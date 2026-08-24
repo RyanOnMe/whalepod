@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# 本机护栏（05-里程碑与Issue拆分.md §6）：
+#   1. 禁止从本地直接推送 main —— main 只通过 GitHub squash PR 合入。
+#   2. 禁止非快进推送（等价于 force push）。
+# 服务器端仍应在 GitHub 上把 main 设为受保护分支；本 hook 只是本地第一道防线。
+zero="0000000000000000000000000000000000000000"
+
+while read -r local_ref local_oid remote_ref remote_oid; do
+  branch="${remote_ref#refs/heads/}"
+
+  if [ "$branch" = "main" ]; then
+    echo "pre-push: 禁止从本地直接推送 main；请走 squash PR 合入。" >&2
+    exit 1
+  fi
+
+  if [ "$local_oid" != "$zero" ] && [ "$remote_oid" != "$zero" ]; then
+    if ! git merge-base --is-ancestor "$remote_oid" "$local_oid"; then
+      echo "pre-push: 拒绝向 $branch 做非快进推送（force push 被禁止）。" >&2
+      exit 1
+    fi
+  fi
+done
+
+exit 0

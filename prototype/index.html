@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="TabTin 2.0：面向 3–10 人小团队的 DSH 多人协作产品原型"
+    />
+    <title>TabTin 2.0 · Task Room 产品原型</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Three variants of the TabTin 2.0 collaboration surface, switchable via ?variant=. -->
+    <a class="skip-link" href="#prototype-root">跳到主要内容</a>
+
+    <svg class="icon-sprite" aria-hidden="true">
+      <symbol id="icon-logo" viewBox="0 0 24 24">
+        <path d="M5 5.5 12 2l7 3.5v8L12 22l-7-8.5v-8Z" />
+        <path d="m8.5 8 3.5-1.8L15.5 8v4L12 16l-3.5-4V8Z" />
+      </symbol>
+      <symbol id="icon-chevron-left" viewBox="0 0 24 24">
+        <path d="m15 18-6-6 6-6" />
+      </symbol>
+      <symbol id="icon-chevron-right" viewBox="0 0 24 24">
+        <path d="m9 18 6-6-6-6" />
+      </symbol>
+      <symbol id="icon-chevron-down" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="icon-search" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="7" />
+        <path d="m20 20-4-4" />
+      </symbol>
+      <symbol id="icon-inbox" viewBox="0 0 24 24">
+        <path d="M4 4h16v15H4z" />
+        <path d="M4 14h4l2 3h4l2-3h4" />
+      </symbol>
+      <symbol id="icon-project" viewBox="0 0 24 24">
+        <path d="M4 6.5h6l2 2h8v10H4z" />
+        <path d="M4 6.5V5h7l2 2" />
+      </symbol>
+      <symbol id="icon-task" viewBox="0 0 24 24">
+        <rect x="4" y="4" width="16" height="16" rx="2" />
+        <path d="m8 12 2.5 2.5L16 9" />
+      </symbol>
+      <symbol id="icon-agent" viewBox="0 0 24 24">
+        <rect x="4" y="7" width="16" height="12" rx="3" />
+        <path d="M12 7V4M9 12h.01M15 12h.01M9 16h6" />
+      </symbol>
+      <symbol id="icon-plug" viewBox="0 0 24 24">
+        <path d="M8 3v5M16 3v5M6 8h12v3a6 6 0 0 1-12 0V8ZM12 17v4" />
+      </symbol>
+      <symbol id="icon-users" viewBox="0 0 24 24">
+        <circle cx="9" cy="8" r="3" />
+        <path d="M3 20v-2a6 6 0 0 1 12 0v2M16 6a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 5v1" />
+      </symbol>
+      <symbol id="icon-settings" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" />
+      </symbol>
+      <symbol id="icon-command" viewBox="0 0 24 24">
+        <path d="M9 6H5a3 3 0 1 0 3 3V5a3 3 0 1 0-3 3h14a3 3 0 1 0-3-3v14a3 3 0 1 0 3-3H5a3 3 0 1 0 3 3v-4" />
+      </symbol>
+      <symbol id="icon-bell" viewBox="0 0 24 24">
+        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
+      </symbol>
+      <symbol id="icon-more" viewBox="0 0 24 24">
+        <circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" />
+      </symbol>
+      <symbol id="icon-play" viewBox="0 0 24 24">
+        <path d="m8 5 11 7-11 7V5Z" />
+      </symbol>
+      <symbol id="icon-pause" viewBox="0 0 24 24">
+        <path d="M8 5v14M16 5v14" />
+      </symbol>
+      <symbol id="icon-stop" viewBox="0 0 24 24">
+        <rect x="6" y="6" width="12" height="12" rx="1" />
+      </symbol>
+      <symbol id="icon-clock" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
+      </symbol>
+      <symbol id="icon-shield" viewBox="0 0 24 24">
+        <path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6l-7-3Z" /><path d="m9 12 2 2 4-4" />
+      </symbol>
+      <symbol id="icon-alert" viewBox="0 0 24 24">
+        <path d="M12 3 2.8 20h18.4L12 3Z" /><path d="M12 9v5M12 17h.01" />
+      </symbol>
+      <symbol id="icon-check" viewBox="0 0 24 24">
+        <path d="m5 12 4 4L19 6" />
+      </symbol>
+      <symbol id="icon-x" viewBox="0 0 24 24">
+        <path d="m6 6 12 12M18 6 6 18" />
+      </symbol>
+      <symbol id="icon-file" viewBox="0 0 24 24">
+        <path d="M6 3h8l4 4v14H6z" /><path d="M14 3v5h5M9 13h6M9 17h5" />
+      </symbol>
+      <symbol id="icon-upload" viewBox="0 0 24 24">
+        <path d="M12 16V4M7 9l5-5 5 5M5 20h14" />
+      </symbol>
+      <symbol id="icon-comment" viewBox="0 0 24 24">
+        <path d="M4 4h16v13H8l-4 4V4Z" />
+      </symbol>
+      <symbol id="icon-terminal" viewBox="0 0 24 24">
+        <rect x="3" y="4" width="18" height="16" rx="2" /><path d="m7 9 3 3-3 3M13 15h4" />
+      </symbol>
+      <symbol id="icon-eye" viewBox="0 0 24 24">
+        <path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12Z" /><circle cx="12" cy="12" r="2.5" />
+      </symbol>
+      <symbol id="icon-lock" viewBox="0 0 24 24">
+        <rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" />
+      </symbol>
+      <symbol id="icon-device" viewBox="0 0 24 24">
+        <rect x="3" y="4" width="18" height="14" rx="2" /><path d="M8 21h8M12 18v3" />
+      </symbol>
+      <symbol id="icon-branch" viewBox="0 0 24 24">
+        <circle cx="6" cy="5" r="2" /><circle cx="18" cy="7" r="2" /><circle cx="6" cy="19" r="2" />
+        <path d="M6 7v10M8 7h4a6 6 0 0 1 6 6v-4" />
+      </symbol>
+      <symbol id="icon-filter" viewBox="0 0 24 24">
+        <path d="M4 5h16M7 12h10M10 19h4" />
+      </symbol>
+      <symbol id="icon-arrow-right" viewBox="0 0 24 24">
+        <path d="M5 12h14M14 7l5 5-5 5" />
+      </symbol>
+      <symbol id="icon-layout" viewBox="0 0 24 24">
+        <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18M9 9h12" />
+      </symbol>
+      <symbol id="icon-refresh" viewBox="0 0 24 24">
+        <path d="M20 7v5h-5M4 17v-5h5" /><path d="M6.1 9a7 7 0 0 1 11.6-2L20 9M4 15l2.3 2a7 7 0 0 0 11.6-2" />
+      </symbol>
+      <symbol id="icon-info" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7h.01" />
+      </symbol>
+    </svg>
+
+    <main id="prototype-root" tabindex="-1" aria-live="polite"></main>
+    <dialog id="prototype-dialog" aria-labelledby="dialog-title"></dialog>
+    <div id="prototype-toast" class="prototype-toast" role="status" aria-live="polite"></div>
+
+    <noscript>
+      <p class="noscript-message">这个交互原型需要启用 JavaScript。</p>
+    </noscript>
+    <script src="prototype.js" defer></script>
+  </body>
+</html>

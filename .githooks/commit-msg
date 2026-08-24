@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# 贡献采用 DCO sign-off（见 06-风险与升级策略.md §6）。
+# 提交必须带 Signed-off-by；请使用 git commit -s。
+msg_file="$1"
+
+if grep -qE '^(Merge|Revert) ' "$msg_file"; then
+  exit 0
+fi
+
+if ! grep -q '^Signed-off-by: ' "$msg_file"; then
+  echo "commit-msg: 缺少 Signed-off-by（DCO）。请改用 git commit -s。" >&2
+  exit 1
+fi

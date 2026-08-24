@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# Node / pnpm
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# 测试与构建输出
+playwright-report/
+test-results/
+
+# 取证包：体积大且含运行现场，不进 git；验过的步骤要写进 docs/agent/
+artifacts/evidence/
+
+# 日志
+*.log
+
+# 密钥与本地环境
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Node 端本地状态（Device Token、secrets.json、spool 等；目录名随定名调整）
+.project311-node/
