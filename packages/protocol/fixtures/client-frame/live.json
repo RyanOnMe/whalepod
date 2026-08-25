@@ -1,0 +1,8 @@
+{
+  "protocolVersion": 1,
+  "kind": "live",
+  "runId": "01905f7c-0000-7000-8000-000000000301",
+  "audience": "owner",
+  "deltaSeq": 7,
+  "delta": { "text": "partial answer" }
+}

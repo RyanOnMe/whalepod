@@ -1,0 +1,17 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a021",
+  "type": "runtime.initialize",
+  "sentAt": "2026-01-05T09:00:01Z",
+  "payload": {
+    "runId": "01905f7c-0000-7000-8000-000000000301",
+    "workspacePath": "<workspace>",
+    "dshHomePath": "<dsh-home>",
+    "profileDigest": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "pluginPackDigest": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "maxTokens": 8192,
+    "persona": "You are a careful TypeScript reviewer."
+  }
+}

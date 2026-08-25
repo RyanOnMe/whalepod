@@ -1,0 +1,523 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "runId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    },
+    "seq": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "occurredAt": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "audience": {
+      "type": "string",
+      "enum": [
+        "owner",
+        "project",
+        "admin"
+      ]
+    },
+    "event": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "runtime.ready"
+            },
+            "dshSessionId": {
+              "$ref": "#/$defs/__schema1"
+            }
+          },
+          "required": [
+            "type",
+            "dshSessionId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "run.phase"
+            },
+            "phase": {
+              "type": "string",
+              "enum": [
+                "thinking",
+                "tool",
+                "finalizing"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "phase"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "assistant.message"
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "tool.started"
+            },
+            "callId": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "toolName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "preview": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": [
+            "type",
+            "callId",
+            "toolName",
+            "preview"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "tool.finished"
+            },
+            "callId": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "succeeded",
+                "failed",
+                "cancelled"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "callId",
+            "outcome"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "approval.requested"
+            },
+            "approval": {
+              "type": "object",
+              "properties": {
+                "approvalId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "runId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "callId": {
+                  "$ref": "#/$defs/__schema2"
+                },
+                "toolName": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "reason": {
+                  "type": "string",
+                  "maxLength": 1000
+                },
+                "preview": {
+                  "$ref": "#/$defs/__schema4"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "allowed_once",
+                    "rejected",
+                    "expired",
+                    "cancelled"
+                  ]
+                },
+                "requestedAt": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "expiresAt": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "required": [
+                "approvalId",
+                "runId",
+                "callId",
+                "toolName",
+                "reason",
+                "preview",
+                "status",
+                "requestedAt",
+                "expiresAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "approval"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "approval.decided"
+            },
+            "approvalId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "allowed_once",
+                "rejected",
+                "expired",
+                "cancelled"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "approvalId",
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "artifact.candidate"
+            },
+            "artifact": {
+              "type": "object",
+              "properties": {
+                "artifactId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "runId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "mediaType": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "byteSize": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 52428800
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "sourceRelativePath": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "artifactId",
+                "runId",
+                "title",
+                "mediaType",
+                "byteSize",
+                "sha256"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "artifact"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "subagent.started"
+            },
+            "childSessionId": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          },
+          "required": [
+            "type",
+            "childSessionId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "subagent.finished"
+            },
+            "childSessionId": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "outcome": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "type",
+            "childSessionId",
+            "outcome"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "run.completed"
+            },
+            "finalText": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "finalText"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "run.failed"
+            },
+            "code": {
+              "type": "string",
+              "enum": [
+                "VALIDATION_FAILED",
+                "AUTH_REQUIRED",
+                "INVALID_CREDENTIALS",
+                "SESSION_EXPIRED",
+                "ORIGIN_REJECTED",
+                "FORBIDDEN",
+                "NOT_FOUND",
+                "CONFLICT",
+                "IDEMPOTENCY_CONFLICT",
+                "ASSIGNMENT_NOT_ACCEPTED",
+                "INVALID_RUN_TRANSITION",
+                "TASK_TERMINAL",
+                "RUN_ALREADY_ACTIVE",
+                "DEVICE_OFFLINE",
+                "DEVICE_REVOKED",
+                "NODE_CAPACITY_REACHED",
+                "WORKSPACE_UNAVAILABLE",
+                "PROFILE_MISMATCH",
+                "PLUGIN_PACK_MISMATCH",
+                "PROTOCOL_MISMATCH",
+                "RUNTIME_START_FAILED",
+                "MODEL_CREDENTIAL_UNAVAILABLE",
+                "RUNTIME_LOST",
+                "APPROVAL_EXPIRED",
+                "APPROVAL_ALREADY_DECIDED",
+                "ARTIFACT_PATH_OUTSIDE_WORKSPACE",
+                "ARTIFACT_TOO_LARGE",
+                "ARTIFACT_HASH_MISMATCH",
+                "PLUGIN_UNREVIEWED",
+                "INTERNAL_ERROR"
+              ]
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          },
+          "required": [
+            "type",
+            "code",
+            "summary"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "run.cancelled"
+            },
+            "forced": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "type",
+            "forced"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "required": [
+    "runId",
+    "seq",
+    "occurredAt",
+    "audience",
+    "event"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+    },
+    "__schema1": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "__schema2": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "__schema3": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema3"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema3"
+          }
+        }
+      ]
+    },
+    "__schema4": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema4"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema4"
+          }
+        }
+      ]
+    }
+  }
+}

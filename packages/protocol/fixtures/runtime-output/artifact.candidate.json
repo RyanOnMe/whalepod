@@ -1,0 +1,12 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a035",
+  "type": "artifact.candidate",
+  "sentAt": "2026-01-05T09:08:00Z",
+  "payload": {
+    "runId": "01905f7c-0000-7000-8000-000000000301",
+    "relativePath": "reports/protocol-review.md",
+    "title": "Protocol review",
+    "mediaType": "text/markdown"
+  }
+}

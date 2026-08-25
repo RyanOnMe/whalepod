@@ -1,0 +1,11 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a017",
+  "type": "run.live_delta",
+  "sentAt": "2026-01-05T09:00:36Z",
+  "payload": {
+    "runId": "01905f7c-0000-7000-8000-000000000301",
+    "deltaSeq": 7,
+    "text": "partial answer"
+  }
+}

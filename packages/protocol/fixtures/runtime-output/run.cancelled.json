@@ -1,0 +1,9 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a037",
+  "type": "run.cancelled",
+  "sentAt": "2026-01-05T09:06:10Z",
+  "payload": {
+    "runId": "01905f7c-0000-7000-8000-000000000301"
+  }
+}

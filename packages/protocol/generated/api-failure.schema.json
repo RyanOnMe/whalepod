@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "ok": {
+      "type": "boolean",
+      "const": false
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "VALIDATION_FAILED",
+            "AUTH_REQUIRED",
+            "INVALID_CREDENTIALS",
+            "SESSION_EXPIRED",
+            "ORIGIN_REJECTED",
+            "FORBIDDEN",
+            "NOT_FOUND",
+            "CONFLICT",
+            "IDEMPOTENCY_CONFLICT",
+            "ASSIGNMENT_NOT_ACCEPTED",
+            "INVALID_RUN_TRANSITION",
+            "TASK_TERMINAL",
+            "RUN_ALREADY_ACTIVE",
+            "DEVICE_OFFLINE",
+            "DEVICE_REVOKED",
+            "NODE_CAPACITY_REACHED",
+            "WORKSPACE_UNAVAILABLE",
+            "PROFILE_MISMATCH",
+            "PLUGIN_PACK_MISMATCH",
+            "PROTOCOL_MISMATCH",
+            "RUNTIME_START_FAILED",
+            "MODEL_CREDENTIAL_UNAVAILABLE",
+            "RUNTIME_LOST",
+            "APPROVAL_EXPIRED",
+            "APPROVAL_ALREADY_DECIDED",
+            "ARTIFACT_PATH_OUTSIDE_WORKSPACE",
+            "ARTIFACT_TOO_LARGE",
+            "ARTIFACT_HASH_MISMATCH",
+            "PLUGIN_UNREVIEWED",
+            "INTERNAL_ERROR"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "details": {
+          "$ref": "#/$defs/__schema0"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "requestId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "ok",
+    "error"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      ]
+    }
+  }
+}

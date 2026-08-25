@@ -1,0 +1,7 @@
+{
+  "runId": "01905f7c-0000-7000-8000-000000000301",
+  "seq": 30,
+  "occurredAt": "2026-01-05T09:04:00Z",
+  "audience": "owner",
+  "event": { "type": "subagent.started", "childSessionId": "dsh-sess-02", "label": "research" }
+}

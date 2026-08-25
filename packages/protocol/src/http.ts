@@ -1,0 +1,135 @@
+/**
+ * HTTP DTO（03-领域模型与运行协议.md §4，字段规则逐项对应 §2 的实体表）。
+ *
+ * 所有写命令的 JSON body 走 Zod 严格模式解析（§4）；Origin / Idempotency-Key /
+ * Cookie 是 Hub 中间件职责（header 级约束，不属于 body DTO，见 §4 末两段）。
+ */
+import { z } from 'zod'
+import { ErrorCodeSchema } from './errors.js'
+
+export const ApiFailureSchema = z.strictObject({
+  ok: z.literal(false),
+  error: z.strictObject({
+    code: ErrorCodeSchema,
+    message: z.string().min(1),
+    requestId: z.string().min(1),
+    // §4 记为 unknown：错误细节，wire 上必须是 JSON 值。
+    details: z.json().optional(),
+  }),
+})
+export type ApiFailure = z.infer<typeof ApiFailureSchema>
+
+/** 响应 envelope：`{ ok: true, data }`，data schema 由各路由给出（§4）。 */
+export function apiSuccess<Data extends z.ZodType>(data: Data) {
+  return z.strictObject({ ok: z.literal(true), data })
+}
+
+// §2.1 身份字段规则
+export const UsernameSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{2,31}$/)
+/** §2.1 只规定存储用 Argon2id，未规定口令长度策略；wire 上仅拒绝空口令。 */
+export const PasswordSchema = z.string().min(1)
+export const DisplayNameSchema = z.string().min(1).max(80)
+
+/** POST /setup：未初始化实例 + Setup Token，创建 Team 与 Owner。 */
+export const SetupRequestSchema = z.strictObject({
+  setupToken: z.string().min(1),
+  // §2.1 team.name：去首尾空格后 1–80
+  teamName: z.string().trim().min(1).max(80),
+  username: UsernameSchema,
+  displayName: DisplayNameSchema,
+  password: PasswordSchema,
+})
+
+/** POST /auth/login。 */
+export const LoginRequestSchema = z.strictObject({
+  username: UsernameSchema,
+  password: PasswordSchema,
+})
+
+/** POST /invites：§2.1 规定不能邀请 Owner。 */
+export const CreateInviteRequestSchema = z.strictObject({
+  role: z.enum(['admin', 'member']),
+})
+
+/** POST /invites/accept：匿名 + 一次性 Token。 */
+export const AcceptInviteRequestSchema = z.strictObject({
+  token: z.string().min(1),
+  username: UsernameSchema,
+  displayName: DisplayNameSchema,
+  password: PasswordSchema,
+})
+
+/** POST /projects（§2.2：name 1–120，description ≤4000）。 */
+export const CreateProjectRequestSchema = z.strictObject({
+  name: z.string().min(1).max(120),
+  description: z.string().max(4000).optional(),
+})
+
+/** POST /projects/:projectId/tasks（§2.2：title 1–200，description ≤20000）。 */
+export const CreateTaskRequestSchema = z.strictObject({
+  title: z.string().min(1).max(200),
+  description: z.string().max(20000).optional(),
+  assigneeUserId: z.uuid(),
+})
+
+/** PATCH /tasks/:taskId：只允许非状态字段。 */
+export const UpdateTaskRequestSchema = z.strictObject({
+  title: z.string().min(1).max(200).optional(),
+  description: z.string().max(20000).optional(),
+})
+
+/** POST /tasks/:taskId/comments（§2.2：body 1–10000）。 */
+export const CreateCommentRequestSchema = z.strictObject({
+  body: z.string().min(1).max(10000),
+})
+
+/**
+ * POST /tasks/:taskId/runs：Run 固化 Agent、Workspace 与 Profile Revision（§2.6）。
+ * profileRevisionId 缺省时由 Hub 取 Agent 当前 Revision（§2.3）。
+ */
+export const CreateRunRequestSchema = z.strictObject({
+  agentId: z.uuid(),
+  profileRevisionId: z.uuid().optional(),
+  deviceId: z.uuid(),
+  workspaceId: z.uuid(),
+  prompt: z.string().min(1).max(20_000),
+})
+
+/** POST /approvals/:approvalId/decisions：一次性决定（§3.3）。 */
+export const DecideApprovalRequestSchema = z.strictObject({
+  decision: z.enum(['allowed_once', 'rejected']),
+})
+
+// §2.3 Profile Revision 字段规则；创建 Agent 时必须同时给出首个 Revision
+// （agent.current_revision_id 非空），新建 Revision 复用同一组字段。
+const RevisionRequestShape = {
+  persona: z.string().min(1).max(20_000),
+  provider: z.string().min(1).max(100),
+  model: z.string().min(1).max(200),
+  credentialSlot: z.string().min(1).max(80),
+  maxTokens: z.number().int().positive().optional(),
+  pluginPackId: z.uuid(),
+} as const
+
+/** POST /agents（Owner/Admin）。 */
+export const CreateAgentRequestSchema = z.strictObject({
+  name: z.string().min(1).max(80),
+  description: z.string().max(500),
+  ...RevisionRequestShape,
+})
+
+/** POST /agents/:agentId/revisions（Owner/Admin）。 */
+export const CreateAgentRevisionRequestSchema = z.strictObject({ ...RevisionRequestShape })
+
+export type SetupRequest = z.infer<typeof SetupRequestSchema>
+export type LoginRequest = z.infer<typeof LoginRequestSchema>
+export type CreateInviteRequest = z.infer<typeof CreateInviteRequestSchema>
+export type AcceptInviteRequest = z.infer<typeof AcceptInviteRequestSchema>
+export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>
+export type CreateTaskRequest = z.infer<typeof CreateTaskRequestSchema>
+export type UpdateTaskRequest = z.infer<typeof UpdateTaskRequestSchema>
+export type CreateCommentRequest = z.infer<typeof CreateCommentRequestSchema>
+export type CreateRunRequest = z.infer<typeof CreateRunRequestSchema>
+export type DecideApprovalRequest = z.infer<typeof DecideApprovalRequestSchema>
+export type CreateAgentRequest = z.infer<typeof CreateAgentRequestSchema>
+export type CreateAgentRevisionRequest = z.infer<typeof CreateAgentRevisionRequestSchema>

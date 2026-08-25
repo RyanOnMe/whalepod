@@ -1,0 +1,15 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a011",
+  "type": "node.hello",
+  "sentAt": "2026-01-05T09:00:00Z",
+  "payload": {
+    "deviceId": "01905f7c-0000-7000-8000-000000000501",
+    "nodeVersion": "24.12.0",
+    "platform": "darwin",
+    "architecture": "arm64",
+    "supportedProtocolVersions": [1],
+    "dshDistributionVersion": "0.1.0-rc.6",
+    "pluginPackDigests": ["2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"]
+  }
+}

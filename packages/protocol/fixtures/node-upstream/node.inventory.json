@@ -1,0 +1,20 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a013",
+  "type": "node.inventory",
+  "sentAt": "2026-01-05T09:00:20Z",
+  "payload": {
+    "deviceId": "01905f7c-0000-7000-8000-000000000501",
+    "credentialSlots": [{ "provider": "deepseek", "slot": "deepseek-default" }],
+    "workspaces": [
+      {
+        "workspaceId": "01905f7c-0000-7000-8000-000000000601",
+        "name": "project311",
+        "kind": "git_repository",
+        "capabilities": { "read": true, "write": true, "git": true },
+        "available": true,
+        "lastCheckedAt": "2026-01-05T08:59:00Z"
+      }
+    ]
+  }
+}

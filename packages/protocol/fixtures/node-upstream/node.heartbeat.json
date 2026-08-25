@@ -1,0 +1,13 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a012",
+  "type": "node.heartbeat",
+  "sentAt": "2026-01-05T09:00:15Z",
+  "payload": {
+    "deviceId": "01905f7c-0000-7000-8000-000000000501",
+    "activeRunIds": ["01905f7c-0000-7000-8000-000000000301"],
+    "lastEventSeqByRun": {
+      "01905f7c-0000-7000-8000-000000000301": 42
+    }
+  }
+}

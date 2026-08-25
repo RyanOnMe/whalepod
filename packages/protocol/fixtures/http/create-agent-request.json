@@ -1,0 +1,10 @@
+{
+  "name": "Reviewer",
+  "description": "Reviews code changes",
+  "persona": "You are a careful TypeScript reviewer.",
+  "provider": "deepseek",
+  "model": "deepseek-chat",
+  "credentialSlot": "deepseek-default",
+  "maxTokens": 8192,
+  "pluginPackId": "01905f7c-0000-7000-8000-000000000901"
+}

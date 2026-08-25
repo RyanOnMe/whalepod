@@ -1,0 +1,10 @@
+{
+  "protocolVersion": 1,
+  "kind": "persistent",
+  "cursor": "01905f7c-0000-7000-8000-00000000c001",
+  "occurredAt": "2026-01-05T09:00:35Z",
+  "event": {
+    "type": "run.changed",
+    "payload": { "runId": "01905f7c-0000-7000-8000-000000000301", "status": "running" }
+  }
+}

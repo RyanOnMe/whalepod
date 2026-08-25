@@ -1,0 +1,11 @@
+{
+  "runId": "01905f7c-0000-7000-8000-000000000301",
+  "seq": 45,
+  "occurredAt": "2026-01-05T09:03:00Z",
+  "audience": "owner",
+  "event": {
+    "type": "approval.decided",
+    "approvalId": "01905f7c-0000-7000-8000-000000000701",
+    "status": "allowed_once"
+  }
+}

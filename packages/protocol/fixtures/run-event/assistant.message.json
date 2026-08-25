@@ -1,0 +1,7 @@
+{
+  "runId": "01905f7c-0000-7000-8000-000000000301",
+  "seq": 40,
+  "occurredAt": "2026-01-05T09:00:33Z",
+  "audience": "owner",
+  "event": { "type": "assistant.message", "text": "I am starting the review now." }
+}

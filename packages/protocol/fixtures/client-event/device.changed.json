@@ -1,0 +1,7 @@
+{
+  "type": "device.changed",
+  "payload": {
+    "deviceId": "01905f7c-0000-7000-8000-000000000501",
+    "lastSeenAt": "2026-01-05T09:00:15Z"
+  }
+}
