@@ -23,6 +23,10 @@
     "@project311/db": "workspace:*",
     "@project311/domain": "workspace:*",
     "@project311/protocol": "workspace:*",
+    "drizzle-orm": "catalog:",
     "fastify": "catalog:"
+  },
+  "devDependencies": {
+    "@project311/testkit": "workspace:*"
   }
 }
