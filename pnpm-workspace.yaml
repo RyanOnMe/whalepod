@@ -8,15 +8,15 @@ allowBuilds:
 # 版本基线见 07-资料与版本基线.md；只允许精确版本，升级走 dsh-upgrade 流程。
 catalog:
   '@deepseek-ai/cordis': 4.0.1
-  '@deepseek-ai/dsh': 0.1.0-rc.6
-  '@deepseek-ai/dsh-agent': 0.1.0-rc.6
-  '@deepseek-ai/dsh-app-boot': 0.1.0-rc.6
-  '@deepseek-ai/dsh-base': 0.1.0-rc.6
-  '@deepseek-ai/dsh-llm': 0.0.1-rc.1
-  '@deepseek-ai/dsh-llm-replay': 0.0.1-rc.1
-  '@deepseek-ai/dsh-session': 0.0.1-rc.1
-  '@deepseek-ai/dsh-tools': 0.0.1-rc.1
-  '@deepseek-ai/dsh-user-approval': 0.0.1-rc.1
+  '@deepseek-ai/dsh': 0.1.0-rc.8
+  '@deepseek-ai/dsh-agent': 0.1.0-rc.8
+  '@deepseek-ai/dsh-app-boot': 0.1.0-rc.8
+  '@deepseek-ai/dsh-base': 0.1.0-rc.8
+  '@deepseek-ai/dsh-llm': 0.1.0-rc.8
+  '@deepseek-ai/dsh-llm-replay': 0.1.0-rc.8
+  '@deepseek-ai/dsh-session': 0.1.0-rc.8
+  '@deepseek-ai/dsh-tools': 0.1.0-rc.8
+  '@deepseek-ai/dsh-user-approval': 0.1.0-rc.8
   '@fastify/cookie': 11.1.2
   '@fastify/websocket': 11.3.0
   '@node-rs/argon2': 2.1.0
