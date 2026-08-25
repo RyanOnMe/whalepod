@@ -1,19 +1,42 @@
 /**
  * Hub integration spec 的统一入口与驱动助手。
  *
- * 与 packages/db/tests/helpers.ts 同源（迁移应用 + 复位 + DATABASE_URL 检查），
- * 但只依赖 @project311/db 的公开导出，不跨包引用测试内部文件。
- * 所有驱动走 Fastify inject（真人同一条 HTTP 路径）；DB 断言走 raw SQL。
+ * 两类驱动共存：
+ * - HTTP 路径（P1-05 setup/auth/invite）：全部走 Fastify inject（真人同一条 HTTP 路径）；
+ *   DB 断言走 raw SQL。
+ * - Run Orchestrator 路径（P1-10）：直驱 RunOrchestrator + OutboxWorker + FakeDeviceGateway，
+ *   不经过 HTTP（routes 留给组合根接线，P1-13）。
+ *
+ * 迁移应用 / 复位 / DATABASE_URL 检查与 packages/db/tests/helpers.ts 同源，但只依赖
+ * @project311/db 的公开导出，不跨包引用测试内部文件（跨包 re-export 在干净 checkout 下
+ * 无法被 Vite module graph 解析）。seedRunPrereqs 在此本地实现，沿用同源约定。
  */
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Writable } from 'node:stream'
 import type { FastifyInstance } from 'fastify'
-import { createDatabase } from '@project311/db'
-import type { Database } from '@project311/db'
+import { eq } from 'drizzle-orm'
+import type { Actor } from '@project311/domain'
+import { asUserId } from '@project311/domain'
+import {
+  createDatabase,
+  insertMember,
+  insertProject,
+  insertTask,
+  insertTeam,
+  insertUser,
+  Outbox,
+  schema,
+} from '@project311/db'
+import type { Database, DbHandle } from '@project311/db'
+import type { FakeDeviceGatewayOptions } from '@project311/testkit'
+import { FakeClock, FakeDeviceGateway } from '@project311/testkit'
+import type { CreateRunInput, RunOrchestrator } from '../src/modules/run/index.js'
+import { RunOrchestrator as Orchestrator } from '../src/modules/run/index.js'
+import { OutboxWorker } from '../src/modules/run/index.js'
 import { buildApp } from '../src/app.js'
 import type { HubConfig } from '../src/config.js'
 
@@ -264,5 +287,233 @@ export async function driveInviteAndAccept(
     },
     inviteToken: created.data.token,
     inviteId: created.data.inviteId,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Run Orchestrator 驱动助手（P1-10）：直驱深模块，不经过 HTTP。
+// 与 packages/db/tests/helpers.ts 同源约定：seedRunPrereqs 本地实现，只用 @project311/db
+// 的公开导出（insertTeam/insertUser/insertMember/insertProject/insertTask + schema），
+// 不跨包引用测试内部文件。
+// ---------------------------------------------------------------------------
+
+/** 与仓库 DSH 基线一致（dsh.lock.json；07-资料与版本基线.md）。 */
+export const TEST_DSH_VERSION = '0.1.0-rc.8'
+
+export interface SeedIds {
+  teamId: string
+  userId: string
+  projectId: string
+  taskId: string
+  pluginPackId: string
+  agentId: string
+  revisionId: string
+  deviceId: string
+  workspaceId: string
+}
+
+/** 插齐 Run 的 FK 依赖链（team→user→project→task、pack→agent→revision、device→workspace）。 */
+export async function seedRunPrereqs(handle: DbHandle): Promise<SeedIds> {
+  const suffix = randomUUID().slice(0, 8)
+  const ids: SeedIds = {
+    teamId: randomUUID(),
+    userId: randomUUID(),
+    projectId: randomUUID(),
+    taskId: randomUUID(),
+    pluginPackId: randomUUID(),
+    agentId: randomUUID(),
+    revisionId: randomUUID(),
+    deviceId: randomUUID(),
+    workspaceId: randomUUID(),
+  }
+  await insertTeam(handle, { id: ids.teamId, name: `team-${suffix}` })
+  await insertUser(handle, {
+    id: ids.userId,
+    username: `user-${suffix}`,
+    displayName: 'Seed User',
+    passwordHash: '$argon2id$placeholder$placeholder',
+  })
+  await insertMember(handle, { teamId: ids.teamId, userId: ids.userId, role: 'owner' })
+  await insertProject(handle, { id: ids.projectId, name: `proj-${suffix}`, createdBy: ids.userId })
+  await insertTask(handle, {
+    id: ids.taskId,
+    projectId: ids.projectId,
+    title: 'Seed task',
+    assigneeUserId: ids.userId,
+    assignmentStatus: 'accepted',
+    acceptedAt: new Date(),
+    createdBy: ids.userId,
+  })
+  await handle.insert(schema.pluginPacks).values({
+    id: ids.pluginPackId,
+    name: `pack-${suffix}`,
+    installations: [],
+    packDigest: 'a'.repeat(64),
+    createdBy: ids.userId,
+  })
+  await handle.insert(schema.agents).values({
+    id: ids.agentId,
+    name: `agent-${suffix}`,
+    createdBy: ids.userId,
+  })
+  await handle.insert(schema.agentProfileRevisions).values({
+    id: ids.revisionId,
+    agentId: ids.agentId,
+    revision: 1,
+    persona: 'You are a helpful agent.',
+    provider: 'deepseek',
+    model: 'deepseek-chat',
+    credentialSlot: 'default',
+    pluginPackId: ids.pluginPackId,
+    profileDigest: 'b'.repeat(64),
+    createdBy: ids.userId,
+  })
+  await handle
+    .update(schema.agents)
+    .set({ currentRevisionId: ids.revisionId })
+    .where(eq(schema.agents.id, ids.agentId))
+  await handle.insert(schema.devices).values({
+    id: ids.deviceId,
+    ownerUserId: ids.userId,
+    name: `dev-${suffix}`,
+    platform: 'darwin',
+    architecture: 'arm64',
+    nodeVersion: '24.12.0',
+    nodeAppVersion: '0.1.0',
+    tokenHash: randomBytes(32),
+    capabilities: {},
+  })
+  await handle.insert(schema.workspaces).values({
+    id: ids.workspaceId,
+    deviceId: ids.deviceId,
+    ownerUserId: ids.userId,
+    name: `ws-${suffix}`,
+    kind: 'directory',
+    capabilities: { read: true, write: true },
+    available: true,
+  })
+  return ids
+}
+
+export function makeActor(userId: string, role: Actor['role'] = 'owner'): Actor {
+  return { userId: asUserId(userId), role }
+}
+
+/** 第二个用户 + 其 Device/Workspace，用于越权守卫用例（bobWorkspaceInput → FORBIDDEN）。 */
+export async function seedSecondUserDevice(handle: DbHandle, ids: SeedIds) {
+  const userId = randomUUID()
+  const deviceId = randomUUID()
+  const workspaceId = randomUUID()
+  const suffix = randomUUID().slice(0, 8)
+  await insertUser(handle, {
+    id: userId,
+    username: `user2-${suffix}`,
+    displayName: 'Second User',
+    passwordHash: '$argon2id$placeholder$placeholder',
+  })
+  await insertMember(handle, { teamId: ids.teamId, userId, role: 'member' })
+  await handle.insert(schema.devices).values({
+    id: deviceId,
+    ownerUserId: userId,
+    name: `dev2-${suffix}`,
+    platform: 'linux',
+    architecture: 'x64',
+    nodeVersion: '24.12.0',
+    nodeAppVersion: '0.1.0',
+    tokenHash: randomBytes(32),
+    capabilities: {},
+  })
+  await handle.insert(schema.workspaces).values({
+    id: workspaceId,
+    deviceId,
+    ownerUserId: userId,
+    name: `ws2-${suffix}`,
+    kind: 'directory',
+    capabilities: { read: true, write: true },
+    available: true,
+  })
+  return { userId, deviceId, workspaceId }
+}
+
+export function makeCreateInput(ids: SeedIds, overrides: Partial<CreateRunInput> = {}) {
+  return {
+    idempotencyKey: randomUUID(),
+    agentId: ids.agentId,
+    deviceId: ids.deviceId,
+    workspaceId: ids.workspaceId,
+    prompt: 'implement the task',
+    dshDistributionVersion: TEST_DSH_VERSION,
+    ...overrides,
+  } satisfies CreateRunInput
+}
+
+export interface Harness {
+  clock: FakeClock
+  outbox: Outbox
+  gateway: FakeDeviceGateway
+  orchestrator: RunOrchestrator
+  worker: OutboxWorker
+  /** run.start 的合法设备身份（ingest 的 device 参数）。 */
+  deviceFor(ids: SeedIds): { deviceId: string; ownerUserId: string }
+  /** worker 派发一轮，并把 Fake Node 的上行帧喂回 orchestrator（模拟一次完整往返）。 */
+  pump(ids: SeedIds): Promise<void>
+}
+
+export function makeHarness(
+  database: Database,
+  gatewayOptions: FakeDeviceGatewayOptions = {},
+): Harness {
+  const clock = new FakeClock(new Date('2026-08-25T00:00:00.000Z'))
+  const now = () => clock.now()
+  const outbox = new Outbox(database, { now, random: () => 0 })
+  const gateway = new FakeDeviceGateway({ now, ...gatewayOptions })
+  const orchestrator = new Orchestrator({ database, outbox, now })
+  const worker = new OutboxWorker({ outbox, gateway, now })
+  return {
+    clock,
+    outbox,
+    gateway,
+    orchestrator,
+    worker,
+    deviceFor: (ids) => ({ deviceId: ids.deviceId, ownerUserId: ids.userId }),
+    pump: async (ids) => {
+      await worker.dispatchOnce()
+      for (const frame of gateway.drainUpstream()) {
+        await orchestrator.ingestNodeEvent(
+          { deviceId: ids.deviceId, ownerUserId: ids.userId },
+          frame,
+        )
+      }
+    },
+  }
+}
+
+let messageSeq = 0
+
+/** 构造 Node 上行 run.event 帧（unknown：ingest 侧走 fail-closed 解析，与真实 WS 一致）。 */
+export function runEventFrame(
+  runId: string,
+  seq: number,
+  event: Record<string, unknown>,
+  audience: 'owner' | 'project' | 'admin' = 'project',
+): unknown {
+  messageSeq += 1
+  return {
+    protocolVersion: 1,
+    messageId: `10000000-0000-4000-8000-${String(messageSeq).padStart(12, '0')}`,
+    sentAt: new Date().toISOString(),
+    type: 'run.event',
+    payload: { runId, seq, occurredAt: new Date().toISOString(), audience, event },
+  }
+}
+
+export function heartbeatFrame(deviceId: string, activeRunIds: string[] = []): unknown {
+  messageSeq += 1
+  return {
+    protocolVersion: 1,
+    messageId: `10000000-0000-4000-8000-${String(messageSeq).padStart(12, '0')}`,
+    sentAt: new Date().toISOString(),
+    type: 'node.heartbeat',
+    payload: { deviceId, activeRunIds, lastEventSeqByRun: {} },
   }
 }
