@@ -98,6 +98,9 @@ importers:
       fastify:
         specifier: 'catalog:'
         version: 5.12.1
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
 
   apps/node:
     dependencies:

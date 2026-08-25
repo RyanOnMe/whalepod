@@ -8,6 +8,7 @@
 | [issue-workflow.md](./issue-workflow.md) | 问题从发现到合入的完整走法 |
 | [evidence-map.md](./evidence-map.md) | 出问题时去哪一层找哪份证据 |
 | [acceptance-template.md](./acceptance-template.md) | 验收文档模板；新验收一律按它写 |
+| [setup-auth-invite-acceptance.md](./setup-auth-invite-acceptance.md) | G1-01..06：Setup/登录/邀请/角色/Origin gate 验收（P1-05） |
 
 规矩只有一条：**验过就要留下**。验收步骤、探针跑法、上次结果、坑在哪，写进这里的 acceptance 文档；能直接复跑的脚本放 `scripts/`。只留在 `/tmp` 或对话里的验证，等于没验。
 

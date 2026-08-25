@@ -2,6 +2,9 @@
   "name": "@project311/hub",
   "version": "0.1.0",
   "private": true,
+  "bin": {
+    "project311-hub": "./dist/cli.js"
+  },
   "files": [
     "dist"
   ],
@@ -14,7 +17,8 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "test:integration": "vitest run --root ../.. --project integration apps/hub/tests"
   },
   "dependencies": {
     "@fastify/cookie": "catalog:",
@@ -23,6 +27,7 @@
     "@project311/db": "workspace:*",
     "@project311/domain": "workspace:*",
     "@project311/protocol": "workspace:*",
-    "fastify": "catalog:"
+    "fastify": "catalog:",
+    "zod": "catalog:"
   }
 }
