@@ -14,7 +14,8 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "test:integration": "vitest run --root ../.. --project integration packages/db/tests"
   },
   "dependencies": {
     "@project311/domain": "workspace:*",

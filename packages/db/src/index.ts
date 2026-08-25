@@ -1,1 +1,11 @@
 export const DB_VERSION = 1 as const
+
+export * from './client.js'
+export * from './transaction.js'
+export * from './outbox.js'
+export * from './repositories/artifact.js'
+export * from './repositories/event.js'
+export * from './repositories/run.js'
+export * from './repositories/task.js'
+export * from './repositories/team.js'
+export * as schema from './schema/index.js'

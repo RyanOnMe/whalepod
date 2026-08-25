@@ -1,0 +1,10 @@
+// schema 单一入口：drizzle.config.ts 与 client.ts 都从这里取全量表定义。
+export * from './common.js'
+export * from './identity.js'
+export * from './project.js'
+export * from './agent.js'
+export * from './device.js'
+export * from './plugin.js'
+export * from './run.js'
+export * from './artifact.js'
+export * from './outbox.js'
