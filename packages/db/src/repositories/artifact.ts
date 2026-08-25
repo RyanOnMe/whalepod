@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, asc, count, eq } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { artifacts } from '../schema/artifact.js'
 
@@ -48,4 +48,28 @@ export async function setArtifactStatus(
     .where(eq(artifacts.id, id))
     .returning()
   return row
+}
+
+/** Task 的全部 Artifact（Task Room 聚合用；按创建时间）。 */
+export async function listArtifactsByTask(
+  handle: DbHandle,
+  taskId: string,
+): Promise<ArtifactRow[]> {
+  return handle
+    .select()
+    .from(artifacts)
+    .where(eq(artifacts.taskId, taskId))
+    .orderBy(asc(artifacts.createdAt))
+}
+
+/** Task 是否已有至少一个 published Artifact（submit-review 守卫，03 §3.1）。 */
+export async function hasPublishedArtifactByTask(
+  handle: DbHandle,
+  taskId: string,
+): Promise<boolean> {
+  const [row] = await handle
+    .select({ value: count() })
+    .from(artifacts)
+    .where(and(eq(artifacts.taskId, taskId), eq(artifacts.status, 'published')))
+  return (row?.value ?? 0) > 0
 }

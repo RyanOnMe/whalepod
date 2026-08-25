@@ -190,6 +190,24 @@ export function idemKey(): string {
   return randomBytes(16).toString('hex')
 }
 
+/** 已认证的 HTTP inject：带 Origin、Cookie 与 Idempotency-Key（GET 也会带上，无害）。 */
+export async function apiInject(
+  ctx: TestApp,
+  session: Session,
+  opts: { method: string; url: string; payload?: unknown; idempotencyKey?: string },
+) {
+  return ctx.app.inject({
+    method: opts.method as 'GET' | 'POST' | 'PATCH' | 'DELETE',
+    url: opts.url,
+    headers: {
+      origin: ctx.origin,
+      cookie: session.cookie,
+      'idempotency-key': opts.idempotencyKey ?? idemKey(),
+    },
+    ...(opts.payload !== undefined ? { payload: opts.payload } : {}),
+  })
+}
+
 /** 从 set-cookie 头提取 project311_session 的 Cookie 请求头值。 */
 export function extractSessionCookie(setCookie: string | string[] | undefined): string {
   const header = Array.isArray(setCookie) ? setCookie[0] : setCookie
@@ -445,6 +463,130 @@ export function makeCreateInput(ids: SeedIds, overrides: Partial<CreateRunInput>
     dshDistributionVersion: TEST_DSH_VERSION,
     ...overrides,
   } satisfies CreateRunInput
+}
+
+/**
+ * 为「已存在用户」（如 driveSetup 的 owner）补齐 Run 的 FK 依赖链：
+ * plugin pack → agent → revision（回填 currentRevisionId）、device → workspace。
+ * 不创建 team/user/project/task（那些由 HTTP 或 seedRunPrereqs 负责）。
+ */
+export async function seedRunChainForUser(
+  handle: DbHandle,
+  userId: string,
+): Promise<{
+  pluginPackId: string
+  agentId: string
+  profileRevisionId: string
+  deviceId: string
+  workspaceId: string
+}> {
+  const suffix = randomUUID().slice(0, 8)
+  const pluginPackId = randomUUID()
+  const agentId = randomUUID()
+  const profileRevisionId = randomUUID()
+  const deviceId = randomUUID()
+  const workspaceId = randomUUID()
+  await handle.insert(schema.pluginPacks).values({
+    id: pluginPackId,
+    name: `pack-${suffix}`,
+    installations: [],
+    packDigest: 'a'.repeat(64),
+    createdBy: userId,
+  })
+  await handle
+    .insert(schema.agents)
+    .values({ id: agentId, name: `agent-${suffix}`, createdBy: userId })
+  await handle.insert(schema.agentProfileRevisions).values({
+    id: profileRevisionId,
+    agentId,
+    revision: 1,
+    persona: 'You are a helpful agent.',
+    provider: 'deepseek',
+    model: 'deepseek-chat',
+    credentialSlot: 'default',
+    pluginPackId,
+    profileDigest: 'b'.repeat(64),
+    createdBy: userId,
+  })
+  await handle
+    .update(schema.agents)
+    .set({ currentRevisionId: profileRevisionId })
+    .where(eq(schema.agents.id, agentId))
+  await handle.insert(schema.devices).values({
+    id: deviceId,
+    ownerUserId: userId,
+    name: `dev-${suffix}`,
+    platform: 'darwin',
+    architecture: 'arm64',
+    nodeVersion: '24.12.0',
+    nodeAppVersion: '0.1.0',
+    tokenHash: randomBytes(32),
+    capabilities: {},
+  })
+  await handle.insert(schema.workspaces).values({
+    id: workspaceId,
+    deviceId,
+    ownerUserId: userId,
+    name: `ws-${suffix}`,
+    kind: 'directory',
+    capabilities: { read: true, write: true },
+    available: true,
+  })
+  return { pluginPackId, agentId, profileRevisionId, deviceId, workspaceId }
+}
+
+/** 直接插入一条 Run 行（不经 orchestrator），用于守卫类用例（G2-05、Task Room 脱敏）。 */
+export async function insertRunRow(
+  handle: DbHandle,
+  input: {
+    taskId: string
+    ownerUserId: string
+    agentId: string
+    profileRevisionId: string
+    deviceId: string
+    workspaceId: string
+    status?: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'lost'
+    dshSessionId?: string
+  },
+): Promise<string> {
+  const runId = randomUUID()
+  await handle.insert(schema.runs).values({
+    id: runId,
+    taskId: input.taskId,
+    ownerUserId: input.ownerUserId,
+    agentId: input.agentId,
+    profileRevisionId: input.profileRevisionId,
+    deviceId: input.deviceId,
+    workspaceId: input.workspaceId,
+    status: input.status ?? 'running',
+    profileDigest: 'b'.repeat(64),
+    pluginPackDigest: 'a'.repeat(64),
+    dshDistributionVersion: TEST_DSH_VERSION,
+    ...(input.dshSessionId !== undefined ? { dshSessionId: input.dshSessionId } : {}),
+  })
+  return runId
+}
+
+/** 直接插入一条 published Artifact（用于 Task Room / submit-review 守卫用例）。 */
+export async function insertPublishedArtifact(
+  handle: DbHandle,
+  input: { taskId: string; runId: string; ownerUserId: string; title?: string },
+): Promise<string> {
+  const artifactId = randomUUID()
+  await handle.insert(schema.artifacts).values({
+    id: artifactId,
+    taskId: input.taskId,
+    runId: input.runId,
+    ownerUserId: input.ownerUserId,
+    title: input.title ?? 'artifact',
+    mediaType: 'text/plain',
+    byteSize: 42,
+    sha256: 'c'.repeat(64),
+    storageKey: 'sha256/cc/' + 'c'.repeat(60),
+    status: 'published',
+    publishedAt: new Date(),
+  })
+  return artifactId
 }
 
 export interface Harness {

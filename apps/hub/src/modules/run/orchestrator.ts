@@ -20,9 +20,7 @@ import {
   appendRunEvent,
   appendTeamEvent,
   countPendingApprovals,
-  failInTransaction,
   findCommandReceipt,
-  findOutboxCommandsForRun,
   getApproval,
   getOutboxCommand,
   getRun,
@@ -37,7 +35,8 @@ import {
   unwrapPgError,
 } from '@project311/db'
 import type { ErrorCode, ProjectedRunEvent, RunSnapshot } from '@project311/protocol'
-import { parseNodeFrame, RunCancelSchema, RunStartSchema } from '@project311/protocol'
+import { parseNodeFrame, RunStartSchema } from '@project311/protocol'
+import { cancelRunInTransaction } from './cancel.js'
 import type { DeviceActivity } from './reconciler.js'
 import { ACTIVE_RUN_STATUSES, reconcileLeases } from './reconciler.js'
 import type { ActorContext, CreateRunInput } from './commands.js'
@@ -250,6 +249,7 @@ export class RunOrchestrator {
    * 取消（§3.2）：queued 直接在事务内作废待投 run.start 并转 cancelled；
    * dispatching/running/waiting_approval 转 cancel_requested 并入队 run.cancel；
    * cancel_requested/cancelled 幂等返回；其余终态抛 INVALID_RUN_TRANSITION。
+   * run 侧写入复用 cancelRunInTransaction（与 Task 取消共享同一事务时同源）。
    */
   async cancel(ctx: ActorContext, runId: string): Promise<RunView> {
     const now = this.nowFn()
@@ -263,48 +263,12 @@ export class RunOrchestrator {
       if (!authorize(ctx, 'cancel_run', { ownerUserId: asUserId(run.ownerUserId) })) {
         throw new RunCommandError('FORBIDDEN', 'only the run owner or a team admin can cancel')
       }
-
-      if (run.status === 'queued') {
-        transitionRun({ status: run.status }, { type: 'cancel_before_dispatch' })
-        for (const pending of await findOutboxCommandsForRun(tx, { runId, pendingOnly: true })) {
-          await failInTransaction(tx, pending.id, now)
-        }
-        await setRunStatus(tx, runId, 'cancelled', { finishedAt: now })
-        await appendTeamEvent(tx, {
-          type: 'run.changed',
-          payload: { runId, taskId: run.taskId, status: 'cancelled' },
-        })
-      } else if (
-        run.status === 'dispatching' ||
-        run.status === 'running' ||
-        run.status === 'waiting_approval'
-      ) {
-        transitionRun({ status: run.status }, { type: 'cancel_requested' })
-        const commandId = randomUUID()
-        const payload = RunCancelSchema.shape.payload.parse({
-          commandId,
-          runId,
-          cause: ctx.userId === run.ownerUserId ? 'user' : 'admin',
-        })
-        await this.outbox.enqueue(tx, {
-          id: commandId,
-          deviceId: run.deviceId,
-          type: 'run.cancel',
-          payload,
-          notBefore: now,
-        })
-        await setRunStatus(tx, runId, 'cancel_requested')
-        await appendTeamEvent(tx, {
-          type: 'run.changed',
-          payload: { runId, taskId: run.taskId, status: 'cancel_requested' },
-        })
-      } else if (run.status === 'cancel_requested' || run.status === 'cancelled') {
-        // 幂等：重复取消返回当前视图，不再入队第二条 run.cancel。
-      } else {
-        // completed/failed/lost：非法边，抛 DomainError('INVALID_RUN_TRANSITION')。
-        transitionRun({ status: run.status }, { type: 'cancel_requested' })
-      }
-
+      await cancelRunInTransaction(
+        tx,
+        { outbox: this.outbox, now },
+        run,
+        ctx.userId === run.ownerUserId ? 'user' : 'admin',
+      )
       const row = await getRun(tx, runId)
       if (row === undefined) throw new Error('run vanished in its own transaction')
       return toRunView(row)

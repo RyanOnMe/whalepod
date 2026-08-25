@@ -70,6 +70,25 @@ export async function getMember(
   return row
 }
 
+/**
+ * 取「未停用」的 Team Member（03 §2.2：Task assignee 必须是未停用 Member）。
+ * 不存在或已停用均返回 undefined，调用方统一映射为输入校验失败。
+ */
+export async function getEnabledMember(
+  handle: DbHandle,
+  teamId: string,
+  userId: string,
+): Promise<TeamMemberRow | undefined> {
+  const [row] = await handle
+    .select({ member: teamMembers, disabledAt: userAccounts.disabledAt })
+    .from(teamMembers)
+    .innerJoin(userAccounts, eq(userAccounts.id, teamMembers.userId))
+    .where(and(eq(teamMembers.teamId, teamId), eq(teamMembers.userId, userId)))
+    .limit(1)
+  if (row === undefined || row.disabledAt !== null) return undefined
+  return row.member
+}
+
 export async function setMemberRole(
   handle: DbHandle,
   teamId: string,

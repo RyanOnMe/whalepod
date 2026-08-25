@@ -20,6 +20,7 @@ import {
   CreateTaskRequestSchema,
   DecideApprovalRequestSchema,
   LoginRequestSchema,
+  ReassignTaskRequestSchema,
   SetupRequestSchema,
   UpdateTaskRequestSchema,
 } from './http.js'
@@ -53,6 +54,7 @@ export const HTTP_FIXTURE_SCHEMAS: Record<string, ZodType> = {
   'create-task-request': CreateTaskRequestSchema,
   'decide-approval-request': DecideApprovalRequestSchema,
   'login-request': LoginRequestSchema,
+  'reassign-task-request': ReassignTaskRequestSchema,
   'setup-request': SetupRequestSchema,
   'update-task-request': UpdateTaskRequestSchema,
 }

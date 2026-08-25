@@ -92,3 +92,54 @@ export async function listComments(handle: DbHandle, taskId: string): Promise<Ta
     .where(eq(taskComments.taskId, taskId))
     .orderBy(asc(taskComments.createdAt))
 }
+
+/** 列出全部 Project（单 Team，所有未停用成员可见；03 §2.2）。 */
+export async function listProjects(handle: DbHandle): Promise<ProjectRow[]> {
+  return handle.select().from(projects).orderBy(asc(projects.createdAt))
+}
+
+/** PATCH /tasks/:taskId：只改非状态字段；updatedAt 由 task_set_updated_at 触发器写。 */
+export async function updateTaskFields(
+  handle: DbHandle,
+  id: string,
+  patch: { title?: string; description?: string },
+): Promise<TaskRow | undefined> {
+  const set: Record<string, unknown> = {}
+  if (patch.title !== undefined) set.title = patch.title
+  if (patch.description !== undefined) set.description = patch.description
+  if (Object.keys(set).length === 0) return getTask(handle, id)
+  const [row] = await handle.update(tasks).set(set).where(eq(tasks.id, id)).returning()
+  return row
+}
+
+/** 迁移 Assignment 状态（accept→accepted、reject→rejected、reassign→pending）。 */
+export async function setAssignment(
+  handle: DbHandle,
+  id: string,
+  assignmentStatus: TaskRow['assignmentStatus'],
+  acceptedAt: Date | null,
+): Promise<TaskRow | undefined> {
+  const [row] = await handle
+    .update(tasks)
+    .set({ assignmentStatus, acceptedAt })
+    .where(eq(tasks.id, id))
+    .returning()
+  return row
+}
+
+/**
+ * 重新指派：assignee 变化后 assignment_status 重置为 pending（03 §2.2/§3.1）。
+ * 调用方负责「无活跃 Run」守卫（G2-05）与新 assignee 存在性校验。
+ */
+export async function reassignTask(
+  handle: DbHandle,
+  id: string,
+  assigneeUserId: string,
+): Promise<TaskRow | undefined> {
+  const [row] = await handle
+    .update(tasks)
+    .set({ assigneeUserId, assignmentStatus: 'pending', acceptedAt: null })
+    .where(eq(tasks.id, id))
+    .returning()
+  return row
+}
