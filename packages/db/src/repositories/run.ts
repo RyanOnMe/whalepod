@@ -95,7 +95,11 @@ export async function getApproval(handle: DbHandle, id: string): Promise<Approva
   return row
 }
 
-/** 写入 Approval 已决终态（03 §3.3：decided_by 必须等于 Run owner）。 */
+/**
+ * 写入 Approval 已决终态（03 §3.3）。
+ * 注意：decided_by 必须等于 Run owner 的约束由调用方保证（orchestrator 传入
+ * run.ownerUserId），本函数只做行更新，不校验该不变式。
+ */
 export async function setApprovalStatus(
   handle: DbHandle,
   id: string,

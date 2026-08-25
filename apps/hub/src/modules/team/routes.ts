@@ -1,0 +1,118 @@
+import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { getTeam } from '@project311/db'
+import type { Database } from '@project311/db'
+import { SetupRequestSchema } from '@project311/protocol'
+import { audit } from '../shared/audit.js'
+import { ApiError } from '../shared/http-error.js'
+import { hashPassword } from '../auth/password.js'
+import { setSessionCookie } from '../auth/session.js'
+import type { RequireActor } from '../auth/session.js'
+import type { RateLimiter } from '../auth/rate-limit.js'
+import { disableMember, setupInstance } from './commands.js'
+import type { SetupTokenStore } from './setup-token.js'
+
+export interface TeamRouteDeps {
+  readonly database: Database
+  readonly requireActor: RequireActor
+  readonly setupTokenStore: SetupTokenStore
+  readonly anonymousLimiter: RateLimiter
+  readonly secureCookie: boolean
+}
+
+/**
+ * Setup Token 以 body 字段为准（protocol SetupRequestSchema 是 wire SSoT）；
+ * `x-setup-token` 头作为 02 Task 5 示例形态的兼容入口，仅在 body 缺省时补入。
+ */
+function mergeSetupTokenHeader(request: FastifyRequest): unknown {
+  const raw =
+    typeof request.body === 'object' && request.body !== null
+      ? { ...(request.body as Record<string, unknown>) }
+      : {}
+  const headerToken: string | string[] | undefined = request.headers['x-setup-token']
+  if (raw['setupToken'] === undefined && typeof headerToken === 'string') {
+    raw['setupToken'] = headerToken
+  }
+  return raw
+}
+
+export function registerTeamRoutes(app: FastifyInstance, deps: TeamRouteDeps): void {
+  // GET /setup/status：匿名，只返回 initialized（03 §4）。
+  app.get('/setup/status', async () => {
+    const team = await getTeam(deps.database.db)
+    return { ok: true, data: { initialized: team !== undefined } }
+  })
+
+  app.post('/setup', async (request, reply) => {
+    // Setup 每 IP 每 15 分钟 20 次（02 Task 5 Step 7）
+    if (!deps.anonymousLimiter.tryAcquire(`setup|${request.ip}`)) {
+      audit(request, 'setup', 'rate_limited')
+      throw new ApiError(429, 'FORBIDDEN', 'too many setup attempts')
+    }
+    const body = SetupRequestSchema.parse(mergeSetupTokenHeader(request))
+    if ((await getTeam(deps.database.db)) !== undefined) {
+      audit(request, 'setup', 'denied')
+      throw new ApiError(409, 'CONFLICT', 'instance already initialized')
+    }
+    if (!(await deps.setupTokenStore.verify(body.setupToken))) {
+      audit(request, 'setup', 'denied')
+      throw new ApiError(401, 'INVALID_CREDENTIALS', 'invalid setup token')
+    }
+    const passwordHash = await hashPassword(body.password)
+    const result = await setupInstance(deps.database, {
+      teamName: body.teamName,
+      username: body.username,
+      displayName: body.displayName,
+      passwordHash,
+    })
+    // 一次性 Token 用后即焚；删除失败不影响已完成的 setup（后续请求由 team 存在性挡 409）。
+    try {
+      await deps.setupTokenStore.consume()
+    } catch {
+      request.log.warn(
+        { component: 'hub.setup', requestId: String(request.id) },
+        'setup token consume failed; instance guard still prevents re-setup',
+      )
+    }
+    setSessionCookie(
+      reply,
+      { token: result.sessionToken, expiresAt: result.sessionExpiresAt },
+      deps.secureCookie,
+    )
+    audit(request, 'setup', 'success', result.userId)
+    return reply.code(201).send({
+      ok: true,
+      data: { teamId: result.teamId, userId: result.userId },
+    })
+  })
+
+  // GET /team：Member 可见的单 Team 基本信息（03 §4）。
+  app.get('/team', async (request) => {
+    await deps.requireActor(request)
+    const team = await getTeam(deps.database.db)
+    if (team === undefined) throw new ApiError(404, 'NOT_FOUND', 'team not found')
+    return {
+      ok: true,
+      data: { id: team.id, name: team.name, createdAt: team.createdAt.toISOString() },
+    }
+  })
+
+  // 成员停用：Owner/Admin；最后 Owner 由 db 策略保护（domain policy 暂无
+  // disable_member action，P1-05 不扩 domain，角色判断就地做）。
+  app.post('/team/members/:userId/disable', async (request, reply) => {
+    const actor = await deps.requireActor(request)
+    if (actor.role !== 'owner' && actor.role !== 'admin') {
+      audit(request, 'member.disable', 'denied', actor.userId)
+      throw new ApiError(403, 'FORBIDDEN', 'only owner or admin can disable a member')
+    }
+    const { userId } = request.params as { userId: string }
+    try {
+      await disableMember(deps.database, { targetUserId: userId })
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'NOT_FOUND') throw error
+      audit(request, 'member.disable', 'denied', actor.userId)
+      throw error
+    }
+    audit(request, 'member.disable', 'success', actor.userId)
+    return reply.send({ ok: true, data: {} })
+  })
+}

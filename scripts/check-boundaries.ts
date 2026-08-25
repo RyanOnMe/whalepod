@@ -29,15 +29,19 @@ const WORKSPACE_SCOPE = '@project311/'
 /** importer path prefix -> allowed `@project311/*` specifiers. */
 const DEPENDENCY_RULES: ReadonlyArray<{ importer: string; allowed: readonly string[] }> = [
   {
-    // testkit 只出现在 apps/hub 的 tests（devDependency，Fake DeviceGateway/Fixtures）；
-    // src 侧若 import testkit，oxlint 的 import 边界与 package.json 依赖面会一并暴露。
-    importer: 'apps/hub/',
+    // testkit 是 apps/hub 的 devDependency，只准测试目录引用（Fake DeviceGateway/Fixtures）；
+    // 排在 apps/hub/ 之前，靠前缀匹配让 src 侧 import testkit 直接判违规。
+    importer: 'apps/hub/tests/',
     allowed: [
       '@project311/domain',
       '@project311/protocol',
       '@project311/db',
       '@project311/testkit',
     ],
+  },
+  {
+    importer: 'apps/hub/',
+    allowed: ['@project311/domain', '@project311/protocol', '@project311/db'],
   },
   { importer: 'apps/web/', allowed: ['@project311/protocol'] },
   { importer: 'apps/node/', allowed: ['@project311/domain', '@project311/protocol'] },
