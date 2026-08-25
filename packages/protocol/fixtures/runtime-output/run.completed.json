@@ -1,0 +1,11 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a036",
+  "type": "run.completed",
+  "sentAt": "2026-01-05T09:09:00Z",
+  "payload": {
+    "runId": "01905f7c-0000-7000-8000-000000000301",
+    "dshSessionId": "dsh-sess-01",
+    "finalMessageId": "msg-0042"
+  }
+}

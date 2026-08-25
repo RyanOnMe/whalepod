@@ -1,0 +1,10 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a023",
+  "type": "run.followup",
+  "sentAt": "2026-01-05T09:05:00Z",
+  "payload": {
+    "runId": "01905f7c-0000-7000-8000-000000000301",
+    "text": "Also check the drift gate."
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a001",
+  "type": "run.start",
+  "sentAt": "2026-01-05T09:00:00Z",
+  "payload": {
+    "commandId": "01905f7c-0000-7000-8000-000000000b01",
+    "runId": "01905f7c-0000-7000-8000-000000000301",
+    "taskId": "01905f7c-0000-7000-8000-000000000201",
+    "ownerUserId": "01905f7c-0000-7000-8000-000000000101",
+    "agent": {
+      "id": "01905f7c-0000-7000-8000-000000000401",
+      "profileRevisionId": "01905f7c-0000-7000-8000-000000000402",
+      "persona": "You are a careful TypeScript reviewer.",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "credentialSlot": "deepseek-default",
+      "maxTokens": 8192
+    },
+    "workspaceId": "01905f7c-0000-7000-8000-000000000601",
+    "expectedProfileDigest": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "expectedPluginPackDigest": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+    "prompt": "Review the protocol fixtures."
+  }
+}

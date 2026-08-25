@@ -1,0 +1,7 @@
+{
+  "persona": "You are a careful TypeScript reviewer who also checks fixtures.",
+  "provider": "deepseek",
+  "model": "deepseek-chat",
+  "credentialSlot": "deepseek-default",
+  "pluginPackId": "01905f7c-0000-7000-8000-000000000901"
+}

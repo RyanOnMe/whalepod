@@ -1,0 +1,11 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a038",
+  "type": "runtime.fatal",
+  "sentAt": "2026-01-05T09:00:03Z",
+  "payload": {
+    "runId": "01905f7c-0000-7000-8000-000000000301",
+    "code": "RUNTIME_START_FAILED",
+    "summary": "dsh process exited during boot"
+  }
+}

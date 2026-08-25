@@ -1,0 +1,26 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a015",
+  "type": "run.snapshot",
+  "sentAt": "2026-01-05T09:00:30Z",
+  "payload": {
+    "runId": "01905f7c-0000-7000-8000-000000000301",
+    "taskId": "01905f7c-0000-7000-8000-000000000201",
+    "ownerUserId": "01905f7c-0000-7000-8000-000000000101",
+    "agentId": "01905f7c-0000-7000-8000-000000000401",
+    "profileRevisionId": "01905f7c-0000-7000-8000-000000000402",
+    "deviceId": "01905f7c-0000-7000-8000-000000000501",
+    "workspaceId": "01905f7c-0000-7000-8000-000000000601",
+    "dshSessionId": "dsh-sess-01",
+    "status": "running",
+    "failureCode": null,
+    "failureSummary": null,
+    "rerunOfRunId": "01905f7c-0000-7000-8000-000000000302",
+    "profileDigest": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "pluginPackDigest": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+    "dshDistributionVersion": "0.1.0-rc.6",
+    "createdAt": "2026-01-05T09:00:00Z",
+    "startedAt": "2026-01-05T09:00:05Z",
+    "finishedAt": null
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a007",
+  "type": "node.token_revoked",
+  "sentAt": "2026-01-05T09:04:00Z",
+  "payload": {
+    "reason": "Device removed by its owner"
+  }
+}

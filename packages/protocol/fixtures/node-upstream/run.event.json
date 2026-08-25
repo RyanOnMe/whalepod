@@ -1,0 +1,18 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a016",
+  "type": "run.event",
+  "sentAt": "2026-01-05T09:00:35Z",
+  "payload": {
+    "runId": "01905f7c-0000-7000-8000-000000000301",
+    "seq": 42,
+    "occurredAt": "2026-01-05T09:00:34Z",
+    "audience": "owner",
+    "event": {
+      "type": "tool.started",
+      "callId": "call-0001",
+      "toolName": "bash",
+      "preview": { "command": "pnpm test" }
+    }
+  }
+}

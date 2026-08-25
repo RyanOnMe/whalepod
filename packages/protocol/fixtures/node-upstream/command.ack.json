@@ -1,0 +1,14 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a014",
+  "type": "command.ack",
+  "sentAt": "2026-01-05T09:00:25Z",
+  "payload": {
+    "commandId": "01905f7c-0000-7000-8000-000000000b01",
+    "accepted": false,
+    "error": {
+      "code": "PROFILE_MISMATCH",
+      "message": "profile digest does not match the pinned revision"
+    }
+  }
+}

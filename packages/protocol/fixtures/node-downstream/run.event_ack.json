@@ -1,0 +1,10 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a004",
+  "type": "run.event_ack",
+  "sentAt": "2026-01-05T09:02:00Z",
+  "payload": {
+    "runId": "01905f7c-0000-7000-8000-000000000301",
+    "throughSeq": 42
+  }
+}

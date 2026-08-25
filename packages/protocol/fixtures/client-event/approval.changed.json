@@ -1,0 +1,4 @@
+{
+  "type": "approval.changed",
+  "payload": { "approvalId": "01905f7c-0000-7000-8000-000000000701", "status": "pending" }
+}

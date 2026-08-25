@@ -1,0 +1,18 @@
+{
+  "runId": "01905f7c-0000-7000-8000-000000000301",
+  "seq": 46,
+  "occurredAt": "2026-01-05T09:08:05Z",
+  "audience": "owner",
+  "event": {
+    "type": "artifact.candidate",
+    "artifact": {
+      "artifactId": "01905f7c-0000-7000-8000-000000000801",
+      "runId": "01905f7c-0000-7000-8000-000000000301",
+      "title": "Protocol review",
+      "mediaType": "text/markdown",
+      "byteSize": 2048,
+      "sha256": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+      "sourceRelativePath": "reports/protocol-review.md"
+    }
+  }
+}
