@@ -14,7 +14,10 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "generate": "tsx scripts/generate-json-schema.mts",
+    "check:generated": "tsx scripts/generate-json-schema.mts --check",
+    "test": "vitest run --root ../.. --project unit packages/protocol/tests"
   },
   "dependencies": {
     "zod": "catalog:"

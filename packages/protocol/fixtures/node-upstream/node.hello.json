@@ -10,8 +10,6 @@
     "architecture": "arm64",
     "supportedProtocolVersions": [1],
     "dshDistributionVersion": "0.1.0-rc.6",
-    "pluginPackDigests": [
-      "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"
-    ]
+    "pluginPackDigests": ["2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"]
   }
 }

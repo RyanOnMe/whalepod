@@ -3,5 +3,13 @@
   "semi": false,
   "singleQuote": true,
   "trailingComma": "all",
-  "ignorePatterns": ["*.md", "docs/", "prototype/", ".github/", ".agents/", ".githooks/"]
+  "ignorePatterns": [
+    "*.md",
+    "docs/",
+    "prototype/",
+    ".github/",
+    ".agents/",
+    ".githooks/",
+    "packages/protocol/generated/"
+  ]
 }

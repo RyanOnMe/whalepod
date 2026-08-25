@@ -9,12 +9,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import {
-  ProtocolError,
-  parseClientFrame,
-  parseNodeFrame,
-  parseRuntimeFrame,
-} from '../src/index.js'
+import { ProtocolError, parseClientFrame, parseNodeFrame, parseRuntimeFrame } from '../src/index.js'
+import type { ProtocolErrorCode } from '../src/index.js'
 
 const FIXTURES_ROOT = fileURLToPath(new URL('../fixtures/', import.meta.url))
 
@@ -22,47 +18,48 @@ function readFixture(dir: string, name: string): Record<string, unknown> {
   return JSON.parse(readFileSync(join(FIXTURES_ROOT, dir, name), 'utf8'))
 }
 
+/** vitest 4 没有 jest 式 toThrowErrorMatchingObject；显式捕获后断言 code。 */
+function expectProtocolError(fn: () => unknown, code: ProtocolErrorCode): void {
+  let caught: unknown
+  try {
+    fn()
+  } catch (error) {
+    caught = error
+  }
+  expect(caught).toBeInstanceOf(ProtocolError)
+  expect((caught as ProtocolError).code).toBe(code)
+  expect((caught as ProtocolError).message.length).toBeGreaterThan(0)
+}
+
 describe('fail-closed frame parsing', () => {
   it('rejects a protocol mismatch before command dispatch', () => {
     const frame = { ...readFixture('node-downstream', 'run.start.json'), protocolVersion: 2 }
-    expect(() => parseNodeFrame(frame, 'downstream')).toThrowErrorMatchingObject({
-      code: 'PROTOCOL_MISMATCH',
-    })
+    expectProtocolError(() => parseNodeFrame(frame, 'downstream'), 'PROTOCOL_MISMATCH')
   })
 
   it('rejects unknown node command types instead of executing them', () => {
     const frame = { ...readFixture('node-downstream', 'run.start.json'), type: 'run.launch' }
-    expect(() => parseNodeFrame(frame, 'downstream')).toThrowErrorMatchingObject({
-      code: 'PROTOCOL_MISMATCH',
-    })
+    expectProtocolError(() => parseNodeFrame(frame, 'downstream'), 'PROTOCOL_MISMATCH')
   })
 
   it('rejects unknown node upstream types instead of applying state changes', () => {
     const frame = { ...readFixture('node-upstream', 'run.event.json'), type: 'run.teleport' }
-    expect(() => parseNodeFrame(frame, 'upstream')).toThrowErrorMatchingObject({
-      code: 'PROTOCOL_MISMATCH',
-    })
+    expectProtocolError(() => parseNodeFrame(frame, 'upstream'), 'PROTOCOL_MISMATCH')
   })
 
   it('rejects unknown runtime command types', () => {
     const frame = { ...readFixture('runtime-command', 'run.prompt.json'), type: 'run.exfiltrate' }
-    expect(() => parseRuntimeFrame(frame, 'command')).toThrowErrorMatchingObject({
-      code: 'PROTOCOL_MISMATCH',
-    })
+    expectProtocolError(() => parseRuntimeFrame(frame, 'command'), 'PROTOCOL_MISMATCH')
   })
 
   it('rejects unknown runtime output types so the run can be failed explicitly', () => {
     const frame = { ...readFixture('runtime-output', 'agent.status.json'), type: 'agent.magic' }
-    expect(() => parseRuntimeFrame(frame, 'output')).toThrowErrorMatchingObject({
-      code: 'PROTOCOL_MISMATCH',
-    })
+    expectProtocolError(() => parseRuntimeFrame(frame, 'output'), 'PROTOCOL_MISMATCH')
   })
 
   it('rejects unknown client frame kinds', () => {
     const frame = { ...readFixture('client-frame', 'live.json'), kind: 'push' }
-    expect(() => parseClientFrame(frame)).toThrowErrorMatchingObject({
-      code: 'PROTOCOL_MISMATCH',
-    })
+    expectProtocolError(() => parseClientFrame(frame), 'PROTOCOL_MISMATCH')
   })
 
   it('rejects unknown persistent client event types (web records and resyncs)', () => {
@@ -71,9 +68,7 @@ describe('fail-closed frame parsing', () => {
       ...frame,
       event: { ...(frame.event as Record<string, unknown>), type: 'task.magic' },
     }
-    expect(() => parseClientFrame(mutated)).toThrowErrorMatchingObject({
-      code: 'VALIDATION_FAILED',
-    })
+    expectProtocolError(() => parseClientFrame(mutated), 'VALIDATION_FAILED')
   })
 
   it('rejects malformed payloads of a known type with VALIDATION_FAILED', () => {
@@ -82,16 +77,12 @@ describe('fail-closed frame parsing', () => {
       ...frame,
       payload: { ...(frame.payload as Record<string, unknown>), prompt: '' },
     }
-    expect(() => parseNodeFrame(broken, 'downstream')).toThrowErrorMatchingObject({
-      code: 'VALIDATION_FAILED',
-    })
+    expectProtocolError(() => parseNodeFrame(broken, 'downstream'), 'VALIDATION_FAILED')
   })
 
   it('rejects non-object frames', () => {
     for (const junk of [null, 42, 'run.start', []]) {
-      expect(() => parseNodeFrame(junk, 'downstream')).toThrowErrorMatchingObject({
-        code: 'VALIDATION_FAILED',
-      })
+      expectProtocolError(() => parseNodeFrame(junk, 'downstream'), 'VALIDATION_FAILED')
     }
   })
 

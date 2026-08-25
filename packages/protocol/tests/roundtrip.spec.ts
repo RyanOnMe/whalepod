@@ -48,7 +48,9 @@ for (const wire of ENVELOPE_WIRES) {
 
       it(`rejects unknown top-level fields on ${name}`, () => {
         const frame = readFixture(wire.dir, name)
-        expect(() => wire.parse({ ...(frame as Record<string, unknown>), surprise: true })).toThrow()
+        expect(() =>
+          wire.parse({ ...(frame as Record<string, unknown>), surprise: true }),
+        ).toThrow()
       })
 
       it(`rejects unknown payload fields on ${name}`, () => {
@@ -69,7 +71,9 @@ describe('fixtures/client-frame', () => {
 
     it(`rejects unknown top-level fields on ${name}`, () => {
       const frame = readFixture('client-frame', name)
-      expect(() => parseClientFrame({ ...(frame as Record<string, unknown>), surprise: true })).toThrow()
+      expect(() =>
+        parseClientFrame({ ...(frame as Record<string, unknown>), surprise: true }),
+      ).toThrow()
     })
   }
 })

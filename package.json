@@ -12,7 +12,8 @@
     "test:dsh-contract": "vitest run --project dsh-contract --passWithNoTests",
     "test:e2e": "playwright test --pass-with-no-tests",
     "check:boundaries": "tsx scripts/check-boundaries.ts",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:boundaries && pnpm test:unit"
+    "check:protocol-generated": "pnpm --filter @project311/protocol check:generated",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:boundaries && pnpm check:protocol-generated && pnpm test:unit"
   },
   "devDependencies": {
     "@playwright/test": "catalog:",
