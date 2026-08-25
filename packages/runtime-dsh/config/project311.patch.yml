@@ -1,0 +1,31 @@
+# project311 runtime bundle patch, layered over `@deepseek-ai/dsh-base`.
+#
+# One managed DSH Runtime per Run on a Device Node (03-领域模型与运行协议.md §7):
+# the base agent/session/tool stack stays intact; this layer only removes what
+# an isolated per-Run child process must not do. Runtime plugins from reviewed
+# Plugin Packs (P1-17) append their own rows after this layer.
+
+# No module-reload HMR inside a managed per-Run process.
+- id: hmr
+  disabled: true
+
+# Session titles are a Hub projection concern; a Run-scoped Runtime never
+# spends model calls on them.
+- id: session-title
+  disabled: true
+- id: session-title-llm
+  disabled: true
+
+# Network silence by default: no session telemetry upload from the Runtime.
+- id: session-telemetry-otel
+  disabled: true
+
+# Session logs stay line-readable plaintext: the flush contract probe and the
+# evidence map (docs/agent) read them with plain line tools; the rc.8 default
+# `zstd` frame encoding is meant for production volume, not per-Run evidence.
+# Note: an id-targeted patch REPLACES the whole matched config (no deep-merge,
+# per dsh-app-boot README), so the base `root` field is restated verbatim.
+- id: session-persistence-jsonl
+  config:
+    root: !!js dshHomePath('sessions')
+    compression: none

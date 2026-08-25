@@ -1,0 +1,8 @@
+# project311 Runtime profile root — an empty entry list.
+#
+# The tree is composed entirely of patch layers (same contract as a dsh
+# profile root): `@deepseek-ai/dsh-base`'s bundle patch first, then
+# `project311.patch.yml` (the project311 runtime bundle), then test-only
+# overlays such as `replay.yml` (Q3 contract probes). Boot code lives in
+# `packages/runtime-dsh/src/bridge.ts`; do not add rows here.
+[]

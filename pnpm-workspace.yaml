@@ -2,8 +2,18 @@ packages:
   - apps/*
   - packages/*
 
+# 供应链默认拒绝：只有显式 true 的包允许跑安装脚本。
+# DSH rc.8 闭包里这五个包带 postinstall，但运行时均不需要它们的构建产物
+# （node-pty/koffi 自带 prebuild；protobufjs/@google/genai 的 postinstall 非功能必需；
+# dsh-subprocess-local 的 spawn-helper 不在我们的 Runtime 路径上）——显式 false 即
+# 「审过且选择不跑」，而不是静默忽略。P1-11 契约探针在此状态下全绿。
 allowBuilds:
+  '@deepseek-ai/dsh-subprocess-local': false
+  '@google/genai': false
   esbuild: true
+  koffi: false
+  node-pty: false
+  protobufjs: false
 
 # 版本基线见 07-资料与版本基线.md；只允许精确版本，升级走 dsh-upgrade 流程。
 catalog:

@@ -1,0 +1,23 @@
+# Q3 contract-probe overlay: the keyless replay adapter
+# (`@deepseek-ai/dsh-llm-replay`). Mounted ONLY by the contract-probe harness
+# (packages/runtime-dsh/tests/dsh-contract), never in production — production
+# provider adapters arrive through reviewed Plugin Packs (P1-17).
+#
+# The fixture path travels in $DSH_SNAPSHOT_FILE, set by the probe harness per
+# scenario before boot (the plugin's documented contract).
+- insert:
+    - id: llm-replay
+      name: '@deepseek-ai/dsh-llm-replay'
+      config:
+        providers:
+          - id: replay
+            name: Replay
+            retryPolicy:
+              mode: normal
+              backoff:
+                initialDelayMs: 1
+                maxDelayMs: 1
+                jitterRatio: 0
+            models:
+              - id: replay-model
+                contextWindow: 128000

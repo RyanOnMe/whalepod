@@ -2,6 +2,9 @@
   "name": "@project311/runtime",
   "version": "0.1.0",
   "private": true,
+  "bin": {
+    "project311-runtime": "dist/bin.js"
+  },
   "files": [
     "dist"
   ],

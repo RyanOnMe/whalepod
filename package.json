@@ -9,7 +9,7 @@
     "lint": "oxlint .",
     "test:unit": "vitest run --project unit",
     "test:integration": "tsx scripts/with-test-postgres.mts vitest run --project integration",
-    "test:dsh-contract": "vitest run --project dsh-contract --passWithNoTests",
+    "test:dsh-contract": "vitest run --project dsh-contract",
     "test:e2e": "playwright test --pass-with-no-tests",
     "check:boundaries": "tsx scripts/check-boundaries.ts",
     "check:protocol-generated": "pnpm --filter @project311/protocol check:generated",
