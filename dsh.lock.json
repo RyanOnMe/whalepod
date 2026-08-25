@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-08-25",
+  "packages": {
+    "@deepseek-ai/cordis": {
+      "version": "4.0.1",
+      "integrity": "sha512-YBdskTU2Po1kru3GgcUWUbkTsPMA9LkSQDAY8rBkFJeajdgcQad3QPJZE26JyK99Xb6HaASvoXg2DSUTeN/0Nw=="
+    },
+    "@deepseek-ai/dsh": {
+      "version": "0.1.0-rc.8",
+      "integrity": "sha512-VQU5NlomrKLRgcXuOf+sxWFvqxPA8q9vMhrKPlPPXiOJEhGlGlAdiyxZvZxkCVI+v0zbhe21cY3/luLyxpSzzA=="
+    },
+    "@deepseek-ai/dsh-agent": {
+      "version": "0.1.0-rc.8",
+      "integrity": "sha512-fOl46ZvzoYHalrlyfOJAHNhzyKeVDTUnZZKNSJEr9GY/98WJTjcV21agVEofTXldkJ7a/ws2HpJkVNJVFMtslg=="
+    },
+    "@deepseek-ai/dsh-app-boot": {
+      "version": "0.1.0-rc.8",
+      "integrity": "sha512-DS63o1PhX2Gvqdgl6Wd8vZnLl0qo8gJ9LpSHXeJBJL9HITpLPhdVYE3X6S0icIYdbGO2plNyhxVJOSN6ibO7VA=="
+    },
+    "@deepseek-ai/dsh-base": {
+      "version": "0.1.0-rc.8",
+      "integrity": "sha512-aMjXT6d5t8SGQg24geOSX6O0ky+hJLijhzZklDcICrBvGSKXvuS8jxLOcL5u4s4pFCODXhuOpvTfFuUhN2RK3Q=="
+    },
+    "@deepseek-ai/dsh-llm": {
+      "version": "0.1.0-rc.8",
+      "integrity": "sha512-hf6RmX2Stn1UtzpktSHQLkIktQkBm9i/3yFfJlbGSkwyw5Cv9sTYJbyoHzsSnnh6i8nRRcMcBhvMgm23I00oIw=="
+    },
+    "@deepseek-ai/dsh-llm-replay": {
+      "version": "0.1.0-rc.8",
+      "integrity": "sha512-E+S8lDnTWINxLzhSMR104bgz9SxAyXv1mgRWvR/JDuxyzj7Q/dxEf1R4ZHo/m76d9aj84sNpOxjvZawQEvQEXA=="
+    },
+    "@deepseek-ai/dsh-session": {
+      "version": "0.1.0-rc.8",
+      "integrity": "sha512-Qs5Mgn32WPPVB4rKHjsZBgLOkh0TQurUAcc9GaDVudK4dUkpno2HDh++qu/PrwRA3CZ/iwPAoFHCpB3AMMaoLg=="
+    },
+    "@deepseek-ai/dsh-tools": {
+      "version": "0.1.0-rc.8",
+      "integrity": "sha512-tvuGAVUS4yoPW9zH7CGWJgMlAzGjfu2UlRiricldlcwSKAaJZPZx/K/YfTivUyDTER6aK1DJUnIpVG7RD/DoHQ=="
+    },
+    "@deepseek-ai/dsh-user-approval": {
+      "version": "0.1.0-rc.8",
+      "integrity": "sha512-6SFCxp7dgNFEyzQIcs5i9C+5djgXsAeV0iKmZUCLlcIeVM1chcCMHyGcoXlw8yyB14qFMrMs+TPvhvpu2WWxAw=="
+    }
+  },
+  "requiredContracts": [
+    "agents.create",
+    "agent.followup",
+    "agent.cancel",
+    "agent.whenIdle",
+    "session.event",
+    "approval.request",
+    "tools.register",
+    "sessions.flush"
+  ]
+}

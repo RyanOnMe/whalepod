@@ -3,7 +3,10 @@
   "compilerOptions": {
     "composite": true,
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    // tsc 6 不再沿目录上爬自动收 @types；本包直接用 node builtins，显式声明。
+    "typeRoots": ["./node_modules/@types", "../../node_modules/@types"],
+    "types": ["node"]
   },
   "include": ["src/**/*.ts"],
   "references": [{ "path": "../protocol" }]
