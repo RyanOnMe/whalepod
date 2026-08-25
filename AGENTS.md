@@ -38,7 +38,7 @@ project311（开发代号，正式定名前一律用这一代号）：面向 3�
 | Q0 静态门 | `pnpm check` | 生效中（P1-01 起） |
 | Q1 单元门 | `pnpm test:unit`（领域分支覆盖 ≥95%） | 生效中（P1-02 起；覆盖率阈值见 packages/domain/vitest.config.ts） |
 | Q2 数据门 | `pnpm test:integration`（真实 PostgreSQL） | 生效中（P1-04 起，Docker 一次性容器） |
-| Q3 DSH 契约门 | `pnpm test:dsh-contract` | 待 P1-11 |
+| Q3 DSH 契约门 | `pnpm test:dsh-contract` | 生效中（P1-11 起） |
 | Q4 Node 门 | `pnpm test:node` | 待 P1-12 |
 | Q5 浏览器门 | `pnpm test:e2e`（连续 20 次无偶发） | 待 P1-19 |
 | Q6 故障门 | `pnpm test:resilience` | 待 P1-16 |
