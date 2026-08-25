@@ -1,4 +1,4 @@
-import { asc, eq } from 'drizzle-orm'
+import { and, asc, count, eq } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { approvals, runs } from '../schema/run.js'
 
@@ -93,4 +93,33 @@ export async function insertApproval(
 export async function getApproval(handle: DbHandle, id: string): Promise<ApprovalRow | undefined> {
   const [row] = await handle.select().from(approvals).where(eq(approvals.id, id)).limit(1)
   return row
+}
+
+/**
+ * 写入 Approval 已决终态（03 §3.3）。
+ * 注意：decided_by 必须等于 Run owner 的约束由调用方保证（orchestrator 传入
+ * run.ownerUserId），本函数只做行更新，不校验该不变式。
+ */
+export async function setApprovalStatus(
+  handle: DbHandle,
+  id: string,
+  status: ApprovalRow['status'],
+  decidedBy: string,
+  decidedAt: Date,
+): Promise<ApprovalRow | undefined> {
+  const [row] = await handle
+    .update(approvals)
+    .set({ status, decidedBy, decidedAt })
+    .where(eq(approvals.id, id))
+    .returning()
+  return row
+}
+
+/** Run 上仍为 pending 的 Approval 数（waiting_approval 语义，03 §3.2 特殊规则）。 */
+export async function countPendingApprovals(handle: DbHandle, runId: string): Promise<number> {
+  const [row] = await handle
+    .select({ value: count() })
+    .from(approvals)
+    .where(and(eq(approvals.runId, runId), eq(approvals.status, 'pending')))
+  return row?.value ?? 0
 }

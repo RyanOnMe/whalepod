@@ -1,5 +1,5 @@
-import { and, asc, eq, isNull, lte } from 'drizzle-orm'
-import type { Database, Tx } from './client.js'
+import { and, asc, eq, isNull, lte, sql } from 'drizzle-orm'
+import type { Database, DbHandle, Tx } from './client.js'
 import { dispatchOutbox } from './schema/outbox.js'
 
 // Hub → Node 命令的至少一次投递队列（03 §2.6 dispatch_outbox；02 Task 4 Step 5）。
@@ -157,4 +157,75 @@ export class Outbox {
       .returning({ id: dispatchOutbox.id })
     return rows.length > 0
   }
+}
+
+// ---------- P1-10：orchestrator/worker 需要的事务内变体与按 Run 查询 ----------
+
+/** 按 commandId 读 Outbox 行（worker/ingest 判断命令类型与归属）。 */
+export async function getOutboxCommand(
+  handle: DbHandle,
+  id: string,
+): Promise<DispatchOutboxRow | undefined> {
+  const [row] = await handle.select().from(dispatchOutbox).where(eq(dispatchOutbox.id, id)).limit(1)
+  return row
+}
+
+export interface OutboxRunQuery {
+  runId: string
+  /** 限定命令类型（如 'run.start'）。 */
+  type?: string
+  /** 只看未 ack 未 fail 的待投行。 */
+  pendingOnly?: boolean
+}
+
+/** 按 payload->>'runId' 查命令（dispatch 命令的 payload 必含 runId，03 §6.3）。 */
+export async function findOutboxCommandsForRun(
+  handle: DbHandle,
+  query: OutboxRunQuery,
+): Promise<DispatchOutboxRow[]> {
+  return handle
+    .select()
+    .from(dispatchOutbox)
+    .where(
+      and(
+        sql`${dispatchOutbox.payload}->>'runId' = ${query.runId}`,
+        query.type !== undefined ? eq(dispatchOutbox.type, query.type) : undefined,
+        query.pendingOnly === true
+          ? and(isNull(dispatchOutbox.ackedAt), isNull(dispatchOutbox.failedAt))
+          : undefined,
+      ),
+    )
+    .orderBy(asc(dispatchOutbox.nextAttemptAt), asc(dispatchOutbox.id))
+}
+
+/** ack 的事务内版本：与 Run 状态迁移同事务提交（02 Task 10 Step 5 派发确认）。 */
+export async function ackInTransaction(tx: Tx, id: string, now: Date): Promise<boolean> {
+  const rows = await tx
+    .update(dispatchOutbox)
+    .set({ ackedAt: now })
+    .where(
+      and(
+        eq(dispatchOutbox.id, id),
+        isNull(dispatchOutbox.ackedAt),
+        isNull(dispatchOutbox.failedAt),
+      ),
+    )
+    .returning({ id: dispatchOutbox.id })
+  return rows.length > 0
+}
+
+/** fail 的事务内版本：用于取消 queued Run 时在同一事务内作废待投的 run.start。 */
+export async function failInTransaction(tx: Tx, id: string, now: Date): Promise<boolean> {
+  const rows = await tx
+    .update(dispatchOutbox)
+    .set({ failedAt: now })
+    .where(
+      and(
+        eq(dispatchOutbox.id, id),
+        isNull(dispatchOutbox.failedAt),
+        isNull(dispatchOutbox.ackedAt),
+      ),
+    )
+    .returning({ id: dispatchOutbox.id })
+  return rows.length > 0
 }
