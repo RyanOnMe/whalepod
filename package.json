@@ -1,0 +1,30 @@
+{
+  "name": "project311",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "format:check": "oxfmt --check",
+    "typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r --if-present typecheck",
+    "lint": "oxlint .",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration --passWithNoTests",
+    "test:dsh-contract": "vitest run --project dsh-contract --passWithNoTests",
+    "test:e2e": "playwright test --pass-with-no-tests",
+    "check:boundaries": "tsx scripts/check-boundaries.ts",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:boundaries && pnpm test:unit"
+  },
+  "devDependencies": {
+    "@playwright/test": "catalog:",
+    "@types/node": "24.13.3",
+    "oxfmt": "0.63.0",
+    "oxlint": "1.78.0",
+    "tsx": "4.23.12",
+    "typescript": "6.0.3",
+    "vitest": "4.1.10"
+  },
+  "engines": {
+    "node": "^24.0.0"
+  },
+  "packageManager": "pnpm@11.7.0"
+}

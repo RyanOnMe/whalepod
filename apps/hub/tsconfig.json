@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../../packages/db" },
+    { "path": "../../packages/domain" },
+    { "path": "../../packages/protocol" }
+  ]
+}
