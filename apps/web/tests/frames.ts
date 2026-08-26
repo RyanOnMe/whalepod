@@ -6,14 +6,20 @@ import type { ClientFrame } from '@project311/protocol'
 
 export const OCCURRED_AT = '2026-08-25T00:00:00.000Z'
 
-export function persistentFrame(type: string, payload: unknown, cursor = '7'): ClientFrame {
+export type PersistentClientFrame = Extract<ClientFrame, { kind: 'persistent' }>
+
+export function persistentFrame(
+  type: string,
+  payload: unknown,
+  cursor = '7',
+): PersistentClientFrame {
   return {
     protocolVersion: PROTOCOL_VERSION,
     kind: 'persistent',
     cursor,
     occurredAt: OCCURRED_AT,
     event: { type, payload },
-  } as unknown as ClientFrame
+  } as unknown as PersistentClientFrame
 }
 
 export function liveFrame(

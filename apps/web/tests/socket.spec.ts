@@ -54,8 +54,8 @@ function makeSocket(
   } = {},
 ) {
   const cursorStore = options.cursorStore ?? new CursorStore()
-  const onFrame = options.onFrame ?? vi.fn()
-  const onResync = options.onResync ?? vi.fn()
+  const onFrame = vi.fn((frame: ClientFrame) => options.onFrame?.(frame))
+  const onResync = vi.fn((latestCursor?: string) => options.onResync?.(latestCursor))
   const socket = new TeamEventSocket({
     url: 'ws://hub.test/ws/v1/client',
     cursorStore,
