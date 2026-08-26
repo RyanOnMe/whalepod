@@ -32,6 +32,8 @@
     "zod": "catalog:"
   },
   "devDependencies": {
-    "@project311/testkit": "workspace:*"
+    "@project311/testkit": "workspace:*",
+    "@types/ws": "catalog:",
+    "ws": "catalog:"
   }
 }

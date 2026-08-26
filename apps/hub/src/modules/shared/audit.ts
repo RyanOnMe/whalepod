@@ -19,6 +19,9 @@ export type AuditAction =
   | 'comment.create'
   | 'agent.create'
   | 'agent.revision'
+  | 'device.pair'
+  | 'device.claim'
+  | 'device.revoke'
 
 export type AuditOutcome = 'success' | 'denied' | 'rate_limited'
 

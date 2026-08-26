@@ -130,6 +130,23 @@ export const CreateAgentRequestSchema = z.strictObject({
 /** POST /agents/:agentId/revisions（Owner/Admin）。 */
 export const CreateAgentRevisionRequestSchema = z.strictObject({ ...RevisionRequestShape })
 
+/** POST /devices/pairing-codes：登录 Member 生成一次性配对码（03 §4）。 */
+export const CreatePairingCodeRequestSchema = z.strictObject({})
+
+/**
+ * POST /devices/pairing-claims：匿名 Node 以未过期配对码换一次性 Device Token
+ * （03 §4 末段：Node 路由不要 Browser Origin/Cookie，但要求 Idempotency-Key）。
+ * 初始设备信息随 claim 落库；dsh 版本与 pack digests 由后续 node.hello 回填。
+ */
+export const PairingClaimRequestSchema = z.strictObject({
+  code: z.string().min(1).max(128),
+  name: z.string().min(1).max(80),
+  platform: z.enum(['darwin', 'linux', 'win32']),
+  architecture: z.string().min(1).max(32),
+  nodeVersion: z.string().min(1).max(32),
+  nodeAppVersion: z.string().min(1).max(32),
+})
+
 export type SetupRequest = z.infer<typeof SetupRequestSchema>
 export type LoginRequest = z.infer<typeof LoginRequestSchema>
 export type CreateInviteRequest = z.infer<typeof CreateInviteRequestSchema>
@@ -143,3 +160,5 @@ export type CreateRunRequest = z.infer<typeof CreateRunRequestSchema>
 export type DecideApprovalRequest = z.infer<typeof DecideApprovalRequestSchema>
 export type CreateAgentRequest = z.infer<typeof CreateAgentRequestSchema>
 export type CreateAgentRevisionRequest = z.infer<typeof CreateAgentRevisionRequestSchema>
+export type CreatePairingCodeRequest = z.infer<typeof CreatePairingCodeRequestSchema>
+export type PairingClaimRequest = z.infer<typeof PairingClaimRequestSchema>
