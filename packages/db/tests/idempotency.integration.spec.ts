@@ -40,7 +40,7 @@ describe('command idempotency', () => {
     const second = await transactCommand(database, key, execute)
 
     expect(second).toEqual(first)
-    expect(executions).toBe(2)
+    expect(executions).toBe(1)
     // 重放不产生第二条领域写 / Team Event。
     expect(await listRunsByTask(database.db, ids.taskId)).toHaveLength(1)
     expect(await listTeamEvents(database.db)).toHaveLength(1)
