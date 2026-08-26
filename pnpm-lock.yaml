@@ -51,6 +51,9 @@ catalogs:
     '@tanstack/react-query':
       specifier: 5.101.4
       version: 5.101.4
+    '@types/ws':
+      specifier: 8.18.1
+      version: 8.18.1
     drizzle-kit:
       specifier: 0.31.10
       version: 0.31.10
@@ -75,6 +78,9 @@ catalogs:
     vite:
       specifier: 8.2.2
       version: 8.2.2
+    ws:
+      specifier: 8.21.3
+      version: 8.21.3
     zod:
       specifier: 4.4.3
       version: 4.4.3
@@ -131,6 +137,9 @@ importers:
       fastify:
         specifier: 'catalog:'
         version: 5.12.1
+      ws:
+        specifier: 'catalog:'
+        version: 8.21.3
       zod:
         specifier: 'catalog:'
         version: 4.4.3
@@ -138,6 +147,9 @@ importers:
       '@project311/testkit':
         specifier: workspace:*
         version: link:../../packages/testkit
+      '@types/ws':
+        specifier: 'catalog:'
+        version: 8.18.1
 
   apps/node:
     dependencies:
@@ -3765,6 +3777,9 @@ packages:
 
   '@types/retry@0.12.0':
     resolution: {integrity: sha512-wWKOClTTiizcZhXnPY4wikVAwmdYHp8q6DmC+EJUzAMsycb7HB32Kh9RN4+0gExjmPmZSAQjgURXIGATPegAvA==}
+
+  '@types/ws@8.18.1':
+    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
   '@vitest/coverage-v8@4.1.10':
     resolution: {integrity: sha512-IM49HmthevbgAO4anp1hwtoT9wYe59w0LR00gr+eagHE+ZJ5lK4sLPeO0ubgoJcwLk6dehU3R24N+FbEEKDc8g==}
@@ -8735,6 +8750,10 @@ snapshots:
       undici-types: 7.18.2
 
   '@types/retry@0.12.0': {}
+
+  '@types/ws@8.18.1':
+    dependencies:
+      '@types/node': 24.13.3
 
   '@vitest/coverage-v8@4.1.10(vitest@4.1.10)':
     dependencies:
