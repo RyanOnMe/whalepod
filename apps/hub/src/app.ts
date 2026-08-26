@@ -20,6 +20,7 @@ import { SetupTokenStore } from './modules/team/setup-token.js'
 import { registerProjectRoutes } from './modules/project/routes.js'
 import { registerTaskRoutes } from './modules/task/routes.js'
 import { registerAgentRoutes } from './modules/agent/routes.js'
+import { registerRealtimeRoutes } from './modules/realtime/routes.js'
 
 export interface HubDeps {
   readonly config: HubConfig
@@ -139,6 +140,9 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
     },
     { prefix: '/api/v1' },
   )
+
+  // Browser 实时链路：/ws/v1/client（03 §5）。握手自校验在模块内完成，路由在 /ws/v1 下挂载。
+  registerRealtimeRoutes(app, { database, publicOrigin: config.publicOrigin })
 
   return app
 }

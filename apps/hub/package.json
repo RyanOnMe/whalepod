@@ -29,9 +29,11 @@
     "@project311/protocol": "workspace:*",
     "drizzle-orm": "catalog:",
     "fastify": "catalog:",
+    "ws": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
-    "@project311/testkit": "workspace:*"
+    "@project311/testkit": "workspace:*",
+    "@types/ws": "catalog:"
   }
 }
