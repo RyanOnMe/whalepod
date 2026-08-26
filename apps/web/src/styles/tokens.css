@@ -1,0 +1,41 @@
+/**
+ * 设计变量（prototype DESIGN.md §8 视觉语言：墨色/纸张暖白/信号橙/运行绿，
+ * 可信工作现场，不依赖外部字体与图标）。
+ */
+:root {
+  /* 颜色 */
+  --color-ink: #26221c;
+  --color-ink-soft: #4b453c;
+  --color-paper: #faf7f0;
+  --color-surface: #ffffff;
+  --color-line: #e4ddcf;
+  --color-muted: #857c6f;
+  --color-signal: #c24f1c;
+  --color-signal-soft: #f7e4d7;
+  --color-run: #2f6b45;
+  --color-run-soft: #dcebe1;
+  --color-warn: #8a6d1a;
+  --color-warn-soft: #f4ecd4;
+  --color-danger: #a03427;
+  --color-danger-soft: #f6ddda;
+  --color-danger-strong: #8c2b20;
+
+  /* 尺寸 */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --touch-min: 40px;
+
+  /* 字体 */
+  --font-ui:
+    system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* 焦点环 */
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--color-signal) 40%, transparent);
+}

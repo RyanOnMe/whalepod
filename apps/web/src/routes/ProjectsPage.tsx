@@ -1,0 +1,213 @@
+/**
+ * Project 列表（02 Task 7 Interfaces：浏览流程 Setup/Login → Project → Task Room）。
+ *
+ * 已知缺口：GET /projects/:projectId/tasks（按项目列 Task）不在 P1-06 的 Hub 路由表里，
+ * 因此本项目页不伪造 Task 列表；每个 Project 提供「创建任务」，创建成功后直接进入
+ * 新建 Task 的 Task Room。成员选择器也缺成员列表接口，责任人字段当前手工粘贴
+ * 成员 User ID（后续版本提供成员接口后改为选择器）。
+ */
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState, type FormEvent, type ReactNode } from 'react'
+import type { CreateProjectRequest, CreateTaskRequest } from '@project311/protocol'
+import { useNavigate } from 'react-router'
+import { api } from '../shared/api/client.js'
+import { ErrorBanner } from '../app/ErrorBanner.js'
+import { formatIso, shortId } from '../shared/format.js'
+import type { ProjectView, TaskView } from '../shared/api/types.js'
+import { queryKeys } from '../app/query-client.js'
+
+export function ProjectsPage(): ReactNode {
+  const queryClient = useQueryClient()
+  const navigate = useNavigate()
+  const listQuery = useQuery({
+    queryKey: queryKeys.projects,
+    queryFn: () => api.get<ProjectView[]>('/projects'),
+  })
+  const [creatingFor, setCreatingFor] = useState<string | null>(null)
+
+  return (
+    <div className="projects-page">
+      <h1>项目</h1>
+      <CreateProjectForm
+        onCreated={() => void queryClient.invalidateQueries({ queryKey: queryKeys.projects })}
+      />
+      {listQuery.isPending ? <p className="mutation-hint">正在加载项目…</p> : null}
+      {listQuery.isError ? <ErrorBanner error={listQuery.error} /> : null}
+      {listQuery.isSuccess && listQuery.data.length === 0 ? (
+        <p className="empty-state">还没有项目——先创建第一个项目，再为它建 Task。</p>
+      ) : null}
+      {listQuery.isSuccess && listQuery.data.length > 0 ? (
+        <ul className="project-list" role="list">
+          {listQuery.data.map((project) => (
+            <li key={project.id} className="card project-item">
+              <div className="project-title">
+                <h2>{project.name}</h2>
+                <span className="project-meta">
+                  创建于 {formatIso(project.createdAt)} · by {shortId(project.createdBy)}
+                </span>
+              </div>
+              {project.description !== '' ? (
+                <p className="project-description">{project.description}</p>
+              ) : null}
+              <button
+                type="button"
+                className="button button-quiet"
+                aria-expanded={creatingFor === project.id}
+                onClick={() => setCreatingFor(creatingFor === project.id ? null : project.id)}
+              >
+                {creatingFor === project.id ? '收起' : '创建任务'}
+              </button>
+              {creatingFor === project.id ? (
+                <CreateTaskForm
+                  projectId={project.id}
+                  onCreated={(task) => navigate(`/tasks/${task.id}`)}
+                  onClose={() => setCreatingFor(null)}
+                />
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
+
+function CreateProjectForm({ onCreated }: { onCreated: () => void }): ReactNode {
+  const [values, setValues] = useState({ name: '', description: '' })
+  const [error, setError] = useState<unknown>(null)
+  const mutation = useMutation({
+    mutationFn: () => {
+      const body: CreateProjectRequest = {
+        name: values.name.trim(),
+        ...(values.description.trim() !== '' ? { description: values.description.trim() } : {}),
+      }
+      return api.mutate<ProjectView>('/projects', { body })
+    },
+    onSuccess: () => {
+      setValues({ name: '', description: '' })
+      setError(null)
+      onCreated()
+    },
+    onError: (mutationError: unknown) => {
+      setError(mutationError)
+    },
+  })
+  const submit = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault()
+    if (mutation.isPending) return
+    setError(null)
+    mutation.mutate()
+  }
+  return (
+    <form className="card inline-form" onSubmit={submit} aria-label="创建项目">
+      <div className="field">
+        <label htmlFor="project-name">项目名称</label>
+        <input
+          id="project-name"
+          value={values.name}
+          onChange={(event) => setValues((prev) => ({ ...prev, name: event.target.value }))}
+          required
+          maxLength={120}
+        />
+      </div>
+      <div className="field">
+        <label htmlFor="project-description">描述（可选）</label>
+        <input
+          id="project-description"
+          value={values.description}
+          onChange={(event) => setValues((prev) => ({ ...prev, description: event.target.value }))}
+          maxLength={4000}
+        />
+      </div>
+      <div className="form-actions">
+        <button type="submit" className="button button-primary" disabled={mutation.isPending}>
+          {mutation.isPending ? '创建中…' : '创建项目'}
+        </button>
+      </div>
+      {error !== null ? <ErrorBanner error={error} /> : null}
+    </form>
+  )
+}
+
+function CreateTaskForm({
+  projectId,
+  onCreated,
+  onClose,
+}: {
+  projectId: string
+  onCreated: (task: TaskView) => void
+  onClose: () => void
+}): ReactNode {
+  const [values, setValues] = useState({ title: '', description: '', assigneeUserId: '' })
+  const [error, setError] = useState<unknown>(null)
+  const mutation = useMutation({
+    mutationFn: () => {
+      const body: CreateTaskRequest = {
+        title: values.title.trim(),
+        assigneeUserId: values.assigneeUserId.trim(),
+        ...(values.description.trim() !== '' ? { description: values.description.trim() } : {}),
+      }
+      return api.mutate<TaskView>(`/projects/${projectId}/tasks`, { body })
+    },
+    onSuccess: (task) => {
+      setError(null)
+      onCreated(task)
+    },
+    onError: (mutationError: unknown) => {
+      setError(mutationError)
+    },
+  })
+  const submit = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault()
+    if (mutation.isPending) return
+    setError(null)
+    mutation.mutate()
+  }
+  return (
+    <form className="inline-form" onSubmit={submit} aria-label="创建任务">
+      <div className="field">
+        <label htmlFor={`task-title-${projectId}`}>任务标题</label>
+        <input
+          id={`task-title-${projectId}`}
+          value={values.title}
+          onChange={(event) => setValues((prev) => ({ ...prev, title: event.target.value }))}
+          required
+          maxLength={200}
+        />
+      </div>
+      <div className="field">
+        <label htmlFor={`task-desc-${projectId}`}>描述（可选）</label>
+        <textarea
+          id={`task-desc-${projectId}`}
+          rows={3}
+          value={values.description}
+          onChange={(event) => setValues((prev) => ({ ...prev, description: event.target.value }))}
+          maxLength={20_000}
+        />
+      </div>
+      <div className="field">
+        <label htmlFor={`task-assignee-${projectId}`}>责任人 User ID</label>
+        <input
+          id={`task-assignee-${projectId}`}
+          value={values.assigneeUserId}
+          onChange={(event) =>
+            setValues((prev) => ({ ...prev, assigneeUserId: event.target.value }))
+          }
+          placeholder="粘贴成员 User ID（UUID）"
+          required
+          pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+        />
+        <p className="field-hint">成员列表接口随后续版本提供；当前请粘贴负责人的 User ID。</p>
+      </div>
+      <div className="form-actions">
+        <button type="submit" className="button button-primary" disabled={mutation.isPending}>
+          {mutation.isPending ? '创建中…' : '创建任务'}
+        </button>
+        <button type="button" className="button button-quiet" onClick={onClose}>
+          取消
+        </button>
+      </div>
+      {error !== null ? <ErrorBanner error={error} /> : null}
+    </form>
+  )
+}
