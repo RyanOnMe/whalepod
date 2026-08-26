@@ -1,4 +1,5 @@
 export * from './connection-registry.js'
+export * from './gateway.js'
 export * from './pairing.js'
 export * from './routes.js'
 export * from './node-websocket.js'
