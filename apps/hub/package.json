@@ -29,6 +29,7 @@
     "@project311/protocol": "workspace:*",
     "drizzle-orm": "catalog:",
     "fastify": "catalog:",
+    "ws": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

@@ -161,6 +161,9 @@ importers:
       fastify:
         specifier: 'catalog:'
         version: 5.12.1
+      ws:
+        specifier: 'catalog:'
+        version: 8.21.3
       zod:
         specifier: 'catalog:'
         version: 4.4.3
@@ -171,9 +174,6 @@ importers:
       '@types/ws':
         specifier: 'catalog:'
         version: 8.18.1
-      ws:
-        specifier: 'catalog:'
-        version: 8.21.3
 
   apps/node:
     dependencies:
