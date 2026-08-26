@@ -183,6 +183,16 @@ importers:
       '@project311/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      ws:
+        specifier: 'catalog:'
+        version: 8.21.3
+    devDependencies:
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
+      '@types/ws':
+        specifier: 'catalog:'
+        version: 8.18.1
 
   apps/runtime:
     dependencies:

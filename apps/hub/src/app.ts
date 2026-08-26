@@ -1,6 +1,7 @@
 import fastify from 'fastify'
 import type { FastifyInstance, FastifyReply, FastifyRequest, FastifyServerOptions } from 'fastify'
 import cookie from '@fastify/cookie'
+import fastifyWebsocket from '@fastify/websocket'
 import { ZodError } from 'zod'
 import { DomainError } from '@project311/domain'
 import { LastOwnerError, Outbox } from '@project311/db'
@@ -20,6 +21,9 @@ import { SetupTokenStore } from './modules/team/setup-token.js'
 import { registerProjectRoutes } from './modules/project/routes.js'
 import { registerTaskRoutes } from './modules/task/routes.js'
 import { registerAgentRoutes } from './modules/agent/routes.js'
+import { registerDeviceRoutes } from './modules/device/routes.js'
+import { registerNodeWebsocket } from './modules/device/node-websocket.js'
+import { RunOrchestrator } from './modules/run/index.js'
 import { registerRealtimeRoutes } from './modules/realtime/routes.js'
 
 export interface HubDeps {
@@ -102,6 +106,8 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
   const { config, database } = deps
   const app = fastify({ logger: deps.logger ?? false })
   await app.register(cookie)
+  // Node WS（P1-09）：/ws/v1/node 升级通道。
+  await app.register(fastifyWebsocket)
 
   const rateLimit = { ...DEFAULT_RATE_LIMIT, ...deps.config.rateLimit }
   const loginLimiter = new RateLimiter(rateLimit.loginMax, rateLimit.windowMs)
@@ -114,14 +120,24 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
 
   // 03 §4 末段：所有 /api/v1 非安全方法先过 Origin 与 Idempotency-Key，
   // 再进业务 handler；挂在根实例上，未知路径的 404 也先被这两道门拦截。
+  // 例外（同段明文）：Node 匿名路由不以 Browser Origin 作身份证明
+  // （pairing-claims 换 Token；/node/** 为 P1-12 预留）——Idempotency-Key 仍强制。
   app.addHook('onRequest', async (request) => {
-    if (!request.url.startsWith('/api/v1')) return
-    assertSameOrigin(request, config.publicOrigin)
+    const path = request.url.split('?')[0] ?? request.url
+    if (!path.startsWith('/api/v1')) return
+    const nodeRoute =
+      path.startsWith('/api/v1/devices/pairing-claims') || path.startsWith('/api/v1/node/')
+    if (!nodeRoute) assertSameOrigin(request, config.publicOrigin)
     assertIdempotencyKey(request)
   })
 
   app.setErrorHandler(errorHandler)
   app.setNotFoundHandler(notFoundHandler)
+
+  // Node WS（P1-09）：/ws/v1/node 在 /api/v1 之外，直接挂根实例；
+  // orchestrator 实例同时服务 WS 上行分发与（后续 P1-13 的）Run 路由组合。
+  const orchestrator = new RunOrchestrator({ database, outbox })
+  registerNodeWebsocket(app, { database, orchestrator })
 
   await app.register(
     async (api) => {
@@ -137,6 +153,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       registerProjectRoutes(api, { database, requireActor })
       registerTaskRoutes(api, { database, requireActor, outbox })
       registerAgentRoutes(api, { database, requireActor })
+      registerDeviceRoutes(api, { database, requireActor, anonymousLimiter })
     },
     { prefix: '/api/v1' },
   )

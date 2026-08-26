@@ -1,0 +1,8 @@
+{
+  "code": "example-pairing-code-0001",
+  "name": "workshop-node",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "nodeVersion": "24.12.0",
+  "nodeAppVersion": "0.1.0"
+}

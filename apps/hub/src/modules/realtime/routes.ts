@@ -6,7 +6,6 @@
  * Hub WS 握手自校验（Session Cookie + Origin）、回放与订阅分发见各模块文件。
  */
 import type { FastifyInstance } from 'fastify'
-import fastifyWebsocket from '@fastify/websocket'
 import type { Database } from '@project311/db'
 import { TeamEventStore } from './team-event-store.js'
 import { createRealtimeHub, DEFAULT_POLL_INTERVAL_MS } from './subscriptions.js'
@@ -44,7 +43,8 @@ export function registerRealtimeRoutes(
 
   // @fastify/websocket 是 fastify-plugin：其 onRoute 钩子会对后续注册的
   // `websocket: true` 路由做升级接线；必须先于 realtime 路由注册。
-  void app.register(fastifyWebsocket)
+  // 插件本体由组合根（app.ts）统一注册一次——本模块与 node-websocket 共用，
+  // 重复注册会让 onRoute 双重接线、全部 WS 路由失效。
   void app.register(
     async (ws) => {
       const auth = createClientWsAuth(deps)
