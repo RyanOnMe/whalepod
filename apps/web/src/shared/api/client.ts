@@ -33,8 +33,9 @@ export async function apiRequest<T>(route: string, options: RequestOptions = {})
   const method = options.method ?? 'GET'
   const headers: Record<string, string> = {}
   if (options.body !== undefined) headers['content-type'] = 'application/json'
-  const idempotencyKey = options.idempotencyKey
-  if (idempotencyKey !== undefined) headers['idempotency-key'] = idempotencyKey
+  // Hub 对所有非安全方法强制 Idempotency-Key（03 §4）：缺省自动生成，
+  // 调用方持有同义键（重试同一次提交）时可显式传入。
+  if (method !== 'GET') headers['idempotency-key'] = options.idempotencyKey ?? newIdempotencyKey()
 
   let response: Response
   try {
@@ -84,7 +85,7 @@ export async function apiRequest<T>(route: string, options: RequestOptions = {})
   )
 }
 
-/** 便捷封装：GET 查询与 POST 变更（变更自动生成 Idempotency-Key）。 */
+/** 便捷封装：GET 查询与 POST 变更（非 GET 的幂等键由 apiRequest 统一生成）。 */
 export const api = {
   get<T>(route: string): Promise<T> {
     return apiRequest<T>(route)
@@ -93,7 +94,7 @@ export const api = {
     return apiRequest<T>(route, {
       method: 'POST',
       ...(options.body !== undefined ? { body: options.body } : {}),
-      idempotencyKey: options.idempotencyKey ?? newIdempotencyKey(),
+      ...(options.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}),
     })
   },
 }
