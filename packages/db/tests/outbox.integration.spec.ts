@@ -209,6 +209,10 @@ describe('outbox', () => {
         deviceId: ids.deviceId,
         type: 'run.cancel',
         payload: {},
+        // 显式给过去时刻：缺省时 next_attempt_at 落 PG defaultNow()，而 claim 的
+        // now 取 JS Date.now()，两条时钟线存在亚毫秒偏差会让首查偶发为空（#42）。
+        // 「立即派发」的确定性由「行时刻严格早于任何后续 JS 时钟」保证。
+        notBefore: new Date(Date.now() - 60_000),
       })
     })
 
