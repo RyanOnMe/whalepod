@@ -1,6 +1,7 @@
 import fastify from 'fastify'
 import type { FastifyInstance, FastifyReply, FastifyRequest, FastifyServerOptions } from 'fastify'
 import cookie from '@fastify/cookie'
+import fastifyWebsocket from '@fastify/websocket'
 import { ZodError } from 'zod'
 import { DomainError } from '@project311/domain'
 import { LastOwnerError, Outbox } from '@project311/db'
@@ -21,6 +22,8 @@ import { registerProjectRoutes } from './modules/project/routes.js'
 import { registerTaskRoutes } from './modules/task/routes.js'
 import { registerAgentRoutes } from './modules/agent/routes.js'
 import { registerDeviceRoutes } from './modules/device/routes.js'
+import { registerNodeWebsocket } from './modules/device/node-websocket.js'
+import { RunOrchestrator } from './modules/run/index.js'
 
 export interface HubDeps {
   readonly config: HubConfig
@@ -102,6 +105,8 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
   const { config, database } = deps
   const app = fastify({ logger: deps.logger ?? false })
   await app.register(cookie)
+  // Node WS（P1-09）：/ws/v1/node 升级通道。
+  await app.register(fastifyWebsocket)
 
   const rateLimit = { ...DEFAULT_RATE_LIMIT, ...deps.config.rateLimit }
   const loginLimiter = new RateLimiter(rateLimit.loginMax, rateLimit.windowMs)
@@ -127,6 +132,11 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
 
   app.setErrorHandler(errorHandler)
   app.setNotFoundHandler(notFoundHandler)
+
+  // Node WS（P1-09）：/ws/v1/node 在 /api/v1 之外，直接挂根实例；
+  // orchestrator 实例同时服务 WS 上行分发与（后续 P1-13 的）Run 路由组合。
+  const orchestrator = new RunOrchestrator({ database, outbox })
+  registerNodeWebsocket(app, { database, orchestrator })
 
   await app.register(
     async (api) => {

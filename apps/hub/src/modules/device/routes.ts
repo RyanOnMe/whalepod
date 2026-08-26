@@ -20,6 +20,7 @@ import {
   listOwnDevices,
   revokeDeviceForActor,
 } from './pairing.js'
+import { nodeConnections } from './connection-registry.js'
 
 export interface DeviceRouteDeps {
   readonly database: Database
@@ -62,6 +63,8 @@ export function registerDeviceRoutes(app: FastifyInstance, deps: DeviceRouteDeps
       audit(request, 'device.revoke', 'denied', actor.userId)
       throw error
     }
+    // 在线连接：下发 node.token_revoked 并以 4008 断开（02 Task 9 Step 6）。
+    nodeConnections.pushTokenRevokedAndClose(deviceId, 'device token revoked')
     audit(request, 'device.revoke', 'success', actor.userId)
     return { ok: true, data: {} }
   })
