@@ -7,6 +7,7 @@ import {
   insertPairingCode,
   listDevicesByOwner,
   revokeDevice,
+  unwrapPgError,
 } from '@project311/db'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
@@ -18,10 +19,39 @@ export const PAIRING_CODE_TTL_MS: number = 10 * 60 * 1000
 /** Device 在线判定窗口：与 Run 租约同源（03 §3.2，30 秒）。 */
 export const DEVICE_ONLINE_WINDOW_MS = 30_000 as const
 
-/** 128 bit 随机码 base64url（22 字符）；库内只存 SHA-256。 */
+/**
+ * 配对码（03 §2.4「六组 base32」）：120bit 随机 → RFC4648 base32 大写 24 字符，
+ * 按四字符六组展示（XXXX-XXXX-XXXX-XXXX-XXXX-XXXX，人抄写友好）。
+ * 库内只存 SHA-256，且哈希输入是**归一形**（去连字符/空白、大写）——
+ * Node 侧照抄的大小写/分组差异不影响命中。
+ */
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+
+function toBase32(bytes: Uint8Array): string {
+  let bits = 0
+  let value = 0
+  let out = ''
+  for (const byte of bytes) {
+    value = (value << 8) | byte
+    bits += 8
+    while (bits >= 5) {
+      out += BASE32_ALPHABET[(value >>> (bits - 5)) & 31]
+      bits -= 5
+    }
+  }
+  if (bits > 0) out += BASE32_ALPHABET[(value << (5 - bits)) & 31]
+  return out
+}
+
+/** 归一化：去掉连字符/空白并大写；签发与 claim 两侧共用同一归一形取哈希。 */
+export function canonicalizePairingCode(code: string): string {
+  return code.replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+}
+
 export function issuePairingCodeValue(): { code: string; codeHash: Uint8Array } {
-  const code = randomBytes(16).toString('base64url')
-  return { code, codeHash: hashToken(code) }
+  const canonical = toBase32(randomBytes(15)) // 15 字节 = 120bit → 恰好 24 字符
+  const code = (canonical.match(/.{4}/g) ?? [canonical]).join('-')
+  return { code, codeHash: hashToken(canonical) }
 }
 
 export interface CreatedPairingCode {
@@ -67,27 +97,42 @@ export async function claimPairingCode(
   },
 ): Promise<ClaimedDevice> {
   const now = new Date()
-  const claimed = await database.transaction(async (tx) => {
-    // 消费是唯一防重用闸门，必须先行；失败即整体回滚且不产生任何设备行。
-    const consumed = await consumePairingCode(tx, hashToken(input.code), now)
-    if (consumed === undefined) {
-      throw new ApiError(409, 'CONFLICT', 'pairing code is invalid, expired or already used')
-    }
-    const { token, hash } = issueOpaqueToken()
-    const row = await insertDevice(tx, {
-      id: uuidv7(),
-      ownerUserId: consumed.ownerUserId,
-      name: input.name,
-      platform: input.platform,
-      architecture: input.architecture,
-      nodeVersion: input.nodeVersion,
-      nodeAppVersion: input.nodeAppVersion,
-      tokenHash: hash,
-      // 能力矩阵随使用逐步上报（P1-12 inventory）；配对时未知 → 空对象。
-      capabilities: {},
+  let claimed: ClaimedDevice
+  try {
+    claimed = await database.transaction(async (tx) => {
+      // 消费是唯一防重用闸门，必须先行；失败即整体回滚且不产生任何设备行。
+      // claim 前归一化：人抄写的分组/大小写差异不影响命中（与签发侧同一归一形）。
+      const consumed = await consumePairingCode(
+        tx,
+        hashToken(canonicalizePairingCode(input.code)),
+        now,
+      )
+      if (consumed === undefined) {
+        throw new ApiError(409, 'CONFLICT', 'pairing code is invalid, expired or already used')
+      }
+      const { token, hash } = issueOpaqueToken()
+      const row = await insertDevice(tx, {
+        id: uuidv7(),
+        ownerUserId: consumed.ownerUserId,
+        name: input.name,
+        platform: input.platform,
+        architecture: input.architecture,
+        nodeVersion: input.nodeVersion,
+        nodeAppVersion: input.nodeAppVersion,
+        tokenHash: hash,
+        // 能力矩阵随使用逐步上报（P1-12 inventory）；配对时未知 → 空对象。
+        capabilities: {},
+      })
+      return { deviceId: row.id, deviceToken: token }
     })
-    return { deviceId: row.id, deviceToken: token }
-  })
+  } catch (error) {
+    // device_owner_name_unique（03 §2.4：owner 内唯一）撞名 → 409（与 agent/project 同形态）。
+    const pg = unwrapPgError(error)
+    if (pg?.code === '23505' && (pg.constraintName ?? '').includes('device_owner_name')) {
+      throw new ApiError(409, 'CONFLICT', 'device name already taken for this owner')
+    }
+    throw error
+  }
   return claimed
 }
 

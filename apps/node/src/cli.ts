@@ -10,8 +10,8 @@ import { parseArgs } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import { claimDevice } from './pairing/client.js'
 import { loadConfig, saveConfig } from './config.js'
-import { heartbeatFrame, openHubSocket } from './gateway/hub-socket.js'
-import { nextBackoffMs, shouldStopReconnect } from './gateway/reconnect.js'
+import type { HelloFacts } from './gateway/hub-socket.js'
+import { startDeviceSession } from './gateway/session.js'
 
 interface PairArgs {
   hub: string
@@ -50,46 +50,33 @@ async function runPair(args: PairArgs): Promise<void> {
   process.stderr.write(`device token (shown once): ${result.deviceToken}\n`)
 }
 
-async function runStart(): Promise<void> {
+async function runStart(dshVersion: string | undefined): Promise<void> {
   const config = await loadConfig()
   if (config === undefined) {
     process.stderr.write('no local config: run `project311-node pair` first\n')
     process.exit(1)
   }
-  let attempt = 0
-  const connect = (): void => {
-    const socket = openHubSocket(config.hubUrl, config.deviceToken, {
-      onMessage: (frame) => {
-        if (frame.type === 'node.token_revoked') {
-          // 删本地 Token；保留 Workspace/Artifact 数据。
-          void revokeLocalConfig()
-          socket.close(1000, 'token revoked locally')
-        }
-      },
-      onClose: (code) => {
-        if (shouldStopReconnect(code)) {
-          process.stderr.write(`auth failure (close ${code}); stopping. re-pair required.\n`)
-          process.exit(1)
-        }
-        const delay = nextBackoffMs(attempt)
-        attempt += 1
-        setTimeout(connect, delay)
-      },
-      onError: () => {
-        // 错误后续 onClose 会触发重连；这里不重复调度。
-      },
-    })
-    socket.once('open', () => {
-      attempt = 0
-      socket.send(heartbeatFrame(config.deviceId))
-    })
+  // dsh 发行版版本：显式参数 > 环境变量 > 'unmanaged'（本机未托管 DSH 运行时的诚实标注；
+  // P1-12 由 runtime 装配给出真实版本）。pluginPackDigests 恒 []：第一阶段不安装插件包。
+  const facts: HelloFacts = {
+    nodeVersion: process.version,
+    platform: detectPlatform(),
+    architecture: process.arch,
+    dshDistributionVersion: dshVersion ?? process.env.PROJECT311_DSH_VERSION ?? 'unmanaged',
+    pluginPackDigests: [],
   }
-  connect()
-  // 10s 心跳循环（轻量：重连后由新 socket 继续发）。
-  setInterval(() => {
-    // start 仅持有当前连接；心跳由 openHubSocket 的 open 事件首发，之后由 hub 侧租约兜底。
-    // 此处保留循环结构以便 P1-12 扩展为真正的活动 Run 上报。
-  }, 10_000)
+  startDeviceSession({
+    config,
+    facts,
+    onRevoked: () => {
+      // 删本地 Token；保留 Workspace/Artifact 数据。
+      void revokeLocalConfig()
+    },
+    exit: (code, message) => {
+      process.stderr.write(`${message}\n`)
+      process.exit(code)
+    },
+  })
 }
 
 async function revokeLocalConfig(): Promise<void> {
@@ -114,6 +101,7 @@ export async function main(argv: string[]): Promise<void> {
       architecture: { type: 'string', default: process.arch },
       'node-version': { type: 'string', default: process.version },
       'node-app-version': { type: 'string', default: '0.1.0' },
+      'dsh-version': { type: 'string' },
     },
     allowPositionals: true,
   })
@@ -135,7 +123,7 @@ export async function main(argv: string[]): Promise<void> {
     return
   }
   if (command === 'start') {
-    await runStart()
+    await runStart(values['dsh-version'])
     return
   }
   process.stderr.write('usage: project311-node <pair|start> [options]\n')

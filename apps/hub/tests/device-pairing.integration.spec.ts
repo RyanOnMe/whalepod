@@ -73,7 +73,8 @@ describe('device pairing API (G3-01..03)', () => {
 
   it('G3-01: Bob 配对成功，Token 43 字符只出现一次，device 落库归 Bob', async () => {
     const pairing = await createCode(bob)
-    expect(pairing.code.length).toBeGreaterThanOrEqual(22)
+    // 03 §2.4：六组 base32（RFC4648 大写，四字符一组）。
+    expect(pairing.code).toMatch(/^([A-Z2-7]{4}-){5}[A-Z2-7]{4}$/)
 
     const claimed = await claim(pairing.code)
     expect(claimed.statusCode).toBe(201)
@@ -148,6 +149,61 @@ describe('device pairing API (G3-01..03)', () => {
     expect(expiredRow[0]!.expiresAt.getTime()).toBeLessThan(Date.now())
     const expiredClaim = await claim(`${pairing.code}`, {})
     expect([401, 409]).toContain(expiredClaim.statusCode)
+  })
+
+  it('配对码归一化：小写/去连字符的抄写变体命中同一码（签发与 claim 共用归一形哈希）', async () => {
+    const pairing = await createCode(bob)
+    const variant = pairing.code.replace(/-/g, '').toLowerCase()
+    const claimed = await claim(variant)
+    expect(claimed.statusCode).toBe(201)
+    expect(claimed.json().data.deviceId).toBeDefined()
+    // 原形随之消费：同一码的任何变体都不能再用。
+    const replay = await claim(pairing.code)
+    expect(replay.statusCode).toBe(409)
+  })
+
+  it('同名设备（owner 内唯一）重复配对 → 409 而非 500', async () => {
+    const first = await createCode(bob)
+    const second = await createCode(bob)
+    const claim1 = await claim(first.code)
+    expect(claim1.statusCode).toBe(201)
+    const claim2 = await claim(second.code)
+    expect(claim2.statusCode).toBe(409)
+    expect(claim2.json().error.code).toBe('CONFLICT')
+    // 事务整体回滚：撞名的 claim 不会烧掉配对码，换名重试同一码成功。
+    const retry = await claim(second.code, { name: 'bob-macbook-renamed' })
+    expect(retry.statusCode).toBe(201)
+  })
+
+  it('pairing-claims 匿名限流：超配额 429（与 setup/invite-accept 同姿态）', async () => {
+    const limited = await createTestApp(database, { rateLimit: { anonymousMax: 2 } })
+    try {
+      const codes: string[] = []
+      for (let i = 0; i < 2; i++) codes.push((await createCode(bob)).code)
+      const first = await limited.app.inject({
+        method: 'POST',
+        url: '/api/v1/devices/pairing-claims',
+        headers: { 'idempotency-key': `claim-${randomUUID()}` },
+        payload: { code: codes[0], ...nodeInfo, name: 'bob-macbook-1' },
+      })
+      expect(first.statusCode).toBe(201)
+      const second = await limited.app.inject({
+        method: 'POST',
+        url: '/api/v1/devices/pairing-claims',
+        headers: { 'idempotency-key': `claim-${randomUUID()}` },
+        payload: { code: codes[1], ...nodeInfo, name: 'bob-macbook-2' },
+      })
+      expect(second.statusCode).toBe(201)
+      const third = await limited.app.inject({
+        method: 'POST',
+        url: '/api/v1/devices/pairing-claims',
+        headers: { 'idempotency-key': `claim-${randomUUID()}` },
+        payload: { code: (await createCode(bob)).code, ...nodeInfo, name: 'bob-macbook-3' },
+      })
+      expect(third.statusCode).toBe(429)
+    } finally {
+      await limited.close()
+    }
   })
 
   it('revoke：本人可撤自己的设备，Owner/Admin 可撤任何设备，他人不可见 404', async () => {

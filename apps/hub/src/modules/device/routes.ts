@@ -14,6 +14,8 @@ import { CreatePairingCodeRequestSchema, PairingClaimRequestSchema } from '@proj
 import { audit } from '../shared/audit.js'
 import { readIdempotencyKey } from '../auth/idempotency.js'
 import type { RequireActor } from '../auth/session.js'
+import { ApiError } from '../shared/http-error.js'
+import type { RateLimiter } from '../auth/rate-limit.js'
 import {
   claimPairingCode,
   issuePairingCode,
@@ -25,6 +27,8 @@ import { nodeConnections } from './connection-registry.js'
 export interface DeviceRouteDeps {
   readonly database: Database
   readonly requireActor: RequireActor
+  /** 匿名限流（与 setup/invite-accept 共用配额配置）。 */
+  readonly anonymousLimiter: RateLimiter
 }
 
 /** 配对响应禁止缓存（02 Task 9 Step 3）：Token/码明文不得进任何中间层。 */
@@ -43,6 +47,11 @@ export function registerDeviceRoutes(app: FastifyInstance, deps: DeviceRouteDeps
 
   app.post('/devices/pairing-claims', async (request, reply) => {
     // 匿名：无 requireActor；Idempotency-Key 由组合根钩子仍强制。
+    // 每 IP 限流（与 setup/invite-accept 同姿态）：配对码熵已使爆破不可行，限流是纵深。
+    if (!deps.anonymousLimiter.tryAcquire(`pairing-claim|${request.ip}`)) {
+      audit(request, 'device.claim', 'rate_limited')
+      throw new ApiError(429, 'FORBIDDEN', 'too many pairing claim attempts')
+    }
     const body = PairingClaimRequestSchema.parse(request.body)
     const claimed = await claimPairingCode(deps.database, { ...body })
     audit(request, 'device.claim', 'success', claimed.deviceId)

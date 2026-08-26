@@ -152,7 +152,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       registerProjectRoutes(api, { database, requireActor })
       registerTaskRoutes(api, { database, requireActor, outbox })
       registerAgentRoutes(api, { database, requireActor })
-      registerDeviceRoutes(api, { database, requireActor })
+      registerDeviceRoutes(api, { database, requireActor, anonymousLimiter })
     },
     { prefix: '/api/v1' },
   )

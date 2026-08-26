@@ -15,24 +15,27 @@ Member 生成一次性配对码 → Node CLI `project311-node pair --hub <url> -
 - 数据库：Docker 一次性 PostgreSQL 18。
 
 ```bash
-pnpm test:integration     # Q2：device-pairing(4) + node-websocket(5) + 既有 153 = 162
-pnpm test:unit            # Q0：config(2) + pairing(2) + reconnect(2) + gateway(3) + 既有 = 475
+pnpm test:integration     # Q2：device-pairing(7) + node-websocket(5) + 既有 153 = 165
+pnpm test:unit            # Q0：config(2) + pairing(2) + reconnect(2) + gateway(3) + session(5) + 既有 = 480
 ```
 
 ## 判定（成功长什么样）
 
-- G3-01：配对码 ≥22 字符；Token 43 字符只出现一次；重复 claim → 409；device 归码创建者（不是 claim 调用方）。
+- G3-01：配对码为六组 base32（`XXXX-XXXX-XXXX-XXXX-XXXX-XXXX`，RFC4648 大写，120bit）；Token 43 字符只出现一次；重复 claim → 409；device 归码创建者（不是 claim 调用方）。小写/去连字符的抄写变体命中同一码（归一形哈希）。
 - G3-02：Alice 用 Bob 的码 claim → device.ownerUserId = Bob（结构性归属绑定）。
 - G3-03：重用码 → 409；过期码 → 409；GET /devices 派生 online/offline/revoked 状态。
 - 撤销：本人或 Owner/Admin 可撤；无关 Member → 404（不可枚举）；幂等重复删 → 200。
 - WS 认证：无 Token / 错 Token → 升级前 401；正确 Token → 连接建立。
-- hello 落库：`dsh_distribution_version` + `plugin_pack_digests` 写入 #37 列 + lastSeenAt 刷新。
+- hello 落库：`dsh_distribution_version` + `plugin_pack_digests` 写入 #37 列 + lastSeenAt 刷新；**Node CLI 连接建立后真实首发 node.hello**（session.spec：帧过 parseNodeFrame 协议校验）。
 - 单连接替换：同 Device 第二条连接 4008 替换第一条。
-- 心跳：`node.heartbeat` 刷新 `last_seen_at`。
+- 心跳：`node.heartbeat` 刷新 `last_seen_at`；**Node CLI 每 10s 真实周期发送**（会话级定时器，跨重连存活，仅打 OPEN 连接）。
 - 撤销推送：DELETE → 在线连接收到 `node.token_revoked` 帧 + 4008 断开。
 - 网关：`WsDeviceGateway.send` 在线投递合法 JSON 帧；离线抛 `NodeOfflineError`（瞬时，OutboxWorker 留队重投）；替换后投递走新 socket。
 - Node 本地配置：`~/.project311-node/config.json` mode 0600；缺失返回 undefined。
 - 退避：250ms→500ms→…→30s 封顶 + 0–20% full jitter。
+- 永久停止：升级前 HTTP 401/403（映射 4401）、4008（被替换/被撤销）、node.token_revoked 三者都退出进程并提示重新配对——不拿陈旧凭证无限重试（session.spec 全覆盖）。
+- 配对 claim 限流：每 IP 每 15 分钟 20 次（与 setup/invite-accept 同配额），超限 429。
+- 同名设备（owner 内唯一约束）：重复配对 → 409 CONFLICT，事务回滚不烧码（换名重试同码成功）。
 
 ## 归因（失败先看哪层）
 
@@ -55,7 +58,7 @@ bash scripts/secret-scan.sh packages/db apps/hub apps/node packages/protocol
 - **Origin 豁免**：`/api/v1/devices/pairing-claims` 与 `/api/v1/node/**` 按 03 §4 末段豁免 Browser Origin 校验（Idempotency-Key 仍强制）；改在 app.ts onRequest 钩子内。
 - **端到端 dispatch-through-WS 未做集成用例**：orchestrator.create→worker→WsDeviceGateway→ws client 的完整链需要 workspace FK（P1-12 inventory 才建）；以 `device-gateway.spec`（registry→socket 单元证据）替代，端到端随 P1-12/P1-13 接线补。
 - **租约 lost 的端到端用例**：reconciler 的 lost 行为已在 P1-10 的 run-dispatch/reconciler spec 验证；P1-09 只接入定时器，不重测。
-- **Node CLI start 的真实 WS 集成**：CLI 的 connect/heartbeat/reconnect 是单元级（退避序列 + 配置往返 + claim 客户端注入 fetch）；真实 Hub↔Node WS 端到端在 P1-12 接 Workspace 后做。
+- **Node CLI start 的真实 WS 集成**：会话循环（hello 首发/10s 心跳/永久停止码）经 session.spec 单元级覆盖（FakeSocket + 手动定时器）；真实 Hub↔Node WS 端到端在 P1-12 接 Workspace 后做。
 - **web 配对 UI 不在本泳道**：P1-07 的 Devices 页空态承接；真实 PairingPanel 随三线合入后的小跟进 PR 落地。
 - **hello 上报 supportedProtocolVersions**：协议 schema 有该字段但 Hub 目前只持久化 version+digests；protocol mismatch 关闭（03 §11）待 P1-12 Node 版本协商。
 - **capabilities**：配对时空对象起算；P1-12 inventory 扩展。
@@ -66,3 +69,25 @@ bash scripts/secret-scan.sh packages/db apps/hub apps/node packages/protocol
 corepack enable && pnpm install --frozen-lockfile && pnpm -r --if-present build
 pnpm check && pnpm test:integration && pnpm test:unit
 ```
+
+## Review 修订（2026-08-26，合入前）
+
+Review 发现 Node CLI 出站路径三处功能缺口与两处安全姿态不齐，本提交全部修复：
+
+1. **F1 node.hello 首发**：CLI 此前从不发送 hello（#37 列在真实路径上永不回填）。
+   现连接建立后首发 `node.hello`（dsh 版本来自 `--dsh-version` /
+   `PROJECT311_DSH_VERSION`，缺省 `unmanaged` 诚实标注；P1-12 runtime 装配后给真实版本）。
+2. **F2 真实心跳周期**：原 `setInterval` 为空壳（心跳只在 open 发一次，设备 30s 后离线、
+   活跃 Run 会被 reconciler 转 lost）。现为会话级 10s 定时器，跨重连存活、仅打 OPEN 连接。
+3. **F3 永久失败停止**：停止码集合此前只认 4001/4401 而 Hub 认证失败是升级前 HTTP 401
+   （客户端只见 1006），停止码永不触发。现 hub-socket 把升级前 401/403 映射为 4401，
+   停止集合加入 4008（被替换/被撤销），token_revoked 先清本地 Token 再退出。
+4. **F4 配对码对齐 03 §2.4**：base64url 22 字符 → 六组 base32（120bit，RFC4648 大写）；
+   签发与 claim 共用归一形（去连字符/大写）哈希，抄写变体可命中。
+5. **F5 pairing-claims 匿名限流**：与 setup/invite-accept 同配额（每 IP 15 分钟 20 次），
+   超限 429 + `device.claim` rate_limited 审计。
+
+6. **F6（修复中新发现）同名设备 500 → 409**：`device_owner_name_unique` 撞名此前穿透成
+   500 INTERNAL_ERROR；现按 agent/project 先例映射 23505 → 409 CONFLICT。
+
+新增测试：session.spec(5) + device-pairing spec +3（归一化、限流、同名 409）；G3-01 码格式断言改为六组 base32 模式。
