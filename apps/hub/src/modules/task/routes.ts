@@ -99,14 +99,21 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
     const session = await deps.requireActor(request)
     const { taskId } = request.params as { taskId: string }
     const body = ReassignTaskRequestSchema.parse(request.body)
-    const task = await reassignAssignment(
-      deps.database,
-      actorFrom(session),
-      taskId,
-      body.assigneeUserId,
-    )
-    audit(request, 'task.reassign', 'success', session.userId)
-    return { ok: true, data: task }
+    try {
+      const task = await reassignAssignment(
+        deps.database,
+        actorFrom(session),
+        taskId,
+        body.assigneeUserId,
+      )
+      audit(request, 'task.reassign', 'success', session.userId)
+      return { ok: true, data: task }
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'FORBIDDEN') {
+        audit(request, 'task.reassign', 'denied', session.userId)
+      }
+      throw error
+    }
   })
 
   // POST /tasks/:taskId/submit-review：accepted assignee 提交验收。

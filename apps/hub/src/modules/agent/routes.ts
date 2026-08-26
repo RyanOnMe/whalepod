@@ -29,20 +29,27 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
   app.post('/agents', async (request, reply) => {
     const session = await deps.requireActor(request)
     const body = CreateAgentRequestSchema.parse(request.body)
-    const agent = await createAgent(deps.database, actorFrom(session), {
-      name: body.name,
-      ...(body.description !== undefined ? { description: body.description } : {}),
-      persona: body.persona,
-      provider: body.provider,
-      model: body.model,
-      credentialSlot: body.credentialSlot,
-      ...(body.maxTokens !== undefined ? { maxTokens: body.maxTokens } : {}),
-      pluginPackId: body.pluginPackId,
-      createdBy: session.userId,
-      idempotencyKey: readIdempotencyKey(request),
-    })
-    audit(request, 'agent.create', 'success', session.userId)
-    return reply.code(201).send({ ok: true, data: agent })
+    try {
+      const agent = await createAgent(deps.database, actorFrom(session), {
+        name: body.name,
+        ...(body.description !== undefined ? { description: body.description } : {}),
+        persona: body.persona,
+        provider: body.provider,
+        model: body.model,
+        credentialSlot: body.credentialSlot,
+        ...(body.maxTokens !== undefined ? { maxTokens: body.maxTokens } : {}),
+        pluginPackId: body.pluginPackId,
+        createdBy: session.userId,
+        idempotencyKey: readIdempotencyKey(request),
+      })
+      audit(request, 'agent.create', 'success', session.userId)
+      return reply.code(201).send({ ok: true, data: agent })
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'FORBIDDEN') {
+        audit(request, 'agent.create', 'denied', session.userId)
+      }
+      throw error
+    }
   })
 
   // GET /agents/:agentId：Agent 详情（含当前 Revision 与全部历史）。
@@ -59,18 +66,25 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
     const session = await deps.requireActor(request)
     const { agentId } = request.params as { agentId: string }
     const body = CreateAgentRevisionRequestSchema.parse(request.body)
-    const revision = await createProfileRevision(deps.database, actorFrom(session), {
-      agentId,
-      persona: body.persona,
-      provider: body.provider,
-      model: body.model,
-      credentialSlot: body.credentialSlot,
-      ...(body.maxTokens !== undefined ? { maxTokens: body.maxTokens } : {}),
-      pluginPackId: body.pluginPackId,
-      createdBy: session.userId,
-      idempotencyKey: readIdempotencyKey(request),
-    })
-    audit(request, 'agent.revision', 'success', session.userId)
-    return reply.code(201).send({ ok: true, data: revision })
+    try {
+      const revision = await createProfileRevision(deps.database, actorFrom(session), {
+        agentId,
+        persona: body.persona,
+        provider: body.provider,
+        model: body.model,
+        credentialSlot: body.credentialSlot,
+        ...(body.maxTokens !== undefined ? { maxTokens: body.maxTokens } : {}),
+        pluginPackId: body.pluginPackId,
+        createdBy: session.userId,
+        idempotencyKey: readIdempotencyKey(request),
+      })
+      audit(request, 'agent.revision', 'success', session.userId)
+      return reply.code(201).send({ ok: true, data: revision })
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'FORBIDDEN') {
+        audit(request, 'agent.revision', 'denied', session.userId)
+      }
+      throw error
+    }
   })
 }

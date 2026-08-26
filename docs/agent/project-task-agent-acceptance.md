@@ -2,7 +2,22 @@
 
 - 对应场景/门禁：G2-01..06（04-验收矩阵与测试策略.md）、Q0/Q1/Q2
 - 对应 Issue：P1-06
-- 上次验证：2026-08-26 · feat/p1-06-project-task-agent · 结果 PASS（干净 checkout 复验）
+- 上次验证：2026-08-26 · feat/p1-06-project-task-agent · 结果 PASS（干净 checkout 复验，含 review 修订后复验）
+
+## Review 修订（2026-08-26，合入前）
+
+PR review（#41 评论）后的 5 项小项修复，均在本分支：
+
+1. **reassign/disable 权限并入 domain SSoT**：`authorize` 新增 `reassign_task`、`disable_member`
+   动作（Owner/Admin 组），`reassignAssignment` 与 member disable 路由改走 domain 单一入口
+   （domain 单测 +8 行覆盖）。
+2. **denied 审计补齐**：reassign / agent.create / agent.revision 路由对 FORBIDDEN 记
+   `audit('denied')`，与 #38 invite.create / member.disable 先例一致（命令层保留授权，深模块自守卫）。
+3. **Idempotency-Key 多值头拒绝**：与 Origin 门同形（数组 → 400，不静默取第一个）；
+   `origin.integration.spec.ts` 补多值用例。
+4. **ACTIVE_RUN_STATUSES 去重**：单一事实源在 `packages/db`（贴 schema），hub reconciler
+   改导入并再导出（orchestrator 导入路径不变）。
+5. **listAgents 注释**：「按创建时间」改为「按 id 升序（UUIDv7，等价创建顺序）」。
 
 ## 验的是哪条用户路径
 

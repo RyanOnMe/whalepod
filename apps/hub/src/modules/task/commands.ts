@@ -148,7 +148,7 @@ export async function reassignAssignment(
   taskId: string,
   assigneeUserId: string,
 ): Promise<TaskView> {
-  if (actor.role !== 'owner' && actor.role !== 'admin') {
+  if (!authorize(actor, 'reassign_task', {})) {
     throw new ApiError(403, 'FORBIDDEN', 'only owner or admin can reassign a task')
   }
   return database.transaction(async (tx) => {

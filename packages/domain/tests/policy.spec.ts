@@ -39,6 +39,12 @@ describe('authorize: owner/admin only actions', () => {
     ['create_plugin_pack', 'owner', true],
     ['create_plugin_pack', 'admin', true],
     ['create_plugin_pack', 'member', false],
+    ['reassign_task', 'owner', true],
+    ['reassign_task', 'admin', true],
+    ['reassign_task', 'member', false],
+    ['disable_member', 'owner', true],
+    ['disable_member', 'admin', true],
+    ['disable_member', 'member', false],
   ] as const)('%s by %s -> %s', (action, role, allowed) => {
     expect(authorize(actor(role), action, NO_RESOURCE)).toBe(allowed)
   })
@@ -158,6 +164,8 @@ describe('authorize: disabled members can do nothing', () => {
     ['owner', 'manage_agent', NO_RESOURCE],
     ['admin', 'install_plugin', NO_RESOURCE],
     ['member', 'decide_approval', OWN],
+    ['admin', 'reassign_task', NO_RESOURCE],
+    ['owner', 'disable_member', NO_RESOURCE],
   ] as const)('disabled %s cannot %s', (role, action, resource) => {
     expect(authorize(actor(role, U1, 1_700_000_000_000), action, resource)).toBe(false)
   })

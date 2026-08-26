@@ -31,7 +31,7 @@ export async function getAgent(handle: DbHandle, id: string): Promise<AgentRow |
   return row
 }
 
-/** 未归档 Agent 列表（按创建时间；03 §2.3）。 */
+/** 未归档 Agent 列表（按 id 升序；id 为 UUIDv7，等价创建顺序；03 §2.3）。 */
 export async function listAgents(handle: DbHandle): Promise<AgentRow[]> {
   return handle.select().from(agents).where(isNull(agents.archivedAt)).orderBy(asc(agents.id))
 }
