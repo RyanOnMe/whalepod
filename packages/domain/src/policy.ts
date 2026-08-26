@@ -23,6 +23,8 @@ export type Action =
   | 'create_task'
   | 'update_task'
   | 'comment_task'
+  | 'reassign_task'
+  | 'disable_member'
   | 'view_run'
   | 'pair_device'
   | 'accept_assignment'
@@ -61,6 +63,8 @@ export function authorize(actor: Actor, action: Action, resource: Resource = {})
     case 'manage_agent':
     case 'install_plugin':
     case 'create_plugin_pack':
+    case 'reassign_task':
+    case 'disable_member':
       return isOwnerOrAdmin
     case 'accept_assignment':
     case 'reject_assignment':

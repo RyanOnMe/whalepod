@@ -1,3 +1,4 @@
+export * from './cancel.js'
 export * from './commands.js'
 export * from './device-gateway.js'
 export * from './errors.js'

@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { authorize, asUserId } from '@project311/domain'
 import { getTeam } from '@project311/db'
 import type { Database } from '@project311/db'
 import { SetupRequestSchema } from '@project311/protocol'
@@ -96,11 +97,10 @@ export function registerTeamRoutes(app: FastifyInstance, deps: TeamRouteDeps): v
     }
   })
 
-  // 成员停用：Owner/Admin；最后 Owner 由 db 策略保护（domain policy 暂无
-  // disable_member action，P1-05 不扩 domain，角色判断就地做）。
+  // 成员停用：Owner/Admin（domain authorize: disable_member）；最后 Owner 由 db 策略保护。
   app.post('/team/members/:userId/disable', async (request, reply) => {
     const actor = await deps.requireActor(request)
-    if (actor.role !== 'owner' && actor.role !== 'admin') {
+    if (!authorize({ userId: asUserId(actor.userId), role: actor.role }, 'disable_member', {})) {
       audit(request, 'member.disable', 'denied', actor.userId)
       throw new ApiError(403, 'FORBIDDEN', 'only owner or admin can disable a member')
     }

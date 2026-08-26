@@ -1,4 +1,4 @@
-import { and, asc, count, eq } from 'drizzle-orm'
+import { and, asc, count, eq, inArray } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { approvals, runs } from '../schema/run.js'
 
@@ -37,6 +37,27 @@ export async function getRun(handle: DbHandle, id: string): Promise<RunRow | und
 
 export async function listRunsByTask(handle: DbHandle, taskId: string): Promise<RunRow[]> {
   return handle.select().from(runs).where(eq(runs.taskId, taskId)).orderBy(asc(runs.createdAt))
+}
+
+/**
+ * 某 Task 上的活跃 Run（与 run_one_active_per_task 部分唯一索引谓词一致；
+ * 03 §3.2）。Task 取消/重新指派/提交验收前据此判断「是否存在活跃 Run」。
+ * 本常量为活跃态集合的单一事实源；apps/hub 的 run reconciler 从此处导入
+ * 并再导出（勿在 hub 侧另定义副本）。
+ */
+export const ACTIVE_RUN_STATUSES = [
+  'queued',
+  'dispatching',
+  'running',
+  'waiting_approval',
+  'cancel_requested',
+] as const
+
+export async function listActiveRunsByTask(handle: DbHandle, taskId: string): Promise<RunRow[]> {
+  return handle
+    .select()
+    .from(runs)
+    .where(and(eq(runs.taskId, taskId), inArray(runs.status, [...ACTIVE_RUN_STATUSES])))
 }
 
 export interface RunStatusPatch {

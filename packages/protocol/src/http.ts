@@ -78,6 +78,15 @@ export const UpdateTaskRequestSchema = z.strictObject({
   description: z.string().max(20000).optional(),
 })
 
+/**
+ * POST /tasks/:taskId/reassign（03 §2.2/§3.1：assignee 变化后 assignment_status
+ * 重置为 pending）。05 里程碑把「重新指派」列为 P1-06 交付；03 §4 路由表未单列，
+ * 此处按 accept/reject 同形补一条限定命令。
+ */
+export const ReassignTaskRequestSchema = z.strictObject({
+  assigneeUserId: z.uuid(),
+})
+
 /** POST /tasks/:taskId/comments（§2.2：body 1–10000）。 */
 export const CreateCommentRequestSchema = z.strictObject({
   body: z.string().min(1).max(10000),
@@ -111,10 +120,10 @@ const RevisionRequestShape = {
   pluginPackId: z.uuid(),
 } as const
 
-/** POST /agents（Owner/Admin）。 */
+/** POST /agents（Owner/Admin）。description 与 Project/Task 同形可选缺省。 */
 export const CreateAgentRequestSchema = z.strictObject({
   name: z.string().min(1).max(80),
-  description: z.string().max(500),
+  description: z.string().max(500).optional(),
   ...RevisionRequestShape,
 })
 
@@ -128,6 +137,7 @@ export type AcceptInviteRequest = z.infer<typeof AcceptInviteRequestSchema>
 export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>
 export type CreateTaskRequest = z.infer<typeof CreateTaskRequestSchema>
 export type UpdateTaskRequest = z.infer<typeof UpdateTaskRequestSchema>
+export type ReassignTaskRequest = z.infer<typeof ReassignTaskRequestSchema>
 export type CreateCommentRequest = z.infer<typeof CreateCommentRequestSchema>
 export type CreateRunRequest = z.infer<typeof CreateRunRequestSchema>
 export type DecideApprovalRequest = z.infer<typeof DecideApprovalRequestSchema>

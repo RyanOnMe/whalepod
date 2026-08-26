@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest, FastifyServerOption
 import cookie from '@fastify/cookie'
 import { ZodError } from 'zod'
 import { DomainError } from '@project311/domain'
-import { LastOwnerError } from '@project311/db'
+import { LastOwnerError, Outbox } from '@project311/db'
 import type { Database } from '@project311/db'
 import type { ApiFailure, ErrorCode } from '@project311/protocol'
 import type { HubConfig } from './config.js'
@@ -17,6 +17,9 @@ import { registerAuthRoutes } from './modules/auth/routes.js'
 import { registerTeamRoutes } from './modules/team/routes.js'
 import { registerInviteRoutes } from './modules/team/invite-routes.js'
 import { SetupTokenStore } from './modules/team/setup-token.js'
+import { registerProjectRoutes } from './modules/project/routes.js'
+import { registerTaskRoutes } from './modules/task/routes.js'
+import { registerAgentRoutes } from './modules/agent/routes.js'
 
 export interface HubDeps {
   readonly config: HubConfig
@@ -105,6 +108,8 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
   const setupTokenStore = deps.setupTokenStore ?? new SetupTokenStore(config.setupTokenPath)
   const requireActor = makeRequireActor(database)
   const secureCookie = isSecureCookieRequired(config.publicOrigin)
+  // Task 取消带活跃 Run 时需在事务内入队 run.cancel；与 Run 模块共享同一 Outbox 类型。
+  const outbox = new Outbox(database)
 
   // 03 §4 末段：所有 /api/v1 非安全方法先过 Origin 与 Idempotency-Key，
   // 再进业务 handler；挂在根实例上，未知路径的 404 也先被这两道门拦截。
@@ -128,6 +133,9 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         secureCookie,
       })
       registerInviteRoutes(api, { database, requireActor, anonymousLimiter, secureCookie })
+      registerProjectRoutes(api, { database, requireActor })
+      registerTaskRoutes(api, { database, requireActor, outbox })
+      registerAgentRoutes(api, { database, requireActor })
     },
     { prefix: '/api/v1' },
   )

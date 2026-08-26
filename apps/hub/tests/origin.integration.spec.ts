@@ -159,6 +159,19 @@ describe('Idempotency-Key 线规', () => {
     expect(long.statusCode).toBe(400)
   })
 
+  it('多值 Idempotency-Key（逗号拼接形态）与 Origin 门同形拒绝', async () => {
+    // 重复头经 HTTP 解析器逗号拼接过线（与真实 Node 行为一致）：
+    // 'idempotency-key: a…' + 'idempotency-key: b…' → 'a…,b…'，含逗号不是单一 key。
+    const multi = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      headers: { origin: ctx.origin, 'idempotency-key': ['a'.repeat(16), 'b'.repeat(16)] },
+      payload: loginPayload,
+    })
+    expect(multi.statusCode).toBe(400)
+    expect(multi.json().error.code).toBe('VALIDATION_FAILED')
+  })
+
   it('边界 16 与 128 字符被接受（进入业务路径）', async () => {
     await driveSetup(ctx)
     const ok16 = await ctx.app.inject({

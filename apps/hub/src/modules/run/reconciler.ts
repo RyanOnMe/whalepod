@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto'
 import { eq, inArray } from 'drizzle-orm'
 import type { Database, RunRow } from '@project311/db'
 import {
+  ACTIVE_RUN_STATUSES,
   appendTeamEvent,
   findOutboxCommandsForRun,
   Outbox,
@@ -23,14 +24,9 @@ import {
 import { RunStatusRequestSchema } from '@project311/protocol'
 import { transitionRun } from '@project311/domain'
 
-/** 与 run_one_active_per_task 部分唯一索引的谓词一致（packages/db schema/run.ts）。 */
-export const ACTIVE_RUN_STATUSES = [
-  'queued',
-  'dispatching',
-  'running',
-  'waiting_approval',
-  'cancel_requested',
-] as const
+// 活跃态集合的单一事实源在 @project311/db（与 run_one_active_per_task 部分唯一索引
+// 谓词一致）；此处再导出，orchestrator 与 run 模块的既有导入路径不变。
+export { ACTIVE_RUN_STATUSES }
 
 /** Node 最近一次心跳投影（§3.2：断线先写连接投影，不立即改 Run）。 */
 export interface DeviceActivity {

@@ -7,6 +7,18 @@ export type AuditAction =
   | 'invite.create'
   | 'invite.accept'
   | 'member.disable'
+  | 'project.create'
+  | 'task.create'
+  | 'task.update'
+  | 'task.accept'
+  | 'task.reject'
+  | 'task.reassign'
+  | 'task.submit_review'
+  | 'task.complete'
+  | 'task.cancel'
+  | 'comment.create'
+  | 'agent.create'
+  | 'agent.revision'
 
 export type AuditOutcome = 'success' | 'denied' | 'rate_limited'
 
