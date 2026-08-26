@@ -1,0 +1,13 @@
+// tests spec 的独立 typecheck 项目：不产出、不引用协议构建产物，
+// 覆盖 src 与 tests 的 .tsx。根 typecheck 只跑 tsc -b（不含 tests），
+// 本配置由 apps/web `typecheck` 脚本（tsc -p tsconfig.test.json）补上这半边。
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "tests/**/*.tsx"],
+  "exclude": ["dist", "node_modules"]
+}
