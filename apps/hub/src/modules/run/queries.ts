@@ -1,5 +1,6 @@
+import { eq } from 'drizzle-orm'
 import type { RunRow } from '@project311/db'
-import { getRun, listRunsByTask } from '@project311/db'
+import { getRun, listRunsByTask, schema } from '@project311/db'
 import type { DbHandle } from '@project311/db'
 
 /** run_status 枚举（03 §3.2），从 db schema 推断，不另持一份字面量。 */
@@ -61,4 +62,21 @@ export async function getRunView(handle: DbHandle, runId: string): Promise<RunVi
 export async function listRunViewsByTask(handle: DbHandle, taskId: string): Promise<RunView[]> {
   const rows = await listRunsByTask(handle, taskId)
   return rows.map(toRunView)
+}
+
+/**
+ * `dshDistributionVersionFor` 的真实实现（#37）：读 device.dsh_distribution_version
+ * （node.hello 上报，migration 0002）。缺行或尚未 hello（null）→ undefined，
+ * routes 据此映射 DEVICE_OFFLINE；P1-09 落地 hello 回填后此处即取到真实值。
+ */
+export async function getDeviceDshDistributionVersion(
+  handle: DbHandle,
+  deviceId: string,
+): Promise<string | undefined> {
+  const [row] = await handle
+    .select({ version: schema.devices.dshDistributionVersion })
+    .from(schema.devices)
+    .where(eq(schema.devices.id, deviceId))
+    .limit(1)
+  return row?.version ?? undefined
 }

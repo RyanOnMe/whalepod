@@ -20,8 +20,9 @@ export interface CreateRunInput {
   prompt: string
   /**
    * 目标 Device 的 DSH 发行版版本（固化进 Run 行，§2.6）。
-   * 注意：device 表目前没有 dsh_distribution_version 列（schema 洞，见 P1-10 总结），
-   * 现由调用方（组合根/P1-09 连接投影）提供。
+   * device 列已由 migration 0002 补齐（#37）；P1-09 的 node.hello 负责回填，
+   * 组合根经 queries.getDeviceDshDistributionVersion 提供真实查询，
+   * WS 未落地前测试仍注入常量。
    */
   dshDistributionVersion: string
   /** 重跑血缘：同 Task 的终态 Run（G7-04）。 */

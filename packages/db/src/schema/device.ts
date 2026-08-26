@@ -1,5 +1,7 @@
+import { sql } from 'drizzle-orm'
 import {
   boolean,
+  check,
   jsonb,
   pgEnum,
   pgTable,
@@ -32,10 +34,22 @@ export const devices = pgTable(
     // Device WS 凭 token hash 找到唯一 Device，故需唯一（03 §6 连接条件）。
     tokenHash: bytea('token_hash').notNull().unique(),
     capabilities: jsonb('capabilities').notNull(),
+    // node.hello 运行时事实（03 §6.2；migration 0002，#37）：
+    // 配对建行时未知 → version 可空待回填；digests 空数组 = 尚未上报。
+    dshDistributionVersion: varchar('dsh_distribution_version', { length: 64 }),
+    pluginPackDigests: jsonb('plugin_pack_digests')
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
   },
-  (table) => [unique('device_owner_name_unique').on(table.ownerUserId, table.name)],
+  (table) => [
+    unique('device_owner_name_unique').on(table.ownerUserId, table.name),
+    check(
+      'device_plugin_pack_digests_array',
+      sql`jsonb_typeof(${table.pluginPackDigests}) = 'array'`,
+    ),
+  ],
 )
 
 export const devicePairingCodes = pgTable('device_pairing_code', {

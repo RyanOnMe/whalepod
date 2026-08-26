@@ -50,7 +50,7 @@ bash scripts/secret-scan.sh apps/hub packages/db packages/testkit
 ## 边界与未覆盖
 
 - **驱动边界**：本链不经过 HTTP 路由（routes 已写好但未挂组合根；路径与 requestId 约定已与 #38 对齐，P1-13 接线时直接 `app.register` 于 `/api/v1` 前缀下即可）。真实 WebSocket gateway、设备 token 认证是 P1-09；NOTIFY 唤醒是文档明示的优化，未做。
-- `dshDistributionVersionFor` 注入点悬空（device 表缺列，见 #37）：测试注入常量；P1-09 migration 0002 后接真实查询。
+- `dshDistributionVersionFor` 悬空已由 #37 关闭：device 列于 migration 0002 补齐，`queries.getDeviceDshDistributionVersion` 提供真实查询并有测试；hello 回填（真实数据源）仍是 P1-09，路由注册仍是 P1-13。
 - acked_at 语义以 03 §2.6 为准（Node command.ack 才写），与 02 Task 10 Step 4 草图不同。
 - `findOutboxCommandsForRun` 走 `payload->>'runId'` 无索引扫描，第一阶段规模可接受。
 
