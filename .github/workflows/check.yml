@@ -29,3 +29,31 @@ jobs:
 
       - name: Run static checks
         run: pnpm check
+
+  # Q2 数据门（#43）：真实 PostgreSQL 18 一次性容器，与本地同判据。
+  # ubuntu-latest 自带 Docker，scripts/with-test-postgres.mts 自管容器生命周期。
+  # 先 build 再测：integration 经包名 import 走 dist/，不 build 会测到陈旧构建（#35）。
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm -r --if-present build
+
+      - name: Run integration tests (Q2, real PostgreSQL)
+        run: pnpm test:integration
