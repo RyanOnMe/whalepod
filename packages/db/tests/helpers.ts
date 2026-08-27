@@ -1,9 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto'
-import { readdirSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { eq } from 'drizzle-orm'
 import type { Database, DbHandle, PgErrorInfo } from '../src/index.js'
+import { applyMigrations } from '../src/index.js'
 import {
   createDatabase,
   insertMember,
@@ -22,46 +20,12 @@ import {
   workspaces,
 } from '../src/schema/index.js'
 
-const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations')
 const MIGRATION_TABLE = '_schema_migrations'
 // advisory lock：串行化并发 spec 文件的迁移应用，内容任意但全仓库唯一。
 const MIGRATION_LOCK_KEY = 20260825
 
-/**
- * 应用 packages/db/migrations 下全部 .sql（按文件名序），用迁移台账保证幂等。
- * 缺迁移文件必须失败（AGENTS.md 判定原语：缺一环不得报绿）。
- */
-export async function applyMigrations(database: Database): Promise<void> {
-  await database.sql`
-    create table if not exists ${database.sql(MIGRATION_TABLE)} (
-      name text primary key,
-      applied_at timestamptz not null default now()
-    )
-  `
-  let files: string[]
-  try {
-    files = readdirSync(MIGRATIONS_DIR)
-      .filter((file) => file.endsWith('.sql'))
-      .sort()
-  } catch {
-    files = []
-  }
-  if (files.length === 0) {
-    throw new Error('packages/db/migrations 缺少迁移文件（期望 0001_phase1.sql）')
-  }
-  for (const file of files) {
-    const ddl = readFileSync(join(MIGRATIONS_DIR, file), 'utf8')
-    await database.sql.begin(async (sql) => {
-      await sql`select pg_advisory_xact_lock(${MIGRATION_LOCK_KEY})`
-      const applied = await sql<{ name: string }[]>`
-        select name from ${sql(MIGRATION_TABLE)} where name = ${file}
-      `
-      if (applied.length > 0) return
-      await sql.unsafe(ddl)
-      await sql`insert into ${sql(MIGRATION_TABLE)} ${sql({ name: file })}`
-    })
-  }
-}
+// 迁移应用已收敛到包内（src/migrate.ts）；导入并再导出以维持既有导入路径。
+export { applyMigrations }
 
 /** 清空所有业务表（保留迁移台账），供 beforeEach 复位。 */
 export async function resetDatabase(database: Database): Promise<void> {

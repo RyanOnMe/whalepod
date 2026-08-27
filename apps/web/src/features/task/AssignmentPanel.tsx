@@ -45,7 +45,10 @@ export function AssignmentPanel({ task, session }: AssignmentPanelProps): ReactN
   if (task.assignmentStatus === 'accepted') {
     body = (
       <>
-        <p className="assignment-note">你已接受此任务。</p>
+        <p className="assignment-note">
+          {/* 视角区分：对责任人是你；对 Owner/Admin 与其他成员是第三方陈述。 */}
+          {isAssignee ? '你已接受此任务。' : '责任人已接受此任务。'}
+        </p>
         <section className="snapshot-slot" aria-label="Agent 快照">
           <h3>Agent 快照</h3>
           <p className="empty-state">

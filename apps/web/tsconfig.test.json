@@ -4,6 +4,8 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    // e2e spec（playwright，Node 进程）也在此项目内：需要 node types。
+    "types": ["node", "vite/client"],
     "composite": false,
     "noEmit": true,
     "rootDir": "."

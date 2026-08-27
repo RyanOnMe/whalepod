@@ -1,7 +1,39 @@
 import { defineConfig } from '@playwright/test'
 
-// E2E 专用（P1-19 起落地）。testDir 必须显式圈定，否则 playwright 的默认
-// testMatch 会抓走 vitest 的 *.spec.ts（scripts/、packages/*/tests/）。
+/**
+ * E2E（Q5 种子；P1-07 验收场景先行落地）。
+ *
+ * testDir 必须显式圈定，否则 playwright 的默认 testMatch 会抓走 vitest 的
+ * spec 文件（scripts、各包 tests 目录下同后缀的文件）。
+ *
+ * 环境生命周期：webServer 直接拉起 scripts/e2e-serve.mts：本进程是 playwright 的直接子进程
+ *（SIGTERM 可达，容器清理可保证），内部经 scripts/lib/ephemeral-postgres.mts
+ * 启动一次性 PG（随机端口随机密码）、应用迁移、以生产入口 server.ts 拉起真实
+ * Hub、再拉起 vite dev（5173，/api/v1 与 /ws/v1 同源反代）。浏览器只见 5173 一个
+ * origin，与生产同源部署同形（03 §4）。
+ */
 export default defineConfig({
   testDir: 'apps/web/tests/e2e',
+  timeout: 60_000,
+  expect: { timeout: 10_000 },
+  fullyParallel: false,
+  workers: 1,
+  reporter: [['list']],
+  use: {
+    baseURL: 'http://localhost:5173',
+    // 用系统 Chrome（channel）而非 Playwright 自带 Chromium：首次浏览器下载
+    // 依赖境外 CDN，本机网络下不可靠；真 Chrome 也是真人同一条路径。
+    channel: 'chrome',
+    trace: 'retain-on-failure',
+  },
+  webServer: {
+    command: 'pnpm exec tsx scripts/e2e-serve.mts',
+    url: 'http://localhost:5173/',
+    reuseExistingServer: false,
+    timeout: 180_000,
+    // 先 SIGTERM 让 e2e-serve 清理容器与子进程；宽限后 playwright 才升级 SIGKILL。
+    gracefulShutdown: { signal: 'SIGTERM', timeout: 10_000 },
+    stdout: 'ignore',
+    stderr: 'pipe',
+  },
 })

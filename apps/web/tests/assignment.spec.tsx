@@ -83,6 +83,19 @@ describe('assignment', () => {
     expect(await screen.findByText('你已接受此任务。')).toBeVisible()
   })
 
+  it('非责任人视角：已接受任务显示第三方陈述（责任人已接受）', async () => {
+    const task = makeTask({
+      assigneeUserId: BOB.userId,
+      assignmentStatus: 'accepted',
+      acceptedAt: '2026-08-26T00:00:00.000Z',
+    })
+    renderApp(`/tasks/${task.id}`, loggedInHandlers(ALICE, [roomHandler(task)]))
+    expect(await screen.findByText('责任人已接受此任务。')).toBeVisible()
+    expect(screen.queryByText('你已接受此任务。')).not.toBeInTheDocument()
+    // 非责任人看不到接受/拒绝按钮。
+    expect(screen.queryByRole('button', { name: '接受任务' })).not.toBeInTheDocument()
+  })
+
   it('接受失败：展示 message 与 requestId，按钮恢复可用（失败不乐观更新）', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId })
     const user = userEvent.setup()

@@ -12,7 +12,6 @@
  * 无法被 Vite module graph 解析）。seedRunPrereqs 在此本地实现，沿用同源约定。
  */
 import { randomBytes, randomUUID } from 'node:crypto'
-import { readdirSync, readFileSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,6 +21,7 @@ import { eq } from 'drizzle-orm'
 import type { Actor } from '@project311/domain'
 import { asUserId } from '@project311/domain'
 import {
+  applyMigrations,
   createDatabase,
   insertMember,
   insertProject,
@@ -40,36 +40,8 @@ import { OutboxWorker } from '../src/modules/run/index.js'
 import { buildApp } from '../src/app.js'
 import type { HubConfig } from '../src/config.js'
 
-const MIGRATIONS_DIR = new URL('../../../packages/db/migrations/', import.meta.url).pathname
-const MIGRATION_TABLE = '_schema_migrations'
-const MIGRATION_LOCK_KEY = 20260825
-
-export async function applyMigrations(database: Database): Promise<void> {
-  await database.sql`
-    create table if not exists ${database.sql(MIGRATION_TABLE)} (
-      name text primary key,
-      applied_at timestamptz not null default now()
-    )
-  `
-  const files = readdirSync(MIGRATIONS_DIR)
-    .filter((file) => file.endsWith('.sql'))
-    .sort()
-  if (files.length === 0) {
-    throw new Error('packages/db/migrations 缺少迁移文件（期望 0001_phase1.sql）')
-  }
-  for (const file of files) {
-    const ddl = readFileSync(join(MIGRATIONS_DIR, file), 'utf8')
-    await database.sql.begin(async (sql) => {
-      await sql`select pg_advisory_xact_lock(${MIGRATION_LOCK_KEY})`
-      const applied = await sql<{ name: string }[]>`
-        select name from ${sql(MIGRATION_TABLE)} where name = ${file}
-      `
-      if (applied.length > 0) return
-      await sql.unsafe(ddl)
-      await sql`insert into ${sql(MIGRATION_TABLE)} ${sql({ name: file })}`
-    })
-  }
-}
+// 迁移应用已收敛到 @project311/db 公开导出（src/migrate.ts）；applyMigrations 经上方 import 提供。
+const MIGRATION_TABLE = '_schema_migrations' as const
 
 export async function resetDatabase(database: Database): Promise<void> {
   const rows = await database.sql<{ tablename: string }[]>`
