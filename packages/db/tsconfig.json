@@ -3,8 +3,16 @@
   "compilerOptions": {
     "composite": true,
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    "types": ["node"]
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../domain" }, { "path": "../protocol" }]
+  "references": [
+    {
+      "path": "../domain"
+    },
+    {
+      "path": "../protocol"
+    }
+  ]
 }

@@ -1,6 +1,7 @@
 export const DB_VERSION = 1 as const
 
 export * from './client.js'
+export * from './migrate.js'
 export * from './transaction.js'
 export * from './outbox.js'
 export * from './repositories/artifact.js'

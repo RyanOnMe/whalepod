@@ -233,6 +233,9 @@ importers:
       '@testing-library/user-event':
         specifier: 'catalog:'
         version: 14.6.6(@testing-library/dom@10.4.1)
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
       '@types/react':
         specifier: 'catalog:'
         version: 19.2.18
@@ -264,6 +267,9 @@ importers:
         specifier: 'catalog:'
         version: 3.4.9
     devDependencies:
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
       drizzle-kit:
         specifier: 'catalog:'
         version: 0.31.10

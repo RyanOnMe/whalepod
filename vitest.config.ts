@@ -23,6 +23,7 @@ export default defineConfig({
             '**/dist/**',
             '**/tests/integration/**',
             '**/tests/dsh-contract/**',
+            '**/tests/e2e/**',
             '**/*.integration.spec.ts',
           ],
         },
