@@ -203,10 +203,7 @@ export class RunProjector {
    * approval.decide 的本地回显（决定经 Node 生效后上报；§8 approval/decided：
    * owner 见决定、project 见状态变化——schema 本就不带理由正文，两行同形）。
    */
-  projectApprovalDecided(
-    callId: string,
-    decision: 'allowed_once' | 'rejected',
-  ): ProjectionResult {
+  projectApprovalDecided(callId: string, decision: 'allowed_once' | 'rejected'): ProjectionResult {
     const approvalId = this.approvals.get(callId)
     if (approvalId === undefined) return EMPTY
     return this.both(this.now().toISOString(), {
@@ -221,9 +218,7 @@ export class RunProjector {
   private projectSessionEvent(input: unknown, fallbackOccurredAt: string): ProjectionResult {
     if (!isRecord(input) || typeof input['type'] !== 'string') return EMPTY
     const occurredAt =
-      typeof input['time'] === 'number'
-        ? new Date(input['time']).toISOString()
-        : fallbackOccurredAt
+      typeof input['time'] === 'number' ? new Date(input['time']).toISOString() : fallbackOccurredAt
     const data = input['data']
     switch (input['type']) {
       case 'assistant/chunk':
@@ -326,12 +321,10 @@ export class RunProjector {
     const callId =
       (isRecord(block) && typeof block['toolCallId'] === 'string'
         ? block['toolCallId']
-        : undefined) ??
-      (typeof data['callId'] === 'string' ? data['callId'] : undefined)
+        : undefined) ?? (typeof data['callId'] === 'string' ? data['callId'] : undefined)
     if (callId === undefined) return EMPTY
     this.openCalls.delete(callId)
-    const failed =
-      data['error'] !== undefined || (isRecord(block) && block['isError'] === true)
+    const failed = data['error'] !== undefined || (isRecord(block) && block['isError'] === true)
     const event = {
       type: 'tool.finished',
       callId,
@@ -348,8 +341,16 @@ export class RunProjector {
       // 非正常收敛（aborted/error/…）：未闭环的 tool call 收 cancelled，不悬空。
       for (const callId of [...this.openCalls]) {
         events.push(
-          { audience: 'owner', occurredAt, event: { type: 'tool.finished', callId, outcome: 'cancelled' } },
-          { audience: 'project', occurredAt, event: { type: 'tool.finished', callId, outcome: 'cancelled' } },
+          {
+            audience: 'owner',
+            occurredAt,
+            event: { type: 'tool.finished', callId, outcome: 'cancelled' },
+          },
+          {
+            audience: 'project',
+            occurredAt,
+            event: { type: 'tool.finished', callId, outcome: 'cancelled' },
+          },
         )
       }
     }

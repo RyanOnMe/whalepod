@@ -50,7 +50,8 @@ const URL_PATH_MAX = 120
 function sanitizeUrl(raw: string): string {
   try {
     const url = new URL(raw)
-    const path = url.pathname.length > URL_PATH_MAX ? url.pathname.slice(0, URL_PATH_MAX) : url.pathname
+    const path =
+      url.pathname.length > URL_PATH_MAX ? url.pathname.slice(0, URL_PATH_MAX) : url.pathname
     // port 已含在 host 里；query（search）与 fragment（hash）不带走。
     return `${url.protocol}//${url.host}${path}`
   } catch {

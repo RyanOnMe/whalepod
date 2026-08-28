@@ -51,9 +51,7 @@ describe('redactString（03 §9）', () => {
   })
 
   it('规则 4：npm token 格式删除', () => {
-    expect(redactString('token is npm_xxx_fake_token ok', CTX)).not.toContain(
-      'npm_xxx_fake_token',
-    )
+    expect(redactString('token is npm_xxx_fake_token ok', CTX)).not.toContain('npm_xxx_fake_token')
   })
 
   it('规则 4 扩展：env 风格敏感键行删除值（DEEPSEEK_API_KEY=sk-…）', () => {

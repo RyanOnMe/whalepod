@@ -96,7 +96,9 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   })
   supervisor.onLost((runId, reason) => {
     // 丢失语义（RUNTIME_LOST/lost）是 P1-16 的活；这里只留结构化痕迹。
-    process.stderr.write(`${JSON.stringify({ level: 'error', component: 'node.supervisor', msg: 'runtime lost', runId, reason })}\n`)
+    process.stderr.write(
+      `${JSON.stringify({ level: 'error', component: 'node.supervisor', msg: 'runtime lost', runId, reason })}\n`,
+    )
   })
   // Node 重启：孤儿三重匹配处理后交人工重跑（不自动复活 Run）。
   await supervisor.recoverOrphans()
@@ -187,10 +189,7 @@ export async function main(argv: string[]): Promise<void> {
     return
   }
   if (command === 'start') {
-    await runStart(
-      values['dsh-version'],
-      values['state-dir'] ?? join(DEFAULT_CONFIG_DIR, 'state'),
-    )
+    await runStart(values['dsh-version'], values['state-dir'] ?? join(DEFAULT_CONFIG_DIR, 'state'))
     return
   }
   if (command === 'workspace' || command === 'secret') {

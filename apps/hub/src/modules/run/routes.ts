@@ -20,6 +20,7 @@ import type { ActorContext } from './commands.js'
 import { RunCommandError } from './errors.js'
 import type { RunOrchestrator } from './orchestrator.js'
 import { getRunView } from './queries.js'
+import { getRun, listRunEvents } from '@project311/db'
 
 export interface RunRoutesDeps {
   orchestrator: RunOrchestrator
@@ -105,6 +106,55 @@ export function registerRunRoutes(app: FastifyInstance, deps: RunRoutesDeps): vo
       const run = await getRunView(deps.database.db, runId)
       if (run === undefined) return sendError(reply, 'NOT_FOUND', 'run not found')
       return reply.status(200).send({ ok: true, data: run })
+    } catch (error) {
+      const { code, message } = errorCodeOf(error)
+      return sendError(reply, code, message)
+    }
+  })
+
+  /**
+   * GET /runs/:runId/events?after=<seq>&limit=<n>（P1-13；03 §5/§8）。
+   * 受众过滤与 Browser WS 扇出同一判据：project 全员可见；owner 行仅 Run
+   * owner；admin 行仅 owner/admin 角色。payload 出 Node 时已脱敏（§9），
+   * Hub 只做受众裁剪、不做内容改写。
+   */
+  app.get('/runs/:runId/events', async (request, reply) => {
+    try {
+      const actor = await deps.resolveActor(request)
+      const runId = (request.params as { runId?: string }).runId ?? ''
+      const run = await getRun(deps.database.db, runId)
+      if (run === undefined) return sendError(reply, 'NOT_FOUND', 'run not found')
+      const query = request.query as { after?: unknown; limit?: unknown }
+      const afterSeq = typeof query.after === 'string' ? Number(query.after) : undefined
+      if (afterSeq !== undefined && (!Number.isInteger(afterSeq) || afterSeq < 0)) {
+        return sendError(reply, 'VALIDATION_FAILED', 'invalid after cursor')
+      }
+      const limitRaw = typeof query.limit === 'string' ? Number(query.limit) : undefined
+      if (limitRaw !== undefined && (!Number.isInteger(limitRaw) || limitRaw <= 0)) {
+        return sendError(reply, 'VALIDATION_FAILED', 'invalid limit')
+      }
+      const audiences: Array<'owner' | 'project' | 'admin'> = ['project']
+      if (actor.userId === run.ownerUserId) audiences.push('owner')
+      if (actor.role === 'owner' || actor.role === 'admin') audiences.push('admin')
+      const rows = await listRunEvents(deps.database.db, runId, {
+        audiences,
+        ...(afterSeq !== undefined ? { afterSeq } : {}),
+        limit: Math.min(limitRaw ?? 200, 500),
+      })
+      return reply.status(200).send({
+        ok: true,
+        data: {
+          events: rows.map((row) => ({
+            runId: row.runId,
+            seq: row.seq,
+            type: row.type,
+            audience: row.audience,
+            event: row.payload,
+            occurredAt: row.occurredAt.toISOString(),
+            receivedAt: row.receivedAt.toISOString(),
+          })),
+        },
+      })
     } catch (error) {
       const { code, message } = errorCodeOf(error)
       return sendError(reply, code, message)

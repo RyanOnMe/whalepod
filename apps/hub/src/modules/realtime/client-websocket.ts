@@ -18,6 +18,7 @@ import type { SessionActor } from '../auth/session.js'
 import type { TeamEventStore } from './team-event-store.js'
 import { buildPersistentWire } from './team-event-store.js'
 import type { RealtimeHub, RealtimeSubscription } from './subscriptions.js'
+import { eventVisibleTo } from './subscriptions.js'
 
 /** 待发超压/过期 cursor 的关闭码（04 R2/R3 交期待发补洞的失败判据）。 */
 export const CLOSE_RESYNC = 4009
@@ -169,7 +170,10 @@ async function handleClientConnection(
     if (replayFrom === 0) replayFrom = lastExpired // 全新连接：只补窗口内事件
 
     const events = await deps.store.listAfter(replayFrom, highWater)
+    const subscriber = { userId: actor.userId, role: actor.role }
     for (const event of events) {
+      // 受众过滤（P1-13）：回放与轮询同一判据——owner/admin 帧不出现在无权连接。
+      if (!eventVisibleTo(event, subscriber)) continue
       const wire = buildPersistentWire(event, (message, context) =>
         deps.warn(request, message, context),
       )
@@ -187,7 +191,8 @@ async function handleClientConnection(
     if (socket.readyState !== WebSocket.OPEN) return
 
     subscription = deps.hub.subscribe({
-      ownerUserId: actor.userId,
+      userId: actor.userId,
+      role: actor.role,
       sink: (wire) => {
         const status = queue.enqueue(wire)
         if (status === 'overflow') {

@@ -387,9 +387,8 @@ describe('approval 投影（卡关联 §8：runId+dshSessionId+callId）', () =>
         reason: 'needs approval',
       }),
     )
-    const approvalId = (
-      (requested.events[0]!.event as { approval: { approvalId: string } }).approval
-    ).approvalId
+    const approvalId = (requested.events[0]!.event as { approval: { approvalId: string } }).approval
+      .approvalId
     const decided = p.projectApprovalDecided('call-a', 'allowed_once')
     expect(decided.events).toHaveLength(2)
     for (const e of decided.events) {
@@ -426,7 +425,11 @@ describe('runtime 生命周期帧', () => {
     const ownerSummary = (owner!.event as { summary: string }).summary
     expect(ownerSummary).not.toContain('npm_xxx_fake_token')
     expect(ownerSummary).not.toContain('/Users/bob/private')
-    expect(project!.event).toEqual({ type: 'run.failed', code: 'INTERNAL_ERROR', summary: 'INTERNAL_ERROR' })
+    expect(project!.event).toEqual({
+      type: 'run.failed',
+      code: 'INTERNAL_ERROR',
+      summary: 'INTERNAL_ERROR',
+    })
   })
 
   it('run.cancelled → 双受众 forced=false', () => {

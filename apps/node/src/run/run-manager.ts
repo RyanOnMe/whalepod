@@ -23,7 +23,11 @@ import { commandAckFrame, runEventFrame, runLiveDeltaFrame } from '../gateway/hu
 import { RunProjector, type ProjectionContext } from '../projection/projector.js'
 import type { CommandStore } from '../spool/command-store.js'
 import type { EventStore } from '../spool/event-store.js'
-import { newRuntimeNonce, RuntimeSupervisor, SupervisorError } from '../supervisor/runtime-supervisor.js'
+import {
+  newRuntimeNonce,
+  RuntimeSupervisor,
+  SupervisorError,
+} from '../supervisor/runtime-supervisor.js'
 import type { RuntimeStartSpec } from '../runtime-driver.js'
 import type { WorkspaceRegistry } from '../workspace/registry.js'
 
@@ -40,7 +44,11 @@ export interface RunManagerDeps {
   readonly runtimeHomeFor: (runId: string) => string
   readonly homeDir: string
   readonly now?: () => Date
-  readonly log?: (level: 'info' | 'warn' | 'error', msg: string, context?: Record<string, unknown>) => void
+  readonly log?: (
+    level: 'info' | 'warn' | 'error',
+    msg: string,
+    context?: Record<string, unknown>,
+  ) => void
 }
 
 type RunStartPayload = Extract<NodeDownstream, { type: 'run.start' }>['payload']
@@ -125,9 +133,7 @@ export class RunManager {
           provider: payload.agent.provider,
           model: payload.agent.model,
           credentialSlot: payload.agent.credentialSlot,
-          ...(payload.agent.maxTokens !== undefined
-            ? { maxTokens: payload.agent.maxTokens }
-            : {}),
+          ...(payload.agent.maxTokens !== undefined ? { maxTokens: payload.agent.maxTokens } : {}),
         },
         expectedProfileDigest: payload.expectedProfileDigest,
         expectedPluginPackDigest: payload.expectedPluginPackDigest,
@@ -166,8 +172,7 @@ export class RunManager {
       })
     } catch (error) {
       this.projectors.delete(runId)
-      const code =
-        error instanceof SupervisorError ? error.code : ('INTERNAL_ERROR' as const)
+      const code = error instanceof SupervisorError ? error.code : ('INTERNAL_ERROR' as const)
       const message = error instanceof Error ? error.message : String(error)
       this.deps.commandStore.markAcked(commandId)
       this.ack(commandId, false, { code, message })
@@ -292,7 +297,11 @@ export class RunManager {
   /** 事件原子落 spool（seq 嵌入 payload）后立刻尝试 drain。 */
   private spoolAndDrain(
     runId: string,
-    drafts: readonly { audience: 'owner' | 'project'; occurredAt: string; event: ProjectedRunEvent['event'] }[],
+    drafts: readonly {
+      audience: 'owner' | 'project'
+      occurredAt: string
+      event: ProjectedRunEvent['event']
+    }[],
   ): void {
     for (const draft of drafts) {
       this.deps.eventStore.appendAlloc(runId, (seq) =>
@@ -327,7 +336,11 @@ export class RunManager {
     return { runId, workspaceRoot: workspacePath, homeDir: this.deps.homeDir }
   }
 
-  private log(level: 'info' | 'warn' | 'error', msg: string, context?: Record<string, unknown>): void {
+  private log(
+    level: 'info' | 'warn' | 'error',
+    msg: string,
+    context?: Record<string, unknown>,
+  ): void {
     this.deps.log?.(level, msg, context)
   }
 }

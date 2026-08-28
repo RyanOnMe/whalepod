@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest, FastifyServerOption
 import cookie from '@fastify/cookie'
 import fastifyWebsocket from '@fastify/websocket'
 import { ZodError } from 'zod'
-import { DomainError } from '@project311/domain'
+import { DomainError, asUserId } from '@project311/domain'
 import { LastOwnerError, Outbox } from '@project311/db'
 import type { Database } from '@project311/db'
 import type { ApiFailure, ErrorCode } from '@project311/protocol'
@@ -25,6 +25,8 @@ import { registerDeviceRoutes } from './modules/device/routes.js'
 import { registerWorkspaceRoutes } from './modules/device/workspace-routes.js'
 import { registerNodeWebsocket } from './modules/device/node-websocket.js'
 import { RunOrchestrator } from './modules/run/index.js'
+import { registerRunRoutes } from './modules/run/routes.js'
+import { getDeviceDshDistributionVersion } from './modules/run/queries.js'
 import { registerRealtimeRoutes } from './modules/realtime/routes.js'
 
 export interface HubDeps {
@@ -136,9 +138,11 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
   app.setNotFoundHandler(notFoundHandler)
 
   // Node WS（P1-09）：/ws/v1/node 在 /api/v1 之外，直接挂根实例；
-  // orchestrator 实例同时服务 WS 上行分发与（后续 P1-13 的）Run 路由组合。
+  // orchestrator 实例同时服务 WS 上行分发与 Run 路由组合（P1-13）。
+  // Browser 实时链路先注册：拿到 RealtimeHub 注入 Node WS（live delta 投递面）。
+  const realtime = registerRealtimeRoutes(app, { database, publicOrigin: config.publicOrigin })
   const orchestrator = new RunOrchestrator({ database, outbox })
-  registerNodeWebsocket(app, { database, orchestrator })
+  registerNodeWebsocket(app, { database, orchestrator, realtime })
 
   await app.register(
     async (api) => {
@@ -156,12 +160,23 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       registerAgentRoutes(api, { database, requireActor })
       registerDeviceRoutes(api, { database, requireActor, anonymousLimiter })
       registerWorkspaceRoutes(api, { database, requireActor })
+      // P1-13：Run HTTP 面（创建/投影/事件时间线）正式接线；dsh 版本取自
+      // node.hello 回填的设备事实列（缺 = 设备不在线 → DEVICE_OFFLINE）。
+      registerRunRoutes(api, {
+        orchestrator,
+        database,
+        // SessionActor.userId 是裸 string；Run 命令面要领域 Actor（userId 带 brand）——
+        // 与 task/routes.ts 同一转换先例。
+        resolveActor: async (request) => {
+          const session = await requireActor(request)
+          return { userId: asUserId(session.userId), role: session.role }
+        },
+        dshDistributionVersionFor: (deviceId) =>
+          getDeviceDshDistributionVersion(database.db, deviceId),
+      })
     },
     { prefix: '/api/v1' },
   )
-
-  // Browser 实时链路：/ws/v1/client（03 §5）。握手自校验在模块内完成，路由在 /ws/v1 下挂载。
-  registerRealtimeRoutes(app, { database, publicOrigin: config.publicOrigin })
 
   return app
 }

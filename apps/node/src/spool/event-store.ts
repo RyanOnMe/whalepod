@@ -55,9 +55,7 @@ export class EventStore {
           .run(seq + 1, runId)
       }
       this.db
-        .prepare(
-          'insert into spooled_event (run_id, seq, payload, created_at) values (?, ?, ?, ?)',
-        )
+        .prepare('insert into spooled_event (run_id, seq, payload, created_at) values (?, ?, ?, ?)')
         .run(runId, seq, build(seq), new Date().toISOString())
       this.db.exec('commit')
       return seq

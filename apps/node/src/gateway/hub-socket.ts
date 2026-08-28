@@ -125,5 +125,9 @@ export function commandAckFrame(
   accepted: boolean,
   error?: { code: string; message: string },
 ): string {
-  return upstreamFrame('command.ack', { commandId, accepted, ...(error !== undefined ? { error } : {}) })
+  return upstreamFrame('command.ack', {
+    commandId,
+    accepted,
+    ...(error !== undefined ? { error } : {}),
+  })
 }

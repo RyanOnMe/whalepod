@@ -80,7 +80,11 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
     if (current !== undefined && current.readyState === 1) {
       const facts = deps.heartbeatFacts?.()
       current.send(
-        heartbeatFrame(deps.config.deviceId, facts?.activeRunIds ?? [], facts?.lastEventSeqByRun ?? {}),
+        heartbeatFrame(
+          deps.config.deviceId,
+          facts?.activeRunIds ?? [],
+          facts?.lastEventSeqByRun ?? {},
+        ),
       )
     }
   }, heartbeatMs)

@@ -41,7 +41,10 @@ afterEach(async () => {
 const RUN_ID = '11111111-1111-4111-8111-111111111111'
 const COMMAND_ID = '22222222-2222-4222-8222-222222222222'
 
-function runStartFrame(workspaceId: string, overrides: Record<string, unknown> = {}): NodeDownstream {
+function runStartFrame(
+  workspaceId: string,
+  overrides: Record<string, unknown> = {},
+): NodeDownstream {
   return {
     protocolVersion: 1,
     messageId: 'm-1',
@@ -241,7 +244,12 @@ describe('stdout → 投影 → spool → 上行', () => {
     const h = await makeHarness()
     await h.manager.handleFrame(runStartFrame(h.workspaceId))
     h.runtimes[0]!.emitStdout(
-      stdoutSessionEvent(RUN_ID, { type: 'step/start', seq: 1, time: 1_700_000_000_000, data: { turn: 1, step: 1 } }),
+      stdoutSessionEvent(RUN_ID, {
+        type: 'step/start',
+        seq: 1,
+        time: 1_700_000_000_000,
+        data: { turn: 1, step: 1 },
+      }),
     )
     const runEvents = h
       .sentFrames()
@@ -282,7 +290,12 @@ describe('stdout → 投影 → spool → 上行', () => {
     const h = await makeHarness()
     await h.manager.handleFrame(runStartFrame(h.workspaceId))
     h.runtimes[0]!.emitStdout(
-      stdoutSessionEvent(RUN_ID, { type: 'step/start', seq: 1, time: 1, data: { turn: 1, step: 1 } }),
+      stdoutSessionEvent(RUN_ID, {
+        type: 'step/start',
+        seq: 1,
+        time: 1,
+        data: { turn: 1, step: 1 },
+      }),
     )
     expect(h.eventStore.pending(RUN_ID)).toHaveLength(2)
     await h.manager.handleFrame({
@@ -300,7 +313,12 @@ describe('stdout → 投影 → spool → 上行', () => {
     await h.manager.handleFrame(runStartFrame(h.workspaceId))
     h.setOnline(false) // Hub 重启 → socket 断开：上行帧全部丢弃
     h.runtimes[0]!.emitStdout(
-      stdoutSessionEvent(RUN_ID, { type: 'step/start', seq: 1, time: 1, data: { turn: 1, step: 1 } }),
+      stdoutSessionEvent(RUN_ID, {
+        type: 'step/start',
+        seq: 1,
+        time: 1,
+        data: { turn: 1, step: 1 },
+      }),
     )
     expect(h.sentFrames().filter((f) => f.type === 'run.event')).toHaveLength(0)
     expect(h.eventStore.pending(RUN_ID)).toHaveLength(2)
@@ -319,7 +337,12 @@ describe('stdout → 投影 → spool → 上行', () => {
     const h = await makeHarness()
     await h.manager.handleFrame(runStartFrame(h.workspaceId))
     h.runtimes[0]!.emitStdout(
-      stdoutSessionEvent(RUN_ID, { type: 'step/start', seq: 1, time: 1, data: { turn: 1, step: 1 } }),
+      stdoutSessionEvent(RUN_ID, {
+        type: 'step/start',
+        seq: 1,
+        time: 1,
+        data: { turn: 1, step: 1 },
+      }),
     )
     const before = h.sentFrames().filter((f) => f.type === 'run.event').length
     expect(before).toBe(2)
@@ -382,7 +405,8 @@ describe('run.cancel 与 approval.decide', () => {
       .filter((f) => f.type === 'run.event')
       .map((f) => f.payload as unknown as ProjectedRunEvent)
       .find((e) => e.event.type === 'approval.requested')
-    const approvalId = (requested!.event as { approval: { approvalId: string } }).approval.approvalId
+    const approvalId = (requested!.event as { approval: { approvalId: string } }).approval
+      .approvalId
 
     await h.manager.handleFrame({
       protocolVersion: 1,
@@ -450,7 +474,12 @@ describe('心跳事实', () => {
     const h = await makeHarness()
     await h.manager.handleFrame(runStartFrame(h.workspaceId))
     h.runtimes[0]!.emitStdout(
-      stdoutSessionEvent(RUN_ID, { type: 'step/start', seq: 1, time: 1, data: { turn: 1, step: 1 } }),
+      stdoutSessionEvent(RUN_ID, {
+        type: 'step/start',
+        seq: 1,
+        time: 1,
+        data: { turn: 1, step: 1 },
+      }),
     )
     const facts = h.manager.heartbeatFacts()
     expect(facts.activeRunIds).toEqual([RUN_ID])

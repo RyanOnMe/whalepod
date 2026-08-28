@@ -24,7 +24,7 @@ import {
   getApproval,
   getOutboxCommand,
   getRun,
-  insertApproval,
+  insertApprovalIfAbsent,
   insertRun,
   Outbox,
   schema,
@@ -395,6 +395,8 @@ export class RunOrchestrator {
           runId: run.id,
           seq: payload.seq,
           audience: payload.audience,
+          // P1-13 受众过滤的事实源：Browser 扇出按它决定 owner 帧的可见性。
+          ownerUserId: run.ownerUserId,
           event: payload.event,
         },
       })
@@ -449,7 +451,9 @@ export class RunOrchestrator {
         return
       }
       case 'approval.requested': {
-        await insertApproval(tx, {
+        // P1-13 双受众去重：同一 callId 的 owner/project 两行都到这里——只有
+        // 第一行真正落 approval 并推状态机，第二行幂等跳过（事件均已持久留证）。
+        const { inserted } = await insertApprovalIfAbsent(tx, {
           id: event.approval.approvalId,
           runId: run.id,
           callId: event.approval.callId,
@@ -458,6 +462,7 @@ export class RunOrchestrator {
           preview: event.approval.preview,
           expiresAt: new Date(event.approval.expiresAt),
         })
+        if (!inserted) return
         await appendTeamEvent(tx, {
           type: 'approval.changed',
           payload: { approvalId: event.approval.approvalId, runId: run.id, status: 'pending' },

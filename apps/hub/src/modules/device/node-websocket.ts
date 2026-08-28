@@ -11,19 +11,31 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { Database } from '@project311/db'
-import { findDeviceByTokenHash, setDeviceHelloFacts, touchDeviceLastSeenAt } from '@project311/db'
-import { parseNodeFrame } from '@project311/protocol'
+import {
+  findDeviceByTokenHash,
+  getRun,
+  runEventWatermark,
+  setDeviceHelloFacts,
+  touchDeviceLastSeenAt,
+} from '@project311/db'
+import { parseNodeFrame, RunEventAckSchema, RunResendFromSchema } from '@project311/protocol'
 import type { RunOrchestrator } from '../run/orchestrator.js'
 import type { AuthenticatedDevice } from '../run/device-gateway.js'
 import { hashToken } from '../auth/token.js'
 import { nodeConnections } from './connection-registry.js'
 import { WorkspaceInventoryIngest } from './inventory.js'
+import type { RealtimeHub } from '../realtime/subscriptions.js'
 import { WebSocket } from 'ws'
 
 export interface NodeWebsocketDeps {
   readonly database: Database
   readonly orchestrator: RunOrchestrator
+  /** P1-13：owner-only live delta 的投递面（03 §8：不持久、非 owner 不可见）。 */
+  readonly realtime: RealtimeHub
 }
+
+/** Run 终态集合（§3.2）：迟到 live delta 不转发、心跳缺口不为终态 Run 拉取。 */
+const TERMINAL: ReadonlySet<string> = new Set(['completed', 'failed', 'cancelled', 'lost'])
 
 interface DeviceUpgradeRequest extends FastifyRequest {
   device?: AuthenticatedDevice
@@ -87,7 +99,63 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
               lastSeenAt: new Date(),
             })
           }
+          if (frame.type === 'run.live_delta') {
+            // P1-13：直播 delta 不持久——校验归属后直接投递给 owner 连接（03 §8）。
+            const run = await getRun(deps.database.db, frame.payload.runId)
+            if (run === undefined || run.deviceId !== identity.deviceId) {
+              throw new Error('live_delta for unknown or foreign run')
+            }
+            if (TERMINAL.has(run.status)) return // 终态后的迟到 delta：丢，不转发
+            deps.realtime.publishLive({
+              runId: run.id,
+              deltaSeq: frame.payload.deltaSeq,
+              text: frame.payload.text,
+              ownerUserId: run.ownerUserId,
+            })
+            return
+          }
           await deps.orchestrator.ingestNodeEvent(identity, frame)
+          if (frame.type === 'run.event' && socket.readyState === socket.OPEN) {
+            // R6 协议侧：重复 (runId,seq) 也 ack——幂等已应用，ack 只陈述水位。
+            // throughSeq 是连续水位：缺口前的最大 seq，绝不越过缺口。
+            const throughSeq = await runEventWatermark(deps.database.db, frame.payload.runId)
+            if (throughSeq > 0) {
+              socket.send(
+                JSON.stringify(
+                  RunEventAckSchema.parse({
+                    protocolVersion: 1,
+                    messageId: randomUUID(),
+                    sentAt: new Date().toISOString(),
+                    type: 'run.event_ack',
+                    payload: { runId: frame.payload.runId, throughSeq },
+                  }),
+                ),
+              )
+            }
+          }
+          if (frame.type === 'node.heartbeat' && socket.readyState === socket.OPEN) {
+            // R1 协议侧：心跳上报的 Node 水位高于 Hub 连续水位 → 主动拉缺口。
+            // （Node 重连也会自发 drain——这里是 Hub 视角的双保险。）
+            for (const [runId, nodeSeq] of Object.entries(frame.payload.lastEventSeqByRun)) {
+              const run = await getRun(deps.database.db, runId)
+              if (run === undefined || run.deviceId !== identity.deviceId) continue
+              if (TERMINAL.has(run.status)) continue
+              const hubWatermark = await runEventWatermark(deps.database.db, runId)
+              if (nodeSeq > hubWatermark) {
+                socket.send(
+                  JSON.stringify(
+                    RunResendFromSchema.parse({
+                      protocolVersion: 1,
+                      messageId: randomUUID(),
+                      sentAt: new Date().toISOString(),
+                      type: 'run.resend_from',
+                      payload: { runId, fromSeq: hubWatermark + 1 },
+                    }),
+                  ),
+                )
+              }
+            }
+          }
         } catch (error) {
           // fail-closed：协议错误/未知帧/越权载荷一律断开，不给半解析数据留通道。
           request.log.warn(
@@ -103,8 +171,11 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
         }
       }
 
+      // 逐条串行：上一帧处理完才处理下一帧——run.event 的应用顺序必须等于
+      // Node 发送顺序，否则连续水位 ack 会被并发 watermark 查询饿死（P1-13 实测）。
+      let chain: Promise<void> = Promise.resolve()
       socket.on('message', (raw: unknown) => {
-        void handleUpstream(String(raw))
+        chain = chain.then(() => handleUpstream(String(raw)))
       })
     },
   )
