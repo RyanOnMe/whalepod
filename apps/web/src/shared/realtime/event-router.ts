@@ -27,8 +27,8 @@ export interface ApplyFrameDeps {
   readonly cursorStore: { commit(cursor: string): void }
   /** control / 未知事件 → 上层全量快照重拉。 */
   readonly resync: (latestCursor?: string) => void
-  /** live delta 去向：P1-13 ownerRunBuffer 接线点。 */
-  readonly onLive?: (runId: string, deltaText: string) => void
+  /** live delta 去向：P1-13 ownerRunBuffer 接线点（deltaSeq 供有序性观测）。 */
+  readonly onLive?: (runId: string, deltaSeq: number, deltaText: string) => void
 }
 
 function payloadString(payload: unknown, key: string): string | undefined {
@@ -76,7 +76,7 @@ export async function applyClientFrame(
     return
   }
   if (envelope.kind === 'live') {
-    deps.onLive?.(envelope.runId, envelope.delta.text)
+    deps.onLive?.(envelope.runId, envelope.deltaSeq, envelope.delta.text)
     return
   }
   // control: resync.required → 上层全量快照重拉（服务端随后 close 4009）。

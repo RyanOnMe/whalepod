@@ -7,7 +7,7 @@
  * 加载/错误状态显式呈现，不伪装成空数据；空态说明下一步。
  */
 import { useQuery } from '@tanstack/react-query'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { api } from '../shared/api/client.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
@@ -17,12 +17,24 @@ import type { TaskRoomView } from '../shared/api/types.js'
 import { ArtifactList, ReviewerSlot } from '../features/task/ArtifactList.js'
 import { AssignmentPanel } from '../features/task/AssignmentPanel.js'
 import { CommentComposer, CommentList } from '../features/task/CommentComposer.js'
+import { RunLauncher } from '../features/task/RunLauncher.js'
+import { RunLivePanel } from '../features/task/RunLivePanel.js'
 import { ApprovalSlot, RunTimeline } from '../features/task/RunTimeline.js'
 import { TaskHeader } from '../features/task/TaskHeader.js'
+
+/** 活跃 Run 状态集（03 §3.2：一任务同时至多一个）。 */
+const ACTIVE_RUN: ReadonlySet<string> = new Set([
+  'queued',
+  'dispatching',
+  'running',
+  'waiting_approval',
+  'cancel_requested',
+])
 
 export function TaskRoomPage(): ReactNode {
   const { taskId } = useParams()
   const session = useSession()
+  const [selectedRunId, setSelectedRunId] = useState<string | undefined>(undefined)
 
   const query = useQuery({
     queryKey: queryKeys.taskRoom(taskId ?? ''),
@@ -56,12 +68,16 @@ export function TaskRoomPage(): ReactNode {
   }
 
   const { task, comments, runs, artifacts } = query.data
+  const hasActiveRun = runs.some((run) => ACTIVE_RUN.has(run.status))
   return (
     <div className="task-room">
       <TaskHeader task={task} session={session} />
       <div className="task-room-grid">
         <aside className="task-room-col task-room-left">
           <AssignmentPanel task={task} session={session} />
+          {session !== null ? (
+            <RunLauncher task={task} session={session} hasActiveRun={hasActiveRun} />
+          ) : null}
         </aside>
         <section className="task-room-col task-room-middle" aria-label="任务讨论与运行">
           <section className="card" aria-labelledby="comments-heading">
@@ -71,7 +87,10 @@ export function TaskRoomPage(): ReactNode {
           </section>
           <section className="card" aria-labelledby="runs-heading">
             <h2 id="runs-heading">Run</h2>
-            <RunTimeline runs={runs} />
+            <RunTimeline runs={runs} selectedRunId={selectedRunId} onSelect={setSelectedRunId} />
+            {selectedRunId !== undefined && session !== null ? (
+              <RunLivePanel runId={selectedRunId} session={session} />
+            ) : null}
             <ApprovalSlot />
           </section>
         </section>

@@ -149,7 +149,8 @@ describe('device inventory → workspaces 投影', () => {
       expect(JSON.stringify(row)).not.toContain('canonical_path')
     }
 
-    // GET /workspaces：Alice 看到两个投影（不透明：id/name/kind/capabilities/available）。
+    // GET /workspaces：Alice 看到两个投影（不透明：无本地路径；P1-13 起携带 deviceId
+    // 供 Run Launcher 配对 workspace→device——deviceId 是不透明标识，03 §2.4 不破）。
     const mine = await apiInject(ctx, alice, { method: 'GET', url: '/api/v1/workspaces' })
     expect(mine.statusCode).toBe(200)
     const list = mine.json().data as Array<Record<string, unknown>>
@@ -159,6 +160,7 @@ describe('device inventory → workspaces 投影', () => {
       expect(Object.keys(w).sort()).toEqual([
         'available',
         'capabilities',
+        'deviceId',
         'kind',
         'lastCheckedAt',
         'name',

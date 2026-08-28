@@ -13,6 +13,7 @@ import { api } from '../shared/api/client.js'
 import { isApiError } from '../shared/api/errors.js'
 import type { Session } from '../shared/api/types.js'
 import { queryKeys } from './query-client.js'
+import { RealtimeBridge } from './realtime.js'
 
 const SessionContext = createContext<Session | null>(null)
 
@@ -41,6 +42,8 @@ export function AppShell(): ReactNode {
 
   return (
     <SessionContext.Provider value={session}>
+      {/* 登录会话存活期持有 Browser WS：持久事件→query 失效，live→run 缓冲（P1-13）。 */}
+      <RealtimeBridge />
       <div className="app-shell">
         <header className="app-header">
           <Link to="/" className="app-brand">
