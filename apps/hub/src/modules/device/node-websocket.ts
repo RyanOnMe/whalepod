@@ -163,6 +163,7 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
               component: 'hub.node-ws',
               deviceId: identity.deviceId,
               errorName: error instanceof Error ? error.name : 'UnknownError',
+              errorMessage: error instanceof Error ? error.message : String(error),
             },
             'node upstream frame rejected',
           )

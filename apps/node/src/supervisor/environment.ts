@@ -22,7 +22,17 @@ export class RuntimeEnvError extends Error {
 
 export function buildRuntimeEnvironment(
   spec: RuntimeStartSpec,
-  ctx: { workspacePath: string; secrets: SecretStore; processEnv: NodeJS.ProcessEnv },
+  ctx: {
+    workspacePath: string
+    secrets: SecretStore
+    processEnv: NodeJS.ProcessEnv
+    /**
+     * 额外透传的变量名白名单（默认空）。生产 cli 不传；验收链路（G4-04/Q3
+     * replay overlay）显式列入 DSH_SNAPSHOT_FILE 等 replay 变量——这是 04 文档
+     * 契约探针的一等概念，不是后门（名字显式列出，值仍来自进程环境）。
+     */
+    extraPassthrough?: readonly string[]
+  },
 ): NodeJS.ProcessEnv {
   if (!isAbsolute(ctx.workspacePath)) {
     throw new RuntimeEnvError('INVALID_WORKSPACE', 'workspace path must be canonical absolute')
@@ -32,6 +42,11 @@ export function buildRuntimeEnvironment(
   if (ctx.processEnv.LANG !== undefined) env.LANG = ctx.processEnv.LANG
   if (ctx.processEnv.LC_ALL !== undefined) env.LC_ALL = ctx.processEnv.LC_ALL
   env.TMPDIR = ctx.processEnv.TMPDIR ?? join(ctx.workspacePath, '.p311-tmp')
+
+  for (const name of ctx.extraPassthrough ?? []) {
+    const value = ctx.processEnv[name]
+    if (value !== undefined) env[name] = value
+  }
 
   const secret = ctx.secrets.resolve(spec.agent.provider, spec.agent.credentialSlot)
   if (secret === undefined) {

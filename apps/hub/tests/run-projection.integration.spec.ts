@@ -517,4 +517,100 @@ describe('P1-13 run projection（Hub 侧）', () => {
     })
     expect(missing.statusCode).toBe(404)
   })
+
+  it('G4-06：Run 进行中更新 profile → 本 Run digest 不变；下一 Run 绑定新 Revision', async () => {
+    const { deviceId, deviceToken } = await pairDevice(alice)
+    const socket = await connectNode(deviceToken)
+    // hello 回填 dsh 版本列：路由的 DEVICE_OFFLINE 判据。
+    socket.send(
+      nodeFrame('node.hello', {
+        deviceId,
+        nodeVersion: '24.12.0',
+        platform: 'darwin',
+        architecture: 'arm64',
+        supportedProtocolVersions: [1],
+        dshDistributionVersion: '0.1.0-rc.8',
+        pluginPackDigests: [],
+      }),
+    )
+    await silence(150)
+
+    const chain = await seedRunChainForUser(database.db, alice.userId)
+    const workspaceId = randomUUID()
+    await database.db.insert(schema.workspaces).values({
+      id: workspaceId,
+      deviceId,
+      ownerUserId: alice.userId,
+      name: 'ws-g406',
+      kind: 'directory',
+      capabilities: { read: true, write: true },
+      available: true,
+    })
+    const projectId = randomUUID()
+    await insertProject(database.db, {
+      id: projectId,
+      name: `proj-${projectId.slice(0, 8)}`,
+      createdBy: alice.userId,
+    })
+    const makeTask = async (title: string): Promise<string> => {
+      const taskId = randomUUID()
+      await insertTask(database.db, {
+        id: taskId,
+        projectId,
+        title,
+        assigneeUserId: alice.userId,
+        assignmentStatus: 'accepted',
+        acceptedAt: new Date(),
+        createdBy: alice.userId,
+      })
+      return taskId
+    }
+    const startRun = async (taskId: string): Promise<string> => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/tasks/${taskId}/runs`,
+        headers: { origin: ctx.origin, cookie: alice.cookie, 'idempotency-key': idemKey() },
+        payload: { agentId: chain.agentId, deviceId, workspaceId, prompt: 'g4-06' },
+      })
+      expect(res.statusCode).toBe(201)
+      return res.json().data.id as string
+    }
+    const digestOf = async (runId: string): Promise<string> => {
+      const [run] = await database.db
+        .select({ profileDigest: schema.runs.profileDigest })
+        .from(schema.runs)
+        .where(eq(schema.runs.id, runId))
+      return run!.profileDigest
+    }
+
+    // Run 1 绑定 revision 1 的 digest（seed 值 'b'*64）。
+    const run1 = await startRun(await makeTask('g4-06 first'))
+    const digest1 = await digestOf(run1)
+    expect(digest1).toBe('b'.repeat(64))
+
+    // Run 进行中创建 revision 2（不可变修订，digest 重算）。
+    const revRes = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/agents/${chain.agentId}/revisions`,
+      headers: { origin: ctx.origin, cookie: alice.cookie, 'idempotency-key': idemKey() },
+      payload: {
+        persona: 'Persona v2 — changed mid-run.',
+        provider: 'deepseek',
+        model: 'deepseek-chat',
+        credentialSlot: 'default',
+        pluginPackId: chain.pluginPackId,
+      },
+    })
+    expect(revRes.statusCode).toBe(201)
+    const revision2 = revRes.json().data as { profileDigest: string; revision: number }
+    expect(revision2.revision).toBe(2)
+    expect(revision2.profileDigest).not.toBe(digest1)
+
+    // 进行中的 Run 1：digest 钉死不变（快照语义）。
+    expect(await digestOf(run1)).toBe(digest1)
+
+    // Run 2（下一 Task 同一 Agent）：绑定 revision 2 的新 digest。
+    const run2 = await startRun(await makeTask('g4-06 second'))
+    expect(await digestOf(run2)).toBe(revision2.profileDigest)
+  })
 })

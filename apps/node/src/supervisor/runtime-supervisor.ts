@@ -53,6 +53,11 @@ interface SupervisorDeps {
   readonly processEnv?: NodeJS.ProcessEnv
   /** P1-13：stdout 行路由（会话层投影/落 spool）；缺省丢弃。 */
   readonly onStdoutLine?: (runId: string, line: string) => void
+  /**
+   * 额外透传给 Runtime 的环境变量名白名单（默认 []；仅验收/replay 链路用，
+   * 见 environment.ts 注释）。生产 cli 不设置。
+   */
+  readonly runtimeEnvPassthrough?: readonly string[]
 }
 
 interface ActiveRow {
@@ -114,6 +119,7 @@ export class RuntimeSupervisor {
       workspacePath,
       secrets: this.deps.secrets,
       processEnv: this.deps.processEnv ?? process.env,
+      extraPassthrough: this.deps.runtimeEnvPassthrough ?? [],
     })
 
     const tails = new Map<string, StderrTail>()

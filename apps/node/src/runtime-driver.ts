@@ -61,6 +61,11 @@ export interface RuntimeDriver {
 export interface DshRuntimeDriverOptions {
   /** DSH Runtime 入口脚本绝对路径（部署时定位；P1-11 的 runtime-bridge 产物）。 */
   readonly runtimeEntry: string
+  /**
+   * node 自身参数（加载器等，置于入口前）。生产空数组跑 dist 产物；
+   * 验收链路用 ['--import', 'tsx'] 直跑 TS 源（与 Q3 stdio 探针同形态）。
+   */
+  readonly nodeArgs?: readonly string[]
 }
 
 export class DshRuntimeDriver implements RuntimeDriver {
@@ -78,6 +83,7 @@ export class DshRuntimeDriver implements RuntimeDriver {
     const child = spawn(
       process.execPath,
       [
+        ...(this.options.nodeArgs ?? []),
         this.options.runtimeEntry,
         // `--` 之后的参数归 Runtime 的 process.argv，避免被 node CLI 解析（bad option 退出 9）。
         '--',
