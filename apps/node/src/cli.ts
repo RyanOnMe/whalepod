@@ -7,11 +7,15 @@
  * start 持有出站连接 + 心跳循环 + 退避重连，收到 node.token_revoked 时清理本地 Token。
  */
 import { parseArgs } from 'node:util'
+import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { claimDevice } from './pairing/client.js'
-import { loadConfig, saveConfig } from './config.js'
+import { DEFAULT_CONFIG_DIR, loadConfig, saveConfig } from './config.js'
 import type { HelloFacts } from './gateway/hub-socket.js'
 import { startDeviceSession } from './gateway/session.js'
+import { WorkspaceRegistry } from './workspace/registry.js'
+import { SecretStore } from './secret/store.js'
+import { runWorkspaceCommand, runSecretSet, readHiddenLine } from './workspace/cli-commands.js'
 
 interface PairArgs {
   hub: string
@@ -102,6 +106,7 @@ export async function main(argv: string[]): Promise<void> {
       'node-version': { type: 'string', default: process.version },
       'node-app-version': { type: 'string', default: '0.1.0' },
       'dsh-version': { type: 'string' },
+      'state-dir': { type: 'string' },
     },
     allowPositionals: true,
   })
@@ -124,6 +129,38 @@ export async function main(argv: string[]): Promise<void> {
   }
   if (command === 'start') {
     await runStart(values['dsh-version'])
+    return
+  }
+  if (command === 'workspace' || command === 'secret') {
+    const stateDir = values['state-dir'] ?? join(DEFAULT_CONFIG_DIR, 'state')
+    const { mkdirSync } = await import('node:fs')
+    mkdirSync(stateDir, { recursive: true })
+    const { join: joinPath } = await import('node:path')
+    const deps = {
+      registry: new WorkspaceRegistry(joinPath(stateDir, 'workspace-registry.sqlite')),
+      secrets: new SecretStore(joinPath(stateDir, 'secrets.json')),
+      write: (text: string) => process.stdout.write(text),
+    }
+    if (command === 'workspace') {
+      const sub = positionals[1] ?? ''
+      await runWorkspaceCommand(deps, sub, {
+        path: positionals[2],
+        name: values.name,
+        id: positionals[2],
+      })
+      return
+    }
+    const provider = positionals[1]
+    const slot = positionals[2]
+    if (provider === undefined || slot === undefined) {
+      process.stderr.write('usage: project311-node secret set <provider> <slot>\n')
+      process.exit(2)
+    }
+    if (positionals[3] !== 'set') {
+      process.stderr.write('usage: project311-node secret set <provider> <slot>\n')
+      process.exit(2)
+    }
+    await runSecretSet(deps, provider, slot, readHiddenLine)
     return
   }
   process.stderr.write('usage: project311-node <pair|start> [options]\n')
