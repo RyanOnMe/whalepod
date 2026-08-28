@@ -54,7 +54,7 @@ async function runPair(args: PairArgs): Promise<void> {
   process.stderr.write(`device token (shown once): ${result.deviceToken}\n`)
 }
 
-async function runStart(dshVersion: string | undefined): Promise<void> {
+async function runStart(dshVersion: string | undefined, stateDir: string): Promise<void> {
   const config = await loadConfig()
   if (config === undefined) {
     process.stderr.write('no local config: run `project311-node pair` first\n')
@@ -69,18 +69,77 @@ async function runStart(dshVersion: string | undefined): Promise<void> {
     dshDistributionVersion: dshVersion ?? process.env.PROJECT311_DSH_VERSION ?? 'unmanaged',
     pluginPackDigests: [],
   }
-  startDeviceSession({
+
+  // ---- P1-13 运行会话层装配（02 Task 13）----
+  const { mkdirSync } = await import('node:fs')
+  const { createRequire } = await import('node:module')
+  const { homedir } = await import('node:os')
+  const { CommandStore } = await import('./spool/command-store.js')
+  const { EventStore } = await import('./spool/event-store.js')
+  const { RuntimeSupervisor } = await import('./supervisor/runtime-supervisor.js')
+  const { DshRuntimeDriver } = await import('./runtime-driver.js')
+  const { RunManager } = await import('./run/run-manager.js')
+
+  mkdirSync(stateDir, { recursive: true })
+  const registry = new WorkspaceRegistry(join(stateDir, 'workspace-registry.sqlite'))
+  const secrets = new SecretStore(join(stateDir, 'secrets.json'))
+  // Runtime 入口：@project311/runtime 的 bin 产物（部署包内 resolve；P1-20 安装门兜底）。
+  const runtimeEntry = createRequire(import.meta.url).resolve('@project311/runtime/dist/bin.js')
+  const supervisor = new RuntimeSupervisor({
+    driver: new DshRuntimeDriver({ runtimeEntry }),
+    registry,
+    secrets,
+    stateDbPath: join(stateDir, 'supervisor.sqlite'),
+    capacity: 2,
+    runtimeTimeoutMs: 6 * 60 * 60 * 1000, // 单 Run wall-clock 上限（02 约束）
+    onStdoutLine: (runId, line) => runManager.handleStdoutLine(runId, line),
+  })
+  supervisor.onLost((runId, reason) => {
+    // 丢失语义（RUNTIME_LOST/lost）是 P1-16 的活；这里只留结构化痕迹。
+    process.stderr.write(`${JSON.stringify({ level: 'error', component: 'node.supervisor', msg: 'runtime lost', runId, reason })}\n`)
+  })
+  // Node 重启：孤儿三重匹配处理后交人工重跑（不自动复活 Run）。
+  await supervisor.recoverOrphans()
+
+  const runManager = new RunManager({
+    supervisor,
+    registry,
+    commandStore: new CommandStore(join(stateDir, 'commands.sqlite')),
+    eventStore: new EventStore(join(stateDir, 'events.sqlite')),
+    send: (frame) => sessionSend(frame),
+    runtimeHomeFor: (runId) => {
+      const dir = join(stateDir, 'runtime-home', runId)
+      mkdirSync(dir, { recursive: true })
+      return dir
+    },
+    homeDir: homedir(),
+    log: (level, msg, context) => {
+      process.stderr.write(`${JSON.stringify({ level, component: 'node.run', msg, ...context })}\n`)
+    },
+  })
+  let sessionSend: (frame: string) => void = () => {}
+  const session = startDeviceSession({
     config,
     facts,
     onRevoked: () => {
       // 删本地 Token；保留 Workspace/Artifact 数据。
       void revokeLocalConfig()
     },
+    onFrame: (frame) => {
+      void runManager.handleFrame(frame).catch((error: unknown) => {
+        process.stderr.write(
+          `${JSON.stringify({ level: 'error', component: 'node.run', msg: 'downstream frame handling failed', error: error instanceof Error ? error.message : String(error) })}\n`,
+        )
+      })
+    },
+    onConnected: () => runManager.onReconnect(),
+    heartbeatFacts: () => runManager.heartbeatFacts(),
     exit: (code, message) => {
       process.stderr.write(`${message}\n`)
       process.exit(code)
     },
   })
+  sessionSend = session.send
 }
 
 async function revokeLocalConfig(): Promise<void> {
@@ -128,7 +187,10 @@ export async function main(argv: string[]): Promise<void> {
     return
   }
   if (command === 'start') {
-    await runStart(values['dsh-version'])
+    await runStart(
+      values['dsh-version'],
+      values['state-dir'] ?? join(DEFAULT_CONFIG_DIR, 'state'),
+    )
     return
   }
   if (command === 'workspace' || command === 'secret') {

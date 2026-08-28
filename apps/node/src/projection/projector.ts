@@ -396,7 +396,7 @@ export class RunProjector {
             approval: {
               ...base,
               reason: capStringBytes(redactString(reason, this.ctx), 1000),
-              preview: this.buildOwnerPreview(toolName, recorded?.args ?? '{}'),
+              preview: this.buildOwnerPreview(toolName, recorded?.args ?? '{}') as WireJson,
             },
           },
         },

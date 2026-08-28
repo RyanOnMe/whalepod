@@ -7,6 +7,7 @@
  * cmdline 参数是 Node 重启后孤儿探测的三重匹配判据之一（Step 6）。
  */
 import { spawn } from 'node:child_process'
+import { RuntimeCommandSchema, type RuntimeCommand } from '@project311/protocol'
 
 export interface RuntimeStartSpec {
   readonly runId: string
@@ -36,6 +37,12 @@ export interface RuntimeHandle {
   readonly pid: number
   /** 进程退出 promise（测试与 supervisor 等待用）。 */
   readonly exitPromise?: Promise<void>
+  /**
+   * P1-13：向 Runtime stdin 写一帧命令（NDJSON）。帧写出前过
+   * RuntimeCommandSchema（fail-closed 双向纪律）；子进程 stdin 已关闭时静默
+   * 丢弃（与迟到 decide 同构——竞态常态，不是错误）。
+   */
+  readonly send?: (command: RuntimeCommand) => void
 }
 
 export interface RuntimeDriver {
@@ -101,7 +108,12 @@ export class DshRuntimeDriver implements RuntimeDriver {
         resolve()
       })
     })
-    return { pid: child.pid ?? -1, exitPromise }
+    const send = (command: RuntimeCommand): void => {
+      // 写出前过 schema：非法命令帧绝不进入 Runtime（§11 fail-closed 对称侧）。
+      const line = `${JSON.stringify(RuntimeCommandSchema.parse(command))}\n`
+      child.stdin?.write(line, () => {})
+    }
+    return { pid: child.pid ?? -1, exitPromise, send }
   }
 
   async terminate(handle: RuntimeHandle): Promise<void> {

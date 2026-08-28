@@ -22,6 +22,7 @@
   "dependencies": {
     "@project311/domain": "workspace:*",
     "@project311/protocol": "workspace:*",
+    "@project311/runtime": "workspace:*",
     "ws": "catalog:"
   },
   "devDependencies": {

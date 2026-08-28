@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { WebSocket } from 'ws'
 import { WebSocket as WsClient } from 'ws'
-import type { NodeDownstream } from '@project311/protocol'
+import type { NodeDownstream, ProjectedRunEvent } from '@project311/protocol'
 
 /** Hub 出站连接包装：认证升级 + 消息/关闭/错误回调。 */
 export interface HubSocketHandlers {
@@ -82,12 +82,48 @@ export function helloFrame(deviceId: string, facts: HelloFacts): string {
 }
 
 /** 构造上行 node.heartbeat 帧（10s 周期发送）。 */
-export function heartbeatFrame(deviceId: string, activeRunIds: string[] = []): string {
+export function heartbeatFrame(
+  deviceId: string,
+  activeRunIds: string[] = [],
+  lastEventSeqByRun: Record<string, number> = {},
+): string {
   return JSON.stringify({
     protocolVersion: 1,
     messageId: randomUUID(),
     sentAt: new Date().toISOString(),
     type: 'node.heartbeat',
-    payload: { deviceId, activeRunIds, lastEventSeqByRun: {} },
+    payload: { deviceId, activeRunIds, lastEventSeqByRun },
   })
+}
+
+// ---------- P1-13：run 事件上行帧构造（03 §6.2/§6.4） ----------
+
+/** 通用上行帧信封（messageId/sentAt 每次新发；载荷由 spool 原样携带，保证重发同 (runId,seq)）。 */
+function upstreamFrame(type: string, payload: unknown): string {
+  return JSON.stringify({
+    protocolVersion: 1,
+    messageId: randomUUID(),
+    sentAt: new Date().toISOString(),
+    type,
+    payload,
+  })
+}
+
+/** run.event：spool 里的 payload 是完整 ProjectedRunEvent JSON（含 seq）。 */
+export function runEventFrame(payload: ProjectedRunEvent): string {
+  return upstreamFrame('run.event', payload)
+}
+
+/** run.live_delta：owner-only 直播文本（不持久、不占 spool）。 */
+export function runLiveDeltaFrame(runId: string, deltaSeq: number, text: string): string {
+  return upstreamFrame('run.live_delta', { runId, deltaSeq, text })
+}
+
+/** command.ack：run.start/run.cancel/approval.decide 的处理确认（§6.2）。 */
+export function commandAckFrame(
+  commandId: string,
+  accepted: boolean,
+  error?: { code: string; message: string },
+): string {
+  return upstreamFrame('command.ack', { commandId, accepted, ...(error !== undefined ? { error } : {}) })
 }
