@@ -105,6 +105,9 @@ catalogs:
     ws:
       specifier: 8.21.3
       version: 8.21.3
+    yaml:
+      specifier: 2.9.0
+      version: 2.9.0
     zod:
       specifier: 4.4.3
       version: 4.4.3
@@ -189,6 +192,12 @@ importers:
       ws:
         specifier: 'catalog:'
         version: 8.21.3
+      yaml:
+        specifier: 'catalog:'
+        version: 2.9.0
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
     devDependencies:
       '@project311/db':
         specifier: workspace:*
