@@ -131,7 +131,7 @@ async function makeSupervisor(driver: unknown, env: NodeJS.ProcessEnv = CREDENTI
     runtimeTimeoutMs: 60_000,
     processEnv: env,
   })
-  return { supervisor, secrets, ws }
+  return { supervisor, registry, secrets, ws }
 }
 
 describe('RuntimeSupervisor', () => {
@@ -179,6 +179,20 @@ describe('RuntimeSupervisor', () => {
       code: 'MODEL_CREDENTIAL_UNAVAILABLE',
     })
     expect(spawns).toHaveLength(0)
+    expect((await supervisor.activeRuns()).length).toBe(0)
+    await supervisor.stopAll()
+  })
+
+  it('G3-05: 删除目录后启动 Run → WORKSPACE_UNAVAILABLE，不启动 Runtime', async () => {
+    const { driver, spawns } = makeFakeDriver()
+    const { supervisor, registry, ws } = await makeSupervisor(driver)
+    const dir = await registry.resolve(ws.id)
+    await rm(dir, { recursive: true })
+
+    await expect(supervisor.start(makeSpec('r-g305'), { workspaceId: ws.id })).rejects.toMatchObject({
+      code: 'WORKSPACE_UNAVAILABLE',
+    })
+    expect(spawns).toHaveLength(0) // Runtime 一个不启动
     expect((await supervisor.activeRuns()).length).toBe(0)
     await supervisor.stopAll()
   })
