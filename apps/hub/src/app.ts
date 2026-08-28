@@ -22,6 +22,7 @@ import { registerProjectRoutes } from './modules/project/routes.js'
 import { registerTaskRoutes } from './modules/task/routes.js'
 import { registerAgentRoutes } from './modules/agent/routes.js'
 import { registerDeviceRoutes } from './modules/device/routes.js'
+import { registerWorkspaceRoutes } from './modules/device/workspace-routes.js'
 import { registerNodeWebsocket } from './modules/device/node-websocket.js'
 import { RunOrchestrator } from './modules/run/index.js'
 import { registerRealtimeRoutes } from './modules/realtime/routes.js'
@@ -154,6 +155,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       registerTaskRoutes(api, { database, requireActor, outbox })
       registerAgentRoutes(api, { database, requireActor })
       registerDeviceRoutes(api, { database, requireActor, anonymousLimiter })
+      registerWorkspaceRoutes(api, { database, requireActor })
     },
     { prefix: '/api/v1' },
   )

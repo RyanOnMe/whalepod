@@ -44,6 +44,18 @@ export class SecretStore {
     return this.readFromFile(provider, slot)
   }
 
+  /** 本地文件已配置的 (provider, slot) 清单；inventory 只上报 slot 名。 */
+  async configuredSlots(): Promise<Array<{ provider: string; slot: string }>> {
+    const data = this.readWholeFile(false)
+    const slots: Array<{ provider: string; slot: string }> = []
+    for (const provider of Object.keys(data).sort()) {
+      for (const slot of Object.keys(data[provider]).sort()) {
+        slots.push({ provider, slot })
+      }
+    }
+    return slots
+  }
+
   /** inventory 上报形态：只报状态。 */
   status(provider: string, slot: string): SecretStatus {
     return this.resolve(provider, slot) === undefined ? 'unconfigured' : 'configured'

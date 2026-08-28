@@ -11,12 +11,13 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { Database } from '@project311/db'
-import { findDeviceByTokenHash, setDeviceHelloFacts } from '@project311/db'
+import { findDeviceByTokenHash, setDeviceHelloFacts, touchDeviceLastSeenAt } from '@project311/db'
 import { parseNodeFrame } from '@project311/protocol'
 import type { RunOrchestrator } from '../run/orchestrator.js'
 import type { AuthenticatedDevice } from '../run/device-gateway.js'
 import { hashToken } from '../auth/token.js'
 import { nodeConnections } from './connection-registry.js'
+import { WorkspaceInventoryIngest } from './inventory.js'
 import { WebSocket } from 'ws'
 
 export interface NodeWebsocketDeps {
@@ -36,6 +37,10 @@ function extractBearerDeviceToken(request: FastifyRequest): string {
 }
 
 export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketDeps): void {
+  const inventoryIngest = new WorkspaceInventoryIngest({
+    database: deps.database,
+    warn: (message, context) => app.log.warn({ component: 'hub.node-ws', ...context }, message),
+  })
   app.get(
     '/ws/v1/node',
     {
@@ -68,6 +73,13 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
       const handleUpstream = async (raw: string): Promise<void> => {
         try {
           const frame = parseNodeFrame(JSON.parse(raw), 'upstream')
+          if (frame.type === 'node.inventory') {
+            // inventory：先刷 lastSeenAt（与 hello/heartbeat 同职责，不动 #37 事实列），
+            // 再做投影 upsert。
+            await touchDeviceLastSeenAt(deps.database.db, identity.deviceId)
+            await inventoryIngest.ingest(identity, frame.payload)
+            return
+          }
           if (frame.type === 'node.hello' && frame.payload.deviceId === identity.deviceId) {
             await setDeviceHelloFacts(deps.database.db, identity.deviceId, {
               dshDistributionVersion: frame.payload.dshDistributionVersion,
