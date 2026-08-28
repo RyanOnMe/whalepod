@@ -189,7 +189,9 @@ describe('RuntimeSupervisor', () => {
     const dir = await registry.resolve(ws.id)
     await rm(dir, { recursive: true })
 
-    await expect(supervisor.start(makeSpec('r-g305'), { workspaceId: ws.id })).rejects.toMatchObject({
+    await expect(
+      supervisor.start(makeSpec('r-g305'), { workspaceId: ws.id }),
+    ).rejects.toMatchObject({
       code: 'WORKSPACE_UNAVAILABLE',
     })
     expect(spawns).toHaveLength(0) // Runtime 一个不启动
