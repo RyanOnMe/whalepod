@@ -77,6 +77,11 @@ export async function setDeviceHelloFacts(
   return row
 }
 
+/** 只刷 lastSeenAt（inventory 等非 hello 帧的活跃投影；不动 #37 事实列）。 */
+export async function touchDeviceLastSeenAt(handle: DbHandle, id: string): Promise<void> {
+  await handle.update(devices).set({ lastSeenAt: new Date() }).where(eq(devices.id, id))
+}
+
 // ---------------- pairing code ----------------
 
 export interface NewPairingCode {
