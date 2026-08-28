@@ -111,6 +111,23 @@ export async function insertApproval(
   return row
 }
 
+/**
+ * P1-13 双受众去重：同一 callId 的 approval.requested 会产 owner/project 两条
+ * run_event（同一 approvalId），第二条到达时按 id 幂等跳过（inserted=false）。
+ * 与 appendRunEvent 的 (runId,seq) 幂等同哲学：事件源重放不产生第二行。
+ */
+export async function insertApprovalIfAbsent(
+  handle: DbHandle,
+  approval: NewApproval,
+): Promise<{ inserted: boolean }> {
+  const rows = await handle
+    .insert(approvals)
+    .values(approval)
+    .onConflictDoNothing({ target: [approvals.id] })
+    .returning({ id: approvals.id })
+  return { inserted: rows.length > 0 }
+}
+
 export async function getApproval(handle: DbHandle, id: string): Promise<ApprovalRow | undefined> {
   const [row] = await handle.select().from(approvals).where(eq(approvals.id, id)).limit(1)
   return row

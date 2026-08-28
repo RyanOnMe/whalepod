@@ -98,7 +98,7 @@ describe('applyClientFrame (event-router)', () => {
     const queryClient = fakeQueryClient()
     const { cursorStore, onLive, deps } = makeDeps()
     await applyClientFrame(queryClient, liveFrame('r-9', 'streaming…'), deps)
-    expect(onLive).toHaveBeenCalledWith('r-9', 'streaming…')
+    expect(onLive).toHaveBeenCalledWith('r-9', expect.any(Number), 'streaming…')
     expect(cursorStore.load()).toBe('0')
     expect(queryClient.calls).toHaveLength(0)
   })

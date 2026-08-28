@@ -63,6 +63,8 @@ export async function listWorkspacesByOwner(
 ): Promise<
   Array<{
     id: string
+    /** P1-13：Run Launcher 需要 workspace→device 配对（不透明 id，非路径）。 */
+    deviceId: string
     name: string
     kind: string
     capabilities: unknown
@@ -73,6 +75,7 @@ export async function listWorkspacesByOwner(
   return handle
     .select({
       id: workspaces.id,
+      deviceId: workspaces.deviceId,
       name: workspaces.name,
       kind: workspaces.kind,
       capabilities: workspaces.capabilities,

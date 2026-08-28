@@ -22,10 +22,13 @@
   "dependencies": {
     "@project311/domain": "workspace:*",
     "@project311/protocol": "workspace:*",
+    "@project311/runtime": "workspace:*",
     "ws": "catalog:"
   },
   "devDependencies": {
+    "@project311/db": "workspace:*",
     "@types/node": "24.13.3",
-    "@types/ws": "catalog:"
+    "@types/ws": "catalog:",
+    "drizzle-orm": "catalog:"
   }
 }

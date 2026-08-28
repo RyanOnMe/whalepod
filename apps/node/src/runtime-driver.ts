@@ -7,6 +7,7 @@
  * cmdline 参数是 Node 重启后孤儿探测的三重匹配判据之一（Step 6）。
  */
 import { spawn } from 'node:child_process'
+import { RuntimeCommandSchema, type RuntimeCommand } from '@project311/protocol'
 
 export interface RuntimeStartSpec {
   readonly runId: string
@@ -36,6 +37,12 @@ export interface RuntimeHandle {
   readonly pid: number
   /** 进程退出 promise（测试与 supervisor 等待用）。 */
   readonly exitPromise?: Promise<void>
+  /**
+   * P1-13：向 Runtime stdin 写一帧命令（NDJSON）。帧写出前过
+   * RuntimeCommandSchema（fail-closed 双向纪律）；子进程 stdin 已关闭时静默
+   * 丢弃（与迟到 decide 同构——竞态常态，不是错误）。
+   */
+  readonly send?: (command: RuntimeCommand) => void
 }
 
 export interface RuntimeDriver {
@@ -54,6 +61,11 @@ export interface RuntimeDriver {
 export interface DshRuntimeDriverOptions {
   /** DSH Runtime 入口脚本绝对路径（部署时定位；P1-11 的 runtime-bridge 产物）。 */
   readonly runtimeEntry: string
+  /**
+   * node 自身参数（加载器等，置于入口前）。生产空数组跑 dist 产物；
+   * 验收链路用 ['--import', 'tsx'] 直跑 TS 源（与 Q3 stdio 探针同形态）。
+   */
+  readonly nodeArgs?: readonly string[]
 }
 
 export class DshRuntimeDriver implements RuntimeDriver {
@@ -71,6 +83,7 @@ export class DshRuntimeDriver implements RuntimeDriver {
     const child = spawn(
       process.execPath,
       [
+        ...(this.options.nodeArgs ?? []),
         this.options.runtimeEntry,
         // `--` 之后的参数归 Runtime 的 process.argv，避免被 node CLI 解析（bad option 退出 9）。
         '--',
@@ -101,7 +114,12 @@ export class DshRuntimeDriver implements RuntimeDriver {
         resolve()
       })
     })
-    return { pid: child.pid ?? -1, exitPromise }
+    const send = (command: RuntimeCommand): void => {
+      // 写出前过 schema：非法命令帧绝不进入 Runtime（§11 fail-closed 对称侧）。
+      const line = `${JSON.stringify(RuntimeCommandSchema.parse(command))}\n`
+      child.stdin?.write(line, () => {})
+    }
+    return { pid: child.pid ?? -1, exitPromise, send }
   }
 
   async terminate(handle: RuntimeHandle): Promise<void> {

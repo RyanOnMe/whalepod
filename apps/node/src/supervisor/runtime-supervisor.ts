@@ -13,6 +13,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
 import type { RuntimeDriver, RuntimeHandle, RuntimeStartSpec } from '../runtime-driver.js'
+import type { RuntimeCommand } from '@project311/protocol'
 import type { SecretStore } from '../secret/store.js'
 import type { WorkspaceRegistry } from '../workspace/registry.js'
 import { buildRuntimeEnvironment, RuntimeEnvError } from './environment.js'
@@ -50,6 +51,13 @@ interface SupervisorDeps {
   readonly runtimeTimeoutMs: number
   /** Node 自身环境（scrub 的输入源）；测试注入用。 */
   readonly processEnv?: NodeJS.ProcessEnv
+  /** P1-13：stdout 行路由（会话层投影/落 spool）；缺省丢弃。 */
+  readonly onStdoutLine?: (runId: string, line: string) => void
+  /**
+   * 额外透传给 Runtime 的环境变量名白名单（默认 []；仅验收/replay 链路用，
+   * 见 environment.ts 注释）。生产 cli 不设置。
+   */
+  readonly runtimeEnvPassthrough?: readonly string[]
 }
 
 interface ActiveRow {
@@ -111,6 +119,7 @@ export class RuntimeSupervisor {
       workspacePath,
       secrets: this.deps.secrets,
       processEnv: this.deps.processEnv ?? process.env,
+      extraPassthrough: this.deps.runtimeEnvPassthrough ?? [],
     })
 
     const tails = new Map<string, StderrTail>()
@@ -118,8 +127,8 @@ export class RuntimeSupervisor {
       cwd: workspacePath,
       env,
       onStdout: (line) => {
-        // stdout 事件先落 event spool 再发 Hub 的接线在会话层（P1-12 后续/P1-13）。
-        void line
+        // P1-13：会话层投影管线（projector → spool → Hub）经 deps 注入。
+        this.deps.onStdoutLine?.(spec.runId, line)
       },
       onStderr: (chunk) => {
         const tail = tails.get(spec.runId) ?? new StderrTail()
@@ -183,6 +192,27 @@ export class RuntimeSupervisor {
       await this.deps.driver.terminate(entry.handle)
       await entry.handle.exitPromise
     }
+  }
+
+  /** 该 run 的 Runtime 当前是否在管（P1-13 重复 run.start 的 R7 判定）。 */
+  isActive(runId: string): boolean {
+    return this.handles.has(runId)
+  }
+
+  /** 在管 Runtime 的 runId 列表（心跳 activeRunIds 上报用）。 */
+  activeRunIds(): string[] {
+    return [...this.handles.keys()]
+  }
+
+  /**
+   * P1-13：向在管 Runtime 的 stdin 派发命令帧（initialize/prompt/cancel/
+   * approval.decide）。run 不在管或 driver 未实现 stdin 时返回 false。
+   */
+  dispatchToRuntime(runId: string, command: RuntimeCommand): boolean {
+    const entry = this.handles.get(runId)
+    if (entry?.handle.send === undefined) return false
+    entry.handle.send(command)
+    return true
   }
 
   async activeRuns(): Promise<ActiveRuntimeRecord[]> {

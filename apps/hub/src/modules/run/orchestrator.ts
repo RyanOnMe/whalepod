@@ -24,7 +24,7 @@ import {
   getApproval,
   getOutboxCommand,
   getRun,
-  insertApproval,
+  insertApprovalIfAbsent,
   insertRun,
   Outbox,
   schema,
@@ -395,11 +395,17 @@ export class RunOrchestrator {
           runId: run.id,
           seq: payload.seq,
           audience: payload.audience,
+          // P1-13 受众过滤的事实源：Browser 扇出按它决定 owner 帧的可见性。
+          ownerUserId: run.ownerUserId,
           event: payload.event,
         },
       })
       // 终态禁复活（§3.2/R5）：迟到事件已持久留证，状态不动。
       if (isTerminal(run.status)) return
+      // 双受众单行迁移（P1-13 链路实测）：同一事实的 owner/project 两行各自
+      // append 成功，若都推状态机，第二行必撞 INVALID_RUN_TRANSITION——状态
+      // 迁移只由 owner（全量）行驱动，project（收缩）行是纯镜像。
+      if (payload.audience !== 'owner') return
       await this.applyProjectedEvent(tx, run, payload.event, now)
     })
   }
@@ -449,7 +455,9 @@ export class RunOrchestrator {
         return
       }
       case 'approval.requested': {
-        await insertApproval(tx, {
+        // 只有 owner 行会到这里（project 行在调用上游已被挡）；R6 重放的重复
+        // owner 行则由 insertApprovalIfAbsent 幂等跳过（事件均已持久留证）。
+        const { inserted } = await insertApprovalIfAbsent(tx, {
           id: event.approval.approvalId,
           runId: run.id,
           callId: event.approval.callId,
@@ -458,6 +466,7 @@ export class RunOrchestrator {
           preview: event.approval.preview,
           expiresAt: new Date(event.approval.expiresAt),
         })
+        if (!inserted) return
         await appendTeamEvent(tx, {
           type: 'approval.changed',
           payload: { approvalId: event.approval.approvalId, runId: run.id, status: 'pending' },

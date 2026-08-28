@@ -143,3 +143,55 @@ export interface AgentDetailView extends AgentView {
   currentRevision: ProfileRevisionView | null
   revisions: ProfileRevisionView[]
 }
+
+// ---- P1-13 Run 运行面 ----
+
+// device/pairing.ts：GET /devices 的列表项。
+export interface DeviceView {
+  id: string
+  name: string
+  platform: string
+  status: 'online' | 'offline' | 'revoked'
+  dshDistributionVersion: string | null
+  lastSeenAt: string | null
+}
+
+// device/workspace-routes.ts：GET /workspaces 的列表项（不含本地路径，03 §2.4）。
+export interface WorkspaceView {
+  workspaceId: string
+  deviceId: string
+  name: string
+  kind: 'directory' | 'git'
+  available: boolean
+}
+
+// run/queries.ts：GET /runs/:runId 的 RunView。
+export interface RunView {
+  id: string
+  taskId: string
+  ownerUserId: string
+  agentId: string
+  profileRevisionId: string
+  deviceId: string
+  workspaceId: string
+  status: RunStatus
+  dshSessionId: string | null
+  failureCode: string | null
+  failureSummary: string | null
+  profileDigest: string
+  createdAt: string
+  startedAt: string | null
+  finishedAt: string | null
+}
+
+// run/routes.ts：GET /runs/:runId/events 的事件项（受众由 Hub 按请求者裁剪）。
+export interface RunEventItem {
+  runId: string
+  seq: number
+  type: string
+  audience: 'owner' | 'project' | 'admin'
+  /** ProjectedRunEvent 的 event 载荷；具体形状按 type 解释，UI 不猜未知类型。 */
+  event: Record<string, unknown>
+  occurredAt: string
+  receivedAt: string
+}

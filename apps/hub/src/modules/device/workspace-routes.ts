@@ -20,6 +20,9 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: WorkspaceRou
       ok: true,
       data: rows.map((row) => ({
         workspaceId: row.id,
+        // P1-13 Run Launcher 需要 workspace→device 配对（StartRun 两个 id 都要）；
+        // deviceId 是不透明标识，不是本地路径，03 §2.4 边界不破。
+        deviceId: row.deviceId,
         name: row.name,
         kind: row.kind,
         capabilities: row.capabilities,

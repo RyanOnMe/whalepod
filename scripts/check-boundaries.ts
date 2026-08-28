@@ -44,6 +44,12 @@ const DEPENDENCY_RULES: ReadonlyArray<{ importer: string; allowed: readonly stri
     allowed: ['@project311/domain', '@project311/protocol', '@project311/db'],
   },
   { importer: 'apps/web/', allowed: ['@project311/protocol'] },
+  {
+    // 验收链路测试（P1-13 run-projection-chain）：跨 app 验收需要直接读 DB 判定
+    // 落库结果——与 apps/hub/tests/ 同型例外；src 侧仍禁 db（部署边界不变）。
+    importer: 'apps/node/tests/',
+    allowed: ['@project311/domain', '@project311/protocol', '@project311/db'],
+  },
   { importer: 'apps/node/', allowed: ['@project311/domain', '@project311/protocol'] },
   { importer: 'apps/runtime/', allowed: ['@project311/protocol', '@project311/runtime-dsh'] },
   { importer: 'packages/domain/', allowed: [] },

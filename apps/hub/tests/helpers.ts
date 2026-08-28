@@ -609,7 +609,9 @@ export function runEventFrame(
   runId: string,
   seq: number,
   event: Record<string, unknown>,
-  audience: 'owner' | 'project' | 'admin' = 'project',
+  // P1-13 起状态迁移只由 owner 行驱动（project 行是同一事实的收缩镜像）；
+  // 驱动状态边事件的测试帧默认 owner，与真实 projector 的输出一致。
+  audience: 'owner' | 'project' | 'admin' = 'owner',
 ): unknown {
   messageSeq += 1
   return {
