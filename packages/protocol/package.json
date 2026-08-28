@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./plugin-pack-digest": {
+      "types": "./dist/plugin-pack-digest.d.ts",
+      "default": "./dist/plugin-pack-digest.js"
     }
   },
   "scripts": {
