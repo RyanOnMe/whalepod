@@ -142,7 +142,7 @@ export class WorkspaceRegistry {
   async resolve(workspaceId: string): Promise<string> {
     const row = this.db
       .prepare('select * from workspace_registry where workspace_id = ?')
-      .get(workspaceId) as RegistryRow | undefined
+      .get(workspaceId) as unknown as RegistryRow | undefined
     if (row === undefined) {
       throw new WorkspaceError('WORKSPACE_UNAVAILABLE', 'workspace is not registered')
     }
@@ -165,7 +165,7 @@ export class WorkspaceRegistry {
   async list(): Promise<RegisteredWorkspace[]> {
     const rows = this.db
       .prepare('select * from workspace_registry order by created_at asc')
-      .all() as RegistryRow[]
+      .all() as unknown as RegistryRow[]
     return rows.map((row) => ({
       id: row.workspace_id,
       name: row.name,

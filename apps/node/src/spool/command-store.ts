@@ -59,7 +59,7 @@ export class CommandStore {
       .prepare(
         'select command_id, run_id, type, payload, received_at from spooled_command where acked_at is null order by seq_id asc',
       )
-      .all() as Array<{
+      .all() as unknown as Array<{
       command_id: string
       run_id: string
       type: string

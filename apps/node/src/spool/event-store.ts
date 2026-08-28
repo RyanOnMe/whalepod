@@ -40,7 +40,7 @@ export class EventStore {
   pending(runId: string): SpooledEvent[] {
     const rows = this.db
       .prepare('select run_id, seq, payload from spooled_event where run_id = ? order by seq asc')
-      .all(runId) as Array<{ run_id: string; seq: number; payload: string }>
+      .all(runId) as unknown as Array<{ run_id: string; seq: number; payload: string }>
     return rows.map((row) => ({ runId: row.run_id, seq: row.seq, payload: row.payload }))
   }
 
