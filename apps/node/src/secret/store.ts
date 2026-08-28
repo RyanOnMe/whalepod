@@ -49,7 +49,7 @@ export class SecretStore {
     const data = this.readWholeFile(false)
     const slots: Array<{ provider: string; slot: string }> = []
     for (const provider of Object.keys(data).sort()) {
-      for (const slot of Object.keys(data[provider]).sort()) {
+      for (const slot of Object.keys(data[provider] ?? {}).sort()) {
         slots.push({ provider, slot })
       }
     }

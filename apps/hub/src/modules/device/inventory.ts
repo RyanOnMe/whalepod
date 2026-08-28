@@ -51,6 +51,7 @@ export class WorkspaceInventoryIngest {
         })
         upserted += 1
       } catch (error) {
+        console.error('INVENTORY_FAIL', error)
         this.deps.warn?.('workspace inventory upsert failed', {
           deviceId: device.deviceId,
           workspaceId: ws.workspaceId,
