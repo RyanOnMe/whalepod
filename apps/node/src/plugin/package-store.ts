@@ -96,7 +96,10 @@ async function walk(
       const content = await readFile(abs)
       const st = statSync(abs)
       out.push({
-        path: abs.slice(root.length + 1).split('\\').join('/'),
+        path: abs
+          .slice(root.length + 1)
+          .split('\\')
+          .join('/'),
         executable: (st.mode & 0o111) !== 0,
         contentDigest: createHash('sha256').update(content).digest('hex'),
       })

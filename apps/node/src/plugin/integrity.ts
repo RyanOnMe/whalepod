@@ -25,7 +25,10 @@ export class PluginError extends Error {
 const SRI_RE = /^sha(256|384|512)-([A-Za-z0-9+/]+={0,2})$/
 
 /** 计算字节流的 SRI 值（用于 catalog 制作与测试断言）。 */
-export function sriFor(content: Buffer, algorithm: 'sha256' | 'sha384' | 'sha512' = 'sha512'): string {
+export function sriFor(
+  content: Buffer,
+  algorithm: 'sha256' | 'sha384' | 'sha512' = 'sha512',
+): string {
   return `${algorithm}-${createHash(algorithm).update(content).digest('base64')}`
 }
 

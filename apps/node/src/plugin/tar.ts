@@ -8,7 +8,7 @@
  *   longname。
  * - 单文件与总大小上限在 installer 层卡住（这里只做结构性安全）。
  */
-import { gunzipSync } from 'node:zlib'
+import { gunzipSync, gzipSync } from 'node:zlib'
 import { PluginError } from './integrity.js'
 
 export interface TarEntry {
@@ -87,4 +87,46 @@ export function unpackTarGz(archive: Buffer): TarEntry[] {
     }
   }
   return entries
+}
+
+// ---------- 规范化写入器（catalog/fixture tarball 制作用） ----------
+
+export interface TarInputEntry {
+  readonly path: string
+  readonly content?: Buffer
+  readonly kind?: 'file' | 'directory'
+  readonly mode?: number
+}
+
+/**
+ * 确定性 tar.gz：uid/gid 0、mtime 0、条目按路径排序、固定 gzip 参数——
+ * 同一输入永远产出同一字节流（catalog integrity 可离线复算验证）。
+ */
+export function buildTarGz(entries: readonly TarInputEntry[]): Buffer {
+  const blocks: Buffer[] = []
+  for (const entry of [...entries].sort((a, b) => a.path.localeCompare(b.path))) {
+    const content = entry.content ?? Buffer.alloc(0)
+    const header = Buffer.alloc(512)
+    header.write(entry.path, 0, 'latin1')
+    header.write((entry.mode ?? 0o644).toString(8).padStart(7, '0'), 100, 'latin1')
+    header.write('0000000', 108, 'latin1')
+    header.write('0000000', 116, 'latin1')
+    header.write(content.length.toString(8).padStart(11, '0'), 124, 'latin1')
+    header.write('00000000000', 136, 'latin1')
+    header.fill(0x20, 148, 156)
+    header.write(entry.kind === 'directory' ? '5' : '0', 156, 'latin1')
+    header.write('ustar\0', 257, 'latin1')
+    header.write('00', 263, 'latin1')
+    let sum = 0
+    for (const byte of header) sum += byte
+    header.write(sum.toString(8).padStart(6, '0') + '\0 ', 148, 'latin1')
+    blocks.push(header)
+    if (entry.kind !== 'directory' && content.length > 0) {
+      blocks.push(content)
+      const pad = (512 - (content.length % 512)) % 512
+      if (pad > 0) blocks.push(Buffer.alloc(pad))
+    }
+  }
+  blocks.push(Buffer.alloc(1024))
+  return gzipSync(Buffer.concat(blocks), { level: 9 })
 }

@@ -9,11 +9,7 @@ import { createHash } from 'node:crypto'
 import { parseDocument } from 'yaml'
 import { z } from 'zod'
 import { canonicalJson } from '@project311/protocol/plugin-pack-digest'
-import {
-  ExactVersionSchema,
-  NpmPackageNameSchema,
-  SriIntegritySchema,
-} from '@project311/protocol'
+import { ExactVersionSchema, NpmPackageNameSchema, SriIntegritySchema } from '@project311/protocol'
 import { PluginError } from './integrity.js'
 
 /** 闭包中一个依赖 tarball 的钉死记录。 */

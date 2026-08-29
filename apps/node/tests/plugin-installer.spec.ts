@@ -6,7 +6,15 @@
  * 字节上限——全部拒绝且 store 无残留；合法闭包安装后内容可寻址命中。
  */
 import { gunzipSync, gzipSync } from 'node:zlib'
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -141,7 +149,10 @@ function fakeFetch(map: Map<string, Buffer>): PluginFetch {
   }
 }
 
-function makeInstaller(fetchImpl: PluginFetch): { installer: PluginInstaller; store: PackageStore } {
+function makeInstaller(fetchImpl: PluginFetch): {
+  installer: PluginInstaller
+  store: PackageStore
+} {
   const store = new PackageStore(join(mktemp(), 'store'))
   return {
     installer: new PluginInstaller({
@@ -161,13 +172,20 @@ describe('PluginInstaller（攻击矩阵）', () => {
     const manifest = makeManifest(tarball, lock)
     const depTar = buildTarGz([{ path: 'package/index.js', content: '// dep\n' }])
     const { installer } = makeInstaller(
-      fakeFetch(new Map([[manifest.tarballUrl, tarball], [lock.dependencies[0]!.resolved, depTar]])),
+      fakeFetch(
+        new Map([
+          [manifest.tarballUrl, tarball],
+          [lock.dependencies[0]!.resolved, depTar],
+        ]),
+      ),
     )
 
     const first = await installer.install(manifest, lock)
     expect(first.treeDigest).toMatch(/^[a-f0-9]{64}$/)
     expect(readFileSync(join(first.path, 'index.js'), 'utf8')).toContain('2030-01-02')
-    expect(readFileSync(join(first.path, 'node_modules/left-pad/index.js'), 'utf8')).toBe('// dep\n')
+    expect(readFileSync(join(first.path, 'node_modules/left-pad/index.js'), 'utf8')).toBe(
+      '// dep\n',
+    )
     // 只读发布。
     expect(statSync(join(first.path, 'index.js')).mode & 0o777).toBe(0o444)
     // install script 绝不执行：postinstall 的 canary 不存在。
