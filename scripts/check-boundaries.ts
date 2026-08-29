@@ -78,10 +78,15 @@ export function validateImport(importer: string, specifier: string): void {
 
   if (!specifier.startsWith(WORKSPACE_SCOPE)) return
 
+  // 子路径导出（如 @project311/protocol/plugin-pack-digest）归一到包名再判定——
+  // 方向表管的是包级依赖，包的已声明子路径导出继承包的许可。
+  const segments = specifier.split('/')
+  const packageSpecifier = `${segments[0]}/${segments[1]}`
+
   const rule = DEPENDENCY_RULES.find(({ importer: prefix }) => importer.startsWith(prefix))
   if (!rule) return // importers outside apps//packages (e.g. scripts/) are not governed here
 
-  if (!rule.allowed.includes(specifier)) {
+  if (!rule.allowed.includes(packageSpecifier)) {
     const allowed = rule.allowed.length > 0 ? rule.allowed.join(', ') : 'none'
     throw new Error(
       `Import "${specifier}" is not allowed from ${rule.importer} (allowed: ${allowed})`,

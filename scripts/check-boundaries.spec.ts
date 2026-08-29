@@ -33,6 +33,21 @@ describe('workspace dependency rules', () => {
     }
   })
 
+  it('treats declared subpath exports as their package (P1-17 digest subpath)', () => {
+    expect(() =>
+      validateImport('apps/node/src/plugin/lockfile.ts', '@project311/protocol/plugin-pack-digest'),
+    ).not.toThrow()
+    expect(() =>
+      validateImport(
+        'apps/hub/src/modules/plugin/pack-resolver.ts',
+        '@project311/protocol/plugin-pack-digest',
+      ),
+    ).not.toThrow()
+    expect(() => validateImport('apps/web/src/main.ts', '@project311/db/anything')).toThrow(
+      'not allowed from apps/web/',
+    )
+  })
+
   it('blocks hub -> runtime-dsh', () => {
     expect(() => validateImport('apps/hub/src/app.ts', '@project311/runtime-dsh')).toThrow(
       'not allowed from apps/hub/',
