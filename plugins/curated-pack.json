@@ -5,11 +5,11 @@
     {
       "name": "project311-fixed-time",
       "version": "0.1.0",
-      "integrity": "sha256-1PyE/aE4CRhjMf7PdHcZ2B62j91rieC0H6xjZl+Tnc8=",
+      "integrity": "sha256-/LpanxkNgZu4lEmZ4q5UBwxGTQBWUblY1EgNE9Kh+C0=",
       "dependencyLockDigest": "90e1d148a696c6e82b193adbe9a8017fb5dd4b972d6fb1ed6bd3c178b4564bae",
       "entrypoint": "index.js",
       "configDigest": "1593825c7bb45db0e23a43aeac6bf646b234b02d8943c2b8e3b85894b8f722cc"
     }
   ],
-  "packDigest": "864fb1b0651521ff2286db60a94557fa1f3e3423c1d9d975bf6a61a78c66ce28"
+  "packDigest": "056b0273ba40c802bcafef99977811dde036d944ec4c77f1c8461d59c28525be"
 }

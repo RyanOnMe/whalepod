@@ -22,6 +22,9 @@ export interface TarEntry {
 
 const BLOCK = 512
 
+/** gzip 头 OS 字段归一值（3 = Unix；见 buildTarGz 注释）。 */
+const GZIP_OS_UNIX = 3
+
 function parseOctal(field: Buffer): number {
   const text = field.toString('latin1').replace(/\0.*$/s, '').trim()
   if (text === '') return 0
@@ -101,6 +104,11 @@ export interface TarInputEntry {
 /**
  * 确定性 tar.gz：uid/gid 0、mtime 0、条目按路径排序、固定 gzip 参数——
  * 同一输入永远产出同一字节流（catalog integrity 可离线复算验证）。
+ *
+ * 注意 gzip 头第 9 字节是 OS 字段（zlib 编译期 OS_CODE：macOS=19、Linux=3），
+ * 不归一则同一 tar 在不同平台产出不同字节流，catalog integrity 跨平台复算
+ * 漂移（P1-17 CI 实证）。这里归一为 3（Unix，部署目标 POSIX）；mtime 由
+ * zlib 默认置 0、XFL 随固定 level 固定，OS 是唯一平台相关字节。
  */
 export function buildTarGz(entries: readonly TarInputEntry[]): Buffer {
   const blocks: Buffer[] = []
@@ -128,5 +136,7 @@ export function buildTarGz(entries: readonly TarInputEntry[]): Buffer {
     }
   }
   blocks.push(Buffer.alloc(1024))
-  return gzipSync(Buffer.concat(blocks), { level: 9 })
+  const gz = gzipSync(Buffer.concat(blocks), { level: 9 })
+  gz[9] = GZIP_OS_UNIX // 跨平台字节级确定性：归一 gzip 头 OS 字段
+  return gz
 }

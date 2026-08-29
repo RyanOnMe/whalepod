@@ -70,6 +70,15 @@ describe('fixture tarball（catalog/install/runtime 的 integrity 锚）', () =>
     expect(rebuildTarball().equals(readFileSync(TARBALL_PATH))).toBe(true)
   })
 
+  it('gzip 头平台字段已归一（mtime=0、XFL 随 level 固定、OS=3 Unix）', () => {
+    // 跨平台字节级确定性的全部平台相关面：zlib 编译期 OS_CODE 在 macOS=19、
+    // Linux=3，不归一则 catalog integrity 跨平台复算漂移（P1-17 CI 实证）。
+    const header = rebuildTarball().subarray(0, 10)
+    expect([...header.subarray(0, 3)]).toEqual([0x1f, 0x8b, 0x08])
+    expect(header.readUInt32LE(4)).toBe(0) // mtime
+    expect(header[9]).toBe(3) // OS 归一为 Unix
+  })
+
   it('unpackTarGz(已提交 tarball) 解出文件集与 fixture 源逐字节一致', () => {
     const entries = unpackTarGz(readFileSync(TARBALL_PATH))
     const files = readFixtureFiles()
