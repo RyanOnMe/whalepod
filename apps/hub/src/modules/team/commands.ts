@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { digestPluginPack } from '@project311/protocol/plugin-pack-digest'
 import {
   consumeInvite,
   disableUser,
@@ -26,15 +26,13 @@ export const CORE_EMPTY_PACK_NAME = 'core-empty'
 const INVITE_TTL_MS = 72 * 60 * 60 * 1000
 
 /**
- * 标准 pack 算法（03 §2.5：pack_digest 为规范化内容 SHA-256）：
- * 规范化形式 = 按字典序排序后的 installation id 数组的 JSON。
- * core-empty 的外部 installation 列表为空，digest = sha256('[]')。
+ * core-empty Pack（02 Task 5 Step 3）：外部 installation 列表为空。
+ * pack_digest 与 03 §2.5 同一算法——digestPluginPack（packages 排序后 canonical
+ * JSON 的 SHA-256，与 plugin 模块组装 Pack 完全一致；空闭包为固定值）。
+ * 旧算法 sha256('[]')（installation id 数组 digest）已废弃：pack_digest 是内容
+ * digest，Node 侧 preflight 只能按内容算法复算。
  */
-export function computePackDigest(installations: readonly string[]): string {
-  return createHash('sha256')
-    .update(JSON.stringify([...installations].sort()))
-    .digest('hex')
-}
+export const CORE_EMPTY_PACK_DIGEST = digestPluginPack({ schemaVersion: 1, packages: [] })
 
 export interface SetupResult {
   readonly teamId: string
@@ -73,7 +71,7 @@ export async function setupInstance(
         id: uuidv7(),
         name: CORE_EMPTY_PACK_NAME,
         installations: [],
-        packDigest: computePackDigest([]),
+        packDigest: CORE_EMPTY_PACK_DIGEST,
         createdBy: userId,
       })
       await insertSession(tx, {

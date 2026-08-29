@@ -1,0 +1,7 @@
+# p311 hub 集成测试 fixture：受审依赖闭包（空闭包）。
+# dependencyLockDigest 算法见 p311-fixed-time@0.1.0.lock.yaml 头注。
+schemaVersion: 1
+package:
+  name: p311-unreviewed
+  version: 0.0.3
+dependencies: []

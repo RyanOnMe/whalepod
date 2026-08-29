@@ -8,7 +8,7 @@ import { LastOwnerError, Outbox } from '@project311/db'
 import type { Database } from '@project311/db'
 import type { ApiFailure, ErrorCode } from '@project311/protocol'
 import type { HubConfig } from './config.js'
-import { DEFAULT_RATE_LIMIT, isSecureCookieRequired } from './config.js'
+import { DEFAULT_RATE_LIMIT, defaultPluginCatalogDir, isSecureCookieRequired } from './config.js'
 import { ApiError } from './modules/shared/http-error.js'
 import { assertSameOrigin } from './modules/auth/origin.js'
 import { assertIdempotencyKey } from './modules/auth/idempotency.js'
@@ -21,6 +21,8 @@ import { SetupTokenStore } from './modules/team/setup-token.js'
 import { registerProjectRoutes } from './modules/project/routes.js'
 import { registerTaskRoutes } from './modules/task/routes.js'
 import { registerAgentRoutes } from './modules/agent/routes.js'
+import { loadPluginCatalog } from './modules/plugin/catalog.js'
+import { registerPluginRoutes } from './modules/plugin/routes.js'
 import { registerDeviceRoutes } from './modules/device/routes.js'
 import { registerWorkspaceRoutes } from './modules/device/workspace-routes.js'
 import { registerNodeWebsocket } from './modules/device/node-websocket.js'
@@ -120,6 +122,11 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
   const secureCookie = isSecureCookieRequired(config.publicOrigin)
   // Task 取消带活跃 Run 时需在事务内入队 run.cancel；与 Run 模块共享同一 Outbox 类型。
   const outbox = new Outbox(database)
+  // P1-17：curated 插件 catalog 在组合根一次性加载（坏文件 = 启动即失败，fail-closed；
+  // 目录缺失 = 尚未部署 curated catalog，按空 catalog 启动）。插件端点共用同一份只读目录。
+  const pluginCatalog = await loadPluginCatalog(
+    config.pluginCatalogDir ?? defaultPluginCatalogDir(),
+  )
 
   // 03 §4 末段：所有 /api/v1 非安全方法先过 Origin 与 Idempotency-Key，
   // 再进业务 handler；挂在根实例上，未知路径的 404 也先被这两道门拦截。
@@ -158,6 +165,13 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       registerProjectRoutes(api, { database, requireActor })
       registerTaskRoutes(api, { database, requireActor, outbox })
       registerAgentRoutes(api, { database, requireActor })
+      // P1-17：插件端点（03 §4）——catalog/安装/Pack 走 Session，descriptor 走 Device Token。
+      registerPluginRoutes(api, {
+        database,
+        requireActor,
+        catalog: pluginCatalog,
+        allowLocalDevelopment: config.pluginDevMode ?? false,
+      })
       registerDeviceRoutes(api, { database, requireActor, anonymousLimiter })
       registerWorkspaceRoutes(api, { database, requireActor })
       // P1-13：Run HTTP 面（创建/投影/事件时间线）正式接线；dsh 版本取自

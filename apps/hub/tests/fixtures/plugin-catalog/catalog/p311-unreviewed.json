@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "p311-unreviewed",
+  "version": "0.0.3",
+  "tarballUrl": "https://catalog.fixtures.project311.test/tarballs/p311-unreviewed-0.0.3.tgz",
+  "integrity": "sha256-5VTgEZmJ6a5syj3t8Ysel3wS6AcTEWnzKu976fO+Cgc=",
+  "dependencyLockDigest": "3f0d8a5c50d1d0b0b581e62dd0cca07395f208350c973b03f6ae451837a2ed1d",
+  "dshCompatibility": "0.1.0-rc.8",
+  "entrypoint": "dist/unreviewed.js",
+  "capabilities": ["subprocess.spawn"],
+  "capabilityClass": "declared",
+  "license": "MIT",
+  "review": {
+    "status": "unreviewed",
+    "commit": "3f0d8a5c50d1d0b0b581e62dd0cca07395f20835",
+    "at": "2026-08-26T08:15:00.000Z"
+  }
+}

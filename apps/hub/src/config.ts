@@ -2,6 +2,8 @@
  * Hub 运行配置。环境变量以 PROJECT311_ 为前缀（旧代号 TABTIN_* 属文档暂定标识，
  * 不扩散进新代码）。
  */
+import { fileURLToPath } from 'node:url'
+
 export interface RateLimitConfig {
   /** 固定窗口长度，默认 15 分钟。 */
   readonly windowMs: number
@@ -20,12 +22,27 @@ export interface HubConfig {
   readonly host: string
   readonly port: number
   readonly rateLimit?: RateLimitConfig | undefined
+  /**
+   * Curated 插件 catalog 目录（catalog/*.json + locks/*.lock.yaml，02 Task 17）。
+   * 缺省 = 仓库根 plugins/（见 defaultPluginCatalogDir）。
+   */
+  readonly pluginCatalogDir?: string | undefined
+  /** 显式 dev mode：仅此开关打开时允许安装 local-development 清单（默认 fail-closed 拒绝）。 */
+  readonly pluginDevMode?: boolean | undefined
 }
 
 export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
   windowMs: 15 * 60 * 1000,
   loginMax: 10,
   anonymousMax: 20,
+}
+
+/**
+ * 默认 curated catalog 目录：仓库根 plugins/。本文件的 src 与 dist 形态都位于
+ * 仓库根下三级（apps/hub/src|dist），../../../ 恒解析回仓库根——不依赖进程 cwd。
+ */
+export function defaultPluginCatalogDir(): string {
+  return fileURLToPath(new URL('../../../plugins', import.meta.url))
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubConfig {
@@ -43,6 +60,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubConfig {
     setupTokenPath: env.PROJECT311_SETUP_TOKEN_PATH ?? 'data/setup-token',
     host: env.HOST ?? '0.0.0.0',
     port: Number(env.PORT ?? 8080),
+    pluginCatalogDir: env.PROJECT311_PLUGIN_CATALOG_DIR,
+    // 显式开关：仅 '1'/'true' 视为开启，其余（含未设置）一律关闭。
+    pluginDevMode:
+      env.PROJECT311_PLUGIN_DEV_MODE === '1' || env.PROJECT311_PLUGIN_DEV_MODE === 'true',
   }
 }
 
