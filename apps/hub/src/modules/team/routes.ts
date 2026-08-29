@@ -9,7 +9,7 @@ import { hashPassword } from '../auth/password.js'
 import { setSessionCookie } from '../auth/session.js'
 import type { RequireActor } from '../auth/session.js'
 import type { RateLimiter } from '../auth/rate-limit.js'
-import { disableMember, setupInstance } from './commands.js'
+import { disableMember, migrateCoreEmptyPackDigest, setupInstance } from './commands.js'
 import type { SetupTokenStore } from './setup-token.js'
 
 export interface TeamRouteDeps {
@@ -50,6 +50,14 @@ export function registerTeamRoutes(app: FastifyInstance, deps: TeamRouteDeps): v
       throw new ApiError(429, 'FORBIDDEN', 'too many setup attempts')
     }
     const body = SetupRequestSchema.parse(mergeSetupTokenHeader(request))
+    // M10 断代迁移：旧 dev 库的 core-empty 行存的是旧算法 digest，先幂等修复
+    // （已初始化实例重试 setup 也会经过此处），再走常规 409/建账流程。
+    if (await migrateCoreEmptyPackDigest(deps.database)) {
+      request.log.warn(
+        { component: 'hub.setup', requestId: String(request.id) },
+        'core-empty pack digest migrated from legacy algorithm to current digest',
+      )
+    }
     if ((await getTeam(deps.database.db)) !== undefined) {
       audit(request, 'setup', 'denied')
       throw new ApiError(409, 'CONFLICT', 'instance already initialized')

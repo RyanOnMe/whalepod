@@ -151,6 +151,21 @@ export async function createPack(
         if (row === undefined) throw new ApiError(404, 'NOT_FOUND', 'installation not found')
         return row
       })
+      // 同一 packageName 的两个版本（不同 installation）会让「按 name 排序」的 digest
+      // 输入退化为依赖输入顺序（同键 stable sort），而 Node preflight 无条件拒重名
+      // descriptor → 创建即死档。早拒绝并给出可归因错误（400，与重复 id 同形态）；
+      // 协议层 digestPluginPack 对同输入同样 fail-closed（纵深）。
+      const seenPackages = new Set<string>()
+      for (const row of members) {
+        if (seenPackages.has(row.packageName)) {
+          throw new ApiError(
+            400,
+            'VALIDATION_FAILED',
+            'pack cannot include two installations of the same package',
+          )
+        }
+        seenPackages.add(row.packageName)
+      }
       const unreviewed = members.find((row) => row.trust === 'unreviewed')
       if (unreviewed !== undefined) {
         throw new ApiError(

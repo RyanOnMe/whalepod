@@ -6,10 +6,12 @@
  * app.ts 的钩子按 03 §4 末段处理，本模块不重复。
  *
  * fail-closed 主锚点：按请求的 packDigest 找 Pack → 用当前 catalog 重建 entries
- * 并复算 pack digest → 与请求不一致即 404。catalog 被改动（Hub 重启后加载了被
- * 篡改的 manifest）= digest 漂移 = 拒发；与「未知 digest」同一 404 形态，不泄露
- * 存在性（04 §6.1）。descriptor 不含任何 secret、不含本机绝对路径——manifest 与
- * lockfile 都是 catalog 相对内容的原样下发。
+ * ——快照漂移（manifest 缺失、lockfile 缺失、或已审字段与安装行快照不一致）=
+ * 409 PLUGIN_PACK_MISMATCH 显式信号（queries.resolvePackEntryPairs；lockfile 缺失
+ * 分支在本文件尾部，均有测试背书）→ 复算 pack digest，与请求不一致 = 404。
+ * 未知 digest 与 entrypoint 漂移同作 404 形态，不泄露存在性（04 §6.1）。
+ * descriptor 不含任何 secret、不含本机绝对路径——manifest 与 lockfile 都是
+ * catalog 相对内容的原样下发。
  */
 import { eq } from 'drizzle-orm'
 import type { FastifyRequest } from 'fastify'

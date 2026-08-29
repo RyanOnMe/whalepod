@@ -9,7 +9,11 @@ import { asc } from 'drizzle-orm'
 import { schema } from '@project311/db'
 import type { DbHandle } from '@project311/db'
 import { PluginPackEntrySchema, pluginCordisEntry } from '@project311/protocol'
-import { digestPluginCordisEntry, digestPluginPack } from '@project311/protocol/plugin-pack-digest'
+import {
+  compareCodePoints,
+  digestPluginCordisEntry,
+  digestPluginPack,
+} from '@project311/protocol/plugin-pack-digest'
 import type {
   PluginCapability,
   PluginInstallationView,
@@ -85,7 +89,7 @@ export function resolvePackEntryPairs(
   catalog: PluginCatalog,
   rows: readonly PluginInstallationRow[],
 ): PluginPackEntryView[] {
-  const sorted = [...rows].sort((a, b) => a.packageName.localeCompare(b.packageName))
+  const sorted = [...rows].sort((a, b) => compareCodePoints(a.packageName, b.packageName))
   return sorted.map((row) => ({
     entry: rebuildPackEntry(catalog, row),
     installation: toInstallationView(row),

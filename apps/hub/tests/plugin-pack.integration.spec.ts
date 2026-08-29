@@ -4,6 +4,7 @@
  *
  * 覆盖：Admin 安装快照、幂等重装、G1-05（Member POST → 403 + audit denied）、
  * unreviewed/local-development 准入、不可变 Pack（digest 确定性、name 冲突 409）、
+ * 同名包多版本早拒绝（M9，专用 fixture plugin-catalog-multi）、
  * Device Token descriptor（pack/lock/config 三处 digest 一致）、catalog 篡改
  * fail-closed。fixture catalog 自含于 tests/fixtures/plugin-catalog/（不依赖仓库根
  * plugins/）；lock digest 在测试内按 digestLockfile 同算法现算自证。
@@ -41,6 +42,12 @@ import {
 } from './helpers.js'
 
 const FIXTURE_CATALOG_DIR = fileURLToPath(new URL('./fixtures/plugin-catalog', import.meta.url))
+// 同名多版本专用 fixture（p311-echo@0.2.0 与 @0.2.1 并存；M9）。不放主 fixture：
+// plugin-catalog.integration.spec.ts 锚定了主 catalog 的全量条目清单，加第二版本
+// 会打破该断言——多版本 fixture 自含一个目录，互不影响。
+const DUAL_VERSION_CATALOG_DIR = fileURLToPath(
+  new URL('./fixtures/plugin-catalog-multi', import.meta.url),
+)
 
 // fixture 自证：lock 文件为空闭包，dependencyLockDigest 必须等于同算法现算值
 // （digestLockfile = 排序依赖闭包 canonical JSON 的 SHA-256，见 apps/node lockfile.ts）。
@@ -401,6 +408,48 @@ describe('plugin pack API (P1-17)', () => {
       expect(res.json().error.code).toBe('PLUGIN_UNREVIEWED')
     } finally {
       await devCtx.close()
+    }
+  })
+
+  it('同名包两个版本各自可安装，但不能进同一 Pack（M9：400 VALIDATION_FAILED）', async () => {
+    // 同一 packageName 的两个版本（不同 installation）会让 digest 输入依赖排序
+    // 稳定性、Node preflight 也无条件拒重名 descriptor → Hub 侧必须早拒绝。
+    const dualCtx = await createPluginTestApp(database, { catalogDir: DUAL_VERSION_CATALOG_DIR })
+    try {
+      const install = async (version: string): Promise<PluginInstallationView> => {
+        const res = await apiInject(dualCtx, owner, {
+          method: 'POST',
+          url: '/api/v1/plugins/installations',
+          payload: { name: 'p311-echo', version },
+        })
+        if (res.statusCode !== 201) {
+          throw new Error(`install p311-echo@${version} 失败：${res.statusCode} ${res.body}`)
+        }
+        return res.json().data as PluginInstallationView
+      }
+      // 前提自证：两个版本各自安装成功，是两个独立 installation 行。
+      const older = await install('0.2.0')
+      const newer = await install('0.2.1')
+      expect(older.id).not.toBe(newer.id)
+      expect(older.packageVersion).toBe('0.2.0')
+      expect(newer.packageVersion).toBe('0.2.1')
+
+      const res = await apiInject(dualCtx, owner, {
+        method: 'POST',
+        url: '/api/v1/plugin-packs',
+        payload: { name: 'same-name-pack', installationIds: [older.id, newer.id] },
+      })
+      expect(res.statusCode).toBe(400)
+      expect(res.json().error.code).toBe('VALIDATION_FAILED')
+      expect(res.json().error.message).toBe(
+        'pack cannot include two installations of the same package',
+      )
+      // 拒绝即无半成品：库中只剩 setup 创建的 core-empty 一个 Pack。
+      const packs = await database.db.select().from(schema.pluginPacks)
+      expect(packs).toHaveLength(1)
+      expect(packs[0]?.name).toBe('core-empty')
+    } finally {
+      await dualCtx.close()
     }
   })
 

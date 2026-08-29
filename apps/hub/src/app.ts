@@ -127,6 +127,14 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
   const pluginCatalog = await loadPluginCatalog(
     config.pluginCatalogDir ?? defaultPluginCatalogDir(),
   )
+  // 目录缺失 = 尚未部署 curated catalog：显式告警（安装面关闭），不静默启动
+  // （空安装面常被误当作「目录配错」排查不到；不记绝对路径——红线）。
+  if (pluginCatalog.dirMissing) {
+    app.log.warn(
+      { component: 'hub.plugin' },
+      'plugin catalog directory missing; starting with empty catalog; plugin install surface closed',
+    )
+  }
 
   // 03 §4 末段：所有 /api/v1 非安全方法先过 Origin 与 Idempotency-Key，
   // 再进业务 handler；挂在根实例上，未知路径的 404 也先被这两道门拦截。

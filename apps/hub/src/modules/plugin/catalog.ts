@@ -18,6 +18,7 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PluginManifestSchema } from '@project311/protocol'
+import { compareCodePoints } from '@project311/protocol/plugin-pack-digest'
 import type { PluginManifest } from '@project311/protocol'
 
 export interface PluginCatalog {
@@ -26,12 +27,15 @@ export interface PluginCatalog {
   get(name: string, version: string): PluginManifest | undefined
   /** 受审依赖闭包 lockfile 的 yaml 原文（不透明文本）。 */
   lockfile(name: string, version: string): string | undefined
+  /** catalog 目录本身缺失（ENOENT → 空 catalog、安装面关闭）为 true；目录存在（即便无 manifest）为 false。 */
+  readonly dirMissing: boolean
 }
 
 const EMPTY_CATALOG: PluginCatalog = {
   manifests: [],
   get: () => undefined,
   lockfile: () => undefined,
+  dirMissing: true,
 }
 
 interface CatalogEntry {
@@ -45,7 +49,7 @@ export function lockFileName(name: string, version: string): string {
 }
 
 function byNameVersion(a: PluginManifest, b: PluginManifest): number {
-  return a.name.localeCompare(b.name) || a.version.localeCompare(b.version)
+  return compareCodePoints(a.name, b.name) || compareCodePoints(a.version, b.version)
 }
 
 export async function loadPluginCatalog(dir: string): Promise<PluginCatalog> {
@@ -56,13 +60,20 @@ export async function loadPluginCatalog(dir: string): Promise<PluginCatalog> {
     filenames = await readdir(catalogDir)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return EMPTY_CATALOG
-    throw error
+    // EACCES/EISDIR 等原始 fs 错误的 message 内嵌绝对路径（红线：绝对路径不进日志），
+    // 包成只含相对名的消息，与 ENOENT 分支同风格。
+    throw new Error('plugin catalog 目录不可读：catalog/')
   }
 
   const entries = new Map<string, CatalogEntry>()
   for (const filename of filenames.filter((f) => f.endsWith('.json')).sort()) {
     // 错误信息只含 catalog 相对名，不含绝对路径（红线：绝对路径不进日志）。
-    const raw = await readFile(join(catalogDir, filename), 'utf8')
+    let raw: string
+    try {
+      raw = await readFile(join(catalogDir, filename), 'utf8')
+    } catch {
+      throw new Error(`plugin catalog 清单文件不可读：catalog/${filename}`)
+    }
     let json: unknown
     try {
       json = JSON.parse(raw)
@@ -94,7 +105,10 @@ export async function loadPluginCatalog(dir: string): Promise<PluginCatalog> {
           `plugin catalog 不完整：locks/${lockFileName(manifest.name, manifest.version)} 缺失（catalog/${filename} 声明了该包）`,
         )
       }
-      throw error
+      // 同 readdir 分支：原始 fs 错误 message 内嵌绝对路径，包成只含相对名。
+      throw new Error(
+        `plugin catalog lock 文件不可读：locks/${lockFileName(manifest.name, manifest.version)}`,
+      )
     }
     if (lockfile.trim() === '') {
       throw new Error(
@@ -109,5 +123,6 @@ export async function loadPluginCatalog(dir: string): Promise<PluginCatalog> {
     manifests,
     get: (name, version) => entries.get(`${name}@${version}`)?.manifest,
     lockfile: (name, version) => entries.get(`${name}@${version}`)?.lockfile,
+    dirMissing: false,
   }
 }
