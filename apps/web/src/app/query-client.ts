@@ -20,6 +20,10 @@ export const queryKeys = {
   runEvents: (runId: string) => ['run', runId, 'events'] as const,
   devices: ['devices'] as const,
   workspaces: ['workspaces'] as const,
+  /** P1-17 Admin Plugin Settings：插件目录 / 安装列表 / Pack 列表。 */
+  pluginCatalog: ['plugin-catalog'] as const,
+  pluginInstallations: ['plugin-installations'] as const,
+  pluginPacks: ['plugin-packs'] as const,
 }
 
 function retryLimit(failureCount: number, error: unknown): boolean {

@@ -30,6 +30,7 @@ import { ProjectsPage } from '../routes/ProjectsPage.js'
 import { SetupPage } from '../routes/SetupPage.js'
 import { TaskRoomPage } from '../routes/TaskRoomPage.js'
 import { AgentsPage } from '../routes/AgentsPage.js'
+import { PluginsPage } from '../routes/PluginsPage.js'
 
 function RootErrorPage(): ReactNode {
   const error = useRouteError()
@@ -118,6 +119,7 @@ export function createAppRoutes(queryClient: QueryClient): RouteObject[] {
         { index: true, element: <ProjectsPage /> },
         { path: 'tasks/:taskId', element: <TaskRoomPage /> },
         { path: 'agents', element: <AgentsPage /> },
+        { path: 'plugins', element: <PluginsPage /> },
         { path: 'devices', element: <DevicesPage /> },
       ],
     },

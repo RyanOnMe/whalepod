@@ -54,3 +54,16 @@ export function formatBytes(bytes: number): string {
 export function shortId(id: string): string {
   return id.slice(0, 8)
 }
+
+/** 40 hex git sha 的短形态（review commit 等）：前 8 字符，完整值经 title/复制给出。 */
+export function shortSha(value: string): string {
+  return value.slice(0, 8)
+}
+
+/**
+ * SRI / SHA-256 hex 等长 digest 的短摘要：前 12 字符 + 省略号（02 Task 17 Step 7
+ * 的 integrity 短摘要）；完整值必须经 title 或复制入口给出，不伪造截断值。
+ */
+export function shortDigest(value: string): string {
+  return `${value.slice(0, 12)}…`
+}
