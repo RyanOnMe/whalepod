@@ -2,9 +2,10 @@
  * 新建 Agent 表单（02 Task 7 Step 5）：姓名字段 + 首个 Profile Revision
  * （persona/provider/model/credentialSlot/maxTokens/pluginPackId）。
  *
- * 已知缺口：GET /plugin-packs 属 P1-17 未建，Pack 目录无法下拉——表单允许
- * 手工粘贴 Pack UUID 并注明「Pack 目录随 P1-17 提供」，不伪造目录数据。
- * 提交走 POST /agents（Owner/Admin）；pending 时禁用；失败展示 requestId。
+ * Plugin Pack 经 PackSelect 下拉选择（数据源 GET /plugin-packs，P1-17 已提供），
+ * 不再接受手工粘贴 UUID；未选 Pack 时禁用提交（加载/失败/空列表同理，见
+ * PackSelect 注释）。提交走 POST /agents（Owner/Admin）；pending 时禁用；
+ * 失败展示 requestId。
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent, type ReactNode } from 'react'
@@ -13,6 +14,7 @@ import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import type { AgentView } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
+import { PackSelect } from './PackSelect.js'
 
 export interface AgentRevisionFormProps {
   onCreated?: () => void
@@ -61,7 +63,7 @@ export function AgentRevisionForm({ onCreated }: AgentRevisionFormProps): ReactN
 
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
-    if (mutation.isPending) return
+    if (mutation.isPending || values.pluginPackId === '') return
     setError(null)
     mutation.mutate()
   }
@@ -150,22 +152,22 @@ export function AgentRevisionForm({ onCreated }: AgentRevisionFormProps): ReactN
         </div>
       </div>
       <div className="field">
-        <label htmlFor="agent-plugin-pack">Plugin Pack UUID</label>
-        <input
+        <label htmlFor="agent-plugin-pack">Plugin Pack</label>
+        <PackSelect
           id="agent-plugin-pack"
           value={values.pluginPackId}
-          onChange={(event) => set('pluginPackId')(event.target.value)}
-          placeholder="粘贴 Pack UUID"
-          required
-          pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+          onChange={set('pluginPackId')}
         />
         <p className="field-hint">
-          Pack 目录随 P1-17 提供；当前版本请粘贴现有 Pack 的 UUID（Setup 已创建 core-empty
-          Pack，P1-17 提供目录后可选择）。
+          选择 Agent 首个 Revision 使用的 Plugin Pack（列表来自插件管理）。
         </p>
       </div>
       <div className="form-actions">
-        <button type="submit" className="button button-primary" disabled={mutation.isPending}>
+        <button
+          type="submit"
+          className="button button-primary"
+          disabled={mutation.isPending || values.pluginPackId === ''}
+        >
           {mutation.isPending ? '创建中…' : '创建 Agent'}
         </button>
       </div>

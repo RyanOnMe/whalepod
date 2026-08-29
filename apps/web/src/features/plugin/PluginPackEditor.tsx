@@ -2,11 +2,12 @@
  * Plugin Pack 组装（02 Task 17 Step 7）：从已安装列表勾选组装不可变 Pack。
  *
  * - GET /plugin-packs 展示现有 Pack（entries 与 packDigest 短摘要；完整 digest
- *   可见且提供一键复制）；
+ *   可见且提供一键复制）；Pack ID（UUID）短码展示 + title 全值 + 一键复制，
+ *   供 Agent Revision 表单按 Pack 选用（复制失败如实报错，不伪造「已复制」）；
  * - POST /plugin-packs 创建（Owner/Admin 才有表单；Member 只读）；空选择禁止
  *   提交（按钮禁用），请求体与 protocol 的 PluginPackCreateRequest 对齐；
- * - Pack 创建后不修改任何已有 Agent Revision：只提示去 Agent 管理新建 Revision
- *   并选择该 Pack（本组件不实现 Revision 编辑，/agents 路由已存在故直接给链接）；
+ * - Pack 创建后不修改任何已有 Agent Revision：指引去 Agent 管理为已有 Agent
+ *   新建 Revision 并选择该 Pack（/agents 详情页提供「新建 Revision」入口，链接直达）；
  * - 未审核（trust=unreviewed）或未完成安装的插件不能进入普通 Pack（03 §2.5），
  *   勾选框禁用并给出原因，不伪造可选项。
  */
@@ -20,7 +21,7 @@ import type {
 } from '@project311/protocol'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
-import { formatIso, shortDigest } from '../../shared/format.js'
+import { formatIso, shortDigest, shortId } from '../../shared/format.js'
 import type { Session } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
 
@@ -51,7 +52,7 @@ export function PluginPackEditor({ session }: PluginPackEditorProps): ReactNode 
       setName('')
       setSelected(new Set())
       setNotice(
-        `Pack「${pack.name}」已创建：不影响已有 Agent Revision——请在 Agent 管理为 Agent 新建 Revision 并选择该 Pack。`,
+        `Pack「${pack.name}」已创建：不影响已有 Agent Revision——请在 Agent 管理打开目标 Agent 详情，点「新建 Revision」，并在表单中选择该 Pack。`,
       )
       void queryClient.invalidateQueries({ queryKey: queryKeys.pluginPacks })
     },
@@ -187,6 +188,19 @@ function PackCard({ pack }: { pack: PluginPackView }): ReactNode {
       </div>
       <dl className="revision-meta">
         <div>
+          <dt>Pack ID</dt>
+          <dd className="plugin-digest-row">
+            <code className="plugin-digest" title={pack.id}>
+              {shortId(pack.id)}
+            </code>
+            <CopyValueButton
+              value={pack.id}
+              label={`复制 ${pack.name} Pack ID`}
+              valueLabel="Pack ID"
+            />
+          </dd>
+        </div>
+        <div>
           <dt>Pack Digest</dt>
           <dd className="plugin-digest-row">
             <code className="plugin-digest" title={pack.packDigest}>
@@ -228,9 +242,18 @@ function PackCard({ pack }: { pack: PluginPackView }): ReactNode {
 
 /**
  * 一键复制按钮：navigator.clipboard 不可用或写入失败时明确报失败并指向手动
- * 复制入口（完整 digest 始终可见），不伪造「已复制」。
+ * 复制入口（digest 的完整值始终可见；Pack ID 全值在 title 中），不伪造
+ * 「已复制」。valueLabel 指明要复制的取值名称（digest / Pack ID）。
  */
-function CopyValueButton({ value, label }: { value: string; label: string }): ReactNode {
+function CopyValueButton({
+  value,
+  label,
+  valueLabel = '完整 digest',
+}: {
+  value: string
+  label: string
+  valueLabel?: string
+}): ReactNode {
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle')
   const copy = (): void => {
     setCopied('idle')
@@ -245,7 +268,7 @@ function CopyValueButton({ value, label }: { value: string; label: string }): Re
         复制
       </button>
       {copied === 'copied' ? <span role="status">已复制</span> : null}
-      {copied === 'failed' ? <span role="status">复制失败，请手动复制完整 digest</span> : null}
+      {copied === 'failed' ? <span role="status">复制失败，请手动复制{valueLabel}</span> : null}
     </span>
   )
 }

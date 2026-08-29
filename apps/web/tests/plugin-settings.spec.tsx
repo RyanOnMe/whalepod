@@ -7,6 +7,7 @@
  * - legacy_unrestricted 视觉警示与 local-development 整卡标红；
  * - PackEditor：勾选 → POST 体与 PluginPackCreateRequest schema 对齐；
  *   空选择禁止提交；digest 短摘要 + 可复制全值；
+ * - Pack 卡展示 Pack ID（短码 + title 全值 + 一键复制，复制失败如实报错）；
  * - API 错误（403/409）有可读错误展示（message + requestId）。
  *
  * mock 层与断言风格与 agent-settings 相同：仅替换全局 fetch（HTTP 层），
@@ -21,7 +22,7 @@ import type {
   PluginInstallationView,
   PluginPackView,
 } from '@project311/protocol'
-import { ALICE, BOB, created, initOf, loggedInHandlers, ok } from './fixtures.js'
+import { ALICE, BOB, created, initOf, loggedInHandlers, ok, packsHandler } from './fixtures.js'
 import type { MockHandler, MockResponse } from './fixtures.js'
 import { renderApp } from './render.jsx'
 
@@ -107,17 +108,18 @@ function installationsHandler(rows: PluginInstallationView[]): MockHandler {
   return { method: 'GET', url: /\/api\/v1\/plugins\/installations$/, respond: () => ok(rows) }
 }
 
-function packsHandler(packs: PluginPackView[]): MockHandler {
-  return { method: 'GET', url: /\/api\/v1\/plugin-packs$/, respond: () => ok(packs) }
-}
-
 function failureOf(status: number, code: string, message: string, requestId: string): MockResponse {
   return { status, body: { ok: false, error: { code, message, requestId } } }
 }
 
-/** jsdom 没有 navigator.clipboard：临时注入并在用例结束恢复。 */
-function stubClipboardWriteText(): { writeText: ReturnType<typeof vi.fn>; restore: () => void } {
-  const writeText = vi.fn(async (_text: string) => undefined)
+/** jsdom 没有 navigator.clipboard：临时注入并在用例结束恢复。reject 时模拟写入被拒。 */
+function stubClipboardWriteText(options: { reject?: boolean } = {}): {
+  writeText: ReturnType<typeof vi.fn>
+  restore: () => void
+} {
+  const writeText = vi.fn(async (_text: string) => {
+    if (options.reject) throw new Error('NotAllowedError: clipboard denied')
+  })
   Object.defineProperty(window.navigator, 'clipboard', {
     value: { writeText },
     configurable: true,
@@ -276,10 +278,10 @@ describe('plugin-settings', () => {
     expect(createButton).toBeEnabled()
     await user.click(createButton)
 
-    // Pack 创建不修改任何已有 Agent Revision：提示去 Agent 管理新建 Revision。
+    // Pack 创建不修改任何已有 Agent Revision：指引去 Agent 管理详情新建 Revision 并选 Pack。
     expect(await screen.findByText(/Pack「review-pack」已创建/)).toBeVisible()
     expect(screen.getByText(/不影响已有 Agent Revision/)).toBeVisible()
-    expect(screen.getByText(/新建 Revision 并选择该 Pack/)).toBeVisible()
+    expect(screen.getByText(/点「新建 Revision」，并在表单中选择该 Pack/)).toBeVisible()
     expect(screen.getByRole('link', { name: '去 Agent 管理新建 Revision' })).toHaveAttribute(
       'href',
       '/agents',
@@ -319,6 +321,50 @@ describe('plugin-settings', () => {
       await user.click(screen.getByRole('button', { name: '复制 review-pack 完整 digest' }))
       expect(await screen.findByText('已复制')).toBeVisible()
       expect(clipboard.writeText).toHaveBeenCalledWith(PACK_DIGEST)
+    } finally {
+      clipboard.restore()
+    }
+  })
+
+  it('Pack 卡：Pack ID 短码 + title 全值 + 一键复制', async () => {
+    const user = userEvent.setup()
+    const clipboard = stubClipboardWriteText()
+    try {
+      renderApp(
+        '/plugins',
+        loggedInHandlers(ALICE, [
+          catalogHandler([]),
+          installationsHandler([installation]),
+          packsHandler([pack]),
+        ]),
+      )
+      const packCard = await screen.findByRole('article', { name: 'Pack review-pack' })
+      // 短码（前 8 字符）+ title 全值
+      expect(within(packCard).getByText(pack.id.slice(0, 8))).toHaveAttribute('title', pack.id)
+      await user.click(within(packCard).getByRole('button', { name: '复制 review-pack Pack ID' }))
+      expect(await within(packCard).findByText('已复制')).toBeVisible()
+      expect(clipboard.writeText).toHaveBeenCalledWith(pack.id)
+    } finally {
+      clipboard.restore()
+    }
+  })
+
+  it('Pack ID 复制失败：如实报错（不伪造「已复制」）', async () => {
+    const user = userEvent.setup()
+    const clipboard = stubClipboardWriteText({ reject: true })
+    try {
+      renderApp(
+        '/plugins',
+        loggedInHandlers(ALICE, [
+          catalogHandler([]),
+          installationsHandler([installation]),
+          packsHandler([pack]),
+        ]),
+      )
+      const packCard = await screen.findByRole('article', { name: 'Pack review-pack' })
+      await user.click(within(packCard).getByRole('button', { name: '复制 review-pack Pack ID' }))
+      expect(await within(packCard).findByText('复制失败，请手动复制Pack ID')).toBeVisible()
+      expect(within(packCard).queryByText('已复制')).not.toBeInTheDocument()
     } finally {
       clipboard.restore()
     }

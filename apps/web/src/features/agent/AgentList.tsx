@@ -1,6 +1,8 @@
 /**
  * Agent 管理（02 Task 7 Step 5）：列表 + 详情（当前 Revision + 历史）。
- * Owner/Admin 可新建 Agent（AgentRevisionForm），Member 只读（仅看列表与详情）。
+ * Owner/Admin 可新建 Agent（AgentRevisionForm），也可为已有 Agent 新建
+ * Revision（CreateAgentRevisionForm，入口在详情页；03 §4
+ * POST /agents/:agentId/revisions）；Member 只读（仅看列表与详情）。
  */
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
@@ -10,6 +12,7 @@ import { formatIso, shortId } from '../../shared/format.js'
 import type { AgentDetailView, AgentView, Session } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
 import { AgentRevisionForm } from './AgentRevisionForm.js'
+import { CreateAgentRevisionForm } from './CreateAgentRevisionForm.js'
 
 export interface AgentListProps {
   session: Session | null
@@ -76,14 +79,27 @@ export function AgentList({ session }: AgentListProps): ReactNode {
         <section className="card agent-detail" aria-label={`Agent 详情 ${selectedId.slice(0, 8)}`}>
           {detailQuery.isPending ? <p className="mutation-hint">正在加载详情…</p> : null}
           {detailQuery.isError ? <ErrorBanner error={detailQuery.error} /> : null}
-          {detailQuery.isSuccess ? <AgentDetailViewer agent={detailQuery.data} /> : null}
+          {detailQuery.isSuccess ? (
+            <AgentDetailViewer
+              key={detailQuery.data.id}
+              agent={detailQuery.data}
+              canManage={canManage}
+            />
+          ) : null}
         </section>
       ) : null}
     </section>
   )
 }
 
-function AgentDetailViewer({ agent }: { agent: AgentDetailView }): ReactNode {
+function AgentDetailViewer({
+  agent,
+  canManage,
+}: {
+  agent: AgentDetailView
+  canManage: boolean
+}): ReactNode {
+  const [showRevisionForm, setShowRevisionForm] = useState(false)
   const current = agent.currentRevision
   return (
     <>
@@ -132,6 +148,26 @@ function AgentDetailViewer({ agent }: { agent: AgentDetailView }): ReactNode {
             ))}
           </ul>
         </details>
+      ) : null}
+      {canManage ? (
+        <div className="agent-revision-actions">
+          {showRevisionForm ? (
+            <>
+              <CreateAgentRevisionForm agent={agent} />
+              <button
+                type="button"
+                className="button button-quiet"
+                onClick={() => setShowRevisionForm(false)}
+              >
+                收起
+              </button>
+            </>
+          ) : (
+            <button type="button" className="button" onClick={() => setShowRevisionForm(true)}>
+              新建 Revision
+            </button>
+          )}
+        </div>
       ) : null}
     </>
   )

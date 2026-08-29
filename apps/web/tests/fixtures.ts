@@ -4,6 +4,7 @@
  * （{ ok:true, data } / { ok:false, error:{ code, message, requestId } }）。
  */
 import { vi } from 'vitest'
+import type { PluginPackView } from '@project311/protocol'
 import type {
   AgentView,
   CommentView,
@@ -316,6 +317,11 @@ export function agentsHandler(agents: AgentView[]): MockHandler {
 
 export function createAgentHandler(createdAgent: AgentView): MockHandler {
   return { method: 'POST', url: /\/api\/v1\/agents$/, respond: () => created(createdAgent) }
+}
+
+/** GET /plugin-packs：Pack 列表（Agent 表单的 Pack 下拉数据源，P1-17）。 */
+export function packsHandler(packs: PluginPackView[]): MockHandler {
+  return { method: 'GET', url: /\/api\/v1\/plugin-packs$/, respond: () => ok(packs) }
 }
 
 /** 已登录页面的默认 handler 组合（setup/status + session + 页面级 extras）。 */
