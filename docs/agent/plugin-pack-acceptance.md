@@ -21,7 +21,8 @@ pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration \
 
 # Node 层（内存 fetch 注入 descriptor/tarball，真 installer/真 overlay 渲染）
 pnpm exec vitest run --project unit \
-  apps/node/tests/plugin-installer.spec.ts apps/node/tests/runtime-config.spec.ts \
+  apps/node/tests/plugin-installer.spec.ts apps/node/tests/plugin-installer-limits.spec.ts \
+  apps/node/tests/tar-pax.spec.ts apps/node/tests/runtime-config.spec.ts \
   apps/node/tests/plugin-preflight.spec.ts apps/node/tests/plugin-fixture.spec.ts
 
 # Runtime 层（真 DSH boot + replay LLM 出口，工具真实执行）
@@ -39,7 +40,8 @@ pnpm check:plugin-fixture
 
 ## 判定（成功长什么样）
 
-- 插件攻击矩阵全绿：integrity mismatch / dependency lock 漂移 / tarbomb / symlink escape / version range / 未审核包 / pack digest 漂移各自被拒（`apps/node/tests/plugin-installer.spec.ts` 12 例 + preflight 12 例 + hub 集成 21 例）。
+- 插件攻击矩阵全绿：integrity mismatch / dependency lock 漂移 / tarbomb（含 gzip bomb：压缩体内、解压超 64MiB 照拒）/ symlink escape / pax 越界（`..`、绝对路径、'g' 泄漏、畸形 size）/ 重定向出白名单 / version range / 未审核包 / pack digest 漂移各自被拒（`plugin-installer.spec.ts` + `plugin-installer-limits.spec.ts` 10 例 + `tar-pax.spec.ts` 7 例 + preflight 12 例 + hub 集成；`plugin-catalog-load.spec.ts` 8 例锚 loadPluginCatalog fail-closed）。
+- 传输面两道闸：3xx 逐跳 host 白名单（初始 URL 白名单不因一次 302 失效；跳数上限 5）；body 流式截断（不收满无界 body）+ gunzip `maxOutputLength` 64MiB。
 - 未修改插件端到端：overlay 挂载的 fixture 返回定值；无 overlay 反证（isError）证明是 pack 而非 harness 起作用（`unmodified-plugin.contract.spec.ts`）。
 - digest 三阶段锚：catalog integrity ↔ committed tarball 字节 ↔ 安装树逐成员相等；packDigest 在 catalog / Node preflight / Runtime overlay 三处同值（`plugins/curated-pack.json` 现算复算一致）。
 - 插件崩溃隔离：start 可归因失败、bridge 不可复用、进程不挂死、同进程后续 boot 正常。
@@ -51,7 +53,8 @@ pnpm check:plugin-fixture
 - descriptor 拉取/校验失败 → Node `plugin-preflight.ts` 失败码表（消息白名单，tarball 内容不回传）。
 - overlay 生成/锚目录 → Node `runtime-config.ts`（configDigest 复算漂移 = INTEGRITY_MISMATCH）。
 - Runtime 挂载/执行 → `unmodified-plugin.contract.spec.ts` 场景断言 + bridge 结构化日志（只带 runId）。
-- catalog/pack 装配 → Hub `modules/plugin/pack-resolver.ts`（digest 复算不一致 = 404，与未知 digest 同形态不泄露存在性）。
+- catalog/pack 装配 → Hub `modules/plugin/pack-resolver.ts`：未知 digest 与 digest 复算不一致（entrypoint 漂移）= 404 同形态，不泄露存在性；已存在 Pack 的快照字段漂移（integrity/lock digest/能力集）= 409 PLUGIN_PACK_MISMATCH 显式信号（04 §6.1 的不枚举承诺只覆盖未知 digest 探测面）。
+- pack overlay 合法性 → Runtime `bridge.ts` 的 `loadPackOverlay` 两道 fail-closed 门（insert-only 形态 + insert id 不得撞 boot 栈既有 id），违约即 RUNTIME_START_FAILED（`pack-overlay-guard.contract.spec.ts`）。
 
 ## 取证
 
@@ -69,10 +72,14 @@ pnpm check:plugin-fixture                        # --check 只验不写（Q0 已
 - 插件崩溃对 Hub 的隔离由架构保证（Hub 永不加载插件，check-boundaries 强制）；Runtime 侧已验，Node supervisor 对 Runtime 崩溃的处理沿用 P1-12 既有测试。
 - catalog 的 tarballUrl 是 npm 布局占位；所有测试注入 fetch，未走真网络（第一阶段无外网依赖）。
 - Web 端为 jsdom 层；浏览器 e2e 门（Q5）P1-19 才生效。
+- 威胁模型假设（review 登记，非缺陷）：
+  - Node 本地命中（marker + store lookup）不做逐包 digest 复算——内容寻址 + 只读化保证 digest↔内容一致；残余风险是 same-uid 本地攻击者预置/篡改 store 树（storeRoot 已收紧 0o700；同 uid 攻击者本就能替换节点自身 JS，属同信任域）。
+  - Node 下行帧经 `parseNodeFrame('downstream')` fail-closed 校验；该校验防的是 Hub 失陷/TLS 失效后的畸形帧，不替代 TLS 与 Device Token 认证。
+  - catalog 审核（review.commit）是最终信任根：installer/preflight 的所有密码学校验都只保证「安装的 == 审过的」，不保证「审过的是良性的」。
 
 ## 复跑
 
 ```bash
 pnpm check && pnpm test:integration && pnpm test:dsh-contract
-# 关键提交点全绿：Q0（含 fixture 检查）720 单测、Q2 212 集成、Q3 30 契约
+# 关键提交点全绿：Q0（含 fixture 检查）764 单测、Q2 216 集成、Q3 33 契约
 ```
