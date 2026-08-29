@@ -19,7 +19,7 @@ import {
 } from '../../../src/index.js'
 import type { RuntimeCommand, RuntimeOutput } from '@project311/protocol'
 
-export type ReplayScenario = 'basic' | 'tool-approval' | 'cancel'
+export type ReplayScenario = 'basic' | 'tool-approval' | 'cancel' | 'unmodified-plugin'
 
 const CONFIG_DIR = fileURLToPath(new URL('../../../config/', import.meta.url))
 const FIXTURES_DIR = fileURLToPath(new URL('../fixtures/', import.meta.url))

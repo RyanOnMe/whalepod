@@ -14,7 +14,6 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { boot, loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
-import type { TurnEndReason } from '@deepseek-ai/dsh-session'
 import {
   ProtocolError,
   type ErrorCode,
@@ -35,8 +34,10 @@ export interface RuntimeBridgeOptions {
   log?: LogSink
   /**
    * 追加的 Loader patch 层（在 dsh-base 与 project311.patch.yml 之后应用）。
-   * 契约探针用它挂 replay overlay（config/replay.yml）；生产传 P1-17 批准的
-   * Runtime Plugin Pack 层。
+   * 契约探针用它挂 replay overlay（config/replay.yml）。生产不使用本接缝挂
+   * Plugin Pack：P1-17 起经审核的 Runtime Plugin Pack 层按 Run 随
+   * runtime.initialize 的 `pluginPackOverlayPath`（RuntimeSpec）到达并最后
+   * 入栈（见 start/bootDshTree），env/构造参数通道仅留给探针。
    */
   extraPatchFiles?: readonly string[]
 }
@@ -58,12 +59,29 @@ function dshBasePatchPath(): string {
   return require.resolve('@deepseek-ai/dsh-base/cordis.patch.yml')
 }
 
-/** 组合 Runtime 的 patch 栈：dsh-base 基座 → project311 bundle → 额外层。 */
-async function bootDshTree(extraPatchFiles: readonly string[]): Promise<Context> {
+/**
+ * 组合 Runtime 的 patch 栈：dsh-base 基座 → project311 bundle → 额外层
+ * （探针 replay）→ 本 Run 的 Plugin Pack overlay。
+ *
+ * Pack overlay 置于栈尾（P1-17）：它是唯一随 wire 到达的 Run 级层，栈位在
+ * 静态层之后意味着同 id patch「后到者胜」的确定性归它所有——生产运维只能改
+ * 进程静态层，approved pack 的行不被它们意外改写；探针 replay 层只注册
+ * `llm-replay`，与 pack 插件 id 空间不相交，故两者先后仅是语义排序。
+ * overlay 只 insert 插件行（apps/node preflight 产物，runtime-wire.ts
+ * pluginPackOverlayPath），路径不存在时 loadOverlayPatches fail-closed 抛出，
+ * 由 start 转 runtime.fatal。
+ */
+async function bootDshTree(
+  extraPatchFiles: readonly string[],
+  pluginPackOverlayPath: string | undefined,
+): Promise<Context> {
   const patches = [
     ...loadOverlayPatches(BIN_NAME, dshBasePatchPath()),
     ...loadOverlayPatches(BIN_NAME, join(CONFIG_DIR, 'project311.patch.yml')),
     ...extraPatchFiles.flatMap((file) => loadOverlayPatches(BIN_NAME, file)),
+    ...(pluginPackOverlayPath === undefined
+      ? []
+      : loadOverlayPatches(BIN_NAME, pluginPackOverlayPath)),
   ]
   return boot(BIN_NAME, join(CONFIG_DIR, 'cordis.yml'), patches, undefined, dshAnchorUrl())
 }
@@ -119,7 +137,10 @@ export class RuntimeBridge {
     // DSH_HOME 是本进程级契约（dsh-home-paths 经 $DSH_HOME 解析）；一个 Runtime
     // 子进程只服务一个 Run，initialize 到达后再 boot，home 即在 spec 里。
     process.env.DSH_HOME = spec.dshHomePath
-    const ctx = await bootDshTree(options.extraPatchFiles ?? [])
+    // P1-17：spec.pluginPackOverlayPath 是经审核 Plugin Pack 的 Cordis overlay
+    // （本地 wire 绝对路径，红线同 workspacePath——只走本地命令帧，不进日志；
+    // 这里的结构化日志只带 runId）。
+    const ctx = await bootDshTree(options.extraPatchFiles ?? [], spec.pluginPackOverlayPath)
     log({ level: 'info', component: 'runtime.bridge', msg: 'runtime booted', runId })
 
     const approval = new ApprovalPort(

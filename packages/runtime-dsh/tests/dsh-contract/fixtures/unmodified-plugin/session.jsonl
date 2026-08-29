@@ -1,0 +1,13 @@
+{"type":"session","id":"session-replay-unmodified-plugin","createdAt":1755500300000,"seedLength":0}
+{"type":"assistant/chunk","seq":10,"time":1755500300100,"data":{"turn":1,"step":1,"chunk":{"type":"block-start","index":0,"blockType":"tool-call"}}}
+{"type":"assistant/chunk","seq":11,"time":1755500300200,"data":{"turn":1,"step":1,"chunk":{"type":"tool-call-delta","index":0,"id":"call-fixed-time-1","name":"fixed_time","argumentsDelta":"{}"}}}
+{"type":"assistant/chunk","seq":12,"time":1755500300300,"data":{"turn":1,"step":1,"chunk":{"type":"block-end","index":0,"block":{"type":"tool-call","id":"call-fixed-time-1","name":"fixed_time","arguments":"{}"}}}}
+{"type":"assistant/chunk","seq":13,"time":1755500300400,"data":{"turn":1,"step":1,"chunk":{"type":"finish","reason":{"kind":"tool-calls"}}}}
+{"type":"assistant/chunk","seq":20,"time":1755500300500,"data":{"turn":1,"step":2,"chunk":{"type":"block-start","index":0,"blockType":"text"}}}
+{"type":"assistant/chunk","seq":21,"time":1755500300600,"data":{"turn":1,"step":2,"chunk":{"type":"text-delta","index":0,"text":"The fixed time is 2030-01-02T03:04:05.000Z."}}}
+{"type":"assistant/chunk","seq":22,"time":1755500300700,"data":{"turn":1,"step":2,"chunk":{"type":"block-end","index":0,"block":{"type":"text","text":"The fixed time is 2030-01-02T03:04:05.000Z."}}}}
+{"type":"assistant/chunk","seq":23,"time":1755500300800,"data":{"turn":1,"step":2,"chunk":{"type":"finish","reason":{"kind":"stop"}}}}
+{"type":"assistant/chunk","seq":30,"time":1755500300900,"data":{"turn":2,"step":1,"chunk":{"type":"block-start","index":0,"blockType":"text"}}}
+{"type":"assistant/chunk","seq":31,"time":1755500301000,"data":{"turn":2,"step":1,"chunk":{"type":"text-delta","index":0,"text":"Follow-up turn after the fixed_time call."}}}
+{"type":"assistant/chunk","seq":32,"time":1755500301100,"data":{"turn":2,"step":1,"chunk":{"type":"block-end","index":0,"block":{"type":"text","text":"Follow-up turn after the fixed_time call."}}}}
+{"type":"assistant/chunk","seq":33,"time":1755500301200,"data":{"turn":2,"step":1,"chunk":{"type":"finish","reason":{"kind":"stop"}}}}
