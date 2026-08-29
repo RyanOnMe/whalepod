@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "name": "fixed-time",
+  "packages": [
+    {
+      "name": "project311-fixed-time",
+      "version": "0.1.0",
+      "integrity": "sha256-lwF1LCnVNxQRRqKBc3ys2/CeJw8z2PGdV5/MG3AMyFI=",
+      "dependencyLockDigest": "90e1d148a696c6e82b193adbe9a8017fb5dd4b972d6fb1ed6bd3c178b4564bae",
+      "entrypoint": "index.js",
+      "configDigest": "1593825c7bb45db0e23a43aeac6bf646b234b02d8943c2b8e3b85894b8f722cc"
+    }
+  ],
+  "packDigest": "79c4f77b226ad734ac1807403c579694f32b4297b5fb4d53cf2975a8ced6701c"
+}

@@ -10,7 +10,9 @@
  * exit 0；stdin EOF（父 Node 消失）先收敛再 exit 0；单行超 1 MiB exit 2。
  *
  * `PROJECT311_RUNTIME_EXTRA_PATCH_FILES`（path.delimiter 分隔）追加 Loader
- * patch 层：契约探针用它挂 replay overlay；生产留给 P1-17 批准的 Plugin Pack。
+ * patch 层：契约探针用它挂 replay overlay。生产不使用该 env 挂 Plugin Pack：
+ * P1-17 起经审核的 pack overlay 按 Run 随 `runtime.initialize.pluginPackOverlayPath`
+ * 在 wire 上到达（runtime-spec 解析、bridge 入栈），env 仅保留为探针通道。
  */
 import { randomUUID } from 'node:crypto'
 import { writeSync } from 'node:fs'

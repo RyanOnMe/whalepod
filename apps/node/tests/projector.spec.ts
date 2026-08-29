@@ -22,6 +22,19 @@ const CTX: ProjectionContext = {
   runId: '11111111-1111-4111-8111-111111111111',
   workspaceRoot: '/Users/bob/work/team-app',
   homeDir: '/Users/bob',
+  // 默认留空：既有语料按 §9 原始两前缀断言；P1-17 扩展项（stateDir/packsRoot）
+  // 用 home 之外的自定义 stateDir 上下文单测（review m2 场景）。
+  stateDir: '',
+  packsRoot: '',
+}
+
+/** 自定义 --state-dir 在 home 之外：pack overlay 绝对路径会越过 home 替换项。 */
+const CUSTOM_STATE_CTX: ProjectionContext = {
+  runId: CTX.runId,
+  workspaceRoot: CTX.workspaceRoot,
+  homeDir: CTX.homeDir,
+  stateDir: '/var/lib/project311/state',
+  packsRoot: '/var/lib/project311/state/plugin-packs',
 }
 
 const NOW = new Date('2026-08-25T10:00:00.000Z')
@@ -430,6 +443,43 @@ describe('runtime 生命周期帧', () => {
       code: 'INTERNAL_ERROR',
       summary: 'INTERNAL_ERROR',
     })
+  })
+
+  it('runtime.fatal：summary 含 packsRoot 下绝对路径（pack overlay）时投影已脱敏（P1-17 红线）', () => {
+    const p = new RunProjector(CUSTOM_STATE_CTX, { now: () => NOW })
+    const overlayPath = '/var/lib/project311/state/plugin-packs/abcdef1234/cordis.overlay.yml'
+    const out = p.projectRuntimeOutput(
+      lifecycleFrame('runtime.fatal', {
+        code: 'RUNTIME_START_FAILED',
+        summary: `project311-runtime: plugin tree failed to load: failed to read overlay ${overlayPath}: ENOENT`,
+      }),
+    )
+    const owner = out.events.find((e) => e.audience === 'owner')
+    const ownerSummary = (owner!.event as { summary: string }).summary
+    expect(ownerSummary).toContain('<packs-root>/abcdef1234/cordis.overlay.yml')
+    expect(ownerSummary).not.toContain('/var/lib/project311')
+    expect(ownerSummary).not.toContain(overlayPath)
+    const project = out.events.find((e) => e.audience === 'project')
+    expect(project!.event).toEqual({
+      type: 'run.failed',
+      code: 'RUNTIME_START_FAILED',
+      summary: 'RUNTIME_START_FAILED',
+    })
+  })
+
+  it('runtime.fatal：summary 含 stateDir 下路径（非 packs 子树）时归约为 <state-dir>', () => {
+    const p = new RunProjector(CUSTOM_STATE_CTX, { now: () => NOW })
+    const out = p.projectRuntimeOutput(
+      lifecycleFrame('runtime.fatal', {
+        code: 'RUNTIME_START_FAILED',
+        summary:
+          'failed to read config file /var/lib/project311/state/runtime-home/run-1/settings.yaml',
+      }),
+    )
+    const owner = out.events.find((e) => e.audience === 'owner')
+    const ownerSummary = (owner!.event as { summary: string }).summary
+    expect(ownerSummary).toContain('<state-dir>/runtime-home/run-1/settings.yaml')
+    expect(ownerSummary).not.toContain('/var/lib/project311')
   })
 
   it('run.cancelled → 双受众 forced=false', () => {

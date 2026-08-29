@@ -26,8 +26,22 @@ const DSH_ERROR = 'DSH imports are restricted to packages/runtime-dsh and apps/r
 
 const WORKSPACE_SCOPE = '@project311/'
 
-/** importer path prefix -> allowed `@project311/*` specifiers. */
-const DEPENDENCY_RULES: ReadonlyArray<{ importer: string; allowed: readonly string[] }> = [
+/**
+ * importer path prefix -> allowed `@project311/*` specifiers.
+ *
+ * `subpaths`（可选）是该 importer 的「同构子路径白名单」：一旦声明，来自该
+ * importer 的子路径 specifier 一律默认违规，只有白名单里显式列出的完整子路径
+ * （按包名归组）才放行——防止 node-only 子路径导出（如 `plugin-pack-digest`
+ * 引 node:crypto）被包级归一规则带进 web bundle。未声明 `subpaths` 的
+ * 服务端 importer（hub/node 等）保留归一放行行为。
+ */
+const DEPENDENCY_RULES: ReadonlyArray<{
+  importer: string
+  /** Bare package specifiers (`@project311/<name>`) allowed from this importer. */
+  allowed: readonly string[]
+  /** Isomorphic subpath whitelist; see the table doc comment above. */
+  subpaths?: Readonly<Record<string, readonly string[]>>
+}> = [
   {
     // testkit 是 apps/hub 的 devDependency，只准测试目录引用（Fake DeviceGateway/Fixtures）；
     // 排在 apps/hub/ 之前，靠前缀匹配让 src 侧 import testkit 直接判违规。
@@ -43,7 +57,14 @@ const DEPENDENCY_RULES: ReadonlyArray<{ importer: string; allowed: readonly stri
     importer: 'apps/hub/',
     allowed: ['@project311/domain', '@project311/protocol', '@project311/db'],
   },
-  { importer: 'apps/web/', allowed: ['@project311/protocol'] },
+  {
+    // 浏览器 bundle：protocol 的已声明子路径导出目前全部 node-only
+    // （plugin-pack-digest 引 node:crypto），白名单显式置空；确有同构子路径
+    // 时在 subpaths 里显式添加完整 specifier。
+    importer: 'apps/web/',
+    allowed: ['@project311/protocol'],
+    subpaths: { '@project311/protocol': [] },
+  },
   {
     // 验收链路测试（P1-13 run-projection-chain）：跨 app 验收需要直接读 DB 判定
     // 落库结果——与 apps/hub/tests/ 同型例外；src 侧仍禁 db（部署边界不变）。
@@ -78,14 +99,33 @@ export function validateImport(importer: string, specifier: string): void {
 
   if (!specifier.startsWith(WORKSPACE_SCOPE)) return
 
+  // 子路径导出（如 @project311/protocol/plugin-pack-digest）归一到包名再判定——
+  // 方向表管的是包级依赖，服务端 importer 的已声明子路径导出继承包的许可。
+  // 声明了同构子路径白名单的 importer（apps/web）则子路径默认违规，
+  // 只有白名单显式列出的子路径放行，防止 node-only 导出进 web bundle。
+  const segments = specifier.split('/')
+  const packageSpecifier = `${segments[0]}/${segments[1]}`
+  const hasSubpath = segments.length > 2
+
   const rule = DEPENDENCY_RULES.find(({ importer: prefix }) => importer.startsWith(prefix))
   if (!rule) return // importers outside apps//packages (e.g. scripts/) are not governed here
 
-  if (!rule.allowed.includes(specifier)) {
+  if (!rule.allowed.includes(packageSpecifier)) {
     const allowed = rule.allowed.length > 0 ? rule.allowed.join(', ') : 'none'
     throw new Error(
       `Import "${specifier}" is not allowed from ${rule.importer} (allowed: ${allowed})`,
     )
+  }
+
+  if (hasSubpath && rule.subpaths !== undefined) {
+    const whitelisted = rule.subpaths[packageSpecifier] ?? []
+    if (!whitelisted.includes(specifier)) {
+      const listed = whitelisted.length > 0 ? whitelisted.join(', ') : 'none'
+      throw new Error(
+        `Subpath import "${specifier}" is not allowed from ${rule.importer} ` +
+          `(isomorphic subpaths of ${packageSpecifier}: ${listed})`,
+      )
+    }
   }
 }
 

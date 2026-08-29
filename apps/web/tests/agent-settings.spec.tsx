@@ -1,15 +1,31 @@
 /**
- * Agent 管理（02 Task 7 Step 5）：
+ * Agent 管理（02 Task 7 Step 5 + P1-17 补口）：
  * - Owner/Admin 可见创建表单并成功创建（校验请求体与幂等头，成功后表单复位）；
- * - Member 只读：看不到创建表单，只显示说明；
- * - Plugin Pack 选择降级为手工 UUID（P1-17 缺口），非法 UUID 被表单校验拦截；
+ * - Member 只读：看不到创建表单/新建 Revision 入口，只显示说明；
+ * - Plugin Pack 下拉：选项来自 GET /plugin-packs（数据源断言），未选禁用提交；
+ *   空 Pack 列表提示先去插件管理创建；
+ * - 已有 Agent「新建 Revision」：预填当前 Revision 值，POST
+ *   /agents/:agentId/revisions 请求体与 CreateAgentRevisionRequest 对齐（幂等键），
+ *   成功后详情刷新为新 Revision；
  * - 列表 → 详情（当前 Revision）可选展示。
  */
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
-import { ALICE, BOB, agentsHandler, initOf, loggedInHandlers, ok } from './fixtures.js'
+import { CreateAgentRevisionRequestSchema } from '@project311/protocol'
+import type { PluginPackView } from '@project311/protocol'
+import {
+  ALICE,
+  BOB,
+  agentsHandler,
+  created,
+  initOf,
+  loggedInHandlers,
+  ok,
+  packsHandler,
+} from './fixtures.js'
 import type { MockHandler } from './fixtures.js'
+import type { ProfileRevisionView } from '../src/shared/api/types.js'
 import { renderApp } from './render.jsx'
 
 const builderAgent = {
@@ -21,7 +37,7 @@ const builderAgent = {
   currentRevisionId: 'f0000000-0000-4000-8000-000000000010',
 }
 
-const revision = {
+const revision: ProfileRevisionView = {
   id: 'f0000000-0000-4000-8000-000000000010',
   agentId: builderAgent.id,
   revision: 1,
@@ -29,11 +45,28 @@ const revision = {
   provider: 'deepseek',
   model: 'deepseek-chat',
   credentialSlot: 'default',
-  maxTokens: null,
+  maxTokens: 8192,
   pluginPackId: 'eeeeeeee-0000-4000-8000-000000000001',
   profileDigest: 'a'.repeat(64),
   createdBy: ALICE.userId,
   createdAt: '2026-08-25T00:00:00.000Z',
+}
+
+/** Setup 创建的 core-empty Pack（与 revision.pluginPackId 对齐）。 */
+const corePack: PluginPackView = {
+  id: 'eeeeeeee-0000-4000-8000-000000000001',
+  name: 'core-empty',
+  packDigest: 'f'.repeat(64),
+  installations: [],
+  entries: [],
+  createdBy: ALICE.userId,
+  createdAt: '2026-08-22T09:00:00.000Z',
+}
+
+const reviewPack: PluginPackView = {
+  ...corePack,
+  id: 'dddddddd-0000-4000-8000-000000000001',
+  name: 'review-pack',
 }
 
 function agentDetailHandler(): MockHandler {
@@ -46,7 +79,10 @@ function agentDetailHandler(): MockHandler {
 
 describe('agent-settings', () => {
   it('Owner 看到创建表单与 Agent 列表', async () => {
-    renderApp('/agents', loggedInHandlers(ALICE, [agentsHandler([builderAgent])]))
+    renderApp(
+      '/agents',
+      loggedInHandlers(ALICE, [agentsHandler([builderAgent]), packsHandler([corePack])]),
+    )
     expect(await screen.findByRole('heading', { name: 'Agent 管理' })).toBeVisible()
     expect(screen.getByRole('button', { name: '创建 Agent' })).toBeVisible()
     expect(await screen.findByRole('button', { name: /Builder/ })).toBeVisible()
@@ -71,6 +107,7 @@ describe('agent-settings', () => {
             return { status: 201, body: { ok: true, data: createdAgent } }
           },
         },
+        packsHandler([corePack]),
       ]),
     ])
     await screen.findByRole('button', { name: /Builder/ })
@@ -83,10 +120,10 @@ describe('agent-settings', () => {
     await user.type(screen.getByLabelText('Model'), 'deepseek-chat')
     await user.clear(screen.getByLabelText('Credential Slot'))
     await user.type(screen.getByLabelText('Credential Slot'), 'default')
-    await user.type(
-      screen.getByLabelText('Plugin Pack UUID'),
-      'eeeeeeee-0000-4000-8000-000000000001',
-    )
+    // Plugin Pack 从下拉选择（数据源 GET /plugin-packs）；未选时提交按钮禁用
+    expect(screen.getByRole('button', { name: '创建 Agent' })).toBeDisabled()
+    await user.selectOptions(screen.getByLabelText('Plugin Pack'), corePack.id)
+    expect(screen.getByRole('button', { name: '创建 Agent' })).toBeEnabled()
     await user.click(screen.getByRole('button', { name: '创建 Agent' }))
 
     expect(await screen.findByRole('button', { name: /Reviewer/ })).toBeVisible()
@@ -114,30 +151,55 @@ describe('agent-settings', () => {
   })
 
   it('Member 只读：没有创建表单，只有说明', async () => {
-    renderApp('/agents', loggedInHandlers(BOB, [agentsHandler([builderAgent])]))
+    renderApp(
+      '/agents',
+      loggedInHandlers(BOB, [agentsHandler([builderAgent]), packsHandler([corePack])]),
+    )
     expect(await screen.findByRole('button', { name: /Builder/ })).toBeVisible()
     expect(screen.queryByRole('button', { name: '创建 Agent' })).not.toBeInTheDocument()
     expect(screen.getByText(/Agent 只读/)).toBeVisible()
   })
 
-  it('Plugin Pack 手工 UUID：说明可见，非法 UUID 被表单校验拦截', async () => {
+  it('Plugin Pack 下拉：选项来自 GET /plugin-packs，未选时提交禁用', async () => {
     const user = userEvent.setup()
-    renderApp('/agents', loggedInHandlers(ALICE, [agentsHandler([])]))
-    expect(await screen.findByText(/Pack 目录随 P1-17 提供/)).toBeVisible()
-    const packInput = screen.getByLabelText('Plugin Pack UUID')
-    await user.type(packInput, 'not-a-uuid')
-    expect(packInput).toBeInvalid()
-    // 校验通过后恢复有效
-    await user.clear(packInput)
-    await user.type(packInput, 'eeeeeeee-0000-4000-8000-000000000001')
-    expect(packInput).toBeValid()
+    renderApp(
+      '/agents',
+      loggedInHandlers(ALICE, [
+        agentsHandler([builderAgent]),
+        packsHandler([corePack, reviewPack]),
+      ]),
+    )
+    const select = (await screen.findByLabelText('Plugin Pack')) as HTMLSelectElement
+    expect(select).toBeRequired()
+    // 数据源断言：两个 Pack 均以下拉选项出现（不再是手工粘贴 UUID）
+    expect(await screen.findByRole('option', { name: 'core-empty' })).toBeVisible()
+    expect(screen.getByRole('option', { name: 'review-pack' })).toBeVisible()
+    // 未选 Pack：提交禁用
+    expect(screen.getByRole('button', { name: '创建 Agent' })).toBeDisabled()
+    await user.selectOptions(select, reviewPack.id)
+    expect(select).toHaveValue(reviewPack.id)
+    expect(screen.getByRole('button', { name: '创建 Agent' })).toBeEnabled()
+  })
+
+  it('Plugin Pack 列表为空：无选项，提示先去插件管理创建', async () => {
+    renderApp('/agents', loggedInHandlers(ALICE, [agentsHandler([]), packsHandler([])]))
+    const select = (await screen.findByLabelText('Plugin Pack')) as HTMLSelectElement
+    expect(select).toBeRequired()
+    expect(screen.queryByRole('option', { name: 'core-empty' })).not.toBeInTheDocument()
+    expect(await screen.findByText(/暂无可用 Pack/)).toBeVisible()
+    expect(screen.getByRole('link', { name: '插件管理' })).toHaveAttribute('href', '/plugins')
+    expect(screen.getByRole('button', { name: '创建 Agent' })).toBeDisabled()
   })
 
   it('点击 Agent 卡片查看详情（当前 Revision）', async () => {
     const user = userEvent.setup()
     renderApp(
       '/agents',
-      loggedInHandlers(ALICE, [agentsHandler([builderAgent]), agentDetailHandler()]),
+      loggedInHandlers(ALICE, [
+        agentsHandler([builderAgent]),
+        agentDetailHandler(),
+        packsHandler([corePack]),
+      ]),
     )
     await user.click(await screen.findByRole('button', { name: /Builder/ }))
     expect(await screen.findByText('#1 · deepseek-chat')).toBeVisible()
@@ -146,8 +208,122 @@ describe('agent-settings', () => {
     expect(screen.getAllByText('Persona')).toHaveLength(2)
   })
 
+  it('Owner 新建 Revision：预填当前 Revision，下拉换 Pack，载荷与幂等键正确，详情刷新', async () => {
+    const user = userEvent.setup()
+    // 可变详情：POST 成功后 refetch 返回新当前 Revision（与 production 的
+    // invalidate + refetch 语义一致）
+    let currentRevision = revision
+    let allRevisions = [revision]
+    const { fetchMock } = renderApp('/agents', [
+      ...loggedInHandlers(ALICE, [
+        agentsHandler([builderAgent]),
+        packsHandler([corePack, reviewPack]),
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/agents/${builderAgent.id}$`),
+          respond: () => ok({ ...builderAgent, currentRevision, revisions: allRevisions }),
+        },
+        {
+          method: 'POST',
+          url: new RegExp(`/api/v1/agents/${builderAgent.id}/revisions$`),
+          respond: () => {
+            const next: ProfileRevisionView = {
+              ...revision,
+              id: 'f0000000-0000-4000-8000-000000000020',
+              revision: 2,
+              pluginPackId: reviewPack.id,
+              profileDigest: 'b'.repeat(64),
+              createdAt: '2026-08-26T00:00:00.000Z',
+            }
+            currentRevision = next
+            allRevisions = [...allRevisions, next]
+            return created(next)
+          },
+        },
+      ]),
+    ])
+    await user.click(await screen.findByRole('button', { name: /Builder/ }))
+    const detail = screen.getByRole('region', { name: /Agent 详情/ })
+    await user.click(within(detail).getByRole('button', { name: '新建 Revision' }))
+
+    // 预填当前 Revision 值
+    expect(within(detail).getByLabelText('Persona')).toHaveValue('You are a careful builder.')
+    expect(within(detail).getByLabelText('Provider')).toHaveValue('deepseek')
+    expect(within(detail).getByLabelText('Model')).toHaveValue('deepseek-chat')
+    expect(within(detail).getByLabelText('Credential Slot')).toHaveValue('default')
+    expect(within(detail).getByLabelText('Max Tokens（可选）')).toHaveValue(8192)
+    // Pack 下拉：当前用的 core-empty 已预选，切到 review-pack（数据源 GET /plugin-packs）
+    const packSelect = within(detail).getByLabelText('Plugin Pack') as HTMLSelectElement
+    expect(packSelect).toHaveValue(corePack.id)
+    await user.selectOptions(packSelect, reviewPack.id)
+    // Max Tokens 清空 → 可选字段不出现在载荷
+    await user.clear(within(detail).getByLabelText('Max Tokens（可选）'))
+    await user.click(within(detail).getByRole('button', { name: '创建 Revision' }))
+
+    expect(await within(detail).findByText(/Revision #2 已创建/)).toBeVisible()
+    // 详情刷新：当前 Revision 变为 #2
+    expect(await within(detail).findByText('#2 · deepseek-chat')).toBeVisible()
+
+    const postCall = fetchMock.mock.calls.find(
+      ([input, init]) =>
+        (init?.method ?? 'GET') === 'POST' &&
+        String(input).endsWith(`/agents/${builderAgent.id}/revisions`),
+    ) as [RequestInfo | URL, RequestInit?] | undefined
+    expect(postCall).toBeDefined()
+    const init = initOf(postCall as [RequestInfo | URL, RequestInit?])
+    expect(new Headers(init.headers).get('idempotency-key')).toMatch(/^[0-9a-f-]{36}$/)
+    expect(CreateAgentRevisionRequestSchema.parse(JSON.parse(String(init.body ?? '')))).toEqual({
+      persona: 'You are a careful builder.',
+      provider: 'deepseek',
+      model: 'deepseek-chat',
+      credentialSlot: 'default',
+      pluginPackId: reviewPack.id,
+    })
+  })
+
+  it('Member 详情没有「新建 Revision」入口', async () => {
+    const user = userEvent.setup()
+    renderApp(
+      '/agents',
+      loggedInHandlers(BOB, [
+        agentsHandler([builderAgent]),
+        agentDetailHandler(),
+        packsHandler([corePack]),
+      ]),
+    )
+    await user.click(await screen.findByRole('button', { name: /Builder/ }))
+    expect(await screen.findByText('#1 · deepseek-chat')).toBeVisible()
+    expect(screen.queryByRole('button', { name: '新建 Revision' })).not.toBeInTheDocument()
+  })
+
+  it('新建 Revision 表单：无可用 Pack 时提交禁用并提示去插件管理', async () => {
+    const user = userEvent.setup()
+    // 尚无 Revision 的 Agent：表单走默认值，Pack 必选是提交门槛
+    const freshAgent = {
+      ...builderAgent,
+      id: 'f0000000-0000-4000-8000-000000000003',
+      name: 'Fresh',
+      currentRevisionId: null,
+    }
+    const freshDetailHandler: MockHandler = {
+      method: 'GET',
+      url: new RegExp(`/api/v1/agents/${freshAgent.id}$`),
+      respond: () => ok({ ...freshAgent, currentRevision: null, revisions: [] }),
+    }
+    renderApp(
+      '/agents',
+      loggedInHandlers(ALICE, [agentsHandler([freshAgent]), freshDetailHandler, packsHandler([])]),
+    )
+    await user.click(await screen.findByRole('button', { name: /Fresh/ }))
+    const detail = screen.getByRole('region', { name: /Agent 详情/ })
+    expect(await within(detail).findByText('该 Agent 尚无 Revision。')).toBeVisible()
+    await user.click(within(detail).getByRole('button', { name: '新建 Revision' }))
+    expect(within(detail).getByText(/暂无可用 Pack/)).toBeVisible()
+    expect(within(detail).getByRole('button', { name: '创建 Revision' })).toBeDisabled()
+  })
+
   it('空列表展示下一步引导空态', async () => {
-    renderApp('/agents', loggedInHandlers(ALICE, [agentsHandler([])]))
+    renderApp('/agents', loggedInHandlers(ALICE, [agentsHandler([]), packsHandler([corePack])]))
     expect(await screen.findByText(/还没有 Agent。/)).toBeVisible()
   })
 })

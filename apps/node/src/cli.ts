@@ -13,6 +13,8 @@ import { claimDevice } from './pairing/client.js'
 import { DEFAULT_CONFIG_DIR, loadConfig, saveConfig } from './config.js'
 import type { HelloFacts } from './gateway/hub-socket.js'
 import { startDeviceSession } from './gateway/session.js'
+import { installedPackDigests } from './plugin/runtime-config.js'
+import type { PluginFetch } from './plugin/installer.js'
 import { WorkspaceRegistry } from './workspace/registry.js'
 import { SecretStore } from './secret/store.js'
 import { runWorkspaceCommand, runSecretSet, readHiddenLine } from './workspace/cli-commands.js'
@@ -61,13 +63,14 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     process.exit(1)
   }
   // dsh 发行版版本：显式参数 > 环境变量 > 'unmanaged'（本机未托管 DSH 运行时的诚实标注；
-  // P1-12 由 runtime 装配给出真实版本）。pluginPackDigests 恒 []：第一阶段不安装插件包。
+  // P1-12 由 runtime 装配给出真实版本）。pluginPackDigests：本地已就绪 pack 目录
+  // （P1-17；marker 校验通过才上报，半途/损坏目录不上报）。
   const facts: HelloFacts = {
     nodeVersion: process.version,
     platform: detectPlatform(),
     architecture: process.arch,
     dshDistributionVersion: dshVersion ?? process.env.PROJECT311_DSH_VERSION ?? 'unmanaged',
-    pluginPackDigests: [],
+    pluginPackDigests: installedPackDigests(join(stateDir, 'plugin-packs')),
   }
 
   // ---- P1-13 运行会话层装配（02 Task 13）----
@@ -79,6 +82,11 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   const { RuntimeSupervisor } = await import('./supervisor/runtime-supervisor.js')
   const { DshRuntimeDriver } = await import('./runtime-driver.js')
   const { RunManager } = await import('./run/run-manager.js')
+  const { PackageStore } = await import('./plugin/package-store.js')
+  const { PluginInstaller, DEFAULT_ALLOWED_HOSTS, DEFAULT_MAX_TARBALL_BYTES, readCappedBody } =
+    await import('./plugin/installer.js')
+  const { PluginPackPreflight } = await import('./plugin/plugin-preflight.js')
+  const { fetchPluginPackDescriptor } = await import('./run/pack-descriptor-client.js')
 
   mkdirSync(stateDir, { recursive: true })
   const registry = new WorkspaceRegistry(join(stateDir, 'workspace-registry.sqlite'))
@@ -103,6 +111,47 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   // Node 重启：孤儿三重匹配处理后交人工重跑（不自动复活 Run）。
   await supervisor.recoverOrphans()
 
+  // ---- P1-17 插件 pack preflight 装配（02 Task 17 Step 5）----
+  const packsRoot = join(stateDir, 'plugin-packs')
+  const pluginStore = new PackageStore(join(stateDir, 'plugin-store'))
+  // 生产 tarball fetch：全局 fetch（redirect: 'manual'——重定向由 installer 层
+  // 逐跳跟随且每跳过 host 白名单，M3）；body 流式边读边计数，超限即中止（M4：
+  // 不把无界 body 收满进内存）。3xx 不透传 body（installer 只看 Location 头）。
+  const pluginFetch: PluginFetch = async (url) => {
+    const response = await fetch(url, { redirect: 'manual' })
+    const location = response.headers.get('location') ?? undefined
+    if (response.status >= 300 && response.status < 400) {
+      return location === undefined
+        ? { status: response.status, body: Buffer.alloc(0) }
+        : { status: response.status, location, body: Buffer.alloc(0) }
+    }
+    try {
+      const body = await readCappedBody(response.body, DEFAULT_MAX_TARBALL_BYTES)
+      return { status: response.status, body }
+    } catch (error) {
+      // 超限/读失败：中止下载释放连接，再以原错误上抛（installer 折算 wire 码）。
+      await response.body?.cancel().catch(() => {})
+      throw error
+    }
+  }
+  const preflight = new PluginPackPreflight({
+    packsRoot,
+    store: pluginStore,
+    installer: new PluginInstaller({
+      store: pluginStore,
+      fetchImpl: pluginFetch,
+      allowedHosts: [...DEFAULT_ALLOWED_HOSTS],
+      maxTarballBytes: DEFAULT_MAX_TARBALL_BYTES,
+    }),
+    fetchDescriptor: (packDigest) =>
+      fetchPluginPackDescriptor(config.hubUrl, config.deviceToken, packDigest),
+    log: (level, msg, context) => {
+      process.stderr.write(
+        `${JSON.stringify({ level, component: 'node.plugin', msg, ...context })}\n`,
+      )
+    },
+  })
+
   const runManager = new RunManager({
     supervisor,
     registry,
@@ -115,6 +164,11 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
       return dir
     },
     homeDir: homedir(),
+    // 脱敏上下文（P1-17 红线）：自定义 --state-dir 在 home 之外时，pack overlay
+    // 绝对路径会经 runtime.fatal summary 进团队投影，投影前必须归约。
+    stateDir,
+    packsRoot,
+    pluginPackPreflight: (packDigest) => preflight.ensure(packDigest),
     log: (level, msg, context) => {
       process.stderr.write(`${JSON.stringify({ level, component: 'node.run', msg, ...context })}\n`)
     },

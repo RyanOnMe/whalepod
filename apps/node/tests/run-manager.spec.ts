@@ -164,6 +164,8 @@ async function makeHarness(options: { online?: boolean } = {}): Promise<Harness>
     },
     runtimeHomeFor: (runId) => join(root, 'runtime-home', runId),
     homeDir: '/Users/testhome',
+    stateDir: root,
+    packsRoot: join(root, 'plugin-packs'),
   })
   harness.supervisor = supervisor
   harness.manager = manager
@@ -226,6 +228,26 @@ describe('run.start 处理链', () => {
     const rejected = acks[2]!
     expect(rejected.payload['accepted']).toBe(false)
     expect((rejected.payload['error'] as { code: string }).code).toBe('NODE_CAPACITY_REACHED')
+  })
+
+  it('凭据缺失（RuntimeEnvError）→ ack 透传 MODEL_CREDENTIAL_UNAVAILABLE，不降级 INTERNAL_ERROR', async () => {
+    const h = await makeHarness()
+    await h.manager.handleFrame(
+      runStartFrame(h.workspaceId, {
+        agent: {
+          id: '55555555-5555-4555-8555-555555555555',
+          profileRevisionId: '66666666-6666-4666-8666-666666666666',
+          persona: 'test persona',
+          provider: 'no-such-provider',
+          model: 'test-model',
+          credentialSlot: 'nope',
+        },
+      }),
+    )
+    const ack = h.sentFrames().find((f) => f.type === 'command.ack')
+    expect(ack?.payload['accepted']).toBe(false)
+    expect((ack!.payload['error'] as { code: string }).code).toBe('MODEL_CREDENTIAL_UNAVAILABLE')
+    expect(h.runtimes).toHaveLength(0) // spawn 前失败，Runtime 一个不启动
   })
 
   it('重复 run.start（R7）：runtime 在管 → 重放 ack accepted，绝不起第二 Runtime', async () => {

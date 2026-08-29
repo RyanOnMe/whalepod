@@ -632,6 +632,19 @@ select {
   max-width: 560px;
 }
 
+.agent-revision-actions {
+  margin-top: var(--space-3);
+  border-top: 1px solid var(--color-line);
+  padding-top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.agent-revision-form {
+  max-width: 560px;
+}
+
 .revision-meta {
   display: flex;
   flex-direction: column;
@@ -759,4 +772,221 @@ select {
 }
 .run-event.audience-owner .run-event-text {
   /* owner 全量行与普通行同呈现；受众边界在服务端，不靠样式暗示 */
+}
+
+/* ---------- 插件页（P1-17 Admin Plugin Settings） ---------- */
+/* 成功提示横幅（安装成功 / Pack 创建成功等非错误反馈）。 */
+.success-banner {
+  background: var(--color-run-soft);
+  border: 1px solid var(--color-run);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-run);
+}
+
+.success-banner p {
+  margin: 0 0 var(--space-2);
+}
+
+.success-banner p:last-child {
+  margin-bottom: 0;
+}
+
+.plugins-page,
+.plugins-layout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.plugin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.plugin-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  padding: var(--space-3) var(--space-4);
+}
+
+/* local-development 整卡标红（文字警示同在，不只靠颜色）。 */
+.plugin-card-local {
+  border-color: var(--color-danger);
+  background: var(--color-danger-soft);
+}
+
+.plugin-local-warning {
+  color: var(--color-danger-strong);
+  font-size: 13px;
+  margin: 0;
+}
+
+.plugin-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.plugin-name {
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+.plugin-version {
+  font-family: var(--font-mono);
+  color: var(--color-ink-soft);
+}
+
+.badge-plugin-review-reviewed {
+  background: var(--color-run-soft);
+  border-color: color-mix(in srgb, var(--color-run) 35%, transparent);
+  color: var(--color-run);
+}
+
+.badge-plugin-review-unreviewed {
+  background: var(--color-warn-soft);
+  border-color: color-mix(in srgb, var(--color-warn) 35%, transparent);
+  color: var(--color-warn);
+}
+
+.badge-plugin-review-local-development {
+  background: var(--color-danger-soft);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+  color: var(--color-danger-strong);
+}
+
+/* legacy_unrestricted 视觉警示（capabilityClass）。 */
+.badge-plugin-legacy {
+  background: var(--color-danger-soft);
+  border-color: var(--color-danger);
+  color: var(--color-danger-strong);
+}
+
+.badge-plugin-status-installed {
+  background: var(--color-run-soft);
+  border-color: color-mix(in srgb, var(--color-run) 35%, transparent);
+  color: var(--color-run);
+}
+
+.badge-plugin-status-disabled {
+  background: var(--color-warn-soft);
+  border-color: color-mix(in srgb, var(--color-warn) 35%, transparent);
+  color: var(--color-warn);
+}
+
+.badge-plugin-status-failed {
+  background: var(--color-danger-soft);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+  color: var(--color-danger-strong);
+}
+
+.plugin-capabilities-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.plugin-capabilities-label {
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.plugin-capabilities {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.plugin-digest {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.plugin-digest-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.copy-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+
+.plugin-pack-form {
+  max-width: 640px;
+}
+
+.plugin-pick-fieldset {
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  margin: 0 0 var(--space-3);
+}
+
+.plugin-pick-fieldset legend {
+  font-size: 14px;
+  color: var(--color-ink-soft);
+  padding-inline: var(--space-1);
+}
+
+.plugin-pick-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.plugin-pick {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.plugin-pick-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-min);
+}
+
+.plugin-pick-reason {
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.plugin-pack-entries {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.plugin-pack-entry-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
 }

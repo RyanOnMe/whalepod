@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "p311-fixed-time",
+  "version": "0.1.0",
+  "tarballUrl": "https://catalog.fixtures.project311.test/tarballs/p311-fixed-time-0.1.0.tgz",
+  "integrity": "sha256-/v3vhEAnpmuMav9MK205CtgL+6O1xgED/lrocMiEHGs=",
+  "dependencyLockDigest": "f374e4aef0009cf5d2bec997ac4fb4fb52a8858b4ca1e35c00a41942db799fd9",
+  "dshCompatibility": "0.1.0-rc.8",
+  "entrypoint": "dist/index.js",
+  "capabilities": ["workspace.read"],
+  "capabilityClass": "declared",
+  "license": "MIT",
+  "review": {
+    "status": "reviewed",
+    "commit": "16ae457ce0ab1e733fe4a7419b6a5eede6854c90",
+    "at": "2026-08-20T10:00:00.000Z"
+  }
+}

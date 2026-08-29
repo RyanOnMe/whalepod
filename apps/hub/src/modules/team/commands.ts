@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto'
+import { eq } from 'drizzle-orm'
+import { digestPluginPack } from '@project311/protocol/plugin-pack-digest'
 import {
   consumeInvite,
   disableUser,
@@ -26,14 +27,34 @@ export const CORE_EMPTY_PACK_NAME = 'core-empty'
 const INVITE_TTL_MS = 72 * 60 * 60 * 1000
 
 /**
- * 标准 pack 算法（03 §2.5：pack_digest 为规范化内容 SHA-256）：
- * 规范化形式 = 按字典序排序后的 installation id 数组的 JSON。
- * core-empty 的外部 installation 列表为空，digest = sha256('[]')。
+ * core-empty Pack（02 Task 5 Step 3）：外部 installation 列表为空。
+ * pack_digest 与 03 §2.5 同一算法——digestPluginPack（packages 排序后 canonical
+ * JSON 的 SHA-256，与 plugin 模块组装 Pack 完全一致；空闭包为固定值）。
+ * 旧算法 sha256('[]')（installation id 数组 digest）已废弃：pack_digest 是内容
+ * digest，Node 侧 preflight 只能按内容算法复算。
  */
-export function computePackDigest(installations: readonly string[]): string {
-  return createHash('sha256')
-    .update(JSON.stringify([...installations].sort()))
-    .digest('hex')
+export const CORE_EMPTY_PACK_DIGEST = digestPluginPack({ schemaVersion: 1, packages: [] })
+
+/**
+ * core-empty pack digest 断代幂等迁移（P1-17 review M10）：旧代码按旧算法
+ * sha256('[]')（4f53cd…）落库；算法换代后（digestPluginPack，空闭包固定值
+ * 4d1be1bb…）Node preflight 只认新常量，旧 digest 行会让所有引用它的 Run 被
+ * preflight 拒。在 POST /setup 处理入口触发（升级期最自然的可达入口，已初始化
+ * 实例重试 setup 也会经过）：检测到 name=core-empty 行的 digest 非现算值
+ * （含旧值与任何未知值）即原地 UPDATE 为现算值；无行或已是现算值 = no-op，
+ * 重复触发安全。返回是否发生了迁移，供调用方记告警。
+ */
+export async function migrateCoreEmptyPackDigest(database: Database): Promise<boolean> {
+  const [row] = await database.db
+    .select()
+    .from(schema.pluginPacks)
+    .where(eq(schema.pluginPacks.name, CORE_EMPTY_PACK_NAME))
+  if (row === undefined || row.packDigest === CORE_EMPTY_PACK_DIGEST) return false
+  await database.db
+    .update(schema.pluginPacks)
+    .set({ packDigest: CORE_EMPTY_PACK_DIGEST })
+    .where(eq(schema.pluginPacks.id, row.id))
+  return true
 }
 
 export interface SetupResult {
@@ -73,7 +94,7 @@ export async function setupInstance(
         id: uuidv7(),
         name: CORE_EMPTY_PACK_NAME,
         installations: [],
-        packDigest: computePackDigest([]),
+        packDigest: CORE_EMPTY_PACK_DIGEST,
         createdBy: userId,
       })
       await insertSession(tx, {

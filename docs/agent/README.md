@@ -15,6 +15,7 @@
 | [web-shell-acceptance.md](./web-shell-acceptance.md) | Issue #11 验收：Web 壳与 Task Room 双上下文主链 e2e（Q5 种子，P1-07） |
 | [workspace-runtime-acceptance.md](./workspace-runtime-acceptance.md) | G3-04..06：Workspace Registry、Runtime 进程隔离与无孤儿恢复（P1-12） |
 | [run-projection-acceptance.md](./run-projection-acceptance.md) | G4-04..06、R1/R6、§6.4：Run 投影、双受众流与全链路 replay 验收（P1-13） |
+| [plugin-pack-acceptance.md](./plugin-pack-acceptance.md) | G1-05、04 §6.5、Q3：Curated Plugin Pack、未修改插件端到端与攻击矩阵验收（P1-17） |
 
 规矩只有一条：**验过就要留下**。验收步骤、探针跑法、上次结果、坑在哪，写进这里的 acceptance 文档；能直接复跑的脚本放 `scripts/`。只留在 `/tmp` 或对话里的验证，等于没验。
 

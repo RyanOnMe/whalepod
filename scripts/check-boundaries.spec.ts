@@ -33,6 +33,30 @@ describe('workspace dependency rules', () => {
     }
   })
 
+  it('inherits the package grant for subpath exports from server-side importers (P1-17 digest)', () => {
+    expect(() =>
+      validateImport('apps/node/src/plugin/lockfile.ts', '@project311/protocol/plugin-pack-digest'),
+    ).not.toThrow()
+    expect(() =>
+      validateImport(
+        'apps/hub/src/modules/plugin/pack-resolver.ts',
+        '@project311/protocol/plugin-pack-digest',
+      ),
+    ).not.toThrow()
+    expect(() => validateImport('apps/web/src/main.ts', '@project311/db/anything')).toThrow(
+      'not allowed from apps/web/',
+    )
+  })
+
+  it('denies web -> protocol subpaths not on the isomorphic whitelist (P1-17 regression)', () => {
+    expect(() =>
+      validateImport('apps/web/src/main.ts', '@project311/protocol/plugin-pack-digest'),
+    ).toThrow('not allowed from apps/web/')
+    expect(() =>
+      validateImport('apps/web/src/main.ts', '@project311/protocol/plugin-pack-digest'),
+    ).toThrow('isomorphic subpaths of @project311/protocol: none')
+  })
+
   it('blocks hub -> runtime-dsh', () => {
     expect(() => validateImport('apps/hub/src/app.ts', '@project311/runtime-dsh')).toThrow(
       'not allowed from apps/hub/',
@@ -103,5 +127,27 @@ describe('workspace dependency rules', () => {
     expect(() =>
       validateImport('scripts/check-boundaries.ts', '@project311/protocol'),
     ).not.toThrow()
+  })
+})
+
+// P1-17 回归钉：子路径归一不得 blanket 放行 web（Q0 边界门）。
+describe('isomorphic subpath whitelist: pinned edges (P1-17 regression)', () => {
+  it('web -> @project311/protocol/plugin-pack-digest is DENY (node:crypto subpath)', () => {
+    expect(() =>
+      validateImport('apps/web/src/main.ts', '@project311/protocol/plugin-pack-digest'),
+    ).toThrow(
+      'Subpath import "@project311/protocol/plugin-pack-digest" is not allowed from apps/web/ ' +
+        '(isomorphic subpaths of @project311/protocol: none)',
+    )
+  })
+
+  it('node -> @project311/protocol/plugin-pack-digest is ALLOW (server-side package grant)', () => {
+    expect(() =>
+      validateImport('apps/node/src/plugin/lockfile.ts', '@project311/protocol/plugin-pack-digest'),
+    ).not.toThrow()
+  })
+
+  it('web -> @project311/protocol bare package is ALLOW (isomorphic entry)', () => {
+    expect(() => validateImport('apps/web/src/main.ts', '@project311/protocol')).not.toThrow()
   })
 })

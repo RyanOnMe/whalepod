@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "p311-dev-sandbox",
+  "version": "0.0.1",
+  "tarballUrl": "https://catalog.fixtures.project311.test/tarballs/p311-dev-sandbox-0.0.1.tgz",
+  "integrity": "sha256-4IvnqPfKwrbojO+9mMW4g9ZCNSTU7wMCTDkLbI+5BU0=",
+  "dependencyLockDigest": "29e573394cc6165e9f1e578f56280161e470e590ca0f7b8e5213f7751f274742",
+  "dshCompatibility": "0.1.0-rc.8",
+  "entrypoint": "dist/sandbox.js",
+  "capabilities": ["workspace.read", "workspace.write"],
+  "capabilityClass": "declared",
+  "license": "MIT",
+  "review": {
+    "status": "local-development",
+    "commit": "29e573394cc6165e9f1e578f56280161e470e590",
+    "at": "2026-08-25T18:45:00.000Z"
+  }
+}

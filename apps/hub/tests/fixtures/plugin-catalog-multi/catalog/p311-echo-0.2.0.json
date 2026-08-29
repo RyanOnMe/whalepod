@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "p311-echo",
+  "version": "0.2.0",
+  "tarballUrl": "https://catalog.fixtures.project311.test/tarballs/p311-echo-0.2.0.tgz",
+  "integrity": "sha256-Tcg6qLcTNyfxKENH/H9FecaE8Tg84lRAqK/lEnA9sP4=",
+  "dependencyLockDigest": "669804315e7d2e1e1c9283ac00afe90c5a1b2f6a86c71d55cd0af884f4ffa59a",
+  "dshCompatibility": "0.1.0-rc.8",
+  "entrypoint": "dist/echo.js",
+  "capabilities": ["workspace.read", "workspace.write", "network.egress"],
+  "capabilityClass": "declared",
+  "license": "Apache-2.0",
+  "review": {
+    "status": "reviewed",
+    "commit": "2a4ef210a0c7b63079169c3b85905f3d2197886b",
+    "at": "2026-08-18T09:30:00.000Z"
+  }
+}

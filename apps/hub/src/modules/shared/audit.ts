@@ -22,6 +22,8 @@ export type AuditAction =
   | 'device.pair'
   | 'device.claim'
   | 'device.revoke'
+  | 'plugin.install'
+  | 'plugin.pack'
 
 export type AuditOutcome = 'success' | 'denied' | 'rate_limited'
 

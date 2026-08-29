@@ -1,10 +1,15 @@
 /**
  * G1-01 / G1-02：首次 Setup 与重复 Setup。
  * 安全用例：错误 Setup Token、速率限制、Cookie 属性、明文不落库。
+ * P1-17 M10：core-empty pack digest 断代幂等迁移（旧算法 sha256('[]') 行在
+ * POST /setup 入口被原地修复为现算值；已迁移时 no-op）。
  */
+import { createHash } from 'node:crypto'
 import { access } from 'node:fs/promises'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@project311/db'
+import { digestPluginPack } from '@project311/protocol/plugin-pack-digest'
+import { CORE_EMPTY_PACK_DIGEST, migrateCoreEmptyPackDigest } from '../src/modules/team/commands.js'
 import {
   createTestApp,
   createTestDatabase,
@@ -231,6 +236,73 @@ describe('POST /api/v1/setup（G1-02 与拒绝路径）', () => {
     expect(body.error.code).toBe('VALIDATION_FAILED')
     expect(typeof body.error.requestId).toBe('string')
     expect(JSON.stringify(body)).not.toMatch(/\/Users\/|select |insert /i)
+  })
+})
+
+describe('core-empty pack digest 断代迁移（P1-17 M10）', () => {
+  /** 重试 setup 的完整 body：已初始化实例在 token 校验前就 409，token 值无关紧要。 */
+  function retrySetup() {
+    return ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/setup',
+      headers: { origin: ctx.origin, 'idempotency-key': idemKey() },
+      payload: {
+        setupToken: ctx.setupToken,
+        teamName: 'Acme',
+        username: 'alice',
+        displayName: 'Alice',
+        password: 'correct horse battery staple',
+      },
+    })
+  }
+
+  async function coreEmptyRow(): Promise<{ id: string; pack_digest: string } | undefined> {
+    const rows = await database.sql<{ id: string; pack_digest: string }[]>`
+      select id, pack_digest from plugin_pack where name = 'core-empty'`
+    return rows[0]
+  }
+
+  it('旧算法 digest（sha256("[]")）在重试 /setup 时被原地迁移为现算值', async () => {
+    await driveSetup(ctx)
+    const legacy = createHash('sha256').update('[]').digest('hex')
+    // 旧算法值自证（review 记载的断代锚点）：installation id 数组 digest 的定值。
+    expect(legacy).toBe('4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945')
+    const before = await coreEmptyRow()
+    expect(before?.pack_digest).toBe(CORE_EMPTY_PACK_DIGEST) // 初始落库即新算法
+
+    // 模拟旧 dev 库：把行打回旧算法值，再触发升级期最自然的入口——重试 setup。
+    await database.sql`update plugin_pack set pack_digest = ${legacy} where name = 'core-empty'`
+    const retry = await retrySetup()
+    // 常规 409 照旧（实例已初始化）；但 M10 迁移在初始化检查之前已发生（routes 顺序）。
+    expect(retry.statusCode).toBe(409)
+    expect(retry.json().error.code).toBe('CONFLICT')
+
+    const after = await coreEmptyRow()
+    expect(after?.id).toBe(before?.id) // 原地 UPDATE，非删除重建
+    expect(after?.pack_digest).toBe(CORE_EMPTY_PACK_DIGEST)
+    expect(after?.pack_digest).not.toBe(legacy)
+    // 常量与协议现算一致（防常量漂移）：core-empty 空闭包的 digestPluginPack 定值。
+    expect(CORE_EMPTY_PACK_DIGEST).toBe(digestPluginPack({ schemaVersion: 1, packages: [] }))
+  })
+
+  it('已是现算值时迁移为 no-op：返回 false，行不变', async () => {
+    await driveSetup(ctx)
+    const before = await coreEmptyRow()
+    expect(before?.pack_digest).toBe(CORE_EMPTY_PACK_DIGEST)
+    const migrated = await migrateCoreEmptyPackDigest(database)
+    expect(migrated).toBe(false)
+    const after = await coreEmptyRow()
+    expect(after?.id).toBe(before?.id)
+    expect(after?.pack_digest).toBe(before?.pack_digest)
+  })
+
+  it('未知 digest 值同样被迁移（直调返回 true），重复触发安全', async () => {
+    await driveSetup(ctx)
+    await database.sql`update plugin_pack set pack_digest = ${'e'.repeat(64)} where name = 'core-empty'`
+    expect(await migrateCoreEmptyPackDigest(database)).toBe(true)
+    expect((await coreEmptyRow())?.pack_digest).toBe(CORE_EMPTY_PACK_DIGEST)
+    // 幂等：第二遍是 no-op。
+    expect(await migrateCoreEmptyPackDigest(database)).toBe(false)
   })
 })
 

@@ -20,9 +20,11 @@ import type {
 } from '@project311/protocol'
 import { parseRuntimeFrame } from '@project311/protocol'
 import { commandAckFrame, runEventFrame, runLiveDeltaFrame } from '../gateway/hub-socket.js'
+import { PluginPreflightError, type PreflightOutcome } from '../plugin/plugin-preflight.js'
 import { RunProjector, type ProjectionContext } from '../projection/projector.js'
 import type { CommandStore } from '../spool/command-store.js'
 import type { EventStore } from '../spool/event-store.js'
+import { RuntimeEnvError } from '../supervisor/environment.js'
 import {
   newRuntimeNonce,
   RuntimeSupervisor,
@@ -43,6 +45,20 @@ export interface RunManagerDeps {
   /** 每 run 的 DSH_HOME（stateDir 下派生；调用方负责 mkdir）。 */
   readonly runtimeHomeFor: (runId: string) => string
   readonly homeDir: string
+  /**
+   * Node 状态目录（`--state-dir`）与插件 packs 根：脱敏上下文替换项（P1-17，
+   * 红线——绝对路径不进团队投影）。Runtime boot 错误（pack overlay 路径缺失等）
+   * 会把 stateDir 下的绝对路径带进 runtime.fatal summary，投影前必须归约。
+   */
+  readonly stateDir: string
+  readonly packsRoot: string
+  /**
+   * P1-17：Plugin Pack preflight（runtime.initialize 之前执行，02 Task 17
+   * Step 5）。core-empty pack 返回 {}（无 overlay）；非空 pack 本地命中或经
+   * Hub descriptor 安装后返回 overlay yml 路径。失败抛 PluginPreflightError：
+   * run 以对应 failure_code 拒绝（ack accepted=false），绝不启动 Runtime。
+   */
+  readonly pluginPackPreflight?: (packDigest: string) => Promise<PreflightOutcome>
   readonly now?: () => Date
   readonly log?: (
     level: 'info' | 'warn' | 'error',
@@ -120,6 +136,13 @@ export class RunManager {
       // redaction 上下文要 canonical workspace 根（registry.resolve 已 realpath +
       // 身份校验）；supervisor.start 内部会再 resolve 一次（同一事实源）。
       const workspacePath = await this.deps.registry.resolve(payload.workspaceId)
+      // P1-17 preflight：workspace 就绪后、spawn 之前。失败即 run 拒绝，
+      // 绝不带着未校验/未安装的 pack 启动 Runtime。
+      let pluginPackOverlayPath: string | undefined
+      if (this.deps.pluginPackPreflight !== undefined) {
+        const preflight = await this.deps.pluginPackPreflight(payload.expectedPluginPackDigest)
+        pluginPackOverlayPath = preflight.overlayPath
+      }
       const projector = new RunProjector(this.projectionContext(runId, workspacePath))
       const spec: RuntimeStartSpec = {
         runId,
@@ -156,6 +179,7 @@ export class RunManager {
           dshHomePath: this.deps.runtimeHomeFor(runId),
           profileDigest: payload.expectedProfileDigest,
           pluginPackDigest: payload.expectedPluginPackDigest,
+          ...(pluginPackOverlayPath !== undefined ? { pluginPackOverlayPath } : {}),
           provider: payload.agent.provider,
           model: payload.agent.model,
           ...(payload.agent.maxTokens !== undefined ? { maxTokens: payload.agent.maxTokens } : {}),
@@ -172,7 +196,14 @@ export class RunManager {
       })
     } catch (error) {
       this.projectors.delete(runId)
-      const code = error instanceof SupervisorError ? error.code : ('INTERNAL_ERROR' as const)
+      const code =
+        error instanceof SupervisorError
+          ? error.code
+          : error instanceof PluginPreflightError
+            ? error.code
+            : error instanceof RuntimeEnvError
+              ? error.code // 凭据/工作区环境失败：透传具体 wire 码，不降级 INTERNAL_ERROR
+              : ('INTERNAL_ERROR' as const)
       const message = error instanceof Error ? error.message : String(error)
       this.deps.commandStore.markAcked(commandId)
       this.ack(commandId, false, { code, message })
@@ -333,7 +364,13 @@ export class RunManager {
   }
 
   private projectionContext(runId: string, workspacePath: string): ProjectionContext {
-    return { runId, workspaceRoot: workspacePath, homeDir: this.deps.homeDir }
+    return {
+      runId,
+      workspaceRoot: workspacePath,
+      homeDir: this.deps.homeDir,
+      stateDir: this.deps.stateDir,
+      packsRoot: this.deps.packsRoot,
+    }
   }
 
   private log(
