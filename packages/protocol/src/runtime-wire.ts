@@ -24,6 +24,10 @@ export const RuntimeInitializeSchema = envelope(
     dshHomePath: z.string().min(1),
     profileDigest: Sha256DigestSchema,
     pluginPackDigest: Sha256DigestSchema,
+    // P1-17：Node preflight 为该 pack 生成的 Cordis overlay yml 绝对路径（本地
+    // wire 专用——Runtime 在本机按该路径加载 patch 层）。不进 Hub、日志与
+    // evidence（红线同 workspacePath）；pack 为 core-empty 时不携带。
+    pluginPackOverlayPath: z.string().min(1).optional(),
     provider: z.string().min(1).max(100),
     model: z.string().min(1).max(200),
     maxTokens: z.number().int().positive().optional(),

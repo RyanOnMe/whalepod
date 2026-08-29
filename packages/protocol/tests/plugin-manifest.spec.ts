@@ -18,7 +18,8 @@ const VALID_MANIFEST: PluginManifest = {
   schemaVersion: 1,
   name: '@project311/tabtin-fixed-time',
   version: '0.1.0',
-  tarballUrl: 'https://registry.npmjs.org/@project311/tabtin-fixed-time/-/tabtin-fixed-time-0.1.0.tgz',
+  tarballUrl:
+    'https://registry.npmjs.org/@project311/tabtin-fixed-time/-/tabtin-fixed-time-0.1.0.tgz',
   integrity: 'sha512-' + 'A'.repeat(86) + '==',
   dependencyLockDigest: 'a'.repeat(64),
   dshCompatibility: '0.1.0-rc.8',
@@ -42,9 +43,7 @@ describe('PluginManifestSchema', () => {
     '拒绝非不可变来源/版本: %s',
     (version) => {
       expect(ExactVersionSchema.safeParse(version).success).toBe(false)
-      expect(
-        PluginManifestSchema.safeParse({ ...VALID_MANIFEST, version }).success,
-      ).toBe(false)
+      expect(PluginManifestSchema.safeParse({ ...VALID_MANIFEST, version }).success).toBe(false)
     },
   )
 
@@ -73,9 +72,7 @@ describe('PluginManifestSchema', () => {
         review: { ...VALID_MANIFEST.review, status: 'whatever' },
       }).success,
     ).toBe(false)
-    expect(
-      PluginManifestSchema.safeParse({ ...VALID_MANIFEST, extra: true }).success,
-    ).toBe(false)
+    expect(PluginManifestSchema.safeParse({ ...VALID_MANIFEST, extra: true }).success).toBe(false)
   })
 
   it('review 状态 → trust 映射：reviewed→curated，其余→unreviewed', () => {
@@ -112,12 +109,20 @@ describe('digestPluginPack', () => {
 
   it('任一固定字段变化即漂移（含 configDigest）', () => {
     const base = digestPluginPack({ schemaVersion: 1, packages: [entryA] })
-    expect(digestPluginPack({ schemaVersion: 1, packages: [{ ...entryA, version: '1.0.1' }] })).not.toBe(base)
     expect(
-      digestPluginPack({ schemaVersion: 1, packages: [{ ...entryA, configDigest: '1'.repeat(64) }] }),
+      digestPluginPack({ schemaVersion: 1, packages: [{ ...entryA, version: '1.0.1' }] }),
     ).not.toBe(base)
     expect(
-      digestPluginPack({ schemaVersion: 1, packages: [{ ...entryA, dependencyLockDigest: '2'.repeat(64) }] }),
+      digestPluginPack({
+        schemaVersion: 1,
+        packages: [{ ...entryA, configDigest: '1'.repeat(64) }],
+      }),
+    ).not.toBe(base)
+    expect(
+      digestPluginPack({
+        schemaVersion: 1,
+        packages: [{ ...entryA, dependencyLockDigest: '2'.repeat(64) }],
+      }),
     ).not.toBe(base)
   })
 
@@ -128,6 +133,40 @@ describe('digestPluginPack', () => {
   })
 
   it('canonicalJson 键序确定', () => {
-    expect(canonicalJson({ b: 1, a: { d: [2, 3], c: null } })).toBe('{"a":{"c":null,"d":[2,3]},"b":1}')
+    expect(canonicalJson({ b: 1, a: { d: [2, 3], c: null } })).toBe(
+      '{"a":{"c":null,"d":[2,3]},"b":1}',
+    )
+  })
+})
+
+// ---------- plugin-runtime-config：Cordis entry 生成与 configDigest ----------
+describe('pluginCordisEntry + digestPluginCordisEntry', async () => {
+  const { pluginCordisEntry, cordisEntryId } = await import('../src/plugin-runtime-config.js')
+  const { digestPluginCordisEntry } = await import('../src/plugin-pack-digest.js')
+
+  const base = { name: 'project311-fixed-time', version: '0.1.0', entrypoint: 'index.js' }
+
+  it('generates a deterministic entry with empty config', () => {
+    expect(pluginCordisEntry(base)).toEqual({
+      schemaVersion: 1,
+      id: 'project311-fixed-time',
+      name: 'project311-fixed-time',
+      version: '0.1.0',
+      entrypoint: 'index.js',
+      config: {},
+    })
+  })
+
+  it('maps scoped names to fs-safe ids', () => {
+    expect(cordisEntryId('@acme/tools')).toBe('acme--tools')
+  })
+
+  it('digest is stable and drift-sensitive', () => {
+    const digest = digestPluginCordisEntry(pluginCordisEntry(base))
+    expect(digest).toMatch(/^[a-f0-9]{64}$/)
+    expect(digestPluginCordisEntry(pluginCordisEntry(base))).toBe(digest)
+    expect(digestPluginCordisEntry(pluginCordisEntry({ ...base, entrypoint: 'main.js' }))).not.toBe(
+      digest,
+    )
   })
 })

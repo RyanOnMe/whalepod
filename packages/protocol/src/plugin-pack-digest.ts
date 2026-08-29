@@ -10,6 +10,7 @@
  */
 import { createHash } from 'node:crypto'
 import { PluginPackInputSchema, type PluginPackInput } from './plugin-manifest.js'
+import { PluginCordisEntrySchema, type PluginCordisEntry } from './plugin-runtime-config.js'
 
 /** 确定性 JSON：对象键递归排序；数组保序。 */
 export function canonicalJson(value: unknown): string {
@@ -37,4 +38,13 @@ export function digestPluginPack(pack: PluginPackInput): string {
   return createHash('sha256')
     .update(canonicalJson({ schemaVersion: 1, packages: normalized }))
     .digest('hex')
+}
+
+/**
+ * 单包 Cordis entry 的 configDigest（03 §2.5 PluginPackEntry.configDigest）。
+ * Hub 组装 Pack 时写入；Node preflight 复算比对，防 catalog/overlay 漂移。
+ */
+export function digestPluginCordisEntry(entry: PluginCordisEntry): string {
+  const parsed = PluginCordisEntrySchema.parse(entry)
+  return createHash('sha256').update(canonicalJson(parsed)).digest('hex')
 }
