@@ -1,0 +1,11 @@
+{
+  "name": "project311-fixed-time",
+  "version": "0.1.0",
+  "description": "DSH tool plugin: registers a fixed_time tool that returns one constant UTC timestamp.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "index.js",
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.8"
+  }
+}
