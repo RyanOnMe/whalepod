@@ -5,6 +5,7 @@
  * 坏 SRI、绝对/越界 entrypoint、未声明 review 状态——一律拒绝。
  * digest：packages 顺序无关、字段缺省即漂移。
  */
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   ExactVersionSchema,
@@ -12,7 +13,7 @@ import {
   trustForReviewStatus,
   type PluginManifest,
 } from '../src/plugin-manifest.js'
-import { canonicalJson, digestPluginPack } from '../src/plugin-pack-digest.js'
+import { canonicalJson, compareCodePoints, digestPluginPack } from '../src/plugin-pack-digest.js'
 
 const VALID_MANIFEST: PluginManifest = {
   schemaVersion: 1,
@@ -136,6 +137,31 @@ describe('digestPluginPack', () => {
     expect(canonicalJson({ b: 1, a: { d: [2, 3], c: null } })).toBe(
       '{"a":{"c":null,"d":[2,3]},"b":1}',
     )
+  })
+
+  it('规范化排序是码点序而非 locale 序（ICU 无关，跨环境复算一致）', () => {
+    // ICU localeCompare 会把 'a_b' 排在 'a-b' 前（标点折叠）；码点序相反
+    // （'-'=0x2d < '_'=0x5f）。digest 是内容纯函数，不能依赖 ICU 排序表。
+    const dash = { ...entryA, name: 'a-b' }
+    const underscore = { ...entryB, name: 'a_b' }
+    expect(compareCodePoints('a-b', 'a_b')).toBe(-1)
+    expect('a_b'.localeCompare('a-b')).toBe(-1) // 确认两序在此输入上确实分歧
+    const expected = canonicalJson({
+      schemaVersion: 1,
+      packages: [dash, underscore], // 码点序：dash 在前
+    })
+    expect(digestPluginPack({ schemaVersion: 1, packages: [underscore, dash] })).toBe(
+      createHash('sha256').update(expected).digest('hex'),
+    )
+  })
+
+  it('同名包多版本 fail-closed（digest 必须是内容纯函数）', () => {
+    expect(() =>
+      digestPluginPack({
+        schemaVersion: 1,
+        packages: [entryA, { ...entryA, version: '2.0.0' }],
+      }),
+    ).toThrow(/duplicate package name/)
   })
 })
 
