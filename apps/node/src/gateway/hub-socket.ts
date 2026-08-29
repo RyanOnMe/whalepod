@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import type { WebSocket } from 'ws'
 import { WebSocket as WsClient } from 'ws'
-import type { NodeDownstream, ProjectedRunEvent } from '@project311/protocol'
+import {
+  parseNodeFrame,
+  ProtocolError,
+  type NodeDownstream,
+  type ProjectedRunEvent,
+} from '@project311/protocol'
 
 /** Hub 出站连接包装：认证升级 + 消息/关闭/错误回调。 */
 export interface HubSocketHandlers {
@@ -30,11 +35,25 @@ export function openHubSocket(
     headers: { authorization: `Device ${deviceToken}` },
   })
   socket.on('message', (raw: unknown) => {
+    // 下行帧入口 fail-closed（§11，M2）：必须过协议 wire schema 才派发。
+    // 非法帧丢弃并记结构化日志（只记 wire 码，绝不携带原始帧内容——其字段
+    // 攻击者可控）；不崩进程、不断连接（Hub 侧独立裁决）。
+    let frame: NodeDownstream
     try {
-      handlers.onMessage?.(JSON.parse(String(raw)))
-    } catch {
-      // 非 JSON：忽略（协议层 Hub 侧已 fail-closed 断开）。
+      frame = parseNodeFrame(JSON.parse(String(raw)), 'downstream')
+    } catch (error) {
+      const code = error instanceof ProtocolError ? error.code : 'VALIDATION_FAILED'
+      process.stderr.write(
+        `${JSON.stringify({
+          level: 'warn',
+          component: 'node.gateway',
+          msg: 'downstream frame rejected by wire schema',
+          code,
+        })}\n`,
+      )
+      return
     }
+    handlers.onMessage?.(frame)
   })
   socket.on('close', (code: number, reasonBuf: Buffer) => {
     handlers.onClose?.(code, String(reasonBuf))

@@ -58,7 +58,7 @@ import {
   pluginCordisEntry,
   type PluginManifest,
 } from '@project311/protocol'
-import { digestPluginCordisEntry } from '@project311/protocol/plugin-pack-digest'
+import { compareCodePoints, digestPluginCordisEntry } from '@project311/protocol/plugin-pack-digest'
 import { PluginError } from './integrity.js'
 
 /** marker 文件名：pack 目录的就绪标记（含逐包 store 树 digest 回执）。 */
@@ -144,7 +144,7 @@ export function assertCordisEntryDigest(manifest: PluginManifest, configDigest: 
  */
 export function renderPackOverlayYaml(rows: readonly PackOverlayRow[], packDigest: string): string {
   const patches = [...rows]
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .sort((a, b) => compareCodePoints(a.name, b.name))
     .map((row) => ({
       insert: [{ id: row.id, name: row.name, config: row.config }],
     }))
@@ -204,7 +204,7 @@ export function ensurePackOverlay(input: {
   } catch {
     throw new PluginError('STORE_IO', 'failed to create plugin pack directory')
   }
-  const sorted = [...input.packages].sort((a, b) => a.name.localeCompare(b.name))
+  const sorted = [...input.packages].sort((a, b) => compareCodePoints(a.name, b.name))
   ensureMarker(packDir, input.packDigest, sorted)
   for (const pkg of sorted) ensureAnchor(packDir, pkg.name, pkg.storePath)
   const overlayYaml = renderPackOverlayYaml(
@@ -361,5 +361,5 @@ export function installedPackDigests(packsRoot: string): string[] {
       // 未就绪/损坏：不上报。
     }
   }
-  return digests.sort((a, b) => a.localeCompare(b))
+  return digests.sort(compareCodePoints)
 }

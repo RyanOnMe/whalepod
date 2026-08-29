@@ -6,9 +6,11 @@
  *   fixture 与真实 npm 包均不需要）。
  * - 路径必须是包内相对路径：拒绝绝对路径、.. 段、解出目录边界的 pax
  *   longname。
- * - 单文件与总大小上限在 installer 层卡住（这里只做结构性安全）。
+ * - 压缩侧字节上限在 installer 层卡住；解压侧总上限在本模块
+ *   MAX_UNCOMPRESSED_TAR_BYTES（gzip bomb 第二道闸）。
  */
 import { gunzipSync, gzipSync } from 'node:zlib'
+import { compareCodePoints } from '@project311/protocol/plugin-pack-digest'
 import { PluginError } from './integrity.js'
 
 export interface TarEntry {
@@ -25,6 +27,15 @@ const BLOCK = 512
 /** gzip 头 OS 字段归一值（3 = Unix；见 buildTarGz 注释）。 */
 const GZIP_OS_UNIX = 3
 
+/**
+ * 解压后总上限（M4：gzip bomb 第二道闸）。
+ *
+ * 压缩侧 tarball 已由 installer 卡在 maxTarballBytes（默认 8 MiB）；真实 npm
+ * 包压缩比只有数倍，64 MiB 解压上限 = 压缩上限的 8 倍，对合法大包留足余量，
+ * 而 1000:1 以上放大比的炸弹（8 MiB 压缩 → 8 GiB 解压）在此截断。
+ */
+export const MAX_UNCOMPRESSED_TAR_BYTES = 64 * 1024 * 1024
+
 function parseOctal(field: Buffer): number {
   const text = field.toString('latin1').replace(/\0.*$/s, '').trim()
   if (text === '') return 0
@@ -40,13 +51,55 @@ function safePath(raw: string): string | undefined {
   return parts.join('/')
 }
 
+/**
+ * 解析 pax 'x' 头的 record 序列，返回 path= 键值（其余键忽略）。
+ *
+ * record 格式：`<len> <key>=<value>\n`，len（十进制、含自身）= 整条 record
+ * 字节数（n3：len 超过实有字节、缺空格/换行、len 不自洽一律 fail-closed
+ * TARBALL_UNSAFE——绝不截断后把后续字节误当 header）。
+ */
+function parsePaxPath(content: Buffer): string | undefined {
+  let path: string | undefined
+  let pos = 0
+  while (pos < content.length) {
+    const space = content.indexOf(0x20, pos)
+    const lenText = content.subarray(pos, space === -1 ? content.length : space).toString('latin1')
+    if (space === -1 || lenText === '' || !/^\d{1,10}$/.test(lenText)) {
+      throw new PluginError('TARBALL_UNSAFE', 'malformed pax record')
+    }
+    const recordLen = Number.parseInt(lenText, 10)
+    // recordLen 必须至少覆盖 "<len> " 前缀，且不得超出实有字节。
+    if (recordLen <= space - pos + 1 || pos + recordLen > content.length) {
+      throw new PluginError('TARBALL_UNSAFE', 'malformed pax record')
+    }
+    if (content[pos + recordLen - 1] !== 0x0a) {
+      throw new PluginError('TARBALL_UNSAFE', 'malformed pax record')
+    }
+    const record = content.subarray(space + 1, pos + recordLen - 1)
+    const eq = record.indexOf(0x3d)
+    if (eq > 0 && record.subarray(0, eq).toString('latin1') === 'path') {
+      path = record.subarray(eq + 1).toString('utf8')
+    }
+    pos += recordLen
+  }
+  return path
+}
+
 /** 解 tar.gz 为条目数组（全部读进内存——installer 已先卡 tarball 字节上限）。 */
 export function unpackTarGz(archive: Buffer): TarEntry[] {
   let tar: Buffer
   try {
-    tar = gunzipSync(archive)
-  } catch {
-    throw new PluginError('TARBALL_UNSAFE', 'not a gzip stream')
+    // maxOutputLength 超限抛 ERR_ZLIB_BUDGET_EXHAUSTED（gzip bomb 在此截断，M4）。
+    tar = gunzipSync(archive, { maxOutputLength: MAX_UNCOMPRESSED_TAR_BYTES })
+  } catch (error) {
+    const budgetExhausted =
+      error instanceof Error &&
+      (error as NodeJS.ErrnoException).code === 'ERR_ZLIB_BUDGET_EXHAUSTED'
+    // 固定话术：不携带输入细节；两类失败统一 fail-closed TARBALL_UNSAFE。
+    throw new PluginError(
+      'TARBALL_UNSAFE',
+      budgetExhausted ? 'decompressed tarball exceeds size limit' : 'not a gzip stream',
+    )
   }
   const entries: TarEntry[] = []
   let paxPath: string | undefined
@@ -58,19 +111,28 @@ export function unpackTarGz(archive: Buffer): TarEntry[] {
     if (header.every((b) => b === 0)) break // 结束块
     const typeflag = String.fromCharCode(header[156] ?? 0)
     const size = parseOctal(header.subarray(124, 136))
+    // size 字段非八进制垃圾时 parseOctal 得 NaN：offset 算术塌缩会把零块误判
+    // 成结束块、静默截断归档——fail-closed 拒绝（合法 tar 的 size 恒为八进制）。
+    if (!Number.isFinite(size)) {
+      throw new PluginError('TARBALL_UNSAFE', 'tar header size field is not octal')
+    }
     const mode = parseOctal(header.subarray(100, 108))
     const name = header.subarray(0, 100).toString('latin1').replace(/\0.*$/s, '')
     const content = tar.subarray(offset, offset + size)
     offset += Math.ceil(size / BLOCK) * BLOCK
 
     if (typeflag === 'x') {
-      // pax 扩展头：只取 path= 键（其余键忽略——第一阶段最小支持面）。
-      const text = content.toString('utf8')
-      const pathMatch = /(?:^|\n)\d+ path=([^\n]+)/.exec(`\n${text}`)
-      paxPath = pathMatch?.[1]
+      // pax 扩展头：只取 path= 键（其余键忽略——第一阶段最小支持面）；
+      // 每条 record 声明长度必须与实有字节自洽，否则 fail-closed（n3：
+      // 截断后继续会把后续字节误当 header）。
+      paxPath = parsePaxPath(content)
       continue
     }
-    if (typeflag === 'g') continue // pax 全局头：无每文件语义
+    if (typeflag === 'g') {
+      // pax 全局头：无每文件语义；清掉未消费的 'x' 路径，防泄漏到下一条目（n4）。
+      paxPath = undefined
+      continue
+    }
     const rawName = paxPath ?? name
     paxPath = undefined
     const path = safePath(rawName)
@@ -112,7 +174,7 @@ export interface TarInputEntry {
  */
 export function buildTarGz(entries: readonly TarInputEntry[]): Buffer {
   const blocks: Buffer[] = []
-  for (const entry of [...entries].sort((a, b) => a.path.localeCompare(b.path))) {
+  for (const entry of [...entries].sort((a, b) => compareCodePoints(a.path, b.path))) {
     const content = entry.content ?? Buffer.alloc(0)
     const header = Buffer.alloc(512)
     header.write(entry.path, 0, 'latin1')

@@ -18,12 +18,17 @@ import {
 } from 'node:fs'
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { canonicalJson } from '@project311/protocol/plugin-pack-digest'
+import { canonicalJson, compareCodePoints } from '@project311/protocol/plugin-pack-digest'
 import type { TarEntry } from './tar.js'
 import { PluginError } from './integrity.js'
 
 export class PackageStore {
-  constructor(readonly root: string) {}
+  constructor(readonly root: string) {
+    // store 根目录 0o700：插件代码树是敏感落盘面（可执行 JS），umask 不可靠，
+    // 显式 chmod 保证目录已存在（宽权限遗留）时也收口到仅属主可读写。
+    mkdirSync(this.root, { recursive: true, mode: 0o700 })
+    chmodSync(this.root, 0o700)
+  }
 
   /** digest 对应的包树绝对路径；未命中 undefined。 */
   lookup(treeDigest: string): string | undefined {
@@ -59,7 +64,7 @@ export class PackageStore {
   async finalize(staging: string): Promise<{ treeDigest: string; path: string }> {
     const manifest: Array<{ path: string; executable: boolean; contentDigest: string }> = []
     await walk(staging, staging, manifest)
-    manifest.sort((a, b) => a.path.localeCompare(b.path))
+    manifest.sort((a, b) => compareCodePoints(a.path, b.path))
     const treeDigest = createHash('sha256').update(canonicalJson(manifest)).digest('hex')
     const finalDir = join(this.root, 'sha256', treeDigest)
     if (existsSync(finalDir)) {
@@ -70,6 +75,14 @@ export class PackageStore {
     try {
       renameSync(staging, finalDir)
     } catch (error) {
+      // 并发 finalize 同一内容：对手已在 existsSync→rename 窗口内发布
+      // （POSIX rename 到非空目录报 ENOTEMPTY/EEXIST）。内容寻址保证 digest 同
+      // 即内容同，直接命中对手产物，不假性失败。
+      const code = (error as NodeJS.ErrnoException).code
+      if ((code === 'ENOTEMPTY' || code === 'EEXIST') && existsSync(finalDir)) {
+        rmSync(staging, { recursive: true, force: true })
+        return { treeDigest, path: finalDir }
+      }
       rmSync(staging, { recursive: true, force: true })
       throw new PluginError('STORE_IO', `failed to publish package tree: ${String(error)}`)
     }

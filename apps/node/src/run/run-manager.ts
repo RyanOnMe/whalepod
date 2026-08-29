@@ -24,6 +24,7 @@ import { PluginPreflightError, type PreflightOutcome } from '../plugin/plugin-pr
 import { RunProjector, type ProjectionContext } from '../projection/projector.js'
 import type { CommandStore } from '../spool/command-store.js'
 import type { EventStore } from '../spool/event-store.js'
+import { RuntimeEnvError } from '../supervisor/environment.js'
 import {
   newRuntimeNonce,
   RuntimeSupervisor,
@@ -44,6 +45,13 @@ export interface RunManagerDeps {
   /** 每 run 的 DSH_HOME（stateDir 下派生；调用方负责 mkdir）。 */
   readonly runtimeHomeFor: (runId: string) => string
   readonly homeDir: string
+  /**
+   * Node 状态目录（`--state-dir`）与插件 packs 根：脱敏上下文替换项（P1-17，
+   * 红线——绝对路径不进团队投影）。Runtime boot 错误（pack overlay 路径缺失等）
+   * 会把 stateDir 下的绝对路径带进 runtime.fatal summary，投影前必须归约。
+   */
+  readonly stateDir: string
+  readonly packsRoot: string
   /**
    * P1-17：Plugin Pack preflight（runtime.initialize 之前执行，02 Task 17
    * Step 5）。core-empty pack 返回 {}（无 overlay）；非空 pack 本地命中或经
@@ -193,7 +201,9 @@ export class RunManager {
           ? error.code
           : error instanceof PluginPreflightError
             ? error.code
-            : ('INTERNAL_ERROR' as const)
+            : error instanceof RuntimeEnvError
+              ? error.code // 凭据/工作区环境失败：透传具体 wire 码，不降级 INTERNAL_ERROR
+              : ('INTERNAL_ERROR' as const)
       const message = error instanceof Error ? error.message : String(error)
       this.deps.commandStore.markAcked(commandId)
       this.ack(commandId, false, { code, message })
@@ -354,7 +364,13 @@ export class RunManager {
   }
 
   private projectionContext(runId: string, workspacePath: string): ProjectionContext {
-    return { runId, workspaceRoot: workspacePath, homeDir: this.deps.homeDir }
+    return {
+      runId,
+      workspaceRoot: workspacePath,
+      homeDir: this.deps.homeDir,
+      stateDir: this.deps.stateDir,
+      packsRoot: this.deps.packsRoot,
+    }
   }
 
   private log(

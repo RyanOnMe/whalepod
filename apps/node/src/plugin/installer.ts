@@ -13,8 +13,43 @@ import { assertLockMatches, type PluginLockfile } from './lockfile.js'
 import { PackageStore } from './package-store.js'
 import { unpackTarGz } from './tar.js'
 
-/** fetch 注入缝：测试用内存字节服务；生产用全局 fetch。 */
-export type PluginFetch = (url: string) => Promise<{ status: number; body: Buffer }>
+/**
+ * fetch 注入缝：测试用内存字节服务；生产用全局 fetch（redirect: 'manual'）。
+ * 3xx 时 location 原样透出（生产 fetchImpl 从 Location 头取；测试可脚本化
+ * 重定向链）——installer 层逐跳 assertHost 后再跟随（M3）。
+ */
+export interface PluginFetchResponse {
+  readonly status: number
+  readonly location?: string
+  readonly body: Buffer
+}
+export type PluginFetch = (url: string) => Promise<PluginFetchResponse>
+
+/** 重定向跳数上限：每跳独立过 host 白名单，超限按白名单拒绝同码 fail-closed。 */
+export const MAX_TARBALL_REDIRECTS = 5
+
+/**
+ * 流式读响应 body 并按字节上限截断（M4：生产 fetch 适配器第一道闸）。
+ * 超 maxBytes 立即抛 SIZE_LIMIT_EXCEEDED，不把无界 body 收满进内存；
+ * 调用方在 catch 里 cancel 底层流以中止下载。
+ */
+export async function readCappedBody(
+  source: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+): Promise<Buffer> {
+  if (source === null) return Buffer.alloc(0)
+  const chunks: Buffer[] = []
+  let total = 0
+  for await (const chunk of source) {
+    const bytes = Buffer.from(chunk)
+    if (total + bytes.length > maxBytes) {
+      throw new PluginError('SIZE_LIMIT_EXCEEDED', 'tarball body exceeds byte limit')
+    }
+    total += bytes.length
+    chunks.push(bytes)
+  }
+  return Buffer.concat(chunks)
+}
 
 export interface InstallerOptions {
   readonly store: PackageStore
@@ -83,7 +118,49 @@ export class PluginInstaller {
   private assertHost(url: string): void {
     const host = new URL(url).host
     if (!this.options.allowedHosts.includes(host)) {
-      throw new PluginError('HOST_NOT_ALLOWED', `tarball host not in allowlist: ${host}`)
+      // 固定话术：重定向 Location 是攻击者可控串，host 不回显进错误消息。
+      throw new PluginError('HOST_NOT_ALLOWED', 'tarball host not in allowlist')
+    }
+  }
+
+  /**
+   * 拉取 tarball 字节（M3：3xx 逐跳跟随，**每一跳**都过 assertHost——初始
+   * URL 白名单不再因一次重定向失效；Location 头攻击者可控，错误消息不回显；
+   * M4：生产路径的 body 已在 fetchImpl 流式截断，这里的长度检查兜底注入
+   * 路径（测试内存 fetch 直接给完整 body））。
+   */
+  private async fetchTarball(url: string): Promise<Buffer> {
+    let current = url
+    for (let redirects = 0; ; redirects += 1) {
+      this.assertHost(current)
+      const response = await this.options.fetchImpl(current)
+      if (response.status >= 300 && response.status < 400) {
+        if (response.location === undefined) {
+          throw new PluginError('STORE_IO', `tarball fetch failed (${response.status})`)
+        }
+        if (redirects >= MAX_TARBALL_REDIRECTS) {
+          // 跳数超限 = 重定向环风险：与 host 白名单拒绝同码（HOST_NOT_ALLOWED）。
+          throw new PluginError('HOST_NOT_ALLOWED', 'tarball redirect chain exceeds limit')
+        }
+        let next: string
+        try {
+          next = new URL(response.location, current).toString()
+        } catch {
+          throw new PluginError('HOST_NOT_ALLOWED', 'tarball redirect location is not a valid URL')
+        }
+        current = next
+        continue
+      }
+      if (response.status !== 200) {
+        throw new PluginError('STORE_IO', `tarball fetch failed (${response.status})`)
+      }
+      if (response.body.length > this.options.maxTarballBytes) {
+        throw new PluginError(
+          'SIZE_LIMIT_EXCEEDED',
+          `tarball over ${this.options.maxTarballBytes} bytes`,
+        )
+      }
+      return response.body
     }
   }
 
@@ -94,19 +171,9 @@ export class PluginInstaller {
     prefix: string,
     files: string[],
   ): Promise<void> {
-    this.assertHost(url)
-    const response = await this.options.fetchImpl(url)
-    if (response.status !== 200) {
-      throw new PluginError('STORE_IO', `tarball fetch failed (${response.status}): ${url}`)
-    }
-    if (response.body.length > this.options.maxTarballBytes) {
-      throw new PluginError(
-        'SIZE_LIMIT_EXCEEDED',
-        `tarball over ${this.options.maxTarballBytes} bytes: ${url}`,
-      )
-    }
-    verifyIntegrity(response.body, integrity)
-    const entries = unpackTarGz(response.body)
+    const body = await this.fetchTarball(url)
+    verifyIntegrity(body, integrity)
+    const entries = unpackTarGz(body)
     const tarEntries = entries.map((entry) => ({
       ...entry,
       // npm tarball 根前缀 package/ 剥掉；依赖挂到 node_modules/<name>/ 下。

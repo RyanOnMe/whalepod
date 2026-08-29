@@ -20,13 +20,9 @@ import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { PluginManifestSchema, pluginCordisEntry } from '@project311/protocol'
-// digest 算法从 protocol 源码引入（同 packages/protocol/tests 惯例；子路径导出
-// @project311/protocol/plugin-pack-digest 目前会被 check-boundaries 全 specifier
-// 匹配拒绝，dist 边界已由下方 parseLockfile → apps/node lockfile.js 传递覆盖）。
-import {
-  digestPluginCordisEntry,
-  digestPluginPack,
-} from '../../../packages/protocol/src/plugin-pack-digest.js'
+// digest 算法走与生产一致的 dist 子路径导出（check-boundaries 已归一子路径
+// 到包名判定；src/dist 漂移由 hub 集成测试用 dist 复算锚定值拦截）。
+import { digestPluginCordisEntry, digestPluginPack } from '@project311/protocol/plugin-pack-digest'
 import { digestLockfile, parseLockfile } from '../src/plugin/lockfile.js'
 import { buildTarGz, unpackTarGz } from '../src/plugin/tar.js'
 

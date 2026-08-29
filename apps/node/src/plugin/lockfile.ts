@@ -8,7 +8,7 @@
 import { createHash } from 'node:crypto'
 import { parseDocument } from 'yaml'
 import { z } from 'zod'
-import { canonicalJson } from '@project311/protocol/plugin-pack-digest'
+import { canonicalJson, compareCodePoints } from '@project311/protocol/plugin-pack-digest'
 import { ExactVersionSchema, NpmPackageNameSchema, SriIntegritySchema } from '@project311/protocol'
 import { PluginError } from './integrity.js'
 
@@ -35,8 +35,9 @@ export function parseLockfile(yamlText: string): PluginLockfile {
   let data: unknown
   try {
     data = parseDocument(yamlText).toJS()
-  } catch (error) {
-    throw new PluginError('VALIDATION_FAILED', `lockfile is not valid yaml: ${String(error)}`)
+  } catch {
+    // 固定话术：yaml 解析错误会携带输入 token 片段（攻击者可控），不得回显（§9）。
+    throw new PluginError('VALIDATION_FAILED', 'lockfile is not valid yaml')
   }
   const parsed = PluginLockfileSchema.safeParse(data)
   if (!parsed.success) {
@@ -45,10 +46,10 @@ export function parseLockfile(yamlText: string): PluginLockfile {
   return parsed.data
 }
 
-/** 闭包规范化：name+version 排序后 canonical JSON 的 SHA-256。 */
+/** 闭包规范化：name+version 码点排序后 canonical JSON 的 SHA-256。 */
 export function digestLockfile(lock: PluginLockfile): string {
   const normalized = [...lock.dependencies].sort((a, b) =>
-    `${a.name}@${a.version}`.localeCompare(`${b.name}@${b.version}`),
+    compareCodePoints(`${a.name}@${a.version}`, `${b.name}@${b.version}`),
   )
   return createHash('sha256')
     .update(

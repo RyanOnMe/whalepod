@@ -278,6 +278,8 @@ describe('P1-13 全链路（真 Hub + 真 Node + 真 Runtime/replay）', () => {
       runtimeHomeFor: (runId) => mktemp(`p311-chain-home-${runId.slice(0, 8)}-`),
       // 语料第 5 件（/Users/bob/...）依赖 homeDir 归约：固定注入，与本机真实 home 无关。
       homeDir: '/Users/bob',
+      stateDir: nodeStateDir,
+      packsRoot: join(nodeStateDir, 'plugin-packs'),
       log: () => {},
     })
     const session = startDeviceSession({

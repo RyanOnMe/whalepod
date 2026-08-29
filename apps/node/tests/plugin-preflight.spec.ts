@@ -403,6 +403,8 @@ async function makeRunHarness(preflight: PluginPackPreflight): Promise<{
       return join(root, 'runtime-home', runId)
     },
     homeDir: '/Users/testhome',
+    stateDir: root,
+    packsRoot: join(root, 'plugin-packs'),
     pluginPackPreflight: (packDigest) => preflight.ensure(packDigest),
   })
   return {

@@ -13,11 +13,30 @@
  * 同样归 projector——本模块提供它们共用的原语。
  */
 
-/** 脱敏上下文：canonical Workspace 根（调用方已 realpath）与 home 目录。 */
+/**
+ * 脱敏上下文：canonical Workspace 根（调用方已 realpath）、home 目录、Node
+ * 状态目录（`--state-dir`，runtime-home/plugin-packs/plugin-store 等 Run 产物的
+ * 根）与插件 packs 根（通常 `<stateDir>/plugin-packs`）。
+ *
+ * workspace/home 是 03 §9 规则 1/2；stateDir/packsRoot 是 P1-17 的扩展替换项——
+ * 自定义 `--state-dir` 落在 home 之外时，pack overlay 绝对路径（经 Runtime
+ * boot 错误进 runtime.fatal summary）会越过 home 替换项泄漏进团队投影，
+ * 红线（绝对路径不进团队投影）要求同一机制兜住。'' = 未配置，跳过该项。
+ */
 export interface RedactionContext {
   readonly workspaceRoot: string
   readonly homeDir: string
+  readonly stateDir: string
+  readonly packsRoot: string
 }
+
+/** 路径替换项（§9 规则 1/2 + P1-17 扩展）；按前缀长度降序替换。 */
+const PATH_MARKERS: ReadonlyArray<readonly [keyof RedactionContext, string]> = [
+  ['workspaceRoot', '<workspace>'],
+  ['homeDir', '<home>'],
+  ['stateDir', '<state-dir>'],
+  ['packsRoot', '<packs-root>'],
+]
 
 /** §9 规则 3：键名匹配即删除值（值替换为固定标记，保留结构形状）。 */
 const SENSITIVE_KEY = /(token|secret|password|api[_-]?key|authorization|cookie)/i
@@ -61,12 +80,19 @@ function sanitizeUrl(raw: string): string {
   }
 }
 
-/** 字符串级脱敏：§9 规则 1/2/4/8。 */
+/** 字符串级脱敏：§9 规则 1/2/4/8（+ P1-17 stateDir/packsRoot 扩展替换）。 */
 export function redactString(input: string, ctx: RedactionContext): string {
   let out = input
-  // 规则 1 先于规则 2：Workspace 常在 home 之下，先吃掉更长前缀。
-  if (ctx.workspaceRoot !== '') out = out.replaceAll(ctx.workspaceRoot, '<workspace>')
-  if (ctx.homeDir !== '') out = out.replaceAll(ctx.homeDir, '<home>')
+  // 路径替换（规则 1/2 + 扩展）：四个前缀任意两者都可能互相嵌套（Workspace 常在
+  // home 之下；stateDir 默认也在 home 之下，自定义 --state-dir 可能在之外；
+  // packsRoot 在 stateDir 之下）。统一按前缀长度降序替换——先吃掉更长前缀，
+  // 短前缀再替换时不会从已替换的标记里咬出错位（<…> 标记不含任何前缀原文）。
+  const prefixes = PATH_MARKERS.map(([key, marker]) => [ctx[key], marker] as const)
+  for (const [prefix, marker] of prefixes
+    .filter(([prefix]) => prefix !== '')
+    .sort((a, b) => b[0].length - a[0].length)) {
+    out = out.replaceAll(prefix, marker)
+  }
   out = out.replace(PRIVATE_KEY_BLOCK, '<redacted-private-key>')
   out = out.replace(PRIVATE_KEY_LINE, '<redacted-private-key>')
   out = out.replace(BEARER_VALUE, `$1 ${REDACTED}`)

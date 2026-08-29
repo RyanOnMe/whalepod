@@ -3,7 +3,7 @@
  *
  * 只支持 sha256/384/512 单值（npm 实践）；多值/未知算法一律拒绝。
  */
-import { createHash } from 'node:crypto'
+import { createHash, timingSafeEqual } from 'node:crypto'
 
 export class PluginError extends Error {
   constructor(
@@ -36,12 +36,14 @@ export function sriFor(
 export function verifyIntegrity(content: Buffer, integrity: string): void {
   const match = SRI_RE.exec(integrity)
   if (match === null) {
-    throw new PluginError('INTEGRITY_MISMATCH', `malformed SRI: ${integrity.slice(0, 32)}…`)
+    // 固定话术：integrity 串来自 descriptor（攻击者可控面），不得回显片段（§9）。
+    throw new PluginError('INTEGRITY_MISMATCH', 'malformed SRI integrity value')
   }
   const algorithm = `sha${match[1]}` as 'sha256' | 'sha384' | 'sha512'
   const expected = Buffer.from(match[2]!, 'base64')
   const actual = createHash(algorithm).update(content).digest()
-  if (actual.length !== expected.length || !actual.equals(expected)) {
+  // 定长比较防时序侧信道；长度不等直接判不等（timingSafeEqual 对不等长会抛错）。
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
     throw new PluginError('INTEGRITY_MISMATCH', 'tarball content does not match declared integrity')
   }
 }

@@ -83,7 +83,7 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   const { DshRuntimeDriver } = await import('./runtime-driver.js')
   const { RunManager } = await import('./run/run-manager.js')
   const { PackageStore } = await import('./plugin/package-store.js')
-  const { PluginInstaller, DEFAULT_ALLOWED_HOSTS, DEFAULT_MAX_TARBALL_BYTES } =
+  const { PluginInstaller, DEFAULT_ALLOWED_HOSTS, DEFAULT_MAX_TARBALL_BYTES, readCappedBody } =
     await import('./plugin/installer.js')
   const { PluginPackPreflight } = await import('./plugin/plugin-preflight.js')
   const { fetchPluginPackDescriptor } = await import('./run/pack-descriptor-client.js')
@@ -114,10 +114,25 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   // ---- P1-17 插件 pack preflight 装配（02 Task 17 Step 5）----
   const packsRoot = join(stateDir, 'plugin-packs')
   const pluginStore = new PackageStore(join(stateDir, 'plugin-store'))
-  // 生产 tarball fetch：全局 fetch → PluginFetch 适配（字节流收满再校验 SRI）。
+  // 生产 tarball fetch：全局 fetch（redirect: 'manual'——重定向由 installer 层
+  // 逐跳跟随且每跳过 host 白名单，M3）；body 流式边读边计数，超限即中止（M4：
+  // 不把无界 body 收满进内存）。3xx 不透传 body（installer 只看 Location 头）。
   const pluginFetch: PluginFetch = async (url) => {
-    const response = await fetch(url)
-    return { status: response.status, body: Buffer.from(await response.arrayBuffer()) }
+    const response = await fetch(url, { redirect: 'manual' })
+    const location = response.headers.get('location') ?? undefined
+    if (response.status >= 300 && response.status < 400) {
+      return location === undefined
+        ? { status: response.status, body: Buffer.alloc(0) }
+        : { status: response.status, location, body: Buffer.alloc(0) }
+    }
+    try {
+      const body = await readCappedBody(response.body, DEFAULT_MAX_TARBALL_BYTES)
+      return { status: response.status, body }
+    } catch (error) {
+      // 超限/读失败：中止下载释放连接，再以原错误上抛（installer 折算 wire 码）。
+      await response.body?.cancel().catch(() => {})
+      throw error
+    }
   }
   const preflight = new PluginPackPreflight({
     packsRoot,
@@ -149,6 +164,10 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
       return dir
     },
     homeDir: homedir(),
+    // 脱敏上下文（P1-17 红线）：自定义 --state-dir 在 home 之外时，pack overlay
+    // 绝对路径会经 runtime.fatal summary 进团队投影，投影前必须归约。
+    stateDir,
+    packsRoot,
     pluginPackPreflight: (packDigest) => preflight.ensure(packDigest),
     log: (level, msg, context) => {
       process.stderr.write(`${JSON.stringify({ level, component: 'node.run', msg, ...context })}\n`)

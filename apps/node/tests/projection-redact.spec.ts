@@ -9,6 +9,17 @@ import { redactString, redactValue, type RedactionContext } from '../src/project
 const CTX: RedactionContext = {
   workspaceRoot: '/Users/bob/work/team-app',
   homeDir: '/Users/bob',
+  // 默认留空：固定语料（04 §6.4）按 §9 原始两前缀断言，扩展项另设上下文单测。
+  stateDir: '',
+  packsRoot: '',
+}
+
+/** P1-17 扩展上下文：自定义 --state-dir 落在 home 之外（review m2 的场景）。 */
+const CUSTOM_STATE_CTX: RedactionContext = {
+  workspaceRoot: '/Users/bob/work/team-app',
+  homeDir: '/Users/bob',
+  stateDir: '/var/lib/project311/state',
+  packsRoot: '/var/lib/project311/state/plugin-packs',
 }
 
 /** 04 §6.4 固定语料（原文逐项）。 */
@@ -37,6 +48,39 @@ describe('redactString（03 §9）', () => {
   it('规则 1 优先于规则 2：Workspace 在 home 之下时保留 <workspace>', () => {
     const out = redactString('/Users/bob/work/team-app and /Users/bob/other', CTX)
     expect(out).toBe('<workspace> and <home>/other')
+  })
+
+  it('扩展：stateDir 前缀替换为 <state-dir>（自定义 --state-dir 在 home 之外）', () => {
+    const out = redactString(
+      'session log /var/lib/project311/state/runtime-home/run-1/sessions/a.jsonl',
+      CUSTOM_STATE_CTX,
+    )
+    expect(out).toBe('session log <state-dir>/runtime-home/run-1/sessions/a.jsonl')
+  })
+
+  it('扩展：packsRoot 前缀替换为 <packs-root>（比 stateDir 更长的前缀先被吃掉）', () => {
+    const out = redactString(
+      'failed to read overlay /var/lib/project311/state/plugin-packs/abcdef1234/cordis.overlay.yml',
+      CUSTOM_STATE_CTX,
+    )
+    expect(out).toBe('failed to read overlay <packs-root>/abcdef1234/cordis.overlay.yml')
+    expect(out).not.toContain('/var/lib/project311')
+  })
+
+  it('扩展：默认布局 stateDir 在 home 之下——更长前缀（stateDir/packsRoot）先替换，不退化为 <home>', () => {
+    const defaultLayout: RedactionContext = {
+      workspaceRoot: '',
+      homeDir: '/Users/bob',
+      stateDir: '/Users/bob/.project311/state',
+      packsRoot: '/Users/bob/.project311/state/plugin-packs',
+    }
+    const out = redactString(
+      '/Users/bob/.project311/state/plugin-packs/abc/cordis.overlay.yml and /Users/bob/.project311/state/commands.sqlite and /Users/bob/other',
+      defaultLayout,
+    )
+    expect(out).toBe(
+      '<packs-root>/abc/cordis.overlay.yml and <state-dir>/commands.sqlite and <home>/other',
+    )
   })
 
   it('规则 4：Bearer 值删除', () => {

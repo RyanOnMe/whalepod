@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { PluginManifest } from '@project311/protocol'
+import { compareCodePoints } from '@project311/protocol/plugin-pack-digest'
 import { sriFor } from '../src/plugin/integrity.js'
 import { PluginInstaller, type PluginFetch } from '../src/plugin/installer.js'
 import { digestLockfile, parseLockfile, type PluginLockfile } from '../src/plugin/lockfile.js'
@@ -36,7 +37,7 @@ interface FixtureEntry {
 
 function buildTarGz(entries: FixtureEntry[]): Buffer {
   const blocks: Buffer[] = []
-  for (const entry of [...entries].sort((a, b) => a.path.localeCompare(b.path))) {
+  for (const entry of [...entries].sort((a, b) => compareCodePoints(a.path, b.path))) {
     const content = Buffer.from(entry.content ?? '', 'utf8')
     const header = Buffer.alloc(512)
     header.write(entry.path, 0, 'latin1')
