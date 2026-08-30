@@ -27,6 +27,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # 先 build 再查（#35 同一坑）：scripts/ 的 phase1 harness 经包名 import
+      # workspace 包走 dist/（root typecheck 覆盖 scripts/**/*.ts），CI 全新
+      # 检出没有 dist 会 TS2307；与下方 integration job 同规。
+      - name: Build workspace packages
+        run: pnpm -r --if-present build
+
       - name: Run static checks
         run: pnpm check
 
