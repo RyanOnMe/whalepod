@@ -266,9 +266,12 @@ describe('P1-15 artifact（Hub 侧）', () => {
     expect(await artifactRows()).toHaveLength(1)
   })
 
-  it('Device Token 越权：未知 run 与他设备 run 同作 404，撤销 Token 401', async () => {
+  it('Device Token 越权：伪造 Token 401，未知 run 与他设备 run 同作 404，撤销 Token 401', async () => {
+    // authenticateDevice 先于 run 查找（artifact/routes.ts 三个 Node 路由同构）：
+    // 伪造 Token 的唯一真实形态是 401 INVALID_CREDENTIALS，不会落到 404。
     const unknown = await uploadArtifact(randomBytes(32).toString('base64url'), {})
-    expect([401, 404]).toContain(unknown.statusCode)
+    expect(unknown.statusCode).toBe(401)
+    expect(unknown.json().error.code).toBe('INVALID_CREDENTIALS')
 
     const foreign = await uploadArtifact(deviceToken, { runId: randomUUID() })
     expect(foreign.statusCode).toBe(404)
@@ -294,6 +297,8 @@ describe('P1-15 artifact（Hub 侧）', () => {
       headers: { origin: ctx.origin, cookie: by.cookie, 'idempotency-key': idemKey() },
       payload: {},
     })
+    // 调用方（G6-04/07）的断言都以 published 为前提：发布失败要在源头红。
+    expect(publish.statusCode).toBe(200)
     return artifactId
   }
 
@@ -332,7 +337,8 @@ describe('P1-15 artifact（Hub 侧）', () => {
   })
 
   it('G6-04: 发布后其他成员立即可下载，内容与 digest 一致；发布带 artifact.changed 事件', async () => {
-    const artifactId = await uploadThenPublish(alice === undefined ? bob : bob)
+    // 发布者是 Run owner（bob）；发布后 alice 作为其他成员立即可下载。
+    const artifactId = await uploadThenPublish(bob)
     const aliceRes = await ctx.app.inject({
       method: 'GET',
       url: `/api/v1/artifacts/${artifactId}/content`,
