@@ -133,6 +133,7 @@ function runDetailHandlers(ownerUserId: string, events: unknown[]): MockHandler[
     dshSessionId: null,
     failureCode: null,
     failureSummary: null,
+    rerunOfRunId: null,
     profileDigest: 'b'.repeat(64),
     createdAt: '2026-08-25T00:00:00.000Z',
     startedAt: '2026-08-25T00:01:00.000Z',

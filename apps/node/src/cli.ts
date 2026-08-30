@@ -91,27 +91,8 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   mkdirSync(stateDir, { recursive: true })
   const registry = new WorkspaceRegistry(join(stateDir, 'workspace-registry.sqlite'))
   const secrets = new SecretStore(join(stateDir, 'secrets.json'))
-  // Runtime 入口：@project311/runtime 的 bin 产物（部署包内 resolve；P1-20 安装门兜底）。
-  const runtimeEntry = createRequire(import.meta.url).resolve('@project311/runtime/dist/bin.js')
-  const supervisor = new RuntimeSupervisor({
-    driver: new DshRuntimeDriver({ runtimeEntry }),
-    registry,
-    secrets,
-    stateDbPath: join(stateDir, 'supervisor.sqlite'),
-    capacity: 2,
-    runtimeTimeoutMs: 6 * 60 * 60 * 1000, // 单 Run wall-clock 上限（02 约束）
-    onStdoutLine: (runId, line) => runManager.handleStdoutLine(runId, line),
-  })
-  supervisor.onLost((runId, reason) => {
-    // 丢失语义（RUNTIME_LOST/lost）是 P1-16 的活；这里只留结构化痕迹。
-    process.stderr.write(
-      `${JSON.stringify({ level: 'error', component: 'node.supervisor', msg: 'runtime lost', runId, reason })}\n`,
-    )
-  })
-  // Node 重启：孤儿三重匹配处理后交人工重跑（不自动复活 Run）。
-  await supervisor.recoverOrphans()
 
-  // ---- P1-17 插件 pack preflight 装配（02 Task 17 Step 5）----
+  // ---- P1-17 插件 pack preflight 装配（02 Task 17 Step 5；先于 RunManager）----
   const packsRoot = join(stateDir, 'plugin-packs')
   const pluginStore = new PackageStore(join(stateDir, 'plugin-store'))
   // 生产 tarball fetch：全局 fetch（redirect: 'manual'——重定向由 installer 层
@@ -152,6 +133,20 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     },
   })
 
+  // Runtime 入口：@project311/runtime 的 bin 产物（部署包内 resolve；P1-20 安装门兜底）。
+  const runtimeEntry = createRequire(import.meta.url).resolve('@project311/runtime/dist/bin.js')
+  const supervisor = new RuntimeSupervisor({
+    driver: new DshRuntimeDriver({ runtimeEntry }),
+    registry,
+    secrets,
+    stateDbPath: join(stateDir, 'supervisor.sqlite'),
+    capacity: 2,
+    runtimeTimeoutMs: 6 * 60 * 60 * 1000, // 单 Run wall-clock 上限（02 约束）
+    onStdoutLine: (runId, line) => runManager.handleStdoutLine(runId, line),
+  })
+  // ---- P1-16 运行会话层装配（取消升级 / 退出归因 / lost 上报）----
+  // RunManager 必须先于 recoverOrphans 就绪：孤儿处理产生的 lost(RUNTIME_LOST)
+  // 快照由它缓冲到重连补发（R9），cli 只留结构化痕迹。
   const runManager = new RunManager({
     supervisor,
     registry,
@@ -169,10 +164,22 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     stateDir,
     packsRoot,
     pluginPackPreflight: (packDigest) => preflight.ensure(packDigest),
+    deviceId: config.deviceId,
+    dshDistributionVersion: facts.dshDistributionVersion,
+    // 取消升级节奏（03 §3.2：15s 未确认强杀 + 5s SIGTERM 宽限）走默认值。
     log: (level, msg, context) => {
       process.stderr.write(`${JSON.stringify({ level, component: 'node.run', msg, ...context })}\n`)
     },
   })
+  supervisor.onLost((runId, reason) => {
+    // lost 事实已由 RunManager 归因上报（snapshot lost）；这里只留审计痕迹。
+    process.stderr.write(
+      `${JSON.stringify({ level: 'error', component: 'node.supervisor', msg: 'runtime lost', runId, reason })}\n`,
+    )
+  })
+  // Node 重启：孤儿三重匹配处理后交人工重跑（不自动复活 Run）。
+  await supervisor.recoverOrphans()
+
   let sessionSend: (frame: string) => void = () => {}
   const session = startDeviceSession({
     config,

@@ -213,6 +213,40 @@ export class RunProjector {
     })
   }
 
+  /**
+   * P1-16（G7-02）：取消升级的本地合成事实。Runtime 自身确认的取消由
+   * 'run.cancelled' 帧直译（forced=false）；这里供 Supervisor 强杀后合成
+   * forced=true——03 §3.2「cancel_requested 15 秒未确认 → 终止 Runtime，写
+   * cancelled(forced)」。同样走 owner/project 双受众。
+   */
+  projectCancelledLocal(forced: boolean): ProjectionResult {
+    return this.both(this.now().toISOString(), { type: 'run.cancelled', forced })
+  }
+
+  /**
+   * P1-16（G7-03/R9）：Runtime 消失（异常退出/超时回收）且无更具体事实时的
+   * 本地合成失败——code 固定 RUNTIME_LOST（§10），owner 见脱敏 summary，
+   * project 只见错误码（§8 stderr 行语义）。绝不据此自动重启或重放工具。
+   */
+  projectRuntimeLost(summary: string): ProjectionResult {
+    const safeSummary = capStringBytes(redactString(summary, this.ctx), 1000)
+    return {
+      liveTexts: [],
+      events: [
+        {
+          audience: 'owner',
+          occurredAt: this.now().toISOString(),
+          event: { type: 'run.failed', code: 'RUNTIME_LOST', summary: safeSummary },
+        },
+        {
+          audience: 'project',
+          occurredAt: this.now().toISOString(),
+          event: { type: 'run.failed', code: 'RUNTIME_LOST', summary: 'RUNTIME_LOST' },
+        },
+      ],
+    }
+  }
+
   // ---------- session.event 内部 ----------
 
   private projectSessionEvent(input: unknown, fallbackOccurredAt: string): ProjectionResult {

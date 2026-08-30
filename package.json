@@ -9,6 +9,7 @@
     "lint": "oxlint .",
     "test:unit": "vitest run --project unit --project web",
     "test:integration": "tsx scripts/with-test-postgres.mts vitest run --project integration",
+    "test:resilience": "tsx scripts/with-test-postgres.mts vitest run --project resilience",
     "test:dsh-contract": "vitest run --project dsh-contract",
     "test:e2e": "playwright test --pass-with-no-tests",
     "check:boundaries": "tsx scripts/check-boundaries.ts",

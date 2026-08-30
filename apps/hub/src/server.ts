@@ -47,9 +47,10 @@ const leaseTimer = setInterval(() => {
     {
       database,
       outbox,
-      // orchestrator 在 buildApp 内部持有 deviceActivity 投影；此处租约恢复
-      // 只用 devices.lastSeenAt（进程重启后内存投影为空，退化为 DB 事实，符合 R8 语义）。
-      activity: new Map(),
+      // P1-16：喂入 buildApp 装配的 orchestrator 心跳投影——Node 在线但心跳
+      // 已不含该 Run 时立即收敛 lost（03 §3.2）；进程重启后内存投影为空，
+      // 退化为 devices.lastSeenAt（DB 事实），语义不变。
+      activity: app.runOrchestrator.deviceActivity,
       now: () => new Date(),
     },
     new Date(),

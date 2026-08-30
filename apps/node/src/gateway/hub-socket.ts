@@ -4,8 +4,10 @@ import { WebSocket as WsClient } from 'ws'
 import {
   parseNodeFrame,
   ProtocolError,
+  RunSnapshotSchema,
   type NodeDownstream,
   type ProjectedRunEvent,
+  type RunSnapshot,
 } from '@project311/protocol'
 
 /** Hub 出站连接包装：认证升级 + 消息/关闭/错误回调。 */
@@ -136,6 +138,15 @@ export function runEventFrame(payload: ProjectedRunEvent): string {
 /** run.live_delta：owner-only 直播文本（不持久、不占 spool）。 */
 export function runLiveDeltaFrame(runId: string, deltaSeq: number, text: string): string {
   return upstreamFrame('run.live_delta', { runId, deltaSeq, text })
+}
+
+/**
+ * run.snapshot（P1-16）：Node 面向 Hub 的 Run 投影（§6.2）——status_request 的
+ * 应答与「Runtime 消失」的主动上报（R9：孤儿处理后 lost(RUNTIME_LOST)）。
+ * 载荷先过 RunSnapshotSchema（fail-closed 对称侧），绝不写出 schema 外字段。
+ */
+export function runSnapshotFrame(snapshot: RunSnapshot): string {
+  return upstreamFrame('run.snapshot', RunSnapshotSchema.parse(snapshot))
 }
 
 /** command.ack：run.start/run.cancel/approval.decide 的处理确认（§6.2）。 */

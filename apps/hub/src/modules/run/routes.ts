@@ -1,8 +1,9 @@
 /**
- * Run HTTP 路由（02-第一阶段实施计划.md Task 10 Interfaces）：
- *   POST /tasks/:taskId/runs
+ * Run HTTP 路由（02-第一阶段实施计划.md Task 10 Interfaces + P1-16 G7-01/04）：
+ *   POST /tasks/:taskId/runs（含 rerunOfRunId 血缘）
  *   GET  /runs/:runId
- *
+ *   GET  /runs/:runId/events
+ *   POST /runs/:runId/cancel（03 §4；Run owner 或 Owner/Admin）
  * 路径不含 `/api/v1` 前缀——由组合根（app.ts，P1-05）按 #38 先例以
  * `{ prefix: '/api/v1' }` 挂载；接线时与其他模块一致。本模块只管路由与
  * 错误映射；组合根负责装配：
@@ -91,8 +92,28 @@ export function registerRunRoutes(app: FastifyInstance, deps: RunRoutesDeps): vo
         prompt: body.data.prompt,
         idempotencyKey,
         dshDistributionVersion,
+        // G7-04：显式重跑血缘（同 Task 终态 Run 的存在性/终态校验在命令层）。
+        ...(body.data.rerunOfRunId !== undefined ? { rerunOfRunId: body.data.rerunOfRunId } : {}),
       })
       return reply.status(201).send({ ok: true, data: run })
+    } catch (error) {
+      const { code, message } = errorCodeOf(error)
+      return sendError(reply, code, message)
+    }
+  })
+
+  /**
+   * POST /runs/:runId/cancel（03 §4；P1-16 G7-01/G7-06）。
+   * 权限（Run owner 或 Owner/Admin）与状态机都在 orchestrator.cancel；
+   * queued 直接作废待投命令并转 cancelled，活跃 Run 转 cancel_requested 并入队
+   * run.cancel。终态 Run → 409 INVALID_RUN_TRANSITION；重复取消幂等返回。
+   */
+  app.post('/runs/:runId/cancel', async (request, reply) => {
+    try {
+      const actor = await deps.resolveActor(request)
+      const runId = (request.params as { runId?: string }).runId ?? ''
+      const run = await deps.orchestrator.cancel(actor, runId)
+      return reply.status(200).send({ ok: true, data: run })
     } catch (error) {
       const { code, message } = errorCodeOf(error)
       return sendError(reply, code, message)
