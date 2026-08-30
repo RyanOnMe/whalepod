@@ -178,6 +178,8 @@ export interface RunView {
   dshSessionId: string | null
   failureCode: string | null
   failureSummary: string | null
+  // P1-16 G7-04：显式重跑血缘（03 §2.6 rerun_of_run_id）。
+  rerunOfRunId: string | null
   profileDigest: string
   createdAt: string
   startedAt: string | null

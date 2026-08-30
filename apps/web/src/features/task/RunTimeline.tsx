@@ -62,6 +62,12 @@ export function RunTimeline({ runs, selectedRunId, onSelect }: RunTimelineProps)
                 <dd>{formatIso(run.finishedAt)}</dd>
               </div>
             </dl>
+            {/* P1-16 G7-04：显式重跑血缘（03 §2.6 rerun_of_run_id）。 */}
+            {run.rerunOfRunId !== null ? (
+              <p className="run-lineage" data-testid="run-lineage">
+                由 Run {run.rerunOfRunId.slice(0, 8)} 重跑
+              </p>
+            ) : null}
           </button>
         </li>
       ))}

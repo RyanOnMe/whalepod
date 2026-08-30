@@ -13,6 +13,8 @@ import { queryKeys } from '../../app/query-client.js'
 import { formatIso, RUN_STATUS_LABEL } from '../../shared/format.js'
 import type { RunEventItem, RunView, Session } from '../../shared/api/types.js'
 import { dropRunLive, getRunLiveText, subscribeRunLive } from '../../shared/realtime/run-buffer.js'
+import { RunActions } from '../run/RunActions.js'
+import { RunFailureNotice } from '../run/RunFailureNotice.js'
 
 export interface RunLivePanelProps {
   runId: string
@@ -139,6 +141,16 @@ export function RunLivePanel({ runId, session }: RunLivePanelProps): ReactNode {
         {run.startedAt !== null ? <span>开始 {formatIso(run.startedAt)}</span> : null}
         {run.finishedAt !== null ? <span>结束 {formatIso(run.finishedAt)}</span> : null}
       </div>
+
+      {run.rerunOfRunId !== null ? (
+        <p className="run-lineage" data-testid="run-lineage">
+          由 Run {run.rerunOfRunId.slice(0, 8)} 重跑
+        </p>
+      ) : null}
+
+      {/* P1-16：failed/lost 明示未知副作用警示；取消/重跑动作（权限内呈现）。 */}
+      <RunFailureNotice run={run} />
+      <RunActions run={run} session={session} />
 
       {isOwner ? (
         <div className="run-live-stream">
