@@ -28,7 +28,10 @@ import {
   transactCommand,
 } from '@project311/db'
 import type { Database } from '@project311/db'
-import { ArtifactUploadMetadataSchema } from '@project311/protocol'
+import {
+  ArtifactUploadMetadataSchema,
+  ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES,
+} from '@project311/protocol'
 import type { ArtifactUploadMetadata } from '@project311/protocol'
 import { authenticateDevice } from '../plugin/pack-resolver.js'
 import type { RequireActor } from '../auth/session.js'
@@ -151,6 +154,9 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
 
     // GET /node/runs/:runId/input-manifest：Reviewer Run 的只读输入清单
     // （只含已发布；无 storageKey/sourceRelativePath——G6-07 无路径泄露）。
+    // #64 fail-closed：已发布数超协议条目上限时不静默下发（Node 侧 schema
+    // 校验会炸成不显式的 VALIDATION_FAILED），返回专用码显式拒绝。409 =
+    // 请求与目标资源当前状态冲突（已发布数超上限），同状态机拒绝的归位。
     artifact.get('/node/runs/:runId/input-manifest', async (request) => {
       const identity = await authenticateDevice(deps.database, request)
       const { runId } = request.params as { runId: string }
@@ -159,6 +165,13 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
         throw new ApiError(404, 'NOT_FOUND', 'run not found')
       }
       const rows = await listPublishedArtifactsByTask(deps.database.db, run.taskId)
+      if (rows.length > ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES) {
+        throw new ApiError(
+          409,
+          'ARTIFACT_INPUT_MANIFEST_TOO_LARGE',
+          `task has more than ${ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES} published artifacts; reviewer input manifest refused`,
+        )
+      }
       return {
         ok: true,
         data: { taskId: run.taskId, artifacts: rows.map(toManifestEntry) },

@@ -141,9 +141,17 @@ export const ArtifactManifestEntrySchema = z.strictObject({
   publishedAt: z.string().min(1),
 })
 
+/**
+ * Reviewer 输入清单条目上限（P1-15 协议层 hard cap；03 §4/§7.1）。
+ * #64：Hub 的 input-manifest 路由与本 schema 共用同一常量——已发布数超限时
+ * Hub 显式拒绝（ARTIFACT_INPUT_MANIFEST_TOO_LARGE），绝不静默下发超限清单
+ * （Node 侧 schema 校验会炸成不显式的 VALIDATION_FAILED）。
+ */
+export const ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES = 64
+
 export const ArtifactInputManifestSchema = z.strictObject({
   taskId: z.uuid(),
-  artifacts: z.array(ArtifactManifestEntrySchema).max(64),
+  artifacts: z.array(ArtifactManifestEntrySchema).max(ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES),
 })
 
 // §2.3 Profile Revision 字段规则；创建 Agent 时必须同时给出首个 Revision

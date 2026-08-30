@@ -132,8 +132,18 @@ pnpm test:integration -- apps/hub/tests/artifact.integration.spec.ts
   文件系统断言见 apps/node/tests/resilience/artifact-inputs-cleanup.spec.ts。
   Node 进程崩溃（清理代码来不及执行）后的残留目录不自动回收——P1-16 孤儿回收
   只回收进程；残留按 runId 目录隔离不串扰，待显式重跑或人工清理。
-- ** Reviewer 输入清单条目上限 64**（协议层 hard cap）：超 64 条已发布交付物的
-  Task 不在第一阶段容量目标内（04 §8）。
+- **Reviewer 输入清单条目上限 64**（协议层 hard cap；#64 修订申报）：Hub
+  input-manifest 在 Task 已发布 Artifact 超 64 条时 **fail-closed 显式拒绝**
+  （409 `ARTIFACT_INPUT_MANIFEST_TOO_LARGE`，不下发半份清单、不静默溢出）；
+  Node 侧 prepareArtifactInputs 把该码原样透传为 run.start 拒绝（ack
+  accepted=false）。版本偏斜全部 fail-closed：本 PR 的 Node 面对未来未知码
+  或不可解析 body 退回状态码折算 CONFLICT；真正旧版 Node（P1-15 原版，
+  mapStatus 无 409 分支）兜底 INTERNAL_ERROR——三种偏斜均为 run.start 拒绝，
+  不 spawn、清理照跑。机器证据：
+  apps/hub/tests/artifact.integration.spec.ts「超限（#64）」（65 条已发布 →
+  409 专用码）、apps/node/tests/artifact-inputs.spec.ts「manifest 超限（#64）」
+  （透传 + 不写副本）、packages/protocol/tests/artifact-inputs.spec.ts
+  「上限」（schema 上限恰好通过 / 超 1 条拒绝）。
 
 ## 复跑
 

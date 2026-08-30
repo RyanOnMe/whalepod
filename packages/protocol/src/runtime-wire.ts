@@ -49,6 +49,8 @@ const RuntimeInitializePayloadSchema = z
     persona: z.string().min(1).max(20_000),
     // P1-15：Reviewer 输入清单 + 下载副本目录（本地 wire 绝对路径，红线同上）。
     // 清单条目上限 64——单任务已发布交付物的现实上界，防止单次 initialize 无界膨胀。
+    // 与 http.ts 的 ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES 同值互指（Node 1:1 映射
+    // HTTP 清单 → initialize，HTTP 上限为实际约束；改上限需两处同步）。
     artifactInputs: z.array(RuntimeArtifactInputSchema).max(64).optional(),
     artifactInputsDir: z.string().min(1).optional(),
   })

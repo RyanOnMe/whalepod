@@ -631,6 +631,24 @@ describe('P1-15：Artifact 采集与 Reviewer 输入接线', () => {
     expect((ack?.payload['error'] as { code: string }).code).toBe('ARTIFACT_HASH_MISMATCH')
   })
 
+  it('manifest 超限错误码（#64：ARTIFACT_INPUT_MANIFEST_TOO_LARGE）→ ack false 显式透传，不 spawn', async () => {
+    // Hub input-manifest 对 >64 条已发布 Artifact 的专用拒绝码必须原样出现在
+    // run.start 的 ack error.code 上（WireErrorSchema code），语义显式可归因。
+    const inputs = makeInputs({
+      error: Object.assign(new Error('manifest exceeds the 64-entry cap'), {
+        code: 'ARTIFACT_INPUT_MANIFEST_TOO_LARGE',
+      }),
+    })
+    const h = await makeHarness({ managerDeps: { ...inputs.deps } })
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    expect(h.runtimes).toHaveLength(0)
+    const ack = h.sentFrames().find((f) => f.type === 'command.ack')
+    expect(ack?.payload['accepted']).toBe(false)
+    expect((ack?.payload['error'] as { code: string }).code).toBe(
+      'ARTIFACT_INPUT_MANIFEST_TOO_LARGE',
+    )
+  })
+
   it('artifact.candidate 帧 → 采集（workspace realpath）→ 双受众事件：owner 带来源路径，project 不带', async () => {
     const a = makeCollector()
     const h = await makeHarness({ managerDeps: { artifactCollector: a.collector } })

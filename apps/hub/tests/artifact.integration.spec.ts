@@ -416,6 +416,36 @@ describe('P1-15 artifact（Hub 侧）', () => {
     expect(denied.statusCode).toBe(404)
   })
 
+  it('超限（#64）：已发布 Artifact 超 64 条 → input-manifest 409 ARTIFACT_INPUT_MANIFEST_TOO_LARGE（fail-closed 显式拒绝）', async () => {
+    // 造 65 条已发布 Artifact（真人路径：candidate 上传 + owner 发布，逐条）。
+    for (let i = 0; i < 65; i += 1) {
+      const upload = await uploadArtifact(deviceToken, {
+        title: `Builder report ${i}`,
+        sourceRelativePath: `reports/out-${i}.md`,
+        idempotencyKey: idemKey(),
+      })
+      expect(upload.statusCode).toBe(201)
+      const publish = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/artifacts/${upload.json().data.id as string}/publish`,
+        headers: { origin: ctx.origin, cookie: bob.cookie, 'idempotency-key': idemKey() },
+        payload: {},
+      })
+      expect(publish.statusCode).toBe(200)
+    }
+
+    const manifest = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/node/runs/${runId}/input-manifest`,
+      headers: { authorization: `Device ${deviceToken}` },
+    })
+    // 不是静默下发 >64 条（Node 侧 schema 必炸 VALIDATION_FAILED），而是
+    // 显式专用码；且不下发半份数据（fail-closed）。
+    expect(manifest.statusCode).toBe(409)
+    expect(manifest.json().error.code).toBe('ARTIFACT_INPUT_MANIFEST_TOO_LARGE')
+    expect(manifest.json().data).toBeUndefined()
+  })
+
   it('磁盘 blob 与 DB digest 不一致 → 下载 500，不外泄未验证字节（§6.3）', async () => {
     const artifactId = (await uploadArtifact(deviceToken)).json().data.id as string
     const [row] = await artifactRows()
