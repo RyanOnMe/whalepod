@@ -192,4 +192,71 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
     expect(snapshotPayloads(sent2).length).toBeGreaterThanOrEqual(1)
     expect(await supervisor2.activeRuns()).toEqual([])
   })
+
+  it('回归哨兵：supervisor close 后迟到的子进程 exit 不炸状态库、不再归因', async () => {
+    // 复现评审抓到的偶发（确定性时序）：spawn 真进程 → close()（Runtime 仍活，
+    // 即 R9 的「旧实例释放状态库」时刻）→ 杀掉子进程 → exit 回调迟到到达。
+    // 若 finalize 触碰已关闭的 SQLite，会在 ChildProcess exit 监听器里抛
+    // ERR_INVALID_STATE 未处理异常，vitest 以 unhandled error 判本轮失败——
+    // 与线上偶发的失败机制完全同形，因此本哨兵能守住回归。
+    const root = await mkdtemp(join(tmpdir(), 'p311-r9-regression-'))
+    cleanups.push(async () => {
+      await rm(root, { recursive: true, force: true })
+    })
+    const { mkdirSync } = await import('node:fs')
+    const workspaceDir = join(root, 'ws')
+    mkdirSync(workspaceDir, { recursive: true })
+
+    const { driver, pids } = makeRealProcessDriver()
+    const registry = new WorkspaceRegistry(join(root, 'registry.db'), 'test-hmac-key')
+    const workspace = await registry.register(workspaceDir, { name: 'ws-regression' })
+    const supervisor = new RuntimeSupervisor({
+      driver,
+      registry,
+      secrets: new SecretStore(join(root, 'secrets.json'), {
+        PROJECT311_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
+      }),
+      stateDbPath: join(root, 'supervisor.db'),
+      capacity: 2,
+      runtimeTimeoutMs: 60_000,
+    })
+    await supervisor.start(
+      {
+        runId: RUN_ID,
+        nonce: 'nonce-regression',
+        workspaceId: workspace.id,
+        prompt: 'p',
+        agent: {
+          id: '55555555-5555-4555-8555-555555555555',
+          profileRevisionId: '66666666-6666-4666-8666-666666666666',
+          persona: 'p',
+          provider: 'dsh',
+          model: 'm',
+          credentialSlot: 'api_key',
+        },
+        expectedProfileDigest: 'a'.repeat(64),
+        expectedPluginPackDigest: 'b'.repeat(64),
+      },
+      { workspaceId: workspace.id },
+    )
+    const pid = (await supervisor.activeRuns()).find((run) => run.runId === RUN_ID)?.pid
+    expect(pid).toBeGreaterThan(0)
+
+    const exitEvents: unknown[] = []
+    const lostEvents: unknown[] = []
+    supervisor.onRuntimeExit((event) => exitEvents.push(event))
+    supervisor.onLost((runId, reason) => lostEvents.push({ runId, reason }))
+
+    // close 时子进程仍存活（正是偶发发生的前提时序）。
+    supervisor.close()
+    process.kill(-pid!, 'SIGKILL')
+    const { awaitDead } = await import('./harness.js')
+    expect(await awaitDead(pid!, 5_000)).toBe(true)
+    // 给 ChildProcess exit 回调一个确定性的派发窗口。
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    // close 后生命周期已分离：不发布任何归因事实（若 finalize 炸了，上面的
+    // 未处理异常已让本轮失败；这里的断言守住「不再归因」语义）。
+    expect(exitEvents).toEqual([])
+    expect(lostEvents).toEqual([])
+  })
 })
