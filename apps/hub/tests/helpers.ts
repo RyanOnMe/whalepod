@@ -75,7 +75,7 @@ export interface AuditEvent {
 class AuditStream extends Writable {
   readonly events: AuditEvent[] = []
 
-  _write(
+  override _write(
     chunk: Buffer | string,
     _encoding: string,
     callback: (error?: Error | null) => void,
@@ -168,7 +168,7 @@ export function idemKey(): string {
 export async function apiInject(
   ctx: TestApp,
   session: Session,
-  opts: { method: string; url: string; payload?: unknown; idempotencyKey?: string },
+  opts: { method: string; url: string; payload?: object; idempotencyKey?: string },
 ) {
   return ctx.app.inject({
     method: opts.method as 'GET' | 'POST' | 'PATCH' | 'DELETE',

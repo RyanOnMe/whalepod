@@ -40,6 +40,8 @@ export default defineConfig({
             'packages/*/tests/integration/**/*.spec.ts',
             'apps/*/tests/**/*.integration.spec.ts',
             'packages/*/tests/**/*.integration.spec.ts',
+            // P1-18：六原语 harness 自证（scripts/lib/phase1 的绿链/断层判定）。
+            'scripts/tests/**/*.integration.spec.ts',
           ],
           exclude: ['**/node_modules/**', '**/dist/**'],
           // 所有 integration spec 共享同一个临时 PostgreSQL（scripts/with-test-postgres.mts）：

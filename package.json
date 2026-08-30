@@ -12,6 +12,9 @@
     "test:resilience": "tsx scripts/with-test-postgres.mts vitest run --project resilience",
     "test:dsh-contract": "vitest run --project dsh-contract",
     "test:e2e": "playwright test --pass-with-no-tests",
+    "phase1:drive": "tsx scripts/phase1-drive.mts",
+    "phase1:verify": "tsx scripts/phase1-verify.mts",
+    "phase1:evidence": "tsx scripts/phase1-evidence.mts",
     "check:boundaries": "tsx scripts/check-boundaries.ts",
     "check:protocol-generated": "pnpm --filter @project311/protocol check:generated",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:boundaries && pnpm check:protocol-generated && pnpm check:plugin-fixture && pnpm test:unit",
@@ -19,12 +22,17 @@
   },
   "devDependencies": {
     "@playwright/test": "catalog:",
+    "@project311/db": "workspace:*",
+    "@project311/protocol": "workspace:*",
     "@types/node": "24.13.3",
+    "@types/ws": "catalog:",
+    "drizzle-orm": "catalog:",
     "oxfmt": "0.63.0",
     "oxlint": "1.78.0",
     "tsx": "4.23.12",
     "typescript": "6.0.3",
-    "vitest": "4.1.10"
+    "vitest": "4.1.10",
+    "ws": "catalog:"
   },
   "engines": {
     "node": "^24.0.0"
