@@ -59,7 +59,8 @@ describe('task-room', () => {
     expect(await screen.findByText('运行中')).toBeVisible()
     expect(screen.getByText('已完成')).toBeVisible()
     expect(screen.getByRole('heading', { name: '审批' })).toBeVisible()
-    expect(screen.getByText(/审批卡片会出现在这里/)).toBeVisible()
+    // P1-14：无等待审批的 Run 时，审批插槽呈现空态说明。
+    expect(screen.getByText('当前没有等待审批的操作。')).toBeVisible()
   })
 
   it('渲染右侧 Artifact 列表与 Reviewer 插槽', async () => {

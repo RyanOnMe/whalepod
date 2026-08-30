@@ -519,7 +519,16 @@ export async function insertRunRow(
     profileRevisionId: string
     deviceId: string
     workspaceId: string
-    status?: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'lost'
+    status?:
+      | 'queued'
+      | 'dispatching'
+      | 'running'
+      | 'waiting_approval'
+      | 'cancel_requested'
+      | 'completed'
+      | 'failed'
+      | 'cancelled'
+      | 'lost'
     dshSessionId?: string
   },
 ): Promise<string> {

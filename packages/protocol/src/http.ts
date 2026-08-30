@@ -95,6 +95,8 @@ export const CreateCommentRequestSchema = z.strictObject({
 /**
  * POST /tasks/:taskId/runs：Run 固化 Agent、Workspace 与 Profile Revision（§2.6）。
  * profileRevisionId 缺省时由 Hub 取 Agent 当前 Revision（§2.3）。
+ * rerunOfRunId：显式重跑血缘（§2.6 rerun_of_run_id；P1-16 G7-04）——必须指向
+ * 同 Task 的终态 Run，存在性/终态/同 Task 校验在 Hub 命令层（orchestrator）。
  */
 export const CreateRunRequestSchema = z.strictObject({
   agentId: z.uuid(),
@@ -102,6 +104,7 @@ export const CreateRunRequestSchema = z.strictObject({
   deviceId: z.uuid(),
   workspaceId: z.uuid(),
   prompt: z.string().min(1).max(20_000),
+  rerunOfRunId: z.uuid().optional(),
 })
 
 /** POST /approvals/:approvalId/decisions：一次性决定（§3.3）。 */

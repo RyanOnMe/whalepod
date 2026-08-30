@@ -1,5 +1,6 @@
 /**
- * RunManager —— P1-13 的 Node 侧运行会话编排（02 Task 13；03 §6/§7/§8/§9）。
+ * RunManager —— P1-13 的 Node 侧运行会话编排（02 Task 13；03 §6/§7/§8/§9），
+ * P1-16 扩展取消升级 / 退出归因 / Run 投影上报（G7-01..03、R9）。
  *
  * 职责链：Hub 下行命令 → 本地 spool 先落 → ack → Runtime 子进程 → stdout 帧 →
  * 单一 projector → run_event 草稿原子落 spool（appendAlloc）→ 上行 Hub；
@@ -11,20 +12,39 @@
  * - 至少一次 + Hub (runId, seq) 幂等 = 恰好一次应用（R6 的设计依据）。
  * - live delta 不进 spool（03 §8：非持久通道，可丢）。
  * - Runtime stdout 非法帧 → 当前 Run 失败（§11 fail-closed），绝不容忍协议外输出。
+ * - P1-16：Run 终态禁止复活；Runtime 消失/退出只归因、绝不自动重启或重放
+ *   可能有副作用的工具（G7-03/R9）。
+ *
+ * 取消升级（03 §3.2、02 Task 16 Step 3；G7-02）：
+ *   run.cancel → stdin 派发，等待 Runtime 上报 run.cancelled；cancelConfirmMs
+ *   （生产 15s）未确认 → SIGTERM 进程组；cancelTermGraceMs（生产 5s）仍不退 →
+ *   SIGKILL。强杀后由退出归因合成 run.cancelled(forced=true)。每个阶段写
+ *   node.supervisor 结构化日志（真人路径可观测，不做接口背后的暗手）。
  */
 import type {
   NodeDownstream,
   ProjectedRunEvent,
   RuntimeArtifactInput,
+  RunSnapshot,
   RuntimeCommand,
   RuntimeOutput,
 } from '@project311/protocol'
 import { parseRuntimeFrame } from '@project311/protocol'
-import { commandAckFrame, runEventFrame, runLiveDeltaFrame } from '../gateway/hub-socket.js'
+import {
+  commandAckFrame,
+  runEventFrame,
+  runLiveDeltaFrame,
+  runSnapshotFrame,
+} from '../gateway/hub-socket.js'
 import { PluginPreflightError, type PreflightOutcome } from '../plugin/plugin-preflight.js'
 import { RunProjector, type ProjectionContext } from '../projection/projector.js'
 import type { CommandStore } from '../spool/command-store.js'
 import type { EventStore } from '../spool/event-store.js'
+import {
+  classifyRuntimeExit,
+  describeRuntimeExit,
+  type RuntimeTerminalReport,
+} from '../supervisor/exit-classifier.js'
 import { RuntimeEnvError } from '../supervisor/environment.js'
 import {
   newRuntimeNonce,
@@ -36,6 +56,11 @@ import type { WorkspaceRegistry } from '../workspace/registry.js'
 
 /** 上行帧出口：session 层注入；socket 非 OPEN 时由注入方丢弃（spool 仍持有）。 */
 export type UplinkSend = (frame: string) => void
+
+export interface RunManagerTimers {
+  readonly setTimeout: typeof setTimeout
+  readonly clearTimeout: typeof clearTimeout
+}
 
 export interface RunManagerDeps {
   readonly supervisor: RuntimeSupervisor
@@ -73,6 +98,14 @@ export interface RunManagerDeps {
   readonly prepareArtifactInputs?: (runId: string, taskId: string) => Promise<RunArtifactInputs>
   /** P1-15：Run 终态后的输入副本清理（best-effort）。 */
   readonly cleanupArtifactInputs?: (runId: string) => Promise<void>
+  /** P1-16：run.snapshot 的设备身份与 DSH 发行版版本（§2.6/§6.2）。 */
+  readonly deviceId: string
+  readonly dshDistributionVersion: string
+  /** P1-16：取消确认窗口（默认 15s，§3.2）与 SIGTERM 宽限（默认 5s）。 */
+  readonly cancelConfirmMs?: number
+  readonly cancelTermGraceMs?: number
+  /** 计时器注入点（测试手动时钟）；缺省全局定时器。 */
+  readonly timers?: RunManagerTimers
   readonly now?: () => Date
   readonly log?: (
     level: 'info' | 'warn' | 'error',
@@ -102,6 +135,26 @@ export interface RunArtifactInputs {
 }
 
 type RunStartPayload = Extract<NodeDownstream, { type: 'run.start' }>['payload']
+/** run.start 载荷 + spool 层接收时间（snapshot createdAt 事实源；spool 回读时补）。 */
+type RunFacts = RunStartPayload & { receivedAt?: string }
+
+/** 取消升级状态（per run；Runtime 确认或退出即收敛）。 */
+interface CancelEscalation {
+  readonly commandId: string
+  phase: 'requested' | 'sigterm' | 'sigkill' | 'confirmed'
+  timer?: ReturnType<typeof setTimeout> | undefined
+}
+
+/** 本 Node 进程内记录的 Run 终态事实（snapshot 上报的事实源）。 */
+interface FinalFacts {
+  readonly status: Extract<RunSnapshot['status'], 'completed' | 'failed' | 'cancelled' | 'lost'>
+  readonly failureCode: RunSnapshot['failureCode']
+  readonly failureSummary: RunSnapshot['failureSummary']
+  readonly finishedAt: string
+}
+
+const DEFAULT_CANCEL_CONFIRM_MS = 15_000 as const
+const DEFAULT_CANCEL_TERM_GRACE_MS = 5_000 as const
 
 export class RunManager {
   private readonly projectors = new Map<string, RunProjector>()
@@ -109,9 +162,32 @@ export class RunManager {
   /** runId → canonical workspace 根（采集器校验用；P1-15）。 */
   private readonly workspacePaths = new Map<string, string>()
   private readonly now: () => Date
+  private readonly logFn: RunManagerDeps['log']
+  private readonly confirmMs: number
+  private readonly termGraceMs: number
+  private readonly timers: RunManagerTimers
+  /** runId → run.start 载荷（snapshot 的字段事实源；重启后从 spool 回读）。 */
+  private readonly runFacts = new Map<string, RunFacts>()
+  /** runId → runtime.ready 事实（dshSessionId/startedAt）。 */
+  private readonly readyFacts = new Map<string, { dshSessionId: string; startedAt: string }>()
+  /** runId → 本进程内已记录的终态事实。 */
+  private readonly finalFacts = new Map<string, FinalFacts>()
+  /** runId → 取消升级状态。 */
+  private readonly cancels = new Map<string, CancelEscalation>()
+  /** 断连期间攒下的 lost 快照（onReconnect flush；R9）。 */
+  private readonly pendingLostSnapshots = new Map<string, RunSnapshot>()
 
   constructor(private readonly deps: RunManagerDeps) {
     this.now = deps.now ?? (() => new Date())
+    this.logFn = deps.log
+    this.confirmMs = deps.cancelConfirmMs ?? DEFAULT_CANCEL_CONFIRM_MS
+    this.termGraceMs = deps.cancelTermGraceMs ?? DEFAULT_CANCEL_TERM_GRACE_MS
+    this.timers = deps.timers ?? { setTimeout, clearTimeout }
+    // P1-16：Supervisor 的裸事实在这里归因（exit-classifier），Run 终态只收敛一次。
+    deps.supervisor.onRuntimeExit((event) =>
+      this.handleRuntimeExit(event.runId, event.code, event.signal),
+    )
+    deps.supervisor.onLost((runId, reason) => this.handleSupervisorLost(runId, reason))
   }
 
   /** 下行帧入口（session 在 token_revoked 之后委托）。返回 promise 供测试 await。 */
@@ -129,14 +205,22 @@ export class RunManager {
       case 'run.resend_from':
         this.drainRun(frame.payload.runId)
         return
+      case 'run.status_request':
+        // P1-16：Hub 收敛探针的应答（§6.2 run.snapshot）；Run 事实缺失则诚实沉默。
+        this.answerStatusRequest(frame.payload.runId)
+        return
       default:
-        // run.status_request（P1-16 快照语义）/ node.token_revoked（session 已处理）。
+        // node.token_revoked（session 已处理）。
         return
     }
   }
 
   /** 重连后全量补发（R1：Hub 重启后从各自未 ack 处续发；Hub 幂等去重）。 */
   onReconnect(): void {
+    // R9：先补发攒下的 lost 快照（终态事实优先于历史事件重放）。
+    for (const snapshot of this.pendingLostSnapshots.values()) {
+      this.deps.send(runSnapshotFrame(snapshot))
+    }
     for (const runId of this.deps.eventStore.runIdsWithPending()) this.drainRun(runId)
   }
 
@@ -164,7 +248,18 @@ export class RunManager {
         this.ack(commandId, true)
         return
       }
-      // 崩溃恢复：command 已落但未 spawn（或 runtime 已不在）——继续正常处理。
+      if (this.deps.commandStore.isAcked(commandId)) {
+        // P1-16（G7-03/R9）：命令已完整处理过一次且 Runtime 已不在——绝不自动
+        // 重启、不重放工具。回放旧 ack + 上报 lost(RUNTIME_LOST)，等显式重跑。
+        this.log('warn', 'duplicate run.start for finished runtime; reporting lost', { runId })
+        this.ack(commandId, true)
+        this.reportLostSnapshot(
+          runId,
+          'runtime is gone after a previous run.start attempt; explicit rerun required',
+        )
+        return
+      }
+      // 崩溃恢复：command 已落但未 spawn（本进程从未完成处理）——继续正常处理。
       this.log('info', 'duplicate run.start without active runtime; reprocessing', { runId })
     }
 
@@ -207,6 +302,7 @@ export class RunManager {
       this.projectors.set(runId, projector)
       this.liveSeq.set(runId, 0)
       this.workspacePaths.set(runId, workspacePath)
+      this.runFacts.set(runId, payload)
       this.deps.commandStore.markAcked(commandId)
       this.ack(commandId, true)
 
@@ -264,7 +360,7 @@ export class RunManager {
     }
   }
 
-  // ---------- run.cancel / approval.decide ----------
+  // ---------- run.cancel（P1-16 取消升级链路） ----------
 
   private async handleRunCancel(
     payload: Extract<NodeDownstream, { type: 'run.cancel' }>['payload'],
@@ -276,21 +372,255 @@ export class RunManager {
       payload,
     })
     if (outcome === 'duplicate') {
+      // R7：重复 run.cancel 只回放 ack——绝不重启升级计时器（重发不是新取消意图）。
+      this.ack(payload.commandId, true)
+      return
+    }
+    const runId = payload.runId
+    if (!this.deps.supervisor.isActive(runId)) {
+      // Runtime 已不在（崩溃/已终态）：无需升级；退出归因/Hub 侧已收敛。
+      this.log('warn', 'run.cancel for inactive runtime; nothing to escalate', { runId })
+      this.deps.commandStore.markAcked(payload.commandId)
       this.ack(payload.commandId, true)
       return
     }
     // wire 的 admin 取消映射 Runtime 的 parent（03 §7.1 枚举）；终态 run.cancelled
     // 由 Runtime 经 stdout 上报（桥内 turn/end aborted → run.cancelled）。
-    this.deps.supervisor.dispatchToRuntime(payload.runId, {
+    this.deps.supervisor.dispatchToRuntime(runId, {
       protocolVersion: 1,
       messageId: crypto.randomUUID(),
       sentAt: this.now().toISOString(),
       type: 'run.cancel',
-      payload: { runId: payload.runId, cause: payload.cause === 'admin' ? 'parent' : 'user' },
+      payload: { runId, cause: payload.cause === 'admin' ? 'parent' : 'user' },
     })
     this.deps.commandStore.markAcked(payload.commandId)
     this.ack(payload.commandId, true)
+    this.beginCancelEscalation(runId, payload.commandId)
   }
+
+  /** 取消升级第 0 跳：确认窗口（§3.2：cancel_requested 15s 未确认 → 强制收尾）。 */
+  private beginCancelEscalation(runId: string, commandId: string): void {
+    const escalation: CancelEscalation = { commandId, phase: 'requested' }
+    escalation.timer = this.timers.setTimeout(() => {
+      this.escalateToSigterm(runId)
+    }, this.confirmMs)
+    this.cancels.set(runId, escalation)
+    this.log('info', 'cancel requested; awaiting runtime confirmation', {
+      component: 'node.supervisor',
+      runId,
+      confirmMs: this.confirmMs,
+    })
+  }
+
+  private escalateToSigterm(runId: string): void {
+    const escalation = this.cancels.get(runId)
+    if (escalation === undefined || escalation.phase !== 'requested') return
+    escalation.phase = 'sigterm'
+    // 先挂宽限计时器再发信号：若 SIGTERM 即刻生效，退出归因会清掉它（短路）。
+    escalation.timer = this.timers.setTimeout(() => {
+      this.escalateToSigkill(runId)
+    }, this.termGraceMs)
+    this.log('warn', 'cancel unconfirmed; escalating to sigterm', {
+      component: 'node.supervisor',
+      runId,
+      graceMs: this.termGraceMs,
+    })
+    this.deps.supervisor.terminate(runId)
+  }
+
+  private escalateToSigkill(runId: string): void {
+    const escalation = this.cancels.get(runId)
+    if (escalation === undefined || escalation.phase !== 'sigterm') return
+    escalation.phase = 'sigkill'
+    escalation.timer = undefined
+    this.log('warn', 'sigterm grace expired; escalating to sigkill', {
+      component: 'node.supervisor',
+      runId,
+    })
+    this.deps.supervisor.forceKill(runId)
+  }
+
+  /**
+   * Runtime 确认（run.cancelled 帧）：终态事实照常投影（forced=false）；升级链路
+   * 收敛为 reap——确认后仍不退出的 Runtime 是泄漏，宽限到期 SIGTERM，再宽限
+   * SIGKILL（02 Task 16 Step 3 的「未结束则收尾」语义；无投影副作用）。
+   */
+  private confirmCancel(runId: string): void {
+    const escalation = this.cancels.get(runId)
+    if (escalation === undefined || escalation.phase === 'confirmed') return
+    if (escalation.timer !== undefined) this.timers.clearTimeout(escalation.timer)
+    escalation.phase = 'confirmed'
+    escalation.timer = this.timers.setTimeout(() => {
+      const current = this.cancels.get(runId)
+      if (current === undefined) return
+      if (this.deps.supervisor.isActive(runId)) {
+        this.log('warn', 'confirmed-cancelled runtime lingering; reaping', {
+          component: 'node.supervisor',
+          runId,
+        })
+        this.deps.supervisor.terminate(runId)
+        current.timer = this.timers.setTimeout(() => {
+          if (this.deps.supervisor.isActive(runId)) this.deps.supervisor.forceKill(runId)
+          this.cancels.delete(runId)
+        }, this.termGraceMs)
+        return
+      }
+      this.cancels.delete(runId)
+    }, this.termGraceMs)
+  }
+
+  // ---------- 退出归因（P1-16：Supervisor 裸事实 → Run 终态） ----------
+
+  private handleRuntimeExit(runId: string, code: number | null, signal: string | null): void {
+    const reported = this.finalFacts.has(runId)
+      ? (this.finalFacts.get(runId)!.status as RuntimeTerminalReport)
+      : 'none'
+    const outcome = classifyRuntimeExit({ reported, cancelInFlight: this.cancels.has(runId) })
+    switch (outcome) {
+      case 'ignore':
+        return
+      case 'cancelled_forced': {
+        // G7-02：Runtime 未确认取消即死亡 → cancelled(forced=true)。
+        this.log('warn', 'runtime died with cancel in flight; forced cancel', {
+          component: 'node.supervisor',
+          runId,
+          code,
+          signal,
+        })
+        const projector = this.projectors.get(runId)
+        if (projector !== undefined) {
+          this.spoolAndDrain(runId, projector.projectCancelledLocal(true).events)
+        }
+        this.finalizeRun(runId, 'cancelled')
+        return
+      }
+      case 'runtime_lost': {
+        // G7-03：无终态事实的退出 = RUNTIME_LOST。绝不自动重启。
+        const summary = describeRuntimeExit(code, signal)
+        this.log('error', 'runtime lost; failing run without restart', {
+          component: 'node.supervisor',
+          runId,
+          code,
+          signal,
+        })
+        const projector = this.projectors.get(runId)
+        if (projector !== undefined) {
+          this.spoolAndDrain(runId, projector.projectRuntimeLost(summary).events)
+        }
+        this.finalizeRun(runId, 'failed', 'RUNTIME_LOST', summary)
+        return
+      }
+    }
+  }
+
+  private handleSupervisorLost(
+    runId: string,
+    reason: 'runtime_timeout' | 'orphaned_after_node_restart',
+  ): void {
+    if (reason === 'orphaned_after_node_restart') {
+      // R9：Node 重启后孤儿已按三重匹配处理。上报 lost(RUNTIME_LOST)（Hub 落
+      // lost 终态），交人工显式重跑——绝不自动复活或重放。
+      this.log('error', 'orphaned runtime after node restart; reporting lost', {
+        component: 'node.supervisor',
+        runId,
+      })
+      this.finalizeRun(runId, 'lost', 'RUNTIME_LOST', 'runtime orphaned after node restart')
+      this.reportLostSnapshot(runId, 'runtime orphaned after node restart')
+      return
+    }
+    // runtime_timeout：wall-clock 超限被回收（G7-03 的归因面：Run 失败，不重启）。
+    if (this.finalFacts.has(runId)) return
+    const summary = 'runtime exceeded its wall-clock limit (runtime_timeout)'
+    this.log('error', 'runtime timeout; failing run without restart', {
+      component: 'node.supervisor',
+      runId,
+    })
+    const projector = this.projectors.get(runId)
+    if (projector !== undefined) {
+      this.spoolAndDrain(runId, projector.projectRuntimeLost(summary).events)
+    }
+    this.finalizeRun(runId, 'failed', 'RUNTIME_LOST', summary)
+  }
+
+  // ---------- run.status_request 应答与 lost 快照上报 ----------
+
+  private answerStatusRequest(runId: string): void {
+    const snapshot = this.buildSnapshot(runId)
+    if (snapshot === undefined) {
+      this.log('warn', 'status_request for unknown run; no snapshot to report', { runId })
+      return
+    }
+    this.deps.send(runSnapshotFrame(snapshot))
+  }
+
+  /**
+   * R9：lost(RUNTIME_LOST) 快照（快照不落 spool，at-least-once 语义）——立即尝试
+   * 上行，并留底到 onReconnect 重发；离线时 session 层丢弃，重连后由 flush 补达。
+   * Hub 侧终态幂等（重复快照被忽略）。
+   */
+  private reportLostSnapshot(runId: string, summary: string): void {
+    if (this.finalFacts.get(runId) === undefined) {
+      this.finalizeRun(runId, 'lost', 'RUNTIME_LOST', summary)
+    }
+    const snapshot = this.buildSnapshot(runId)
+    if (snapshot === undefined) {
+      this.log('warn', 'lost snapshot skipped: no run facts available', { runId })
+      return
+    }
+    this.pendingLostSnapshots.set(runId, snapshot)
+    this.deps.send(runSnapshotFrame(snapshot))
+  }
+
+  /** 组装 §6.2 RunSnapshot：字段只来自 run.start 载荷与本地观测到的事实。 */
+  private buildSnapshot(runId: string): RunSnapshot | undefined {
+    const facts = this.runFacts.get(runId) ?? this.readRunFactsFromSpool(runId)
+    if (facts === undefined) return undefined
+    if (this.runFacts.get(runId) === undefined) this.runFacts.set(runId, facts)
+    const ready = this.readyFacts.get(runId)
+    const final = this.finalFacts.get(runId)
+    const active = this.deps.supervisor.isActive(runId)
+    const status: RunSnapshot['status'] =
+      final !== undefined
+        ? final.status
+        : active
+          ? ready !== undefined
+            ? 'running'
+            : 'dispatching'
+          : 'lost'
+    return {
+      runId,
+      taskId: facts.taskId,
+      ownerUserId: facts.ownerUserId,
+      agentId: facts.agent.id,
+      profileRevisionId: facts.agent.profileRevisionId,
+      deviceId: this.deps.deviceId,
+      workspaceId: facts.workspaceId,
+      dshSessionId: ready?.dshSessionId ?? null,
+      status,
+      failureCode: final?.failureCode ?? null,
+      failureSummary: final?.failureSummary ?? null,
+      // Node 不持有 rerunOfRunId（Hub 固化字段）；上报 null，Hub 不回读该列。
+      rerunOfRunId: null,
+      profileDigest: facts.expectedProfileDigest,
+      pluginPackDigest: facts.expectedPluginPackDigest,
+      dshDistributionVersion: this.deps.dshDistributionVersion,
+      createdAt: facts.receivedAt ?? new Date().toISOString(),
+      startedAt: ready?.startedAt ?? null,
+      finishedAt: final?.finishedAt ?? null,
+    }
+  }
+
+  /** Node 重启后内存为空：从 command spool 回读 run.start 载荷。 */
+  private readRunFactsFromSpool(runId: string): RunFacts | undefined {
+    const spooled = this.deps.commandStore.latestForRun(runId, 'run.start')
+    if (spooled === undefined) return undefined
+    const payload = spooled.payload as RunStartPayload
+    if (payload.runId !== runId) return undefined
+    // receivedAt 是 spool 层字段；补回快照 createdAt 用。
+    return { ...payload, receivedAt: spooled.receivedAt }
+  }
+
+  // ---------- approval.decide ----------
 
   private async handleApprovalDecide(
     payload: Extract<NodeDownstream, { type: 'approval.decide' }>['payload'],
@@ -340,6 +670,17 @@ export class RunManager {
       this.protocolViolation(runId, 'runtime output runId mismatch')
       return
     }
+    // P1-16：runtime.ready 事实入账（snapshot 的 dshSessionId/startedAt）。
+    if (frame.type === 'runtime.ready') {
+      this.readyFacts.set(runId, {
+        dshSessionId: frame.payload.dshSessionId,
+        startedAt: this.now().toISOString(),
+      })
+    }
+    // P1-16：Runtime 自身确认取消 → 升级链路收敛（投影 forced=false 照旧）。
+    if (frame.type === 'run.cancelled') {
+      this.confirmCancel(runId)
+    }
     // P1-15：artifact.candidate 不进投影直译——先采集（realpath/hash/上传）
     // 取得 artifactId/sha256/byteSize，成功后再投影双受众 candidate 事件。
     if (frame.type === 'artifact.candidate') {
@@ -362,15 +703,21 @@ export class RunManager {
       this.liveSeq.set(runId, deltaSeq)
       this.deps.send(runLiveDeltaFrame(runId, deltaSeq, text))
     }
-    // Run 终态帧已投影：回收 projector（spool 里的事件由 ack 流程清尾），
-    // 并清理该 run 的 Reviewer 输入副本目录（best-effort）。
+    // Run 终态帧已投影：登记终态事实并回收 projector（G7-03 归因以事实为准；
+    // finalizeRun 内做 projectors/liveSeq 回收与取消升级计时器收敛）；同时回收
+    // workspace 上下文并清理该 run 的 Reviewer 输入副本（P1-15，best-effort）。
     if (
       frame.type === 'run.completed' ||
       frame.type === 'run.cancelled' ||
       frame.type === 'runtime.fatal'
     ) {
-      this.projectors.delete(runId)
-      this.liveSeq.delete(runId)
+      if (frame.type === 'run.completed') {
+        this.finalizeRun(runId, 'completed')
+      } else if (frame.type === 'run.cancelled') {
+        this.finalizeRun(runId, 'cancelled')
+      } else {
+        this.finalizeRun(runId, 'failed', frame.payload.code, frame.payload.summary)
+      }
       this.workspacePaths.delete(runId)
       void this.deps.cleanupArtifactInputs?.(runId).catch(() => {})
     }
@@ -429,11 +776,34 @@ export class RunManager {
         payload: { runId, code: 'INTERNAL_ERROR', summary: `runtime protocol violation: ${why}` },
       })
       this.spoolAndDrain(runId, result.events)
-      this.projectors.delete(runId)
-      this.liveSeq.delete(runId)
+      this.finalizeRun(runId, 'failed', 'INTERNAL_ERROR', `runtime protocol violation: ${why}`)
       this.workspacePaths.delete(runId)
     }
     void this.deps.supervisor.cancel(runId)
+  }
+
+  // ---------- 终态登记（P1-16：单一收敛点，终态只记一次） ----------
+
+  private finalizeRun(
+    runId: string,
+    status: Extract<RunSnapshot['status'], 'completed' | 'failed' | 'cancelled' | 'lost'>,
+    failureCode: RunSnapshot['failureCode'] = null,
+    failureSummary: RunSnapshot['failureSummary'] = null,
+  ): void {
+    if (this.finalFacts.has(runId)) return // 终态禁改写（03 §3.2）
+    this.finalFacts.set(runId, {
+      status,
+      failureCode,
+      failureSummary,
+      finishedAt: this.now().toISOString(),
+    })
+    const escalation = this.cancels.get(runId)
+    if (escalation !== undefined && escalation.phase !== 'confirmed') {
+      if (escalation.timer !== undefined) this.timers.clearTimeout(escalation.timer)
+      this.cancels.delete(runId)
+    }
+    this.projectors.delete(runId)
+    this.liveSeq.delete(runId)
   }
 
   // ---------- spool 与上行 ----------
@@ -491,6 +861,6 @@ export class RunManager {
     msg: string,
     context?: Record<string, unknown>,
   ): void {
-    this.deps.log?.(level, msg, context)
+    this.logFn?.(level, msg, context)
   }
 }

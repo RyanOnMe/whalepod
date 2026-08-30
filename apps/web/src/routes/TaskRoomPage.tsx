@@ -91,7 +91,7 @@ export function TaskRoomPage(): ReactNode {
             {selectedRunId !== undefined && session !== null ? (
               <RunLivePanel runId={selectedRunId} session={session} />
             ) : null}
-            <ApprovalSlot />
+            <ApprovalSlot runs={runs} task={task} session={session} />
           </section>
         </section>
         <aside className="task-room-col task-room-right" aria-label="交付物">

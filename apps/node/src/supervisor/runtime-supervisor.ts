@@ -35,6 +35,13 @@ export interface RuntimeLostEvent {
   readonly reason: 'runtime_timeout' | 'orphaned_after_node_restart'
 }
 
+/** P1-16：进程退出的裸事实（RunManager 经 exit-classifier 归因到 Run 终态）。 */
+export interface RuntimeExitEvent {
+  readonly runId: string
+  readonly code: number | null
+  readonly signal: string | null
+}
+
 export interface ActiveRuntimeRecord {
   readonly runId: string
   readonly pid: number
@@ -77,6 +84,19 @@ export class RuntimeSupervisor {
   private readonly lostHandlers: Array<
     (runId: string, reason: RuntimeLostEvent['reason']) => void
   > = []
+  /** P1-16：退出事件订阅者（stopAll 引发的退出不发布——Node 停机不是 Run 故障）。 */
+  private readonly exitHandlers: Array<(event: RuntimeExitEvent) => void> = []
+  private stopping = false
+  /**
+   * P1-16 修复（评审发现的 Q6 偶发）：close() 之后的「生命周期分离」标志。
+   * close() 时在管 Runtime 可能仍存活（R9 时序：Node 崩溃被新实例接管，旧实例
+   * 释放状态库），其 exit 事件随后才迟到到达——finalize 运行在 ChildProcess
+   * exit 监听器里，一旦访问已关闭的 SQLite 会抛 ERR_INVALID_STATE 未处理异常
+   * 并杀死整个 Node 进程。closed 后本实例彻底退出生命周期管理：不碰状态库、
+   * 不再发信号、不再发布任何 lost/exit 事实（归因权已移交接管方）。正常路径
+   * （db 存活期间的退出归因）不受影响。
+   */
+  private closed = false
 
   constructor(private readonly deps: SupervisorDeps) {
     this.db = new DatabaseSync(deps.stateDbPath)
@@ -98,6 +118,10 @@ export class RuntimeSupervisor {
 
   onLost(handler: (runId: string, reason: RuntimeLostEvent['reason']) => void): void {
     this.lostHandlers.push(handler)
+  }
+
+  onRuntimeExit(handler: (event: RuntimeExitEvent) => void): void {
+    this.exitHandlers.push(handler)
   }
 
   private emitLost(runId: string, reason: RuntimeLostEvent['reason']): void {
@@ -165,19 +189,29 @@ export class RuntimeSupervisor {
 
   private finalize(
     runId: string,
-    _code: number | null,
-    _signal: string | null,
+    code: number | null,
+    signal: string | null,
     tail?: StderrTail,
   ): void {
+    // close() 后的迟到 exit（孤儿被接管方击杀时，旧实例的 onExit 回调晚到）：
+    // 静默返回——绝不访问已关闭的状态库、绝不发布归因事件（见 closed 字段注释）。
+    if (this.closed) return
     const entry = this.handles.get(runId)
     if (entry?.timer !== undefined) clearTimeout(entry.timer)
     this.handles.delete(runId)
     // 活跃表只反映存活 Runtime；终态经 lost 事件上报（stderr tail 随 P1-13 投影带出）。
     this.db.prepare('delete from active_runtime where run_id = ?').run(runId)
+    // P1-16：裸退出事实交给 RunManager 归因（cancelled_forced / runtime_lost /
+    // ignore）。stopAll（Node 停机）引发的退出不发布——租约恢复由 Hub 收敛。
+    if (!this.stopping) {
+      const event: RuntimeExitEvent = { runId, code, signal }
+      for (const handler of this.exitHandlers) handler(event)
+    }
   }
 
   /** 超时回收：wall-clock 超限 → 终止 + 上报 runtime_timeout。 */
   private async reclaimTimeout(runId: string): Promise<void> {
+    if (this.closed) return
     const entry = this.handles.get(runId)
     if (entry === undefined) return
     await this.deps.driver.terminate(entry.handle)
@@ -187,11 +221,38 @@ export class RuntimeSupervisor {
   }
 
   async cancel(runId: string): Promise<void> {
+    if (this.closed) return
     const entry = this.handles.get(runId)
     if (entry !== undefined) {
       await this.deps.driver.terminate(entry.handle)
       await entry.handle.exitPromise
     }
+  }
+
+  /**
+   * P1-16 取消升级路径：SIGTERM 即发即忘（不等待退出）——等待与升级节奏由
+   * RunManager 的确认窗口/宽限计时器驱动。run 不在管或实例已 close 时为 no-op
+   * （closed 后绝不再向进程组发信号——孤儿归接管方所有，见 closed 字段注释）。
+   */
+  terminate(runId: string): void {
+    if (this.closed) return
+    const entry = this.handles.get(runId)
+    if (entry === undefined) return
+    void this.deps.driver.terminate(entry.handle).catch(() => {
+      // 信号失败（进程已死等）：退出事件随后到达，由归因层收敛。
+    })
+  }
+
+  /** P1-16：SIGKILL 进程组（driver 未实现 forceKill 时退化为 SIGTERM）。 */
+  forceKill(runId: string): void {
+    if (this.closed) return
+    const entry = this.handles.get(runId)
+    if (entry === undefined) return
+    if (this.deps.driver.forceKill !== undefined) {
+      void this.deps.driver.forceKill(entry.handle).catch(() => {})
+      return
+    }
+    this.terminate(runId)
   }
 
   /** 该 run 的 Runtime 当前是否在管（P1-13 重复 run.start 的 R7 判定）。 */
@@ -258,8 +319,9 @@ export class RuntimeSupervisor {
     }
   }
 
-  /** 优雅停机：终止本实例管理的全部 Runtime（不影响恢复流程语义）。 */
+  /** 优雅停机：终止本实例管理的全部 Runtime（退出事件被抑制，不归因为 Run 故障）。 */
   async stopAll(): Promise<void> {
+    this.stopping = true
     for (const [runId, entry] of [...this.handles.entries()]) {
       if (entry.timer !== undefined) clearTimeout(entry.timer)
       await this.deps.driver.terminate(entry.handle)
@@ -267,7 +329,16 @@ export class RuntimeSupervisor {
     }
   }
 
+  /**
+   * 释放状态库并脱离生命周期管理（closed 语义）：清掉 wall-clock 计时器、
+   * 之后所有 finalize/terminate/lost 发布一律 no-op。可与存活中的在管 Runtime
+   * 共存（R9 时序：旧实例 close，孤儿由接管方 recoverOrphans 终止并归因）。
+   */
   close(): void {
+    this.closed = true
+    for (const [, entry] of this.handles) {
+      if (entry.timer !== undefined) clearTimeout(entry.timer)
+    }
     this.db.close()
   }
 }

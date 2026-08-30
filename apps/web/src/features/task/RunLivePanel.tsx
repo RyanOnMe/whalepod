@@ -13,6 +13,8 @@ import { queryKeys } from '../../app/query-client.js'
 import { formatIso, RUN_STATUS_LABEL } from '../../shared/format.js'
 import type { RunEventItem, RunView, Session } from '../../shared/api/types.js'
 import { dropRunLive, getRunLiveText, subscribeRunLive } from '../../shared/realtime/run-buffer.js'
+import { RunActions } from '../run/RunActions.js'
+import { RunFailureNotice } from '../run/RunFailureNotice.js'
 
 export interface RunLivePanelProps {
   runId: string
@@ -64,7 +66,18 @@ function describeEvent(item: RunEventItem): string | null {
     }
     case 'approval.decided': {
       const status = (item.event as { status?: unknown }).status
-      return typeof status === 'string' ? `审批决定：${status}` : null
+      if (typeof status !== 'string') return null
+      const label =
+        status === 'allowed_once'
+          ? '已批准一次'
+          : status === 'rejected'
+            ? '已拒绝'
+            : status === 'expired'
+              ? '已过期（按拒绝处理）'
+              : status === 'cancelled'
+                ? '已取消'
+                : status
+      return `审批决定：${label}`
     }
     case 'run.completed': {
       const finalText = (item.event as { finalText?: unknown }).finalText
@@ -128,6 +141,16 @@ export function RunLivePanel({ runId, session }: RunLivePanelProps): ReactNode {
         {run.startedAt !== null ? <span>开始 {formatIso(run.startedAt)}</span> : null}
         {run.finishedAt !== null ? <span>结束 {formatIso(run.finishedAt)}</span> : null}
       </div>
+
+      {run.rerunOfRunId !== null ? (
+        <p className="run-lineage" data-testid="run-lineage">
+          由 Run {run.rerunOfRunId.slice(0, 8)} 重跑
+        </p>
+      ) : null}
+
+      {/* P1-16：failed/lost 明示未知副作用警示；取消/重跑动作（权限内呈现）。 */}
+      <RunFailureNotice run={run} />
+      <RunActions run={run} session={session} />
 
       {isOwner ? (
         <div className="run-live-stream">

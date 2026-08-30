@@ -54,8 +54,13 @@ export interface RuntimeDriver {
       onExit: (code: number | null, signal: string | null) => void
     },
   ): Promise<RuntimeHandle>
-  /** 取消：对进程组发 SIGTERM（driver 实现负责升级策略）。 */
+  /**
+   * 取消：对进程组发 SIGTERM（driver 实现负责升级策略）。
+   * forceKill（P1-16，可选）：SIGKILL 进程组——取消升级链路的最后一跳；
+   * 未实现的 driver 退化为 terminate。
+   */
   terminate(handle: RuntimeHandle): Promise<void>
+  forceKill?(handle: RuntimeHandle): Promise<void>
 }
 
 export interface DshRuntimeDriverOptions {
@@ -129,6 +134,19 @@ export class DshRuntimeDriver implements RuntimeDriver {
         process.kill(-handle.pid, 'SIGTERM')
       } else {
         process.kill(handle.pid, 'SIGTERM')
+      }
+    } catch {
+      // 已退出：ESRCH 视为成功。
+    }
+  }
+
+  /** P1-16：SIGKILL 进程组——SIGTERM 宽限到期后的最后一跳（G7-02）。 */
+  async forceKill(handle: RuntimeHandle): Promise<void> {
+    try {
+      if (process.platform !== 'win32') {
+        process.kill(-handle.pid, 'SIGKILL')
+      } else {
+        process.kill(handle.pid, 'SIGKILL')
       }
     } catch {
       // 已退出：ESRCH 视为成功。

@@ -34,6 +34,14 @@ import { registerRealtimeRoutes } from './modules/realtime/routes.js'
 import { ArtifactStore } from './modules/artifact/store.js'
 import { registerArtifactRoutes } from './modules/artifact/routes.js'
 
+// P1-16：server 组合根把 orchestrator 的内存心跳投影喂给租约 reconcile
+// （「Node 在线但已不跑该 Run」的判定路径）；app 实例是唯一交接点。
+declare module 'fastify' {
+  interface FastifyInstance {
+    runOrchestrator: RunOrchestrator
+  }
+}
+
 export interface HubDeps {
   readonly config: HubConfig
   readonly database: Database
@@ -160,6 +168,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
   // Browser 实时链路先注册：拿到 RealtimeHub 注入 Node WS（live delta 投递面）。
   const realtime = registerRealtimeRoutes(app, { database, publicOrigin: config.publicOrigin })
   const orchestrator = new RunOrchestrator({ database, outbox })
+  app.decorate('runOrchestrator', orchestrator)
   registerNodeWebsocket(app, { database, orchestrator, realtime })
 
   await app.register(

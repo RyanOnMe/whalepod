@@ -3,5 +3,6 @@
   "profileRevisionId": "01905f7c-0000-7000-8000-000000000402",
   "deviceId": "01905f7c-0000-7000-8000-000000000501",
   "workspaceId": "01905f7c-0000-7000-8000-000000000601",
-  "prompt": "Review the protocol fixtures."
+  "prompt": "Review the protocol fixtures.",
+  "rerunOfRunId": "01905f7c-0000-7000-8000-000000000301"
 }
