@@ -506,6 +506,23 @@ describe('P1-13 全链路（真 Hub + 真 Node + 真 Runtime/replay）', () => {
       if (Date.now() > aliceDeadline) throw new Error('alice never saw run.completed')
       await silence(50)
     }
+    // member 侧同一等待纪律（#66）：CI 慢环境下 Bob 的扇出/断线补洞可能晚于
+    // Alice 到达——轮询等到 Bob 收到 run.completed 项目帧再断言；等不到必须红
+    //（判定不软化：project run.completed 对 member 必达）。
+    const bobDeadline = Date.now() + TAKE_TIMEOUT_MS
+    while (
+      !bobWs.frames.some(
+        (f) =>
+          f.kind === 'persistent' &&
+          f.event.type === 'run.event' &&
+          JSON.stringify(f.event.payload).includes('"run.completed"'),
+      )
+    ) {
+      if (Date.now() > bobDeadline) {
+        throw new Error('bob never saw run.completed (project audience)')
+      }
+      await silence(50)
+    }
     const aliceRunEvents = aliceWs.frames.filter(
       (f) => f.kind === 'persistent' && f.event.type === 'run.event',
     )
