@@ -63,6 +63,10 @@ const FIXTURE_SECRETS = join(
   REPO_ROOT,
   'packages/runtime-dsh/tests/dsh-contract/fixtures/secrets/session.jsonl',
 )
+const FIXTURE_APPROVAL = join(
+  REPO_ROOT,
+  'packages/runtime-dsh/tests/dsh-contract/fixtures/tool-approval/session.jsonl',
+)
 
 const TAKE_TIMEOUT_MS = 90_000
 
@@ -524,6 +528,156 @@ describe('P1-13 全链路（真 Hub + 真 Node + 真 Runtime/replay）', () => {
       'Hello from replay.',
     )
   }, 120_000)
+
+  it('G5-01/G5-03：Approval 卡双受众 diff + owner HTTP 决策 → decide 命令链 → DSH 工具继续执行', async () => {
+    const chain = await setupChain(FIXTURE_APPROVAL)
+    const aliceWs = await chain.connectBrowser(chain.alice)
+    const bobWs = await chain.connectBrowser(chain.bob)
+    const runId = await startRun(chain)
+
+    // G5-01 前半：Approval 卡落库（DSH 工具触发 ask）。
+    const rows = await waitForRunEvent(runId, (rs) =>
+      rs.some((r) => r.type === 'approval.requested' && r.audience === 'owner'),
+    )
+    const requested = rows.find((r) => r.type === 'approval.requested' && r.audience === 'owner')
+    const card = (
+      requested?.payload as {
+        approval: {
+          approvalId: string
+          callId: string
+          toolName: string
+          reason: string
+          preview: unknown
+        }
+      }
+    ).approval
+    expect(card.toolName).toBe('publish_artifact')
+    expect(card.reason).not.toBe('')
+    // callId 关联（03 §8）：preview 来自同 callId 的 tool/call 参数。
+    expect(JSON.stringify(card.preview)).toContain('out/report.md')
+
+    const [approvalRow] = await database.db
+      .select()
+      .from(schema.approvals)
+      .where(eq(schema.approvals.id, card.approvalId))
+    expect(approvalRow).toBeDefined()
+    expect(approvalRow?.status).toBe('pending')
+    expect(approvalRow?.callId).toBe(card.callId)
+
+    // G5-01 后半：两端 frame diff——owner 见完整卡；member 只见等待态。
+    const aliceDeadline = Date.now() + TAKE_TIMEOUT_MS
+    while (
+      !aliceWs.frames.some(
+        (f) =>
+          f.kind === 'persistent' &&
+          f.event.type === 'run.event' &&
+          JSON.stringify(f.event.payload).includes(`"${card.approvalId}"`),
+      )
+    ) {
+      if (Date.now() > aliceDeadline) throw new Error('alice never saw approval card')
+      await silence(50)
+    }
+    const bobDeadline = Date.now() + TAKE_TIMEOUT_MS
+    while (
+      !bobWs.frames.some((f) => f.kind === 'persistent' && f.event.type === 'approval.changed')
+    ) {
+      if (Date.now() > bobDeadline) throw new Error('bob never saw approval.changed')
+      await silence(50)
+    }
+    // owner 流里有带正文的卡；member 流里只有收缩卡（reason 恒空）与状态事件，
+    // owner 卡的 reason 正文一条都不出现。
+    const aliceRequested = aliceWs.frames.filter(
+      (f) => f.kind === 'persistent' && JSON.stringify(f.event).includes('"approval.requested"'),
+    )
+    expect(aliceRequested.some((f) => JSON.stringify(f).includes(card.reason))).toBe(true)
+    for (const frame of bobWs.frames) {
+      expect(JSON.stringify(frame), 'member stream must not carry owner card reason').not.toContain(
+        card.reason,
+      )
+    }
+    const bobRequested = bobWs.frames.filter(
+      (f) => f.kind === 'persistent' && JSON.stringify(f.event).includes('"approval.requested"'),
+    )
+    expect(bobRequested.length).toBeGreaterThan(0)
+    for (const frame of bobRequested) {
+      const payload = frame.kind === 'persistent' ? frame.event.payload : {}
+      const approval = (payload as { event?: { approval?: { reason?: string } } }).event?.approval
+      expect(approval?.reason).toBe('')
+    }
+
+    // G5-03：owner 经真人 HTTP 路径决定 → Hub→Node→Runtime 命令链。
+    const decideRes = await chain.ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/approvals/${card.approvalId}/decisions`,
+      headers: {
+        origin: chain.ctx.origin,
+        cookie: chain.alice.cookie,
+        'idempotency-key': randomUUID(),
+      },
+      payload: { decision: 'allowed_once' },
+    })
+    expect(decideRes.statusCode).toBe(200)
+    expect(decideRes.json()).toMatchObject({
+      ok: true,
+      data: { status: 'allowed_once', decidedBy: chain.alice.userId },
+    })
+
+    // 命令链 trace：outbox 的 approval.decide 已被 Node ack。
+    const decideDeadline = Date.now() + TAKE_TIMEOUT_MS
+    for (;;) {
+      const [command] = await database.db
+        .select()
+        .from(schema.dispatchOutbox)
+        .where(eq(schema.dispatchOutbox.type, 'approval.decide'))
+      if (command?.ackedAt !== null && command !== undefined) {
+        expect(command.payload).toMatchObject({
+          runId,
+          approvalId: card.approvalId,
+          callId: card.callId,
+          decision: 'allowed_once',
+        })
+        break
+      }
+      if (Date.now() > decideDeadline) throw new Error('approval.decide never acked by node')
+      await silence(100)
+    }
+
+    // DSH 工具继续执行：allow 后 publish_artifact 跑通（tool.finished succeeded），
+    // Agent 生成解释后 Run 正常完成。
+    // 注：artifact.candidate 的投影与落库是 P1-15 交付，本链路不断言。
+    await waitForRunEvent(runId, (rs) =>
+      rs.some(
+        (r) =>
+          r.type === 'tool.finished' &&
+          r.audience === 'owner' &&
+          (r.payload as { outcome?: string }).outcome === 'succeeded',
+      ),
+    )
+    await waitForRunEvent(runId, (rs) =>
+      rs.some((r) => r.type === 'run.completed' && r.audience === 'owner'),
+    )
+    const [finalRun] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(finalRun?.status).toBe('completed')
+
+    const [decidedApproval] = await database.db
+      .select()
+      .from(schema.approvals)
+      .where(eq(schema.approvals.id, card.approvalId))
+    expect(decidedApproval?.status).toBe('allowed_once')
+    expect(decidedApproval?.decidedBy).toBe(chain.alice.userId)
+    expect(decidedApproval?.decidedAt).not.toBeNull()
+    // 决定回显是持久事件（owner/project 双受众）。
+    const decidedRows = await database.db
+      .select()
+      .from(schema.runEvents)
+      .where(eq(schema.runEvents.runId, runId))
+    expect(
+      decidedRows
+        .filter((r) => r.type === 'approval.decided')
+        .map((r) => r.audience)
+        .sort(),
+    ).toEqual(['owner', 'project'])
+  }, 180_000)
 
   it('R1：Hub 重启（Node 不动）→ 重连自动补发，Hub 侧 seq 连续完整', async () => {
     // 确定性时序：等 Node 侧 runtime 真的在跑 → 关 Hub → 等 runtime 跑完
