@@ -42,11 +42,14 @@ pnpm phase1:evidence -- --evidence <dir> [--run <runId>]
 ## 观测（看什么）
 
 统一结构化事件流（`events.jsonl`），每条带 `component` 分层字段（06 §8 词表 +
-`harness.*`）与 `traceId` 跨层索引键，run 相关事件带 `runId`：
+`harness.*`）与 `traceId` 跨层索引键，run 相关事件带 `runId`。`layerOf()` 把
+component 归约到观测分层：产品四层（Hub/Node/Runtime/Browser）+ **Harness 单列**
+——`observe-layer-coverage` 的「Hub 在案」只认真实 `hub.*`/`artifact.store`
+事件，harness 自身事件不充数：
 
 | 层 (component) | 证据文件 | 内容 |
 |---|---|---|
-| harness.* | events.jsonl | 驱动里程碑、故障注入标记 |
+| harness.*（Harness 层） | events.jsonl | 驱动里程碑、故障注入标记 |
 | hub.http | events.jsonl + layer-facts.jsonl | HTTP 请求事实、真 TCP 探活（inject 绕过 listener，不能判 Hub 存亡） |
 | hub.outbox / hub.db | events.jsonl + db-snapshot.json | 派发/ack、run/run_event/approval/artifact/outbox 显式列快照 |
 | node.gateway / node.run / node.artifact | events.jsonl + node-events.jsonl | 收帧、上行帧全文（已脱敏）、输入清单/候选采集日志 |
@@ -81,14 +84,21 @@ pnpm phase1:evidence -- --evidence <dir> [--run <runId>]
 outbox ack、Node 上行、Runtime 帧摘要、DB 快照、Browser 帧与 socket 事实），
 **不看 drive 的注入参数**——fault 字段只进报告标题，不自证。
 
+**Hub 下线判定 = 探活序列「末尾连续 3 次失败」（探活间隔 250ms ≈ 750ms 不可达）**：
+单次瞬时探活超时（重负载 spawn 抖动）不参与归因——这是 harness 偶发红的第一
+来源，由合成证据测试钉死（绿链 + 单次探活失败必须仍 PASS）。
+
 | 故意打断的层 | 证据签名 | verify 归因 |
 |---|---|---|
-| Hub（breakHub） | 探活失败 + outbox acked_at 为空 或 Node 侧已产出 run.completed 而 Hub 未落库 | **Hub** |
+| Hub（breakHub） | 探活末尾连续失败 + outbox acked_at 为空 或 Node 侧已产出 run.completed 而 Hub 未落库 | **Hub** |
 | Node（stopNodeSession） | Hub 在线且已派发，Node 会话未收到 run.start / 未 ack | **Node** |
 | Runtime（必崩 stub） | run.start 已 ack，runtime-summary 零帧，run 落 failed(RUNTIME_LOST) | **Runtime** |
 | Browser（closeBrowsers） | Hub 已落库 completed，Browser socket 已关、帧流缺 run.completed | **Browser** |
 
 绿链上的场景断言失败也各自带层标（如 G4-05 flush 顺序 → Hub 投影面）。
+等待窗语义：只有 hub/node 断层走 stall 窗收口；browser/runtime 断层下链路
+其余部分健康，drive 必须等正常终态再收口（否则等待窗先于终态会把
+fault=browser 误判成 Node）。
 
 ### 断层自证证据表（phase1-drive --fault ×4 → phase1:verify，CLI 实跑）
 
@@ -137,13 +147,18 @@ git clone <repo> && cd <repo> && corepack enable && pnpm install && pnpm -r buil
 pnpm check                                        # Q0（含 harness 静态门）
 pnpm test:integration                             # Q2，含六原语 harness 自证 spec：
                                                   #   scripts/tests/phase1-harness.integration.spec.ts
-                                                  #   （绿链 PASS + hub/node/runtime/browser 四层断层 FAIL 且归因正确 + CLI 冒烟）
+                                                  #   11 例：绿链 standard PASS + 四层断层 FAIL 且归因正确
+                                                  #   + fault=browser 终态必达 + secrets 端到端（corpus 分支）
+                                                  #   + 合成证据判定硬度（瞬时探活不误判/末尾连续失败归 Hub/
+                                                  #     Hub 覆盖不认 harness.*）+ CLI 冒烟
 pnpm phase1:drive -- --scenario standard          # CLI 独立复跑（自起一次性 PG）
 pnpm phase1:verify -- --evidence <上一步输出的目录>
 pnpm phase1:evidence -- --evidence <目录> --run <runId>
 scripts/secret-scan.sh                            # Q7 取证面
 ```
 
-上次全套结果（6/6）：`绿链 standard PASS · fault=hub→Hub · fault=node→Node ·
-fault=runtime→Runtime · fault=browser→Browser · CLI 冒烟（drive→verify→evidence
-出包过 secret-scan）PASS`，见 `artifacts/evidence/acceptance-demo/results.txt`。
+上次全套结果（11/11）：`绿链 standard PASS · fault=hub→Hub · fault=node→Node ·
+fault=runtime→Runtime · fault=browser→Browser（含 Hub 侧终态必达断言）·
+secrets 端到端 PASS（corpus 分支）· 判定硬度合成证据 ×3 · CLI 冒烟
+（drive→verify→evidence 出包过 secret-scan）PASS`。首版四层断层 CLI 证据表
+见 `artifacts/evidence/acceptance-demo/results.txt`。

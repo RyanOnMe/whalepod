@@ -236,10 +236,16 @@ export async function drivePhase1(options: DriveOptions): Promise<DriveResult> {
         })
       }
 
-      await waitForRunEnd(asm, runId1, fault === 'none' ? STEP_TIMEOUT_MS : stallWindowMs)
+      // 归因面等待窗：只有 hub/node 断层时链路真的会停滞（stall 窗收口）；
+      // browser/runtime 断层下链路其余部分健康，必须等正常终态——否则等待窗
+      // 先于终态收口会把 fault=browser 误判成 Node（评审修正 2）。
+      const endWaitMs = fault === 'hub' || fault === 'node' ? stallWindowMs : STEP_TIMEOUT_MS
+      await waitForRunEnd(asm, runId1, endWaitMs)
       // Browser 沉降：Hub 终态落库与 WS 扇出之间有毫秒级时差，采集必须在
-      // 扇出帧落袋后再收口（否则把扇出时差误判成断层）。
-      await settleBrowsers(asm, browsers, runId1, fault === 'browser' ? 2_000 : 30_000)
+      // 扇出帧落袋后再收口（否则把扇出时差误判成断层）。Hub 已断/连接已断时
+      // 帧不可能再来，短等即可。
+      const settleMs = fault === 'browser' || fault === 'hub' ? 2_000 : 30_000
+      await settleBrowsers(asm, browsers, runId1, settleMs)
 
       if (fault === 'none' && scenario === 'standard') {
         // Artifact 腿：candidate 落库 → owner 发布 → Reviewer Run 消费。

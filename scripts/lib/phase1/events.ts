@@ -8,8 +8,9 @@
  *
  * component 取值沿用 06 §8 固定词表（browser | hub.* | node.* |
  * runtime.bridge | dsh.agent | artifact.store），harness 自身的驱动步骤用
- * `harness.*`；layerOf() 把 component 归约到验收四层（Hub/Node/Runtime/
- * Browser），verify 的归因（localize）按它输出断在哪层。
+ * `harness.*`；layerOf() 把 component 归约到观测分层（Hub/Node/Runtime/
+ * Browser + Harness 单列，harness.* 不充作产品层证据），verify 的归因
+ * （localize）按它输出断在哪层。
  */
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -17,11 +18,17 @@ import { join } from 'node:path'
 /** 验收四层（05 §4 P1-18：verify 必须指明 Hub、Node、Runtime 或 Browser）。 */
 export type Phase1Layer = 'Hub' | 'Node' | 'Runtime' | 'Browser'
 
-/** component → 验收四层的归约（evidence-map.md 分层表的一致映射）。 */
-export function layerOf(component: string): Phase1Layer {
+/** 观测分层：产品四层 + harness 自身观测单列（不充作任何产品层的证据）。 */
+export type ObservationLayer = Phase1Layer | 'Harness'
+
+/** component → 观测分层（evidence-map.md 分层表的一致映射）。 */
+export function layerOf(component: string): ObservationLayer {
   if (component === 'browser') return 'Browser'
   if (component === 'runtime.bridge' || component === 'dsh.agent') return 'Runtime'
   if (component.startsWith('node.')) return 'Node'
+  // harness 自身的驱动/采集步骤单列一层：observe-layer-coverage 的「Hub 在案」
+  // 必须来自真实 hub.*/artifact.store 事件，harness.* 不得充数。
+  if (component.startsWith('harness.')) return 'Harness'
   // hub.* 与 artifact.store 都在 Hub 进程内（04 evidence-map 分层表）。
   return 'Hub'
 }

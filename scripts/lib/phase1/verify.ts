@@ -52,6 +52,9 @@ const CORPUS = [
 
 const TERMINAL_RUN_STATES = new Set(['completed', 'failed', 'cancelled', 'lost'])
 
+/** Hub 下线判定所需的连续探活失败次数（探活间隔 250ms → 连续 3 次 ≈ 750ms 不可达）。 */
+const HUB_DOWN_CONSECUTIVE_PROBES = 3
+
 interface FactLine {
   ts: string
   component: string
@@ -174,7 +177,6 @@ interface ChainFacts {
   nodeGotRunStart: boolean
   runtimeFrameCount: number
   hubDownAtEnd: boolean
-  hubDownEver: boolean
   hubRunEventCount: number
   hubTerminal: string | undefined
   hubCompleted: boolean
@@ -210,8 +212,14 @@ function browserHasCompleted(frames: unknown[], runId: string): boolean {
 function reduceFacts(evidence: Evidence, run1: string, run2?: string): ChainFacts {
   const { snapshot } = evidence
   const probes = evidence.facts.filter((f) => f.kind === 'hub.probe')
-  const hubDownAtEnd = probes.length > 0 && probes[probes.length - 1]?.['ok'] === false
-  const hubDownEver = probes.some((f) => f['ok'] === false)
+  // Hub 下线判定 = 探活序列「末尾连续失败」；单次瞬时超时（重负载 spawn 抖动）
+  // 不算——否则它是 harness 偶发红的第一来源。健康 loopback 不会连续 750ms
+  // 不可达（探活间隔 250ms）。
+  const hubDownAtEnd = (() => {
+    if (probes.length === 0) return false
+    const tail = probes.slice(-HUB_DOWN_CONSECUTIVE_PROBES)
+    return tail.every((f) => f['ok'] === false)
+  })()
   const runEvents = snapshot?.runEvents.filter((r) => r.runId === run1) ?? []
   const run1Row = snapshot?.runs.find((r) => r.id === run1)
   const nodeUplinkRun1 = evidence.nodeUplink.filter((f) => frameRunId(f) === run1)
@@ -234,7 +242,6 @@ function reduceFacts(evidence: Evidence, run1: string, run2?: string): ChainFact
     ),
     runtimeFrameCount: evidence.runtimeFrames.length,
     hubDownAtEnd,
-    hubDownEver,
     hubRunEventCount: runEvents.length,
     hubTerminal:
       run1Row !== undefined && TERMINAL_RUN_STATES.has(run1Row.status) ? run1Row.status : undefined,
@@ -262,12 +269,12 @@ function reduceFacts(evidence: Evidence, run1: string, run2?: string): ChainFact
 export function attribute(facts: ChainFacts): VerifyAttribution | undefined {
   // 1) 命令链未闭合：Hub 派发 → Node 确认。
   if (!facts.commandAcked) {
-    if (facts.hubDownAtEnd || facts.hubDownEver) {
+    if (facts.hubDownAtEnd) {
       return {
         layer: 'Hub',
-        reason: 'run.start 命令未被 Node 确认，且 Hub 探活出现失败——Hub 先于命令链闭合下线',
+        reason: 'run.start 命令未被 Node 确认，且 Hub 探活末尾连续失败——Hub 先于命令链闭合下线',
         evidence: [
-          'layer-facts.jsonl: hub.probe ok=false',
+          'layer-facts.jsonl: hub.probe 末尾连续 ok=false',
           'db-snapshot.json: outbox run.start acked_at 为空',
         ],
       }
@@ -284,14 +291,14 @@ export function attribute(facts: ChainFacts): VerifyAttribution | undefined {
     }
   }
   // 2) 命令链闭合但 Hub 中途下线：尾部事件滞留 Node。
-  if (facts.hubDownAtEnd || facts.hubDownEver) {
+  if (facts.hubDownAtEnd) {
     return {
       layer: 'Hub',
       reason: facts.nodeUplinkHasCompleted
-        ? 'Node 侧已产出 run.completed 上行帧而 Hub 未落库，且 Hub 探活失败——Hub 中途下线'
-        : 'Hub 探活失败（链路窗口内）——Hub 层中断',
+        ? 'Node 侧已产出 run.completed 上行帧而 Hub 未落库，且 Hub 探活末尾连续失败——Hub 中途下线'
+        : 'Hub 探活末尾连续失败（链路窗口内）——Hub 层中断',
       evidence: [
-        'layer-facts.jsonl: hub.probe ok=false',
+        'layer-facts.jsonl: hub.probe 末尾连续 ok=false',
         'db-snapshot.json: run_event 缺 run.completed',
       ],
     }
@@ -634,8 +641,14 @@ export function verifyEvidence(attemptDir: string): VerifyVerdict {
     }
   }
 
-  // milestones 全绿 → 场景绿断言。
-  const finalText = scenario === 'standard' ? 'Artifact published.' : 'Hello from replay.'
+  // milestones 全绿 → 场景绿断言。最终文本标记按 fixture 而定（secrets 场景
+  // 的最终正文整体脱敏，稳定的存活尾部是 'done.'，与 P1-13 chain spec 同判据）。
+  const finalText =
+    scenario === 'standard'
+      ? 'Artifact published.'
+      : scenario === 'secrets'
+        ? 'done.'
+        : 'Hello from replay.'
   checks.push(...projectionChecks(evidence, run1, finalText))
   if (scenario === 'standard') {
     if (run2 === undefined) {
