@@ -66,7 +66,18 @@ function describeEvent(item: RunEventItem): string | null {
     }
     case 'approval.decided': {
       const status = (item.event as { status?: unknown }).status
-      return typeof status === 'string' ? `审批决定：${status}` : null
+      if (typeof status !== 'string') return null
+      const label =
+        status === 'allowed_once'
+          ? '已批准一次'
+          : status === 'rejected'
+            ? '已拒绝'
+            : status === 'expired'
+              ? '已过期（按拒绝处理）'
+              : status === 'cancelled'
+                ? '已取消'
+                : status
+      return `审批决定：${label}`
     }
     case 'run.completed': {
       const finalText = (item.event as { finalText?: unknown }).finalText

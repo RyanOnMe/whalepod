@@ -3,8 +3,9 @@
  *
  * buildApp 负责 app 内部的 WS 路由 + orchestrator（WS 上行分发用）；
  * 此处额外启动组合根级别的后台循环：
- * - OutboxWorker：250ms 扫描派发队列，经 WsDeviceGateway 把 run.start/run.cancel 等下行帧投到在线 Node；
- * - reconcileLeases：10s 扫描活跃 Run，30s 无心跳的设备上的 Run 转 lost（03 §3.2/R5）。
+ * - OutboxWorker：250ms 扫描派发队列，经 WsDeviceGateway 把 run.start/run.cancel/approval.decide 等下行帧投到在线 Node；
+ * - reconcileLeases：10s 扫描活跃 Run，30s 无心跳的设备上的 Run 转 lost（03 §3.2/R5）；
+ *   同周期驱动 Approval 过期清扫（P1-14，G5-05 pending → expired 等价拒绝）。
  * 进程退出时清理定时器与连接。
  */
 import { createDatabase, getTeam, Outbox } from '@project311/db'
@@ -13,6 +14,7 @@ import { loadConfig } from './config.js'
 import { SetupTokenStore } from './modules/team/setup-token.js'
 import { OutboxWorker } from './modules/run/index.js'
 import { reconcileLeases } from './modules/run/reconciler.js'
+import { expireApprovals } from './modules/run/approval-expiry.js'
 import { WsDeviceGateway } from './modules/device/index.js'
 
 const config = loadConfig()
@@ -56,6 +58,13 @@ const leaseTimer = setInterval(() => {
     new Date(),
   ).catch((error) => {
     app.log.warn({ component: 'hub.reconciler', errorName: String(error) }, 'lease reconcile error')
+  })
+  // P1-14：Approval 过期清扫与租约 reconcile 同周期（幂等，重复触发无害）。
+  void expireApprovals({ database, outbox, now: () => new Date() }, new Date()).catch((error) => {
+    app.log.warn(
+      { component: 'hub.approval.expiry', errorName: String(error) },
+      'approval expiry sweep error',
+    )
   })
 }, 10_000)
 

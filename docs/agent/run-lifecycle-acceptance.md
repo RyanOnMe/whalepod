@@ -44,7 +44,7 @@ pnpm vitest run --project web apps/web/tests/run-actions.spec.tsx
 | G7-04（API/FK） | `apps/hub/tests/run-rerun.integration.spec.ts` | 带 `rerunOfRunId` 201 且响应/Task Room 携带血缘；非终态 409；跨 Task/未知 404；畸形 400；同 Idempotency-Key 重放同一 Run；DB FK 拒绝悬挂引用 |
 | G7-04/G7-05（UI） | `apps/web/tests/run-actions.spec.tsx` | 时间线「由 Run xx 重跑」；终态 Run「重跑此 Run」→ 确认 POST 带 `rerunOfRunId`；活跃 Run「取消 Run」带 Idempotency-Key；member 不可见动作 |
 | G7-05 | 同上 | `failed/lost` 出警示（含失败码），文案含「需验证外部状态」「不会自动重放」，且不出现「安全重放/已安全恢复」；`completed` 无警示 |
-| G7-06 | `apps/hub/tests/run-cancel-route.integration.spec.ts`（断言 a）+ `packages/domain/tests/policy.spec.ts`（断言 b） | Alice（Owner 角色）可经 HTTP 取消 Bob 的 Run（`cause=admin`）；`decide_approval` 仅 Run owner（domain policy 单测 + orchestrator `decided_by=owner` 强制）；HTTP 决定路由属 P1-14 交付面 |
+| G7-06 | `apps/hub/tests/run-cancel-route.integration.spec.ts`（断言 a）+ `apps/hub/tests/approval-decision.integration.spec.ts`（断言 b，P1-14 #59 已合入） | Alice（Owner 角色）可经 HTTP 取消 Bob 的 Run（`cause=admin`）；同一 Owner 角色对 Bob 的 Approval 决策被 HTTP 403 拒绝、行保持 pending（「不能替 Bob 批准」的 HTTP 面证据）；辅以 domain policy 单测（`decide_approval` 仅 owner）+ orchestrator `decided_by=owner` 强制 |
 | R4 | `apps/hub/tests/resilience/run-lease-resilience.spec.ts` | 断网 10s（FakeClock）+ `reconcileLeases` → Run 保持原状态、`failureCode` 为空；重连 `runtime.ready` → running；全程无 `lost` 事件 |
 | R5 | 同上 | >30s → `lost(RUNTIME_LOST)` + finishedAt + Team Event；之后心跳（含声称活跃）、snapshot(running)、迟到事件都不复活（事件持久留证，状态不动） |
 | R9 | `apps/node/tests/resilience/node-restart-orphan.spec.ts`（Node 侧）+ `run-lease-resilience.spec.ts`（Hub 侧） | 真实孤儿进程三重匹配后被杀（liveness 判死）；离线期 lost 快照缓冲、重连 flush `run.snapshot(lost, RUNTIME_LOST)`；Hub 侧据此落 `lost(RUNTIME_LOST)`；Hub 重发 `run.start` 不复活、不重发 prompt |
@@ -93,10 +93,10 @@ scripts/secret-scan.sh apps/hub/src apps/hub/tests apps/node/src apps/node/tests
 
 ## 边界与未覆盖
 
-- **G7-06 的 HTTP 批准断言**：`POST /approvals/:approvalId/decisions` 属 P1-14
-  交付面（并行 Issue），本 PR 以 domain policy 单测（`decide_approval` 仅
-  owner）+ orchestrator `decided_by=owner` 强制为证据；P1-14 落地后补 HTTP 403
-  断言。
+- **G7-06 的 HTTP 批准断言**：已由 P1-14（PR #59，已合入 main）的
+  `approval-decision.integration.spec.ts`「G5-02：非 owner（团队 Owner 角色）
+  决策被拒 403，决定仍 pending」覆盖；合并 main 后与本 PR 的断言 a
+  （run-cancel-route.integration.spec.ts）共同闭环 G7-06。
 - **R9 双重启边界**：Node 重启后、重连前再次重启，内存缓冲的 lost 快照丢失；
   此时 Hub 依赖心跳投影（activeRunIds 不含该 Run）与租约过期兜底收敛 lost。
 - **Windows Job Object**：升级链路按进程组信号实现（darwin/linux 验证）；

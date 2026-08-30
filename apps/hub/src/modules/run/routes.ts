@@ -2,8 +2,10 @@
  * Run HTTP 路由（02-第一阶段实施计划.md Task 10 Interfaces + P1-16 G7-01/04）：
  *   POST /tasks/:taskId/runs（含 rerunOfRunId 血缘）
  *   GET  /runs/:runId
- *   GET  /runs/:runId/events
- *   POST /runs/:runId/cancel（03 §4；Run owner 或 Owner/Admin）
+ *   GET  /runs/:runId/events（P1-13）
+ *   POST /runs/:runId/cancel（P1-16，03 §4；Run owner 或 Owner/Admin）
+ *   POST /approvals/:approvalId/decisions（P1-14，03 §4）
+ *
  * 路径不含 `/api/v1` 前缀——由组合根（app.ts，P1-05）按 #38 先例以
  * `{ prefix: '/api/v1' }` 挂载；接线时与其他模块一致。本模块只管路由与
  * 错误映射；组合根负责装配：
@@ -22,6 +24,7 @@ import { RunCommandError } from './errors.js'
 import type { RunOrchestrator } from './orchestrator.js'
 import { getRunView } from './queries.js'
 import { getRun, listRunEvents } from '@project311/db'
+import { DecideApprovalRequestSchema } from '@project311/protocol'
 
 export interface RunRoutesDeps {
   orchestrator: RunOrchestrator
@@ -40,6 +43,9 @@ const ERROR_HTTP_STATUS: Readonly<Partial<Record<ErrorCode, number>>> = {
   TASK_TERMINAL: 409,
   ASSIGNMENT_NOT_ACCEPTED: 409,
   INVALID_RUN_TRANSITION: 409,
+  // P1-14：一次性决定的两类领域拒绝（03 §3.3/§10）——状态冲突与过期。
+  APPROVAL_ALREADY_DECIDED: 409,
+  APPROVAL_EXPIRED: 409,
   DEVICE_OFFLINE: 409,
   DEVICE_REVOKED: 409,
   WORKSPACE_UNAVAILABLE: 409,
@@ -127,6 +133,33 @@ export function registerRunRoutes(app: FastifyInstance, deps: RunRoutesDeps): vo
       const run = await getRunView(deps.database.db, runId)
       if (run === undefined) return sendError(reply, 'NOT_FOUND', 'run not found')
       return reply.status(200).send({ ok: true, data: run })
+    } catch (error) {
+      const { code, message } = errorCodeOf(error)
+      return sendError(reply, code, message)
+    }
+  })
+
+  /**
+   * POST /approvals/:approvalId/decisions（03 §4；P1-14 一次性决定）。
+   * owner-only、first-wins、过期即拒；语义在 RunOrchestrator.decideApproval
+   * （decide.ts），本路由只做 actor 解析、body 校验与错误映射。
+   */
+  app.post('/approvals/:approvalId/decisions', async (request, reply) => {
+    // actor 解析在 try 之外：AUTH_REQUIRED 等 ApiError 直接交给全局
+    // errorHandler（与 task 模块同一先例），不被本路由吞成 500。
+    const actor = await deps.resolveActor(request)
+    try {
+      const approvalId = (request.params as { approvalId?: string }).approvalId ?? ''
+      const body = DecideApprovalRequestSchema.safeParse(request.body)
+      if (!body.success) {
+        return sendError(
+          reply,
+          'VALIDATION_FAILED',
+          body.error.issues[0]?.message ?? 'invalid request body',
+        )
+      }
+      const approval = await deps.orchestrator.decideApproval(actor, approvalId, body.data.decision)
+      return reply.status(200).send({ ok: true, data: approval })
     } catch (error) {
       const { code, message } = errorCodeOf(error)
       return sendError(reply, code, message)
