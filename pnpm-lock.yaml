@@ -119,9 +119,21 @@ importers:
       '@playwright/test':
         specifier: 'catalog:'
         version: 1.62.1
+      '@project311/db':
+        specifier: workspace:*
+        version: link:packages/db
+      '@project311/protocol':
+        specifier: workspace:*
+        version: link:packages/protocol
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
+      '@types/ws':
+        specifier: 'catalog:'
+        version: 8.18.1
+      drizzle-orm:
+        specifier: 'catalog:'
+        version: 0.45.2(@opentelemetry/api@1.9.1)(postgres@3.4.9)
       oxfmt:
         specifier: 0.63.0
         version: 0.63.0
@@ -137,6 +149,9 @@ importers:
       vitest:
         specifier: 4.1.10
         version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(jsdom@30.0.1)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
+      ws:
+        specifier: 'catalog:'
+        version: 8.21.3
 
   apps/hub:
     dependencies:

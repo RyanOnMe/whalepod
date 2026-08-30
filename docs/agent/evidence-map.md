@@ -16,7 +16,11 @@
 
 ## 一把捞齐
 
-- 按 Run 取证：`pnpm phase1:evidence -- --run <id>`（待 P1-18）。
+- 按 Run/场景取证（P1-18）：`pnpm phase1:evidence -- --evidence <dir> [--run <id>]`；
+  驱动 `pnpm phase1:drive`、判定+归因 `pnpm phase1:verify`（exit code 即结论）。
+  采集由 `scripts/lib/phase1/` 六原语 harness 完成：真 Hub+真 Node+真 Runtime+双
+  Browser WS，跨层 traceId/runId 索引在证据目录的 `index.json`（按 run 一把捞齐
+  四层证据计数与文件）。验收细节见 [harness-acceptance.md](./harness-acceptance.md)。
 - E2E 失败自动产包：`artifacts/evidence/<scenario-id>/<attempt-id>/`，含 `manifest.json`（git commit、DSH 版本、协议版本、种子、起止时间）、`assertions.json`、`api.jsonl`、`team-events.jsonl`、`node-events.jsonl`、`runtime-summary.jsonl`、`db-snapshot.json`、双浏览器截图。
 - 任何证据离开本机或进 git 之前：`scripts/secret-scan.sh <路径>`，命中即拒（Q7）。
 
