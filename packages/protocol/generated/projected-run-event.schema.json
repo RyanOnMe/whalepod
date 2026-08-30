@@ -399,6 +399,7 @@
                 "ARTIFACT_PATH_OUTSIDE_WORKSPACE",
                 "ARTIFACT_TOO_LARGE",
                 "ARTIFACT_HASH_MISMATCH",
+                "ARTIFACT_INPUT_MANIFEST_TOO_LARGE",
                 "PLUGIN_UNREVIEWED",
                 "INTERNAL_ERROR"
               ]

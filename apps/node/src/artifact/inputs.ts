@@ -4,7 +4,8 @@
  * run.start 后、Runtime 启动前：
  * 1. `GET /node/runs/:runId/input-manifest`（Device Token）拉取任务已发布
  *    Artifact 清单（协议 ArtifactInputManifestSchema fail-closed 解析；
- *    taskId 与 Run 不一致 → VALIDATION_FAILED）；
+ *    taskId 与 Run 不一致 → VALIDATION_FAILED；Hub 显式拒绝（如 #64 超上限
+ *    ARTIFACT_INPUT_MANIFEST_TOO_LARGE）→ 错误码原样透传为 run.start 拒绝）；
  * 2. 逐条 `GET /node/artifacts/:artifactId/content` 受控下载副本，sha256 与
  *    清单比对（不符 → ARTIFACT_HASH_MISMATCH 且清理目录）；
  * 3. 副本文件名 = artifactId（UUID 白名单，无用户可控文件名，无路径面）；
@@ -129,9 +130,15 @@ export class ArtifactInputsManager {
       `${this.deps.hubUrl.replace(/\/$/, '')}/api/v1/node/runs/${runId}/input-manifest`,
     )
     if (!response.ok) {
+      // #64：Hub 失败 envelope 里的专用码（如 ARTIFACT_INPUT_MANIFEST_TOO_LARGE）
+      // 原样透传为 run.start 拒绝码（语义显式可归因）；body 不可解析或码不在
+      // 本侧协议版本内时，退回状态码折算（fail-closed 兜底）。
+      const envelopeCode = await wireErrorCodeFrom(response)
       throw new ArtifactInputsError(
-        mapStatus(response.status),
-        `input manifest request failed with http ${response.status}`,
+        envelopeCode ?? mapStatus(response.status),
+        envelopeCode !== undefined
+          ? 'input manifest request rejected by hub'
+          : `input manifest request failed with http ${response.status}`,
       )
     }
     const envelope = (await response.json()) as { ok?: unknown; data?: unknown }
@@ -176,6 +183,23 @@ function mapStatus(status: number): string {
   if (status === 404) return 'NOT_FOUND'
   if (status === 401) return 'AUTH_REQUIRED'
   if (status === 403) return 'FORBIDDEN'
+  if (status === 409) return 'CONFLICT'
   const fallback = 'INTERNAL_ERROR'
   return ErrorCodeSchema.safeParse(fallback).success ? fallback : 'INTERNAL_ERROR'
+}
+
+/**
+ * #64：从 Hub 失败 envelope（§4 ApiFailure）提取 wire 错误码——只接受能通过
+ * ErrorCodeSchema 解析的码（协议演进安全：本侧不认识的码不透传，走状态码折算）。
+ */
+async function wireErrorCodeFrom(response: Response): Promise<string | undefined> {
+  try {
+    const body = (await response.json()) as { ok?: unknown; error?: { code?: unknown } }
+    if (body.ok !== false) return undefined
+    const code = body.error?.code
+    if (typeof code !== 'string') return undefined
+    return ErrorCodeSchema.safeParse(code).success ? code : undefined
+  } catch {
+    return undefined
+  }
 }

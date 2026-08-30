@@ -66,6 +66,7 @@ function makeHarness(input: {
   manifest?: unknown
   content?: Buffer
   manifestError?: number
+  manifestErrorBody?: string
   contentError?: number
   manifestTaskId?: string
 }): Harness {
@@ -75,7 +76,10 @@ function makeHarness(input: {
     requests.push({ url, token: String(new Headers(init?.headers).get('authorization')) })
     if (url.endsWith('/input-manifest')) {
       if (input.manifestError !== undefined) {
-        return new Response('nope', { status: input.manifestError })
+        return new Response(input.manifestErrorBody ?? 'nope', {
+          status: input.manifestError,
+          headers: { 'content-type': 'application/json' },
+        })
       }
       return new Response(
         envelope({
@@ -146,6 +150,33 @@ describe('ArtifactInputsManager', () => {
       code: 'NOT_FOUND',
     })
     expect(existsSync(join(inputsRoot, RUN_ID))).toBe(false)
+  })
+
+  it('manifest 超限（#64）：Hub 409 + ARTIFACT_INPUT_MANIFEST_TOO_LARGE 显式码透传，不写副本', async () => {
+    const h = makeHarness({
+      manifestError: 409,
+      manifestErrorBody: JSON.stringify({
+        ok: false,
+        error: {
+          code: 'ARTIFACT_INPUT_MANIFEST_TOO_LARGE',
+          message: 'task has more than 64 published artifacts; reviewer input manifest refused',
+          requestId: 'req-manifest-limit',
+        },
+      }),
+    })
+    // 拒绝码必须是 Hub 的专用码本身（不是折算的 INTERNAL_ERROR）：run.start
+    // ack 的 error.code 透传它，语义显式可归因。
+    await expect(h.manager.prepare(RUN_ID, TASK_ID)).rejects.toMatchObject({
+      code: 'ARTIFACT_INPUT_MANIFEST_TOO_LARGE',
+    })
+    expect(existsSync(join(inputsRoot, RUN_ID))).toBe(false)
+  })
+
+  it('manifest 超限但 body 不是已知 envelope（旧 Node 对新 Hub）→ 409 折算 CONFLICT', async () => {
+    const h = makeHarness({ manifestError: 409, manifestErrorBody: 'nope' })
+    await expect(h.manager.prepare(RUN_ID, TASK_ID)).rejects.toMatchObject({
+      code: 'CONFLICT',
+    })
   })
 
   it('cleanup 删除该 run 的输入目录', async () => {

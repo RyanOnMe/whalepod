@@ -41,6 +41,9 @@ export const ErrorCodeSchema = z.enum([
   'ARTIFACT_PATH_OUTSIDE_WORKSPACE',
   'ARTIFACT_TOO_LARGE',
   'ARTIFACT_HASH_MISMATCH',
+  // #64：Reviewer 输入清单超条目上限（协议 hard cap）时 Hub input-manifest 的
+  // fail-closed 显式拒绝码；Node 透传为 run.start 拒绝（ack accepted=false）。
+  'ARTIFACT_INPUT_MANIFEST_TOO_LARGE',
   'PLUGIN_UNREVIEWED',
   'INTERNAL_ERROR',
 ])

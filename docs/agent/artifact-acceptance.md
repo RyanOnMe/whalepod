@@ -126,8 +126,15 @@ pnpm test:integration -- apps/hub/tests/artifact.integration.spec.ts
 - **输入副本的磁盘生命周期**：Run 终态触发 best-effort 清理（RunManager 接
   cleanup）；Node 进程崩溃后的残留目录随 supervisor 恢复路径（P1-16 覆盖孤儿
   回收）一并处理，本 Issue 未单独断言。
-- ** Reviewer 输入清单条目上限 64**（协议层 hard cap）：超 64 条已发布交付物的
-  Task 不在第一阶段容量目标内（04 §8）。
+- **Reviewer 输入清单条目上限 64**（协议层 hard cap；#64 修订申报）：Hub
+  input-manifest 在 Task 已发布 Artifact 超 64 条时 **fail-closed 显式拒绝**
+  （409 `ARTIFACT_INPUT_MANIFEST_TOO_LARGE`，不下发半份清单、不静默溢出）；
+  Node 侧 prepareArtifactInputs 把该码原样透传为 run.start 拒绝（ack
+  accepted=false，旧 Node 对未知码退回状态码折算 CONFLICT）。机器证据：
+  apps/hub/tests/artifact.integration.spec.ts「超限（#64）」（65 条已发布 →
+  409 专用码）、apps/node/tests/artifact-inputs.spec.ts「manifest 超限（#64）」
+  （透传 + 不写副本）、packages/protocol/tests/artifact-inputs.spec.ts
+  「上限」（schema 上限恰好通过 / 超 1 条拒绝）。
 
 ## 复跑
 

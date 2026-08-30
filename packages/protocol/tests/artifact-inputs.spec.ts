@@ -6,8 +6,13 @@
  * 成对出现：只带清单不给目录、或只给目录不带清单，都是畸形 initialize，
  * fail-closed 拒绝。清单条目锁定内容寻址事实（artifactId/sha256/byteSize），
  * 不含任何本地路径。
+ *
+ * #64（P1-15 评审跟进）：manifest 响应（ArtifactInputManifestSchema）条目上限
+ * 以导出常量钉死，上限值恰好通过、上限+1 fail-closed 拒绝——Hub 与 schema
+ * 共用同一常量，防两处漂移。
  */
 import { describe, expect, it } from 'vitest'
+import { ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES, ArtifactInputManifestSchema } from '../src/http.js'
 import { RuntimeInitializeSchema } from '../src/runtime-wire.js'
 
 const BASE_PAYLOAD = {
@@ -84,5 +89,42 @@ describe('runtime.initialize artifact input manifest', () => {
         artifactInputsDir: '<runtime-inputs>/r1',
       }),
     ).toEqual({ ok: false })
+  })
+})
+
+describe('ArtifactInputManifestSchema 条目上限（#64）', () => {
+  const TASK_ID = '01905f7c-0000-7000-8000-000000000201'
+
+  function manifestEntry(i: number) {
+    return {
+      artifactId: `01905f7c-0000-7000-8000-${String(i).padStart(12, '0')}`,
+      runId: '01905f7c-0000-7000-8000-000000000301',
+      title: `Builder report ${i}`,
+      mediaType: 'text/markdown',
+      byteSize: 10,
+      sha256: '3c'.repeat(32),
+      publishedAt: '2026-01-05T09:30:00Z',
+    }
+  }
+
+  function parseManifest(count: number): { ok: boolean } {
+    return {
+      ok: ArtifactInputManifestSchema.safeParse({
+        taskId: TASK_ID,
+        artifacts: Array.from({ length: count }, (_, i) => manifestEntry(i)),
+      }).success,
+    }
+  }
+
+  it('上限值 = 导出常量（Hub 与 schema 共用，防漂移）', () => {
+    expect(ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES).toBe(64)
+  })
+
+  it(`恰好 ${ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES} 条（上限）通过`, () => {
+    expect(parseManifest(ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES)).toEqual({ ok: true })
+  })
+
+  it(`超上限（${ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES + 1} 条）fail-closed 拒绝`, () => {
+    expect(parseManifest(ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES + 1)).toEqual({ ok: false })
   })
 })
