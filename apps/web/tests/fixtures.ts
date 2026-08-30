@@ -39,7 +39,8 @@ export interface MockResponse {
 export interface MockHandler {
   method: string
   url: RegExp
-  respond: (init: RequestInit) => MockResponse | Promise<MockResponse>
+  /** 返回 MockResponse = JSON envelope；直接返回 Response = 原样透传（二进制下载用）。 */
+  respond: (init: RequestInit) => MockResponse | Response | Promise<MockResponse | Response>
 }
 
 export function ok(data: unknown): MockResponse {
@@ -71,6 +72,8 @@ export function installFetch(handlers: readonly MockHandler[]): ReturnType<typeo
     for (const handler of handlers) {
       if (handler.method === method && handler.url.test(url)) {
         const response = await handler.respond(requestInit)
+        // Response 实例：raw 透传（P1-15 Artifact 内容下载等二进制面）。
+        if (response instanceof Response) return response
         return new Response(JSON.stringify(response.body), {
           status: response.status,
           headers: { 'content-type': 'application/json' },

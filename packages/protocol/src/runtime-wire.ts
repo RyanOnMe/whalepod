@@ -15,9 +15,24 @@ const CallIdSchema = z.string().min(1).max(128)
 
 // ---------- §7.1 Node 命令（stdin） ----------
 
-export const RuntimeInitializeSchema = envelope(
-  'runtime.initialize',
-  z.strictObject({
+/**
+ * Reviewer Run 的只读 Artifact 输入清单条目（P1-15；03 §7.1 扩展）。
+ *
+ * 只含内容寻址事实（artifactId/sha256/byteSize）与展示元数据，绝不含本地
+ * 路径——Reviewer 通过 Node 下载副本读取（artifactInputsDir 下按 artifactId
+ * 命名的文件），不继承 Builder Workspace、不感知任何本机路径（G6-07）。
+ */
+export const RuntimeArtifactInputSchema = z.strictObject({
+  artifactId: z.uuid(),
+  title: z.string().min(1).max(200),
+  mediaType: z.string().min(1).max(200),
+  byteSize: z.number().int().min(0).max(52_428_800),
+  sha256: Sha256DigestSchema,
+})
+export type RuntimeArtifactInput = z.infer<typeof RuntimeArtifactInputSchema>
+
+const RuntimeInitializePayloadSchema = z
+  .strictObject({
     runId: z.uuid(),
     // Node 本地绝对路径，仅存在于本条本地 wire；fixture 中用 <workspace> 占位。
     workspacePath: z.string().min(1),
@@ -32,7 +47,26 @@ export const RuntimeInitializeSchema = envelope(
     model: z.string().min(1).max(200),
     maxTokens: z.number().int().positive().optional(),
     persona: z.string().min(1).max(20_000),
-  }),
+    // P1-15：Reviewer 输入清单 + 下载副本目录（本地 wire 绝对路径，红线同上）。
+    // 清单条目上限 64——单任务已发布交付物的现实上界，防止单次 initialize 无界膨胀。
+    artifactInputs: z.array(RuntimeArtifactInputSchema).max(64).optional(),
+    artifactInputsDir: z.string().min(1).optional(),
+  })
+  // 清单与副本目录必须成对出现：只带清单不给目录（Runtime 无处读取）或只给
+  // 目录不带清单（无意义副本）都是畸形 initialize，fail-closed 拒绝。
+  .superRefine((value, ctx) => {
+    if ((value.artifactInputs !== undefined) !== (value.artifactInputsDir !== undefined)) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          'artifactInputs and artifactInputsDir must be provided together (input manifest pair rule)',
+      })
+    }
+  })
+
+export const RuntimeInitializeSchema = envelope(
+  'runtime.initialize',
+  RuntimeInitializePayloadSchema,
 )
 
 export const RunPromptSchema = envelope(

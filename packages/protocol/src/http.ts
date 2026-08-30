@@ -109,6 +109,40 @@ export const DecideApprovalRequestSchema = z.strictObject({
   decision: z.enum(['allowed_once', 'rejected']),
 })
 
+/**
+ * POST /node/runs/:runId/artifacts（P1-15）的元数据（经 query 传输，body 为
+ * 原始 octet-stream 字节）。sha256 是权威校验：Hub 复算实收字节比对，不匹配
+ * 拒绝（G6-03）；byteSize 只是先行的上界声明，落库取实收长度。
+ */
+export const ArtifactUploadMetadataSchema = z.strictObject({
+  title: z.string().min(1).max(200),
+  mediaType: z.string().min(1).max(200),
+  byteSize: z.number().int().min(0).max(52_428_800),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  // Node 采集侧产出的规范化相对路径；仅 owner 可见（03 §2.6），不下发其他成员。
+  sourceRelativePath: z.string().min(1).max(1024),
+})
+
+/**
+ * GET /node/runs/:runId/input-manifest（P1-15）的响应 data：Reviewer Run 的
+ * 只读 Artifact 输入清单。只含内容寻址事实与展示元数据——绝不含 storageKey /
+ * sourceRelativePath（不泄露本机路径，G6-07）。
+ */
+export const ArtifactManifestEntrySchema = z.strictObject({
+  artifactId: z.uuid(),
+  runId: z.uuid(),
+  title: z.string().min(1).max(200),
+  mediaType: z.string().min(1).max(200),
+  byteSize: z.number().int().min(0).max(52_428_800),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  publishedAt: z.string().min(1),
+})
+
+export const ArtifactInputManifestSchema = z.strictObject({
+  taskId: z.uuid(),
+  artifacts: z.array(ArtifactManifestEntrySchema).max(64),
+})
+
 // §2.3 Profile Revision 字段规则；创建 Agent 时必须同时给出首个 Revision
 // （agent.current_revision_id 非空），新建 Revision 复用同一组字段。
 const RevisionRequestShape = {
@@ -162,3 +196,6 @@ export type CreateAgentRequest = z.infer<typeof CreateAgentRequestSchema>
 export type CreateAgentRevisionRequest = z.infer<typeof CreateAgentRevisionRequestSchema>
 export type CreatePairingCodeRequest = z.infer<typeof CreatePairingCodeRequestSchema>
 export type PairingClaimRequest = z.infer<typeof PairingClaimRequestSchema>
+export type ArtifactUploadMetadata = z.infer<typeof ArtifactUploadMetadataSchema>
+export type ArtifactManifestEntry = z.infer<typeof ArtifactManifestEntrySchema>
+export type ArtifactInputManifest = z.infer<typeof ArtifactInputManifestSchema>

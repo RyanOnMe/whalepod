@@ -7,7 +7,7 @@
  * 与 evidence），RuntimeBridge.start 把它作为最后一层 patch 挂进 boot 栈
  * （bridge.ts）。pack 为 core-empty 时不携带（wire optional）。
  */
-import type { RuntimeCommand } from '@project311/protocol'
+import type { RuntimeArtifactInput, RuntimeCommand } from '@project311/protocol'
 
 export interface RuntimeSpec {
   readonly runId: string
@@ -21,18 +21,28 @@ export interface RuntimeSpec {
   readonly model: string
   readonly maxTokens?: number
   readonly persona: string
+  /**
+   * P1-15：Reviewer Run 的只读 Artifact 输入清单（03 §7.1 扩展）。
+   * 清单与 `artifactInputsDir`（Node 下载副本目录，本地 wire 绝对路径——红线
+   * 同 workspacePath）必须成对出现；Builder Run（无输入）两者缺省。
+   */
+  readonly artifactInputs?: readonly RuntimeArtifactInput[]
+  readonly artifactInputsDir?: string
 }
 
 type InitializeCommand = Extract<RuntimeCommand, { type: 'runtime.initialize' }>
 
 export function runtimeSpecFromInitialize(command: InitializeCommand): RuntimeSpec {
-  const { maxTokens, pluginPackOverlayPath, ...rest } = command.payload
+  const { maxTokens, pluginPackOverlayPath, artifactInputs, artifactInputsDir, ...rest } =
+    command.payload
   // exactOptionalPropertyTypes：zod 的 optional 产出 `number | undefined`，
   // 桥内形态要求键存在即有效值。
   return {
     ...rest,
     ...(maxTokens === undefined ? {} : { maxTokens }),
     ...(pluginPackOverlayPath === undefined ? {} : { pluginPackOverlayPath }),
+    ...(artifactInputs === undefined ? {} : { artifactInputs }),
+    ...(artifactInputsDir === undefined ? {} : { artifactInputsDir }),
   }
 }
 

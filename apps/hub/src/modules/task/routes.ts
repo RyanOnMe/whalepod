@@ -51,10 +51,12 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
   })
 
   // GET /tasks/:taskId：Task Room 聚合（不暴露 runtime internals，03 §9/02 Step 1）。
+  // GET /tasks/:taskId：Task Room 聚合（不暴露 runtime internals，03 §9/02 Step 1）。
+  // viewer 传入会话用户：candidate Artifact 仅 owner 本人可见（P1-15，G6-01）。
   app.get('/tasks/:taskId', async (request) => {
-    await deps.requireActor(request)
+    const session = await deps.requireActor(request)
     const { taskId } = request.params as { taskId: string }
-    const room = await getTaskRoom(deps.database.db, taskId)
+    const room = await getTaskRoom(deps.database.db, taskId, session.userId)
     if (room === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
     return { ok: true, data: room }
   })

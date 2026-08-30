@@ -6,7 +6,7 @@
  * replay adapter 替换（fixture: tests/dsh-contract/fixtures/<scenario>/）。
  * 任何探针都不访问外部模型或密钥。
  */
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -26,9 +26,15 @@ const FIXTURES_DIR = fileURLToPath(new URL('../fixtures/', import.meta.url))
 
 /** 探针用 RuntimeSpec（02 Step 1 的 runtimeSpec()）：replay provider，占位 digest。 */
 export function runtimeSpec(overrides: Partial<RuntimeSpec> = {}): RuntimeSpec {
+  const workspacePath = mkdtempSync(join(tmpdir(), 'project311-probe-ws-'))
+  // P1-15：桥内 publish_artifact 校验已接线（realpath/边界/size）——探针里
+  // publish_artifact('out/report.md') 的候选必须是工作区内真实存在的文件，
+  // 否则工具以失败结果回给模型、replay 循环重试直到超时。
+  mkdirSync(join(workspacePath, 'out'), { recursive: true })
+  writeFileSync(join(workspacePath, 'out', 'report.md'), '# probe report\n')
   return {
     runId: randomUUID(),
-    workspacePath: mkdtempSync(join(tmpdir(), 'project311-probe-ws-')),
+    workspacePath,
     dshHomePath: mkdtempSync(join(tmpdir(), 'project311-probe-home-')),
     // profile/plugin-pack digest 由 P1-17 真实接线；探针阶段为 wire 占位（schema 要求 64 hex）。
     profileDigest: '0'.repeat(64),

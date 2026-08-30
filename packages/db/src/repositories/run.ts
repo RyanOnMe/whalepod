@@ -161,3 +161,17 @@ export async function countPendingApprovals(handle: DbHandle, runId: string): Pr
     .where(and(eq(approvals.runId, runId), eq(approvals.status, 'pending')))
   return row?.value ?? 0
 }
+
+/** 该 Device 是否承载该 Task 的 Run（Node Artifact 下载授权判据，P1-15）。 */
+export async function deviceHasRunOnTask(
+  handle: DbHandle,
+  deviceId: string,
+  taskId: string,
+): Promise<boolean> {
+  const [row] = await handle
+    .select({ id: runs.id })
+    .from(runs)
+    .where(and(eq(runs.deviceId, deviceId), eq(runs.taskId, taskId)))
+    .limit(1)
+  return row !== undefined
+}

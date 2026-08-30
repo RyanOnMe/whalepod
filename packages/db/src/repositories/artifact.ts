@@ -73,3 +73,15 @@ export async function hasPublishedArtifactByTask(
     .where(and(eq(artifacts.taskId, taskId), eq(artifacts.status, 'published')))
   return (row?.value ?? 0) > 0
 }
+
+/** Task 的已发布 Artifact（Reviewer 输入 manifest 源，P1-15；按创建时间）。 */
+export async function listPublishedArtifactsByTask(
+  handle: DbHandle,
+  taskId: string,
+): Promise<ArtifactRow[]> {
+  return handle
+    .select()
+    .from(artifacts)
+    .where(and(eq(artifacts.taskId, taskId), eq(artifacts.status, 'published')))
+    .orderBy(asc(artifacts.createdAt))
+}
