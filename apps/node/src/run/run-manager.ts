@@ -96,7 +96,11 @@ export interface RunManagerDeps {
    * 失败折算 run.start 拒绝（ack accepted=false 透传错误码）。
    */
   readonly prepareArtifactInputs?: (runId: string, taskId: string) => Promise<RunArtifactInputs>
-  /** P1-15：Run 终态后的输入副本清理（best-effort）。 */
+  /**
+   * P1-15：Run 终态后的输入副本清理（best-effort）。#62：由 finalizeRun 终态
+   * 单一收敛点触发（帧投影/协议违例/退出归因/supervisor lost 全覆盖），
+   * run.start 拒绝路径单独补清（Run 从未在管，不进 finalizeRun）。
+   */
   readonly cleanupArtifactInputs?: (runId: string) => Promise<void>
   /** P1-16：run.snapshot 的设备身份与 DSH 发行版版本（§2.6/§6.2）。 */
   readonly deviceId: string
@@ -356,7 +360,9 @@ export class RunManager {
       const message = error instanceof Error ? error.message : String(error)
       this.deps.commandStore.markAcked(commandId)
       this.ack(commandId, false, { code, message })
-      void this.deps.cleanupArtifactInputs?.(runId).catch(() => {})
+      // run.start 拒绝路径不进 finalizeRun（Run 从未在管）：输入准备可能已下载
+      // 副本（spawn 前失败），同样要清理（#62：不留半成品目录）。
+      this.cleanupInputs(runId)
     }
   }
 
@@ -704,8 +710,8 @@ export class RunManager {
       this.deps.send(runLiveDeltaFrame(runId, deltaSeq, text))
     }
     // Run 终态帧已投影：登记终态事实并回收 projector（G7-03 归因以事实为准；
-    // finalizeRun 内做 projectors/liveSeq 回收与取消升级计时器收敛）；同时回收
-    // workspace 上下文并清理该 run 的 Reviewer 输入副本（P1-15，best-effort）。
+    // finalizeRun 内做 projectors/liveSeq 回收、取消升级计时器收敛与输入副本
+    // 清理（#62：所有终态路径统一在 finalizeRun 收敛，这里不再单发））。
     if (
       frame.type === 'run.completed' ||
       frame.type === 'run.cancelled' ||
@@ -719,7 +725,6 @@ export class RunManager {
         this.finalizeRun(runId, 'failed', frame.payload.code, frame.payload.summary)
       }
       this.workspacePaths.delete(runId)
-      void this.deps.cleanupArtifactInputs?.(runId).catch(() => {})
     }
   }
 
@@ -804,6 +809,15 @@ export class RunManager {
     }
     this.projectors.delete(runId)
     this.liveSeq.delete(runId)
+    // P1-15/#62：输入副本清理收敛在终态单一收敛点——所有终态路径（终态帧投影、
+    // 协议违例、退出归因 cancelled_forced/runtime_lost、supervisor lost
+    // orphan/runtime_timeout、lost 快照）都经 finalizeRun，无一漏网。
+    this.cleanupInputs(runId)
+  }
+
+  /** P1-15：输入副本清理（best-effort，失败只吞掉——不阻塞终态登记）。 */
+  private cleanupInputs(runId: string): void {
+    void this.deps.cleanupArtifactInputs?.(runId).catch(() => {})
   }
 
   // ---------- spool 与上行 ----------
