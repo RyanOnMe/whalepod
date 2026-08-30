@@ -29,6 +29,10 @@ export interface HubConfig {
   readonly pluginCatalogDir?: string | undefined
   /** 显式 dev mode：仅此开关打开时允许安装 local-development 清单（默认 fail-closed 拒绝）。 */
   readonly pluginDevMode?: boolean | undefined
+  /**
+   * 内容寻址 Artifact Store 根目录（P1-15；blob 树 sha256/ab/cd/<digest> + tmp/）。
+   */
+  readonly artifactStoreDir: string
 }
 
 export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
@@ -64,6 +68,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubConfig {
     // 显式开关：仅 '1'/'true' 视为开启，其余（含未设置）一律关闭。
     pluginDevMode:
       env.PROJECT311_PLUGIN_DEV_MODE === '1' || env.PROJECT311_PLUGIN_DEV_MODE === 'true',
+    artifactStoreDir: env.PROJECT311_ARTIFACT_STORE_DIR ?? 'data/artifact-store',
   }
 }
 

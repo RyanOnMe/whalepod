@@ -21,6 +21,7 @@ import {
   type RuntimeOutput,
 } from '@project311/protocol'
 import type { ArtifactPort } from './artifact-tool.js'
+import { createWorkspaceArtifactValidator } from './artifact-validation.js'
 import { ApprovalPort } from './approval-port.js'
 import { nullLog, type LogSink } from './log.js'
 import { dshSessionIdOf, runtimeSpecFromInitialize, type RuntimeSpec } from './runtime-spec.js'
@@ -307,7 +308,19 @@ export class RuntimeBridge {
         }
       },
     }
-    const owner = await SessionOwner.create(ctx, spec, { artifact, approval }, events, log)
+    const owner = await SessionOwner.create(
+      ctx,
+      spec,
+      {
+        artifact,
+        approval,
+        // P1-15：publish_artifact 在桥内先过工作区校验（realpath/边界/size），
+        // 越界/超限的候选以失败工具结果回给模型，绝不发 artifact.candidate 帧。
+        artifactValidator: createWorkspaceArtifactValidator({ workspacePath: spec.workspacePath }),
+      },
+      events,
+      log,
+    )
     emit(frameOf('runtime.ready', { runId, dshSessionId }))
     return new RuntimeBridge(ctx, owner, approval, spec, log)
   }

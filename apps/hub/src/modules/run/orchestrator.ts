@@ -562,7 +562,8 @@ export class RunOrchestrator {
       }
       default:
         // run.phase / assistant.message / tool.* / artifact.candidate / subagent.*：
-        // 本任务只持久投影；Artifact 落库是 P1-15 的事。
+        // 只持久投影。artifact.candidate 的 Artifact 行在 Node 上传时已落库
+        // （P1-15：store+row 原子），这里不重复创建、也不产生状态迁移。
         return
     }
   }

@@ -1,0 +1,14 @@
+{
+  "taskId": "01905f7c-0000-7000-8000-000000000201",
+  "artifacts": [
+    {
+      "artifactId": "01905f7c-0000-7000-8000-000000000801",
+      "runId": "01905f7c-0000-7000-8000-000000000301",
+      "title": "Builder report",
+      "mediaType": "text/markdown",
+      "byteSize": 2048,
+      "sha256": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+      "publishedAt": "2026-01-05T09:30:00Z"
+    }
+  ]
+}

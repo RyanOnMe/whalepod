@@ -127,6 +127,8 @@ export async function createTestApp(
     setupTokenPath,
     host: '127.0.0.1',
     port: 0,
+    // P1-15：Artifact Store 与 setup token 同一个一次性临时目录。
+    artifactStoreDir: join(dir, 'artifact-store'),
     ...(options.rateLimit !== undefined ? { rateLimit: options.rateLimit } : {}),
   }
   const app = await buildApp({

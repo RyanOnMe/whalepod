@@ -73,7 +73,7 @@ describe('task-room', () => {
     expect(await screen.findByText('security-review.md')).toBeVisible()
     expect(screen.getByText('text/markdown')).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Reviewer' })).toBeVisible()
-    expect(screen.getByText(/Reviewer Agent 运行链随后续版本接入/)).toBeVisible()
+    expect(screen.getByText(/只读输入清单/)).toBeVisible()
   })
 
   it('空态说明下一步，而不是静默空白', async () => {

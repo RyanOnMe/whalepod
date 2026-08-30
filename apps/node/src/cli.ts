@@ -87,6 +87,34 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     await import('./plugin/installer.js')
   const { PluginPackPreflight } = await import('./plugin/plugin-preflight.js')
   const { fetchPluginPackDescriptor } = await import('./run/pack-descriptor-client.js')
+  // P1-15：Artifact 采集与 Reviewer 输入准备。
+  const { ArtifactCollector } = await import('./artifact/collect.js')
+  const { uploadArtifactCandidate } = await import('./artifact/upload-client.js')
+  const { ArtifactInputsManager } = await import('./artifact/inputs.js')
+
+  const artifactLog = (
+    level: 'info' | 'warn' | 'error',
+    msg: string,
+    context?: Record<string, unknown>,
+  ) => {
+    process.stderr.write(`${JSON.stringify({ level, msg, ...context })}\n`)
+  }
+  const artifactInputs = new ArtifactInputsManager({
+    hubUrl: config.hubUrl,
+    deviceToken: config.deviceToken,
+    inputsRoot: join(stateDir, 'runtime-inputs'),
+    log: artifactLog,
+  })
+  const artifactCollector = new ArtifactCollector({
+    stagingDir: join(stateDir, 'artifact-staging'),
+    // 幂等键每次 collect 生成一次（客户端对瞬时失败用同一 key 重试 → Hub 回执幂等）。
+    upload: (runId, payload, body) =>
+      uploadArtifactCandidate(config.hubUrl, config.deviceToken, runId, payload, body, {
+        idempotencyKey: randomUUID(),
+        log: artifactLog,
+      }),
+    log: artifactLog,
+  })
 
   mkdirSync(stateDir, { recursive: true })
   const registry = new WorkspaceRegistry(join(stateDir, 'workspace-registry.sqlite'))
@@ -164,6 +192,10 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     stateDir,
     packsRoot,
     pluginPackPreflight: (packDigest) => preflight.ensure(packDigest),
+    // P1-15：候选采集 + Reviewer 输入准备/清理。
+    artifactCollector,
+    prepareArtifactInputs: (runId, taskId) => artifactInputs.prepare(runId, taskId),
+    cleanupArtifactInputs: (runId) => artifactInputs.cleanup(runId),
     deviceId: config.deviceId,
     dshDistributionVersion: facts.dshDistributionVersion,
     // 取消升级节奏（03 §3.2：15s 未确认强杀 + 5s SIGTERM 宽限）走默认值。

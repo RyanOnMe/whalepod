@@ -16,6 +16,18 @@ export { ApprovalPort } from './approval-port.js'
 export type { ApprovalRequestedFact } from './approval-port.js'
 export { createPublishArtifactTool, PUBLISH_ARTIFACT_TOOL } from './artifact-tool.js'
 export type { ArtifactCandidate, ArtifactPort } from './artifact-tool.js'
+export { createReadArtifactInputTool, READ_ARTIFACT_INPUT_TOOL } from './artifact-input-tool.js'
+export type { ArtifactInputEntry } from './artifact-input-tool.js'
+export {
+  createWorkspaceArtifactValidator,
+  isInsideWorkspaceRoot,
+  ArtifactCandidateError,
+  ARTIFACT_MAX_BYTES,
+} from './artifact-validation.js'
+export type {
+  ArtifactCandidateRejectReason,
+  WorkspaceArtifactValidator,
+} from './artifact-validation.js'
 export { readRuntimeCommands, writeRuntimeOutput, MAX_COMMAND_LINE_BYTES } from './protocol-port.js'
 export type { CommandSourceOptions } from './protocol-port.js'
 export { nullLog } from './log.js'

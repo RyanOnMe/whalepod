@@ -13,13 +13,15 @@
  *   （无命令正文/文件名列表/中间文本/Token 用量）。
  * - 未登记事件类型不投影（fail-silent）：DSH 事件词汇会增长，未知即跳过，
  *   绝不猜测归属（§8 末行：禁止依赖"最后一条消息"或数组位置猜关联）。
- * - artifact.candidate 的落库与 sha256/byteSize 是 P1-15 的活；subagent.*
- *   在 DSH rc.8 无 SessionEvent 事实源（child session 独立日志）——两者本版
- *   不投影，边界登记在验收文档。
+ * - artifact.candidate 不走本入口的直译：Runtime 帧只有相对路径，必须先经
+ *   Node 采集器（realpath/hash/上传）取得 artifactId/sha256/byteSize，再经
+ *   projectArtifactCandidate 投影双受众事件（RunManager 接线）；subagent.*
+ *   在 DSH rc.8 无 SessionEvent 事实源（child session 独立日志）——subagent
+ *   本版不投影，边界登记在验收文档。
  */
 import { randomUUID } from 'node:crypto'
 import { isAbsolute, relative } from 'node:path'
-import type { ProjectedRunEvent, RuntimeOutput } from '@project311/protocol'
+import type { ArtifactWire, ProjectedRunEvent, RuntimeOutput } from '@project311/protocol'
 import { redactString, redactValue, type RedactionContext } from './redact.js'
 
 export interface ProjectionContext extends RedactionContext {
@@ -194,7 +196,8 @@ export class RunProjector {
           frame.sentAt,
         )
       default:
-        // agent.status（phase 已由 step/start 派生）与 artifact.candidate（P1-15）。
+        // agent.status（phase 已由 step/start 派生）。artifact.candidate 在
+        // RunManager 已被采集链路截获，不会到达这里；其他未登记帧 fail-silent。
         return EMPTY
     }
   }
@@ -242,6 +245,36 @@ export class RunProjector {
           audience: 'project',
           occurredAt: this.now().toISOString(),
           event: { type: 'run.failed', code: 'RUNTIME_LOST', summary: 'RUNTIME_LOST' },
+        },
+      ],
+    }
+  }
+
+  /**
+   * artifact.candidate 双受众投影（P1-15；03 §6.4/§8）。owner 行携带
+   * sourceRelativePath（owner 本地来源相对路径，§2.6 仅 owner 可见）；
+   * project 行是二层收缩镜像（无文件路径，04 §6.1 不向其他成员泄漏）。
+   * 入参 artifactId/sha256/byteSize 来自 Hub 上传回执（采集先于投影）。
+   */
+  projectArtifactCandidate(artifact: ArtifactWire): ProjectionResult {
+    const occurredAt = this.now().toISOString()
+    const { sourceRelativePath, ...shared } = artifact
+    return {
+      liveTexts: [],
+      events: [
+        {
+          audience: 'owner',
+          occurredAt,
+          event: {
+            type: 'artifact.candidate',
+            artifact:
+              sourceRelativePath !== undefined ? { ...shared, sourceRelativePath } : { ...shared },
+          },
+        },
+        {
+          audience: 'project',
+          occurredAt,
+          event: { type: 'artifact.candidate', artifact: shared },
         },
       ],
     }

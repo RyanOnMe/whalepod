@@ -67,12 +67,17 @@ export interface TaskRoomView {
 }
 
 /**
- * 并行查询四类数据；Artifacts 只返回已发布的（02 Step 5：「已发布 Artifact metadata」）。
- * Run 投影剥离 runtime internals，使 JSON 不含 workspacePath / dshSession / modelApiKey。
+ * 并行查询四类数据。Artifacts 可见性（03 §2.6/§4）：
+ * - published：全员可见（已发布进 Team）。
+ * - candidate：仅 owner 本人可见（G6-01：candidate 只有 Bob 能打开）；
+ *   viewerUserId 缺省（无会话语境）时只回 published。
+ * 其余 rejected/他人 candidate 不出现在聚合里。Run 投影剥离 runtime internals，
+ * 使 JSON 不含 workspacePath / dshSession / modelApiKey。
  */
 export async function getTaskRoom(
   handle: DbHandle,
   taskId: string,
+  viewerUserId?: string,
 ): Promise<TaskRoomView | undefined> {
   const task = await getTask(handle, taskId)
   if (task === undefined) return undefined
@@ -85,6 +90,14 @@ export async function getTaskRoom(
     task: toTaskView(task),
     comments: comments.map(toCommentView),
     runs: runs.map(toTaskRoomRun),
-    artifacts: artifacts.filter((a) => a.status === 'published').map(toTaskRoomArtifact),
+    artifacts: artifacts
+      .filter(
+        (a) =>
+          a.status === 'published' ||
+          (a.status === 'candidate' &&
+            viewerUserId !== undefined &&
+            a.ownerUserId === viewerUserId),
+      )
+      .map(toTaskRoomArtifact),
   }
 }

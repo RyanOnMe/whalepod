@@ -12,6 +12,16 @@
     "provider": "deepseek",
     "model": "deepseek-chat",
     "maxTokens": 8192,
-    "persona": "You are a careful TypeScript reviewer."
+    "persona": "You are a careful TypeScript reviewer.",
+    "artifactInputs": [
+      {
+        "artifactId": "01905f7c-0000-7000-8000-000000000901",
+        "title": "Builder report",
+        "mediaType": "text/markdown",
+        "byteSize": 2048,
+        "sha256": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+      }
+    ],
+    "artifactInputsDir": "<runtime-inputs>/01905f7c-0000-7000-8000-000000000301"
   }
 }

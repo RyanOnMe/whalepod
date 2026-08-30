@@ -14,6 +14,8 @@ import { SessionId, type Session, type TurnEndReason } from '@deepseek-ai/dsh-se
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
 import { createPublishArtifactTool, type ArtifactPort } from './artifact-tool.js'
+import { createReadArtifactInputTool } from './artifact-input-tool.js'
+import type { WorkspaceArtifactValidator } from './artifact-validation.js'
 import type { ApprovalPort } from './approval-port.js'
 import type { LogSink } from './log.js'
 import { dshSessionIdOf, type RuntimeSpec } from './runtime-spec.js'
@@ -33,6 +35,11 @@ export interface SessionOwnerEvents {
 export interface RunScopedPorts {
   readonly artifact: ArtifactPort
   readonly approval: ApprovalPort
+  /**
+   * P1-15：publish_artifact 的桥内工作区校验（realpath/边界/size）。缺省
+   * （契约探针）不校验直接登记——生产由 bridge 按 spec.workspacePath 装配。
+   */
+  readonly artifactValidator?: WorkspaceArtifactValidator
 }
 
 /** systemPrompt 服务的结构式（P1-11 只锁十个 DSH 直接依赖，dsh-system-prompt 不在其中）。 */
@@ -83,7 +90,17 @@ export class SessionOwner {
         ...(spec.maxTokens !== undefined ? { maxTokens: spec.maxTokens } : {}),
       },
       setup: (agentCtx) => {
-        agentCtx.tools.register(createPublishArtifactTool(ports.artifact))
+        agentCtx.tools.register(createPublishArtifactTool(ports.artifact, ports.artifactValidator))
+        // P1-15：Reviewer Run 带输入清单时注册只读读取工具（清单为空不注册）。
+        if (
+          spec.artifactInputs !== undefined &&
+          spec.artifactInputs.length > 0 &&
+          spec.artifactInputsDir !== undefined
+        ) {
+          agentCtx.tools.register(
+            createReadArtifactInputTool(spec.artifactInputs, spec.artifactInputsDir),
+          )
+        }
         ports.approval.install(agentCtx)
         // Runtime 姿态：本 Run 内每次工具调用都要回 Node 拿一次性批准（不永久授权）。
         agentCtx.on('tools/pre-execute', (exec): Promise<PreToolDecision> =>

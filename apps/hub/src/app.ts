@@ -30,6 +30,9 @@ import { RunOrchestrator } from './modules/run/index.js'
 import { registerRunRoutes } from './modules/run/routes.js'
 import { getDeviceDshDistributionVersion } from './modules/run/queries.js'
 import { registerRealtimeRoutes } from './modules/realtime/routes.js'
+// P1-15：内容寻址 Artifact Store 与 HTTP 面。
+import { ArtifactStore } from './modules/artifact/store.js'
+import { registerArtifactRoutes } from './modules/artifact/routes.js'
 
 // P1-16：server 组合根把 orchestrator 的内存心跳投影喂给租约 reconcile
 // （「Node 在线但已不跑该 Run」的判定路径）；app 实例是唯一交接点。
@@ -191,6 +194,13 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       })
       registerDeviceRoutes(api, { database, requireActor, anonymousLimiter })
       registerWorkspaceRoutes(api, { database, requireActor })
+      // P1-15：Artifact 面——Node 上传/manifest/受控下载 + owner 发布 + 内容下载。
+      // Store 根来自配置（生产 data/artifact-store，测试注入临时目录）。
+      registerArtifactRoutes(api, {
+        database,
+        store: new ArtifactStore({ root: config.artifactStoreDir }),
+        requireActor,
+      })
       // P1-13：Run HTTP 面（创建/投影/事件时间线）正式接线；dsh 版本取自
       // node.hello 回填的设备事实列（缺 = 设备不在线 → DEVICE_OFFLINE）。
       registerRunRoutes(api, {

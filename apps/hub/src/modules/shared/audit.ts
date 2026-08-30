@@ -24,6 +24,7 @@ export type AuditAction =
   | 'device.revoke'
   | 'plugin.install'
   | 'plugin.pack'
+  | 'artifact.publish'
 
 export type AuditOutcome = 'success' | 'denied' | 'rate_limited'
 

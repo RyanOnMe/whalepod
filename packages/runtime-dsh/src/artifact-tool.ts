@@ -7,6 +7,7 @@
  * `installRunScopedPorts`），端口回调钉在本次 Run 的 runId 上。
  */
 import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
+import type { WorkspaceArtifactValidator } from './artifact-validation.js'
 
 export const PUBLISH_ARTIFACT_TOOL = 'publish_artifact'
 
@@ -21,7 +22,15 @@ export interface ArtifactPort {
   publish(candidate: ArtifactCandidate): void
 }
 
-export function createPublishArtifactTool(port: ArtifactPort): ToolDefinition {
+/**
+ * `validate` 是 P1-15 的工作区校验（workspace realpath/边界/size）；缺省
+ * （契约探针）保持旧行为直接登记。校验失败抛 ArtifactCandidateError——
+ * 工具结果失败回给模型，且绝不发 artifact.candidate 帧。
+ */
+export function createPublishArtifactTool(
+  port: ArtifactPort,
+  validate?: WorkspaceArtifactValidator,
+): ToolDefinition {
   return defineTool({
     name: PUBLISH_ARTIFACT_TOOL,
     description:
@@ -48,11 +57,13 @@ export function createPublishArtifactTool(port: ArtifactPort): ToolDefinition {
       ],
     },
     execute: (args) => {
-      port.publish({
+      const candidate = {
         relativePath: args.relativePath,
         title: args.title,
         mediaType: args.mediaType,
-      })
+      }
+      validate?.validate(candidate)
+      port.publish(candidate)
       return Promise.resolve({ registered: true })
     },
   })

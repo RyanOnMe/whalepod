@@ -97,7 +97,7 @@ export function TaskRoomPage(): ReactNode {
         <aside className="task-room-col task-room-right" aria-label="交付物">
           <section className="card" aria-labelledby="artifacts-heading">
             <h2 id="artifacts-heading">Artifacts</h2>
-            <ArtifactList artifacts={artifacts} />
+            <ArtifactList artifacts={artifacts} session={session} taskId={task.id} />
           </section>
           <ReviewerSlot />
         </aside>

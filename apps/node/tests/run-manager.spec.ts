@@ -120,7 +120,13 @@ interface Harness {
   sentFrames: () => Array<{ type: string; payload: Record<string, unknown> }>
 }
 
-async function makeHarness(options: { online?: boolean } = {}): Promise<Harness> {
+async function makeHarness(
+  options: {
+    online?: boolean
+    /** P1-15：RunManager 的 Artifact 依赖注入（collector / inputs）。 */
+    managerDeps?: Record<string, unknown>
+  } = {},
+): Promise<Harness> {
   let online = options.online ?? true
   const registry = new WorkspaceRegistry(join(root, 'registry.db'), 'test-hmac-key')
   const workspace = await registry.register(workspaceDir, { name: 'ws-1' })
@@ -166,6 +172,7 @@ async function makeHarness(options: { online?: boolean } = {}): Promise<Harness>
     homeDir: '/Users/testhome',
     stateDir: root,
     packsRoot: join(root, 'plugin-packs'),
+    ...options.managerDeps,
   })
   harness.supervisor = supervisor
   harness.manager = manager
@@ -506,5 +513,179 @@ describe('心跳事实', () => {
     const facts = h.manager.heartbeatFacts()
     expect(facts.activeRunIds).toEqual([RUN_ID])
     expect(facts.lastEventSeqByRun[RUN_ID]).toBe(2)
+  })
+})
+
+describe('P1-15：Artifact 采集与 Reviewer 输入接线', () => {
+  const ARTIFACT_ID = '01905f7c-0000-7000-8000-000000000801'
+
+  function stdoutArtifactCandidate(runId: string): string {
+    return JSON.stringify({
+      protocolVersion: 1,
+      messageId: randomUUID(),
+      sentAt: new Date().toISOString(),
+      type: 'artifact.candidate',
+      payload: {
+        runId,
+        relativePath: 'reports/out.md',
+        title: 'Report',
+        mediaType: 'text/markdown',
+      },
+    })
+  }
+
+  function makeCollector(options: { error?: Error } = {}) {
+    const calls: Array<{
+      runId: string
+      candidate: Record<string, unknown>
+      workspacePath: string
+    }> = []
+    return {
+      calls,
+      collector: {
+        collect: async (
+          runId: string,
+          candidate: Record<string, unknown>,
+          workspacePath: string,
+        ) => {
+          calls.push({ runId, candidate, workspacePath })
+          if (options.error !== undefined) throw options.error
+          return {
+            artifactId: ARTIFACT_ID,
+            sha256: 'c'.repeat(64),
+            byteSize: 10,
+            sourceRelativePath: candidate['relativePath'],
+          }
+        },
+      },
+    }
+  }
+
+  function makeInputs(options: { error?: Error; entries?: unknown[] } = {}) {
+    const prepared: Array<{ runId: string; taskId: string }> = []
+    const cleaned: string[] = []
+    return {
+      prepared,
+      cleaned,
+      deps: {
+        prepareArtifactInputs: async (runId: string, taskId: string) => {
+          prepared.push({ runId, taskId })
+          if (options.error !== undefined) throw options.error
+          return { dir: '/fake-inputs-dir', entries: options.entries ?? [] }
+        },
+        cleanupArtifactInputs: async (runId: string) => {
+          cleaned.push(runId)
+        },
+      },
+    }
+  }
+
+  it('Reviewer Run：run.start 先拉输入清单，initialize 带 artifactInputs+dir（成对）', async () => {
+    const inputs = makeInputs({
+      entries: [
+        {
+          artifactId: ARTIFACT_ID,
+          title: 'Builder report',
+          mediaType: 'text/markdown',
+          byteSize: 10,
+          sha256: 'c'.repeat(64),
+        },
+      ],
+    })
+    const h = await makeHarness({ managerDeps: { ...inputs.deps } })
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    expect(inputs.prepared).toEqual([
+      { runId: RUN_ID, taskId: '33333333-3333-4333-8333-333333333333' },
+    ])
+    const init = h.runtimes[0]!.stdin[0] as Extract<RuntimeCommand, { type: 'runtime.initialize' }>
+    expect(init.payload.artifactInputs).toEqual([
+      {
+        artifactId: ARTIFACT_ID,
+        title: 'Builder report',
+        mediaType: 'text/markdown',
+        byteSize: 10,
+        sha256: 'c'.repeat(64),
+      },
+    ])
+    expect(init.payload.artifactInputsDir).toBe('/fake-inputs-dir')
+  })
+
+  it('Builder Run（无已发布 Artifact）：initialize 不携带输入字段（pair 规则）', async () => {
+    const inputs = makeInputs()
+    const h = await makeHarness({ managerDeps: { ...inputs.deps } })
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    const init = h.runtimes[0]!.stdin[0] as Extract<RuntimeCommand, { type: 'runtime.initialize' }>
+    expect(init.payload.artifactInputs).toBeUndefined()
+    expect(init.payload.artifactInputsDir).toBeUndefined()
+  })
+
+  it('输入准备失败（如 digest 不符）→ run.start 拒绝：ack false 透传错误码，不 spawn', async () => {
+    const inputs = makeInputs({
+      error: Object.assign(new Error('digest mismatch'), { code: 'ARTIFACT_HASH_MISMATCH' }),
+    })
+    const h = await makeHarness({ managerDeps: { ...inputs.deps } })
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    expect(h.runtimes).toHaveLength(0)
+    const ack = h.sentFrames().find((f) => f.type === 'command.ack')
+    expect(ack?.payload['accepted']).toBe(false)
+    expect((ack?.payload['error'] as { code: string }).code).toBe('ARTIFACT_HASH_MISMATCH')
+  })
+
+  it('artifact.candidate 帧 → 采集（workspace realpath）→ 双受众事件：owner 带来源路径，project 不带', async () => {
+    const a = makeCollector()
+    const h = await makeHarness({ managerDeps: { artifactCollector: a.collector } })
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    h.runtimes[0]!.emitStdout(stdoutArtifactCandidate(RUN_ID))
+    // 采集是异步链：让微任务队列排空。
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(a.calls).toHaveLength(1)
+    expect(a.calls[0]?.workspacePath).toBe(await realpath(workspaceDir))
+    const runEvents = h
+      .sentFrames()
+      .filter((f) => f.type === 'run.event')
+      .map((f) => f.payload as unknown as ProjectedRunEvent)
+    expect(runEvents).toHaveLength(2)
+    const owner = runEvents.find((e) => e.audience === 'owner')
+    const project = runEvents.find((e) => e.audience === 'project')
+    const ownerArtifact = (owner?.event as { artifact?: Record<string, unknown> }).artifact
+    const projectArtifact = (project?.event as { artifact?: Record<string, unknown> }).artifact
+    expect(ownerArtifact).toMatchObject({
+      artifactId: ARTIFACT_ID,
+      sourceRelativePath: 'reports/out.md',
+    })
+    expect(projectArtifact).toMatchObject({ artifactId: ARTIFACT_ID })
+    expect(projectArtifact).not.toHaveProperty('sourceRelativePath')
+  })
+
+  it('路径攻击（采集拒绝）→ 不产生 candidate 事件，Run 继续运行', async () => {
+    const a = makeCollector({
+      error: Object.assign(new Error('escapes the workspace'), {
+        code: 'ARTIFACT_PATH_OUTSIDE_WORKSPACE',
+      }),
+    })
+    const h = await makeHarness({ managerDeps: { artifactCollector: a.collector } })
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    h.runtimes[0]!.emitStdout(stdoutArtifactCandidate(RUN_ID))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(h.sentFrames().filter((f) => f.type === 'run.event')).toHaveLength(0)
+    expect(h.supervisor.isActive(RUN_ID)).toBe(true)
+  })
+
+  it('Run 终态（run.completed）→ 输入副本目录清理被触发', async () => {
+    const inputs = makeInputs()
+    const a = makeCollector()
+    const h = await makeHarness({ managerDeps: { ...inputs.deps, artifactCollector: a.collector } })
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    h.runtimes[0]!.emitStdout(
+      JSON.stringify({
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: new Date().toISOString(),
+        type: 'run.completed',
+        payload: { runId: RUN_ID, dshSessionId: 'session-1' },
+      }),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(inputs.cleaned).toEqual([RUN_ID])
   })
 })

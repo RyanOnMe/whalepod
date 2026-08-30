@@ -572,6 +572,16 @@ select {
   overflow-wrap: anywhere;
 }
 
+.artifact-actions {
+  margin-top: var(--space-2);
+}
+
+.artifact-reviewer-note {
+  margin: var(--space-3) 0 0;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+}
+
 .task-room-error {
   display: flex;
   flex-direction: column;

@@ -11,6 +11,8 @@ import { CLIENT_FRAME_KINDS, CLIENT_PERSISTENT_EVENT_TYPES } from './client-even
 import {
   AcceptInviteRequestSchema,
   ApiFailureSchema,
+  ArtifactInputManifestSchema,
+  ArtifactUploadMetadataSchema,
   CreateAgentRequestSchema,
   CreateAgentRevisionRequestSchema,
   CreateCommentRequestSchema,
@@ -47,6 +49,9 @@ export {
 export const HTTP_FIXTURE_SCHEMAS: Record<string, ZodType> = {
   'api-failure': ApiFailureSchema,
   'accept-invite-request': AcceptInviteRequestSchema,
+  // P1-15：Node↔Hub Artifact 面（上传元数据 / Reviewer 输入清单响应）。
+  'artifact-upload-metadata': ArtifactUploadMetadataSchema,
+  'artifact-input-manifest': ArtifactInputManifestSchema,
   'create-agent-request': CreateAgentRequestSchema,
   'create-agent-revision-request': CreateAgentRevisionRequestSchema,
   'create-comment-request': CreateCommentRequestSchema,

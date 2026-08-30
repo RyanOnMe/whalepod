@@ -24,6 +24,7 @@
 import type {
   NodeDownstream,
   ProjectedRunEvent,
+  RuntimeArtifactInput,
   RunSnapshot,
   RuntimeCommand,
   RuntimeOutput,
@@ -84,6 +85,19 @@ export interface RunManagerDeps {
    * run 以对应 failure_code 拒绝（ack accepted=false），绝不启动 Runtime。
    */
   readonly pluginPackPreflight?: (packDigest: string) => Promise<PreflightOutcome>
+  /**
+   * P1-15：Artifact 采集器（artifact.candidate 帧 → realpath/hash/上传 →
+   * candidate 事件投影）。缺省（部分单测）时候选被丢弃并留结构化告警。
+   */
+  readonly artifactCollector?: RunArtifactCollector
+  /**
+   * P1-15：Reviewer 输入准备（run.start 时拉取任务已发布 Artifact 清单并下载
+   * 受控副本）。返回 entries+dir 随 runtime.initialize 下发（成对字段）；
+   * 失败折算 run.start 拒绝（ack accepted=false 透传错误码）。
+   */
+  readonly prepareArtifactInputs?: (runId: string, taskId: string) => Promise<RunArtifactInputs>
+  /** P1-15：Run 终态后的输入副本清理（best-effort）。 */
+  readonly cleanupArtifactInputs?: (runId: string) => Promise<void>
   /** P1-16：run.snapshot 的设备身份与 DSH 发行版版本（§2.6/§6.2）。 */
   readonly deviceId: string
   readonly dshDistributionVersion: string
@@ -98,6 +112,26 @@ export interface RunManagerDeps {
     msg: string,
     context?: Record<string, unknown>,
   ) => void
+}
+
+/** 采集器结构面（实现见 artifact/collect.ts；测试用 fake 同形注入）。 */
+export interface RunArtifactCollector {
+  collect(
+    runId: string,
+    candidate: { relativePath: string; title: string; mediaType: string },
+    workspacePath: string,
+  ): Promise<{
+    artifactId: string
+    sha256: string
+    byteSize: number
+    sourceRelativePath: string
+  }>
+}
+
+/** Reviewer 输入准备结构面（实现见 artifact/inputs.ts）。 */
+export interface RunArtifactInputs {
+  readonly dir: string
+  readonly entries: readonly RuntimeArtifactInput[]
 }
 
 type RunStartPayload = Extract<NodeDownstream, { type: 'run.start' }>['payload']
@@ -125,6 +159,8 @@ const DEFAULT_CANCEL_TERM_GRACE_MS = 5_000 as const
 export class RunManager {
   private readonly projectors = new Map<string, RunProjector>()
   private readonly liveSeq = new Map<string, number>()
+  /** runId → canonical workspace 根（采集器校验用；P1-15）。 */
+  private readonly workspacePaths = new Map<string, string>()
   private readonly now: () => Date
   private readonly logFn: RunManagerDeps['log']
   private readonly confirmMs: number
@@ -238,6 +274,12 @@ export class RunManager {
         const preflight = await this.deps.pluginPackPreflight(payload.expectedPluginPackDigest)
         pluginPackOverlayPath = preflight.overlayPath
       }
+      // P1-15：Reviewer 输入准备（清单拉取 + 受控下载副本）。失败 → run 拒绝，
+      // 错误码透传（如 ARTIFACT_HASH_MISMATCH）；Builder Run（空清单）直接通过。
+      let artifactInputs: RunArtifactInputs | undefined
+      if (this.deps.prepareArtifactInputs !== undefined) {
+        artifactInputs = await this.deps.prepareArtifactInputs(runId, payload.taskId)
+      }
       const projector = new RunProjector(this.projectionContext(runId, workspacePath))
       const spec: RuntimeStartSpec = {
         runId,
@@ -259,6 +301,7 @@ export class RunManager {
       await this.deps.supervisor.start(spec, { workspaceId: payload.workspaceId })
       this.projectors.set(runId, projector)
       this.liveSeq.set(runId, 0)
+      this.workspacePaths.set(runId, workspacePath)
       this.runFacts.set(runId, payload)
       this.deps.commandStore.markAcked(commandId)
       this.ack(commandId, true)
@@ -276,6 +319,12 @@ export class RunManager {
           profileDigest: payload.expectedProfileDigest,
           pluginPackDigest: payload.expectedPluginPackDigest,
           ...(pluginPackOverlayPath !== undefined ? { pluginPackOverlayPath } : {}),
+          ...(artifactInputs !== undefined && artifactInputs.entries.length > 0
+            ? {
+                artifactInputs: [...artifactInputs.entries],
+                artifactInputsDir: artifactInputs.dir,
+              }
+            : {}),
           provider: payload.agent.provider,
           model: payload.agent.model,
           ...(payload.agent.maxTokens !== undefined ? { maxTokens: payload.agent.maxTokens } : {}),
@@ -292,6 +341,7 @@ export class RunManager {
       })
     } catch (error) {
       this.projectors.delete(runId)
+      this.workspacePaths.delete(runId)
       const code =
         error instanceof SupervisorError
           ? error.code
@@ -299,10 +349,14 @@ export class RunManager {
             ? error.code
             : error instanceof RuntimeEnvError
               ? error.code // 凭据/工作区环境失败：透传具体 wire 码，不降级 INTERNAL_ERROR
-              : ('INTERNAL_ERROR' as const)
+              : error instanceof Error &&
+                  typeof (error as unknown as { code?: unknown }).code === 'string'
+                ? (error as unknown as { code: string }).code // P1-15：输入准备失败码（如 ARTIFACT_HASH_MISMATCH）透传
+                : ('INTERNAL_ERROR' as const)
       const message = error instanceof Error ? error.message : String(error)
       this.deps.commandStore.markAcked(commandId)
       this.ack(commandId, false, { code, message })
+      void this.deps.cleanupArtifactInputs?.(runId).catch(() => {})
     }
   }
 
@@ -627,6 +681,21 @@ export class RunManager {
     if (frame.type === 'run.cancelled') {
       this.confirmCancel(runId)
     }
+    // P1-15：artifact.candidate 不进投影直译——先采集（realpath/hash/上传）
+    // 取得 artifactId/sha256/byteSize，成功后再投影双受众 candidate 事件。
+    if (frame.type === 'artifact.candidate') {
+      const workspacePath = this.workspacePaths.get(runId)
+      if (workspacePath === undefined) {
+        this.log('warn', 'artifact candidate without workspace context dropped', { runId })
+        return
+      }
+      if (this.deps.artifactCollector === undefined) {
+        this.log('warn', 'artifact candidate dropped: no collector wired', { runId })
+        return
+      }
+      void this.collectArtifact(runId, frame.payload, workspacePath).catch(() => {})
+      return
+    }
     const result = projector.projectRuntimeOutput(frame)
     this.spoolAndDrain(runId, result.events)
     for (const text of result.liveTexts) {
@@ -634,13 +703,63 @@ export class RunManager {
       this.liveSeq.set(runId, deltaSeq)
       this.deps.send(runLiveDeltaFrame(runId, deltaSeq, text))
     }
-    // Run 终态帧已投影：登记终态事实并回收 projector（G7-03 归因以事实为准）。
-    if (frame.type === 'run.completed') {
-      this.finalizeRun(runId, 'completed')
-    } else if (frame.type === 'run.cancelled') {
-      this.finalizeRun(runId, 'cancelled')
-    } else if (frame.type === 'runtime.fatal') {
-      this.finalizeRun(runId, 'failed', frame.payload.code, frame.payload.summary)
+    // Run 终态帧已投影：登记终态事实并回收 projector（G7-03 归因以事实为准；
+    // finalizeRun 内做 projectors/liveSeq 回收与取消升级计时器收敛）；同时回收
+    // workspace 上下文并清理该 run 的 Reviewer 输入副本（P1-15，best-effort）。
+    if (
+      frame.type === 'run.completed' ||
+      frame.type === 'run.cancelled' ||
+      frame.type === 'runtime.fatal'
+    ) {
+      if (frame.type === 'run.completed') {
+        this.finalizeRun(runId, 'completed')
+      } else if (frame.type === 'run.cancelled') {
+        this.finalizeRun(runId, 'cancelled')
+      } else {
+        this.finalizeRun(runId, 'failed', frame.payload.code, frame.payload.summary)
+      }
+      this.workspacePaths.delete(runId)
+      void this.deps.cleanupArtifactInputs?.(runId).catch(() => {})
+    }
+  }
+
+  /** P1-15：采集链路（collector 抛错=候选被拒/上传失败：只留结构化痕迹，Run 不受影响）。 */
+  private async collectArtifact(
+    runId: string,
+    candidate: { relativePath: string; title: string; mediaType: string },
+    workspacePath: string,
+  ): Promise<void> {
+    const collector = this.deps.artifactCollector
+    if (collector === undefined) return
+    try {
+      const collected = await collector.collect(runId, candidate, workspacePath)
+      const projector = this.projectors.get(runId)
+      if (projector === undefined) {
+        // Run 已终态：Hub 行已在（上传原子落库），仅迟到投影丢失，不补发。
+        this.log('warn', 'artifact collected after run terminal; event skipped', {
+          runId,
+          artifactId: collected.artifactId,
+        })
+        return
+      }
+      const result = projector.projectArtifactCandidate({
+        artifactId: collected.artifactId,
+        runId,
+        title: candidate.title,
+        mediaType: candidate.mediaType,
+        byteSize: collected.byteSize,
+        sha256: collected.sha256,
+        sourceRelativePath: collected.sourceRelativePath,
+      })
+      this.spoolAndDrain(runId, result.events)
+    } catch (error) {
+      const code = (error as { code?: unknown }).code
+      this.log('error', 'artifact candidate collection failed', {
+        runId,
+        component: 'node.artifact',
+        code: typeof code === 'string' ? code : 'INTERNAL_ERROR',
+        reason: error instanceof Error ? error.message : String(error),
+      })
     }
   }
 
@@ -658,6 +777,7 @@ export class RunManager {
       })
       this.spoolAndDrain(runId, result.events)
       this.finalizeRun(runId, 'failed', 'INTERNAL_ERROR', `runtime protocol violation: ${why}`)
+      this.workspacePaths.delete(runId)
     }
     void this.deps.supervisor.cancel(runId)
   }
