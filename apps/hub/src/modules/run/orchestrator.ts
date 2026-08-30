@@ -37,14 +37,17 @@ import {
 import type { ErrorCode, ProjectedRunEvent, RunSnapshot } from '@project311/protocol'
 import { parseNodeFrame, RunStartSchema } from '@project311/protocol'
 import { cancelRunInTransaction } from './cancel.js'
+import { decideApprovalInTransaction } from './decide.js'
+import type { ApprovalDecisionInput } from './decide.js'
+import { expireApprovals } from './approval-expiry.js'
 import type { DeviceActivity } from './reconciler.js'
 import { ACTIVE_RUN_STATUSES, reconcileLeases } from './reconciler.js'
 import type { ActorContext, CreateRunInput } from './commands.js'
 import { assertCreateRunInput } from './commands.js'
 import type { AuthenticatedDevice } from './device-gateway.js'
 import { RunCommandError } from './errors.js'
-import type { RunView } from './queries.js'
-import { toRunView } from './queries.js'
+import type { ApprovalView, RunView } from './queries.js'
+import { toApprovalView, toRunView } from './queries.js'
 
 const TERMINAL_RUN_STATUSES = ['completed', 'failed', 'cancelled', 'lost'] as const
 
@@ -276,6 +279,50 @@ export class RunOrchestrator {
   }
 
   /**
+   * Approval 一次性决定（03 §4「POST /approvals/:approvalId/decisions」；P1-14）。
+   * owner-only、first-wins、过期即拒——语义见 decide.ts；此处负责行锁、
+   * NotFound 判定与事务边界。
+   */
+  async decideApproval(
+    ctx: ActorContext,
+    approvalId: string,
+    decision: ApprovalDecisionInput,
+  ): Promise<ApprovalView> {
+    const now = this.nowFn()
+    return this.database.transaction(async (tx) => {
+      const [approval] = await tx
+        .select()
+        .from(schema.approvals)
+        .where(eq(schema.approvals.id, approvalId))
+        .for('update')
+      if (approval === undefined) throw new RunCommandError('NOT_FOUND', 'approval not found')
+      const [run] = await tx
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.id, approval.runId))
+        .for('update')
+      if (run === undefined) throw new RunCommandError('NOT_FOUND', 'run not found')
+      const row = await decideApprovalInTransaction(
+        tx,
+        { outbox: this.outbox, now },
+        approval,
+        run,
+        ctx,
+        decision,
+      )
+      return toApprovalView(row)
+    })
+  }
+
+  /**
+   * Approval 过期清扫（G5-05）：组合根周期驱动；语义见 approval-expiry.ts。
+   * 返回本轮写入 expired 的行数。
+   */
+  async expireApprovals(now: Date): Promise<number> {
+    return expireApprovals({ database: this.database, outbox: this.outbox, now: this.nowFn }, now)
+  }
+
+  /**
    * Node 上行帧入口（fail-closed：未知 type/畸形载荷抛 ProtocolError）。
    * 任何已认证帧都刷新设备租约（lastSeenAt）；hello/inventory/live_delta 由
    * device/realtime 模块负责（P1-09/13），这里只租约刷新，不做 run 侧动作。
@@ -469,7 +516,13 @@ export class RunOrchestrator {
         if (!inserted) return
         await appendTeamEvent(tx, {
           type: 'approval.changed',
-          payload: { approvalId: event.approval.approvalId, runId: run.id, status: 'pending' },
+          // taskId 供 Browser 端按 Task Room 粒度失效查询（03 §5 投影 payload）。
+          payload: {
+            approvalId: event.approval.approvalId,
+            runId: run.id,
+            taskId: run.taskId,
+            status: 'pending',
+          },
         })
         this.applyRunTransition(run, { type: 'approval_opened' })
         await setRunStatus(tx, run.id, 'waiting_approval')
@@ -486,7 +539,12 @@ export class RunOrchestrator {
           await setApprovalStatus(tx, approval.id, event.status, run.ownerUserId, now)
           await appendTeamEvent(tx, {
             type: 'approval.changed',
-            payload: { approvalId: approval.id, runId: run.id, status: event.status },
+            payload: {
+              approvalId: approval.id,
+              runId: run.id,
+              taskId: run.taskId,
+              status: event.status,
+            },
           })
         }
         if (run.status === 'waiting_approval') {

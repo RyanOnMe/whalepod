@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm'
-import type { RunRow } from '@project311/db'
+import type { ApprovalRow, RunRow } from '@project311/db'
 import { getRun, listRunsByTask, schema } from '@project311/db'
 import type { DbHandle } from '@project311/db'
 
@@ -57,6 +57,40 @@ export function toRunView(row: RunRow): RunView {
 export async function getRunView(handle: DbHandle, runId: string): Promise<RunView | undefined> {
   const row = await getRun(handle, runId)
   return row === undefined ? undefined : toRunView(row)
+}
+
+/**
+ * Approval 决策接口的 JSON 视图（03 §2.6 approval 表；时间为 ISO 字符串）。
+ * preview 是 Node 侧已脱敏的参数摘要（z.json()），Hub 不做二次改写。
+ */
+export interface ApprovalView {
+  id: string
+  runId: string
+  callId: string
+  toolName: string
+  reason: string
+  preview: unknown
+  status: ApprovalRow['status']
+  requestedAt: string
+  expiresAt: string
+  decidedBy: string | null
+  decidedAt: string | null
+}
+
+export function toApprovalView(row: ApprovalRow): ApprovalView {
+  return {
+    id: row.id,
+    runId: row.runId,
+    callId: row.callId,
+    toolName: row.toolName,
+    reason: row.reason,
+    preview: row.preview,
+    status: row.status,
+    requestedAt: row.requestedAt.toISOString(),
+    expiresAt: row.expiresAt.toISOString(),
+    decidedBy: row.decidedBy,
+    decidedAt: row.decidedAt?.toISOString() ?? null,
+  }
 }
 
 export async function listRunViewsByTask(handle: DbHandle, taskId: string): Promise<RunView[]> {

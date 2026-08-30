@@ -1,5 +1,7 @@
+export * from './approval-expiry.js'
 export * from './cancel.js'
 export * from './commands.js'
+export * from './decide.js'
 export * from './device-gateway.js'
 export * from './errors.js'
 export * from './orchestrator.js'
