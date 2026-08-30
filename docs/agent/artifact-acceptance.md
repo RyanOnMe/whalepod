@@ -1,13 +1,11 @@
 # Artifact 候选、存储、发布与 Reviewer 输入 验收
 
 - 对应场景/门禁：G6-01..08、04 §6.3 路径攻击矩阵、§6.1 候选可见性（见 04-验收矩阵与测试策略.md）
-- 对应 Issue：P1-15（GitHub #19）
-- 上次验证：2026-08-25 · feat/p1-15-artifact-store（本 PR）· 结果 PASS
-  - Q0 `pnpm check` 全绿（format/lint/typecheck/boundaries/protocol-generated/unit 828 tests）
-  - Q2 `pnpm test:integration` 全绿（31 files / 227 tests，含 artifact 集成 11 tests）
-  - Q3 `pnpm test:dsh-contract` 全绿（9 files / 33 tests）
-  - web 组件测试全绿（8 files / 60 tests，在 Q0 的 test:unit 内）
-  - `scripts/secret-scan.sh`（改动文件 + docs）零命中
+- 对应 Issue：P1-15（GitHub #19）；评审跟进 #62（Reviewer 输入副本清理覆盖全部终态路径）
+- 上次验证：2026-08-30 · fix/p1-15-inputs-cleanup（#62 评审跟进）· 结果 PASS
+  - Q0 `pnpm check` 全绿；Q6 `pnpm test:resilience` 全绿（含 #62 新增
+    `apps/node/tests/resilience/artifact-inputs-cleanup.spec.ts` 8 tests）
+  - `scripts/secret-scan.sh`（改动文件）零命中
 
 ## 验的是哪条用户路径
 
@@ -39,6 +37,9 @@ pnpm vitest run --project unit apps/node/tests/artifact-inputs.spec.ts
 
 # Q1：RunManager 接线（candidate 帧→采集→双受众事件；inputs→initialize）
 pnpm vitest run --project unit apps/node/tests/run-manager.spec.ts
+
+# Q6：#62 全部终态路径的输入副本清理（真实文件系统断言，含崩溃/丢失路径）
+pnpm vitest run --project resilience apps/node/tests/resilience/artifact-inputs-cleanup.spec.ts
 
 # Q1：桥内 publish_artifact 校验 + read_artifact_input 只读工具
 pnpm vitest run --project unit packages/runtime-dsh/tests/artifact-tool.spec.ts \
@@ -74,6 +75,7 @@ pnpm vitest run --project web apps/web/tests/artifact-list.spec.tsx
 | G6-06 Bob 启动 Reviewer Run → 新 Run 用 Reviewer Revision，Session 分离 | run.start 时拉输入清单；initialize 载荷带 artifactInputs+artifactInputsDir（成对，fail-closed）；每个 Run 的 DSH Session id 独立（`project311-run-<runId>`，P1-11 既有契约） | apps/node/tests/run-manager.spec.ts「Reviewer Run：initialize 带 artifactInputs+dir」「Builder Run：initialize 不携带输入字段」；packages/protocol/tests/artifact-inputs.spec.ts（pair 规则） |
 | G6-07 Reviewer 读取发布 Artifact → 受控下载副本，不继承 Builder Workspace，无路径泄露 | manifest 只含已发布且 JSON 无 storageKey/sourceRelativePath；Node 下载副本经 sha256 校验（文件名=artifactId）；Reviewer 只读工具按清单白名单读取、拒绝消息无绝对路径 | apps/hub/tests/artifact.integration.spec.ts「G6-07」；apps/node/tests/artifact-inputs.spec.ts（含篡改→ARTIFACT_HASH_MISMATCH）；packages/runtime-dsh/tests/artifact-input-tool.spec.ts（遍历形 id 不得成路径） |
 | G6-08 Reviewer 提交脱敏复核摘要或 Artifact → 时间线闭环 | Reviewer Run 的 run.completed 摘要走 P1-13 双受众投影（project 行 ≤500 字符折叠）；Reviewer 自产的 Artifact 复用 G6-01 全链 | packages/protocol fixture run-event（既有）+ apps/node/tests/run-manager.spec.ts 双受众断言；G6-08 的两浏览器 UI 级断言归 P1-19（见「边界与未覆盖」） |
+| #62 全部终态路径清理输入副本（P1-15 评审跟进） | 终态帧（completed/cancelled/runtime.fatal）、协议违例 fail-closed、退出归因（cancelled_forced/runtime_lost）、supervisor lost（runtime_timeout/orphaned_after_node_restart）每条路径终态后 `runtime-inputs/<runId>` 目录真实消失（文件系统断言，非回调记录）；清理收敛在 RunManager 终态单一收敛点 finalizeRun | apps/node/tests/resilience/artifact-inputs-cleanup.spec.ts（8 tests，Q6） |
 
 ### 路径攻击矩阵逐条（04 §6.3）
 
@@ -123,9 +125,13 @@ pnpm test:integration -- apps/hub/tests/artifact.integration.spec.ts
   P1-19 全链 E2E；本 Issue 覆盖到单元/集成层（投影与权限判定）。
 - **上传的并发同 key 竞态**由 command_receipt 唯一约束串行化（transactCommand
   既有机制），未在本 Issue 重复压测。
-- **输入副本的磁盘生命周期**：Run 终态触发 best-effort 清理（RunManager 接
-  cleanup）；Node 进程崩溃后的残留目录随 supervisor 恢复路径（P1-16 覆盖孤儿
-  回收）一并处理，本 Issue 未单独断言。
+- **输入副本的磁盘生命周期（#62 修订申报）**：RunManager 的**所有**终态路径
+  （终态帧投影、协议违例 fail-closed、退出归因 cancelled_forced/runtime_lost、
+  supervisor lost runtime_timeout/orphaned_after_node_restart）在终态单一收敛点
+  finalizeRun 触发 best-effort 清理，run.start 拒绝路径同样补清；逐路径真实
+  文件系统断言见 apps/node/tests/resilience/artifact-inputs-cleanup.spec.ts。
+  Node 进程崩溃（清理代码来不及执行）后的残留目录不自动回收——P1-16 孤儿回收
+  只回收进程；残留按 runId 目录隔离不串扰，待显式重跑或人工清理。
 - ** Reviewer 输入清单条目上限 64**（协议层 hard cap）：超 64 条已发布交付物的
   Task 不在第一阶段容量目标内（04 §8）。
 

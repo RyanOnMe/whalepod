@@ -258,6 +258,10 @@ export async function makeResilienceHarness(
     online?: boolean
     /** 替换 driver（真人路径强杀探针：真实 node 子进程）。 */
     driverOverride?: RuntimeDriver
+    /** Supervisor wall-clock 上限（默认 60s；runtime_timeout 路径用例调小）。 */
+    runtimeTimeoutMs?: number
+    /** RunManager 额外依赖注入（P1-15/#62：输入准备/清理等），键覆盖默认值。 */
+    managerDeps?: Record<string, unknown>
   } = {},
 ): Promise<ResilienceHarness> {
   const root = await mkdtemp(join(tmpdir(), 'p311-resilience-'))
@@ -309,7 +313,7 @@ export async function makeResilienceHarness(
     secrets,
     stateDbPath: join(root, 'supervisor.db'),
     capacity: 2,
-    runtimeTimeoutMs: 60_000,
+    runtimeTimeoutMs: options.runtimeTimeoutMs ?? 60_000,
     onStdoutLine: (runId, line) => harness.manager.handleStdoutLine(runId, line),
   })
   const manager = new RunManager({
@@ -324,6 +328,7 @@ export async function makeResilienceHarness(
     homeDir: '/Users/testhome',
     stateDir: root,
     packsRoot: join(root, 'plugin-packs'),
+    ...(options.managerDeps ?? {}),
     deviceId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
     dshDistributionVersion: '0.1.0-rc.8',
     ...(options.cancelConfirmMs !== undefined ? { cancelConfirmMs: options.cancelConfirmMs } : {}),
