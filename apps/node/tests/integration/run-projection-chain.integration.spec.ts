@@ -15,7 +15,7 @@
  *          且 owner 文本呈现脱敏标记（证明是「脱了敏」，不是「没内容」）。
  */
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -235,6 +235,13 @@ describe('P1-13 全链路（真 Hub + 真 Node + 真 Runtime/replay）', () => {
     // ---- Node 侧真装配（与 cli.ts runStart 同配方；仅测试注入点不同）----
     const nodeStateDir = mktemp('p311-chain-node-state-')
     const workspaceDir = mktemp('p311-chain-ws-')
+    // P1-15：桥内 publish_artifact 校验已接线（realpath/边界/size）——tool-approval
+    // fixture 的候选 out/report.md 必须是工作区内真实文件，否则工具以失败结果
+    // 回给模型、链路等不到 tool.finished succeeded（与 replay-runtime 探针同补法）。
+    if (fixture === FIXTURE_APPROVAL) {
+      mkdirSync(join(workspaceDir, 'out'), { recursive: true })
+      writeFileSync(join(workspaceDir, 'out', 'report.md'), '# chain report\n')
+    }
     const registry = new WorkspaceRegistry(join(nodeStateDir, 'workspace-registry.sqlite'))
     const registered = await registry.register(workspaceDir, { name: 'chain-ws' })
     const workspaceId = registered.id
