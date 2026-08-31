@@ -58,7 +58,7 @@ import type {
 import { ArtifactInputsManager } from '../../../apps/node/src/artifact/inputs.js'
 import { ArtifactCollector } from '../../../apps/node/src/artifact/collect.js'
 import { uploadArtifactCandidate } from '../../../apps/node/src/artifact/upload-client.js'
-import { Phase1Recorder } from './events.js'
+import { Phase1Recorder, redactText } from './events.js'
 
 export const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 // 子进程 cwd 是临时 workspace（无 node_modules）：--import 必须用绝对路径，
@@ -584,7 +584,8 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
 /**
  * Runtime stderr 观测缝：包装 driver，把 onStderr chunk（脱敏后）记入事件流。
  * stderr 是 runtime 层的一等证据（evidence-map「runtime.bridge/dsh.agent」行）；
- * 绝对路径按 secret-scan 模式归约（/Users/<name>/ → <home>/），保证证据可出包。
+ * 绝对路径按 secret-scan 模式归约（repo/tmpdir/home → <repo>/<tmp>/<home>，
+ * 见 events.ts redactText），保证证据可出包。
  */
 class StderrRecordingDriver implements RuntimeDriver {
   constructor(
@@ -606,7 +607,8 @@ class StderrRecordingDriver implements RuntimeDriver {
         this.recorder.event(
           'runtime.bridge',
           'runtime.stderr',
-          { runId: spec.runId, tail: redactHome(chunk).slice(0, 2_000) },
+          // 先归约再截断（#73）：tail 碎片不得残留带机器身份的目录名。
+          { runId: spec.runId, tail: redactText(chunk).slice(0, 2_000) },
           spec.runId,
         )
         ctx.onStderr(chunk)
@@ -621,11 +623,6 @@ class StderrRecordingDriver implements RuntimeDriver {
   async forceKill?(handle: RuntimeHandle): Promise<void> {
     await this.inner.forceKill?.(handle)
   }
-}
-
-/** secret-scan 模式归约：本机用户目录前缀一律归约成 <home>/（证据可出包）。 */
-function redactHome(text: string): string {
-  return text.replace(/\/Users\/[^/]+(?=\/)/g, '<home>')
 }
 
 /**

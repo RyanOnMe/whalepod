@@ -1,8 +1,10 @@
 # 六原语 harness 与 Evidence 包 验收
 
 - 对应场景/门禁：05 §4 P1-18 验收标准（断层自证）、04 §9 Evidence 包、六原语全量落地；Q0/Q2/Q7
-- 对应 Issue：P1-18（#22）
-- 上次验证：2026-08-30 · feat/p1-18-harness-evidence · 结果 PASS（六测全绿：绿链 + 四层断层归因 + CLI 冒烟；门结果见下）
+- 对应 Issue：P1-18（#22）· #73（P1-18 评审遗留：取证面 Linux 绝对路径红线无判据——
+  recorder 通用路径归约、secret-scan /home/与tmpdir 模式 + 逐条 --self-test、
+  「证据目录无绝对路径」判定）
+- 上次验证：2026-08-31 · fix/p1-18-linux-path-redaction（#73）· 结果 PASS（17 例：原 11 例 harness 自证全绿 + 取证面卫生 6 例；门结果见文末「复跑」）
 
 ## 验的是哪条用户路径
 
@@ -64,6 +66,11 @@ component 归约到观测分层：产品四层（Hub/Node/Runtime/Browser）+ **
 `phase1:verify` 跑可证伪断言，全部写成检查项（无数据、缺一环即 FAIL）：
 
 - **观测纪律**：事件逐条带 component/traceId；四层观测都在案。
+- **取证面卫生（#73）**：`Q7.evidence-no-abs-path` 逐行扫证据目录里的**每个文件**，
+  残留「还能被归约掉的绝对路径形态」（repo root / os.tmpdir() / homedir，及跨机
+  形态——macOS home 前缀、Linux home 前缀、macOS 临时目录 `var/folders` 根）即 FAIL——直写文件
+  （绕过 recorder 的形态）也躲不过这道判定。报告 detail 只写归约后的形态，
+  判定输出本身不再泄漏路径。fault 场景（归因早退）同样执行。
 - **链路里程碑**：run.start 命令被 Node ack → Runtime 产生协议帧 → Node 上行 →
   Hub run_event 落库 → run 终态 completed → 双 Browser 各自收到 run.completed
   （owner 全文 / member 仅 project 帧）。
@@ -127,7 +134,12 @@ scripts/secret-scan.sh
 包布局（04 §9）：`manifest.json`（commit/DSH 版本/协议版本/平台/起止时间/逐文件
 sha256/verdict）、`assertions.json`（verify 判定全文）、README.md（含复跑命令）+
 各层证据文件。红线：runtime 层只有帧型与字节长度，文本面全部经过 Node 投影
-脱敏，绝对路径在 stderr 证据里归约为 `<home>/`；证据只落 `artifacts/evidence/`
+脱敏；**绝对路径归约是 recorder 的统一纪律（#73）**——`event()/fact()` 写入前
+经 `redactText`（repo root → `<repo>`、os.tmpdir() → `<tmp>`、homedir 与 macOS/Linux
+home 前缀、macOS 临时目录 `var/folders` 根 → `<home>`/`<tmp>`），不再只有 stderr
+一处且只认 macOS 用户目录前缀；drive 失败消息（meta.json error）源头归约。
+`scripts/secret-scan.sh` 的绝对路径模式与归约规则一致（补 Linux home 与
+tmpdir 形态，`--self-test` 逐条语料断言防模式退化）。证据只落 `artifacts/evidence/`
 （gitignore），绝不留 /tmp（装配的临时目录收尾即删，stub 等工具文件不入证据）。
 
 ## 边界与未覆盖
@@ -146,19 +158,27 @@ sha256/verdict）、`assertions.json`（verify 判定全文）、README.md（含
 git clone <repo> && cd <repo> && corepack enable && pnpm install && pnpm -r build
 pnpm check                                        # Q0（含 harness 静态门）
 pnpm test:integration                             # Q2，含六原语 harness 自证 spec：
-                                                  #   scripts/tests/phase1-harness.integration.spec.ts
-                                                  #   11 例：绿链 standard PASS + 四层断层 FAIL 且归因正确
+                                                  #   scripts/tests/phase1-harness.integration.spec.ts（11 例）
+                                                  #     绿链 standard PASS + 四层断层 FAIL 且归因正确
                                                   #   + fault=browser 终态必达 + secrets 端到端（corpus 分支）
                                                   #   + 合成证据判定硬度（瞬时探活不误判/末尾连续失败归 Hub/
                                                   #     Hub 覆盖不认 harness.*）+ CLI 冒烟
+                                                  #   scripts/tests/phase1-evidence-hygiene.integration.spec.ts（6 例，#73）
+                                                  #     recorder 通用路径归约 ×2（Linux home/tmpdir/repo root
+                                                  #     注入 → 出包已归约；幂等与截断碎片）
+                                                  #   + 证据目录无绝对路径判定 ×3（脏证据 FAIL/干净 PASS/
+                                                  #     本机 home、tmpdir 残留判负）+ secret-scan 自检 ×1
 pnpm phase1:drive -- --scenario standard          # CLI 独立复跑（自起一次性 PG）
 pnpm phase1:verify -- --evidence <上一步输出的目录>
 pnpm phase1:evidence -- --evidence <目录> --run <runId>
 scripts/secret-scan.sh                            # Q7 取证面
+scripts/secret-scan.sh --self-test                # 判定力自检（泄漏语料逐条判中）
 ```
 
-上次全套结果（11/11）：`绿链 standard PASS · fault=hub→Hub · fault=node→Node ·
-fault=runtime→Runtime · fault=browser→Browser（含 Hub 侧终态必达断言）·
-secrets 端到端 PASS（corpus 分支）· 判定硬度合成证据 ×3 · CLI 冒烟
-（drive→verify→evidence 出包过 secret-scan）PASS`。首版四层断层 CLI 证据表
-见 `artifacts/evidence/acceptance-demo/results.txt`。
+上次全套结果（17/17，#73 复验 2026-08-31）：`原 11 例全绿（绿链 standard PASS ·
+fault=hub→Hub · fault=node→Node · fault=runtime→Runtime · fault=browser→Browser
+（含 Hub 侧终态必达断言）· secrets 端到端 PASS（corpus 分支）· 判定硬度合成证据
+×3 · CLI 冒烟（drive→verify→evidence 出包过 secret-scan，secret-scan 已含
+Linux home/tmpdir 模式））+ #73 卫生 6 例全绿（recorder 归约 ×2 · 证据目录
+判定 ×3 · secret-scan --self-test 逐条断言 ×1）`。首版四层断层 CLI 证据表见
+`artifacts/evidence/acceptance-demo/results.txt`。

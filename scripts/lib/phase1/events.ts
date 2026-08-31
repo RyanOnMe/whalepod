@@ -6,6 +6,14 @@
  * 已脱敏投影」——密码、Token、Cookie、原始 Runtime 帧、绝对路径一律不进
  * 事件（红线：证据与密钥不相容；完整 DSH JSONL 不进包，04 §9）。
  *
+ * #73（P1-18 评审遗留）：event()/fact() 写入前对 data 做**通用路径归约**
+ * （redactText）——repo root → `<repo>`、os.tmpdir() → `<tmp>`、homedir →
+ * `<home>`，并覆盖 macOS/Linux 跨机形态（Users 用户目录前缀、Linux home
+ * 前缀、macOS var/folders 临时根，含 /private realpath 形态）。此前只有
+ * stderr 观测缝的 redactHome 且只认 macOS 用户目录，Linux CI 上 home 与
+ * 临时目录形态原样落盘「看不见所以过」。归约只替换路径前缀形态、不动
+ * 其余语义，与 secret-scan 的检出模式保持一致。
+ *
  * component 取值沿用 06 §8 固定词表（browser | hub.* | node.* |
  * runtime.bridge | dsh.agent | artifact.store），harness 自身的驱动步骤用
  * `harness.*`；layerOf() 把 component 归约到观测分层（Hub/Node/Runtime/
@@ -13,10 +21,104 @@
  * （localize）按它输出断在哪层。
  */
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 /** 验收四层（05 §4 P1-18：verify 必须指明 Hub、Node、Runtime 或 Browser）。 */
 export type Phase1Layer = 'Hub' | 'Node' | 'Runtime' | 'Browser'
+
+// ---------- 通用路径归约（#73：取证面绝对路径红线判据） ----------
+
+/** 本 harness 所在仓库根（scripts/lib/phase1 → 仓库根）。 */
+const HARNESS_REPO_ROOT = join(import.meta.dirname, '..', '..', '..')
+
+/** 单段目录名（不含 /）。 */
+const SEG = String.raw`[^/"'\\\s]+`
+/** 延续一个目录名的字符（用于字面量前缀的右边界判定）。 */
+const NAME_CH = String.raw`[A-Za-z0-9_.\-]`
+
+function literal(path: string): RegExp {
+  const esc = path.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
+  // 右边界：短锚点（如 tmp 根）不得命中同前缀的更长目录名；后随 `/`、引号或串尾才算整段结束。
+  return new RegExp(`${esc}(?!${NAME_CH})`, 'g')
+}
+
+interface RedactionRule {
+  readonly pattern: RegExp
+  readonly marker: string
+}
+
+/** 「绝对前缀 + 单段目录名 + /」的归约模式（前缀以段清单传入）。 */
+function prefixRule(...segments: string[]): RegExp {
+  const prefix = `/${segments.join('/')}`
+  return new RegExp(`${prefix}/${SEG}(?=\\/)`, 'g')
+}
+
+/** macOS 临时根（var/folders 两段 UUID + T 子目录，含 /private realpath 形态）。 */
+function tmpRootRule(...segments: string[]): RegExp {
+  const prefix = `/${segments.join('/')}`
+  return new RegExp(`(?:/private)?${prefix}/${SEG}/${SEG}/T(?=[/"'\\s]|$)`, 'g')
+}
+
+/**
+ * 规则表按「先具体后一般」排：本机真实前缀（repo/tmp/home）先归约，
+ * 避免 `<repo>`/`<tmp>` 嵌在 `<home>` 里丢结构；随后是跨机器形态
+ * （任意用户 home、macOS 临时目录的任意 UUID 形态）兜底，与
+ * scripts/secret-scan.sh 的检出模式一致。macOS realpath（/private 前缀）
+ * 与 os.tmpdir() 原形态都覆盖。
+ */
+function redactionRules(): readonly RedactionRule[] {
+  const rules: RedactionRule[] = []
+  const tmp = tmpdir().replace(/\/+$/, '')
+  const home = homedir().replace(/\/+$/, '')
+  rules.push({ pattern: literal(HARNESS_REPO_ROOT), marker: '<repo>' })
+  if (tmp !== '' && tmp !== '/') {
+    // macOS：/private 前缀的 realpath 形态先于 os.tmpdir() 原形态归约。
+    rules.push({ pattern: literal(`/private${tmp}`), marker: '<tmp>' })
+    rules.push({ pattern: literal(tmp), marker: '<tmp>' })
+  }
+  if (home !== '' && home !== '/') {
+    rules.push({ pattern: literal(home), marker: '<home>' })
+    if (!home.startsWith('/private/')) {
+      rules.push({ pattern: literal(`/private${home}`), marker: '<home>' })
+    }
+  }
+  // 跨机器兜底（secret-scan 同款）：任意用户的 home、任意 UUID 形态的 macOS
+  // 临时根。前缀按段清单拼装（prefixRule/tmpRootRule）：源码里不书写完整
+  // 字面路径，免得本模块被自己的扫描模式判中。
+  rules.push({ pattern: prefixRule('Users'), marker: '<home>' })
+  rules.push({ pattern: prefixRule('home'), marker: '<home>' })
+  rules.push({ pattern: tmpRootRule('var', 'folders'), marker: '<tmp>' })
+  return rules
+}
+
+let cachedRules: readonly RedactionRule[] | undefined
+function rules(): readonly RedactionRule[] {
+  cachedRules ??= redactionRules()
+  return cachedRules
+}
+
+/**
+ * 文本通用归约：repo root/tmpdir/homedir 与跨机形态的绝对路径一律换成
+ * `<repo>`/`<tmp>`/`<home>` 标记；非路径文本不动（幂等：已归约标记不含
+ * 任何规则模式，二次调用零变化）。
+ */
+export function redactText(text: string): string {
+  let out = text
+  for (const { pattern, marker } of rules()) out = out.replace(pattern, marker)
+  return out
+}
+
+function deepRedact(value: unknown): unknown {
+  if (typeof value === 'string') return redactText(value)
+  if (Array.isArray(value)) return value.map(deepRedact)
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = deepRedact(v)
+    return out
+  }
+  return value
+}
 
 /** 观测分层：产品四层 + harness 自身观测单列（不充作任何产品层的证据）。 */
 export type ObservationLayer = Phase1Layer | 'Harness'
@@ -83,18 +185,28 @@ export class Phase1Recorder {
     mkdirSync(dir, { recursive: true })
   }
 
-  /** 追加一条事件（同步落盘：drive 崩溃也不丢已观测的尾巴）。 */
+  /**
+   * 追加一条事件（同步落盘：drive 崩溃也不丢已观测的尾巴）。
+   * data 经通用路径归约后才进内存与磁盘（#73）：node.run/node.artifact 等
+   * 以 error.message 为 payload 的事件不再原样落绝对路径。
+   */
   event(component: string, kind: string, data?: Record<string, unknown>, runId?: string): void {
     const e: Phase1Event = { ts: new Date().toISOString(), component, kind, traceId: this.traceId }
     if (runId !== undefined) e.runId = runId
-    if (data !== undefined) e.data = data
+    if (data !== undefined) e.data = deepRedact(data) as Record<string, unknown>
     this.events.push(e)
     appendFileSync(join(this.dir, 'events.jsonl'), `${JSON.stringify(e)}\n`)
   }
 
-  /** 分层存活事实（hub 探活、node 会话开闭、browser socket 开闭）。 */
+  /** 分层存活事实（hub 探活、node 会话开闭、browser socket 开闭）。同 #73 归约。 */
   fact(component: string, kind: string, data: Record<string, unknown>): void {
-    const f = { ts: new Date().toISOString(), component, kind, traceId: this.traceId, ...data }
+    const f = {
+      ts: new Date().toISOString(),
+      component,
+      kind,
+      traceId: this.traceId,
+      ...(deepRedact(data) as Record<string, unknown>),
+    }
     appendFileSync(join(this.dir, 'layer-facts.jsonl'), `${JSON.stringify(f)}\n`)
   }
 
