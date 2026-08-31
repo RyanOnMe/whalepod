@@ -24,7 +24,8 @@ export interface DatabaseOptions {
 export interface Database {
   readonly db: Db
   readonly sql: postgres.Sql
-  transaction<T>(fn: (tx: Tx) => Promise<T>): Promise<T>
+  /** 事务入口；options 透传 drizzle 事务配置（隔离级别等），缺省随连接默认（READ COMMITTED）。 */
+  transaction<T>(fn: (tx: Tx) => Promise<T>, options?: Parameters<Db['transaction']>[1]): Promise<T>
   close(): Promise<void>
 }
 
@@ -34,7 +35,7 @@ export function createDatabase(options: DatabaseOptions): Database {
   return {
     db,
     sql,
-    transaction: (fn) => db.transaction(fn),
+    transaction: (fn, txOptions) => db.transaction(fn, txOptions),
     close: async () => {
       await sql.end()
     },

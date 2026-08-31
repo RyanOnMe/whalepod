@@ -9,7 +9,12 @@ import { access } from 'node:fs/promises'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@project311/db'
 import { digestPluginPack } from '@project311/protocol/plugin-pack-digest'
-import { CORE_EMPTY_PACK_DIGEST, migrateCoreEmptyPackDigest } from '../src/modules/team/commands.js'
+import {
+  CORE_EMPTY_MIGRATION_LOCK_KEY,
+  CORE_EMPTY_PACK_DIGEST,
+  migrateCoreEmptyPackDigest,
+  MigrationLockTimeoutError,
+} from '../src/modules/team/commands.js'
 import {
   createTestApp,
   createTestDatabase,
@@ -361,6 +366,33 @@ describe('core-empty pack digest 断代迁移（P1-17 M10）', () => {
       // 告警计数确定：并发场景下迁移告警恰好一条（无锁时两条 SELECT 都读到旧值 → 双告警）。
       const warnsAfter = local.warnEvents.filter((e) => e.component === 'hub.setup').length
       expect(warnsAfter - warnsBefore).toBe(1)
+    } finally {
+      await local.close()
+    }
+  })
+
+  it('advisory lock 等锁超时：fail-fast 且报错可归因，释放后照常迁移恰好一次（#55 N2）', async () => {
+    const local = await createTestApp(database)
+    try {
+      await driveSetup(local)
+      const legacy = createHash('sha256').update('[]').digest('hex')
+      await database.sql`update plugin_pack set pack_digest = ${legacy} where name = 'core-empty'`
+      // 病态持锁者：独占连接持同一 key 的会话级锁，直到本用例结束才放。
+      const holder = await database.sql.reserve()
+      try {
+        await holder`select pg_advisory_lock(${CORE_EMPTY_MIGRATION_LOCK_KEY})`
+        await expect(
+          migrateCoreEmptyPackDigest(database, { lockTimeoutMs: 150 }),
+        ).rejects.toBeInstanceOf(MigrationLockTimeoutError)
+        // 超时事务整体回滚、无副作用：行仍是旧值。
+        expect((await coreEmptyRow())?.pack_digest).toBe(legacy)
+      } finally {
+        await holder`select pg_advisory_unlock(${CORE_EMPTY_MIGRATION_LOCK_KEY})`
+        holder.release()
+      }
+      // 锁释放后迁移照常完成恰好一次（超时的败者无需补偿）。
+      expect(await migrateCoreEmptyPackDigest(database)).toBe(true)
+      expect((await coreEmptyRow())?.pack_digest).toBe(CORE_EMPTY_PACK_DIGEST)
     } finally {
       await local.close()
     }

@@ -7,10 +7,12 @@
  * 串行化机制是 packages/db/src/migrate.ts 的逐文件事务 +
  * pg_advisory_xact_lock（MIGRATION_LOCK_KEY=20260825）；本用例把该保证变成
  * 机器证据，任何人去掉/改坏锁都会在这里变红。
+ * 另钉等锁上限（#55 N2）：病态持锁者不会让启动无限排队——lock_timeout 到点
+ * 以 55P03 fail-fast，报错可归因、重试可完成。
  */
 import { randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { applyMigrations, createDatabase } from '../src/index.js'
+import { applyMigrations, createDatabase, MIGRATION_LOCK_KEY, unwrapPgError } from '../src/index.js'
 import type { Database } from '../src/index.js'
 
 let admin: Database
@@ -43,11 +45,11 @@ describe('applyMigrations 并发（#55）', () => {
     const b = createDatabase({ connectionString: urlWithDatabase(adminUrl, dbName), max: 3 })
     try {
       const [ra, rb] = await Promise.allSettled([applyMigrations(a), applyMigrations(b)])
-      // 都成功：败者不得以 23505（台账 dup key）或 42P07（relation 已存在）冒出来。
-      if (ra.status === 'rejected' || rb.status === 'rejected') {
-        throw new Error(
-          `并发 applyMigrations 失败：${String(ra.status === 'rejected' ? ra.reason : rb.reason)} / ${String(rb.status === 'rejected' ? rb.reason : ra.reason)}`,
-        )
+      // 都成功：败者不得以 dup key（台账/目录）或 relation 已存在等同族报错冒出来。
+      for (const r of [ra, rb] as const) {
+        if (r.status === 'rejected') {
+          throw new Error(`并发 applyMigrations 失败：${String(r.reason)}`)
+        }
       }
       // 台账恰好一次：每个 name 计数为 1。
       const ledger = await a.sql<{ name: string; n: number }[]>`
@@ -63,6 +65,43 @@ describe('applyMigrations 并发（#55）', () => {
       const names = tables.map((row) => row.tablename)
       expect(names).toContain('plugin_pack')
       expect(names).toContain('team')
+    } finally {
+      await a.close()
+      await b.close()
+      await admin.sql.unsafe(`drop database if exists ${dbName}`)
+    }
+  }, 60_000)
+
+  it('病态持锁者：等锁以 lock_timeout 55P03 fail-fast 可归因，释放后重试恰好完成', async () => {
+    const dbName = `mig_timeout_${randomBytes(4).toString('hex')}`
+    // 安全：dbName 是本用例生成的 hex 字面量，非外部输入。
+    await admin.sql.unsafe(`create database ${dbName}`)
+    const url = urlWithDatabase(adminUrl, dbName)
+    const a = createDatabase({ connectionString: url, max: 2 })
+    const b = createDatabase({ connectionString: url, max: 2 })
+    try {
+      // advisory lock 按库作用域：持锁者必须落在目标库上（reserve 独占连接）。
+      const holder = await a.sql.reserve()
+      try {
+        await holder`select pg_advisory_lock(${MIGRATION_LOCK_KEY})`
+        const failure = await applyMigrations(b, { lockTimeoutMs: 250 }).then(
+          () => undefined,
+          (caught: unknown) => caught,
+        )
+        if (failure === undefined) throw new Error('等锁超时应 fail-fast，却意外成功')
+        // 归因：SQLSTATE 55P03（lock_not_available），不是无声排队也不是莫名错误。
+        expect(unwrapPgError(failure)?.code).toBe('55P03')
+      } finally {
+        await holder`select pg_advisory_unlock(${MIGRATION_LOCK_KEY})`
+        holder.release()
+      }
+      // 持锁者离开后，正常上限的迁移可直接成功（fail-fast 无副作用残留）。
+      await applyMigrations(b)
+      const ledger = await b.sql<{ name: string; n: number }[]>`
+          select name, count(*)::int as n from _schema_migrations group by name
+        `
+      expect(ledger.length).toBeGreaterThan(0)
+      expect(ledger.map((row) => row.n)).toEqual(ledger.map(() => 1))
     } finally {
       await a.close()
       await b.close()

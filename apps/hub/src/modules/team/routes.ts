@@ -9,7 +9,12 @@ import { hashPassword } from '../auth/password.js'
 import { setSessionCookie } from '../auth/session.js'
 import type { RequireActor } from '../auth/session.js'
 import type { RateLimiter } from '../auth/rate-limit.js'
-import { disableMember, migrateCoreEmptyPackDigest, setupInstance } from './commands.js'
+import {
+  disableMember,
+  migrateCoreEmptyPackDigest,
+  MigrationLockTimeoutError,
+  setupInstance,
+} from './commands.js'
 import type { SetupTokenStore } from './setup-token.js'
 
 export interface TeamRouteDeps {
@@ -52,11 +57,28 @@ export function registerTeamRoutes(app: FastifyInstance, deps: TeamRouteDeps): v
     const body = SetupRequestSchema.parse(mergeSetupTokenHeader(request))
     // M10 断代迁移：旧 dev 库的 core-empty 行存的是旧算法 digest，先幂等修复
     // （已初始化实例重试 setup 也会经过此处），再走常规 409/建账流程。
-    if (await migrateCoreEmptyPackDigest(deps.database)) {
-      request.log.warn(
-        { component: 'hub.setup', requestId: String(request.id) },
-        'core-empty pack digest migrated from legacy algorithm to current digest',
-      )
+    // 等锁超时（#55 N2）：结构化 warn 归因后 fail-fast 503，客户端可重试；
+    // 不让 /setup 被病态持锁者无限排队。
+    try {
+      if (await migrateCoreEmptyPackDigest(deps.database)) {
+        request.log.warn(
+          { component: 'hub.setup', requestId: String(request.id) },
+          'core-empty pack digest migrated from legacy algorithm to current digest',
+        )
+      }
+    } catch (error) {
+      if (error instanceof MigrationLockTimeoutError) {
+        request.log.warn(
+          {
+            component: 'hub.setup',
+            requestId: String(request.id),
+            lockTimeoutMs: error.lockTimeoutMs,
+          },
+          'core-empty digest migration advisory lock wait timed out; failing fast',
+        )
+        throw new ApiError(503, 'INTERNAL_ERROR', 'migration lock timeout, retry later')
+      }
+      throw error
     }
     if ((await getTeam(deps.database.db)) !== undefined) {
       audit(request, 'setup', 'denied')

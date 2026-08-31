@@ -43,7 +43,21 @@ export const CORE_EMPTY_PACK_DIGEST = digestPluginPack({ schemaVersion: 1, packa
  * （packages/db/src/migrate.ts）及插件安装 (name@version) 派生键互不共用；
  * 即便与插件安装键偶合也只会多一次无碍串行，不破坏正确性。
  */
-const CORE_EMPTY_MIGRATION_LOCK_KEY = 2_874_284_989
+export const CORE_EMPTY_MIGRATION_LOCK_KEY = 2_874_284_989
+
+/** 等锁上限：防病态持有者让 /setup 无限排队（#55 N2，超时 fail-fast 可归因可重试）。 */
+const MIGRATION_LOCK_TIMEOUT_MS = 30_000
+
+/** 等锁超时（PostgreSQL 55P03 lock_not_available）的归因包装：调用方按类型记告警并 500。 */
+export class MigrationLockTimeoutError extends Error {
+  override readonly name = 'MigrationLockTimeoutError'
+
+  constructor(readonly lockTimeoutMs: number) {
+    super(
+      `core-empty digest migration advisory lock wait exceeded ${lockTimeoutMs}ms, failing fast`,
+    )
+  }
+}
 
 /**
  * core-empty pack digest 断代幂等迁移（P1-17 review M10）：旧代码按旧算法
@@ -57,25 +71,45 @@ const CORE_EMPTY_MIGRATION_LOCK_KEY = 2_874_284_989
  * 并发安全（#55）：read-modify-write 整体收进「事务 + 事务级 advisory lock」
  * 临界区——并发调用者被串行化，败者阻塞等胜者提交后重读即见现算值返回 false，
  * 「发生了迁移 = true」与迁移告警在并发下恰好一次、可计数；xact 锁随
- * COMMIT/ROLLBACK 自动释放，进程崩溃连接断开即失效，不残留。与 setupInstance
- * 的时序组合可证：setup 事务只会以现算 digest 建新行（对迁移恒为 no-op），
- * 且旧行存在 ⟹ team 已存在 ⟹ setup 必 409，不产生第二行。
+ * COMMIT/ROLLBACK 自动释放，进程崩溃连接断开即失效，不残留。隔离级别显式钉
+ * READ COMMITTED：「恰好一次」依赖其语句级快照语义——败者等锁后的 SELECT 是新
+ * 快照，必见胜者已提交值；不随会话/数据库默认隔离级别漂移。等锁带 lock_timeout
+ * 上限：超时抛 MigrationLockTimeoutError（fail-fast，报错可重试），不让 /setup
+ * 被病态持锁者无限排队。与 setupInstance 的时序组合可证：setup 事务只会以现算
+ * digest 建新行（对迁移恒为 no-op），且旧行存在 ⟹ team 已存在 ⟹ setup 必 409，
+ * 不产生第二行。
  */
-export async function migrateCoreEmptyPackDigest(database: Database): Promise<boolean> {
-  return database.transaction(async (tx) => {
-    // 串行化点：pg_advisory_xact_lock 等待取锁（非 fail-fast），事务结束自动释放。
-    await tx.execute(sql`select pg_advisory_xact_lock(${CORE_EMPTY_MIGRATION_LOCK_KEY})`)
-    const [row] = await tx
-      .select()
-      .from(schema.pluginPacks)
-      .where(eq(schema.pluginPacks.name, CORE_EMPTY_PACK_NAME))
-    if (row === undefined || row.packDigest === CORE_EMPTY_PACK_DIGEST) return false
-    await tx
-      .update(schema.pluginPacks)
-      .set({ packDigest: CORE_EMPTY_PACK_DIGEST })
-      .where(eq(schema.pluginPacks.id, row.id))
-    return true
-  })
+export async function migrateCoreEmptyPackDigest(
+  database: Database,
+  options: { readonly lockTimeoutMs?: number } = {},
+): Promise<boolean> {
+  const lockTimeoutMs = options.lockTimeoutMs ?? MIGRATION_LOCK_TIMEOUT_MS
+  try {
+    return await database.transaction(
+      async (tx) => {
+        // 先设本事务等锁上限，再取锁（SET LOCAL 语义，随事务结束失效）。
+        await tx.execute(sql`select set_config('lock_timeout', ${`${lockTimeoutMs}ms`}, true)`)
+        // 串行化点：pg_advisory_xact_lock 等待取锁（上限内非 fail-fast），事务结束自动释放。
+        await tx.execute(sql`select pg_advisory_xact_lock(${CORE_EMPTY_MIGRATION_LOCK_KEY})`)
+        const [row] = await tx
+          .select()
+          .from(schema.pluginPacks)
+          .where(eq(schema.pluginPacks.name, CORE_EMPTY_PACK_NAME))
+        if (row === undefined || row.packDigest === CORE_EMPTY_PACK_DIGEST) return false
+        await tx
+          .update(schema.pluginPacks)
+          .set({ packDigest: CORE_EMPTY_PACK_DIGEST })
+          .where(eq(schema.pluginPacks.id, row.id))
+        return true
+      },
+      { isolationLevel: 'read committed' },
+    )
+  } catch (error) {
+    if (unwrapPgError(error)?.code === '55P03') {
+      throw new MigrationLockTimeoutError(lockTimeoutMs)
+    }
+    throw error
+  }
 }
 
 export interface SetupResult {
