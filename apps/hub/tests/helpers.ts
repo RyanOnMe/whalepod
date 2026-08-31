@@ -601,7 +601,13 @@ export function makeHarness(
   const now = () => clock.now()
   const outbox = new Outbox(database, { now, random: () => 0 })
   const gateway = new FakeDeviceGateway({ now, ...gatewayOptions })
-  const orchestrator = new Orchestrator({ database, outbox, now, warn: orchestratorOptions.warn })
+  // exactOptionalPropertyTypes：warn 未注入时条件展开，不显式传 undefined。
+  const orchestrator = new Orchestrator({
+    database,
+    outbox,
+    now,
+    ...(orchestratorOptions.warn === undefined ? {} : { warn: orchestratorOptions.warn }),
+  })
   const worker = new OutboxWorker({ outbox, gateway, now })
   return {
     clock,
