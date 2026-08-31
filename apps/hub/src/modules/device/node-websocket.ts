@@ -7,6 +7,8 @@
  * - 其余（heartbeat/command.ack/run.event/run.snapshot）：统一交
  *   RunOrchestrator.ingestNodeEvent——它先刷 lastSeenAt 再按帧类型迁移
  *   Run/租约活动投影，本层不重复该职责。
+ * 4003 的射程（#52/ADR-0007）：结构坏与越权 = 通道不可信 → 断开；Run 账本的
+ * 语义冲突 = 单 Run 业务问题 → orchestrator Run 级收敛，连接保留。
  */
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
@@ -21,6 +23,7 @@ import {
 import { parseNodeFrame, RunEventAckSchema, RunResendFromSchema } from '@project311/protocol'
 import type { RunOrchestrator } from '../run/orchestrator.js'
 import type { AuthenticatedDevice } from '../run/device-gateway.js'
+import { isRunSemanticConflict } from '../run/errors.js'
 import { hashToken } from '../auth/token.js'
 import { nodeConnections } from './connection-registry.js'
 import { WorkspaceInventoryIngest } from './inventory.js'
@@ -157,16 +160,25 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
             }
           }
         } catch (error) {
-          // fail-closed：协议错误/未知帧/越权载荷一律断开，不给半解析数据留通道。
+          // ADR-0007：连接级 fail-closed 收窄到「通道不可信」——结构坏（JSON/
+          // schema 不过）与越权（deviceId 不符）一律断开，不给半解析数据留通道。
+          // Run 账本的语义冲突（表外越边、引用缺失）不属此类：orchestrator 已在
+          // 同一事务内留证 + Run 级收敛；此处再兜一道（disposition 日志字段是
+          // 违例的可观测面），防任何路径把单 Run 冲突冒泡成 4003 毒杀设备连接。
+          // 判定共用 isRunSemanticConflict（run/errors.ts 单一事实源）：与
+          // orchestrator 降级各写一遍，惩罚边界迟早漂移。
+          const semanticConflict = isRunSemanticConflict(error)
           request.log.warn(
             {
               component: 'hub.node-ws',
               deviceId: identity.deviceId,
               errorName: error instanceof Error ? error.name : 'UnknownError',
               errorMessage: error instanceof Error ? error.message : String(error),
+              disposition: semanticConflict ? 'connection-retained' : 'connection-closed',
             },
             'node upstream frame rejected',
           )
+          if (semanticConflict) return
           if (socket.readyState === socket.OPEN) socket.close(4003, 'protocol violation')
           nodeConnections.detach(identity.deviceId, socket)
         }
