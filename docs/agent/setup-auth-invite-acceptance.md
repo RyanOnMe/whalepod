@@ -1,8 +1,8 @@
 # 首次 Setup、登录、邀请与角色 验收
 
 - 对应场景/门禁：G1-01..06、04 §6.1 HTTP/IDOR 中属于身份域的用例、Q0/Q1/Q2（见 04-验收矩阵与测试策略.md）
-- 对应 Issue：P1-05
-- 上次验证：2026-08-25 · feat/p1-05-setup-auth-invite · 结果 PASS
+- 对应 Issue：P1-05；#55（P1-17 review M10 遗留：core-empty digest 断代迁移并发锁）
+- 上次验证：2026-09-01 · fix/p1-debt-migration-lock · 结果 PASS
 
 ## 验的是哪条用户路径
 
@@ -32,6 +32,8 @@ pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration ap
 - G1-05：Member 创建邀请 → 403 `FORBIDDEN` 且有 `invite.create/denied` 审计。
 - G1-06：停用最后 Owner → 409，owner 保留、会话不撤销、有 denied 审计。
 - 安全：无/错/`null`/多值 Origin 的非安全请求 403 `ORIGIN_REJECTED`；缺/非法 Idempotency-Key 400；停用用户旧 Cookie 401；过期会话 401 `SESSION_EXPIRED`；登录限流 429；错误口令与未知用户 401 形态逐字段一致（除 requestId）。
+- 迁移并发（#55 判据一，`apps/hub/tests/setup.integration.spec.ts`）：遗留旧 digest 行时并发双跑 `migrateCoreEmptyPackDigest`——两调用都成功（无 dup key / 序列化错误）、`true` 恰好一个、终态 digest=现算常量；并发两个 POST /setup 重试——都 409、`component=hub.setup` 迁移告警恰好一条（warn 级结构化日志经 logger stream 计数）。无锁实现上两案必红（双 true / 双告警）。
+- 迁移并发（#55 判据二，`packages/db/tests/migrations-concurrent.integration.spec.ts`）：空库并发双跑 `applyMigrations`——都成功、`_schema_migrations` 每文件恰一条、无「relation 已存在/dup key」同族报错（台账建表已收进 advisory lock；无锁实现上必撞 42P07 或 23505 二者之一）；病态持锁者场景以 `lock_timeout` 55P03 fail-fast、归因明确，放锁后重试恰好完成（同文件第二例与 hub spec 的 MigrationLockTimeoutError 例）。
 
 ## 归因（失败先看哪层）
 
@@ -39,11 +41,16 @@ pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration ap
 - 409/行数不对 → `apps/hub/src/modules/team/commands.ts` 事务与 `packages/db/src/repositories/`（identity 三件套）。
 - 500 → `hub.http` 结构化日志（只有 name/message，无堆栈无路径）。
 - 审计缺失 → `modules/shared/audit.ts` 与路由的调用点。
+- 迁移并发/告警计数不对（#55）→ `apps/hub/src/modules/team/commands.ts` 的事务 + `pg_advisory_xact_lock(CORE_EMPTY_MIGRATION_LOCK_KEY)`；等锁超时 503 → 同函数 `MigrationLockTimeoutError`（`component=hub.setup` warn 带 `lockTimeoutMs`）。
+- 启动/并发迁移失败（#55）→ `packages/db/src/migrate.ts`（台账建表与逐文件应用同锁 `MIGRATION_LOCK_KEY=20260825`；55P03=有实例持锁，属预期 fail-fast，重试即可）。
 
 ## 取证
 
 ```bash
 pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration apps/hub/tests
+# #55 迁移并发四条（直调双跑/并发 /setup 告警计数/等锁超时/空库并发 applyMigrations）：
+pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration \
+  apps/hub/tests/setup.integration.spec.ts packages/db/tests/migrations-concurrent.integration.spec.ts
 # 改动文件过敏感扫描：
 bash scripts/secret-scan.sh apps/hub packages/db/src
 ```
