@@ -584,15 +584,24 @@ export interface Harness {
   pump(ids: SeedIds): Promise<void>
 }
 
+export interface HarnessOrchestratorOptions {
+  /**
+   * orchestrator 的结构化告警通道（#52/评审建议 1）：越边降级是撤销连接级安全网
+   * 后的补偿控制，其 warn 是补偿控制生效的唯一机器证据，测试需能注入 spy 断言。
+   */
+  warn?: (message: string, context: Record<string, unknown>) => void
+}
+
 export function makeHarness(
   database: Database,
   gatewayOptions: FakeDeviceGatewayOptions = {},
+  orchestratorOptions: HarnessOrchestratorOptions = {},
 ): Harness {
   const clock = new FakeClock(new Date('2026-08-25T00:00:00.000Z'))
   const now = () => clock.now()
   const outbox = new Outbox(database, { now, random: () => 0 })
   const gateway = new FakeDeviceGateway({ now, ...gatewayOptions })
-  const orchestrator = new Orchestrator({ database, outbox, now })
+  const orchestrator = new Orchestrator({ database, outbox, now, warn: orchestratorOptions.warn })
   const worker = new OutboxWorker({ outbox, gateway, now })
   return {
     clock,

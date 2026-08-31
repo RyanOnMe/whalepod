@@ -12,7 +12,6 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { DomainError } from '@project311/domain'
 import type { Database } from '@project311/db'
 import {
   findDeviceByTokenHash,
@@ -24,7 +23,7 @@ import {
 import { parseNodeFrame, RunEventAckSchema, RunResendFromSchema } from '@project311/protocol'
 import type { RunOrchestrator } from '../run/orchestrator.js'
 import type { AuthenticatedDevice } from '../run/device-gateway.js'
-import { RunCommandError } from '../run/errors.js'
+import { isRunSemanticConflict } from '../run/errors.js'
 import { hashToken } from '../auth/token.js'
 import { nodeConnections } from './connection-registry.js'
 import { WorkspaceInventoryIngest } from './inventory.js'
@@ -166,9 +165,9 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
           // Run 账本的语义冲突（表外越边、引用缺失）不属此类：orchestrator 已在
           // 同一事务内留证 + Run 级收敛；此处再兜一道（disposition 日志字段是
           // 违例的可观测面），防任何路径把单 Run 冲突冒泡成 4003 毒杀设备连接。
-          const semanticConflict =
-            (error instanceof DomainError && error.code === 'INVALID_RUN_TRANSITION') ||
-            (error instanceof RunCommandError && error.code === 'NOT_FOUND')
+          // 判定共用 isRunSemanticConflict（run/errors.ts 单一事实源）：与
+          // orchestrator 降级各写一遍，惩罚边界迟早漂移。
+          const semanticConflict = isRunSemanticConflict(error)
           request.log.warn(
             {
               component: 'hub.node-ws',

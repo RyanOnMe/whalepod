@@ -34,7 +34,9 @@ owner-only live delta 不持久通道。一切文本离开设备前过 §9 脱�
   构造 waiting_approval，再上送终态/表外/引用缺失帧，断言连接存活、真终态、留证、
   折叠 cancelled、ack 水位推进、R6 重放、重连 drain、终态禁复活、反向守门 4003；
   全链路裁决覆盖用 stub Runtime（ready→approval.requested 无人决定→completed）跑
-  真 Node spool/drain + 真 Hub，spool 清空即毒帧循环拆除的直接证明。
+  真 Node spool/drain + 真 Hub，spool 清空即毒帧循环拆除的直接证明。违例 warn 作
+  为补偿控制经 makeHarness warn spy 机器钉死（表外必发、component/runId/fromStatus/
+  reason 字段齐；表内裁决边零误发——run-policy 两例）。
 
 ## 判定
 

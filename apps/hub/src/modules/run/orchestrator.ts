@@ -47,7 +47,7 @@ import { ACTIVE_RUN_STATUSES, reconcileLeases } from './reconciler.js'
 import type { ActorContext, CreateRunInput } from './commands.js'
 import { assertCreateRunInput } from './commands.js'
 import type { AuthenticatedDevice } from './device-gateway.js'
-import { RunCommandError } from './errors.js'
+import { isRunSemanticConflict, RunCommandError } from './errors.js'
 import type { ApprovalView, RunView } from './queries.js'
 import { toApprovalView, toRunView } from './queries.js'
 
@@ -55,21 +55,6 @@ const TERMINAL_RUN_STATUSES = ['completed', 'failed', 'cancelled', 'lost'] as co
 
 function isTerminal(status: RunRow['status']): boolean {
   return (TERMINAL_RUN_STATUSES as readonly string[]).includes(status)
-}
-
-/**
- * #52/ADR-0007：事件通道上的「语义冲突」错误——帧结构合法、归属合法、seq 有效，
- * 只有该 Run 的账本解释不了它。这类错误降级为 Run 级收敛，不再冒泡到 WS 层的
- * 连接级惩罚；通道不可信类（schema 坏、越权）不在其列。
- */
-function isRunSemanticConflict(error: unknown): boolean {
-  if (error instanceof DomainError) return error.code === 'INVALID_RUN_TRANSITION'
-  if (error instanceof RunCommandError) {
-    // 近亲：approval.decided 引用缺失行——同样是单 Run 账本冲突（NOT_FOUND 在
-    // applyProjectedEvent 内仅此一个来源）。
-    return error.code === 'NOT_FOUND'
-  }
-  return false
 }
 
 export interface RunOrchestratorDeps {
