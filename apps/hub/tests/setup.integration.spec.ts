@@ -9,7 +9,12 @@ import { access } from 'node:fs/promises'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@project311/db'
 import { digestPluginPack } from '@project311/protocol/plugin-pack-digest'
-import { CORE_EMPTY_PACK_DIGEST, migrateCoreEmptyPackDigest } from '../src/modules/team/commands.js'
+import {
+  CORE_EMPTY_MIGRATION_LOCK_KEY,
+  CORE_EMPTY_PACK_DIGEST,
+  migrateCoreEmptyPackDigest,
+  MigrationLockTimeoutError,
+} from '../src/modules/team/commands.js'
 import {
   createTestApp,
   createTestDatabase,
@@ -303,6 +308,94 @@ describe('core-empty pack digest 断代迁移（P1-17 M10）', () => {
     expect((await coreEmptyRow())?.pack_digest).toBe(CORE_EMPTY_PACK_DIGEST)
     // 幂等：第二遍是 no-op。
     expect(await migrateCoreEmptyPackDigest(database)).toBe(false)
+  })
+
+  it('并发双跑迁移：两调用都成功，迁移恰好执行一次（#55）', async () => {
+    // 独立 TestApp：driveSetup 的每 IP 限流预算与日志捕获不占共享 ctx 账本。
+    const local = await createTestApp(database)
+    try {
+      await driveSetup(local)
+      const legacy = createHash('sha256').update('[]').digest('hex')
+      // 多轮放大交错窗口：每轮把行打回旧算法值后同时发射两个迁移调用。
+      for (let round = 0; round < 5; round++) {
+        await database.sql`update plugin_pack set pack_digest = ${legacy} where name = 'core-empty'`
+        const [a, b] = await Promise.allSettled([
+          migrateCoreEmptyPackDigest(database),
+          migrateCoreEmptyPackDigest(database),
+        ])
+        // 都成功：并发不得以 dup key / 序列化失败等形式冒出来。
+        if (a.status === 'rejected' || b.status === 'rejected') {
+          throw new Error(`并发迁移调用失败（round ${round}）：${String(a.reason ?? b.reason)}`)
+        }
+        // 恰好一次：只有一个调用观察到旧值并完成迁移，另一个等锁后见现算值返回 false。
+        expect([a.value, b.value].filter(Boolean)).toHaveLength(1)
+        const after = await coreEmptyRow()
+        expect(after?.pack_digest).toBe(CORE_EMPTY_PACK_DIGEST)
+      }
+    } finally {
+      await local.close()
+    }
+  })
+
+  it('并发两个 /setup 重试（遗留旧 digest 行）：都 409，恰好一条迁移告警（#55）', async () => {
+    const local = await createTestApp(database)
+    try {
+      await driveSetup(local)
+      const legacy = createHash('sha256').update('[]').digest('hex')
+      await database.sql`update plugin_pack set pack_digest = ${legacy} where name = 'core-empty'`
+      // 已初始化实例重试 setup 在 token 校验前就 409，token 值无关紧要。
+      const retry = () =>
+        local.app.inject({
+          method: 'POST',
+          url: '/api/v1/setup',
+          headers: { origin: local.origin, 'idempotency-key': idemKey() },
+          payload: {
+            setupToken: local.setupToken,
+            teamName: 'Acme',
+            username: 'alice',
+            displayName: 'Alice',
+            password: 'correct horse battery staple',
+          },
+        })
+      const warnsBefore = local.warnEvents.filter((e) => e.component === 'hub.setup').length
+      const [ra, rb] = await Promise.all([retry(), retry()])
+      expect(ra.statusCode).toBe(409)
+      expect(rb.statusCode).toBe(409)
+      const after = await coreEmptyRow()
+      expect(after?.pack_digest).toBe(CORE_EMPTY_PACK_DIGEST)
+      // 告警计数确定：并发场景下迁移告警恰好一条（无锁时两条 SELECT 都读到旧值 → 双告警）。
+      const warnsAfter = local.warnEvents.filter((e) => e.component === 'hub.setup').length
+      expect(warnsAfter - warnsBefore).toBe(1)
+    } finally {
+      await local.close()
+    }
+  })
+
+  it('advisory lock 等锁超时：fail-fast 且报错可归因，释放后照常迁移恰好一次（#55 N2）', async () => {
+    const local = await createTestApp(database)
+    try {
+      await driveSetup(local)
+      const legacy = createHash('sha256').update('[]').digest('hex')
+      await database.sql`update plugin_pack set pack_digest = ${legacy} where name = 'core-empty'`
+      // 病态持锁者：独占连接持同一 key 的会话级锁，直到本用例结束才放。
+      const holder = await database.sql.reserve()
+      try {
+        await holder`select pg_advisory_lock(${CORE_EMPTY_MIGRATION_LOCK_KEY})`
+        await expect(
+          migrateCoreEmptyPackDigest(database, { lockTimeoutMs: 150 }),
+        ).rejects.toBeInstanceOf(MigrationLockTimeoutError)
+        // 超时事务整体回滚、无副作用：行仍是旧值。
+        expect((await coreEmptyRow())?.pack_digest).toBe(legacy)
+      } finally {
+        await holder`select pg_advisory_unlock(${CORE_EMPTY_MIGRATION_LOCK_KEY})`
+        holder.release()
+      }
+      // 锁释放后迁移照常完成恰好一次（超时的败者无需补偿）。
+      expect(await migrateCoreEmptyPackDigest(database)).toBe(true)
+      expect((await coreEmptyRow())?.pack_digest).toBe(CORE_EMPTY_PACK_DIGEST)
+    } finally {
+      await local.close()
+    }
   })
 })
 
