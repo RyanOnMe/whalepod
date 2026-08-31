@@ -3,7 +3,9 @@
  *
  * 此前本逻辑只在两份 test helper 里各抄一份（packages/db 与 apps/hub）——生产 Hub
  * 与 e2e 环境同样需要可靠的迁移入口，故收敛到包内导出；test helper 委托至此。
- * 幂等：advisory lock 串行化并发应用，台账跳过已应用文件；缺迁移文件必须失败。
+ * 幂等：advisory lock 串行化并发应用（含台账建表本身，#55），台账跳过已应用文件；
+ * 缺迁移文件必须失败。拿不到锁的实例阻塞等待（非 fail-fast），xact 锁随事务结束
+ * 或连接崩溃自动释放，不残留。
  */
 import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -16,12 +18,18 @@ const MIGRATION_TABLE = '_schema_migrations'
 const MIGRATION_LOCK_KEY = 20260825
 
 export async function applyMigrations(database: Database): Promise<void> {
-  await database.sql`
-    create table if not exists ${database.sql(MIGRATION_TABLE)} (
-      name text primary key,
-      applied_at timestamptz not null default now()
-    )
-  `
+  // 台账建表也必须在锁内：`create table if not exists` 的并发判定不互斥，
+  // 两实例同时建表会撞 pg_type 目录索引 23505（#55 并发用例实测复现），
+  // 「多实例并发启动/重跑迁移」直接失败。
+  await database.sql.begin(async (sql) => {
+    await sql`select pg_advisory_xact_lock(${MIGRATION_LOCK_KEY})`
+    await sql`
+      create table if not exists ${sql(MIGRATION_TABLE)} (
+        name text primary key,
+        applied_at timestamptz not null default now()
+      )
+    `
+  })
   let files: string[]
   try {
     files = readdirSync(MIGRATIONS_DIR)
