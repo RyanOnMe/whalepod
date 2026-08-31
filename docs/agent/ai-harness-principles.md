@@ -50,6 +50,10 @@ node.workspace | node.supervisor | runtime.bridge | dsh.agent | artifact.store
 - 按 Run/场景取证：`pnpm phase1:evidence -- --run <id>`（P1-18）。
 - E2E 失败自动产出 `artifacts/evidence/<scenario-id>/<attempt-id>/` 包（布局见 04 文档 §9），采集前过同一脱敏库，采完跑 `scripts/secret-scan.sh`。
 - 密码、Token、绝对路径、完整 DSH JSONL、未发布 Artifact 正文不进包。
+- 绝对路径**不进**要靠判据，不靠肉眼：harness 的 recorder 在事件写入前做通用路径
+  归约（repo root / os.tmpdir() / homedir → `<repo>`/`<tmp>`/`<home>`，含 Linux 与
+  macOS 跨机形态），verify 有「证据目录无绝对路径」判定，`secret-scan.sh` 的
+  检出模式与归约规则一致且有逐条语料 `--self-test`（#73）。
 
 ## 6. 发现 —— 登记了才算做
 

@@ -9,9 +9,9 @@
  * ack、Node 上行、Runtime 帧摘要、DB 快照、Browser 帧），不看 drive 的故障
  * 注入参数——fault 字段只进报告标题，不进判定逻辑（不自证）。
  */
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { layerOf, type Phase1Layer } from './events.js'
+import { layerOf, redactText, type Phase1Layer } from './events.js'
 import type { DriveMeta } from './drive.js'
 
 export type { Phase1Scenario } from './drive.js'
@@ -398,6 +398,62 @@ function disciplineChecks(evidence: Evidence): VerifyCheck[] {
   ]
 }
 
+/** 证据目录内的全部文件（递归；判定对象是目录里的证据本身）。 */
+function evidenceFiles(dir: string): string[] {
+  const out: string[] = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) out.push(...evidenceFiles(full))
+    else out.push(full)
+  }
+  return out.sort()
+}
+
+/**
+ * #73 取证面红线判定：「证据目录无绝对路径」。
+ * 递归扫描 attempt 目录每个文件每行文本，用 recorder 同一归约函数（redactText）
+ * 检查残留——任何「还能被归约出路径形态」的文本（repo root/tmpdir/home 及
+ * macOS Users、Linux home、var/folders 跨机形态）都判负。detail 只写归约后的形态，
+ * 不复述泄漏原文（判定报告本身也在证据包里，自洁）。
+ */
+function evidenceHygieneChecks(attemptDir: string): VerifyCheck[] {
+  const offenders: string[] = []
+  let scanned = 0
+  for (const file of evidenceFiles(attemptDir)) {
+    const rel = file.slice(attemptDir.length + 1)
+    let text: string | undefined
+    try {
+      text = readFileSync(file, 'utf8')
+    } catch {
+      offenders.push(`${rel}（不可读文件——取证面必须是可读文本）`)
+      continue
+    }
+    scanned += 1
+    let hits = 0
+    let sample = ''
+    for (const line of text.split('\n')) {
+      const reduced = redactText(line)
+      if (reduced !== line) {
+        hits += 1
+        if (sample === '') sample = reduced.slice(0, 140)
+      }
+    }
+    if (hits > 0) offenders.push(`${rel}（${hits} 处残留，归约后形如：${sample}）`)
+  }
+  const pass = scanned > 0 && offenders.length === 0
+  return [
+    check(
+      'Q7.evidence-no-abs-path',
+      pass,
+      pass
+        ? `证据目录 ${scanned} 个文件无未归约绝对路径（<repo>/<tmp>/<home> 形态零残留）`
+        : scanned === 0
+          ? '证据目录没有任何文件（没数据必须失败）'
+          : `未归约绝对路径残留：${offenders.join('; ')}`,
+    ),
+  ]
+}
+
 /** 单个 Run 的链路 milestones（归因树的判定面）。 */
 function chainChecks(facts: ChainFacts, runId: string): VerifyCheck[] {
   return [
@@ -607,6 +663,9 @@ export function verifyEvidence(attemptDir: string): VerifyVerdict {
     check('drive.captured', true, `drive 采集完成（scenario=${scenario}, fault=${fault}）`),
   )
   checks.push(...disciplineChecks(evidence))
+  // 取证面卫生判定对「已采集的全部文件」成立，与链路归因正交：放最前面，
+  // fault 场景（归因早退）也照跑——路径泄漏在断层采集里同样是红线。
+  checks.push(...evidenceHygieneChecks(attemptDir))
 
   const run1 = evidence.meta.runIds[0]
   const run2 = evidence.meta.runIds[1]
