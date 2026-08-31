@@ -153,7 +153,8 @@ describe('run policy: cancel and transitions', () => {
 
   it('表外越边事件：事件留证 + Run 级收敛 failed(INVALID_RUN_TRANSITION)，不炸通道（#52/ADR-0007）', async () => {
     const ids = await seedRunPrereqs(database.db)
-    const harness = makeHarness(database)
+    const violations: { message: string; context: Record<string, unknown> }[] = []
+    const harness = makeHarness(database, {}, { warn: (message, context) => violations.push({ message, context }) })
     const run = await harness.orchestrator.create(
       makeActor(ids.userId),
       ids.taskId,
@@ -175,6 +176,69 @@ describe('run policy: cancel and transitions', () => {
       .from(schema.runEvents)
       .where(eq(schema.runEvents.runId, run.id))
     expect(events).toHaveLength(1) // 留证：事件行不随迁移失败回滚
+
+    // ADR-0007 撤销连接级安全网的代价论证 = 结构化违例 warn——补偿控制必须机器
+    // 钉死：降级收敛必然发出一条、字段齐（component 归因 + runId/fromStatus/reason
+    // 取证），缺省静默的 warn 通道不算兜住。
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.context).toMatchObject({
+      component: 'hub.run.orchestrator.transition-violation',
+      runId: run.id,
+      deviceId: ids.deviceId,
+      fromStatus: 'queued',
+    })
+    expect(String(violations[0]?.context.reason)).toContain('cannot apply')
+  })
+
+  it('表内合法裁决边（waiting_approval + run.completed）正常收敛，不得误发越边告警', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    const violations: { message: string; context: Record<string, unknown> }[] = []
+    const harness = makeHarness(database, {}, { warn: (message, context) => violations.push({ message, context }) })
+    const run = await harness.orchestrator.create(
+      makeActor(ids.userId),
+      ids.taskId,
+      makeCreateInput(ids),
+    )
+    await harness.pump(ids)
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(run.id, 1, { type: 'runtime.ready', dshSessionId: 's-1' }),
+    )
+    const approvalId = '00000000-0000-4000-8000-0000000aa009'
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(run.id, 2, {
+        type: 'approval.requested',
+        approval: {
+          approvalId,
+          runId: run.id,
+          callId: 'call-1',
+          toolName: 'fs.write',
+          reason: 'needs to write a file',
+          preview: { path: 'src/index.ts' },
+          status: 'pending',
+          requestedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 600_000).toISOString(),
+        },
+      }),
+    )
+    expect((await getRun(database.db, run.id))?.status).toBe('waiting_approval')
+
+    // 新加的表内裁决边：completed 是终态裁决，折叠悬置审批——但它是合法边，
+    // 违例告警必须零发（否则 warn 沦为噪声，补偿控制失去指认价值）。
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(run.id, 3, { type: 'run.completed', finalText: 'done' }, 'owner'),
+    )
+    const row = await getRun(database.db, run.id)
+    expect(row?.status).toBe('completed')
+    expect(row?.failureCode).toBeNull()
+    const [approval] = await database.db
+      .select()
+      .from(schema.approvals)
+      .where(eq(schema.approvals.id, approvalId))
+    expect(approval?.status).toBe('cancelled') // 折叠照常，但不是违例
+    expect(violations).toHaveLength(0)
   })
 
   it('never revives a terminal run when a late event arrives (03 §3.2 终态禁复活)', async () => {
