@@ -154,7 +154,11 @@ describe('run policy: cancel and transitions', () => {
   it('表外越边事件：事件留证 + Run 级收敛 failed(INVALID_RUN_TRANSITION)，不炸通道（#52/ADR-0007）', async () => {
     const ids = await seedRunPrereqs(database.db)
     const violations: { message: string; context: Record<string, unknown> }[] = []
-    const harness = makeHarness(database, {}, { warn: (message, context) => violations.push({ message, context }) })
+    const harness = makeHarness(
+      database,
+      {},
+      { warn: (message, context) => violations.push({ message, context }) },
+    )
     const run = await harness.orchestrator.create(
       makeActor(ids.userId),
       ids.taskId,
@@ -193,7 +197,11 @@ describe('run policy: cancel and transitions', () => {
   it('表内合法裁决边（waiting_approval + run.completed）正常收敛，不得误发越边告警', async () => {
     const ids = await seedRunPrereqs(database.db)
     const violations: { message: string; context: Record<string, unknown> }[] = []
-    const harness = makeHarness(database, {}, { warn: (message, context) => violations.push({ message, context }) })
+    const harness = makeHarness(
+      database,
+      {},
+      { warn: (message, context) => violations.push({ message, context }) },
+    )
     const run = await harness.orchestrator.create(
       makeActor(ids.userId),
       ids.taskId,
