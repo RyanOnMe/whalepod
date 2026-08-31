@@ -61,11 +61,14 @@ function tmpRootRule(...segments: string[]): RegExp {
 }
 
 /**
- * 规则表按「先具体后一般」排：本机真实前缀（repo/tmp/home）先归约，
- * 避免 `<repo>`/`<tmp>` 嵌在 `<home>` 里丢结构；随后是跨机器形态
- * （任意用户 home、macOS 临时目录的任意 UUID 形态）兜底，与
+ * 规则表按「先具体后一般」排：本机真实前缀（<repo>/<tmp>/<home> 对应的
+ * 本机路径）先归约，避免 `<repo>`/`<tmp>` 嵌在 `<home>` 里丢结构；随后
+ * 是跨机器形态（任意用户 home、macOS 临时目录的任意 UUID 形态）兜底，与
  * scripts/secret-scan.sh 的检出模式一致。macOS realpath（/private 前缀）
  * 与 os.tmpdir() 原形态都覆盖。
+ * 注意：本文件与 verify.ts 的注释/detail 文本不得含裸「斜杠+tmp+斜杠」
+ * 字面前缀——Linux 上 secret-scan 的动态 tmpdir 锚会把这种字面当泄漏
+ * 判中（#73 CI 实测踩过：PASS detail 自指文本命中导致出包拒收）。
  */
 function redactionRules(): readonly RedactionRule[] {
   const rules: RedactionRule[] = []

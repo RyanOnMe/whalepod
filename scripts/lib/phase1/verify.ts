@@ -446,7 +446,7 @@ function evidenceHygieneChecks(attemptDir: string): VerifyCheck[] {
       'Q7.evidence-no-abs-path',
       pass,
       pass
-        ? `证据目录 ${scanned} 个文件无未归约绝对路径（repo/tmp/home 形态零残留）`
+        ? `证据目录 ${scanned} 个文件无未归约绝对路径（<repo>/<tmp>/<home> 形态零残留）`
         : scanned === 0
           ? '证据目录没有任何文件（没数据必须失败）'
           : `未归约绝对路径残留：${offenders.join('; ')}`,
