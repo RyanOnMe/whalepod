@@ -23,7 +23,7 @@ import { schema } from '@project311/db'
 import type { Database } from '@project311/db'
 import { assembleChain, FIXTURE_APPROVAL, FIXTURE_BASIC, FIXTURE_SECRETS } from './chain.js'
 import type { BrowserClient } from './chain.js'
-import { Phase1Recorder, buildIndex, type FaultKind } from './events.js'
+import { Phase1Recorder, buildIndex, redactText, type FaultKind } from './events.js'
 import { createTestDatabase } from '../../../apps/hub/tests/helpers.js'
 import { startEphemeralPostgres } from '../../lib/ephemeral-postgres.mts'
 
@@ -276,7 +276,9 @@ export async function drivePhase1(options: DriveOptions): Promise<DriveResult> {
     recorder.event('harness.drive', 'drive.capture-end', { runIds })
   } catch (error) {
     captured = false
-    driveError = error instanceof Error ? error.message : String(error)
+    // 错误消息可能内嵌本机绝对路径（spawn/ENOENT/HTTP 体）：源头归约一次，
+    // drive.error 事件、meta.json 与 CLI 输出全部走归约后的文本（#73）。
+    driveError = redactText(error instanceof Error ? error.message : String(error))
     recorder.event('harness.drive', 'drive.error', { error: driveError })
   } finally {
     // 证据收尾：DB 快照、跨层索引、meta（cleanup 前写，时序事实不被收尾污染）。
