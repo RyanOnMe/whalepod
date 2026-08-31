@@ -2,7 +2,7 @@
 
 - 对应场景/门禁：G1-01..06、04 §6.1 HTTP/IDOR 中属于身份域的用例、Q0/Q1/Q2（见 04-验收矩阵与测试策略.md）
 - 对应 Issue：P1-05；#55（P1-17 review M10 遗留：core-empty digest 断代迁移并发锁）
-- 上次验证：2026-09-01 · fix/p1-debt-migration-lock · 结果 PASS
+- 上次验证：2026-09-01 · fix/p1-debt-migration-lock · 结果 PASS（合 origin/main #80 后复跑：Q0 unit 851、Q2 集成 37 files/273 例；#55 迁移并发/等锁超时四条全绿，红基线与绿实录脱敏留档 worktree 取证目录）
 
 ## 验的是哪条用户路径
 
