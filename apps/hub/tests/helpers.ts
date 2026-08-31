@@ -72,8 +72,15 @@ export interface AuditEvent {
   requestId: string
 }
 
+/** 捕获 hub warn 级结构化日志（带 component 的非审计行）；供告警计数断言（#55 迁移告警）。 */
+export interface WarnEvent {
+  readonly component: string
+  readonly msg: string
+}
+
 class AuditStream extends Writable {
   readonly events: AuditEvent[] = []
+  readonly warnings: WarnEvent[] = []
 
   override _write(
     chunk: Buffer | string,
@@ -84,8 +91,19 @@ class AuditStream extends Writable {
       const trimmed = line.trim()
       if (trimmed === '') continue
       try {
-        const entry = JSON.parse(trimmed) as { component?: string } & AuditEvent
+        const entry = JSON.parse(trimmed) as {
+          component?: string
+          level?: number
+          msg?: string
+        } & AuditEvent
         if (entry.component === 'hub.audit') this.events.push(entry)
+        else if (
+          entry.level === 40 &&
+          typeof entry.component === 'string' &&
+          typeof entry.msg === 'string'
+        ) {
+          this.warnings.push({ component: entry.component, msg: entry.msg })
+        }
       } catch {
         // 非 JSON 行（启动横幅等）忽略
       }
@@ -101,6 +119,7 @@ export interface TestApp {
   readonly setupToken: string
   readonly setupTokenPath: string
   readonly auditEvents: AuditEvent[]
+  readonly warnEvents: WarnEvent[]
   readonly config: HubConfig
   close(): Promise<void>
 }
@@ -143,6 +162,7 @@ export async function createTestApp(
     setupToken,
     setupTokenPath,
     auditEvents: audit.events,
+    warnEvents: audit.warnings,
     config,
     close: async () => {
       await app.close()
