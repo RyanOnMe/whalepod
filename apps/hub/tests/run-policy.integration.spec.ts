@@ -151,7 +151,7 @@ describe('run policy: cancel and transitions', () => {
     )
   })
 
-  it('rejects invalid node-reported transitions without touching stored state', async () => {
+  it('表外越边事件：事件留证 + Run 级收敛 failed(INVALID_RUN_TRANSITION)，不炸通道（#52/ADR-0007）', async () => {
     const ids = await seedRunPrereqs(database.db)
     const harness = makeHarness(database)
     const run = await harness.orchestrator.create(
@@ -160,14 +160,21 @@ describe('run policy: cancel and transitions', () => {
       makeCreateInput(ids),
     )
 
-    // queued 上收到 run.completed 是非法边（§3.2）：整帧拒绝，不落事件不改状态。
-    await expect(
-      harness.orchestrator.ingestNodeEvent(
-        harness.deviceFor(ids),
-        runEventFrame(run.id, 1, { type: 'run.completed', finalText: 'premature' }),
-      ),
-    ).rejects.toMatchObject({ code: 'INVALID_RUN_TRANSITION' })
-    expect((await getRun(database.db, run.id))?.status).toBe('queued')
+    // queued 上收到 run.completed 是表外边（§3.2 有意不开）：旧姿势是抛错→连接级
+    // 惩罚（毒帧循环的引擎）；新姿势是事件照常落库留证 + 单 Run 收敛为终态。
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(run.id, 1, { type: 'run.completed', finalText: 'premature' }, 'owner'),
+    )
+    const row = await getRun(database.db, run.id)
+    expect(row?.status).toBe('failed')
+    expect(row?.failureCode).toBe('INVALID_RUN_TRANSITION')
+    expect(row?.failureSummary).toContain('cannot apply')
+    const events = await database.db
+      .select()
+      .from(schema.runEvents)
+      .where(eq(schema.runEvents.runId, run.id))
+    expect(events).toHaveLength(1) // 留证：事件行不随迁移失败回滚
   })
 
   it('never revives a terminal run when a late event arrives (03 §3.2 终态禁复活)', async () => {

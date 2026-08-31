@@ -3,8 +3,10 @@ import { expectDomainError } from './helpers.js'
 import type { RunEvent, RunStatus } from '../src/run.js'
 import { transitionRun } from '../src/run.js'
 
-// 合法边与状态迁移表以 03-领域模型与运行协议.md §3.2 为准（与 02 Task 2 示例
-// 冲突处以 03 为准：waiting_approval/cancel_requested 不接受 failed）。
+// 合法边与状态迁移表以 03-领域模型与运行协议.md §3.2 为准。
+// #52（ADR-0007）：waiting_approval 接受 Runtime 的终态裁决（completed/failed）；
+// cancel_requested 不接受终态裁决边（它的收敛只有 cancel_confirmed / lease_expired，
+// 表外事件由 Hub 做事件留证 + Run 级降级收敛，不再毒杀连接）。
 const RUN_STATUSES: readonly RunStatus[] = [
   'queued',
   'dispatching',
@@ -47,6 +49,9 @@ const RUN_LEGAL: Readonly<Record<RunStatus, Partial<Record<RunEvent['type'], Run
   waiting_approval: {
     approval_closed: 'running',
     cancel_requested: 'cancel_requested',
+    // ADR-0007：Runtime 在悬置审批下的终态是对该 Run 的最终裁决。
+    completed: 'completed',
+    failed: 'failed',
     lease_expired: 'lost',
   },
   cancel_requested: { cancel_confirmed: 'cancelled', lease_expired: 'lost' },
@@ -80,9 +85,15 @@ describe('transitionRun', () => {
     )
   })
 
-  it('rejects failed in waiting_approval and cancel_requested (03 状态机无此边)', () => {
+  it('accepts Runtime 终态裁决 in waiting_approval (ADR-0007)，rejects them in cancel_requested', () => {
+    expect(transitionRun({ status: 'waiting_approval' }, { type: 'completed' })).toEqual({
+      status: 'completed',
+    })
+    expect(transitionRun({ status: 'waiting_approval' }, { type: 'failed' })).toEqual({
+      status: 'failed',
+    })
     expectDomainError(
-      () => transitionRun({ status: 'waiting_approval' }, { type: 'failed' }),
+      () => transitionRun({ status: 'cancel_requested' }, { type: 'completed' }),
       'INVALID_RUN_TRANSITION',
     )
     expectDomainError(

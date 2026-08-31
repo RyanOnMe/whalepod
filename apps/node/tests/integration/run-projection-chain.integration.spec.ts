@@ -15,10 +15,14 @@
  *          缩水流），live delta 只到 owner；
  *   G4-05  owner 流上最后一条 assistant 内容先于 run.completed（flush 顺序）；
  *   R1     Hub 进程重启（Node 不动）→ Node 重连自动补发，Hub 侧 seq 连续无缺口；
+ *   #52    Runtime 在悬置 Approval 下完成（stub 直发帧）→ Run 收敛 completed、
+ *          审批折叠、spool 清空（全链路毒帧清零，ADR-0007）；
  *   语料   04 §6.4 六件秘密语料在 Hub DB 与两个 Browser 帧流中都零出现，
  *          且 owner 文本呈现脱敏标记（证明是「脱了敏」，不是「没内容」）。
  */
 import { DatabaseSync } from 'node:sqlite'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
@@ -429,6 +433,105 @@ describe('P1-13 全链路（真 Hub + 真 Node + 真 Runtime/replay）', () => {
     const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
     expect(run?.status).toBe('completed')
   }, 120_000)
+
+  it('#52 全链路：Runtime 在悬置 Approval 下完成 → Run 收敛 completed、审批折叠、连接与 spool 正常收口', async () => {
+    // 「审批不阻塞」的 Runtime 用 stub 直发 §7.2 帧构造（与 fault=runtime 必崩
+    // stub 同先例）：ready → approval.requested（无决定）→ run.completed。
+    // 真 Node（投影/spool/drain/重连）+ 真 Hub（WS/orchestrator/PG）原样跑毒帧
+    // 序列——修复前此处必现 4003 循环：run 永卡 waiting_approval、spool 永不清空。
+    const stubDir = mkdtempSync(join(tmpdir(), 'p311-p52-runtime-stub-'))
+    const stub = join(stubDir, 'runtime-entry.mjs')
+    // driver 的 spawn 参数形态：node <entry> -- --run-id <id> --nonce <n> --prompt-stdin
+    writeFileSync(
+      stub,
+      [
+        'const argv = process.argv.slice()',
+        "const runId = argv[argv.indexOf('--run-id') + 1]",
+        'const send = (type, payload) =>',
+        '  process.stdout.write(',
+        "    JSON.stringify({ protocolVersion: 1, messageId: crypto.randomUUID(), sentAt: new Date().toISOString(), type, payload }) + '\\n',",
+        '  )',
+        'process.stdin.resume()',
+        "setTimeout(() => send('runtime.ready', { runId, dshSessionId: 'stub-session-1' }), 100)",
+        "setTimeout(() => send('approval.requested', { runId, callId: 'call-p52-1', toolName: 'bash', reason: 'needs rm' }), 400)",
+        "setTimeout(() => send('run.completed', { runId, dshSessionId: 'stub-session-1' }), 900)",
+      ].join('\n'),
+    )
+    let c: ChainAssembly
+    try {
+      c = await assembleChain({
+        database,
+        fixture: FIXTURE_BASIC,
+        agents: 1,
+        runtimeEntry: stub,
+        nodeArgs: [],
+      })
+      chain = c
+      const runId = await startRun({
+        ctx: c.ctx,
+        alice: c.alice,
+        taskId: c.taskId,
+        builderAgentId: c.builderAgentId,
+        deviceId: c.deviceId,
+        workspaceId: c.workspaceId,
+      })
+
+      // 悬置审批落 Hub：Run 进入 waiting_approval（真人路径上行）。
+      await waitForRunEvent(runId, (rs) =>
+        rs.some((r) => r.type === 'approval.requested' && r.audience === 'owner'),
+      )
+      const [waiting] = await database.db
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.id, runId))
+      expect(waiting?.status).toBe('waiting_approval')
+
+      // 裁决覆盖：run.completed 到达 → 全链路收敛为真终态 completed（修复前永不满足）。
+      const rows = await waitForRunEvent(
+        runId,
+        (rs) => rs.some((r) => r.type === 'run.completed' && r.audience === 'owner'),
+        30_000,
+      )
+      const [finalRun] = await database.db
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.id, runId))
+      expect(finalRun?.status).toBe('completed')
+      expect(finalRun?.failureCode).toBeNull()
+
+      // 折叠：pending Approval 随终态 cancelled（owner 行里的 approvalId 对上）。
+      const ownerRequested = rows.find(
+        (r) => r.type === 'approval.requested' && r.audience === 'owner',
+      )
+      const approvalId = (ownerRequested?.payload as { approval: { approvalId: string } }).approval
+        .approvalId
+      const [approval] = await database.db
+        .select()
+        .from(schema.approvals)
+        .where(eq(schema.approvals.id, approvalId))
+      expect(approval?.status).toBe('cancelled')
+
+      // 连接与 spool 正常收口：毒帧被 ack → spool 清空（毒帧循环拆除的直接证明；
+      // 修复前 Hub 4003 反复断连，run.completed 永远进不了 Hub）。
+      const spoolDeadline = Date.now() + 10_000
+      for (;;) {
+        const spool = new DatabaseSync(join(c.nodeStateDir, 'events.sqlite'), { readOnly: true })
+        let left: { n: number }
+        try {
+          left = spool
+            .prepare('select count(*) as n from spooled_event where run_id = ?')
+            .get(runId) as { n: number }
+        } finally {
+          spool.close()
+        }
+        if (left.n === 0) break
+        if (Date.now() > spoolDeadline) throw new Error('spool never drained; poison loop intact')
+        await silence(100)
+      }
+    } finally {
+      rmSync(stubDir, { recursive: true, force: true })
+    }
+  }, 90_000)
 
   it('秘密语料：六件语料在 Hub DB 与两个 Browser 帧流零出现，脱敏标记在', async () => {
     const c = await setupChain(FIXTURE_SECRETS)
