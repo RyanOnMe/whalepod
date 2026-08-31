@@ -9,6 +9,8 @@
  * - Node command.ack 只表示命令已持久到 Node spool：queued → dispatching；
  *   只有 runtime.ready 才转 running。
  * - 终态禁复活：终态 Run 上的迟到事件持久留证但不迁移状态。
+ * - #52/ADR-0007：合法帧上的语义冲突（表外边/引用缺失）不外溢为通道故障——
+ *   事件留证 + 非终态 Run 收敛 failed(INVALID_RUN_TRANSITION) + 连接保留。
  */
 import { randomUUID } from 'node:crypto'
 import { and, eq, inArray } from 'drizzle-orm'
@@ -36,7 +38,7 @@ import {
 } from '@project311/db'
 import type { ErrorCode, ProjectedRunEvent, RunSnapshot } from '@project311/protocol'
 import { parseNodeFrame, RunStartSchema } from '@project311/protocol'
-import { cancelRunInTransaction } from './cancel.js'
+import { cancelPendingApprovalsInTransaction, cancelRunInTransaction } from './cancel.js'
 import { decideApprovalInTransaction } from './decide.js'
 import type { ApprovalDecisionInput } from './decide.js'
 import { expireApprovals } from './approval-expiry.js'
@@ -55,16 +57,37 @@ function isTerminal(status: RunRow['status']): boolean {
   return (TERMINAL_RUN_STATUSES as readonly string[]).includes(status)
 }
 
+/**
+ * #52/ADR-0007：事件通道上的「语义冲突」错误——帧结构合法、归属合法、seq 有效，
+ * 只有该 Run 的账本解释不了它。这类错误降级为 Run 级收敛，不再冒泡到 WS 层的
+ * 连接级惩罚；通道不可信类（schema 坏、越权）不在其列。
+ */
+function isRunSemanticConflict(error: unknown): boolean {
+  if (error instanceof DomainError) return error.code === 'INVALID_RUN_TRANSITION'
+  if (error instanceof RunCommandError) {
+    // 近亲：approval.decided 引用缺失行——同样是单 Run 账本冲突（NOT_FOUND 在
+    // applyProjectedEvent 内仅此一个来源）。
+    return error.code === 'NOT_FOUND'
+  }
+  return false
+}
+
 export interface RunOrchestratorDeps {
   database: Database
   outbox: Outbox
   now?: () => Date
+  /**
+   * #52：越边降级与违例收敛的结构化告警通道（组合根接 app.log.warn，
+   * component 分层字段由调用点给出）。缺省 = 静默（测试深模块驱动）。
+   */
+  warn?: (message: string, context: Record<string, unknown>) => void
 }
 
 export class RunOrchestrator {
   private readonly database: Database
   private readonly outbox: Outbox
   private readonly nowFn: () => Date
+  private readonly warnFn: (message: string, context: Record<string, unknown>) => void
   /** deviceId → 最近心跳；reconciler 据此判断「Node 在线但已没有该 Run」。 */
   readonly deviceActivity = new Map<string, DeviceActivity>()
 
@@ -72,6 +95,7 @@ export class RunOrchestrator {
     this.database = deps.database
     this.outbox = deps.outbox
     this.nowFn = deps.now ?? (() => new Date())
+    this.warnFn = deps.warn ?? (() => {})
   }
 
   /**
@@ -453,7 +477,52 @@ export class RunOrchestrator {
       // append 成功，若都推状态机，第二行必撞 INVALID_RUN_TRANSITION——状态
       // 迁移只由 owner（全量）行驱动，project（收缩）行是纯镜像。
       if (payload.audience !== 'owner') return
-      await this.applyProjectedEvent(tx, run, payload.event, now)
+      try {
+        await this.applyProjectedEvent(tx, run, payload.event, now)
+      } catch (error) {
+        // #52/ADR-0007：表外边/引用缺失——语义冲突在本事务内降级：已 append 的
+        // 事件行随降级提交一起留证（现状：抛错回滚，连证都留不下），Run 收敛
+        // failed，帧按正常应用 ack 掉（水位推进、spool 可 GC）——毒帧循环从
+        // 源头拆除，连接保留。
+        if (isRunSemanticConflict(error)) {
+          await this.convergeSemanticConflict(tx, run, error, now)
+          return
+        }
+        throw error
+      }
+    })
+  }
+
+  /**
+   * 语义冲突的 Run 级收敛（ADR-0007 决策 2）：failed(INVALID_RUN_TRANSITION)、
+   * pending Approval 随终态折叠（cause=run_terminal_fold）、run.changed 广播、
+   * 结构化 warn（违例的可观测面）。不走 transitionRun——收敛本身必须无条件
+   * 成立（否则又造出新的不可收敛态）。
+   */
+  private async convergeSemanticConflict(
+    tx: Tx,
+    run: RunRow,
+    error: unknown,
+    now: Date,
+  ): Promise<void> {
+    const reason = error instanceof Error ? error.message : String(error)
+    this.warnFn('run transition violation converged to failed', {
+      component: 'hub.run.orchestrator.transition-violation',
+      runId: run.id,
+      deviceId: run.deviceId,
+      taskId: run.taskId,
+      fromStatus: run.status,
+      reason,
+    })
+    await setRunStatus(tx, run.id, 'failed', {
+      failureCode: 'INVALID_RUN_TRANSITION',
+      failureSummary: `transition violation: ${reason}`.slice(0, 1000),
+      finishedAt: now,
+    })
+    await cancelPendingApprovalsInTransaction(tx, run, now, 'run_terminal_fold')
+    await appendTeamEvent(tx, {
+      type: 'run.changed',
+      payload: { runId: run.id, taskId: run.taskId, status: 'failed' },
     })
   }
 
@@ -482,6 +551,9 @@ export class RunOrchestrator {
       case 'run.completed': {
         this.applyRunTransition(run, { type: 'completed' })
         await setRunStatus(tx, run.id, 'completed', { finishedAt: now })
+        // #52/ADR-0007：Runtime 终态裁决折叠悬置审批（waiting_approval 来的
+        // 裁决在此落账；running 来的折叠是恒等空转，一并防御既有不变量）。
+        await cancelPendingApprovalsInTransaction(tx, run, now, 'run_terminal_fold')
         await runChanged('completed')
         return
       }
@@ -492,6 +564,7 @@ export class RunOrchestrator {
           failureSummary: event.summary,
           finishedAt: now,
         })
+        await cancelPendingApprovalsInTransaction(tx, run, now, 'run_terminal_fold')
         await runChanged('failed')
         return
       }
@@ -632,13 +705,22 @@ export class RunOrchestrator {
       ...(snapshot.failureCode !== null ? { failureCode: snapshot.failureCode } : {}),
       ...(snapshot.failureSummary !== null ? { failureSummary: snapshot.failureSummary } : {}),
     })
+    // ADR-0007：快照也能把 waiting_approval 收敛到终态（新边）——同一事务折叠
+    // 悬置审批，守住「终态 Run 不挂 pending Approval」的账本不变式。
+    if (terminal) {
+      await cancelPendingApprovalsInTransaction(tx, run, now, 'run_terminal_fold')
+    }
     await appendTeamEvent(tx, {
       type: 'run.changed',
       payload: { runId: run.id, taskId: run.taskId, status },
     })
   }
 
-  /** 状态迁移唯一入口：domain transitionRun 抛出即非法边，调用方不吞（snapshot 除外）。 */
+  /**
+   * 状态迁移唯一入口：domain transitionRun 抛出即表外边。调用方分通道处置——
+   * run.event 通道在同一事务捕获并 Run 级收敛留证（convergeSemanticConflict），
+   * snapshot 通道视为陈旧投影静默跳过；HTTP/取消等写路径照旧上抛 409。
+   */
   private applyRunTransition(run: RunRow, event: DomainRunEvent): { status: RunRow['status'] } {
     return transitionRun({ status: run.status }, event)
   }

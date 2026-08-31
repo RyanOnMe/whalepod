@@ -167,7 +167,13 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
   // orchestrator 实例同时服务 WS 上行分发与 Run 路由组合（P1-13）。
   // Browser 实时链路先注册：拿到 RealtimeHub 注入 Node WS（live delta 投递面）。
   const realtime = registerRealtimeRoutes(app, { database, publicOrigin: config.publicOrigin })
-  const orchestrator = new RunOrchestrator({ database, outbox })
+  const orchestrator = new RunOrchestrator({
+    database,
+    outbox,
+    // #52/ADR-0007：表外越边的 Run 级降级收敛走结构化 warn（component 分层，
+    // 违例计数/告警的挂点；真人路径可观测，不做暗手）。
+    warn: (message, context) => app.log.warn({ component: 'hub.run', ...context }, message),
+  })
   app.decorate('runOrchestrator', orchestrator)
   registerNodeWebsocket(app, { database, orchestrator, realtime })
 

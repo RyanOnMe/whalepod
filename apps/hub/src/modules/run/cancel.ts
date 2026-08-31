@@ -88,8 +88,24 @@ export async function cancelRunInTransaction(
   transitionRun({ status: run.status }, { type: 'cancel_requested' })
 }
 
-/** 把 Run 上全部 pending Approval 置 cancelled 并广播 approval.changed（G5-07）。 */
-async function cancelPendingApprovalsInTransaction(tx: Tx, run: RunRow, now: Date): Promise<void> {
+/**
+ * 把 Run 上全部 pending Approval 置 cancelled 并广播 approval.changed。
+ *
+ * 两个触发面（同源折叠，保证「终态 Run 不挂 pending Approval」的账本不变式）：
+ * - run.cancel（G5-07）：用户/管理员取消，事件 payload 不带 cause（既有形态）；
+ * - Run 终态收敛（#52/ADR-0007）：Runtime 在悬置审批下的裁决（completed/failed）
+ *   与表外越边的 Run 级降级收敛，传 cause='run_terminal_fold'——语义是「审批随
+ *   Run 终态失效」，不是有人做出了决定（不得记 rejected/expired 伪造决定或计时）。
+ *
+ * 决定/失效随 Run 收口：Node 取消 Runtime 时，桥在 dispose 时收口全部挂起审批
+ * （approval-port.cancelAll），无需逐条 approval.decide 下行。
+ */
+export async function cancelPendingApprovalsInTransaction(
+  tx: Tx,
+  run: RunRow,
+  now: Date,
+  cause?: 'run_terminal_fold',
+): Promise<void> {
   const pending = await tx
     .select()
     .from(schema.approvals)
@@ -101,7 +117,7 @@ async function cancelPendingApprovalsInTransaction(tx: Tx, run: RunRow, now: Dat
       { type: 'cancel', at: now.getTime() },
     )
     // decided_by 记 Run owner：03 §2.6「必须等于 Run owner」的平凡满足
-    //（取消联动是系统写入，不存在人工决定者）。
+    //（折叠是系统写入，不存在人工决定者）。
     await setApprovalStatus(tx, approval.id, 'cancelled', run.ownerUserId, now)
     await appendTeamEvent(tx, {
       type: 'approval.changed',
@@ -110,6 +126,7 @@ async function cancelPendingApprovalsInTransaction(tx: Tx, run: RunRow, now: Dat
         runId: run.id,
         taskId: run.taskId,
         status: 'cancelled',
+        ...(cause === undefined ? {} : { cause }),
       },
     })
   }

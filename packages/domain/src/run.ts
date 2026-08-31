@@ -2,8 +2,12 @@ import { DomainError } from './errors.js'
 
 // 状态迁移表以 03-领域模型与运行协议.md §3.2 为准：
 // 终态 completed | failed | cancelled | lost 之间禁止迁移。
-// 与 02-第一阶段实施计划.md Task 2 示例的差异（以 03 为准）：
-// waiting_approval 与 cancel_requested 不接受 failed。
+// #52/ADR-0007 修订（取代 P1-02 对 02 Task 2 示例的「waiting_approval 不接受
+// 终态」收紧）：waiting_approval 接受 completed/failed——审批的执行闸门在 Runtime
+// 路径（ask-all 阻塞），不是 Hub 侧的终态前置条件；Runtime 在悬置审批下报出终态
+// 是对该 Run 的最终裁决，Hub 记账必须能收敛（落终态同事务折叠 pending
+// Approval）。cancel_requested 仍不收终态裁决边：取消的收敛由确认/强杀/租约负责，
+// 表外冲突事件由 Hub 做事件留证 + Run 级降级收敛，不再连接级惩罚（毒帧循环）。
 export type RunStatus =
   | 'queued'
   | 'dispatching'
@@ -45,6 +49,10 @@ const RUN_NEXT: Readonly<Record<RunStatus, Partial<Record<RunEvent['type'], RunS
   waiting_approval: {
     approval_closed: 'running',
     cancel_requested: 'cancel_requested',
+    // ADR-0007：Runtime 在悬置审批下的终态是 Run 的最终裁决；Hub 落终态的
+    // 同事务把 pending Approval 折叠为 cancelled（cause=run_terminal_fold）。
+    completed: 'completed',
+    failed: 'failed',
     lease_expired: 'lost',
   },
   cancel_requested: { cancel_confirmed: 'cancelled', lease_expired: 'lost' },
