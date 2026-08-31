@@ -1,8 +1,9 @@
 # Run 投影、脱敏与双受众流验收
 
-- 对应场景/门禁：G4-04..06、R1/R6、04 §6.4 秘密语料；Q0/Q2/Q3
-- 对应 Issue：#17（P1-13）
+- 对应场景/门禁：G4-04..06、G5-08、R1/R6、04 §6.4 秘密语料；Q0/Q2/Q3
+- 对应 Issue：#17（P1-13）、#52（越边毒帧类清零，ADR-0007）
 - 上次验证：2026-08-28 · feat/p1-13-run-projection · 结果 PASS（Q0 单测 640+、Q2 集成 187+、链路 spec 3/3 ×3 连跑稳定）
+  · 追加 fix/p1-debt-transition-poison-frame：#52 越边用例（Hub 真人路径 8 例 + policy 降级 + 全链路裁决覆盖）PASS
 
 ## 验的是哪条用户路径
 
@@ -29,6 +30,11 @@ owner-only live delta 不持久通道。一切文本离开设备前过 §9 脱�
 - secrets fixture（packages/runtime-dsh/tests/dsh-contract/fixtures/secrets/）：单 turn
   文本原样嵌入 §6.4 六件语料，作攻击输入（语料是攻击输入的存放处 ≠ evidence，
   secret-scan 针对 evidence/日志判负）。
+- **#52 越边毒帧（run-transition-violation.integration.spec.ts 8 例）**：真人 WS 路径
+  构造 waiting_approval，再上送终态/表外/引用缺失帧，断言连接存活、真终态、留证、
+  折叠 cancelled、ack 水位推进、R6 重放、重连 drain、终态禁复活、反向守门 4003；
+  全链路裁决覆盖用 stub Runtime（ready→approval.requested 无人决定→completed）跑
+  真 Node spool/drain + 真 Hub，spool 清空即毒帧循环拆除的直接证明。
 
 ## 判定
 
@@ -43,6 +49,9 @@ owner-only live delta 不持久通道。一切文本离开设备前过 §9 脱�
   同端口重启后 Node 自动重连全量补发，Hub 侧 seq 空间（跨受众共享）1..N 连续，
   run 行落 completed。
 - R6：重复 (runId,seq) 不产生第二行、仍按水位 ack（幂等已应用）。
+- G5-08（#52/ADR-0007）：waiting_approval 收终态裁决 → Run 落真终态、pending Approval
+  cancelled(cause=run_terminal_fold)、连接存活、事件留证；表外越边 → 留证 +
+  failed(INVALID_RUN_TRANSITION) + 连接保留；结构坏/越权 → 仍 4003。
 - 秘密语料：六件语料在 Hub run_event 全表 JSON 与两个 Browser 帧流中零出现；
   owner 完成行含 `<redacted>`/`<home>/private/project`/`https://example.com/path`
   （证明是脱了敏，不是没内容）。
@@ -53,14 +62,16 @@ owner-only live delta 不持久通道。一切文本离开设备前过 §9 脱�
   第二行重复应用同一状态边 → INVALID_RUN_TRANSITION → Hub 4003 断连 → Node 重连
   补发 → 再撞同一边 → 毒帧循环。修复：状态迁移只由 owner 行驱动，project 行纯镜像
   （orchestrator.handleRunEvent）。低层集成测试没抓到它（只发单行）；全链路才暴露。
+- **越边毒帧类（#52/ADR-0007）**：waiting_approval 等状态下 Runtime 终态帧撞表外边 →
+  抛错回滚连事件行都留不下 → 4003 → 补发再撞。修复：领域开 `waiting_approval →
+  completed/failed` 终态裁决边（落终态同事务折叠 pending Approval，
+  cause=run_terminal_fold）；表外越边降级为「留证 + Run 收敛
+  failed(INVALID_RUN_TRANSITION) + 连接保留」，4003 收窄至结构坏/越权。
 
 ## 边界与未覆盖
 
-- `waiting_approval → completed` 无状态机边：Runtime 在仍有 pending Approval 时完成
-  （replay 下审批不阻塞即出现）会让 Hub 拒收该事件并断连。生产 DSH ask-all 语义下
-  理论上不可达，但属于「合法观感事件序列可毒杀连接」的健壮性缺口，已另立 Issue 跟进。
 - live delta 丢损由设计（lossy）；Run 完成后 Runtime 子进程驻留至 supervisor 超时
-  （capacity 释放策略待 P1-14/16 定稿）。
+  （capacity 释放策略已由 P1-14/16 定稿：终态单一收敛点清理）。
 - G4-04 的 Playwright 双 BrowserContext 形态留 P1-19（Q5 门）；本 Issue 用双 WS
   客户端证明同一帧边界 diff。
 
@@ -75,4 +86,6 @@ pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration ru
 pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration run-projection-chain
 # Q3 契约（replay overlay 本体）
 pnpm test:dsh-contract
+# #52 越边毒帧（真人 WS 路径 8 例 + 全链路裁决覆盖；同一集成 project）
+pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration run-transition-violation
 ```
