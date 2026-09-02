@@ -16,7 +16,8 @@ Issue #11 验收原文：**Alice 创建 Task、Bob 在第二 BrowserContext 接�
 ## 驱动（怎么触发）
 
 ```bash
-pnpm exec playwright test          # playwright.config.ts webServer 拉起全环境并跑场景
+pnpm test:e2e                      # 整门全量（两项目各自冷启；单 invocation 跑双
+                                   # project 会共享 webServer，第二次 Setup 必 409）
 pnpm exec playwright test --ui     # 调试模式（可选）
 ```
 
@@ -55,7 +56,8 @@ pnpm exec playwright test --ui     # 调试模式（可选）
 ## 取证
 
 ```bash
-pnpm exec playwright test                 # 场景本体
+pnpm exec playwright test --project=p1-07 # 场景本体（单项目：双 project 单 invocation
+                                          # 共享 webServer 会二次 Setup 409，全门用 pnpm test:e2e）
 pnpm check && pnpm test:integration       # Q0/Q2（本次改动后 536/536 + 174/174）
 bash scripts/secret-scan.sh apps/web scripts docs/agent
 ```
@@ -73,7 +75,7 @@ bash scripts/secret-scan.sh apps/web scripts docs/agent
 
 ```bash
 corepack enable && pnpm install --frozen-lockfile && pnpm -r --if-present build
-pnpm exec playwright test
+pnpm exec playwright test --project=p1-07   # 单项目冷启（理由见上方取证块注记）
 ```
 
 ---
@@ -182,8 +184,8 @@ cli.ts 恒为空）。
 
 ```bash
 corepack enable && pnpm install --frozen-lockfile && pnpm -r --if-present build
-pnpm exec playwright test                                   # 全量 13 场景
-pnpm test:e2e                                             # 整门全量（两项目各自冷启）
+pnpm test:e2e                                             # 整门全量（两项目各自冷启：
+                                          # 同一 Hub 只容一次 Setup，单 invocation 双 project 必 409）
 bash scripts/q5-loop.sh 20                                  # Q5 门（20 连冷启；轮次日志 artifacts/q5/）
 pnpm check && pnpm test:integration                         # Q0/Q2
 bash scripts/secret-scan.sh apps/web scripts docs/agent     # Q7 片段

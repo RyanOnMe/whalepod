@@ -306,9 +306,9 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     // 单测友好：setup/pair 幂等守卫使本测试可被 --grep 独立拉起。
     await setupTeamAndTask()
     await pairNodeViaUiAndControl()
-    // 拒绝分支快照：工具调用与 approval 相同，但收尾文本是「被拒解释」——语义
-    // 诚实（replay 是定序回放、不随决定分支；共用 approval 快照会让拒绝 Run
-    // 说出 “Artifact published.” 的假话）。
+    // 拒绝分支快照：工具调用与 approval 相同，收尾文本即被拒解释——replay 是
+    // 定序回放不随决定分支，快照文本本身必须是被拒叙事（假话消灭在事实源，
+    // 两端与 completed 摘要通路同文）。
     await setRuntimeFixture('rejection')
     try {
       await shared.bob!.reload()
@@ -344,6 +344,16 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
       await shared.alice!.reload()
       await selectRun(shared.alice!, runId)
       await expect(shared.alice!.getByTestId('run-live-events')).toContainText('审批决定：已拒绝')
+
+      // 语义诚实（二评残留修复）：两端事件区含被拒解释文本（owner 原文行 +
+      // project completed 摘要直通），且两端任何一行都不得再说 “Artifact
+      // published.”——被拒 Run 说假话正是独立快照要消灭的东西。
+      const REJECT_EXPLANATION = 'Report skipped: publication was rejected by the approver.'
+      for (const page of [shared.bob!, shared.alice!]) {
+        const events = page.getByTestId('run-live-events')
+        await expect(events).toContainText(REJECT_EXPLANATION)
+        await expect(events).not.toContainText('Artifact published.')
+      }
 
       await releaseRuntime(runId)
     } finally {
@@ -411,16 +421,20 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     expect(manifest.manifestText).toContain(builderArtifact.sha256)
     expect(manifest.manifestText).toContain('runtime-inputs')
     // 不继承 Builder Workspace（评审 N3）：① canonical 真实目录不得出现在输入
-    // 清单（dir 是 runtime-inputs/<runId> 消费位——合法绝对路径，与来源 workspace
-    // 判然有别）；② 全 Run 事件正文任何一行不得携带该路径（03 §2.4 红线：
-    // canonicalPath 永不出 Node 投影面）。
+    // 清单（dir 是 runtime-inputs/<runId> 消费位——合法绝对路径，与来源
+    // workspace 判然有别）；② 两端 RunLivePanel 真实 UI 文本面不得携带该路径
+    // （03 §2.4 红线：canonicalPath 永不出 Node 投影面。二评修复：原「全
+    // runEvents 正文」循环因 RunFact 列白名单只有 seq/type/audience 而恒真，
+    // 撤换为 UI innerText 断言）。
     const builderWsPath = await workspaceCanonicalPath()
     expect(builderWsPath.length).toBeGreaterThan(0)
     expect(manifest.manifestText).not.toContain(builderWsPath)
-    const evFact = await getRunFact(runId)
-    for (const e of evFact.runEvents) {
-      expect(JSON.stringify(e)).not.toContain(builderWsPath)
-    }
+    await shared.bob!.reload()
+    await selectRun(shared.bob!, runId)
+    await expect(shared.bob!.getByTestId('run-live-events')).not.toContainText(builderWsPath)
+    await shared.alice!.reload()
+    await selectRun(shared.alice!, runId)
+    await expect(shared.alice!.getByTestId('run-live-events')).not.toContainText(builderWsPath)
     // Reviewer 消费位真实存在（受控输入不是一句空话）。
     expect(manifest.manifestText).toContain(join('runtime-inputs', runId))
   })
@@ -428,51 +442,57 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
   test('G4-04 两浏览器 frame diff：Bob 见脱敏全文事件流，Alice 只见脱敏阶段', async () => {
     test.setTimeout(240_000)
     await setRuntimeFixture('basic')
-    await shared.bob!.reload()
-    const runId = await startRunViaUi('builder', 'hello replay')
-    await waitForRunStatus(runId, 'completed', 120_000)
+    try {
+      await shared.bob!.reload()
+      const runId = await startRunViaUi('builder', 'hello replay')
+      await waitForRunStatus(runId, 'completed', 120_000)
 
-    // Bob（owner）：事件流含 owner 行（assistant.message 全文只在 owner 受众投影）。
-    await selectRun(shared.bob!, runId)
-    await expect(shared.bob!.getByTestId('run-live-events')).toContainText('Hello from replay.', {
-      timeout: 30_000,
-    })
-    expect(await shared.bob!.locator('.run-event.audience-owner').count()).toBeGreaterThanOrEqual(5)
-    // 原文正对照（评审 N3）：owner 受众行里确有该原文（Alice 侧的负断言因此
-    // 不是空真——同一原文在 project 侧只允许以 run.completed 摘要形态出现）。
-    expect(
-      await shared
-        .bob!.getByTestId('run-live-events')
-        .locator('.run-event.audience-owner', { hasText: 'Hello from replay.' })
-        .count(),
-    ).toBeGreaterThanOrEqual(1)
+      // Bob（owner）：事件流含 owner 行（assistant.message 全文只在 owner 受众投影）。
+      await selectRun(shared.bob!, runId)
+      await expect(shared.bob!.getByTestId('run-live-events')).toContainText('Hello from replay.', {
+        timeout: 30_000,
+      })
+      expect(await shared.bob!.locator('.run-event.audience-owner').count()).toBeGreaterThanOrEqual(
+        5,
+      )
+      // 原文正对照（评审 N3）：owner 受众行里确有该原文（Alice 侧的负断言因此
+      // 不是空真——同一原文在 project 侧只允许以 run.completed 摘要形态出现）。
+      expect(
+        await shared
+          .bob!.getByTestId('run-live-events')
+          .locator('.run-event.audience-owner', { hasText: 'Hello from replay.' })
+          .count(),
+      ).toBeGreaterThanOrEqual(1)
 
-    // Alice（成员）：同一动作——服务端受众过滤后，owner 行零出现，只见缩水产品。
-    await shared.alice!.reload()
-    await selectRun(shared.alice!, runId)
-    const aliceEvents = shared.alice!.getByTestId('run-live-events')
-    await expect(aliceEvents).toBeVisible({ timeout: 30_000 })
-    await expect(aliceEvents.locator('.run-event.audience-project').first()).toBeVisible()
-    expect(await aliceEvents.locator('.run-event.audience-owner').count()).toBe(0)
-    const aliceText = await aliceEvents.innerText()
-    expect(aliceText).toContain('DSH 运行时就绪') // 缩水流确有内容（脱敏而非空缺）
-    // 评审 N3 原文负断言（行级、防摘要设计误伤）：该原文在 Alice 侧不得以
-    // owner 受众行出现；project 受众行中也不允许有 assistant.message 原文行
-    // （run.completed 摘要行是设计通路，另行核验其截断语义归 P1-16 用例）。
-    expect(
-      await aliceEvents
-        .locator('.run-event.audience-owner', { hasText: 'Hello from replay.' })
-        .count(),
-    ).toBe(0)
-    expect(
-      await aliceEvents
-        .locator('.run-event.audience-project', { hasText: 'Hello from replay.' })
-        .count(),
-    ).toBeLessThanOrEqual(1) // 只可能来自 completed 摘要；无原文流行泄漏通道
-    // 注：project 受众同样携带 run.phase 缩水行（03 §8：阶段对团队可见），
-    // 差异点在 assistant.message / tool 预览 / approval 正文——上面按受众行核验。
-    await releaseRuntime(runId)
-    await setRuntimeFixture('approval')
+      // Alice（成员）：同一动作——服务端受众过滤后，owner 行零出现，只见缩水产品。
+      await shared.alice!.reload()
+      await selectRun(shared.alice!, runId)
+      const aliceEvents = shared.alice!.getByTestId('run-live-events')
+      await expect(aliceEvents).toBeVisible({ timeout: 30_000 })
+      await expect(aliceEvents.locator('.run-event.audience-project').first()).toBeVisible()
+      expect(await aliceEvents.locator('.run-event.audience-owner').count()).toBe(0)
+      const aliceText = await aliceEvents.innerText()
+      expect(aliceText).toContain('DSH 运行时就绪') // 缩水流确有内容（脱敏而非空缺）
+      // 评审 N3 原文负断言（行级、防摘要设计误伤）：该原文在 Alice 侧不得以
+      // owner 受众行出现；project 受众行中也不允许有 assistant.message 原文行
+      // （run.completed 摘要行是设计通路，另行核验其截断语义归 P1-16 用例）。
+      expect(
+        await aliceEvents
+          .locator('.run-event.audience-owner', { hasText: 'Hello from replay.' })
+          .count(),
+      ).toBe(0)
+      expect(
+        await aliceEvents
+          .locator('.run-event.audience-project', { hasText: 'Hello from replay.' })
+          .count(),
+      ).toBeLessThanOrEqual(1) // 只可能来自 completed 摘要；无原文流行泄漏通道
+      // 注：project 受众同样携带 run.phase 缩水行（03 §8：阶段对团队可见），
+      // 差异点在 assistant.message / tool 预览 / approval 正文——上面按受众行核验。
+      await releaseRuntime(runId)
+    } finally {
+      // 二评顺手项：无论成败都恢复默认 approval 快照（失败不再污染后续场景）。
+      await setRuntimeFixture('approval')
+    }
   })
 })
 

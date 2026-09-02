@@ -4,6 +4,6 @@
 {"type":"assistant/chunk","seq":12,"time":1755500100300,"data":{"turn":1,"step":1,"chunk":{"type":"block-end","index":0,"block":{"type":"tool-call","id":"call-artifact-1","name":"publish_artifact","arguments":"{\"relativePath\":\"out/report.md\",\"title\":\"Report\",\"mediaType\":\"text/markdown\"}"}}}}
 {"type":"assistant/chunk","seq":13,"time":1755500100400,"data":{"turn":1,"step":1,"chunk":{"type":"finish","reason":{"kind":"tool-calls"}}}}
 {"type":"assistant/chunk","seq":20,"time":1755500100500,"data":{"turn":1,"step":2,"chunk":{"type":"block-start","index":0,"blockType":"text"}}}
-{"type":"assistant/chunk","seq":21,"time":1755500100600,"data":{"turn":1,"step":2,"chunk":{"type":"text-delta","index":0,"text":"Artifact published.","delta":"Report skipped: publication was rejected by the approver."}}}
-{"type":"assistant/chunk","seq":22,"time":1755500100700,"data":{"turn":1,"step":2,"chunk":{"type":"block-end","index":0,"block":{"type":"text","text":"Artifact published."}}}}
+{"type":"assistant/chunk","seq":21,"time":1755500100600,"data":{"turn":1,"step":2,"chunk":{"type":"text-delta","index":0,"text":"Report skipped: publication was rejected by the approver."}}}
+{"type":"assistant/chunk","seq":22,"time":1755500100700,"data":{"turn":1,"step":2,"chunk":{"type":"block-end","index":0,"block":{"type":"text","text":"Report skipped: publication was rejected by the approver."}}}}
 {"type":"assistant/chunk","seq":23,"time":1755500100800,"data":{"turn":1,"step":2,"chunk":{"type":"finish","reason":{"kind":"stop"}}}}
