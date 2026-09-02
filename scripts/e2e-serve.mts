@@ -307,7 +307,13 @@ function stopNodeChild(signal: 'SIGTERM' | 'SIGKILL'): { stopped: boolean } {
 }
 
 async function startNodeChild(pairingCode: string | undefined): Promise<NodeHandle> {
-  if (nodeHandle !== undefined) fail('node already running')
+  // 多副本 E2E（repeat-each，每副本独立 worker 会重新配对）：已有实例先按
+  // 崩溃语义收掉再拉新（真人拔电源重启观感），避免 'already running' 死路。
+  if (nodeHandle !== undefined) {
+    log('node/start：既有实例先停（restart-on-start）')
+    stopNodeChild('SIGKILL')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+  }
   const { mkdir, rm } = await import('node:fs/promises')
   // 每轮 start 全新 state/config 目录（除非 restart 传入既有路径——由调用方决定）。
   const base = NODE_STATE_ROOT

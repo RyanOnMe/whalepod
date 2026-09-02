@@ -48,6 +48,11 @@ import {
 
 const ALICE_PASSWORD = 'correct horse battery staple'
 const BOB_PASSWORD = 'correct horse battery staple'
+// Q5 repeat-each 的每个副本跑在独立 worker（模块态各自成立）：账号/团队带
+// 唯一后缀，多副本共存一套 Hub 不互踩（全局 username 唯一是产品约束）。
+const RUN_TAG = randomUUID().slice(0, 8)
+const ALICE_NAME = `alice-${RUN_TAG}`
+const BOB_NAME = `bob-${RUN_TAG}`
 
 /** 本文件的模块级共享态：serial 模式按序流转（一次 Setup 一个团队，诚实共享）。 */
 const shared: {
@@ -76,8 +81,8 @@ async function setupTeamAndTask(): Promise<void> {
 
   await alice.goto('/setup')
   await alice.fill('#setup-token', env().setupToken)
-  await alice.fill('#team-name', '全链验收团队')
-  await alice.fill('#setup-username', 'alice')
+  await alice.fill('#team-name', `全链验收团队 ${RUN_TAG}`)
+  await alice.fill('#setup-username', ALICE_NAME)
   await alice.fill('#setup-display-name', 'Alice')
   await fillAndEnter(alice, '#setup-password', ALICE_PASSWORD)
   await expect(alice.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
@@ -100,7 +105,7 @@ async function setupTeamAndTask(): Promise<void> {
     },
     body: JSON.stringify({
       token: inviteToken,
-      username: 'bob',
+      username: BOB_NAME,
       displayName: 'Bob',
       password: BOB_PASSWORD,
     }),
@@ -128,7 +133,7 @@ async function setupTeamAndTask(): Promise<void> {
   const bob = await shared.bobContext!.newPage()
   shared.bob = bob
   await bob.goto('/login')
-  await bob.fill('#login-username', 'bob')
+  await bob.fill('#login-username', BOB_NAME)
   await fillAndEnter(bob, '#login-password', BOB_PASSWORD)
   await expect(bob.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
   await bob.goto(`/tasks/${shared.taskId}`)
@@ -171,7 +176,7 @@ async function startRunViaUi(agentName: string, promptText: string): Promise<str
   await bob.reload()
   await expect(bob.getByLabel('选择 Agent')).toBeVisible({ timeout: 30_000 })
   await bob.getByLabel('选择 Agent').selectOption({ label: agentName })
-  await bob.getByLabel('选择设备').selectOption({ index: 1 })
+  await bob.getByLabel('选择设备').selectOption({ value: shared.deviceId! })
   await expect(bob.getByLabel('选择 Workspace').locator('option').nth(1)).toBeAttached({
     timeout: 30_000,
   })

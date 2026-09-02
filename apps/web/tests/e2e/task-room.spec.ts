@@ -26,6 +26,11 @@ const env = JSON.parse(readFileSync(join(tmpdir(), 'project311-e2e-env.json'), '
 
 const ALICE_PASSWORD = 'correct horse battery staple'
 const BOB_PASSWORD = 'correct horse battery staple'
+// Q5 repeat-each：每个副本在独立 worker 中执行（模块态不跨副本）——账号与团队
+// 带唯一后缀，20 副本共享一套 Hub 互不踩踏（全局 username 唯一是产品约束）。
+const RUN_TAG = randomUUID().slice(0, 8)
+const ALICE_NAME = `alice-${RUN_TAG}`
+const BOB_NAME = `bob-${RUN_TAG}`
 
 /** 以某个已登录会话的 Cookie 直调 Hub HTTP API（账号开通等非场景动作用）。 */
 async function hubApi(
@@ -81,8 +86,8 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     // ---- Alice：真实 Setup 页开通团队与 Owner ----
     await alice.goto('/setup')
     await alice.fill('#setup-token', env.setupToken)
-    await alice.fill('#team-name', '验收团队')
-    await alice.fill('#setup-username', 'alice')
+    await alice.fill('#team-name', `验收团队 ${RUN_TAG}`)
+    await alice.fill('#setup-username', ALICE_NAME)
     await alice.fill('#setup-display-name', 'Alice')
     await fillAndEnter(alice, '#setup-password', ALICE_PASSWORD)
     await expect(alice.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
@@ -105,7 +110,7 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
       },
       body: JSON.stringify({
         token: inviteToken,
-        username: 'bob',
+        username: BOB_NAME,
         displayName: 'Bob',
         password: BOB_PASSWORD,
       }),
@@ -131,7 +136,7 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     // ---- Bob：第二 BrowserContext 走真实登录页 ----
     const bob = await bobContext.newPage()
     await bob.goto('/login')
-    await bob.fill('#login-username', 'bob')
+    await bob.fill('#login-username', BOB_NAME)
     await fillAndEnter(bob, '#login-password', BOB_PASSWORD)
     await expect(bob.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
 
