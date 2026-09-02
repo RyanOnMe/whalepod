@@ -132,7 +132,11 @@ export function RunLivePanel({ runId, session }: RunLivePanelProps): ReactNode {
 
   const events = eventsQuery.data?.events ?? []
   return (
-    <section className="card run-live" data-testid="run-live-panel" aria-labelledby="run-live-heading">
+    <section
+      className="card run-live"
+      data-testid="run-live-panel"
+      aria-labelledby="run-live-heading"
+    >
       <div className="run-live-head">
         <h3 id="run-live-heading">Run {run.id.slice(0, 8)}</h3>
         <span className={`badge badge-run badge-run-${run.status}`}>

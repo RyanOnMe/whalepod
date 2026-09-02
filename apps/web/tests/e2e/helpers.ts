@@ -30,9 +30,7 @@ let envCache: E2eEnv | undefined
 
 export function env(): E2eEnv {
   if (envCache === undefined) {
-    envCache = JSON.parse(
-      readFileSync(join(tmpdir(), 'project311-e2e-env.json'), 'utf8'),
-    ) as E2eEnv
+    envCache = JSON.parse(readFileSync(join(tmpdir(), 'project311-e2e-env.json'), 'utf8')) as E2eEnv
   }
   if (envCache.controlPort === undefined || envCache.controlToken === undefined) {
     throw new Error('环境清单缺控制面字段（e2e-serve 版本过旧？）')
@@ -112,7 +110,13 @@ export interface RunFact {
   }
   runEvents: Array<{ seq: number; type: string; audience: string }>
   approvals: Array<{ id: string; status: string; toolName: string; decidedBy: string | null }>
-  artifacts: Array<{ id: string; status: string; sha256: string; title: string; ownerUserId: string }>
+  artifacts: Array<{
+    id: string
+    status: string
+    sha256: string
+    title: string
+    ownerUserId: string
+  }>
   outbox: Array<{ type: string; attempts: number; acked: boolean; failed: boolean }>
 }
 
@@ -147,16 +151,15 @@ export async function waitForRunStatus(
 }
 
 /** 轮询 Hub 侧 DB 事实到 Run 终态（判定用；UI 断言仍走浏览器）。 */
-export async function waitForRunTerminal(
-  runId: string,
-  timeoutMs = 90_000,
-): Promise<RunFact> {
+export async function waitForRunTerminal(runId: string, timeoutMs = 90_000): Promise<RunFact> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
     const fact = await getRunFact(runId)
     if (TERMINAL.has(fact.run.status)) return fact
     if (Date.now() > deadline) {
-      throw new Error(`Run ${runId.slice(0, 8)} 未在 ${timeoutMs}ms 内到终态（当前 ${fact.run.status}）`)
+      throw new Error(
+        `Run ${runId.slice(0, 8)} 未在 ${timeoutMs}ms 内到终态（当前 ${fact.run.status}）`,
+      )
     }
     await new Promise((resolve) => setTimeout(resolve, 250))
   }
@@ -194,7 +197,10 @@ export interface NodeStartResult {
   workspaceId: string
 }
 
-export function startNode(input: { pairingCode: string; workspaceFiles?: Record<string, string> }): Promise<NodeStartResult> {
+export function startNode(input: {
+  pairingCode: string
+  workspaceFiles?: Record<string, string>
+}): Promise<NodeStartResult> {
   return controlApi<NodeStartResult>('/control/node/start', input)
 }
 
@@ -211,7 +217,10 @@ export interface HubRestartResult {
   hubOrigin: string
 }
 
-export function restartHub(input: { signal: 'SIGTERM' | 'SIGKILL'; stayDownMs?: number }): Promise<HubRestartResult> {
+export function restartHub(input: {
+  signal: 'SIGTERM' | 'SIGKILL'
+  stayDownMs?: number
+}): Promise<HubRestartResult> {
   return controlApi<HubRestartResult>('/control/hub/restart', input)
 }
 
@@ -237,7 +246,10 @@ export interface RuntimeInfo {
   pid: number
 }
 
-export function activeRuntimes(): Promise<{ runtimes: RuntimeInfo[]; spawnCounts: Record<string, number> }> {
+export function activeRuntimes(): Promise<{
+  runtimes: RuntimeInfo[]
+  spawnCounts: Record<string, number>
+}> {
   return nodeControl('/runtimes')
 }
 

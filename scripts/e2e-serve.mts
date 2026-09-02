@@ -99,7 +99,9 @@ async function spawnHub(databaseUrl: string, setupTokenPath: string): Promise<Ch
   child.stderr?.on('data', (chunk: string) => hubStderr.append(chunk))
   child.on('exit', (code, signal) => {
     if (!hubIntentional && !shuttingDown) {
-      log(`Hub 提前退出 code=${code} signal=${signal}\n${redactText(hubStderr.capped.slice(-2000))}`)
+      log(
+        `Hub 提前退出 code=${code} signal=${signal}\n${redactText(hubStderr.capped.slice(-2000))}`,
+      )
       void shutdown()
       process.exit(1)
     }
@@ -148,7 +150,9 @@ async function waitForPortFree(port: number, timeoutMs = 15_000): Promise<void> 
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     try {
-      await fetch(`http://127.0.0.1:${port}/api/v1/setup/status`, { signal: AbortSignal.timeout(500) })
+      await fetch(`http://127.0.0.1:${port}/api/v1/setup/status`, {
+        signal: AbortSignal.timeout(500),
+      })
     } catch {
       // 连接拒绝 = 端口空；超时类错误也再试。
       return
@@ -188,7 +192,9 @@ async function killStaleByArgMarker(marker: string): Promise<void> {
     for (const raw of stdout.split('\n')) {
       const pid = Number(raw)
       if (!Number.isInteger(pid) || pid === process.pid) continue
-      const { stdout: out } = await execFileAsync('ps', ['-p', String(pid), '-o', 'args=']).catch(() => ({ stdout: '' }))
+      const { stdout: out } = await execFileAsync('ps', ['-p', String(pid), '-o', 'args=']).catch(
+        () => ({ stdout: '' }),
+      )
       const args = out.trim()
       if (!args.startsWith(process.execPath) && !/\bnode\b/.test(args.split(' ')[0] ?? '')) continue
       if (!args.includes(marker)) continue
@@ -220,7 +226,8 @@ try {
     ])
     const comm = commOut.trim()
     const args = argsOut.trim()
-    const isServeProcess = comm.split('/').pop() === 'node' && args.includes('--import tsx scripts/e2e-serve.mts')
+    const isServeProcess =
+      comm.split('/').pop() === 'node' && args.includes('--import tsx scripts/e2e-serve.mts')
     if (!isServeProcess) continue
     try {
       process.kill(pid, 'SIGKILL')
@@ -264,7 +271,9 @@ viteServer.stderr?.setEncoding('utf8')
 viteServer.stderr?.on('data', (chunk: string) => viteStderr.append(chunk))
 viteServer.on('exit', (code, signal) => {
   if (!shuttingDown) {
-    log(`vite 提前退出 code=${code} signal=${signal}\n${redactText(viteStderr.capped.slice(-2000))}`)
+    log(
+      `vite 提前退出 code=${code} signal=${signal}\n${redactText(viteStderr.capped.slice(-2000))}`,
+    )
     void shutdown()
     process.exit(1)
   }
@@ -308,7 +317,15 @@ async function startNodeChild(pairingCode: string | undefined): Promise<NodeHand
   await rm(configDir, { recursive: true, force: true })
   await mkdir(stateDir, { recursive: true })
   await mkdir(configDir, { recursive: true })
-  const args = ['scripts/e2e-node.mts', '--hub', `http://127.0.0.1:${HUB_PORT}`, '--state-dir', stateDir, '--config-dir', configDir]
+  const args = [
+    'scripts/e2e-node.mts',
+    '--hub',
+    `http://127.0.0.1:${HUB_PORT}`,
+    '--state-dir',
+    stateDir,
+    '--config-dir',
+    configDir,
+  ]
   if (pairingCode !== undefined) args.push('--pair-code', pairingCode)
   const child = spawn(process.execPath, ['--import', 'tsx', ...args], {
     env: { ...process.env },
@@ -340,13 +357,19 @@ async function startNodeChild(pairingCode: string | undefined): Promise<NodeHand
     })
     child.once('exit', (code, signal) => {
       clearTimeout(timer)
-      reject(new Error(`e2e-node 提前退出 code=${code} signal=${signal}: ${redactText(nodeStderr.capped.slice(-1500))}`))
+      reject(
+        new Error(
+          `e2e-node 提前退出 code=${code} signal=${signal}: ${redactText(nodeStderr.capped.slice(-1500))}`,
+        ),
+      )
     })
   })
   child.stderr?.on('data', (chunk: string) => nodeStderr.append(chunk))
   const handle = await handlePromise
   nodeHandle = handle
-  log(`e2e-node 就绪 deviceId=${handle.deviceId.slice(0, 8)} workspace=${handle.workspaceId.slice(0, 8)}`)
+  log(
+    `e2e-node 就绪 deviceId=${handle.deviceId.slice(0, 8)} workspace=${handle.workspaceId.slice(0, 8)}`,
+  )
   return handle
 }
 
@@ -356,7 +379,17 @@ async function restartNodeChild(): Promise<NodeHandle> {
   stopNodeChild('SIGKILL')
   const child = spawn(
     process.execPath,
-    ['--import', 'tsx', 'scripts/e2e-node.mts', '--hub', `http://127.0.0.1:${HUB_PORT}`, '--state-dir', stateDir, '--config-dir', configDir],
+    [
+      '--import',
+      'tsx',
+      'scripts/e2e-node.mts',
+      '--hub',
+      `http://127.0.0.1:${HUB_PORT}`,
+      '--state-dir',
+      stateDir,
+      '--config-dir',
+      configDir,
+    ],
     { env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] },
   )
   child.stdout?.setEncoding('utf8')
@@ -364,7 +397,10 @@ async function restartNodeChild(): Promise<NodeHandle> {
   child.stderr?.on('data', (chunk: string) => nodeStderr.append(chunk))
   const handle = await new Promise<NodeHandle>((resolve, reject) => {
     let buffered = ''
-    const timer = setTimeout(() => reject(new Error('e2e-node restart READY 超时')), NODE_READY_TIMEOUT_MS)
+    const timer = setTimeout(
+      () => reject(new Error('e2e-node restart READY 超时')),
+      NODE_READY_TIMEOUT_MS,
+    )
     child.stdout?.on('data', (chunk: string) => {
       nodeStdout.append(chunk)
       buffered += chunk
@@ -372,7 +408,12 @@ async function restartNodeChild(): Promise<NodeHandle> {
       if (match !== null) {
         clearTimeout(timer)
         try {
-          resolve({ child, ...(JSON.parse(match[1]) as Omit<NodeHandle, 'child' | 'stateDir' | 'configDir'>), stateDir, configDir })
+          resolve({
+            child,
+            ...(JSON.parse(match[1]) as Omit<NodeHandle, 'child' | 'stateDir' | 'configDir'>),
+            stateDir,
+            configDir,
+          })
         } catch (error) {
           reject(error)
         }
@@ -397,7 +438,8 @@ async function proxyToNode(path: string, body: unknown): Promise<unknown> {
     signal: AbortSignal.timeout(30_000),
   })
   const json = (await res.json()) as Record<string, unknown>
-  if (!res.ok) throw new Error(`node control ${path}: ${res.status} ${JSON.stringify(json).slice(0, 300)}`)
+  if (!res.ok)
+    throw new Error(`node control ${path}: ${res.status} ${JSON.stringify(json).slice(0, 300)}`)
   return json
 }
 
@@ -417,10 +459,18 @@ const controlServer = createServer((req: IncomingMessage, res: ServerResponse) =
   })
 })
 
-async function handleControl(req: IncomingMessage, res: ServerResponse, chunks: Buffer[]): Promise<void> {
-  if (req.headers['x-e2e-control'] !== controlToken) return json(res, 401, { error: 'unauthorized' })
+async function handleControl(
+  req: IncomingMessage,
+  res: ServerResponse,
+  chunks: Buffer[],
+): Promise<void> {
+  if (req.headers['x-e2e-control'] !== controlToken)
+    return json(res, 401, { error: 'unauthorized' })
   const url = new URL(req.url ?? '/', 'http://127.0.0.1')
-  const body = (chunks.length > 0 ? JSON.parse(Buffer.concat(chunks).toString()) : {}) as Record<string, unknown>
+  const body = (chunks.length > 0 ? JSON.parse(Buffer.concat(chunks).toString()) : {}) as Record<
+    string,
+    unknown
+  >
   const route = `${req.method} ${url.pathname}`
 
   if (route === 'POST /control/plugin-pack/seed') {
@@ -526,20 +576,40 @@ async function readRunFact(runId: string): Promise<unknown> {
     .from(schema.runs)
     .where(eq(schema.runs.id, runId))
   const runEvents = await database.db
-    .select({ seq: schema.runEvents.seq, type: schema.runEvents.type, audience: schema.runEvents.audience })
+    .select({
+      seq: schema.runEvents.seq,
+      type: schema.runEvents.type,
+      audience: schema.runEvents.audience,
+    })
     .from(schema.runEvents)
     .where(eq(schema.runEvents.runId, runId))
     .orderBy(schema.runEvents.seq)
   const approvals = await database.db
-    .select({ id: schema.approvals.id, status: schema.approvals.status, toolName: schema.approvals.toolName, decidedBy: schema.approvals.decidedBy })
+    .select({
+      id: schema.approvals.id,
+      status: schema.approvals.status,
+      toolName: schema.approvals.toolName,
+      decidedBy: schema.approvals.decidedBy,
+    })
     .from(schema.approvals)
     .where(eq(schema.approvals.runId, runId))
   const artifacts = await database.db
-    .select({ id: schema.artifacts.id, status: schema.artifacts.status, sha256: schema.artifacts.sha256, title: schema.artifacts.title, ownerUserId: schema.artifacts.ownerUserId })
+    .select({
+      id: schema.artifacts.id,
+      status: schema.artifacts.status,
+      sha256: schema.artifacts.sha256,
+      title: schema.artifacts.title,
+      ownerUserId: schema.artifacts.ownerUserId,
+    })
     .from(schema.artifacts)
     .where(eq(schema.artifacts.runId, runId))
   const outbox = await database.db
-    .select({ type: schema.dispatchOutbox.type, attempts: schema.dispatchOutbox.attemptCount, ackedAt: schema.dispatchOutbox.ackedAt, failedAt: schema.dispatchOutbox.failedAt })
+    .select({
+      type: schema.dispatchOutbox.type,
+      attempts: schema.dispatchOutbox.attemptCount,
+      ackedAt: schema.dispatchOutbox.ackedAt,
+      failedAt: schema.dispatchOutbox.failedAt,
+    })
     .from(schema.dispatchOutbox)
     .where(sql`${schema.dispatchOutbox.payload}->>'runId' = ${runId}`)
   return {
@@ -547,7 +617,12 @@ async function readRunFact(runId: string): Promise<unknown> {
     runEvents,
     approvals,
     artifacts,
-    outbox: outbox.map((o) => ({ type: o.type, attempts: o.attempts, acked: o.ackedAt !== null, failed: o.failedAt !== null })),
+    outbox: outbox.map((o) => ({
+      type: o.type,
+      attempts: o.attempts,
+      acked: o.ackedAt !== null,
+      failed: o.failedAt !== null,
+    })),
   }
 }
 

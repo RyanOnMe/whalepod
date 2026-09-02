@@ -460,7 +460,8 @@ test.describe('P1-19 恢复场景（R1/R4/R5/R7/R8/R9）', () => {
       for (;;) {
         const f = await getRunFact(runId)
         if (f.run.status === 'lost') return f
-        if (Date.now() > deadline) throw new Error(`未在 lease 窗口内标 lost（当前 ${f.run.status}）`)
+        if (Date.now() > deadline)
+          throw new Error(`未在 lease 窗口内标 lost（当前 ${f.run.status}）`)
         await sleep(500)
       }
     })()
@@ -584,9 +585,14 @@ test.describe('P1-19 Run 行动（G7-01 取消 / G7-04 重跑血缘）', () => {
 
     // 终态禁改写：取消后审批不得再被决定（HTTP 旁路核验产品判断）。
     if (fact.approvals.length > 0) {
-      const denied = await hubApi(shared.bobCookie!, 'POST', `/approvals/${fact.approvals[0]!.id}/decisions`, {
-        decision: 'allowed_once',
-      })
+      const denied = await hubApi(
+        shared.bobCookie!,
+        'POST',
+        `/approvals/${fact.approvals[0]!.id}/decisions`,
+        {
+          decision: 'allowed_once',
+        },
+      )
       expect(denied.status).toBe(409)
     }
     await shared.bob!.reload()

@@ -61,13 +61,21 @@ const TSX_LOADER = createRequire(import.meta.url).resolve('tsx')
 const RUNTIME_BIN = join(REPO_ROOT, 'apps/runtime/src/bin.ts')
 const REPLAY_PATCH = join(REPO_ROOT, 'packages/runtime-dsh/config/replay.yml')
 const FIXTURES: Record<string, string> = {
-  approval: join(REPO_ROOT, 'packages/runtime-dsh/tests/dsh-contract/fixtures/tool-approval/session.jsonl'),
+  approval: join(
+    REPO_ROOT,
+    'packages/runtime-dsh/tests/dsh-contract/fixtures/tool-approval/session.jsonl',
+  ),
   basic: join(REPO_ROOT, 'packages/runtime-dsh/tests/dsh-contract/fixtures/basic/session.jsonl'),
-  secrets: join(REPO_ROOT, 'packages/runtime-dsh/tests/dsh-contract/fixtures/secrets/session.jsonl'),
+  secrets: join(
+    REPO_ROOT,
+    'packages/runtime-dsh/tests/dsh-contract/fixtures/secrets/session.jsonl',
+  ),
 }
 
 const log = (msg: string, extra?: Record<string, unknown>): void => {
-  process.stderr.write(`${JSON.stringify({ level: 'info', component: 'e2e-node', msg, ...(extra ?? {}) })}\n`)
+  process.stderr.write(
+    `${JSON.stringify({ level: 'info', component: 'e2e-node', msg, ...(extra ?? {}) })}\n`,
+  )
 }
 
 const { values: argv } = parseArgs({
@@ -82,7 +90,9 @@ const hubUrl = argv['hub']
 const stateDir = argv['state-dir']
 const configDir = argv['config-dir']
 if (hubUrl === undefined || stateDir === undefined || configDir === undefined) {
-  process.stderr.write('usage: e2e-node --hub <url> --state-dir <dir> --config-dir <dir> [--pair-code <code>]\n')
+  process.stderr.write(
+    'usage: e2e-node --hub <url> --state-dir <dir> --config-dir <dir> [--pair-code <code>]\n',
+  )
   process.exit(2)
 }
 
@@ -101,7 +111,10 @@ if (argv['pair-code'] !== undefined) {
     },
     { idempotencyKey: randomUUID() },
   )
-  await saveConfig({ hubUrl, deviceId: claim.deviceId, deviceToken: claim.deviceToken }, { configDir })
+  await saveConfig(
+    { hubUrl, deviceId: claim.deviceId, deviceToken: claim.deviceToken },
+    { configDir },
+  )
   config = { hubUrl, deviceId: claim.deviceId, deviceToken: claim.deviceToken }
 } else {
   config = await loadConfig({ configDir })
@@ -115,7 +128,10 @@ if (config === undefined) {
 mkdirSync(stateDir, { recursive: true })
 const workspaceDir = join(stateDir, 'workspace')
 mkdirSync(join(workspaceDir, 'out'), { recursive: true })
-writeFileSync(join(workspaceDir, 'out', 'report.md'), '# e2e report\n\n内容摘要：E2E 验收交付物。\n')
+writeFileSync(
+  join(workspaceDir, 'out', 'report.md'),
+  '# e2e report\n\n内容摘要：E2E 验收交付物。\n',
+)
 
 const registry = new WorkspaceRegistry(join(stateDir, 'workspace-registry.sqlite'))
 // restart（R9 崩溃重启）复用同一 state 目录：workspace 行已在册则复用（真人
@@ -139,7 +155,10 @@ process.env['DSH_SNAPSHOT_FILE'] = FIXTURES['approval'] as string
 // ---- 观测记录（控制口查询用；不改变产品行为）----
 const runtimePids = new Map<string, number>() // runId → 最近一次 spawn 的 pid
 const spawnCounts = new Map<string, number>() // runId → spawn 次数（R7 判定：恒 1）
-const inputManifests = new Map<string, { manifest: unknown; copiedFiles: string[]; manifestText: string }>()
+const inputManifests = new Map<
+  string,
+  { manifest: unknown; copiedFiles: string[]; manifestText: string }
+>()
 let ackDropRemaining = 0
 const ackDropped: string[] = [] // 被吞掉的 ack 事实（取证）
 
@@ -168,7 +187,9 @@ class PidRecordingDriver implements RuntimeDriver {
 }
 
 const supervisor = new RuntimeSupervisor({
-  driver: new PidRecordingDriver(new DshRuntimeDriver({ runtimeEntry: RUNTIME_BIN, nodeArgs: ['--import', TSX_LOADER] })),
+  driver: new PidRecordingDriver(
+    new DshRuntimeDriver({ runtimeEntry: RUNTIME_BIN, nodeArgs: ['--import', TSX_LOADER] }),
+  ),
   registry,
   secrets,
   stateDbPath: join(stateDir, 'supervisor.sqlite'),
@@ -182,8 +203,14 @@ const supervisor = new RuntimeSupervisor({
   onStdoutLine: (runId, line) => runManager.handleStdoutLine(runId, line),
 })
 
-const artifactLog = (level: 'info' | 'warn' | 'error', msg: string, context?: Record<string, unknown>) => {
-  process.stderr.write(`${JSON.stringify({ level, component: 'e2e-node.artifact', msg, ...(context ?? {}) })}\n`)
+const artifactLog = (
+  level: 'info' | 'warn' | 'error',
+  msg: string,
+  context?: Record<string, unknown>,
+) => {
+  process.stderr.write(
+    `${JSON.stringify({ level, component: 'e2e-node.artifact', msg, ...(context ?? {}) })}\n`,
+  )
 }
 const artifactInputs = new ArtifactInputsManager({
   hubUrl: config.hubUrl,
@@ -254,7 +281,9 @@ const runManager = new RunManager({
   deviceId: config.deviceId,
   dshDistributionVersion: '0.1.0-rc.8-e2e',
   log: (level, msg, context) => {
-    process.stderr.write(`${JSON.stringify({ level, component: 'e2e-node.run', msg, ...(context ?? {}) })}\n`)
+    process.stderr.write(
+      `${JSON.stringify({ level, component: 'e2e-node.run', msg, ...(context ?? {}) })}\n`,
+    )
   },
 })
 
@@ -282,7 +311,8 @@ const supervisorActiveOrig = supervisor.activeRunIds.bind(supervisor)
 supervisor.activeRunIds = () => {
   const live = new Set(supervisorActiveOrig())
   for (const id of managerActive) {
-    if (live.has(id)) managerActive.delete(id) // 已入账 supervisor：去重
+    if (live.has(id))
+      managerActive.delete(id) // 已入账 supervisor：去重
     else live.add(id)
   }
   return [...live]
@@ -290,7 +320,6 @@ supervisor.activeRunIds = () => {
 
 // R9 语义：重启后先回收孤儿（recoverOrphans 内完成），再建立会话。
 await supervisor.recoverOrphans()
-
 
 // ---- WebSocket 故障缝：offline 窗口内连接尝试立即失败（模拟拔线——非 stop
 // 语义，产品重连退避照常运转），存活连接 terminate() 直接摧毁。----
@@ -317,10 +346,13 @@ class FaultWebSocket extends (await import('node:events')).EventEmitter {
     this.real = real
     liveSockets.add(this)
     for (const event of FORWARDED_EVENTS) {
-      real.on(event as never, ((...args: unknown[]) => {
-        if (event === 'close') liveSockets.delete(this)
-        this.emit(event, ...args)
-      }) as never)
+      real.on(
+        event as never,
+        ((...args: unknown[]) => {
+          if (event === 'close') liveSockets.delete(this)
+          this.emit(event, ...args)
+        }) as never,
+      )
     }
   }
 
@@ -376,7 +408,9 @@ const session = startDeviceSession({
   },
   onFrame: (frame: NodeDownstream) => {
     void runManager.handleFrame(frame).catch((error: unknown) => {
-      log('frame handling failed', { error: error instanceof Error ? error.message : String(error) })
+      log('frame handling failed', {
+        error: error instanceof Error ? error.message : String(error),
+      })
     })
   },
   onConnected: () => {
@@ -423,9 +457,13 @@ const server = createServer((req, res) => {
       res.writeHead(status, { 'content-type': 'application/json' })
       res.end(JSON.stringify(body))
     }
-    if (req.headers['x-e2e-node-control'] !== controlToken) return reply(401, { error: 'unauthorized' })
+    if (req.headers['x-e2e-node-control'] !== controlToken)
+      return reply(401, { error: 'unauthorized' })
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
-    const body = chunks.length > 0 ? (JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>) : {}
+    const body =
+      chunks.length > 0
+        ? (JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>)
+        : {}
     // e2e-serve 代理统一以 POST 转发（path + JSON body）；本服务只按路径分发。
     switch (url.pathname) {
       case '/fixture': {
@@ -454,13 +492,19 @@ const server = createServer((req, res) => {
         return reply(200, { ok: true, wasActive })
       }
       case '/runtimes': {
-        const runtimes = supervisor.activeRunIds().map((runId) => ({ runId, pid: runtimePids.get(runId) ?? -1 }))
+        const runtimes = supervisor
+          .activeRunIds()
+          .map((runId) => ({ runId, pid: runtimePids.get(runId) ?? -1 }))
         return reply(200, { runtimes, spawnCounts: Object.fromEntries(spawnCounts) })
       }
       case '/input-manifest': {
         const runId = String(body['runId'] ?? url.searchParams.get('runId') ?? '')
         const recorded = inputManifests.get(runId)
-        if (recorded === undefined) return reply(404, { error: 'no input manifest recorded for run', known: [...inputManifests.keys()] })
+        if (recorded === undefined)
+          return reply(404, {
+            error: 'no input manifest recorded for run',
+            known: [...inputManifests.keys()],
+          })
         return reply(200, { runId, ...recorded })
       }
       case '/state': {
