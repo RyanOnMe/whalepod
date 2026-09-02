@@ -179,14 +179,58 @@ try {
 } catch {
   // Docker 暂不可用等情况交由 startEphemeralPostgres 报错。
 }
-// 自愈（P1-19）：上一轮 SIGKILL 残留的 e2e-node / replay Runtime 孙进程按专属
-// cmdline 特征清理（本仓库路径 + --run-id/--nonce 判别），不碰无关进程。
-for (const pattern of ['project311/scripts/e2e-node.mts', 'project311/apps/runtime/src/bin.ts']) {
+// 自愈（P1-19）：上一轮 SIGKILL 残留的 e2e-node / replay Runtime 孙进程清理。
+// 不用 pkill -f：任何 cmdline 含同样路径字样的进程（包括启动本脚本的 shell）都
+// 会被误杀；按 comm=node + argv 精确判据。
+async function killStaleByArgMarker(marker: string): Promise<void> {
   try {
-    await execFileAsync('pkill', ['-f', pattern])
+    const { stdout } = await execFileAsync('pgrep', ['-f', marker])
+    for (const raw of stdout.split('\n')) {
+      const pid = Number(raw)
+      if (!Number.isInteger(pid) || pid === process.pid) continue
+      const { stdout: out } = await execFileAsync('ps', ['-p', String(pid), '-o', 'args=']).catch(() => ({ stdout: '' }))
+      const args = out.trim()
+      if (!args.startsWith(process.execPath) && !/\bnode\b/.test(args.split(' ')[0] ?? '')) continue
+      if (!args.includes(marker)) continue
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        // 已退出。
+      }
+    }
   } catch {
-    // 无残留（pkill 退出码 1）是常态。
+    // 无残留。
   }
+}
+await killStaleByArgMarker('scripts/e2e-node.mts')
+await killStaleByArgMarker('apps/runtime/src/bin.ts')
+// 残留的其它 e2e-serve 实例（历史双进程包装泄漏）：会占住 18080/5173 并互相
+// 覆盖 env 清单，先清掉。判据必须 comm==node——调用方 bash/playwright-runner 的
+// 命令行里也可能含同样的脚本路径字样（pkill 参数、日志等），按 cmdline 直杀是
+// 自伤（实测误杀 webServer 父链）。
+try {
+  const { stdout } = await execFileAsync('pgrep', ['-f', 'scripts/e2e-serve.mts'])
+  const mine = new Set<number>([process.pid, process.ppid])
+  for (const raw of stdout.split('\n')) {
+    const pid = Number(raw)
+    if (!Number.isInteger(pid) || mine.has(pid)) continue
+    const [{ stdout: commOut }, { stdout: argsOut }] = await Promise.all([
+      execFileAsync('ps', ['-p', String(pid), '-o', 'comm=']).catch(() => ({ stdout: '' })),
+      execFileAsync('ps', ['-p', String(pid), '-o', 'args=']).catch(() => ({ stdout: '' })),
+    ])
+    const comm = commOut.trim()
+    const args = argsOut.trim()
+    const isServeProcess = comm.split('/').pop() === 'node' && args.includes('--import tsx scripts/e2e-serve.mts')
+    if (!isServeProcess) continue
+    try {
+      process.kill(pid, 'SIGKILL')
+      log(`清理残留 e2e-serve 实例 pid=${pid}`)
+    } catch {
+      // 已退出。
+    }
+  }
+} catch {
+  // 无残留。
 }
 postgres = await startEphemeralPostgres()
 const databaseUrl = postgres.databaseUrl

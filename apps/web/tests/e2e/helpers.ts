@@ -237,7 +237,7 @@ export interface RuntimeInfo {
   pid: number
 }
 
-export function activeRuntimes(): Promise<{ runtimes: RuntimeInfo[] }> {
+export function activeRuntimes(): Promise<{ runtimes: RuntimeInfo[]; spawnCounts: Record<string, number> }> {
   return nodeControl('/runtimes')
 }
 

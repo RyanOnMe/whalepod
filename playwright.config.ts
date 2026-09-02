@@ -27,7 +27,9 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'pnpm exec tsx scripts/e2e-serve.mts',
+    // 单进程直启（不走 pnpm exec/tsx cli 包装）：playwright 的信号直达 e2e-serve，
+    // 不留孤儿孙进程——它们会占住 18080/5173 并污染后续运行的端口与 env 文件。
+    command: 'node --import tsx scripts/e2e-serve.mts',
     url: 'http://localhost:5173/',
     reuseExistingServer: false,
     timeout: 180_000,

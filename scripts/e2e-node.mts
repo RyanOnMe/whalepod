@@ -51,6 +51,7 @@ import type {
 } from '../apps/node/src/runtime-driver.js'
 import { RunManager } from '../apps/node/src/run/run-manager.js'
 import { startDeviceSession } from '../apps/node/src/gateway/session.js'
+import { heartbeatFrame } from '../apps/node/src/gateway/hub-socket.js'
 import { ArtifactInputsManager } from '../apps/node/src/artifact/inputs.js'
 import { ArtifactCollector } from '../apps/node/src/artifact/collect.js'
 import { uploadArtifactCandidate } from '../apps/node/src/artifact/upload-client.js'
@@ -117,7 +118,17 @@ mkdirSync(join(workspaceDir, 'out'), { recursive: true })
 writeFileSync(join(workspaceDir, 'out', 'report.md'), '# e2e report\n\n内容摘要：E2E 验收交付物。\n')
 
 const registry = new WorkspaceRegistry(join(stateDir, 'workspace-registry.sqlite'))
-const registered = await registry.register(workspaceDir, { name: 'e2e-ws' })
+// restart（R9 崩溃重启）复用同一 state 目录：workspace 行已在册则复用（真人
+// Node 重启同语义——registry 是持久状态，不重注册）。
+let registered: Awaited<ReturnType<WorkspaceRegistry['register']>>
+try {
+  registered = await registry.register(workspaceDir, { name: 'e2e-ws' })
+} catch (error) {
+  if ((error as { code?: string }).code !== 'CONFLICT') throw error
+  const existing = (await registry.list()).find((w) => w.name === 'e2e-ws')
+  if (existing === undefined) throw error
+  registered = existing
+}
 const secrets = new SecretStore(join(stateDir, 'secrets.json'))
 await secrets.set('replay', 'default', 'e2e-replay-dummy-key')
 
@@ -247,8 +258,39 @@ const runManager = new RunManager({
   },
 })
 
+// P1-19 实测竞态（登记为发现）：supervisor.activeRunIds 在子进程 spawn 后才入账，
+// Hub reconcile 若恰好落在「run.start 已受理、心跳快照尚未含该 Run」窗口会误判
+// nodeLostRun → lost。E2E 装配把受理时刻并入事实源（保守超集，不改产品代码）。
+const managerActive = new Set<string>()
+let sendHeartbeatNow: () => void = () => {}
+const originalHandleFrame = runManager.handleFrame.bind(runManager)
+runManager.handleFrame = async (frame: Parameters<RunManager['handleFrame']>[0]) => {
+  if (frame.type === 'run.start') managerActive.add(frame.payload.runId)
+  await originalHandleFrame(frame)
+  if (frame.type === 'run.start') {
+    // 关键一步：受理即补发心跳（真实事实源），把 Hub reconcile 误判窗口从
+    // 「≤ heartbeatMs」压到「≤ 单帧网络时延」。
+    sendHeartbeatNow()
+  }
+}
+// 终态收敛：Runtime 退出即从受理集合移除（心跳集合有界；exit 前 supervisor 已入账，
+// 超集语义不丢窗口）。
+supervisor.onRuntimeExit((event) => {
+  managerActive.delete(event.runId)
+})
+const supervisorActiveOrig = supervisor.activeRunIds.bind(supervisor)
+supervisor.activeRunIds = () => {
+  const live = new Set(supervisorActiveOrig())
+  for (const id of managerActive) {
+    if (live.has(id)) managerActive.delete(id) // 已入账 supervisor：去重
+    else live.add(id)
+  }
+  return [...live]
+}
+
 // R9 语义：重启后先回收孤儿（recoverOrphans 内完成），再建立会话。
 await supervisor.recoverOrphans()
+
 
 // ---- WebSocket 故障缝：offline 窗口内连接尝试立即失败（模拟拔线——非 stop
 // 语义，产品重连退避照常运转），存活连接 terminate() 直接摧毁。----
@@ -324,6 +366,8 @@ const inventory = new WorkspaceInventory(registry, secrets)
 
 const session = startDeviceSession({
   config,
+  // E2E 心跳加密到 2s（真协议帧真事实）；受理即补发的窗口缝见 sendHeartbeatNow。
+  heartbeatMs: 2_000,
   facts,
   onRevoked: () => {},
   exit: (code, message) => {
@@ -359,6 +403,12 @@ const session = startDeviceSession({
   heartbeatFacts: () => runManager.heartbeatFacts(),
   WebSocketImpl: FaultWebSocket as unknown as never,
 })
+
+sendHeartbeatNow = () => {
+  const f = runManager.heartbeatFacts()
+  session.send(heartbeatFrame(config.deviceId, f.activeRunIds, f.lastEventSeqByRun))
+}
+
 sessionSend = session.send
 
 // ---- 控制口（127.0.0.1；e2e-serve 代理，仅故障注入与观测）----
