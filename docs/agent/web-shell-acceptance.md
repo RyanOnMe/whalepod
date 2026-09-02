@@ -172,6 +172,17 @@ cli.ts 恒为空）。
      duplicate→lost 分支。属 G7-03 禁复活语义的安全侧（宁可 lost 不重放），但
      首投递为何无处理日志未成完全定论；R8 改用确定性窗口（拔线+崩溃），该形态
      保留为观察项。
+  7. **Docker 端口发布竞态（合入门禁期抓到并已修复）**：评审在最终 HEAD 前置的
+     Q5 x20 第 8 轮环境启动失败——`docker run -d` 返回后立即 `docker port`，撞
+     Docker 网络编程滞后窗报 "no public port '5432' published"（容器报「已启动」
+     而映射未发布；证据 artifacts/q5/run-8.log）。修复：
+     `scripts/lib/ephemeral-postgres.mts` 的 `waitPublishedPort` 有界轮询
+     （10s 上限 / 200ms 间隔，同 waitReady 模式），超期抛错并附
+     `docker logs --tail 20` 现场（区分「发布滞后」与「容器即死」）；空输出/端口
+     0 按未发布重试不误报成功。`scripts/tests/ephemeral-postgres.spec.ts` 4 例
+     确定性测试（注入假 docker/时钟）钉死两形态。该 lib 为 Q2 与 Q5 共用：
+     修复后 auth.integration 10/10 + 1 轮冷启 E2E 无回归。**修复后最终 20 连由
+     评审在合入前置 HEAD 上执行，结果回填此处：（待回填）**。
 
 ## 归因速查
 

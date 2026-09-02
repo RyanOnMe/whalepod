@@ -2,8 +2,8 @@
 /**
  * 一次性 PostgreSQL 容器生命周期（供 with-test-postgres.mts CLI 与 e2e-serve 共用）。
  *
- * 启动 postgres:18 一次性容器（127.0.0.1 随机端口、随机密码、--rm），等 ready 后
- * 返回连接串；stop() 强制删除容器，保证 `docker ps` 无残留。Docker 不可用、镜像
+ * 启动 postgres:18 一次性容器（127.0.0.1 随机端口、随机密码、--rm），等端口映射
+ * 发布（有界轮询，见 waitPublishedPort）与 ready 后返回连接串；stop() 强制删除容器，保证 `docker ps` 无残留。Docker 不可用、镜像
  * 缺失或启动超时一律抛错，不得报绿。密码不进仓库、不进日志；日志一律写 stderr。
  */
 import { execFile, spawn } from 'node:child_process'
@@ -15,6 +15,9 @@ const execFileAsync = promisify(execFile)
 const IMAGE = 'postgres:18'
 const READY_TIMEOUT_MS = 60_000
 const READY_POLL_MS = 250
+// 端口发布滞后窗兜底（实测 x20 第 8 轮抓到）：上限 10s、200ms 间隔。
+const PORT_PUBLISH_TIMEOUT_MS = 10_000
+const PORT_PUBLISH_POLL_MS = 200
 
 const log = (message: string): void => console.error(`[ephemeral-postgres] ${message}`)
 
@@ -49,13 +52,53 @@ async function ensureImage(): Promise<void> {
   }
 }
 
-/** 解析 `docker port <id> 5432` 的输出（形如 `127.0.0.1:55001`），取宿主机端口。 */
-async function publishedPort(containerId: string): Promise<string> {
-  const out = await docker(['port', containerId, '5432'])
-  const line = out.trim().split('\n')[0] ?? ''
-  const port = line.split(':').pop()?.trim()
-  if (!port || !/^\d+$/.test(port)) fail(`无法解析容器端口映射：${JSON.stringify(out)}`)
-  return port
+/**
+ * 端口发布探测的依赖面（生产接线用真实 docker + setTimeout/Date.now；
+ * 确定性测试注入假 docker/时钟——Q5 x20 第 8 轮实测竞态的回归哨兵需要）。
+ */
+export interface PublishedPortDeps {
+  docker(args: string[]): Promise<string>
+  sleep(ms: number): Promise<void>
+  now(): number
+  timeoutMs: number
+  pollMs: number
+}
+
+/**
+ * `docker run -d` 返回 ≠ 端口映射已发布：Docker 网络编程有滞后窗（实测 20 连跑
+ * 第 8 轮抓到——容器报「已启动」而 `docker port` 报 no public port published）。
+ * 有界轮询直至发布；超期附 `docker logs --tail 20` 现场抛出（区分「发布滞后」
+ * 与「容器即死」两种真因），绝不带着歧义继续。
+ */
+export async function waitPublishedPort(
+  containerId: string,
+  deps: PublishedPortDeps,
+): Promise<string> {
+  const deadline = deps.now() + deps.timeoutMs
+  for (;;) {
+    try {
+      const out = await deps.docker(['port', containerId, '5432'])
+      const line = out.trim().split('\n')[0] ?? ''
+      const port = line.split(':').pop()?.trim()
+      if (port && /^\d+$/.test(port) && port !== '0') return port
+      // 空输出/端口 0：视为「尚未发布」继续轮询，不误报成功。
+    } catch {
+      // docker port 非零退出（no public port published）= 预期中的未发布态。
+    }
+    if (deps.now() >= deadline) {
+      let logs = ''
+      try {
+        logs = await deps.docker(['logs', '--tail', '20', containerId])
+      } catch {
+        logs = '(docker logs 也不可用)'
+      }
+      throw new Error(
+        `容器 ${containerId.slice(0, 12)} 端口映射未在 ${deps.timeoutMs / 1000}s 内发布` +
+          `（若日志显示容器已死则非竞态）。容器日志尾部：\n${logs}`,
+      )
+    }
+    await deps.sleep(deps.pollMs)
+  }
 }
 
 async function waitReady(containerId: string): Promise<void> {
@@ -122,7 +165,20 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
     }
   }
 
-  const port = await publishedPort(containerId)
+  let port: string
+  try {
+    port = await waitPublishedPort(containerId, {
+      docker,
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      now: () => Date.now(),
+      timeoutMs: PORT_PUBLISH_TIMEOUT_MS,
+      pollMs: PORT_PUBLISH_POLL_MS,
+    })
+  } catch (error) {
+    // 抛错即死（非零退出）：e2e-serve/with-test-postgres 都以启动失败处理，
+    // 报错已带日志尾部现场——不留「带着未发布端口继续跑」的歧义态。
+    fail(error instanceof Error ? error.message : String(error))
+  }
   await waitReady(containerId)
   const databaseUrl = `postgres://postgres:${password}@127.0.0.1:${port}/postgres`
 
