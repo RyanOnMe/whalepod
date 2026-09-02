@@ -79,7 +79,10 @@ pnpm exec playwright test
 
 # P1-19 两浏览器全链 E2E 与恢复场景（Q5 正式门）
 
-- 对应场景/门禁：Issue #23（P1-19）；Q5 浏览器门 `--repeat-each=20` 连跑
+- 对应场景/门禁：Issue #23（P1-19）；Q5 浏览器门 = `scripts/q5-loop.sh 20`
+  （连续 20 次完整 `pnpm test:e2e`，每轮全新冷启环境）。口径说明：`--repeat-each`
+  会在同一实例内重放副本，与「一个 Hub 一次 Setup 一个团队」的产品模型架构性
+  不兼容（实测副本卡死在 Setup 页），且每轮冷启本身就是被验收的路径。
 - 对应 Issue：#23
 - 上次验证：2026-09-02 · feat/p1-19-e2e-recovery · 结果 PASS（12/12 × 20 连跑，见下）
 
@@ -150,6 +153,12 @@ cli.ts 恒为空）。
      外层，孤儿 serve 占死 18080/5173 并互相覆盖环境清单（本轮多轮失败根因）。
      已改 `node --import tsx` 单进程直启 + serve 启动自愈（comm/argv 精确判据；
      第一版 `pkill -f` 会误杀携带同样路径字样的父 shell，自伤教训）。
+  6. **崩溃时机砸进「派发在途」窗口的歧义形态**（R8 早期配方实测一次）：Hub 在
+     run.start 已投递、ack 未落库的毫秒窗被 SIGKILL 后，重启重发在 Node 侧呈现
+     「commandStore 有记录但无处理日志、零事件、attempts 快速爬升」并最终走
+     duplicate→lost 分支。属 G7-03 禁复活语义的安全侧（宁可 lost 不重放），但
+     首投递为何无处理日志未成完全定论；R8 改用确定性窗口（拔线+崩溃），该形态
+     保留为观察项。
 
 ## 归因速查
 
@@ -163,7 +172,7 @@ cli.ts 恒为空）。
 ```bash
 corepack enable && pnpm install --frozen-lockfile && pnpm -r --if-present build
 pnpm exec playwright test                                   # 全量 13 场景
-pnpm exec playwright test --repeat-each=20                  # Q5 门
+bash scripts/q5-loop.sh 20                                  # Q5 门（20 连冷启）
 pnpm check && pnpm test:integration                         # Q0/Q2
 bash scripts/secret-scan.sh apps/web scripts docs/agent     # Q7 片段
 ```
