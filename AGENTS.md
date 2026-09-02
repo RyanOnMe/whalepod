@@ -40,7 +40,7 @@ project311（开发代号，正式定名前一律用这一代号）：面向 3�
 | Q2 数据门 | `pnpm test:integration`（真实 PostgreSQL） | 生效中（P1-04 起，Docker 一次性容器；#43 起 CI 同跑） |
 | Q3 DSH 契约门 | `pnpm test:dsh-contract` | 生效中（P1-11 起） |
 | Q4 Node 门 | `pnpm test:node` | 待 P1-12 |
-| Q5 浏览器门 | `pnpm test:e2e`（连续 20 次无偶发） | 待 P1-19 |
+| Q5 浏览器门 | `pnpm test:e2e`；连续 20 次用 `bash scripts/q5-loop.sh 20` | 生效中（P1-19 起） |
 | Q6 故障门 | `pnpm test:resilience` | 生效中（P1-16 起） |
 | Q7 安全门 | `pnpm test:security` + `scripts/secret-scan.sh` | 部分可用 |
 | Q8 性能门 | `pnpm test:load` | 待 P1-20 |
