@@ -505,8 +505,13 @@ test.describe('P1-19 恢复场景（R1/R4/R5/R7/R8/R9）', () => {
   test('R8：提交后 Hub 崩溃——Outbox worker 重启续派发，无永久 queued', async () => {
     test.setTimeout(300_000)
     await shared.bob!.reload()
+    // 崩溃注入取「提交后、未达 Node」这一确定性形态：先拔 Node 网线（产品语义
+    // 断链，outbox 行已提交但首次派发必然失败），再 SIGKILL Hub。曾实测直接
+    // SIGKILL 会砸进「首次派发 ack 在途」的毫秒窗（Node 收到但未回执、重发撞上
+    // 处理中状态），那是另一条已登记的产品竞态，不是 R8 的验收点。
+    await dropNodeConnection(4_000)
     const runId = await startRunViaUi('builder', 'R8：提交后崩溃')
-    // 崩溃注入：run.start 已提交（POST 201 + outbox 行同事务）后立刻 SIGKILL。
+    await sleep(800) // 让首个派发 attempt 撞墙（unacked 留底）
     await restartHub({ signal: 'SIGKILL', stayDownMs: 2_000 })
     await sleep(1_500)
 

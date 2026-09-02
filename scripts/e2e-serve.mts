@@ -48,7 +48,7 @@ const HUB_ARTIFACT_STORE = join(tmpdir(), 'project311-e2e-hub-artifacts')
 const READY_TIMEOUT_MS = 90_000
 const READY_POLL_MS = 400
 const NODE_READY_TIMEOUT_MS = 60_000
-const TAIL_LIMIT = 120_000
+const TAIL_LIMIT = 160_000 // ~4x 之前；R8 类秒级窗口证据不能被早期行冲出缓冲
 
 const log = (message: string): void => console.error(`[e2e-serve] ${message}`)
 

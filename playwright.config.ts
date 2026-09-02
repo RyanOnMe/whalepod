@@ -19,6 +19,13 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   reporter: [['list']],
+  // 一个 Hub 实例只容一个团队（Setup 一次性，产品约束）——不同 spec 文件必须
+  // 各占一套环境。Q5（pnpm test:e2e）据此拆成按项目两次串行调用，每次 webServer
+  // 全新冷启；--project 过滤见根 package.json。
+  projects: [
+    { name: 'p1-07', testMatch: /task-room\.spec\.ts/ },
+    { name: 'p1-19', testMatch: /full-chain\.spec\.ts/ },
+  ],
   use: {
     baseURL: 'http://localhost:5173',
     // 用系统 Chrome（channel）而非 Playwright 自带 Chromium：首次浏览器下载
