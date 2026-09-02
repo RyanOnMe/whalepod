@@ -84,7 +84,8 @@ pnpm exec playwright test
   会在同一实例内重放副本，与「一个 Hub 一次 Setup 一个团队」的产品模型架构性
   不兼容（实测副本卡死在 Setup 页），且每轮冷启本身就是被验收的路径。
 - 对应 Issue：#23
-- 上次验证：2026-09-02 · feat/p1-19-e2e-recovery · 结果 PASS（12/12 × 20 连跑，见下）
+- 上次验证：2026-09-03 · feat/p1-19-e2e-recovery · **Q5 PASS（20/20 连续冷启全绿，
+  每轮 task-room 1/1 + full-chain 12/12）**；Q0 `pnpm check` 全绿；Q2 集成 283/283
 
 ## 验的是哪条用户路径
 
