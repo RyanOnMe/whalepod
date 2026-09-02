@@ -169,7 +169,7 @@ export function RunLivePanel({ runId, session }: RunLivePanelProps): ReactNode {
         </div>
       ) : null}
 
-      <div className="run-live-events">
+      <div className="run-live-events" data-testid="run-live-events">
         <h4>事件</h4>
         {eventsQuery.isPending ? <p className="mutation-hint">正在加载事件…</p> : null}
         {events.length === 0 && !eventsQuery.isPending ? (

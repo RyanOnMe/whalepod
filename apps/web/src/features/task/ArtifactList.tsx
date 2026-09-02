@@ -121,6 +121,7 @@ function ArtifactRows({
             <button
               type="button"
               className="button"
+              data-testid="artifact-download-button"
               disabled={busyId === artifact.id}
               onClick={() => void download(artifact)}
             >
@@ -191,6 +192,7 @@ function CandidateRows({
             <button
               type="button"
               className="button"
+              data-testid="artifact-publish-button"
               disabled={busyId === artifact.id}
               onClick={() => void publish(artifact)}
             >
