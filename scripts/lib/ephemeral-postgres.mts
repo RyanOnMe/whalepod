@@ -15,9 +15,12 @@ const execFileAsync = promisify(execFile)
 const IMAGE = 'postgres:18'
 const READY_TIMEOUT_MS = 60_000
 const READY_POLL_MS = 250
-// 端口发布滞后窗兜底（实测 x20 第 8 轮抓到）：上限 10s、200ms 间隔。
-const PORT_PUBLISH_TIMEOUT_MS = 10_000
-const PORT_PUBLISH_POLL_MS = 200
+// 端口发布滞后窗兜底：实测 x20 抓到两形态——第 8 轮「立即查询即红」、
+// 第 19 轮「10s 不够」（Docker Desktop Mac 经 18 轮容器 churn 后发布滞后
+// 超 10s，容器日志显示本身健康在 init）。上限对齐 READY_TIMEOUT_MS（60s，
+// 发布是容器启动的一部分，与 pg_isready 同级预算），间隔同 READY_POLL_MS。
+const PORT_PUBLISH_TIMEOUT_MS = 60_000
+const PORT_PUBLISH_POLL_MS = 250
 
 const log = (message: string): void => console.error(`[ephemeral-postgres] ${message}`)
 
