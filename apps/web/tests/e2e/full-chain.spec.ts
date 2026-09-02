@@ -32,6 +32,7 @@ import {
   getRunFact,
   waitForRunStatus,
   inputManifestForRun,
+  workspaceCanonicalPath,
   releaseRuntime,
   activeRuntimes,
   restartHub,
@@ -48,8 +49,8 @@ import {
 
 const ALICE_PASSWORD = 'correct horse battery staple'
 const BOB_PASSWORD = 'correct horse battery staple'
-// Q5 repeat-each 的每个副本跑在独立 worker（模块态各自成立）：账号/团队带
-// 唯一后缀，多副本共存一套 Hub 不互踩（全局 username 唯一是产品约束）。
+// 账号/团队带唯一后缀：模块态只在单 worker 内存活，任何环境复用/漂移场景下
+// 都不与既有团队互踩（全局 username 唯一是产品约束）。
 const RUN_TAG = randomUUID().slice(0, 8)
 const ALICE_NAME = `alice-${RUN_TAG}`
 const BOB_NAME = `bob-${RUN_TAG}`
@@ -300,6 +301,56 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     await releaseRuntime(runId) // 终态已确认：回收 Runtime 进程（容量留给后续场景）。
   })
 
+  test('G5-04：Bob 拒绝审批——工具失败结果回 Runtime、零发布副作用、终态两端可见', async () => {
+    test.setTimeout(300_000)
+    // 单测友好：setup/pair 幂等守卫使本测试可被 --grep 独立拉起。
+    await setupTeamAndTask()
+    await pairNodeViaUiAndControl()
+    // 拒绝分支快照：工具调用与 approval 相同，但收尾文本是「被拒解释」——语义
+    // 诚实（replay 是定序回放、不随决定分支；共用 approval 快照会让拒绝 Run
+    // 说出 “Artifact published.” 的假话）。
+    await setRuntimeFixture('rejection')
+    try {
+      await shared.bob!.reload()
+      const runId = await startRunViaUi('builder', 'G5-04：拒绝这次发布')
+      await waitForRunStatus(runId, 'waiting_approval', 120_000)
+      await shared.bob!.reload()
+
+      // 键盘可达：焦点到「拒绝」按钮 Enter 激活（G5-04 驱动走 UI）。
+      const card = shared.bob!.getByTestId('approval-card')
+      await expect(card).toBeVisible({ timeout: 30_000 })
+      await shared.bob!.getByTestId('reject-button').focus()
+      await shared.bob!.keyboard.press('Enter')
+
+      // 判定（HTTP 旁路取事实）：Run 继续收尾到 completed；审批终态 rejected、
+      // 决定人 = Bob（Run owner）。
+      const fact = await waitForRunStatus(runId, 'completed', 120_000)
+      expect(fact.approvals[0]?.status).toBe('rejected')
+      expect(fact.approvals[0]?.decidedBy).toBe(shared.bobUserId)
+      // 红线：拒绝 = 零副作用——本 Run 没有任何 artifact 行。
+      expect(fact.artifacts.length).toBe(0)
+      // 决定事件进 Run 时间线（owner 受众）。
+      expect(
+        fact.runEvents.some((e) => e.type === 'approval.decided' && e.audience === 'owner'),
+      ).toBe(true)
+
+      // 两端可见（走 UI）：审批卡插槽只随 waiting Run 存在而渲染（决定即收卡），
+      // 终态经 RunLivePanel 事件行核验——projector 对 approval.decided 走
+      // owner/project 双受众同形投影（03 §8），Bob/Alice 各自 reload+点选后
+      // 都应看到「审批决定：已拒绝」。
+      await shared.bob!.reload()
+      await selectRun(shared.bob!, runId)
+      await expect(shared.bob!.getByTestId('run-live-events')).toContainText('审批决定：已拒绝')
+      await shared.alice!.reload()
+      await selectRun(shared.alice!, runId)
+      await expect(shared.alice!.getByTestId('run-live-events')).toContainText('审批决定：已拒绝')
+
+      await releaseRuntime(runId)
+    } finally {
+      await setRuntimeFixture('approval')
+    }
+  })
+
   test('G6-04 Artifact：Bob 发布 candidate；Alice 下载且与 digest 一致', async () => {
     test.setTimeout(180_000)
     await shared.bob!.reload()
@@ -359,8 +410,19 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     const builderArtifact = (await getRunFact(shared.builderRunId!)).artifacts[0]!
     expect(manifest.manifestText).toContain(builderArtifact.sha256)
     expect(manifest.manifestText).toContain('runtime-inputs')
-    // 不继承 Builder Workspace：清单文本不得携带 node 工作区目录形态。
-    expect(manifest.manifestText).not.toContain(join('state', 'workspace'))
+    // 不继承 Builder Workspace（评审 N3）：① canonical 真实目录不得出现在输入
+    // 清单（dir 是 runtime-inputs/<runId> 消费位——合法绝对路径，与来源 workspace
+    // 判然有别）；② 全 Run 事件正文任何一行不得携带该路径（03 §2.4 红线：
+    // canonicalPath 永不出 Node 投影面）。
+    const builderWsPath = await workspaceCanonicalPath()
+    expect(builderWsPath.length).toBeGreaterThan(0)
+    expect(manifest.manifestText).not.toContain(builderWsPath)
+    const evFact = await getRunFact(runId)
+    for (const e of evFact.runEvents) {
+      expect(JSON.stringify(e)).not.toContain(builderWsPath)
+    }
+    // Reviewer 消费位真实存在（受控输入不是一句空话）。
+    expect(manifest.manifestText).toContain(join('runtime-inputs', runId))
   })
 
   test('G4-04 两浏览器 frame diff：Bob 见脱敏全文事件流，Alice 只见脱敏阶段', async () => {
@@ -376,6 +438,14 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
       timeout: 30_000,
     })
     expect(await shared.bob!.locator('.run-event.audience-owner').count()).toBeGreaterThanOrEqual(5)
+    // 原文正对照（评审 N3）：owner 受众行里确有该原文（Alice 侧的负断言因此
+    // 不是空真——同一原文在 project 侧只允许以 run.completed 摘要形态出现）。
+    expect(
+      await shared
+        .bob!.getByTestId('run-live-events')
+        .locator('.run-event.audience-owner', { hasText: 'Hello from replay.' })
+        .count(),
+    ).toBeGreaterThanOrEqual(1)
 
     // Alice（成员）：同一动作——服务端受众过滤后，owner 行零出现，只见缩水产品。
     await shared.alice!.reload()
@@ -386,6 +456,19 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     expect(await aliceEvents.locator('.run-event.audience-owner').count()).toBe(0)
     const aliceText = await aliceEvents.innerText()
     expect(aliceText).toContain('DSH 运行时就绪') // 缩水流确有内容（脱敏而非空缺）
+    // 评审 N3 原文负断言（行级、防摘要设计误伤）：该原文在 Alice 侧不得以
+    // owner 受众行出现；project 受众行中也不允许有 assistant.message 原文行
+    // （run.completed 摘要行是设计通路，另行核验其截断语义归 P1-16 用例）。
+    expect(
+      await aliceEvents
+        .locator('.run-event.audience-owner', { hasText: 'Hello from replay.' })
+        .count(),
+    ).toBe(0)
+    expect(
+      await aliceEvents
+        .locator('.run-event.audience-project', { hasText: 'Hello from replay.' })
+        .count(),
+    ).toBeLessThanOrEqual(1) // 只可能来自 completed 摘要；无原文流行泄漏通道
     // 注：project 受众同样携带 run.phase 缩水行（03 §8：阶段对团队可见），
     // 差异点在 assistant.message / tool 预览 / approval 正文——上面按受众行核验。
     await releaseRuntime(runId)
@@ -508,10 +591,21 @@ test.describe('P1-19 恢复场景（R1/R4/R5/R7/R8/R9）', () => {
     // 崩溃注入取「提交后、未达 Node」这一确定性形态：先拔 Node 网线（产品语义
     // 断链，outbox 行已提交但首次派发必然失败），再 SIGKILL Hub。曾实测直接
     // SIGKILL 会砸进「首次派发 ack 在途」的毫秒窗（Node 收到但未回执、重发撞上
-    // 处理中状态），那是另一条已登记的产品竞态，不是 R8 的验收点。
+    // 处理中状态），那是另一条已登记的产品竞态（立账 #90 观察项），不是 R8 的
+    // 验收点。
     await dropNodeConnection(4_000)
     const runId = await startRunViaUi('builder', 'R8：提交后崩溃')
     await sleep(800) // 让首个派发 attempt 撞墙（unacked 留底）
+
+    // 硬闸（防静默退化为 R1 变体）：崩溃前 Run 必须仍停在派发前/中——
+    // queued/dispatching 且 run.start 未 ack。若此刻已 acked/已 waiting_approval，
+    // 说明根本没测到「崩溃在提交与派发之间」这一 R8 本体窗，直接红。
+    const pre = await getRunFact(runId)
+    expect(['queued', 'dispatching']).toContain(pre.run.status)
+    const preStart = pre.outbox.filter((r) => r.type === 'run.start')
+    expect(preStart.length).toBe(1)
+    expect(preStart[0]!.acked).toBe(false)
+
     await restartHub({ signal: 'SIGKILL', stayDownMs: 2_000 })
     await sleep(1_500)
 
@@ -519,6 +613,11 @@ test.describe('P1-19 恢复场景（R1/R4/R5/R7/R8/R9）', () => {
     await waitForRunStatus(runId, 'waiting_approval', 120_000)
     const queued = await getRunFact(runId)
     expect(queued.run.status).not.toBe('queued')
+    // 硬闸（观测）：崩溃前已至少一次失败 attempt + 重启后续派发再 attempt ≥2，
+    // 最终 acked——「Outbox 重启续派发」的完整证据链。
+    const postStart = queued.outbox.find((r) => r.type === 'run.start')!
+    expect(postStart.attempts).toBeGreaterThanOrEqual(2)
+    expect(postStart.acked).toBe(true)
 
     await approveAndComplete(runId)
     assertSeqContiguous(await getRunFact(runId))
@@ -594,17 +693,17 @@ test.describe('P1-19 Run 行动（G7-01 取消 / G7-04 重跑血缘）', () => {
     expect(lingering).toBe(false)
 
     // 终态禁改写：取消后审批不得再被决定（HTTP 旁路核验产品判断）。
-    if (fact.approvals.length > 0) {
-      const denied = await hubApi(
-        shared.bobCookie!,
-        'POST',
-        `/approvals/${fact.approvals[0]!.id}/decisions`,
-        {
-          decision: 'allowed_once',
-        },
-      )
-      expect(denied.status).toBe(409)
-    }
+    // 无条件断言（评审 N2）：G7-01 取消的正是 waiting_approval Run——审批行必存在。
+    expect(fact.approvals.length).toBeGreaterThan(0)
+    const denied = await hubApi(
+      shared.bobCookie!,
+      'POST',
+      `/approvals/${fact.approvals[0]!.id}/decisions`,
+      {
+        decision: 'allowed_once',
+      },
+    )
+    expect(denied.status).toBe(409)
     await shared.bob!.reload()
     await expect(shared.bob!.getByText('已取消').first()).toBeVisible({ timeout: 30_000 })
     shared.cancelledRunId = runId

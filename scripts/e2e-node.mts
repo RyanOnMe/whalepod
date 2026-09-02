@@ -13,6 +13,8 @@
  *    overlay 是 04 文档契约探针的一等概念，生产 cli 该项为空；
  * 2. Workspace 投影上报：生产 cli 尚未接线 inventory 发送（P1-12 交付的是
  *    构建器与 Hub 侧投影），本进程在连接建立后按 03 §6.2 发 node.inventory 帧，
+ *    （产品缺陷立账 #89，Alpha 阻断级：真实用户 RunLauncher 选不到 Workspace；
+ *     生产修复后本缝应删除——E2E 全绿不代表该产品路径可用）
  *    走的正是 Hub node-websocket 已有的真人处理路径；
  * 3. 故障注入与观测缝：进程内 127.0.0.1 控制口（drop=拔线模拟、ack-drop=吞
  *    command.ack、runtimes=真 pid、input-manifest=Reviewer 输入清单快照、
@@ -69,6 +71,12 @@ const FIXTURES: Record<string, string> = {
   secrets: join(
     REPO_ROOT,
     'packages/runtime-dsh/tests/dsh-contract/fixtures/secrets/session.jsonl',
+  ),
+  // G5-04 拒绝分支：同 tool-call 前置，收尾文本为被拒解释（replay 定序回放不随
+  // 决定分支，语义诚实需要独立快照）。
+  rejection: join(
+    REPO_ROOT,
+    'packages/runtime-dsh/tests/dsh-contract/fixtures/tool-rejection/session.jsonl',
   ),
 }
 
@@ -194,9 +202,10 @@ const supervisor = new RuntimeSupervisor({
   secrets,
   stateDbPath: join(stateDir, 'supervisor.sqlite'),
   // E2E 单 Node 承载多轮多 Run（20 连跑复用同一环境）；终态回收见下。
+  // ⚠ 与生产差异（立账 #88）：生产 capacity:2 / runtimeTimeoutMs:6h（cli.ts:171-172），
+  //   且无人发 runtime.shutdown——终态进程占容量最长 6h。Q5 绿是在本装配兜底下
+  //   取得的，该产品行为本 E2E 测不到；#88 修复后此处应收敛为生产同值。
   capacity: 6,
-  // 产品观察（登记 acceptance）：completed 的 Runtime 进程默认滞留到硬超时才回收；
-  // 这里硬超时收窄到 120s，另提供 /release 显式回收缝（等同 supervisor 到期动作）。
   runtimeTimeoutMs: 120_000,
   // 验收缝（P1-18 惯例）：replay overlay 变量显式透传，生产 cli 此处为空。
   runtimeEnvPassthrough: ['DSH_SNAPSHOT_FILE', 'PROJECT311_RUNTIME_EXTRA_PATCH_FILES'],
@@ -299,6 +308,8 @@ runManager.handleFrame = async (frame: Parameters<RunManager['handleFrame']>[0])
   if (frame.type === 'run.start') {
     // 关键一步：受理即补发心跳（真实事实源），把 Hub reconcile 误判窗口从
     // 「≤ heartbeatMs」压到「≤ 单帧网络时延」。
+    // ⚠ monkey-patch 兜底（立账 #87）：心跳投影竞态的正解在产品侧（Node 受理
+    //   即补拍 / Hub 启动宽限）。#87 落地后删除本包装与 managerActive 超集。
     sendHeartbeatNow()
   }
 }
@@ -506,6 +517,11 @@ const server = createServer((req, res) => {
             known: [...inputManifests.keys()],
           })
         return reply(200, { runId, ...recorded })
+      }
+      case '/workspace-path': {
+        // G6-07 负断言数据源：canonical workspace 真实目录（127.0.0.1 控制口内
+        // 观测缝，不进证据/git——红线判据要求「真实目录不出现」而非形态猜测）。
+        return reply(200, { canonicalPath: registered.canonicalPath })
       }
       case '/state': {
         return reply(200, {

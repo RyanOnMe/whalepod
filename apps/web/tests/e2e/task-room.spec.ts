@@ -26,8 +26,8 @@ const env = JSON.parse(readFileSync(join(tmpdir(), 'project311-e2e-env.json'), '
 
 const ALICE_PASSWORD = 'correct horse battery staple'
 const BOB_PASSWORD = 'correct horse battery staple'
-// Q5 repeat-each：每个副本在独立 worker 中执行（模块态不跨副本）——账号与团队
-// 带唯一后缀，20 副本共享一套 Hub 互不踩踏（全局 username 唯一是产品约束）。
+// 账号与团队带唯一后缀：worker/环境复用下模块态不跨进程，唯一名防止任何
+// 同实例重放互踩（全局 username 唯一是产品约束）。
 const RUN_TAG = randomUUID().slice(0, 8)
 const ALICE_NAME = `alice-${RUN_TAG}`
 const BOB_NAME = `bob-${RUN_TAG}`

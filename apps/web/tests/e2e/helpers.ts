@@ -150,21 +150,6 @@ export async function waitForRunStatus(
   }
 }
 
-/** 轮询 Hub 侧 DB 事实到 Run 终态（判定用；UI 断言仍走浏览器）。 */
-export async function waitForRunTerminal(runId: string, timeoutMs = 90_000): Promise<RunFact> {
-  const deadline = Date.now() + timeoutMs
-  for (;;) {
-    const fact = await getRunFact(runId)
-    if (TERMINAL.has(fact.run.status)) return fact
-    if (Date.now() > deadline) {
-      throw new Error(
-        `Run ${runId.slice(0, 8)} 未在 ${timeoutMs}ms 内到终态（当前 ${fact.run.status}）`,
-      )
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250))
-  }
-}
-
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -224,8 +209,16 @@ export function restartHub(input: {
   return controlApi<HubRestartResult>('/control/hub/restart', input)
 }
 
-export function setRuntimeFixture(name: 'approval' | 'basic' | 'secrets'): Promise<unknown> {
+export function setRuntimeFixture(
+  name: 'approval' | 'basic' | 'secrets' | 'rejection',
+): Promise<unknown> {
   return nodeControl('/fixture', { name })
+}
+
+/** Builder workspace 真实目录（G6-07 负断言数据源；只在测试进程内存活）。 */
+export async function workspaceCanonicalPath(): Promise<string> {
+  const res = await nodeControl<{ canonicalPath: string }>('/workspace-path', {})
+  return res.canonicalPath
 }
 
 export function dropNodeConnection(offlineMs: number): Promise<unknown> {
@@ -236,7 +229,11 @@ export function dropAckCount(count: number): Promise<unknown> {
   return nodeControl('/ack-drop', { count })
 }
 
-/** 终态 Run 的 Runtime 进程回收缝（等同 supervisor 硬超时动作；调用方必须先确认终态）。 */
+/**
+ * 终态 Run 的 Runtime 进程回收缝（等同 supervisor 硬超时动作；调用方必须先确认
+ * 终态）。⚠ 产品缺 runtime.shutdown 主动回收（立账 #88，生产滞留上限 6h）；
+ * #88 落地后本缝应删除。
+ */
 export function releaseRuntime(runId: string): Promise<{ wasActive: boolean }> {
   return nodeControl('/release', { runId })
 }
@@ -332,7 +329,7 @@ export async function collectEvidenceOnFailure(
   const files = ['hub.log.txt', 'node.log.txt', 'vite.log.txt']
   for (const attachment of testInfo.attachments) {
     if (attachment.path !== undefined) {
-      files.push(attachment.path)
+      files.push(scrubLocalPaths(attachment.path)) // N1：绝对路径不进包（Q7 红线）
     }
   }
   const manifest = {

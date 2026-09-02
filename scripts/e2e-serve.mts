@@ -159,6 +159,8 @@ async function waitForPortFree(port: number, timeoutMs = 15_000): Promise<void> 
     }
     await new Promise((resolve) => setTimeout(resolve, 200))
   }
+  // 显式失败（N5）：静默放行只会让下一次 bind 以更难归因的 EADDRINUSE 爆掉。
+  fail(`端口 ${port} 在 ${timeoutMs}ms 后仍未释放`)
 }
 
 // ---- 0. 一次性 PostgreSQL（与 Q2 同一容器实现） ----
@@ -317,8 +319,8 @@ function stopNodeChild(signal: 'SIGTERM' | 'SIGKILL'): { stopped: boolean } {
 }
 
 async function startNodeChild(pairingCode: string | undefined): Promise<NodeHandle> {
-  // 多副本 E2E（repeat-each，每副本独立 worker 会重新配对）：已有实例先按
-  // 崩溃语义收掉再拉新（真人拔电源重启观感），避免 'already running' 死路。
+  // restart-on-start：worker/进程漂移下配对重建时旧 Node 可能仍在管——按崩溃
+  // 语义收掉再拉新（真人拔电源重启观感），避免 'already running' 死路。
   if (nodeHandle !== undefined) {
     log('node/start：既有实例先停（restart-on-start）')
     stopNodeChild('SIGKILL')
@@ -659,7 +661,8 @@ await writeFile(
   }),
   { mode: 0o600 },
 )
-log(`环境清单：${ENV_FILE}（Token 明文只在 0600 文件与清单中，不进 git/日志）`)
+// 路径本身也是敏感面（Q7 红线：绝对路径不进日志）——打印归约形态。
+log(`环境清单：${redactText(ENV_FILE)}（Token 明文只在 0600 文件与清单中，不进 git/日志）`)
 launchVite()
 await waitReady(`http://localhost:${WEB_PORT}/`, 'Web')
 log('e2e 环境就绪，保持运行直至父进程退出')

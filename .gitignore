@@ -26,3 +26,4 @@ artifacts/evidence/
 # Node 端本地状态（Device Token、secrets.json、spool 等；目录名随定名调整）
 .project311-node/
 .dsh/
+artifacts/q5/

@@ -28,15 +28,16 @@ cleanup_stale() {
     | xargs -r docker rm -f >/dev/null 2>&1 || true
 }
 
+mkdir -p artifacts/q5
 pass=0
 for i in $(seq 1 "$N"); do
   cleanup_stale
-  if pnpm test:e2e > "/tmp/q5-run-$i.log" 2>&1; then
+  if pnpm test:e2e > "artifacts/q5/run-$i.log" 2>&1; then
     pass=$((pass + 1))
     echo "run $i/$N: PASS"
   else
-    echo "run $i/$N: FAIL —— 见 /tmp/q5-run-$i.log"
-    tail -25 "/tmp/q5-run-$i.log"
+    echo "run $i/$N: FAIL —— 见 artifacts/q5/run-$i.log"
+    tail -25 "artifacts/q5/run-$i.log"
     exit 1
   fi
 done
