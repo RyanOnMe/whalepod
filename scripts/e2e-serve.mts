@@ -239,6 +239,12 @@ try {
 } catch {
   // 无残留。
 }
+// 上一轮残留清单先删（配合「先写清单后开 vite」的时序：让 spec 读不到就
+// fail-fast，而不是静默拿旧 Setup Token 假跑）。
+{
+  const { rm } = await import('node:fs/promises')
+  await rm(ENV_FILE, { force: true })
+}
 postgres = await startEphemeralPostgres()
 const databaseUrl = postgres.databaseUrl
 {
@@ -257,31 +263,35 @@ const setupDir = await mkdtemp(join(tmpdir(), 'project311-e2e-hub-'))
 const setupTokenPath = join(setupDir, 'setup-token')
 hub = await spawnHub(databaseUrl, setupTokenPath)
 
-// ---- 3. Web dev server（vite，同源反代） ----
-const viteServer = spawn(
-  'pnpm',
-  ['--filter', '@project311/web', 'exec', 'vite', '--port', String(WEB_PORT), '--strictPort'],
-  {
-    env: { ...process.env, PROJECT311_HUB_ORIGIN: `http://127.0.0.1:${HUB_PORT}` },
-    stdio: ['ignore', 'ignore', 'pipe'],
-  },
-)
-viteChild.push(viteServer)
-viteServer.stderr?.setEncoding('utf8')
-viteServer.stderr?.on('data', (chunk: string) => viteStderr.append(chunk))
-viteServer.on('exit', (code, signal) => {
-  if (!shuttingDown) {
-    log(
-      `vite 提前退出 code=${code} signal=${signal}\n${redactText(viteStderr.capped.slice(-2000))}`,
-    )
-    void shutdown()
-    process.exit(1)
-  }
-})
+// ---- 3. Web dev server（vite，同源反代）——延迟到环境清单写完之后才拉起 ----
+// 时序红线（P1-19 实测）：playwright 的 webServer 探活只看 vite 的 200，spec 在
+// 模块加载时读 tmpdir 清单；若先拉起 vite，探活通过与清单落盘之间存在窗口，
+// spec 可能读到上一轮残留清单（invalid setup token）。先写清单、后开大门。
+function launchVite(): void {
+  const viteServer = spawn(
+    'pnpm',
+    ['--filter', '@project311/web', 'exec', 'vite', '--port', String(WEB_PORT), '--strictPort'],
+    {
+      env: { ...process.env, PROJECT311_HUB_ORIGIN: `http://127.0.0.1:${HUB_PORT}` },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    },
+  )
+  viteChild.push(viteServer)
+  viteServer.stderr?.setEncoding('utf8')
+  viteServer.stderr?.on('data', (chunk: string) => viteStderr.append(chunk))
+  viteServer.on('exit', (code, signal) => {
+    if (!shuttingDown) {
+      log(
+        `vite 提前退出 code=${code} signal=${signal}\n${redactText(viteStderr.capped.slice(-2000))}`,
+      )
+      void shutdown()
+      process.exit(1)
+    }
+  })
+}
 
 // ---- 4. 就绪等待 + 控制面 ----
 await waitReady(`http://127.0.0.1:${HUB_PORT}/api/v1/setup/status`, 'Hub')
-await waitReady(`http://localhost:${WEB_PORT}/`, 'Web')
 
 const setupToken = (await readFile(setupTokenPath, 'utf8')).trim()
 const controlToken = randomUUID()
@@ -650,5 +660,7 @@ await writeFile(
   { mode: 0o600 },
 )
 log(`环境清单：${ENV_FILE}（Token 明文只在 0600 文件与清单中，不进 git/日志）`)
+launchVite()
+await waitReady(`http://localhost:${WEB_PORT}/`, 'Web')
 log('e2e 环境就绪，保持运行直至父进程退出')
 setInterval(() => {}, 60_000) // 保活，等待 playwright webServer 结束本进程
