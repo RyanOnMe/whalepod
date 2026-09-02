@@ -277,11 +277,16 @@ describe('P1-13 全链路（真 Hub + 真 Node + 真 Runtime/replay）', () => {
       if (Date.now() > aliceDeadline) throw new Error('alice never saw approval card')
       await silence(50)
     }
+    // 等待条件必须盯断言目标本身（#91，#67 同族）：approval.changed(pending)
+    // 在审批创建时即广播，可能先于 requested 收缩卡到达——盯它做等待会提前
+    // 放行，下方 :301 的 requested 断言偶发空集。改为轮询 requested 帧。
     const bobDeadline = Date.now() + TAKE_TIMEOUT_MS
     while (
-      !bobWs.frames.some((f) => f.kind === 'persistent' && f.event.type === 'approval.changed')
+      !bobWs.frames.some(
+        (f) => f.kind === 'persistent' && JSON.stringify(f.event).includes('"approval.requested"'),
+      )
     ) {
-      if (Date.now() > bobDeadline) throw new Error('bob never saw approval.changed')
+      if (Date.now() > bobDeadline) throw new Error('bob never saw approval.requested')
       await silence(50)
     }
     // owner 流里有带正文的卡；member 流里只有收缩卡（reason 恒空）与状态事件，
