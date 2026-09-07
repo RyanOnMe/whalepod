@@ -132,7 +132,11 @@ export function RunLivePanel({ runId, session }: RunLivePanelProps): ReactNode {
 
   const events = eventsQuery.data?.events ?? []
   return (
-    <section className="card run-live" aria-labelledby="run-live-heading">
+    <section
+      className="card run-live"
+      data-testid="run-live-panel"
+      aria-labelledby="run-live-heading"
+    >
       <div className="run-live-head">
         <h3 id="run-live-heading">Run {run.id.slice(0, 8)}</h3>
         <span className={`badge badge-run badge-run-${run.status}`}>
@@ -169,7 +173,7 @@ export function RunLivePanel({ runId, session }: RunLivePanelProps): ReactNode {
         </div>
       ) : null}
 
-      <div className="run-live-events">
+      <div className="run-live-events" data-testid="run-live-events">
         <h4>事件</h4>
         {eventsQuery.isPending ? <p className="mutation-hint">正在加载事件…</p> : null}
         {events.length === 0 && !eventsQuery.isPending ? (

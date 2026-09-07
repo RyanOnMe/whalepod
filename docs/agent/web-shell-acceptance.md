@@ -16,7 +16,8 @@ Issue #11 验收原文：**Alice 创建 Task、Bob 在第二 BrowserContext 接�
 ## 驱动（怎么触发）
 
 ```bash
-pnpm exec playwright test          # playwright.config.ts webServer 拉起全环境并跑场景
+pnpm test:e2e                      # 整门全量（两项目各自冷启；单 invocation 跑双
+                                   # project 会共享 webServer，第二次 Setup 必 409）
 pnpm exec playwright test --ui     # 调试模式（可选）
 ```
 
@@ -55,7 +56,8 @@ pnpm exec playwright test --ui     # 调试模式（可选）
 ## 取证
 
 ```bash
-pnpm exec playwright test                 # 场景本体
+pnpm exec playwright test --project=p1-07 # 场景本体（单项目：双 project 单 invocation
+                                          # 共享 webServer 会二次 Setup 409，全门用 pnpm test:e2e）
 pnpm check && pnpm test:integration       # Q0/Q2（本次改动后 536/536 + 174/174）
 bash scripts/secret-scan.sh apps/web scripts docs/agent
 ```
@@ -64,7 +66,8 @@ bash scripts/secret-scan.sh apps/web scripts docs/agent
 
 - Bob 的账号经 HTTP API 以 Alice 会话开通（邀请开通 UI 不在 P1-07 范围）；Bob 登录之后
   的一切动作都走真实浏览器路径。
-- Q5 浏览器门全量（连续 20 次无偶发）与更多场景随 P1-19 落地；本场景为种子。
+- Q5 浏览器门已由 P1-19 落地（`bash scripts/q5-loop.sh 20`；本场景经 projects
+  拆分独立冷启，见下文 P1-19 段）。
 - 浏览器实时事件（#13 已交付的 realtime 模块）接线进 Task Room 属 P1-13 组合根范围，
   本场景的可视性经显式 reload 驱动（诚实路径，不依赖轮询巧合）。
 
@@ -72,5 +75,141 @@ bash scripts/secret-scan.sh apps/web scripts docs/agent
 
 ```bash
 corepack enable && pnpm install --frozen-lockfile && pnpm -r --if-present build
-pnpm exec playwright test
+pnpm exec playwright test --project=p1-07   # 单项目冷启（理由见上方取证块注记）
 ```
+
+---
+
+# P1-19 两浏览器全链 E2E 与恢复场景（Q5 正式门）
+
+- 对应场景/门禁：Issue #23（P1-19）；Q5 浏览器门 = `scripts/q5-loop.sh 20`
+  （连续 20 次完整 `pnpm test:e2e`，每轮全新冷启环境）。口径说明：`--repeat-each`
+  会在同一实例内重放副本，与「一个 Hub 一次 Setup 一个团队」的产品模型架构性
+  不兼容（实测副本卡死在 Setup 页），且每轮冷启本身就是被验收的路径。
+- 对应 Issue：#23
+- 上次验证：2026-09-07 · feat/p1-19-e2e-recovery @ bdff8b1 · **Q5 PASS（20/20
+  连续冷启全绿，每轮 task-room 1/1 + full-chain 13/13）**；期间门禁抓并修掉
+  Docker 端口发布竞态三形态（见「发现」第 7 条），另修 chain spec 等待条件错位
+  （#91/#92）。Q0 `pnpm check` 全绿；Q2 集成 283/283；CI check+integration 双绿。
+  ⚠ 见「发现」0/2/3 条：Q5 绿在装配兜底下取得，产品缺陷分账 #87/#88/#89/#90
+
+## 验的是哪条用户路径
+
+Issue #23 验收原文：**两浏览器全链 + 恢复场景**——Bob 创建 Builder Run → Runtime
+真起（DSH replay 子进程）→ 审批卡（两端 diff）→ 批准 → 完成 → Artifact 发布给
+Alice 下载 → Bob 起 Reviewer Run 受控消费输入清单；Hub/Node 故障注入后恢复
+（R1/R4/R5/R7/R8/R9）与取消/重跑（G7-01/G7-04）。
+
+真实装配零 mock：浏览器 ⇄ vite 反代 ⇄ 生产 Hub 子进程 ⇄ 真 Node 会话（e2e-node：
+WorkspaceRegistry/SecretStore/CommandStore/EventStore/RuntimeSupervisor/
+DshRuntimeDriver/RunManager/startDeviceSession）⇄ 真 Runtime 子进程（apps/runtime
++ DSH replay overlay，经 `runtimeEnvPassthrough` 验收缝注入快照；该缝在生产
+cli.ts 恒为空）。
+
+## 三通道纪律（每步标注「走 UI / 走 HTTP 旁路 / 走控制面」）
+
+| 场景 | 驱动 | 观测/判定 | 通道备注 |
+|---|---|---|---|
+| G5 审批卡两端 diff | Bob UI 启动 Run、焦点+Enter 批准 | Bob/Alice 两浏览器断言；403 判定走 HTTP 旁路 | 越权面（G5-02）UI 不渲染入口，仅旁路核验 |
+| G6-04 发布/下载 | Bob UI 点发布、Alice UI 点下载（download 事件） | sha256 与 DB 行一致：HTTP 旁路 | 浏览器字节流与 blob 双核验 |
+| G6-07 输入清单消费 | Bob UI 启动 Reviewer Run + 批准 | Node 控制面 `/input-manifest`（受理时留档） | 清单含 artifact sha、目录 runtime-inputs、不携带 Builder workspace 路径 |
+| G4-04 frame diff | 两浏览器各自点选 Run 行看事件面板 | owner 行存在 / audience-owner=0 计数 | 受众过滤在服务端，UI 行类即证据 |
+| R1 Hub 重启 | 控制面 SIGTERM+延迟拉起 | DB 事实（状态不丢）+ UI 批准后完成 + seq 连续 | Node 走产品退避重连，不加速 |
+| R4 断 10s | 控制面 `/drop`（真 terminate + 窗口内拒连） | lease 内状态不变；重连后完成 | |
+| R5 断 45s | 同上 | lease 到期 lost(RUNTIME_LOST)；重连后禁改写；UI「丢失」徽标 | |
+| R7 丢 ack | 控制面 `/ack-drop`（Node 不发 command.ack） | outbox attempts≥2 且同 commandId；`/runtimes` spawnCounts=1 | 幂等判定 = 零第二 Runtime |
+| R8 提交后崩溃 | 控制面 SIGKILL Hub + 延迟拉起 | worker 重启续派发：离开 queued 直至完成 | |
+| R9 Node 崩溃 | 控制面 restartNode（SIGKILL 语义 + 同状态目录复活） | `/runtimes` pid → OS 级 kill 0 探活 = 死；Hub 端 lost(RUNTIME_LOST) 不复活 | recoverOrphans 真回收 |
+| G7-01 取消 | Bob UI（键盘 Enter）点「取消 Run」 | DB cancelled + 进程不残留 + 终态后审批 409（旁路） | |
+| G7-04 重跑 | Bob UI「重跑此 Run」+ 新指令 + 确认 | DB rerunOfRunId + 面板 lineage 文案 | 来源终态不改写 |
+
+控制面（127.0.0.1 一次性 Token，0600 清单）只做进程生命周期与故障注入/取证，
+**不执行任何产品动作**；产品动作一律走浏览器 UI 或契约 HTTP。
+
+## 六原语对账
+
+- **驱动**：真人路径（Chrome 双上下文、键盘 Enter、点选），旁路仅限账号开通与
+  配对码（P1-07 同款登记）；恢复动作（重连/重发/回收）全由产品自身机制完成。
+- **观测**：Hub/Node/Runtime 三层结构化日志（`component` 分层）+ DB run 事实白名单
+  查询（run/runEvents/approvals/artifacts/outbox）+ Node 侧 pid/心跳/spawn 计数缝。
+- **判定**：全部为可跑断言（状态机事实、seq 连续、sha256 一致、audience 计数、
+  pid 存活），无「界面看起来正常」类判定。
+- **归因**：失败时证据包含三层日志尾 + 相关 Run 全量事实 + manifest（traceId/
+  test/error/runIds），按 component 前缀定位层。
+- **取证**：`collectEvidenceOnFailure` 自动打包 `artifacts/evidence/e2e/<attemptId>/`
+  （hub/node/vite 日志尾经 redactText 归约、run-*.json、manifest）；Node stdout
+  （含控制 Token 的 READY 行）已被排除在证据外。
+- **发现**（本轮实测发现，登记）：
+  0. **生产 cli 未接线 node.inventory（立账 #89，Alpha 阻断）**：Hub 的 workspace
+     投影唯一来源是 `node.inventory` 帧，而生产 cli/gateway 不发送该帧（真实用户
+     RunLauncher 选不到 Workspace）。E2E 在装配层连接后手动补发（走 Hub 既有真人
+     路径），**掩盖了该产品缺口**：本门全绿不代表生产 Run 启动链路可跑通。
+  1. **Task Room 聚合查询（`['task-room', id]`）不在 realtime 失效映射内**：
+     状态跃迁后的 Room 呈现依赖显式 reload/导航（P1-07 已按诚实路径处理，本门
+     沿用）；RunLivePanel 的事件流键 `['run', id]` 是实时的。若要 Room 全实时，
+     属产品改动（另立 Issue）。
+  2. **心跳投影竞态（立账 #87）**：Hub reconcile 用「30s 内最新心跳的 activeRunIds」判定
+     nodeLostRun，而 Node 心跳默认 10s 一拍——run.start 受理与下一拍之间的窗口
+     可把新 Run 误标 lost（E2E 实测复现）。E2E 装配已用「受理即补发心跳 +
+     activeRunIds 取 supervisor∪受理 超集」把窗口压到亚秒；**产品侧建议**：Node
+     run.start 受理后立即补发一拍心跳（或 Hub 对刚派发 Run 设启动宽限）。
+  3. **终态 Run 的 Runtime 进程滞留（立账 #88）**：completed 后 Node 不发
+     `runtime.shutdown`（bridge/bin 支持但无人调用），进程占容量到 supervisor 硬
+     超时——生产值 **6h**（apps/node/src/cli.ts:172）且生产 `capacity: 2`
+     （cli.ts:171）：两个终态 Run 即可把设备容量占死最长 6 小时。E2E 装配以
+     capacity 6 / 120s 硬超时 + `/release` 回收缝兜底——**该产品行为本 E2E
+     测不到，Q5 绿是在装配兜底下取得的**；#88 修复后缝应收敛为生产同值。
+  4. **run.status_request 探针应答不 ack（立账 #90·问题1）**：Node 回快照但不回 command.ack，
+     outbox 对该行持续退避重发（观测到 attempts 10+）。功能无损，但属噪声，
+     建议探针纳入 ack 或走非 outbox 通道。
+  5. **webServer 进程包装泄漏**：`pnpm exec tsx` 双层包装令 playwright 只杀到
+     外层，孤儿 serve 占死 18080/5173 并互相覆盖环境清单（本轮多轮失败根因）。
+     已改 `node --import tsx` 单进程直启 + serve 启动自愈（comm/argv 精确判据；
+     第一版 `pkill -f` 会误杀携带同样路径字样的父 shell，自伤教训）。
+  6. **崩溃时机砸进「派发在途」窗口的歧义形态（立账 #90·问题2，观察项）**（R8 早期配方实测一次）：Hub 在
+     run.start 已投递、ack 未落库的毫秒窗被 SIGKILL 后，重启重发在 Node 侧呈现
+     「commandStore 有记录但无处理日志、零事件、attempts 快速爬升」并最终走
+     duplicate→lost 分支。属 G7-03 禁复活语义的安全侧（宁可 lost 不重放），但
+     首投递为何无处理日志未成完全定论；R8 改用确定性窗口（拔线+崩溃），该形态
+     保留为观察项。
+  7. **Docker 端口发布竞态（合入门禁期抓到并已修复）**：评审在最终 HEAD 前置的
+     Q5 x20 第 8 轮环境启动失败——`docker run -d` 返回后立即 `docker port`，撞
+     Docker 网络编程滞后窗报 "no public port '5432' published"（容器报「已启动」
+     而映射未发布；证据 artifacts/q5/run-8.log）。修复：
+     `scripts/lib/ephemeral-postgres.mts` 的 `waitPublishedPort` 有界轮询
+     （10s 上限 / 200ms 间隔，同 waitReady 模式），超期抛错并附
+     `docker logs --tail 20` 现场（区分「发布滞后」与「容器即死」）；空输出/端口
+     0 按未发布重试不误报成功。`scripts/tests/ephemeral-postgres.spec.ts` 4 例
+     确定性测试（注入假 docker/时钟）钉死两形态。该 lib 为 Q2 与 Q5 共用：
+     修复后 auth.integration 10/10 + 1 轮冷启 E2E 无回归。
+     **同一竞态在门禁期又抓两形态，逐层修到根**：第 19 轮（HEAD dadcc82）「10s
+     不够」——容器日志显示 initdb 已完成、本身健康，映射仍不可见，遂把上限对齐
+     READY 同级 60s（`aad11ce`）；第 18 轮（HEAD aad11ce）「60s 死等仍不发布」且
+     容器仍活着 ⟹ 病态绑在单个 endpoint 上，**延长等待无效**，遂改为「20s/次 ×
+     3 次删容器重建」（退避 1s/2s，总预算留在 playwright webServer 180s 内；每次
+     失败删僵尸容器并写 attempt 计数 WARN 供归因；测试扩至 7 例，按容器序号精确
+     断供，钉死重建成功/上限用尽逐个清干净/WARN 可见，`f50049c`）。
+     **最终 20 连（HEAD bdff8b1，13 场景版）：20/20 全绿**，逐轮日志留
+     `artifacts/q5/`；本轮 0 次触发重建——churn 条件未复现，兜底路径由单测钉住。
+
+## 归因速查
+
+- 环境起不来 → `scripts/e2e-serve.mts` stderr（含提前退出的子进程日志尾）。
+- Run 不动 → `/control/db/run/:id`（状态 + outbox attempts/acked）→ Node 日志
+  component=node.*，再 Runtime（runtime.* 经 node 转发段）。
+- UI 不更新 → 先分清「聚合 stale（需 reload，见发现 1）」vs realtime 键（面板）。
+
+## 取证与复跑
+
+```bash
+corepack enable && pnpm install --frozen-lockfile && pnpm -r --if-present build
+pnpm test:e2e                                             # 整门全量（两项目各自冷启：
+                                          # 同一 Hub 只容一次 Setup，单 invocation 双 project 必 409）
+bash scripts/q5-loop.sh 20                                  # Q5 门（20 连冷启；轮次日志 artifacts/q5/）
+pnpm check && pnpm test:integration                         # Q0/Q2
+bash scripts/secret-scan.sh apps/web scripts docs/agent     # Q7 片段
+```
+
+Q5 轮次日志落 `artifacts/q5/run-<i>.log`（gitignored）；失败证据自动落
+`artifacts/evidence/e2e/`（gitignored）；trace 走
+`pnpm exec playwright show-trace test-results/**/trace.zip`。
