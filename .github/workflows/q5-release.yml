@@ -1,0 +1,57 @@
+# Q5 浏览器门（#93 裁决）：**不进 per-PR CI**——它的已知抖动是 Docker/端口类
+# 基建问题，挂每次 PR 会用假红磨掉对门的信任；口径是「发布级证据」。
+# 触发：①push tag v*（发布 ⟹ 20 连，04 矩阵「连续 20 次无偶发」）；
+#       ②workflow_dispatch（分支预验/临时复跑 ⟹ 自选轮数）。
+name: q5-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: 连续冷启轮数（发布口径 20；工作流自验 1）
+        default: '1'
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  q5:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # 与 check.yml 同规：workspace 包走 dist/（#35），先 build 再跑。
+      - name: Build workspace packages
+        run: pnpm -r --if-present build
+
+      # E2E 用系统 Chrome（playwright.config channel:'chrome'，P1-19 的刻意选择：
+      # 免浏览器下载）；ubuntu-latest runner 预装 google-chrome，无需 install。
+      - name: Run Q5 loop (fresh env each round)
+        env:
+          ROUNDS: ${{ github.event_name == 'workflow_dispatch' && inputs.rounds || '20' }}
+        run: bash scripts/q5-loop.sh "$ROUNDS"
+
+      # 取证（六原语 5）：每轮日志 + 失败 attempt 的 evidence 包。
+      - name: Upload Q5 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: q5-evidence
+          path: artifacts/q5/
+          if-no-files-found: warn
+          retention-days: 30
