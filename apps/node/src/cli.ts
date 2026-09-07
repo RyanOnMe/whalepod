@@ -164,7 +164,9 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   })
 
   // Runtime 入口：@project311/runtime 的 bin 产物（部署包内 resolve；P1-20 安装门兜底）。
-  const runtimeEntry = createRequire(import.meta.url).resolve('@project311/runtime/dist/bin.js')
+  // #97：按 runtime 包 exports 声明的公开子路径解析（原先解 './dist/bin.js'
+  // 深路径，未 exports ⟹ ERR_PACKAGE_PATH_NOT_EXPORTED，start 启动即死）。
+  const runtimeEntry = createRequire(import.meta.url).resolve('@project311/runtime/bin')
   const supervisor = new RuntimeSupervisor({
     driver: new DshRuntimeDriver({ runtimeEntry }),
     registry,
