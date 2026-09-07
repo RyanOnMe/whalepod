@@ -10,8 +10,10 @@
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { WorkspaceRegistry } from '../src/workspace/registry.js'
+import { NodeInventorySchema } from '@project311/protocol'
+import { WORKSPACE_NAME_MAX, WorkspaceRegistry } from '../src/workspace/registry.js'
 
 let root: string
 
@@ -142,5 +144,67 @@ describe('WorkspaceRegistry.list/remove', () => {
     const stat = await import('node:fs/promises').then((fs) => fs.stat(dir))
     expect(stat.isDirectory()).toBe(true)
     await registry.close()
+  })
+})
+
+/**
+ * #101：name 协议边界的本地守卫 + 上界漂移锁。
+ *
+ * 背景：Hub 对结构性坏帧按 ADR-0007 fail-closed **断开设备连接**，而 #89 之后
+ * inventory 每条连接建立后都上报 ⟹ 一个超长名就是「连接→被踢→重连→再被踢」的
+ * 死循环。故 invalid 帧必须在本地事实源就被挡住，且两侧边界不得各说各话。
+ */
+describe('WorkspaceRegistry name 边界（#101）', () => {
+  const frameWith = (name: string) =>
+    NodeInventorySchema.safeParse({
+      protocolVersion: 1,
+      messageId: randomUUID(),
+      sentAt: new Date().toISOString(),
+      type: 'node.inventory',
+      payload: {
+        deviceId: randomUUID(),
+        credentialSlots: [],
+        workspaces: [
+          {
+            workspaceId: randomUUID(),
+            name,
+            kind: 'directory',
+            capabilities: { read: true, write: true, git: false },
+            available: true,
+            lastCheckedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    })
+
+  it('协议上界确为 80（80 通过、81 被拒）——registry 守卫生效的前提', () => {
+    expect(frameWith('a'.repeat(80)).success).toBe(true)
+    expect(frameWith('a'.repeat(81)).success).toBe(false)
+    expect(frameWith('').success).toBe(false)
+  })
+
+  it('registry 与协议同一口径：80 收、81 拒且错误可操作', async () => {
+    const registry = makeRegistry()
+    const dir = join(root, `nm-${Math.random().toString(36).slice(2)}`)
+    await mkdir(dir, { recursive: true })
+
+    const ok = await registry.register(dir, { name: 'a'.repeat(WORKSPACE_NAME_MAX) })
+    expect(ok.name).toHaveLength(WORKSPACE_NAME_MAX)
+
+    await expect(registry.register(dir, { name: 'a'.repeat(81) })).rejects.toMatchObject({
+      code: 'WORKSPACE_NAME_INVALID',
+      message: expect.stringContaining('1-80 characters (protocol bound)'),
+    })
+    await expect(registry.register(dir, { name: '' })).rejects.toMatchObject({
+      code: 'WORKSPACE_NAME_INVALID',
+    })
+    registry.close()
+  })
+
+  it('守卫本地常量与协议上界一致（改协议忘改 registry 时这条先红）', () => {
+    expect(WORKSPACE_NAME_MAX).toBe(80)
+    // 80 必须可用、81 必须不可用——两侧同时成立才算一致。
+    expect(frameWith('a'.repeat(WORKSPACE_NAME_MAX)).success).toBe(true)
+    expect(frameWith('a'.repeat(WORKSPACE_NAME_MAX + 1)).success).toBe(false)
   })
 })
