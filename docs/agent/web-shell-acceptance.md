@@ -92,6 +92,13 @@ pnpm exec playwright test --project=p1-07   # 单项目冷启（理由见上方�
   Docker 端口发布竞态三形态（见「发现」第 7 条），另修 chain spec 等待条件错位
   （#91/#92）。Q0 `pnpm check` 全绿；Q2 集成 283/283；CI check+integration 双绿。
   ⚠ 见「发现」0/2/3 条：Q5 绿在装配兜底下取得，产品缺陷分账 #87/#88/#89/#90
+- **后续更正（#89，2026-09-07）**：上述「装配兜底」中 **Workspace 投影一支已删除**
+  ——`scripts/e2e-node.mts` 不再自行拼发 `node.inventory`，`scripts/lib/phase1/chain.ts`
+  不再直插 `schema.workspaces`；投影改由产品侧 session 层上报、cli 注入事实源建立。
+  删缝后 `pnpm test:e2e` **连 3 轮全绿**（每轮 task-room 1/1 + full-chain 13/13）。
+  **边界说清**：上面那个 20/20 是在**缝尚未删除**的 bdff8b1 上取得的，不得当作删缝
+  后的证据；Q5 二十连按口径属发布门，P1-20 会在无兜底的树上重跑。#87/#88/#90 三条
+  分账**状态不变**（均未修）。
 
 ## 验的是哪条用户路径
 
@@ -140,10 +147,16 @@ cli.ts 恒为空）。
   （hub/node/vite 日志尾经 redactText 归约、run-*.json、manifest）；Node stdout
   （含控制 Token 的 READY 行）已被排除在证据外。
 - **发现**（本轮实测发现，登记）：
-  0. **生产 cli 未接线 node.inventory（立账 #89，Alpha 阻断）**：Hub 的 workspace
+  0. **生产 cli 未接线 node.inventory（#89，Alpha 阻断）**：Hub 的 workspace
      投影唯一来源是 `node.inventory` 帧，而生产 cli/gateway 不发送该帧（真实用户
-     RunLauncher 选不到 Workspace）。E2E 在装配层连接后手动补发（走 Hub 既有真人
+     RunLauncher 选不到 Workspace）。E2E 曾在装配层连接后手动补发（走 Hub 既有真人
      路径），**掩盖了该产品缺口**：本门全绿不代表生产 Run 启动链路可跑通。
+     **已修（#89）**：session 层每条连接建立后上报、cli 注入事实源，且 e2e-node 与
+     phase1/chain.ts 两条代偿缝已删除（chain 原本更糟——直插 `schema.workspaces`
+     绕开协议建投影）；改由真 bin 的组合根测从入口验收
+     （`apps/node/tests/integration/cli-inventory.integration.spec.ts`）。
+     接线过程中另挖出两处同源 p0：#95（cli 无顶层 `main()` 调用，二进制静默
+     no-op）、#97（runtime 入口未 `exports`，`start` 启动即死），均已修。
   1. **Task Room 聚合查询（`['task-room', id]`）不在 realtime 失效映射内**：
      状态跃迁后的 Room 呈现依赖显式 reload/导航（P1-07 已按诚实路径处理，本门
      沿用）；RunLivePanel 的事件流键 `['run', id]` 是实时的。若要 Room 全实时，
