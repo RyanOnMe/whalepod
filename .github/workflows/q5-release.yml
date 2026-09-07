@@ -55,3 +55,20 @@ jobs:
           path: artifacts/q5/
           if-no-files-found: warn
           retention-days: 30
+
+  # Q8 短档（#109 裁决）：绝对 p95 判据由 runner 承担（4 CPU/16GB ≥ 04 §8 环境），
+  # 开发机数字只作调试（--dev-report 固定退 3）。与 20 连同触发面：发布级证据。
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r --if-present build
+      - name: Run Q8 load profile (short)
+        run: pnpm test:load

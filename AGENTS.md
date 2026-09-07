@@ -43,7 +43,7 @@ project311（开发代号，正式定名前一律用这一代号）：面向 3�
 | Q5 浏览器门 | `pnpm test:e2e`；连续 20 次用 `bash scripts/q5-loop.sh 20` | 生效中（P1-19 起） |
 | Q6 故障门 | `pnpm test:resilience` | 生效中（P1-16 起） |
 | Q7 安全门 | `pnpm test:security`（security project + secret-scan 自检与实扫 + 依赖许可 gate 四半边） | 生效中（#106 起首用例族：口令政策；许可/SBOM 面见 #24 与 release-artifacts） |
-| Q8 性能门 | `pnpm test:load` | 待 P1-20 |
+| Q8 性能门 | `pnpm test:load`（短档：10 WS 传播 p95 + 2 Run ingest p95 + 空闲段 RSS 斜率；30min/50Run 长档挂 release 手动） | 生效中（P1-20 起；判据数字以 ubuntu runner 为准，见 load-performance-acceptance） |
 | Q9 安装门 | `pnpm test:compose-smoke` | 待 P1-20 |
 
 现在就能跑的：`scripts/baseline-check.sh`（环境基线）、`scripts/secret-scan.sh [路径]`（敏感语料扫描）。

@@ -145,6 +145,10 @@ export interface ChainAssembly {
   readonly recorder: Phase1Recorder
   startWorker(): void
   connectBrowser(as: Session): Promise<BrowserClient>
+  /** Q8 负载腿出口：raw session send（不经 recordUplink——见 nodeFrameHooks 注释）。 */
+  nodeSend(frame: string): void
+  /** Q8 负载腿 ack 配对：下行帧钩子，返回退订。 */
+  onNodeFrame(cb: (frame: NodeDownstream, atMs: number) => void): () => void
   /** 收掉当前全部 Browser 连接（fault=browser 注入点）。 */
   closeBrowsers(): void
   /** 关 Hub listener（OutboxWorker 继续跑——进程级连接注册表照常工作，R1 语义）。 */
@@ -409,6 +413,9 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
         recorder.event('node.run', msg, { level, ...(context ?? {}) })
       },
     })
+    // #24 Q8：负载腿的帧观测钩子（不动 recorder 路径——per-frame 文件写会
+    // 注入同步 I/O，污染延迟样本；钩子只喂内存时间戳）。
+    const nodeFrameHooks = new Set<(frame: NodeDownstream, atMs: number) => void>()
     const session = startDeviceSession({
       config: { hubUrl: httpBase, deviceId, deviceToken: claimBody.deviceToken },
       facts: {
@@ -425,6 +432,8 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
       onFrame: (frame) => {
         const ids = frameIds(frame)
         recorder.event('node.gateway', 'node.frame.received', ids, ids.runId)
+        const at = performance.now()
+        for (const hook of nodeFrameHooks) hook(frame, at)
         void runManager.handleFrame(frame)
       },
       onConnected: () => {
@@ -568,6 +577,11 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
       recorder,
       startWorker,
       connectBrowser,
+      nodeSend: (frame) => sessionSend(frame),
+      onNodeFrame: (cb) => {
+        nodeFrameHooks.add(cb)
+        return () => nodeFrameHooks.delete(cb)
+      },
       closeBrowsers: () => {
         for (const client of [...openBrowsers]) client.close()
       },

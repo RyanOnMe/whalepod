@@ -21,7 +21,8 @@
     "check:plugin-fixture": "tsx scripts/build-fixture-plugin.mts --check",
     "test:compose-smoke": "tsx scripts/compose-smoke.mts",
     "test:licenses": "tsx scripts/license-check.mts",
-    "test:security": "tsx scripts/with-test-postgres.mts vitest run --project security && scripts/secret-scan.sh --self-test && scripts/secret-scan.sh && tsx scripts/license-check.mts"
+    "test:security": "tsx scripts/with-test-postgres.mts vitest run --project security && scripts/secret-scan.sh --self-test && scripts/secret-scan.sh && tsx scripts/license-check.mts",
+    "test:load": "tsx scripts/load-test.mts"
   },
   "devDependencies": {
     "@playwright/test": "catalog:",
