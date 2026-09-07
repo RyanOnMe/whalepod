@@ -173,6 +173,5 @@ describe('#89 生产 cli 组合根：连接后自行上报 node.inventory', () =
       child.kill('SIGKILL')
       await new Promise<void>((resolve) => child.once('exit', () => resolve()))
     }
-  }, // 子进程冷启（tsx 加载 + 真 Hub 握手）+ 投影轮询预算，须大于轮询上限。
-  60_000)
+  }, 60_000) // 子进程冷启（tsx 加载 + 真 Hub 握手）+ 投影轮询预算，须大于轮询上限。
 })

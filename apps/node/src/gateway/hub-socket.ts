@@ -130,7 +130,11 @@ export interface InventoryFacts {
     readonly workspaceId: string
     readonly name: string
     readonly kind: 'directory' | 'git_repository'
-    readonly capabilities: { readonly read: boolean; readonly write: boolean; readonly git: boolean }
+    readonly capabilities: {
+      readonly read: boolean
+      readonly write: boolean
+      readonly git: boolean
+    }
     readonly available: boolean
     readonly lastCheckedAt: string
   }>

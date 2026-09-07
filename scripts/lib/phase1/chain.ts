@@ -42,6 +42,7 @@ import { OutboxWorker } from '../../../apps/hub/src/modules/run/index.js'
 import type { DeviceGateway } from '../../../apps/hub/src/modules/run/device-gateway.js'
 import { WsDeviceGateway } from '../../../apps/hub/src/modules/device/index.js'
 import { WorkspaceRegistry } from '../../../apps/node/src/workspace/registry.js'
+import { WorkspaceInventory } from '../../../apps/node/src/workspace/inventory.js'
 import { SecretStore } from '../../../apps/node/src/secret/store.js'
 import { CommandStore } from '../../../apps/node/src/spool/command-store.js'
 import { EventStore } from '../../../apps/node/src/spool/event-store.js'
@@ -321,19 +322,14 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
     const registry = new WorkspaceRegistry(join(nodeStateDir, 'workspace-registry.sqlite'))
     const registered = await registry.register(workspaceDir, { name: 'chain-ws' })
     const workspaceId = registered.id
-    // Hub 投影行：与 Node registry 同一 id（生产由 inventory 上报建立，P1-12）。
-    await database.db.insert(schema.workspaces).values({
-      id: workspaceId,
-      deviceId,
-      ownerUserId: alice.userId,
-      name: 'chain-ws',
-      kind: 'directory',
-      capabilities: { read: true, write: true },
-      available: true,
-    })
-
     const secrets = new SecretStore(join(nodeStateDir, 'secrets.json'))
     await secrets.set('replay', 'default', 'replay-key-dummy')
+
+    // #89：Hub 的 Workspace 投影**只由 node.inventory 帧建立**（与生产同一条路径）。
+    // 原先此处直接 insert schema.workspaces 兜底——绕开协议写库，等于把「生产漏发
+    // 帧」这一缺陷永久遮掉；现改由 session 层上报（在 secrets 落位后构建，slot
+    // 事实与生产一致），并由下方 readiness 等待收敛。
+    const inventory = new WorkspaceInventory(registry, secrets)
     const eventStore = new EventStore(join(nodeStateDir, 'events.sqlite'))
     const supervisor = new RuntimeSupervisor({
       // stderr 观测缝（evidence-map：Runtime stderr tail 是 runtime 层一等证据）：
@@ -436,6 +432,13 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
         runManager.onReconnect()
       },
       heartbeatFacts: () => runManager.heartbeatFacts(),
+      // #89：与 hello 同责，每条连接建立后上报投影事实源。
+      inventoryFacts: () => inventory.build(),
+      onInventoryError: (error: unknown) => {
+        recorder.event('node.gateway', 'inventory.report.failed', {
+          error: error instanceof Error ? error.message : String(error),
+        })
+      },
       WebSocketImpl: WebSocket as never,
       heartbeatMs: 60_000,
       baseDelayMs: 100,
@@ -443,6 +446,23 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
     })
     sessionSend = session.send
     cleanups.push(() => session.stop())
+
+    // readiness（#89）：真人也得等 Hub 看得见 Workspace 才能起 Run。轮询投影
+    // 直到该 workspaceId 可见——deadline 失败即红，绝不软化成固定 sleep。
+    const projectionDeadline = Date.now() + 15_000
+    for (;;) {
+      const res = await apiInject(ctx, alice, { method: 'GET', url: '/api/v1/workspaces' })
+      const list = res.json().data as Array<Record<string, unknown>> | undefined
+      if (Array.isArray(list) && list.some((w) => w.workspaceId === workspaceId)) break
+      if (Date.now() > projectionDeadline) {
+        throw new Error(
+          `node.inventory 未在 15s 内建立 Workspace ${workspaceId} 的 Hub 投影` +
+            `（GET /workspaces 最后 ${res.statusCode}）——生产上报路径失效（#89）`,
+        )
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    recorder.fact('hub.projection', 'workspace.projected', { workspaceId })
 
     // OutboxWorker：生产 250ms 循环的测试手动挡（真 gateway → 进程级连接注册表 →
     // 真 WS 下行；Hub 重启后新连接在同一注册表，worker 照常工作——R1 依赖这点）。
