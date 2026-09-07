@@ -1,0 +1,8 @@
+[
+  {
+    "package": "@img/sharp-libvips-darwin-arm64",
+    "license": "LGPL-3.0-or-later",
+    "via": "@project311/runtime-dsh → @deepseek-ai/dsh → @deepseek-ai/dsh-base → @deepseek-ai/dsh-attachment-local → sharp → libvips 二进制",
+    "rationale": "未修改的 libvips 二进制 + 动态链接（sharp 官方形态）：LGPL-3.0 §6 对'工作组合'的动态链接许可满足，无修改无逆向义务；来源为 DSH 官方包锁定的精确版本，我们既不能也不应替换；同链 Linux 平台二进制（@img/sharp-libvips-linux*）随安装平台出现，同判据。"
+  }
+]

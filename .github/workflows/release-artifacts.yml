@@ -1,0 +1,32 @@
+# 发布工件（#24 交付⑥）：tag v* ⟹ SBOM + 许可报告进 artifact。
+# 与 q5-release 分离：那是判据门（可红挡发布），这是**发布凭证**（必须产出）。
+name: release-artifacts
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: SBOM (CycloneDX)
+        run: mkdir -p artifacts/sbom && pnpm sbom --sbom-format cyclonedx > artifacts/sbom/project311-cyclonedx.json
+      - name: License report（gate 同判据，报告入包）
+        run: |
+          pnpm exec tsx scripts/license-check.mts
+          mkdir -p artifacts/sbom && pnpm licenses list > artifacts/sbom/licenses-report.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-sbom-${{ github.ref_name }}
+          path: artifacts/sbom/
+          retention-days: 365

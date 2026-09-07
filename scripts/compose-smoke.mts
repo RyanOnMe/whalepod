@@ -34,22 +34,33 @@ let phaseMark = Date.now()
 function phase(name: string): void {
   phaseLog.push({ phase: name, ms: Date.now() - phaseMark })
   phaseMark = Date.now()
-  process.stdout.write(`[compose-smoke] ${name} (+${(phaseLog[phaseLog.length - 1]!.ms / 1000).toFixed(1)}s)\n`)
+  process.stdout.write(
+    `[compose-smoke] ${name} (+${(phaseLog[phaseLog.length - 1]!.ms / 1000).toFixed(1)}s)\n`,
+  )
   if (Date.now() - startedAt > TOTAL_BUDGET_MS) {
     throw new Error(`compose-smoke: 15 分钟总预算超时（进入 ${name} 时）`)
   }
 }
 
 function composeEnv(): NodeJS.ProcessEnv {
-  return { ...process.env, POSTGRES_PASSWORD: dbPassword, PROJECT311_PUBLIC_ORIGIN: publicOrigin, P311_WEB_PORT: String(webPort) }
+  return {
+    ...process.env,
+    POSTGRES_PASSWORD: dbPassword,
+    PROJECT311_PUBLIC_ORIGIN: publicOrigin,
+    P311_WEB_PORT: String(webPort),
+  }
 }
 
 async function compose(args: string[]): Promise<string> {
-  const { stdout } = await execFileP('docker', ['compose', '-f', COMPOSE_FILE, '-p', project, ...args], {
-    env: composeEnv(),
-    cwd: REPO_ROOT,
-    maxBuffer: 16 * 1024 * 1024,
-  })
+  const { stdout } = await execFileP(
+    'docker',
+    ['compose', '-f', COMPOSE_FILE, '-p', project, ...args],
+    {
+      env: composeEnv(),
+      cwd: REPO_ROOT,
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  )
   return stdout
 }
 
@@ -66,24 +77,46 @@ async function waitHealthy(deadlineMs: number): Promise<void> {
         if (body.ok === true) return
         last = `200 but body=${JSON.stringify(body).slice(0, 120)}`
       } else last = `status=${res.status}`
-    } catch (error) { last = String(error) }
-    if (Date.now() > deadline) throw new Error(`hub unreachable via nginx /healthz within budget; last=${last}`)
+    } catch (error) {
+      last = String(error)
+    }
+    if (Date.now() > deadline)
+      throw new Error(`hub unreachable via nginx /healthz within budget; last=${last}`)
     await sleep(1000)
   }
 }
 
 /** 浏览器替身：非安全方法必须带精确 Origin + Idempotency-Key（03 §4）。 */
-async function api<T>(method: string, path: string, payload?: unknown, cookie?: string): Promise<{ status: number; body: T; cookie?: string }> {
-  const headers: Record<string, string> = { origin: publicOrigin, 'content-type': 'application/json' }
+async function api<T>(
+  method: string,
+  path: string,
+  payload?: unknown,
+  cookie?: string,
+): Promise<{ status: number; body: T; cookie?: string }> {
+  const headers: Record<string, string> = {
+    origin: publicOrigin,
+    'content-type': 'application/json',
+  }
   if (method !== 'GET') headers['idempotency-key'] = randomBytes(16).toString('hex') // 16-128 字符内
   if (cookie !== undefined) headers.cookie = cookie
-  const res = await fetch(`${publicOrigin}${path}`, { method, headers, body: method === 'GET' ? undefined : JSON.stringify(payload ?? {}) })
+  const res = await fetch(`${publicOrigin}${path}`, {
+    method,
+    headers,
+    body: method === 'GET' ? undefined : JSON.stringify(payload ?? {}),
+  })
   const setCookie = res.headers.get('set-cookie') ?? undefined
   const body = (await res.json()) as T
-  return { status: res.status, body, cookie: setCookie === undefined ? undefined : setCookie.split(';')[0] }
+  return {
+    status: res.status,
+    body,
+    cookie: setCookie === undefined ? undefined : setCookie.split(';')[0],
+  }
 }
 
-function runNodeCli(args: string[], home: string): { child: ReturnType<typeof spawn>; tail: () => string } {
+function runNodeCli(
+  args: string[],
+  home: string,
+): { child: ReturnType<typeof spawn>; tail: () => string } {
   const buf: string[] = []
   const child = spawn(process.execPath, [join(REPO_ROOT, 'apps/node/dist/cli.js'), ...args], {
     env: { ...process.env, HOME: home },
@@ -110,29 +143,51 @@ async function main(): Promise<void> {
     if (page.status !== 200) throw new Error(`web root status=${page.status}`)
     const html = await page.text()
     const asset = /\/assets\/[\w.-]+\.js/.exec(html)?.[0]
-    if (asset === undefined) throw new Error('index.html 无 /assets/*.js 引用（vite build 产物形态变了）')
-    if ((await fetch(`${publicOrigin}${asset}`)).status !== 200) throw new Error(`asset ${asset} 404`)
+    if (asset === undefined)
+      throw new Error('index.html 无 /assets/*.js 引用（vite build 产物形态变了）')
+    if ((await fetch(`${publicOrigin}${asset}`)).status !== 200)
+      throw new Error(`asset ${asset} 404`)
     phase('web static + hashed asset')
 
     // 容器内**生产 bin** 读 setup token（compose 就是 hub 入口的组合根测）。
-    const tokenOut = (await compose(['exec', '-T', 'hub', 'node', 'dist/cli.js', 'setup-token'])).trim()
-    if (!/^[\w-]{16,}$/.test(tokenOut)) throw new Error(`setup-token 形态异常: ${tokenOut.slice(0, 40)}`)
+    const tokenOut = (
+      await compose(['exec', '-T', 'hub', 'node', 'dist/cli.js', 'setup-token'])
+    ).trim()
+    if (!/^[\w-]{16,}$/.test(tokenOut))
+      throw new Error(`setup-token 形态异常: ${tokenOut.slice(0, 40)}`)
     phase('container bin setup-token')
 
     const setup = await api<{ data?: { userId?: string } }>('POST', '/api/v1/setup', {
-      setupToken: tokenOut, teamName: 'Smoke Co', username: 'smoke', displayName: 'Smoke', password: 'correct horse battery staple',
+      setupToken: tokenOut,
+      teamName: 'Smoke Co',
+      username: 'smoke',
+      displayName: 'Smoke',
+      password: 'correct horse battery staple',
     })
-    if (setup.status !== 201 || setup.cookie === undefined) throw new Error(`setup status=${setup.status}`)
-    const login = await api<unknown>('POST', '/api/v1/auth/login', { username: 'smoke', password: 'correct horse battery staple' })
-    if (login.status !== 200 || login.cookie === undefined) throw new Error(`login status=${login.status}`)
+    if (setup.status !== 201 || setup.cookie === undefined)
+      throw new Error(`setup status=${setup.status}`)
+    const login = await api<unknown>('POST', '/api/v1/auth/login', {
+      username: 'smoke',
+      password: 'correct horse battery staple',
+    })
+    if (login.status !== 200 || login.cookie === undefined)
+      throw new Error(`login status=${login.status}`)
     const cookie = login.cookie
     phase('setup + login via API')
 
-    const code = await api<{ data?: { code?: string } }>('POST', '/api/v1/devices/pairing-codes', {}, cookie)
+    const code = await api<{ data?: { code?: string } }>(
+      'POST',
+      '/api/v1/devices/pairing-codes',
+      {},
+      cookie,
+    )
     const pairing = code.body.data?.code
-    if (code.status !== 201 || pairing === undefined) throw new Error(`pairing-code status=${code.status}`)
+    if (code.status !== 201 || pairing === undefined)
+      throw new Error(`pairing-code status=${code.status}`)
     const pair = runNodeCli(['pair', '--hub', publicOrigin, '--code', pairing], home)
-    const pairCode = await new Promise<number | null>((resolve) => pair.child.on('exit', (c) => resolve(c)))
+    const pairCode = await new Promise<number | null>((resolve) =>
+      pair.child.on('exit', (c) => resolve(c)),
+    )
     if (pairCode !== 0) throw new Error(`node cli pair exit=${pairCode}\n${pair.tail()}`)
     phase('pairing code + node cli pair')
 
@@ -155,14 +210,20 @@ async function main(): Promise<void> {
         undefined,
         cookie, // 带权限接口：不带会话就是 401，轮询会把它读成「投影为空」——必须带
       )
-      probeLog.push({ status: list.status, names: (list.body.data ?? []).map((w) => w.name), body: JSON.stringify(list.body).slice(0, 160) })
+      probeLog.push({
+        status: list.status,
+        names: (list.body.data ?? []).map((w) => w.name),
+        body: JSON.stringify(list.body).slice(0, 160),
+      })
       const mine = (list.body.data ?? []).filter((w) => w.name === 'smoke-ws')
       if (mine.length === 1) {
         if (mine[0]!.kind !== 'git_repository') throw new Error(`kind 投影异常: ${mine[0]!.kind}`)
         break
       }
       if (nodeChild?.child.exitCode !== null) {
-        throw new Error(`node start 退出 code=${nodeChild.child.exitCode}，投影仍缺\n${nodeChild.tail()}`)
+        throw new Error(
+          `node start 退出 code=${nodeChild.child.exitCode}，投影仍缺\n${nodeChild.tail()}`,
+        )
       }
       if (Date.now() > deadline) {
         throw new Error(
@@ -175,17 +236,27 @@ async function main(): Promise<void> {
     phase('inventory projection visible')
 
     const total = ((Date.now() - startedAt) / 1000).toFixed(1)
-    process.stdout.write(`[compose-smoke] PASS total=${total}s phases=${JSON.stringify(phaseLog)}\n`)
+    process.stdout.write(
+      `[compose-smoke] PASS total=${total}s phases=${JSON.stringify(phaseLog)}\n`,
+    )
   } finally {
     nodeChild?.child.kill('SIGKILL')
     if (up) {
-      try { await compose(['down', '-v', '--remove-orphans']) } catch (error) { process.stderr.write(`[compose-smoke] component=harness.smoke down 失败（需人工清 ${project}）: ${String(error)}\n`) }
+      try {
+        await compose(['down', '-v', '--remove-orphans'])
+      } catch (error) {
+        process.stderr.write(
+          `[compose-smoke] component=harness.smoke down 失败（需人工清 ${project}）: ${String(error)}\n`,
+        )
+      }
     }
     rmSync(home, { recursive: true, force: true })
   }
 }
 
 await main().catch((error: unknown) => {
-  process.stderr.write(`[compose-smoke] FAIL component=hub.smoke ${String(error)}\nphases=${JSON.stringify(phaseLog)}\n`)
+  process.stderr.write(
+    `[compose-smoke] FAIL component=hub.smoke ${String(error)}\nphases=${JSON.stringify(phaseLog)}\n`,
+  )
   process.exitCode = 1
 })
