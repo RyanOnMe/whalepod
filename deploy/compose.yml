@@ -1,0 +1,65 @@
+# P1-20 / Q9：单源部署形态（db + hub + web/nginx）。
+# 冒烟（test:compose-smoke）与真实安装共用这份文件——**判据文件与生产文件同一份**，
+# 不许冒烟专用拓扑（那等于没验生产）。端口/项目名经 env 注入，防与开发装配互踩。
+name: project311
+
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?refuse to start without a database password}
+      POSTGRES_DB: project311
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d project311']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  hub:
+    build:
+      context: ..
+      dockerfile: deploy/hub.Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/project311
+      # 单源：浏览器访问的精确 origin（03 §4）。经 .env / shell 注入，compose 不猜。
+      PROJECT311_PUBLIC_ORIGIN: ${PROJECT311_PUBLIC_ORIGIN:?set to the browser-facing origin}
+    volumes:
+      - hubdata:/data
+    healthcheck:
+      # 无 curl 依赖：node:24 自带 fetch，探针就是 /healthz 本身。
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8080/healthz').then((r)=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/web.Dockerfile
+    depends_on:
+      hub:
+        condition: service_healthy
+    ports:
+      - '${P311_WEB_PORT:-8080}:80'
+    healthcheck:
+      # 浏览器视角探活：nginx → /healthz 反代 → hub。一条路径三段各得证明。
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1/healthz']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  pgdata:
+  hubdata:
