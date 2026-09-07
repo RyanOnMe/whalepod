@@ -7,7 +7,8 @@
  * 时钟与 sleep 均注入，红/绿两路径毫秒级确定性。
  */
 import { describe, expect, it } from 'vitest'
-import { waitPublishedPort } from '../lib/ephemeral-postgres.mts'
+import { launchWithPortRetry, waitPublishedPort } from '../lib/ephemeral-postgres.mts'
+import type { LaunchDeps } from '../lib/ephemeral-postgres.mts'
 
 interface FakeCall {
   args: string[]
@@ -112,5 +113,102 @@ describe('waitPublishedPort（端口发布有界轮询）', () => {
     })
     expect(port).toBe('55002')
     expect(attempts).toBe(3)
+  })
+})
+
+/**
+ * 容器创建重试（x20 第 18/19 轮实测形态：容器活着但端口始终不发布——
+ * 病态绑在单个 endpoint 上，延长等待无效，删容器重建才有效）。
+ */
+describe('launchWithPortRetry（发布失败删容器重建）', () => {
+  /**
+   * 假 docker：`brokenRuns` 里列出的第 N 个容器，其端口永不发布。
+   * 时钟由 sleep 推进 pollMs，保证内层 waitPublishedPort 的 deadline 可达。
+   */
+  function makeFakeLaunch(options: { brokenRuns: number[] }): {
+    docker: (args: string[]) => Promise<string>
+    calls: string[][]
+    deps: Omit<LaunchDeps, 'docker' | 'attempts' | 'backoffMs'>
+  } {
+    const calls: string[][] = []
+    let runs = 0
+    let clock = 0
+    const docker = async (args: string[]): Promise<string> => {
+      calls.push(args)
+      if (args[0] === 'run') {
+        runs += 1
+        return `container-${runs}\n`
+      }
+      if (args[0] === 'port') {
+        if (options.brokenRuns.includes(runs)) {
+          throw new Error("no public port '5432' published")
+        }
+        return `127.0.0.1:${55000 + runs}\n`
+      }
+      if (args[0] === 'logs') return 'LOG:  init complete, server not started'
+      if (args[0] === 'rm') return ''
+      if (args[0] === 'exec') return '' // waitReady 的 pg_isready 探针
+      throw new Error(`fake docker 收到意外调用：${args.join(' ')}`)
+    }
+    return {
+      docker,
+      calls,
+      deps: {
+        sleep: async (ms: number) => {
+          clock += ms
+        },
+        now: () => clock,
+        timeoutMs: 5_000,
+        pollMs: 250,
+        log: () => {},
+      },
+    }
+  }
+
+  it('首次发布失败：删掉该容器并重建，第二次成功', async () => {
+    const fake = makeFakeLaunch({ brokenRuns: [1] })
+    const result = await launchWithPortRetry(['run', '-d', 'img'], {
+      ...fake.deps,
+      docker: fake.docker,
+      attempts: 3,
+      backoffMs: 1_000,
+    })
+    // 第 1 个容器发布失败 → 必须被 rm -f 清掉，再拿全新沙箱（container-2）。
+    expect(fake.calls.some((c) => c.join(' ') === 'rm -f container-1')).toBe(true)
+    expect(result.containerId).toBe('container-2')
+    expect(result.port).toBe('55002')
+  })
+
+  it('连续失败到上限：抛错且每次失败都删容器（不泄漏僵尸）', async () => {
+    const fake = makeFakeLaunch({ brokenRuns: [1, 2, 3] })
+    await expect(
+      launchWithPortRetry(['run', '-d', 'img'], {
+        ...fake.deps,
+        docker: fake.docker,
+        attempts: 3,
+        backoffMs: 1_000,
+      }),
+    ).rejects.toThrow(/端口映射未在 5s 内发布/)
+    expect(fake.calls.filter((c) => c[0] === 'rm').map((c) => c[2])).toEqual([
+      'container-1',
+      'container-2',
+      'container-3',
+    ])
+  })
+
+  it('失败路径写结构化 WARN（attempt 计数可见，供归因）', async () => {
+    const logged: string[] = []
+    const fake = makeFakeLaunch({ brokenRuns: [1, 2] })
+    await expect(
+      launchWithPortRetry(['run', '-d', 'img'], {
+        ...fake.deps,
+        docker: fake.docker,
+        attempts: 2,
+        backoffMs: 0,
+        log: (m: string) => logged.push(m),
+      }),
+    ).rejects.toThrow()
+    expect(logged.filter((l) => l.startsWith('WARN 第 1/2 次'))).toHaveLength(1)
+    expect(logged.filter((l) => l.startsWith('WARN 第 2/2 次'))).toHaveLength(1)
   })
 })

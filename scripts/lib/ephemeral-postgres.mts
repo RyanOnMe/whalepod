@@ -4,7 +4,7 @@
  *
  * 启动 postgres:18 一次性容器（127.0.0.1 随机端口、随机密码、--rm），等端口映射
  * 发布（有界轮询，见 waitPublishedPort）与 ready 后返回连接串；stop() 强制删除容器，保证 `docker ps` 无残留。Docker 不可用、镜像
- * 缺失或启动超时一律抛错，不得报绿。密码不进仓库、不进日志；日志一律写 stderr。
+ * 缺失或启动超时（含重建上限用尽）一律抛错，不得报绿。密码不进仓库、不进日志；日志一律写 stderr。
  */
 import { execFile, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
@@ -15,12 +15,14 @@ const execFileAsync = promisify(execFile)
 const IMAGE = 'postgres:18'
 const READY_TIMEOUT_MS = 60_000
 const READY_POLL_MS = 250
-// 端口发布滞后窗兜底：实测 x20 抓到两形态——第 8 轮「立即查询即红」、
-// 第 19 轮「10s 不够」（Docker Desktop Mac 经 18 轮容器 churn 后发布滞后
-// 超 10s，容器日志显示本身健康在 init）。上限对齐 READY_TIMEOUT_MS（60s，
-// 发布是容器启动的一部分，与 pg_isready 同级预算），间隔同 READY_POLL_MS。
-const PORT_PUBLISH_TIMEOUT_MS = 60_000
+// 端口发布兜底：实测 x20 抓到两形态——第 8 轮「立即查询即红」、第 18/19 轮
+// 「60s 死等仍不发布（容器活着，病态绑在单个 endpoint 上）」。故单次等待收窄到
+// 20s，失败即删容器重建（共 3 次尝试）：重开沙箱比延长等待有效，且总预算
+// （3×20s + 退避 3s）留在 playwright webServer 的 180s 超时内。
+const PORT_PUBLISH_TIMEOUT_MS = 20_000
 const PORT_PUBLISH_POLL_MS = 250
+const LAUNCH_ATTEMPTS = 3
+const LAUNCH_BACKOFF_MS = 1_000
 
 const log = (message: string): void => console.error(`[ephemeral-postgres] ${message}`)
 
@@ -104,6 +106,55 @@ export async function waitPublishedPort(
   }
 }
 
+export interface LaunchDeps extends PublishedPortDeps {
+  /** 创建→发布失败之间的重试退避基数（第 i 次重试等 i*backoffMs）。 */
+  backoffMs: number
+  /** 总尝试次数（含首次）。 */
+  attempts: number
+  log(message: string): void
+}
+
+/**
+ * 创建容器 + 等端口发布，**发布失败则删容器重建**（上限 attempts 次）。
+ *
+ * 依据（Q5 x20 三轮实测的两形态）：第 8 轮「立即查即无」、第 18/19 轮「容器活着
+ * （initdb 完成、日志可取）但 60s 内端口始终不发布」——后者说明病态绑在单个
+ * endpoint 上，延长等待无效，重开沙箱才有效（Docker Desktop 端口分配器在连续
+ * 容器 churn 下的退化）。环境准备失败不该判产品死刑，也不该吃掉 playwright
+ * webServer 的 180s 预算：故用 attempts×portTimeout + 退避的有界重建。
+ */
+export async function launchWithPortRetry(
+  runArgs: string[],
+  deps: LaunchDeps,
+): Promise<{ containerId: string; port: string }> {
+  let lastError: unknown
+  for (let attempt = 1; attempt <= deps.attempts; attempt += 1) {
+    const containerId = (await deps.docker(runArgs)).trim()
+    deps.log(`容器 ${containerId.slice(0, 12)} 已启动（第 ${attempt}/${deps.attempts} 次尝试）`)
+    try {
+      const port = await waitPublishedPort(containerId, deps)
+      return { containerId, port }
+    } catch (error) {
+      lastError = error
+      deps.log(
+        `WARN 第 ${attempt}/${deps.attempts} 次端口发布失败：${
+          error instanceof Error ? error.message.split('\n')[0] : String(error)
+        }`,
+      )
+      // 删掉这个「活着但网络没发布」的容器，让下一次尝试拿到全新沙箱。
+      try {
+        await deps.docker(['rm', '-f', containerId])
+      } catch {
+        // --rm 容器可能已自清：删不掉不是本路径的判据，继续重试。
+      }
+      if (attempt < deps.attempts) await deps.sleep(deps.backoffMs * attempt)
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`端口发布连续 ${deps.attempts} 次失败（无错误现场）`)
+}
+
 async function waitReady(containerId: string): Promise<void> {
   const deadline = Date.now() + READY_TIMEOUT_MS
   for (;;) {
@@ -138,21 +189,37 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
 
   // 随机密码：一次性容器不落到任何文件，避免 secret-scan 语料与真实凭据混淆。
   const password = randomBytes(12).toString('base64url')
-  const containerId = (
-    await docker([
-      'run',
-      '-d',
-      '--rm',
-      '-e',
-      `POSTGRES_PASSWORD=${password}`,
-      '-p',
-      '127.0.0.1:0:5432',
-      '--label',
-      'project311.e2e-postgres=true',
-      IMAGE,
-    ])
-  ).trim()
-  log(`容器 ${containerId.slice(0, 12)} 已启动（${IMAGE}）`)
+  const runArgs = [
+    'run',
+    '-d',
+    '--rm',
+    '-e',
+    `POSTGRES_PASSWORD=${password}`,
+    '-p',
+    '127.0.0.1:0:5432',
+    '--label',
+    'project311.e2e-postgres=true',
+    IMAGE,
+  ]
+
+  let containerId: string
+  let port: string
+  try {
+    ;({ containerId, port } = await launchWithPortRetry(runArgs, {
+      docker,
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      now: () => Date.now(),
+      timeoutMs: PORT_PUBLISH_TIMEOUT_MS,
+      pollMs: PORT_PUBLISH_POLL_MS,
+      attempts: LAUNCH_ATTEMPTS,
+      backoffMs: LAUNCH_BACKOFF_MS,
+      log,
+    }))
+  } catch (error) {
+    // 抛错即死（非零退出）：e2e-serve/with-test-postgres 都以启动失败处理，
+    // 报错已带日志尾部现场——不留「带着未发布端口继续跑」的歧义态。
+    fail(error instanceof Error ? error.message : String(error))
+  }
 
   let stopped = false
   async function removeContainer(): Promise<void> {
@@ -168,20 +235,6 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
     }
   }
 
-  let port: string
-  try {
-    port = await waitPublishedPort(containerId, {
-      docker,
-      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-      now: () => Date.now(),
-      timeoutMs: PORT_PUBLISH_TIMEOUT_MS,
-      pollMs: PORT_PUBLISH_POLL_MS,
-    })
-  } catch (error) {
-    // 抛错即死（非零退出）：e2e-serve/with-test-postgres 都以启动失败处理，
-    // 报错已带日志尾部现场——不留「带着未发布端口继续跑」的歧义态。
-    fail(error instanceof Error ? error.message : String(error))
-  }
   await waitReady(containerId)
   const databaseUrl = `postgres://postgres:${password}@127.0.0.1:${port}/postgres`
 
