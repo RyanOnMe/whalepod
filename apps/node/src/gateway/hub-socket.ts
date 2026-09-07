@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { WebSocket } from 'ws'
 import { WebSocket as WsClient } from 'ws'
 import {
+  NodeInventorySchema,
   parseNodeFrame,
   ProtocolError,
   RunSnapshotSchema,
@@ -141,15 +142,27 @@ export interface InventoryFacts {
   readonly credentialSlots: ReadonlyArray<{ readonly provider: string; readonly slot: string }>
 }
 
-/** 构造上行 node.inventory 帧（Hub 侧 Workspace 投影的唯一来源，03 §6.2）。 */
+/**
+ * 构造上行 node.inventory 帧（Hub 侧 Workspace 投影的唯一来源，03 §6.2）。
+ *
+ * **发出前按协议自检**（#101/B2）：`registry.register` / `SecretStore.set` 的源守卫
+ * 只封住 CLI 写路径，而 `config.json`、`secrets.json`、`workspace-registry.sqlite`
+ * 三个本地载体都可被**带外手改**绕过它们；`ws.send` 不做任何校验，一旦把越界值拼上帧，
+ * Hub 按 ADR-0007 fail-closed **直接断开设备连接**——而 #89 之后上报发生在每条连接
+ * 建立后，于是变成永久「连接→被踢→重连→再被踢」死循环。所以「绝不发坏帧」只能收在
+ * 帧工厂：宁可不发（异常交 `onInventoryError` 归因、由下条连接重试），也不能发出去
+ * 把整台设备踢下线。
+ */
 export function inventoryFrame(deviceId: string, facts: InventoryFacts): string {
-  return JSON.stringify({
-    protocolVersion: 1,
-    messageId: randomUUID(),
-    sentAt: new Date().toISOString(),
-    type: 'node.inventory',
-    payload: { deviceId, workspaces: facts.workspaces, credentialSlots: facts.credentialSlots },
-  })
+  return JSON.stringify(
+    NodeInventorySchema.parse({
+      protocolVersion: 1,
+      messageId: randomUUID(),
+      sentAt: new Date().toISOString(),
+      type: 'node.inventory',
+      payload: { deviceId, workspaces: facts.workspaces, credentialSlots: facts.credentialSlots },
+    }),
+  )
 }
 
 // ---------- P1-13：run 事件上行帧构造（03 §6.2/§6.4） ----------
