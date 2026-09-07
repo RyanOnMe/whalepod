@@ -9,6 +9,7 @@
 import { createInterface } from 'node:readline/promises'
 import { stdin, stdout } from 'node:process'
 import { WorkspaceRegistry, WorkspaceError } from './registry.js'
+import { SecretError } from '../secret/store.js'
 import { SecretStore } from '../secret/store.js'
 
 /** TTY 无回显读取一行（secret 输入；非 TTY 环境退化为普通行读，供测试/管道）。 */
@@ -113,6 +114,16 @@ export async function runSecretSet(
     process.exitCode = 2
     return
   }
-  await deps.secrets.set(provider, slot, value)
+  try {
+    await deps.secrets.set(provider, slot, value)
+  } catch (error) {
+    // 与 workspace 分支对称：可预期的本地校验错误走人话输出，不抛栈。
+    if (error instanceof SecretError) {
+      deps.write(`${error.code}: ${error.message}\n`)
+      process.exitCode = 1
+      return
+    }
+    throw error
+  }
   deps.write(`configured: ${provider}/${slot} (stored locally 0600; Hub only sees configured)\n`)
 }

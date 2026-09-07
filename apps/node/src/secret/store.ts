@@ -10,9 +10,20 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { chmod, readFile, rename, writeFile } from 'node:fs/promises'
 
+/**
+ * 协议边界镜像（#101 同类，credentialSlots 一支）：`NodeInventorySchema` 是
+ * `strictObject`，`provider` ≤100、`slot` ≤80。Hub 对结构性坏帧按 ADR-0007
+ * **fail-closed 断开设备连接**（node-websocket.ts:162-170），而 #89 之后 inventory
+ * 每条连接建立后上报 ⟹ 越界名会让 Node 永久「连接→被踢→重连→再被踢」。
+ * 故 invalid 帧必须在本地事实源就被挡住；长度按 UTF-16 code unit 计（与 Zod
+ * `.max()` 同口径，否则边界会漂）。
+ */
+export const CREDENTIAL_PROVIDER_MAX = 100 as const
+export const CREDENTIAL_SLOT_MAX = 80 as const
+
 export class SecretError extends Error {
   constructor(
-    readonly code: 'SECRET_FILE_PERMISSIONS',
+    readonly code: 'SECRET_FILE_PERMISSIONS' | 'SECRET_SLOT_INVALID',
     message: string,
   ) {
     super(message)
@@ -63,6 +74,18 @@ export class SecretStore {
 
   /** 交互写入（CLI 从 TTY 无回显读取后调用）；文件恒定 0600。 */
   async set(provider: string, slot: string, value: string): Promise<void> {
+    // #101：provider/slot 会经 inventory 上到 Hub，越界即毒帧 ⟹ 本地先拒。
+    for (const [label, input, max] of [
+      ['provider', provider, CREDENTIAL_PROVIDER_MAX],
+      ['slot', slot, CREDENTIAL_SLOT_MAX],
+    ] as const) {
+      if (input.length < 1 || input.length > max) {
+        throw new SecretError(
+          'SECRET_SLOT_INVALID',
+          `credential ${label} must be 1-${max} characters (protocol bound), got ${input.length}`,
+        )
+      }
+    }
     const data = this.readWholeFile(false)
     data[provider] = { ...data[provider], [slot]: value }
     await this.writeWholeFile(data)
