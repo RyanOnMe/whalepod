@@ -103,9 +103,10 @@ scripts/secret-scan.sh apps/hub/src apps/hub/tests apps/node/src apps/node/tests
   Windows experimental 路径（02 Task 16 Step 3）不在本 Issue 验证范围。
 - **取消确认后的 reap**：确认后不退出的 Runtime 由 SIGTERM/SIGKILL 兜底（已
   测）；真正的 bridge 是否总是确认后自退由 Q3 shutdown 契约覆盖。
-- **Q4 `pnpm test:node`**：根脚本尚未建立（AGENTS 门表仍标「待 P1-12」），
-  apps/node 测试现挂在 unit/integration/resilience 项目内全量执行，本 PR 以
-  `pnpm check` + `pnpm test:resilience` 覆盖。
+- **Q4 `pnpm test:node`**：当时根脚本尚未建立，apps/node 测试挂在
+  unit/integration/resilience 项目内全量执行，本 PR 以 `pnpm check` +
+  `pnpm test:resilience` 覆盖。（现状：#100 已裁决**退役 Q4**——聚合脚本不再
+  建立，本段保留为历史实录；Node 覆盖归属见 04 矩阵墓碑行。）
 
 ## 复跑
 

@@ -14,7 +14,7 @@ description: project311 默认开发方式——从认领 Issue 到开 PR 的完
 3. **先写会红的检查**（TDD）：正向、拒绝、重复、故障路径都要有断言。测试与实现同属这个 Issue，不允许「后续补测试」。
 4. **最小改动**。行为不变不重构周边；目标要能验。
 5. **跑受影响的门**，不要无故全仓库跑：
-   - 领域/协议改动 → Q0/Q1；DB/Hub → 加 Q2；DSH 相关 → 加 Q3；Node → Q4；浏览器 → Q5。
+   - 领域/协议改动 → Q0/Q1；DB/Hub → 加 Q2；DSH 相关 → 加 Q3；Node → Q1/Q2（故障面加 Q6；旧 Q4 编号已随 #100 退役，无独立命令）；浏览器 → Q5。
 6. **验证走真人路径**：用模块 interface（Fastify inject、Fake/DSH Adapter、Playwright），不抄近道。六原语见 `docs/agent/ai-harness-principles.md`。
 7. **留下证据**：新链路补验收文档（`docs/agent/acceptance-template.md`）并登记索引；可复跑脚本放 `scripts/`。
 8. **提交**：`git commit -s`，说明写为什么改。开 squash PR，标题带 `P1-XX`，描述写验了什么、跑了哪些门。
