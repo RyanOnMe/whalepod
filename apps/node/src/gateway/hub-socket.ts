@@ -117,6 +117,37 @@ export function heartbeatFrame(
   })
 }
 
+// ---------- #89：inventory 上行帧（与 hello/heartbeat 同责：连接建立后上报） ----------
+
+/**
+ * 上行 node.inventory 的载荷形状。与 `WorkspaceInventory.build()` 的返回值结构
+ * 兼容（此处不 import 上层模块：wire 形状归 wire 层所有，构建器归本地事实源所有）。
+ * 协议侧是 `strictObject`——**多一个键就会被拒**，故 payload 只允许 deviceId +
+ * credentialSlots + workspaces 三键，勿加字段。
+ */
+export interface InventoryFacts {
+  readonly workspaces: ReadonlyArray<{
+    readonly workspaceId: string
+    readonly name: string
+    readonly kind: 'directory' | 'git_repository'
+    readonly capabilities: { readonly read: boolean; readonly write: boolean; readonly git: boolean }
+    readonly available: boolean
+    readonly lastCheckedAt: string
+  }>
+  readonly credentialSlots: ReadonlyArray<{ readonly provider: string; readonly slot: string }>
+}
+
+/** 构造上行 node.inventory 帧（Hub 侧 Workspace 投影的唯一来源，03 §6.2）。 */
+export function inventoryFrame(deviceId: string, facts: InventoryFacts): string {
+  return JSON.stringify({
+    protocolVersion: 1,
+    messageId: randomUUID(),
+    sentAt: new Date().toISOString(),
+    type: 'node.inventory',
+    payload: { deviceId, workspaces: facts.workspaces, credentialSlots: facts.credentialSlots },
+  })
+}
+
 // ---------- P1-13：run 事件上行帧构造（03 §6.2/§6.4） ----------
 
 /** 通用上行帧信封（messageId/sentAt 每次新发；载荷由 spool 原样携带，保证重发同 (runId,seq)）。 */
