@@ -170,8 +170,15 @@ describe('#89 生产 cli 组合根：连接后自行上报 node.inventory', () =
       ])
       expect(JSON.stringify(mine[0]!)).not.toContain(workspaceDir)
     } finally {
+      // 清理绝不许盖掉现场：子进程可能**已经**退出（此时 once('exit') 永不触发），
+      // 任何情况下都必须有界——否则诊断异常会被测试超时吞掉，只剩"timed out"。
       child.kill('SIGKILL')
-      await new Promise<void>((resolve) => child.once('exit', () => resolve()))
+      if (child.exitCode === null && child.signalCode === null) {
+        await Promise.race([
+          new Promise<void>((resolve) => child.once('exit', () => resolve())),
+          silence(5_000),
+        ])
+      }
     }
   }, 60_000) // 子进程冷启（tsx 加载 + 真 Hub 握手）+ 投影轮询预算，须大于轮询上限。
 })

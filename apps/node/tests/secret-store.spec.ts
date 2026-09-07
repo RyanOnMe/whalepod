@@ -12,10 +12,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { NodeInventorySchema } from '@project311/protocol'
-import {
-  CREDENTIAL_PROVIDER_MAX,
-  SecretStore,
-} from '../src/secret/store.js'
+import { CREDENTIAL_PROVIDER_MAX, SecretStore } from '../src/secret/store.js'
 
 let root: string
 
