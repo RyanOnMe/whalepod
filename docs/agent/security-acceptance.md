@@ -14,7 +14,9 @@
 | 用例 | 断言 | 来源 |
 |---|---|---|
 | 域层界值 | 11 码点拒 / 12 过；空/单字符拒；**码点**计数（emoji 代理对不劈半） | #106 |
-| Setup HTTP 半边 | 11 字符真请求 400 `VALIDATION_FAILED`；同实例 12 字符 201（政策不吞合法路径）；登录不受政策约束 | #106 |
+| Setup HTTP 半边 | 11 字符真请求 400 `VALIDATION_FAILED`；同实例 12 字符 201 且**反证 setupToken 未被 400 烧掉**（"拒绝先于副作用"不信文案信下一步） | #106 |
+| Invite 接受半边（B1） | **admin 角色**邀请 11 字符 ⟹ 400 且成员未建、**同 token 换合规口令仍可 201**（拒绝先于消耗）；封"只修 setup 一腿"的半修 | #106 评审 |
+| 登录豁免（正形） | DB 种 1 字符 argon2 hash（模拟历史存量，测试基建直写）⟹ login 200：政策管进门建账、不管历史口令锁死 | #106 评审 N2 |
 
 ## 发现账（本门首案即立威的实录）
 - 全仓曾无口令强度政策：`PasswordSchema=z.string().min(1)`，域层/hub 无 policy 层
@@ -24,6 +26,10 @@
   防护"不是"该条有判据"。
 
 ## 待补（按 04 §6.1 逐条挂用例，不烂尾）
+- security project 的 include 是位置限定（`apps|packages/*/tests/**`）而 unit 的
+  exclude 是全仓 `**/*.security.spec.ts`——`scripts/` 下命名的安全用例会**全局隐身**
+  （评审 N4 抓出的不对称，现无此文件）。follow-up：include 收敛为单条
+  `**/*.security.spec.ts`，两个 pattern 一条 SSoT。
 - Cookie Secure 分支与 LAN http 失效形态（#105 裁决后补对应用例）
 - 令牌/secret 在投影与日志的脱敏断言（既有代码有规则，缺 security project 用例锁）
 - CSRF Origin 逐字节（既有 integration 已覆盖主案，迁名挂族即可）
