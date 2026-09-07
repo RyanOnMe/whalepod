@@ -8,7 +8,7 @@
  *   同周期驱动 Approval 过期清扫（P1-14，G5-05 pending → expired 等价拒绝）。
  * 进程退出时清理定时器与连接。
  */
-import { createDatabase, getTeam, Outbox } from '@project311/db'
+import { applyMigrations, createDatabase, getTeam, Outbox } from '@project311/db'
 import { buildApp } from './app.js'
 import { loadConfig } from './config.js'
 import { SetupTokenStore } from './modules/team/setup-token.js'
@@ -19,6 +19,12 @@ import { WsDeviceGateway } from './modules/device/index.js'
 
 const config = loadConfig()
 const database = createDatabase({ connectionString: config.databaseUrl })
+// 启动即应用迁移（P1-20 空卷冷启动判据）：幂等 + advisory lock 串行化（#55），
+// 多副本同起也安全。此前 applyMigrations 只有测试 helper 与 e2e-serve 调用——
+// 「库已就绪」在测试里永远是真，这个洞就永远隐身（#95/#97 同族：生产入口
+// 从未被执行过）。DB 不可达时进程崩溃退出是**正确语义**：compose 的 healthy
+// 条件等不到它，编排层负责重试与报警，绝不静默半启动。
+await applyMigrations(database)
 const setupTokenStore = new SetupTokenStore(config.setupTokenPath)
 
 // 只有尚无 Team 时才生成一次性 Setup Token；Token 不打印进日志（由 CLI 读文件输出）。
