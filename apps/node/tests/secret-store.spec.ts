@@ -10,7 +10,9 @@ import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { SecretStore } from '../src/secret/store.js'
+import { randomUUID } from 'node:crypto'
+import { NodeInventorySchema } from '@project311/protocol'
+import { CREDENTIAL_PROVIDER_MAX, SecretStore } from '../src/secret/store.js'
 
 let root: string
 
@@ -124,5 +126,55 @@ describe('写文件权限（writeFile 直接 0644 后 store.set 修回 0600）',
     expect((await stat(path)).mode & 0o777).toBe(0o600)
     expect(store.resolve('dsh', 'api_key')).toBe('rewritten')
     store.close()
+  })
+})
+
+/**
+ * #101（credentialSlots 分支）：provider/slot 会随 inventory 上行，越界即毒帧；
+ * Hub 按 ADR-0007 fail-closed 断设备连接，而 #89 让上报发生在**每条连接**
+ * ⟹ 一次越界就永久「连接→被踢→重连→再被踢」。本地必须拒。
+ */
+describe('SecretStore provider/slot 协议边界（#101）', () => {
+  const frameWith = (provider: string, slot: string) =>
+    NodeInventorySchema.safeParse({
+      protocolVersion: 1,
+      messageId: randomUUID(),
+      sentAt: new Date().toISOString(),
+      type: 'node.inventory',
+      payload: {
+        deviceId: randomUUID(),
+        credentialSlots: [{ provider, slot }],
+        workspaces: [],
+      },
+    })
+
+  function makeStore(): SecretStore {
+    return new SecretStore(join(root, `sec-${Math.random().toString(36).slice(2)}.json`))
+  }
+
+  it('协议口径：provider ≤100、slot ≤80（边界值过、+1 拒）', () => {
+    expect(frameWith('p'.repeat(100), 's'.repeat(80)).success).toBe(true)
+    expect(frameWith('p'.repeat(101), 'short').success).toBe(false)
+    expect(frameWith('short', 's'.repeat(81)).success).toBe(false)
+    expect(frameWith('', 's').success).toBe(false)
+  })
+
+  it('store 与协议同口径：越界抛 SECRET_SLOT_INVALID 且不落盘', async () => {
+    const store = makeStore()
+    await store.set('deepseek', 'default', 'v')
+    await store.set('p'.repeat(CREDENTIAL_PROVIDER_MAX), 'ok-slot', 'v')
+    // configuredSlots() 就是 inventory.build() 喂 credentialSlots 的那个来源。
+    const slots = await store.configuredSlots()
+    expect(slots.some((entry) => entry.provider === 'p'.repeat(CREDENTIAL_PROVIDER_MAX))).toBe(true)
+
+    await expect(store.set('p'.repeat(101), 'x', 'v')).rejects.toMatchObject({
+      code: 'SECRET_SLOT_INVALID',
+      message: expect.stringContaining('provider must be 1-100 characters (protocol bound)'),
+    })
+    await expect(store.set('deepseek', 's'.repeat(81), 'v')).rejects.toMatchObject({
+      code: 'SECRET_SLOT_INVALID',
+      message: expect.stringContaining('slot must be 1-80 characters (protocol bound)'),
+    })
+    expect(frameWith('p'.repeat(101), 'x').success).toBe(false) // 佐证：这种值一旦上行的后果
   })
 })

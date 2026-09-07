@@ -16,9 +16,12 @@ import { existsSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 
+/** 协议上界镜像：packages/protocol NodeInventorySchema 的 `name` max(80)（#101）。 */
+export const WORKSPACE_NAME_MAX = 80 as const
+
 export class WorkspaceError extends Error {
   constructor(
-    readonly code: 'WORKSPACE_UNAVAILABLE' | 'CONFLICT',
+    readonly code: 'WORKSPACE_UNAVAILABLE' | 'WORKSPACE_NAME_INVALID' | 'CONFLICT',
     message: string,
   ) {
     super(message)
@@ -91,8 +94,23 @@ export class WorkspaceRegistry {
     return createHmac('sha256', this.hmacKey).update(canonicalPath).digest('base64url')
   }
 
-  /** 注册真实目录：realpath 归一（G3-06：canonical 被采用）+ filesystem identity 落库。 */
+  /**
+   * 注册真实目录：realpath 归一（G3-06：canonical 被采用）+ filesystem identity 落库。
+   *
+   * name 在**本地事实源**就守住协议边界（#101）：`NodeInventorySchema` 的
+   * `name` 是 `strictObject` 里的 `min(1).max(80)`，而 Hub 对结构性坏帧按
+   * ADR-0007 **fail-closed 断开设备连接**（node-websocket.ts:162-170）。#89 把
+   * inventory 接到「每条连接建立后上报」之后，一个超长名会变成「连接→被踢→
+   * 重连→再被踢」的死循环——所以绝不允许 invalid 帧从生产侧产生。
+   * 长度按 UTF-16 code unit 计（与 Zod `.max()` 同一口径，否则边界会漂）。
+   */
   async register(rawPath: string, input: { name: string }): Promise<RegisteredWorkspace> {
+    if (input.name.length < 1 || input.name.length > WORKSPACE_NAME_MAX) {
+      throw new WorkspaceError(
+        'WORKSPACE_NAME_INVALID',
+        `workspace name must be 1-${WORKSPACE_NAME_MAX} characters (protocol bound), got ${input.name.length}`,
+      )
+    }
     let canonical: string
     try {
       canonical = await realpath(rawPath)

@@ -18,6 +18,7 @@ import { startDeviceSession } from './gateway/session.js'
 import { installedPackDigests } from './plugin/runtime-config.js'
 import type { PluginFetch } from './plugin/installer.js'
 import { WorkspaceRegistry } from './workspace/registry.js'
+import { WorkspaceInventory } from './workspace/inventory.js'
 import { SecretStore } from './secret/store.js'
 import { runWorkspaceCommand, runSecretSet, readHiddenLine } from './workspace/cli-commands.js'
 
@@ -121,6 +122,8 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   mkdirSync(stateDir, { recursive: true })
   const registry = new WorkspaceRegistry(join(stateDir, 'workspace-registry.sqlite'))
   const secrets = new SecretStore(join(stateDir, 'secrets.json'))
+  // #89：inventory 事实源（本地真值：registry.resolve preflight + secrets slot 名）。
+  const inventory = new WorkspaceInventory(registry, secrets)
 
   // ---- P1-17 插件 pack preflight 装配（02 Task 17 Step 5；先于 RunManager）----
   const packsRoot = join(stateDir, 'plugin-packs')
@@ -232,6 +235,19 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
       })
     },
     onConnected: () => runManager.onReconnect(),
+    // #89：连接建立后上报 inventory（Hub 的 Workspace 投影唯一来源；此前生产
+    // 链路一帧不发，真实用户 RunLauncher 选不到任何 Workspace）。
+    inventoryFacts: () => inventory.build(),
+    onInventoryError: (error) => {
+      process.stderr.write(
+        `${JSON.stringify({
+          level: 'warn',
+          component: 'node.gateway',
+          msg: 'inventory report failed',
+          error: error instanceof Error ? error.message : String(error),
+        })}\n`,
+      )
+    },
     heartbeatFacts: () => runManager.heartbeatFacts(),
     exit: (code, message) => {
       process.stderr.write(`${message}\n`)

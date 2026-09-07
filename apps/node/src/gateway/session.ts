@@ -14,9 +14,11 @@ import type { NodeDownstream } from '@project311/protocol'
 import {
   heartbeatFrame,
   helloFrame,
+  inventoryFrame,
   openHubSocket,
   type HelloFacts,
   type HubSocketOptions,
+  type InventoryFacts,
 } from './hub-socket.js'
 import { nextBackoffMs, shouldStopReconnect } from './reconnect.js'
 
@@ -41,6 +43,13 @@ export interface DeviceSessionDeps {
     activeRunIds: string[]
     lastEventSeqByRun: Record<string, number>
   }
+  /**
+   * #89：inventory 事实源。与 hello 同责——**每条连接建立后**（含重连）上报一次，
+   * 因为 Hub 的 Workspace 投影只有这一个来源（03 §6.2）。缺省不上报。
+   */
+  readonly inventoryFacts?: () => Promise<InventoryFacts>
+  /** #89：inventory 构建/发送失败的归因回调（缺省无操作）。 */
+  readonly onInventoryError?: (error: unknown) => void
   readonly WebSocketImpl?: HubSocketOptions['WebSocketImpl']
   readonly random?: () => number
   readonly heartbeatMs?: number
@@ -134,6 +143,23 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
       socket.send(helloFrame(deps.config.deviceId, deps.facts))
       // P1-13/R1：连接（重）建立后补发 spool 里全部未 ack 事件。
       deps.onConnected?.()
+      // #89：inventory 与 hello 同责——**每条**连接建立后上报一次（Hub 的
+      // Workspace 投影只有这一个来源）。异步构建，失败只归因、不打断会话，
+      // 由下条连接自然收敛。守卫：构建完成时该连接必须仍是当前活连接且 OPEN，
+      // 否则丢帧（不得往已关闭/已被替换的 socket 上写）。
+      if (deps.inventoryFacts !== undefined) {
+        const me = current
+        void deps
+          .inventoryFacts()
+          .then((facts) => {
+            if (current === me && me !== undefined && me.readyState === 1) {
+              me.send(inventoryFrame(deps.config.deviceId, facts))
+            }
+          })
+          .catch((error: unknown) => {
+            deps.onInventoryError?.(error)
+          })
+      }
     })
   }
   connect()

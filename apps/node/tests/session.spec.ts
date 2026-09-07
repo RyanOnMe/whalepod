@@ -226,3 +226,87 @@ describe('startDeviceSession', () => {
     expect(hello.type).toBe('node.hello')
   })
 })
+
+/**
+ * #89 session 层上报 + #101/B2「绝不发坏帧」不变式。
+ *
+ * 判定要打在 **socket 上写了什么**，不是"函数抛没抛"：`ws.send` 不做校验，一帧越界
+ * 值出去，Hub 按 ADR-0007 fail-closed 断设备连接，而上报发生在每条连接建立后
+ * ⟹ 永久「连接→被踢→重连→再被踢」。所以源守卫（register/set）之外的带外改文件
+ * 路径，必须由帧工厂的协议自检兜住；而帧工厂抛异常还不够——必须证明**没写出去**。
+ */
+const goodWorkspace = {
+  workspaceId: '01905f7c-0000-7000-8000-000000000503',
+  name: 'proj',
+  kind: 'directory' as const,
+  capabilities: { read: true, write: true, git: false },
+  available: true,
+  lastCheckedAt: '2026-09-07T00:00:00.000Z',
+}
+
+describe('#89 inventory 上报与坏帧拦截', () => {
+  it('连接建立后上报一帧 node.inventory（payload 恰三键、deviceId 与 config 一致）', async () => {
+    FakeSocket.reset()
+    const { deps } = makeDeps({})
+    startDeviceSession({
+      ...deps,
+      inventoryFacts: async () => ({ workspaces: [goodWorkspace], credentialSlots: [] }),
+    })
+    const socket = latestSocket()
+    socket.emitOpen()
+    // 一次宏任务 flush：让 async 事实源 + .then 发送链走完（假 timer 不帮忙，
+    // 这里是微任务链，用真 setTimeout 排空微任务队列后再判定）。
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const frame = socket.sent.map(JSON.parse).find((f) => f.type === 'node.inventory')
+    expect(frame).toBeDefined()
+    expect(Object.keys(frame.payload).sort()).toEqual(['credentialSlots', 'deviceId', 'workspaces'])
+    expect(frame.payload.deviceId).toBe(deps.config.deviceId)
+    expect(frame.payload.workspaces[0].name).toBe('proj')
+  })
+
+  it('带外越界事实（名字 120 字符）：一帧都不许写到 socket 上，且失败要归因', async () => {
+    FakeSocket.reset()
+    const { deps } = makeDeps({})
+    const errors: unknown[] = []
+    startDeviceSession({
+      ...deps,
+      inventoryFacts: async () => ({
+        workspaces: [{ ...goodWorkspace, name: 'a'.repeat(120) }],
+        credentialSlots: [],
+      }),
+      onInventoryError: (error: unknown) => errors.push(error),
+    })
+    const socket = latestSocket()
+    socket.emitOpen()
+    // 一次宏任务 flush：让 async 事实源 + .then 发送链走完（假 timer 不帮忙，
+    // 这里是微任务链，用真 setTimeout 排空微任务队列后再判定）。
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // hello/heartbeat 是合法帧，必须照发；关键是**没有 inventory 帧出去**。
+    const types = socket.sent.map((raw) => JSON.parse(raw).type as string)
+    expect(types).toContain('node.hello')
+    expect(types).not.toContain('node.inventory')
+    expect(errors).toHaveLength(1)
+    expect(String(errors[0])).toContain('max')
+  })
+
+  it('credentialSlots 越界（provider 120）同样不发帧——两支都收在帧工厂', async () => {
+    FakeSocket.reset()
+    const { deps } = makeDeps({})
+    const errors: unknown[] = []
+    startDeviceSession({
+      ...deps,
+      inventoryFacts: async () => ({
+        workspaces: [goodWorkspace],
+        credentialSlots: [{ provider: 'p'.repeat(120), slot: 'default' }],
+      }),
+      onInventoryError: (error: unknown) => errors.push(error),
+    })
+    const socket = latestSocket()
+    socket.emitOpen()
+    // 一次宏任务 flush：让 async 事实源 + .then 发送链走完（假 timer 不帮忙，
+    // 这里是微任务链，用真 setTimeout 排空微任务队列后再判定）。
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(socket.sent.map((raw) => JSON.parse(raw).type)).not.toContain('node.inventory')
+    expect(errors).toHaveLength(1)
+  })
+})

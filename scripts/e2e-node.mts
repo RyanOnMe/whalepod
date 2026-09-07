@@ -11,11 +11,12 @@
  * 1. 验收缝（P1-18 既有惯例）：RuntimeSupervisor 的 runtimeEnvPassthrough 显式
  *    列入 DSH_SNAPSHOT_FILE / PROJECT311_RUNTIME_EXTRA_PATCH_FILES——replay
  *    overlay 是 04 文档契约探针的一等概念，生产 cli 该项为空；
- * 2. Workspace 投影上报：生产 cli 尚未接线 inventory 发送（P1-12 交付的是
- *    构建器与 Hub 侧投影），本进程在连接建立后按 03 §6.2 发 node.inventory 帧，
- *    （产品缺陷立账 #89，Alpha 阻断级：真实用户 RunLauncher 选不到 Workspace；
- *     生产修复后本缝应删除——E2E 全绿不代表该产品路径可用）
- *    走的正是 Hub node-websocket 已有的真人处理路径；
+ * 2. Workspace 投影上报：**无代偿**。#89 之前本进程自行拼 node.inventory 帧
+ *    发出去遮掉了生产缺陷（cli 从不发帧 ⟹ 真实用户 RunLauncher 选不到
+ *    Workspace）；#89 已把上报接线到 session 层（与 hello 同责，每条连接建立后
+ *    一次），本进程只提供 `inventoryFacts` 事实源，与 cli 走同一条路径。
+ *    若该缝再被需要（E2E 因投影缺失而红），说明产品上报路径又坏了——查
+ *    session.ts 的 inventoryFacts 与 cli.ts 的注入，不要在这里补发帧。
  * 3. 故障注入与观测缝：进程内 127.0.0.1 控制口（drop=拔线模拟、ack-drop=吞
  *    command.ack、runtimes=真 pid、input-manifest=Reviewer 输入清单快照、
  *    fixture=切换 replay 快照）。控制口 Token 与 Device Token 都只进 0600 内存
@@ -241,7 +242,6 @@ const eventStore = new EventStore(join(stateDir, 'events.sqlite'))
 
 // ---- 会话与帧通路（含 R7 ack 吞帧故障缝）----
 let sessionSend: (frame: string) => void = () => {}
-let inventorySentForSocket = 0 // 每条连接建立后发一次 inventory
 
 function sendUplink(frame: string): void {
   try {
@@ -426,26 +426,13 @@ const session = startDeviceSession({
   },
   onConnected: () => {
     runManager.onReconnect()
-    // 每条新连接上报一次 inventory（生产 cli 未接线的 P1-12 投影路径，经真人
-    // 协议帧补齐；Hub 侧 ingest 幂等 upsert）。
-    inventorySentForSocket += 1
-    void inventory
-      .build()
-      .then((payload) => {
-        const frame = {
-          protocolVersion: 1,
-          messageId: randomUUID(),
-          sentAt: new Date().toISOString(),
-          type: 'node.inventory',
-          payload: { deviceId: config.deviceId, ...payload },
-        }
-        sessionSend(JSON.stringify(frame))
-      })
-      .catch((error: unknown) => {
-        log('inventory build failed', { error: String(error) })
-      })
   },
   heartbeatFacts: () => runManager.heartbeatFacts(),
+  // #89 后本进程与生产 cli 走同一条上报路径：只提供事实源，发帧由 session 层负责。
+  inventoryFacts: () => inventory.build(),
+  onInventoryError: (error: unknown) => {
+    log('inventory build failed', { error: String(error) })
+  },
   WebSocketImpl: FaultWebSocket as unknown as never,
 })
 
@@ -529,7 +516,6 @@ const server = createServer((req, res) => {
           pendingRunIds: eventStore.runIdsWithPending(),
           watermarks: eventStore.seqWatermarkByRun(),
           ackDropped: ackDropped.length,
-          inventoryReports: inventorySentForSocket,
         })
       }
       default:
