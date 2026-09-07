@@ -219,7 +219,7 @@ describe('邀请 Token 重复使用（G1-04）', () => {
       method: 'POST',
       url: '/api/v1/invites/accept',
       headers: { origin: ctx.origin, 'idempotency-key': idemKey() },
-      payload: { token, username: 'alice', displayName: 'Alice Clone', password: 'x'.repeat(8) },
+      payload: { token, username: 'alice', displayName: 'Alice Clone', password: 'x'.repeat(12) }, // #106 起 8 字符会先撞政策 400，本案测的是 username 冲突
     })
     expect(response.statusCode).toBe(409)
     expect(response.json().error.code).toBe('CONFLICT')

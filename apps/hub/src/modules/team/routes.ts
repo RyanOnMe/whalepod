@@ -6,6 +6,7 @@ import { SetupRequestSchema } from '@project311/protocol'
 import { audit } from '../shared/audit.js'
 import { ApiError } from '../shared/http-error.js'
 import { hashPassword } from '../auth/password.js'
+import { isPasswordAcceptable } from '@project311/domain'
 import { setSessionCookie } from '../auth/session.js'
 import type { RequireActor } from '../auth/session.js'
 import type { RateLimiter } from '../auth/rate-limit.js'
@@ -55,6 +56,12 @@ export function registerTeamRoutes(app: FastifyInstance, deps: TeamRouteDeps): v
       throw new ApiError(429, 'FORBIDDEN', 'too many setup attempts')
     }
     const body = SetupRequestSchema.parse(mergeSetupTokenHeader(request))
+    // #106 口令政策（Q7 首个用例族）：建账路径哈希之前判——垃圾口令不进 argon2
+    // （弱网 DoS 面顺手收掉），错误形态走 VALIDATION_FAILED（政策在 domain，
+    // 传输归因在这层；协议 PasswordSchema=min(1) 不动，两层各管各的）。
+    if (!isPasswordAcceptable(body.password)) {
+      throw new ApiError(400, 'VALIDATION_FAILED', 'password must be at least 12 characters')
+    }
     // M10 断代迁移：旧 dev 库的 core-empty 行存的是旧算法 digest，先幂等修复
     // （已初始化实例重试 setup 也会经过此处），再走常规 409/建账流程。
     // 等锁超时（#55 N2）：结构化 warn 归因后 fail-fast 503，客户端可重试；

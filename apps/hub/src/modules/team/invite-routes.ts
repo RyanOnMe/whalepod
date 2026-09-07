@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import { asUserId, authorize } from '@project311/domain'
+import { asUserId, authorize, isPasswordAcceptable } from '@project311/domain'
 import type { Actor } from '@project311/domain'
 import type { Database } from '@project311/db'
 import { AcceptInviteRequestSchema, CreateInviteRequestSchema } from '@project311/protocol'
@@ -51,6 +51,12 @@ export function registerInviteRoutes(app: FastifyInstance, deps: InviteRouteDeps
       throw new ApiError(429, 'FORBIDDEN', 'too many accept attempts')
     }
     const body = AcceptInviteRequestSchema.parse(request.body ?? {})
+    // #106（B1，评审第二人抓出）：invite 接受是**第二条建账腿**且角色含 admin——
+    // 权限等级与 Owner 弱口令同级，setup 半边封住不等于建账封住。判定与执行点
+    // 同 setup 形态：domain 纯函数、哈希之前、既有错误码零扩张。
+    if (!isPasswordAcceptable(body.password)) {
+      throw new ApiError(400, 'VALIDATION_FAILED', 'password must be at least 12 characters')
+    }
     const passwordHash = await hashPassword(body.password)
     const result = await acceptInvite(deps.database, {
       token: body.token,

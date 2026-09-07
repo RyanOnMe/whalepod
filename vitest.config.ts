@@ -29,6 +29,8 @@ export default defineConfig({
             '**/tests/e2e/**',
             '**/tests/resilience/**',
             '**/*.integration.spec.ts',
+            // Q7 安全门用例族独立成 project（* 双跑既慢又让门归属含糊）
+            '**/*.security.spec.ts',
           ],
         },
       },
@@ -90,6 +92,17 @@ export default defineConfig({
           fileParallelism: false,
           testTimeout: 60_000,
           hookTimeout: 60_000,
+        },
+      },
+      {
+        // Q7 安全门（pnpm test:security，#106 起）：威胁模型用例族。命名即归属——
+        // *.security.spec.ts 只进本 project。DB 依赖用例经 with-test-postgres 提供
+        // 一次性 PostgreSQL（脚本半边），文件串行防共享库互踩。
+        test: {
+          name: 'security',
+          include: ['apps/*/tests/**/*.security.spec.ts', 'packages/*/tests/**/*.security.spec.ts'],
+          exclude: ['**/node_modules/**', '**/dist/**'],
+          fileParallelism: false,
         },
       },
     ],
