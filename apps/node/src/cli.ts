@@ -7,7 +7,9 @@
  * start 持有出站连接 + 心跳循环 + 退避重连，收到 node.token_revoked 时清理本地 Token。
  */
 import { parseArgs } from 'node:util'
-import { join } from 'node:path'
+import { realpathSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { claimDevice } from './pairing/client.js'
 import { DEFAULT_CONFIG_DIR, loadConfig, saveConfig } from './config.js'
@@ -321,4 +323,39 @@ export async function main(argv: string[]): Promise<void> {
   }
   process.stderr.write('usage: project311-node <pair|start> [options]\n')
   process.exit(2)
+}
+
+/**
+ * 顶层调用（#95）：`package.json` 的 `bin.project311-node` 指向本模块的编译产物，
+ * 因此**被作为脚本直接执行时**必须调用 `main`——此前文件到函数定义就结束，
+ * 装好的 CLI 加载、定义、exit 0 静默退出，任何子命令都是空操作。
+ *
+ * 保护条件：被 `import` 时（单测直接调 `main`、或他人复用装配）绝不能自动执行，
+ * 否则 import 即产生副作用（打 usage 并 exit 2）。判据用 realpath 比对，同时兼容
+ * bin 跑 `.js` 与 tsx 直跑 `.ts` 两种入口形态。
+ */
+function invokedAsScript(): boolean {
+  const entry = process.argv[1]
+  if (entry === undefined) return false
+  try {
+    return realpathSync(resolve(entry)) === realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    // argv[1] 不可解析（不存在的入口路径等）：按「不是直接执行」处理，绝不误跑。
+    return false
+  }
+}
+
+if (invokedAsScript()) {
+  main(process.argv.slice(2)).catch((error: unknown) => {
+    // 归因纪律：未预期失败必须有结构化出口（component=node.cli），不许静默成功。
+    process.stderr.write(
+      `${JSON.stringify({
+        level: 'error',
+        component: 'node.cli',
+        msg: 'fatal',
+        error: error instanceof Error ? error.message : String(error),
+      })}\n`,
+    )
+    process.exit(1)
+  })
 }
