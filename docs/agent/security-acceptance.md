@@ -4,11 +4,14 @@
 - 对应 Issue：#106（首个用例族）；Q7 工程面随 P1-20（#24）建立
 - 状态：生效中（首族绿于 #106 分支）
 
-## 门形状（三半边，一条命令）
+## 门形状（四半边，一条命令）
 1. `vitest --project security`：命名即归属——`*.security.spec.ts` 只进本 project
    （unit 的 exclude 明确剔除，**不双跑**）；DB 依赖经 `with-test-postgres`。
 2. `scripts/secret-scan.sh --self-test`：判定力自检（防模式被改坏后假绿）。
 3. `scripts/secret-scan.sh`：实扫 evidence 输出面（04 §6.4）。
+4. `tsx scripts/license-check.mts`：依赖许可 gate（#24 判据落地：强 copyleft 红、
+   弱 copyleft 白名单必须带 via+rationale、UNKNOWN 红；判定逻辑有红样自检
+   `scripts/tests/license-check.spec.ts`）。
 
 ## 用例族清单
 | 用例 | 断言 | 来源 |

@@ -1,0 +1,18 @@
+# 构建上下文卫生（P1-20）。首犯实录：漏了本文件 ⟹ 宿主 node_modules（软链指向
+# 宿主绝对路径）被 COPY 进容器，pnpm 判 store 畸变要清 purge，非 TTY 直接拒装。
+.git
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+**/*.sqlite*
+artifacts
+data
+coverage
+.local
+*.log
+.DS_Store
+# 凭证与本地配置绝不进镜像上下文（红线：token 不进镜像层；若将来引入私有
+# registry 的 .npmrc，用 secrets/挂载，不走 COPY）。
+.env
+.env.*
+.npmrc

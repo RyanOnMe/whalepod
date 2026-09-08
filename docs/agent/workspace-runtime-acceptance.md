@@ -1,6 +1,6 @@
 # Workspace Registry 与 Runtime Supervisor 验收
 
-- 对应场景/门禁：G3-04..06、R5/R8 前置；Q0/Q2（Q4 Node 门随本 Issue 起生效的种子）
+- 对应场景/门禁：G3-04..06、R5/R8 前置；Q0/Q2（曾把本 Issue 当 Q4 门的种子；#100 裁决 Q4 退役，Node 用例归 Q1/Q2/Q6 真实执行）
 - 对应 Issue：#16（P1-12）
 - 上次验证：2026-08-28 · feat/p1-12-workspace-registry · 结果 PASS（Q0 575/575、Q2 178/178）
 
@@ -42,9 +42,10 @@ Run 启动时每 Run 一个独立 Runtime 子进程（环境白名单 + 最小�
   验收（pair→workspace add→start 真人顺序 + 轮询投影直至出现）。
   **「变化时」半边仍未做**：会话存活期间 `workspace add` 不会被上报，需重启
   `node start` —— 另立 **#94**（含三个待定方向与判据），不得当作已完成。
-- Q4 Node 门（`pnpm test:node`）**至今未建**：Node 侧单测实际由 `unit` project 的
-  include 每天在 Q0/Q1 跑，集成/故障用例在 Q2/Q6，缺的是门的名字与可追溯性。
-  裁决（建聚合门 or 正式退役并写明替代归属）见 **#100**，P1-20 前必须定。
+- Q4 Node 门：**已退役（#100 裁决，随 P1-20 落地）**。`pnpm test:node` 从未建立；
+  Node 侧用例一直由 Q1（unit include）、Q2（integration）、Q6（resilience）真实
+  执行，聚合门只会复制覆盖、不新增判据 ⟹ 正式退役；04/AGENTS 同批改齐，编号留
+  墓碑防「Q0–Q9」范围表述漂移。
 
 ## 复跑
 

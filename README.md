@@ -4,6 +4,10 @@
 
 这套方案定义一个全新的开源项目，不迁移 TabTin 1.x 代码，也不兼容其 Django API、数据库或客户端。第一阶段只证明一个核心命题：**两名以上成员能围绕一个 Task，让不同 Agent 在各自受控的 Workspace 中运行，并安全地观察、审批、接管和交付结果。**
 
+## 试用与安装
+
+Alpha 试用者（3–10 人团队）请直接读 [docs/installation.md](./docs/installation.md)；以下阅读顺序面向开发与架构读者。
+
 ## 一句话定位
 
 TabTin 2.0 是面向 3–10 人小团队的 DSH 多人协作发行版：TabTin 拥有团队事实和产品体验，DSH 提供 Agent Runtime 与插件生态。

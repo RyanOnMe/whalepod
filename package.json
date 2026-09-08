@@ -19,7 +19,10 @@
     "check:protocol-generated": "pnpm --filter @project311/protocol check:generated",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:boundaries && pnpm check:protocol-generated && pnpm check:plugin-fixture && pnpm test:unit",
     "check:plugin-fixture": "tsx scripts/build-fixture-plugin.mts --check",
-    "test:security": "tsx scripts/with-test-postgres.mts vitest run --project security && scripts/secret-scan.sh --self-test && scripts/secret-scan.sh"
+    "test:compose-smoke": "tsx scripts/compose-smoke.mts",
+    "test:licenses": "tsx scripts/license-check.mts",
+    "test:security": "tsx scripts/with-test-postgres.mts vitest run --project security && scripts/secret-scan.sh --self-test && scripts/secret-scan.sh && tsx scripts/license-check.mts",
+    "test:load": "NODE_OPTIONS=--expose-gc tsx scripts/load-test.mts"
   },
   "devDependencies": {
     "@playwright/test": "catalog:",

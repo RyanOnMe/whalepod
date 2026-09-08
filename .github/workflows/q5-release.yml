@@ -55,3 +55,22 @@ jobs:
           path: artifacts/q5/
           if-no-files-found: warn
           retention-days: 30
+
+  # Q8 短档（#109 修订后两级判定）：runner 实测 2vCPU/7.8GiB **不达** 04 §8
+  # （4CPU/8GiB）——本 job 的绿只能是 PASS-CONSERVATIVE（保守口径，标签在日志里，
+  # 归档表必须引用标签字样）；权威判在合格环境执行（欠账见 load-performance-
+  # acceptance.md）。exit 3 INCONCLUSIVE 会红本 job：去合格环境复判，不许放行。
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r --if-present build
+      - name: Run Q8 load profile (short)
+        run: pnpm test:load

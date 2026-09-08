@@ -160,6 +160,12 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
     assertIdempotencyKey(request)
   })
 
+  // 存活探针（P1-20 compose healthcheck 的锚点）：刻意不进 /api/v1——
+  // 上面那道 CSRF 钩子只管业务面，探针必须**无前置条件**可答：无 cookie、
+  // 无 Origin、Team 未初始化（空卷冷启动）也要 200。响应只陈述进程活着，
+  // 不回显配置/路径/版本以外信息（红线：绝对路径不进任何对外面）。
+  app.get('/healthz', async () => ({ ok: true, data: { status: 'ok' } }))
+
   app.setErrorHandler(errorHandler)
   app.setNotFoundHandler(notFoundHandler)
 
