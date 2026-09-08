@@ -151,7 +151,21 @@ async function main(): Promise<void> {
       `POSTGRES_PASSWORD=${dbPassword}\nPROJECT311_PUBLIC_ORIGIN=${publicOrigin}\nP311_WEB_PORT=${webPort}\n`,
     )
     chmodSync(envFile, 0o600)
-    await compose(['up', '-d', '--build'])
+    // Docker Hub 匿名授权 EOF 是本会话三次实录的瞬时抖动（ephemeral-postgres 有
+    // 同款退避）：仅对拉取/授权类失败重试一次，构建/编排错误不掩。
+    try {
+      await compose(['up', '-d', '--build'])
+    } catch (error) {
+      if (
+        !/failed to resolve reference|failed to (fetch oauth token|authorize)|EOF/.test(
+          String(error),
+        )
+      )
+        throw error
+      process.stderr.write('[compose-smoke] component=harness.smoke 拉取抖动，退避 20s 重试一次\n')
+      await sleep(20_000)
+      await compose(['up', '-d', '--build'])
+    }
     up = true
     phase('compose up --build')
     await waitHealthy(8 * 60_000)
