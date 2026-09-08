@@ -113,6 +113,21 @@ export class DshRuntimeDriver implements RuntimeDriver {
     })
     child.stderr?.setEncoding('utf8')
     child.stderr?.on('data', (chunk: string) => ctx.onStderr(chunk))
+    // #107：对已死子进程 stdin 的写失败有两条腿，都必须归因且不掀宿主——
+    // ① 猝死 + 管道积压 ⟹ 流级 EPIPE error 事件（无监听 = uncaughtException，
+    //    CI Q2 实录杀宿主）；② 干净退出被本端感知后 ⟹ 流已销毁，write 只经
+    //    回调报 ERR_STREAM_DESTROYED，不再发 error 事件。两腿归并一次留证
+    //    （Run 收敛由 onExit → exit-classifier 的 RUNTIME_LOST 路径承担；
+    //    评审 F1 销账：本注释曾引用全仓不存在的 runtime_crashed 幽灵词）。
+    let stdinFailureAttributed = false
+    const attributeStdinFailure = (error: unknown): void => {
+      if (stdinFailureAttributed) return
+      stdinFailureAttributed = true
+      ctx.onStderr(
+        `[runtime-driver] stdin 写失败（Runtime 已退出？）：${error instanceof Error ? error.message : String(error)}\n`,
+      )
+    }
+    child.stdin?.on('error', attributeStdinFailure)
     const exitPromise = new Promise<void>((resolve) => {
       child.once('exit', (code, signal) => {
         ctx.onExit(code, signal)
@@ -122,7 +137,16 @@ export class DshRuntimeDriver implements RuntimeDriver {
     const send = (command: RuntimeCommand): void => {
       // 写出前过 schema：非法命令帧绝不进入 Runtime（§11 fail-closed 对称侧）。
       const line = `${JSON.stringify(RuntimeCommandSchema.parse(command))}\n`
-      child.stdin?.write(line, () => {})
+      // #107 腿②（已销毁流的回调报错）+ 同步形态（ERR_STREAM_DESTROYED 同步抛出）
+      // 同源兜底。doc 承诺的「stdin 已关闭时静默丢弃」含归因留证——竞态常态，
+      // 但不是无迹可寻。
+      try {
+        child.stdin?.write(line, (error?: Error | null) => {
+          if (error != null) attributeStdinFailure(error)
+        })
+      } catch (error) {
+        attributeStdinFailure(error)
+      }
     }
     return { pid: child.pid ?? -1, exitPromise, send }
   }

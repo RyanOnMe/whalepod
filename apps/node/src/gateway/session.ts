@@ -44,6 +44,11 @@ export interface DeviceSessionDeps {
     lastEventSeqByRun: Record<string, number>
   }
   /**
+   * #103：心跳事实采集失败的归因回调（与 onInventoryError 同构）。
+   * 缺省静默——但进程必须活着：本拍心跳跳过，Hub 侧设备陈旧判据自然兜底。
+   */
+  readonly onHeartbeatError?: (error: unknown) => void
+  /**
    * #89：inventory 事实源。与 hello 同责——**每条连接建立后**（含重连）上报一次，
    * 因为 Hub 的 Workspace 投影只有这一个来源（03 §6.2）。缺省不上报。
    */
@@ -87,7 +92,15 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
   const heartbeatTimer = setIntervalFn(() => {
     // 会话级单一定时器：跨重连存活，只打当前 OPEN 连接。
     if (current !== undefined && current.readyState === 1) {
-      const facts = deps.heartbeatFacts?.()
+      // #103：事实采集抛错（SQLite 等本地 I/O）不得穿透定时器回调——
+      // uncaughtException 会掀掉宿主进程。本拍跳过 + 归因，进程活着。
+      let facts: { activeRunIds: string[]; lastEventSeqByRun: Record<string, number> } | undefined
+      try {
+        facts = deps.heartbeatFacts?.()
+      } catch (error) {
+        deps.onHeartbeatError?.(error)
+        return
+      }
       current.send(
         heartbeatFrame(
           deps.config.deviceId,
