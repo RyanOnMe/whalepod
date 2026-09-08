@@ -94,6 +94,8 @@ interface FakeTimers {
 function makeDeps(overrides: {
   exit?: (code: number, message: string) => void
   onRevoked?: () => void
+  heartbeatFacts?: () => { activeRunIds: string[]; lastEventSeqByRun: Record<string, number> }
+  onHeartbeatError?: (error: unknown) => void
 }) {
   const timers: FakeTimers = { intervals: [], timeouts: [] }
   const exits: Array<{ code: number; message: string }> = []
@@ -101,6 +103,10 @@ function makeDeps(overrides: {
     config,
     facts,
     onRevoked: overrides.onRevoked ?? (() => {}),
+    ...(overrides.heartbeatFacts !== undefined ? { heartbeatFacts: overrides.heartbeatFacts } : {}),
+    ...(overrides.onHeartbeatError !== undefined
+      ? { onHeartbeatError: overrides.onHeartbeatError }
+      : {}),
     exit: overrides.exit ?? ((code: number, message: string) => exits.push({ code, message })),
     WebSocketImpl: FakeSocket as never,
     random: () => 0,
@@ -161,6 +167,35 @@ describe('startDeviceSession', () => {
     const heartbeat = parseNodeFrame(JSON.parse(socket.sent[1] ?? ''), 'upstream')
     expect(heartbeat.type).toBe('node.heartbeat')
     session.stop()
+  })
+
+  it('#103：heartbeatFacts 抛错不穿透定时器回调——归因 onHeartbeatError、本拍跳过、下拍恢复', () => {
+    FakeSocket.reset()
+    const errors: unknown[] = []
+    let shouldThrow = true
+    const { deps, timers } = makeDeps({
+      heartbeatFacts: () => {
+        if (shouldThrow) throw new Error('sqlite boom')
+        return { activeRunIds: [], lastEventSeqByRun: {} }
+      },
+      onHeartbeatError: (error) => errors.push(error),
+    })
+    startDeviceSession(deps)
+    const socket = latestSocket()
+    socket.emitOpen()
+    expect(socket.sent).toHaveLength(1) // hello
+
+    // 红：修前这一行直接 throw 出定时器回调（真实进程=uncaughtException 掀宿主）。
+    expect(() => timers.intervals[0]?.fn()).not.toThrow()
+    expect(errors).toHaveLength(1)
+    expect(String((errors[0] as Error).message)).toContain('sqlite boom')
+    expect(socket.sent).toHaveLength(1) // 本拍心跳跳过（Hub 侧陈旧判据自然兜底）
+
+    // 故障一次性：下拍事实恢复后心跳照常，会话不因单拍失败残废。
+    shouldThrow = false
+    timers.intervals[0]?.fn()
+    expect(socket.sent).toHaveLength(2)
+    expect(parseNodeFrame(JSON.parse(socket.sent[1] ?? ''), 'upstream').type).toBe('node.heartbeat')
   })
 
   it('4401（升级前 HTTP 401 映射）永久失败：退出且不调度重连', () => {

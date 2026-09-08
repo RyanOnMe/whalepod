@@ -249,6 +249,17 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
       )
     },
     heartbeatFacts: () => runManager.heartbeatFacts(),
+    // #103：心跳事实采集失败（SQLite 等）只 warn 不掀进程——与 inventory 同构。
+    onHeartbeatError: (error) => {
+      process.stderr.write(
+        `${JSON.stringify({
+          level: 'warn',
+          component: 'node.gateway',
+          msg: 'heartbeat facts failed',
+          error: error instanceof Error ? error.message : String(error),
+        })}\n`,
+      )
+    },
     exit: (code, message) => {
       process.stderr.write(`${message}\n`)
       process.exit(code)
