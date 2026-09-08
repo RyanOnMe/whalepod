@@ -30,7 +30,8 @@ const dbPassword = randomBytes(12).toString('hex')
 const publicOrigin = `http://localhost:${webPort}`
 // 文书与机检同路径（B7）：机密写临时 .env（0600），compose 一律 --env-file 显式指定，
 // 与 installation.md 教给非开发者的形态逐字一致——不依赖 cwd 解析的跨版本差异。
-const envFile = join(mkdtempSync(join(tmpdir(), 'p311smoke-env-')), '.env')
+const envDir = mkdtempSync(join(tmpdir(), 'p311smoke-env-'))
+const envFile = join(envDir, '.env')
 
 const phaseLog: Array<{ phase: string; ms: number }> = []
 let phaseMark = Date.now()
@@ -112,6 +113,7 @@ async function api<T>(
     method,
     headers,
     body: method === 'GET' ? undefined : JSON.stringify(payload ?? {}),
+    signal: AbortSignal.timeout(30_000), // 一审 nit：api 群同挂死线
   })
   const setCookie = res.headers.get('set-cookie') ?? undefined
   const body = (await res.json()) as T
@@ -138,6 +140,7 @@ function runNodeCli(
 
 async function main(): Promise<void> {
   const home = mkdtempSync(join(tmpdir(), 'p311-smoke-home-'))
+  let wsDir: string | undefined
   let nodeChild: { child: ReturnType<typeof spawn>; tail: () => string } | undefined
   let up = false
   try {
@@ -210,7 +213,7 @@ async function main(): Promise<void> {
     if (pairCode !== 0) throw new Error(`node cli pair exit=${pairCode}\n${pair.tail()}`)
     phase('pairing code + node cli pair')
 
-    const wsDir = mkdtempSync(join(tmpdir(), 'p311-smoke-ws-'))
+    wsDir = mkdtempSync(join(tmpdir(), 'p311-smoke-ws-'))
     mkdirSync(join(wsDir, '.git'), { recursive: true }) // git_repository kind 分支
     const add = runNodeCli(['workspace', 'add', wsDir, '--name', 'smoke-ws'], home)
     if ((await new Promise<number | null>((r) => add.child.on('exit', r))) !== 0) {
@@ -270,6 +273,8 @@ async function main(): Promise<void> {
       }
     }
     rmSync(home, { recursive: true, force: true })
+    if (wsDir !== undefined) rmSync(wsDir, { recursive: true, force: true }) // 一审 nit：临时目录全数收尸
+    rmSync(envDir, { recursive: true, force: true })
   }
 }
 
