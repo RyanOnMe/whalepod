@@ -117,7 +117,8 @@ export class DshRuntimeDriver implements RuntimeDriver {
     // ① 猝死 + 管道积压 ⟹ 流级 EPIPE error 事件（无监听 = uncaughtException，
     //    CI Q2 实录杀宿主）；② 干净退出被本端感知后 ⟹ 流已销毁，write 只经
     //    回调报 ERR_STREAM_DESTROYED，不再发 error 事件。两腿归并一次留证
-    //    （Run 收敛由 onExit 的 runtime_crashed 路径负责，重复归因只是噪声）。
+    //    （Run 收敛由 onExit → exit-classifier 的 RUNTIME_LOST 路径承担；
+    //    评审 F1 销账：本注释曾引用全仓不存在的 runtime_crashed 幽灵词）。
     let stdinFailureAttributed = false
     const attributeStdinFailure = (error: unknown): void => {
       if (stdinFailureAttributed) return
