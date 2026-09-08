@@ -410,3 +410,35 @@ export async function runLoadProfile(
     await postgres.stop()
   }
 }
+
+/**
+ * 两级判定（#109 修订，事实驱动：裁决前提"ubuntu-latest=4vCPU/16GB"被闸亲手
+ * 证伪——实测 2vCPU/7.8GiB，本机 Docker VM 2C/1.9GiB，合格环境暂不可及）。
+ *
+ * 语义（FAIL 永不绿洗，SKIP 形态不存在）：
+ * - 合格环境：权威判——PASS exit 0 / FAIL exit 2。
+ * - 欠规环境跑完照判：PASS ⟹ exit 0 但标签 PASS-CONSERVATIVE（弱机过了强机
+ *   必过，方向严格——这是保守证据不是权威判据，标签不许含糊）；FAIL ⟹
+ *   exit 3 INCONCLUSIVE（不判产品红——可能是环境贫血；必须去合格环境复判）。
+ * - --dev-report：任何结果恒 exit 3（调试面，永远不充当判据）。
+ */
+export function finalVerdict(
+  envEligible: boolean,
+  v: Pick<LoadVerdict, 'verdict'>,
+  devReport: boolean,
+): { code: 0 | 2 | 3; label: string } {
+  if (devReport) return { code: 3, label: 'DEV-REPORT（非判据环境，任何结果不充当发布判据）' }
+  if (envEligible)
+    return v.verdict === 'PASS'
+      ? { code: 0, label: 'PASS（判据环境，权威判）' }
+      : { code: 2, label: 'FAIL（判据环境，权威判）' }
+  if (v.verdict === 'PASS')
+    return {
+      code: 0,
+      label: 'PASS-CONSERVATIVE（欠规环境保守口径：弱机过强机必过；非权威判据，合格环境复判仍欠）',
+    }
+  return {
+    code: 3,
+    label: 'INCONCLUSIVE（欠规环境 FAIL：可能是环境贫血，须合格环境复判——不绿洗也不误杀）',
+  }
+}

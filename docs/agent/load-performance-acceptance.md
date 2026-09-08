@@ -52,3 +52,21 @@ pnpm test:load                      # Linux 判据机：真判；本机：exit 3
 pnpm test:load -- --dev-report      # 开发机调试（数字打印但不判，恒退 3）
 pnpm exec vitest run --project unit scripts/tests/load-threshold.spec.ts  # 尺子自检
 ```
+
+## 尺子账其二：环境判据的前提被闸亲手证伪（#109 修订）
+
+裁决时假设"ubuntu-latest = 4vCPU/16GB"（checkpoint 原话，**未验证**）。
+Runner 首跑实测：**2 vCPU / 7.8 GiB**——不合格；本机 Docker Desktop VM 实测
+2 CPU / 1.9 GiB——也不合格；合格判据环境当时**没有任何一个可及**。环境闸
+按设计拒判（exit 3 而非绿洗），抓的是我自己的假断言。
+
+修订（两级判定，FAIL 永不绿洗）：
+- 合格环境：权威判（PASS=0 / FAIL=2），语义不变；
+- 欠规环境**跑完照判**：PASS ⟹ exit 0 但标签 `PASS-CONSERVATIVE`（弱机过
+  强机必过——保守证据，非权威判据）；FAIL ⟹ exit 3 `INCONCLUSIVE`
+  （可能是环境贫血，须合格环境复判——不误杀也不放行）；
+- `--dev-report` 恒 3，不变。
+
+权威判据的欠账（**Alpha 发布前必须偿还**）：在 4CPU/8GiB/Linux Docker 环境
+真跑一次 PASS（候选：本机 Docker VM 提额 4C/9GiB——hypervisor 事实须披露；
+或任意合格 Linux 机）。偿还后本节补退出码与报告 JSON 摘要。

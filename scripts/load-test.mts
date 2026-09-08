@@ -2,15 +2,19 @@
 /**
  * Q8 性能门（P1-20 交付⑥）：`pnpm test:load`。
  *
- * 退出码语义（照 phase1-verify 的码位约定，绝不 SKIP 报绿）：
- *   0 = PASS  2 = FAIL  1 = harness/装配错误  3 = 环境不合格（**不是**通过，
- *   也不许被当成跳过；04 §8 判据环境是 4 CPU / 8 GiB / Linux Docker / PG 同机）。
+ * 退出码语义（#109 修订后的两级判定，FAIL 永不绿洗、SKIP 形态不存在）：
+ *   0 = PASS（合格环境=权威判；欠规环境=PASS-CONSERVATIVE 保守口径，标签写明）
+ *   2 = FAIL（合格环境的产品红）
+ *   3 = INCONCLUSIVE（欠规环境 FAIL——可能环境贫血，须合格环境复判）
+ *       或 DEV-REPORT（--dev-report 恒退 3，任何结果不充当判据）
+ *   1 = harness/装配错误
  *
- * `--dev-report`：在非判据环境上完整跑一遍并打印数字，用于开发调试；
- * 无论结果如何**固定退出 3**，输出首行标 DEV-REPORT——开发机数字不得充当发布判据。
+ * 判据环境（04 §8）：4 CPU / 8 GiB / Linux Docker / PG 同机。欠规环境**不再**
+ * 空跑退 3——修订原因见 load.ts finalVerdict 注释（裁决前提"ubuntu-latest
+ * 4vCPU"被闸亲手证伪：实测 2vCPU/7.8GiB）。
  */
 import { parseArgs } from 'node:util'
-import { assessEnvironment, readEnvFacts, runLoadProfile } from './lib/phase1/load.js'
+import { assessEnvironment, finalVerdict, readEnvFacts, runLoadProfile } from './lib/phase1/load.js'
 
 const { values } = parseArgs({
   options: {
@@ -23,15 +27,11 @@ const { values } = parseArgs({
 const env = readEnvFacts()
 const gate = assessEnvironment(env)
 if (!gate.eligible) {
-  if (values['dev-report'] !== true) {
-    process.stdout.write(`Q8 环境不合格（非判据环境）：${gate.reasons.join('；')}\n`)
-    process.stdout.write(
-      '开发机调试用 `pnpm test:load -- --dev-report`（无论数字如何都退 3，不充当发布判据）\n',
-    )
-    process.exit(3)
-  }
+  process.stdout.write(`Q8 环境欠规（非 04 §8 判据环境）：${gate.reasons.join('；')}\n`)
   process.stdout.write(
-    `DEV-REPORT 非判据环境（${gate.reasons.join('；')}）——以下数字仅供调试，退出码固定 3\n`,
+    values['dev-report'] === true
+      ? 'DEV-REPORT 模式：以下数字仅供调试，恒退 3\n'
+      : '两级判定：跑完照判——PASS 只算保守口径（PASS-CONSERVATIVE），FAIL 判 INCONCLUSIVE（exit 3）\n',
   )
 }
 
@@ -41,10 +41,14 @@ const result = await runLoadProfile({
   ratePerStreamPerSec: 20,
   browserConnections: Number(values.connections),
 })
+const final = finalVerdict(gate.eligible, result, values['dev-report'] === true)
 process.stdout.write(
   JSON.stringify(
     {
       verdict: result.verdict,
+      label: final.label,
+      envFacts: env,
+      envEligible: gate.eligible,
       failures: result.failures,
       metrics: result.metrics,
       report: result.report,
@@ -53,8 +57,5 @@ process.stdout.write(
     2,
   ) + '\n',
 )
-if (values['dev-report'] === true) {
-  process.stdout.write('DEV-REPORT：不判 PASS/FAIL（见文件头环境口径）\n')
-  process.exit(3)
-}
-process.exit(result.verdict === 'PASS' ? 0 : 2)
+process.stdout.write(`Q8 判定：${final.label}\n`)
+process.exit(final.code)

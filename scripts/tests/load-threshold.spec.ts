@@ -4,7 +4,13 @@
  * 真负载跑在 scripts/load-test.mts（环境闸内），这里钉的是"尺子本身准"。
  */
 import { describe, expect, it } from 'vitest'
-import { assessEnvironment, p95, regressionSlope, verdictLoadSample } from '../lib/phase1/load.js'
+import {
+  assessEnvironment,
+  finalVerdict,
+  p95,
+  regressionSlope,
+  verdictLoadSample,
+} from '../lib/phase1/load.js'
 
 describe('p95', () => {
   it('样本不足必红（30 份是 Q8 短档下限，缺数据不得外推）', () => {
@@ -143,5 +149,42 @@ describe('环境闸（04 §8：4 CPU / 8 GiB / Linux / Docker）', () => {
     const r = assessEnvironment({ platform: 'linux', cpus: 2, totalMemGiB: 4, docker: false })
     expect(r.eligible).toBe(false)
     expect(r.reasons.length).toBe(3)
+  })
+})
+
+describe('两级判定（#109 修订：合格环境权威判 / 欠规环境保守判，FAIL 不绿洗）', () => {
+  const passV = {
+    verdict: 'PASS' as const,
+    failures: [],
+    metrics: {
+      propagationP95Ms: 1,
+      ingestP95Ms: 1,
+      idleRssSlopeMiBPerMin: 0,
+      rssNetGrowthMiB: 0,
+      propagationN: 40,
+      ingestN: 40,
+    },
+  }
+  const failV = { ...passV, verdict: 'FAIL' as const, failures: ['x'] }
+  it('合格环境：PASS⟹0（PASS），FAIL⟹2（FAIL）——权威判不变', () => {
+    expect(finalVerdict(true, passV, false)).toEqual({
+      code: 0,
+      label: expect.stringContaining('PASS'),
+    })
+    expect(finalVerdict(true, failV, false).code).toBe(2)
+  })
+  it('欠规环境无 dev-report：PASS⟹0 但标签必须写保守口径（弱机通过≠权威判据）', () => {
+    const r = finalVerdict(false, passV, false)
+    expect(r.code).toBe(0)
+    expect(r.label).toContain('CONSERVATIVE')
+  })
+  it('欠规环境 FAIL⟹exit 3 INCONCLUSIVE（不许判产品红，也不许绿）', () => {
+    const r = finalVerdict(false, failV, false)
+    expect(r.code).toBe(3)
+    expect(r.label).toContain('INCONCLUSIVE')
+  })
+  it('dev-report 恒 3（任何结果都不充当判据）', () => {
+    expect(finalVerdict(false, passV, true).code).toBe(3)
+    expect(finalVerdict(true, passV, true).code).toBe(3)
   })
 })
