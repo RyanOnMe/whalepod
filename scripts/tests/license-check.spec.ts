@@ -56,9 +56,19 @@ describe('license-check 判定', () => {
         'utf8',
       ),
     ) as AcceptedEntry[]
-    // 装机平台族：dev mac（arm64/x64）、CI/服务器 linux（x64/arm64）。musl 不在部署面，
-    // 出现即红、到时再加——fail-closed 的正确方向。
-    const variants = ['darwin-arm64', 'darwin-x64', 'linux-x64', 'linux-arm64'].map((v) => ({
+    // 装机平台族：dev mac（arm64/x64）、CI/服务器 linux（x64/arm64）。
+    // musl 变体同前缀同判据**自动覆盖**（libc 实现形态不改"未修改二进制的动态
+    // 链接"分析，二审 B1 指正：前缀通配机制上 musl 本就命中，说"出现即红"是
+    // 安全错觉型误差）——钉入 variants 表"按设计过"，将来 matcher 或条目改动
+    // 若破此语义，本测转红替判据说话；族名超出判据时闸红。
+    const variants = [
+      'darwin-arm64',
+      'darwin-x64',
+      'linux-x64',
+      'linux-arm64',
+      'linuxmusl-x64',
+      'linuxmusl-arm64',
+    ].map((v) => ({
       name: `@img/sharp-libvips-${v}`,
     }))
     expect(evaluateLicenses({ 'LGPL-3.0-or-later': variants }, real).violations).toEqual([])
