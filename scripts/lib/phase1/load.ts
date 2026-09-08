@@ -24,7 +24,7 @@ export const MIN_SAMPLES = 30
  * 在 acceptance 文档有账（04 长档原口径保留为未覆盖）。
  */
 export const IDLE_RSS_SLOPE_MAX_MIB_PER_MIN = 1
-export const RSS_NET_GROWTH_MAX_MIB = 96
+export const RSS_NET_GROWTH_MAX_MIB = 96 // 口径=空闲窗首尾差（非全程累计），台阶式扩张兜底
 /** 环境判据（04:222 的机器可检形态）。 */
 export const REQUIRED_CPUS = 4
 export const REQUIRED_MEM_GIB = 8
@@ -124,7 +124,7 @@ export function verdictLoadSample(input: LoadSampleInput): LoadVerdict {
     )
   if (netGrowthMiB > RSS_NET_GROWTH_MAX_MIB)
     failures.push(
-      `RSS 全程净增=${netGrowthMiB.toFixed(1)}MiB > ${RSS_NET_GROWTH_MAX_MIB}（斜率平缓也兜不住的台阶式扩张）`,
+      `空闲窗 RSS 净增=${netGrowthMiB.toFixed(1)}MiB > ${RSS_NET_GROWTH_MAX_MIB}（斜率平缓也兜不住的台阶式扩张）`,
     )
   if ((input.droppedConnections ?? 0) > 0)
     failures.push(

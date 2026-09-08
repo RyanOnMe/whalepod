@@ -28,6 +28,9 @@ const project = `p311smoke${randomBytes(3).toString('hex')}`
 const webPort = 20_000 + Math.floor(Math.random() * 20_000)
 const dbPassword = randomBytes(12).toString('hex')
 const publicOrigin = `http://localhost:${webPort}`
+// 文书与机检同路径（B7）：机密写临时 .env（0600），compose 一律 --env-file 显式指定，
+// 与 installation.md 教给非开发者的形态逐字一致——不依赖 cwd 解析的跨版本差异。
+const envFile = join(mkdtempSync(join(tmpdir(), 'p311smoke-env-')), '.env')
 
 const phaseLog: Array<{ phase: string; ms: number }> = []
 let phaseMark = Date.now()
@@ -51,14 +54,20 @@ function composeEnv(): NodeJS.ProcessEnv {
   }
 }
 
+/** 剩余预算（一审 B3：15 分钟是硬闸不是终检——每个外部调用都带死线，挂死=红而非永久挂）。 */
+function remainingMs(): number {
+  return Math.max(1_000, TOTAL_BUDGET_MS - (Date.now() - startedAt))
+}
+
 async function compose(args: string[]): Promise<string> {
   const { stdout } = await execFileP(
     'docker',
-    ['compose', '-f', COMPOSE_FILE, '-p', project, ...args],
+    ['compose', '--env-file', envFile, '-f', COMPOSE_FILE, '-p', project, ...args],
     {
       env: composeEnv(),
       cwd: REPO_ROOT,
       maxBuffer: 16 * 1024 * 1024,
+      timeout: remainingMs(), // B3：compose 子进程挂死不得绕过预算
     },
   )
   return stdout
@@ -71,7 +80,7 @@ async function waitHealthy(deadlineMs: number): Promise<void> {
   let last = 'unknown'
   for (;;) {
     try {
-      const res = await fetch(`${publicOrigin}/healthz`)
+      const res = await fetch(`${publicOrigin}/healthz`, { signal: AbortSignal.timeout(10_000) })
       if (res.status === 200) {
         const body = (await res.json()) as { ok?: boolean }
         if (body.ok === true) return
@@ -132,6 +141,13 @@ async function main(): Promise<void> {
   let nodeChild: { child: ReturnType<typeof spawn>; tail: () => string } | undefined
   let up = false
   try {
+    // envFile 必须在第一次 compose 调用前写好（up 在 phase 打点之前执行——插错过一次，Q9 红实录）。
+    const { writeFileSync, chmodSync } = await import('node:fs')
+    writeFileSync(
+      envFile,
+      `POSTGRES_PASSWORD=${dbPassword}\nPROJECT311_PUBLIC_ORIGIN=${publicOrigin}\nP311_WEB_PORT=${webPort}\n`,
+    )
+    chmodSync(envFile, 0o600)
     await compose(['up', '-d', '--build'])
     up = true
     phase('compose up --build')
@@ -139,13 +155,16 @@ async function main(): Promise<void> {
     phase('healthy via nginx /healthz')
 
     // web 静态可达 + 哈希资产真实存在（只 GET 200 不证明 bundle 齐）。
-    const page = await fetch(`${publicOrigin}/`)
+    const page = await fetch(`${publicOrigin}/`, { signal: AbortSignal.timeout(30_000) })
     if (page.status !== 200) throw new Error(`web root status=${page.status}`)
     const html = await page.text()
     const asset = /\/assets\/[\w.-]+\.js/.exec(html)?.[0]
     if (asset === undefined)
       throw new Error('index.html 无 /assets/*.js 引用（vite build 产物形态变了）')
-    if ((await fetch(`${publicOrigin}${asset}`)).status !== 200)
+    if (
+      (await fetch(`${publicOrigin}${asset}`, { signal: AbortSignal.timeout(30_000) })).status !==
+      200
+    )
       throw new Error(`asset ${asset} 404`)
     phase('web static + hashed asset')
 

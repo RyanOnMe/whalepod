@@ -39,20 +39,21 @@ ENV
 #   PROJECT311_PUBLIC_ORIGIN="https://hub.你的域名"
 #   P311_WEB_PORT=8080    # 仍绑本机，TLS 交给反代（见 C）
 
-# 2) 起服务（首次构建镜像约 3-5 分钟）
-docker compose -f deploy/compose.yml up -d --build
+# 2) 起服务（首次构建镜像约 3-5 分钟；--env-file 显式指定——compose 的
+#    默认 env 解析目录跨版本行为不一，显式化钉死，一审 B7）
+docker compose --env-file .env -f deploy/compose.yml up -d --build
 
 # 3) 看到 "healthy" 才算起来（约 30-60 秒）
-docker compose -f deploy/compose.yml ps        # 三个服务都 healthy
+docker compose --env-file .env -f deploy/compose.yml ps        # 三个服务都 healthy
 
 # 4) 拿一次性 Setup Token（团队创建用，只显示一次）
-docker compose -f deploy/compose.yml exec hub node dist/cli.js setup-token
+docker compose --env-file .env -f deploy/compose.yml exec hub node dist/cli.js setup-token
 ```
 
 **验证点**：浏览器打开 `PROJECT311_PUBLIC_ORIGIN`（如 `http://localhost:8080`）→
 看到"创建团队"页 → 粘贴第 4 步的 Token + 团队名 + 你的用户名/密码 → 进入产品。
-> **密码请自觉用 12 字符以上、由密码管理器生成**：Alpha 版本产品端**还不强制**口令强度
-> （已知缺口 #106，发布前修复；修复前请靠自觉）。**Token 用过即废**；找不到就重启 hub 容器
+> **口令强度已强制**（#106/#108 已落地）：少于 12 个字符建队/受邀会被 400 拒绝——
+> 用密码管理器生成，别试短密码。**Token 用过即废**；找不到就重启 hub 容器
 重新执行第 4 步（已建队的实例不会再给 Token）。
 
 ## B. 每位成员的电脑（macOS / Linux）
@@ -69,6 +70,7 @@ pnpm -r --if-present build                    # 约 1-2 分钟
 
 # 1) 网页右上角「设备」页 →「生成配对码」（10 分钟有效），然后：
 node apps/node/dist/cli.js pair --hub http://localhost:8080 --code <配对码>
+#    https 形态把 --hub 换成你的 origin（如 https://hub.你的域名），其余不变
 #    （成功输出 "device token (shown once)"，抄进密码管理器，只此一次）
 
 # 2) 登记你要让 Agent 干活的项目目录（可以有多个）：
@@ -102,20 +104,21 @@ Caddy 自动签发/续期 Let's Encrypt；`PROJECT311_PUBLIC_ORIGIN` 填 `https:
 - Linux（Node 机器与 Hub 主机同法）：`systemd` unit 跑
   `node .../cli.js start`，Hub 主机则直接 `docker compose ... up -d` 加
   `restart: unless-stopped`（compose 文件里给 web/hub/db 三个服务都加上）。
-- macOS：`launchd` 的 `KeepAlive` 项（示例见 `deploy/` 目录，Alpha 期手写一份）。
+- macOS：`launchd` 的 `KeepAlive` 项（Alpha 期手写一份，仓库暂无示例——别去找，真没有）。
 
 ## E. 升级与回滚
 
 ```bash
 # 升级：切 tag → 重建 → 启动（数据自动向前迁移，见下）
 git fetch --tags && git checkout v0.1.0-alpha.2
-docker compose -f deploy/compose.yml up -d --build       # Hub 侧
+docker compose --env-file .env -f deploy/compose.yml up -d --build   # Hub 侧
 pnpm install --frozen-lockfile && pnpm -r --if-present build   # 每台 Node 机器
 node apps/node/dist/cli.js start                          # 重启各 Node
 
 # 回滚：checkout 旧 tag 重复上法。注意：
-# 迁移是**只向前**的——旧版 hub 遇到新版 schema 会拒绝启动（不会坏数据），
-# 回滚 = 停在旧版 + 数据不动；需要真回退数据时找维护者（Alpha 期人工）。
+# 迁移是**只向前**的——回滚 = 停在旧版 hub + 数据不动（旧版代码不认识新 schema
+# 列时可能报错，属预期；需要真回退数据找维护者，Alpha 期人工）。版本守卫是
+# 已知缺口（旧版不会主动拒绝新 schema，别把它当保护机制）。
 ```
 
 ## F. 出问题了看哪里

@@ -77,6 +77,15 @@ describe('负载判决（Q8 短档判据，界值各钉双向）', () => {
         liveSamples: 9,
       }).verdict,
     ).toBe('PASS')
+    // 平界钉死：p95 恰 500.0 也红（判据 >= 界即 FAIL，保守侧，一审 nit）。
+    expect(
+      verdictLoadSample({
+        propagation: prop(500.0),
+        ingest: ing(50),
+        idleRssSamples: flat,
+        liveSamples: 9,
+      }).verdict,
+    ).toBe('FAIL')
   })
   it('ingest p95=101 ⟹ FAIL', () => {
     expect(
