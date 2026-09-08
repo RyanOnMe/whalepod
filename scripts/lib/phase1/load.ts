@@ -375,12 +375,18 @@ export async function runLoadProfile(
     for (const s of sockets) s.close()
     await new Promise((r) => setTimeout(r, 5_000)) // ack/扇出尾巴与 GC 先落一轮
     // **空闲段 = 判定窗**：无任何注入仍持续上涨才是泄漏（04 空闲口径的缩短代理）。
+    // 尺子账其三：33s/10 点窗曾被判据环境权威判 FAIL（斜率 2.7MiB/min）——取证
+    // （180s+逐点强制 GC）证明 RSS/heapUsed 死平、无泄漏，系 GC 沉降伪影：
+    // 短窗测的是"GC 何时跑"而非"内存是否留"。故窗长 33s→120s、每点先 gc() 再采
+    // （测留存而非分配时序；脚本经 NODE_OPTIONS=--expose-gc 运行，无 gc 时静默跳过
+    // 采样仍有效但分辨率降——dev 机接受的降级）。阈值不随本修复松动。
+    const gc = (globalThis as { gc?: () => void }).gc
     const idleStart = performance.now()
-    const idleTimer = setInterval(
-      () => rssSamples.push({ x: performance.now() - idleStart, y: process.memoryUsage().rss }),
-      3_000,
-    )
-    await new Promise((r) => setTimeout(r, 33_000))
+    const idleTimer = setInterval(() => {
+      gc?.()
+      rssSamples.push({ x: performance.now() - idleStart, y: process.memoryUsage().rss })
+    }, 3_000)
+    await new Promise((r) => setTimeout(r, 120_000))
     clearInterval(idleTimer)
     await asm.cleanup()
     await database.close()

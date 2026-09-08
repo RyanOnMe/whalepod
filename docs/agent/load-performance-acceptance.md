@@ -67,6 +67,23 @@ Runner 首跑实测：**2 vCPU / 7.8 GiB**——不合格；本机 Docker Deskto
   （可能是环境贫血，须合格环境复判——不误杀也不放行）；
 - `--dev-report` 恒 3，不变。
 
-权威判据的欠账（**Alpha 发布前必须偿还**）：在 4CPU/8GiB/Linux Docker 环境
-真跑一次 PASS（候选：本机 Docker VM 提额 4C/9GiB——hypervisor 事实须披露；
-或任意合格 Linux 机）。偿还后本节补退出码与报告 JSON 摘要。
+~~权威判据的欠账（**Alpha 发布前必须偿还**）~~ **已偿还**（见尺子账其三）。
+
+## 尺子账其三：短窗 GC 沉降伪影（权威判 FAIL → 判具修复 → 权威判 PASS）
+
+判据环境首次权威判（本机 Docker Desktop VM 提额 4C/9GiB，Linux/aarch64 容器内
+执行，宿主机 10C/16GiB Apple Silicon——hypervisor 事实披露）给出 **FAIL exit 2**：
+传播 256.2ms ✓ / ingest 14.9ms ✓（runner 的 144.5 越界确证为 2vCPU 贫血）/
+**空闲 RSS 斜率 2.70MiB/min ≥ 1 ✗**。绝对量可疑（首尾净增仅 1MiB）⟹ 取证
+（一次性副本，180s 长窗 + 逐点强制 GC）：RSS 死平 396.4MiB、heapUsed 死平
+35.4MiB、长窗斜率 -0.11——**无泄漏，系 33s 短窗测到的是"GC 何时跑"而非
+"内存是否留"**（同窗口 Mac 上 GC 放 184MiB，容器里不放）。
+
+判具修复（不动任何阈值，只提分辨率）：空闲窗 33s→120s（40 采样点）、每采样点
+先 `gc()` 再采（直接测**留存内存**；`test:load` 经 `NODE_OPTIONS=--expose-gc`
+运行，无 gc 时静默降级）。修复后同环境权威判 **PASS exit 0**：传播 257.2ms /
+ingest 15.4ms / 空闲斜率 -0.11MiB/min / 净增 -1.2MiB（report JSON 与容器
+命令形态见会话实录；判据=04 §8 全部阈值原值）。
+
+教训入册：内存判据的物理量必须是**留存**（GC 后），不是分配时序；短窗斜率的
+分辨率下限由"一次 GC 周期"决定，窗长必须 ≥2 个 GC 周期。
