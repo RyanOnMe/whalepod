@@ -1,4 +1,4 @@
-# TabTin 安装（v0.1.0-alpha.1）
+# TabTin 安装（v0.1.0-alpha.2）
 
 适用对象：**没有开发背景的试用团队**。全程约 30 分钟。产品命题与边界见
 [README](../README.md)；这里只有"装到哪一步、看到什么算对"。
@@ -25,7 +25,7 @@ Hub 的网页。3–10 人团队 = 一台 Hub + 每人一个 Node。
 ```bash
 git clone https://github.com/RyanOnMe/project311.git
 cd project311
-git checkout v0.1.0-alpha.1        # 锁版本；main 是开发分支，试用勿用
+git checkout v0.1.0-alpha.2        # 锁版本；main 是开发分支，试用勿用
 
 # 1) 生成两个只此一份的机密，写进 .env（权限 0600）
 umask 077
@@ -63,7 +63,7 @@ docker compose --env-file .env -f deploy/compose.yml exec hub node dist/cli.js s
 
 ```bash
 git clone https://github.com/RyanOnMe/project311.git
-cd project311 && git checkout v0.1.0-alpha.1
+cd project311 && git checkout v0.1.0-alpha.2
 corepack enable
 pnpm install --frozen-lockfile
 pnpm -r --if-present build                    # 约 1-2 分钟

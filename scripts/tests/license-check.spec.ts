@@ -2,6 +2,8 @@
  * license-check 判定力自检（#24 gate 自身的六原语·判定半边）：
  * 门的逻辑必须能被红样证伪——与 secret-scan --self-test 同理。
  */
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { evaluateLicenses, type AcceptedEntry } from '../license-check.mts'
 
@@ -45,6 +47,21 @@ describe('license-check 判定', () => {
     expect(ok.violations).toEqual([])
     const bad = evaluateLicenses({ 'LGPL-3.0-or-later': [{ name: 'some-other-lib' }] }, [libvips])
     expect(bad.violations.length).toBe(1)
+  })
+
+  it('真实白名单覆盖全部装机平台变体（tag alpha.1 的 sbom job 红：linux-x64 漏白实录）', () => {
+    const real = JSON.parse(
+      readFileSync(
+        fileURLToPath(new URL('../../deploy/licenses.accepted.json', import.meta.url)),
+        'utf8',
+      ),
+    ) as AcceptedEntry[]
+    // 装机平台族：dev mac（arm64/x64）、CI/服务器 linux（x64/arm64）。musl 不在部署面，
+    // 出现即红、到时再加——fail-closed 的正确方向。
+    const variants = ['darwin-arm64', 'darwin-x64', 'linux-x64', 'linux-arm64'].map((v) => ({
+      name: `@img/sharp-libvips-${v}`,
+    }))
+    expect(evaluateLicenses({ 'LGPL-3.0-or-later': variants }, real).violations).toEqual([])
   })
 
   it('红样④：白名单裸条目（缺 via/rationale）自身违规——白名单不是免检通道', () => {
