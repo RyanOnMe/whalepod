@@ -26,7 +26,7 @@ Run 启动时每 Run 一个独立 Runtime 子进程（环境白名单 + 最小�
 - G3-06：注册 symlink → canonical 被采用；目录被换成他处 symlink → resolve 拒绝；
   路径策略越界一律拒绝。
 - 容量：第 3 个 Runtime → NODE_CAPACITY_REACHED。
-- 环境 scrub：子进程 env 仅 PATH/locale/TMPDIR + <PROVIDER>_API_KEY；凭据缺失 →
+- 环境 scrub：子进程 env 仅 PATH/locale/TMPDIR + <PROVIDER>_API_KEY（CREDENTIAL_ENV_OVERRIDES 真值表优先的派生兜底）；凭据缺失 →
   MODEL_CREDENTIAL_UNAVAILABLE（spawn 前）；Device Token/SSH/AWS 值断言不出现在子进程 env。
 - stderr tail ≤ 8KiB；超时回收 runtime_timeout；Node 重启：pid+启动时间+cmdline nonce
   三重匹配才终止进程组，nonce 被篡改 → 绝不发信号（测试直接篡改状态库验证），

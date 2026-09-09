@@ -24,7 +24,7 @@ const DEFAULT_VALUES = {
   name: '',
   description: '',
   persona: '',
-  provider: 'deepseek',
+  provider: 'deepseek-official',
   model: 'deepseek-chat',
   credentialSlot: 'default',
   maxTokens: '',

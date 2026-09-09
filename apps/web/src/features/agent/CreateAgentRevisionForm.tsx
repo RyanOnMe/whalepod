@@ -26,7 +26,7 @@ function initialValues(agent: AgentDetailView) {
   const current = agent.currentRevision
   return {
     persona: current?.persona ?? '',
-    provider: current?.provider ?? 'deepseek',
+    provider: current?.provider ?? 'deepseek-official',
     model: current?.model ?? 'deepseek-chat',
     credentialSlot: current?.credentialSlot ?? 'default',
     maxTokens:

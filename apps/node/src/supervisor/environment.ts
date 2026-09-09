@@ -2,7 +2,8 @@
  * Runtime 子进程环境白名单（P1-12；02 Task 12 Step 5）。
  *
  * 白名单：PATH、locale、临时目录，加 SecretStore 为该 provider/slot 解析的
- * 最小模型凭据（键形 `<PROVIDER>_API_KEY`）。其余一律剔除——Hub/Device Token、
+ * 最小模型凭据（环境名：CREDENTIAL_ENV_OVERRIDES 真值表优先，表外派生
+ * `<PROVIDER>_API_KEY`）。其余一律剔除——Hub/Device Token、
  * SSH agent、其他 provider key、云平台 metadata 凭据都进不了 Runtime。
  * 凭据缺失在 spawn 前即抛 MODEL_CREDENTIAL_UNAVAILABLE（Runtime 一个不启动）。
  */
@@ -18,6 +19,23 @@ export class RuntimeEnvError extends Error {
     super(message)
     this.name = 'RuntimeEnvError'
   }
+}
+
+/**
+ * provider → credential-ref 环境名真值表（#117）。
+ *
+ * 默认约定是派生 `<PROVIDER>_API_KEY`；但真值源是各 DSH adapter 包内的
+ * credential-ref 默认（如 dsh-llm-deepseek 的 DEFAULT_API_KEY_ENV），二者
+ * 不一致时必须以 adapter 为准——alpha.2 狗食实录：`deepseek-official` 纯
+ * 派生得 DEEPSEEK_OFFICIAL_API_KEY，DSH credentials「继承进程环境」层认
+ * 不到此名，Run 以 MISSING_CREDENTIAL 败。
+ * 新 provider 入表前必须核对其 adapter 的 credential-ref 默认值并留出处。
+ */
+const CREDENTIAL_ENV_OVERRIDES: Readonly<Record<string, string>> = {
+  // dsh-llm-deepseek@0.1.0-rc.8 lib/index.js：PROVIDER='deepseek-official'，
+  // DEFAULT_API_KEY_ENV='DEEPSEEK_API_KEY'（settings 段 llm-deepseek 的
+  // apiKeyEnv 默认）。
+  'deepseek-official': 'DEEPSEEK_API_KEY',
 }
 
 export function buildRuntimeEnvironment(
@@ -56,6 +74,7 @@ export function buildRuntimeEnvironment(
     )
   }
   const providerKey = spec.agent.provider.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()
-  env[`${providerKey}_API_KEY`] = secret
+  const credentialEnv = CREDENTIAL_ENV_OVERRIDES[spec.agent.provider] ?? `${providerKey}_API_KEY`
+  env[credentialEnv] = secret
   return env
 }

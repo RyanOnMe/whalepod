@@ -76,11 +76,25 @@ node apps/node/dist/cli.js pair --hub http://localhost:8080 --code <配对码>
 # 2) 登记你要让 Agent 干活的项目目录（可以有多个）：
 node apps/node/dist/cli.js workspace add ~/code/我的项目 --name 我的项目
 
-# 3) 常驻运行（先开着窗口跑；稳定后见 D 做成服务）：
+# 3) 配置模型凭证（每个要用模型的成员机都要做一次；密钥只落本机
+#    0600 文件，永不上 Hub——Hub 只看得到 slot 名）：
+node apps/node/dist/cli.js secret set deepseek-official default
+#    按提示粘贴 DeepSeek API Key（platform.deepseek.com 申请，sk-...）
+
+# 4) 常驻运行（先开着窗口跑；稳定后见 D 做成服务）：
 node apps/node/dist/cli.js start
 ```
 
-**验证点**：回到网页 → 发起一个 Run，运行器里能选到"我的项目"。
+**建 Agent 时三个字段照这个填**（网页「Agents」→ 新建）：
+Provider `deepseek-official`、Model `deepseek-chat`、Credential Slot `default`
+——provider 是 DSH 运行时的真实路由名，填别的（比如 `deepseek`）会在
+Run 发起时报 `NO_ADAPTER`（#117 实录）。
+（Model 说明：`deepseek-chat` 是 DeepSeek API 的真实模型 id，狗食链路实测
+跑通；adapter 自带目录是 `deepseek-v4-flash`/`deepseek-v4-pro`，目录内模型
+才有精确上下文窗口预算，目录外 id 透传可用但继承默认 1M 预算。）
+
+**验证点**：回到网页 → 发起一个 Run，运行器里能选到"我的项目"；Run 跑起来
+后每次工具调用都会请你审批（一次性批准，这是设计）。
 
 > ⚠ **已知限制（#94）**：`start` 运行**期间**再 `workspace add` 的新目录，网页
 > 要等 Node 重启（Ctrl+C 再 `start`）后才能看到。正常顺序是"先 add 后 start"。
