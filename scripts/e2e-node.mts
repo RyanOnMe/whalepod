@@ -54,7 +54,6 @@ import type {
 } from '../apps/node/src/runtime-driver.js'
 import { RunManager } from '../apps/node/src/run/run-manager.js'
 import { startDeviceSession } from '../apps/node/src/gateway/session.js'
-import { heartbeatFrame } from '../apps/node/src/gateway/hub-socket.js'
 import { ArtifactInputsManager } from '../apps/node/src/artifact/inputs.js'
 import { ArtifactCollector } from '../apps/node/src/artifact/collect.js'
 import { uploadArtifactCandidate } from '../apps/node/src/artifact/upload-client.js'
@@ -296,38 +295,9 @@ const runManager = new RunManager({
   },
 })
 
-// P1-19 实测竞态（登记为发现）：supervisor.activeRunIds 在子进程 spawn 后才入账，
-// Hub reconcile 若恰好落在「run.start 已受理、心跳快照尚未含该 Run」窗口会误判
-// nodeLostRun → lost。E2E 装配把受理时刻并入事实源（保守超集，不改产品代码）。
-const managerActive = new Set<string>()
-let sendHeartbeatNow: () => void = () => {}
-const originalHandleFrame = runManager.handleFrame.bind(runManager)
-runManager.handleFrame = async (frame: Parameters<RunManager['handleFrame']>[0]) => {
-  if (frame.type === 'run.start') managerActive.add(frame.payload.runId)
-  await originalHandleFrame(frame)
-  if (frame.type === 'run.start') {
-    // 关键一步：受理即补发心跳（真实事实源），把 Hub reconcile 误判窗口从
-    // 「≤ heartbeatMs」压到「≤ 单帧网络时延」。
-    // ⚠ monkey-patch 兜底（立账 #87）：心跳投影竞态的正解在产品侧（Node 受理
-    //   即补拍 / Hub 启动宽限）。#87 落地后删除本包装与 managerActive 超集。
-    sendHeartbeatNow()
-  }
-}
-// 终态收敛：Runtime 退出即从受理集合移除（心跳集合有界；exit 前 supervisor 已入账，
-// 超集语义不丢窗口）。
-supervisor.onRuntimeExit((event) => {
-  managerActive.delete(event.runId)
-})
-const supervisorActiveOrig = supervisor.activeRunIds.bind(supervisor)
-supervisor.activeRunIds = () => {
-  const live = new Set(supervisorActiveOrig())
-  for (const id of managerActive) {
-    if (live.has(id))
-      managerActive.delete(id) // 已入账 supervisor：去重
-    else live.add(id)
-  }
-  return [...live]
-}
+// （#87 已下沉产品侧：Hub reconcile 新生儿宽限（PR #122）+ Run 出生时间走
+// 领域时钟。本文件原 monkey-patch（受理即补拍心跳 + activeRunIds 超集）已按
+// 账体约定删除——E2E 直面真实 10s 心跳节奏，Q5 20× 连续绿是删后无回归的判据。）
 
 // R9 语义：重启后先回收孤儿（recoverOrphans 内完成），再建立会话。
 await supervisor.recoverOrphans()
@@ -409,8 +379,6 @@ const inventory = new WorkspaceInventory(registry, secrets)
 
 const session = startDeviceSession({
   config,
-  // E2E 心跳加密到 2s（真协议帧真事实）；受理即补发的窗口缝见 sendHeartbeatNow。
-  heartbeatMs: 2_000,
   facts,
   onRevoked: () => {},
   exit: (code, message) => {
@@ -435,11 +403,6 @@ const session = startDeviceSession({
   },
   WebSocketImpl: FaultWebSocket as unknown as never,
 })
-
-sendHeartbeatNow = () => {
-  const f = runManager.heartbeatFacts()
-  session.send(heartbeatFrame(config.deviceId, f.activeRunIds, f.lastEventSeqByRun))
-}
 
 sessionSend = session.send
 
