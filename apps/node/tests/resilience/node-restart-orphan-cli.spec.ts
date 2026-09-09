@@ -146,6 +146,8 @@ describe('R9-CLI：真实 cli start 遇孤儿不得崩（#118 TDZ 回归）', ()
       `cli 进程在孤儿恢复期间退出（exit=${exitCode}）——stderr: ${stderr.slice(-400)}`,
     ).toBeNull()
     expect(stderr).toContain('orphaned runtime after node restart')
+    // 评审 S1：绿测自证快照命中、send 已被驱动（skip 日志缺席），不靠红绿配对保鲜。
+    expect(stderr).not.toContain('lost snapshot skipped')
     // 孤儿行已清（WAL 允许并发读）。
     const check = new DatabaseSync(join(stateDir, 'supervisor.sqlite'), { readOnly: true })
     const rows = check.prepare('select count(*) as n from active_runtime').get() as {
