@@ -167,6 +167,7 @@ export async function seedRunPrereqs(handle: DbHandle): Promise<SeedIds> {
 export function makeRunInput(ids: SeedIds, overrides: Partial<NewRun> = {}): NewRun {
   return {
     id: randomUUID(),
+    createdAt: new Date(),
     taskId: ids.taskId,
     ownerUserId: ids.userId,
     agentId: ids.agentId,

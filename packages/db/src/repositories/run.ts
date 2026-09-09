@@ -22,6 +22,11 @@ export interface NewRun {
   dshSessionId?: string
   failureCode?: string
   failureSummary?: string
+  /**
+   * #119：出生时间必须由调用方领域时钟显式给出，不吃 DB 默认值——reconcile
+   * 的新生儿宽限拿 createdAt 与领域时钟对表，DB 墙钟会让测试与生产时钟语义分叉。
+   */
+  createdAt: Date
 }
 
 export async function insertRun(handle: DbHandle, run: NewRun): Promise<RunRow> {

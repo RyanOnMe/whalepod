@@ -234,6 +234,7 @@ export class RunOrchestrator {
       profileDigest: revision.profileDigest,
       pluginPackDigest: pack.packDigest,
       dshDistributionVersion: input.dshDistributionVersion,
+      createdAt: now, // #119：领域时钟出生时间，reconcile 新生儿宽限的对表基准
       ...(input.rerunOfRunId !== undefined ? { rerunOfRunId: input.rerunOfRunId } : {}),
     })
     // 首个 Run 把 Task 推进到 in_progress（§3.1）；in_progress 上重复 run_started 无边。

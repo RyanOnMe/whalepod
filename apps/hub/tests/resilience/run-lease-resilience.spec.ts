@@ -151,6 +151,9 @@ describe('R5: >30s lease expiry marks lost; reconnect never revives terminal', (
 
   it('a node that heartbeats without the run loses it (heartbeat projection path)', async () => {
     const { harness, run } = await dispatchingRun()
+    // #119：nodeLostRun 臂只适用于「心跳有过机会列出它」的 Run——先把时钟
+    // 推进过宽限期（30s，与 DEVICE_LEASE_MS 同口径），再造空心跳，隔离臂语义。
+    harness.clock.advance(31_000)
     await harness.orchestrator.ingestNodeEvent(
       harness.deviceFor(ids),
       heartbeatFrame(ids.deviceId, [run.id]),
@@ -166,6 +169,32 @@ describe('R5: >30s lease expiry marks lost; reconnect never revives terminal', (
     const lost = await getRun(database.db, run.id)
     expect(lost?.status).toBe('lost')
     expect(lost?.failureCode).toBe('RUNTIME_LOST')
+  })
+
+  it('#119 新生儿宽限：刚派发的 Run 不在当次心跳里是正常窗口，不得判 lost', async () => {
+    // alpha.2 狗食实录（三跑三判 lost，最速 +353ms）：run.start ack 后节点要
+    // 等下一个 10s 心跳才有机会把 Run 列进 activeRunIds；若 reconcile 恰好
+    // 落在窗口内，nodeLostRun（心跳新鲜+未列出）直接把活 Run 打成 lost，
+    // 且事件继续落账（runtime.ready 在 lost 之后 415ms 仍被收录）——僵尸 Run。
+    const { harness, run } = await dispatchingRun()
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      heartbeatFrame(ids.deviceId, []), // 节点还来不及列出新 Run（正常窗口）
+    )
+    harness.clock.advance(1_000)
+    await harness.orchestrator.reconcileLeases(harness.clock.now())
+
+    const alive = await getRun(database.db, run.id)
+    expect(alive?.status).toBe('dispatching')
+    // 宽限期后心跳仍不含 → 才允许判 lost（边界互补钉死）。
+    harness.clock.advance(31_000)
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      heartbeatFrame(ids.deviceId, []),
+    )
+    harness.clock.advance(1_000)
+    await harness.orchestrator.reconcileLeases(harness.clock.now())
+    expect((await getRun(database.db, run.id))?.status).toBe('lost')
   })
 
   it('after lost: heartbeat, snapshot and late events never revive the terminal run', async () => {
