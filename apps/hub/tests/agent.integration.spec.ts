@@ -25,7 +25,7 @@ async function coreEmptyPackId(database: Database): Promise<string> {
 
 const profile = {
   persona: 'You are a careful builder.',
-  provider: 'deepseek',
+  provider: 'deepseek-official',
   model: 'deepseek-chat',
   credentialSlot: 'default',
   pluginPackId: 'PLACEHOLDER',

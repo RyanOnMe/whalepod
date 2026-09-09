@@ -335,13 +335,16 @@ export async function main(argv: string[]): Promise<void> {
       })
       return
     }
-    const provider = positionals[1]
-    const slot = positionals[2]
-    if (provider === undefined || slot === undefined) {
+    // 参数序以 usage 与权威规格（02 计划）为准：secret set <provider> <slot>。
+    // 实现曾把 'set' 当 provider 解析并要求 'set' 在末尾——照文档敲必 EXIT=2
+    // 不落盘（PR #121 评审实录；workspace-cli.spec.ts 绕过 main() 层所以从未暴露）。
+    if (positionals[1] !== 'set') {
       process.stderr.write('usage: project311-node secret set <provider> <slot>\n')
       process.exit(2)
     }
-    if (positionals[3] !== 'set') {
+    const provider = positionals[2]
+    const slot = positionals[3]
+    if (provider === undefined || slot === undefined) {
       process.stderr.write('usage: project311-node secret set <provider> <slot>\n')
       process.exit(2)
     }

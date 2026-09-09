@@ -2,7 +2,8 @@
  * Runtime 子进程环境白名单（P1-12；02 Task 12 Step 5）。
  *
  * 白名单：PATH、locale、临时目录，加 SecretStore 为该 provider/slot 解析的
- * 最小模型凭据（键形 `<PROVIDER>_API_KEY`）。其余一律剔除——Hub/Device Token、
+ * 最小模型凭据（环境名：CREDENTIAL_ENV_OVERRIDES 真值表优先，表外派生
+ * `<PROVIDER>_API_KEY`）。其余一律剔除——Hub/Device Token、
  * SSH agent、其他 provider key、云平台 metadata 凭据都进不了 Runtime。
  * 凭据缺失在 spawn 前即抛 MODEL_CREDENTIAL_UNAVAILABLE（Runtime 一个不启动）。
  */

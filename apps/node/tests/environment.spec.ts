@@ -18,7 +18,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { buildRuntimeEnvironment } from '../src/supervisor/environment.js'
+import { buildRuntimeEnvironment, RuntimeEnvError } from '../src/supervisor/environment.js'
 import { SecretStore } from '../src/secret/store.js'
 
 let cleanups: Array<() => Promise<void>> = []
@@ -84,5 +84,16 @@ describe('runtime 环境注入：provider→credential-ref 真值表（#117）',
         processEnv: { PATH: '/usr/bin' },
       }),
     ).toThrowError(/credential not configured: deepseek-official\/default/)
+    // 评审补钉：错误种类（RuntimeEnvError.code）一并断言，不只匹配 message。
+    try {
+      buildRuntimeEnvironment(spec('deepseek-official'), {
+        workspacePath,
+        secrets,
+        processEnv: { PATH: '/usr/bin' },
+      })
+      expect.unreachable('missing slot must throw')
+    } catch (error) {
+      expect((error as RuntimeEnvError).code).toBe('MODEL_CREDENTIAL_UNAVAILABLE')
+    }
   })
 })

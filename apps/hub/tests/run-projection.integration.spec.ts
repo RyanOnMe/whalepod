@@ -595,7 +595,7 @@ describe('P1-13 run projection（Hub 侧）', () => {
       headers: { origin: ctx.origin, cookie: alice.cookie, 'idempotency-key': idemKey() },
       payload: {
         persona: 'Persona v2 — changed mid-run.',
-        provider: 'deepseek',
+        provider: 'deepseek-official',
         model: 'deepseek-chat',
         credentialSlot: 'default',
         pluginPackId: chain.pluginPackId,

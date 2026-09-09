@@ -89,6 +89,9 @@ node apps/node/dist/cli.js start
 Provider `deepseek-official`、Model `deepseek-chat`、Credential Slot `default`
 ——provider 是 DSH 运行时的真实路由名，填别的（比如 `deepseek`）会在
 Run 发起时报 `NO_ADAPTER`（#117 实录）。
+（Model 说明：`deepseek-chat` 是 DeepSeek API 的真实模型 id，狗食链路实测
+跑通；adapter 自带目录是 `deepseek-v4-flash`/`deepseek-v4-pro`，目录内模型
+才有精确上下文窗口预算，目录外 id 透传可用但继承默认 1M 预算。）
 
 **验证点**：回到网页 → 发起一个 Run，运行器里能选到"我的项目"；Run 跑起来
 后每次工具调用都会请你审批（一次性批准，这是设计）。
