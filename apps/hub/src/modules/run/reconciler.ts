@@ -118,7 +118,14 @@ async function reconcileOne(deps: ReconcileDeps, run: RunRow, now: Date): Promis
     const heartbeat = deps.activity.get(locked.deviceId)
     const heartbeatFresh =
       heartbeat !== undefined && now.getTime() - heartbeat.at.getTime() <= DEVICE_LEASE_MS
-    const nodeLostRun = heartbeatFresh && !heartbeat.activeRunIds.has(locked.id)
+    // #119 新生儿宽限：「心跳新鲜但未列出」只在 Run 年龄超过一个租约窗口后才
+    // 构成定罪——节点要等下一个 10s 心跳才有机会把新 Run 列进 activeRunIds，
+    // 窗口内宣判会把活 Run 打成 lost（alpha.2 狗食三跑三判，最速 +353ms，
+    // 且事件继续落账成僵尸 Run）。宽限与 DEVICE_LEASE_MS 同口径：「多新算
+    // 来不及报」与「多久沉默算死」用同一把尺。
+    const runAgeMs = now.getTime() - locked.createdAt.getTime()
+    const nodeLostRun =
+      heartbeatFresh && !heartbeat.activeRunIds.has(locked.id) && runAgeMs > DEVICE_LEASE_MS
 
     if (!leaseFresh || nodeLostRun) {
       transitionRun({ status: locked.status }, { type: 'lease_expired' })
