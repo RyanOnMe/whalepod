@@ -97,8 +97,15 @@ pnpm exec playwright test --project=p1-07   # 单项目冷启（理由见上方�
   不再直插 `schema.workspaces`；投影改由产品侧 session 层上报、cli 注入事实源建立。
   删缝后 `pnpm test:e2e` **连 3 轮全绿**（每轮 task-room 1/1 + full-chain 13/13）。
   **边界说清**：上面那个 20/20 是在**缝尚未删除**的 bdff8b1 上取得的，不得当作删缝
-  后的证据；Q5 二十连按口径属发布门，P1-20 会在无兜底的树上重跑。#87/#88/#90 三条
+  后的证据；Q5 二十连按口径属发布门，P1-20 会在无兜底的树上重跑。#88/#90 两条
   分账**状态不变**（均未修）。
+- **后续更正（#87，2026-09-09）**：「装配兜底」中**心跳竞态一支已删除**——产品侧
+  正解为 Hub reconcile 新生儿宽限（PR #122，活 Run 不再被心跳窗口误判 lost）+
+  Run 出生时间走领域时钟；`scripts/e2e-node.mts` 的 monkey-patch（受理即补发心跳
+  + `activeRunIds` supervisor∪受理超集 + 心跳加密 2s）按账体约定全删，E2E 直面
+  真实 10s 心跳节奏。删补丁后 `bash scripts/q5-loop.sh 20` **20/20 连续冷启全绿**
+  （每轮 task-room 1/1 + full-chain 13/13，轮次日志 `artifacts/q5/run-*.log`），
+  其中含 R5 lost 判定场景——竞态原复现路径（约五成概率）20 轮零复发。#87 关账。
 
 ## 验的是哪条用户路径
 
@@ -161,11 +168,12 @@ cli.ts 恒为空）。
      状态跃迁后的 Room 呈现依赖显式 reload/导航（P1-07 已按诚实路径处理，本门
      沿用）；RunLivePanel 的事件流键 `['run', id]` 是实时的。若要 Room 全实时，
      属产品改动（另立 Issue）。
-  2. **心跳投影竞态（立账 #87）**：Hub reconcile 用「30s 内最新心跳的 activeRunIds」判定
+  2. **心跳投影竞态（立账 #87，已修）**：Hub reconcile 用「30s 内最新心跳的 activeRunIds」判定
      nodeLostRun，而 Node 心跳默认 10s 一拍——run.start 受理与下一拍之间的窗口
-     可把新 Run 误标 lost（E2E 实测复现）。E2E 装配已用「受理即补发心跳 +
-     activeRunIds 取 supervisor∪受理 超集」把窗口压到亚秒；**产品侧建议**：Node
-     run.start 受理后立即补发一拍心跳（或 Hub 对刚派发 Run 设启动宽限）。
+     可把新 Run 误标 lost（E2E 实测复现）。**已修（#87 / PR #122）**：Hub 侧
+     reconcile 加新生儿宽限 + Run 出生时间走领域时钟；E2E 装配的「受理即补发心跳 +
+     activeRunIds 超集」monkey-patch 已删除，删后 Q5 20 连全绿（见头部更正段）。
+     残留跟进：#124（宽限锚点精确化 + lastSeenAt 时钟域收敛）、#123（观测收口）。
   3. **终态 Run 的 Runtime 进程滞留（立账 #88）**：completed 后 Node 不发
      `runtime.shutdown`（bridge/bin 支持但无人调用），进程占容量到 supervisor 硬
      超时——生产值 **6h**（apps/node/src/cli.ts:172）且生产 `capacity: 2`
