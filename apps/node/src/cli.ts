@@ -170,6 +170,11 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   // #97：按 runtime 包 exports 声明的公开子路径解析（原先解 './dist/bin.js'
   // 深路径，未 exports ⟹ ERR_PACKAGE_PATH_NOT_EXPORTED，start 启动即死）。
   const runtimeEntry = createRequire(import.meta.url).resolve('@project311/runtime/bin')
+  // #118：sessionSend 的 let 必须先于 RunManager 构造与 recoverOrphans() 执行——
+  // 否则「RunManager send 闭包（L190 形态）在 TDZ 内求值 sessionSend」，有孤儿
+  // 时启动即崩（alpha.2 狗食实录：一孤儿一崩）。no-op 默认值正是为会话建立前
+  // 的这段窗口准备的，但 TDZ 会让默认值根本来不及生效。
+  let sessionSend: (frame: string) => void = () => {}
   const supervisor = new RuntimeSupervisor({
     driver: new DshRuntimeDriver({ runtimeEntry }),
     registry,
@@ -219,7 +224,6 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   // Node 重启：孤儿三重匹配处理后交人工重跑（不自动复活 Run）。
   await supervisor.recoverOrphans()
 
-  let sessionSend: (frame: string) => void = () => {}
   const session = startDeviceSession({
     config,
     facts,
