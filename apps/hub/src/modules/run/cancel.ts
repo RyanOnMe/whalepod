@@ -91,11 +91,12 @@ export async function cancelRunInTransaction(
 /**
  * 把 Run 上全部 pending Approval 置 cancelled 并广播 approval.changed。
  *
- * 两个触发面（同源折叠，保证「终态 Run 不挂 pending Approval」的账本不变式）：
+ * 触发面（同源折叠，保证「终态 Run 不挂 pending Approval」的账本不变式）：
  * - run.cancel（G5-07）：用户/管理员取消，事件 payload 不带 cause（既有形态）；
- * - Run 终态收敛（#52/ADR-0007）：Runtime 在悬置审批下的裁决（completed/failed）
- *   与表外越边的 Run 级降级收敛，传 cause='run_terminal_fold'——语义是「审批随
- *   Run 终态失效」，不是有人做出了决定（不得记 rejected/expired 伪造决定或计时）。
+ * - Run 终态收敛（#52/ADR-0007 + #84）：Runtime 在悬置审批下的裁决
+ *   （completed/failed）、表外越边的 Run 级降级收敛、lease→lost 租约判死，
+ *   传 cause='run_terminal_fold'——语义是「审批随 Run 终态失效」，不是有人
+ *   做出了决定（不得记 rejected/expired 伪造决定或计时）。
  *
  * 决定/失效随 Run 收口：Node 取消 Runtime 时，桥在 dispose 时收口全部挂起审批
  * （approval-port.cancelAll），无需逐条 approval.decide 下行。
