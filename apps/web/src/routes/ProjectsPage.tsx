@@ -8,7 +8,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
-import type { CreateProjectRequest, CreateTaskRequest, TeamMembersData } from '@whalepod/protocol'
+import type { CreateProjectRequest, CreateTaskRequest, TeamMemberView } from '@whalepod/protocol'
 import { useNavigate } from 'react-router'
 import { api } from '../shared/api/client.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
