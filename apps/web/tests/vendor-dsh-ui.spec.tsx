@@ -1062,11 +1062,15 @@ describe('L1 token 第二批增量（#138）', () => {
 
   it('L1 声明的每个 --dsw-* 都有消费者（无孤儿变量）——本批曾多带一个 amber-500，被审查纠出', () => {
     // 口径：一个变量"有消费者"= ①被 vendored CSS 以 var() 引用，或 ②被本文件里另一个
-    // 声明的值以 var() 引用，或 ③被**本仓应用层 CSS**（global.css）引用。
+    // 声明的值以 var() 引用，或 ③被**本仓应用层 CSS**（styles/ 下除本文件外的全部 .css，
+    // 即 global.css + tokens.css）引用。
     // 三者都不是 ⇒ 孤儿（写死的取值没有任何路径能到达）。孤儿本身不会报错，但会让同一
     // 档位出现两处取值、日后必然漂移，所以用测试守。
     // ③ 是必须算进来的：首批三个 900 档静态色阶是**故意留给应用层**的（AA 重映射），
     // 只扫 L1 + vendored 会把它们误判成孤儿（实测踩过）。
+    // ③ 必须扫**整个应用层**而不是只扫 global.css：#153 主题切片把应用层的桥接从
+    // global.css 挪进了 tokens.css，合并后 main 新声明的 blue-100/blue-600/amber-100
+    // 三个静态阶的消费者只剩 tokens.css 一处，只扫 global.css 就会误报孤儿（实测踩过）。
     const declared = [...tokensCss.matchAll(/^\s*(--dsw-[a-z0-9-]+)\s*:/gm)].map((m) => m[1] ?? '')
     const stripComments = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '')
     const vendorReferenced = new Set(
@@ -1081,13 +1085,16 @@ describe('L1 token 第二批增量（#138）', () => {
     const internallyConsumed = new Set(
       [...tokensCss.matchAll(/var\((--dsw-[a-z0-9-]+)/g)].map((m) => m[1] ?? ''),
     )
-    // 应用层消费者：global.css（业务侧显式桥接 L1 的地方）。
+    // 应用层消费者：styles/ 下除 L1 本文件以外的全部 .css（global.css 与 tokens.css 都是
+    // 业务侧显式桥接 L1 的地方；写成目录扫描，日后新增应用层样式表不会让门悄悄失明）。
+    const appCssDir = join(repoRoot, 'apps/web/src/styles')
     const appConsumed = new Set(
-      [
-        ...stripComments(
-          readFileSync(join(repoRoot, 'apps/web/src/styles/global.css'), 'utf8'),
-        ).matchAll(/var\((--dsw-[a-z0-9-]+)/g),
-      ].map((m) => m[1] ?? ''),
+      readdirSync(appCssDir)
+        .filter((f) => f.endsWith('.css') && f !== 'dsw-tokens.css')
+        .map((f) => stripComments(readFileSync(join(appCssDir, f), 'utf8')))
+        .join('\n')
+        .match(/var\((--dsw-[a-z0-9-]+)/g)
+        ?.map((m) => m.replace('var(', '')) ?? [],
     )
     const orphans = [...new Set(declared)].filter(
       (name) =>
