@@ -2,7 +2,7 @@
 
 - 对应场景/门禁：Q0 静态门（源码文本判据）+ Q5 浏览器门（computed style 判据）
 - 对应 Issue：#168（P1-168）
-- 上次验证：2026-09-11 · `feat/p1-168-control-family` · Q0 PASS（6 条新用例全绿 + 16 条变异验证全红）；
+- 上次验证：2026-09-11 · `feat/p1-168-control-family` · Q0 PASS（6 条新用例全绿 + 22 条变异验证全红）；
   已并入 `main`（#159/#164/#166/#170 落地后的合并，冲突已解：本 PR 去掉了 #159 在
   `.app-header .button-quiet:hover` 上写的 `border-color`——quiet 是无边形态，形状不该由容器改）；
   **Q5 未跑**（本机同一时刻只允许一套 e2e 栈，调度未放行，见「边界与未覆盖」）
@@ -30,7 +30,8 @@ pnpm exec vitest run --project web tests/control-family.spec.tsx
 ```
 
 判据文件里**没有任何 `0.5px` / `8px` 字面量**：度量从
-`apps/web/src/vendor/dsh-ui/Input.module.css` 的 `.wrap` 现场读（`readVendorMetrics`）。
+`apps/web/src/vendor/dsh-ui/Input.module.css` 的 `.wrap` 现场读（`parseVendorInputMetrics`，
+单测与 Q5 共用同一份实现）。
 上游改度量而应用层不同步 → 判据红；把数字抄进测试就永远验不出这件事。
 
 ### 二、真实浏览器判据（Q5）
@@ -81,7 +82,7 @@ pnpm exec playwright test --project=p1-142   # 成员页 390 档：主按钮
    hover 面/描边 `--dsw-alias-interactive-bg-hover` / `--dsw-alias-border-l3`。
 3. **`min-height` 与 `var(--touch-min)` 同值且 `--touch-min ≥ 40px`**：高度轴不跟着 vendored
    `Input` 降到 32px，由判据承担，不靠注释。
-4. **变异验证（15 条）**：描边回 1px / 圆角回 6px / 描边换 `border-l3` / 背景换应用层
+4. **变异验证（22 条）**：描边回 1px / 圆角回 6px / 描边换 `border-l3` / 背景换应用层
    `--color-surface`（**同值**：两者浅色下都是 `rgb(255,255,255)`）/ 高度回 32px / 主按钮写 `#fff` /
    主按钮底换 `brand-primary` / 危险底换错误色 / 危险字回红-500 / 危险描边回 1px /
    quiet 无边被改松 / hover 面换应用层变量 / `:disabled` 里塞裸色值 / 焦点描边换应用层变量 /
@@ -111,6 +112,27 @@ pnpm exec playwright test --project=p1-142   # 成员页 390 档：主按钮
 | 描边/圆角不符 | 应用层 CSS | `apps/web/src/styles/global.css` 的 `#168` 段 |
 | 颜色不符 | token 层 | `apps/web/src/styles/dsw-tokens.css`（L1 白名单）与 `tokens.css`（应用层映射） |
 | 浏览器侧与源码侧结论不一致 | 层叠 | 产物 CSS 顺序（`global.css` 头块记了实测顺序）与 `@media` 覆盖 |
+
+### 第二轮复核整改（2026-09-11）
+
+复核确认两条阻断的修复到位且不可复现，剩 3 条应改 + 1 条产品决定，逐条处置：
+
+| 项 | 复现 | 修法 |
+|---|---|---|
+| **B-1** `probeFromSource` 自比恒真**没真修**（注释却说修了） | 把 `assertControlFamily` 架空后只跑探针层：M2/M3/M5/M8 里只有 M2/M5 红，且 M4 红是因为**抛错**而不是比较失败；`minHeight` 与 `resolved.touch` 仍是同一个 `tokenValue('--touch-min')`，`reference*` 就是控件自己的值 | `minHeight` 改为从**规则体的 `min-height` 声明**解出（`var(--touch-min)` → 解析成 `40px`）；`referenceBorderWidth/Radius` 改为取 **vendored** 度量（另一份 CSS 的另一条规则）。**隔离复测**（复刻评审协议：架空 `assertControlFamily`、只跑探针层）：M2 描边 1px vs 0.5px **红**、M3 圆角 6px vs 8px **红**、M5 `min-height=32px` vs 40px **红**、危险描边 1px **红** |
+| **B-2a** 新选择器逃逸 | 追加 `.field input:focus-visible { border-color: … }` → 全绿（不在选择器白名单里，判据根本不看它） | 新增**选择器守卫**：任何"命中同一批元素"的规则都必须登记进期望表（切词时剥掉伪类/属性选择器，所以 `.field > input`、`.field input:focus-visible` 同样命中）。守卫**必须跑在期望表循环之后**——第一版写在循环里，用"已遍历集合"判断，新规则一看不在集合里就被放行（自己踩到并修掉） |
+| **B-2b** 非颜色属性写裸色值逃逸 | `.button:focus-visible` 里加 `outline: 2px solid #ff0000` → 全绿（反向钉只抓 `--color-*`） | 改为**整条规则体全属性扫描**裸色值（hex / `rgb()` / 具名色，具名色用 `(?<![\w-])…(?![\w-])` 边界，避免命中 `--dsw-static-red-900`），只豁免显式列出的形状属性；颜色属性名仍用于"钉 token" |
+| **B-3** 文档指向不存在的函数 | `readVendorMetrics` 全仓仅此一处 | 改为 `parseVendorInputMetrics` |
+| **产品决定** 顶栏 hover 反馈 | 删掉 #159 的 `border-color` 后，浅色主题下这枚按钮没有可见反馈（`rgba(38,49,72,0.06)` 压在顶栏上只差 1/255，实测 1.13:1） | 补 `.app-header .button-quiet:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08) }`——**面**变、不动形状；合成到顶栏上是 16.24:1（浅色主题档的普通 hover 面在顶栏上只有 1.13:1，正是要修的那个"看不见"）。为什么这里是全仓少见的**裸值**：L1 没有"深色容器上的 hover 叠加"这一档（`--dsw-alias-interactive-bg-hover` 是深色压浅底、`--dsw-alias-button-ghost-active-fill` 是近白实心 16.24:1 太抢眼且像选中态），发明新 token 属 tokens 层裁决；已用 `raw:` 哨兵把**具体值**登记进期望表，改成别的裸值会红 |
+
+顺带修掉复核指出的两处自相矛盾：变异条数（数组实际条数）与
+`global.css` 里 `.button:hover` 的"特异性 (0,2,1)"（实为 **(0,3,0)**，`:not(:disabled)` 按参数计）。
+
+新增的登记（都在期望表里，附理由）：
+`.app-header .button-quiet`（#159 深色容器前景族；`border-color: null` = **禁止**再点出描边）、
+`.app-header .button-quiet:hover:not(:disabled)`（产品决定那条）、`.app-header-user .button`
+（形状限定：布局，`colors: {}` = 不许出现颜色）、`:focus-visible`（**全局可访问性规则**，
+登记它以挡住"往通用焦点里加颜色"；`border-radius` 显式豁免并写明理由）。
 
 ### 整改时的实测（本机 Chrome，独立小页面，不进 e2e 栈）
 
@@ -153,6 +175,7 @@ pnpm exec playwright test --project=p1-142   # 成员页 390 档：主按钮
 | `.button-primary` 字 | `#fff` 裸值 → `--dsw-alias-label-primary-foreground`（同值，只是改了来源） | 同上 |
 | `.button-quiet` 字 | `--color-signal`（蓝）→ **近黑**（= `--dsw-alias-brand-primary`） | 与主按钮同族的前景语义 |
 | `.button-danger` 描边 | `--color-danger`（red-900，**红**）→ 中性 hairline `border-l4` | 见下"已知取舍" |
+| 顶栏「退出登录」hover 反馈的**来源** | 描边（#159 的 `border-color: var(--color-signal-soft)`）→ **面**（`rgba(255, 255, 255, 0.08)`） | 产品决定：无边形态不该被容器点出描边，但**反馈必须有**；合成前后 16.24:1，普通 hover 面在顶栏上只差 1.13:1（看不见） |
 
 **已知取舍**（登记，不在本 PR 内解决）：`.button-danger` 的红色可供性现在只由**文字**承担；
 同屏的红字徽标（`.badge-*`，描边是 `color-mix(--color-danger 35%)`）仍是红边，两者并排时

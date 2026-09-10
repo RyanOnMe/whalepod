@@ -15,7 +15,7 @@
  *     都曾全绿）。没登记期望值、却声明了颜色属性的规则**直接报红**，不许静默放过。
  *  C. `min-height` 与 `var(--touch-min)` 同值，且 `--touch-min ≥ 40px`——**高度不跟着
  *     vendored `Input` 降到 32px** 这件事必须由判据承担，否则下一个人"顺手对齐 32px"没人拦。
- *  D. 反面钉（变异验证，15 条）：按 **CSS 规则 + 属性**定位后改坏一次（描边回 1px / 圆角回 6px /
+ *  D. 反面钉（变异验证，22 条）：按 **CSS 规则 + 属性**定位后改坏一次（描边回 1px / 圆角回 6px /
  *     换另一个 L1 描边档 / 颜色回应用层 token（含**同值**的 `--color-surface`，纯文本判据才拦得住）/
  *     高度回 32px / 变体写裸色值 / 底色换成错误色 / hover 与 disabled 里塞应用层值与裸色值 /
  *     `@media` 里偷偷改松），`assertControlFamily` 必须**变红**，且失败信息指到那条规则；
@@ -161,45 +161,68 @@ function declaration(body: string, property: string): string | undefined {
   return new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`, 'i').exec(body)?.[1]?.trim()
 }
 
-/** 颜色相关属性清单：规则体里出现其中任何一个，都必须能在期望表里找到对应的 token。 */
+/** 颜色相关属性清单：登记了期望 token 的规则里，这些属性逐条判。 */
 const COLOR_PROPERTIES = ['color', 'background', 'background-color', 'border', 'border-color']
 
 /**
- * 变体沿哪条基类继承（用于把源码侧的探针凑成**浏览器里会算出来的那一组值**）。
+ * 裸色值形态（评审 B-2b）：`#rgb`/`#rrggbb`、`rgb()/rgba()/hsl()/hsla()`（`color-mix()` 里
+ * 也含 `rgb` 字面量时会被一并抓住）、CSS 具名色。
  *
- * 为什么需要它：`checkControlTokens` 是给**真实控件**用的判据，探针里三项颜色都必须有值
- * （浏览器里它们一定都被解析出来了）。变体规则自己只声明改动的那几项（例如 `.button:hover`
- * 只声明 `background` 与 `border-color`），所以这里按层叠把基类的声明补上——
- * 补的是"浏览器会怎么算"，不是"期望值"，装错照样会红。
+ * 为什么用"裸色值扫描"而不是"按属性名逐个判"：后者只覆盖点名的几个属性，
+ * `outline: 2px solid #ff0000`、`box-shadow: 0 0 0 2px red` 这类**同族写法**会静默逃逸
+ * （评审实测全绿）。所以现在是"整条规则体里不许出现裸色值"，属性名只用来决定
+ * **要不要额外钉 token**。
  */
-const BASE_OF: Record<string, string> = {
-  '.button:hover:not(:disabled)': '.button',
-  '.button:disabled': '.button',
-  '.button:focus-visible': '.button',
-  '.button-primary': '.button',
-  '.button-primary:hover:not(:disabled)': '.button-primary',
-  '.button-quiet': '.button',
-  '.button-quiet:hover:not(:disabled)': '.button-quiet',
-  '.button-danger': '.button',
-}
+const RAW_COLOR_VALUE =
+  /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?)\(|(?<![\w-])(?:red|blue|green|black|white|gray|grey|orange|purple|yellow|pink|brown|cyan|magenta)(?![\w-])/i
 
-/** 把基类的声明并进规则体（规则自身的声明优先）。 */
-function cascadedBody(scanned: CssRule[], selector: string): string {
-  const base = BASE_OF[selector]
-  if (base === undefined) return findRule(scanned, selector, 'border').body
-  const baseRule = findRule(scanned, base, 'border')
-  const patch = findRule(scanned, selector)
-  const own = new Set(
-    [...patch.body.matchAll(/(?:^|;)\s*([a-z-]+)\s*:/gi)].map((match) => match[1] ?? ''),
-  )
-  const inherited = baseRule.body
-    .split(';')
-    .filter((piece) => {
-      const property = /^\s*([a-z-]+)\s*:/i.exec(piece)?.[1]
-      return property !== undefined && !own.has(property)
-    })
-    .join(';')
-  return `${patch.body};${inherited}`
+/**
+ * 只承载几何/布局的属性：它们不该出现颜色，但会在值里出现合法关键字
+ * （例如 `solid`）。命中这些属性名时**跳过裸色值扫描**，改由 A 组判据钉住形状值本身。
+ */
+/**
+ * 期望值哨兵：允许某个属性用**裸值**，但必须显式登记具体值（评审认可的那种）。
+ *
+ * 为什么需要它：整体规则是"颜色只走 `var(--dsw-*)`"，而顶栏 hover 那一条是全仓少见的
+ * 裸 `rgba()`（L1 没有"深色容器上的 hover 叠加"这一档）。放行它的方式是**把这个值写进
+ * 期望表**，而不是给一个属性名开洞——后者会让"换个裸值"也通过。
+ */
+const EXPECT_RAW_VALUE = 'raw:'
+
+/**
+ * 期望值哨兵：允许某个属性引用**应用层 token**（`--color-*`），必须显式写出变量名与理由。
+ *
+ * 为什么需要它：#159 的深色容器前景族就是应用层机制（顶栏给出 `--color-signal-soft`），
+ * 把整个应用层颜色一律禁掉会逼着后人改成裸值或改 L1——两条都更糟。放行的方式同样是
+ * **把变量名写进期望表**，所以"换成另一个 `--color-*`"仍会红。
+ */
+const EXPECT_APP_TOKEN = 'app:'
+
+const SHAPE_ONLY_PROPERTIES = new Set([
+  'display',
+  'align-items',
+  'justify-content',
+  'min-height',
+  'padding',
+  'padding-inline',
+  'padding-block',
+  'width',
+  'height',
+  'border-radius',
+  'border-width',
+  'border-style',
+  'cursor',
+  'position',
+  'flex',
+  'gap',
+])
+
+/** 解析规则体里的所有声明（属性名小写）。 */
+function declarationsOf(body: string): Array<{ property: string; value: string }> {
+  return [...body.matchAll(/(?:^|;)\s*([a-z-]+)\s*:\s*([^;]+)/gi)].map((match) => ({
+    property: (match[1] ?? '').toLowerCase(),
+    value: (match[2] ?? '').trim(),
+  }))
 }
 
 /**
@@ -228,6 +251,62 @@ function setDeclaration(
   return mutated
 }
 
+/**
+ * 变体沿哪条基类继承（用于把源码侧的探针凑成**浏览器里会算出来的那一组值**；
+ * 链可以有多跳，见 `cascadedBody`）。
+ *
+ * 为什么需要它：`checkControlTokens` 是给**真实控件**用的判据，探针里三项颜色都必须有值
+ * （浏览器里它们一定都被解析出来了）。变体规则自己只声明改动的那几项（例如 `.button:hover`
+ * 只声明 `background` 与 `border-color`），所以这里按层叠把基类的声明补上——
+ * 补的是"浏览器会怎么算"，不是"期望值"，装错照样会红。
+ */
+const BASE_OF: Record<string, string> = {
+  '.button:hover:not(:disabled)': '.button',
+  '.button:disabled': '.button',
+  '.button:focus-visible': '.button',
+  '.button-primary': '.button',
+  '.button-primary:hover:not(:disabled)': '.button-primary',
+  '.button-quiet': '.button',
+  '.button-quiet:hover:not(:disabled)': '.button-quiet',
+  '.app-header .button-quiet:hover:not(:disabled)': '.button-quiet:hover:not(:disabled)',
+  '.app-header-user .button': '.button',
+  '.button-danger': '.button',
+}
+
+/**
+ * 把继承链上的声明并进规则体（近者优先），模拟**浏览器会算出来的那一组值**。
+ *
+ * 为什么要走**整条链**而不是一跳：`.button-primary` 自己不声明 `min-height`/`cursor`，
+ * 它们来自 `.button`；而 `.button-primary:hover` 又只声明两个属性。一跳就把链截断了
+ * （实测踩到：`.button-primary:hover` 的探针里取不到 `min-height`，报"规则体里没有声明"）。
+ */
+function cascadedBody(
+  scanned: CssRule[],
+  selector: string,
+  mustDeclare?: string,
+  seen = new Set<string>(),
+): string {
+  if (seen.has(selector)) throw new Error(`BASE_OF 出现环：${selector}`)
+  seen.add(selector)
+  // 子规则要按 mustDeclare 收窄（`.field textarea` 有两条）；基类规则本身唯一，不必收窄
+  // （而且变体常常不声明那条属性，收窄会反而找不到）。
+  const own = findRule(scanned, selector, mustDeclare).body
+  const base = BASE_OF[selector]
+  if (base === undefined) return own
+  const inherited = cascadedBody(scanned, base, undefined, seen)
+  const declaredHere = new Set(
+    [...own.matchAll(/(?:^|;)\s*([a-z-]+)\s*:/gi)].map((match) => match[1] ?? ''),
+  )
+  const fromBase = inherited
+    .split(';')
+    .filter((piece) => {
+      const property = /^\s*([a-z-]+)\s*:/i.exec(piece)?.[1]
+      return property !== undefined && !declaredHere.has(property)
+    })
+    .join(';')
+  return `${own};${fromBase}`
+}
+
 // ---------- 期望表 ----------
 
 /**
@@ -247,8 +326,17 @@ interface ExpectedRule {
   border?: string
   /** 期望的 `border-radius`。语义同 `border`。 */
   radius?: string
-  /** 逐属性的期望 token；这里**没列**的属性一旦被声明就报红（防"加了条新颜色没人管"） */
-  colors: Record<string, string>
+  /**
+   * 逐属性的期望 token。`null` = **这条规则不许声明这个属性**（比"没登记"更严：
+   * 未登记只是"漏登记"，`null` 是"这条规则上就是禁止"）。
+   */
+  colors: Record<string, string | null>
+  /**
+   * 豁免"度量必须等于 vendored Input"与"颜色必须登记"的**具体属性**（都要在本文件里
+   * 写明为什么）。用途只有一个：`:focus-visible` 这种**全局可访问性**规则——
+   * 它对所有元素生效，不是"控件族的新写法"，不该被控件族的度量绑架。
+   */
+  exempt?: readonly string[]
 }
 
 const rules: ExpectedRule[] = [
@@ -304,6 +392,17 @@ const rules: ExpectedRule[] = [
     colors: {},
   },
   {
+    // 通用焦点规则里也有 `.button`（`*:focus-visible`），不登记的话"往通用焦点里加颜色"
+    // 会绕过全部判据——它是无条件生效的，比单条控件规则更危险。
+    selector: ':focus-visible',
+    mustDeclare: 'box-shadow',
+    // 豁免圆角：这条是**全局可访问性规则**（对所有元素生效），它的 `border-radius`
+    // 只是给"本来没有圆角的元素"一个协调的形状；控件自己声明了 8px，box-shadow 跟随
+    // 元素自身圆角，所以对这三族**无实际影响**（#164 的 focus-ring 门另有覆盖）。
+    exempt: ['border-radius'],
+    colors: { 'box-shadow': `${EXPECT_RAW_VALUE}var(--focus-ring)` },
+  },
+  {
     selector: '.button:focus-visible',
     mustDeclare: 'border-color',
     colors: { 'border-color': '--dsw-alias-brand-primary' },
@@ -343,6 +442,36 @@ const rules: ExpectedRule[] = [
     selector: '.button-quiet:hover:not(:disabled)',
     mustDeclare: 'background',
     colors: { background: CONTROL_HOVER_BACKGROUND_TOKEN, 'border-color': 'transparent' },
+  },
+  {
+    // 产品决定（评审）：#159 那条 `border-color` 删掉后，顶栏「退出登录」在浅色主题下
+    // 失去了可见的 hover 反馈（通用 hover 面 `rgba(38,49,72,0.06)` 压在顶栏上只差 1/255）。
+    // 所以补一条**面**变，并在这里钉住——免得它下一轮又被顺手删掉。
+    selector: '.app-header .button-quiet:hover:not(:disabled)',
+    mustDeclare: 'background',
+    colors: {
+      // 这一条刻意写**裸 rgba**：L1 没有"深色容器上的 hover 叠加"这一档，理由与实测数字
+      // 写在 global.css 该规则处（评审已认可这个量）。用哨兵把**具体值**登记进来——
+      // 改小到看不见、或换成别的裸色，都会红。
+      background: `${EXPECT_RAW_VALUE}rgba(255, 255, 255, 0.08)`,
+    },
+  },
+  {
+    // #159 的深色容器前景族（blue-100 压 ink 15.49:1）。登记它的目的是让守卫能覆盖
+    // "往这个容器规则里加东西"：`border-color` 显式登记为 `null`——那是 #159 原先写在
+    // `:hover` 上、被本 PR 删掉的那条（无边形态不该被容器点出描边）。谁再加回来就会红。
+    selector: '.app-header .button-quiet',
+    mustDeclare: 'color',
+    colors: { color: `${EXPECT_APP_TOKEN}--color-signal-soft`, 'border-color': null },
+  },
+  {
+    // 下面两条是**形状限定**规则（顶栏退出按钮的布局 / 页头用户的按钮不参与收缩）：
+    // 登记进来是为了让选择器守卫能覆盖它们——`colors: {}` 的含义是"这里不许出现任何颜色，
+    // 出现即红（未登记）"。不登记的话，"往 `.app-header-user .button` 里加一条 color"
+    // 会绕过全部判据（评审 B-2a 的同类逃逸）。
+    selector: '.app-header-user .button',
+    mustDeclare: 'flex',
+    colors: {},
   },
   {
     selector: '.button-danger',
@@ -476,7 +605,9 @@ function assertControlFamily(cssText: string): void {
       )
     }
     const radius = declaration(rule.body, 'border-radius')
-    if (expected.radius === undefined) {
+    if (expected.exempt?.includes('border-radius')) {
+      // 显式豁免（理由写在期望表该条上）：不判圆角度量
+    } else if (expected.radius === undefined) {
       if (radius !== undefined) {
         failures.push(
           `${expected.selector} 不该声明圆角（应继承 .button 的 ${vendor.radius}），实测 ${radius}`,
@@ -487,11 +618,35 @@ function assertControlFamily(cssText: string): void {
         `${expected.selector} 的圆角应与 vendored Input 同值（${expected.radius}），实测 ${radius ?? '（未声明）'}`,
       )
     }
-    // B. 颜色：逐属性判 token；**声明了却没登记期望值**也要报红。
+    // B1（评审 B-2b）：**整条规则体**里不许出现裸色值 / 应用层变量——不再只看
+    // COLOR_PROPERTIES 那几个属性名，否则 `outline: 2px solid #ff0000` 这类同族写法会逃逸。
+    for (const { property, value } of declarationsOf(rule.body)) {
+      if (SHAPE_ONLY_PROPERTIES.has(property)) continue
+      // 显式登记过的裸值放行（期望表里写的是 `raw:<原值>`）；未登记的裸值一律红。
+      if (expected.colors[property] === `${EXPECT_RAW_VALUE}${value}`) continue
+      const raw = RAW_COLOR_VALUE.exec(value)?.[0]
+      if (raw !== undefined) {
+        failures.push(
+          `${expected.selector} 的 ${property} 里有裸色值 \`${raw}\`：颜色必须走 var(--dsw-*)（整条规则体都在判据内，不是只查颜色属性名）`,
+        )
+      }
+      const appVar = /--color-[\w-]+/.exec(value)?.[0]
+      if (appVar !== undefined && expected.colors[property] !== `${EXPECT_APP_TOKEN}${appVar}`) {
+        failures.push(`${expected.selector} 的 ${property} 引用了应用层变量 ${appVar}`)
+      }
+    }
+    // B2：登记了期望 token 的颜色属性逐条判。
     for (const property of COLOR_PROPERTIES) {
       const value = declaration(rule.body, property)
       if (value === undefined) continue
+      if (expected.exempt?.includes(property)) continue
       const expectedToken = expected.colors[property]
+      if (expectedToken === null) {
+        failures.push(
+          `${expected.selector} 不该声明 ${property}（期望表里登记为 null），实测 \`${value}\``,
+        )
+        continue
+      }
       if (expectedToken === undefined) {
         // 豁免：`.button-quiet` 的 color（理由见上方注释）。其余规则上未登记的颜色仍然报红。
         if (expected.selector === '.button-quiet' && property === 'color') {
@@ -509,12 +664,71 @@ function assertControlFamily(cssText: string): void {
         }
         continue
       }
+      // 显式登记的应用层 token（`app:<变量名>`）：必须逐字相等
+      if (expectedToken.startsWith(EXPECT_APP_TOKEN)) {
+        const wanted = expectedToken.slice(EXPECT_APP_TOKEN.length)
+        if (value.trim() !== `var(${wanted})`) {
+          failures.push(
+            `${expected.selector} 的 ${property} 是 \`${value}\`，登记的是应用层 token \`var(${wanted})\``,
+          )
+        }
+        continue
+      }
+      // 显式登记的裸值（`raw:<原值>`）：必须逐字相等，且**不进**"只吃 L1"那条分支
+      // （否则同一个值既被放行又被判为"非 L1"）。换任何别的裸值都会红。
+      if (expectedToken.startsWith(EXPECT_RAW_VALUE)) {
+        const wanted = expectedToken.slice(EXPECT_RAW_VALUE.length)
+        if (value !== wanted) {
+          failures.push(
+            `${expected.selector} 的 ${property} 是 \`${value}\`，登记的是裸值 \`${wanted}\`（只许这一处裸值，且逐字相等）`,
+          )
+        }
+        continue
+      }
       checkColor(failures, expected.selector, property, value, expectedToken)
     }
-    // 反向钉：不许残留应用层 `--color-*` 变量名。
-    const appToken = /--color-[\w-]+/.exec(rule.body)?.[0]
-    if (appToken !== undefined) {
-      failures.push(`${expected.selector} 里残留应用层变量 ${appToken}`)
+    // 反向钉：不许残留应用层 `--color-*` 变量名（显式登记的应用层 token 除外）。
+    const declaredAppTokens = Object.values(expected.colors).filter(
+      (token): token is string => typeof token === 'string' && token.startsWith(EXPECT_APP_TOKEN),
+    )
+    const leftovers = [...rule.body.matchAll(/--color-[\w-]+/g)]
+      .map((match) => match[0])
+      .filter((token) => !declaredAppTokens.includes(`${EXPECT_APP_TOKEN}${token}`))
+    if (leftovers.length > 0) {
+      failures.push(`${expected.selector} 里残留应用层变量 ${[...new Set(leftovers)].join('、')}`)
+    }
+  }
+
+  // D. 选择器守卫（评审 B-2a）：**任何命中同一批元素**的规则都必须登记进期望表，
+  //    否则"新加一条 `.field input:focus-visible { border-color: … }`"会静默逃逸
+  //    （实测全绿：`*:focus-visible` 不在选择器白名单里，判据根本不看它）。
+  //
+  //    判据是"选择器组里出现基类选择器"，所以 `.field > input` 这种与 `.field input`
+  //    命中同一批元素的等价写法也算命中。**必须跑在期望表循环之后**：早期版本写在循环里，
+  //    用的是"已遍历到的那几条"，新规则一看"不在已遍历集合里"就被当成已登记而放行。
+  //
+  //    登记形式统一为 `.selector + mustDeclare`（例如 `*:focus-visible|border-color`）。
+  const guardedBases = ['.field input', '.field textarea', '.button']
+  const registeredSelectors = new Set(rules.map((entry) => entry.selector))
+  for (const rule of scanned) {
+    for (const group of rule.selectors) {
+      // 切词要切掉伪类/伪元素/属性选择器：`.field input:focus-visible` 必须还原出
+      // `.field input` 这一对（否则"新加一条带伪类的规则"仍然逃逸——实测踩到过）。
+      // 先把伪类/伪元素（`:…`）与属性选择器（`[…]`）整段换成空格，再按组合子/后代切开：
+      // `.field input:focus-visible` → `.field input`、`.field > input` → `.field input`。
+      // 用"在 `:` 前切"的写法实测会切出 `:focus-visible` 这个片段而漏掉整对（踩过）。
+      const hit = guardedBases.find((base) =>
+        group
+          .replaceAll(/::?[\w-]+(?:\([^)]*\))?|\[[^\]]*\]/g, ' ')
+          .split(/[\s>+~]+/)
+          .filter((piece) => piece !== '')
+          .join(' ')
+          .includes(base),
+      )
+      if (hit === undefined || registeredSelectors.has(group)) continue
+      failures.push(
+        `${group} 命中了控件族元素（${hit}）却不在期望表里：新增/改名的控件规则必须登记（连同它的期望 token 与必须声明的属性），否则它会绕过全部判据`,
+      )
     }
   }
 
@@ -541,23 +755,38 @@ function assertControlFamily(cssText: string): void {
 
 /**
  * 把静态 CSS 的声明装成**浏览器侧探针**（与 Q5 采回来的结构完全一致），用同一份
- * `checkControlTokens` 判一遍。
+ * `checkControlTokens` 判一遍——两侧共用判定函数本身也是被验的对象。
  *
- * 这里刻意**不**把值填成"期望值本身"（评审 S9：早先 `minHeight` 直接填 `tokenValue(...)`，
- * 那条对照成了自己跟自己比）：所有解析值都从 CSS 文本**独立解出来**，装错就会红。
+ * **每一个字段都必须来自与它对照的那一侧不同的来源**，否则这条对照就是自己跟自己比
+ * （评审 B-1 实测：早先 `minHeight` 与 `resolved.touch` 都是 `tokenValue('--touch-min')`、
+ * `referenceBorderWidth/Radius` 就是 `borderWidth/radius` 自身 → 那次调用**恒真**，
+ * 只有"`--touch-min ≥ 40px`"这条地板是平凡的）。所以现在：
+ *
+ * | 探针字段 | 来源 | 对照对象 | 来源 |
+ * |---|---|---|---|
+ * | `background` / `borderColor` / `color` | **规则体的声明**（经 var() 指向的 token 解析） | `resolved.*` | 该 token 在 L1/应用层 `:root` 里的**声明值** |
+ * | `borderWidth` / `radius` | **控件规则体**的声明 | `reference*` | **vendored `Input.module.css`** 解出的度量 |
+ * | `minHeight` | **规则体的 `min-height` 声明** | `resolved.touch` | `tokens.css` 里 `--touch-min` 的声明值 |
+ *
+ * 源码侧与浏览器侧的差别只在一处（都写在注释里）：浏览器里 `0.5px` 会算成 `1px`，
+ * 所以浏览器侧拿**参照元素的实测值**比（元素对元素）；源码侧比的是两处**声明值**。
  */
-function probeFromSource(scanned: CssRule[], selector: string): ControlProbe {
-  const body = cascadedBody(scanned, selector)
+function probeFromSource(scanned: CssRule[], selector: string, mustDeclare?: string): ControlProbe {
+  const body = cascadedBody(scanned, selector, mustDeclare)
   const borderValue = (declaration(body, 'border') ?? '').replaceAll(/\s+/g, ' ').trim()
+  // 取值可能是 `var(--token)`（→ 先解出 token 名再解析），也可能是**显式登记的裸值**
+  // （顶栏 hover 那条 `rgba(...)`，见 `EXPECT_RAW_VALUE`）。裸值原样传下去，
+  // 与"对照侧"的 token 解析值不同就会红——不会因为它"不是 token"而在这里抛错。
   const colorToken = (property: string): string => {
     const value = declaration(body, property) ?? ''
     if (value.trim() === 'transparent') return 'transparent'
     const ref = /var\(\s*(--[\w-]+)\s*\)/.exec(value)
-    if (ref?.[1] === undefined) throw new Error(`${selector} 的 ${property} 不是 var()：${value}`)
-    return ref[1]
+    return ref?.[1] ?? value.trim()
   }
-  const resolve = (token: string): string =>
-    token === 'transparent' ? 'rgba(0, 0, 0, 0)' : tokenValue(token)
+  const resolve = (token: string): string => {
+    if (token === 'transparent') return 'rgba(0, 0, 0, 0)'
+    return token.startsWith('--') ? tokenValue(token) : token
+  }
   // 颜色项可能是 `border-color/mix`（`.button-danger` 的 3.19:1）——这里只做"装进探针"，
   // 真正的形态判据在 checkColor 里。
   const borderToken = /var\(\s*(--[\w-]+)\s*\)/.exec(borderValue)?.[1]
@@ -568,17 +797,28 @@ function probeFromSource(scanned: CssRule[], selector: string): ControlProbe {
   const label = colorToken('color')
   const width = borderValue.split(/\s+/)[0] ?? ''
   const radius = declaration(body, 'border-radius') ?? ''
+  // `min-height` 从**规则体的声明**解出来（不是把 token 值填进去），与 `resolved.touch`
+  // 形成两条独立来源的对照。声明缺失时报错而不是静默取空串。
+  // 声明原文是 `var(--touch-min)`、浏览器算出来是 `40px`——所以要在**这里**把声明里的
+  // var() 解成解析值（与浏览器 computed style 的形态一致），而不是把 `resolved.touch`
+  // 反向填进 `minHeight`（那就是原先那个自比）。
+  const minHeightRaw = declaration(body, 'min-height')
+  if (minHeightRaw === undefined) {
+    throw new Error(`${selector} 的规则体里没有 min-height 声明（探针无法与 --touch-min 对照）`)
+  }
+  const minHeight = minHeightRaw.replaceAll(/var\(\s*(--[\w-]+)\s*\)/g, (_match, token: string) =>
+    tokenValue(token),
+  )
   return {
     background: resolve(background),
     borderColor: resolve(borderColor),
     borderWidth: width,
     radius,
     color: resolve(label),
-    // 浏览器里 `0.5px` 会算成 `1px`（评审 BLOCK-1 成因 B），参照元素的实测值同样如此；
-    // 判据比的是"控件 vs 同浏览器参照"，所以这里两侧同源。
-    minHeight: tokenValue(CONTROL_TOUCH_TOKEN),
-    referenceBorderWidth: width,
-    referenceRadius: radius,
+    minHeight,
+    // 参照值取 **vendored** 度量（另一份 CSS 的另一条规则），不是把控件自己的值抄一遍。
+    referenceBorderWidth: vendor.borderWidth,
+    referenceRadius: vendor.radius,
     resolved: {
       background: resolve(background),
       border: resolve(borderColor),
@@ -610,20 +850,30 @@ describe('#168 自研控件对齐 DSH 族（源码文本判据）', () => {
   it('A+B+C：描边/圆角逐值等于 vendored Input，颜色只吃登记的 L1 token，高度 = --touch-min', () => {
     assertControlFamily(globalCss)
     // 顺带把两侧共用的判定函数跑一遍（Q5 的 assertControlTokens 用的就是它）。
-    // 注意这里**不是**恒真：探针的解析值由 tokenValue 独立解出，与期望表是两条来源。
+    // 注意这里**不是**恒真（评审 B-1 实测过它曾恒真，所以每条对照的来源都写在
+    // `probeFromSource` 的注释里）：控件侧的值来自规则体声明，对照侧分别来自 L1 的
+    // token 声明与 vendored `Input.module.css`——三处不同来源，改坏任一处就会红。
     for (const expected of rules) {
+      // 只对"控件族规则"跑浏览器侧探针：`:focus-visible` 是全局可访问性规则，
+      // 它没有控件的高度/底/字那一组语义，硬跑只会得到"缺 min-height"的噪音失败。
+      if (!BASE_OF[expected.selector] && !expected.selector.startsWith('.field ')) continue
+      const probe = probeFromSource(globalRules, expected.selector, expected.mustDeclare)
       expect(
-        checkControlTokens(
-          probeFromSource(globalRules, expected.selector),
-          checkerExpect,
-          expected.selector,
-        ),
+        checkControlTokens(probe, checkerExpect, expected.selector),
+        `${expected.selector} 的探针与对照：${JSON.stringify({
+          minHeight: probe.minHeight,
+          touch: probe.resolved.touch,
+          borderWidth: probe.borderWidth,
+          referenceBorderWidth: probe.referenceBorderWidth,
+          radius: probe.radius,
+          referenceRadius: probe.referenceRadius,
+        })}`,
       ).toEqual([])
     }
   })
 
   it('判定函数不是恒真：五类问题各自被造出来时都必须挑出问题', () => {
-    const base = probeFromSource(globalRules, '.field input')
+    const base = probeFromSource(globalRules, '.field input', 'border')
     expect(checkControlTokens(base, checkerExpect, '.field input')).toEqual([])
     // ① 背景值被改坏（token 名不变）——"只比最终值"能抓住的那类漂移
     expect(
@@ -863,6 +1113,46 @@ describe('#168 自研控件对齐 DSH 族（源码文本判据）', () => {
           'var(--color-signal)',
         ),
         expect: /\.button:focus-visible 的 border-color 引用了非 L1 变量 --color-signal/,
+      },
+      {
+        // B-2a 复现：新加一条**命中同一批元素**的规则，早先完全逃逸（不在选择器白名单里）
+        name: 'B-2a：新选择器 .field input:focus-visible 覆盖描边',
+        css: `${globalPlain}
+.field input:focus-visible {
+  border-color: var(--dsw-alias-state-error-primary);
+}
+`,
+        expect: /命中了控件族元素（\.field input）却不在期望表里/,
+      },
+      {
+        // B-2a 的另一种写法：`.field > input` 与 `.field input` 命中同一批元素
+        name: 'B-2a：等价写法 .field > input 覆盖描边',
+        css: `${globalPlain}
+.field > input {
+  border-color: var(--dsw-alias-state-error-primary);
+}
+`,
+        expect: /命中了控件族元素（\.field input）却不在期望表里/,
+      },
+      {
+        // B-2b 复现：被判规则里**非颜色属性**写裸色值，早先全绿（反向钉只抓 --color-*）
+        name: 'B-2b：.button:focus-visible 里加 outline 裸色值',
+        css: setDeclaration(
+          { selector: '.button:focus-visible', mustDeclare: 'border-color' },
+          'border-color',
+          'var(--dsw-alias-brand-primary); outline: 2px solid #ff0000',
+        ),
+        expect: /的 outline 里有裸色值 `#ff0000`/,
+      },
+      {
+        // 产品决定：顶栏「退出登录」的 hover 面（删掉 #159 那条 border-color 后补的反馈）
+        name: '顶栏退出登录的 hover 面被改小到看不见',
+        css: setDeclaration(
+          { selector: '.app-header .button-quiet:hover:not(:disabled)', mustDeclare: 'background' },
+          'background',
+          'rgba(255, 255, 255, 0.01)',
+        ),
+        expect: /登记的是裸值 `rgba\(255, 255, 255, 0\.08\)`/,
       },
       {
         name: '危险按钮底色写成 color-mix（合法 CSS 但不是单一 token）',

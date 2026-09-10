@@ -307,7 +307,8 @@ select {
 }
 
 /* 无边形态的 hover 必须把描边**再点明一次 transparent**：`.button:hover` 的描边档
-   特异性同为 (0,2,1)，靠源码顺序胜出，漏写就会让安静的按钮 hover 时长出一道描边。 */
+   特异性同为 (0,3,0)（`:not(:disabled)` 按参数计、`:hover` 计一个类），靠源码顺序胜出，
+   漏写就会让安静的按钮 hover 时长出一道描边。 */
 .button-quiet:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover);
   border-color: transparent;
@@ -333,8 +334,30 @@ select {
 
 /* #159 那条 `.app-header .button-quiet:hover` 里的 `border-color: var(--color-signal-soft)`
    在本 PR 里去掉了：`.button-quiet` 是**无边形态**（`border: 0.5px solid transparent`），
-   hover 时点出描边会让它长出边框（同特异性下靠源码顺序胜出，实测会生效）。
-   深色容器只需要给出**前景色**，形状不该由容器改。 */
+   hover 时点出描边会让它长出边框（同特异性 (0,3,0) 下靠源码顺序胜出，实测会生效）。
+   深色容器只需要给出**前景色**，形状不该由容器改。
+   但删掉之后这枚按钮在浅色主题下**失去了可见的 hover 反馈**（评审实测并拍板要补回来）：
+   通用 `.button:hover` 给的面是 `--dsw-alias-interactive-bg-hover` = `rgba(38, 49, 72, 0.06)`，
+   那是"深色压浅底"的叠加；压在深色顶栏（`--color-ink` = `rgb(15, 17, 21)`）上合成后
+   只差约 1/255（实测 1.13:1），肉眼看不见。深色主题档给的 `rgba(255,255,255,0.08)`
+   才可见，而那一段是 `body[data-ds-dark-theme]` 的、浅色主题下取不到（深色主题当前休眠）。
+   所以按"深色容器自己给反馈、但**不动形状**"补一条**面**变，并说明为什么这里是全仓
+   少见的裸色值： */
+.app-header .button-quiet:hover:not(:disabled) {
+  /* 这里写裸 `rgba(255, 255, 255, 0.08)`（= 与深色主题档 `--dsw-alias-interactive-bg-hover`
+     逐字相同的值），三个理由：
+     ① 正是评审实测认可的那个"深底上看得见"的量；
+     ② L1 里**没有**"深色容器上的 hover 叠加"这一档——`--dsw-alias-interactive-bg-hover`
+        是"深色压浅底"（`rgba(38,49,72,0.06)`，顶栏上 1.13:1 看不见），
+        `--dsw-alias-button-ghost-active-fill` 是**近白实心**（`rgb(235,238,242)`，
+        顶栏上 16.24:1 太抢眼，且它会把 hover 变成"选中态"的观感）；发明一个新 L1 token
+        属于 tokens 层的裁决，本次不发明。
+     ③ 用 alpha 叠加而不是实心色，是为了让这层跟着底下的顶栏色走（深色主题真上线时
+        顶栏与它一起变，不会突然出现一块"浅色主题遗留的灰块"）。
+     机器判据把这条规则与这个值一起钉住（`tests/control-family.spec.tsx` 的
+     `.app-header .button-quiet:hover:not(:disabled)` 期望项），免得它下一轮又被顺手删掉。 */
+  background: rgba(255, 255, 255, 0.08);
+}
 
 /* 危险按钮：**危险意图由文字色表达，底色与描边仍是中性控件面**。
    文字色取静态档 red-900（白底实测 14.35:1，与迁移前的 `--color-danger-strong` 逐值相同，
