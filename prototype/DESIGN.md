@@ -45,6 +45,12 @@ Team
 
 ### 不直接 Fork DSH Web 的原因
 
+> **2026-09-10 更新（ADR-0008）**：本节结论已被推翻——改为**分层 Fork DSH client UI 源码**
+> （L1 主题 token → L2 原语 → L3 运行视图；壳与 RPC 永久不取）。本节四条理由仍是对
+> 「全壳 Fork」的有效否决（对应 ADR-0008 的 L4 禁止项），而**继承边界（§1/§2）不变**：
+> DSH 仍是 Runtime，不成为顶层导航与团队事实来源。详见 `docs/adr/0008-fork-dsh-client-ui.md`。
+
+
 1. DSH Web 的首要对象是本地 Workspace 与 Session；WhalePod 的首要对象是团队交付 Task。
 2. DSH 当前指南是“配置模型 → 选择 Workspace → 启动 Session”；WhalePod 必须先表达责任、公开进展、审批边界和 Artifact 发布。
 3. 把团队身份和权限塞进 Runtime UI 会让上游升级、隐私边界与团队事实同时耦合。
