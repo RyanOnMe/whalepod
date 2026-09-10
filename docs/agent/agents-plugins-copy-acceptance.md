@@ -3,8 +3,8 @@
 - 对应场景/门禁：Q5 浏览器门（`pnpm test:e2e` 的 `p1-142` 项目）；文案判据本体在 Q0
   （`pnpm check` 的 unit project 里跑同一套纯函数）
 - 对应 Issue：#167（UI 人话化第二批：Agents 页与插件页）
-- 上次验证：2026-09-11 · `feat/p1-167-agents-plugins-copy`（已合并 main `8780fc7`，含
-  #160 对比度扫描 / #166 焦点环 / #170 排版门）· 结果见「复跑（本次实测输出）」小节
+- 上次验证：2026-09-11 · `feat/p1-167-agents-plugins-copy`（已合并 main `09b8f50`，含
+  #160 对比度扫描 / #161 select→Menu / #166 焦点环 / #170 排版门）· 结果见「复跑（本次实测输出）」小节
   （**数字以该节为准**，一审 B2/B1 整改后重跑）
 
 ## 验的是哪条用户路径
@@ -237,7 +237,8 @@ pnpm exec playwright test --project=p1-142                 # Q5：3 passed (22.3
 #   ✓ 生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备 (2.7s)
 #   ✓ 文案判据：Agents 与插件页无裸摘要 / 无内部词 / 无同义标题（1280×720 与 390×844 两档）(1.4s)
 #   ✓ 390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可达 (1.5s)
-pnpm exec playwright test --project=p1-19                  # 改过 /agents 断言的 spec：13 passed (2.7m)
+pnpm exec playwright test --project=p1-158                 # #161 下拉迁移的审计（我改过它的选择器）：1 passed (39.7s)
+pnpm exec playwright test --project=p1-19                  # 改过 /agents 断言的 spec：13 passed (3.0m)
 #   （G5/G5-04/G6-04/G6-07/G4-04 + R1/R4/R5/R7/R8/R9 + G7-01/G7-04 全绿）
 bash scripts/secret-scan.sh apps/web scripts docs/agent     # Q7 片段：OK
 ```
