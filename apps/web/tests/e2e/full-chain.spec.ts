@@ -783,15 +783,16 @@ test.describe('P1-19 Run 行动（G7-01 取消 / G7-04 重跑血缘）', () => {
     const newFact = await waitForRunStatus(newRunId, 'waiting_approval', 120_000)
     expect(newFact.run.rerunOfRunId).toBe(sourceRunId!)
 
-    // UI 呈现（#162）：血缘句说「重跑自来源运行」，来源 id 只在 title 上悬停可见
+    // UI 呈现（#162）：血缘句说「重跑自第 N 次运行」，来源 id 只在 title 上悬停可见
     // ——不再有「由 Run <前8位> 重跑」这种拿短 id 当标签的写法。reload 取新快照后再点选。
     await shared.bob!.reload()
     await selectRun(shared.bob!, newRunId)
     const panel = shared.bob!.getByTestId('run-live-panel')
     const lineage = panel.getByTestId('run-lineage')
-    // 整句相等（而不是「全文不含短 id」）：这句话就是判据要的样子，短 id 自然无处容身；
-    // 对面板全文做一刀切否定会因事件文本里出现别处的哈希而假红。
-    await expect(lineage).toHaveText('重跑自来源运行')
+    // 整句匹配（而不是「全文不含短 id」）：这句话就是判据要的样子，短 id 自然无处容身；
+    // 对面板全文做一刀切否定会因事件文本里出现别处的哈希而假红。来源的序号 N 取决于
+    // 本 Task 到此刻已有几次运行，所以用正则锚形态、不写死 N。
+    await expect(lineage).toHaveText(/^重跑自第 \d+ 次运行$/)
     await expect(lineage).toHaveAttribute('title', sourceRunId!)
     // 行标签是人话句柄「第 N 次运行」（完整 id 在 title 上），面板标题说「本次运行」。
     const rowLabel = shared.bob!.locator(`.run-item-button[data-run-id="${newRunId}"] .run-label`)

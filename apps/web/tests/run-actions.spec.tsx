@@ -155,7 +155,7 @@ describe('G7-05: failed/lost Run 的未知副作用警示', () => {
 })
 
 describe('G7-04: UI 血缘与 Run 行动', () => {
-  it('#162 血缘说「重跑自来源运行」，原始 id 退到 title（不再拿短 id 当标签）', async () => {
+  it('#162 血缘说「重跑自第 N 次运行」，原始 id 退到 title（不再拿短 id 当标签）', async () => {
     const task = taskWith([])
     renderApp(
       `/tasks/${task.id}`,
@@ -171,7 +171,8 @@ describe('G7-04: UI 血缘与 Run 行动', () => {
     )
     const lineage = await screen.findByTestId('run-lineage')
     expect(lineage).toBeVisible()
-    expect(lineage).toHaveTextContent('重跑自来源运行')
+    // 来源是第 1 次运行（本用例里 SOURCE_RUN_ID 在前）→ 血缘句带上这个序号。
+    expect(lineage).toHaveTextContent('重跑自第 1 次运行')
     // 原始 id 不丢：悬停可见（title）；正文里不得出现它的短形态。
     expect(lineage).toHaveAttribute('title', SOURCE_RUN_ID)
     // 行标签是「第 N 次运行」这种人话句柄，短 id 同样不冒充标签。

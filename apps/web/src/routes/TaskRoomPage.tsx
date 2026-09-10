@@ -21,6 +21,7 @@ import { AssignmentPanel } from '../features/task/AssignmentPanel.js'
 import { CommentComposer, CommentList } from '../features/task/CommentComposer.js'
 import { RunLauncher } from '../features/task/RunLauncher.js'
 import { RunLivePanel } from '../features/task/RunLivePanel.js'
+import { runOrdinalLabels } from '../features/task/runLabels.js'
 import { ApprovalSlot, RunTimeline } from '../features/task/RunTimeline.js'
 import { TaskHeader } from '../features/task/TaskHeader.js'
 
@@ -91,7 +92,11 @@ export function TaskRoomPage(): ReactNode {
             <h2 id="runs-heading">Run</h2>
             <RunTimeline runs={runs} selectedRunId={selectedRunId} onSelect={setSelectedRunId} />
             {selectedRunId !== undefined && session !== null ? (
-              <RunLivePanel runId={selectedRunId} session={session} />
+              <RunLivePanel
+                runId={selectedRunId}
+                session={session}
+                runLabels={runOrdinalLabels(runs)}
+              />
             ) : null}
             <ApprovalSlot runs={runs} task={task} session={session} />
           </section>

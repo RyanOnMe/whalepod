@@ -118,6 +118,18 @@ export function personSlotVerdict(text: string, roster: PersonRoster): string | 
     ...roster.fallbackLabels,
     ...roster.viewpointLabels,
   ].sort((a, b) => b.length - a.length)
+  /**
+   * fail-closed：「未知成员」是名册**没落定**（首帧/请求失败）时的兜底。此时这一格
+   * 到底该写谁，判据无从核对——「还没回来」与「这个人真不在队里」（后者呈现为
+   * 「已离开的成员」，判绿）是两件事，不能糊在一起当通过。判定不了就是失败，
+   * 由调用方先等名册落定再采样（等不到就超时红）。
+   */
+  if (shown.includes(ROSTER_PENDING_LABEL)) {
+    return (
+      `名册未落定（可见文本「${shown}」呈现「${ROSTER_PENDING_LABEL}」）：` +
+      `这一格该写谁无从核对，判定不了就不算通过`
+    )
+  }
   // 先抓短 id，再说「没说清是谁」：整格就是一个短 id 时（旧 TaskHeader 的
   // `bbbbbbbb`），最该说出口的诊断是「这里拿 id 当名字」，不是含糊的「没人名」。
   // 摘掉所有可接受的写法后仍剩 8 位十六进制裸 token 的，就是 `shortId()` 的产物：
@@ -146,6 +158,10 @@ export function personSlotVerdict(text: string, roster: PersonRoster): string | 
 /**
  * 批量判定：返回**全部**问题（不是遇到第一个就停）——一次跑完能看到所有漏点。
  * 空数组 = 全过。
+ *
+ * 「判据覆盖不到」也算问题：`texts` 为空意味着选择器没匹配到元素（改错了选择器、
+ * 该区没渲染），此时对着一堆空样本判「没发现 id」是恒真的假绿。这条性质写在**内核**里，
+ * 而不是只靠调用方记得先断言 `count > 0`——调用方那一层是双保险，不是唯一防线。
  */
 export function personSlotProblems(
   samples: readonly PersonSlotSample[],
@@ -153,6 +169,13 @@ export function personSlotProblems(
 ): string[] {
   const problems: string[] = []
   for (const sample of samples) {
+    if (sample.texts.length === 0) {
+      problems.push(
+        `${sample.slot.what}（${sample.slot.selector}）：判据没覆盖到任何元素——` +
+          `选择器失效或该区未渲染，空样本不得当成通过`,
+      )
+      continue
+    }
     sample.texts.forEach((text, index) => {
       const verdict = personSlotVerdict(text, roster)
       if (verdict !== null) {

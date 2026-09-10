@@ -66,11 +66,27 @@ describe('#162 判据内核：指人的位置不得出现短 id', () => {
       '你',
       `此任务分配给 ${memberLabel(BOB_MEMBER)}，等待其接受。`,
       FORMER_MEMBER_LABEL,
-      UNKNOWN_MEMBER_LABEL,
     ]
     for (const text of current) {
       expect(personSlotVerdict(text, ROSTER), `新文本「${text}」不该判红`).toBeNull()
     }
+  })
+
+  it('名册未落定（「未知成员」）判红：判定不了就不算通过（fail-closed）', () => {
+    // 「未知成员」是首帧/名册取失败时的兜底；此时这一格该写谁无从核对。
+    // 它**不是**「人已离开」——后者呈现为「已离开的成员」，判绿（上一例）。
+    const verdict = personSlotVerdict(UNKNOWN_MEMBER_LABEL, ROSTER)
+    expect(verdict).toContain('名册未落定')
+    expect(
+      personSlotVerdict(`此任务分配给 ${UNKNOWN_MEMBER_LABEL}，等待其接受。`, ROSTER),
+    ).toContain('名册未落定')
+  })
+
+  it('槽位没匹配到任何元素也是问题：空样本不得当通过（内核自带，不靠调用方纪律）', () => {
+    const problems = personSlotProblems([{ slot: PERSON_SLOTS.assignee, texts: [] }], ROSTER)
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toContain('判据没覆盖到任何元素')
+    expect(problems[0]).toContain('[data-testid="task-assignee"]')
   })
 
   it('假红守门：用户名里的 8 位十六进制 tag 不算泄漏', () => {
@@ -107,7 +123,7 @@ describe('#162 判据内核：指人的位置不得出现短 id', () => {
     expect(problems[1]).toContain(BOB_SHORT)
   })
 
-  it('名册为空时不会把「未知成员」判红（兜底文案是人话）', () => {
-    expect(personSlotVerdict(UNKNOWN_MEMBER_LABEL, personRosterFromMembers([]))).toBeNull()
+  it('名册为空时「已离开的成员」仍判绿（人不在册是人话兜底，不是判定不了）', () => {
+    expect(personSlotVerdict(FORMER_MEMBER_LABEL, personRosterFromMembers([]))).toBeNull()
   })
 })

@@ -289,7 +289,7 @@ describe('#162 指人的位置用显示名，短 id 不上屏', () => {
 
 /** #162：Run 用「第 N 次运行 / 本次运行 / 来源运行」，原始 id 只在 title 上。 */
 describe('#162 Run 与来源运行的可读措辞', () => {
-  it('时间线行说「第 N 次运行」、面板说「本次运行」、血缘说「重跑自来源运行」', async () => {
+  it('时间线行说「第 N 次运行」、面板说「本次运行」、血缘说「重跑自第 N 次运行」', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId, assignmentStatus: 'accepted' })
     const sourceRun = makeRun({ id: SOURCE_RUN_ID, status: 'failed' })
     const rerun = makeRun({ id: RUN_ID, status: 'queued', rerunOfRunId: SOURCE_RUN_ID })
@@ -314,17 +314,19 @@ describe('#162 Run 与来源运行的可读措辞', () => {
     expect(heading).toHaveAttribute('title', RUN_ID)
     // 血缘句两处（时间线行 + 直播面板）同款措辞；面板那一处在 run-live-panel 内。
     const lineage = within(screen.getByTestId('run-live-panel')).getByTestId('run-lineage')
-    expect(lineage).toHaveTextContent('重跑自来源运行')
+    // 来源是第 1 次运行 —— 血缘句说的是「哪一次」，不是含糊的「有来源」。
+    expect(lineage).toHaveTextContent('重跑自第 1 次运行')
     expect(lineage).toHaveAttribute('title', SOURCE_RUN_ID)
     const lineages = screen.getAllByTestId('run-lineage')
     expect(lineages).toHaveLength(2)
-    for (const node of lineages) expect(node).toHaveTextContent('重跑自来源运行')
+    for (const node of lineages) expect(node).toHaveTextContent('重跑自第 1 次运行')
 
     // 短 id 一个都不在正文里（只有 title 属性带着完整 id）。
     const body = document.body.textContent ?? ''
     expect(body).not.toContain(SOURCE_RUN_ID.slice(0, 8))
     expect(body).not.toContain(RUN_ID.slice(0, 8))
-    expect(screen.getByRole('button', { name: /第 1 次运行/ })).toBeVisible()
+    // 行标签从行首开始（血缘句里也会出现「第 1 次运行」，所以锚定行首区分两行）。
+    expect(screen.getByRole('button', { name: /^第 1 次运行/ })).toBeVisible()
   })
 
   it('Artifact 的来源运行不在本任务运行记录里时，给人话而不是 id', async () => {

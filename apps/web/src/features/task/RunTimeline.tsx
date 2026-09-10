@@ -16,7 +16,7 @@ import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
 import { RUN_STATUS_LABEL } from '../../shared/format.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
-import { RERUN_LINEAGE_LABEL, runOrdinalLabels } from './runLabels.js'
+import { rerunLineageLabel, runOrdinalLabels } from './runLabels.js'
 import type { RunEventItem, Session, TaskRoomRun, TaskView } from '../../shared/api/types.js'
 
 export interface RunTimelineProps {
@@ -79,7 +79,7 @@ export function RunTimeline({ runs, selectedRunId, onSelect }: RunTimelineProps)
             {/* P1-16 G7-04：显式重跑血缘（03 §2.6 rerun_of_run_id）。 */}
             {run.rerunOfRunId !== null ? (
               <p className="run-lineage" data-testid="run-lineage" title={run.rerunOfRunId}>
-                {RERUN_LINEAGE_LABEL}
+                {rerunLineageLabel(ordinal.get(run.rerunOfRunId))}
               </p>
             ) : null}
           </button>
