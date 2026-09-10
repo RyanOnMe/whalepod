@@ -62,6 +62,25 @@ bash scripts/secret-scan.sh apps/hub packages/db/src
 - 速率限制是单实例内存实现；多副本部署需要共享存储，第一阶段 Global Constraints 明确不加 Redis。
 - 错误 Setup Token 401 `INVALID_CREDENTIALS`、限流 429 用 `FORBIDDEN`（03 §10 无 RATE_LIMITED 码），均为实现侧取值。
 
+## 浏览器面补充（#141：邀请入口与接受页）
+
+- 对应 Issue：#141（现象：成员邀请链在浏览器里两头都没有入口）。
+- 新增 Hub 路由（`apps/hub/src/modules/team/invite-routes.ts`、`routes.ts`）：
+  `GET /team/members`（成员名单，Session 必需）、`GET /invites/:token`（接受页预检，
+  匿名可读、只回团队名/角色/有效期）、`POST /invites/:token/accept`（已登录一键加入，
+  不建账号）。三者的验收用例在 `apps/hub/tests/invite-ui.integration.spec.ts`，
+  走 Fastify inject 与既有邀请链同一条驱动方式。
+- 预检的失效形态：未知 Token 404 `NOT_FOUND`；已用/已过期 409 `CONFLICT` 且
+  `error.details` 给出 `{ expired, consumed }`，UI 据此说人话（**不显示裸错误码**）。
+  匿名 `POST /invites/accept` 的不可枚举 409 形态（G1-04）保持不变。
+- 浏览器面判定（web 单测，`pnpm test:unit` 的 web project）：
+  `apps/web/tests/members-page.spec.tsx`（导航入口可达、角色选择、链接可复制、
+  有效期、复制失败如实报错、Member 只读）、`apps/web/tests/invite-accept-page.spec.tsx`
+  （未登录先说明再建号/登录、已登录一键加入落项目页、失效链接三种人话错误态）。
+- 真人路径（Q5）草案：`apps/web/tests/e2e/invite-accept.spec.ts`——**未注册** playwright
+  project，启用步骤写在文件末尾（单 Hub 只容一个团队，须独占一次 webServer 生命周期）。
+  注册并实跑之前，本页的「两个真实浏览器」判据仍**未验证**。
+
 ## 复跑
 
 ```bash
