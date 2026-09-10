@@ -228,3 +228,31 @@ export const TeamMemberViewSchema = z.strictObject({
 export const TeamMemberViewsSchema = z.array(TeamMemberViewSchema)
 export type TeamMemberView = z.infer<typeof TeamMemberViewSchema>
 export type TeamMemberViews = z.infer<typeof TeamMemberViewsSchema>
+
+/**
+ * GET /invites/:token 的预检视图（#141 接受页）。匿名可读，因此**严格对象**是
+ * 结构性保证：多一列少一列都 parse 红，成员/Token/裸时间戳不可能随字段漂移漏出。
+ * expired/consumed 在 200 分支恒为 false（无效邀请走 409 + error.details，同名字段
+ * 便于 UI 用一份形状处理两条腿）；失败细节不进 200 响应。
+ */
+export const InvitePreflightSchema = z.strictObject({
+  role: z.enum(['admin', 'member']),
+  teamName: z.string(),
+  expiresAt: z.string(),
+  expired: z.boolean(),
+  consumed: z.boolean(),
+})
+export type InvitePreflight = z.infer<typeof InvitePreflightSchema>
+
+/**
+ * POST /invites/:token/accept 的结果视图（#141，已登录一键加入）。
+ * joined=false 且 alreadyMember=true 是幂等重放（已是团队成员/本人重复提交），
+ * 不是失败——所以用 200 + 两个布尔，而不是错误码。
+ */
+export const InviteAcceptResultSchema = z.strictObject({
+  role: z.enum(['admin', 'member']),
+  teamName: z.string(),
+  joined: z.boolean(),
+  alreadyMember: z.boolean(),
+})
+export type InviteAcceptResult = z.infer<typeof InviteAcceptResultSchema>

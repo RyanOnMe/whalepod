@@ -257,6 +257,15 @@ select {
   max-width: 560px;
 }
 
+/* #141：接受邀请成功后的确认条（用运行绿，与 danger 红明确区分）。 */
+.success-banner {
+  background: var(--color-run-soft);
+  border: 1px solid var(--color-run);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-run);
+}
+
 /* ---------- 表单 ---------- */
 .field {
   display: flex;
@@ -1147,4 +1156,75 @@ select {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1) var(--space-3);
+}
+
+/* ---------- #141 成员与邀请 ---------- */
+.members-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 900px;
+}
+
+.member-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.member-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--color-line);
+  padding-bottom: var(--space-2);
+}
+
+.member-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.member-name {
+  font-weight: 600;
+}
+
+.member-handle {
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.badge-member-disabled {
+  background: var(--color-warn-soft);
+  border-color: color-mix(in srgb, var(--color-warn) 35%, transparent);
+  color: var(--color-warn);
+}
+
+.invite-result {
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-top: var(--space-3);
+  background: var(--color-paper);
+}
+
+.invite-link-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.invite-link {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.invite-card {
+  max-width: 520px;
 }

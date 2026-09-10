@@ -73,7 +73,7 @@ function failure(
 function errorHandler(error: unknown, request: FastifyRequest, reply: FastifyReply): FastifyReply {
   const requestId = String(request.id)
   if (error instanceof ApiError) {
-    return failure(reply, error.statusCode, error.code, error.message, requestId)
+    return failure(reply, error.statusCode, error.code, error.message, requestId, error.details)
   }
   if (error instanceof ZodError) {
     return failure(reply, 400, 'VALIDATION_FAILED', 'request validation failed', requestId, {

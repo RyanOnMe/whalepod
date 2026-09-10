@@ -4,11 +4,12 @@
  * （{ ok:true, data } / { ok:false, error:{ code, message, requestId } }）。
  */
 import { vi } from 'vitest'
-import type { PluginPackView } from '@whalepod/protocol'
+import type { PluginPackView, TeamMemberView } from '@whalepod/protocol'
 import type {
   AgentView,
   CommentView,
   DeviceView,
+  InviteDetailsView,
   PairingCodeView,
   ProjectView,
   Session,
@@ -269,28 +270,16 @@ export function projectsHandler(projects: ProjectView[]): MockHandler {
   return { method: 'GET', url: /\/api\/v1\/projects$/, respond: () => ok(projects) }
 }
 
-/** #136 GET /team/members mock：默认给出 Alice(owner) + Bob(member) 两条未停用成员。 */
-export function teamMembersHandler(): MockHandler {
+/**
+ * #136/#141 GET /team/members mock：默认给出 Alice(owner) + Bob(member) 两条未停用成员。
+ * 形态与 Hub 一致：**data 即数组**（`TeamMemberViewsSchema`），不包 `{ members }`；
+ * 类型来自 `@whalepod/protocol`（本仓响应面 schema 的唯一来源）。
+ */
+export function teamMembersHandler(members?: TeamMemberView[]): MockHandler {
   return {
     method: 'GET',
     url: /\/api\/v1\/team\/members$/,
-    respond: () =>
-      ok([
-        {
-          userId: ALICE.userId,
-          username: ALICE.username,
-          displayName: ALICE.displayName,
-          role: ALICE.role,
-          enabled: true,
-        },
-        {
-          userId: BOB.userId,
-          username: BOB.username,
-          displayName: BOB.displayName,
-          role: BOB.role,
-          enabled: true,
-        },
-      ]),
+    respond: () => ok(members ?? [makeMember(), makeMember({ ...BOB, role: BOB.role })]),
   }
 }
 
@@ -364,6 +353,155 @@ export function createAgentHandler(createdAgent: AgentView): MockHandler {
 /** GET /plugin-packs：Pack 列表（Agent 表单的 Pack 下拉数据源，P1-17）。 */
 export function packsHandler(packs: PluginPackView[]): MockHandler {
   return { method: 'GET', url: /\/api\/v1\/plugin-packs$/, respond: () => ok(packs) }
+}
+
+// ---------------------------------------------------------------------------
+// #141 邀请链（成员页 / 接受页）。以下均为**新增** export：既有 handler 签名不动。
+// ---------------------------------------------------------------------------
+
+/** 邀请 Token 的测试取值（32 字节随机串的形态与长度，非真实 Token）。 */
+export const INVITE_TOKEN = 'invite-token-for-tests-0000000000000000'
+
+/** GET /team：单 Team 基本信息（接受页/成员页的团队名来源）。 */
+export function teamHandler(name: string): MockHandler {
+  return {
+    method: 'GET',
+    url: /\/api\/v1\/team$/,
+    respond: () => ok({ id: TEAM_ID, name, createdAt: '2026-08-24T00:00:00.000Z' }),
+  }
+}
+
+/** POST /invites：生成一次性邀请。requests 记录请求体，供断言角色选择。 */
+export function createInviteHandler(invite: {
+  inviteId?: string
+  token?: string
+  role: 'admin' | 'member'
+  expiresAt?: string
+}): { handler: MockHandler; requests: Array<Record<string, unknown>> } {
+  const requests: Array<Record<string, unknown>> = []
+  return {
+    requests,
+    handler: {
+      method: 'POST',
+      url: /\/api\/v1\/invites$/,
+      respond: (init) => {
+        requests.push(JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>)
+        return created({
+          inviteId: invite.inviteId ?? 'invite-1',
+          token: invite.token ?? INVITE_TOKEN,
+          role: invite.role,
+          expiresAt: invite.expiresAt ?? '2026-08-28T00:00:00.000Z',
+        })
+      },
+    },
+  }
+}
+
+/** GET /invites/:token：接受页预检。 */
+export function inviteDetailsHandler(
+  details: Partial<InviteDetailsView> = {},
+  token: string = INVITE_TOKEN,
+): MockHandler {
+  return {
+    method: 'GET',
+    url: new RegExp(`/api/v1/invites/${token}$`),
+    respond: () =>
+      ok({
+        role: details.role ?? 'member',
+        teamName: details.teamName ?? 'Acme',
+        expiresAt: details.expiresAt ?? '2026-08-28T00:00:00.000Z',
+        expired: details.expired ?? false,
+        consumed: details.consumed ?? false,
+      }),
+  }
+}
+
+/** GET /invites/:token 的失效形态：404 未知 Token，或 409 已用/已过期（带区分 details）。 */
+export function unusableInviteHandler(
+  kind: 'unknown' | 'expired' | 'consumed',
+  token: string = INVITE_TOKEN,
+): MockHandler {
+  return {
+    method: 'GET',
+    url: new RegExp(`/api/v1/invites/${token}$`),
+    respond: () =>
+      kind === 'unknown'
+        ? {
+            status: 404,
+            body: {
+              ok: false,
+              error: { code: 'NOT_FOUND', message: 'invite not found', requestId: 'req-inv-404' },
+            },
+          }
+        : {
+            status: 409,
+            body: {
+              ok: false,
+              error: {
+                code: 'CONFLICT',
+                message: 'invite token is invalid, expired or already consumed',
+                requestId: 'req-inv-409',
+                details: { expired: kind === 'expired', consumed: kind === 'consumed' },
+              },
+            },
+          },
+  }
+}
+
+/** POST /invites/:token/accept：已登录一键加入。 */
+export function acceptInviteAsMemberHandler(
+  result: {
+    role?: 'admin' | 'member'
+    teamName?: string
+    joined?: boolean
+    alreadyMember?: boolean
+  } = {},
+  token: string = INVITE_TOKEN,
+): MockHandler {
+  return {
+    method: 'POST',
+    url: new RegExp(`/api/v1/invites/${token}/accept$`),
+    respond: () =>
+      ok({
+        role: result.role ?? 'member',
+        teamName: result.teamName ?? 'Acme',
+        joined: result.joined ?? true,
+        alreadyMember: result.alreadyMember ?? false,
+      }),
+  }
+}
+
+/** POST /invites/accept：匿名接受（接受页的「建号并加入」腿）。 */
+export function acceptInviteAnonymouslyHandler(
+  result: { userId?: string; role?: 'admin' | 'member' } = {},
+  requests: Array<Record<string, unknown>> = [],
+  /** 真实 Hub 会在本响应里下发 Session Cookie：用例用它翻转会话桩。 */
+  onAccepted?: () => void,
+): MockHandler {
+  return {
+    method: 'POST',
+    url: /\/api\/v1\/invites\/accept$/,
+    respond: (init) => {
+      requests.push(JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>)
+      onAccepted?.()
+      return created({ userId: result.userId ?? BOB.userId, role: result.role ?? 'member' })
+    },
+  }
+}
+
+/**
+ * 成员名单 fixture（#136/#141）：字段与 `TeamMemberViewSchema` 一致——
+ * `enabled` 是「未停用」的唯一判据（Hub 侧由 disabledAt 收敛，裸时间戳不出网）。
+ */
+export function makeMember(overrides: Partial<TeamMemberView> = {}): TeamMemberView {
+  return {
+    userId: ALICE.userId,
+    username: ALICE.username,
+    displayName: ALICE.displayName,
+    role: 'owner',
+    enabled: true,
+    ...overrides,
+  }
 }
 
 export function devicesHandler(devices: DeviceView[]): MockHandler {

@@ -29,6 +29,15 @@ export async function findInviteByTokenHash(
   return row
 }
 
+/** 按 id 取邀请（#141：接受页预检要知道「已用/已过期」是哪种，才能给明确文案）。 */
+export async function getInviteById(
+  handle: DbHandle,
+  inviteId: string,
+): Promise<InviteRow | undefined> {
+  const [row] = await handle.select().from(invites).where(eq(invites.id, inviteId)).limit(1)
+  return row
+}
+
 /**
  * 原子消费：仅当未消费且未过期才写入 consumed_by/consumed_at。
  * 返回 undefined 表示已消费 / 已过期 / 不存在，调用方统一映射为 409（G1-04）。

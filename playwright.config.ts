@@ -30,6 +30,9 @@ export default defineConfig({
     { name: 'p1-140', testMatch: /realtime-observation\.spec\.ts/ },
     // #142：设备配对 UI 真人路径（页面签发配对码 → 真 node CLI 消费 → 设备自动上屏）。
     { name: 'p1-142', testMatch: /pairing-ui\.spec\.ts/ },
+    // #141：邀请链真人路径（Owner 生成链接 → 新浏览器加入）——单 Hub 只容一个团队，
+    // 所以它必须独占一套冷启环境（p1-07 的团队已被自身 Setup 占用）。
+    { name: 'p1-141', testMatch: /invite-accept\.spec\.ts/ },
   ],
   use: {
     baseURL: 'http://localhost:5173',

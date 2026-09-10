@@ -6,6 +6,9 @@ export type AuditAction =
   | 'auth.logout'
   | 'invite.create'
   | 'invite.accept'
+  // #141：匿名预检（GET /invites/:token）——目前只在限流拒绝时记账
+  // （rate_limited），成功路径不记：这是读路径，逐次入审计会淹没真正的事件。
+  | 'invite.preflight'
   | 'member.disable'
   | 'project.create'
   | 'task.create'
