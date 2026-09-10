@@ -259,6 +259,28 @@ select {
   padding-inline: var(--space-2);
 }
 
+/*
+ * #159：深色容器里的「安静按钮」必须换成该容器自己的前景族。
+ *
+ * 实测（浏览器侧扫描器在设备页抓到，1280×720 浅色主题）：顶栏的「退出登录」是
+ * `.button.button-quiet`，颜色取 --color-signal（blue-600 = rgb(37,99,235)），而顶栏
+ * 底色是 --color-ink（rgb(15,17,21)）——**3.66:1，低于 AA 4.5:1**。#153 把应用层的
+ * signal 从旧的亮蓝收敛到 blue-600 之后，这个按钮就成了深底上的深蓝字。
+ *
+ * 修法不是给这个按钮单独调色，而是补一条通则：顶栏已经是深色容器，它的交互文字色族
+ * 原本就定义在 --color-signal-soft（顶栏导航的 hover / aria-current 用的就是它，
+ * blue-100 压在 ink 上实测 15.49:1）。深色容器 + 浅色前景是**结构性**的一对，所以：
+ *   - 新加深色容器时，沿用这条（容器给出 --color-* 前景，按钮别自带 signal）
+ *   - 这条也是扫描器将来再抓到同类问题的修法范式，不许再回到"给单个按钮调深一点"
+ */
+.app-header .button-quiet {
+  color: var(--color-signal-soft);
+}
+
+.app-header .button-quiet:hover:not(:disabled) {
+  border-color: var(--color-signal-soft);
+}
+
 .button-danger {
   background: var(--color-surface);
   border-color: var(--color-danger);
@@ -276,6 +298,17 @@ select {
   white-space: nowrap;
 }
 
+/*
+ * #159：浅底徽标的文字用**强档**，不用 --color-signal。
+ *
+ * 实测（浏览器侧扫描器在 p1-07 抓到）：`.badge` 原来写 color: var(--color-signal)
+ * （blue-600 = rgb(37,99,235)）压在 background: var(--color-signal-soft)
+ * （blue-100 = rgb(219,234,254)）上 = **4.24:1，低于 AA 4.5:1**。#153 把 signal 从旧亮蓝
+ * 收敛到 blue-600 时留下的边角：blue-600 压白是 5.17:1（达标），压自己的浅底就不够了。
+ *
+ * 修法与其它色族对齐：green/red/amber 一族在浅底上取的都是 900 档（见下面两组规则），
+ * 只有 blue 缺 900 档。补上 L1 的 blue-900 后按同一范式写 —— 浅底 + 强档文字。
+ */
 .badge-task-open,
 .badge-task-in_progress,
 .badge-run-queued,
@@ -283,8 +316,8 @@ select {
 .badge-run-running,
 .badge-assignment-pending {
   background: var(--color-signal-soft);
-  border-color: color-mix(in srgb, var(--color-signal) 35%, transparent);
-  color: var(--color-signal);
+  border-color: color-mix(in srgb, var(--color-signal-strong) 35%, transparent);
+  color: var(--color-signal-strong);
 }
 
 .badge-task-in_review,

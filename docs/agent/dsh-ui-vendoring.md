@@ -90,13 +90,26 @@ ADR-0008 §3 的硬约束：vendored 代码是**复制品，不是依赖**。
 
 | 口径 | 数量 | 复算命令 |
 |---|---|---|
-| 6 个组件 CSS **引用**的 `--dsw-*` 变量 | **23** | `grep -hoE '\-\-dsw-[a-z0-9-]+' apps/web/src/vendor/dsh-ui/*.module.css \| sort -u \| wc -l` |
-| `dsw-tokens.css` **声明**的 `--dsw-*` 变量 | **26** | `grep -oE '^\s*--dsw-[a-z0-9-]+' apps/web/src/styles/dsw-tokens.css \| sed 's/^ *//' \| sort -u \| wc -l` |
+| vendored 组件 CSS **引用**的 `--dsw-*` 变量 | **38** | `grep -hoE '\-\-dsw-[a-z0-9-]+' apps/web/src/vendor/dsh-ui/*.module.css \| sort -u \| wc -l` |
+| `dsw-tokens.css` **声明**的 `--dsw-*` 变量 | **57** | `grep -oE '^\s*--dsw-[a-z0-9-]+' apps/web/src/styles/dsw-tokens.css \| sed 's/^ *//' \| sort -u \| wc -l` |
+| 其中 `--dsw-static-*` 静态色阶 | **19** | `grep -oE '^\s*--dsw-static-[a-z0-9-]+' apps/web/src/styles/dsw-tokens.css \| sed 's/^ *//' \| sort -u \| wc -l` |
 | 上游 `design-platform.css` 的静态色阶 `--dsw-static-*` | **73** | `gh api -H 'Accept: application/vnd.github.raw' …/design-platform.css?ref=$SHA \| grep -oE '\-\-dsw-static-[a-z0-9-]+' \| sort -u \| wc -l` |
 
-26 与 23 的差是 3 个**仅被 alias 声明消费**的静态色阶（`--dsw-static-amber-900` / `-green-900` / `-red-900`）；即"引用 23、声明 26"不矛盾。**关键正确性属性（实测）**：组件引用的 23 个**全部**在 `dsw-tokens.css` 里有声明——`comm -13` 的差集为空，即**没有未解析引用**，不会静默落到 CSS fallback。`dsw-tokens.css` 文件头写的"共 23 个"指的就是**引用口径**。
+> **复算口径（必须写清，否则数字对不上）**：三列都先**剥注释**再数——文件头与段注释里写了变量名来解释"为什么删/为什么留"，不剥注释会把说明文字当成声明（#159 实测踩过：同一命令在剥/不剥两种口径下能差出 20 多个）。
+>
+> **两个"19"不是同一个集合（作者第一版写错，复审前自己查出来的）**：声明 57 按「是否被 vendored CSS `var()` 引用」切成 38 + 19，但那 19 个**不等于**上表第三列的"静态色阶 19 个"——两个集合只是**数目恰好相同**：
+> - 静态档 19 个里，**只有 `--dsw-static-deepseek-450` 被 vendored CSS 直接引用**（StateDot 的 ongoing 用色），其余 18 个只被 alias 段与应用层消费；
+> - 未被引用的 19 个里，除了那 18 个静态档，还有 **1 个非静态**：`--dsw-elevation-stroke`（它是 `--dsw-elevation-prominent` 的派生依赖，在 L1 自己的 `body, body *` 段里被 `var()` 消费，不是 vendored CSS 直接引用）。
+>
+> 复算：`decl - refs` 的差集大小 = 19（与 `static` 计数同为 19，纯属巧合），`static ∩ refs` = `{--dsw-static-deepseek-450}`。**别把这两个 19 当成同一个数写进文档**——这正是"计数漂移"最喜欢藏身的地方。
 
-> **两处计数错值已由 `069b2f1` 修掉（原「待转实现线」项，现销账）**：`apps/web/src/styles/dsw-tokens.css` 文件头与 `manifest.json` 的 `tokens[0].adaptations` 此前均写"上游静态色阶 **78** 个"，实测为 **73**；`manifest.json` 的 `components[]`（`index.ts` 条）写"上游桶文件含整包 **43** 个原语"，而 **43 是 `packages/client/ui-*` 的包数**，`ui-primitives/src` 顶层实测 **29 个 `.tsx`**。这些错值都属实现线文件，**本台账无权修改**，当时只登记正确值；`069b2f1` 已把实现线文件一并改正（现为 73 / 29 `.tsx` / 30 原语 / 43 包数，见 §3.4）。白名单口径本身（23 个引用变量）与 `dsw-tokens.css` 实测吻合，无需改动。
+> **#159 复核与三处数字对齐（2026-09-11，诚实记账）**：本节此前写"引用 23 / 声明 26 / 静态 3"，那是**首批切片时**的值；`#152` 主题切片（应用层改为只 `var()` 引用 L1，补 5 个静态档）与 `#138` L2 第二批（补 15 个引用变量与若干静态档）之后，**本节没有跟着重算**，`dsw-tokens.css` 文件头写"静态色阶共 15 个"、`manifest.json` 写"17 个"，而 #159 实测是 **18** 个——**三个数字互不相等**。三者已一并对齐到 19（#159 补 `blue-900` 之后）。这不是笔误，是"L1 白名单是活的、每次增删都要重算本节"这条纪律没被执行的结果，所以把复算命令与相加关系写进上面两段，让它下次能被机械核出来。
+>
+> **#159 的增删**：只**新增 1 个**变量（`--dsw-static-blue-900: rgb(14, 48, 116)`，上游 `design-platform.css` 静态段第 20 行逐字，用于修 `.badge` 一族在浅底上的 AA 不达标：blue-600 压 blue-100 实测 4.24:1 → blue-900 压 blue-100 10.16:1）；不删任何变量；38 个引用变量未变。
+
+**关键正确性属性（实测）**：组件引用的 **38** 个**全部**在 `dsw-tokens.css` 里有声明——`comm -13` 的差集为空，即**没有未解析引用**，不会静默落到 CSS fallback（#159 复跑仍为空）。这就是上表"引用"那一列与"声明"那一列**不是同一件事**的原因：引用是 vendored CSS 吃的，声明里还包含只服务别名与应用层的静态档。
+
+> **两处计数错值已由 `069b2f1` 修掉（原「待转实现线」项，现销账）**：`apps/web/src/styles/dsw-tokens.css` 文件头与 `manifest.json` 的 `tokens[0].adaptations` 此前均写"上游静态色阶 **78** 个"，实测为 **73**；`manifest.json` 的 `components[]`（`index.ts` 条）写"上游桶文件含整包 **43** 个原语"，而 **43 是 `packages/client/ui-*` 的包数**，`ui-primitives/src` 顶层实测 **29 个 `.tsx`**。这些错值都属实现线文件，**本台账无权修改**，当时只登记正确值；`069b2f1` 已把实现线文件一并改正（现为 73 / 29 `.tsx` / 30 原语 / 43 包数，见 §3.4）。白名单口径本身（当时 23 个引用变量）与当时的 `dsw-tokens.css` 实测吻合，无需改动——**注意这个 23 是首批时的值**，两批并集后为 38，见上面的复算表。
 
 **派生形态与声明义务**：`dsw-tokens.css` 的文件头自带来源声明（上游 repo / 上游文件路径 / 取用 commit / MIT 与版权行），符合 ADR-0008 §3「子树内保留上游 LICENSE 全文与 `Copyright (c) 2026 DeepSeek`」的要求。派生**不豁免** MIT 的声明义务——MIT 覆盖 "copies or substantial portions of the Software"，被抄的 token 取值正是 substantial portion。见 §5。
 
@@ -420,6 +433,7 @@ const DSH_OWNERS = ['packages/runtime-dsh/', 'apps/runtime/']
 **已完成**
 
 - [x] §3.1 L1 映射回填：`dsw-tokens.css` 派生自 `design-platform.css`，其余 5 个上游 CSS 未取用；变量账 23 引用 / 26 声明 / 上游静态色阶 73 已复算（2026-09-10）。
+- [x] §3.1 变量账重算并三处对齐（2026-09-11，`#159`）：38 引用 / 57 声明 / 19 静态档（剥注释口径，相加关系 57 = 38 + 19）。此前文件头写 15、manifest 写 17、实测 18，三者互不相等，已一并对齐并写明复算命令。
 - [x] §3.2 L2 映射回填：6 个组件（Button/Pill/Tag/StateDot/DisclosureRow/Switch）+ 支撑文件，**三列哈希**（上游 / 本仓 / 剥出处头后）逐文件已核对（2026-09-10）。
 - [x] 核对 `LICENSE` 与上游**仓库根** `LICENSE` blob `c1f7a78e…`：**逐字节一致**（§5.2）。
 - [x] 品牌排除清单实测：目录内无品牌图形与品牌导出符号（§3.3）。
