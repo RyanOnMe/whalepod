@@ -70,6 +70,45 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
   await expect(page.getByText('在线')).toBeVisible()
   expect(await page.evaluate(() => Reflect.get(window, '__pairingUiNoReload') === true)).toBe(true)
 
+  // ---- #138：vendored DSH 原语「真的生效」的机器判据（不是「看着像」） ----
+  // 三条一起才有意义：组件确实是 vendored 的（data-vendored）、它的颜色等于文档里
+  // --dsw-* token 的解析值（L1 token 真被消费）、且页面上存在一条命中它类名的活动 CSS
+  // 规则（样式来自 vendored 的 .module.css，而不是别处的全局类恰好长得像）。
+  const statusTag = page.locator('[data-vendored="tag"]').first()
+  await expect(statusTag).toBeVisible()
+  const probe = await statusTag.evaluate((el) => {
+    const classes = (el.getAttribute('class') ?? '').split(/\s+/).filter(Boolean)
+    const token = getComputedStyle(document.body)
+      .getPropertyValue('--dsw-alias-state-success-primary')
+      .trim()
+    const hasRule = [...document.styleSheets].some((sheet) => {
+      try {
+        return [...sheet.cssRules].some((rule) => {
+          const selector = (rule as CSSStyleRule).selectorText
+          return selector !== undefined && classes.some((c) => selector.includes(`.${c}`))
+        })
+      } catch {
+        return false // 跨域样式表读不到，跳过
+      }
+    })
+    return {
+      tone: el.getAttribute('data-tone'),
+      className: el.getAttribute('class') ?? '',
+      color: getComputedStyle(el).color,
+      token,
+      hasRule,
+    }
+  })
+  // 在线设备 → success 色调（DevicesPage 里显式映射，不靠组件默认值）
+  expect(probe.tone).toBe('success')
+  // L1 token 真被加载并解析（值来自 dsw-tokens.css 白名单：rgb(34, 197, 94)）
+  expect(probe.token).toBe('rgb(34, 197, 94)')
+  // 组件颜色 = token 解析值：若 vendored CSS 没生效，这里会是被继承的默认色
+  expect(probe.color).toBe('rgb(34, 197, 94)')
+  // 带 CSS Modules 类名，且文档里有活动规则命中它
+  expect(probe.className.length).toBeGreaterThan(0)
+  expect(probe.hasRule).toBe(true)
+
   const cookie = await sessionCookie(context)
 
   // 同一码二次使用：由 Hub/node 侧拒绝（页面不负责这条错误，只核验 409 可读）。
