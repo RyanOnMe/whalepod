@@ -164,7 +164,7 @@ async function waitForPortFree(port: number, timeoutMs = 15_000): Promise<void> 
 }
 
 // ---- 0. 一次性 PostgreSQL（与 Q2 同一容器实现） ----
-const { startEphemeralPostgres } = await import('./lib/ephemeral-postgres.mts')
+const { startEphemeralPostgres, e2eScope } = await import('./lib/ephemeral-postgres.mts')
 // 自愈：playwright 对 webServer 的终止可能是 SIGKILL（handler 不会跑），
 // 上一次运行的残留容器在本进程启动前按专属 label 清掉，不碰无关容器。
 const { execFile: execFileCb } = await import('node:child_process')
@@ -176,6 +176,10 @@ try {
     '-q',
     '--filter',
     'label=whalepod.e2e-postgres=true',
+    // 并行 worktree 隔离：只清**本 worktree** 的残留容器。此前按共用标签清，会把
+    // 兄弟 worktree 正在用的 DB 一并删掉（实测发生过：审查线起栈时删掉术语线的容器）。
+    '--filter',
+    `label=whalepod.e2e-scope=${e2eScope()}`,
   ])
   const ids = stale.trim().split('\n').filter(Boolean)
   if (ids.length > 0) {
@@ -230,6 +234,29 @@ try {
     const args = argsOut.trim()
     const isServeProcess =
       comm.split('/').pop() === 'node' && args.includes('--import tsx scripts/e2e-serve.mts')
+    if (!isServeProcess) continue
+    // 并行 worktree：只清**本 worktree** 的残留实例。别的 worktree 的栈占着 5173/18080
+    // 是"合法的别人在用"——互杀会让两条线同时失败（实测过双向自愈互杀），
+    // 故这里改为**失败快**：明确告诉调度者端口被谁占了。
+    const { stdout: cwdOut } = await execFileAsync('lsof', [
+      '-a',
+      '-p',
+      String(pid),
+      '-d',
+      'cwd',
+      '-Fn',
+    ]).catch(() => ({ stdout: '' }))
+    const otherCwd = cwdOut
+      .split('\n')
+      .find((line) => line.startsWith('n'))
+      ?.slice(1)
+    if (otherCwd !== undefined && otherCwd !== process.cwd()) {
+      process.stderr.write(
+        `[e2e-serve] 另一个 worktree 正在跑 e2e（pid=${pid} cwd=${otherCwd}）——` +
+          `本实例不抢端口，直接退出。请在那边跑完释放 5173/18080 后再起。\n`,
+      )
+      process.exit(2)
+    }
     if (!isServeProcess) continue
     try {
       process.kill(pid, 'SIGKILL')
