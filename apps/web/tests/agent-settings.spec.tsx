@@ -27,6 +27,7 @@ import {
 import type { MockHandler } from './fixtures.js'
 import type { ProfileRevisionView } from '../src/shared/api/types.js'
 import { renderApp } from './render.jsx'
+import { openSelect, selectOption, selectTrigger } from './select-menu.js'
 
 const builderAgent = {
   id: 'f0000000-0000-4000-8000-000000000001',
@@ -120,9 +121,11 @@ describe('agent-settings', () => {
     await user.type(screen.getByLabelText('Model'), 'deepseek-chat')
     await user.clear(screen.getByLabelText('Credential Slot'))
     await user.type(screen.getByLabelText('Credential Slot'), 'default')
-    // Plugin Pack 从下拉选择（数据源 GET /plugin-packs）；未选时提交按钮禁用
+    // Plugin Pack 从下拉选择（数据源 GET /plugin-packs）；未选时提交按钮禁用。
+    // #158：控件是 vendored Menu，走真人路径（点开 → 点选项）。
     expect(screen.getByRole('button', { name: '创建 Agent' })).toBeDisabled()
-    await user.selectOptions(screen.getByLabelText('Plugin Pack'), corePack.id)
+    await selectOption(user, 'Plugin Pack', 'core-empty')
+    expect(await selectTrigger('Plugin Pack')).toHaveTextContent('core-empty')
     expect(screen.getByRole('button', { name: '创建 Agent' })).toBeEnabled()
     await user.click(screen.getByRole('button', { name: '创建 Agent' }))
 
@@ -169,24 +172,35 @@ describe('agent-settings', () => {
         packsHandler([corePack, reviewPack]),
       ]),
     )
-    const select = (await screen.findByLabelText('Plugin Pack')) as HTMLSelectElement
-    expect(select).toBeRequired()
-    // 数据源断言：两个 Pack 均以下拉选项出现（不再是手工粘贴 UUID）
-    expect(await screen.findByRole('option', { name: 'core-empty' })).toBeVisible()
-    expect(screen.getByRole('option', { name: 'review-pack' })).toBeVisible()
+    const trigger = await screen.findByLabelText('Plugin Pack')
+    // #158 反面钉：这一处**不再是原生 <select>**，而是 vendored Menu 的触发器按钮。
+    expect(trigger.tagName).toBe('BUTTON')
+    expect(trigger).toHaveAttribute('aria-haspopup', 'menu')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    // 数据源断言：两个 Pack 都作为菜单项出现（不再是手工粘贴 UUID）
+    const list = await openSelect(user, 'Plugin Pack')
+    expect(list.getByRole('menuitem', { name: 'core-empty' })).toBeVisible()
+    // 打开后 aria-expanded 如实变 true（与 #152 折叠入口同一套语义）
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
     // 未选 Pack：提交禁用
     expect(screen.getByRole('button', { name: '创建 Agent' })).toBeDisabled()
-    await user.selectOptions(select, reviewPack.id)
-    expect(select).toHaveValue(reviewPack.id)
+    await user.click(list.getByRole('menuitem', { name: 'review-pack' }))
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(trigger).toHaveTextContent('review-pack')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
     expect(screen.getByRole('button', { name: '创建 Agent' })).toBeEnabled()
   })
 
   it('Plugin Pack 列表为空：无选项，提示先去插件管理创建', async () => {
     renderApp('/agents', loggedInHandlers(ALICE, [agentsHandler([]), packsHandler([])]))
-    const select = (await screen.findByLabelText('Plugin Pack')) as HTMLSelectElement
-    expect(select).toBeRequired()
-    expect(screen.queryByRole('option', { name: 'core-empty' })).not.toBeInTheDocument()
-    expect(await screen.findByText(/暂无可用 Pack/)).toBeVisible()
+    const trigger = await screen.findByLabelText('Plugin Pack')
+    // 异步查询而不是同步断言：列表查询落地前控件先以「正在加载 Packs…」占位（实测踩过）
+    await within(trigger).findByText('没有可选 Pack')
+    // 说明文字只有一条（不做两句重复的提示）
+    // 没有可选项时触发器禁用（原生 select 无可用 option 时的等价呈现，不伪造可点入口）
+    expect(trigger).toBeDisabled()
+    // 空态提示是「一句话 + 链接」两段文本，按链接定位（整段文本会被元素切开，正则匹配不到）
+    expect(await screen.findByRole('link', { name: '插件管理' })).toBeVisible()
     expect(screen.getByRole('link', { name: '插件管理' })).toHaveAttribute('href', '/plugins')
     expect(screen.getByRole('button', { name: '创建 Agent' })).toBeDisabled()
   })
@@ -253,9 +267,9 @@ describe('agent-settings', () => {
     expect(within(detail).getByLabelText('Credential Slot')).toHaveValue('default')
     expect(within(detail).getByLabelText('Max Tokens（可选）')).toHaveValue(8192)
     // Pack 下拉：当前用的 core-empty 已预选，切到 review-pack（数据源 GET /plugin-packs）
-    const packSelect = within(detail).getByLabelText('Plugin Pack') as HTMLSelectElement
-    expect(packSelect).toHaveValue(corePack.id)
-    await user.selectOptions(packSelect, reviewPack.id)
+    const packTrigger = within(detail).getByLabelText('Plugin Pack')
+    expect(packTrigger).toHaveTextContent('core-empty') // 预选当前 Revision 用的 Pack
+    await selectOption(user, 'Plugin Pack', 'review-pack', within(detail))
     // Max Tokens 清空 → 可选字段不出现在载荷
     await user.clear(within(detail).getByLabelText('Max Tokens（可选）'))
     await user.click(within(detail).getByRole('button', { name: '创建 Revision' }))
@@ -318,7 +332,7 @@ describe('agent-settings', () => {
     const detail = screen.getByRole('region', { name: /Agent 详情/ })
     expect(await within(detail).findByText('该 Agent 尚无 Revision。')).toBeVisible()
     await user.click(within(detail).getByRole('button', { name: '新建 Revision' }))
-    expect(within(detail).getByText(/暂无可用 Pack/)).toBeVisible()
+    expect(within(detail).getByRole('link', { name: '插件管理' })).toBeVisible()
     expect(within(detail).getByRole('button', { name: '创建 Revision' })).toBeDisabled()
   })
 

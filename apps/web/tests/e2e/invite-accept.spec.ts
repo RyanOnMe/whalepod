@@ -14,7 +14,13 @@
  */
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { env, fillAndEnter } from './helpers.js'
+import {
+  assertMenuTriggerTokens,
+  assertNotNativeSelect,
+  env,
+  fillAndEnter,
+  selectFromMenu,
+} from './helpers.js'
 
 const OWNER_PASSWORD = 'correct horse battery staple'
 const BOB_PASSWORD = 'correct horse battery staple'
@@ -46,7 +52,17 @@ async function createInviteViaUi(owner: Page, role: 'member' | 'admin'): Promise
     .getByRole('link', { name: '成员' })
     .click()
   await expect(owner.getByRole('heading', { name: '成员', exact: true })).toBeVisible()
-  await owner.selectOption('#invite-role', role)
+  // #158：角色下拉已从原生 <select> 迁到 vendored Menu。这里同时钉三件事——
+  // ①它不再是原生 select（反面钉）；②触发器样式来自 L1 token（浏览器实测）；
+  // ③选角色走真人路径（点开 → 点选项），不再是 selectOption 那条原生近道。
+  const roleTrigger = owner.locator('#invite-role')
+  await assertNotNativeSelect(roleTrigger, owner.locator('.members-invite'), '角色')
+  await assertMenuTriggerTokens(roleTrigger)
+  await selectFromMenu(
+    roleTrigger,
+    role === 'admin' ? 'Admin（可管理插件与邀请）' : 'Member（普通成员）',
+  )
+  await expect(roleTrigger).toContainText(role === 'admin' ? 'Admin' : 'Member')
   await owner.getByRole('button', { name: '生成邀请链接' }).click()
   const link = owner.locator('code.invite-link')
   await expect(link).toBeVisible()

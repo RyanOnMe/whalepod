@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
+import { assertNotNativeSelect } from './helpers.js'
 
 interface E2eEnv {
   hubOrigin: string
@@ -170,14 +171,25 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     const bobUserId = ((await accepted.json()) as { data: { userId: string } }).data.userId
 
     // ---- Alice：创建 Task 并指派 Bob（#136 起责任人为下拉选择器，默认选中自己） ----
+    // #158：责任人下拉已从原生 <select> 迁到 vendored Menu，所以指派走**真人路径 +
+    // 键盘**——点开（aria-expanded 翻 true）→ 方向键 → Enter 选中。既要证明它不再是
+    // 原生 select（assertNotNativeSelect），也要证明键盘仍能完成这一步。
     await alice.getByRole('button', { name: '创建任务' }).click()
+    const createTaskForm = alice.locator('form[aria-label="创建任务"]')
     const taskIdInput = alice.locator('input[id^="task-title-"]')
     await taskIdInput.fill('起草验收报告')
-    await alice.selectOption('select[id^="task-assignee-"]', bobUserId)
-    await alice
-      .locator('form[aria-label="创建任务"]')
-      .getByRole('button', { name: /创建任务/ })
-      .click()
+    const assignee = createTaskForm.locator('button[id^="task-assignee-"]')
+    await assertNotNativeSelect(assignee, createTaskForm, '责任人')
+    await assignee.click()
+    await expect(assignee).toHaveAttribute('aria-expanded', 'true')
+    // autoFocus 让焦点落在首项（默认选中的 Alice）——方向键从这里开始走
+    await expect(alice.getByRole('menuitem').first()).toBeFocused()
+    await alice.keyboard.press('ArrowDown')
+    await expect(alice.getByRole('menuitem').nth(1)).toBeFocused()
+    await alice.keyboard.press('Enter')
+    await expect(assignee).toHaveAttribute('aria-expanded', 'false')
+    await expect(assignee).toContainText('Bob')
+    await createTaskForm.getByRole('button', { name: /创建任务/ }).click()
     await alice.waitForURL(/\/tasks\//)
     const taskUrl = new URL(alice.url()).pathname
     const taskId = taskUrl.split('/').pop() ?? ''

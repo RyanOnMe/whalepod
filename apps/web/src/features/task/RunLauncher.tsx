@@ -11,6 +11,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { isApiError } from '../../shared/api/errors.js'
 import { queryKeys } from '../../app/query-client.js'
+import { SelectMenu } from '../../shared/SelectMenu.js'
 import type {
   AgentDetailView,
   AgentView,
@@ -66,6 +67,42 @@ export function RunLauncher({ task, session, hasActiveRun }: RunLauncherProps): 
     [workspacesQuery.data, deviceId],
   )
 
+  // #158：四处原生 <select> → vendored Menu（shared/SelectMenu）。选项文案与禁用态
+  // 逐条沿用原 <option>：离线设备仍列出但不可选（不是隐藏——「看得见但选不了」才是
+  // 实情），禁用项在 Menu 里同样既不响应指针也不进键盘序列。
+  const agentOptions = useMemo(
+    () =>
+      (agentsQuery.data ?? [])
+        .filter((agent) => agent.archivedAt === null)
+        .map((agent) => ({ value: agent.id, label: agent.name, disabled: false })),
+    [agentsQuery.data],
+  )
+  const revisionOptions = useMemo(
+    () =>
+      revisions.map((revision) => ({
+        value: revision.id,
+        label: `r${revision.revision} — ${revision.provider}/${revision.model}${
+          revision.id === agentDetailQuery.data?.currentRevisionId ? '（当前）' : ''
+        }`,
+        disabled: false,
+      })),
+    [revisions, agentDetailQuery.data],
+  )
+  const deviceOptions = useMemo(
+    () =>
+      (devicesQuery.data ?? []).map((device) => ({
+        value: device.id,
+        label: `${device.name}（${device.status === 'online' ? '在线' : '离线'}）`,
+        disabled: device.status !== 'online',
+      })),
+    [devicesQuery.data],
+  )
+  const workspaceOptions = useMemo(
+    () =>
+      deviceWorkspaces.map((ws) => ({ value: ws.workspaceId, label: ws.name, disabled: false })),
+    [deviceWorkspaces],
+  )
+
   const start = useMutation({
     mutationFn: () =>
       api.mutate<RunView>(`/tasks/${task.id}/runs`, {
@@ -104,77 +141,58 @@ export function RunLauncher({ task, session, hasActiveRun }: RunLauncherProps): 
           if (ready && !start.isPending) start.mutate()
         }}
       >
-        <label>
-          Agent
-          <select
-            aria-label="选择 Agent"
+        <div className="field">
+          <SelectMenu
+            id="run-agent"
+            label="Agent"
+            ariaLabel="选择 Agent"
             value={agentId}
-            onChange={(event) => {
-              setAgentId(event.target.value)
+            placeholder="选择 Agent…"
+            options={agentOptions}
+            onChange={(next) => {
+              setAgentId(next)
               setProfileRevisionId('')
             }}
-          >
-            <option value="">选择 Agent…</option>
-            {(agentsQuery.data ?? [])
-              .filter((agent) => agent.archivedAt === null)
-              .map((agent) => (
-                <option key={agent.id} value={agent.id}>
-                  {agent.name}
-                </option>
-              ))}
-          </select>
-        </label>
-        <label>
-          Revision（选定即快照）
-          <select
-            aria-label="选择 Revision"
+          />
+        </div>
+        <div className="field">
+          <SelectMenu
+            id="run-revision"
+            label="Revision（选定即快照）"
+            ariaLabel="选择 Revision"
             value={effectiveRevisionId}
-            onChange={(event) => setProfileRevisionId(event.target.value)}
+            placeholder="先选 Agent…"
+            options={revisionOptions}
+            onChange={setProfileRevisionId}
             disabled={agentId === ''}
-          >
-            {agentId === '' ? <option value="">先选 Agent…</option> : null}
-            {revisions.map((revision) => (
-              <option key={revision.id} value={revision.id}>
-                r{revision.revision} — {revision.provider}/{revision.model}
-                {revision.id === agentDetailQuery.data?.currentRevisionId ? '（当前）' : ''}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          设备
-          <select
-            aria-label="选择设备"
+          />
+        </div>
+        <div className="field">
+          <SelectMenu
+            id="run-device"
+            label="设备"
+            ariaLabel="选择设备"
             value={deviceId}
-            onChange={(event) => {
-              setDeviceId(event.target.value)
+            placeholder="选择设备…"
+            options={deviceOptions}
+            onChange={(next) => {
+              setDeviceId(next)
               setWorkspaceId('')
             }}
-          >
-            <option value="">选择设备…</option>
-            {(devicesQuery.data ?? []).map((device) => (
-              <option key={device.id} value={device.id} disabled={device.status !== 'online'}>
-                {device.name}（{device.status === 'online' ? '在线' : '离线'}）
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Workspace
-          <select
-            aria-label="选择 Workspace"
+          />
+        </div>
+        <div className="field">
+          <SelectMenu
+            id="run-workspace"
+            label="Workspace"
+            ariaLabel="选择 Workspace"
             value={workspaceId}
-            onChange={(event) => setWorkspaceId(event.target.value)}
+            placeholder={deviceId === '' ? '先选设备…' : '选择 Workspace…'}
+            options={workspaceOptions}
+            onChange={setWorkspaceId}
             disabled={deviceId === ''}
-          >
-            <option value="">{deviceId === '' ? '先选设备…' : '选择 Workspace…'}</option>
-            {deviceWorkspaces.map((ws) => (
-              <option key={ws.workspaceId} value={ws.workspaceId}>
-                {ws.name}
-              </option>
-            ))}
-          </select>
-        </label>
+          />
+        </div>
         <label>
           Prompt
           <textarea

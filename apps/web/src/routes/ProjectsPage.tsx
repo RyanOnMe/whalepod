@@ -13,6 +13,7 @@ import { useNavigate } from 'react-router'
 import { api } from '../shared/api/client.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
 import { useSession } from '../app/session.js'
+import { SelectMenu } from '../shared/SelectMenu.js'
 import { TASK_STATUS_LABEL, formatIso, shortId } from '../shared/format.js'
 import type { ProjectView, TaskView } from '../shared/api/types.js'
 import { queryKeys } from '../app/query-client.js'
@@ -283,29 +284,28 @@ function CreateTaskForm({
         />
       </div>
       <div className="field">
-        <label htmlFor={`task-assignee-${projectId}`}>责任人</label>
-        <select
+        {/* #158：责任人从原生 <select> 换成 vendored Menu 的包装（shared/SelectMenu）。
+            id 仍是 #task-assignee-<projectId>（每项目一个，e2e 按前缀定位），
+            label 仍指向它；只是元素变成 <button aria-haspopup="menu">。 */}
+        <SelectMenu
           id={`task-assignee-${projectId}`}
+          label="责任人"
           value={values.assigneeUserId}
-          onChange={(event) =>
-            setValues((prev) => ({ ...prev, assigneeUserId: event.target.value }))
-          }
-          required
-          disabled={membersQuery.isPending}
-        >
-          <option value="" disabled>
-            {membersQuery.isPending
+          placeholder={
+            membersQuery.isPending
               ? '正在加载成员…'
               : selectableMembers.length === 0
                 ? '没有可选成员'
-                : '选择责任人'}
-          </option>
-          {selectableMembers.map((m) => (
-            <option key={m.userId} value={m.userId}>
-              {m.displayName}（@{m.username}）{m.userId === session?.userId ? ' · 你' : ''}
-            </option>
-          ))}
-        </select>
+                : '选择责任人'
+          }
+          options={selectableMembers.map((m) => ({
+            value: m.userId,
+            label: `${m.displayName}（@${m.username}）${m.userId === session?.userId ? ' · 你' : ''}`,
+            disabled: false,
+          }))}
+          onChange={(next) => setValues((prev) => ({ ...prev, assigneeUserId: next }))}
+          disabled={membersQuery.isPending}
+        />
         {membersQuery.isError ? <ErrorBanner error={membersQuery.error} /> : null}
       </div>
       <div className="form-actions">

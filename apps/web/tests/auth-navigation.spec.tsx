@@ -252,9 +252,12 @@ describe('auth-navigation', () => {
     await user.keyboard('{Enter}')
 
     // 填表并提交（#136：成员列表就绪后默认选中自己=Bob；键盘只填标题）
+    // #158：责任人已从原生 <select> 迁到 vendored Menu 的触发器按钮，所以这里断言
+    // 「触发器上显示的值」而不是 `select.value`——真人看到的就是这段文字。
     const title = await screen.findByLabelText('任务标题')
-    const assigneeSelect = (await screen.findByLabelText('责任人')) as HTMLSelectElement
-    await waitFor(() => expect(assigneeSelect.value).toBe(BOB.userId))
+    const assigneeTrigger = await screen.findByLabelText('责任人')
+    expect(assigneeTrigger.tagName).toBe('BUTTON')
+    await waitFor(() => expect(assigneeTrigger).toHaveTextContent(BOB.displayName))
     title.focus()
     await user.keyboard('Write onboarding guide{TAB}')
     const createButton = screen.getByRole('button', { name: /^创建任务$/ })

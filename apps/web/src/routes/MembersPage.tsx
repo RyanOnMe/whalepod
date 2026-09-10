@@ -14,6 +14,7 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 import type { CreateInviteRequest, TeamMemberView } from '@whalepod/protocol'
 import { api } from '../shared/api/client.js'
 import { CopyButton } from '../shared/CopyButton.js'
+import { SelectMenu } from '../shared/SelectMenu.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
 import { queryKeys } from '../app/query-client.js'
 import { useSession } from '../app/session.js'
@@ -118,17 +119,25 @@ export function MembersPage(): ReactNode {
                 </p>
                 <form className="inline-form" onSubmit={submit}>
                   <div className="field">
-                    <label htmlFor="invite-role">角色</label>
-                    <select
+                    {/* #158：角色选择从原生 <select> 换成 vendored Menu 的包装
+                        （shared/SelectMenu）。id 仍是 #invite-role，可访问名仍是
+                        「角色」——名字不变，承载元素从 select 变成 button。 */}
+                    <SelectMenu
                       id="invite-role"
+                      label="角色"
                       value={role}
-                      onChange={(event) =>
-                        setRole(event.target.value === 'admin' ? 'admin' : 'member')
-                      }
-                    >
-                      <option value="member">Member（普通成员）</option>
-                      <option value="admin">Admin（可管理插件与邀请）</option>
-                    </select>
+                      options={[
+                        { value: 'member', label: 'Member（普通成员）', disabled: false },
+                        {
+                          value: 'admin',
+                          label: 'Admin（可管理插件与邀请）',
+                          disabled: false,
+                        },
+                      ]}
+                      onChange={(next) => {
+                        setRole(next === 'admin' ? 'admin' : 'member')
+                      }}
+                    />
                     <p className="field-hint">不能邀请 Owner：Owner 只能由初始化流程创建。</p>
                   </div>
                   <div className="form-actions">

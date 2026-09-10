@@ -43,6 +43,8 @@ import {
   assertSeqContiguous,
   collectEvidenceOnFailure,
   fillAndEnter,
+  assertNotNativeSelect,
+  selectFromMenu,
   sleep,
   type RunFact,
 } from './helpers.js'
@@ -125,12 +127,14 @@ async function setupTeamAndTask(): Promise<void> {
   await alice.goto('/')
   await expect(alice.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
   await alice.getByRole('button', { name: '创建任务' }).click()
+  const createTaskForm = alice.locator('form[aria-label="创建任务"]')
   await alice.locator('input[id^="task-title-"]').fill('产出并复核验收报告')
-  await alice.selectOption('select[id^="task-assignee-"]', shared.bobUserId)
-  await alice
-    .locator('form[aria-label="创建任务"]')
-    .getByRole('button', { name: /创建任务/ })
-    .click()
+  // #158：责任人下拉是 vendored Menu（不再是原生 <select>）——反面钉 + 真人路径。
+  const assignee = createTaskForm.locator('button[id^="task-assignee-"]')
+  await assertNotNativeSelect(assignee, createTaskForm, '责任人')
+  await selectFromMenu(assignee, /Bob/)
+  await expect(assignee).toContainText('Bob')
+  await createTaskForm.getByRole('button', { name: /创建任务/ }).click()
   await alice.waitForURL(/\/tasks\//)
   const taskId = new URL(alice.url()).pathname.split('/').pop()
   if (taskId === undefined || taskId === '') throw new Error('Task URL 无法解析')
@@ -156,7 +160,11 @@ async function createAgentViaUi(page: Page, name: string, pluginPackId: string):
   await page.fill('#agent-provider', 'replay')
   await page.fill('#agent-model', 'replay-model')
   await page.fill('#agent-credential-slot', 'default')
-  await page.selectOption('#agent-plugin-pack', pluginPackId)
+  // #158：Plugin Pack 下拉是 vendored Menu——反面钉（不再是原生 select）+ 真人路径
+  // （点开 → 点选项）。原来这里用 selectOption，只对原生 <select> 成立。
+  const packTrigger = page.locator('#agent-plugin-pack')
+  await assertNotNativeSelect(packTrigger, page.locator('form'), 'Plugin Pack')
+  await selectFromMenu(packTrigger, new RegExp(pluginPackId.slice(0, 8)))
   await page.getByRole('button', { name: '创建 Agent' }).click()
   await expect(page.getByText(name).first()).toBeVisible()
 }
@@ -183,13 +191,15 @@ async function startRunViaUi(agentName: string, promptText: string): Promise<str
   // 真实用户动作；不加速重连本身）。
   await waitDeviceOnline()
   await bob.reload()
-  await expect(bob.getByLabel('选择 Agent')).toBeVisible({ timeout: 30_000 })
-  await bob.getByLabel('选择 Agent').selectOption({ label: agentName })
-  await bob.getByLabel('选择设备').selectOption({ value: shared.deviceId! })
-  await expect(bob.getByLabel('选择 Workspace').locator('option').nth(1)).toBeAttached({
-    timeout: 30_000,
-  })
-  await bob.getByLabel('选择 Workspace').selectOption({ index: 1 })
+  const agentTrigger = bob.getByLabel('选择 Agent')
+  await expect(agentTrigger).toBeVisible({ timeout: 30_000 })
+  // #158：RunLauncher 四处下拉都是 vendored Menu——反面钉 + 真人路径（点开 → 点选项）。
+  await assertNotNativeSelect(agentTrigger, bob.locator('.run-launcher'), '选择 Agent')
+  await selectFromMenu(agentTrigger, agentName)
+  // 设备项文案 = 「<设备名>（在线/离线）」，设备名取自 scripts/e2e-node.mts 的 'e2e-node'；
+  // 离线设备仍在列表里但不可选——这里按「在线」文案点，正好也钉住禁用项没被误点。
+  await selectFromMenu(bob.getByLabel('选择设备'), /e2e-node（在线）/)
+  await selectFromMenu(bob.getByLabel('选择 Workspace'), 'e2e-ws')
   await bob.getByLabel('Run prompt').fill(promptText)
   await bob.getByRole('button', { name: '启动 Run' }).click()
   // Run 行进时间线（责任人真人路径）。

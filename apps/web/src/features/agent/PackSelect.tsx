@@ -3,18 +3,22 @@
  * 插件页 Pack 列表同一端点与 query key）。替代早期「手工粘贴 Pack UUID」的
  * 降级输入：选项只来自服务端已有 Pack，粘贴不存在的 UUID 无从发生。
  *
- * - 加载/失败态：选项为空（占位项禁用），错误经 ErrorBanner 展示；
- * - 空列表：提示去插件管理先创建 Pack，不伪造选项；
- * - 宿主表单以「未选 Pack 时禁用提交」兜底：disabled 控件不受浏览器
- *   required 约束校验，仅靠 required 拦不住加载/失败态下的误提交。
+ * - 加载/失败态：没有可选项，控件禁用，文案如实说明（占位文字本身就是状态提示）；
+ *   错误经 ErrorBanner 展示；
+ * - 空列表：提示去插件管理先创建 Pack（链接那条 hint 一个就够，不重复两句），不伪造选项；
+ * - 宿主表单以「未选 Pack 时禁用提交」兜底。
+ *   **#158 起这条兜底是唯一拦截**：控件从原生 `<select>` 换成 vendored Menu
+ *   （见 shared/SelectMenu.tsx 文件头），按钮不是表单可校验元素，原生 `required`
+ *   的浏览器校验随之消失——别以为 required 还在把关。
  */
 import { useQuery } from '@tanstack/react-query'
-import type { ChangeEvent, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import type { PluginPackView } from '@whalepod/protocol'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
+import { SelectMenu } from '../../shared/SelectMenu.js'
 
 export interface PackSelectProps {
   id: string
@@ -28,38 +32,30 @@ export function PackSelect({ id, value, onChange }: PackSelectProps): ReactNode 
     queryFn: () => api.get<PluginPackView[]>('/plugin-packs'),
   })
 
-  const handleChange = (event: ChangeEvent<HTMLSelectElement>): void => {
-    onChange(event.target.value)
-  }
+  const packs = packsQuery.data ?? []
+  const placeholder = packsQuery.isPending
+    ? '正在加载 Packs…'
+    : packsQuery.isError
+      ? 'Pack 列表加载失败'
+      : packs.length === 0
+        ? '没有可选 Pack'
+        : '请选择 Pack'
 
   return (
     <>
-      <select
+      <SelectMenu
         id={id}
+        label="Plugin Pack"
         value={value}
-        onChange={handleChange}
-        required
-        disabled={packsQuery.isPending || packsQuery.isError}
-      >
-        <option value="" disabled>
-          {packsQuery.isPending
-            ? '正在加载 Packs…'
-            : packsQuery.isError
-              ? 'Pack 列表加载失败'
-              : '请选择 Pack'}
-        </option>
-        {packsQuery.isSuccess
-          ? packsQuery.data.map((pack) => (
-              <option key={pack.id} value={pack.id}>
-                {pack.name}
-              </option>
-            ))
-          : null}
-      </select>
+        placeholder={placeholder}
+        options={packs.map((pack) => ({ value: pack.id, label: pack.name, disabled: false }))}
+        onChange={onChange}
+        disabled={packsQuery.isPending || packsQuery.isError || packs.length === 0}
+      />
       {packsQuery.isError ? <ErrorBanner error={packsQuery.error} /> : null}
-      {packsQuery.isSuccess && packsQuery.data.length === 0 ? (
+      {packsQuery.isSuccess && packs.length === 0 ? (
         <p className="field-hint">
-          暂无可用 Pack，请先在 <Link to="/plugins">插件管理</Link> 创建。
+          去 <Link to="/plugins">插件管理</Link> 创建 Pack，回到这里即可选择。
         </p>
       ) : null}
     </>

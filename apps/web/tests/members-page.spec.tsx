@@ -16,6 +16,7 @@ import {
   type MockHandler,
 } from './fixtures.js'
 import { renderApp } from './render.jsx'
+import { selectOption } from './select-menu.js'
 
 /** jsdom 没有 navigator.clipboard：临时注入并在用例结束恢复（P1-17 同形）。 */
 function stubClipboardWriteText(options: { reject?: boolean } = {}): {
@@ -81,7 +82,7 @@ describe('members-page', () => {
     const invite = createInviteHandler({ role: 'admin', expiresAt: '2026-08-28T10:00:00.000Z' })
     renderApp('/members', memberListHandlers([invite.handler]))
 
-    await user.selectOptions(await screen.findByLabelText('角色'), 'admin')
+    await selectOption(user, '角色', 'Admin（可管理插件与邀请）')
     await user.click(screen.getByRole('button', { name: '生成邀请链接' }))
 
     // 链接完整可见（Token 只出现一次，必须当场给全）
