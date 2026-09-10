@@ -48,11 +48,19 @@ export interface PersonRoster {
 }
 
 /**
- * 兜底文案白名单。这里刻意**不**从 `src/features/team/memberDirectory.ts` 导入：
- * 判据内核要零依赖（Playwright 进程不该为了两个字符串把 React 拉进来），一致性
- * 改由 `person-identity.spec.ts` 的断言守住——改了产品文案而没改这里，单测会红。
+ * 名册尚未就绪（首帧）或取失败时的兜底文案。判据在它上面等的不是「结果」，是**前提**：
+ * 名册还没落定时，人名位置的正确呈现本来就是它，此时判「说了谁」没有意义——先等它过去
+ * 再判；一直等不到（名册请求挂了）就是真判定不了，判据必须红而不是静默放过。
  */
-export const FALLBACK_LABELS = ['未知成员', '已离开的成员'] as const
+export const ROSTER_PENDING_LABEL = '未知成员'
+
+/**
+ * 兜底文案白名单（含名册未就绪那一条）。这里刻意**不**从
+ * `src/features/team/memberDirectory.ts` 导入：判据内核要零依赖（Playwright 进程不该
+ * 为了两个字符串把 React 拉进来），一致性改由 `person-identity.spec.ts` 的断言守住——
+ * 改了产品文案而没改这里，单测会红。
+ */
+export const FALLBACK_LABELS = [ROSTER_PENDING_LABEL, '已离开的成员'] as const
 
 /** 视角词白名单（同上：与产品措辞的一致性由单测守住）。 */
 export const VIEWPOINT_LABELS = ['你'] as const

@@ -17,6 +17,7 @@ import { randomUUID } from 'node:crypto'
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 import {
   PERSON_SLOTS,
+  ROSTER_PENDING_LABEL,
   personRosterFromMembers,
   personSlotProblems,
   type PersonRoster,
@@ -149,6 +150,15 @@ async function expectPersonSlotsUseDisplayNames(
       count,
       `#162 判据没覆盖到「${slot.what}」（${slot.selector} 无匹配元素）：选择器失效或该区未渲染`,
     ).toBeGreaterThan(0)
+    /**
+     * 前提等待：名册没落定时人名位置本来就该写「未知成员」，此时判「说了谁」没有意义。
+     * 等它过去再采样；名册请求真挂了就一直等不到 → 超时判红（判定不了也是失败，
+     * 不能因为「看起来是加载态」就静默放过）。
+     */
+    await expect(
+      elements.first(),
+      `#162 名册未落定（仍呈现「${ROSTER_PENDING_LABEL}」）：无法判定「${slot.what}」是否写了人名`,
+    ).not.toContainText(ROSTER_PENDING_LABEL)
     const texts: string[] = []
     for (let index = 0; index < count; index += 1) {
       texts.push(await elements.nth(index).innerText())
@@ -290,17 +300,19 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     if (bobMember === undefined) {
       throw new Error(`名册里没有 ${BOB_NAME}（判据的期望人缺失）`)
     }
-    await expect(alice.locator('[data-testid="task-assignee"]')).toContainText(
-      bobMember.displayName,
-    )
-    await expect(alice.locator('[data-testid="assignment-assignee-note"]')).toContainText(
-      bobMember.username,
-    )
+    // 判据先跑（这样变异回短 id 时，第一个红灯就是判据自己的诊断）。
     await expectPersonSlotsUseDisplayNames(
       alice,
       roster,
       [PERSON_SLOTS.assignee, PERSON_SLOTS.assignmentNote],
       'Task Room 首屏（Alice 视角）',
+    )
+    // 正向：这两处确实说出了 Bob 的显示名/用户名（不是「只要不是 id 就行」）。
+    await expect(alice.locator('[data-testid="task-assignee"]')).toContainText(
+      bobMember.displayName,
+    )
+    await expect(alice.locator('[data-testid="assignment-assignee-note"]')).toContainText(
+      bobMember.username,
     )
 
     // ---- #137：离开 Task Room 后能找回任务（项目页任务列表） ----
@@ -351,14 +363,15 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     await expectNoJargonVisible(bob)
 
     // #162：留言作者同样是人名（Bob；Alice 视角下不是「你」），责任人仍写显示名。
-    await expect(alice.locator('[data-testid="comment-author"]').first()).toContainText(
-      bobMember.displayName,
-    )
+    // 判据先跑，正向断言随后（变异回短 id 时先看到判据的诊断）。
     await expectPersonSlotsUseDisplayNames(
       alice,
       roster,
       [PERSON_SLOTS.assignee, PERSON_SLOTS.commentAuthor],
       'Alice 重载后的留言区',
+    )
+    await expect(alice.locator('[data-testid="comment-author"]').first()).toContainText(
+      bobMember.displayName,
     )
     // Bob 看自己：两处都是视角词「你」——它不是姓名，但判据必须放行（否则假红）。
     await expectPersonSlotsUseDisplayNames(
