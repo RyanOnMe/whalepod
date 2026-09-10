@@ -11,7 +11,7 @@
     "test:integration": "tsx scripts/with-test-postgres.mts vitest run --project integration",
     "test:resilience": "tsx scripts/with-test-postgres.mts vitest run --project resilience",
     "test:dsh-contract": "vitest run --project dsh-contract",
-    "test:e2e": "playwright test --project=p1-07 && playwright test --project=p1-19",
+    "test:e2e": "playwright test --project=p1-07 && playwright test --project=p1-19 && playwright test --project=p1-140",
     "phase1:drive": "tsx scripts/phase1-drive.mts",
     "phase1:verify": "tsx scripts/phase1-verify.mts",
     "phase1:evidence": "tsx scripts/phase1-evidence.mts",

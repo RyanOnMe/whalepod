@@ -25,6 +25,9 @@ export default defineConfig({
   projects: [
     { name: 'p1-07', testMatch: /task-room\.spec\.ts/ },
     { name: 'p1-19', testMatch: /full-chain\.spec\.ts/ },
+    // #140：实时观察用例独立成套——判据是「对端零操作」，与既有两条「显式
+    // reload 驱动」的用例口径相反；混在一起旁路会重新长回来。
+    { name: 'p1-140', testMatch: /realtime-observation\.spec\.ts/ },
   ],
   use: {
     baseURL: 'http://localhost:5173',

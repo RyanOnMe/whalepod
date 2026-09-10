@@ -58,7 +58,7 @@ describe('applyClientFrame (event-router)', () => {
     expect(queryClient.calls).toHaveLength(0) // handler 未完成：尚未提交
     release()
     await pending
-    expect(queryClient.calls).toEqual([{ queryKey: ['task', 't-1'] }])
+    expect(queryClient.calls).toEqual([{ queryKey: ['task-room', 't-1'] }])
     expect(cursorStore.load()).toBe('42')
   })
 
@@ -74,24 +74,31 @@ describe('applyClientFrame (event-router)', () => {
   })
 
   it('maps every registered persistent event type to its cache key', () => {
-    const keys: Array<[string, unknown, readonly unknown[]]> = [
-      ['project.changed', {}, ['projects']],
-      ['task.changed', { taskId: 't-1' }, ['task', 't-1']],
-      ['comment.created', { taskId: 't-1' }, ['task', 't-1']],
-      ['run.changed', { runId: 'r-1' }, ['run', 'r-1']],
-      ['run.event', { runId: 'r-1' }, ['run', 'r-1']],
-      ['approval.changed', { taskId: 't-1' }, ['task', 't-1']],
-      ['artifact.changed', { taskId: 't-1' }, ['task', 't-1']],
-      ['device.changed', {}, ['devices']],
+    // 键字面量必须与 app/query-client.ts 的 queryKeys 一致：
+    // Task Room 是 queryKeys.taskRoom = ['task-room', id]（#140 前这里错写成
+    // ['task', id]，前缀不匹配 → 远程变化刷不进任务房间，且本测试把 bug 钉成了期望）。
+    const keys: Array<[string, unknown, readonly (readonly unknown[])[]]> = [
+      ['project.changed', {}, [['projects']]],
+      ['task.changed', { taskId: 't-1' }, [['task-room', 't-1']]],
+      ['comment.created', { taskId: 't-1' }, [['task-room', 't-1']]],
+      ['run.changed', { runId: 'r-1' }, [['run', 'r-1']]],
+      ['run.event', { runId: 'r-1' }, [['run', 'r-1']]],
+      ['approval.changed', { taskId: 't-1' }, [['task-room', 't-1']]],
+      ['artifact.changed', { taskId: 't-1' }, [['task-room', 't-1']]],
+      ['device.changed', {}, [['devices']]],
     ]
     for (const [type, payload, expected] of keys) {
       expect(keysForPersistentEvent(persistentFrame(type, payload).event)).toEqual(expected)
     }
   })
 
-  it('falls back to coarse keys when the payload lacks the entity id', () => {
-    expect(keysForPersistentEvent(persistentFrame('task.changed', {}).event)).toEqual(['tasks'])
-    expect(keysForPersistentEvent(persistentFrame('run.changed', {}).event)).toEqual(['runs'])
+  it('falls back to the queryKeys prefix when the payload lacks the entity id', () => {
+    // 降级键必须是真前缀：['task-room'] 覆盖 ['task-room', id]；
+    // ['run'] 覆盖 ['run', id] 与 ['run', id, 'events']。
+    expect(keysForPersistentEvent(persistentFrame('task.changed', {}).event)).toEqual([
+      ['task-room'],
+    ])
+    expect(keysForPersistentEvent(persistentFrame('run.changed', {}).event)).toEqual([['run']])
   })
 
   it('forwards live frames to the live sink without touching the cursor', async () => {

@@ -11,6 +11,7 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
+import { queryKeys } from '../../app/query-client.js'
 import { formatBytes, formatIso, shortId } from '../../shared/format.js'
 import type { Session } from '../../shared/api/types.js'
 import type { TaskRoomArtifact } from '../../shared/api/types.js'
@@ -155,7 +156,7 @@ function CandidateRows({
     setError(undefined)
     try {
       await api.mutate(`/artifacts/${artifact.id}/publish`)
-      await queryClient.invalidateQueries({ queryKey: ['task', taskId] })
+      await queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(taskId) })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '发布失败，请稍后重试。')
     } finally {

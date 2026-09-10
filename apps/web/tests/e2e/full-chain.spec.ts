@@ -293,7 +293,14 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     // 键盘可达：焦点到批准按钮 Enter 激活（批准一次）。
     await shared.bob!.getByTestId('approve-button').focus()
     await shared.bob!.keyboard.press('Enter')
-    await expect(shared.bob!.getByTestId('approval-decided')).toContainText('已批准一次')
+    // #140 后判据改挂**持久**证据：审批卡「决定即收卡」（见 G5-04 头注释的既有设计），
+    // 决定一落地、Run 恢复运行，插槽就不再渲染该卡。此前这里断言 approval-decided
+    // 之所以稳定通过，靠的正是任务房间不刷新（#140 的脏数据 bug）把卡片留在页面上——
+    // 拿 bug 当判据。改为核验 Run 事件行里的审批决定（owner 受众投影，03 §8）：
+    // reload + 选中该 Run（与 G5-04 同法），这是「决定真的落到事件流」的持久证据。
+    await shared.bob!.reload()
+    await selectRun(shared.bob!, runId)
+    await expect(shared.bob!.getByTestId('run-live-events')).toContainText('审批决定：已批准一次')
 
     // Runtime 继续 → 完成（DB 事实判定；UI 徽标经 reload 核验）。
     const done = await waitForRunStatus(runId, 'completed', 120_000)
