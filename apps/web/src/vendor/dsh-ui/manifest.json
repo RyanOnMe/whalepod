@@ -104,7 +104,7 @@
     {
       "local": "apps/web/src/vendor/dsh-ui/index.ts",
       "upstream": "packages/client/ui-primitives/src/index.ts",
-      "adaptations": ["只保留 6 个原语与其类型的导出（上游桶文件含整包 43 个原语）"]
+      "adaptations": ["只保留 6 个原语与其类型的导出（上游 ui-primitives/src 顶层有 29 个 .tsx / 桶文件导出 30 个原语；43 是 packages/client/ui-* 的包数，别混）"]
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/cx.ts",
@@ -134,7 +134,7 @@
       "local": "apps/web/src/styles/dsw-tokens.css",
       "upstream": "packages/client/ui-theme/src/styles/design-platform.css（--dsw-* 白名单子集；base.css 只用于确认 data-ds-dark-theme 切换语义）",
       "adaptations": [
-        "只取上述 6 个组件 CSS 真正引用的 23 个变量（上游静态色阶 78 个中只保留 --dsw-static-deepseek-450）",
+        "只取上述 6 个组件 CSS 真正引用的 23 个变量（上游静态色阶 73 个中只保留 --dsw-static-deepseek-450）",
         "静态色阶引用就地展开为 rgb() 字面量，alias→alias 的间接保留",
         "浅色 :root / 深色 body[data-ds-dark-theme]，与上游选择器语义一致"
       ]

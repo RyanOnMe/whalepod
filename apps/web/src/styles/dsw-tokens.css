@@ -9,7 +9,7 @@
  * 白名单口径：**只抄 apps/web/src/vendor/dsh-ui/ 里 6 个原语 CSS 真正引用的变量**
  * （Button/Pill/Tag/StateDot/DisclosureRow/Switch 逐一 grep 得到），共 23 个，外加 3 个
  * 静态色阶（green/red/amber-900，见下）——上游 design-platform.css 的 alias 段有近百个
- * 变量、静态色阶 78 个，这里只留必需的。本仓对上游做的三处收缩/补齐（都「取值不变」）：
+ * 变量、静态色阶 **73** 个（实测唯一 `--dsw-static-*` 计数），这里只留必需的。本仓对上游做的三处收缩/补齐（都「取值不变」）：
  *   1. 静态色阶引用就地展开为 rgb() 字面量，只保留 4 个静态变量（deepseek-450 是
  *      StateDot ongoing 蓝，900 三档是设备页 AA 重映射的取值来源，别名上无可替代）；
  *   2. alias→alias 的间接（--dsw-alias-button-primary-fill → --dsw-alias-brand-primary）
