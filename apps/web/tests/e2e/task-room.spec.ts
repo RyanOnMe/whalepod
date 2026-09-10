@@ -19,7 +19,7 @@ import {
   CONTROL_PRIMARY_FILL_TOKEN,
   CONTROL_PRIMARY_LABEL_TOKEN,
 } from '../../src/shared/control-style-tokens.js'
-import { assertControlTokens } from './helpers.js'
+import { assertControlTokens, assertNotNativeSelect } from './helpers.js'
 import { expectNoContrastOffenders } from './contrast-sweep.js'
 import {
   PERSON_SLOTS,
@@ -282,7 +282,11 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     const bobUserId = ((await accepted.json()) as { data: { userId: string } }).data.userId
 
     // ---- Alice：创建 Task 并指派 Bob（#136 起责任人为下拉选择器，默认选中自己） ----
+    // #158：责任人下拉已从原生 <select> 迁到 vendored Menu，所以指派走**真人路径 +
+    // 键盘**——点开（aria-expanded 翻 true）→ 方向键 → Enter 选中。既要证明它不再是
+    // 原生 select（assertNotNativeSelect），也要证明键盘仍能完成这一步。
     await alice.getByRole('button', { name: '创建任务' }).click()
+    const createTaskForm = alice.locator('form[aria-label="创建任务"]')
     const taskIdInput = alice.locator('input[id^="task-title-"]')
     // #168：项目页这一屏同时有 `.field input` / `.field textarea` / `.button`（含
     // primary 与 quiet 两个变体）——正是"同一屏两族控件"的现场，所以在真实浏览器里采一遍
@@ -313,11 +317,23 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
       },
     )
     await taskIdInput.fill('起草验收报告')
-    await alice.selectOption('select[id^="task-assignee-"]', bobUserId)
-    await alice
-      .locator('form[aria-label="创建任务"]')
-      .getByRole('button', { name: /创建任务/ })
-      .click()
+    const assignee = createTaskForm.locator('button[id^="task-assignee-"]')
+    await assertNotNativeSelect(assignee, createTaskForm, '责任人')
+    await assignee.click()
+    await expect(assignee).toHaveAttribute('aria-expanded', 'true')
+    // 菜单项的顺序 = [placeholder(disabled), 各成员…]：placeholder 占 **index 0** 且不可选，
+    // 所以 `autoFocus`（聚焦第一个可用项）落在 **index 1**（默认选中的 Alice），
+    // 再按一次方向键到 index 2（Bob）——本切片首轮 e2e 实测踩到：把 `first()` 当成"首项"，
+    // 拿到的是被禁用的 placeholder（Received: inactive）。
+    const items = alice.getByRole('menu').getByRole('menuitem')
+    await expect(items.first()).toBeDisabled()
+    await expect(items.nth(1)).toBeFocused()
+    await alice.keyboard.press('ArrowDown')
+    await expect(items.nth(2)).toBeFocused()
+    await alice.keyboard.press('Enter')
+    await expect(assignee).toHaveAttribute('aria-expanded', 'false')
+    await expect(assignee).toContainText('Bob')
+    await createTaskForm.getByRole('button', { name: /创建任务/ }).click()
     await alice.waitForURL(/\/tasks\//)
     const taskUrl = new URL(alice.url()).pathname
     const taskId = taskUrl.split('/').pop() ?? ''

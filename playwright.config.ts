@@ -33,6 +33,10 @@ export default defineConfig({
     // #141：邀请链真人路径（Owner 生成链接 → 新浏览器加入）——单 Hub 只容一个团队，
     // 所以它必须独占一套冷启环境（p1-07 的团队已被自身 Setup 占用）。
     { name: 'p1-141', testMatch: /invite-accept\.spec\.ts/ },
+    // #158：七处下拉落页的两档（1280×720 / 390×844）截图与窄屏定位审计。要真跑到
+    // 成员页 / 项目页 / Agent 页 / Task Room 四个界面全部渲染出来，还要起真 node 才有
+    // 设备与 Workspace 可选项——同样必须独占一套冷启环境，故单列一个 project。
+    { name: 'p1-158', testMatch: /select-menu-audit\.spec\.ts/ },
   ],
   use: {
     baseURL: 'http://localhost:5173',

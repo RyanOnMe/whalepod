@@ -144,7 +144,7 @@ export function CreateAgentRevisionForm({ agent }: CreateAgentRevisionFormProps)
         </div>
       </div>
       <div className="field">
-        <label htmlFor="revision-plugin-pack">Plugin Pack</label>
+        {/* #158：可见标签由 PackSelect 内部的 SelectMenu 渲染，这里不重复。 */}
         <PackSelect
           id="revision-plugin-pack"
           value={values.pluginPackId}
