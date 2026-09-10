@@ -85,6 +85,32 @@ describe('#152 主题门', () => {
     expect(failures).toEqual([])
   })
 
+  it('全站样式表里没有"引用了但没定义、又没 fallback"的 token（静默失效）', () => {
+    // 这条门的由来（实测）：Run Console 的实况区引用了 `--font-size-sm` /
+    // `--color-surface-sunken` / `--color-text-muted` / `--color-accent`，而它们**从未被定义**——
+    // 浏览器不报错，直接回落到 var() 的 fallback（那是另一套深蓝终端色板），
+    // 于是页面「看着还行」，实际用的是仓库里第三套配色。
+    const sheets = ['global.css', 'tokens.css', 'dsw-tokens.css']
+    const defined = new Set<string>()
+    for (const name of sheets) {
+      const text = readFileSync(join(here, `../src/styles/${name}`), 'utf8')
+      for (const m of text.matchAll(/^\s*(--[a-z0-9-]+)\s*:/gim)) defined.add(m[1] ?? '')
+    }
+    const offenders: string[] = []
+    for (const name of sheets) {
+      const text = readFileSync(join(here, `../src/styles/${name}`), 'utf8')
+      const withoutTokens = name === 'tokens.css' || name === 'dsw-tokens.css'
+      for (const m of text.matchAll(/var\(\s*(--[a-z0-9-]+)\s*(,[^)]*)?\)/gi)) {
+        const ref = m[1] ?? ''
+        const fallback = (m[2] ?? '').replace(/^,/, '').trim()
+        // token 定义文件里允许 var(--x) 指向同文件既有 token；引用未定义且无 fallback 一律算缺陷
+        if (!defined.has(ref) && fallback === '' && !withoutTokens)
+          offenders.push(`${name}: ${ref}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
   it('反向用例：把上游亮色当文字色会不达标（说明门不是恒真）', () => {
     // 上游 500 阶：亮绿 on 白 —— 这就是 #151 的 AA 回归现场
     expect(round2(contrastRatio(parseCssColor('rgb(34, 197, 94)'), WHITE))).toBeLessThan(AA_TEXT)

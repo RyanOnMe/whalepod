@@ -29,6 +29,12 @@
   --color-danger: var(--dsw-static-red-900); /* 危险文字（12:1） */
   --color-danger-soft: var(--dsw-static-red-100);
   --color-danger-strong: var(--dsw-static-red-900);
+  /* 下面三个 + 字号 token 此前**只被引用、从未定义**（Run Console 的实况区在用），
+     于是浏览器静默落回 var() 的 fallback —— 那是另一套深蓝终端色板，等于仓库里同时
+     存在三套配色。这里补齐定义：色值仍取 L1，语义与全站一致。 */
+  --color-accent: var(--dsw-static-blue-600); /* 焦点环等非文字强调（= signal） */
+  --color-surface-sunken: var(--dsw-alias-bg-module-platform); /* 比卡片更"沉"的面 */
+  --color-text-muted: var(--dsw-alias-label-secondary); /* 次级文字（5.8:1） */
 
   /* 尺寸 */
   --radius-sm: 6px;
@@ -45,6 +51,8 @@
   --font-ui:
     system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
   --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  /* 字号：只补被引用过的那一档，不趁机发明整套字号尺度 */
+  --font-size-sm: 13px;
 
   /* 焦点环 */
   --focus-ring: 0 0 0 3px color-mix(in srgb, var(--color-signal) 40%, transparent);
