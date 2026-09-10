@@ -21,9 +21,11 @@ export interface CopyButtonProps {
 export function CopyButton({
   value,
   label,
-  // 默认为中性措辞：这个组件被邀请链接（MembersPage）等多处复用，写死「完整 digest」
-  // 会让「复制邀请链接失败」提示成「请手动复制完整 digest」——错文案（#167 一审指出）。
-  // 调用方给 valueLabel 时以调用方为准；不给时只说"这个值"，不说错名。
+  // 默认值改成中性措辞（原先写死「完整 digest」）。**如实说明现状**：现有调用点都显式
+  // 传了 valueLabel（`MembersPage` 的邀请链接传「邀请链接」、PluginPackEditor 传
+  // 「Pack ID」/「插件组合摘要」），所以这个默认值今天**不会**被用在邀请链路上——
+  // 它是防御性的：默认值带业务语义，将来新增调用点漏传时就会给出错名的失败提示。
+  // 这是 #167 一审的整改（评审指出我原先把它写成了"已存在的 bug"，与事实不符）。
   valueLabel = '这个值',
   children,
 }: CopyButtonProps): ReactNode {
