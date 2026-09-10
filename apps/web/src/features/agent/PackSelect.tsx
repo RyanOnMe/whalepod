@@ -47,7 +47,10 @@ export function PackSelect({ id, value, onChange }: PackSelectProps): ReactNode 
     <>
       <SelectMenu
         id={id}
-        label="Plugin Pack"
+        // #167：标签中文优先（CONTEXT.md 的正式领域词保留在括号里）；#158 之后这个
+        // label 是 PackSelect 唯一的可见文案来源（表单里不再有第二个 <label>），
+        // 所以 #167 的中文化必须落在这里，而不是调用点的表单里。
+        label="插件组合（Plugin Pack）"
         value={value}
         placeholder={placeholder}
         options={packs.map((pack) => ({ value: pack.id, label: pack.name, disabled: false }))}

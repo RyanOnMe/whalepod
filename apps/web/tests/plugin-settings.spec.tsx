@@ -7,7 +7,8 @@
  * - legacy_unrestricted 视觉警示与 local-development 整卡标红；
  * - PackEditor：勾选 → POST 体与 PluginPackCreateRequest schema 对齐；
  *   空选择禁止提交；digest 短摘要 + 可复制全值；
- * - Pack 卡展示 Pack ID（短码 + title 全值 + 一键复制，复制失败如实报错）；
+ * - Pack 卡展示 Pack ID 与 Pack Digest（短码 + title 全值 + 一键复制，复制失败如实报错）；
+ *   #167 起摘要不再把 64 位十六进制铺在正文里（原来「Pack Digest」与「完整 Digest」两行）；
  * - API 错误（403/409）有可读错误展示（message + requestId）。
  *
  * mock 层与断言风格与 agent-settings 相同：仅替换全局 fetch（HTTP 层），
@@ -24,7 +25,63 @@ import type {
 } from '@whalepod/protocol'
 import { ALICE, BOB, created, initOf, loggedInHandlers, ok, packsHandler } from './fixtures.js'
 import type { MockHandler, MockResponse } from './fixtures.js'
+import { findInternalTerms } from './copy-criteria.js'
 import { renderApp } from './render.jsx'
+
+/**
+ * 把渲染出来的**可见文本**喂给 #167 的判据（不是"不许有英文"：领域词不在词表里）。
+ *
+ * 为什么在组件测试里也要查一遍：e2e 的词表判据跑在真实站点上，而插件页的空态只有
+ * 目录为空时才渲染——本次实现的第一版把空闲态写成「（curated）」带原词的形态，
+ * e2e 在「有目录项」的形态下照样全绿，是截图自审里才撞见。这一条把判据搬到组件层，
+ * 让**每一种可渲染形态**都在 Q0 里被扫，而不是只扫 e2e 恰好走到的那个。
+ *
+ * 为什么不用 `container.textContent`：它把不渲染的文字（闭合 `<details>` 里的导航
+ * 链接、隐藏元素）也算进来，比 e2e 的 `innerText` 口径宽——宽口径会把没上屏的文字
+ * 判成泄漏（假红）。这里按与 e2e 同一口径取文本：
+ * - 排除 `display:none` / `visibility:hidden`（自身与祖先链）；
+ * - 排除闭合 `<details>` 的内容（`<summary>` 除外）；
+ * - `title` 属性天然不在其中（属性不是文本节点）。
+ *
+ * jsdom **不实现** `HTMLElement.innerText`（取到 undefined）也不实现
+ * `getClientRects`（恒为空列表，用它判可见会把所有文本都滤掉，实测踩过），
+ * 所以这里走 computed style。
+ */
+function visibleText(root: HTMLElement): string {
+  const isRendered = (element: Element): boolean => {
+    for (let node: Element | null = element; node !== null; node = node.parentElement) {
+      const style = window.getComputedStyle(node)
+      if (style.display === 'none' || style.visibility === 'hidden') return false
+      const details = node.closest('details')
+      if (
+        details !== null &&
+        !details.hasAttribute('open') &&
+        node.tagName !== 'SUMMARY' &&
+        !(details.querySelector(':scope > summary')?.contains(node) ?? false)
+      ) {
+        return false
+      }
+    }
+    return true
+  }
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  const parts: string[] = []
+  let node = walker.nextNode()
+  while (node !== null) {
+    const parent = node.parentElement
+    if (parent !== null && isRendered(parent)) parts.push(node.textContent ?? '')
+    node = walker.nextNode()
+  }
+  return parts.join('\n')
+}
+
+function expectNoInternalTerm(container: HTMLElement, label: string): void {
+  const hits = findInternalTerms(visibleText(container))
+  expect(
+    hits.map((hit) => hit.text),
+    `${label} 的可见文本命中了内部词表`,
+  ).toEqual([])
+}
 
 const INTEGRITY = `sha256-${'X'.repeat(43)}=`
 const INTEGRITY_SHORT = `${INTEGRITY.slice(0, 12)}…`
@@ -201,7 +258,41 @@ describe('plugin-settings', () => {
       screen.getByText('你是成员，插件目录只读；仅所有者或管理员可安装插件或创建 Pack。'),
     ).toBeVisible()
     expect(screen.getByRole('heading', { name: '已安装插件' })).toBeVisible()
-    expect(screen.getByRole('heading', { name: 'Plugin Packs' })).toBeVisible()
+    // #167：标题语言统一。此前这里写 `Plugin Packs`，同页其它标题（插件目录 / 已安装插件）
+    // 都是中文，一页两种语言。
+    expect(screen.getByRole('heading', { name: '插件组合（Plugin Pack）' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'Plugin Packs' })).not.toBeInTheDocument()
+    // #167：`curated` 是上游目录标识，不再当正文——徽标走 formatTrust 的中文名。
+    expect(screen.getByText('精选')).toBeVisible()
+    expect(screen.queryByText('curated')).not.toBeInTheDocument()
+  })
+
+  it('#167 内部词表：目录为空的形态，可见文本不得命中（空态是本次改过的文案）', async () => {
+    // 一个 renderApp 一次：testing-library 的 screen 查询挂在同一个 document 上，
+    // 同一用例里渲染两次会让后面的按名查询撞上两份 DOM（strict 失败）。
+    const { container } = renderApp(
+      '/plugins',
+      loggedInHandlers(ALICE, [catalogHandler([]), installationsHandler([]), packsHandler([])]),
+    )
+    // 等空态文案自己渲染出来：等壳（标题）会拿到「正在加载…」的中间态，
+    // 那时页面上还没有本次要检的文案（#159 一审抓过的同一类假绿）。
+    // 等空态文案自己渲染出来：等壳（标题）会拿到「正在加载…」的中间态，那时页面上
+    // 还没有本次要检的文案（#159 一审抓过的同一类假绿）。
+    expect(await screen.findByText(/精选目录暂无插件/)).toBeVisible()
+    expectNoInternalTerm(container, '插件目录空态')
+  })
+
+  it('#167 内部词表：有目录项/安装行/Pack 的形态，可见文本不得命中', async () => {
+    const { container } = renderApp(
+      '/plugins',
+      loggedInHandlers(ALICE, [
+        catalogHandler([reviewedEntry, legacyEntry, localDevEntry]),
+        installationsHandler([installation]),
+        packsHandler([pack]),
+      ]),
+    )
+    await screen.findByRole('article', { name: 'wp-fixed-time 0.1.0' })
+    expectNoInternalTerm(container, '插件页有数据形态')
   })
 
   it('Owner 安装成功：请求体与 PluginInstallRequest 对齐，提示不影响已有 Revision', async () => {
@@ -301,7 +392,7 @@ describe('plugin-settings', () => {
     expect(parsed.installationIds).toEqual([installation.id])
   })
 
-  it('Pack 列表：digest 短摘要 + 完整值可见并可一键复制', async () => {
+  it('Pack 列表：摘要只给短码，全值走 title 与一键复制（正文不铺 64 位十六进制）', async () => {
     const user = userEvent.setup()
     const clipboard = stubClipboardWriteText()
     try {
@@ -313,15 +404,21 @@ describe('plugin-settings', () => {
           packsHandler([pack]),
         ]),
       )
-      expect(await screen.findByText(`${PACK_DIGEST.slice(0, 12)}…`)).toBeVisible()
-      expect(screen.getByText(`${PACK_DIGEST.slice(0, 12)}…`)).toHaveAttribute('title', PACK_DIGEST)
-      expect(screen.getByText(PACK_DIGEST)).toBeVisible() // 完整值可见，可手动复制
+      const packCard = await screen.findByRole('article', { name: 'Pack review-pack' })
+      const short = within(packCard).getByText(`${PACK_DIGEST.slice(0, 12)}…`)
+      expect(short).toBeVisible()
+      expect(short).toHaveAttribute('title', PACK_DIGEST) // 全值走 title
+      // 反例（#167 的现状证据）：改前这里是第二行「完整 Digest」，整串 64 位十六进制
+      // 当正文铺在卡里。现在正文不得再出现全值——只能出现在 title（上面那条已钉）。
+      expect(within(packCard).queryByText(PACK_DIGEST)).not.toBeInTheDocument()
       // 成员插件（entries）展示（限定在 Pack 卡内：表单勾选行有同名文本）
-      const packCard = screen.getByRole('article', { name: 'Pack review-pack' })
       expect(within(packCard).getByText('wp-fixed-time@0.1.0')).toBeVisible()
 
-      await user.click(screen.getByRole('button', { name: '复制 review-pack 完整 digest' }))
-      expect(await screen.findByText('已复制')).toBeVisible()
+      // 全值仍要拿得到：一键复制（写进剪贴板的是全值，不是屏上的短码）
+      await user.click(
+        within(packCard).getByRole('button', { name: '复制 review-pack 插件组合摘要' }),
+      )
+      expect(await within(packCard).findByText('已复制')).toBeVisible()
       expect(clipboard.writeText).toHaveBeenCalledWith(PACK_DIGEST)
     } finally {
       clipboard.restore()

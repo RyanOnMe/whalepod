@@ -213,9 +213,12 @@ test.describe('#158 七处下拉的两档审计', () => {
 
     // ---- 落页点 1-2/7：#agent-plugin-pack / #revision-plugin-pack（Agent 页） ----
     await owner.goto('/agents')
-    await expect(owner.getByRole('heading', { name: 'Agent 管理' })).toBeVisible()
+    // #167：页面标题只说一次，h1 文案取主导航同一套的领域词（原 h1「Agent 管理」+
+    // 紧随的 h2「Agents」是同义重复，h2 已删）。
+    await expect(owner.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible()
     const packTrigger = owner.locator('#agent-plugin-pack')
-    await assertNotNativeSelect(packTrigger, owner.locator('form'), 'Plugin Pack')
+    // #167：PackSelect 的可见标签/可访问名已中文化（#158 之后它是唯一来源）。
+    await assertNotNativeSelect(packTrigger, owner.locator('form'), '插件组合（Plugin Pack）')
     await assertMenuTriggerTokens(packTrigger)
     for (const vp of VIEWPORTS) {
       await owner.setViewportSize({ width: vp.width, height: vp.height })
@@ -230,7 +233,7 @@ test.describe('#158 七处下拉的两档审计', () => {
     await detail.getByRole('button', { name: '新建 Revision' }).click()
     const revisionPack = detail.locator('#revision-plugin-pack')
     await expect(revisionPack).toBeAttached()
-    await assertNotNativeSelect(revisionPack, detail, 'Plugin Pack')
+    await assertNotNativeSelect(revisionPack, detail, '插件组合（Plugin Pack）')
     for (const vp of VIEWPORTS) {
       await owner.setViewportSize({ width: vp.width, height: vp.height })
       await auditMenuAt(owner, revisionPack, `revision-plugin-pack-${vp.name}`, vp)
@@ -302,7 +305,7 @@ async function auditMenuAt(
 /** 经真实 Agent 页建一个 Agent（Plugin Pack 走真人路径：点开 → 点选项）。 */
 async function createAgentViaUi(page: Page, name: string): Promise<void> {
   await page.goto('/agents')
-  await expect(page.getByRole('heading', { name: 'Agent 管理' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible()
   await page.fill('#agent-name', name)
   await page.fill('#agent-persona', '你是下拉审计用的代理。')
   await page.fill('#agent-provider', 'replay')

@@ -8,12 +8,17 @@
  * Revision 时用与新建 Agent 表单相同的默认值。Plugin Pack 经 PackSelect
  * 下拉选择（数据源 GET /plugin-packs）。成功后提示新 Revision 号并失效
  * Agent 详情/列表缓存；失败展示 requestId。
+ *
+ * #167：字段标签与新建表单**共用** shared/format.ts 的 PERSONA_LABEL /
+ * CREDENTIAL_SLOT_LABEL / CREDENTIAL_SLOT_HINT——同一屏两个表单不能各写一套说法
+ * （此前详情与表单都写裸 `Credential Slot`，同源只是巧合，一改就漂）。
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import type { CreateAgentRevisionRequest } from '@whalepod/protocol'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
+import { CREDENTIAL_SLOT_HINT, CREDENTIAL_SLOT_LABEL, PERSONA_LABEL } from '../../shared/format.js'
 import type { AgentDetailView, ProfileRevisionView } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
 import { PackSelect } from './PackSelect.js'
@@ -89,7 +94,7 @@ export function CreateAgentRevisionForm({ agent }: CreateAgentRevisionFormProps)
     >
       <h4>新建 Revision</h4>
       <div className="field">
-        <label htmlFor="revision-persona">Persona</label>
+        <label htmlFor="revision-persona">{PERSONA_LABEL}</label>
         <textarea
           id="revision-persona"
           rows={4}
@@ -101,7 +106,7 @@ export function CreateAgentRevisionForm({ agent }: CreateAgentRevisionFormProps)
       </div>
       <div className="field-row">
         <div className="field">
-          <label htmlFor="revision-provider">Provider</label>
+          <label htmlFor="revision-provider">模型服务商（Provider）</label>
           <input
             id="revision-provider"
             value={values.provider}
@@ -111,7 +116,7 @@ export function CreateAgentRevisionForm({ agent }: CreateAgentRevisionFormProps)
           />
         </div>
         <div className="field">
-          <label htmlFor="revision-model">Model</label>
+          <label htmlFor="revision-model">模型（Model）</label>
           <input
             id="revision-model"
             value={values.model}
@@ -123,7 +128,7 @@ export function CreateAgentRevisionForm({ agent }: CreateAgentRevisionFormProps)
       </div>
       <div className="field-row">
         <div className="field">
-          <label htmlFor="revision-credential-slot">Credential Slot</label>
+          <label htmlFor="revision-credential-slot">{CREDENTIAL_SLOT_LABEL}</label>
           <input
             id="revision-credential-slot"
             value={values.credentialSlot}
@@ -131,9 +136,10 @@ export function CreateAgentRevisionForm({ agent }: CreateAgentRevisionFormProps)
             required
             maxLength={80}
           />
+          <p className="field-hint">{CREDENTIAL_SLOT_HINT}</p>
         </div>
         <div className="field">
-          <label htmlFor="revision-max-tokens">Max Tokens（可选）</label>
+          <label htmlFor="revision-max-tokens">单次最多生成 Token 数（Max Tokens，可选）</label>
           <input
             id="revision-max-tokens"
             type="number"
@@ -144,7 +150,7 @@ export function CreateAgentRevisionForm({ agent }: CreateAgentRevisionFormProps)
         </div>
       </div>
       <div className="field">
-        {/* #158：可见标签由 PackSelect 内部的 SelectMenu 渲染，这里不重复。 */}
+        {/* #167 × #158：标签文案由 PackSelect 的 label 传下去（见上），不重复 <label>。 */}
         <PackSelect
           id="revision-plugin-pack"
           value={values.pluginPackId}

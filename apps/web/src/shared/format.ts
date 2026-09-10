@@ -146,6 +146,55 @@ export function formatCountdown(ms: number): string {
 }
 
 /**
+ * 插件信任级别文案（#167）：`curated` / `unreviewed` 是上游目录标识（03 §2.5 的
+ * 目录名与审核枚举），不是给用户看的词——此前插件页直接把 `curated` 印在正文里
+ * （「curated 目录暂无插件。」「请先在…安装 curated 包。」）。这里给中文名，原词只
+ * 出现在中文后面的括号里当对应关系。
+ *
+ * 未知取值原样保留并标「未知」，与 formatPlatform 同一套口径：既不丢信息，也不假装认识。
+ */
+export const TRUST_LABEL: Readonly<Record<string, string>> = {
+  curated: '精选',
+  unreviewed: '未审核',
+}
+
+export function formatTrust(trust: string): string {
+  return TRUST_LABEL[trust] ?? `${trust}（未知信任级别）`
+}
+
+/*
+ * Agent Revision 的字段名与解释（#167）：表单 <label> 与详情 <dt> 共用同一份常量。
+ *
+ * 为什么单独立常量而不是各写一遍：此前表单与详情都写 `Credential Slot`，两处同源
+ * 只是巧合；一改就会漂成两种说法。同一份常量让「表单怎么填」与「详情怎么读」永远
+ * 是一个词。形态统一为「中文（English）」：中文先说明这是什么，括号里保留
+ * CONTEXT.md / 协议里的正式领域词，方便和 CLI 输出、接口字段对上。
+ * `Provider` / `Model` 不进这里——它们是外部服务名与模型名、不是本仓库的领域词，
+ * 译成中文反而会让人对不上号，故只在表单/详情里就地写。
+ */
+export const PERSONA_LABEL = '人格设定（Persona）' as const
+
+/**
+ * 凭据槽：**内部概念**（03 §2.4 的 credential slot），单看名字没人知道该填什么。
+ * 所以除「中文（English）」标签外还必须配一句解释（见下）——只翻译不解释等于没改
+ * （#167 明确点名这一条）。
+ */
+export const CREDENTIAL_SLOT_LABEL = '凭据槽（Credential Slot）' as const
+
+/**
+ * 凭据槽的解释（表单 field-hint 与详情侧列共用）。
+ *
+ * 措辞按实现事实写（apps/node/src/secret/store.ts 的 resolve/configuredSlots）：
+ * 槽名由**运行该 Agent 的设备所有者**在本机配置（`WHALEPOD_DSH_SECRET_<PROVIDER>_<SLOT>`
+ * 环境变量或本地密钥文件），Node 按 provider + slot 两个键取值，取不到直接报
+ * `credential not configured`；Hub 只知道「叫什么、配没配」，永远拿不到明文。
+ * 所以这里不能写成「团队服务器上的密钥」。默认值 `default` 与两份表单的
+ * DEFAULT_VALUES / initialValues 一致。
+ */
+export const CREDENTIAL_SLOT_HINT =
+  '凭据槽是设备所有者在本机给 API 密钥起的名字（默认 default）：运行这个 Agent 的成员要在自己设备上用同一个名字配好密钥，团队服务器只知道名字、拿不到明文。' as const
+
+/**
  * 短 id（8 字符）。#152 起**不再用于呈现人名**：成员名录（features/team/
  * memberDirectory）解析不出人时给「未知成员」，不拿半截 UUID 冒充姓名。
  * 仍用于 git sha / digest 等非人名场景。
