@@ -1,7 +1,7 @@
 {
-  "//": "Vendored DSH client UI 来源台账（#138 L1+L2 首批切片）。改动 vendored 文件前先读 README.md；新增文件必须在此登记。",
-  "coverage": "口径：components[] 逐个登记全部源码与样式文件（.ts/.tsx/.module.css），meta[] 登记元文件（README.md/LICENSE/manifest.json 自身）；两者并集 = 本目录全部文件，逐个可核对（Q0 单测 apps/web/tests/vendor-dsh-ui.spec.tsx 按此口径断言）。所有文件顶部统一加出处注释（上游路径 + commit SHA + 本仓改动），改动按「①工程口径」与「②功能性改动」分类写明（②如 Tag.tsx/StateDot.tsx 的可测性锚点，同步上游时必须保留）；components[] 的 adaptations 只列代码/样式层面的实际改动。",
-  "tokenScope": "样式变量：--dsw-* 走 L1 白名单（apps/web/src/styles/dsw-tokens.css）。已知例外（只有 DisclosureRow.module.css）：上游 body 发布的 --dsh-content-font-size-secondary 与 --dsh-content-font-delta，每处引用都带 fallback（13px / 0px），L1 不提供也能正确降级。另有 StateDot.module.css 文件内自定义、自给自用的局部变量 --dsh-state-ongoing（不构成外部依赖）。除此之外 vendored CSS 不引用任何非 --dsw-* 变量，也不引用本仓 --color-*。",
+  "//": "Vendored DSH client UI 来源台账（#138 L1 + L2 首批与第二批）。改动 vendored 文件前先读 README.md；新增文件必须在此登记。",
+  "coverage": "口径：components[] 逐个登记全部源码与样式文件（.ts/.tsx/.module.css），meta[] 登记元文件（README.md/LICENSE/manifest.json 自身）；两者并集 = 本目录全部文件，逐个可核对（Q0 单测 apps/web/tests/vendor-dsh-ui.spec.tsx 按此口径断言）。现况（#138 L2 第二批落地后实测）：components[] 24 + meta[] 3 = 27 = 目录实有 27。所有文件顶部统一加出处注释（上游路径 + commit SHA + 本仓改动），改动按「①工程口径」与「②功能性改动」分类写明（②如 Tag.tsx/StateDot.tsx/Input.tsx/Menu.tsx/ConnectionIndicator.tsx 的可测性锚点，同步上游时必须保留）；components[] 的 adaptations 只列代码/样式层面的实际改动。",
+  "tokenScope": "样式变量：--dsw-* 走 L1 白名单（apps/web/src/styles/dsw-tokens.css）。已知例外共四个，性质分两类：①被**读取**的（DisclosureRow.module.css 的 --dsh-content-font-size-secondary 与 --dsh-content-font-delta，每处引用带 fallback：13px / 0px，L1 不提供也能正确降级）；②被**赋值/重绑**的（Menu.module.css 的 --dsh-scrollbar-thumb 与 --dsh-scrollbar-thumb-hover，#138 L2 第二批新增；Menu 在浮层面板上把它们从 l1 指向 l2，Menu 自己不读——消费方是上游 scrollbar.css，本仓未取该样式，故这两条声明当前不生效也不报错）。另有 StateDot.module.css 文件内自定义、自给自用的局部变量 --dsh-state-ongoing（不构成外部依赖）。除此之外 vendored CSS 不引用任何非 --dsw-* 变量，也不引用本仓 --color-*。",
   "upstream": {
     "repository": "github.com/deepseek-ai/deepseek-harness",
     "ref": "master",
@@ -14,12 +14,12 @@
     "retrieval": "gh api -H 'Accept: application/vnd.github.raw' repos/deepseek-ai/deepseek-harness/contents/<path>?ref=<commit>"
   },
   "scope": {
-    "layers": ["L1 主题 token（--dsw-* 白名单子集）", "L2 原语组件（6 个）"],
+    "layers": ["L1 主题 token（--dsw-* 白名单子集）", "L2 原语组件（10 个）"],
     "excluded": [
       "L3 运行视图（后续切片）",
       "DSH 应用壳与 RPC（永久不取）",
       "packages/client/ui-* 其余 42 个包",
-      "上游 icons/index.tsx 除 IconChevronDownOutline14 外的全部图标",
+      "上游 icons/index.tsx 除 IconChevronDownOutline14/IconCheckOutline16/IconCloseOutline16/IconWarningOutline16 四个符号外的全部图标",
       "上游品牌资产 FishLogo.tsx 与 BrandWordmark.tsx（未取用，逐资产过审后才能取）"
     ]
   },
@@ -97,14 +97,79 @@
       "adaptations": []
     },
     {
+      "local": "apps/web/src/vendor/dsh-ui/Input.tsx",
+      "upstream": "packages/client/ui-primitives/src/Input.tsx",
+      "adaptations": [
+        "clsx → ./cx.js",
+        "import 后缀 .tsx → .js",
+        "wrapper span 新增 data-vendored=input 与可覆写的 data-testid 测试锚点（属性，非视觉；原生 input 的属性一个未动）"
+      ]
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/Input.module.css",
+      "upstream": "packages/client/ui-primitives/src/Input.module.css",
+      "adaptations": []
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/Menu.tsx",
+      "upstream": "packages/client/ui-primitives/src/Menu.tsx",
+      "adaptations": [
+        "clsx → ./cx.js（6 处调用）",
+        "check 图标从 ./icons/index.tsx 改指 ./icons.js（只 vendored 该符号）",
+        "usePointerGrace 从 ./pointer-grace.ts 改指 ./pointer-grace.js（同目录已一并 vendored）",
+        "import 后缀 .tsx/.ts → .js",
+        "wrapper span 新增 data-vendored=menu 与可覆写的 data-testid 测试锚点（属性，非视觉）"
+      ]
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/Menu.module.css",
+      "upstream": "packages/client/ui-primitives/src/Menu.module.css",
+      "adaptations": []
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/ConnectionIndicator.tsx",
+      "upstream": "packages/client/ui-primitives/src/ConnectionIndicator.tsx",
+      "adaptations": [
+        "两个图标从 ./icons/index.tsx 改指 ./icons.js（只 vendored 用到的符号）",
+        "import 后缀 .tsx → .js",
+        "两个渲染分支都新增 data-vendored=connection-indicator 与可覆写的 data-testid 测试锚点（属性，非视觉）",
+        "上游本文件不 import clsx（实测零命中），故无 clsx → cx 这处改动"
+      ]
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/ConnectionIndicator.module.css",
+      "upstream": "packages/client/ui-primitives/src/ConnectionIndicator.module.css",
+      "adaptations": []
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/Modal.tsx",
+      "upstream": "packages/client/ui-primitives/src/Modal.tsx",
+      "adaptations": [
+        "clsx → ./cx.js",
+        "close 图标从 ./icons/index.tsx 改指 ./icons.js（只 vendored 该符号）",
+        "import 后缀 .tsx → .js",
+        "新增可选属性 data-testid（给了才落到 role=dialog 卡片上，没给不上屏，既有渲染不变）"
+      ]
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/Modal.module.css",
+      "upstream": "packages/client/ui-primitives/src/Modal.module.css",
+      "adaptations": []
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/pointer-grace.ts",
+      "upstream": "packages/client/ui-primitives/src/pointer-grace.ts",
+      "adaptations": ["仅加出处头块；代码与上游逐字节一致（Menu 的同目录运行时依赖）"]
+    },
+    {
       "local": "apps/web/src/vendor/dsh-ui/icons.tsx",
-      "upstream": "packages/client/ui-primitives/src/icons/props.ts + packages/client/ui-primitives/src/icons/index.tsx（仅 IconChevronDownOutline14 符号，路径数据逐字节照抄）",
+      "upstream": "packages/client/ui-primitives/src/icons/props.ts + packages/client/ui-primitives/src/icons/index.tsx（仅 IconChevronDownOutline14、IconCheckOutline16、IconCloseOutline16、IconWarningOutline16 四个符号，路径数据逐字节照抄）",
       "adaptations": ["两个上游文件合并为一个文件；其余图标不 vendored"]
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/index.ts",
       "upstream": "packages/client/ui-primitives/src/index.ts",
-      "adaptations": ["只保留 6 个原语与其类型的导出（上游 ui-primitives/src 顶层有 29 个 .tsx / 桶文件导出 30 个原语；43 是 packages/client/ui-* 的包数，别混）"]
+      "adaptations": ["只保留 10 个已 vendored 原语与其类型的导出（首批 6 + 第二批 4，另导出 pointer-grace 的 hook 与常量）；上游 ui-primitives/src 顶层有 29 个 .tsx / 桶文件导出 30 个原语；43 是 packages/client/ui-* 的包数，别混"]
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/cx.ts",
@@ -132,11 +197,12 @@
   "tokens": [
     {
       "local": "apps/web/src/styles/dsw-tokens.css",
-      "upstream": "packages/client/ui-theme/src/styles/design-platform.css（--dsw-* 白名单子集；base.css 只用于确认 data-ds-dark-theme 切换语义）",
+      "upstream": "packages/client/ui-theme/src/styles/design-platform.css（--dsw-* 白名单子集；base.css 只用于确认 data-ds-dark-theme 切换语义）+ packages/client/ui-theme/src/styles/gradient-shadow-text.css（#138 L2 第二批新增：elevation 三件套与遮罩模糊四个变量）",
       "adaptations": [
-        "只取上述 6 个组件 CSS 真正引用的 23 个变量（上游静态色阶 73 个中只保留 --dsw-static-deepseek-450）",
-        "静态色阶引用就地展开为 rgb() 字面量，alias→alias 的间接保留",
-        "浅色 :root / 深色 body[data-ds-dark-theme]，与上游选择器语义一致"
+        "只取 vendored 组件 CSS 真正引用的变量：首批 23 个 + 第二批新增 15 个 = 两批并集 38 个（另有 elevation 派生依赖 --dsw-elevation-stroke / --dsw-elevation-stroke-color 与 --dsw-mask-blur，一并取自 gradient-shadow-text.css）",
+        "静态色阶只保留被引用变量真正需要的 17 个 --dsw-static-*；其余静态档不抄",
+        "别名间接按上游保留（能吃 alias 的不落到静态字面量）；注意两批的静态色阶写法不一致，待归一，见 dsw-tokens.css 文件头",
+        "浅色 :root / 深色 body[data-ds-dark-theme]；elevation 段挂在 `body, body *`（与上游选择器同形，为保住 --dsw-elevation-stroke-color 的重绑语义）"
       ]
     }
   ]

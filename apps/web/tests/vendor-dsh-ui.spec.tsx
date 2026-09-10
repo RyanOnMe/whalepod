@@ -1,20 +1,23 @@
 /**
  * #138 L1+L2：vendored DSH 原语（apps/web/src/vendor/dsh-ui）的行为契约与真实接线。
  *
- * 三块：
- * A. 六个原语各自的语义契约——role / aria / data-* 钩子 + 受控回调，逐个最小用例。
+ * 四块：
+ * A. 十个原语各自的语义契约——role / aria / data-* 钩子 + 受控回调，逐个最小用例
+ *    （首批 6 个 + #138 L2 第二批 4 个：Input / Menu / ConnectionIndicator / Modal）。
  *    断言的是读屏与键盘能看到的表面，**不锚 hash 类名**（vitest 默认不处理 CSS，
  *    类名在测试里没有意义，锚它只会得到一条假绿）。
  * B. 真实界面接线：/devices 的设备状态改用 vendored StateDot + Tag 渲染，文案仍是
  *    「在线/离线/已撤销」（#142 的用例按文本断言，这里同时钉住 data-state/data-tone）。
- * C. vendored 子树的静态纪律：零 @deepseek-ai/*、零第三方 import（react 除外）、
- *    每个文件带出处注释、引用的 --dsw-* 变量在 L1 白名单里有定义（两个 --dsh-* 例外
+ * C. vendored 子树的静态纪律：零 @deepseek-ai/*、零第三方 import（react / react-dom 除外）、
+ *    每个文件带出处注释、引用的 --dsw-* 变量在 L1 白名单里有定义（四个 --dsh-* 例外
  *    列明且必须带 fallback）、manifest.json 覆盖口径。
  * D. 设备状态配色的 WCAG 2.1 AA 门（审查回归）：三个状态的文字/色块对比度实测复算。
  *
  * 没验的（如实说明）：①间距/深色一套的视觉（vitest 不处理 CSS，要真实浏览器才谈得上；
  * 颜色本身在 D 里按 CSS 文本算过，e2e 另按浏览器实测值再算一遍）；②与上游的逐像素一致性；
- * ③L3 运行视图（不在本切片）。
+ * ③L3 运行视图（不在本切片）；④第二批新增原语**在本仓页面上的真实接线**——本切片是
+ * pure additive vendoring，一个页面都没改（页面迁移由主协调者另行安排），所以第二批
+ * 四个原语只有原语级用例，没有像 B 那样的真实界面用例。
  */
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -32,7 +35,19 @@ import {
   readToneTintPercent,
   round2,
 } from './contrast.js'
-import { Button, DisclosureRow, Pill, StateDot, Switch, Tag } from '../src/vendor/dsh-ui/index.js'
+import {
+  Button,
+  ConnectionIndicator,
+  DisclosureRow,
+  Input,
+  Menu,
+  Modal,
+  Pill,
+  StateDot,
+  Switch,
+  Tag,
+  cx,
+} from '../src/vendor/dsh-ui/index.js'
 
 // 用 import.meta.dirname（纯路径字符串）而不是 import.meta.url + fileURLToPath：
 // 在 vitest 的 jsdom 环境里，collect 阶段 new URL(...) 拿到的是 jsdom 的 URL 实例，
@@ -292,6 +307,397 @@ describe('DisclosureRow（L2 原语）', () => {
   })
 })
 
+describe('Input（L2 原语，#138 第二批）', () => {
+  it('包装成 wrapper span + 原生 input：属性透传、可访问名走 label、根带稳定锚', () => {
+    renderUi(<Input aria-label="搜索设备" placeholder="搜索" data-testid="search" />)
+    // 锚在 wrapper 上（本仓新增），原生 input 的属性一个未改，所以按 role 取输入框。
+    const wrap = screen.getByTestId('search')
+    expect(wrap.tagName.toLowerCase()).toBe('span')
+    expect(wrap).toHaveAttribute('data-vendored', 'input')
+    const field = within(wrap).getByRole('textbox', { name: '搜索设备' })
+    expect(field).toHaveAttribute('placeholder', '搜索')
+    expect(field.tagName.toLowerCase()).toBe('input')
+  })
+
+  it('受控输入：onChange 收到键入值；disabled / type 等原生属性照样透传', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    renderUi(<Input aria-label="搜索设备" value="" onChange={onChange} />)
+    const field = screen.getByRole('textbox', { name: '搜索设备' })
+    await user.type(field, 'm4')
+    // 受控（value 恒为 ''）：onChange 逐字符上报，输入框内容不自己变。
+    expect(onChange).toHaveBeenCalledTimes(2)
+    expect(field).toHaveValue('')
+  })
+
+  it('icon 只在给了的时候渲染前置节点；不给时 wrapper 里只有 input', () => {
+    const { unmount } = renderUi(<Input aria-label="搜索" icon={<svg data-testid="leading" />} />)
+    expect(screen.getByTestId('leading')).toBeInTheDocument()
+    unmount()
+
+    renderUi(<Input aria-label="搜索" data-testid="bare" />)
+    const wrap = screen.getByTestId('bare')
+    expect(wrap.querySelectorAll('svg')).toHaveLength(0)
+    expect(wrap.querySelectorAll('input')).toHaveLength(1)
+  })
+})
+
+describe('Menu（L2 原语，#138 第二批）', () => {
+  const ITEMS = [
+    { id: 'rename', label: '重命名' },
+    { type: 'separator' as const, id: 'sep' },
+    { type: 'label' as const, id: 'grp', text: '危险操作' },
+    { id: 'remove', label: '移除设备', danger: true },
+    { id: 'locked', label: '转移所有权', disabled: true },
+  ]
+
+  it('open=false 时只有锚点、没有 menu 角色（受控：Menu 自己不写 open）', () => {
+    renderUi(
+      <Menu
+        open={false}
+        anchor={<button type="button">设备操作</button>}
+        items={ITEMS}
+        onSelect={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    expect(screen.getByRole('button', { name: '设备操作' })).toBeVisible()
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.querySelector('[data-vendored="menu"]')).not.toBeNull()
+  })
+
+  it('展开后逐项渲染：普通项/分隔线/标题行各按角色上屏，点击普通项回调 id', async () => {
+    const user = userEvent.setup()
+    const onSelect = vi.fn()
+    renderUi(
+      <Menu
+        open
+        anchor={<button type="button">设备操作</button>}
+        items={ITEMS}
+        onSelect={onSelect}
+        onClose={() => {}}
+      />,
+    )
+    const menu = screen.getByRole('menu')
+    // 5 个 entry → 3 个 menuitem：分隔线是 role=separator、标题行是 role=presentation，
+    // 都不占 menuitem（disabled 的「转移所有权」**仍算** menuitem——它是 disabled 而不是
+    // 不渲染，这里钉住"那一行确实在 DOM 里且带 disabled"，免得把渲染丢了当成语义正确）。
+    expect(within(menu).getAllByRole('menuitem')).toHaveLength(3)
+    expect(menu.querySelectorAll('[role="menuitem"]')).toHaveLength(3)
+    expect(within(menu).getByRole('separator')).toBeInTheDocument()
+    expect(within(menu).getByText('危险操作')).toBeInTheDocument()
+    expect(within(menu).getByRole('menuitem', { name: '转移所有权' })).toBeDisabled()
+    await user.click(within(menu).getByRole('menuitem', { name: '重命名' }))
+    expect(onSelect).toHaveBeenCalledWith('rename')
+  })
+
+  it('disabled 项点不动（不上报 onSelect）', async () => {
+    const user = userEvent.setup()
+    const onSelect = vi.fn()
+    renderUi(
+      <Menu
+        open
+        anchor={<button type="button">设备操作</button>}
+        items={ITEMS}
+        onSelect={onSelect}
+        onClose={() => {}}
+      />,
+    )
+    const locked = screen.getByRole('menuitem', { name: '转移所有权' })
+    expect(locked).toBeDisabled()
+    await user.click(locked)
+    expect(onSelect).not.toHaveBeenCalled()
+  })
+
+  it('selectedId / selectedIds 决定哪一行被标记为选中（trailing check）', () => {
+    const { unmount } = renderUi(
+      <Menu
+        open
+        anchor={<button type="button">设备操作</button>}
+        items={ITEMS}
+        selectedId="rename"
+        onSelect={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    // check 是 SVG 图标：选中行有、未选中行没有（这是「选中态真的画出来了」的机器证据）。
+    const selectedRow = screen.getByRole('menuitem', { name: '重命名' })
+    expect(selectedRow.querySelectorAll('svg')).toHaveLength(1)
+    expect(screen.getByRole('menuitem', { name: '移除设备' }).querySelectorAll('svg')).toHaveLength(
+      0,
+    )
+    unmount()
+
+    renderUi(
+      <Menu
+        open
+        anchor={<button type="button">设备操作</button>}
+        items={ITEMS}
+        selectedIds={['remove']}
+        onSelect={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    expect(screen.getByRole('menuitem', { name: '移除设备' }).querySelectorAll('svg')).toHaveLength(
+      1,
+    )
+  })
+
+  it('Escape 走 onClose；document 上的外部 pointerdown 也走 onClose', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    renderUi(
+      <Menu
+        open
+        anchor={<button type="button">设备操作</button>}
+        items={ITEMS}
+        onSelect={() => {}}
+        onClose={onClose}
+      />,
+    )
+    await user.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledTimes(1)
+
+    // 菜单内部点击不得触发关闭（列表根上有 stopPropagation 就是为了这类冒泡）。
+    await user.click(screen.getByRole('menuitem', { name: '重命名' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+
+    // 外部点击关闭。
+    fireEvent.pointerDown(document.body)
+    expect(onClose).toHaveBeenCalledTimes(2)
+  })
+
+  it('closeOnPointerLeave=false（默认）时指针离开不关；开了才按 grace 关', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    const { unmount } = renderUi(
+      <Menu
+        open
+        anchor={<button type="button">设备操作</button>}
+        items={ITEMS}
+        onSelect={() => {}}
+        onClose={onClose}
+      />,
+    )
+    fireEvent.pointerLeave(document.querySelector('[data-vendored="menu"]') as Element)
+    // 默认不关：菜单不会因为指针经过就消失。
+    expect(onClose).not.toHaveBeenCalled()
+    unmount()
+
+    vi.useFakeTimers()
+    try {
+      const onCloseTimed = vi.fn()
+      renderUi(
+        <Menu
+          open
+          closeOnPointerLeave
+          anchor={<button type="button">设备操作</button>}
+          items={ITEMS}
+          onSelect={() => {}}
+          onClose={onCloseTimed}
+        />,
+      )
+      fireEvent.pointerLeave(document.querySelector('[data-vendored="menu"]') as Element)
+      expect(onCloseTimed).not.toHaveBeenCalled() // grace 未到，先不关
+      vi.advanceTimersByTime(200) // POINTER_GRACE_MS
+      expect(onCloseTimed).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+    void user
+  })
+
+  it('portal=false 时列表留在锚点 wrapper 内；portal=true 时挂到 document.body（React 树仍在 Menu 下）', () => {
+    const { container, unmount } = renderUi(
+      <Menu
+        open
+        anchor={<button type="button">设备操作</button>}
+        items={ITEMS}
+        onSelect={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    // 非 portal：列表就在组件自己的 DOM 子树里，within(container) 找得到。
+    expect(within(container as HTMLElement).getByRole('menu')).toBeInTheDocument()
+    unmount()
+
+    const second = renderUi(
+      <Menu
+        open
+        portal
+        getAnchorRect={() => new DOMRect(10, 10, 100, 32)}
+        anchor={<button type="button">设备操作</button>}
+        items={ITEMS}
+        onSelect={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    const menu = screen.getByRole('menu')
+    // portal：DOM 上挂到 body 直下，调用方的容器里找不到——这正是页面迁移要注意的点。
+    expect(second.container.contains(menu)).toBe(false)
+    expect(menu.closest('body')).toBe(document.body)
+  })
+})
+
+describe('ConnectionIndicator（L2 原语，#138 第二批）', () => {
+  const LABELS = {
+    disconnectedLabel: '连接已断开',
+    reconnectLabel: '重新连接',
+    connectingLabel: '正在重连',
+    recoveredLabel: '连接已恢复',
+    reconnectActionLabel: '重新连接设备',
+    restartActionLabel: '重新开始重连',
+    onReconnect: () => {},
+  }
+
+  it('state=undefined 时不渲染任何东西（没有连接反馈就不占位）', () => {
+    const view = renderUi(<ConnectionIndicator state={undefined} {...LABELS} />)
+    expect(view.container).toBeEmptyDOMElement()
+  })
+
+  it('disconnected 是按钮：可访问名走 reconnectActionLabel，点击上抛 onReconnect，data-phase 暴露状态', async () => {
+    const user = userEvent.setup()
+    const onReconnect = vi.fn()
+    renderUi(<ConnectionIndicator state="disconnected" {...LABELS} onReconnect={onReconnect} />)
+    const control = screen.getByRole('button', { name: '重新连接设备' })
+    expect(control).toHaveAttribute('data-phase', 'disconnected')
+    expect(control).toHaveAttribute('data-vendored', 'connection-indicator')
+    // 可见文案是断线话术（hover 时才换成「重新连接」）。
+    expect(control).toHaveTextContent('连接已断开')
+    await user.click(control)
+    expect(onReconnect).toHaveBeenCalledTimes(1)
+  })
+
+  it('connecting 换话术与可访问名（restartActionLabel），并渲染三点动画', () => {
+    renderUi(<ConnectionIndicator state="connecting" {...LABELS} />)
+    const control = screen.getByRole('button', { name: '重新开始重连' })
+    expect(control).toHaveAttribute('data-phase', 'connecting')
+    expect(control).toHaveTextContent('正在重连')
+    // 三点：一个静态 + 两个错相动画点（第二/三个点各带自己的类）。
+    const dots = control.querySelectorAll('span > span')
+    expect(dots.length).toBeGreaterThanOrEqual(4) // sizeLabel 里的 '...' 与动画点都在
+  })
+
+  it('recovered 不是按钮而是 role=status 的只读提示（aria-label 即恢复话术）', () => {
+    const view = renderUi(<ConnectionIndicator state="recovered" {...LABELS} data-testid="conn" />)
+    const status = screen.getByRole('status')
+    expect(status).toHaveAttribute('aria-label', '连接已恢复')
+    expect(status).toHaveAttribute('data-vendored', 'connection-indicator')
+    expect(status).toHaveAttribute('data-testid', 'conn')
+    expect(status).toHaveTextContent('连接已恢复')
+    // 恢复态不该留下重连入口。
+    expect(view.container.querySelectorAll('button')).toHaveLength(0)
+  })
+})
+
+describe('Modal（L2 原语，#138 第二批）', () => {
+  it('open=false 时渲染 null', () => {
+    const view = renderUi(
+      <Modal open={false} onClose={() => {}} title="移除设备" closeLabel="关闭">
+        <p>正文</p>
+      </Modal>,
+    )
+    expect(view.container).toBeEmptyDOMElement()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('open=true：portal 到 body、role=dialog + aria-modal + aria-label、标题/描述/正文/页脚都上屏', () => {
+    const view = renderUi(
+      <Modal
+        open
+        onClose={() => {}}
+        title="移除设备"
+        description="该设备将无法再连接。"
+        closeLabel="关闭"
+        data-testid="confirm"
+        footer={<button type="button">确认移除</button>}
+      >
+        <p>正文段落</p>
+      </Modal>,
+    )
+    const dialog = screen.getByRole('dialog', { name: '移除设备' })
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    expect(dialog).toHaveAttribute('data-testid', 'confirm')
+    // portal：不在调用方容器里（页面迁移时 within(container) 找不到它）。
+    expect(view.container.contains(dialog)).toBe(false)
+    expect(screen.getByText('该设备将无法再连接。')).toBeVisible()
+    expect(screen.getByText('正文段落')).toBeVisible()
+    expect(screen.getByRole('button', { name: '确认移除' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '关闭' })).toBeVisible()
+  })
+
+  it('ESC 触发 onClose；关闭按钮点击也触发 onClose', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    renderUi(
+      <Modal open onClose={onClose} title="移除设备" closeLabel="关闭">
+        <p>正文</p>
+      </Modal>,
+    )
+    await user.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('button', { name: '关闭' }))
+    expect(onClose).toHaveBeenCalledTimes(2)
+  })
+
+  it('点 mask 关闭；点卡片内部不关闭（mask 是独立兄弟节点，不是 dialog 本体）', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    renderUi(
+      <Modal open onClose={onClose} title="移除设备" closeLabel="关闭" data-testid="card">
+        <p>正文段落</p>
+      </Modal>,
+    )
+    await user.click(screen.getByText('正文段落'))
+    expect(onClose).not.toHaveBeenCalled()
+    // mask 是 dialog 的前一个兄弟节点，且 aria-hidden（读屏不参与，只能按结构取）。
+    const dialog = screen.getByTestId('card')
+    const mask = dialog.previousElementSibling
+    expect(mask).not.toBeNull()
+    expect(mask).toHaveAttribute('aria-hidden', 'true')
+    await user.click(mask as Element)
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('open=false 时不留 ESC 监听：关闭后按 ESC 不再回调', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    const { rerender } = renderUi(
+      <Modal open onClose={onClose} title="移除设备" closeLabel="关闭">
+        <p>正文</p>
+      </Modal>,
+    )
+    rerender(
+      <Modal open={false} onClose={onClose} title="移除设备" closeLabel="关闭">
+        <p>正文</p>
+      </Modal>,
+    )
+    await user.keyboard('{Escape}')
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('headless：只渲染 children，不带默认头/关闭按钮，但 mask 与 aria-label 仍在', () => {
+    renderUi(
+      <Modal open headless onClose={() => {}} title="移除设备">
+        <p>自绘内容</p>
+      </Modal>,
+    )
+    const dialog = screen.getByRole('dialog', { name: '移除设备' })
+    expect(within(dialog).getByText('自绘内容')).toBeVisible()
+    // headless 模式不提供 closeLabel（上游类型上互斥），故没有关闭按钮。
+    expect(within(dialog).queryByRole('button')).toBeNull()
+    expect(within(dialog).queryByRole('heading')).toBeNull()
+  })
+})
+
+describe('cx（本仓新增，非上游代码）', () => {
+  it('跳过 falsy、保留顺序；对象入参按真值拼键名（第二批为 ConnectionIndicator 扩展）', () => {
+    expect(cx('a', false, null, undefined, '', 'b')).toBe('a b')
+    expect(cx({ a: true, b: false, c: null, d: undefined })).toBe('a')
+    expect(cx('base', { mod: true }, { off: false })).toBe('base mod')
+  })
+})
+
 describe('设备页状态改用 vendored StateDot + Tag（#138 交付物 3）', () => {
   it('三种状态：文案不变（在线/离线/已撤销），色块 state 与色调 tone 成对', async () => {
     renderApp(
@@ -337,19 +743,28 @@ describe('设备页状态改用 vendored StateDot + Tag（#138 交付物 3）', 
  * 透明、偷偷 import 上游包就绕过边界门），所以用测试守，而不是靠 review 记得。
  */
 describe('vendored 子树纪律（#138）', () => {
-  it('至少 vendored 了约定的 6 个组件与 L1 token 白名单', () => {
-    expect(sourceFiles.length).toBeGreaterThanOrEqual(7)
+  it('至少 vendored 了约定的 10 个组件（首批 6 + 第二批 4）与 L1 token 白名单', () => {
+    expect(sourceFiles.length).toBeGreaterThanOrEqual(11)
     expect(cssFiles.sort()).toEqual([
       'Button.module.css',
+      'ConnectionIndicator.module.css',
       'DisclosureRow.module.css',
+      'Input.module.css',
+      'Menu.module.css',
+      'Modal.module.css',
       'Pill.module.css',
       'StateDot.module.css',
       'Switch.module.css',
       'Tag.module.css',
     ])
+    // 第二批的四个原语每个都必须同时有 .tsx 与 .module.css（只有一半不算取全）。
+    for (const name of ['Input', 'Menu', 'ConnectionIndicator', 'Modal']) {
+      expect(sourceFiles, `${name}.tsx 缺失`).toContain(`${name}.tsx`)
+      expect(cssFiles, `${name}.module.css 缺失`).toContain(`${name}.module.css`)
+    }
   })
 
-  it('零 @deepseek-ai/*、零 @whalepod/*、零第三方 import（只准 react 与相对路径）', () => {
+  it('零 @deepseek-ai/*、零 @whalepod/*、零第三方 import（只准 react / react-dom 与相对路径）', () => {
     for (const file of sourceFiles) {
       const text = readFileSync(join(vendorDir, file), 'utf8')
       // 出处注释里写的是裸路径 deepseek-ai/deepseek-harness（无 @ 前缀），不会误伤；
@@ -365,7 +780,12 @@ describe('vendored 子树纪律（#138）', () => {
           expect(specifier.startsWith('../'), `${file} 不得引用子树外的 ${specifier}`).toBe(false)
           continue
         }
-        expect(specifier, `${file} 只允许 import react`).toBe('react')
+        // react-dom 是第二批放行的：Modal 与 Menu 用 createPortal 把浮层挂到 document.body,
+        // 这是上游行为，本仓未改（见 vendor/dsh-ui/README.md 的依赖纪律）。
+        expect(
+          ['react', 'react-dom'].includes(specifier),
+          `${file} 只允许 import react / react-dom，实见 ${specifier}`,
+        ).toBe(true)
       }
     }
   })
@@ -441,16 +861,29 @@ describe('vendored 子树纪律（#138）', () => {
       expect(tokensCss, `L1 白名单缺定义：${name}`).toContain(`${name}:`)
     }
 
-    // 已知例外（不是漏洞，是上游 body 发布的 content 轴，且每处都带 fallback）：
-    // 只有 DisclosureRow.module.css 引用这两个 --dsh-* 变量。清单一旦变化就得改注释
-    // 与 README/manifest 的措辞，所以在这里钉死。
+    // 已知例外（不是漏洞，是上游 body 发布的 content / scrollbar 轴，且每处都带 fallback）：
+    // 精确清单 = DisclosureRow 的两个 content 轴变量（#138 首批）+ Menu 的两个 scrollbar
+    // 轴变量（#138 L2 第二批）。清单一旦变化就得改注释与 README/manifest 的措辞，
+    // 所以在这里钉死。
+    //
+    // 注意这两类例外的**性质不同**，别混为一谈（实测区分）：
+    //   - content 轴两个是**被 var() 读取**的（DisclosureRow），所以"必须带 fallback"
+    //     这条纪律对它们成立，下面的循环就是在验这件事；
+    //   - scrollbar 轴两个是 Menu 在浮层面板上**赋值/重绑**的（`--dsh-scrollbar-thumb: …`），
+    //     Menu 自己没有读取它们——上游的读取方是 scrollbar.css 的 body 与 ::-webkit-scrollbar
+    //     规则，本仓没取那份样式。所以本仓现状是：这两条声明**被声明但无人消费**，
+    //     既不生效也不报错；将来接全站滚动条皮肤时它们才会开始起作用。
     const consumedDshVars = new Set(
       [...vendorCss.matchAll(/var\((--dsh-[a-z0-9-]+)/g)].map((m) => m[1] ?? ''),
     )
+    // 定义判定按**声明起始位置**锚定（前置必须是 { ; 或行首，后置必须是冒号）：
+    // 裸查 `(--dsh-x)\s*:` 会把 `--dsh-scrollbar-thumb-hover:` 也当成
+    // `--dsh-scrollbar-thumb` 的定义——正则回溯能用 "thum" + "-hover:" 满足模式，
+    // 这是子串匹配的经典坑，本切片实测踩过，故按锚定写法。
     const locallyDefined = new Set(
-      [...vendorCss.matchAll(/(--dsh-[a-z0-9-]+)\s*:/g)].map((m) => m[1] ?? ''),
+      [...vendorCss.matchAll(/(?:^|[;{\s])(--dsh-[a-z0-9-]+)\s*:/gm)].map((m) => m[1] ?? ''),
     )
-    // 外部依赖 = 引用了但本子树没有定义的 --dsh-*。
+    // 外部依赖 = 被 var() 读取、但本子树没有定义的 --dsh-*（= 真的会走 fallback 的那些）。
     const external = [...consumedDshVars].filter((name) => !locallyDefined.has(name)).sort()
     expect(external, '--dsh-* 外部依赖清单变了，必须同步注释/README/manifest').toEqual([
       '--dsh-content-font-delta',
@@ -464,7 +897,16 @@ describe('vendored 子树纪律（#138）', () => {
     }
     // 子树内部自给的局部变量（定义+使用都在同一文件）不构成外部依赖，但也要在册，
     // 免得以后多出一个没人知道来源的变量。
-    expect([...locallyDefined].sort()).toEqual(['--dsh-state-ongoing'])
+    expect([...locallyDefined].sort()).toEqual([
+      '--dsh-scrollbar-thumb',
+      '--dsh-scrollbar-thumb-hover',
+      '--dsh-state-ongoing',
+    ])
+    // 其中只有 --dsh-state-ongoing 是"自给自用"（同一文件里既定义又 var() 读取）；
+    // 两个 scrollbar 变量是"声明了但本子树无人读取"（消费者是没被取用的 scrollbar.css），
+    // 这一条把两者的区别钉住，免得将来有人把 scrollbar 那两条当成"已接通"。
+    const selfContained = [...consumedDshVars].filter((name) => locallyDefined.has(name)).sort()
+    expect(selfContained).toEqual(['--dsh-state-ongoing'])
 
     const globalCss = readFileSync(join(repoRoot, 'apps/web/src/styles/global.css'), 'utf8')
     const prototypeAt = globalCss.indexOf("@import './tokens.css'")
@@ -473,6 +915,131 @@ describe('vendored 子树纪律（#138）', () => {
     expect(dswAt).toBeGreaterThan(prototypeAt)
     // 源码 import 顺序不是产物序保证——注释里必须写明这点（实测产物序见 global.css）。
     expect(globalCss).toContain('这不是产物序')
+  })
+})
+
+/**
+ * #138 L2 第二批对 L1（apps/web/src/styles/dsw-tokens.css）的增量。
+ *
+ * 这里守的不是「有没有那个变量」，而是**取值仍与上游逐字一致**与**别名间接没被压平**——
+ * 这两件事坏掉都不会报错：值改了一个数字只是颜色微变（没人看得出来），
+ * 别名被压平成字面量则会让「改一个静态档、所有引用它的语义一起动」这条链断掉。
+ */
+describe('L1 token 第二批增量（#138）', () => {
+  const tokensCss = readFileSync(join(repoRoot, 'apps/web/src/styles/dsw-tokens.css'), 'utf8')
+
+  /** 从 dsw-tokens.css 里取某变量的声明值（同 readTokenValue，但明确只吃 L1 文件）。 */
+  const decl = (name: string): string => readTokenValue(tokensCss, name)
+
+  it('上游取值逐字照抄：四个高风险的 alias/静态档不能被"顺手改好看"', () => {
+    // warn-label 与 warn-primary 是两个不同档位——上游如此，合并成一个就是 bug。
+    // 注意两者在本文件里的**写法不同**：warn-label 是第二批新增、保留 alias 间接；
+    // warn-primary 是首批就有的、按首批口径就地展开了字面量（两批写法不一致，见文件头）。
+    expect(decl('--dsw-alias-state-warn-label')).toBe('var(--dsw-static-amber-600)')
+    expect(decl('--dsw-alias-state-warn-primary')).toBe('rgb(245, 158, 11)')
+    expect(decl('--dsw-static-amber-600')).toBe('rgb(221, 134, 41)')
+    expect(decl('--dsw-static-amber-500')).toBe('rgb(245, 158, 11)')
+    // 两个档位确实是不同颜色——这条是上面"别合并"的机器证据。
+    expect(decl('--dsw-static-amber-600')).not.toBe(decl('--dsw-static-amber-500'))
+    // label-dimmed 走偏蓝的 neutral-bluish 档，不是中性灰 neutral-*。
+    expect(decl('--dsw-alias-label-dimmed')).toBe('var(--dsw-static-neutral-bluish-200)')
+    expect(decl('--dsw-alias-bg-layer-1')).toBe('var(--dsw-static-neutral-bluish-00)')
+    // 弹层遮罩透明度与模糊。
+    expect(decl('--dsw-alias-bg-mask-1')).toBe('rgba(0, 0, 0, 0.24)')
+    expect(decl('--dsw-mask-blur')).toBe('blur(2px)')
+    // specific-menu 走 alias 间接（→ bg-layer-3），不是静态字面量。
+    expect(decl('--dsw-specific-menu')).toBe('var(--dsw-alias-bg-layer-3)')
+  })
+
+  it('深色段按上游语义重写（且与浅色取值不同——同值就不该重写）', () => {
+    // 定位**规则**而不是注释里的提及：`body[data-ds-dark-theme]` 在文件里出现 4 次
+    // （文件头注释、两个段注释、规则本身），裸 indexOf 会命中注释，取到的块就成了 :root
+    // ——本切片实测踩过。带大括号一起匹配，只会命中规则。
+    const marker = /body\[data-ds-dark-theme\]\s*\{/g
+    const hits = [...tokensCss.matchAll(marker)]
+    expect(hits, '深色规则应恰好一条').toHaveLength(1)
+    const open = (hits[0]?.index ?? 0) + (hits[0]?.[0].length ?? 0) - 1
+    // 按括号配对取块本体（不能用 lastIndexOf('}')——文件后面还有别的规则块）。
+    let depth = 0
+    let close = open
+    for (let i = open; i < tokensCss.length; i += 1) {
+      if (tokensCss[i] === '{') depth += 1
+      else if (tokensCss[i] === '}') {
+        depth -= 1
+        if (depth === 0) {
+          close = i
+          break
+        }
+      }
+    }
+    // 先剥注释再断言：注释里提到变量名不代表声明了它（文件头与两个段注释都写了变量名）。
+    const darkBody = tokensCss.slice(open + 1, close).replace(/\/\*[\s\S]*?\*\//g, '')
+    for (const [name, value] of [
+      ['--dsw-alias-bg-layer-1', 'var(--dsw-static-neutral-bluish-875)'],
+      ['--dsw-alias-bg-mask-1', 'rgba(0, 0, 0, 0.5)'],
+      ['--dsw-alias-border-l1', 'rgba(255, 255, 255, 0.06)'],
+      ['--dsw-alias-state-success-tertiary', 'var(--dsw-static-green-900)'],
+      ['--dsw-alias-state-warn-tertiary', 'var(--dsw-static-amber-900)'],
+      ['--dsw-specific-menu', 'var(--dsw-alias-bg-layer-3)'],
+    ] as const) {
+      expect(darkBody, `深色段缺 ${name} 的重写`).toContain(`${name}: ${value};`)
+    }
+    // 浅深同值的变量不应在深色段再写一遍（单一来源，避免两处漂移）。
+    for (const same of [
+      '--dsw-alias-state-warn-label',
+      '--dsw-mask-blur',
+      '--dsw-static-amber-600',
+    ]) {
+      expect(darkBody, `${same} 浅深同值，不该在深色段重写`).not.toContain(`${same}:`)
+    }
+  })
+
+  it('elevation 段挂在 `body, body *` 而不是 :root——Menu 重绑描边色才能进到投影里', () => {
+    // 这是从上游 gradient-shadow-text.css 抄来的语义：派生值必须逐元素声明，
+    // 否则继承下来的是在祖先处就已代入完的值，后代重绑 --dsw-elevation-stroke-color 无效。
+    const at = tokensCss.indexOf('body,\nbody * {')
+    expect(at, 'elevation 段的选择器不是 `body, body *`').toBeGreaterThanOrEqual(0)
+    const block = tokensCss.slice(at, tokensCss.indexOf('}', at))
+    expect(block).toContain('--dsw-elevation-stroke-color: var(--dsw-alias-border-l4);')
+    expect(block).toContain(
+      '--dsw-elevation-stroke: 0 0 0 0.5px var(--dsw-elevation-stroke-color);',
+    )
+    // prominent = stroke + 两层柔光，取值逐字照抄。
+    expect(block).toContain('--dsw-elevation-prominent:')
+    expect(block).toContain('0 3px 8px 0 rgba(0, 0, 0, 0.04), 0 0 20px 0 rgba(0, 0, 0, 0.05)')
+    // 反面：不能也挂在 :root（挂两处会让 `body *` 那层变成唯一生效的一层，语义就糊了）。
+    const rootBlock = tokensCss.slice(
+      tokensCss.indexOf(':root {'),
+      tokensCss.indexOf('}', tokensCss.indexOf(':root {')),
+    )
+    expect(rootBlock).not.toContain('--dsw-elevation-prominent')
+  })
+
+  it('Menu.module.css 确实重绑了描边色；Modal 确实吃 mask 与 elevation', () => {
+    const menuCss = readFileSync(join(vendorDir, 'Menu.module.css'), 'utf8')
+    expect(menuCss).toContain('--dsw-elevation-stroke-color: var(--dsw-alias-border-l1);')
+    expect(menuCss).toContain('box-shadow: var(--dsw-elevation-prominent);')
+    const modalCss = readFileSync(join(vendorDir, 'Modal.module.css'), 'utf8')
+    expect(modalCss).toContain('background: var(--dsw-alias-bg-mask-1);')
+    expect(modalCss).toContain('backdrop-filter: var(--dsw-mask-blur);')
+    expect(modalCss).toContain('box-shadow: var(--dsw-elevation-prominent);')
+  })
+
+  it('两批并集 = 37 个被引用变量，且全部在 L1 有声明（零未解析引用）', () => {
+    const referenced = new Set(
+      readdirSync(vendorDir)
+        .filter((f) => f.endsWith('.module.css'))
+        .map((f) => readFileSync(join(vendorDir, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, ''))
+        .join('\n')
+        .match(/var\((--dsw-[a-z0-9-]+)/g)
+        ?.map((m) => m.replace('var(', '')) ?? [],
+    )
+    // 逐个数出来的：首批 23 + 第二批 14（Input 5 / Menu 9 / ConnectionIndicator 6 /
+    // Modal 11 各自去重后合并，与首批重叠的是 --dsw-alias-brand-primary 等）。
+    expect(referenced.size).toBe(37)
+    for (const name of referenced) {
+      expect(tokensCss, `L1 白名单缺定义：${name}`).toContain(`${name}:`)
+    }
   })
 })
 
