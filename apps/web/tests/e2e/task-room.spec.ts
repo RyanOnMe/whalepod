@@ -15,7 +15,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
-import { assertNotNativeSelect } from './helpers.js'
+import {
+  CONTROL_PRIMARY_FILL_TOKEN,
+  CONTROL_PRIMARY_LABEL_TOKEN,
+} from '../../src/shared/control-style-tokens.js'
+import { assertControlTokens, assertNotNativeSelect } from './helpers.js'
 import { expectNoContrastOffenders } from './contrast-sweep.js'
 import {
   PERSON_SLOTS,
@@ -284,6 +288,34 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     await alice.getByRole('button', { name: '创建任务' }).click()
     const createTaskForm = alice.locator('form[aria-label="创建任务"]')
     const taskIdInput = alice.locator('input[id^="task-title-"]')
+    // #168：项目页这一屏同时有 `.field input` / `.field textarea` / `.button`（含
+    // primary 与 quiet 两个变体）——正是"同一屏两族控件"的现场，所以在真实浏览器里采一遍
+    // computed style：描边宽度与圆角必须等于 vendored Input 的度量，颜色必须等于 L1 token
+    // 的解析值，min-height 必须等于 --touch-min。判据与单测共用
+    // `src/shared/control-style-tokens.ts`（各写一份必漂移）。
+    await assertControlTokens(taskIdInput, '.field input（任务标题）')
+    await assertControlTokens(
+      alice.locator('textarea[id^="task-desc-"]'),
+      '.field textarea（任务描述）',
+    )
+    await assertControlTokens(
+      alice.locator('form[aria-label="创建任务"] .button.button-primary'),
+      '.button-primary（创建任务）',
+      // 主按钮的底与文字**按设计**不是基类那两个 token（vendored `Button.module.css`
+      // 的 `.primary` 同两个 token），所以在这里显式给出——判据不拿基类期望套变体。
+      { backgroundToken: CONTROL_PRIMARY_FILL_TOKEN, labelToken: CONTROL_PRIMARY_LABEL_TOKEN },
+    )
+    await assertControlTokens(
+      alice.locator('form[aria-label="创建任务"] .button.button-quiet'),
+      '.button-quiet（取消）',
+      // quiet 是**无边形态**：底与描边按设计是 `transparent`（判据用 `transparent` 表示
+      // "这里没有期望"，不是"期望是某个颜色"）。
+      {
+        backgroundToken: 'transparent',
+        borderToken: 'transparent',
+        labelToken: '--dsw-alias-brand-primary',
+      },
+    )
     await taskIdInput.fill('起草验收报告')
     const assignee = createTaskForm.locator('button[id^="task-assignee-"]')
     await assertNotNativeSelect(assignee, createTaskForm, '责任人')

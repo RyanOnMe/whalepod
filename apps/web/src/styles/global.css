@@ -224,21 +224,51 @@ select {
   padding: var(--space-4);
 }
 
+/* ---------- #168 按钮与表单控件：对齐 DSH 族的度量与取值来源 ----------
+ *
+ * 为什么改：同一屏里原本并存两族控件——#158/#161 的下拉触发器已按 DSH 族取值
+ * （0.5px 描边 / 8px 圆角 / L1 `--dsw-*`），而本段的按钮与 `.field input` 还是自研旧族
+ * （1px `--color-line` / 6px 圆角 / 应用层 `--color-*`）。本次把这三条（含
+ * `.button-primary` / `-quiet` / `-danger` 里重复声明的部分）落到同一族：
+ * `0.5px solid var(--dsw-alias-border-l4)` + `border-radius: 8px`，颜色改走 L1。
+ *
+ * **高度刻意保留 40px（`--touch-min`），不跟着 vendored `Input` 降到 32px**：那个 32px 是
+ * 桌面密度（`Input.module.css` 的 `.wrap` 写死 `height: 32px`，是给工具栏内联输入用的），
+ * 而本仓表单行要触屏可达（390 档实测在跑）。所以这里只对齐**描边与圆角**两个视觉度量，
+ * 高度轴不动——与 #161 触发器「高度取 --touch-min 而不是 Input 的 32px」同源；
+ * 真要换到 32px 得先裁决尺寸轴，不能在这里单方面改。
+ *
+ * 为什么圆角/描边宽度不写在这条注释里当依据：判据从 `vendor/dsh-ui/Input.module.css`
+ * **现场读**这两个值再逐值比对（`tests/control-family.spec.tsx`），上游改度量时判据跟着变；
+ * 把 8px / 0.5px 抄死在任何一处（包括注释）就会漂移。
+ *
+ * 为什么 hover 用 `--dsw-alias-interactive-bg-hover`（浅灰底）而不是旧的应用层强调色描边：
+ * 旧写法在 hover 时把描边染成蓝色，而 DSH 族的反馈是**面**变（vendored
+ * `Button.module.css` 的 `.ghost:hover` / `.outline:hover` 都是这个 token）——同族控件
+ * 不该一个吃面变、一个吃描边变色。`color-mix(in srgb, currentColor …)` 那条更显然的写法
+ * 先被否掉：它让「值来自 L1 白名单」这条判据失去可判定性（颜色由 currentColor 派生，
+ * 静态读不出 token 名）。
+ */
 .button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: var(--touch-min);
   padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-line);
-  background: var(--color-surface);
-  color: var(--color-ink);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
   cursor: pointer;
 }
 
+/* hover：面变 + 描边加深一档，两者都取 L1。描边用**描边档** `--dsw-alias-border-l3`
+   而不是 `--dsw-alias-label-tertiary`——后者是**文字色** token，浅色下两值都偏灰看不出问题，
+   深色下 label-tertiary 是 rgb(173,178,184) 而 border-l3 是 rgba(255,255,255,0.16)，
+   拿文字色当描边会明显偏亮（评审观察项）。 */
 .button:hover:not(:disabled) {
-  border-color: var(--color-signal);
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-border-l3);
 }
 
 .button:disabled {
@@ -246,17 +276,42 @@ select {
   cursor: not-allowed;
 }
 
+/* focus-visible 的环由通用规则给（--focus-ring），这里只补描边色——沿用 vendored
+   `Input.module.css` 的 `.wrap:focus-within` 语义：聚焦时描边转品牌色。
+   与 #158/#161 的下拉触发器同一处置（那条也这么写）。 */
+.button:focus-visible {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+/* 主按钮**不覆盖描边宽度与圆角**：沿用 `.button` 那道 0.5px `border-l4` + 8px 圆角，
+   与其余变体同族；这里只重复 token 名，不重复数字（数字重复就是下一个漂移点）。
+   底色/前景取 vendored `Button.module.css` 的 `.primary` 同两个 token。 */
 .button-primary {
-  background: var(--color-signal);
-  border-color: var(--color-signal);
-  color: #fff;
+  background: var(--dsw-alias-button-primary-fill);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  color: var(--dsw-alias-label-primary-foreground);
+}
+
+.button-primary:hover:not(:disabled) {
+  background: var(--dsw-alias-button-primary-hover);
+  border-color: var(--dsw-alias-border-l4);
 }
 
 .button-quiet {
   background: transparent;
-  border-color: transparent;
-  color: var(--color-signal);
+  border: 0.5px solid transparent;
+  border-radius: 8px;
+  color: var(--dsw-alias-brand-primary);
   padding-inline: var(--space-2);
+}
+
+/* 无边形态的 hover 必须把描边**再点明一次 transparent**：`.button:hover` 的描边档
+   特异性同为 (0,3,0)（`:not(:disabled)` 按参数计、`:hover` 计一个类），靠源码顺序胜出，
+   漏写就会让安静的按钮 hover 时长出一道描边。 */
+.button-quiet:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: transparent;
 }
 
 /*
@@ -277,14 +332,46 @@ select {
   color: var(--color-signal-soft);
 }
 
+/* #159 那条 `.app-header .button-quiet:hover` 里的 `border-color: var(--color-signal-soft)`
+   在本 PR 里去掉了：`.button-quiet` 是**无边形态**（`border: 0.5px solid transparent`），
+   hover 时点出描边会让它长出边框（同特异性 (0,3,0) 下靠源码顺序胜出，实测会生效）。
+   深色容器只需要给出**前景色**，形状不该由容器改。
+   但删掉之后这枚按钮在浅色主题下**失去了可见的 hover 反馈**（评审实测并拍板要补回来）：
+   通用 `.button:hover` 给的面是 `--dsw-alias-interactive-bg-hover` = `rgba(38, 49, 72, 0.06)`，
+   那是"深色压浅底"的叠加；压在深色顶栏（`--color-ink` = `rgb(15, 17, 21)`）上合成后
+   只差约 1/255（实测 1.13:1），肉眼看不见。深色主题档给的 `rgba(255,255,255,0.08)`
+   才可见，而那一段是 `body[data-ds-dark-theme]` 的、浅色主题下取不到（深色主题当前休眠）。
+   所以按"深色容器自己给反馈、但**不动形状**"补一条**面**变，并说明为什么这里是全仓
+   少见的裸色值： */
 .app-header .button-quiet:hover:not(:disabled) {
-  border-color: var(--color-signal-soft);
+  /* 这里写裸 `rgba(255, 255, 255, 0.08)`（= 与深色主题档 `--dsw-alias-interactive-bg-hover`
+     逐字相同的值），三个理由：
+     ① 正是评审实测认可的那个"深底上看得见"的量；
+     ② L1 里**没有**"深色容器上的 hover 叠加"这一档——`--dsw-alias-interactive-bg-hover`
+        是"深色压浅底"（`rgba(38,49,72,0.06)`，顶栏上 1.13:1 看不见），
+        `--dsw-alias-button-ghost-active-fill` 是**近白实心**（`rgb(235,238,242)`，
+        顶栏上 16.24:1 太抢眼，且它会把 hover 变成"选中态"的观感）；发明一个新 L1 token
+        属于 tokens 层的裁决，本次不发明。
+     ③ 用 alpha 叠加而不是实心色，是为了让这层跟着底下的顶栏色走（深色主题真上线时
+        顶栏与它一起变，不会突然出现一块"浅色主题遗留的灰块"）。
+     机器判据把这条规则与这个值一起钉住（`tests/control-family.spec.tsx` 的
+     `.app-header .button-quiet:hover:not(:disabled)` 期望项），免得它下一轮又被顺手删掉。 */
+  background: rgba(255, 255, 255, 0.08);
 }
 
+/* 危险按钮：**危险意图由文字色表达，底色与描边仍是中性控件面**。
+   文字色取静态档 red-900（白底实测 14.35:1，与迁移前的 `--color-danger-strong` 逐值相同，
+   这一条其实是"把应用层别名内联到 L1"），不用别名 `--dsw-alias-state-error-primary`
+   （= red-500，白底实测 4.4976:1，差 0.0023 不到 AA 的 4.5）；底色若也吃错误色，
+   红底 + red-900 字只有 3.19:1。判据把底色与文字色两个 token 名分别钉死
+   （control-family.spec.tsx 的变异用例）。
+   已知取舍（登记在 docs/agent/control-family-acceptance.md）：迁移前描边是
+   `--color-danger`（红），现在与其余控件同为中性 hairline，红色可供性只由文字承担。 */
 .button-danger {
-  background: var(--color-surface);
-  border-color: var(--color-danger);
-  color: var(--color-danger-strong);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  color: var(--dsw-static-red-900);
 }
 
 .badge {
@@ -411,13 +498,17 @@ select {
   color: var(--color-ink-soft);
 }
 
+/* #168：与上面的按钮同族——0.5px `border-l4` 描边、8px 圆角、颜色只吃 L1。
+   高度同样保留 `--touch-min`（40px）而不是 vendored `Input` 的 32px：理由与 `.button`
+   段那条注释同源（触屏可达；32px 是上游桌面密度），此处不重复。 */
 .field input,
 .field textarea {
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-sm);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
   padding: var(--space-2) var(--space-3);
   min-height: var(--touch-min);
-  background: var(--color-surface);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
   min-width: 0;
   width: 100%;
 }
