@@ -17,7 +17,7 @@ import type { HelloFacts } from './gateway/hub-socket.js'
 import { startDeviceSession } from './gateway/session.js'
 import { installedPackDigests } from './plugin/runtime-config.js'
 import type { PluginFetch } from './plugin/installer.js'
-import { WorkspaceRegistry } from './workspace/registry.js'
+import { registryFileRevision, WorkspaceRegistry } from './workspace/registry.js'
 import { WorkspaceInventory } from './workspace/inventory.js'
 import { SecretStore } from './secret/store.js'
 import { runWorkspaceCommand, runSecretSet, readHiddenLine } from './workspace/cli-commands.js'
@@ -242,6 +242,9 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     // #89：连接建立后上报 inventory（Hub 的 Workspace 投影唯一来源；此前生产
     // 链路一帧不发，真实用户 RunLauncher 选不到任何 Workspace）。
     inventoryFacts: () => inventory.build(),
+    // #94：变化时重报——registry 文件指纹随心跳节拍探测，`workspace add/remove`
+    // （独立短进程写库）无需重启 node 即收敛到 Hub 投影。
+    inventoryRevision: () => registryFileRevision(join(stateDir, 'workspace-registry.sqlite')),
     onInventoryError: (error) => {
       process.stderr.write(
         `${JSON.stringify({

@@ -7,7 +7,7 @@
  * 每条 upsert 失败不拖垮整批（逐条 best-effort + 审计可查），保证 inventory 重放收敛。
  */
 import type { Database } from '@project311/db'
-import { upsertWorkspace } from '@project311/db'
+import { convergeDeviceWorkspaceRemovals, upsertWorkspace } from '@project311/db'
 import type { AuthenticatedDevice } from '../run/device-gateway.js'
 
 export interface InventoryWorkspaceInput {
@@ -59,6 +59,14 @@ export class WorkspaceInventoryIngest {
         })
       }
     }
+    // #94 删除收敛：inventory 是全量快照——清单未覆盖的本设备行即 Node registry
+    // 已移除（无 Run 引用删行、有引用标 unavailable；只动本设备的行）。
+    // keepIds 取帧内清单而非成功 upsert 集：单条 upsert 失败不该把该行当「已移除」。
+    await convergeDeviceWorkspaceRemovals(this.deps.database.db, {
+      deviceId: device.deviceId,
+      keepIds: inventory.workspaces.map((ws) => ws.workspaceId),
+      lastCheckedAt,
+    })
     return upserted
   }
 }
