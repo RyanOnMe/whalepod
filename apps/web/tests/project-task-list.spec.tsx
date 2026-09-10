@@ -23,6 +23,7 @@ import {
   type MockHandler,
 } from './fixtures.js'
 import { renderApp } from './render.jsx'
+import { openSelect } from './select-menu.js'
 
 const PROJECT: ProjectView = {
   id: '11111111-0000-4000-8000-000000000001',
@@ -100,6 +101,44 @@ describe('#137 项目任务列表', () => {
     renderApp('/', [...loggedInHandlers(ALICE, handlers)])
     await user.click(await screen.findByRole('button', { name: '任务列表' }))
     expect(await screen.findByText('这个项目还没有任务。')).toBeVisible()
+  })
+
+  /**
+   * #158 评审 B1：责任人从原生 `<select required>` 换成按钮触发器后，浏览器侧的
+   * 「不选不放行」随 required 一起消失，提交按钮的空值守卫成了**唯一**拦截。
+   * 这条用例钉住它：成员列表还没落地（拿不到默认责任人）时，表单不许发出
+   * `assigneeUserId: ""` 的请求——那会被协议层 z.uuid() 拒成 400。
+   */
+  it('#158：责任人未定时提交按钮禁用（required 消失后的唯一拦截）', async () => {
+    const handlers = [
+      projectsHandler([PROJECT]),
+      // 成员接口一直 pending（不 resolve）：模拟成员列表未落地。
+      // 返回类型显式写成 Promise<never>，否则 TS 推成 unknown 过不了 MockHandler。
+      {
+        method: 'GET',
+        url: /\/api\/v1\/team\/members$/,
+        respond: (): Promise<never> => new Promise(() => {}),
+      },
+    ]
+    const user = userEvent.setup()
+    const view = renderApp('/', [...loggedInHandlers(ALICE, handlers)])
+    await user.click(await screen.findByRole('button', { name: '创建任务' }))
+    await user.type(await screen.findByLabelText('任务标题'), '起草验收报告')
+
+    const assignee = await screen.findByLabelText('责任人')
+    expect(assignee).toHaveAttribute('id', `task-assignee-${PROJECT.id}`)
+    expect(assignee.tagName).toBe('BUTTON') // #158 反面钉：这一处不再是原生 select
+    expect(assignee).toBeDisabled() // 成员未落地 → 触发器禁用
+
+    const submit = screen.getByRole('button', { name: /创建任务/ })
+    expect(submit).toBeDisabled()
+    await user.click(submit)
+    // 没有发出任何创建请求（POST /projects/:id/tasks 一次都不该有）
+    const posted = view.fetchMock.mock.calls.filter(([input, init]) => {
+      const method = init?.method ?? 'GET'
+      return method === 'POST' && String(input).endsWith(`/projects/${PROJECT.id}/tasks`)
+    })
+    expect(posted).toHaveLength(0)
   })
 })
 
@@ -195,9 +234,12 @@ describe('#152 名册新鲜度：挂载后加入的成员必须出现在责任�
     // Bob 加入（服务端事实变化）
     membership.add(makeMember({ ...BOB, role: 'member' }))
 
-    // 打开「创建任务」：责任人下拉必须重新核对名册
+    // 打开「创建任务」→ 点开责任人下拉：必须重新核对名册，且新人在选项里。
+    // #158：这一处下拉已迁到 vendored Menu，项是 `role=menuitem` 且只在菜单打开时
+    // 渲染（原来 `findByRole('option', …)` 的写法在迁移后恒为空集）。
     await user.click(screen.getByRole('button', { name: '创建任务' }))
-    expect(await screen.findByRole('option', { name: /Bob（@bob）/ })).toBeVisible()
+    const list = await openSelect(user, '责任人')
+    expect(list.getByRole('menuitem', { name: /Bob（@bob）/ })).toBeVisible()
     expect(membership.calls()).toBeGreaterThan(callsAfterMount)
   })
 

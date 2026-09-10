@@ -439,6 +439,93 @@ select {
   flex-wrap: wrap;
 }
 
+/* ---------- #158 下拉选择器（原生 <select> → vendored Menu） ----------
+ *
+ * 为什么触发器样式写在应用层而不是 vendored 目录：ADR-0008 §3 禁止改
+ * `apps/web/src/vendor/dsh-ui/` 的任何文件，所以「触发器长什么样」只能由调用方给。
+ * 这里给的取值**全部来自 L1 白名单 `--dsw-*`**（声明见 styles/dsw-tokens.css），
+ * 判据在 apps/web/tests/select-menu.spec.tsx：静态断言本段只吃 --dsw-*，并对
+ * 「背景、描边、圆角」三条算出与 token 解析值相等的期望值；Q5 里再用真实浏览器
+ * getComputedStyle 复核一遍（采集在 apps/web/tests/e2e/helpers.ts 的
+ * assertMenuTriggerTokens，调用点在 invite-accept.spec.ts，判定函数与 token 常量
+ * 与单测共用 apps/web/src/shared/select-trigger-tokens.ts）。
+ *
+ * 几何与 vendored Input.module.css **逐值对齐**（0.5px 描边 / 8px 圆角 /
+ * --dsw-alias-border-l4 / --dsw-alias-bg-layer-1），高度取本仓 --touch-min（40px）
+ * 而不是 Input 的 32px——原 <select> 就是 40px，表单行高不变；等输入框迁移那一片
+ * 落地时两者再一起定夺，不要在这里单方面对齐 32px。
+ *
+ * 三个刻意的选择（都写了理由，免得后人"顺手改回去"）：
+ * 1. 触发器**不吃** `.field input` 那套 `--color-line` 描边：那族是待迁移的旧形态
+ *    （Issue #158「表单输入仍是自研 .field input，与 vendored Input 不同源」），
+ *    下拉先落 DSH 族，不是把两种形态再混一次。
+ * 2. `.select-menu`（Menu 的 wrapper span）必须 `width: 100%`：vendored `.root` 是
+ *    `inline-flex`，不撑开的话触发器只有文字宽，与原生 select 的满宽视觉不符。
+ * 3. 高度用 `min-height` 而不是 `height`：选项文案变长（provider/model 拼串）时
+ *    允许换行，而不是把文字压出控件。
+ */
+.select-menu {
+  width: 100%;
+  min-width: 0;
+}
+
+.select-menu .select-menu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--touch-min);
+  padding: var(--space-2) var(--space-3);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.select-menu .select-menu-trigger:hover:not(:disabled) {
+  border-color: var(--dsw-alias-label-tertiary);
+}
+
+/* focus-visible 的环由 global.css 通用规则给（--focus-ring），这里只补描边色。
+   沿用 Input 的 focus 语义：聚焦时描边转品牌色。 */
+.select-menu .select-menu-trigger:focus-visible {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+/* 禁用态**不要给整个触发器上 opacity**（#158 首轮 Q5 实测踩到）：
+   `opacity` 会被 #159 的对比度门沿祖先链累乘进有效前景，0.55 让占位文字
+   （run-revision「先选 Agent…」/ run-workspace「先选设备…」）从 18.9:1 掉到 **4.17:1**，
+   直接判 AA 不达标。禁用语义本来就有三处承担：`disabled` 属性、`cursor: not-allowed`、
+   点击无效；靠"整块变淡"表达反而把信息性文字一起压暗。将来若要视觉变淡，用**前景色**
+   （`color-mix` 合成成不透明色）而不是 opacity——那样门能正确合成、也不牵连边框与背景。 */
+.select-menu .select-menu-trigger:disabled {
+  cursor: not-allowed;
+}
+
+.select-menu .select-menu-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-menu .select-menu-chevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.select-menu-label {
+  display: block;
+  margin-bottom: var(--space-1);
+  font-size: 14px;
+  color: var(--color-ink-soft);
+}
+
 .inline-form {
   border: 1px solid var(--color-line);
   border-radius: var(--radius-md);
