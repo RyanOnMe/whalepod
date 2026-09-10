@@ -71,6 +71,44 @@ bash scripts/secret-scan.sh apps/web scripts docs/agent
 - 浏览器实时事件（#13 已交付的 realtime 模块）接线进 Task Room 属 P1-13 组合根范围，
   本场景的可视性经显式 reload 驱动（诚实路径，不依赖轮询巧合）。
 
+## 对比度门：浏览器侧 WCAG AA 扫描（Issue #159）
+
+**为什么单开一条**：`apps/web/tests/theme-contrast.spec.ts`（#152）只在 **token 表**上
+校验"我声明出来的配对"，抓不到颜色由**继承 / color-mix / 组件内部**得出的情形。两次真
+发生过的回归都在它之外：`.run-live-text` 深底深字（只设了底、没设文字色），以及 #151 把
+`rgb(34,197,94)`（2.28:1）当成功色钉住。所以判据必须落在**真实渲染结果**上。
+
+- 扫描器：`apps/web/tests/e2e/contrast-sweep.ts`
+  （`findContrastOffenders` / `expectNoContrastOffenders`；对每个"自己直接挂着文字"的可见
+  元素取 `color`，向上把半透明背景依次合成到第一个不透明底，算 WCAG 对比度；`<4.5:1` 即
+  不达标；例外必须写进 `CONTRAST_EXEMPT` 并给出理由，不许静默放宽）。
+- 挂点（不新增冷启栈，全部复用 Q5 既有项目已渲染出的真实页面）：
+  | 项目 | 挂点 |
+  |---|---|
+  | p1-142 | 未登录的 `/setup` 与 `/login`（提交前扫，之后 Setup 表单就不在 DOM 里了）；有设备态的 `/devices`；390×844 下 `/`、`/devices`、`/members` 三页；折叠导航展开态 |
+  | p1-07 | 项目页（1280 与 390 两档）、Task Room 空态、Task Room 满态（Alice 与 Bob 两侧） |
+  | p1-19 | Run 实况面板可见那一刻（`.run-live-text` 的复现现场） |
+
+**首轮跑出来的两个真实不达标（都不是扫描器误报，已在同一 PR 修掉）**：
+
+| 现场 | 实测 | 根因 | 修法 |
+|---|---|---|---|
+| 顶栏「退出登录」（`button.button-quiet`） | blue-600 `rgb(37,99,235)` 压 ink `rgb(15,17,21)` = **3.66:1** | #153 把 `--color-signal` 从旧亮蓝收敛到 blue-600 后，深色顶栏上的安静按钮成了"深底深蓝字" | `.app-header .button-quiet` 改用该容器自己的前景族 `--color-signal-soft`（blue-100 压 ink = **15.49:1**），并写清"深色容器给前景、按钮别自带 signal"的通则 |
+| `.badge` 一族（未开始/进行中等） | blue-600 压 `--color-signal-soft`（blue-100）= **4.24:1** | 同一 token 用在两种底上：blue-600 压白达标（5.17:1），压自己的浅底就不够；green/red/amber 一族在浅底上都取 900 档，只有 blue 缺 900 档 | L1 补 `--dsw-static-blue-900`（上游 `design-platform.css` 逐字 `rgb(14, 48, 116)`，同段还有 800/950，本仓不需要）→ 应用层 `--color-signal-strong`，徽标文字/描边改用它（**10.16:1**） |
+
+两个新配对已加进 `theme-contrast.spec.ts` 的 AA 清单（15 对全过，最低 4.78:1），并且
+`vendor-dsh-ui.spec.tsx` 的"无孤儿变量"用例把新 token 的消费者钉住（扫描面含应用层全部
+样式表，不只是 `global.css`）。
+
+**门不是空的（变异证明）**：修好之前，p1-142 与 p1-07 都因这两条**变红**（失败信息逐条
+打印 元素/文字/颜色/底色/实测比值）——这就是红→绿的过程，不是事后补的断言。此外
+`vendor-dsh-ui.spec.tsx` 的孤儿门做过注入变异（加一个无消费者的
+`--dsw-static-orphan-proof-999` → 变红；还原 → 56 passed）。
+
+**未覆盖（诚实列出）**：深色主题（本仓尚无切换入口，`body[data-ds-dark-theme]` 一套
+只在 token 层备好）；Firefox / Safari；悬停与焦点态（扫描的是静止态）；非文字对比度
+（图标、描边、focus ring 的 3:1 判据）目前只在设备状态色块那一处按 3:1 断言。
+
 ## 复跑
 
 ```bash

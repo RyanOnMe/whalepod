@@ -6,12 +6,17 @@
  *   上游文件  packages/client/ui-theme/src/styles/design-platform.css
  *   取用 commit  c291e7961a515f6d7af9304e7fd1d257929aef26
  *
- * 白名单口径：**只抄 apps/web/src/vendor/dsh-ui/ 里 6 个原语 CSS 真正引用的变量**
- * （Button/Pill/Tag/StateDot/DisclosureRow/Switch 逐一 grep 得到），共 23 个，外加 3 个
- * 静态色阶（green/red/amber-900，见下）——上游 design-platform.css 的 alias 段有近百个
- * 变量、静态色阶 **73** 个（实测唯一 `--dsw-static-*` 计数），这里只留必需的。本仓对上游做的三处收缩/补齐（都「取值不变」）：
- *   1. 静态色阶引用就地展开为 rgb() 字面量，只保留 4 个静态变量（deepseek-450 是
- *      StateDot ongoing 蓝，900 三档是设备页 AA 重映射的取值来源，别名上无可替代）；
+ * 白名单口径：**只抄必要的变量**，分两类，当前共 32 个（复算命令与漂移史见
+ * docs/agent/dsh-ui-vendoring.md §3.1）：
+ *   · 23 个 = apps/web/src/vendor/dsh-ui/ 里 6 个原语 CSS 真正 `var()` 引用的变量
+ *     （Button/Pill/Tag/StateDot/DisclosureRow/Switch 逐一 grep 得到）；
+ *   · 9 个 = 只被 alias 段与应用层（styles/tokens.css）消费的静态色阶
+ *     （green/red/amber/blue 的 100 与 900 档，见下）。
+ * 上游 design-platform.css 的 alias 段有近百个变量、静态色阶 **73** 个（实测唯一
+ * `--dsw-static-*` 计数），这里只留必需的。本仓对上游做的收缩/补齐（都「取值不变」）：
+ *   1. 静态色阶**取值**逐字照抄上游，但引用方式分两种：vendored 组件吃的就地展开为
+ *      rgb() 字面量，应用层要用的留成静态变量（deepseek-450 是 StateDot ongoing 蓝；
+ *      各色族 100/900 档是浅底徽标与设备页 AA 重映射的取值来源，别名上无可替代）；
  *   2. alias→alias 的间接（--dsw-alias-button-primary-fill → --dsw-alias-brand-primary）
  *      保留原样，因为改品牌色时按钮要跟着动，这层间接是语义而不是冗余。
  * 未抄的两个上游变量是 DisclosureRow 用到的 --dsh-content-font-size-secondary 与
@@ -39,7 +44,8 @@
    * - deepseek-450：StateDot 的 ongoing 用色（上游 StateDot.module.css 直接吃它）；
    * - 三个 900 档：设备页状态标记做 WCAG AA 重新映射的取值来源（见 global.css 的
    *   .device-status-* 与「AA 重映射」注释）。上游 design-platform.css 里 900 档
-   *   位于静态段：green-900 第 36 行、red-900 第 77 行、amber-900 第 9 行，取值逐字照抄。 */
+   *   位于静态段：green-900 第 36 行、red-900 第 77 行、amber-900 第 9 行，取值逐字照抄；
+   * - blue-900：强调色文字压浅底时的取值来源（#159，理由见下方该行注释）。 */
   /* #152 主题统一：本仓应用层（tokens.css）引用的静态阶一并入白名单，让「单一来源」
      是结构性的（应用层只 var() 引用，不各自抄字面量；改上游只需改这一处）。 */
   --dsw-static-deepseek-450: rgb(86, 134, 254);
@@ -51,6 +57,14 @@
   --dsw-static-green-900: rgb(35, 60, 44);
   --dsw-static-red-900: rgb(87, 12, 12);
   --dsw-static-amber-900: rgb(39, 36, 31);
+  /* #159：blue-900 = rgb(14, 48, 116)，上游 design-platform.css 静态段逐字照抄
+     （同段还有 blue-800/950，本仓不需要）。加它的原因是 #152 主题统一之后暴露出的一处
+     **真实不达标**：`.badge` 一族用 --color-signal（blue-600）压在自己的浅底
+     --color-signal-soft（blue-100）上，实测 4.24:1，低于 AA 4.5:1（浏览器侧扫描器在
+     p1-07 抓到，见 #159）。本仓其它色族（green/red/amber）在浅底上用的都是 900 档，
+     只有 blue 这一族缺 900 档、退而用了 600——补上这一档就与其余色族同构：
+     blue-900 压 blue-100 = 10.16:1（theme-contrast.spec.ts 实测）。 */
+  --dsw-static-blue-900: rgb(14, 48, 116);
 
   /* 背景层级 */
   --dsw-alias-bg-layer-2: rgb(255, 255, 255);

@@ -22,6 +22,9 @@
   --color-muted: var(--dsw-alias-label-secondary); /* 提示文字（不用 tertiary：3.71:1 不达 AA） */
   --color-signal: var(--dsw-static-blue-600); /* 交互强调（白字 5.17:1） */
   --color-signal-soft: var(--dsw-static-blue-100); /* 强调浅底 */
+  /* 强调色当**文字**压在自己的浅底上时改用这一档（10.16:1）。同一色族有"上白底"
+     （signal，5.17:1）与"上自己浅底"（signal-strong）两种用法，混用即 #159 修的不达标。 */
+  --color-signal-strong: var(--dsw-static-blue-900);
   --color-run: var(--dsw-static-green-900); /* 运行/成功文字（浅底上 11:1） */
   --color-run-soft: var(--dsw-static-green-100);
   --color-warn: var(--dsw-static-amber-900); /* 警告文字（14:1） */

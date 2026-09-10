@@ -91,10 +91,21 @@ ADR-0008 §3 的硬约束：vendored 代码是**复制品，不是依赖**。
 | 口径 | 数量 | 复算命令 |
 |---|---|---|
 | 6 个组件 CSS **引用**的 `--dsw-*` 变量 | **23** | `grep -hoE '\-\-dsw-[a-z0-9-]+' apps/web/src/vendor/dsh-ui/*.module.css \| sort -u \| wc -l` |
-| `dsw-tokens.css` **声明**的 `--dsw-*` 变量 | **26** | `grep -oE '^\s*--dsw-[a-z0-9-]+' apps/web/src/styles/dsw-tokens.css \| sed 's/^ *//' \| sort -u \| wc -l` |
+| `dsw-tokens.css` **声明**的 `--dsw-*` 变量 | **32**（`#159` 复核后的当前值，见下） | `grep -oE '^\s*--dsw-[a-z0-9-]+' apps/web/src/styles/dsw-tokens.css \| sed 's/^ *//' \| sort -u \| wc -l` |
+| 其中 `--dsw-static-*` 静态色阶 | **10** | `grep -oE '^\s*--dsw-static-[a-z0-9-]+' apps/web/src/styles/dsw-tokens.css \| sed 's/^ *//' \| sort -u \| wc -l` |
 | 上游 `design-platform.css` 的静态色阶 `--dsw-static-*` | **73** | `gh api -H 'Accept: application/vnd.github.raw' …/design-platform.css?ref=$SHA \| grep -oE '\-\-dsw-static-[a-z0-9-]+' \| sort -u \| wc -l` |
 
-26 与 23 的差是 3 个**仅被 alias 声明消费**的静态色阶（`--dsw-static-amber-900` / `-green-900` / `-red-900`）；即"引用 23、声明 26"不矛盾。**关键正确性属性（实测）**：组件引用的 23 个**全部**在 `dsw-tokens.css` 里有声明——`comm -13` 的差集为空，即**没有未解析引用**，不会静默落到 CSS fallback。`dsw-tokens.css` 文件头写的"共 23 个"指的就是**引用口径**。
+（首批当时的写法，数字已过期，保留以说明口径）26 与 23 的差是 3 个**仅被 alias 声明消费**的静态色阶（`--dsw-static-amber-900` / `-green-900` / `-red-900`）；即"引用 23、声明 26"不矛盾。
+
+> **计数漂移与 `#159` 复核（2026-09-11，诚实记账）**：上表"26"是**首批切片时**的实测值。此后 `#152` 主题切片把应用层（`tokens.css`）改为只以 `var()` 引用 L1 取值，为此在白名单里补了 5 个静态色阶（`blue-100` / `blue-600` / `green-100` / `amber-100` / `red-100`），`#159` 又补了 `blue-900`——**声明数因此从 26 变成 32，其中静态色阶 10 个，但文件头与本节计数当时没跟着改**（漂移了 6）。`#159` 一并改正，并把「静态色阶只有 3 个」的旧表述换成实测的分档说明：
+>
+> - **23 个引用变量**：vendored CSS（6 个首批原语）真正 `var()` 吃的，全部在 L1 有声明，`comm -13` 差集为空（#159 复算，仍是 23，未变）；
+> - **9 个"只被 alias/应用层消费"的静态色阶**：`amber-100/900`、`blue-100/600/900`、`green-100/900`、`red-100/900`。它们不进 vendored 组件的引用集，但**不是孤儿**——`dsw-tokens.css` 的 alias 段与 `apps/web/src/styles/*.css` 都在 `var()` 引用（`apps/web/tests/vendor-dsh-ui.spec.tsx` 的"无孤儿变量"用例守这条，扫描面是 L1 + vendored + 应用层全部样式表）；
+> - 32 = 23 + 9，且 23 与 9 无交集（复算：`comm -23`）。
+>
+> 教训写在这里而不是只改数字：**L1 白名单是"活"的，每次增删都必须重算本节三个数**。首批当时的纪律是"锚点前移整套重算"，这条落到 L1 上就是本节。
+
+**关键正确性属性（实测）**：组件引用的 23 个**全部**在 `dsw-tokens.css` 里有声明——`comm -13` 的差集为空，即**没有未解析引用**，不会静默落到 CSS fallback。`dsw-tokens.css` 文件头写的"共 23 个"指的就是**引用口径**。
 
 > **两处计数错值已由 `069b2f1` 修掉（原「待转实现线」项，现销账）**：`apps/web/src/styles/dsw-tokens.css` 文件头与 `manifest.json` 的 `tokens[0].adaptations` 此前均写"上游静态色阶 **78** 个"，实测为 **73**；`manifest.json` 的 `components[]`（`index.ts` 条）写"上游桶文件含整包 **43** 个原语"，而 **43 是 `packages/client/ui-*` 的包数**，`ui-primitives/src` 顶层实测 **29 个 `.tsx`**。这些错值都属实现线文件，**本台账无权修改**，当时只登记正确值；`069b2f1` 已把实现线文件一并改正（现为 73 / 29 `.tsx` / 30 原语 / 43 包数，见 §3.4）。白名单口径本身（23 个引用变量）与 `dsw-tokens.css` 实测吻合，无需改动。
 

@@ -46,6 +46,7 @@ import {
   sleep,
   type RunFact,
 } from './helpers.js'
+import { expectNoContrastOffenders } from './contrast-sweep.js'
 
 const ALICE_PASSWORD = 'correct horse battery staple'
 const BOB_PASSWORD = 'correct horse battery staple'
@@ -467,6 +468,10 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
       await expect(shared.bob!.getByTestId('run-live-events')).toContainText('Hello from replay.', {
         timeout: 30_000,
       })
+      // #159：Run 实况面板是「深底 + 等宽正文」的唯一现场，也真出过事——`.run-live-text`
+      // 曾经只设深色底、没设文字色，于是继承了深色正文（深底深字，几乎不可读），而
+      // token 层的配对检查看不到这一对（值由继承得出）。就在这行状态上量真实渲染。
+      await expectNoContrastOffenders(shared.bob!)
       expect(await shared.bob!.locator('.run-event.audience-owner').count()).toBeGreaterThanOrEqual(
         5,
       )
