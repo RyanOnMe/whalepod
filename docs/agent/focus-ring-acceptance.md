@@ -3,8 +3,11 @@
 - 对应场景/门禁：Q0 静态门新增用例族 `apps/web/tests/focus-ring.spec.ts`（unit project）；
   判据口径 SC 1.4.11 非文字对比度（AA，3:1）与 SC 2.4.13 焦点外观（AAA，≥2px 周长厚度）
 - 对应 Issue：#164（同族：#159 文字对比度浏览器扫描、#152 主题 AA 门）
-- 上次验证：2026-09-11 · fix/p1-164-focus-ring · 结果 **PASS**（门 8/8 绿；红→绿实测双向做过，
-  日志在 `artifacts/evidence/focus-ring/`，gitignored）；Q0 `pnpm check` 全绿（1022/1022）
+- 上次验证：2026-09-11 · fix/p1-164-focus-ring · 结果 **PASS**（门 **10/10** 绿；红→绿实测双向做过，
+  日志在 `artifacts/evidence/focus-ring/`，gitignored）；Q0 `pnpm check` 全绿（**82 files / 1057 tests**）
+- 数字口径（复审 N1 指出本文件曾停留在整改前的 8 例 / 1022）：门在二审后新增两条断言
+  （`--focus-ring` 全仓只声明一次、环里不许有裸色值），所以"八条"→"**十条**"；Q0 的用例数
+  随 main 前进而变，引用时**必须写明是哪棵树上的数字**，不要只抄一个数。
 
 ## 验的是哪条用户路径
 
@@ -63,7 +66,7 @@ paper **1.77:1** / surface **1.81:1** / ink **1.53:1** / signal 1:1，四处都�
 
 ## 判定（成功长什么样）
 
-`apps/web/tests/focus-ring.spec.ts` 八条用例，全绿才算过：
+`apps/web/tests/focus-ring.spec.ts` **十条**用例，全绿才算过：
 
 1. **浅色**：paper / surface / ink / signal 每个底色上**至少一层** ≥3:1，且该层可见环带 ≥2px；
 2. **深色一套**：同样判据再算一遍（用 `body[data-ds-dark-theme]` 段取值）；
@@ -73,20 +76,25 @@ paper **1.77:1** / surface **1.81:1** / ink **1.53:1** / signal 1:1，四处都�
 5. **每一层颜色都是对应用层语义 token 的 `var()` 引用**（不写裸色值，深色一套才能自动翻）；
 6. **焦点环只挂在 `:focus-visible` 上**：`global.css` 里承载 `var(--focus-ring)` 的规则只允许
    `:focus-visible` 与显式登记的 `.agent-card-selected`；裸 `:focus` 不得承载（鼠标点击不出环）；
-7. **反向用例**：旧值（40% 单层环）必须被本门判红（红→绿的红侧常驻在用例里）；
-8. **反向用例**：单色 signal 环在 signal 自身底（`.button-primary`）上只有 1:1——
-   这就是"为什么不用更显然的写法（把蓝色加深成单色）"的机器证据：
-   100% blue-600 单层环确实压得住三个底色（paper 4.78 / surface 5.17 / ink 3.66:1），
-   但焦点元素自身底色就可能是蓝的，环与它 1:1 等于没有指示。
+7. **`--focus-ring` 全仓只声明一次且落在 `tokens.css :root`**（二审 S1 加）：局部覆盖会让门失明
+   ——实测在 `global.css` 里追加 `.app-header { --focus-ring: … }` 后，只读首个声明的旧实现
+   仍 8/8 全绿；
+8. **环的每一层里不许出现裸色值**（二审 S2 加）：`var(--color-x, #ff00ff)` 这种带 fallback 的
+   形态会绕过原判据（仓库里这类写法有 3 处）；
+9. **反向用例**：旧值（40% 单层环）必须被本门判红（红→绿的红侧常驻在用例里）；
+10. **反向用例**：单色 signal 环必须被判红——"为什么不用更显然的写法（把蓝色加深成单色）"的
+    机器证据。**作用域（二审 B1 更正）**：100% blue-600 单层环只在**浅色侧**的 paper / surface /
+    ink 三个底色上够（4.78 / 5.17 / 3.66:1）；深色侧 paper **2.34:1**、surface **2.7:1** 都不达标，
+    浅色全调色板里也还有 16 个底色不达标（详见下方发现第 3 条）。
 
 ## 红→绿实测（门不是恒真的证据）
 
 | 步骤 | 命令 | 结果 |
 |---|---|---|
 | ① 先写门，token 仍是旧值 | `pnpm exec vitest run --project unit apps/web/tests/focus-ring.spec.ts` | **红**：8 例中 2 例失败，报"没有一层同时满足 ≥3:1 与环带 ≥2px（实测 1.77 / 1.81 / 1.53 / 1:1）"（日志 `artifacts/evidence/focus-ring/red-before-fix.log`） |
-| ② 改 `--focus-ring` 为双层环 | 同上 | **绿**：8/8（`green-after-fix.log`） |
+| ② 改 `--focus-ring` 为双层环 | 同上 | **绿**：8/8（`green-after-fix.log`；当时门是 8 例，二审后新增两条断言 → 现 10 例） |
 | ③ 把 `--focus-ring` 临时改回旧值 | 同上 | **红**：同两条用例失败；浅色 1.77 / 1.81 / 1.53 / 1:1，深色 1.36 / 1.43 / 1.79 / 1:1（`red-revert-cycle.log`） |
-| ④ 改回双层环 | 同上 | **绿**：8/8（`green-restored.log`） |
+| ④ 改回双层环 | 同上 | **绿**：8/8（`green-restored.log`；同②，现为 10 例） |
 
 ## 归因（失败先看哪层）
 
@@ -159,9 +167,11 @@ bash scripts/secret-scan.sh apps/web docs/agent                        # 提交�
    会随 L1 深色段一起翻转被读成通用结论。一审复算：深色 paper `rgb(53,54,56)` **2.34:1**、
    深色 surface `rgb(44,44,46)` **2.7:1**，只有深色 ink 过。**换成更强的论据**：单色 blue-600
    在**浅色全调色板** 30 个"可能当元素自身底色"的取值里有 **16 个**不达标（`.button-danger`
-   的 red-900 2.78:1、`--color-signal-soft` 蓝底 1:1、ghost-active 1.86:1…），深色侧还有
-   paper/surface；双层环在浅深两套全调色板（30+31 色）**0 处失败**——任何底色都必然与
-   ink 或 surface 之一拉开。
+   的 red-900 2.78:1、`--color-signal` 自身蓝底 **1:1**、`--dsw-alias-button-ghost-active-border`
+   1.89:1、`--dsw-alias-button-primary-hover` 1.86:1…），深色侧还有 paper/surface；双层环在
+   浅深两套全调色板（**浅 30 色 / 深 30 色**）**0 处失败**——任何底色都必然与 ink 或 surface
+   之一拉开。首版把 `--color-signal-soft` 与 ghost-active 的出处写错、把深色写成 31 色，
+   一审独立复算后已更正（口径：按"声明未显式带 alpha"的颜色去重；全量口径 38 色/19 不达标）。
 4. **一审 S1 实测到门会失明，已修**：`readTokenValue` 取正则首个匹配，门只读 `tokens.css`；
    在 `global.css` 末尾追加 `.app-header { --focus-ring: … }` 后门仍 8/8 全绿。现已加断言
    「`--focus-ring` 在 `styles/**` 里只声明一次且落在 `tokens.css :root`」，并做变异实测：

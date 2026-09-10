@@ -66,8 +66,12 @@
      单色 blue-600 在**浅色侧**只有 paper/surface/ink 三个底色达标（4.78 / 5.17 / 3.66:1），
      在**深色侧** paper 2.34:1、surface 2.7:1 都不达标；更要命的是它在**浅色全调色板**
      30 个可能当"元素自身底色"的取值里有 **16 个**不达标（含 `.button-danger` 的 red-900
-     2.78:1、`--color-signal-soft` 蓝底 1:1、ghost-active 1.86:1）。双层环在浅深两套
-     全调色板（30 + 31 色）上 **0 处失败**——因为任何底色都必然与 ink 或 surface 之一拉开。
+     2.78:1、`--color-signal`/`--color-accent` 蓝底 **1:1**、`--dsw-alias-button-ghost-active-border`
+     1.89:1、`--dsw-alias-button-primary-hover` 1.86:1）。双层环在浅深两套全调色板
+     （浅 30 色 / 深 30 色）上 **0 处失败**——因为任何底色都必然与 ink 或 surface 之一拉开。
+     （口径：按"声明未显式带 alpha"的颜色去重；全量口径 38 色/19 不达标。这几个数字一审
+     独立复算过，首版曾把 `--color-signal-soft`（blue-600 在其上 4.24:1，**达标**）与
+     ghost-active 的出处写错，已更正。）
      两层都走不透明语义 token（不写裸色值）：环要随 L1 深色段一起翻。
      数字、红→绿实测与复跑命令见 apps/web/tests/focus-ring.spec.ts 与
      docs/agent/focus-ring-acceptance.md。 */

@@ -328,10 +328,21 @@ describe('#164 焦点环门', () => {
     // var(--color-paper); }`，token 里仍是好值 → 门 8/8 **全绿**，而真实顶栏上的焦点环已经
     // 退化。根因是 `readTokenValue` 取的是正则**首个**匹配，只读 tokens.css。
     // 所以这里对 styles/ 下**全部** css 扫一遍声明点，把"局部覆盖"这条通道关掉。
-    const files = readdirSync(styleDir).filter((f) => f.endsWith('.css'))
+    // **递归**扫（二审 N5：首版用 readdirSync 只扫 styles/*.css，往 styles/themes/x.css 里放
+    // 覆盖再 @import 进来时门仍然全绿——断言口径大于实现）。
+    const files: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) walk(full)
+        else if (entry.name.endsWith('.css')) files.push(full)
+      }
+    }
+    walk(styleDir)
     const declared: Array<{ where: string; selector: string }> = []
-    for (const file of files) {
-      const text = readFileSync(join(styleDir, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    for (const full of files) {
+      const file = full.slice(styleDir.length + 1)
+      const text = readFileSync(full, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
       for (const [, selector, body] of text.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
         if ((body ?? '').includes('--focus-ring:')) {
           declared.push({ where: file, selector: (selector ?? '').trim().replace(/\s+/g, ' ') })
@@ -410,8 +421,8 @@ describe('#164 焦点环门', () => {
     //   · 焦点元素**自身**的底色就可能是 signal（.button-primary）→ 环与它 1:1，等于没有指示；
     //   · **深色侧** paper 2.34:1、surface 2.7:1 都不达标（一审 B1 纠正了首版把这句当通用结论
     //     写在随深色一起翻转的 token 注释里的错误）；
-    //   · 浅色全调色板里还有 15 个底色不达标（`.button-danger` 的 red-900 2.78、signal-soft
-    //     蓝底 1:1、ghost-active 1.86…）。
+    //   · 浅色全调色板（30 色）里还有 16 个底色不达标（`.button-danger` 的 red-900 2.78、
+    //     `--color-signal` 自身蓝底 1:1、ghost-active-border 1.89、button-primary-hover 1.86…）。
     // 双层环取 ink / surface 两极，正是为了"任何底色都必然与其中之一拉开"；这条数字就是
     // "为什么不用更显然的写法（单色加深）"的机器证据。
     const signal = parseCssColor(resolveTokenValue('--color-signal', false))
