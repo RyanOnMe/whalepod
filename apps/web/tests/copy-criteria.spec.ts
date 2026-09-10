@@ -133,6 +133,15 @@ describe('#167 文案判据（自身）', () => {
     const spaced = `${DIGEST_64.slice(0, 32)}\u200b${DIGEST_64.slice(32)}`
     expect(spaced).not.toBe(DIGEST_64)
     expect(findBareLongDigests(spaced)).toHaveLength(1)
+    // 判据 3 也是同一套预处理：`Ag\u200bents`（h1）与 `Agents`（h2）必须仍被判成同一个
+    // 标题——不剥零宽就会因为"不相等"而整体绕过（复核实测过）。
+    expect(
+      findDuplicateHeadings([
+        { level: 1, text: 'Ag\u200bents' },
+        { level: 2, text: 'Agents' },
+      ]),
+    ).toHaveLength(1)
+    expect(normalizeHeading('Ag\u200bents')).toBe(normalizeHeading('Agents'))
   })
 
   it('内部词表每条都写清了理由（词表本身不许裸奔）', () => {

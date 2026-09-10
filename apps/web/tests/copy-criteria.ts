@@ -135,9 +135,10 @@ export function findBareLongDigests(text: string): CopyViolation[] {
  * 中文。所以判据是「裸词才算」，不是一个词出现在屏上就算。
  *
  * 判据口径（**与实现逐字对齐**，一审 B2 指出过文档与实现不一致）：
- *   - 放过：term 被全角括号包住、且**括号前 8 个字符内出现过中文**（左标签，
+ *   - 放过：term 被括号包住（**全角或半角都算**，正则里是 `[（(]`）、且**括号前 8 个
+ *     字符内出现过中文**（左标签，
  *     如 `本地开发包（local-development）`、`精选（curated）`）；
- *   - 放过：term 后紧跟一个**以中文开头**的全角括号（右标签，
+ *   - 放过：term 后紧跟一个**以中文开头**的括号（同样全角/半角都收）（右标签，
  *     如 `local-development（本地开发）`）；
  *   - 命中：其余（`curated 目录暂无插件。`、`unreviewed 包不能进入普通 Pack`）。
  *
@@ -148,7 +149,8 @@ export function findBareLongDigests(text: string): CopyViolation[] {
  * 对照标签一起判红。本仓库的处置是"不写这种散文"（空态写成「精选目录暂无插件」），
  * 判据保证别退回裸词。
  *
- * 零宽字符（`cur\u200bated`）已由 normalizeForCriteria 统一剥掉，不再是绕过路径。
+ * 零宽字符（`cur\u200bated`）由 normalizeForCriteria 剥掉——**三条判据都走这套预处理**
+ * （判据 1/2 在按行扫描前调用它，判据 3 在 normalizeHeading 里调用它）。
  */
 export function findInternalTerms(text: string): CopyViolation[] {
   const violations: CopyViolation[] = []
@@ -172,7 +174,7 @@ export function findInternalTerms(text: string): CopyViolation[] {
  *
  * - 左标签：`[中文][≤8 字符][（term）]`——中文没有词间空格，所以"括号前一小段里有中文"
  *   基本等价于"这个词被前面的中文解释着"；
- * - 右标签：`term（中文…）`——term 后紧跟以中文开头的全角括号。
+ * - 右标签：`term（中文…）`——term 后紧跟以中文开头的括号（全角/半角都收）。
  *
  * 括号里"只有 term"只对左标签成立（防止 `（curated catalog）` 这种括号内容更长的形态被
  * 当成标签）；右标签按"以中文开头"判定。
@@ -202,9 +204,15 @@ export interface HeadingInfo {
   readonly text: string
 }
 
-/** 标题归一化：去空白、统一小写——`Agents` 与 ` Agents ` 是同一个标题。 */
+/**
+ * 标题归一化：去空白、统一小写——`Agents` 与 ` Agents ` 是同一个标题。
+ *
+ * **也走同一套零宽剥离**（`normalizeForCriteria`）：一审复核实测 `Ag​ents`（h1）
+ * 与 `Agents`（h2）会因为零宽字符而**不相等**，判据 3 被整体绕过；而判据 1/2 早已剥离，
+ * 三条判据必须是同一套预处理。剥离后再去空白/小写，顺序不影响结果（零宽字符不是空白符）。
+ */
 export function normalizeHeading(text: string): string {
-  return text.replace(/\s+/g, '').toLowerCase()
+  return normalizeForCriteria(text).replace(/\s+/g, '').toLowerCase()
 }
 
 /**
