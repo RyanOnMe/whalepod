@@ -68,6 +68,27 @@ async function fillAndEnter(page: Page, selector: string, value: string): Promis
 }
 
 /**
+ * #152「零泄漏」机器判据：用户可见文本里不得出现内部词汇。
+ *
+ * - UUID 形态（`01a08c11-…`）：截断/完整 UUID 都不是名字（实测截图里的
+ *   `by 01a08c11`）；
+ * - 裸枚举词（pending/accepted/rejected/in_progress）：状态必须走中文标签表，
+ *   内部枚举值不上屏。
+ *
+ * 只读 `innerText`（用户真正看得见的文本，display:none 不算），不扫 DOM 属性：
+ * 判据是「人看到的」，不是「源码里有没有」。调用点都先等待目标区域渲染完成，
+ * 避免扫到一个空页面就算通过。
+ */
+const UUID_SHAPE = /[0-9a-f]{8}-[0-9a-f]{4}-/
+const BARE_STATUS_ENUM = /\b(pending|accepted|rejected|in_progress)\b/
+
+async function expectNoJargonVisible(page: Page): Promise<void> {
+  const text = await page.locator('body').innerText()
+  expect(text, '页面可见文本不应出现 UUID 形态').not.toMatch(UUID_SHAPE)
+  expect(text, '页面可见文本不应出现裸状态枚举').not.toMatch(BARE_STATUS_ENUM)
+}
+
+/**
  * #152 判据：项目页首屏（不滚动）必须看得见项目列表与「任务列表」入口。
  * 桌面与 390×844 两档都判——「创建项目」表单常驻展开曾把两者挤出首屏。
  */
@@ -186,6 +207,10 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     // Task Room 四区可见（header/assignment/comments/runs+artifacts 空态）
     await expect(alice.getByText('起草验收报告').first()).toBeVisible()
     await expect(alice.getByText('还没有留言')).toBeVisible()
+    // #152：Task Room 一屏内不得出现 UUID 形态与裸状态枚举（责任人姓名走成员名录，
+    // 分配状态走 ASSIGNMENT_STATUS_LABEL）。
+    await expect(alice.locator('dt', { hasText: '当前责任人' })).toBeVisible()
+    await expectNoJargonVisible(alice)
 
     // ---- #137：离开 Task Room 后能找回任务（项目页任务列表） ----
     // 判据：真人路径「返回项目页 → 展开任务列表 → 看到刚建的任务 → 点回 Task Room」。
@@ -195,6 +220,9 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     await expect(listedTask).toBeVisible()
     // 责任人显示名来自成员接口（#136），不是短 UUID
     await expect(alice.getByRole('list', { name: '项目任务列表' })).toContainText('Bob（@bob')
+    // #152：项目卡写的是创建者姓名（成员名录），不是截断 UUID；列表就绪后再取文本
+    await expect(alice.locator('.project-meta').first()).toContainText('创建者')
+    await expectNoJargonVisible(alice)
     await listedTask.click()
     await alice.waitForURL(new RegExp(`/tasks/${taskId}$`))
     await expect(alice.getByText('还没有留言')).toBeVisible()
@@ -226,6 +254,10 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     // Bob 接受后任务状态仍是未开始（in_progress 随 Run 启动），可见的是
     // 「已接受」徽标 + 非责任人视角的第三方陈述措辞。
     await expect(alice.getByText('责任人已接受此任务。')).toBeVisible()
+    // #152：留言作者与分配状态这一屏同样零内部词汇（`accepted` 只能以「已接受」出现）
+    await expect(alice.locator('span.badge', { hasText: '已接受' }).first()).toBeVisible()
+    await expectNoJargonVisible(alice)
+    await expectNoJargonVisible(bob)
 
     // 键盘可达性证据：从留言输入框 Tab 一步即达提交按钮（与 DOM 顺序一致）。
     await bob.focus('textarea[name="body"]')

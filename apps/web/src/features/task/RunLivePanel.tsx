@@ -10,7 +10,8 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { queryKeys } from '../../app/query-client.js'
-import { formatIso, RUN_STATUS_LABEL } from '../../shared/format.js'
+import { RUN_STATUS_LABEL } from '../../shared/format.js'
+import { RelativeTime } from '../../shared/RelativeTime.js'
 import type { RunEventItem, RunView, Session } from '../../shared/api/types.js'
 import { dropRunLive, getRunLiveText, subscribeRunLive } from '../../shared/realtime/run-buffer.js'
 import { RunActions } from '../run/RunActions.js'
@@ -142,8 +143,16 @@ export function RunLivePanel({ runId, session }: RunLivePanelProps): ReactNode {
         <span className={`badge badge-run badge-run-${run.status}`}>
           {RUN_STATUS_LABEL[run.status]}
         </span>
-        {run.startedAt !== null ? <span>开始 {formatIso(run.startedAt)}</span> : null}
-        {run.finishedAt !== null ? <span>结束 {formatIso(run.finishedAt)}</span> : null}
+        {run.startedAt !== null ? (
+          <span>
+            开始 <RelativeTime iso={run.startedAt} />
+          </span>
+        ) : null}
+        {run.finishedAt !== null ? (
+          <span>
+            结束 <RelativeTime iso={run.finishedAt} />
+          </span>
+        ) : null}
       </div>
 
       {run.rerunOfRunId !== null ? (
@@ -189,7 +198,7 @@ export function RunLivePanel({ runId, session }: RunLivePanelProps): ReactNode {
               >
                 <span className="run-event-seq">#{item.seq}</span>
                 <span className="run-event-text">{text ?? item.type}</span>
-                <time>{formatIso(item.occurredAt)}</time>
+                <RelativeTime iso={item.occurredAt} />
               </li>
             )
           })}
