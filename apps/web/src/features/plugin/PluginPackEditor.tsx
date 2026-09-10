@@ -20,6 +20,7 @@ import type {
   PluginPackView,
 } from '@whalepod/protocol'
 import { api } from '../../shared/api/client.js'
+import { CopyButton } from '../../shared/CopyButton.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { formatIso, shortDigest, shortId } from '../../shared/format.js'
 import type { Session } from '../../shared/api/types.js'
@@ -244,6 +245,7 @@ function PackCard({ pack }: { pack: PluginPackView }): ReactNode {
  * 一键复制按钮：navigator.clipboard 不可用或写入失败时明确报失败并指向手动
  * 复制入口（digest 的完整值始终可见；Pack ID 全值在 title 中），不伪造
  * 「已复制」。valueLabel 指明要复制的取值名称（digest / Pack ID）。
+ * 实现已抽到 shared/CopyButton（#141 邀请链接复用同一行为与文案）。
  */
 function CopyValueButton({
   value,
@@ -254,21 +256,5 @@ function CopyValueButton({
   label: string
   valueLabel?: string
 }): ReactNode {
-  const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle')
-  const copy = (): void => {
-    setCopied('idle')
-    navigator.clipboard
-      .writeText(value)
-      .then(() => setCopied('copied'))
-      .catch(() => setCopied('failed'))
-  }
-  return (
-    <span className="copy-value">
-      <button type="button" className="button button-quiet" aria-label={label} onClick={copy}>
-        复制
-      </button>
-      {copied === 'copied' ? <span role="status">已复制</span> : null}
-      {copied === 'failed' ? <span role="status">复制失败，请手动复制{valueLabel}</span> : null}
-    </span>
-  )
+  return <CopyButton value={value} label={label} valueLabel={valueLabel} />
 }

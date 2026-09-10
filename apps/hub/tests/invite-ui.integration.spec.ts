@@ -82,21 +82,30 @@ describe('成员列表（GET /team/members）', () => {
 
     const response = await apiInject(ctx, owner, { method: 'GET', url: '/api/v1/team/members' })
     expect(response.statusCode).toBe(200)
-    const members = response.json().data.members as Array<{
+    // #136 的形态：data 即数组（与 /projects、/agents、/devices 一致），不包 { members }。
+    const members = response.json().data as Array<{
       userId: string
       username: string
       displayName: string
       role: string
-      joinedAt: string
+      enabled: boolean
     }>
+    expect(Array.isArray(response.json().data)).toBe(true)
     expect(members.map((member) => member.username)).toEqual(['alice', 'bob'])
     expect(members[0]?.userId).toBe(owner.userId)
     expect(members[0]?.role).toBe('owner')
     expect(members[1]?.displayName).toBe('Bob')
     expect(members[1]?.role).toBe('member')
     expect(members[1]?.userId).toBe(bob.userId)
-    // joined_at 以 ISO 串下发（UI 直接展示，不二次猜测时区）。
-    expect(members[1]?.joinedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    // 字段最小集：#136 的 schema 只出 enabled（未停用判据），不含裸 disabledAt/joinedAt。
+    expect(members[1]?.enabled).toBe(true)
+    expect(Object.keys(members[1] ?? {}).sort()).toEqual([
+      'displayName',
+      'enabled',
+      'role',
+      'userId',
+      'username',
+    ])
   })
 
   it('匿名请求成员列表返回 401（成员名单不匿名可见）', async () => {
@@ -113,7 +122,7 @@ describe('成员列表（GET /team/members）', () => {
     })
     const response = await apiInject(ctx, bob, { method: 'GET', url: '/api/v1/team/members' })
     expect(response.statusCode).toBe(200)
-    expect(response.json().data.members).toHaveLength(2)
+    expect(response.json().data).toHaveLength(2)
   })
 })
 

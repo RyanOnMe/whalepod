@@ -16,6 +16,7 @@ import {
   createMemoryRouter,
   isRouteErrorResponse,
   redirect,
+  useLoaderData,
   useRouteError,
 } from 'react-router'
 import type { RouteObject } from 'react-router'
@@ -25,7 +26,9 @@ import type { Session, SetupStatus } from '../shared/api/types.js'
 import { queryKeys } from './query-client.js'
 import { AppShell } from './session.js'
 import { DevicesPage } from '../routes/DevicesPage.js'
+import { InvitePage } from '../routes/InvitePage.js'
 import { LoginPage } from '../routes/LoginPage.js'
+import { MembersPage } from '../routes/MembersPage.js'
 import { ProjectsPage } from '../routes/ProjectsPage.js'
 import { SetupPage } from '../routes/SetupPage.js'
 import { TaskRoomPage } from '../routes/TaskRoomPage.js'
@@ -105,11 +108,48 @@ function makeLoginLoader(queryClient: QueryClient) {
   }
 }
 
+/**
+ * #141 接受页的引导 loader：/setup/status + /auth/session。
+ *
+ * 与 root loader 的**唯一**差别：未登录**不跳** /login——被邀请人打开链接时
+ * 还没有账号，跳走会丢掉 URL 里的 Token（登录页不接受外部跳转目标，这是既定的
+ * 防开放重定向纪律）。未登录时把 session=null 交给页面，由页面在原 URL 上引导登录。
+ *
+ * 预检失败（404/409）不在 loader 抛错：页面要按「不存在 / 已过期 / 已被使用」
+ * 给人话，抛给 errorElement 只会显示裸错误码。
+ */
+function makeInviteLoader(queryClient: QueryClient) {
+  return async (): Promise<{ session: Session | null; initialized: boolean }> => {
+    const setupStatus = await queryClient.fetchQuery({
+      queryKey: queryKeys.setupStatus,
+      queryFn: () => api.get<SetupStatus>('/setup/status'),
+      staleTime: Infinity,
+    })
+    if (!setupStatus.initialized) return { session: null, initialized: false }
+    try {
+      const session = await queryClient.fetchQuery({
+        queryKey: queryKeys.session,
+        queryFn: () => api.get<Session>('/auth/session'),
+        staleTime: 60_000,
+      })
+      return { session: session ?? null, initialized: true }
+    } catch (error) {
+      if (isSessionError(error)) return { session: null, initialized: true }
+      throw error
+    }
+  }
+}
+
 /** 完整路由表；测试与生产共用，保证 loader 行为一致。 */
 export function createAppRoutes(queryClient: QueryClient): RouteObject[] {
   return [
     { path: '/setup', loader: makeSetupLoader(queryClient), element: <SetupPage /> },
     { path: '/login', loader: makeLoginLoader(queryClient), element: <LoginPage /> },
+    {
+      path: '/invites/:token',
+      loader: makeInviteLoader(queryClient),
+      element: <InviteRoute />,
+    },
     {
       path: '/',
       loader: makeRootLoader(queryClient),
@@ -121,9 +161,19 @@ export function createAppRoutes(queryClient: QueryClient): RouteObject[] {
         { path: 'agents', element: <AgentsPage /> },
         { path: 'plugins', element: <PluginsPage /> },
         { path: 'devices', element: <DevicesPage /> },
+        { path: 'members', element: <MembersPage /> },
       ],
     },
   ]
+}
+
+/** 把 loader 结果喂给接受页（页面按 session 决定「登录后加入」还是「一键加入」）。 */
+function InviteRoute(): ReactNode {
+  const { session, initialized } = useLoaderData() as {
+    session: Session | null
+    initialized: boolean
+  }
+  return <InvitePage session={session} initialized={initialized} />
 }
 
 export function createAppRouter(queryClient: QueryClient) {
