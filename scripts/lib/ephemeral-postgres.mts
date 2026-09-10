@@ -183,6 +183,17 @@ export interface EphemeralPostgres {
   stop(): Promise<void>
 }
 
+/**
+ * 当前 worktree 的隔离标识（并行 e2e 用）：取 cwd 目录名 + 路径短哈希。
+ * 目的：多 worktree 并行跑 Q5 时，容器清理只碰自己那一副，不误删兄弟线的 DB。
+ */
+export function e2eScope(cwd: string = process.cwd()): string {
+  const name = cwd.split('/').filter(Boolean).pop() ?? 'root'
+  let hash = 0
+  for (const ch of cwd) hash = (hash * 31 + ch.codePointAt(0)!) >>> 0
+  return `${name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 24)}-${hash.toString(16).slice(0, 6)}`
+}
+
 export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
   await ensureDocker()
   await ensureImage()
@@ -199,6 +210,10 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
     '127.0.0.1:0:5432',
     '--label',
     'whalepod.e2e-postgres=true',
+    // 并行 worktree 隔离：多 worktree 同时跑 e2e 时，各自的清理只该动自己的容器。
+    // 旧标签保留（q5-loop.sh 与历史清理路径仍按它筛），新标签用于「按 worktree 精确清」。
+    '--label',
+    `whalepod.e2e-scope=${e2eScope()}`,
     IMAGE,
   ]
 

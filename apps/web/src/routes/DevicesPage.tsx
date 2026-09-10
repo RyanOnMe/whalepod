@@ -86,48 +86,56 @@ export function DevicesPage(): ReactNode {
   return (
     <div className="devices-page">
       <h1>设备</h1>
-      <PairingCodePanel
-        issued={issued}
-        issuing={issue.isPending}
-        error={issue.isError ? issue.error : null}
-        onIssue={() => issue.mutate()}
-      />
-      <section className="card devices-list" aria-labelledby="devices-list-heading">
-        <h2 id="devices-list-heading">已配对设备</h2>
-        {listQuery.isPending ? <p className="mutation-hint">正在加载设备…</p> : null}
-        {listQuery.isError ? <ErrorBanner error={listQuery.error} /> : null}
-        {listQuery.isSuccess && listQuery.data.length === 0 ? (
-          <p className="empty-state">
-            还没有设备——先点上方「生成配对码」，再按下方 CLI
-            步骤在成员本机完成配对；配对成功后设备会自动出现在这里，不用刷新。
-          </p>
-        ) : null}
-        {listQuery.isSuccess && listQuery.data.length > 0 ? (
-          <ul className="device-list" role="list">
-            {listQuery.data.map((device) => (
-              <li key={device.id} className="device-item">
-                <div className="device-item-head">
-                  <h3>{device.name}</h3>
-                  <DeviceStatus status={device.status} />
-                </div>
-                <dl className="device-meta">
-                  <div>
-                    <dt>平台</dt>
-                    <dd>{formatPlatform(device.platform)}</dd>
-                  </div>
-                  <div>
-                    <dt>最后在线</dt>
-                    <dd>
-                      <RelativeTime iso={device.lastSeenAt} />
-                    </dd>
-                  </div>
-                </dl>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </section>
-      <CliSteps />
+      {/* #152：宽屏两栏（主列 = 配对码 + 已配对设备，侧列 = CLI 说明），窄屏回落单列。 */}
+      <div className="page-grid">
+        <div className="page-col">
+          <PairingCodePanel
+            issued={issued}
+            issuing={issue.isPending}
+            error={issue.isError ? issue.error : null}
+            onIssue={() => issue.mutate()}
+          />
+          <section className="card devices-list" aria-labelledby="devices-list-heading">
+            <h2 id="devices-list-heading">已配对设备</h2>
+            {listQuery.isPending ? <p className="mutation-hint">正在加载设备…</p> : null}
+            {listQuery.isError ? <ErrorBanner error={listQuery.error} /> : null}
+            {listQuery.isSuccess && listQuery.data.length === 0 ? (
+              <p className="empty-state">
+                {/* #152：两栏后 CLI 步骤在宽屏位于右列、窄屏位于下方——指路文案不再写方位。 */}
+                还没有设备——先点上方「生成配对码」，再按 CLI
+                步骤在成员本机完成配对；配对成功后设备会自动出现在这里，不用刷新。
+              </p>
+            ) : null}
+            {listQuery.isSuccess && listQuery.data.length > 0 ? (
+              <ul className="device-list" role="list">
+                {listQuery.data.map((device) => (
+                  <li key={device.id} className="device-item">
+                    <div className="device-item-head">
+                      <h3>{device.name}</h3>
+                      <DeviceStatus status={device.status} />
+                    </div>
+                    <dl className="device-meta">
+                      <div>
+                        <dt>平台</dt>
+                        <dd>{formatPlatform(device.platform)}</dd>
+                      </div>
+                      <div>
+                        <dt>最后在线</dt>
+                        <dd>
+                          <RelativeTime iso={device.lastSeenAt} />
+                        </dd>
+                      </div>
+                    </dl>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
+        </div>
+        <div className="page-col">
+          <CliSteps />
+        </div>
+      </div>
     </div>
   )
 }
@@ -293,9 +301,20 @@ function CliSteps(): ReactNode {
           </pre>
         </li>
         <li>
-          用上方「生成配对码」拿到一次性码后，在成员本机执行：
+          {/* #152：配对码面板在宽屏位于左列——同样只留动作名，不写方位。 */}
+          用「生成配对码」拿到一次性码后，在成员本机执行：
           <pre>
-            <code>whalepod-node pair --hub &lt;hub-url&gt; --code &lt;code&gt;</code>
+            {/*
+              #152：这条命令在侧列（368px）与 390px 单列里都放不下（整块已按空格软换行，
+              软换行不进剪贴板）。参数两两包成不可断开的 token——否则 UAX #14 会在连字符
+              处断成 `--` / `code`。各段用显式字符串表达式拼接，避免 JSX 缩进把空白混进
+              命令文本（单测逐字比对 textContent）。
+            */}
+            <code>
+              {'whalepod-node pair '}
+              <span className="cli-token">--hub &lt;hub-url&gt;</span>{' '}
+              <span className="cli-token">--code &lt;code&gt;</span>
+            </code>
           </pre>
         </li>
         <li>

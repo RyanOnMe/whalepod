@@ -1,0 +1,44 @@
+/**
+ * vendored from deepseek-ai/deepseek-harness packages/client/ui-primitives/src/Input.module.css
+ * @ c291e7961a515f6d7af9304e7fd1d257929aef26（MIT，见同目录 LICENSE）
+ * 本仓改动：仅①工程口径（顶部加本出处头块）。**样式声明与上游逐字节一致**——
+ * 剥掉出处头后与上游 blob 相等（见 docs/agent/dsh-ui-vendoring-batch2.md §哈希表）。
+ */
+.wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 8px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.wrap:focus-within {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.input::placeholder {
+  color: var(--dsw-alias-label-dimmed);
+}

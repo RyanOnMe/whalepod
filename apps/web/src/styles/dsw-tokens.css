@@ -1,24 +1,46 @@
 /**
- * L1 主题 token（#138 首批切片）：vendored DSH client UI 原语消费的 --dsw-* 变量白名单。
+ * L1 主题 token（#138）：vendored DSH client UI 原语消费的 --dsw-* 变量白名单。
  *
  * 来源（逐文件台账见 apps/web/src/vendor/dsh-ui/manifest.json）：
  *   上游 repo  github.com/deepseek-ai/deepseek-harness（MIT, Copyright (c) 2026 DeepSeek）
- *   上游文件  packages/client/ui-theme/src/styles/design-platform.css
+ *   上游文件  packages/client/ui-theme/src/styles/design-platform.css（主体）
+ *             + packages/client/ui-theme/src/styles/gradient-shadow-text.css（elevation/遮罩段，
+ *               #138 L2 第二批新增，见下方 `body, body *` 规则）
  *   取用 commit  c291e7961a515f6d7af9304e7fd1d257929aef26
  *
- * 白名单口径：**只抄 apps/web/src/vendor/dsh-ui/ 里 6 个原语 CSS 真正引用的变量**
- * （Button/Pill/Tag/StateDot/DisclosureRow/Switch 逐一 grep 得到），共 23 个，外加 3 个
- * 静态色阶（green/red/amber-900，见下）——上游 design-platform.css 的 alias 段有近百个
- * 变量、静态色阶 **73** 个（实测唯一 `--dsw-static-*` 计数），这里只留必需的。本仓对上游做的三处收缩/补齐（都「取值不变」）：
- *   1. 静态色阶引用就地展开为 rgb() 字面量，只保留 4 个静态变量（deepseek-450 是
- *      StateDot ongoing 蓝，900 三档是设备页 AA 重映射的取值来源，别名上无可替代）；
- *   2. alias→alias 的间接（--dsw-alias-button-primary-fill → --dsw-alias-brand-primary）
- *      保留原样，因为改品牌色时按钮要跟着动，这层间接是语义而不是冗余。
- * 未抄的两个上游变量是 DisclosureRow 用到的 --dsh-content-font-size-secondary 与
- * --dsh-content-font-delta（注意前缀是 --dsh-，属上游 body 发布的 content 轴，不在本
- * 白名单的 --dsw-* 范围内，是**已知例外**：只有 DisclosureRow.module.css 引用它俩）；
- * 其每一处引用都带 fallback（13px / 0px），L1 不提供也能正确降级。若将来 L3 要做字号
- * 偏好，再按同一份 manifest 补。
+ * 白名单口径：**只抄 apps/web/src/vendor/dsh-ui/ 里已 vendored 的原语 CSS 真正引用的变量**，
+ * 反向定义，不是全量继承。上游 design-platform.css 的 alias 段有近百个变量、静态色阶 **73** 个
+ * （实测唯一 `--dsw-static-*` 计数），这里只留必需的：
+ *   - 首批（6 个原语：Button/Pill/Tag/StateDot/DisclosureRow/Switch）：引用 **23** 个；
+ *   - #138 L2 第二批（4 个原语：Input/Menu/ConnectionIndicator/Modal）：**新增引用 15 个**
+ *     （其中 --dsw-elevation-prominent 另需其派生依赖 --dsw-elevation-stroke 与
+ *     --dsw-elevation-stroke-color 共 3 个 + --dsw-mask-blur 1 个，见 `body, body *` 段）；
+ *     两批并集 **38** 个引用变量，逐个在下方 :root 段有声明（Q0 单测钉死"零未解析引用"）。
+ * 本仓对上游的收缩/补齐（都「取值不变」）：
+ *   1. 只保留被引用变量真正需要的静态色阶（共 15 个 `--dsw-static-*`），其余静态档不抄；
+ *      「真正需要」= 有 `var()` 消费者（vendored CSS / 本文件内部 / global.css 三处之一）。
+ *      本批初版把上游那一段的 13 个静态档整批搬了进来，被审查追出**两个孤儿**
+ *      （`--dsw-static-amber-500`、`--dsw-static-neutral-bluish-1000`），两个都已删除；
+ *      理由分别见两处注释，现在有一条 Q0 用例守着「L1 不得有零消费者变量」。
+ *   2. 别名间接按上游保留：能吃 alias 的不落到静态字面量（--dsw-alias-button-primary-fill →
+ *      --dsw-alias-brand-primary、--dsw-specific-menu → --dsw-alias-bg-layer-3、
+ *      --dsw-alias-state-warn-label → --dsw-static-amber-600 …），这层间接是语义而不是冗余。
+ *
+ * **两批的静态色阶写法不一致（已知，待归一）**：首批把 alias→静态 的引用**就地展开成
+ * rgb() 字面量**；第二批改为**保留 alias → var(--dsw-static-*) 的指引**。两者都是「最终取值
+ * 与上游逐字一致」，但形态不同：第二批的写法保住了「同一个静态档只声明一次」，代价是多一层
+ * 间接。**归一动作**（把首批的 alias 改回指向静态档）属 L1 文件的结构调整，本切片不动——
+ * 它会让本文件在其它切片的 diff 里整体变红、且与 vendored 目录无关。留作后续单列一件。
+ *
+ * 未抄的四个上游变量，性质分两类（别混）：
+ *   - --dsh-content-font-size-secondary 与 --dsh-content-font-delta（DisclosureRow 读取）：
+ *     **每处引用都带 fallback**（13px / 0px），L1 不提供也能正确降级；
+ *   - --dsh-scrollbar-thumb 与 --dsh-scrollbar-thumb-hover（Menu.module.css 在浮层面板上
+ *     **赋值/重绑**，Menu 自己不读）：它们是给上游 scrollbar.css 的 body 与
+ *     ::-webkit-scrollbar 规则消费的，本仓没取那份样式，所以这两条声明**被声明但无人消费**
+ *     ——既不生效也不报错。将来接全站滚动条皮肤时才需要一并补 L1 取值。
+ * 前缀是 --dsh-，属上游 body 发布的 content / scrollbar 轴，不在本白名单的 --dsw-* 范围内，
+ * 是**已知例外**。若将来 L3 要做字号偏好或滚动条皮肤，再按同一份 manifest 补。
  *
  * 与既有 token 的关系（双轨并存的已知代价）：apps/web/src/styles/tokens.css 的
  * --color-* 与 --space-* 是本仓原型视觉语言，值一个没动；本文件只新增 --dsw-* 一族。
@@ -32,7 +54,7 @@
  * 上游把变量定义在 body 上（便于局部作用域），本仓浅色挂在 :root；深色同样由
  * body[data-ds-dark-theme] 覆盖——该属性由主题切换方设置。**本仓当前没有深色切换入口**
  * （index.html 不设该属性），所以线上只有浅色生效；深色一套先按上游语义备好，L3 接主题
- * 切换时把它设到 body 上即可。两套里取值相同的变量不重写，见下方 dark 段的清单注释。
+ * 切换时把它设到 body 上即可。
  */
 :root {
   /* 静态色阶（白名单里的静态变量，别名上无可替代）：
@@ -51,6 +73,35 @@
   --dsw-static-green-900: rgb(35, 60, 44);
   --dsw-static-red-900: rgb(87, 12, 12);
   --dsw-static-amber-900: rgb(39, 36, 31);
+
+  /* #138 L2 第二批新增的静态色阶（上游 design-platform.css 静态段逐字照抄）。
+   * 它们只被下面新增的 alias 声明消费——即"仅被 alias 声明消费"的那一类，
+   * 上游 light/dark 两段取值相同，故深色段不重复声明。
+   * 注意取值的两个坑（都在上游如此，不是抄错）：
+   *   - label-dimmed 用 neutral-bluish-200/750（偏蓝的灰），不是 neutral-* 中性灰；
+   *   - warn-label 与 warn-primary 是**两个不同**的档位（amber-600 / amber-500）。 */
+  --dsw-static-neutral-bluish-00: rgb(255, 255, 255);
+  --dsw-static-neutral-bluish-200: rgb(225, 229, 238);
+  --dsw-static-neutral-bluish-750: rgb(67, 69, 74);
+  --dsw-static-neutral-bluish-875: rgb(35, 35, 36);
+  /* 这里**没有** --dsw-static-neutral-bluish-1000（理由同下方 amber-500）：上游拿它做
+   * --dsw-alias-brand-primary 的取值，但本仓首批已把 brand-primary 就地展开成
+   * rgb(15, 17, 21) 字面量，故它零消费者。本切片初版把 13 个静态档整批搬了进来，
+   * 被审查的变异思路追出两个孤儿（amber-500 / bluish-1000），两个都已删除；
+   * 现在有一条 Q0 用例守着「L1 不得有零消费者变量」。 */
+  --dsw-static-neutral-200: rgb(229, 229, 229);
+  --dsw-static-neutral-300: rgb(212, 212, 212);
+  --dsw-static-neutral-550: rgb(101, 103, 107);
+  --dsw-static-neutral-600: rgb(84, 85, 87);
+  --dsw-static-green-100: rgb(230, 250, 237);
+  --dsw-static-amber-100: rgb(254, 245, 231);
+  /* 注意这里**没有** --dsw-static-amber-500：本仓没有它的消费者。上游 warn 的两个档位里，
+   * amber-600 被 --dsw-alias-state-warn-label 消费（本批新增），而 amber-500 的消费者
+   * --dsw-alias-state-warn-primary 在**首批就已经就地展开成字面量** rgb(245, 158, 11)，
+   * 从来不是 var() 引用。本切片初版按"同一档只声明一次"的理由把它加进来过，被审查纠出：
+   * 它零消费者，反而让同一档位在文件里有两处取值（正是本文件要避免的漂移），故删除。
+   * 将来若把首批那处字面量改回 alias 指引（见文件头「两批写法不一」那条），再把它加回来。 */
+  --dsw-static-amber-600: rgb(221, 134, 41);
 
   /* 背景层级 */
   --dsw-alias-bg-layer-2: rgb(255, 255, 255);
@@ -85,14 +136,69 @@
   --dsw-alias-state-warn-primary: rgb(245, 158, 11);
   --dsw-alias-state-error-primary: rgb(236, 19, 19);
   --dsw-alias-state-business-primary: rgb(65, 118, 230);
+
+  /* ===== #138 L2 第二批（Input / Menu / ConnectionIndicator / Modal）白名单增量 =====
+   * 上游 `body` 段其余声明里，只补这四个组件 CSS 真正引用到的（逐个 grep 得到）。
+   * 别名语义按上游保留：能吃 alias 的不落到静态色阶字面量。
+   * 口径提醒：state-warn-label（amber-600）与 state-warn-primary（amber-500）是**两个不同**
+   * 档位，输入框/连接的 warn 面同时吃这两个，别合并。 */
+  --dsw-alias-bg-layer-1: var(--dsw-static-neutral-bluish-00);
+  --dsw-alias-bg-mask-1: rgba(0, 0, 0, 0.24);
+  --dsw-alias-border-l1: rgba(0, 0, 0, 0.04);
+  --dsw-alias-border-l2: rgba(0, 0, 0, 0.1);
+  --dsw-alias-interactive-bg-hover-danger: rgba(236, 19, 19, 0.05);
+  --dsw-alias-label-dimmed: var(--dsw-static-neutral-bluish-200);
+  --dsw-alias-scrollbar-bg-l2: var(--dsw-static-neutral-200);
+  --dsw-alias-scrollbar-hover-l2: var(--dsw-static-neutral-300);
+  --dsw-alias-state-success-tertiary: var(--dsw-static-green-100);
+  --dsw-alias-state-warn-label: var(--dsw-static-amber-600);
+  --dsw-alias-state-warn-tertiary: var(--dsw-static-amber-100);
+  --dsw-specific-menu: var(--dsw-alias-bg-layer-3);
 }
 
 /**
- * 深色一套：只重写与浅色取值不同的 17 个；下列 6 个两套取值相同，故不重复
- * （保持单一来源，避免两处取值漂移）：
- *   --dsw-static-deepseek-450、--dsw-alias-button-primary-fill（随 brand-primary 变）、
- *   --dsw-alias-button-tool-bar-fill、--dsw-alias-button-tool-bar-hover、
- *   --dsw-alias-state-success-primary、--dsw-alias-state-warn-primary。
+ * #138 L2 第二批：elevation 与遮罩模糊（上游 gradient-shadow-text.css 的 body 段与
+ * `body, body *` 段）。**两块的选择器不能合并**——这正是上游把默认色与派生值分开写的用意：
+ *
+ *   1. `body { … }`（上游 17/19 行）：**只声明默认值** `--dsw-elevation-stroke-color`
+ *      与 `--dsw-mask-blur`。上游注释原文：「默认色只声明在 body 上，让表面的重绑沿继承
+ *      传给真正消费投影的后代。」
+ *   2. `body, body * { … }`（上游 26–35 行）：**只声明派生值**
+ *      `--dsw-elevation-stroke` / `-prominent`。逐元素声明是因为继承传下来的是在 body 上
+ *      **已代入完** `var()` 的值，重绑方（Menu.module.css 把 --dsw-elevation-stroke-color
+ *      重绑到 --dsw-alias-border-l1）的后代就拿不到重绑色。
+ *
+ * **初版曾经把四个变量全放进 `body, body *`，那是语义错误**（本次审查纠出）：等于每个元素
+ * 都重新声明默认描边色 l4，重绑元素的**后代**会拿到 l4 而不是继承来的重绑色。当时不显形
+ * 只是因为唯一重绑方 Menu 的 `.list/.submenu` 在同一条规则里自己消费 `box-shadow`。
+ * 两块的分工由 Q0 单测钉住（见 vendor-dsh-ui.spec.tsx 的「elevation 两块」用例）。
+ *
+ * `body *` 通配规则的作用面较大，且占的是 --dsw-* 命名空间。**实测**（2026-09-11）：
+ * apps/web 下没有任何内联 `style=` / `style={{` 写法，也没有 setProperty 调用，故这一层
+ * 不覆盖任何既有内联变量；本仓 **index.html 不设** data-ds-dark-theme，深色段当前不生效。
+ * 风险留给 L3：将来谁要写内联 --dsw-* 变量，必须知道这条通配规则存在（内联样式仍会赢，
+ * 但若把派生值挂在元素上靠继承，这条规则会把它重置掉）。
+ *
+ * 上游取值逐字照抄，未改一个数字。本仓只取这 4 个变量，没有上游 gradient-shadow-text.css
+ * 的其余部分（阴影档/字号阶梯）。
+ */
+body {
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l4);
+  /* blur filter */
+  --dsw-mask-blur: blur(2px);
+}
+
+body,
+body * {
+  --dsw-elevation-stroke: 0 0 0 0.5px var(--dsw-elevation-stroke-color);
+  --dsw-elevation-prominent:
+    var(--dsw-elevation-stroke), 0 3px 8px 0 rgba(0, 0, 0, 0.04), 0 0 20px 0 rgba(0, 0, 0, 0.05);
+}
+
+/**
+ * 深色一套：只重写与浅色取值不同的变量（首批 17 个 + #138 L2 第二批 11 个 = 28 个）；
+ * 两套取值相同的变量不重复声明（保持单一来源，避免两处取值漂移），逐项的清单注释
+ * 写在各段上方。
  */
 body[data-ds-dark-theme] {
   /* 背景层级：深色下三层各自上一档（上游 neutral-bluish 850/800/800） */
@@ -123,4 +229,24 @@ body[data-ds-dark-theme] {
   /* 状态色：error/business 提亮到 400 档，success/warn 不变 */
   --dsw-alias-state-error-primary: rgb(242, 90, 90);
   --dsw-alias-state-business-primary: rgb(103, 158, 254);
+
+  /* #138 L2 第二批新增变量的深色取值（上游 body[data-ds-dark-theme] 段逐字照抄）。
+   * 该批 15 个引用变量 + 4 个 elevation/遮罩变量里，下列 11 个两套取值不同，故在此重写；
+   * 其余 8 个（--dsw-alias-brand-primary 已在上面、--dsw-alias-border-l4、
+   * --dsw-alias-state-warn-primary、--dsw-alias-state-warn-label、--dsw-elevation-stroke-color、
+   * --dsw-elevation-stroke、--dsw-elevation-prominent、--dsw-mask-blur）浅深同值，
+   * 保持单一来源、不在此重复，避免两处取值漂移。 */
+  --dsw-alias-bg-layer-1: var(--dsw-static-neutral-bluish-875);
+  --dsw-alias-bg-mask-1: rgba(0, 0, 0, 0.5);
+  --dsw-alias-border-l1: rgba(255, 255, 255, 0.06);
+  --dsw-alias-border-l2: rgba(255, 255, 255, 0.12);
+  --dsw-alias-interactive-bg-hover-danger: rgba(242, 90, 90, 0.15);
+  --dsw-alias-label-dimmed: var(--dsw-static-neutral-bluish-750);
+  --dsw-alias-scrollbar-bg-l2: var(--dsw-static-neutral-600);
+  --dsw-alias-scrollbar-hover-l2: var(--dsw-static-neutral-550);
+  /* 注意：上游深色下 success/warn 的 tertiary 底**不沿用同一个静态档**
+   * （浅色 green-100/amber-100 → 深色 green-900/amber-900），别按浅色规律想当然。 */
+  --dsw-alias-state-success-tertiary: var(--dsw-static-green-900);
+  --dsw-alias-state-warn-tertiary: var(--dsw-static-amber-900);
+  --dsw-specific-menu: var(--dsw-alias-bg-layer-3);
 }

@@ -78,21 +78,52 @@ select {
   grid-template-rows: auto auto 1fr;
 }
 
+/*
+ * #152 顶栏：恒定单行（390px 下也不折行）。高度预算 = 内容 40px（--touch-min）
+ * + 上下 --space-3 = 64px；用户信息超长时省略而不是把顶栏顶成三行。
+ * min-width: 0 是要害：顶栏是 .app-shell 栅格的 item，默认 min-width: auto 会让
+ * 「不换行的用户名」把整页宽度顶出去（390 视口实测被顶到 522）。
+ */
 .app-header {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: var(--space-5);
-  padding: var(--space-3) var(--space-5);
+  gap: var(--space-3);
+  flex-wrap: nowrap;
+  padding: var(--space-3) var(--space-4);
+  min-width: 0;
+  min-height: 64px;
   background: var(--color-ink);
   color: var(--color-paper);
-  flex-wrap: wrap;
 }
 
 .app-brand {
+  flex: none;
   color: var(--color-paper);
   font-weight: 700;
   text-decoration: none;
   font-size: 18px;
+}
+
+/* 折叠导航：窄屏只有一个入口，展开的面板绝对定位（不撑高顶栏）。 */
+.app-nav-menu {
+  display: block;
+  flex: none;
+  min-width: 0;
+}
+
+.app-nav-toggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--touch-min);
+  padding: 0 var(--space-2);
+  color: var(--color-paper);
+  cursor: pointer;
+  list-style: none;
+}
+
+.app-nav-toggle::-webkit-details-marker {
+  display: none;
 }
 
 .app-nav {
@@ -119,8 +150,22 @@ select {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* 退出按钮不参与收缩（否则文字折行反把顶栏顶高），高度交给 --touch-min。 */
+.app-header-user .button {
+  flex: none;
+  padding-block: 0;
+}
+
+/* 顶栏宽度是硬预算：显示名过长时省略（完整值在 title 与成员页里）。 */
+.app-header-user-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .app-logout-error {
@@ -128,12 +173,47 @@ select {
   padding: var(--space-2) var(--space-5);
 }
 
+/* #152：全站唯一内容容器。居中 1120px，两侧 var(--space-5) 留白（内容列 1072px）；
+   项目页 / Task Room / 成员页 / 设备页 / Agents / 插件页都只经它定宽。 */
 .app-main {
   padding: var(--space-5);
   width: 100%;
-  max-width: 1200px;
+  max-width: 1120px;
   margin: 0 auto;
   min-width: 0;
+}
+
+/*
+ * #152 两栏栅格：宽屏让主列与侧列并排（不留半屏空白），窄屏回落单列。
+ * 只做布局，不引入 JS：列宽由 grid 决定，两列都 minmax(0,·) 以免长内容顶宽。
+ */
+.page-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+  min-width: 0;
+}
+
+.page-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* 页面标题与主操作同一行（项目页「新建项目」）。 */
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+
+.page-head h1 {
+  margin: 0;
 }
 
 /* ---------- 通用元素 ---------- */
@@ -746,16 +826,11 @@ select {
 }
 
 /* ---------- 设备页（#142：配对码签发 + 设备列表） ---------- */
+/* #152：页面不再各自定宽（原 720px 让宽屏空出半屏），列宽交给 .page-grid。 */
 .devices-page {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-}
-
-.devices-pairing,
-.devices-list,
-.devices-cli {
-  max-width: 720px;
 }
 
 .device-pairing-code {
@@ -893,13 +968,39 @@ select {
   color: var(--color-paper);
   border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-3);
-  overflow-x: auto;
+  /* #152：三条命令在两栏侧列（368px）与 390px 单列下都放不下——实测内部横向溢出
+     88/114px，命令尾巴被切掉且没有滚动提示。改为按空格软换行：软换行不进剪贴板
+     （真 Chrome 实测复制结果与源串逐字相同、无换行符），可复制语义不变；续行用
+     悬挂缩进，免得被读成第二条命令。break-word（而非 anywhere）只在整词放不下时
+     才折断，避免把 `--code` 掰成 `-` + `-code`。 */
+  padding-left: calc(var(--space-3) + var(--space-4));
+  text-indent: calc(-1 * var(--space-4));
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
   font-family: var(--font-mono);
   font-size: 13px;
   margin: var(--space-2) 0 0;
 }
 
+/* 命令行里不可断开的片段（如 `--hub <hub-url>`）：连字符处默认可断（UAX #14），
+   会把 `--code` 断成 `--` / `code`。 */
+.cli-token {
+  white-space: nowrap;
+}
+
 /* ---------- 响应式：760px 以上三列 Task Room，360px 单列 ---------- */
+
+/* #152 响应式底噪：长标题 / 长用户名 / 长标识在 390px 下换行，而不是把页面顶出横向滚动。 */
+.project-title h2,
+.member-name,
+.member-handle,
+.device-item-head h3,
+.plugin-name,
+.plugin-version {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 @media (min-width: 760px) {
   .task-room-grid {
     grid-template-columns: 240px minmax(0, 1fr) 280px;
@@ -909,6 +1010,41 @@ select {
 @media (min-width: 760px) {
   .app-main {
     padding: var(--space-6) var(--space-5);
+  }
+}
+
+/* #152 宽屏：折叠入口收起，同一份链接常显。
+   ::details-content 是闭合态隐藏内容的载体（Chromium 131+ / Safari 18.2+）；不支持
+   它的浏览器只是保留「菜单」入口，导航依旧可点，不会丢链接。 */
+@media (min-width: 760px) {
+  .app-nav-menu > summary {
+    display: none;
+  }
+
+  .app-nav-menu::details-content {
+    content-visibility: visible;
+  }
+}
+
+/* #152 窄屏：展开的面板绝对定位覆盖在内容之上，顶栏高度不随展开变化。 */
+@media (max-width: 759px) {
+  .app-nav-menu[open] > .app-nav {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    flex-direction: column;
+    gap: 0;
+    padding: var(--space-2) var(--space-4) var(--space-3);
+    background: var(--color-ink);
+  }
+}
+
+/* #152 宽屏两栏：主列 + 侧列（内容列 1072px → 主列 ~688px / 侧列 368px）。 */
+@media (min-width: 1024px) {
+  .page-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 23rem);
   }
 }
 
@@ -1193,11 +1329,11 @@ select {
 }
 
 /* ---------- #141 成员与邀请 ---------- */
+/* #152：原 max-width: 900px 让宽屏空出右侧；现由 .page-grid 决定两列宽度。 */
 .members-page {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  max-width: 900px;
 }
 
 .member-list {
