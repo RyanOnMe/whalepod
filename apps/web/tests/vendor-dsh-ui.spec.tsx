@@ -19,6 +19,7 @@
  * pure additive vendoring，一个页面都没改（页面迁移由主协调者另行安排），所以第二批
  * 四个原语只有原语级用例，没有像 B 那样的真实界面用例。
  */
+import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -54,6 +55,21 @@ import {
 // fileURLToPath 不认（"must be of scheme file"）；dirname 不受环境影响。
 const repoRoot = join(import.meta.dirname, '../../..')
 const vendorDir = join(repoRoot, 'apps/web/src/vendor/dsh-ui')
+/** manifest.json 里 components[]/meta[] 单条的登记形状（本仓台账契约）。 */
+interface ManifestEntry {
+  local: string
+  upstream: string | null
+  adaptations: string[]
+  /** 本仓文件内容（含出处头）的 sha256。 */
+  sha256: string
+  /** 上游对应文件的 blob sha1；null = 本仓新增或无单一上游来源。 */
+  upstreamBlob: string | null
+  /** 上游对应文件内容的 sha256；null 同前。 */
+  upstreamSha256: string | null
+  /** 保真分类：剥头后与上游逐字节相同 / 含本仓功能性改动 / 无单一上游来源。 */
+  fidelity: 'stripped-matches-upstream' | 'local-adaptations' | 'no-single-upstream-source'
+}
+
 const sourceFiles = readdirSync(vendorDir).filter((f) => f.endsWith('.ts') || f.endsWith('.tsx'))
 const cssFiles = readdirSync(vendorDir).filter((f) => f.endsWith('.module.css'))
 
@@ -841,6 +857,97 @@ describe('vendored 子树纪律（#138）', () => {
     ).toEqual(['apps/web/src/vendor/dsh-ui/cx.ts'])
   })
 
+  it('逐字节保真的机器门：每个文件 sha256 与登记一致，且声明保真的必须剥头后 == 上游 blob', () => {
+    // 这条门补的是原先的缺口：只有「上游 commit + 覆盖并集 + 出处头存在」时，
+    // 把 Menu.module.css 的 min-width 由 218px 改成 200px、或图标路径尾数改一位，
+    // 51 例全绿——**纯拷贝的保真度没有机器证据**（审查员用变异测试实测出来的）。
+    // 现在：①任何文件被改动 → sha256 不符 → 变红；②声明 stripped-matches-upstream 的文件，
+    // 剥掉出处头块后必须等于登记的 upstreamBlob（上游值就写在 manifest 里，**断网可验**）。
+    const manifest = JSON.parse(readFileSync(join(vendorDir, 'manifest.json'), 'utf8')) as {
+      components: ManifestEntry[]
+      meta: ManifestEntry[]
+    }
+
+    const entries = [...manifest.components, ...manifest.meta]
+    const sha256 = (buf: Buffer): string => createHash('sha256').update(buf).digest('hex')
+    // blob sha1（git 口径）：'blob <len>\0' + 内容——与 git hash-object 等价，无外部依赖。
+    const blobSha = (buf: Buffer): string =>
+      createHash('sha1')
+        .update(Buffer.concat([Buffer.from(`blob ${buf.length}\0`), buf]))
+        .digest('hex')
+    // 剥出处头块：删到第一个「只有空白 + */」的行为止（与台账 §3.4 的 sed 同法）。
+    const stripProvenanceHead = (text: string): string => {
+      const lines = text.split('\n')
+      const end = lines.findIndex((line) => /^\s*\*\/\s*$/.test(line))
+      return end < 0 ? text : lines.slice(end + 1).join('\n')
+    }
+
+    let strippedVerified = 0
+    for (const entry of entries) {
+      const name = entry.local.split('/').pop() ?? ''
+      const buf = readFileSync(join(vendorDir, name))
+      if (name === 'manifest.json') {
+        // 唯一例外且是**结构性**的：manifest 自己登记自己的 sha256 没有不动点
+        // （写进去就改了内容，再算又变），所以本条显式 null。它的完整性由 git 与本用例的
+        // JSON.parse 守（改坏即解析失败）。别为此发明"算完再回填"的循环。
+        expect(entry.sha256, 'manifest.json 的自哈希应为显式 null（无不动点）').toBeNull()
+        continue
+      }
+      expect(entry.sha256, `${name} manifest 缺 sha256`).toMatch(/^[0-9a-f]{64}$/)
+      expect(sha256(buf), `${name} 内容与 manifest 登记的 sha256 不符（文件被改过？）`).toBe(
+        entry.sha256,
+      )
+
+      if (entry.fidelity === 'stripped-matches-upstream') {
+        // 声明了保真就必须有法验证：upstreamBlob 不能为空。
+        expect(entry.upstreamBlob, `${name} 声明了保真但没有登记 upstreamBlob`).toMatch(
+          /^[0-9a-f]{40}$/,
+        )
+        const stripped = Buffer.from(stripProvenanceHead(buf.toString('utf8')), 'utf8')
+        expect(blobSha(stripped), `${name} 剥掉出处头后与登记的上游 blob 不符——正文被改过了`).toBe(
+          entry.upstreamBlob,
+        )
+        // 上游侧的内容哈希也在册（用于断网时交叉核对，以及将来跟版换值）。
+        expect(entry.upstreamSha256, `${name} 缺 upstreamSha256`).toMatch(/^[0-9a-f]{64}$/)
+        strippedVerified += 1
+      } else {
+        // 反向：非保真的文件不该有"看起来能验"的 upstreamBlob 却又不验。
+        expect(
+          ['local-adaptations', 'no-single-upstream-source'],
+          `${name} fidelity 取值不认识`,
+        ).toContain(entry.fidelity)
+      }
+    }
+    // 至少本批 4 个 .module.css + pointer-grace.ts + 首批 6 个 .module.css 都在保真列。
+    expect(strippedVerified, '保真列太少，门形同虚设').toBeGreaterThanOrEqual(11)
+  })
+
+  it('manifest 登记的 upstreamBlob 与上游原文一致（离线自洽：剥头后 == 登记值 == 上游）', () => {
+    // 上一条验的是"剥头后 == manifest 登记的 upstreamBlob"。这条把 manifest 的登记值
+    // 与**上游原文**对齐一次——上游原文不在仓里，故用钉版下的 blob 值做三角核对：
+    // 先把本仓剥头结果算出来，确认它同时等于 manifest 的 blob 与 sha256 两个登记值。
+    // 任一处被改（文件 / blob / sha256）都会在这里变红。
+    const manifest = JSON.parse(readFileSync(join(vendorDir, 'manifest.json'), 'utf8')) as {
+      components: ManifestEntry[]
+    }
+    const sha256 = (buf: Buffer): string => createHash('sha256').update(buf).digest('hex')
+    const faithful = manifest.components.filter(
+      (e) => e.fidelity === 'stripped-matches-upstream' && e.upstreamSha256 !== null,
+    )
+    for (const entry of faithful) {
+      const name = entry.local.split('/').pop() ?? ''
+      const text = readFileSync(join(vendorDir, name), 'utf8')
+      const lines = text.split('\n')
+      const end = lines.findIndex((line) => /^\s*\*\/\s*$/.test(line))
+      const stripped = Buffer.from(lines.slice(end + 1).join('\n'), 'utf8')
+      // 上游 sha256 与上游 blob 必须描述同一份内容：这里用剥头后的本地内容做代理，
+      // 它已被上一条用例证明等于 upstreamBlob，故 sha256 也应等于 upstreamSha256。
+      expect(sha256(stripped), `${name} 剥头后 sha256 与登记的 upstreamSha256 不符`).toBe(
+        entry.upstreamSha256,
+      )
+    }
+  })
+
   it('vendored CSS 只吃 L1 白名单（--dsw-*）+ 两个列明的 --dsh-* 例外；白名单在源码里于 tokens.css 之后引入', () => {
     // 先去掉注释再扫：上游注释里就出现过变量名（如 DisclosureRow 的排版说明），
     // 不剥注释会把「注释里提到的变量」误当成「文件里定义的变量」。
@@ -935,12 +1042,14 @@ describe('L1 token 第二批增量（#138）', () => {
     // warn-label 与 warn-primary 是两个不同档位——上游如此，合并成一个就是 bug。
     // 注意两者在本文件里的**写法不同**：warn-label 是第二批新增、保留 alias 间接；
     // warn-primary 是首批就有的、按首批口径就地展开了字面量（两批写法不一致，见文件头）。
+    // 因此「两个档位值不同」这条证据要拿 warn-label 解析到的 amber-600 去比 warn-primary，
+    // **不能**去比 --dsw-static-amber-500——那个变量本仓没有消费者，已被删除（见下条用例）。
+    const warnLabelTone = decl('--dsw-static-amber-600')
+    const warnPrimaryTone = decl('--dsw-alias-state-warn-primary')
     expect(decl('--dsw-alias-state-warn-label')).toBe('var(--dsw-static-amber-600)')
-    expect(decl('--dsw-alias-state-warn-primary')).toBe('rgb(245, 158, 11)')
-    expect(decl('--dsw-static-amber-600')).toBe('rgb(221, 134, 41)')
-    expect(decl('--dsw-static-amber-500')).toBe('rgb(245, 158, 11)')
-    // 两个档位确实是不同颜色——这条是上面"别合并"的机器证据。
-    expect(decl('--dsw-static-amber-600')).not.toBe(decl('--dsw-static-amber-500'))
+    expect(warnLabelTone).toBe('rgb(221, 134, 41)')
+    expect(warnPrimaryTone).toBe('rgb(245, 158, 11)')
+    expect(warnLabelTone, 'amber-600 与 amber-500 必须是不同颜色').not.toBe(warnPrimaryTone)
     // label-dimmed 走偏蓝的 neutral-bluish 档，不是中性灰 neutral-*。
     expect(decl('--dsw-alias-label-dimmed')).toBe('var(--dsw-static-neutral-bluish-200)')
     expect(decl('--dsw-alias-bg-layer-1')).toBe('var(--dsw-static-neutral-bluish-00)')
@@ -949,6 +1058,49 @@ describe('L1 token 第二批增量（#138）', () => {
     expect(decl('--dsw-mask-blur')).toBe('blur(2px)')
     // specific-menu 走 alias 间接（→ bg-layer-3），不是静态字面量。
     expect(decl('--dsw-specific-menu')).toBe('var(--dsw-alias-bg-layer-3)')
+  })
+
+  it('L1 声明的每个 --dsw-* 都有消费者（无孤儿变量）——本批曾多带一个 amber-500，被审查纠出', () => {
+    // 口径：一个变量"有消费者"= ①被 vendored CSS 以 var() 引用，或 ②被本文件里另一个
+    // 声明的值以 var() 引用，或 ③被**本仓应用层 CSS**（global.css）引用。
+    // 三者都不是 ⇒ 孤儿（写死的取值没有任何路径能到达）。孤儿本身不会报错，但会让同一
+    // 档位出现两处取值、日后必然漂移，所以用测试守。
+    // ③ 是必须算进来的：首批三个 900 档静态色阶是**故意留给应用层**的（AA 重映射），
+    // 只扫 L1 + vendored 会把它们误判成孤儿（实测踩过）。
+    const declared = [...tokensCss.matchAll(/^\s*(--dsw-[a-z0-9-]+)\s*:/gm)].map((m) => m[1] ?? '')
+    const stripComments = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '')
+    const vendorReferenced = new Set(
+      readdirSync(vendorDir)
+        .filter((f) => f.endsWith('.module.css'))
+        .map((f) => stripComments(readFileSync(join(vendorDir, f), 'utf8')))
+        .join('\n')
+        .match(/var\((--dsw-[a-z0-9-]+)/g)
+        ?.map((m) => m.replace('var(', '')) ?? [],
+    )
+    // 本文件内部被 alias 间接消费的（含深色段的重写值）。
+    const internallyConsumed = new Set(
+      [...tokensCss.matchAll(/var\((--dsw-[a-z0-9-]+)/g)].map((m) => m[1] ?? ''),
+    )
+    // 应用层消费者：global.css（业务侧显式桥接 L1 的地方）。
+    const appConsumed = new Set(
+      [
+        ...stripComments(
+          readFileSync(join(repoRoot, 'apps/web/src/styles/global.css'), 'utf8'),
+        ).matchAll(/var\((--dsw-[a-z0-9-]+)/g),
+      ].map((m) => m[1] ?? ''),
+    )
+    const orphans = [...new Set(declared)].filter(
+      (name) =>
+        !vendorReferenced.has(name) && !internallyConsumed.has(name) && !appConsumed.has(name),
+    )
+    expect(orphans, 'L1 里存在零消费者的孤儿变量；要么删掉，要么写清为什么留着').toEqual([])
+    // 反面钉：两个被删掉的孤儿确实不再**被声明**了。必须先剥注释——文件头与两处段注释
+    // 都写了这两个变量名来解释"为什么删"（实测：不剥注释这条会因自己的说明文字而变红）。
+    for (const removed of ['--dsw-static-amber-500', '--dsw-static-neutral-bluish-1000']) {
+      expect(stripComments(tokensCss), `${removed} 已删除，不该再出现在声明里`).not.toContain(
+        `${removed}:`,
+      )
+    }
   })
 
   it('深色段按上游语义重写（且与浅色取值不同——同值就不该重写）', () => {
@@ -994,25 +1146,50 @@ describe('L1 token 第二批增量（#138）', () => {
     }
   })
 
-  it('elevation 段挂在 `body, body *` 而不是 :root——Menu 重绑描边色才能进到投影里', () => {
-    // 这是从上游 gradient-shadow-text.css 抄来的语义：派生值必须逐元素声明，
-    // 否则继承下来的是在祖先处就已代入完的值，后代重绑 --dsw-elevation-stroke-color 无效。
-    const at = tokensCss.indexOf('body,\nbody * {')
-    expect(at, 'elevation 段的选择器不是 `body, body *`').toBeGreaterThanOrEqual(0)
-    const block = tokensCss.slice(at, tokensCss.indexOf('}', at))
-    expect(block).toContain('--dsw-elevation-stroke-color: var(--dsw-alias-border-l4);')
-    expect(block).toContain(
+  it('elevation 的默认色与派生值**分挂两块**（body / body, body *），且都不在 :root', () => {
+    // 语义来自上游 gradient-shadow-text.css，两块的**分工不能合并**：
+    //   - `body` 只声明**默认值**（stroke-color / mask-blur）——上游注释：「默认色只声明在
+    //     body 上，让表面的重绑沿继承传给真正消费投影的后代」；
+    //   - `body, body *` 只声明**派生值**（stroke / prominent）——继承传下来的是已代入完
+    //     var() 的值，必须逐元素重新代入，重绑方才生效。
+    // 反例（本切片初版犯过、被审查纠出）：把四个都放进 `body, body *`，等于每个元素都重置
+    // 默认描边色 l4，重绑元素的**后代**拿到的是 l4 而不是继承来的重绑色。
+    // 定位规则要带**行首锚**：段注释里就写着 `` `body { … }` `` 这样的散文引用，
+    // 裸 indexOf('body {') 会命中注释（实测命中第 150 行的注释而不是第 172 行的规则）。
+    const bodyOnlyAt = tokensCss.indexOf('\nbody {')
+    expect(bodyOnlyAt, '缺 `body {` 规则块（默认值应只挂这里）').toBeGreaterThanOrEqual(0)
+    const bodyOnly = tokensCss.slice(bodyOnlyAt, tokensCss.indexOf('}', bodyOnlyAt))
+    expect(bodyOnly).toContain('--dsw-elevation-stroke-color: var(--dsw-alias-border-l4);')
+    expect(bodyOnly).toContain('--dsw-mask-blur: blur(2px);')
+
+    const derivedAt = tokensCss.indexOf('body,\nbody * {')
+    expect(derivedAt, '缺 `body, body * {` 块（派生值应挂这里）').toBeGreaterThanOrEqual(0)
+    const derived = tokensCss.slice(derivedAt, tokensCss.indexOf('}', derivedAt))
+    expect(derived).toContain(
       '--dsw-elevation-stroke: 0 0 0 0.5px var(--dsw-elevation-stroke-color);',
     )
     // prominent = stroke + 两层柔光，取值逐字照抄。
-    expect(block).toContain('--dsw-elevation-prominent:')
-    expect(block).toContain('0 3px 8px 0 rgba(0, 0, 0, 0.04), 0 0 20px 0 rgba(0, 0, 0, 0.05)')
-    // 反面：不能也挂在 :root（挂两处会让 `body *` 那层变成唯一生效的一层，语义就糊了）。
+    expect(derived).toContain('--dsw-elevation-prominent:')
+    expect(derived).toContain('0 3px 8px 0 rgba(0, 0, 0, 0.04), 0 0 20px 0 rgba(0, 0, 0, 0.05)')
+
+    // 反向钉（这条是本次审查的核心）：默认值**不得**出现在 `body, body *` 块里。
+    expect(
+      derived,
+      '--dsw-elevation-stroke-color 不得挂 `body, body *`——会让每个元素重置默认描边色，' +
+        '重绑元素的后代拿不到继承色',
+    ).not.toContain('--dsw-elevation-stroke-color:')
+    expect(derived, '--dsw-mask-blur 不得挂 `body, body *`（上游只声明在 body）').not.toContain(
+      '--dsw-mask-blur:',
+    )
+
+    // 反面：两块都不能挂 :root。
     const rootBlock = tokensCss.slice(
       tokensCss.indexOf(':root {'),
       tokensCss.indexOf('}', tokensCss.indexOf(':root {')),
     )
     expect(rootBlock).not.toContain('--dsw-elevation-prominent')
+    expect(rootBlock).not.toContain('--dsw-elevation-stroke-color')
+    expect(rootBlock).not.toContain('--dsw-mask-blur')
   })
 
   it('Menu.module.css 确实重绑了描边色；Modal 确实吃 mask 与 elevation', () => {
@@ -1040,6 +1217,94 @@ describe('L1 token 第二批增量（#138）', () => {
     for (const name of referenced) {
       expect(tokensCss, `L1 白名单缺定义：${name}`).toContain(`${name}:`)
     }
+  })
+})
+
+/**
+ * #138 L2 第二批的 AA 门：`ConnectionIndicator` 的 warn / success 面（审查要求补成机器判据）。
+ *
+ * 与上面设备页那条同源问题：上游把**文字专用变体**只给了 warn 一档（`state-warn-label`
+ * = amber-600），success 面直接拿 `state-success-primary`（green-500）当文字色，
+ * 底色是同色系的 `*-tertiary` 浅底，于是小字对比度不达 AA 4.5:1。
+ * 实测数字（门里真算，写进断言与台账）：warn 2.58:1、success 2.09:1。
+ *
+ * 处置与首批一致：**不改 vendored 文件、也不改 L1 取值**（L1 必须与上游逐字一致），
+ * 迁移页面时在包裹元素上做局部重映射（同 global.css 的 .device-status-*）。
+ * 这条用例的作用是把「差多少」钉成数字：迁移切片要拿它当判据，而不是靠肉眼。
+ */
+describe('ConnectionIndicator 配色 AA 门（#138 L2 第二批）', () => {
+  const tokensCss = readFileSync(join(repoRoot, 'apps/web/src/styles/dsw-tokens.css'), 'utf8')
+  const ciCss = readFileSync(join(vendorDir, 'ConnectionIndicator.module.css'), 'utf8')
+
+  /** 把 `var(--x)` 顺着 L1 的声明链解析到最终颜色字面量（浅色段优先，即第一处声明）。 */
+  const resolveToken = (name: string): string => {
+    let value = readTokenValue(tokensCss, name)
+    for (let hop = 0; hop < 8; hop += 1) {
+      const ref = /^var\((--dsw-[a-z0-9-]+)\)$/.exec(value)
+      if (ref?.[1] === undefined) return value
+      value = readTokenValue(tokensCss, ref[1])
+    }
+    throw new Error(`${name} 的 var() 链太深或成环`)
+  }
+
+  /** 取某个类规则的 `background` / `color` 声明的 token 名（从 CSS 文本解析，不写死）。 */
+  const readRule = (selector: string): { bg: string; fg: string } => {
+    const body = new RegExp(`\\${selector}\\s*\\{([^}]*)\\}`).exec(ciCss)?.[1]
+    if (body === undefined) throw new Error(`ConnectionIndicator.module.css 里找不到 ${selector}`)
+    const bg = /background:\s*var\((--dsw-[a-z0-9-]+)\)/.exec(body)?.[1]
+    const fg = /color:\s*var\((--dsw-[a-z0-9-]+)\)/.exec(body)?.[1]
+    if (bg === undefined || fg === undefined) {
+      throw new Error(`${selector} 的 background/color 不是直接的 var(--dsw-*)`)
+    }
+    return { bg, fg }
+  }
+
+  const CASES = [
+    { selector: '.warning', face: '断线/重连', min: 2.5, expected: 2.58 },
+    { selector: '.success', face: '已恢复', min: 2.0, expected: 2.09 },
+  ] as const
+
+  it('实测复算：两个面的文字 vs 自身浅底都不达 4.5:1（数字钉住，供迁移切片复用）', () => {
+    const rows: string[] = []
+    for (const item of CASES) {
+      const { bg, fg } = readRule(item.selector)
+      const text = parseCssColor(resolveToken(fg))
+      const surface = parseCssColor(resolveToken(bg))
+      // 底色是"不透明浅底"，故直接算文字 vs 底色。
+      expect(surface.a, `${bg} 应是不透明色（浅底）`).toBe(1)
+      const ratio = contrastRatio(text, surface)
+      rows.push(`${item.face}(${fg} on ${bg}) ${round2(ratio)}:1`)
+      // 不达 AA：这条是**问题本身**的机器证据（达标了说明上游变了，要重评这条门）。
+      expect(
+        ratio,
+        `${item.face} 竟然达标了（${round2(ratio)}），请重评这条门是否还需要`,
+      ).toBeLessThan(4.5)
+      // 数字按实测钉住（±0.01 容差）：上游/L1 取值被改会立刻变红。
+      expect(
+        Math.abs(round2(ratio) - item.expected),
+        `${item.face} 对比度漂了`,
+      ).toBeLessThanOrEqual(0.01)
+      expect(ratio).toBeGreaterThan(item.min)
+    }
+    console.log(`[#138 L2b AA] ${rows.join('；')}`)
+  })
+
+  it('token 对就是上游那两个（warn 走 label/tertiary，success 直接拿 primary 当文字色）', () => {
+    expect(readRule('.warning')).toEqual({
+      bg: '--dsw-alias-state-warn-tertiary',
+      fg: '--dsw-alias-state-warn-label',
+    })
+    // success 没有文字专用变体——这正是它比 warn 更差的**原因**，钉住它。
+    expect(readRule('.success')).toEqual({
+      bg: '--dsw-alias-state-success-tertiary',
+      fg: '--dsw-alias-state-success-primary',
+    })
+    // 深浅两套值不同 ⇒ 深色下这条门的结论可能不同，但本仓没有深色入口，故只登记不判。
+    // 注意 success 面的文字色在 L1 里是**字面量**（首批把 alias→静态展开了，且
+    // --dsw-static-green-500 不在白名单里），故这里解析到的是 rgb(34, 197, 94)；
+    // warn-label 则是第二批新增、保留 alias 指引的写法——两批写法不一，见 dsw-tokens.css 文件头。
+    expect(resolveToken('--dsw-static-amber-600')).toBe('rgb(221, 134, 41)')
+    expect(resolveToken('--dsw-alias-state-success-primary')).toBe('rgb(34, 197, 94)')
   })
 })
 

@@ -17,7 +17,11 @@
  *     --dsw-elevation-stroke-color 共 3 个 + --dsw-mask-blur 1 个，见 `body, body *` 段）；
  *     两批并集 **38** 个引用变量，逐个在下方 :root 段有声明（Q0 单测钉死"零未解析引用"）。
  * 本仓对上游的收缩/补齐（都「取值不变」）：
- *   1. 只保留被引用变量真正需要的静态色阶（共 17 个 `--dsw-static-*`），其余静态档不抄；
+ *   1. 只保留被引用变量真正需要的静态色阶（共 15 个 `--dsw-static-*`），其余静态档不抄；
+ *      「真正需要」= 有 `var()` 消费者（vendored CSS / 本文件内部 / global.css 三处之一）。
+ *      本批初版把上游那一段的 13 个静态档整批搬了进来，被审查追出**两个孤儿**
+ *      （`--dsw-static-amber-500`、`--dsw-static-neutral-bluish-1000`），两个都已删除；
+ *      理由分别见两处注释，现在有一条 Q0 用例守着「L1 不得有零消费者变量」。
  *   2. 别名间接按上游保留：能吃 alias 的不落到静态字面量（--dsw-alias-button-primary-fill →
  *      --dsw-alias-brand-primary、--dsw-specific-menu → --dsw-alias-bg-layer-3、
  *      --dsw-alias-state-warn-label → --dsw-static-amber-600 …），这层间接是语义而不是冗余。
@@ -73,14 +77,23 @@
   --dsw-static-neutral-bluish-200: rgb(225, 229, 238);
   --dsw-static-neutral-bluish-750: rgb(67, 69, 74);
   --dsw-static-neutral-bluish-875: rgb(35, 35, 36);
-  --dsw-static-neutral-bluish-1000: rgb(15, 17, 21);
+  /* 这里**没有** --dsw-static-neutral-bluish-1000（理由同下方 amber-500）：上游拿它做
+   * --dsw-alias-brand-primary 的取值，但本仓首批已把 brand-primary 就地展开成
+   * rgb(15, 17, 21) 字面量，故它零消费者。本切片初版把 13 个静态档整批搬了进来，
+   * 被审查的变异思路追出两个孤儿（amber-500 / bluish-1000），两个都已删除；
+   * 现在有一条 Q0 用例守着「L1 不得有零消费者变量」。 */
   --dsw-static-neutral-200: rgb(229, 229, 229);
   --dsw-static-neutral-300: rgb(212, 212, 212);
   --dsw-static-neutral-550: rgb(101, 103, 107);
   --dsw-static-neutral-600: rgb(84, 85, 87);
   --dsw-static-green-100: rgb(230, 250, 237);
   --dsw-static-amber-100: rgb(254, 245, 231);
-  --dsw-static-amber-500: rgb(245, 158, 11);
+  /* 注意这里**没有** --dsw-static-amber-500：本仓没有它的消费者。上游 warn 的两个档位里，
+   * amber-600 被 --dsw-alias-state-warn-label 消费（本批新增），而 amber-500 的消费者
+   * --dsw-alias-state-warn-primary 在**首批就已经就地展开成字面量** rgb(245, 158, 11)，
+   * 从来不是 var() 引用。本切片初版按"同一档只声明一次"的理由把它加进来过，被审查纠出：
+   * 它零消费者，反而让同一档位在文件里有两处取值（正是本文件要避免的漂移），故删除。
+   * 将来若把首批那处字面量改回 alias 指引（见文件头「两批写法不一」那条），再把它加回来。 */
   --dsw-static-amber-600: rgb(221, 134, 41);
 
   /* 背景层级 */
@@ -137,30 +150,42 @@
 }
 
 /**
- * #138 L2 第二批：elevation 三件套与遮罩模糊（上游 gradient-shadow-text.css 的 body 段）。
+ * #138 L2 第二批：elevation 与遮罩模糊（上游 gradient-shadow-text.css 的 body 段与
+ * `body, body *` 段）。**两块的选择器不能合并**——这正是上游把默认色与派生值分开写的用意：
  *
- * 为什么与上面 :root 分开、且不挂进 :root：
- *   1. 上游把 --dsw-elevation-stroke-color 声明在 body 上、派生值 --dsw-elevation-* 逐元素
- *      声明，是为了让浮层**重绑描边色**时投影跟着变（Menu.module.css 就把
- *      --dsw-elevation-stroke-color 重绑到 --dsw-alias-border-l1）。本仓把两个变量都放在
- *      `body, body *` 上——选择器与上游同形，后代改 --dsw-elevation-stroke-color 时
- *      该元素重新代入 var(--dsw-elevation-stroke)，重绑才会生效（挂 :root 会失效）。
- *   2. `body *` 的通配选择器作用面大，且占的是 --dsw-* 命名空间。**实测**（2026-09-11）：
- *      apps/web 下没有任何内联 `style=` / `style={{` 写法，也没有 setProperty 调用，
- *      故这一层不会覆盖任何既有内联变量；本仓 **index.html 不设** data-ds-dark-theme，
- *      深色段当前不生效。风险留给 L3：将来谁要写内联 --dsw-* 变量，必须知道这条通配
- *      规则的存在（作者样式表 < 内联样式，所以内联仍然赢；但若把派生值挂在元素上继承，
- *      这条规则会把它重置掉）。
- * 上游取值逐字照抄，未改一个数字。已知代价（已实测）：本仓没有上游的
- * gradient-shadow-text.css 其余部分（阴影/字号阶梯），只取这四个变量。
+ *   1. `body { … }`（上游 17/19 行）：**只声明默认值** `--dsw-elevation-stroke-color`
+ *      与 `--dsw-mask-blur`。上游注释原文：「默认色只声明在 body 上，让表面的重绑沿继承
+ *      传给真正消费投影的后代。」
+ *   2. `body, body * { … }`（上游 26–35 行）：**只声明派生值**
+ *      `--dsw-elevation-stroke` / `-prominent`。逐元素声明是因为继承传下来的是在 body 上
+ *      **已代入完** `var()` 的值，重绑方（Menu.module.css 把 --dsw-elevation-stroke-color
+ *      重绑到 --dsw-alias-border-l1）的后代就拿不到重绑色。
+ *
+ * **初版曾经把四个变量全放进 `body, body *`，那是语义错误**（本次审查纠出）：等于每个元素
+ * 都重新声明默认描边色 l4，重绑元素的**后代**会拿到 l4 而不是继承来的重绑色。当时不显形
+ * 只是因为唯一重绑方 Menu 的 `.list/.submenu` 在同一条规则里自己消费 `box-shadow`。
+ * 两块的分工由 Q0 单测钉住（见 vendor-dsh-ui.spec.tsx 的「elevation 两块」用例）。
+ *
+ * `body *` 通配规则的作用面较大，且占的是 --dsw-* 命名空间。**实测**（2026-09-11）：
+ * apps/web 下没有任何内联 `style=` / `style={{` 写法，也没有 setProperty 调用，故这一层
+ * 不覆盖任何既有内联变量；本仓 **index.html 不设** data-ds-dark-theme，深色段当前不生效。
+ * 风险留给 L3：将来谁要写内联 --dsw-* 变量，必须知道这条通配规则存在（内联样式仍会赢，
+ * 但若把派生值挂在元素上靠继承，这条规则会把它重置掉）。
+ *
+ * 上游取值逐字照抄，未改一个数字。本仓只取这 4 个变量，没有上游 gradient-shadow-text.css
+ * 的其余部分（阴影档/字号阶梯）。
  */
+body {
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l4);
+  /* blur filter */
+  --dsw-mask-blur: blur(2px);
+}
+
 body,
 body * {
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l4);
   --dsw-elevation-stroke: 0 0 0 0.5px var(--dsw-elevation-stroke-color);
   --dsw-elevation-prominent:
     var(--dsw-elevation-stroke), 0 3px 8px 0 rgba(0, 0, 0, 0.04), 0 0 20px 0 rgba(0, 0, 0, 0.05);
-  --dsw-mask-blur: blur(2px);
 }
 
 /**

@@ -27,36 +27,56 @@
     {
       "local": "apps/web/src/vendor/dsh-ui/Button.tsx",
       "upstream": "packages/client/ui-primitives/src/Button.tsx",
-      "adaptations": ["clsx → ./cx.js", "import 后缀 .tsx → .js"]
+      "adaptations": ["clsx → ./cx.js", "import 后缀 .tsx → .js"],
+      "sha256": "0a4f4b00f094a46660e583a62d192845c9d435551e2d29a7281513ae504636be",
+      "upstreamBlob": "d2e39dbf23867bcfdc4f163fc84c9775e3dbb59a",
+      "upstreamSha256": "5f1db06042fa372c45d777feffaab3b1d0c9395a89fa00b735bd9cbc8a389371",
+      "fidelity": "local-adaptations"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/Button.module.css",
       "upstream": "packages/client/ui-primitives/src/Button.module.css",
-      "adaptations": []
+      "adaptations": [],
+      "sha256": "d2ab0c450f52e41020c24b06b8c23a4fd162bf0eacace0cd3060a98823ee4131",
+      "upstreamBlob": "9fa1712a669602fb6ec393a3bbe2e25a60d4ee98",
+      "upstreamSha256": "a32017eff252569cef883d7d3308b2ca01fc41b167b568ad00b923603a902f99",
+      "fidelity": "stripped-matches-upstream"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/Pill.tsx",
       "upstream": "packages/client/ui-primitives/src/Pill.tsx",
-      "adaptations": ["clsx → ./cx.js", "import 后缀 .tsx → .js"]
+      "adaptations": ["clsx → ./cx.js", "import 后缀 .tsx → .js"],
+      "sha256": "cbcf2400d4b08fa04c546a687a29325863128960f205c257be1b848f88b512ae",
+      "upstreamBlob": "8e2762c714e3a377b60d143e6b2166408865a34d",
+      "upstreamSha256": "851727b4f745755f8553a92bc5881e54d0479ea680d1686533ba210cb943ca2f",
+      "fidelity": "local-adaptations"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/Pill.module.css",
       "upstream": "packages/client/ui-primitives/src/Pill.module.css",
-      "adaptations": []
+      "adaptations": [],
+      "sha256": "a083e8203cdd6c1789c19e1588f016b5dd735163ee8b1b50567e8da49d3be4a7",
+      "upstreamBlob": "8fb6cc0bda1a769759cfe645b61c8db51c92f4e8",
+      "upstreamSha256": "c1c39eb6adc0e40326f7a33598a32195b388cb9db2627a9c723c009b44a94dab",
+      "fidelity": "stripped-matches-upstream"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/Tag.tsx",
       "upstream": "packages/client/ui-primitives/src/Tag.tsx",
-      "adaptations": [
-        "clsx → ./cx.js",
-        "import 后缀 .tsx → .js",
-        "新增 data-vendored=tag 与可覆写的 data-testid 测试锚点（属性，非视觉）"
-      ]
+      "adaptations": ["clsx → ./cx.js", "import 后缀 .tsx → .js", "新增 data-vendored=tag 与可覆写的 data-testid 测试锚点（属性，非视觉）"],
+      "sha256": "efc89f71c64befe302be3dab00bbe2320ec880308a7304beb772dab587732a40",
+      "upstreamBlob": "b99e9ba2080ed83edd37e2803c77286c4a5e6cb6",
+      "upstreamSha256": "2f4845c6b5c7d6f06304de6b972127692a909c775bae72c14799acfd2dc56289",
+      "fidelity": "local-adaptations"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/Tag.module.css",
       "upstream": "packages/client/ui-primitives/src/Tag.module.css",
-      "adaptations": []
+      "adaptations": [],
+      "sha256": "f9196a429abf6bda10ed94a1738c414d8ab5cd250e4d4cf511ddf3d6cb358bcf",
+      "upstreamBlob": "65380320ac1cec80459f3d5fdcdce152c59bfe90",
+      "upstreamSha256": "ac135f028674d5bce37a2617902c86d5934b299742536056a2abc5e99583764e",
+      "fidelity": "stripped-matches-upstream"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/StateDot.tsx",
@@ -65,12 +85,20 @@
         "clsx → ./cx.js",
         "import 后缀 .tsx → .js",
         "两个渲染分支都新增 data-vendored=state-dot 与可覆写的 data-testid 测试锚点（属性，非视觉）"
-      ]
+      ],
+      "sha256": "05dcf2a2e24f9d570c3146331e46e3447f0a41732f4b3fbb358d1c7f3684e491",
+      "upstreamBlob": "0cc825e75ad8689858226b10372ab95bc47b8283",
+      "upstreamSha256": "94e287b278d5481d6812dae820a95afee6856d34b4056bfd84017f43a5b43ad2",
+      "fidelity": "local-adaptations"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/StateDot.module.css",
       "upstream": "packages/client/ui-primitives/src/StateDot.module.css",
-      "adaptations": []
+      "adaptations": [],
+      "sha256": "69accb139af92decbaa0e2e3c46f848e6740834356c75cda9c92fff0aee23531",
+      "upstreamBlob": "265dd1b0a68680f5002a1064bd46a716c05ac853",
+      "upstreamSha256": "21c9dca85dffbae6e31da3bfd4c4578739282f9ed3b9a3bbf68b6b12338879de",
+      "fidelity": "stripped-matches-upstream"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/DisclosureRow.tsx",
@@ -79,22 +107,38 @@
         "clsx → ./cx.js",
         "chevron 图标从 ./icons/index.tsx 改指 ./icons.js（只 vendored 该符号）",
         "import 后缀 .tsx → .js"
-      ]
+      ],
+      "sha256": "5923393bcda52bb44667c06af19038d08ccc1ecab6c1ef31b8b41f071c043be7",
+      "upstreamBlob": "f04ad8986a36bc2845446f3aeb211f6fecaf281c",
+      "upstreamSha256": "0c65c0f0f14f9fdaf4dda6aeea6c73bf803c4591d64f53784928aaa559cc9b96",
+      "fidelity": "local-adaptations"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/DisclosureRow.module.css",
       "upstream": "packages/client/ui-primitives/src/DisclosureRow.module.css",
-      "adaptations": []
+      "adaptations": [],
+      "sha256": "7f53b83481e1d51e3cba6b0e6f414fdecb79dceba35042552ae03a018610dd8c",
+      "upstreamBlob": "fed453f34575197535098b3bab3466c8aac02b0b",
+      "upstreamSha256": "40cdcab1f8821760ba2a59ff859b4c4fb894ea373b27083076c0e4f995373712",
+      "fidelity": "stripped-matches-upstream"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/Switch.tsx",
       "upstream": "packages/client/ui-primitives/src/Switch.tsx",
-      "adaptations": ["clsx → ./cx.js", "import 后缀 .tsx → .js"]
+      "adaptations": ["clsx → ./cx.js", "import 后缀 .tsx → .js"],
+      "sha256": "431d819bb6239f47ab5972d6ce0c8e56b931ad8fec099f04627a777b2ed88754",
+      "upstreamBlob": "980a08f6beb1c489ca9b68244a4c991edc350cfa",
+      "upstreamSha256": "9f0f6db0de338793711b4333e87dcd2b82d06d8ad43aa362eb67efc63573ccb1",
+      "fidelity": "local-adaptations"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/Switch.module.css",
       "upstream": "packages/client/ui-primitives/src/Switch.module.css",
-      "adaptations": []
+      "adaptations": [],
+      "sha256": "a8bfbca8f0c611a96978cd635922930f87639e79eefcbdaf2798647c88c2290e",
+      "upstreamBlob": "c038331a6604cd98a3ff72622a62f4d0377704fd",
+      "upstreamSha256": "9baa1cfa828e5806cf59d88b82bbde6d9ba5f795c1105a2e819476388f734149",
+      "fidelity": "stripped-matches-upstream"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/Input.tsx",
@@ -103,12 +147,20 @@
         "clsx → ./cx.js",
         "import 后缀 .tsx → .js",
         "wrapper span 新增 data-vendored=input 与可覆写的 data-testid 测试锚点（属性，非视觉；原生 input 的属性一个未动）"
-      ]
+      ],
+      "sha256": "177b3878c6d0714c5b6be0b7998c7adbd8a496b5ec46ab012352188127758171",
+      "upstreamBlob": "3af60f9d184be4c734e92f0d1231a90c81e11bd1",
+      "upstreamSha256": "dcb73dad681f3f37975c08ed3aa97922a1f5337548b406806324877a5d398c51",
+      "fidelity": "local-adaptations"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/Input.module.css",
       "upstream": "packages/client/ui-primitives/src/Input.module.css",
-      "adaptations": []
+      "adaptations": [],
+      "sha256": "bc83d56cf7fc8ec6067a89395d25729a659e5049257cbcd5fe85653585254b9c",
+      "upstreamBlob": "5102c3291f4d08e4bd4a5ba775d90370a23ae0cd",
+      "upstreamSha256": "f13333abf03b98d52bd65702ac34fbbf00b3c4fc3d8985b793d5e912a3e22b2e",
+      "fidelity": "stripped-matches-upstream"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/Menu.tsx",
@@ -119,12 +171,20 @@
         "usePointerGrace 从 ./pointer-grace.ts 改指 ./pointer-grace.js（同目录已一并 vendored）",
         "import 后缀 .tsx/.ts → .js",
         "wrapper span 新增 data-vendored=menu 与可覆写的 data-testid 测试锚点（属性，非视觉）"
-      ]
+      ],
+      "sha256": "9353395524cc3e79693bdafafef90d429e3d7a2f75185fc2069c17778cd52af7",
+      "upstreamBlob": "db8b5588fee8490fce5c41cd9f4e989f23bf518a",
+      "upstreamSha256": "905ce9ef6ff3e2ee3fef051ddea8383cd9988be0a81cf68c34e83d3ff5149094",
+      "fidelity": "local-adaptations"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/Menu.module.css",
       "upstream": "packages/client/ui-primitives/src/Menu.module.css",
-      "adaptations": []
+      "adaptations": [],
+      "sha256": "7a6d62b125f2359dd38abe228bb4415decb9bef8e766ddcf16a663f4cd4d0062",
+      "upstreamBlob": "a63209665966d9502373ab46267e03bd6dd921cf",
+      "upstreamSha256": "281d01fd38a35f72bb2f6827873512d5ee3511a0f04553f1d532d886dfd78b91",
+      "fidelity": "stripped-matches-upstream"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/ConnectionIndicator.tsx",
@@ -134,12 +194,20 @@
         "import 后缀 .tsx → .js",
         "两个渲染分支都新增 data-vendored=connection-indicator 与可覆写的 data-testid 测试锚点（属性，非视觉）",
         "上游本文件不 import clsx（实测零命中），故无 clsx → cx 这处改动"
-      ]
+      ],
+      "sha256": "d9f11530e6a8b10c2449a8ed7214f75feb95db61165d753334aae418e2af4b4f",
+      "upstreamBlob": "2c549661df0e17aac49aec47f1f1ed70102ad6fc",
+      "upstreamSha256": "499507b69b5bc72713d2d77ff0fa59d34cfc2c56202af43cfad12227100cfe33",
+      "fidelity": "local-adaptations"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/ConnectionIndicator.module.css",
       "upstream": "packages/client/ui-primitives/src/ConnectionIndicator.module.css",
-      "adaptations": []
+      "adaptations": [],
+      "sha256": "dea279a9d45b3cc8ab89ecb97e5d5f25c46edaa416d522069a4ccb1af289ff1d",
+      "upstreamBlob": "bf0e653740112587c65bf6e708fca0f2f5f37374",
+      "upstreamSha256": "440be5d197d7a56b8e1a8305d4199a112a7635c493eddd1e92fe3d9b0e0dddb2",
+      "fidelity": "stripped-matches-upstream"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/Modal.tsx",
@@ -149,49 +217,90 @@
         "close 图标从 ./icons/index.tsx 改指 ./icons.js（只 vendored 该符号）",
         "import 后缀 .tsx → .js",
         "新增可选属性 data-testid（给了才落到 role=dialog 卡片上，没给不上屏，既有渲染不变）"
-      ]
+      ],
+      "sha256": "ee63a06552e3f86c62617bf9c6ddd4e6c2a261404eacbf1c9a6cb52d75c82938",
+      "upstreamBlob": "fd33a8724cd635547cee33b553ef9464500891e8",
+      "upstreamSha256": "1c2ed7f8b9ef84b892b4f0a69570db2379ecaa07fb46fe71008443e2388a4a53",
+      "fidelity": "local-adaptations"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/Modal.module.css",
       "upstream": "packages/client/ui-primitives/src/Modal.module.css",
-      "adaptations": []
+      "adaptations": [],
+      "sha256": "fd61513c09d49f5f7d141ab747be651510dc41eb392360340b3299f9648da0ae",
+      "upstreamBlob": "44ec4b7d932d8a14c68b89b86f089aa4c7abee26",
+      "upstreamSha256": "0e1de6a6cfcd5333e6b02c8b2583c09ad90f98a618f3b80ec60acfc5c59ee68c",
+      "fidelity": "stripped-matches-upstream"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/pointer-grace.ts",
       "upstream": "packages/client/ui-primitives/src/pointer-grace.ts",
-      "adaptations": ["仅加出处头块；代码与上游逐字节一致（Menu 的同目录运行时依赖）"]
+      "adaptations": ["仅加出处头块；代码与上游逐字节一致（Menu 的同目录运行时依赖）"],
+      "sha256": "9b8a56efb4bd83247ec20e99f9b839968e4b70b400183dbbd37b442ffbee3acf",
+      "upstreamBlob": "4b91a84b0a01f13d86d75618a25f2ce513966d8c",
+      "upstreamSha256": "cba1529e052cf3ea09fd3851990219e2b80d61fa4b3d35da490f28ba9f9965c6",
+      "fidelity": "stripped-matches-upstream"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/icons.tsx",
       "upstream": "packages/client/ui-primitives/src/icons/props.ts + packages/client/ui-primitives/src/icons/index.tsx（仅 IconChevronDownOutline14、IconCheckOutline16、IconCloseOutline16、IconWarningOutline16 四个符号，路径数据逐字节照抄）",
-      "adaptations": ["两个上游文件合并为一个文件；其余图标不 vendored"]
+      "adaptations": ["两个上游文件合并为一个文件；其余图标不 vendored"],
+      "sha256": "22e686466fadd8efaa82ccfc4ca11bcea56aa5f926b69e436454da4268c8a178",
+      "upstreamBlob": null,
+      "upstreamSha256": null,
+      "fidelity": "no-single-upstream-source"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/index.ts",
       "upstream": "packages/client/ui-primitives/src/index.ts",
-      "adaptations": ["只保留 10 个已 vendored 原语与其类型的导出（首批 6 + 第二批 4，另导出 pointer-grace 的 hook 与常量）；上游 ui-primitives/src 顶层有 29 个 .tsx / 桶文件导出 30 个原语；43 是 packages/client/ui-* 的包数，别混"]
+      "adaptations": [
+        "只保留 10 个已 vendored 原语与其类型的导出（首批 6 + 第二批 4，另导出 pointer-grace 的 hook 与常量）；上游 ui-primitives/src 顶层有 29 个 .tsx / 桶文件导出 30 个原语；43 是 packages/client/ui-* 的包数，别混"
+      ],
+      "sha256": "6654c33b2ad468eeaaee217b131ab0252a72c0937e88c1e418a547fa947b0422",
+      "upstreamBlob": null,
+      "upstreamSha256": null,
+      "fidelity": "no-single-upstream-source"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/cx.ts",
       "upstream": null,
-      "adaptations": ["本仓新增代码（Apache-2.0，非上游 MIT）：替代上游 clsx 调用，避免引入新第三方依赖"]
+      "adaptations": ["本仓新增代码（Apache-2.0，非上游 MIT）：替代上游 clsx 调用，避免引入新第三方依赖"],
+      "sha256": "9ce32c34a412fb2a5d6b230d47a1bd61cc10ebc08c7ec61e7c371fa528724cba",
+      "upstreamBlob": null,
+      "upstreamSha256": null,
+      "fidelity": "no-single-upstream-source"
     }
   ],
   "meta": [
     {
       "local": "apps/web/src/vendor/dsh-ui/README.md",
       "upstream": null,
-      "adaptations": ["本仓新增：vendored 子树的用法与纪律说明（含「不含 DSH 品牌资产」声明）"]
+      "adaptations": ["本仓新增：vendored 子树的用法与纪律说明（含「不含 DSH 品牌资产」声明）"],
+      "sha256": "4572506f601194d24a7fd40e78d48a18179edd70255f50b07546db6d514c7ac1",
+      "upstreamBlob": null,
+      "upstreamSha256": null,
+      "fidelity": "no-single-upstream-source"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/LICENSE",
       "upstream": "LICENSE",
-      "adaptations": ["全文照抄，未改一字"]
+      "adaptations": ["全文照抄，未改一字"],
+      "sha256": "ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be",
+      "upstreamBlob": null,
+      "upstreamSha256": null,
+      "fidelity": "no-single-upstream-source"
     },
     {
       "local": "apps/web/src/vendor/dsh-ui/manifest.json",
       "upstream": null,
-      "adaptations": ["本仓新增：本台账自身"]
+      "adaptations": [
+        "本仓新增：本台账自身",
+        "**不自哈希**：manifest 自己登记自己的 sha256 没有不动点（写进去就改了内容），故本条的 sha256 显式 null；其完整性由 git 与 Q0 的 JSON 解析守（改坏就解析失败）"
+      ],
+      "sha256": null,
+      "upstreamBlob": null,
+      "upstreamSha256": null,
+      "fidelity": "no-single-upstream-source"
     }
   ],
   "tokens": [
@@ -205,5 +314,6 @@
         "浅色 :root / 深色 body[data-ds-dark-theme]；elevation 段挂在 `body, body *`（与上游选择器同形，为保住 --dsw-elevation-stroke-color 的重绑语义）"
       ]
     }
-  ]
+  ],
+  "fidelity": "逐字节保真的机器门（#138 L2 第二批新增，审查要求）：components[]/meta[] 每条登记 sha256（**本仓文件**的内容哈希，含出处头）与 upstreamBlob（**上游** blob，口径同 blob sha1；null = 本仓新增或无单一上游来源）。Q0 断言：①本仓文件 sha256 必须与登记一致（任何改动都会变红）；②fidelity=stripped-matches-upstream 的文件，剥掉出处头块后必须等于登记的 upstreamBlob（上游值已登记，**断网可验**）。这补上了原先只有「人工哈希台账」守门的缺口——实测把 Menu.module.css 的 min-width 或图标路径数字改一位，旧门全绿，新门变红。 注：manifest.json 自身不做自哈希（无不动点），其 sha256 为 null；README.md 与 LICENSE 照常登记。"
 }
