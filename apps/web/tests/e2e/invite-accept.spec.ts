@@ -8,11 +8,9 @@
  *   Owner 刷新成员页，名单里出现 Bob；另一条用例验失效链接的友好错误态
  *   （页面不出现裸错误码）。
  *
- * ⚠️ 本文件**未注册** playwright project。Q5 由主协调者串行调度：单 Hub 只容一个团队，
- * 每次 e2e 调用都会冷启一套真实 Hub/PG/vite（5173/18080），并行会互相抢端口与浏览器。
- * 启用方式：在 playwright.config.ts 的 projects 里加一条
- * `{ name: 'p1-141', testMatch: /invite-accept\.spec\.ts/ }`，并把它挂进根 package.json
- * 的 test:e2e 串行链（见文件末尾的登记说明）。注册前请勿直接 `playwright test` 跑本文件。
+ * 调度：已注册为 playwright project `p1-141` 并挂在根 `test:e2e` 串行链末位。单 Hub 只容
+ * 一个团队，每次调用冷启一套真实 Hub/PG/vite（5173/18080）——**不能与其它 project 并行**，
+ * 也不能在 demo 栈开着时跑（会抢节点的在线判定）。
  */
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
@@ -70,7 +68,7 @@ test.describe('#141 邀请链：Owner 生成 → Bob 新浏览器加入', () => 
     await bobContext.close()
   })
 
-  test('Bob 从零到加入：新浏览器打开链接 → 建号 → 落到项目页 → Owner 名单里出现 Bob', async () => {
+  test('Bob 从零到加入 + 失效链接人话错误态（单 Hub 单团队，故合为一条自洽用例）', async () => {
     const owner = await ownerContext.newPage()
     await setupTeamAndProject(owner)
     const inviteUrl = await createInviteViaUi(owner, 'member')
@@ -101,22 +99,25 @@ test.describe('#141 邀请链：Owner 生成 → Bob 新浏览器加入', () => 
     const bobRow = owner.locator('li.member-item', { hasText: BOB_NAME })
     await expect(bobRow).toBeVisible()
     await expect(bobRow.getByText(`@${BOB_NAME}`)).toBeVisible()
-  })
 
-  test('失效链接：给人话错误态，不出现裸错误码', async () => {
-    const owner = await ownerContext.newPage()
-    await setupTeamAndProject(owner)
-    const inviteUrl = await createInviteViaUi(owner, 'member')
-
-    const bob = await bobContext.newPage()
-    await bob.goto(`${inviteUrl}-tampered`)
-    const alert = bob.getByRole('alert')
-    await expect(alert).toBeVisible()
-    await expect(alert).toContainText('这条邀请链接')
-    await expect(alert).not.toContainText('NOT_FOUND')
-    await expect(alert).not.toContainText('CONFLICT')
-    await expect(alert).not.toContainText('404')
-    await expect(alert).not.toContainText('409')
+    // ---- 失效链接：给人话错误态，不出现裸错误码（同一用例内续跑） ----
+    // 为什么合并在一条里：单 Team 部署下 Hub 只容一次 Setup，第二条独立用例
+    // 再走 setupTeamAndProject 会撞在已初始化的实例上（页面跳登录 → 超时），
+    // 这不是产品缺陷而是用例生命周期写错——首轮 Q5 实测踩到并修正。
+    const strangerContext = await bobContext.browser()!.newContext()
+    try {
+      const stranger = await strangerContext.newPage()
+      await stranger.goto(`${inviteUrl}-tampered`)
+      const alert = stranger.getByRole('alert')
+      await expect(alert).toBeVisible()
+      await expect(alert).toContainText('这条邀请链接')
+      await expect(alert).not.toContainText('NOT_FOUND')
+      await expect(alert).not.toContainText('CONFLICT')
+      await expect(alert).not.toContainText('404')
+      await expect(alert).not.toContainText('409')
+    } finally {
+      await strangerContext.close()
+    }
   })
 })
 
@@ -124,6 +125,9 @@ test.describe('#141 邀请链：Owner 生成 → Bob 新浏览器加入', () => 
  * 登记说明（主协调者执行，勿并行）：
  * 1. playwright.config.ts 的 projects 加 `{ name: 'p1-141', testMatch: /invite-accept\.spec\.ts/ }`；
  * 2. 根 package.json 的 test:e2e 串行链追加 `&& playwright test --project=p1-141`；
- * 3. 之后可挂进 scripts/q5-loop.sh 的 20 次口径——本文件每条用例自带一次性 Setup
- *    （team/usename 唯一后缀），可在同一 webServer 生命周期内重复跑。
+ * 3. 之后可挂进 scripts/q5-loop.sh 的 20 次口径。
+ *
+ * 用例生命周期约束（本文件首轮 Q5 实测得出）：**单 Team 部署下 Hub 只容一次 Setup**，
+ * 所以本文件只能有**一条**用例（一条用例内串完「加入成功」与「失效链接」两个场景）；
+ * 新增第二条独立用例必须先登录既有团队，不能重跑 Setup。
  */

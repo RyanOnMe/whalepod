@@ -149,10 +149,12 @@ describe('邀请详情预检（GET /invites/:token）', () => {
     expect(typeof data.expiresAt).toBe('string')
     // 字段最小集（InvitePreflightSchema 是 strictObject）：多一列少一列都该红，
     // 成员信息/Token 不可能随字段漂移漏出。
+    // 注意：JS 默认字典序下 'expired' 排在 'expiresAt' 之前（第 7 个字符 'd' < 's'）——
+    // 手写期望数组容易凭语义顺序写错，这里按 .sort() 的真实顺序书写。
     expect(Object.keys(data).sort()).toEqual([
       'consumed',
-      'expiresAt',
       'expired',
+      'expiresAt',
       'role',
       'teamName',
     ])
