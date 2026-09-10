@@ -3,9 +3,9 @@
 - 对应场景/门禁：Q5 浏览器门（`pnpm test:e2e` 的 `p1-142` 项目）；文案判据本体在 Q0
   （`pnpm check` 的 unit project 里跑同一套纯函数）
 - 对应 Issue：#167（UI 人话化第二批：Agents 页与插件页）
-- 上次验证：2026-09-11 · `feat/p1-167-agents-plugins-copy`（已合并 main `38c6968` / #160）
-  · 结果：**Q0 PASS（82 files / 1059 tests）+ Q5 PASS**
-  （`--project=p1-142` 3 passed 1.1m；`--project=p1-19` 13 passed 4.3m）
+- 上次验证：2026-09-11 · `feat/p1-167-agents-plugins-copy`（已合并 main `8780fc7`，含
+  #160 对比度扫描 / #166 焦点环 / #170 排版门）· 结果见「复跑（本次实测输出）」小节
+  （**数字以该节为准**，一审 B2/B1 整改后重跑）
 
 ## 验的是哪条用户路径
 
@@ -34,9 +34,15 @@ pnpm exec playwright test --project=p1-142
 `expectCopyCriteria`）；挂点在 `apps/web/tests/e2e/pairing-ui.spec.ts` 的
 「文案判据：Agents 与插件页…（1280×720 与 390×844 两档）」用例。
 
-**注意（与 #159 的接口）**：#159 的对比度扫描（`tests/e2e/contrast-sweep.ts`）落在
-PR #160，合入后两者挂在同一处扫描点（同一个逐页循环、同一套「等内容渲染再判」口径）。
-本判据**不** import 那个模块：它只需要 innerText 采集 + 三条断言，独立实现避免跨分支耦合。
+**与 #159 的关系（已合并）**：#159 的对比度扫描（`tests/e2e/contrast-sweep.ts`）在
+main `38c6968` 合入后，本判据的用例里**同时**调用 `expectCopyCriteria` 与
+`expectNoContrastOffenders`——两门同一处、同一口径（逐页等真实内容出现再判）。两侧独立
+实现（本判据只需要 innerText 采集 + 三条断言），互不 import。
+
+**与 #170 排版门的关系**：`apps/web/tests/copy-typography.spec.ts`（unit project）按**源码行**
+判"跨行折叠出的空格"。本切片一处文案初版踩了它（`AgentList.tsx` 的 Revision 说明：
+逗号后折行 + 破折号前折行），修法与"为什么机器判据抓不到渲染后破折号那一处"写在
+`AgentList.tsx` 的注释里；渲染结果的逐字断言在 `agent-settings.spec.tsx`。
 
 ## 判定（成功长什么样）
 
@@ -48,17 +54,24 @@ PR #160，合入后两者挂在同一处扫描点（同一个逐页循环、同�
 2. **正文不得命中"裸的"内部词**（`curated` / `unreviewed` / `local-development`）。
    领域词（`Agent` / `Run` / `Artifact` / `Plugin Pack` / `Profile Revision`）**不在**
    表里，保留英文不算泄漏，单测里有反例钉住这一点。
-   「裸」的判据 = 这个词在屏上**有没有中文兜着**：`local-development（本地开发）` 与
-   `精选（curated）包` 是 CONTEXT.md 认可的「中文（English）」对照标签，放过；
-   `curated 目录暂无插件。` 这种没有中文解释的**才算命中**。这条口径两个方向各被实测
-   撞过一次（见「发现」）。
+   放过条件是「对照标签」形态：term 被全角括号包住且**括号前 8 字符内出现过中文**
+   （`本地开发包（local-development）`、`精选（curated）`），或 term 后紧跟一个
+   **以中文开头**的全角括号（`local-development（本地开发）`）。其余算命中
+   （`curated 目录暂无插件。`、`unreviewed 包不能进入普通 Pack`）。
+   **这条口径有已知假阴性**（散文里出现 `（curated）` 会被放过），见「边界与未覆盖」——
+   一审 B2 指出文档原先写的是"括号里只有它"，与实现不符，已按实现改写。
+   判定前统一剥离零宽字符（`\u200b-\u200d\u2060\ufeff`），否则 `cur\u200bated`
+   能整体绕过。
 3. **同一屏不得有两个同义标题**：`h1` 与紧随其后的 `h2/h3` 相同或互相包含即失败。
 4. 顺带：390×844 无横向溢出（复用 #152 既有判据，两页此前没进过那个循环）。
 
-另有纯函数级"门不是空的"证据（`copy-criteria.spec.ts`，8 例）：
+另有纯函数级"门不是空的"证据（`copy-criteria.spec.ts`，**10 例**）：
 
 - 旧文案（改动前逐字原文）**必须变红**：裸摘要、`curated`、同义标题三类各一条；
 - 新文案**必须全绿**；短摘要形态 `4d1be1bbe093…` 与 63/65 位十六进制不得误报；
+- 「中文（English）」标签形态放过、裸词仍抓（含 `（curated catalog）` 这种括号内容更长的
+  反例）；
+- 零宽字符插在词里/摘要里照样命中（一审 B2 的绕过路径）；
 - 词表每条必须写明「为什么它在表里」（理由里要出现"枚举/标识/目录/状态"这类判断依据）；
 - 失败信息必须能定位：元素/文本/期望三件都在。
 
@@ -103,7 +116,7 @@ plugins-1280x720: copyCriteria=FAIL #167 文案判据未通过（2 项）：
 
 | 档 | `/agents` | `/plugins` |
 |---|---|---|
-| 1280×720 | `scrollWidth=1280/1280`；两栏 `gridCols=[688, 368]`；标题序列 `H1:Agents → H3:新建 Agent（表单）→ H2:Revision 是什么 → H3:Builder（详情）` | `scrollWidth=1280/1280`；标题序列 `H1:插件管理 → H2:插件目录 → H2:已安装插件 → H2:插件组合（Pack）→ H3:新建插件组合` |
+| 1280×720 | `scrollWidth=1280/1280`；两栏 `gridCols=[688, 368]`；标题序列 `H1:Agents → H3:新建 Agent（表单）→ H2:Revision 是什么 → H3:Builder（详情）` | `scrollWidth=1280/1280`；标题序列 `H1:插件管理 → H2:插件目录 → H2:已安装插件 → H2:插件组合（Plugin Pack）→ H3:新建插件组合` |
 | 390×844 | `scrollWidth=390/390`（无横向溢出）；单列顺序 `Agents → 列表 → 说明卡 → 新建表单 → 详情`；标签与解释在 390px 下逐行换行、无截断 | `scrollWidth=390/390`；`插件组合摘要（Pack Digest）` 标签换两行、短码 `4d1be1bbe093…` 与「复制」同排；正文无 64 位整串 |
 
 逐条结论：
@@ -112,10 +125,13 @@ plugins-1280x720: copyCriteria=FAIL #167 文案判据未通过（2 项）：
   （与主导航同一套词）。截图里 h1 之后紧跟的是表单 h3 与侧列说明 h2，两种形态都不再重复。
 - **标签中文化**：表单与详情 6 个标签统一「中文（English）」；`凭据槽（Credential Slot）`
   下面那句解释在 1280 与 390 两档都完整可读（3 行 / 5 行，无截断）。
-- **排版**：1280 下表单与详情进了 23rem 侧列（368px），列表与说明留在 688px 主列；
-  左列在只有 1 个 Agent 时下方留白，属小团队正常形态（收口前的留白是**右半屏固定空**，
-  与内容多少无关）。曾试过把表单放主列：两处 `.field-row` 各摊到 ~330px，右侧空出大片，
-  截图比对后定为侧列（理由写进 `global.css` 的注释）。
+- **排版**（一审 B7 指出原注释的实测方向写反了，已按真 Chrome 量到数字重写）：
+  1280 下左列 688px 放列表与说明、右列 368px 放表单与详情。侧列可用宽度
+  368 − 2×16 = **334px**，而每对字段需要 2×200(flex-basis) + 12(gap) = **412px** ⟹
+  `.field-row` 换行、两个字段各占满 334px 上下排列，**表单在侧列里是 9 行单列、总高
+  1027px**；把表单放回主列（688px）会重新并排（每格 **257px**、总高 **794px**，矮 233px）。
+  仍然选侧列的理由是**列表要主列的宽度**（放侧列就是 220px 卡片，一行放不下两个），
+  且两种放法都解决了"1120px 容器右半整片空着"。取舍与两组实测数字都写进 `global.css`。
 - **`curated`**：空态写成「精选目录暂无插件：这里只列上游精选过的插件，团队自建的
   本地包不经此入口。」——纯中文，不带原词；信任级别徽标写「精选」（`formatTrust`）。
   为什么不用「精选目录（curated）」：那一版实测**命中了本切片自己的词表判据**
@@ -124,6 +140,21 @@ plugins-1280x720: copyCriteria=FAIL #167 文案判据未通过（2 项）：
   那样，括号前的中文就是这个词的解释）。
 - **长标识**：Pack ID 短码 `dddddddd`、摘要短码 `4d1be1bbe093…`，两者各带「复制」；
   原来那行「完整 Digest + 64 位整串」已删除（正文不再出现整串，全值在 `title` 里）。
+
+## 一审（独立评审）整改记录
+
+| 条目 | 处置 |
+|---|---|
+| B1 排版门（`copy-typography`）在 `AgentList.tsx` 命中规则 B | 折行点改到标点之后 + 用显式字符串表达式折行；`pnpm check` 的 unit project 复跑全绿 |
+| B1 附带：渲染后「配置 ——人格」多空格 | 与 #170 同类，一并修掉；`agent-settings.spec.tsx` 加渲染结果逐字断言（机器判据抓不到破折号那处） |
+| B2 分支落后 main / 无 CI | merge `8780fc7`；冲突只 `docs/agent/README.md` 一行，两行索引都留 |
+| 应改 1 口径与实现不符 + 零宽绕过 | 文档口径按实现改写；加零宽字符剥离 + 回归用例；假阴性写进「边界与未覆盖」 |
+| 应改 2 判据 1 只认 hex | 写进代码注释与「边界与未覆盖」（SRI base64 形态不覆盖） |
+| 应改 3 键盘/触屏取不到全值 | 登记为取舍：复制按钮是键盘可达的取全值入口；`code` 不可聚焦，未加"显示全值"入口 |
+| 应改 4 同一概念两种译法 | 统一成权威词「插件组合（Plugin Pack）」（h2 / 按钮 / valueLabel / 单测 / e2e 选择器） |
+| 应改 5 `CopyButton` 默认值只修一半 | 默认值中性化为「这个值」，JSDoc 例子改成「插件组合摘要」 |
+| 应改 6 验收文档自相矛盾 | 删掉过期的"Q5 未实跑"条目；纯函数用例数 8 → 10 |
+| 应改 7 `global.css` 理由与实测相反 | 按实测重写（见上），并把"曾经写错的那版"留在注释里防后人照抄 |
 
 ## 实现过程中被自己的门抓到的两次（登记）
 
@@ -164,9 +195,17 @@ bash scripts/secret-scan.sh apps/web scripts docs/agent   # Q7 片段
 
 ## 边界与未覆盖
 
-- **Q5 尚未在空栈上实跑**：`p1-142` 的 390×844 循环与新增文案用例都要真栈
-  （`scripts/e2e-serve.mts` 占 5173/18080，同一时刻全机一套）。本次交付时该栈被
-  其它 agent 占用，故 Q5 由父 agent 放行后补跑；本文件届时更新「上次验证」。
+- **对照标签口径的假阴性（一审 B2 登记）**：`isGlossedTerm` 的左标签规则是"括号前 8 个字
+  符内出现过中文"，因此 `这里只列上游精选过的插件（curated）` 这种**散文**写法不会被抓，
+  单测里也**显式钉住了"它确实不报"**（`copy-criteria.spec.ts`）。不收紧的理由：它与合法的
+  `精选（curated）包` 在字符串上无法区分。本仓库的处置是不写这种散文。
+- **判据 1 只认 hex 形态（一审 B3 登记）**：SHA-256 的 base64 / base64url 序列化
+  （43/44 字符）完全不覆盖——页面上的 SRI `Integrity` 就是这种形态。要覆盖需要新规则 +
+  按位置区分（短 base64 与 token/公钥/图标 data URI 形状相同，容易误报），当前未做。
+- **摘要全值的可达性（一审应改 3 登记，取舍）**：删掉「完整 Digest」行后，全值只剩
+  `title`（鼠标悬停）与「复制」按钮（键盘可达）。`<code>` 元素本身不可聚焦，所以**纯键盘
+  用户看不到全值文本**，只能复制后粘到别处看。这是有意的取舍（全值不该以正文形态出现）；
+  若将来要补，应加一个可聚焦的「显示全值」入口，而不是把整串放回正文。
 - **#159 的对比度扫描未并跑**：它落在 PR #160（未合入）。合入后本判据与它同点并排，
   本分支届时 rebase 一次。
 - **空团队形态下的真栈覆盖有限**：`p1-142` 的团队里通常没有 Agent / Pack，
@@ -179,6 +218,10 @@ bash scripts/secret-scan.sh apps/web scripts docs/agent   # Q7 片段
   `aria-label` / `title` / `placeholder` 不进 innerText 因而不判；只查显式词表，
   新造的内部词不会自动被抓；中英两套说法且互不包含的标题对（如 `Agent 管理` 与
   `Agents`）字符串上无从判定，靠人看。
+- **本页之外仍有两处「上方」方位词（一审观察项，本 PR 范围外）**：
+  `features/task/RunTimeline.tsx:32`（「…用上方「启动 Run」…」）与
+  `routes/DevicesPage.tsx:105`（「…先点上方「生成配对码」…」）。它们随布局变化同样会说错，
+  登记在此，留给后续切片。
 - **`PluginSettings` 目录卡的 Integrity / 依赖闭包 Digest 没有复制按钮**：它们已经是
   「短摘要 + title 全值」形态（#167 之前就是），本次只按 issue 范围处理
   `PluginPackEditor` 的 Pack ID / Pack Digest / 完整 Digest 三条。是否给目录卡也加
@@ -188,12 +231,13 @@ bash scripts/secret-scan.sh apps/web scripts docs/agent   # Q7 片段
 
 ```bash
 corepack enable && pnpm install --frozen-lockfile && pnpm -r --if-present build
-pnpm check                                                 # Q0：82 files / 1059 tests 全绿
-pnpm exec playwright test --project=p1-142                 # Q5：3 passed (1.1m)
-#   ✓ 生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备 (5.1s)
-#   ✓ 文案判据：Agents 与插件页无裸摘要 / 无内部词 / 无同义标题（1280×720 与 390×844 两档）(4.5s)
-#   ✓ 390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可达 (15.3s)
-pnpm exec playwright test --project=p1-19                  # 改过 /agents 断言的 spec：13 passed (4.3m)
+pnpm check                                                 # Q0：84 files / 1076 tests 全绿
+                                                           #（含 #170 排版门 4 例 + 本判据纯函数 10 例）
+pnpm exec playwright test --project=p1-142                 # Q5：3 passed (22.3s)
+#   ✓ 生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备 (2.7s)
+#   ✓ 文案判据：Agents 与插件页无裸摘要 / 无内部词 / 无同义标题（1280×720 与 390×844 两档）(1.4s)
+#   ✓ 390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可达 (1.5s)
+pnpm exec playwright test --project=p1-19                  # 改过 /agents 断言的 spec：13 passed (2.7m)
 #   （G5/G5-04/G6-04/G6-07/G4-04 + R1/R4/R5/R7/R8/R9 + G7-01/G7-04 全绿）
 bash scripts/secret-scan.sh apps/web scripts docs/agent     # Q7 片段：OK
 ```

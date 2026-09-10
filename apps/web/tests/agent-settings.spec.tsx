@@ -337,6 +337,25 @@ describe('agent-settings', () => {
     expect(within(detail).getByRole('button', { name: '创建 Revision' })).toBeDisabled()
   })
 
+  it('#167 侧列说明文案无多余空格（#169 排版门只看标点边界，渲染后的空格靠这条钉）', async () => {
+    const { container } = renderApp(
+      '/agents',
+      loggedInHandlers(ALICE, [agentsHandler([builderAgent]), packsHandler([corePack])]),
+    )
+    const about = await screen.findByRole('heading', { name: 'Revision 是什么' })
+    const paragraph = (about.parentElement as HTMLElement).querySelector('p.field-hint')
+    // 逐字比对：`配置——人格` 之间不许有空格（初版 JSX 折行折叠出了一个）、
+    // `Revision。改配置` 之间也不许有（同一个坑的另一半）。#169 的门按源码行判标点，
+    // 判不到"折行发生在表达式之间"的情形，所以在这里按渲染结果钉一次。
+    expect(paragraph?.textContent).toBe(
+      '一个 Agent 是团队共用的长期 AI 角色。它每次运行（Run）用到的配置——人格、模型、' +
+        '插件组合——会被固化成一份不可变的 Profile Revision。改配置就是新建 Revision，' +
+        '已经跑过的 Run 不受影响。',
+    )
+    expect(container.textContent ?? '').not.toContain('配置 ——')
+    expect(container.textContent ?? '').not.toContain('Revision。 改配置')
+  })
+
   it('空列表展示下一步引导空态', async () => {
     renderApp('/agents', loggedInHandlers(ALICE, [agentsHandler([]), packsHandler([corePack])]))
     // #167：空态文案改成指路（「用右栏的表单创建第一个」），文案随 #167 的窄屏顺序

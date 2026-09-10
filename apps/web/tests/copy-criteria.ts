@@ -84,9 +84,15 @@ export const INTERNAL_TERMS: readonly InternalTerm[] = [
 ]
 
 /**
- * 64 位十六进制摘要（SHA-256 形态）。**必须整词**：`(?<![0-9a-f])` / `(?![0-9a-f])`
- * 两侧排除，否则 64 位以上的串（如 git sha 拼长、或 64 × 2 的拼接）会被截成假阳性，
- * 而 63 位以下的串本来就不该命中。
+ * 64 位十六进制摘要（SHA-256 的 **hex** 序列化）。**必须整词**：`(?<![0-9a-f])` /
+ * `(?![0-9a-f])` 两侧排除，否则 64 位以上的串（如 git sha 拼长、或 64 × 2 的拼接）
+ * 会被截成假阳性，而 63 位以下的串本来就不该命中。
+ *
+ * **形态边界（一审 B3 指出，已登记）**：只认 hex。SHA-256 的 **base64 / base64url**
+ * 序列化（43/44 字符、含 `+` `/` `-` `_` `=`）完全不覆盖——页面上的 SRI `Integrity`
+ * 就是这种形态（`sha256-<43 字符 base64>=`）。要覆盖得另立规则：短、且与"摘要"之外的
+ * base64 串（token、公钥、图标 data URI）形状相同，判据会开始误报，需要按位置区分
+ * （与判据 1 的 innerText 口径不同）。当前未做，列在验收文档的盲区清单里。
  */
 export const LONG_HEX_64 = /(?<![0-9a-fA-F])[0-9a-fA-F]{64}(?![0-9a-fA-F])/
 
@@ -105,7 +111,7 @@ export interface CopyViolation {
 /** 纯函数：正文里的裸 64 位摘要。`text` 按行扫描，报出命中所在行。 */
 export function findBareLongDigests(text: string): CopyViolation[] {
   const violations: CopyViolation[] = []
-  for (const line of text.split('\n')) {
+  for (const line of normalizeForCriteria(text).split('\n')) {
     const match = LONG_HEX_64.exec(line)
     if (match === null) continue
     violations.push({
@@ -128,17 +134,25 @@ export function findBareLongDigests(text: string): CopyViolation[] {
  * 英文时写成「中文（English）」），它给的是**对照**而不是黑话——那个英文词旁边就写着
  * 中文。所以判据是「裸词才算」，不是一个词出现在屏上就算。
  *
- * 判据口径（两条都要求英文词紧贴括号、括号里只有它）：
- *   - 左标签：`（local-development）` 直接跟在中文后面 → 放过；`（curated 目录）`
- *     这种括号里还有别的词 → 仍算裸词（旧文案就是这么写的）；
- *   - 右标签：`local-development（本地开发）` → 放过。
- * 这条口径是被实测逼出来的：第一版实现把 `curated` 写成「精选目录（curated）」，
- * 判据当场变红；反过来，插件页本来就有的 `local-development（本地开发）` 徽标
- * （#167 之前就有）不该被判成泄漏。两种形态都得有一套说得清的口径。
+ * 判据口径（**与实现逐字对齐**，一审 B2 指出过文档与实现不一致）：
+ *   - 放过：term 被全角括号包住、且**括号前 8 个字符内出现过中文**（左标签，
+ *     如 `本地开发包（local-development）`、`精选（curated）`）；
+ *   - 放过：term 后紧跟一个**以中文开头**的全角括号（右标签，
+ *     如 `local-development（本地开发）`）；
+ *   - 命中：其余（`curated 目录暂无插件。`、`unreviewed 包不能进入普通 Pack`）。
+ *
+ * **已知假阴性（口径的代价，已登记进验收文档「边界与未覆盖」）**：「括号前 8 字符内
+ * 有中文」是个近似——`这里只列上游精选过的插件（curated）` 这种**散文**写法（括号属于
+ * 前半句，只是因为括号前是中文就被放过）不会被抓。之所以不收紧：`精选（curated）包`
+ * 与它**在字符串上无法区分**（都是"中文（term）"紧跟更多中文），收紧就会把合法的
+ * 对照标签一起判红。本仓库的处置是"不写这种散文"（空态写成「精选目录暂无插件」），
+ * 判据保证别退回裸词。
+ *
+ * 零宽字符（`cur\u200bated`）已由 normalizeForCriteria 统一剥掉，不再是绕过路径。
  */
 export function findInternalTerms(text: string): CopyViolation[] {
   const violations: CopyViolation[] = []
-  for (const line of text.split('\n')) {
+  for (const line of normalizeForCriteria(text).split('\n')) {
     for (const entry of INTERNAL_TERMS) {
       if (!entry.pattern.test(line)) continue
       if (isGlossedTerm(line, entry.term)) continue
@@ -154,21 +168,21 @@ export function findInternalTerms(text: string): CopyViolation[] {
 }
 
 /**
- * 这一行里的 `term` 是不是「中文（English）」标签形态（它被中文标注，或它标注了中文）。
+ * 这一行里的 `term` 是不是「中文（English）」对照标签（它被中文标注，或它标注了中文）。
  *
- * 两种合法形态（都要求**括号里只有这个词**）：
- * - 左标签：`精选（curated）`、`本地开发包（local-development）`——term 前一小段里有中文
- *   （中文没有词间空格，所以"中文出现在附近"就意味着这个词被中文解释着）；
- * - 右标签：`local-development（本地开发）`——term 后紧跟以中文开头的全角括号。
+ * - 左标签：`[中文][≤8 字符][（term）]`——中文没有词间空格，所以"括号前一小段里有中文"
+ *   基本等价于"这个词被前面的中文解释着"；
+ * - 右标签：`term（中文…）`——term 后紧跟以中文开头的全角括号。
  *
- * 括号里只有 term 这条不能省：`这里只列上游精选过的插件（curated catalog）` 的括号
- * 属于前半句，只是恰好包住了 term——不设这条会把裸词判成标签。
+ * 括号里"只有 term"只对左标签成立（防止 `（curated catalog）` 这种括号内容更长的形态被
+ * 当成标签）；右标签按"以中文开头"判定。
  *
  * **为什么需要这条规则**（两个方向的实测各撞过一次）：
  * ① 第一版实现把空态写成「精选目录（curated）暂无插件」，判据当场变红；
  * ② 但插件页本来就有的审核徽标是 `local-development（本地开发）`（#167 之前就有），
- *    它显然不是黑话——英文词旁边就写着中文。所以判据只能是「裸词才算」，
- *    而"裸"的判据就是这个词在屏上有没有中文兜着。
+ *    它显然不是黑话——英文词旁边就写着中文。所以判据只能是「裸词才算」。
+ * 左标签这一条的假阴性（散文里出现 `（curated）` 会被放过）已在 findInternalTerms
+ * 的注释与验收文档里登记，不再当成"括号里只有它"来宣称。
  */
 function isGlossedTerm(line: string, term: string): boolean {
   const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -232,6 +246,21 @@ export function findDuplicateHeadings(headings: readonly HeadingInfo[]): CopyVio
         '同一屏只留一个标题：页面标题放 h1，紧随其后的区块标题要么删掉、要么换成不重复的内容',
     },
   ]
+}
+
+/**
+ * 零宽字符剥离（#167 一审 B2 指出的绕过路径）：`cur\u200bated` 这种写法在屏幕上
+ * 与 `curated` 完全一样，但正则匹配不到、判据静默放过。所以在**喂给所有判据之前**先把
+ * 这批不可见字符删掉——剥离的是"看不见的东西"，不是"看得见的文字"，不影响误报率。
+ *
+ * `\u200b` 零宽空格 / `\u200c` 零宽非连接符 / `\u200d` 零宽连接符 /
+ * `\u2060` word joiner / `\ufeff` BOM。它们都不占宽度、人眼不可见。
+ */
+const ZERO_WIDTH = /[\u200b-\u200d\u2060\ufeff]/g
+
+/** 判据统一的文本预处理：先剥零宽字符，再按行拆。 */
+function normalizeForCriteria(text: string): string {
+  return text.replace(ZERO_WIDTH, '')
 }
 
 /** 失败信息里的文本片段：长文本截断，换行折成空格。 */

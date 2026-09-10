@@ -260,7 +260,7 @@ describe('plugin-settings', () => {
     expect(screen.getByRole('heading', { name: '已安装插件' })).toBeVisible()
     // #167：标题语言统一。此前这里写 `Plugin Packs`，同页其它标题（插件目录 / 已安装插件）
     // 都是中文，一页两种语言。
-    expect(screen.getByRole('heading', { name: '插件组合（Pack）' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: '插件组合（Plugin Pack）' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'Plugin Packs' })).not.toBeInTheDocument()
     // #167：`curated` 是上游目录标识，不再当正文——徽标走 formatTrust 的中文名。
     expect(screen.getByText('精选')).toBeVisible()

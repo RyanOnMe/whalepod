@@ -85,7 +85,7 @@ export function PluginPackEditor({ session }: PluginPackEditorProps): ReactNode 
 
   return (
     <section className="plugins-layout" aria-labelledby="plugin-packs-heading">
-      <h2 id="plugin-packs-heading">插件组合（Pack）</h2>
+      <h2 id="plugin-packs-heading">插件组合（Plugin Pack）</h2>
 
       {packsQuery.isPending ? <p className="mutation-hint">正在加载 Packs…</p> : null}
       {packsQuery.isError ? <ErrorBanner error={packsQuery.error} /> : null}

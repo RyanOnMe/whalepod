@@ -13,9 +13,9 @@
  *   `Model`/`Credential Slot`/`Max Tokens`/`Plugin Pack` 单看不知道是什么，而同屏的
  *   「名称 / 描述」是中文，一页两种语言。括号里保留 CONTEXT.md 的正式领域词，方便
  *   和协议字段、CLI 输出对上。文案常量在 shared/format.ts，与表单共用同一份。
- * - **排版收口到 page-grid 两栏**：宽屏（≥1024px）左列放列表与说明、右列放新建表单与
- *   选中 Agent 的详情；窄屏回落单列，且详情会提到表单之前（点开卡片要立刻看到内容）。
- *   此前 1120px 容器里表单只占左半、右半整片空着。
+ * - **排版收口到 page-grid 两栏**：宽屏（≥1024px）左列放列表与「Revision 是什么」说明、
+ *   右列放新建表单与选中 Agent 的详情；窄屏回落单列（顺序与 DOM 一致：列表 → 说明 →
+ *   表单 → 详情，没有 order 补救）。此前 1120px 容器里表单只占左半、右半整片空着。
  */
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
@@ -111,10 +111,21 @@ export function AgentList({
         */}
         <section className="card" aria-labelledby="agents-about-heading">
           <h2 id="agents-about-heading">Revision 是什么</h2>
+          {/*
+            #169 排版门（apps/web/tests/copy-typography.spec.ts）：JSX 把跨行的换行 + 缩进
+            折叠成**一个空格**，所以折行点不能落在标点前后。本段初版两处都踩了——「…改配置
+            就是新建 Revision，」换行接「已经跑过的」（规则 B：逗号后多一个空格）、以及
+            「用到的配置」与「——人格」之间（规则 A：破折号前多一个空格）。
+
+            修法用**显式字符串表达式**折行（`{...}` 结束的行不算文本折行，门按 JSX 结构
+            换行放过）：JSX 文本行只能在标点之后断，而这一段的长句里没有合适的断点——
+            断在句号后同样会被规则 B 抓（空格落在全角句号之后）。写成表达式既保住源码可读
+            宽度，又保证渲染文本里一个多余空格都没有。
+          */}
           <p className="field-hint">
-            一个 Agent 是团队共用的长期 AI 角色。它每次运行（Run）用到的配置——人格、模型、
-            插件组合——会被固化成一份不可变的 Profile Revision：改配置就是新建 Revision， 已经跑过的
-            Run 不受影响。
+            {'一个 Agent 是团队共用的长期 AI 角色。它每次运行（Run）用到的配置——人格、模型、'}
+            {'插件组合——会被固化成一份不可变的 Profile Revision。改配置就是新建 Revision，'}
+            {'已经跑过的 Run 不受影响。'}
           </p>
         </section>
       </div>

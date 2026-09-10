@@ -22,6 +22,7 @@
 | [run-lifecycle-acceptance.md](./run-lifecycle-acceptance.md) | G7-01..06、R4/R5/R9、Q6：Run 取消/强杀/丢失与显式重跑验收（P1-16） |
 | [harness-acceptance.md](./harness-acceptance.md) | P1-18：六原语 harness（phase1:drive/verify/evidence）、跨层 traceId/runId 索引、Evidence 包与四层断层自证；#73 取证面绝对路径归约与「证据目录无绝对路径」判定 |
 | [agents-plugins-copy-acceptance.md](./agents-plugins-copy-acceptance.md) | #167：Agents 页与插件页的文案/排版（标签中文化、`curated` 换人话、长摘要截断+复制、去重复标题、page-grid 两栏）；Q5 内文案判据（裸 64 位摘要 / 内部词表 / 同义标题）与两档截图自审结论、未覆盖清单 |
+| [focus-ring-acceptance.md](./focus-ring-acceptance.md) | #164 焦点环对比度门：`--focus-ring` 双层环的逐层实测（浅色/深色两套 × 四个底色）、红→绿实测、非文字对比度 3:1 的边界与未验证清单 |
 | [load-performance-acceptance.md](./load-performance-acceptance.md) | Q8 短档性能门：10 浏览器 WS 传播 p95 · 2 Run×20ev/s 合成流 ingest p95 · 空闲段 RSS 斜率（30min 空闲口径的缩短代理）· 环境不足 exit 3 无 SKIP；尺子账与覆盖边界（P1-20/#109） |
 
 规矩只有一条：**验过就要留下**。验收步骤、探针跑法、上次结果、坑在哪，写进这里的 acceptance 文档；能直接复跑的脚本放 `scripts/`。只留在 `/tmp` 或对话里的验证，等于没验。

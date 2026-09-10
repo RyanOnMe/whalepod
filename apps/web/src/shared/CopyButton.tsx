@@ -12,7 +12,7 @@ export interface CopyButtonProps {
   value: string
   /** 无障碍名称（按钮可访问名，如「复制邀请链接」）。 */
   label: string
-  /** 失败提示里指明要手动复制的东西（如「完整 digest」「邀请链接」）。 */
+  /** 失败提示里指明要手动复制的东西（如「插件组合摘要」「邀请链接」）。 */
   valueLabel?: string
   /** 按钮文本（默认「复制」）；邀请场景给更明确的动作词。 */
   children?: ReactNode
@@ -21,7 +21,10 @@ export interface CopyButtonProps {
 export function CopyButton({
   value,
   label,
-  valueLabel = '完整 digest',
+  // 默认为中性措辞：这个组件被邀请链接（MembersPage）等多处复用，写死「完整 digest」
+  // 会让「复制邀请链接失败」提示成「请手动复制完整 digest」——错文案（#167 一审指出）。
+  // 调用方给 valueLabel 时以调用方为准；不给时只说"这个值"，不说错名。
+  valueLabel = '这个值',
   children,
 }: CopyButtonProps): ReactNode {
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle')

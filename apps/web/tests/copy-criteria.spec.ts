@@ -75,7 +75,7 @@ describe('#167 文案判据（自身）', () => {
   it('改动后的现文案必须全绿：截断摘要 + title（不在正文）+ 中文标题', () => {
     // 逐字取自改动后的 PluginPackEditor.tsx：正文只有短码，全值是 title 属性（不进 innerText）
     const after = [
-      '插件组合（Pack）',
+      '插件组合（Plugin Pack）',
       'review-pack 1 个插件',
       'Pack ID',
       'dddddddd',
@@ -88,7 +88,7 @@ describe('#167 文案判据（自身）', () => {
       { level: 1, text: '插件管理' },
       { level: 2, text: '插件目录' },
       { level: 2, text: '已安装插件' },
-      { level: 2, text: '插件组合（Pack）' },
+      { level: 2, text: '插件组合（Plugin Pack）' },
     ]
     expect(() => assertCopyCriteria({ text: after, headings, label: '/plugins' })).not.toThrow()
   })
@@ -121,6 +121,18 @@ describe('#167 文案判据（自身）', () => {
     // （`精选目录（curated）暂无插件`）。它与左标签形态字符串上无法区分——本次的
     // 处置是**不写这种散文**（空态写成「精选目录暂无插件」），判据只保证别退回裸词。
     expect(findInternalTerms('精选目录（curated）暂无插件。')).toEqual([])
+  })
+
+  it('零宽字符不能当绕过路径（\u200b 插在词里照样命中）', () => {
+    // #167 一审 B2：`cur\u200bated` 在屏幕上与 `curated` 一模一样，但不做剥离时
+    // 正则匹配不到 → 判据静默放过。剥离发生在判定之前（normalizeForCriteria）。
+    expect(findInternalTerms('cur\u200bated 目录暂无插件。')).toHaveLength(1)
+    expect(findInternalTerms('unre\u200dviewed 包不能进入普通 Pack')).toHaveLength(1)
+    expect(findInternalTerms('local-\ufeffdevelopment（本地开发）')).toEqual([])
+    // 摘要那条同样要穿过零宽字符
+    const spaced = `${DIGEST_64.slice(0, 32)}\u200b${DIGEST_64.slice(32)}`
+    expect(spaced).not.toBe(DIGEST_64)
+    expect(findBareLongDigests(spaced)).toHaveLength(1)
   })
 
   it('内部词表每条都写清了理由（词表本身不许裸奔）', () => {
