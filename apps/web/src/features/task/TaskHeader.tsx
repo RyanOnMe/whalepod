@@ -7,12 +7,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
-import {
-  ASSIGNMENT_STATUS_LABEL,
-  formatIso,
-  shortId,
-  TASK_STATUS_LABEL,
-} from '../../shared/format.js'
+import { ASSIGNMENT_STATUS_LABEL, shortId, TASK_STATUS_LABEL } from '../../shared/format.js'
+import { RelativeTime } from '../../shared/RelativeTime.js'
 import type { Session, TaskView } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
 
@@ -78,18 +74,24 @@ export function TaskHeader({ task, session }: TaskHeaderProps): ReactNode {
         </div>
         <div>
           <dt>创建时间</dt>
-          <dd>{formatIso(task.createdAt)}</dd>
+          <dd>
+            <RelativeTime iso={task.createdAt} />
+          </dd>
         </div>
         {task.acceptedAt !== null ? (
           <div>
             <dt>接受时间</dt>
-            <dd>{formatIso(task.acceptedAt)}</dd>
+            <dd>
+              <RelativeTime iso={task.acceptedAt} />
+            </dd>
           </div>
         ) : null}
         {task.completedAt !== null ? (
           <div>
             <dt>完成时间</dt>
-            <dd>{formatIso(task.completedAt)}</dd>
+            <dd>
+              <RelativeTime iso={task.completedAt} />
+            </dd>
           </div>
         ) : null}
       </dl>

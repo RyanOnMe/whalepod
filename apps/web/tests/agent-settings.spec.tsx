@@ -158,6 +158,8 @@ describe('agent-settings', () => {
     expect(await screen.findByRole('button', { name: /Builder/ })).toBeVisible()
     expect(screen.queryByRole('button', { name: '创建 Agent' })).not.toBeInTheDocument()
     expect(screen.getByText(/Agent 只读/)).toBeVisible()
+    // #152：角色名统一中文（此前这里直接印内部枚举值 `member` 与 `Owner/Admin`）
+    expect(screen.getByText('你是成员，Agent 只读；仅所有者或管理员可创建或修改。')).toBeVisible()
   })
 
   it('Plugin Pack 下拉：选项来自 GET /plugin-packs，未选时提交禁用', async () => {

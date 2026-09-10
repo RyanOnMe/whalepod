@@ -19,14 +19,10 @@ import { api } from '../shared/api/client.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
 import { isApiError } from '../shared/api/errors.js'
 import { queryKeys } from '../app/query-client.js'
-import { formatIso } from '../shared/format.js'
+import { RelativeTime } from '../shared/RelativeTime.js'
+import { ROLE_LABEL } from '../shared/format.js'
 import { setFlash } from '../shared/flash.js'
 import type { AcceptInviteAsMemberView, InviteDetailsView, Session } from '../shared/api/types.js'
-
-const ROLE_LABEL: Readonly<Record<'admin' | 'member', string>> = {
-  admin: 'Admin',
-  member: 'Member',
-}
 
 /**
  * 失效链接的人话。优先用预检失败时 Hub 给的 details（能区分过期/已用），
@@ -108,22 +104,22 @@ export function InvitePage({ session, initialized }: InvitePageProps): ReactNode
             <p>{failureText(inviteQuery.error)}</p>
             <p>
               已经在团队里了？<Link to="/login">去登录</Link>
-              ，或让 Owner 在「成员」页重新生成一条邀请。
+              ，或请所有者到「成员」页重新生成一条邀请。
             </p>
           </div>
         ) : null}
         {invite !== undefined ? (
           <>
             <p className="page-lead" role="status">
-              团队「{invite.teamName}」邀请你以 {ROLE_LABEL[invite.role]} 身份加入。链接有效期至{' '}
-              <time dateTime={invite.expiresAt}>{formatIso(invite.expiresAt)}</time>。
+              团队「{invite.teamName}」邀请你以{ROLE_LABEL[invite.role]}身份加入。链接有效期至{' '}
+              <RelativeTime iso={invite.expiresAt} />。
             </p>
             {session === null ? (
               initialized ? (
                 <InviteAuthPanel token={token} teamName={invite.teamName} />
               ) : (
                 <div className="empty-state">
-                  <p>这个 Hub 还没有初始化：先创建团队与 Owner 账号，再回来使用这条邀请。</p>
+                  <p>这个 Hub 还没有初始化：先创建团队与所有者账号，再回来使用这条邀请。</p>
                   <p>
                     <Link to="/setup">去初始化团队</Link>
                   </p>

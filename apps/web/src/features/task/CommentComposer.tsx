@@ -6,7 +6,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
-import { formatIso, shortId } from '../../shared/format.js'
+import { RelativeTime } from '../../shared/RelativeTime.js'
+import { shortId } from '../../shared/format.js'
 import type { CommentView, Session } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
 
@@ -27,7 +28,7 @@ export function CommentList({ comments, session }: CommentListProps): ReactNode 
           <li key={comment.id} className="comment-item">
             <div className="comment-meta">
               <strong>{isMine ? '你' : shortId(comment.authorUserId)}</strong>
-              <time dateTime={comment.createdAt}>{formatIso(comment.createdAt)}</time>
+              <RelativeTime iso={comment.createdAt} />
             </div>
             <p className="comment-body">{comment.body}</p>
           </li>

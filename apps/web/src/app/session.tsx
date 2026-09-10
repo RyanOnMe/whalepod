@@ -5,12 +5,14 @@
  * 因此 useLoaderData 里的 session 一定存在；子组件经 useSession() 读取。
  * 退出登录：撤销会话后回 /login（root loader 的 session 查询会再次 401 并重定向，
  * 这里直接导航更即时）。
+ * #152：页头身份行的角色走 ROLE_LABEL（此前直接印 `owner` 这个内部枚举值）。
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react'
 import { Link, Outlet, useLoaderData, useLocation, useNavigate } from 'react-router'
 import { api } from '../shared/api/client.js'
 import { isApiError } from '../shared/api/errors.js'
+import { ROLE_LABEL } from '../shared/format.js'
 import type { Session } from '../shared/api/types.js'
 import { queryKeys } from './query-client.js'
 import { FlashBanner } from './FlashBanner.js'
@@ -86,11 +88,13 @@ export function AppShell(): ReactNode {
             </nav>
           </details>
           <div className="app-header-user">
+            {/* 布局取 main（省略号 + title 承载全名），文案取术语切片（角色走中文标签表，
+                不上屏 owner/admin 这类内部枚举）。两边改动落在同一处，故合并保留二者。 */}
             <span
               className="app-header-user-name"
-              title={`${session.displayName}（${session.role}）`}
+              title={`${session.displayName}（${ROLE_LABEL[session.role]}）`}
             >
-              {session.displayName}（{session.role}）
+              {session.displayName}（{ROLE_LABEL[session.role]}）
             </span>
             <button
               type="button"

@@ -3,11 +3,14 @@
  *
  * A. 生成配对码：POST /devices/pairing-codes → 明文（六组 base32）+ 10 分钟倒计时
  *    + 一键复制 + 「只显示一次」提示（与 CLI 的 shown once 同语义）；
- * B. 设备列表：GET /devices 渲染名称/在线状态/最后心跳，空态给下一步指引；
+ * B. 设备列表：GET /devices 渲染名称/在线状态/最后在线，空态给下一步指引；
  * C. 收敛：device.changed 帧经真实 RealtimeBridge → event-router 失效 ['devices'] →
  *    页面不刷新出现新设备（失效链路不 mock，只把手推帧的 socket 装进来）；
  * D. 过期/失败：倒计时归零给出过期态与重新生成入口；失败一律走统一 ErrorBanner
  *    （只给 Hub 的 message + requestId，不把裸错误码搬上屏）。
+ *
+ * #152：平台名映射（darwin→macOS）与「最后在线」文案、相对时间 + title 绝对时刻
+ * 都在本文件立机器判据（实测截图里的「平台 darwin」「最后心跳」）。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, screen } from '@testing-library/react'
@@ -239,7 +242,7 @@ describe('DevicesPage 生成配对码（#142 A/D）', () => {
 })
 
 describe('DevicesPage 设备列表（#142 B/C）', () => {
-  it('列表渲染：名称 / 在线状态 / 最后心跳（从未心跳显示占位符，不伪造时间）', async () => {
+  it('列表渲染：名称 / 在线状态 / 最后在线（从未在线显示占位符，不伪造时间）', async () => {
     const online = makeDevice({
       id: DEVICE_ID,
       name: 'm4-mini',
@@ -260,9 +263,51 @@ describe('DevicesPage 设备列表（#142 B/C）', () => {
     expect(screen.getByText('linux-box')).toBeVisible()
     expect(screen.getByText('在线')).toBeVisible()
     expect(screen.getByText('离线')).toBeVisible()
-    expect(screen.getAllByText('最后心跳')).toHaveLength(2)
+    expect(screen.getAllByText('最后在线')).toHaveLength(2)
     expect(screen.getByText('—')).toBeVisible()
     expect(screen.queryByText(/还没有设备/)).not.toBeInTheDocument()
+  })
+
+  it('#152 平台名是人话：darwin→macOS、linux→Linux，页面不出现内部标识', async () => {
+    const mac = makeDevice({ id: DEVICE_ID, name: 'm4-mini', platform: 'darwin' })
+    const box = makeDevice({
+      id: 'd2d2d2d2-0000-4000-8000-00000000000d',
+      name: 'linux-box',
+      platform: 'linux',
+    })
+    const unknown = makeDevice({
+      id: 'd3d3d3d3-0000-4000-8000-00000000000e',
+      name: 'bsd-box',
+      platform: 'freebsd',
+    })
+    renderApp('/devices', loggedInHandlers(ALICE, [devicesHandler([mac, box, unknown])]))
+
+    expect(await screen.findByText('macOS')).toBeVisible()
+    expect(screen.getByText('Linux')).toBeVisible()
+    // 未知平台原样保留但显式标注，不假装认识
+    expect(screen.getByText('freebsd（未知平台）')).toBeVisible()
+    expect(document.body.textContent).not.toContain('darwin')
+    expect(document.body.textContent).not.toContain('心跳')
+  })
+
+  it('#152 时间给相对文案，title 里保留绝对时刻可核对', async () => {
+    const device = makeDevice({
+      id: DEVICE_ID,
+      name: 'm4-mini',
+      lastSeenAt: '2026-09-10T00:05:00.000Z',
+    })
+    renderApp('/devices', loggedInHandlers(ALICE, [devicesHandler([device])]))
+
+    const row = (await screen.findByText('m4-mini')).closest('li') as HTMLElement
+    const relative = row.querySelector('time')
+    expect(relative).not.toBeNull()
+    // 相对文案（刚刚/N 分钟前/N 小时前/昨天 HH:mm/日期）——不写死具体值（跑在不同
+    // 日期都成立），但必须是相对档位之一，且绝对长串只出现在 title 里。
+    expect(relative?.textContent ?? '').toMatch(
+      /^(刚刚|\d+ 分钟前|\d+ 小时前|昨天 \d{2}:\d{2}|\d{4}年\d{1,2}月\d{1,2}日|\d{1,2}月\d{1,2}日)$/,
+    )
+    expect(relative?.getAttribute('title')).toMatch(/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}$/)
+    expect(relative?.getAttribute('dateTime')).toBe('2026-09-10T00:05:00.000Z')
   })
 
   it('空态：给出下一步（先生成码、再按 CLI 步骤配对），CLI 三步教学仍在', async () => {
