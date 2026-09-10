@@ -79,100 +79,109 @@ export function MembersPage(): ReactNode {
         </p>
       ) : null}
 
-      <section className="card" aria-labelledby="members-list-heading">
-        <h2 id="members-list-heading">团队成员</h2>
-        {membersQuery.isPending ? (
-          <p className="mutation-hint">加载成员名单…</p>
-        ) : membersQuery.isError ? (
-          <ErrorBanner error={membersQuery.error} />
-        ) : members.length === 0 ? (
-          <p className="empty-state">还没有成员记录。</p>
-        ) : (
-          <ul className="member-list" role="list">
-            {members.map((member) => (
-              <li key={member.userId} className="member-item">
-                <span className="member-name">{member.displayName}</span>
-                <span className="member-handle">@{member.username}</span>
-                <span className="badge">{ROLE_LABEL[member.role]}</span>
-                {member.enabled ? null : (
-                  <span className="badge badge-member-disabled">已停用</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <div className="page-grid">
+        <div className="page-col">
+          <section className="card" aria-labelledby="members-list-heading">
+            <h2 id="members-list-heading">团队成员</h2>
+            {membersQuery.isPending ? (
+              <p className="mutation-hint">加载成员名单…</p>
+            ) : membersQuery.isError ? (
+              <ErrorBanner error={membersQuery.error} />
+            ) : members.length === 0 ? (
+              <p className="empty-state">还没有成员记录。</p>
+            ) : (
+              <ul className="member-list" role="list">
+                {members.map((member) => (
+                  <li key={member.userId} className="member-item">
+                    <span className="member-name">{member.displayName}</span>
+                    <span className="member-handle">@{member.username}</span>
+                    <span className="badge">{ROLE_LABEL[member.role]}</span>
+                    {member.enabled ? null : (
+                      <span className="badge badge-member-disabled">已停用</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
 
-      <section className="card members-invite" aria-labelledby="members-invite-heading">
-        <h2 id="members-invite-heading">邀请成员</h2>
-        {canInvite ? (
-          <>
-            <p className="page-lead">
-              选一个角色生成邀请链接。链接只能使用一次，72 小时后失效；生成后请立即复制发给他
-              ——Token 只出现这一次。
-            </p>
-            <form className="inline-form" onSubmit={submit}>
-              <div className="field">
-                <label htmlFor="invite-role">角色</label>
-                <select
-                  id="invite-role"
-                  value={role}
-                  onChange={(event) => setRole(event.target.value === 'admin' ? 'admin' : 'member')}
-                >
-                  <option value="member">Member（普通成员）</option>
-                  <option value="admin">Admin（可管理插件与邀请）</option>
-                </select>
-                <p className="field-hint">不能邀请 Owner：Owner 只能由初始化流程创建。</p>
-              </div>
-              <div className="form-actions">
-                <button
-                  type="submit"
-                  className="button button-primary"
-                  disabled={createInvite.isPending}
-                >
-                  {createInvite.isPending ? '生成中…' : '生成邀请链接'}
-                </button>
-              </div>
-            </form>
-            {createInvite.isError ? <ErrorBanner error={createInvite.error} /> : null}
-            {created !== null && inviteUrl !== null ? (
-              <div className="invite-result">
-                <h3>把这条链接发给他</h3>
-                <p className="invite-link-row">
-                  <code className="invite-link">{inviteUrl}</code>
-                  <CopyButton
-                    value={inviteUrl}
-                    label={`复制邀请 ${created.role} 的链接`}
-                    valueLabel="邀请链接"
-                  >
-                    复制链接
-                  </CopyButton>
+        {/* #152：宽屏把邀请面板放到侧列（原来挤在名单下方，右侧半屏空着）。 */}
+        <div className="page-col">
+          <section className="card members-invite" aria-labelledby="members-invite-heading">
+            <h2 id="members-invite-heading">邀请成员</h2>
+            {canInvite ? (
+              <>
+                <p className="page-lead">
+                  选一个角色生成邀请链接。链接只能使用一次，72 小时后失效；生成后请立即复制发给他
+                  ——Token 只出现这一次。
                 </p>
-                <dl className="revision-meta">
-                  <div>
-                    <dt>角色</dt>
-                    <dd>{ROLE_LABEL[created.role]}</dd>
+                <form className="inline-form" onSubmit={submit}>
+                  <div className="field">
+                    <label htmlFor="invite-role">角色</label>
+                    <select
+                      id="invite-role"
+                      value={role}
+                      onChange={(event) =>
+                        setRole(event.target.value === 'admin' ? 'admin' : 'member')
+                      }
+                    >
+                      <option value="member">Member（普通成员）</option>
+                      <option value="admin">Admin（可管理插件与邀请）</option>
+                    </select>
+                    <p className="field-hint">不能邀请 Owner：Owner 只能由初始化流程创建。</p>
                   </div>
-                  <div>
-                    <dt>有效期至</dt>
-                    <dd>
-                      <time dateTime={created.expiresAt}>{formatIso(created.expiresAt)}</time>
-                      <span className="field-hint">（72 小时）</span>
-                    </dd>
+                  <div className="form-actions">
+                    <button
+                      type="submit"
+                      className="button button-primary"
+                      disabled={createInvite.isPending}
+                    >
+                      {createInvite.isPending ? '生成中…' : '生成邀请链接'}
+                    </button>
                   </div>
-                </dl>
-                <p className="field-hint">
-                  链接是一次性的：他加入成功后即失效；重复打开会提示「已被使用」，请重新生成。
-                </p>
-              </div>
-            ) : null}
-          </>
-        ) : (
-          <p className="empty-state">
-            只有 Owner 或 Admin 能邀请成员。需要加人时，请联系团队 Owner 生成邀请链接。
-          </p>
-        )}
-      </section>
+                </form>
+                {createInvite.isError ? <ErrorBanner error={createInvite.error} /> : null}
+                {created !== null && inviteUrl !== null ? (
+                  <div className="invite-result">
+                    <h3>把这条链接发给他</h3>
+                    <p className="invite-link-row">
+                      <code className="invite-link">{inviteUrl}</code>
+                      <CopyButton
+                        value={inviteUrl}
+                        label={`复制邀请 ${created.role} 的链接`}
+                        valueLabel="邀请链接"
+                      >
+                        复制链接
+                      </CopyButton>
+                    </p>
+                    <dl className="revision-meta">
+                      <div>
+                        <dt>角色</dt>
+                        <dd>{ROLE_LABEL[created.role]}</dd>
+                      </div>
+                      <div>
+                        <dt>有效期至</dt>
+                        <dd>
+                          <time dateTime={created.expiresAt}>{formatIso(created.expiresAt)}</time>
+                          <span className="field-hint">（72 小时）</span>
+                        </dd>
+                      </div>
+                    </dl>
+                    <p className="field-hint">
+                      链接是一次性的：他加入成功后即失效；重复打开会提示「已被使用」，请重新生成。
+                    </p>
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <p className="empty-state">
+                只有 Owner 或 Admin 能邀请成员。需要加人时，请联系团队 Owner 生成邀请链接。
+              </p>
+            )}
+          </section>
+        </div>
+      </div>
     </div>
   )
 }

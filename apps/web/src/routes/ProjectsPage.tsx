@@ -26,13 +26,32 @@ export function ProjectsPage(): ReactNode {
   })
   const [creatingFor, setCreatingFor] = useState<string | null>(null)
   const [listOpenFor, setListOpenFor] = useState<string | null>(null)
+  // #152：创建项目表单默认收起——常驻展开会把项目列表与「任务列表」入口挤出首屏。
+  // 交互与「创建任务」同款：一个按钮 + aria-expanded，点开才渲染表单。
+  const [creatingProject, setCreatingProject] = useState(false)
 
   return (
     <div className="projects-page">
-      <h1>项目</h1>
-      <CreateProjectForm
-        onCreated={() => void queryClient.invalidateQueries({ queryKey: queryKeys.projects })}
-      />
+      <div className="page-head">
+        <h1>项目</h1>
+        <button
+          type="button"
+          className="button"
+          aria-expanded={creatingProject}
+          onClick={() => setCreatingProject(!creatingProject)}
+        >
+          {creatingProject ? '收起' : '新建项目'}
+        </button>
+      </div>
+      {creatingProject ? (
+        <CreateProjectForm
+          onCreated={() => {
+            void queryClient.invalidateQueries({ queryKey: queryKeys.projects })
+            // 建成即收起：结果（新项目卡片）就在下面，不需要占着半屏表单。
+            setCreatingProject(false)
+          }}
+        />
+      ) : null}
       {listQuery.isPending ? <p className="mutation-hint">正在加载项目…</p> : null}
       {listQuery.isError ? <ErrorBanner error={listQuery.error} /> : null}
       {listQuery.isSuccess && listQuery.data.length === 0 ? (
@@ -133,6 +152,7 @@ function ProjectTaskList({
   )
 }
 
+/** 创建项目表单（#152 起由页面上的「新建项目」按钮收起/展开后才渲染）。 */
 function CreateProjectForm({ onCreated }: { onCreated: () => void }): ReactNode {
   const [values, setValues] = useState({ name: '', description: '' })
   const [error, setError] = useState<unknown>(null)
