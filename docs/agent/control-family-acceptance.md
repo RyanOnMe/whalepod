@@ -2,7 +2,9 @@
 
 - 对应场景/门禁：Q0 静态门（源码文本判据）+ Q5 浏览器门（computed style 判据）
 - 对应 Issue：#168（P1-168）
-- 上次验证：2026-09-11 · `feat/p1-168-control-family` · Q0 PASS（6 条新用例全绿 + 22 条变异验证全红）；
+- 上次验证：2026-09-11 · `feat/p1-168-control-family` · **Q0 PASS**（7 条新用例全绿 + 22 条变异验证全红）
+  · **Q5 PASS**（`--project=p1-07` 1 passed / 18.6s；`--project=p1-142` 2 passed / 19.9s）
+  · 两档截图自审已做（含顶栏 hover 对照，见下节）；
   已并入 `main`（#159/#164/#166/#170 落地后的合并，冲突已解：本 PR 去掉了 #159 在
   `.app-header .button-quiet:hover` 上写的 `border-color`——quiet 是无边形态，形状不该由容器改）；
   **Q5 未跑**（本机同一时刻只允许一套 e2e 栈，调度未放行，见「边界与未覆盖」）
@@ -134,6 +136,34 @@ pnpm exec playwright test --project=p1-142   # 成员页 390 档：主按钮
 （形状限定：布局，`colors: {}` = 不许出现颜色）、`:focus-visible`（**全局可访问性规则**，
 登记它以挡住"往通用焦点里加颜色"；`border-radius` 显式豁免并写明理由）。
 
+### Q5 首跑抓到的三处（判据自身的缺陷，都已修）
+
+Q5 一跑就红——**红在判据上，不是产品上**，三处都不是假想：
+
+| # | 现象 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | `style.getPropertyValue is not a function` | 我把 `CSSStyleDeclaration` 数组从页面带回 Node 再解 token；跨进程序列化会把原型方法丢掉（回到 Node 是 `{}`）。我上一轮"序列化后方法还在"的结论是**测法错误**：只对页内活对象 `typeof` 了一下，没走序列化那一趟 | 在**页内**把 token 解析成字符串再带回（只过纯数据）。页内那段 var() 链跟法与 `resolveTokenValue` 同算法，注释里写明为什么不能直接复用（Playwright 的 `evaluate` 只收两个参数、arg 里的函数会被丢掉——两条都实测踩到） |
+| 2 | `.button-primary` 被判"背景/文字不符" | 我拿 `.button` 那族的期望去套**变体**；主按钮按设计就是 `--dsw-alias-button-primary-fill` + `--dsw-alias-label-primary-foreground` | `assertControlTokens` 加 per-call 的期望 token 覆盖（调用点显式传主按钮那两个 token） |
+| 3 | `.button-quiet` 被判"背景/描边不符" | 它是**无边形态**，底与描边按设计是 `transparent`（浏览器算成 `rgba(0, 0, 0, 0)`） | 期望值支持 `transparent` 哨兵，并在探针里把它与"token 没解析出来"分开成 `n/a` / `unresolved` 两个值——否则"没有期望"与"期望没解析出来"会长得一样 |
+
+另外**主动核了评审提醒的状态口径**：5 个调用点里有一个紧跟在 `click()` 之后（p1-07 展开
+「创建任务」表单），控件完全可能带焦点或 hover，而 `:focus-visible` 按设计会改描边。
+现已让探针采回 `focused` / `hovered`，判定函数在交互态**只放开描边项**（背景/文字照判），
+并补了单测（聚焦态描边取品牌色不红、但聚焦态背景漂移仍红）。这样调用点不必依赖
+"控件此刻一定没焦点"这种脆弱前提。
+
+### 截图自审（2026-09-11，两档各三页 + hover 对照）
+
+| 截图 | 看什么 | 结论 |
+|---|---|---|
+| 项目页 1280×720 / 390×844 | input / textarea / 主按钮 / quiet 按钮同屏 | 四者描边一致为细 hairline、圆角一致；主按钮近黑底白字、quiet 无边无底，**同族感成立**；390 档不溢出、控件仍满宽 |
+| 成员页 1280×720 / 390×844 | 原生 `<select>` + 主按钮同屏 | 主按钮已是 DSH 族；**原生 select 仍是浏览器默认外观**（细看与旁边按钮不同族）——这正是 #158/#161 未落地前应有的样子，与「未迁移」清单一致，不是本次回归 |
+| Task Room 1280×720 / 390×844 | 留言 textarea + 按钮 | 按钮同族；留言框是 `.comment-composer textarea`（**未迁移**、旧 1px/6px），与旁边已迁移控件**肉眼可辨**——与登记清单一致 |
+| 顶栏 hover（1280 / 390，`hover` 前 vs 后） | 「退出登录」是否看得见反馈 | **看得见**：hover 时出现浅色药丸底（`rgba(255, 255, 255, 0.08)` 压在近黑顶栏上），静止态无底色。以前那条"合成色 16.24:1"的机器证据现在有人眼对照 |
+
+自审**没有**发现需要在本次修的问题；两处"不同族"都是已登记的有意未迁移项。
+未覆盖：深色主题档（休眠）、`prefers-reduced-motion`、放大字号（浏览器缩放）。
+
 ### 整改时的实测（本机 Chrome，独立小页面，不进 e2e 栈）
 
 | 断言 | 实测 |
@@ -142,7 +172,7 @@ pnpm exec playwright test --project=p1-142   # 成员页 390 档：主按钮
 | 控件 `borderTopWidth`（`border: 0.5px solid …`） | `1px` |
 | 参照元素同声明的 `borderTopWidth` | `1px`（DPR=1 与 DPR=2 都相同）→ 元素对元素比较成立 |
 | 参照元素 `borderTopLeftRadius` | `8px`（与控件一致） |
-| Playwright 把 `CSSStyleDeclaration[]` 序列化回 Node 后 | `typeof getPropertyValue === 'function'`（三个元素全过）→ `resolveTokenValue` 在 Node 侧可用 |
+| ~~Playwright 把 `CSSStyleDeclaration[]` 序列化回 Node 后方法仍在~~ | **这条结论是错的**：当时只对**页内活对象**取了 `typeof`，没走序列化那一趟；Q5 首跑实测报 `getPropertyValue is not a function`。现改为**页内解析成字符串**再带回 |
 | 参照元素在**没定义** `--dsw-alias-border-l4` 的页面上 | `borderTopWidth = 0px`（整条 `border` 在 computed-value 阶段失效，回落到初值）→ 所以 `assertControlTokens` 显式断言参照非 0，防"两边都是 0"的假绿 |
 
 ### 为什么参照元素是合成元素而不是页面上的 vendored `Input`
@@ -184,14 +214,14 @@ pnpm exec playwright test --project=p1-142   # 成员页 390 档：主按钮
 
 ## 边界与未覆盖
 
-1. **Q5 未跑**：本机同一时刻只允许一套 e2e 栈（`scripts/e2e-serve.mts` 占 5173/18080），
-   调度未放行。浏览器侧 `assertControlTokens` 的**接线已写好**（p1-07 项目页四处、p1-142 成员页
-   390 档一处），但**在真实页面上的采集没有实测过**。其中三件关键依赖已在整改时用**独立小页面**
-   实测（见上表）：自定义属性读到的是解析值、`0.5px→1px` 且参照同值、序列化后方法可用。
-   仍未实测的是：这些行为**在本仓真实页面（含全部 CSS 与 token）上的落点**、
-   参照自检（token 缺失时的报错路径）、以及 390 档下的取值。
-2. **两档截图自审未做**：1280×720 / 390×844 的成员页、项目页、Task Room 三处截图依赖同一套
-   e2e 栈，一并等放行。**本次没有"看着没问题"的结论**。
+1. **Q5 已跑通**（2026-09-11，栈空闲时执行）：`--project=p1-07` **1 passed / 18.6s**、
+   `--project=p1-142` **2 passed / 19.9s**；`assertControlTokens` 的 5 个接线点全部真跑到，
+   并且在真实页面上**抓出并修掉了三处判据自身的缺陷**（见下节「Q5 首跑抓到的三处」）。
+   仍未覆盖：参照自检的**报错路径**（token 缺失时那条 throw）没有被主动构造过；
+   深色主题档没跑（当前休眠）。
+2. **两档截图自审已做**（2026-09-11）：成员页 / 项目页 / Task Room × 1280×720 与 390×844，
+   外加顶栏「退出登录」的 hover **对照**截图（`hover` 前 / 后各一张，1280 与 390 两档）。
+   结论与未覆盖见下节「截图自审」。
 3. **深色一套未验**：`body[data-ds-dark-theme]` 下 L1 换了一套值（`border-l3`/`l4` 也不同值），
    判据只在浅色跑；浏览器侧探针已经按"沿继承链取值"写，理论上能覆盖，但没有实测。
 4. **未迁移的控件仍在旧族**（本次刻意不收口，登记以免被当成漏改）：

@@ -163,17 +163,14 @@ export interface ComputedStyleLike {
  * `--dsw-alias-state-error-primary` 重绑到 red-900）与 `body[data-ds-dark-theme]` 那一套。
  * 从元素自身往祖先走，既拿到最近的重绑，也顺带把深色主题算进去。
  *
- * @param chain 从目标元素到 `documentElement`（含）的 computed style 链，至少一个元素
+ * @param style 取值的入口：源码/单测侧传一个普通对象，浏览器侧传一个
+ *   `{ getPropertyValue }` 适配器（**它自己负责沿元素→祖先链找最近的非空声明**）。
+ *   为什么是"一个对象 + 适配器"而不是"一个 CSSStyleDeclaration 数组"：数组要塞进
+ *   Playwright 的 `evaluate` 参数，而带原型方法的对象跨进程会被序列化成 `{}`
+ *   （实测报 `getPropertyValue is not a function`）——改成适配器后边界上只过字符串。
  */
-export function resolveTokenValue(chain: ComputedStyleLike[], name: string): string {
-  const read = (property: string): string => {
-    for (const style of chain) {
-      const value = style.getPropertyValue(property).trim()
-      // 属性被声明成空值（`--x: ;`）时按"未设置"处理，继续往上找
-      if (value !== '') return value
-    }
-    return ''
-  }
+export function resolveTokenValue(style: ComputedStyleLike, name: string): string {
+  const read = (property: string): string => style.getPropertyValue(property).trim()
   let current = name
   for (let hop = 0; hop < 8; hop += 1) {
     const value = read(current)
@@ -230,7 +227,22 @@ export interface ControlProbe {
   referenceBorderWidth: string
   /** 同上，用 vendored 的 `border-radius` 渲染出来的实测半径。 */
   referenceRadius: string
-  /** 控件上各 token 的解析值（`resolveTokenValue` 沿继承链算）。 */
+  /**
+   * 参照元素的描边色（`getComputedStyle(参照).borderTopColor`）。
+   *
+   * 为什么单独采它：用来做**参照自检**——如果页面加载的 token 与 `global.css` 里写的
+   * vendored 度量已经对不上（例如 token 缺失导致整条 `border` 在 computed-value 阶段失效），
+   * 参照会按 `0px`/初值计算，"控件 == 参照"就可能两边都是 0 而**假绿**。
+   */
+  referenceBorderColor: string
+  /**
+   * 控件上各 token 的解析值（`resolveTokenValue` 求解）。
+   *
+   * 三个特殊值：`'unresolved'` = 期望是 `--token` 但没取到值（判红）；`'n/a'` = 该控件在
+   * 静止态**没有**这个期望（例如 `.button-quiet` 的底/描边按设计是 `transparent`）；
+   * 其余原样带回（可能是 `rgba(0, 0, 0, 0)` 这类设计值）。
+   */
+
   resolved: {
     background: string
     border: string
@@ -283,10 +295,14 @@ export function checkControlTokens(
     pairs.splice(1, 0, ['描边', probe.borderColor, probe.resolved.border, restBorder])
   }
   for (const [what, actual, expected, expectedToken] of pairs) {
-    if (expected === '') {
+    // `unresolved` = 期望的是一个 `--token`，但元素与祖先都没取到值（真问题，必须红）；
+    // `n/a` = 该控件在静止态**没有**这个期望（例如 `.button-quiet` 的底与描边按设计是
+    // `transparent`），此时不判——把"没有期望"与"期望没解析出来"区分开，避免后者被静默放过。
+    if (expected === 'unresolved') {
       failures.push(`${label} 的${what} token ${expectedToken} 未解析（元素与祖先都取到空串）`)
       continue
     }
+    if (expected === 'n/a') continue
     if (normalizeColor(actual) !== normalizeColor(expected)) {
       failures.push(
         `${label} 的${what}取值为 ${actual}，与 token ${expectedToken} 的解析值 ${expected} 不符`,

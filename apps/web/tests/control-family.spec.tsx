@@ -823,6 +823,9 @@ function probeFromSource(scanned: CssRule[], selector: string, mustDeclare?: str
     // 参照值取 **vendored** 度量（另一份 CSS 的另一条规则），不是把控件自己的值抄一遍。
     referenceBorderWidth: vendor.borderWidth,
     referenceRadius: vendor.radius,
+    // 源码侧没有"渲染出来的参照元素"，用 vendored 那个 token 的解析值充当参照色
+    // （参照自检在浏览器侧才真正起作用）。
+    referenceBorderColor: tokenValue(vendor.borderToken),
     resolved: {
       background: resolve(background),
       border: resolve(borderColor),
@@ -903,14 +906,29 @@ describe('#168 自研控件对齐 DSH 族（源码文本判据）', () => {
         '.field input',
       ).join('\n'),
     ).toContain('圆角')
-    // ④ token 解析不出来（元素与祖先都取到空串）必须报"未解析"，不能静默通过
+    // ④ token 解析不出来（元素与祖先都取到空串）必须报"未解析"，不能静默通过。
+    // 探针用 `'unresolved'` 表示这种情形；它与 `'n/a'`（该控件静止态**没有**这个期望，
+    // 例如 `.button-quiet` 的底/描边按设计是 transparent）必须分开——否则"没有期望"
+    // 会被当成"没解析出来"，或者反过来被静默放过。
     expect(
       checkControlTokens(
-        { ...base, resolved: { ...base.resolved, background: '' } },
+        { ...base, resolved: { ...base.resolved, background: 'unresolved' } },
         checkerExpect,
         '.field input',
       ).join('\n'),
     ).toContain('未解析')
+    expect(
+      checkControlTokens(
+        {
+          ...base,
+          background: 'rgba(0, 0, 0, 0)',
+          resolved: { ...base.resolved, background: 'n/a' },
+        },
+        checkerExpect,
+        '.field input',
+      ),
+      '`n/a`（该控件静止态没有这个期望）不该被判红',
+    ).toEqual([])
     // ⑤ 高度降到 vendored Input 的 32px：与 token 不同值 + 低于触屏下限各报一条
     const lowered = { ...base, minHeight: '32px' }
     expect(checkControlTokens(lowered, checkerExpect, '.field input').join('\n')).toContain(
@@ -957,7 +975,7 @@ describe('#168 自研控件对齐 DSH 族（源码文本判据）', () => {
     ).toContain('文字取值')
   })
 
-  it('resolveTokenValue：沿继承链解 var() 链，且认最近的重绑', () => {
+  it('resolveTokenValue：解 var() 链，且适配器能表达"按元素就近取值"', () => {
     const style = (values: Record<string, string>): ComputedStyleLike => ({
       getPropertyValue: (name) => values[name] ?? '',
       backgroundColor: '',
@@ -971,19 +989,31 @@ describe('#168 自研控件对齐 DSH 族（源码文本判据）', () => {
       '--dsw-alias-button-primary-fill': 'var(--dsw-alias-brand-primary)',
       '--dsw-alias-brand-primary': 'rgb(15, 17, 21)',
     })
-    const body = style({ '--dsw-alias-brand-primary': 'rgb(249, 250, 251)' })
     // 无重绑：跟两跳拿到 :root 的值
-    expect(resolveTokenValue([root], '--dsw-alias-button-primary-fill')).toBe('rgb(15, 17, 21)')
-    // 有重绑（深色主题那种形态）：解链按**每个元素自己的**值走，取最近的那个
-    expect(resolveTokenValue([body, root], '--dsw-alias-button-primary-fill')).toBe(
-      'rgb(249, 250, 251)',
-    )
-    // 元素没声明就往上找；到处都没有就是空串（判定函数会报"未解析"）
-    expect(resolveTokenValue([body, root], '--nobody-declares-this')).toBe('')
+    expect(resolveTokenValue(root, '--dsw-alias-button-primary-fill')).toBe('rgb(15, 17, 21)')
+    // 有重绑（深色主题那种形态）：适配器自己按"元素 → 祖先"取值，解链时每一跳都走它，
+    // 所以拿到的是最近的那个（这里用同一个 `getPropertyValue` 模拟链上的就近查找）。
+    const nearest = (values: Record<string, string>): ComputedStyleLike => ({
+      getPropertyValue: (name) => values[name] ?? root.getPropertyValue(name),
+      backgroundColor: '',
+      borderTopColor: '',
+      borderTopWidth: '',
+      borderTopLeftRadius: '',
+      color: '',
+      minHeight: '',
+    })
+    expect(
+      resolveTokenValue(
+        nearest({ '--dsw-alias-brand-primary': 'rgb(249, 250, 251)' }),
+        '--dsw-alias-button-primary-fill',
+      ),
+    ).toBe('rgb(249, 250, 251)')
+    // 到处都没有就是空串（判定函数会报"未解析"）
+    expect(resolveTokenValue(root, '--nobody-declares-this')).toBe('')
     // 循环引用必须抛，不能死循环
-    expect(() =>
-      resolveTokenValue([style({ '--a': 'var(--b)', '--b': 'var(--a)' })], '--a'),
-    ).toThrow(/var\(\) 链/)
+    expect(() => resolveTokenValue(style({ '--a': 'var(--b)', '--b': 'var(--a)' }), '--a')).toThrow(
+      /var\(\) 链/,
+    )
   })
 
   it('BLOCK-2：@media 里偷偷改松这三条控件，判据必须红（不是静默失明）', () => {

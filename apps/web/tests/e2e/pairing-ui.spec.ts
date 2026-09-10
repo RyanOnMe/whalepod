@@ -14,6 +14,10 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  CONTROL_PRIMARY_FILL_TOKEN,
+  CONTROL_PRIMARY_LABEL_TOKEN,
+} from '../../src/shared/control-style-tokens.js'
+import {
   assertControlTokens,
   env,
   fillAndEnter,
@@ -374,6 +378,8 @@ test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可�
   await assertControlTokens(
     page.locator('form.inline-form .button.button-primary'),
     '.button-primary（生成邀请链接，390 档）',
+    // 主按钮自带的底/文字 token（理由见 task-room.spec.ts 同一处）
+    { backgroundToken: CONTROL_PRIMARY_FILL_TOKEN, labelToken: CONTROL_PRIMARY_LABEL_TOKEN },
   )
 
   // 换了页再走一遍：这次从成员页点「设备」（鼠标路径），落在设备页后直接点主体按钮
