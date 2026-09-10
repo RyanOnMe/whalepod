@@ -1,0 +1,142 @@
+{
+  "//": "Vendored DSH client UI 来源台账（#138 L1+L2 首批切片）。改动 vendored 文件前先读 README.md；新增文件必须在此登记。",
+  "coverage": "口径：components[] 逐个登记全部源码与样式文件（.ts/.tsx/.module.css），meta[] 登记元文件（README.md/LICENSE/manifest.json 自身）；两者并集 = 本目录全部文件，逐个可核对（Q0 单测 apps/web/tests/vendor-dsh-ui.spec.tsx 按此口径断言）。所有文件顶部统一加出处注释（上游路径 + commit SHA + 本仓改动），components[] 的 adaptations 只列代码/样式层面的实际改动。",
+  "upstream": {
+    "repository": "github.com/deepseek-ai/deepseek-harness",
+    "ref": "master",
+    "commit": "c291e7961a515f6d7af9304e7fd1d257929aef26",
+    "commitDate": "2026-09-10T14:17:09Z",
+    "retrievedAt": "2026-09-10T15:33:00Z",
+    "license": "MIT",
+    "licenseCopyright": "Copyright (c) 2026 DeepSeek",
+    "licenseFile": "apps/web/src/vendor/dsh-ui/LICENSE",
+    "retrieval": "gh api -H 'Accept: application/vnd.github.raw' repos/deepseek-ai/deepseek-harness/contents/<path>?ref=<commit>"
+  },
+  "scope": {
+    "layers": ["L1 主题 token（--dsw-* 白名单子集）", "L2 原语组件（6 个）"],
+    "excluded": [
+      "L3 运行视图（后续切片）",
+      "DSH 应用壳与 RPC（永久不取）",
+      "packages/client/ui-* 其余 42 个包",
+      "上游 icons/index.tsx 除 IconChevronDownOutline14 外的全部图标",
+      "上游品牌资产 FishLogo.tsx 与 BrandWordmark.tsx（未取用，逐资产过审后才能取）"
+    ]
+  },
+  "components": [
+    {
+      "local": "apps/web/src/vendor/dsh-ui/Button.tsx",
+      "upstream": "packages/client/ui-primitives/src/Button.tsx",
+      "adaptations": ["clsx → ./cx.js", "import 后缀 .tsx → .js"]
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/Button.module.css",
+      "upstream": "packages/client/ui-primitives/src/Button.module.css",
+      "adaptations": []
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/Pill.tsx",
+      "upstream": "packages/client/ui-primitives/src/Pill.tsx",
+      "adaptations": ["clsx → ./cx.js", "import 后缀 .tsx → .js"]
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/Pill.module.css",
+      "upstream": "packages/client/ui-primitives/src/Pill.module.css",
+      "adaptations": []
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/Tag.tsx",
+      "upstream": "packages/client/ui-primitives/src/Tag.tsx",
+      "adaptations": [
+        "clsx → ./cx.js",
+        "import 后缀 .tsx → .js",
+        "新增 data-vendored=tag 与可覆写的 data-testid 测试锚点（属性，非视觉）"
+      ]
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/Tag.module.css",
+      "upstream": "packages/client/ui-primitives/src/Tag.module.css",
+      "adaptations": []
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/StateDot.tsx",
+      "upstream": "packages/client/ui-primitives/src/StateDot.tsx",
+      "adaptations": [
+        "clsx → ./cx.js",
+        "import 后缀 .tsx → .js",
+        "两个渲染分支都新增 data-vendored=state-dot 与可覆写的 data-testid 测试锚点（属性，非视觉）"
+      ]
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/StateDot.module.css",
+      "upstream": "packages/client/ui-primitives/src/StateDot.module.css",
+      "adaptations": []
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/DisclosureRow.tsx",
+      "upstream": "packages/client/ui-primitives/src/DisclosureRow.tsx",
+      "adaptations": [
+        "clsx → ./cx.js",
+        "chevron 图标从 ./icons/index.tsx 改指 ./icons.js（只 vendored 该符号）",
+        "import 后缀 .tsx → .js"
+      ]
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/DisclosureRow.module.css",
+      "upstream": "packages/client/ui-primitives/src/DisclosureRow.module.css",
+      "adaptations": []
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/Switch.tsx",
+      "upstream": "packages/client/ui-primitives/src/Switch.tsx",
+      "adaptations": ["clsx → ./cx.js", "import 后缀 .tsx → .js"]
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/Switch.module.css",
+      "upstream": "packages/client/ui-primitives/src/Switch.module.css",
+      "adaptations": []
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/icons.tsx",
+      "upstream": "packages/client/ui-primitives/src/icons/props.ts + packages/client/ui-primitives/src/icons/index.tsx（仅 IconChevronDownOutline14 符号，路径数据逐字节照抄）",
+      "adaptations": ["两个上游文件合并为一个文件；其余图标不 vendored"]
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/index.ts",
+      "upstream": "packages/client/ui-primitives/src/index.ts",
+      "adaptations": ["只保留 6 个原语与其类型的导出（上游桶文件含整包 43 个原语）"]
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/cx.ts",
+      "upstream": null,
+      "adaptations": ["本仓新增代码（Apache-2.0，非上游 MIT）：替代上游 clsx 调用，避免引入新第三方依赖"]
+    }
+  ],
+  "meta": [
+    {
+      "local": "apps/web/src/vendor/dsh-ui/README.md",
+      "upstream": null,
+      "adaptations": ["本仓新增：vendored 子树的用法与纪律说明（含「不含 DSH 品牌资产」声明）"]
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/LICENSE",
+      "upstream": "LICENSE",
+      "adaptations": ["全文照抄，未改一字"]
+    },
+    {
+      "local": "apps/web/src/vendor/dsh-ui/manifest.json",
+      "upstream": null,
+      "adaptations": ["本仓新增：本台账自身"]
+    }
+  ],
+  "tokens": [
+    {
+      "local": "apps/web/src/styles/dsw-tokens.css",
+      "upstream": "packages/client/ui-theme/src/styles/design-platform.css（--dsw-* 白名单子集；base.css 只用于确认 data-ds-dark-theme 切换语义）",
+      "adaptations": [
+        "只取上述 6 个组件 CSS 真正引用的 23 个变量（上游静态色阶 78 个中只保留 --dsw-static-deepseek-450）",
+        "静态色阶引用就地展开为 rgb() 字面量，alias→alias 的间接保留",
+        "浅色 :root / 深色 body[data-ds-dark-theme]，与上游选择器语义一致"
+      ]
+    }
+  ]
+}

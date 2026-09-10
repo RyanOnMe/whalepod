@@ -1,0 +1,108 @@
+/**
+ * L1 主题 token（#138 首批切片）：vendored DSH client UI 原语消费的 --dsw-* 变量白名单。
+ *
+ * 来源（逐文件台账见 apps/web/src/vendor/dsh-ui/manifest.json）：
+ *   上游 repo  github.com/deepseek-ai/deepseek-harness（MIT, Copyright (c) 2026 DeepSeek）
+ *   上游文件  packages/client/ui-theme/src/styles/design-platform.css
+ *   取用 commit  c291e7961a515f6d7af9304e7fd1d257929aef26
+ *
+ * 白名单口径：**只抄 apps/web/src/vendor/dsh-ui/ 里 6 个原语 CSS 真正引用的变量**
+ * （Button/Pill/Tag/StateDot/DisclosureRow/Switch 逐一 grep 得到），共 23 个——
+ * 上游 design-platform.css 的 alias 段有近百个变量、静态色阶 78 个，这里只留必需的。
+ * 本仓对上游做的两处收缩（都是「取值不变、体积变小」）：
+ *   1. 静态色阶引用就地展开为 rgb() 字面量，只保留 --dsw-static-deepseek-450
+ *      （StateDot 的 ongoing 蓝直接吃它，别名上无可替代）；
+ *   2. alias→alias 的间接（--dsw-alias-button-primary-fill → --dsw-alias-brand-primary）
+ *      保留原样，因为改品牌色时按钮要跟着动，这层间接是语义而不是冗余。
+ * 未抄的两个上游变量是 DisclosureRow 用到的 --dsh-content-font-size-secondary 与
+ * --dsh-content-font-delta（注意前缀是 --dsh-，属上游 body 发布的 content 轴，不在本
+ * 白名单的 --dsw-* 范围内）；其每一处引用都带 fallback（13px / 0px），L1 不提供也能
+ * 正确降级。若将来 L3 要做字号偏好，再按同一份 manifest 补。
+ *
+ * 与既有 token 的关系（双轨并存的已知代价）：apps/web/src/styles/tokens.css 的
+ * --color-* 与 --space-* 是本仓原型视觉语言，值一个没动；本文件只新增 --dsw-* 一族。
+ * 引入顺序见 global.css：tokens.css 之后。两族不互相引用——vendored CSS 只吃 --dsw-*，
+ * 本仓业务 CSS 继续吃 --color-*，需要对齐时在业务侧显式桥接，不要改 vendored 文件。
+ *
+ * 明暗两套按上游语义实现：浅色 = 上游 body 段，深色 = 上游 body[data-ds-dark-theme] 段。
+ * 上游把变量定义在 body 上（便于局部作用域），本仓浅色挂在 :root；深色同样由
+ * body[data-ds-dark-theme] 覆盖——该属性由主题切换方设置。**本仓当前没有深色切换入口**
+ * （index.html 不设该属性），所以线上只有浅色生效；深色一套先按上游语义备好，L3 接主题
+ * 切换时把它设到 body 上即可。两套里取值相同的变量不重写，见下方 dark 段的清单注释。
+ */
+:root {
+  /* 静态色阶（23 个白名单里唯一的静态变量：StateDot 的 ongoing 用色，无 alias 可替） */
+  --dsw-static-deepseek-450: rgb(86, 134, 254);
+
+  /* 背景层级 */
+  --dsw-alias-bg-layer-2: rgb(255, 255, 255);
+  --dsw-alias-bg-layer-3: rgb(255, 255, 255);
+  --dsw-alias-bg-module-platform: rgb(245, 246, 247);
+
+  /* 描边 */
+  --dsw-alias-border-l3: rgba(0, 0, 0, 0.12);
+  --dsw-alias-border-l4: rgba(0, 0, 0, 0.16);
+
+  /* 文本 */
+  --dsw-alias-label-primary: rgb(15, 17, 21);
+  --dsw-alias-label-primary-foreground: rgb(255, 255, 255);
+  --dsw-alias-label-secondary: rgb(97, 102, 107);
+  --dsw-alias-label-tertiary: rgb(129, 133, 140);
+
+  /* 品牌与按钮（primary-fill 走间接，随 brand-primary 变） */
+  --dsw-alias-brand-primary: rgb(15, 17, 21);
+  --dsw-alias-button-primary-fill: var(--dsw-alias-brand-primary);
+  --dsw-alias-button-primary-hover: rgb(67, 69, 74);
+  --dsw-alias-button-ghost-active-fill: rgb(235, 238, 242);
+  --dsw-alias-button-ghost-active-border: rgb(151, 157, 166);
+  --dsw-alias-button-tool-bar-fill: rgba(84, 85, 87, 0.5);
+  --dsw-alias-button-tool-bar-hover: rgba(84, 85, 87, 0.6);
+
+  /* 交互底色（hover / active 提升层） */
+  --dsw-alias-interactive-bg-hover: rgba(38, 49, 72, 0.06);
+  --dsw-alias-interactive-bg-active: rgba(38, 49, 72, 0.1);
+
+  /* 状态色（StateDot 与 Tag 的 success/info/warning/danger 色调） */
+  --dsw-alias-state-success-primary: rgb(34, 197, 94);
+  --dsw-alias-state-warn-primary: rgb(245, 158, 11);
+  --dsw-alias-state-error-primary: rgb(236, 19, 19);
+  --dsw-alias-state-business-primary: rgb(65, 118, 230);
+}
+
+/**
+ * 深色一套：只重写与浅色取值不同的 17 个；下列 6 个两套取值相同，故不重复
+ * （保持单一来源，避免两处取值漂移）：
+ *   --dsw-static-deepseek-450、--dsw-alias-button-primary-fill（随 brand-primary 变）、
+ *   --dsw-alias-button-tool-bar-fill、--dsw-alias-button-tool-bar-hover、
+ *   --dsw-alias-state-success-primary、--dsw-alias-state-warn-primary。
+ */
+body[data-ds-dark-theme] {
+  /* 背景层级：深色下三层各自上一档（上游 neutral-bluish 850/800/800） */
+  --dsw-alias-bg-layer-2: rgb(44, 44, 46);
+  --dsw-alias-bg-layer-3: rgb(53, 54, 56);
+  --dsw-alias-bg-module-platform: rgb(53, 54, 56);
+
+  /* 描边：深色改用白色透明叠加 */
+  --dsw-alias-border-l3: rgba(255, 255, 255, 0.16);
+  --dsw-alias-border-l4: rgba(255, 255, 255, 0.2);
+
+  /* 文本：primary/foreground 互换，secondary/tertiary 提亮 */
+  --dsw-alias-label-primary: rgb(249, 250, 251);
+  --dsw-alias-label-primary-foreground: rgb(15, 17, 21);
+  --dsw-alias-label-secondary: rgb(207, 211, 214);
+  --dsw-alias-label-tertiary: rgb(173, 178, 184);
+
+  /* 品牌与按钮：深色下品牌色反相为近白，primary-hover 走浅灰 */
+  --dsw-alias-brand-primary: rgb(249, 250, 251);
+  --dsw-alias-button-primary-hover: rgb(235, 238, 242);
+  --dsw-alias-button-ghost-active-fill: rgb(67, 69, 74);
+  --dsw-alias-button-ghost-active-border: rgb(129, 133, 140);
+
+  /* 交互底色：深色改用白色透明叠加 */
+  --dsw-alias-interactive-bg-hover: rgba(255, 255, 255, 0.08);
+  --dsw-alias-interactive-bg-active: rgba(255, 255, 255, 0.14);
+
+  /* 状态色：error/business 提亮到 400 档，success/warn 不变 */
+  --dsw-alias-state-error-primary: rgb(242, 90, 90);
+  --dsw-alias-state-business-primary: rgb(103, 158, 254);
+}

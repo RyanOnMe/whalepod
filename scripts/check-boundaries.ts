@@ -2,8 +2,11 @@
  * Workspace boundary checker (P1-01).
  *
  * Two rule families:
- * 1. DSH isolation — `@deepseek-ai/dsh*` and `@deepseek-ai/cordis` may only be
- *    imported from `packages/runtime-dsh/` and `apps/runtime/`.
+ * 1. DSH isolation — the whole `@deepseek-ai/` scope may only be imported from
+ *    `packages/runtime-dsh/` and `apps/runtime/`. The rule is scope-wide on
+ *    purpose (#138, ADR-0008 §3): enumerating known package names left room for
+ *    an unlisted companion package (`@deepseek-ai/schemastery` and friends) to
+ *    slip into business code unnoticed.
  * 2. Workspace dependency rules — `@whalepod/*` imports must follow the
  *    direction table in 02-第一阶段实施计划.md Task 1:
  *    web -> protocol; hub -> domain/protocol/db; node -> domain/protocol;
@@ -20,7 +23,12 @@ import { extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type * as TS from 'typescript'
 
-const DSH_PREFIXES = ['@deepseek-ai/dsh-', '@deepseek-ai/dsh', '@deepseek-ai/cordis']
+/**
+ * 整个 DSH scope：`@deepseek-ai/` 下任何包（dsh、cordis、以及未逐个列举的伴随包）
+ * 都只准 runtime-dsh adapter 与 apps/runtime 引用。写成 scope 前缀而不是包名清单，
+ * 是为了「上游新增包名」这件事不会被漏掉（#138 收紧）。
+ */
+const DSH_SCOPE_PREFIX = '@deepseek-ai/'
 const DSH_OWNERS = ['packages/runtime-dsh/', 'apps/runtime/']
 const DSH_ERROR = 'DSH imports are restricted to packages/runtime-dsh and apps/runtime'
 
@@ -80,7 +88,7 @@ const DEPENDENCY_RULES: ReadonlyArray<{
 
 /** Throws when the edge importer -> specifier violates a boundary rule. */
 export function validateImport(importer: string, specifier: string): void {
-  if (DSH_PREFIXES.some((prefix) => specifier.startsWith(prefix))) {
+  if (specifier.startsWith(DSH_SCOPE_PREFIX)) {
     if (!DSH_OWNERS.some((prefix) => importer.startsWith(prefix))) {
       throw new Error(DSH_ERROR)
     }

@@ -1,5 +1,8 @@
 /* 全局样式与布局（P1-07）。引入设计变量后使用；360px 单列无水平滚动。 */
 @import './tokens.css';
+/* L1（#138）：vendored DSH 原语消费的 --dsw-* 白名单，必须在 tokens.css 之后引入
+ * （两族变量并存、互不覆盖：tokens.css 是 --color-*，本文件是 --dsw-*）。 */
+@import './dsw-tokens.css';
 
 * {
   box-sizing: border-box;
@@ -777,23 +780,13 @@ select {
   font-weight: 600;
 }
 
-/* 设备状态：文字 + 色块同时给（不能只靠颜色传达状态，prototype DESIGN.md §8）。 */
-.badge-device-online {
-  background: var(--color-run-soft);
-  border-color: color-mix(in srgb, var(--color-run) 35%, transparent);
-  color: var(--color-run);
-}
-
-.badge-device-offline {
-  background: var(--color-warn-soft);
-  border-color: color-mix(in srgb, var(--color-warn) 35%, transparent);
-  color: var(--color-warn);
-}
-
-.badge-device-revoked {
-  background: var(--color-danger-soft);
-  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
-  color: var(--color-danger-strong);
+/* 设备状态（#138）：色块 + 文字同时给（不能只靠颜色传达状态，prototype DESIGN.md §8）。
+ * 色块与文字本身来自 vendored DSH 原语（StateDot/Tag，见 src/vendor/dsh-ui），配色由
+ * --dsw-* token 决定，这里只管两者的排布；原先的 .badge-device-* 三色已被原语取代。 */
+.device-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .device-list {
