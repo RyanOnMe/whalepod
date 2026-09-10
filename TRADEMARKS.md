@@ -44,3 +44,35 @@ project's GitHub repository.
 Forks and redistributions are welcome under the Apache-2.0 license, but they
 must be clearly distinguishable from the official project: use your own name
 and branding, and state the origin of the code as the license requires.
+
+## Third-party marks: DeepSeek Harness (DSH)
+
+WhalePod vendors a copy of selected **DeepSeek Harness client UI source code**
+(see [NOTICE](./NOTICE) and
+[docs/agent/dsh-ui-vendoring.md](./docs/agent/dsh-ui-vendoring.md)). This
+policy section is about *their* marks, not ours.
+
+**What the vendoring covers: code only.** The copy is limited to source files
+under upstream `packages/client/ui-theme` and `packages/client/ui-primitives`.
+It does **not** include the DSH name, logo, whale mark, wordmark, or any other
+brand asset. Brand packages such as `ui-brand-official` — and brand artwork that
+happens to live inside an otherwise vendored package (for example upstream
+`FishLogo.tsx` and `BrandWordmark.tsx`) — are deliberately **not** copied. The
+exclusion list and its review procedure are recorded in
+[docs/agent/dsh-ui-vendoring.md](./docs/agent/dsh-ui-vendoring.md) §3.3.
+
+The distinction matters because the two grants are separate: the MIT License
+covers copyright only and conveys **no trademark rights**. Vendoring MIT code is
+therefore not a license to use DSH branding, and the upstream brand guidelines
+apply to us as they do to anyone else:
+
+- You may truthfully describe the relationship, e.g. "includes MIT-licensed code
+  from DeepSeek Harness" or "compatible with DSH".
+- You may **not** use "DeepSeek Harness" in a product or project name, and you
+  may not use DSH logos or brand artwork in a way suggesting official status,
+  endorsement, sponsorship, or affiliation.
+- WhalePod's own name and branding stay separate from DSH's; WhalePod ships its
+  own visual identity.
+
+Upstream reference:
+[DeepSeek Harness Brand Asset Usage Guidelines](https://github.com/deepseek-ai/deepseek-harness/blob/master/BRAND_GUIDELINES.md).
