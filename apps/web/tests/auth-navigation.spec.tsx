@@ -243,7 +243,9 @@ describe('auth-navigation', () => {
     expect(await screen.findByRole('heading', { name: '项目' })).toBeVisible()
 
     // 展开项目里的「创建任务」表单（键盘：聚焦按钮 + Enter）
-    const createTaskToggle = screen.getByRole('button', { name: '创建任务' })
+    // 时序纪律（#143）：跳转后出现的元素一律 findBy*——「项目」标题先于项目列表
+    // 查询结果渲染，同步 getByRole 会在并行 project 的 CPU 竞争下踩空（~50% 假红）。
+    const createTaskToggle = await screen.findByRole('button', { name: '创建任务' })
     createTaskToggle.focus()
     await user.keyboard('{Enter}')
 
@@ -260,7 +262,7 @@ describe('auth-navigation', () => {
     expect(await screen.findByText('你已接受此任务。')).toBeVisible()
 
     // 留言（键盘：聚焦输入框 + 输入 + Tab 到发送 + Enter）
-    const textarea = screen.getByLabelText('留言')
+    const textarea = await screen.findByLabelText('留言')
     textarea.focus()
     await user.keyboard('handling this run')
     await user.tab()
