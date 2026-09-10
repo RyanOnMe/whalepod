@@ -14,6 +14,10 @@
  *
  * 已知缺口（不在本页伪造入口）：Hub 没有「撤销未使用配对码」接口（03 §4 只有
  * DELETE /devices/:deviceId 撤销设备），已签发未使用的码只能等 10 分钟自然过期。
+ *
+ * #138：设备状态的呈现改用 vendored DSH 原语（src/vendor/dsh-ui 的 StateDot + Tag）。
+ * 只换渲染层，文案仍是 DEVICE_STATUS_LABEL 的「在线/离线/已撤销」（#142 的用例按文本
+ * 断言），配色语义与替换前一一对应：online 绿 / offline 琥珀 / revoked 红。
  */
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useState, type ReactNode } from 'react'
@@ -21,7 +25,47 @@ import { api } from '../shared/api/client.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
 import { queryKeys } from '../app/query-client.js'
 import { DEVICE_STATUS_LABEL, formatCountdown, formatIso } from '../shared/format.js'
+import { StateDot, Tag, type StateDotState, type TagTone } from '../vendor/dsh-ui/index.js'
 import type { DeviceView, PairingCodeView } from '../shared/api/types.js'
+
+/**
+ * 设备状态 → 原语语义（#138）。两个表分开写：StateDot 的状态语义（done/warning/
+ * error）与 Tag 的色调（success/warning/danger）不是同一套词表，硬凑成一个映射会让
+ * 以后换色调时看起来像在改状态判定。
+ */
+const DEVICE_STATE_DOT: Readonly<Record<DeviceView['status'], StateDotState>> = {
+  online: 'done',
+  offline: 'warning',
+  revoked: 'error',
+}
+
+const DEVICE_STATE_TONE: Readonly<Record<DeviceView['status'], TagTone>> = {
+  online: 'success',
+  offline: 'warning',
+  revoked: 'danger',
+}
+
+/**
+ * 状态标记：色块（StateDot，aria-hidden）+ 文字（Tag）。
+ * 两者都给，不能只靠颜色传达状态——StateDot 自身对读屏不可见，语义由 Tag 的文案承担。
+ *
+ * `data-testid="device-status"` 是本处稳定锚点（Q5 定位「这行状态」用）；**不在这里重复
+ * 挂 `data-vendored`**：两个 vendored 组件各自在根元素上带 `data-vendored="state-dot"` /
+ * `"tag"`，外层再挂一次会让 `[data-vendored="tag"]` 一行匹配到两个元素（Playwright
+ * strict 模式直接判失败），也分不清命中的是不是真带 hash 类名的那个元素。
+ *
+ * `device-status-<status>` 修饰类只做一件事：把该状态的语义 token 局部重映射到上游 900
+ * 档深色，让 vendored 组件自己解析到满足 WCAG AA 的颜色（为什么与实测对比度见
+ * global.css 的「AA 重映射」注释）。基类与修饰类都在外层挂，两个 vendored 组件一个字不改。
+ */
+function DeviceStatus({ status }: { status: DeviceView['status'] }): ReactNode {
+  return (
+    <span className={`device-status device-status-${status}`} data-testid="device-status">
+      <StateDot state={DEVICE_STATE_DOT[status]} />
+      <Tag tone={DEVICE_STATE_TONE[status]}>{DEVICE_STATUS_LABEL[status]}</Tag>
+    </span>
+  )
+}
 
 export function DevicesPage(): ReactNode {
   const listQuery = useQuery({
@@ -63,9 +107,7 @@ export function DevicesPage(): ReactNode {
                   <li key={device.id} className="device-item">
                     <div className="device-item-head">
                       <h3>{device.name}</h3>
-                      <span className={`badge badge-device-${device.status}`}>
-                        {DEVICE_STATUS_LABEL[device.status]}
-                      </span>
+                      <DeviceStatus status={device.status} />
                     </div>
                     <dl className="device-meta">
                       <div>
