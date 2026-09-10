@@ -333,11 +333,11 @@ const rules: ExpectedRule[] = [
     // 无边形态：**宽度仍必须跟 vendored 同步**（`0.5px` 不写死——vendor 改 0.25px 时这里要红）
     border: `${vendor.borderWidth} ${vendor.borderStyle} transparent`,
     radius: vendor.radius,
-    colors: {
-      background: 'transparent',
-      border: 'transparent',
-      color: '--dsw-alias-brand-primary',
-    },
+    // 只有这条的 `color` **不钉 token 名**：`.app-header .button-quiet` 是 #159 加的
+    // 深色容器前景覆盖（`--color-signal-soft`，blue-100 压 ink 实测 15.49:1），
+    // 那是另一层机制、另一个判据（Q5 的对比度扫描器）的地盘。
+    // 这里仍然钉住"不是应用层 token、不是裸色值"，只放开 token 名（详细理由见 rules 表后的注释）。
+    colors: { background: 'transparent', border: 'transparent' },
   },
   {
     selector: '.button-quiet:hover:not(:disabled)',
@@ -356,6 +356,20 @@ const rules: ExpectedRule[] = [
     },
   },
 ]
+
+/**
+ * `.button-quiet` 的 `color` 为什么**没有**登记期望 token 名（其余属性都登记了）：
+ *
+ * - 本仓存在 `--dsw-alias-brand-primary`（近黑）与 #159 的深色容器覆盖
+ *   `.app-header .button-quiet { color: var(--color-signal-soft) }`；
+ * - 容器级覆盖是**另一层机制**（"深色容器给前景族"），它的判据是对比度门
+ *   （`apps/web/tests/e2e/contrast-sweep.ts` 在真实浏览器里量），不是这一条；
+ * - 所以这里只要求"非应用层 token、非裸色值"——**能挡住"往 quiet 里塞 `#123456` 或
+ *   `--color-signal`"**，挡不住"在两个 L1 token 之间换"（那种换色由对比度门管）。
+ *
+ * 这条边界写在这里而不是省略：**放开一个检查必须写明放到哪去了**，否则下一个人
+ * 会以为这里漏了。
+ */
 
 // ---------- 颜色判据 ----------
 
@@ -479,6 +493,11 @@ function assertControlFamily(cssText: string): void {
       if (value === undefined) continue
       const expectedToken = expected.colors[property]
       if (expectedToken === undefined) {
+        // 豁免：`.button-quiet` 的 color（理由见上方注释）。其余规则上未登记的颜色仍然报红。
+        if (expected.selector === '.button-quiet' && property === 'color') {
+          checkColor(failures, expected.selector, property, value, undefined)
+          continue
+        }
         failures.push(
           `${expected.selector} 声明了未登记的 ${property}: \`${value}\`——要么登记进期望表（连同期望 token），要么去掉`,
         )
@@ -814,6 +833,17 @@ describe('#168 自研控件对齐 DSH 族（源码文本判据）', () => {
         ),
         expect:
           /\.button:hover:not\(:disabled\) 的 background 引用了非 L1 变量 --color-signal-soft/,
+      },
+      {
+        // quiet 的 color 不钉 token 名（见 rules 表后的豁免说明），但**裸色值仍要红**：
+        // 豁免的是"在两个 L1 token 之间换"，不是"可以写死颜色"。
+        name: 'quiet 文字写裸色值（豁免 token 名，不豁免裸值）',
+        css: setDeclaration(
+          { selector: '.button-quiet', mustDeclare: 'color' },
+          'color',
+          '#123456',
+        ),
+        expect: /\.button-quiet 的 color 不是单一 L1 token 引用：`#123456`/,
       },
       {
         // S3 复现：:disabled 里塞裸色值，早先全绿

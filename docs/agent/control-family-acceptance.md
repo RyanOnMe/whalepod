@@ -2,7 +2,9 @@
 
 - 对应场景/门禁：Q0 静态门（源码文本判据）+ Q5 浏览器门（computed style 判据）
 - 对应 Issue：#168（P1-168）
-- 上次验证：2026-09-11 · `feat/p1-168-control-family` · Q0 PASS（6 条新用例全绿 + 15 条变异验证全红）；
+- 上次验证：2026-09-11 · `feat/p1-168-control-family` · Q0 PASS（6 条新用例全绿 + 16 条变异验证全红）；
+  已并入 `main`（#159/#164/#166/#170 落地后的合并，冲突已解：本 PR 去掉了 #159 在
+  `.app-header .button-quiet:hover` 上写的 `border-color`——quiet 是无边形态，形状不该由容器改）；
   **Q5 未跑**（本机同一时刻只允许一套 e2e 栈，调度未放行，见「边界与未覆盖」）
 - 独立评审（同日）提出两条阻断，已整改，复现与修法见下节「评审整改」
 
@@ -183,9 +185,20 @@ pnpm exec playwright test --project=p1-142   # 成员页 390 档：主按钮
 6. **间距未对齐**：只对了描边/圆角/颜色/高度四项，padding 与 DSH 族（`Input` 的 `0 8px`）不同。
 7. **按钮的 `border-radius` 与 vendored `Button.module.css` 无关**：那条是 18px 胶囊，本次按 #168
    的裁决只对齐 `Input` 族的 8px。两族度量不一致这件事本身未被裁决，只是本次不扩大范围。
-8. **焦点环颜色仍吃应用层 token**：通用 `:focus-visible` 的 `box-shadow: var(--focus-ring)`，
-   而 `--focus-ring` 里是 `var(--color-signal)`（应用层）。本 PR 只把**控件自己的**焦点描边
-   （`.button:focus-visible`）钉进判据，环本身归 #164 的改动范围，未在本 PR 登记为已完成。
+8. ~~焦点环颜色仍吃应用层 token~~ **已随 #164 合并解决**：`main` 上 `--focus-ring` 已换成
+   ink/surface 双层不透明环（`apps/web/tests/focus-ring.spec.ts` 有门）。本 PR 只把
+   **控件自己的**焦点描边（`.button:focus-visible { border-color: var(--dsw-alias-brand-primary) }`）
+   钉进判据——注意它现在与双层环**同时**生效：聚焦时既有描边转品牌色，也有双层环。
+   "两者叠起来好不好看"属于视觉自审（未做，见第 2 条）。
+9. **`.button-quiet` 的 `color` 没有钉 token 名**（其余颜色属性都钉了）：本仓存在 #159 的
+   深色容器覆盖 `.app-header .button-quiet { color: var(--color-signal-soft) }`，那属于
+   "深色容器给前景族"的另一层机制，判据是 Q5 的对比度扫描器（`e2e/contrast-sweep.ts`），
+   不是本判据。这里仍要求"非应用层 token、非裸色值"（变异用例：写 `#123456` 会红）。
+   **放开一个检查必须在原地写明放到哪去了**，否则下一个人会以为这里漏了。
+10. **#159 的 `.app-header .button-quiet:hover { border-color: … }` 在本 PR 里删掉了**：
+    `.button-quiet` 是无边形态，hover 点出描边会让它长出边框（同特异性靠源码顺序胜出，
+    实测会生效）。深色容器只需给出前景色，形状不该由容器改。这条删除是合并冲突的处置，
+    请评审确认口径。
 
 ## 复跑
 
