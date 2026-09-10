@@ -22,8 +22,8 @@ import {
   type ErrorCode,
   type PluginManifest,
   type PluginPackEntry,
-} from '@project311/protocol'
-import { digestPluginCordisEntry, digestPluginPack } from '@project311/protocol/plugin-pack-digest'
+} from '@whalepod/protocol'
+import { digestPluginCordisEntry, digestPluginPack } from '@whalepod/protocol/plugin-pack-digest'
 import { PluginError } from './integrity.js'
 import { type PluginInstaller } from './installer.js'
 import { assertLockMatches, parseLockfile } from './lockfile.js'

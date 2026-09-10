@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { NodeDownstream } from '@project311/protocol'
+import type { NodeDownstream } from '@whalepod/protocol'
 import {
   NodeConnectionRegistry,
   NodeOfflineError,

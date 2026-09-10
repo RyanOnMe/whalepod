@@ -28,8 +28,8 @@ import type {
   RunSnapshot,
   RuntimeCommand,
   RuntimeOutput,
-} from '@project311/protocol'
-import { parseRuntimeFrame } from '@project311/protocol'
+} from '@whalepod/protocol'
+import { parseRuntimeFrame } from '@whalepod/protocol'
 import {
   commandAckFrame,
   runEventFrame,

@@ -7,7 +7,7 @@
  * cmdline 参数是 Node 重启后孤儿探测的三重匹配判据之一（Step 6）。
  */
 import { spawn } from 'node:child_process'
-import { RuntimeCommandSchema, type RuntimeCommand } from '@project311/protocol'
+import { RuntimeCommandSchema, type RuntimeCommand } from '@whalepod/protocol'
 
 export interface RuntimeStartSpec {
   readonly runId: string

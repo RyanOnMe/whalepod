@@ -1,4 +1,4 @@
-# project311 runtime bundle patch, layered over `@deepseek-ai/dsh-base`.
+# whalepod runtime bundle patch, layered over `@deepseek-ai/dsh-base`.
 #
 # One managed DSH Runtime per Run on a Device Node (03-领域模型与运行协议.md §7):
 # the base agent/session/tool stack stays intact; this layer only removes what

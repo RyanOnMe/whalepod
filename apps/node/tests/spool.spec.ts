@@ -18,7 +18,7 @@ import { openStateDatabase } from '../src/state/db.js'
 let root: string
 
 beforeAll(async () => {
-  root = await mkdtemp(join(tmpdir(), 'p311-spool-'))
+  root = await mkdtemp(join(tmpdir(), 'wp-spool-'))
 })
 
 afterAll(async () => {

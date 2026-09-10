@@ -2,7 +2,7 @@
  * SecretStore 单测（P1-12；02 Task 12 Step 3/7）。
  *
  * 判定基线：
- * - 解析顺序：环境变量 PROJECT311_DSH_SECRET_<PROVIDER>_<SLOT> 先于本地 secrets.json；
+ * - 解析顺序：环境变量 WHALEPOD_DSH_SECRET_<PROVIDER>_<SLOT> 先于本地 secrets.json；
  * - 本地文件 mode 0600；权限过宽（组/其他可读）一律拒绝读取（fail-closed，02 Step 7）；
  * - Hub 只拿到 slot 的「已配置/未配置」状态，永不拿到 secret 明文。
  */
@@ -11,13 +11,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import { NodeInventorySchema } from '@project311/protocol'
+import { NodeInventorySchema } from '@whalepod/protocol'
 import { CREDENTIAL_PROVIDER_MAX, SecretStore } from '../src/secret/store.js'
 
 let root: string
 
 beforeAll(async () => {
-  root = await mkdtemp(join(tmpdir(), 'p311-secrets-'))
+  root = await mkdtemp(join(tmpdir(), 'wp-secrets-'))
 })
 
 afterAll(async () => {
@@ -31,7 +31,7 @@ describe('SecretStore.resolve', () => {
     const path = storePath()
     const store = new SecretStore(path)
     await store.set('dsh', 'api_key', 'from-file')
-    const env = { PROJECT311_DSH_SECRET_DSH_API_KEY: 'from-env' }
+    const env = { WHALEPOD_DSH_SECRET_DSH_API_KEY: 'from-env' }
     const storeWithEnv = new SecretStore(path, env)
 
     expect(storeWithEnv.resolve('dsh', 'api_key')).toBe('from-env')
@@ -47,7 +47,7 @@ describe('SecretStore.resolve', () => {
 
   it('provider/slot 大小写与连字符归一到环境变量名', () => {
     const store = new SecretStore(storePath(), {
-      PROJECT311_DSH_SECRET_DSH_DEEPSEEK_API: 'env-value',
+      WHALEPOD_DSH_SECRET_DSH_DEEPSEEK_API: 'env-value',
     })
     expect(store.resolve('DSH', 'deepseek-api')).toBe('env-value')
     store.close()
@@ -76,7 +76,7 @@ describe('SecretStore.resolve', () => {
 
   it('status 只报已配置/未配置，不泄露明文', async () => {
     const path = storePath()
-    const store = new SecretStore(path, { PROJECT311_DSH_SECRET_DSH_API_KEY: 'x' })
+    const store = new SecretStore(path, { WHALEPOD_DSH_SECRET_DSH_API_KEY: 'x' })
     await store.set('dsh', 'other', 'y')
 
     expect(store.status('dsh', 'api_key')).toBe('configured')

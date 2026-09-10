@@ -21,9 +21,9 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { NodeDownstream, RuntimeCommand } from '@project311/protocol'
-import { pluginCordisEntry } from '@project311/protocol'
-import { digestPluginCordisEntry, digestPluginPack } from '@project311/protocol/plugin-pack-digest'
+import type { NodeDownstream, RuntimeCommand } from '@whalepod/protocol'
+import { pluginCordisEntry } from '@whalepod/protocol'
+import { digestPluginCordisEntry, digestPluginPack } from '@whalepod/protocol/plugin-pack-digest'
 import { stringify as stringifyYaml } from 'yaml'
 import {
   PluginPreflightError,
@@ -47,7 +47,7 @@ import { buildTarGz } from '../src/plugin/tar.js'
 
 const tempDirs: string[] = []
 function mktemp(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'p311-preflight-'))
+  const dir = mkdtempSync(join(tmpdir(), 'wp-preflight-'))
   tempDirs.push(dir)
   return dir
 }
@@ -70,7 +70,7 @@ afterEach(() => {
   }
 })
 
-const PKG_NAME = '@project311/tabtin-fixed-time'
+const PKG_NAME = '@whalepod/wp-fixed-time'
 const PKG_VERSION = '0.1.0'
 const HUB_URL = 'http://hub.test'
 
@@ -116,7 +116,7 @@ function makeManifest({ integrity, reviewStatus = 'reviewed' }: FixtureManifestI
     schemaVersion: 1,
     name: PKG_NAME,
     version: PKG_VERSION,
-    tarballUrl: 'https://registry.npmjs.org/@project311/tabtin-fixed-time/-/x-0.1.0.tgz',
+    tarballUrl: 'https://registry.npmjs.org/@whalepod/wp-fixed-time/-/x-0.1.0.tgz',
     integrity,
     dependencyLockDigest: '0'.repeat(64), // 由调用方按 lock 覆写
     dshCompatibility: '0.1.0-rc.8',
@@ -377,7 +377,7 @@ async function makeRunHarness(preflight: PluginPackPreflight): Promise<{
   const registry = new WorkspaceRegistry(join(root, 'registry.db'), 'test-hmac-key')
   const workspace = await registry.register(workspaceDir, { name: 'ws-1' })
   const secrets = new SecretStore(join(root, 'secrets.json'), {
-    PROJECT311_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
+    WHALEPOD_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
   })
   const { driver, runtimes } = makeFakeDriver()
   const sent: string[] = []

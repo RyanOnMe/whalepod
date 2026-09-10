@@ -1,4 +1,4 @@
-# TabTin Team Collaboration
+# WhalePod Team Collaboration
 
 这个领域描述一个小团队如何把工作交给人和 Agent，并让执行发生在成员可控的本地现场，结果再安全地回到团队。
 

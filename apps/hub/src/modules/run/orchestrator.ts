@@ -14,9 +14,9 @@
  */
 import { randomUUID } from 'node:crypto'
 import { and, eq, inArray } from 'drizzle-orm'
-import { asUserId, authorize, DomainError, transitionRun, transitionTask } from '@project311/domain'
-import type { RunEvent as DomainRunEvent } from '@project311/domain'
-import type { Database, RunRow, Tx } from '@project311/db'
+import { asUserId, authorize, DomainError, transitionRun, transitionTask } from '@whalepod/domain'
+import type { RunEvent as DomainRunEvent } from '@whalepod/domain'
+import type { Database, RunRow, Tx } from '@whalepod/db'
 import {
   ackInTransaction,
   appendRunEvent,
@@ -35,9 +35,9 @@ import {
   setTaskStatus,
   transactCommand,
   unwrapPgError,
-} from '@project311/db'
-import type { ErrorCode, ProjectedRunEvent, RunSnapshot } from '@project311/protocol'
-import { parseNodeFrame, RunCancelSchema, RunStartSchema } from '@project311/protocol'
+} from '@whalepod/db'
+import type { ErrorCode, ProjectedRunEvent, RunSnapshot } from '@whalepod/protocol'
+import { parseNodeFrame, RunCancelSchema, RunStartSchema } from '@whalepod/protocol'
 import { cancelPendingApprovalsInTransaction, cancelRunInTransaction } from './cancel.js'
 import { decideApprovalInTransaction } from './decide.js'
 import type { ApprovalDecisionInput } from './decide.js'

@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest'
 import { isInsideWorkspace } from '../src/workspace/path-policy.js'
 
-const ROOT = '/private/tmp/p311-ws/project'
+const ROOT = '/private/tmp/wp-ws/project'
 
 describe('isInsideWorkspace', () => {
   it('canonical 路径内的相对候选通过', () => {
@@ -23,12 +23,12 @@ describe('isInsideWorkspace', () => {
 
   it('绝对路径越界被拒绝；恰好等于根或根内绝对路径通过', () => {
     expect(isInsideWorkspace(ROOT, '/etc/passwd')).toBe(false)
-    expect(isInsideWorkspace(ROOT, '/private/tmp/p311-ws/other/file')).toBe(false)
-    expect(isInsideWorkspace(ROOT, '/private/tmp/p311-ws/project/file')).toBe(true)
+    expect(isInsideWorkspace(ROOT, '/private/tmp/wp-ws/other/file')).toBe(false)
+    expect(isInsideWorkspace(ROOT, '/private/tmp/wp-ws/project/file')).toBe(true)
   })
 
   it('前缀相似但非同目录被拒绝（/project-evil 不算 /project 内）', () => {
-    expect(isInsideWorkspace(ROOT, '/private/tmp/p311-ws/project-evil/file')).toBe(false)
+    expect(isInsideWorkspace(ROOT, '/private/tmp/wp-ws/project-evil/file')).toBe(false)
   })
 
   it('symlink 归一后越界被拒绝（策略输入已是 realpath）', () => {

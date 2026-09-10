@@ -119,18 +119,18 @@ importers:
       '@playwright/test':
         specifier: 'catalog:'
         version: 1.62.1
-      '@project311/db':
-        specifier: workspace:*
-        version: link:packages/db
-      '@project311/protocol':
-        specifier: workspace:*
-        version: link:packages/protocol
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
       '@types/ws':
         specifier: 'catalog:'
         version: 8.18.1
+      '@whalepod/db':
+        specifier: workspace:*
+        version: link:packages/db
+      '@whalepod/protocol':
+        specifier: workspace:*
+        version: link:packages/protocol
       drizzle-orm:
         specifier: 'catalog:'
         version: 0.45.2(@opentelemetry/api@1.9.1)(postgres@3.4.9)
@@ -164,13 +164,13 @@ importers:
       '@node-rs/argon2':
         specifier: 'catalog:'
         version: 2.1.0
-      '@project311/db':
+      '@whalepod/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@project311/domain':
+      '@whalepod/domain':
         specifier: workspace:*
         version: link:../../packages/domain
-      '@project311/protocol':
+      '@whalepod/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
       drizzle-orm:
@@ -186,22 +186,22 @@ importers:
         specifier: 'catalog:'
         version: 4.4.3
     devDependencies:
-      '@project311/testkit':
-        specifier: workspace:*
-        version: link:../../packages/testkit
       '@types/ws':
         specifier: 'catalog:'
         version: 8.18.1
+      '@whalepod/testkit':
+        specifier: workspace:*
+        version: link:../../packages/testkit
 
   apps/node:
     dependencies:
-      '@project311/domain':
+      '@whalepod/domain':
         specifier: workspace:*
         version: link:../../packages/domain
-      '@project311/protocol':
+      '@whalepod/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
-      '@project311/runtime':
+      '@whalepod/runtime':
         specifier: workspace:*
         version: link:../runtime
       ws:
@@ -214,36 +214,36 @@ importers:
         specifier: 'catalog:'
         version: 4.4.3
     devDependencies:
-      '@project311/db':
-        specifier: workspace:*
-        version: link:../../packages/db
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
       '@types/ws':
         specifier: 'catalog:'
         version: 8.18.1
+      '@whalepod/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       drizzle-orm:
         specifier: 'catalog:'
         version: 0.45.2(@opentelemetry/api@1.9.1)(postgres@3.4.9)
 
   apps/runtime:
     dependencies:
-      '@project311/protocol':
+      '@whalepod/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
-      '@project311/runtime-dsh':
+      '@whalepod/runtime-dsh':
         specifier: workspace:*
         version: link:../../packages/runtime-dsh
 
   apps/web:
     dependencies:
-      '@project311/protocol':
-        specifier: workspace:*
-        version: link:../../packages/protocol
       '@tanstack/react-query':
         specifier: 'catalog:'
         version: 5.101.4(react@19.2.8)
+      '@whalepod/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       react:
         specifier: 'catalog:'
         version: 19.2.8
@@ -287,10 +287,10 @@ importers:
 
   packages/db:
     dependencies:
-      '@project311/domain':
+      '@whalepod/domain':
         specifier: workspace:*
         version: link:../domain
-      '@project311/protocol':
+      '@whalepod/protocol':
         specifier: workspace:*
         version: link:../protocol
       drizzle-orm:
@@ -354,22 +354,22 @@ importers:
       '@deepseek-ai/dsh-user-approval':
         specifier: 'catalog:'
         version: 0.1.0-rc.8(380a43f4d6510c4a5dfadf54dc7f17a7)
-      '@project311/protocol':
+      '@whalepod/protocol':
         specifier: workspace:*
         version: link:../protocol
 
   packages/testkit:
     dependencies:
-      '@project311/db':
+      '@whalepod/db':
         specifier: workspace:*
         version: link:../db
-      '@project311/domain':
+      '@whalepod/domain':
         specifier: workspace:*
         version: link:../domain
-      '@project311/protocol':
+      '@whalepod/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@project311/runtime-dsh':
+      '@whalepod/runtime-dsh':
         specifier: workspace:*
         version: link:../runtime-dsh
 

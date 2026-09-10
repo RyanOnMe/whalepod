@@ -7,8 +7,8 @@
 import { createHash } from 'node:crypto'
 import { access } from 'node:fs/promises'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { Database } from '@project311/db'
-import { digestPluginPack } from '@project311/protocol/plugin-pack-digest'
+import type { Database } from '@whalepod/db'
+import { digestPluginPack } from '@whalepod/protocol/plugin-pack-digest'
 import {
   CORE_EMPTY_MIGRATION_LOCK_KEY,
   CORE_EMPTY_PACK_DIGEST,
@@ -80,7 +80,7 @@ describe('POST /api/v1/setup（G1-01）', () => {
 
     const setCookie = response.headers['set-cookie']
     const cookieHeader = Array.isArray(setCookie) ? setCookie.join(';') : (setCookie ?? '')
-    expect(cookieHeader).toContain('project311_session=')
+    expect(cookieHeader).toContain('whalepod_session=')
     expect(cookieHeader).toContain('HttpOnly')
     expect(cookieHeader).toContain('SameSite=Lax')
     expect(cookieHeader).toContain('Path=/')

@@ -11,13 +11,13 @@
  * Origin/Idempotency-Key 约束沿用组合根 app.ts 的全局机制，此处不重复。
  */
 import type { FastifyInstance } from 'fastify'
-import type { Database } from '@project311/db'
-import { asUserId } from '@project311/domain'
+import type { Database } from '@whalepod/db'
+import { asUserId } from '@whalepod/domain'
 import {
   PluginInstallRequestSchema,
   PluginPackCreateRequestSchema,
   Sha256HexSchema,
-} from '@project311/protocol'
+} from '@whalepod/protocol'
 import { audit } from '../shared/audit.js'
 import { ApiError } from '../shared/http-error.js'
 import { readIdempotencyKey } from '../auth/idempotency.js'
@@ -31,7 +31,7 @@ export interface PluginRouteDeps {
   readonly database: Database
   readonly requireActor: RequireActor
   readonly catalog: PluginCatalog
-  /** 显式 dev mode：允许安装 local-development 清单（PROJECT311_PLUGIN_DEV_MODE）。 */
+  /** 显式 dev mode：允许安装 local-development 清单（WHALEPOD_PLUGIN_DEV_MODE）。 */
   readonly allowLocalDevelopment: boolean
 }
 

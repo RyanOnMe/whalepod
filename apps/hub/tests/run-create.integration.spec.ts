@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { DomainError } from '@project311/domain'
-import type { Database } from '@project311/db'
-import { listRunsByTask, listTeamEvents, schema } from '@project311/db'
+import { DomainError } from '@whalepod/domain'
+import type { Database } from '@whalepod/db'
+import { listRunsByTask, listTeamEvents, schema } from '@whalepod/db'
 import { RunCommandError } from '../src/modules/run/index.js'
 import {
   createTestDatabase,

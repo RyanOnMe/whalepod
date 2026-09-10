@@ -4,7 +4,7 @@
  */
 import { createHash, randomBytes } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { Database } from '@project311/db'
+import type { Database } from '@whalepod/db'
 import {
   createTestApp,
   createTestDatabase,
@@ -208,7 +208,7 @@ describe('GET /api/v1/auth/session', () => {
     const forged = await ctx.app.inject({
       method: 'GET',
       url: '/api/v1/auth/session',
-      headers: { cookie: `project311_session=${randomBytes(32).toString('base64url')}` },
+      headers: { cookie: `whalepod_session=${randomBytes(32).toString('base64url')}` },
     })
     expect(forged.statusCode).toBe(401)
     expect(forged.json().error.code).toBe('AUTH_REQUIRED')
@@ -229,7 +229,7 @@ describe('GET /api/v1/auth/session', () => {
     const response = await ctx.app.inject({
       method: 'GET',
       url: '/api/v1/auth/session',
-      headers: { cookie: `project311_session=${token}` },
+      headers: { cookie: `whalepod_session=${token}` },
     })
     expect(response.statusCode).toBe(401)
     expect(response.json().error.code).toBe('SESSION_EXPIRED')

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import type { Database } from '@project311/db'
+import type { Database } from '@whalepod/db'
 import {
   consumePairingCode,
   getDeviceById,
@@ -8,7 +8,7 @@ import {
   listDevicesByOwner,
   revokeDevice,
   unwrapPgError,
-} from '@project311/db'
+} from '@whalepod/db'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
 import { hashToken, issueOpaqueToken } from '../auth/token.js'

@@ -13,7 +13,7 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
-import type { RuntimeArtifactInput } from '@project311/protocol'
+import type { RuntimeArtifactInput } from '@whalepod/protocol'
 
 export const READ_ARTIFACT_INPUT_TOOL = 'read_artifact_input'
 

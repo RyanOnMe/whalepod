@@ -7,7 +7,7 @@
  * 与 evidence），RuntimeBridge.start 把它作为最后一层 patch 挂进 boot 栈
  * （bridge.ts）。pack 为 core-empty 时不携带（wire optional）。
  */
-import type { RuntimeArtifactInput, RuntimeCommand } from '@project311/protocol'
+import type { RuntimeArtifactInput, RuntimeCommand } from '@whalepod/protocol'
 
 export interface RuntimeSpec {
   readonly runId: string
@@ -48,5 +48,5 @@ export function runtimeSpecFromInitialize(command: InitializeCommand): RuntimeSp
 
 /** 本 Run 的 DSH Session 身份：`runId + dshSessionId` 关联的桥侧锚点（03 §8）。 */
 export function dshSessionIdOf(spec: RuntimeSpec): string {
-  return `project311-run-${spec.runId}`
+  return `whalepod-run-${spec.runId}`
 }

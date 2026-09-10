@@ -24,7 +24,7 @@ let root: string
 let workspace: string
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'p311-artifact-tool-'))
+  root = mkdtempSync(join(tmpdir(), 'wp-artifact-tool-'))
   workspace = join(root, 'ws')
   mkdirSync(join(workspace, 'reports'), { recursive: true })
   writeFileSync(join(workspace, 'reports', 'out.md'), '# report\n')

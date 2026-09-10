@@ -12,7 +12,7 @@
  * 结构上与 apps/hub 的 DeviceGateway 接口（modules/run/device-gateway.ts）兼容；
  * testkit 按边界规则不能 import apps/hub，靠 TypeScript 结构类型在装配处对齐。
  */
-import type { NodeDownstream, NodeUpstream } from '@project311/protocol'
+import type { NodeDownstream, NodeUpstream } from '@whalepod/protocol'
 
 /** Hub 侧把带 `code: 'DEVICE_OFFLINE'` 的错误归类为可重试（与 wire ErrorCode 对齐）。 */
 export class FakeDeviceOfflineError extends Error {

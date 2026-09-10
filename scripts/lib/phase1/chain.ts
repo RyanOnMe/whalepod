@@ -25,10 +25,10 @@ import { createRequire } from 'node:module'
 import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { WebSocket } from 'ws'
-import { Outbox, schema } from '@project311/db'
-import type { Database } from '@project311/db'
-import { parseClientFrame } from '@project311/protocol'
-import type { ClientFrame, NodeDownstream } from '@project311/protocol'
+import { Outbox, schema } from '@whalepod/db'
+import type { Database } from '@whalepod/db'
+import { parseClientFrame } from '@whalepod/protocol'
+import type { ClientFrame, NodeDownstream } from '@whalepod/protocol'
 import {
   apiInject,
   createTestApp,
@@ -179,7 +179,7 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
     for (const fn of cleanups.splice(0)) await fn()
     for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
     delete process.env['DSH_SNAPSHOT_FILE']
-    delete process.env['PROJECT311_RUNTIME_EXTRA_PATCH_FILES']
+    delete process.env['WHALEPOD_RUNTIME_EXTRA_PATCH_FILES']
   }
 
   try {
@@ -187,13 +187,13 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
       options.recorder ??
       (() => {
         // 无观测调用方（既有测试形态）：事件落到临时目录，cleanup 一并收走。
-        const dir = mktemp('p311-chain-events-')
+        const dir = mktemp('wp-chain-events-')
         return new Phase1Recorder(dir, `noop-${randomUUID()}`)
       })()
 
     await resetDatabase(database)
     process.env['DSH_SNAPSHOT_FILE'] = fixture
-    process.env['PROJECT311_RUNTIME_EXTRA_PATCH_FILES'] = REPLAY_PATCH
+    process.env['WHALEPOD_RUNTIME_EXTRA_PATCH_FILES'] = REPLAY_PATCH
 
     const ctx = await createTestApp(database)
     await ctx.app.listen({ host: '127.0.0.1', port: 0 })
@@ -312,8 +312,8 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
     recorder.event('hub.http', 'http.device.paired', { deviceId })
 
     // ---- Node 侧真装配（与 cli.ts runStart 同配方；仅测试注入点不同）----
-    const nodeStateDir = mktemp('p311-chain-node-state-')
-    const workspaceDir = mktemp('p311-chain-ws-')
+    const nodeStateDir = mktemp('wp-chain-node-state-')
+    const workspaceDir = mktemp('wp-chain-ws-')
     // P1-15：桥内 publish_artifact 校验已接线（realpath/边界/size）——tool-approval
     // fixture 的候选 out/report.md 必须是工作区内真实文件，否则工具以失败结果
     // 回给模型、链路等不到 tool.finished succeeded（与 replay-runtime 探针同补法）。
@@ -353,7 +353,7 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
       capacity: 2,
       runtimeTimeoutMs: 300_000,
       // 验收缝：replay overlay 变量显式列入白名单（生产 cli 为空）。
-      runtimeEnvPassthrough: ['DSH_SNAPSHOT_FILE', 'PROJECT311_RUNTIME_EXTRA_PATCH_FILES'],
+      runtimeEnvPassthrough: ['DSH_SNAPSHOT_FILE', 'WHALEPOD_RUNTIME_EXTRA_PATCH_FILES'],
       // stdout 行 → RunManager 投影管线（与 cli.ts 同配方；runManager 后构造，
       // 闭包在 spawn 回调时才被调用，TDZ 安全）。
       onStdoutLine: (runId, line) => {
@@ -399,7 +399,7 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
         recordUplink(recorder, frame)
         sessionSend(frame)
       },
-      runtimeHomeFor: (runId) => mktemp(`p311-chain-home-${runId.slice(0, 8)}-`),
+      runtimeHomeFor: (runId) => mktemp(`wp-chain-home-${runId.slice(0, 8)}-`),
       // 语料第 5 件（/Users/bob/...）依赖 homeDir 归约：固定注入，与本机真实 home 无关。
       homeDir: '/Users/bob',
       stateDir: nodeStateDir,
@@ -557,7 +557,7 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
       for (const fn of cleanups.splice(0)) await fn()
       for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
       delete process.env['DSH_SNAPSHOT_FILE']
-      delete process.env['PROJECT311_RUNTIME_EXTRA_PATCH_FILES']
+      delete process.env['WHALEPOD_RUNTIME_EXTRA_PATCH_FILES']
     }
 
     return {

@@ -1,5 +1,5 @@
 {
-  "name": "@project311/web",
+  "name": "@whalepod/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,8 +10,8 @@
     "typecheck": "tsc -b && tsc -p tsconfig.test.json"
   },
   "dependencies": {
-    "@project311/protocol": "workspace:*",
     "@tanstack/react-query": "catalog:",
+    "@whalepod/protocol": "workspace:*",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-router": "catalog:"

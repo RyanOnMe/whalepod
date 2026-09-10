@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
-import type { Database } from '@project311/db'
-import { CreateProjectRequestSchema } from '@project311/protocol'
+import type { Database } from '@whalepod/db'
+import { CreateProjectRequestSchema } from '@whalepod/protocol'
 import { audit } from '../shared/audit.js'
 import { ApiError } from '../shared/http-error.js'
 import { readIdempotencyKey } from '../auth/idempotency.js'

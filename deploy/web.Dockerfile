@@ -5,7 +5,7 @@ FROM node:24-bookworm-slim AS build
 WORKDIR /repo
 RUN corepack enable && corepack prepare pnpm@11.7.0 --activate
 COPY . .
-RUN pnpm install --frozen-lockfile && pnpm --filter @project311/web... --if-present build
+RUN pnpm install --frozen-lockfile && pnpm --filter @whalepod/web... --if-present build
 
 # stable 滚动大版本（非数字 pin：本项目把 nginx 当纯静态+反代基座，无特性依赖；
 # stable 镜像自带 curl，healthcheck 直接用，不引入 busybox wget 分支）。

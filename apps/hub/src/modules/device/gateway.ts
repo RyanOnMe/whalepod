@@ -1,4 +1,4 @@
-import type { NodeDownstream } from '@project311/protocol'
+import type { NodeDownstream } from '@whalepod/protocol'
 import type { DeviceGateway, DispatchAck } from '../run/device-gateway.js'
 import { nodeConnections, type NodeConnectionRegistry } from './connection-registry.js'
 

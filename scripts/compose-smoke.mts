@@ -24,13 +24,13 @@ const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
 const COMPOSE_FILE = join(REPO_ROOT, 'deploy/compose.yml')
 const TOTAL_BUDGET_MS = 15 * 60_000
 const startedAt = Date.now()
-const project = `p311smoke${randomBytes(3).toString('hex')}`
+const project = `wpsmoke${randomBytes(3).toString('hex')}`
 const webPort = 20_000 + Math.floor(Math.random() * 20_000)
 const dbPassword = randomBytes(12).toString('hex')
 const publicOrigin = `http://localhost:${webPort}`
 // 文书与机检同路径（B7）：机密写临时 .env（0600），compose 一律 --env-file 显式指定，
 // 与 installation.md 教给非开发者的形态逐字一致——不依赖 cwd 解析的跨版本差异。
-const envDir = mkdtempSync(join(tmpdir(), 'p311smoke-env-'))
+const envDir = mkdtempSync(join(tmpdir(), 'wpsmoke-env-'))
 const envFile = join(envDir, '.env')
 
 const phaseLog: Array<{ phase: string; ms: number }> = []
@@ -50,8 +50,8 @@ function composeEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
     POSTGRES_PASSWORD: dbPassword,
-    PROJECT311_PUBLIC_ORIGIN: publicOrigin,
-    P311_WEB_PORT: String(webPort),
+    WHALEPOD_PUBLIC_ORIGIN: publicOrigin,
+    WHALEPOD_WEB_PORT: String(webPort),
   }
 }
 
@@ -139,7 +139,7 @@ function runNodeCli(
 }
 
 async function main(): Promise<void> {
-  const home = mkdtempSync(join(tmpdir(), 'p311-smoke-home-'))
+  const home = mkdtempSync(join(tmpdir(), 'wp-smoke-home-'))
   let wsDir: string | undefined
   let nodeChild: { child: ReturnType<typeof spawn>; tail: () => string } | undefined
   let up = false
@@ -148,7 +148,7 @@ async function main(): Promise<void> {
     const { writeFileSync, chmodSync } = await import('node:fs')
     writeFileSync(
       envFile,
-      `POSTGRES_PASSWORD=${dbPassword}\nPROJECT311_PUBLIC_ORIGIN=${publicOrigin}\nP311_WEB_PORT=${webPort}\n`,
+      `POSTGRES_PASSWORD=${dbPassword}\nWHALEPOD_PUBLIC_ORIGIN=${publicOrigin}\nWHALEPOD_WEB_PORT=${webPort}\n`,
     )
     chmodSync(envFile, 0o600)
     // Docker Hub 匿名授权 EOF 是本会话三次实录的瞬时抖动（ephemeral-postgres 有
@@ -227,7 +227,7 @@ async function main(): Promise<void> {
     if (pairCode !== 0) throw new Error(`node cli pair exit=${pairCode}\n${pair.tail()}`)
     phase('pairing code + node cli pair')
 
-    wsDir = mkdtempSync(join(tmpdir(), 'p311-smoke-ws-'))
+    wsDir = mkdtempSync(join(tmpdir(), 'wp-smoke-ws-'))
     mkdirSync(join(wsDir, '.git'), { recursive: true }) // git_repository kind 分支
     const add = runNodeCli(['workspace', 'add', wsDir, '--name', 'smoke-ws'], home)
     if ((await new Promise<number | null>((r) => add.child.on('exit', r))) !== 0) {

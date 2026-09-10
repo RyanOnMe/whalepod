@@ -42,7 +42,7 @@ function shutdownFrame(runId: string) {
 
 describe('DshRuntimeDriver 宿主韧性（#107）', () => {
   it('腿①（猝死+管道积压，CI 实录形态）：EPIPE 不掀宿主，归因进 stderr 取证环', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'p311-driver-'))
+    const dir = mkdtempSync(join(tmpdir(), 'wp-driver-'))
     const entry = join(dir, 'runtime.js')
     // 从不读 stdin，50ms 后猝死——洪泛写在内核管道里积压，exit 时冲刷失败 ⟹ EPIPE。
     writeFileSync(entry, 'setTimeout(() => process.exit(1), 50)\n')
@@ -75,7 +75,7 @@ describe('DshRuntimeDriver 宿主韧性（#107）', () => {
   })
 
   it('腿②（干净退出已被本端感知）：写已销毁流只经回调报错——同样归因、不掀宿主', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'p311-driver-'))
+    const dir = mkdtempSync(join(tmpdir(), 'wp-driver-'))
     const entry = join(dir, 'runtime.js')
     writeFileSync(entry, 'process.exit(0)\n')
     const driver = new DshRuntimeDriver({ runtimeEntry: entry })
@@ -106,7 +106,7 @@ describe('DshRuntimeDriver 宿主韧性（#107）', () => {
   })
 
   it('子进程活着时 send 真到达（正向：帧没被误吞）', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'p311-driver-'))
+    const dir = mkdtempSync(join(tmpdir(), 'wp-driver-'))
     const entry = join(dir, 'runtime.js')
     writeFileSync(
       entry,

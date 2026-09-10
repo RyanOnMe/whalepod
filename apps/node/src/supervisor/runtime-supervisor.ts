@@ -13,7 +13,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
 import type { RuntimeDriver, RuntimeHandle, RuntimeStartSpec } from '../runtime-driver.js'
-import type { RuntimeCommand } from '@project311/protocol'
+import type { RuntimeCommand } from '@whalepod/protocol'
 import type { SecretStore } from '../secret/store.js'
 import type { WorkspaceRegistry } from '../workspace/registry.js'
 import { buildRuntimeEnvironment, RuntimeEnvError } from './environment.js'

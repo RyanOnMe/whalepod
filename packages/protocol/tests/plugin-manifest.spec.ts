@@ -17,10 +17,9 @@ import { canonicalJson, compareCodePoints, digestPluginPack } from '../src/plugi
 
 const VALID_MANIFEST: PluginManifest = {
   schemaVersion: 1,
-  name: '@project311/tabtin-fixed-time',
+  name: '@whalepod/wp-fixed-time',
   version: '0.1.0',
-  tarballUrl:
-    'https://registry.npmjs.org/@project311/tabtin-fixed-time/-/tabtin-fixed-time-0.1.0.tgz',
+  tarballUrl: 'https://registry.npmjs.org/@whalepod/wp-fixed-time/-/wp-fixed-time-0.1.0.tgz',
   integrity: 'sha512-' + 'A'.repeat(86) + '==',
   dependencyLockDigest: 'a'.repeat(64),
   dshCompatibility: '0.1.0-rc.8',
@@ -170,13 +169,13 @@ describe('pluginCordisEntry + digestPluginCordisEntry', async () => {
   const { pluginCordisEntry, cordisEntryId } = await import('../src/plugin-runtime-config.js')
   const { digestPluginCordisEntry } = await import('../src/plugin-pack-digest.js')
 
-  const base = { name: 'project311-fixed-time', version: '0.1.0', entrypoint: 'index.js' }
+  const base = { name: 'whalepod-fixed-time', version: '0.1.0', entrypoint: 'index.js' }
 
   it('generates a deterministic entry with empty config', () => {
     expect(pluginCordisEntry(base)).toEqual({
       schemaVersion: 1,
-      id: 'project311-fixed-time',
-      name: 'project311-fixed-time',
+      id: 'whalepod-fixed-time',
+      name: 'whalepod-fixed-time',
       version: '0.1.0',
       entrypoint: 'index.js',
       config: {},

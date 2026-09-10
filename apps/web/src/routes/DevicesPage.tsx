@@ -11,26 +11,26 @@ export function DevicesPage(): ReactNode {
       <section className="card devices-empty" aria-labelledby="devices-empty-heading">
         <h2 id="devices-empty-heading">尚未配对任何设备</h2>
         <p className="empty-state">
-          成员在本机运行 project311-node 完成配对后，设备会出现在这里（配对流程随后续版本提供）。
+          成员在本机运行 whalepod-node 完成配对后，设备会出现在这里（配对流程随后续版本提供）。
         </p>
         <h3>CLI 安装与配对</h3>
         <ol className="cli-steps">
           <li>
             在成员本机安装 CLI：
             <pre>
-              <code>npm install -g project311-node</code>
+              <code>npm install -g whalepod-node</code>
             </pre>
           </li>
           <li>
             在团队 Hub 上生成一次性配对码（后续版本提供）后：
             <pre>
-              <code>project311-node pair --hub &lt;hub-url&gt; --code &lt;code&gt;</code>
+              <code>whalepod-node pair --hub &lt;hub-url&gt; --code &lt;code&gt;</code>
             </pre>
           </li>
           <li>
             启动节点守护进程：
             <pre>
-              <code>project311-node start</code>
+              <code>whalepod-node start</code>
             </pre>
           </li>
         </ol>

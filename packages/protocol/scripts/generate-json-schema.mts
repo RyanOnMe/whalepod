@@ -81,12 +81,12 @@ if (!checkMode) {
     for (const [name, content] of expected) {
       const path = join(GENERATED_DIR, name)
       if (!existsSync(path)) {
-        problems.push(`${name}: missing (run pnpm --filter @project311/protocol generate)`)
+        problems.push(`${name}: missing (run pnpm --filter @whalepod/protocol generate)`)
         continue
       }
       if (readFileSync(path, 'utf8') !== content) {
         problems.push(
-          `${name}: stale or hand-edited (run pnpm --filter @project311/protocol generate)`,
+          `${name}: stale or hand-edited (run pnpm --filter @whalepod/protocol generate)`,
         )
       }
     }

@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { createDatabase, type Database } from '@project311/db'
+import { createDatabase, type Database } from '@whalepod/db'
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..')
 const SERVER_ENTRY = join(REPO_ROOT, 'apps/hub/dist/server.js')
@@ -56,7 +56,7 @@ describe('#24 空库冷启动 server.js', () => {
   it('真 bin + 空数据库 → /healthz 在预算内 200（迁移由启动路径自己应用）', async () => {
     const dbName = `coldboot_${randomBytes(4).toString('hex')}`
     await admin.sql.unsafe(`create database ${dbName}`) // dbName 为自生成 hex，非外部输入
-    const dataDir = mkdtempSync(join(tmpdir(), 'p311-coldboot-'))
+    const dataDir = mkdtempSync(join(tmpdir(), 'wp-coldboot-'))
     let child: ChildProcessWithoutNullStreams | undefined
     const stderr: string[] = []
     try {
@@ -65,11 +65,11 @@ describe('#24 空库冷启动 server.js', () => {
         env: {
           ...process.env,
           DATABASE_URL: urlWithDatabase(ADMIN_URL, dbName),
-          PROJECT311_PUBLIC_ORIGIN: `http://127.0.0.1:${port}`,
+          WHALEPOD_PUBLIC_ORIGIN: `http://127.0.0.1:${port}`,
           HOST: '127.0.0.1',
           PORT: String(port),
-          PROJECT311_SETUP_TOKEN_PATH: join(dataDir, 'setup-token'),
-          PROJECT311_ARTIFACT_STORE_DIR: join(dataDir, 'artifact-store'),
+          WHALEPOD_SETUP_TOKEN_PATH: join(dataDir, 'setup-token'),
+          WHALEPOD_ARTIFACT_STORE_DIR: join(dataDir, 'artifact-store'),
           LOG_LEVEL: 'error',
         },
         stdio: ['ignore', 'pipe', 'pipe'],

@@ -10,7 +10,7 @@ import {
   RuntimeOutputSchema,
   type RuntimeCommand,
   type RuntimeOutput,
-} from '@project311/protocol'
+} from '@whalepod/protocol'
 
 /** 单行命令上限（02 Step 6）：1 MiB。 */
 export const MAX_COMMAND_LINE_BYTES = 1024 * 1024

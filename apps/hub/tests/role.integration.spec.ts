@@ -2,7 +2,7 @@
  * G1-06：最后 Owner 保护；成员停用主链；越权与 404 形态一致（04 §6.1）。
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { Database } from '@project311/db'
+import type { Database } from '@whalepod/db'
 import {
   createTestApp,
   createTestDatabase,

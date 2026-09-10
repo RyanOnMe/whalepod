@@ -18,8 +18,8 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { PluginManifest } from '@project311/protocol'
-import { compareCodePoints } from '@project311/protocol/plugin-pack-digest'
+import type { PluginManifest } from '@whalepod/protocol'
+import { compareCodePoints } from '@whalepod/protocol/plugin-pack-digest'
 import { sriFor } from '../src/plugin/integrity.js'
 import { PluginInstaller, type PluginFetch } from '../src/plugin/installer.js'
 import { digestLockfile, parseLockfile, type PluginLockfile } from '../src/plugin/lockfile.js'
@@ -70,7 +70,7 @@ function buildTarGz(entries: FixtureEntry[]): Buffer {
 
 const tempDirs: string[] = []
 function mktemp(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'p311-plugin-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'wp-plugin-test-'))
   tempDirs.push(dir)
   return dir
 }
@@ -91,7 +91,7 @@ afterEach(() => {
   }
 })
 
-const PKG_NAME = '@project311/tabtin-fixed-time'
+const PKG_NAME = '@whalepod/wp-fixed-time'
 const PKG_VERSION = '0.1.0'
 
 function fixtureTarball(extra: FixtureEntry[] = []): Buffer {
@@ -102,7 +102,7 @@ function fixtureTarball(extra: FixtureEntry[] = []): Buffer {
         name: PKG_NAME,
         version: PKG_VERSION,
         main: 'index.js',
-        scripts: { postinstall: 'touch /tmp/p311-pwned' },
+        scripts: { postinstall: 'touch /tmp/wp-pwned' },
       }),
     },
     { path: 'package/index.js', content: 'module.exports = () => "2030-01-02T03:04:05.000Z"\n' },
@@ -130,7 +130,7 @@ function makeManifest(tarball: Buffer, lock: PluginLockfile): PluginManifest {
     schemaVersion: 1,
     name: PKG_NAME,
     version: PKG_VERSION,
-    tarballUrl: 'https://registry.npmjs.org/@project311/tabtin-fixed-time/-/x-0.1.0.tgz',
+    tarballUrl: 'https://registry.npmjs.org/@whalepod/wp-fixed-time/-/x-0.1.0.tgz',
     integrity: sriFor(tarball),
     dependencyLockDigest: digestLockfile(lock),
     dshCompatibility: '0.1.0-rc.8',
@@ -190,7 +190,7 @@ describe('PluginInstaller（攻击矩阵）', () => {
     // 只读发布。
     expect(statSync(join(first.path, 'index.js')).mode & 0o777).toBe(0o444)
     // install script 绝不执行：postinstall 的 canary 不存在。
-    expect(() => statSync('/tmp/p311-pwned')).toThrow()
+    expect(() => statSync('/tmp/wp-pwned')).toThrow()
     // 重复安装（同 digest）→ 同一路径，无重复落盘。
     const second = await installer.install(manifest, lock)
     expect(second.path).toBe(first.path)

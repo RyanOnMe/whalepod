@@ -10,7 +10,7 @@ let store: SetupTokenStore
 let tokenPath: string
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'p311-setup-token-'))
+  dir = await mkdtemp(join(tmpdir(), 'wp-setup-token-'))
   tokenPath = join(dir, 'setup-token')
   store = new SetupTokenStore(tokenPath)
 })

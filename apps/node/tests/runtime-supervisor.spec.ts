@@ -22,7 +22,7 @@ import type { RuntimeStartSpec } from '../src/runtime-driver.js'
 let root: string
 
 beforeAll(async () => {
-  root = await mkdtemp(join(tmpdir(), 'p311-supervisor-'))
+  root = await mkdtemp(join(tmpdir(), 'wp-supervisor-'))
 })
 
 afterAll(async () => {
@@ -31,7 +31,7 @@ afterAll(async () => {
 
 const LONG_SCRIPT = 'setInterval(() => {}, 1000)' // 直到被杀才退出
 
-const CREDENTIAL_ENV = { PROJECT311_DSH_SECRET_DSH_API_KEY: 'sk-test-123' }
+const CREDENTIAL_ENV = { WHALEPOD_DSH_SECRET_DSH_API_KEY: 'sk-test-123' }
 
 function makeSpec(runId: string): RuntimeStartSpec {
   return {
@@ -154,7 +154,7 @@ describe('RuntimeSupervisor', () => {
       PATH: '/usr/bin',
       LANG: 'en_US.UTF-8',
       TMPDIR: '/tmp',
-      PROJECT311_DEVICE_TOKEN: 'must-not-leak',
+      WHALEPOD_DEVICE_TOKEN: 'must-not-leak',
       SSH_AUTH_SOCK: '/socket',
       AWS_SECRET_ACCESS_KEY: 'must-not-leak',
     })

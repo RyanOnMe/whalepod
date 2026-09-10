@@ -47,7 +47,7 @@ export function AppShell(): ReactNode {
       <div className="app-shell">
         <header className="app-header">
           <Link to="/" className="app-brand">
-            project311
+            WhalePod
           </Link>
           <nav className="app-nav" aria-label="主导航">
             <Link to="/">项目</Link>

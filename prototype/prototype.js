@@ -122,7 +122,7 @@
       digest: 'sha256:72b…8e1',
       plugins: [
         { name: 'dsh-base', kind: 'Bundle', status: '已加载' },
-        { name: 'tabtin-team-bridge', kind: 'Bridge', status: '已加载' },
+        { name: 'whalepod-team-bridge', kind: 'Bridge', status: '已加载' },
         { name: 'dsh-tool-bash', kind: 'Tool', status: '受审批保护' },
         { name: 'dsh-skill-security-audit', kind: 'Skill', status: '已调用' },
         { name: 'filesystem-local', kind: 'Provider', status: '仅 Bob 可见' }
@@ -282,9 +282,9 @@
   function renderATopbar() {
     return [
       '<header class="a-topbar">',
-      '<button class="brand brand--a" type="button" data-action="set-variant" data-variant="A" aria-label="TabTin 任务作战室首页">',
+      '<button class="brand brand--a" type="button" data-action="set-variant" data-variant="A" aria-label="WhalePod 任务作战室首页">',
       '<span class="brand-mark">', icon('logo'), '</span>',
-      '<span class="brand-word">tabtin</span>',
+      '<span class="brand-word">whalepod</span>',
       '</button>',
       '<div class="a-breadcrumb" aria-label="当前位置">',
       '<span>Northstar Studio</span>', icon('chevron-right'),
@@ -496,7 +496,7 @@
       '<article class="room-event room-event--system">',
       '<div class="event-avatar event-avatar--system">', icon('shield'), '</div>',
       '<div class="event-body">',
-      '<div class="event-header"><div><strong>TabTin</strong><span>拦截了高风险工具调用</span></div><time>14:18</time></div>',
+      '<div class="event-header"><div><strong>WhalePod</strong><span>拦截了高风险工具调用</span></div><time>14:18</time></div>',
       renderApprovalCard('feed'),
       '</div></article>',
       '<article class="room-event room-event--artifact">',
@@ -590,7 +590,7 @@
   function renderBTopbar() {
     return [
       '<header class="b-topbar">',
-      '<div class="b-brand">', icon('logo'), '<strong>TabTin</strong><span>MISSION CONTROL</span></div>',
+      '<div class="b-brand">', icon('logo'), '<strong>WhalePod</strong><span>MISSION CONTROL</span></div>',
       '<nav class="b-nav" aria-label="总控台导航">',
       '<a href="#b-overview" aria-current="page">总览</a><a href="#b-queue">任务队列</a><a href="#b-runs">Runs</a><a href="#b-agents">Agents</a><a href="#b-plugins">插件</a>',
       '</nav>',
@@ -763,7 +763,7 @@
     return [
       '<div class="app-shell variant-c">',
       '<header class="c-topbar">',
-      '<div class="c-brand">', icon('logo'), '<strong>TABTIN</strong><span>/</span><em>HARNESS</em><small>DSH runtime surface</small></div>',
+      '<div class="c-brand">', icon('logo'), '<strong>WHALEPOD</strong><span>/</span><em>HARNESS</em><small>DSH runtime surface</small></div>',
       '<div class="c-top-status"><span class="c-online-dot"></span><span>runtime connected</span><code>localhost:3080</code></div>',
       '<div class="c-top-actions"><button type="button" class="c-icon-button" data-action="prototype-info" aria-label="搜索">', icon('search'), '</button><button type="button" class="c-icon-button" data-action="prototype-info" aria-label="设置">', icon('settings'), '</button>', avatar(fixture.members.bob, 'sm'), '</div>',
       '</header>',
@@ -807,7 +807,7 @@
           return '<tr><td><strong>' + plugin.name + '</strong></td><td>' + plugin.kind + '</td><td>' + plugin.status + '</td><td>' + (plugin.name === 'filesystem-local' ? '仅能力摘要' : '是') + '</td></tr>';
         }).join(''),
         '</tbody></table>',
-        '<div class="console-architecture-note">', icon('branch'), '<div><strong>组合，而不是 Fork</strong><p>TabTin Bridge 作为 DSH Profile 中的一等插件，监听 Session/Agent/Tool seam；Team、Task 和 Artifact 权威仍在 TabTin Hub。</p></div></div>',
+        '<div class="console-architecture-note">', icon('branch'), '<div><strong>组合，而不是 Fork</strong><p>WhalePod Bridge 作为 DSH Profile 中的一等插件，监听 Session/Agent/Tool seam；Team、Task 和 Artifact 权威仍在 WhalePod Hub。</p></div></div>',
         '</div>'
       ].join('');
     }
@@ -878,7 +878,7 @@
       '<section><span class="info-key">A</span><div><h3>Task Room · 推荐</h3><p>先看共同目标、真人责任、阻塞和交付，再按需深入 DSH Run。</p></div></section>',
       '<section><span class="info-key">B</span><div><h3>Mission Control</h3><p>先跨任务扫描状态，适合负责人分诊，但协作关系会被压缩。</p></div></section>',
       '<section><span class="info-key">C</span><div><h3>Harness First</h3><p>最接近直接继承 DSH Web；运行控制很强，但 Team 和 Task 退居次位。</p></div></section>',
-      '<div class="info-conclusion">', icon('branch'), '<div><strong>推荐继承方式</strong><p>直接组合 DSH Runtime、Profile、Bundle 和事件 seam；TabTin 自己拥有团队产品外壳。不要 Fork 整个 DSH Web。</p></div></div>',
+      '<div class="info-conclusion">', icon('branch'), '<div><strong>推荐继承方式</strong><p>直接组合 DSH Runtime、Profile、Bundle 和事件 seam；WhalePod 自己拥有团队产品外壳。不要 Fork 整个 DSH Web。</p></div></div>',
       '</div>',
       '<footer class="dialog-footer"><span>使用页面底部按钮或键盘 ← → 切换</span><button class="button button--dark" type="button" data-action="close-dialog">继续体验</button></footer>',
       '</div>'
@@ -911,7 +911,7 @@
   function render() {
     var current = getVariant();
     document.body.dataset.variant = current;
-    document.title = 'TabTin 2.0 · ' + variants[current].name + ' 产品原型';
+    document.title = 'WhalePod · ' + variants[current].name + ' 产品原型';
     var content = current === 'A'
       ? renderTaskRoom()
       : current === 'B'

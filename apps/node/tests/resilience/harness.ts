@@ -17,7 +17,7 @@ import { mkdirSync } from 'node:fs'
 import { mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { NodeDownstream, ProjectedRunEvent, RuntimeCommand } from '@project311/protocol'
+import type { NodeDownstream, ProjectedRunEvent, RuntimeCommand } from '@whalepod/protocol'
 import { CommandStore } from '../../src/spool/command-store.js'
 import { EventStore } from '../../src/spool/event-store.js'
 import { SecretStore } from '../../src/secret/store.js'
@@ -264,7 +264,7 @@ export async function makeResilienceHarness(
     managerDeps?: Record<string, unknown>
   } = {},
 ): Promise<ResilienceHarness> {
-  const root = await mkdtemp(join(tmpdir(), 'p311-resilience-'))
+  const root = await mkdtemp(join(tmpdir(), 'wp-resilience-'))
   const workspaceDir = join(root, 'ws')
   await mkdir(workspaceDir, { recursive: true })
   mkdirSync(join(root, 'runtime-home'), { recursive: true })
@@ -280,7 +280,7 @@ export async function makeResilienceHarness(
   const registry = new WorkspaceRegistry(join(root, 'registry.db'), 'test-hmac-key')
   const workspace = await registry.register(workspaceDir, { name: 'ws-1' })
   const secrets = new SecretStore(join(root, 'secrets.json'), {
-    PROJECT311_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
+    WHALEPOD_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
   })
   const eventStore = new EventStore(join(root, 'events.db'))
   const commandStore = new CommandStore(join(root, 'commands.db'))

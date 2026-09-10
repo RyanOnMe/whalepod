@@ -9,7 +9,7 @@
  * - 失败：解析失败 envelope（protocol 的 ApiFailureSchema 是 wire SSoT），
  *   抛类型化 ApiError（code/message/requestId/details），UI 原样展示。
  */
-import { ApiFailureSchema } from '@project311/protocol'
+import { ApiFailureSchema } from '@whalepod/protocol'
 import { ApiError } from './errors.js'
 
 /** 所有 HTTP 接口的前缀（03 §4）。同源部署时留空。 */

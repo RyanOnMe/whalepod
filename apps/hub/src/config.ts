@@ -1,6 +1,6 @@
 /**
- * Hub 运行配置。环境变量以 PROJECT311_ 为前缀（旧代号 TABTIN_* 属文档暂定标识，
- * 不扩散进新代码）。
+ * Hub 运行配置。环境变量以 WHALEPOD_ 为前缀（定名 #133 前的旧前缀 TABTIN_ 与
+ * PROJECT311_ 已全量替换，不再接受）。
  */
 import { fileURLToPath } from 'node:url'
 
@@ -56,10 +56,10 @@ export function defaultPluginCatalogDir(): string {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubConfig {
-  const publicOrigin = env.PROJECT311_PUBLIC_ORIGIN
+  const publicOrigin = env.WHALEPOD_PUBLIC_ORIGIN
   const databaseUrl = env.DATABASE_URL
   if (publicOrigin === undefined || publicOrigin === '') {
-    throw new Error('PROJECT311_PUBLIC_ORIGIN 未设置（期望形如 https://hub.example.com）')
+    throw new Error('WHALEPOD_PUBLIC_ORIGIN 未设置（期望形如 https://hub.example.com）')
   }
   if (databaseUrl === undefined || databaseUrl === '') {
     throw new Error('DATABASE_URL 未设置')
@@ -67,17 +67,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubConfig {
   return {
     publicOrigin,
     databaseUrl,
-    setupTokenPath: env.PROJECT311_SETUP_TOKEN_PATH ?? 'data/setup-token',
+    setupTokenPath: env.WHALEPOD_SETUP_TOKEN_PATH ?? 'data/setup-token',
     host: env.HOST ?? '0.0.0.0',
     port: Number(env.PORT ?? 8080),
-    pluginCatalogDir: env.PROJECT311_PLUGIN_CATALOG_DIR,
+    pluginCatalogDir: env.WHALEPOD_PLUGIN_CATALOG_DIR,
     // 显式开关：仅 '1'/'true' 视为开启，其余（含未设置）一律关闭。
-    pluginDevMode:
-      env.PROJECT311_PLUGIN_DEV_MODE === '1' || env.PROJECT311_PLUGIN_DEV_MODE === 'true',
+    pluginDevMode: env.WHALEPOD_PLUGIN_DEV_MODE === '1' || env.WHALEPOD_PLUGIN_DEV_MODE === 'true',
     // #113：同形态显式开关——compose（nginx 反代）置 true；直连默认 false，
     // 否则直连部署反而被伪造 XFF 骗过限流。
-    trustProxy: env.PROJECT311_TRUST_PROXY === '1' || env.PROJECT311_TRUST_PROXY === 'true',
-    artifactStoreDir: env.PROJECT311_ARTIFACT_STORE_DIR ?? 'data/artifact-store',
+    trustProxy: env.WHALEPOD_TRUST_PROXY === '1' || env.WHALEPOD_TRUST_PROXY === 'true',
+    artifactStoreDir: env.WHALEPOD_ARTIFACT_STORE_DIR ?? 'data/artifact-store',
   }
 }
 

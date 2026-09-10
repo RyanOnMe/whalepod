@@ -12,15 +12,15 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import type { Database } from '@project311/db'
+import type { Database } from '@whalepod/db'
 import {
   findDeviceByTokenHash,
   getRun,
   runEventWatermark,
   setDeviceHelloFacts,
   touchDeviceLastSeenAt,
-} from '@project311/db'
-import { parseNodeFrame, RunEventAckSchema, RunResendFromSchema } from '@project311/protocol'
+} from '@whalepod/db'
+import { parseNodeFrame, RunEventAckSchema, RunResendFromSchema } from '@whalepod/protocol'
 import type { RunOrchestrator } from '../run/orchestrator.js'
 import type { AuthenticatedDevice } from '../run/device-gateway.js'
 import { isRunSemanticConflict } from '../run/errors.js'

@@ -12,8 +12,8 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
-import { CreateAgentRevisionRequestSchema } from '@project311/protocol'
-import type { PluginPackView } from '@project311/protocol'
+import { CreateAgentRevisionRequestSchema } from '@whalepod/protocol'
+import type { PluginPackView } from '@whalepod/protocol'
 import {
   ALICE,
   BOB,

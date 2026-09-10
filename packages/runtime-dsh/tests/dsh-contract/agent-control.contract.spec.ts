@@ -9,7 +9,7 @@ import {
   runtimeSpec,
   startReplayRuntime,
 } from './helpers/replay-runtime.js'
-import type { RuntimeOutput } from '@project311/protocol'
+import type { RuntimeOutput } from '@whalepod/protocol'
 
 /** 从 session.event 帧里取 DSH SessionEvent（unknown 载荷，探针内收窄）。 */
 function sessionEventsOf(outputs: readonly RuntimeOutput[]): { type: string; data: unknown }[] {

@@ -23,7 +23,7 @@ const CONTENT = 'artifact payload 0123456789\n'
 const DIGEST = createHash('sha256').update(CONTENT).digest('hex')
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'p311-artifact-store-'))
+  root = await mkdtemp(join(tmpdir(), 'wp-artifact-store-'))
   store = new ArtifactStore({ root })
 })
 

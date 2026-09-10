@@ -1,7 +1,7 @@
 /**
  * Node CLI（02 Task 9 Step 3/5）。
- *   project311-node pair --hub <url> --code <code> [--name <n>] ...
- *   project311-node start
+ *   whalepod-node pair --hub <url> --code <code> [--name <n>] ...
+ *   whalepod-node start
  *
  * 零三方依赖（node:util parseArgs）。pair 写本地配置（mode 0600）；
  * start 持有出站连接 + 心跳循环 + 退避重连，收到 node.token_revoked 时清理本地 Token。
@@ -62,7 +62,7 @@ async function runPair(args: PairArgs): Promise<void> {
 async function runStart(dshVersion: string | undefined, stateDir: string): Promise<void> {
   const config = await loadConfig()
   if (config === undefined) {
-    process.stderr.write('no local config: run `project311-node pair` first\n')
+    process.stderr.write('no local config: run `whalepod-node pair` first\n')
     process.exit(1)
   }
   // dsh 发行版版本：显式参数 > 环境变量 > 'unmanaged'（本机未托管 DSH 运行时的诚实标注；
@@ -72,7 +72,7 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     nodeVersion: process.version,
     platform: detectPlatform(),
     architecture: process.arch,
-    dshDistributionVersion: dshVersion ?? process.env.PROJECT311_DSH_VERSION ?? 'unmanaged',
+    dshDistributionVersion: dshVersion ?? process.env.WHALEPOD_DSH_VERSION ?? 'unmanaged',
     pluginPackDigests: installedPackDigests(join(stateDir, 'plugin-packs')),
   }
 
@@ -166,10 +166,10 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     },
   })
 
-  // Runtime 入口：@project311/runtime 的 bin 产物（部署包内 resolve；P1-20 安装门兜底）。
+  // Runtime 入口：@whalepod/runtime 的 bin 产物（部署包内 resolve；P1-20 安装门兜底）。
   // #97：按 runtime 包 exports 声明的公开子路径解析（原先解 './dist/bin.js'
   // 深路径，未 exports ⟹ ERR_PACKAGE_PATH_NOT_EXPORTED，start 启动即死）。
-  const runtimeEntry = createRequire(import.meta.url).resolve('@project311/runtime/bin')
+  const runtimeEntry = createRequire(import.meta.url).resolve('@whalepod/runtime/bin')
   // #118：sessionSend 的 let 必须先于 RunManager 构造与 recoverOrphans() 执行——
   // 否则「RunManager send 闭包（L190 形态）在 TDZ 内求值 sessionSend」，有孤儿
   // 时启动即崩（alpha.2 狗食实录：一孤儿一崩）。no-op 默认值正是为会话建立前
@@ -292,7 +292,7 @@ export async function main(argv: string[]): Promise<void> {
     options: {
       hub: { type: 'string' },
       code: { type: 'string' },
-      name: { type: 'string', default: 'project311-node' },
+      name: { type: 'string', default: 'whalepod-node' },
       platform: { type: 'string' },
       architecture: { type: 'string', default: process.arch },
       'node-version': { type: 'string', default: process.version },
@@ -305,13 +305,13 @@ export async function main(argv: string[]): Promise<void> {
   const command = positionals[0]
   if (command === 'pair') {
     if (values.hub === undefined || values.code === undefined) {
-      process.stderr.write('usage: project311-node pair --hub <url> --code <code>\n')
+      process.stderr.write('usage: whalepod-node pair --hub <url> --code <code>\n')
       process.exit(2)
     }
     await runPair({
       hub: values.hub,
       code: values.code,
-      name: values.name ?? 'project311-node',
+      name: values.name ?? 'whalepod-node',
       platform: (values.platform as 'darwin' | 'linux' | 'win32') ?? detectPlatform(),
       architecture: values.architecture ?? process.arch,
       nodeVersion: values['node-version'] ?? process.version,
@@ -346,24 +346,24 @@ export async function main(argv: string[]): Promise<void> {
     // 实现曾把 'set' 当 provider 解析并要求 'set' 在末尾——照文档敲必 EXIT=2
     // 不落盘（PR #121 评审实录；workspace-cli.spec.ts 绕过 main() 层所以从未暴露）。
     if (positionals[1] !== 'set') {
-      process.stderr.write('usage: project311-node secret set <provider> <slot>\n')
+      process.stderr.write('usage: whalepod-node secret set <provider> <slot>\n')
       process.exit(2)
     }
     const provider = positionals[2]
     const slot = positionals[3]
     if (provider === undefined || slot === undefined) {
-      process.stderr.write('usage: project311-node secret set <provider> <slot>\n')
+      process.stderr.write('usage: whalepod-node secret set <provider> <slot>\n')
       process.exit(2)
     }
     await runSecretSet(deps, provider, slot, readHiddenLine)
     return
   }
-  process.stderr.write('usage: project311-node <pair|start> [options]\n')
+  process.stderr.write('usage: whalepod-node <pair|start> [options]\n')
   process.exit(2)
 }
 
 /**
- * 顶层调用（#95）：`package.json` 的 `bin.project311-node` 指向本模块的编译产物，
+ * 顶层调用（#95）：`package.json` 的 `bin.whalepod-node` 指向本模块的编译产物，
  * 因此**被作为脚本直接执行时**必须调用 `main`——此前文件到函数定义就结束，
  * 装好的 CLI 加载、定义、exit 0 静默退出，任何子命令都是空操作。
  *

@@ -33,7 +33,7 @@ let root: string
 let inputsRoot: string
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'p311-inputs-cleanup-'))
+  root = await mkdtemp(join(tmpdir(), 'wp-inputs-cleanup-'))
   inputsRoot = join(root, 'runtime-inputs')
 })
 

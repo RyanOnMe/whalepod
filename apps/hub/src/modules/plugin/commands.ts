@@ -1,19 +1,19 @@
 /**
  * Plugin 写命令（03 §4：POST /plugins/installations、POST /plugin-packs）。
  *
- * 权限走 @project311/domain 单一决策入口（install_plugin / create_plugin_pack 均
+ * 权限走 @whalepod/domain 单一决策入口（install_plugin / create_plugin_pack 均
  * Owner/Admin）；幂等经 transactCommand 回执；trust 与 capability 快照以 catalog
  * manifest 为准（03 §2.5）。Pack 不可变：无更新端点，name 冲突映射 409。
  */
 import { createHash } from 'node:crypto'
 import { and, eq, sql } from 'drizzle-orm'
-import { authorize } from '@project311/domain'
-import type { Actor } from '@project311/domain'
-import { schema, transactCommand, unwrapPgError } from '@project311/db'
-import type { Database } from '@project311/db'
-import { digestPluginPack } from '@project311/protocol/plugin-pack-digest'
-import { trustForReviewStatus } from '@project311/protocol'
-import type { PluginInstallationView, PluginManifest, PluginPackView } from '@project311/protocol'
+import { authorize } from '@whalepod/domain'
+import type { Actor } from '@whalepod/domain'
+import { schema, transactCommand, unwrapPgError } from '@whalepod/db'
+import type { Database } from '@whalepod/db'
+import { digestPluginPack } from '@whalepod/protocol/plugin-pack-digest'
+import { trustForReviewStatus } from '@whalepod/protocol'
+import type { PluginInstallationView, PluginManifest, PluginPackView } from '@whalepod/protocol'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
 import type { PluginCatalog } from './catalog.js'

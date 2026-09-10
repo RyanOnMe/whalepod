@@ -1,5 +1,5 @@
 {
-  "name": "@project311/runtime-dsh",
+  "name": "@whalepod/runtime-dsh",
   "version": "0.1.0",
   "private": true,
   "files": [
@@ -27,6 +27,6 @@
     "@deepseek-ai/dsh-session": "catalog:",
     "@deepseek-ai/dsh-tools": "catalog:",
     "@deepseek-ai/dsh-user-approval": "catalog:",
-    "@project311/protocol": "workspace:*"
+    "@whalepod/protocol": "workspace:*"
   }
 }

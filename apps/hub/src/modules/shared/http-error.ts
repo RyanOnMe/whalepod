@@ -1,4 +1,4 @@
-import type { ErrorCode } from '@project311/protocol'
+import type { ErrorCode } from '@whalepod/protocol'
 
 /** Hub 业务错误：statusCode + wire ErrorCode，由 app.ts 错误处理器统一上 envelope。 */
 export class ApiError extends Error {

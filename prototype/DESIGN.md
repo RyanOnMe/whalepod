@@ -1,18 +1,18 @@
-# TabTin 2.0 HTML 产品原型设计说明
+# WhalePod HTML 产品原型设计说明
 
-> 状态：已批准进入原型实现 · 日期：2026-08-16 · 原型问题：TabTin 2.0 应该长什么样，以及产品层是否应直接继承 DSH Web。
+> 状态：已批准进入原型实现 · 日期：2026-08-16 · 原型问题：WhalePod 应该长什么样，以及产品层是否应直接继承 DSH Web。
 
 ## 1. 设计结论
 
-TabTin 2.0 的主界面不是聊天框、Agent Session 列表或传统项目看板，而是 **Task Room（任务作战室）**：一个真人责任人与多个长期 Agent 围绕同一交付目标协作、审批、接管和验收的共享空间。
+WhalePod 的主界面不是聊天框、Agent Session 列表或传统项目看板，而是 **Task Room（任务作战室）**：一个真人责任人与多个长期 Agent 围绕同一交付目标协作、审批、接管和验收的共享空间。
 
 DSH 的正确继承方式是 **组合 Runtime，而不是 Fork 产品外壳**：
 
-- 在运行层，TabTin 通过自有 Profile / Bundle / Bridge 直接组合 DSH，继承 Agent Loop、Session Log、Tool、Skill、MCP、Subagent、审批 seam 和插件生态。
-- 在产品层，TabTin 自己拥有 Team、Project、Task、Assignment、Run、Approval、Artifact 和成员权限。
-- 在界面层，DSH 的 Session/Turn/Step/Tool 语义进入 Task Room 内的 Run Console；DSH Web 不成为 TabTin 的顶层导航和团队事实来源。
+- 在运行层，WhalePod 通过自有 Profile / Bundle / Bridge 直接组合 DSH，继承 Agent Loop、Session Log、Tool、Skill、MCP、Subagent、审批 seam 和插件生态。
+- 在产品层，WhalePod 自己拥有 Team、Project、Task、Assignment、Run、Approval、Artifact 和成员权限。
+- 在界面层，DSH 的 Session/Turn/Step/Tool 语义进入 Task Room 内的 Run Console；DSH Web 不成为 WhalePod 的顶层导航和团队事实来源。
 
-这与 DSH 官方架构一致：DSH 当前以 Cordis 插件树、Profile 和 Bundle 组合能力；UI 从 `session/event` 渲染，并通过 Agent 接口驱动输入。因此可以在不改 Agent Loop 的前提下增加 TabTin Bridge 或自有界面，但上游仍处于会发生破坏性变化的 developer preview，必须锁版本并维持契约探针。
+这与 DSH 官方架构一致：DSH 当前以 Cordis 插件树、Profile 和 Bundle 组合能力；UI 从 `session/event` 渲染，并通过 Agent 接口驱动输入。因此可以在不改 Agent Loop 的前提下增加 WhalePod Bridge 或自有界面，但上游仍处于会发生破坏性变化的 developer preview，必须锁版本并维持契约探针。
 
 ## 2. 产品层级
 
@@ -35,18 +35,18 @@ Team
 
 ## 3. DSH 继承边界
 
-| 层 | 直接继承 / 组合 DSH | TabTin 自己拥有 | 桥接方式 |
+| 层 | 直接继承 / 组合 DSH | WhalePod 自己拥有 | 桥接方式 |
 |---|---|---|---|
 | Runtime | Agent Loop、Session、Turn/Step、Tools、Skills、MCP、Subagent、模型适配器 | Run 调度、真人责任、取消与重跑血缘 | `runId ↔ sessionId`，Node 启动独立 Runtime |
-| 插件 | Cordis Plugin、Profile、Bundle、能力 seam | curated catalog、团队安装、Agent Profile 授权 | TabTin overlay + 锁版本 + capability digest |
+| 插件 | Cordis Plugin、Profile、Bundle、能力 seam | curated catalog、团队安装、Agent Profile 授权 | WhalePod overlay + 锁版本 + capability digest |
 | 安全 | DSH 工具审批入口、Sandbox seam | Workspace 所有权、谁能批准、脱敏与超时 | Bridge 将 `ask` 投影为 Team Approval |
 | 事件 | `session/event`、Agent 状态、工具生命周期 | Team Event Log、Task 活动流、可见性 | owner-only / project 两级事件投影 |
-| UI | Run Console 的对话、步骤、工具、插件状态语义 | Team、Project、Task Room、Artifact 发布、成员协作 | TabTin UI 读取产品投影；按需展开 Run Console |
+| UI | Run Console 的对话、步骤、工具、插件状态语义 | Team、Project、Task Room、Artifact 发布、成员协作 | WhalePod UI 读取产品投影；按需展开 Run Console |
 
 ### 不直接 Fork DSH Web 的原因
 
-1. DSH Web 的首要对象是本地 Workspace 与 Session；TabTin 的首要对象是团队交付 Task。
-2. DSH 当前指南是“配置模型 → 选择 Workspace → 启动 Session”；TabTin 必须先表达责任、公开进展、审批边界和 Artifact 发布。
+1. DSH Web 的首要对象是本地 Workspace 与 Session；WhalePod 的首要对象是团队交付 Task。
+2. DSH 当前指南是“配置模型 → 选择 Workspace → 启动 Session”；WhalePod 必须先表达责任、公开进展、审批边界和 Artifact 发布。
 3. 把团队身份和权限塞进 Runtime UI 会让上游升级、隐私边界与团队事实同时耦合。
 4. DSH 官方明确仍在 developer preview；组合公开 seam 的升级成本低于长期维护产品级 Fork。
 

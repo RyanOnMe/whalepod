@@ -198,7 +198,7 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
     '-p',
     '127.0.0.1:0:5432',
     '--label',
-    'project311.e2e-postgres=true',
+    'whalepod.e2e-postgres=true',
     IMAGE,
   ]
 

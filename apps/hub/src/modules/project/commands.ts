@@ -1,5 +1,5 @@
-import type { Database } from '@project311/db'
-import { appendTeamEvent, insertProject, transactCommand, unwrapPgError } from '@project311/db'
+import type { Database } from '@whalepod/db'
+import { appendTeamEvent, insertProject, transactCommand, unwrapPgError } from '@whalepod/db'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
 import { toProjectView } from './queries.js'

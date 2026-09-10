@@ -6,7 +6,7 @@
 import { randomUUID } from 'node:crypto'
 import type { WebSocket } from 'ws'
 import type { AuthenticatedDevice } from '../run/device-gateway.js'
-import type { NodeDownstream } from '@project311/protocol'
+import type { NodeDownstream } from '@whalepod/protocol'
 
 export interface NodeConnection extends AuthenticatedDevice {
   readonly socket: WebSocket

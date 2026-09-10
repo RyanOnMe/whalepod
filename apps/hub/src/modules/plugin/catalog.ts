@@ -1,7 +1,7 @@
 /**
  * Curated 插件 catalog 的加载（02 Task 17 Step 3/7）。
  *
- * 目录布局（PROJECT311_PLUGIN_CATALOG_DIR，缺省仓库根 plugins/）：
+ * 目录布局（WHALEPOD_PLUGIN_CATALOG_DIR，缺省仓库根 plugins/）：
  *   <dir>/catalog/<name>.json             PluginManifest（review overlay，置于 tarball 之外）
  *   <dir>/locks/<name>@<version>.lock.yaml 受审全依赖闭包 lockfile 原文
  *
@@ -17,9 +17,9 @@
  */
 import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { PluginManifestSchema } from '@project311/protocol'
-import { compareCodePoints } from '@project311/protocol/plugin-pack-digest'
-import type { PluginManifest } from '@project311/protocol'
+import { PluginManifestSchema } from '@whalepod/protocol'
+import { compareCodePoints } from '@whalepod/protocol/plugin-pack-digest'
+import type { PluginManifest } from '@whalepod/protocol'
 
 export interface PluginCatalog {
   /** 全部 manifest，按 name、version 字典序稳定排序（GET /plugins/catalog 的顺序）。 */

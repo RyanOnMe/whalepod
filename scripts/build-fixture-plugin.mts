@@ -2,18 +2,18 @@
 /**
  * P1-17 fixture 插件确定性重生成脚本（02 Task 17；plugins/ 数据树单一来源）。
  *
- * 从 `plugins/fixtures/project311-fixed-time/` 的未修改插件源码出发，用
+ * 从 `plugins/fixtures/whalepod-fixed-time/` 的未修改插件源码出发，用
  * apps/node 的规范化写入器 buildTarGz（uid/gid 0、mtime 0、按路径排序、
  * 固定 gzip 参数；npm 布局 package/ 前缀）产出确定性 tarball，再现算全部
  * digest 并写出/校验三个登记文件：
  *
- *   plugins/tarballs/project311-fixed-time-0.1.0.tgz   确定性 tar.gz
- *   plugins/locks/project311-fixed-time@0.1.0.lock.yaml 受审依赖闭包（空闭包）
- *   plugins/catalog/project311-fixed-time.json          review overlay manifest
+ *   plugins/tarballs/whalepod-fixed-time-0.1.0.tgz   确定性 tar.gz
+ *   plugins/locks/whalepod-fixed-time@0.1.0.lock.yaml 受审依赖闭包（空闭包）
+ *   plugins/catalog/whalepod-fixed-time.json          review overlay manifest
  *   plugins/curated-pack.json                           预组装不可变 Pack 登记
  *
  * 何时跑：
- *   - 改了 plugins/fixtures/project311-fixed-time/ 下任何文件、protocol 的
+ *   - 改了 plugins/fixtures/whalepod-fixed-time/ 下任何文件、protocol 的
  *     digest 算法或 apps/node 的 tar/lockfile 实现后，必须重跑默认模式，
  *     并把重生成的四个文件与源码改动放进同一个提交（digest 漂移 = 登记失效）。
  *   - `--check` 只验不写，退出码非零即漂移，适合接进 CI 门（接哪个门由
@@ -27,7 +27,7 @@
  * 实现说明：本脚本属业务侧，不 import @deepseek-ai/*。tar/lockfile 算法从
  * apps/node 源码相对路径引入（tsx 直接跑 TS），protocol 的 manifest/entry/
  * digest 算法从 packages/protocol 源码引入；apps/node 与 fixture 测试里的
- * 对应实现走 `@project311/protocol` 构建产物（dist），src/dist 一旦漂移会被
+ * 对应实现走 `@whalepod/protocol` 构建产物（dist），src/dist 一旦漂移会被
  * apps/node/tests/plugin-fixture.spec.ts 的复算断言拦截。
  */
 import { execFileSync } from 'node:child_process'
@@ -49,14 +49,14 @@ import {
 } from '../packages/protocol/src/plugin-pack-digest.js'
 
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url))
-const FIXTURE_DIR = join(REPO_ROOT, 'plugins/fixtures/project311-fixed-time')
-const TARBALL_PATH = join(REPO_ROOT, 'plugins/tarballs/project311-fixed-time-0.1.0.tgz')
-const LOCK_PATH = join(REPO_ROOT, 'plugins/locks/project311-fixed-time@0.1.0.lock.yaml')
-const CATALOG_PATH = join(REPO_ROOT, 'plugins/catalog/project311-fixed-time.json')
+const FIXTURE_DIR = join(REPO_ROOT, 'plugins/fixtures/whalepod-fixed-time')
+const TARBALL_PATH = join(REPO_ROOT, 'plugins/tarballs/whalepod-fixed-time-0.1.0.tgz')
+const LOCK_PATH = join(REPO_ROOT, 'plugins/locks/whalepod-fixed-time@0.1.0.lock.yaml')
+const CATALOG_PATH = join(REPO_ROOT, 'plugins/catalog/whalepod-fixed-time.json')
 const PACK_PATH = join(REPO_ROOT, 'plugins/curated-pack.json')
 const DSH_LOCK_PATH = join(REPO_ROOT, 'dsh.lock.json')
 
-const PACKAGE_NAME = 'project311-fixed-time'
+const PACKAGE_NAME = 'whalepod-fixed-time'
 const PACKAGE_VERSION = '0.1.0'
 const PACK_NAME = 'fixed-time'
 const ENTRYPOINT = 'index.js'

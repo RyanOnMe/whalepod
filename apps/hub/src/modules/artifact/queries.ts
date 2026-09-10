@@ -5,8 +5,8 @@
  * sourceRelativePath（owner 本地工作区相对路径，03 §2.6）——owner 对来源路径
  * 的可见性只经由 Node→Hub 的 owner 受众 run_event（timeline）。
  */
-import type { ArtifactRow } from '@project311/db'
-import type { ArtifactManifestEntry } from '@project311/protocol'
+import type { ArtifactRow } from '@whalepod/db'
+import type { ArtifactManifestEntry } from '@whalepod/protocol'
 
 export interface ArtifactView {
   readonly id: string

@@ -21,7 +21,7 @@ import type {
   PluginInstallRequest,
   PluginReviewStatus,
   PluginStatus,
-} from '@project311/protocol'
+} from '@whalepod/protocol'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { formatIso, shortDigest, shortSha } from '../../shared/format.js'

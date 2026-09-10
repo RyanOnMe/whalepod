@@ -12,7 +12,7 @@ import { runWorkspaceCommand, runSecretSet } from '../src/workspace/cli-commands
 let root: string
 
 beforeAll(async () => {
-  root = await mkdtemp(join(tmpdir(), 'p311-ws-cli-'))
+  root = await mkdtemp(join(tmpdir(), 'wp-ws-cli-'))
 })
 afterAll(async () => {
   await rm(root, { recursive: true, force: true })

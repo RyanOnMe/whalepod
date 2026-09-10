@@ -10,7 +10,7 @@ import {
   runtimeSpec,
   startReplayRuntime,
 } from './helpers/replay-runtime.js'
-import type { RuntimeOutput } from '@project311/protocol'
+import type { RuntimeOutput } from '@whalepod/protocol'
 
 function sessionEventsOf(outputs: readonly RuntimeOutput[]): { type: string; data: unknown }[] {
   return outputs

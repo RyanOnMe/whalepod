@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseNodeFrame } from '@project311/protocol'
+import { parseNodeFrame } from '@whalepod/protocol'
 import { FakeClock } from '../src/fake-clock.js'
 import { FakeDeviceGateway, FakeDeviceOfflineError } from '../src/fake-device-gateway.js'
 

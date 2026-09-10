@@ -1,8 +1,8 @@
 /**
- * project311-fixed-time — a minimal DSH tool plugin for the Cordis plugin
+ * whalepod-fixed-time — a minimal DSH tool plugin for the Cordis plugin
  * ecosystem.
  *
- * Loading this package as a Cordis plugin (`ctx.plugin(import('project311-fixed-time'))`
+ * Loading this package as a Cordis plugin (`ctx.plugin(import('whalepod-fixed-time'))`
  * or equivalent) registers one tool, `fixed_time`, which always returns the
  * same UTC timestamp. The tool is intentionally deterministic: integration
  * suites assert its exact return value byte-for-byte.

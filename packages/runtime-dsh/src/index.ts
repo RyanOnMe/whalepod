@@ -1,5 +1,5 @@
 /**
- * @project311/runtime-dsh —— 唯一允许依赖 DSH 的 Adapter 包（02 Global
+ * @whalepod/runtime-dsh —— 唯一允许依赖 DSH 的 Adapter 包（02 Global
  * Constraints，check-boundaries 强制）。公共面见 02 Task 11 Interfaces：
  * RuntimeBridge.start/followup(经 handleCommand)/cancel/dispose 与
  * NDJSON 单通道边界。

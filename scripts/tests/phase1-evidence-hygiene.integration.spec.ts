@@ -35,7 +35,7 @@ const FAKE_MAC_HOME_FILE = `${MAC_HOME}/dave/secret/notes.md`
 
 const dirs: string[] = []
 function newDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `p311-${prefix}-`))
+  const dir = mkdtempSync(join(tmpdir(), `wp-${prefix}-`))
   dirs.push(dir)
   return dir
 }
@@ -50,7 +50,7 @@ describe('#73 recorder 通用路径归约（取证原语·脱敏）', () => {
     const recorder = new Phase1Recorder(dir, `t-${randomUUID()}`)
     const message =
       `ENOENT, no such file or directory ${FAKE_LINUX_HOME} | ` +
-      `tmp ${TMP_ROOT}/p311-chain-ws-abc/report.md | ` +
+      `tmp ${TMP_ROOT}/wp-chain-ws-abc/report.md | ` +
       `repo ${join(REPO, 'packages/domain/src/x.ts')} | ` +
       `macos ${FAKE_MAC_HOME_FILE}`
     recorder.event('node.run', 'artifact candidate collection failed', { reason: message })

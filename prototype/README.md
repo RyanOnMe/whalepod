@@ -1,6 +1,6 @@
-# TabTin 2.0 HTML 产品原型
+# WhalePod HTML 产品原型
 
-这个原型用同一组 Team、Task、Agent、Run、Approval 和 Artifact 数据，对比三种完全不同的产品结构。默认方向是 **A — Task Room**：TabTin 拥有团队协作外壳，DSH Run Console 作为任务中的第二层运行界面。
+这个原型用同一组 Team、Task、Agent、Run、Approval 和 Artifact 数据，对比三种完全不同的产品结构。默认方向是 **A — Task Room**：WhalePod 拥有团队协作外壳，DSH Run Console 作为任务中的第二层运行界面。
 
 ## 打开
 
@@ -40,12 +40,12 @@ python3 -m http.server 4173 --bind 127.0.0.1
 
 ## 产品结论
 
-TabTin 可以直接组合 DSH Runtime 和插件生态，但不应直接 Fork 整个 DSH Web：
+WhalePod 可以直接组合 DSH Runtime 和插件生态，但不应直接 Fork 整个 DSH Web：
 
 ```text
-TabTin Team / Project / Task Room
+WhalePod Team / Project / Task Room
                ↓
-       TabTin Run Console
+       WhalePod Run Console
                ↓
 DSH Agent / Session / Tool / Plugin Runtime
 ```

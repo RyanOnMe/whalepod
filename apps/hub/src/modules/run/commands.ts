@@ -1,5 +1,5 @@
-import type { Actor } from '@project311/domain'
-import { CreateRunRequestSchema } from '@project311/protocol'
+import type { Actor } from '@whalepod/domain'
+import { CreateRunRequestSchema } from '@whalepod/protocol'
 import { RunCommandError } from './errors.js'
 
 /** 命令层入口的调用者身份：即 domain policy 的 Actor。 */

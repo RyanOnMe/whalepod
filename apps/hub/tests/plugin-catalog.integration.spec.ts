@@ -14,9 +14,9 @@ import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { createHash } from 'node:crypto'
-import type { Database } from '@project311/db'
-import { canonicalJson } from '@project311/protocol/plugin-pack-digest'
-import type { PluginCatalogEntryView } from '@project311/protocol'
+import type { Database } from '@whalepod/db'
+import { canonicalJson } from '@whalepod/protocol/plugin-pack-digest'
+import type { PluginCatalogEntryView } from '@whalepod/protocol'
 import { buildApp } from '../src/app.js'
 import type { HubConfig } from '../src/config.js'
 import {
@@ -72,7 +72,7 @@ async function createPluginTestApp(
   options: { readonly catalogDir: string; readonly pluginDevMode?: boolean },
 ): Promise<TestApp> {
   const origin = 'http://localhost:4242'
-  const dir = await mkdtemp(join(tmpdir(), 'p311-hub-plugin-test-'))
+  const dir = await mkdtemp(join(tmpdir(), 'wp-hub-plugin-test-'))
   const setupTokenPath = join(dir, 'setup-token')
   const setupToken = randomBytes(32).toString('base64url')
   await writeFile(setupTokenPath, setupToken, { mode: 0o600 })
@@ -139,13 +139,13 @@ describe('plugin catalog API (P1-17)', () => {
     const entries = res.json().data as PluginCatalogEntryView[]
     // 稳定排序（name 字典序）：dev-sandbox / echo / fixed-time / unreviewed。
     expect(entries.map((e) => e.name)).toEqual([
-      'p311-dev-sandbox',
-      'p311-echo',
-      'p311-fixed-time',
-      'p311-unreviewed',
+      'wp-dev-sandbox',
+      'wp-echo',
+      'wp-fixed-time',
+      'wp-unreviewed',
     ])
 
-    const fixedTime = entries.find((e) => e.name === 'p311-fixed-time')
+    const fixedTime = entries.find((e) => e.name === 'wp-fixed-time')
     expect(fixedTime).toBeDefined()
     expect(fixedTime?.version).toBe('0.1.0') // 精确版本
     expect(fixedTime?.integrity).toMatch(/^sha256-[A-Za-z0-9+/]+={0,2}$/) // SRI 全文下发（短摘要 Web 自截）
@@ -157,9 +157,9 @@ describe('plugin catalog API (P1-17)', () => {
     expect(fixedTime?.tarballUrl).toMatch(/^https:/)
 
     // fixture 自证：manifest 登记的闭包 digest 与 lock 原文同算法现算一致。
-    expect(fixedTime?.dependencyLockDigest).toBe(lockDigest('p311-fixed-time', '0.1.0'))
+    expect(fixedTime?.dependencyLockDigest).toBe(lockDigest('wp-fixed-time', '0.1.0'))
 
-    const echo = entries.find((e) => e.name === 'p311-echo')
+    const echo = entries.find((e) => e.name === 'wp-echo')
     expect(echo?.capabilities).toEqual(['workspace.read', 'workspace.write', 'network.egress'])
     expect(echo?.license).toBe('Apache-2.0')
   })

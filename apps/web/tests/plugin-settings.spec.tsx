@@ -16,12 +16,12 @@
 import { screen, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import { PluginInstallRequestSchema, PluginPackCreateRequestSchema } from '@project311/protocol'
+import { PluginInstallRequestSchema, PluginPackCreateRequestSchema } from '@whalepod/protocol'
 import type {
   PluginCatalogEntryView,
   PluginInstallationView,
   PluginPackView,
-} from '@project311/protocol'
+} from '@whalepod/protocol'
 import { ALICE, BOB, created, initOf, loggedInHandlers, ok, packsHandler } from './fixtures.js'
 import type { MockHandler, MockResponse } from './fixtures.js'
 import { renderApp } from './render.jsx'
@@ -35,9 +35,9 @@ const REVIEW_COMMIT = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7b8c9d0'
 
 const reviewedEntry: PluginCatalogEntryView = {
   schemaVersion: 1,
-  name: 'tabtin-fixed-time',
+  name: 'wp-fixed-time',
   version: '0.1.0',
-  tarballUrl: 'https://registry.npmjs.org/tabtin-fixed-time/-/tabtin-fixed-time-0.1.0.tgz',
+  tarballUrl: 'https://registry.npmjs.org/wp-fixed-time/-/wp-fixed-time-0.1.0.tgz',
   integrity: INTEGRITY,
   dependencyLockDigest: LOCK_DIGEST,
   dshCompatibility: '0.1.0',
@@ -66,7 +66,7 @@ const localDevEntry: PluginCatalogEntryView = {
 
 const installation: PluginInstallationView = {
   id: 'eeeeeeee-0000-4000-8000-000000000001',
-  packageName: 'tabtin-fixed-time',
+  packageName: 'wp-fixed-time',
   packageVersion: '0.1.0',
   integrity: INTEGRITY,
   dependencyLockDigest: LOCK_DIGEST,
@@ -146,7 +146,7 @@ describe('plugin-settings', () => {
     // 导航入口
     expect(screen.getByRole('link', { name: '插件' })).toHaveAttribute('href', '/plugins')
 
-    const card = await screen.findByRole('article', { name: 'tabtin-fixed-time 0.1.0' })
+    const card = await screen.findByRole('article', { name: 'wp-fixed-time 0.1.0' })
     expect(card).toBeVisible()
     expect(screen.getByText('0.1.0')).toBeVisible() // 精确 version
     expect(screen.getByText(INTEGRITY_SHORT)).toBeVisible() // 短摘要（前 12 字符 + …）
@@ -177,7 +177,7 @@ describe('plugin-settings', () => {
     expect(localCard).toHaveClass('plugin-card-local')
     expect(screen.getByText(/本地开发包（local-development）/)).toBeVisible()
     // reviewed 卡不标红
-    expect(screen.getByRole('article', { name: 'tabtin-fixed-time 0.1.0' })).not.toHaveClass(
+    expect(screen.getByRole('article', { name: 'wp-fixed-time 0.1.0' })).not.toHaveClass(
       'plugin-card-local',
     )
   })
@@ -191,12 +191,10 @@ describe('plugin-settings', () => {
         packsHandler([pack]),
       ]),
     )
-    expect(await screen.findByRole('article', { name: 'tabtin-fixed-time 0.1.0' })).toBeVisible()
+    expect(await screen.findByRole('article', { name: 'wp-fixed-time 0.1.0' })).toBeVisible()
     expect(screen.queryByRole('button', { name: /^安装/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '创建 Pack' })).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole('checkbox', { name: 'tabtin-fixed-time@0.1.0' }),
-    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: 'wp-fixed-time@0.1.0' })).not.toBeInTheDocument()
     expect(screen.getByText(/插件目录只读/)).toBeVisible()
     expect(screen.getByRole('heading', { name: '已安装插件' })).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Plugin Packs' })).toBeVisible()
@@ -217,8 +215,8 @@ describe('plugin-settings', () => {
         },
       ]),
     )
-    await screen.findByRole('article', { name: 'tabtin-fixed-time 0.1.0' })
-    await user.click(screen.getByRole('button', { name: '安装 tabtin-fixed-time' }))
+    await screen.findByRole('article', { name: 'wp-fixed-time 0.1.0' })
+    await user.click(screen.getByRole('button', { name: '安装 wp-fixed-time' }))
 
     // 安装成功不自动修改任何 Agent Revision：语义文案明确「对新 Pack/Revision 生效」。
     expect(await screen.findByText(/安装成功/)).toBeVisible()
@@ -233,7 +231,7 @@ describe('plugin-settings', () => {
     const init = initOf(postCall as [RequestInfo | URL, RequestInit?])
     expect(new Headers(init.headers).get('idempotency-key')).toMatch(/^[0-9a-f-]{36}$/)
     const parsed = PluginInstallRequestSchema.parse(JSON.parse(String(init.body ?? '')))
-    expect(parsed).toEqual({ name: 'tabtin-fixed-time', version: '0.1.0' })
+    expect(parsed).toEqual({ name: 'wp-fixed-time', version: '0.1.0' })
   })
 
   it('安装失败 403：错误横幅展示 message 与 requestId', async () => {
@@ -251,8 +249,8 @@ describe('plugin-settings', () => {
         },
       ]),
     )
-    await screen.findByRole('article', { name: 'tabtin-fixed-time 0.1.0' })
-    await user.click(screen.getByRole('button', { name: '安装 tabtin-fixed-time' }))
+    await screen.findByRole('article', { name: 'wp-fixed-time 0.1.0' })
+    await user.click(screen.getByRole('button', { name: '安装 wp-fixed-time' }))
     const banner = await screen.findByRole('alert')
     expect(banner).toHaveTextContent('仅 Owner/Admin 可安装插件')
     expect(banner).toHaveTextContent('req-403')
@@ -274,7 +272,7 @@ describe('plugin-settings', () => {
     // 空选择禁止提交
     expect(createButton).toBeDisabled()
     expect(screen.getByText('至少勾选一个已安装插件。')).toBeVisible()
-    await user.click(await screen.findByRole('checkbox', { name: 'tabtin-fixed-time@0.1.0' }))
+    await user.click(await screen.findByRole('checkbox', { name: 'wp-fixed-time@0.1.0' }))
     expect(createButton).toBeEnabled()
     await user.click(createButton)
 
@@ -316,7 +314,7 @@ describe('plugin-settings', () => {
       expect(screen.getByText(PACK_DIGEST)).toBeVisible() // 完整值可见，可手动复制
       // 成员插件（entries）展示（限定在 Pack 卡内：表单勾选行有同名文本）
       const packCard = screen.getByRole('article', { name: 'Pack review-pack' })
-      expect(within(packCard).getByText('tabtin-fixed-time@0.1.0')).toBeVisible()
+      expect(within(packCard).getByText('wp-fixed-time@0.1.0')).toBeVisible()
 
       await user.click(screen.getByRole('button', { name: '复制 review-pack 完整 digest' }))
       expect(await screen.findByText('已复制')).toBeVisible()
@@ -386,7 +384,7 @@ describe('plugin-settings', () => {
         },
       ]),
     )
-    const checkbox = await screen.findByRole('checkbox', { name: 'tabtin-fixed-time@0.1.0' })
+    const checkbox = await screen.findByRole('checkbox', { name: 'wp-fixed-time@0.1.0' })
     await user.type(screen.getByLabelText('Pack 名称'), 'review-pack')
     await user.click(checkbox)
     await user.click(screen.getByRole('button', { name: '创建 Pack' }))

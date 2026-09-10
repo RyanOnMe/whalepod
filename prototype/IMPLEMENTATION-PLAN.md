@@ -1,10 +1,10 @@
-# TabTin 2.0 HTML 产品原型 Implementation Plan
+# WhalePod HTML 产品原型 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 制作一个离线可打开、包含三种结构性界面方向的 TabTin 2.0 可交互 HTML 原型，用于判断 Task Room 与 DSH Run Console 的正确产品关系。
+**Goal:** 制作一个离线可打开、包含三种结构性界面方向的 WhalePod 可交互 HTML 原型，用于判断 Task Room 与 DSH Run Console 的正确产品关系。
 
-**Architecture:** 原型是桌面方案目录中的独立静态站点，不依赖 TabTin 1.x 工作树或任何后端。`index.html` 提供语义化入口，`styles.css` 定义三套互相独立的布局语言，`prototype.js` 保存统一演示数据、渲染三个变体并管理本地交互；URL 查询参数是变体状态的唯一持久来源。
+**Architecture:** 原型是桌面方案目录中的独立静态站点，不依赖主仓工作树或任何后端（原型早于 #133 定名，见 prototype/README）。`index.html` 提供语义化入口，`styles.css` 定义三套互相独立的布局语言，`prototype.js` 保存统一演示数据、渲染三个变体并管理本地交互；URL 查询参数是变体状态的唯一持久来源。
 
 **Tech Stack:** HTML5、CSS Custom Properties、原生 JavaScript、原生 `<dialog>`、本地静态 HTTP 服务器与浏览器点验。
 
@@ -16,7 +16,7 @@
 - 所有产品状态使用同一组 fixture；任何审批、发布和评论都是明确标记的本地演示状态。
 - WCAG 2.1 AA 为基线：语义化元素、键盘可达、可见焦点、Dialog 焦点归还、减少动态效果。
 - 本目录是 Git 仓库之外的评审产物，不创建分支或提交；用校验命令和截图代替提交门。
-- 不读取或修改 `/Users/rysir/PycharmProjects/TabTin` 中的现有业务文件。
+- 不读取或修改 `/Users/rysir/PycharmProjects/WhalePod` 中的现有业务文件。
 
 ---
 

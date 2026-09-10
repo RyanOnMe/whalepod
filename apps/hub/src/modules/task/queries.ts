@@ -1,6 +1,6 @@
-import type { TaskCommentRow, TaskRow } from '@project311/db'
-import { getTask, listTasksByProject } from '@project311/db'
-import type { DbHandle } from '@project311/db'
+import type { TaskCommentRow, TaskRow } from '@whalepod/db'
+import { getTask, listTasksByProject } from '@whalepod/db'
+import type { DbHandle } from '@whalepod/db'
 
 /** Task 的 JSON 视图（03 §2.2；时间为 ISO 字符串）。 */
 export interface TaskView {

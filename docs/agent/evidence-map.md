@@ -10,7 +10,7 @@
 | browser | Playwright trace + 自动证据包（hub/node/vite 日志尾、run 事实、manifest） | `test-results/**/trace.zip`；`artifacts/evidence/e2e/<attemptId>/`（P1-19 collectEvidenceOnFailure，redactText 源头归约，Node READY 行含 Token 已排除） | 生效（P1-19） |
 | hub.http / hub.domain / hub.db / hub.outbox / hub.ws | 结构化 JSON 日志（stdout，含 allowlist 字段） | Hub 进程 stdout；Compose 部署走 `docker compose -f deploy/compose.yml logs hub` | 待 P1-05 起 |
 | hub.db | 团队事实：Team Event、`run_event`、`outbox` | PostgreSQL 直接查；测试用 `scripts/with-test-postgres.mts` 起的临时实例 | 待 P1-04 |
-| node.gateway / node.workspace / node.supervisor | Node 结构化日志、本地 spool、SQLite registry | Node 本地状态目录（方案暂定 `~/.project311-node/`，随定名调整）；诊断走本地 Unix socket | 待 P1-09/12 |
+| node.gateway / node.workspace / node.supervisor | Node 结构化日志、本地 spool、SQLite registry | Node 本地状态目录（`~/.whalepod-node/`；#133 定名后按本行预留调整改名，旧 `~/.project311-node/` 不再写入）；诊断走本地 Unix socket | 待 P1-09/12 |
 | runtime.bridge / dsh.agent | Runtime stderr 尾部（≤8 KiB，脱敏）、NDJSON 协议帧 | Node 暂存；owner-only | 待 P1-11/12 |
 | artifact.store | 内容寻址 blob、candidate 元数据 | Hub `blobs/sha256/ab/<digest>` + DB | 待 P1-15 |
 

@@ -16,7 +16,7 @@
  *   artifact.changed     → ['task', taskId]          （产物列表在 task room）
  *   device.changed       → ['devices']
  */
-import type { ClientFrame, ClientPersistentEvent } from '@project311/protocol'
+import type { ClientFrame, ClientPersistentEvent } from '@whalepod/protocol'
 
 /** 结构最小化：只依赖 invalidateQueries（TanStack Query 的 QueryClient 天然满足）。 */
 export interface QueryClientLike {

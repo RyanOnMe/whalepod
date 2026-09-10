@@ -15,16 +15,16 @@
  * Origin 校验与 Cookie 解析是中间件职责（03 §4），不在本文件。
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { DomainError } from '@project311/domain'
-import type { Database } from '@project311/db'
-import type { ErrorCode } from '@project311/protocol'
-import { CreateRunRequestSchema } from '@project311/protocol'
+import { DomainError } from '@whalepod/domain'
+import type { Database } from '@whalepod/db'
+import type { ErrorCode } from '@whalepod/protocol'
+import { CreateRunRequestSchema } from '@whalepod/protocol'
 import type { ActorContext } from './commands.js'
 import { RunCommandError } from './errors.js'
 import type { RunOrchestrator } from './orchestrator.js'
 import { getRunView } from './queries.js'
-import { getRun, listRunEvents } from '@project311/db'
-import { DecideApprovalRequestSchema } from '@project311/protocol'
+import { getRun, listRunEvents } from '@whalepod/db'
+import { DecideApprovalRequestSchema } from '@whalepod/protocol'
 
 export interface RunRoutesDeps {
   orchestrator: RunOrchestrator

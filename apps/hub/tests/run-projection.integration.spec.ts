@@ -16,10 +16,10 @@
 import { randomUUID } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { Database } from '@project311/db'
-import { insertProject, insertTask, schema } from '@project311/db'
-import { parseClientFrame } from '@project311/protocol'
-import type { ClientFrame } from '@project311/protocol'
+import type { Database } from '@whalepod/db'
+import { insertProject, insertTask, schema } from '@whalepod/db'
+import { parseClientFrame } from '@whalepod/protocol'
+import type { ClientFrame } from '@whalepod/protocol'
 import WebSocket from 'ws'
 import {
   createTestApp,

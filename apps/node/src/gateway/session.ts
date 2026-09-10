@@ -10,7 +10,7 @@
  *   凭证无限重试。
  */
 import type { NodeConfig } from '../config.js'
-import type { NodeDownstream } from '@project311/protocol'
+import type { NodeDownstream } from '@whalepod/protocol'
 import {
   heartbeatFrame,
   helloFrame,
@@ -183,7 +183,7 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
           if (current !== (socket as unknown as SocketLike)) return // 旧连接事件忽略
           current = undefined
           if (revoked) {
-            deps.exit(1, 'device token revoked; run `project311-node pair` to re-pair')
+            deps.exit(1, 'device token revoked; run `whalepod-node pair` to re-pair')
             return
           }
           if (shouldStopReconnect(code)) {

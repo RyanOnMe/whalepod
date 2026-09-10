@@ -16,7 +16,7 @@ let root: string
 let inputsDir: string
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'p311-artifact-input-'))
+  root = mkdtempSync(join(tmpdir(), 'wp-artifact-input-'))
   inputsDir = join(root, 'inputs')
   mkdirSync(inputsDir, { recursive: true })
 })

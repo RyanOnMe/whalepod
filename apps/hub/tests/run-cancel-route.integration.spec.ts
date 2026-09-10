@@ -12,8 +12,8 @@
  */
 import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { Database } from '@project311/db'
-import { getRun, schema } from '@project311/db'
+import type { Database } from '@whalepod/db'
+import { getRun, schema } from '@whalepod/db'
 import {
   apiInject,
   createTestApp,

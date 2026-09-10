@@ -100,7 +100,7 @@ function launcherHandlers(capture?: { body?: unknown; key?: unknown }): MockHand
           {
             workspaceId: WORKSPACE_ID,
             deviceId: DEVICE_ID,
-            name: 'project311',
+            name: 'whalepod',
             kind: 'directory',
             available: true,
           },
@@ -170,7 +170,7 @@ describe('RunLauncher', () => {
     await waitFor(() => expect(screen.getByLabelText('选择 Revision')).toHaveValue(REVISION_ID))
     await screen.findByRole('option', { name: /m4-mini/ })
     await user.selectOptions(screen.getByLabelText('选择设备'), DEVICE_ID)
-    await screen.findByRole('option', { name: 'project311' })
+    await screen.findByRole('option', { name: 'whalepod' })
     await user.selectOptions(screen.getByLabelText('选择 Workspace'), WORKSPACE_ID)
     await user.type(screen.getByLabelText('Run prompt'), '把登录页修好')
 

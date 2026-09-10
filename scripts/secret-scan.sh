@@ -26,7 +26,7 @@ patterns=(
 
 # 本机 tmpdir 锚点（#73）：与 Node os.tmpdir() 同语义——TMPDIR 覆盖，缺省 /tmp。
 # 动态入列（固定串只出现在扫描语料里、不写死进仓库），并加右边界防 /tmp 误配
-# /tmpfoo。扫描证据时它把 os.tmpdir() 形态的残留（如 /tmp/p311-chain-ws-*）判中。
+# /tmpfoo。扫描证据时它把 os.tmpdir() 形态的残留（如 /tmp/wp-chain-ws-*）判中。
 tmp_anchor="${TMPDIR:-/tmp}"
 tmp_anchor="${tmp_anchor%/}"
 if [ -n "$tmp_anchor" ] && [ "$tmp_anchor" != "/" ]; then
@@ -63,10 +63,10 @@ self_test() {
     '-----BEGIN PRIVATE KEY-----' \
     '/Users/bob/private/project' \
     'https://example.com/path?token=secret#fragment' \
-    '/home/alice/workspace/project311/.deploy.env' \
-    '/var/folders/9g/abc123def456789ghi012345jkl6/T/p311-chain-ws-x7/secret.md' \
+    '/home/alice/workspace/whalepod/.deploy.env' \
+    '/var/folders/9g/abc123def456789ghi012345jkl6/T/wp-chain-ws-x7/secret.md' \
     '/private/var/folders/9g/abc123def456789ghi012345jkl6/T/tsx-1000/ipc.sock' \
-    "${tmp_anchor}/p311-selftest-leak.txt")"
+    "${tmp_anchor}/wp-selftest-leak.txt")"
   while IFS= read -r line; do
     n=$((n + 1))
     printf '%s\n' "$line" > "$tmp/line.txt"
@@ -83,7 +83,7 @@ self_test() {
     ok=1
   fi
   # tmpdir 锚点边界自查：/tmpfoo（Linux 缺省锚 /tmp）与 <tmp>/<home> 标记不得误伤。
-  printf '%s\n' 'mentions /tmpfoo-like words and <tmp>/p311-chain markers only' > "$tmp/clean2.txt"
+  printf '%s\n' 'mentions /tmpfoo-like words and <tmp>/wp-chain markers only' > "$tmp/clean2.txt"
   if ! scan_paths "$tmp/clean2.txt" >/dev/null; then
     echo "FAIL  自检：tmpdir 锚点过宽误伤（边界退化）" >&2
     ok=1

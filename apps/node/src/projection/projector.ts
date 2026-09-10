@@ -21,7 +21,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { isAbsolute, relative } from 'node:path'
-import type { ArtifactWire, ProjectedRunEvent, RuntimeOutput } from '@project311/protocol'
+import type { ArtifactWire, ProjectedRunEvent, RuntimeOutput } from '@whalepod/protocol'
 import { redactString, redactValue, type RedactionContext } from './redact.js'
 
 export interface ProjectionContext extends RedactionContext {

@@ -22,7 +22,7 @@ interface E2eEnv {
   setupToken: string
 }
 
-const env = JSON.parse(readFileSync(join(tmpdir(), 'project311-e2e-env.json'), 'utf8')) as E2eEnv
+const env = JSON.parse(readFileSync(join(tmpdir(), 'whalepod-e2e-env.json'), 'utf8')) as E2eEnv
 
 const ALICE_PASSWORD = 'correct horse battery staple'
 const BOB_PASSWORD = 'correct horse battery staple'
@@ -56,7 +56,7 @@ async function hubApi(
 
 async function sessionCookie(context: BrowserContext): Promise<string> {
   const cookies = await context.cookies(env.webOrigin)
-  const session = cookies.find((c) => c.name === 'project311_session')
+  const session = cookies.find((c) => c.name === 'whalepod_session')
   if (session === undefined) throw new Error('会话 Cookie 不存在')
   return `${session.name}=${session.value}`
 }

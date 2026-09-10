@@ -12,7 +12,7 @@ import { chmodSync, existsSync, mkdtempSync, readdirSync, rmSync, statSync } fro
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { PluginManifest } from '@project311/protocol'
+import type { PluginManifest } from '@whalepod/protocol'
 import { sriFor } from '../src/plugin/integrity.js'
 import {
   DEFAULT_MAX_TARBALL_BYTES,
@@ -27,7 +27,7 @@ import { buildTarGz, MAX_UNCOMPRESSED_TAR_BYTES, unpackTarGz } from '../src/plug
 
 const tempDirs: string[] = []
 function mktemp(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'p311-installer-limits-'))
+  const dir = mkdtempSync(join(tmpdir(), 'wp-installer-limits-'))
   tempDirs.push(dir)
   return dir
 }
@@ -48,7 +48,7 @@ afterEach(() => {
   }
 })
 
-const PKG_NAME = 'p311-limits-fixture'
+const PKG_NAME = 'wp-limits-fixture'
 const PKG_VERSION = '0.1.0'
 const ROOT_URL = `https://registry.npmjs.org/${PKG_NAME}/-/${PKG_NAME}-${PKG_VERSION}.tgz`
 

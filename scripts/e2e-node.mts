@@ -9,7 +9,7 @@
  * bin，无外部模型密钥）。相对生产 CLI 的差异只有三处，且全部是 harness 职责：
  *
  * 1. 验收缝（P1-18 既有惯例）：RuntimeSupervisor 的 runtimeEnvPassthrough 显式
- *    列入 DSH_SNAPSHOT_FILE / PROJECT311_RUNTIME_EXTRA_PATCH_FILES——replay
+ *    列入 DSH_SNAPSHOT_FILE / WHALEPOD_RUNTIME_EXTRA_PATCH_FILES——replay
  *    overlay 是 04 文档契约探针的一等概念，生产 cli 该项为空；
  * 2. Workspace 投影上报：**无代偿**。#89 之前本进程自行拼 node.inventory 帧
  *    发出去遮掉了生产缺陷（cli 从不发帧 ⟹ 真实用户 RunLauncher 选不到
@@ -37,7 +37,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { WebSocket } from 'ws'
-import type { NodeDownstream } from '@project311/protocol'
+import type { NodeDownstream } from '@whalepod/protocol'
 import { claimDevice } from '../apps/node/src/pairing/client.js'
 import { loadConfig, saveConfig, type NodeConfig } from '../apps/node/src/config.js'
 import { registryFileRevision, WorkspaceRegistry } from '../apps/node/src/workspace/registry.js'
@@ -157,7 +157,7 @@ const secrets = new SecretStore(join(stateDir, 'secrets.json'))
 await secrets.set('replay', 'default', 'e2e-replay-dummy-key')
 
 // 进程环境：replay overlay 验收缝（默认 approval 快照；控制口可切换）。
-process.env['PROJECT311_RUNTIME_EXTRA_PATCH_FILES'] = REPLAY_PATCH
+process.env['WHALEPOD_RUNTIME_EXTRA_PATCH_FILES'] = REPLAY_PATCH
 process.env['DSH_SNAPSHOT_FILE'] = FIXTURES['approval'] as string
 
 // ---- 观测记录（控制口查询用；不改变产品行为）----
@@ -207,7 +207,7 @@ const supervisor = new RuntimeSupervisor({
   capacity: 2,
   runtimeTimeoutMs: 6 * 60 * 60 * 1000,
   // 验收缝（P1-18 惯例）：replay overlay 变量显式透传，生产 cli 此处为空。
-  runtimeEnvPassthrough: ['DSH_SNAPSHOT_FILE', 'PROJECT311_RUNTIME_EXTRA_PATCH_FILES'],
+  runtimeEnvPassthrough: ['DSH_SNAPSHOT_FILE', 'WHALEPOD_RUNTIME_EXTRA_PATCH_FILES'],
   onStdoutLine: (runId, line) => runManager.handleStdoutLine(runId, line),
 })
 

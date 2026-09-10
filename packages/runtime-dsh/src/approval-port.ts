@@ -1,7 +1,7 @@
 /**
  * Approval answerer（03 §7.1/§7.2）：把 DSH 的 `approval/request` 瀑布转成
  * `approval.requested` output 帧，挂起等待 Node 下行的 `approval.decide`，
- * 一次性映射回 DSH outcome。TabTin 红线：只有 `allowed-once` 是授权
+ * 一次性映射回 DSH outcome。WhalePod 红线：只有 `allowed-once` 是授权
  * （07 §2 user-approval 结论），不做任何永久授权。
  *
  * 决定迟到（turn 已被取消/请求已被 signal 撤回）时静默丢弃并记日志——

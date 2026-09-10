@@ -10,7 +10,7 @@
  *   MAX_UNCOMPRESSED_TAR_BYTES（gzip bomb 第二道闸）。
  */
 import { gunzipSync, gzipSync } from 'node:zlib'
-import { compareCodePoints } from '@project311/protocol/plugin-pack-digest'
+import { compareCodePoints } from '@whalepod/protocol/plugin-pack-digest'
 import { PluginError } from './integrity.js'
 
 export interface TarEntry {

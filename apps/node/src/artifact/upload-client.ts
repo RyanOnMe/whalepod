@@ -6,8 +6,8 @@
  * query 元数据（协议 ArtifactUploadMetadataSchema 的权威形状）+ octet-stream
  * body。瞬时失败（网络/5xx）有界重试；4xx 原样折算错误码不重试。
  */
-import { ArtifactUploadMetadataSchema, ErrorCodeSchema } from '@project311/protocol'
-import type { ArtifactUploadMetadata } from '@project311/protocol'
+import { ArtifactUploadMetadataSchema, ErrorCodeSchema } from '@whalepod/protocol'
+import type { ArtifactUploadMetadata } from '@whalepod/protocol'
 
 export const DEFAULT_UPLOAD_TIMEOUT_MS = 30_000
 export const UPLOAD_ATTEMPTS = 3

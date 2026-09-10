@@ -24,8 +24,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import type { Database } from '@project311/db'
-import { schema } from '@project311/db'
+import type { Database } from '@whalepod/db'
+import { schema } from '@whalepod/db'
 import {
   createTestApp,
   createTestDatabase,

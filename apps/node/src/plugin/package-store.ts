@@ -18,7 +18,7 @@ import {
 } from 'node:fs'
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { canonicalJson, compareCodePoints } from '@project311/protocol/plugin-pack-digest'
+import { canonicalJson, compareCodePoints } from '@whalepod/protocol/plugin-pack-digest'
 import type { TarEntry } from './tar.js'
 import { PluginError } from './integrity.js'
 

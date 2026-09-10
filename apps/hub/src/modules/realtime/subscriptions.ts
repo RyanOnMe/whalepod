@@ -7,7 +7,7 @@
  * - owner-only live delta 经 `publishLive` 注入面分发（P1-13 run 模块接线前，测试用注入 seam）；
  *   非 owner 订阅者永远收不到（04 §6.2：Alice 的连接永不出现 Bob 的 owner 帧）。
  */
-import { ClientFrameSchema } from '@project311/protocol'
+import { ClientFrameSchema } from '@whalepod/protocol'
 import type { TeamEventRecord, TeamEventStore } from './team-event-store.js'
 import { buildPersistentWire } from './team-event-store.js'
 import type { WarnFn } from './team-event-store.js'

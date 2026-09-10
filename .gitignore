@@ -23,8 +23,8 @@ artifacts/evidence/
 !.env.example
 !.env.sample
 
-# Node 端本地状态（Device Token、secrets.json、spool 等；目录名随定名调整）
-.project311-node/
+# Node 端本地状态（Device Token、secrets.json、spool 等；目录名 .whalepod-node，#133 定名）
+.whalepod-node/
 .dsh/
 artifacts/q5/
 artifacts/sbom/

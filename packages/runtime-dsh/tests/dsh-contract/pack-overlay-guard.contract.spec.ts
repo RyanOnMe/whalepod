@@ -41,7 +41,7 @@ import {
 
 const tempRoots: string[] = []
 function makePacksRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'project311-p1-17-guard-'))
+  const dir = mkdtempSync(join(tmpdir(), 'whalepod-p1-17-guard-'))
   tempRoots.push(dir)
   return dir
 }

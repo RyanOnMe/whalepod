@@ -10,8 +10,8 @@
  *   lost(RUNTIME_LOST)——Hub 不要求 Node 侧有任何「复活」命令。
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { Database } from '@project311/db'
-import { getRun, listRunEvents, listTeamEvents, schema } from '@project311/db'
+import type { Database } from '@whalepod/db'
+import { getRun, listRunEvents, listTeamEvents, schema } from '@whalepod/db'
 import { eq } from 'drizzle-orm'
 import {
   createTestDatabase,

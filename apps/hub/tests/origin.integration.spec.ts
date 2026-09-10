@@ -3,7 +3,7 @@
  * 所有非安全方法必须带 exact Origin 与 16–128 字符 Idempotency-Key。
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { Database } from '@project311/db'
+import type { Database } from '@whalepod/db'
 import { createTestApp, createTestDatabase, driveSetup, idemKey, resetDatabase } from './helpers.js'
 import type { TestApp } from './helpers.js'
 

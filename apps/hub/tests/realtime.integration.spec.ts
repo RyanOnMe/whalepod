@@ -16,10 +16,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { AddressInfo } from 'node:net'
 import WebSocket from 'ws'
-import type { Database } from '@project311/db'
-import { appendTeamEvent, schema } from '@project311/db'
-import { parseClientFrame } from '@project311/protocol'
-import type { ClientFrame } from '@project311/protocol'
+import type { Database } from '@whalepod/db'
+import { appendTeamEvent, schema } from '@whalepod/db'
+import { parseClientFrame } from '@whalepod/protocol'
+import type { ClientFrame } from '@whalepod/protocol'
 import {
   createTestApp,
   createTestDatabase,

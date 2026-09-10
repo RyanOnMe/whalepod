@@ -12,13 +12,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { NodeInventorySchema } from '@project311/protocol'
+import { NodeInventorySchema } from '@whalepod/protocol'
 import { WORKSPACE_NAME_MAX, WorkspaceRegistry } from '../src/workspace/registry.js'
 
 let root: string
 
 beforeAll(async () => {
-  root = await mkdtemp(join(tmpdir(), 'p311-ws-registry-'))
+  root = await mkdtemp(join(tmpdir(), 'wp-ws-registry-'))
 })
 
 afterAll(async () => {

@@ -7,8 +7,8 @@
  * 防止「第三份错误码清单」漂移。domain 新增错误码而 protocol 未同步时此测试变红。
  */
 import { describe, expect, it } from 'vitest'
-import { DOMAIN_ERROR_CODES } from '@project311/domain'
-import { ErrorCodeSchema } from '@project311/protocol'
+import { DOMAIN_ERROR_CODES } from '@whalepod/domain'
+import { ErrorCodeSchema } from '@whalepod/protocol'
 
 describe('error code alignment (domain ⊆ protocol)', () => {
   it('every DomainErrorCode is a wire ErrorCode', () => {

@@ -1,11 +1,6 @@
-import type { AgentRow, ProfileRevisionRow } from '@project311/db'
-import {
-  getAgent,
-  getProfileRevision,
-  listAgents,
-  listProfileRevisionsByAgent,
-} from '@project311/db'
-import type { DbHandle } from '@project311/db'
+import type { AgentRow, ProfileRevisionRow } from '@whalepod/db'
+import { getAgent, getProfileRevision, listAgents, listProfileRevisionsByAgent } from '@whalepod/db'
+import type { DbHandle } from '@whalepod/db'
 
 /** Profile Revision 的 JSON 视图（03 §2.3；时间为 ISO 字符串）。 */
 export interface ProfileRevisionView {

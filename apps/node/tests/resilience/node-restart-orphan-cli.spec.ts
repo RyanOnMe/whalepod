@@ -53,11 +53,11 @@ function deadPid(): number {
 
 describe('R9-CLI：真实 cli start 遇孤儿不得崩（#118 TDZ 回归）', () => {
   it('死 pid 孤儿 + runFacts 齐全：lost 归因审计落 stderr、行清除、进程存活', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'p311-r9-cli-'))
+    const home = await mkdtemp(join(tmpdir(), 'wp-r9-cli-'))
     cleanups.push(async () => {
       await rm(home, { recursive: true, force: true })
     })
-    const configDir = join(home, '.project311-node')
+    const configDir = join(home, '.whalepod-node')
     const stateDir = join(configDir, 'state')
     mkdirSync(stateDir, { recursive: true })
     writeFileSync(

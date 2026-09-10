@@ -1,5 +1,5 @@
 {
-  "name": "project311-fixed-time",
+  "name": "whalepod-fixed-time",
   "version": "0.1.0",
   "description": "DSH tool plugin: registers a fixed_time tool that returns one constant UTC timestamp.",
   "license": "Apache-2.0",

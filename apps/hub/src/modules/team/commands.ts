@@ -1,5 +1,5 @@
 import { eq, sql } from 'drizzle-orm'
-import { digestPluginPack } from '@project311/protocol/plugin-pack-digest'
+import { digestPluginPack } from '@whalepod/protocol/plugin-pack-digest'
 import {
   consumeInvite,
   disableUser,
@@ -14,8 +14,8 @@ import {
   revokeSessionsForUser,
   schema,
   unwrapPgError,
-} from '@project311/db'
-import type { Database } from '@project311/db'
+} from '@whalepod/db'
+import type { Database } from '@whalepod/db'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
 import { SESSION_TTL_MS } from '../auth/session.js'
@@ -37,7 +37,7 @@ export const CORE_EMPTY_PACK_DIGEST = digestPluginPack({ schemaVersion: 1, packa
 
 /**
  * core-empty digest 断代迁移的并发串行化锁键（#55，P1-17 review M10）。
- * 固定 int8 常量 = parseInt(sha256('project311:core-empty-pack-digest-migration')
+ * 固定 int8 常量 = parseInt(sha256('whalepod:core-empty-pack-digest-migration')
  * 前 8 位 hex, 16)（与 plugin/commands.ts advisoryKey 同一推导风格，值在提交前
  * 现算后冻结于此，便于全文检索）。全仓库唯一：与 schema 迁移锁键 20260825
  * （packages/db/src/migrate.ts）及插件安装 (name@version) 派生键互不共用；

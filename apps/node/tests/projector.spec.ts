@@ -15,7 +15,7 @@
  * - 未登记事件类型 → 不投影（fail-silent 是投影纪律，不是错误）
  */
 import { describe, expect, it } from 'vitest'
-import type { RuntimeOutput } from '@project311/protocol'
+import type { RuntimeOutput } from '@whalepod/protocol'
 import { RunProjector, type ProjectionContext } from '../src/projection/projector.js'
 
 const CTX: ProjectionContext = {
@@ -33,8 +33,8 @@ const CUSTOM_STATE_CTX: ProjectionContext = {
   runId: CTX.runId,
   workspaceRoot: CTX.workspaceRoot,
   homeDir: CTX.homeDir,
-  stateDir: '/var/lib/project311/state',
-  packsRoot: '/var/lib/project311/state/plugin-packs',
+  stateDir: '/var/lib/whalepod/state',
+  packsRoot: '/var/lib/whalepod/state/plugin-packs',
 }
 
 const NOW = new Date('2026-08-25T10:00:00.000Z')
@@ -447,17 +447,17 @@ describe('runtime 生命周期帧', () => {
 
   it('runtime.fatal：summary 含 packsRoot 下绝对路径（pack overlay）时投影已脱敏（P1-17 红线）', () => {
     const p = new RunProjector(CUSTOM_STATE_CTX, { now: () => NOW })
-    const overlayPath = '/var/lib/project311/state/plugin-packs/abcdef1234/cordis.overlay.yml'
+    const overlayPath = '/var/lib/whalepod/state/plugin-packs/abcdef1234/cordis.overlay.yml'
     const out = p.projectRuntimeOutput(
       lifecycleFrame('runtime.fatal', {
         code: 'RUNTIME_START_FAILED',
-        summary: `project311-runtime: plugin tree failed to load: failed to read overlay ${overlayPath}: ENOENT`,
+        summary: `whalepod-runtime: plugin tree failed to load: failed to read overlay ${overlayPath}: ENOENT`,
       }),
     )
     const owner = out.events.find((e) => e.audience === 'owner')
     const ownerSummary = (owner!.event as { summary: string }).summary
     expect(ownerSummary).toContain('<packs-root>/abcdef1234/cordis.overlay.yml')
-    expect(ownerSummary).not.toContain('/var/lib/project311')
+    expect(ownerSummary).not.toContain('/var/lib/whalepod')
     expect(ownerSummary).not.toContain(overlayPath)
     const project = out.events.find((e) => e.audience === 'project')
     expect(project!.event).toEqual({
@@ -473,13 +473,13 @@ describe('runtime 生命周期帧', () => {
       lifecycleFrame('runtime.fatal', {
         code: 'RUNTIME_START_FAILED',
         summary:
-          'failed to read config file /var/lib/project311/state/runtime-home/run-1/settings.yaml',
+          'failed to read config file /var/lib/whalepod/state/runtime-home/run-1/settings.yaml',
       }),
     )
     const owner = out.events.find((e) => e.audience === 'owner')
     const ownerSummary = (owner!.event as { summary: string }).summary
     expect(ownerSummary).toContain('<state-dir>/runtime-home/run-1/settings.yaml')
-    expect(ownerSummary).not.toContain('/var/lib/project311')
+    expect(ownerSummary).not.toContain('/var/lib/whalepod')
   })
 
   it('run.cancelled → 双受众 forced=false', () => {

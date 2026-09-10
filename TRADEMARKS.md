@@ -1,8 +1,9 @@
 # Trademark Policy
 
-project311 is the project's development codename; the final project name and
-logo will be announced separately. This policy applies to the codename, the
-final name, and any project logos or other brand assets (together, the "Marks").
+WhalePod is the project's official name (decided in #133, 2026-09; former
+development codenames: tabtin, project311). This policy applies to the name
+WhalePod, its historical codenames, and any project logos or other brand
+assets (together, the "Marks").
 
 ## What the license does not grant
 
@@ -19,7 +20,7 @@ its maintainers, without separate written permission.
 ## Allowed without asking
 
 - Truthful, referential use: describing your software as "based on",
-  "compatible with", or "built with project311" (or the final project name).
+  "compatible with", or "built with whalepod" (or the final project name).
 - Referring to the project by name in articles, talks, documentation, and
   comparisons, as long as it is clear you are not speaking for the project.
 - Reproducing unmodified copyright and attribution notices, as the license
@@ -28,8 +29,8 @@ its maintainers, without separate written permission.
 ## Requires separate permission
 
 - Using the Marks in the name of a fork, derivative distribution, hosted
-  service, or commercial offering (for example, names like "project311 Cloud"
-  or "project311 Pro").
+  service, or commercial offering (for example, names like "whalepod Cloud"
+  or "whalepod Pro").
 - Using project logos or stylized wordmarks on merchandise, marketing material,
   or your own product branding.
 - Any use that could reasonably lead others to believe your product or service

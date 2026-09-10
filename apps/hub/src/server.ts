@@ -8,7 +8,7 @@
  *   同周期驱动 Approval 过期清扫（P1-14，G5-05 pending → expired 等价拒绝）。
  * 进程退出时清理定时器与连接。
  */
-import { applyMigrations, createDatabase, getTeam, Outbox } from '@project311/db'
+import { applyMigrations, createDatabase, getTeam, Outbox } from '@whalepod/db'
 import { buildApp } from './app.js'
 import { loadConfig } from './config.js'
 import { SetupTokenStore } from './modules/team/setup-token.js'
