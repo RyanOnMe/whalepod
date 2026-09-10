@@ -33,7 +33,7 @@ import {
   waitForRunStatus,
   inputManifestForRun,
   workspaceCanonicalPath,
-  releaseRuntime,
+  waitForRuntimeReleased,
   activeRuntimes,
   restartHub,
   restartNode,
@@ -298,7 +298,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     await expect(shared.bob!.getByText('已完成').first()).toBeVisible({ timeout: 30_000 })
     expect(done.artifacts.length).toBe(1)
     shared.artifactId = done.artifacts[0]!.id
-    await releaseRuntime(runId) // 终态已确认：回收 Runtime 进程（容量留给后续场景）。
+    await waitForRuntimeReleased(runId) // #88：终态须由产品路径自动回收（runtime.shutdown），容量释放给后续场景。
   })
 
   test('G5-04：Bob 拒绝审批——工具失败结果回 Runtime、零发布副作用、终态两端可见', async () => {
@@ -355,7 +355,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
         await expect(events).not.toContainText('Artifact published.')
       }
 
-      await releaseRuntime(runId)
+      await waitForRuntimeReleased(runId)
     } finally {
       await setRuntimeFixture('approval')
     }
@@ -413,7 +413,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     await expect(shared.bob!.getByTestId('approval-card')).toBeVisible({ timeout: 30_000 })
     await shared.bob!.getByTestId('approve-button').click()
     await waitForRunStatus(runId, 'completed', 120_000)
-    await releaseRuntime(runId)
+    await waitForRuntimeReleased(runId)
 
     // 判定（Node 侧观测缝）：Reviewer 输入按清单受控消费，不继承 Builder Workspace。
     const manifest = await inputManifestForRun(runId)
@@ -488,7 +488,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
       ).toBeLessThanOrEqual(1) // 只可能来自 completed 摘要；无原文流行泄漏通道
       // 注：project 受众同样携带 run.phase 缩水行（03 §8：阶段对团队可见），
       // 差异点在 assistant.message / tool 预览 / approval 正文——上面按受众行核验。
-      await releaseRuntime(runId)
+      await waitForRuntimeReleased(runId)
     } finally {
       // 二评顺手项：无论成败都恢复默认 approval 快照（失败不再污染后续场景）。
       await setRuntimeFixture('approval')
@@ -516,7 +516,7 @@ test.describe('P1-19 恢复场景（R1/R4/R5/R7/R8/R9）', () => {
     await expect(shared.bob!.getByTestId('approval-card')).toBeVisible({ timeout: 30_000 })
     await shared.bob!.getByTestId('approve-button').click()
     await waitForRunStatus(runId, 'completed', 120_000)
-    await releaseRuntime(runId)
+    await waitForRuntimeReleased(runId)
   }
 
   test('R1：Hub 重启后 Node 重连、事件补发且 Run 不误终态', async () => {
@@ -583,7 +583,7 @@ test.describe('P1-19 恢复场景（R1/R4/R5/R7/R8/R9）', () => {
     // UI 呈现（责任人 reload 后见「丢失」徽标 + 未知副作用警示）。
     await shared.bob!.reload()
     await expect(shared.bob!.getByText('丢失').first()).toBeVisible({ timeout: 30_000 })
-    await releaseRuntime(runId) // Runtime 进程仍在等审批：显式回收（不重放工具）。
+    await waitForRuntimeReleased(runId) // #88：Hub 判 lost 后心跳仍报 active → admin run.cancel 收敛，进程由产品路径回收。
   })
 
   test('R7：Outbox 重发按 commandId 幂等——只启动一个 Runtime', async () => {
@@ -776,5 +776,5 @@ async function approveAndCompleteLoose(runId: string): Promise<void> {
   await expect(shared.bob!.getByTestId('approval-card')).toBeVisible({ timeout: 30_000 })
   await shared.bob!.getByTestId('approve-button').click()
   await waitForRunStatus(runId, 'completed', 120_000)
-  await releaseRuntime(runId)
+  await waitForRuntimeReleased(runId)
 }

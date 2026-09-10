@@ -106,6 +106,18 @@ pnpm exec playwright test --project=p1-07   # 单项目冷启（理由见上方�
   真实 10s 心跳节奏。删补丁后 `bash scripts/q5-loop.sh 20` **20/20 连续冷启全绿**
   （每轮 task-room 1/1 + full-chain 13/13，轮次日志 `artifacts/q5/run-*.log`），
   其中含 R5 lost 判定场景——竞态原复现路径（约五成概率）20 轮零复发。#87 关账。
+- **后续更正（#88，2026-09-09）**：「装配兜底」中**容量/回收一支已删除**——产品侧
+  修复两腿：① Node 在终态单一收敛点（finalizeRun）下发 `runtime.shutdown`
+  （协议帧，bridge/bin 收敛后 EOF 退出），宽限内不退升级 SIGTERM→SIGKILL，
+  supervisor 6h 硬超时降为最后兜底；② Hub 心跳见「已终态 Run 仍报 active」
+  入队 admin run.cancel 收敛 Node 侧滞留 Runtime（R5 断连窗形态；账本不动，
+  终态禁复活），Node 对本地已终态 Run 的迟到 cancel 只回 ack（免打扰守卫）。
+  E2E 装配随之收敛为**生产同值**（capacity 2 / runtimeTimeoutMs 6h），
+  `/release` 回收缝删除，spec 改为断言产品自动回收（waitForRuntimeReleased）。
+  删缝后 `bash scripts/q5-loop.sh 20` **20/20 连续冷启全绿**（生产同值装配：
+  capacity 2 / 6h 硬超时兜底 / 无 `/release` 缝；每轮 task-room 1/1 +
+  full-chain 13/13，含 R5 收敛取消与 G5/G7-01 自动回收断言；轮次日志
+  `artifacts/q5/run-*.log`）。#88 关账。#90 分账状态不变。
 
 ## 验的是哪条用户路径
 
@@ -174,12 +186,12 @@ cli.ts 恒为空）。
      reconcile 加新生儿宽限 + Run 出生时间走领域时钟；E2E 装配的「受理即补发心跳 +
      activeRunIds 超集」monkey-patch 已删除，删后 Q5 20 连全绿（见头部更正段）。
      残留跟进：#124（宽限锚点精确化 + lastSeenAt 时钟域收敛）、#123（观测收口）。
-  3. **终态 Run 的 Runtime 进程滞留（立账 #88）**：completed 后 Node 不发
+  3. **终态 Run 的 Runtime 进程滞留（立账 #88，已修）**：completed 后 Node 不发
      `runtime.shutdown`（bridge/bin 支持但无人调用），进程占容量到 supervisor 硬
-     超时——生产值 **6h**（apps/node/src/cli.ts:172）且生产 `capacity: 2`
-     （cli.ts:171）：两个终态 Run 即可把设备容量占死最长 6 小时。E2E 装配以
-     capacity 6 / 120s 硬超时 + `/release` 回收缝兜底——**该产品行为本 E2E
-     测不到，Q5 绿是在装配兜底下取得的**；#88 修复后缝应收敛为生产同值。
+     超时——生产值 **6h** 且 `capacity: 2`：两个终态 Run 即可把设备容量占死
+     最长 6 小时。**已修（#88）**：Node 终态收敛点发 `runtime.shutdown` +
+     宽限信号升级；Hub 心跳收敛终态仍 active 的 Run（admin run.cancel）；
+     E2E 装配收敛为生产同值、`/release` 缝删除（见头部更正段）。
   4. **run.status_request 探针应答不 ack（立账 #90·问题1）**：Node 回快照但不回 command.ack，
      outbox 对该行持续退避重发（观测到 attempts 10+）。功能无损，但属噪声，
      建议探针纳入 ack 或走非 outbox 通道。

@@ -201,12 +201,11 @@ const supervisor = new RuntimeSupervisor({
   registry,
   secrets,
   stateDbPath: join(stateDir, 'supervisor.sqlite'),
-  // E2E 单 Node 承载多轮多 Run（20 连跑复用同一环境）；终态回收见下。
-  // ⚠ 与生产差异（立账 #88）：生产 capacity:2 / runtimeTimeoutMs:6h（cli.ts:171-172），
-  //   且无人发 runtime.shutdown——终态进程占容量最长 6h。Q5 绿是在本装配兜底下
-  //   取得的，该产品行为本 E2E 测不到；#88 修复后此处应收敛为生产同值。
-  capacity: 6,
-  runtimeTimeoutMs: 120_000,
+  // E2E 与生产同值（#88 已修：Run 终态即 runtime.shutdown 主动回收 + Hub 心跳
+  // 收敛 admin run.cancel；supervisor 硬超时降为最后兜底）。单 Node 串行场景
+  // 在 capacity 2 下可行，正是本修复的验收面之一。
+  capacity: 2,
+  runtimeTimeoutMs: 6 * 60 * 60 * 1000,
   // 验收缝（P1-18 惯例）：replay overlay 变量显式透传，生产 cli 此处为空。
   runtimeEnvPassthrough: ['DSH_SNAPSHOT_FILE', 'PROJECT311_RUNTIME_EXTRA_PATCH_FILES'],
   onStdoutLine: (runId, line) => runManager.handleStdoutLine(runId, line),
@@ -443,14 +442,6 @@ const server = createServer((req, res) => {
       case '/ack-drop': {
         ackDropRemaining += Number(body['count'] ?? 1)
         return reply(200, { ok: true, droppedSoFar: ackDropped.length })
-      }
-      case '/release': {
-        // 回收缝：等同 supervisor 硬超时到期动作（终态 Run 的 Runtime 进程在产品
-        // 语义里滞留到 timeout；E2E 多轮复用单 Node，spec 在确认终态后显式回收）。
-        const runId = String(body['runId'] ?? '')
-        const wasActive = supervisor.isActive(runId)
-        if (wasActive) supervisor.terminate(runId)
-        return reply(200, { ok: true, wasActive })
       }
       case '/runtimes': {
         const runtimes = supervisor

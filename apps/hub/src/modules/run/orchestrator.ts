@@ -37,7 +37,7 @@ import {
   unwrapPgError,
 } from '@project311/db'
 import type { ErrorCode, ProjectedRunEvent, RunSnapshot } from '@project311/protocol'
-import { parseNodeFrame, RunStartSchema } from '@project311/protocol'
+import { parseNodeFrame, RunCancelSchema, RunStartSchema } from '@project311/protocol'
 import { cancelPendingApprovalsInTransaction, cancelRunInTransaction } from './cancel.js'
 import { decideApprovalInTransaction } from './decide.js'
 import type { ApprovalDecisionInput } from './decide.js'
@@ -75,6 +75,9 @@ export class RunOrchestrator {
   private readonly warnFn: (message: string, context: Record<string, unknown>) => void
   /** deviceId → 最近心跳；reconciler 据此判断「Node 在线但已没有该 Run」。 */
   readonly deviceActivity = new Map<string, DeviceActivity>()
+
+  /** #88：已发收敛取消的终态 Run（本进程内去重；重启重发由 Node 侧幂等吸收）。 */
+  private readonly terminalReleaseNotified = new Set<string>()
 
   constructor(deps: RunOrchestratorDeps) {
     this.database = deps.database
@@ -362,6 +365,12 @@ export class RunOrchestrator {
           at: now,
           activeRunIds: new Set(frame.payload.activeRunIds),
         })
+        // #88：心跳仍把 Hub 已终态的 Run 列为 active（Node 侧 Runtime 滞留——
+        // 如断连期被判 lost、本地还在等审批）→ 入队 admin run.cancel 让 Node
+        // 走既有取消升级链收敛进程。不动账本状态（终态禁复活），每 Run 本进程
+        // 内只发一次（心跳 10s 一拍，不得刷出重发风暴；Hub 重启重发无害——
+        // Node 侧幂等：本地已终态只回 ack）。
+        await this.convergeTerminalActiveRuns(device, frame.payload.activeRunIds, now)
         return
       default:
         return
@@ -655,6 +664,53 @@ export class RunOrchestrator {
       } catch (error) {
         if (error instanceof DomainError && error.code === 'INVALID_RUN_TRANSITION') return
         throw error
+      }
+    })
+  }
+
+  /**
+   * #88：心跳 activeRunIds 里的 Hub 终态 Run → 入队 admin run.cancel（收敛取消）。
+   * 只入队、不迁移状态（终态禁复活：账本行是真相，Node 侧滞留 Runtime 是要
+   * 回收的副作用）。幂等由 terminalReleaseNotified（进程内）+ Node 免打扰
+   * 守卫（本地已终态只回 ack）双层保证；run 不属于该设备或不存在时跳过。
+   */
+  private async convergeTerminalActiveRuns(
+    device: AuthenticatedDevice,
+    activeRunIds: readonly string[],
+    now: Date,
+  ): Promise<void> {
+    const candidates = activeRunIds.filter((id) => !this.terminalReleaseNotified.has(id))
+    if (candidates.length === 0) return
+    await this.database.transaction(async (tx) => {
+      for (const runId of candidates) {
+        const [run] = await tx
+          .select()
+          .from(schema.runs)
+          .where(eq(schema.runs.id, runId))
+          .for('update')
+        if (run === undefined) continue
+        if (!isTerminal(run.status)) continue // 活跃 Run 每拍如实上报是常态，不记账
+        if (run.deviceId !== device.deviceId) continue // 心跳声明他人设备的 Run：不动作
+        this.terminalReleaseNotified.add(runId)
+        const commandId = randomUUID()
+        const payload = RunCancelSchema.shape.payload.parse({
+          commandId,
+          runId: run.id,
+          cause: 'admin',
+        })
+        await this.outbox.enqueue(tx, {
+          id: commandId,
+          deviceId: run.deviceId,
+          type: 'run.cancel',
+          payload,
+          notBefore: now,
+        })
+        this.warnFn('terminal run still active on node; enqueuing convergence cancel', {
+          component: 'hub.orchestrator',
+          runId: run.id,
+          status: run.status,
+          deviceId: device.deviceId,
+        })
       }
     })
   }

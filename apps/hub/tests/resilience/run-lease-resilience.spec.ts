@@ -284,3 +284,64 @@ describe('R9 (hub side): node-reported lost snapshot converges the run', () => {
     expect((await getRun(database.db, run.id))?.status).toBe('queued')
   })
 })
+
+describe('#88: 终态 Run 仍被心跳报 active → 收敛 run.cancel(admin) 回收 Runtime', () => {
+  it('lost 后重连心跳仍列出该 Run → 入队 admin run.cancel；账本状态不动（禁复活）', async () => {
+    const { harness, run } = await dispatchingRun()
+    harness.clock.advance(31_000)
+    await harness.orchestrator.reconcileLeases(harness.clock.now())
+    expect((await getRun(database.db, run.id))?.status).toBe('lost')
+
+    // Node 重连：本地 Runtime 还在（如等审批），心跳如实列出 → Hub 发收敛取消。
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      heartbeatFrame(ids.deviceId, [run.id]),
+    )
+    await harness.worker.dispatchOnce()
+
+    const cancels = harness.gateway.sent.filter(
+      (f) => f.frame.type === 'run.cancel' && f.frame.payload.runId === run.id,
+    )
+    expect(cancels).toHaveLength(1)
+    expect(
+      (cancels[0]!.frame as Extract<(typeof cancels)[0]['frame'], { type: 'run.cancel' }>).payload
+        .cause,
+    ).toBe('admin')
+    // 账本不动：无状态迁移、无 run.changed 重开。
+    expect((await getRun(database.db, run.id))?.status).toBe('lost')
+    expect((await getRun(database.db, run.id))?.failureCode).toBe('RUNTIME_LOST')
+  })
+
+  it('同一 Run 的收敛取消只入队一次（心跳每 10s 一拍，不得刷出重发风暴）', async () => {
+    const { harness, run } = await dispatchingRun()
+    harness.clock.advance(31_000)
+    await harness.orchestrator.reconcileLeases(harness.clock.now())
+
+    // pump = dispatchOnce + ack 回流处理：ack 后 outbox 行收敛，不再重发；
+    // 后续心跳命中进程内去重，不再入队第二条。
+    for (let round = 0; round < 3; round += 1) {
+      harness.clock.advance(10_000)
+      await harness.orchestrator.ingestNodeEvent(
+        harness.deviceFor(ids),
+        heartbeatFrame(ids.deviceId, [run.id]),
+      )
+      await harness.pump(ids)
+    }
+    const cancels = harness.gateway.sent.filter(
+      (f) => f.frame.type === 'run.cancel' && f.frame.payload.runId === run.id,
+    )
+    expect(cancels).toHaveLength(1)
+  })
+
+  it('非终态 Run 照常出现在心跳里 → 绝不误发收敛取消', async () => {
+    const { harness, run } = await dispatchingRun()
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      heartbeatFrame(ids.deviceId, [run.id]),
+    )
+    await harness.worker.dispatchOnce()
+    const cancels = harness.gateway.sent.filter((f) => f.frame.type === 'run.cancel')
+    expect(cancels).toHaveLength(0)
+    expect((await getRun(database.db, run.id))?.status).toBe('dispatching')
+  })
+})

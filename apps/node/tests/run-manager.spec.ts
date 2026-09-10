@@ -22,7 +22,7 @@ import { EventStore } from '../src/spool/event-store.js'
 import { SecretStore } from '../src/secret/store.js'
 import { WorkspaceRegistry } from '../src/workspace/registry.js'
 import { RuntimeSupervisor } from '../src/supervisor/runtime-supervisor.js'
-import { RunManager } from '../src/run/run-manager.js'
+import { RunManager, type RunManagerTimers } from '../src/run/run-manager.js'
 import type { RuntimeDriver, RuntimeHandle, RuntimeStartSpec } from '../src/runtime-driver.js'
 
 let root: string
@@ -76,10 +76,12 @@ interface FakeRuntime {
   readonly runId: string
   readonly stdin: RuntimeCommand[]
   readonly emitStdout: (line: string) => void
+  readonly emitExit: (code: number | null, signal: string | null) => void
   terminateCount: number
+  forceKillCount: number
 }
 
-/** 纯内存 fake driver：记录 stdin 帧；stdout 由测试脚本化注入。 */
+/** 纯内存 fake driver：记录 stdin 帧；stdout/exit 由测试脚本化注入。 */
 function makeFakeDriver(): { driver: RuntimeDriver; runtimes: FakeRuntime[] } {
   const runtimes: FakeRuntime[] = []
   const driver: RuntimeDriver = {
@@ -88,7 +90,9 @@ function makeFakeDriver(): { driver: RuntimeDriver; runtimes: FakeRuntime[] } {
         runId: spec.runId,
         stdin: [],
         terminateCount: 0,
+        forceKillCount: 0,
         emitStdout: (line) => ctx.onStdout(line),
+        emitExit: (code, signal) => ctx.onExit(code, signal),
       }
       runtimes.push(runtime)
       return {
@@ -102,6 +106,11 @@ function makeFakeDriver(): { driver: RuntimeDriver; runtimes: FakeRuntime[] } {
     async terminate(handle) {
       const runtime = runtimes[runtimes.length - 1]
       if (runtime !== undefined) runtime.terminateCount += 1
+      void handle
+    },
+    async forceKill(handle) {
+      const runtime = runtimes[runtimes.length - 1]
+      if (runtime !== undefined) runtime.forceKillCount += 1
       void handle
     },
   }
@@ -705,5 +714,132 @@ describe('P1-15：Artifact 采集与 Reviewer 输入接线', () => {
     )
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(inputs.cleaned).toEqual([RUN_ID])
+  })
+})
+
+describe('#88 终态回收：runtime.shutdown 主动释放 + 宽限信号升级', () => {
+  /** 手动时钟：按序点火未清除的计时器（fireNext 返回是否有可点火的）。 */
+  function manualTimers() {
+    interface Entry {
+      id: number
+      fn: () => void
+      cleared: boolean
+      fired: boolean
+    }
+    let seq = 0
+    const entries: Entry[] = []
+    const timers: RunManagerTimers = {
+      setTimeout: ((fn: () => void, _ms?: number) => {
+        seq += 1
+        entries.push({ id: seq, fn, cleared: false, fired: false })
+        return seq
+      }) as unknown as typeof setTimeout,
+      clearTimeout: ((id: unknown) => {
+        const entry = entries.find((x) => x.id === id)
+        if (entry !== undefined) entry.cleared = true
+      }) as unknown as typeof clearTimeout,
+    }
+    const fireNext = (): boolean => {
+      const entry = entries.find((x) => !x.cleared && !x.fired)
+      if (entry === undefined) return false
+      entry.fired = true
+      entry.fn()
+      return true
+    }
+    return { timers, fireNext }
+  }
+
+  function completedFrame(runId: string): string {
+    return JSON.stringify({
+      protocolVersion: 1,
+      messageId: randomUUID(),
+      sentAt: new Date().toISOString(),
+      type: 'run.completed',
+      payload: { runId, dshSessionId: 'session-1' },
+    })
+  }
+
+  it('run.completed 终态 → 下发 runtime.shutdown；Runtime 退出即释放容量，零信号升级', async () => {
+    const kit = manualTimers()
+    const h = await makeHarness({ managerDeps: { timers: kit.timers } })
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    h.runtimes[0]!.emitStdout(completedFrame(RUN_ID))
+
+    // 终态单一收敛点即发 runtime.shutdown（协议帧，bridge/bin 收敛后 EOF 退出）。
+    const shutdown = h.runtimes[0]!.stdin.find((c) => c.type === 'runtime.shutdown')
+    expect(shutdown).toBeDefined()
+    expect((shutdown as Extract<RuntimeCommand, { type: 'runtime.shutdown' }>).payload.runId).toBe(
+      RUN_ID,
+    )
+
+    // Runtime 按约退出 → 容量立即释放，宽限计时器清除，绝不发信号杀已退进程。
+    h.runtimes[0]!.emitExit(0, null)
+    expect(h.supervisor.isActive(RUN_ID)).toBe(false)
+    expect(h.supervisor.activeRunIds()).toEqual([])
+    expect(kit.fireNext()).toBe(false) // 升级计时器已全部清除
+    expect(h.runtimes[0]!.terminateCount).toBe(0)
+    expect(h.runtimes[0]!.forceKillCount).toBe(0)
+  })
+
+  it('shutdown 宽限到期仍滞留 → SIGTERM；再宽限仍滞留 → SIGKILL（硬超时降为最后兜底）', async () => {
+    const kit = manualTimers()
+    const h = await makeHarness({ managerDeps: { timers: kit.timers } })
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    h.runtimes[0]!.emitStdout(completedFrame(RUN_ID))
+
+    expect(kit.fireNext()).toBe(true) // 第一段宽限到期
+    expect(h.runtimes[0]!.terminateCount).toBe(1)
+    expect(h.runtimes[0]!.forceKillCount).toBe(0)
+    expect(kit.fireNext()).toBe(true) // 第二段宽限到期
+    expect(h.runtimes[0]!.forceKillCount).toBe(1)
+    expect(kit.fireNext()).toBe(false) // 升级链收敛，无更多计时器
+  })
+
+  it('runtime.fatal 终态同样走 shutdown 释放（同一收敛点，不只 completed）', async () => {
+    const h = await makeHarness()
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    h.runtimes[0]!.emitStdout(
+      JSON.stringify({
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: new Date().toISOString(),
+        type: 'runtime.fatal',
+        payload: { runId: RUN_ID, code: 'INTERNAL_ERROR', summary: 'boom' },
+      }),
+    )
+    expect(h.runtimes[0]!.stdin.some((c) => c.type === 'runtime.shutdown')).toBe(true)
+  })
+
+  it('本地已终态的 Run 收到迟到 run.cancel → 只回 ack，绝不再打扰 Runtime', async () => {
+    // Hub 心跳收敛（终态仍 active → admin run.cancel）与 Node 正常 shutdown 释放
+    // 之间存在竞态窗：cancel 到达时本地已终态，免打扰守卫按 finalFacts 判定。
+    const h = await makeHarness()
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    h.runtimes[0]!.emitStdout(completedFrame(RUN_ID))
+    const stdinBefore = h.runtimes[0]!.stdin.length
+
+    await h.manager.handleFrame({
+      protocolVersion: 1,
+      messageId: 'c-late',
+      sentAt: new Date().toISOString(),
+      type: 'run.cancel',
+      payload: { commandId: 'c9c9c9c9-c9c9-4999-8999-c9c9c9c9c9c9', runId: RUN_ID, cause: 'admin' },
+    } as NodeDownstream)
+
+    const ack = h.sentFrames().findLast((f) => f.type === 'command.ack')
+    expect(ack?.payload).toMatchObject({
+      commandId: 'c9c9c9c9-c9c9-4999-8999-c9c9c9c9c9c9',
+      accepted: true,
+    })
+    expect(h.runtimes[0]!.stdin.length).toBe(stdinBefore) // 不再下发任何帧
+    expect(h.runtimes[0]!.stdin.some((c) => c.type === 'run.cancel')).toBe(false)
+  })
+
+  it('supervisor lost（runtime 已死）终态路径不发 shutdown——没有可收的对象', async () => {
+    const h = await makeHarness()
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    h.runtimes[0]!.emitExit(1, null) // Runtime 无终态帧即死 → runtime_lost 归因
+    const shutdown = h.runtimes[0]!.stdin.find((c) => c.type === 'runtime.shutdown')
+    expect(shutdown).toBeUndefined()
   })
 })
