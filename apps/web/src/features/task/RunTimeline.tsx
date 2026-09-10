@@ -16,6 +16,7 @@ import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
 import { RUN_STATUS_LABEL } from '../../shared/format.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
+import { rerunLineageLabel, runOrdinalLabels } from './runLabels.js'
 import type { RunEventItem, Session, TaskRoomRun, TaskView } from '../../shared/api/types.js'
 
 export interface RunTimelineProps {
@@ -33,6 +34,8 @@ export function RunTimeline({ runs, selectedRunId, onSelect }: RunTimelineProps)
       </p>
     )
   }
+  // #162：行标签是「第 N 次运行」，不是 `Run 01a08c11`（短 id 不再是标签）。
+  const ordinal = runOrdinalLabels(runs)
   return (
     <ul className="run-list" role="list">
       {runs.map((run) => (
@@ -40,11 +43,15 @@ export function RunTimeline({ runs, selectedRunId, onSelect }: RunTimelineProps)
           <button
             type="button"
             className={`run-item-button${selectedRunId === run.id ? ' selected' : ''}`}
+            data-run-id={run.id}
             onClick={() => onSelect?.(run.id)}
             aria-pressed={selectedRunId === run.id}
           >
             <div className="run-item-head">
-              <span className="run-id">Run {run.id.slice(0, 8)}</span>
+              {/* 完整 id 悬停在 title 里（原始值不丢，只是不冒充标签）。 */}
+              <span className="run-label" title={run.id}>
+                {ordinal.get(run.id)}
+              </span>
               <span className={`badge badge-run badge-run-${run.status}`}>
                 {RUN_STATUS_LABEL[run.status]}
               </span>
@@ -71,8 +78,8 @@ export function RunTimeline({ runs, selectedRunId, onSelect }: RunTimelineProps)
             </dl>
             {/* P1-16 G7-04：显式重跑血缘（03 §2.6 rerun_of_run_id）。 */}
             {run.rerunOfRunId !== null ? (
-              <p className="run-lineage" data-testid="run-lineage">
-                由 Run {run.rerunOfRunId.slice(0, 8)} 重跑
+              <p className="run-lineage" data-testid="run-lineage" title={run.rerunOfRunId}>
+                {rerunLineageLabel(ordinal.get(run.rerunOfRunId))}
               </p>
             ) : null}
           </button>

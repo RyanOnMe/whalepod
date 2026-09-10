@@ -10,7 +10,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
-import { ASSIGNMENT_STATUS_LABEL, shortId } from '../../shared/format.js'
+import { ASSIGNMENT_STATUS_LABEL } from '../../shared/format.js'
+import { useMemberDirectory } from '../team/memberDirectory.js'
 import type { Session, TaskView } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
 
@@ -23,6 +24,7 @@ export function AssignmentPanel({ task, session }: AssignmentPanelProps): ReactN
   const queryClient = useQueryClient()
   const [error, setError] = useState<unknown>(null)
   const isAssignee = session !== null && task.assigneeUserId === session.userId
+  const directory = useMemberDirectory()
 
   const mutation = useMutation({
     mutationFn: (kind: 'accept' | 'reject') => api.mutate<TaskView>(`/tasks/${task.id}/${kind}`),
@@ -87,7 +89,11 @@ export function AssignmentPanel({ task, session }: AssignmentPanelProps): ReactN
     )
   } else {
     body = (
-      <p className="assignment-note">此任务分配给 {shortId(task.assigneeUserId)}，等待其接受。</p>
+      // #162：第三方陈述里的责任人写人名（此前是 `shortId()`）。判据锚点在句子上，
+      // 因为「谁在等」这件事在这句话里，而不在某个独立的姓名格子里。
+      <p className="assignment-note" data-testid="assignment-assignee-note">
+        此任务分配给 {directory.personOf(task.assigneeUserId)}，等待其接受。
+      </p>
     )
   }
 

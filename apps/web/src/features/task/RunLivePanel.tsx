@@ -12,6 +12,7 @@ import { api } from '../../shared/api/client.js'
 import { queryKeys } from '../../app/query-client.js'
 import { RUN_STATUS_LABEL } from '../../shared/format.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
+import { rerunLineageLabel, SELECTED_RUN_LABEL } from './runLabels.js'
 import type { RunEventItem, RunView, Session } from '../../shared/api/types.js'
 import { dropRunLive, getRunLiveText, subscribeRunLive } from '../../shared/realtime/run-buffer.js'
 import { RunActions } from '../run/RunActions.js'
@@ -20,6 +21,12 @@ import { RunFailureNotice } from '../run/RunFailureNotice.js'
 export interface RunLivePanelProps {
   runId: string
   session: Session
+  /**
+   * runId → 「第 N 次运行」（Task Room 的运行记录派生）。面板只用它把血缘句里的
+   * 来源 Run 说清楚（「重跑自第 2 次运行」）；来源 Run 不在表里时血缘句退回不指名的
+   * 「重跑自来源运行」。
+   */
+  runLabels: ReadonlyMap<string, string>
 }
 
 const TERMINAL_RUN: ReadonlySet<string> = new Set(['completed', 'failed', 'cancelled', 'lost'])
@@ -95,7 +102,7 @@ function describeEvent(item: RunEventItem): string | null {
   }
 }
 
-export function RunLivePanel({ runId, session }: RunLivePanelProps): ReactNode {
+export function RunLivePanel({ runId, session, runLabels }: RunLivePanelProps): ReactNode {
   const runQuery = useQuery({
     queryKey: queryKeys.run(runId),
     queryFn: () => api.get<RunView>(`/runs/${runId}`),
@@ -139,7 +146,10 @@ export function RunLivePanel({ runId, session }: RunLivePanelProps): ReactNode {
       aria-labelledby="run-live-heading"
     >
       <div className="run-live-head">
-        <h3 id="run-live-heading">Run {run.id.slice(0, 8)}</h3>
+        {/* #162：面板标题说「本次运行」，不写 `Run 01a08c11`；完整 id 在 title 里。 */}
+        <h3 id="run-live-heading" title={run.id}>
+          {SELECTED_RUN_LABEL}
+        </h3>
         <span className={`badge badge-run badge-run-${run.status}`}>
           {RUN_STATUS_LABEL[run.status]}
         </span>
@@ -156,8 +166,8 @@ export function RunLivePanel({ runId, session }: RunLivePanelProps): ReactNode {
       </div>
 
       {run.rerunOfRunId !== null ? (
-        <p className="run-lineage" data-testid="run-lineage">
-          由 Run {run.rerunOfRunId.slice(0, 8)} 重跑
+        <p className="run-lineage" data-testid="run-lineage" title={run.rerunOfRunId}>
+          {rerunLineageLabel(runLabels.get(run.rerunOfRunId))}
         </p>
       ) : null}
 

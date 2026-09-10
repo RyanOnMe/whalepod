@@ -16,14 +16,20 @@ import { api } from '../../shared/api/client.js'
 import { queryKeys } from '../../app/query-client.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { formatBytes, shortId } from '../../shared/format.js'
+import { RUN_NOT_IN_TIMELINE_LABEL, runOrdinalLabels } from './runLabels.js'
 import type { Session } from '../../shared/api/types.js'
-import type { TaskRoomArtifact } from '../../shared/api/types.js'
+import type { TaskRoomArtifact, TaskRoomRun } from '../../shared/api/types.js'
 
 export interface ArtifactListProps {
   artifacts: TaskRoomArtifact[]
   /** 当前会话；candidate 行的发布按钮只对 artifact owner 显示。 */
   session: Session | null
   taskId: string
+  /**
+   * 本任务的运行记录（#162）：只用来把 `artifact.runId` 翻译成人话
+   * （「第 N 次运行」，与时间线行同款，可对照）。id 本身仍留在 `title` 上。
+   */
+  runs: TaskRoomRun[]
 }
 
 /** 下载文件名：标题里的路径分隔与控制字符折叠成「-」，回退用 artifact 短 id。 */
@@ -35,17 +41,18 @@ function safeFileName(artifact: TaskRoomArtifact): string {
   return base === '' ? `artifact-${shortId(artifact.id)}` : base
 }
 
-export function ArtifactList({ artifacts, session, taskId }: ArtifactListProps): ReactNode {
+export function ArtifactList({ artifacts, session, taskId, runs }: ArtifactListProps): ReactNode {
   const published = artifacts.filter((a) => a.status === 'published')
   // 候选行的可见性以会话为准（Hub 只给 owner 下发 candidate；此处仍按 owner 过滤，
   // 防御未来服务端形状变化时把他人候选渲染出来）。
   const candidates = artifacts.filter(
     (a) => a.status === 'candidate' && session !== null && a.ownerUserId === session.userId,
   )
+  const runLabels = runOrdinalLabels(runs)
   return (
     <div>
-      <ArtifactRows artifacts={published} session={session} taskId={taskId} />
-      <CandidateRows artifacts={candidates} taskId={taskId} />
+      <ArtifactRows artifacts={published} session={session} taskId={taskId} runLabels={runLabels} />
+      <CandidateRows artifacts={candidates} taskId={taskId} runLabels={runLabels} />
       {published.length === 0 && candidates.length === 0 ? (
         <p className="empty-state">
           还没有已发布的 Artifact。Run 产出经发布后，交付物会出现在这里。
@@ -60,12 +67,34 @@ export function ArtifactList({ artifacts, session, taskId }: ArtifactListProps):
   )
 }
 
+/**
+ * 「来源运行」格（#162）：此前这一格直接印 `shortId(artifact.runId)`。现在写
+ * 「第 N 次运行」——与中间 Run 时间线的行标签同款，人可以对照着找回去；那个 Run
+ * 不在本任务运行记录里（理论不该发生）时说人话，不回落到 id。
+ */
+function SourceRunCell({
+  artifact,
+  runLabels,
+}: {
+  artifact: TaskRoomArtifact
+  runLabels: ReadonlyMap<string, string>
+}): ReactNode {
+  return (
+    <div>
+      <dt>来源运行</dt>
+      <dd title={artifact.runId}>{runLabels.get(artifact.runId) ?? RUN_NOT_IN_TIMELINE_LABEL}</dd>
+    </div>
+  )
+}
+
 function ArtifactRows({
   artifacts,
+  runLabels,
 }: {
   artifacts: TaskRoomArtifact[]
   session: Session | null
   taskId: string
+  runLabels: ReadonlyMap<string, string>
 }): ReactNode {
   const [busyId, setBusyId] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
@@ -108,10 +137,7 @@ function ArtifactRows({
               <dt>大小</dt>
               <dd>{formatBytes(artifact.byteSize)}</dd>
             </div>
-            <div>
-              <dt>来自 Run</dt>
-              <dd>{shortId(artifact.runId)}</dd>
-            </div>
+            <SourceRunCell artifact={artifact} runLabels={runLabels} />
             <div>
               <dt>发布时间</dt>
               <dd>
@@ -148,9 +174,11 @@ function ArtifactRows({
 function CandidateRows({
   artifacts,
   taskId,
+  runLabels,
 }: {
   artifacts: TaskRoomArtifact[]
   taskId: string
+  runLabels: ReadonlyMap<string, string>
 }): ReactNode {
   const queryClient = useQueryClient()
   const [busyId, setBusyId] = useState<string | undefined>(undefined)
@@ -185,10 +213,7 @@ function CandidateRows({
               <dt>大小</dt>
               <dd>{formatBytes(artifact.byteSize)}</dd>
             </div>
-            <div>
-              <dt>来自 Run</dt>
-              <dd>{shortId(artifact.runId)}</dd>
-            </div>
+            <SourceRunCell artifact={artifact} runLabels={runLabels} />
             <div>
               <dt>内容摘要</dt>
               <dd>{artifact.sha256.slice(0, 12)}</dd>
