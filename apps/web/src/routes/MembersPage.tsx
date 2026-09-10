@@ -123,7 +123,7 @@ export function MembersPage(): ReactNode {
                         setRole(event.target.value === 'admin' ? 'admin' : 'member')
                       }
                     >
-                      <option value="member">Member（普通成员）</option>
+                      <option value="member">成员</option>
                       <option value="admin">管理员（可管理插件与邀请）</option>
                     </select>
                     <p className="field-hint">不能邀请所有者：所有者只能由初始化流程创建。</p>
