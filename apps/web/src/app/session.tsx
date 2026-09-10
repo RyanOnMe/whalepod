@@ -7,8 +7,8 @@
  * 这里直接导航更即时）。
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { createContext, useContext, type ReactNode } from 'react'
-import { Link, Outlet, useLoaderData, useNavigate } from 'react-router'
+import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react'
+import { Link, Outlet, useLoaderData, useLocation, useNavigate } from 'react-router'
 import { api } from '../shared/api/client.js'
 import { isApiError } from '../shared/api/errors.js'
 import type { Session } from '../shared/api/types.js'
@@ -27,6 +27,23 @@ export function AppShell(): ReactNode {
   const { session } = useLoaderData() as { session: Session }
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  const location = useLocation()
+  const navMenu = useRef<HTMLDetailsElement>(null)
+  /**
+   * #152：窄屏的导航面板是绝对定位浮层（盖在内容之上），换页必须收起。
+   *
+   * 不收起的话：390px 下点「设备」落地后面板仍开着，覆盖 y=64..284 且背景不透明，
+   * 首屏主体按钮被它挡住——`elementFromPoint` 命中的是 `nav.app-nav` 而不是按钮，
+   * Playwright click 直接超时（真人读数就是「点了没反应」）。
+   *
+   * 用 ref 直接关而不是受控 `open`：`<details>` 的原生 toggle 不经过 React，受控写法
+   * 还得回接 `onToggle` 同步状态，否则用户原生展开后 React 状态仍是 false，换页时
+   * 「setState(false) 无变化」不会重写 DOM，面板照样开着。这里只需在换页时关掉，
+   * 也不必重挂载（`key` 换 key 会让导航链接重建、键盘焦点掉回 body）。
+   */
+  useEffect(() => {
+    if (navMenu.current !== null) navMenu.current.open = false
+  }, [location.pathname])
   const logout = useMutation({
     mutationFn: () => api.mutate<Record<string, never>>('/auth/logout', { body: {} }),
     onSuccess: () => {
@@ -56,7 +73,7 @@ export function AppShell(): ReactNode {
           <Link to="/" className="app-brand">
             WhalePod
           </Link>
-          <details className="app-nav-menu">
+          <details className="app-nav-menu" ref={navMenu}>
             <summary className="app-nav-toggle" aria-label="主导航菜单">
               菜单
             </summary>

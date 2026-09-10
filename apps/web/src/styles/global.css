@@ -968,10 +968,24 @@ select {
   color: var(--color-paper);
   border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-3);
-  overflow-x: auto;
+  /* #152：三条命令在两栏侧列（368px）与 390px 单列下都放不下——实测内部横向溢出
+     88/114px，命令尾巴被切掉且没有滚动提示。改为按空格软换行：软换行不进剪贴板
+     （真 Chrome 实测复制结果与源串逐字相同、无换行符），可复制语义不变；续行用
+     悬挂缩进，免得被读成第二条命令。break-word（而非 anywhere）只在整词放不下时
+     才折断，避免把 `--code` 掰成 `-` + `-code`。 */
+  padding-left: calc(var(--space-3) + var(--space-4));
+  text-indent: calc(-1 * var(--space-4));
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
   font-family: var(--font-mono);
   font-size: 13px;
   margin: var(--space-2) 0 0;
+}
+
+/* 命令行里不可断开的片段（如 `--hub <hub-url>`）：连字符处默认可断（UAX #14），
+   会把 `--code` 断成 `--` / `code`。 */
+.cli-token {
+  white-space: nowrap;
 }
 
 /* ---------- 响应式：760px 以上三列 Task Room，360px 单列 ---------- */

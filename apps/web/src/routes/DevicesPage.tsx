@@ -297,7 +297,17 @@ function CliSteps(): ReactNode {
           {/* #152：配对码面板在宽屏位于左列——同样只留动作名，不写方位。 */}
           用「生成配对码」拿到一次性码后，在成员本机执行：
           <pre>
-            <code>whalepod-node pair --hub &lt;hub-url&gt; --code &lt;code&gt;</code>
+            {/*
+              #152：这条命令在侧列（368px）与 390px 单列里都放不下（整块已按空格软换行，
+              软换行不进剪贴板）。参数两两包成不可断开的 token——否则 UAX #14 会在连字符
+              处断成 `--` / `code`。各段用显式字符串表达式拼接，避免 JSX 缩进把空白混进
+              命令文本（单测逐字比对 textContent）。
+            */}
+            <code>
+              {'whalepod-node pair '}
+              <span className="cli-token">--hub &lt;hub-url&gt;</span>{' '}
+              <span className="cli-token">--code &lt;code&gt;</span>
+            </code>
           </pre>
         </li>
         <li>

@@ -66,6 +66,21 @@ describe('#152 布局：内容容器与两栏栅格', () => {
     expect(within(main).queryByRole('heading', { name: 'CLI 安装与配对' })).not.toBeInTheDocument()
   })
 
+  it('CLI 命令文本逐字不变：分段换行不能把空白混进命令（复制语义）', async () => {
+    // 配对命令在窄栏里必须换行（#152），因此拆成了显式字符串表达式 + nowrap token。
+    // JSX 缩进一旦混进文本，真人复制到终端就是一条跑不通的命令。
+    const { container } = renderApp('/devices', loggedInHandlers(ALICE, [devicesHandler([])]))
+    await screen.findByRole('heading', { name: 'CLI 安装与配对' })
+    const commands = [...container.querySelectorAll('.cli-steps pre code')].map(
+      (element) => element.textContent,
+    )
+    expect(commands).toEqual([
+      'npm install -g whalepod-node',
+      'whalepod-node pair --hub <hub-url> --code <code>',
+      'whalepod-node start',
+    ])
+  })
+
   it('成员页：主列 = 团队成员名单，侧列 = 邀请面板', async () => {
     const { container } = renderApp('/members', loggedInHandlers(ALICE, [teamMembersHandler()]))
     await screen.findByRole('heading', { name: '团队成员' })
