@@ -230,12 +230,15 @@ async function waitForFreshRunId(): Promise<string> {
   throw new Error('UI 启动的 Run 未出现在 Task Room 聚合中')
 }
 
-/** 点选时间线中的 Run 行 → RunLivePanel（事件流走 realtime 键，真人路径）。 */
+/**
+ * 点选时间线中的 Run 行 → RunLivePanel（事件流走 realtime 键，真人路径）。
+ *
+ * #162 起行标签是「第 N 次运行」（短 id 不再冒充标签），所以定位改用行上的
+ * `data-run-id`——它是**定位**用锚点，可见文本仍是人话；判「行标签是人话」这件事
+ * 由下面的血缘用例断言。
+ */
 async function selectRun(page: Page, runId: string): Promise<void> {
-  await page
-    .locator('.run-item-button')
-    .filter({ hasText: `Run ${runId.slice(0, 8)}` })
-    .click()
+  await page.locator(`.run-item-button[data-run-id="${runId}"]`).click()
   await expect(page.getByTestId('run-live-events')).toBeVisible({ timeout: 30_000 })
 }
 
@@ -387,6 +390,13 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     // Alice（另一浏览器上下文）立即能下载（UI 下载 + HTTP 双核验）。
     await shared.alice!.reload()
     await expect(shared.alice!.getByText('Report').first()).toBeVisible({ timeout: 30_000 })
+    // #162：交付物的「来源运行」是人话句柄（第 N 次运行，可与时间线行对照），
+    // 完整 runId 只在 title 上——这一格以前直接印 `shortId(artifact.runId)`。
+    const sourceValue = shared
+      .alice!.locator('.artifact-item')
+      .first()
+      .locator(`dd[title="${shared.builderRunId}"]`)
+    await expect(sourceValue).toHaveText(/^第 \d+ 次运行$/)
     const artifactRow = (await getRunFact(shared.builderRunId!)).artifacts.find(
       (a) => a.id === shared.artifactId,
     )
@@ -773,12 +783,22 @@ test.describe('P1-19 Run 行动（G7-01 取消 / G7-04 重跑血缘）', () => {
     const newFact = await waitForRunStatus(newRunId, 'waiting_approval', 120_000)
     expect(newFact.run.rerunOfRunId).toBe(sourceRunId!)
 
-    // UI 呈现：血缘提示「由 Run <前8位> 重跑」（reload 取新快照后再点选）。
+    // UI 呈现（#162）：血缘句说「重跑自来源运行」，来源 id 只在 title 上悬停可见
+    // ——不再有「由 Run <前8位> 重跑」这种拿短 id 当标签的写法。reload 取新快照后再点选。
     await shared.bob!.reload()
     await selectRun(shared.bob!, newRunId)
-    await expect(
-      shared.bob!.getByTestId('run-live-panel').getByTestId('run-lineage'),
-    ).toContainText(`由 Run ${sourceRunId!.slice(0, 8)} 重跑`)
+    const panel = shared.bob!.getByTestId('run-live-panel')
+    const lineage = panel.getByTestId('run-lineage')
+    // 整句相等（而不是「全文不含短 id」）：这句话就是判据要的样子，短 id 自然无处容身；
+    // 对面板全文做一刀切否定会因事件文本里出现别处的哈希而假红。
+    await expect(lineage).toHaveText('重跑自来源运行')
+    await expect(lineage).toHaveAttribute('title', sourceRunId!)
+    // 行标签是人话句柄「第 N 次运行」（完整 id 在 title 上），面板标题说「本次运行」。
+    const rowLabel = shared.bob!.locator(`.run-item-button[data-run-id="${newRunId}"] .run-label`)
+    await expect(rowLabel).toHaveText(/^第 \d+ 次运行$/)
+    await expect(rowLabel).toHaveAttribute('title', newRunId)
+    const panelHeading = panel.getByRole('heading', { name: '本次运行' })
+    await expect(panelHeading).toHaveAttribute('title', newRunId)
     await approveAndCompleteLoose(newRunId)
     assertSeqContiguous(await getRunFact(newRunId))
     // 红线：来源 Run 终态不因重跑被改写。

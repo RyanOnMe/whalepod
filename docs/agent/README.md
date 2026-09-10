@@ -22,6 +22,7 @@
 | [run-lifecycle-acceptance.md](./run-lifecycle-acceptance.md) | G7-01..06、R4/R5/R9、Q6：Run 取消/强杀/丢失与显式重跑验收（P1-16） |
 | [harness-acceptance.md](./harness-acceptance.md) | P1-18：六原语 harness（phase1:drive/verify/evidence）、跨层 traceId/runId 索引、Evidence 包与四层断层自证；#73 取证面绝对路径归约与「证据目录无绝对路径」判定 |
 | [load-performance-acceptance.md](./load-performance-acceptance.md) | Q8 短档性能门：10 浏览器 WS 传播 p95 · 2 Run×20ev/s 合成流 ingest p95 · 空闲段 RSS 斜率（30min 空闲口径的缩短代理）· 环境不足 exit 3 无 SKIP；尺子账与覆盖边界（P1-20/#109） |
+| [jargon-ids-acceptance.md](./jargon-ids-acceptance.md) | #152/#162 术语泄漏：内部 id 不冒充人名/标签——指人槽位判据（位置敏感、期望值取自真名册）、Run/交付物的人话句柄、红→绿变异复跑清单 |
 
 规矩只有一条：**验过就要留下**。验收步骤、探针跑法、上次结果、坑在哪，写进这里的 acceptance 文档；能直接复跑的脚本放 `scripts/`。只留在 `/tmp` 或对话里的验证，等于没验。
 

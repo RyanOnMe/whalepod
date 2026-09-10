@@ -240,7 +240,7 @@ describe('RunLivePanel', () => {
       ]),
     )
 
-    await user.click(await screen.findByRole('button', { name: /Run f6f6f6f6/ }))
+    await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
     expect(await screen.findByText('实时输出')).toBeVisible()
     expect(await screen.findByText('阶段：思考中')).toBeVisible()
 
@@ -286,7 +286,7 @@ describe('RunLivePanel', () => {
       ]),
     )
 
-    await user.click(await screen.findByRole('button', { name: /Run f6f6f6f6/ }))
+    await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
     expect(await screen.findByText('阶段：工具执行中')).toBeVisible()
     // project 缩水卡：reason 恒空 → 固定文案，不显示空框（03 §8）。
     expect(screen.getByText('等待责任人批准')).toBeVisible()

@@ -113,7 +113,7 @@ describe('G7-05: failed/lost Run 的未知副作用警示', () => {
       ]),
     )
 
-    await user.click(await screen.findByRole('button', { name: /Run f6f6f6f6/ }))
+    await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
     const banner = await screen.findByTestId('run-failure-notice')
     expect(banner).toBeVisible()
     expect(banner).toHaveTextContent('需验证外部状态')
@@ -134,7 +134,7 @@ describe('G7-05: failed/lost Run 的未知副作用警示', () => {
         ...runDetailHandlers(makeRunView({ status: 'lost', failureCode: 'RUNTIME_LOST' })),
       ]),
     )
-    await user.click(await screen.findByRole('button', { name: /Run f6f6f6f6/ }))
+    await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
     expect(await screen.findByTestId('run-failure-notice')).toHaveTextContent('需验证外部状态')
 
     // completed：无警示（先卸载上一棵树，避免同文档残留干扰查询）。
@@ -148,14 +148,14 @@ describe('G7-05: failed/lost Run 的未知副作用警示', () => {
         ),
       ]),
     )
-    await user.click(await screen.findByRole('button', { name: /Run f6f6f6f6/ }))
+    await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
     await waitFor(() => expect(screen.getByText('事件')).toBeVisible())
     expect(screen.queryByTestId('run-failure-notice')).not.toBeInTheDocument()
   })
 })
 
 describe('G7-04: UI 血缘与 Run 行动', () => {
-  it('时间线显示「由 Run xx 重跑」血缘', async () => {
+  it('#162 血缘说「重跑自来源运行」，原始 id 退到 title（不再拿短 id 当标签）', async () => {
     const task = taskWith([])
     renderApp(
       `/tasks/${task.id}`,
@@ -171,7 +171,14 @@ describe('G7-04: UI 血缘与 Run 行动', () => {
     )
     const lineage = await screen.findByTestId('run-lineage')
     expect(lineage).toBeVisible()
-    expect(lineage).toHaveTextContent('由 Run b7b7b7b7 重跑')
+    expect(lineage).toHaveTextContent('重跑自来源运行')
+    // 原始 id 不丢：悬停可见（title）；正文里不得出现它的短形态。
+    expect(lineage).toHaveAttribute('title', SOURCE_RUN_ID)
+    // 行标签是「第 N 次运行」这种人话句柄，短 id 同样不冒充标签。
+    expect(screen.getByRole('button', { name: /第 2 次运行/ })).toBeVisible()
+    const body = document.body.textContent ?? ''
+    expect(body).not.toContain(SOURCE_RUN_ID.slice(0, 8))
+    expect(body).not.toContain(RUN_ID.slice(0, 8))
   })
 
   it('活跃 Run 显示「取消」；点击后走 cancel 路由并带 Idempotency-Key', async () => {
@@ -187,7 +194,7 @@ describe('G7-04: UI 血缘与 Run 行动', () => {
         ...runDetailHandlers(makeRunView({ status: 'running' }), [], captures),
       ]),
     )
-    await user.click(await screen.findByRole('button', { name: /Run f6f6f6f6/ }))
+    await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
     const cancel = await screen.findByRole('button', { name: '取消 Run' })
     await user.click(cancel)
     await waitFor(() => expect(captures.cancelCalls).toHaveLength(1))
@@ -209,7 +216,7 @@ describe('G7-04: UI 血缘与 Run 行动', () => {
         ...runDetailHandlers(makeRunView({ status: 'failed' }), [], captures),
       ]),
     )
-    await user.click(await screen.findByRole('button', { name: /Run f6f6f6f6/ }))
+    await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
     await user.click(await screen.findByRole('button', { name: '重跑此 Run' }))
 
     const promptBox = await screen.findByLabelText('新 Run 的指令')
@@ -249,7 +256,7 @@ describe('G7-04: UI 血缘与 Run 行动', () => {
         ...runDetailHandlers(makeRunView({ status: 'running', ownerUserId: BOB.userId })),
       ]),
     )
-    await user.click(await screen.findByRole('button', { name: /Run f6f6f6f6/ }))
+    await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
     await screen.findByText('事件')
     expect(screen.queryByRole('button', { name: '取消 Run' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '重跑此 Run' })).not.toBeInTheDocument()
