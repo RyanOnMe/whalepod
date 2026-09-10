@@ -3,11 +3,14 @@
  *
  * - GET /team/members 列成员（显示名/@用户名/角色/是否停用；#136 的协议 schema 钉死字段最小集，
  *   `data` 即数组），受邀加入的人在这一页看见自己进队；
- * - Owner/Admin 可在此生成一次性邀请链接（POST /invites，角色 member/admin），
+ * - 所有者/管理员可在此生成一次性邀请链接（POST /invites，角色 member/admin），
  *   生成后**明文链接只在本次响应里出现一次**，页面必须把它完整显示出来并给一键复制，
  *   同时说清有效期（Hub 侧 72 小时）；
- * - Member 只读：不给表单，明说只有 Owner/Admin 能邀请（不伪造可点击的入口）；
+ * - 成员只读：不给表单，明说只有所有者/管理员能邀请（不伪造可点击的入口）；
  * - 复制失败如实报错，不伪造「已复制」（shared/CopyButton 统一行为）。
+ *
+ * #152：角色文案统一走 format.ts 的 ROLE_LABEL（徽标、下拉、复制按钮同一套措辞），
+ * 此前徽标写 `Owner`、下拉写「Member（普通成员）」，同一页两套说法。
  */
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState, type FormEvent, type ReactNode } from 'react'
@@ -17,15 +20,9 @@ import { CopyButton } from '../shared/CopyButton.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
 import { queryKeys } from '../app/query-client.js'
 import { useSession } from '../app/session.js'
-import { formatIso } from '../shared/format.js'
+import { RelativeTime } from '../shared/RelativeTime.js'
+import { ROLE_LABEL } from '../shared/format.js'
 import { takeFlash } from '../shared/flash.js'
-import type { Role } from '../shared/api/types.js'
-
-const ROLE_LABEL: Readonly<Record<Role, string>> = {
-  owner: 'Owner',
-  admin: 'Admin',
-  member: 'Member',
-}
 
 interface CreatedInviteView {
   inviteId: string
@@ -119,10 +116,10 @@ export function MembersPage(): ReactNode {
                   value={role}
                   onChange={(event) => setRole(event.target.value === 'admin' ? 'admin' : 'member')}
                 >
-                  <option value="member">Member（普通成员）</option>
-                  <option value="admin">Admin（可管理插件与邀请）</option>
+                  <option value="member">成员</option>
+                  <option value="admin">管理员（可管理插件与邀请）</option>
                 </select>
-                <p className="field-hint">不能邀请 Owner：Owner 只能由初始化流程创建。</p>
+                <p className="field-hint">不能邀请所有者：所有者只能由初始化流程创建。</p>
               </div>
               <div className="form-actions">
                 <button
@@ -142,7 +139,7 @@ export function MembersPage(): ReactNode {
                   <code className="invite-link">{inviteUrl}</code>
                   <CopyButton
                     value={inviteUrl}
-                    label={`复制邀请 ${created.role} 的链接`}
+                    label={`复制${ROLE_LABEL[created.role]}邀请链接`}
                     valueLabel="邀请链接"
                   >
                     复制链接
@@ -156,7 +153,7 @@ export function MembersPage(): ReactNode {
                   <div>
                     <dt>有效期至</dt>
                     <dd>
-                      <time dateTime={created.expiresAt}>{formatIso(created.expiresAt)}</time>
+                      <RelativeTime iso={created.expiresAt} />
                       <span className="field-hint">（72 小时）</span>
                     </dd>
                   </div>
@@ -169,7 +166,7 @@ export function MembersPage(): ReactNode {
           </>
         ) : (
           <p className="empty-state">
-            只有 Owner 或 Admin 能邀请成员。需要加人时，请联系团队 Owner 生成邀请链接。
+            只有所有者或管理员能邀请成员。需要加人时，请联系团队所有者生成邀请链接。
           </p>
         )}
       </section>

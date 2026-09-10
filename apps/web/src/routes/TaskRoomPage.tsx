@@ -3,8 +3,10 @@
  * - 顶部：Task 目标/状态/责任人 + 责任人行动（features/task/TaskHeader）
  * - 左侧：Assignment 接受/拒绝 + Agent revision 快照（AssignmentPanel）
  * - 中间：Comment 时间线 + Run 状态 + 审批卡插槽（CommentComposer/RunTimeline）
- * - 右侧：Artifact 列表 + Reviewer 插槽（ArtifactList）
+ * - 右侧：交付物列表 + 复核插槽（ArtifactList）
  * 加载/错误状态显式呈现，不伪装成空数据；空态说明下一步。
+ * 区段标题一律中文（#152）：Artifact→交付物、Reviewer→复核；Agent/Run/Task 这类
+ * 领域术语保留英文（CONTEXT.md 的领域语言）。
  */
 import { useQuery } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
@@ -96,7 +98,7 @@ export function TaskRoomPage(): ReactNode {
         </section>
         <aside className="task-room-col task-room-right" aria-label="交付物">
           <section className="card" aria-labelledby="artifacts-heading">
-            <h2 id="artifacts-heading">Artifacts</h2>
+            <h2 id="artifacts-heading">交付物</h2>
             <ArtifactList artifacts={artifacts} session={session} taskId={task.id} />
           </section>
           <ReviewerSlot />

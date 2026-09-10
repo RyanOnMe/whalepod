@@ -20,6 +20,13 @@ const OWNER_NAME = `owner-${TAG}`
 /** 六组 base32（03 §2.4）：120bit → 24 字符。 */
 const PAIRING_CODE_PATTERN = /^[A-Z2-7]{4}(-[A-Z2-7]{4}){5}$/
 
+/** #152：Hub 的 platform 枚举 → 设备页应显示的人话（与 shared/format.ts 同表）。 */
+const PLATFORM_TEXT: Readonly<Record<string, string>> = {
+  darwin: 'macOS',
+  linux: 'Linux',
+  win32: 'Windows',
+}
+
 test.describe.configure({ mode: 'serial' })
 
 let context: BrowserContext
@@ -85,6 +92,28 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
 
   // 列表事实与 node 侧回执一致（不拿「界面看起来对」当判据）。
   const listed = await hubApi(cookie, 'GET', '/devices')
-  const devices = listed.data as Array<{ id: string; name: string; status: string }>
-  expect(devices.some((d) => d.id === node.deviceId && d.name === 'e2e-node')).toBe(true)
+  const devices = listed.data as Array<{
+    id: string
+    name: string
+    status: string
+    platform: string
+  }>
+  const ours = devices.find((d) => d.id === node.deviceId)
+  expect(ours?.name).toBe('e2e-node')
+  expect(ours).toBeDefined()
+
+  // ---- #152 零泄漏：设备行只给人话，不露内部标识与黑话 ----
+  // 先等这一行（含平台与最后在线）渲染出来再取文本——不扫空页面。
+  const deviceRow = page.locator('li.device-item', { hasText: 'e2e-node' })
+  await expect(deviceRow).toBeVisible()
+  await expect(deviceRow).toContainText('最后在线')
+  // Hub 报回的 platform 是 process.platform 内部标识；页面必须显示映射后的人话。
+  const humanPlatform = PLATFORM_TEXT[ours?.platform ?? '']
+  expect(humanPlatform, `Hub 侧 platform=${String(ours?.platform)}`).toBeDefined()
+  await expect(deviceRow).toContainText(humanPlatform as string)
+
+  const devicesText = await page.locator('body').innerText()
+  expect(devicesText, '设备页不应出现 darwin/win32 这类内部标识').not.toMatch(/\b(darwin|win32)\b/)
+  expect(devicesText, '「心跳」是内部黑话').not.toContain('心跳')
+  expect(devicesText).toContain('最后在线')
 })

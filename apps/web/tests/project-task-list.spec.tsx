@@ -4,8 +4,9 @@
  * 判据（Issue #137）：「建两个任务 → 返回项目页 → 列表看到两条 → 点第二条进 Task Room」。
  * 断言面：列表只呈现本项目任务（跨项目隔离由 Hub 保证，本 spec 只验 UI 不重排、不伪造）、
  * 责任人显示名走 #136 成员列表（不是短 UUID）、点击进入对应 Task Room。
+ * #152 追加：项目卡的创建者同样走成员名录（不写截断 UUID），时间给相对文案。
  */
-import { screen } from '@testing-library/react'
+import { screen, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import type { ProjectView } from '../src/shared/api/types.js'
@@ -13,6 +14,7 @@ import {
   ALICE,
   BOB,
   loggedInHandlers,
+  makeMember,
   makeTask,
   ok,
   projectsHandler,
@@ -97,5 +99,42 @@ describe('#137 项目任务列表', () => {
     renderApp('/', [...loggedInHandlers(ALICE, handlers)])
     await user.click(await screen.findByRole('button', { name: '任务列表' }))
     expect(await screen.findByText('这个项目还没有任务。')).toBeVisible()
+  })
+})
+
+/**
+ * #152 项目卡创建者姓名：实测截图里写着 `by 01a08c11`（截断 UUID 当人名）。
+ * 判据：成员在册 → 「显示名（@用户名）」；不在册 → 一句人话「未知成员」；
+ * 两种情况都不得出现截断 UUID。
+ */
+describe('#152 项目卡：创建者姓名解析', () => {
+  it('创建者在册：显示「Alice（@alice）」，不出现截断 UUID', async () => {
+    renderApp('/', loggedInHandlers(ALICE, [projectsHandler([PROJECT]), teamMembersHandler()]))
+    const card = (await screen.findByText(PROJECT.name)).closest('li') as HTMLElement
+    expect(within(card).getByText(/Alice（@alice）/)).toBeVisible()
+    expect(card.textContent).not.toContain(ALICE.userId.slice(0, 8))
+    expect(card.textContent).not.toContain(' by ')
+  })
+
+  it('创建者不在名录里：显示「未知成员」，不退回短 UUID', async () => {
+    renderApp(
+      '/',
+      loggedInHandlers(ALICE, [
+        projectsHandler([PROJECT]),
+        // 名录里只有 Bob：创建者 Alice 查不到（例如已被移出团队）
+        teamMembersHandler([makeMember({ ...BOB, role: 'member' })]),
+      ]),
+    )
+    const card = (await screen.findByText(PROJECT.name)).closest('li') as HTMLElement
+    expect(within(card).getByText(/未知成员/)).toBeVisible()
+    expect(card.textContent).not.toContain(ALICE.userId.slice(0, 8))
+  })
+
+  it('创建时间给相对文案，title 保留绝对时刻', async () => {
+    renderApp('/', loggedInHandlers(ALICE, [projectsHandler([PROJECT]), teamMembersHandler()]))
+    const card = (await screen.findByText(PROJECT.name)).closest('li') as HTMLElement
+    const time = card.querySelector('time')
+    expect(time?.getAttribute('title')).toMatch(/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}$/)
+    expect(time?.getAttribute('dateTime')).toBe(PROJECT.createdAt)
   })
 })
