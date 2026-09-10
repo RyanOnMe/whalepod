@@ -138,6 +138,7 @@ export function registerTeamRoutes(app: FastifyInstance, deps: TeamRouteDeps): v
   // 任何已登录 Member 可见——指派动线要求创建者能列出可指的人；
   // 出网前过 TeamMemberViewsSchema：字段最小集由 protocol 钉死（无密码散列、无裸时间戳）。
   // 形态与 GET /projects、/agents、/devices 一致：data 即数组，不额外包一层。
+  // #141 成员页复用本路由（本分支原带一份重复实现，收编时删除）。
   app.get('/team/members', async (request) => {
     await deps.requireActor(request)
     const team = await getTeam(deps.database.db)

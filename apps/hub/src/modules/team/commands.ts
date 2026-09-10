@@ -4,6 +4,7 @@ import {
   consumeInvite,
   disableUser,
   findInviteByTokenHash,
+  getInviteById,
   getMember,
   getTeam,
   insertMember,
@@ -253,6 +254,109 @@ export async function acceptInvite(
 
 function inviteConflict(): ApiError {
   return new ApiError(409, 'CONFLICT', 'invite token is invalid, expired or already consumed')
+}
+
+export interface InviteDetails {
+  readonly inviteId: string
+  readonly role: 'admin' | 'member'
+  readonly expiresAt: Date
+  /** 已消费：Token 用过（邀请是一次性的）。 */
+  readonly consumed: boolean
+  /** 已过期：expires_at 早于 now。 */
+  readonly expired: boolean
+  readonly valid: boolean
+}
+
+/**
+ * 邀请详情预检（#141 接受页）：Token 是 32 字节随机串，只有链接持有者知道；
+ * 「已用/已过期」对持有者不是新信息，回给 UI 才能给出**明确文案**而不是让
+ * 用户对着 409 猜（Issue 要求「不显示裸错误码」）。匿名接受（POST /invites/accept）
+ * 仍统一 409 不可枚举——那条路径的响应面不动（G1-04 的既有断言继续成立）。
+ */
+export async function readInvite(
+  database: Database,
+  input: { token: string },
+): Promise<InviteDetails | undefined> {
+  const invite = await findInviteByTokenHash(database.db, hashToken(input.token))
+  if (invite === undefined) return undefined
+  const now = Date.now()
+  return {
+    inviteId: invite.id,
+    role: invite.role,
+    expiresAt: invite.expiresAt,
+    consumed: invite.consumedAt !== null,
+    expired: invite.expiresAt.getTime() <= now,
+    valid: invite.consumedAt === null && invite.expiresAt.getTime() > now,
+  }
+}
+
+/** 按 id 复核邀请（消费失败时区分「已用」「已过期」，其余按不可枚举处理）。 */
+
+export interface AcceptedInviteAsMember {
+  readonly userId: string
+  readonly role: 'admin' | 'member'
+  readonly teamName: string
+  /** true = 本次真的插入了成员行；false = 已经是本团队成员（幂等重放）。 */
+  readonly joined: boolean
+  readonly alreadyMember: boolean
+}
+
+/**
+ * 已登录成员接受邀请（#141 接受页「一键加入」）：不建账号、不换 Session，
+ * 只把当前 Session 的账号按邀请角色加进团队。
+ *
+ * 幂等由数据本身保证（无需 command_receipt）：consumeInvite 的原子 UPDATE 是
+ * 唯一消费点。重放时它返回 undefined，此时只有「本条邀请正是被**请求者本人**
+ * 消费的」才按幂等成功返回（重复点按钮 / 多标签页）；被别人用掉的链接照旧 409
+ * 不可枚举（G1-04 同形态），不因请求者恰好在队里就把失效链接说成成功。
+ *
+ * 单 Team 部署（team_singleton）下能通过 Session 的账号必然已在队里，因此
+ * 「已在队里」分支是真人路径上的常态：仍是幂等成功，joined=false。
+ */
+export async function acceptInviteAsMember(
+  database: Database,
+  input: { token: string; userId: string },
+): Promise<AcceptedInviteAsMember> {
+  const tokenHash = hashToken(input.token)
+  return database.transaction(async (tx) => {
+    const invite = await findInviteByTokenHash(tx, tokenHash)
+    if (invite === undefined) throw inviteConflict()
+    const team = await getTeam(tx)
+    if (team === undefined) {
+      throw new ApiError(500, 'INTERNAL_ERROR', 'invite exists without a team')
+    }
+    const existing = await getMember(tx, team.id, input.userId)
+    // 已消费：只有本人重放算幂等成功；否则与「无效 Token」同形（不可枚举）。
+    if (invite.consumedAt !== null) {
+      if (invite.consumedBy !== input.userId || existing === undefined) throw inviteConflict()
+      return {
+        userId: input.userId,
+        role: existing.role === 'owner' ? 'admin' : existing.role,
+        teamName: team.name,
+        joined: false,
+        alreadyMember: true,
+      }
+    }
+    const consumed = await consumeInvite(tx, invite.id, input.userId, new Date())
+    if (consumed === undefined) throw inviteConflict()
+    if (existing !== undefined) {
+      return {
+        userId: input.userId,
+        role: existing.role === 'owner' ? 'admin' : existing.role,
+        teamName: team.name,
+        joined: false,
+        alreadyMember: true,
+      }
+    }
+    await insertMember(tx, { teamId: team.id, userId: input.userId, role: invite.role })
+    return {
+      userId: input.userId,
+      role: invite.role,
+      teamName: team.name,
+      joined: true,
+      alreadyMember: false,
+    }
+  })
 }
 
 /**

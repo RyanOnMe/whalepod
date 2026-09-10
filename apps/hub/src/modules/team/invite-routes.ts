@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { asUserId, authorize, isPasswordAcceptable } from '@whalepod/domain'
 import type { Actor } from '@whalepod/domain'
+import { getTeam } from '@whalepod/db'
 import type { Database } from '@whalepod/db'
 import { AcceptInviteRequestSchema, CreateInviteRequestSchema } from '@whalepod/protocol'
 import { audit } from '../shared/audit.js'
@@ -9,7 +10,7 @@ import { hashPassword } from '../auth/password.js'
 import { setSessionCookie } from '../auth/session.js'
 import type { RequireActor, SessionActor } from '../auth/session.js'
 import type { RateLimiter } from '../auth/rate-limit.js'
-import { acceptInvite, createInvite } from './commands.js'
+import { acceptInvite, acceptInviteAsMember, createInvite, readInvite } from './commands.js'
 
 export interface InviteRouteDeps {
   readonly database: Database
@@ -73,6 +74,58 @@ export function registerInviteRoutes(app: FastifyInstance, deps: InviteRouteDeps
     return reply.code(201).send({
       ok: true,
       data: { userId: result.userId, role: result.role },
+    })
+  })
+
+  /**
+   * GET /invites/:token：接受页预检（#141），匿名可读——被邀请人通常还没有账号。
+   * 只回「加入哪个团队、什么角色、还有没有效」，不回任何成员信息。
+   * 未知 Token 404；已用/已过期 409 且 details 里给出区分（UI 才能给明确文案，
+   * 而不是把裸错误码丢给用户）。Token 本身不回显。
+   */
+  app.get('/invites/:token', async (request) => {
+    const { token } = request.params as { token: string }
+    const invite = await readInvite(deps.database, { token })
+    if (invite === undefined) throw new ApiError(404, 'NOT_FOUND', 'invite not found')
+    if (!invite.valid) {
+      throw new ApiError(409, 'CONFLICT', 'invite token is invalid, expired or already consumed', {
+        expired: invite.expired,
+        consumed: invite.consumed,
+      })
+    }
+    const team = await getTeam(deps.database.db)
+    if (team === undefined) throw new ApiError(404, 'NOT_FOUND', 'team not found')
+    return {
+      ok: true,
+      data: {
+        role: invite.role,
+        expiresAt: invite.expiresAt.toISOString(),
+        teamName: team.name,
+        expired: false,
+        consumed: false,
+      },
+    }
+  })
+
+  /**
+   * POST /invites/:token/accept：**已登录**成员一键加入（#141 接受页）。
+   * 匿名那条腿走 POST /invites/accept（要建账号），这条腿不建账号、不换 Session。
+   * Token 从 path 取（链接形态），body 语义上没有需要消费者填的字段。
+   * 速率限制不加：本路由要求有效 Session，且消费是原子的。
+   */
+  app.post('/invites/:token/accept', async (request, reply) => {
+    const actor = await deps.requireActor(request)
+    const { token } = request.params as { token: string }
+    const result = await acceptInviteAsMember(deps.database, { token, userId: actor.userId })
+    audit(request, 'invite.accept', 'success', actor.userId)
+    return reply.send({
+      ok: true,
+      data: {
+        role: result.role,
+        teamName: result.teamName,
+        joined: result.joined,
+        alreadyMember: result.alreadyMember,
+      },
     })
   })
 }
