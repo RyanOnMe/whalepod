@@ -93,9 +93,11 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
 
   // 不 reload、不重新导航：device.changed 失效 ['devices'] → 列表自己长出设备。
   await expect(page.getByText('e2e-node')).toBeVisible({ timeout: 60_000 })
-  // 状态徽标（#152 起页面上另有「最后在线」这一栏，`getByText('在线')` 会同时命中
-  // 两处 → 用徽标定位，避免 strict mode 撞车）。
-  await expect(page.locator('.device-item span.badge').first()).toHaveText('在线')
+  // 状态徽标：用稳定锚点 `[data-testid="device-status"]`（#138 起由 vendored Tag 承载），
+  // **不要**用 `.badge`——那是替换前的手写徽标类，合并后已不存在（本行踩过一次：
+  // 术语切片按旧类名断言，与主题/vendored 合并后定位不到）。
+  // 也不要用 `getByText('在线')`：#152 起页面另有「最后在线」一栏，会撞 strict mode。
+  await expect(page.getByTestId('device-status').first()).toHaveText('在线')
   expect(await page.evaluate(() => Reflect.get(window, '__pairingUiNoReload') === true)).toBe(true)
 
   // ---- #138：vendored DSH 原语「真的生效」的机器判据（不是「看着像」） ----
