@@ -26,10 +26,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { schema } from '@project311/db'
-import type { ClientFrame } from '@project311/protocol'
+import { schema } from '@whalepod/db'
+import type { ClientFrame } from '@whalepod/protocol'
 import { createTestDatabase, idemKey } from '../../../hub/tests/helpers.js'
-import type { Database } from '@project311/db'
+import type { Database } from '@whalepod/db'
 import {
   assembleChain,
   FIXTURE_APPROVAL,
@@ -444,7 +444,7 @@ describe('P1-13 全链路（真 Hub + 真 Node + 真 Runtime/replay）', () => {
     // stub 同先例）：ready → approval.requested（无决定）→ run.completed。
     // 真 Node（投影/spool/drain/重连）+ 真 Hub（WS/orchestrator/PG）原样跑毒帧
     // 序列——修复前此处必现 4003 循环：run 永卡 waiting_approval、spool 永不清空。
-    const stubDir = mkdtempSync(join(tmpdir(), 'p311-p52-runtime-stub-'))
+    const stubDir = mkdtempSync(join(tmpdir(), 'wp-p52-runtime-stub-'))
     const stub = join(stubDir, 'runtime-entry.mjs')
     // driver 的 spawn 参数形态：node <entry> -- --run-id <id> --nonce <n> --prompt-stdin
     writeFileSync(

@@ -21,7 +21,7 @@ import {
   ArtifactInputManifestSchema,
   ErrorCodeSchema,
   type RuntimeArtifactInput,
-} from '@project311/protocol'
+} from '@whalepod/protocol'
 
 export const DEFAULT_INPUTS_TIMEOUT_MS = 30_000
 

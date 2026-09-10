@@ -1,9 +1,9 @@
 {
-  "name": "@project311/hub",
+  "name": "@whalepod/hub",
   "version": "0.1.0",
   "private": true,
   "bin": {
-    "project311-hub": "./dist/cli.js"
+    "whalepod-hub": "./dist/cli.js"
   },
   "files": [
     "dist"
@@ -24,17 +24,17 @@
     "@fastify/cookie": "catalog:",
     "@fastify/websocket": "catalog:",
     "@node-rs/argon2": "catalog:",
-    "@project311/db": "workspace:*",
-    "@project311/domain": "workspace:*",
-    "@project311/protocol": "workspace:*",
+    "@whalepod/db": "workspace:*",
+    "@whalepod/domain": "workspace:*",
+    "@whalepod/protocol": "workspace:*",
     "drizzle-orm": "catalog:",
     "fastify": "catalog:",
     "ws": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
-    "@project311/testkit": "workspace:*",
     "@types/ws": "catalog:",
+    "@whalepod/testkit": "workspace:*",
     "ws": "catalog:"
   }
 }

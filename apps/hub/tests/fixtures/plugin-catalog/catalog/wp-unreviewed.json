@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "name": "p311-unreviewed",
+  "name": "wp-unreviewed",
   "version": "0.0.3",
-  "tarballUrl": "https://catalog.fixtures.project311.test/tarballs/p311-unreviewed-0.0.3.tgz",
+  "tarballUrl": "https://catalog.fixtures.whalepod.test/tarballs/wp-unreviewed-0.0.3.tgz",
   "integrity": "sha256-5VTgEZmJ6a5syj3t8Ysel3wS6AcTEWnzKu976fO+Cgc=",
-  "dependencyLockDigest": "3f0d8a5c50d1d0b0b581e62dd0cca07395f208350c973b03f6ae451837a2ed1d",
+  "dependencyLockDigest": "fec1fa6b8afe1324419c047696998eb6127ce9570883688b2ac481eb01af34bd",
   "dshCompatibility": "0.1.0-rc.8",
   "entrypoint": "dist/unreviewed.js",
   "capabilities": ["subprocess.spawn"],

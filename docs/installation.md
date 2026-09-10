@@ -1,4 +1,4 @@
-# TabTin 安装（v0.1.0-alpha.3）
+# WhalePod 安装（v0.1.0-alpha.3）
 
 适用对象：**没有开发背景的试用团队**。全程约 30 分钟。产品命题与边界见
 [README](../README.md)；这里只有"装到哪一步、看到什么算对"。
@@ -23,8 +23,8 @@ Hub 的网页。3–10 人团队 = 一台 Hub + 每人一个 Node。
 前置：Docker（含 compose 插件）、git。检查：`docker compose version` 有输出即对。
 
 ```bash
-git clone https://github.com/RyanOnMe/project311.git
-cd project311
+git clone https://github.com/RyanOnMe/whalepod.git
+cd whalepod
 git checkout v0.1.0-alpha.3        # 锁版本；main 是开发分支，试用勿用
 
 # 1) 生成两个只此一份的机密，写进 .env（权限 0600）
@@ -32,12 +32,12 @@ umask 077
 cat > .env <<ENV
 POSTGRES_PASSWORD="$(openssl rand -hex 24)"
 # 单源 = 浏览器地址栏那个 origin，逐字符一致（含协议与端口）：
-PROJECT311_PUBLIC_ORIGIN="http://localhost:8080"
-P311_WEB_PORT=8080
+WHALEPOD_PUBLIC_ORIGIN="http://localhost:8080"
+WHALEPOD_WEB_PORT=8080
 ENV
 # 多人 https 形态改这两行：
-#   PROJECT311_PUBLIC_ORIGIN="https://hub.你的域名"
-#   P311_WEB_PORT=8080    # 仍绑本机，TLS 交给反代（见 C）
+#   WHALEPOD_PUBLIC_ORIGIN="https://hub.你的域名"
+#   WHALEPOD_WEB_PORT=8080    # 仍绑本机，TLS 交给反代（见 C）
 
 # 2) 起服务（首次构建镜像约 3-5 分钟；--env-file 显式指定——compose 的
 #    默认 env 解析目录跨版本行为不一，显式化钉死，一审 B7）
@@ -50,7 +50,7 @@ docker compose --env-file .env -f deploy/compose.yml ps        # 三个服务都
 docker compose --env-file .env -f deploy/compose.yml exec hub node dist/cli.js setup-token
 ```
 
-**验证点**：浏览器打开 `PROJECT311_PUBLIC_ORIGIN`（如 `http://localhost:8080`）→
+**验证点**：浏览器打开 `WHALEPOD_PUBLIC_ORIGIN`（如 `http://localhost:8080`）→
 看到"创建团队"页 → 粘贴第 4 步的 Token + 团队名 + 你的用户名/密码 → 进入产品。
 > **口令强度已强制**（#106/#108 已落地）：少于 12 个字符建队/受邀会被 400 拒绝——
 > 用密码管理器生成，别试短密码。**Token 用过即废**；找不到就重启 hub 容器
@@ -62,8 +62,8 @@ docker compose --env-file .env -f deploy/compose.yml exec hub node dist/cli.js s
 最省事）、corepack（随 Node 附带）。
 
 ```bash
-git clone https://github.com/RyanOnMe/project311.git
-cd project311 && git checkout v0.1.0-alpha.3
+git clone https://github.com/RyanOnMe/whalepod.git
+cd whalepod && git checkout v0.1.0-alpha.3
 corepack enable
 pnpm install --frozen-lockfile
 pnpm -r --if-present build                    # 约 1-2 分钟
@@ -101,7 +101,7 @@ Run 发起时报 `NO_ADAPTER`（#117 实录）。
 
 ## C. 多人 https 的一层薄反代（能少则少）
 
-compose 的 web 只绑 `127.0.0.1`（改 `P311_WEB_PORT` 那行旁边加 `127.0.0.1:` 前缀），
+compose 的 web 只绑 `127.0.0.1`（改 `WHALEPOD_WEB_PORT` 那行旁边加 `127.0.0.1:` 前缀），
 TLS 交给 Caddy 一行配置：
 
 ```
@@ -110,7 +110,7 @@ hub.你的域名 {
 }
 ```
 
-Caddy 自动签发/续期 Let's Encrypt；`PROJECT311_PUBLIC_ORIGIN` 填 `https://hub.你的域名`
+Caddy 自动签发/续期 Let's Encrypt；`WHALEPOD_PUBLIC_ORIGIN` 填 `https://hub.你的域名`
 后重启 compose（`docker compose ... up -d` 即可，env 变了会自动重建）。
 
 ## D. 开机自启（试用第二周再做这个也不迟）

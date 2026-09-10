@@ -24,7 +24,7 @@ cleanup_stale() {
       *node*"scripts/e2e-node.mts"*) kill -9 "$p" 2>/dev/null || true ;;
     esac
   done
-  docker ps -q --filter "label=project311.e2e-postgres=true" 2>/dev/null \
+  docker ps -q --filter "label=whalepod.e2e-postgres=true" 2>/dev/null \
     | xargs -r docker rm -f >/dev/null 2>&1 || true
 }
 

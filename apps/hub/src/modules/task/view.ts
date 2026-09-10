@@ -3,9 +3,9 @@
  * 已发布 Artifact metadata，不暴露 runtime internals（Device Token、Workspace path、
  * 原始 Session event、dshSessionId、digest 等——03 §9 脱敏 + 02 Step 1 断言）。
  */
-import type { ArtifactRow, RunRow } from '@project311/db'
-import { getTask, listArtifactsByTask, listComments, listRunsByTask } from '@project311/db'
-import type { DbHandle } from '@project311/db'
+import type { ArtifactRow, RunRow } from '@whalepod/db'
+import { getTask, listArtifactsByTask, listComments, listRunsByTask } from '@whalepod/db'
+import type { DbHandle } from '@whalepod/db'
 import { toCommentView, toTaskView } from './queries.js'
 import type { CommentView, TaskView } from './queries.js'
 

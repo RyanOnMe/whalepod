@@ -6,14 +6,14 @@
  * descriptor 同一语义拒绝——被污染的 catalog 不产出任何 Pack 内容。
  */
 import { asc } from 'drizzle-orm'
-import { schema } from '@project311/db'
-import type { DbHandle } from '@project311/db'
-import { PluginPackEntrySchema, pluginCordisEntry } from '@project311/protocol'
+import { schema } from '@whalepod/db'
+import type { DbHandle } from '@whalepod/db'
+import { PluginPackEntrySchema, pluginCordisEntry } from '@whalepod/protocol'
 import {
   compareCodePoints,
   digestPluginCordisEntry,
   digestPluginPack,
-} from '@project311/protocol/plugin-pack-digest'
+} from '@whalepod/protocol/plugin-pack-digest'
 import type {
   PluginCapability,
   PluginInstallationView,
@@ -21,7 +21,7 @@ import type {
   PluginPackEntry,
   PluginPackEntryView,
   PluginPackView,
-} from '@project311/protocol'
+} from '@whalepod/protocol'
 import { ApiError } from '../shared/http-error.js'
 import type { PluginCatalog } from './catalog.js'
 

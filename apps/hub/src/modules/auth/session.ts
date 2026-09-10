@@ -1,17 +1,12 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
-import {
-  findSessionActor,
-  insertSession,
-  revokeSession,
-  touchSessionLastSeen,
-} from '@project311/db'
-import type { Database } from '@project311/db'
+import { findSessionActor, insertSession, revokeSession, touchSessionLastSeen } from '@whalepod/db'
+import type { Database } from '@whalepod/db'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
 import { hashToken, issueOpaqueToken } from './token.js'
 
-// 文档中 `tabtin_session` 是定名前的暂定标识；新代码一律 project311。
-export const SESSION_COOKIE = 'project311_session'
+// Cookie 名 whalepod_session（#133 定名；历史暂定名 tabtin_session / project311_session 已废弃）。
+export const SESSION_COOKIE = 'whalepod_session'
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 03 §2.1：默认 30 天
 const LAST_SEEN_THROTTLE_MS = 5 * 60 * 1000 // 03 §2.1：每 5 分钟最多更新一次
 

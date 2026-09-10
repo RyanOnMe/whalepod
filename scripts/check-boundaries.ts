@@ -4,7 +4,7 @@
  * Two rule families:
  * 1. DSH isolation — `@deepseek-ai/dsh*` and `@deepseek-ai/cordis` may only be
  *    imported from `packages/runtime-dsh/` and `apps/runtime/`.
- * 2. Workspace dependency rules — `@project311/*` imports must follow the
+ * 2. Workspace dependency rules — `@whalepod/*` imports must follow the
  *    direction table in 02-第一阶段实施计划.md Task 1:
  *    web -> protocol; hub -> domain/protocol/db; node -> domain/protocol;
  *    runtime -> protocol/runtime-dsh. Reverse imports fail.
@@ -24,10 +24,10 @@ const DSH_PREFIXES = ['@deepseek-ai/dsh-', '@deepseek-ai/dsh', '@deepseek-ai/cor
 const DSH_OWNERS = ['packages/runtime-dsh/', 'apps/runtime/']
 const DSH_ERROR = 'DSH imports are restricted to packages/runtime-dsh and apps/runtime'
 
-const WORKSPACE_SCOPE = '@project311/'
+const WORKSPACE_SCOPE = '@whalepod/'
 
 /**
- * importer path prefix -> allowed `@project311/*` specifiers.
+ * importer path prefix -> allowed `@whalepod/*` specifiers.
  *
  * `subpaths`（可选）是该 importer 的「同构子路径白名单」：一旦声明，来自该
  * importer 的子路径 specifier 一律默认违规，只有白名单里显式列出的完整子路径
@@ -37,7 +37,7 @@ const WORKSPACE_SCOPE = '@project311/'
  */
 const DEPENDENCY_RULES: ReadonlyArray<{
   importer: string
-  /** Bare package specifiers (`@project311/<name>`) allowed from this importer. */
+  /** Bare package specifiers (`@whalepod/<name>`) allowed from this importer. */
   allowed: readonly string[]
   /** Isomorphic subpath whitelist; see the table doc comment above. */
   subpaths?: Readonly<Record<string, readonly string[]>>
@@ -46,45 +46,35 @@ const DEPENDENCY_RULES: ReadonlyArray<{
     // testkit 是 apps/hub 的 devDependency，只准测试目录引用（Fake DeviceGateway/Fixtures）；
     // 排在 apps/hub/ 之前，靠前缀匹配让 src 侧 import testkit 直接判违规。
     importer: 'apps/hub/tests/',
-    allowed: [
-      '@project311/domain',
-      '@project311/protocol',
-      '@project311/db',
-      '@project311/testkit',
-    ],
+    allowed: ['@whalepod/domain', '@whalepod/protocol', '@whalepod/db', '@whalepod/testkit'],
   },
   {
     importer: 'apps/hub/',
-    allowed: ['@project311/domain', '@project311/protocol', '@project311/db'],
+    allowed: ['@whalepod/domain', '@whalepod/protocol', '@whalepod/db'],
   },
   {
     // 浏览器 bundle：protocol 的已声明子路径导出目前全部 node-only
     // （plugin-pack-digest 引 node:crypto），白名单显式置空；确有同构子路径
     // 时在 subpaths 里显式添加完整 specifier。
     importer: 'apps/web/',
-    allowed: ['@project311/protocol'],
-    subpaths: { '@project311/protocol': [] },
+    allowed: ['@whalepod/protocol'],
+    subpaths: { '@whalepod/protocol': [] },
   },
   {
     // 验收链路测试（P1-13 run-projection-chain）：跨 app 验收需要直接读 DB 判定
     // 落库结果——与 apps/hub/tests/ 同型例外；src 侧仍禁 db（部署边界不变）。
     importer: 'apps/node/tests/',
-    allowed: ['@project311/domain', '@project311/protocol', '@project311/db'],
+    allowed: ['@whalepod/domain', '@whalepod/protocol', '@whalepod/db'],
   },
-  { importer: 'apps/node/', allowed: ['@project311/domain', '@project311/protocol'] },
-  { importer: 'apps/runtime/', allowed: ['@project311/protocol', '@project311/runtime-dsh'] },
+  { importer: 'apps/node/', allowed: ['@whalepod/domain', '@whalepod/protocol'] },
+  { importer: 'apps/runtime/', allowed: ['@whalepod/protocol', '@whalepod/runtime-dsh'] },
   { importer: 'packages/domain/', allowed: [] },
   { importer: 'packages/protocol/', allowed: [] },
-  { importer: 'packages/db/', allowed: ['@project311/domain', '@project311/protocol'] },
-  { importer: 'packages/runtime-dsh/', allowed: ['@project311/protocol'] },
+  { importer: 'packages/db/', allowed: ['@whalepod/domain', '@whalepod/protocol'] },
+  { importer: 'packages/runtime-dsh/', allowed: ['@whalepod/protocol'] },
   {
     importer: 'packages/testkit/',
-    allowed: [
-      '@project311/domain',
-      '@project311/protocol',
-      '@project311/db',
-      '@project311/runtime-dsh',
-    ],
+    allowed: ['@whalepod/domain', '@whalepod/protocol', '@whalepod/db', '@whalepod/runtime-dsh'],
   },
 ]
 
@@ -99,7 +89,7 @@ export function validateImport(importer: string, specifier: string): void {
 
   if (!specifier.startsWith(WORKSPACE_SCOPE)) return
 
-  // 子路径导出（如 @project311/protocol/plugin-pack-digest）归一到包名再判定——
+  // 子路径导出（如 @whalepod/protocol/plugin-pack-digest）归一到包名再判定——
   // 方向表管的是包级依赖，服务端 importer 的已声明子路径导出继承包的许可。
   // 声明了同构子路径白名单的 importer（apps/web）则子路径默认违规，
   // 只有白名单显式列出的子路径放行，防止 node-only 导出进 web bundle。

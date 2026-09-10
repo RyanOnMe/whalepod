@@ -1,8 +1,8 @@
 import { eq } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { Database } from '@project311/db'
-import { schema } from '@project311/db'
+import type { Database } from '@whalepod/db'
+import { schema } from '@whalepod/db'
 import type { FastifyInstance } from 'fastify'
 import WebSocket from 'ws'
 import {

@@ -8,8 +8,8 @@
 import { createHash } from 'node:crypto'
 import { parseDocument } from 'yaml'
 import { z } from 'zod'
-import { canonicalJson, compareCodePoints } from '@project311/protocol/plugin-pack-digest'
-import { ExactVersionSchema, NpmPackageNameSchema, SriIntegritySchema } from '@project311/protocol'
+import { canonicalJson, compareCodePoints } from '@whalepod/protocol/plugin-pack-digest'
+import { ExactVersionSchema, NpmPackageNameSchema, SriIntegritySchema } from '@whalepod/protocol'
 import { PluginError } from './integrity.js'
 
 /** 闭包中一个依赖 tarball 的钉死记录。 */

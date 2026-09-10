@@ -8,8 +8,8 @@
  *   “旧 cursor → 服务端再次 resync”的无限循环。
  * - 帧一律过 parseClientFrame（fail-closed）；未知帧不改任何状态。
  */
-import { parseClientFrame } from '@project311/protocol'
-import type { ClientFrame } from '@project311/protocol'
+import { parseClientFrame } from '@whalepod/protocol'
+import type { ClientFrame } from '@whalepod/protocol'
 import type { CursorStore } from './cursor-store.js'
 
 export interface TeamEventSocketCallbacks {

@@ -3,7 +3,7 @@
  * code/requestId 直接来自 wire：code 用 protocol 的 ErrorCodeSchema 枚举（wire SSoT），
  * requestId 由 Hub 在每次失败响应中给出，UI 原样展示供排查。
  */
-import type { ErrorCode } from '@project311/protocol'
+import type { ErrorCode } from '@whalepod/protocol'
 
 export class ApiError extends Error {
   readonly code: ErrorCode

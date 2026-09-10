@@ -1,5 +1,5 @@
-import { DomainError } from '@project311/domain'
-import type { ErrorCode } from '@project311/protocol'
+import { DomainError } from '@whalepod/domain'
+import type { ErrorCode } from '@whalepod/protocol'
 
 /**
  * Hub 命令层错误：code 即 wire ErrorCode（03-领域模型与运行协议.md §10），

@@ -8,7 +8,7 @@
  *   不经过 HTTP（routes 留给组合根接线，P1-13）。
  *
  * 迁移应用 / 复位 / DATABASE_URL 检查与 packages/db/tests/helpers.ts 同源，但只依赖
- * @project311/db 的公开导出，不跨包引用测试内部文件（跨包 re-export 在干净 checkout 下
+ * @whalepod/db 的公开导出，不跨包引用测试内部文件（跨包 re-export 在干净 checkout 下
  * 无法被 Vite module graph 解析）。seedRunPrereqs 在此本地实现，沿用同源约定。
  */
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -18,8 +18,8 @@ import { join } from 'node:path'
 import { Writable } from 'node:stream'
 import type { FastifyInstance } from 'fastify'
 import { eq } from 'drizzle-orm'
-import type { Actor } from '@project311/domain'
-import { asUserId } from '@project311/domain'
+import type { Actor } from '@whalepod/domain'
+import { asUserId } from '@whalepod/domain'
 import {
   applyMigrations,
   createDatabase,
@@ -30,17 +30,17 @@ import {
   insertUser,
   Outbox,
   schema,
-} from '@project311/db'
-import type { Database, DbHandle } from '@project311/db'
-import type { FakeDeviceGatewayOptions } from '@project311/testkit'
-import { FakeClock, FakeDeviceGateway } from '@project311/testkit'
+} from '@whalepod/db'
+import type { Database, DbHandle } from '@whalepod/db'
+import type { FakeDeviceGatewayOptions } from '@whalepod/testkit'
+import { FakeClock, FakeDeviceGateway } from '@whalepod/testkit'
 import type { CreateRunInput, RunOrchestrator } from '../src/modules/run/index.js'
 import { RunOrchestrator as Orchestrator } from '../src/modules/run/index.js'
 import { OutboxWorker } from '../src/modules/run/index.js'
 import { buildApp } from '../src/app.js'
 import type { HubConfig } from '../src/config.js'
 
-// 迁移应用已收敛到 @project311/db 公开导出（src/migrate.ts）；applyMigrations 经上方 import 提供。
+// 迁移应用已收敛到 @whalepod/db 公开导出（src/migrate.ts）；applyMigrations 经上方 import 提供。
 const MIGRATION_TABLE = '_schema_migrations' as const
 
 export async function resetDatabase(database: Database): Promise<void> {
@@ -137,7 +137,7 @@ export async function createTestApp(
   options: TestAppOptions = {},
 ): Promise<TestApp> {
   const origin = options.origin ?? 'http://localhost:4242'
-  const dir = await mkdtemp(join(tmpdir(), 'p311-hub-test-'))
+  const dir = await mkdtemp(join(tmpdir(), 'wp-hub-test-'))
   const setupTokenPath = join(dir, 'setup-token')
   const setupToken = randomBytes(32).toString('base64url')
   await writeFile(setupTokenPath, setupToken, { mode: 0o600 })
@@ -205,13 +205,13 @@ export async function apiInject(
   })
 }
 
-/** 从 set-cookie 头提取 project311_session 的 Cookie 请求头值。 */
+/** 从 set-cookie 头提取 whalepod_session 的 Cookie 请求头值。 */
 export function extractSessionCookie(setCookie: string | string[] | undefined): string {
   const header = Array.isArray(setCookie) ? setCookie[0] : setCookie
   if (header === undefined) throw new Error('response 缺少 set-cookie')
   const pair = header.split(';')[0]
-  if (pair === undefined || !pair.startsWith('project311_session=')) {
-    throw new Error(`set-cookie 不含 project311_session：${header}`)
+  if (pair === undefined || !pair.startsWith('whalepod_session=')) {
+    throw new Error(`set-cookie 不含 whalepod_session：${header}`)
   }
   return pair
 }
@@ -307,7 +307,7 @@ export async function driveInviteAndAccept(
 
 // ---------------------------------------------------------------------------
 // Run Orchestrator 驱动助手（P1-10）：直驱深模块，不经过 HTTP。
-// 与 packages/db/tests/helpers.ts 同源约定：seedRunPrereqs 本地实现，只用 @project311/db
+// 与 packages/db/tests/helpers.ts 同源约定：seedRunPrereqs 本地实现，只用 @whalepod/db
 // 的公开导出（insertTeam/insertUser/insertMember/insertProject/insertTask + schema），
 // 不跨包引用测试内部文件。
 // ---------------------------------------------------------------------------

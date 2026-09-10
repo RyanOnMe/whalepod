@@ -7,7 +7,7 @@
  * symlink/hardlink/设备节点）→ **绝不运行任何 lifecycle script / native
  * addon**（第一阶段无构建步骤，源码树原样入 store）→ 树 digest 原子发布。
  */
-import { PluginManifestSchema, type PluginManifest } from '@project311/protocol'
+import { PluginManifestSchema, type PluginManifest } from '@whalepod/protocol'
 import { PluginError, verifyIntegrity } from './integrity.js'
 import { assertLockMatches, type PluginLockfile } from './lockfile.js'
 import { PackageStore } from './package-store.js'

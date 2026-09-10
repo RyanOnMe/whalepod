@@ -32,7 +32,7 @@ async function fixture(
   provider: string,
   env: Record<string, string>,
 ): Promise<{ secrets: SecretStore; workspacePath: string }> {
-  const root = await mkdtemp(join(tmpdir(), 'p311-env-'))
+  const root = await mkdtemp(join(tmpdir(), 'wp-env-'))
   cleanups.push(async () => {
     await rm(root, { recursive: true, force: true })
   })
@@ -52,7 +52,7 @@ const spec = (provider: string) => ({
 describe('runtime 环境注入：provider→credential-ref 真值表（#117）', () => {
   it('deepseek-official → 注入 DEEPSEEK_API_KEY（adapter 真值），不产派生名', async () => {
     const { secrets, workspacePath } = await fixture('deepseek-official', {
-      PROJECT311_DSH_SECRET_DEEPSEEK_OFFICIAL_DEFAULT: 'sk-real-route',
+      WHALEPOD_DSH_SECRET_DEEPSEEK_OFFICIAL_DEFAULT: 'sk-real-route',
     })
     const env = buildRuntimeEnvironment(spec('deepseek-official'), {
       workspacePath,
@@ -65,7 +65,7 @@ describe('runtime 环境注入：provider→credential-ref 真值表（#117）',
 
   it('表外 provider 保持派生约定（向后兼容，dsh → DSH_API_KEY）', async () => {
     const { secrets, workspacePath } = await fixture('dsh', {
-      PROJECT311_DSH_SECRET_DSH_DEFAULT: 'sk-legacy',
+      WHALEPOD_DSH_SECRET_DSH_DEFAULT: 'sk-legacy',
     })
     const env = buildRuntimeEnvironment(spec('dsh'), {
       workspacePath,

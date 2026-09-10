@@ -4,7 +4,7 @@
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent, type ReactNode } from 'react'
-import type { LoginRequest } from '@project311/protocol'
+import type { LoginRequest } from '@whalepod/protocol'
 import { useNavigate } from 'react-router'
 import { api } from '../shared/api/client.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'

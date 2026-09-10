@@ -17,16 +17,16 @@ import { Writable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
-import { schema } from '@project311/db'
-import type { Database } from '@project311/db'
-import { pluginCordisEntry } from '@project311/protocol'
+import { schema } from '@whalepod/db'
+import type { Database } from '@whalepod/db'
+import { pluginCordisEntry } from '@whalepod/protocol'
 import type {
   PluginInstallationView,
   PluginPackDescriptor,
   PluginPackView,
-} from '@project311/protocol'
-import { digestPluginCordisEntry } from '@project311/protocol/plugin-pack-digest'
-import { canonicalJson, digestPluginPack } from '@project311/protocol/plugin-pack-digest'
+} from '@whalepod/protocol'
+import { digestPluginCordisEntry } from '@whalepod/protocol/plugin-pack-digest'
+import { canonicalJson, digestPluginPack } from '@whalepod/protocol/plugin-pack-digest'
 import { buildApp } from '../src/app.js'
 import type { HubConfig } from '../src/config.js'
 import { hashToken } from '../src/modules/auth/token.js'
@@ -42,7 +42,7 @@ import {
 } from './helpers.js'
 
 const FIXTURE_CATALOG_DIR = fileURLToPath(new URL('./fixtures/plugin-catalog', import.meta.url))
-// 同名多版本专用 fixture（p311-echo@0.2.0 与 @0.2.1 并存；M9）。不放主 fixture：
+// 同名多版本专用 fixture（wp-echo@0.2.0 与 @0.2.1 并存；M9）。不放主 fixture：
 // plugin-catalog.integration.spec.ts 锚定了主 catalog 的全量条目清单，加第二版本
 // 会打破该断言——多版本 fixture 自含一个目录，互不影响。
 const DUAL_VERSION_CATALOG_DIR = fileURLToPath(
@@ -85,7 +85,7 @@ async function createPluginTestApp(
   options: { readonly catalogDir: string; readonly pluginDevMode?: boolean },
 ): Promise<TestApp> {
   const origin = 'http://localhost:4242'
-  const dir = await mkdtemp(join(tmpdir(), 'p311-hub-plugin-test-'))
+  const dir = await mkdtemp(join(tmpdir(), 'wp-hub-plugin-test-'))
   const setupTokenPath = join(dir, 'setup-token')
   const setupToken = randomBytes(32).toString('base64url')
   await writeFile(setupTokenPath, setupToken, { mode: 0o600 })
@@ -204,8 +204,8 @@ describe('plugin pack API (P1-17)', () => {
     packDigest: string
     installations: PluginInstallationView[]
   }> {
-    const echo = await installPackage(owner, 'p311-echo', '0.2.1')
-    const fixed = await installPackage(owner, 'p311-fixed-time', '0.1.0')
+    const echo = await installPackage(owner, 'wp-echo', '0.2.1')
+    const fixed = await installPackage(owner, 'wp-fixed-time', '0.1.0')
     const pack = await createPackAs(owner, 'descriptor-pack', [fixed.id, echo.id])
     return { packDigest: pack.packDigest, installations: [echo, fixed] }
   }
@@ -227,11 +227,11 @@ describe('plugin pack API (P1-17)', () => {
     const res = await apiInject(ctx, owner, {
       method: 'POST',
       url: '/api/v1/plugins/installations',
-      payload: { name: 'p311-fixed-time', version: '0.1.0' },
+      payload: { name: 'wp-fixed-time', version: '0.1.0' },
     })
     expect(res.statusCode).toBe(201)
     const installation = res.json().data as PluginInstallationView
-    expect(installation.packageName).toBe('p311-fixed-time')
+    expect(installation.packageName).toBe('wp-fixed-time')
     expect(installation.packageVersion).toBe('0.1.0')
     expect(installation.trust).toBe('curated')
     expect(installation.capabilityClass).toBe('declared')
@@ -240,17 +240,17 @@ describe('plugin pack API (P1-17)', () => {
     expect(installation.installedBy).toBe(owner.userId)
 
     const [row] = await database.db.select().from(schema.pluginInstallations)
-    expect(row?.packageName).toBe('p311-fixed-time')
-    expect(row?.dependencyLockDigest).toBe(lockDigest('p311-fixed-time', '0.1.0'))
+    expect(row?.packageName).toBe('wp-fixed-time')
+    expect(row?.dependencyLockDigest).toBe(lockDigest('wp-fixed-time', '0.1.0'))
     expect(row?.installedBy).toBe(owner.userId)
   })
 
   it('同 name+version 重复安装返回已有行（200 + 同 id，不产生第二行）', async () => {
-    const first = await installPackage(owner, 'p311-echo', '0.2.1')
+    const first = await installPackage(owner, 'wp-echo', '0.2.1')
     const res = await apiInject(ctx, owner, {
       method: 'POST',
       url: '/api/v1/plugins/installations',
-      payload: { name: 'p311-echo', version: '0.2.1' },
+      payload: { name: 'wp-echo', version: '0.2.1' },
     })
     expect(res.statusCode).toBe(200)
     const second = res.json().data as PluginInstallationView
@@ -263,7 +263,7 @@ describe('plugin pack API (P1-17)', () => {
     const res = await apiInject(ctx, member, {
       method: 'POST',
       url: '/api/v1/plugins/installations',
-      payload: { name: 'p311-fixed-time', version: '0.1.0' },
+      payload: { name: 'wp-fixed-time', version: '0.1.0' },
     })
     expect(res.statusCode).toBe(403)
     expect(res.json().error.code).toBe('FORBIDDEN')
@@ -279,7 +279,7 @@ describe('plugin pack API (P1-17)', () => {
     const res = await apiInject(ctx, owner, {
       method: 'POST',
       url: '/api/v1/plugins/installations',
-      payload: { name: 'p311-unreviewed', version: '0.0.3' },
+      payload: { name: 'wp-unreviewed', version: '0.0.3' },
     })
     expect(res.statusCode).toBe(403)
     expect(res.json().error.code).toBe('PLUGIN_UNREVIEWED')
@@ -289,7 +289,7 @@ describe('plugin pack API (P1-17)', () => {
     const res = await apiInject(ctx, owner, {
       method: 'POST',
       url: '/api/v1/plugins/installations',
-      payload: { name: 'p311-ghost', version: '1.0.0' },
+      payload: { name: 'wp-ghost', version: '1.0.0' },
     })
     expect(res.statusCode).toBe(404)
     expect(res.json().error.code).toBe('NOT_FOUND')
@@ -299,7 +299,7 @@ describe('plugin pack API (P1-17)', () => {
     const off = await apiInject(ctx, owner, {
       method: 'POST',
       url: '/api/v1/plugins/installations',
-      payload: { name: 'p311-dev-sandbox', version: '0.0.1' },
+      payload: { name: 'wp-dev-sandbox', version: '0.0.1' },
     })
     expect(off.statusCode).toBe(403)
     expect(off.json().error.code).toBe('PLUGIN_UNREVIEWED')
@@ -313,7 +313,7 @@ describe('plugin pack API (P1-17)', () => {
       const on = await apiInject(devCtx, owner, {
         method: 'POST',
         url: '/api/v1/plugins/installations',
-        payload: { name: 'p311-dev-sandbox', version: '0.0.1' },
+        payload: { name: 'wp-dev-sandbox', version: '0.0.1' },
       })
       expect(on.statusCode).toBe(201)
       expect(on.json().data.trust).toBe('unreviewed')
@@ -323,8 +323,8 @@ describe('plugin pack API (P1-17)', () => {
   })
 
   it('创建不可变 Pack：entries 按 name 排序展开，digest 可复算，configDigest 正确', async () => {
-    const echo = await installPackage(owner, 'p311-echo', '0.2.1')
-    const fixed = await installPackage(owner, 'p311-fixed-time', '0.1.0')
+    const echo = await installPackage(owner, 'wp-echo', '0.2.1')
+    const fixed = await installPackage(owner, 'wp-fixed-time', '0.1.0')
     // 反序输入：组装必须按 package name 重排（03 §2.5）。
     const res = await apiInject(ctx, owner, {
       method: 'POST',
@@ -335,7 +335,7 @@ describe('plugin pack API (P1-17)', () => {
     const pack = res.json().data as PluginPackView
     expect(pack.name).toBe('curated-base')
     expect(pack.createdBy).toBe(owner.userId)
-    expect(pack.entries.map((e) => e.entry.name)).toEqual(['p311-echo', 'p311-fixed-time'])
+    expect(pack.entries.map((e) => e.entry.name)).toEqual(['wp-echo', 'wp-fixed-time'])
     expect(pack.installations).toEqual([echo.id, fixed.id])
     expect(pack.entries[0]?.installation.id).toBe(echo.id)
 
@@ -358,8 +358,8 @@ describe('plugin pack API (P1-17)', () => {
   })
 
   it('digest 确定性：同输入、不同 name 的 Pack 得同一 pack_digest', async () => {
-    const echo = await installPackage(owner, 'p311-echo', '0.2.1')
-    const fixed = await installPackage(owner, 'p311-fixed-time', '0.1.0')
+    const echo = await installPackage(owner, 'wp-echo', '0.2.1')
+    const fixed = await installPackage(owner, 'wp-fixed-time', '0.1.0')
     const packA = await createPackAs(owner, 'pack-alpha', [echo.id, fixed.id])
     const packB = await createPackAs(owner, 'pack-beta', [fixed.id, echo.id])
     expect(packA.name).toBe('pack-alpha')
@@ -368,7 +368,7 @@ describe('plugin pack API (P1-17)', () => {
   })
 
   it('Pack name 冲突 → 409 CONFLICT（不可变，不提供更新）', async () => {
-    const fixed = await installPackage(owner, 'p311-fixed-time', '0.1.0')
+    const fixed = await installPackage(owner, 'wp-fixed-time', '0.1.0')
     await createPackAs(owner, 'solo-pack', [fixed.id])
     const res = await apiInject(ctx, owner, {
       method: 'POST',
@@ -396,8 +396,8 @@ describe('plugin pack API (P1-17)', () => {
         }
         return res.json().data as PluginInstallationView
       }
-      const fixed = await installOn('p311-fixed-time', '0.1.0')
-      const dev = await installOn('p311-dev-sandbox', '0.0.1')
+      const fixed = await installOn('wp-fixed-time', '0.1.0')
+      const dev = await installOn('wp-dev-sandbox', '0.0.1')
       expect(dev.trust).toBe('unreviewed')
       const res = await apiInject(devCtx, owner, {
         method: 'POST',
@@ -420,10 +420,10 @@ describe('plugin pack API (P1-17)', () => {
         const res = await apiInject(dualCtx, owner, {
           method: 'POST',
           url: '/api/v1/plugins/installations',
-          payload: { name: 'p311-echo', version },
+          payload: { name: 'wp-echo', version },
         })
         if (res.statusCode !== 201) {
-          throw new Error(`install p311-echo@${version} 失败：${res.statusCode} ${res.body}`)
+          throw new Error(`install wp-echo@${version} 失败：${res.statusCode} ${res.body}`)
         }
         return res.json().data as PluginInstallationView
       }
@@ -462,7 +462,7 @@ describe('plugin pack API (P1-17)', () => {
     expect(missing.statusCode).toBe(404)
     expect(missing.json().error.code).toBe('NOT_FOUND')
 
-    const fixed = await installPackage(owner, 'p311-fixed-time', '0.1.0')
+    const fixed = await installPackage(owner, 'wp-fixed-time', '0.1.0')
     const duplicate = await apiInject(ctx, owner, {
       method: 'POST',
       url: '/api/v1/plugin-packs',
@@ -487,15 +487,15 @@ describe('plugin pack API (P1-17)', () => {
   })
 
   it('Member 可读 Pack 列表（entries 展开安装详情）', async () => {
-    const echo = await installPackage(owner, 'p311-echo', '0.2.1')
-    const fixed = await installPackage(owner, 'p311-fixed-time', '0.1.0')
+    const echo = await installPackage(owner, 'wp-echo', '0.2.1')
+    const fixed = await installPackage(owner, 'wp-fixed-time', '0.1.0')
     const created = await createPackAs(owner, 'curated-base', [echo.id, fixed.id])
     const res = await apiInject(ctx, member, { method: 'GET', url: '/api/v1/plugin-packs' })
     expect(res.statusCode).toBe(200)
     const packs = res.json().data as PluginPackView[]
     const pack = packs.find((p) => p.id === created.id)
     expect(pack).toBeDefined()
-    expect(pack?.entries.map((e) => e.entry.name)).toEqual(['p311-echo', 'p311-fixed-time'])
+    expect(pack?.entries.map((e) => e.entry.name)).toEqual(['wp-echo', 'wp-fixed-time'])
     expect(pack?.entries[0]?.installation.installedBy).toBe(owner.userId)
     // core-empty（Setup 创建，空闭包）同列表可见且 digest 与新算法一致。
     const coreEmpty = packs.find((p) => p.name === 'core-empty')
@@ -597,7 +597,7 @@ describe('plugin pack API (P1-17)', () => {
     it('catalog entrypoint 被篡改后 descriptor 拒发（重启加载漂移 catalog = digest 漂移 → 404）', async () => {
       const token = await seedDeviceToken(owner.userId)
       const { packDigest } = await buildDescriptorPack()
-      const manifestPath = join(FIXTURE_CATALOG_DIR, 'catalog', 'p311-fixed-time.json')
+      const manifestPath = join(FIXTURE_CATALOG_DIR, 'catalog', 'wp-fixed-time.json')
       const original = await readFile(manifestPath, 'utf8')
       try {
         const tampered = {
@@ -630,7 +630,7 @@ describe('plugin pack API (P1-17)', () => {
     it('catalog integrity 被篡改后拒发：快照失配 409，GET /plugin-packs 同拒', async () => {
       const token = await seedDeviceToken(owner.userId)
       const { packDigest } = await buildDescriptorPack()
-      const manifestPath = join(FIXTURE_CATALOG_DIR, 'catalog', 'p311-echo.json')
+      const manifestPath = join(FIXTURE_CATALOG_DIR, 'catalog', 'wp-echo.json')
       const original = await readFile(manifestPath, 'utf8')
       try {
         const tampered = {

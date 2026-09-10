@@ -1,5 +1,5 @@
 /**
- * CLI 验收：project311-hub setup-token 只在尚无 Team 时打印 Token（02 Task 5 Step 3）。
+ * CLI 验收：whalepod-hub setup-token 只在尚无 Team 时打印 Token（02 Task 5 Step 3）。
  * 驱动真实子进程 + 真实 PostgreSQL，不走 mock。
  */
 import { execFile } from 'node:child_process'
@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { Database } from '@project311/db'
+import type { Database } from '@whalepod/db'
 import { createTestApp, createTestDatabase, driveSetup, resetDatabase } from './helpers.js'
 
 const execFileAsync = promisify(execFile)
@@ -26,7 +26,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await resetDatabase(database)
-  dir = await mkdtemp(join(tmpdir(), 'p311-cli-test-'))
+  dir = await mkdtemp(join(tmpdir(), 'wp-cli-test-'))
 })
 
 afterEach(async () => {
@@ -42,8 +42,8 @@ async function runCli(setupTokenPath: string): Promise<{ code: number; stdout: s
     const { stdout } = await execFileAsync(TSX, [CLI, 'setup-token'], {
       env: {
         ...process.env,
-        PROJECT311_PUBLIC_ORIGIN: 'http://localhost:4242',
-        PROJECT311_SETUP_TOKEN_PATH: setupTokenPath,
+        WHALEPOD_PUBLIC_ORIGIN: 'http://localhost:4242',
+        WHALEPOD_SETUP_TOKEN_PATH: setupTokenPath,
       },
     })
     return { code: 0, stdout }
@@ -53,7 +53,7 @@ async function runCli(setupTokenPath: string): Promise<{ code: number; stdout: s
   }
 }
 
-describe('project311-hub setup-token', () => {
+describe('whalepod-hub setup-token', () => {
   it('尚无 Team 时生成 Token 文件并打印到 stdout；重复调用不轮换', async () => {
     const setupTokenPath = join(dir, 'setup-token')
     const first = await runCli(setupTokenPath)
@@ -81,7 +81,7 @@ describe('project311-hub setup-token', () => {
   it('未知子命令退出非零', async () => {
     try {
       await execFileAsync(TSX, [CLI, 'bogus'], {
-        env: { ...process.env, PROJECT311_PUBLIC_ORIGIN: 'http://localhost:4242' },
+        env: { ...process.env, WHALEPOD_PUBLIC_ORIGIN: 'http://localhost:4242' },
       })
       expect.unreachable('应当失败')
     } catch (error) {

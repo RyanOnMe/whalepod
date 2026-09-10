@@ -13,8 +13,8 @@
 import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { Database } from '@project311/db'
-import { insertProject, insertTask, listTeamEvents, Outbox, schema } from '@project311/db'
+import type { Database } from '@whalepod/db'
+import { insertProject, insertTask, listTeamEvents, Outbox, schema } from '@whalepod/db'
 import { expireApprovals } from '../src/modules/run/approval-expiry.js'
 import {
   apiInject,

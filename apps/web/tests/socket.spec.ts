@@ -7,8 +7,8 @@
  * - handler 失败不重置光标（等修复后继续补发），不主动断连。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PROTOCOL_VERSION } from '@project311/protocol'
-import type { ClientFrame } from '@project311/protocol'
+import { PROTOCOL_VERSION } from '@whalepod/protocol'
+import type { ClientFrame } from '@whalepod/protocol'
 import { CursorStore } from '../src/shared/realtime/cursor-store.js'
 import { TeamEventSocket } from '../src/shared/realtime/socket.js'
 import type { WebSocketLike } from '../src/shared/realtime/socket.js'

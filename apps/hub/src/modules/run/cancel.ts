@@ -10,8 +10,8 @@
  */
 import { randomUUID } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
-import { decideApproval, transitionRun } from '@project311/domain'
-import type { Outbox, RunRow, Tx } from '@project311/db'
+import { decideApproval, transitionRun } from '@whalepod/domain'
+import type { Outbox, RunRow, Tx } from '@whalepod/db'
 import {
   appendTeamEvent,
   failInTransaction,
@@ -19,8 +19,8 @@ import {
   schema,
   setApprovalStatus,
   setRunStatus,
-} from '@project311/db'
-import { RunCancelSchema } from '@project311/protocol'
+} from '@whalepod/db'
+import { RunCancelSchema } from '@whalepod/protocol'
 
 export interface CancelRunDeps {
   readonly outbox: Outbox

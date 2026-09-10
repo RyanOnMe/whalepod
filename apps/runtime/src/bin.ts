@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * project311-runtime —— per-Run DSH Runtime 子进程入口（02 Task 11 Step 6，03 §7）。
+ * whalepod-runtime —— per-Run DSH Runtime 子进程入口（02 Task 11 Step 6，03 §7）。
  *
  * 通道纪律：stdout 只写 NDJSON 协议帧（每帧过 RuntimeOutputSchema，同步写，
  * 任何库打点一律改道 stderr）；stderr 写结构化 JSON 日志行。
@@ -9,7 +9,7 @@
  * runtime.fatal(RUNTIME_START_FAILED) 后 exit 1；runtime.shutdown 收敛后
  * exit 0；stdin EOF（父 Node 消失）先收敛再 exit 0；单行超 1 MiB exit 2。
  *
- * `PROJECT311_RUNTIME_EXTRA_PATCH_FILES`（path.delimiter 分隔）追加 Loader
+ * `WHALEPOD_RUNTIME_EXTRA_PATCH_FILES`（path.delimiter 分隔）追加 Loader
  * patch 层：契约探针用它挂 replay overlay。生产不使用该 env 挂 Plugin Pack：
  * P1-17 起经审核的 pack overlay 按 Run 随 `runtime.initialize.pluginPackOverlayPath`
  * 在 wire 上到达（runtime-spec 解析、bridge 入栈），env 仅保留为探针通道。
@@ -18,14 +18,14 @@ import { randomUUID } from 'node:crypto'
 import { writeSync } from 'node:fs'
 import { delimiter } from 'node:path'
 import { format } from 'node:util'
-import type { RuntimeCommand, RuntimeOutput } from '@project311/protocol'
+import type { RuntimeCommand, RuntimeOutput } from '@whalepod/protocol'
 import {
   dispatchRuntimeCommand,
   readRuntimeCommands,
   writeRuntimeOutput,
   type LogSink,
   type RuntimeBridgeSlot,
-} from '@project311/runtime-dsh'
+} from '@whalepod/runtime-dsh'
 
 // console 一律转 stderr：stdout 是协议单通道。
 for (const method of ['log', 'info', 'warn', 'error', 'debug'] as const) {
@@ -53,7 +53,7 @@ function emitStartFatal(runId: string, error: unknown): void {
 }
 
 function main(): void {
-  const extraPatchFiles = (process.env['PROJECT311_RUNTIME_EXTRA_PATCH_FILES'] ?? '')
+  const extraPatchFiles = (process.env['WHALEPOD_RUNTIME_EXTRA_PATCH_FILES'] ?? '')
     .split(delimiter)
     .filter((entry) => entry.length > 0)
   const slot: RuntimeBridgeSlot = { current: undefined }

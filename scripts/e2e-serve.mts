@@ -10,7 +10,7 @@
  * 0. 经 scripts/lib/ephemeral-postgres.mts 启动一次性 PostgreSQL（退出时删除）；
  * 1. 应用 packages/db 迁移（applyMigrations，公开导出）；
  * 2. 以生产入口拉起真实 Hub 子进程（apps/hub/src/server.ts，含 OutboxWorker/租约循环），
- *    PROJECT311_PUBLIC_ORIGIN 指向 Web dev origin（同源反代部署形态，03 §4）；
+ *    WHALEPOD_PUBLIC_ORIGIN 指向 Web dev origin（同源反代部署形态，03 §4）；
  * 3. 拉起 apps/web 的 vite dev server（5173，/api/v1、/ws/v1 反代到 Hub）；
  * 4. 双端就绪后把环境清单（Hub origin、Setup Token 路径、控制面端口与一次性
  *    Token）写到临时清单文件，供 playwright spec 读取；Token 明文不进 git、不进日志；
@@ -33,18 +33,18 @@ import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq, sql } from 'drizzle-orm'
-import { schema } from '@project311/db'
-import { digestPluginPack } from '@project311/protocol/plugin-pack-digest'
+import { schema } from '@whalepod/db'
+import { digestPluginPack } from '@whalepod/protocol/plugin-pack-digest'
 import { redactText } from './lib/phase1/events.js'
 
 const HUB_PORT = 18080
 const WEB_PORT = 5173
 const WEB_ORIGIN = `http://localhost:${WEB_PORT}`
-const ENV_FILE = join(tmpdir(), 'project311-e2e-env.json')
-const NODE_STATE_ROOT = join(tmpdir(), 'project311-e2e-node')
+const ENV_FILE = join(tmpdir(), 'whalepod-e2e-env.json')
+const NODE_STATE_ROOT = join(tmpdir(), 'whalepod-e2e-node')
 // Artifact store：Hub 默认落在 ./data（仓库目录，E2E 不该污染）；固定 tmp 路径让
 // Hub 重启前后 blob 连续，启动时整体清空。
-const HUB_ARTIFACT_STORE = join(tmpdir(), 'project311-e2e-hub-artifacts')
+const HUB_ARTIFACT_STORE = join(tmpdir(), 'whalepod-e2e-hub-artifacts')
 const READY_TIMEOUT_MS = 90_000
 const READY_POLL_MS = 400
 const NODE_READY_TIMEOUT_MS = 60_000
@@ -83,9 +83,9 @@ async function spawnHub(databaseUrl: string, setupTokenPath: string): Promise<Ch
     env: {
       ...process.env,
       DATABASE_URL: databaseUrl,
-      PROJECT311_PUBLIC_ORIGIN: WEB_ORIGIN,
-      PROJECT311_SETUP_TOKEN_PATH: setupTokenPath,
-      PROJECT311_ARTIFACT_STORE_DIR: HUB_ARTIFACT_STORE,
+      WHALEPOD_PUBLIC_ORIGIN: WEB_ORIGIN,
+      WHALEPOD_SETUP_TOKEN_PATH: setupTokenPath,
+      WHALEPOD_ARTIFACT_STORE_DIR: HUB_ARTIFACT_STORE,
       HOST: '127.0.0.1',
       PORT: String(HUB_PORT),
       // info 级结构化日志（allowlist 字段，产品侧已脱敏）——失败证据的 hub 层来源。
@@ -175,7 +175,7 @@ try {
     'ps',
     '-q',
     '--filter',
-    'label=project311.e2e-postgres=true',
+    'label=whalepod.e2e-postgres=true',
   ])
   const ids = stale.trim().split('\n').filter(Boolean)
   if (ids.length > 0) {
@@ -261,7 +261,7 @@ await applyMigrations(database)
 log('迁移已应用')
 
 // ---- 2. Hub（生产入口子进程） ----
-const setupDir = await mkdtemp(join(tmpdir(), 'project311-e2e-hub-'))
+const setupDir = await mkdtemp(join(tmpdir(), 'whalepod-e2e-hub-'))
 const setupTokenPath = join(setupDir, 'setup-token')
 hub = await spawnHub(databaseUrl, setupTokenPath)
 
@@ -272,9 +272,9 @@ hub = await spawnHub(databaseUrl, setupTokenPath)
 function launchVite(): void {
   const viteServer = spawn(
     'pnpm',
-    ['--filter', '@project311/web', 'exec', 'vite', '--port', String(WEB_PORT), '--strictPort'],
+    ['--filter', '@whalepod/web', 'exec', 'vite', '--port', String(WEB_PORT), '--strictPort'],
     {
-      env: { ...process.env, PROJECT311_HUB_ORIGIN: `http://127.0.0.1:${HUB_PORT}` },
+      env: { ...process.env, WHALEPOD_HUB_ORIGIN: `http://127.0.0.1:${HUB_PORT}` },
       stdio: ['ignore', 'ignore', 'pipe'],
     },
   )

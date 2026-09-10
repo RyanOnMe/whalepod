@@ -4,7 +4,7 @@
  * 请求体 schema 的权威在 packages/protocol（wire SSoT），前端直接复用其类型；
  * 响应 data 形状没有单独的包承载——它们由 apps/hub 各模块的查询/视图层定义
  * （project/queries.ts、task/queries.ts、task/view.ts、agent/queries.ts、auth/routes.ts、
- * team/routes.ts）。apps/web 的边界规则只允许 import @project311/protocol，因此这里
+ * team/routes.ts）。apps/web 的边界规则只允许 import @whalepod/protocol，因此这里
  * 按 Hub 视图逐字段镜像，并注释各自来源；Hub 侧改动时需同步（P1-13 前后宜把
  * 响应 DTO 上收进 protocol，消除镜像）。
  */

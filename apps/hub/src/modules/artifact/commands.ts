@@ -7,10 +7,10 @@
  * 发布不自动完成 Task，只产生发布事件；candidate 不发事件——不泄漏给其他成员）。
  */
 import { eq } from 'drizzle-orm'
-import { asUserId, authorize, transitionArtifact } from '@project311/domain'
-import { appendTeamEvent, getArtifact, schema, setArtifactStatus } from '@project311/db'
-import type { Database, Tx } from '@project311/db'
-import type { ArtifactRow } from '@project311/db'
+import { asUserId, authorize, transitionArtifact } from '@whalepod/domain'
+import { appendTeamEvent, getArtifact, schema, setArtifactStatus } from '@whalepod/db'
+import type { Database, Tx } from '@whalepod/db'
+import type { ArtifactRow } from '@whalepod/db'
 import { ApiError } from '../shared/http-error.js'
 
 export interface PublishArtifactInput {

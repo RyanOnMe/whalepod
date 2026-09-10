@@ -3,7 +3,7 @@
  *
  * 注意：02 Task 3 的接口草案写的是「Consumes: DomainErrorCode from domain」，
  * 但 P1-01 落地的边界规则（scripts/check-boundaries.ts）规定 packages/protocol
- * 不得 import 任何 @project311/* 包，且 §10 错误码本就定义在协议正典里，
+ * 不得 import 任何 @whalepod/* 包，且 §10 错误码本就定义在协议正典里，
  * 因此 ErrorCode 由本包持有；domain 侧持其子集 DomainErrorCode，子集关系由
  * apps/hub/tests/error-code-alignment.spec.ts 对齐门强制（Issue #30）。
  */

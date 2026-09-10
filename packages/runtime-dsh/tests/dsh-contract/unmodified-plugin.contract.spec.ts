@@ -29,7 +29,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { parseRuntimeFrame, type RuntimeOutput } from '@project311/protocol'
+import { parseRuntimeFrame, type RuntimeOutput } from '@whalepod/protocol'
 import {
   commandFrame,
   initializeCommand,
@@ -67,7 +67,7 @@ async function untilOutputCount(
 
 const tempRoots: string[] = []
 function makePacksRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'project311-p1-17-packs-'))
+  const dir = mkdtempSync(join(tmpdir(), 'whalepod-p1-17-packs-'))
   tempRoots.push(dir)
   return dir
 }

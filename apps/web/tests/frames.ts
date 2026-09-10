@@ -1,8 +1,8 @@
 /**
  * P1-08 Web 实时单测共享帧构造器（纯 node，非 spec 文件，不会被 unit glob 收集）。
  */
-import { PROTOCOL_VERSION } from '@project311/protocol'
-import type { ClientFrame } from '@project311/protocol'
+import { PROTOCOL_VERSION } from '@whalepod/protocol'
+import type { ClientFrame } from '@whalepod/protocol'
 
 export const OCCURRED_AT = '2026-08-25T00:00:00.000Z'
 

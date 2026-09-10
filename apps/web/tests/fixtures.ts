@@ -4,7 +4,7 @@
  * （{ ok:true, data } / { ok:false, error:{ code, message, requestId } }）。
  */
 import { vi } from 'vitest'
-import type { PluginPackView } from '@project311/protocol'
+import type { PluginPackView } from '@whalepod/protocol'
 import type {
   AgentView,
   CommentView,

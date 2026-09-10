@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "name": "p311-dev-sandbox",
+  "name": "wp-dev-sandbox",
   "version": "0.0.1",
-  "tarballUrl": "https://catalog.fixtures.project311.test/tarballs/p311-dev-sandbox-0.0.1.tgz",
+  "tarballUrl": "https://catalog.fixtures.whalepod.test/tarballs/wp-dev-sandbox-0.0.1.tgz",
   "integrity": "sha256-4IvnqPfKwrbojO+9mMW4g9ZCNSTU7wMCTDkLbI+5BU0=",
-  "dependencyLockDigest": "29e573394cc6165e9f1e578f56280161e470e590ca0f7b8e5213f7751f274742",
+  "dependencyLockDigest": "6b617f7633c699c9e8c79715c0734cbe43c35bfce1e29ab4744e2dc45cd073ef",
   "dshCompatibility": "0.1.0-rc.8",
   "entrypoint": "dist/sandbox.js",
   "capabilities": ["workspace.read", "workspace.write"],

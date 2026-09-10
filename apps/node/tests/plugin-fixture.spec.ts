@@ -19,18 +19,18 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { PluginManifestSchema, pluginCordisEntry } from '@project311/protocol'
+import { PluginManifestSchema, pluginCordisEntry } from '@whalepod/protocol'
 // digest 算法走与生产一致的 dist 子路径导出（check-boundaries 已归一子路径
 // 到包名判定；src/dist 漂移由 hub 集成测试用 dist 复算锚定值拦截）。
-import { digestPluginCordisEntry, digestPluginPack } from '@project311/protocol/plugin-pack-digest'
+import { digestPluginCordisEntry, digestPluginPack } from '@whalepod/protocol/plugin-pack-digest'
 import { digestLockfile, parseLockfile } from '../src/plugin/lockfile.js'
 import { buildTarGz, unpackTarGz } from '../src/plugin/tar.js'
 
 const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
-const FIXTURE_DIR = join(REPO_ROOT, 'plugins/fixtures/project311-fixed-time')
-const TARBALL_PATH = join(REPO_ROOT, 'plugins/tarballs/project311-fixed-time-0.1.0.tgz')
-const LOCK_PATH = join(REPO_ROOT, 'plugins/locks/project311-fixed-time@0.1.0.lock.yaml')
-const CATALOG_PATH = join(REPO_ROOT, 'plugins/catalog/project311-fixed-time.json')
+const FIXTURE_DIR = join(REPO_ROOT, 'plugins/fixtures/whalepod-fixed-time')
+const TARBALL_PATH = join(REPO_ROOT, 'plugins/tarballs/whalepod-fixed-time-0.1.0.tgz')
+const LOCK_PATH = join(REPO_ROOT, 'plugins/locks/whalepod-fixed-time@0.1.0.lock.yaml')
+const CATALOG_PATH = join(REPO_ROOT, 'plugins/catalog/whalepod-fixed-time.json')
 const PACK_PATH = join(REPO_ROOT, 'plugins/curated-pack.json')
 
 /** fixture 源码文件全集（相对路径 → 字节），与生成脚本的收集口径一致。 */
@@ -93,7 +93,7 @@ describe('fixture tarball（catalog/install/runtime 的 integrity 锚）', () =>
 
   it('catalog manifest 过 PluginManifestSchema 且 integrity == 现算 tarball SRI', () => {
     const manifest = PluginManifestSchema.parse(JSON.parse(readFileSync(CATALOG_PATH, 'utf8')))
-    expect(manifest.name).toBe('project311-fixed-time')
+    expect(manifest.name).toBe('whalepod-fixed-time')
     expect(manifest.version).toBe('0.1.0')
     expect(manifest.dshCompatibility).toBe('0.1.0-rc.8')
     expect(manifest.integrity).toBe(sha256Sri(rebuildTarball()))
@@ -104,7 +104,7 @@ describe('fixture lockfile（install 阶段的 dependency lock 锚）', () => {
   it('parseLockfile 可解析且 digestLockfile == manifest.dependencyLockDigest', () => {
     const manifest = PluginManifestSchema.parse(JSON.parse(readFileSync(CATALOG_PATH, 'utf8')))
     const lock = parseLockfile(readFileSync(LOCK_PATH, 'utf8'))
-    expect(lock.package).toEqual({ name: 'project311-fixed-time', version: '0.1.0' })
+    expect(lock.package).toEqual({ name: 'whalepod-fixed-time', version: '0.1.0' })
     // dsh-tools 是宿主提供的 peerDependency：安装闭包为空。
     expect(lock.dependencies).toEqual([])
     expect(digestLockfile(lock)).toBe(manifest.dependencyLockDigest)
@@ -192,7 +192,7 @@ describe('fixture 自证清白（unmodified plugin 的静态断言）', () => {
       dependencies?: Record<string, string>
       peerDependencies?: Record<string, string>
     }
-    expect(pkg.name).toBe('project311-fixed-time')
+    expect(pkg.name).toBe('whalepod-fixed-time')
     expect(pkg.version).toBe('0.1.0')
     expect(pkg.type).toBe('module')
     expect(pkg.main).toBe('index.js')

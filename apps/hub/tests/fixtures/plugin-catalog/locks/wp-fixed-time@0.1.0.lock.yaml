@@ -1,9 +1,9 @@
-# p311 hub 集成测试 fixture：受审依赖闭包（空闭包）。
+# wp hub 集成测试 fixture：受审依赖闭包（空闭包）。
 # dependencyLockDigest = sha256(canonicalJson({schemaVersion:1, package:{name,version}, dependencies:[]}))
 # ——与 apps/node/src/plugin/lockfile.ts 的 digestLockfile 同算法（本文件无依赖条目，
 # 故为空数组定值）。测试内会用同一算法现算自证。
 schemaVersion: 1
 package:
-  name: p311-fixed-time
+  name: wp-fixed-time
   version: 0.1.0
 dependencies: []

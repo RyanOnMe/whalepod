@@ -1,8 +1,8 @@
 import { eq } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { Database } from '@project311/db'
-import { insertMember, insertTeam, insertUser, schema } from '@project311/db'
+import type { Database } from '@whalepod/db'
+import { insertMember, insertTeam, insertUser, schema } from '@whalepod/db'
 import { getDeviceDshDistributionVersion } from '../src/modules/run/index.js'
 import { createTestDatabase, resetDatabase, seedRunChainForUser } from './helpers.js'
 

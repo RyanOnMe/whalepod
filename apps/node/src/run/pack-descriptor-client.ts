@@ -14,7 +14,7 @@ import {
   PluginPackDescriptorSchema,
   type PluginManifest,
   type PluginPackEntry,
-} from '@project311/protocol'
+} from '@whalepod/protocol'
 import {
   PluginPreflightError,
   type PluginPackDescriptor,

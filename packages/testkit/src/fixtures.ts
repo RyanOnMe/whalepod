@@ -1,4 +1,4 @@
-import type { AgentId, ProfileRevisionId } from '@project311/domain'
+import type { AgentId, ProfileRevisionId } from '@whalepod/domain'
 
 /**
  * Builder/Reviewer 标准 fixture（P1-02 Issue 交付物）。

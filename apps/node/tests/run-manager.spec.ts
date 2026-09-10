@@ -16,7 +16,7 @@ import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { NodeDownstream, ProjectedRunEvent, RuntimeCommand } from '@project311/protocol'
+import type { NodeDownstream, ProjectedRunEvent, RuntimeCommand } from '@whalepod/protocol'
 import { CommandStore } from '../src/spool/command-store.js'
 import { EventStore } from '../src/spool/event-store.js'
 import { SecretStore } from '../src/secret/store.js'
@@ -29,7 +29,7 @@ let root: string
 let workspaceDir: string
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'p311-runmgr-'))
+  root = await mkdtemp(join(tmpdir(), 'wp-runmgr-'))
   workspaceDir = join(root, 'ws')
   await mkdir(workspaceDir, { recursive: true })
 })
@@ -140,7 +140,7 @@ async function makeHarness(
   const registry = new WorkspaceRegistry(join(root, 'registry.db'), 'test-hmac-key')
   const workspace = await registry.register(workspaceDir, { name: 'ws-1' })
   const secrets = new SecretStore(join(root, 'secrets.json'), {
-    PROJECT311_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
+    WHALEPOD_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
   })
   const { driver, runtimes } = makeFakeDriver()
   const eventStore = new EventStore(join(root, 'events.db'))

@@ -31,7 +31,7 @@ let workspace: string
 let staging: string
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'p311-artifact-collect-'))
+  root = await mkdtemp(join(tmpdir(), 'wp-artifact-collect-'))
   workspace = join(root, 'ws')
   staging = join(root, 'staging')
   await mkdir(join(workspace, 'reports'), { recursive: true })

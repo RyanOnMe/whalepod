@@ -18,15 +18,15 @@
  *   pending 结束，03 §3.2 特殊规则）。
  */
 import { randomUUID } from 'node:crypto'
-import { asUserId, authorize, decideApproval, transitionRun } from '@project311/domain'
-import type { ApprovalRow, Outbox, RunRow, Tx } from '@project311/db'
+import { asUserId, authorize, decideApproval, transitionRun } from '@whalepod/domain'
+import type { ApprovalRow, Outbox, RunRow, Tx } from '@whalepod/db'
 import {
   appendTeamEvent,
   countPendingApprovals,
   setApprovalStatus,
   setRunStatus,
-} from '@project311/db'
-import { ApprovalDecideSchema } from '@project311/protocol'
+} from '@whalepod/db'
+import { ApprovalDecideSchema } from '@whalepod/protocol'
 import type { ActorContext } from './commands.js'
 import { RunCommandError } from './errors.js'
 

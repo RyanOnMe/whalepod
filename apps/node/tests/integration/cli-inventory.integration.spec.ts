@@ -3,7 +3,7 @@
  *
  * 真要素：真 Hub（createTestApp + 真 PG + 真 listen）+ **真 cli 子进程**
  * （`node --import tsx apps/node/src/cli.ts start`，`HOME` 重定向到临时目录，
- * 绝不碰真实 `~/.project311-node`）。用户操作顺序也照真人：先配对写 config、
+ * 绝不碰真实 `~/.whalepod-node`）。用户操作顺序也照真人：先配对写 config、
  * 先 `workspace add` 落 registry，**之后**才起 `start`。
  *
  * 为什么必须打在组合根：#89 能存在的根因正是「构建器有单测、Hub 摄入有集成测、
@@ -17,7 +17,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { Database } from '@project311/db'
+import type { Database } from '@whalepod/db'
 import {
   apiInject,
   createTestApp,
@@ -57,9 +57,9 @@ describe('#89 生产 cli 组合根：连接后自行上报 node.inventory', () =
     await resetDatabase(database)
     ctx = await createTestApp(database)
     alice = await driveSetup(ctx)
-    // 临时 HOME：cli 的 DEFAULT_CONFIG_DIR = homedir()/.project311-node 在子进程
+    // 临时 HOME：cli 的 DEFAULT_CONFIG_DIR = homedir()/.whalepod-node 在子进程
     // 模块加载时求值，故重定向 HOME 即可完全隔离真实用户目录。
-    home = mkdtempSync(join(tmpdir(), 'p311-cli-home-'))
+    home = mkdtempSync(join(tmpdir(), 'wp-cli-home-'))
   })
 
   afterEach(async () => {
@@ -99,7 +99,7 @@ describe('#89 生产 cli 组合根：连接后自行上报 node.inventory', () =
     const { deviceId, deviceToken } = await pairDevice()
 
     // 真人写 config（配对产物）与 registry（workspace add 产物）到临时 HOME 下。
-    const configDir = join(home, '.project311-node')
+    const configDir = join(home, '.whalepod-node')
     const stateDir = join(configDir, 'state')
     mkdirSync(stateDir, { recursive: true })
     writeFileSync(
@@ -185,7 +185,7 @@ describe('#89 生产 cli 组合根：连接后自行上报 node.inventory', () =
   it('#94 会话存活期 workspace add/remove（独立短进程）→ 不重启 node，Hub 投影自动收敛', async () => {
     const base = await httpBase(ctx.app)
     const { deviceId, deviceToken } = await pairDevice()
-    const configDir = join(home, '.project311-node')
+    const configDir = join(home, '.whalepod-node')
     const stateDir = join(configDir, 'state')
     mkdirSync(stateDir, { recursive: true })
     writeFileSync(

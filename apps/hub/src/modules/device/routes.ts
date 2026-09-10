@@ -9,8 +9,8 @@
  * 本文件只管路由与错误映射。Node WS（/ws/v1/node）在 node-websocket.ts。
  */
 import type { FastifyInstance, FastifyReply } from 'fastify'
-import type { Database } from '@project311/db'
-import { CreatePairingCodeRequestSchema, PairingClaimRequestSchema } from '@project311/protocol'
+import type { Database } from '@whalepod/db'
+import { CreatePairingCodeRequestSchema, PairingClaimRequestSchema } from '@whalepod/protocol'
 import { audit } from '../shared/audit.js'
 import { readIdempotencyKey } from '../auth/idempotency.js'
 import type { RequireActor } from '../auth/session.js'

@@ -30,7 +30,7 @@ let envCache: E2eEnv | undefined
 
 export function env(): E2eEnv {
   if (envCache === undefined) {
-    envCache = JSON.parse(readFileSync(join(tmpdir(), 'project311-e2e-env.json'), 'utf8')) as E2eEnv
+    envCache = JSON.parse(readFileSync(join(tmpdir(), 'whalepod-e2e-env.json'), 'utf8')) as E2eEnv
   }
   if (envCache.controlPort === undefined || envCache.controlToken === undefined) {
     throw new Error('环境清单缺控制面字段（e2e-serve 版本过旧？）')
@@ -62,7 +62,7 @@ export async function hubApi(
 
 export async function sessionCookie(context: BrowserContext): Promise<string> {
   const cookies = await context.cookies(env().webOrigin)
-  const session = cookies.find((c) => c.name === 'project311_session')
+  const session = cookies.find((c) => c.name === 'whalepod_session')
   if (session === undefined) throw new Error('会话 Cookie 不存在')
   return `${session.name}=${session.value}`
 }

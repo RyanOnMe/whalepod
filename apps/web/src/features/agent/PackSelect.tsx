@@ -11,7 +11,7 @@
 import { useQuery } from '@tanstack/react-query'
 import type { ChangeEvent, ReactNode } from 'react'
 import { Link } from 'react-router'
-import type { PluginPackView } from '@project311/protocol'
+import type { PluginPackView } from '@whalepod/protocol'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'

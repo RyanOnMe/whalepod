@@ -1,5 +1,5 @@
 {
-  "name": "@project311/testkit",
+  "name": "@whalepod/testkit",
   "version": "0.1.0",
   "private": true,
   "files": [
@@ -17,9 +17,9 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
-    "@project311/db": "workspace:*",
-    "@project311/domain": "workspace:*",
-    "@project311/protocol": "workspace:*",
-    "@project311/runtime-dsh": "workspace:*"
+    "@whalepod/db": "workspace:*",
+    "@whalepod/domain": "workspace:*",
+    "@whalepod/protocol": "workspace:*",
+    "@whalepod/runtime-dsh": "workspace:*"
   }
 }

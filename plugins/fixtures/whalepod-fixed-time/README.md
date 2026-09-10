@@ -1,12 +1,12 @@
-# project311-fixed-time
+# whalepod-fixed-time
 
 An ecosystem-shaped **fixture**: a minimal, unmodified DSH tool plugin written
 the way a third-party Cordis ecosystem package would be written. It registers a
 single tool, `fixed_time`, that always returns `2030-01-02T03:04:05.000Z`.
 
-This package is the "unmodified plugin" evidence for project311's curated plugin
-pack flow (P1-17): it contains **no** project311-specific branches, no patching
-hooks, and no knowledge of the host product. Everything project311-specific
+This package is the "unmodified plugin" evidence for whalepod's curated plugin
+pack flow (P1-17): it contains **no** whalepod-specific branches, no patching
+hooks, and no knowledge of the host product. Everything whalepod-specific
 (manifest review overlay, lockfile, pack digest) lives *outside* the tarball in
 `plugins/catalog/`, `plugins/locks/`, and `plugins/curated-pack.json`.
 
@@ -37,7 +37,7 @@ against `@deepseek-ai/dsh-tools@0.1.0-rc.8` / `@deepseek-ai/cordis@4.0.1`:
    a tool scoped to one agent calls it in `ctx.agents.create({ setup:
    (agentCtx) => agentCtx.tools.register(...) })`; an `agent.ctx` registration
    applies to that agent alone and **shadows** a same-named global there.
-   project311's own runtime uses exactly this for its run-scoped
+   whalepod's own runtime uses exactly this for its run-scoped
    `publish_artifact` tool (`packages/runtime-dsh/src/session-owner.ts`,
    `agentCtx.tools.register(...)`). A plugin that cannot hook `create` can
    listen for the `agent/created` event and call
@@ -66,7 +66,7 @@ against `@deepseek-ai/dsh-tools@0.1.0-rc.8` / `@deepseek-ai/cordis@4.0.1`:
 6. **Service requirements are self-declared (`inject`).** Cordis gates service
    access on the fiber's declared `inject` list: reading `ctx.tools` inside
    `apply` without it fails with "cannot get property 'tools' without inject"
-   (verified empirically by the project311 Q3 contract probe). This fixture
+   (verified empirically by the whalepod Q3 contract probe). This fixture
    therefore declares `export const inject = ['tools']` in source. That is the
    ecosystem contract: the host mounts the package **unmodified** and never
    annotates service needs on the plugin's behalf (no patching, no mount-time

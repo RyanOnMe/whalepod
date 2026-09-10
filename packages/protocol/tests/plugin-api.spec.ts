@@ -16,9 +16,9 @@ import {
 
 const VALID_MANIFEST: PluginManifest = {
   schemaVersion: 1,
-  name: 'p311-fixed-time',
+  name: 'wp-fixed-time',
   version: '0.1.0',
-  tarballUrl: 'https://catalog.fixtures.project311.test/tarballs/p311-fixed-time-0.1.0.tgz',
+  tarballUrl: 'https://catalog.fixtures.whalepod.test/tarballs/wp-fixed-time-0.1.0.tgz',
   integrity: 'sha256-' + 'A'.repeat(43) + '=',
   dependencyLockDigest: 'a'.repeat(64),
   dshCompatibility: '0.1.0-rc.8',
@@ -38,7 +38,7 @@ const UUID_B = '018f0000-0000-7000-8000-000000000002'
 
 const VALID_INSTALLATION = {
   id: UUID_A,
-  packageName: 'p311-fixed-time',
+  packageName: 'wp-fixed-time',
   packageVersion: '0.1.0',
   integrity: 'sha256-' + 'A'.repeat(43) + '=',
   dependencyLockDigest: 'a'.repeat(64),
@@ -52,23 +52,21 @@ const VALID_INSTALLATION = {
 
 describe('PluginInstallRequestSchema', () => {
   it('接受 catalog 内精确版本', () => {
-    expect(PluginInstallRequestSchema.parse({ name: 'p311-fixed-time', version: '0.1.0' })).toEqual(
-      {
-        name: 'p311-fixed-time',
-        version: '0.1.0',
-      },
-    )
+    expect(PluginInstallRequestSchema.parse({ name: 'wp-fixed-time', version: '0.1.0' })).toEqual({
+      name: 'wp-fixed-time',
+      version: '0.1.0',
+    })
   })
 
   it('拒绝 version range/tag 与多余字段', () => {
     expect(() =>
-      PluginInstallRequestSchema.parse({ name: 'p311-fixed-time', version: '^0.1.0' }),
+      PluginInstallRequestSchema.parse({ name: 'wp-fixed-time', version: '^0.1.0' }),
     ).toThrow()
     expect(() =>
-      PluginInstallRequestSchema.parse({ name: 'p311-fixed-time', version: 'latest' }),
+      PluginInstallRequestSchema.parse({ name: 'wp-fixed-time', version: 'latest' }),
     ).toThrow()
     expect(() =>
-      PluginInstallRequestSchema.parse({ name: 'p311-fixed-time', version: '0.1.0', extra: 1 }),
+      PluginInstallRequestSchema.parse({ name: 'wp-fixed-time', version: '0.1.0', extra: 1 }),
     ).toThrow()
   })
 })
@@ -94,7 +92,7 @@ describe('PluginInstallationViewSchema', () => {
 describe('PluginPackViewSchema / PluginPackCreateRequestSchema', () => {
   const installation = PluginInstallationViewSchema.parse(VALID_INSTALLATION)
   const entry = {
-    name: 'p311-fixed-time',
+    name: 'wp-fixed-time',
     version: '0.1.0',
     integrity: 'sha256-' + 'A'.repeat(43) + '=',
     dependencyLockDigest: 'a'.repeat(64),

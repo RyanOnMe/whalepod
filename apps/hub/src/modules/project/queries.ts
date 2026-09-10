@@ -1,6 +1,6 @@
-import type { ProjectRow } from '@project311/db'
-import { getProject, listProjects } from '@project311/db'
-import type { DbHandle } from '@project311/db'
+import type { ProjectRow } from '@whalepod/db'
+import { getProject, listProjects } from '@whalepod/db'
+import type { DbHandle } from '@whalepod/db'
 
 /** Project 的 JSON 视图（03 §2.2；时间为 ISO 字符串）。 */
 export interface ProjectView {

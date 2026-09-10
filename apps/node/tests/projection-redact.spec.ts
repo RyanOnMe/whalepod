@@ -18,8 +18,8 @@ const CTX: RedactionContext = {
 const CUSTOM_STATE_CTX: RedactionContext = {
   workspaceRoot: '/Users/bob/work/team-app',
   homeDir: '/Users/bob',
-  stateDir: '/var/lib/project311/state',
-  packsRoot: '/var/lib/project311/state/plugin-packs',
+  stateDir: '/var/lib/whalepod/state',
+  packsRoot: '/var/lib/whalepod/state/plugin-packs',
 }
 
 /** 04 §6.4 固定语料（原文逐项）。 */
@@ -52,7 +52,7 @@ describe('redactString（03 §9）', () => {
 
   it('扩展：stateDir 前缀替换为 <state-dir>（自定义 --state-dir 在 home 之外）', () => {
     const out = redactString(
-      'session log /var/lib/project311/state/runtime-home/run-1/sessions/a.jsonl',
+      'session log /var/lib/whalepod/state/runtime-home/run-1/sessions/a.jsonl',
       CUSTOM_STATE_CTX,
     )
     expect(out).toBe('session log <state-dir>/runtime-home/run-1/sessions/a.jsonl')
@@ -60,22 +60,22 @@ describe('redactString（03 §9）', () => {
 
   it('扩展：packsRoot 前缀替换为 <packs-root>（比 stateDir 更长的前缀先被吃掉）', () => {
     const out = redactString(
-      'failed to read overlay /var/lib/project311/state/plugin-packs/abcdef1234/cordis.overlay.yml',
+      'failed to read overlay /var/lib/whalepod/state/plugin-packs/abcdef1234/cordis.overlay.yml',
       CUSTOM_STATE_CTX,
     )
     expect(out).toBe('failed to read overlay <packs-root>/abcdef1234/cordis.overlay.yml')
-    expect(out).not.toContain('/var/lib/project311')
+    expect(out).not.toContain('/var/lib/whalepod')
   })
 
   it('扩展：默认布局 stateDir 在 home 之下——更长前缀（stateDir/packsRoot）先替换，不退化为 <home>', () => {
     const defaultLayout: RedactionContext = {
       workspaceRoot: '',
       homeDir: '/Users/bob',
-      stateDir: '/Users/bob/.project311/state',
-      packsRoot: '/Users/bob/.project311/state/plugin-packs',
+      stateDir: '/Users/bob/.whalepod/state',
+      packsRoot: '/Users/bob/.whalepod/state/plugin-packs',
     }
     const out = redactString(
-      '/Users/bob/.project311/state/plugin-packs/abc/cordis.overlay.yml and /Users/bob/.project311/state/commands.sqlite and /Users/bob/other',
+      '/Users/bob/.whalepod/state/plugin-packs/abc/cordis.overlay.yml and /Users/bob/.whalepod/state/commands.sqlite and /Users/bob/other',
       defaultLayout,
     )
     expect(out).toBe(

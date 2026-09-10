@@ -17,7 +17,7 @@ import {
   type RuntimeBridgeOptions,
   type RuntimeSpec,
 } from '../../../src/index.js'
-import type { RuntimeCommand, RuntimeOutput } from '@project311/protocol'
+import type { RuntimeCommand, RuntimeOutput } from '@whalepod/protocol'
 
 export type ReplayScenario = 'basic' | 'tool-approval' | 'cancel' | 'unmodified-plugin'
 
@@ -26,7 +26,7 @@ const FIXTURES_DIR = fileURLToPath(new URL('../fixtures/', import.meta.url))
 
 /** 探针用 RuntimeSpec（02 Step 1 的 runtimeSpec()）：replay provider，占位 digest。 */
 export function runtimeSpec(overrides: Partial<RuntimeSpec> = {}): RuntimeSpec {
-  const workspacePath = mkdtempSync(join(tmpdir(), 'project311-probe-ws-'))
+  const workspacePath = mkdtempSync(join(tmpdir(), 'whalepod-probe-ws-'))
   // P1-15：桥内 publish_artifact 校验已接线（realpath/边界/size）——探针里
   // publish_artifact('out/report.md') 的候选必须是工作区内真实存在的文件，
   // 否则工具以失败结果回给模型、replay 循环重试直到超时。
@@ -35,13 +35,13 @@ export function runtimeSpec(overrides: Partial<RuntimeSpec> = {}): RuntimeSpec {
   return {
     runId: randomUUID(),
     workspacePath,
-    dshHomePath: mkdtempSync(join(tmpdir(), 'project311-probe-home-')),
+    dshHomePath: mkdtempSync(join(tmpdir(), 'whalepod-probe-home-')),
     // profile/plugin-pack digest 由 P1-17 真实接线；探针阶段为 wire 占位（schema 要求 64 hex）。
     profileDigest: '0'.repeat(64),
     pluginPackDigest: '0'.repeat(64),
     provider: 'replay',
     model: 'replay-model',
-    persona: 'You are a contract-probe agent for project311.',
+    persona: 'You are a contract-probe agent for whalepod.',
     ...overrides,
   }
 }

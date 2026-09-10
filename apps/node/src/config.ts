@@ -1,6 +1,6 @@
 /**
  * Node 本地配置（02 Task 9 Step 3）。
- * 明文 Device Token 与 Hub URL 存 ~/.project311-node/config.json，文件 mode 0600
+ * 明文 Device Token 与 Hub URL 存 ~/.whalepod-node/config.json，文件 mode 0600
  * （03 §2.4：Token 不打印进日志；本地文件不得世界可读）。
  */
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
@@ -13,11 +13,11 @@ export interface NodeConfig {
   readonly deviceToken: string
 }
 
-export const DEFAULT_CONFIG_DIR: string = join(homedir(), '.project311-node')
+export const DEFAULT_CONFIG_DIR: string = join(homedir(), '.whalepod-node')
 const CONFIG_FILENAME = 'config.json'
 
 export interface ConfigPath {
-  /** 配置目录；默认 ~/.project311-node。 */
+  /** 配置目录；默认 ~/.whalepod-node。 */
   readonly configDir?: string
   /** 完整路径；优先于 configDir。 */
   readonly path?: string

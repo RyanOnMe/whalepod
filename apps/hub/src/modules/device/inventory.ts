@@ -6,8 +6,8 @@
  * 2. owner 校验：投影归属恒等 Device owner（03 §2.4：workspace 永不转移）。
  * 每条 upsert 失败不拖垮整批（逐条 best-effort + 审计可查），保证 inventory 重放收敛。
  */
-import type { Database } from '@project311/db'
-import { convergeDeviceWorkspaceRemovals, upsertWorkspace } from '@project311/db'
+import type { Database } from '@whalepod/db'
+import { convergeDeviceWorkspaceRemovals, upsertWorkspace } from '@whalepod/db'
 import type { AuthenticatedDevice } from '../run/device-gateway.js'
 
 export interface InventoryWorkspaceInput {

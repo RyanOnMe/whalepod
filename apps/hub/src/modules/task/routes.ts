@@ -1,12 +1,12 @@
 import type { FastifyInstance } from 'fastify'
-import type { Database, Outbox } from '@project311/db'
-import { asUserId } from '@project311/domain'
+import type { Database, Outbox } from '@whalepod/db'
+import { asUserId } from '@whalepod/domain'
 import {
   CreateCommentRequestSchema,
   CreateTaskRequestSchema,
   ReassignTaskRequestSchema,
   UpdateTaskRequestSchema,
-} from '@project311/protocol'
+} from '@whalepod/protocol'
 import { audit } from '../shared/audit.js'
 import { ApiError } from '../shared/http-error.js'
 import { readIdempotencyKey } from '../auth/idempotency.js'

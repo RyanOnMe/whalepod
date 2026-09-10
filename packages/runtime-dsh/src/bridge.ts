@@ -2,7 +2,7 @@
  * RuntimeBridge —— Node ↔ DSH Runtime 子进程协议的桥（02 Task 11，03 §7）。
  *
  * `RuntimeBridge.start(spec)` 处理 `runtime.initialize`：以 dsh-base 为基座
- * （其 cordis.patch.yml  bundle 层）+ project311.patch.yml（本包 config/ 下）boot
+ * （其 cordis.patch.yml  bundle 层）+ whalepod.patch.yml（本包 config/ 下）boot
  * 一棵 Cordis 树，创建本 Run 的 Agent，随后发 `runtime.ready`。其余 wire 命令
  * 经 `handleCommand` 映射到 DSH 公开 interface（07 §2 结论：只用公开面，
  * 不 fork loop）。`dispose()` 按 cancel → flush → dispose 次序收敛后拆树。
@@ -19,7 +19,7 @@ import {
   type ErrorCode,
   type RuntimeCommand,
   type RuntimeOutput,
-} from '@project311/protocol'
+} from '@whalepod/protocol'
 import type { ArtifactPort } from './artifact-tool.js'
 import { createWorkspaceArtifactValidator } from './artifact-validation.js'
 import { ApprovalPort } from './approval-port.js'
@@ -34,7 +34,7 @@ export interface RuntimeBridgeOptions {
   /** 结构化日志 sink（stderr 通道；缺省丢弃）。 */
   log?: LogSink
   /**
-   * 追加的 Loader patch 层（在 dsh-base 与 project311.patch.yml 之后应用）。
+   * 追加的 Loader patch 层（在 dsh-base 与 whalepod.patch.yml 之后应用）。
    * 契约探针用它挂 replay overlay（config/replay.yml）。生产不使用本接缝挂
    * Plugin Pack：P1-17 起经审核的 Runtime Plugin Pack 层按 Run 随
    * runtime.initialize 的 `pluginPackOverlayPath`（RuntimeSpec）到达并最后
@@ -45,7 +45,7 @@ export interface RuntimeBridgeOptions {
 
 const CONFIG_DIR = fileURLToPath(new URL('../config/', import.meta.url))
 const require = createRequire(import.meta.url)
-const BIN_NAME = 'project311-runtime'
+const BIN_NAME = 'whalepod-runtime'
 
 /**
  * in-box 插件名的解析锚点：@deepseek-ai/dsh CLI 包的真实路径（realpath 后进
@@ -78,7 +78,7 @@ function dshBasePatchPath(): string {
  *   带其他键（vendor insert 分支会静默丢弃，放行会让非契约行混过审计）或
  *   insert 非数组的行一律拒绝；
  * - b.（assertPackInsertIdsFresh）insert 子条目的 id 不得与既有层 patch 行
- *   出现过的 id 重复（dsh-base 核心 / project311 bundle / 探针
+ *   出现过的 id 重复（dsh-base 核心 / whalepod bundle / 探针
  *   extraPatchFiles；group 子树按 vendor buildMap 同形递归收集），pack 内部
  *   重复 id 同拒。config/cordis.yml 是空表（见其头注），栈内条目全部来自
  *   这些层的 insert 行，故该集合即 pack 入栈前已占用的 id 空间。
@@ -178,7 +178,7 @@ function loadPackOverlay(
 }
 
 /**
- * 组合 Runtime 的 patch 栈：dsh-base 基座 → project311 bundle → 额外层
+ * 组合 Runtime 的 patch 栈：dsh-base 基座 → whalepod bundle → 额外层
  * （探针 replay）→ 本 Run 的 Plugin Pack overlay。
  *
  * Pack overlay 置于栈尾（P1-17）：它是唯一随 wire 到达的 Run 级层，栈位在
@@ -196,7 +196,7 @@ async function bootDshTree(
   pluginPackOverlayPath: string | undefined,
 ): Promise<Context> {
   const dshBasePatches = loadOverlayPatches(BIN_NAME, dshBasePatchPath())
-  const bundlePatches = loadOverlayPatches(BIN_NAME, join(CONFIG_DIR, 'project311.patch.yml'))
+  const bundlePatches = loadOverlayPatches(BIN_NAME, join(CONFIG_DIR, 'whalepod.patch.yml'))
   const probePatches = extraPatchFiles.flatMap((file) => loadOverlayPatches(BIN_NAME, file))
   const earlierLayers = [dshBasePatches, bundlePatches, probePatches]
   const packOverlayPatches =

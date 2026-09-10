@@ -9,7 +9,7 @@ import {
   type NodeDownstream,
   type ProjectedRunEvent,
   type RunSnapshot,
-} from '@project311/protocol'
+} from '@whalepod/protocol'
 
 /** Hub 出站连接包装：认证升级 + 消息/关闭/错误回调。 */
 export interface HubSocketHandlers {

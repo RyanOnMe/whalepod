@@ -13,16 +13,16 @@
  */
 import { randomUUID } from 'node:crypto'
 import { and, eq, lte } from 'drizzle-orm'
-import { decideApproval, transitionRun } from '@project311/domain'
-import type { Database, Outbox, Tx } from '@project311/db'
+import { decideApproval, transitionRun } from '@whalepod/domain'
+import type { Database, Outbox, Tx } from '@whalepod/db'
 import {
   appendTeamEvent,
   countPendingApprovals,
   schema,
   setApprovalStatus,
   setRunStatus,
-} from '@project311/db'
-import { ApprovalDecideSchema } from '@project311/protocol'
+} from '@whalepod/db'
+import { ApprovalDecideSchema } from '@whalepod/protocol'
 
 export interface ExpirySweepDeps {
   readonly database: Database

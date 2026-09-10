@@ -19,8 +19,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
-import { schema } from '@project311/db'
-import type { Database } from '@project311/db'
+import { schema } from '@whalepod/db'
+import type { Database } from '@whalepod/db'
 import { assembleChain, FIXTURE_APPROVAL, FIXTURE_BASIC, FIXTURE_SECRETS } from './chain.js'
 import type { BrowserClient } from './chain.js'
 import { Phase1Recorder, buildIndex, redactText, type FaultKind } from './events.js'
@@ -155,7 +155,7 @@ export async function drivePhase1(options: DriveOptions): Promise<DriveResult> {
   let runtimeStubDir: string | undefined
   const runtimeEntryOverride = (): string | undefined => {
     if (fault !== 'runtime') return undefined
-    runtimeStubDir = mkdtempSync(join(tmpdir(), 'p311-phase1-runtime-stub-'))
+    runtimeStubDir = mkdtempSync(join(tmpdir(), 'wp-phase1-runtime-stub-'))
     const stub = join(runtimeStubDir, 'runtime-entry.mjs')
     writeFileSync(stub, 'process.exit(7)\n')
     return stub

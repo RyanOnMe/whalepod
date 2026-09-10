@@ -1,7 +1,7 @@
 /**
  * SecretStore（P1-12；02 Task 12 Step 3、03 §2.4）。
  *
- * 解析顺序：环境变量 PROJECT311_DSH_SECRET_<PROVIDER>_<SLOT> → 本地 secrets.json。
+ * 解析顺序：环境变量 WHALEPOD_DSH_SECRET_<PROVIDER>_<SLOT> → 本地 secrets.json。
  * Hub 只知道 credential slot 名与「已配置/未配置」（inventory 上报形态），永不获取明文。
  * 本地文件 mode 0600；发现权限过宽（组/其他位非零）一律拒绝读取——fail-closed，
  * 静态保护依赖操作系统账号（文档明示），权限护栏是最后的机器可查防线。
@@ -39,7 +39,7 @@ interface SecretFileShape {
 
 function envVarName(provider: string, slot: string): string {
   const normalize = (part: string): string => part.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()
-  return `PROJECT311_DSH_SECRET_${normalize(provider)}_${normalize(slot)}`
+  return `WHALEPOD_DSH_SECRET_${normalize(provider)}_${normalize(slot)}`
 }
 
 export class SecretStore {

@@ -20,7 +20,7 @@ import type { RuntimeDriver, RuntimeStartSpec } from '../src/runtime-driver.js'
 let root: string
 
 beforeAll(async () => {
-  root = await mkdtemp(join(tmpdir(), 'p311-recovery-'))
+  root = await mkdtemp(join(tmpdir(), 'wp-recovery-'))
 })
 
 afterAll(async () => {
@@ -86,7 +86,7 @@ async function makeReadySupervisor(stateDbPath: string, runId: string): Promise<
     driver: realProcessDriver(),
     registry,
     secrets: new SecretStore(join(root, `sec-${runId}.json`), {
-      PROJECT311_DSH_SECRET_DSH_API_KEY: 'k',
+      WHALEPOD_DSH_SECRET_DSH_API_KEY: 'k',
     }),
     stateDbPath,
     capacity: 2,

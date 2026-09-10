@@ -3,7 +3,7 @@
  */
 import { createHash, randomBytes } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { Database } from '@project311/db'
+import type { Database } from '@whalepod/db'
 import {
   createTestApp,
   createTestDatabase,

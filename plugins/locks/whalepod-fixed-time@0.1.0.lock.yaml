@@ -5,6 +5,6 @@
 # distribution, so the installable closure is empty.
 schemaVersion: 1
 package:
-  name: project311-fixed-time
+  name: whalepod-fixed-time
   version: 0.1.0
 dependencies: []

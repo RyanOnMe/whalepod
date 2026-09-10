@@ -59,7 +59,7 @@ export function buildRuntimeEnvironment(
   if (ctx.processEnv.PATH !== undefined) env.PATH = ctx.processEnv.PATH
   if (ctx.processEnv.LANG !== undefined) env.LANG = ctx.processEnv.LANG
   if (ctx.processEnv.LC_ALL !== undefined) env.LC_ALL = ctx.processEnv.LC_ALL
-  env.TMPDIR = ctx.processEnv.TMPDIR ?? join(ctx.workspacePath, '.p311-tmp')
+  env.TMPDIR = ctx.processEnv.TMPDIR ?? join(ctx.workspacePath, '.wp-tmp')
 
   for (const name of ctx.extraPassthrough ?? []) {
     const value = ctx.processEnv[name]

@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm'
-import { authorize, asUserId, transitionAssignment, transitionTask } from '@project311/domain'
-import type { Actor } from '@project311/domain'
-import type { Database, Outbox, TaskRow, Tx } from '@project311/db'
+import { authorize, asUserId, transitionAssignment, transitionTask } from '@whalepod/domain'
+import type { Actor } from '@whalepod/domain'
+import type { Database, Outbox, TaskRow, Tx } from '@whalepod/db'
 import {
   appendTeamEvent,
   getEnabledMember,
@@ -16,7 +16,7 @@ import {
   schema,
   transactCommand,
   updateTaskFields,
-} from '@project311/db'
+} from '@whalepod/db'
 import { cancelRunInTransaction } from '../run/cancel.js'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'

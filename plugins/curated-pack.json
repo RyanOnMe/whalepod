@@ -3,13 +3,13 @@
   "name": "fixed-time",
   "packages": [
     {
-      "name": "project311-fixed-time",
+      "name": "whalepod-fixed-time",
       "version": "0.1.0",
-      "integrity": "sha256-lwF1LCnVNxQRRqKBc3ys2/CeJw8z2PGdV5/MG3AMyFI=",
-      "dependencyLockDigest": "90e1d148a696c6e82b193adbe9a8017fb5dd4b972d6fb1ed6bd3c178b4564bae",
+      "integrity": "sha256-u6Lngef6x1yPef+BV5MjGJ4syWTpbKkQ8XXv+n2vWNI=",
+      "dependencyLockDigest": "f9b81f8224df86f465fd5f792e1a3383abbc68db3a4c4d08acd772cd575b72b0",
       "entrypoint": "index.js",
-      "configDigest": "1593825c7bb45db0e23a43aeac6bf646b234b02d8943c2b8e3b85894b8f722cc"
+      "configDigest": "882d616f9700db4cc1714344376d09417e004e68a81f4694d07b841fe25a7e5e"
     }
   ],
-  "packDigest": "79c4f77b226ad734ac1807403c579694f32b4297b5fb4d53cf2975a8ced6701c"
+  "packDigest": "f1eb39b8a5ccb986ae43ef35db90f7a321174f4466c08a45e9e6abbd1b4c2ef9"
 }

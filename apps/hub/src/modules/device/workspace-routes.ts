@@ -3,8 +3,8 @@
  * 不含 canonical_path/任何本地路径——路径只存在于 Node 本地（03 §2.4）。
  */
 import type { FastifyInstance } from 'fastify'
-import type { Database } from '@project311/db'
-import { listWorkspacesByOwner } from '@project311/db'
+import type { Database } from '@whalepod/db'
+import { listWorkspacesByOwner } from '@whalepod/db'
 import type { RequireActor } from '../auth/session.js'
 
 export interface WorkspaceRouteDeps {

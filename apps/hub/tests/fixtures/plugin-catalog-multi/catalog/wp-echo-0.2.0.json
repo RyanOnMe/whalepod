@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "name": "p311-echo",
+  "name": "wp-echo",
   "version": "0.2.0",
-  "tarballUrl": "https://catalog.fixtures.project311.test/tarballs/p311-echo-0.2.0.tgz",
+  "tarballUrl": "https://catalog.fixtures.whalepod.test/tarballs/wp-echo-0.2.0.tgz",
   "integrity": "sha256-Tcg6qLcTNyfxKENH/H9FecaE8Tg84lRAqK/lEnA9sP4=",
-  "dependencyLockDigest": "669804315e7d2e1e1c9283ac00afe90c5a1b2f6a86c71d55cd0af884f4ffa59a",
+  "dependencyLockDigest": "f57175556b99ec0732d1b3dd8e6202afff010a3c43e4aa039eb548f0d5bc904e",
   "dshCompatibility": "0.1.0-rc.8",
   "entrypoint": "dist/echo.js",
   "capabilities": ["workspace.read", "workspace.write", "network.egress"],

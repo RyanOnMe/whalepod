@@ -1,6 +1,6 @@
 ---
 name: dev-main
-description: project311 默认开发方式——从认领 Issue 到开 PR 的完整走法。改代码、修 bug、做功能时先读这份。
+description: whalepod 默认开发方式——从认领 Issue 到开 PR 的完整走法。改代码、修 bug、做功能时先读这份。
 ---
 
 # 默认开发方式（dev-main）
@@ -27,4 +27,4 @@ description: project311 默认开发方式——从认领 Issue 到开 PR 的完
 - Run 终态不复活；Runtime 崩溃不自动重放副作用工具。
 - 禁 force push / `reset --hard` / `stash drop`；本地直接推 main 已被 hook 拦截。
 - 改动承重设计（状态机、协议、权限）先看 `docs/adr/`，必要时先写 ADR。
-- 方案文档中的包名、CLI 名沿用旧代号，属于定名前的暂定标识；仓库代号为 project311，落地命名跟随最终定名，不要在新增代码里扩散旧代号。
+- 仓库正式名 **WhalePod**（#133 定名）：新代码与新文档一律 `@whalepod/*`、`WHALEPOD_*`、`whalepod-node`；历史代号 tabtin / project311 只保留在历史文档（ADR、验收记录、release notes）里，不要扩散。

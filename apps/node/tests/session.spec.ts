@@ -4,7 +4,7 @@
  * 心跳周期真实发送、永久关闭（4401/4008/token_revoked）停止重连、普通断线退避重连。
  */
 import { describe, expect, it } from 'vitest'
-import { parseNodeFrame } from '@project311/protocol'
+import { parseNodeFrame } from '@whalepod/protocol'
 import { startDeviceSession } from '../src/gateway/session.js'
 import type { HelloFacts } from '../src/gateway/hub-socket.js'
 import type { NodeConfig } from '../src/config.js'

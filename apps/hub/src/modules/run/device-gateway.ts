@@ -1,4 +1,4 @@
-import type { NodeDownstream } from '@project311/protocol'
+import type { NodeDownstream } from '@whalepod/protocol'
 
 /**
  * Hub → Device Node 的下行网关（02-第一阶段实施计划.md Task 10 Interfaces）。

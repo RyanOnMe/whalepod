@@ -1,5 +1,5 @@
 {
-  "name": "project311",
+  "name": "whalepod",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,7 +16,7 @@
     "phase1:verify": "tsx scripts/phase1-verify.mts",
     "phase1:evidence": "tsx scripts/phase1-evidence.mts",
     "check:boundaries": "tsx scripts/check-boundaries.ts",
-    "check:protocol-generated": "pnpm --filter @project311/protocol check:generated",
+    "check:protocol-generated": "pnpm --filter @whalepod/protocol check:generated",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:boundaries && pnpm check:protocol-generated && pnpm check:plugin-fixture && pnpm test:unit",
     "check:plugin-fixture": "tsx scripts/build-fixture-plugin.mts --check",
     "test:compose-smoke": "tsx scripts/compose-smoke.mts",
@@ -26,10 +26,10 @@
   },
   "devDependencies": {
     "@playwright/test": "catalog:",
-    "@project311/db": "workspace:*",
-    "@project311/protocol": "workspace:*",
     "@types/node": "24.13.3",
     "@types/ws": "catalog:",
+    "@whalepod/db": "workspace:*",
+    "@whalepod/protocol": "workspace:*",
     "drizzle-orm": "catalog:",
     "oxfmt": "0.63.0",
     "oxlint": "1.78.0",

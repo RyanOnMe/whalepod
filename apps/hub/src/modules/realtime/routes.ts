@@ -6,7 +6,7 @@
  * Hub WS 握手自校验（Session Cookie + Origin）、回放与订阅分发见各模块文件。
  */
 import type { FastifyInstance } from 'fastify'
-import type { Database } from '@project311/db'
+import type { Database } from '@whalepod/db'
 import { TeamEventStore } from './team-event-store.js'
 import { createRealtimeHub, DEFAULT_POLL_INTERVAL_MS } from './subscriptions.js'
 import type { RealtimeHub } from './subscriptions.js'

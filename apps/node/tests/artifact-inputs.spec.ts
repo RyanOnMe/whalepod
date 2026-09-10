@@ -14,14 +14,14 @@ import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { RuntimeArtifactInput } from '@project311/protocol'
+import type { RuntimeArtifactInput } from '@whalepod/protocol'
 import { ArtifactInputsManager, ArtifactInputsError } from '../src/artifact/inputs.js'
 
 let root: string
 let inputsRoot: string
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'p311-artifact-inputs-'))
+  root = await mkdtemp(join(tmpdir(), 'wp-artifact-inputs-'))
   inputsRoot = join(root, 'runtime-inputs')
   await mkdir(inputsRoot, { recursive: true })
 })

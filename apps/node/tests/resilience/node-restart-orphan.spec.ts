@@ -71,7 +71,7 @@ function snapshotPayloads(sent: string[]): Array<Record<string, unknown>> {
 
 describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活', () => {
   it('重启后：孤儿被杀、snapshot lost 缓冲到重连才发、重复 run.start 不复活', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'p311-r9-'))
+    const root = await mkdtemp(join(tmpdir(), 'wp-r9-'))
     cleanups.push(async () => {
       await rm(root, { recursive: true, force: true })
     })
@@ -90,7 +90,7 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
       driver,
       registry: registry1,
       secrets: new SecretStore(join(root, 'secrets.json'), {
-        PROJECT311_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
+        WHALEPOD_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
       }),
       stateDbPath: join(root, 'supervisor.db'),
       capacity: 2,
@@ -133,7 +133,7 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
       driver: driver2,
       registry: registry2,
       secrets: new SecretStore(join(root, 'secrets.json'), {
-        PROJECT311_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
+        WHALEPOD_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
       }),
       stateDbPath: join(root, 'supervisor.db'),
       capacity: 2,
@@ -199,7 +199,7 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
     // 若 finalize 触碰已关闭的 SQLite，会在 ChildProcess exit 监听器里抛
     // ERR_INVALID_STATE 未处理异常，vitest 以 unhandled error 判本轮失败——
     // 与线上偶发的失败机制完全同形，因此本哨兵能守住回归。
-    const root = await mkdtemp(join(tmpdir(), 'p311-r9-regression-'))
+    const root = await mkdtemp(join(tmpdir(), 'wp-r9-regression-'))
     cleanups.push(async () => {
       await rm(root, { recursive: true, force: true })
     })
@@ -214,7 +214,7 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
       driver,
       registry,
       secrets: new SecretStore(join(root, 'secrets.json'), {
-        PROJECT311_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
+        WHALEPOD_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
       }),
       stateDbPath: join(root, 'supervisor.db'),
       capacity: 2,

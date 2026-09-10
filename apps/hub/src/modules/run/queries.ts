@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm'
-import type { ApprovalRow, RunRow } from '@project311/db'
-import { getRun, listRunsByTask, schema } from '@project311/db'
-import type { DbHandle } from '@project311/db'
+import type { ApprovalRow, RunRow } from '@whalepod/db'
+import { getRun, listRunsByTask, schema } from '@whalepod/db'
+import type { DbHandle } from '@whalepod/db'
 
 /** run_status 枚举（03 §3.2），从 db schema 推断，不另持一份字面量。 */
 export type RunStatus = RunRow['status']

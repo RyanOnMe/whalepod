@@ -7,9 +7,9 @@
  *   多团队迁移时再补 team_id 过滤（02 Task 8 伪代码里的 actor.teamId 在此落地为全局游标）。
  */
 import { and, asc, gt, lt, lte, max } from 'drizzle-orm'
-import type { DbHandle } from '@project311/db'
-import { schema } from '@project311/db'
-import { ClientFrameSchema } from '@project311/protocol'
+import type { DbHandle } from '@whalepod/db'
+import { schema } from '@whalepod/db'
+import { ClientFrameSchema } from '@whalepod/protocol'
 
 export const TEAM_EVENT_RETENTION_MS = 24 * 60 * 60 * 1000
 

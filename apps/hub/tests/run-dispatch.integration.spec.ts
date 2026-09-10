@@ -1,8 +1,8 @@
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { Database } from '@project311/db'
-import { getRun, listRunEvents, listTeamEvents, schema } from '@project311/db'
-import { parseNodeFrame } from '@project311/protocol'
+import type { Database } from '@whalepod/db'
+import { getRun, listRunEvents, listTeamEvents, schema } from '@whalepod/db'
+import { parseNodeFrame } from '@whalepod/protocol'
 import {
   createTestDatabase,
   makeActor,

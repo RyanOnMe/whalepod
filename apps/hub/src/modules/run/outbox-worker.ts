@@ -11,8 +11,8 @@
  * 帧过不了协议 schema（编程错误）或对端报永久错误；离线等瞬时错误留待退避重投。
  */
 import { randomUUID } from 'node:crypto'
-import type { ClaimedCommand, Outbox } from '@project311/db'
-import { NodeDownstreamSchema } from '@project311/protocol'
+import type { ClaimedCommand, Outbox } from '@whalepod/db'
+import { NodeDownstreamSchema } from '@whalepod/protocol'
 import type { DeviceGateway } from './device-gateway.js'
 
 export interface OutboxWorkerDeps {

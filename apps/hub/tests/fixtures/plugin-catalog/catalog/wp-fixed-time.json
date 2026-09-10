@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "name": "p311-fixed-time",
+  "name": "wp-fixed-time",
   "version": "0.1.0",
-  "tarballUrl": "https://catalog.fixtures.project311.test/tarballs/p311-fixed-time-0.1.0.tgz",
+  "tarballUrl": "https://catalog.fixtures.whalepod.test/tarballs/wp-fixed-time-0.1.0.tgz",
   "integrity": "sha256-/v3vhEAnpmuMav9MK205CtgL+6O1xgED/lrocMiEHGs=",
-  "dependencyLockDigest": "f374e4aef0009cf5d2bec997ac4fb4fb52a8858b4ca1e35c00a41942db799fd9",
+  "dependencyLockDigest": "57a6fd889261be82a170240c6a3be74d7f665bc739447f54a9d9397561be09b5",
   "dshCompatibility": "0.1.0-rc.8",
   "entrypoint": "dist/index.js",
   "capabilities": ["workspace.read"],

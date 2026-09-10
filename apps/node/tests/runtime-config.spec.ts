@@ -27,8 +27,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parseDocument } from 'yaml'
-import { pluginCordisEntry, type PluginManifest } from '@project311/protocol'
-import { digestPluginCordisEntry } from '@project311/protocol/plugin-pack-digest'
+import { pluginCordisEntry, type PluginManifest } from '@whalepod/protocol'
+import { digestPluginCordisEntry } from '@whalepod/protocol/plugin-pack-digest'
 import { PluginError, sriFor } from '../src/plugin/integrity.js'
 import { digestLockfile, type PluginLockfile } from '../src/plugin/lockfile.js'
 import { PackageStore } from '../src/plugin/package-store.js'
@@ -47,7 +47,7 @@ import {
 
 const tempDirs: string[] = []
 function mktemp(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'p311-runtime-config-'))
+  const dir = mkdtempSync(join(tmpdir(), 'wp-runtime-config-'))
   tempDirs.push(dir)
   return dir
 }
@@ -71,7 +71,7 @@ afterEach(() => {
 })
 
 const PACK_DIGEST = 'a'.repeat(64)
-const PKG_NAME = '@project311/tabtin-fixed-time'
+const PKG_NAME = '@whalepod/wp-fixed-time'
 const PKG_VERSION = '0.1.0'
 
 function fixtureTarball(): Buffer {
@@ -109,7 +109,7 @@ function makeManifest(tarball: Buffer, lock: PluginLockfile): PluginManifest {
     schemaVersion: 1,
     name: PKG_NAME,
     version: PKG_VERSION,
-    tarballUrl: 'https://registry.npmjs.org/@project311/tabtin-fixed-time/-/x-0.1.0.tgz',
+    tarballUrl: 'https://registry.npmjs.org/@whalepod/wp-fixed-time/-/x-0.1.0.tgz',
     integrity: sriFor(tarball),
     dependencyLockDigest: digestLockfile(lock),
     dshCompatibility: '0.1.0-rc.8',
@@ -184,7 +184,7 @@ describe('overlay 生成', () => {
     const other = buildPackOverlay({ packDigest: PACK_DIGEST, packsRoot: otherRoot, packages })
     const normalize = (yaml: string, root: string) => yaml.split(root).join('<packsRoot>')
     expect(normalize(other.overlayYaml, otherRoot)).toBe(normalize(first.overlayYaml, packsRoot))
-    expect(first.overlayYaml).toContain('node_modules/@project311/tabtin-fixed-time/index.js')
+    expect(first.overlayYaml).toContain('node_modules/@whalepod/wp-fixed-time/index.js')
   })
 
   it('overlay 是 PatchOptions 顶层数组：每包一条 insert 行 { id, name, config }', async () => {
@@ -212,7 +212,7 @@ describe('overlay 生成', () => {
     }>
     expect(parsed).toHaveLength(1)
     const row = parsed[0]!.insert[0]!
-    expect(row).toMatchObject({ id: 'project311--tabtin-fixed-time', config: {} })
+    expect(row).toMatchObject({ id: 'whalepod--wp-fixed-time', config: {} })
     expect(row['name']).toBe(
       join(packsRoot, PACK_DIGEST, 'node_modules', PKG_NAME, fixture.manifest.entrypoint),
     )

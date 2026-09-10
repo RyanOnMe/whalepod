@@ -5,7 +5,7 @@
  * （键序递归排序）后 sha256。Hub 组装 Pack 时计算；Node preflight 用同一算法
  * 复算 descriptor 验证 digest 未漂移（G-契约：digest 变 = preflight 拒绝）。
  *
- * 仅此文件引 node:crypto——经 `@project311/protocol/plugin-pack-digest`
+ * 仅此文件引 node:crypto——经 `@whalepod/protocol/plugin-pack-digest`
  * 子路径导出，不进 index（Web  bundle 不触 node 内建）。
  */
 import { createHash } from 'node:crypto'

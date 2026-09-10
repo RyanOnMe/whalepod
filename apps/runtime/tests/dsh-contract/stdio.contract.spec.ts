@@ -7,7 +7,7 @@
  * - 进程处置表：initialize→ready→prompt→completed→shutdown exit 0；
  *   裸 EOF exit 0；单行超 1 MiB exit 2 且 stdout 无协议垃圾。
  *
- * LLM 出口由 replay overlay 替换（DSH_SNAPSHOT_FILE + PROJECT311_RUNTIME_EXTRA_PATCH_FILES），
+ * LLM 出口由 replay overlay 替换（DSH_SNAPSHOT_FILE + WHALEPOD_RUNTIME_EXTRA_PATCH_FILES），
  * 不访问外部模型或密钥。
  */
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -17,7 +17,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { RuntimeOutputSchema, type RuntimeOutput } from '@project311/protocol'
+import { RuntimeOutputSchema, type RuntimeOutput } from '@whalepod/protocol'
 
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url))
 const BIN = join(REPO_ROOT, 'apps/runtime/src/bin.ts')
@@ -47,7 +47,7 @@ function spawnRuntime(fixture: string): ChildHarness {
     env: {
       ...process.env,
       DSH_SNAPSHOT_FILE: fixture,
-      PROJECT311_RUNTIME_EXTRA_PATCH_FILES: REPLAY_PATCH,
+      WHALEPOD_RUNTIME_EXTRA_PATCH_FILES: REPLAY_PATCH,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
@@ -147,8 +147,8 @@ function commandFrame(type: string, payload: Record<string, unknown>): Record<st
 }
 
 function initializePayload(): Record<string, unknown> {
-  const workspacePath = mkdtempSync(join(tmpdir(), 'project311-stdio-ws-'))
-  const dshHomePath = mkdtempSync(join(tmpdir(), 'project311-stdio-home-'))
+  const workspacePath = mkdtempSync(join(tmpdir(), 'whalepod-stdio-ws-'))
+  const dshHomePath = mkdtempSync(join(tmpdir(), 'whalepod-stdio-home-'))
   tempDirs.push(workspacePath, dshHomePath)
   return {
     runId: randomUUID(),
@@ -158,7 +158,7 @@ function initializePayload(): Record<string, unknown> {
     pluginPackDigest: '0'.repeat(64),
     provider: 'replay',
     model: 'replay-model',
-    persona: 'You are a contract-probe agent for project311.',
+    persona: 'You are a contract-probe agent for whalepod.',
   }
 }
 

@@ -14,7 +14,7 @@
  *   被 SIGKILL 收尾（liveness 探针判定，绝不自证）。
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { ProjectedRunEvent } from '@project311/protocol'
+import type { ProjectedRunEvent } from '@whalepod/protocol'
 import {
   alive,
   awaitDead,

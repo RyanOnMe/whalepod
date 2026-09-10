@@ -9,7 +9,7 @@ describe('node local config', () => {
   let dir: string
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'p311-node-cfg-'))
+    dir = await mkdtemp(join(tmpdir(), 'wp-node-cfg-'))
   })
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true })

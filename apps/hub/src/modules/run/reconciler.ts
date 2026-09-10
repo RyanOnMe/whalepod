@@ -12,7 +12,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { eq, inArray } from 'drizzle-orm'
-import type { Database, RunRow } from '@project311/db'
+import type { Database, RunRow } from '@whalepod/db'
 import {
   ACTIVE_RUN_STATUSES,
   appendTeamEvent,
@@ -20,12 +20,12 @@ import {
   Outbox,
   schema,
   setRunStatus,
-} from '@project311/db'
-import { RunStatusRequestSchema } from '@project311/protocol'
-import { transitionRun } from '@project311/domain'
+} from '@whalepod/db'
+import { RunStatusRequestSchema } from '@whalepod/protocol'
+import { transitionRun } from '@whalepod/domain'
 import { cancelPendingApprovalsInTransaction } from './cancel.js'
 
-// 活跃态集合的单一事实源在 @project311/db（与 run_one_active_per_task 部分唯一索引
+// 活跃态集合的单一事实源在 @whalepod/db（与 run_one_active_per_task 部分唯一索引
 // 谓词一致）；此处再导出，orchestrator 与 run 模块的既有导入路径不变。
 export { ACTIVE_RUN_STATUSES }
 

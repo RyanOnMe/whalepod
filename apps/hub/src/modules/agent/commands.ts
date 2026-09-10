@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto'
 import { desc, eq } from 'drizzle-orm'
-import { authorize } from '@project311/domain'
-import type { Actor } from '@project311/domain'
-import type { Database, Tx } from '@project311/db'
+import { authorize } from '@whalepod/domain'
+import type { Actor } from '@whalepod/domain'
+import type { Database, Tx } from '@whalepod/db'
 import {
   insertAgent,
   insertProfileRevision,
@@ -10,7 +10,7 @@ import {
   schema,
   transactCommand,
   unwrapPgError,
-} from '@project311/db'
+} from '@whalepod/db'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
 import { toAgentView, toProfileRevisionView } from './queries.js'

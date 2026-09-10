@@ -198,7 +198,7 @@ export async function runLoadProfile(
   const rssSamples: XY[] = []
   let dropped = 0
   try {
-    const { createDatabase, applyMigrations } = await import('@project311/db')
+    const { createDatabase, applyMigrations } = await import('@whalepod/db')
     process.env.DATABASE_URL = postgres.databaseUrl // 与 drive.ts 同规：不留 env 依赖的暗雷
     const database = createDatabase({ connectionString: postgres.databaseUrl, max: 10 }) // 10 连接×250ms 轮询 ⟹ 池不能是默认 4（假瓶颈，调研坑 6）
     await applyMigrations(database) // 裸连接不自带迁移（drive 走 createTestDatabase 才隐性做了——这里第一次就踩实）

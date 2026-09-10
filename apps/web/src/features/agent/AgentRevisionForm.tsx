@@ -9,7 +9,7 @@
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent, type ReactNode } from 'react'
-import type { CreateAgentRequest } from '@project311/protocol'
+import type { CreateAgentRequest } from '@whalepod/protocol'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import type { AgentView } from '../../shared/api/types.js'

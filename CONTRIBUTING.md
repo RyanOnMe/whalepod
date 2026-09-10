@@ -1,4 +1,4 @@
-# Contributing to project311
+# Contributing to whalepod
 
 Thanks for your interest in contributing. This document is the short version;
 [AGENTS.md](./AGENTS.md) is the authoritative in-repo guide for humans and AI

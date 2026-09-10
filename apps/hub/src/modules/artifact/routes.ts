@@ -18,7 +18,7 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { eq } from 'drizzle-orm'
-import { authorize, asUserId } from '@project311/domain'
+import { authorize, asUserId } from '@whalepod/domain'
 import {
   getArtifact,
   getRun,
@@ -26,13 +26,13 @@ import {
   deviceHasRunOnTask,
   listPublishedArtifactsByTask,
   transactCommand,
-} from '@project311/db'
-import type { Database } from '@project311/db'
+} from '@whalepod/db'
+import type { Database } from '@whalepod/db'
 import {
   ArtifactUploadMetadataSchema,
   ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES,
-} from '@project311/protocol'
-import type { ArtifactUploadMetadata } from '@project311/protocol'
+} from '@whalepod/protocol'
+import type { ArtifactUploadMetadata } from '@whalepod/protocol'
 import { authenticateDevice } from '../plugin/pack-resolver.js'
 import type { RequireActor } from '../auth/session.js'
 import { readIdempotencyKey } from '../auth/idempotency.js'

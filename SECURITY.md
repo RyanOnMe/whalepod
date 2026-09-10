@@ -24,7 +24,7 @@ anonymous.
 
 ## Supported Versions
 
-project311 is in its first development phase. Only the `main` branch is
+whalepod is in its first development phase. Only the `main` branch is
 supported; there are no released versions yet.
 
 | Version / Branch | Supported |

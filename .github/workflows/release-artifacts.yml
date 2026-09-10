@@ -20,7 +20,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: SBOM (CycloneDX)
-        run: mkdir -p artifacts/sbom && pnpm sbom --sbom-format cyclonedx > artifacts/sbom/project311-cyclonedx.json
+        run: mkdir -p artifacts/sbom && pnpm sbom --sbom-format cyclonedx > artifacts/sbom/whalepod-cyclonedx.json
       - name: License report（gate 同判据，报告入包）
         run: |
           pnpm exec tsx scripts/license-check.mts

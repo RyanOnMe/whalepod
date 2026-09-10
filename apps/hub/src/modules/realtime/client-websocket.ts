@@ -10,8 +10,8 @@
  */
 import type { FastifyRequest } from 'fastify'
 import WebSocket from 'ws'
-import type { Database } from '@project311/db'
-import { ClientFrameSchema } from '@project311/protocol'
+import type { Database } from '@whalepod/db'
+import { ClientFrameSchema } from '@whalepod/protocol'
 import { ApiError } from '../shared/http-error.js'
 import { resolveSession, SESSION_COOKIE } from '../auth/session.js'
 import type { SessionActor } from '../auth/session.js'

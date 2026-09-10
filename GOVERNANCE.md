@@ -1,6 +1,6 @@
 # Governance
 
-This document describes how decisions are made in project311 during its first
+This document describes how decisions are made in whalepod during its first
 development phase. The project is young and the maintainer team is small; the
 process is deliberately lightweight and will evolve as the community grows.
 

@@ -9,7 +9,7 @@
     "workspaces": [
       {
         "workspaceId": "01905f7c-0000-7000-8000-000000000601",
-        "name": "project311",
+        "name": "whalepod",
         "kind": "git_repository",
         "capabilities": { "read": true, "write": true, "git": true },
         "available": true,
