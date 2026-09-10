@@ -17,6 +17,8 @@ import WebSocket from 'ws'
 import {
   apiInject,
   createTestApp,
+  insertRunRow,
+  seedRunChainForUser,
   createTestDatabase,
   driveInviteAndAccept,
   driveSetup,
@@ -231,5 +233,73 @@ describe('device inventory → workspaces 投影', () => {
       headers: { connection: 'upgrade', upgrade: 'websocket' },
     })
     expect(res.statusCode).toBe(401)
+  })
+
+  // #94 删除收敛（变化时重报的 Hub 半边）。
+  it('全量清单未覆盖的本设备 Workspace：无 Run 引用删行、有引用标 unavailable；重新上报恢复', async () => {
+    const { deviceId, deviceToken: token } = await pair(alice)
+    const socket = await connect(token)
+    const keepId = randomUUID()
+    const removedId = randomUUID()
+    const ws = (workspaceId: string, name: string) => ({
+      workspaceId,
+      name,
+      kind: 'directory',
+      capabilities: { read: true, write: true, git: false },
+      available: true,
+      lastCheckedAt: new Date().toISOString(),
+    })
+    sendInventory(socket, deviceId, [ws(keepId, 'keep-me'), ws(removedId, 'removed-one')])
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(await database.db.select().from(schema.workspaces)).toHaveLength(2)
+
+    // Node 侧 workspace remove 后的第二轮 inventory（全量快照只列存活项）。
+    sendInventory(socket, deviceId, [ws(keepId, 'keep-me')])
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    const rows = await database.db.select().from(schema.workspaces)
+    // 无 Run 引用的移除项：行被删除——投影与 Node registry 镜像一致。
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.id).toBe(keepId)
+    expect(rows[0]?.available).toBe(true)
+
+    // 有 Run 引用的移除项：行必须保留（runs.workspaceId FK），降级为 unavailable。
+    const referencedId = randomUUID()
+    sendInventory(socket, deviceId, [ws(keepId, 'keep-me'), ws(referencedId, 'has-runs')])
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const project = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: '/api/v1/projects',
+      payload: { name: 'p-inventory-convergence' },
+    })
+    const projectId = (project.json() as { data: { id: string } }).data.id
+    const task = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/projects/${projectId}/tasks`,
+      payload: { title: 't-inventory', assigneeUserId: alice.userId },
+    })
+    const taskId = (task.json() as { data: { id: string } }).data.id
+    const chain = await seedRunChainForUser(database.db, alice.userId)
+    await insertRunRow(database.db, {
+      taskId,
+      ownerUserId: alice.userId,
+      agentId: chain.agentId,
+      profileRevisionId: chain.profileRevisionId,
+      deviceId,
+      workspaceId: referencedId,
+      status: 'completed',
+    })
+    sendInventory(socket, deviceId, [ws(keepId, 'keep-me')])
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const after = await database.db.select().from(schema.workspaces)
+    const referenced = after.find((r) => r.id === referencedId)
+    expect(referenced).toBeDefined() // 行保留
+    expect(referenced?.available).toBe(false) // 但不再可被新 Run 选用
+
+    // 重新 add → 下一份全量清单带回 → 恢复 available（镜像语义闭环）。
+    sendInventory(socket, deviceId, [ws(keepId, 'keep-me'), ws(referencedId, 'has-runs')])
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const restored = await database.db.select().from(schema.workspaces)
+    expect(restored.find((r) => r.id === referencedId)?.available).toBe(true)
   })
 })

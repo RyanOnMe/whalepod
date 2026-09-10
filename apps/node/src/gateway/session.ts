@@ -53,6 +53,14 @@ export interface DeviceSessionDeps {
    * 因为 Hub 的 Workspace 投影只有这一个来源（03 §6.2）。缺省不上报。
    */
   readonly inventoryFacts?: () => Promise<InventoryFacts>
+  /**
+   * #94：inventory 变更指纹（如 registry 文件的 mtime/size 摘要）。与
+   * inventoryFacts 配对注入后，心跳每拍探测一次：指纹变化即重报
+   * node.inventory——「workspace add 后无需重启 node」的会话内收敛。
+   * 不开新协议帧、不引 fs watch：检测成本是一拍一次 stat，重放收敛靠
+   * Hub upsert 幂等。缺省不探测（行为退化为只连后上报）。
+   */
+  readonly inventoryRevision?: () => Promise<string>
   /** #89：inventory 构建/发送失败的归因回调（缺省无操作）。 */
   readonly onInventoryError?: (error: unknown) => void
   readonly WebSocketImpl?: HubSocketOptions['WebSocketImpl']
@@ -88,6 +96,26 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
   let revoked = false
   let manuallyStopped = false
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  // #94：最近一次成功上报时的 inventory 指纹（首报时若注入 revision 源则入账）。
+  let lastInventoryRevision: string | undefined
+
+  // #94：指纹变化才重建+重报；与连接后首报共用同一份连接守卫纪律（构建完成时
+  // 该连接必须仍是当前活连接且 OPEN）。任何失败只归因、不穿透定时器回调（#103）。
+  const maybeReportInventoryChange = (): void => {
+    if (deps.inventoryFacts === undefined || deps.inventoryRevision === undefined) return
+    const me = current
+    if (me === undefined || me.readyState !== 1) return
+    void (async () => {
+      const revision = await deps.inventoryRevision!()
+      if (revision === lastInventoryRevision) return
+      const facts = await deps.inventoryFacts!()
+      if (current !== me || me.readyState !== 1) return // 连接已换/已关：丢帧，下拍自然收敛
+      me.send(inventoryFrame(deps.config.deviceId, facts))
+      lastInventoryRevision = revision
+    })().catch((error: unknown) => {
+      deps.onInventoryError?.(error)
+    })
+  }
 
   const heartbeatTimer = setIntervalFn(() => {
     // 会话级单一定时器：跨重连存活，只打当前 OPEN 连接。
@@ -108,6 +136,8 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
           facts?.lastEventSeqByRun ?? {},
         ),
       )
+      // #94：心跳节拍顺带探测 inventory 指纹——变化时重报（不株连心跳本身）。
+      maybeReportInventoryChange()
     }
   }, heartbeatMs)
 
@@ -162,16 +192,18 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
       // 否则丢帧（不得往已关闭/已被替换的 socket 上写）。
       if (deps.inventoryFacts !== undefined) {
         const me = current
-        void deps
-          .inventoryFacts()
-          .then((facts) => {
-            if (current === me && me !== undefined && me.readyState === 1) {
-              me.send(inventoryFrame(deps.config.deviceId, facts))
-            }
-          })
-          .catch((error: unknown) => {
-            deps.onInventoryError?.(error)
-          })
+        void (async () => {
+          // #94：指纹在构建前取——构建读到的是更新的 registry 时，旧指纹入账后
+          // 下一拍会再报一次（多报无害，漏报才有害）。
+          const revision = await deps.inventoryRevision?.()
+          const facts = await deps.inventoryFacts!()
+          if (current === me && me !== undefined && me.readyState === 1) {
+            me.send(inventoryFrame(deps.config.deviceId, facts))
+            lastInventoryRevision = revision
+          }
+        })().catch((error: unknown) => {
+          deps.onInventoryError?.(error)
+        })
       }
     })
   }

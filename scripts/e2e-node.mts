@@ -40,7 +40,7 @@ import { WebSocket } from 'ws'
 import type { NodeDownstream } from '@project311/protocol'
 import { claimDevice } from '../apps/node/src/pairing/client.js'
 import { loadConfig, saveConfig, type NodeConfig } from '../apps/node/src/config.js'
-import { WorkspaceRegistry } from '../apps/node/src/workspace/registry.js'
+import { registryFileRevision, WorkspaceRegistry } from '../apps/node/src/workspace/registry.js'
 import { WorkspaceInventory } from '../apps/node/src/workspace/inventory.js'
 import { SecretStore } from '../apps/node/src/secret/store.js'
 import { CommandStore } from '../apps/node/src/spool/command-store.js'
@@ -397,6 +397,8 @@ const session = startDeviceSession({
   heartbeatFacts: () => runManager.heartbeatFacts(),
   // #89 后本进程与生产 cli 走同一条上报路径：只提供事实源，发帧由 session 层负责。
   inventoryFacts: () => inventory.build(),
+  // #94：与 cli.ts 同一注入——registry 文件指纹随心跳探测，变化即重报。
+  inventoryRevision: () => registryFileRevision(join(stateDir, 'workspace-registry.sqlite')),
   onInventoryError: (error: unknown) => {
     log('inventory build failed', { error: String(error) })
   },

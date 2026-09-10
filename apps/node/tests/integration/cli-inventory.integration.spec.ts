@@ -10,7 +10,7 @@
  * 唯独装配层无人测」——只测 `startDeviceSession` 单元的话，cli 忘注入
  * `inventoryFacts` 照样绿，等于把这个 bug 原样复刻进测试。
  */
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -181,4 +181,104 @@ describe('#89 生产 cli 组合根：连接后自行上报 node.inventory', () =
       }
     }
   }, 60_000) // 子进程冷启（tsx 加载 + 真 Hub 握手）+ 投影轮询预算，须大于轮询上限。
+
+  it('#94 会话存活期 workspace add/remove（独立短进程）→ 不重启 node，Hub 投影自动收敛', async () => {
+    const base = await httpBase(ctx.app)
+    const { deviceId, deviceToken } = await pairDevice()
+    const configDir = join(home, '.project311-node')
+    const stateDir = join(configDir, 'state')
+    mkdirSync(stateDir, { recursive: true })
+    writeFileSync(
+      join(configDir, 'config.json'),
+      JSON.stringify({ hubUrl: base, deviceId, deviceToken }, null, 2),
+      { mode: 0o600 },
+    )
+    const wsDir1 = join(home, 'repo-one')
+    const wsDir2 = join(home, 'repo-two')
+    mkdirSync(wsDir1, { recursive: true })
+    mkdirSync(wsDir2, { recursive: true })
+    const registry = new WorkspaceRegistry(join(stateDir, 'workspace-registry.sqlite'))
+    const first = await registry.register(wsDir1, { name: 'cli-ws-1' })
+    registry.close()
+
+    const child: ChildProcess = spawn(
+      process.execPath,
+      ['--import', 'tsx', CLI_ENTRY, 'start', '--state-dir', stateDir],
+      { cwd: REPO_ROOT, env: { ...process.env, HOME: home }, stdio: ['ignore', 'pipe', 'pipe'] },
+    )
+    let stderrTail = ''
+    child.stderr?.setEncoding('utf8')
+    child.stderr?.on('data', (chunk: string) => {
+      stderrTail = (stderrTail + chunk).split('\n').slice(-40).join('\n')
+    })
+    child.stdout?.resume()
+
+    // 轮询投影直到谓词成立；deadline 内需容纳生产 10s 心跳节拍 × 指纹重报。
+    async function pollUntil(
+      predicate: (list: Record<string, unknown>[]) => boolean,
+      deadlineMs: number,
+      what: string,
+    ): Promise<Record<string, unknown>[]> {
+      const deadline = Date.now() + deadlineMs
+      for (;;) {
+        const res = await apiInject(ctx, alice, { method: 'GET', url: '/api/v1/workspaces' })
+        const list = (res.json().data ?? []) as Record<string, unknown>[]
+        if (predicate(list)) return list
+        if (child.exitCode !== null) {
+          throw new Error(
+            `cli 子进程提前退出（code=${child.exitCode}），${what} 未达成。stderr 尾部：\n${stderrTail}`,
+          )
+        }
+        if (Date.now() > deadline) {
+          throw new Error(
+            `${what} 在 ${deadlineMs / 1000}s 内未达成（#94 变化时重报断链）。stderr 尾部：\n${stderrTail}`,
+          )
+        }
+        await silence(POLL_INTERVAL_MS)
+      }
+    }
+
+    const runCli = (args: string[]): void => {
+      const result = spawnSync(process.execPath, ['--import', 'tsx', CLI_ENTRY, ...args], {
+        cwd: REPO_ROOT,
+        env: { ...process.env, HOME: home },
+        encoding: 'utf8',
+      })
+      expect(result.status, `cli ${args.join(' ')} 失败：${result.stderr}`).toBe(0)
+    }
+
+    try {
+      // 首报：连接后投影出现 ws1（#89 既有判据）。
+      await pollUntil((l) => l.some((w) => w.workspaceId === first.id), POLL_DEADLINE_MS, '首报')
+
+      // 另一终端真人命令：独立短进程 workspace add——会话不重启。
+      runCli(['workspace', 'add', wsDir2, '--name', 'cli-ws-2', '--state-dir', stateDir])
+      const withSecond = await pollUntil(
+        (l) => l.some((w) => w.name === 'cli-ws-2'),
+        40_000,
+        '会话存活期 add 收敛',
+      )
+      const second = withSecond.find((w) => w.name === 'cli-ws-2')!
+      expect(second.deviceId).toBe(deviceId)
+      expect(second.available).toBe(true)
+      expect(JSON.stringify(second)).not.toContain(wsDir2)
+
+      // 反向：独立短进程 workspace remove → 投影收敛（无 Run 引用 → 删行）。
+      runCli(['workspace', 'remove', second.workspaceId as string, '--state-dir', stateDir])
+      const final = await pollUntil(
+        (l) => !l.some((w) => w.name === 'cli-ws-2'),
+        40_000,
+        '会话存活期 remove 收敛',
+      )
+      expect(final.some((w) => w.workspaceId === first.id)).toBe(true) // 存活项不受影响
+    } finally {
+      child.kill('SIGKILL')
+      if (child.exitCode === null && child.signalCode === null) {
+        await Promise.race([
+          new Promise<void>((resolve) => child.once('exit', () => resolve())),
+          silence(5_000),
+        ])
+      }
+    }
+  }, 120_000) // 冷启 + 两轮心跳节拍（10s/拍）轮询预算。
 })

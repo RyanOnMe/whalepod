@@ -36,12 +36,15 @@ Run 启动时每 Run 一个独立 Runtime 子进程（环境白名单 + 最小�
 
 - DshRuntimeDriver 的 runtimeEntry 来自部署配置；真实 DSH Runtime 进程协议（stdout
   事件 schema、stdin prompt）随 P1-13/14 接线补集成。
-- node.inventory 上报：**「连接后」半边已由 #89 接线**——session 层每条连接建立
+- node.inventory 上报：「连接后」由 #89 接线——session 层每条连接建立
   （含重连）后发一帧，cli 注入 `WorkspaceInventory.build()`；组合根由
   `apps/node/tests/integration/cli-inventory.integration.spec.ts` 从**真 bin**
   验收（pair→workspace add→start 真人顺序 + 轮询投影直至出现）。
-  **「变化时」半边仍未做**：会话存活期间 `workspace add` 不会被上报，需重启
-  `node start` —— 另立 **#94**（含三个待定方向与判据），不得当作已完成。
+  **「变化时」半边已由 #94 接线**：session 层心跳每拍探测 registry 文件指纹
+  （db/-wal/-shm mtime+size），变化即重报（会话不重启收敛）；Hub 侧全量快照
+  删除收敛（无 Run 引用删行、有引用标 unavailable）。证据：session 单测
+  （revision 变化重报/未变静默/探测失败不株连心跳）+ device-inventory
+  集成（删除收敛两腿 + 恢复）。
 - Q4 Node 门：**已退役（#100 裁决，随 P1-20 落地）**。`pnpm test:node` 从未建立；
   Node 侧用例一直由 Q1（unit include）、Q2（integration）、Q6（resilience）真实
   执行，聚合门只会复制覆盖、不新增判据 ⟹ 正式退役；04/AGENTS 同批改齐，编号留

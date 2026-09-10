@@ -345,3 +345,88 @@ describe('#89 inventory 上报与坏帧拦截', () => {
     expect(errors).toHaveLength(1)
   })
 })
+
+describe('#94 inventory 变化时重报（心跳节拍检测，会话不重启）', () => {
+  const secondWorkspace = {
+    workspaceId: '01905f7c-0000-7000-8000-000000000594',
+    name: 'docs',
+    kind: 'directory' as const,
+    capabilities: { read: true, write: true, git: false },
+    available: true,
+    lastCheckedAt: '2026-09-09T00:00:00.000Z',
+  }
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+  const inventoryFrames = (socket: FakeSocket) =>
+    socket.sent
+      .map((raw) => JSON.parse(raw) as { type: string; payload: { workspaces: unknown[] } })
+      .filter((f) => f.type === 'node.inventory')
+
+  it('registry revision 变化 → 下一拍心跳补发 node.inventory；未变不重报', async () => {
+    FakeSocket.reset()
+    let revision = 'v1'
+    let workspaces = [goodWorkspace]
+    const { deps, timers } = makeDeps({})
+    startDeviceSession({
+      ...deps,
+      inventoryFacts: async () => ({ workspaces, credentialSlots: [] }),
+      inventoryRevision: async () => revision,
+    })
+    const socket = latestSocket()
+    socket.emitOpen()
+    await flush()
+    expect(inventoryFrames(socket)).toHaveLength(1) // 连接后首报（#89 既有）
+
+    // 另一终端 `workspace add` 之前：revision 不变 → 心跳拍不重报（零常态带宽）。
+    timers.intervals[0]!.fn()
+    await flush()
+    expect(inventoryFrames(socket)).toHaveLength(1)
+
+    // 另一终端 workspace add 落库 → 指纹变化 → 下一拍补报，含新 Workspace。
+    revision = 'v2'
+    workspaces = [goodWorkspace, secondWorkspace]
+    timers.intervals[0]!.fn()
+    await flush()
+    const frames = inventoryFrames(socket)
+    expect(frames).toHaveLength(2)
+    const names = frames[1]!.payload.workspaces.map((w) => (w as { name: string }).name)
+    expect(names).toEqual(['proj', 'docs'])
+  })
+
+  it('revision 探测失败：只归因 onInventoryError——心跳照发、会话存活、恢复后下拍补报', async () => {
+    FakeSocket.reset()
+    let revision: string | Error = 'v1' // 连接期探测正常，首报入账指纹
+    const { deps, timers } = makeDeps({})
+    const errors: unknown[] = []
+    startDeviceSession({
+      ...deps,
+      inventoryFacts: async () => ({ workspaces: [goodWorkspace], credentialSlots: [] }),
+      inventoryRevision: async () => {
+        if (revision instanceof Error) throw revision
+        return revision
+      },
+      onInventoryError: (error: unknown) => errors.push(error),
+    })
+    const socket = latestSocket()
+    socket.emitOpen()
+    await flush()
+    expect(inventoryFrames(socket)).toHaveLength(1) // 连接后首报
+    expect(errors).toHaveLength(0)
+
+    // 探测开始失败（如 sqlite 文件暂时锁住）：本拍只归因，心跳照发不重报。
+    revision = new Error('sqlite locked')
+    const heartbeatsBefore = socket.sent.filter((raw) => raw.includes('node.heartbeat')).length
+    timers.intervals[0]!.fn()
+    await flush()
+    expect(errors).toHaveLength(1) // 归因留证
+    expect(socket.sent.filter((raw) => raw.includes('node.heartbeat')).length).toBe(
+      heartbeatsBefore + 1,
+    ) // 心跳本拍照发，不被探测失败株连
+    expect(inventoryFrames(socket)).toHaveLength(1) // 不重报
+
+    // 探测恢复且 revision 已变 → 下拍自然补报（错误不黏住会话）。
+    revision = 'v2'
+    timers.intervals[0]!.fn()
+    await flush()
+    expect(inventoryFrames(socket)).toHaveLength(2)
+  })
+})

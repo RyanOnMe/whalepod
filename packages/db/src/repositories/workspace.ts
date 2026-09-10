@@ -9,6 +9,7 @@
 import { and, eq } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { workspaces } from '../schema/device.js'
+import { runs } from '../schema/run.js'
 
 export interface WorkspaceUpsert {
   readonly id: string
@@ -54,6 +55,38 @@ export async function upsertWorkspace(
     .where(and(eq(workspaces.ownerUserId, input.ownerUserId), eq(workspaces.name, input.name)))
   await handle.insert(workspaces).values(input)
   return 'replaced'
+}
+
+/**
+ * #94 删除收敛：node.inventory 是本设备 Workspace 的全量快照——清单未覆盖的
+ * 行即 Node registry 已移除。无 Run 引用 → 删行（投影与 registry 镜像一致）；
+ * 有引用 → 标 unavailable 并保留行（runs.workspaceId FK + 历史投影）。
+ * 只作用于该设备自己的行（同 owner 的其他设备不受影响）。
+ */
+export async function convergeDeviceWorkspaceRemovals(
+  handle: DbHandle,
+  input: { deviceId: string; keepIds: readonly string[]; lastCheckedAt: Date },
+): Promise<void> {
+  const rows = await handle
+    .select({ id: workspaces.id })
+    .from(workspaces)
+    .where(eq(workspaces.deviceId, input.deviceId))
+  for (const row of rows) {
+    if (input.keepIds.includes(row.id)) continue
+    const refs = await handle
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.workspaceId, row.id))
+      .limit(1)
+    if (refs.length === 0) {
+      await handle.delete(workspaces).where(eq(workspaces.id, row.id))
+    } else {
+      await handle
+        .update(workspaces)
+        .set({ available: false, lastCheckedAt: input.lastCheckedAt })
+        .where(eq(workspaces.id, row.id))
+    }
+  }
 }
 
 /** owner-scoped 不透明投影（03 §4：只返回当前 Member 自己的 Workspace）。 */

@@ -19,6 +19,26 @@ import { join } from 'node:path'
 /** 协议上界镜像：packages/protocol NodeInventorySchema 的 `name` max(80)（#101）。 */
 export const WORKSPACE_NAME_MAX = 80 as const
 
+/**
+ * #94：registry 文件指纹（db/-wal/-shm 三件的 mtimeMs+size 摘要）。
+ * `workspace add/remove` 是独立短进程写库，长会话（node start）只能靠文件
+ * 指纹感知变化——心跳节拍每拍 stat 三次，成本可忽略；指纹变化即触发
+ * inventory 重报（session 层接线）。WAL 模式下最新写可能只落在 -wal，
+ * 所以三件都进指纹。
+ */
+export async function registryFileRevision(dbPath: string): Promise<string> {
+  const parts: string[] = []
+  for (const suffix of ['', '-wal', '-shm']) {
+    try {
+      const s = await stat(dbPath + suffix)
+      parts.push(`${s.mtimeMs}:${s.size}`)
+    } catch {
+      parts.push('absent')
+    }
+  }
+  return parts.join('|')
+}
+
 export class WorkspaceError extends Error {
   constructor(
     readonly code: 'WORKSPACE_UNAVAILABLE' | 'WORKSPACE_NAME_INVALID' | 'CONFLICT',
