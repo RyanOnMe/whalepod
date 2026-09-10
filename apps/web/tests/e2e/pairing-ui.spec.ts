@@ -279,23 +279,37 @@ test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可�
   // 永久渲染只读提示 → 这个断言会超时（假红），日后谁给这 5 页再加一句提示也会踩到。
   // 所以改成直接等"该页数据已经渲染出来"的标志性节点（下面 CONTENT_READY），不再借类名。
   // 每页的"数据已渲染"标志：有数据（列表/卡片）与空态（.empty-state）两种形态都覆盖。
+  // 二审 N2-a：锚点必须是**数据/空态**节点，不能拿无条件渲染的容器（`section.devices-list`、
+  // `form.card.agent-form`、`form.card.plugin-pack-form` 在 isPending 时就已经在 DOM 里）。
+  // 每页至少给一个"有数据"与一个"确实为空"的备选，两者都只在 isSuccess 之后出现。
   const CONTENT_READY: Readonly<Record<string, string>> = {
-    '/': 'ul.project-list, .empty-state',
-    '/devices': 'section.devices-list',
-    '/members': 'ul.member-list, .empty-state',
+    '/': 'ul.project-list > li, .projects-page .empty-state',
+    '/devices': 'section.devices-list li.device-item, section.devices-list .empty-state',
+    // `.empty-state` 在这一页有两个：成员列表的空态，以及"只有所有者或管理员能邀请成员"那段
+    // **无条件渲染**的说明（对成员/访客会话一直存在）。这里用 `section.card` 的第一个作用域
+    // 限定到列表那一个，否则非 owner 会话会在 isPending 窗口就被锚点放过。
+    '/members':
+      'section[aria-labelledby="members-list-heading"] ul.member-list > li, section[aria-labelledby="members-list-heading"] .empty-state',
     // #159 一审的覆盖缺口：Agents 与插件页此前没有任何扫描点（它们同样有徽标、表单
-    // 与浅底提示，是最容易掉 AA 的页面类型）。成员会话下这两页没有表单卡片，只有
-    // 只读提示（见下面的"加载中"判据——那不冲突：只读提示的文字里没有"正在加载"）。
-    '/agents': '.agents-page .card, .agents-page .empty-state, .agents-page .agent-readonly-hint',
+    // 与浅底提示，是最容易掉 AA 的页面类型）。成员会话下这两页没有表单与列表，只有只读提示
+    // （它的文字里没有「正在加载」，与上面的加载判据不冲突）。
+    '/agents': '.agent-list > li, .agents-page .empty-state, .agents-page .agent-readonly-hint',
     '/plugins':
-      '.plugins-page .card, .plugins-page .empty-state, .plugin-settings .plugin-readonly-hint',
+      '.plugins-page .empty-state, .plugins-layout .plugin-readonly-hint, .plugin-list > li',
   }
   for (const path of ['/', '/devices', '/members', '/agents', '/plugins']) {
     await page.goto(path)
     await expect(page.locator('.app-header')).toBeVisible()
     // 二审 N2：不要再用 `.mutation-hint` 计数当加载哨兵——那个类名同时被 7 处**静态信息
-    // 文字**使用（只读提示等），成员会话下 Agents/插件页会永久渲染它。改成认"加载文案本身"：
-    // 各页的加载提示统一以「正在加载」开头（实测 12 处），静态提示里没有这四个字。
+    // 文字**使用（只读提示等），成员会话下 Agents/插件页会永久渲染它。改成认"加载文案本身"。
+    // **口径更正（二审复核指出我原先写的"12 处、全仓统一以「正在加载」开头"不成立）**：
+    // 实测 15 处 UI 加载文案里有两处不以「正在加载」开头（`MembersPage` 的「加载成员名单…」、
+    // `InvitePage` 的「正在确认邀请…」）。所以两道防线是**按页分工**的，不能互相替代：
+    //   · 文案检查覆盖 /devices、/agents、/plugins（这三页的加载文案恰好都含「正在加载」）；
+    //   · /members 靠内容锚点（`ul.member-list` / 「还没有成员记录」都在 isSuccess 之后）。
+    // 而 `/devices`、`/agents`、`/plugins` 的内容锚点里有几个是**无条件渲染**的容器
+    // （`section.devices-list`、`form.card.agent-form`、`form.card.plugin-pack-form`），
+    // 所以那三页真正挡住 pending 窗口的是文案检查；`/members` 则相反。两边都留着，别删任一处。
     await expect(page.getByText(/正在加载/)).toHaveCount(0)
     await expect(page.locator(CONTENT_READY[path] ?? 'main').first()).toBeVisible()
     const metrics = await page.evaluate(() => ({

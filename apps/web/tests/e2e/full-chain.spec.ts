@@ -473,9 +473,10 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
       await expect(shared.bob!.getByTestId('run-live-events')).toContainText('Hello from replay.', {
         timeout: 30_000,
       })
-      // #159：Run 实况面板的正文是等宽字体，也是**唯一一处 "底色由 token 决定、文字色靠
-      // 继承" 的现场**——它真出过事：`.run-live-text` 曾经只设深色底、没设文字色，于是
-      // 继承了深色正文（深底深字，几乎不可读），而 token 层的配对检查看不到这一对。
+      // #159：Run 实况面板的正文是等宽字体，属"底色由 token 决定、文字色靠继承"这一类
+      // （同类还有 `.card`/`.field input`/`.inline-form` 等，不是唯一一处——一审纠正过这个
+      // 量词）。它真出过事：`.run-live-text` 曾经只设深色底、没设文字色，于是继承了深色
+      // 正文（深底深字，几乎不可读），而 token 层的配对检查看不到这一对。
       // 注：#159 一审指出该条现在时描述已不成立——`--color-surface-sunken` 在 #152 里
       // 补了定义（= bg-module-platform，浅灰），所以当前呈现是**浅底深字**；深色 fallback
       // `#14161c` 成了死代码。历史是真的，现状不同，故改写如实。
