@@ -208,10 +208,15 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     await assertNotNativeSelect(assignee, createTaskForm, '责任人')
     await assignee.click()
     await expect(assignee).toHaveAttribute('aria-expanded', 'true')
-    // autoFocus 让焦点落在首项（默认选中的 Alice）——方向键从这里开始走
-    await expect(alice.getByRole('menuitem').first()).toBeFocused()
+    // 菜单项的顺序 = [placeholder(disabled), 各成员…]：placeholder 占 **index 0** 且不可选，
+    // 所以 `autoFocus`（聚焦第一个可用项）落在 **index 1**（默认选中的 Alice），
+    // 再按一次方向键到 index 2（Bob）——本切片首轮 e2e 实测踩到：把 `first()` 当成"首项"，
+    // 拿到的是被禁用的 placeholder（Received: inactive）。
+    const items = alice.getByRole('menu').getByRole('menuitem')
+    await expect(items.first()).toBeDisabled()
+    await expect(items.nth(1)).toBeFocused()
     await alice.keyboard.press('ArrowDown')
-    await expect(alice.getByRole('menuitem').nth(1)).toBeFocused()
+    await expect(items.nth(2)).toBeFocused()
     await alice.keyboard.press('Enter')
     await expect(assignee).toHaveAttribute('aria-expanded', 'false')
     await expect(assignee).toContainText('Bob')

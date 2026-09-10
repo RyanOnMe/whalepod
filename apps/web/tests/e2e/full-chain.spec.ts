@@ -121,8 +121,10 @@ async function setupTeamAndTask(): Promise<void> {
 
   // Plugin Pack 行种子（harness.seed，P1-18 惯例）→ Agent 经真人 UI 创建。
   const pack = await seedPluginPack(shared.aliceUserId!)
-  await createAgentViaUi(alice, 'builder', pack.pluginPackId)
-  await createAgentViaUi(alice, 'reviewer', pack.pluginPackId)
+  // `pack.pluginPackId` 只用来断言种子成功；选 Pack 走名字（见 createAgentViaUi 的注释）
+  expect(pack.pluginPackId).not.toBe('')
+  await createAgentViaUi(alice, 'builder')
+  await createAgentViaUi(alice, 'reviewer')
 
   // Task：Alice 创建并指派 Bob（#136 责任人下拉选择器）；Bob 真实浏览器登录并接受。
   await alice.goto('/')
@@ -153,7 +155,7 @@ async function setupTeamAndTask(): Promise<void> {
   shared.bobCookie = await sessionCookie(shared.bobContext!)
 }
 
-async function createAgentViaUi(page: Page, name: string, pluginPackId: string): Promise<void> {
+async function createAgentViaUi(page: Page, name: string): Promise<void> {
   await page.goto('/agents')
   await expect(page.getByRole('heading', { name: 'Agent 管理' })).toBeVisible()
   await page.fill('#agent-name', name)
@@ -165,7 +167,10 @@ async function createAgentViaUi(page: Page, name: string, pluginPackId: string):
   // （点开 → 点选项）。原来这里用 selectOption，只对原生 <select> 成立。
   const packTrigger = page.locator('#agent-plugin-pack')
   await assertNotNativeSelect(packTrigger, page.locator('form'), 'Plugin Pack')
-  await selectFromMenu(packTrigger, new RegExp(pluginPackId.slice(0, 8)))
+  // 按**名字**点，不按 UUID：菜单项文案是 `pack.name`，而 control 面的种子包叫
+  // `e2e-pack`（scripts/e2e-serve.mts 的 /control/plugin-pack/seed）。
+  // #158 首轮 Q5 实测踩到：拿 `pluginPackId.slice(0, 8)` 去匹配永远是"找不到"。
+  await selectFromMenu(packTrigger, 'e2e-pack')
   await page.getByRole('button', { name: '创建 Agent' }).click()
   await expect(page.getByText(name).first()).toBeVisible()
 }

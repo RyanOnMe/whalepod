@@ -496,8 +496,13 @@ select {
   border-color: var(--dsw-alias-brand-primary);
 }
 
+/* 禁用态**不要给整个触发器上 opacity**（#158 首轮 Q5 实测踩到）：
+   `opacity` 会被 #159 的对比度门沿祖先链累乘进有效前景，0.55 让占位文字
+   （run-revision「先选 Agent…」/ run-workspace「先选设备…」）从 18.9:1 掉到 **4.17:1**，
+   直接判 AA 不达标。禁用语义本来就有三处承担：`disabled` 属性、`cursor: not-allowed`、
+   点击无效；靠"整块变淡"表达反而把信息性文字一起压暗。将来若要视觉变淡，用**前景色**
+   （`color-mix` 合成成不透明色）而不是 opacity——那样门能正确合成、也不牵连边框与背景。 */
 .select-menu .select-menu-trigger:disabled {
-  opacity: 0.55;
   cursor: not-allowed;
 }
 
