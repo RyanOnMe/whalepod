@@ -89,6 +89,44 @@ export async function getEnabledMember(
   return row.member
 }
 
+/** #136：成员列表视图行（Hub 路由过 protocol schema 后出网；不带任何敏感列）。 */
+export interface TeamMemberViewRow {
+  readonly userId: string
+  readonly username: string
+  readonly displayName: string
+  readonly role: Role
+  readonly enabled: boolean
+}
+
+/**
+ * 列出 Team 全部成员（含已停用，enabled=false 由调用方决定呈现——#136 选择器据此过滤）。
+ * 排序稳定：按加入时间，选择器呈现顺序可预期。
+ */
+export async function listTeamMembersWithUser(
+  handle: DbHandle,
+  teamId: string,
+): Promise<TeamMemberViewRow[]> {
+  const rows = await handle
+    .select({
+      userId: userAccounts.id,
+      username: userAccounts.username,
+      displayName: userAccounts.displayName,
+      role: teamMembers.role,
+      disabledAt: userAccounts.disabledAt,
+    })
+    .from(teamMembers)
+    .innerJoin(userAccounts, eq(userAccounts.id, teamMembers.userId))
+    .where(eq(teamMembers.teamId, teamId))
+    .orderBy(teamMembers.joinedAt, userAccounts.id)
+  return rows.map((r) => ({
+    userId: r.userId,
+    username: r.username,
+    displayName: r.displayName,
+    role: r.role,
+    enabled: r.disabledAt === null,
+  }))
+}
+
 export async function setMemberRole(
   handle: DbHandle,
   teamId: string,

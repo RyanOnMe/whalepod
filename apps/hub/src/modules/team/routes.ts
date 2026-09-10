@@ -1,8 +1,8 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { authorize, asUserId } from '@whalepod/domain'
-import { getTeam } from '@whalepod/db'
+import { getTeam, listTeamMembersWithUser } from '@whalepod/db'
 import type { Database } from '@whalepod/db'
-import { SetupRequestSchema } from '@whalepod/protocol'
+import { SetupRequestSchema, TeamMemberViewsSchema } from '@whalepod/protocol'
 import { audit } from '../shared/audit.js'
 import { ApiError } from '../shared/http-error.js'
 import { hashPassword } from '../auth/password.js'
@@ -132,6 +132,18 @@ export function registerTeamRoutes(app: FastifyInstance, deps: TeamRouteDeps): v
       ok: true,
       data: { id: team.id, name: team.name, createdAt: team.createdAt.toISOString() },
     }
+  })
+
+  // GET /team/members：成员列表（#136：任务责任人选择器的数据源）。
+  // 任何已登录 Member 可见——指派动线要求创建者能列出可指的人；
+  // 出网前过 TeamMemberViewsSchema：字段最小集由 protocol 钉死（无密码散列、无裸时间戳）。
+  // 形态与 GET /projects、/agents、/devices 一致：data 即数组，不额外包一层。
+  app.get('/team/members', async (request) => {
+    await deps.requireActor(request)
+    const team = await getTeam(deps.database.db)
+    if (team === undefined) throw new ApiError(404, 'NOT_FOUND', 'team not found')
+    const members = await listTeamMembersWithUser(deps.database.db, team.id)
+    return { ok: true, data: TeamMemberViewsSchema.parse(members) }
   })
 
   // 成员停用：Owner/Admin（domain authorize: disable_member）；最后 Owner 由 db 策略保护。

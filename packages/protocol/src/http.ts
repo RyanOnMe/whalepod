@@ -210,3 +210,21 @@ export type PairingClaimRequest = z.infer<typeof PairingClaimRequestSchema>
 export type ArtifactUploadMetadata = z.infer<typeof ArtifactUploadMetadataSchema>
 export type ArtifactManifestEntry = z.infer<typeof ArtifactManifestEntrySchema>
 export type ArtifactInputManifest = z.infer<typeof ArtifactInputManifestSchema>
+
+// ---------------------------------------------------------------------------
+// 视图（响应 data）schema：本仓惯例是 Request 在 protocol、View 在 Web 手写
+// interface。#136 起新增响应也纳入 zod——选择器契约（字段最小集）由 schema 钉死，
+// Hub 出网前 parse，多一列少一列都是红。
+// ---------------------------------------------------------------------------
+
+/** GET /team/members 的单条成员视图（03 §2.1；无敏感列，enabled 收敛 disabledAt）。 */
+export const TeamMemberViewSchema = z.strictObject({
+  userId: z.uuid(),
+  username: z.string(),
+  displayName: z.string(),
+  role: z.enum(['owner', 'admin', 'member']),
+  enabled: z.boolean(),
+})
+export const TeamMemberViewsSchema = z.array(TeamMemberViewSchema)
+export type TeamMemberView = z.infer<typeof TeamMemberViewSchema>
+export type TeamMemberViews = z.infer<typeof TeamMemberViewsSchema>

@@ -118,12 +118,15 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     expect(accepted.status).toBe(201)
     const bobUserId = ((await accepted.json()) as { data: { userId: string } }).data.userId
 
-    // ---- Alice：创建 Task 并指派 Bob（键盘：责任人输入框内 Enter） ----
+    // ---- Alice：创建 Task 并指派 Bob（#136 起责任人为下拉选择器，默认选中自己） ----
     await alice.getByRole('button', { name: '创建任务' }).click()
     const taskIdInput = alice.locator('input[id^="task-title-"]')
     await taskIdInput.fill('起草验收报告')
-    await alice.fill('input[id^="task-assignee-"]', bobUserId)
-    await alice.press('input[id^="task-assignee-"]', 'Enter')
+    await alice.selectOption('select[id^="task-assignee-"]', bobUserId)
+    await alice
+      .locator('form[aria-label="创建任务"]')
+      .getByRole('button', { name: /创建任务/ })
+      .click()
     await alice.waitForURL(/\/tasks\//)
     const taskUrl = new URL(alice.url()).pathname
     const taskId = taskUrl.split('/').pop() ?? ''

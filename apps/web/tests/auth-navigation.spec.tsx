@@ -3,7 +3,7 @@
  * 进 /setup；已初始化再看 auth/session → 未登录进 /login；已登录进 Project 列表。
  * 重定向只发生在站内固定路径，外部 URL 不存在可注入点。
  */
-import { screen } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import type { CommentView } from '../src/shared/api/types.js'
@@ -22,6 +22,7 @@ import {
   sessionHandler,
   sessionSwitchHandler,
   taskRoomHandler,
+  teamMembersHandler,
   type MockHandler,
 } from './fixtures.js'
 import { renderApp } from './render.jsx'
@@ -205,6 +206,7 @@ describe('auth-navigation', () => {
       loginHandler(BOB, switchable.flip),
       setupStatusHandler(true),
       projectsHandler([project]),
+      teamMembersHandler(),
       {
         method: 'POST',
         url: /\/api\/v1\/projects\/[^/]+\/tasks$/,
@@ -247,10 +249,15 @@ describe('auth-navigation', () => {
     createTaskToggle.focus()
     await user.keyboard('{Enter}')
 
-    // 填表并提交（键盘：标题 → 描述 → 责任人 User ID → 创建任务 + Enter）
+    // 填表并提交（#136：成员列表就绪后默认选中自己=Bob；键盘只填标题）
     const title = await screen.findByLabelText('任务标题')
+    const assigneeSelect = (await screen.findByLabelText('责任人')) as HTMLSelectElement
+    await waitFor(() => expect(assigneeSelect.value).toBe(BOB.userId))
     title.focus()
-    await user.keyboard(`Write onboarding guide{TAB}{TAB}${BOB.userId}{TAB}{Enter}`)
+    await user.keyboard('Write onboarding guide{TAB}')
+    const createButton = screen.getByRole('button', { name: /^创建任务$/ })
+    createButton.focus()
+    await user.keyboard('{Enter}')
     expect(await screen.findByRole('heading', { name: task.title })).toBeVisible()
 
     // 接受任务（键盘：聚焦按钮 + Enter）

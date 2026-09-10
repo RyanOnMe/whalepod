@@ -255,6 +255,31 @@ export function projectsHandler(projects: ProjectView[]): MockHandler {
   return { method: 'GET', url: /\/api\/v1\/projects$/, respond: () => ok(projects) }
 }
 
+/** #136 GET /team/members mock：默认给出 Alice(owner) + Bob(member) 两条未停用成员。 */
+export function teamMembersHandler(): MockHandler {
+  return {
+    method: 'GET',
+    url: /\/api\/v1\/team\/members$/,
+    respond: () =>
+      ok([
+        {
+          userId: ALICE.userId,
+          username: ALICE.username,
+          displayName: ALICE.displayName,
+          role: ALICE.role,
+          enabled: true,
+        },
+        {
+          userId: BOB.userId,
+          username: BOB.username,
+          displayName: BOB.displayName,
+          role: BOB.role,
+          enabled: true,
+        },
+      ]),
+  }
+}
+
 export function createProjectHandler(createdProject: ProjectView): MockHandler {
   return {
     method: 'POST',
