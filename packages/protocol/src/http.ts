@@ -225,8 +225,6 @@ export const TeamMemberViewSchema = z.strictObject({
   role: z.enum(['owner', 'admin', 'member']),
   enabled: z.boolean(),
 })
-export const TeamMembersDataSchema = z.strictObject({
-  members: z.array(TeamMemberViewSchema),
-})
+export const TeamMemberViewsSchema = z.array(TeamMemberViewSchema)
 export type TeamMemberView = z.infer<typeof TeamMemberViewSchema>
-export type TeamMembersData = z.infer<typeof TeamMembersDataSchema>
+export type TeamMemberViews = z.infer<typeof TeamMemberViewsSchema>

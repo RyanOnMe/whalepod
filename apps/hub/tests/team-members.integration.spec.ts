@@ -54,24 +54,24 @@ describe('#136 GET /team/members（集成 · PostgreSQL）', () => {
     expect(res.statusCode).toBe(200)
     const body = res.json() as {
       ok: true
-      data: {
-        members: Array<{
-          userId: string
-          username: string
-          displayName: string
-          role: string
-          enabled: boolean
-        }>
-      }
+      data: Array<{
+        userId: string
+        username: string
+        displayName: string
+        role: string
+        enabled: boolean
+      }>
     }
-    const byName = Object.fromEntries(body.data.members.map((m) => [m.username, m]))
+    // 形态契约：data 即数组（与 GET /projects、/agents、/devices 一致）
+    expect(Array.isArray(body.data)).toBe(true)
+    const byName = Object.fromEntries(body.data.map((m) => [m.username, m]))
     expect(Object.keys(byName).sort()).toEqual(['alice', 'bob'])
     expect(byName.alice?.role).toBe('owner')
     expect(byName.bob?.role).toBe('member')
     expect(byName.alice?.enabled).toBe(true)
     expect(byName.bob?.enabled).toBe(true)
     // 最小暴露面：任何一条都不带敏感键
-    for (const m of body.data.members) {
+    for (const m of body.data) {
       expect(Object.keys(m).sort()).toEqual(
         ['displayName', 'enabled', 'role', 'userId', 'username'].sort(),
       )
@@ -87,8 +87,7 @@ describe('#136 GET /team/members（集成 · PostgreSQL）', () => {
 
     const list = await apiInject(ctx, alice, { method: 'GET', url: '/api/v1/team/members' })
     expect(list.statusCode).toBe(200)
-    const members = (list.json() as { data: { members: Array<Record<string, unknown>> } }).data
-      .members
+    const members = (list.json() as { data: Array<Record<string, unknown>> }).data
     const bobRow = members.find((m) => m.username === 'bob')
     expect(bobRow).toBeDefined()
     expect(bobRow?.enabled).toBe(false)

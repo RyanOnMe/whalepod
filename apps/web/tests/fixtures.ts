@@ -261,24 +261,22 @@ export function teamMembersHandler(): MockHandler {
     method: 'GET',
     url: /\/api\/v1\/team\/members$/,
     respond: () =>
-      ok({
-        members: [
-          {
-            userId: ALICE.userId,
-            username: ALICE.username,
-            displayName: ALICE.displayName,
-            role: ALICE.role,
-            enabled: true,
-          },
-          {
-            userId: BOB.userId,
-            username: BOB.username,
-            displayName: BOB.displayName,
-            role: BOB.role,
-            enabled: true,
-          },
-        ],
-      }),
+      ok([
+        {
+          userId: ALICE.userId,
+          username: ALICE.username,
+          displayName: ALICE.displayName,
+          role: ALICE.role,
+          enabled: true,
+        },
+        {
+          userId: BOB.userId,
+          username: BOB.username,
+          displayName: BOB.displayName,
+          role: BOB.role,
+          enabled: true,
+        },
+      ]),
   }
 }
 

@@ -144,10 +144,10 @@ function CreateTaskForm({
   const session = useSession()
   const membersQuery = useQuery({
     queryKey: queryKeys.teamMembers,
-    queryFn: () => api.get<TeamMembersData>('/team/members'),
+    queryFn: () => api.get<TeamMemberView[]>('/team/members'),
   })
   // 停用成员不进选择器（03 §2.2 assignee 必须未停用；后端同规则 fail-closed）。
-  const selectableMembers = (membersQuery.data?.members ?? []).filter((m) => m.enabled)
+  const selectableMembers = (membersQuery.data ?? []).filter((m) => m.enabled)
   // 列表就绪后默认选中自己（多数场景是给自己建任务）；用户改选后不覆盖。
   useEffect(() => {
     const preferred =
