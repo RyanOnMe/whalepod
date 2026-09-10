@@ -6,7 +6,8 @@
  * - 终态 Run 显示「重跑」；确认后 POST /tasks/:taskId/runs 带 rerunOfRunId 指向旧
  *   Run（血缘），重复确认用同一 Idempotency-Key；
  * - failed/lost Run 明示「需验证外部状态」，绝不声称会自动重放/安全恢复；
- * - 时间线用 rerunOfRunId 显示「由 Run xx 重跑」。
+ * - 时间线用 rerunOfRunId 显示「重跑自第 N 次运行」（#162：来源写它在运行记录里的位置，
+ *   不写短 id；完整来源 runId 在 title 上）。
  */
 import { describe, expect, it } from 'vitest'
 import { cleanup, screen, waitFor } from '@testing-library/react'

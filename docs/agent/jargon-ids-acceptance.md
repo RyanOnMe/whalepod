@@ -71,6 +71,22 @@ pnpm vitest run --project unit apps/web/tests/person-identity.spec.ts
 - 截图自审：`artifacts/evidence/jargon-ids-shots/`（8 张 + `manifest.md` 写明拍摄条件；在 `.gitignore` 的 `artifacts/evidence/` 内，不入 git；脱敏过 `scripts/secret-scan.sh`）；
 - 提交前：`scripts/secret-scan.sh`。
 
+## 环境交代（本机实测的两个坑，别拿本机结果当判据）
+
+- **全新 worktree 必须先 build 再 Q0**：`pnpm check` 里的根 typecheck 会解析 `@whalepod/*` 的
+  `dist`，新检出没有产物时会报一片 `Cannot find module '@whalepod/db'`。CI 的 `check.yml`
+  同样是先 `pnpm -r --if-present build` 再 `pnpm check`，按同口径跑即可（与本次改动无关）。
+- **Q2 本机不可信（多 worktree 并存时）**：与另一 worktree 的 e2e 栈并跑时，
+  `pnpm test:integration` 实测 **7 failed**（5s 超时 / `deadlock detected` /
+  `workspace_device_id_fkey` 冲突）。做了 A/B：把本次唯一的 DB 改动
+  （`listRunsByTask` 的 `asc(runs.id)` 排序键）临时还原后**单跑**同一文件，失败更彻底
+  （**4/4 failed**）⇒ 与本次改动无关，属机器争用（共享一次性 PostgreSQL + 真 Node/Runtime 抢资源）。
+  **Q2 以 CI 的 integration job 为准**，本机结果不要当判据。
+- **Q5 栈纪律**：同一时刻全机只允许一套 e2e 栈（5173/18080）。多片同时起时 `e2e-serve`
+  会以 exit 2 拒绝；但**跑起来之后**别人的栈启动，本方会出现控制面
+  `500 {"error":"node not running"}` 这类基础设施红——本轮实测撞到过一次（p1-19 的 R5），
+  重跑即绿。这类红不算产品回归，但也不能当干净证据，登记时要标出来。
+
 ## 边界与未覆盖
 
 - **Agents / 插件页**的 `shortId(agent.id)`、`shortId(pack.id)` 未动：#162 明确不在本次范围（`Agent` 是领域词，另行判断）；
@@ -116,7 +132,7 @@ Received: ["顶部「当前责任人」的值（[data-testid="task-assignee"] �
 看出的结论：
 
 - 三个指人位置都写「显示名（@用户名）」：`当前责任人 Bob（@bob-ecc14fdb）`、`此任务分配给 Bob（@bob-ecc14fdb），等待其接受。`、留言作者 `Bob（@bob-ecc14fdb）`；旧版这三处分别是 `01a08c70` 形态的短 id；
-- Run 面：时间线行 `第 1 次运行` / `第 2 次运行`，时间线行上的血缘句 `重跑自来源运行`（截这批图时血缘句还没带上来源序号；随后按评审意见改成 `重跑自第 1 次运行`，见下方「与评审的往返」），面板标题 `本次运行`；交付物 `来源运行 第 1 次运行`（与时间线行同款句柄，可对照）；
+- Run 面：时间线行 `第 1 次运行` / `第 2 次运行`，时间线行与面板上的血缘句 `重跑自来源运行`——**这是评审前那一版的措辞**（图为 `c67b903` 树）；本笔按一审意见改成 `重跑自第 N 次运行`，`run-timeline-*` 与 `run-live-panel-*` 两张会在栈窗口内重拍覆盖，面板标题 `本次运行`；交付物 `来源运行 第 1 次运行`（与时间线行同款句柄，可对照）；
 - 空态四区都给人话空态（`还没有留言 ——…` / `还没有 Run。…` / `还没有已发布的 Artifact。…`），没有把空白伪装成结论；
 - 两档布局均正常（手机档单列堆叠，无溢出/截断）；
 - **一处在截图上「看起来像泄漏」但其实合法**：用户名自带 8 位随机 tag（`bob-ecc14fdb`）——这正是判据不能写成「页面里不许出现 8 位十六进制」的原因；登记在此，免得后来者按截图误判。
