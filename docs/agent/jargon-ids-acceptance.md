@@ -2,7 +2,7 @@
 
 - 对应场景/门禁：Q0（组件层判据）+ Q5（p1-07 / p1-19 真浏览器）
 - 对应 Issue：#162（切片一 #152/#157 的补漏）；领域语言以 [CONTEXT.md](../../CONTEXT.md) 为准
-- 上次验证：2026-09-10 · feat/p1-162-jargon-ids · Q0 PASS · Q5 PASS（p1-07 1 passed / p1-19 13 passed / 浏览器层红→绿各一次；两轮数字见「实测记录」）
+- 上次验证：2026-09-10 · feat/p1-162-jargon-ids `8dc6f2d` · Q0 PASS（82 files / 1061 tests）· Q5 PASS（p1-07 1 passed / p1-19 13 passed / 浏览器层红→绿各一次；三轮数字见「实测记录」）
 
 ## 验的是哪条用户路径
 
@@ -108,6 +108,9 @@ pnpm vitest run --project unit apps/web/tests/person-identity.spec.ts
 | 第一轮 | `6a3bccb` | p1-19 | `pnpm exec playwright test --project=p1-19` | **13 passed**（整轮 3.9m） |
 | 第二轮（冻结树，判据补完前提后） | `c67b903` | p1-07 | 同上 | **1 passed**（用例 4.0s / 整轮 22.9s） |
 | 第二轮 | `c67b903` | p1-19 | 同上 | **13 passed**（整轮 4.0m） |
+| 第三轮（一审修改后，独占栈窗口） | `8dc6f2d` | p1-07 | 同上 | **1 passed**（用例 3.0s / 整轮 19.5s） |
+| 第三轮 | `8dc6f2d` | p1-19 | 同上 | **13 passed**（整轮 2.8m） |
+| 第三轮 | `8dc6f2d` | 截图自审 | 临时 shot spec（`up` → `playwright test --project=shots -g "G5：Bob 启动 Builder Run|G6-04 Artifact|#162 截图自审"` → `down`） | **3 passed**（30.1s），8 张重拍，两张 Run 图措辞更新 |
 | 浏览器层**红** | 变异 `TaskHeader`（见下方「造红」） | p1-07 | 同命令 | **1 failed**，判据诊断指名槽位与短 id（实测 `01a08c70`） |
 | 浏览器层**绿** | 还原同一文件 | p1-07 | 同命令 | **1 passed**（用例 18.6s / 整轮 41.1s，本轮桌面机上有他人在跑栈） |
 
@@ -127,12 +130,12 @@ Received: ["顶部「当前责任人」的值（[data-testid="task-assignee"] �
 
 产物：`artifacts/evidence/jargon-ids-shots/`（8 张 + `manifest.md`；在 `.gitignore` 的 `artifacts/evidence/` 内，不入 git，脱敏过 `scripts/secret-scan.sh`）。
 
-拍摄条件：e2e 真栈（`scripts/e2e-serve.mts`）+ 真 Node/Runtime；Task Room 空态（新建、无留言无 Run 无交付物）与满态（已接受 + 留言 + 2 次 Run + 已发布交付物），Run 实况面板与时间线取 owner 视角；桌面 1280×720、手机 390×844 各一张。
+拍摄条件：e2e 真栈（`scripts/e2e-serve.mts`）+ 真 Node/Runtime；Task Room 空态（新建、无留言无 Run 无交付物）与满态（已接受 + 留言 + 2 次 Run + 已发布交付物），Run 实况面板与时间线取 owner 视角；桌面 1280×720、手机 390×844 各一张（共 8 张）。拍 Run 两张前先 `reload` 取干净快照，避免把「刚点过的重跑表单」这种动作态拍进去。
 
 看出的结论：
 
 - 三个指人位置都写「显示名（@用户名）」：`当前责任人 Bob（@bob-ecc14fdb）`、`此任务分配给 Bob（@bob-ecc14fdb），等待其接受。`、留言作者 `Bob（@bob-ecc14fdb）`；旧版这三处分别是 `01a08c70` 形态的短 id；
-- Run 面：时间线行 `第 1 次运行` / `第 2 次运行`，时间线行与面板上的血缘句 `重跑自来源运行`——**这是评审前那一版的措辞**（图为 `c67b903` 树）；本笔按一审意见改成 `重跑自第 N 次运行`，`run-timeline-*` 与 `run-live-panel-*` 两张会在栈窗口内重拍覆盖，面板标题 `本次运行`；交付物 `来源运行 第 1 次运行`（与时间线行同款句柄，可对照）；
+- Run 面：时间线行 `第 1 次运行` / `第 2 次运行`，血缘句（**时间线行与面板两处**）`重跑自第 1 次运行`，面板标题 `本次运行`；交付物 `来源运行 第 1 次运行`（与时间线行同款句柄，可对照）。两张 Run 图在 `8dc6f2d` 树上重拍（此前 `c67b903` 那两张是评审前措辞「重跑自来源运行」，已覆盖）；
 - 空态四区都给人话空态（`还没有留言 ——…` / `还没有 Run。…` / `还没有已发布的 Artifact。…`），没有把空白伪装成结论；
 - 两档布局均正常（手机档单列堆叠，无溢出/截断）；
 - **一处在截图上「看起来像泄漏」但其实合法**：用户名自带 8 位随机 tag（`bob-ecc14fdb`）——这正是判据不能写成「页面里不许出现 8 位十六进制」的原因；登记在此，免得后来者按截图误判。
