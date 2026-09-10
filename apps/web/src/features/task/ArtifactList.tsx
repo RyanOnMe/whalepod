@@ -1,5 +1,5 @@
 /**
- * 右侧区域：Artifact 列表 + Reviewer 插槽（02 Task 7 Step 4；P1-15 接线）。
+ * 右侧区域：交付物列表 + 复核插槽（02 Task 7 Step 4；P1-15 接线）。
  *
  * 可见性与动作（03 §2.6/§4，Hub 已按受众裁剪）：
  * - published：全员可见，带「下载」（GET /artifacts/:id/content，Session Cookie
@@ -7,12 +7,15 @@
  * - candidate：Hub 仅向 owner 下发（G6-01），owner 见「发布」按钮
  *   （POST /artifacts/:id/publish，成功后刷新 Task Room）。
  * - 内容摘要 sha256 随行展示：Reviewer 输入按它固定内容（G6-07/G6-08）。
+ * 区段标题用中文「交付物 / 复核」（#152）；Builder/Reviewer 是 Agent 的名字
+ * （01 §42），作为专名保留英文。
  */
 import { useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { queryKeys } from '../../app/query-client.js'
-import { formatBytes, formatIso, shortId } from '../../shared/format.js'
+import { RelativeTime } from '../../shared/RelativeTime.js'
+import { formatBytes, shortId } from '../../shared/format.js'
 import type { Session } from '../../shared/api/types.js'
 import type { TaskRoomArtifact } from '../../shared/api/types.js'
 
@@ -111,7 +114,9 @@ function ArtifactRows({
             </div>
             <div>
               <dt>发布时间</dt>
-              <dd>{formatIso(artifact.publishedAt)}</dd>
+              <dd>
+                <RelativeTime iso={artifact.publishedAt} />
+              </dd>
             </div>
             <div>
               <dt>内容摘要</dt>
@@ -211,11 +216,11 @@ function CandidateRows({
   )
 }
 
-/** Reviewer 插槽：已发布交付物即 Reviewer Run 的输入面（Reviewer 链由 P1-15 完成）。 */
+/** 复核插槽：已发布交付物即 Reviewer Run 的输入面（Reviewer 链由 P1-15 完成）。 */
 export function ReviewerSlot(): ReactNode {
   return (
-    <section className="card snapshot-slot" aria-label="Reviewer">
-      <h3>Reviewer</h3>
+    <section className="card snapshot-slot" aria-label="复核">
+      <h3>复核</h3>
       <p className="empty-state">
         为 Task 启动 Reviewer Agent 的 Run 时，以上已发布交付物会作为只读输入清单 送达该
         Run（受控副本，不继承 Builder 的 Workspace）。

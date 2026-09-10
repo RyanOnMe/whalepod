@@ -4,17 +4,20 @@
  * 已知缺口：GET /projects/:projectId/tasks（按项目列 Task）不在 P1-06 的 Hub 路由表里，
  * 因此本项目页不伪造 Task 列表；每个 Project 提供「创建任务」，创建成功后直接进入
  * 新建 Task 的 Task Room。成员选择器由 #136 提供（GET /team/members + 下拉，
- * 停用成员不进选择器——不再手贴 UUID）。
+ * 停用成员不进选择器——不再手贴 UUID）；创建者/责任人姓名由 #152 的成员名录
+ * （features/team/memberDirectory）解析，解析不到给人话而不是短 UUID。
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
-import type { CreateProjectRequest, CreateTaskRequest, TeamMemberView } from '@whalepod/protocol'
+import type { CreateProjectRequest, CreateTaskRequest } from '@whalepod/protocol'
 import { useNavigate } from 'react-router'
 import { api } from '../shared/api/client.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
 import { useSession } from '../app/session.js'
 import { SelectMenu } from '../shared/SelectMenu.js'
-import { TASK_STATUS_LABEL, formatIso, shortId } from '../shared/format.js'
+import { RelativeTime } from '../shared/RelativeTime.js'
+import { TASK_STATUS_LABEL } from '../shared/format.js'
+import { useMemberDirectory } from '../features/team/memberDirectory.js'
 import type { ProjectView, TaskView } from '../shared/api/types.js'
 import { queryKeys } from '../app/query-client.js'
 
@@ -25,6 +28,9 @@ export function ProjectsPage(): ReactNode {
     queryKey: queryKeys.projects,
     queryFn: () => api.get<ProjectView[]>('/projects'),
   })
+  // 创建者姓名（#152）：成员名录解析，解析不到给「未知成员」——不把创建者写成
+  // 截断 UUID（实测截图里的 `by 01a08c11`）。
+  const { nameOf } = useMemberDirectory()
   const [creatingFor, setCreatingFor] = useState<string | null>(null)
   const [listOpenFor, setListOpenFor] = useState<string | null>(null)
   // #152：创建项目表单默认收起——常驻展开会把项目列表与「任务列表」入口挤出首屏。
@@ -65,7 +71,8 @@ export function ProjectsPage(): ReactNode {
               <div className="project-title">
                 <h2>{project.name}</h2>
                 <span className="project-meta">
-                  创建于 {formatIso(project.createdAt)} · by {shortId(project.createdBy)}
+                  创建于 <RelativeTime iso={project.createdAt} /> · 创建者{' '}
+                  {nameOf(project.createdBy)}
                 </span>
               </div>
               {project.description !== '' ? (
@@ -110,7 +117,7 @@ export function ProjectsPage(): ReactNode {
 /**
  * 项目任务列表（#137）：Task 建好后一旦离开 Task Room，此前没有任何界面入口能再
  * 找回它（URL 里的 UUID 没人记得住）。列表只读项目自己的任务（跨项目隔离由 Hub
- * 保证），责任人显示名复用 #136 的成员列表（同一 queryKey，天然共享缓存）。
+ * 保证），责任人显示名复用 #152 的成员名录（与项目卡的创建者同一份解析与缓存）。
  */
 function ProjectTaskList({
   projectId,
@@ -123,14 +130,7 @@ function ProjectTaskList({
     queryKey: queryKeys.projectTasks(projectId),
     queryFn: () => api.get<TaskView[]>(`/projects/${projectId}/tasks`),
   })
-  const membersQuery = useQuery({
-    queryKey: queryKeys.teamMembers,
-    queryFn: () => api.get<TeamMemberView[]>('/team/members'),
-  })
-  const nameOf = (userId: string): string => {
-    const member = (membersQuery.data ?? []).find((m) => m.userId === userId)
-    return member === undefined ? shortId(userId) : `${member.displayName}（@${member.username}）`
-  }
+  const { nameOf } = useMemberDirectory()
 
   if (tasksQuery.isPending) return <p className="mutation-hint">正在加载任务…</p>
   if (tasksQuery.isError) return <ErrorBanner error={tasksQuery.error} />
@@ -145,7 +145,7 @@ function ProjectTaskList({
           </button>
           <span className="task-meta">
             {TASK_STATUS_LABEL[task.status]} · 责任人 {nameOf(task.assigneeUserId)} · 更新于{' '}
-            {formatIso(task.updatedAt)}
+            <RelativeTime iso={task.updatedAt} />
           </span>
         </li>
       ))}
@@ -223,12 +223,11 @@ function CreateTaskForm({
   const [values, setValues] = useState({ title: '', description: '', assigneeUserId: '' })
   const [error, setError] = useState<unknown>(null)
   const session = useSession()
-  const membersQuery = useQuery({
-    queryKey: queryKeys.teamMembers,
-    queryFn: () => api.get<TeamMemberView[]>('/team/members'),
-  })
+  // 责任人下拉与项目卡/任务列表共用同一份名册（#152 的共用 hook，同一 queryKey）：
+  // 只在 hook 里定义策略，避免「同一个 key 两套 staleTime」这种漂移。
+  const directory = useMemberDirectory()
   // 停用成员不进选择器（03 §2.2 assignee 必须未停用；后端同规则 fail-closed）。
-  const selectableMembers = (membersQuery.data ?? []).filter((m) => m.enabled)
+  const selectableMembers = directory.members.filter((m) => m.enabled)
   // 列表就绪后默认选中自己（多数场景是给自己建任务）；用户改选后不覆盖。
   useEffect(() => {
     const preferred =
@@ -237,7 +236,7 @@ function CreateTaskForm({
     setValues((prev) =>
       prev.assigneeUserId === '' ? { ...prev, assigneeUserId: preferred.userId } : prev,
     )
-  }, [membersQuery.data, session?.userId])
+  }, [directory.members, session?.userId])
   const mutation = useMutation({
     mutationFn: () => {
       const body: CreateTaskRequest = {
@@ -292,7 +291,7 @@ function CreateTaskForm({
           label="责任人"
           value={values.assigneeUserId}
           placeholder={
-            membersQuery.isPending
+            directory.isPending
               ? '正在加载成员…'
               : selectableMembers.length === 0
                 ? '没有可选成员'
@@ -304,9 +303,9 @@ function CreateTaskForm({
             disabled: false,
           }))}
           onChange={(next) => setValues((prev) => ({ ...prev, assigneeUserId: next }))}
-          disabled={membersQuery.isPending}
+          disabled={directory.isPending}
         />
-        {membersQuery.isError ? <ErrorBanner error={membersQuery.error} /> : null}
+        {directory.isError ? <ErrorBanner error={directory.error} /> : null}
       </div>
       <div className="form-actions">
         {/* #158 起这条空值守卫是本表单**唯一**的拦截：责任人从原生

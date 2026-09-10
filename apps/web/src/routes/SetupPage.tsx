@@ -68,7 +68,7 @@ export function SetupPage(): ReactNode {
     <div className="auth-page">
       <form className="card auth-card" onSubmit={submit}>
         <h1>初始化团队</h1>
-        <p className="page-lead">第一次访问：用 Setup Token 创建团队与 Owner 账号。</p>
+        <p className="page-lead">第一次访问：用 Setup Token 创建团队与所有者账号。</p>
         <div className="field">
           <label htmlFor="setup-token">Setup Token</label>
           <input

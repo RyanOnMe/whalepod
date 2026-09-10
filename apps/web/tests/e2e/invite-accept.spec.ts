@@ -58,11 +58,9 @@ async function createInviteViaUi(owner: Page, role: 'member' | 'admin'): Promise
   const roleTrigger = owner.locator('#invite-role')
   await assertNotNativeSelect(roleTrigger, owner.locator('.members-invite'), '角色')
   await assertMenuTriggerTokens(roleTrigger)
-  await selectFromMenu(
-    roleTrigger,
-    role === 'admin' ? 'Admin（可管理插件与邀请）' : 'Member（普通成员）',
-  )
-  await expect(roleTrigger).toContainText(role === 'admin' ? 'Admin' : 'Member')
+  // 角色文案走 #152 统一后的中文措辞（format.ts 的 ROLE_LABEL 同一套）
+  await selectFromMenu(roleTrigger, role === 'admin' ? '管理员（可管理插件与邀请）' : '成员')
+  await expect(roleTrigger).toContainText(role === 'admin' ? '管理员' : '成员')
   await owner.getByRole('button', { name: '生成邀请链接' }).click()
   const link = owner.locator('code.invite-link')
   await expect(link).toBeVisible()
@@ -95,9 +93,9 @@ test.describe('#141 邀请链：Owner 生成 → Bob 新浏览器加入', () => 
     const bob = await bobContext.newPage()
     await bob.goto(inviteUrl)
     await expect(bob.getByRole('heading', { name: '加入团队' })).toBeVisible()
-    // 未登录时说清「哪个团队、什么角色、何时过期」
+    // 未登录时说清「哪个团队、什么角色、何时过期」；角色用中文名（#152）
     await expect(
-      bob.getByText(new RegExp(`团队「${TEAM_NAME}」邀请你以 Member 身份加入`)),
+      bob.getByText(new RegExp(`团队「${TEAM_NAME}」邀请你以成员身份加入`)),
     ).toBeVisible()
     // 建号腿（键盘可达：逐字段填 + Enter 提交）
     await bob.fill('#invite-signup-username', BOB_NAME)
@@ -117,6 +115,23 @@ test.describe('#141 邀请链：Owner 生成 → Bob 新浏览器加入', () => 
     const bobRow = owner.locator('li.member-item', { hasText: BOB_NAME })
     await expect(bobRow).toBeVisible()
     await expect(bobRow.getByText(`@${BOB_NAME}`)).toBeVisible()
+
+    // ---- #152：角色徽标是中文，且与同一页的角色下拉同一套措辞 ----
+    // 等这一行渲染出来再断徽标（不扫空页面）：Bob 是 member → 「成员」。
+    await expect(bobRow.locator('span.badge').first()).toHaveText('成员')
+    const ownerRow = owner.locator('li.member-item', { hasText: `@${OWNER_NAME}` })
+    await expect(ownerRow.locator('span.badge').first()).toHaveText('所有者')
+    // #158：角色下拉不再是原生 <select>，选项是菜单项（`role=menuitem`），
+    // 且**只在菜单打开时才在 DOM 里** —— 所以先点开再断文案（原来读 option 的写法
+    // 在迁移后恒为空集）。这条断言的用意（下拉与徽标同一套措辞）原样保留。
+    const roleTrigger = owner.locator('#invite-role')
+    await assertNotNativeSelect(roleTrigger, owner.locator('.members-invite'), '角色')
+    await roleTrigger.click()
+    await expect(owner.getByRole('menuitem')).toHaveText(['成员', '管理员（可管理插件与邀请）'])
+    await owner.keyboard.press('Escape')
+    await expect(roleTrigger).toHaveAttribute('aria-expanded', 'false')
+    const membersText = await owner.locator('li.member-item').first().innerText()
+    expect(membersText, '成员行不应出现英文角色词').not.toMatch(/\b(Owner|Admin|Member)\b/)
 
     // ---- 失效链接：给人话错误态，不出现裸错误码（同一用例内续跑） ----
     // 为什么合并在一条里：单 Team 部署下 Hub 只容一次 Setup，第二条独立用例

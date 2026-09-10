@@ -14,7 +14,8 @@ import { useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
-import { formatIso, RUN_STATUS_LABEL } from '../../shared/format.js'
+import { RUN_STATUS_LABEL } from '../../shared/format.js'
+import { RelativeTime } from '../../shared/RelativeTime.js'
 import type { RunEventItem, Session, TaskRoomRun, TaskView } from '../../shared/api/types.js'
 
 export interface RunTimelineProps {
@@ -51,15 +52,21 @@ export function RunTimeline({ runs, selectedRunId, onSelect }: RunTimelineProps)
             <dl className="run-item-meta">
               <div>
                 <dt>创建</dt>
-                <dd>{formatIso(run.createdAt)}</dd>
+                <dd>
+                  <RelativeTime iso={run.createdAt} />
+                </dd>
               </div>
               <div>
                 <dt>开始</dt>
-                <dd>{formatIso(run.startedAt)}</dd>
+                <dd>
+                  <RelativeTime iso={run.startedAt} />
+                </dd>
               </div>
               <div>
                 <dt>结束</dt>
-                <dd>{formatIso(run.finishedAt)}</dd>
+                <dd>
+                  <RelativeTime iso={run.finishedAt} />
+                </dd>
               </div>
             </dl>
             {/* P1-16 G7-04：显式重跑血缘（03 §2.6 rerun_of_run_id）。 */}
@@ -193,12 +200,16 @@ export function ApprovalSlot({ runs, task, session }: ApprovalSlotProps): ReactN
                 <div key={card.approvalId} className="approval-card" data-testid="approval-card">
                   <div className="approval-head">
                     <span data-testid="approval-tool">{card.toolName}</span>
-                    <span>请求于 {formatIso(card.requestedAt)}</span>
+                    <span>
+                      请求于 <RelativeTime iso={card.requestedAt} />
+                    </span>
                   </div>
                   {card.reason !== '' ? <p data-testid="approval-reason">{card.reason}</p> : null}
                   <pre data-testid="approval-preview">{JSON.stringify(card.preview)}</pre>
                   {card.expiresAt !== '' ? (
-                    <p data-testid="approval-expires">有效期至 {formatIso(card.expiresAt)}</p>
+                    <p data-testid="approval-expires">
+                      有效期至 <RelativeTime iso={card.expiresAt} />
+                    </p>
                   ) : null}
                   <div className="approval-actions">
                     <button

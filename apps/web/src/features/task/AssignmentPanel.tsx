@@ -10,7 +10,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
-import { shortId } from '../../shared/format.js'
+import { ASSIGNMENT_STATUS_LABEL, shortId } from '../../shared/format.js'
 import type { Session, TaskView } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
 
@@ -59,7 +59,7 @@ export function AssignmentPanel({ task, session }: AssignmentPanelProps): ReactN
       </>
     )
   } else if (task.assignmentStatus === 'rejected') {
-    body = <p className="assignment-note">此任务已被拒绝，等待 Owner/Admin 重新指派。</p>
+    body = <p className="assignment-note">此任务已被拒绝，等待所有者或管理员重新指派。</p>
   } else if (isAssignee) {
     body = (
       <>
@@ -95,7 +95,10 @@ export function AssignmentPanel({ task, session }: AssignmentPanelProps): ReactN
     <section className="card assignment-panel" aria-labelledby="assignment-heading">
       <h2 id="assignment-heading">任务分配</h2>
       <div className="assignment-status">
-        状态：<span className={`badge badge-assignment`}>{task.assignmentStatus}</span>
+        状态：
+        <span className={`badge badge-assignment`}>
+          {ASSIGNMENT_STATUS_LABEL[task.assignmentStatus]}
+        </span>
       </div>
       {body}
       {error !== null ? <ErrorBanner error={error} /> : null}

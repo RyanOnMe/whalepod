@@ -223,12 +223,15 @@ export async function assertNotNativeSelect(
 }
 
 /**
- * #158 视觉判据（浏览器实测）：触发器的背景 / 描边 / 圆角必须等于 L1 token 的解析值。
+ * #158 视觉判据（浏览器实测）：触发器的背景 / 描边最终值必须等于 L1 token 在 `:root` 上的
+ * 解析值，圆角必须是 8px。
  *
- * 触发器取值在浅色下可能与别的层相同（实测：`--dsw-alias-bg-layer-1` 与 `-2` 都是
- * `rgb(255,255,255)`）——所以**只看 computed 值分不出用的哪个 token**：浏览器这一侧能证的
- * 是"取值确实等于该 token 的解析值"，"规则里写的就是这个 token"由单测在 CSS 文本上钉
- * （两边锚同一组常量）。
+ * **这条判据的能力边界（评审用真实 Chrome 证伪过一次）**：它证不了"用了哪个 token"。
+ * `getComputedStyle(el).getPropertyValue('--dsw-…')` 拿到的是**解析后的值**而不是声明原文
+ * ——自定义属性是继承属性且在 computed-value 阶段就完成 `var()` 代换，所以元素上永远读不到
+ * `var(--dsw-…)` 这种形态（实测 DPR=1/2 都是 `"rgb(255, 255, 255)"`）。"用了哪个 token"
+ * 由 `tests/select-menu.spec.tsx` 的 CSS 文本断言钉；描边宽度 0.5px 同理（Chrome 的
+ * computed `border-top-width` 是 **1px**），也留在源码文本判据里。
  */
 export async function assertMenuTriggerTokens(trigger: Locator): Promise<void> {
   const probe = await trigger.evaluate((el) => {
@@ -238,13 +241,22 @@ export async function assertMenuTriggerTokens(trigger: Locator): Promise<void> {
       background: style.backgroundColor,
       borderColor: style.borderTopColor,
       radius: style.borderTopLeftRadius,
-      // 自定义属性读到的是**本元素上的声明原文**（var(...)），不是解析值
-      rawBackground: style.getPropertyValue('--dsw-alias-bg-layer-1').trim(),
-      rawBorder: style.getPropertyValue('--dsw-alias-border-l4').trim(),
+      // 两边都是**解析值**（不是声明原文，见上面注释）；读 :root 是为了让判据跟着 token 走，
+      // 而不是把 rgb 字面量抄进测试里
       resolvedBackgroundToken: root.getPropertyValue('--dsw-alias-bg-layer-1').trim(),
       resolvedBorderToken: root.getPropertyValue('--dsw-alias-border-l4').trim(),
     }
   })
+  // 顺手在真实浏览器里回读一次描边宽度：CSS 里声明的是 0.5px，Chrome 的 computed 值是
+  // **1px**（DPR=1/2 都一样，本机实测）。这不是产品判据，是"别再拿 computed 宽度去和
+  // vendored 的 0.5px 比"的活证据——写在这里，跑一次 Q5 就复核一次。
+  const borderWidth = await trigger.evaluate((el) => getComputedStyle(el).borderTopWidth)
+  if (borderWidth === '0.5px') {
+    throw new Error(
+      '实测到 computed border-top-width = 0.5px：本机 Chrome 此前给的是 1px（0.5px 会被取整）。' +
+        '若浏览器行为变了，select-trigger-tokens.ts 里那条"浏览器侧不判宽度"的理由要一并复核。',
+    )
+  }
   const failures = checkMenuTriggerTokens(
     probe,
     SELECT_TRIGGER_BACKGROUND_TOKEN,

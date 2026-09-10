@@ -238,7 +238,7 @@ describe('#158 契约面：键盘可达 + aria 语义', () => {
     expect(document.activeElement).toBe(within(list).getAllByRole('menuitem')[1])
     await user.keyboard('{Enter}')
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
-    expect(trigger).toHaveTextContent('Admin（可管理插件与邀请）')
+    expect(trigger).toHaveTextContent('管理员（可管理插件与邀请）')
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
     // S3（评审追出）：选中路径下 `Menu` 不回焦（它只在 Esc + autoFocus 时回焦），
     // 不补的话焦点会掉到 body —— 键盘用户在 RunLauncher 四个字段之间每选一次都要
@@ -279,7 +279,7 @@ describe('#158 契约面：键盘可达 + aria 语义', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     // Esc 这条是 vendored Menu 自带的回焦（autoFocus 打开时才有）
     expect(document.activeElement).toBe(trigger)
-    expect(trigger).toHaveTextContent('Member（普通成员）')
+    expect(trigger).toHaveTextContent('成员')
   })
 
   it('鼠标选中后焦点也回触发器（S3：不只是键盘路径）', async () => {
@@ -293,8 +293,8 @@ describe('#158 契约面：键盘可达 + aria 语义', () => {
     )
     const trigger = (await screen.findByLabelText('角色')) as HTMLButtonElement
     const list = await openSelect(user, '角色')
-    await user.click(list.getByRole('menuitem', { name: 'Admin（可管理插件与邀请）' }))
-    expect(trigger).toHaveTextContent('Admin（可管理插件与邀请）')
+    await user.click(list.getByRole('menuitem', { name: '管理员（可管理插件与邀请）' }))
+    expect(trigger).toHaveTextContent('管理员（可管理插件与邀请）')
     expect(document.activeElement).toBe(trigger)
   })
 
@@ -427,13 +427,13 @@ describe('#158 视觉判据：触发器样式来自 L1 token', () => {
 
   /**
    * 浏览器侧判据（Q5 的 assertMenuTriggerTokens）的**判定逻辑**在这里跑：用与浏览器同一套
-   * 采集口径（computed 值 + 自定义属性原文 + :root 解析值）造探针，喂给同一个纯函数。
+   * 采集口径（**两边都是解析值**）造探针，喂给同一个纯函数。
    *
-   * 实测缺口（这条用例就是为了守住它）：`--dsw-alias-bg-layer-1` 与 `-2` 在浅色下都是
-   * `rgb(255,255,255)`，**只比最终颜色**的判据在"换成另一个同值 token"时静默通过；
-   * 所以判定函数还要求"规则声明的就是约定 token"（读自定义属性原文）。
+   * 这条用例的边界要说清楚（评审用真实 Chrome 证伪过一次）：纯函数**判不了**"用了哪个
+   * token"——`getComputedStyle` 读自定义属性拿到的是解析值，见下面那条钉事实的用例。所以
+   * 「同值 token 互换」这类变异只有上面那条 **CSS 文本**断言能抓，别在这里指望它。
    */
-  it('Q5 判定函数：声明与解析值都对才过；换同值 token / 裸色值 / 圆角变 / token 缺失全红', () => {
+  it('Q5 判定函数：最终值等于 token 解析值即过；值不符 / 圆角变 / token 缺失全红', () => {
     const backgroundToken = SELECT_TRIGGER_BACKGROUND_TOKEN
     const borderToken = SELECT_TRIGGER_BORDER_TOKEN
     const backgroundResolved = readTokenValue(tokensCss, '--dsw-static-neutral-bluish-00')
@@ -442,37 +442,22 @@ describe('#158 视觉判据：触发器样式来自 L1 token', () => {
       background: backgroundResolved,
       borderColor: borderResolved,
       radius: '8px',
-      rawBackground: `var(${backgroundToken})`,
-      rawBorder: `var(${borderToken})`,
       resolvedBackgroundToken: backgroundResolved,
       resolvedBorderToken: borderResolved,
     }
     expect(checkMenuTriggerTokens(probe, backgroundToken, borderToken)).toEqual([])
 
-    // 换成另一个同值 token：解析值一样，但声明已经不是约定的那个 → 必须红
-    const otherLayer = readTokenValue(tokensCss, '--dsw-alias-bg-layer-2')
-    expect(otherLayer).toBe(backgroundResolved)
-    expect(
-      checkMenuTriggerTokens(
-        { ...probe, rawBackground: 'var(--dsw-alias-bg-layer-2)' },
-        backgroundToken,
-        borderToken,
-      ),
-    ).toHaveLength(1)
-
-    // 声明改成裸色值（值是白的也照样红：声明面已经脱离 token）
-    expect(
-      checkMenuTriggerTokens(
-        { ...probe, rawBackground: backgroundResolved, background: 'rgb(255, 255, 255)' },
-        backgroundToken,
-        borderToken,
-      ),
-    ).toHaveLength(1)
-
-    // 最终值与 token 解析值不符（token 改了但控件没跟上）
+    // 最终值与该 token 的解析值不符（token 改了但控件没跟上，或控件被写成别的颜色）
     expect(
       checkMenuTriggerTokens(
         { ...probe, background: 'rgb(0, 0, 0)' },
+        backgroundToken,
+        borderToken,
+      ),
+    ).toHaveLength(1)
+    expect(
+      checkMenuTriggerTokens(
+        { ...probe, borderColor: 'rgb(0, 0, 0)' },
         backgroundToken,
         borderToken,
       ),
@@ -486,11 +471,40 @@ describe('#158 视觉判据：触发器样式来自 L1 token', () => {
     // token 没解析（CSS 没加载 / 名字打错）：必须失败，而不是"空串相等"悄悄通过
     expect(
       checkMenuTriggerTokens(
-        { ...probe, rawBackground: '', resolvedBackgroundToken: '' },
+        { ...probe, resolvedBackgroundToken: '' },
         backgroundToken,
         borderToken,
       ),
     ).toHaveLength(1)
+  })
+
+  /**
+   * 钉一条**浏览器事实**（评审用真实 Chrome 证伪过一次的那个假设）：`getComputedStyle`
+   * 读自定义属性拿到的是**解析值**，不是声明原文——所以浏览器侧**只能**判「最终值 ==
+   * token 解析值」，「用了哪个 token」只能由上面那条 CSS 文本断言判。
+   *
+   * 这里不写"数字"（jsdom 没有布局也没有自定义属性代换，算不出真值），写的是**形状**：
+   * 探针字段里不许再出现 `raw*`（那正是被证伪的假设），判定函数里不许出现描边宽度比较
+   * （Chrome 把 `border: 0.5px` 算成 computed 1px，见
+   * `docs/agent/select-menu-acceptance.md` 的实测数字）。
+   */
+  it('浏览器事实：探针只吃解析值（raw* 形态被证伪，别再补回来）', () => {
+    const source = readFileSync(join(webSrc, 'shared/select-trigger-tokens.ts'), 'utf8')
+    // ① 探针字段面：只有解析值，没有"声明原文"
+    const probeBody = /interface MenuTriggerProbe \{([\s\S]*?)\n\}/.exec(source)?.[1] ?? ''
+    expect(probeBody).not.toMatch(/\braw[A-Z]/)
+    expect(probeBody).toMatch(/resolvedBackgroundToken/)
+    expect(probeBody).toMatch(/resolvedBorderToken/)
+    // ② 判定函数不许比描边宽度（Chrome 的 computed 值恒为 1px）
+    const checker = /export function checkMenuTriggerTokens\(([\s\S]*?)\n\}/.exec(source)?.[1] ?? ''
+    expect(checker).not.toMatch(/borderWidth|borderTopWidth/)
+    // ③ 被证伪的理由必须留在源文件里（不然下一个人还会把它加回来）
+    expect(source).toMatch(/永远不可能以 `var\(` 开头/)
+    expect(source).toMatch(/computed 宽度算成 \*\*1px\*\*/)
+    // ④ 采集侧同样不许再读自定义属性原文
+    const helpers = readFileSync(join(import.meta.dirname, 'e2e/helpers.ts'), 'utf8')
+    expect(helpers).not.toMatch(/rawBackground|rawBorder/)
+    expect(helpers).toMatch(/resolvedBackgroundToken/)
   })
 
   it('文字色用 L1 label-primary 而非本仓旧色，且白底对比度过 AA（4.5:1）', () => {

@@ -63,17 +63,20 @@ describe('task-room', () => {
     expect(screen.getByText('当前没有等待审批的操作。')).toBeVisible()
   })
 
-  it('渲染右侧 Artifact 列表与 Reviewer 插槽', async () => {
+  it('渲染右侧交付物列表与复核插槽（区段标题是中文，#152）', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId })
     renderApp(
       `/tasks/${task.id}`,
       loggedInHandlers(BOB, [taskRoomHandler(task, { artifacts: [makeArtifact()] })]),
     )
-    expect(await screen.findByRole('heading', { name: 'Artifacts' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: '交付物' })).toBeVisible()
     expect(await screen.findByText('security-review.md')).toBeVisible()
     expect(screen.getByText('text/markdown')).toBeVisible()
-    expect(screen.getByRole('heading', { name: 'Reviewer' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: '复核' })).toBeVisible()
     expect(screen.getByText(/只读输入清单/)).toBeVisible()
+    // 英文区段标题不再出现（Agent/Run/Task 这些领域术语照旧保留）
+    expect(screen.queryByRole('heading', { name: 'Artifacts' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Reviewer' })).not.toBeInTheDocument()
   })
 
   it('空态说明下一步，而不是静默空白', async () => {

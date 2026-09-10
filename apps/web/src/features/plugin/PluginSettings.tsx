@@ -24,7 +24,8 @@ import type {
 } from '@whalepod/protocol'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
-import { formatIso, shortDigest, shortSha } from '../../shared/format.js'
+import { ROLE_LABEL, shortDigest, shortSha } from '../../shared/format.js'
+import { RelativeTime } from '../../shared/RelativeTime.js'
 import type { Session } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
 
@@ -74,7 +75,8 @@ export function PluginSettings({ session }: PluginSettingsProps): ReactNode {
       <h2 id="plugin-settings-heading">插件目录</h2>
       {canManage ? null : (
         <p className="mutation-hint">
-          你是 {session?.role}，插件目录只读；仅 Owner/Admin 可安装插件或创建 Pack。
+          你是{session === null ? '访客' : ROLE_LABEL[session.role]}
+          ，插件目录只读；仅所有者或管理员可安装插件或创建 Pack。
         </p>
       )}
       {notice !== null ? (
@@ -168,7 +170,7 @@ function CatalogCard(props: {
           <dt>Review</dt>
           <dd>
             <code title={entry.review.commit}>{shortSha(entry.review.commit)}</code> ·{' '}
-            <time dateTime={entry.review.at}>{formatIso(entry.review.at)}</time>
+            <RelativeTime iso={entry.review.at} />
           </dd>
         </div>
         <div>
@@ -245,7 +247,7 @@ function InstallationCard({ installation }: { installation: PluginInstallationVi
         <div>
           <dt>安装时间</dt>
           <dd>
-            <time dateTime={installation.createdAt}>{formatIso(installation.createdAt)}</time>
+            <RelativeTime iso={installation.createdAt} />
           </dd>
         </div>
       </dl>
