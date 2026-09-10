@@ -14,9 +14,9 @@
 > 于 `main` 上是悬空的——本台账引用的是**已评审待合入**的决策文本，不是虚构文件；
 > ADR 合入后本注可删。
 
-> **状态：映射已按实测回填，但切片尚未提交。** 首批 L1+L2 切片（`apps/web/src/vendor/dsh-ui/` 与 `apps/web/src/styles/dsw-tokens.css`）已存在于并行工作线 `feat/p1-138-vendor-ui-primitives` 的**工作区**（观察时**未提交**、无 commit）。第 3 节的映射、blob SHA 与体量均**实测自该工作区**（逐文件 `git hash-object` 核对，方法见 §3.4），不是从任务描述推测的。
+> **状态：映射已按实测回填（哈希三列核对，锚点 `f3452f0`）。** 首批 L1+L2 切片已提交在 `feat/p1-138-vendor-ui-primitives` 分支（`ee9c4b5` 落地 vendored 子树与 L1 token，`f3452f0` 补 Q5 判据）；第 3 节的路径、**三列 blob SHA**、字节数与改动分类均**实测自锚点 commit `f3452f0` 的提交内容**（`git rev-parse <commit>:<path>` + 剥出处头后比对 + diff，方法见 §3.4），不是从任务描述或工作区快照推测的。
 >
-> **切片合入后须复核**：工作区内容在提交前仍可能变动，故本台账以**哈希**而非路径为锚——合入时重跑 §3.4 的核对命令，任一哈希漂移则本节与第 3 节须同步更新。
+> **哈希是锚，路径只是索引**：本台账早期版本曾对**工作区**取值，而该分支随后又改了 vendored 文件，导致 6/6 记录失效而仍标"已实测"——**凡本台账的数字都应能在标明的 commit 上复算出来**，工作区值不作为依据（§3.4 有对账纪律）。同时注意：**上游 blob ≠ 本仓 blob** 是本项目的常态（每个文件都带 5 行出处头），比较时必须用「剥出处头后」那一列，见 §3.2 的关系式。
 
 ---
 
@@ -79,16 +79,28 @@ ADR-0008 §3 的硬约束：vendored 代码是**复制品，不是依赖**。
 
 | 上游路径 | blob sha | 字节 | 本仓产物 | 实际关系（已核实） |
 |---|---|---|---|---|
-| `packages/client/ui-theme/src/styles/design-platform.css` | `bc4712b223be682a6066ed706d25b1aadb9254a4` | 19109 | `apps/web/src/styles/dsw-tokens.css` | **派生**：只取 6 个原语 CSS 真正引用的 `--dsw-*` 变量（23 个），静态色阶引用就地展开为 `rgb()` 字面量 |
+| `packages/client/ui-theme/src/styles/design-platform.css` | `bc4712b223be682a6066ed706d25b1aadb9254a4` | 19109 | `apps/web/src/styles/dsw-tokens.css` | **派生**：见下方变量账 |
 | `packages/client/ui-theme/src/styles/base.css` | `4c801b8d4dddd3c7a1e619ad8ee0d58eb3a55b11` | 836 | 无（未复制） | 仅用于**确认** `body[data-ds-dark-theme]` 的明暗切换语义，未取任何声明 |
 | `packages/client/ui-theme/src/styles/gradient-shadow-text.css` | `36fee4941590cbc09a15a67a8fb4e2c577ea2952` | 14722 | 无 | 未取用 |
 | `packages/client/ui-theme/src/styles/scrollbar.css` | `d61bcbcedbdb2459d86220667faf9ed885d3100b` | 4343 | 无 | 未取用 |
 | `packages/client/ui-theme/src/styles/corner-shape.css` | `70197aa6a34fc52ef510f247acf11aef024ce98a` | 1135 | 无 | 未取用 |
 | `packages/client/ui-theme/src/styles/shiki.css` | `c7a3c5d27219d146d965d0fb37fcc0445d32b089` | 1181 | 无 | 未取用 |
 
+**变量账（实测复算，三个数要分清）**：
+
+| 口径 | 数量 | 复算命令 |
+|---|---|---|
+| 6 个组件 CSS **引用**的 `--dsw-*` 变量 | **23** | `grep -hoE '\-\-dsw-[a-z0-9-]+' apps/web/src/vendor/dsh-ui/*.module.css \| sort -u \| wc -l` |
+| `dsw-tokens.css` **声明**的 `--dsw-*` 变量 | **26** | `grep -oE '^\s*--dsw-[a-z0-9-]+' apps/web/src/styles/dsw-tokens.css \| sed 's/^ *//' \| sort -u \| wc -l` |
+| 上游 `design-platform.css` 的静态色阶 `--dsw-static-*` | **73** | `gh api -H 'Accept: application/vnd.github.raw' …/design-platform.css?ref=$SHA \| grep -oE '\-\-dsw-static-[a-z0-9-]+' \| sort -u \| wc -l` |
+
+26 与 23 的差是 3 个**仅被 alias 声明消费**的静态色阶（`--dsw-static-amber-900` / `-green-900` / `-red-900`）；即"引用 23、声明 26"不矛盾。**关键正确性属性（实测）**：组件引用的 23 个**全部**在 `dsw-tokens.css` 里有声明——`comm -13` 的差集为空，即**没有未解析引用**，不会静默落到 CSS fallback。`dsw-tokens.css` 文件头写的"共 23 个"指的就是**引用口径**。
+
+> **两处待实现线修正的数字（本台账不重复其错值）**：`apps/web/src/styles/dsw-tokens.css` 文件头与 `apps/web/src/vendor/dsh-ui/manifest.json` 的 `tokens[0].adaptations` 均写"上游静态色阶 **78** 个"，实测为 **73**；`manifest.json` 的 `components[]`（`index.ts` 条）写"上游桶文件含整包 **43** 个原语"，而 **43 是 `packages/client/ui-*` 的包数**（实测），`ui-primitives/src` 顶层为 **29 个 `.tsx`**（实测）。这两处属实现线文件，**本台账无权修改**，已登记待其修正（§7）；白名单口径本身（23 个引用变量）与 `dsw-tokens.css` 实测吻合，无需改动。
+
 **派生形态与声明义务**：`dsw-tokens.css` 的文件头自带来源声明（上游 repo / 上游文件路径 / 取用 commit / MIT 与版权行），符合 ADR-0008 §3「子树内保留上游 LICENSE 全文与 `Copyright (c) 2026 DeepSeek`」的要求。派生**不豁免** MIT 的声明义务——MIT 覆盖 "copies or substantial portions of the Software"，被抄的 token 取值正是 substantial portion。见 §5。
 
-**L1 的已知边界（已核实，非遗漏）**：`DisclosureRow.module.css`（逐字节照抄的上游文件）引用了两个 **`--dsh-`** 前缀变量——`--dsh-content-font-size-secondary` 与 `--dsh-content-font-delta`。这两个属上游 `body` 发布的 **content 轴**，**不在**本白名单的 `--dsw-*` 范围内，L1 有意不提供；其每一处引用都带 CSS fallback，实测确有（`var(--dsh-content-font-delta, 0px)`、`var(--dsh-content-font-size-secondary, 13px)`），故缺 token 时降级正确、不会渲染错乱。**含义**：L1 的变量面由「被 vendored 的组件 CSS 实际引用」反向定义，不是全量继承——将来 L3 取新组件时，须按同一份 manifest 口径重新推导白名单。
+**L1 的已知边界（已核实，非遗漏）**：`DisclosureRow.module.css`（出处头之外与上游逐字节一致）引用了两个 **`--dsh-`** 前缀变量——`--dsh-content-font-size-secondary` 与 `--dsh-content-font-delta`。这两个属上游 `body` 发布的 **content 轴**，**不在**本白名单的 `--dsw-*` 范围内，L1 有意不提供；其每一处引用都带 CSS fallback，实测确有（`var(--dsh-content-font-delta, 0px)`、`var(--dsh-content-font-size-secondary, 13px)`），故缺 token 时降级正确、不会渲染错乱。**含义**：L1 的变量面由「被 vendored 的组件 CSS 实际引用」反向定义，不是全量继承——将来 L3 取新组件时，须按同一份 manifest 口径重新推导白名单。
 
 **命名不冲突（已核实）**：上游原语的 token 命名空间是 `--dsw-*`（`packages/client/ui-primitives/src/index.ts` 文档注释原文：*"Cordis-free React primitives styled only through `--dsw-*` tokens."*），本仓既有视觉变量是 `apps/web/src/styles/tokens.css` 里的 `--color-*` / `--space-*` / `--radius-*`。两套前缀不交叠，这是 L1 token 与 WhalePod 自有 token 能并存而不互相覆盖的机制（`dsw-tokens.css` 文件头亦把它记为「双轨并存的已知代价」）。
 
@@ -98,29 +110,60 @@ ADR-0008 §3 的硬约束：vendored 代码是**复制品，不是依赖**。
 
 > 说明：ADR-0008 §2 只给了范围描述（「按钮/弹层/输入」）而**未点名具体 6 个**；下列 6 个是**从切片工作区实测得到**的，不是从文档推断的。注意实际取用的 6 个与 ADR 那句举例并不完全对应（取的是原子级原语，**未取** `Modal` / `Menu` / `Tooltip` / `HoverCard` 等弹层类）。
 
-**复制形态（已核实，逐文件 `git hash-object`）**：
+**哈希锚点（读表前必读）**：下表三个哈希列全部对应 **vendored 子树的提交状态 `f3452f0`**（`feat/p1-138-vendor-ui-primitives` 分支），复算用 `git rev-parse <commit>:<path>` 或 `git show <commit>:<path> | git hash-object --stdin`——**不要**用对**工作区**跑 `git hash-object`：该分支后续仍在改 vendored 文件，工作区值与提交值会不一致，这正是本台账早期版本记下错值的原因。**凡本台账的哈希都以"某 commit 的 blob"为单位**，不以下一时刻的工作区为单位。
 
-- 6 个 `.module.css` **全部与上游逐字节一致**（哈希相等）→ 未修改的复制。
-- 6 个 `.tsx` **全部与上游不同**（哈希不等）→ **已修改的复制**，改动为两类：`clsx` → 本仓 `./cx.js`；import 后缀 `.tsx` → `.js`（`DisclosureRow.tsx` 另有一处 chevron 图标改指 `./icons.js`）。
-- MIT 明确允许修改，义务只是"保留声明"——`LICENSE` 已随子树保留（§5.2），故**合规**。但因此**不能**把本子树描述为"未修改的上游副本"。
+**出处头（全目录统一，这是读哈希表的前提）**：vendored 目录里**每个文件**顶部都加了 5 行出处注释（`/* … */` 或 `/** … */`）：上游路径 + 取用 commit SHA + 本仓改动说明。因此**本仓 blob 必然不等于上游 blob**——关系式是：
 
-| # | 组件 | 上游 `.tsx`（blob sha / 字节） | 本仓 `.tsx`（blob sha） | `.tsx` 关系 | 上游 `.module.css`（blob sha） | 本仓 `.module.css`（blob sha） | CSS 关系 |
-|---|---|---|---|---|---|---|---|
-| 1 | `Button` | `d2e39dbf23867bcfdc4f163fc84c9775e3dbb59a` / 1190 | `5719633ae356883c7e903a7ae8e3213897431d4c` | 已修改 | `9fa1712a669602fb6ec393a3bbe2e25a60d4ee98` | `9fa1712a669602fb6ec393a3bbe2e25a60d4ee98` | **逐字节一致** |
-| 2 | `Pill` | `8e2762c714e3a377b60d143e6b2166408865a34d` / 1297 | `a4f4aad94dd4eee43b08a2ec33c9c588f2055d99` | 已修改 | `8fb6cc0bda1a769759cfe645b61c8db51c92f4e8` | `8fb6cc0bda1a769759cfe645b61c8db51c92f4e8` | **逐字节一致** |
-| 3 | `Tag` | `b99e9ba2080ed83edd37e2803c77286c4a5e6cb6` / 1592 | `4addaf708587b2379ebd75fece96619801cbd0d7` | 已修改 | `65380320ac1cec80459f3d5fdcdce152c59bfe90` | `65380320ac1cec80459f3d5fdcdce152c59bfe90` | **逐字节一致** |
-| 4 | `StateDot` | `0cc825e75ad8689858226b10372ab95bc47b8283` / 1866 | `9aa6628f17bc0489a5ff693030b5e10dd22ef4af` | 已修改 | `265dd1b0a68680f5002a1064bd46a716c05ac853` | `265dd1b0a68680f5002a1064bd46a716c05ac853` | **逐字节一致** |
-| 5 | `DisclosureRow` | `f04ad8986a36bc2845446f3aeb211f6fecaf281c` / 3256 | `b58f70f818a7546f9fb2e4c7e2b9771f82c2c983` | 已修改（含图标改指） | `fed453f34575197535098b3bab3466c8aac02b0b` | `fed453f34575197535098b3bab3466c8aac02b0b` | **逐字节一致** |
-| 6 | `Switch` | `980a08f6beb1c489ca9b68244a4c991edc350cfa` / 1523 | `f6e546decd08ee2dbcad28da743ed46295ae01d1` | 已修改 | `c038331a6604cd98a3ff72622a62f4d0377704fd` | `c038331a6604cd98a3ff72622a62f4d0377704fd` | **逐字节一致** |
+```
+本仓 blob = 上游 blob + 5 行出处头 (+ .tsx 的功能性改动)
+```
+
+所以本台账用**三列**分开记，不把两种值混在一列：**上游 blob**（钉住 commit 下的原文）、**本仓 blob**（`f3452f0` 里实际提交的那份）、**剥出处头后 blob**（本仓文件去掉前 5 行后的内容哈希，用于判断"除出处头外还改了什么"）。
+
+**`.module.css`（6/6：剥掉出处头后与上游逐字节一致）**
+
+| # | 组件 | 上游 blob | 本仓 blob | 剥头后 blob | 剥头后 vs 上游 |
+|---|---|---|---|---|---|
+| 1 | `Button` | `9fa1712a669602fb6ec393a3bbe2e25a60d4ee98` | `3e20c84e05da61bae691e7e5adb5e41ef29b0e37` | `9fa1712a669602fb6ec393a3bbe2e25a60d4ee98` | **相等** |
+| 2 | `Pill` | `8fb6cc0bda1a769759cfe645b61c8db51c92f4e8` | `3acb0759ae921bf89fa6a96a6e3a5afb76036f53` | `8fb6cc0bda1a769759cfe645b61c8db51c92f4e8` | **相等** |
+| 3 | `Tag` | `65380320ac1cec80459f3d5fdcdce152c59bfe90` | `b5c36db88c08404e4619bf4b5245f13aff60ba31` | `65380320ac1cec80459f3d5fdcdce152c59bfe90` | **相等** |
+| 4 | `StateDot` | `265dd1b0a68680f5002a1064bd46a716c05ac853` | `0d8776ed7ad614a939fd681560dc685c7377def1` | `265dd1b0a68680f5002a1064bd46a716c05ac853` | **相等** |
+| 5 | `DisclosureRow` | `fed453f34575197535098b3bab3466c8aac02b0b` | `830425dd7c5670cd7eb5a5c455a677c093e5560d` | `fed453f34575197535098b3bab3466c8aac02b0b` | **相等** |
+| 6 | `Switch` | `c038331a6604cd98a3ff72622a62f4d0377704fd` | `50e3a205723876b157a5b91cdb947f376598c147` | `c038331a6604cd98a3ff72622a62f4d0377704fd` | **相等** |
+
+**结论（带条件）**：6 个 `.module.css` 是「**剥掉 5 行出处头后**与上游逐字节一致」——**不能**简写成"与上游逐字节一致"（提交 blob 与上游 blob 不相等，如 `Button.module.css` 本仓 2056 B vs 上游 1720 B，差的正是出处头）。样式声明本身一字未改，该结论对 6/6 成立。
+
+**`.tsx`（6/6：剥掉出处头后**仍**与上游不同——因为含功能性改动）**
+
+| # | 组件 | 上游 blob | 本仓 blob | 剥头后 blob | 剥头后 vs 上游 | 剥头后仍然存在的改动 |
+|---|---|---|---|---|---|---|
+| 1 | `Button` | `d2e39dbf23867bcfdc4f163fc84c9775e3dbb59a` | `f5a8c63f8ce57ba28e8f5bf8c1993083b04f7924` | `174dad08ff480bcf5e5cbf1291fb29ac972da1ff` | 不同 | `clsx` → `./cx.js`（import + 调用） |
+| 2 | `Pill` | `8e2762c714e3a377b60d143e6b2166408865a34d` | `125b97852d1d65a07ec4a321a139a0d207745151` | `e079841243929dbcc512b860116531bbe29b5022` | 不同 | `clsx` → `./cx.js`（import + 2 处调用） |
+| 3 | `Tag` | `b99e9ba2080ed83edd37e2803c77286c4a5e6cb6` | `ea9d0c1ae9a3c08e4e9b045499625dc61ab73679` | `79115307d4f122d8979e2e2749f45d9db9901e33` | 不同 | `clsx` → `./cx.js`；**新增 `data-vendored="tag"` 属性**；**新增可覆写 `data-testid` prop** |
+| 4 | `StateDot` | `0cc825e75ad8689858226b10372ab95bc47b8283` | `43251b7b88c5a444480b07ad5f3cfe1908f62c9f` | `da99913bec5b7d338c48cea0626265c0547affa5` | 不同 | `clsx` → `./cx.js`；**两个渲染分支都新增 `data-vendored="state-dot"` 与可覆写 `data-testid`** |
+| 5 | `DisclosureRow` | `f04ad8986a36bc2845446f3aeb211f6fecaf281c` | `43e0d95eb2f7310333a7cd1f5dce00ad53702222` | `b67092dd6cc0a6c7c50aaaa733de02d0237d978e` | 不同 | `clsx` → `./cx.js`（6 处）；chevron 图标 `./icons/index.tsx` → `./icons.js` |
+| 6 | `Switch` | `980a08f6beb1c489ca9b68244a4c991edc350cfa` | `0d29dc22e975da884cc1542c894a880844cde3b3` | `1a7d44e7964fde1eef439341a3649bbf252311c4` | 不同 | `clsx` → `./cx.js`（import + 调用） |
+
+**改动分类要如实——不能只说"工程口径"**：`Button` / `Pill` / `Switch` 三类改动确属工程口径（`clsx` 替换、import 后缀）。但 **`Tag.tsx` 与 `StateDot.tsx` 另有功能性改动**：新增 `data-vendored` 稳定锚属性与**可覆写的 `data-testid` prop**（`StateDot` 两个渲染分支都有）。这**不是**纯工程口径——它扩展了组件的 props 面与 DOM 形状（虽然不是视觉改动）。`DisclosureRow.tsx` 的图标 import 改指也属实质改动。
+
+> 与 `manifest.json` 的关系：其 `adaptations` 字段对上述改动**登记是准确的**（含 Tag/StateDot 的属性新增、DisclosureRow 的图标改指）。但注意这三个 `.tsx` 文件**自身的 5 行出处头**当时写作「仅工程口径，未动视觉与行为」，对该文件的实际改动而言**不准确**（Tag/StateDot）。出处头的措辞由实现线修正，本台账以 **diff 实测**为准（上表右列即 diff 结果）。
+
+**MIT 合规判断（结论不变）**：MIT 允许修改与再分发，义务只是保留版权与许可声明——`LICENSE` 已随子树保留（§5.2），故**合规**。但因存在修改，**不能**把本子树描述为"未修改的上游副本"。
 
 **同目录支撑文件（一并被取用，`manifest.json` 已登记）**：
 
-| 本仓文件 | blob sha | 上游来源 | 关系 |
-|---|---|---|---|
-| `apps/web/src/vendor/dsh-ui/icons.tsx` | `678c5a2b2792ada36f64449bc6245e51bff050a5` | `ui-primitives/src/icons/props.ts` + `ui-primitives/src/icons/index.tsx` | **合并 + 裁剪**：只留 `IconChevronDownOutline14` 一个符号（路径数据照抄），上游 100+ 图标不取 |
-| `apps/web/src/vendor/dsh-ui/index.ts` | `3a146a2a7d4bf092976cd34ffafe3a66d4a9f0e6` | `ui-primitives/src/index.ts` | **裁剪**：只留 6 个原语与其类型的导出（上游桶文件含整包原语） |
+| 本仓文件 | 本仓 blob | 字节 | 上游来源 | 关系 |
+|---|---|---|---|---|
+| `apps/web/src/vendor/dsh-ui/icons.tsx` | `678c5a2b2792ada36f64449bc6245e51bff050a5` | 1985 | `ui-primitives/src/icons/props.ts` + `ui-primitives/src/icons/index.tsx` | **合并 + 裁剪**：只留 `IconChevronDownOutline14` 一个符号（路径数据照抄），上游其余图标不取 |
+| `apps/web/src/vendor/dsh-ui/index.ts` | `3a146a2a7d4bf092976cd34ffafe3a66d4a9f0e6` | 992 | `ui-primitives/src/index.ts` | **裁剪**：只留 6 个原语与其类型的导出 |
+| `apps/web/src/vendor/dsh-ui/LICENSE` | `c1f7a78e89e4e4dc7b86664c3b3c76eb5eee1785` | 1065 | **仓库根** `LICENSE` | 全文照抄，未改一字 |
+| `apps/web/src/vendor/dsh-ui/README.md` | `365c36193ba692ddfbc8fa7fea13bcbf2dbfb2bb` | 2115 | **无**（本仓新增） | 用法与纪律说明（含「不含 DSH 品牌资产」声明） |
+| `apps/web/src/vendor/dsh-ui/cx.ts` | `3d105dce12f0dee538f9c74c5d854b90136459af` | 1046 | **无**（本仓新增） | 替代上游 `clsx` 调用，避免引入新第三方依赖 |
+| `apps/web/src/vendor/dsh-ui/manifest.json` | `17ef1a93cc6cd6d9dda825c6b82d4eae17f289df` | 6260 | **无**（本仓新增） | 机器可读台账自身 |
 
-**`cx.ts` 的归属须单独注意（实测发现）**：`apps/web/src/vendor/dsh-ui/cx.ts`（blob `369cd1c58f08d7e85024adaa3bd8b7147885f612`）在 `manifest.json` 里登记为 `"upstream": null`——它是**本仓新增代码**（替代上游 `clsx` 调用，避免引入新第三方依赖），**不是** MIT/DeepSeek 代码。它放在 vendored 子树内是对的（就近，且它是为 vendored 组件服务的），但**著作权归属与许可不同**：本仓自有代码按 Apache-2.0（ADR-0006），MIT 那套义务只覆盖 vendored 部分。建议在该文件头显式标注「本仓新增，Apache-2.0」，否则读者会把它误当上游 MIT 代码——**已记入 §7 待办**。
+**`LICENSE` 的来源路径要说准**：上游 **`packages/client/ui-primitives/` 下没有 LICENSE 文件**（已实测：该目录列目录无任何 license 项）。我们复制的是**上游仓库根**的 `LICENSE`（`LICENSE`，blob `c1f7a78e…`）——这是覆盖整个 monorepo 的那一份 MIT 全文。出处头与 `manifest.json` 里 `"upstream": "LICENSE"` 即指仓库根路径，读者不要误以为取自 `ui-primitives/src/`。
+
+**`cx.ts` 的归属（已由实现线落实）**：`cx.ts` 在 `manifest.json` 里登记为 `"upstream": null`，且其文件头已标明「**本仓新增代码，非上游代码**：WhalePod 自有实现，许可为 Apache-2.0」。即**著作权归属与许可与 vendored 部分不同**：本仓自有代码按 Apache-2.0（ADR-0006），MIT 那套义务只覆盖 vendored 部分。原「建议加标注」的待办**已销**。
 
 **上游候选清单（已核实，供 L3 后续切片选取）**：`packages/client/ui-primitives/src/` 顶层组件与其样式，blob SHA 取自钉住 commit。**本批已取用其中的 6 个——`Button` / `Pill` / `Tag` / `StateDot` / `DisclosureRow` / `Switch`（见 §3.2）**；下表其余条目是 L3 候选，尚未取用，回填时按 §3.2 的表格式登记本仓哈希与复制形态：
 
@@ -166,39 +209,59 @@ ADR-0008 §5 与 TRADEMARKS.md 的红线：`ui-brand-official` 与**任何 DSH �
 
 **审查动作**：L2 取源时**逐个资产过**，上表三项一律不取；若某个被选中的组件 import 了 `FishLogo`/`BrandWordmark`，必须改为 WhalePod 自有标识（ADR-0008 §5：「L1/L2 交付物带 WhalePod 自身视觉标识」），**不得**以「反正是 MIT 代码」为由带进仓。MIT 许可的是著作权，**不许可商标**——这是两件事（见 §6.1）。
 
-**本批执行结果（已实测核对）：通过。** 对已落地的 `apps/web/src/vendor/dsh-ui/` 全目录 grep 品牌资产标识（`FishLogo` / `FISH_LOGO` / `BrandWordmark` / `whale` / `DeepSeek Harness`），**零命中**；18 个文件中没有任何品牌图形。`icons.tsx` 只含 `IconChevronDownOutline14` 一个通用 chevron 符号（非品牌资产）。即 §3.3 的红线在本批**已落实**，不是待办。
+**本批执行结果（已实测核对）：通过——判据是「无品牌图形与品牌符号」，不是「文本零命中」。**
+
+- **事实澄清**：对 `apps/web/src/vendor/dsh-ui/` 全目录按品牌标识 grep，**并非零命中**——`FishLogo` / `BrandWordmark` 会出现在 `README.md:12-13` 与 `manifest.json:22`，但那些是**声明"未取用"的说明文字**；另有 `whale` 命中 `@whalepod` / `WhalePod` 字样（本仓自己的名字，属模式误伤）。所以"零命中"的写法**不准确**，不能用它当判据。
+- **真正的判据（可复跑）**：查的是**品牌图形与品牌符号是否存在**，而非标识词是否出现：
+
+  ```console
+  $ grep -rn "FISH_LOGO_PATH\|export function FishLogo\|export function BrandWordmark" \
+      apps/web/src/vendor/dsh-ui/
+  # 无输出 ⟹ 目录内没有品牌图形与品牌导出符号
+  ```
+
+  实测**无输出**：18 个文件中没有任何品牌 SVG path、没有 `FishLogo` / `BrandWordmark` 的实现或导出。
+- `icons.tsx` 只含 `IconChevronDownOutline14` 一个通用 chevron 符号（非品牌资产）；`manifest.json` 的 `scope.excluded` 亦显式登记了这两个品牌文件"未取用，逐资产过审后才能取"。
+
+即 §3.3 的红线在本批**已落实**，不是待办。
 
 ### 3.4 哈希核对方法与 Q0 断言现状
 
-**复核命令（合入时重跑，任一漂移即须更新本台账）**：
+**复核命令（每次跟版后重跑，任一漂移即须更新本台账）**：
 
 ```console
-# 1) 上游侧：取钉住 commit 下目标文件的 blob SHA（本节各表的上游列即由此得来）
-$ gh api "repos/deepseek-ai/deepseek-harness/git/trees/<pinned-sha>?recursive=1" \
-    --jq '.tree[] | select(.path|test("^packages/client/ui-(theme|primitives)/")) | "\(.sha)\t\(.size)\t\(.path)"'
+SHA=c291e7961a515f6d7af9304e7fd1d257929aef26   # 上游钉住 commit
+C=f3452f0                                        # 本仓 vendored 子树的锚点 commit
 
-# 2) 本仓侧：算本地 blob SHA 与上游列逐行比对
-$ git hash-object apps/web/src/vendor/dsh-ui/<file>
+# 1) 上游侧：取原文并本地算哈希（不依赖 tree API 的 .sha 字段，独立可证）
+$ gh api -H 'Accept: application/vnd.github.raw' \
+    "repos/deepseek-ai/deepseek-harness/contents/<upstream-path>?ref=$SHA" | git hash-object --stdin
+
+# 2) 本仓侧：**锚在 commit 上**，不要对工作区跑 hash-object
+$ git rev-parse "$C:apps/web/src/vendor/dsh-ui/<file>"
+$ git show "$C:apps/web/src/vendor/dsh-ui/<file>" | tail -n +6 | git hash-object --stdin
 ```
 
-`LICENSE` 的比对结论（唯一要求"一字不改"的文件）：本仓 `git hash-object` 得
-`c1f7a78e89e4e4dc7b86664c3b3c76eb5eee1785`，与上游 `LICENSE` blob **完全相等**，1065 B——**逐字节一致，已核实**。
+第 3 步是判定"除出处头外还改了什么"的关键：**剥头后 == 上游** ⟹ 只有出处头之差（本批 6/6 `.module.css`）；**剥头后 ≠ 上游** ⟹ 另有实质改动（本批 6/6 `.tsx`）。
 
-**Q0 断言现状（实测发现一处覆盖缺口）**：ADR-0008 §3 要求 Q0 新增断言「**登记文件覆盖 vendored 目录的每个文件**」。以当前 `manifest.json` 实测对照目录实际内容：
+> **工作区≠提交值（实测的坑）**：写本台账期间，`feat/p1-138-vendor-ui-primitives` 分支在 `f3452f0` 之后**仍有未提交的 vendored 文件改动**（如 `Button.tsx`：提交值 `f5a8c63f…`、当时工作区值 `c26bf3e2…`）。所以"我在那台机器上 `git hash-object` 得到的是另一个值"**不代表台账错**，只代表锚点不是一个 commit。**对账时先 `git rev-parse HEAD:…` 确认工作区是否干净**，不干净就先取 commit 值。这条是本台账曾经出错的根因，别再踩。
+
+**`LICENSE` 的比对**：在锚点 `f3452f0` 上 `git rev-parse f3452f0:apps/web/src/vendor/dsh-ui/LICENSE` 得 `c1f7a78e89e4e4dc7b86664c3b3c76eb5eee1785`，与上游**仓库根** `LICENSE` blob 完全相等，1065 B——这是唯一要求"一字不改"的文件，**逐字节一致，已核实**（且它是全目录**唯一**没有出处头的文件——它是原文本身，不需要标注自己）。
+
+**Q0 断言现状：覆盖缺口已收口（由 PR #151 落地）。** ADR-0008 §3 要求 Q0 断言「登记文件覆盖 vendored 目录的每个文件」。现行口径把登记面拆成两组，并集必须等于目录全部文件：
 
 | | 数量 |
 |---|---|
-| `apps/web/src/vendor/dsh-ui/` 实际文件 | 18 |
-| `manifest.json` 的 `components[]` 已登记文件 | 16 |
-| **未登记** | `README.md`、`manifest.json` 自身 |
+| `components[]`（源码与样式：`.ts`/`.tsx`/`.module.css`） | 15 |
+| `meta[]`（元文件：`README.md` / `LICENSE` / `manifest.json`） | 3 |
+| **并集** | **18** |
+| `apps/web/src/vendor/dsh-ui/` 实际文件 | **18** |
 
-即：按「每个文件」的**字面**口径，当前登记面上有 2 个缺口。`cx.ts` 已登记（`"upstream": null`），支撑文件 `icons.tsx` / `index.ts` / `LICENSE` 也都已登记，所以缺口仅在 `README.md` 与 `manifest.json` 这两个**非源码**文件。三种收口方式，**需切片作者/所有人选一种并落成机器判据**（已记入 §7）：
+实测对照（本台账独立复算）：`MISSING=[]`、`EXTRA=[]`——**18 对 18，恰好全覆盖**。口径本身写在 `manifest.json` 的 `coverage` 字段里（"components[] 逐个登记全部源码与样式文件…meta[] 登记元文件…两者并集 = 本目录全部文件"），并由 Q0 单测钉死：`apps/web/tests/vendor-dsh-ui.spec.tsx` 的用例「manifest.json 覆盖口径：components[] = 全部源码与样式文件，meta[] = 元文件（并集 = 目录全部文件）」断言 `[...components, ...meta].sort()` 与 `readdirSync` 的目录列表**逐项相等**；同一用例还**反向钉住了上游 commit**（`manifest.upstream.commit === 'c291e796…'`），所以第 1 节的钉版 SHA 被机器守住，不会在同步上游时被静默改掉。
 
-1. 把两者补进 `components[]`（`README.md` 与 `manifest.json` 与上游无对应，按 `cx.ts` 先例记 `"upstream": null`）；
-2. 在断言里把「登记范围」显式定义为「源码文件」（排除 `README.md` / `manifest.json` 等元数据文件），并与台账口径对齐；
-3. 由 `manifest.json` 增加一个 `unregistered`/`selfDescribing` 白名单字段显式声明豁免，避免"未登记"与"有意不登记"混同。
+> 历史说明：本台账曾在此处登记「已登记 16 / 目录 18，`README.md` 与 `manifest.json` 未登记」的缺口。那是 PR #151 **之前**的中间态；现况已由上述 `meta[]` + Q0 单测收口，原三选一收口方案**不再需要拍板**。
 
-**注**：本台账（`docs/agent/dsh-ui-vendoring.md`）是**人读汇总**，不是 Q0 断言去解析的那份；断言的机器可读输入是 `manifest.json`。两处口径必须一致（§7 有对应待办）。
+**注**：本台账（`docs/agent/dsh-ui-vendoring.md`）是**人读汇总**，Q0 断言解析的机器可读输入是 `manifest.json`。两处的钉版 SHA 与覆盖面必须一致——改动任一处都要同步另一处。
 
 ---
 
@@ -285,7 +348,13 @@ MIT 的硬性义务只有一条：**保留版权声明与许可文本**。本仓
 | 与 ADR-0001 | 保持 DSH 是 Runtime、不是产品权威 | UI 包即 cordis 插件，等于把产品层重新耦合回 DSH |
 | 变更可控性 | 每个文件都能审、能改、能停 | 上游一发版就可能被动升级 |
 
-`ui-primitives` 之所以适合做首个 L2 目标：它在上游 `package.json` 里 **`dependencies: []`**（已核实），即**本就不依赖 cordis**，剥壳成本最低。`ui-theme` 则依赖 `@deepseek-ai/schemastery`（上游 `vendor/schemastery`，MIT，版权行是 `Copyright (c) 2021-present Shigma`，**不是** DeepSeek），所以 L1 必须"剥出 cordis"而不是"整个复制"。
+`ui-primitives` 之所以适合做首个 L2 目标：它在上游 `package.json` 里 **`dependencies: []`**（已核实），即**本就不依赖 cordis**，剥壳成本最低。
+
+`ui-theme` 的情形要说准——**"剥出 cordis"指的是把文件从 cordis 插件包里剥出来，不是那个文件本身依赖 cordis**：
+
+- `ui-theme` **作为包**确实是 cordis 插件：`src/index.ts` 有 `import type { Context } from '@deepseek-ai/cordis'`（已核实），另外其 `package.json` 依赖 `@deepseek-ai/schemastery`（上游 `vendor/schemastery`，MIT，版权行是 `Copyright (c) 2021-present Shigma`，**不是** DeepSeek）。
+- 但 L1 **实际只取一个文件**：`src/styles/design-platform.css`。实测该文件是**纯 CSS**——`import` 与 `cordis` 出现次数均为 **0**，不含任何 JS 依赖。
+- 所以准确的理由是：**我们绕开 cordis 的方式是不依赖 `ui-theme` 这个包、只把其中的纯 CSS 文件拿出来**（连 schemastery 也不需要，因为 token 是静态声明而非 schema 求值）。若当初选择"整个复制 `ui-theme`"或"加 `@deepseek-ai/dsh-client-ui-theme` 依赖"，才会同时把 cordis 与 schemastery 拖进来——那正是红线禁止的形态（§6.3）。
 
 ### 6.3 为什么这个区别在 `check-boundaries.ts` 下成立
 
@@ -315,25 +384,33 @@ const DSH_OWNERS = ['packages/runtime-dsh/', 'apps/runtime/']
 
 ## 7. 待回填 / 待拍板清单
 
-切片合并后逐条销账；`[ ]` 未完成，`[x]` 已完成并注明日期。
+逐条销账；`[ ]` 未完成，`[x]` 已完成并注明日期。
 
-**已完成（2026-09-10，实测自切片工作区）**
+**已完成**
 
-- [x] §3.1 L1 映射回填：`dsw-tokens.css` 派生自 `design-platform.css`，其余 5 个上游 CSS 未取用。
-- [x] §3.2 L2 映射回填：6 个组件（Button/Pill/Tag/StateDot/DisclosureRow/Switch）+ 支撑文件，逐文件 blob SHA 已核对。
-- [x] 核对 `LICENSE` 与上游 blob `c1f7a78e…`：**逐字节一致**（§5.2）。
-- [x] 品牌排除清单实测：vendored 目录零品牌资产（§3.3）。
+- [x] §3.1 L1 映射回填：`dsw-tokens.css` 派生自 `design-platform.css`，其余 5 个上游 CSS 未取用；变量账 23 引用 / 26 声明 / 上游静态色阶 73 已复算（2026-09-10）。
+- [x] §3.2 L2 映射回填：6 个组件（Button/Pill/Tag/StateDot/DisclosureRow/Switch）+ 支撑文件，**三列哈希**（上游 / 本仓 / 剥出处头后）逐文件已核对（2026-09-10）。
+- [x] 核对 `LICENSE` 与上游**仓库根** `LICENSE` blob `c1f7a78e…`：**逐字节一致**（§5.2）。
+- [x] 品牌排除清单实测：目录内无品牌图形与品牌导出符号（§3.3）。
 - [x] 核对 `manifest.json` 的上游 repo / commit SHA / commitDate 与上游 API 一致（`c291e796…`、`2026-09-10T14:17:09Z`）；逐文件映射与本台账一致。
+- [x] `cx.ts` 归属标注：文件头已标明「本仓新增代码，非上游代码…Apache-2.0」（§3.2）。
+- [x] **Q0 登记覆盖面缺口已收口**（PR #151）：`components[]` 15 + `meta[]` 3 = 18 = 目录实有 18，`MISSING=[]`/`EXTRA=[]`，由 Q0 单测 `apps/web/tests/vendor-dsh-ui.spec.tsx` 断言；原「三选一收口方案」不再需要拍板（§3.4）。
+- [x] 切片已提交（`ee9c4b5` + `f3452f0`）——顶部原「尚未提交」的观察态说明已随之更新。
 
-**待回填（切片合入后）**
+**待回填（跟版时）**
 
-- [ ] 切片合入后**重跑 §3.4 核对命令**：18 个文件的本仓 blob SHA 是否仍与 §3.2/§3.3 记录一致；不一致即按实测更新本台账。
-- [ ] 销掉顶部「切片尚未提交」的观察态说明，改为指向实际 commit。
-- [ ] 在 `apps/web/src/vendor/dsh-ui/cx.ts` 文件头标注「本仓新增，Apache-2.0，非上游 MIT 代码」（§3.2 末段理由）。
+- [ ] 每次跟版后**重跑 §3.4 核对命令**（锚在 commit 上，不对工作区取值）：18 个文件的三列 blob SHA 是否漂移；不一致即按实测更新 §3.1/§3.2，并把锚点 commit 一并改写。
+- [ ] 本台账当前锚点 = `f3452f0`；该分支在锚点之后**仍有未提交的 vendored 文件改动**（§3.4 记录了 `Button.tsx` 的工作区值 `c26bf3e2…` vs 提交值 `f5a8c63f…`）。待实现线提交后，**把锚点前移到新 commit 并整套重算**，不要只改个别格子。
+- [ ] `Tag.tsx` / `StateDot.tsx` / `DisclosureRow.tsx` 的 5 行出处头措辞「仅工程口径，未动视觉与行为」与实际 diff 不符（前两者新增 `data-vendored` 与 `data-testid`）——出处头措辞由**实现线**修正；本台账已按 diff 实录（§3.2）。
+
+**待转实现线修正的数字（本台账无权改其文件，已记为正确值）**
+
+- [ ] `apps/web/src/styles/dsw-tokens.css` 文件头「上游静态色阶 **78** 个」→ 实测 **73**。
+- [ ] `apps/web/src/vendor/dsh-ui/manifest.json` 的 `tokens[0].adaptations` 同句「**78** 个」→ 实测 **73**。
+- [ ] `manifest.json` 的 `components[]`（`index.ts` 条）「上游桶文件含整包 **43** 个原语」→ **43 是 `packages/client/ui-*` 的包数**；`ui-primitives/src` 顶层实测 **29 个 `.tsx`**。同一字段写 `ui-primitives/src` **没有 LICENSE**——我们复制的是**仓库根** `LICENSE`（§3.2 末段）。
 
 **待仓库所有人 / 切片作者拍板**
 
-- [ ] **Q0 登记覆盖面缺口（§3.4）**：`manifest.json` 的 `components[]` 登记 16 个文件，目录实际 18 个，`README.md` 与 `manifest.json` 自身未登记。ADR-0008 §3 要求「登记文件覆盖 vendored 目录的每个文件」。三种收口方式（补登记 / 显式定义登记范围为源码文件 / 加豁免字段）选一种并落成机器判据。
 - [ ] **§6.3 的 scope 口径差**：ADR-0008 §3 写「零 `@deepseek-ai/*` import」，而 `check-boundaries.ts` 的 `DSH_PREFIXES` 只覆盖 `@deepseek-ai/dsh*` 与 `@deepseek-ai/cordis`。要不要把 Q0 新断言的覆盖面扩到整个 `@deepseek-ai/` scope？
 - [ ] 「可复跑取源脚本」的落地时机（ADR-0008 §3 说与 L3 一起评估；在此之前**不得**声称出处可复现）。是否需要一个只做「按 SHA 取文件 + 校验 blob SHA」的最小脚本先行？
 - [ ] 公开发布前是否按 ADR-0006 的约定，由项目权利人对 MIT 引入面做一次法律审阅。
@@ -345,4 +422,5 @@ const DSH_OWNERS = ['packages/runtime-dsh/', 'apps/runtime/']
 | 日期 | 变更 |
 |---|---|
 | 2026-09-10 | 建档。钉住上游 `c291e7961a515f6d7af9304e7fd1d257929aef26`；核实 L1 六个 CSS 与 `ui-primitives` 组件清单的路径/blob SHA/体量；登记品牌排除清单。 |
-| 2026-09-10 | 按 §3.4 方法**实测回填**：6 个 L2 组件（Button/Pill/Tag/StateDot/DisclosureRow/Switch）+ `icons.tsx`/`index.ts`/`cx.ts`/`LICENSE` 的本仓 blob SHA 与复制形态（6 个 `.module.css` 逐字节一致、6 个 `.tsx` 已修改）；`LICENSE` 与上游 blob 逐字节一致；品牌排除清单实测通过；记入 Q0 登记覆盖面缺口（`README.md`/`manifest.json` 未登记）与 `cx.ts` 归属标注待办。**切片当时尚未提交，哈希为准，合入后须复核。** |
+| 2026-09-10 | 按 §3.4 方法**实测回填**：6 个 L2 组件（Button/Pill/Tag/StateDot/DisclosureRow/Switch）+ `icons.tsx`/`index.ts`/`cx.ts`/`LICENSE` 的本仓 blob SHA 与复制形态；`LICENSE` 与上游 blob 逐字节一致；品牌排除清单实测通过；记入 Q0 登记覆盖面缺口（`README.md`/`manifest.json` 未登记）与 `cx.ts` 归属标注待办。 |
+| 2026-09-10 | **独立审查后修正（PR #150 一审「需改」4 项 + 顺带 5 项）**。根因：上一版哈希取自切片刻**变动前**的工作区快照，切片随后加了出处头与功能改动，旧值失效而仍标「已实测」。修正内容：①§3.2 哈希表改为**三列**（上游 / 本仓 / 剥出处头后）并全部重算——旧 6/6 `.tsx` 值既非上游也非本仓，`cx.ts` 同病，均已纠正；②「逐字节一致」改为**带条件**表述（剥掉 5 行出处头后成立）并写明关系式；③`.tsx` 改动分类补上 `Tag.tsx`/`StateDot.tsx` 的 `data-vendored` 与可覆写 `data-testid`（功能性，非纯工程口径）；④§3.4 Q0 缺口改写为**已收口**（`components[]` 15 + `meta[]` 3 = 18，Q0 单测断言，PR #151）；⑤品牌核验删去不实的「grep 零命中」，改为「无品牌图形与导出符号」的可复跑判据；⑥补记实现线文件中两处待修数字（静态色阶 78→**73**、桶文件「43 个原语」→43 是**包数**、顶层实测 **29 个 `.tsx`**）；⑦L1「剥出 cordis」归因改准（`ui-theme` 包确是 cordis 插件 + 依赖 schemastery，但实取文件 `design-platform.css` 是**纯 CSS**，0 import/0 cordis）；⑧写明 `LICENSE` 取自**仓库根**（上游 `ui-primitives/` 下无 LICENSE）；⑨新增变量账 23 引用 / 26 声明并验证零未解析引用。 |

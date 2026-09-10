@@ -61,6 +61,15 @@ happens to live inside an otherwise vendored package (for example upstream
 exclusion list and its review procedure are recorded in
 [docs/agent/dsh-ui-vendoring.md](./docs/agent/dsh-ui-vendoring.md) §3.3.
 
+**Which license governs the vendored code: MIT, not Apache-2.0.** The vendored
+DSH sources are redistributed under **their own upstream MIT license**
+(`Copyright (c) 2026 DeepSeek`), whose full text ships with them at
+`apps/web/src/vendor/dsh-ui/LICENSE`. The "Forks and redistributions" terms in
+the previous section describe **WhalePod's own** Apache-2.0 code and do **not**
+apply to the vendored DSH files — do not read that section as the terms for DSH
+code. What the two do share is the trademark rule below: MIT grants copyright
+permissions only, so neither license conveys any right to use DSH branding.
+
 The distinction matters because the two grants are separate: the MIT License
 covers copyright only and conveys **no trademark rights**. Vendoring MIT code is
 therefore not a license to use DSH branding, and the upstream brand guidelines
