@@ -227,6 +227,10 @@ export async function assertControlTokens(control: Locator, label: string): Prom
         const referenceStyle = getComputedStyle(reference)
         const style = getComputedStyle(el)
         return {
+          // 状态口径（评审提醒）：把"采样那一刻是不是聚焦/hover"一起采回来，
+          // 由共用判定函数决定放开哪几项——详见 checkControlTokens 的注释。
+          focused: document.activeElement === el,
+          hovered: el.matches(':hover'),
           background: style.backgroundColor,
           borderColor: style.borderTopColor,
           borderWidth: style.borderTopWidth,

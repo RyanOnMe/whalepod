@@ -810,6 +810,10 @@ function probeFromSource(scanned: CssRule[], selector: string, mustDeclare?: str
     tokenValue(token),
   )
   return {
+    // 源码侧探针天然是"静止态"（没有指针也没有焦点），显式写 false 而不是留空：
+    // 判定函数的状态口径要在这里也被走一遍。
+    focused: false,
+    hovered: false,
     background: resolve(background),
     borderColor: resolve(borderColor),
     borderWidth: width,
@@ -919,6 +923,38 @@ describe('#168 自研控件对齐 DSH 族（源码文本判据）', () => {
         '.field input',
       ).join('\n'),
     ).toContain('小于触屏下限')
+  })
+
+  it('状态口径：聚焦/悬停态跳过描边项（按设计会变），但背景/文字仍判', () => {
+    const base = probeFromSource(globalRules, '.field input', 'border')
+    // 静止态：三项都判，全绿
+    expect(checkControlTokens(base, checkerExpect, '.field input')).toEqual([])
+    // 聚焦态：描边按设计可变成品牌色（`.button:focus-visible` 那一类），不该被判成漂移
+    const focused = {
+      ...base,
+      focused: true,
+      borderColor: tokenValue('--dsw-alias-brand-primary'),
+    }
+    expect(
+      checkControlTokens(focused, checkerExpect, '.field input'),
+      '聚焦态因"按设计改了的描边"被判红——这正是评审提醒的假红形态',
+    ).toEqual([])
+    // 但聚焦态下**背景**仍然要判：这条不是"状态一变就全放开"
+    expect(
+      checkControlTokens(
+        { ...focused, background: 'rgb(1, 2, 3)' },
+        checkerExpect,
+        '.field input',
+      ).join('\n'),
+    ).toContain('背景取值')
+    // hover 同理（hover 改面与描边档，但文字不该变）
+    const hovered = { ...base, hovered: true, borderColor: 'rgb(9, 9, 9)' }
+    expect(checkControlTokens(hovered, checkerExpect, '.field input')).toEqual([])
+    expect(
+      checkControlTokens({ ...hovered, color: 'rgb(1, 2, 3)' }, checkerExpect, '.field input').join(
+        '\n',
+      ),
+    ).toContain('文字取值')
   })
 
   it('resolveTokenValue：沿继承链解 var() 链，且认最近的重绑', () => {

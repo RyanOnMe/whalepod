@@ -208,6 +208,19 @@ export interface ControlProbe {
   /** `getComputedStyle(el).minHeight`：如 '40px'。 */
   minHeight: string
   /**
+   * 采样那一刻该控件是不是 `document.activeElement`。
+   *
+   * **状态口径**（评审提醒的同类坑，#161 在 390 档踩过）：`:focus-visible` 按设计会把描边
+   * 改成品牌色（`.button:focus-visible { border-color: var(--dsw-alias-brand-primary) }`，
+   * 与 vendored `Input` 的 `.wrap:focus-within` 同语义），hover 会改面与描边档。
+   * 所以判据**必须声明自己判的是哪个状态**——否则调用点紧挨 `click()` / `fill()` 时，
+   * 控件正好带着焦点或 hover，判据就假红。这里记下状态，由 `checkControlTokens` 决定
+   * 放开哪几项（见该函数注释）。
+   */
+  focused: boolean
+  /** 采样那一刻指针是否悬停在该控件上（`el.matches(':hover')`）。 */
+  hovered: boolean
+  /**
    * **同一浏览器里**用 vendored `Input` 的 `border` 声明渲染出来的实测宽度。
    *
    * 为什么是元素对元素而不是"期望 0.5px"：Chrome 对 `border: 0.5px` 的 computed/used 宽度
@@ -246,15 +259,29 @@ export function checkControlTokens(
     labelToken: string
     /** 高度下限（px）。 */
     minTouchPx: number
+    /** 该控件在非聚焦/非 hover 态下的面（默认取 `backgroundToken`）。 */
+    restBackgroundToken?: string
+    /** 该控件在非聚焦/非 hover 态下的描边（默认取 `borderToken`）。 */
+    restBorderToken?: string
   },
   label = '控件',
 ): string[] {
   const failures: string[] = []
+  // 状态口径（评审提醒；#161 在 390 档踩过同一个坑）：判据只对**静止态**写死期望值。
+  //  - `:focus-visible` 按设计把描边改成品牌色、hover 按设计改面与描边档；
+  //  - 所以这三项在**聚焦/hover 态**下只能与"交互态的变体 token"比对，而在**没有给**
+  //    变体 token 时，检查项**仅限"没有设计变化"的那些**（背景/文字在聚焦时不该变），
+  //    描边项直接跳过——避免调用点紧挨 click()/fill() 时按设计变化的样子被判成漂移。
+  const restBackground = expect.restBackgroundToken ?? expect.backgroundToken
+  const restBorder = expect.restBorderToken ?? expect.borderToken
+  const interactive = probe.focused || probe.hovered
   const pairs: Array<[string, string, string, string]> = [
-    ['背景', probe.background, probe.resolved.background, expect.backgroundToken],
-    ['描边', probe.borderColor, probe.resolved.border, expect.borderToken],
+    ['背景', probe.background, probe.resolved.background, restBackground],
     ['文字', probe.color, probe.resolved.label, expect.labelToken],
   ]
+  if (!interactive) {
+    pairs.splice(1, 0, ['描边', probe.borderColor, probe.resolved.border, restBorder])
+  }
   for (const [what, actual, expected, expectedToken] of pairs) {
     if (expected === '') {
       failures.push(`${label} 的${what} token ${expectedToken} 未解析（元素与祖先都取到空串）`)
