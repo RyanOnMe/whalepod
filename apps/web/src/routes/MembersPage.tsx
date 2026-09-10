@@ -9,7 +9,7 @@
  * - Member 只读：不给表单，明说只有 Owner/Admin 能邀请（不伪造可点击的入口）；
  * - 复制失败如实报错，不伪造「已复制」（shared/CopyButton 统一行为）。
  */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import type { CreateInviteRequest, TeamMemberView } from '@whalepod/protocol'
 import { api } from '../shared/api/client.js'
@@ -20,9 +20,6 @@ import { useSession } from '../app/session.js'
 import { formatIso } from '../shared/format.js'
 import { takeFlash } from '../shared/flash.js'
 import type { Role } from '../shared/api/types.js'
-
-/** Hub 侧 invite.expires_at 默认 72 小时（03 §2.1，apps/hub 的 INVITE_TTL_MS）。 */
-const INVITE_TTL_MS = 72 * 60 * 60 * 1000
 
 const ROLE_LABEL: Readonly<Record<Role, string>> = {
   owner: 'Owner',
@@ -39,7 +36,6 @@ interface CreatedInviteView {
 
 export function MembersPage(): ReactNode {
   const session = useSession()
-  const queryClient = useQueryClient()
   const [role, setRole] = useState<'member' | 'admin'>('member')
   const [created, setCreated] = useState<CreatedInviteView | null>(null)
   // 加入成功的一次性提示（跳转回来时仍在同一标签页的 sessionStorage 里）。

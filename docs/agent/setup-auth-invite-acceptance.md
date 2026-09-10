@@ -73,6 +73,18 @@ bash scripts/secret-scan.sh apps/hub packages/db/src
 - 预检的失效形态：未知 Token 404 `NOT_FOUND`；已用/已过期 409 `CONFLICT` 且
   `error.details` 给出 `{ expired, consumed }`，UI 据此说人话（**不显示裸错误码**）。
   匿名 `POST /invites/accept` 的不可枚举 409 形态（G1-04）保持不变。
+- 响应面纳入协议 schema（对齐 #136 惯例）：`InvitePreflightSchema` /
+  `InviteAcceptResultSchema`（`packages/protocol/src/http.ts`，均为 strictObject），
+  两条路由出网前 `parse`——字段最小集由协议钉死，成员信息不可能随字段漂移漏出。
+- 预检是**匿名可读**的，因此必须限流：与 `POST /setup`、匿名 `POST /invites/accept`
+  共用匿名限流器，键前缀 `invite-preflight|<ip>`（每 IP 每窗口 20 次），超限 429
+  `FORBIDDEN` 并写 `invite.preflight` / `rate_limited` 审计。不加限流则预检就是无成本
+  的 Token 枚举通道（200/404 二分）。用例：`invite-ui.integration.spec.ts` 的
+  「邀请预检速率限制」两条（超配额 429 + 与 invite-accept 各自独立计数）。
+- `POST /invites/:token/accept` **不读** Idempotency-Key（无 `transactCommand` 回执）：
+  组合根钩子仍强制该头存在，去重由数据保证（`consumeInvite` 原子 UPDATE 是唯一消费点，
+  重放走「本人已消费」分支返回 `joined=false`）。用例钉死：同键重放两次都 200、
+  成员行与 `command_receipt` 都不增。
 - 浏览器面判定（web 单测，`pnpm test:unit` 的 web project）：
   `apps/web/tests/members-page.spec.tsx`（导航入口可达、角色选择、链接可复制、
   有效期、复制失败如实报错、Member 只读）、`apps/web/tests/invite-accept-page.spec.tsx`
