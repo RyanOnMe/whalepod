@@ -124,6 +124,17 @@ describe('members-page', () => {
     expect(screen.getByText('管理员')).toBeVisible()
   })
 
+  it('#169 邀请说明里的破折号紧贴前文（JSX 跨行折叠出的空格不该出现）', async () => {
+    // 反例（真发生过）：源码写成两行「…复制发给他」/「——Token 只出现这一次。」，JSX 把
+    // 换行 + 缩进折叠成**一个空格**，渲染出来是「发给他 ——Token…」。这条在**真实渲染结果**
+    // 上钉住它——只做源码扫描（copy-typography.spec.ts）证明不了"渲染出来是对的"。
+    renderApp('/members', loggedInHandlers(ALICE, [teamMembersHandler([makeMember()])]))
+    const lead = await screen.findByText(/选一个角色生成邀请链接/)
+    const text = lead.textContent ?? ''
+    expect(text, '破折号前出现了空格（JSX 跨行折叠）').toContain('发给他——Token')
+    expect(text, '破折号前不该有空格').not.toMatch(/\s——/)
+  })
+
   it('复制失败如实报错，不伪造「已复制」', async () => {
     const user = userEvent.setup()
     stubClipboardWriteText({ reject: true })

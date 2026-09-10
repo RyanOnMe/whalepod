@@ -16,12 +16,24 @@
  *     （其中 --dsw-elevation-prominent 另需其派生依赖 --dsw-elevation-stroke 与
  *     --dsw-elevation-stroke-color 共 3 个 + --dsw-mask-blur 1 个，见 `body, body *` 段）；
  *     两批并集 **38** 个引用变量，逐个在下方 :root 段有声明（Q0 单测钉死"零未解析引用"）。
+ * #159 复核（57 声明 = 38 被 vendored CSS 引用 + 19 未被引用；**注意后一个 19 里是
+ * 18 个静态档 + 1 个非静态的 --dsw-elevation-stroke**，与"静态档共 19 个"不是同一个集合，
+ * 两者数目相同纯属巧合——详见台账 §3.1 的复算口径）：
+ *   · #159 只**新增 1 个**（`--dsw-static-blue-900`，理由见该行注释），不删任何变量；
+ *   · 声明数 56 → 57、静态档 18 → 19，38 个引用变量未变（`comm -13` 差集仍为空）；
+ *   · 静态档里被 vendored CSS 直接引用的只有 `--dsw-static-deepseek-450` 一个。
  * 本仓对上游的收缩/补齐（都「取值不变」）：
- *   1. 只保留被引用变量真正需要的静态色阶（共 15 个 `--dsw-static-*`），其余静态档不抄；
- *      「真正需要」= 有 `var()` 消费者（vendored CSS / 本文件内部 / global.css 三处之一）。
+ *   1. 只保留被引用变量真正需要的静态色阶（共 **19** 个 `--dsw-static-*`，复算命令见
+ *      docs/agent/dsh-ui-vendoring.md §3.1；此前这里写 15、manifest.json 写 17，两者与实测
+ *      都不符——#159 复核实测 18，补 blue-900 后为 19，三处已一并对齐），其余静态档不抄；
+ *      「真正需要」= 有 `var()` 消费者（vendored CSS / 本文件内部 / 应用层样式表三处之一；
+ *      应用层这一处要扫 `apps/web/src/styles/*.css` **全部**，不是只扫 global.css）。
  *      本批初版把上游那一段的 13 个静态档整批搬了进来，被审查追出**两个孤儿**
  *      （`--dsw-static-amber-500`、`--dsw-static-neutral-bluish-1000`），两个都已删除；
- *      理由分别见两处注释，现在有一条 Q0 用例守着「L1 不得有零消费者变量」。
+ *      理由分别见两处注释，现在有一条 Q0 用例守着「L1 不得有零消费者变量」。那条用例的
+ *      扫描面在 #156（L2 第二批）时从 global.css 扩到应用层全部样式表——只扫 global.css
+ *      会漏掉 tokens.css 这一处消费者（#153 之后消费者的位置变了）。归属写清楚：#159 只是
+ *      复核了它，没有改它。
  *   2. 别名间接按上游保留：能吃 alias 的不落到静态字面量（--dsw-alias-button-primary-fill →
  *      --dsw-alias-brand-primary、--dsw-specific-menu → --dsw-alias-bg-layer-3、
  *      --dsw-alias-state-warn-label → --dsw-static-amber-600 …），这层间接是语义而不是冗余。
@@ -73,6 +85,13 @@
   --dsw-static-green-900: rgb(35, 60, 44);
   --dsw-static-red-900: rgb(87, 12, 12);
   --dsw-static-amber-900: rgb(39, 36, 31);
+  /* #159：blue-900 = rgb(14, 48, 116)，上游 design-platform.css 静态段第 20 行逐字照抄
+     （同段还有 blue-800/950，本仓不需要）。加它是因为 #152 主题统一后暴露的一处**真实
+     不达标**：`.badge` 一族用 --color-signal（blue-600）压自己的浅底 --color-signal-soft
+     （blue-100），实测 4.24:1 < AA 4.5:1（浏览器侧扫描器在 p1-07 抓到，见 #159）。
+     本仓其它色族（green/red/amber）在浅底上取的都是 900 档，只有 blue 缺 900 档而退用
+     了 600；补上这一档后与其余色族同构：blue-900 压 blue-100 = 10.16:1（实测）。 */
+  --dsw-static-blue-900: rgb(14, 48, 116);
 
   /* #138 L2 第二批新增的静态色阶（上游 design-platform.css 静态段逐字照抄）。
    * 它们只被下面新增的 alias 声明消费——即"仅被 alias 声明消费"的那一类，

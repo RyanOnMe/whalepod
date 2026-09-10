@@ -82,7 +82,7 @@ export function MembersPage(): ReactNode {
           <section className="card" aria-labelledby="members-list-heading">
             <h2 id="members-list-heading">团队成员</h2>
             {membersQuery.isPending ? (
-              <p className="mutation-hint">加载成员名单…</p>
+              <p className="mutation-hint">正在加载成员名单…</p>
             ) : membersQuery.isError ? (
               <ErrorBanner error={membersQuery.error} />
             ) : members.length === 0 ? (
@@ -111,8 +111,8 @@ export function MembersPage(): ReactNode {
             {canInvite ? (
               <>
                 <p className="page-lead">
-                  选一个角色生成邀请链接。链接只能使用一次，72 小时后失效；生成后请立即复制发给他
-                  ——Token 只出现这一次。
+                  选一个角色生成邀请链接。链接只能使用一次，72
+                  小时后失效；生成后请立即复制发给他——Token 只出现这一次。
                 </p>
                 <form className="inline-form" onSubmit={submit}>
                   <div className="field">
