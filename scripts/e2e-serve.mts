@@ -274,6 +274,51 @@ try {
   const { rm } = await import('node:fs/promises')
   await rm(ENV_FILE, { force: true })
 }
+// 端口占用体检（#155）：上一轮若被 SIGKILL，**Hub 子进程会活下来占住 18080**，
+// 于是本轮 Hub 起不来、报出的却是「读不到 setup-token」这种误导性现场（实测踩到，
+// 排查花了一轮）。这里在起容器前先体检：同 cwd 的残留监听者清掉；别的 worktree 的
+// 监听者则失败快并打印归属，绝不互杀。
+async function assertPortsFree(): Promise<void> {
+  for (const [port, what] of [
+    [HUB_PORT, 'Hub'],
+    [WEB_PORT, 'Web dev server'],
+  ] as const) {
+    const { stdout } = await execFileAsync('lsof', [
+      '-nP',
+      `-iTCP:${port}`,
+      '-sTCP:LISTEN',
+      '-t',
+    ]).catch(() => ({ stdout: '' }))
+    const pids = stdout
+      .split('\n')
+      .map((line) => Number(line.trim()))
+      .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid)
+    for (const pid of pids) {
+      const [{ stdout: cwdOut }, { stdout: cmdOut }] = await Promise.all([
+        execFileAsync('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn']).catch(() => ({
+          stdout: '',
+        })),
+        execFileAsync('ps', ['-p', String(pid), '-o', 'command=']).catch(() => ({ stdout: '' })),
+      ])
+      const cwd = cwdOut
+        .split('\n')
+        .find((line) => line.startsWith('n'))
+        ?.slice(1)
+      const command = cmdOut.trim().split(' ').slice(0, 3).join(' ')
+      if (cwd === process.cwd()) {
+        process.kill(pid, 'SIGKILL')
+        log(`体检：清掉本 worktree 的残留 ${what} 监听者 pid=${pid}`)
+        continue
+      }
+      process.stderr.write(
+        `[e2e-serve] 端口 ${port} 被另一个 worktree 占用（pid=${pid} cwd=${cwd ?? '未知'} cmd=${command}）——` +
+          `本实例不抢端口，直接退出。请在那条线跑完释放后再起。\n`,
+      )
+      process.exit(2)
+    }
+  }
+}
+await assertPortsFree()
 postgres = await startEphemeralPostgres()
 const databaseUrl = postgres.databaseUrl
 {
