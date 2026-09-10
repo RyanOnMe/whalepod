@@ -163,7 +163,9 @@ export function AgentRevisionForm({ onCreated }: AgentRevisionFormProps): ReactN
         </div>
       </div>
       <div className="field">
-        <label htmlFor="agent-plugin-pack">插件组合（Plugin Pack）</label>
+        {/* #167 × #158：可见标签与可访问名由 PackSelect → SelectMenu 渲染
+            （`<label htmlFor={id}>` 指向触发器按钮），这里不重复一个 <label>；
+            中文优先的文案「插件组合（Plugin Pack）」写在 PackSelect 的 label 上传下去。 */}
         <PackSelect
           id="agent-plugin-pack"
           value={values.pluginPackId}

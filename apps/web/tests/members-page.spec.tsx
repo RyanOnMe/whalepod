@@ -16,6 +16,7 @@ import {
   type MockHandler,
 } from './fixtures.js'
 import { renderApp } from './render.jsx'
+import { openSelect, selectOption } from './select-menu.js'
 
 /** jsdom 没有 navigator.clipboard：临时注入并在用例结束恢复（P1-17 同形）。 */
 function stubClipboardWriteText(options: { reject?: boolean } = {}): {
@@ -63,6 +64,7 @@ describe('members-page', () => {
   })
 
   it('#152 角色徽标是中文，且与角色下拉同一套措辞（不再是 Owner vs Member）', async () => {
+    const user = userEvent.setup()
     renderApp('/members', memberListHandlers())
     const alice = (await screen.findByText('Alice')).closest('li') as HTMLElement
     const bob = screen.getByText('Bob').closest('li') as HTMLElement
@@ -73,9 +75,12 @@ describe('members-page', () => {
         expect(badge.textContent ?? '').not.toMatch(/[A-Za-z]/)
       }
     }
-    // 下拉选项用同一套角色名（徽标「成员」↔ 下拉「成员」）
-    expect(await screen.findByRole('option', { name: '成员' })).toBeVisible()
-    expect(screen.getByRole('option', { name: /管理员/ })).toBeVisible()
+    // 下拉项用同一套角色名（徽标「成员」↔ 下拉「成员」）。
+    // #158 起角色下拉是 vendored Menu：项是 `role=menuitem` 且**只在菜单打开时**在
+    // DOM 里（原来读 `option` 的写法在迁移后恒为空集，等于假绿）。
+    const list = await openSelect(user, '角色')
+    expect(list.getByRole('menuitem', { name: '成员' })).toBeVisible()
+    expect(list.getByRole('menuitem', { name: /管理员/ })).toBeVisible()
     expect(screen.queryByRole('option', { name: /Member|Admin/ })).not.toBeInTheDocument()
   })
 
@@ -98,7 +103,7 @@ describe('members-page', () => {
     const invite = createInviteHandler({ role: 'admin', expiresAt: '2026-08-28T10:00:00.000Z' })
     renderApp('/members', memberListHandlers([invite.handler]))
 
-    await user.selectOptions(await screen.findByLabelText('角色'), 'admin')
+    await selectOption(user, '角色', '管理员（可管理插件与邀请）')
     await user.click(screen.getByRole('button', { name: '生成邀请链接' }))
 
     // 链接完整可见（Token 只出现一次，必须当场给全）

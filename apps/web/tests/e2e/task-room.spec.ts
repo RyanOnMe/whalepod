@@ -15,7 +15,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
+import { assertNotNativeSelect } from './helpers.js'
 import { expectNoContrastOffenders } from './contrast-sweep.js'
+import {
+  PERSON_SLOTS,
+  ROSTER_PENDING_LABEL,
+  personRosterFromMembers,
+  personSlotProblems,
+  type PersonRoster,
+  type PersonSlot,
+  type PersonSlotSample,
+} from '../person-identity.js'
 
 interface E2eEnv {
   hubOrigin: string
@@ -36,9 +46,9 @@ const BOB_NAME = `bob-${RUN_TAG}`
 /** 以某个已登录会话的 Cookie 直调 Hub HTTP API（账号开通等非场景动作用）。 */
 async function hubApi(
   cookie: string,
-  method: 'POST',
+  method: 'GET' | 'POST',
   path: string,
-  body: unknown,
+  body?: unknown,
 ): Promise<{ status: number; data: unknown }> {
   const res = await fetch(`${env.hubOrigin}/api/v1${path}`, {
     method,
@@ -49,7 +59,7 @@ async function hubApi(
       'idempotency-key': randomUUID(),
       cookie,
     },
-    body: JSON.stringify(body),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   })
   const json = (await res.json()) as { ok: boolean; data?: unknown }
   return { status: res.status, data: json.data }
@@ -79,6 +89,12 @@ async function fillAndEnter(page: Page, selector: string, value: string): Promis
  * 只读 `innerText`（用户真正看得见的文本，display:none 不算），不扫 DOM 属性：
  * 判据是「人看到的」，不是「源码里有没有」。调用点都先等待目标区域渲染完成，
  * 避免扫到一个空页面就算通过。
+ *
+ * **已知盲区（#162 补）**：`shortId()` 产出的是 8 位**不带连字符**的十六进制，
+ * 从 `UUID_SHAPE` 底下整类穿过（「当前责任人 01a08c11」就是这么上屏的）。指人的
+ * 位置改由 `expectPersonSlotsUseDisplayNames` 判——它位置敏感，且期望值取自真实
+ * 名册，不是「页面里别出现十六进制」那种一刀切（Run 短 id、用户名里的随机 tag、
+ * sha 前缀都合法长这个形状，一刀切会假红）。
  */
 const UUID_SHAPE = /[0-9a-f]{8}-[0-9a-f]{4}-/
 const BARE_STATUS_ENUM = /\b(pending|accepted|rejected|in_progress)\b/
@@ -87,6 +103,72 @@ async function expectNoJargonVisible(page: Page): Promise<void> {
   const text = await page.locator('body').innerText()
   expect(text, '页面可见文本不应出现 UUID 形态').not.toMatch(UUID_SHAPE)
   expect(text, '页面可见文本不应出现裸状态枚举').not.toMatch(BARE_STATUS_ENUM)
+}
+
+/** GET /team/members 的响应元素（Hub 出网字段子集；data 即裸数组）。 */
+interface RosterMember {
+  userId: string
+  username: string
+  displayName: string
+  enabled: boolean
+}
+
+/**
+ * #162 判据的期望值来源：控制面 HTTP 取真身名册（与页面同一数据源）。
+ * 判据里的成员名**不写死**——写死名字的判据只是在测测试自己；而且随机后缀的
+ * 用户名（`bob-1a2b3c4d`）本来就是本次要防假红的那类形状。
+ */
+async function fetchRoster(cookie: string): Promise<{
+  roster: PersonRoster
+  members: RosterMember[]
+}> {
+  const res = await hubApi(cookie, 'GET', '/team/members')
+  expect(res.status, 'GET /team/members 未返回 200（判据拿不到期望值）').toBe(200)
+  const members = res.data as RosterMember[]
+  expect(Array.isArray(members) && members.length > 0, '名册为空：判据失去期望值').toBe(true)
+  return { roster: personRosterFromMembers(members), members }
+}
+
+/**
+ * #162 判据：Task Room 里**指人的位置**必须说出「是谁」——成员显示名，或明确的
+ * 兜底文案（「未知成员」/「已离开的成员」），或视角词「你」；不得是 `shortId()`
+ * 的 8 位十六进制内部 id。
+ *
+ * 判定逻辑在 `../person-identity.js`（纯函数，组件测试与 e2e 共用一份，避免两处
+ * 口径分叉）；这里只负责用真浏览器的 locator 取**可见文本**并保证判据真的覆盖到
+ * 了元素——选择器失效或该区没渲染时必须红，不能静默通过（六原语·判定：缺一环必须失败）。
+ */
+async function expectPersonSlotsUseDisplayNames(
+  page: Page,
+  roster: PersonRoster,
+  slots: readonly PersonSlot[],
+  where: string,
+): Promise<void> {
+  const samples: PersonSlotSample[] = []
+  for (const slot of slots) {
+    const elements = page.locator(slot.selector)
+    const count = await elements.count()
+    expect(
+      count,
+      `#162 判据没覆盖到「${slot.what}」（${slot.selector} 无匹配元素）：选择器失效或该区未渲染`,
+    ).toBeGreaterThan(0)
+    /**
+     * 前提等待：名册没落定时人名位置本来就该写「未知成员」，此时判「说了谁」没有意义。
+     * 等它过去再采样；名册请求真挂了就一直等不到 → 超时判红（判定不了也是失败，
+     * 不能因为「看起来是加载态」就静默放过）。
+     */
+    await expect(
+      elements.first(),
+      `#162 名册未落定（仍呈现「${ROSTER_PENDING_LABEL}」）：无法判定「${slot.what}」是否写了人名`,
+    ).not.toContainText(ROSTER_PENDING_LABEL)
+    const texts: string[] = []
+    for (let index = 0; index < count; index += 1) {
+      texts.push(await elements.nth(index).innerText())
+    }
+    samples.push({ slot, texts })
+  }
+  const problems = personSlotProblems(samples, roster)
+  expect(problems, `#162 ${where}：人名位置出现内部 id 或说不出「是谁」`).toEqual([])
 }
 
 /**
@@ -196,14 +278,30 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     const bobUserId = ((await accepted.json()) as { data: { userId: string } }).data.userId
 
     // ---- Alice：创建 Task 并指派 Bob（#136 起责任人为下拉选择器，默认选中自己） ----
+    // #158：责任人下拉已从原生 <select> 迁到 vendored Menu，所以指派走**真人路径 +
+    // 键盘**——点开（aria-expanded 翻 true）→ 方向键 → Enter 选中。既要证明它不再是
+    // 原生 select（assertNotNativeSelect），也要证明键盘仍能完成这一步。
     await alice.getByRole('button', { name: '创建任务' }).click()
+    const createTaskForm = alice.locator('form[aria-label="创建任务"]')
     const taskIdInput = alice.locator('input[id^="task-title-"]')
     await taskIdInput.fill('起草验收报告')
-    await alice.selectOption('select[id^="task-assignee-"]', bobUserId)
-    await alice
-      .locator('form[aria-label="创建任务"]')
-      .getByRole('button', { name: /创建任务/ })
-      .click()
+    const assignee = createTaskForm.locator('button[id^="task-assignee-"]')
+    await assertNotNativeSelect(assignee, createTaskForm, '责任人')
+    await assignee.click()
+    await expect(assignee).toHaveAttribute('aria-expanded', 'true')
+    // 菜单项的顺序 = [placeholder(disabled), 各成员…]：placeholder 占 **index 0** 且不可选，
+    // 所以 `autoFocus`（聚焦第一个可用项）落在 **index 1**（默认选中的 Alice），
+    // 再按一次方向键到 index 2（Bob）——本切片首轮 e2e 实测踩到：把 `first()` 当成"首项"，
+    // 拿到的是被禁用的 placeholder（Received: inactive）。
+    const items = alice.getByRole('menu').getByRole('menuitem')
+    await expect(items.first()).toBeDisabled()
+    await expect(items.nth(1)).toBeFocused()
+    await alice.keyboard.press('ArrowDown')
+    await expect(items.nth(2)).toBeFocused()
+    await alice.keyboard.press('Enter')
+    await expect(assignee).toHaveAttribute('aria-expanded', 'false')
+    await expect(assignee).toContainText('Bob')
+    await createTaskForm.getByRole('button', { name: /创建任务/ }).click()
     await alice.waitForURL(/\/tasks\//)
     const taskUrl = new URL(alice.url()).pathname
     const taskId = taskUrl.split('/').pop() ?? ''
@@ -216,6 +314,29 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     // 分配状态走 ASSIGNMENT_STATUS_LABEL）。
     await expect(alice.locator('dt', { hasText: '当前责任人' })).toBeVisible()
     await expectNoJargonVisible(alice)
+
+    // ---- #162：指人的位置必须写显示名（此前是 `shortId()`，判据看不见） ----
+    // 期望值取自真身名册（控制面 HTTP），不是写死的姓名；Bob 是本次指派的责任人。
+    const { roster, members } = await fetchRoster(aliceCookie)
+    const bobMember = members.find((member) => member.username === BOB_NAME)
+    if (bobMember === undefined) {
+      throw new Error(`名册里没有 ${BOB_NAME}（判据的期望人缺失）`)
+    }
+    // 判据先跑（这样变异回短 id 时，第一个红灯就是判据自己的诊断）。
+    await expectPersonSlotsUseDisplayNames(
+      alice,
+      roster,
+      [PERSON_SLOTS.assignee, PERSON_SLOTS.assignmentNote],
+      'Task Room 首屏（Alice 视角）',
+    )
+    // 正向：这两处确实说出了 Bob 的显示名/用户名（不是「只要不是 id 就行」）。
+    await expect(alice.locator('[data-testid="task-assignee"]')).toContainText(
+      bobMember.displayName,
+    )
+    await expect(alice.locator('[data-testid="assignment-assignee-note"]')).toContainText(
+      bobMember.username,
+    )
+
     // #159：空态也要扫（空态引导文字往往是 secondary 灰，最容易掉到 AA 以下）。
     // 放在术语判据之后：那时 "当前责任人" 与留言区都已渲染出来，扫描不会取在渲染之前。
     await expectNoContrastOffenders(alice)
@@ -265,6 +386,25 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     await expect(alice.locator('span.badge', { hasText: '已接受' }).first()).toBeVisible()
     await expectNoJargonVisible(alice)
     await expectNoJargonVisible(bob)
+
+    // #162：留言作者同样是人名（Bob；Alice 视角下不是「你」），责任人仍写显示名。
+    // 判据先跑，正向断言随后（变异回短 id 时先看到判据的诊断）。
+    await expectPersonSlotsUseDisplayNames(
+      alice,
+      roster,
+      [PERSON_SLOTS.assignee, PERSON_SLOTS.commentAuthor],
+      'Alice 重载后的留言区',
+    )
+    await expect(alice.locator('[data-testid="comment-author"]').first()).toContainText(
+      bobMember.displayName,
+    )
+    // Bob 看自己：两处都是视角词「你」——它不是姓名，但判据必须放行（否则假红）。
+    await expectPersonSlotsUseDisplayNames(
+      bob,
+      roster,
+      [PERSON_SLOTS.assignee, PERSON_SLOTS.commentAuthor],
+      'Bob 自己视角',
+    )
 
     // 键盘可达性证据：从留言输入框 Tab 一步即达提交按钮（与 DOM 顺序一致）。
     await bob.focus('textarea[name="body"]')

@@ -42,7 +42,7 @@ pnpm vitest run --project web apps/web/tests/run-actions.spec.tsx
 | G7-02 | 同上 | 注入 100ms/50ms 时钟：确认窗口内不动进程；过期 SIGTERM；再宽限 SIGKILL；强杀退出投影 `run.cancelled(forced=true)` 双受众；Runtime 主动确认则 `forced=false` 且零升级信号；SIGTERM 免疫进程被 SIGKILL 收尾 |
 | G7-03 | `apps/node/tests/resilience/runtime-exit-no-restart.spec.ts` | 退出(1)→`run.failed(RUNTIME_LOST, code=1)`（owner 带 summary、project 只见错误码）；重复 `run.start` 不产生第二 Runtime；`code=0` 无终态帧同样判 lost；`completed` 后退出被忽略 |
 | G7-04（API/FK） | `apps/hub/tests/run-rerun.integration.spec.ts` | 带 `rerunOfRunId` 201 且响应/Task Room 携带血缘；非终态 409；跨 Task/未知 404；畸形 400；同 Idempotency-Key 重放同一 Run；DB FK 拒绝悬挂引用 |
-| G7-04/G7-05（UI） | `apps/web/tests/run-actions.spec.tsx` | 时间线「由 Run xx 重跑」；终态 Run「重跑此 Run」→ 确认 POST 带 `rerunOfRunId`；活跃 Run「取消 Run」带 Idempotency-Key；member 不可见动作 |
+| G7-04/G7-05（UI） | `apps/web/tests/run-actions.spec.tsx` | 时间线「重跑自第 N 次运行」（#162 起；此前是「由 Run <前8位> 重跑」，短 id 不再当标签，完整来源 runId 退到 `title`）；终态 Run「重跑此 Run」→ 确认 POST 带 `rerunOfRunId`；活跃 Run「取消 Run」带 Idempotency-Key；member 不可见动作 |
 | G7-05 | 同上 | `failed/lost` 出警示（含失败码），文案含「需验证外部状态」「不会自动重放」，且不出现「安全重放/已安全恢复」；`completed` 无警示 |
 | G7-06 | `apps/hub/tests/run-cancel-route.integration.spec.ts`（断言 a）+ `apps/hub/tests/approval-decision.integration.spec.ts`（断言 b，P1-14 #59 已合入） | Alice（Owner 角色）可经 HTTP 取消 Bob 的 Run（`cause=admin`）；同一 Owner 角色对 Bob 的 Approval 决策被 HTTP 403 拒绝、行保持 pending（「不能替 Bob 批准」的 HTTP 面证据）；辅以 domain policy 单测（`decide_approval` 仅 owner）+ orchestrator `decided_by=owner` 强制 |
 | R4 | `apps/hub/tests/resilience/run-lease-resilience.spec.ts` | 断网 10s（FakeClock）+ `reconcileLeases` → Run 保持原状态、`failureCode` 为空；重连 `runtime.ready` → running；全程无 `lost` 事件 |

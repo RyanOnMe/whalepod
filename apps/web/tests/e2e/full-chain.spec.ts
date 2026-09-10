@@ -43,6 +43,8 @@ import {
   assertSeqContiguous,
   collectEvidenceOnFailure,
   fillAndEnter,
+  assertNotNativeSelect,
+  selectFromMenu,
   sleep,
   type RunFact,
 } from './helpers.js'
@@ -119,19 +121,23 @@ async function setupTeamAndTask(): Promise<void> {
 
   // Plugin Pack 行种子（harness.seed，P1-18 惯例）→ Agent 经真人 UI 创建。
   const pack = await seedPluginPack(shared.aliceUserId!)
-  await createAgentViaUi(alice, 'builder', pack.pluginPackId)
-  await createAgentViaUi(alice, 'reviewer', pack.pluginPackId)
+  // `pack.pluginPackId` 只用来断言种子成功；选 Pack 走名字（见 createAgentViaUi 的注释）
+  expect(pack.pluginPackId).not.toBe('')
+  await createAgentViaUi(alice, 'builder')
+  await createAgentViaUi(alice, 'reviewer')
 
   // Task：Alice 创建并指派 Bob（#136 责任人下拉选择器）；Bob 真实浏览器登录并接受。
   await alice.goto('/')
   await expect(alice.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
   await alice.getByRole('button', { name: '创建任务' }).click()
+  const createTaskForm = alice.locator('form[aria-label="创建任务"]')
   await alice.locator('input[id^="task-title-"]').fill('产出并复核验收报告')
-  await alice.selectOption('select[id^="task-assignee-"]', shared.bobUserId)
-  await alice
-    .locator('form[aria-label="创建任务"]')
-    .getByRole('button', { name: /创建任务/ })
-    .click()
+  // #158：责任人下拉是 vendored Menu（不再是原生 <select>）——反面钉 + 真人路径。
+  const assignee = createTaskForm.locator('button[id^="task-assignee-"]')
+  await assertNotNativeSelect(assignee, createTaskForm, '责任人')
+  await selectFromMenu(assignee, /Bob/)
+  await expect(assignee).toContainText('Bob')
+  await createTaskForm.getByRole('button', { name: /创建任务/ }).click()
   await alice.waitForURL(/\/tasks\//)
   const taskId = new URL(alice.url()).pathname.split('/').pop()
   if (taskId === undefined || taskId === '') throw new Error('Task URL 无法解析')
@@ -149,7 +155,7 @@ async function setupTeamAndTask(): Promise<void> {
   shared.bobCookie = await sessionCookie(shared.bobContext!)
 }
 
-async function createAgentViaUi(page: Page, name: string, pluginPackId: string): Promise<void> {
+async function createAgentViaUi(page: Page, name: string): Promise<void> {
   await page.goto('/agents')
   // #167：页面标题只说一次（原来 h1「Agent 管理」+ 紧接着的 h2「Agents」是同义重复），
   // 文案取主导航同一套的领域词。
@@ -159,7 +165,15 @@ async function createAgentViaUi(page: Page, name: string, pluginPackId: string):
   await page.fill('#agent-provider', 'replay')
   await page.fill('#agent-model', 'replay-model')
   await page.fill('#agent-credential-slot', 'default')
-  await page.selectOption('#agent-plugin-pack', pluginPackId)
+  // #158：Plugin Pack 下拉是 vendored Menu——反面钉（不再是原生 select）+ 真人路径
+  // （点开 → 点选项）。原来这里用 selectOption，只对原生 <select> 成立。
+  const packTrigger = page.locator('#agent-plugin-pack')
+  // #167：PackSelect 的可见标签/可访问名已中文化（#158 之后它是唯一来源）。
+  await assertNotNativeSelect(packTrigger, page.locator('form'), '插件组合（Plugin Pack）')
+  // 按**名字**点，不按 UUID：菜单项文案是 `pack.name`，而 control 面的种子包叫
+  // `e2e-pack`（scripts/e2e-serve.mts 的 /control/plugin-pack/seed）。
+  // #158 首轮 Q5 实测踩到：拿 `pluginPackId.slice(0, 8)` 去匹配永远是"找不到"。
+  await selectFromMenu(packTrigger, 'e2e-pack')
   await page.getByRole('button', { name: '创建 Agent' }).click()
   await expect(page.getByText(name).first()).toBeVisible()
   // #167：字段标签中文优先——`Credential Slot` 是内部概念，除标签外必须带一句
@@ -190,18 +204,22 @@ async function startRunViaUi(agentName: string, promptText: string): Promise<str
   // 真实用户动作；不加速重连本身）。
   await waitDeviceOnline()
   await bob.reload()
-  await expect(bob.getByLabel('选择 Agent')).toBeVisible({ timeout: 30_000 })
-  // #159：**就在这一刻扫**——启动面板已渲染、Run prompt 还是空的（显示 placeholder）。
+  const agentTrigger = bob.getByLabel('选择 Agent')
+  await expect(agentTrigger).toBeVisible({ timeout: 30_000 })
+  // #159：**就在这一刻扫对比度**——启动面板已渲染、Run prompt 还是空的（显示 placeholder）。
   // 一审抓到过本门的三种假绿（前景 alpha、控件文字/placeholder 从不被扫、底色无法判定），
   // 而全仓只有两处 placeholder（RunLauncher 与 RunActions），只有在"面板可见且未输入"
   // 的瞬间才能扫到它。变异验证：把 input/textarea::placeholder 改成 #e6e6e6 → 这里变红。
+  // #158 合并时保留此调用点（评审明确要求不要删）；它扫的是**已迁移后的**控件——
+  // 下拉触发器不再是原生 select，但仍是可见控件，扫描面反而更大。
   await expectNoContrastOffenders(bob)
-  await bob.getByLabel('选择 Agent').selectOption({ label: agentName })
-  await bob.getByLabel('选择设备').selectOption({ value: shared.deviceId! })
-  await expect(bob.getByLabel('选择 Workspace').locator('option').nth(1)).toBeAttached({
-    timeout: 30_000,
-  })
-  await bob.getByLabel('选择 Workspace').selectOption({ index: 1 })
+  // #158：RunLauncher 四处下拉都是 vendored Menu——反面钉 + 真人路径（点开 → 点选项）。
+  await assertNotNativeSelect(agentTrigger, bob.locator('.run-launcher'), '选择 Agent')
+  await selectFromMenu(agentTrigger, agentName)
+  // 设备项文案 = 「<设备名>（在线/离线）」，设备名取自 scripts/e2e-node.mts 的 'e2e-node'；
+  // 离线设备仍在列表里但不可选——这里按「在线」文案点，正好也钉住禁用项没被误点。
+  await selectFromMenu(bob.getByLabel('选择设备'), /e2e-node（在线）/)
+  await selectFromMenu(bob.getByLabel('选择 Workspace'), 'e2e-ws')
   await bob.getByLabel('Run prompt').fill(promptText)
   await bob.getByRole('button', { name: '启动 Run' }).click()
   // Run 行进时间线（责任人真人路径）。
@@ -242,12 +260,15 @@ async function waitForFreshRunId(): Promise<string> {
   throw new Error('UI 启动的 Run 未出现在 Task Room 聚合中')
 }
 
-/** 点选时间线中的 Run 行 → RunLivePanel（事件流走 realtime 键，真人路径）。 */
+/**
+ * 点选时间线中的 Run 行 → RunLivePanel（事件流走 realtime 键，真人路径）。
+ *
+ * #162 起行标签是「第 N 次运行」（短 id 不再冒充标签），所以定位改用行上的
+ * `data-run-id`——它是**定位**用锚点，可见文本仍是人话；判「行标签是人话」这件事
+ * 由下面的血缘用例断言。
+ */
 async function selectRun(page: Page, runId: string): Promise<void> {
-  await page
-    .locator('.run-item-button')
-    .filter({ hasText: `Run ${runId.slice(0, 8)}` })
-    .click()
+  await page.locator(`.run-item-button[data-run-id="${runId}"]`).click()
   await expect(page.getByTestId('run-live-events')).toBeVisible({ timeout: 30_000 })
 }
 
@@ -399,6 +420,13 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     // Alice（另一浏览器上下文）立即能下载（UI 下载 + HTTP 双核验）。
     await shared.alice!.reload()
     await expect(shared.alice!.getByText('Report').first()).toBeVisible({ timeout: 30_000 })
+    // #162：交付物的「来源运行」是人话句柄（第 N 次运行，可与时间线行对照），
+    // 完整 runId 只在 title 上——这一格以前直接印 `shortId(artifact.runId)`。
+    const sourceValue = shared
+      .alice!.locator('.artifact-item')
+      .first()
+      .locator(`dd[title="${shared.builderRunId}"]`)
+    await expect(sourceValue).toHaveText(/^第 \d+ 次运行$/)
     const artifactRow = (await getRunFact(shared.builderRunId!)).artifacts.find(
       (a) => a.id === shared.artifactId,
     )
@@ -793,12 +821,23 @@ test.describe('P1-19 Run 行动（G7-01 取消 / G7-04 重跑血缘）', () => {
     const newFact = await waitForRunStatus(newRunId, 'waiting_approval', 120_000)
     expect(newFact.run.rerunOfRunId).toBe(sourceRunId!)
 
-    // UI 呈现：血缘提示「由 Run <前8位> 重跑」（reload 取新快照后再点选）。
+    // UI 呈现（#162）：血缘句说「重跑自第 N 次运行」，来源 id 只在 title 上悬停可见
+    // ——不再有「由 Run <前8位> 重跑」这种拿短 id 当标签的写法。reload 取新快照后再点选。
     await shared.bob!.reload()
     await selectRun(shared.bob!, newRunId)
-    await expect(
-      shared.bob!.getByTestId('run-live-panel').getByTestId('run-lineage'),
-    ).toContainText(`由 Run ${sourceRunId!.slice(0, 8)} 重跑`)
+    const panel = shared.bob!.getByTestId('run-live-panel')
+    const lineage = panel.getByTestId('run-lineage')
+    // 整句匹配（而不是「全文不含短 id」）：这句话就是判据要的样子，短 id 自然无处容身；
+    // 对面板全文做一刀切否定会因事件文本里出现别处的哈希而假红。来源的序号 N 取决于
+    // 本 Task 到此刻已有几次运行，所以用正则锚形态、不写死 N。
+    await expect(lineage).toHaveText(/^重跑自第 \d+ 次运行$/)
+    await expect(lineage).toHaveAttribute('title', sourceRunId!)
+    // 行标签是人话句柄「第 N 次运行」（完整 id 在 title 上），面板标题说「本次运行」。
+    const rowLabel = shared.bob!.locator(`.run-item-button[data-run-id="${newRunId}"] .run-label`)
+    await expect(rowLabel).toHaveText(/^第 \d+ 次运行$/)
+    await expect(rowLabel).toHaveAttribute('title', newRunId)
+    const panelHeading = panel.getByRole('heading', { name: '本次运行' })
+    await expect(panelHeading).toHaveAttribute('title', newRunId)
     await approveAndCompleteLoose(newRunId)
     assertSeqContiguous(await getRunFact(newRunId))
     // 红线：来源 Run 终态不因重跑被改写。

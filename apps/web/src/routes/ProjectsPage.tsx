@@ -14,6 +14,7 @@ import { useNavigate } from 'react-router'
 import { api } from '../shared/api/client.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
 import { useSession } from '../app/session.js'
+import { SelectMenu } from '../shared/SelectMenu.js'
 import { RelativeTime } from '../shared/RelativeTime.js'
 import { TASK_STATUS_LABEL } from '../shared/format.js'
 import { useMemberDirectory } from '../features/team/memberDirectory.js'
@@ -282,33 +283,41 @@ function CreateTaskForm({
         />
       </div>
       <div className="field">
-        <label htmlFor={`task-assignee-${projectId}`}>责任人</label>
-        <select
+        {/* #158：责任人从原生 <select> 换成 vendored Menu 的包装（shared/SelectMenu）。
+            id 仍是 #task-assignee-<projectId>（每项目一个，e2e 按前缀定位），
+            label 仍指向它；只是元素变成 <button aria-haspopup="menu">。 */}
+        <SelectMenu
           id={`task-assignee-${projectId}`}
+          label="责任人"
           value={values.assigneeUserId}
-          onChange={(event) =>
-            setValues((prev) => ({ ...prev, assigneeUserId: event.target.value }))
-          }
-          required
-          disabled={directory.isPending}
-        >
-          <option value="" disabled>
-            {directory.isPending
+          placeholder={
+            directory.isPending
               ? '正在加载成员…'
               : selectableMembers.length === 0
                 ? '没有可选成员'
-                : '选择责任人'}
-          </option>
-          {selectableMembers.map((m) => (
-            <option key={m.userId} value={m.userId}>
-              {m.displayName}（@{m.username}）{m.userId === session?.userId ? ' · 你' : ''}
-            </option>
-          ))}
-        </select>
+                : '选择责任人'
+          }
+          options={selectableMembers.map((m) => ({
+            value: m.userId,
+            label: `${m.displayName}（@${m.username}）${m.userId === session?.userId ? ' · 你' : ''}`,
+            disabled: false,
+          }))}
+          onChange={(next) => setValues((prev) => ({ ...prev, assigneeUserId: next }))}
+          disabled={directory.isPending}
+        />
         {directory.isError ? <ErrorBanner error={directory.error} /> : null}
       </div>
       <div className="form-actions">
-        <button type="submit" className="button button-primary" disabled={mutation.isPending}>
+        {/* #158 起这条空值守卫是本表单**唯一**的拦截：责任人从原生
+            `<select required>` 换成按钮触发器后，浏览器侧的「不选不放行」随 required
+            一起消失（按钮不是表单可校验元素）。评审实测：成员列表未落地时默认选中
+            拿不到值，缺这条守卫会发出 `assigneeUserId: ""` 的请求，被协议层
+            z.uuid() 拒成 400（packages/protocol/src/http.ts）。别删。 */}
+        <button
+          type="submit"
+          className="button button-primary"
+          disabled={mutation.isPending || values.assigneeUserId === ''}
+        >
           {mutation.isPending ? '创建中…' : '创建任务'}
         </button>
         <button type="button" className="button button-quiet" onClick={onClose}>

@@ -7,7 +7,7 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
-import { shortId } from '../../shared/format.js'
+import { useMemberDirectory } from '../team/memberDirectory.js'
 import type { CommentView, Session } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
 
@@ -17,6 +17,9 @@ export interface CommentListProps {
 }
 
 export function CommentList({ comments, session }: CommentListProps): ReactNode {
+  // #162：留言作者写人名（显示名（@用户名）），不写 `shortId(authorUserId)`——
+  // 团队讨论里「谁说了这句」是主信息，半截 UUID 提供不了这个信息。
+  const directory = useMemberDirectory()
   if (comments.length === 0) {
     return <p className="empty-state">还没有留言——向责任人说明下一步吧。</p>
   }
@@ -27,7 +30,9 @@ export function CommentList({ comments, session }: CommentListProps): ReactNode 
         return (
           <li key={comment.id} className="comment-item">
             <div className="comment-meta">
-              <strong>{isMine ? '你' : shortId(comment.authorUserId)}</strong>
+              <strong data-testid="comment-author">
+                {isMine ? '你' : directory.personOf(comment.authorUserId)}
+              </strong>
               <RelativeTime iso={comment.createdAt} />
             </div>
             <p className="comment-body">{comment.body}</p>

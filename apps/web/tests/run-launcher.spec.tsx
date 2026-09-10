@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest'
 import { act, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { renderApp } from './render.js'
+import { openSelect, selectOption } from './select-menu.js'
 import {
   ALICE,
   BOB,
@@ -163,15 +164,16 @@ describe('RunLauncher', () => {
       loggedInHandlers(BOB, [taskRoomHandler(task), ...launcherHandlers(capture)]),
     )
 
-    // 级联：选 Agent → Revision 选项出现（缺省钉住当前 Revision）→ 设备 → Workspace。
-    const agentSelect = await screen.findByLabelText('选择 Agent')
-    await screen.findByRole('option', { name: 'Fixer' }) // 等 agents 查询落地
-    await user.selectOptions(agentSelect, AGENT_ID)
-    await waitFor(() => expect(screen.getByLabelText('选择 Revision')).toHaveValue(REVISION_ID))
-    await screen.findByRole('option', { name: /m4-mini/ })
-    await user.selectOptions(screen.getByLabelText('选择设备'), DEVICE_ID)
-    await screen.findByRole('option', { name: 'whalepod' })
-    await user.selectOptions(screen.getByLabelText('选择 Workspace'), WORKSPACE_ID)
+    // 级联：选 Agent → Revision 缺省钉住当前 Revision → 设备 → Workspace。
+    // #158：四处控件已从原生 <select> 迁移到 vendored Menu，所以这里走真人路径
+    // （点开 → 点选项）而不是 selectOptions 那条只有原生 select 才有的近道。
+    const agentTrigger = await screen.findByLabelText('选择 Agent')
+    expect(agentTrigger.tagName).toBe('BUTTON') // 反面钉：这一处不再是 <select>
+    await openSelect(user, '选择 Agent')
+    await user.click(screen.getByRole('menuitem', { name: 'Fixer' }))
+    await waitFor(() => expect(screen.getByLabelText('选择 Revision')).toHaveTextContent('r3'))
+    await selectOption(user, '选择设备', 'm4-mini（在线）')
+    await selectOption(user, '选择 Workspace', 'whalepod')
     await user.type(screen.getByLabelText('Run prompt'), '把登录页修好')
 
     const submit = screen.getByRole('button', { name: '启动 Run' })
@@ -240,7 +242,7 @@ describe('RunLivePanel', () => {
       ]),
     )
 
-    await user.click(await screen.findByRole('button', { name: /Run f6f6f6f6/ }))
+    await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
     expect(await screen.findByText('实时输出')).toBeVisible()
     expect(await screen.findByText('阶段：思考中')).toBeVisible()
 
@@ -286,7 +288,7 @@ describe('RunLivePanel', () => {
       ]),
     )
 
-    await user.click(await screen.findByRole('button', { name: /Run f6f6f6f6/ }))
+    await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
     expect(await screen.findByText('阶段：工具执行中')).toBeVisible()
     // project 缩水卡：reason 恒空 → 固定文案，不显示空框（03 §8）。
     expect(screen.getByText('等待责任人批准')).toBeVisible()

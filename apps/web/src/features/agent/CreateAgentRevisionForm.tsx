@@ -150,7 +150,7 @@ export function CreateAgentRevisionForm({ agent }: CreateAgentRevisionFormProps)
         </div>
       </div>
       <div className="field">
-        <label htmlFor="revision-plugin-pack">插件组合（Plugin Pack）</label>
+        {/* #167 × #158：标签文案由 PackSelect 的 label 传下去（见上），不重复 <label>。 */}
         <PackSelect
           id="revision-plugin-pack"
           value={values.pluginPackId}
