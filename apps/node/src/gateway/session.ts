@@ -45,7 +45,8 @@ export interface DeviceSessionDeps {
   }
   /**
    * #103：心跳事实采集失败的归因回调（与 onInventoryError 同构）。
-   * 缺省静默——但进程必须活着：本拍心跳跳过，Hub 侧设备陈旧判据自然兜底。
+   * #112：缺省**不静默**——回落到结构化 stderr warn（component=node.session），
+   * 调用方可覆盖不可遗忘（cli.ts 接的正是同形态结构化行）。
    */
   readonly onHeartbeatError?: (error: unknown) => void
   /**
@@ -61,7 +62,7 @@ export interface DeviceSessionDeps {
    * Hub upsert 幂等。缺省不探测（行为退化为只连后上报）。
    */
   readonly inventoryRevision?: () => Promise<string>
-  /** #89：inventory 构建/发送失败的归因回调（缺省无操作）。 */
+  /** #89：inventory 构建/发送失败的归因回调（#112：缺省同族 stderr warn 兜底）。 */
   readonly onInventoryError?: (error: unknown) => void
   readonly WebSocketImpl?: HubSocketOptions['WebSocketImpl']
   readonly random?: () => number
@@ -91,6 +92,27 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
   const clearTimeoutFn = deps.clearTimeoutImpl ?? clearTimeout
   const heartbeatMs = deps.heartbeatMs ?? HEARTBEAT_INTERVAL_MS
 
+  // #112：归因回调缺省不静默——调用方忘接也有结构化 stderr 留痕（footgun 拆掉）。
+  // stderr 自身写不进时无处可报，吞掉是唯一诚实选择（绝不能让兜底掀掉宿主进程）。
+  const defaultWarn = (msg: string, error: unknown): void => {
+    try {
+      process.stderr.write(
+        `${JSON.stringify({
+          level: 'warn',
+          component: 'node.session',
+          msg,
+          error: error instanceof Error ? error.message : String(error),
+        })}\n`,
+      )
+    } catch {
+      // stderr 不可写：最后的出口也断了，保持进程活着。
+    }
+  }
+  const onHeartbeatError =
+    deps.onHeartbeatError ?? ((e: unknown) => defaultWarn('heartbeat_facts_failed', e))
+  const onInventoryError =
+    deps.onInventoryError ?? ((e: unknown) => defaultWarn('inventory_report_failed', e))
+
   let current: SocketLike | undefined
   let attempt = 0
   let revoked = false
@@ -113,7 +135,7 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
       me.send(inventoryFrame(deps.config.deviceId, facts))
       lastInventoryRevision = revision
     })().catch((error: unknown) => {
-      deps.onInventoryError?.(error)
+      onInventoryError(error)
     })
   }
 
@@ -126,7 +148,7 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
       try {
         facts = deps.heartbeatFacts?.()
       } catch (error) {
-        deps.onHeartbeatError?.(error)
+        onHeartbeatError(error)
         return
       }
       current.send(
@@ -202,7 +224,7 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
             lastInventoryRevision = revision
           }
         })().catch((error: unknown) => {
-          deps.onInventoryError?.(error)
+          onInventoryError(error)
         })
       }
     })
