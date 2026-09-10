@@ -1,7 +1,9 @@
 /**
  * vendored from deepseek-ai/deepseek-harness packages/client/ui-primitives/src/StateDot.tsx
  * @ c291e7961a515f6d7af9304e7fd1d257929aef26（MIT，见同目录 LICENSE）
- * 本仓改动（仅工程口径，未动视觉与行为）：`clsx` → `./cx.js`；import 后缀 `.tsx` → `.js`。
+ * 本仓改动分两类：①工程口径（`clsx` → `./cx.js`、import 补 `.js` 后缀）；
+ * ②可测性（两个渲染分支都新增根属性 `data-vendored="state-dot"`、允许调用方覆写 `data-testid`）。
+ * ②是 API 面的改动而不是纯格式差异——**视觉与行为未改**，但同步上游时它属于要保留的改动。
  */
 import { cx } from './cx.js'
 import css from './StateDot.module.css'

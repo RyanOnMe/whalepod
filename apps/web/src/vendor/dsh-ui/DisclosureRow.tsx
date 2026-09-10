@@ -1,7 +1,9 @@
 /**
  * vendored from deepseek-ai/deepseek-harness packages/client/ui-primitives/src/DisclosureRow.tsx
  * @ c291e7961a515f6d7af9304e7fd1d257929aef26（MIT，见同目录 LICENSE）
- * 本仓改动（仅工程口径，未动视觉与行为）：`clsx` → `./cx.js`；import 后缀 `.tsx` → `.js`。
+ * 本仓改动分两类：①工程口径（`clsx` → `./cx.js`、import 补 `.js` 后缀）；
+ * ②依赖收缩（chevron 图标改从本目录 `./icons.js` 引入——上游是 119KB 的
+ * `./icons/index.tsx` 桶文件，本仓只 vendored 那一个符号）——**视觉与行为未改**。
  */
 import { type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import { cx } from './cx.js'

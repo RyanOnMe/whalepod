@@ -20,9 +20,16 @@
 ## 怎么改
 
 - **别顺手改 vendored 文件**：视觉/行为应与上游保持一致，否则下次同步上游时无法比对
-  差异。需要偏离上游时，在文件顶部注释里写清「本仓改动 + 为什么」。
-- 本仓只允许两类改动：①工程口径（`clsx` → `./cx.js`、import 后缀 `.js`、oxfmt 格式）；
-  ②**不得新增**任何运行时依赖，也不得出现 `@deepseek-ai/*` 或 `@whalepod/*` 说明符。
+  差异。需要偏离上游时，在文件顶部注释里写清「本仓改动 + 为什么」——出处注释按
+  **①工程口径**（`clsx` → `./cx.js`、import 后缀 `.js`）与**②功能性改动**（如 `Tag.tsx`/
+  `StateDot.tsx` 为可测性新增的 `data-vendored` / 可覆写 `data-testid`）分类写明，同步
+  上游时②必须保留，别把它当格式差异抹掉。
+- 运行时依赖：**不得新增**任何第三方依赖，也不得出现 `@deepseek-ai/*` 或
+  `@whalepod/*` 说明符。
 - 新增文件（哪怕只多取一个图标）必须登记进 `manifest.json`。
-- 样式只吃 `--dsw-*` 变量（L1 白名单在 `apps/web/src/styles/dsw-tokens.css`），
-  不要在 vendored CSS 里写死颜色或引用本仓 `--color-*` token。
+- 样式变量只吃 `--dsw-*`（L1 白名单在 `apps/web/src/styles/dsw-tokens.css`）——唯一的
+  **已知例外**是 `DisclosureRow.module.css` 引用的两个上游 body 发布变量
+  `--dsh-content-font-size-secondary` 与 `--dsh-content-font-delta`（每处引用都带
+  fallback：13px / 0px，L1 不提供也能正确降级）；`StateDot.module.css` 另有一个文件内
+  自定义、自给自用的局部变量 `--dsh-state-ongoing`。除此之外不要在 vendored CSS 里写死
+  颜色或引用本仓 `--color-*` token。

@@ -53,10 +53,14 @@ const DEVICE_STATE_TONE: Readonly<Record<DeviceView['status'], TagTone>> = {
  * 挂 `data-vendored`**：两个 vendored 组件各自在根元素上带 `data-vendored="state-dot"` /
  * `"tag"`，外层再挂一次会让 `[data-vendored="tag"]` 一行匹配到两个元素（Playwright
  * strict 模式直接判失败），也分不清命中的是不是真带 hash 类名的那个元素。
+ *
+ * `device-status-<status>` 修饰类只做一件事：把该状态的语义 token 局部重映射到上游 900
+ * 档深色，让 vendored 组件自己解析到满足 WCAG AA 的颜色（为什么与实测对比度见
+ * global.css 的「AA 重映射」注释）。基类与修饰类都在外层挂，两个 vendored 组件一个字不改。
  */
 function DeviceStatus({ status }: { status: DeviceView['status'] }): ReactNode {
   return (
-    <span className="device-status" data-testid="device-status">
+    <span className={`device-status device-status-${status}`} data-testid="device-status">
       <StateDot state={DEVICE_STATE_DOT[status]} />
       <Tag tone={DEVICE_STATE_TONE[status]}>{DEVICE_STATUS_LABEL[status]}</Tag>
     </span>

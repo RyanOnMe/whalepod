@@ -8,11 +8,13 @@
  * B. 真实界面接线：/devices 的设备状态改用 vendored StateDot + Tag 渲染，文案仍是
  *    「在线/离线/已撤销」（#142 的用例按文本断言，这里同时钉住 data-state/data-tone）。
  * C. vendored 子树的静态纪律：零 @deepseek-ai/*、零第三方 import（react 除外）、
- *    每个文件带出处注释、引用的 --dsw-* 变量在 L1 白名单里有定义、manifest.json
- *    登记了全部文件。
+ *    每个文件带出处注释、引用的 --dsw-* 变量在 L1 白名单里有定义（两个 --dsh-* 例外
+ *    列明且必须带 fallback）、manifest.json 覆盖口径。
+ * D. 设备状态配色的 WCAG 2.1 AA 门（审查回归）：三个状态的文字/色块对比度实测复算。
  *
- * 没验的（如实说明）：①颜色/间距/深色一套（vitest 不处理 CSS，要真实浏览器才谈得上）；
- * ②与上游的逐像素一致性；③L3 运行视图（不在本切片）。
+ * 没验的（如实说明）：①间距/深色一套的视觉（vitest 不处理 CSS，要真实浏览器才谈得上；
+ * 颜色本身在 D 里按 CSS 文本算过，e2e 另按浏览器实测值再算一遍）；②与上游的逐像素一致性；
+ * ③L3 运行视图（不在本切片）。
  */
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -21,7 +23,24 @@ import { fireEvent, screen, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { renderApp, renderUi } from './render.js'
 import { ALICE, devicesHandler, loggedInHandlers, makeDevice } from './fixtures.js'
+import {
+  WHITE,
+  contrastOnTint,
+  contrastRatio,
+  parseCssColor,
+  readTokenValue,
+  readToneTintPercent,
+  round2,
+} from './contrast.js'
 import { Button, DisclosureRow, Pill, StateDot, Switch, Tag } from '../src/vendor/dsh-ui/index.js'
+
+// 用 import.meta.dirname（纯路径字符串）而不是 import.meta.url + fileURLToPath：
+// 在 vitest 的 jsdom 环境里，collect 阶段 new URL(...) 拿到的是 jsdom 的 URL 实例，
+// fileURLToPath 不认（"must be of scheme file"）；dirname 不受环境影响。
+const repoRoot = join(import.meta.dirname, '../../..')
+const vendorDir = join(repoRoot, 'apps/web/src/vendor/dsh-ui')
+const sourceFiles = readdirSync(vendorDir).filter((f) => f.endsWith('.ts') || f.endsWith('.tsx'))
+const cssFiles = readdirSync(vendorDir).filter((f) => f.endsWith('.module.css'))
 
 describe('Button（L2 原语）', () => {
   it('默认 type=button、文案上屏、点击触发 onClick、外部类名透传', async () => {
@@ -286,12 +305,12 @@ describe('设备页状态改用 vendored StateDot + Tag（#138 交付物 3）', 
       ]),
     )
 
-    const expected: readonly (readonly [string, string, string, string])[] = [
-      ['m4-mini', '在线', 'done', 'success'],
-      ['thinkpad-x1', '离线', 'warning', 'warning'],
-      ['old-air', '已撤销', 'error', 'danger'],
+    const expected: readonly (readonly [string, string, string, string, string])[] = [
+      ['m4-mini', '在线', 'done', 'success', 'device-status-online'],
+      ['thinkpad-x1', '离线', 'warning', 'warning', 'device-status-offline'],
+      ['old-air', '已撤销', 'error', 'danger', 'device-status-revoked'],
     ]
-    for (const [name, label, dotState, tone] of expected) {
+    for (const [name, label, dotState, tone, statusClass] of expected) {
       const heading = await screen.findByRole('heading', { name })
       const row = heading.closest('li')
       expect(row).not.toBeNull()
@@ -299,6 +318,9 @@ describe('设备页状态改用 vendored StateDot + Tag（#138 交付物 3）', 
       // 稳定锚点：外层 data-testid，内层两个 data-vendored（Q5 判计算样式时按它们定位）。
       const status = within(row).getByTestId('device-status')
       expect(status.querySelector('[data-vendored="state-dot"]')).not.toBeNull()
+      // 每个状态带自己的修饰类：AA 重映射就挂在这个类上（见 global.css），
+      // 挂错元素会让重映射失效而看起来「一切正常」。
+      expect(status).toHaveClass(statusClass)
       // 文案：#142 的 Q5 用例按文本断言，这里钉住「换渲染层没换文案」。
       const text = within(status).getByText(label)
       expect(text).toHaveAttribute('data-tone', tone) // Tag
@@ -315,14 +337,6 @@ describe('设备页状态改用 vendored StateDot + Tag（#138 交付物 3）', 
  * 透明、偷偷 import 上游包就绕过边界门），所以用测试守，而不是靠 review 记得。
  */
 describe('vendored 子树纪律（#138）', () => {
-  // 用 import.meta.dirname（纯路径字符串）而不是 import.meta.url + fileURLToPath：
-  // 在 vitest 的 jsdom 环境里，collect 阶段 new URL(...) 拿到的是 jsdom 的 URL
-  // 实例，fileURLToPath 不认（"must be of scheme file"）；dirname 不受环境影响。
-  const repoRoot = join(import.meta.dirname, '../../..')
-  const vendorDir = join(repoRoot, 'apps/web/src/vendor/dsh-ui')
-  const sourceFiles = readdirSync(vendorDir).filter((f) => f.endsWith('.ts') || f.endsWith('.tsx'))
-  const cssFiles = readdirSync(vendorDir).filter((f) => f.endsWith('.module.css'))
-
   it('至少 vendored 了约定的 6 个组件与 L1 token 白名单', () => {
     expect(sourceFiles.length).toBeGreaterThanOrEqual(7)
     expect(cssFiles.sort()).toEqual([
@@ -407,11 +421,14 @@ describe('vendored 子树纪律（#138）', () => {
     ).toEqual(['apps/web/src/vendor/dsh-ui/cx.ts'])
   })
 
-  it('vendored CSS 只吃 --dsw-*，且每个变量都在 L1 白名单里有定义；白名单在 tokens.css 之后引入', () => {
+  it('vendored CSS 只吃 L1 白名单（--dsw-*）+ 两个列明的 --dsh-* 例外；白名单在源码里于 tokens.css 之后引入', () => {
+    // 先去掉注释再扫：上游注释里就出现过变量名（如 DisclosureRow 的排版说明），
+    // 不剥注释会把「注释里提到的变量」误当成「文件里定义的变量」。
     const vendorCss = readdirSync(vendorDir)
       .filter((f) => f.endsWith('.module.css'))
       .map((f) => readFileSync(join(vendorDir, f), 'utf8'))
       .join('\n')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
     // 不得反向引用本仓业务 token（--color-*/--space-* 是原型视觉语言，不是 L1）。
     expect(vendorCss.match(/--color-[a-z-]+/g) ?? []).toEqual([])
 
@@ -424,10 +441,126 @@ describe('vendored 子树纪律（#138）', () => {
       expect(tokensCss, `L1 白名单缺定义：${name}`).toContain(`${name}:`)
     }
 
+    // 已知例外（不是漏洞，是上游 body 发布的 content 轴，且每处都带 fallback）：
+    // 只有 DisclosureRow.module.css 引用这两个 --dsh-* 变量。清单一旦变化就得改注释
+    // 与 README/manifest 的措辞，所以在这里钉死。
+    const consumedDshVars = new Set(
+      [...vendorCss.matchAll(/var\((--dsh-[a-z0-9-]+)/g)].map((m) => m[1] ?? ''),
+    )
+    const locallyDefined = new Set(
+      [...vendorCss.matchAll(/(--dsh-[a-z0-9-]+)\s*:/g)].map((m) => m[1] ?? ''),
+    )
+    // 外部依赖 = 引用了但本子树没有定义的 --dsh-*。
+    const external = [...consumedDshVars].filter((name) => !locallyDefined.has(name)).sort()
+    expect(external, '--dsh-* 外部依赖清单变了，必须同步注释/README/manifest').toEqual([
+      '--dsh-content-font-delta',
+      '--dsh-content-font-size-secondary',
+    ])
+    for (const name of external) {
+      // 例外必须真带 fallback：L1 不提供也要能正确降级。
+      const uses = [...vendorCss.matchAll(new RegExp(`var\\(${name}\\s*,[^)]*\\)`, 'g'))]
+      const total = [...vendorCss.matchAll(new RegExp(`var\\(${name}[,)]`, 'g'))]
+      expect(uses.length, `${name} 每一处引用都必须带 fallback`).toBe(total.length)
+    }
+    // 子树内部自给的局部变量（定义+使用都在同一文件）不构成外部依赖，但也要在册，
+    // 免得以后多出一个没人知道来源的变量。
+    expect([...locallyDefined].sort()).toEqual(['--dsh-state-ongoing'])
+
     const globalCss = readFileSync(join(repoRoot, 'apps/web/src/styles/global.css'), 'utf8')
     const prototypeAt = globalCss.indexOf("@import './tokens.css'")
     const dswAt = globalCss.indexOf("@import './dsw-tokens.css'")
     expect(prototypeAt).toBeGreaterThanOrEqual(0)
     expect(dswAt).toBeGreaterThan(prototypeAt)
+    // 源码 import 顺序不是产物序保证——注释里必须写明这点（实测产物序见 global.css）。
+    expect(globalCss).toContain('这不是产物序')
+  })
+})
+
+/**
+ * 设备状态配色的 WCAG AA 门（#138 审查回归）。
+ *
+ * 事实：vendored Tag 的 success/warning 是 11px 小字 + 10%~12% 同色浅底，上游取的是
+ * 500 档亮色，白底上只有 2.2 左右——上游 design-platform.css 里只有 state-warn-label
+ * 一个文字专用变体，success/error 没有，即「DSH 的浅底小字」本身不满足 AA（他们的
+ * 取舍，不是我们抄错）。prototype/IMPLEMENTATION-PLAN.md:17 明写 AA 为基线，所以本仓
+ * 在设备页包裹元素上做局部重映射（global.css 的 .device-status-*），不动 vendored 文件。
+ *
+ * 这门同时覆盖「当前渲染不出来的状态」：色值全部从 CSS 文本取，三个状态各自算一遍。
+ */
+describe('设备状态配色 AA 门（#138 审查回归）', () => {
+  const tokensCss = readFileSync(join(repoRoot, 'apps/web/src/styles/dsw-tokens.css'), 'utf8')
+  const globalCss = readFileSync(join(repoRoot, 'apps/web/src/styles/global.css'), 'utf8')
+  const tagCss = readFileSync(join(vendorDir, 'Tag.module.css'), 'utf8')
+
+  const CASES = [
+    {
+      status: 'online',
+      label: '在线',
+      alias: '--dsw-alias-state-success-primary',
+      dark: '--dsw-static-green-900',
+      tone: 'success',
+    },
+    {
+      status: 'offline',
+      label: '离线',
+      alias: '--dsw-alias-state-warn-primary',
+      dark: '--dsw-static-amber-900',
+      tone: 'warning',
+    },
+    {
+      status: 'revoked',
+      label: '已撤销',
+      alias: '--dsw-alias-state-error-primary',
+      dark: '--dsw-static-red-900',
+      tone: 'danger',
+    },
+  ] as const
+
+  it('重映射接线在：global.css 把三个状态各自的 alias 指到上游 900 静态色', () => {
+    for (const item of CASES) {
+      const rule = new RegExp(`\\.device-status-${item.status}\\s*\\{([^}]*)\\}`).exec(
+        globalCss,
+      )?.[1]
+      expect(rule, `${item.status} 缺少 .device-status-${item.status} 重映射规则`).toBeDefined()
+      expect(rule).toContain(`${item.alias}: var(${item.dark})`)
+      // 深色档取值必须来自 dsw-tokens.css 的白名单（不是就地写死的 rgb）。
+      expect(tokensCss, `${item.dark} 不在 L1 白名单里`).toContain(`${item.dark}:`)
+    }
+  })
+
+  it('实测复算：文字 vs 自身浅底 ≥4.5:1、色块 vs 白底 ≥3:1（三个状态都算）', () => {
+    const rows: string[] = []
+    for (const item of CASES) {
+      const text = parseCssColor(readTokenValue(tokensCss, item.dark))
+      expect(text.a, `${item.dark} 应是不透明色`).toBe(1)
+      const tint = readToneTintPercent(tagCss, item.tone)
+      const onTint = contrastOnTint(text, tint)
+      const dotOnWhite = contrastRatio(text, WHITE)
+      rows.push(
+        `${item.label} 文字/浅底 ${round2(onTint)}:1（底 ${Math.round(tint * 100)}%）` +
+          `、色块/白底 ${round2(dotOnWhite)}:1`,
+      )
+      expect(
+        onTint,
+        `${item.label} 文字对比度不足 4.5:1（实测 ${round2(onTint)}）`,
+      ).toBeGreaterThanOrEqual(4.5)
+      expect(
+        dotOnWhite,
+        `${item.label} 色块对比度不足 3:1（实测 ${round2(dotOnWhite)}）`,
+      ).toBeGreaterThanOrEqual(3)
+    }
+    // 实测数字留痕（评审要的是「算出来的」而不是「声称的」）。
+    console.log(`[#138 AA] ${rows.join('；')}`)
+  })
+
+  it('反向钉：上游 500 档亮色确实不达标——重映射不是装饰', () => {
+    for (const item of CASES) {
+      const bright = parseCssColor(readTokenValue(tokensCss, item.alias))
+      const onTint = contrastOnTint(bright, readToneTintPercent(tagCss, item.tone))
+      expect(
+        onTint,
+        `${item.label} 上游亮色竟已达标（${round2(onTint)}），可复核是否可以撤掉重映射`,
+      ).toBeLessThan(4.5)
+    }
   })
 })

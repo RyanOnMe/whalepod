@@ -1,7 +1,7 @@
 /**
  * vendored from deepseek-ai/deepseek-harness packages/client/ui-primitives/src/Pill.tsx
  * @ c291e7961a515f6d7af9304e7fd1d257929aef26（MIT，见同目录 LICENSE）
- * 本仓改动（仅工程口径，未动视觉与行为）：`clsx` → `./cx.js`；import 后缀 `.tsx` → `.js`。
+ * 本仓改动：仅工程口径（`clsx` → `./cx.js`、import 补 `.js` 后缀）——**视觉与行为未改**。
  */
 // Pill: capsule at the 24px text-line size, selectable when given `onClick`
 // (view switcher tabs, filters) and a static span otherwise — TerminalBlock's

@@ -1,7 +1,12 @@
 /* 全局样式与布局（P1-07）。引入设计变量后使用；360px 单列无水平滚动。 */
 @import './tokens.css';
-/* L1（#138）：vendored DSH 原语消费的 --dsw-* 白名单，必须在 tokens.css 之后引入
- * （两族变量并存、互不覆盖：tokens.css 是 --color-*，本文件是 --dsw-*）。 */
+/* L1（#138）：vendored DSH 原语消费的 --dsw-* 白名单。
+ *
+ * 源码口径：这里按「tokens.css 在前、dsw-tokens.css 在后」写 import。**这不是产物序
+ * 保证**——实测 vite build 后的 CSS 顺序是「vendored 组件规则 → tokens.css（--color-*）
+ * → dsw 浅色（:root --dsw-*）→ dsw 深色（body[data-ds-dark-theme]）→ 本文件业务规则」，
+ * 与源码 import 顺序并不一致。两族变量互不引用、也无同名覆盖，所以这个差异对结果没有
+ * 影响；写清实测顺序是为了避免后人把源码顺序当成依赖（真要依赖顺序就得靠 layer）。 */
 @import './dsw-tokens.css';
 
 * {
@@ -787,6 +792,42 @@ select {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+}
+
+/* AA 重映射（#138 审查回归修复）：vendored 的状态色在白底上不满足 WCAG 2.1 AA。
+ *
+ * 为什么这么做：Tag 的 success/warning/danger 是「11px 小字 + 10%~12% 同色浅底」，
+ * 上游取的是 500 档亮色（--dsw-alias-state-success-primary = rgb(34,197,94) 等），
+ * 实测白底对比度只有 2.09 / 1.96 / 3.82:1，连非文字图形要求的 3:1 都有两档不到；
+ * 上游 design-platform.css 里**只有 --dsw-alias-state-warn-label 一个文字专用变体**，
+ * success/error 没有 label 变体——即「DSH 的浅底小字」本身不满足 AA，这是上游的取舍，
+ * 不是我们抄错。prototype/IMPLEMENTATION-PLAN.md:17 明写「WCAG 2.1 AA 为基线」，所以
+ * 在本仓侧做局部重映射，**不动 vendored 文件一个字**。
+ *
+ * 做法：只在该状态自己的包裹元素上重定义对应的语义 token（--dsw-* 是继承属性，作用域
+ * 就到此元素为止，不会漏到别处），值取上游静态色阶的 900 档（同色系、逐字照抄，见
+ * dsw-tokens.css 的 --dsw-static-*-900）。vendored 组件那条规则原样解析到这个深色：
+ * 文字变深色、color-mix 的浅底随之变成同色系浅底（底和字仍是一家人），StateDot 同时
+ * 变深——非文字图形也需要 ≥3:1，亮绿在白底同样不过线。
+ *
+ * 实测（算法与断言见 apps/web/tests/contrast.ts + vendor-dsh-ui.spec.tsx 的「AA 门」，
+ * e2e 侧用同一套算法在浏览器实测值上再算一遍；单位 1，取样底为白卡片）：
+ *         文字 vs 自身 10%（warning 12%）浅底     色块 vs 白底
+ *   在线   2.09 → 10.03（≥4.5 ✓）                 2.28 → 11.97（≥3 ✓）
+ *   离线   1.96 → 12.24（≥4.5 ✓）                 2.15 → 15.46（≥3 ✓）
+ *   已撤销 3.82 → 11.75（≥4.5 ✓）                 4.50 → 14.35（≥3 ✓）
+ * 这三行数字是脚本复算出来的（不是估的）；改动 900 档取值或 Tag 的混合比例都会让它们变，
+ * 单测会先红。 */
+.device-status-online {
+  --dsw-alias-state-success-primary: var(--dsw-static-green-900);
+}
+
+.device-status-offline {
+  --dsw-alias-state-warn-primary: var(--dsw-static-amber-900);
+}
+
+.device-status-revoked {
+  --dsw-alias-state-error-primary: var(--dsw-static-red-900);
 }
 
 .device-list {

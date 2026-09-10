@@ -1,6 +1,7 @@
 {
   "//": "Vendored DSH client UI 来源台账（#138 L1+L2 首批切片）。改动 vendored 文件前先读 README.md；新增文件必须在此登记。",
-  "coverage": "口径：components[] 逐个登记全部源码与样式文件（.ts/.tsx/.module.css），meta[] 登记元文件（README.md/LICENSE/manifest.json 自身）；两者并集 = 本目录全部文件，逐个可核对（Q0 单测 apps/web/tests/vendor-dsh-ui.spec.tsx 按此口径断言）。所有文件顶部统一加出处注释（上游路径 + commit SHA + 本仓改动），components[] 的 adaptations 只列代码/样式层面的实际改动。",
+  "coverage": "口径：components[] 逐个登记全部源码与样式文件（.ts/.tsx/.module.css），meta[] 登记元文件（README.md/LICENSE/manifest.json 自身）；两者并集 = 本目录全部文件，逐个可核对（Q0 单测 apps/web/tests/vendor-dsh-ui.spec.tsx 按此口径断言）。所有文件顶部统一加出处注释（上游路径 + commit SHA + 本仓改动），改动按「①工程口径」与「②功能性改动」分类写明（②如 Tag.tsx/StateDot.tsx 的可测性锚点，同步上游时必须保留）；components[] 的 adaptations 只列代码/样式层面的实际改动。",
+  "tokenScope": "样式变量：--dsw-* 走 L1 白名单（apps/web/src/styles/dsw-tokens.css）。已知例外（只有 DisclosureRow.module.css）：上游 body 发布的 --dsh-content-font-size-secondary 与 --dsh-content-font-delta，每处引用都带 fallback（13px / 0px），L1 不提供也能正确降级。另有 StateDot.module.css 文件内自定义、自给自用的局部变量 --dsh-state-ongoing（不构成外部依赖）。除此之外 vendored CSS 不引用任何非 --dsw-* 变量，也不引用本仓 --color-*。",
   "upstream": {
     "repository": "github.com/deepseek-ai/deepseek-harness",
     "ref": "master",

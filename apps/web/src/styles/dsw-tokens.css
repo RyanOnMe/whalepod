@@ -7,22 +7,26 @@
  *   取用 commit  c291e7961a515f6d7af9304e7fd1d257929aef26
  *
  * 白名单口径：**只抄 apps/web/src/vendor/dsh-ui/ 里 6 个原语 CSS 真正引用的变量**
- * （Button/Pill/Tag/StateDot/DisclosureRow/Switch 逐一 grep 得到），共 23 个——
- * 上游 design-platform.css 的 alias 段有近百个变量、静态色阶 78 个，这里只留必需的。
- * 本仓对上游做的两处收缩（都是「取值不变、体积变小」）：
- *   1. 静态色阶引用就地展开为 rgb() 字面量，只保留 --dsw-static-deepseek-450
- *      （StateDot 的 ongoing 蓝直接吃它，别名上无可替代）；
+ * （Button/Pill/Tag/StateDot/DisclosureRow/Switch 逐一 grep 得到），共 23 个，外加 3 个
+ * 静态色阶（green/red/amber-900，见下）——上游 design-platform.css 的 alias 段有近百个
+ * 变量、静态色阶 78 个，这里只留必需的。本仓对上游做的三处收缩/补齐（都「取值不变」）：
+ *   1. 静态色阶引用就地展开为 rgb() 字面量，只保留 4 个静态变量（deepseek-450 是
+ *      StateDot ongoing 蓝，900 三档是设备页 AA 重映射的取值来源，别名上无可替代）；
  *   2. alias→alias 的间接（--dsw-alias-button-primary-fill → --dsw-alias-brand-primary）
  *      保留原样，因为改品牌色时按钮要跟着动，这层间接是语义而不是冗余。
  * 未抄的两个上游变量是 DisclosureRow 用到的 --dsh-content-font-size-secondary 与
  * --dsh-content-font-delta（注意前缀是 --dsh-，属上游 body 发布的 content 轴，不在本
- * 白名单的 --dsw-* 范围内）；其每一处引用都带 fallback（13px / 0px），L1 不提供也能
- * 正确降级。若将来 L3 要做字号偏好，再按同一份 manifest 补。
+ * 白名单的 --dsw-* 范围内，是**已知例外**：只有 DisclosureRow.module.css 引用它俩）；
+ * 其每一处引用都带 fallback（13px / 0px），L1 不提供也能正确降级。若将来 L3 要做字号
+ * 偏好，再按同一份 manifest 补。
  *
  * 与既有 token 的关系（双轨并存的已知代价）：apps/web/src/styles/tokens.css 的
  * --color-* 与 --space-* 是本仓原型视觉语言，值一个没动；本文件只新增 --dsw-* 一族。
- * 引入顺序见 global.css：tokens.css 之后。两族不互相引用——vendored CSS 只吃 --dsw-*，
- * 本仓业务 CSS 继续吃 --color-*，需要对齐时在业务侧显式桥接，不要改 vendored 文件。
+ * 源码里 global.css 按「tokens.css 在前、dsw-tokens.css 在后」写 @import（**源码口径，
+ * 不是产物序保证**：实测 vite build 后的 CSS 顺序是「vendored 组件规则 → tokens.css →
+ * dsw 浅色 → dsw 深色 → global.css 业务规则」，见 global.css 顶部注释）。两族变量互不
+ * 引用、也没有同名覆盖，所以产物序对结果无影响；vendored CSS 只吃 --dsw-*，本仓业务
+ * CSS 继续吃 --color-*，需要对齐时在业务侧显式桥接，不要改 vendored 文件。
  *
  * 明暗两套按上游语义实现：浅色 = 上游 body 段，深色 = 上游 body[data-ds-dark-theme] 段。
  * 上游把变量定义在 body 上（便于局部作用域），本仓浅色挂在 :root；深色同样由
@@ -31,8 +35,15 @@
  * 切换时把它设到 body 上即可。两套里取值相同的变量不重写，见下方 dark 段的清单注释。
  */
 :root {
-  /* 静态色阶（23 个白名单里唯一的静态变量：StateDot 的 ongoing 用色，无 alias 可替） */
+  /* 静态色阶（白名单里的静态变量，别名上无可替代）：
+   * - deepseek-450：StateDot 的 ongoing 用色（上游 StateDot.module.css 直接吃它）；
+   * - 三个 900 档：设备页状态标记做 WCAG AA 重新映射的取值来源（见 global.css 的
+   *   .device-status-* 与「AA 重映射」注释）。上游 design-platform.css 里 900 档
+   *   位于静态段：green-900 第 36 行、red-900 第 77 行、amber-900 第 9 行，取值逐字照抄。 */
   --dsw-static-deepseek-450: rgb(86, 134, 254);
+  --dsw-static-green-900: rgb(35, 60, 44);
+  --dsw-static-red-900: rgb(87, 12, 12);
+  --dsw-static-amber-900: rgb(39, 36, 31);
 
   /* 背景层级 */
   --dsw-alias-bg-layer-2: rgb(255, 255, 255);

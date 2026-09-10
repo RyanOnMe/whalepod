@@ -1,7 +1,9 @@
 /* vendored from deepseek-ai/deepseek-harness packages/client/ui-primitives/src/DisclosureRow.module.css
  * @ c291e7961a515f6d7af9304e7fd1d257929aef26（MIT，见同目录 LICENSE）
- * 本仓改动：仅新增本条出处注释，样式声明一字未改；只消费 --dsw-* 变量，白名单见
- * apps/web/src/styles/dsw-tokens.css。
+ * 本仓改动：仅新增本条出处注释，样式声明一字未改。
+ * 变量：--dsw-* 白名单（apps/web/src/styles/dsw-tokens.css）+ 上游 body 发布的
+ * --dsh-content-font-size-secondary 与 --dsh-content-font-delta——**已知例外**：这两个不是
+ * 本仓 token，但每处引用都带 fallback（13px / 0px），L1 不提供也能正确降级。
  */
 /* Shared disclosure header: [16px leading] gap 6 [title 13/24] at the default
    size. The Settings font-size preference moves the row through the
