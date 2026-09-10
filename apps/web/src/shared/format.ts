@@ -2,7 +2,7 @@
  * 展示层格式化与状态文案（状态同时用文字+色块，见 prototype DESIGN.md §8：
  * 不能只靠颜色传达状态）。
  */
-import type { AssignmentStatus, RunStatus, TaskStatus } from './api/types.js'
+import type { AssignmentStatus, DeviceView, RunStatus, TaskStatus } from './api/types.js'
 
 export const TASK_STATUS_LABEL: Readonly<Record<TaskStatus, string>> = {
   open: '未开始',
@@ -30,6 +30,13 @@ export const RUN_STATUS_LABEL: Readonly<Record<RunStatus, string>> = {
   lost: '丢失',
 }
 
+/** 设备在线状态文案（#142；Hub 侧 deriveDeviceStatus 的 online/offline/revoked）。 */
+export const DEVICE_STATUS_LABEL: Readonly<Record<DeviceView['status'], string>> = {
+  online: '在线',
+  offline: '离线',
+  revoked: '已撤销',
+}
+
 /** ISO 时间 → 本地可读字符串；null 显示占位符。非法串原样返回（不伪装）。 */
 export function formatIso(iso: string | null): string {
   if (iso === null) return '—'
@@ -48,6 +55,17 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/**
+ * 剩余毫秒 → mm:ss 倒计时（#142 配对码有效期）。向上取整：只剩 0.4 秒时显示
+ * 00:01、归零才显示 00:00——既不提前宣布过期，也不给出负数倒计时。
+ */
+export function formatCountdown(ms: number): string {
+  const totalSeconds = Math.ceil(Math.max(0, ms) / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
 /** 成员列表接口缺失前的临时身份呈现：短 id，不伪造显示名（03 §9）。 */

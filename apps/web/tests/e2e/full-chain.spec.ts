@@ -161,7 +161,10 @@ async function createAgentViaUi(page: Page, name: string, pluginPackId: string):
 
 async function pairNodeViaUiAndControl(): Promise<void> {
   if (shared.deviceId !== undefined) return
-  // 配对码：Bob 会话 HTTP 旁路（设备配对 UI 属后续版本）。
+  // 配对码：Bob 会话 HTTP 旁路——**有意的分工**：本 spec 判的是整条 Run 链，
+  // 设备配对的真人路径（页面签发码 → 真 node CLI 消费 → 设备自动上屏）由
+  // `pairing-ui.spec.ts`（project p1-142）覆盖；此前那句「设备配对 UI 属后续版本」
+  // 已由 #142 兑现。
   const codeRes = await hubApi(shared.bobCookie!, 'POST', '/devices/pairing-codes', {})
   expect(codeRes.status).toBe(201)
   const code = (codeRes.data as { code: string }).code

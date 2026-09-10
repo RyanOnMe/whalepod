@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@whalepod/db'
-import { schema } from '@whalepod/db'
+import { listTeamEvents, schema } from '@whalepod/db'
 import {
   apiInject,
   createTestApp,
@@ -70,6 +70,21 @@ describe('device pairing API (G3-01..03)', () => {
       payload: { code, ...nodeInfo, ...overrides },
     })
   }
+
+  it('#142 契约：配对成功必须进 Team Event 流（device.changed）——页面靠它自动上屏', async () => {
+    // 断链背景：device.changed 在 protocol §5 的 8 个持久事件里、Web 的 event-router 也把它
+    // 失效到 ['devices']，但 Hub **从未发布过该事件**——于是「配对成功后设备自动出现，不用
+    // 刷新」这条承诺在服务端根本没有实现（#142 的 Q5 用例当场抓到）。本用例把「claim 成功
+    // ⟹ 有一条 device.changed」钉成契约：漏发即红。
+    const pairing = await createCode(bob)
+    const claimed = await claim(pairing.code)
+    expect(claimed.statusCode).toBe(201)
+    const { deviceId } = claimed.json().data as { deviceId: string }
+
+    const events = (await listTeamEvents(database.db)).filter((e) => e.type === 'device.changed')
+    expect(events).toHaveLength(1)
+    expect(events[0]?.payload).toMatchObject({ deviceId })
+  })
 
   it('G3-01: Bob 配对成功，Token 43 字符只出现一次，device 落库归 Bob', async () => {
     const pairing = await createCode(bob)

@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import type { Database } from '@whalepod/db'
 import {
+  appendTeamEvent,
   consumePairingCode,
   getDeviceById,
   insertDevice,
@@ -122,6 +123,13 @@ export async function claimPairingCode(
         tokenHash: hash,
         // 能力矩阵随使用逐步上报（P1-12 inventory）；配对时未知 → 空对象。
         capabilities: {},
+      })
+      // #142：设备进入 Team Event 流——protocol §5 的 device.changed 是浏览器
+      // 「设备自动上屏」的唯一触发面；不发就等于契约悬空（Web 的 event-router
+      // 一直在等它）。同事务写，回执与事件要么都在、要么都不在。
+      await appendTeamEvent(tx, {
+        type: 'device.changed',
+        payload: { deviceId: row.id, name: row.name },
       })
       return { deviceId: row.id, deviceToken: token }
     })

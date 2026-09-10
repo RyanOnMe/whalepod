@@ -8,7 +8,9 @@ import type { PluginPackView, TeamMemberView } from '@whalepod/protocol'
 import type {
   AgentView,
   CommentView,
+  DeviceView,
   InviteDetailsView,
+  PairingCodeView,
   ProjectView,
   Session,
   TaskRoomArtifact,
@@ -156,6 +158,18 @@ export function makeArtifact(overrides: Partial<TaskRoomArtifact> = {}): TaskRoo
     status: 'published',
     createdAt: '2026-08-25T03:00:00.000Z',
     publishedAt: '2026-08-25T03:05:00.000Z',
+    ...overrides,
+  }
+}
+
+export function makeDevice(overrides: Partial<DeviceView> = {}): DeviceView {
+  return {
+    id: nextId(),
+    name: 'm4-mini',
+    platform: 'darwin',
+    status: 'online',
+    dshDistributionVersion: null,
+    lastSeenAt: '2026-08-25T00:00:00.000Z',
     ...overrides,
   }
 }
@@ -487,6 +501,47 @@ export function makeMember(overrides: Partial<TeamMemberView> = {}): TeamMemberV
     role: 'owner',
     enabled: true,
     ...overrides,
+  }
+}
+
+export function devicesHandler(devices: DeviceView[]): MockHandler {
+  return { method: 'GET', url: /\/api\/v1\/devices$/, respond: () => ok(devices) }
+}
+
+/**
+ * 可变设备列表（#142）：配对成功后 Hub 扇出 device.changed，event-router 失效
+ * ['devices'] 触发 refetch——用例用 add 模拟「服务器那边已多了一台」，
+ * calls 计 refetch 次数，证明设备是重新拉取来的，不是别处凭空出现的。
+ */
+export function statefulDevices(initial: DeviceView[] = []): {
+  handler: MockHandler
+  add: (device: DeviceView) => void
+  calls: () => number
+} {
+  let devices = [...initial]
+  let calls = 0
+  return {
+    handler: {
+      method: 'GET',
+      url: /\/api\/v1\/devices$/,
+      respond: () => {
+        calls += 1
+        return ok([...devices])
+      },
+    },
+    add: (device) => {
+      devices = [...devices, device]
+    },
+    calls: () => calls,
+  }
+}
+
+/** POST /devices/pairing-codes：一次性配对码（明文只在本响应出现一次）。 */
+export function pairingCodeHandler(code: PairingCodeView): MockHandler {
+  return {
+    method: 'POST',
+    url: /\/api\/v1\/devices\/pairing-codes$/,
+    respond: () => created(code),
   }
 }
 

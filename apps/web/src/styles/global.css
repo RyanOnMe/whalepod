@@ -737,9 +737,113 @@ select {
   margin-top: var(--space-3);
 }
 
-/* ---------- 设备页 ---------- */
-.devices-empty {
-  max-width: 640px;
+/* ---------- 设备页（#142：配对码签发 + 设备列表） ---------- */
+.devices-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.devices-pairing,
+.devices-list,
+.devices-cli {
+  max-width: 720px;
+}
+
+.device-pairing-code {
+  margin: var(--space-2) 0;
+}
+
+.device-pairing-code code {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 20px;
+  letter-spacing: 0.08em;
+  background: var(--color-ink);
+  color: var(--color-paper);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  overflow-wrap: anywhere;
+}
+
+.device-pairing-countdown {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink-soft);
+  margin: var(--space-1) 0 var(--space-2);
+}
+
+.device-pairing-expired {
+  color: var(--color-warn);
+  font-weight: 600;
+}
+
+/* 设备状态：文字 + 色块同时给（不能只靠颜色传达状态，prototype DESIGN.md §8）。 */
+.badge-device-online {
+  background: var(--color-run-soft);
+  border-color: color-mix(in srgb, var(--color-run) 35%, transparent);
+  color: var(--color-run);
+}
+
+.badge-device-offline {
+  background: var(--color-warn-soft);
+  border-color: color-mix(in srgb, var(--color-warn) 35%, transparent);
+  color: var(--color-warn);
+}
+
+.badge-device-revoked {
+  background: var(--color-danger-soft);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+  color: var(--color-danger-strong);
+}
+
+.device-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.device-item {
+  border-bottom: 1px solid var(--color-line);
+  padding-bottom: var(--space-3);
+}
+
+.device-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.device-item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.device-item-head h3 {
+  margin: 0;
+}
+
+.device-meta {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin: var(--space-2) 0 0;
+}
+
+.device-meta div {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.device-meta dt {
+  color: var(--color-muted);
+}
+
+.device-meta dd {
+  margin: 0;
 }
 
 .cli-steps {

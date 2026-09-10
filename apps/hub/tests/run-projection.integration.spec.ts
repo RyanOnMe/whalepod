@@ -42,6 +42,16 @@ const silence = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)
 interface BrowserClient {
   readonly frames: ClientFrame[]
   take(n: number, timeoutMs?: number): Promise<ClientFrame[]>
+  /**
+   * 按谓词取帧（#142）：连接从 cursor=0 回放，帧流里还可能有别的持久事件
+   * （device.changed 现在会在配对/上线时入流），所以「我要的那类帧到了没有」
+   * 不能靠 take(n) 数位置——那等于把无关事件当成断言的一部分。
+   */
+  takeWhere(
+    predicate: (frame: ClientFrame) => boolean,
+    n: number,
+    timeoutMs?: number,
+  ): Promise<ClientFrame[]>
   close(): void
 }
 
@@ -132,6 +142,16 @@ describe('P1-13 run projection（Hub 侧）', () => {
             await silence(20)
           }
           return frames.slice(0, n)
+        },
+        takeWhere: async (predicate, n, timeoutMs = TAKE_TIMEOUT_MS) => {
+          const deadline = Date.now() + timeoutMs
+          for (;;) {
+            const matched = frames.filter(predicate)
+            if (matched.length >= n) return matched.slice(0, n)
+            if (Date.now() >= deadline)
+              throw new Error(`timeout waiting ${n} browser frames matching predicate`)
+            await silence(20)
+          }
         },
         close: () => socket.close(),
       }
@@ -302,7 +322,7 @@ describe('P1-13 run projection（Hub 侧）', () => {
 
     socket.send(nodeFrame('run.live_delta', { runId, deltaSeq: 1, text: 'Hello, ' }))
     socket.send(nodeFrame('run.live_delta', { runId, deltaSeq: 2, text: 'world' }))
-    const [f1, f2] = await aliceWs.take(2)
+    const [f1, f2] = await aliceWs.takeWhere((f) => f.kind === 'live', 2)
     expect(f1).toMatchObject({ kind: 'live', runId, deltaSeq: 1, delta: { text: 'Hello, ' } })
     expect(f2).toMatchObject({ kind: 'live', runId, deltaSeq: 2, delta: { text: 'world' } })
 
@@ -333,16 +353,16 @@ describe('P1-13 run projection（Hub 侧）', () => {
     )
     await node.take(3) // 三条 ack 排干
 
+    const isRunEvent = (f: ClientFrame): boolean =>
+      f.kind === 'persistent' && f.event.type === 'run.event'
+
     // alice（team owner 角色 + run owner）：三帧全见。
-    const aliceFrames = await aliceWs.take(3)
-    const aliceRunEvents = aliceFrames.filter(
-      (f) => f.kind === 'persistent' && f.event.type === 'run.event',
-    )
+    const aliceRunEvents = await aliceWs.takeWhere(isRunEvent, 3)
     expect(aliceRunEvents).toHaveLength(3)
 
     // bob（member）：只见 project 帧；owner/admin 帧在回放与轮询两路都不可见。
-    const bobFrames = await bobWs.take(1)
-    expect(bobFrames[0]).toMatchObject({
+    const [bobFrame] = await bobWs.takeWhere(isRunEvent, 1)
+    expect(bobFrame).toMatchObject({
       kind: 'persistent',
       event: { type: 'run.event', payload: { audience: 'project' } },
     })
@@ -352,8 +372,8 @@ describe('P1-13 run projection（Hub 侧）', () => {
     // bob 断线重连（回放路径）也只补到 project 帧。
     bobWs.close()
     const bobAgain = await connectBrowser(bob)
-    const replayed = await bobAgain.take(1)
-    expect(replayed[0]).toMatchObject({
+    const [replayedFrame] = await bobAgain.takeWhere(isRunEvent, 1)
+    expect(replayedFrame).toMatchObject({
       kind: 'persistent',
       event: { type: 'run.event', payload: { audience: 'project' } },
     })

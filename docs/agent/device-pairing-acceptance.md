@@ -59,7 +59,7 @@ bash scripts/secret-scan.sh packages/db apps/hub apps/node packages/protocol
 - **端到端 dispatch-through-WS 未做集成用例**：orchestrator.create→worker→WsDeviceGateway→ws client 的完整链需要 workspace FK（P1-12 inventory 才建）；以 `device-gateway.spec`（registry→socket 单元证据）替代，端到端随 P1-12/P1-13 接线补。
 - **租约 lost 的端到端用例**：reconciler 的 lost 行为已在 P1-10 的 run-dispatch/reconciler spec 验证；P1-09 只接入定时器，不重测。
 - **Node CLI start 的真实 WS 集成**：会话循环（hello 首发/10s 心跳/永久停止码）经 session.spec 单元级覆盖（FakeSocket + 手动定时器）；真实 Hub↔Node WS 端到端在 P1-12 接 Workspace 后做。
-- **web 配对 UI 不在本泳道**：P1-07 的 Devices 页空态承接；真实 PairingPanel 随三线合入后的小跟进 PR 落地。
+- **web 配对 UI 不在本泳道**：P1-09 时由 P1-07 的 Devices 页空态承接；**#142 已补上页面控件**（见下节），本条只存历史。
 - **hello 上报 supportedProtocolVersions**：协议 schema 有该字段但 Hub 目前只持久化 version+digests；protocol mismatch 关闭（03 §11）待 P1-12 Node 版本协商。
 - **capabilities**：配对时空对象起算；P1-12 inventory 扩展。
 
@@ -91,3 +91,22 @@ Review 发现 Node CLI 出站路径三处功能缺口与两处安全姿态不齐
    500 INTERNAL_ERROR；现按 agent/project 先例映射 23505 → 409 CONFLICT。
 
 新增测试：session.spec(5) + device-pairing spec +3（归一化、限流、同名 409）；G3-01 码格式断言改为六组 base32 模式。
+
+## #142 Web 配对 UI（2026-09-10 追加）
+
+- 场景：设备页此前只有 CLI 教学，第二步写着「生成一次性配对码（后续版本提供）」——
+  页面上没有控件，真人卡死（alpha.4 演示实录：最后靠 DevTools 手搓 fetch 才拿到码）。
+- 驱动（真人同路径）：`apps/web/tests/devices-pairing.spec.tsx` 走真实 router + 真实
+  QueryClient，只 mock HTTP 层；收敛用例把「可手推帧」的 socket 装进真实 RealtimeBridge，
+  帧仍过真实 event-router 失效映射（失效链路本身不 mock）。
+- 判定：点「生成配对码」→ 明文六组 base32 + 「此码只显示一次」提示 + `有效期剩余 mm:ss`；
+  一键复制如实报成败（剪贴板不可用不伪造「已复制」）；有效期极短的码到点**自己**转过期态
+  （证明倒计时真的在走）；空态/列表（名称/在线状态/最后心跳，从未心跳显示占位符）；
+  `device.changed` → 失效 `['devices']` → 页面不刷新出现新设备；失败一律统一 ErrorBanner
+  （Hub 的 message + requestId，裸错误码不上屏）。
+- 复跑：`pnpm exec vitest run --project web apps/web/tests/devices-pairing.spec.tsx`（10 用例）。
+- 未覆盖（待主协调者）：Q5 真人路径草稿在 `apps/web/tests/e2e/pairing-ui.spec.ts`，
+  **尚未注册** playwright project、本次未跑；真实浏览器 + 真 node CLI 消费的收敛判定由它承载。
+- 已知缺口：Hub 没有「撤销未使用配对码」接口（03 §4 只有 `DELETE /devices/:deviceId`
+  撤销设备），已签发未使用的码只能等 10 分钟自然过期（不在页面伪造撤销入口）；
+  设备撤销 UI 同样未落地，本 Issue 范围之外。

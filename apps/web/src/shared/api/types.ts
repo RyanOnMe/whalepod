@@ -177,6 +177,14 @@ export interface DeviceView {
   lastSeenAt: string | null
 }
 
+// device/pairing.ts：POST /devices/pairing-codes 的 data(#142)。code 明文只在
+// 本响应出现一次（Hub 只存 SHA-256），Web 侧不持久化、不写日志。
+export interface PairingCodeView {
+  pairingCodeId: string
+  code: string
+  expiresAt: string
+}
+
 // device/workspace-routes.ts：GET /workspaces 的列表项（不含本地路径，03 §2.4）。
 export interface WorkspaceView {
   workspaceId: string

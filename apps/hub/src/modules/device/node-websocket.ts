@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { Database } from '@whalepod/db'
 import {
+  appendTeamEvent,
   findDeviceByTokenHash,
   getRun,
   runEventWatermark,
@@ -96,10 +97,19 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
             return
           }
           if (frame.type === 'node.hello' && frame.payload.deviceId === identity.deviceId) {
-            await setDeviceHelloFacts(deps.database.db, identity.deviceId, {
-              dshDistributionVersion: frame.payload.dshDistributionVersion,
-              pluginPackDigests: [...frame.payload.pluginPackDigests],
-              lastSeenAt: new Date(),
+            // #142：hello 是「设备变在线」的唯一时刻（status 由 lastSeenAt 推导），
+            // 与事实列回填同事务补发 device.changed——否则配对后页面停在「离线」，
+            // 要等用户自己刷新才变绿。
+            await deps.database.transaction(async (tx) => {
+              await setDeviceHelloFacts(tx, identity.deviceId, {
+                dshDistributionVersion: frame.payload.dshDistributionVersion,
+                pluginPackDigests: [...frame.payload.pluginPackDigests],
+                lastSeenAt: new Date(),
+              })
+              await appendTeamEvent(tx, {
+                type: 'device.changed',
+                payload: { deviceId: identity.deviceId },
+              })
             })
           }
           if (frame.type === 'run.live_delta') {
