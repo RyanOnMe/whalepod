@@ -20,7 +20,11 @@ import {
   CONTROL_BORDER_TOKEN,
   CONTROL_LABEL_TOKEN,
   CONTROL_TOUCH_TOKEN,
+  TOUCH_MIN_PX,
   checkControlTokens,
+  normalizeColor,
+  parseVendorInputMetrics,
+  resolveTokenValue,
 } from '../../src/shared/control-style-tokens.js'
 import { expect } from '@playwright/test'
 import type { BrowserContext, Locator, Page, TestInfo } from '@playwright/test'
@@ -173,90 +177,105 @@ export async function fillAndEnter(page: Page, selector: string, value: string):
 // ---------- #168：自研表单控件（.field input / .field textarea / .button）的浏览器侧判据 ----------
 
 /**
- * 从 vendored `Input.module.css` 的 `.wrap` 读 DSH 族的描边宽度与圆角（**不抄数字**）。
+ * #168 视觉判据（真实浏览器实测）：控件的**背景 / 描边色 / 文字色**必须等于同名 token 的
+ * **解析值**；**描边宽度与圆角**必须等于**同一浏览器里 vendored `Input` 声明的实测值**；
+ * `min-height` 必须等于 `--touch-min`。
  *
- * 与单测 `tests/control-family.spec.tsx` 的 `readVendorMetrics` 同口径，但这份是给
- * Playwright 进程用的（那个是 vitest/jsdom 侧的），所以只能各读一次源文件——两边的
- * **判定逻辑与 token 常量**仍然共用 `src/shared/control-style-tokens.ts`。
- */
-function readVendorInputMetrics(): { borderWidth: string; radius: string } {
-  // cwd = 仓库根是本套 e2e 的既有约定（pairing-ui.spec.ts 也这么用）；路径不对就当场炸，
-  // 不静默跳过——静默跳过的判据等于没有判据。
-  const text = readFileSync(
-    join(process.cwd(), 'apps/web/src/vendor/dsh-ui/Input.module.css'),
-    'utf8',
-  ).replaceAll(/\/\*[\s\S]*?\*\//g, '')
-  const wrap = /(?:^|[},])\s*\.wrap\s*\{([^}]*)\}/.exec(text)?.[1]
-  if (wrap === undefined) throw new Error('vendored Input.module.css 里找不到 .wrap 规则')
-  const border = /border\s*:\s*([\d.]+(?:px|rem|em))/.exec(wrap)?.[1]
-  const radius = /border-radius\s*:\s*([^;]+)/.exec(wrap)?.[1]?.trim()
-  if (border === undefined || radius === undefined) {
-    throw new Error('vendored Input.module.css 的 .wrap 缺 border 宽度或 border-radius')
-  }
-  return { borderWidth: border, radius }
-}
-
-/**
- * #168 视觉判据（真实浏览器实测）：`.field input` / `.field textarea` / `.button` 的
- * **描边宽度、描边色、背景、文字色、圆角、min-height** 必须与约定一致。
+ * 两条口径是被实测逼出来的（评审 BLOCK-1，两条都会让 Q5 对每个控件必红）：
+ * 1. `getComputedStyle(el).getPropertyValue('--dsw-…')` 拿到的是**解析值**而不是声明原文
+ *    ——自定义属性是继承属性，且 computed-value 阶段就完成了 `var()` 代换。所以浏览器侧
+ *    **判不了"用的哪个 token"**，那一条由源码文本判据负责；这里只做解析值对解析值。
+ * 2. Chrome 对 `border: 0.5px` 的 computed/used 宽度就是 **1px**（本机实测：DPR=1 与 DPR=2
+ *    都是 `1px`）。所以期望值不能写 `'0.5px'`，改为在**同一个浏览器**里给 vendored 的
+ *    `border` / `border-radius` 声明建一个参照元素实测——元素对元素比较，取整与上游度量
+ *    变化都自动吸收（实测：控件与参照都在 DPR=1/2 下报 `1px`，圆角都报 `8px`）。
  *
- * 采集到的 computed style 里，"用了哪个 token"读 `getPropertyValue('--dsw-…')`（拿到的是
- * **声明原文**，实测如此），"最终值"读 `backgroundColor` / `borderTopColor` / `color`；
- * 判定交给与单测共用的 `checkControlTokens`——两边各写一份判定必然漂移。
+ * 判定交给与单测共用的 `checkControlTokens`（`src/shared/control-style-tokens.ts`）。
  *
- * 为什么要浏览器这一遍：单测读的是 CSS **文本**，证明不了层叠（`@media`、后置规则、
- * 深色覆盖）之后浏览器算出来的还是这套值。
+ * 参照元素的**自检**不能省：如果设计 token 没进页面（例如判据跑在没加载 `dsw-tokens.css`
+ * 的页面上），`border: 0.5px solid var(--dsw-alias-border-l4)` 会在 computed-value 阶段整条失效、
+ * 参照按 `border-width` 初值 `0px` 计算——实测确实如此（`ref: "0px"`）。那种情况下
+ * "控件 == 参照" 可能两边都是 0 而**假绿**。所以下面显式断言参照非 0，并断言参照的描边色
+ * 等于 vendored CSS 里那个 token 的解析值。
  */
 export async function assertControlTokens(control: Locator, label: string): Promise<void> {
-  const probe = await control.evaluate(
-    (el, tokens) => {
-      const style = getComputedStyle(el)
-      const root = getComputedStyle(document.documentElement)
-      const readRaw = (name: string): string => style.getPropertyValue(name).trim()
-      const resolve = (name: string): string => {
-        // `:root` 上的定义可能是 var() 链（实测 `--dsw-alias-button-primary-fill` →
-        // `--dsw-alias-brand-primary`），手工跟两跳足够；跟不动就返回原文，判定会当成空串报错。
-        let value = root.getPropertyValue(name).trim()
-        for (let hop = 0; hop < 3; hop += 1) {
-          const ref = /^var\(\s*(--[\w-]+)\s*\)$/.exec(value)
-          if (ref?.[1] === undefined) break
-          value = root.getPropertyValue(ref[1]).trim()
-        }
-        return value
-      }
-      return {
-        background: style.backgroundColor,
-        borderColor: style.borderTopColor,
-        borderWidth: style.borderTopWidth,
-        radius: style.borderTopLeftRadius,
-        color: style.color,
-        minHeight: style.minHeight,
-        rawBackground: readRaw(tokens.backgroundToken),
-        rawBorder: readRaw(tokens.borderToken),
-        rawColor: readRaw(tokens.labelToken),
-        resolvedBackgroundToken: resolve(tokens.backgroundToken),
-        resolvedBorderToken: resolve(tokens.borderToken),
-        resolvedLabelToken: resolve(tokens.labelToken),
-        resolvedTouchToken: resolve(tokens.touchToken),
-      }
-    },
-    {
-      backgroundToken: CONTROL_BACKGROUND_TOKEN,
-      borderToken: CONTROL_BORDER_TOKEN,
-      labelToken: CONTROL_LABEL_TOKEN,
-      touchToken: CONTROL_TOUCH_TOKEN,
-    },
+  // cwd = 仓库根是本套 e2e 的既有约定（pairing-ui.spec.ts 也这么用）；路径不对就当场炸，
+  // 不静默跳过——静默跳过的判据等于没有判据。
+  const vendorCss = readFileSync(
+    join(process.cwd(), 'apps/web/src/vendor/dsh-ui/Input.module.css'),
+    'utf8',
   )
-  const vendor = readVendorInputMetrics()
+  const metrics = parseVendorInputMetrics(vendorCss)
+  const probe = await control.evaluate(
+    (el, input) => {
+      // 从元素自身往 documentElement 走：继承属性 + 局部重绑都算对（深色主题也在 body 上）。
+      const chain = ((): CSSStyleDeclaration[] => {
+        const styles: CSSStyleDeclaration[] = []
+        for (let node: Element | null = el; node !== null; node = node.parentElement) {
+          styles.push(getComputedStyle(node))
+        }
+        if (styles.length === 0) styles.push(getComputedStyle(document.documentElement))
+        return styles
+      })()
+      // 参照元素：插进 DOM 再量。为什么不是 `display: none`——那种元素根本不进渲染树，
+      // Chrome 不会解析出计算值；这里用 fixed + 移出视口，元素正常参与布局与计算。
+      const reference = document.createElement('div')
+      reference.setAttribute('data-control-family-reference', 'true')
+      reference.style.cssText = `position: fixed; top: 0; left: -9999px; width: 10px; height: 10px; border: ${input.borderDeclaration}; border-radius: ${input.radius};`
+      document.body.append(reference)
+      try {
+        const referenceStyle = getComputedStyle(reference)
+        const style = getComputedStyle(el)
+        return {
+          background: style.backgroundColor,
+          borderColor: style.borderTopColor,
+          borderWidth: style.borderTopWidth,
+          radius: style.borderTopLeftRadius,
+          color: style.color,
+          minHeight: style.minHeight,
+          referenceBorderWidth: referenceStyle.borderTopWidth,
+          referenceRadius: referenceStyle.borderTopLeftRadius,
+          referenceBorderColor: referenceStyle.borderTopColor,
+          chain,
+        }
+      } finally {
+        reference.remove()
+      }
+    },
+    { borderDeclaration: metrics.borderDeclaration, radius: metrics.radius },
+  )
+  // 参照自检（理由见函数头注释）：token 没进页面时整条 `border` 会在 computed-value 阶段失效，
+  // 参照按 0px 计算，"两边都是 0"会假绿。
+  const referenceBorderPx = Number.parseFloat(probe.referenceBorderWidth)
+  if (!Number.isFinite(referenceBorderPx) || referenceBorderPx <= 0) {
+    throw new Error(
+      `${label} 的参照元素量到 ${probe.referenceBorderWidth}：vendored 的 \`${metrics.borderDeclaration}\` 在这张页面上没生效（设计 token 缺失？）——判据不能就这样通过`,
+    )
+  }
+  if (Number.parseFloat(probe.referenceRadius) <= 0) {
+    throw new Error(`${label} 的参照元素圆角量到 ${probe.referenceRadius}（vendored 度量没生效）`)
+  }
+  const resolvedBorderToken = resolveTokenValue(probe.chain, CONTROL_BORDER_TOKEN)
+  if (normalizeColor(probe.referenceBorderColor) !== normalizeColor(resolvedBorderToken)) {
+    throw new Error(
+      `${label} 的参照元素描边色 ${probe.referenceBorderColor} 与页面 token ${CONTROL_BORDER_TOKEN}=${resolvedBorderToken} 不符：源码里的 vendored 度量与页面加载的 token 已经对不上了`,
+    )
+  }
   const failures = checkControlTokens(
-    probe,
+    {
+      ...probe,
+      resolved: {
+        background: resolveTokenValue(probe.chain, CONTROL_BACKGROUND_TOKEN),
+        border: resolveTokenValue(probe.chain, CONTROL_BORDER_TOKEN),
+        label: resolveTokenValue(probe.chain, CONTROL_LABEL_TOKEN),
+        touch: resolveTokenValue(probe.chain, CONTROL_TOUCH_TOKEN),
+      },
+    },
     {
       backgroundToken: CONTROL_BACKGROUND_TOKEN,
       borderToken: CONTROL_BORDER_TOKEN,
       labelToken: CONTROL_LABEL_TOKEN,
-      vendorBorderWidth: vendor.borderWidth,
-      vendorRadius: vendor.radius,
-      minTouchPx: 40,
+      minTouchPx: TOUCH_MIN_PX,
     },
     label,
   )

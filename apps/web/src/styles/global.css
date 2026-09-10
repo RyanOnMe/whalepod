@@ -262,14 +262,25 @@ select {
   cursor: pointer;
 }
 
+/* hover：面变 + 描边加深一档，两者都取 L1。描边用**描边档** `--dsw-alias-border-l3`
+   而不是 `--dsw-alias-label-tertiary`——后者是**文字色** token，浅色下两值都偏灰看不出问题，
+   深色下 label-tertiary 是 rgb(173,178,184) 而 border-l3 是 rgba(255,255,255,0.16)，
+   拿文字色当描边会明显偏亮（评审观察项）。 */
 .button:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover);
-  border-color: var(--dsw-alias-label-tertiary);
+  border-color: var(--dsw-alias-border-l3);
 }
 
 .button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+/* focus-visible 的环由通用规则给（--focus-ring），这里只补描边色——沿用 vendored
+   `Input.module.css` 的 `.wrap:focus-within` 语义：聚焦时描边转品牌色。
+   与 #158/#161 的下拉触发器同一处置（那条也这么写）。 */
+.button:focus-visible {
+  border-color: var(--dsw-alias-brand-primary);
 }
 
 /* 主按钮**不覆盖描边宽度与圆角**：沿用 `.button` 那道 0.5px `border-l4` + 8px 圆角，
@@ -284,6 +295,7 @@ select {
 
 .button-primary:hover:not(:disabled) {
   background: var(--dsw-alias-button-primary-hover);
+  border-color: var(--dsw-alias-border-l4);
 }
 
 .button-quiet {
@@ -294,14 +306,21 @@ select {
   padding-inline: var(--space-2);
 }
 
+/* 无边形态的 hover 必须把描边**再点明一次 transparent**：`.button:hover` 的描边档
+   特异性同为 (0,2,1)，靠源码顺序胜出，漏写就会让安静的按钮 hover 时长出一道描边。 */
 .button-quiet:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover);
+  border-color: transparent;
 }
 
-/* 危险按钮的文字色用静态档 red-900（白底实测 15.9:1）而不是别名
-   `--dsw-alias-state-error-primary`（= red-500，白底实测 4.50:1，正好压在 AA 线上）：
-   与 tokens.css 头块记的「文字色取 900 阶而非 500 阶」是同一条纪律，#151 就是亮阶当
-   文字色的回归现场。判据把这条钉在 token 名上（control-family.spec.tsx 的变异用例）。 */
+/* 危险按钮：**危险意图由文字色表达，底色与描边仍是中性控件面**。
+   文字色取静态档 red-900（白底实测 14.35:1，与迁移前的 `--color-danger-strong` 逐值相同，
+   这一条其实是"把应用层别名内联到 L1"），不用别名 `--dsw-alias-state-error-primary`
+   （= red-500，白底实测 4.4976:1，差 0.0023 不到 AA 的 4.5）；底色若也吃错误色，
+   红底 + red-900 字只有 3.19:1。判据把底色与文字色两个 token 名分别钉死
+   （control-family.spec.tsx 的变异用例）。
+   已知取舍（登记在 docs/agent/control-family-acceptance.md）：迁移前描边是
+   `--color-danger`（红），现在与其余控件同为中性 hairline，红色可供性只由文字承担。 */
 .button-danger {
   background: var(--dsw-alias-bg-layer-2);
   border: 0.5px solid var(--dsw-alias-border-l4);
