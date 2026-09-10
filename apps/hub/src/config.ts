@@ -30,6 +30,12 @@ export interface HubConfig {
   /** 显式 dev mode：仅此开关打开时允许安装 local-development 清单（默认 fail-closed 拒绝）。 */
   readonly pluginDevMode?: boolean | undefined
   /**
+   * #113：反代形态开关（透传 fastify trustProxy）。true ⟹ request.ip 取 XFF
+   * 首跳，按 IP 速率限制按真实客户端分桶（nginx 已注入 X-Forwarded-For）；
+   * false（默认，直连形态）⟹ 忽略 XFF，伪造头骗不到限流/审计。
+   */
+  readonly trustProxy?: boolean | undefined
+  /**
    * 内容寻址 Artifact Store 根目录（P1-15；blob 树 sha256/ab/cd/<digest> + tmp/）。
    */
   readonly artifactStoreDir: string
@@ -68,6 +74,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubConfig {
     // 显式开关：仅 '1'/'true' 视为开启，其余（含未设置）一律关闭。
     pluginDevMode:
       env.PROJECT311_PLUGIN_DEV_MODE === '1' || env.PROJECT311_PLUGIN_DEV_MODE === 'true',
+    // #113：同形态显式开关——compose（nginx 反代）置 true；直连默认 false，
+    // 否则直连部署反而被伪造 XFF 骗过限流。
+    trustProxy: env.PROJECT311_TRUST_PROXY === '1' || env.PROJECT311_TRUST_PROXY === 'true',
     artifactStoreDir: env.PROJECT311_ARTIFACT_STORE_DIR ?? 'data/artifact-store',
   }
 }

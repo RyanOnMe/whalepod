@@ -120,7 +120,11 @@ function notFoundHandler(request: FastifyRequest, reply: FastifyReply): FastifyR
  */
 export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
   const { config, database } = deps
-  const app = fastify({ logger: deps.logger ?? false })
+  const app = fastify({
+    logger: deps.logger ?? false,
+    // #113：反代形态由配置显式开启——request.ip 才信任 XFF 首跳（限流分桶真值）。
+    trustProxy: config.trustProxy ?? false,
+  })
   await app.register(cookie)
   // Node WS（P1-09）：/ws/v1/node 升级通道。
   await app.register(fastifyWebsocket)
