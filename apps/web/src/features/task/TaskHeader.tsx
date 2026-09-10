@@ -7,8 +7,9 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
-import { ASSIGNMENT_STATUS_LABEL, shortId, TASK_STATUS_LABEL } from '../../shared/format.js'
+import { ASSIGNMENT_STATUS_LABEL, TASK_STATUS_LABEL } from '../../shared/format.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
+import { useMemberDirectory } from '../team/memberDirectory.js'
 import type { Session, TaskView } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
 
@@ -29,6 +30,7 @@ export function TaskHeader({ task, session }: TaskHeaderProps): ReactNode {
   const queryClient = useQueryClient()
   const [action, setAction] = useState<TaskAction | null>(null)
   const [error, setError] = useState<unknown>(null)
+  const directory = useMemberDirectory()
 
   const isAssignee = session !== null && task.assigneeUserId === session.userId
   const canAct = isAssignee && task.assignmentStatus === 'accepted'
@@ -54,7 +56,9 @@ export function TaskHeader({ task, session }: TaskHeaderProps): ReactNode {
     mutation.mutate(kind)
   }
 
-  const assigneeLabel = isAssignee ? '你' : shortId(task.assigneeUserId)
+  // #162：责任人写人名（显示名（@用户名）），不写 `shortId()`。视角词「你」保留：
+  // 它不是身份标识，而是「这个人就是你」的短说。查不到人时由名录给人话兜底。
+  const assigneeLabel = isAssignee ? '你' : directory.personOf(task.assigneeUserId)
 
   return (
     <header className="task-header">
@@ -70,7 +74,8 @@ export function TaskHeader({ task, session }: TaskHeaderProps): ReactNode {
       <dl className="task-meta">
         <div>
           <dt>当前责任人</dt>
-          <dd>{assigneeLabel}</dd>
+          {/* #162 判据锚点：这一格必须说出「是谁」（显示名或明确兜底），不得是短 id。 */}
+          <dd data-testid="task-assignee">{assigneeLabel}</dd>
         </div>
         <div>
           <dt>创建时间</dt>

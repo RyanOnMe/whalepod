@@ -15,6 +15,7 @@ import {
   makeComment,
   makeTask,
   statefulTaskRoom,
+  teamMembersHandler,
 } from './fixtures.js'
 import type { MockHandler } from './fixtures.js'
 import { renderApp } from './render.jsx'
@@ -50,16 +51,24 @@ describe('comment', () => {
     })
   })
 
-  it('列表渲染历史留言（自己显示“你”，他人显示短 id）', async () => {
+  it('#162 列表渲染历史留言（自己显示“你”，他人显示成员显示名而不是短 id）', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId })
     const comments = [
       makeComment({ taskId: task.id, authorUserId: BOB.userId, body: '已经跑完了第一轮' }),
       makeComment({ taskId: task.id, authorUserId: ALICE.userId, body: '请补充验收说明' }),
     ]
-    renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [roomHandler(task, comments)]))
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [roomHandler(task, comments), teamMembersHandler()]),
+    )
     expect(await screen.findByText('已经跑完了第一轮')).toBeVisible()
     expect(screen.getByText('请补充验收说明')).toBeVisible()
     expect(screen.getAllByText('你')).not.toHaveLength(0)
+    // 他人（Alice）那一行现在是显示名；短 id（`aaaaaaaa`）不上屏。
+    await waitFor(() => {
+      expect(screen.getByText('Alice（@alice）')).toBeVisible()
+    })
+    expect(document.body.textContent).not.toContain(ALICE.userId.slice(0, 8))
   })
 
   it('发送期间按钮禁用，且只发出一条请求', async () => {

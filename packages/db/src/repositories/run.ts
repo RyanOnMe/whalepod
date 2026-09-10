@@ -40,8 +40,20 @@ export async function getRun(handle: DbHandle, id: string): Promise<RunRow | und
   return row
 }
 
+/**
+ * 某 Task 的运行记录，**按创建时间升序**（Task Room 时间线的顺序）。
+ *
+ * `createdAt` 是毫秒精度的时间戳，同毫秒建两次在真实路径上被 `run_one_active_per_task`
+ * 串行化挡住，但排序本身不该靠这条外部不变式：#162 的 Run 呈现用「第 N 次运行」这种
+ * **位置派生**的句柄（`apps/web/src/features/task/runLabels.ts`），并列时若顺序不定，
+ * 屏上的 N 会跟着飘。所以补 `asc(runs.id)` 作第二排序键，让顺序全序确定。
+ */
 export async function listRunsByTask(handle: DbHandle, taskId: string): Promise<RunRow[]> {
-  return handle.select().from(runs).where(eq(runs.taskId, taskId)).orderBy(asc(runs.createdAt))
+  return handle
+    .select()
+    .from(runs)
+    .where(eq(runs.taskId, taskId))
+    .orderBy(asc(runs.createdAt), asc(runs.id))
 }
 
 /**

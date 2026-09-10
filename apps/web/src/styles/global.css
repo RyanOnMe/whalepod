@@ -786,7 +786,7 @@ select {
   flex-wrap: wrap;
 }
 
-.run-id {
+.run-label {
   font-family: var(--font-mono);
   font-size: 14px;
 }
