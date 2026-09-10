@@ -15,6 +15,11 @@ import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import {
+  SELECT_TRIGGER_BACKGROUND_TOKEN,
+  SELECT_TRIGGER_BORDER_TOKEN,
+  checkMenuTriggerTokens,
+} from '../../src/shared/select-trigger-tokens.js'
 import { expect } from '@playwright/test'
 import type { BrowserContext, Locator, Page, TestInfo } from '@playwright/test'
 
@@ -211,89 +216,10 @@ export async function assertNotNativeSelect(
   await expect(control).toHaveRole('button')
   await expect(control).toHaveAttribute('aria-haspopup', 'menu')
   await expect(control).toHaveAccessibleName(name)
-  // 带 id / aria-label / name 的 select 才算"这是一处下拉"；控制台里那种无属性
-  // `<select>` 是 DevTools 自己的 UI，不该被这条判据误伤。
-  await expect(scope.locator('select[id], select[aria-label], select[name]')).toHaveCount(0)
-}
-
-/** 归一化颜色文本：同一颜色在 `getComputedStyle` 与 token 原文里的空格形态不同。 */
-export function normalizeColor(value: string): string {
-  return value.replaceAll(/\s+/g, '').toLowerCase()
-}
-
-/** 触发器上被判据覆盖的 computed style + 判据要用到的 token 原始值/解析值。 */
-export interface MenuTriggerProbe {
-  /** `getComputedStyle(trigger).backgroundColor`：**最终解析值**（rgb(...)）。 */
-  background: string
-  /** `getComputedStyle(trigger).borderTopColor`：同上。 */
-  borderColor: string
-  /** `getComputedStyle(trigger).borderTopLeftRadius`：如 '8px'。 */
-  radius: string
-  /**
-   * `getComputedStyle(trigger).getPropertyValue(<token>)`：**这条规则自己声明的原文**，
-   * 即 `var(--dsw-alias-…)`。实测：`getComputedStyle` 的自定义属性拿到的是声明原文而不是
-   * 解析值（真正的解析值要靠 `backgroundColor` 那三个属性读）——正好用来钉"用的哪个 token"。
-   */
-  rawBackground: string
-  /** 同上，用于描边 token。 */
-  rawBorder: string
-  /** `:root` 上 token 的解析值（浅色一套）。 */
-  resolvedBackgroundToken: string
-  resolvedBorderToken: string
-}
-
-/**
- * #158 视觉判据的**判定函数**（纯函数，不碰 DOM）。check 三条：
- *   ① 规则声明的就是约定的那两个 token（`rawBackground`/`rawBorder` 指向它们）；
- *   ② 浏览器算出来的最终值与 token 解析值相等；
- *   ③ 圆角是约定的 8px（与 vendored `Input.module.css` 同半径）。
- *
- * 抽出来的理由：真正的采集在浏览器里（`assertMenuTriggerTokens`），但"判定逻辑本身对不对"
- * 不该只能靠跑一遍 Q5 才知道——单测（`tests/select-menu.spec.tsx`）用同一组 token 造期望值
- * 直接调它，把「换成裸色值 / 换成另一个同值 token / 圆角被动过 / token 没解析」四种情况都钉住。
- *
- * 为什么必须查 ①（而不是只比对最终颜色）：实测 `--dsw-alias-bg-layer-1` 与 `-2` 在浅色下
- * 都是 `rgb(255,255,255)`——只比最终值的判据在"换了个同值 token"时静默通过，等于没判。
- *
- * @returns 违反判据的说明列表；空数组 = 全过
- */
-export function checkMenuTriggerTokens(
-  probe: MenuTriggerProbe,
-  expectBackgroundToken: string,
-  expectBorderToken: string,
-): string[] {
-  const failures: string[] = []
-  const tokenResolved = (name: string): string | null => {
-    if (name === expectBackgroundToken) return probe.resolvedBackgroundToken
-    if (name === expectBorderToken) return probe.resolvedBorderToken
-    return null
-  }
-  for (const [label, raw, actual, expectedToken] of [
-    ['背景', probe.rawBackground, probe.background, expectBackgroundToken],
-    ['描边', probe.rawBorder, probe.borderColor, expectBorderToken],
-  ] as const) {
-    const declared = /var\(\s*(--[\w-]+)\s*\)/.exec(raw)?.[1]
-    if (declared !== expectedToken) {
-      failures.push(
-        `${label}声明的是 ${declared ?? `（不是 var()：${raw}）`}，约定应是 ${expectedToken}`,
-      )
-      continue
-    }
-    const expected = tokenResolved(expectedToken)
-    if (expected === null || expected === '') {
-      failures.push(`L1 token ${expectedToken} 未解析（:root 取到空串）`)
-      continue
-    }
-    if (normalizeColor(actual) !== normalizeColor(expected)) {
-      failures.push(
-        `${label}取值与 ${expectedToken} 的解析值不符：computed=${actual} token=${expected}`,
-      )
-    }
-  }
-  if (probe.radius !== '8px') {
-    failures.push(`圆角应为 8px（与 vendored Input 同半径），实测 ${probe.radius}`)
-  }
-  return failures
+  // 作用域里**一个 select 都不许有**（评审追出：早先只查带 id/aria-label/name 的，
+  // 裸 `<select>` 能溜过去；"DevTools 自己的 UI"那个理由也不成立——DevTools 的 DOM
+  // 不在页面里，扫描范围内不可能混进它）。
+  await expect(scope.locator('select')).toHaveCount(0)
 }
 
 /**
@@ -312,13 +238,18 @@ export async function assertMenuTriggerTokens(trigger: Locator): Promise<void> {
       background: style.backgroundColor,
       borderColor: style.borderTopColor,
       radius: style.borderTopLeftRadius,
+      // 自定义属性读到的是**本元素上的声明原文**（var(...)），不是解析值
       rawBackground: style.getPropertyValue('--dsw-alias-bg-layer-1').trim(),
       rawBorder: style.getPropertyValue('--dsw-alias-border-l4').trim(),
       resolvedBackgroundToken: root.getPropertyValue('--dsw-alias-bg-layer-1').trim(),
       resolvedBorderToken: root.getPropertyValue('--dsw-alias-border-l4').trim(),
     }
   })
-  const failures = checkMenuTriggerTokens(probe, '--dsw-alias-bg-layer-1', '--dsw-alias-border-l4')
+  const failures = checkMenuTriggerTokens(
+    probe,
+    SELECT_TRIGGER_BACKGROUND_TOKEN,
+    SELECT_TRIGGER_BORDER_TOKEN,
+  )
   if (failures.length > 0) throw new Error(`触发器样式判据未过：\n- ${failures.join('\n- ')}`)
 }
 

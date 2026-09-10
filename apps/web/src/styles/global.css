@@ -412,8 +412,10 @@ select {
  * `apps/web/src/vendor/dsh-ui/` 的任何文件，所以「触发器长什么样」只能由调用方给。
  * 这里给的取值**全部来自 L1 白名单 `--dsw-*`**（声明见 styles/dsw-tokens.css），
  * 判据在 apps/web/tests/select-menu.spec.tsx：静态断言本段只吃 --dsw-*，并对
- * 「背景、描边、圆角」三条算出与 token 解析值相等的期望值（Q5 里再用真实浏览器
- * getComputedStyle 复核一遍，见 apps/web/tests/e2e/select-menu.spec.ts）。
+ * 「背景、描边、圆角」三条算出与 token 解析值相等的期望值；Q5 里再用真实浏览器
+ * getComputedStyle 复核一遍（采集在 apps/web/tests/e2e/helpers.ts 的
+ * assertMenuTriggerTokens，调用点在 invite-accept.spec.ts，判定函数与 token 常量
+ * 与单测共用 apps/web/src/shared/select-trigger-tokens.ts）。
  *
  * 几何与 vendored Input.module.css **逐值对齐**（0.5px 描边 / 8px 圆角 /
  * --dsw-alias-border-l4 / --dsw-alias-bg-layer-1），高度取本仓 --touch-min（40px）

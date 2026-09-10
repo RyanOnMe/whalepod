@@ -309,7 +309,16 @@ function CreateTaskForm({
         {membersQuery.isError ? <ErrorBanner error={membersQuery.error} /> : null}
       </div>
       <div className="form-actions">
-        <button type="submit" className="button button-primary" disabled={mutation.isPending}>
+        {/* #158 起这条空值守卫是本表单**唯一**的拦截：责任人从原生
+            `<select required>` 换成按钮触发器后，浏览器侧的「不选不放行」随 required
+            一起消失（按钮不是表单可校验元素）。评审实测：成员列表未落地时默认选中
+            拿不到值，缺这条守卫会发出 `assigneeUserId: ""` 的请求，被协议层
+            z.uuid() 拒成 400（packages/protocol/src/http.ts）。别删。 */}
+        <button
+          type="submit"
+          className="button button-primary"
+          disabled={mutation.isPending || values.assigneeUserId === ''}
+        >
           {mutation.isPending ? '创建中…' : '创建任务'}
         </button>
         <button type="button" className="button button-quiet" onClick={onClose}>

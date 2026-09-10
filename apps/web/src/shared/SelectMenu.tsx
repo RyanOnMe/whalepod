@@ -16,19 +16,33 @@
  *   真人路径（点开菜单 → 点选项），这正是 #158 要求同步更新的部分；
  * - `value` → `Menu` 的 `selectedId`；`onChange(value)` → `onSelect(id)`；
  * - 禁用项：`<option disabled>` → `MenuItem.disabled`（Menu 的项本身是
- *   `<button type="button">`，被 disable 后既不响应指针也不进键盘序列，与原生一致）；
- * - **`required` 没有对应物**：按钮不是表单可校验元素，原生 `required` 的「不选就不
- *   放行」在浏览器层消失了。7 个落页点的宿主表单本来就有「值为空则提交按钮禁用」的
- *   守卫（PackSelect / ProjectsPage 的 `disabled={…}`、RunLauncher 的 `ready`），迁移后
- *   该守卫就是**唯一**的拦截，不要删。所以这里改成 `aria-required="true"` 如实告知
- *   读屏，而不是假装还有浏览器校验。
+ *   `<button type="button">`，被 disable 后既不响应指针也不进键盘序列，与原生一致）。
+ *
+ * **已知缺口（评审追出，别再"顺手补一句 aria"）**：
+ * 1. **`required` 没有对应物，而且 `aria-required` 也补不上**。按钮不是表单可校验元素，
+ *    原生 `required` 的「不选就不放行」在浏览器层消失；而 ARIA 1.2 的 `aria-required`
+ *    Used-in-Roles 白名单是 checkbox / combobox / gridcell / listbox / radiogroup /
+ *    spinbutton / textbox（+tree），**不含 button** —— 挂在触发器上 AT 不会按必填播报，
+ *    写了等于自欺。所以本层**不挂**该属性，"必填"只剩应用层的守卫：宿主表单必须自己
+ *    「值为空则禁用提交」（PackSelect 的两个宿主表单、RunLauncher 的 `ready`、
+ *    ProjectsPage 的空值守卫；**MembersPage 的角色选择本来就没有 required**——有默认值，
+ *    不要为了"统一"给它加必填）。谁删这些守卫，谁就把校验整条拆掉了。
+ *    要真正表意得把触发器改成 `aria-haspopup="listbox"` + 列表项 `role="option"` +
+ *    `aria-required`，那是**偏离 vendored Menu 的 role=menu/menuitem** 的一层额外映射，
+ *    本切片不自行拍板。
+ * 2. **选中态对 AT 不可见**：vendored `Menu` 的选中项只有一个尾随 check 图标，没有
+ *    `aria-checked` / `aria-selected`，读屏拿不到"当前选的是哪个"（上游原语缺口，
+ *    已登记到 `docs/agent/dsh-ui-vendoring-batch2.md`）。选中的**文字**仍会渲染在触发器
+ *    上，所以视觉与键盘用户不受影响。
  *
  * 键盘路径（`autoFocus` 打开即聚焦首项，两条都是 vendored `Menu` 自带的实现，本层不重复）：
  * Tab 到触发器 → Enter/Space 打开（原生 button 行为）→ 方向键 / Home / End 在项间移动 →
  * Enter/Space 选中并关闭 → Esc 关闭并把焦点还给触发器。本层只负责把
- * `aria-haspopup="menu"` 与 `aria-expanded` 如实标出——后者与 #152 折叠入口同一套语义。
+ * `aria-haspopup="menu"` 与 `aria-expanded` 如实标出——后者与 #152 折叠入口同一套语义——
+ * 并在**选中后自己把焦点收回触发器**（`Menu` 只在 Esc 且 `autoFocus` 时回焦，选中路径
+ * 不回；不补的话键盘用户每选一个字段就要从文档头重新 Tab，见下面的 `triggerRef`）。
  */
-import { useCallback, useId, useState, type ReactNode } from 'react'
+import { useCallback, useId, useRef, useState, type ReactNode } from 'react'
 import { Menu } from '../vendor/dsh-ui/Menu.js'
 import type { MenuEntry } from '../vendor/dsh-ui/Menu.js'
 // 图标不走原语桶：`icons.tsx` 是 vendored 子目录里的**支撑文件**（只含被原语用到的几个
@@ -36,18 +50,14 @@ import type { MenuEntry } from '../vendor/dsh-ui/Menu.js'
 // chevron，不为触发器另画图标。
 import { IconChevronDownOutline14 } from '../vendor/dsh-ui/icons.js'
 
-/**
- * 触发器取值所用的 L1 token（#158 的视觉判据锚在这里）。
- *
- * 为什么要导出：这条契约有两个消费者，分居两侧——单测
- * （`tests/select-menu.spec.tsx`）在 CSS 文本里钉「这条规则只吃这些 token」，
- * Q5 在真实浏览器里钉「computed style 等于这些 token 的解析值」
- * （`tests/e2e/helpers.ts` 的 `assertMenuTriggerTokens`）。两边**必须锚同一组名字**：
- * 各写一份就会漂移成"单测管 A、浏览器管 B"——把 `--dsw-alias-bg-layer-1` 换成
- * `-2` 这种既有测试全都绿的改动就漏过去了（实测：两者浅色下取值相同）。
- */
-export const SELECT_TRIGGER_BACKGROUND_TOKEN = '--dsw-alias-bg-layer-1'
-export const SELECT_TRIGGER_BORDER_TOKEN = '--dsw-alias-border-l4'
+// 触发器取值所用的 L1 token 与判定函数住在 `./select-trigger-tokens.js`：那里是**零运行时
+// 依赖**的纯模块，Q5 的 e2e 进程与单测都能直接 load（本文件带 Menu/图标/CSS 模块，e2e
+// 侧反向 import 进来会拖 CSS 模块，见该文件头注释）。这里原样再导出，保证
+// `shared/SelectMenu.js` 的对外面不变。
+export {
+  SELECT_TRIGGER_BACKGROUND_TOKEN,
+  SELECT_TRIGGER_BORDER_TOKEN,
+} from './select-trigger-tokens.js'
 
 /** 与原生 `<option>` 对齐的一项；`disabled` 的项在列表里不可点、键盘也跳不过去。 */
 export interface SelectMenuOption {
@@ -122,15 +132,27 @@ export function SelectMenu({
   ]
 
   // 受控：Menu 自己不写 open，选中/点外/Esc 都只上报意图，由这里落状态。
+  //
+  // S3（评审追出）：**关闭时把焦点收回触发器**。vendored `Menu` 只在「Esc 且 autoFocus」
+  // 时回焦（Menu.tsx 的 keydown 分支），选中路径完全不管焦点——实测 jsdom 下选中后
+  // `document.activeElement` 是 `<body>`（那条断言见 tests/select-menu.spec.tsx 的键盘
+  // 全路径用例）。后果是键盘用户在 RunLauncher 的四个字段之间每选一次都得从文档头重新
+  // Tab，等于键盘路径只兑现了一半。触发器 ref 由应用层持有（不去改 vendored 文件）：
+  // 焦点本来就该落在被操作的控件上，与 Esc 的行为一致。
+  //
+  // 为什么放在 `close` 而不是塞进 `select`：三条关闭路径（选中 / Esc / 点外面）都该回焦，
+  // 写一处比写两处少一个漂移点。点触发器自己收起时回焦到它本身是 no-op（焦点本来就在）。
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const close = useCallback(() => {
     setOpen(false)
+    triggerRef.current?.focus()
   }, [])
   const select = useCallback(
     (next: string) => {
-      setOpen(false)
+      close()
       onChange(next)
     },
-    [onChange],
+    [close, onChange],
   )
 
   return (
@@ -152,6 +174,7 @@ export function SelectMenu({
         data-testid={`${id}-menu`}
         anchor={
           <button
+            ref={triggerRef}
             type="button"
             id={id}
             className="select-menu-trigger"
@@ -170,8 +193,10 @@ export function SelectMenu({
             // 说明文字挂到控件上（原生 select 没有对应通道，这是按钮形态的补强）：
             // 只在真有 hint 时挂，免得 aria-describedby 指向一个不存在的 id。
             {...(hint === undefined ? {} : { 'aria-describedby': hintId })}
-            // 与 #152 折叠入口同一套语义：展开态如实标出。
-            aria-required="true"
+            // 这里**刻意不挂 aria-required**：`role=button` 不在 ARIA 1.2 的
+            // aria-required 白名单里（见文件头「已知缺口」第 1 条），挂了也不会被播报，
+            // 只是把"必填"这件事伪装成已表达。必填由宿主表单的提交守卫兜（各落页点各自
+            // 一条，别删）。
             disabled={disabled}
             onClick={() => {
               setOpen(!open)

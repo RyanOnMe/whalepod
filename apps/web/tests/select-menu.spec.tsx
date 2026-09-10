@@ -20,22 +20,30 @@ import { screen, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { renderApp, renderUi } from './render.js'
-import { selectOption } from './select-menu.js'
+import { openSelect, selectOption } from './select-menu.js'
 import {
   ALICE,
   BOB,
+  agentsHandler,
   createInviteHandler,
   loggedInHandlers,
   makeMember,
+  packsHandler,
   projectsHandler,
   teamMembersHandler,
 } from './fixtures.js'
 import {
-  SELECT_TRIGGER_BACKGROUND_TOKEN,
-  SELECT_TRIGGER_BORDER_TOKEN,
+  SELECT_TRIGGER_BACKGROUND_TOKEN as reExportedBackgroundToken,
+  SELECT_TRIGGER_BORDER_TOKEN as reExportedBorderToken,
   SelectMenu,
 } from '../src/shared/SelectMenu.js'
-import { checkMenuTriggerTokens } from './e2e/helpers.js'
+// 常量与判定函数从**纯模块**直接取（评审 S1：单测不该从 e2e 的 helpers 反向 import；
+// 那个文件会拖 @playwright/test，方向也不对）。e2e 的 helpers 从这里同一份 import。
+import {
+  SELECT_TRIGGER_BACKGROUND_TOKEN,
+  SELECT_TRIGGER_BORDER_TOKEN,
+  checkMenuTriggerTokens,
+} from '../src/shared/select-trigger-tokens.js'
 import { contrastRatio, parseCssColor, readTokenValue, round2 } from './contrast.js'
 import type { ProjectView } from '../src/shared/api/types.js'
 
@@ -64,6 +72,24 @@ function cssBlock(selector: string): string {
 }
 
 const TRIGGER_BLOCK = cssBlock('.select-menu .select-menu-trigger')
+
+/** #revision-plugin-pack 用例的 Agent 与详情（该 id 只在「新建 Revision」表单里出现）。 */
+const revisionProbeAgent = {
+  id: 'aaaaaaaa-0000-4000-8000-00000000000f',
+  name: 'Probe',
+  description: '',
+  createdBy: ALICE.userId,
+  archivedAt: null,
+  currentRevisionId: null,
+}
+const revisionProbeDetailHandler = {
+  method: 'GET' as const,
+  url: new RegExp(`/api/v1/agents/${revisionProbeAgent.id}$`),
+  respond: () => ({
+    status: 200,
+    body: { ok: true, data: { ...revisionProbeAgent, currentRevision: null, revisions: [] } },
+  }),
+}
 
 // ---------- A. 反面钉：不再是原生 <select> ----------
 
@@ -120,26 +146,56 @@ describe('#158 反面钉：7 处下拉不再是原生 <select>', () => {
     await within(control).findByText(/Alice/)
   })
 
-  it('落页点 #agent-plugin-pack / #revision-plugin-pack：按钮 + 可展开列表', async () => {
-    const view = renderApp(
+  it('落页点 #agent-plugin-pack：按钮 + 打开后是菜单项（不是原生 option）', async () => {
+    const user = userEvent.setup()
+    renderApp(
       '/agents',
       loggedInHandlers(ALICE, [
-        {
-          method: 'GET',
-          url: /\/api\/v1\/agents$/,
-          respond: () => ({ status: 200, body: { ok: true, data: [] } }),
-        },
-        {
-          method: 'GET',
-          url: /\/api\/v1\/plugin-packs$/,
-          respond: () => ({ status: 200, body: { ok: true, data: [] } }),
-        },
+        agentsHandler([]),
+        packsHandler([
+          {
+            id: 'eeeeeeee-0000-4000-8000-000000000001',
+            name: 'core-empty',
+            packDigest: 'f'.repeat(64),
+            installations: [],
+            entries: [],
+            createdBy: ALICE.userId,
+            createdAt: '2026-08-22T09:00:00.000Z',
+          },
+        ]),
       ]),
     )
     const control = await screen.findByLabelText('Plugin Pack')
     expect(control.tagName).toBe('BUTTON')
     expect(control).toHaveAttribute('id', 'agent-plugin-pack')
-    expect(view.container.querySelectorAll('select')).toHaveLength(0)
+    await user.click(control)
+    const list = await screen.findByRole('menu')
+    expect(within(list).getByRole('menuitem', { name: 'core-empty' })).toBeVisible()
+    expect(screen.queryAllByRole('option')).toHaveLength(0) // 原生 option 一个都不该有
+    expect(document.querySelectorAll('select')).toHaveLength(0)
+  })
+
+  it('落页点 #revision-plugin-pack：真打开一次（空 Pack 列表下如实禁用）', async () => {
+    // 评审 S4 追出：上一版只在标题里声称覆盖了 #revision-plugin-pack，其实从没打开过它。
+    const user = userEvent.setup()
+    renderApp(
+      '/agents',
+      loggedInHandlers(ALICE, [
+        agentsHandler([revisionProbeAgent]),
+        revisionProbeDetailHandler,
+        packsHandler([]),
+      ]),
+    )
+    await user.click(await screen.findByRole('button', { name: /Probe/ }))
+    const detail = screen.getByRole('region', { name: /Agent 详情/ })
+    await user.click(within(detail).getByRole('button', { name: '新建 Revision' }))
+    const control = await within(detail).findByLabelText('Plugin Pack')
+    expect(control).toHaveAttribute('id', 'revision-plugin-pack')
+    expect(control.tagName).toBe('BUTTON')
+    // 空 Pack 列表 → 与 #agent-plugin-pack 同款：触发器禁用、文案如实说明
+    expect(control).toBeDisabled()
+    expect(within(control).getByText('没有可选 Pack')).toBeInTheDocument()
+    expect(within(detail).queryAllByRole('option')).toHaveLength(0)
   })
 })
 
@@ -184,6 +240,10 @@ describe('#158 契约面：键盘可达 + aria 语义', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     expect(trigger).toHaveTextContent('Admin（可管理插件与邀请）')
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    // S3（评审追出）：选中路径下 `Menu` 不回焦（它只在 Esc + autoFocus 时回焦），
+    // 不补的话焦点会掉到 body —— 键盘用户在 RunLauncher 四个字段之间每选一次都要
+    // 从文档头重新 Tab。先在这里钉住"回到触发器"。
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('Space 也能打开（原生 button 行为）', async () => {
@@ -217,8 +277,25 @@ describe('#158 契约面：键盘可达 + aria 语义', () => {
     await screen.findByRole('menu')
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    // Esc 这条是 vendored Menu 自带的回焦（autoFocus 打开时才有）
     expect(document.activeElement).toBe(trigger)
     expect(trigger).toHaveTextContent('Member（普通成员）')
+  })
+
+  it('鼠标选中后焦点也回触发器（S3：不只是键盘路径）', async () => {
+    const user = userEvent.setup()
+    renderApp(
+      '/members',
+      loggedInHandlers(ALICE, [
+        teamMembersHandler([makeMember()]),
+        createInviteHandler({ role: 'member' }).handler,
+      ]),
+    )
+    const trigger = (await screen.findByLabelText('角色')) as HTMLButtonElement
+    const list = await openSelect(user, '角色')
+    await user.click(list.getByRole('menuitem', { name: 'Admin（可管理插件与邀请）' }))
+    expect(trigger).toHaveTextContent('Admin（可管理插件与邀请）')
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('placeholder 是禁用项：点它不选中、不上报 onChange', async () => {
@@ -232,6 +309,8 @@ describe('#158 契约面：键盘可达 + aria 语义', () => {
     expect(placeholder).toBeDisabled()
     await user.click(placeholder)
     expect(onChange).not.toHaveBeenCalled()
+    // 点禁用项没有选中，但菜单没关（Menu 不自行关闭），焦点仍在项上
+    expect(screen.getByRole('menu')).toBeInTheDocument()
   })
 
   it('选中项被禁用时不认这个 value：显示回落 placeholder（原生 select 同款）', () => {
@@ -331,6 +410,10 @@ describe('#158 视觉判据：触发器样式来自 L1 token', () => {
       new RegExp(`border:\\s*0\\.5px solid var\\(${SELECT_TRIGGER_BORDER_TOKEN}\\)`),
     )
     expect(TRIGGER_BLOCK).toMatch(/border-radius:\s*8px/)
+    // 纯模块里的常量必须与 `SelectMenu.tsx` 对外再导出的那一份**同值**——两处定义
+    // 曾经就是这么漂移的（评审 S1：e2e 侧一度硬编码字面量）。这里直接比对两个模块。
+    expect(SELECT_TRIGGER_BACKGROUND_TOKEN).toBe(reExportedBackgroundToken)
+    expect(SELECT_TRIGGER_BORDER_TOKEN).toBe(reExportedBorderToken)
     // 契约常量本身必须真的在 L1 白名单里有声明（名字打错时这条立刻红）
     for (const token of [SELECT_TRIGGER_BACKGROUND_TOKEN, SELECT_TRIGGER_BORDER_TOKEN]) {
       expect(() => readTokenValue(tokensCss, token)).not.toThrow()

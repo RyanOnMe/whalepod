@@ -7,9 +7,11 @@
  *   错误经 ErrorBanner 展示；
  * - 空列表：提示去插件管理先创建 Pack（链接那条 hint 一个就够，不重复两句），不伪造选项；
  * - 宿主表单以「未选 Pack 时禁用提交」兜底。
- *   **#158 起这条兜底是唯一拦截**：控件从原生 `<select>` 换成 vendored Menu
- *   （见 shared/SelectMenu.tsx 文件头），按钮不是表单可校验元素，原生 `required`
- *   的浏览器校验随之消失——别以为 required 还在把关。
+ *   **#158 起这条兜底是唯一拦截**：控件从原生 `<select required>` 换成按钮触发器
+ *   （见 shared/SelectMenu.tsx 文件头「已知缺口」），按钮不是表单可校验元素，原生
+ *   `required` 的浏览器校验随之消失，而 `aria-required` 在 `role=button` 上又不会被
+ *   播报（ARIA 1.2 白名单不含 button）——所以既没有浏览器校验也没有读屏必填语义，
+ *   只剩这条守卫。别以为 required 还在把关。
  */
 import { useQuery } from '@tanstack/react-query'
 import type { ReactNode } from 'react'

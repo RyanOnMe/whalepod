@@ -380,14 +380,34 @@ $ git show "$C:apps/web/src/vendor/dsh-ui/<file>" \
 | `Menu` | ① **受控**：`open` 由调用方持有，`Menu` 不自己写；原生 `<select>` 的 `value/onChange` 心智要换掉。② `items` 是 `{id,label}` 数组，**没有** `<option>` 的 value 语义，选中靠 `selectedId`/`selectedIds`。③ 祖先有 `overflow` 裁剪时必须开 `portal`，并用 `getAnchorRect` 直接给锚点矩形（否则与宿主布局 effect 竞态）。④ portal 模式下列表在 `document.body`，`within(container)` 找不到。⑤ 键位：Escape 关、`autoFocus` 时才启用方向键导航。 |
 | `ConnectionIndicator` | 它不是「在线指示」，而是**断线恢复控件**：三态 `disconnected/connecting/recovered`，`state=undefined` 时**渲染 null**（没有连接反馈就不占位）。迁移时「在线」这个状态应当用别的表达（Tag/StateDot 即可），只有断线/重连/刚恢复才用它。文案 7 个必填 prop 全部由调用方提供（本仓要接 i18n 的话在这里落）。 |
 | `Modal` | ① portal 到 `document.body`。② ESC 与 **mask 点击**都触发 `onClose`；mask 是 dialog 的**兄弟节点**。③ `headless` 与 `closeLabel` 在类型上互斥（headless 时不渲染默认头/关闭按钮）。④ 上游**没有**焦点陷阱（没有 focus trap / 初始聚焦 / 滚动锁），做审批弹层时要自己评估是否需要补——这是上游行为，改它属功能性改动，必须在出处头里写明。 |
+| `Menu`（#158 落页实测补充） | ⑥ **触发器要调用方自己给**：`Menu` 只画列表，触发器是 `anchor` 里的任意节点，所以样式与 aria（`aria-haspopup`/`aria-expanded`）都归应用层——不在应用层包一层，7 个落页点的键盘与 aria 细节必然各走各的。⑦ `onClose` 不区分关闭原因，选中路径不回焦（G-4，应用层自己补）。⑧ 窄屏注意：`.list` 有 `min-width: 218px`，宿主容器窄于它时列表会横向溢出触发器；祖先有 `overflow` 裁剪时必须开 `portal`（`portal` 在 #158 未接线）。⑨ `id` 归属要自己定：`Menu` 的 wrapper span 与列表都不接 id，`<label htmlFor>` 这类关联要挂在调用方的触发器上。 |
 | 通用 | 四个原语都吃 `--dsw-*`，本仓业务 CSS 吃 `--color-*`；需要视觉对齐时在**业务侧**显式桥接（如首批 `global.css` 的 `.device-status-*` 那样），**不要改 vendored 文件**。另外：本批 `ConnectionIndicator` warn/success 面的浅底小字在 AA 上有和首批 Tag 同样的已知问题——**具体数字见 §3.6（warn 2.58:1 / success 2.09:1）**，迁移时若用于正文级文字，按首批做法在包裹元素上做局部重映射。 |
 
 ---
 
-## 变更记录
+## 6.1 页面迁移实测追出的**上游原语缺口**（#158 登记，未改 vendored 文件）
+
+#158 把 7 处原生 `<select>` 迁到 `Menu`（应用层包装 `apps/web/src/shared/SelectMenu.tsx`），
+过程中实测到四条属于**上游原语本身**、不能靠应用层包装补上的缺口。按台账纪律登记，
+**不**改 vendored 文件；将来跟版或做 L3 时按这里的编号复核上游是否已修。
+
+| # | 缺口 | 实测证据 | 应用层的现状与代价 |
+|---|---|---|---|
+| G-1 | 选中项**对 AT 不可见**：`.item` 上没有任何 `aria-checked` / `aria-selected`，选中只体现为一个尾随 check 图标（`IconCheckOutline16`） | `Menu.tsx` 渲染项的那段只有 `role="menuitem"` + `aria-haspopup/expanded`（子菜单用），全文件 grep 不到 `aria-selected`/`aria-checked` | 读屏用户拿不到"当前选的是哪个"。选中的**文字**仍渲染在触发器上，所以视觉/键盘用户不受影响。要真修得改 vendored 文件（功能性改动，需出处头标注 + 上游同步保留），本切片不做 |
+| G-2 | `role=menu` 用在**选择器**上，语义只兑现一半：菜单语义里"当前值"与"必填"都没有位置（不是 listbox） | `Menu.tsx` 固定 `role="menu"` / `role="menuitem"`；`Menu` 只接受 `selectedId`，不发布选中态 | 这是 ADR-0008 分层取原语的**连带代价**：要 `combobox`/`listbox` 语义就得自己做一层 role 映射，属偏离上游的额外映射，本切片不自行拍板（已写进 `SelectMenu.tsx` 文件头） |
+| G-3 | `aria-required` 补不上原生 `required`：ARIA 1.2 的 Used-in-Roles 白名单是 checkbox / combobox / gridcell / listbox / radiogroup / spinbutton / textbox（+tree），**不含 button** | 迁移初版曾无条件挂 `aria-required="true"`，被评审判为"语义不实"（不会播报）→ 已删除 | "必填"只剩应用层的提交守卫：PackSelect 的两个宿主表单、RunLauncher 的 `ready`、ProjectsPage 的空值守卫（#158 评审 B1 补上，此前缺失）。**没有任何读屏侧表达**，属已知缺口 |
+| G-4 | 选中路径**不回焦**：`Menu` 只在 `Escape` 且 `autoFocus` 时把焦点还给锚点（`Menu.tsx` 的 keydown 分支），选中/点外面都不管 | jsdom 实测：选中后 `document.activeElement` 是 `<body>`（断言见 `apps/web/tests/select-menu.spec.tsx` 键盘全路径用例） | 应用层在 `SelectMenu` 的 `close` 回调里回焦触发器（ref 由应用层持有，**没有**改 vendored 文件）。不补的话键盘用户每选一个字段都要从文档头重新 Tab |
+
+**跟版检查清单**：上游若修了 G-1/G-4，本仓应用层那两处补丁可以撤；G-2/G-3 是产品决策，
+跟版不影响。
+
+---
+
+## 7. 变更记录
 
 | 日期 | 变更 |
 |---|---|
 | 2026-09-11 | 建档（#138 L2 第二批）。登记 4 个新原语 + `pointer-grace.ts` 的三列哈希（锚点 `e138bbc`）；`icons.tsx`/`index.ts`/`cx.ts` 的本批改动分类；L1 增量变量账（引用 23→37、声明 26→55、深色 17→28）；elevation 段来源更正为 `gradient-shadow-text.css` 并记录 `body, body *` 的结构性决定；`--dsh-*` 例外 2→4 且区分「被读取」与「被赋值」；登记 4 处未验与页面迁移注意事项。 |
 | 2026-09-11 | **审查整改（锚点前移到 `a262cd4`）**，四修一补：①elevation 的默认值与派生值**拆回两块**（初版合并到 `body, body *` 是语义错误：重绑元素的后代会拿到默认 l4，已改正并把措辞收紧为「只有派生两项必须挂 `body, body *`」）；②新增 **§3.5 逐字节保真机器门**（manifest 每条登记 sha256/upstreamBlob/upstreamSha256/fidelity + Q0 两条断言；此前无门，变异测试实测旧门全绿）；③删除两个零消费者孤儿变量（`amber-500`、`neutral-bluish-1000`）并新增「无孤儿变量」Q0 用例（声明数 55→**53**）；④新增 **§3.6 AA 数字**（warn 2.58:1 / success 2.09:1）并进 Q0；⑤§3.1 复算命令补 `var(` 锚（原命令得 38、表里 37，37 是对的）。首批 6 个 `.module.css` 的上游 blob 值经独立重算与主台账相符。 |
 | 2026-09-11 | 台账回填（`a1b00ae`，纯文档提交）：锚点仍锚在 `a262cd4`——实测 `a1b00ae` 相对它只改了本文件，vendored blob 未动，故三列哈希无需重算。 |
+| 2026-09-11 | **新增 §6.1「页面迁移实测追出的上游原语缺口」G-1…G-4**（#158：`aria-selected` 缺失 / `role=menu` 用在选择器上 / `aria-required` 在 button 上无效 / 选中路径不回焦），并在 §6 补 `Menu` 的三条迁移注意事项（触发器归应用层、`onClose` 不辨原因、窄屏 `min-width: 218px`）。本节只登记上游缺口与跟版检查清单，**未改任何 vendored 文件**。 |
