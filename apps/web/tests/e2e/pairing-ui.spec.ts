@@ -269,22 +269,34 @@ test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可�
   await page.setViewportSize({ width: 390, height: 844 })
 
   // #159 一审抓出的假绿：这轮循环原来只等 `.app-header`（壳，立即渲染）就扫描，而三页的
-  // 数据都是异步 query —— 在 isPending 窗口里页面上只有 "正在加载…"（.mutation-hint），
-  // 徽标/状态色/时间戳一个都没进画面，扫描退化成只量顶栏。现在逐页等**内容**：
-  // 等加载提示消失且出现该页的标志性节点，再扫。
+  // 数据都是异步 query —— 在 isPending 窗口里页面上只有 "正在加载…"，徽标/状态色/时间戳
+  // 一个都没进画面，扫描退化成只量顶栏。现在逐页等**该页的真实内容**再扫。
+  //
+  // 二审 N2 指出首版整改还有第二层问题：它把「`.mutation-hint` 计数 0」当加载哨兵，而
+  // `.mutation-hint` 同时也是 7 处**静态信息文字**的类名（AgentList/PluginSettings 的只读
+  // 提示、TaskHeader、CommentComposer、RunTimeline、ArtifactList…）。owner 会话下这 5 条
+  // 路由恰好没有静态 `.mutation-hint`，所以当时是绿的；**成员会话**下 /agents、/plugins 会
+  // 永久渲染只读提示 → 这个断言会超时（假红），日后谁给这 5 页再加一句提示也会踩到。
+  // 所以改成直接等"该页数据已经渲染出来"的标志性节点（下面 CONTENT_READY），不再借类名。
+  // 每页的"数据已渲染"标志：有数据（列表/卡片）与空态（.empty-state）两种形态都覆盖。
   const CONTENT_READY: Readonly<Record<string, string>> = {
     '/': 'ul.project-list, .empty-state',
     '/devices': 'section.devices-list',
     '/members': 'ul.member-list, .empty-state',
     // #159 一审的覆盖缺口：Agents 与插件页此前没有任何扫描点（它们同样有徽标、表单
-    // 与浅底提示，是最容易掉 AA 的页面类型）。两页对空团队都渲染空态，故两者都等。
-    '/agents': '.agents-page .card, .agents-page .empty-state',
-    '/plugins': '.plugins-page .card, .plugins-page .empty-state',
+    // 与浅底提示，是最容易掉 AA 的页面类型）。成员会话下这两页没有表单卡片，只有
+    // 只读提示（见下面的"加载中"判据——那不冲突：只读提示的文字里没有"正在加载"）。
+    '/agents': '.agents-page .card, .agents-page .empty-state, .agents-page .agent-readonly-hint',
+    '/plugins':
+      '.plugins-page .card, .plugins-page .empty-state, .plugin-settings .plugin-readonly-hint',
   }
   for (const path of ['/', '/devices', '/members', '/agents', '/plugins']) {
     await page.goto(path)
     await expect(page.locator('.app-header')).toBeVisible()
-    await expect(page.locator('.mutation-hint')).toHaveCount(0)
+    // 二审 N2：不要再用 `.mutation-hint` 计数当加载哨兵——那个类名同时被 7 处**静态信息
+    // 文字**使用（只读提示等），成员会话下 Agents/插件页会永久渲染它。改成认"加载文案本身"：
+    // 各页的加载提示统一以「正在加载」开头（实测 12 处），静态提示里没有这四个字。
+    await expect(page.getByText(/正在加载/)).toHaveCount(0)
     await expect(page.locator(CONTENT_READY[path] ?? 'main').first()).toBeVisible()
     const metrics = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,

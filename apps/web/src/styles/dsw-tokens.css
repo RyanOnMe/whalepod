@@ -30,9 +30,10 @@
  *      应用层这一处要扫 `apps/web/src/styles/*.css` **全部**，不是只扫 global.css）。
  *      本批初版把上游那一段的 13 个静态档整批搬了进来，被审查追出**两个孤儿**
  *      （`--dsw-static-amber-500`、`--dsw-static-neutral-bluish-1000`），两个都已删除；
- *      理由分别见两处注释，现在有一条 Q0 用例守着「L1 不得有零消费者变量」（#159 把它的
- *      扫描面从 global.css 扩到应用层全部样式表——只扫 global.css 会漏掉 tokens.css 这一处
- *      消费者，#153 之后消费者的位置变了）。
+ *      理由分别见两处注释，现在有一条 Q0 用例守着「L1 不得有零消费者变量」。那条用例的
+ *      扫描面在 #156（L2 第二批）时从 global.css 扩到应用层全部样式表——只扫 global.css
+ *      会漏掉 tokens.css 这一处消费者（#153 之后消费者的位置变了）。归属写清楚：#159 只是
+ *      复核了它，没有改它。
  *   2. 别名间接按上游保留：能吃 alias 的不落到静态字面量（--dsw-alias-button-primary-fill →
  *      --dsw-alias-brand-primary、--dsw-specific-menu → --dsw-alias-bg-layer-3、
  *      --dsw-alias-state-warn-label → --dsw-static-amber-600 …），这层间接是语义而不是冗余。

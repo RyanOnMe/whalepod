@@ -14,8 +14,9 @@
  * ## 评审暴露过的漏报路径（都已修，改这个文件前先读）
  *
  * 首版有五条"静默放过"的通道。#159 一审逐条给了数值反例，修法如下：
- *   1. **前景 alpha 从不合成**：`color: rgba(15,17,21,.35)` 压白真值 ≈2.4:1（不达标），
- *      首版按不透明 ink 报 ≈16.9:1（通过）→ 现在前景也走 `compositeOver`（见 `ratio` 前一步）。
+ *   1. **前景 alpha 从不合成**：`color: rgba(15,17,21,.35)` 压白，真值 **2.28:1**（不达标），
+ *      首版只看 rgb 三通道、按不透明 ink 报 **18.9:1**（通过）→ 现在前景也参与合成。
+ *      （这两个数是二审独立复算后更正的：首版注释里写的 2.4/16.9 复算不出来。）
  *   2. **解析不了的颜色静默跳过**：将来谁写 `oklch()`/`lab()`/`color(display-p3 …)`
  *      （Chrome 对这些**不做** legacy 序列化）就永久免检而门恒绿 → 现在把解析失败**计数并上报**，
  *      `expectNoContrastOffenders` 直接失败（门不能对看不懂的颜色下结论）。
@@ -28,9 +29,16 @@
  *   5. **祖先 `opacity` 不计**（opacity 不继承，子元素 computed 值仍是 1）→ 现在沿祖先链
  *      累乘有效不透明度，并把文字按该不透明度合成后再算对比度。
  *
- * 仍然不判定（诚实列出，当前仓库均 0 命中，见 docs/agent/web-shell-acceptance.md）：
- * `::before/::after` 生成的文本、`-webkit-text-fill-color`、非祖先覆盖层（浮层压住文字）、
- * 动画中间态（单次取样）。这些是**已知盲区**，不是"通过"。
+ * 仍然不判定（诚实列出，见 docs/agent/web-shell-acceptance.md；前四条当前仓库 0 命中）：
+ *   - `::before/::after` 生成的文本；
+ *   - `-webkit-text-fill-color`（它覆盖 `color`，而这里读的是 `color`）；
+ *   - 非祖先覆盖层（浮层压住文字）；
+ *   - 动画中间态（单次取样、无重试）；
+ *   - **`<select>` / `<option>` 的文字**（原生下拉的文字由系统渲染，`<select>` 没有直接
+ *     TEXT_NODE 子节点 → 走到 `own.length === 0` 就跳过。被扫页面里确实有 select，
+ *     属"未判定"而不是"通过"；#158 把下拉迁到 vendored Menu 之后这条盲区会自然收窄，
+ *     但迁移完成前不要把它当成已覆盖）。
+ * 这些是**已知盲区**，不是"通过"。
  */
 import { expect, type Page } from '@playwright/test'
 
@@ -152,30 +160,52 @@ export async function sweepContrast(page: Page, min = 4.5): Promise<ContrastSwee
       }
 
       /**
-       * 背景：把沿途半透明层依次合成，直到遇到不透明底。
-       * 遇到渐变 / backdrop-filter 就返回"无法判定"——那种情况下真实底色取决于图层合成，
-       * 不是取一个 background-color 能算出来的，硬算只会高估对比度（假绿）。
+       * 背景：把沿途半透明层依次合成，直到遇到"实际不透明"的底。
+       * 遇到渐变 / backdrop-filter（**含元素自身**，二审 N4 指出首版用 `node !== el` 把自身
+       * 漏在外面）就返回"无法判定"——那种情况下真实底色取决于图层合成，不是取一个
+       * background-color 能算出来的，硬算只会高估对比度（假绿）。
+       *
+       * 不透明度的归属（二审 O4 指出的实现与注释不一致，现已按物理修正）：
+       * 文字色受**从文字元素到根**的全部 opacity 影响（= `effectiveOpacity(el)`）；
+       * 而某一层底色的实际 alpha 受**从该层自己到根**的 opacity 影响——元素自己的 opacity
+       * 不会淡化祖先的底色。所以这里先收集祖先链、再按"该节点到根"的后缀乘积逐层淡化，
+       * 而不是给每层都乘同一个 `ownOpacity`。
        */
-      const resolveBackground = (el: Element, ownOpacity: number): BgResult => {
-        let acc: [number, number, number, number] = [255, 255, 255, 1]
-        const chain: Array<[number, number, number, number]> = []
+      const resolveBackground = (el: Element): BgResult => {
+        const nodes: Element[] = []
+        const opacities: number[] = []
         for (let node: Element | null = el; node !== null; node = node.parentElement) {
+          nodes.push(node)
+          const v = Number(getComputedStyle(node).opacity)
+          opacities.push(Number.isNaN(v) ? 1 : v)
+        }
+        // suffix[i] = nodes[i] 到根（含两端）的 opacity 乘积
+        const suffix: number[] = new Array<number>(nodes.length).fill(1)
+        let running = 1
+        for (let i = nodes.length - 1; i >= 0; i -= 1) {
+          running *= opacities[i] ?? 1
+          suffix[i] = running
+        }
+
+        const chain: Array<[number, number, number, number]> = []
+        for (let i = 0; i < nodes.length; i += 1) {
+          const node = nodes[i] as Element
           const cs = getComputedStyle(node)
-          if (node !== el && (cs.backgroundImage !== 'none' || cs.backdropFilter !== 'none')) {
+          if (cs.backgroundImage !== 'none' || cs.backdropFilter !== 'none') {
             return {
               color: null,
               undecidable: `${describe(node)} 有渐变/backdrop-filter，底色需人工判定`,
             }
           }
           const bg = toRgb(cs.backgroundColor)
+          const layerOpacity = suffix[i] ?? 1
           if (bg !== null && bg[3] > 0) {
-            // 祖先的淡出同样作用在这一层底色上；元素自身那层用自己累乘后的不透明度。
-            const faded: [number, number, number, number] =
-              node === el ? [bg[0], bg[1], bg[2], bg[3] * ownOpacity] : bg
-            chain.push(faded)
+            chain.push([bg[0], bg[1], bg[2], bg[3] * layerOpacity])
           }
-          if (bg !== null && bg[3] >= 0.9) break
+          // "不透明"要按**实际** alpha 判：raw alpha 1 的底若整层被 opacity 淡化，底下还会透出来。
+          if (bg !== null && bg[3] * layerOpacity >= 0.9) break
         }
+        let acc: [number, number, number, number] = [255, 255, 255, 1]
         for (const layer of chain.reverse()) acc = blend(layer, acc)
         return { color: acc, undecidable: '' }
       }
@@ -209,7 +239,28 @@ export async function sweepContrast(page: Page, min = 4.5): Promise<ContrastSwee
         const weight = Number(cs.fontWeight) || 400
 
         const tag = el.tagName.toLowerCase()
-        if (tag === 'input' || tag === 'textarea') {
+        // 二审 N3：`<input type="checkbox">` 在没有 value 属性时 `el.value === 'on'`，
+        // 首版据此把它当成"有文字的样本"，会污染"量到了几个元素"的计数，将来还可能报出
+        // 一条根本不存在的文字的假红。所以只认**真的承载文本**的控件类型。
+        const TEXT_INPUT_TYPES = new Set([
+          'text',
+          'search',
+          'url',
+          'tel',
+          'email',
+          'password',
+          'number',
+          'date',
+          'datetime-local',
+          'month',
+          'week',
+          'time',
+        ])
+        const isTextControl =
+          tag === 'textarea' ||
+          (tag === 'input' &&
+            TEXT_INPUT_TYPES.has(((el as HTMLInputElement).type || 'text').toLowerCase()))
+        if (isTextControl) {
           // 控件文字不在 TEXT_NODE 里（值是属性）——首版整片漏扫，而 placeholder 恰恰是
           // 登录/初始化页最容易掉到 AA 以下的一档灰。
           const field = el as HTMLInputElement | HTMLTextAreaElement
@@ -252,7 +303,8 @@ export async function sweepContrast(page: Page, min = 4.5): Promise<ContrastSwee
         }
         const opacity = effectiveOpacity(sample.el)
         if (opacity === 0) continue
-        const bg = resolveBackground(sample.el, opacity)
+        void opacity // 文字色已按它合成（见下）；底色按每层自己的不透明度处理
+        const bg = resolveBackground(sample.el)
         if (bg.color === null) {
           undecidable.push({
             selector: describe(sample.el),
