@@ -136,6 +136,18 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     await expect(alice.getByText('起草验收报告').first()).toBeVisible()
     await expect(alice.getByText('还没有留言')).toBeVisible()
 
+    // ---- #137：离开 Task Room 后能找回任务（项目页任务列表） ----
+    // 判据：真人路径「返回项目页 → 展开任务列表 → 看到刚建的任务 → 点回 Task Room」。
+    await alice.goto('/')
+    await alice.getByRole('button', { name: '任务列表' }).click()
+    const listedTask = alice.getByRole('button', { name: '起草验收报告' })
+    await expect(listedTask).toBeVisible()
+    // 责任人显示名来自成员接口（#136），不是短 UUID
+    await expect(alice.getByRole('list', { name: '项目任务列表' })).toContainText('Bob（@bob')
+    await listedTask.click()
+    await alice.waitForURL(new RegExp(`/tasks/${taskId}$`))
+    await expect(alice.getByText('还没有留言')).toBeVisible()
+
     // ---- Bob：第二 BrowserContext 走真实登录页 ----
     const bob = await bobContext.newPage()
     await bob.goto('/login')

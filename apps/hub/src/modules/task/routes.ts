@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import type { Database, Outbox } from '@whalepod/db'
+import { getProject, type Database, type Outbox } from '@whalepod/db'
 import { asUserId } from '@whalepod/domain'
 import {
   CreateCommentRequestSchema,
@@ -22,6 +22,7 @@ import {
   submitTaskForReview,
   updateTask,
 } from './commands.js'
+import { listTaskViewsByProject } from './queries.js'
 import { getTaskRoom } from './view.js'
 
 export interface TaskRouteDeps {
@@ -48,6 +49,18 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
     })
     audit(request, 'task.create', 'success', session.userId)
     return reply.code(201).send({ ok: true, data: task })
+  })
+
+  // GET /projects/:projectId/tasks：项目任务列表（#137）。
+  // 动线缺口：Task 建好后一旦离开 Task Room，真人没有任何入口能再找回它（URL 里的
+  // UUID 没人记得住）。列表形态与 GET /projects、/agents、/devices 一致：data 即数组；
+  // 排序由仓储保证（updatedAt DESC + id tiebreak），UI 不重排。
+  app.get('/projects/:projectId/tasks', async (request) => {
+    await deps.requireActor(request)
+    const { projectId } = request.params as { projectId: string }
+    const project = await getProject(deps.database.db, projectId)
+    if (project === undefined) throw new ApiError(404, 'NOT_FOUND', 'project not found')
+    return { ok: true, data: await listTaskViewsByProject(deps.database.db, projectId) }
   })
 
   // GET /tasks/:taskId：Task Room 聚合（不暴露 runtime internals，03 §9/02 Step 1）。

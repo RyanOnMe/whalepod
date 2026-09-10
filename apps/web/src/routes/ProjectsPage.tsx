@@ -13,7 +13,7 @@ import { useNavigate } from 'react-router'
 import { api } from '../shared/api/client.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
 import { useSession } from '../app/session.js'
-import { formatIso, shortId } from '../shared/format.js'
+import { TASK_STATUS_LABEL, formatIso, shortId } from '../shared/format.js'
 import type { ProjectView, TaskView } from '../shared/api/types.js'
 import { queryKeys } from '../app/query-client.js'
 
@@ -25,6 +25,7 @@ export function ProjectsPage(): ReactNode {
     queryFn: () => api.get<ProjectView[]>('/projects'),
   })
   const [creatingFor, setCreatingFor] = useState<string | null>(null)
+  const [listOpenFor, setListOpenFor] = useState<string | null>(null)
 
   return (
     <div className="projects-page">
@@ -50,14 +51,27 @@ export function ProjectsPage(): ReactNode {
               {project.description !== '' ? (
                 <p className="project-description">{project.description}</p>
               ) : null}
-              <button
-                type="button"
-                className="button button-quiet"
-                aria-expanded={creatingFor === project.id}
-                onClick={() => setCreatingFor(creatingFor === project.id ? null : project.id)}
-              >
-                {creatingFor === project.id ? '收起' : '创建任务'}
-              </button>
+              <div className="project-actions">
+                <button
+                  type="button"
+                  className="button button-quiet"
+                  aria-expanded={creatingFor === project.id}
+                  onClick={() => setCreatingFor(creatingFor === project.id ? null : project.id)}
+                >
+                  {creatingFor === project.id ? '收起' : '创建任务'}
+                </button>
+                <button
+                  type="button"
+                  className="button button-quiet"
+                  aria-expanded={listOpenFor === project.id}
+                  onClick={() => setListOpenFor(listOpenFor === project.id ? null : project.id)}
+                >
+                  {listOpenFor === project.id ? '收起任务列表' : '任务列表'}
+                </button>
+              </div>
+              {listOpenFor === project.id ? (
+                <ProjectTaskList projectId={project.id} onOpen={(id) => navigate(`/tasks/${id}`)} />
+              ) : null}
               {creatingFor === project.id ? (
                 <CreateTaskForm
                   projectId={project.id}
@@ -70,6 +84,52 @@ export function ProjectsPage(): ReactNode {
         </ul>
       ) : null}
     </div>
+  )
+}
+
+/**
+ * 项目任务列表（#137）：Task 建好后一旦离开 Task Room，此前没有任何界面入口能再
+ * 找回它（URL 里的 UUID 没人记得住）。列表只读项目自己的任务（跨项目隔离由 Hub
+ * 保证），责任人显示名复用 #136 的成员列表（同一 queryKey，天然共享缓存）。
+ */
+function ProjectTaskList({
+  projectId,
+  onOpen,
+}: {
+  projectId: string
+  onOpen: (taskId: string) => void
+}): ReactNode {
+  const tasksQuery = useQuery({
+    queryKey: queryKeys.projectTasks(projectId),
+    queryFn: () => api.get<TaskView[]>(`/projects/${projectId}/tasks`),
+  })
+  const membersQuery = useQuery({
+    queryKey: queryKeys.teamMembers,
+    queryFn: () => api.get<TeamMemberView[]>('/team/members'),
+  })
+  const nameOf = (userId: string): string => {
+    const member = (membersQuery.data ?? []).find((m) => m.userId === userId)
+    return member === undefined ? shortId(userId) : `${member.displayName}（@${member.username}）`
+  }
+
+  if (tasksQuery.isPending) return <p className="mutation-hint">正在加载任务…</p>
+  if (tasksQuery.isError) return <ErrorBanner error={tasksQuery.error} />
+  const tasks = tasksQuery.data ?? []
+  if (tasks.length === 0) return <p className="empty-state">这个项目还没有任务。</p>
+  return (
+    <ul className="task-list" role="list" aria-label="项目任务列表">
+      {tasks.map((task) => (
+        <li key={task.id} className="task-list-item">
+          <button type="button" className="task-link" onClick={() => onOpen(task.id)}>
+            {task.title}
+          </button>
+          <span className="task-meta">
+            {TASK_STATUS_LABEL[task.status]} · 责任人 {nameOf(task.assigneeUserId)} · 更新于{' '}
+            {formatIso(task.updatedAt)}
+          </span>
+        </li>
+      ))}
+    </ul>
   )
 }
 

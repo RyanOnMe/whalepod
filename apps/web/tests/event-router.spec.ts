@@ -43,11 +43,19 @@ describe('applyClientFrame (event-router)', () => {
   it('invalidates the mapped cache key and commits the cursor only after success', async () => {
     const queryClient = fakeQueryClient()
     const { cursorStore, deps } = makeDeps()
+    // 首个失效调用被挂住，后续调用立即完成——用于证明「cursor 只在 handler 全部
+    // 完成后才推进」（task.changed 现在命中两个键，见 #137 实时接线）。
     let release!: () => void
+    let released = false
     queryClient.invalidateQueries = vi.fn(async (opts: { queryKey: readonly unknown[] }) => {
-      await new Promise<void>((resolve) => {
-        release = resolve
-      })
+      if (!released) {
+        await new Promise<void>((resolve) => {
+          release = () => {
+            released = true
+            resolve()
+          }
+        })
+      }
       queryClient.calls.push(opts)
     })
     const pending = applyClientFrame(
@@ -58,7 +66,12 @@ describe('applyClientFrame (event-router)', () => {
     expect(queryClient.calls).toHaveLength(0) // handler 未完成：尚未提交
     release()
     await pending
-    expect(queryClient.calls).toEqual([{ queryKey: ['task-room', 't-1'] }])
+    // task.changed 命中两个键：任务房间 + 项目任务列表（payload 无 projectId 时
+    // 后者降级为前缀键 ['project-tasks']）——见 #137 的实时接线。
+    expect(queryClient.calls).toEqual([
+      { queryKey: ['task-room', 't-1'] },
+      { queryKey: ['project-tasks'] },
+    ])
     expect(cursorStore.load()).toBe('42')
   })
 
@@ -79,7 +92,14 @@ describe('applyClientFrame (event-router)', () => {
     // ['task', id]，前缀不匹配 → 远程变化刷不进任务房间，且本测试把 bug 钉成了期望）。
     const keys: Array<[string, unknown, readonly (readonly unknown[])[]]> = [
       ['project.changed', {}, [['projects']]],
-      ['task.changed', { taskId: 't-1' }, [['task-room', 't-1']]],
+      [
+        'task.changed',
+        { taskId: 't-1', projectId: 'p-1' },
+        [
+          ['task-room', 't-1'],
+          ['project-tasks', 'p-1'],
+        ],
+      ],
       ['comment.created', { taskId: 't-1' }, [['task-room', 't-1']]],
       ['run.changed', { runId: 'r-1' }, [['run', 'r-1']]],
       ['run.event', { runId: 'r-1' }, [['run', 'r-1']]],
@@ -97,6 +117,7 @@ describe('applyClientFrame (event-router)', () => {
     // ['run'] 覆盖 ['run', id] 与 ['run', id, 'events']。
     expect(keysForPersistentEvent(persistentFrame('task.changed', {}).event)).toEqual([
       ['task-room'],
+      ['project-tasks'],
     ])
     expect(keysForPersistentEvent(persistentFrame('run.changed', {}).event)).toEqual([['run']])
   })

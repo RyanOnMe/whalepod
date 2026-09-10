@@ -1,4 +1,4 @@
-import { asc, eq } from 'drizzle-orm'
+import { asc, desc, eq } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { projects, taskComments, tasks } from '../schema/project.js'
 
@@ -47,12 +47,17 @@ export async function getTask(handle: DbHandle, id: string): Promise<TaskRow | u
   return row
 }
 
+/**
+ * 项目内任务列表（#137：项目页任务列表的数据源）。
+ * 排序契约：updatedAt DESC + id 作 tiebreak——「最近动过的在最前」是列表的可用性
+ * 前提；id tiebreak 保证同毫秒写入时顺序仍确定（UI 不抖动）。
+ */
 export async function listTasksByProject(handle: DbHandle, projectId: string): Promise<TaskRow[]> {
   return handle
     .select()
     .from(tasks)
     .where(eq(tasks.projectId, projectId))
-    .orderBy(asc(tasks.createdAt))
+    .orderBy(desc(tasks.updatedAt), desc(tasks.id))
 }
 
 export async function setTaskStatus(

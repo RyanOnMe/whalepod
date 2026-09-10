@@ -12,7 +12,8 @@
  * = ['task-room', id]——前缀不匹配 = 命中零个查询，远程变化永远刷不进任务房间，
  * 而既有 E2E 靠 reload 驱动，全门绿也照不出来）：
  *   project.changed      → ['projects']
- *   task.changed         → ['task-room', taskId]    （取不到 taskId 时降级 ['task-room'] 前缀）
+ *   task.changed         → ['task-room', taskId] + ['project-tasks', projectId]
+ *                          （任务变了既动任务房间也动项目页列表；取不到 id 时降级前缀）
  *   comment.created      → ['task-room', taskId]    （评论时间线挂在 task room）
  *   run.changed/run.event→ ['run', runId]           （降级 ['run'] 前缀，同时覆盖 runEvents）
  *   approval.changed     → ['task-room', taskId]    （审批卡在 task room）
@@ -56,7 +57,12 @@ function keysWith(payload: unknown, idKey: string, prefix: string): CacheKeys {
 
 const EVENT_KEY_BUILDERS: Readonly<Record<string, (payload: unknown) => CacheKeys>> = {
   'project.changed': () => [['projects']],
-  'task.changed': (payload) => keysWith(payload, 'taskId', 'task-room'),
+  'task.changed': (payload) => [
+    ...keysWith(payload, 'taskId', 'task-room'),
+    // 项目页任务列表（#137）：payload 带 projectId 时一并失效——「别人建了任务」
+    // 必须实时进我的列表，否则又回到「刷新才看见」。
+    ...keysWith(payload, 'projectId', 'project-tasks'),
+  ],
   'comment.created': (payload) => keysWith(payload, 'taskId', 'task-room'),
   'run.changed': (payload) => keysWith(payload, 'runId', 'run'),
   'run.event': (payload) => keysWith(payload, 'runId', 'run'),
