@@ -28,6 +28,9 @@ services:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/project311
       # 单源：浏览器访问的精确 origin（03 §4）。经 .env / shell 注入，compose 不猜。
       PROJECT311_PUBLIC_ORIGIN: ${PROJECT311_PUBLIC_ORIGIN:?set to the browser-facing origin}
+      # #113：本形态必经 nginx 反代（已注 XFF）——trustProxy 开启，限流按真实客户端
+      # IP 分桶；直连形态（不走本 compose）默认关闭，伪造 XFF 无效。
+      PROJECT311_TRUST_PROXY: 'true'
     volumes:
       - hubdata:/data
     healthcheck:

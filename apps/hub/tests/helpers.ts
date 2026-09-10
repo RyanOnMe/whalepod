@@ -128,6 +128,8 @@ export interface TestAppOptions {
   /** 默认 http://localhost:4242（Secure=false 分支）；换 https origin 走 Secure=true 分支。 */
   readonly origin?: string
   readonly rateLimit?: HubConfig['rateLimit']
+  /** #113：反代形态开关（透传 fastify trustProxy；默认 false = 直连形态）。 */
+  readonly trustProxy?: boolean
 }
 
 export async function createTestApp(
@@ -149,6 +151,7 @@ export async function createTestApp(
     // P1-15：Artifact Store 与 setup token 同一个一次性临时目录。
     artifactStoreDir: join(dir, 'artifact-store'),
     ...(options.rateLimit !== undefined ? { rateLimit: options.rateLimit } : {}),
+    ...(options.trustProxy !== undefined ? { trustProxy: options.trustProxy } : {}),
   }
   const app = await buildApp({
     config,

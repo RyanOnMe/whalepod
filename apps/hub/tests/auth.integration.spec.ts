@@ -134,6 +134,56 @@ describe('POST /api/v1/auth/login', () => {
       await limited.close()
     }
   })
+
+  it('#113 trustProxy 开启（反代形态）：限流按 XFF 首跳 IP 分桶——两人各有预算', async () => {
+    const limited = await createTestApp(database, {
+      rateLimit: { loginMax: 2 },
+      trustProxy: true,
+    })
+    try {
+      const attempt = (xff: string) =>
+        limited.app.inject({
+          method: 'POST',
+          url: '/api/v1/auth/login',
+          headers: {
+            origin: limited.origin,
+            'idempotency-key': idemKey(),
+            'x-forwarded-for': xff,
+          },
+          payload: { username: 'alice', password: 'wrong password' },
+        })
+      // 同一 username：IP-A 打满预算 → 第 3 次 429；IP-B 不受影响（不共享）。
+      expect((await attempt('10.0.0.1')).statusCode).toBe(401)
+      expect((await attempt('10.0.0.1')).statusCode).toBe(401)
+      expect((await attempt('10.0.0.1')).statusCode).toBe(429)
+      expect((await attempt('10.0.0.2')).statusCode).toBe(401)
+    } finally {
+      await limited.close()
+    }
+  })
+
+  it('#113 trustProxy 关闭（直连形态默认）：伪造 XFF 不生效——仍按对端 IP 计同一桶', async () => {
+    const limited = await createTestApp(database, { rateLimit: { loginMax: 2 } })
+    try {
+      const attempt = (xff: string) =>
+        limited.app.inject({
+          method: 'POST',
+          url: '/api/v1/auth/login',
+          headers: {
+            origin: limited.origin,
+            'idempotency-key': idemKey(),
+            'x-forwarded-for': xff,
+          },
+          payload: { username: 'alice', password: 'wrong password' },
+        })
+      // 每次伪造不同 XFF：直连形态全部忽略 → 同一桶，第 3 次即 429。
+      expect((await attempt('10.0.0.1')).statusCode).toBe(401)
+      expect((await attempt('10.0.0.2')).statusCode).toBe(401)
+      expect((await attempt('10.0.0.3')).statusCode).toBe(429)
+    } finally {
+      await limited.close()
+    }
+  })
 })
 
 describe('GET /api/v1/auth/session', () => {
