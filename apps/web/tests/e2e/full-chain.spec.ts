@@ -119,13 +119,16 @@ async function setupTeamAndTask(): Promise<void> {
   await createAgentViaUi(alice, 'builder', pack.pluginPackId)
   await createAgentViaUi(alice, 'reviewer', pack.pluginPackId)
 
-  // Task：Alice 创建并指派 Bob；Bob 真实浏览器登录并接受。
+  // Task：Alice 创建并指派 Bob（#136 责任人下拉选择器）；Bob 真实浏览器登录并接受。
   await alice.goto('/')
   await expect(alice.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
   await alice.getByRole('button', { name: '创建任务' }).click()
   await alice.locator('input[id^="task-title-"]').fill('产出并复核验收报告')
-  await alice.fill('input[id^="task-assignee-"]', shared.bobUserId)
-  await alice.press('input[id^="task-assignee-"]', 'Enter')
+  await alice.selectOption('select[id^="task-assignee-"]', shared.bobUserId)
+  await alice
+    .locator('form[aria-label="创建任务"]')
+    .getByRole('button', { name: /创建任务/ })
+    .click()
   await alice.waitForURL(/\/tasks\//)
   const taskId = new URL(alice.url()).pathname.split('/').pop()
   if (taskId === undefined || taskId === '') throw new Error('Task URL 无法解析')

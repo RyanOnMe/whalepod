@@ -12,6 +12,8 @@ export const queryKeys = {
   setupStatus: ['setup-status'] as const,
   session: ['session'] as const,
   projects: ['projects'] as const,
+  /** #136：成员列表——创建任务的责任人选择器数据源。 */
+  teamMembers: ['team-members'] as const,
   taskRoom: (taskId: string) => ['task-room', taskId] as const,
   agents: ['agents'] as const,
   agentDetail: (agentId: string) => ['agent-detail', agentId] as const,

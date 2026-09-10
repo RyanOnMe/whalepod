@@ -3,15 +3,16 @@
  *
  * 已知缺口：GET /projects/:projectId/tasks（按项目列 Task）不在 P1-06 的 Hub 路由表里，
  * 因此本项目页不伪造 Task 列表；每个 Project 提供「创建任务」，创建成功后直接进入
- * 新建 Task 的 Task Room。成员选择器也缺成员列表接口，责任人字段当前手工粘贴
- * 成员 User ID（后续版本提供成员接口后改为选择器）。
+ * 新建 Task 的 Task Room。成员选择器由 #136 提供（GET /team/members + 下拉，
+ * 停用成员不进选择器——不再手贴 UUID）。
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState, type FormEvent, type ReactNode } from 'react'
-import type { CreateProjectRequest, CreateTaskRequest } from '@whalepod/protocol'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import type { CreateProjectRequest, CreateTaskRequest, TeamMembersData } from '@whalepod/protocol'
 import { useNavigate } from 'react-router'
 import { api } from '../shared/api/client.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
+import { useSession } from '../app/session.js'
 import { formatIso, shortId } from '../shared/format.js'
 import type { ProjectView, TaskView } from '../shared/api/types.js'
 import { queryKeys } from '../app/query-client.js'
@@ -140,6 +141,22 @@ function CreateTaskForm({
 }): ReactNode {
   const [values, setValues] = useState({ title: '', description: '', assigneeUserId: '' })
   const [error, setError] = useState<unknown>(null)
+  const session = useSession()
+  const membersQuery = useQuery({
+    queryKey: queryKeys.teamMembers,
+    queryFn: () => api.get<TeamMembersData>('/team/members'),
+  })
+  // 停用成员不进选择器（03 §2.2 assignee 必须未停用；后端同规则 fail-closed）。
+  const selectableMembers = (membersQuery.data?.members ?? []).filter((m) => m.enabled)
+  // 列表就绪后默认选中自己（多数场景是给自己建任务）；用户改选后不覆盖。
+  useEffect(() => {
+    const preferred =
+      selectableMembers.find((m) => m.userId === session?.userId) ?? selectableMembers[0]
+    if (preferred === undefined) return
+    setValues((prev) =>
+      prev.assigneeUserId === '' ? { ...prev, assigneeUserId: preferred.userId } : prev,
+    )
+  }, [membersQuery.data, session?.userId])
   const mutation = useMutation({
     mutationFn: () => {
       const body: CreateTaskRequest = {
@@ -186,18 +203,30 @@ function CreateTaskForm({
         />
       </div>
       <div className="field">
-        <label htmlFor={`task-assignee-${projectId}`}>责任人 User ID</label>
-        <input
+        <label htmlFor={`task-assignee-${projectId}`}>责任人</label>
+        <select
           id={`task-assignee-${projectId}`}
           value={values.assigneeUserId}
           onChange={(event) =>
             setValues((prev) => ({ ...prev, assigneeUserId: event.target.value }))
           }
-          placeholder="粘贴成员 User ID（UUID）"
           required
-          pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
-        />
-        <p className="field-hint">成员列表接口随后续版本提供；当前请粘贴负责人的 User ID。</p>
+          disabled={membersQuery.isPending}
+        >
+          <option value="" disabled>
+            {membersQuery.isPending
+              ? '正在加载成员…'
+              : selectableMembers.length === 0
+                ? '没有可选成员'
+                : '选择责任人'}
+          </option>
+          {selectableMembers.map((m) => (
+            <option key={m.userId} value={m.userId}>
+              {m.displayName}（@{m.username}）{m.userId === session?.userId ? ' · 你' : ''}
+            </option>
+          ))}
+        </select>
+        {membersQuery.isError ? <ErrorBanner error={membersQuery.error} /> : null}
       </div>
       <div className="form-actions">
         <button type="submit" className="button button-primary" disabled={mutation.isPending}>
