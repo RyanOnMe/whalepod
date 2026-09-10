@@ -185,6 +185,11 @@ async function startRunViaUi(agentName: string, promptText: string): Promise<str
   await waitDeviceOnline()
   await bob.reload()
   await expect(bob.getByLabel('选择 Agent')).toBeVisible({ timeout: 30_000 })
+  // #159：**就在这一刻扫**——启动面板已渲染、Run prompt 还是空的（显示 placeholder）。
+  // 一审抓到过本门的三种假绿（前景 alpha、控件文字/placeholder 从不被扫、底色无法判定），
+  // 而全仓只有两处 placeholder（RunLauncher 与 RunActions），只有在"面板可见且未输入"
+  // 的瞬间才能扫到它。变异验证：把 input/textarea::placeholder 改成 #e6e6e6 → 这里变红。
+  await expectNoContrastOffenders(bob)
   await bob.getByLabel('选择 Agent').selectOption({ label: agentName })
   await bob.getByLabel('选择设备').selectOption({ value: shared.deviceId! })
   await expect(bob.getByLabel('选择 Workspace').locator('option').nth(1)).toBeAttached({
@@ -468,9 +473,12 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
       await expect(shared.bob!.getByTestId('run-live-events')).toContainText('Hello from replay.', {
         timeout: 30_000,
       })
-      // #159：Run 实况面板是「深底 + 等宽正文」的唯一现场，也真出过事——`.run-live-text`
-      // 曾经只设深色底、没设文字色，于是继承了深色正文（深底深字，几乎不可读），而
-      // token 层的配对检查看不到这一对（值由继承得出）。就在这行状态上量真实渲染。
+      // #159：Run 实况面板的正文是等宽字体，也是**唯一一处 "底色由 token 决定、文字色靠
+      // 继承" 的现场**——它真出过事：`.run-live-text` 曾经只设深色底、没设文字色，于是
+      // 继承了深色正文（深底深字，几乎不可读），而 token 层的配对检查看不到这一对。
+      // 注：#159 一审指出该条现在时描述已不成立——`--color-surface-sunken` 在 #152 里
+      // 补了定义（= bg-module-platform，浅灰），所以当前呈现是**浅底深字**；深色 fallback
+      // `#14161c` 成了死代码。历史是真的，现状不同，故改写如实。
       await expectNoContrastOffenders(shared.bob!)
       expect(await shared.bob!.locator('.run-event.audience-owner').count()).toBeGreaterThanOrEqual(
         5,

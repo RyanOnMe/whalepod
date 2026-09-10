@@ -234,9 +234,24 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
 test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可达', async () => {
   await page.setViewportSize({ width: 390, height: 844 })
 
-  for (const path of ['/', '/devices', '/members']) {
+  // #159 一审抓出的假绿：这轮循环原来只等 `.app-header`（壳，立即渲染）就扫描，而三页的
+  // 数据都是异步 query —— 在 isPending 窗口里页面上只有 "正在加载…"（.mutation-hint），
+  // 徽标/状态色/时间戳一个都没进画面，扫描退化成只量顶栏。现在逐页等**内容**：
+  // 等加载提示消失且出现该页的标志性节点，再扫。
+  const CONTENT_READY: Readonly<Record<string, string>> = {
+    '/': 'ul.project-list, .empty-state',
+    '/devices': 'section.devices-list',
+    '/members': 'ul.member-list, .empty-state',
+    // #159 一审的覆盖缺口：Agents 与插件页此前没有任何扫描点（它们同样有徽标、表单
+    // 与浅底提示，是最容易掉 AA 的页面类型）。两页对空团队都渲染空态，故两者都等。
+    '/agents': '.agents-page .card, .agents-page .empty-state',
+    '/plugins': '.plugins-page .card, .plugins-page .empty-state',
+  }
+  for (const path of ['/', '/devices', '/members', '/agents', '/plugins']) {
     await page.goto(path)
     await expect(page.locator('.app-header')).toBeVisible()
+    await expect(page.locator('.mutation-hint')).toHaveCount(0)
+    await expect(page.locator(CONTENT_READY[path] ?? 'main').first()).toBeVisible()
     const metrics = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       innerWidth: window.innerWidth,

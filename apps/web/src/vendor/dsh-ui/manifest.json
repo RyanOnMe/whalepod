@@ -309,7 +309,7 @@
       "upstream": "packages/client/ui-theme/src/styles/design-platform.css（--dsw-* 白名单子集；base.css 只用于确认 data-ds-dark-theme 切换语义）+ packages/client/ui-theme/src/styles/gradient-shadow-text.css（#138 L2 第二批新增：elevation 三件套与遮罩模糊四个变量）",
       "adaptations": [
         "只取 vendored 组件 CSS 真正引用的变量：首批 23 个 + 第二批新增 15 个 = 两批并集 38 个（另有 elevation 派生依赖 --dsw-elevation-stroke / --dsw-elevation-stroke-color 与 --dsw-mask-blur，一并取自 gradient-shadow-text.css）",
-        "静态色阶只保留被引用变量真正需要的 17 个 --dsw-static-*；其余静态档不抄",
+        "静态色阶只保留被引用变量真正需要的 19 个 --dsw-static-*（#159 复核后的实测值；此前这里写 17、dsw-tokens.css 文件头写 15，两者与实测都不符——#159 之前实测 18，补 blue-900 后为 19）；其余静态档不抄",
         "别名间接按上游保留（能吃 alias 的不落到静态字面量）；注意两批的静态色阶写法不一致，待归一，见 dsw-tokens.css 文件头",
         "浅色 :root / 深色 body[data-ds-dark-theme]；elevation 段挂在 `body, body *`（与上游选择器同形，为保住 --dsw-elevation-stroke-color 的重绑语义）"
       ]
