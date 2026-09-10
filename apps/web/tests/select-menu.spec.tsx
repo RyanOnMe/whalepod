@@ -237,7 +237,9 @@ describe('#158 反面钉：7 处下拉不再是原生 <select>', () => {
         ]),
       ]),
     )
-    const control = await screen.findByLabelText('Plugin Pack')
+    // 可访问名 = PackSelect 传给 SelectMenu 的 label；#167 起中文化为
+    // 「插件组合（Plugin Pack）」（CONTEXT.md 的领域词保留在括号里）。
+    const control = await screen.findByLabelText('插件组合（Plugin Pack）')
     expect(control.tagName).toBe('BUTTON')
     expect(control).toHaveAttribute('id', 'agent-plugin-pack')
     await user.click(control)
@@ -261,7 +263,7 @@ describe('#158 反面钉：7 处下拉不再是原生 <select>', () => {
     await user.click(await screen.findByRole('button', { name: /Probe/ }))
     const detail = screen.getByRole('region', { name: /Agent 详情/ })
     await user.click(within(detail).getByRole('button', { name: '新建 Revision' }))
-    const control = await within(detail).findByLabelText('Plugin Pack')
+    const control = await within(detail).findByLabelText('插件组合（Plugin Pack）')
     expect(control).toHaveAttribute('id', 'revision-plugin-pack')
     expect(control.tagName).toBe('BUTTON')
     // 空 Pack 列表 → 与 #agent-plugin-pack 同款：触发器禁用、文案如实说明

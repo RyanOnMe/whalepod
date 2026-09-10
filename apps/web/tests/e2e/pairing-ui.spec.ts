@@ -13,7 +13,8 @@ import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { env, fillAndEnter, hubApi, sessionCookie, startNode } from './helpers.js'
+import { env, fillAndEnter, hubApi, seedPluginPack, sessionCookie, startNode } from './helpers.js'
+import { expectCopyCriteria } from '../copy-criteria.js'
 import { expectNoContrastOffenders } from './contrast-sweep.js'
 import {
   WHITE,
@@ -52,6 +53,13 @@ test.describe.configure({ mode: 'serial' })
 let context: BrowserContext
 let page: Page
 
+/**
+ * 跨用例共享的团队事实（#167）：Setup 之后才有 owner，而「有数据形态」的文案判据
+ * 需要 owner id 才能经 HTTP 旁路造 Agent 与 Pack。用可变对象而不是模块级 let：
+ * 用例之间只传值，不传状态机。
+ */
+const shared: { ownerUserId?: string; pluginPackId?: string } = {}
+
 test.beforeAll(async ({ browser }) => {
   context = await browser.newContext()
   page = await context.newPage()
@@ -82,6 +90,10 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
   await page.fill('#setup-display-name', 'Owner')
   await fillAndEnter(page, '#setup-password', PASSWORD)
   await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
+  // #167：记下 owner id——后面的「有数据形态」文案判据要经 HTTP 旁路用它造数据
+  // （Pack/Agent 的 createdBy 是外键，必须先拿到真实 userId）。
+  const session = await hubApi(await sessionCookie(context), 'GET', '/auth/session')
+  shared.ownerUserId = (session.data as { userId: string }).userId
 
   // 设备页：#142 的断头点——空态指引之外，签发控件必须就在本页。
   await page.goto('/devices')
@@ -256,6 +268,128 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
   // 整页扫一遍真实渲染结果——上面那些只钉了设备状态标记与设备行文案两处。
   // 位置放在 main 的零泄漏断言之后：那些断言已经等这一行渲染出来了，扫描不会扫到空页面。
   await expectNoContrastOffenders(page)
+})
+
+/**
+ * #167 文案判据（Agents 页与插件页）：正文不得出现裸的 64 位摘要、不得出现内部词表里的
+ * 词、同一屏不得有两个同义标题。判据口径、词表与理由见 apps/web/tests/copy-criteria.ts
+ * （一个文件同时导出纯函数与浏览器侧入口；纯函数在 Q0 的 unit project 里每次跑，
+ * 这里是把同一套判据挂到**真实渲染结果**上）。
+ *
+ * 渲染时机：#159 一审抓过一次假绿——壳（.app-header）立即渲染，而各页数据都是异步 query，
+ * 在 isPending 窗口里页面上只有「正在加载…」，判据等于什么都没量。所以这里与对比度扫描
+ * 同一口径：逐页等**内容**（加载提示消失 + 标志性节点出现）再判。
+ *
+ * 红→绿实测：#167 的提交说明里有旧文案下这份判据的失败输出（裸摘要 + curated + 同义标题
+ * 三种各一条）。
+ */
+const COPY_CHECK_PAGES: Readonly<Record<string, { ready: string; card?: string }>> = {
+  // 空团队下 Agents 页是空态 + 表单；有 Agent 时点开卡片判详情（详情里才有
+  // persona/插件组合这些标签）。两种形态都要覆盖。
+  '/agents': { ready: '.agent-list > li, .agents-page .empty-state', card: '.agent-card' },
+  '/plugins': {
+    ready: '.plugins-page .empty-state, .plugins-layout .plugin-readonly-hint, .plugin-list > li',
+  },
+}
+
+/**
+ * #167 文案判据（Agents 页与插件页）：正文不得出现裸的 64 位摘要、不得出现裸的内部词、
+ * 同一屏不得有两个同义标题。判据口径、词表与理由见 apps/web/tests/copy-criteria.ts
+ * （一个文件同时导出纯函数与浏览器侧入口；纯函数在 Q0 的 unit project 里每次跑，
+ * 这里是把同一套判据挂到**真实渲染结果**上）。
+ *
+ * 渲染时机与 #159 的对比度扫描同一口径：逐页等**该页真实内容**（有数据或空态）出现再判，
+ * 不扫 isPending 窗口里的空页面。
+ *
+ * ## 「有数据形态」（本用例的重点，之前是未验证清单里最值钱的一条）
+ *
+ * 空团队下 Pack 卡、Agent 详情都不渲染，判据只能扫到空态与表单——而「摘要截断 + title
+ * 全值 + 一键复制」正好只在 Pack 卡上有。所以本用例先用**既有旁路**造数据：
+ * `POST /agents`（Hub HTTP，owner 会话；与真人同一接口）+ 控制面 `seedPluginPack`
+ * （P1-18/P1-19 既有惯例：Pack 管理流不在 E2E 复跑，行级种子 + 事件留痕）。
+ * 造完再回到浏览器：判据扫的是**真实渲染结果**，种出来的 digest 也是真算出来的
+ * （e2e-serve 用 digestPluginPack 复算，GET /plugin-packs 会核）。
+ *
+ * 红→绿实测见 PR #172 正文：旧文案下本判据在真浏览器里红过（同义标题 / 裸 64 位摘要 /
+ * 裸 `curated` 三条各一次）。
+ */
+test('文案判据：Agents 与插件页无裸摘要 / 无内部词 / 无同义标题（1280×720 与 390×844 两档）', async () => {
+  test.setTimeout(180_000)
+
+  // ---- 先造「有数据形态」（走既有旁路；浏览器侧只负责读渲染结果） ----
+  const cookie = await sessionCookie(context)
+  const ownerUserId = shared.ownerUserId
+  expect(ownerUserId, 'Setup 用例未记录 owner id（本用例依赖序列执行）').toBeDefined()
+  const pack = await seedPluginPack(ownerUserId as string)
+  shared.pluginPackId = pack.pluginPackId
+  const createdAgent = await hubApi(cookie, 'POST', '/agents', {
+    name: `文案验收 Agent ${TAG}`,
+    description: '判据用的有数据形态',
+    persona: 'You are a copy-audit agent.',
+    provider: 'replay',
+    model: 'replay-model',
+    credentialSlot: 'default',
+    pluginPackId: pack.pluginPackId,
+  })
+  expect(createdAgent.status, `POST /agents 失败：${JSON.stringify(createdAgent.data)}`).toBe(201)
+
+  for (const viewport of [
+    { width: 1280, height: 720 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport)
+    for (const [path, spec] of Object.entries(COPY_CHECK_PAGES)) {
+      await page.goto(path)
+      await expect(page.locator('.app-header')).toBeVisible()
+      await expect(page.locator(spec.ready).first()).toBeVisible()
+      // 详情面板是懒渲染的（点卡片才请求详情），里面才有「人格设定（Persona）」
+      // 这些标签；有卡片就点开，把详情形态也纳入判据。
+      const card = page.locator(spec.card ?? '.agent-card').first()
+      if ((await card.count()) > 0) {
+        await card.click()
+        await expect(page.locator('.agent-detail')).toBeVisible()
+      }
+      await expectCopyCriteria(page, `${path} @ ${viewport.width}×${viewport.height}`)
+      await expectNoContrastOffenders(page)
+
+      // 390×844 档顺带判横向溢出（#152 的既有判据，两页此前没进过那个循环）。
+      if (viewport.width === 390) {
+        const metrics = await page.evaluate(() => ({
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+        }))
+        expect(
+          metrics.scrollWidth,
+          `${path} 在 390px 下横向溢出（scrollWidth=${metrics.scrollWidth}）`,
+        ).toBeLessThanOrEqual(metrics.innerWidth + 1)
+      }
+    }
+  }
+
+  // ---- #167 摘要两头一起钉：正文只许短码，全值必须在 title 且复制得到全值 ----
+  // 种出来的 Pack 是空 Pack（entries 为空），digest 由 e2e-serve 用 digestPluginPack 复算，
+  // 因此这里核的是**真 digest**，不是桩值。
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.goto('/plugins')
+  const packCard = page.locator('article.plugin-card', { hasText: 'e2e-pack' }).first()
+  await expect(packCard).toBeVisible()
+  const digestCode = packCard.locator('dd code.plugin-digest').nth(1)
+  const shortDigest = (await digestCode.innerText()).trim()
+  const fullDigest = await digestCode.getAttribute('title')
+  expect(shortDigest, '摘要短码形态应是前 12 位 + 省略号').toMatch(/^[0-9a-f]{12}…$/)
+  expect(fullDigest, '摘要全值必须经 title 给出').toMatch(/^[0-9a-f]{64}$/)
+  expect(shortDigest).not.toBe(fullDigest)
+  // 反例半边：正文（innerText）里不得出现整串（判据 1 已在上面扫过全页，
+  // 这里把范围收到这张卡上，失败信息更贴现场）
+  const cardText = await packCard.innerText()
+  expect(cardText, 'Pack 卡正文不得出现 64 位摘要整串').not.toContain(fullDigest as string)
+
+  // 一键复制拿到的必须是全值（不是屏上的短码）：读剪贴板核对。
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await packCard.getByRole('button', { name: `复制 e2e-pack 插件组合摘要` }).click()
+  await expect(packCard.getByText('已复制')).toBeVisible()
+  const clipboardText = await page.evaluate(() => navigator.clipboard.readText())
+  expect(clipboardText, '复制按钮写入剪贴板的应是完整摘要').toBe(fullDigest)
 })
 
 /**
