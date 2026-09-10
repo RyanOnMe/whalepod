@@ -13,7 +13,14 @@ import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { env, fillAndEnter, hubApi, sessionCookie, startNode } from './helpers.js'
+import {
+  assertControlTokens,
+  env,
+  fillAndEnter,
+  hubApi,
+  sessionCookie,
+  startNode,
+} from './helpers.js'
 import {
   WHITE,
   compositeOver,
@@ -297,6 +304,14 @@ test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可�
   // 那一提交里，抢在它之前取样会误判）。同时链接在可访问性树里也不再可见。
   await expect(menu).not.toHaveAttribute('open')
   await expect(nav.getByRole('link', { name: '成员' })).toBeHidden()
+
+  // #168：成员页 390 档下「邀请成员」表单里的主按钮也要过控件族判据（描边/圆角与
+  // vendored Input 逐值相等、颜色只吃 L1、min-height = --touch-min）。这一档是最容易
+  // 被"窄屏单独覆盖样式"改松的地方，所以在 390 视口下采。
+  await assertControlTokens(
+    page.locator('form.inline-form .button.button-primary'),
+    '.button-primary（生成邀请链接，390 档）',
+  )
 
   // 换了页再走一遍：这次从成员页点「设备」（鼠标路径），落在设备页后直接点主体按钮
   await page.locator('.app-nav-menu > summary').click()

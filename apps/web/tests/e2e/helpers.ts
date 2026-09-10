@@ -15,7 +15,15 @@ import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { BrowserContext, Page, TestInfo } from '@playwright/test'
+import {
+  CONTROL_BACKGROUND_TOKEN,
+  CONTROL_BORDER_TOKEN,
+  CONTROL_LABEL_TOKEN,
+  CONTROL_TOUCH_TOKEN,
+  checkControlTokens,
+} from '../../src/shared/control-style-tokens.js'
+import { expect } from '@playwright/test'
+import type { BrowserContext, Locator, Page, TestInfo } from '@playwright/test'
 
 export interface E2eEnv {
   hubOrigin: string
@@ -160,6 +168,99 @@ export function sleep(ms: number): Promise<void> {
 export async function fillAndEnter(page: Page, selector: string, value: string): Promise<void> {
   await page.fill(selector, value)
   await page.press(selector, 'Enter')
+}
+
+// ---------- #168：自研表单控件（.field input / .field textarea / .button）的浏览器侧判据 ----------
+
+/**
+ * 从 vendored `Input.module.css` 的 `.wrap` 读 DSH 族的描边宽度与圆角（**不抄数字**）。
+ *
+ * 与单测 `tests/control-family.spec.tsx` 的 `readVendorMetrics` 同口径，但这份是给
+ * Playwright 进程用的（那个是 vitest/jsdom 侧的），所以只能各读一次源文件——两边的
+ * **判定逻辑与 token 常量**仍然共用 `src/shared/control-style-tokens.ts`。
+ */
+function readVendorInputMetrics(): { borderWidth: string; radius: string } {
+  // cwd = 仓库根是本套 e2e 的既有约定（pairing-ui.spec.ts 也这么用）；路径不对就当场炸，
+  // 不静默跳过——静默跳过的判据等于没有判据。
+  const text = readFileSync(
+    join(process.cwd(), 'apps/web/src/vendor/dsh-ui/Input.module.css'),
+    'utf8',
+  ).replaceAll(/\/\*[\s\S]*?\*\//g, '')
+  const wrap = /(?:^|[},])\s*\.wrap\s*\{([^}]*)\}/.exec(text)?.[1]
+  if (wrap === undefined) throw new Error('vendored Input.module.css 里找不到 .wrap 规则')
+  const border = /border\s*:\s*([\d.]+(?:px|rem|em))/.exec(wrap)?.[1]
+  const radius = /border-radius\s*:\s*([^;]+)/.exec(wrap)?.[1]?.trim()
+  if (border === undefined || radius === undefined) {
+    throw new Error('vendored Input.module.css 的 .wrap 缺 border 宽度或 border-radius')
+  }
+  return { borderWidth: border, radius }
+}
+
+/**
+ * #168 视觉判据（真实浏览器实测）：`.field input` / `.field textarea` / `.button` 的
+ * **描边宽度、描边色、背景、文字色、圆角、min-height** 必须与约定一致。
+ *
+ * 采集到的 computed style 里，"用了哪个 token"读 `getPropertyValue('--dsw-…')`（拿到的是
+ * **声明原文**，实测如此），"最终值"读 `backgroundColor` / `borderTopColor` / `color`；
+ * 判定交给与单测共用的 `checkControlTokens`——两边各写一份判定必然漂移。
+ *
+ * 为什么要浏览器这一遍：单测读的是 CSS **文本**，证明不了层叠（`@media`、后置规则、
+ * 深色覆盖）之后浏览器算出来的还是这套值。
+ */
+export async function assertControlTokens(control: Locator, label: string): Promise<void> {
+  const probe = await control.evaluate(
+    (el, tokens) => {
+      const style = getComputedStyle(el)
+      const root = getComputedStyle(document.documentElement)
+      const readRaw = (name: string): string => style.getPropertyValue(name).trim()
+      const resolve = (name: string): string => {
+        // `:root` 上的定义可能是 var() 链（实测 `--dsw-alias-button-primary-fill` →
+        // `--dsw-alias-brand-primary`），手工跟两跳足够；跟不动就返回原文，判定会当成空串报错。
+        let value = root.getPropertyValue(name).trim()
+        for (let hop = 0; hop < 3; hop += 1) {
+          const ref = /^var\(\s*(--[\w-]+)\s*\)$/.exec(value)
+          if (ref?.[1] === undefined) break
+          value = root.getPropertyValue(ref[1]).trim()
+        }
+        return value
+      }
+      return {
+        background: style.backgroundColor,
+        borderColor: style.borderTopColor,
+        borderWidth: style.borderTopWidth,
+        radius: style.borderTopLeftRadius,
+        color: style.color,
+        minHeight: style.minHeight,
+        rawBackground: readRaw(tokens.backgroundToken),
+        rawBorder: readRaw(tokens.borderToken),
+        rawColor: readRaw(tokens.labelToken),
+        resolvedBackgroundToken: resolve(tokens.backgroundToken),
+        resolvedBorderToken: resolve(tokens.borderToken),
+        resolvedLabelToken: resolve(tokens.labelToken),
+        resolvedTouchToken: resolve(tokens.touchToken),
+      }
+    },
+    {
+      backgroundToken: CONTROL_BACKGROUND_TOKEN,
+      borderToken: CONTROL_BORDER_TOKEN,
+      labelToken: CONTROL_LABEL_TOKEN,
+      touchToken: CONTROL_TOUCH_TOKEN,
+    },
+  )
+  const vendor = readVendorInputMetrics()
+  const failures = checkControlTokens(
+    probe,
+    {
+      backgroundToken: CONTROL_BACKGROUND_TOKEN,
+      borderToken: CONTROL_BORDER_TOKEN,
+      labelToken: CONTROL_LABEL_TOKEN,
+      vendorBorderWidth: vendor.borderWidth,
+      vendorRadius: vendor.radius,
+      minTouchPx: 40,
+    },
+    label,
+  )
+  if (failures.length > 0) throw new Error(`${label} 样式判据未过：\n- ${failures.join('\n- ')}`)
 }
 
 /** run_event 全表 seq 连续性判定（R1/R6 补发无缺无重）。 */

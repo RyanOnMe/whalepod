@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
+import { assertControlTokens } from './helpers.js'
 
 interface E2eEnv {
   hubOrigin: string
@@ -193,6 +194,24 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     // ---- Alice：创建 Task 并指派 Bob（#136 起责任人为下拉选择器，默认选中自己） ----
     await alice.getByRole('button', { name: '创建任务' }).click()
     const taskIdInput = alice.locator('input[id^="task-title-"]')
+    // #168：项目页这一屏同时有 `.field input` / `.field textarea` / `.button`（含
+    // primary 与 quiet 两个变体）——正是"同一屏两族控件"的现场，所以在真实浏览器里采一遍
+    // computed style：描边宽度与圆角必须等于 vendored Input 的度量，颜色必须等于 L1 token
+    // 的解析值，min-height 必须等于 --touch-min。判据与单测共用
+    // `src/shared/control-style-tokens.ts`（各写一份必漂移）。
+    await assertControlTokens(taskIdInput, '.field input（任务标题）')
+    await assertControlTokens(
+      alice.locator('textarea[id^="task-desc-"]'),
+      '.field textarea（任务描述）',
+    )
+    await assertControlTokens(
+      alice.locator('form[aria-label="创建任务"] .button.button-primary'),
+      '.button-primary（创建任务）',
+    )
+    await assertControlTokens(
+      alice.locator('form[aria-label="创建任务"] .button.button-quiet'),
+      '.button-quiet（取消）',
+    )
     await taskIdInput.fill('起草验收报告')
     await alice.selectOption('select[id^="task-assignee-"]', bobUserId)
     await alice

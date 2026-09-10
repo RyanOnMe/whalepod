@@ -224,21 +224,47 @@ select {
   padding: var(--space-4);
 }
 
+/* ---------- #168 按钮与表单控件：对齐 DSH 族的度量与取值来源 ----------
+ *
+ * 为什么改：同一屏里原本并存两族控件——#158/#161 的下拉触发器已按 DSH 族取值
+ * （0.5px 描边 / 8px 圆角 / L1 `--dsw-*`），而本段的按钮与 `.field input` 还是自研旧族
+ * （1px `--color-line` / 6px 圆角 / 应用层 `--color-*`）。本次把这三条（含
+ * `.button-primary` / `-quiet` / `-danger` 里重复声明的部分）落到同一族：
+ * `0.5px solid var(--dsw-alias-border-l4)` + `border-radius: 8px`，颜色改走 L1。
+ *
+ * **高度刻意保留 40px（`--touch-min`），不跟着 vendored `Input` 降到 32px**：那个 32px 是
+ * 桌面密度（`Input.module.css` 的 `.wrap` 写死 `height: 32px`，是给工具栏内联输入用的），
+ * 而本仓表单行要触屏可达（390 档实测在跑）。所以这里只对齐**描边与圆角**两个视觉度量，
+ * 高度轴不动——与 #161 触发器「高度取 --touch-min 而不是 Input 的 32px」同源；
+ * 真要换到 32px 得先裁决尺寸轴，不能在这里单方面改。
+ *
+ * 为什么圆角/描边宽度不写在这条注释里当依据：判据从 `vendor/dsh-ui/Input.module.css`
+ * **现场读**这两个值再逐值比对（`tests/control-family.spec.tsx`），上游改度量时判据跟着变；
+ * 把 8px / 0.5px 抄死在任何一处（包括注释）就会漂移。
+ *
+ * 为什么 hover 用 `--dsw-alias-interactive-bg-hover`（浅灰底）而不是旧的应用层强调色描边：
+ * 旧写法在 hover 时把描边染成蓝色，而 DSH 族的反馈是**面**变（vendored
+ * `Button.module.css` 的 `.ghost:hover` / `.outline:hover` 都是这个 token）——同族控件
+ * 不该一个吃面变、一个吃描边变色。`color-mix(in srgb, currentColor …)` 那条更显然的写法
+ * 先被否掉：它让「值来自 L1 白名单」这条判据失去可判定性（颜色由 currentColor 派生，
+ * 静态读不出 token 名）。
+ */
 .button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: var(--touch-min);
   padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-line);
-  background: var(--color-surface);
-  color: var(--color-ink);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
   cursor: pointer;
 }
 
 .button:hover:not(:disabled) {
-  border-color: var(--color-signal);
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-label-tertiary);
 }
 
 .button:disabled {
@@ -246,23 +272,41 @@ select {
   cursor: not-allowed;
 }
 
+/* 主按钮**不覆盖描边宽度与圆角**：沿用 `.button` 那道 0.5px `border-l4` + 8px 圆角，
+   与其余变体同族；这里只重复 token 名，不重复数字（数字重复就是下一个漂移点）。
+   底色/前景取 vendored `Button.module.css` 的 `.primary` 同两个 token。 */
 .button-primary {
-  background: var(--color-signal);
-  border-color: var(--color-signal);
-  color: #fff;
+  background: var(--dsw-alias-button-primary-fill);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  color: var(--dsw-alias-label-primary-foreground);
+}
+
+.button-primary:hover:not(:disabled) {
+  background: var(--dsw-alias-button-primary-hover);
 }
 
 .button-quiet {
   background: transparent;
-  border-color: transparent;
-  color: var(--color-signal);
+  border: 0.5px solid transparent;
+  border-radius: 8px;
+  color: var(--dsw-alias-brand-primary);
   padding-inline: var(--space-2);
 }
 
+.button-quiet:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* 危险按钮的文字色用静态档 red-900（白底实测 15.9:1）而不是别名
+   `--dsw-alias-state-error-primary`（= red-500，白底实测 4.50:1，正好压在 AA 线上）：
+   与 tokens.css 头块记的「文字色取 900 阶而非 500 阶」是同一条纪律，#151 就是亮阶当
+   文字色的回归现场。判据把这条钉在 token 名上（control-family.spec.tsx 的变异用例）。 */
 .button-danger {
-  background: var(--color-surface);
-  border-color: var(--color-danger);
-  color: var(--color-danger-strong);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  color: var(--dsw-static-red-900);
 }
 
 .badge {
@@ -378,13 +422,17 @@ select {
   color: var(--color-ink-soft);
 }
 
+/* #168：与上面的按钮同族——0.5px `border-l4` 描边、8px 圆角、颜色只吃 L1。
+   高度同样保留 `--touch-min`（40px）而不是 vendored `Input` 的 32px：理由与 `.button`
+   段那条注释同源（触屏可达；32px 是上游桌面密度），此处不重复。 */
 .field input,
 .field textarea {
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-sm);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
   padding: var(--space-2) var(--space-3);
   min-height: var(--touch-min);
-  background: var(--color-surface);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
   min-width: 0;
   width: 100%;
 }
