@@ -70,6 +70,10 @@ bash scripts/secret-scan.sh apps/web scripts docs/agent
   拆分独立冷启，见下文 P1-19 段）。
 - 浏览器实时事件（#13 已交付的 realtime 模块）接线进 Task Room 属 P1-13 组合根范围，
   本场景的可视性经显式 reload 驱动（诚实路径，不依赖轮询巧合）。
+- 键盘链路的**焦点可见性**不在本场景判据内：这里判的是"键盘能不能走完主链"，不判"走的时候
+  看不看得见焦点落在哪"（原 `--focus-ring` 与相邻色只有 1.53–1.81:1）。两块分开记：
+  可见性已由 #164 的机器门（`apps/web/tests/focus-ring.spec.ts`）与
+  [focus-ring-acceptance.md](./focus-ring-acceptance.md) 登记；渲染态确认仍待 Q5。
 
 ## 复跑
 
