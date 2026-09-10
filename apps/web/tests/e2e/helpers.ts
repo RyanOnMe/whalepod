@@ -230,12 +230,21 @@ export function dropAckCount(count: number): Promise<unknown> {
 }
 
 /**
- * 终态 Run 的 Runtime 进程回收缝（等同 supervisor 硬超时动作；调用方必须先确认
- * 终态）。⚠ 产品缺 runtime.shutdown 主动回收（立账 #88，生产滞留上限 6h）；
- * #88 落地后本缝应删除。
+ * #88：终态 Run 的 Runtime 必须由产品路径自动回收（Node 终态即发
+ * runtime.shutdown；Hub 见心跳把终态 Run 报 active 会补 admin run.cancel）。
+ * 本断言只做观测：轮询 /runtimes 直到该 Run 不在管（进程已退、容量已释放）。
+ * 超时即产品回归——不允许测试代为回收（旧 /release 缝已随 #88 删除）。
  */
-export function releaseRuntime(runId: string): Promise<{ wasActive: boolean }> {
-  return nodeControl('/release', { runId })
+export async function waitForRuntimeReleased(runId: string, timeoutMs = 60_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const { runtimes } = await activeRuntimes()
+    if (!runtimes.some((r) => r.runId === runId)) return
+    if (Date.now() > deadline) {
+      throw new Error(`Runtime 未在 ${timeoutMs}ms 内被产品路径回收（runId=${runId}）`)
+    }
+    await sleep(500)
+  }
 }
 
 export interface RuntimeInfo {

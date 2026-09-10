@@ -178,6 +178,12 @@ export class RunManager {
   private readonly finalFacts = new Map<string, FinalFacts>()
   /** runId → 取消升级状态。 */
   private readonly cancels = new Map<string, CancelEscalation>()
+  /**
+   * #88：runId → 终态释放的升级计时器（runtime.shutdown → 宽限 → SIGTERM →
+   * 再宽限 → SIGKILL）。Runtime 退出（handleRuntimeExit）即清除——绝不向已退
+   * 进程发信号；supervisor 硬超时（生产 6h）降为最后兜底而非主回收路径。
+   */
+  private readonly releases = new Map<string, { timer?: ReturnType<typeof setTimeout> }>()
   /** 断连期间攒下的 lost 快照（onReconnect flush；R9）。 */
   private readonly pendingLostSnapshots = new Map<string, RunSnapshot>()
 
@@ -383,6 +389,14 @@ export class RunManager {
       return
     }
     const runId = payload.runId
+    if (this.finalFacts.has(runId)) {
+      // #88：本地已终态（shutdown 释放已发或 Runtime 已退）→ 迟到的收敛取消
+      // 只回 ack，绝不再向 Runtime 下发任何帧（免打扰守卫，先于 isActive 判定）。
+      this.log('info', 'run.cancel for locally terminal run; ack only', { runId })
+      this.deps.commandStore.markAcked(payload.commandId)
+      this.ack(payload.commandId, true)
+      return
+    }
     if (!this.deps.supervisor.isActive(runId)) {
       // Runtime 已不在（崩溃/已终态）：无需升级；退出归因/Hub 侧已收敛。
       this.log('warn', 'run.cancel for inactive runtime; nothing to escalate', { runId })
@@ -447,37 +461,30 @@ export class RunManager {
   }
 
   /**
-   * Runtime 确认（run.cancelled 帧）：终态事实照常投影（forced=false）；升级链路
-   * 收敛为 reap——确认后仍不退出的 Runtime 是泄漏，宽限到期 SIGTERM，再宽限
-   * SIGKILL（02 Task 16 Step 3 的「未结束则收尾」语义；无投影副作用）。
+   * Runtime 确认（run.cancelled 帧）：取消升级链收敛（确认窗口/SIGTERM 宽限
+   * 计时器清除，不再升级）。「确认后仍不退出」的进程收尾由 finalizeRun →
+   * releaseRuntime 统一承担（#88：shutdown → 宽限 → SIGTERM → SIGKILL，
+   * 与 completed/failed 终态同一收敛点），本函数不再单设 reap 链。
    */
   private confirmCancel(runId: string): void {
     const escalation = this.cancels.get(runId)
     if (escalation === undefined || escalation.phase === 'confirmed') return
     if (escalation.timer !== undefined) this.timers.clearTimeout(escalation.timer)
     escalation.phase = 'confirmed'
-    escalation.timer = this.timers.setTimeout(() => {
-      const current = this.cancels.get(runId)
-      if (current === undefined) return
-      if (this.deps.supervisor.isActive(runId)) {
-        this.log('warn', 'confirmed-cancelled runtime lingering; reaping', {
-          component: 'node.supervisor',
-          runId,
-        })
-        this.deps.supervisor.terminate(runId)
-        current.timer = this.timers.setTimeout(() => {
-          if (this.deps.supervisor.isActive(runId)) this.deps.supervisor.forceKill(runId)
-          this.cancels.delete(runId)
-        }, this.termGraceMs)
-        return
-      }
-      this.cancels.delete(runId)
-    }, this.termGraceMs)
+    escalation.timer = undefined
+    this.cancels.delete(runId)
   }
 
   // ---------- 退出归因（P1-16：Supervisor 裸事实 → Run 终态） ----------
 
   private handleRuntimeExit(runId: string, code: number | null, signal: string | null): void {
+    // #88：Runtime 退出收敛释放升级链——已排程的 SIGTERM/SIGKILL 一律撤销，
+    // 绝不向已退进程发信号。
+    const release = this.releases.get(runId)
+    if (release !== undefined) {
+      if (release.timer !== undefined) this.timers.clearTimeout(release.timer)
+      this.releases.delete(runId)
+    }
     const reported = this.finalFacts.has(runId)
       ? (this.finalFacts.get(runId)!.status as RuntimeTerminalReport)
       : 'none'
@@ -813,6 +820,56 @@ export class RunManager {
     // 协议违例、退出归因 cancelled_forced/runtime_lost、supervisor lost
     // orphan/runtime_timeout、lost 快照）都经 finalizeRun，无一漏网。
     this.cleanupInputs(runId)
+    // #88：Runtime 主动回收同样收敛在此——终态即下发 runtime.shutdown（协议帧，
+    // bridge/bin 收敛后 EOF 退出），容量立即释放；宽限内不退则信号升级
+    // （SIGTERM→SIGKILL），supervisor 硬超时（生产 6h）降为最后兜底。
+    this.releaseRuntime(runId)
+  }
+
+  /**
+   * #88 终态回收（02 语义：runtime.shutdown 收敛帧 + 宽限升级）。
+   * Runtime 已不在管（退出归因/lost 路径先走一步）时 no-op——没有可收的对象。
+   * 升级节奏与取消确认收敛同口径（cancelTermGraceMs）；退出事件到达即清除
+   * 计时器（handleRuntimeExit），绝不杀已退进程。
+   */
+  private releaseRuntime(runId: string): void {
+    if (!this.deps.supervisor.isActive(runId)) return
+    this.deps.supervisor.dispatchToRuntime(runId, {
+      protocolVersion: 1,
+      messageId: crypto.randomUUID(),
+      sentAt: this.now().toISOString(),
+      type: 'runtime.shutdown',
+      payload: { runId },
+    })
+    this.log('info', 'run terminal; runtime.shutdown dispatched, release pending', {
+      component: 'node.supervisor',
+      runId,
+      graceMs: this.termGraceMs,
+    })
+    const entry: { timer?: ReturnType<typeof setTimeout> } = {}
+    entry.timer = this.timers.setTimeout(() => {
+      if (!this.deps.supervisor.isActive(runId)) {
+        this.releases.delete(runId)
+        return
+      }
+      this.log('warn', 'runtime lingered past shutdown grace; escalating to sigterm', {
+        component: 'node.supervisor',
+        runId,
+        graceMs: this.termGraceMs,
+      })
+      this.deps.supervisor.terminate(runId)
+      entry.timer = this.timers.setTimeout(() => {
+        if (this.deps.supervisor.isActive(runId)) {
+          this.log('warn', 'sigterm grace expired after shutdown; escalating to sigkill', {
+            component: 'node.supervisor',
+            runId,
+          })
+          this.deps.supervisor.forceKill(runId)
+        }
+        this.releases.delete(runId)
+      }, this.termGraceMs)
+    }, this.termGraceMs)
+    this.releases.set(runId, entry)
   }
 
   /** P1-15：输入副本清理（best-effort，失败只吞掉——不阻塞终态登记）。 */
