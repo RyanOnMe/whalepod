@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
+import { expectNoContrastOffenders } from './contrast-sweep.js'
 
 interface E2eEnv {
   hubOrigin: string
@@ -141,7 +142,11 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
       'false',
     )
     await assertProjectFirstScreen(alice, { width: 1280, height: 720 })
+    // #159：首屏可见性判据（上面那两条）与对比度是两件事——一个元素可以在首屏内、
+    // 但仍然浅到读不清。项目页此刻已有项目卡片 + 折叠入口 + 任务列表，扫真实渲染。
+    await expectNoContrastOffenders(alice)
     await assertProjectFirstScreen(alice, { width: 390, height: 844 })
+    await expectNoContrastOffenders(alice)
     await alice.setViewportSize({ width: 1280, height: 720 })
 
     // ---- Bob 账号：Alice 会话经 HTTP API 开通 ----
@@ -186,6 +191,8 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     // Task Room 四区可见（header/assignment/comments/runs+artifacts 空态）
     await expect(alice.getByText('起草验收报告').first()).toBeVisible()
     await expect(alice.getByText('还没有留言')).toBeVisible()
+    // #159：空态也要扫（空态引导文字往往是 secondary 灰，最容易掉到 AA 以下）
+    await expectNoContrastOffenders(alice)
 
     // ---- #137：离开 Task Room 后能找回任务（项目页任务列表） ----
     // 判据：真人路径「返回项目页 → 展开任务列表 → 看到刚建的任务 → 点回 Task Room」。
@@ -231,5 +238,11 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     await bob.focus('textarea[name="body"]')
     await bob.keyboard.press('Tab')
     await expect(bob.getByRole('button', { name: '发送留言' })).toBeFocused()
+
+    // #159：Task Room 是**内容最杂的一页**（责任人栏 + 留言时间线 + Run/Artifact 区），
+    // 也是本项目里唯一有文本框、徽标、时间戳混排的页面。放到最后扫：此时是「已被接受
+    // + 已有留言」的完整态，空态与满态的文字色并不保证同源，两个态都要扫到。
+    await expectNoContrastOffenders(alice)
+    await expectNoContrastOffenders(bob)
   })
 })

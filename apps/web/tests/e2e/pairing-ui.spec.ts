@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { env, fillAndEnter, hubApi, sessionCookie, startNode } from './helpers.js'
+import { expectNoContrastOffenders } from './contrast-sweep.js'
 import {
   WHITE,
   compositeOver,
@@ -57,6 +58,16 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
   test.setTimeout(180_000) // 承载一次性 Setup 与 Node 冷启动。
 
   // Setup：Owner 与团队（本文件独立成套，一次 Setup 一个团队）。
+  // 先扫两个**未登录面**再提交：Setup 是新用户第一屏、登录页是每个成员每次进来的第一屏，
+  // 且两页都自带说明/报错文字（浅灰最容易掉到 AA 以下）。提交后 Setup 表单就不在
+  // DOM 里了（一次性 Setup 的产品约束），所以必须在这一步之前量。
+  await page.goto('/setup')
+  await expect(page.locator('#setup-token')).toBeVisible()
+  await expectNoContrastOffenders(page)
+  await page.goto('/login')
+  await expect(page.locator('#login-username')).toBeVisible()
+  await expectNoContrastOffenders(page)
+
   await page.goto('/setup')
   await page.fill('#setup-token', env().setupToken)
   await page.fill('#team-name', `配对 UI 验收团队 ${TAG}`)
@@ -207,6 +218,10 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
   const listed = await hubApi(cookie, 'GET', '/devices')
   const devices = listed.data as Array<{ id: string; name: string; status: string }>
   expect(devices.some((d) => d.id === node.deviceId && d.name === 'e2e-node')).toBe(true)
+
+  // #159：设备页此刻是**有设备**的形态（空态与有数据态的文字色可能不同源），
+  // 整页扫一遍真实渲染结果——上面那两条只钉了设备状态标记那一处。
+  await expectNoContrastOffenders(page)
 })
 
 /**
@@ -237,6 +252,9 @@ test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可�
       metrics.headerHeight,
       `${path} 顶栏高度 ${metrics.headerHeight}px 超过 64px（折行？）`,
     ).toBeLessThanOrEqual(64)
+    // #159：窄屏下正文/次要文字会换行、容器变窄，配色也跟着换了容器——同一页面
+    // 在 390 与 1280 下的对比度不是同一件事，所以三页各扫一遍。
+    await expectNoContrastOffenders(page)
   }
 
   // ---- 导航入口：键盘可开 → 跳转后必须自己收起 → 落地页主体按钮真的点得到 ----
@@ -256,6 +274,9 @@ test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可�
     .locator('.app-header')
     .evaluate((el) => el.getBoundingClientRect().height)
   expect(openHeaderHeight).toBeLessThanOrEqual(64)
+  // #159：折叠面板展开态单独扫——它是**另一个容器**（绝对定位 + 自己的底色），
+  // 面板收起时它的文字在可访问性树里不可见，不收着的这一瞬间才是它的真实呈现。
+  await expectNoContrastOffenders(page)
 
   await nav.getByRole('link', { name: '成员' }).click()
   await page.waitForURL(/\/members$/)
