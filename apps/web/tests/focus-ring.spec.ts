@@ -3,10 +3,18 @@
  * 深色一套（`body[data-ds-dark-theme]`）上都要够看。
  *
  * 为什么单开一道门：
- * 1. 旧值 `0 0 0 3px color-mix(in srgb, var(--color-signal) 40%, transparent)` 是**全站唯一的
- *    焦点样式**（global.css 的 `:focus-visible`），而它合成后压页面底 1.77:1、压卡片面 1.81:1、
- *    压顶栏底 1.53:1——SC 1.4.11 非文字对比度（AA）要求焦点指示与相邻颜色 ≥3:1。结果是键盘
- *    用户能操作、但看不见焦点在哪。
+ * 1. 旧值 `0 0 0 3px color-mix(in srgb, var(--color-signal) 40%, transparent)` 是**应用层
+ *    （global.css）唯一的焦点样式**（`:focus-visible`），而它合成后压页面底 1.77:1、压卡片面
+ *    1.81:1、压顶栏底 1.53:1——SC 1.4.11 非文字对比度（AA）要求焦点指示与相邻颜色 ≥3:1。
+ *    结果是键盘用户能操作、但看不见焦点在哪。
+ *
+ *    措辞更正（一审 S3）：**不能**说"全站唯一"——vendored 原语自带独立的焦点指示，
+ *    本门既不扫它们、也没把它们算进覆盖：`vendor/dsh-ui/Switch.module.css:38`
+ *    （`outline: 2px solid var(--dsw-alias-brand-primary)`）、
+ *    `ConnectionIndicator.module.css:40`（warn 色 outline）、
+ *    `Input.module.css:18`（`.wrap:focus-within` 改描边色）。三者在 `apps/web/src`（除 vendor）
+ *    当前**零使用点**，所以不是线上回归；但"键盘可达路径全被覆盖"这个说法不成立，已列入
+ *    本文末尾的未验证清单。
  * 2. 现有两道颜色门都守不住它：`theme-contrast.spec.ts` 判的是**声明出来的文字/背景配对**
  *    （焦点环不是文字，也不在那张清单里）；#159 的浏览器扫描判的是**文字**对比度。
  *
@@ -27,9 +35,10 @@
  *
  * 数字全部从 CSS 文本解析出来算（不抄死在测试里）：改 token，判据跟着变；门绿时也打印
  * 整张表，便于评审看趋势。末尾两条**反向用例**把"门不是恒真"变成常驻断言——旧值与
- * "单色加深"两个负样本都在里面，红→绿实测由它们复现。
+ * "单色加深"两个负样本都在里面，红→绿实测由它们复现——注意负样本里的数字是**刻意抄死**的
+ * （负样本不该随 token 变，它记录的是历史事实），改动时别把它们改成"从当前 token 现算"。
  */
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -44,7 +53,8 @@ import {
 } from './contrast.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const appTokens = readFileSync(join(here, '../src/styles/tokens.css'), 'utf8')
+const styleDir = join(here, '../src/styles')
+const appTokens = readFileSync(join(styleDir, 'tokens.css'), 'utf8')
 const l1Tokens = readFileSync(join(here, '../src/styles/dsw-tokens.css'), 'utf8')
 const globalCss = readFileSync(join(here, '../src/styles/global.css'), 'utf8')
 
@@ -313,6 +323,48 @@ describe('#164 焦点环门', () => {
     expect(offenders).toEqual([])
   })
 
+  it('--focus-ring 全仓只声明一次且落在 :root（局部覆盖会让门失明——一审 S1 实测过）', () => {
+    // 一审的实测反例：在 global.css 末尾追加 `.app-header { --focus-ring: 0 0 0 3px
+    // var(--color-paper); }`，token 里仍是好值 → 门 8/8 **全绿**，而真实顶栏上的焦点环已经
+    // 退化。根因是 `readTokenValue` 取的是正则**首个**匹配，只读 tokens.css。
+    // 所以这里对 styles/ 下**全部** css 扫一遍声明点，把"局部覆盖"这条通道关掉。
+    const files = readdirSync(styleDir).filter((f) => f.endsWith('.css'))
+    const declared: Array<{ where: string; selector: string }> = []
+    for (const file of files) {
+      const text = readFileSync(join(styleDir, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+      for (const [, selector, body] of text.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        if ((body ?? '').includes('--focus-ring:')) {
+          declared.push({ where: file, selector: (selector ?? '').trim().replace(/\s+/g, ' ') })
+        }
+      }
+    }
+    expect(
+      declared.map((d) => `${d.where} ${d.selector}`),
+      '--focus-ring 只允许在 styles/tokens.css 的 :root 里声明一次；任何局部覆盖都会让本门失明',
+    ).toEqual(['tokens.css :root'])
+  })
+
+  it('环的每一层里不出现裸色值（`var(--x, #ff00ff)` 这种带误导性 fallback 也算）', () => {
+    // 一审 S2：原判据只查"有没有 var()"，不查"有没有裸色值"，所以带 fallback 的形态会放行。
+    // 仓库里 `var(--color-accent, #4f6ef7)` 这类写法有 3 处，属真实惯例，不是假想。
+    const value = readTokenValue(appTokens, '--focus-ring')
+    const bare = [/#[0-9a-fA-F]{3,8}\b/, /\brgba?\(/, /\bhsla?\(/, /\boklch\(/].filter((re) =>
+      re.test(value),
+    )
+    expect(
+      bare.map((re) => re.source),
+      '--focus-ring 的取值里出现裸色值',
+    ).toEqual([])
+    for (const layer of ringLayers(false)) {
+      expect(
+        [/#[0-9a-fA-F]{3,8}\b/, /\brgba?\(/]
+          .filter((re) => re.test(layer.colorText))
+          .map((re) => re.source),
+        `层「${layer.colorText}」里出现裸色值`,
+      ).toEqual([])
+    }
+  })
+
   it('焦点环只挂在 :focus-visible 上（鼠标点击不出环）；复用同一 token 的非焦点规则须登记', () => {
     // 先剥注释再切规则：注释里出现 `{`/`}` 时按大括号切块会错位
     const stripped = globalCss.replace(/\/\*[\s\S]*?\*\//g, '')
@@ -353,9 +405,14 @@ describe('#164 焦点环门', () => {
   })
 
   it('反向用例：单色 signal 环在 signal 自身底上只有 1:1（所以"单色加深"不是修法）', () => {
-    // 100% blue-600 单层环确实压得住三个底色（paper 4.78 / surface 5.17 / ink 3.66——比旧值
-    // 好得多），但焦点元素**自身**的底色就可能是 signal（.button-primary）：环与它 1:1，
-    // 等于没有指示。双层环取 ink / surface 两极，正好躲开这个盲区；这条数字就是
+    // 100% blue-600 单层环在**浅色**的 paper / surface / ink 三个底色上确实够（4.78 / 5.17 /
+    // 3.66——比旧值好得多），**但两侧都有盲区**：
+    //   · 焦点元素**自身**的底色就可能是 signal（.button-primary）→ 环与它 1:1，等于没有指示；
+    //   · **深色侧** paper 2.34:1、surface 2.7:1 都不达标（一审 B1 纠正了首版把这句当通用结论
+    //     写在随深色一起翻转的 token 注释里的错误）；
+    //   · 浅色全调色板里还有 15 个底色不达标（`.button-danger` 的 red-900 2.78、signal-soft
+    //     蓝底 1:1、ghost-active 1.86…）。
+    // 双层环取 ink / surface 两极，正是为了"任何底色都必然与其中之一拉开"；这条数字就是
     // "为什么不用更显然的写法（单色加深）"的机器证据。
     const signal = parseCssColor(resolveTokenValue('--color-signal', false))
     const single: RingLayer[] = [{ colorText: 'var(--color-signal)', spreadPx: 3, color: signal }]

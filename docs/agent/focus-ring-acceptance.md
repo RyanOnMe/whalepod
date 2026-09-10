@@ -9,7 +9,8 @@
 ## 验的是哪条用户路径
 
 键盘用户按 Tab 走到任意可聚焦元素时，**看得见焦点落在哪**。焦点指示是
-`global.css` 里唯一的全局焦点样式：
+`global.css`（**应用层**）里唯一的全局焦点样式——注意口径：vendored 原语另有自己的焦点
+指示，见文末未覆盖第 6 条：
 
 ```css
 :focus-visible {
@@ -115,9 +116,14 @@ bash scripts/secret-scan.sh apps/web docs/agent                        # 提交�
    （尤其下面第 2、4 条）仍是未验证项，不得引用本门当渲染证据。
 2. **环从 3px 外扩变成 4px，是否被 `overflow: hidden` 祖先裁剪未验**：静态检索到的相关点——
    `global.css` 的三处 `overflow: hidden` 都是文字裁剪类（`.visually-hidden` / 省略号行），
-   `.run-live-text` 是 `overflow-y: auto` 但有 12px 内边距；**vendored `Modal.module.css` 的
-   `.dialog` 是 `overflow: hidden` 且水平 `padding: 0`**，模态里贴边的可聚焦元素其 4px 环有被
-   左右裁掉的风险（旧值 3px 同样有此风险，新值多 1px）。需要渲染确认后再决定是否补内边距。
+   `.run-live-text` 是 `overflow-y: auto` 但有 12px 内边距。
+   **一审更正（本条第 2 项原先的描述不准，已改写）**：vendored `Modal.module.css` 的 `.dialog`
+   确实是 `overflow: hidden`，但它的内层**每个可聚焦容器都自带 24px 水平内边距**
+   （`.header` `padding: 22px 14px 12px 24px`、`.body`/`.description`/`.footer` `padding: 0 24px`），
+   所以 4px 环在水平方向根本贴不到裁切线；真正零内边距的只有**上边缘**，而贴顶的 `.header`
+   自带 22px。**且 `Modal` 在 `apps/web/src`（除 vendor）当前零引用、零渲染点**——所以
+   "裁掉 1px"在当前形态下不会发生，无需为它补内边距。将来有人真的用上 Modal 且把可聚焦元素
+   贴到裁切边时再验。
 3. **深色一套只在文本层算过，没在真实界面验过**：本仓当前**没有深色切换入口**
    （`index.html` 不设 `data-ds-dark-theme`），所以上面深色那张表是"备好但没用过"。
    L3 接主题切换时必须补一次渲染验证（本门会随 L1 取值自动跟着算，但不能替代渲染核对）。
@@ -130,6 +136,12 @@ bash scripts/secret-scan.sh apps/web docs/agent                        # 提交�
 6. **非文字对比度的浏览器侧扫描仍缺**：本门判的是 `--focus-ring` 这条声明算出来的数字；
    `.run-item-button.selected` 的 `outline: 2px solid var(--color-accent)` 等其它非文字指示，
    以及"颜色由继承/color-mix 得出的非文字对比度"仍没有机器门（#159 扫的是文字）。
+   **另有三处 vendored 原语自带的焦点指示不归本门管**（一审 S3 指出"global.css 唯一"是
+   应用层口径，不能扩大成"全站唯一"）：`vendor/dsh-ui/Switch.module.css:38`
+   （`outline: 2px solid var(--dsw-alias-brand-primary)`）、
+   `ConnectionIndicator.module.css:40`（warn 色 outline）、`Input.module.css:18`
+   （`.wrap:focus-within` 改描边色）。三者在 `apps/web/src`（除 vendor）当前**零使用点**，
+   故不是线上回归；但等它们落页（#168 一带）时必须逐个补判据。
 7. **强制色彩模式（forced-colors）未验**：该模式下 `box-shadow` 会被 UA 丢弃，焦点可见性
    靠 UA 默认 `outline`。无回归证据，也无验证。
 
@@ -141,7 +153,24 @@ bash scripts/secret-scan.sh apps/web docs/agent                        # 提交�
    3:1 相邻色对比度落在 **SC 1.4.11 非文字对比度（AA）**。判据不变，编号按标准写清楚。
 2. **旧值在深色一套下更差**（1.36 / 1.43 / 1.79:1）——旧值是蓝 40% 叠在**深底**上，合成色
    更暗更糊；这条也说明"深色将来接上时同一判据要跟着过"不是空话。
-3. **`theme-contrast.spec.ts` 的 12 对 AA 清单里没有焦点环**：它判的是"声明出来的文字/背景
+3. **一审 B1 纠正：不能把"单色加深压得住三个底色"当通用结论**（2026-09-11）。首版在
+   `tokens.css` 注释、本 spec 两处注释、PR 正文与提交说明里写了"100% blue-600 单色环压得住
+   paper/surface/ink 三个底色（4.78 / 5.17 / 3.66:1）"——那是**浅色侧**的数字，而这条注释
+   会随 L1 深色段一起翻转被读成通用结论。一审复算：深色 paper `rgb(53,54,56)` **2.34:1**、
+   深色 surface `rgb(44,44,46)` **2.7:1**，只有深色 ink 过。**换成更强的论据**：单色 blue-600
+   在**浅色全调色板** 30 个"可能当元素自身底色"的取值里有 **16 个**不达标（`.button-danger`
+   的 red-900 2.78:1、`--color-signal-soft` 蓝底 1:1、ghost-active 1.86:1…），深色侧还有
+   paper/surface；双层环在浅深两套全调色板（30+31 色）**0 处失败**——任何底色都必然与
+   ink 或 surface 之一拉开。
+4. **一审 S1 实测到门会失明，已修**：`readTokenValue` 取正则首个匹配，门只读 `tokens.css`；
+   在 `global.css` 末尾追加 `.app-header { --focus-ring: … }` 后门仍 8/8 全绿。现已加断言
+   「`--focus-ring` 在 `styles/**` 里只声明一次且落在 `tokens.css :root`」，并做变异实测：
+   追加局部覆盖 → 门红（`expected [ 'global.css .app-header', …(1) ] to deeply equal
+   [ 'tokens.css :root' ]`）→ 还原 → 10 passed。
+5. **一审 S2**：判据原先只查"有没有 `var()`"、不查"有没有裸色值"，`var(--color-x, #ff00ff)`
+   这种带 fallback 的形态会放行（仓库里这类写法有 3 处）。已加反向断言（环的每一层里不得
+   出现裸 `#hex` / `rgb()`）。
+6. **`theme-contrast.spec.ts` 的 12 对 AA 清单里没有焦点环**：它判的是"声明出来的文字/背景
    配对"，非文字对比度不在口径内（#159 也只判文字）。本门补的正是这个缺口，
    但**只覆盖 `--focus-ring` 这一条**（见边界第 6 条）。
 4. **两处关于焦点环的注释会随本改动过期**，已在本次一并更正：`tokens.css` 文件头
