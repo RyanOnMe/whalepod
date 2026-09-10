@@ -67,6 +67,33 @@ async function fillAndEnter(page: Page, selector: string, value: string): Promis
   await page.press(selector, 'Enter')
 }
 
+/**
+ * #152 判据：项目页首屏（不滚动）必须看得见项目列表与「任务列表」入口。
+ * 桌面与 390×844 两档都判——「创建项目」表单常驻展开曾把两者挤出首屏。
+ */
+async function assertProjectFirstScreen(
+  page: Page,
+  viewport: { width: number; height: number },
+): Promise<void> {
+  await page.setViewportSize(viewport)
+  await page.evaluate(() => window.scrollTo(0, 0))
+  const item = await page.locator('.project-list > li').first().boundingBox()
+  const taskListButton = await page.getByRole('button', { name: '任务列表' }).first().boundingBox()
+  expect(item, '项目列表首项未渲染').not.toBeNull()
+  expect(taskListButton, '「任务列表」入口未渲染').not.toBeNull()
+  const itemBottom = (item?.y ?? 0) + (item?.height ?? 0)
+  const buttonBottom = (taskListButton?.y ?? 0) + (taskListButton?.height ?? 0)
+  expect(
+    itemBottom,
+    `项目列表首项在视口外（bottom=${itemBottom} > ${viewport.height}）`,
+  ).toBeLessThanOrEqual(viewport.height)
+  expect(
+    buttonBottom,
+    `「任务列表」入口在视口外（bottom=${buttonBottom} > ${viewport.height}）`,
+  ).toBeLessThanOrEqual(viewport.height)
+  expect(await page.evaluate(() => window.scrollY)).toBe(0)
+}
+
 test.describe('P1-07 验收：双浏览器上下文主链', () => {
   let aliceContext: BrowserContext
   let bobContext: BrowserContext
@@ -92,9 +119,30 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     await fillAndEnter(alice, '#setup-password', ALICE_PASSWORD)
     await expect(alice.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
 
+    // ---- #152：项目页首屏先看得见列表与「任务列表」入口，表单要手动展开 ----
+    // 「创建项目」默认收起（与「创建任务」同款 aria-expanded 语义）——常驻展开的
+    // 两个输入框 + 按钮会把列表与任务入口推到首屏之外。
+    const newProjectToggle = alice.getByRole('button', { name: '新建项目' })
+    await expect(newProjectToggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(alice.locator('#project-name')).toHaveCount(0) // 收起时表单不在 DOM 里
+    await newProjectToggle.click()
+    await expect(alice.getByRole('button', { name: '收起' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+    await expect(alice.locator('#project-name')).toBeVisible()
+
     // ---- Alice：创建项目（键盘：名称输入框内 Enter） ----
     await fillAndEnter(alice, '#project-name', '验收项目')
     await expect(alice.getByText('验收项目').first()).toBeVisible()
+    // 建成即收起：新项目卡片就在下面，不需要用户再点一次「收起」
+    await expect(alice.getByRole('button', { name: '新建项目' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    )
+    await assertProjectFirstScreen(alice, { width: 1280, height: 720 })
+    await assertProjectFirstScreen(alice, { width: 390, height: 844 })
+    await alice.setViewportSize({ width: 1280, height: 720 })
 
     // ---- Bob 账号：Alice 会话经 HTTP API 开通 ----
     // 此处保留 HTTP 直连是**有意的分工**：本 spec 判的是 Task Room 双会话主链，

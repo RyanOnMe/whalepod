@@ -12,3 +12,31 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+--------------------------------------------------------------------------------
+
+Third-party components included in this product
+--------------------------------------------------------------------------------
+
+DeepSeek Harness client UI (source-vendored copy)
+Copyright (c) 2026 DeepSeek
+Licensed under the MIT License.
+
+  Upstream project : DeepSeek Harness (https://github.com/deepseek-ai/deepseek-harness)
+  Upstream license : MIT — full text at https://github.com/deepseek-ai/deepseek-harness/blob/master/LICENSE
+  Vendored scope   : selected source files from `packages/client/ui-theme` (design
+                     tokens) and `packages/client/ui-primitives` (React primitives),
+                     copied into this repository as source under
+                     `apps/web/src/vendor/dsh-ui/`.
+  Vendored revision: pinned to upstream commit c291e7961a515f6d7af9304e7fd1d257929aef26
+
+The MIT License text is reproduced in full at `apps/web/src/vendor/dsh-ui/LICENSE`,
+which is distributed with the vendored source. Per-file provenance, the pinned
+upstream revision, and the sync policy are recorded in
+`docs/agent/dsh-ui-vendoring.md`.
+
+This notice covers only the vendored source described above. DeepSeek Harness
+names, logos, and other brand assets are NOT included; see `TRADEMARKS.md`.
+The MIT License grants copyright permissions only and does not grant any
+trademark rights. Nothing here implies endorsement, sponsorship, or affiliation
+by or with DeepSeek.

@@ -62,7 +62,14 @@
    * - 三个 900 档：设备页状态标记做 WCAG AA 重新映射的取值来源（见 global.css 的
    *   .device-status-* 与「AA 重映射」注释）。上游 design-platform.css 里 900 档
    *   位于静态段：green-900 第 36 行、red-900 第 77 行、amber-900 第 9 行，取值逐字照抄。 */
+  /* #152 主题统一：本仓应用层（tokens.css）引用的静态阶一并入白名单，让「单一来源」
+     是结构性的（应用层只 var() 引用，不各自抄字面量；改上游只需改这一处）。 */
   --dsw-static-deepseek-450: rgb(86, 134, 254);
+  --dsw-static-blue-100: rgb(219, 234, 254);
+  --dsw-static-blue-600: rgb(37, 99, 235);
+  --dsw-static-green-100: rgb(230, 250, 237);
+  --dsw-static-amber-100: rgb(254, 245, 231);
+  --dsw-static-red-100: rgb(254, 226, 226);
   --dsw-static-green-900: rgb(35, 60, 44);
   --dsw-static-red-900: rgb(87, 12, 12);
   --dsw-static-amber-900: rgb(39, 36, 31);
