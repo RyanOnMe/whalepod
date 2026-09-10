@@ -110,8 +110,8 @@ export function MembersPage(): ReactNode {
             {canInvite ? (
               <>
                 <p className="page-lead">
-                  选一个角色生成邀请链接。链接只能使用一次，72 小时后失效；生成后请立即复制发给他
-                  ——Token 只出现这一次。
+                  选一个角色生成邀请链接。链接只能使用一次，72
+                  小时后失效；生成后请立即复制发给他——Token 只出现这一次。
                 </p>
                 <form className="inline-form" onSubmit={submit}>
                   <div className="field">
