@@ -74,7 +74,9 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
 
   // 不 reload、不重新导航：device.changed 失效 ['devices'] → 列表自己长出设备。
   await expect(page.getByText('e2e-node')).toBeVisible({ timeout: 60_000 })
-  await expect(page.getByText('在线')).toBeVisible()
+  // 状态徽标（#152 起页面上另有「最后在线」这一栏，`getByText('在线')` 会同时命中
+  // 两处 → 用徽标定位，避免 strict mode 撞车）。
+  await expect(page.locator('.device-item span.badge').first()).toHaveText('在线')
   expect(await page.evaluate(() => Reflect.get(window, '__pairingUiNoReload') === true)).toBe(true)
 
   const cookie = await sessionCookie(context)

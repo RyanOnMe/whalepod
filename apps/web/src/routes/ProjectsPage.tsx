@@ -9,7 +9,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
-import type { CreateProjectRequest, CreateTaskRequest, TeamMemberView } from '@whalepod/protocol'
+import type { CreateProjectRequest, CreateTaskRequest } from '@whalepod/protocol'
 import { useNavigate } from 'react-router'
 import { api } from '../shared/api/client.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
@@ -202,12 +202,11 @@ function CreateTaskForm({
   const [values, setValues] = useState({ title: '', description: '', assigneeUserId: '' })
   const [error, setError] = useState<unknown>(null)
   const session = useSession()
-  const membersQuery = useQuery({
-    queryKey: queryKeys.teamMembers,
-    queryFn: () => api.get<TeamMemberView[]>('/team/members'),
-  })
+  // 责任人下拉与项目卡/任务列表共用同一份名册（#152 的共用 hook，同一 queryKey）：
+  // 只在 hook 里定义策略，避免「同一个 key 两套 staleTime」这种漂移。
+  const directory = useMemberDirectory()
   // 停用成员不进选择器（03 §2.2 assignee 必须未停用；后端同规则 fail-closed）。
-  const selectableMembers = (membersQuery.data ?? []).filter((m) => m.enabled)
+  const selectableMembers = directory.members.filter((m) => m.enabled)
   // 列表就绪后默认选中自己（多数场景是给自己建任务）；用户改选后不覆盖。
   useEffect(() => {
     const preferred =
@@ -216,7 +215,7 @@ function CreateTaskForm({
     setValues((prev) =>
       prev.assigneeUserId === '' ? { ...prev, assigneeUserId: preferred.userId } : prev,
     )
-  }, [membersQuery.data, session?.userId])
+  }, [directory.members, session?.userId])
   const mutation = useMutation({
     mutationFn: () => {
       const body: CreateTaskRequest = {
@@ -271,10 +270,10 @@ function CreateTaskForm({
             setValues((prev) => ({ ...prev, assigneeUserId: event.target.value }))
           }
           required
-          disabled={membersQuery.isPending}
+          disabled={directory.isPending}
         >
           <option value="" disabled>
-            {membersQuery.isPending
+            {directory.isPending
               ? '正在加载成员…'
               : selectableMembers.length === 0
                 ? '没有可选成员'
@@ -286,7 +285,7 @@ function CreateTaskForm({
             </option>
           ))}
         </select>
-        {membersQuery.isError ? <ErrorBanner error={membersQuery.error} /> : null}
+        {directory.isError ? <ErrorBanner error={directory.error} /> : null}
       </div>
       <div className="form-actions">
         <button type="submit" className="button button-primary" disabled={mutation.isPending}>
