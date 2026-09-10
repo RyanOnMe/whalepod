@@ -73,7 +73,7 @@ export function PluginSettings({ session }: PluginSettingsProps): ReactNode {
     <section className="plugins-layout" aria-labelledby="plugin-settings-heading">
       <h2 id="plugin-settings-heading">插件目录</h2>
       {canManage ? null : (
-        <p className="mutation-hint">
+        <p className="mutation-hint plugin-readonly-hint">
           你是{session === null ? '访客' : ROLE_LABEL[session.role]}
           ，插件目录只读；仅所有者或管理员可安装插件或创建 Pack。
         </p>

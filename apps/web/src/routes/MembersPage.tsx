@@ -81,7 +81,7 @@ export function MembersPage(): ReactNode {
           <section className="card" aria-labelledby="members-list-heading">
             <h2 id="members-list-heading">团队成员</h2>
             {membersQuery.isPending ? (
-              <p className="mutation-hint">加载成员名单…</p>
+              <p className="mutation-hint">正在加载成员名单…</p>
             ) : membersQuery.isError ? (
               <ErrorBanner error={membersQuery.error} />
             ) : members.length === 0 ? (

@@ -123,7 +123,7 @@ export function AgentList({
         {canManage ? (
           <AgentRevisionForm onCreated={onCreated} />
         ) : (
-          <p className="mutation-hint">
+          <p className="mutation-hint agent-readonly-hint">
             你是{session === null ? '访客' : ROLE_LABEL[session.role]}，Agent
             只读；仅所有者或管理员可创建或修改。
           </p>

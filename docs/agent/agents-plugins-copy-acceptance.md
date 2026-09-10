@@ -3,9 +3,9 @@
 - 对应场景/门禁：Q5 浏览器门（`pnpm test:e2e` 的 `p1-142` 项目）；文案判据本体在 Q0
   （`pnpm check` 的 unit project 里跑同一套纯函数）
 - 对应 Issue：#167（UI 人话化第二批：Agents 页与插件页）
-- 上次验证：2026-09-11 · `feat/p1-167-agents-plugins-copy` · 结果：Q0 PASS
-  （82 files / 1056 tests）；**Q5 待父 agent 放行后在空栈上跑**
-  （`pnpm exec playwright test --project=p1-142`），本文件记的是判据本体 + 离线复现 + 截图自审
+- 上次验证：2026-09-11 · `feat/p1-167-agents-plugins-copy`（已合并 main `38c6968` / #160）
+  · 结果：**Q0 PASS（82 files / 1059 tests）+ Q5 PASS**
+  （`--project=p1-142` 3 passed 1.1m；`--project=p1-19` 13 passed 4.3m）
 
 ## 验的是哪条用户路径
 
@@ -184,11 +184,18 @@ bash scripts/secret-scan.sh apps/web scripts docs/agent   # Q7 片段
   `PluginPackEditor` 的 Pack ID / Pack Digest / 完整 Digest 三条。是否给目录卡也加
   复制入口属新范围，未做。
 
-## 复跑
+## 复跑（本次实测输出）
 
 ```bash
 corepack enable && pnpm install --frozen-lockfile && pnpm -r --if-present build
-pnpm check                                                 # Q0（含判据纯函数 8 例）
-pnpm exec playwright test --project=p1-142                 # Q5（需空栈；与 #159 的扫描同点）
-bash scripts/secret-scan.sh apps/web scripts docs/agent     # Q7 片段
+pnpm check                                                 # Q0：82 files / 1059 tests 全绿
+pnpm exec playwright test --project=p1-142                 # Q5：3 passed (1.1m)
+#   ✓ 生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备 (5.1s)
+#   ✓ 文案判据：Agents 与插件页无裸摘要 / 无内部词 / 无同义标题（1280×720 与 390×844 两档）(4.5s)
+#   ✓ 390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可达 (15.3s)
+pnpm exec playwright test --project=p1-19                  # 改过 /agents 断言的 spec：13 passed (4.3m)
+#   （G5/G5-04/G6-04/G6-07/G4-04 + R1/R4/R5/R7/R8/R9 + G7-01/G7-04 全绿）
+bash scripts/secret-scan.sh apps/web scripts docs/agent     # Q7 片段：OK
 ```
+
+两个 project 各一次冷启，跑完确认 5173/18080 已释放、无残留 `project311.e2e-postgres` 容器。

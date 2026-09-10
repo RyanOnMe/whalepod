@@ -13,8 +13,9 @@ import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { env, fillAndEnter, hubApi, sessionCookie, startNode } from './helpers.js'
+import { env, fillAndEnter, hubApi, seedPluginPack, sessionCookie, startNode } from './helpers.js'
 import { expectCopyCriteria } from '../copy-criteria.js'
+import { expectNoContrastOffenders } from './contrast-sweep.js'
 import {
   WHITE,
   compositeOver,
@@ -52,6 +53,13 @@ test.describe.configure({ mode: 'serial' })
 let context: BrowserContext
 let page: Page
 
+/**
+ * 跨用例共享的团队事实（#167）：Setup 之后才有 owner，而「有数据形态」的文案判据
+ * 需要 owner id 才能经 HTTP 旁路造 Agent 与 Pack。用可变对象而不是模块级 let：
+ * 用例之间只传值，不传状态机。
+ */
+const shared: { ownerUserId?: string; pluginPackId?: string } = {}
+
 test.beforeAll(async ({ browser }) => {
   context = await browser.newContext()
   page = await context.newPage()
@@ -65,6 +73,16 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
   test.setTimeout(180_000) // 承载一次性 Setup 与 Node 冷启动。
 
   // Setup：Owner 与团队（本文件独立成套，一次 Setup 一个团队）。
+  // 先扫两个**未登录面**再提交：Setup 是新用户第一屏、登录页是每个成员每次进来的第一屏，
+  // 且两页都自带说明/报错文字（浅灰最容易掉到 AA 以下）。提交后 Setup 表单就不在
+  // DOM 里了（一次性 Setup 的产品约束），所以必须在这一步之前量。
+  await page.goto('/setup')
+  await expect(page.locator('#setup-token')).toBeVisible()
+  await expectNoContrastOffenders(page)
+  await page.goto('/login')
+  await expect(page.locator('#login-username')).toBeVisible()
+  await expectNoContrastOffenders(page)
+
   await page.goto('/setup')
   await page.fill('#setup-token', env().setupToken)
   await page.fill('#team-name', `配对 UI 验收团队 ${TAG}`)
@@ -72,6 +90,10 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
   await page.fill('#setup-display-name', 'Owner')
   await fillAndEnter(page, '#setup-password', PASSWORD)
   await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
+  // #167：记下 owner id——后面的「有数据形态」文案判据要经 HTTP 旁路用它造数据
+  // （Pack/Agent 的 createdBy 是外键，必须先拿到真实 userId）。
+  const session = await hubApi(await sessionCookie(context), 'GET', '/auth/session')
+  shared.ownerUserId = (session.data as { userId: string }).userId
 
   // 设备页：#142 的断头点——空态指引之外，签发控件必须就在本页。
   await page.goto('/devices')
@@ -241,6 +263,11 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
   expect(devicesText, '设备页不应出现 darwin/win32 这类内部标识').not.toMatch(/\b(darwin|win32)\b/)
   expect(devicesText, '「心跳」是内部黑话').not.toContain('心跳')
   expect(devicesText).toContain('最后在线')
+
+  // #159：设备页此刻是**有设备**的形态（空态与有数据态的文字色可能不同源），
+  // 整页扫一遍真实渲染结果——上面那些只钉了设备状态标记与设备行文案两处。
+  // 位置放在 main 的零泄漏断言之后：那些断言已经等这一行渲染出来了，扫描不会扫到空页面。
+  await expectNoContrastOffenders(page)
 })
 
 /**
@@ -258,12 +285,54 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
  */
 const COPY_CHECK_PAGES: Readonly<Record<string, { ready: string; card?: string }>> = {
   // 空团队下 Agents 页是空态 + 表单；有 Agent 时点开卡片判详情（详情里才有
-  // persona/插件组合这些标签）。两种形态都要覆盖，selector 用「有卡片」优先。
-  '/agents': { ready: 'form[aria-label="新建 Agent"], .empty-state', card: '.agent-card' },
-  '/plugins': { ready: '.plugins-page .empty-state, .plugin-card' },
+  // persona/插件组合这些标签）。两种形态都要覆盖。
+  '/agents': { ready: '.agent-list > li, .agents-page .empty-state', card: '.agent-card' },
+  '/plugins': {
+    ready: '.plugins-page .empty-state, .plugins-layout .plugin-readonly-hint, .plugin-list > li',
+  },
 }
 
+/**
+ * #167 文案判据（Agents 页与插件页）：正文不得出现裸的 64 位摘要、不得出现裸的内部词、
+ * 同一屏不得有两个同义标题。判据口径、词表与理由见 apps/web/tests/copy-criteria.ts
+ * （一个文件同时导出纯函数与浏览器侧入口；纯函数在 Q0 的 unit project 里每次跑，
+ * 这里是把同一套判据挂到**真实渲染结果**上）。
+ *
+ * 渲染时机与 #159 的对比度扫描同一口径：逐页等**该页真实内容**（有数据或空态）出现再判，
+ * 不扫 isPending 窗口里的空页面。
+ *
+ * ## 「有数据形态」（本用例的重点，之前是未验证清单里最值钱的一条）
+ *
+ * 空团队下 Pack 卡、Agent 详情都不渲染，判据只能扫到空态与表单——而「摘要截断 + title
+ * 全值 + 一键复制」正好只在 Pack 卡上有。所以本用例先用**既有旁路**造数据：
+ * `POST /agents`（Hub HTTP，owner 会话；与真人同一接口）+ 控制面 `seedPluginPack`
+ * （P1-18/P1-19 既有惯例：Pack 管理流不在 E2E 复跑，行级种子 + 事件留痕）。
+ * 造完再回到浏览器：判据扫的是**真实渲染结果**，种出来的 digest 也是真算出来的
+ * （e2e-serve 用 digestPluginPack 复算，GET /plugin-packs 会核）。
+ *
+ * 红→绿实测见 PR #172 正文：旧文案下本判据在真浏览器里红过（同义标题 / 裸 64 位摘要 /
+ * 裸 `curated` 三条各一次）。
+ */
 test('文案判据：Agents 与插件页无裸摘要 / 无内部词 / 无同义标题（1280×720 与 390×844 两档）', async () => {
+  test.setTimeout(180_000)
+
+  // ---- 先造「有数据形态」（走既有旁路；浏览器侧只负责读渲染结果） ----
+  const cookie = await sessionCookie(context)
+  const ownerUserId = shared.ownerUserId
+  expect(ownerUserId, 'Setup 用例未记录 owner id（本用例依赖序列执行）').toBeDefined()
+  const pack = await seedPluginPack(ownerUserId as string)
+  shared.pluginPackId = pack.pluginPackId
+  const createdAgent = await hubApi(cookie, 'POST', '/agents', {
+    name: `文案验收 Agent ${TAG}`,
+    description: '判据用的有数据形态',
+    persona: 'You are a copy-audit agent.',
+    provider: 'replay',
+    model: 'replay-model',
+    credentialSlot: 'default',
+    pluginPackId: pack.pluginPackId,
+  })
+  expect(createdAgent.status, `POST /agents 失败：${JSON.stringify(createdAgent.data)}`).toBe(201)
+
   for (const viewport of [
     { width: 1280, height: 720 },
     { width: 390, height: 844 },
@@ -271,16 +340,6 @@ test('文案判据：Agents 与插件页无裸摘要 / 无内部词 / 无同义�
     await page.setViewportSize(viewport)
     for (const [path, spec] of Object.entries(COPY_CHECK_PAGES)) {
       await page.goto(path)
-      // 未初始化/未登录时根 loader 会把任何人重定向走（单 Hub 只容一个团队，
-      // 本 spec 的 Setup 属另一个用例，重跑时可能已被占用）——那不是本判据的现场，
-      // 记一条跳过并继续，不在这里制造假红。
-      if (!new URL(page.url()).pathname.startsWith(path)) {
-        test.info().annotations.push({
-          type: 'skip-scope',
-          description: `${path} 被重定向到 ${new URL(page.url()).pathname}（无会话），本档未覆盖该页`,
-        })
-        continue
-      }
       await expect(page.locator('.app-header')).toBeVisible()
       await expect(page.locator(spec.ready).first()).toBeVisible()
       // 详情面板是懒渲染的（点卡片才请求详情），里面才有「人格设定（Persona）」
@@ -291,6 +350,7 @@ test('文案判据：Agents 与插件页无裸摘要 / 无内部词 / 无同义�
         await expect(page.locator('.agent-detail')).toBeVisible()
       }
       await expectCopyCriteria(page, `${path} @ ${viewport.width}×${viewport.height}`)
+      await expectNoContrastOffenders(page)
 
       // 390×844 档顺带判横向溢出（#152 的既有判据，两页此前没进过那个循环）。
       if (viewport.width === 390) {
@@ -305,6 +365,31 @@ test('文案判据：Agents 与插件页无裸摘要 / 无内部词 / 无同义�
       }
     }
   }
+
+  // ---- #167 摘要两头一起钉：正文只许短码，全值必须在 title 且复制得到全值 ----
+  // 种出来的 Pack 是空 Pack（entries 为空），digest 由 e2e-serve 用 digestPluginPack 复算，
+  // 因此这里核的是**真 digest**，不是桩值。
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.goto('/plugins')
+  const packCard = page.locator('article.plugin-card', { hasText: 'e2e-pack' }).first()
+  await expect(packCard).toBeVisible()
+  const digestCode = packCard.locator('dd code.plugin-digest').nth(1)
+  const shortDigest = (await digestCode.innerText()).trim()
+  const fullDigest = await digestCode.getAttribute('title')
+  expect(shortDigest, '摘要短码形态应是前 12 位 + 省略号').toMatch(/^[0-9a-f]{12}…$/)
+  expect(fullDigest, '摘要全值必须经 title 给出').toMatch(/^[0-9a-f]{64}$/)
+  expect(shortDigest).not.toBe(fullDigest)
+  // 反例半边：正文（innerText）里不得出现整串（判据 1 已在上面扫过全页，
+  // 这里把范围收到这张卡上，失败信息更贴现场）
+  const cardText = await packCard.innerText()
+  expect(cardText, 'Pack 卡正文不得出现 64 位摘要整串').not.toContain(fullDigest as string)
+
+  // 一键复制拿到的必须是全值（不是屏上的短码）：读剪贴板核对。
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await packCard.getByRole('button', { name: `复制 e2e-pack 插件组合摘要` }).click()
+  await expect(packCard.getByText('已复制')).toBeVisible()
+  const clipboardText = await page.evaluate(() => navigator.clipboard.readText())
+  expect(clipboardText, '复制按钮写入剪贴板的应是完整摘要').toBe(fullDigest)
 })
 
 /**
@@ -317,9 +402,50 @@ test('文案判据：Agents 与插件页无裸摘要 / 无内部词 / 无同义�
 test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可达', async () => {
   await page.setViewportSize({ width: 390, height: 844 })
 
-  for (const path of ['/', '/devices', '/members']) {
+  // #159 一审抓出的假绿：这轮循环原来只等 `.app-header`（壳，立即渲染）就扫描，而三页的
+  // 数据都是异步 query —— 在 isPending 窗口里页面上只有 "正在加载…"，徽标/状态色/时间戳
+  // 一个都没进画面，扫描退化成只量顶栏。现在逐页等**该页的真实内容**再扫。
+  //
+  // 二审 N2 指出首版整改还有第二层问题：它把「`.mutation-hint` 计数 0」当加载哨兵，而
+  // `.mutation-hint` 同时也是 7 处**静态信息文字**的类名（AgentList/PluginSettings 的只读
+  // 提示、TaskHeader、CommentComposer、RunTimeline、ArtifactList…）。owner 会话下这 5 条
+  // 路由恰好没有静态 `.mutation-hint`，所以当时是绿的；**成员会话**下 /agents、/plugins 会
+  // 永久渲染只读提示 → 这个断言会超时（假红），日后谁给这 5 页再加一句提示也会踩到。
+  // 所以改成直接等"该页数据已经渲染出来"的标志性节点（下面 CONTENT_READY），不再借类名。
+  // 每页的"数据已渲染"标志：有数据（列表/卡片）与空态（.empty-state）两种形态都覆盖。
+  // 二审 N2-a：锚点必须是**数据/空态**节点，不能拿无条件渲染的容器（`section.devices-list`、
+  // `form.card.agent-form`、`form.card.plugin-pack-form` 在 isPending 时就已经在 DOM 里）。
+  // 每页至少给一个"有数据"与一个"确实为空"的备选，两者都只在 isSuccess 之后出现。
+  const CONTENT_READY: Readonly<Record<string, string>> = {
+    '/': 'ul.project-list > li, .projects-page .empty-state',
+    '/devices': 'section.devices-list li.device-item, section.devices-list .empty-state',
+    // `.empty-state` 在这一页有两个：成员列表的空态，以及"只有所有者或管理员能邀请成员"那段
+    // **无条件渲染**的说明（对成员/访客会话一直存在）。这里用 `section.card` 的第一个作用域
+    // 限定到列表那一个，否则非 owner 会话会在 isPending 窗口就被锚点放过。
+    '/members':
+      'section[aria-labelledby="members-list-heading"] ul.member-list > li, section[aria-labelledby="members-list-heading"] .empty-state',
+    // #159 一审的覆盖缺口：Agents 与插件页此前没有任何扫描点（它们同样有徽标、表单
+    // 与浅底提示，是最容易掉 AA 的页面类型）。成员会话下这两页没有表单与列表，只有只读提示
+    // （它的文字里没有「正在加载」，与上面的加载判据不冲突）。
+    '/agents': '.agent-list > li, .agents-page .empty-state, .agents-page .agent-readonly-hint',
+    '/plugins':
+      '.plugins-page .empty-state, .plugins-layout .plugin-readonly-hint, .plugin-list > li',
+  }
+  for (const path of ['/', '/devices', '/members', '/agents', '/plugins']) {
     await page.goto(path)
     await expect(page.locator('.app-header')).toBeVisible()
+    // 二审 N2：不要再用 `.mutation-hint` 计数当加载哨兵——那个类名同时被 7 处**静态信息
+    // 文字**使用（只读提示等），成员会话下 Agents/插件页会永久渲染它。改成认"加载文案本身"。
+    // **口径更正（二审复核指出我原先写的"12 处、全仓统一以「正在加载」开头"不成立）**：
+    // 实测 15 处 UI 加载文案里有两处不以「正在加载」开头（`MembersPage` 的「加载成员名单…」、
+    // `InvitePage` 的「正在确认邀请…」）。所以两道防线是**按页分工**的，不能互相替代：
+    //   · 文案检查覆盖 /devices、/agents、/plugins（这三页的加载文案恰好都含「正在加载」）；
+    //   · /members 靠内容锚点（`ul.member-list` / 「还没有成员记录」都在 isSuccess 之后）。
+    // 而 `/devices`、`/agents`、`/plugins` 的内容锚点里有几个是**无条件渲染**的容器
+    // （`section.devices-list`、`form.card.agent-form`、`form.card.plugin-pack-form`），
+    // 所以那三页真正挡住 pending 窗口的是文案检查；`/members` 则相反。两边都留着，别删任一处。
+    await expect(page.getByText(/正在加载/)).toHaveCount(0)
+    await expect(page.locator(CONTENT_READY[path] ?? 'main').first()).toBeVisible()
     const metrics = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       innerWidth: window.innerWidth,
@@ -335,6 +461,9 @@ test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可�
       metrics.headerHeight,
       `${path} 顶栏高度 ${metrics.headerHeight}px 超过 64px（折行？）`,
     ).toBeLessThanOrEqual(64)
+    // #159：窄屏下正文/次要文字会换行、容器变窄，配色也跟着换了容器——同一页面
+    // 在 390 与 1280 下的对比度不是同一件事，所以三页各扫一遍。
+    await expectNoContrastOffenders(page)
   }
 
   // ---- 导航入口：键盘可开 → 跳转后必须自己收起 → 落地页主体按钮真的点得到 ----
@@ -354,6 +483,9 @@ test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可�
     .locator('.app-header')
     .evaluate((el) => el.getBoundingClientRect().height)
   expect(openHeaderHeight).toBeLessThanOrEqual(64)
+  // #159：折叠面板展开态单独扫——它是**另一个容器**（绝对定位 + 自己的底色），
+  // 面板收起时它的文字在可访问性树里不可见，不收着的这一瞬间才是它的真实呈现。
+  await expectNoContrastOffenders(page)
 
   await nav.getByRole('link', { name: '成员' }).click()
   await page.waitForURL(/\/members$/)
