@@ -7,10 +7,14 @@
  * - 「生成配对码」→ POST /devices/pairing-codes：明文（六组 base32）+ 10 分钟
  *   倒计时 + 一键复制，并明说「此码只显示一次」（Hub 只存 SHA-256，与 CLI 的
  *   shown once 同语义）；过期后明文撤下、给出重新生成入口；
- * - 设备列表 → GET /devices（queryKeys.devices）：名称/在线状态/最后心跳。配对
- *   成功后 Hub 扇出 device.changed，event-router 失效 ['devices'] → 新设备无需
+ * - 设备列表 → GET /devices（queryKeys.devices）：名称/在线状态/最后在线时间。
+ *   配对成功后 Hub 扇出 device.changed，event-router 失效 ['devices'] → 新设备无需
  *   刷新即出现在本页；
  * - 失败一律走统一 ErrorBanner（Hub 的 message + requestId），不把裸错误码搬上屏。
+ *
+ * #152：平台与时间都是「给人看的」——`platform` 是 Node 上报的 process.platform
+ * 内部标识（darwin），过 formatPlatform 映射成 macOS；「最后心跳」是内部黑话，
+ * 改为「最后在线」；时间走相对文案（RelativeTime）。
  *
  * 已知缺口（不在本页伪造入口）：Hub 没有「撤销未使用配对码」接口（03 §4 只有
  * DELETE /devices/:deviceId 撤销设备），已签发未使用的码只能等 10 分钟自然过期。
@@ -24,7 +28,8 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { api } from '../shared/api/client.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
 import { queryKeys } from '../app/query-client.js'
-import { DEVICE_STATUS_LABEL, formatCountdown, formatIso } from '../shared/format.js'
+import { RelativeTime } from '../shared/RelativeTime.js'
+import { DEVICE_STATUS_LABEL, formatCountdown, formatPlatform } from '../shared/format.js'
 import { StateDot, Tag, type StateDotState, type TagTone } from '../vendor/dsh-ui/index.js'
 import type { DeviceView, PairingCodeView } from '../shared/api/types.js'
 
@@ -112,11 +117,13 @@ export function DevicesPage(): ReactNode {
                     <dl className="device-meta">
                       <div>
                         <dt>平台</dt>
-                        <dd>{device.platform}</dd>
+                        <dd>{formatPlatform(device.platform)}</dd>
                       </div>
                       <div>
-                        <dt>最后心跳</dt>
-                        <dd>{formatIso(device.lastSeenAt)}</dd>
+                        <dt>最后在线</dt>
+                        <dd>
+                          <RelativeTime iso={device.lastSeenAt} />
+                        </dd>
                       </div>
                     </dl>
                   </li>

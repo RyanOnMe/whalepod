@@ -22,7 +22,8 @@ import type {
 import { api } from '../../shared/api/client.js'
 import { CopyButton } from '../../shared/CopyButton.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
-import { formatIso, shortDigest, shortId } from '../../shared/format.js'
+import { shortDigest, shortId } from '../../shared/format.js'
+import { RelativeTime } from '../../shared/RelativeTime.js'
 import type { Session } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
 
@@ -219,7 +220,7 @@ function PackCard({ pack }: { pack: PluginPackView }): ReactNode {
         <div>
           <dt>创建时间</dt>
           <dd>
-            <time dateTime={pack.createdAt}>{formatIso(pack.createdAt)}</time>
+            <RelativeTime iso={pack.createdAt} />
           </dd>
         </div>
       </dl>

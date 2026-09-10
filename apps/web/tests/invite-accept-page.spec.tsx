@@ -43,7 +43,7 @@ describe('invite-accept-page', () => {
   it('未登录：先说清团队/角色/有效期，再给登录表单（不跳走、不丢 Token）', async () => {
     renderApp(INVITE_PATH, loggedOutHandlers())
     expect(await screen.findByRole('heading', { name: '加入团队' })).toBeVisible()
-    expect(await screen.findByText(/团队「Acme」邀请你以 Member 身份加入/)).toBeVisible()
+    expect(await screen.findByText(/团队「Acme」邀请你以成员身份加入/)).toBeVisible()
     expect(screen.getByText(/链接有效期至/)).toBeVisible()
     // 原地给两条腿：建号加入（默认）与「我已有账号」登录；页面没有跳去 /login
     expect(screen.getByRole('button', { name: '创建账号并加入' })).toBeVisible()
@@ -184,7 +184,7 @@ describe('invite-accept-page', () => {
         projectsHandler([]),
       ]),
     )
-    expect(await screen.findByText(/团队「Launch Crew」邀请你以 Admin 身份加入/)).toBeVisible()
+    expect(await screen.findByText(/团队「Launch Crew」邀请你以管理员身份加入/)).toBeVisible()
     await user.click(await screen.findByRole('button', { name: '加入团队' }))
     expect(await screen.findByRole('heading', { name: '项目' })).toBeVisible()
     // 落地页（项目页的 AppShell 布局）读到「刚刚加入」的一次性提示

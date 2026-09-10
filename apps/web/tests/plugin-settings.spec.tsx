@@ -196,6 +196,10 @@ describe('plugin-settings', () => {
     expect(screen.queryByRole('button', { name: '创建 Pack' })).not.toBeInTheDocument()
     expect(screen.queryByRole('checkbox', { name: 'wp-fixed-time@0.1.0' })).not.toBeInTheDocument()
     expect(screen.getByText(/插件目录只读/)).toBeVisible()
+    // #152：角色名统一中文（此前这里直接印内部枚举值 `member` 与 `Owner/Admin`）
+    expect(
+      screen.getByText('你是成员，插件目录只读；仅所有者或管理员可安装插件或创建 Pack。'),
+    ).toBeVisible()
     expect(screen.getByRole('heading', { name: '已安装插件' })).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Plugin Packs' })).toBeVisible()
   })

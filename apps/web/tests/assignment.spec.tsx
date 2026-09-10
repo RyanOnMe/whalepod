@@ -19,6 +19,31 @@ import type { MockHandler } from './fixtures.js'
 import { renderApp } from './render.jsx'
 
 describe('assignment', () => {
+  it('#152 任务分配卡的状态是中文标签，不是裸枚举（`pending` 不上屏）', async () => {
+    const task = makeTask({ assigneeUserId: BOB.userId, assignmentStatus: 'pending' })
+    renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [roomHandler(task)]))
+    expect(await screen.findByRole('heading', { name: '任务分配' })).toBeVisible()
+    const panel = document.querySelector('.assignment-panel') as HTMLElement
+    expect(panel.textContent).toContain('待接受')
+    expect(panel.textContent).not.toContain('pending')
+  })
+
+  it('#152 已接受/已拒绝同样不露枚举值', async () => {
+    // 非责任人视角（Alice 看指派给 Bob 的任务）：第三方陈述 + 「已接受」徽标。
+    const accepted = makeTask({ assigneeUserId: BOB.userId, assignmentStatus: 'accepted' })
+    const { unmount } = renderApp(
+      `/tasks/${accepted.id}`,
+      loggedInHandlers(ALICE, [roomHandler(accepted)]),
+    )
+    expect(await screen.findByText('责任人已接受此任务。')).toBeVisible()
+    expect(document.body.textContent).not.toContain('accepted')
+    unmount()
+    const rejected = makeTask({ assigneeUserId: BOB.userId, assignmentStatus: 'rejected' })
+    renderApp(`/tasks/${rejected.id}`, loggedInHandlers(ALICE, [roomHandler(rejected)]))
+    expect(await screen.findByText(/此任务已被拒绝/)).toBeVisible()
+    expect(document.body.textContent).not.toContain('rejected')
+  })
+
   it('责任人接受任务：按钮 → 接受 → 显示已接受与 Agent 快照插槽', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId })
     const room = statefulTaskRoom(task)

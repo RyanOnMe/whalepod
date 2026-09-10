@@ -8,7 +8,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
-import { formatIso, shortId } from '../../shared/format.js'
+import { ROLE_LABEL, shortId } from '../../shared/format.js'
+import { RelativeTime } from '../../shared/RelativeTime.js'
 import type { AgentDetailView, AgentView, Session } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
 import { AgentRevisionForm } from './AgentRevisionForm.js'
@@ -45,7 +46,8 @@ export function AgentList({ session }: AgentListProps): ReactNode {
         <AgentRevisionForm onCreated={onCreated} />
       ) : (
         <p className="mutation-hint">
-          你是 {session?.role}，Agent 只读；仅 Owner/Admin 可创建或修改。
+          你是{session === null ? '访客' : ROLE_LABEL[session.role]}，Agent
+          只读；仅所有者或管理员可创建或修改。
         </p>
       )}
 
@@ -143,7 +145,7 @@ function AgentDetailViewer({
           <ul role="list">
             {agent.revisions.map((revision) => (
               <li key={revision.id}>
-                #{revision.revision} · {revision.model} · {formatIso(revision.createdAt)}
+                #{revision.revision} · {revision.model} · <RelativeTime iso={revision.createdAt} />
               </li>
             ))}
           </ul>
