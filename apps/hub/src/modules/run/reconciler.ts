@@ -23,6 +23,7 @@ import {
 } from '@project311/db'
 import { RunStatusRequestSchema } from '@project311/protocol'
 import { transitionRun } from '@project311/domain'
+import { cancelPendingApprovalsInTransaction } from './cancel.js'
 
 // 活跃态集合的单一事实源在 @project311/db（与 run_one_active_per_task 部分唯一索引
 // 谓词一致）；此处再导出，orchestrator 与 run 模块的既有导入路径不变。
@@ -129,6 +130,10 @@ async function reconcileOne(deps: ReconcileDeps, run: RunRow, now: Date): Promis
 
     if (!leaseFresh || nodeLostRun) {
       transitionRun({ status: locked.status }, { type: 'lease_expired' })
+      // ADR-0007 不变式「终态 Run 不挂 pending Approval」对 lease→lost 同样
+      // 生效（#84：此前只靠 approval-expiry 10 分钟清扫兜底，窗口内账本违反
+      // 不变式）。与终态收敛同一事务、同一 cause——折叠是系统写入，非人工决定。
+      await cancelPendingApprovalsInTransaction(tx, locked, now, 'run_terminal_fold')
       await setRunStatus(tx, locked.id, 'lost', {
         failureCode: 'RUNTIME_LOST',
         failureSummary: 'device lease expired or node no longer runs this run',

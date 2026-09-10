@@ -11,7 +11,8 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@project311/db'
-import { getRun, listRunEvents, listTeamEvents } from '@project311/db'
+import { getRun, listRunEvents, listTeamEvents, schema } from '@project311/db'
+import { eq } from 'drizzle-orm'
 import {
   createTestDatabase,
   heartbeatFrame,
@@ -343,5 +344,57 @@ describe('#88: 终态 Run 仍被心跳报 active → 收敛 run.cancel(admin) �
     const cancels = harness.gateway.sent.filter((f) => f.frame.type === 'run.cancel')
     expect(cancels).toHaveLength(0)
     expect((await getRun(database.db, run.id))?.status).toBe('dispatching')
+  })
+})
+
+describe('#84: 不变式补洞——lease→lost 路径同样折叠 pending Approval', () => {
+  it('waiting_approval 的 Run 被判 lost 时，悬置审批同事务折叠（run_terminal_fold）', async () => {
+    const { harness, run } = await dispatchingRun()
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(run.id, 1, { type: 'runtime.ready', dshSessionId: 's-84' }),
+    )
+    const approvalId = '00000000-0000-4000-8000-0000000aa084'
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(run.id, 2, {
+        type: 'approval.requested',
+        approval: {
+          approvalId,
+          runId: run.id,
+          callId: 'call-84',
+          toolName: 'fs.write',
+          reason: 'needs to write a file',
+          preview: { path: 'src/index.ts' },
+          status: 'pending',
+          requestedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 600_000).toISOString(),
+        },
+      }),
+    )
+    expect((await getRun(database.db, run.id))?.status).toBe('waiting_approval')
+
+    // 断链超租约 → reconcile 判 lost。不变式（ADR-0007）：终态 Run 不挂
+    // pending Approval——lease→lost 路径不得例外（此前靠 approval-expiry
+    // 10 分钟清扫兜底，窗口内账本违反不变式）。
+    harness.clock.advance(31_000)
+    await harness.orchestrator.reconcileLeases(harness.clock.now())
+
+    const lost = await getRun(database.db, run.id)
+    expect(lost?.status).toBe('lost')
+    const [approval] = await database.db
+      .select()
+      .from(schema.approvals)
+      .where(eq(schema.approvals.id, approvalId))
+    expect(approval?.status).toBe('cancelled') // 折叠，不是 expired/rejected（无人做决定）
+    const events = await listTeamEvents(database.db)
+    const fold = events.find(
+      (event) =>
+        event.type === 'approval.changed' &&
+        (event.payload as { approvalId?: string; status?: string }).approvalId === approvalId &&
+        (event.payload as { status?: string }).status === 'cancelled',
+    )
+    expect(fold).toBeDefined()
+    expect((fold!.payload as { cause?: string }).cause).toBe('run_terminal_fold')
   })
 })

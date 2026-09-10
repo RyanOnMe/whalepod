@@ -18,5 +18,6 @@ Hub 对 Node 上行帧的处理错误共用一个 catch-all：`socket.close(4003
 ## 后果
 
 - 正向：毒帧循环对一切表外边永久绝迹，R1/R6 承诺恢复；`waiting_approval` 的裁决语义与过期/取消折叠规则一致；Hub↔Node 与 Node↔Runtime 两层的惩罚粒度哲学统一。
-- 代价与风险：连接级安全网消失后，真实乱序/坏实现从「断连报警」变为「Run 收敛 failed」，依赖结构化违例 warn 与后续告警计数兜住（违例计数器无既有模式，留 follow-up）；表内新边使 replay overlay 与生产 ask-all 的行为分叉更显性，由 Q3 契约探针保留阻塞语义用例（G5-03 全链路）对冲；用户侧出现「审批未答 Run 即完成」的观感，折叠事件即时收卡（`cause` 字段供文案区分）。
+- 代价与风险：连接级安全网消失后，真实乱序/坏实现从「断连报警」变为「Run 收敛 failed」，依赖结构化违例 warn 兜住。~~违例计数器留 follow-up~~ → **#84 拍板弃疗**：第一阶段无指标管线（全仓无任何 metrics 模式），为单点计数器新造观测面得不偿失；结构化 warn（`component=hub.run` 分层）即观测面，Q 门以日志断言替代计数器（run-policy 集成测试钉死「合法边零误报」）。若 Phase 2 引入指标管线，warn 打点处即计数器挂载点，无需回溯设计。另：表内新边使 replay overlay 与生产 ask-all 的行为分叉更显性，由 Q3 契约探针保留阻塞语义用例（G5-03 全链路）对冲；用户侧出现「审批未答 Run 即完成」的观感，折叠事件即时收卡（`cause` 字段供文案区分）。
+- 后续补强（#84）：「终态 Run 不挂 pending Approval」折叠面的最后一个缺口已堵——lease→lost（reconciler 租约判死）路径此前不折叠、靠 approval-expiry 10 分钟清扫兜底（窗口内账本违反不变式），现已与同事务折叠（`cause=run_terminal_fold`）。至此折叠触发面完备：run.cancel、终态裁决/降级收敛、快照终态、lease→lost。
 - 弃选：仅加边（追不完竞态类，`cancel_requested` 一族仍毒通道）；仅降级（把真完成记成 failed，违反 R1「Run 误终态」判据）；新造 `PROTOCOL_VIOLATION` 码（§10 SSoT + protocol 枚举 + 对齐门三处变更，收益仅措辞）。
