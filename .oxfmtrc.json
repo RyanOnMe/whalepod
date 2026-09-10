@@ -10,6 +10,7 @@
     ".github/",
     ".agents/",
     ".githooks/",
-    "packages/protocol/generated/"
+    "packages/protocol/generated/",
+    "apps/web/src/vendor/"
   ]
 }

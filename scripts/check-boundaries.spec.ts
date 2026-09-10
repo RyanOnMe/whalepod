@@ -18,11 +18,29 @@ describe('DSH isolation', () => {
     }
   })
 
+  it('blocks the whole @deepseek-ai scope, not just the enumerated names (#138 收紧)', () => {
+    for (const specifier of [
+      '@deepseek-ai/schemastery',
+      '@deepseek-ai/dsh-something-new',
+      '@deepseek-ai/anything/subpath',
+    ]) {
+      expect(() => validateImport('apps/hub/src/app.ts', specifier)).toThrow(DSH_ERROR)
+      expect(() => validateImport('apps/web/src/main.tsx', specifier)).toThrow(DSH_ERROR)
+    }
+    // 边界门只管 DSH scope：形近但不同 scope 的说明符不得误伤。
+    expect(() => validateImport('apps/hub/src/app.ts', '@deepseek-ai-other/pkg')).not.toThrow()
+    expect(() => validateImport('apps/hub/src/app.ts', '@whalepod/protocol')).not.toThrow()
+  })
+
   it('allows the runtime adapter to import DSH', () => {
     expect(() =>
       validateImport('packages/runtime-dsh/src/bridge.ts', '@deepseek-ai/dsh-agent'),
     ).not.toThrow()
     expect(() => validateImport('apps/runtime/src/bin.ts', '@deepseek-ai/cordis')).not.toThrow()
+    // scope 收紧后，runtime 侧同样放行未列举的伴随包。
+    expect(() =>
+      validateImport('packages/runtime-dsh/src/bridge.ts', '@deepseek-ai/schemastery'),
+    ).not.toThrow()
   })
 })
 
