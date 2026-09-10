@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { env, fillAndEnter, hubApi, sessionCookie, startNode } from './helpers.js'
+import { expectNoContrastOffenders } from './contrast-sweep.js'
 import {
   WHITE,
   compositeOver,
@@ -64,6 +65,16 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
   test.setTimeout(180_000) // 承载一次性 Setup 与 Node 冷启动。
 
   // Setup：Owner 与团队（本文件独立成套，一次 Setup 一个团队）。
+  // 先扫两个**未登录面**再提交：Setup 是新用户第一屏、登录页是每个成员每次进来的第一屏，
+  // 且两页都自带说明/报错文字（浅灰最容易掉到 AA 以下）。提交后 Setup 表单就不在
+  // DOM 里了（一次性 Setup 的产品约束），所以必须在这一步之前量。
+  await page.goto('/setup')
+  await expect(page.locator('#setup-token')).toBeVisible()
+  await expectNoContrastOffenders(page)
+  await page.goto('/login')
+  await expect(page.locator('#login-username')).toBeVisible()
+  await expectNoContrastOffenders(page)
+
   await page.goto('/setup')
   await page.fill('#setup-token', env().setupToken)
   await page.fill('#team-name', `配对 UI 验收团队 ${TAG}`)
@@ -240,6 +251,11 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
   expect(devicesText, '设备页不应出现 darwin/win32 这类内部标识').not.toMatch(/\b(darwin|win32)\b/)
   expect(devicesText, '「心跳」是内部黑话').not.toContain('心跳')
   expect(devicesText).toContain('最后在线')
+
+  // #159：设备页此刻是**有设备**的形态（空态与有数据态的文字色可能不同源），
+  // 整页扫一遍真实渲染结果——上面那些只钉了设备状态标记与设备行文案两处。
+  // 位置放在 main 的零泄漏断言之后：那些断言已经等这一行渲染出来了，扫描不会扫到空页面。
+  await expectNoContrastOffenders(page)
 })
 
 /**
@@ -252,9 +268,50 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
 test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可达', async () => {
   await page.setViewportSize({ width: 390, height: 844 })
 
-  for (const path of ['/', '/devices', '/members']) {
+  // #159 一审抓出的假绿：这轮循环原来只等 `.app-header`（壳，立即渲染）就扫描，而三页的
+  // 数据都是异步 query —— 在 isPending 窗口里页面上只有 "正在加载…"，徽标/状态色/时间戳
+  // 一个都没进画面，扫描退化成只量顶栏。现在逐页等**该页的真实内容**再扫。
+  //
+  // 二审 N2 指出首版整改还有第二层问题：它把「`.mutation-hint` 计数 0」当加载哨兵，而
+  // `.mutation-hint` 同时也是 7 处**静态信息文字**的类名（AgentList/PluginSettings 的只读
+  // 提示、TaskHeader、CommentComposer、RunTimeline、ArtifactList…）。owner 会话下这 5 条
+  // 路由恰好没有静态 `.mutation-hint`，所以当时是绿的；**成员会话**下 /agents、/plugins 会
+  // 永久渲染只读提示 → 这个断言会超时（假红），日后谁给这 5 页再加一句提示也会踩到。
+  // 所以改成直接等"该页数据已经渲染出来"的标志性节点（下面 CONTENT_READY），不再借类名。
+  // 每页的"数据已渲染"标志：有数据（列表/卡片）与空态（.empty-state）两种形态都覆盖。
+  // 二审 N2-a：锚点必须是**数据/空态**节点，不能拿无条件渲染的容器（`section.devices-list`、
+  // `form.card.agent-form`、`form.card.plugin-pack-form` 在 isPending 时就已经在 DOM 里）。
+  // 每页至少给一个"有数据"与一个"确实为空"的备选，两者都只在 isSuccess 之后出现。
+  const CONTENT_READY: Readonly<Record<string, string>> = {
+    '/': 'ul.project-list > li, .projects-page .empty-state',
+    '/devices': 'section.devices-list li.device-item, section.devices-list .empty-state',
+    // `.empty-state` 在这一页有两个：成员列表的空态，以及"只有所有者或管理员能邀请成员"那段
+    // **无条件渲染**的说明（对成员/访客会话一直存在）。这里用 `section.card` 的第一个作用域
+    // 限定到列表那一个，否则非 owner 会话会在 isPending 窗口就被锚点放过。
+    '/members':
+      'section[aria-labelledby="members-list-heading"] ul.member-list > li, section[aria-labelledby="members-list-heading"] .empty-state',
+    // #159 一审的覆盖缺口：Agents 与插件页此前没有任何扫描点（它们同样有徽标、表单
+    // 与浅底提示，是最容易掉 AA 的页面类型）。成员会话下这两页没有表单与列表，只有只读提示
+    // （它的文字里没有「正在加载」，与上面的加载判据不冲突）。
+    '/agents': '.agent-list > li, .agents-page .empty-state, .agents-page .agent-readonly-hint',
+    '/plugins':
+      '.plugins-page .empty-state, .plugins-layout .plugin-readonly-hint, .plugin-list > li',
+  }
+  for (const path of ['/', '/devices', '/members', '/agents', '/plugins']) {
     await page.goto(path)
     await expect(page.locator('.app-header')).toBeVisible()
+    // 二审 N2：不要再用 `.mutation-hint` 计数当加载哨兵——那个类名同时被 7 处**静态信息
+    // 文字**使用（只读提示等），成员会话下 Agents/插件页会永久渲染它。改成认"加载文案本身"。
+    // **口径更正（二审复核指出我原先写的"12 处、全仓统一以「正在加载」开头"不成立）**：
+    // 实测 15 处 UI 加载文案里有两处不以「正在加载」开头（`MembersPage` 的「加载成员名单…」、
+    // `InvitePage` 的「正在确认邀请…」）。所以两道防线是**按页分工**的，不能互相替代：
+    //   · 文案检查覆盖 /devices、/agents、/plugins（这三页的加载文案恰好都含「正在加载」）；
+    //   · /members 靠内容锚点（`ul.member-list` / 「还没有成员记录」都在 isSuccess 之后）。
+    // 而 `/devices`、`/agents`、`/plugins` 的内容锚点里有几个是**无条件渲染**的容器
+    // （`section.devices-list`、`form.card.agent-form`、`form.card.plugin-pack-form`），
+    // 所以那三页真正挡住 pending 窗口的是文案检查；`/members` 则相反。两边都留着，别删任一处。
+    await expect(page.getByText(/正在加载/)).toHaveCount(0)
+    await expect(page.locator(CONTENT_READY[path] ?? 'main').first()).toBeVisible()
     const metrics = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       innerWidth: window.innerWidth,
@@ -270,6 +327,9 @@ test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可�
       metrics.headerHeight,
       `${path} 顶栏高度 ${metrics.headerHeight}px 超过 64px（折行？）`,
     ).toBeLessThanOrEqual(64)
+    // #159：窄屏下正文/次要文字会换行、容器变窄，配色也跟着换了容器——同一页面
+    // 在 390 与 1280 下的对比度不是同一件事，所以三页各扫一遍。
+    await expectNoContrastOffenders(page)
   }
 
   // ---- 导航入口：键盘可开 → 跳转后必须自己收起 → 落地页主体按钮真的点得到 ----
@@ -289,6 +349,9 @@ test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可�
     .locator('.app-header')
     .evaluate((el) => el.getBoundingClientRect().height)
   expect(openHeaderHeight).toBeLessThanOrEqual(64)
+  // #159：折叠面板展开态单独扫——它是**另一个容器**（绝对定位 + 自己的底色），
+  // 面板收起时它的文字在可访问性树里不可见，不收着的这一瞬间才是它的真实呈现。
+  await expectNoContrastOffenders(page)
 
   await nav.getByRole('link', { name: '成员' }).click()
   await page.waitForURL(/\/members$/)

@@ -22,9 +22,19 @@ const here = dirname(fileURLToPath(import.meta.url))
 const appTokens = readFileSync(join(here, '../src/styles/tokens.css'), 'utf8')
 const l1Tokens = readFileSync(join(here, '../src/styles/dsw-tokens.css'), 'utf8')
 
-/** 解析一层 var() 间接：先取应用层声明，若其值是 var(--dsw-x) 再取白名单的字面量。 */
+/**
+ * 解析一层 var() 间接：先取应用层声明，若其值是 var(--dsw-x) 再取白名单的字面量。
+ *
+ * 先折白：声明里出现长注释时，oxfmt 会把 `var(--dsw-x);` 折成三行（实测：#159 给
+ * --color-signal 加了一句注释就被折了），而 `^var\(...\)$` 这种锚定正则随即失配——
+ * 失败信息会变成"取值是 var(\n --dsw-x\n)"这种看不出原因的形态。折叠空白是格式问题，
+ * 不该让语义门变红（也不该靠"别把注释写长"来维持）。
+ */
 function resolve(name: string): string {
-  const raw = readTokenValue(appTokens, name)
+  // 折成**无空白**形态：一审实测过三种折叠，`.replace(/\s+/g,' ')` 只救得了"冒号后换行"，
+  // 救不了"var( 内部换行"（折白后是 `var( --x )`，锚定正则 `^var\((--` 仍失配 → 门会以
+  // "颜色解析不了"的形式变红，而真实原因只是格式化）。去空白对取值语义无影响。
+  const raw = readTokenValue(appTokens, name).replace(/\s+/g, '')
   const indirect = /^var\((--[a-z0-9-]+)\)$/i.exec(raw.trim())
   if (indirect === null) return raw
   const target = indirect[1]
@@ -49,6 +59,15 @@ const PAIRS: ReadonlyArray<[string, string, string | null, string]> = [
   ['警告态文字 / 警告态底', '--color-warn', '--color-warn-soft', '警告徽标'],
   ['危险态文字 / 危险态底', '--color-danger', '--color-danger-soft', '危险徽标'],
   ['危险态文字 / 卡片面', '--color-danger', '--color-surface', '错误横幅文字'],
+  // #159 补：这一对曾经**漏在清单外**，浏览器侧扫描器在 p1-07 抓到它 4.24:1 不达标。
+  // 漏的原因值得记：清单是按「语义名」列的，而徽标当时用的是 --color-signal（通用链接色）
+  // 而不是一个"浅底上的强调文字"用的名字——同一个 token 用在两种底上，配对就看不见了。
+  // 所以这里按**用法**列，并把应用层的取值换成强档（--color-signal-strong）。
+  // 已知边界（#159 一审 O1）：本文件只解析 `:root`（浅色）取值，对深色段**天然主题盲**；
+  // 而 blue-100 是静态档、深色段未重定义，深色主题下 `.app-header` 会变成浅色条，
+  // 这条"深色容器给前景"的通则照抄过去会复现同一 bug。深色主题没有切换入口，留待 #164 一族收口。
+  ['强调徽标文字 / 强调浅底', '--color-signal-strong', '--color-signal-soft', '进行中徽标'],
+  ['顶栏安静按钮文字 / 顶栏底', '--color-signal-soft', '--color-ink', '顶栏「退出登录」'],
 ]
 
 describe('#152 主题门', () => {
@@ -66,6 +85,7 @@ describe('#152 主题门', () => {
     expect(resolve('--color-signal').trim()).toBe('rgb(37, 99, 235)') // blue-600
     expect(resolve('--color-paper').trim()).toBe('rgb(245, 246, 247)') // bg-module-platform
     expect(resolve('--color-run').trim()).toBe('rgb(35, 60, 44)') // green-900
+    expect(resolve('--color-signal-strong').trim()).toBe('rgb(14, 48, 116)') // blue-900
   })
 
   it(`清单里每对文字/背景都过 WCAG AA（≥${AA_TEXT}:1）`, () => {
