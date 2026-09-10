@@ -14,7 +14,7 @@
 | 项 | 值 |
 |---|---|
 | 分支 | `feat/p1-138-l2-batch2`（基于 `main` = `70d7342`） |
-| **锚点 commit** | `e138bbcb809d8f9442b021277bf0a69ded0d978d`（本切片唯一提交） |
+| **锚点 commit** | `a262cd4ac8769868a1f72d80d2206015dd195592`（审查整改提交；本切片共两条：`e138bbc` 首批交付 → `a262cd4ac8769868a1f72d80d2206015dd195592` 审查整改） |
 | 上游钉版 | 与主台账一致：`c291e7961a515f6d7af9304e7fd1d257929aef26`（**本切片未跟版**，实测该 SHA 仍是上游 `master` 的 HEAD，2026-09-11） |
 | 本批新增原语 | `Input` / `Menu` / `ConnectionIndicator` / `Modal`（**4 个，全部整取，未经裁剪**） |
 | 本批新增支撑文件 | `pointer-grace.ts`（Menu 的同目录运行时依赖）；`icons.tsx` 追加 3 个图标符号 |
@@ -96,7 +96,7 @@
 | `apps/web/src/vendor/dsh-ui/index.ts` | `facc27a55cb39211e8fbfbb2342e7b2a8d6f1f80` | 2176 | 追加 4 个原语 + `Menu` 的 4 个类型 + `usePointerGrace`/`POINTER_GRACE_MS`/`cx` 的导出 | 上游 `ui-primitives/src/index.ts` 的**裁剪**版 |
 | `apps/web/src/vendor/dsh-ui/cx.ts` | `e020935db7e372f3d77aed0ccd00d6e1fe7840a3` | 1765 | **扩展入参形态**：新增「对象入参按真值拼键名」一档（ConnectionIndicator 用了 `{ [css.secondDot]: true }`）；仍是 clsx 的子集，不是全实现 | **本仓新增代码**（Apache-2.0），非上游文件 |
 | `apps/web/src/vendor/dsh-ui/README.md` | `3fd56b44c342963ecc5b4cc41b5f19863cd71b7c` | 4416 | 列进本批 4 个原语、重申「不含任何 DSH 品牌资产」、补 4 类 `--dsh-*` 例外的性质区分、把允许的运行时 import 从「只 react」放宽为「react / react-dom」 | 本仓新增 |
-| `apps/web/src/vendor/dsh-ui/manifest.json` | `7d4fbd233685ed69206fe00abf29c7e648130529` | 11226 | `components[]` 15 → **24**、`meta[]` 3（不变）、`scope.layers`/`excluded`/`tokens` 同步 | 本仓新增（机器可读台账自身） |
+| `apps/web/src/vendor/dsh-ui/manifest.json` | `e081c9d845987e79b0a926d36023124d2561a133` | 19335 | `components[]` 15 → **24**、`meta[]` 3（不变）、`scope.layers`/`excluded`/`tokens` 同步；审查整改再为每条加 `sha256`/`upstreamBlob`/`upstreamSha256`/`fidelity` 四个保真字段（见 §3.5） | 本仓新增（机器可读台账自身） |
 
 > 上表 5 个 blob 全部实测于锚点 `e138bbc`（`git rev-parse e138bbc:<path>`）。其中
 > `cx.ts` 是**本仓新增代码**、`README.md`/`manifest.json` 是元文件，它们与上游**没有**
@@ -106,8 +106,8 @@
 
 | 本仓文件 | 本仓 blob@`e138bbc` | 本仓字节 | 上游关系 |
 |---|---|---|---|
-| `apps/web/src/styles/dsw-tokens.css` | `a70de06c5322b7d0b1d25e0b1119b7dccbaa48b3` | 14154 | 上游 `design-platform.css`（`bc4712b2…`，19109 B）+ `gradient-shadow-text.css`（`36fee494…`，14722 B）的**派生白名单**，非逐字节复制 |
-| `apps/web/tests/vendor-dsh-ui.spec.tsx` | `96d0e50944b3cc61995d6eced51c5897a9456fd4` | 51875 | 本仓新增（Q0 单测），上游无对应物 |
+| `apps/web/src/styles/dsw-tokens.css` | `7e9acd44b56d35d3fe92eeebd4d5bfc6228fe71b` | 16264 | 上游 `design-platform.css`（`bc4712b2…`，19109 B）+ `gradient-shadow-text.css`（`36fee494…`，14722 B）的**派生白名单**，非逐字节复制 |
+| `apps/web/tests/vendor-dsh-ui.spec.tsx` | `d6be55b37f4d28d6e154f3623892bcb52fbccebc` | 67147 | 本仓新增（Q0 单测），上游无对应物 |
 | `docs/agent/dsh-ui-vendoring-batch2.md`（即本页） | — | — | 本仓新增 |
 
 
@@ -137,8 +137,8 @@
 
 | 口径 | 首批 | 本批新增 | 两批并集 | 复算命令 |
 |---|---|---|---|---|
-| vendored CSS **引用**的 `--dsw-*` | 23 | **14** | **37** | `grep -hoE '\-\-dsw-[a-z0-9-]+' apps/web/src/vendor/dsh-ui/*.module.css \| sort -u \| wc -l` |
-| `dsw-tokens.css` **声明**的 `--dsw-*` | 26 | **29** | **55** | `grep -oE '^\s*--dsw-[a-z0-9-]+' apps/web/src/styles/dsw-tokens.css \| sed 's/^ *//' \| sort -u \| wc -l` |
+| vendored CSS **引用**的 `--dsw-*` | 23 | **14** | **37** | `grep -hoE 'var\(--dsw-[a-z0-9-]+' apps/web/src/vendor/dsh-ui/*.module.css \| sed 's/var(//' \| sort -u \| wc -l`（**必须带 `var(` 锚**，理由见表下注） |
+| `dsw-tokens.css` **声明**的 `--dsw-*` | 26 | **27** | **53** | `grep -oE '^\s*--dsw-[a-z0-9-]+' apps/web/src/styles/dsw-tokens.css \| sed 's/^ *//' \| sort -u \| wc -l` |
 | 其中深色段**重写**的 | 17 | **11** | **28** | 见 §3.3 |
 
 - **新引用的 14 个**（逐个 grep 本批 4 个 `.module.css` 得到）：
@@ -148,30 +148,54 @@
   `--dsw-alias-state-success-tertiary`、`--dsw-alias-state-warn-label`、
   `--dsw-alias-state-warn-tertiary`、`--dsw-specific-menu`、
   `--dsw-elevation-prominent`、`--dsw-mask-blur`。
-- **新声明 29 条 = 上列 14 个 + 15 个传递依赖**。15 个传递依赖 = **13 个 `--dsw-static-*`**
-  （`neutral-bluish-00/200/750/875/1000`、`neutral-200/300/550/600`、`green-100`、
-  `amber-100/500/600`）+ **2 个 elevation 派生值**（`--dsw-elevation-stroke`、
-  `--dsw-elevation-stroke-color`，是 `--dsw-elevation-prominent` 的传递依赖，见 §3.2）。
-  13 个静态档里有 12 个被本批新 alias 消费；`amber-500` 是被**首批已声明**的
-  `--dsw-alias-state-warn-primary` 消费的（首批把它就地展开成了 `rgb(245, 158, 11)` 字面量、
-  没有留 alias，所以那个档位当时没进白名单）——本批把它补进来是为了让「同一档只声明一次」，
-  且它同时是本批 `ConnectionIndicator.module.css` 的 `color-mix` 输入之一。
+- **新声明 27 条 = 上列 14 个 + 13 个传递依赖**（审查后从初版的 29 条减到 27 条，见下条）。
+  13 个传递依赖 = **11 个 `--dsw-static-*`** + **2 个 elevation 派生值**
+  （`--dsw-elevation-stroke`、`--dsw-elevation-stroke-color`，是 `--dsw-elevation-prominent`
+  的传递依赖，见 §3.2）。另有 `--dsw-mask-blur` 与默认描边色属上列 14 个之内的直接引用。
+- **⚠ 初版多带了两个零消费者变量，审查后删除（本页据实登记）**：`--dsw-static-amber-500`
+  与 `--dsw-static-neutral-bluish-1000`。初版按「上游那一段的静态档整批搬进来、同一档只声明
+  一次」的理由收录，但两者在本仓**都没有 `var()` 消费者**——它们的上游消费者
+  （`--dsw-alias-state-warn-primary`、`--dsw-alias-brand-primary`）在**首批就已经被就地展开
+  成字面量**（`rgb(245, 158, 11)` / `rgb(15, 17, 21)`），从来不是 alias 引用。留着它们等于让
+  同一档位在文件里有两处取值，正是该文件自称要避免的漂移。现已删除，并新增一条 Q0 用例
+  `L1 声明的每个 --dsw-* 都有消费者（无孤儿变量）`守这个不变量（消费者口径 = vendored CSS /
+  L1 内部 alias 间接 / `global.css` 三处之一；首批三个 900 档静态色阶由 `global.css` 消费，
+  正是必须把第三处算进来的原因）。
+  **要恢复它们的前提**：先把首批那两处字面量改回 alias 指引（即 §3.5「两批写法不一」的归一动作）。
 - **关键正确性属性（实测）**：两批并集的 37 个引用变量**全部**在 `dsw-tokens.css` 里有声明
   ——差集为空，即**没有未解析引用**，不会静默落到 CSS fallback。Q0 单测已把这 37 这个数钉死。
 
-### 3.2 本批唯一的结构性决定：elevation 段挂在 `body, body *`
+> **`var(` 锚不是可选的（审查纠出的一处台账错误）**：本页初版给的引用计数命令是
+> `grep -hoE '\-\-dsw-[a-z0-9-]+' …`，实测得 **38**，与表里的 37 对不上。多出来的那一个是
+> `--dsw-elevation-stroke-color`——`Menu.module.css` 里它是**被赋值**的
+> （`--dsw-elevation-stroke-color: var(--dsw-alias-border-l1)`），不是被读取的，裸 grep 会把
+> 赋值也数进去。**37 是对的**（Q0 的正则带 `var\(` 锚），错的是命令。凡是"引用口径"的计数，
+> 命令必须写成 `grep -hoE 'var\(--dsw-…'`。本页与 Q0 现已同口径。
 
-`--dsw-elevation-prominent` / `--dsw-elevation-stroke` / `--dsw-elevation-stroke-color` /
-`--dsw-mask-blur` 取自上游 **`packages/client/ui-theme/src/styles/gradient-shadow-text.css` 的
-`body` 段**（不是 `design-platform.css`——本批实测确认这四个变量不在 design-platform.css 里，
-主台账 §3.1 把 L1 来源只记了 design-platform.css，**本条是主台账需要补的一句**）。
+### 3.2 elevation：**两块**选择器，默认值与派生值不能合并（审查纠出的一处语义错误）
 
-上游把派生值声明在 `body, body *` 上而不是 `body` 一处，注释里写明了原因：继承下来的是在
-祖先处**已代入完**的值，后代重绑 `--dsw-elevation-stroke-color` 就进不到
-`var(--dsw-elevation-*)` 里。**Menu.module.css 正是那个重绑方**（把描边色重绑到
-`--dsw-alias-border-l1`），所以本仓必须照抄同形选择器，否则菜单会丢掉 0.5px 发丝描边。
-本仓把这一整段放在 `:root` **之外**、并有一条 Q0 单测断言它**不在** `:root` 里
-（挂两处会让 `body *` 那层变成唯一生效层，语义就糊了）。
+`--dsw-elevation-stroke-color` / `--dsw-mask-blur` / `--dsw-elevation-stroke` /
+`--dsw-elevation-prominent` 取自上游 **`packages/client/ui-theme/src/styles/gradient-shadow-text.css`**
+（不是 `design-platform.css`——本批实测确认这四个变量不在 design-platform.css 里，
+主台账 §3.1 把 L1 来源只记了 design-platform.css，**本条是主台账需要补的一句**）。上游的分工是：
+
+| 上游位置 | 声明什么 | 选择器 |
+|---|---|---|
+| 17 / 19 行 | **只声明默认值** `--dsw-elevation-stroke-color`、`--dsw-mask-blur` | **`body`** |
+| 26–35 行 | **只声明派生值** `--dsw-elevation-stroke` / `-panel` / `-prominent` / `-soft` | **`body, body *`** |
+
+上游注释原文（那段的用意）：「默认色只声明在 body 上，让表面的重绑沿继承传给真正消费投影的
+后代。」而派生值必须逐元素声明，因为继承传下来的是在祖先处**已代入完** `var()` 的值，
+后代重绑 `--dsw-elevation-stroke-color` 就进不到 `var(--dsw-elevation-*)` 里。
+
+> **本切片初版把四个变量全放进了 `body, body *`，被审查判为语义错误，已改正。**
+> 坏法：等于**每个元素**都重新声明默认描边色 l4，重绑元素的**后代**会拿到 l4 而不是继承来的
+> 重绑色。今天不显形，只是因为唯一重绑方 `Menu.module.css` 的 `.list/.submenu` 在同一条规则里
+> 自己消费 `box-shadow`（Modal 只消费不重绑）。
+> 同时纠正一处措辞：本页初版与提交说明里那句「必须挂 `body, body *`」**只对派生两项成立**。
+> 现行 Q0 用例 `elevation 的默认色与派生值**分挂两块**` 正反两面都钉住（两块各自该有什么、
+> 默认值**不得**出现在 `body, body *` 里、三者都不得进 `:root`）。
+> **教训**：抄"选择器与上游同形"时要逐个变量对齐到上游的**那一行**，不要按"整段一起抄"。
 
 **已知代价（已实测）**：`body *` 是通配规则，占的是 `--dsw-*` 命名空间。实测
 apps/web 下没有任何内联 `style=` / `style={{` 写法、也没有 `setProperty` 调用，故不覆盖
@@ -206,13 +230,88 @@ apps/web 下没有任何内联 `style=` / `style={{` 写法、也没有 `setProp
 > `--dsh-scrollbar-thumb-hover:` 也当成 `--dsh-scrollbar-thumb` 的定义（`"thum"` +
 > `"-hover:"` 满足模式），Q0 单测因此按「前置 `{`/`;`/行首」锚定写法修正。
 
+### 3.5 逐字节保真的机器门（审查要求新增；此前**没有**门）
+
+**问题（审查员用变异测试实测出来的）**：在本批之前，"vendored 副本与上游逐字节可比"这条纪律
+**只靠人工哈希台账守**。实测把 `Menu.module.css` 的 `min-width: 218px` 改成 `200px`、
+或把 `IconWarningOutline16` 的路径尾数 `3.32843Z` 改成 `3.32844Z`，**旧门 51 例全绿**——
+因为原有断言只有三项：上游 commit SHA、登记覆盖并集、出处头存在，都不看正文。
+
+**现在（登记 + 断言两层）**：
+
+1. `manifest.json` 里 `components[]`/`meta[]` **每条**新增四个字段：
+   `sha256`（**本仓文件**内容哈希，含出处头）、`upstreamBlob`（上游 blob sha1，口径同
+   `git hash-object`；`null` = 本仓新增或无单一上游来源）、`upstreamSha256`（上游内容哈希）、
+   `fidelity`（`stripped-matches-upstream` / `local-adaptations` / `no-single-upstream-source`）。
+   **上游值就登记在仓里 ⇒ 断网可验**（不需要再连 GitHub 才能判"是否被改过"）。
+2. Q0 新增两条用例：
+   - `逐字节保真的机器门`：逐文件①算 sha256 与登记值比对（任何改动都变红）；②凡是
+     `fidelity=stripped-matches-upstream` 的，**剥掉出处头块后**的 blob 必须等于登记的
+     `upstreamBlob`（这一条才真正守住"只有出处头之差"）；③声明了保真却没登记
+     `upstreamBlob` 要报错（防止用空值把门绕过）；④保真条目数 ≥ 11（门形同虚设也要报错）。
+   - `manifest 登记的 upstreamBlob 与上游原文一致（离线自洽）`：把"本仓剥头结果"与
+     manifest 的 blob / sha256 两个登记值三角核对，任一处被改都变红。
+3. **唯一例外是结构性的**：`manifest.json` 自己登记自己的 `sha256` **没有不动点**
+   （写进去就改了内容，再算又变），故该条显式 `null`，其完整性由 git 与本用例的 `JSON.parse`
+   守。别为此发明"算完再回填"的循环——本切片试过，不收敛。
+
+**当前分布（实测 24 个 components + 3 个 meta）**：
+`stripped-matches-upstream` = **11 个**（首批 6 个 `.module.css` + 本批 4 个 `.module.css` +
+`pointer-grace.ts`）；`local-adaptations` = **10 个**（首批 6 个 `.tsx` + 本批 4 个 `.tsx`，
+即全部含本仓功能性改动的代码文件）；`no-single-upstream-source` = **6 个**
+（`icons.tsx`（两文件合并+裁剪）、`index.ts`（裁剪）、`cx.ts`（本仓新增）、
+`README.md` / `LICENSE` / `manifest.json`（元文件））。
+**顺带得到一条交叉验证**：本次为回填 `upstreamBlob` 而**独立重算了首批 6 个 `.module.css`
+的上游 blob**，结果与主台账 §3.2 登记值**逐字节相符**（`9fa1712a…`/`8fb6cc0b…`/`65380320…`/
+`265dd1b0…`/`fed453f3…`/`c038331a…`）——主台账那两列是可复算的。
+
+**变异测试证据（两次都各跑一次，见 §9 报告）**：变异 A（`min-width` 218→200）使 2 条用例变红
+（本仓 sha256 不符 + 剥头后 sha256 不符）；变异 B（图标路径尾数改一位）使 1 条变红
+（本仓 sha256 不符）。恢复后 56 例全绿，且 `shasum -a 256` 与恢复前逐字符相同。
+
+### 3.6 本批视觉的已知 AA 缺口（数字登记，供迁移切片当判据）
+
+`ConnectionIndicator` 的两个面都是**浅底 + 同色系小字**，实测都不达 WCAG AA 的 4.5:1
+（与首批 Tag 同源问题：上游只给了 `state-warn-label` 一个文字专用变体，success 面直接拿
+`state-success-primary` 当文字色）。**数字由 Q0 用例真算并钉住**（`ConnectionIndicator 配色 AA 门`）：
+
+| 面 | 文字 token（实测解析值） | 底色 token | 实测对比度 | AA 4.5:1 |
+|---|---|---|---|---|
+| 断线 / 重连（`.warning`） | `--dsw-alias-state-warn-label` → `--dsw-static-amber-600` = `rgb(221, 134, 41)` | `--dsw-alias-state-warn-tertiary` → `--dsw-static-amber-100` = `rgb(254, 245, 231)` | **2.58 : 1** | ✗ 差 1.92 |
+| 已恢复（`.success`） | `--dsw-alias-state-success-primary` = `rgb(34, 197, 94)` | `--dsw-alias-state-success-tertiary` → `--dsw-static-green-100` = `rgb(230, 250, 237)` | **2.09 : 1** | ✗ 差 2.41 |
+
+处置与首批一致：**不改 vendored 文件、也不改 L1 取值**（L1 必须与上游逐字一致），迁移时在
+包裹元素上做局部重映射（同 `global.css` 的 `.device-status-*`）。用例同时断言"**不达标**"
+（达标即说明上游取值变了，要重评这条门）与"数字未漂移（±0.01）"。
+深色一套取值不同，本仓没有深色入口，故只登记不判。
+
 ---
+
+### 3.7 本页哈希的**自校验**（差集为空 = 没有一条声明是推测的）
+
+本页写作与整改后各跑过一次全量对账，方法：把本页里所有 40 位十六进制引用抽出来，
+逐个在锚点 `a262cd4` 上找归属。结果（**32 条去重声明**）：
+
+| 归类 | 数量 | 说明 |
+|---|---|---|
+| 本仓文件 blob@锚点 | **16** | 逐个 `git rev-parse a262cd4:<path>` 命中 |
+| 本仓「剥出处头后」blob | **9** | 逐个 `git show … \| sed '1,/^\*\/$/d' \| git hash-object --stdin` 命中 |
+| 上游文件 blob | **5** | `Input.tsx`/`Menu.tsx`/`ConnectionIndicator.tsx`/`Modal.tsx`/`icons/index.tsx`，逐个与按钉版 SHA 取来的原文 `git hash-object` 命中 |
+| commit SHA（非 blob） | **2** | 锚点 `a262cd4`（本地 git object）与上游钉版 `c291e796`（`gh api` 复核仍是 master HEAD，与 manifest 登记值一致） |
+| **无法归属 / 差集** | **0** | —— |
+| 合计（去重） | **32** | 16 + 9 + 5 + 2；其中 5 个"剥头后"值与上游 blob 相等（即纯粹只有出处头之差），去重后并入上游那一行 |
+
+**读法**：本页凡出现哈希，都能在锚点上复算出来；没有一条是从任务描述或工作区快照推测的。
+复算脚本形态见 §4；上游 blob 与「剥头后」blob 的比较必须用后者（本仓 blob 必然多一个出处头块）。
+
+复算 §4 之前先确认工作区干净：本切片历史上出现过"工作区值 ≠ 提交值"（台账 §2 写作期间
+manifest 因回填字段而变动），**所有哈希一律以锚点 commit 的 blob 为单位取值**。
 
 ## 4. 复算命令（照抄主台账 §3.4 的形状）
 
 ```console
 SHA=c291e7961a515f6d7af9304e7fd1d257929aef26   # 上游钉住 commit（本批未跟版）
-C=e138bbcb809d8f9442b021277bf0a69ded0d978d     # 本批锚点 commit
+C=a262cd4ac8769868a1f72d80d2206015dd195592     # 本批锚点 commit
 
 # 1) 上游侧：取原文并本地算哈希（不依赖 tree API 的 .sha 字段，独立可证）
 $ gh api -H 'Accept: application/vnd.github.raw' \
@@ -232,7 +331,7 @@ $ git show "$C:apps/web/src/vendor/dsh-ui/<file>" \
 
 ---
 
-## 4.1 一次额外的实测：本批原语**没有**进产物包（additive vendoring 的直接后果）
+### 4.1 一次额外的实测：本批原语**没有**进产物包（additive vendoring 的直接后果）
 
 `pnpm -r --if-present build` 成功之后，对 `apps/web/dist/assets/*.js|css` 实测：
 
@@ -281,7 +380,7 @@ $ git show "$C:apps/web/src/vendor/dsh-ui/<file>" \
 | `Menu` | ① **受控**：`open` 由调用方持有，`Menu` 不自己写；原生 `<select>` 的 `value/onChange` 心智要换掉。② `items` 是 `{id,label}` 数组，**没有** `<option>` 的 value 语义，选中靠 `selectedId`/`selectedIds`。③ 祖先有 `overflow` 裁剪时必须开 `portal`，并用 `getAnchorRect` 直接给锚点矩形（否则与宿主布局 effect 竞态）。④ portal 模式下列表在 `document.body`，`within(container)` 找不到。⑤ 键位：Escape 关、`autoFocus` 时才启用方向键导航。 |
 | `ConnectionIndicator` | 它不是「在线指示」，而是**断线恢复控件**：三态 `disconnected/connecting/recovered`，`state=undefined` 时**渲染 null**（没有连接反馈就不占位）。迁移时「在线」这个状态应当用别的表达（Tag/StateDot 即可），只有断线/重连/刚恢复才用它。文案 7 个必填 prop 全部由调用方提供（本仓要接 i18n 的话在这里落）。 |
 | `Modal` | ① portal 到 `document.body`。② ESC 与 **mask 点击**都触发 `onClose`；mask 是 dialog 的**兄弟节点**。③ `headless` 与 `closeLabel` 在类型上互斥（headless 时不渲染默认头/关闭按钮）。④ 上游**没有**焦点陷阱（没有 focus trap / 初始聚焦 / 滚动锁），做审批弹层时要自己评估是否需要补——这是上游行为，改它属功能性改动，必须在出处头里写明。 |
-| 通用 | 四个原语都吃 `--dsw-*`，本仓业务 CSS 吃 `--color-*`；需要视觉对齐时在**业务侧**显式桥接（如首批 `global.css` 的 `.device-status-*` 那样），**不要改 vendored 文件**。另外：本批 warn/success 面的浅底小字在 AA 上有和首批 Tag 同样的已知问题（上游浅色档取值使然），迁移时若用于正文级文字，按首批做法在包裹元素上做局部重映射。 |
+| 通用 | 四个原语都吃 `--dsw-*`，本仓业务 CSS 吃 `--color-*`；需要视觉对齐时在**业务侧**显式桥接（如首批 `global.css` 的 `.device-status-*` 那样），**不要改 vendored 文件**。另外：本批 `ConnectionIndicator` warn/success 面的浅底小字在 AA 上有和首批 Tag 同样的已知问题——**具体数字见 §3.6（warn 2.58:1 / success 2.09:1）**，迁移时若用于正文级文字，按首批做法在包裹元素上做局部重映射。 |
 
 ---
 
@@ -290,3 +389,4 @@ $ git show "$C:apps/web/src/vendor/dsh-ui/<file>" \
 | 日期 | 变更 |
 |---|---|
 | 2026-09-11 | 建档（#138 L2 第二批）。登记 4 个新原语 + `pointer-grace.ts` 的三列哈希（锚点 `e138bbc`）；`icons.tsx`/`index.ts`/`cx.ts` 的本批改动分类；L1 增量变量账（引用 23→37、声明 26→55、深色 17→28）；elevation 段来源更正为 `gradient-shadow-text.css` 并记录 `body, body *` 的结构性决定；`--dsh-*` 例外 2→4 且区分「被读取」与「被赋值」；登记 4 处未验与页面迁移注意事项。 |
+| 2026-09-11 | **审查整改（锚点前移到 `a262cd4`）**，四修一补：①elevation 的默认值与派生值**拆回两块**（初版合并到 `body, body *` 是语义错误：重绑元素的后代会拿到默认 l4，已改正并把措辞收紧为「只有派生两项必须挂 `body, body *`」）；②新增 **§3.5 逐字节保真机器门**（manifest 每条登记 sha256/upstreamBlob/upstreamSha256/fidelity + Q0 两条断言；此前无门，变异测试实测旧门全绿）；③删除两个零消费者孤儿变量（`amber-500`、`neutral-bluish-1000`）并新增「无孤儿变量」Q0 用例（声明数 55→**53**）；④新增 **§3.6 AA 数字**（warn 2.58:1 / success 2.09:1）并进 Q0；⑤§3.1 复算命令补 `var(` 锚（原命令得 38、表里 37，37 是对的）。首批 6 个 `.module.css` 的上游 blob 值经独立重算与主台账相符。 |
