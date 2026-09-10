@@ -430,3 +430,84 @@ describe('#94 inventory 变化时重报（心跳节拍检测，会话不重启�
     expect(inventoryFrames(socket)).toHaveLength(2)
   })
 })
+
+describe('#112 归因回调缺省不可静默（默认结构化 warn 兜底）', () => {
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  function captureStderr(): { lines: string[]; restore: () => void } {
+    const lines: string[] = []
+    const original = process.stderr.write
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      lines.push(String(chunk))
+      return true
+    }) as typeof process.stderr.write
+    return {
+      lines,
+      restore: () => {
+        process.stderr.write = original
+      },
+    }
+  }
+
+  it('heartbeatFacts 抛错且未接 onHeartbeatError：stderr 有结构化 warn（不是静默）', async () => {
+    FakeSocket.reset()
+    const { deps, timers } = makeDeps({
+      heartbeatFacts: () => {
+        throw new Error('sqlite gone')
+      },
+    })
+    const cap = captureStderr()
+    try {
+      startDeviceSession({ ...deps }) // 故意不接 onHeartbeatError
+      const socket = latestSocket()
+      socket.emitOpen()
+      timers.intervals[0]!.fn()
+      await flush()
+    } finally {
+      cap.restore()
+    }
+    const warn = cap.lines
+      .map((l) => {
+        try {
+          return JSON.parse(l) as Record<string, unknown>
+        } catch {
+          return undefined
+        }
+      })
+      .find((l) => l?.component === 'node.session')
+    expect(warn).toBeDefined()
+    expect(warn!.level).toBe('warn')
+    expect(String(warn!.error)).toContain('sqlite gone')
+  })
+
+  it('inventoryFacts 失败且未接 onInventoryError：stderr 同样兜底（两族同形态）', async () => {
+    FakeSocket.reset()
+    const { deps } = makeDeps({})
+    const cap = captureStderr()
+    try {
+      startDeviceSession({
+        ...deps,
+        inventoryFacts: async () => {
+          throw new Error('build boom')
+        },
+      })
+      const socket = latestSocket()
+      socket.emitOpen()
+      await flush()
+    } finally {
+      cap.restore()
+    }
+    const warn = cap.lines
+      .map((l) => {
+        try {
+          return JSON.parse(l) as Record<string, unknown>
+        } catch {
+          return undefined
+        }
+      })
+      .find((l) => l?.component === 'node.session')
+    expect(warn).toBeDefined()
+    expect(warn!.level).toBe('warn')
+    expect(String(warn!.error)).toContain('build boom')
+  })
+})
