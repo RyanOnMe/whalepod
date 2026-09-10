@@ -2,7 +2,7 @@
 
 - 对应场景/门禁：Q0（组件层判据）+ Q5（p1-07 / p1-19 真浏览器）
 - 对应 Issue：#162（切片一 #152/#157 的补漏）；领域语言以 [CONTEXT.md](../../CONTEXT.md) 为准
-- 上次验证：2026-09-10 · feat/p1-162-jargon-ids `8dc6f2d` · Q0 PASS（82 files / 1061 tests）· Q5 PASS（p1-07 1 passed / p1-19 13 passed / 浏览器层红→绿各一次；三轮数字见「实测记录」）
+- 上次验证：2026-09-10 · feat/p1-162-jargon-ids `d5f93be`（已并 main `8780fc7`）· Q0 PASS（84 files / 1076 tests）· Q5 PASS（p1-07 1 passed / p1-19 13 passed / 浏览器层红→绿各一次；四轮数字见「实测记录」）
 
 ## 验的是哪条用户路径
 
@@ -71,6 +71,17 @@ pnpm vitest run --project unit apps/web/tests/person-identity.spec.ts
 - 截图自审：`artifacts/evidence/jargon-ids-shots/`（8 张 + `manifest.md` 写明拍摄条件；在 `.gitignore` 的 `artifacts/evidence/` 内，不入 git；脱敏过 `scripts/secret-scan.sh`）；
 - 提交前：`scripts/secret-scan.sh`。
 
+## 与 #159（对比度扫描）在同一 spec 里共存
+
+`apps/web/tests/e2e/task-room.spec.ts` 同时承载本判据与 #159 的
+`expectNoContrastOffenders`（合并 main `8780fc7` 时同位置冲突，解冲突**两边都留**）：
+
+- 顺序：**#162 术语判据在前**（它负责让「当前责任人」与留言区渲染出来），#159 的对比度扫描
+  紧随其后——这是 main 侧注释本身的意图（扫描要等文字渲染完成再取）；
+- 调用点核对：合并后 `expectNoContrastOffenders` 6 处（1 import + 5 调用，与 main 一致）、
+  `#162` 判据 4 处（1 定义 + 3 调用），两边都没丢；
+- 两者的失败信息互不遮挡：术语判据自带槽位描述与实测文本，对比度扫描报违规元素与对比度值。
+
 ## 环境交代（本机实测的两个坑，别拿本机结果当判据）
 
 - **全新 worktree 必须先 build 再 Q0**：`pnpm check` 里的根 typecheck 会解析 `@whalepod/*` 的
@@ -81,7 +92,10 @@ pnpm vitest run --project unit apps/web/tests/person-identity.spec.ts
   `workspace_device_id_fkey` 冲突）。做了 A/B：把本次唯一的 DB 改动
   （`listRunsByTask` 的 `asc(runs.id)` 排序键）临时还原后**单跑**同一文件，失败更彻底
   （**4/4 failed**）⇒ 与本次改动无关，属机器争用（共享一次性 PostgreSQL + 真 Node/Runtime 抢资源）。
-  **Q2 以 CI 的 integration job 为准**，本机结果不要当判据。
+  **本 head 的 Q2 没有机器覆盖**：`c67b903` 那次 CI 的 integration 绿**早于** `asc(runs.id)`
+  这笔 DB 改动（该改动在 `c86208a`），而本分支此后 GitHub 未生成任何 run（事件投递问题，
+  `gh api …?branch=…` 只有 `6a3bccb`/`c67b903` 两条）。所以这条上**不能**写「以 CI integration
+  为准」——**落地时以 main 的 `push:main` run 为准**，那是本仓唯一会覆盖到这笔改动的机器门。
 - **Q5 栈纪律**：同一时刻全机只允许一套 e2e 栈（5173/18080）。多片同时起时 `e2e-serve`
   会以 exit 2 拒绝；但**跑起来之后**别人的栈启动，本方会出现控制面
   `500 {"error":"node not running"}` 这类基础设施红——本轮实测撞到过一次（p1-19 的 R5），
@@ -111,6 +125,8 @@ pnpm vitest run --project unit apps/web/tests/person-identity.spec.ts
 | 第三轮（一审修改后，独占栈窗口） | `8dc6f2d` | p1-07 | 同上 | **1 passed**（用例 3.0s / 整轮 19.5s） |
 | 第三轮 | `8dc6f2d` | p1-19 | 同上 | **13 passed**（整轮 2.8m） |
 | 第三轮 | `8dc6f2d` | 截图自审 | 临时 shot spec（`up` → `playwright test --project=shots -g "G5：Bob 启动 Builder Run|G6-04 Artifact|#162 截图自审"` → `down`） | **3 passed**（30.1s），8 张重拍，两张 Run 图措辞更新 |
+| 第四轮（合并 main `8780fc7` 后：与 #159 对比度扫描同文件共存） | `d5f93be` | p1-07 | 同上 | **1 passed**（用例 3.9s / 整轮 21.0s） |
+| 第四轮 | `d5f93be` | p1-19 | 同上 | **13 passed**（整轮 3.1m） |
 | 浏览器层**红** | 变异 `TaskHeader`（见下方「造红」） | p1-07 | 同命令 | **1 failed**，判据诊断指名槽位与短 id（实测 `01a08c70`） |
 | 浏览器层**绿** | 还原同一文件 | p1-07 | 同命令 | **1 passed**（用例 18.6s / 整轮 41.1s，本轮桌面机上有他人在跑栈） |
 
