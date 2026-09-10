@@ -96,7 +96,10 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     await fillAndEnter(alice, '#project-name', '验收项目')
     await expect(alice.getByText('验收项目').first()).toBeVisible()
 
-    // ---- Bob 账号：Alice 会话经 HTTP API 开通（非本场景 UI 范围） ----
+    // ---- Bob 账号：Alice 会话经 HTTP API 开通 ----
+    // 此处保留 HTTP 直连是**有意的分工**：本 spec 判的是 Task Room 双会话主链，
+    // 邀请链自身的真人路径（成员页生成链接 → 新浏览器加入）由 `invite-accept.spec.ts`
+    // （project p1-141）覆盖——那条曾经写在注释里的「成员管理 UI 属后续版本」已由 #141 兑现。
     const aliceCookie = await sessionCookie(aliceContext)
     const invite = await hubApi(aliceCookie, 'POST', '/invites', { role: 'member' })
     expect(invite.status).toBe(201)

@@ -28,6 +28,27 @@ export interface TeamView {
   createdAt: string
 }
 
+// team/routes.ts：GET /team/members 的列表项（#141 成员页）。
+// #136 起该响应面已纳入 protocol schema（TeamMemberView），类型从 @whalepod/protocol
+// 引入，不再在此镜像——本文件原有的同名 interface（多一个 joinedAt）已删除。
+
+// team/invite-routes.ts：GET /invites/:token（接受页预检）、POST /invites/:token/accept。
+export interface InviteDetailsView {
+  role: 'admin' | 'member'
+  teamName: string
+  expiresAt: string
+  expired: boolean
+  consumed: boolean
+}
+
+export interface AcceptInviteAsMemberView {
+  role: 'admin' | 'member'
+  teamName: string
+  /** true = 本次真的加入了；false = 已是团队成员（重复点击/多标签页）。 */
+  joined: boolean
+  alreadyMember: boolean
+}
+
 // project/queries.ts：ProjectView。
 export interface ProjectView {
   id: string

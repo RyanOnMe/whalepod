@@ -12,7 +12,10 @@ export const queryKeys = {
   setupStatus: ['setup-status'] as const,
   session: ['session'] as const,
   projects: ['projects'] as const,
-  /** #136：成员列表——创建任务的责任人选择器数据源。 */
+  /**
+   * #136：成员列表——创建任务的责任人选择器数据源；#141 成员页复用同一键
+   * （本分支原带一份重复定义，收编时删除）。
+   */
   teamMembers: ['team-members'] as const,
   /** #137：项目内任务列表（离开 Task Room 后找回任务的入口）。 */
   projectTasks: (projectId: string) => ['project-tasks', projectId] as const,
@@ -28,6 +31,8 @@ export const queryKeys = {
   pluginCatalog: ['plugin-catalog'] as const,
   pluginInstallations: ['plugin-installations'] as const,
   pluginPacks: ['plugin-packs'] as const,
+  /** #141：邀请接受页的预检（键带 token，接受成功后随成员列表一起失效）。 */
+  invite: (token: string) => ['invite', token] as const,
 }
 
 function retryLimit(failureCount: number, error: unknown): boolean {

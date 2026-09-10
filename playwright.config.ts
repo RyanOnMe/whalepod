@@ -28,6 +28,9 @@ export default defineConfig({
     // #140：实时观察用例独立成套——判据是「对端零操作」，与既有两条「显式
     // reload 驱动」的用例口径相反；混在一起旁路会重新长回来。
     { name: 'p1-140', testMatch: /realtime-observation\.spec\.ts/ },
+    // #141：邀请链真人路径（Owner 生成链接 → 新浏览器加入）——单 Hub 只容一个团队，
+    // 所以它必须独占一套冷启环境（p1-07 的团队已被自身 Setup 占用）。
+    { name: 'p1-141', testMatch: /invite-accept\.spec\.ts/ },
   ],
   use: {
     baseURL: 'http://localhost:5173',

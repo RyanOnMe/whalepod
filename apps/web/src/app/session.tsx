@@ -13,6 +13,7 @@ import { api } from '../shared/api/client.js'
 import { isApiError } from '../shared/api/errors.js'
 import type { Session } from '../shared/api/types.js'
 import { queryKeys } from './query-client.js'
+import { FlashBanner } from './FlashBanner.js'
 import { RealtimeBridge } from './realtime.js'
 
 const SessionContext = createContext<Session | null>(null)
@@ -51,6 +52,7 @@ export function AppShell(): ReactNode {
           </Link>
           <nav className="app-nav" aria-label="主导航">
             <Link to="/">项目</Link>
+            <Link to="/members">成员</Link>
             <Link to="/agents">Agents</Link>
             <Link to="/plugins">插件</Link>
             <Link to="/devices">设备</Link>
@@ -74,6 +76,7 @@ export function AppShell(): ReactNode {
             退出失败：{logoutError}
           </div>
         ) : null}
+        <FlashBanner />
         <main className="app-main">
           <Outlet />
         </main>
