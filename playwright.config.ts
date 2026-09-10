@@ -28,6 +28,8 @@ export default defineConfig({
     // #140：实时观察用例独立成套——判据是「对端零操作」，与既有两条「显式
     // reload 驱动」的用例口径相反；混在一起旁路会重新长回来。
     { name: 'p1-140', testMatch: /realtime-observation\.spec\.ts/ },
+    // #142：设备配对 UI 真人路径（页面签发配对码 → 真 node CLI 消费 → 设备自动上屏）。
+    { name: 'p1-142', testMatch: /pairing-ui\.spec\.ts/ },
   ],
   use: {
     baseURL: 'http://localhost:5173',

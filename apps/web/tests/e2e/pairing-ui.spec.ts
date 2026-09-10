@@ -1,11 +1,8 @@
 /**
  * #142 设备配对 UI 真人路径（Q5 用例草稿）。
  *
- * **本文件尚未注册，也不在本分支运行**：playwright.config.ts 的 project testMatch
- * 不含 pairing-ui，根 package.json 的 test:e2e 也没带它（Q5 由主协调者串行执行）。
- * 待主协调者拍板后两步接线：
- *   1. playwright.config.ts 加 `{ name: 'p1-142', testMatch: /pairing-ui\.spec\.ts/ }`；
- *   2. 根 test:e2e 追加一次串行调用（一个 Hub 实例只容一个团队，必须独立成套冷启）。
+ * 调度：已注册为 playwright project `p1-142` 并挂在根 `test:e2e` 串行链末位
+ * （一个 Hub 实例只容一个团队，必须独立成套冷启；不能与其它 project 并行跑）。
  *
  * 判据（Issue #142「怎样算修好」第 3 条）：一个浏览器里点「生成配对码」拿到码 →
  * 真 node 进程用同一码 claim（scripts/e2e-node.mts，与 `whalepod-node pair` 同一
