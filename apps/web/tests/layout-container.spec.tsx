@@ -14,15 +14,65 @@ import { screen, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import type { ProjectView } from '../src/shared/api/types.js'
+import type { PluginPackView } from '@whalepod/protocol'
 import {
   ALICE,
+  agentsHandler,
   devicesHandler,
   loggedInHandlers,
   makeDevice,
+  ok,
+  packsHandler,
   projectsHandler,
   teamMembersHandler,
 } from './fixtures.js'
+import type { MockHandler } from './fixtures.js'
+import type { AgentView, ProfileRevisionView } from '../src/shared/api/types.js'
 import { renderApp } from './render.jsx'
+
+// #167 Agents 页两栏断言用：一个 Agent + 它的当前 Revision + 一个 Pack（Pack 下拉数据源）。
+const BUILDER_AGENT: AgentView = {
+  id: 'f0000000-0000-4000-8000-000000000001',
+  name: 'Builder',
+  description: '实现任务的构建者',
+  createdBy: ALICE.userId,
+  archivedAt: null,
+  currentRevisionId: 'f0000000-0000-4000-8000-000000000010',
+}
+
+const BUILDER_REVISION: ProfileRevisionView = {
+  id: 'f0000000-0000-4000-8000-000000000010',
+  agentId: BUILDER_AGENT.id,
+  revision: 1,
+  persona: 'You are a careful builder.',
+  provider: 'deepseek',
+  model: 'deepseek-chat',
+  credentialSlot: 'default',
+  maxTokens: 8192,
+  pluginPackId: 'eeeeeeee-0000-4000-8000-000000000001',
+  profileDigest: 'a'.repeat(64),
+  createdBy: ALICE.userId,
+  createdAt: '2026-08-25T00:00:00.000Z',
+}
+
+const CORE_PACK: PluginPackView = {
+  id: 'eeeeeeee-0000-4000-8000-000000000001',
+  name: 'core-empty',
+  packDigest: 'f'.repeat(64),
+  installations: [],
+  entries: [],
+  createdBy: ALICE.userId,
+  createdAt: '2026-08-22T09:00:00.000Z',
+}
+
+function agentDetailHandler(): MockHandler {
+  return {
+    method: 'GET',
+    url: new RegExp(`/api/v1/agents/${BUILDER_AGENT.id}$`),
+    respond: () =>
+      ok({ ...BUILDER_AGENT, currentRevision: BUILDER_REVISION, revisions: [BUILDER_REVISION] }),
+  }
+}
 
 const PROJECT: ProjectView = {
   id: '11111111-0000-4000-8000-000000000001',
@@ -91,6 +141,62 @@ describe('#152 布局：内容容器与两栏栅格', () => {
     // Owner 能邀请：邀请面板在侧列（Member 视角只读的文案不在本用例范围）
     expect(within(aside).getByRole('heading', { name: '邀请成员' })).toBeVisible()
     expect(within(aside).getByRole('button', { name: '生成邀请链接' })).toBeVisible()
+  })
+
+  it('#167 Agents 页：左列 = 列表与 Revision 说明，右列 = 新建表单与选中详情', async () => {
+    const user = userEvent.setup()
+    const { container } = renderApp(
+      '/agents',
+      loggedInHandlers(ALICE, [
+        agentsHandler([BUILDER_AGENT]),
+        agentDetailHandler(),
+        packsHandler([CORE_PACK]),
+      ]),
+    )
+    // 点开一张 Agent 卡：详情是懒渲染的（enabled: selectedId !== null），
+    // 不点卡片就没有 .agent-detail 可判。
+    await user.click(await screen.findByRole('button', { name: /Builder/ }))
+    expect(await screen.findByText('#1 · deepseek-chat')).toBeVisible()
+
+    // 收口前（#167 之前）这里只有一个 flex 列：1120px 容器里表单只占左半、右半空着。
+    const [main, aside] = twoColumnGrid(container)
+    // 左列 = 入口（列表）+ 常驻说明；右列 = 表单 + 详情
+    expect(within(main).getByRole('button', { name: /Builder/ })).toBeVisible()
+    expect(within(main).getByRole('heading', { name: 'Revision 是什么' })).toBeVisible()
+    // 表单标题是 h3（h1 已被页面标题占用、说明是 h2）——层级 h1 → h2 → h3 不断档
+    expect(within(aside).getByRole('heading', { level: 3, name: '新建 Agent' })).toBeVisible()
+    expect(within(aside).getByRole('region', { name: /Agent 详情/ })).toBeVisible()
+    // 归属不许含糊：详情不得留在列表列，说明也不许跑到表单列（窄屏整列上移的正是表单列）
+    expect(within(main).queryByRole('region', { name: /Agent 详情/ })).not.toBeInTheDocument()
+    expect(
+      within(aside).queryByRole('heading', { name: 'Revision 是什么' }),
+    ).not.toBeInTheDocument()
+
+    // #167 删掉的那条重复标题：页面标题的 id 由 AgentList 的区域名引用，
+    // 屏上只有「Agents」一个标题，不再有紧随其后的同义 h2。
+    const heading = screen.getByRole('heading', { level: 1, name: 'Agents' })
+    expect(heading).toHaveAttribute('id', 'agents-page-heading')
+    // 层级 h1 → h2（侧列说明）→ h3（新建表单 / 详情里的 Agent 名）不断档，
+    // 且**只有一个 h2**：被删掉的重复标题原来正是第二个 h2。
+    expect(container.querySelectorAll('h2')).toHaveLength(1)
+    expect(container.querySelectorAll('h3')).toHaveLength(2)
+
+    // 单列顺序 = DOM 顺序（列表/说明 → 表单 → 详情），窄屏不需要 order 补救：
+    // 详情是「点出来的补充」，排在表单之后；曾经靠 :has() 把它提到表单之前，那条规则
+    // 已删（宽屏两栏列归属只由 DOM 决定，两处顺序天然一致）。
+    const grid = container.querySelector('.page-grid')
+    expect(aside.parentElement).toBe(grid)
+    expect(aside.querySelector(':scope > .agent-detail')).not.toBeNull()
+    // 表单在详情之前（DOM 顺序即窄屏阅读顺序）
+    const asideChildren = [...(aside.children as unknown as HTMLElement[])].map(
+      (el) => el.className,
+    )
+    expect(asideChildren.indexOf('card agent-detail')).toBeGreaterThan(
+      asideChildren.findIndex((name) => name.includes('agent-form')),
+    )
+    // 常驻说明住在列表列，不在表单列
+    expect(main.querySelector(':scope > [aria-labelledby="agents-about-heading"]')).not.toBeNull()
+    expect(aside.querySelector(':scope > [aria-labelledby="agents-about-heading"]')).toBeNull()
   })
 })
 

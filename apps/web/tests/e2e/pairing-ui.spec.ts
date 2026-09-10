@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { env, fillAndEnter, hubApi, sessionCookie, startNode } from './helpers.js'
+import { expectCopyCriteria } from '../copy-criteria.js'
 import {
   WHITE,
   compositeOver,
@@ -240,6 +241,70 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
   expect(devicesText, '设备页不应出现 darwin/win32 这类内部标识').not.toMatch(/\b(darwin|win32)\b/)
   expect(devicesText, '「心跳」是内部黑话').not.toContain('心跳')
   expect(devicesText).toContain('最后在线')
+})
+
+/**
+ * #167 文案判据（Agents 页与插件页）：正文不得出现裸的 64 位摘要、不得出现内部词表里的
+ * 词、同一屏不得有两个同义标题。判据口径、词表与理由见 apps/web/tests/copy-criteria.ts
+ * （一个文件同时导出纯函数与浏览器侧入口；纯函数在 Q0 的 unit project 里每次跑，
+ * 这里是把同一套判据挂到**真实渲染结果**上）。
+ *
+ * 渲染时机：#159 一审抓过一次假绿——壳（.app-header）立即渲染，而各页数据都是异步 query，
+ * 在 isPending 窗口里页面上只有「正在加载…」，判据等于什么都没量。所以这里与对比度扫描
+ * 同一口径：逐页等**内容**（加载提示消失 + 标志性节点出现）再判。
+ *
+ * 红→绿实测：#167 的提交说明里有旧文案下这份判据的失败输出（裸摘要 + curated + 同义标题
+ * 三种各一条）。
+ */
+const COPY_CHECK_PAGES: Readonly<Record<string, { ready: string; card?: string }>> = {
+  // 空团队下 Agents 页是空态 + 表单；有 Agent 时点开卡片判详情（详情里才有
+  // persona/插件组合这些标签）。两种形态都要覆盖，selector 用「有卡片」优先。
+  '/agents': { ready: 'form[aria-label="新建 Agent"], .empty-state', card: '.agent-card' },
+  '/plugins': { ready: '.plugins-page .empty-state, .plugin-card' },
+}
+
+test('文案判据：Agents 与插件页无裸摘要 / 无内部词 / 无同义标题（1280×720 与 390×844 两档）', async () => {
+  for (const viewport of [
+    { width: 1280, height: 720 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport)
+    for (const [path, spec] of Object.entries(COPY_CHECK_PAGES)) {
+      await page.goto(path)
+      // 未初始化/未登录时根 loader 会把任何人重定向走（单 Hub 只容一个团队，
+      // 本 spec 的 Setup 属另一个用例，重跑时可能已被占用）——那不是本判据的现场，
+      // 记一条跳过并继续，不在这里制造假红。
+      if (!new URL(page.url()).pathname.startsWith(path)) {
+        test.info().annotations.push({
+          type: 'skip-scope',
+          description: `${path} 被重定向到 ${new URL(page.url()).pathname}（无会话），本档未覆盖该页`,
+        })
+        continue
+      }
+      await expect(page.locator('.app-header')).toBeVisible()
+      await expect(page.locator(spec.ready).first()).toBeVisible()
+      // 详情面板是懒渲染的（点卡片才请求详情），里面才有「人格设定（Persona）」
+      // 这些标签；有卡片就点开，把详情形态也纳入判据。
+      const card = page.locator(spec.card ?? '.agent-card').first()
+      if ((await card.count()) > 0) {
+        await card.click()
+        await expect(page.locator('.agent-detail')).toBeVisible()
+      }
+      await expectCopyCriteria(page, `${path} @ ${viewport.width}×${viewport.height}`)
+
+      // 390×844 档顺带判横向溢出（#152 的既有判据，两页此前没进过那个循环）。
+      if (viewport.width === 390) {
+        const metrics = await page.evaluate(() => ({
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+        }))
+        expect(
+          metrics.scrollWidth,
+          `${path} 在 390px 下横向溢出（scrollWidth=${metrics.scrollWidth}）`,
+        ).toBeLessThanOrEqual(metrics.innerWidth + 1)
+      }
+    }
+  }
 })
 
 /**

@@ -1,9 +1,10 @@
 /**
  * Plugin Pack 组装（02 Task 17 Step 7）：从已安装列表勾选组装不可变 Pack。
  *
- * - GET /plugin-packs 展示现有 Pack（entries 与 packDigest 短摘要；完整 digest
- *   可见且提供一键复制）；Pack ID（UUID）短码展示 + title 全值 + 一键复制，
- *   供 Agent Revision 表单按 Pack 选用（复制失败如实报错，不伪造「已复制」）；
+ * - GET /plugin-packs 展示现有 Pack（entries 与 packDigest 短摘要）；长标识（Pack ID
+ *   与摘要）**一律**短码展示 + title 给全值 + 一键复制，供 Agent Revision 表单按 Pack
+ *   选用（复制失败如实报错，不伪造「已复制」）。#167 之前这里只有 Pack ID 是这套范式，
+ *   摘要还额外铺了一行 64 位十六进制当正文（截图实测一行 64 个字符）。
  * - POST /plugin-packs 创建（Owner/Admin 才有表单；Member 只读）；空选择禁止
  *   提交（按钮禁用），请求体与 protocol 的 PluginPackCreateRequest 对齐；
  * - Pack 创建后不修改任何已有 Agent Revision：指引去 Agent 管理为已有 Agent
@@ -84,7 +85,7 @@ export function PluginPackEditor({ session }: PluginPackEditorProps): ReactNode 
 
   return (
     <section className="plugins-layout" aria-labelledby="plugin-packs-heading">
-      <h2 id="plugin-packs-heading">Plugin Packs</h2>
+      <h2 id="plugin-packs-heading">插件组合（Pack）</h2>
 
       {packsQuery.isPending ? <p className="mutation-hint">正在加载 Packs…</p> : null}
       {packsQuery.isError ? <ErrorBanner error={packsQuery.error} /> : null}
@@ -103,13 +104,16 @@ export function PluginPackEditor({ session }: PluginPackEditorProps): ReactNode 
 
       {canManage ? (
         <form className="card plugin-pack-form" onSubmit={submit} aria-label="新建 Plugin Pack">
-          <h3>新建 Pack</h3>
+          <h3>新建插件组合</h3>
           {installationsQuery.isPending ? (
             <p className="mutation-hint">正在加载已安装插件…</p>
           ) : null}
           {installationsQuery.isError ? <ErrorBanner error={installationsQuery.error} /> : null}
           {installationsQuery.isSuccess && installationsQuery.data.length === 0 ? (
-            <p className="empty-state">尚无已安装插件；请先在上方插件目录安装 curated 包。</p>
+            <p className="empty-state">
+              尚无已安装插件：先在「已安装插件」里安装一个精选（curated）包——只有已安装且已审核的包才能进
+              Pack。
+            </p>
           ) : null}
           {installationsQuery.isSuccess && installationsQuery.data.length > 0 ? (
             <fieldset className="plugin-pick-fieldset">
@@ -180,7 +184,16 @@ export function PluginPackEditor({ session }: PluginPackEditorProps): ReactNode 
   )
 }
 
-/** Pack 卡：digest 短摘要 + 一键复制 + 完整值可见；成员插件展开列出。 */
+/**
+ * Pack 卡：长标识（Pack ID / Pack Digest）一律短码展示 + title 全值 + 一键复制；
+ * 成员插件展开列出。
+ *
+ * #167：原来「Pack Digest」与「完整 Digest」是两行——后者把 64 位十六进制整串当正文
+ * 铺在卡里（截图实测一行 64 个字符）。现在合并成一行：正文只留短摘要，全值走 title
+ * 与复制入口。为什么保留全值入口而不是直接删掉：摘要的用途是**核对**（和 node/runtime
+ * 日志里的 digest 对比），少了这条路排障就只能靠肉眼数字符；可见性由 title（悬停即得）
+ * 与复制按钮承担，不再占用正文。
+ */
 function PackCard({ pack }: { pack: PluginPackView }): ReactNode {
   return (
     <article className="plugin-card" aria-label={`Pack ${pack.name}`}>
@@ -203,18 +216,16 @@ function PackCard({ pack }: { pack: PluginPackView }): ReactNode {
           </dd>
         </div>
         <div>
-          <dt>Pack Digest</dt>
+          <dt>插件组合摘要（Pack Digest）</dt>
           <dd className="plugin-digest-row">
             <code className="plugin-digest" title={pack.packDigest}>
               {shortDigest(pack.packDigest)}
             </code>
-            <CopyValueButton value={pack.packDigest} label={`复制 ${pack.name} 完整 digest`} />
-          </dd>
-        </div>
-        <div>
-          <dt>完整 Digest</dt>
-          <dd>
-            <code className="plugin-digest">{pack.packDigest}</code>
+            <CopyValueButton
+              value={pack.packDigest}
+              label={`复制 ${pack.name} 插件组合摘要`}
+              valueLabel="插件组合摘要"
+            />
           </dd>
         </div>
         <div>
@@ -244,18 +255,18 @@ function PackCard({ pack }: { pack: PluginPackView }): ReactNode {
 
 /**
  * 一键复制按钮：navigator.clipboard 不可用或写入失败时明确报失败并指向手动
- * 复制入口（digest 的完整值始终可见；Pack ID 全值在 title 中），不伪造
- * 「已复制」。valueLabel 指明要复制的取值名称（digest / Pack ID）。
- * 实现已抽到 shared/CopyButton（#141 邀请链接复用同一行为与文案）。
+ * 复制入口（#167 起全值在 title 中，正文只有短码），不伪造「已复制」。
+ * valueLabel 指明要复制的取值名称（Pack ID / 插件组合摘要），失败提示里会用到。
+ * 实现已在 shared/CopyButton（#141 邀请链接复用同一行为与文案）。
  */
 function CopyValueButton({
   value,
   label,
-  valueLabel = '完整 digest',
+  valueLabel,
 }: {
   value: string
   label: string
-  valueLabel?: string
+  valueLabel: string
 }): ReactNode {
   return <CopyButton value={value} label={label} valueLabel={valueLabel} />
 }

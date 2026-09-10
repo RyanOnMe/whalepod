@@ -1,8 +1,7 @@
 /**
- * Admin Plugin Settings（02 Task 17 Step 7）：curated catalog 审核摘要 + 已安装
- * 列表 + 安装动作。
+ * Admin Plugin Settings（02 Task 17 Step 7）：插件目录审核摘要 + 已安装列表 + 安装动作。
  *
- * - 只展示 curated catalog（GET /plugins/catalog）：每条展示精确 version、
+ * - 只展示上游精选目录（`curated` catalog，GET /plugins/catalog）：每条展示精确 version、
  *   integrity 短摘要（title 给全值）、license、review commit 短 sha 与 review
  *   时间、declared capabilities、capabilityClass（legacy_unrestricted 视觉警示）
  *   与 review.status；local-development 包整卡标红。
@@ -24,7 +23,7 @@ import type {
 } from '@whalepod/protocol'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
-import { ROLE_LABEL, shortDigest, shortSha } from '../../shared/format.js'
+import { ROLE_LABEL, formatTrust, shortDigest, shortSha } from '../../shared/format.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import type { Session } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
@@ -89,7 +88,9 @@ export function PluginSettings({ session }: PluginSettingsProps): ReactNode {
       {catalogQuery.isPending ? <p className="mutation-hint">正在加载插件目录…</p> : null}
       {catalogQuery.isError ? <ErrorBanner error={catalogQuery.error} /> : null}
       {catalogQuery.isSuccess && catalogQuery.data.length === 0 ? (
-        <p className="empty-state">curated 目录暂无插件。</p>
+        <p className="empty-state">
+          精选目录暂无插件：这里只列上游精选过的插件，团队自建的本地包不经此入口。
+        </p>
       ) : null}
       {catalogQuery.isSuccess && catalogQuery.data.length > 0 ? (
         <ul className="plugin-list" role="list">
@@ -224,7 +225,7 @@ function InstallationCard({ installation }: { installation: PluginInstallationVi
         <span className={`badge badge-plugin-status-${installation.status}`}>
           {statusLabel[installation.status]}
         </span>
-        <span className="badge">{installation.trust}</span>
+        <span className="badge">{formatTrust(installation.trust)}</span>
         <CapabilityClassBadge capabilityClass={installation.capabilityClass} />
       </div>
       <dl className="revision-meta">

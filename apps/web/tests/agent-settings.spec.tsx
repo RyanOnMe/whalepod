@@ -83,7 +83,10 @@ describe('agent-settings', () => {
       '/agents',
       loggedInHandlers(ALICE, [agentsHandler([builderAgent]), packsHandler([corePack])]),
     )
-    expect(await screen.findByRole('heading', { name: 'Agent 管理' })).toBeVisible()
+    // #167：页面标题只说一次。此前 h1「Agent 管理」+ 紧接着的 h2「Agents」是同义重复
+    // （机器判据见 e2e 的 expectNoDuplicateHeadings），现在只留 h1，文案取主导航同一套。
+    expect(await screen.findByRole('heading', { name: 'Agents', level: 1 })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'Agent 管理' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '创建 Agent' })).toBeVisible()
     expect(await screen.findByRole('button', { name: /Builder/ })).toBeVisible()
   })
@@ -112,17 +115,19 @@ describe('agent-settings', () => {
     ])
     await screen.findByRole('button', { name: /Builder/ })
     await user.type(screen.getByLabelText('名称'), 'Reviewer')
-    await user.type(screen.getByLabelText('Persona'), 'You are a careful reviewer.')
+    await user.type(screen.getByLabelText('人格设定（Persona）'), 'You are a careful reviewer.')
     // provider/model/credentialSlot 表单预填了默认值，先清空再输入（避免叠加）
-    await user.clear(screen.getByLabelText('Provider'))
-    await user.type(screen.getByLabelText('Provider'), 'deepseek')
-    await user.clear(screen.getByLabelText('Model'))
-    await user.type(screen.getByLabelText('Model'), 'deepseek-chat')
-    await user.clear(screen.getByLabelText('Credential Slot'))
-    await user.type(screen.getByLabelText('Credential Slot'), 'default')
+    await user.clear(screen.getByLabelText('模型服务商（Provider）'))
+    await user.type(screen.getByLabelText('模型服务商（Provider）'), 'deepseek')
+    await user.clear(screen.getByLabelText('模型（Model）'))
+    await user.type(screen.getByLabelText('模型（Model）'), 'deepseek-chat')
+    await user.clear(screen.getByLabelText('凭据槽（Credential Slot）'))
+    await user.type(screen.getByLabelText('凭据槽（Credential Slot）'), 'default')
+    // #167：Credential Slot 是内部概念，除标签外必须有一句「填什么」的解释。
+    expect(screen.getByText(/设备所有者在本机给 API 密钥起的名字/)).toBeVisible()
     // Plugin Pack 从下拉选择（数据源 GET /plugin-packs）；未选时提交按钮禁用
     expect(screen.getByRole('button', { name: '创建 Agent' })).toBeDisabled()
-    await user.selectOptions(screen.getByLabelText('Plugin Pack'), corePack.id)
+    await user.selectOptions(screen.getByLabelText('插件组合（Plugin Pack）'), corePack.id)
     expect(screen.getByRole('button', { name: '创建 Agent' })).toBeEnabled()
     await user.click(screen.getByRole('button', { name: '创建 Agent' }))
 
@@ -130,7 +135,7 @@ describe('agent-settings', () => {
     // 成功后表单复位
     await waitFor(() => {
       expect(screen.getByLabelText('名称')).toHaveValue('')
-      expect(screen.getByLabelText('Persona')).toHaveValue('')
+      expect(screen.getByLabelText('人格设定（Persona）')).toHaveValue('')
     })
 
     const createCall = fetchMock.mock.calls.find(([input, requestInit]) => {
@@ -171,7 +176,7 @@ describe('agent-settings', () => {
         packsHandler([corePack, reviewPack]),
       ]),
     )
-    const select = (await screen.findByLabelText('Plugin Pack')) as HTMLSelectElement
+    const select = (await screen.findByLabelText('插件组合（Plugin Pack）')) as HTMLSelectElement
     expect(select).toBeRequired()
     // 数据源断言：两个 Pack 均以下拉选项出现（不再是手工粘贴 UUID）
     expect(await screen.findByRole('option', { name: 'core-empty' })).toBeVisible()
@@ -185,7 +190,7 @@ describe('agent-settings', () => {
 
   it('Plugin Pack 列表为空：无选项，提示先去插件管理创建', async () => {
     renderApp('/agents', loggedInHandlers(ALICE, [agentsHandler([]), packsHandler([])]))
-    const select = (await screen.findByLabelText('Plugin Pack')) as HTMLSelectElement
+    const select = (await screen.findByLabelText('插件组合（Plugin Pack）')) as HTMLSelectElement
     expect(select).toBeRequired()
     expect(screen.queryByRole('option', { name: 'core-empty' })).not.toBeInTheDocument()
     expect(await screen.findByText(/暂无可用 Pack/)).toBeVisible()
@@ -205,9 +210,13 @@ describe('agent-settings', () => {
     )
     await user.click(await screen.findByRole('button', { name: /Builder/ }))
     expect(await screen.findByText('#1 · deepseek-chat')).toBeVisible()
-    // 详情 <dt> 与表单 <label> 同名文案，两个都在页面上（表单 + 详情）
-    expect(screen.getAllByText('Credential Slot')).toHaveLength(2)
-    expect(screen.getAllByText('Persona')).toHaveLength(2)
+    // #167：表单 <label> 与详情 <dt> 现在共用 shared/format.ts 的同一份文案常量
+    // （不是两处各写一遍恰好同字），同屏两处都该是「中文（English）」形态。
+    expect(screen.getAllByText('凭据槽（Credential Slot）')).toHaveLength(2)
+    expect(screen.getAllByText('人格设定（Persona）')).toHaveLength(2)
+    // 详情不再出现裸英文标签（回归：截图上的 `Persona` / `Credential Slot` 两列）
+    expect(screen.queryByText('Credential Slot')).not.toBeInTheDocument()
+    expect(screen.queryByText('Persona')).not.toBeInTheDocument()
   })
 
   it('Owner 新建 Revision：预填当前 Revision，下拉换 Pack，载荷与幂等键正确，详情刷新', async () => {
@@ -249,17 +258,21 @@ describe('agent-settings', () => {
     await user.click(within(detail).getByRole('button', { name: '新建 Revision' }))
 
     // 预填当前 Revision 值
-    expect(within(detail).getByLabelText('Persona')).toHaveValue('You are a careful builder.')
-    expect(within(detail).getByLabelText('Provider')).toHaveValue('deepseek')
-    expect(within(detail).getByLabelText('Model')).toHaveValue('deepseek-chat')
-    expect(within(detail).getByLabelText('Credential Slot')).toHaveValue('default')
-    expect(within(detail).getByLabelText('Max Tokens（可选）')).toHaveValue(8192)
+    expect(within(detail).getByLabelText('人格设定（Persona）')).toHaveValue(
+      'You are a careful builder.',
+    )
+    expect(within(detail).getByLabelText('模型服务商（Provider）')).toHaveValue('deepseek')
+    expect(within(detail).getByLabelText('模型（Model）')).toHaveValue('deepseek-chat')
+    expect(within(detail).getByLabelText('凭据槽（Credential Slot）')).toHaveValue('default')
+    expect(within(detail).getByLabelText('单次最多生成 Token 数（Max Tokens，可选）')).toHaveValue(
+      8192,
+    )
     // Pack 下拉：当前用的 core-empty 已预选，切到 review-pack（数据源 GET /plugin-packs）
-    const packSelect = within(detail).getByLabelText('Plugin Pack') as HTMLSelectElement
+    const packSelect = within(detail).getByLabelText('插件组合（Plugin Pack）') as HTMLSelectElement
     expect(packSelect).toHaveValue(corePack.id)
     await user.selectOptions(packSelect, reviewPack.id)
     // Max Tokens 清空 → 可选字段不出现在载荷
-    await user.clear(within(detail).getByLabelText('Max Tokens（可选）'))
+    await user.clear(within(detail).getByLabelText('单次最多生成 Token 数（Max Tokens，可选）'))
     await user.click(within(detail).getByRole('button', { name: '创建 Revision' }))
 
     expect(await within(detail).findByText(/Revision #2 已创建/)).toBeVisible()
@@ -326,6 +339,8 @@ describe('agent-settings', () => {
 
   it('空列表展示下一步引导空态', async () => {
     renderApp('/agents', loggedInHandlers(ALICE, [agentsHandler([]), packsHandler([corePack])]))
-    expect(await screen.findByText(/还没有 Agent。/)).toBeVisible()
+    // #167：空态文案改成指路（「用右栏的表单创建第一个」），文案随 #167 的窄屏顺序
+    // 调整过一次（详情/表单列在窄屏提到列表之前，空团队时表单在下面）。
+    expect(await screen.findByText(/还没有 Agent/)).toBeVisible()
   })
 })
