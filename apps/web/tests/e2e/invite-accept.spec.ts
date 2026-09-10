@@ -33,6 +33,8 @@ async function setupTeamAndProject(owner: Page): Promise<void> {
   await owner.fill('#setup-display-name', 'Alice')
   await fillAndEnter(owner, '#setup-password', OWNER_PASSWORD)
   await expect(owner.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
+  // #152：「创建项目」表单默认收起（与「创建任务」同款折叠入口），先点开再填。
+  await owner.getByRole('button', { name: '新建项目' }).click()
   await fillAndEnter(owner, '#project-name', '邀请链项目')
   await expect(owner.getByRole('heading', { name: '邀请链项目' })).toBeVisible()
 }

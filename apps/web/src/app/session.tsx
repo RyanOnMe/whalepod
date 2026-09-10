@@ -46,19 +46,33 @@ export function AppShell(): ReactNode {
       {/* 登录会话存活期持有 Browser WS：持久事件→query 失效，live→run 缓冲（P1-13）。 */}
       <RealtimeBridge />
       <div className="app-shell">
+        {/*
+          #152：顶栏恒为单行（390px 下也不折行）——品牌 + 折叠导航入口 + 用户信息。
+          <details>/<summary> 是原生折叠：无 JS、Tab 可达、Enter/Space 开关；窄屏由
+          CSS 用绝对定位面板下拉（顶栏高度不随展开变化），宽屏（≥760px）隐藏 summary
+          并让面板常显（::details-content 放开 content-visibility），始终只有这一份链接。
+        */}
         <header className="app-header">
           <Link to="/" className="app-brand">
             WhalePod
           </Link>
-          <nav className="app-nav" aria-label="主导航">
-            <Link to="/">项目</Link>
-            <Link to="/members">成员</Link>
-            <Link to="/agents">Agents</Link>
-            <Link to="/plugins">插件</Link>
-            <Link to="/devices">设备</Link>
-          </nav>
+          <details className="app-nav-menu">
+            <summary className="app-nav-toggle" aria-label="主导航菜单">
+              菜单
+            </summary>
+            <nav className="app-nav" aria-label="主导航">
+              <Link to="/">项目</Link>
+              <Link to="/members">成员</Link>
+              <Link to="/agents">Agents</Link>
+              <Link to="/plugins">插件</Link>
+              <Link to="/devices">设备</Link>
+            </nav>
+          </details>
           <div className="app-header-user">
-            <span>
+            <span
+              className="app-header-user-name"
+              title={`${session.displayName}（${session.role}）`}
+            >
               {session.displayName}（{session.role}）
             </span>
             <button

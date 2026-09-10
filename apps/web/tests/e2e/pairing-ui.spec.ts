@@ -88,3 +88,51 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
   const devices = listed.data as Array<{ id: string; name: string; status: string }>
   expect(devices.some((d) => d.id === node.deviceId && d.name === 'e2e-node')).toBe(true)
 })
+
+/**
+ * #152（布局与响应式一致）：390×844 下没有横向溢出，顶栏单行且 ≤64px，
+ * 折叠后的导航入口键盘可达。三页都量：项目页 / 设备页 / 成员页。
+ *
+ * 判据取自 Issue #152 第三节：此前 390px 顶栏折成 3 行（占屏高约 25%），
+ * 导航链接占一整行；现在收进 <details> 折叠入口，顶栏恒定 64px。
+ */
+test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可达', async () => {
+  await page.setViewportSize({ width: 390, height: 844 })
+
+  for (const path of ['/', '/devices', '/members']) {
+    await page.goto(path)
+    await expect(page.locator('.app-header')).toBeVisible()
+    const metrics = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      innerWidth: window.innerWidth,
+      headerHeight: document.querySelector('.app-header')?.getBoundingClientRect().height ?? 0,
+    }))
+    expect(metrics.innerWidth).toBe(390)
+    // 判定用真实滚动宽度，而不是「看起来没露出来」：+1 容忍亚像素舍入
+    expect(
+      metrics.scrollWidth,
+      `${path} 在 390px 下横向溢出（scrollWidth=${metrics.scrollWidth}）`,
+    ).toBeLessThanOrEqual(metrics.innerWidth + 1)
+    expect(
+      metrics.headerHeight,
+      `${path} 顶栏高度 ${metrics.headerHeight}px 超过 64px（折行？）`,
+    ).toBeLessThanOrEqual(64)
+  }
+
+  // 导航入口：键盘（focus + Enter）打开折叠菜单 → 链接可达且能完成跳转
+  await page.goto('/')
+  const toggle = page.locator('.app-nav-menu > summary')
+  await expect(toggle).toHaveAttribute('aria-label', '主导航菜单')
+  await toggle.focus()
+  await page.keyboard.press('Enter')
+  const nav = page.getByRole('navigation', { name: '主导航' })
+  await expect(nav.getByRole('link', { name: '成员' })).toBeVisible()
+  await nav.getByRole('link', { name: '成员' }).click()
+  await page.waitForURL(/\/members$/)
+  await expect(page.getByRole('heading', { name: '成员', exact: true })).toBeVisible()
+  // 展开导航也不许把顶栏顶高（面板绝对定位）
+  const openHeaderHeight = await page
+    .locator('.app-header')
+    .evaluate((el) => el.getBoundingClientRect().height)
+  expect(openHeaderHeight).toBeLessThanOrEqual(64)
+})

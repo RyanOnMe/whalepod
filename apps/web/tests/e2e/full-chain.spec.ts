@@ -88,6 +88,8 @@ async function setupTeamAndTask(): Promise<void> {
   await fillAndEnter(alice, '#setup-password', ALICE_PASSWORD)
   await expect(alice.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
 
+  // #152：「创建项目」表单默认收起（与「创建任务」同款折叠入口），先点开再填。
+  await alice.getByRole('button', { name: '新建项目' }).click()
   await fillAndEnter(alice, '#project-name', 'P1-19 全链项目')
   shared.aliceCookie = await sessionCookie(shared.aliceContext!)
   const me = await hubApi(shared.aliceCookie, 'GET', '/auth/session')
