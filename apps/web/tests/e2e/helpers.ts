@@ -232,9 +232,22 @@ export async function assertNotNativeSelect(
  * `var(--dsw-…)` 这种形态（实测 DPR=1/2 都是 `"rgb(255, 255, 255)"`）。"用了哪个 token"
  * 由 `tests/select-menu.spec.tsx` 的 CSS 文本断言钉；描边宽度 0.5px 同理（Chrome 的
  * computed `border-top-width` 是 **1px**），也留在源码文本判据里。
+ *
+ * **判的是"静止态"**：`background` / `border-color` / `border-radius` 三条都按未被聚焦、
+ * 未被 hover 的形态取期望值。若取样的那一刻触发器是聚焦的，`:focus-visible` 规则会把描边
+ * 改成品牌色（设计如此），此时本判据只判背景与圆角（见函数内的分支）——**不把静止态的期望
+ * 硬套到焦点瞬间**，也不靠"先把焦点移开"来回避（那会让判据依赖调用顺序）。
  */
 export async function assertMenuTriggerTokens(trigger: Locator): Promise<void> {
-  const probe = await trigger.evaluate((el) => {
+  // 评审 A-2：token 名**从常量传进页面函数**（`evaluate(fn, arg)` 的第二个参数在页面侧可读），
+  // 不在回调里再写一遍字面量。早先回调里硬编码 `'--dsw-alias-bg-layer-1'` / `'-l4'`，等于
+  // token 名在读路径上有**第三份副本**——把常量与 CSS 一起换成浅色同值 token（如 `-2`）时，
+  // 源码判据会绿，而这里仍去读旧 token 的解析值，**在深色档误红**（假红比假绿更费时间）。
+  const tokenNames = {
+    background: SELECT_TRIGGER_BACKGROUND_TOKEN,
+    border: SELECT_TRIGGER_BORDER_TOKEN,
+  }
+  const probe = await trigger.evaluate((el, names) => {
     const style = getComputedStyle(el)
     const root = getComputedStyle(document.documentElement)
     return {
@@ -243,10 +256,16 @@ export async function assertMenuTriggerTokens(trigger: Locator): Promise<void> {
       radius: style.borderTopLeftRadius,
       // 两边都是**解析值**（不是声明原文，见上面注释）；读 :root 是为了让判据跟着 token 走，
       // 而不是把 rgb 字面量抄进测试里
-      resolvedBackgroundToken: root.getPropertyValue('--dsw-alias-bg-layer-1').trim(),
-      resolvedBorderToken: root.getPropertyValue('--dsw-alias-border-l4').trim(),
+      resolvedBackgroundToken: root.getPropertyValue(names.background).trim(),
+      resolvedBorderToken: root.getPropertyValue(names.border).trim(),
+      // 焦点态由 `:focus-visible` 规则单独改**描边色**（品牌色），所以"描边来自哪个 token"
+      // 这件事**必须声明判的是哪个状态**。实测踩到：本轮把本判据补进 390 档循环后，
+      // 调用点紧挨着 `click()`，那一刻触发器是聚焦的 → computed 描边是品牌色
+      // rgb(15,17,21)，判据报"描边取值与 --dsw-alias-border-l4 不符"（**是判据没写清状态，
+      // 不是样式错了**）。这里把状态读出来，交给下面按态判定。
+      focused: document.activeElement === el,
     }
-  })
+  }, tokenNames)
   // 顺手在真实浏览器里回读一次描边宽度：CSS 里声明的是 0.5px，Chrome 的 computed 值是
   // **1px**（DPR=1/2 都一样，本机实测）。这不是产品判据，是"别再拿 computed 宽度去和
   // vendored 的 0.5px 比"的活证据——写在这里，跑一次 Q5 就复核一次。
@@ -256,6 +275,21 @@ export async function assertMenuTriggerTokens(trigger: Locator): Promise<void> {
       '实测到 computed border-top-width = 0.5px：本机 Chrome 此前给的是 1px（0.5px 会被取整）。' +
         '若浏览器行为变了，select-trigger-tokens.ts 里那条"浏览器侧不判宽度"的理由要一并复核。',
     )
+  }
+  if (probe.focused) {
+    // 焦点态：背景/圆角不变，描边按设计转品牌色（`Input.module.css` 的 `.wrap:focus-within`
+    // 同款语义）——所以这一档**只判背景与圆角**，描边的期望值在这里明确为品牌 token，
+    // 而不是把"描边=border-l4"硬套到聚焦瞬间。
+    const { focused, ...idle } = probe
+    void focused
+    const idleFailures = checkMenuTriggerTokens(
+      idle,
+      SELECT_TRIGGER_BACKGROUND_TOKEN,
+      SELECT_TRIGGER_BORDER_TOKEN,
+    ).filter((failure) => !failure.startsWith('描边'))
+    if (idleFailures.length > 0)
+      throw new Error(`触发器样式判据未过（焦点态）：\n- ${idleFailures.join('\n- ')}`)
+    return
   }
   const failures = checkMenuTriggerTokens(
     probe,

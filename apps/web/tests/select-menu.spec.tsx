@@ -63,12 +63,84 @@ function sourceFiles(dir: string): string[] {
   })
 }
 
-/** 取 global.css 里某条选择器的声明块原文（找不到就抛——别让判据静默变成空断言）。 */
+/** 一条样式规则：选择器（已按逗号拆开、空白归一）+ 声明块原文。 */
+export interface CssRule {
+  selectors: string[]
+  body: string
+}
+
+/**
+ * 扫描 CSS 文本，返回所有**样式规则**，并**把 at-rule 前导剥在选择器之外**。
+ *
+ * 为什么必须显式做这件事（评审 A-1，同 #171 的 BLOCK-2）：早先的实现是
+ * `new RegExp(selector + '\\s*\\{([^}]*)\\}').exec(css)` **只取首个 match**，于是往
+ * `global.css` 末尾追加
+ * `@media (max-width: 390px) { .select-menu .select-menu-trigger { … } }` 之后，
+ * 那条正则要么把 `@media (max-width: 390px) { .select-menu .select-menu-trigger` 当成选择器
+ * （永远匹配不上 → **那条规则根本没被看到**），要么只认顶层那一条 → **往窄屏里塞回旧值
+ * 是"全绿通过"**。复核实测：追加该 `@media`（border 1px / radius 6px / bg layer-2）后
+ * 整个 web project 196/196 全绿，判据毫无反应。
+ *
+ * 现在按**配对花括号**把文本切成「前导 + 体」：前导以 `@` 开头的是 at-rule（自己不是样式
+ * 规则、不进结果），**每次进入块之后前导重新起算**——内层规则的选择器文本因此天然干净。
+ * 另外 `@import …;` 这类语句在顶层遇到 `;` 时前导也要重新起算（本次实测踩到过）。
+ */
+export function scanRules(cssText: string): CssRule[] {
+  const rules: CssRule[] = []
+  let preludeStart = 0
+  const stack: Array<'at' | 'style'> = []
+  for (let i = 0; i < cssText.length; i += 1) {
+    const char = cssText[i]
+    if (char === '{') {
+      const prelude = cssText.slice(preludeStart, i).trim()
+      if (prelude === '' || prelude.startsWith('@')) {
+        stack.push('at')
+      } else {
+        stack.push('style')
+        const selectors = prelude
+          .split(',')
+          .map((part) => part.trim().replaceAll(/\s+/g, ' '))
+          .filter((part) => part !== '')
+        let depth = 0
+        let end = i
+        for (; end < cssText.length; end += 1) {
+          if (cssText[end] === '{') depth += 1
+          else if (cssText[end] === '}') {
+            depth -= 1
+            if (depth === 0) break
+          }
+        }
+        if (end >= cssText.length) {
+          throw new Error(`CSS 花括号不配平（规则 ${selectors.join(', ')} 未闭合）`)
+        }
+        rules.push({ selectors, body: cssText.slice(i + 1, end) })
+      }
+      preludeStart = i + 1
+    } else if (char === '}') {
+      stack.pop()
+      preludeStart = i + 1
+    } else if (char === ';' && stack.length === 0) {
+      preludeStart = i + 1
+    }
+  }
+  return rules
+}
+
+const GLOBAL_RULES = scanRules(globalCss)
+
+/**
+ * 取 global.css 里某条选择器的声明块原文（找不到就抛——别让判据静默变成空断言）。
+ *
+ * **命中多条时报"定位不唯一"，不取第一条**（评审 A-1）：`@media` 里复制一份同名规则正是
+ * 本条判据要抓的目标，"窄屏单独改松"必须让判据红，而不是被静默忽略。
+ */
 function cssBlock(selector: string): string {
-  const escaped = selector.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const match = new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 'g').exec(globalCss)
-  if (match?.[1] === undefined) throw new Error(`global.css 里找不到规则：${selector}`)
-  return match[1]
+  const hits = GLOBAL_RULES.filter((rule) => rule.selectors.includes(selector))
+  if (hits.length === 0) throw new Error(`global.css 里找不到规则：${selector}`)
+  if (hits.length > 1) {
+    throw new Error(`${selector} 命中 ${hits.length} 条规则，判据定位不唯一（先收窄再判）`)
+  }
+  return (hits[0] as CssRule).body
 }
 
 const TRIGGER_BLOCK = cssBlock('.select-menu .select-menu-trigger')
@@ -515,6 +587,54 @@ describe('#158 视觉判据：触发器样式来自 L1 token', () => {
       contrastRatio({ r: fg.r, g: fg.g, b: fg.b }, { r: bg.r, g: bg.g, b: bg.b }),
     )
     expect(ratio).toBeGreaterThanOrEqual(4.5)
+  })
+
+  /**
+   * 评审 A-1 的常驻回归（与 #171 的 BLOCK-2 同形）。两件事都要成立：
+   * ① 判据**看得见** `@media` 内的同名规则（早先只取首个 match → 完全失明）；
+   * ② 同一选择器命中多条时**报"定位不唯一"**，而不是取第一条。
+   *
+   * 变异实测（复核给的那段）：往 global.css 末尾追加
+   * `@media (max-width: 390px) { .select-menu .select-menu-trigger { border:1px solid …;
+   * border-radius:6px; background: var(--dsw-alias-bg-layer-2) } }`
+   * → 本用例与 `cssBlock` 的定位断言一起变红；删掉 → 绿。
+   */
+  it('@media 内的同名规则不能静默失明：要么被扫到，要么报定位不唯一', () => {
+    const synthetic = `
+.other { color: red }
+@media (max-width: 390px) {
+  .select-menu .select-menu-trigger { border-radius: 6px; background: var(--dsw-alias-bg-layer-2) }
+}
+`
+    const rules = scanRules(synthetic)
+    // ① 内层规则的选择器文本是**干净的**（不带 `@media (…) { ` 前缀）
+    const inner = rules.filter((rule) =>
+      rule.selectors.includes('.select-menu .select-menu-trigger'),
+    )
+    expect(inner).toHaveLength(1)
+    expect((inner[0] as CssRule).body).toContain('border-radius: 6px')
+    // at-rule 自己不进结果
+    expect(rules.some((rule) => rule.selectors.some((sel) => sel.startsWith('@')))).toBe(false)
+
+    // ② 真文件里现在只有一条；一旦有人在 @media 里再声明一条，cssBlock 必须抛"定位不唯一"
+    const topLevel = GLOBAL_RULES.filter((rule) =>
+      rule.selectors.includes('.select-menu .select-menu-trigger'),
+    )
+    expect(topLevel).toHaveLength(1)
+    const withDuplicate = `${globalCss}\n@media (max-width: 390px) { .select-menu .select-menu-trigger { border-radius: 6px } }\n`
+    const dupHits = scanRules(withDuplicate).filter((rule) =>
+      rule.selectors.includes('.select-menu .select-menu-trigger'),
+    )
+    expect(
+      dupHits,
+      '追加 @media 后必须能被扫到两条（否则 cssBlock 无从判"定位不唯一"）',
+    ).toHaveLength(2)
+
+    // ③ 顺带钉住「@import …; 不被并进下一条规则的选择器」这条实测踩过的坑
+    const withImport = `@import './tokens.css';\n.a { color: red }\n`
+    const afterImport = scanRules(withImport)
+    expect(afterImport).toHaveLength(1)
+    expect((afterImport[0] as CssRule).selectors).toEqual(['.a'])
   })
 
   it('整条触发器规则里不出现裸色值（颜色一律 var(--…)）', () => {

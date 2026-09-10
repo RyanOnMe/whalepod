@@ -260,6 +260,11 @@ async function auditMenuAt(
   shotName: string,
   viewport: { name: string; width: number; height: number },
 ): Promise<void> {
+  // **每一档都判一次 token 来源**（评审 A-1 的补充）：`assertMenuTriggerTokens` 早先只在
+  // 1280 档调用过，于是"有人往 `@media (max-width: 390px)` 里把触发器改松"这件事在浏览器侧
+  // 也没有判据。源码侧现在有 `@media` 感知的扫描器（`select-menu.spec.tsx`），这里补浏览器
+  // 侧的同档复核——两档各判一次，覆盖面才与截图范围一致。
+  await assertMenuTriggerTokens(trigger)
   await trigger.click()
   const menu = page.getByRole('menu')
   await expect(menu).toBeVisible()
