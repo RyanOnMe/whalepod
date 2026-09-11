@@ -22,6 +22,7 @@
  *   node.supervisor 结构化日志（真人路径可观测，不做接口背后的暗手）。
  */
 import type {
+  ErrorCode,
   NodeDownstream,
   ProjectedRunEvent,
   RuntimeArtifactInput,
@@ -207,6 +208,8 @@ export class RunManager {
         return this.handleRunStart(frame.payload)
       case 'run.cancel':
         return this.handleRunCancel(frame.payload)
+      case 'run.followup':
+        return this.handleRunFollowup(frame.payload)
       case 'approval.decide':
         return this.handleApprovalDecide(frame.payload)
       case 'run.event_ack':
@@ -370,6 +373,143 @@ export class RunManager {
       // 副本（spawn 前失败），同样要清理（#62：不留半成品目录）。
       this.cleanupInputs(runId)
     }
+  }
+
+  // ---------- run.followup（#180 / ADR-0009 决策 3：执行中继续说话） ----------
+
+  /**
+   * Run 执行期间的一次追问：**不新开 Run、不换 session**，直接把 text 写进 Runtime
+   * stdin 的本地 `run.followup` 帧（runtime-wire 既有），由 Runtime 排队成一次
+   * follow-up turn。
+   *
+   * 受理语义（与协议注释同口径）：`ack accepted=true` 只表示「**已受理并下发到
+   * Runtime stdin**」，不表示模型已读到——进展仍由既有 `session.event` / `run.*`
+   * 上行帧呈现。Hub 侧据此把指令落 `instruction_state=accepted`（切片③）。
+   *
+   * 拒绝路径一律走 §10 现有码（不新造码），且**都不下发**：
+   * - 本地已终态（finalFacts）→ INVALID_RUN_TRANSITION（终态禁止复活；免打扰守卫先于一切）
+   * - 本 Node 没有这个 Run 的任何事实 → NOT_FOUND
+   * - 还没到 runtime.ready（Run 不处于 running）→ INVALID_RUN_TRANSITION
+   * - Runtime 已不在 → RUNTIME_LOST
+   */
+  private async handleRunFollowup(
+    payload: Extract<NodeDownstream, { type: 'run.followup' }>['payload'],
+  ): Promise<void> {
+    const { commandId, runId } = payload
+    const outcome = this.deps.commandStore.record({
+      commandId,
+      runId,
+      type: 'run.followup',
+      payload,
+    })
+    if (outcome === 'duplicate') {
+      /**
+       * 重复投递必须**回放当初那次处理的真实结果**，不能一律回 accepted（#181 阻断 B1）。
+       *
+       * 反例（评审用探针复现过）：首次投递因「未 ready」被拒 → ack 上行时连接已断、
+       * ack 被丢弃 → Hub outbox 未落 acked_at → 退避后按**同一 commandId** 重投；
+       * 此时 Run 已 ready。若这里回 accepted=true，那句话从未进过 Runtime stdin，
+       * 而 Hub 会因为这条 ack 把 outbox 行标记完成、**永不重投**——「已受理、零痕迹、
+       * 未执行」，正是 ADR-0009 决策 3 禁止的形态。
+       *
+       * 三种情况：
+       * - 首次已受理（outcome=accepted）→ 回放 accepted=true：那句话确实在 Runtime 队列里。
+       * - 首次被拒（outcome=rejected）→ 回放**同一个拒绝码与理由**，不重新判定
+       *  （重新判定会因状态已变化而给出与当初不一致的答案）。
+       * - 没有处理结果（崩溃在 record 与处理之间）→ 落到下面重新处理一次：这正是 spool 的
+       *   本意（未处理完的 command 重来时应当被真正处理）。
+       */
+      const previous = this.deps.commandStore.outcomeOf(commandId)
+      if (previous !== undefined) {
+        // 回放是 B1 的关键事件（不该静默）：观测面要能看见「这次 ack 是回放、回放的是什么」。
+        this.log('info', 'run.followup duplicate replayed first outcome', {
+          component: 'node.run_manager',
+          runId,
+          commandId,
+          replayed: previous.outcome,
+          ...(previous.error !== undefined ? { replayedCode: previous.error.code } : {}),
+        })
+        if (previous.outcome === 'accepted') {
+          this.ack(commandId, true)
+          return
+        }
+        this.ack(
+          commandId,
+          false,
+          previous.error ?? { code: 'INTERNAL_ERROR', message: 'replayed rejection' },
+        )
+        return
+      }
+    }
+    /**
+     * 记录首次处理结果。**落库失败绝不吞掉 ack**（#181 评审 N1）：ack 描述的是刚刚
+     * 真实发生的事（已下发 / 已拒绝），与本地台账是否写成无关；反过来，若不 ack，
+     * Hub 会按同一 commandId 重投，而 `outcomeOf` 仍是 undefined（落库失败），于是
+     * 重新处理一次 → 同一句追问**二次注入**。所以落库异常降级为 error 级留痕，
+     * ack 照发；代价是「ack 也丢失」时可能二次注入（极窄，登记在验收文档）。
+     */
+    const persistOutcome = (
+      result: 'accepted' | 'rejected',
+      error?: { code: string; message: string },
+    ): void => {
+      try {
+        this.deps.commandStore.recordOutcome(commandId, result, error)
+      } catch (cause) {
+        this.log('error', 'run.followup outcome persist failed; ack still sent', {
+          component: 'node.run_manager',
+          runId,
+          commandId,
+          outcome: result,
+          error: cause instanceof Error ? cause.message : String(cause),
+        })
+      }
+    }
+    const reject = (code: ErrorCode, message: string): void => {
+      // 记录首次结果（与 ack 同一时刻的事实）：Hub 重投时据此回放同一个拒绝。
+      persistOutcome('rejected', { code, message })
+      this.log('warn', 'run.followup rejected', { component: 'node.run_manager', runId, code })
+      this.ack(commandId, false, { code, message })
+    }
+    if (this.finalFacts.has(runId)) {
+      reject('INVALID_RUN_TRANSITION', 'run is terminal; followup rejected')
+      return
+    }
+    if (!this.runFacts.has(runId) && !this.readyFacts.has(runId)) {
+      reject('NOT_FOUND', 'run is unknown on this node')
+      return
+    }
+    if (!this.readyFacts.has(runId)) {
+      // Run 存在但还没 running（queued / dispatching）：本 Node 不排队，交回 Hub 决定
+      //（ADR-0009 决策 5：未 running 的窗口由 Hub 侧排队，进 running 后按序下发）。
+      reject('INVALID_RUN_TRANSITION', 'run has not reached running; followup rejected')
+      return
+    }
+    // 用 dispatchToRuntime 的返回值而不是先 isActive() 再派发：它把「handle 是否还在」
+    // 的判断与写入放在同一次调用里，省掉一次可被穿插的检查。
+    //
+    // 但它**只保证「handle 在管且调用过 write」**，不保证字节真的到达 Runtime：driver
+    // 的 send 把 stdin 写失败统一吞成 stderr 归因（#107 有意设计）。所以已知窗口是
+    // 「进程已死、exit 事件尚未投递」——那一瞬 handle 还在、这里返回 true，而追问被
+    // 无声吞掉（进程边界窗口，非本函数的竞态）。要让 accepted 更强就得让发送路径能
+    // 报投递失败（send 返回结果 / supervisor 暴露可写性），那是 driver 层的改动，
+    // 不在切片② 范围内；本片按机制能保证的强度措辞，并把它登记在验收文档。
+    const dispatched = this.deps.supervisor.dispatchToRuntime(runId, {
+      protocolVersion: 1,
+      messageId: crypto.randomUUID(),
+      sentAt: this.now().toISOString(),
+      type: 'run.followup',
+      payload: { runId, text: payload.text },
+    })
+    if (!dispatched) {
+      reject('RUNTIME_LOST', 'runtime is not active; followup rejected')
+      return
+    }
+    persistOutcome('accepted')
+    this.ack(commandId, true)
+    this.log('info', 'run.followup dispatched to runtime', {
+      component: 'node.run_manager',
+      runId,
+    })
   }
 
   // ---------- run.cancel（P1-16 取消升级链路） ----------

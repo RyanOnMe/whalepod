@@ -303,6 +303,30 @@ export const ApprovalDecideSchema = envelope(
   }),
 )
 
+/**
+ * run.followup（#180 / ADR-0009 决策 3）：Run 执行期间「继续说话」的下行帧。
+ *
+ * 与 `run.start` 的 `prompt` 不同，它不是新 Run 的首轮输入，而是**注入当前 Run
+ * 会话**的一次追问（Runtime 侧排队成一次 follow-up turn，不新开 Run、不换 session）。
+ * 命名：`run.followup` 两侧都有，按本仓既有避让方向——**runtime 侧加前缀、node 侧留平名**
+ * （先例：本文件的 `RunCancelSchema` / `ApprovalDecideSchema` ↔ runtime-wire 的
+ * `RuntimeRunCancelSchema` / `RuntimeApprovalDecideSchema`）。故本地 wire 那个改名
+ * `RuntimeRunFollowupSchema`，本帧就是平的 `RunFollowupSchema`。
+ *
+ * 受理与否由既有 `command.ack { commandId, accepted, error? }` 回报：`accepted=true`
+ * 的含义是「已受理并下发到 Runtime stdin」，**不是**「模型已读到」——进展仍走既有
+ * `session.event` / `run.*` 上行帧。Hub 侧据此把指令 `instruction_state` 落 accepted
+ * （切片③）。
+ */
+export const RunFollowupSchema = envelope(
+  'run.followup',
+  z.strictObject({
+    commandId: z.uuid(),
+    runId: z.uuid(),
+    text: z.string().min(1).max(20_000),
+  }),
+)
+
 export const NodeTokenRevokedSchema = envelope(
   'node.token_revoked',
   z.strictObject({
@@ -316,6 +340,7 @@ export const NodeDownstreamSchema = z.discriminatedUnion('type', [
   RunStatusRequestSchema,
   RunEventAckSchema,
   RunResendFromSchema,
+  RunFollowupSchema,
   ApprovalDecideSchema,
   NodeTokenRevokedSchema,
 ])

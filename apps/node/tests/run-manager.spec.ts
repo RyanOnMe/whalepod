@@ -23,6 +23,7 @@ import { SecretStore } from '../src/secret/store.js'
 import { WorkspaceRegistry } from '../src/workspace/registry.js'
 import { RuntimeSupervisor } from '../src/supervisor/runtime-supervisor.js'
 import { RunManager, type RunManagerTimers } from '../src/run/run-manager.js'
+import { openStateDatabase } from '../src/state/db.js'
 import type { RuntimeDriver, RuntimeHandle, RuntimeStartSpec } from '../src/runtime-driver.js'
 
 let root: string
@@ -134,6 +135,8 @@ async function makeHarness(
     online?: boolean
     /** P1-15：RunManager 的 Artifact 依赖注入（collector / inputs）。 */
     managerDeps?: Record<string, unknown>
+    /** 捕获结构化日志（观测面断言用）。 */
+    logs?: Array<{ level: string; msg: string; fields?: Record<string, unknown> }>
   } = {},
 ): Promise<Harness> {
   let online = options.online ?? true
@@ -181,6 +184,13 @@ async function makeHarness(
     homeDir: '/Users/testhome',
     stateDir: root,
     packsRoot: join(root, 'plugin-packs'),
+    ...(options.logs !== undefined
+      ? {
+          log: (level, msg, fields) => {
+            options.logs!.push({ level, msg, ...(fields !== undefined ? { fields } : {}) })
+          },
+        }
+      : {}),
     ...options.managerDeps,
   })
   harness.supervisor = supervisor
@@ -196,6 +206,39 @@ function stdoutSessionEvent(runId: string, event: unknown): string {
     type: 'session.event',
     payload: { runId, dshSessionId: 'session-1', event },
   })
+}
+
+function stdoutRuntimeReady(runId: string): string {
+  return JSON.stringify({
+    protocolVersion: 1,
+    messageId: randomUUID(),
+    sentAt: new Date().toISOString(),
+    type: 'runtime.ready',
+    payload: { runId, dshSessionId: 'session-1' },
+  })
+}
+
+function followupFrame(
+  text: string,
+  overrides: { commandId?: string; runId?: string } = {},
+): NodeDownstream {
+  return {
+    protocolVersion: 1,
+    messageId: randomUUID(),
+    sentAt: new Date().toISOString(),
+    type: 'run.followup',
+    payload: {
+      commandId: overrides.commandId ?? 'f0000000-0000-4000-8000-000000000001',
+      runId: overrides.runId ?? RUN_ID,
+      text,
+    },
+  } as NodeDownstream
+}
+
+/** 起一个已 ready（running）的 Run：run.start → stdout runtime.ready。 */
+async function startReadyRun(h: Harness): Promise<void> {
+  await h.manager.handleFrame(runStartFrame(h.workspaceId))
+  h.runtimes[0]!.emitStdout(stdoutRuntimeReady(RUN_ID))
 }
 
 describe('run.start 处理链', () => {
@@ -396,6 +439,245 @@ describe('stdout → 投影 → spool → 上行', () => {
       .filter((f) => f.type === 'run.event')
       .map((f) => (f.payload as unknown as ProjectedRunEvent).seq)
     expect(after).toEqual([1, 2, 1, 2]) // 首次 + 重发同 seq
+  })
+})
+
+describe('run.followup 处理链（#180 / ADR-0009 决策 3）', () => {
+  it('happy path：ack accepted + stdin 收到 run.followup（不新开 Run、不重发 initialize）', async () => {
+    const h = await makeHarness()
+    await startReadyRun(h)
+    const before = h.runtimes[0]!.stdin.length
+
+    await h.manager.handleFrame(followupFrame('顺便把 macOS 的冒烟结果也补进清单'))
+
+    const ack = h.sentFrames().findLast((f) => f.type === 'command.ack')
+    expect(ack?.payload).toMatchObject({
+      commandId: 'f0000000-0000-4000-8000-000000000001',
+      accepted: true,
+    })
+    const appended = h.runtimes[0]!.stdin.slice(before)
+    expect(appended.map((c) => c.type)).toEqual(['run.followup'])
+    expect((appended[0] as Extract<RuntimeCommand, { type: 'run.followup' }>).payload).toEqual({
+      runId: RUN_ID,
+      text: '顺便把 macOS 的冒烟结果也补进清单',
+    })
+    // 只追加一次追问：没有第二个 Runtime、没有第二次 initialize。
+    expect(h.runtimes).toHaveLength(1)
+    expect(h.runtimes[0]!.stdin.filter((c) => c.type === 'runtime.initialize')).toHaveLength(1)
+    expect(h.commandStore.pending()).toHaveLength(0)
+  })
+
+  it('重复 commandId（Hub 重发 / ack 丢失）→ 只回放 ack，绝不重复注入', async () => {
+    const h = await makeHarness()
+    await startReadyRun(h)
+    const frame = followupFrame('同一句追问')
+
+    await h.manager.handleFrame(frame)
+    await h.manager.handleFrame(frame)
+
+    expect(h.runtimes[0]!.stdin.filter((c) => c.type === 'run.followup')).toHaveLength(1)
+    const acks = h.sentFrames().filter((f) => f.type === 'command.ack')
+    expect(acks.filter((f) => f.payload['accepted'] === true).length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('B1 回归：首次被拒 → ack 丢失 → 同 commandId 重投（此时已 ready）必须回放拒绝，不得假受理', async () => {
+    const h = await makeHarness()
+    // 反例路径：Run 存在但还没 ready → 首次投递被拒（而 ack 上行丢在断连的那一侧）。
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    const frame = followupFrame('这句在 Run ready 之前发的追问')
+    await h.manager.handleFrame(frame)
+    expect(h.sentFrames().findLast((f) => f.type === 'command.ack')?.payload).toMatchObject({
+      accepted: false,
+      error: { code: 'INVALID_RUN_TRANSITION' },
+    })
+
+    // Hub 没收到那条 ack（outbox 未落 acked_at）→ Run 随后 ready → 按同一 commandId 重投。
+    h.runtimes[0]!.emitStdout(stdoutRuntimeReady(RUN_ID))
+    await h.manager.handleFrame(frame)
+
+    const replayed = h.sentFrames().findLast((f) => f.type === 'command.ack')
+    // 关键：**不能**因为「见过这个 commandId」就回 accepted=true——那句话从未进过 stdin，
+    // 一旦假受理，Hub 会把 outbox 行标记完成并永不重投（已受理、零痕迹、未执行）。
+    expect(replayed?.payload['accepted']).toBe(false)
+    expect(replayed?.payload['error']).toMatchObject({ code: 'INVALID_RUN_TRANSITION' })
+    expect(h.runtimes[0]!.stdin.map((c) => c.type)).not.toContain('run.followup')
+  })
+
+  it('首次已受理 → ack 丢失 → 同 commandId 重投 → 回放 accepted，且不二次注入', async () => {
+    const h = await makeHarness()
+    await startReadyRun(h)
+    const frame = followupFrame('这句已经成功下发过')
+
+    await h.manager.handleFrame(frame)
+    await h.manager.handleFrame(frame) // Hub 未收到 ack → 重投
+
+    const replayed = h.sentFrames().findLast((f) => f.type === 'command.ack')
+    expect(replayed?.payload['accepted']).toBe(true)
+    expect(h.runtimes[0]!.stdin.filter((c) => c.type === 'run.followup')).toHaveLength(1)
+  })
+
+  it('崩溃在 record 与处理之间（无处理结果）→ 重投时真正处理一次（spool 本意）', async () => {
+    const h = await makeHarness()
+    await startReadyRun(h)
+    const commandId = 'f0000000-0000-4000-8000-0000000000ff'
+    // 模拟「已 spool 但从未处理」：直接入库，不走 handleFrame。
+    h.commandStore.record({
+      commandId,
+      runId: RUN_ID,
+      type: 'run.followup',
+      payload: { commandId, runId: RUN_ID, text: '崩溃前没来得及处理的追问' },
+    })
+
+    await h.manager.handleFrame(followupFrame('崩溃前没来得及处理的追问', { commandId }))
+
+    const ack = h.sentFrames().findLast((f) => f.type === 'command.ack')
+    expect(ack?.payload['accepted']).toBe(true)
+    expect(h.runtimes[0]!.stdin.filter((c) => c.type === 'run.followup')).toHaveLength(1)
+  })
+
+  it('Runtime 已不在管（stopAll 摘 handle）→ 确定性 RUNTIME_LOST，且不下发', async () => {
+    const h = await makeHarness()
+    await startReadyRun(h)
+    // stopAll：摘 handle 并置 stopping（抑制退出事件 ⇒ 不写 finalFacts），于是 Run 事实
+    // 仍是 running 而 Runtime 已不可派发——这是 RUNTIME_LOST 的确定性命中路径
+    //（#181 评审 S2：先前"不可确定性复现"的说法不成立）。
+    await h.supervisor.stopAll()
+
+    await h.manager.handleFrame(followupFrame('Runtime 已经收摊了'))
+
+    const ack = h.sentFrames().findLast((f) => f.type === 'command.ack')
+    expect(ack?.payload['accepted']).toBe(false)
+    expect(ack?.payload['error']).toMatchObject({ code: 'RUNTIME_LOST' })
+    expect(h.runtimes[0]!.stdin.map((c) => c.type)).not.toContain('run.followup')
+  })
+
+  it('回放首次结果时留结构化日志（观测面：这次 ack 是回放、回放的是什么）', async () => {
+    const logs: Array<{ level: string; msg: string; fields?: Record<string, unknown> }> = []
+    const h = await makeHarness({ logs })
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    const frame = followupFrame('先被拒，之后 ack 丢失重投')
+    await h.manager.handleFrame(frame)
+    h.runtimes[0]!.emitStdout(stdoutRuntimeReady(RUN_ID))
+    await h.manager.handleFrame(frame)
+
+    const replayed = logs.find((entry) => entry.msg.includes('duplicate replayed first outcome'))
+    expect(replayed?.level).toBe('info')
+    expect(replayed?.fields).toMatchObject({
+      replayed: 'rejected',
+      replayedCode: 'INVALID_RUN_TRANSITION',
+    })
+  })
+
+  it('首次结果落库失败 → 仍照发 ack（不悬挂），并留 error 级日志', async () => {
+    const logs: Array<{ level: string; msg: string; fields?: Record<string, unknown> }> = []
+    const h = await makeHarness({ logs })
+    await startReadyRun(h)
+    // 模拟本地 spool 写失败（磁盘满 / IO 错 / WAL 锁）：写已发生是既定事实，ack 必须照发
+    // ——否则 Hub 会重投，而 outcomeOf 仍为空 ⇒ 同一句追问二次注入（#181 评审 N1）。
+    h.commandStore.recordOutcome = () => {
+      throw new Error('disk full')
+    }
+
+    await h.manager.handleFrame(followupFrame('落库会失败的这句追问'))
+
+    const ack = h.sentFrames().findLast((f) => f.type === 'command.ack')
+    expect(ack?.payload['accepted']).toBe(true)
+    expect(h.runtimes[0]!.stdin.filter((c) => c.type === 'run.followup')).toHaveLength(1)
+    expect(
+      logs.some((entry) => entry.level === 'error' && entry.msg.includes('outcome persist failed')),
+    ).toBe(true)
+  })
+
+  it('老库补列（#181 N3）：旧 schema 的 commands 库打开后补齐三列，历史行按「未处理」处理', async () => {
+    const legacyPath = join(root, 'legacy-commands.db')
+    // 造一个旧 schema 的库（没有 outcome / error_code / error_message 三列）+ 一行历史数据。
+    const legacy = openStateDatabase(legacyPath)
+    legacy.exec(`
+      create table spooled_command (
+        seq_id integer primary key autoincrement,
+        command_id text not null unique,
+        run_id text not null,
+        type text not null,
+        payload text not null,
+        received_at text not null,
+        acked_at text
+      )
+    `)
+    legacy
+      .prepare(
+        'insert into spooled_command (command_id, run_id, type, payload, received_at, acked_at) values (?, ?, ?, ?, ?, ?)',
+      )
+      .run('legacy-1', RUN_ID, 'run.start', '{}', new Date().toISOString(), null)
+    legacy.close()
+
+    const store = new CommandStore(legacyPath) // 构造函数里的 ensureColumn 负责迁移
+    const columns = (
+      store as unknown as { db: { prepare: (sql: string) => { all: () => unknown[] } } }
+    ).db
+      .prepare('pragma table_info(spooled_command)')
+      .all() as Array<{ name: string }>
+    expect(columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(['outcome', 'error_code', 'error_message']),
+    )
+    // 历史行没有处理结果 → 视为「未处理完」，重投时会真正处理一次（spool 本意）。
+    expect(store.outcomeOf('legacy-1')).toBeUndefined()
+    // 新结果可写可读，且与 ack 同步落库。
+    store.recordOutcome('legacy-1', 'rejected', { code: 'NOT_FOUND', message: 'legacy row' })
+    expect(store.outcomeOf('legacy-1')).toEqual({
+      outcome: 'rejected',
+      error: { code: 'NOT_FOUND', message: 'legacy row' },
+    })
+    expect(store.isAcked('legacy-1')).toBe(true)
+    store.close()
+  })
+
+  it('Run 已终态 → ack false INVALID_RUN_TRANSITION，且不下发（终态禁止复活）', async () => {
+    const h = await makeHarness()
+    await startReadyRun(h)
+    // 终态：runtime 上报 run.completed（Node 侧落 finalFacts 并释放 Runtime）。
+    h.runtimes[0]!.emitStdout(
+      JSON.stringify({
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: new Date().toISOString(),
+        type: 'run.completed',
+        payload: { runId: RUN_ID, dshSessionId: 'session-1' },
+      }),
+    )
+    const before = h.runtimes[0]!.stdin.length
+
+    await h.manager.handleFrame(followupFrame('终态之后再插一句'))
+
+    const ack = h.sentFrames().findLast((f) => f.type === 'command.ack')
+    expect(ack?.payload['accepted']).toBe(false)
+    expect(ack?.payload['error']).toMatchObject({ code: 'INVALID_RUN_TRANSITION' })
+    expect(h.runtimes[0]!.stdin.slice(before).map((c) => c.type)).not.toContain('run.followup')
+  })
+
+  it('Run 存在但还没 running（未收到 runtime.ready）→ ack false INVALID_RUN_TRANSITION', async () => {
+    const h = await makeHarness()
+    await h.manager.handleFrame(runStartFrame(h.workspaceId)) // 只 start，不 emit ready
+
+    await h.manager.handleFrame(followupFrame('还没跑起来就追问'))
+
+    const ack = h.sentFrames().findLast((f) => f.type === 'command.ack')
+    expect(ack?.payload['accepted']).toBe(false)
+    expect(ack?.payload['error']).toMatchObject({ code: 'INVALID_RUN_TRANSITION' })
+    expect(h.runtimes[0]!.stdin.map((c) => c.type)).not.toContain('run.followup')
+  })
+
+  it('本 Node 无此 Run 的任何事实 → ack false NOT_FOUND，且不 spawn', async () => {
+    const h = await makeHarness()
+    await startReadyRun(h)
+
+    await h.manager.handleFrame(
+      followupFrame('发给一个不存在的 Run', { runId: '99999999-9999-4999-8999-999999999999' }),
+    )
+
+    const ack = h.sentFrames().findLast((f) => f.type === 'command.ack')
+    expect(ack?.payload['accepted']).toBe(false)
+    expect(ack?.payload['error']).toMatchObject({ code: 'NOT_FOUND' })
+    expect(h.runtimes).toHaveLength(1)
   })
 })
 

@@ -79,7 +79,7 @@ export const RunPromptSchema = envelope(
   }),
 )
 
-export const RunFollowupSchema = envelope(
+export const RuntimeRunFollowupSchema = envelope(
   'run.followup',
   z.strictObject({
     runId: z.uuid(),
@@ -114,7 +114,7 @@ export const RuntimeShutdownSchema = envelope(
 export const RuntimeCommandSchema = z.discriminatedUnion('type', [
   RuntimeInitializeSchema,
   RunPromptSchema,
-  RunFollowupSchema,
+  RuntimeRunFollowupSchema,
   RuntimeRunCancelSchema,
   RuntimeApprovalDecideSchema,
   RuntimeShutdownSchema,
