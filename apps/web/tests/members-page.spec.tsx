@@ -2,7 +2,7 @@
  * #141 成员页与邀请入口：选角色 → 生成一次性链接 → 链接可复制 + 有效期可见。
  * 从主导航可达（「成员」）也在这里断言——入口藏起来等于没做（Issue 的现象 1）。
  */
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -52,22 +52,31 @@ describe('members-page', () => {
   })
 
   it('成员名单展示显示名、用户名与角色', async () => {
-    renderApp('/members', memberListHandlers())
+    const { container } = renderApp('/members', memberListHandlers())
     expect(await screen.findByRole('heading', { name: '成员' })).toBeVisible()
-    const alice = (await screen.findByText('Alice')).closest('li')
+    // #173：侧栏用户卡也有当前用户的显示名（「Alice」精确命中会抢在名单加载完成前
+    // 解析），所以成员一律在名单容器里找，不用裸 findByText；名单本身是异步渲染，
+    // 先等容器出现。
+    await waitFor(() => expect(container.querySelector('.member-list')).not.toBeNull())
+    const list = container.querySelector('.member-list') as HTMLElement
+    const alice = (await within(list).findByText('Alice')).closest('li')
     expect(alice).not.toBeNull()
     expect(within(alice as HTMLElement).getByText('@alice')).toBeVisible()
     expect(within(alice as HTMLElement).getByText('所有者')).toBeVisible()
-    const bob = screen.getByText('Bob').closest('li') as HTMLElement
+    const bob = within(list).getByText('Bob').closest('li') as HTMLElement
     expect(within(bob).getByText('@bob')).toBeVisible()
     expect(within(bob).getByText('成员')).toBeVisible()
   })
 
   it('#152 角色徽标是中文，且与角色下拉同一套措辞（不再是 Owner vs Member）', async () => {
     const user = userEvent.setup()
-    renderApp('/members', memberListHandlers())
-    const alice = (await screen.findByText('Alice')).closest('li') as HTMLElement
-    const bob = screen.getByText('Bob').closest('li') as HTMLElement
+    const { container } = renderApp('/members', memberListHandlers())
+    // 同上：锁定名单容器（侧栏用户卡里的当前用户显示名会抢先命中裸 findByText），
+    // 并等异步名单挂上。
+    await waitFor(() => expect(container.querySelector('.member-list')).not.toBeNull())
+    const memberList = container.querySelector('.member-list') as HTMLElement
+    const alice = (await within(memberList).findByText('Alice')).closest('li') as HTMLElement
+    const bob = within(memberList).getByText('Bob').closest('li') as HTMLElement
     for (const row of [alice, bob]) {
       const badges = [...row.querySelectorAll('.badge')]
       expect(badges.length).toBeGreaterThan(0)

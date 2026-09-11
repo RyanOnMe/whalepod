@@ -91,8 +91,8 @@ ADR-0008 §3 的硬约束：vendored 代码是**复制品，不是依赖**。
 | 口径 | 数量 | 复算命令 |
 |---|---|---|
 | vendored 组件 CSS **引用**的 `--dsw-*` 变量 | **38** | `grep -hoE '\-\-dsw-[a-z0-9-]+' apps/web/src/vendor/dsh-ui/*.module.css \| sort -u \| wc -l` |
-| `dsw-tokens.css` **声明**的 `--dsw-*` 变量 | **57** | `grep -oE '^\s*--dsw-[a-z0-9-]+' apps/web/src/styles/dsw-tokens.css \| sed 's/^ *//' \| sort -u \| wc -l` |
-| 其中 `--dsw-static-*` 静态色阶 | **19** | `grep -oE '^\s*--dsw-static-[a-z0-9-]+' apps/web/src/styles/dsw-tokens.css \| sed 's/^ *//' \| sort -u \| wc -l` |
+| `dsw-tokens.css` **声明**的 `--dsw-*` 变量 | **70**（#173 第三批后；此前 57） | `grep -oE '^\s*--dsw-[a-z0-9-]+' apps/web/src/styles/dsw-tokens.css \| sed 's/^ *//' \| sort -u \| wc -l` |
+| 其中 `--dsw-static-*` 静态色阶 | **25**（#173 后；此前 19） | `grep -oE '^\s*--dsw-static-[a-z0-9-]+' apps/web/src/styles/dsw-tokens.css \| sed 's/^ *//' \| sort -u \| wc -l` |
 | 上游 `design-platform.css` 的静态色阶 `--dsw-static-*` | **73** | `gh api -H 'Accept: application/vnd.github.raw' …/design-platform.css?ref=$SHA \| grep -oE '\-\-dsw-static-[a-z0-9-]+' \| sort -u \| wc -l` |
 
 > **复算口径（必须写清，否则数字对不上）**：三列都先**剥注释**再数——文件头与段注释里写了变量名来解释"为什么删/为什么留"，不剥注释会把说明文字当成声明（#159 实测踩过：同一命令在剥/不剥两种口径下能差出 20 多个）。
@@ -105,6 +105,13 @@ ADR-0008 §3 的硬约束：vendored 代码是**复制品，不是依赖**。
 
 > **#159 复核与三处数字对齐（2026-09-11，诚实记账）**：本节此前写"引用 23 / 声明 26 / 静态 3"，那是**首批切片时**的值；`#152` 主题切片（应用层改为只 `var()` 引用 L1，补 5 个静态档）与 `#138` L2 第二批（补 15 个引用变量与若干静态档）之后，**本节没有跟着重算**，`dsw-tokens.css` 文件头写"静态色阶共 15 个"、`manifest.json` 写"17 个"，而 #159 实测是 **18** 个——**三个数字互不相等**。三者已一并对齐到 19（#159 补 `blue-900` 之后）。这不是笔误，是"L1 白名单是活的、每次增删都要重算本节"这条纪律没被执行的结果，所以把复算命令与相加关系写进上面两段，让它下次能被机械核出来。
 >
+> **#173 第三批（2026-09-11，视觉迁移）**：新增 13 个声明——6 静态色阶（bluish-50/75/100/800/850/900）
+> + 5 alias/specific（sidebar-fill、sidebar-nav-item-hover/-active、button-elevated-fill、
+> button-floating-hover）+ 1 字体栈（--dsw-font-family）+ 1 派生投影（--dsw-elevation-soft，
+> 挂 `body, body *` 派生块）。**消费者全部在应用层**（侧栏 chrome / 胶囊按钮 / 应用框投影 /
+> 正文栈），vendored 原语引用集不变（38）。声明计数 57 → **70**（+:root 12 +派生块 1）、
+> 静态档 19 → **25**。「L1 白名单是活的、每次增删都要重算本节」这次当场执行了。
+
 > **#159 的增删**：只**新增 1 个**变量（`--dsw-static-blue-900: rgb(14, 48, 116)`，上游 `design-platform.css` 静态段第 20 行逐字，用于修 `.badge` 一族在浅底上的 AA 不达标：blue-600 压 blue-100 实测 4.24:1 → blue-900 压 blue-100 10.16:1）；不删任何变量；38 个引用变量未变。
 
 **关键正确性属性（实测）**：组件引用的 **38** 个**全部**在 `dsw-tokens.css` 里有声明——`comm -13` 的差集为空，即**没有未解析引用**，不会静默落到 CSS fallback（#159 复跑仍为空）。这就是上表"引用"那一列与"声明"那一列**不是同一件事**的原因：引用是 vendored CSS 吃的，声明里还包含只服务别名与应用层的静态档。

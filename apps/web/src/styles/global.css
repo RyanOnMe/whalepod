@@ -71,38 +71,142 @@ select {
   white-space: nowrap;
 }
 
-/* ---------- App 壳 ---------- */
+/* ---------- App 壳（#173：迁移到真实 DSH Web 形态） ----------
+ *
+ * 形态：灰平台（body 底 = --color-paper = bg-module-platform）上放一张白色应用卡
+ * （.app-frame：圆角 20 + --dsw-elevation-soft 软投影）；卡里左侧栏（品牌 / 胶囊导航 /
+ * 用户卡置底）+ 右内容列。窄屏（<1024px）应用卡全幅直角、侧栏换成顶栏 + 折叠菜单。
+ * 断点取上游约定 1024（dsh-client-ui-layout 的 SIDEBAR_AUTO_COLLAPSE）。
+ *
+ * 度量来源（判据现场读，注释不写死数字依据）：侧栏 = dsh-client-ui-sidebar 的
+ * root/logoRow/navCell（面板 padding 6/12、导航项 h40 r12、hover/active 两档填充）；
+ * 应用卡圆角/投影 = 上游 Menu 浮层（20px / elevation-prominent 一族的 soft 档）。
+ */
 .app-shell {
   min-height: 100dvh;
-  display: grid;
-  grid-template-rows: auto auto 1fr;
 }
 
-/*
- * #152 顶栏：恒定单行（390px 下也不折行）。高度预算 = 内容 40px（--touch-min）
- * + 上下 --space-3 = 64px；用户信息超长时省略而不是把顶栏顶成三行。
- * min-width: 0 是要害：顶栏是 .app-shell 栅格的 item，默认 min-width: auto 会让
- * 「不换行的用户名」把整页宽度顶出去（390 视口实测被顶到 522）。
- */
-.app-header {
+.app-frame {
+  display: flex;
+  min-height: 100dvh;
+  background: var(--color-surface);
+}
+
+/* 侧栏只在宽屏渲染（useWideLayout 互斥），这里无需 display 开关。 */
+.app-sidebar {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: 264px;
+  min-width: 0;
+  background: var(--dsw-specific-sidebar-fill);
+  border-right: 0.5px solid var(--dsw-alias-border-l3);
+  padding: 6px 12px 12px;
+}
+
+.app-brand-row {
+  display: flex;
+  align-items: center;
+  height: 60px;
+  padding: 8px 0 8px 4px;
+  margin-bottom: 8px;
+  flex: none;
+}
+
+.app-brand {
+  color: var(--color-ink);
+  font-weight: 600;
+  font-size: 18px;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+}
+
+.app-sidebar .app-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* 导航项 = 上游 navCell 逐值：h40 / r12 / padding 9 16 9 12 / 14px 22px。 */
+.app-nav a {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 9px 16px 9px 12px;
+  border-radius: var(--radius-lg);
+  color: var(--color-ink);
+  text-decoration: none;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.app-nav a:hover {
+  background: var(--dsw-specific-sidebar-nav-item-hover);
+}
+
+/* NavLink 真实给出的当前页（#173 之前这条从未命中——Link 不写 aria-current）。 */
+.app-nav a[aria-current='page'] {
+  background: var(--dsw-specific-sidebar-nav-item-active);
+  font-weight: 500;
+}
+
+.app-sidebar-user {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 4px 0;
+  min-width: 0;
+}
+
+.app-sidebar-user-name {
+  font-size: 14px;
+  font-weight: 500;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-sidebar-user-role {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.app-sidebar-logout {
+  margin-top: 8px;
+}
+
+/* 右列：顶栏（窄屏）+ 横幅 + 内容。宽屏下内容在列内滚动（应用卡定高）。 */
+.app-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 窄屏顶栏：白底发丝分隔，恒定单行（390px 下也不折行）。
+   min-width: 0 是要害：默认 min-width: auto 会让「不换行的用户名」把整页顶宽
+   （390 视口实测曾被顶到 522）。 */
+.app-topbar {
   position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-3);
   flex-wrap: nowrap;
-  padding: var(--space-3) var(--space-4);
+  padding: 0 var(--space-4);
   min-width: 0;
-  min-height: 64px;
-  background: var(--color-ink);
-  color: var(--color-paper);
+  min-height: 60px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  flex: none;
 }
 
-.app-brand {
-  flex: none;
-  color: var(--color-paper);
-  font-weight: 700;
-  text-decoration: none;
-  font-size: 18px;
+.app-topbar .app-brand {
+  font-size: 17px;
+  letter-spacing: 0;
 }
 
 /* 折叠导航：窄屏只有一个入口，展开的面板绝对定位（不撑高顶栏）。 */
@@ -116,37 +220,39 @@ select {
   display: inline-flex;
   align-items: center;
   min-height: var(--touch-min);
-  padding: 0 var(--space-2);
-  color: var(--color-paper);
+  padding: 0 var(--space-3);
+  border-radius: 18px;
+  color: var(--color-ink);
+  font-size: 14px;
   cursor: pointer;
   list-style: none;
+}
+
+.app-nav-toggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .app-nav-toggle::-webkit-details-marker {
   display: none;
 }
 
-.app-nav {
+/* 窄屏展开面板 = 上游 Menu 浮层一族：白底 + r16 + elevation-prominent + p4。 */
+.app-nav-menu[open] > .app-nav-overlay {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: var(--space-2);
+  z-index: 20;
   display: flex;
-  gap: var(--space-4);
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 0;
+  min-width: 200px;
+  padding: 4px;
+  background: var(--dsw-specific-menu);
+  border-radius: 16px;
+  box-shadow: var(--dsw-elevation-prominent);
 }
 
-.app-nav a {
-  color: var(--color-paper);
-  text-decoration: none;
-  padding: var(--space-1) var(--space-2);
-  min-height: var(--touch-min);
-  display: inline-flex;
-  align-items: center;
-}
-
-.app-nav a[aria-current='page'],
-.app-nav a:hover {
-  color: var(--color-signal-soft);
-}
-
-.app-header-user {
+.app-topbar-user {
   margin-left: auto;
   display: flex;
   align-items: center;
@@ -155,13 +261,13 @@ select {
 }
 
 /* 退出按钮不参与收缩（否则文字折行反把顶栏顶高），高度交给 --touch-min。 */
-.app-header-user .button {
+.app-topbar-user .button {
   flex: none;
   padding-block: 0;
 }
 
 /* 顶栏宽度是硬预算：显示名过长时省略（完整值在 title 与成员页里）。 */
-.app-header-user-name {
+.app-topbar-user-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -171,6 +277,26 @@ select {
 .app-logout-error {
   background: var(--color-danger-soft);
   padding: var(--space-2) var(--space-5);
+}
+
+/* 宽屏（≥1024px）：应用卡收成白卡浮在灰平台上，内容列在卡内滚动。
+   （侧栏/顶栏的取舍不在 CSS——useWideLayout 互斥渲染，这里只管卡框形态。） */
+@media (min-width: 1024px) {
+  .app-shell {
+    padding: 12px;
+  }
+
+  .app-frame {
+    min-height: 0;
+    height: calc(100dvh - 24px);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--dsw-elevation-soft);
+    overflow: hidden;
+  }
+
+  .app-body {
+    overflow-y: auto;
+  }
 }
 
 /* #152：全站唯一内容容器。居中 1120px，两侧 var(--space-5) 留白（内容列 1072px）；
@@ -219,56 +345,45 @@ select {
 /* ---------- 通用元素 ---------- */
 .card {
   background: var(--color-surface);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--radius-lg);
   padding: var(--space-4);
 }
 
-/* ---------- #168 按钮与表单控件：对齐 DSH 族的度量与取值来源 ----------
+/* ---------- 按钮：vendored Button 的胶囊族（#168 对齐取值来源，#173 对齐几何） ----------
  *
- * 为什么改：同一屏里原本并存两族控件——#158/#161 的下拉触发器已按 DSH 族取值
- * （0.5px 描边 / 8px 圆角 / L1 `--dsw-*`），而本段的按钮与 `.field input` 还是自研旧族
- * （1px `--color-line` / 6px 圆角 / 应用层 `--color-*`）。本次把这三条（含
- * `.button-primary` / `-quiet` / `-danger` 里重复声明的部分）落到同一族：
- * `0.5px solid var(--dsw-alias-border-l4)` + `border-radius: 8px`，颜色改走 L1。
+ * 几何与取值**现场读**自 `vendor/dsh-ui/Button.module.css`（判据在
+ * tests/control-family.spec.tsx）：胶囊圆角（上游 figma 1:155 的 r18@h36 形态）、
+ * 面变反馈。高度轴保留本仓 `--touch-min`（40px）——上游 md 是 36px 桌面密度，
+ * 表单行要触屏可达（390 档实测在跑），只对齐**圆角/描边/颜色**，不对齐高度。
  *
- * **高度刻意保留 40px（`--touch-min`），不跟着 vendored `Input` 降到 32px**：那个 32px 是
- * 桌面密度（`Input.module.css` 的 `.wrap` 写死 `height: 32px`，是给工具栏内联输入用的），
- * 而本仓表单行要触屏可达（390 档实测在跑）。所以这里只对齐**描边与圆角**两个视觉度量，
- * 高度轴不动——与 #161 触发器「高度取 --touch-min 而不是 Input 的 32px」同源；
- * 真要换到 32px 得先裁决尺寸轴，不能在这里单方面改。
- *
- * 为什么圆角/描边宽度不写在这条注释里当依据：判据从 `vendor/dsh-ui/Input.module.css`
- * **现场读**这两个值再逐值比对（`tests/control-family.spec.tsx`），上游改度量时判据跟着变；
- * 把 8px / 0.5px 抄死在任何一处（包括注释）就会漂移。
- *
- * 为什么 hover 用 `--dsw-alias-interactive-bg-hover`（浅灰底）而不是旧的应用层强调色描边：
- * 旧写法在 hover 时把描边染成蓝色，而 DSH 族的反馈是**面**变（vendored
- * `Button.module.css` 的 `.ghost:hover` / `.outline:hover` 都是这个 token）——同族控件
- * 不该一个吃面变、一个吃描边变色。`color-mix(in srgb, currentColor …)` 那条更显然的写法
- * 先被否掉：它让「值来自 L1 白名单」这条判据失去可判定性（颜色由 currentColor 派生，
- * 静态读不出 token 名）。
+ * 三个变体的官方出处：
+ *   · 默认（白底发丝描边胶囊）= 上游侧栏「新会话」形态（elevated-fill + 0.5px l3，
+ *     hover 换 floating-hover 浅灰面）；
+ *   · primary = vendored `.primary`（brand-primary 黑底白字，hover 750）；
+ *   · quiet = vendored `.ghost`（透明面，hover interactive-bg-hover）。
+ * #173 退役的两条旧特判：#159 给深色顶栏加的 `.app-header .button-quiet` 前景/hover
+ * 叠加——壳已改浅色 chrome（侧栏/顶栏都是浅底），深色容器特判没有附着点了。
  */
 .button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: var(--touch-min);
-  padding: var(--space-2) var(--space-4);
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2);
+  padding: 0 var(--space-4);
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 18px;
+  background: var(--dsw-alias-button-elevated-fill);
   color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
   cursor: pointer;
 }
 
-/* hover：面变 + 描边加深一档，两者都取 L1。描边用**描边档** `--dsw-alias-border-l3`
-   而不是 `--dsw-alias-label-tertiary`——后者是**文字色** token，浅色下两值都偏灰看不出问题，
-   深色下 label-tertiary 是 rgb(173,178,184) 而 border-l3 是 rgba(255,255,255,0.16)，
-   拿文字色当描边会明显偏亮（评审观察项）。 */
+/* hover 只换面（elevated → floating-hover），描边不动——上游「新会话」同一写法。 */
 .button:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-  border-color: var(--dsw-alias-border-l3);
+  background: var(--dsw-alias-button-floating-hover);
 }
 
 .button:disabled {
@@ -277,103 +392,45 @@ select {
 }
 
 /* focus-visible 的环由通用规则给（--focus-ring），这里只补描边色——沿用 vendored
-   `Input.module.css` 的 `.wrap:focus-within` 语义：聚焦时描边转品牌色。
-   与 #158/#161 的下拉触发器同一处置（那条也这么写）。 */
+   `Input.module.css` 的 `.wrap:focus-within` 语义：聚焦时描边转品牌色。 */
 .button:focus-visible {
   border-color: var(--dsw-alias-brand-primary);
 }
 
-/* 主按钮**不覆盖描边宽度与圆角**：沿用 `.button` 那道 0.5px `border-l4` + 8px 圆角，
-   与其余变体同族；这里只重复 token 名，不重复数字（数字重复就是下一个漂移点）。
-   底色/前景取 vendored `Button.module.css` 的 `.primary` 同两个 token。 */
+/* 主按钮：黑底白字胶囊（vendored `.primary` 同两个 token），hover 换 750 面。 */
 .button-primary {
   background: var(--dsw-alias-button-primary-fill);
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: 8px;
+  border-color: transparent;
   color: var(--dsw-alias-label-primary-foreground);
 }
 
 .button-primary:hover:not(:disabled) {
   background: var(--dsw-alias-button-primary-hover);
-  border-color: var(--dsw-alias-border-l4);
 }
 
 .button-quiet {
   background: transparent;
-  border: 0.5px solid transparent;
-  border-radius: 8px;
+  border-color: transparent;
   color: var(--dsw-alias-brand-primary);
   padding-inline: var(--space-2);
 }
 
-/* 无边形态的 hover 必须把描边**再点明一次 transparent**：`.button:hover` 的描边档
-   特异性同为 (0,3,0)（`:not(:disabled)` 按参数计、`:hover` 计一个类），靠源码顺序胜出，
-   漏写就会让安静的按钮 hover 时长出一道描边。 */
 .button-quiet:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover);
-  border-color: transparent;
-}
-
-/*
- * #159：深色容器里的「安静按钮」必须换成该容器自己的前景族。
- *
- * 实测（浏览器侧扫描器在设备页抓到，1280×720 浅色主题）：顶栏的「退出登录」是
- * `.button.button-quiet`，颜色取 --color-signal（blue-600 = rgb(37,99,235)），而顶栏
- * 底色是 --color-ink（rgb(15,17,21)）——**3.66:1，低于 AA 4.5:1**。#153 把应用层的
- * signal 从旧的亮蓝收敛到 blue-600 之后，这个按钮就成了深底上的深蓝字。
- *
- * 修法不是给这个按钮单独调色，而是补一条通则：顶栏已经是深色容器，它的交互文字色族
- * 原本就定义在 --color-signal-soft（顶栏导航的 hover / aria-current 用的就是它，
- * blue-100 压在 ink 上实测 15.49:1）。深色容器 + 浅色前景是**结构性**的一对，所以：
- *   - 新加深色容器时，沿用这条（容器给出 --color-* 前景，按钮别自带 signal）
- *   - 这条也是扫描器将来再抓到同类问题的修法范式，不许再回到"给单个按钮调深一点"
- */
-.app-header .button-quiet {
-  color: var(--color-signal-soft);
-}
-
-/* #159 那条 `.app-header .button-quiet:hover` 里的 `border-color: var(--color-signal-soft)`
-   在本 PR 里去掉了：`.button-quiet` 是**无边形态**（`border: 0.5px solid transparent`），
-   hover 时点出描边会让它长出边框（同特异性 (0,3,0) 下靠源码顺序胜出，实测会生效）。
-   深色容器只需要给出**前景色**，形状不该由容器改。
-   但删掉之后这枚按钮在浅色主题下**失去了可见的 hover 反馈**（评审实测并拍板要补回来）：
-   通用 `.button:hover` 给的面是 `--dsw-alias-interactive-bg-hover` = `rgba(38, 49, 72, 0.06)`，
-   那是"深色压浅底"的叠加；压在深色顶栏（`--color-ink` = `rgb(15, 17, 21)`）上合成后
-   只差约 1/255（实测 1.13:1），肉眼看不见。深色主题档给的 `rgba(255,255,255,0.08)`
-   才可见，而那一段是 `body[data-ds-dark-theme]` 的、浅色主题下取不到（深色主题当前休眠）。
-   所以按"深色容器自己给反馈、但**不动形状**"补一条**面**变，并说明为什么这里是全仓
-   少见的裸色值： */
-.app-header .button-quiet:hover:not(:disabled) {
-  /* 这里写裸 `rgba(255, 255, 255, 0.08)`（= 与深色主题档 `--dsw-alias-interactive-bg-hover`
-     逐字相同的值），三个理由：
-     ① 正是评审实测认可的那个"深底上看得见"的量；
-     ② L1 里**没有**"深色容器上的 hover 叠加"这一档——`--dsw-alias-interactive-bg-hover`
-        是"深色压浅底"（`rgba(38,49,72,0.06)`，顶栏上 1.13:1 看不见），
-        `--dsw-alias-button-ghost-active-fill` 是**近白实心**（`rgb(235,238,242)`，
-        顶栏上 16.24:1 太抢眼，且它会把 hover 变成"选中态"的观感）；发明一个新 L1 token
-        属于 tokens 层的裁决，本次不发明。
-     ③ 用 alpha 叠加而不是实心色，是为了让这层跟着底下的顶栏色走（深色主题真上线时
-        顶栏与它一起变，不会突然出现一块"浅色主题遗留的灰块"）。
-     机器判据把这条规则与这个值一起钉住（`tests/control-family.spec.tsx` 的
-     `.app-header .button-quiet:hover:not(:disabled)` 期望项），免得它下一轮又被顺手删掉。 */
-  background: rgba(255, 255, 255, 0.08);
 }
 
 /* 危险按钮：**危险意图由文字色表达，底色与描边仍是中性控件面**。
-   文字色取静态档 red-900（白底实测 14.35:1，与迁移前的 `--color-danger-strong` 逐值相同，
-   这一条其实是"把应用层别名内联到 L1"），不用别名 `--dsw-alias-state-error-primary`
+   文字色取静态档 red-900（白底实测 14.35:1），不用别名 `--dsw-alias-state-error-primary`
    （= red-500，白底实测 4.4976:1，差 0.0023 不到 AA 的 4.5）；底色若也吃错误色，
    红底 + red-900 字只有 3.19:1。判据把底色与文字色两个 token 名分别钉死
    （control-family.spec.tsx 的变异用例）。
    已知取舍（登记在 docs/agent/control-family-acceptance.md）：迁移前描边是
    `--color-danger`（红），现在与其余控件同为中性 hairline，红色可供性只由文字承担。 */
 .button-danger {
-  background: var(--dsw-alias-bg-layer-2);
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: 8px;
+  background: var(--dsw-alias-button-elevated-fill);
+  border-color: var(--dsw-alias-border-l3);
   color: var(--dsw-static-red-900);
 }
-
 .badge {
   display: inline-flex;
   align-items: center;
@@ -381,7 +438,7 @@ select {
   padding: 2px var(--space-3);
   border-radius: 999px;
   font-size: 13px;
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--dsw-alias-border-l3);
   white-space: nowrap;
 }
 
@@ -435,8 +492,8 @@ select {
 
 .empty-state {
   color: var(--color-muted);
-  border: 1px dashed var(--color-line);
-  border-radius: var(--radius-sm);
+  border: 0.5px dashed var(--dsw-alias-border-l4);
+  border-radius: var(--radius-lg);
   padding: var(--space-3) var(--space-4);
 }
 
@@ -447,8 +504,8 @@ select {
 
 .error-banner {
   background: var(--color-danger-soft);
-  border: 1px solid var(--color-danger);
-  border-radius: var(--radius-sm);
+  border: 0.5px solid var(--dsw-alias-state-error-primary);
+  border-radius: var(--radius-lg);
   padding: var(--space-3) var(--space-4);
   color: var(--color-danger-strong);
 }
@@ -465,13 +522,22 @@ select {
   max-width: 560px;
 }
 
-/* #141：接受邀请成功后的确认条（用运行绿，与 danger 红明确区分）。 */
+/* #141：接受邀请成功后的确认条（用运行绿，与 danger 红明确区分）。
+   #173 起全站只有这一条 .success-banner（插件页那段重复定义已合并到这里）。 */
 .success-banner {
   background: var(--color-run-soft);
-  border: 1px solid var(--color-run);
-  border-radius: var(--radius-sm);
+  border: 0.5px solid var(--dsw-alias-state-success-primary);
+  border-radius: var(--radius-lg);
   padding: var(--space-3) var(--space-4);
   color: var(--color-run);
+}
+
+.success-banner p {
+  margin: 0 0 var(--space-2);
+}
+
+.success-banner p:last-child {
+  margin-bottom: 0;
 }
 
 /* ---------- 表单 ---------- */
@@ -618,8 +684,8 @@ select {
 }
 
 .inline-form {
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--radius-lg);
   padding: var(--space-4);
   background: var(--color-surface);
   margin: var(--space-3) 0;
@@ -634,9 +700,15 @@ select {
   padding: var(--space-5);
 }
 
+/* #173：登录/初始化卡 = 上游 Dialog 一族（白底 + 大圆角 + prominent 投影），
+   浮在灰平台上（body 底）。 */
 .auth-card {
   width: 100%;
   max-width: 420px;
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--dsw-elevation-prominent);
+  padding: var(--space-6);
 }
 
 .page-lead {
@@ -727,8 +799,8 @@ select {
 
 .task-header {
   background: var(--color-surface);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--radius-lg);
   padding: var(--space-5);
 }
 
@@ -851,10 +923,14 @@ select {
   color: var(--color-ink-soft);
 }
 
+/* #173：与 .field 控件同族（0.5px l4 / r8 / L1 面）——遗留的最后一处旧族输入。 */
 .comment-composer textarea {
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-sm);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
   padding: var(--space-2) var(--space-3);
+  min-height: 88px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
   min-width: 0;
   width: 100%;
   resize: vertical;
@@ -996,8 +1072,8 @@ select {
   flex-direction: column;
   gap: var(--space-1);
   text-align: left;
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--radius-lg);
   background: var(--color-surface);
   padding: var(--space-3) var(--space-4);
   min-height: var(--touch-min);
@@ -1086,14 +1162,16 @@ select {
   margin: var(--space-2) 0;
 }
 
+/* #173：配对码从「黑块反白」改成浅底代码片（DSH 代码块一族：sunken 面 + 发丝描边）。 */
 .device-pairing-code code {
   display: inline-block;
   font-family: var(--font-mono);
   font-size: 20px;
   letter-spacing: 0.08em;
-  background: var(--color-ink);
-  color: var(--color-paper);
-  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+  color: var(--color-ink);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--radius-lg);
   padding: var(--space-2) var(--space-3);
   overflow-wrap: anywhere;
 }
@@ -1212,10 +1290,12 @@ select {
   margin: 0 0 var(--space-3);
 }
 
+/* #173：CLI 代码块从「黑块反白」改成浅底代码块（上游 --dsl-code-block 一族：r12）。 */
 .cli-steps pre {
-  background: var(--color-ink);
-  color: var(--color-paper);
-  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+  color: var(--color-ink);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--radius-lg);
   padding: var(--space-2) var(--space-3);
   /* #152：三条命令在两栏侧列（368px）与 390px 单列下都放不下——实测内部横向溢出
      88/114px，命令尾巴被切掉且没有滚动提示。改为按空格软换行：软换行不进剪贴板
@@ -1262,33 +1342,8 @@ select {
   }
 }
 
-/* #152 宽屏：折叠入口收起，同一份链接常显。
-   ::details-content 是闭合态隐藏内容的载体（Chromium 131+ / Safari 18.2+）；不支持
-   它的浏览器只是保留「菜单」入口，导航依旧可点，不会丢链接。 */
-@media (min-width: 760px) {
-  .app-nav-menu > summary {
-    display: none;
-  }
-
-  .app-nav-menu::details-content {
-    content-visibility: visible;
-  }
-}
-
-/* #152 窄屏：展开的面板绝对定位覆盖在内容之上，顶栏高度不随展开变化。 */
-@media (max-width: 759px) {
-  .app-nav-menu[open] > .app-nav {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    z-index: 20;
-    flex-direction: column;
-    gap: 0;
-    padding: var(--space-2) var(--space-4) var(--space-3);
-    background: var(--color-ink);
-  }
-}
+/* #173：导航的宽窄两态改由壳结构承担（侧栏 ↔ 顶栏折叠菜单，断点 1024），
+   原 760px 的 ::details-content 常显规则与 ink 底窄屏面板一并退役。 */
 
 /* #152 宽屏两栏：主列 + 侧列（内容列 1072px → 主列 ~688px / 侧列 368px）。 */
 @media (min-width: 1024px) {
@@ -1333,7 +1388,7 @@ select {
   overflow-y: auto;
   padding: var(--space-3);
   background: var(--color-surface-sunken, #14161c);
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-lg, 12px);
   white-space: pre-wrap;
   word-break: break-word;
   font-size: var(--font-size-sm);
@@ -1361,22 +1416,6 @@ select {
 }
 
 /* ---------- 插件页（P1-17 Admin Plugin Settings） ---------- */
-/* 成功提示横幅（安装成功 / Pack 创建成功等非错误反馈）。 */
-.success-banner {
-  background: var(--color-run-soft);
-  border: 1px solid var(--color-run);
-  border-radius: var(--radius-sm);
-  padding: var(--space-3) var(--space-4);
-  color: var(--color-run);
-}
-
-.success-banner p {
-  margin: 0 0 var(--space-2);
-}
-
-.success-banner p:last-child {
-  margin-bottom: 0;
-}
 
 .plugins-page,
 .plugins-layout {
@@ -1398,8 +1437,8 @@ select {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--radius-lg);
   background: var(--color-surface);
   padding: var(--space-3) var(--space-4);
 }
@@ -1521,8 +1560,8 @@ select {
 }
 
 .plugin-pick-fieldset {
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-sm);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--radius-lg);
   padding: var(--space-2) var(--space-3);
   margin: 0 0 var(--space-3);
 }
@@ -1624,8 +1663,8 @@ select {
 }
 
 .invite-result {
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--radius-lg);
   padding: var(--space-4);
   margin-top: var(--space-3);
   background: var(--color-paper);

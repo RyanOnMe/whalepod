@@ -16,6 +16,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import {
+  BUTTON_BACKGROUND_TOKEN,
+  BUTTON_BORDER_TOKEN,
   CONTROL_BACKGROUND_TOKEN,
   CONTROL_BORDER_TOKEN,
   CONTROL_LABEL_TOKEN,
@@ -23,6 +25,7 @@ import {
   TOUCH_MIN_PX,
   checkControlTokens,
   normalizeColor,
+  parseVendorButtonMetrics,
   parseVendorInputMetrics,
   resolveTokenValue,
   type ComputedStyleLike,
@@ -230,15 +233,28 @@ export async function assertControlTokens(
     restBackgroundToken?: string
     /** 该控件在非聚焦/非 hover 态的描边（默认 = `borderToken`）。 */
     restBorderToken?: string
+    /**
+     * #173 控件族分轴：`'input'`（默认）对照 vendored `Input.module.css`（0.5px l4 / r8）；
+     * `'button'` 对照 vendored `Button.module.css` 的胶囊族（`.outline` 描边 0.5px l3 /
+     * `.button` 圆角 18px），且默认的底/描边期望 token 换成按钮族的两个
+     * （elevated-fill / l3）。
+     */
+    family?: 'input' | 'button'
   } = {},
 ): Promise<void> {
   // cwd = 仓库根是本套 e2e 的既有约定（pairing-ui.spec.ts 也这么用）；路径不对就当场炸，
   // 不静默跳过——静默跳过的判据等于没有判据。
-  const vendorCss = readFileSync(
-    join(process.cwd(), 'apps/web/src/vendor/dsh-ui/Input.module.css'),
-    'utf8',
-  )
-  const metrics = parseVendorInputMetrics(vendorCss)
+  const metrics =
+    options.family === 'button'
+      ? parseVendorButtonMetrics(
+          readFileSync(join(process.cwd(), 'apps/web/src/vendor/dsh-ui/Button.module.css'), 'utf8'),
+        )
+      : parseVendorInputMetrics(
+          readFileSync(join(process.cwd(), 'apps/web/src/vendor/dsh-ui/Input.module.css'), 'utf8'),
+        )
+  const defaultBackground =
+    options.family === 'button' ? BUTTON_BACKGROUND_TOKEN : CONTROL_BACKGROUND_TOKEN
+  const defaultBorder = options.family === 'button' ? BUTTON_BORDER_TOKEN : CONTROL_BORDER_TOKEN
   const probe = (await control.evaluate(
     (
       el: HTMLElement,
@@ -337,8 +353,8 @@ export async function assertControlTokens(
       borderDeclaration: metrics.borderDeclaration,
       radius: metrics.radius,
       tokens: {
-        backgroundToken: options.backgroundToken ?? CONTROL_BACKGROUND_TOKEN,
-        borderToken: options.borderToken ?? CONTROL_BORDER_TOKEN,
+        backgroundToken: options.backgroundToken ?? defaultBackground,
+        borderToken: options.borderToken ?? defaultBorder,
         labelToken: options.labelToken ?? CONTROL_LABEL_TOKEN,
         touchToken: CONTROL_TOUCH_TOKEN,
       },
@@ -361,14 +377,14 @@ export async function assertControlTokens(
     normalizeColor(probe.referenceBorderColor) !== normalizeColor(resolvedBorderToken)
   ) {
     throw new Error(
-      `${label} 的参照元素描边色 ${probe.referenceBorderColor} 与页面 token ${options.borderToken ?? CONTROL_BORDER_TOKEN}=${resolvedBorderToken} 不符：源码里的 vendored 度量与页面加载的 token 已经对不上了`,
+      `${label} 的参照元素描边色 ${probe.referenceBorderColor} 与页面 token ${options.borderToken ?? defaultBorder}=${resolvedBorderToken} 不符：源码里的 vendored 度量与页面加载的 token 已经对不上了`,
     )
   }
   const failures = checkControlTokens(
     probe,
     {
-      backgroundToken: options.backgroundToken ?? CONTROL_BACKGROUND_TOKEN,
-      borderToken: options.borderToken ?? CONTROL_BORDER_TOKEN,
+      backgroundToken: options.backgroundToken ?? defaultBackground,
+      borderToken: options.borderToken ?? defaultBorder,
       labelToken: options.labelToken ?? CONTROL_LABEL_TOKEN,
       minTouchPx: TOUCH_MIN_PX,
       ...(options.restBackgroundToken === undefined

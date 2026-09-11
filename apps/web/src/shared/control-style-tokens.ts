@@ -53,7 +53,7 @@ export const CONTROL_PRIMARY_HOVER_TOKEN = '--dsw-alias-button-primary-hover'
  * `--dsw-alias-state-error-primary` = red-500），红底 + red-900 字实测只有 **3.19:1**，
  * AA 不过。判据把这个 token 钉死，挡住"顺手把 danger 做成红底"。
  */
-export const CONTROL_DANGER_FILL_TOKEN = '--dsw-alias-bg-layer-2'
+export const CONTROL_DANGER_FILL_TOKEN = '--dsw-alias-button-elevated-fill'
 
 /**
  * 危险按钮文字所用的 L1 token。
@@ -85,6 +85,55 @@ export const CONTROL_TOUCH_TOKEN = '--touch-min'
 
 /** 触屏可达下限（px）。单测与 Q5 共用同一个数字（评审 S8：早先两边各写一个 40）。 */
 export const TOUCH_MIN_PX = 40
+
+// ---------- #173：按钮族与输入族分轴 ----------
+
+/**
+ * #173 起按钮与输入框**不再共享同一组度量**：输入框仍对齐 vendored `Input.module.css`
+ * （0.5px l4 / r8），按钮对齐 vendored `Button.module.css` 的胶囊族——圆角取 `.button`
+ * 的 18px（上游 figma 1:155 胶囊几何），描边取 `.outline` 变体的 `0.5px l3`
+ * （上游 figma 451:18655 的"带边胶囊"）。
+ */
+export const BUTTON_BACKGROUND_TOKEN = '--dsw-alias-button-elevated-fill'
+export const BUTTON_BORDER_TOKEN = '--dsw-alias-border-l3'
+export const BUTTON_HOVER_BACKGROUND_TOKEN = '--dsw-alias-button-floating-hover'
+
+/** vendored `Button.module.css` 解出的胶囊族度量（与 Input 度量解析同一纪律：现场读）。 */
+export interface VendorButtonMetrics {
+  /** `.outline` 的完整 `border` 简写值（白底带边胶囊的描边出处）。 */
+  borderDeclaration: string
+  /** `.outline` 的 `border` 简写宽度项，如 `0.5px`。 */
+  borderWidth: string
+  /** `.outline` 描边色项里的 token 名。 */
+  borderToken: string
+  /** `.button` 的 `border-radius` 值（胶囊几何出处）。 */
+  radius: string
+}
+
+export function parseVendorButtonMetrics(cssText: string): VendorButtonMetrics {
+  const plain = cssText.replaceAll(/\/\*[\s\S]*?\*\//g, '')
+  const outline = ruleBody(plain, '\\.outline')
+  const base = ruleBody(plain, '\\.button')
+  const border = /(?:^|;)\s*border\s*:\s*([^;]+)/i.exec(outline)?.[1]?.trim()
+  const radius = /(?:^|;)\s*border-radius\s*:\s*([^;]+)/i.exec(base)?.[1]?.trim()
+  if (border === undefined || radius === undefined) {
+    throw new Error(
+      'vendored Button.module.css 的 .outline 缺 border 或 .button 缺 border-radius 声明',
+    )
+  }
+  const parsed = /^([\d.]+(?:px|rem|em))\s+(solid|dashed|dotted)\s+var\(\s*(--[\w-]+)\s*\)$/.exec(
+    border.replaceAll(/\s+/g, ' '),
+  )
+  if (parsed === null) {
+    throw new Error(`vendored Button .outline 的 border 形态变了（判据依赖它）：${border}`)
+  }
+  return {
+    borderDeclaration: border.replaceAll(/\s+/g, ' '),
+    borderWidth: parsed[1] ?? '',
+    borderToken: parsed[3] ?? '',
+    radius,
+  }
+}
 
 // ---------- vendored 度量的解析（两侧共用同一份实现） ----------
 

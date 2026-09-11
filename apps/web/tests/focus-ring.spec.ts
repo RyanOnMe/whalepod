@@ -1,5 +1,5 @@
 /**
- * #164 焦点环门：`--focus-ring` 的**每一层**颜色与粗细，在浅色底、深色顶栏底与
+ * #164 焦点环门：`--focus-ring` 的**每一层**颜色与粗细，在浅色底、深底（ink 档）与
  * 深色一套（`body[data-ds-dark-theme]`）上都要够看。
  *
  * 为什么单开一道门：
@@ -20,7 +20,7 @@
  *
  * 判据（逐层算，不是只看最外层）：
  *   · 每个底色上**至少有一层** ≥3:1，且这一层的**可见环带 ≥2px**（0.5px 的发丝线再高的
- *     对比度也看不见）。底色清单：页面底 paper、卡片面 surface、顶栏底 ink（= `--color-ink`，
+ *     对比度也看不见）。底色清单：页面底 paper、卡片面 surface、深底 ink（= `--color-ink`，
  *     双层环要解决的正是它），外加焦点元素**自身底色** signal（`.button-primary` 就是蓝底）；
  *   · 焦点指示整体厚度（最外层 spread）≥2px：SC 2.4.13 焦点外观（AAA）的面积/周长口径；
  *   · 每一层颜色必须是对**应用层语义 token** 的 `var()` 引用（本仓"不写裸色值"惯例；也因为
@@ -71,7 +71,9 @@ const MIN_THICKNESS_PX = 2
 const BACKGROUNDS: ReadonlyArray<[label: string, token: string]> = [
   ['页面底 paper', '--color-paper'],
   ['卡片面 surface', '--color-surface'],
-  ['顶栏底 ink', '--color-ink'],
+  // #173：深色顶栏已退役，但 ink 作为「深底」代表档留在矩阵里——任何将来的深色容器
+  // （或深色主题上线）都会落在这条上。
+  ['深底 ink', '--color-ink'],
   ['主按钮底 signal（元素自身底色）', '--color-signal'],
 ]
 
@@ -325,7 +327,8 @@ describe('#164 焦点环门', () => {
 
   it('--focus-ring 全仓只声明一次且落在 :root（局部覆盖会让门失明——一审 S1 实测过）', () => {
     // 一审的实测反例：在 global.css 末尾追加 `.app-header { --focus-ring: 0 0 0 3px
-    // var(--color-paper); }`，token 里仍是好值 → 门 8/8 **全绿**，而真实顶栏上的焦点环已经
+    // var(--color-paper); }`（彼时顶栏是深底），token 里仍是好值 → 门 8/8 **全绿**，
+    // 而真实顶栏上的焦点环已经
     // 退化。根因是 `readTokenValue` 取的是正则**首个**匹配，只读 tokens.css。
     // 所以这里对 styles/ 下**全部** css 扫一遍声明点，把"局部覆盖"这条通道关掉。
     // **递归**扫（二审 N5：首版用 readdirSync 只扫 styles/*.css，往 styles/themes/x.css 里放
