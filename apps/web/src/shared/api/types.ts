@@ -81,11 +81,20 @@ export interface TaskView {
 
 // task/queries.ts：CommentView。authorUserId 是原始 user id，显示名需成员接口
 // （P1-08 后）补齐；当前以短 id 呈现，不伪造姓名。
+//
+// #185：实体已升级为 task_message（讨论/指令/追问同表），服务端视图多出五个字段。
+// 这里**跟着补上**而不是等 UI 用——`client.ts` 是 `as T` 不做运行期校验，副本漏字段
+// 不会有任何门报错，只会静默漂移（评审观察项）。改名与 UI 消费属切片③c。
 export interface CommentView {
   id: string
   taskId: string
   authorUserId: string
   body: string
+  kind: 'discussion' | 'instruction' | 'followup'
+  origin: 'human' | 'auto_assignment'
+  targetAgentId: string | null
+  runId: string | null
+  instructionState: 'pending' | 'accepted' | 'rejected' | null
   createdAt: string
   editedAt: string | null
 }

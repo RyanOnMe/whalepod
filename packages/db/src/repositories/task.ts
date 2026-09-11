@@ -1,10 +1,10 @@
 import { asc, desc, eq } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
-import { projects, taskComments, tasks } from '../schema/project.js'
+import { projects, taskMessages, tasks } from '../schema/project.js'
 
 export type ProjectRow = typeof projects.$inferSelect
 export type TaskRow = typeof tasks.$inferSelect
-export type TaskCommentRow = typeof taskComments.$inferSelect
+export type TaskMessageRow = typeof taskMessages.$inferSelect
 
 export interface NewProject {
   id: string
@@ -74,28 +74,46 @@ export async function setTaskStatus(
   return row
 }
 
-export interface NewTaskComment {
+/**
+ * 线程消息的写入形状（#185 / ADR-0009 决策 2）。
+ *
+ * 讨论消息只需 id/taskId/authorUserId/body（kind/origin 走默认值 human/discussion）；
+ * 指令与追问要显式给 kind、targetAgentId、instructionState（追问另需 runId）——DB 的
+ * check 约束会拒绝「讨论带了 Agent/Run/受理状态」与「指令缺受理状态」这类组合。
+ */
+export interface NewTaskMessage {
   id: string
   taskId: string
   authorUserId: string
   body: string
+  kind?: 'discussion' | 'instruction' | 'followup'
+  origin?: 'human' | 'auto_assignment'
+  targetAgentId?: string | undefined
+  runId?: string | undefined
+  instructionState?: 'pending' | 'accepted' | 'rejected' | undefined
+  /** 显式创建时间（默认 now()）；迁移测试与回填用。 */
+  createdAt?: Date | undefined
 }
 
-export async function insertComment(
+export async function insertMessage(
   handle: DbHandle,
-  comment: NewTaskComment,
-): Promise<TaskCommentRow> {
-  const [row] = await handle.insert(taskComments).values(comment).returning()
-  if (row === undefined) throw new Error('insert comment returned no row')
+  message: NewTaskMessage,
+): Promise<TaskMessageRow> {
+  const [row] = await handle.insert(taskMessages).values(message).returning()
+  if (row === undefined) throw new Error('insert message returned no row')
   return row
 }
 
-export async function listComments(handle: DbHandle, taskId: string): Promise<TaskCommentRow[]> {
+/**
+ * 线程读取：按 `(createdAt, id)` 排序。`id` 是**决胜键**不是插入序（uuidv7 低位随机），
+ * 它保证的是**确定性**——同一毫秒创建的多条消息每次读出的顺序一致。
+ */
+export async function listMessages(handle: DbHandle, taskId: string): Promise<TaskMessageRow[]> {
   return handle
     .select()
-    .from(taskComments)
-    .where(eq(taskComments.taskId, taskId))
-    .orderBy(asc(taskComments.createdAt))
+    .from(taskMessages)
+    .where(eq(taskMessages.taskId, taskId))
+    .orderBy(asc(taskMessages.createdAt), asc(taskMessages.id))
 }
 
 /** 列出全部 Project（单 Team，所有未停用成员可见；03 §2.2）。 */

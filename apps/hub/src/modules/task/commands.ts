@@ -7,7 +7,7 @@ import {
   getEnabledMember,
   getTeam,
   hasPublishedArtifactByTask,
-  insertComment,
+  insertMessage,
   insertTask,
   listActiveRunsByTask,
   reassignTask,
@@ -282,11 +282,16 @@ export async function addComment(
   const id = uuidv7()
   return transactCommand(database, `comment.create:${input.idempotencyKey}`, async (tx) => {
     await lockTask(tx, taskId)
-    const comment = await insertComment(tx, {
+    // #185：实体升级为 task_message；评论路径写入的就是一条**讨论消息**
+    //（kind='discussion'、origin='human'、不带 targetAgentId/runId/instructionState
+    // ——DB 的 task_message_discussion_inert 约束会拒绝任何越界组合，即「讨论不驱动 Agent」）。
+    const comment = await insertMessage(tx, {
       id,
       taskId,
       authorUserId: actor.userId,
       body: input.body,
+      kind: 'discussion',
+      origin: 'human',
     })
     await appendTeamEvent(tx, {
       type: 'comment.created',

@@ -24,7 +24,7 @@ Run 状态机、审批闸门（ask-all 阻塞在 Runtime 执行路径）、终�
 
 1. **新增一等实体 TaskSession（任务会话线程）**。每个 Task 有且只有一条持久线程，锚定「Task × 当前 Workspace」。Task Room 的讨论区与 agent 线程**合并为这一条线程**（O3-a）：成员留言、指令、agent 输出、执行卡（每次执行的状态/审批/取消入口）在同一列按时间排列。
 
-2. **线程消息落库（新实体 `task_message` 承载，不新立 TaskSession 表）**。`task_comment`（§2.2）只是人际评论，缺三样：消息类型、驱动关系、被谁授权。故线程消息统一走**扩展后的消息实体**（字段：`id / task_id / author_user_id / origin(human|auto_assignment) / kind(discussion|instruction|followup) / body / target_agent_id nullable / run_id nullable / instruction_state / created_at / edited_at`），由 `task_comment` 迁移而来（同一张表的升级，不是并列两张）。**触发者就是 `author_user_id`，不另设 `triggered_by` 列**（同一事实两列必漂移）；assignee = Agent 的自动指令记 `origin=auto_assignment`，`author_user_id` 填**做出该次指派的人**——审计问「谁让它跑的」永远有答案。它是审计链的锚点：**每条指令消息必然指向一个 `run_id`**——要么它创建了那个 Run，要么它是那个活跃 Run 的追问。线程展示 = 该 Task 的消息流按时间归并（含 Run 事件投影），不靠链式推导。
+2. **线程消息落库（新实体 `task_message` 承载，不新立 TaskSession 表）**。`task_comment`（§2.2）只是人际评论，缺三样：消息类型、驱动关系、被谁授权。故线程消息统一走**扩展后的消息实体**（字段：`id / task_id / author_user_id / origin(human|auto_assignment) / kind(discussion|instruction|followup) / body / target_agent_id nullable / run_id nullable / instruction_state / created_at / edited_at`），由 `task_comment` 迁移而来（同一张表的升级，不是并列两张）。**触发者就是 `author_user_id`，不另设 `triggered_by` 列**（同一事实两列必漂移）；assignee = Agent 的自动指令记 `origin=auto_assignment`，`author_user_id` 填**做出该次指派的人**——审计问「谁让它跑的」永远有答案。它是审计链的锚点：**每条被受理的指令消息必然指向一个 `run_id`**——要么它创建了那个 Run，要么它降级成了那个活跃 Run 的 followup。建 Run 之前（`instruction_state='pending'`）`run_id` 允许为空，但**受理成功而 `run_id` 为空是禁止态**（「已受理、零痕迹」，由 `task_message_accepted_has_run` 约束拒绝，见 #185）；被拒（`rejected`）则允许为空，若拒绝原因来自终态 Run 也会带上那个 `run_id`。线程展示 = 该 Task 的消息流按时间归并（含 Run 事件投影），不靠链式推导。
 
 3. **Run 降级为「线程上的执行区间」**。指令消息创建 Run（沿用现有状态机、快照、幂等、血缘、终态语义，一个字不改）；讨论消息不产生任何执行。产品语义：
    - **活跃中追问**：Run 非终态时，指令消息不建新 Run，而是成为该 Run 的 followup，经 `POST /runs/:id/followup` 下发。**成本要说清：这不是"协议层零改动"**——`run.followup` 只存在于 Node↔Runtime 的本地 stdin wire（`runtime-wire.ts:83`），Hub→Node 下行全集 `NodeDownstreamSchema`（`node-wire.ts:313-321`）里**没有**这一帧。切片②的真实成本 = node-wire 加帧 + schema/fixture 生成 + Node run-manager 分发到 Runtime stdin + 受理 ack 语义。
@@ -38,7 +38,7 @@ Run 状态机、审批闸门（ask-all 阻塞在 Runtime 执行路径）、终�
    - **默认不驱动**：线程消息只有显式 @Agent 才成为 `kind=instruction`；其余一律 `discussion`，永不触发执行。没有分类器，没有猜测。
    - **谁可以发指令（新守卫，替代现行两条不变量）**：现行实现是「只有 Task 责任人能建 Run」（`orchestrator.ts:130-132`）+「Device 必须属于操作者」（`orchestrator.ts:166-168`）。本决策**显式改写这两条**为：
      - **执行主体不变量（不放宽）**：Run 的 Device、Workspace、credential slot 恒为 **Task 责任人的**——这条比现状更严（现状是「操作者 = 责任人」隐含同一人），任何成员都不能让别人的凭据跑工具。
-     - **指令权（新）**：默认仅责任人可发指令；责任人可在 Task 上把指令权**显式授予**具体成员（`task_instruction_grant`，一条 Task 一张授权名单）。未授权成员的 @ 一律落 `discussion` 并在 UI 提示「无指令权」。触发者恒记 `triggered_by_user_id`。
+     - **指令权（新）**：默认仅责任人可发指令；责任人可在 Task 上把指令权**显式授予**具体成员（`task_instruction_grant`，一条 Task 一张授权名单）。未授权成员的 @ 一律落 `discussion` 并在 UI 提示「无指令权」。触发者恒记在**消息的 `author_user_id`** 上（不另设 `triggered_by_user_id` 列，见决策 2）。
      - **审批权不变**：仍归 Run owner（= 责任人）。
    - **上下文卫生**：agent 上下文默认只带该 Task 的指令消息与执行历史；`discussion` 消息不进模型，引用消息可显式带入。
    - **审计链**：见第 2 条（消息 ↔ Run 的指向关系 + `instruction_state` 收敛）。
@@ -61,7 +61,7 @@ Run 状态机、审批闸门（ask-all 阻塞在 Runtime 执行路径）、终�
    - **下传路径（成本列明）**：Runtime 姿态在 agent 创建时固化（`session-owner.ts:106-111`），按 Run 配档位需给 `runtime.initialize` 加字段——**这又是一处 runtime-wire 协议变更**，与切片②的 node-wire 变更同性质，不得再被漏算。
    - `full_access` 是显式放权：二次确认 + Run 卡片与审计事件显著标记；凭据隔离、脱敏投影、事件账本不因档位而削弱。
 
-8. **状态机与数据改动面汇总**。Task 状态机不变（§3.1）；Run 状态机不变（§3.2）——followup 只在 `running` 受理，`waiting_approval` 排队，其余状态受理失败。数据：`task_comment` 升级为 `task_message`（加 `kind / target_agent_id / run_id / instruction_state / triggered_by_user_id`）；新表 `task_instruction_grant`（Task 指令权授权名单）；`runs` 加 `approval_policy`、`resume_from_run_id`、`trigger_message_id`（与 `rerun_of_run_id` 并存：rerun 是**不带上下文重来**，resume 是**接着聊**）。协议：node-wire 加 followup 下行帧与受理 ack；runtime-wire 的 `runtime.initialize` 加审批档位字段；Hub 侧新增 `POST /runs/:id/followup`、`POST /tasks/:id/messages`、授权名单读写，以及 `run.resumed` 事件。线程**不落新表**（由 `task_message` 的消息流承载，含 `run_id` 指向），线程级设置（标题、固定指令）将来若要再立表，本次不发明。
+8. **状态机与数据改动面汇总**。Task 状态机不变（§3.1）；Run 状态机不变（§3.2）——followup 只在 `running` 受理，`waiting_approval` 排队，其余状态受理失败。数据：`task_comment` 升级为 `task_message`（加 `kind / origin / target_agent_id / run_id / instruction_state`；**不设** `triggered_by_user_id`，触发者恒为 `author_user_id`）；新表 `task_instruction_grant`（Task 指令权授权名单）；`runs` 加 `approval_policy`、`resume_from_run_id`、`trigger_message_id`（与 `rerun_of_run_id` 并存：rerun 是**不带上下文重来**，resume 是**接着聊**）。协议：node-wire 加 followup 下行帧与受理 ack；runtime-wire 的 `runtime.initialize` 加审批档位字段；Hub 侧新增 `POST /runs/:id/followup`、`POST /tasks/:id/messages`、授权名单读写，以及 `run.resumed` 事件。线程**不落新表**（由 `task_message` 的消息流承载，含 `run_id` 指向），线程级设置（标题、固定指令）将来若要再立表，本次不发明。
 
 ## 后果
 

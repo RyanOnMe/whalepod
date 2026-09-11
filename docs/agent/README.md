@@ -23,6 +23,7 @@
 | [approval-acceptance.md](./approval-acceptance.md) | G5-01..07：一次性 Approval 闭环——owner 决策、first-wins、过期与取消联动（P1-14） |
 | [plugin-pack-acceptance.md](./plugin-pack-acceptance.md) | G1-05、04 §6.5、Q3：Curated Plugin Pack、未修改插件端到端与攻击矩阵验收（P1-17） |
 | [artifact-acceptance.md](./artifact-acceptance.md) | G6-01..08、04 §6.3：Artifact 候选/存储/发布/Reviewer 输入与路径攻击矩阵验收（P1-15） |
+| [task-message-entity-acceptance.md](./task-message-entity-acceptance.md) | #185（ADR-0009 切片③a）：`task_message` 实体升级——讨论/指令/追问同表、数据层硬约束（讨论不驱动 Agent、受理即落账、追问挂既有 Run）、线程读取排序 |
 | [run-lifecycle-acceptance.md](./run-lifecycle-acceptance.md) | G7-01..06、R4/R5/R9、Q6：Run 取消/强杀/丢失与显式重跑验收（P1-16）；#180 追加：执行中追问的受理语义（含 B1 假受理回归）|
 | [harness-acceptance.md](./harness-acceptance.md) | P1-18：六原语 harness（phase1:drive/verify/evidence）、跨层 traceId/runId 索引、Evidence 包与四层断层自证；#73 取证面绝对路径归约与「证据目录无绝对路径」判定 |
 | [agents-plugins-copy-acceptance.md](./agents-plugins-copy-acceptance.md) | #167：Agents 页与插件页的文案/排版（标签中文化、`curated` 换人话、长摘要截断+复制、去重复标题、page-grid 两栏）；Q5 内文案判据（裸 64 位摘要 / 内部词表 / 同义标题）与两档截图自审结论、未覆盖清单 |
