@@ -1,6 +1,7 @@
 import { and, asc, count, eq, inArray } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { approvals, runs } from '../schema/run.js'
+import { taskMessages } from '../schema/project.js'
 
 export type RunRow = typeof runs.$inferSelect
 export type ApprovalRow = typeof approvals.$inferSelect
@@ -85,6 +86,14 @@ export interface RunStatusPatch {
   dshSessionId?: string
 }
 
+/** 终态集合（03 §3.2）：写进这些状态后 Run 不再推进。 */
+const TERMINAL_RUN_STATUSES = new Set<RunRow['status']>([
+  'completed',
+  'failed',
+  'cancelled',
+  'lost',
+])
+
 export async function setRunStatus(
   handle: DbHandle,
   id: string,
@@ -103,6 +112,21 @@ export async function setRunStatus(
     })
     .where(eq(runs.id, id))
     .returning()
+  // 派生状态维护（ADR-0009 决策 3）：Run 进终态时，该 Run 上仍 pending 的追问一律落
+  // rejected(RUN_TERMINAL)——否则「等待审批时追问 → 取消 → lost」会让消息永久停在 pending
+  //（Node 已死，ack 永远不会来；outbox 对瞬时错误没有重试上限）。放在这里是因为
+  // `setRunStatus` 是**所有**终态迁移的唯一收敛点（16 处调用），漏挂一个路径就会留口子；
+  // 而 `settleInstruction` 只从 pending 收敛，所以多挂点、重复调用都安全。
+  if (row !== undefined && TERMINAL_RUN_STATUSES.has(status)) {
+    await handle
+      .update(taskMessages)
+      .set({
+        instructionState: 'rejected',
+        instructionErrorCode: 'RUN_TERMINAL',
+        instructionErrorMessage: `run reached ${status} before the followup was accepted`,
+      })
+      .where(and(eq(taskMessages.runId, id), eq(taskMessages.instructionState, 'pending')))
+  }
   return row
 }
 

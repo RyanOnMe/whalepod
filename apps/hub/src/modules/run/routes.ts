@@ -144,7 +144,19 @@ export function registerRunRoutes(app: FastifyInstance, deps: RunRoutesDeps): vo
       if (idempotencyKey === undefined || idempotencyKey.trim().length === 0) {
         return sendError(reply, 'VALIDATION_FAILED', 'Idempotency-Key header is required')
       }
-      const body = CreateFollowupRequestSchema.parse(request.body)
+      // 与 `POST /tasks/:taskId/runs`（routes.ts:82）同一写法：**safeParse** 后自行回
+      // VALIDATION_FAILED。用 .parse() 抛 ZodError 会落到本函数的 catch —— 它只认
+      // DomainError / RunCommandError，于是被映射成 500 INTERNAL_ERROR
+      //（全局 ZodError→400 处理器在这条链上永远到不了；评审实测 text=20001 与 '' 都是 500）。
+      const parsed = CreateFollowupRequestSchema.safeParse(request.body)
+      if (!parsed.success) {
+        return sendError(
+          reply,
+          'VALIDATION_FAILED',
+          parsed.error.issues[0]?.message ?? 'invalid followup body',
+        )
+      }
+      const body = parsed.data
       const message = await sendRunFollowup(deps.database, deps.outbox, actor, runId, {
         text: body.text,
         idempotencyKey,

@@ -9,7 +9,13 @@
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '../src/index.js'
-import { insertMessage, insertRun, insertTask, listMessages } from '../src/index.js'
+import {
+  insertMessage,
+  insertRun,
+  insertTask,
+  listMessages,
+  settleInstruction,
+} from '../src/index.js'
 import {
   catchPgError,
   createTestDatabase,
@@ -242,5 +248,51 @@ describe('task_message constraints', () => {
 
     const rows = await listMessages(database.db, ids.taskId)
     expect(rows.map((row) => row.body)).toEqual(['第一条（id 较小）', '第二条（id 较大）'])
+  })
+})
+
+describe('settleInstruction 的收敛守卫（#186）', () => {
+  let database: Database
+  beforeAll(async () => {
+    database = await createTestDatabase()
+  })
+  beforeEach(async () => {
+    await resetDatabase(database)
+  })
+  afterAll(async () => {
+    await database.close()
+  })
+
+  it('只从 pending 收敛：二次结算不改写既成事实（重复 ack / 迟到 ack）', async () => {
+    // 变异判据（#187 评审）：删掉 `instructionState='pending'` 守卫后，本用例必须变红
+    // ——Hub 侧重复 ack 被 ackInTransaction 先挡住，所以只在集成层测不出这个守卫。
+    const ids = await seedRunPrereqs(database.db)
+    const run = await insertRun(database.db, makeRunInput(ids))
+    const message = await insertMessage(database.db, {
+      id: randomUUID(),
+      taskId: ids.taskId,
+      authorUserId: ids.userId,
+      body: '@Agent 继续',
+      kind: 'followup',
+      targetAgentId: ids.agentId,
+      runId: run.id,
+      instructionState: 'pending',
+    })
+
+    const first = await settleInstruction(database.db, message.id, { state: 'accepted' })
+    expect(first?.instructionState).toBe('accepted')
+
+    const second = await settleInstruction(database.db, message.id, {
+      state: 'rejected',
+      error: { code: 'RUNTIME_LOST', message: 'late reject' },
+    })
+    expect(second).toBeUndefined() // 终态不二次改写
+
+    const [row] = await listMessages(database.db, ids.taskId)
+    expect(row).toMatchObject({
+      instructionState: 'accepted',
+      instructionErrorCode: null,
+      instructionErrorMessage: null,
+    })
   })
 })

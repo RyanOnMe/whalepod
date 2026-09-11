@@ -51,6 +51,36 @@ describe('outbox', () => {
     expect(row?.nextAttemptAt.getTime() - fixedNow.getTime()).toBe(250)
   })
 
+  it('未给 notBefore = 立即可投：next_attempt_at 用 Outbox 的时钟，不是 DB 默认 now()', async () => {
+    // #186 实测的坑：老实现让没传 notBefore 的行落 DB 的 now()，而 worker 的 claim 用注入
+    // 时钟比较（`next_attempt_at <= now`）。两者在假时钟下不同 → 命令**永远不可 claim**、
+    // 静默躺在表里。这条用例是可失败判据：把 enqueue 改回不写 nextAttemptAt 就会红
+    //（本文件其它用例都用真实时钟，DB now() 与 new Date() 同刻度，变异不掉）。
+    const ids = await seedRunPrereqs(database.db)
+    const fixedNow = new Date('2026-08-25T00:00:00.000Z')
+    const clocked = new Outbox(database, { now: () => fixedNow, random: () => 0 })
+    const commandId = randomUUID()
+    await database.transaction(async (tx) => {
+      await clocked.enqueue(tx, {
+        id: commandId,
+        deviceId: ids.deviceId,
+        type: 'run.followup',
+        // 不传 messageId：本用例只验时钟口径（message_id 与 followup 的关联在
+        // apps/hub/tests/followup.integration.spec.ts 验）。
+        payload: { commandId, runId: randomUUID(), text: 'x' },
+      })
+    })
+
+    const [row] = await database.db
+      .select()
+      .from(dispatchOutbox)
+      .where(eq(dispatchOutbox.id, commandId))
+    expect(row?.nextAttemptAt.getTime()).toBe(fixedNow.getTime())
+    // 同刻即可 claim —— 这正是生产里「入队后立刻可投」的语义。
+    const claimed = await clocked.claim()
+    expect(claimed.map((command) => command.id)).toContain(commandId)
+  })
+
   it('does not claim commands scheduled in the future', async () => {
     const ids = await seedRunPrereqs(database.db)
     await database.transaction(async (tx) => {

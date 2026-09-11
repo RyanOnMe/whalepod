@@ -35,7 +35,16 @@ describe('run followup (P1-186)', () => {
   })
 
   /** 建一个 Run 并摆到指定状态。 */
-  async function seedRun(status: 'running' | 'waiting_approval' | 'completed' = 'running') {
+  async function seedRun(
+    status:
+      | 'queued'
+      | 'dispatching'
+      | 'running'
+      | 'waiting_approval'
+      | 'cancel_requested'
+      | 'completed'
+      | 'lost' = 'running',
+  ) {
     const ids = await seedRunPrereqs(database.db)
     const harness = makeHarness(database)
     const run = await harness.orchestrator.create(
@@ -110,19 +119,57 @@ describe('run followup (P1-186)', () => {
     expect(acked?.ackedAt).not.toBeNull()
   })
 
-  it('waiting_approval：受理但排队（进程还在，帧进 stdin 队列）', async () => {
-    const { ids, harness, run } = await seedRun('waiting_approval')
-
-    const message = await sendRunFollowup(database, harness.outbox, makeActor(ids.userId), run.id, {
-      text: '审批完继续',
-      idempotencyKey: 'k2',
+  // 逐个状态一条用例（不写成循环）：只测「running 受理」时，把集合放宽到 cancel_requested
+  // 也照样全绿（评审变异实测）；拆开也让每条失败直接指向它那个状态。
+  for (const [status, expected] of [
+    ['queued', 'pending'],
+    ['dispatching', 'pending'],
+    ['running', 'pending'],
+    ['waiting_approval', 'pending'],
+    ['cancel_requested', 'rejected'],
+  ] as const) {
+    it(`受理集合钉死：${status} → ${expected}`, async () => {
+      const { ids, harness, run } = await seedRun(status)
+      const message = await sendRunFollowup(
+        database,
+        harness.outbox,
+        makeActor(ids.userId),
+        run.id,
+        { text: `在 ${status} 时追问`, idempotencyKey: `k-${status}` },
+      )
+      expect(message.instructionState).toBe(expected)
+      const commands = await database.db
+        .select()
+        .from(schema.dispatchOutbox)
+        .where(eq(schema.dispatchOutbox.type, 'run.followup'))
+      expect(commands).toHaveLength(expected === 'pending' ? 1 : 0)
+      if (expected === 'rejected') {
+        expect(message.instructionErrorCode).toBe('RUN_CANCELLING')
+        expect(message.instructionErrorMessage).toContain('cancel_requested')
+      }
     })
-    expect(message.instructionState).toBe('pending')
-    const rows = await database.db
-      .select()
-      .from(schema.dispatchOutbox)
-      .where(eq(schema.dispatchOutbox.type, 'run.followup'))
-    expect(rows).toHaveLength(1)
+  }
+
+  it('Run 进终态时，仍 pending 的追问被清扫成 rejected(RUN_TERMINAL)（ADR-0009 决策 3）', async () => {
+    // 为什么必须有：accepted 只保证「Node 写进 stdin」，Node 可能永远不回 ack
+    //（进程已死、连接丢失、outbox 对瞬时错误无重试上限）。没有这条清扫，消息永久停在
+    // pending —— 正是「已受理、零痕迹」的同族口子。可达路径见本用例：等待审批时追问，
+    // 然后 Run 被取消/丢失。
+    const { ids, harness, run } = await seedRun('waiting_approval')
+    await sendRunFollowup(database, harness.outbox, makeActor(ids.userId), run.id, {
+      text: '这句话还没被受理，Run 就结束了',
+      idempotencyKey: 'k-terminal-sweep',
+    })
+    expect((await listMessages(database.db, ids.taskId))[0]?.instructionState).toBe('pending')
+
+    await setRunStatus(database.db, run.id, 'lost')
+
+    const [swept] = await listMessages(database.db, ids.taskId)
+    expect(swept).toMatchObject({
+      instructionState: 'rejected',
+      instructionErrorCode: 'RUN_TERMINAL',
+    })
+    expect(swept?.instructionErrorMessage).toContain('lost')
   })
 
   it('终态 Run：**不受理**——消息落 rejected + 理由，且不入队任何命令', async () => {
@@ -134,7 +181,9 @@ describe('run followup (P1-186)', () => {
     })
     expect(message).toMatchObject({
       instructionState: 'rejected',
-      instructionErrorCode: 'INVALID_RUN_TRANSITION',
+      // Hub 侧拒绝用 ADR 命名的理由标签（wire ErrorCode 描述的是 Node 的回应，
+      // 这里描述的是指令的命运；两套词表同列存放，见 followup.ts 的说明）。
+      instructionErrorCode: 'RUN_TERMINAL',
     })
     expect(message.instructionErrorMessage).toContain('completed')
     // 不受理就绝不驱动：没有命令入队（否则终态 Run 会被注入一段话）。
