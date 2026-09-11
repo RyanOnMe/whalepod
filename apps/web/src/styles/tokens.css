@@ -41,9 +41,12 @@
   --color-surface-sunken: var(--dsw-alias-bg-module-platform); /* 比卡片更"沉"的面 */
   --color-text-muted: var(--dsw-alias-label-secondary); /* 次级文字（5.8:1） */
 
-  /* 尺寸 */
+  /* 尺寸（#173：圆角阶梯补两档——卡片/面板 12px、应用框 20px，取值与上游
+     dsl 一族（code-block/diff/read 均 12px）及 Menu 浮层（20px）同档） */
   --radius-sm: 6px;
   --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 20px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -52,17 +55,19 @@
   --space-6: 32px;
   --touch-min: 40px;
 
-  /* 字体 */
-  --font-ui:
-    system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  /* 字体（#173：正文栈桥接 L1 的上游 --dsw-font-family——与真实 DSH Web 同一栈，
+     单一来源在 dsw-tokens.css；mono 栈沿用本仓约定） */
+  --font-ui: var(--dsw-font-family);
   --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   /* 字号：只补被引用过的那一档，不趁机发明整套字号尺度 */
   --font-size-sm: 13px;
 
   /* 焦点环（#164）：**双层同心环**——内层 2px 贴元素、外层 2px 在其外（总外扩 4px）。
      为什么不是"把蓝色加深成单色"：焦点指示要同时面对三类相邻色（页面底 paper、卡片面
-     surface、顶栏底 ink），而顶栏底就是 `--color-ink` 本身——旧值（signal 40% 混合）实测
+     surface、深底 ink），旧值（signal 40% 混合）实测
      paper 1.77:1 / surface 1.81:1 / ink 1.53:1，四处都低于 SC 1.4.11 非文字对比度的 3:1。
+     （#173 注：当时的"顶栏底"就是 ink 本身；深色顶栏退役后 ink 档仍留在判据矩阵里，
+     作为任何将来深色容器/深色主题的代表底色。）
      取 ink 与 surface 两个**极值**各做一层后，任何底色上都有 ≥3:1 的那一层：浅色底上外环
      ink 17.46:1 / 18.9:1，顶栏 ink 上内环 surface 18.9:1（深色一套翻转后 11.57 / 13.34:1）。
      为什么不用"把蓝色加深成单色"（一审要求把作用域写清，别把浅色数字当通用结论）：

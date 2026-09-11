@@ -1,6 +1,12 @@
 /**
  * #168 自研表单控件（`.field input` / `.field textarea` / `.button` 族）对齐 DSH 族的**机器判据**。
  *
+ * **#173 修订（按钮族分轴）**：按钮从 Input 度量（r8 / 0.5px l4）改到 vendored
+ * `Button.module.css` 的胶囊族（r18 / 0.5px l3 / elevated-fill / floating-hover），
+ * 输入族保持 Input 度量；对照度量按族分读（`parseVendorButtonMetrics` /
+ * `parseVendorInputMetrics`），`assertControlTokens` 加 `family` 参数（Q5 侧）。
+ * #159 的深色顶栏特判（`.app-header .button-quiet` 两条）随深色 chrome 退役而删除。
+ *
  * 这个文件存在的理由：本次改的是几个「看起来对就行」的视觉度量（描边 0.5px、圆角 8px、
  * 颜色改走 L1）。没有判据的话，任何人把 `0.5px` 改回 `1px`、或把 `--dsw-alias-*` 换成应用层
  * `--color-*`，页面依然"看着正常"，测试全绿。
@@ -32,12 +38,14 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  BUTTON_BACKGROUND_TOKEN,
+  BUTTON_BORDER_TOKEN,
+  BUTTON_HOVER_BACKGROUND_TOKEN,
   CONTROL_BACKGROUND_TOKEN,
   CONTROL_BORDER_TOKEN,
   CONTROL_DANGER_FILL_TOKEN,
   CONTROL_DANGER_LABEL_TOKEN,
   CONTROL_HOVER_BACKGROUND_TOKEN,
-  CONTROL_HOVER_BORDER_TOKEN,
   CONTROL_LABEL_TOKEN,
   CONTROL_PRIMARY_FILL_TOKEN,
   CONTROL_PRIMARY_HOVER_TOKEN,
@@ -45,6 +53,7 @@ import {
   CONTROL_TOUCH_TOKEN,
   TOUCH_MIN_PX,
   checkControlTokens,
+  parseVendorButtonMetrics,
   parseVendorInputMetrics,
   resolveTokenValue,
   type ComputedStyleLike,
@@ -60,6 +69,12 @@ const vendorCss = readFileSync(
   'utf8',
 )
 const vendor = parseVendorInputMetrics(vendorCss)
+// #173：按钮族对齐 vendored `Button.module.css` 的胶囊几何（与输入框的 Input 度量分轴）。
+const vendorButtonCss = readFileSync(
+  join(repoRoot, 'apps/web/src/vendor/dsh-ui/Button.module.css'),
+  'utf8',
+)
+const vendorButton = parseVendorButtonMetrics(vendorButtonCss)
 
 // ---------- CSS 读取（本仓没有 postcss 运行时依赖，够用就好） ----------
 
@@ -268,8 +283,7 @@ const BASE_OF: Record<string, string> = {
   '.button-primary:hover:not(:disabled)': '.button-primary',
   '.button-quiet': '.button',
   '.button-quiet:hover:not(:disabled)': '.button-quiet',
-  '.app-header .button-quiet:hover:not(:disabled)': '.button-quiet:hover:not(:disabled)',
-  '.app-header-user .button': '.button',
+  '.app-topbar-user .button': '.button',
   '.button-danger': '.button',
 }
 
@@ -363,13 +377,16 @@ const rules: ExpectedRule[] = [
     },
   },
   {
+    // #173：按钮对齐 vendored `Button.module.css` 的胶囊族——描边取 `.outline` 变体
+    // （0.5px l3 带边胶囊），圆角取 `.button` 的 18px；底色是上游侧栏「新会话」同款的
+    // elevated-fill（白台面）。度量都从 vendored CSS 现场读，本文件没有 18px/0.5px 字面量。
     selector: '.button',
     mustDeclare: 'border',
-    border: vendorBorder,
-    radius: vendor.radius,
+    border: vendorButton.borderDeclaration,
+    radius: vendorButton.radius,
     colors: {
-      background: CONTROL_BACKGROUND_TOKEN,
-      border: CONTROL_BORDER_TOKEN,
+      background: BUTTON_BACKGROUND_TOKEN,
+      border: BUTTON_BORDER_TOKEN,
       color: CONTROL_LABEL_TOKEN,
     },
   },
@@ -377,11 +394,11 @@ const rules: ExpectedRule[] = [
   {
     // 变体**不声明**描边宽度/圆角（靠 `.button` 继承）——所以这里不填 border/radius，
     // 断言就会要求它确实没声明：谁在变体里复制一份度量会被抓出来（下一个漂移点）。
+    // #173：hover 只换面（elevated → floating-hover，上游「新会话」同一写法），不再动描边。
     selector: '.button:hover:not(:disabled)',
     mustDeclare: 'background',
     colors: {
-      background: CONTROL_HOVER_BACKGROUND_TOKEN,
-      'border-color': CONTROL_HOVER_BORDER_TOKEN,
+      background: BUTTON_HOVER_BACKGROUND_TOKEN,
     },
   },
   {
@@ -408,13 +425,12 @@ const rules: ExpectedRule[] = [
     colors: { 'border-color': '--dsw-alias-brand-primary' },
   },
   {
+    // #173：主按钮只声明底/字/描边色（无边色），描边宽度与圆角全部继承 `.button` 胶囊。
     selector: '.button-primary',
     mustDeclare: 'background',
-    border: vendorBorder,
-    radius: vendor.radius,
     colors: {
       background: CONTROL_PRIMARY_FILL_TOKEN,
-      border: CONTROL_BORDER_TOKEN,
+      'border-color': 'transparent',
       color: CONTROL_PRIMARY_LABEL_TOKEN,
     },
   },
@@ -423,20 +439,20 @@ const rules: ExpectedRule[] = [
     mustDeclare: 'background',
     colors: {
       background: CONTROL_PRIMARY_HOVER_TOKEN,
-      'border-color': CONTROL_BORDER_TOKEN,
     },
   },
   {
+    // #173：无边形态改成**真的没有 border 声明**（只有 border-color: transparent 压住
+    // 基类那道描边）——vendored `.ghost` 就是无边透明面。宽度同步钉随之退役（没有宽度了）。
     selector: '.button-quiet',
-    mustDeclare: 'border',
-    // 无边形态：**宽度仍必须跟 vendored 同步**（`0.5px` 不写死——vendor 改 0.25px 时这里要红）
-    border: `${vendor.borderWidth} ${vendor.borderStyle} transparent`,
-    radius: vendor.radius,
-    // 只有这条的 `color` **不钉 token 名**：`.app-header .button-quiet` 是 #159 加的
-    // 深色容器前景覆盖（`--color-signal-soft`，blue-100 压 ink 实测 15.49:1），
-    // 那是另一层机制、另一个判据（Q5 的对比度扫描器）的地盘。
-    // 这里仍然钉住"不是应用层 token、不是裸色值"，只放开 token 名（详细理由见 rules 表后的注释）。
-    colors: { background: 'transparent', border: 'transparent' },
+    mustDeclare: 'background',
+    colors: {
+      background: 'transparent',
+      'border-color': 'transparent',
+      // #173 起钉死 token 名：#159 的深色容器覆盖（`.app-header .button-quiet`）随深色
+      // chrome 退役后，quiet 的 color 只剩这一个合法取值，豁免分支一并删除。
+      color: '--dsw-alias-brand-primary',
+    },
   },
   {
     selector: '.button-quiet:hover:not(:disabled)',
@@ -444,61 +460,26 @@ const rules: ExpectedRule[] = [
     colors: { background: CONTROL_HOVER_BACKGROUND_TOKEN, 'border-color': 'transparent' },
   },
   {
-    // 产品决定（评审）：#159 那条 `border-color` 删掉后，顶栏「退出登录」在浅色主题下
-    // 失去了可见的 hover 反馈（通用 hover 面 `rgba(38,49,72,0.06)` 压在顶栏上只差 1/255）。
-    // 所以补一条**面**变，并在这里钉住——免得它下一轮又被顺手删掉。
-    selector: '.app-header .button-quiet:hover:not(:disabled)',
-    mustDeclare: 'background',
-    colors: {
-      // 这一条刻意写**裸 rgba**：L1 没有"深色容器上的 hover 叠加"这一档，理由与实测数字
-      // 写在 global.css 该规则处（评审已认可这个量）。用哨兵把**具体值**登记进来——
-      // 改小到看不见、或换成别的裸色，都会红。
-      background: `${EXPECT_RAW_VALUE}rgba(255, 255, 255, 0.08)`,
-    },
-  },
-  {
-    // #159 的深色容器前景族（blue-100 压 ink 15.49:1）。登记它的目的是让守卫能覆盖
-    // "往这个容器规则里加东西"：`border-color` 显式登记为 `null`——那是 #159 原先写在
-    // `:hover` 上、被本 PR 删掉的那条（无边形态不该被容器点出描边）。谁再加回来就会红。
-    selector: '.app-header .button-quiet',
-    mustDeclare: 'color',
-    colors: { color: `${EXPECT_APP_TOKEN}--color-signal-soft`, 'border-color': null },
-  },
-  {
-    // 下面两条是**形状限定**规则（顶栏退出按钮的布局 / 页头用户的按钮不参与收缩）：
-    // 登记进来是为了让选择器守卫能覆盖它们——`colors: {}` 的含义是"这里不许出现任何颜色，
-    // 出现即红（未登记）"。不登记的话，"往 `.app-header-user .button` 里加一条 color"
-    // 会绕过全部判据（评审 B-2a 的同类逃逸）。
-    selector: '.app-header-user .button',
+    // #173：窄屏顶栏里退出按钮的形状限定（不参与收缩）。登记进期望表是为了让选择器
+    // 守卫覆盖它——`colors: {}` 的含义是"这里不许出现任何颜色，出现即红（未登记）"。
+    // 被它替换的 `#159` 深色顶栏特判（`.app-header .button-quiet` 两条）随深色 chrome
+    // 一并退役：侧栏/顶栏都是浅底，quiet 按钮吃通用规则即可。
+    selector: '.app-topbar-user .button',
     mustDeclare: 'flex',
     colors: {},
   },
   {
+    // #173：危险按钮与普通控件同面（elevated-fill）+ 中性发丝描边（l3，由 border-color
+    // 声明——宽度/圆角继承 `.button` 胶囊）；危险意图仍只由 red-900 文字承担。
     selector: '.button-danger',
-    mustDeclare: 'border',
-    border: vendorBorder,
-    radius: vendor.radius,
+    mustDeclare: 'background',
     colors: {
       background: CONTROL_DANGER_FILL_TOKEN,
-      border: CONTROL_BORDER_TOKEN,
+      'border-color': BUTTON_BORDER_TOKEN,
       color: CONTROL_DANGER_LABEL_TOKEN,
     },
   },
 ]
-
-/**
- * `.button-quiet` 的 `color` 为什么**没有**登记期望 token 名（其余属性都登记了）：
- *
- * - 本仓存在 `--dsw-alias-brand-primary`（近黑）与 #159 的深色容器覆盖
- *   `.app-header .button-quiet { color: var(--color-signal-soft) }`；
- * - 容器级覆盖是**另一层机制**（"深色容器给前景族"），它的判据是对比度门
- *   （`apps/web/tests/e2e/contrast-sweep.ts` 在真实浏览器里量），不是这一条；
- * - 所以这里只要求"非应用层 token、非裸色值"——**能挡住"往 quiet 里塞 `#123456` 或
- *   `--color-signal`"**，挡不住"在两个 L1 token 之间换"（那种换色由对比度门管）。
- *
- * 这条边界写在这里而不是省略：**放开一个检查必须写明放到哪去了**，否则下一个人
- * 会以为这里漏了。
- */
 
 // ---------- 颜色判据 ----------
 
@@ -601,7 +582,7 @@ function assertControlFamily(cssText: string): void {
       }
     } else if (border !== expected.border) {
       failures.push(
-        `${expected.selector} 的描边是 \`${border ?? '（未声明）'}\`，应为 \`${expected.border}\``,
+        `${expected.selector} 的描边是 \`${border ?? '（未声明）'}\`，应为 \`${expected.border}\`（vendored 参照）`,
       )
     }
     const radius = declaration(rule.body, 'border-radius')
@@ -615,7 +596,7 @@ function assertControlFamily(cssText: string): void {
       }
     } else if (radius !== expected.radius) {
       failures.push(
-        `${expected.selector} 的圆角应与 vendored Input 同值（${expected.radius}），实测 ${radius ?? '（未声明）'}`,
+        `${expected.selector} 的圆角应与 vendored 参照同值（${expected.radius}），实测 ${radius ?? '（未声明）'}`,
       )
     }
     // B1（评审 B-2b）：**整条规则体**里不许出现裸色值 / 应用层变量——不再只看
@@ -648,11 +629,6 @@ function assertControlFamily(cssText: string): void {
         continue
       }
       if (expectedToken === undefined) {
-        // 豁免：`.button-quiet` 的 color（理由见上方注释）。其余规则上未登记的颜色仍然报红。
-        if (expected.selector === '.button-quiet' && property === 'color') {
-          checkColor(failures, expected.selector, property, value, undefined)
-          continue
-        }
         failures.push(
           `${expected.selector} 声明了未登记的 ${property}: \`${value}\`——要么登记进期望表（连同期望 token），要么去掉`,
         )
@@ -772,6 +748,9 @@ function assertControlFamily(cssText: string): void {
  * 所以浏览器侧拿**参照元素的实测值**比（元素对元素）；源码侧比的是两处**声明值**。
  */
 function probeFromSource(scanned: CssRule[], selector: string, mustDeclare?: string): ControlProbe {
+  // #173：按钮族的对照度量来自 vendored `Button.module.css`（胶囊 18px / 0.5px l3），
+  // 输入族仍来自 vendored `Input.module.css`（8px / 0.5px l4）。
+  const family = selector.startsWith('.field ') ? vendor : vendorButton
   const body = cascadedBody(scanned, selector, mustDeclare)
   const borderValue = (declaration(body, 'border') ?? '').replaceAll(/\s+/g, ' ').trim()
   // 取值可能是 `var(--token)`（→ 先解出 token 名再解析），也可能是**显式登记的裸值**
@@ -791,9 +770,17 @@ function probeFromSource(scanned: CssRule[], selector: string, mustDeclare?: str
   // 真正的形态判据在 checkColor 里。
   const borderToken = /var\(\s*(--[\w-]+)\s*\)/.exec(borderValue)?.[1]
   const background = colorToken('background')
-  const borderColor = borderValue.endsWith('transparent')
-    ? 'transparent'
-    : (borderToken ?? colorToken('border-color'))
+  // #173：长写 `border-color` 优先于基类继承来的 `border` 简写（`.button-quiet` 用
+  // `border-color: transparent` 压掉 `.button` 的 0.5px l3——真实层叠里也是长写胜出）。
+  const borderColorLonghand = declaration(body, 'border-color')?.trim()
+  const borderColor =
+    borderColorLonghand !== undefined
+      ? borderColorLonghand === 'transparent'
+        ? 'transparent'
+        : (/var\(\s*(--[\w-]+)\s*\)/.exec(borderColorLonghand)?.[1] ?? borderColorLonghand)
+      : borderValue.endsWith('transparent')
+        ? 'transparent'
+        : (borderToken ?? '')
   const label = colorToken('color')
   const width = borderValue.split(/\s+/)[0] ?? ''
   const radius = declaration(body, 'border-radius') ?? ''
@@ -821,11 +808,11 @@ function probeFromSource(scanned: CssRule[], selector: string, mustDeclare?: str
     color: resolve(label),
     minHeight,
     // 参照值取 **vendored** 度量（另一份 CSS 的另一条规则），不是把控件自己的值抄一遍。
-    referenceBorderWidth: vendor.borderWidth,
-    referenceRadius: vendor.radius,
+    referenceBorderWidth: family.borderWidth ?? '',
+    referenceRadius: family.radius,
     // 源码侧没有"渲染出来的参照元素"，用 vendored 那个 token 的解析值充当参照色
     // （参照自检在浏览器侧才真正起作用）。
-    referenceBorderColor: tokenValue(vendor.borderToken),
+    referenceBorderColor: tokenValue(family.borderToken),
     resolved: {
       background: resolve(background),
       border: resolve(borderColor),
@@ -843,13 +830,19 @@ const checkerExpect = {
 }
 
 describe('#168 自研控件对齐 DSH 族（源码文本判据）', () => {
-  it('度量来源：vendored Input 的描边/圆角被读到（上游形态变了不能静默失效）', () => {
+  it('度量来源：vendored Input/Button 的度量被读到（上游形态变了不能静默失效）', () => {
     // 这条不是凑数：解析器抛错会立刻红，但"解析出来是空串"不会——空串会让后面所有
     // "逐值相等"退化成"两边都空"的假绿。
     expect(vendor.borderWidth).toMatch(/^[\d.]+px$/)
     expect(vendor.borderStyle).toBe('solid')
     expect(vendor.borderToken).toBe(CONTROL_BORDER_TOKEN)
     expect(vendor.radius).toMatch(/^\d+px$/)
+    // #173：按钮族的对照——vendored Button 的胶囊几何（r18）与 .outline 描边（l3）。
+    expect(vendorButton.borderWidth).toMatch(/^[\d.]+px$/)
+    expect(vendorButton.borderToken).toBe(BUTTON_BORDER_TOKEN)
+    expect(vendorButton.radius).toMatch(/^\d+px$/)
+    expect(tokenValue(BUTTON_BACKGROUND_TOKEN)).not.toBe('')
+    expect(tokenValue(BUTTON_HOVER_BACKGROUND_TOKEN)).not.toBe('')
     expect(tokenValue(CONTROL_BACKGROUND_TOKEN)).not.toBe('')
     expect(TOUCH_MIN_PX).toBe(40)
   })
@@ -865,8 +858,17 @@ describe('#168 自研控件对齐 DSH 族（源码文本判据）', () => {
       // 它没有控件的高度/底/字那一组语义，硬跑只会得到"缺 min-height"的噪音失败。
       if (!BASE_OF[expected.selector] && !expected.selector.startsWith('.field ')) continue
       const probe = probeFromSource(globalRules, expected.selector, expected.mustDeclare)
+      // #173：按钮族与输入族的期望 token 分轴（失败信息里指认用；逐值比对仍按
+      // 探针自身的声明与 L1 解析值，不靠这组常量当期望）。
+      const familyExpect = expected.selector.startsWith('.field ')
+        ? checkerExpect
+        : {
+            ...checkerExpect,
+            backgroundToken: BUTTON_BACKGROUND_TOKEN,
+            borderToken: BUTTON_BORDER_TOKEN,
+          }
       expect(
-        checkControlTokens(probe, checkerExpect, expected.selector),
+        checkControlTokens(probe, familyExpect, expected.selector),
         `${expected.selector} 的探针与对照：${JSON.stringify({
           minHeight: probe.minHeight,
           touch: probe.resolved.touch,
@@ -1053,7 +1055,7 @@ describe('#168 自研控件对齐 DSH 族（源码文本判据）', () => {
       {
         name: '圆角改回旧值 6px',
         css: setDeclaration({ selector: '.button', mustDeclare: 'border' }, 'border-radius', '6px'),
-        expect: /\.button 的圆角应与 vendored Input 同值（8px），实测 6px/,
+        expect: /\.button 的圆角应与 vendored 参照同值（18px），实测 6px/,
       },
       {
         // 换到另一个 L1 描边档。注意 `border-l3` 与 `-l4` **不是同值**（实测 l3=rgba(0,0,0,0.12)、
@@ -1110,7 +1112,7 @@ describe('#168 自研控件对齐 DSH 族（源码文本判据）', () => {
           'background',
           'var(--dsw-alias-state-error-primary)',
         ),
-        expect: /引用了 --dsw-alias-state-error-primary，约定应是 --dsw-alias-bg-layer-2/,
+        expect: /引用了 --dsw-alias-state-error-primary，约定应是 --dsw-alias-button-elevated-fill/,
       },
       {
         name: '危险按钮文字回到别名亮阶 state-error-primary',
@@ -1122,22 +1124,26 @@ describe('#168 自研控件对齐 DSH 族（源码文本判据）', () => {
         expect: /引用了 --dsw-alias-state-error-primary，约定应是 --dsw-static-red-900/,
       },
       {
-        name: '危险按钮描边宽度改回 1px',
+        // #173：危险按钮的描边宽度继承 `.button`（自己只声明 border-color），
+        // 所以"宽度改回 1px"的变异落在基类上。
+        name: '按钮基类描边宽度改回 1px',
         css: setDeclaration(
-          { selector: '.button-danger', mustDeclare: 'border' },
+          { selector: '.button', mustDeclare: 'border' },
           'border',
-          `1px solid var(--dsw-alias-border-l4)`,
+          `1px solid var(--dsw-alias-border-l3)`,
         ),
-        expect: /\.button-danger 的描边是 `1px solid/,
+        expect: /\.button 的描边是 `1px solid/,
       },
       {
-        name: 'quiet 的无边形态被改松（描边换成有色 hairline）',
+        // #173：quiet 不再有 border 简写（无边形态 = 只有 `border-color: transparent` 压基类），
+        // 改松的方向就是把 transparent 换成有色——判据要拦。
+        name: 'quiet 的无边形态被改松（transparent 换成有色描边）',
         css: setDeclaration(
-          { selector: '.button-quiet', mustDeclare: 'border' },
-          'border',
-          `${vendor.borderWidth} solid var(--dsw-alias-border-l4)`,
+          { selector: '.button-quiet', mustDeclare: 'border-color' },
+          'border-color',
+          'var(--dsw-alias-border-l4)',
         ),
-        expect: /\.button-quiet 的描边是/,
+        expect: /\.button-quiet 的 border-color 应为 transparent/,
       },
       {
         // S3 复现：hover 里写应用层变量，早先全绿（hover 根本不在判据里）
@@ -1211,14 +1217,15 @@ describe('#168 自研控件对齐 DSH 族（源码文本判据）', () => {
         expect: /的 outline 里有裸色值 `#ff0000`/,
       },
       {
-        // 产品决定：顶栏「退出登录」的 hover 面（删掉 #159 那条 border-color 后补的反馈）
-        name: '顶栏退出登录的 hover 面被改小到看不见',
+        // #173：形状限定规则（窄屏顶栏退出按钮）里偷塞颜色——`colors: {}` 的语义是
+        // "出现即红"，这条变异守的就是它。
+        name: '顶栏形状限定规则里塞一条 color',
         css: setDeclaration(
-          { selector: '.app-header .button-quiet:hover:not(:disabled)', mustDeclare: 'background' },
-          'background',
-          'rgba(255, 255, 255, 0.01)',
+          { selector: '.app-topbar-user .button', mustDeclare: 'flex' },
+          'flex',
+          'none; color: var(--dsw-alias-state-error-primary)',
         ),
-        expect: /登记的是裸值 `rgba\(255, 255, 255, 0\.08\)`/,
+        expect: /\.app-topbar-user \.button 声明了未登记的 color/,
       },
       {
         name: '危险按钮底色写成 color-mix（合法 CSS 但不是单一 token）',

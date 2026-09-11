@@ -34,7 +34,11 @@ function resolve(name: string): string {
   // 折成**无空白**形态：一审实测过三种折叠，`.replace(/\s+/g,' ')` 只救得了"冒号后换行"，
   // 救不了"var( 内部换行"（折白后是 `var( --x )`，锚定正则 `^var\((--` 仍失配 → 门会以
   // "颜色解析不了"的形式变红，而真实原因只是格式化）。去空白对取值语义无影响。
-  const raw = readTokenValue(appTokens, name).replace(/\s+/g, '')
+  //
+  // #173：应用层没有桥接的 L1 token（侧栏一族只被 global.css 直接引用）直接查白名单
+  // （readTokenValue 找不到会抛，所以用正则探测代替 try/catch，失败语义不变）。
+  const appHit = new RegExp(`${name}\\s*:\\s*([^;]+);`).exec(appTokens)?.[1]?.trim() ?? ''
+  const raw = (appHit !== '' ? appHit : readTokenValue(l1Tokens, name)).replace(/\s+/g, '')
   const indirect = /^var\((--[a-z0-9-]+)\)$/i.exec(raw.trim())
   if (indirect === null) return raw
   const target = indirect[1]
@@ -51,7 +55,8 @@ const PAIRS: ReadonlyArray<[string, string, string | null, string]> = [
   ['正文 / 页面底', '--color-ink', '--color-paper', '页面底上的正文'],
   ['次级文字 / 卡片面', '--color-ink-soft', '--color-surface', '说明性文字'],
   ['弱化文字 / 卡片面', '--color-muted', '--color-surface', '提示与时间戳'],
-  ['顶栏文字 / 顶栏底', '--color-paper', '--color-ink', '顶栏（底用 ink）'],
+  // #173：深色顶栏退役，换成浅色侧栏的真实配对（chrome 文字压侧栏底）。
+  ['侧栏文字 / 侧栏底', '--color-ink', '--dsw-specific-sidebar-fill', '侧栏导航与品牌'],
   ['主按钮文字 / 主按钮底', '--color-surface', '--color-signal', '白字按钮'],
   ['链接文字 / 卡片面', '--color-signal', '--color-surface', '链接与可点文字'],
   ['链接文字 / 页面底', '--color-signal', '--color-paper', '页面底上的链接'],
@@ -63,11 +68,17 @@ const PAIRS: ReadonlyArray<[string, string, string | null, string]> = [
   // 漏的原因值得记：清单是按「语义名」列的，而徽标当时用的是 --color-signal（通用链接色）
   // 而不是一个"浅底上的强调文字"用的名字——同一个 token 用在两种底上，配对就看不见了。
   // 所以这里按**用法**列，并把应用层的取值换成强档（--color-signal-strong）。
-  // 已知边界（#159 一审 O1）：本文件只解析 `:root`（浅色）取值，对深色段**天然主题盲**；
-  // 而 blue-100 是静态档、深色段未重定义，深色主题下 `.app-header` 会变成浅色条，
-  // 这条"深色容器给前景"的通则照抄过去会复现同一 bug。深色主题没有切换入口，留待 #164 一族收口。
+  // 已知边界（#159 一审 O1）：本文件只解析 `:root`（浅色）取值，对深色段**天然主题盲**。
+  // #173 注：这条边界曾经警告"深色主题下 `.app-header` 会变浅色条"——深色顶栏已随 #173
+  // 退役，深色段的 chrome 取值（侧栏/顶栏都走 alias/specific 重定义）不再有这个坑。
   ['强调徽标文字 / 强调浅底', '--color-signal-strong', '--color-signal-soft', '进行中徽标'],
-  ['顶栏安静按钮文字 / 顶栏底', '--color-signal-soft', '--color-ink', '顶栏「退出登录」'],
+  // #173：侧栏导航选中态（ink 文字压选中底）替代退役的「顶栏安静按钮」配对。
+  [
+    '侧栏选中导航文字 / 选中底',
+    '--color-ink',
+    '--dsw-specific-sidebar-nav-item-active',
+    '侧栏当前页导航项',
+  ],
 ]
 
 describe('#152 主题门', () => {

@@ -288,7 +288,7 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
  * （一个文件同时导出纯函数与浏览器侧入口；纯函数在 Q0 的 unit project 里每次跑，
  * 这里是把同一套判据挂到**真实渲染结果**上）。
  *
- * 渲染时机：#159 一审抓过一次假绿——壳（.app-header）立即渲染，而各页数据都是异步 query，
+ * 渲染时机：#159 一审抓过一次假绿——壳（.app-frame，#173 之前是 .app-header）立即渲染，而各页数据都是异步 query，
  * 在 isPending 窗口里页面上只有「正在加载…」，判据等于什么都没量。所以这里与对比度扫描
  * 同一口径：逐页等**内容**（加载提示消失 + 标志性节点出现）再判。
  *
@@ -352,7 +352,8 @@ test('文案判据：Agents 与插件页无裸摘要 / 无内部词 / 无同义�
     await page.setViewportSize(viewport)
     for (const [path, spec] of Object.entries(COPY_CHECK_PAGES)) {
       await page.goto(path)
-      await expect(page.locator('.app-header')).toBeVisible()
+      // #173：壳锚点从旧顶栏类名换成应用框（宽屏侧栏 / 窄屏顶栏互斥渲染，.app-frame 恒在）
+      await expect(page.locator('.app-frame')).toBeVisible()
       await expect(page.locator(spec.ready).first()).toBeVisible()
       // 详情面板是懒渲染的（点卡片才请求详情），里面才有「人格设定（Persona）」
       // 这些标签；有卡片就点开，把详情形态也纳入判据。
@@ -414,7 +415,7 @@ test('文案判据：Agents 与插件页无裸摘要 / 无内部词 / 无同义�
 test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可达', async () => {
   await page.setViewportSize({ width: 390, height: 844 })
 
-  // #159 一审抓出的假绿：这轮循环原来只等 `.app-header`（壳，立即渲染）就扫描，而三页的
+  // #159 一审抓出的假绿：这轮循环原来只等壳（旧 .app-header，现为 .app-frame，立即渲染）就扫描，而三页的
   // 数据都是异步 query —— 在 isPending 窗口里页面上只有 "正在加载…"，徽标/状态色/时间戳
   // 一个都没进画面，扫描退化成只量顶栏。现在逐页等**该页的真实内容**再扫。
   //
@@ -445,7 +446,8 @@ test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可�
   }
   for (const path of ['/', '/devices', '/members', '/agents', '/plugins']) {
     await page.goto(path)
-    await expect(page.locator('.app-header')).toBeVisible()
+    // #173：同上，壳锚点换成恒在的应用框
+    await expect(page.locator('.app-frame')).toBeVisible()
     // 二审 N2：不要再用 `.mutation-hint` 计数当加载哨兵——那个类名同时被 7 处**静态信息
     // 文字**使用（只读提示等），成员会话下 Agents/插件页会永久渲染它。改成认"加载文案本身"。
     // **口径更正（二审复核指出我原先写的"12 处、全仓统一以「正在加载」开头"不成立）**：
@@ -461,7 +463,7 @@ test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可�
     const metrics = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       innerWidth: window.innerWidth,
-      headerHeight: document.querySelector('.app-header')?.getBoundingClientRect().height ?? 0,
+      headerHeight: document.querySelector('.app-topbar')?.getBoundingClientRect().height ?? 0,
     }))
     expect(metrics.innerWidth).toBe(390)
     // 判定用真实滚动宽度，而不是「看起来没露出来」：+1 容忍亚像素舍入
@@ -492,7 +494,7 @@ test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可�
   await expect(nav.getByRole('link', { name: '成员' })).toBeVisible()
   // 展开导航也不许把顶栏顶高（面板绝对定位）
   const openHeaderHeight = await page
-    .locator('.app-header')
+    .locator('.app-topbar')
     .evaluate((el) => el.getBoundingClientRect().height)
   expect(openHeaderHeight).toBeLessThanOrEqual(64)
   // #159：折叠面板展开态单独扫——它是**另一个容器**（绝对定位 + 自己的底色），
@@ -513,8 +515,14 @@ test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可�
   await assertControlTokens(
     page.locator('form.inline-form .button.button-primary'),
     '.button-primary（生成邀请链接，390 档）',
-    // 主按钮自带的底/文字 token（理由见 task-room.spec.ts 同一处）
-    { backgroundToken: CONTROL_PRIMARY_FILL_TOKEN, labelToken: CONTROL_PRIMARY_LABEL_TOKEN },
+    // 主按钮自带的底/文字 token（理由见 task-room.spec.ts 同一处）。
+    // #173：按钮族参照（胶囊几何）；primary 描边色按设计是 transparent。
+    {
+      backgroundToken: CONTROL_PRIMARY_FILL_TOKEN,
+      labelToken: CONTROL_PRIMARY_LABEL_TOKEN,
+      borderToken: 'transparent',
+      family: 'button',
+    },
   )
 
   // 换了页再走一遍：这次从成员页点「设备」（鼠标路径），落在设备页后直接点主体按钮

@@ -38,6 +38,14 @@
  *      --dsw-alias-brand-primary、--dsw-specific-menu → --dsw-alias-bg-layer-3、
  *      --dsw-alias-state-warn-label → --dsw-static-amber-600 …），这层间接是语义而不是冗余。
  *
+ * #173 第三批（全站视觉迁移到真实 DSH Web 形态）：新增 **12** 个浅色声明（6 静态色阶
+ * + 5 alias/specific + 1 字体栈）+ 1 个派生投影（--dsw-elevation-soft，挂 `body, body *`
+ * 派生块）。这批的消费者**全部在应用层**（侧栏 chrome / 胶囊按钮 / 应用框投影 / 正文字体栈），
+ * vendored 原语引用集不变。来源：上游 design-platform.css 的 specific 段与
+ * gradient-shadow-text.css 的 elevation 段，取值逐字照抄；hex-alpha 按本仓既有口径归一为
+ * 两位小数 rgba（#00000008 → rgba(0, 0, 0, 0.03)，与 prominent 的 #0000000a →
+ * rgba(0, 0, 0, 0.04) 同一折算法）。深色段同步重写 5 个（上游深色取值逐字照抄）。
+ *
  * **两批的静态色阶写法不一致（已知，待归一）**：首批把 alias→静态 的引用**就地展开成
  * rgb() 字面量**；第二批改为**保留 alias → var(--dsw-static-*) 的指引**。两者都是「最终取值
  * 与上游逐字一致」，但形态不同：第二批的写法保住了「同一个静态档只声明一次」，代价是多一层
@@ -173,6 +181,29 @@
   --dsw-alias-state-warn-label: var(--dsw-static-amber-600);
   --dsw-alias-state-warn-tertiary: var(--dsw-static-amber-100);
   --dsw-specific-menu: var(--dsw-alias-bg-layer-3);
+
+  /* ===== #173 第三批：侧栏 chrome / 浮起按钮 / 正文字体 =====
+   * 静态色阶（上游静态段逐字照抄，rgb 归一写法同既有批次）。各自的文件内消费者：
+   * 50←sidebar-fill；75←nav-item-hover 与 button-floating-hover；100←nav-item-active；
+   * 800/850/900 只在深色段被消费（见下）。 */
+  --dsw-static-neutral-bluish-50: rgb(249, 250, 251);
+  --dsw-static-neutral-bluish-75: rgb(241, 243, 245);
+  --dsw-static-neutral-bluish-100: rgb(235, 238, 242);
+  --dsw-static-neutral-bluish-800: rgb(53, 54, 56);
+  --dsw-static-neutral-bluish-850: rgb(44, 44, 46);
+  --dsw-static-neutral-bluish-900: rgb(27, 27, 28);
+
+  /* 侧栏（上游 specific 段）：面板底、导航项 hover / 选中态。 */
+  --dsw-specific-sidebar-fill: var(--dsw-static-neutral-bluish-50);
+  --dsw-specific-sidebar-nav-item-hover: var(--dsw-static-neutral-bluish-75);
+  --dsw-specific-sidebar-nav-item-active: var(--dsw-static-neutral-bluish-100);
+  /* 浮起/台面按钮（上游 alias 段）：白底控件 hover 的浅灰面。 */
+  --dsw-alias-button-elevated-fill: var(--dsw-static-neutral-bluish-00);
+  --dsw-alias-button-floating-hover: var(--dsw-static-neutral-bluish-75);
+  /* 正文字体栈（上游 --dsw-font-family 逐字照抄；应用层 --font-ui 桥接它）。 */
+  --dsw-font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
 }
 
 /**
@@ -212,6 +243,11 @@ body * {
   --dsw-elevation-stroke: 0 0 0 0.5px var(--dsw-elevation-stroke-color);
   --dsw-elevation-prominent:
     var(--dsw-elevation-stroke), 0 3px 8px 0 rgba(0, 0, 0, 0.04), 0 0 20px 0 rgba(0, 0, 0, 0.05);
+  /* #173：应用框（.app-frame）使用的更软一档投影，上游 gradient-shadow-text.css
+     的 --dsw-elevation-soft 逐字照抄（hex-alpha 折算口径同 prominent）。
+     同属派生值（消费 stroke），按同一纪律挂这一块。 */
+  --dsw-elevation-soft:
+    var(--dsw-elevation-stroke), 0 4px 16px 0 rgba(0, 0, 0, 0.03), 0 0 24px 0 rgba(0, 0, 0, 0.03);
 }
 
 /**
@@ -268,4 +304,13 @@ body[data-ds-dark-theme] {
   --dsw-alias-state-success-tertiary: var(--dsw-static-green-900);
   --dsw-alias-state-warn-tertiary: var(--dsw-static-amber-900);
   --dsw-specific-menu: var(--dsw-alias-bg-layer-3);
+
+  /* #173 第三批的深色重写（上游 body[data-ds-dark-theme] 段逐字照抄）：
+     侧栏 900、导航项 hover/active 850/750、浮起按钮 750/800；浅深同值的
+     （stroke / soft / prominent / 字体栈）不在此重复。 */
+  --dsw-specific-sidebar-fill: var(--dsw-static-neutral-bluish-900);
+  --dsw-specific-sidebar-nav-item-hover: var(--dsw-static-neutral-bluish-850);
+  --dsw-specific-sidebar-nav-item-active: var(--dsw-static-neutral-bluish-750);
+  --dsw-alias-button-elevated-fill: var(--dsw-static-neutral-bluish-750);
+  --dsw-alias-button-floating-hover: var(--dsw-static-neutral-bluish-800);
 }

@@ -303,7 +303,13 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
       '.button-primary（创建任务）',
       // 主按钮的底与文字**按设计**不是基类那两个 token（vendored `Button.module.css`
       // 的 `.primary` 同两个 token），所以在这里显式给出——判据不拿基类期望套变体。
-      { backgroundToken: CONTROL_PRIMARY_FILL_TOKEN, labelToken: CONTROL_PRIMARY_LABEL_TOKEN },
+      // #173：按钮族参照（胶囊 18px / 0.5px l3）；primary 的描边色按设计是 transparent。
+      {
+        backgroundToken: CONTROL_PRIMARY_FILL_TOKEN,
+        labelToken: CONTROL_PRIMARY_LABEL_TOKEN,
+        borderToken: 'transparent',
+        family: 'button',
+      },
     )
     await assertControlTokens(
       alice.locator('form[aria-label="创建任务"] .button.button-quiet'),
@@ -314,6 +320,7 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
         backgroundToken: 'transparent',
         borderToken: 'transparent',
         labelToken: '--dsw-alias-brand-primary',
+        family: 'button',
       },
     )
     await taskIdInput.fill('起草验收报告')

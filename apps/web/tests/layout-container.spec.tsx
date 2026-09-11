@@ -220,18 +220,23 @@ describe('#152 布局：项目页折叠表单与顶栏折叠入口', () => {
     expect(screen.queryByLabelText('项目名称')).not.toBeInTheDocument()
   })
 
-  it('顶栏导航收在单个折叠入口里（同一条链接，不复制第二份）', async () => {
+  it('宽屏壳：左侧栏只有一份导航（链接不复制第二份），窄屏折叠菜单不渲染', async () => {
+    // #173：侧栏 ↔ 顶栏由 useWideLayout 互斥渲染。jsdom 没有 matchMedia，回落宽屏档，
+    // 所以这里看到的就是桌面侧栏形态；窄屏折叠菜单由 390px 的 Q5 覆盖（pairing-ui）。
     const { container } = renderApp('/', loggedInHandlers(ALICE, [projectsHandler([PROJECT])]))
     await screen.findByRole('heading', { name: '项目' })
 
-    const menu = container.querySelector('details.app-nav-menu')
-    expect(menu).not.toBeNull()
-    // 折叠入口有可读名字，导航本身仍是 aria-label="主导航" 的那一个
-    const summary = menu?.querySelector('summary.app-nav-toggle')
-    expect(summary).toHaveAttribute('aria-label', '主导航菜单')
+    const sidebar = container.querySelector('aside.app-sidebar')
+    expect(sidebar).not.toBeNull()
+    // 全屏只有一份主导航，且就住在侧栏里
     const navs = container.querySelectorAll('nav[aria-label="主导航"]')
     expect(navs).toHaveLength(1)
-    expect(navs[0]?.closest('details')).toBe(menu)
+    expect(navs[0]?.closest('aside')).toBe(sidebar)
     expect(within(navs[0] as HTMLElement).getAllByRole('link')).toHaveLength(5)
+    // 窄屏的折叠菜单在宽屏形态下不存在（不是"藏"，是"不渲染"——DOM 里不留第二份链接）
+    expect(container.querySelector('details.app-nav-menu')).toBeNull()
+    // 侧栏三段：品牌 → 导航 → 用户卡（显示名 + 中文角色 + 退出）
+    expect(within(sidebar as HTMLElement).getByText('WhalePod')).toBeVisible()
+    expect(within(sidebar as HTMLElement).getByRole('button', { name: '退出登录' })).toBeVisible()
   })
 })
