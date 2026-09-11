@@ -136,7 +136,7 @@ pnpm test:unit                      # 含 protocol catalog-drift / roundtrip
 pnpm check:protocol-generated       # 生成物与 schema 不得漂移
 ```
 
-### 判定（9 条用例，全部可失败）
+### 判定（12 条用例，全部可失败）
 
 | 分支 | 断言 | 结果 |
 |---|---|---|
@@ -149,6 +149,9 @@ pnpm check:protocol-generated       # 生成物与 schema 不得漂移
 | **Runtime 已不在管**（`supervisor.stopAll()` 摘 handle、抑制退出事件） | ack `accepted=false` + `RUNTIME_LOST`；不下发 | PASS |
 | 本 Node 无该 Run 事实 | ack `accepted=false` + `NOT_FOUND`；不 spawn | PASS |
 | 重复帧（Runtime 在管） | 只回放 ack；不二次注入 | PASS |
+| 回放时留结构化日志 | `info` + `replayed: rejected` + `replayedCode`（关键事件不静默） | PASS |
+| 首次结果**落库失败**（磁盘满模拟） | 仍照发 `accepted=true`、不悬挂；error 级日志留痕；只注入一次 | PASS |
+| **老库补列迁移**（旧 schema 库 + 历史行） | 打开后补齐 `outcome`/`error_code`/`error_message`；历史行 `outcomeOf → undefined`（按未处理完重投一次）；新结果可写可读且与 ack 同步 | PASS |
 
 **变异验证（证明用例不是恒真）**：把「重复投递回放首次结果」改回「一律回 `accepted=true`」，
 **恰好 2 条**回归用例转红（B1 回归 + 崩溃后重投），其余 34 条仍绿；还原后 36/36 绿。
@@ -166,7 +169,11 @@ pnpm check:protocol-generated       # 生成物与 schema 不得漂移
    增长率从「每 Run 一行」变成「每条消息一行、每行最多 20 000 字」。已登记，清理策略与 §9 日志
    保留期一起定。另外：**除 `run.start` 外本 Node 不主动重放 command**（`pending()` 目前只有测试
    消费者），ack 丢失时的唯一恢复路径是 Hub 按同一 commandId 重投。
-4. **`command.ack` 的 `error.code` 今天不会被 Hub 解释**（`apps/hub/src/modules/run/orchestrator.ts`
+4. **首次结果落库失败 + ack 也丢失**（#181 评审 N1 的残留极窄窗口）：落库失败已降级为
+   「仍照发 ack + error 留痕」（不会悬挂、正常情况下不会重投），但若那条 ack **同时**丢失，
+   Hub 重投时 `outcomeOf` 仍为空 → 命中「无处理结果 → 重新处理」→ 同一句追问**二次注入**。
+   彻底解需本地帧带 `commandId` 让 Runtime 去重（runtime-wire 变更，后续切片）。
+5. **`command.ack` 的 `error.code` 今天不会被 Hub 解释**（`apps/hub/src/modules/run/orchestrator.ts`
    对非 `run.start` 的 ack 直接 return）：切片③ 必须把映射写进同事务，否则被拒的指令会静默消失。
    §6.3 已写出要求的映射表与「不要照抄 run.start 失败映射」的告警。
 

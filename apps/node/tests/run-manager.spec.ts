@@ -23,6 +23,7 @@ import { SecretStore } from '../src/secret/store.js'
 import { WorkspaceRegistry } from '../src/workspace/registry.js'
 import { RuntimeSupervisor } from '../src/supervisor/runtime-supervisor.js'
 import { RunManager, type RunManagerTimers } from '../src/run/run-manager.js'
+import { openStateDatabase } from '../src/state/db.js'
 import type { RuntimeDriver, RuntimeHandle, RuntimeStartSpec } from '../src/runtime-driver.js'
 
 let root: string
@@ -134,6 +135,8 @@ async function makeHarness(
     online?: boolean
     /** P1-15：RunManager 的 Artifact 依赖注入（collector / inputs）。 */
     managerDeps?: Record<string, unknown>
+    /** 捕获结构化日志（观测面断言用）。 */
+    logs?: Array<{ level: string; msg: string; fields?: Record<string, unknown> }>
   } = {},
 ): Promise<Harness> {
   let online = options.online ?? true
@@ -181,6 +184,13 @@ async function makeHarness(
     homeDir: '/Users/testhome',
     stateDir: root,
     packsRoot: join(root, 'plugin-packs'),
+    ...(options.logs !== undefined
+      ? {
+          log: (level, msg, fields) => {
+            options.logs!.push({ level, msg, ...(fields !== undefined ? { fields } : {}) })
+          },
+        }
+      : {}),
     ...options.managerDeps,
   })
   harness.supervisor = supervisor
@@ -539,6 +549,86 @@ describe('run.followup 处理链（#180 / ADR-0009 决策 3）', () => {
     expect(ack?.payload['accepted']).toBe(false)
     expect(ack?.payload['error']).toMatchObject({ code: 'RUNTIME_LOST' })
     expect(h.runtimes[0]!.stdin.map((c) => c.type)).not.toContain('run.followup')
+  })
+
+  it('回放首次结果时留结构化日志（观测面：这次 ack 是回放、回放的是什么）', async () => {
+    const logs: Array<{ level: string; msg: string; fields?: Record<string, unknown> }> = []
+    const h = await makeHarness({ logs })
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    const frame = followupFrame('先被拒，之后 ack 丢失重投')
+    await h.manager.handleFrame(frame)
+    h.runtimes[0]!.emitStdout(stdoutRuntimeReady(RUN_ID))
+    await h.manager.handleFrame(frame)
+
+    const replayed = logs.find((entry) => entry.msg.includes('duplicate replayed first outcome'))
+    expect(replayed?.level).toBe('info')
+    expect(replayed?.fields).toMatchObject({
+      replayed: 'rejected',
+      replayedCode: 'INVALID_RUN_TRANSITION',
+    })
+  })
+
+  it('首次结果落库失败 → 仍照发 ack（不悬挂），并留 error 级日志', async () => {
+    const logs: Array<{ level: string; msg: string; fields?: Record<string, unknown> }> = []
+    const h = await makeHarness({ logs })
+    await startReadyRun(h)
+    // 模拟本地 spool 写失败（磁盘满 / IO 错 / WAL 锁）：写已发生是既定事实，ack 必须照发
+    // ——否则 Hub 会重投，而 outcomeOf 仍为空 ⇒ 同一句追问二次注入（#181 评审 N1）。
+    h.commandStore.recordOutcome = () => {
+      throw new Error('disk full')
+    }
+
+    await h.manager.handleFrame(followupFrame('落库会失败的这句追问'))
+
+    const ack = h.sentFrames().findLast((f) => f.type === 'command.ack')
+    expect(ack?.payload['accepted']).toBe(true)
+    expect(h.runtimes[0]!.stdin.filter((c) => c.type === 'run.followup')).toHaveLength(1)
+    expect(
+      logs.some((entry) => entry.level === 'error' && entry.msg.includes('outcome persist failed')),
+    ).toBe(true)
+  })
+
+  it('老库补列（#181 N3）：旧 schema 的 commands 库打开后补齐三列，历史行按「未处理」处理', async () => {
+    const legacyPath = join(root, 'legacy-commands.db')
+    // 造一个旧 schema 的库（没有 outcome / error_code / error_message 三列）+ 一行历史数据。
+    const legacy = openStateDatabase(legacyPath)
+    legacy.exec(`
+      create table spooled_command (
+        seq_id integer primary key autoincrement,
+        command_id text not null unique,
+        run_id text not null,
+        type text not null,
+        payload text not null,
+        received_at text not null,
+        acked_at text
+      )
+    `)
+    legacy
+      .prepare(
+        'insert into spooled_command (command_id, run_id, type, payload, received_at, acked_at) values (?, ?, ?, ?, ?, ?)',
+      )
+      .run('legacy-1', RUN_ID, 'run.start', '{}', new Date().toISOString(), null)
+    legacy.close()
+
+    const store = new CommandStore(legacyPath) // 构造函数里的 ensureColumn 负责迁移
+    const columns = (
+      store as unknown as { db: { prepare: (sql: string) => { all: () => unknown[] } } }
+    ).db
+      .prepare('pragma table_info(spooled_command)')
+      .all() as Array<{ name: string }>
+    expect(columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(['outcome', 'error_code', 'error_message']),
+    )
+    // 历史行没有处理结果 → 视为「未处理完」，重投时会真正处理一次（spool 本意）。
+    expect(store.outcomeOf('legacy-1')).toBeUndefined()
+    // 新结果可写可读，且与 ack 同步落库。
+    store.recordOutcome('legacy-1', 'rejected', { code: 'NOT_FOUND', message: 'legacy row' })
+    expect(store.outcomeOf('legacy-1')).toEqual({
+      outcome: 'rejected',
+      error: { code: 'NOT_FOUND', message: 'legacy row' },
+    })
+    expect(store.isAcked('legacy-1')).toBe(true)
+    store.close()
   })
 
   it('Run 已终态 → ack false INVALID_RUN_TRANSITION，且不下发（终态禁止复活）', async () => {

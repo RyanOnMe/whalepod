@@ -420,11 +420,19 @@ export class RunManager {
        *   本意（未处理完的 command 重来时应当被真正处理）。
        */
       const previous = this.deps.commandStore.outcomeOf(commandId)
-      if (previous?.outcome === 'accepted') {
-        this.ack(commandId, true)
-        return
-      }
-      if (previous?.outcome === 'rejected') {
+      if (previous !== undefined) {
+        // 回放是 B1 的关键事件（不该静默）：观测面要能看见「这次 ack 是回放、回放的是什么」。
+        this.log('info', 'run.followup duplicate replayed first outcome', {
+          component: 'node.run_manager',
+          runId,
+          commandId,
+          replayed: previous.outcome,
+          ...(previous.error !== undefined ? { replayedCode: previous.error.code } : {}),
+        })
+        if (previous.outcome === 'accepted') {
+          this.ack(commandId, true)
+          return
+        }
         this.ack(
           commandId,
           false,
@@ -433,9 +441,32 @@ export class RunManager {
         return
       }
     }
+    /**
+     * 记录首次处理结果。**落库失败绝不吞掉 ack**（#181 评审 N1）：ack 描述的是刚刚
+     * 真实发生的事（已下发 / 已拒绝），与本地台账是否写成无关；反过来，若不 ack，
+     * Hub 会按同一 commandId 重投，而 `outcomeOf` 仍是 undefined（落库失败），于是
+     * 重新处理一次 → 同一句追问**二次注入**。所以落库异常降级为 error 级留痕，
+     * ack 照发；代价是「ack 也丢失」时可能二次注入（极窄，登记在验收文档）。
+     */
+    const persistOutcome = (
+      result: 'accepted' | 'rejected',
+      error?: { code: string; message: string },
+    ): void => {
+      try {
+        this.deps.commandStore.recordOutcome(commandId, result, error)
+      } catch (cause) {
+        this.log('error', 'run.followup outcome persist failed; ack still sent', {
+          component: 'node.run_manager',
+          runId,
+          commandId,
+          outcome: result,
+          error: cause instanceof Error ? cause.message : String(cause),
+        })
+      }
+    }
     const reject = (code: ErrorCode, message: string): void => {
       // 记录首次结果（与 ack 同一时刻的事实）：Hub 重投时据此回放同一个拒绝。
-      this.deps.commandStore.recordOutcome(commandId, 'rejected', { code, message })
+      persistOutcome('rejected', { code, message })
       this.log('warn', 'run.followup rejected', { component: 'node.run_manager', runId, code })
       this.ack(commandId, false, { code, message })
     }
@@ -473,7 +504,7 @@ export class RunManager {
       reject('RUNTIME_LOST', 'runtime is not active; followup rejected')
       return
     }
-    this.deps.commandStore.recordOutcome(commandId, 'accepted')
+    persistOutcome('accepted')
     this.ack(commandId, true)
     this.log('info', 'run.followup dispatched to runtime', {
       component: 'node.run_manager',
