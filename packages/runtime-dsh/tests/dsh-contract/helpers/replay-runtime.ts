@@ -81,7 +81,14 @@ export function commandFrame<T extends RuntimeCommand['type']>(
 }
 
 export function initializeCommand(spec: RuntimeSpec): RuntimeCommand {
-  return commandFrame('runtime.initialize', { ...spec })
+  // RuntimeSpec 的 artifactInputs 是 readonly（spec 是只读事实），wire 载荷要可变数组。
+  // 先解构摘掉这个键、再按需放回副本：否则 TS 会把两处 spread 的该属性并成
+  // 「readonly 数组 或 可变数组」而仍不兼容（#178 纳入 tests typecheck 后暴露）。
+  const { artifactInputs, ...rest } = spec
+  return commandFrame('runtime.initialize', {
+    ...rest,
+    ...(artifactInputs !== undefined ? { artifactInputs: [...artifactInputs] } : {}),
+  })
 }
 
 export interface ProbeRuntime {
@@ -194,7 +201,8 @@ export async function startReplayRuntime(
       }, FRAME_TIMEOUT_MS)
       waiters.push({
         predicate: predicate as (frame: RuntimeOutput) => boolean,
-        resolve: (frame) => resolve(frame),
+        // T 就是 predicate 的窄化结果：帧到这一步已由谓词判定为 T，收窄点只在这一处。
+        resolve: (frame) => resolve(frame as T),
         timer,
       })
     })
