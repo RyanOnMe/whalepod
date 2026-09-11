@@ -4,7 +4,7 @@
  * 原始 Session event、dshSessionId、digest 等——03 §9 脱敏 + 02 Step 1 断言）。
  */
 import type { ArtifactRow, RunRow } from '@whalepod/db'
-import { getTask, listArtifactsByTask, listComments, listRunsByTask } from '@whalepod/db'
+import { getTask, listArtifactsByTask, listMessages, listRunsByTask } from '@whalepod/db'
 import type { DbHandle } from '@whalepod/db'
 import { toCommentView, toTaskView } from './queries.js'
 import type { CommentView, TaskView } from './queries.js'
@@ -82,7 +82,7 @@ export async function getTaskRoom(
   const task = await getTask(handle, taskId)
   if (task === undefined) return undefined
   const [comments, runs, artifacts] = await Promise.all([
-    listComments(handle, taskId),
+    listMessages(handle, taskId),
     listRunsByTask(handle, taskId),
     listArtifactsByTask(handle, taskId),
   ])
