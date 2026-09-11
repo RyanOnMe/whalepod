@@ -16,12 +16,13 @@
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { DomainError } from '@whalepod/domain'
-import type { Database } from '@whalepod/db'
+import type { Database, Outbox } from '@whalepod/db'
 import type { ErrorCode } from '@whalepod/protocol'
-import { CreateRunRequestSchema } from '@whalepod/protocol'
+import { CreateFollowupRequestSchema, CreateRunRequestSchema } from '@whalepod/protocol'
 import type { ActorContext } from './commands.js'
 import { RunCommandError } from './errors.js'
 import type { RunOrchestrator } from './orchestrator.js'
+import { sendRunFollowup } from './followup.js'
 import { getRunView } from './queries.js'
 import { getRun, listRunEvents } from '@whalepod/db'
 import { DecideApprovalRequestSchema } from '@whalepod/protocol'
@@ -29,6 +30,8 @@ import { DecideApprovalRequestSchema } from '@whalepod/protocol'
 export interface RunRoutesDeps {
   orchestrator: RunOrchestrator
   database: Database
+  /** 追问命令的入队口（#186）；与 orchestrator 共用同一个 Outbox 实例。 */
+  outbox: Outbox
   resolveActor: (request: FastifyRequest) => Promise<ActorContext>
   dshDistributionVersionFor: (deviceId: string) => Promise<string | undefined>
 }
@@ -120,6 +123,33 @@ export function registerRunRoutes(app: FastifyInstance, deps: RunRoutesDeps): vo
       const runId = (request.params as { runId?: string }).runId ?? ''
       const run = await deps.orchestrator.cancel(actor, runId)
       return reply.status(200).send({ ok: true, data: run })
+    } catch (error) {
+      const { code, message } = errorCodeOf(error)
+      return sendError(reply, code, message)
+    }
+  })
+
+  /**
+   * POST /runs/:runId/followup（03 §6.3；ADR-0009 决策 3；#186）。
+   * 往活跃 Run 里继续说话：受理判定与入队命令在命令层同一把 Run 行锁下完成，
+   * 返回线程消息视图（含受理状态）。状态不受理时**也返回这条消息**（201，状态为
+   * rejected + 理由），只有越权/不存在才是错误码——「被拒」是消息的命运，不是请求的失败。
+   */
+  app.post('/runs/:runId/followup', async (request, reply) => {
+    try {
+      const actor = await deps.resolveActor(request)
+      const runId = (request.params as { runId?: string }).runId ?? ''
+      const keyHeader = request.headers['idempotency-key']
+      const idempotencyKey = Array.isArray(keyHeader) ? keyHeader[0] : keyHeader
+      if (idempotencyKey === undefined || idempotencyKey.trim().length === 0) {
+        return sendError(reply, 'VALIDATION_FAILED', 'Idempotency-Key header is required')
+      }
+      const body = CreateFollowupRequestSchema.parse(request.body)
+      const message = await sendRunFollowup(deps.database, deps.outbox, actor, runId, {
+        text: body.text,
+        idempotencyKey,
+      })
+      return reply.status(201).send({ ok: true, data: message })
     } catch (error) {
       const { code, message } = errorCodeOf(error)
       return sendError(reply, code, message)

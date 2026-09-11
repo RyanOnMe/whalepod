@@ -56,6 +56,9 @@ export interface CommentView {
   targetAgentId: string | null
   runId: string | null
   instructionState: 'pending' | 'accepted' | 'rejected' | null
+  /** 拒绝理由（#186）：`team_event` 只有 24 小时窗口，理由必须能长期读到。 */
+  instructionErrorCode: string | null
+  instructionErrorMessage: string | null
   createdAt: string
   editedAt: string | null
 }
@@ -71,6 +74,8 @@ export function toCommentView(row: TaskMessageRow): CommentView {
     targetAgentId: row.targetAgentId,
     runId: row.runId,
     instructionState: row.instructionState as CommentView['instructionState'],
+    instructionErrorCode: row.instructionErrorCode,
+    instructionErrorMessage: row.instructionErrorMessage,
     createdAt: row.createdAt.toISOString(),
     editedAt: row.editedAt?.toISOString() ?? null,
   }

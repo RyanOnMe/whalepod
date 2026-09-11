@@ -16,6 +16,11 @@ export interface OutboxCommand {
   deviceId: string
   type: string
   payload: unknown
+  /**
+   * 触发该命令的线程消息（#186）。目前只有 `run.followup` 带：Node 的 ack 只回 commandId，
+   * 而 wire 帧载荷固定是 `{runId, text}`，Hub 只能靠这一列把 ack 认回消息去结算受理状态。
+   */
+  messageId?: string | undefined
 }
 
 export interface ClaimedCommand extends OutboxCommand {
@@ -103,6 +108,11 @@ export class Outbox {
   /**
    * 在命令事务内入队，与领域状态、Team Event、命令回执原子提交（02 Task 4 Step 4）。
    * 重复 commandId 直接撞主键（23505），视为编程错误抛出。
+   *
+   * `notBefore` 缺省 = **立即可投**，用 Outbox 自己的时钟写 `next_attempt_at`：不能留给
+   * 列默认值 `now()`（DB 时钟）。两者在注入假时钟的场景下不同——DB 的 now() 会比 worker 的
+   * 假 now 晚，于是 `claim` 的 `next_attempt_at <= now` 永远不成立，命令静默躺在表里
+   *（#186 实测：唯一一条没传 notBefore 的入队就这样永不派发）。
    */
   async enqueue(tx: Tx, command: OutboxCommand & { notBefore?: Date }): Promise<void> {
     const [row] = await tx
@@ -112,7 +122,8 @@ export class Outbox {
         deviceId: command.deviceId,
         type: command.type,
         payload: command.payload,
-        ...(command.notBefore !== undefined ? { nextAttemptAt: command.notBefore } : {}),
+        ...(command.messageId !== undefined ? { messageId: command.messageId } : {}),
+        nextAttemptAt: command.notBefore ?? this.nowFn(),
       })
       .returning({ id: dispatchOutbox.id })
     if (row === undefined) throw new Error('enqueue returned no row')

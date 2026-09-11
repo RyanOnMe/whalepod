@@ -200,6 +200,8 @@ describe('auth-navigation', () => {
       targetAgentId: null,
       runId: null,
       instructionState: null,
+      instructionErrorCode: null,
+      instructionErrorMessage: null,
       createdAt: '2026-08-26T00:01:00.000Z',
       editedAt: null,
     }

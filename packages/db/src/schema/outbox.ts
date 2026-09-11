@@ -12,6 +12,7 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core'
 import { devices } from './device.js'
+import { taskMessages } from './project.js'
 
 // 持久 Team Event（03 §5：cursor 补发、24 小时保留窗口）。
 // id 即 Browser WS 的 cursor（wire 上序列化为字符串）。
@@ -45,8 +46,18 @@ export const dispatchOutbox = pgTable(
     nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
     ackedAt: timestamp('acked_at', { withTimezone: true }),
     failedAt: timestamp('failed_at', { withTimezone: true }),
+    /**
+     * 该命令由哪条线程消息触发（#186）：followup 的 ack 只带回 commandId，而 wire 帧载荷
+     * 固定是 `{runId, text}`，映射只能落在 Hub 侧的 outbox 行上。指令起 Run 不用这列
+     *（那条链的锚点是 `run.trigger_message_id`，切片③c）。
+     */
+    messageId: uuid('message_id').references(() => taskMessages.id),
   },
   (table) => [
+    check(
+      'dispatch_outbox_message_only_for_followup',
+      sql`${table.messageId} is null or ${table.type} = 'run.followup'`,
+    ),
     index('dispatch_outbox_pending_idx')
       .on(table.nextAttemptAt)
       .where(sql`${table.ackedAt} is null and ${table.failedAt} is null`),

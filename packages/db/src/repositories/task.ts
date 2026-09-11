@@ -1,4 +1,4 @@
-import { asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { projects, taskMessages, tasks } from '../schema/project.js'
 
@@ -91,6 +91,9 @@ export interface NewTaskMessage {
   targetAgentId?: string | undefined
   runId?: string | undefined
   instructionState?: 'pending' | 'accepted' | 'rejected' | undefined
+  /** 拒绝理由（#186）：只在 `instructionState='rejected'` 时可有值（DB check 钉住）。 */
+  instructionErrorCode?: string | undefined
+  instructionErrorMessage?: string | undefined
   /** 显式创建时间（默认 now()）；迁移测试与回填用。 */
   createdAt?: Date | undefined
 }
@@ -101,6 +104,39 @@ export async function insertMessage(
 ): Promise<TaskMessageRow> {
   const [row] = await handle.insert(taskMessages).values(message).returning()
   if (row === undefined) throw new Error('insert message returned no row')
+  return row
+}
+
+/**
+ * 指令受理结算（#186 / ADR-0009 决策 3）：把 `pending` 收敛成 `accepted` / `rejected`，
+ * 拒绝时**同时落理由**（team_event 只有 24 小时窗口，理由不能只活在事件里）。
+ *
+ * 只从 `pending` 收敛：已是终态的行返回 undefined（重复 ack 重放、Hub 重启后的旧 ack
+ * 都不得二次改写既成事实）。返回 undefined 与「行不存在」对调用方同一处理——都不改账。
+ */
+export async function settleInstruction(
+  handle: DbHandle,
+  messageId: string,
+  settlement:
+    | { state: 'accepted'; runId?: string }
+    | { state: 'rejected'; error: { code: string; message: string } },
+): Promise<TaskMessageRow | undefined> {
+  const [row] = await handle
+    .update(taskMessages)
+    .set(
+      settlement.state === 'accepted'
+        ? {
+            instructionState: 'accepted',
+            ...(settlement.runId !== undefined ? { runId: settlement.runId } : {}),
+          }
+        : {
+            instructionState: 'rejected',
+            instructionErrorCode: settlement.error.code,
+            instructionErrorMessage: settlement.error.message,
+          },
+    )
+    .where(and(eq(taskMessages.id, messageId), eq(taskMessages.instructionState, 'pending')))
+    .returning()
   return row
 }
 

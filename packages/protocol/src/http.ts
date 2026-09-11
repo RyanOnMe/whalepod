@@ -107,6 +107,16 @@ export const CreateRunRequestSchema = z.strictObject({
   rerunOfRunId: z.uuid().optional(),
 })
 
+/**
+ * POST /runs/:runId/followup（§6.3；ADR-0009 决策 3）：往活跃 Run 里继续说话。
+ *
+ * 载荷与 node-wire 的下行帧同源——`text` 就是塞进 Runtime stdin 的那段文字（上限同
+ * `run.followup` 帧的 20 000）。受理规则按 Run **状态**判定（决策 5），理由见命令层。
+ */
+export const CreateFollowupRequestSchema = z.strictObject({
+  text: z.string().min(1).max(20_000),
+})
+
 /** POST /approvals/:approvalId/decisions：一次性决定（§3.3）。 */
 export const DecideApprovalRequestSchema = z.strictObject({
   decision: z.enum(['allowed_once', 'rejected']),
@@ -202,6 +212,7 @@ export type UpdateTaskRequest = z.infer<typeof UpdateTaskRequestSchema>
 export type ReassignTaskRequest = z.infer<typeof ReassignTaskRequestSchema>
 export type CreateCommentRequest = z.infer<typeof CreateCommentRequestSchema>
 export type CreateRunRequest = z.infer<typeof CreateRunRequestSchema>
+export type CreateFollowupRequest = z.infer<typeof CreateFollowupRequestSchema>
 export type DecideApprovalRequest = z.infer<typeof DecideApprovalRequestSchema>
 export type CreateAgentRequest = z.infer<typeof CreateAgentRequestSchema>
 export type CreateAgentRevisionRequest = z.infer<typeof CreateAgentRevisionRequestSchema>

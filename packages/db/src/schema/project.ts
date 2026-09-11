@@ -86,8 +86,14 @@ export const taskMessages = pgTable(
     targetAgentId: uuid('target_agent_id').references(() => agents.id),
     /** 该指令/追问落到哪个 Run 上（followup 必填；instruction 建 Run 前可空）。 */
     runId: uuid('run_id').references(() => runs.id),
-    /** 受理状态收敛：pending → accepted / rejected（rejected 的理由见 Run 失败码语义）。 */
+    /** 受理状态收敛：pending → accepted / rejected。 */
     instructionState: text('instruction_state'),
+    /**
+     * 拒绝理由（#186）：`team_event` 只有 24 小时保留窗口，理由必须与状态同列存放，
+     * 否则「我的指令为什么没被受理」在一天后就查不到了。仅 `rejected` 时可有值。
+     */
+    instructionErrorCode: text('instruction_error_code'),
+    instructionErrorMessage: text('instruction_error_message'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     editedAt: timestamp('edited_at', { withTimezone: true }),
   },
@@ -119,6 +125,11 @@ export const taskMessages = pgTable(
     check(
       'task_message_accepted_has_run',
       sql`${table.instructionState} <> 'accepted' or ${table.runId} is not null`,
+    ),
+    // 理由只在被拒时有意义：受理成功却带拒绝理由是自相矛盾的账。
+    check(
+      'task_message_error_only_when_rejected',
+      sql`${table.instructionState} = 'rejected' or (${table.instructionErrorCode} is null and ${table.instructionErrorMessage} is null)`,
     ),
     index('task_message_task_created_idx').on(table.taskId, table.createdAt),
   ],

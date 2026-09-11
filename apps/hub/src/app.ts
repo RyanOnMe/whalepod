@@ -222,6 +222,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       registerRunRoutes(api, {
         orchestrator,
         database,
+        outbox,
         // SessionActor.userId 是裸 string；Run 命令面要领域 Actor（userId 带 brand）——
         // 与 task/routes.ts 同一转换先例。
         resolveActor: async (request) => {

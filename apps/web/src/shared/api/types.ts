@@ -95,6 +95,8 @@ export interface CommentView {
   targetAgentId: string | null
   runId: string | null
   instructionState: 'pending' | 'accepted' | 'rejected' | null
+  instructionErrorCode: string | null
+  instructionErrorMessage: string | null
   createdAt: string
   editedAt: string | null
 }
