@@ -85,12 +85,13 @@ ready 时间（区间，跨次有波动；单次样本不足下结论）：
 - **长日志未测**：最大只到 273 KB / 8 轮。10 MB 级日志的装载耗时与内存未验（趋势线性，
   但「线性外推到 10 MB」不是实测，不当结论用）。
 - **同 Workspace 约束（#177 O2，重要）**：`ResumeAgentOptions` **不接受 `cwd`**，续跑 Run 的
-  工作目录来自**持久化 header**，而桥内 artifact 校验用的是**新 spec 的 `workspacePath`**。
-  探针两阶段刻意复用同一 workspace，所以这条不对称**在探针里不可观测**：真正落地时
-  resume 只允许同 Workspace，切片⑤ 必须把这条做成机器判据，否则会出现「工具在旧 workspace
-  跑、artifact 按新 workspace 校验」的错位。
-- **跨设备未测**：本探针 Workspace / DSH_HOME 固定在同一台机器；「换设备续跑」没有可装载的
-  日志（日志按 `meta.cwd` 分目录），按 ADR-0009 决策 3 的摘要 fallback 处理（未验）。
+  工作目录来自**持久化 header**（旧值），而桥内 artifact 校验用的是**新 spec 的 `workspacePath`**。
+  探针两阶段刻意复用同一 workspace，所以这条不对称**在探针里不可观测**。落地时必须限制
+  **同 Workspace**——注意理由（评审二次纠正）：**换目录仍能按 id 找到旧日志**（persistence
+  的 `loadStored` 支持「cwd 未知时跨项目目录按 id 读」），于是会出现「工具在新目录跑、会话按
+  旧 cwd 续」的静默错位；真正没有可装载日志的是**换设备**（日志在设备的 DSH_HOME 里）。
+- **跨设备未测**：本探针 Workspace / DSH_HOME 固定在同一台机器；换设备的续跑按 ADR-0009
+  决策 3 的摘要 fallback 处理（未验）。
 - **工具调用中途的历史未测**：探针是纯文本轮次（无工具调用、无审批）。带 tool call / 审批的
   历史能否装载后继续，未验。
 - **并发续跑未测**：同一 session id 被两个 Runtime 同时装载的行为未验（ADR-0009 决策 5 的

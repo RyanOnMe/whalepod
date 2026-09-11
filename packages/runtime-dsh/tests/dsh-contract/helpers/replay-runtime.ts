@@ -43,6 +43,9 @@ const FIXTURES_DIR = fileURLToPath(new URL('../fixtures/', import.meta.url))
  */
 export function runtimeSpec(overrides: Partial<RuntimeSpec> = {}): RuntimeSpec {
   const workspacePath = overrides.workspacePath ?? mkdtempSync(join(tmpdir(), 'whalepod-probe-ws-'))
+  // 注意（#177 R5 评审提醒）：**自带 workspacePath 的调用方不会拿到 out/report.md 脚手架**。
+  // 这是有意为之——复用既有 workspace 的探针（resume 多轮）不该被注入新文件；新调用方若要
+  // 走 publish_artifact 探针，得自己准备候选文件。
   if (overrides.workspacePath === undefined) {
     // P1-15：桥内 publish_artifact 校验已接线（realpath/边界/size）——探针里
     // publish_artifact('out/report.md') 的候选必须是工作区内真实存在的文件，

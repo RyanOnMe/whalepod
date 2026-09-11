@@ -25,7 +25,7 @@
  *
  * - **日志增长形态**：persisted load 用**同一 session id、同一日志文件**追加，不是
  *   复制历史到新会话。所以逐次续跑应当是**线性**增长；探针按轮测字节数，并断言
- *   第一轮那句话在日志里**只出现一次**（复制式 seed 会让它出现两次以上）。
+ *   「旧日志字节持续增长 + 会话目录集合恰好只有那一个」（这两条才是"没跨会话复制"的判据）。
  * - **续跑耗时**：记录每轮 `runtime.initialize → runtime.ready` 的墙钟时间（含 boot +
  *   装载 + setup + whenIdle，探针如实标注口径，不假装只量了装载）。
  */
@@ -117,23 +117,26 @@ describe('probe: resume（#176 切片①，ADR-0009 决策 3 前置）', () => {
       const textAfterFirst = readFileSync(logFile, 'utf8')
       expect(textAfterFirst).toContain(FIRST_PROMPT)
       /**
-       * 防复制口径（自校准，不猜记录条数）：第一轮那句话在**续跑前**出现几次，
-       * 续跑后就该还是几次。persisted load 是原地追加，不会重写或复制既有历史；
-       * 复制式 seed（新建会话 + 复制前缀）会让它成倍出现。
+       * 防重复追加口径（自校准，不猜记录条数）：第一轮那句话在**续跑前**出现几次，
+       * 续跑后就该还是几次——它只能抓"同一文件里把历史又追加了一遍"。
+       * **抓不到跨会话复制**（fork/seed 形态是新会话、新文件，旧文件一字不动、计数当然不变）：
+       * 那一条由下面的「字节持续增长」与「会话目录集合唯一」负责（#177 R6 评审纠正）。
        * 为什么不用验证码本身计数：`7788` 会随每轮 assistant 回复进入日志（delta /
        * block-end / 后续请求都带），那是正常的追加，不是复制——第一版就是这么写错的。
        */
       const firstPromptOccurrences = textAfterFirst.split(FIRST_PROMPT).length - 1
       expect(firstPromptOccurrences).toBeGreaterThan(0)
 
-      // 逐轮续跑：第二轮用静态脚本（含 fromRequest 判据），第三轮起用生成的脚本，
-      // 每轮都记字节数与「boot + 装载 + ready」耗时。
+      // 逐轮续跑：8 轮共用同一份静态脚本（`resume-continue`）——上游 replay 只按
+      // turn/step 把 chunk 切成"一次模型调用"，fixture 里的 turn 号进不了真实会话
+      //（#177 O3 评审核实），所以不必按轮生成脚本。每轮都记字节数与
+      // 「boot + 装载 + ready」耗时。
       const rounds: { round: number; bytes: number; readyMs: number; assistant: string }[] = []
       for (let round = 2; round <= 8; round += 1) {
         // 关键：workspace 与 DSH_HOME 复用第一轮的——会话日志就躺在那里。
         // #177 R5：直接继承 specA 的路径、只换 runId，不再走 runtimeSpec({...})——
         // 那种写法会先白造两个临时目录再被覆盖掉（评审实测每次运行漏 14 个孤儿目录）。
-        const specB: RuntimeSpec = { ...specA, runId: randomUUID() }
+        const specB = { ...specA, runId: randomUUID() }
         const started = Date.now()
         const runtimeB = await startReplayRuntime('resume-continue', specB, {
           probeResumeSessionId: sessionId,
@@ -218,7 +221,7 @@ describe('probe: resume（#176 切片①，ADR-0009 决策 3 前置）', () => {
 
   /**
    * 判据不恒真的反证（本仓的变异验证习惯）：把续跑脚本用在**没有 resume 的新会话**上，
-   * 那个 `{{fromRequest:验证码是 (\d{4})}}` 占位符就无内容可匹配——上游 llm-replay 会抛
+   * 那个 `{{fromRequest:请记住：验证码是 (\\d{4})}}` 占位符就无内容可匹配——上游 llm-replay 会抛
    * `fromRequest pattern ... matched nothing`，turn 以错误收敛、bridge 发 `runtime.fatal`，
    * **不会**出现 run.completed。也就是说判据 2 的"绿"确实要求上下文在场。
    */
