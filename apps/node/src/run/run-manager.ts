@@ -22,6 +22,7 @@
  *   node.supervisor 结构化日志（真人路径可观测，不做接口背后的暗手）。
  */
 import type {
+  ErrorCode,
   NodeDownstream,
   ProjectedRunEvent,
   RuntimeArtifactInput,
@@ -207,6 +208,8 @@ export class RunManager {
         return this.handleRunStart(frame.payload)
       case 'run.cancel':
         return this.handleRunCancel(frame.payload)
+      case 'run.followup':
+        return this.handleRunFollowup(frame.payload)
       case 'approval.decide':
         return this.handleApprovalDecide(frame.payload)
       case 'run.event_ack':
@@ -370,6 +373,83 @@ export class RunManager {
       // 副本（spawn 前失败），同样要清理（#62：不留半成品目录）。
       this.cleanupInputs(runId)
     }
+  }
+
+  // ---------- run.followup（#180 / ADR-0009 决策 3：执行中继续说话） ----------
+
+  /**
+   * Run 执行期间的一次追问：**不新开 Run、不换 session**，直接把 text 写进 Runtime
+   * stdin 的本地 `run.followup` 帧（runtime-wire 既有），由 Runtime 排队成一次
+   * follow-up turn。
+   *
+   * 受理语义（与协议注释同口径）：`ack accepted=true` 只表示「**已受理并下发到
+   * Runtime stdin**」，不表示模型已读到——进展仍由既有 `session.event` / `run.*`
+   * 上行帧呈现。Hub 侧据此把指令落 `instruction_state=accepted`（切片③）。
+   *
+   * 拒绝路径一律走 §10 现有码（不新造码），且**都不下发**：
+   * - 本地已终态（finalFacts）→ INVALID_RUN_TRANSITION（终态禁止复活；免打扰守卫先于一切）
+   * - 本 Node 没有这个 Run 的任何事实 → NOT_FOUND
+   * - 还没到 runtime.ready（Run 不处于 running）→ INVALID_RUN_TRANSITION
+   * - Runtime 已不在 → RUNTIME_LOST
+   */
+  private async handleRunFollowup(
+    payload: Extract<NodeDownstream, { type: 'run.followup' }>['payload'],
+  ): Promise<void> {
+    const { commandId, runId } = payload
+    const outcome = this.deps.commandStore.record({
+      commandId,
+      runId,
+      type: 'run.followup',
+      payload,
+    })
+    if (outcome === 'duplicate' && this.deps.supervisor.isActive(runId)) {
+      // R7 同款：Hub 重发（ack 丢失）且 Runtime 仍在管 → 回放旧 ack。同一句追问已经在
+      // Runtime 的队列里，绝不二次注入。
+      this.ack(commandId, true)
+      return
+    }
+    // 重复投递但 Runtime 已不在管：**不能盲目回 accepted=true**——那句话并没有
+    // （或不再）躺在任何 Runtime 队列里。落到下面的守卫按真实状态拒绝（终态 / 未
+    // running / 已丢失），把「受理」的含义守住。
+    const reject = (code: ErrorCode, message: string): void => {
+      this.deps.commandStore.markAcked(commandId)
+      this.log('warn', 'run.followup rejected', { component: 'node.run_manager', runId, code })
+      this.ack(commandId, false, { code, message })
+    }
+    if (this.finalFacts.has(runId)) {
+      reject('INVALID_RUN_TRANSITION', 'run is terminal; followup rejected')
+      return
+    }
+    if (!this.runFacts.has(runId) && !this.readyFacts.has(runId)) {
+      reject('NOT_FOUND', 'run is unknown on this node')
+      return
+    }
+    if (!this.readyFacts.has(runId)) {
+      // Run 存在但还没 running（queued / dispatching）：本 Node 不排队，交回 Hub 决定
+      //（ADR-0009 决策 5：未 running 的窗口由 Hub 侧排队，进 running 后按序下发）。
+      reject('INVALID_RUN_TRANSITION', 'run has not reached running; followup rejected')
+      return
+    }
+    // 用 dispatchToRuntime 的**原子返回值**而不是先 isActive() 再派发：Runtime 退出
+    // 事件与终态事实写入之间有窗口（supervisor 先摘 handle、manager 才落 finalFacts），
+    // check-then-act 会在这个窗口里把追问投给一个已经不在的 Runtime——静默丢失。
+    const dispatched = this.deps.supervisor.dispatchToRuntime(runId, {
+      protocolVersion: 1,
+      messageId: crypto.randomUUID(),
+      sentAt: this.now().toISOString(),
+      type: 'run.followup',
+      payload: { runId, text: payload.text },
+    })
+    if (!dispatched) {
+      reject('RUNTIME_LOST', 'runtime is not active; followup rejected')
+      return
+    }
+    this.deps.commandStore.markAcked(commandId)
+    this.ack(commandId, true)
+    this.log('info', 'run.followup dispatched to runtime', {
+      component: 'node.run_manager',
+      runId,
+    })
   }
 
   // ---------- run.cancel（P1-16 取消升级链路） ----------

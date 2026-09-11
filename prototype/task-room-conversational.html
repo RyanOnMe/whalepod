@@ -1,0 +1,1044 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WhalePod 原型 · 对话式任务房间（ADR-0009）</title>
+<style>
+  :root {
+    --platform: #f4f4f6;
+    --card: #ffffff;
+    --ink: #1d1d1f;
+    --ink-2: #5a5a60;
+    --ink-3: #8e8e96;
+    --line: rgba(0, 0, 0, 0.08);
+    --line-strong: rgba(0, 0, 0, 0.14);
+    --sidebar: #ececef;
+    --hover: rgba(0, 0, 0, 0.045);
+    --active: rgba(0, 0, 0, 0.08);
+    --accent: #1d1d1f;
+    --green: #2f9e5f;
+    --green-bg: rgba(47, 158, 95, 0.1);
+    --amber: #b7791f;
+    --amber-bg: rgba(183, 121, 31, 0.1);
+    --red: #c9392b;
+    --red-bg: rgba(201, 57, 43, 0.1);
+    --blue: #3167d8;
+    --blue-bg: rgba(49, 103, 216, 0.09);
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+    --shadow-soft: 0 2px 12px rgba(0, 0, 0, 0.05), 0 12px 40px rgba(0, 0, 0, 0.06);
+    --shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.08), 0 20px 56px rgba(0, 0, 0, 0.12);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { -webkit-font-smoothing: antialiased; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+    background: var(--platform);
+    color: var(--ink);
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  .mono { font-family: var(--mono); font-size: 12px; }
+
+  /* ── 原型说明条 ─────────────────────────── */
+  .proto-banner {
+    background: var(--ink);
+    color: rgba(255, 255, 255, 0.92);
+    padding: 10px 24px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .proto-banner strong { font-weight: 600; }
+  .proto-banner .tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 99px;
+    padding: 2px 10px;
+  }
+  .proto-banner a { color: rgba(255,255,255,.75); }
+
+  /* ── 壳 ─────────────────────────────── */
+  .shell { display: flex; min-height: calc(100vh - 42px); }
+  .sidebar {
+    width: 224px;
+    flex: none;
+    background: var(--sidebar);
+    border-right: 0.5px solid var(--line-strong);
+    padding: 16px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px 16px;
+    font-weight: 600; font-size: 15px;
+  }
+  .brand .logo {
+    width: 28px; height: 28px; border-radius: 8px;
+    background: var(--ink); color: #fff;
+    display: grid; place-items: center;
+    font-size: 14px; font-weight: 700;
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    height: 40px; padding: 0 12px;
+    border-radius: 12px;
+    color: var(--ink-2);
+    font-size: 13.5px;
+    cursor: default;
+    user-select: none;
+  }
+  .nav-item.on { background: var(--active); color: var(--ink); font-weight: 500; }
+  .nav-item .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); }
+  .nav-item.on .dot { background: var(--green); }
+  .side-user {
+    margin-top: auto;
+    border-top: 0.5px solid var(--line);
+    padding: 12px 10px 4px;
+    display: flex; align-items: center; gap: 10px;
+  }
+
+  /* ── 主卡 ─────────────────────────────── */
+  .main { flex: 1; padding: 20px 24px 24px; min-width: 0; }
+  .app-card {
+    background: var(--card);
+    border-radius: 20px;
+    box-shadow: var(--shadow-soft);
+    border: 0.5px solid var(--line);
+    /* 定高（不是 min-height）：卡片内的线程与 Run Console 各自内部滚动，
+       输入框始终在视口内——与线上壳一致。 */
+    height: calc(100vh - 86px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Task 头 */
+  .task-head {
+    padding: 18px 24px 14px;
+    border-bottom: 0.5px solid var(--line);
+    display: flex; align-items: flex-start; gap: 16px;
+  }
+  .task-title { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+  .task-sub { color: var(--ink-3); font-size: 12.5px; margin-top: 2px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 22px; padding: 0 10px;
+    border-radius: 99px;
+    font-size: 12px; font-weight: 500;
+    border: 0.5px solid transparent;
+    white-space: nowrap;
+  }
+  .chip.green { background: var(--green-bg); color: var(--green); }
+  .chip.amber { background: var(--amber-bg); color: var(--amber); }
+  .chip.red   { background: var(--red-bg); color: var(--red); }
+  .chip.blue  { background: var(--blue-bg); color: var(--blue); }
+  .chip.gray  { background: var(--hover); color: var(--ink-2); border-color: var(--line); }
+  .chip.mono  { font-family: var(--mono); font-size: 11px; }
+
+  /* 场景切换 */
+  .scenes { display: flex; gap: 6px; padding: 12px 24px 0; }
+  .scene-tab {
+    height: 32px; padding: 0 14px;
+    border-radius: 16px;
+    border: 0.5px solid var(--line-strong);
+    background: var(--card);
+    color: var(--ink-2);
+    font-size: 13px; font-family: inherit;
+    cursor: pointer;
+    transition: background .12s;
+  }
+  .scene-tab:hover { background: var(--hover); }
+  .scene-tab.on { background: var(--ink); border-color: var(--ink); color: #fff; font-weight: 500; }
+  .scene-note { padding: 8px 24px 0; color: var(--ink-3); font-size: 12.5px; }
+
+  /* 三栏：线程 + 右栏 */
+  .room { flex: 1; display: flex; min-height: 0; }
+  .thread-wrap { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .thread { flex: 1; overflow-y: auto; padding: 18px 24px 8px; display: flex; flex-direction: column; gap: 4px; }
+
+  /* 消息 */
+  .msg { display: flex; gap: 10px; padding: 7px 8px; border-radius: 12px; }
+  .avatar {
+    width: 30px; height: 30px; border-radius: 50%;
+    flex: none;
+    display: grid; place-items: center;
+    font-size: 12px; font-weight: 600; color: #fff;
+  }
+  .msg-body { min-width: 0; flex: 1; }
+  .msg-meta { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .msg-name { font-weight: 600; font-size: 13px; }
+  .msg-time { color: var(--ink-3); font-size: 11.5px; font-family: var(--mono); }
+  .msg-text { margin-top: 1px; font-size: 13.5px; }
+  .msg-text .at { color: var(--blue); font-weight: 600; }
+
+  /* 指令消息：可辨识、可审计 */
+  .msg.instruction {
+    background: var(--blue-bg);
+    border: 0.5px solid rgba(49, 103, 216, 0.22);
+  }
+  .msg.instruction.auto {
+    background: var(--hover);
+    border-color: var(--line-strong);
+  }
+  .instr-foot { display: flex; gap: 8px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+  .run-link { color: var(--blue); font-size: 12px; cursor: pointer; text-decoration: none; }
+  .run-link:hover { text-decoration: underline; }
+
+  /* 系统行 */
+  .sysline {
+    align-self: center;
+    color: var(--ink-3); font-size: 12px;
+    padding: 2px 12px;
+  }
+
+  /* Run 卡：执行区间 */
+  .run-card {
+    margin: 10px 0 10px 40px;
+    border: 0.5px solid var(--line-strong);
+    border-radius: 14px;
+    background: #fafafa;
+    overflow: hidden;
+    scroll-margin-top: 12px;
+  }
+  .run-head {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 10px 14px;
+    background: #f0f0f2;
+    border-bottom: 0.5px solid var(--line);
+  }
+  .run-head .rid { font-weight: 600; font-size: 13px; }
+  .run-head .grow { flex: 1; }
+  .run-events { padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+  .ev { display: flex; gap: 10px; font-size: 13px; align-items: flex-start; }
+  .ev .k { flex: none; width: 64px; color: var(--ink-3); font-size: 11.5px; padding-top: 2px; text-align: right; font-family: var(--mono); }
+  .ev .v { min-width: 0; }
+  .ev.tool .v { font-family: var(--mono); font-size: 12px; background: var(--hover); border: 0.5px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+  .ev.followup .v { border-left: 2px solid var(--blue); padding-left: 10px; color: var(--ink-2); }
+  .run-foot {
+    padding: 8px 14px; border-top: 0.5px solid var(--line);
+    color: var(--ink-3); font-size: 11.5px;
+    display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
+  }
+  .caret { display: inline-block; width: 8px; height: 14px; background: var(--ink); vertical-align: -2px; animation: blink 1s steps(1) infinite; border-radius: 1px; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* 审批卡 */
+  .approval {
+    border: 0.5px solid rgba(183, 121, 31, 0.4);
+    background: var(--amber-bg);
+    border-radius: 12px;
+    padding: 10px 12px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .approval .ap-title { font-size: 13px; font-weight: 600; color: #7a4d0f; display:flex; gap:6px; align-items:center; flex-wrap: wrap; }
+  .approval .ap-cmd { font-family: var(--mono); font-size: 12px; background: rgba(255,255,255,.7); border: 0.5px solid rgba(183,121,31,.25); border-radius: 8px; padding: 6px 10px; }
+  .approval .ap-actions { display: flex; gap: 8px; }
+  .approval.done { border-color: var(--line); background: var(--hover); }
+  .approval.done .ap-title { color: var(--ink-2); }
+
+  /* 按钮：胶囊族（与线上一致） */
+  .btn {
+    height: 32px; padding: 0 16px;
+    border-radius: 16px;
+    border: 0.5px solid var(--line-strong);
+    background: var(--card);
+    color: var(--ink);
+    font-size: 13px; font-family: inherit;
+    cursor: pointer;
+    transition: background .12s, transform .06s;
+  }
+  .btn:hover { background: var(--hover); }
+  .btn:active { transform: scale(0.97); }
+  .btn.primary { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .btn.primary:hover { background: #000; }
+  .btn.danger  { color: var(--red); }
+  .btn.small { height: 26px; padding: 0 12px; font-size: 12px; border-radius: 13px; }
+  .btn:disabled { opacity: .45; cursor: default; transform: none; }
+
+  /* 续跑徽标行 */
+  .resume-strip {
+    margin: 6px 0 0 40px;
+    display: flex; align-items: center; gap: 8px;
+    color: var(--ink-3); font-size: 12px;
+  }
+  .resume-strip::before, .resume-strip::after {
+    content: ""; flex: 1; border-top: 0.5px dashed var(--line-strong);
+  }
+
+  /* Composer */
+  .composer { border-top: 0.5px solid var(--line); padding: 12px 24px 14px; }
+  .composer-hint { font-size: 12px; color: var(--ink-3); margin-bottom: 8px; display: flex; gap: 6px; align-items: center; min-height: 18px; flex-wrap: wrap; }
+  .composer-hint .state-discuss { color: var(--ink-3); }
+  .composer-hint .state-instr { color: var(--blue); font-weight: 500; }
+  .composer-row { display: flex; gap: 10px; }
+  .composer input {
+    flex: 1; height: 38px;
+    border: 0.5px solid var(--line-strong);
+    border-radius: 19px;
+    padding: 0 16px;
+    font-size: 13.5px; font-family: inherit;
+    background: #fbfbfc;
+    outline: none;
+    transition: border-color .12s, box-shadow .12s;
+  }
+  .composer input:focus { border-color: var(--ink); background: #fff; box-shadow: 0 0 0 3px rgba(0,0,0,.06); }
+  .composer input.instr { border-color: rgba(49,103,216,.55); box-shadow: 0 0 0 3px rgba(49,103,216,.12); background: #fff; }
+
+  /* 右栏 */
+  .rail {
+    width: 268px; flex: none;
+    border-left: 0.5px solid var(--line);
+    padding: 16px;
+    display: flex; flex-direction: column; gap: 14px;
+    overflow-y: auto;
+  }
+  .rail h4 { font-size: 12px; color: var(--ink-3); font-weight: 600; letter-spacing: .04em; margin-bottom: 8px; text-transform: uppercase; }
+  .rail-card { border: 0.5px solid var(--line); border-radius: 12px; padding: 12px; background: #fbfbfc; }
+  .policy-row { display: flex; gap: 6px; }
+  .policy-btn {
+    flex: 1; height: 30px; border-radius: 15px;
+    border: 0.5px solid var(--line-strong);
+    background: var(--card); font-size: 12.5px; font-family: inherit;
+    color: var(--ink-2); cursor: pointer;
+  }
+  .policy-btn.on { background: var(--ink); color: #fff; border-color: var(--ink); font-weight: 500; }
+  .rail-note { font-size: 12px; color: var(--ink-2); margin-top: 8px; line-height: 1.5; }
+  .grant-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 13px; }
+  .grant-row .who { flex: 1; }
+  .audit-item { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; border-bottom: 0.5px dashed var(--line); font-size: 12.5px; }
+  .audit-item:last-child { border-bottom: 0; }
+  .viewer-row { display: flex; gap: 6px; }
+
+  /* toast */
+  .toast {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(16px);
+    background: var(--ink); color: #fff;
+    padding: 9px 18px; border-radius: 19px;
+    font-size: 13px;
+    box-shadow: var(--shadow-pop);
+    opacity: 0; pointer-events: none;
+    transition: opacity .18s, transform .18s;
+    z-index: 50;
+    max-width: 70vw;
+    text-align: center;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ── Run Console：点开 Run 卡后的对话页（ADR-0008 L3 形态） ── */
+  .app-card { position: relative; }
+  .run-card { cursor: pointer; transition: border-color .12s, box-shadow .12s; }
+  .run-card:hover { border-color: rgba(0,0,0,.26); box-shadow: 0 2px 10px rgba(0,0,0,.05); }
+  .run-card .open-hint { opacity: 0; transition: opacity .12s; }
+  .run-card:hover .open-hint { opacity: 1; }
+
+  .console {
+    position: absolute; inset: 0;
+    background: var(--card);
+    border-radius: 20px;
+    display: flex; flex-direction: column;
+    z-index: 20;
+  }
+  .console[hidden] { display: none; }
+  .console-head {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 14px 20px;
+    border-bottom: 0.5px solid var(--line);
+  }
+  .console-head .grow { flex: 1; }
+  .console-meta {
+    display: flex; gap: 16px; flex-wrap: wrap;
+    padding: 8px 20px;
+    background: #fafafa;
+    border-bottom: 0.5px solid var(--line);
+    color: var(--ink-3); font-size: 11.5px;
+  }
+  .console-body { flex: 1; overflow-y: auto; padding: 18px 20px 8px; }
+  .turn { padding-bottom: 18px; margin-bottom: 18px; border-bottom: 0.5px dashed var(--line); }
+  .turn:last-child { border-bottom: 0; }
+  .turn-label {
+    font-size: 11.5px; color: var(--ink-3); font-family: var(--mono);
+    margin-bottom: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  }
+  .u-msg {
+    background: #f1f1f3;
+    border: 0.5px solid var(--line);
+    border-radius: 14px 14px 14px 4px;
+    padding: 9px 14px;
+    font-size: 13.5px;
+    max-width: 78%;
+    margin-bottom: 12px;
+  }
+  .a-msg { font-size: 13.5px; margin-bottom: 10px; line-height: 1.62; }
+  .tool-call {
+    border: 0.5px solid var(--line-strong);
+    border-radius: 12px;
+    overflow: hidden;
+    margin: 10px 0;
+    background: #fbfbfc;
+  }
+  .tool-call .tc-head {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 8px 12px; background: #f2f2f4; border-bottom: 0.5px solid var(--line);
+  }
+  .tool-call .tc-name { font-family: var(--mono); font-size: 12px; font-weight: 600; }
+  .tool-call .tc-args {
+    font-family: var(--mono); font-size: 12px;
+    padding: 8px 12px; white-space: pre-wrap; word-break: break-all;
+    color: var(--ink-2);
+  }
+  .tool-call .tc-result {
+    font-family: var(--mono); font-size: 12px;
+    padding: 8px 12px; border-top: 0.5px dashed var(--line);
+    color: var(--ink-2); background: #fff;
+  }
+  .console-composer { border-top: 0.5px solid var(--line); padding: 12px 20px 14px; }
+  .boundary-note {
+    padding: 8px 20px 14px;
+    color: var(--ink-3); font-size: 11.5px; line-height: 1.6;
+  }
+  .boundary-note code { font-family: var(--mono); font-size: 11px; }
+
+  .flash { animation: flash 1.4s ease; }
+  @keyframes flash { 0% { box-shadow: 0 0 0 3px rgba(49,103,216,.35); } 100% { box-shadow: 0 0 0 3px rgba(49,103,216,0); } }
+
+  @media (max-width: 1080px) {
+    .rail { display: none; }
+    .sidebar { width: 64px; }
+    .sidebar .label, .side-user .label { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="proto-banner">
+  <strong>原型 · 对话式任务房间</strong>
+  <span class="tag">ADR-0009</span>
+  <span>回应三条反馈：① 一个 Run 只能对话一次 → 线程内<strong>追问 / 续跑</strong>；② 协作性 → 讨论与驱动在<strong>同一线程</strong>、审批与验收仍在人手里；③ 「为什么不直接交给 Agent」→ Agent 是<strong>可被 @ 的线程成员</strong>，凭据与验收权不离开人。</span>
+  <span style="margin-left:auto" class="tag">演示数据 · 无后端</span>
+</div>
+
+<div class="shell">
+  <!-- 侧栏 -->
+  <nav class="sidebar">
+    <div class="brand"><div class="logo">W</div><span class="label">WhalePod</span></div>
+    <div class="nav-item"><span class="dot"></span><span class="label">任务</span></div>
+    <div class="nav-item on"><span class="dot"></span><span class="label">任务房间</span></div>
+    <div class="nav-item"><span class="dot"></span><span class="label">成员</span></div>
+    <div class="nav-item"><span class="dot"></span><span class="label">运行</span></div>
+    <div class="nav-item"><span class="dot"></span><span class="label">设备</span></div>
+    <div class="nav-item"><span class="dot"></span><span class="label">设置</span></div>
+    <div class="side-user">
+      <div class="avatar" id="side-avatar" style="background:#4a6fa5">张</div>
+      <div class="label"><div style="font-weight:600;font-size:13px" id="side-name">老张</div><div style="font-size:11.5px;color:var(--ink-3)" id="side-role">责任人</div></div>
+    </div>
+  </nav>
+
+  <!-- 主卡 -->
+  <main class="main">
+    <div class="app-card">
+      <div class="task-head">
+        <div style="flex:1;min-width:0">
+          <div class="task-title" id="task-title">发布 v2.4 的回归清单</div>
+          <div class="task-sub" id="task-sub"></div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex:none">
+          <span class="chip amber" id="task-status">进行中</span>
+        </div>
+      </div>
+
+      <div class="scenes" id="scenes">
+        <button class="scene-tab on" data-scene="A">A · Run 执行中，继续说</button>
+        <button class="scene-tab" data-scene="B">B · Run 已终态，续跑</button>
+        <button class="scene-tab" data-scene="C">C · 责任人是 Agent</button>
+      </div>
+      <div class="scene-note" id="scene-note"></div>
+
+      <div class="room">
+        <div class="thread-wrap">
+          <div class="thread" id="thread"></div>
+          <div class="composer">
+            <div class="composer-hint" id="composer-hint"></div>
+            <div class="composer-row">
+              <input id="composer-input" placeholder="讨论一下…（以 @Agent 开头才是指令）" autocomplete="off">
+              <button class="btn primary" id="send-btn" style="height:38px;border-radius:19px">发送</button>
+            </div>
+          </div>
+        </div>
+
+        <aside class="rail">
+          <section>
+            <h4>当前视角</h4>
+            <div class="viewer-row" id="viewer-row"></div>
+            <div class="rail-note" id="viewer-note"></div>
+          </section>
+          <section>
+            <h4>审批档位（本 Task）</h4>
+            <div class="rail-card">
+              <div class="policy-row">
+                <button class="policy-btn on" id="policy-required">需要审批</button>
+                <button class="policy-btn" id="policy-full">完全权限</button>
+              </div>
+              <div class="rail-note" id="policy-note"></div>
+            </div>
+          </section>
+          <section>
+            <h4>指令授权名单</h4>
+            <div class="rail-card" id="grant-list"></div>
+          </section>
+          <section>
+            <h4>审计链 · 指令 ↔ Run</h4>
+            <div class="rail-card" id="audit-list"><div class="rail-note" style="margin-top:0">暂无一处…哦不，看线程里发生了什么。</div></div>
+          </section>
+          <section>
+            <h4>不可让渡的边界</h4>
+            <div class="rail-card">
+              <div class="rail-note" style="margin-top:0">
+                · 执行永远发生在<b>责任人的设备</b>上，用的是责任人的凭据<br>
+                · <code class="mono">in_review → done</code> 只能由真人点下<br>
+                · Run 终态不可复活；续的是<b>会话</b>，不是 Run<br>
+                · 自动触发的 Run 强制降级为「需要审批」
+              </div>
+            </div>
+          </section>
+        </aside>
+      </div>
+
+      <!-- Run Console：Run 卡的对话页（同一份会话，两种视角） -->
+      <div class="console" id="console" hidden>
+        <div class="console-head">
+          <button class="btn small" id="console-back">← 返回线程</button>
+          <span id="console-title" style="font-weight:600;font-size:15px"></span>
+          <span id="console-status"></span>
+          <span class="grow"></span>
+          <span class="chip mono gray" id="console-sid"></span>
+        </div>
+        <div class="console-meta" id="console-meta"></div>
+        <div class="console-body" id="console-body"></div>
+        <div class="console-composer">
+          <div class="composer-hint" id="console-hint"></div>
+          <div class="composer-row">
+            <input id="console-input" placeholder="追问这个 Run…" autocomplete="off">
+            <button class="btn primary" id="console-send" style="height:38px;border-radius:19px">发送</button>
+          </div>
+        </div>
+        <div class="boundary-note" id="console-boundary"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ── 演示数据与状态 ─────────────────────────────────────────── */
+const USERS = {
+  zhang: { name: '老张', role: '责任人', color: '#4a6fa5', canInstruct: true,  grantTag: '责任人（默认可驱动）' },
+  wang:  { name: '老王', role: '成员 · 已授权', color: '#7a5fa0', canInstruct: true,  grantTag: '已授权（task_instruction_grant）' },
+  li:    { name: '小李', role: '成员', color: '#a0684a', canInstruct: false, grantTag: '未授权（@Agent 会被拒）' },
+  bot:   { name: 'NightlyBot', role: 'Agent', color: '#3d8f6f', canInstruct: false, grantTag: '' },
+};
+let viewer = 'zhang';          // 当前视角
+let scene = 'A';               // 场景
+let policy = 'required';       // 本 Task 审批档位：required | full
+// 每个场景的下一个 Run 编号：A 的 #12 在跑、B 的 #12 已终态、C 已用到 #14。
+const nextRunId = { A: 13, B: 13, C: 15 };
+let seq = 100;                 // 演示消息 id
+
+const $ = (id) => document.getElementById(id);
+const threadEl = $('thread');
+
+function toast(text, ms = 2600) {
+  const t = $('toast');
+  t.textContent = text;
+  t.classList.add('show');
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+function chip(cls, text) { return `<span class="chip ${cls}">${text}</span>`; }
+function avatar(u) { return `<div class="avatar" style="background:${u.color}">${u.name.slice(0,1)}</div>`; }
+function msgMeta(u, time, extra = '') {
+  return `<div class="msg-meta"><span class="msg-name">${u.name}</span><span class="msg-time">${time}</span>${extra}</div>`;
+}
+function atify(text) { return text.replace(/@(Agent|NightlyBot)/g, '<span class="at">@$1</span>'); }
+
+function discussHtml(u, time, text) {
+  return `<div class="msg">${avatar(u)}<div class="msg-body">${msgMeta(u, time)}<div class="msg-text">${atify(text)}</div></div></div>`;
+}
+function sysline(text) { return `<div class="sysline">${text}</div>`; }
+
+function instrHtml({ u, time, text, state, stateCls, runId, auto, note }) {
+  const cls = auto ? 'msg instruction auto' : 'msg instruction';
+  const foot = [
+    chip(stateCls, state),
+    auto ? chip('gray', 'origin: auto_assignment · 指派人即触发者') : '',
+    runId ? `<a class="run-link" data-run="${runId}">→ 触发 ${runId}</a>` : '',
+    note ? `<span style="color:var(--ink-3);font-size:12px">${note}</span>` : '',
+  ].filter(Boolean).join('');
+  return `<div class="${cls}" data-mid="${++seq}">${avatar(u)}<div class="msg-body">${msgMeta(u, time)}<div class="msg-text">${atify(text)}</div><div class="instr-foot">${foot}</div></div></div>`;
+}
+
+function evRow(kind, k, v) {
+  return `<div class="ev ${kind}"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+}
+function approvalCard(id, cmd, why, opts = {}) {
+  return `<div class="approval" id="${id}">
+    <div class="ap-title">⏸ 审批请求 ${opts.auto ? chip('gray','自动触发 · 已强制降级') : ''}</div>
+    <div style="font-size:12.5px;color:var(--ink-2)">${why}</div>
+    <div class="ap-cmd">${cmd}</div>
+    <div class="ap-actions">
+      <button class="btn small primary" onclick="decideApproval('${id}', true)">批准（一次性）</button>
+      <button class="btn small danger" onclick="decideApproval('${id}', false)">拒绝</button>
+    </div>
+  </div>`;
+}
+function runCardHtml({ id, title, statusChip, events, foot, approval, resumed }) {
+  return `<div class="run-card" id="${id}">
+    <div class="run-head">
+      <span class="rid">${title}</span>
+      ${resumed ? chip('blue', '↻ 接续上一 Run 的会话上下文 · persisted load') : ''}
+      ${statusChip}
+      <span class="grow"></span>
+      <span class="chip mono gray">whalepod-run-${id.replace('run-', '')}</span>
+    </div>
+    <div class="run-events" id="${id}-events">${events}${approval || ''}</div>
+    <div class="run-foot">${foot}<span class="open-hint" style="color:var(--blue);font-weight:500">打开 Run 会话 ↗</span></div>
+  </div>`;
+}
+
+/* ── 三个场景的罐头线程 ─────────────────────────────────────── */
+function cannedThread() {
+  const z = USERS.zhang, w = USERS.wang, l = USERS.li, b = USERS.bot;
+
+  const runA = runCardHtml({
+    id: 'run-12', title: 'Run #12 · 整理发布记录',
+    statusChip: chip('amber', '执行中'),
+    events: [
+      evRow('', 'assistant', '收到，开始读取 v2.3..main 的提交历史…'),
+      evRow('tool', 'tool', `git log --oneline v2.3..main &nbsp; ${chip('green','已批准 ✓ · 老张 09:41')}`),
+      evRow('', 'assistant', '找到 14 条发布记录，按模块分 4 组。接下来想跑一次 e2e 冒烟确认清单完整性。'),
+    ].join(''),
+    approval: policy === 'required'
+      ? approvalCard('ap-1', 'pnpm test:e2e --reporter=json', '需要 2 分钟左右，会占用本机资源。批准仅对这一次调用生效。')
+      : `<div class="ev tool"><div class="k">tool</div><div class="v">pnpm test:e2e --reporter=json &nbsp; ${chip('gray','完全权限 · 已自动执行')}</div></div>`,
+    foot: `<span>开始 09:38</span><span>责任人设备：老张的 MacBook</span><span>姿态：${policy === 'required' ? '每个工具调用逐一审批' : '完全权限（不再打扰）'}</span>`,
+  });
+
+  const runB = runCardHtml({
+    id: 'run-12', title: 'Run #12 · 整理发布记录',
+    statusChip: chip('green', '已完成'),
+    events: [
+      evRow('', 'assistant', '已按模块分 4 组整理完毕，共 14 条。完整结果见交付物。'),
+    ].join(''),
+    foot: `<span>09:38 → 09:41 · 用时 3 分 12 秒</span><span>交付物：regression-list.md</span><span class="mono">终态 · 不可复活</span>`,
+  });
+
+  if (scene === 'A') {
+    return [
+      discussHtml(z, '09:31', 'v2.4 回归清单今天得出，先把上周的发布项捋一遍。'),
+      discussHtml(w, '09:33', 'macOS 的冒烟结果别忘了带上，昨天那台机器有点飘。'),
+      instrHtml({ u: z, time: '09:38', text: '@Agent 整理上周 main 分支的发布记录，按模块分组', state: 'accepted', stateCls: 'green', runId: '#12' }),
+      runA,
+      discussHtml(l, '09:44', '清单出来以后我可以顺手把阻塞项标出来。'),
+    ].join('');
+  }
+  if (scene === 'B') {
+    return [
+      discussHtml(z, '09:31', 'v2.4 回归清单今天得出，先把上周的发布项捋一遍。'),
+      instrHtml({ u: z, time: '09:38', text: '@Agent 整理上周 main 分支的发布记录，按模块分组', state: 'accepted', stateCls: 'green', runId: '#12' }),
+      runB,
+      discussHtml(w, '10:02', '清单 OK。就差发布说明了——这时候再叫一次 Agent，它还记得刚才整理的 14 条记录吗？'),
+      sysline('↑ 试试在下方输入框以 @Agent 开头发一句：它会<b>新开 Run</b>，但<b>接着 Run #12 的会话上下文</b>继续'),
+    ].join('');
+  }
+  // C：责任人是 Agent
+  return [
+    sysline('09:00 · 老王 将本任务的责任人改为 <b>@NightlyBot</b>（Agent 可被指派）'),
+    discussHtml(w, '09:00', '这个巡检太机械了，交给 Bot 吧，每天早上看一眼就行。我盯着审批。'),
+    instrHtml({ u: w, time: '09:00', text: '@NightlyBot 每天 09:00 前巡检 main 分支构建状态，有异常就汇报到本线程', state: 'accepted', stateCls: 'green', runId: '#14', auto: true, note: '自动指令 · author=老王（做出指派的人）' }),
+    runCardHtml({
+      id: 'run-14', title: 'Run #14 · 每日构建巡检（首次）',
+      statusChip: chip('amber', '执行中'),
+      events: [
+        evRow('', 'assistant', '开始巡检 main 分支最近 24h 的构建…'),
+      ].join(''),
+      approval: approvalCard('ap-c1', 'gh run list --branch main --limit 20', '自动触发的 Run 不能使用完全权限：本项目档位是「完全权限」，本次已被<b>强制降级为需要审批</b>。', { auto: true }),
+      foot: `<span>开始 09:00</span><span>责任人设备：Bot 池节点 03</span><span>档位：<b>需要审批（降级后）</b></span>`,
+    }),
+    discussHtml(l, '09:05', '昨天晚高峰那次构建失败也一起看吗？'),
+    sysline('↓ 切换右栏视角到「老王（已授权）」可以 @Agent 追问；切到「小李」会被拒'),
+  ].join('');
+}
+
+const SCENE_NOTES = {
+  A: 'Run #12 正在跑。此时再以 @Agent 发指令：不新开 Run，<b>自动转为追问</b>（run.followup）注入当前执行；普通发送则只是讨论，Agent 读不到。',
+  B: 'Run #12 已终态（不可复活）。再以 @Agent 发指令：<b>新开 Run #13</b>，但通过 persisted load <b>接上 Run #12 的会话上下文</b>——它还记得刚才的 14 条记录。',
+  C: '责任人可以是 Agent。它的自动指令带 <b>origin=auto_assignment</b> 标记（审计问「谁让它跑的」答案是做出指派的老王），且自动触发的 Run <b>强制降级为需要审批</b>。真人的指令权看授权名单。',
+};
+
+/* ── 渲染 ───────────────────────────────────────────────────── */
+function renderAll() {
+  threadEl.innerHTML = cannedThread();
+  $('scene-note').innerHTML = SCENE_NOTES[scene];
+  document.querySelectorAll('.scene-tab').forEach(b => b.classList.toggle('on', b.dataset.scene === scene));
+
+  // task 头
+  const assignee = scene === 'C' ? USERS.bot : USERS.zhang;
+  $('task-sub').innerHTML = [
+    `责任人：<b>${assignee.name}</b>${assignee.role === 'Agent' ? chip('gray','Agent 责任人') : ''}`,
+    `项目：Web 控制台`,
+    chip('mono gray', 'task-4f2a'),
+  ].join('');
+  $('task-status').className = 'chip amber';
+  $('task-status').textContent = '进行中';
+
+  // 视角切换
+  $('viewer-row').innerHTML = ['zhang', 'wang', 'li'].map(k =>
+    `<button class="policy-btn ${viewer === k ? 'on' : ''}" data-viewer="${k}">${USERS[k].name}</button>`).join('');
+  $('viewer-note').innerHTML = `你现在以 <b>${USERS[viewer].name}</b> 的身份操作（${USERS[viewer].grantTag}）。`;
+  document.querySelectorAll('[data-viewer]').forEach(b => b.onclick = () => { viewer = b.dataset.viewer; renderAll(); });
+
+  // 侧栏用户
+  $('side-avatar').textContent = USERS[viewer].name.slice(0, 1);
+  $('side-avatar').style.background = USERS[viewer].color;
+  $('side-name').textContent = USERS[viewer].name;
+  $('side-role').textContent = USERS[viewer].role;
+
+  // 审批档位
+  $('policy-required').classList.toggle('on', policy === 'required');
+  $('policy-full').classList.toggle('on', policy === 'full');
+  $('policy-note').innerHTML = policy === 'required'
+    ? '每个工具调用都回到责任人处<b>逐一审批</b>（一次性，不永久授权）。默认档。'
+    : '本 Task 内 Run 的工具调用<b>不再逐个打扰</b>。仅责任人可设；<b>自动触发的 Run 不享受</b>，会被强制降级回需要审批。';
+
+  // 授权名单
+  $('grant-list').innerHTML = ['zhang', 'wang', 'li'].map(k => {
+    const u = USERS[k];
+    return `<div class="grant-row">${avatar(u)}<div class="who">${u.name}</div>${u.canInstruct ? chip('green', '可驱动 Agent') : chip('gray', '仅可讨论')}</div>`;
+  }).join('') + `<div class="rail-note">指令权默认归责任人；授予别人靠 <code class="mono">task_instruction_grant</code>（可撤销、全留痕）。</div>`;
+
+  renderAudit();
+  updateComposerHint();
+}
+
+function renderAudit() {
+  const items = [];
+  threadEl.querySelectorAll('.msg.instruction').forEach(m => {
+    const name = m.querySelector('.msg-name').textContent;
+    const text = m.querySelector('.msg-text').textContent.slice(0, 26) + '…';
+    const stateChip = m.querySelector('.instr-foot .chip');
+    const runLink = m.querySelector('.run-link');
+    items.push({ name, text, state: stateChip ? stateChip.textContent : '', cls: stateChip ? stateChip.className.replace('chip ', '') : 'gray', run: runLink ? runLink.dataset.run : null });
+  });
+  if (!items.length) return;
+  $('audit-list').innerHTML = items.map(i =>
+    `<div class="audit-item"><div style="display:flex;gap:6px;align-items:center">${chip(i.cls, i.state)}<b>${i.name}</b>${i.run ? `<a class="run-link" data-run="${i.run}">${i.run}</a>` : ''}</div><div style="color:var(--ink-3)">${i.text}</div></div>`
+  ).join('');
+  bindRunLinks();
+}
+
+function bindRunLinks() {
+  document.querySelectorAll('.run-link').forEach(a => {
+    a.onclick = () => {
+      const target = document.getElementById(a.dataset.run.replace('#', 'run-'));
+      if (target) { target.scrollIntoView({ behavior: 'smooth', block: 'center' }); target.classList.remove('flash'); void target.offsetWidth; target.classList.add('flash'); }
+    };
+  });
+}
+
+/* ── 审批交互 ───────────────────────────────────────────────── */
+var decideApproval = function (id, ok) {
+  const card = $(id);
+  if (!card || card.classList.contains('done')) return;
+  card.classList.add('done');
+  card.style.borderColor = ok ? 'rgba(47,158,95,.45)' : 'rgba(201,57,43,.45)';
+  card.style.background = ok ? 'var(--green-bg)' : 'var(--red-bg)';
+  card.innerHTML = ok
+    ? `<div class="ap-title" style="color:var(--green)">✓ 已由 ${USERS[viewer].name} 批准（仅本次）</div><div style="font-size:12px;color:var(--ink-2)">决定留痕：approver=${viewer} · 一次性，不永久授权。工具继续执行…</div>`
+    : `<div class="ap-title" style="color:var(--red)">✕ 已由 ${USERS[viewer].name} 拒绝</div><div style="font-size:12px;color:var(--ink-2)">工具未执行；Agent 收到失败结果，需要换一条路或等人接管。</div>`;
+  toast(ok ? '已批准这一次调用（决定已留痕）' : '已拒绝（决定已留痕）');
+};
+window.decideApproval = decideApproval;
+
+/* ── Composer：合并线程的控制规则 ──────────────────────────── */
+const input = $('composer-input');
+
+function isInstruction(text) { return /^@(Agent|NightlyBot)\b/.test(text.trim()); }
+
+function updateComposerHint() {
+  const v = input.value.trim();
+  const hint = $('composer-hint');
+  input.classList.toggle('instr', isInstruction(v));
+  if (!v) {
+    hint.innerHTML = `<span class="state-discuss">默认发送只是<b>讨论</b>，Agent 不会读到（上下文卫生）；以 <b>@Agent</b> 开头才会驱动它。</span>`;
+  } else if (isInstruction(v)) {
+    const who = USERS[viewer];
+    hint.innerHTML = who.canInstruct
+      ? `<span class="state-instr">⚡ 这是一条<b>指令</b>——将驱动 Agent。执行发生在责任人设备上，你被记为触发者（triggered_by）。</span>`
+      : `<span class="state-instr">⚡ 这是指令，但 <b>${who.name} 不在授权名单</b>——发出后会被 <code class="mono">rejected</code>（演示一下也好）。</span>`;
+  } else {
+    hint.innerHTML = `<span class="state-discuss">💬 这是<b>讨论</b>：进线程、全员可见，但<b>不驱动 Agent</b>，也不进它的上下文。</span>`;
+  }
+}
+input.addEventListener('input', updateComposerHint);
+
+function sendMessage() {
+  const text = input.value.trim();
+  if (!text) return;
+  const u = USERS[viewer];
+  const time = new Date().toTimeString().slice(0, 5);
+
+  if (!isInstruction(text)) {
+    appendHtml(discussHtml(u, time, text));
+    toast('已作为讨论发送（Agent 不会读到这条）');
+    input.value = ''; updateComposerHint();
+    return;
+  }
+
+  // ── 指令路径 ──
+  if (!u.canInstruct) {
+    appendHtml(instrHtml({ u, time, text, state: 'rejected（not granted）', stateCls: 'red', note: '未在 task_instruction_grant 名单；指令不会到达任何 Run' }));
+    toast('指令被拒绝：当前视角未授权。右栏切到「老张」或「老王」再试。', 3400);
+    input.value = ''; updateComposerHint(); renderAudit();
+    return;
+  }
+
+  if (scene === 'A') {
+    // Run 活跃中 → 自动转追问（并发降级规则）
+    appendHtml(instrHtml({ u, time, text, state: 'accepted', stateCls: 'green', runId: '#12', note: 'Run 执行中 → 自动转为追问，不新开 Run' }));
+    const events = $('run-12-events');
+    if (events) {
+      events.insertAdjacentHTML('beforeend', evRow('followup', 'followup', `「${text.replace(/^@(Agent|NightlyBot)\s*/, '')}」——已注入当前执行（同一 Run、同一会话）`));
+      events.insertAdjacentHTML('beforeend', evRow('', 'assistant', '收到追问，把它并进当前整理口径…'));
+    }
+    toast('Run 正在执行：指令已自动转为追问（run.followup），不会新开 Run', 3200);
+  } else if (scene === 'B') {
+    // Run 终态 → 新开 Run + persisted load 续接
+    const rid = nextRunId[scene]++;
+    appendHtml(`<div class="resume-strip"><span class="chip blue">↻ 接续 Run #12 的会话上下文 · persisted load（同一 session id 原地追加，实测开销与新建不可辨）</span></div>`);
+    appendHtml(instrHtml({ u, time, text, state: 'accepted', stateCls: 'green', runId: `#${rid}` }));
+    const running = policy === 'required'
+      ? approvalCard(`ap-${rid}`, 'sed -n 1,200p regression-list.md', '接续的会话里已有清单全文，Agent 想重新读一遍交付物核对。')
+      : `<div class="ev tool"><div class="k">tool</div><div class="v">sed -n 1,200p regression-list.md &nbsp; ${chip('gray','完全权限 · 已自动执行')}</div></div>`;
+    appendHtml(runCardHtml({
+      id: `run-${rid}`, title: `Run #${rid} · ${text.replace(/^@(Agent|NightlyBot)\s*/, '').slice(0, 18)}`,
+      statusChip: chip('amber', '执行中'), resumed: true,
+      events: evRow('', 'assistant', '（我记得上一轮整理出的 14 条记录与分组口径，直接在此基础上继续…<span class="caret"></span>'),
+      approval: running,
+      foot: `<span>开始 ${time}</span><span>责任人设备：老张的 MacBook</span><span>Run #12 保持终态，一字未动</span>`,
+    }));
+    toast(`已新开 Run #${rid} 并接续会话上下文；旧 Run 终态未被触碰`, 3200);
+  } else {
+    // C：责任人是 Agent，已授权成员的追问
+    appendHtml(instrHtml({ u, time, text, state: 'accepted', stateCls: 'green', runId: '#14', note: '追问注入 Run #14' }));
+    const events = $('run-14-events');
+    if (events) events.insertAdjacentHTML('beforeend', evRow('followup', 'followup', `「${text.replace(/^@(Agent|NightlyBot)\s*/, '')}」`));
+    toast('已作为追问注入 Run #14（执行仍在 Bot 池节点 03，凭据属于责任人槽位）', 3200);
+  }
+  input.value = ''; updateComposerHint(); renderAudit();
+  threadEl.scrollTop = threadEl.scrollHeight;
+}
+
+function appendHtml(html) {
+  threadEl.insertAdjacentHTML('beforeend', html);
+  bindRunLinks();
+  threadEl.scrollTop = threadEl.scrollHeight;
+}
+
+$('send-btn').onclick = sendMessage;
+input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(); });
+
+document.querySelectorAll('.scene-tab').forEach(b => b.onclick = () => { scene = b.dataset.scene; renderAll(); });
+$('policy-required').onclick = () => { policy = 'required'; renderAll(); toast('本 Task 审批档位：需要审批'); };
+$('policy-full').onclick = () => {
+  if (scene === 'C') { toast('责任人是 Agent 且仅由自动指令驱动时，完全权限会被强制降级——本场景演示该规则', 3400); }
+  policy = 'full'; renderAll(); toast('本 Task 审批档位：完全权限（自动触发的 Run 不受影响，仍强制需要审批）');
+};
+
+/* ── Run Console：点开 Run 卡看到的「对话页」 ─────────────────
+ * 形态按 ADR-0008 L3：渲染 inherit 自 DSH 的对话/步骤/工具视图，
+ * 但**数据源是 WhalePod 的 Run 事件**（决策 4：不接触 DSH session 结构），
+ * 且**不含 DSH 壳与顶层导航**（L4 永久禁止）——它是 Task 内的第二层。
+ * ──────────────────────────────────────────────────────────── */
+const RUNS = {
+  'run-12': {
+    title: 'Run #12 · 整理发布记录', sid: 'whalepod-run-12',
+    turns: () => {
+      const t = [{
+        label: 'Turn 1 · 指令来自线程（老张）',
+        user: '@Agent 整理上周 main 分支的发布记录，按模块分组',
+        steps: [
+          { kind: 'a', text: '收到，开始读取 v2.3..main 的提交历史…' },
+          { kind: 'tool', name: 'git log --oneline v2.3..main', args: '{"range":"v2.3..main","max":200}', result: '14 commits', approved: true },
+          { kind: 'a', text: '找到 14 条发布记录，按模块分 4 组。接下来想跑一次 e2e 冒烟确认清单完整性。' },
+        ],
+        approval: 'ap-1',
+      }];
+      if (consoleFollowups.length) {
+        consoleFollowups.forEach((f, i) => t.push({
+          label: `Turn ${i + 2} · 追问（run.followup，不新开 Run）`,
+          user: f,
+          steps: [{ kind: 'a', text: '收到追问，把它并进当前整理口径…' }],
+        }));
+      }
+      return t;
+    },
+  },
+  'run-13': {
+    title: 'Run #13 · 发布说明', sid: 'whalepod-run-13', resumed: true,
+    turns: () => [{
+      label: 'Turn 1 · 指令来自线程（老张）· 本会话接续自 Run #12（persisted load）',
+      user: '@Agent 把结论整理成发布说明',
+      steps: [
+        { kind: 'a', text: '（我记得上一轮整理出的 14 条记录与分组口径，直接在此基础上继续。）先读一遍交付物核对。' },
+        { kind: 'tool', name: 'sed -n 1,200p regression-list.md', args: '{"file":"regression-list.md"}', result: '# 回归清单\n…14 条…', approved: policy === 'full' },
+        { kind: 'a', text: '核对完成，开始起草发布说明：变更范围、破坏性变更、回滚方式三段。' },
+      ],
+    }],
+  },
+  'run-14': {
+    title: 'Run #14 · 每日构建巡检（首次）', sid: 'whalepod-run-14',
+    turns: () => [{
+      label: 'Turn 1 · 自动指令（origin=auto_assignment · author=老王）',
+      user: '@NightlyBot 每天 09:00 前巡检 main 分支构建状态，有异常就汇报到本线程',
+      steps: [
+        { kind: 'a', text: '开始巡检 main 分支最近 24h 的构建…' },
+      ],
+      approval: 'ap-c1',
+    }],
+  },
+};
+
+let consoleRunId = null;
+let consoleFollowups = [];   // 控制台里发出的追问（演示：与线程共享同一会话）
+
+function toolCallHtml(st) {
+  const badge = st.approved === true ? chip('green', '已批准 ✓')
+    : st.approved === false ? chip('gray', '完全权限 · 已自动执行')
+    : chip('amber', '待审批');
+  return `<div class="tool-call">
+    <div class="tc-head"><span class="tc-name">⚙ ${st.name}</span>${badge}</div>
+    <div class="tc-args">${st.args}</div>
+    <div class="tc-result">↳ ${st.result}</div>
+  </div>`;
+}
+
+function renderConsole() {
+  const run = RUNS[consoleRunId];
+  if (!run) return;
+  const active = consoleRunId === 'run-12' ? scene === 'A' : true;
+  $('console-title').textContent = run.title;
+  $('console-status').innerHTML = active ? chip('amber', '执行中') : chip('green', '已完成');
+  $('console-sid').textContent = run.sid;
+  $('console-meta').innerHTML = [
+    `会话：<span class="mono">${run.sid}</span>`,
+    run.resumed ? '<b style="color:var(--blue)">↻ 接续自 Run #12（persisted load · 同一 session id 原地追加）</b>' : '',
+    '责任人设备：' + (consoleRunId === 'run-14' ? 'Bot 池节点 03' : '老张的 MacBook'),
+    '审批档位：' + (consoleRunId === 'run-14' ? '<b>需要审批（自动触发已强制降级）</b>' : policy === 'required' ? '需要审批' : '完全权限'),
+    active ? '状态：等待 Agent 下一步' : '状态：终态（不可复活）',
+  ].filter(Boolean).join('<span style="opacity:.4">·</span>');
+
+  const body = run.turns().map(turn => {
+    const steps = turn.steps.map(st => st.kind === 'tool'
+      ? toolCallHtml(st)
+      : `<div class="a-msg">${st.text}</div>`).join('');
+    // 审批卡只在「Run 仍在跑且尚未决定」时是待办；终态 Run 里的审批必然是已决的
+    // ——否则会出现「Run 已完成，却还挂着待审批」这种自相矛盾的画面。
+    let ap = '';
+    if (turn.approval) {
+      if (active && !consoleDecided.has(turn.approval)) {
+        ap = approvalCard(
+          turn.approval,
+          turn.approval === 'ap-1' ? 'pnpm test:e2e --reporter=json' : 'gh run list --branch main --limit 20',
+          turn.approval === 'ap-1'
+            ? '需要 2 分钟左右，会占用本机资源。批准仅对这一次调用生效。'
+            : '自动触发的 Run 不能使用完全权限：本项目档位是「完全权限」，本次已被<b>强制降级为需要审批</b>。',
+          turn.approval === 'ap-c1' ? { auto: true } : {},
+        );
+      } else {
+        ap = `<div class="approval done" style="border-color:rgba(47,158,95,.35);background:var(--green-bg)">
+          <div class="ap-title" style="color:var(--green)">✓ 已批准（一次性）· 09:41 由 老张</div>
+          <div style="font-size:12px;color:var(--ink-2)">决定已留痕；Run 随后跑完并收敛到终态。</div></div>`;
+      }
+    }
+    return `<div class="turn">
+      <div class="turn-label">${turn.label}</div>
+      <div class="u-msg">${atify(turn.user)}</div>
+      ${steps}${ap}
+    </div>`;
+  }).join('');
+  $('console-body').innerHTML = body;
+
+  $('console-hint').innerHTML = active
+    ? `<span class="state-instr">⚡ 这个 Run 还在跑：追问会<b>注入当前执行</b>（run.followup），不新开 Run。</span>`
+    : `<span class="state-discuss">这个 Run 已终态。追问会<b>新开一个 Run</b>，并通过 persisted load <b>接续本会话</b>——上面的记录它都还记得。</span>`;
+  $('console-input').placeholder = active ? '追问这个 Run…（注入当前执行）' : '追问…（将新开 Run 并接续本会话）';
+  $('console-boundary').innerHTML = `渲染层：Fork 自 DSH <code>ui-chat</code> / <code>ui-conversation</code> / <code>ui-trajectory</code> / <code>ui-tool</code>（ADR-0008 <b>L3</b>，后续切片）· 数据源：<b>WhalePod Run 事件 / Projection</b>（决策 4：L3 不接触 DSH session 数据结构，<code>runId ↔ sessionId</code> 映射留在 runtime 侧）· 不含 DSH 壳与顶层导航（<b>L4 永久禁止</b>）· 品牌资产不 Fork（决策 5）。`;
+}
+
+function openConsole(runId) {
+  consoleRunId = runId; consoleFollowups = [];
+  $('console').hidden = false;
+  renderConsole();
+}
+function closeConsole() { $('console').hidden = true; consoleRunId = null; }
+window.openConsole = openConsole;
+
+$('console-back').onclick = closeConsole;
+
+document.addEventListener('click', (e) => {
+  // 整张卡可点开；只让真正的可交互元素（按钮/输入/链接）自己处理点击，
+  // 否则批准按钮会被卡片点击吞掉。
+  const card = e.target.closest('.run-card');
+  if (card && card.id && !e.target.closest('button, input, a')) openConsole(card.id);
+});
+
+function consoleSend() {
+  const text = $('console-input').value.trim();
+  if (!text) return;
+  const run = RUNS[consoleRunId];
+  const active = consoleRunId === 'run-12' ? scene === 'A' : true;
+  if (active) {
+    consoleFollowups.push(text);
+    // 同一份会话、两种视角：Console 里发出的追问，线程里也要看得到。
+    appendHtml(instrHtml({
+      u: USERS[viewer], time: new Date().toTimeString().slice(0, 5), text,
+      state: 'accepted', stateCls: 'green', runId: '#12',
+      note: '来自 Run Console 的追问 · 自动转为 followup，不新开 Run',
+    }));
+    const events = $('run-12-events');
+    if (events) events.insertAdjacentHTML('beforeend', evRow('followup', 'followup', `「${text}」——从 Run Console 注入当前执行`));
+    renderAudit();
+    toast('已注入当前执行（run.followup，同一 Run、同一会话）', 3000);
+  } else {
+    toast('本 Run 已终态：将新开 Run 并接续本会话（persisted load）', 3200);
+    // 演示：终态追问走「新 Run + 续跑」——与线程里的规则一致
+    scene = 'B';
+  }
+  $('console-input').value = '';
+  const decided = new Set(consoleDecided);
+  renderConsole();
+  consoleDecided = decided;
+}
+$('console-send').onclick = consoleSend;
+$('console-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') consoleSend(); });
+
+// 审批决定需在线程卡与 Console 之间共享（同一份真相，两种视角）
+let consoleDecided = new Set();
+const _decide = decideApproval;
+decideApproval = function (id, ok) {
+  consoleDecided.add(id);
+  _decide(id, ok);
+  if (consoleRunId) renderConsole();
+};
+
+renderAll();
+</script>
+</body>
+</html>

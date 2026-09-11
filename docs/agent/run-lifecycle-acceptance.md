@@ -117,3 +117,46 @@ pnpm test:integration   # Q2（含 G7-01/04/06 HTTP 面）
 pnpm test:resilience    # Q6（R4/R5/R9 + 故障注入）
 scripts/secret-scan.sh apps/hub/src apps/hub/tests apps/node/src apps/node/tests apps/web/src apps/web/tests packages/protocol
 ```
+
+## 追加：#180 执行中追问的受理语义（ADR-0009 切片②）
+
+- 对应 Issue：#180（ADR-0009 决策 3 的协议先行切片）
+- 验证日期：2026-09-11 · 分支 `feat/p1-180-node-followup` · 结果 PASS
+
+### 驱动
+
+`RunManager.handleFrame({ type: 'run.followup', payload: { commandId, runId, text } })`——
+与 Hub 下行同一条入口；Runtime 侧用 Q1 既有内存 fake driver（`apps/node/tests/run-manager.spec.ts`），
+断言写进 Runtime stdin 的帧。协议目录一致性由 `packages/protocol/tests/catalog-drift.spec.ts`
+（frame ↔ fixture 一一对应）+ `roundtrip.spec.ts`（新增 fixture 走解析往返）自动覆盖。
+
+```bash
+pnpm vitest run --project unit apps/node/tests/run-manager.spec.ts
+pnpm test:unit                      # 含 protocol catalog-drift / roundtrip
+pnpm check:protocol-generated       # 生成物与 schema 不得漂移
+```
+
+### 判定（覆盖到的分支）
+
+| 分支 | 断言 | 结果 |
+|---|---|---|
+| happy path（Run 已 running） | ack `accepted=true`；stdin 追加**恰好一帧** `run.followup{runId,text}`；无第二个 Runtime、无第二次 `initialize`；spool 已 ack | PASS |
+| 重复 `commandId` + Runtime 仍在管（Hub 重发 / ack 丢失） | 只回放 ack；stdin 里 `run.followup` 仍只有一帧 | PASS |
+| 重复 `commandId` + Runtime 已退出 | **不盲目回 `accepted=true`**：按真实状态拒绝（`INVALID_RUN_TRANSITION`），且仍只注入过一次 | PASS |
+| Run 已终态（`run.completed` 之后） | ack `accepted=false` + `INVALID_RUN_TRANSITION`；**不下发** | PASS |
+| Run 存在但未 `runtime.ready` | ack `accepted=false` + `INVALID_RUN_TRANSITION`；不下发 | PASS |
+| 本 Node 无该 Run 事实 | ack `accepted=false` + `NOT_FOUND`；不 spawn | PASS |
+
+### 未覆盖（如实登记）
+
+- **`RUNTIME_LOST` 分支仍没有确定性用例**：新增的「Runtime 已退出后的重发」用例命中的是**终态守卫**
+  （进程退出必然先落 `finalFacts`），不是 `RUNTIME_LOST`；原说明如下。
+- **`RUNTIME_LOST` 分支没有确定性用例**：正常时序下 Runtime 消失必然先落终态事实
+  （`finalFacts`），终态守卫会先命中；该分支靠 `dispatchToRuntime` 的**原子返回值**兜住
+  「supervisor 已摘 handle、manager 尚未写 finalFacts」的窗口。窗口极窄、不可确定性复现，
+  故不声称已覆盖——写在这里以免后人误以为已验。
+- **Hub 半场（发送方）本片不存在**：本片是 ADR 明写的「协议先行」，`run.followup` 在产线
+  还没有发送方；指令落库与 `instruction_state` 收敛属切片③，授权属切片④。所以本片验的是
+  **Node 半场的受理语义与拒绝语义**，不是端到端追问链路。
+- `command.ack accepted=true` 只表示「已下发 Runtime stdin」，不表示模型已读到——端到端的
+  「模型确实收到追问」尚未验（切片③接入后由 Q5/Q6 覆盖）。
