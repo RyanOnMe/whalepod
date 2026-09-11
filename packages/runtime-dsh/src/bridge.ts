@@ -41,6 +41,14 @@ export interface RuntimeBridgeOptions {
    * 入栈（见 start/bootDshTree），env/构造参数通道仅留给探针。
    */
   extraPatchFiles?: readonly string[]
+  /**
+   * **探针专用**（#176 切片①：resume 可行性）：非空时本 Run 不新建会话，而是让
+   * DSH 用 `ctx.agents.resume` 把该 id 的既有会话日志装载回来继续写（persisted
+   * load，同一 session id、同一日志文件）。走的是与 create 完全相同的 boot 与
+   * setup 组合面，只有装载方式不同——所以探针验证的就是将来产品路径要用的那条路。
+   * 生产不用本接缝：Hub 尚无 resume 语义，切片⑤ 提升为产品面时改为 wire 字段。
+   */
+  probeResumeSessionId?: string
 }
 
 const CONFIG_DIR = fileURLToPath(new URL('../config/', import.meta.url))
@@ -255,7 +263,9 @@ export class RuntimeBridge {
   static async start(spec: RuntimeSpec, options: RuntimeBridgeOptions): Promise<RuntimeBridge> {
     const log = options.log ?? nullLog
     const runId = spec.runId
-    const dshSessionId = dshSessionIdOf(spec)
+    // resume 探测时，本 Run 的会话 id 就是被装载的那个既有会话——帧里如实上报，
+    // 否则探针无法区分「接上了」与「悄悄新建了一个」。
+    const dshSessionId = options.probeResumeSessionId ?? dshSessionIdOf(spec)
     const emit = (output: RuntimeOutput): void => options.emit(output)
 
     // DSH_HOME 是本进程级契约（dsh-home-paths 经 $DSH_HOME 解析）；一个 Runtime
@@ -320,6 +330,7 @@ export class RuntimeBridge {
       },
       events,
       log,
+      options.probeResumeSessionId,
     )
     emit(frameOf('runtime.ready', { runId, dshSessionId }))
     return new RuntimeBridge(ctx, owner, approval, spec, log)

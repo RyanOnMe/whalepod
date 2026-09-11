@@ -1,0 +1,6 @@
+{"type":"session","id":"session-replay-resume","createdAt":1755501000000,"seedLength":0}
+{"type":"assistant/chunk","seq":10,"time":1755501000100,"data":{"turn":1,"step":1,"chunk":{"type":"block-start","index":0,"blockType":"text"}}}
+{"type":"assistant/chunk","seq":11,"time":1755501000200,"data":{"turn":1,"step":1,"chunk":{"type":"text-delta","index":0,"text":"已记住。"}}}
+{"type":"assistant/chunk","seq":12,"time":1755501000300,"data":{"turn":1,"step":1,"chunk":{"type":"block-end","index":0,"block":{"type":"text","text":"已记住。"}}}}
+{"type":"assistant/chunk","seq":13,"time":1755501000400,"data":{"turn":1,"step":1,"chunk":{"type":"usage","usage":{"inputTokens":1,"outputTokens":1}}}}
+{"type":"assistant/chunk","seq":14,"time":1755501000500,"data":{"turn":1,"step":1,"chunk":{"type":"finish","reason":{"kind":"stop"}}}}

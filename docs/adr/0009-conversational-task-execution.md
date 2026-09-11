@@ -27,7 +27,8 @@ Run 状态机、审批闸门（ask-all 阻塞在 Runtime 执行路径）、终�
 
 3. **Run 降级为「线程上的执行区间」**。指令消息创建 Run（沿用现有状态机、快照、幂等、血缘、终态语义，一个字不改）；讨论消息不产生任何执行。产品语义：
    - **活跃中追问**：Run 非终态时，指令消息不建新 Run，而是成为该 Run 的 followup，经 `POST /runs/:id/followup` 下发。**成本要说清：这不是"协议层零改动"**——`run.followup` 只存在于 Node↔Runtime 的本地 stdin wire（`runtime-wire.ts:83`），Hub→Node 下行全集 `NodeDownstreamSchema`（`node-wire.ts:313-321`）里**没有**这一帧。切片②的真实成本 = node-wire 加帧 + schema/fixture 生成 + Node run-manager 分发到 Runtime stdin + 受理 ack 语义。
-   - **终态后续跑**：新指令创建新 Run，Runtime 以 seed/`fromRestore` 接回该 Task 会话日志（同一 Workspace 上的 `whalepod-run-<上一Run>`），`session/end-seed` 之后是新事件。旧 Run 一字不动——「终态禁止复活」红线保持，续的是**会话**不是 Run。
+   - **终态后续跑**：新指令创建新 Run，Runtime 以 **persisted load**（`ctx.agents.resume({ resumeSessionId })`）按**同一 session id** 重新装载该 Task 的会话日志并继续追加。旧 Run 一字不动——「终态禁止复活」红线保持，续的是**会话**不是 Run。
+     （原稿写的是「seed/`fromRestore` 接回」，**#176 切片① 探针实测纠正**：DSH 的真实续接通道是 persisted load，同 id、同日志文件原地追加；`seed`/`fromRestore` 是「新建会话 + 复制前缀」，只留给换 Workspace 的无日志场景。）
    - **换 Workspace 的 fallback**：线程仍在，新 Run 在新 Workspace 起新会话并以摘要注入上下文（原 O1-b 降级为 fallback）。摘要器是新组件（现行投影管线只有确定性脱敏，没有摘要器——本 ADR 不谎称现成）：该 Run 的执行卡必须带**可见标记**（「上下文经摘要接续」），不许静默降级。
    - **受理即落账（消竞态）**：指令消息先落 `instruction_state=pending`，Hub 向 Node 下发后按受理结果落 `accepted | rejected`；Run 进入终态时仍在 `pending` 的指令一律落 `rejected(run_terminal)`。**不存在"已受理、零痕迹、未执行"**——这是审计规则四的机器判据。
 
@@ -63,6 +64,17 @@ Run 状态机、审批闸门（ask-all 阻塞在 Runtime 执行路径）、终�
 ## 后果
 
 - **正向**：单人路径变快（拆完任务 @Agent 即走，追问接着上文）；多人协作第一次显形——A 拆任务 @Reviewer 自动跑，B（被授权后）在同一线程追问，C 验收交付物，上下文、审批、凭据边界留在原位；传统 agent 产品的对话能力（多轮、上下文、随时打断追问）回归，且不牺牲任何已验证的安全语义。
-- **代价与风险**：一，**两处协议变更**（node-wire followup 下行 + runtime-wire 审批档位）意味着 Q3 契约门要同步扩，成本高于"接线"量级——这是评审纠正后的诚实估计；二，resume 需要实测：`fromRestore` 在长日志上的行为与耗时，**以及逐次 resume 全量历史以新 session id 重新持久化带来的近平方存储增长**（并入探针项）；三，`full_access` 是真实的放权，无人值守执行的风险由快照固化 + 自动触发降级 + 显著标记承担，安全评审必须过；四，合并线程让 Task Room 同时承载讨论与执行，消息分型（讨论/指令/followup/执行卡）的视觉区分是硬需求；五，`task_comment` → `task_message` 是**表结构升级 + 数据迁移**（不是加列），走既有 migration 纪律并保留回滚路径。
+- **代价与风险**：一，**两处协议变更**（node-wire followup 下行 + runtime-wire 审批档位）意味着 Q3 契约门要同步扩，成本高于"接线"量级——这是评审纠正后的诚实估计；二，resume 的**长日志**行为仍未实测（#176 探针只到 273 KB / 8 轮）；原稿担心的「逐次 resume 全量历史以新 session id 重持久化 → 近平方存储增长」**已被探针证伪**（同 id 原地追加，实测 +33.2 KB/轮线性、历史不复制），故该风险从"待验"降级为"不成立"；三，`full_access` 是真实的放权，无人值守执行的风险由快照固化 + 自动触发降级 + 显著标记承担，安全评审必须过；四，合并线程让 Task Room 同时承载讨论与执行，消息分型（讨论/指令/followup/执行卡）的视觉区分是硬需求；五，`task_comment` → `task_message` 是**表结构升级 + 数据迁移**（不是加列），走既有 migration 纪律并保留回滚路径。
 - **弃选**：O1-b（摘要注入起新会话）——上下文不完整且引入新的失真面，降级为换 Workspace 的 fallback（带可见标记）；O3-b（讨论区/执行区分开）——安全感是假的，指令入口只是藏到另一个表单，控制面一条没少，还保住「对话感为零」的现状；Agent 全自动闭环（agent 自验收）——越过「责任在人」红线，不议。
-- **后续（实现切片顺序，含依赖）**：① resume 可行性探针（不涉模型；同时验长日志耗时与存储增长）；② **协议先行**：node-wire followup 下行帧 + 受理 ack + Node 分发（门归属说清：node-wire 变更走 **protocol schema 重生成检查**（`pnpm check:protocol-generated`）+ Q2/Q5 扩用例；**Q3 是 DSH 契约门，只管 runtime-wire**，与切片⑧的 `runtime.initialize` 变更是两回事，别混）；③ Hub 接线：`POST /runs/:id/followup` + 消息实体升级（`task_message`，含 `instruction_state` 落账）——**②③ 是"活跃中对话"的最小可交付，②之前拿不到**；④ 授权模型（`task_instruction_grant` + 指令权守卫改写）；⑤ resume 续跑（`resume_from_run_id` + seed）；⑥ 合并线程 UI（@触发 + 消息分型 + 执行卡，依赖 ③④）；⑦ Assignment 多态（Agent 可指派，依赖 ④⑥）；⑧ 审批档位（含 runtime-wire 变更 + 自动触发降级规则）。每片独立 PR，Q5 逐片扩用例（追问受理/终态竞态、续跑上下文命中、@不误触发、越权指令被拒、档位快照与自动降级）。文档同步：`CONTEXT.md`、`03-领域模型与运行协议.md` §2.2/§2.6/§3/§6、`04-验收矩阵与测试策略.md` 的 Q3/Q5 范围随对应切片回填。
+- **后续（实现切片顺序，含依赖）**：① resume 可行性探针（不涉模型；同时验长日志耗时与存储增长）；② **协议先行**：node-wire followup 下行帧 + 受理 ack + Node 分发（门归属说清：node-wire 变更走 **protocol schema 重生成检查**（`pnpm check:protocol-generated`）+ Q2/Q5 扩用例；**Q3 是 DSH 契约门，只管 runtime-wire**，与切片⑧的 `runtime.initialize` 变更是两回事，别混）；③ Hub 接线：`POST /runs/:id/followup` + 消息实体升级（`task_message`，含 `instruction_state` 落账）——**②③ 是"活跃中对话"的最小可交付，②之前拿不到**；④ 授权模型（`task_instruction_grant` + 指令权守卫改写）；⑤ resume 续跑（`resume_from_run_id` + **persisted load**；#176 探针已证明机制可行、开销与热态新建不可辨，本片只剩产品面：wire 字段 + Hub 语义）；⑥ 合并线程 UI（@触发 + 消息分型 + 执行卡，依赖 ③④）；⑦ Assignment 多态（Agent 可指派，依赖 ④⑥）；⑧ 审批档位（含 runtime-wire 变更 + 自动触发降级规则）。每片独立 PR，Q5 逐片扩用例（追问受理/终态竞态、续跑上下文命中、@不误触发、越权指令被拒、档位快照与自动降级）。文档同步：`CONTEXT.md`、`03-领域模型与运行协议.md` §2.2/§2.6/§3/§6、`04-验收矩阵与测试策略.md` 的 Q3/Q5 范围随对应切片回填。
+
+## 探针结论回填（#176 切片①，2026-09-11）
+
+`packages/runtime-dsh/tests/dsh-contract/resume.contract.spec.ts` + `docs/agent/resume-probe-acceptance.md`：
+
+- **可行**：第二轮 Run 以同一 session id 接上第一轮会话；「上下文真进了模型请求」由 replay 的
+  `{{fromRequest:…}}` 占位符做成**可失败的机器判据**（匹配不到即抛错），不是观感判断。
+- **开销**：热进程新建 ready 28 ms vs 续跑 26–34 ms（本底噪声内不可辨）；冷进程首次 boot 446 ms
+  （口径不同，不可比）。
+- **存储**：+33.2 KB/轮、线性；第一轮记录出现次数续跑前后不变（无复制）→ 原「近平方增长」风险作废。
+- **未覆盖**：10 MB 级长日志、跨设备续跑、带工具调用/审批的历史、同 id 并发装载（见验收文档边界节）。

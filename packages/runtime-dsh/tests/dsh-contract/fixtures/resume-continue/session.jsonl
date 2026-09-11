@@ -1,0 +1,5 @@
+{"type":"session","id":"session-replay-resume-continue","createdAt":1755501100000,"seedLength":0}
+{"type":"assistant/chunk","seq":20,"time":1755501100100,"data":{"turn":2,"step":1,"chunk":{"type":"block-start","index":0,"blockType":"text"}}}
+{"type":"assistant/chunk","seq":21,"time":1755501100200,"data":{"turn":2,"step":1,"chunk":{"type":"text-delta","index":0,"text":"验证码是 {{fromRequest:验证码是 (\\d{4})}}。"}}}
+{"type":"assistant/chunk","seq":22,"time":1755501100300,"data":{"turn":2,"step":1,"chunk":{"type":"block-end","index":0,"block":{"type":"text","text":"验证码是 {{fromRequest:验证码是 (\\d{4})}}。"}}}}
+{"type":"assistant/chunk","seq":23,"time":1755501100400,"data":{"turn":2,"step":1,"chunk":{"type":"finish","reason":{"kind":"stop"}}}}

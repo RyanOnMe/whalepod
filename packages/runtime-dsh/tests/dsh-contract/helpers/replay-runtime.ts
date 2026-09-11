@@ -19,7 +19,16 @@ import {
 } from '../../../src/index.js'
 import type { RuntimeCommand, RuntimeOutput } from '@whalepod/protocol'
 
-export type ReplayScenario = 'basic' | 'tool-approval' | 'cancel' | 'unmodified-plugin'
+export type ReplayScenario =
+  | 'basic'
+  | 'tool-approval'
+  | 'cancel'
+  | 'unmodified-plugin'
+  // #176 切片① resume 探针：第一阶段（resume）与续跑阶段（resume-continue）各一份脚本。
+  // 第二阶段脚本里的 assistant 文本带 `{{fromRequest:<pattern>}}` 占位符，只有**上下文里
+  // 真有第一阶段那句话**才解析得出（pattern 匹配不到即硬失败）——这就是"接上了"的机器判据。
+  | 'resume'
+  | 'resume-continue'
 
 const CONFIG_DIR = fileURLToPath(new URL('../../../config/', import.meta.url))
 const FIXTURES_DIR = fileURLToPath(new URL('../fixtures/', import.meta.url))
@@ -96,12 +105,31 @@ interface FrameWaiter {
  * 启动 replay 探针运行时：备好隔离 DSH_HOME/Workspace 与 replay fixture 环境，
  * 返回命令/帧驱动面。`send(initializeCommand(spec))` 触发真正的 boot。
  */
+export interface ReplayRuntimeOptions {
+  /**
+   * **探针专用**（#176 切片①）：把本 Run 改成对既有会话的 persisted load
+   * （`RuntimeBridgeOptions.probeResumeSessionId`）。用于 resume 探针的第二阶段。
+   */
+  probeResumeSessionId?: string
+  /**
+   * 保留临时目录（默认删除）。resume 探针需要跨阶段复用同一个 DSH_HOME 与
+   * Workspace——会话日志就躺在 DSH_HOME 里，删了就没得续。
+   */
+  keepTempDirs?: boolean
+  /**
+   * 直接用这个 fixture 文件（覆盖 scenario 目录推导）。resume 探针的多轮测量要按
+   * 轮次生成 turn 号正确的脚本，静态目录装不下。
+   */
+  fixtureFile?: string
+}
+
 export async function startReplayRuntime(
   scenario: ReplayScenario,
   spec: RuntimeSpec = runtimeSpec(),
+  probeOptions: ReplayRuntimeOptions = {},
 ): Promise<ProbeRuntime> {
   const fixtureDir = join(FIXTURES_DIR, scenario)
-  process.env.DSH_SNAPSHOT_FILE = join(fixtureDir, 'session.jsonl')
+  process.env.DSH_SNAPSHOT_FILE = probeOptions.fixtureFile ?? join(fixtureDir, 'session.jsonl')
   const overrideFile = join(fixtureDir, 'replay.override.json')
   if (existsSync(overrideFile)) {
     process.env.DSH_SNAPSHOT_OVERRIDE = overrideFile
@@ -133,6 +161,9 @@ export async function startReplayRuntime(
       logs.push(record)
     },
     extraPatchFiles: [join(CONFIG_DIR, 'replay.yml')],
+    ...(probeOptions.probeResumeSessionId === undefined
+      ? {}
+      : { probeResumeSessionId: probeOptions.probeResumeSessionId }),
   }
 
   const slot: { current: RuntimeBridge | undefined } = { current: undefined }
@@ -204,7 +235,9 @@ export async function startReplayRuntime(
       for (const waiter of waiters.splice(0)) clearTimeout(waiter.timer)
       await slot.current?.dispose()
       slot.current = undefined
-      for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true })
+      if (probeOptions.keepTempDirs !== true) {
+        for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true })
+      }
     },
   }
 }

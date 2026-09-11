@@ -80,39 +80,57 @@ export class SessionOwner {
     ports: RunScopedPorts,
     events: SessionOwnerEvents,
     log: LogSink,
+    /**
+     * **探针专用**（#176 切片①）：非空时改走 DSH 的 persisted load
+     * （`ctx.agents.resume({ resumeSessionId })`），把既有会话日志按**同一 session id**
+     * 重新装载并继续追加，而不是新建会话。生产路径当前恒为 undefined（Hub 还没有
+     * resume 语义）；切片⑤ 把它提升为产品面时，本参数与 wire 字段一并转正。
+     */
+    probeResumeSessionId?: string,
   ): Promise<SessionOwner> {
-    const handle = await ctx.agents.create({
-      sessionId: SessionId(dshSessionIdOf(spec)),
-      meta: { cwd: spec.workspacePath },
-      agentOptions: {
-        provider: spec.provider,
-        model: spec.model,
-        ...(spec.maxTokens !== undefined ? { maxTokens: spec.maxTokens } : {}),
-      },
-      setup: (agentCtx) => {
-        agentCtx.tools.register(createPublishArtifactTool(ports.artifact, ports.artifactValidator))
-        // P1-15：Reviewer Run 带输入清单时注册只读读取工具（清单为空不注册）。
-        if (
-          spec.artifactInputs !== undefined &&
-          spec.artifactInputs.length > 0 &&
-          spec.artifactInputsDir !== undefined
-        ) {
-          agentCtx.tools.register(
-            createReadArtifactInputTool(spec.artifactInputs, spec.artifactInputsDir),
-          )
-        }
-        ports.approval.install(agentCtx)
-        // Runtime 姿态：本 Run 内每次工具调用都要回 Node 拿一次性批准（不永久授权）。
-        agentCtx.on('tools/pre-execute', (exec): Promise<PreToolDecision> =>
-          Promise.resolve({
-            kind: 'ask',
-            reason: `Run tool call requires approval: ${exec.name}`,
-          }),
+    const agentOptions = {
+      provider: spec.provider,
+      model: spec.model,
+      ...(spec.maxTokens !== undefined ? { maxTokens: spec.maxTokens } : {}),
+    }
+    // setup 体在 create / resume 两条路径**同一份**（resume 只是换装载方式，
+    // 组合面必须完全一致，否则「续跑的 Run 少注册了一个工具」这类漂移没人拦）。
+    const setup = (agentCtx: Context) => {
+      agentCtx.tools.register(createPublishArtifactTool(ports.artifact, ports.artifactValidator))
+      // P1-15：Reviewer Run 带输入清单时注册只读读取工具（清单为空不注册）。
+      if (
+        spec.artifactInputs !== undefined &&
+        spec.artifactInputs.length > 0 &&
+        spec.artifactInputsDir !== undefined
+      ) {
+        agentCtx.tools.register(
+          createReadArtifactInputTool(spec.artifactInputs, spec.artifactInputsDir),
         )
-        const systemPrompt = agentCtx.get('systemPrompt') as SystemPromptLike | undefined
-        systemPrompt?.section({ name: PERSONA_SECTION, order: 0, text: spec.persona })
-      },
-    })
+      }
+      ports.approval.install(agentCtx)
+      // Runtime 姿态：本 Run 内每次工具调用都要回 Node 拿一次性批准（不永久授权）。
+      agentCtx.on('tools/pre-execute', (exec): Promise<PreToolDecision> =>
+        Promise.resolve({
+          kind: 'ask',
+          reason: `Run tool call requires approval: ${exec.name}`,
+        }),
+      )
+      const systemPrompt = agentCtx.get('systemPrompt') as SystemPromptLike | undefined
+      systemPrompt?.section({ name: PERSONA_SECTION, order: 0, text: spec.persona })
+    }
+    const handle =
+      probeResumeSessionId === undefined
+        ? await ctx.agents.create({
+            sessionId: SessionId(dshSessionIdOf(spec)),
+            meta: { cwd: spec.workspacePath },
+            agentOptions,
+            setup,
+          })
+        : await ctx.agents.resume({
+            resumeSessionId: SessionId(probeResumeSessionId),
+            agentOptions,
+            setup,
+          })
     const owner = new SessionOwner(handle, ctx, events, log)
     owner.subscribe()
     // setup 落定后再向 Node 报 ready（headless runner 同一契约）。
