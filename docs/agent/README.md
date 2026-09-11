@@ -8,6 +8,7 @@
 | [issue-workflow.md](./issue-workflow.md) | 问题从发现到合入的完整走法 |
 | [evidence-map.md](./evidence-map.md) | 出问题时去哪一层找哪份证据 |
 | [acceptance-template.md](./acceptance-template.md) | 验收文档模板；新验收一律按它写 |
+| [typecheck-coverage-acceptance.md](./typecheck-coverage-acceptance.md) | #178：`tests/` 纳入 typecheck 面（给**门**立档）——已接线 5 包 / 未覆盖 4 包及各自实测存量错误数、变异验证、接线护栏、`--if-present` 静默跳过风险 |
 | [dsh-ui-vendoring.md](./dsh-ui-vendoring.md) | vendored 第三方代码的出处台账：上游钉版 SHA、逐文件映射、同步纪律、许可/商标义务落点（ADR-0008 / #138） |
 | [setup-auth-invite-acceptance.md](./setup-auth-invite-acceptance.md) | G1-01..06：Setup/登录/邀请/角色/Origin gate 验收（P1-05）；#55 迁移并发串行化与等锁超时判据 |
 | [project-task-agent-acceptance.md](./project-task-agent-acceptance.md) | G2-01..06：Project/Task/Comment/Assignment + Task Room 聚合 + Agent Revision 验收（P1-06） |

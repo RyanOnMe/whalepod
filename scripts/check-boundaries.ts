@@ -179,6 +179,62 @@ function* walkSourceFiles(dir: string): Generator<string> {
   }
 }
 
+/**
+ * 「有 tests/ 就必须有覆盖它的 typecheck 脚本」（#178 评审 O2）。
+ *
+ * 为什么需要这条：根 `typecheck` 是 `tsc -p tsconfig.json --noEmit && pnpm -r --if-present
+ * typecheck`——`--if-present` 在**缺脚本时静默 exit 0**（实测），而根 `tsc -b` 只构建根项目
+ * （无 references），所以每个包的 `src/` 与 `tests/` 能否进 Q0 **完全依赖它自己那条脚本**。
+ * 于是「新包漏配 typecheck」= 该包整体静默脱离类型门，没有任何门会红。这条把它变成硬失败：
+ * 凡是有 `tests/` 的 workspace 包，`scripts.typecheck` 必须存在且引用 `tsconfig.test.json`。
+ */
+/**
+ * 尚未接线的包（每个都必须带 Issue 与**实测**存量错误数）。这张表只允许**缩小**：
+ * 收口一片就删一行并把数字清零，`checkTypecheckWiring` 对表内条目不再报违规。
+ * 新增未接线的包进不来——这就是这条护栏的意义。
+ */
+const TYPECHECK_WIRING_DEFERRED = new Map<string, string>([
+  ['apps/hub', '#183：30 个存量错误'],
+  ['apps/node', '#183：29 个存量错误（另需先拆对 hub/tests/helpers.js 的跨包 import）'],
+  ['packages/db', '#183：1 个存量错误'],
+  ['packages/protocol', '#183：1 个存量错误'],
+])
+
+export function checkTypecheckWiring(repoRoot: string): string[] {
+  const violations: string[] = []
+  for (const scope of ['apps', 'packages']) {
+    const scopeDir = join(repoRoot, scope)
+    if (!existsSync(scopeDir)) continue
+    for (const entry of readdirSync(scopeDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const dir = join(scopeDir, entry.name)
+      if (!existsSync(join(dir, 'tests'))) continue
+      const manifestPath = join(dir, 'package.json')
+      if (!existsSync(manifestPath)) continue
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+        scripts?: Record<string, string>
+      }
+      const typecheck = manifest.scripts?.['typecheck']
+      const where = `${scope}/${entry.name}`
+      if (TYPECHECK_WIRING_DEFERRED.has(where)) continue
+      if (typecheck === undefined) {
+        violations.push(`${where}: has tests/ but no typecheck script (its tests never reach Q0)`)
+        continue
+      }
+      if (!typecheck.includes('tsconfig.test.json')) {
+        violations.push(
+          `${where}: typecheck does not run tsconfig.test.json (tests/ excluded from Q0)`,
+        )
+        continue
+      }
+      if (!existsSync(join(dir, 'tsconfig.test.json'))) {
+        violations.push(`${where}: typecheck references tsconfig.test.json but the file is missing`)
+      }
+    }
+  }
+  return violations
+}
+
 /** Scans the repo and returns one human-readable line per violation. */
 export async function checkBoundaries(repoRoot: string): Promise<string[]> {
   const violations: string[] = []
@@ -205,7 +261,7 @@ const invokedAsScript =
 
 if (invokedAsScript) {
   const repoRoot = resolve(fileURLToPath(import.meta.url), '../..')
-  const violations = await checkBoundaries(repoRoot)
+  const violations = [...(await checkBoundaries(repoRoot)), ...checkTypecheckWiring(repoRoot)]
   for (const violation of violations) console.error(violation)
   if (violations.length > 0) {
     console.error(`check-boundaries: ${violations.length} violation(s) found`)

@@ -114,6 +114,11 @@ export interface ProbeRuntime {
 
 const FRAME_TIMEOUT_MS = 90_000
 
+/**
+ * 帧等待者。`T` 就是调用方谓词的窄化结果：`predicate` 负责判定、`resolve` 只接 `T`
+ * ——两者由同一个类型参数绑定，这样 `emit` 里传 `output`、`waitForFrame` 里传 `frame`
+ * 都不需要 cast（#178 评审 O1：原先唯一的 `as T` 虽安全，但绑不住契约）。
+ */
 interface FrameWaiter {
   predicate: (frame: RuntimeOutput) => boolean
   resolve: (frame: RuntimeOutput) => void
@@ -183,11 +188,18 @@ export async function startReplayRuntime(
   const slot: { current: RuntimeBridge | undefined } = { current: undefined }
   const tempDirs = [spec.workspacePath, spec.dshHomePath]
 
+  /**
+   * 等一帧满足谓词的 output。`T` 的收窄**只发生在这一处**：谓词是类型守卫，settle 在
+   * 守卫通过的同一分支里被调用，因此不需要任何 `as`（#178 评审 O1）。
+   * 跨条目的存储用 `FrameWaiter`（吃 RuntimeOutput），避免异构数组的方差问题。
+   */
   const waitForFrame = <T extends RuntimeOutput>(
     predicate: (frame: RuntimeOutput) => frame is T,
     label: string,
-  ): Promise<T> =>
-    new Promise<T>((resolve, reject) => {
+  ): Promise<T> => {
+    let settle: (frame: T) => void = () => {}
+    const pending = new Promise<T>((resolve, reject) => {
+      settle = (frame) => resolve(frame)
       const timer = setTimeout(() => {
         const index = waiters.findIndex((waiter) => waiter.timer === timer)
         if (index >= 0) waiters.splice(index, 1)
@@ -201,11 +213,14 @@ export async function startReplayRuntime(
       }, FRAME_TIMEOUT_MS)
       waiters.push({
         predicate: predicate as (frame: RuntimeOutput) => boolean,
-        // T 就是 predicate 的窄化结果：帧到这一步已由谓词判定为 T，收窄点只在这一处。
-        resolve: (frame) => resolve(frame as T),
+        resolve: (frame: RuntimeOutput) => {
+          if (predicate(frame)) settle(frame)
+        },
         timer,
       })
     })
+    return pending
+  }
 
   return {
     async send(command) {

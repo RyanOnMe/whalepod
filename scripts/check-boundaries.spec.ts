@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest'
-import { validateImport } from './check-boundaries.js'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { checkTypecheckWiring, validateImport } from './check-boundaries.js'
 
 const DSH_ERROR = 'DSH imports are restricted to packages/runtime-dsh and apps/runtime'
 
@@ -165,5 +168,63 @@ describe('isomorphic subpath whitelist: pinned edges (P1-17 regression)', () => 
 
   it('web -> @whalepod/protocol bare package is ALLOW (isomorphic entry)', () => {
     expect(() => validateImport('apps/web/src/main.ts', '@whalepod/protocol')).not.toThrow()
+  })
+})
+
+describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
+  let root: string
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'whalepod-typecheck-wiring-'))
+  })
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  /** 造一个最小 workspace 片段：`<scope>/<name>/{tests,package.json,tsconfig.test.json?}`。 */
+  async function makePackage(
+    scope: 'apps' | 'packages',
+    name: string,
+    manifest: Record<string, unknown>,
+    withTestConfig = false,
+    withTests = true,
+  ): Promise<void> {
+    const dir = join(root, scope, name)
+    await mkdir(withTests ? join(dir, 'tests') : dir, { recursive: true })
+    await writeFile(join(dir, 'package.json'), JSON.stringify(manifest))
+    if (withTestConfig) await writeFile(join(dir, 'tsconfig.test.json'), '{}')
+  }
+
+  it('有 tests/ 但没有 typecheck 脚本 → 违规（该包整体静默脱离 Q0）', async () => {
+    await makePackage('packages', 'solo', { scripts: {} })
+    expect(checkTypecheckWiring(root)).toEqual([
+      'packages/solo: has tests/ but no typecheck script (its tests never reach Q0)',
+    ])
+  })
+
+  it('typecheck 没跑 tsconfig.test.json → 违规（tests/ 仍在门外）', async () => {
+    await makePackage('apps', 'portal', { scripts: { typecheck: 'tsc -b' } })
+    expect(checkTypecheckWiring(root)).toEqual([
+      'apps/portal: typecheck does not run tsconfig.test.json (tests/ excluded from Q0)',
+    ])
+  })
+
+  it('脚本引用了 tsconfig.test.json 但文件不存在 → 违规', async () => {
+    await makePackage('apps', 'portal', {
+      scripts: { typecheck: 'tsc -b && tsc -p tsconfig.test.json' },
+    })
+    expect(checkTypecheckWiring(root)).toEqual([
+      'apps/portal: typecheck references tsconfig.test.json but the file is missing',
+    ])
+  })
+
+  it('接线正确 → 无违规；没有 tests/ 的包不受约束', async () => {
+    await makePackage(
+      'packages',
+      'wired',
+      { scripts: { typecheck: 'tsc -b && tsc -p tsconfig.test.json' } },
+      true,
+    )
+    await makePackage('packages', 'no-tests', { scripts: {} }, false, false)
+    expect(checkTypecheckWiring(root)).toEqual([])
   })
 })
