@@ -263,9 +263,14 @@ export class RuntimeBridge {
   static async start(spec: RuntimeSpec, options: RuntimeBridgeOptions): Promise<RuntimeBridge> {
     const log = options.log ?? nullLog
     const runId = spec.runId
-    // resume 探测时，本 Run 的会话 id 就是被装载的那个既有会话——帧里如实上报，
-    // 否则探针无法区分「接上了」与「悄悄新建了一个」。
-    const dshSessionId = options.probeResumeSessionId ?? dshSessionIdOf(spec)
+    /**
+     * 会话 id 的**权威来源是 DSH 侧**（`owner.session.id`），不是本函数的入参——
+     * 入参只是期望值。评审（#177 R4）指出：若这里写 `probeResumeSessionId ?? dshSessionIdOf(spec)`，
+     * 帧里报的就是**期望值的回声**，与"实际装载了哪条会话"无关，探针据此断言
+     * 「接上的是同一条线程」会变成同义反复。所以先立期望值（在 owner 创建前，
+     * 事件回调闭包要用），owner 起来后立刻用真实值覆盖并**对不上就抛**（fail loud）。
+     */
+    let dshSessionId = options.probeResumeSessionId ?? dshSessionIdOf(spec)
     const emit = (output: RuntimeOutput): void => options.emit(output)
 
     // DSH_HOME 是本进程级契约（dsh-home-paths 经 $DSH_HOME 解析）；一个 Runtime
@@ -332,6 +337,15 @@ export class RuntimeBridge {
       log,
       options.probeResumeSessionId,
     )
+    // 真实值覆盖 + 一致性校验：resume 探测时若 DSH 装载的 id 与请求不符（例如退化成新建），
+    // 这里当场炸，而不是让探针"绿着"。
+    const actualSessionId = String(owner.session.id)
+    if (actualSessionId !== dshSessionId) {
+      throw new Error(
+        `bridge: session identity mismatch — expected ${dshSessionId}, DSH reports ${actualSessionId}`,
+      )
+    }
+    dshSessionId = actualSessionId
     emit(frameOf('runtime.ready', { runId, dshSessionId }))
     return new RuntimeBridge(ctx, owner, approval, spec, log)
   }

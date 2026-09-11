@@ -12,7 +12,8 @@ WhalePod 第一阶段的执行模型是「一次 Run = 一次 prompt = 一次性
 
 1. **Run 一次性**：`03-领域模型与运行协议.md` §3.2 状态机终态 `completed | failed | cancelled | lost` 禁止迁移；`rerun_of_run_id` 只是血缘标记（`orchestrator.ts:187-194` 只校验来源 Run 同 Task 且终态），新 Run 拿新 prompt 起**全新 DSH 会话**（`dshSessionIdOf(spec) = whalepod-run-<runId>`，`runtime-spec.ts:51`），上一轮对话上下文零继承。
 2. **追问能力只铺到 Node↔Runtime 这一段**：`run.followup` 定义在 `packages/protocol/src/runtime-wire.ts:83`（`{runId, text}`，**没有触发者字段**），`packages/runtime-dsh/src/bridge.ts:339-340` 收到即在同一 DSH 会话追加一轮（`owner.followup(text)`）。但 **Hub→Node 下行全集 `NodeDownstreamSchema`（`node-wire.ts:313-321`）里没有这一帧**（03 §6.3 同样没有），`apps/hub/src` 也没有任何 followup 路由——所以"接线"实际包含一次**协议变更**，不是零成本（见决策 3、8）。
-3. **会话续接有官方机制**：DSH 会话日志由 `dsh-session-persistence-jsonl` 持久化在设备上（按 `meta.cwd` 分目录，per workspace 成立）；`Session.fromRestore(id, seed, header)` 与 store 层 `SessionStore.create(id, options)`（`options.seed`）用存储日志播种新会话，`session/end-seed` 标记事件区分历史与新事件（`dsh-session` lib/types 注释原文：「a resumed session's constructor seed is its full stored log」；注意静态 `Session.create` 是**位置参数**，记法别混）。`dsh-agent` 侧 `CreateAgentOptions.seed` + `meta.parentSession` 已支持续接——探针可行性有底，但**尚未在 WhalePod 的 Runtime 里实测**。
+3. **会话续接有官方机制（#176 切片① 已实测）**：DSH 会话日志由 `dsh-session-persistence-jsonl` 持久化在设备上（按 `meta.cwd` 分目录，per workspace 成立）。续接走 **`ctx.agents.resume({ resumeSessionId })` → `sessionPersistence.prepare(id)`**：该路径以 `seedSource: 'persistence'` 调 `SessionStore.prepare`，后者直接 `return Session.fromRestore(sessionId, options.seed, options.meta)`（`dsh-session/lib/index.js:1655`）——**即 persisted load 的底层就是 `Session.fromRestore`**，语义是「按同一 id 接管既有日志并继续追加」。另一支「新建会话 + 复制前缀」是 `SessionStore.create(id, { seed })` / `CreateAgentOptions.seed` + `meta.parentSession`（replay / fork 语义），与续接不是同一条路。
+   #176 探针实测：同 id 接上、上下文进了模型请求、日志**原地线性增长**（+33.2 KB/轮），与热态新建的开销不可辨。
 4. **协作价值不显眼**：`CONTEXT.md` 把 `Agent assignment` / `Run owner` 列为 _Avoid_（责任必须在人），这与「责任在人」红线一致；但现状下「拆任务 → 人逐个发起 Run」把多 agent 编排的成本全压回人身上，单人使用时「成员 → agent」这一跳是纯开销。
 
 ### 为什么不推翻而是降级 Run
@@ -28,7 +29,8 @@ Run 状态机、审批闸门（ask-all 阻塞在 Runtime 执行路径）、终�
 3. **Run 降级为「线程上的执行区间」**。指令消息创建 Run（沿用现有状态机、快照、幂等、血缘、终态语义，一个字不改）；讨论消息不产生任何执行。产品语义：
    - **活跃中追问**：Run 非终态时，指令消息不建新 Run，而是成为该 Run 的 followup，经 `POST /runs/:id/followup` 下发。**成本要说清：这不是"协议层零改动"**——`run.followup` 只存在于 Node↔Runtime 的本地 stdin wire（`runtime-wire.ts:83`），Hub→Node 下行全集 `NodeDownstreamSchema`（`node-wire.ts:313-321`）里**没有**这一帧。切片②的真实成本 = node-wire 加帧 + schema/fixture 生成 + Node run-manager 分发到 Runtime stdin + 受理 ack 语义。
    - **终态后续跑**：新指令创建新 Run，Runtime 以 **persisted load**（`ctx.agents.resume({ resumeSessionId })`）按**同一 session id** 重新装载该 Task 的会话日志并继续追加。旧 Run 一字不动——「终态禁止复活」红线保持，续的是**会话**不是 Run。
-     （原稿写的是「seed/`fromRestore` 接回」，**#176 切片① 探针实测纠正**：DSH 的真实续接通道是 persisted load，同 id、同日志文件原地追加；`seed`/`fromRestore` 是「新建会话 + 复制前缀」，只留给换 Workspace 的无日志场景。）
+     （原稿写的是「以 seed/`fromRestore` 接回」，**#176 切片① 探针实测纠正**：真实续接通道是 `ctx.agents.resume` → `persistence.prepare(id)` → `Session.fromRestore(id, 该 id 的整份存储日志, header)`，同 id、同日志文件原地追加。「新建会话 + 复制前缀」是**另一支**：`SessionStore.create(id, { seed })` 与 `CreateAgentOptions.seed` + `meta.parentSession`（replay / fork），本决策不用它。原稿担心的近平方存储增长正来自那一支，实测不走它。）
+   - **约束（#177 评审 O2）**：`ResumeAgentOptions` 不接受 `cwd`，续跑 Run 的工作目录来自**持久化 header**，而桥内 artifact 校验用的是**新 spec** 的 `workspacePath` ⇒ resume 只允许**同 Workspace**；换设备/换目录属于下一段的摘要 fallback（且那里没有可装载的日志）。切片⑤ 必须把这条做成机器判据，否则会出现「工具在旧 workspace 跑、artifact 按新 workspace 校验」的错位。
    - **换 Workspace 的 fallback**：线程仍在，新 Run 在新 Workspace 起新会话并以摘要注入上下文（原 O1-b 降级为 fallback）。摘要器是新组件（现行投影管线只有确定性脱敏，没有摘要器——本 ADR 不谎称现成）：该 Run 的执行卡必须带**可见标记**（「上下文经摘要接续」），不许静默降级。
    - **受理即落账（消竞态）**：指令消息先落 `instruction_state=pending`，Hub 向 Node 下发后按受理结果落 `accepted | rejected`；Run 进入终态时仍在 `pending` 的指令一律落 `rejected(run_terminal)`。**不存在"已受理、零痕迹、未执行"**——这是审计规则四的机器判据。
 
@@ -74,7 +76,9 @@ Run 状态机、审批闸门（ask-all 阻塞在 Runtime 执行路径）、终�
 
 - **可行**：第二轮 Run 以同一 session id 接上第一轮会话；「上下文真进了模型请求」由 replay 的
   `{{fromRequest:…}}` 占位符做成**可失败的机器判据**（匹配不到即抛错），不是观感判断。
-- **开销**：热进程新建 ready 28 ms vs 续跑 26–34 ms（本底噪声内不可辨）；冷进程首次 boot 446 ms
-  （口径不同，不可比）。
-- **存储**：+33.2 KB/轮、线性；第一轮记录出现次数续跑前后不变（无复制）→ 原「近平方增长」风险作废。
+- **开销**（区间，跨次运行有波动；单次样本不足以下结论）：热进程新建 ready 25–28 ms vs 续跑
+  26–37 ms（独立跑；Q3 全量并行时三者都会抬高，实测续跑 39–75 ms）；冷进程首次 boot 387–446 ms
+  （口径不同——含模块/插件加载——不可与热态并列比较）。
+- **存储**：+33.2 KB/轮、线性（字节数逐轮可复现）。原「近平方增长」风险作废——**归因要说准**（#177 R6）：证伪它的是「同一日志文件字节持续增长 + 会话目录集合恰好只有那一个」两条断言；「第一轮记录出现次数不变」只能抓同一文件内重复追加，抓不到跨会话复制。
+- **判据覆盖面**（#177 R3）：`{{fromRequest:…}}` 的 pattern 必须带**用户消息独有**的前缀（本探针用「请记住：」）——只用「验证码是 (\d{4})」的话，第 2 轮 assistant 回复自身会被持久化并满足该正则，从第 3 轮起判据退化成"上一轮回复在场"。
 - **未覆盖**：10 MB 级长日志、跨设备续跑、带工具调用/审批的历史、同 id 并发装载（见验收文档边界节）。

@@ -33,18 +33,27 @@ export type ReplayScenario =
 const CONFIG_DIR = fileURLToPath(new URL('../../../config/', import.meta.url))
 const FIXTURES_DIR = fileURLToPath(new URL('../fixtures/', import.meta.url))
 
-/** 探针用 RuntimeSpec（02 Step 1 的 runtimeSpec()）：replay provider，占位 digest。 */
+/**
+ * 探针用 RuntimeSpec（02 Step 1 的 runtimeSpec()）：replay provider，占位 digest。
+ *
+ * #177 R5：**被 overrides 覆盖的目录不再预先创建**。此前无条件 mkdtemp 再被 overrides
+ * 覆盖，会给"复用既有 workspace / DSH_HOME"的探针（resume 多轮续跑）每次白造 2 个
+ * 没人认领的孤儿临时目录（评审实测每次运行净留 14 个）。现在只有真正会被用到的目录
+ * 才创建，且都在 spec 里、由 harness 的 tempDirs 负责回收。
+ */
 export function runtimeSpec(overrides: Partial<RuntimeSpec> = {}): RuntimeSpec {
-  const workspacePath = mkdtempSync(join(tmpdir(), 'whalepod-probe-ws-'))
-  // P1-15：桥内 publish_artifact 校验已接线（realpath/边界/size）——探针里
-  // publish_artifact('out/report.md') 的候选必须是工作区内真实存在的文件，
-  // 否则工具以失败结果回给模型、replay 循环重试直到超时。
-  mkdirSync(join(workspacePath, 'out'), { recursive: true })
-  writeFileSync(join(workspacePath, 'out', 'report.md'), '# probe report\n')
+  const workspacePath = overrides.workspacePath ?? mkdtempSync(join(tmpdir(), 'whalepod-probe-ws-'))
+  if (overrides.workspacePath === undefined) {
+    // P1-15：桥内 publish_artifact 校验已接线（realpath/边界/size）——探针里
+    // publish_artifact('out/report.md') 的候选必须是工作区内真实存在的文件，
+    // 否则工具以失败结果回给模型、replay 循环重试直到超时。
+    mkdirSync(join(workspacePath, 'out'), { recursive: true })
+    writeFileSync(join(workspacePath, 'out', 'report.md'), '# probe report\n')
+  }
   return {
     runId: randomUUID(),
     workspacePath,
-    dshHomePath: mkdtempSync(join(tmpdir(), 'whalepod-probe-home-')),
+    dshHomePath: overrides.dshHomePath ?? mkdtempSync(join(tmpdir(), 'whalepod-probe-home-')),
     // profile/plugin-pack digest 由 P1-17 真实接线；探针阶段为 wire 占位（schema 要求 64 hex）。
     profileDigest: '0'.repeat(64),
     pluginPackDigest: '0'.repeat(64),
@@ -116,11 +125,6 @@ export interface ReplayRuntimeOptions {
    * Workspace——会话日志就躺在 DSH_HOME 里，删了就没得续。
    */
   keepTempDirs?: boolean
-  /**
-   * 直接用这个 fixture 文件（覆盖 scenario 目录推导）。resume 探针的多轮测量要按
-   * 轮次生成 turn 号正确的脚本，静态目录装不下。
-   */
-  fixtureFile?: string
 }
 
 export async function startReplayRuntime(
@@ -129,7 +133,7 @@ export async function startReplayRuntime(
   probeOptions: ReplayRuntimeOptions = {},
 ): Promise<ProbeRuntime> {
   const fixtureDir = join(FIXTURES_DIR, scenario)
-  process.env.DSH_SNAPSHOT_FILE = probeOptions.fixtureFile ?? join(fixtureDir, 'session.jsonl')
+  process.env.DSH_SNAPSHOT_FILE = join(fixtureDir, 'session.jsonl')
   const overrideFile = join(fixtureDir, 'replay.override.json')
   if (existsSync(overrideFile)) {
     process.env.DSH_SNAPSHOT_OVERRIDE = overrideFile
