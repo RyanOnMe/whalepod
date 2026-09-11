@@ -187,13 +187,12 @@ function* walkSourceFiles(dir: string): Generator<string> {
  * （无 references），所以每个包的 `src/` 与 `tests/` 能否进 Q0 **完全依赖它自己那条脚本**。
  * 于是「新包漏配 typecheck」= 该包整体静默脱离类型门，没有任何门会红。这条把它变成硬失败：
  * 凡是有 `tests/` 的 workspace 包，`scripts.typecheck` 必须存在且引用 `tsconfig.test.json`。
+ *
+ * 表 `TYPECHECK_WIRING_DEFERRED` 是**尚未接线**的包（每项必须带 Issue 与实测存量错误数），
+ * 只允许**缩小**：收口一片就删一行。新增未接线的包进不来——这就是这条护栏的意义；
+ * 「表内条目其实已经接线了却忘了删行」由 `check-boundaries.spec.ts` 的机器判据兜住。
  */
-/**
- * 尚未接线的包（每个都必须带 Issue 与**实测**存量错误数）。这张表只允许**缩小**：
- * 收口一片就删一行并把数字清零，`checkTypecheckWiring` 对表内条目不再报违规。
- * 新增未接线的包进不来——这就是这条护栏的意义。
- */
-const TYPECHECK_WIRING_DEFERRED = new Map<string, string>([
+export const TYPECHECK_WIRING_DEFERRED = new Map<string, string>([
   ['apps/hub', '#183：30 个存量错误'],
   ['apps/node', '#183：29 个存量错误（另需先拆对 hub/tests/helpers.js 的跨包 import）'],
   ['packages/db', '#183：1 个存量错误'],

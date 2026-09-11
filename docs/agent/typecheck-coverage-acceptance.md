@@ -2,7 +2,7 @@
 
 - 对应门禁：Q0 静态门（`pnpm check`）——本片改的是**门本身**，故单独立档
 - 对应 Issue：#178（门禁缺口）；未覆盖部分另见 #183
-- 上次验证：2026-09-11 · `fix/p1-178-runtime-dsh-test-typecheck` · 结果 PASS（Q0 绿 / 1134 用例）
+- 上次验证：2026-09-11 · `fix/p1-178-runtime-dsh-test-typecheck` · 结果 PASS（Q0 绿 / 1138 用例；含本片新增的 4 条接线护栏单测）
 
 ## 门改了什么
 
@@ -46,6 +46,28 @@ npx tsx scripts/check-boundaries.ts                  # 接线护栏（O2）
 > 在**缺脚本时静默 exit 0**（实测）。没有护栏时，「新包漏配」= 该包整体静默脱离类型门。
 > 护栏带一张**只允许缩小**的豁免表（当前 4 项，每项标注 #183 与实测错误数）。
 
+## 观测（看什么）
+
+静态门没有运行时事件流：**判定表本身就是观测面**。人读的输出是三条命令的退出码与 stderr
+（`error TS…` 行、`check-boundaries: N violation(s) found`）；机器读的是 CI 上 `pnpm check` 的
+退出码。包级复跑时 `tsc -p <包>/tsconfig.test.json` 的退出码与错误行是唯一事实。
+
+## 归因（失败先看哪层）
+
+- `error TS…` 且路径在 `<包>/tests/…` → 该包的测试代码有类型问题（这正是本片要抓的）；
+- `error TS…` 且路径在 `<包>/src/…` → 源码问题（本片顺带暴露过一例：`packages/db` 的分支内状态）；
+- 大量 `TS6059 … is not under 'rootDir'` → **不是代码错误**，是测试里跨包 import 把别的包的
+  `src` 拖进了本包 program（`apps/node` 就有这处，见未覆盖第 1 条）；
+- `check-boundaries: … has tests/ but no typecheck script` → 新包漏配接线（护栏 O2 命中）；
+- `tsc -p tsconfig.test.json` 报「文件不存在」→ 脚本引用了没提交的配置。
+
+## 取证
+
+- CI：`check` job 的 `pnpm check` 日志（GitHub Actions run 页），失败时保留完整 `error TS` 列表；
+- 本地：`pnpm check > /tmp/q0.log 2>&1` 后 `grep 'error TS'`——**临时日志不进仓库**；
+- 本片的变异验证（注入错误 → 红 → 还原 → 逐字节一致）在同一次 shell 调用内完成，不落盘留证，
+  复跑命令写在「驱动」里，任何人可重现。
+
 ## 未覆盖与已知项
 
 1. **4 个包仍未接线**（#183，实测存量错误）：`apps/node` **29**、`apps/hub` **30**、
@@ -60,3 +82,12 @@ npx tsx scripts/check-boundaries.ts                  # 接线护栏（O2）
    偶发失败，单跑全绿；与本片无关（本片不动 web），但「Q0 绿」在本地不是每次都可复现。
 4. **超时口径未调**：Q2/Q6 的用例仍是 5s 默认超时，机器饱和时既有用例会按超时失败（见
    `task-message-entity-acceptance.md` 的登记）。这是另一个问题，不在本片。
+
+## 复跑
+
+```bash
+git checkout main            # 或本 PR 分支
+pnpm check                   # Q0：应 exit 0，Tests 1138 passed
+npx tsc -p packages/runtime-dsh/tsconfig.test.json   # 单包：应 exit 0
+npx tsx scripts/check-boundaries.ts                  # 接线护栏：应 no violations
+```

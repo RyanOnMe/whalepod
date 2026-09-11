@@ -212,7 +212,7 @@ export async function startReplayRuntime(
         )
       }, FRAME_TIMEOUT_MS)
       waiters.push({
-        predicate: predicate as (frame: RuntimeOutput) => boolean,
+        predicate,
         resolve: (frame: RuntimeOutput) => {
           if (predicate(frame)) settle(frame)
         },

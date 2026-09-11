@@ -1,6 +1,8 @@
+import { existsSync, readFileSync } from 'node:fs'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { checkTypecheckWiring, validateImport } from './check-boundaries.js'
 
@@ -215,6 +217,26 @@ describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
     expect(checkTypecheckWiring(root)).toEqual([
       'apps/portal: typecheck references tsconfig.test.json but the file is missing',
     ])
+  })
+
+  it('豁免表只允许缩小：表内每个包在**当前仓库**里必须真的仍未接线', async () => {
+    // 为什么需要这条（#178 评审 O-a）：豁免表是 `continue` 跳过，什么都不查，所以
+    // 「某个包其实已经接线了、行却没删」会变成**永久静默豁免**。这里把承诺变成机检：
+    // 谁把某个包接上 typecheck，这条就会红，逼他删掉表里那一行。
+    const { TYPECHECK_WIRING_DEFERRED } = await import('./check-boundaries.js')
+    const repoRoot = resolve(fileURLToPath(import.meta.url), '../..')
+    for (const where of TYPECHECK_WIRING_DEFERRED.keys()) {
+      const manifestPath = join(repoRoot, where, 'package.json')
+      expect(existsSync(manifestPath), `${where} 的 package.json 不见了`).toBe(true)
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+        scripts?: Record<string, string>
+      }
+      const typecheck = manifest.scripts?.['typecheck'] ?? ''
+      expect(
+        typecheck.includes('tsconfig.test.json'),
+        `${where} 已经接线了——请把它从 TYPECHECK_WIRING_DEFERRED 里删掉（该表只允许缩小）`,
+      ).toBe(false)
+    }
   })
 
   it('接线正确 → 无违规；没有 tests/ 的包不受约束', async () => {
