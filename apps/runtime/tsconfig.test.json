@@ -1,0 +1,13 @@
+// tests 的独立 typecheck 项目（#178）：根 typecheck 只跑 tsc -b，而本包 tsconfig 只
+// include src/**，于是 tests/ 此前**不在任何 typecheck 面内**——测试代码里的类型错误
+// （漏 import、拼错类型名、签名漂移）逃得过 Q0。与 apps/web 同形：不产出、不开 composite。
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["dist", "node_modules"]
+}

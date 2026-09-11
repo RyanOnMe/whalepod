@@ -16,9 +16,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   ArtifactCandidateError,
   createWorkspaceArtifactValidator,
-  type ArtifactCandidate,
 } from '../src/artifact-validation.js'
-import { createPublishArtifactTool } from '../src/artifact-tool.js'
+// ArtifactCandidate 的**定义**在 artifact-tool.ts（artifact-validation 只导出错误类型）；
+// #178 把 tests/ 纳入 typecheck 面后这条错位的 import 才暴露出来。
+import { createPublishArtifactTool, type ArtifactCandidate } from '../src/artifact-tool.js'
 
 let root: string
 let workspace: string
