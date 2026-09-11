@@ -47,7 +47,7 @@ Run 状态机、审批闸门（ask-all 阻塞在 Runtime 执行路径）、终�
    - 建 Run 沿用唯一的活跃约束（`run_one_active_per_task`）：**指令到达时若该 Task 已有非终态 Run，该指令自动降级为该 Run 的 followup**（不建新 Run、不 409），这是对话式下的自然语义——"接着说"永远成立。
    - 消除 check-to-act 竞态：降级判定与 followup 落库在**同一事务**内按「SELECT … FOR UPDATE 活跃 Run」执行；Run 恰好在此刻终态时事务重试，退化为建新 Run（resume）。
    - **未 running 的一切窗口都排队，不丢**：`queued` / `dispatching` / `waiting_approval` 期间到达的指令一律落 `instruction_state=pending`，等 Run 进入 `running` 后按序下发（`waiting_approval` 尤其不得把追问塞进审批阻塞的执行路径）。**"接着说永远成立"的准确口径**：只要 Run 未落终态，指令要么被执行、要么被明确拒绝（`rejected(run_terminal)` + UI 引导改为新回合），**绝不静默**——reviewer 指出的 `queued/dispatching` 小窗口由此闭合。
-   - **终态竞态（评审指出的真实危险）**：Node 在首个 `run.completed` 即 finalize + `runtime.shutdown`（`run-manager.ts:723-728 / 830-844`），在途追问会被连同 Runtime 一起拆掉。规则：Hub 只对**非终态且已 ack 过 start** 的 Run 下发 followup；Node 收到 followup 时若 Run 已 finalize，回**受理失败**（新增 followup ack），Hub 据此把该指令落 `rejected(run_terminal)` 并提示用户「上一轮已结束，已改为新回合」——由 UI 引导改为 resume 新 Run。
+   - **终态竞态（评审指出的真实危险）**：Node 在首个 `run.completed` 即 finalize + `runtime.shutdown`（`run-manager.ts:723-728 / 830-844`），在途追问会被连同 Runtime 一起拆掉。规则：Hub 只对**非终态且已 ack 过 start** 的 Run 下发 followup；Node 收到 followup 时若 Run 已 finalize，回**受理失败**（受理回执**复用既有 `command.ack`**，不新增上行帧；#180 已落地 Node 半场），Hub 据此把该指令落 `rejected(run_terminal)` 并提示用户「上一轮已结束，已改为新回合」——由 UI 引导改为 resume 新 Run。
 
 6. **Agent 可被指派**。Assignment 的 assignee 放宽为「成员或 Agent」（`CONTEXT.md` 的 _Avoid_ 条目相应修订：「Run 的发起主体/审批主体仍是真人，Agent 只是执行者」）：
    - assignee = Agent 时，指派动作本身即一条 `kind=instruction` 的消息，自动创建 Run（无活跃 Run）或 followup（有活跃 Run）；无需人再点一次。

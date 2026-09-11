@@ -470,25 +470,75 @@ describe('run.followup 处理链（#180 / ADR-0009 决策 3）', () => {
     expect(acks.filter((f) => f.payload['accepted'] === true).length).toBeGreaterThanOrEqual(2)
   })
 
-  it('重复帧但 Runtime 已不在管 → 不盲目回 accepted=true，按真实状态拒绝', async () => {
+  it('B1 回归：首次被拒 → ack 丢失 → 同 commandId 重投（此时已 ready）必须回放拒绝，不得假受理', async () => {
+    const h = await makeHarness()
+    // 反例路径：Run 存在但还没 ready → 首次投递被拒（而 ack 上行丢在断连的那一侧）。
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    const frame = followupFrame('这句在 Run ready 之前发的追问')
+    await h.manager.handleFrame(frame)
+    expect(h.sentFrames().findLast((f) => f.type === 'command.ack')?.payload).toMatchObject({
+      accepted: false,
+      error: { code: 'INVALID_RUN_TRANSITION' },
+    })
+
+    // Hub 没收到那条 ack（outbox 未落 acked_at）→ Run 随后 ready → 按同一 commandId 重投。
+    h.runtimes[0]!.emitStdout(stdoutRuntimeReady(RUN_ID))
+    await h.manager.handleFrame(frame)
+
+    const replayed = h.sentFrames().findLast((f) => f.type === 'command.ack')
+    // 关键：**不能**因为「见过这个 commandId」就回 accepted=true——那句话从未进过 stdin，
+    // 一旦假受理，Hub 会把 outbox 行标记完成并永不重投（已受理、零痕迹、未执行）。
+    expect(replayed?.payload['accepted']).toBe(false)
+    expect(replayed?.payload['error']).toMatchObject({ code: 'INVALID_RUN_TRANSITION' })
+    expect(h.runtimes[0]!.stdin.map((c) => c.type)).not.toContain('run.followup')
+  })
+
+  it('首次已受理 → ack 丢失 → 同 commandId 重投 → 回放 accepted，且不二次注入', async () => {
     const h = await makeHarness()
     await startReadyRun(h)
-    const frame = followupFrame('这句追问发出去之后 Run 就结束了')
+    const frame = followupFrame('这句已经成功下发过')
 
     await h.manager.handleFrame(frame)
-    expect(h.sentFrames().findLast((f) => f.type === 'command.ack')?.payload['accepted']).toBe(true)
+    await h.manager.handleFrame(frame) // Hub 未收到 ack → 重投
 
-    // Runtime 进程真的没了（无终态帧即死 → runtime_lost 归因，handle 被摘除）之后，
-    // Hub 因 ack 丢失重发同一 commandId：那句话已经不在任何 Runtime 队列里，
-    // 必须如实拒绝，不能因为"见过这个 commandId"就回放 accepted。
-    h.runtimes[0]!.emitExit(1, null)
-    await h.manager.handleFrame(frame)
+    const replayed = h.sentFrames().findLast((f) => f.type === 'command.ack')
+    expect(replayed?.payload['accepted']).toBe(true)
+    expect(h.runtimes[0]!.stdin.filter((c) => c.type === 'run.followup')).toHaveLength(1)
+  })
+
+  it('崩溃在 record 与处理之间（无处理结果）→ 重投时真正处理一次（spool 本意）', async () => {
+    const h = await makeHarness()
+    await startReadyRun(h)
+    const commandId = 'f0000000-0000-4000-8000-0000000000ff'
+    // 模拟「已 spool 但从未处理」：直接入库，不走 handleFrame。
+    h.commandStore.record({
+      commandId,
+      runId: RUN_ID,
+      type: 'run.followup',
+      payload: { commandId, runId: RUN_ID, text: '崩溃前没来得及处理的追问' },
+    })
+
+    await h.manager.handleFrame(followupFrame('崩溃前没来得及处理的追问', { commandId }))
+
+    const ack = h.sentFrames().findLast((f) => f.type === 'command.ack')
+    expect(ack?.payload['accepted']).toBe(true)
+    expect(h.runtimes[0]!.stdin.filter((c) => c.type === 'run.followup')).toHaveLength(1)
+  })
+
+  it('Runtime 已不在管（stopAll 摘 handle）→ 确定性 RUNTIME_LOST，且不下发', async () => {
+    const h = await makeHarness()
+    await startReadyRun(h)
+    // stopAll：摘 handle 并置 stopping（抑制退出事件 ⇒ 不写 finalFacts），于是 Run 事实
+    // 仍是 running 而 Runtime 已不可派发——这是 RUNTIME_LOST 的确定性命中路径
+    //（#181 评审 S2：先前"不可确定性复现"的说法不成立）。
+    await h.supervisor.stopAll()
+
+    await h.manager.handleFrame(followupFrame('Runtime 已经收摊了'))
 
     const ack = h.sentFrames().findLast((f) => f.type === 'command.ack')
     expect(ack?.payload['accepted']).toBe(false)
-    expect(ack?.payload['error']).toMatchObject({ code: 'INVALID_RUN_TRANSITION' })
-    // 仍然只注入过一次（幂等没有被这条规则破坏）。
-    expect(h.runtimes[0]!.stdin.filter((c) => c.type === 'run.followup')).toHaveLength(1)
+    expect(ack?.payload['error']).toMatchObject({ code: 'RUNTIME_LOST' })
+    expect(h.runtimes[0]!.stdin.map((c) => c.type)).not.toContain('run.followup')
   })
 
   it('Run 已终态 → ack false INVALID_RUN_TRANSITION，且不下发（终态禁止复活）', async () => {

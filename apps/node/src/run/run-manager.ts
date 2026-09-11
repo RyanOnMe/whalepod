@@ -402,17 +402,40 @@ export class RunManager {
       type: 'run.followup',
       payload,
     })
-    if (outcome === 'duplicate' && this.deps.supervisor.isActive(runId)) {
-      // R7 同款：Hub 重发（ack 丢失）且 Runtime 仍在管 → 回放旧 ack。同一句追问已经在
-      // Runtime 的队列里，绝不二次注入。
-      this.ack(commandId, true)
-      return
+    if (outcome === 'duplicate') {
+      /**
+       * 重复投递必须**回放当初那次处理的真实结果**，不能一律回 accepted（#181 阻断 B1）。
+       *
+       * 反例（评审用探针复现过）：首次投递因「未 ready」被拒 → ack 上行时连接已断、
+       * ack 被丢弃 → Hub outbox 未落 acked_at → 退避后按**同一 commandId** 重投；
+       * 此时 Run 已 ready。若这里回 accepted=true，那句话从未进过 Runtime stdin，
+       * 而 Hub 会因为这条 ack 把 outbox 行标记完成、**永不重投**——「已受理、零痕迹、
+       * 未执行」，正是 ADR-0009 决策 3 禁止的形态。
+       *
+       * 三种情况：
+       * - 首次已受理（outcome=accepted）→ 回放 accepted=true：那句话确实在 Runtime 队列里。
+       * - 首次被拒（outcome=rejected）→ 回放**同一个拒绝码与理由**，不重新判定
+       *  （重新判定会因状态已变化而给出与当初不一致的答案）。
+       * - 没有处理结果（崩溃在 record 与处理之间）→ 落到下面重新处理一次：这正是 spool 的
+       *   本意（未处理完的 command 重来时应当被真正处理）。
+       */
+      const previous = this.deps.commandStore.outcomeOf(commandId)
+      if (previous?.outcome === 'accepted') {
+        this.ack(commandId, true)
+        return
+      }
+      if (previous?.outcome === 'rejected') {
+        this.ack(
+          commandId,
+          false,
+          previous.error ?? { code: 'INTERNAL_ERROR', message: 'replayed rejection' },
+        )
+        return
+      }
     }
-    // 重复投递但 Runtime 已不在管：**不能盲目回 accepted=true**——那句话并没有
-    // （或不再）躺在任何 Runtime 队列里。落到下面的守卫按真实状态拒绝（终态 / 未
-    // running / 已丢失），把「受理」的含义守住。
     const reject = (code: ErrorCode, message: string): void => {
-      this.deps.commandStore.markAcked(commandId)
+      // 记录首次结果（与 ack 同一时刻的事实）：Hub 重投时据此回放同一个拒绝。
+      this.deps.commandStore.recordOutcome(commandId, 'rejected', { code, message })
       this.log('warn', 'run.followup rejected', { component: 'node.run_manager', runId, code })
       this.ack(commandId, false, { code, message })
     }
@@ -430,9 +453,15 @@ export class RunManager {
       reject('INVALID_RUN_TRANSITION', 'run has not reached running; followup rejected')
       return
     }
-    // 用 dispatchToRuntime 的**原子返回值**而不是先 isActive() 再派发：Runtime 退出
-    // 事件与终态事实写入之间有窗口（supervisor 先摘 handle、manager 才落 finalFacts），
-    // check-then-act 会在这个窗口里把追问投给一个已经不在的 Runtime——静默丢失。
+    // 用 dispatchToRuntime 的返回值而不是先 isActive() 再派发：它把「handle 是否还在」
+    // 的判断与写入放在同一次调用里，省掉一次可被穿插的检查。
+    //
+    // 但它**只保证「handle 在管且调用过 write」**，不保证字节真的到达 Runtime：driver
+    // 的 send 把 stdin 写失败统一吞成 stderr 归因（#107 有意设计）。所以已知窗口是
+    // 「进程已死、exit 事件尚未投递」——那一瞬 handle 还在、这里返回 true，而追问被
+    // 无声吞掉（进程边界窗口，非本函数的竞态）。要让 accepted 更强就得让发送路径能
+    // 报投递失败（send 返回结果 / supervisor 暴露可写性），那是 driver 层的改动，
+    // 不在切片② 范围内；本片按机制能保证的强度措辞，并把它登记在验收文档。
     const dispatched = this.deps.supervisor.dispatchToRuntime(runId, {
       protocolVersion: 1,
       messageId: crypto.randomUUID(),
@@ -444,7 +473,7 @@ export class RunManager {
       reject('RUNTIME_LOST', 'runtime is not active; followup rejected')
       return
     }
-    this.deps.commandStore.markAcked(commandId)
+    this.deps.commandStore.recordOutcome(commandId, 'accepted')
     this.ack(commandId, true)
     this.log('info', 'run.followup dispatched to runtime', {
       component: 'node.run_manager',

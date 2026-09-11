@@ -120,7 +120,7 @@ scripts/secret-scan.sh apps/hub/src apps/hub/tests apps/node/src apps/node/tests
 
 ## 追加：#180 执行中追问的受理语义（ADR-0009 切片②）
 
-- 对应 Issue：#180（ADR-0009 决策 3 的协议先行切片）
+- 对应 Issue：#180（ADR-0009 决策 3 的协议先行切片）；评审整改见 PR #181（阻断 B1 + 应改 S1–S4）
 - 验证日期：2026-09-11 · 分支 `feat/p1-180-node-followup` · 结果 PASS
 
 ### 驱动
@@ -128,7 +128,7 @@ scripts/secret-scan.sh apps/hub/src apps/hub/tests apps/node/src apps/node/tests
 `RunManager.handleFrame({ type: 'run.followup', payload: { commandId, runId, text } })`——
 与 Hub 下行同一条入口；Runtime 侧用 Q1 既有内存 fake driver（`apps/node/tests/run-manager.spec.ts`），
 断言写进 Runtime stdin 的帧。协议目录一致性由 `packages/protocol/tests/catalog-drift.spec.ts`
-（frame ↔ fixture 一一对应）+ `roundtrip.spec.ts`（新增 fixture 走解析往返）自动覆盖。
+（frame ↔ fixture 一一对应）+ `roundtrip.spec.ts`（新 fixture 走解析往返）自动覆盖。
 
 ```bash
 pnpm vitest run --project unit apps/node/tests/run-manager.spec.ts
@@ -136,27 +136,41 @@ pnpm test:unit                      # 含 protocol catalog-drift / roundtrip
 pnpm check:protocol-generated       # 生成物与 schema 不得漂移
 ```
 
-### 判定（覆盖到的分支）
+### 判定（9 条用例，全部可失败）
 
 | 分支 | 断言 | 结果 |
 |---|---|---|
-| happy path（Run 已 running） | ack `accepted=true`；stdin 追加**恰好一帧** `run.followup{runId,text}`；无第二个 Runtime、无第二次 `initialize`；spool 已 ack | PASS |
-| 重复 `commandId` + Runtime 仍在管（Hub 重发 / ack 丢失） | 只回放 ack；stdin 里 `run.followup` 仍只有一帧 | PASS |
-| 重复 `commandId` + Runtime 已退出 | **不盲目回 `accepted=true`**：按真实状态拒绝（`INVALID_RUN_TRANSITION`），且仍只注入过一次 | PASS |
-| Run 已终态（`run.completed` 之后） | ack `accepted=false` + `INVALID_RUN_TRANSITION`；**不下发** | PASS |
+| happy path（Run 已 running） | ack `accepted=true`；stdin 追加**恰好一帧** `run.followup{runId,text}`；无第二个 Runtime、无第二次 `initialize` | PASS |
+| **B1 回归**：首次被拒 → ack 丢失 → 同 commandId 重投（此时已 ready） | ack **仍为 false** 且回放**同一个拒绝码**；stdin 无 `run.followup`（不得假受理） | PASS |
+| 首次已受理 → ack 丢失 → 同 commandId 重投 | 回放 `accepted=true`；stdin 仍只有一帧（幂等未被破坏） | PASS |
+| 已 spool 但从未处理完（崩溃在 record 与处理之间） | 重投时**真正处理一次**（spool 本意），ack `accepted=true` | PASS |
+| Run 已终态（`run.completed` 之后） | ack `accepted=false` + `INVALID_RUN_TRANSITION`；不下发 | PASS |
 | Run 存在但未 `runtime.ready` | ack `accepted=false` + `INVALID_RUN_TRANSITION`；不下发 | PASS |
+| **Runtime 已不在管**（`supervisor.stopAll()` 摘 handle、抑制退出事件） | ack `accepted=false` + `RUNTIME_LOST`；不下发 | PASS |
 | 本 Node 无该 Run 事实 | ack `accepted=false` + `NOT_FOUND`；不 spawn | PASS |
+| 重复帧（Runtime 在管） | 只回放 ack；不二次注入 | PASS |
 
-### 未覆盖（如实登记）
+**变异验证（证明用例不是恒真）**：把「重复投递回放首次结果」改回「一律回 `accepted=true`」，
+**恰好 2 条**回归用例转红（B1 回归 + 崩溃后重投），其余 34 条仍绿；还原后 36/36 绿。
 
-- **`RUNTIME_LOST` 分支仍没有确定性用例**：新增的「Runtime 已退出后的重发」用例命中的是**终态守卫**
-  （进程退出必然先落 `finalFacts`），不是 `RUNTIME_LOST`；原说明如下。
-- **`RUNTIME_LOST` 分支没有确定性用例**：正常时序下 Runtime 消失必然先落终态事实
-  （`finalFacts`），终态守卫会先命中；该分支靠 `dispatchToRuntime` 的**原子返回值**兜住
-  「supervisor 已摘 handle、manager 尚未写 finalFacts」的窗口。窗口极窄、不可确定性复现，
-  故不声称已覆盖——写在这里以免后人误以为已验。
-- **Hub 半场（发送方）本片不存在**：本片是 ADR 明写的「协议先行」，`run.followup` 在产线
-  还没有发送方；指令落库与 `instruction_state` 收敛属切片③，授权属切片④。所以本片验的是
-  **Node 半场的受理语义与拒绝语义**，不是端到端追问链路。
-- `command.ack accepted=true` 只表示「已下发 Runtime stdin」，不表示模型已读到——端到端的
-  「模型确实收到追问」尚未验（切片③接入后由 Q5/Q6 覆盖）。
+### 未覆盖与已知窗口（如实登记）
+
+1. **`accepted=true` 不保证字节到达 Runtime**：Node 侧只保证「已写入在管进程的 stdin」，driver
+   把 stdin 写失败统一归因为 stderr（#107 有意设计）。已知窗口：**进程已死、退出事件尚未投递**——
+   那一瞬 handle 仍在管、派发返回成功，而追问被无声吞掉。要让受理更强，需让发送路径能报投递
+   失败（driver 层改动），不在切片② 范围。
+2. **Hub 半场（发送方）本片不存在**：`run.followup` 在产线还没有发送方（grep `apps/hub/src` 无
+   生产代码）。指令落库、`instruction_state` 收敛属切片③，授权属切片④。本片验的是 **Node 半场的
+   受理与拒绝语义**，不是端到端追问链路；「模型确实收到追问」同样待切片③ 接入后由 Q5/Q6 覆盖。
+3. **spool 只进不出**：`spooled_command` 无删除与保留期，payload 全文入库——`run.followup` 把
+   增长率从「每 Run 一行」变成「每条消息一行、每行最多 20 000 字」。已登记，清理策略与 §9 日志
+   保留期一起定。另外：**除 `run.start` 外本 Node 不主动重放 command**（`pending()` 目前只有测试
+   消费者），ack 丢失时的唯一恢复路径是 Hub 按同一 commandId 重投。
+4. **`command.ack` 的 `error.code` 今天不会被 Hub 解释**（`apps/hub/src/modules/run/orchestrator.ts`
+   对非 `run.start` 的 ack 直接 return）：切片③ 必须把映射写进同事务，否则被拒的指令会静默消失。
+   §6.3 已写出要求的映射表与「不要照抄 run.start 失败映射」的告警。
+
+### 协议面
+
+`run.followup` 已进 `03-领域模型与运行协议.md` §6.3（权威本文），本地 wire 同名帧在 §7.1；
+两侧命名按本仓避让方向（runtime 侧加前缀）：`RuntimeRunFollowupSchema` ↔ `RunFollowupSchema`。
