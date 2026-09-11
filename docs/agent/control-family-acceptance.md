@@ -14,7 +14,7 @@
 
 - 对应场景/门禁：Q0 静态门（源码文本判据）+ Q5 浏览器门（computed style 判据）
 - 对应 Issue：#168（P1-168）；#173 起按钮族几何改判，见上方改写说明
-- 上次验证：2026-09-11 · `feat/p1-168-control-family` · **Q0 PASS**（7 条新用例全绿 + 22 条变异验证全红）
+- 上次验证：2026-09-11 · `feat/p1-168-control-family` · **Q0 PASS**（7 条新用例全绿 + 20 条变异验证全红；本文档与 spec 头此前误写 22，#173 评审纠出）
   · **Q5 PASS**（`--project=p1-07` 1 passed / 18.6s；`--project=p1-142` 2 passed / 19.9s）
   · 两档截图自审已做（含顶栏 hover 对照，见下节）；
   已并入 `main` 两次（#159/#164/#166/#170，以及随后的 **#161 原生 select 迁移**）；
@@ -96,7 +96,7 @@ pnpm exec playwright test --project=p1-142   # 成员页 390 档：主按钮
    hover 面/描边 `--dsw-alias-interactive-bg-hover` / `--dsw-alias-border-l3`。
 3. **`min-height` 与 `var(--touch-min)` 同值且 `--touch-min ≥ 40px`**：高度轴不跟着 vendored
    `Input` 降到 32px，由判据承担，不靠注释。
-4. **变异验证（22 条）**：描边回 1px / 圆角回 6px / 描边换 `border-l3` / 背景换应用层
+4. **变异验证（20 条，此前误写 22）**：描边回 1px / 圆角回 6px / 描边换 `border-l3` / 背景换应用层
    `--color-surface`（**同值**：两者浅色下都是 `rgb(255,255,255)`）/ 高度回 32px / 主按钮写 `#fff` /
    主按钮底换 `brand-primary` / 危险底换错误色 / 危险字回红-500 / 危险描边回 1px /
    quiet 无边被改松 / hover 面换应用层变量 / `:disabled` 里塞裸色值 / 焦点描边换应用层变量 /

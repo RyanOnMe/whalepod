@@ -21,7 +21,7 @@
  *     都曾全绿）。没登记期望值、却声明了颜色属性的规则**直接报红**，不许静默放过。
  *  C. `min-height` 与 `var(--touch-min)` 同值，且 `--touch-min ≥ 40px`——**高度不跟着
  *     vendored `Input` 降到 32px** 这件事必须由判据承担，否则下一个人"顺手对齐 32px"没人拦。
- *  D. 反面钉（变异验证，22 条）：按 **CSS 规则 + 属性**定位后改坏一次（描边回 1px / 圆角回 6px /
+ *  D. 反面钉（变异验证，20 条）：按 **CSS 规则 + 属性**定位后改坏一次（描边回 1px / 圆角回 6px /
  *     换另一个 L1 描边档 / 颜色回应用层 token（含**同值**的 `--color-surface`，纯文本判据才拦得住）/
  *     高度回 32px / 变体写裸色值 / 底色换成错误色 / hover 与 disabled 里塞应用层值与裸色值 /
  *     `@media` 里偷偷改松），`assertControlFamily` 必须**变红**，且失败信息指到那条规则；
@@ -1159,7 +1159,7 @@ describe('#168 自研控件对齐 DSH 族（源码文本判据）', () => {
       {
         // quiet 的 color 不钉 token 名（见 rules 表后的豁免说明），但**裸色值仍要红**：
         // 豁免的是"在两个 L1 token 之间换"，不是"可以写死颜色"。
-        name: 'quiet 文字写裸色值（豁免 token 名，不豁免裸值）',
+        name: 'quiet 文字写裸色值',
         css: setDeclaration(
           { selector: '.button-quiet', mustDeclare: 'color' },
           'color',

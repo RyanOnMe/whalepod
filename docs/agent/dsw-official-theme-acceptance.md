@@ -50,7 +50,7 @@ npx tsx .dsh/shots4.mts <user>   # 截图到 ~/.whalepod-work/shots6（脚本 gi
 
 - **Q0 机器判据**（全部在源码文本层，改坏任一处必红）：
   - `control-family.spec.tsx`：按钮族度量现场读 vendored `Button.module.css`（新增
-    `parseVendorButtonMetrics`，与 Input 族分轴）；期望表逐条钉 token；22 条变异验证
+    `parseVendorButtonMetrics`，与 Input 族分轴）；期望表逐条钉 token；20 条变异验证
     （含「quiet 的 transparent 被偷换成有色描边」「顶栏形状规则塞 color」两条新变异）。
   - `theme-contrast.spec.ts`：深色顶栏两对配对退役，换成侧栏真实配对
     （侧栏文字 18.08:1、选中导航 16.24:1；输出表逐行打印）。
@@ -73,8 +73,9 @@ npx tsx .dsh/shots4.mts <user>   # 截图到 ~/.whalepod-work/shots6（脚本 gi
 
 ## 取证
 
-- 截图：`~/.whalepod-work/shots6/`（本机，gitignored；复跑命令见上）。
-- Q5 输出：`/tmp/q5.log` 末段（六段 passed）。
+- 截图：`~/.whalepod-work/shots6/`（本机，gitignored；复跑命令见上节「驱动」）。
+- Q5/Q0 输出不落盘存档（验收口径 = 可复跑的判据本身）：复跑 `pnpm check && pnpm test:e2e`，
+  两段的汇总行（`Tests 1119 passed` / 六段 `N passed`）即为证据。
 
 ## 边界与未覆盖
 
