@@ -15,6 +15,7 @@
 | [browser-realtime-acceptance.md](./browser-realtime-acceptance.md) | G2-06、R2/R3、§6.2：Browser Team Event 实时链路与断线补洞（P1-08） |
 | [web-shell-acceptance.md](./web-shell-acceptance.md) | Issue #11/#23 验收：Web 壳与 Task Room 双上下文主链 e2e（P1-07 种子）+ P1-19 全链/恢复/行动 12 场景与 Q5 正式门（三通道映射与实测发现） |
 | [control-family-acceptance.md](./control-family-acceptance.md) | #168：自研表单控件（`.field input` / `.field textarea` / `.button` 族）对齐 DSH 族的机器判据——度量从 vendored CSS 现场读、变异验证、Q5 接线与未覆盖清单 |
+| [resume-probe-acceptance.md](./resume-probe-acceptance.md) | #176（ADR-0009 切片①）：会话 resume 可行性探针——同 id persisted load、`fromRequest` 上下文硬判据、日志线性增长与开销实测、未覆盖边界 |
 | [dsw-official-theme-acceptance.md](./dsw-official-theme-acceptance.md) | #173：全站迁移真实 DSH Web 形态——浅色侧栏壳（互斥渲染）、胶囊按钮族、L1 白名单第三批、灰平台白卡；Q0/Q5 判据与两档截图自审 |
 | [workspace-runtime-acceptance.md](./workspace-runtime-acceptance.md) | G3-04..06：Workspace Registry、Runtime 进程隔离与无孤儿恢复（P1-12） |
 | [run-projection-acceptance.md](./run-projection-acceptance.md) | G4-04..06、R1/R6、§6.4：Run 投影、双受众流与全链路 replay 验收（P1-13） |

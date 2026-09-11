@@ -19,23 +19,44 @@ import {
 } from '../../../src/index.js'
 import type { RuntimeCommand, RuntimeOutput } from '@whalepod/protocol'
 
-export type ReplayScenario = 'basic' | 'tool-approval' | 'cancel' | 'unmodified-plugin'
+export type ReplayScenario =
+  | 'basic'
+  | 'tool-approval'
+  | 'cancel'
+  | 'unmodified-plugin'
+  // #176 切片① resume 探针：第一阶段（resume）与续跑阶段（resume-continue）各一份脚本。
+  // 第二阶段脚本里的 assistant 文本带 `{{fromRequest:<pattern>}}` 占位符，只有**上下文里
+  // 真有第一阶段那句话**才解析得出（pattern 匹配不到即硬失败）——这就是"接上了"的机器判据。
+  | 'resume'
+  | 'resume-continue'
 
 const CONFIG_DIR = fileURLToPath(new URL('../../../config/', import.meta.url))
 const FIXTURES_DIR = fileURLToPath(new URL('../fixtures/', import.meta.url))
 
-/** 探针用 RuntimeSpec（02 Step 1 的 runtimeSpec()）：replay provider，占位 digest。 */
+/**
+ * 探针用 RuntimeSpec（02 Step 1 的 runtimeSpec()）：replay provider，占位 digest。
+ *
+ * #177 R5：**被 overrides 覆盖的目录不再预先创建**。此前无条件 mkdtemp 再被 overrides
+ * 覆盖，会给"复用既有 workspace / DSH_HOME"的探针（resume 多轮续跑）每次白造 2 个
+ * 没人认领的孤儿临时目录（评审实测每次运行净留 14 个）。现在只有真正会被用到的目录
+ * 才创建，且都在 spec 里、由 harness 的 tempDirs 负责回收。
+ */
 export function runtimeSpec(overrides: Partial<RuntimeSpec> = {}): RuntimeSpec {
-  const workspacePath = mkdtempSync(join(tmpdir(), 'whalepod-probe-ws-'))
-  // P1-15：桥内 publish_artifact 校验已接线（realpath/边界/size）——探针里
-  // publish_artifact('out/report.md') 的候选必须是工作区内真实存在的文件，
-  // 否则工具以失败结果回给模型、replay 循环重试直到超时。
-  mkdirSync(join(workspacePath, 'out'), { recursive: true })
-  writeFileSync(join(workspacePath, 'out', 'report.md'), '# probe report\n')
+  const workspacePath = overrides.workspacePath ?? mkdtempSync(join(tmpdir(), 'whalepod-probe-ws-'))
+  // 注意（#177 R5 评审提醒）：**自带 workspacePath 的调用方不会拿到 out/report.md 脚手架**。
+  // 这是有意为之——复用既有 workspace 的探针（resume 多轮）不该被注入新文件；新调用方若要
+  // 走 publish_artifact 探针，得自己准备候选文件。
+  if (overrides.workspacePath === undefined) {
+    // P1-15：桥内 publish_artifact 校验已接线（realpath/边界/size）——探针里
+    // publish_artifact('out/report.md') 的候选必须是工作区内真实存在的文件，
+    // 否则工具以失败结果回给模型、replay 循环重试直到超时。
+    mkdirSync(join(workspacePath, 'out'), { recursive: true })
+    writeFileSync(join(workspacePath, 'out', 'report.md'), '# probe report\n')
+  }
   return {
     runId: randomUUID(),
     workspacePath,
-    dshHomePath: mkdtempSync(join(tmpdir(), 'whalepod-probe-home-')),
+    dshHomePath: overrides.dshHomePath ?? mkdtempSync(join(tmpdir(), 'whalepod-probe-home-')),
     // profile/plugin-pack digest 由 P1-17 真实接线；探针阶段为 wire 占位（schema 要求 64 hex）。
     profileDigest: '0'.repeat(64),
     pluginPackDigest: '0'.repeat(64),
@@ -96,9 +117,23 @@ interface FrameWaiter {
  * 启动 replay 探针运行时：备好隔离 DSH_HOME/Workspace 与 replay fixture 环境，
  * 返回命令/帧驱动面。`send(initializeCommand(spec))` 触发真正的 boot。
  */
+export interface ReplayRuntimeOptions {
+  /**
+   * **探针专用**（#176 切片①）：把本 Run 改成对既有会话的 persisted load
+   * （`RuntimeBridgeOptions.probeResumeSessionId`）。用于 resume 探针的第二阶段。
+   */
+  probeResumeSessionId?: string
+  /**
+   * 保留临时目录（默认删除）。resume 探针需要跨阶段复用同一个 DSH_HOME 与
+   * Workspace——会话日志就躺在 DSH_HOME 里，删了就没得续。
+   */
+  keepTempDirs?: boolean
+}
+
 export async function startReplayRuntime(
   scenario: ReplayScenario,
   spec: RuntimeSpec = runtimeSpec(),
+  probeOptions: ReplayRuntimeOptions = {},
 ): Promise<ProbeRuntime> {
   const fixtureDir = join(FIXTURES_DIR, scenario)
   process.env.DSH_SNAPSHOT_FILE = join(fixtureDir, 'session.jsonl')
@@ -133,6 +168,9 @@ export async function startReplayRuntime(
       logs.push(record)
     },
     extraPatchFiles: [join(CONFIG_DIR, 'replay.yml')],
+    ...(probeOptions.probeResumeSessionId === undefined
+      ? {}
+      : { probeResumeSessionId: probeOptions.probeResumeSessionId }),
   }
 
   const slot: { current: RuntimeBridge | undefined } = { current: undefined }
@@ -204,7 +242,9 @@ export async function startReplayRuntime(
       for (const waiter of waiters.splice(0)) clearTimeout(waiter.timer)
       await slot.current?.dispose()
       slot.current = undefined
-      for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true })
+      if (probeOptions.keepTempDirs !== true) {
+        for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true })
+      }
     },
   }
 }
