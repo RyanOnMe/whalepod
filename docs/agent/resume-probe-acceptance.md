@@ -36,20 +36,25 @@ npx vitest run --project dsh-contract resume.contract   # 只跑本探针
 | 2 | 续跑轮能走完并给出回复 | replay 脚本的 assistant 文本带 `{{fromRequest:验证码是 (\d{4})}}` 占位符——它按**模型实际收到的请求内容**解析，**匹配不到即硬失败**（上游 `llm-replay` 行为）。解析出 `7788` 只可能来自第一轮的用户消息 → 上下文真进了模型请求 |
 | 3 | 第一轮那句话在日志里的出现次数**续跑前后不变**，且只存在一个会话目录 | persisted load 是**原地追加**；复制式 seed 会让历史成倍出现（第一版曾用验证码计数，被自己的数据纠正——验证码会随每轮回复正常进入日志） |
 
+**反证（判据 2 不是恒真）**：同一份续跑脚本用在**没有 resume 的新会话**上时，占位符
+无内容可匹配 → 上游 `llm-replay` 抛 `fromRequest pattern ... matched nothing` → turn 以错误
+收敛、bridge 发 `runtime.fatal`、**不出现** `run.completed`。探针里有这一条独立用例
+（`反证：同一脚本用在没有续接的新会话上会失败`），所以判据 2 的"绿"确实要求上下文在场。
+
 ## 实测结果（2026-09-11，本机 Apple Silicon / Node 24.12）
 
 ```
-冷进程新建 ready 446 ms / 热进程新建 ready 28 ms
+冷进程新建 ready 387–446 ms（跨次运行有波动）
+热进程新建 ready 25–28 ms
 首轮日志 40454 B
-第 2 轮：73698 B / ready 31 ms
-第 3 轮：106942 B / ready 29 ms
-第 4 轮：140186 B / ready 26 ms
-第 5 轮：173430 B / ready 32 ms
-第 6 轮：206674 B / ready 27 ms
-第 7 轮：239923 B / ready 32 ms
-第 8 轮：273185 B / ready 34 ms
-第一轮那句话出现 2 次（续跑前 2 次）
+第 2..8 轮日志：73698 / 106942 / 140186 / 173430 / 206674 / 239923 / 273185 B
+对应 ready：26–37 ms（波动与本底噪声同量级，别把单次差当趋势）
+第一轮那句话出现 2 次（续跑前也是 2 次）
 ```
+
+> 数字口径：ready 时间 = `runtime.initialize → runtime.ready` 的墙钟（含 **boot + 会话装载 +
+> setup + whenIdle**），不是"只量装载"。冷/热进程不可比（冷进程要加载模块与插件），
+> 所以对照用的是**热进程新建**。字节数只说明增长形态（线性），不是存储上限结论。
 
 ## 结论（回填 ADR-0009）
 
@@ -83,6 +88,8 @@ npx vitest run --project dsh-contract resume.contract   # 只跑本探针
   并发规则在产品侧是单活 Run，但 Runtime 层没有实测护栏）。
 - 探针用的 `probeResumeSessionId` 是**探针专用接缝**（生产路径恒为 undefined，与既有
   `extraPatchFiles` 同性质）；把它提升为产品面属于切片⑤，需 wire 字段 + Hub 侧 `resume_from_run_id`。
+- 探针跑完**收掉自己的临时目录**（workspace / DSH_HOME / 生成的 fixture），不留 /tmp 现场——
+  证据是可复跑的判据本身，不是一次性的现场快照。
 
 ## 复跑
 

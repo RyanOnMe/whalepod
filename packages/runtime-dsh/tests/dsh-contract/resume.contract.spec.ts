@@ -25,7 +25,7 @@
  * - **续跑耗时**：记录每轮 `runtime.initialize → runtime.ready` 的墙钟时间（含 boot +
  *   装载 + setup + whenIdle，探针如实标注口径，不假装只量了装载）。
  */
-import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -233,5 +233,33 @@ describe('probe: resume（#176 切片①，ADR-0009 决策 3 前置）', () => {
           .join('；') +
         `；第一轮那句话出现 ${finalPromptOccurrences} 次（续跑前 ${firstPromptOccurrences} 次）`,
     )
+
+    // 证据是「可复跑的判据」本身，不是留在 /tmp 的现场：跑完把临时目录收掉。
+    rmSync(specA.workspacePath, { recursive: true, force: true })
+    rmSync(specA.dshHomePath, { recursive: true, force: true })
+    rmSync(fixtureDir, { recursive: true, force: true })
   }, 180_000)
+
+  /**
+   * 判据不恒真的反证（本仓的变异验证习惯）：把续跑脚本用在**没有 resume 的新会话**上，
+   * 那个 `{{fromRequest:验证码是 (\d{4})}}` 占位符就无内容可匹配——上游 llm-replay 会抛
+   * `fromRequest pattern ... matched nothing`，turn 以错误收敛、bridge 发 `runtime.fatal`，
+   * **不会**出现 run.completed。也就是说判据 2 的"绿"确实要求上下文在场。
+   */
+  it('反证：同一脚本用在没有续接的新会话上会失败（判据 2 不是恒真）', async () => {
+    const spec = runtimeSpec()
+    const runtime = await startReplayRuntime('resume-continue', spec)
+    try {
+      await runtime.send(initializeCommand(spec))
+      await runtime.until('runtime.ready')
+      await runtime.send(commandFrame('run.prompt', { runId: spec.runId, text: SECOND_PROMPT }))
+      const fatal = await runtime.until('runtime.fatal')
+      // 归因走既有映射表（bridge mapTurnError）：这里只钉"没有静默成功"。
+      expect(typeof fatal.payload.summary).toBe('string')
+      expect(runtime.outputs.some((frame) => frame.type === 'run.completed')).toBe(false)
+      expect(assistantTexts(runtime.outputs)).not.toContain(SECRET)
+    } finally {
+      await runtime.dispose()
+    }
+  }, 120_000)
 })
