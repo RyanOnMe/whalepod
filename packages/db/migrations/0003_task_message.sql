@@ -77,3 +77,8 @@ create index task_message_task_created_idx on task_message (task_id, created_at)
 --
 -- 反向 SQL 不随仓库发（避免被当成 down-migration 自动执行）；需要时按上面骨架现场写，
 -- 并用 pg_constraint / pg_indexes 与迁移前快照逐名核对。
+--
+-- **回滚后必须删台账行**：`delete from _schema_migrations where name = '0003_task_message.sql';`
+-- 否则该实例的台账仍记着 0003，下次部署会被迁移应用器**静默跳过**，而应用代码已按
+-- `task_message` 写——直接变成「部署起来就报 relation 不存在」。反向 SQL 的可执行性由
+-- `packages/db/tests/task-message-rollback.integration.spec.ts` 常驻验证（含这条台账提醒）。

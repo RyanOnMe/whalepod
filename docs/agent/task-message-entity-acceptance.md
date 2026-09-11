@@ -40,7 +40,8 @@ PG 错误码与**约束名**（`23514` = check_violation）。
 | 枚举取值 | `kind='shout'` → `task_message_kind_valid`；`origin='robot'` → `task_message_origin_valid`；`instruction_state='maybe'` → `task_message_state_valid` | PASS |
 | 受理成功必有 Run | `accepted` 无 `run_id` → `23514` + `task_message_accepted_has_run`（评审实测原先可入库）；四种合法组合（pending±run / rejected±run / accepted+run）不得被误伤 | PASS |
 | 线程读取 | **同一 `createdAt` + 逆序 id** 的两行按 `(createdAt, id)` 读出确定顺序，且只返回本 Task 的消息（单 Team 部署下用第二个 Task 验 `task_id` 过滤） | PASS |
-| **老库升级**（评审点名缺失项） | 独立 schema 只应用 0001/0002 → 按旧表结构灌 3 行真实数据（含 10 000 字边界与首尾空白）→ 应用 0003：行数不变、全部成 `discussion/human`、body 逐字完好、`task_comment%` 约束与索引零残留、新约束生效 | PASS |
+| **老库升级**（评审点名缺失项） | 独立 schema 只应用 0001/0002 → 按旧表结构灌 3 行真实数据（含 10 000 字边界与首尾空白）→ 应用 0003：行数不变、全部成 `discussion/human`、body 逐字完好、`task_comment%` 约束与索引零残留、`accepted_has_run` **按约束名**生效 | PASS |
+| **反向 SQL**（回滚收口） | 跑 0001→0003 后按骨架反向执行：零失败，列/约束/索引名逐名回到迁移前；台账行须显式删除否则 0003 被静默跳过 | PASS |
 
 ## 变异验证（证明用例有牙）
 
@@ -49,6 +50,8 @@ PG 错误码与**约束名**（`23514` = check_violation）。
 | 去掉 `asc(taskMessages.id)` 决胜键 | 排序用例必须变红 | ✅ 变红（**整改前**该用例两行 `createdAt` 不同，去掉兜底照样绿——断言落空，评审抓出） |
 | 删掉 `task_message_accepted_has_run` | 「受理成功必有 Run」用例必须变红 | ✅ 变红 |
 | `instruction_state='accepted'` 且无 `run_id` 入库 | 必须被拒 | ✅ `23514`（整改前可入库） |
+| 把 `accepted_has_run` 改成恒真（等于删约束） | 迁移用例也必须红 | ✅ 修复后变红（**修复前**该用例用正则「任一约束名」+ 一行同时违反两条约束 ⇒ 空转照样绿，评审抓出） |
+| 反向 SQL 漏掉某条约束改名 | 回滚用例必须红 | ✅ 逐名比对会红（迁移与骨架漂移即失败） |
 
 ## 归因（失败先看哪层）
 
@@ -64,9 +67,12 @@ PG 错误码与**约束名**（`23514` = check_violation）。
 - **公开 API 与 UI 未改名**：HTTP 仍是 `POST /tasks/:taskId/comments`、视图仍叫 `CommentView`
   （新增五个字段是**附加**的，老客户端不受影响）。改名与线程 UI 一起做（③c）。
 - **`comment.created` 团队事件名未改**：仍是既有事件类型，保留兼容；改名同 ③c。
-- **回滚只写了路径没写脚本**：迁移尾部给出反向 SQL 骨架与「先备份」纪律（本仓 forward-only，
-  不发 down-migration）。真回滚需要现场按骨架写并按 `pg_constraint` / `pg_indexes` 逐名核对
-  ——**没有机器验证过反向 SQL 可执行**，这是留下的最大空白。
+- **回滚：骨架已机器验证，但不随仓库发 down-migration**。反向 SQL 由
+  `packages/db/tests/task-message-rollback.integration.spec.ts` 常驻验证（跑 0001→0003 再反向，
+  断言列/约束/索引名**逐名**回到迁移前；任何人改 0003 而忘了同步骨架就会红）。迁移尾部另有
+  一条**台账提醒**并经用例钉住：反向 SQL 不含删 `_schema_migrations` 行，而**不删就会被下次
+  部署静默跳过 0003**（应用代码已按 `task_message` 写 → 起服务即报 relation 不存在）。
+  真回滚仍须先备份、现场按骨架执行。
 - **`run_id` / `target_agent_id` 未建索引**（PG 不自动索引外键）：③b 要查「某 Run 的消息」时补；
   另无「`run_id` 必须属于同一 Task」的跨表约束（仓库全局无此类先例）。
 - **`origin='auto_assignment'` + `kind='discussion'` 仍可入库**：自相矛盾的来源（自动指令不该

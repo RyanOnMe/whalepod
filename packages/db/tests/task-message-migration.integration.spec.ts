@@ -48,6 +48,7 @@ describe('task_message migration: 老库带真实数据升级', () => {
     const userId = randomUUID()
     const projectId = randomUUID()
     const taskId = randomUUID()
+    const agentId = randomUUID()
     const longBody = 'x'.repeat(10_000)
     const rows: Array<{ id: string; body: string }> = [
       { id: randomUUID(), body: '旧评论：一句普通的话' },
@@ -137,12 +138,26 @@ describe('task_message migration: 老库带真实数据升级', () => {
     expect(staleIndexes).toEqual([])
 
     // 新约束确实在升级后的库上生效：accepted 必须落到某个 Run 上。
-    await expect(
-      database.sql.unsafe(
+    // 断言**具体约束名**：给 target_agent_id 一个真 Agent，否则这一行会同时违反
+    // instruction_addressed（缺 Agent），正则「任一命中」就变成了空转
+    //（评审实测：把 accepted_has_run 改成恒真，这条用例照样绿）。
+    // schema 必须显式限定：这段在事务外执行，search_path 已回落到 public（否则报
+    // relation "agent" does not exist）。
+    await database.sql.unsafe(
+      `insert into ${schema}.agent (id, name, created_by) values ($1, $2, $3)`,
+      [agentId, `legacy-agent-${schema.slice(-6)}`, userId],
+    )
+    const violation = await database.sql
+      .unsafe(
         `insert into ${schema}.task_message (id, task_id, author_user_id, body, kind, target_agent_id, instruction_state)
-         values ($1, $2, $3, 'accepted 但没有 run', 'instruction', null, 'accepted')`,
-        [randomUUID(), taskId, userId],
-      ),
-    ).rejects.toThrow(/task_message_instruction_addressed|task_message_accepted_has_run/)
+         values ($1, $2, $3, 'accepted 但没有 run', 'instruction', $4, 'accepted')`,
+        [randomUUID(), taskId, userId, agentId],
+      )
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+    expect(violation).toBeInstanceOf(Error)
+    expect(String((violation as Error).message)).toContain('task_message_accepted_has_run')
   })
 })

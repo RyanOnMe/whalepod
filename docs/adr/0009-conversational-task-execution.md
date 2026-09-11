@@ -38,7 +38,7 @@ Run 状态机、审批闸门（ask-all 阻塞在 Runtime 执行路径）、终�
    - **默认不驱动**：线程消息只有显式 @Agent 才成为 `kind=instruction`；其余一律 `discussion`，永不触发执行。没有分类器，没有猜测。
    - **谁可以发指令（新守卫，替代现行两条不变量）**：现行实现是「只有 Task 责任人能建 Run」（`orchestrator.ts:130-132`）+「Device 必须属于操作者」（`orchestrator.ts:166-168`）。本决策**显式改写这两条**为：
      - **执行主体不变量（不放宽）**：Run 的 Device、Workspace、credential slot 恒为 **Task 责任人的**——这条比现状更严（现状是「操作者 = 责任人」隐含同一人），任何成员都不能让别人的凭据跑工具。
-     - **指令权（新）**：默认仅责任人可发指令；责任人可在 Task 上把指令权**显式授予**具体成员（`task_instruction_grant`，一条 Task 一张授权名单）。未授权成员的 @ 一律落 `discussion` 并在 UI 提示「无指令权」。触发者恒记 `triggered_by_user_id`。
+     - **指令权（新）**：默认仅责任人可发指令；责任人可在 Task 上把指令权**显式授予**具体成员（`task_instruction_grant`，一条 Task 一张授权名单）。未授权成员的 @ 一律落 `discussion` 并在 UI 提示「无指令权」。触发者恒记在**消息的 `author_user_id`** 上（不另设 `triggered_by_user_id` 列，见决策 2）。
      - **审批权不变**：仍归 Run owner（= 责任人）。
    - **上下文卫生**：agent 上下文默认只带该 Task 的指令消息与执行历史；`discussion` 消息不进模型，引用消息可显式带入。
    - **审计链**：见第 2 条（消息 ↔ Run 的指向关系 + `instruction_state` 收敛）。
