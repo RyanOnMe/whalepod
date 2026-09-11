@@ -55,7 +55,9 @@ describe('task_message constraints', () => {
     for (const bad of [
       { targetAgentId: ids.agentId },
       { runId: run.id },
-      { instructionState: 'accepted' as const },
+      // 用 pending 而不是 accepted：accepted 还会撞上 accepted_has_run（新约束），
+      // 那样断言的就成了别人，而不是「讨论不得带受理状态」这条。
+      { instructionState: 'pending' as const },
     ]) {
       const error = await catchPgError(
         insertMessage(database.db, {
@@ -104,6 +106,43 @@ describe('task_message constraints', () => {
       code: '23514',
       constraintName: 'task_message_instruction_addressed',
     })
+  })
+
+  it('受理成功必须落到某个 Run 上（accepted 而无 run_id = 「已受理、零痕迹」，ADR 禁止）', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    const noRun = await catchPgError(
+      insertMessage(database.db, {
+        id: randomUUID(),
+        taskId: ids.taskId,
+        authorUserId: ids.userId,
+        body: '@Agent 整理发布记录',
+        kind: 'instruction',
+        targetAgentId: ids.agentId,
+        instructionState: 'accepted',
+      }),
+    )
+    expect(noRun).toMatchObject({ code: '23514', constraintName: 'task_message_accepted_has_run' })
+
+    // 三条合法路径都不能被误伤：pending 无 Run、rejected 无 Run、accepted 带 Run。
+    const run = await insertRun(database.db, makeRunInput(ids))
+    const legal = [
+      { instructionState: 'pending' as const, runId: undefined },
+      { instructionState: 'rejected' as const, runId: undefined },
+      { instructionState: 'accepted' as const, runId: run.id },
+      { instructionState: 'rejected' as const, runId: run.id },
+    ]
+    for (const combo of legal) {
+      const row = await insertMessage(database.db, {
+        id: randomUUID(),
+        taskId: ids.taskId,
+        authorUserId: ids.userId,
+        body: '合法组合',
+        kind: 'instruction',
+        targetAgentId: ids.agentId,
+        ...combo,
+      })
+      expect(row.instructionState).toBe(combo.instructionState)
+    }
   })
 
   it('追问必须挂在既有 Run 上（followup 是那次执行里的继续说话）', async () => {
@@ -176,17 +215,23 @@ describe('task_message constraints', () => {
       acceptedAt: new Date(),
       createdBy: ids.userId,
     })
+    // 关键：**同一 createdAt**（显式同值，不靠默认 now()），id 逆序插入——
+    // 这样只有真的按 (createdAt, id) 排序才能得到下面的期望顺序（评审变异验证：
+    // 早先版本两行 createdAt 不同，去掉 id 兜底用例照样绿 ⇒ 断言落空）。
+    const sameInstant = new Date('2026-01-05T09:00:00.000Z')
+    await insertMessage(database.db, {
+      id: '00000000-0000-4000-8000-0000000000ff',
+      taskId: ids.taskId,
+      authorUserId: ids.userId,
+      body: '第二条（id 较大）',
+      createdAt: sameInstant,
+    })
     await insertMessage(database.db, {
       id: '00000000-0000-4000-8000-000000000001',
       taskId: ids.taskId,
       authorUserId: ids.userId,
-      body: '第一条',
-    })
-    await insertMessage(database.db, {
-      id: '00000000-0000-4000-8000-000000000002',
-      taskId: ids.taskId,
-      authorUserId: ids.userId,
-      body: '第二条',
+      body: '第一条（id 较小）',
+      createdAt: sameInstant,
     })
     await insertMessage(database.db, {
       id: randomUUID(),
@@ -196,6 +241,6 @@ describe('task_message constraints', () => {
     })
 
     const rows = await listMessages(database.db, ids.taskId)
-    expect(rows.map((row) => row.body)).toEqual(['第一条', '第二条'])
+    expect(rows.map((row) => row.body)).toEqual(['第一条（id 较小）', '第二条（id 较大）'])
   })
 })

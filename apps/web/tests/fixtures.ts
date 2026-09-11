@@ -128,6 +128,12 @@ export function makeComment(overrides: Partial<CommentView> = {}): CommentView {
     taskId: 'task',
     authorUserId: ALICE.userId,
     body: '默认留言内容',
+    // #185：默认造一条**讨论**消息（服务端的默认值同形）。指令/追问形态由用例显式覆盖。
+    kind: 'discussion',
+    origin: 'human',
+    targetAgentId: null,
+    runId: null,
+    instructionState: null,
     createdAt: '2026-08-25T01:00:00.000Z',
     editedAt: null,
     ...overrides,

@@ -91,6 +91,8 @@ export interface NewTaskMessage {
   targetAgentId?: string | undefined
   runId?: string | undefined
   instructionState?: 'pending' | 'accepted' | 'rejected' | undefined
+  /** 显式创建时间（默认 now()）；迁移测试与回填用。 */
+  createdAt?: Date | undefined
 }
 
 export async function insertMessage(
@@ -102,7 +104,10 @@ export async function insertMessage(
   return row
 }
 
-/** 线程读取：按 (createdAt, id) 稳定排序（同一毫秒内也不抖动）。 */
+/**
+ * 线程读取：按 `(createdAt, id)` 排序。`id` 是**决胜键**不是插入序（uuidv7 低位随机），
+ * 它保证的是**确定性**——同一毫秒创建的多条消息每次读出的顺序一致。
+ */
 export async function listMessages(handle: DbHandle, taskId: string): Promise<TaskMessageRow[]> {
   return handle
     .select()

@@ -114,6 +114,12 @@ export const taskMessages = pgTable(
       'task_message_followup_attached',
       sql`${table.kind} <> 'followup' or ${table.runId} is not null`,
     ),
+    // 「受理成功」必然落到某个 Run 上：accepted 而无 run_id 就是「已受理、零痕迹」
+    //（ADR-0009 决策 3 禁止）。pending（还没建 Run）与 rejected（可能挂在既有 Run 上）不设限。
+    check(
+      'task_message_accepted_has_run',
+      sql`${table.instructionState} <> 'accepted' or ${table.runId} is not null`,
+    ),
     index('task_message_task_created_idx').on(table.taskId, table.createdAt),
   ],
 )

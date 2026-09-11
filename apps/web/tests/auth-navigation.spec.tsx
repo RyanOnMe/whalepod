@@ -195,6 +195,11 @@ describe('auth-navigation', () => {
       taskId: task.id,
       authorUserId: BOB.userId,
       body: 'handling this run',
+      kind: 'discussion',
+      origin: 'human',
+      targetAgentId: null,
+      runId: null,
+      instructionState: null,
       createdAt: '2026-08-26T00:01:00.000Z',
       editedAt: null,
     }

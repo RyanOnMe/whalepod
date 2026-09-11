@@ -38,7 +38,7 @@ pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration \
 
 ## 观测（看什么）
 
-- DB 行：`project`、`task`（status / assignment_status / assignee_user_id / accepted_at / completed_at）、`task_comment`（按 (created_at, id) 排序）、`agent` + `agent_profile_revision`（revision 号、profile_digest、current_revision_id）、`team_event`（project.changed / task.changed / comment.created）、`run` + `dispatch_outbox`（cancel 用例）。
+- DB 行：`project`、`task`（status / assignment_status / assignee_user_id / accepted_at / completed_at）、`task_message`（#185 由 `task_comment` 升级；按 (created_at, id) 排序）、`agent` + `agent_profile_revision`（revision 号、profile_digest、current_revision_id）、`team_event`（project.changed / task.changed / comment.created）、`run` + `dispatch_outbox`（cancel 用例）。
 - HTTP envelope：`{ ok, data }` 成功体与 `{ ok:false, error:{code,message,requestId} }` 失败体。
 - 脱敏：`GET /tasks/:taskId` 的 JSON 整串不含 `workspacePath|dshSession|modelApiKey`，Run 投影无 dshSessionId/deviceId/workspaceId/digest，Artifact 无 storageKey。
 
