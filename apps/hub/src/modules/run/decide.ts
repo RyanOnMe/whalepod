@@ -27,6 +27,7 @@ import {
   setRunStatus,
 } from '@whalepod/db'
 import { ApprovalDecideSchema } from '@whalepod/protocol'
+import { applyRunStatus } from './run-status.js'
 import type { ActorContext } from './commands.js'
 import { RunCommandError } from './errors.js'
 
@@ -104,7 +105,9 @@ export async function decideApprovalInTransaction(
       { type: 'approval_closed', remainingPending },
     )
     if (next.status !== run.status) {
-      await setRunStatus(tx, run.id, next.status)
+      // 收口（评审 B1）：HTTP 审批决策是**真人主路径**，同一事务里把 waiting_approval → running，
+      // 审批期间排队的追问必须在这里放行（Node 回显的 approval.decided 到达时已经不是该状态）。
+      await applyRunStatus(tx, deps.outbox, run.id, next.status)
       await appendTeamEvent(tx, {
         type: 'run.changed',
         payload: { runId: run.id, taskId: run.taskId, status: next.status },

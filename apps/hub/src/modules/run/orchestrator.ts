@@ -49,7 +49,8 @@ import type { ActorContext, CreateRunInput } from './commands.js'
 import { assertCreateRunInput } from './commands.js'
 import type { AuthenticatedDevice } from './device-gateway.js'
 import { isRunSemanticConflict, RunCommandError } from './errors.js'
-import { dispatchPendingInstructions, settleFollowupAck } from './followup.js'
+import { settleFollowupAck } from './followup.js'
+import { applyRunStatus } from './run-status.js'
 import type { ApprovalView, RunView } from './queries.js'
 import { toApprovalView, toRunView } from './queries.js'
 
@@ -544,14 +545,12 @@ export class RunOrchestrator {
     switch (event.type) {
       case 'runtime.ready': {
         this.applyRunTransition(run, { type: 'runtime_ready' })
-        await setRunStatus(tx, run.id, 'running', {
+        // 走收口：进入 running 时顺带放行排队中的追问（ADR-0009 决策 5）。
+        await applyRunStatus(tx, this.outbox, run.id, 'running', {
           dshSessionId: event.dshSessionId,
           startedAt: run.startedAt ?? now,
         })
         await runChanged('running')
-        // ADR-0009 决策 5：Run 进 running 是把「排队中的追问」放行的时刻之一——与状态迁移
-        // **同一事务**，按 (created_at, id) 顺序补发（另一个入口是审批闭环回到 running）。
-        await dispatchPendingInstructions(tx, this.outbox, run)
         return
       }
       case 'run.completed': {
@@ -633,14 +632,8 @@ export class RunOrchestrator {
             remainingPending,
           })
           if (next.status !== run.status) {
-            await setRunStatus(tx, run.id, next.status)
+            await applyRunStatus(tx, this.outbox, run.id, next.status)
             await runChanged(next.status)
-            // 审批闭环也能让 Run 回到 running（waiting_approval → running）：这是**第二个**
-            // 进入 running 的入口，同样要放行排队中的追问（本片首版只接了 runtime.ready，
-            // 被 instruction-queue 用例抓出「审批往返后第二句不下发」）。
-            if (next.status === 'running') {
-              await dispatchPendingInstructions(tx, this.outbox, run)
-            }
           }
         }
         return
@@ -757,7 +750,7 @@ export class RunOrchestrator {
     now: Date,
   ): Promise<void> {
     const terminal = isTerminal(status)
-    await setRunStatus(tx, run.id, status, {
+    await applyRunStatus(tx, this.outbox, run.id, status, {
       ...(snapshot.dshSessionId !== null ? { dshSessionId: snapshot.dshSessionId } : {}),
       ...(status === 'running' ? { startedAt: run.startedAt ?? now } : {}),
       ...(terminal ? { finishedAt: now } : {}),

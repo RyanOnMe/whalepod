@@ -15,9 +15,9 @@
  * 授权按现行不变量（只有 Task 责任人能驱动执行，`orchestrator.ts:130-132` 同款）：
  * 授权名单 `task_instruction_grant` 属切片④，本片**不放宽**任何权限。
  */
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 import type { Actor } from '@whalepod/domain'
-import type { Database, Outbox, TaskMessageRow, Tx } from '@whalepod/db'
+import type { Database, Outbox, RunRow, TaskMessageRow, Tx } from '@whalepod/db'
 import {
   appendTeamEvent,
   INSTRUCTION_REFUSAL,
@@ -46,6 +46,37 @@ import { uuidv7 } from '../shared/uuid.js'
  */
 const FOLLOWUP_DISPATCHABLE_STATUSES = new Set(['running'])
 const FOLLOWUP_QUEUEING_STATUSES = new Set(['queued', 'dispatching', 'waiting_approval'])
+
+/**
+ * 不受理时的理由映射（显式穷尽，评审 O2）：`run_status` 现有 9 值 = 活跃 5 + 终态 4，
+ * 这里覆盖**全部**非受理分支；未来新增状态会落到最后一条 `INTERNAL_ERROR`（诚实报「未知」），
+ * 而不是被推断成「正在取消」。
+ */
+function refusalFor(status: RunRow['status']): {
+  code: string
+  message: (status: RunRow['status']) => string
+} {
+  if (TERMINAL_RUN_STATUSES.has(status)) {
+    return {
+      code: REFUSAL_RUN_TERMINAL,
+      message: (value) => `run reached ${value}; send the followup as a new run instead`,
+    }
+  }
+  switch (status) {
+    case 'cancel_requested':
+      return {
+        code: REFUSAL_RUN_CANCELLING,
+        message: (value) =>
+          `run is ${value}; the cancellation in flight will end it before a followup could be read`,
+      }
+    default:
+      return {
+        code: 'INTERNAL_ERROR',
+        message: (value) =>
+          `run is ${value}, which this Hub cannot accept or queue an instruction for`,
+      }
+  }
+}
 
 /**
  * Hub 侧拒绝理由的标签（写进 `task_message.instruction_error_code`）。
@@ -126,14 +157,14 @@ export async function sendRunFollowup(
     if (!dispatchNow && !FOLLOWUP_QUEUEING_STATUSES.has(run.status)) {
       // 不受理也要留痕：线程里出现这条消息，带明确状态与理由（不静默丢弃）。
       // 理由区分「已经答完」与「正在取消」——前者引导用户改走新回合，后者只需等取消落地。
-      const terminal = TERMINAL_RUN_STATUSES.has(run.status)
+      // 显式映射，不靠「非终态 ⇒ 正在取消」推断（评审 O2）：将来 `run_status` 加第 10 个值时，
+      // 它会落到 INTERNAL_ERROR 这条**诚实**的分支，而不是被静默标成「正在取消」。
+      const refusal = refusalFor(run.status)
       const message = await insertMessage(tx, {
         ...common,
         instructionState: 'rejected',
-        instructionErrorCode: terminal ? REFUSAL_RUN_TERMINAL : REFUSAL_RUN_CANCELLING,
-        instructionErrorMessage: terminal
-          ? `run reached ${run.status}; send the followup as a new run instead`
-          : `run is ${run.status}; the cancellation in flight will end it before a followup could be read`,
+        instructionErrorCode: refusal.code,
+        instructionErrorMessage: refusal.message(run.status),
       })
       await appendTeamEvent(tx, {
         type: 'comment.created',
@@ -233,8 +264,11 @@ export async function settleFollowupAck(
 export async function dispatchPendingInstructions(
   tx: Tx,
   outbox: Outbox,
-  run: { id: string; deviceId: string },
+  run: { id: string; deviceId: string; status: RunRow['status'] },
 ): Promise<number> {
+  // 不信任调用方（评审 S1）：Node 只会在 Run 处于 running 时受理 followup，其他状态下发必被拒
+  //（#189）。这里显式挡一道，免得将来有人从别的状态误调。
+  if (run.status !== 'running') return 0
   const pending = await tx
     .select()
     .from(schema.taskMessages)
@@ -248,10 +282,20 @@ export async function dispatchPendingInstructions(
   if (pending.length === 0) return 0
 
   // 「已入队」的唯一判据是 outbox 行上的 message_id（migration 0004 就是为这条链加的）。
+  // 用刚查出的 pending id 收窄（评审 S3）：`dispatch_outbox` 只有 pending 的部分索引、
+  // 且全仓没有 GC，全表扫 followup 会随历史线性变慢。
   const queued = await tx
     .select({ messageId: schema.dispatchOutbox.messageId })
     .from(schema.dispatchOutbox)
-    .where(eq(schema.dispatchOutbox.type, 'run.followup'))
+    .where(
+      and(
+        eq(schema.dispatchOutbox.type, 'run.followup'),
+        inArray(
+          schema.dispatchOutbox.messageId,
+          pending.map((message) => message.id),
+        ),
+      ),
+    )
   const queuedIds = new Set(
     queued.map((row) => row.messageId).filter((id): id is string => id !== null),
   )
