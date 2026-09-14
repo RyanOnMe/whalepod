@@ -25,6 +25,7 @@ import {
 } from './commands.js'
 import { sendInstruction } from '../run/instruction.js'
 import type { RunOrchestrator } from '../run/orchestrator.js'
+import { ERROR_HTTP_STATUS, errorCodeOf } from '../run/routes.js'
 import { listTaskViewsByProject } from './queries.js'
 import { getTaskRoom } from './view.js'
 
@@ -193,23 +194,36 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
         .code(400)
         .send({ ok: false, error: { code: 'VALIDATION_FAILED', message: parsed.error.message } })
     }
-    const outcome = await sendInstruction(
-      {
-        database: deps.database,
-        outbox: deps.outbox,
-        orchestrator: deps.orchestrator,
-        dshDistributionVersionFor: deps.dshDistributionVersionFor,
-      },
-      actorFrom(session),
-      taskId,
-      {
-        text: parsed.data.text,
-        idempotencyKey: readIdempotencyKey(request),
-        ...(parsed.data.deviceId !== undefined ? { deviceId: parsed.data.deviceId } : {}),
-        ...(parsed.data.workspaceId !== undefined ? { workspaceId: parsed.data.workspaceId } : {}),
-        ...(parsed.data.agentId !== undefined ? { agentId: parsed.data.agentId } : {}),
-      },
-    )
+    let outcome: Awaited<ReturnType<typeof sendInstruction>>
+    try {
+      outcome = await sendInstruction(
+        {
+          database: deps.database,
+          outbox: deps.outbox,
+          orchestrator: deps.orchestrator,
+          dshDistributionVersionFor: deps.dshDistributionVersionFor,
+        },
+        actorFrom(session),
+        taskId,
+        {
+          text: parsed.data.text,
+          idempotencyKey: readIdempotencyKey(request),
+          ...(parsed.data.deviceId !== undefined ? { deviceId: parsed.data.deviceId } : {}),
+          ...(parsed.data.workspaceId !== undefined
+            ? { workspaceId: parsed.data.workspaceId }
+            : {}),
+          ...(parsed.data.agentId !== undefined ? { agentId: parsed.data.agentId } : {}),
+        },
+      )
+    } catch (error) {
+      // 运行面的错误映射在本模块不生效（它是 run 插件的 `setErrorHandler`）：不显式映射，
+      // `DEVICE_OFFLINE` 这类语义化拒绝会变成 500。复用 run 模块导出的同一份映射表（单一真相）。
+      const { code, message } = errorCodeOf(error)
+      if (code === 'INTERNAL_ERROR') throw error
+      return reply
+        .code(ERROR_HTTP_STATUS[code] ?? 500)
+        .send({ ok: false, error: { code, message, requestId: String(request.id) } })
+    }
     audit(request, 'instruction.send', 'success', session.userId)
     // 201：受理与否是**消息的命运**（可能已 rejected），不是请求的失败——与追问路由同一口径。
     return reply.code(201).send({

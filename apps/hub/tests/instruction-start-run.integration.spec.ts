@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@whalepod/db'
 import {
+  insertAgent,
   insertDevice,
   insertTask,
   insertUser,
@@ -13,12 +14,17 @@ import {
 import { sendInstruction } from '../src/modules/run/instruction.js'
 import { resolveRunTarget } from '../src/modules/run/instruction-target.js'
 import {
+  apiInject,
+  createTestApp,
   createTestDatabase,
+  driveSetup,
+  idemKey,
   makeActor,
   makeCreateInput,
   makeHarness,
   resetDatabase,
   seedRunPrereqs,
+  type TestApp,
 } from './helpers.js'
 
 /**
@@ -430,5 +436,168 @@ describe('instruction starts a run (P1-196)', () => {
       .from(schema.runs)
       .where(eq(schema.runs.triggerMessageId, foreign.id))
     expect(rows).toEqual([])
+  })
+})
+
+describe('执行区指令的 HTTP 面（P1-196：路由 201 / 400 / 409）', () => {
+  let database: Database
+  let ctx: TestApp
+  beforeAll(async () => {
+    database = await createTestDatabase()
+  })
+  beforeEach(async () => {
+    await resetDatabase(database)
+    // app **每个用例新建**：`resetDatabase` 会 truncate 全部表（含 setup token 表），
+    // 一次 reset 之后旧 ctx 的 setupToken 就失效了（"invalid setup token" 的由来）。
+    ctx = await createTestApp(database)
+  })
+  afterEach(async () => {
+    await ctx.close()
+  })
+  afterAll(async () => {
+    await database.close()
+  })
+
+  /** 经 HTTP 建好 project/task，并把该 Task 的责任人设备置为在线、任务指派接受。 */
+  async function seedViaHttp() {
+    const alice = await driveSetup(ctx)
+    const project = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: '/api/v1/projects',
+      payload: { name: 'P' },
+    })
+    const task = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/projects/${project.json().data.id}/tasks`,
+      payload: { title: 'T', assigneeUserId: alice.userId },
+    })
+    const taskId = task.json().data.id as string
+    // 接受指派（建 Run 的前置之一）。
+    await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/accept`,
+      idempotencyKey: idemKey(),
+    })
+    // 设备/工作区/Agent 直接种（HTTP 侧没有建它们的最小面）。
+    // **不能**用 `seedRunPrereqs`：它会再建一个 Team，而 team 是单例（`team_singleton`），
+    // 而 `driveSetup` 已经建过 Team 了——本用例第一版即此错。
+    const agent = await insertAgent(database.db, {
+      id: randomUUID(),
+      name: 'agent-http',
+      createdBy: alice.userId,
+    })
+    // Agent 必须有 Profile Revision 才能建 Run（`orchestrator.create` 会拒绝
+    // 「agent has no profile revision」——本用例第一版即此错）。
+    const revisionId = randomUUID()
+    // Profile Revision 需要真实的 plugin_pack 行（FK）——`seedRunPrereqs` 也是这么种的。
+    const pluginPackId = randomUUID()
+    await database.db.insert(schema.pluginPacks).values({
+      id: pluginPackId,
+      name: `pack-http-${pluginPackId.slice(0, 8)}`,
+      installations: [],
+      packDigest: 'a'.repeat(64),
+      createdBy: alice.userId,
+    })
+    await database.db.insert(schema.agentProfileRevisions).values({
+      id: revisionId,
+      agentId: agent.id,
+      revision: 1,
+      persona: 'You are a helpful agent.',
+      provider: 'deepseek-official',
+      model: 'deepseek-chat',
+      credentialSlot: 'default',
+      pluginPackId,
+      profileDigest: 'b'.repeat(64),
+      createdBy: alice.userId,
+    })
+    await database.db
+      .update(schema.agents)
+      .set({ currentRevisionId: revisionId })
+      .where(eq(schema.agents.id, agent.id))
+    const device = await insertDevice(database.db, {
+      id: randomUUID(),
+      ownerUserId: alice.userId,
+      name: 'device-http',
+      platform: 'darwin',
+      architecture: 'arm64',
+      nodeVersion: '24.12.0',
+      nodeAppVersion: '0.1.0',
+      tokenHash: new Uint8Array([7, 7, 7]),
+      capabilities: {},
+    })
+    // 在线 = 已 node.hello（与 queries.ts 的 DEVICE_OFFLINE 判据同一事实）。
+    await database.db
+      .update(schema.devices)
+      .set({ dshDistributionVersion: '9.9.9-test', lastSeenAt: new Date() })
+      .where(eq(schema.devices.id, device.id))
+    const workspaceId = randomUUID()
+    await database.db.insert(schema.workspaces).values({
+      id: workspaceId,
+      deviceId: device.id,
+      ownerUserId: alice.userId,
+      name: 'ws-http',
+      kind: 'directory',
+      capabilities: { read: true, write: true },
+      available: true,
+    })
+    const ids = { deviceId: device.id, workspaceId, agentId: agent.id }
+    return { alice, taskId, ids }
+  }
+
+  it('显式设备/工作区 → 201，outcome=started_run，且指令与 Run 都落库', async () => {
+    const { alice, taskId, ids } = await seedViaHttp()
+    const res = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/instructions`,
+      payload: {
+        text: '跑一趟',
+        deviceId: ids.deviceId,
+        workspaceId: ids.workspaceId,
+        agentId: ids.agentId,
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(res.statusCode, JSON.stringify(res.json())).toBe(201)
+    const data = res.json().data as { outcome: string; runId: string; instructionState: string }
+    expect(data.outcome).toBe('started_run')
+    expect(data.instructionState).toBe('pending') // 受理与否由 run.start ack 决定
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, data.runId))
+    expect(run?.triggerMessageId).toBe(data.id ?? run?.triggerMessageId)
+    expect(run?.status).toBe('queued')
+  })
+
+  it('body 非法 → **400**（不是 500：③b 的 `.parse()` 教训）', async () => {
+    const { alice, taskId } = await seedViaHttp()
+    const res = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/instructions`,
+      payload: { text: '' },
+      idempotencyKey: idemKey(),
+    })
+    expect(res.statusCode).toBe(400)
+    expect(res.json().error.code).toBe('VALIDATION_FAILED')
+  })
+
+  it('没有可用执行目标 → **409 DEVICE_OFFLINE**，且不建 Run、不落指令', async () => {
+    const { alice, taskId, ids } = await seedViaHttp()
+    await database.db
+      .update(schema.devices)
+      .set({ dshDistributionVersion: null })
+      .where(eq(schema.devices.id, ids.deviceId))
+    await database.db
+      .update(schema.workspaces)
+      .set({ available: false })
+      .where(eq(schema.workspaces.id, ids.workspaceId))
+
+    const res = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/instructions`,
+      payload: { text: '没设备也要发', agentId: ids.agentId },
+      idempotencyKey: idemKey(),
+    })
+    expect(res.statusCode).toBe(409)
+    expect(res.json().error.code).toBe('DEVICE_OFFLINE')
+    expect(await database.db.select().from(schema.runs)).toEqual([])
+    expect(await listMessages(database.db, taskId)).toEqual([])
   })
 })
