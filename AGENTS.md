@@ -23,7 +23,14 @@
 
 ## git 纪律（skill: `gitflow`）
 
-- 受保护 `main`；本地 hook 已拦截直接推 main 与非快进推送，服务器端同样设为受保护。
+- 受保护 `main`。**两道护栏的实际状态（2026-09-14 核对并补齐）**：
+  - **服务端**（已启用）：必检项 `check` + `integration`、禁止 force push、禁止删除分支、
+    必须走 PR；`enforce_admins = false` ⇒ **管理员可绕过**（紧急通道，代价是它管不住管理员身份）。
+  - **本地**：`.githooks/pre-push` 拦直接推 main 与非快进推送、`commit-msg` 强制 DCO sign-off，
+    但**必须 clone 后跑一次 `scripts/install-hooks.sh` 才生效**（`core.hooksPath` 未设时它们形同不存在
+    ——本仓库曾长期处于「文档说有、实际没装」的状态，核对时才发现）；
+  - 服务端另有 `allow_force_pushes=false`/`allow_deletions=false` 兜底，但**管理员身份绕过**所有
+    保护项，所以真正拦住"手滑"的仍是「走 PR」的习惯与本地 hook。
 - 分支：`feat/p1-<issue>-<slug>`、`fix/p1-<issue>-<slug>`；一个 Issue 一个 squash PR，标题带 `P1-XX`。
 - 提交必须 DCO sign-off：`git commit -s`（commit-msg hook 强制）。
 - **DSH 版本升级永远单独 PR**（`chore/dsh-upgrade-<from>-to-<to>`），步骤见 skill `dsh-upgrade`。
