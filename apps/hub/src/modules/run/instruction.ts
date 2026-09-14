@@ -17,6 +17,7 @@ import type { Database, TaskMessageRow, Tx } from '@whalepod/db'
 import {
   findCommandReceipt,
   insertMessage,
+  resolveInstructionRight,
   schema,
   settleInstruction,
   TERMINAL_RUN_STATUSES,
@@ -132,10 +133,27 @@ export async function sendInstruction(
     return { kind: queued ? 'queued' : 'followup', message, runId: active.id }
   }
 
+  // 执行主体判定（#198）：责任人 ∪ 被授权成员。放在目标解析**之前**——
+  // 否则无权的人会先收到「设备不在线」这种与真实原因无关的错（而且是 409 不是 403）。
+  const right = await resolveInstructionRight(deps.database.db, taskId, actor.userId)
+  if (right === 'none') {
+    throw new RunCommandError(
+      'FORBIDDEN',
+      'only the task assignee or a granted member can send instructions',
+    )
+  }
+  // 目标解析用**责任人**的设备/工作区：被授权成员只是"能开口"，执行永远在责任人的机器与凭据上。
+  const [task] = await deps.database.db
+    .select({ assigneeUserId: schema.tasks.assigneeUserId })
+    .from(schema.tasks)
+    .where(eq(schema.tasks.id, taskId))
+    .limit(1)
+  if (task === undefined) throw new RunCommandError('NOT_FOUND', 'task not found')
+
   // 没有活跃 Run → 建 Run。目标解析失败一律**明确拒绝**（不猜，也不落一条注定失败的指令）。
   const target = await resolveRunTarget(deps.database.db, {
     taskId,
-    assigneeUserId: actor.userId,
+    assigneeUserId: task.assigneeUserId,
     ...(input.deviceId !== undefined ? { deviceId: input.deviceId } : {}),
     ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
   })

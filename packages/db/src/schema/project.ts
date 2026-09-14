@@ -1,5 +1,15 @@
 import { sql } from 'drizzle-orm'
-import { check, index, pgEnum, pgTable, text, timestamp, uuid, varchar } from 'drizzle-orm/pg-core'
+import {
+  check,
+  index,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+  uuid,
+  varchar,
+} from 'drizzle-orm/pg-core'
 import { agents } from './agent.js'
 import { userAccounts } from './identity.js'
 import { runs } from './run.js'
@@ -60,6 +70,35 @@ export const tasks = pgTable(
   (table) => [
     check('task_title_length', sql`length(btrim(${table.title})) between 1 and 200`),
     check('task_description_length', sql`length(${table.description}) <= 20000`),
+  ],
+)
+
+/**
+ * 指令权授权（#198；ADR-0009 决策 4）：谁能在**执行区**驱动这个 Task 的 Agent。
+ *
+ * 与"谁能说话"无关——讨论区任何成员都能评论（ADR-0010）。授权只影响：发指令、起 Run、排队追问。
+ * 审批决定权**不可授予**（只看 `run.owner_user_id`）；Run 归属永远是责任人。
+ */
+export const taskInstructionGrants = pgTable(
+  'task_instruction_grant',
+  {
+    id: uuid('id').primaryKey(),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => userAccounts.id, { onDelete: 'cascade' }),
+    /** 谁授的（只有责任人能授）。 */
+    grantedBy: uuid('granted_by')
+      .notNull()
+      .references(() => userAccounts.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // 一人一 Task 一条授权：重复授予是幂等的，不该长出第二行。
+    unique('task_instruction_grant_unique').on(table.taskId, table.userId),
+    index('task_instruction_grant_lookup_idx').on(table.taskId, table.userId),
   ],
 )
 
