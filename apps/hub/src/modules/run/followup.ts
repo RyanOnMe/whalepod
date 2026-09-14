@@ -15,7 +15,7 @@
  * 授权按现行不变量（只有 Task 责任人能驱动执行，`orchestrator.ts:130-132` 同款）：
  * 授权名单 `task_instruction_grant` 属切片④，本片**不放宽**任何权限。
  */
-import { eq } from 'drizzle-orm'
+import { and, asc, eq } from 'drizzle-orm'
 import type { Actor } from '@whalepod/domain'
 import type { Database, Outbox, TaskMessageRow, Tx } from '@whalepod/db'
 import {
@@ -33,19 +33,19 @@ import type { CommentView } from '../task/queries.js'
 import { uuidv7 } from '../shared/uuid.js'
 
 /**
- * 受理集合（ADR-0009 决策 5）：**只按状态判定**，不猜 Node 内部。
+ * 受理集合（ADR-0009 决策 5）：**只按状态判定**，不猜 Node 内部。分两档：
  *
- * `queued` / `dispatching` / `running` / `waiting_approval` 全部受理——前两者是「运行已建立、
- * 首轮还在路上」，`run.start` 的 ack 一定会来，而同一个 outbox 天然保序，追问排在它后面即可
- *（03 §6.3「该窗口由 Hub 侧排队」）。`cancel_requested` 与各终态一律**当场拒绝**：取消已经在
- * 路上，排队必然被终态打断，不如立刻如实告诉人。
+ * - **可下发**（`running`）：Node 的 `runtime.ready` 已到，写 stdin 有意义；
+ * - **只排队**（`queued` / `dispatching` / `waiting_approval`）：**落 `pending`、不下发命令**。
+ *   前两者是「运行已建立、首轮还在路上」，此时 Node 收到 followup 会以
+ *   `INVALID_RUN_TRANSITION` 拒绝（`apps/node/src/run/run-manager.ts:392`，见 #189）；
+ *   `waiting_approval` 尤其不得把追问塞进审批阻塞的执行路径。等 Run 进入 `running` 时按序补发
+ *   （`dispatchPendingInstructions`）。
+ *
+ * `cancel_requested` 与各终态一律**当场拒绝**：取消已经在路上、Run 已答完，排队必然被打断。
  */
-const FOLLOWUP_ACCEPTING_STATUSES = new Set([
-  'queued',
-  'dispatching',
-  'running',
-  'waiting_approval',
-])
+const FOLLOWUP_DISPATCHABLE_STATUSES = new Set(['running'])
+const FOLLOWUP_QUEUEING_STATUSES = new Set(['queued', 'dispatching', 'waiting_approval'])
 
 /**
  * Hub 侧拒绝理由的标签（写进 `task_message.instruction_error_code`）。
@@ -122,7 +122,8 @@ export async function sendRunFollowup(
       runId: run.id,
     }
 
-    if (!FOLLOWUP_ACCEPTING_STATUSES.has(run.status)) {
+    const dispatchNow = FOLLOWUP_DISPATCHABLE_STATUSES.has(run.status)
+    if (!dispatchNow && !FOLLOWUP_QUEUEING_STATUSES.has(run.status)) {
       // 不受理也要留痕：线程里出现这条消息，带明确状态与理由（不静默丢弃）。
       // 理由区分「已经答完」与「正在取消」——前者引导用户改走新回合，后者只需等取消落地。
       const terminal = TERMINAL_RUN_STATUSES.has(run.status)
@@ -145,8 +146,20 @@ export async function sendRunFollowup(
       return toCommentView(message)
     }
 
-    // 受理：先落 pending 消息，再入队命令；ack 回来时按 commandId 找回来收敛（migration 0004）。
+    // 受理：先落 pending 消息。**只有 running 才同时入队命令**（决策 5）：排队窗口里下发
+    // 必然被 Node 拒（#189 实测），等 Run 进 running 再按序补发。
     const message = await insertMessage(tx, { ...common, instructionState: 'pending' })
+    if (!dispatchNow) {
+      await appendTeamEvent(tx, {
+        type: 'comment.created',
+        payload: {
+          commentId: message.id,
+          taskId: message.taskId,
+          authorUserId: message.authorUserId,
+        },
+      })
+      return toCommentView(message)
+    }
     const commandId = uuidv7()
     await outbox.enqueue(tx, {
       id: commandId,
@@ -205,4 +218,56 @@ export async function settleFollowupAck(
     type: 'comment.created',
     payload: { commentId: settled.id, taskId: settled.taskId, authorUserId: settled.authorUserId },
   })
+}
+
+/**
+ * Run 进入 `running` 时，把它上面**仍 `pending` 且尚未入队**的追问按 `(created_at, id)` 顺序补发
+ *（ADR-0009 决策 5：「未 running 的一切窗口都排队，不丢……等 Run 进入 `running` 后按序下发」）。
+ *
+ * 幂等：以 `dispatch_outbox.message_id` 作为「已入队」的唯一判据——重复进入 `running`（或
+ * running 状态的重复事件）不会二次下发同一句话。顺序取自 `(created_at, id)`，与线程展示一致。
+ *
+ * 调用点：orchestrator 把 Run 推进到 `running` 的**每一个**入口（`runtime.ready` 与审批闭环
+ * 回到 running），都在同一事务里调用。
+ */
+export async function dispatchPendingInstructions(
+  tx: Tx,
+  outbox: Outbox,
+  run: { id: string; deviceId: string },
+): Promise<number> {
+  const pending = await tx
+    .select()
+    .from(schema.taskMessages)
+    .where(
+      and(
+        eq(schema.taskMessages.runId, run.id),
+        eq(schema.taskMessages.instructionState, 'pending'),
+      ),
+    )
+    .orderBy(asc(schema.taskMessages.createdAt), asc(schema.taskMessages.id))
+  if (pending.length === 0) return 0
+
+  // 「已入队」的唯一判据是 outbox 行上的 message_id（migration 0004 就是为这条链加的）。
+  const queued = await tx
+    .select({ messageId: schema.dispatchOutbox.messageId })
+    .from(schema.dispatchOutbox)
+    .where(eq(schema.dispatchOutbox.type, 'run.followup'))
+  const queuedIds = new Set(
+    queued.map((row) => row.messageId).filter((id): id is string => id !== null),
+  )
+
+  let dispatched = 0
+  for (const message of pending) {
+    if (queuedIds.has(message.id)) continue // 已入队过：不重复下发
+    const commandId = uuidv7()
+    await outbox.enqueue(tx, {
+      id: commandId,
+      deviceId: run.deviceId,
+      type: 'run.followup',
+      payload: { commandId, runId: run.id, text: message.body },
+      messageId: message.id,
+    })
+    dispatched += 1
+  }
+  return dispatched
 }
