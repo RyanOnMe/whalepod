@@ -38,7 +38,7 @@ import { uuidv7 } from '../shared/uuid.js'
  * - **可下发**（`running`）：Node 的 `runtime.ready` 已到，写 stdin 有意义；
  * - **只排队**（`queued` / `dispatching` / `waiting_approval`）：**落 `pending`、不下发命令**。
  *   前两者是「运行已建立、首轮还在路上」，此时 Node 收到 followup 会以
- *   `INVALID_RUN_TRANSITION` 拒绝（`apps/node/src/run/run-manager.ts:392`，见 #189）；
+ *   `INVALID_RUN_TRANSITION` 拒绝（真守卫在 `apps/node/src/run/run-manager.ts:481-484`，见 #189）；
  *   `waiting_approval` 尤其不得把追问塞进审批阻塞的执行路径。等 Run 进入 `running` 时按序补发
  *   （`dispatchPendingInstructions`）。
  *
@@ -258,8 +258,8 @@ export async function settleFollowupAck(
  * 幂等：以 `dispatch_outbox.message_id` 作为「已入队」的唯一判据——重复进入 `running`（或
  * running 状态的重复事件）不会二次下发同一句话。顺序取自 `(created_at, id)`，与线程展示一致。
  *
- * 调用点：orchestrator 把 Run 推进到 `running` 的**每一个**入口（`runtime.ready` 与审批闭环
- * 回到 running），都在同一事务里调用。
+ * 调用点：**唯一**收口 `./run-status.ts` 的 `applyRunStatus`（Hub 里能写 `running` 的 5 条路径
+ * 全部经它）。别再往各入口各挂一次——那正是本片首版漏掉真人路径（`decide.ts`）的原因。
  */
 export async function dispatchPendingInstructions(
   tx: Tx,

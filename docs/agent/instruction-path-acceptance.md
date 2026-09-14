@@ -35,7 +35,7 @@ npx tsx scripts/with-test-postgres.mts vitest run --project integration \
 |---|---|---|
 | running 受理全程 | 消息 `pending` → 命令入队（载荷**恰好** `{commandId, runId, text}`，`message_id` 指回消息）→ 派发帧过 schema → ack 后消息 `accepted`、outbox 落 `acked_at` | PASS |
 | ack 未回前 | 消息仍 `pending`（受理 ≠ 送达，决策 3 的语义强度） | PASS |
-| **受理集合逐状态钉死**（5 条） | `queued` / `dispatching` / `running` / `waiting_approval` → `pending` + 1 条命令；`cancel_requested` → `rejected(RUN_CANCELLING)` + **0 条命令** | PASS |
+| **受理集合逐状态钉死**（5 条） | `running` → `pending` + **1 条命令**；`queued` / `dispatching` / `waiting_approval` → `pending` + **0 条命令**（**③c-1/P1-192 改正**：未 running 只排队，下发必被 Node 以 `INVALID_RUN_TRANSITION` 拒，见 #189）；`cancel_requested` → `rejected(RUN_CANCELLING)` + **0 条命令** | PASS |
 | 终态 Run | **不受理**：消息 `rejected(RUN_TERMINAL)` + 理由含状态名，且**零命令入队** | PASS |
 | **终态清扫** | Run 进终态时该 Run 上仍 `pending` 的追问被同事务清扫成 `rejected(RUN_TERMINAL)`（Node 可能永远不回 ack） | PASS |
 | Node 拒绝 ack | 消息 `rejected`，理由来自 Node 的错误码（`RUNTIME_LOST` 原文），不冒充受理成功 | PASS |

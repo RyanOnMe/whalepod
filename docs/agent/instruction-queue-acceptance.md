@@ -14,7 +14,7 @@ Run 还没到 `running` 时，人在线程里接着说一句话，Hub 怎么处�
 
 **为什么必须有这条链**：#189 实测——③b 把「排队」实现成了「消息标 `pending` 但命令立刻入队」，
 而 Node 在 Run 未到 `runtime.ready` 时会以 `INVALID_RUN_TRANSITION` 拒绝
-（`apps/node/src/run/run-manager.ts:392`）→ 消息经 ack 结算被写成 `rejected`，
+（真守卫在 `apps/node/src/run/run-manager.ts:481-484`；`:392` 只是解释该守则的注释）→ 消息经 ack 结算被写成 `rejected`，
 与 ADR-0009 决策 5「接着说永远成立」相反。
 
 ## 判定（6 条机器判据，`apps/hub/tests/instruction-queue.integration.spec.ts`）
@@ -33,16 +33,23 @@ Run 还没到 `running` 时，人在线程里接着说一句话，Hub 怎么处�
 
 | 变异 | 红 | 归因 |
 |---|---|---|
-| A 把「未 running 也下发」改回去（=③b 错行为） | **6** | 三条排队窗口用例 + 顺序用例 + 幂等 + 终态 |
+| A 把「未 running 也下发」改回去（=③b 错行为） | **6**（另有 ③b 验收的 3 条同时红，合计 9） | 三条排队窗口用例 + 顺序用例 + 幂等 + 终态 |
 | B 删掉审批闭环回 running 的补发点 | **1** | 恰是「审批往返」那条（本片首版就漏了这个入口） |
 | C 去掉补发里的 `message_id` 幂等判据 | **1** | 恰是「不重复下发」那条 |
+| D `decide.ts` 绕过收口（真人路径漏接） | **1** | 恰是「真人路径」那条 |
+| E `handleRunSnapshot` 绕过收口 | **1** | 恰是「reconciler 探活路径」那条 |
+| F 顺序改 `orderBy(id)` / 删掉 orderBy / 改倒序 | **1 / 1 / 2** | 顺序判据（钉 `(created_at, id)`；首版 id 与 created_at 同向，F 全绿——判据自己错了，已修） |
 
 ## 归因（失败先看哪层）
 
 - **命令数不为 0（排队窗口）** → `apps/hub/src/modules/run/followup.ts` 的
   `FOLLOWUP_DISPATCHABLE_STATUSES` / `FOLLOWUP_QUEUEING_STATUSES`；
-- **进 running 后没补发** → 两个入口都要接：`orchestrator.ts` 的 `runtime.ready` 分支与
-  审批闭环（`approval.decided` → `waiting_approval → running`）；
+- **进 running 后没补发** → 检查是不是有人绕过了唯一收口 `apps/hub/src/modules/run/run-status.ts`
+  的 `applyRunStatus`（它是**唯一**允许把 Run 写成 `running` 的入口）。Hub 里能写 `running` 的
+  路径共 **5 条**：`orchestrator.ts` 的 `runtime.ready`、`approval.decided` 回显、
+  `handleRunSnapshot`（reconciler 探活），`decide.ts` 的 HTTP 审批决策（**真人主路径**），
+  `approval-expiry.ts` 的过期清扫。首版只接了前两条，而其中「回显」那条生产上基本是死路——
+  这才是 B1 的真身；
 - **重复下发** → 补发器的 `dispatch_outbox.message_id` 判据；
 - **消息被写成 rejected（INVALID_RUN_TRANSITION）** → 说明有路径把未 running 的追向下发了
   （正是本片要根除的形态），或 Node 侧真的还没 ready（真机排查看 `deviceActivity` 与 run 状态）。
