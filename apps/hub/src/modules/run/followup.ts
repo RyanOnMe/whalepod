@@ -15,9 +15,9 @@
  * 授权按现行不变量（只有 Task 责任人能驱动执行，`orchestrator.ts:130-132` 同款）：
  * 授权名单 `task_instruction_grant` 属切片④，本片**不放宽**任何权限。
  */
-import { eq } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 import type { Actor } from '@whalepod/domain'
-import type { Database, Outbox, TaskMessageRow, Tx } from '@whalepod/db'
+import type { Database, Outbox, RunRow, TaskMessageRow, Tx } from '@whalepod/db'
 import {
   appendTeamEvent,
   INSTRUCTION_REFUSAL,
@@ -27,25 +27,57 @@ import {
   TERMINAL_RUN_STATUSES,
   transactCommand,
 } from '@whalepod/db'
+import { DomainError } from '@whalepod/domain'
 import { RunCommandError } from './errors.js'
 import { toCommentView } from '../task/queries.js'
 import type { CommentView } from '../task/queries.js'
 import { uuidv7 } from '../shared/uuid.js'
 
 /**
- * 受理集合（ADR-0009 决策 5）：**只按状态判定**，不猜 Node 内部。
+ * 受理集合（ADR-0009 决策 5）：**只按状态判定**，不猜 Node 内部。分两档：
  *
- * `queued` / `dispatching` / `running` / `waiting_approval` 全部受理——前两者是「运行已建立、
- * 首轮还在路上」，`run.start` 的 ack 一定会来，而同一个 outbox 天然保序，追问排在它后面即可
- *（03 §6.3「该窗口由 Hub 侧排队」）。`cancel_requested` 与各终态一律**当场拒绝**：取消已经在
- * 路上，排队必然被终态打断，不如立刻如实告诉人。
+ * - **可下发**（`running`）：Node 的 `runtime.ready` 已到，写 stdin 有意义；
+ * - **只排队**（`queued` / `dispatching` / `waiting_approval`）：**落 `pending`、不下发命令**。
+ *   前两者是「运行已建立、首轮还在路上」，此时 Node 收到 followup 会以
+ *   `INVALID_RUN_TRANSITION` 拒绝（真守卫在 `apps/node/src/run/run-manager.ts:481-484`，见 #189）；
+ *   `waiting_approval` 尤其不得把追问塞进审批阻塞的执行路径。等 Run 进入 `running` 时按序补发
+ *   （`dispatchPendingInstructions`）。
+ *
+ * `cancel_requested` 与各终态一律**当场拒绝**：取消已经在路上、Run 已答完，排队必然被打断。
  */
-const FOLLOWUP_ACCEPTING_STATUSES = new Set([
-  'queued',
-  'dispatching',
-  'running',
-  'waiting_approval',
-])
+const FOLLOWUP_DISPATCHABLE_STATUSES = new Set(['running'])
+const FOLLOWUP_QUEUEING_STATUSES = new Set(['queued', 'dispatching', 'waiting_approval'])
+
+/**
+ * 不受理时的理由映射（显式穷尽，评审 O2）：`run_status` 现有 9 值 = 活跃 5 + 终态 4，
+ * 这里覆盖**全部**非受理分支；未来新增状态会落到最后一条 `INTERNAL_ERROR`（诚实报「未知」），
+ * 而不是被推断成「正在取消」。
+ */
+function refusalFor(status: RunRow['status']): {
+  code: string
+  message: (status: RunRow['status']) => string
+} {
+  if (TERMINAL_RUN_STATUSES.has(status)) {
+    return {
+      code: REFUSAL_RUN_TERMINAL,
+      message: (value) => `run reached ${value}; send the followup as a new run instead`,
+    }
+  }
+  switch (status) {
+    case 'cancel_requested':
+      return {
+        code: REFUSAL_RUN_CANCELLING,
+        message: (value) =>
+          `run is ${value}; the cancellation in flight will end it before a followup could be read`,
+      }
+    default:
+      return {
+        code: 'INTERNAL_ERROR',
+        message: (value) =>
+          `run is ${value}, which this Hub cannot accept or queue an instruction for`,
+      }
+  }
+}
 
 /**
  * Hub 侧拒绝理由的标签（写进 `task_message.instruction_error_code`）。
@@ -122,17 +154,18 @@ export async function sendRunFollowup(
       runId: run.id,
     }
 
-    if (!FOLLOWUP_ACCEPTING_STATUSES.has(run.status)) {
+    const dispatchNow = FOLLOWUP_DISPATCHABLE_STATUSES.has(run.status)
+    if (!dispatchNow && !FOLLOWUP_QUEUEING_STATUSES.has(run.status)) {
       // 不受理也要留痕：线程里出现这条消息，带明确状态与理由（不静默丢弃）。
       // 理由区分「已经答完」与「正在取消」——前者引导用户改走新回合，后者只需等取消落地。
-      const terminal = TERMINAL_RUN_STATUSES.has(run.status)
+      // 显式映射，不靠「非终态 ⇒ 正在取消」推断（评审 O2）：将来 `run_status` 加第 10 个值时，
+      // 它会落到 INTERNAL_ERROR 这条**诚实**的分支，而不是被静默标成「正在取消」。
+      const refusal = refusalFor(run.status)
       const message = await insertMessage(tx, {
         ...common,
         instructionState: 'rejected',
-        instructionErrorCode: terminal ? REFUSAL_RUN_TERMINAL : REFUSAL_RUN_CANCELLING,
-        instructionErrorMessage: terminal
-          ? `run reached ${run.status}; send the followup as a new run instead`
-          : `run is ${run.status}; the cancellation in flight will end it before a followup could be read`,
+        instructionErrorCode: refusal.code,
+        instructionErrorMessage: refusal.message(run.status),
       })
       await appendTeamEvent(tx, {
         type: 'comment.created',
@@ -145,8 +178,20 @@ export async function sendRunFollowup(
       return toCommentView(message)
     }
 
-    // 受理：先落 pending 消息，再入队命令；ack 回来时按 commandId 找回来收敛（migration 0004）。
+    // 受理：先落 pending 消息。**只有 running 才同时入队命令**（决策 5）：排队窗口里下发
+    // 必然被 Node 拒（#189 实测），等 Run 进 running 再按序补发。
     const message = await insertMessage(tx, { ...common, instructionState: 'pending' })
+    if (!dispatchNow) {
+      await appendTeamEvent(tx, {
+        type: 'comment.created',
+        payload: {
+          commentId: message.id,
+          taskId: message.taskId,
+          authorUserId: message.authorUserId,
+        },
+      })
+      return toCommentView(message)
+    }
     const commandId = uuidv7()
     await outbox.enqueue(tx, {
       id: commandId,
@@ -205,4 +250,75 @@ export async function settleFollowupAck(
     type: 'comment.created',
     payload: { commentId: settled.id, taskId: settled.taskId, authorUserId: settled.authorUserId },
   })
+}
+
+/**
+ * Run 进入 `running` 时，把它上面**仍 `pending` 且尚未入队**的追问按 `(created_at, id)` 顺序补发
+ *（ADR-0009 决策 5：「未 running 的一切窗口都排队，不丢……等 Run 进入 `running` 后按序下发」）。
+ *
+ * 幂等：以 `dispatch_outbox.message_id` 作为「已入队」的唯一判据——重复进入 `running`（或
+ * running 状态的重复事件）不会二次下发同一句话。顺序取自 `(created_at, id)`，与线程展示一致。
+ *
+ * 调用点：**唯一**收口 `./run-status.ts` 的 `applyRunStatus`（Hub 里能写 `running` 的 5 条路径
+ * 全部经它）。别再往各入口各挂一次——那正是本片首版漏掉真人路径（`decide.ts`）的原因。
+ */
+export async function dispatchPendingInstructions(
+  tx: Tx,
+  outbox: Outbox,
+  run: { id: string; deviceId: string; status: RunRow['status'] },
+): Promise<number> {
+  // 不信任调用方（评审 S1/③）：Node 只会在 Run 处于 running 时受理 followup，其他状态下发必被拒
+  //（#189）。这里**抛错而不是静默返回 0**——静默降级正是 B1 的同族（漏发却看不出来），
+  // 而生产路径（`applyRunStatus`）传的是迁移后的行，永远满足这个前置条件，抛错不会误伤。
+  if (run.status !== 'running') {
+    throw new DomainError(
+      'INVALID_RUN_TRANSITION',
+      `cannot dispatch queued instructions for a run in ${run.status}`,
+    )
+  }
+  const pending = await tx
+    .select()
+    .from(schema.taskMessages)
+    .where(
+      and(
+        eq(schema.taskMessages.runId, run.id),
+        eq(schema.taskMessages.instructionState, 'pending'),
+      ),
+    )
+    .orderBy(asc(schema.taskMessages.createdAt), asc(schema.taskMessages.id))
+  if (pending.length === 0) return 0
+
+  // 「已入队」的唯一判据是 outbox 行上的 message_id（migration 0004 就是为这条链加的）。
+  // 用刚查出的 pending id 收窄（评审 S3）：`dispatch_outbox` 只有 pending 的部分索引、
+  // 且全仓没有 GC，全表扫 followup 会随历史线性变慢。
+  const queued = await tx
+    .select({ messageId: schema.dispatchOutbox.messageId })
+    .from(schema.dispatchOutbox)
+    .where(
+      and(
+        eq(schema.dispatchOutbox.type, 'run.followup'),
+        inArray(
+          schema.dispatchOutbox.messageId,
+          pending.map((message) => message.id),
+        ),
+      ),
+    )
+  const queuedIds = new Set(
+    queued.map((row) => row.messageId).filter((id): id is string => id !== null),
+  )
+
+  let dispatched = 0
+  for (const message of pending) {
+    if (queuedIds.has(message.id)) continue // 已入队过：不重复下发
+    const commandId = uuidv7()
+    await outbox.enqueue(tx, {
+      id: commandId,
+      deviceId: run.deviceId,
+      type: 'run.followup',
+      payload: { commandId, runId: run.id, text: message.body },
+      messageId: message.id,
+    })
+    dispatched += 1
+  }
+  return dispatched
 }

@@ -50,6 +50,7 @@ import { assertCreateRunInput } from './commands.js'
 import type { AuthenticatedDevice } from './device-gateway.js'
 import { isRunSemanticConflict, RunCommandError } from './errors.js'
 import { settleFollowupAck } from './followup.js'
+import { applyRunStatus } from './run-status.js'
 import type { ApprovalView, RunView } from './queries.js'
 import { toApprovalView, toRunView } from './queries.js'
 
@@ -544,7 +545,8 @@ export class RunOrchestrator {
     switch (event.type) {
       case 'runtime.ready': {
         this.applyRunTransition(run, { type: 'runtime_ready' })
-        await setRunStatus(tx, run.id, 'running', {
+        // 走收口：进入 running 时顺带放行排队中的追问（ADR-0009 决策 5）。
+        await applyRunStatus(tx, this.outbox, run.id, 'running', {
           dshSessionId: event.dshSessionId,
           startedAt: run.startedAt ?? now,
         })
@@ -630,7 +632,7 @@ export class RunOrchestrator {
             remainingPending,
           })
           if (next.status !== run.status) {
-            await setRunStatus(tx, run.id, next.status)
+            await applyRunStatus(tx, this.outbox, run.id, next.status)
             await runChanged(next.status)
           }
         }
@@ -748,7 +750,7 @@ export class RunOrchestrator {
     now: Date,
   ): Promise<void> {
     const terminal = isTerminal(status)
-    await setRunStatus(tx, run.id, status, {
+    await applyRunStatus(tx, this.outbox, run.id, status, {
       ...(snapshot.dshSessionId !== null ? { dshSessionId: snapshot.dshSessionId } : {}),
       ...(status === 'running' ? { startedAt: run.startedAt ?? now } : {}),
       ...(terminal ? { finishedAt: now } : {}),

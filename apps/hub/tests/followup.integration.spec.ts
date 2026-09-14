@@ -142,7 +142,11 @@ describe('run followup (P1-186)', () => {
         .select()
         .from(schema.dispatchOutbox)
         .where(eq(schema.dispatchOutbox.type, 'run.followup'))
-      expect(commands).toHaveLength(expected === 'pending' ? 1 : 0)
+      // ADR-0009 决策 5 + #189：**只有 running 才下发**，未 running 的一切窗口只排队
+      //（Node 在 Run 未到 runtime.ready 时会以 INVALID_RUN_TRANSITION 拒绝，见
+      // run-manager.ts:392；提前入队只会让消息被写成 rejected——③b 首版即此错，本片改正）。
+      // 排队 → 进 running 时的补发时机与顺序由 instruction-queue.integration.spec.ts 覆盖。
+      expect(commands).toHaveLength(status === 'running' ? 1 : 0)
       if (expected === 'rejected') {
         expect(message.instructionErrorCode).toBe('RUN_CANCELLING')
         expect(message.instructionErrorMessage).toContain('cancel_requested')

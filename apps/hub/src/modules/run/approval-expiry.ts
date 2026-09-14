@@ -15,13 +15,8 @@ import { randomUUID } from 'node:crypto'
 import { and, eq, lte } from 'drizzle-orm'
 import { decideApproval, transitionRun } from '@whalepod/domain'
 import type { Database, Outbox, Tx } from '@whalepod/db'
-import {
-  appendTeamEvent,
-  countPendingApprovals,
-  schema,
-  setApprovalStatus,
-  setRunStatus,
-} from '@whalepod/db'
+import { appendTeamEvent, countPendingApprovals, schema, setApprovalStatus } from '@whalepod/db'
+import { applyRunStatus } from './run-status.js'
 import { ApprovalDecideSchema } from '@whalepod/protocol'
 
 export interface ExpirySweepDeps {
@@ -102,7 +97,8 @@ async function expireOne(deps: ExpirySweepDeps, approvalId: string, now: Date): 
         { type: 'approval_closed', remainingPending },
       )
       if (next.status !== run.status) {
-        await setRunStatus(tx, run.id, next.status)
+        // 收口（评审 B1）：过期清扫同样能让 waiting_approval → running。
+        await applyRunStatus(tx, deps.outbox, run.id, next.status)
         await appendTeamEvent(tx, {
           type: 'run.changed',
           payload: { runId: run.id, taskId: run.taskId, status: next.status },

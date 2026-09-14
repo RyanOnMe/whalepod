@@ -12,7 +12,7 @@
  * 结构上与 apps/hub 的 DeviceGateway 接口（modules/run/device-gateway.ts）兼容；
  * testkit 按边界规则不能 import apps/hub，靠 TypeScript 结构类型在装配处对齐。
  */
-import type { NodeDownstream, NodeUpstream } from '@whalepod/protocol'
+import type { NodeDownstream, NodeUpstream, ErrorCode } from '@whalepod/protocol'
 
 /** Hub 侧把带 `code: 'DEVICE_OFFLINE'` 的错误归类为可重试（与 wire ErrorCode 对齐）。 */
 export class FakeDeviceOfflineError extends Error {
@@ -34,6 +34,16 @@ export interface FakeDeviceGatewayOptions {
   online?: boolean
   autoAck?: boolean
   now?: () => Date
+  /**
+   * Node 侧的**受理前置条件**（#189 的教训）：真实 Node 在 Run 未到 `runtime.ready`
+   * 时会拒绝下行命令（`apps/node/src/run/run-manager.ts:392` → `INVALID_RUN_TRANSITION`），
+   * 而 fake 原先对任何命令都回 `accepted=true`，于是「Hub 以为受理、Node 实际拒绝」这类
+   * 缺口（③b 的 queued/dispatching 假排队）在测试里永远看不见。
+   *
+   * 传了它，fake 就按真实语义回 `accepted=false` + 错误码；不传保持旧行为（既有用例不受影响）。
+   * 判据由调用方给（通常是「去 DB 查这个 Run 的状态」），fake 只负责拒绝。
+   */
+  refuseCommand?: (frame: NodeDownstream) => { code: ErrorCode; message: string } | undefined
 }
 
 export class FakeDeviceGateway {
@@ -44,9 +54,15 @@ export class FakeDeviceGateway {
   /** 已确认停止的 Run。 */
   readonly cancelledRunIds: string[] = []
 
-  private readonly spool = new Map<string, { accepted: boolean }>()
+  private readonly spool = new Map<
+    string,
+    { accepted: boolean; code?: ErrorCode; message?: string }
+  >()
   private readonly upstream: NodeUpstream[] = []
   private readonly nowFn: () => Date
+  private readonly refuseCommand:
+    | ((frame: NodeDownstream) => { code: ErrorCode; message: string } | undefined)
+    | undefined
   private messageSeq = 0
   online: boolean
   autoAck: boolean
@@ -54,6 +70,7 @@ export class FakeDeviceGateway {
   constructor(options: FakeDeviceGatewayOptions = {}) {
     this.online = options.online ?? true
     this.autoAck = options.autoAck ?? true
+    this.refuseCommand = options.refuseCommand
     this.nowFn = options.now ?? (() => new Date())
   }
 
@@ -73,12 +90,24 @@ export class FakeDeviceGateway {
     const commandId = 'commandId' in frame.payload ? frame.payload.commandId : undefined
     if (commandId !== undefined) {
       if (!this.spool.has(commandId)) {
-        this.spool.set(commandId, { accepted: true })
-        if (frame.type === 'run.start') this.startedRunIds.push(frame.payload.runId)
-        if (frame.type === 'run.cancel') this.cancelledRunIds.push(frame.payload.runId)
+        // 拒收判定先于副作用：被拒的命令**不**执行（真实 Node 在 not-ready 时同样不写 stdin）。
+        const refusal = this.refuseCommand?.(frame)
+        this.spool.set(
+          commandId,
+          refusal === undefined
+            ? { accepted: true }
+            : { accepted: false, code: refusal.code, message: refusal.message },
+        )
+        if (refusal === undefined) {
+          if (frame.type === 'run.start') this.startedRunIds.push(frame.payload.runId)
+          if (frame.type === 'run.cancel') this.cancelledRunIds.push(frame.payload.runId)
+        }
       }
       if (this.autoAck) {
-        this.upstream.push(this.ackFrame(commandId, this.spool.get(commandId)?.accepted ?? true))
+        const entry = this.spool.get(commandId)
+        this.upstream.push(
+          this.ackFrame(commandId, entry?.accepted ?? true, entry?.code, entry?.message),
+        )
       }
     }
     return { sentAt }
@@ -89,7 +118,12 @@ export class FakeDeviceGateway {
     return this.upstream.splice(0, this.upstream.length)
   }
 
-  private ackFrame(commandId: string, accepted: boolean): NodeUpstream {
+  private ackFrame(
+    commandId: string,
+    accepted: boolean,
+    code?: ErrorCode,
+    message?: string,
+  ): NodeUpstream {
     // messageId 只需是合法 uuid；fake 用计数器即可，不引入 node:crypto（包 tsconfig 无 node types）。
     this.messageSeq += 1
     return {
@@ -97,7 +131,12 @@ export class FakeDeviceGateway {
       messageId: `00000000-0000-4000-8000-${String(this.messageSeq).padStart(12, '0')}`,
       sentAt: this.nowFn().toISOString(),
       type: 'command.ack',
-      payload: { commandId, accepted },
+      // 与真实 Node 的 ack 同形：拒绝时带 error（切片② 定型的 wire 形状）。
+      payload: {
+        commandId,
+        accepted,
+        ...(accepted || code === undefined ? {} : { error: { code, message: message ?? code } }),
+      },
     }
   }
 }
