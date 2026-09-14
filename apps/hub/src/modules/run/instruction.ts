@@ -15,11 +15,11 @@
 import { and, desc, eq, inArray } from 'drizzle-orm'
 import type { Database, TaskMessageRow, Tx } from '@whalepod/db'
 import {
+  findCommandReceipt,
   insertMessage,
   schema,
   settleInstruction,
   TERMINAL_RUN_STATUSES,
-  transactCommand,
 } from '@whalepod/db'
 import type { ActorContext } from './commands.js'
 import { toCommentView } from '../task/queries.js'
@@ -54,6 +54,8 @@ export type SendInstructionOutcome =
   | { kind: 'started_run'; message: CommentView; runId: string }
   | { kind: 'followup'; message: CommentView; runId: string }
   | { kind: 'queued'; message: CommentView; runId: string }
+  /** 已被 Hub 当场拒绝（终态 / 正在取消）：`message.instructionState='rejected'` 且带理由。 */
+  | { kind: 'rejected'; message: CommentView; runId: string }
 
 /** 该 Task 当前的活跃 Run（非终态，按创建时间取最近一条）。 */
 async function activeRunForTask(
@@ -97,6 +99,22 @@ export async function sendInstruction(
 ): Promise<SendInstructionOutcome> {
   const now = deps.now?.() ?? new Date()
 
+  // **幂等优先**（评审 B1）：`orchestrator.create` 用 `run.create:<key>` 回执保证同一把 key 只建一个
+  // Run，但"写指令消息 + 回填锚点"没有幂等——同 key 重发会插出第二条指令、覆盖 `trigger_message_id`，
+  // 让第一条永远等不到 ack。所以在**任何副作用之前**先按同一把 key 查回执：命中说明上一次调用已经
+  // 落过账，按锚点把那条指令读回来原样返回（消息 id、Run id 都不变）。
+  const priorReceipt = await findCommandReceipt(
+    deps.database.db,
+    `run.create:${input.idempotencyKey}`,
+  )
+  if (priorReceipt !== undefined) {
+    const priorRunId = (priorReceipt.result as { id?: unknown }).id
+    if (typeof priorRunId === 'string') {
+      const replayed = await replayByRun(deps, priorRunId)
+      if (replayed !== undefined) return replayed
+    }
+  }
+
   // 先看有没有活跃 Run：有 → 复用追问路径（③c-1 的排队/下发语义原样生效）。
   const active = await activeRunForTask(deps.database.db, taskId)
   if (active !== undefined) {
@@ -105,6 +123,11 @@ export async function sendInstruction(
       idempotencyKey: input.idempotencyKey,
     })
     // 追问的受理/排队由 ③c-1 决定：状态 pending 且没有命令 = 排队（Node 还没到 running）。
+    // outcome 要与消息的真实命运一致（评审应改 5）：被拒的消息没有 outbox 行，但绝不是"排队中"，
+    // 否则 UI 会把 `outcome:'queued'` 与 `instructionState:'rejected'` 同时显示，误导人。
+    if (message.instructionState === 'rejected') {
+      return { kind: 'rejected', message, runId: active.id }
+    }
     const queued = await isQueued(deps, message.id)
     return { kind: queued ? 'queued' : 'followup', message, runId: active.id }
   }
@@ -137,14 +160,62 @@ export async function sendInstruction(
     throw new RunCommandError('DEVICE_OFFLINE', 'the target device has not reported node.hello yet')
   }
 
-  const run = await deps.orchestrator.create(actor, taskId, {
-    idempotencyKey: input.idempotencyKey,
-    agentId,
-    deviceId: target.deviceId,
-    workspaceId: target.workspaceId,
-    dshDistributionVersion: dshVersion,
-    prompt: input.text,
-  })
+  let run: Awaited<ReturnType<typeof deps.orchestrator.create>>
+  try {
+    run = await deps.orchestrator.create(actor, taskId, {
+      idempotencyKey: input.idempotencyKey,
+      agentId,
+      deviceId: target.deviceId,
+      workspaceId: target.workspaceId,
+      dshDistributionVersion: dshVersion,
+      prompt: input.text,
+    })
+  } catch (error) {
+    // 并发窗口（评审应改 1）：上面那次"有没有活跃 Run"是无锁读，两条指令同时到会一成一败。
+    // ADR-0010 的语义是**有活跃 Run 就接着说**，所以这里不该把用户的话丢掉、回 409——
+    // 退化成追问，与"先看到活跃 Run"的分支同路。
+    if (error instanceof RunCommandError && error.code === 'RUN_ALREADY_ACTIVE') {
+      const raced = await activeRunForTask(deps.database.db, taskId)
+      if (raced !== undefined) {
+        const message = await sendRunFollowup(deps.database, deps.outbox, actor, raced.id, {
+          text: input.text,
+          idempotencyKey: input.idempotencyKey,
+        })
+        return {
+          kind:
+            message.instructionState === 'rejected'
+              ? 'rejected'
+              : (await isQueued(deps, message.id))
+                ? 'queued'
+                : 'followup',
+          message,
+          runId: raced.id,
+        }
+      }
+    }
+    throw error
+  }
+
+  // **幂等**（评审 B1）：`orchestrator.create` 按 idempotencyKey 回放同一个 Run，但消息写入没有
+  // 幂等——同 key 重发会插出第二条指令，并把 `trigger_message_id` 覆盖掉，让第一条永远等不到 ack。
+  // 判据就是锚点本身：这个 Run 已经有触发消息 = 上一次同 key 的调用已经落过账，直接读回来返回。
+  const [existingRun] = await deps.database.db
+    .select({ triggerMessageId: schema.runs.triggerMessageId })
+    .from(schema.runs)
+    .where(eq(schema.runs.id, run.id))
+  if (existingRun?.triggerMessageId != null) {
+    const [prior] = await deps.database.db
+      .select()
+      .from(schema.taskMessages)
+      .where(eq(schema.taskMessages.id, existingRun.triggerMessageId))
+    if (prior !== undefined) {
+      return {
+        kind: 'started_run',
+        message: toCommentView(prior),
+        runId: run.id,
+      }
+    }
+  }
 
   // 双向锚定（migration 0005）：Run 记触发它的消息，消息记 run_id；指令停在 pending，
   // 由该 Run 的 run.start ack 结算（accepted / rejected + 理由）。
@@ -195,35 +266,6 @@ async function isQueued(deps: SendInstructionDeps, messageId: string): Promise<b
   return rows.length === 0
 }
 
-/**
- * 仅用于**幂等重放**：把上一次同 idempotencyKey 的指令读回来（`transactCommand` 已保证
- * 建 Run 侧幂等；这里让「同一 key 重发」返回同一结果而不是再建一条消息）。
- */
-export async function replayInstruction(
-  deps: SendInstructionDeps,
-  taskId: string,
-  idempotencyKey: string,
-): Promise<SendInstructionOutcome | undefined> {
-  const receipt = await transactCommand(deps.database, idempotencyKey, async (tx) => {
-    const rows = await tx
-      .select()
-      .from(schema.taskMessages)
-      .where(eq(schema.taskMessages.taskId, taskId))
-      .orderBy(desc(schema.taskMessages.createdAt))
-      .limit(1)
-    return rows[0]
-  })
-  if (receipt === undefined) return undefined
-  const settled = receipt as TaskMessageRow
-  if (settled.runId === null) return undefined
-  const queued = await isQueued(deps, settled.id)
-  return {
-    kind: queued ? 'queued' : 'followup',
-    message: toCommentView(settled),
-    runId: settled.runId,
-  }
-}
-
 /** 暴露给路由：把「指令没被受理」的拒绝写进消息（设备拒绝 run.start 时的兜底路径之外用不到）。 */
 export async function rejectInstruction(
   tx: Tx,
@@ -231,4 +273,22 @@ export async function rejectInstruction(
   error: { code: string; message: string },
 ): Promise<void> {
   await settleInstruction(tx, messageId, { state: 'rejected', error })
+}
+
+/** 按 Run 的触发锚点把指令读回来（幂等重放用）：没有锚点/消息则返回 undefined。 */
+async function replayByRun(
+  deps: SendInstructionDeps,
+  runId: string,
+): Promise<SendInstructionOutcome | undefined> {
+  const [run] = await deps.database.db
+    .select({ triggerMessageId: schema.runs.triggerMessageId })
+    .from(schema.runs)
+    .where(eq(schema.runs.id, runId))
+  if (run?.triggerMessageId == null) return undefined
+  const [message] = await deps.database.db
+    .select()
+    .from(schema.taskMessages)
+    .where(eq(schema.taskMessages.id, run.triggerMessageId))
+  if (message === undefined) return undefined
+  return { kind: 'started_run', message: toCommentView(message), runId }
 }

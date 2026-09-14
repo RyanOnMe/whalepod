@@ -59,11 +59,22 @@ async function resolveExplicit(
   handle: DbHandle,
   input: ResolveRunTargetInput,
 ): Promise<RunTarget | undefined> {
-  if (input.deviceId === undefined) return undefined
+  // 只给 workspaceId 也要能用（评审 B2）：设备由 `workspace.device_id` **确定性推导**，不是猜。
+  // 此前直接 `return undefined` → 路由回 409「把设备弄上线」，与真实原因（缺 deviceId）无关且误导；
+  // 契约（03 §2.2 / protocol 的字段注释）明说可用 workspaceId 显式覆盖。
+  let deviceId = input.deviceId
+  if (deviceId === undefined) {
+    if (input.workspaceId === undefined) return undefined
+    const workspace = await findWorkspace(handle, input.workspaceId)
+    if (workspace === undefined) {
+      throw new RunCommandError('VALIDATION_FAILED', 'the specified workspace does not exist')
+    }
+    deviceId = workspace.deviceId
+  }
   const [device] = await handle
     .select()
     .from(schema.devices)
-    .where(eq(schema.devices.id, input.deviceId))
+    .where(eq(schema.devices.id, deviceId))
     .limit(1)
   if (device === undefined) return undefined
   if (device.ownerUserId !== input.assigneeUserId) {

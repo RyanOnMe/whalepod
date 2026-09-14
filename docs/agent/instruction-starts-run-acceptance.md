@@ -25,10 +25,14 @@ HTTP 面走 `POST /api/v1/tasks/:taskId/instructions` 的 Fastify inject。
 | 三段式③ | 无可用目标 → `undefined` / 409，**不建 Run、不落指令**（不猜） | PASS |
 | Agent 不猜 | 无上一轮 Run 可继承且未显式给 `agentId` → 明确要求显式指定，且不留半成品 | PASS |
 | 显式覆盖校验 | 别人的设备 → FORBIDDEN；工作区不可用 → VALIDATION_FAILED；已撤销 → DEVICE_OFFLINE | PASS |
-| 库级约束（0005） | 触发消息必须与 Run **同 Task**（触发器拒绝跨 Task 锚点，且不留坏账行） | PASS |
+| 库级约束（0005） | 触发消息必须与 Run **同 Task**（触发器拒绝跨 Task 锚点，且不留坏账行）。**已知可绕过**（评审实测）：触发器只挂在 `run` 表上，直接 `update task_message set task_id = …` 仍能造出不一致的锚点——属"尽力而为"，不是不可绕过的库级不变式（补 `task_message` 侧触发器见 #199） | PASS（含已知偏差） |
 | HTTP 201 | 显式目标 → 201，`outcome='started_run'`，指令 pending（命运由 ack 定） | PASS |
 | HTTP 400 | body 非法 → **400**（不是 500：③b 的 `.parse()` 教训） | PASS |
 | HTTP 409 | 无可用目标 → 409 `DEVICE_OFFLINE`，不建 Run、不落指令 | PASS |
+| 幂等重放（评审 B1） | 同 `idempotencyKey` 再发一次**不写第二条指令**、不覆盖锚点（按 `run.create:` 回执回放同一条消息） | PASS |
+| 只给 workspaceId（评审 B2） | 设备由 `workspace.device_id` 确定性推导（`source='explicit'`）；workspaceId 不存在 → `VALIDATION_FAILED`（而不是误导性的 409） | PASS |
+| 并发两条指令（评审应改 1） | 一条起 Run、另一条**降级为追问**（`queued`，因为新 Run 还在 `queued`），不向用户抛 `RUN_ALREADY_ACTIVE`；最终只有一个 Run | PASS |
+| 不被二次下发（评审观察 2） | 触发指令的 `run_id` 从出生就非空，但 Run 进 `running` 时补发器只放行 `pending` 的**追问** ⇒ `run.followup` 行数 = 0 | PASS |
 
 ## 归因（失败先看哪层）
 
@@ -40,6 +44,13 @@ HTTP 面走 `POST /api/v1/tasks/:taskId/instructions` 的 Fastify inject。
   orchestrator 的 ack 分支上，锚点是 `run.trigger_message_id`）。
 
 ## 未覆盖与已知项
+
+- **「在线」判据有两套真相（评审观察 1）**：本片用 `devices.dsh_distribution_version is not null`
+  （一次 hello 后永不清空），而设备页状态由 `last_seen_at` + 时间窗推导。于是「三天没心跳的设备」
+  可能在三段式② 里胜出。与 `run/routes.ts` 的既有口径自洽（那里同样用它），但注释里
+  「与 queries.ts 的 DEVICE_OFFLINE 判据同一事实」只对了一半——这是**已知偏差**，不是本片新造。
+- **起 Run 与写指令分两个事务**：极端窗口下可能留「有 Run 无指令」（run 会被正常执行，只是线程里
+  少一条记录）。窗口极窄，未做原子化。
 
 - **授权仍是「责任人」**：`orchestrator.create` 里的守卫没动，泛化到 `task_instruction_grant`
   是**切片④**的事（别在本片先造半套）。

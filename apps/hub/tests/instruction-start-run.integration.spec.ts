@@ -23,6 +23,7 @@ import {
   makeCreateInput,
   makeHarness,
   resetDatabase,
+  runEventFrame,
   seedRunPrereqs,
   type TestApp,
 } from './helpers.js'
@@ -111,7 +112,7 @@ describe('instruction starts a run (P1-196)', () => {
     })
   })
 
-  it('run.start ack accepted → 指令 accepted；ack rejected → 指令 rejected 且**理由落库**', async () => {
+  it('run.start ack accepted → 指令 accepted（确定性单分支：rejected 由下一条用例覆盖）', async () => {
     const ids = await seedRunPrereqs(database.db)
     await bringDeviceOnline(ids.deviceId)
     const harness = makeHarness(database)
@@ -128,29 +129,23 @@ describe('instruction starts a run (P1-196)', () => {
       },
     )
 
-    // 走真人路径：派发 → Node 回 ack（含 error 的拒绝形态）。
+    // 走真人路径：派发 → Node 回 ack（fake 默认 autoAck=true ⇒ 确定性 accepted）。
     await harness.worker.dispatchOnce()
     const upstream = harness.gateway.drainUpstream()
-    const startAck = upstream.find(
-      (frame) => frame.type === 'command.ack' && frame.payload.accepted === false,
-    )
-    if (startAck === undefined) {
-      // 正常（accepted）路径：断言结算成 accepted。
-      for (const frame of upstream) {
-        await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
-      }
-      const [accepted] = await listMessages(database.db, ids.taskId)
-      expect(accepted).toMatchObject({ instructionState: 'accepted' })
-      return
-    }
+    // 明确断言 ack 形状：这条用例只验 accepted 分支，不能靠"分支里没走到 rejected"蒙过去
+    //（评审应改 6a：原写法是 if/else 双分支，rejected 分支永不执行却写在标题里）。
+    expect(
+      upstream.some((frame) => frame.type === 'command.ack' && frame.payload.accepted === true),
+    ).toBe(true)
     for (const frame of upstream) {
       await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
     }
-    const [rejected] = await listMessages(database.db, ids.taskId)
-    expect(rejected?.instructionState).toBe('rejected')
-    expect(rejected?.instructionErrorCode).not.toBeNull()
-    expect(rejected?.instructionErrorMessage).not.toBeNull()
-    expect(outcome.runId).toBeTruthy()
+    const [accepted] = await listMessages(database.db, ids.taskId)
+    expect(accepted).toMatchObject({
+      instructionState: 'accepted',
+      instructionErrorCode: null,
+      runId: outcome.runId,
+    })
   })
 
   it('设备拒绝 run.start（离线）→ 指令被写成 rejected + 错误码（不是静默停在 pending）', async () => {
@@ -558,7 +553,12 @@ describe('执行区指令的 HTTP 面（P1-196：路由 201 / 400 / 409）', () 
       idempotencyKey: idemKey(),
     })
     expect(res.statusCode, JSON.stringify(res.json())).toBe(201)
-    const data = res.json().data as { outcome: string; runId: string; instructionState: string }
+    const data = res.json().data as {
+      id: string
+      outcome: string
+      runId: string
+      instructionState: string
+    }
     expect(data.outcome).toBe('started_run')
     expect(data.instructionState).toBe('pending') // 受理与否由 run.start ack 决定
     const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, data.runId))
@@ -599,5 +599,157 @@ describe('执行区指令的 HTTP 面（P1-196：路由 201 / 400 / 409）', () 
     expect(res.json().error.code).toBe('DEVICE_OFFLINE')
     expect(await database.db.select().from(schema.runs)).toEqual([])
     expect(await listMessages(database.db, taskId)).toEqual([])
+  })
+})
+
+describe('P1-196 评审整改的回归判据', () => {
+  let database: Database
+  beforeAll(async () => {
+    database = await createTestDatabase()
+  })
+  beforeEach(async () => {
+    await resetDatabase(database)
+  })
+  afterAll(async () => {
+    await database.close()
+  })
+
+  async function bringOnline(deviceId: string) {
+    await database.db
+      .update(schema.devices)
+      .set({ dshDistributionVersion: '9.9.9-test', lastSeenAt: new Date() })
+      .where(eq(schema.devices.id, deviceId))
+  }
+
+  function deps(harness: ReturnType<typeof makeHarness>) {
+    return {
+      database,
+      outbox: harness.outbox,
+      orchestrator: harness.orchestrator,
+      dshDistributionVersionFor: async () => '1.2.3-test',
+      now: () => new Date('2026-08-25T00:00:00.000Z'),
+    }
+  }
+
+  it('幂等重放（评审 B1）：同 idempotencyKey 再发一次**不写第二条指令**、不覆盖锚点', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    const input = {
+      text: '同一句话发两次',
+      idempotencyKey: 'same-key',
+      deviceId: ids.deviceId,
+      workspaceId: ids.workspaceId,
+      agentId: ids.agentId,
+    }
+
+    const first = await sendInstruction(deps(harness), makeActor(ids.userId), ids.taskId, input)
+    const second = await sendInstruction(deps(harness), makeActor(ids.userId), ids.taskId, input)
+
+    // 同 key → 同一条消息、同一个 Run（幂等），而不是插出第二条把锚点覆盖掉。
+    expect(second.message.id).toBe(first.message.id)
+    expect(second.runId).toBe(first.runId)
+    const messages = await listMessages(database.db, ids.taskId)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.kind).toBe('instruction')
+    const [run] = await database.db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, first.runId))
+    expect(run?.triggerMessageId).toBe(first.message.id)
+  })
+
+  it('只给 workspaceId（评审 B2）：设备由 workspace.device_id 确定性推导，不再静默丢弃', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringOnline(ids.deviceId)
+
+    const resolved = await resolveRunTarget(database.db, {
+      taskId: ids.taskId,
+      assigneeUserId: ids.userId,
+      workspaceId: ids.workspaceId,
+    })
+    expect(resolved).toEqual({
+      deviceId: ids.deviceId,
+      workspaceId: ids.workspaceId,
+      source: 'explicit',
+    })
+
+    // 不存在的 workspaceId → 明确的 VALIDATION_FAILED（而不是 409「把设备弄上线」这种误导）。
+    await expect(
+      resolveRunTarget(database.db, {
+        taskId: ids.taskId,
+        assigneeUserId: ids.userId,
+        workspaceId: randomUUID(),
+      }),
+    ).rejects.toThrow(/does not exist/)
+  })
+
+  it('并发两条指令（评审应改 1）：不硬失败，**降级为追问**（ADR 语义：有活跃 Run 就接着说）', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringOnline(ids.deviceId)
+    const harness = makeHarness(database)
+
+    const [a, b] = await Promise.all([
+      sendInstruction(deps(harness), makeActor(ids.userId), ids.taskId, {
+        text: '并发第一条',
+        idempotencyKey: 'race-a',
+        deviceId: ids.deviceId,
+        workspaceId: ids.workspaceId,
+        agentId: ids.agentId,
+      }),
+      sendInstruction(deps(harness), makeActor(ids.userId), ids.taskId, {
+        text: '并发第二条',
+        idempotencyKey: 'race-b',
+        deviceId: ids.deviceId,
+        workspaceId: ids.workspaceId,
+        agentId: ids.agentId,
+      }),
+    ])
+
+    // 两条都成功：一条起 Run，另一条降级为**追问**（不再向用户抛 RUN_ALREADY_ACTIVE）。
+    // 第二条的 kind 是 `queued` 而不是 `followup`：它落在刚建出来、还处于 `queued` 的 Run 上，
+    // 按 ③c-1 的语义"未 running 只排队"——这正是 ADR-0009 决策 5 要的行为。
+    expect([a.kind, b.kind].sort()).toEqual(['queued', 'started_run'])
+    expect(a.runId).toBe(b.runId) // 落在同一个 Run 上
+    const runs = await database.db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, ids.taskId))
+    expect(runs).toHaveLength(1)
+    const messages = await listMessages(database.db, ids.taskId)
+    expect(messages.map((message) => message.kind).sort()).toEqual(['followup', 'instruction'])
+  })
+
+  it('触发指令不会被二次当 followup 下发（评审观察 2）：Run 进 running 时只放行**追问**', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    const outcome = await sendInstruction(deps(harness), makeActor(ids.userId), ids.taskId, {
+      text: '只有这一条指令',
+      idempotencyKey: 'single',
+      deviceId: ids.deviceId,
+      workspaceId: ids.workspaceId,
+      agentId: ids.agentId,
+    })
+
+    // 派发 + ack（accepted）→ Run 进 dispatching；再喂 runtime.ready → running（补发器会跑）。
+    await harness.worker.dispatchOnce()
+    for (const frame of harness.gateway.drainUpstream()) {
+      await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+    }
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(outcome.runId, 1, { type: 'runtime.ready', dshSessionId: 'dsh-single' }),
+    )
+
+    // 触发指令的 run_id 从出生就非空，但它的命运由 run.start ack 定的（accepted）；
+    // 补发器取的是 `instruction_state='pending'` 的消息，所以它不该被再下发一次。
+    const followups = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(eq(schema.dispatchOutbox.type, 'run.followup'))
+    expect(followups).toEqual([])
+    const [message] = await listMessages(database.db, ids.taskId)
+    expect(message?.instructionState).toBe('accepted')
   })
 })
