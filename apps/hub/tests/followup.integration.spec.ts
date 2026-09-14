@@ -172,6 +172,32 @@ describe('run followup (P1-186)', () => {
     expect(swept?.instructionErrorMessage).toContain('lost')
   })
 
+  it('终态清扫**只动 pending**：已被受理的追问在 Run 终态后仍是 accepted', async () => {
+    // 为什么单独一条（#187 评审 N1）：清扫的 `instructionState='pending'` 守卫是**承重**的
+    // ——没有它，Run 一进终态就会把已经受理成功的追问翻成 rejected(RUN_TERMINAL)，凭空
+    // 告诉人「没受理」。而删掉该守卫时，项目自带的整套 integration（352 条）**一条都不红**，
+    // 因为既有用例只从 pending 方向验清扫。这条补上反方向。
+    const { ids, harness, run } = await seedRun('running')
+    await sendRunFollowup(database, harness.outbox, makeActor(ids.userId), run.id, {
+      text: '这句已经受理成功了',
+      idempotencyKey: 'k-accepted-survives',
+    })
+    await harness.worker.dispatchOnce()
+    for (const frame of harness.gateway.drainUpstream()) {
+      await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+    }
+    expect((await listMessages(database.db, ids.taskId))[0]?.instructionState).toBe('accepted')
+
+    await setRunStatus(database.db, run.id, 'completed')
+
+    const [row] = await listMessages(database.db, ids.taskId)
+    expect(row).toMatchObject({
+      instructionState: 'accepted',
+      instructionErrorCode: null,
+      instructionErrorMessage: null,
+    })
+  })
+
   it('终态 Run：**不受理**——消息落 rejected + 理由，且不入队任何命令', async () => {
     const { ids, harness, run } = await seedRun('completed')
 

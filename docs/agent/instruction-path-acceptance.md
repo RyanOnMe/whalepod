@@ -27,7 +27,7 @@ npx tsx scripts/with-test-postgres.mts vitest run --project integration \
 `dispatch_outbox` 的 `type` / `payload` / `message_id` / `acked_at`；`team_event`；
 以及派发出去的帧本身（过协议 schema 后的形态）。
 
-## 判定（10 条用例）
+## 判定（命令层 15 + 路由层 6 + 数据层 3）
 
 ### 命令层（`followup.integration.spec.ts`，15 条）
 
@@ -87,7 +87,15 @@ npx tsx scripts/with-test-postgres.mts vitest run --project integration \
 - **本机高负载**：默认 5s 用例超时在本机负载 15+ 时会被拖爆（`main` 上同样复现），本地须用
   `--testTimeout=30000`；CI 用默认值。
 - **`instruction_error_code` 里有两套词表**（wire ErrorCode 透传 + Hub 理由标签 `RUN_TERMINAL` /
-  `RUN_CANCELLING`）：已在 `03` §2.2 写明；若将来要机器分派，需要一张显式词表而不是靠字符串猜。
+  `RUN_CANCELLING`）：标签已集中定义为 `packages/db` 的 `INSTRUCTION_REFUSAL`（单一事实源），
+  `03` §2.2 写明两套词表的语义。**下一步要求（不是可选）**：给该列加一张显式枚举表 + DB check，
+  因为 UI 迟早要按码分派文案，靠字符串猜迟早漂移。
+- **终态清扫与迟到 ack 的偏离窗口**：若 Node 其实已受理、ack 却晚于 Run 终态到达，消息会先被
+  清扫成 `rejected(RUN_TERMINAL)`（outbox 行照常落 `acked_at`，账不烂）。这是 ADR 决策 3 要求的
+  确定性取舍（宁如实说没受理，也不静默留 pending），但「Node 收了 / 账上说没收」这个窗口要在
+  UI 上不误导用户——切片⑥ 需要注意。
+- **清扫只覆盖 `setRunStatus` 的调用点**：目前完备（`runs.status` 无第二写入路径，评审核过 16 处），
+  将来若出现绕过它的终态写入，就是新口子。
 - **`comment.created` 事件名未改**：与 `task_message` 实体名不一致，改名归切片③c（与 UI 一起）。
 - **`origin='auto_assignment'` 的自动指令路径未实现**：本片只有人发指令。
 
@@ -98,6 +106,7 @@ npx tsx scripts/with-test-postgres.mts vitest run --project integration \
 | 受理集合收窄成只剩 `running` | `waiting_approval` 等用例变红 | ✅ 变红 |
 | 受理集合放宽到 `+cancel_requested` | 必须变红 | ✅ 变红（**整改前**该变异 10 条全绿——`cancel_requested` 无覆盖，评审抓出） |
 | 删掉 `settleInstruction` 的 `pending` 守卫 | 必须变红 | ✅ 变红（**整改前**集成层测不到：重复 ack 被 `ackInTransaction` 先挡住，故补了直接调用的数据层用例） |
+| 删掉**终态清扫**的 `pending` 守卫 | 必须变红 | ✅ 变红（**整改前**项目自带 352 条 integration 一条都不红——既有用例只从 pending 方向验清扫，故补了反方向用例「已 accepted 的消息在 Run 终态后仍是 accepted」） |
 | 命令载荷删掉 `commandId` | 必须变红 | ✅ 变红（worker 的 `NodeDownstreamSchema` 校验失败 → 行被标 permanent fail） |
-| `enqueue` 改回不写 `nextAttemptAt` | outbox 时钟用例变红 | ✅ 变红（**整改前**该修复无用例） |
+| `enqueue` 改回不写 `nextAttemptAt` | outbox 时钟用例变红 | ✅ 变红（**整改前**该修复无用例；判据已按评审收紧成「假时钟领先/落后 DB 时钟两个方向都必须红」） |
 | 路由改回 `.parse()` | 空文本/超长文本用例变红（500 而非 400） | ✅ 变红 |

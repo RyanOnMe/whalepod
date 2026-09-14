@@ -15,14 +15,16 @@
  * 授权按现行不变量（只有 Task 责任人能驱动执行，`orchestrator.ts:130-132` 同款）：
  * 授权名单 `task_instruction_grant` 属切片④，本片**不放宽**任何权限。
  */
-import { and, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import type { Actor } from '@whalepod/domain'
 import type { Database, Outbox, TaskMessageRow, Tx } from '@whalepod/db'
 import {
   appendTeamEvent,
+  INSTRUCTION_REFUSAL,
   insertMessage,
   schema,
   settleInstruction,
+  TERMINAL_RUN_STATUSES,
   transactCommand,
 } from '@whalepod/db'
 import { RunCommandError } from './errors.js'
@@ -53,11 +55,9 @@ const FOLLOWUP_ACCEPTING_STATUSES = new Set([
  * 决策 3/5 命名的理由标签（`RUN_TERMINAL` / `RUN_CANCELLING`），而 Node 的 ack 码**原样透传**。
  * 不改 protocol 的 ErrorCode 目录——那是线上契约，不该为 Hub 内部记账扩容。
  */
-const REFUSAL_RUN_TERMINAL = 'RUN_TERMINAL'
-const REFUSAL_RUN_CANCELLING = 'RUN_CANCELLING'
-
-/** 终态：Run 已经答完了，追问只能改走新回合。 */
-const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'lost'])
+// 标签与终态集合都取 packages/db 的单一事实源（#187 评审 N3/N4）。
+const REFUSAL_RUN_TERMINAL = INSTRUCTION_REFUSAL.RUN_TERMINAL
+const REFUSAL_RUN_CANCELLING = INSTRUCTION_REFUSAL.RUN_CANCELLING
 
 export interface SendFollowupInput {
   text: string
@@ -205,34 +205,4 @@ export async function settleFollowupAck(
     type: 'comment.created',
     payload: { commentId: settled.id, taskId: settled.taskId, authorUserId: settled.authorUserId },
   })
-}
-
-/**
- * Run 进终态时，把该 Run 上仍 `pending` 的追问一律落 `rejected(RUN_TERMINAL)`（ADR-0009 决策 3）。
- *
- * 为什么必须有：`accepted` 的机制保证只到「Node 写进 stdin」，Node 可能**永远不会**回 ack
- *（进程已死、outbox 无重试上限、连接丢失）。没有这条清扫，「waiting_approval 追问 → 用户取消
- * → lost」这类路径会让消息**永久停在 pending**——正是本片要消灭的「零痕迹」的同族口子。
- * 由 `setRunStatus` 在写终态时同事务调用（只从 pending 收敛，故多挂点也安全）。
- */
-export async function settlePendingInstructionsForRun(
-  tx: Tx,
-  runId: string,
-  reason: { code: string; message: string },
-): Promise<number> {
-  const settled = await tx
-    .update(schema.taskMessages)
-    .set({
-      instructionState: 'rejected',
-      instructionErrorCode: reason.code,
-      instructionErrorMessage: reason.message,
-    })
-    .where(
-      and(
-        eq(schema.taskMessages.runId, runId),
-        eq(schema.taskMessages.instructionState, 'pending'),
-      ),
-    )
-    .returning({ id: schema.taskMessages.id })
-  return settled.length
 }

@@ -33,6 +33,7 @@ import {
   setApprovalStatus,
   setRunStatus,
   setTaskStatus,
+  TERMINAL_RUN_STATUSES,
   transactCommand,
   unwrapPgError,
 } from '@whalepod/db'
@@ -52,10 +53,9 @@ import { settleFollowupAck } from './followup.js'
 import type { ApprovalView, RunView } from './queries.js'
 import { toApprovalView, toRunView } from './queries.js'
 
-const TERMINAL_RUN_STATUSES = ['completed', 'failed', 'cancelled', 'lost'] as const
-
+// 终态集合来自 packages/db 的单一事实源（#187 评审 N3；此前三处各写一份）。
 function isTerminal(status: RunRow['status']): boolean {
-  return (TERMINAL_RUN_STATUSES as readonly string[]).includes(status)
+  return TERMINAL_RUN_STATUSES.has(status)
 }
 
 export interface RunOrchestratorDeps {

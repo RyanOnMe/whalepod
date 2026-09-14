@@ -86,13 +86,30 @@ export interface RunStatusPatch {
   dshSessionId?: string
 }
 
-/** 终态集合（03 §3.2）：写进这些状态后 Run 不再推进。 */
-const TERMINAL_RUN_STATUSES = new Set<RunRow['status']>([
+/**
+ * 终态集合（03 §3.2）：写进这些状态后 Run 不再推进。
+ *
+ * **导出为单一事实源**（#187 评审 N3）：此前这个集合在 3 处各写一份
+ *（本文件、`apps/hub/.../orchestrator.ts`、`.../followup.ts`），改一处就会漂移。
+ */
+export const TERMINAL_RUN_STATUSES: ReadonlySet<RunRow['status']> = new Set([
   'completed',
   'failed',
   'cancelled',
   'lost',
 ])
+
+/**
+ * Hub 侧「指令为什么没被受理」的理由标签（#187 评审 N4）：写进
+ * `task_message.instruction_error_code`，与 Node ack 透传的 wire ErrorCode 分属两套词表
+ *（见 03 §2.2）。集中定义，避免两侧各写裸字符串。
+ */
+export const INSTRUCTION_REFUSAL = {
+  /** Run 已经答完：追问只能改走新回合。 */
+  RUN_TERMINAL: 'RUN_TERMINAL',
+  /** 取消已经在路上，排队必然被终态打断。 */
+  RUN_CANCELLING: 'RUN_CANCELLING',
+} as const
 
 export async function setRunStatus(
   handle: DbHandle,
@@ -122,7 +139,7 @@ export async function setRunStatus(
       .update(taskMessages)
       .set({
         instructionState: 'rejected',
-        instructionErrorCode: 'RUN_TERMINAL',
+        instructionErrorCode: INSTRUCTION_REFUSAL.RUN_TERMINAL,
         instructionErrorMessage: `run reached ${status} before the followup was accepted`,
       })
       .where(and(eq(taskMessages.runId, id), eq(taskMessages.instructionState, 'pending')))
