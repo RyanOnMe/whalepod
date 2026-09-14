@@ -170,6 +170,46 @@
   .target-bar code { font-family: var(--mono); font-size: 11.5px; }
   .target-bar .chg { margin-left: auto; }
 
+  /* 目标选择器（可见，不是藏在"改…"里） */
+  .pick { display: inline-flex; align-items: center; gap: 6px; }
+  .pick-btn {
+    font: inherit; font-size: 12px; padding: 4px 9px; border-radius: 8px; cursor: pointer;
+    border: .5px solid var(--line-strong); background: #fff; color: var(--ink); display: inline-flex; align-items: center; gap: 6px;
+  }
+  .pick-btn:hover { background: var(--hover); }
+  .pick-btn .caret { color: var(--ink-3); font-size: 10px; }
+  .pick-panel {
+    margin: 10px 20px 0; border-radius: 11px; border: .5px solid var(--line-strong);
+    background: #fff; box-shadow: var(--shadow-pop); padding: 10px 12px;
+  }
+  .pick-panel h5 { font-size: 12px; color: var(--ink-3); font-weight: 600; margin: 0 0 6px; }
+  .pick-panel h5:not(:first-child) { margin-top: 12px; }
+  .pick-row {
+    display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 9px; font-size: 12.5px; cursor: pointer;
+  }
+  .pick-row:hover { background: var(--hover); }
+  .pick-row.on { background: var(--blue-bg); }
+  .pick-row.disabled { opacity: .5; cursor: not-allowed; }
+  .pick-row .why { margin-left: auto; font-size: 11.5px; color: var(--ink-3); }
+  .pick-note { margin-top: 9px; font-size: 11.5px; color: var(--ink-3); }
+
+  /* 讨论里引用某次运行 */
+  .ref-chip {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600;
+    padding: 3px 9px; border-radius: 99px; background: var(--violet-bg); color: var(--violet);
+    cursor: pointer; border: .5px solid rgba(107,75,216,.25); margin: 0 2px;
+  }
+  .ref-chip:hover { background: rgba(107,75,216,.16); }
+  .ref-menu {
+    position: absolute; z-index: 12; bottom: 74px; left: 20px; right: 20px;
+    border-radius: 11px; border: .5px solid var(--line-strong); background: #fff; box-shadow: var(--shadow-pop); padding: 9px;
+  }
+  .ref-menu h5 { font-size: 11.5px; color: var(--ink-3); margin: 0 0 6px; font-weight: 600; }
+  .ref-menu .pick-row { font-size: 12px; }
+  .composer { position: relative; }
+  .pending-ref { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 7px; }
+  .pending-ref .x { cursor: pointer; color: var(--ink-3); font-weight: 700; }
+
   .exec-settings { display: flex; gap: 7px; padding: 10px 20px 0; flex-wrap: wrap; align-items: center; }
 
   /* 输入区 */
@@ -262,11 +302,14 @@
           </div>
           <div class="stream" id="discuss-stream"></div>
           <div class="composer">
-            <div class="composer-hint">💬 这里只是说话——<b style="color:var(--ink-2)">不会</b>启动任何运行</div>
+            <div class="composer-hint">💬 这里只是说话——<b style="color:var(--ink-2)">不会</b>启动任何运行<span id="discuss-ref-hint"></span></div>
+            <div id="pending-ref"></div>
             <div class="composer-row">
+              <button class="btn small" id="ref-btn" title="引用某次运行">🔗 引用运行</button>
               <input id="discuss-input" placeholder="和大家讨论一下…" autocomplete="off">
               <button class="btn" id="discuss-send">发送</button>
             </div>
+            <div class="ref-menu" id="ref-menu" hidden></div>
           </div>
         </section>
 
@@ -440,6 +483,12 @@ function statusChip(status) {
   return map[status] || '<span class="chip gray">' + status + '</span>'
 }
 
+/** 讨论里引用的运行/指令：可点，直接打开 Run Console（引用≠驱动，不触发任何运行）。 */
+function refChip(ref) {
+  const isRun = ref.startsWith('R-')
+  return `<span class="ref-chip" data-console="${isRun ? ref : '#R-1042'}" data-status="running" data-agent="回归助手 v3" data-events="37">${isRun ? '🔗 运行 ' + ref : '🔗 指令 ' + ref}</span>`
+}
+
 function renderDiscuss() {
   const base = scenes[scene].discuss
   $('discuss-stream').innerHTML = base.concat(live[scene].discuss).map((m) => `
@@ -447,7 +496,7 @@ function renderDiscuss() {
       <div class="avatar" style="background:${m.who.color}">${m.who.initial}</div>
       <div class="msg-body">
         <div class="msg-meta"><span class="msg-name">${m.who.name}</span><span>${m.t}</span></div>
-        <div class="msg-text">${m.text}</div>
+        <div class="msg-text">${m.text}${m.ref ? refChip(m.ref) : ''}</div>
       </div>
     </div>`).join('')
   const el = $('discuss-stream'); el.scrollTop = el.scrollHeight
@@ -520,25 +569,93 @@ function renderExec() {
   const el = $('exec-stream'); el.scrollTop = el.scrollHeight
 }
 
+const devices = [
+  { id: 'mbp', name: '老张的 MacBook Pro', online: true, owner: '老张', ws: ['~/work/whalepod', '~/work/release-notes'], note: '已 hello' },
+  { id: 'mini', name: '老张的 Mac mini', online: false, owner: '老张', ws: ['~/ci'], note: '未 hello（离线）' },
+  { id: 'wang', name: '老王的工作站', online: true, owner: '老王', ws: ['~/regress'], note: '不属于责任人' },
+]
+
+let pick = { device: 'mbp', ws: '~/work/whalepod', source: 'reuse', panel: false }
+
 function renderTarget() {
+  // 面板是插在 #target-bar **后面**的兄弟节点（重写 target-bar.innerHTML 清不掉它）——
+  // 不显式移除就会越积越多（首版点两次选择器 → 两个面板同时叠着，截图抓到的真 bug）。
+  document.querySelectorAll('.pick-panel').forEach((el) => el.remove())
   const t = scenes[scene].target
-  const dot = t.online
-    ? '<span class="chip green" style="padding:2px 7px">在线</span>'
-    : '<span class="chip red" style="padding:2px 7px">离线</span>'
-  $('target-bar').className = 'target-bar' + (t.warn ? ' warn' : '')
+  // 场景 A/B/D/E 命中「沿用上一轮」；C 场景无可用目标（离线 + 工作区不可用）
+  const noTarget = t.mode === 'none'
+  if (!pick.touched) { pick.device = 'mbp'; pick.ws = '~/work/whalepod'; pick.source = 'reuse' }
+  const dev = devices.find((d) => d.id === pick.device)
+  const devLabel = dev ? dev.name : '—'
+  const online = !noTarget && (dev ? dev.online : false)
+
+  const srcChip = noTarget
+    ? '<span class="chip red" style="padding:2px 8px">不可用</span>'
+    : pick.source === 'reuse'
+      ? '<span class="chip violet" style="padding:2px 8px">沿用上一轮</span>'
+      : pick.source === 'auto'
+        ? '<span class="chip blue" style="padding:2px 8px">自动选</span>'
+        : '<span class="chip amber" style="padding:2px 8px">显式指定</span>'
+
+  $('target-bar').className = 'target-bar' + (online ? '' : ' warn')
   $('target-bar').innerHTML = `
-    <span class="k">执行目标</span>
-    <span class="chip ${t.mode === 'none' ? 'red' : 'violet'}" style="padding:2px 8px">${t.text}</span>
-    <code>${t.device}</code><span class="k">·</span><code>${t.ws}</code>${dot}
-    <span class="chg"><button class="btn ghost small">改…</button></span>`
-  $('exec-hint').textContent = scenes[scene].hint
+    <span class="k">执行目标</span>${srcChip}
+    <span class="pick">
+      <button class="pick-btn" id="pick-device">${devLabel}<span class="caret">▾</span></button>
+      <button class="pick-btn" id="pick-ws">${noTarget ? '无可用工作区' : pick.ws}<span class="caret">▾</span></button>
+    </span>
+    ${online ? '<span class="chip green" style="padding:2px 7px">在线</span>' : '<span class="chip red" style="padding:2px 7px">离线</span>'}
+    <span class="chg"><button class="btn ghost small" id="pick-auto">回到自动</button></span>`
+
+  if (pick.panel === 'device') {
+    $('target-bar').insertAdjacentHTML('afterend', `<div class="pick-panel" id="pick-panel">
+      <h5>选择设备（显式指定优先于自动解析，但仍校验归属与可用性）</h5>
+      ${devices.map((d) => {
+        const usable = d.owner === '老张'
+        return `<div class="pick-row ${d.id === pick.device ? 'on' : ''} ${usable ? '' : 'disabled'}" data-dev="${d.id}" data-usable="${usable}">
+          <span>${d.name}</span>
+          <span class="chip ${d.online ? 'green' : 'gray'}" style="padding:1px 7px">${d.online ? '在线' : '离线'}</span>
+          <span class="why">${d.owner === '老张' ? d.note : d.note + ' · 不可选'}</span>
+        </div>`
+      }).join('')}
+      <div class="pick-note">设备离线判据 = 是否已 <code class="mono">node.hello</code>（与设备页同一事实）。选一台离线设备发送 → 当场 409 <code class="mono">DEVICE_OFFLINE</code>，不建 Run。</div>
+    </div>`)
+  } else if (pick.panel === 'ws') {
+    const list = dev ? dev.ws : []
+    $('target-bar').insertAdjacentHTML('afterend', `<div class="pick-panel" id="pick-panel">
+      <h5>选择工作区（${devLabel}）</h5>
+      ${list.map((w, i) => `<div class="pick-row ${w === pick.ws ? 'on' : ''}" data-ws="${w}">
+        <span><code class="mono">${w}</code></span>
+        <span class="chip ${i === 0 ? 'green' : 'gray'}" style="padding:1px 7px">available</span>
+        <span class="why">${i === 0 ? '最近使用（③c-2b 三段式第①档命中它）' : '未使用过'}</span>
+      </div>`).join('') || '<div class="pick-note">该设备没有可用工作区。</div>'}
+      <div class="pick-note"><code class="mono">available=false</code> 的工作区不参与解析（扫描未完成 / 已失联）。</div>
+    </div>`)
+  }
+
+  $('exec-hint').textContent = noTarget ? '发送会被拒绝：没有可用目标（409 DEVICE_OFFLINE）' : scenes[scene].hint
   $('boundary-note').innerHTML = scenes[scene].boundary
   $('scene-note').innerHTML = scenes[scene].note
   const runs = scenes[scene].exec.filter((i) => i.kind === 'run').length
   $('exec-count').textContent = runs + ' 个运行'
 }
 
-function render() { renderDiscuss(); renderExec(); renderTarget() }
+// 目标选择器交互
+document.addEventListener('click', (e) => {
+  const dev = e.target.closest('[data-dev]')
+  if (dev) {
+    if (dev.dataset.usable === 'true') { pick.device = dev.dataset.dev; pick.touched = true; pick.source = 'explicit'; pick.panel = false; renderTarget() }
+    return
+  }
+  const ws = e.target.closest('[data-ws]')
+  if (ws) { pick.ws = ws.dataset.ws; pick.touched = true; pick.source = 'explicit'; pick.panel = false; renderTarget(); return }
+  if (e.target.closest('#pick-device')) { pick.panel = pick.panel === 'device' ? false : 'device'; renderTarget(); return }
+  if (e.target.closest('#pick-ws')) { pick.panel = pick.panel === 'ws' ? false : 'ws'; renderTarget(); return }
+  if (e.target.closest('#pick-auto')) { pick.touched = false; pick.source = 'reuse'; pick.panel = false; renderTarget(); return }
+  if (!e.target.closest('.pick-panel') && pick.panel) { pick.panel = false; renderTarget() }
+})
+
+function render() { renderDiscuss(); renderExec(); renderTarget(); renderPendingRef() }
 
 // ── 交互 ──────────────────────────────────────────────
 document.querySelectorAll('.scene-tab').forEach((btn) => {
@@ -549,11 +666,40 @@ document.querySelectorAll('.scene-tab').forEach((btn) => {
   })
 })
 
+// 引用某次运行（讨论侧的能力：引用 ≠ 驱动）
+let pendingRef = null
+function runsInScene() {
+  return scenes[scene].exec.filter((i) => i.kind === 'run')
+}
+function renderPendingRef() {
+  $('pending-ref').innerHTML = pendingRef
+    ? `<span class="pending-ref"><span class="ref-chip">🔗 运行 ${pendingRef}</span><span class="x" id="ref-clear">×</span></span>`
+    : ''
+  $('discuss-ref-hint').innerHTML = pendingRef ? ' · 将附上 <b style="color:var(--ink-2)">引用</b>（仍然不会触发运行）' : ''
+}
+$('ref-btn').addEventListener('click', () => {
+  const menu = $('ref-menu')
+  if (!menu.hidden) { menu.hidden = true; return }
+  const runs = runsInScene()
+  menu.innerHTML = `<h5>引用哪一次运行？</h5>` + (runs.length
+    ? runs.map((r) => `<div class="pick-row" data-ref="${r.run}">
+        <span class="mono">#${r.run}</span><span>${r.agent}</span>
+        ${statusChip(r.status)}<span class="why">${r.device}</span></div>`).join('')
+    : '<div class="pick-note">本场景没有运行可引用。</div>')
+  menu.hidden = false
+})
+document.addEventListener('click', (e) => {
+  const r = e.target.closest('[data-ref]')
+  if (r) { pendingRef = r.dataset.ref; $('ref-menu').hidden = true; renderPendingRef(); return }
+  if (e.target.closest('#ref-clear')) { pendingRef = null; renderPendingRef(); return }
+  if (!e.target.closest('#ref-menu') && !e.target.closest('#ref-btn')) $('ref-menu').hidden = true
+})
+
 // 左侧：只追加讨论，绝不触发运行（这就是 ADR-0010 的分工）
 $('discuss-send').addEventListener('click', () => {
   const input = $('discuss-input'); const text = input.value.trim(); if (!text) return
-  live[scene].discuss.push({ who: 老张, t: '现在', text: text.replace(/</g, '&lt;') })
-  input.value = ''; renderDiscuss()
+  live[scene].discuss.push({ who: 老张, t: '现在', text: text.replace(/</g, '&lt;'), ref: pendingRef })
+  input.value = ''; pendingRef = null; renderPendingRef(); renderDiscuss()
 })
 $('discuss-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('discuss-send').click() })
 
@@ -580,7 +726,9 @@ $('exec-send').addEventListener('click', () => {
 $('exec-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('exec-send').click() })
 
 // Run Console 覆盖层（#179 决策：卡内覆盖层 + 返回线程）
-$('exec-stream').addEventListener('click', (e) => {
+// 用**文档级委派**：入口有两个——执行栏的运行卡、讨论栏里引用的运行 chip。
+// （首版只挂在 #exec-stream 上，讨论里的引用 chip 点了没反应——DOM 断言抓到的真 bug。）
+document.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-console]')
   if (!btn) return
   const run = btn.dataset.console
@@ -600,7 +748,7 @@ $('exec-stream').addEventListener('click', (e) => {
   $('console').hidden = false
 })
 $('console-back').addEventListener('click', () => { $('console').hidden = true })
-$('exec-stream').addEventListener('click', (e) => {
+document.addEventListener('click', (e) => {
   if (e.target.closest('[data-again]')) alert('原型示意：基于本轮的 DSH 会话回溯重跑（新 Run，血缘 rerun_of 指向本轮）')
 })
 

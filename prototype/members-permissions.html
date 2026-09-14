@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WhalePod 原型 · 成员与权限（谁能驱动 Agent）</title>
+<style>
+  :root {
+    --platform: #f4f4f6; --card: #fff; --ink: #1d1d1f; --ink-2: #5a5a60; --ink-3: #8e8e96;
+    --line: rgba(0,0,0,.08); --line-strong: rgba(0,0,0,.14); --sidebar: #ececef; --hover: rgba(0,0,0,.045);
+    --green: #2f9e5f; --green-bg: rgba(47,158,95,.1);
+    --amber: #b7791f; --amber-bg: rgba(183,121,31,.1);
+    --red: #c9392b;   --red-bg: rgba(201,57,43,.1);
+    --blue: #3167d8;  --blue-bg: rgba(49,103,216,.09);
+    --violet: #6b4bd8; --violet-bg: rgba(107,75,216,.09);
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+    --shadow-soft: 0 2px 12px rgba(0,0,0,.05), 0 12px 40px rgba(0,0,0,.06);
+    --shadow-pop: 0 4px 16px rgba(0,0,0,.08), 0 20px 56px rgba(0,0,0,.12);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { -webkit-font-smoothing: antialiased; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Noto Sans CJK SC", sans-serif; background: var(--platform); color: var(--ink); font-size: 14px; line-height: 1.55; }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  .grow { flex: 1; }
+  a { color: inherit; }
+
+  .proto-banner { background: var(--ink); color: rgba(255,255,255,.92); padding: 10px 24px; font-size: 13px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .proto-banner strong { font-weight: 600; }
+  .proto-banner .tag { font-family: var(--mono); font-size: 11px; background: rgba(255,255,255,.14); border-radius: 99px; padding: 2px 10px; }
+  .proto-banner a { color: rgba(255,255,255,.8); text-decoration: none; border-bottom: 1px dotted rgba(255,255,255,.4); }
+  .proto-banner .sep { width: 1px; height: 14px; background: rgba(255,255,255,.2); }
+
+  .shell { display: flex; min-height: calc(100vh - 42px); }
+  .sidebar { width: 208px; flex: none; background: var(--sidebar); border-right: .5px solid var(--line-strong); padding: 16px 12px; display: flex; flex-direction: column; gap: 2px; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 8px 10px 16px; font-weight: 600; font-size: 15px; }
+  .logo { width: 26px; height: 26px; border-radius: 8px; background: var(--ink); color: #fff; display: grid; place-items: center; font-size: 14px; font-weight: 700; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; color: var(--ink-2); font-size: 13.5px; text-decoration: none; }
+  .nav-item.on { background: var(--card); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+  .dot { width: 6px; height: 6px; border-radius: 99px; background: currentColor; opacity: .45; }
+  .side-user { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 10px; background: rgba(255,255,255,.6); }
+  .avatar { width: 28px; height: 28px; border-radius: 99px; display: grid; place-items: center; color: #fff; font-size: 12px; font-weight: 600; flex: none; }
+
+  .main { flex: 1; padding: 20px 24px 28px; min-width: 0; }
+  .app-card { background: var(--card); border-radius: 16px; box-shadow: var(--shadow-soft); overflow: hidden; }
+  .page-head { display: flex; align-items: flex-start; gap: 16px; padding: 18px 22px 14px; border-bottom: .5px solid var(--line); }
+  .page-title { font-size: 17px; font-weight: 600; }
+  .page-sub { font-size: 12.5px; color: var(--ink-3); margin-top: 3px; }
+
+  .chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 99px; white-space: nowrap; }
+  .chip.green { background: var(--green-bg); color: var(--green); }
+  .chip.amber { background: var(--amber-bg); color: var(--amber); }
+  .chip.red { background: var(--red-bg); color: var(--red); }
+  .chip.blue { background: var(--blue-bg); color: var(--blue); }
+  .chip.violet { background: var(--violet-bg); color: var(--violet); }
+  .chip.gray { background: rgba(0,0,0,.055); color: var(--ink-2); }
+
+  .btn { font: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: 8px; border: .5px solid var(--line-strong); background: #fff; color: var(--ink); cursor: pointer; }
+  .btn.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .btn.small { font-size: 11.5px; padding: 4px 10px; }
+  .btn.ghost { border-color: transparent; background: transparent; color: var(--ink-2); }
+  .btn.danger { color: var(--red); border-color: rgba(201,57,43,.35); }
+
+  .body { padding: 18px 22px 24px; display: grid; grid-template-columns: 1fr 320px; gap: 22px; align-items: start; }
+  h3 { font-size: 13px; font-weight: 700; letter-spacing: .01em; margin-bottom: 3px; }
+  .h3sub { font-size: 12px; color: var(--ink-3); margin-bottom: 10px; }
+
+  table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+  th { text-align: left; font-size: 11.5px; font-weight: 600; color: var(--ink-3); padding: 0 10px 7px; }
+  td { padding: 11px 10px; border-top: .5px solid var(--line); vertical-align: top; }
+  tr:hover td { background: rgba(0,0,0,.014); }
+  .task-cell { font-weight: 600; }
+  .task-cell .who { font-weight: 400; color: var(--ink-3); font-size: 12px; margin-top: 2px; }
+  .driver-list { display: flex; gap: 6px; flex-wrap: wrap; }
+  .driver { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; background: rgba(0,0,0,.045); border-radius: 99px; padding: 3px 5px 3px 9px; }
+  .driver .x { cursor: pointer; color: var(--ink-3); font-weight: 700; padding: 0 3px; }
+  .driver .x:hover { color: var(--red); }
+
+  .side-card { border: .5px solid var(--line-strong); border-radius: 12px; padding: 13px 14px; margin-bottom: 14px; }
+  .side-card h4 { font-size: 12.5px; font-weight: 700; margin-bottom: 8px; }
+  .side-note { font-size: 12px; color: var(--ink-2); }
+  .side-note b { color: var(--ink); }
+  .side-note ul { margin: 6px 0 0 16px; }
+  .side-note li { margin-bottom: 5px; }
+
+  .audit-row { display: flex; gap: 9px; padding: 8px 0; border-top: .5px solid var(--line); font-size: 12px; }
+  .audit-row .t { font-family: var(--mono); font-size: 11px; color: var(--ink-3); flex: none; width: 62px; }
+  .audit-row:first-of-type { border-top: 0; }
+
+  .dialog { margin-top: 14px; border: .5px solid rgba(107,75,216,.3); background: linear-gradient(180deg, rgba(107,75,216,.05), rgba(107,75,216,.012)); border-radius: 12px; padding: 13px 14px; }
+  .dialog h4 { font-size: 12.5px; font-weight: 700; margin-bottom: 9px; }
+  .field { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; font-size: 12.5px; }
+  .field .lbl { color: var(--ink-3); width: 74px; flex: none; }
+  .sel { font: inherit; font-size: 12.5px; padding: 5px 9px; border-radius: 8px; border: .5px solid var(--line-strong); background: #fff; }
+  .dialog .actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+  .warnbox { border: .5px dashed rgba(201,57,43,.4); background: var(--red-bg); color: #8f2a1f; border-radius: 10px; padding: 9px 11px; font-size: 12px; margin-top: 10px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="proto-banner">
+  <strong>WhalePod 原型</strong>
+  <span class="tag">成员与权限</span>
+  <span>谁能<b>驱动 Agent</b>（执行区）——与"谁能说话"（讨论区）是两件事</span>
+  <span class="sep"></span>
+  <a href="task-room-split.html">← 回任务房间（讨论｜执行）</a>
+</div>
+
+<div class="shell">
+  <nav class="sidebar">
+    <div class="brand"><div class="logo">W</div><span>WhalePod</span></div>
+    <div class="nav-item"><span class="dot"></span><span>任务</span></div>
+    <a class="nav-item" href="task-room-split.html"><span class="dot"></span><span>任务房间</span></a>
+    <div class="nav-item on"><span class="dot"></span><span>成员与权限</span></div>
+    <div class="nav-item"><span class="dot"></span><span>运行</span></div>
+    <div class="nav-item"><span class="dot"></span><span>设备</span></div>
+    <div class="nav-item"><span class="dot"></span><span>设置</span></div>
+    <div class="side-user">
+      <div class="avatar" style="background:#4a6fa5">张</div>
+      <div><div style="font-weight:600;font-size:13px">老张</div><div style="font-size:11.5px;color:var(--ink-3)">责任人</div></div>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="app-card">
+      <div class="page-head">
+        <div style="flex:1;min-width:0">
+          <div class="page-title">成员与权限</div>
+          <div class="page-sub">授权只作用于<b>执行区</b>的指令；讨论区任何成员都能说，审批决定权不可授予</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex:none">
+          <span class="chip gray">团队 5 人</span>
+        </div>
+      </div>
+
+      <div class="body">
+        <div>
+          <h3>谁能驱动 Agent（按任务）</h3>
+          <div class="h3sub">责任人永远可驱动；被授权成员由责任人授予，可随时撤销（撤销即时生效，不需要重启）</div>
+          <table>
+            <thead>
+              <tr><th style="width:38%">任务</th><th>可驱动成员</th><th style="width:150px">最近变更</th><th style="width:96px"></th></tr>
+            </thead>
+            <tbody id="grant-rows"></tbody>
+          </table>
+
+          <div class="dialog" id="grant-dialog">
+            <h4>授权某人驱动这个任务</h4>
+            <div class="field"><span class="lbl">任务</span><span id="dlg-task">发布 v2.4 的回归清单</span></div>
+            <div class="field"><span class="lbl">成员</span>
+              <select class="sel" id="dlg-member">
+                <option selected>老王</option><option>小李</option><option>小赵</option>
+              </select>
+              <span class="side-note">只有责任人能授权；管理员不能替责任人授权</span>
+            </div>
+            <div class="field"><span class="lbl">范围</span>
+              <select class="sel" id="dlg-scope">
+                <option selected>这个任务（直到撤销）</option>
+                <option>仅这一次运行</option>
+              </select>
+            </div>
+            <div class="actions">
+              <button class="btn primary small" id="dlg-grant">授权</button>
+              <button class="btn small" id="dlg-cancel">取消</button>
+              <span class="side-note" id="dlg-echo"></span>
+            </div>
+            <div class="warnbox">被授权成员可以<b>发指令、起运行、排队追问</b>；但<b>不能</b>批准审批、不能改任务状态、不能取消责任人的运行。运行始终记在责任人的设备与凭据上。</div>
+          </div>
+
+          <div style="margin-top:26px">
+            <h3>授权变更审计</h3>
+            <div class="h3sub">谁在什么时候授予/撤销了谁——<code class="mono">task_instruction_grant</code> 的账，长期可读</div>
+            <div id="audit-rows"></div>
+          </div>
+        </div>
+
+        <aside>
+          <div class="side-card">
+            <h4>成员</h4>
+            <div class="side-note" id="member-list"></div>
+          </div>
+          <div class="side-card">
+            <h4>两区两套规则</h4>
+            <div class="side-note">
+              <ul>
+                <li><b>讨论区</b>：团队内任何成员都能说、能引用某次运行；<b>不触发任何运行</b>。</li>
+                <li><b>执行区</b>：责任人 + 被授权成员可以发指令；非成员看不到这个任务。</li>
+              </ul>
+            </div>
+          </div>
+          <div class="side-card" style="border-color:rgba(201,57,43,.3)">
+            <h4>不可让渡（红线）</h4>
+            <div class="side-note">
+              <ul>
+                <li><b>审批决定权</b>只属于责任人——授权驱动 ≠ 授权拍板。</li>
+                <li><b>运行归属</b>永远记在责任人：设备、凭据、工作区都是他的。</li>
+                <li>授权不能超出责任人自己的权限（不能把"取消运行"授出去）。</li>
+              </ul>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const grants = [
+  { task: '发布 v2.4 的回归清单', owner: '老张', drivers: [{ who: '老张', note: '责任人' }, { who: '小李', by: '老张', at: '今天 16:02' }], changed: '今天 16:02' },
+  { task: '修复登录超时', owner: '老王', drivers: [{ who: '老王', note: '责任人' }], changed: '—' },
+  { task: '迁移插件清单到新格式', owner: '老张', drivers: [{ who: '老张', note: '责任人' }, { who: '小李', by: '老张', at: '昨天 10:11' }, { who: '老王', by: '老张', at: '昨天 10:11' }], changed: '昨天 10:11' },
+]
+
+const audit = [
+  { t: '16:02', text: '<b>老张</b> 授予 <b>小李</b> 驱动「发布 v2.4 的回归清单」' },
+  { t: '15:40', text: '<b>老张</b> 撤销 <b>老王</b> 驱动「发布 v2.4 的回归清单」——撤销后下一次指令立刻 403 <code class="mono">FORBIDDEN</code>' },
+  { t: '昨天', text: '<b>老张</b> 授予 <b>老王</b> 驱动「迁移插件清单到新格式」' },
+  { t: '昨天', text: '<b>老张</b> 授予 <b>小李</b> 驱动「迁移插件清单到新格式」' },
+]
+
+const members = [
+  ['张', '老张', '责任人', '#4a6fa5'],
+  ['王', '老王', '成员', '#2f9e5f'],
+  ['李', '小李', '成员', '#b7791f'],
+  ['赵', '小赵', '成员', '#6b4bd8'],
+  ['', '（邀请链接 1 个待接受）', '', '#8e8e96'],
+]
+
+let state = JSON.parse(JSON.stringify(grants))
+
+function render() {
+  document.getElementById('grant-rows').innerHTML = state.map((g, i) => `
+    <tr>
+      <td class="task-cell">${g.task}<div class="who">责任人 ${g.owner}</div></td>
+      <td><div class="driver-list">
+        ${g.drivers.map((d) => `<span class="driver">${d.who}${d.note ? ` <span class="chip gray" style="padding:1px 6px">${d.note}</span>` : ''}${d.by ? ` <span style="color:var(--ink-3);font-size:11px">由${d.by} ${d.at}</span>` : ''}${d.note ? '' : `<span class="x" data-revoke="${i}|${d.who}" title="撤销">×</span>`}</span>`).join('')}
+        <button class="btn ghost small" data-grant="${i}">+ 授权…</button>
+      </div></td>
+      <td class="side-note">${g.changed}</td>
+      <td><button class="btn small" data-detail="${i}">详情</button></td>
+    </tr>`).join('')
+
+  document.getElementById('audit-rows').innerHTML = audit.map((a) => `
+    <div class="audit-row"><span class="t">${a.t}</span><span>${a.text}</span></div>`).join('')
+
+  document.getElementById('member-list').innerHTML = members.map(([ini, name, role, color]) => `
+    <div style="display:flex;align-items:center;gap:9px;padding:5px 0">
+      <span class="avatar" style="background:${color};width:24px;height:24px;font-size:11px">${ini}</span>
+      <span style="font-size:12.5px">${name}</span>
+      ${role ? `<span class="chip gray" style="margin-left:auto">${role}</span>` : ''}
+    </div>`).join('')
+}
+render()
+
+document.addEventListener('click', (e) => {
+  const g = e.target.closest('[data-grant]')
+  if (g) {
+    const i = Number(g.dataset.grant)
+    document.getElementById('dlg-task').textContent = state[i].task
+    document.getElementById('grant-dialog').dataset.target = String(i)
+    document.getElementById('grant-dialog').scrollIntoView({ behavior: 'smooth', block: 'center' })
+    return
+  }
+  const r = e.target.closest('[data-revoke]')
+  if (r) {
+    const [i, who] = r.dataset.revoke.split('|')
+    state[Number(i)].drivers = state[Number(i)].drivers.filter((d) => d.who !== who)
+    state[Number(i)].changed = '刚刚'
+    audit.unshift({ t: '刚刚', text: `<b>老张</b> 撤销 <b>${who}</b> 驱动「${state[Number(i)].task}」` })
+    document.getElementById('dlg-echo').textContent = `已撤销 ${who}（下一次指令立刻 403）`
+    render()
+    return
+  }
+  if (e.target.closest('#dlg-grant')) {
+    const i = Number(document.getElementById('grant-dialog').dataset.target || 0)
+    const who = document.getElementById('dlg-member').value
+    if (!state[i].drivers.some((d) => d.who === who)) {
+      state[i].drivers.push({ who, by: '老张', at: '刚刚' })
+      state[i].changed = '刚刚'
+      audit.unshift({ t: '刚刚', text: `<b>老张</b> 授予 <b>${who}</b> 驱动「${state[i].task}」` })
+    }
+    document.getElementById('dlg-echo').textContent = `已授予 ${who}（可立即发指令）`
+    render()
+    return
+  }
+  if (e.target.closest('#dlg-cancel')) { document.getElementById('dlg-echo').textContent = ''; return }
+  const d = e.target.closest('[data-detail]')
+  if (d) alert('原型示意：该任务的授权历史与由谁发起过哪些指令（审计视图）')
+})
+</script>
+</body>
+</html>
