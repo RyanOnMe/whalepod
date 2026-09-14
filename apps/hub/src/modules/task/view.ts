@@ -4,7 +4,13 @@
  * 原始 Session event、dshSessionId、digest 等——03 §9 脱敏 + 02 Step 1 断言）。
  */
 import type { ArtifactRow, RunRow } from '@whalepod/db'
-import { getTask, listArtifactsByTask, listMessages, listRunsByTask } from '@whalepod/db'
+import {
+  getTask,
+  listArtifactsByTask,
+  listDiscussionMessages,
+  listInstructionMessages,
+  listRunsByTask,
+} from '@whalepod/db'
 import type { DbHandle } from '@whalepod/db'
 import { toCommentView, toTaskView } from './queries.js'
 import type { CommentView, TaskView } from './queries.js'
@@ -61,7 +67,13 @@ function toTaskRoomArtifact(row: ArtifactRow): TaskRoomArtifact {
 
 export interface TaskRoomView {
   task: TaskView
+  /** 讨论流（ADR-0010 决策 1）：**只含** `kind='discussion'` 的人际评论。 */
   comments: CommentView[]
+  /**
+   * 执行流（ADR-0010 决策 2）：`kind in ('instruction','followup')`，带 `instructionState`
+   * 与拒绝理由，供执行区渲染「指令列表与状态」。与 `comments` **互斥不重叠**。
+   */
+  instructions: CommentView[]
   runs: TaskRoomRun[]
   artifacts: TaskRoomArtifact[]
 }
@@ -81,14 +93,18 @@ export async function getTaskRoom(
 ): Promise<TaskRoomView | undefined> {
   const task = await getTask(handle, taskId)
   if (task === undefined) return undefined
-  const [comments, runs, artifacts] = await Promise.all([
-    listMessages(handle, taskId),
+  // 讨论流与执行流分开取（ADR-0010 决策 1/2）：评论区只有人际评论，指令与追问进执行区。
+  // 库里仍是同一张 `task_message`（审计链），隔离发生在读模型这一层。
+  const [comments, instructions, runs, artifacts] = await Promise.all([
+    listDiscussionMessages(handle, taskId),
+    listInstructionMessages(handle, taskId),
     listRunsByTask(handle, taskId),
     listArtifactsByTask(handle, taskId),
   ])
   return {
     task: toTaskView(task),
     comments: comments.map(toCommentView),
+    instructions: instructions.map(toCommentView),
     runs: runs.map(toTaskRoomRun),
     artifacts: artifacts
       .filter(
