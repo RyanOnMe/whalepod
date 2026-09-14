@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { projects, taskMessages, tasks } from '../schema/project.js'
 
@@ -141,14 +141,54 @@ export async function settleInstruction(
 }
 
 /**
- * 线程读取：按 `(createdAt, id)` 排序。`id` 是**决胜键**不是插入序（uuidv7 低位随机），
- * 它保证的是**确定性**——同一毫秒创建的多条消息每次读出的顺序一致。
+ * 列出任务的全部消息——**审计用全量查询**（含讨论、指令、追问）。
+ *
+ * 排序：按 `(created_at, id)`；`id` 是**决胜键**而不是插入序（uuidv7 低位随机），它保证的是
+ * **确定性**——同一毫秒创建的多条消息每次读出的顺序一致。
+ *
+ * **展示用不要用它**（ADR-0010：评论区只承载人际交流）：走下面两个按用途切开的口径——
+ * `listDiscussionMessages`（讨论流）/ `listInstructionMessages`（执行流）。
  */
 export async function listMessages(handle: DbHandle, taskId: string): Promise<TaskMessageRow[]> {
   return handle
     .select()
     .from(taskMessages)
     .where(eq(taskMessages.taskId, taskId))
+    .orderBy(asc(taskMessages.createdAt), asc(taskMessages.id))
+}
+
+/**
+ * 讨论流（ADR-0010 决策 1）：**只含 `kind='discussion'`**。
+ *
+ * 这是**读模型**约束而不是前端过滤——指令消息带着 `pending`/`accepted`/`rejected` 三种命运
+ * 与执行副作用，混进人际评论流会让「我这句话被 Agent 拒了」和「我的讨论没发出去」长得一样
+ *（ADR-0010 背景节）。库里仍存着指令（审计链要求），但讨论流不返回它们。
+ */
+export async function listDiscussionMessages(
+  handle: DbHandle,
+  taskId: string,
+): Promise<TaskMessageRow[]> {
+  return handle
+    .select()
+    .from(taskMessages)
+    .where(and(eq(taskMessages.taskId, taskId), eq(taskMessages.kind, 'discussion')))
+    .orderBy(asc(taskMessages.createdAt), asc(taskMessages.id))
+}
+
+/**
+ * 执行流（ADR-0010 决策 2）：`kind in ('instruction','followup')`——执行区据此渲染
+ * 「指令列表与状态」（含被拒理由：`instruction_error_code` / `_message`）。
+ */
+export async function listInstructionMessages(
+  handle: DbHandle,
+  taskId: string,
+): Promise<TaskMessageRow[]> {
+  return handle
+    .select()
+    .from(taskMessages)
+    .where(
+      and(eq(taskMessages.taskId, taskId), inArray(taskMessages.kind, ['instruction', 'followup'])),
+    )
     .orderBy(asc(taskMessages.createdAt), asc(taskMessages.id))
 }
 
