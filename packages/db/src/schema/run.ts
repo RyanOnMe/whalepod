@@ -16,7 +16,7 @@ import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 import { agents, agentProfileRevisions } from './agent.js'
 import { devices, workspaces } from './device.js'
 import { userAccounts } from './identity.js'
-import { tasks } from './project.js'
+import { taskMessages, tasks } from './project.js'
 
 // Run/Approval 域表结构以 03-领域模型与运行协议.md §2.6 为准。
 // 状态枚举与 03 §3.2/§3.3 状态机一一对应。
@@ -57,6 +57,15 @@ export const runs = pgTable(
     profileRevisionId: uuid('profile_revision_id')
       .notNull()
       .references(() => agentProfileRevisions.id),
+    /**
+     * 触发本 Run 的那条指令消息（#196；ADR-0010 执行区入口）。
+     *
+     * 两个锚点各管一条链：指令起 Run → 本列；追问既有 Run → `dispatch_outbox.message_id`（0004）。
+     * `run.start` 的 ack 靠它把结果写回指令的 `instruction_state`（wire 载荷不可能夹带消息 id）。
+     * 显式创建的 Run（人点 UI 起）为 null。
+     */
+    // 显式返回类型注解：runs ↔ task_message 互相引用（环），不注解会退化成 any（见 rerunOfRunId 同款）。
+    triggerMessageId: uuid('trigger_message_id').references((): AnyPgColumn => taskMessages.id),
     deviceId: uuid('device_id')
       .notNull()
       .references(() => devices.id),

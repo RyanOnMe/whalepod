@@ -36,7 +36,7 @@ export interface RunRoutesDeps {
   dshDistributionVersionFor: (deviceId: string) => Promise<string | undefined>
 }
 
-const ERROR_HTTP_STATUS: Readonly<Partial<Record<ErrorCode, number>>> = {
+export const ERROR_HTTP_STATUS: Readonly<Partial<Record<ErrorCode, number>>> = {
   VALIDATION_FAILED: 400,
   AUTH_REQUIRED: 401,
   FORBIDDEN: 403,
@@ -62,7 +62,14 @@ function sendError(reply: FastifyReply, code: ErrorCode, message: string): Fasti
   })
 }
 
-function errorCodeOf(error: unknown): { code: ErrorCode; message: string } {
+/**
+ * 把运行面错误映射成 `{code, message}`（供本模块的路由与**其它模块**共用）。
+ *
+ * 为什么导出（#196）：执行区指令路由挂在 task 模块，但它调的是运行面的服务函数
+ *（`sendInstruction` 会抛 `RunCommandError`）。只在本插件内 `setErrorHandler` 时，
+ * 任务路由抛出的 `RunCommandError` 会落到全局 500——本片首版即此（409 → 500）。
+ */
+export function errorCodeOf(error: unknown): { code: ErrorCode; message: string } {
   if (error instanceof DomainError || error instanceof RunCommandError) {
     return { code: error.code, message: error.message }
   }

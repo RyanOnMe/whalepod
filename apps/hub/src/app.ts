@@ -199,7 +199,14 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       })
       registerInviteRoutes(api, { database, requireActor, anonymousLimiter, secureCookie })
       registerProjectRoutes(api, { database, requireActor })
-      registerTaskRoutes(api, { database, requireActor, outbox })
+      registerTaskRoutes(api, {
+        database,
+        requireActor,
+        outbox,
+        orchestrator,
+        dshDistributionVersionFor: (deviceId) =>
+          getDeviceDshDistributionVersion(database.db, deviceId),
+      })
       registerAgentRoutes(api, { database, requireActor })
       // P1-17：插件端点（03 §4）——catalog/安装/Pack 走 Session，descriptor 走 Device Token。
       registerPluginRoutes(api, {
