@@ -8,7 +8,10 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  e2eScope,
+  findStaleContainers,
   launchWithPortRetry,
+  startEphemeralPostgres,
   sweepStaleContainers,
   waitPublishedPort,
 } from '../lib/ephemeral-postgres.mts'
@@ -222,46 +225,197 @@ describe('launchWithPortRetry（发布失败删容器重建）', () => {
   })
 })
 
-describe('陈旧容器清扫（#188：中断的运行会留下容器 + 匿名卷）', () => {
-  it('按本 worktree 的 scope 标签筛，逐条 rm -f -v（卷跟着走）', async () => {
+describe('startEphemeralPostgres 的接线与清理（#188 评审 S1/S2）', () => {
+  /**
+   * 假 docker 走完整条启动链：sweep → run → port → exec(pg_isready) → stop。
+   * 存在的意义：`removeContainer` 的 `-v`、清扫的接线、以及与启动标签的**同值**关系
+   * 原先都没有判据（评审实测：删掉 sweep 调用或改错 scope，Q0 全绿）。
+   */
+  function makeFakeStartDocker(): {
+    docker: (args: string[]) => Promise<string>
+    calls: string[][]
+  } {
     const calls: string[][] = []
-    const docker = async (args: string[]): Promise<string> => {
-      calls.push(args)
-      if (args[0] === 'ps') return 'aaa\nbbb\n'
-      return ''
-    }
-    await sweepStaleContainers({ docker, log: () => {} })
-    // 筛选用的是 scope 标签（并行 worktree 隔离），不是全量清扫。
-    expect(calls[0]?.slice(0, 3)).toEqual(['ps', '-aq', '--filter'])
-    expect(calls[0]?.[3]).toMatch(/^label=whalepod\.e2e-scope=/)
-    expect(calls.slice(1)).toEqual([
-      ['rm', '-f', '-v', 'aaa'],
-      ['rm', '-f', '-v', 'bbb'],
-    ])
-  })
-
-  it('没有陈旧容器时一条命令都不删', async () => {
-    const calls: string[][] = []
-    await sweepStaleContainers({
+    return {
+      calls,
       docker: async (args: string[]) => {
         calls.push(args)
-        return '\n'
+        if (args[0] === 'ps') return '' // 无陈旧容器
+        if (args[0] === 'run') return 'container-under-test\n'
+        if (args[0] === 'port') return '127.0.0.1:55099\n'
+        return '' // exec / rm / logs
       },
+    }
+  }
+
+  it('启动链：先按 scope 清扫、再 run（标签与清扫判据同值）、stop 用 rm -f -v', async () => {
+    const fake = makeFakeStartDocker()
+    const started = await startEphemeralPostgres({
+      docker: fake.docker,
+      skipPrelude: true,
       log: () => {},
+      isPidAlive: () => true,
     })
-    expect(calls).toEqual([['ps', '-aq', '--filter', expect.stringContaining('label=')]])
+    await started.stop()
+
+    // ① 第一条命令是清扫，且筛的正是本 worktree 的 scope（与启动标签同值）。
+    expect(fake.calls[0]).toEqual([
+      'ps',
+      '-aq',
+      '--filter',
+      `label=whalepod.e2e-scope=${e2eScope()}`,
+    ])
+    // ② 清扫在 run 之前（顺序可断言；评审 M8 的变异即颠倒这两步）。
+    const runIndex = fake.calls.findIndex((call) => call[0] === 'run')
+    expect(runIndex).toBeGreaterThan(0)
+
+    // ③ 启动标签带同一个 scope + 启动者 pid（清扫据此区分活着的兄弟运行）。
+    const runArgs = fake.calls[runIndex] ?? []
+    expect(runArgs).toContain(`whalepod.e2e-scope=${e2eScope()}`)
+    expect(runArgs).toContain(`whalepod.e2e-runner-pid=${process.pid}`)
+
+    // ④ stop 必须 rm -f -v（少 -v 就是一次永久漏卷——评审 S1：这条路径原先零判据）。
+    const removals = fake.calls.filter((call) => call[0] === 'rm')
+    expect(removals).toEqual([['rm', '-f', '-v', 'container-under-test']])
+  })
+
+  it('清理失败只记 WARN，不抛错（容器可能已被 --rm 自清）', async () => {
+    const logged: string[] = []
+    const docker = async (args: string[]): Promise<string> => {
+      if (args[0] === 'ps') return ''
+      if (args[0] === 'run') return 'c1\n'
+      if (args[0] === 'port') return '127.0.0.1:55001\n'
+      if (args[0] === 'rm') throw new Error('No such container: c1')
+      return ''
+    }
+    const started = await startEphemeralPostgres({
+      docker,
+      skipPrelude: true,
+      log: (message: string) => logged.push(message),
+    })
+    await expect(started.stop()).resolves.toBeUndefined()
+    expect(logged.join('\n')).toContain('删除容器失败')
+  })
+})
+
+describe('陈旧容器判定与清扫（#188 + 评审 B1/B2）', () => {
+  /** 假 docker：`ps -aq` 返回给定容器，`inspect` 返回它们的 StartedAt 与 pid 标签。 */
+  function makeFakeDocker(
+    containers: Array<{ id: string; startedAt: number; pid?: number | 'no-value' }>,
+  ): { docker: (args: string[]) => Promise<string>; calls: string[][] } {
+    const calls: string[][] = []
+    return {
+      calls,
+      docker: async (args: string[]) => {
+        calls.push(args)
+        if (args[0] === 'ps') return containers.map((c) => `${c.id}\n`).join('')
+        if (args[0] === 'inspect') {
+          return containers
+            .map((container) => {
+              const pid =
+                container.pid === undefined
+                  ? '<no value>'
+                  : container.pid === 'no-value'
+                    ? '<no value>'
+                    : String(container.pid)
+              return `${container.id}|${new Date(container.startedAt).toISOString()}|${pid}`
+            })
+            .join('\n')
+        }
+        return ''
+      },
+    }
+  }
+
+  const NOW = Date.parse('2026-09-11T12:00:00.000Z')
+
+  it('pid 仍活着的容器一律不碰（同 worktree 并发运行，评审 B2 的回归判据）', async () => {
+    const fake = makeFakeDocker([{ id: 'alive', startedAt: NOW - 3_600_000, pid: 4242 }])
+    const stale = await findStaleContainers({
+      docker: fake.docker,
+      now: () => NOW,
+      isPidAlive: (pid) => pid === 4242,
+      scope: 'test-scope',
+    })
+    // 即便它已经跑了一小时也不删：pid 活着 = 那次运行还在跑。
+    expect(stale).toEqual([])
+    const removed = await sweepStaleContainers({
+      docker: fake.docker,
+      log: () => {},
+      now: () => NOW,
+      isPidAlive: (pid) => pid === 4242,
+      scope: 'test-scope',
+    })
+    expect(removed).toBe(0)
+    expect(fake.calls.some((c) => c[0] === 'rm')).toBe(false)
+  })
+
+  it('pid 已死 = 那次运行结束了 → 清掉，且带 -v 回收匿名卷', async () => {
+    const fake = makeFakeDocker([{ id: 'orphan', startedAt: NOW - 60_000, pid: 9999 }])
+    const removed = await sweepStaleContainers({
+      docker: fake.docker,
+      log: () => {},
+      now: () => NOW,
+      isPidAlive: () => false,
+      scope: 'test-scope',
+    })
+    expect(removed).toBe(1)
+    expect(fake.calls.filter((c) => c[0] === 'rm')).toEqual([['rm', '-f', '-v', 'orphan']])
+  })
+
+  it('无 pid 标签的容器按宽限期判定：年轻的不碰、够老的清掉', async () => {
+    const young = makeFakeDocker([{ id: 'young', startedAt: NOW - 60_000, pid: 'no-value' }])
+    expect(
+      await findStaleContainers({
+        docker: young.docker,
+        now: () => NOW,
+        isPidAlive: () => true,
+        graceMs: 600_000,
+        scope: 'test-scope',
+      }),
+    ).toEqual([])
+
+    const old = makeFakeDocker([{ id: 'old', startedAt: NOW - 3_600_000, pid: 'no-value' }])
+    expect(
+      await findStaleContainers({
+        docker: old.docker,
+        now: () => NOW,
+        isPidAlive: () => true,
+        graceMs: 600_000,
+        scope: 'test-scope',
+      }),
+    ).toEqual(['old'])
+  })
+
+  it('筛选用的是 scope 标签（并行 worktree 隔离），并一次 inspect 拿全部事实', async () => {
+    const fake = makeFakeDocker([])
+    await findStaleContainers({ docker: fake.docker, scope: 'wt-scope', now: () => NOW })
+    expect(fake.calls[0]).toEqual(['ps', '-aq', '--filter', 'label=whalepod.e2e-scope=wt-scope'])
   })
 
   it('docker ps 抖动时只告警、不抛错（清扫是尽力而为，不该挡住启动）', async () => {
     const logged: string[] = []
-    await expect(
-      sweepStaleContainers({
-        docker: async () => {
-          throw new Error('docker daemon not running')
-        },
-        log: (message: string) => logged.push(message),
-      }),
-    ).resolves.toBeUndefined()
+    const removed = await sweepStaleContainers({
+      docker: async () => {
+        throw new Error('docker daemon not running')
+      },
+      log: (message: string) => logged.push(message),
+      scope: 'test-scope',
+    })
+    expect(removed).toBe(0)
     expect(logged.join('\n')).toContain('清扫陈旧容器失败')
+  })
+
+  it('inspect 输出异常（空/缺字段）不误判为残留', async () => {
+    const fake = makeFakeDocker([{ id: 'weird', startedAt: 0, pid: 'no-value' }])
+    const stale = await findStaleContainers({
+      docker: fake.docker,
+      now: () => NOW,
+      graceMs: 600_000,
+      isPidAlive: () => true,
+      scope: 'test-scope',
+    })
+    // startedAt 解析为 0（1970）→ 远早于宽限期 → 判为残留，这是可接受的保守选择。
+    expect(stale).toEqual(['weird'])
   })
 })

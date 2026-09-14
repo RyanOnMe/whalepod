@@ -20,6 +20,11 @@ const READY_POLL_MS = 250
 // 20s，失败即删容器重建（共 3 次尝试）：重开沙箱比延长等待有效，且总预算
 // （3×20s + 退避 3s）留在 playwright webServer 的 180s 超时内。
 const PORT_PUBLISH_TIMEOUT_MS = 20_000
+/**
+ * 无 pid 标签的陈旧容器判为残留所需的年龄（#188）：10 分钟远大于任何一次门禁运行的
+ * 启动阶段，又远小于「上一轮被中断、隔天再跑」的间隔，所以既不误杀、又能自愈。
+ */
+const STALE_GRACE_MS = 10 * 60_000
 const PORT_PUBLISH_POLL_MS = 250
 const LAUNCH_ATTEMPTS = 3
 const LAUNCH_BACKOFF_MS = 1_000
@@ -159,18 +164,22 @@ export async function launchWithPortRetry(
     : new Error(`端口发布连续 ${deps.attempts} 次失败（无错误现场）`)
 }
 
-async function waitReady(containerId: string): Promise<void> {
-  const deadline = Date.now() + READY_TIMEOUT_MS
+async function waitReady(
+  containerId: string,
+  runDocker: (args: string[]) => Promise<string> = docker,
+  nowMs: () => number = Date.now,
+): Promise<void> {
+  const deadline = nowMs() + READY_TIMEOUT_MS
   for (;;) {
     try {
       // 走容器内 TCP（而非本地 socket），确保发布端口对应的监听已就绪。
-      await docker(['exec', containerId, 'pg_isready', '-U', 'postgres', '-h', '127.0.0.1'])
+      await runDocker(['exec', containerId, 'pg_isready', '-U', 'postgres', '-h', '127.0.0.1'])
       return
     } catch {
-      if (Date.now() >= deadline) {
+      if (nowMs() >= deadline) {
         let logs = ''
         try {
-          logs = await docker(['logs', '--tail', '20', containerId])
+          logs = await runDocker(['logs', '--tail', '20', containerId])
         } catch {
           logs = '(docker logs 也不可用)'
         }
@@ -199,53 +208,165 @@ export function e2eScope(cwd: string = process.cwd()): string {
 }
 
 /**
+ * 判定「哪些容器是上一次运行留下的残留」（#188 + 评审 B1/B2）。
+ *
+ * 三条判据，缺一不可：
+ *   1. **scope 标签**（worktree 隔离）：绝不碰兄弟 worktree 的库；
+ *   2. **启动者 pid**：pid 仍活着 = 同 worktree 里正跑着的兄弟运行 → **一律不碰**
+ *     （这是评审 B2 抓到的回归：只按 scope 清会把并行运行的库抽走）；
+ *   3. **宽限期**：没有 pid 标签的旧容器（历史版本留下的）按「启动超过 graceMs」判定，
+ *     避免把刚起、还没来得及打标签的容器当残留。
+ *
+ * pid 已死 = 那次运行确定结束了 → 立即算残留（不必等宽限期）。
+ */
+export interface StaleContainerDeps {
+  docker?: (args: string[]) => Promise<string>
+  log?: (message: string) => void
+  /** 判定 pid 是否仍活着（默认 process.kill(pid, 0)）；注入便于确定性测试。 */
+  isPidAlive?: (pid: number) => boolean
+  now?: () => number
+  /** 无 pid 标签的容器判为残留所需的年龄（默认 10 分钟）。 */
+  graceMs?: number
+  /** 覆盖 scope（默认取当前 cwd 的 e2eScope）；测试用。 */
+  scope?: string
+}
+
+interface ContainerFacts {
+  id: string
+  startedAt: number
+  runnerPid: number | undefined
+}
+
+/** docker ps -aq（按 scope 标签）→ docker inspect 一次拿全部事实。 */
+async function inspectScopedContainers(
+  runDocker: (args: string[]) => Promise<string>,
+  scope: string,
+): Promise<ContainerFacts[]> {
+  const listed = await runDocker(['ps', '-aq', '--filter', `label=whalepod.e2e-scope=${scope}`])
+  const ids = listed
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+  if (ids.length === 0) return []
+  // 一次 inspect 拿全部（避免 N 次往返）：Id | StartedAt | runner-pid 标签。
+  const inspected = await runDocker([
+    'inspect',
+    '--format',
+    '{{.Id}}|{{.State.StartedAt}}|{{index .Config.Labels "whalepod.e2e-runner-pid"}}',
+    ...ids,
+  ])
+  return inspected
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const [id = '', startedAt = '', pidRaw = ''] = line.split('|')
+      const started = Date.parse(startedAt)
+      const pid = Number.parseInt(pidRaw, 10)
+      return {
+        id,
+        startedAt: Number.isNaN(started) ? 0 : started,
+        // 缺标签时 Go 模板渲染成 `<no value>`；非数字一律视为「无 pid」。
+        runnerPid: Number.isNaN(pid) ? undefined : pid,
+      }
+    })
+    .filter((facts) => facts.id.length > 0)
+}
+
+export async function findStaleContainers(deps: StaleContainerDeps = {}): Promise<string[]> {
+  const runDocker = deps.docker ?? docker
+  const now = deps.now ?? (() => Date.now())
+  const graceMs = deps.graceMs ?? STALE_GRACE_MS
+  const isPidAlive = deps.isPidAlive ?? defaultIsPidAlive
+  const facts = await inspectScopedContainers(runDocker, deps.scope ?? e2eScope())
+  return facts
+    .filter((container) => {
+      if (container.runnerPid !== undefined) return !isPidAlive(container.runnerPid)
+      // 无 pid 标签：只有够老才算残留（历史版本留下的容器没有这个标签）。
+      return now() - container.startedAt > graceMs
+    })
+    .map((container) => container.id)
+}
+
+/**
  * 清扫本 worktree 上一次运行留下的容器与匿名卷（#188）。
  *
  * 为什么必须有：`--rm` 只在容器**自己退出**时回收匿名卷。上一次运行若被 SIGKILL /
  * 超时打断（本机高负载时很常见），容器会一直活着，卷也就一直留着；等到有人（或某条清理
  * 命令）用 `docker rm -f` 收掉容器时，卷**不会**跟着走。实测复现过这条链。
  *
- * 只按**本 worktree 的 scope 标签**筛，避免误删并行跑的兄弟 worktree 的库
- *（`e2eScope()` 的隔离设计见上）。
+ * 只清 `findStaleContainers` 判定的残留（活着的兄弟运行不碰），且一律 `rm -f -v`
+ *（`-v` 才是回收匿名卷的那一位）。
  */
-export async function sweepStaleContainers(
-  deps: {
-    docker?: (args: string[]) => Promise<string>
-    log?: (message: string) => void
-  } = {},
-): Promise<void> {
+export async function sweepStaleContainers(deps: StaleContainerDeps = {}): Promise<number> {
   const runDocker = deps.docker ?? docker
   const log = deps.log ?? ((message: string) => console.error(`[ephemeral-postgres] ${message}`))
-  const scope = e2eScope()
-  let ids: string[] = []
+  let stale: string[] = []
   try {
-    const output = await runDocker(['ps', '-aq', '--filter', `label=whalepod.e2e-scope=${scope}`])
-    ids = output
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
+    stale = await findStaleContainers(deps)
   } catch (error) {
     // 清扫是尽力而为：Docker 抖动不该挡住启动（真正的启动失败会在下面如实报错）。
     log(
       `WARN 清扫陈旧容器失败（继续启动）：${error instanceof Error ? error.message : String(error)}`,
     )
-    return
+    return 0
   }
-  if (ids.length === 0) return
-  for (const id of ids) {
+  if (stale.length === 0) return 0
+  let removed = 0
+  for (const id of stale) {
     try {
       await runDocker(['rm', '-f', '-v', id])
+      removed += 1
     } catch {
       // 单条删不掉不影响其余：下轮启动还会再扫。
     }
   }
-  log(`已清扫上一次运行留下的 ${ids.length} 个容器（含其匿名卷）`)
+  if (removed > 0) {
+    log(`已清扫上一次运行留下的 ${removed} 个容器（含其匿名卷）`)
+  }
+  return removed
 }
 
-export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
-  await ensureDocker()
-  await ensureImage()
-  await sweepStaleContainers()
+/** 默认存活判定：ESRCH = 不存在；EPERM = 存在但非本用户（也算活着）。 */
+function defaultIsPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+/**
+ * 启动依赖（#188 评审 S1/S2）：`docker` 原先只在模块级，导致 `removeContainer` 的 `-v`、
+ * 清扫的接线与顺序**都无法被判据覆盖**（变异后 Q0 全绿）。开一个注入缝，让单测能用假
+ * docker 走完整条启动→清理路径。
+ */
+export interface StartDeps {
+  docker?: (args: string[]) => Promise<string>
+  /** 跳过 ensureDocker/ensureImage（单测不碰真 Docker）。 */
+  skipPrelude?: boolean
+  now?: () => number
+  log?: (message: string) => void
+  isPidAlive?: (pid: number) => boolean
+  scope?: string
+}
+
+export async function startEphemeralPostgres(deps: StartDeps = {}): Promise<EphemeralPostgres> {
+  const runDocker = deps.docker ?? docker
+  const startLog = deps.log ?? log
+  const scope = deps.scope ?? e2eScope()
+  if (deps.skipPrelude !== true) {
+    await ensureDocker()
+    await ensureImage()
+  }
+  await sweepStaleContainers({
+    docker: runDocker,
+    log: startLog,
+    scope,
+    ...(deps.now !== undefined ? { now: deps.now } : {}),
+    ...(deps.isPidAlive !== undefined ? { isPidAlive: deps.isPidAlive } : {}),
+  })
 
   // 随机密码：一次性容器不落到任何文件，避免 secret-scan 语料与真实凭据混淆。
   const password = randomBytes(12).toString('base64url')
@@ -262,7 +383,13 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
     // 并行 worktree 隔离：多 worktree 同时跑 e2e 时，各自的清理只该动自己的容器。
     // 旧标签保留（q5-loop.sh 与历史清理路径仍按它筛），新标签用于「按 worktree 精确清」。
     '--label',
-    `whalepod.e2e-scope=${e2eScope()}`,
+    `whalepod.e2e-scope=${scope}`,
+    // 启动者 pid（#188 评审 B2）：清扫据此区分「上一次中断的残留」与「**同 worktree 里
+    // 正在跑的兄弟运行**」——scope 只隔离到 worktree，同 worktree 并发（integration +
+    // resilience、或两条 integration）scope 相同，只按 scope 清会互相残杀（实测：
+    // 后起者启动即把先起者正在用的库删掉）。
+    '--label',
+    `whalepod.e2e-runner-pid=${process.pid}`,
     IMAGE,
   ]
 
@@ -270,14 +397,14 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
   let port: string
   try {
     ;({ containerId, port } = await launchWithPortRetry(runArgs, {
-      docker,
+      docker: runDocker,
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       now: () => Date.now(),
       timeoutMs: PORT_PUBLISH_TIMEOUT_MS,
       pollMs: PORT_PUBLISH_POLL_MS,
       attempts: LAUNCH_ATTEMPTS,
       backoffMs: LAUNCH_BACKOFF_MS,
-      log,
+      log: startLog,
     }))
   } catch (error) {
     // 抛错即死（非零退出）：e2e-serve/with-test-postgres 都以启动失败处理，
@@ -291,16 +418,16 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
     stopped = true
     try {
       // `-v` 见上面重试路径的说明（#188）：强杀/超时路径下容器可能仍活着，不带 -v 就漏卷。
-      await docker(['rm', '-f', '-v', containerId])
-      log(`容器 ${containerId.slice(0, 12)} 已删除`)
+      await runDocker(['rm', '-f', '-v', containerId])
+      startLog(`容器 ${containerId.slice(0, 12)} 已删除`)
     } catch (error) {
-      log(
+      startLog(
         `WARN 删除容器失败（需人工检查 docker ps）：${error instanceof Error ? error.message : String(error)}`,
       )
     }
   }
 
-  await waitReady(containerId)
+  await waitReady(containerId, runDocker, deps.now ?? Date.now)
   const databaseUrl = `postgres://postgres:${password}@127.0.0.1:${port}/postgres`
 
   return {
