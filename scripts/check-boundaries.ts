@@ -234,6 +234,41 @@ export function checkTypecheckWiring(repoRoot: string): string[] {
   return violations
 }
 
+/**
+ * 唯一写入口判据（P1-192 评审 B1/①）：Hub 里把 Run 写成 `running` 必须经
+ * `apps/hub/src/modules/run/run-status.ts` 的 `applyRunStatus`——它顺带放行排队中的指令。
+ *
+ * 为什么需要机器判据：ADR-0009 决策 5 的补发原先「在每个入口各挂一次」，而 Hub 里能写
+ * `running` 的入口有 5 条，作者（我）漏了 3 条、其中包含真人主路径 `decide.ts`，评审用探针
+ * 才挖出来。人肉枚举会漏，所以这里钉住**字面量直调**这种最常见的漏法。
+ *
+ * 覆盖面（诚实标注）：只扫 `setRunStatus(...)` 实参里出现**字面量** `'running'` 的调用；
+ * 变量形式（如 `next.status`）由 `instruction-queue.integration.spec.ts` 的 5 条路径判据覆盖
+ *（含真人路径、reconciler 探活、审批过期清扫）。
+ */
+export const RUN_STATUS_CHOKE_POINT = 'apps/hub/src/modules/run/run-status.ts'
+
+export function checkRunStatusChokePoint(repoRoot: string): string[] {
+  const violations: string[] = []
+  const hubRoot = join(repoRoot, 'apps/hub/src')
+  if (!existsSync(hubRoot)) return violations
+  for (const filePath of walkSourceFiles(hubRoot)) {
+    const relativePath = relative(repoRoot, filePath).split(sep).join('/')
+    if (relativePath === RUN_STATUS_CHOKE_POINT) continue
+    const source = readFileSync(filePath, 'utf8')
+    source.split('\n').forEach((line, index) => {
+      // 只认调用形态，且要求同一行里同时出现 `setRunStatus(` 与字面量 'running'。
+      if (!line.includes('setRunStatus(')) return
+      if (!/['"]running['"]/.test(line)) return
+      violations.push(
+        `${relativePath}:${index + 1}: writes run status 'running' directly; ` +
+          `use applyRunStatus (${RUN_STATUS_CHOKE_POINT}) so queued instructions are released`,
+      )
+    })
+  }
+  return violations
+}
+
 /** Scans the repo and returns one human-readable line per violation. */
 export async function checkBoundaries(repoRoot: string): Promise<string[]> {
   const violations: string[] = []
@@ -260,7 +295,11 @@ const invokedAsScript =
 
 if (invokedAsScript) {
   const repoRoot = resolve(fileURLToPath(import.meta.url), '../..')
-  const violations = [...(await checkBoundaries(repoRoot)), ...checkTypecheckWiring(repoRoot)]
+  const violations = [
+    ...(await checkBoundaries(repoRoot)),
+    ...checkTypecheckWiring(repoRoot),
+    ...checkRunStatusChokePoint(repoRoot),
+  ]
   for (const violation of violations) console.error(violation)
   if (violations.length > 0) {
     console.error(`check-boundaries: ${violations.length} violation(s) found`)

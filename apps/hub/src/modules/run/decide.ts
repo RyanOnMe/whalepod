@@ -20,12 +20,7 @@
 import { randomUUID } from 'node:crypto'
 import { asUserId, authorize, decideApproval, transitionRun } from '@whalepod/domain'
 import type { ApprovalRow, Outbox, RunRow, Tx } from '@whalepod/db'
-import {
-  appendTeamEvent,
-  countPendingApprovals,
-  setApprovalStatus,
-  setRunStatus,
-} from '@whalepod/db'
+import { appendTeamEvent, countPendingApprovals, setApprovalStatus } from '@whalepod/db'
 import { ApprovalDecideSchema } from '@whalepod/protocol'
 import { applyRunStatus } from './run-status.js'
 import type { ActorContext } from './commands.js'

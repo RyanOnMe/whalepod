@@ -1,10 +1,14 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { checkTypecheckWiring, validateImport } from './check-boundaries.js'
+import {
+  checkRunStatusChokePoint,
+  checkTypecheckWiring,
+  validateImport,
+} from './check-boundaries.js'
 
 const DSH_ERROR = 'DSH imports are restricted to packages/runtime-dsh and apps/runtime'
 
@@ -248,5 +252,49 @@ describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
     )
     await makePackage('packages', 'no-tests', { scripts: {} }, false, false)
     expect(checkTypecheckWiring(root)).toEqual([])
+  })
+})
+
+describe('checkRunStatusChokePoint（P1-192：Run 唯一写入口）', () => {
+  const repoRoot = resolve(fileURLToPath(import.meta.url), '../..')
+
+  it('本仓库当前无违规（要写 running 只能走 applyRunStatus）', () => {
+    expect(checkRunStatusChokePoint(repoRoot)).toEqual([])
+  })
+
+  it("抓到「字面量直调 setRunStatus(..., 'running', ...)」的写法，并指出该走收口", () => {
+    const root = mkdtempSync(join(tmpdir(), 'choke-'))
+    const dir = join(root, 'apps/hub/src/modules/run')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, 'sneaky.ts'),
+      "export const go = (tx: Tx) => setRunStatus(tx, 'id', 'running', {})\n",
+    )
+    const violations = checkRunStatusChokePoint(root)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]).toContain('sneaky.ts:1')
+    expect(violations[0]).toContain('applyRunStatus')
+  })
+
+  it('收口文件自己不受这条判据限制（它就是那个入口）', () => {
+    const root = mkdtempSync(join(tmpdir(), 'choke-ok-'))
+    const dir = join(root, 'apps/hub/src/modules/run')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, 'run-status.ts'),
+      "export const go = (tx: Tx) => setRunStatus(tx, 'id', 'running', {})\n",
+    )
+    expect(checkRunStatusChokePoint(root)).toEqual([])
+  })
+
+  it('变量形式的写不误报（那条由集成判据覆盖，见函数注释的覆盖面声明）', () => {
+    const root = mkdtempSync(join(tmpdir(), 'choke-var-'))
+    const dir = join(root, 'apps/hub/src/modules/run')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, 'ok.ts'),
+      "export const go = (tx: Tx, next: { status: S }) => setRunStatus(tx, 'id', next.status, {})\n",
+    )
+    expect(checkRunStatusChokePoint(root)).toEqual([])
   })
 })

@@ -14,10 +14,17 @@
  * 首版只在 1、2 两处调了补发，于是「审批中说的话」在通过后永远吊在 `pending`（评审用探针在
  * 3/4/5 上实测：status=running、`run.followup` 命令 0 条）。这正是 #189 的同一个洞换了位置。
  * 因此把「进入 running 顺带放行排队指令」收口到本函数，所有写入点都必须走它；
- * `scripts/check-boundaries.ts` 里有一条源码扫描判据钉住这件事。
+ * `scripts/check-boundaries.ts` 里有一条源码扫描判据（`checkRunStatusChokePoint`）钉住
+ * 「不得用字面量 `'running'` 直调 `setRunStatus`」这件事。
+ *
+ * 另有一道自检：**终态禁复活**（AGENTS.md 红线）。5 个现有调用方之前都有状态机把关，但既然
+ * 这里是唯一写入口，就自己再挡一道——否则一个绕过状态机的调用能把 Run 从终态拉回 running
+ * 并顺带补发指令。
  */
+import { eq } from 'drizzle-orm'
+import { DomainError } from '@whalepod/domain'
 import type { Outbox, RunRow, Tx } from '@whalepod/db'
-import { setRunStatus } from '@whalepod/db'
+import { schema, setRunStatus, TERMINAL_RUN_STATUSES } from '@whalepod/db'
 import type { RunStatusPatch } from '@whalepod/db'
 import { dispatchPendingInstructions } from './followup.js'
 
@@ -33,6 +40,17 @@ export async function applyRunStatus(
   status: RunRow['status'],
   patch: RunStatusPatch = {},
 ): Promise<RunRow | undefined> {
+  const current = await tx
+    .select({ status: schema.runs.status })
+    .from(schema.runs)
+    .where(eq(schema.runs.id, runId))
+  const from = current[0]?.status
+  if (from !== undefined && from !== status && TERMINAL_RUN_STATUSES.has(from)) {
+    throw new DomainError(
+      'INVALID_RUN_TRANSITION',
+      `run is ${from} (terminal); terminal states never revive`,
+    )
+  }
   const row = await setRunStatus(tx, runId, status, patch)
   if (row !== undefined && status === 'running') {
     // 幂等（补发器以 outbox.message_id 判重），所以「多调一次」是安全的，

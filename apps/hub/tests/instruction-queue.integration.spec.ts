@@ -341,6 +341,13 @@ describe('instruction queue (P1-192)', () => {
     const late = await make(idLate, '最晚说的（created_at 最晚，id 最小）', base + 3000)
     const middle = await make(idMiddle, '中间说的', base + 2000)
     const early = await make(idEarly, '最早说的（created_at 最早，id 最大）', base + 1000)
+    // 第 4 条与 middle **同一 created_at**、id 更小：钉住**次级键**（评审 V1：只测三条互不相同的
+    // created_at 时，`orderBy(createdAt, desc(id))` 仍能全绿——那是对契约的过度声明）。
+    const tieEarly = await make(
+      'aaaaaaaa-0000-7000-8000-000000000000',
+      '与中间那句同一毫秒、但 id 更小',
+      base + 2000,
+    )
 
     // 传**最新**的 Run 行：补发器自带「必须 running」断言（评审 S1），而 `run` 是创建时的
     // 快照（那时还是 queued）——这条断言正好也让「拿旧快照乱调」当场失败。
@@ -355,8 +362,14 @@ describe('instruction queue (P1-192)', () => {
       .select()
       .from(schema.dispatchOutbox)
       .where(eq(schema.dispatchOutbox.type, 'run.followup'))
-    // 线程顺序 = createdAt 顺序（早→晚），与插入序/id 序**不同**。
-    expect(commands.map((row) => row.messageId)).toEqual([early.id, middle.id, late.id])
+    // 线程顺序 = `(created_at, id)`：先按时间（早→中→晚），同刻按 id 升序
+    // （tieEarly 的 id 比 middle 小，故它排在 middle 前）。插入序与两个键序都不同。
+    expect(commands.map((row) => row.messageId)).toEqual([
+      early.id,
+      tieEarly.id,
+      middle.id,
+      late.id,
+    ])
   })
 
   it('排队期间 Run 进终态：消息被清扫成 rejected(RUN_TERMINAL)，不会被永远吊在 pending', async () => {

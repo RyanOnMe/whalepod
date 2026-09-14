@@ -15,13 +15,7 @@ import { randomUUID } from 'node:crypto'
 import { and, eq, lte } from 'drizzle-orm'
 import { decideApproval, transitionRun } from '@whalepod/domain'
 import type { Database, Outbox, Tx } from '@whalepod/db'
-import {
-  appendTeamEvent,
-  countPendingApprovals,
-  schema,
-  setApprovalStatus,
-  setRunStatus,
-} from '@whalepod/db'
+import { appendTeamEvent, countPendingApprovals, schema, setApprovalStatus } from '@whalepod/db'
 import { applyRunStatus } from './run-status.js'
 import { ApprovalDecideSchema } from '@whalepod/protocol'
 

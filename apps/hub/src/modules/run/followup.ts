@@ -27,6 +27,7 @@ import {
   TERMINAL_RUN_STATUSES,
   transactCommand,
 } from '@whalepod/db'
+import { DomainError } from '@whalepod/domain'
 import { RunCommandError } from './errors.js'
 import { toCommentView } from '../task/queries.js'
 import type { CommentView } from '../task/queries.js'
@@ -266,9 +267,15 @@ export async function dispatchPendingInstructions(
   outbox: Outbox,
   run: { id: string; deviceId: string; status: RunRow['status'] },
 ): Promise<number> {
-  // 不信任调用方（评审 S1）：Node 只会在 Run 处于 running 时受理 followup，其他状态下发必被拒
-  //（#189）。这里显式挡一道，免得将来有人从别的状态误调。
-  if (run.status !== 'running') return 0
+  // 不信任调用方（评审 S1/③）：Node 只会在 Run 处于 running 时受理 followup，其他状态下发必被拒
+  //（#189）。这里**抛错而不是静默返回 0**——静默降级正是 B1 的同族（漏发却看不出来），
+  // 而生产路径（`applyRunStatus`）传的是迁移后的行，永远满足这个前置条件，抛错不会误伤。
+  if (run.status !== 'running') {
+    throw new DomainError(
+      'INVALID_RUN_TRANSITION',
+      `cannot dispatch queued instructions for a run in ${run.status}`,
+    )
+  }
   const pending = await tx
     .select()
     .from(schema.taskMessages)
