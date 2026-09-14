@@ -29,7 +29,10 @@ npx vitest run --project unit scripts/tests/ephemeral-postgres.spec.ts
 # 下一次运行会（正确地）不打印「已清扫」——这正是 #190 评审 O7 的坑）。
 npx tsx scripts/with-test-postgres.mts node -e 'setTimeout(()=>{}, 40000)' &
 sleep 15
-kill -9 $(docker inspect --format '{{index .Config.Labels "whalepod.e2e-runner-pid"}}' $(docker ps -q | head -1))
+# 必须用 whalepod 标签过滤：同机若有别的 worktree 的 postgres，
+# `docker ps -q | head -1` 会取到**别人的**容器并把它的 runner kill 掉（评审 N3）。
+kill -9 $(docker inspect --format '{{index .Config.Labels "whalepod.e2e-runner-pid"}}' \
+  $(docker ps -q --filter label=whalepod.e2e-postgres=true))
 npx tsx scripts/with-test-postgres.mts node -e 'console.log("ok")'             # 应打印「已清扫…」
 ```
 
@@ -63,8 +66,11 @@ npx tsx scripts/with-test-postgres.mts node -e 'console.log("ok")'             #
 - **`q5-loop.sh` 那条是护栏、不是回收路径**（#190 评审 O3）：带 `--rm` 的容器退出即被自动删除，
   所以它匹配到的通常是空集；它的价值是**保住「不杀兄弟 worktree 活容器」**（加 `status=exited`），
   真正回收被打断运行的是各 worktree 的 pid 感知清扫。别把「四处都带 `-v`」读成「q5 在回收卷」。
-- **pid 复用**已有年龄上限兜底（6 小时，`:STALE_MAX_AGE_MS`）：超过上限一律算残留，
+- **pid 复用**已有年龄上限兜底（6 小时，`STALE_MAX_AGE_MS`）：超过上限一律算残留，
   不再看 pid 是否活着（否则「恰好活着」的无关 pid 会让容器永留）。
+  **偏置（评审 N4）**：任何**真的**活过 6 小时的容器（例如人工 `with-test-postgres.mts bash`
+  挂着过夜）会被同 worktree 的下一次启动铲掉。仓内最长门禁是负载长档 30 分钟、Q5 webServer
+  预算 180 秒，所以不影响门禁；需要长跑时请自觉避开或临时调大该常量。
 - **pid 记的是启动者、不是整棵运行树**（#190 评审 O2）：常规信号转发路径安全；「只 SIGKILL
   wrapper 而让被包裹子进程续跑」时会误扫那个子进程正在用的库。要根治需记 pgid，本片不做。
 - **历史那 1332 个卷**已手工回收（`docker volume prune -f`，58.59 GB）；本片只保证不再产生新的。

@@ -420,6 +420,31 @@ describe('陈旧容器判定与清扫（#188 + 评审 B1/B2）', () => {
     expect(fake.calls[0]).toEqual(['ps', '-aq', '--filter', 'label=whalepod.e2e-scope=wt-scope'])
   })
 
+  it('批量 inspect 部分失败时保住 stdout 的部分结果继续判（评审 O1/N1）', async () => {
+    // 形态：ps 列出两个容器，inspect 时其中一个已消失（兄弟运行的正常 stop() 就能在 20ms
+    // 窗口里造成）→ 真实 docker 输出**部分** stdout 并以非零退出，execFile 形态的 rejection
+    // 对象带 .stdout。修好之前这里整轮清扫放弃（removed=0、WARN），残留要等下一轮。
+    const docker = async (args: string[]): Promise<string> => {
+      if (args[0] === 'ps') return 'gone\nalive\n'
+      if (args[0] === 'inspect') {
+        const error = Object.assign(new Error('Command failed: docker inspect …'), {
+          stdout: `alive|${new Date(Date.parse('2026-09-11T11:00:00.000Z')).toISOString()}|999999\n`,
+          stderr: 'Error: No such object: gone\n',
+        })
+        throw error
+      }
+      return ''
+    }
+    const removed = await sweepStaleContainers({
+      docker,
+      log: () => {},
+      now: () => Date.parse('2026-09-11T12:00:00.000Z'),
+      isPidAlive: () => false, // alive 那条的 pid「已死」→ 应被清掉
+      scope: 'test-scope',
+    })
+    expect(removed).toBe(1)
+  })
+
   it('docker ps 抖动时只告警、不抛错（清扫是尽力而为，不该挡住启动）', async () => {
     const logged: string[] = []
     const removed = await sweepStaleContainers({

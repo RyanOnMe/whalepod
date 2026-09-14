@@ -16,7 +16,7 @@
  */
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { startEphemeralPostgres } from '../lib/ephemeral-postgres.mts'
 
 const execFileAsync = promisify(execFile)
