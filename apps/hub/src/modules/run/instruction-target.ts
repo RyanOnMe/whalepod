@@ -48,7 +48,7 @@ export async function resolveRunTarget(
     return explicit
   }
 
-  const fromLastRun = await resolveFromLastRun(handle, input.taskId)
+  const fromLastRun = await resolveFromLastRun(handle, input.taskId, input.assigneeUserId)
   if (fromLastRun !== undefined) return fromLastRun
 
   return resolveFromAssigneeDevices(handle, input.assigneeUserId)
@@ -105,6 +105,7 @@ async function resolveExplicit(
 async function resolveFromLastRun(
   handle: DbHandle,
   taskId: string,
+  assigneeUserId: string,
 ): Promise<RunTarget | undefined> {
   const priorRuns = await handle
     .select({
@@ -124,9 +125,14 @@ async function resolveFromLastRun(
       .where(eq(schema.devices.id, prior.deviceId))
       .limit(1)
     if (device === undefined || device.revokedAt !== null) continue
+    // 归属校验（评审观察 6）：解析结果必须落在**责任人**的设备/工作区上。
+    // 少了这一条，历史 Run 若指向他人的设备，这里会照样返回它，直到建 Run 时才以一句
+    // 与真实原因无关的 403 结束——fail-closed 但误导。
+    if (device.ownerUserId !== assigneeUserId) continue
     if (device.dshDistributionVersion === null) continue // 设备不在线：换下一台候选
     const workspace = await findWorkspace(handle, prior.workspaceId)
     if (workspace === undefined || !workspace.available) continue
+    if (workspace.ownerUserId !== assigneeUserId) continue
     return { deviceId: device.id, workspaceId: workspace.id, source: 'last_run' }
   }
   return undefined

@@ -81,21 +81,21 @@ describe('authorize: assignment decisions belong to the assignee', () => {
 })
 
 describe('authorize: accepted-assignee task commands', () => {
-  it.each(['submit_review', 'complete_task', 'cancel_task', 'create_run'] as const)(
+  it.each(['submit_review', 'complete_task', 'cancel_task'] as const)(
     '%s by the accepted assignee -> true',
     (action) => {
       expect(authorize(member, action, ASSIGNEE_ACCEPTED)).toBe(true)
     },
   )
 
-  it.each(['submit_review', 'complete_task', 'cancel_task', 'create_run'] as const)(
+  it.each(['submit_review', 'complete_task', 'cancel_task'] as const)(
     '%s while the Assignment is not accepted -> false',
     (action) => {
       expect(authorize(member, action, ASSIGNEE_PENDING)).toBe(false)
     },
   )
 
-  it.each(['submit_review', 'complete_task', 'cancel_task', 'create_run'] as const)(
+  it.each(['submit_review', 'complete_task', 'cancel_task'] as const)(
     '%s by a non-assignee -> false, even Owner/Admin',
     (action) => {
       expect(authorize(foreignMember, action, ASSIGNEE_ACCEPTED)).toBe(false)

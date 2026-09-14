@@ -12,6 +12,7 @@ import {
   schema,
   setRunStatus,
 } from '@whalepod/db'
+import { RunCommandError } from '../src/modules/run/errors.js'
 import { sendInstruction } from '../src/modules/run/instruction.js'
 import { sendRunFollowup } from '../src/modules/run/followup.js'
 import {
@@ -286,11 +287,26 @@ describe('instruction grants (P1-198)', () => {
     if (approval === undefined) throw new Error('approval seed failed')
 
     // 同一条审批：被授权成员决定 → 拒绝（授权驱动 ≠ 授权拍板）。
-    await expect(
-      harness.orchestrator.decideApproval(makeActor(member), approval.id, 'allowed_once'),
-    ).rejects.toThrow(/FORBIDDEN|assignee|owner/i)
+    // 断言**精确错误码**，不用 /FORBIDDEN|owner/i 这种宽泛正则——后者必然被
+    // "only the run owner can decide an approval" 里的 owner 命中，等于没断言（评审阻断 2）。
+    const denied = await harness.orchestrator
+      .decideApproval(makeActor(member), approval.id, 'allowed_once')
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+    expect(denied).toBeInstanceOf(RunCommandError)
+    expect((denied as RunCommandError).code).toBe('FORBIDDEN')
+    // 排除"因为状态/过期才被拒"：拒绝之后审批**仍是 pending 且未过期**——
+    // 这条断言让本条判据能打红「decideApproval 谁都能决」这类变异（M8 的补法）。
+    const [stillPending] = await database.db
+      .select()
+      .from(schema.approvals)
+      .where(eq(schema.approvals.id, approval.id))
+    expect(stillPending).toMatchObject({ status: 'pending', decidedBy: null })
+    expect(stillPending!.expiresAt.getTime()).toBeGreaterThan(Date.now())
 
-    // 对照组：责任人决定 → 通过。证明上一条拒绝来自**权限**，而不是状态/过期之类的别的原因。
+    // 对照组：同一条审批由责任人决定 → 通过，并记下决定人。
     const decided = await harness.orchestrator.decideApproval(
       makeActor(ids.userId),
       approval.id,
@@ -401,5 +417,241 @@ describe('instruction grants (P1-198)', () => {
     } finally {
       await ctx.close()
     }
+  })
+})
+
+/**
+ * 评审 #204 阻断 1/2 的回归判据——这三条都是「删掉对应守卫仍全绿」的缺口补法。
+ */
+describe('instruction grants：评审整改的回归判据（P1-198）', () => {
+  let database: Database
+  beforeAll(async () => {
+    database = await createTestDatabase()
+  })
+  beforeEach(async () => {
+    await resetDatabase(database)
+  })
+  afterAll(async () => {
+    await database.close()
+  })
+
+  async function addMember(name: string): Promise<string> {
+    const id = randomUUID()
+    await insertUser(database.db, {
+      id,
+      // 用户名有格式约束（小写），displayName 保留原样。
+      username: `${name.toLowerCase()}-${id.slice(0, 8)}`,
+      displayName: name,
+      passwordHash: 'x',
+    })
+    return id
+  }
+
+  function deps(harness: ReturnType<typeof makeHarness>) {
+    return {
+      database,
+      outbox: harness.outbox,
+      orchestrator: harness.orchestrator,
+      dshDistributionVersionFor: async () => '1.2.3-test',
+      now: () => new Date('2026-08-25T00:00:00.000Z'),
+    }
+  }
+
+  it('授权**按人**过滤（阻断 2 / M7）：同 Task 里授权的是 A，B 开口仍被拒', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await database.db
+      .update(schema.devices)
+      .set({ dshDistributionVersion: '9.9.9-test', lastSeenAt: new Date() })
+      .where(eq(schema.devices.id, ids.deviceId))
+    const memberA = await addMember('A')
+    const memberB = await addMember('B')
+    const harness = makeHarness(database)
+    await grantInstruction(database.db, {
+      id: randomUUID(),
+      taskId: ids.taskId,
+      userId: memberA,
+      grantedBy: ids.userId,
+    })
+
+    // 判定层：A 是 granted，B 必须是 none——"这个 Task 有授权行"不等于"谁都能驱动"。
+    expect(await resolveInstructionRight(database.db, ids.taskId, memberA)).toBe('granted')
+    expect(await resolveInstructionRight(database.db, ids.taskId, memberB)).toBe('none')
+
+    // 行为层：B 发指令被拒，且不留痕。
+    await expect(
+      sendInstruction(deps(harness), makeActor(memberB), ids.taskId, {
+        text: 'B 没有被授权',
+        idempotencyKey: 'm7-b',
+      }),
+    ).rejects.toThrow(/granted member/)
+    expect(await database.db.select().from(schema.runs)).toEqual([])
+    expect(await listMessages(database.db, ids.taskId)).toEqual([])
+  })
+
+  it('阻断 1：撤销授权后**旧 key 重放**不得绕过（判据 3 只覆盖了新 key）', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await database.db
+      .update(schema.devices)
+      .set({ dshDistributionVersion: '9.9.9-test', lastSeenAt: new Date() })
+      .where(eq(schema.devices.id, ids.deviceId))
+    const member = await addMember('replay')
+    const harness = makeHarness(database)
+    await grantInstruction(database.db, {
+      id: randomUUID(),
+      taskId: ids.taskId,
+      userId: member,
+      grantedBy: ids.userId,
+    })
+
+    // 授权期内用一把 key 成功起 Run（回执落库）。
+    const key = 'revoke-then-replay'
+    const first = await sendInstruction(deps(harness), makeActor(member), ids.taskId, {
+      text: '授权期内的指令',
+      idempotencyKey: key,
+      deviceId: ids.deviceId,
+      workspaceId: ids.workspaceId,
+      agentId: ids.agentId,
+    })
+    expect(first.kind).toBe('started_run')
+    await revokeInstruction(database.db, ids.taskId, member)
+
+    // 同一把 key 重放：必须 403。回执回放**排在判权之前**时这里会返回 201（评审实测）。
+    await expect(
+      sendInstruction(deps(harness), makeActor(member), ids.taskId, {
+        text: '授权期内的指令',
+        idempotencyKey: key,
+        deviceId: ids.deviceId,
+        workspaceId: ids.workspaceId,
+        agentId: ids.agentId,
+      }),
+    ).rejects.toThrow(/granted member/)
+  })
+
+  it('阻断 1：未被授权的人**猜到 key** 也读不回别人的指令（判权先于回放）', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await database.db
+      .update(schema.devices)
+      .set({ dshDistributionVersion: '9.9.9-test', lastSeenAt: new Date() })
+      .where(eq(schema.devices.id, ids.deviceId))
+    const harness = makeHarness(database)
+    const key = 'guessable-key'
+    // 责任人（或任何被授权人）用这把 key 起了一次 Run。
+    const sent = await sendInstruction(deps(harness), makeActor(ids.userId), ids.taskId, {
+      text: '责任人的机密指令正文',
+      idempotencyKey: key,
+      deviceId: ids.deviceId,
+      workspaceId: ids.workspaceId,
+      agentId: ids.agentId,
+    })
+    expect(sent.kind).toBe('started_run')
+
+    // 未被授权的成员拿同一把 key 重放 → 403，拿不到正文/消息 id/runId。
+    const outsider = await addMember('outsider')
+    const error = await sendInstruction(deps(harness), makeActor(outsider), ids.taskId, {
+      text: '责任人的机密指令正文',
+      idempotencyKey: key,
+      deviceId: ids.deviceId,
+      workspaceId: ids.workspaceId,
+      agentId: ids.agentId,
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    )
+    expect(error).toBeInstanceOf(RunCommandError)
+    expect((error as RunCommandError).code).toBe('FORBIDDEN')
+  })
+
+  it('红线「执行不换机器」在 **orchestrator 层**也成立（评审：原判据只覆盖了目标解析层）', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await database.db
+      .update(schema.devices)
+      .set({ dshDistributionVersion: '9.9.9-test', lastSeenAt: new Date() })
+      .where(eq(schema.devices.id, ids.deviceId))
+    const member = await addMember('driver')
+    const harness = makeHarness(database)
+    await grantInstruction(database.db, {
+      id: randomUUID(),
+      taskId: ids.taskId,
+      userId: member,
+      grantedBy: ids.userId,
+    })
+
+    // ① 被授权成员 + **责任人的**设备/工作区 → 必须成功。
+    //    这一条是打红「orchestrator 把关属校验改回 ctx.userId」的判据（评审 M2：原判据 4 做不到）。
+    const ok = await harness.orchestrator.create(makeActor(member), ids.taskId, {
+      ...makeCreateInput(ids),
+      idempotencyKey: 'orch-ok',
+    })
+    expect(ok.deviceId).toBe(ids.deviceId)
+    expect(ok.ownerUserId).toBe(ids.userId) // 归属仍是责任人
+
+    // ② 被授权成员 + **自己的**设备（owner ≠ 责任人）→ orchestrator 必须拒（覆盖 orchestrator 的设备归属校验）。
+    const ownDevice = randomUUID()
+    await database.db.insert(schema.devices).values({
+      id: ownDevice,
+      ownerUserId: member,
+      name: '小李的笔记本',
+      platform: 'darwin',
+      architecture: 'arm64',
+      nodeVersion: '24.12.0',
+      nodeAppVersion: '0.1.0',
+      tokenHash: new Uint8Array([5, 5, 5]),
+      capabilities: {},
+      dshDistributionVersion: '9.9.9-test',
+    })
+    await expect(
+      harness.orchestrator.create(makeActor(member), ids.taskId, {
+        ...makeCreateInput(ids),
+        idempotencyKey: 'orch-own-device',
+        deviceId: ownDevice,
+      }),
+    ).rejects.toThrow(/FORBIDDEN|device/i)
+
+    // ③ 责任人的设备 + **他人的**工作区 → 必须拒（覆盖工作区归属校验这条独立分支）。
+    const foreignWs = randomUUID()
+    await database.db.insert(schema.workspaces).values({
+      id: foreignWs,
+      deviceId: ownDevice,
+      ownerUserId: member,
+      name: '小李的工作区',
+      kind: 'directory',
+      capabilities: { read: true, write: true },
+      available: true,
+    })
+    await expect(
+      harness.orchestrator.create(makeActor(member), ids.taskId, {
+        ...makeCreateInput(ids),
+        idempotencyKey: 'orch-foreign-ws',
+        workspaceId: foreignWs,
+      }),
+    ).rejects.toThrow(/FORBIDDEN|workspace/i)
+  })
+
+  it('表级兜底（评审应改 5）：granted_by 必须是该 Task 的责任人——写库也绕不过', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    const member = await addMember('notassignee')
+    // 直接插一行"非责任人授予"的授权：触发器必须拒绝（这条不变量不再只靠命令层自觉）。
+    const error = await database.db
+      .insert(schema.taskInstructionGrants)
+      .values({
+        id: randomUUID(),
+        taskId: ids.taskId,
+        userId: member,
+        grantedBy: member, // 自己授自己：非责任人
+      })
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      )
+    expect(error).toBeDefined()
+    // drizzle 会包一层，错误原文在 cause 链上（与 0005 那条判据同一写法）。
+    const chain: string[] = []
+    let cursor: unknown = error
+    while (cursor instanceof Error) {
+      chain.push(cursor.message)
+      cursor = cursor.cause
+    }
+    expect(chain.join('\n')).toMatch(/must be the task assignee/)
+    expect(await listInstructionGrants(database.db, ids.taskId)).toEqual([])
   })
 })

@@ -15,20 +15,43 @@ create table task_instruction_grant (
   -- 被授权人：能往这个 Task 的执行区发指令的成员。
   user_id uuid not null references user_account (id) on delete cascade,
   -- 谁授的（审计要能回答）：只有责任人能授，故这里必然是责任人。
-  granted_by uuid not null references user_account (id),
+  -- 谁授的。on delete cascade：授与人被删除时这条授权随之消失（不该留下无主的授权）。
+  -- 不写行为会落到默认 NO ACTION，删用户时被 23503 卡住（评审应改 4）。
+  granted_by uuid not null references user_account (id) on delete cascade,
   created_at timestamptz not null default now(),
   -- 一个人对一个 Task 只有一条授权：重复授予是幂等操作，不该长出第二行。
   constraint task_instruction_grant_unique unique (task_id, user_id)
 );
 
--- 守卫按 (task_id, user_id) 点查，这是热路径。
-create index task_instruction_grant_lookup_idx on task_instruction_grant (task_id, user_id);
+-- 守卫的点查（task_id, user_id）**不需要额外索引**：上面的 unique 约束已经建了列序完全相同的
+-- 唯一 btree 索引，再建一个只是写放大（评审应改 3 实测两条 indexdef 逐字一致）。
+
+-- 「只有责任人能授」不能只写在注释里（评审应改 5）：granted_by 可以是任意用户。
+-- 与 0005 守跨表不变量同一风格——用触发器把这条不变量钉在库上，而不是指望命令层自觉。
+create or replace function task_instruction_grant_by_assignee() returns trigger as $$
+begin
+  if not exists (
+    select 1 from task t
+    where t.id = new.task_id and t.assignee_user_id = new.granted_by
+  ) then
+    raise exception 'task_instruction_grant.granted_by must be the task assignee'
+      using errcode = '23514';
+  end if;
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger task_instruction_grant_by_assignee_check
+  before insert on task_instruction_grant
+  for each row execute function task_instruction_grant_by_assignee();
 
 -- 撤回一条指令（#198 的判据 3「撤销后立刻失效」）：
 -- 直接 delete 该行即可——没有缓存，守卫每次都点查本表，所以"立刻"是真的立刻。
 -- （不引入 deleted_at：授权不是账，是状态；谁何时授予/撤销的历史由 team_event 承载。）
 --
 -- 回滚路径：
+--   drop trigger if exists task_instruction_grant_by_assignee_check on task_instruction_grant;
+--   drop function if exists task_instruction_grant_by_assignee();
 --   drop table if exists task_instruction_grant;
 -- 回滚后果：所有被授权成员立刻失去驱动权（授权名单丢失）。若要保留名单，先导出
 --   select task_id, user_id, granted_by from task_instruction_grant;

@@ -89,16 +89,16 @@ export const taskInstructionGrants = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => userAccounts.id, { onDelete: 'cascade' }),
-    /** 谁授的（只有责任人能授）。 */
+    /** 谁授的。只有责任人能授——这条由 migration 0006 的触发器钉在库上，不靠命令层自觉。 */
     grantedBy: uuid('granted_by')
       .notNull()
-      .references(() => userAccounts.id),
+      .references(() => userAccounts.id, { onDelete: 'cascade' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     // 一人一 Task 一条授权：重复授予是幂等的，不该长出第二行。
+    // 唯一索引同时服务守卫的点查（列序相同），不再另建普通索引（评审应改 3）。
     unique('task_instruction_grant_unique').on(table.taskId, table.userId),
-    index('task_instruction_grant_lookup_idx').on(table.taskId, table.userId),
   ],
 )
 
