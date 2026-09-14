@@ -5,6 +5,17 @@ on:
     branches: [main]
   pull_request:
 
+# 同一分支连推只保留最新一轮（#200）：不取消的话每次推送都新起一轮——评审整改往往推 2–4 次，
+# 于是"最新一次到底绿没绿"要靠人眼辨认，也白跑几轮。
+#
+# 为什么**不**顺手加 `paths-ignore` 跳过纯文档改动：① 仓库转为公开后 Actions 分钟数不计量，
+# 省下的不是钱；② `pnpm check` 里含 `format:check`，而它恰恰覆盖 `docs/**` 与 `*.md`——
+# 跳过等于让文档格式没人管；③ 只改文档的 PR 若因此永远等不到检查，"必检项"会变成卡住的假象。
+# 文档格式由本地 `pnpm check` 与 CI 一起守，别为了省不存在的分钟数把它关掉。
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
