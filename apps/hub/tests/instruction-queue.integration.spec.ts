@@ -316,11 +316,14 @@ describe('instruction queue (P1-192)', () => {
     // 用 db 层直接插三条消息：id 由 uuidv7 递增（插入序），而 createdAt 故意倒着给——
     // 这样「按 id 排」「不排序（堆序）」都会得到不同结果，判据才真的钉住契约（评审 O1）。
     const base = Date.parse('2026-08-25T00:00:00.000Z')
-    // 显式给 id（`task_message.id` 无默认值），并按「created_at 越早 → id 越大」分配，
-    // 让 id 序与 created_at 序**相反**：这样「按 id 排」与「不排序（插入即堆序）」都会红。
-    const idLate = 'ffffffff-0000-7000-8000-000000000003'
+    // 显式给 id（`task_message.id` 无默认值），并让 **id 序与 created_at 序相反**：
+    // created_at 最早的那条拿**最大**的 id，最晚的拿**最小**的 id。
+    // 这样「按 id 排」（orderBy(id)）与「不排序」（Postgres 返回插入/堆序 = 晚→中→早）
+    // 都会红，判据才真的钉住 `(created_at, id)` 契约（评审 O1）。
+    // 首版把 id 按同一方向分配（early→0001…late→0003），于是 orderBy(id) 仍全绿——判据自己错了。
+    const idEarly = 'ffffffff-0000-7000-8000-000000000003'
     const idMiddle = 'ffffffff-0000-7000-8000-000000000002'
-    const idEarly = 'ffffffff-0000-7000-8000-000000000001'
+    const idLate = 'ffffffff-0000-7000-8000-000000000001'
     const make = (id: string, body: string, createdAt: number) =>
       insertMessage(database.db, {
         id,
@@ -334,10 +337,10 @@ describe('instruction queue (P1-192)', () => {
         instructionState: 'pending' as const,
         createdAt: new Date(createdAt),
       })
-    // 插入顺序 = id 降序（晚→中→早），而 created_at 升序（早→中→晚）。
-    const late = await make(idLate, '最晚说的（created_at 最晚，id 最大）', base + 3000)
+    // 插入顺序 = 晚→中→早（= 堆序），id 序与 created_at 序都与它不同。
+    const late = await make(idLate, '最晚说的（created_at 最晚，id 最小）', base + 3000)
     const middle = await make(idMiddle, '中间说的', base + 2000)
-    const early = await make(idEarly, '最早说的（created_at 最早，id 最小）', base + 1000)
+    const early = await make(idEarly, '最早说的（created_at 最早，id 最大）', base + 1000)
 
     // 传**最新**的 Run 行：补发器自带「必须 running」断言（评审 S1），而 `run` 是创建时的
     // 快照（那时还是 queued）——这条断言正好也让「拿旧快照乱调」当场失败。
