@@ -24,8 +24,14 @@ cleanup_stale() {
       *node*"scripts/e2e-node.mts"*) kill -9 "$p" 2>/dev/null || true ;;
     esac
   done
-  docker ps -q --filter "label=whalepod.e2e-postgres=true" 2>/dev/null \
-    | xargs -r docker rm -f >/dev/null 2>&1 || true
+  # `-v` 必带（#188）：postgres 镜像声明了匿名 VOLUME（PG18 起挂在 /var/lib/postgresql），
+  # `docker rm -f` 默认不回收它，每次残留就是永久 ~40 MB。Q5 x20 是历史上 1332 个孤儿卷的主产地。
+  #
+  # `status=exited` 也是必须的（#188 评审 B1）：本脚本按**共用标签**筛（算不出别的 worktree
+  # 的 scope 哈希），不加这条会把**兄弟 worktree 正在用**的活容器连同匿名卷一起删掉
+  #（评审逐字复刻验证过）。只清已退出的残留；仍在跑的残留由各运行自己的 pid 感知清扫负责。
+  docker ps -q --filter "label=whalepod.e2e-postgres=true" --filter "status=exited" 2>/dev/null \
+    | xargs -r docker rm -f -v >/dev/null 2>&1 || true
 }
 
 mkdir -p artifacts/q5

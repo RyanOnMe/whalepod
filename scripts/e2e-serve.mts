@@ -164,28 +164,26 @@ async function waitForPortFree(port: number, timeoutMs = 15_000): Promise<void> 
 }
 
 // ---- 0. 一次性 PostgreSQL（与 Q2 同一容器实现） ----
-const { startEphemeralPostgres, e2eScope } = await import('./lib/ephemeral-postgres.mts')
+const { startEphemeralPostgres, sweepStaleContainers } =
+  await import('./lib/ephemeral-postgres.mts')
 // 自愈：playwright 对 webServer 的终止可能是 SIGKILL（handler 不会跑），
 // 上一次运行的残留容器在本进程启动前按专属 label 清掉，不碰无关容器。
 const { execFile: execFileCb } = await import('node:child_process')
 const { promisify } = await import('node:util')
 const execFileAsync = promisify(execFileCb)
 try {
-  const stale = await execFileAsync('docker', [
-    'ps',
-    '-q',
-    '--filter',
-    'label=whalepod.e2e-postgres=true',
-    // 并行 worktree 隔离：只清**本 worktree** 的残留容器。此前按共用标签清，会把
-    // 兄弟 worktree 正在用的 DB 一并删掉（实测发生过：审查线起栈时删掉术语线的容器）。
-    '--filter',
-    `label=whalepod.e2e-scope=${e2eScope()}`,
-  ])
-  const ids = stale.trim().split('\n').filter(Boolean)
-  if (ids.length > 0) {
-    await execFileAsync('docker', ['rm', '-f', ...ids])
-    log(`自愈：清理上一次残留容器 ${ids.length} 个`)
-  }
+  // #188 评审 B1/B2：原先这里按 scope 标签 `docker rm -f`（无 -v）**先于** startEphemeralPostgres
+  // 的清扫执行 —— 残留容器被删掉、匿名卷当场成孤儿，后面的 sweep 再也扫不到（容器已不存在）。
+  // 现在统一走共享的 pid 感知清扫：只删「启动者 pid 已死 / 无 pid 标签且够老」的容器，
+  // 且一律带 `-v` 回收匿名卷。同 worktree 里正在跑的兄弟运行不会被碰。
+  const removed = await sweepStaleContainers({
+    docker: async (args) => {
+      const { stdout } = await execFileAsync('docker', args)
+      return stdout
+    },
+    log,
+  })
+  if (removed > 0) log(`自愈：清理上一次残留容器 ${removed} 个（含匿名卷）`)
 } catch {
   // Docker 暂不可用等情况交由 startEphemeralPostgres 报错。
 }
