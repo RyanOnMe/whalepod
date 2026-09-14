@@ -25,6 +25,15 @@ const PORT_PUBLISH_TIMEOUT_MS = 20_000
  * 启动阶段，又远小于「上一轮被中断、隔天再跑」的间隔，所以既不误杀、又能自愈。
  */
 const STALE_GRACE_MS = 10 * 60_000
+/**
+ * 容器年龄上限（#190 评审 R2）：超过它一律算残留，**不再看 pid 是否活着**。
+ *
+ * 为什么需要：pid 会被复用。若某个残留容器的 `runner-pid` 标签恰好指向一个活着的无关进程，
+ * 单看 pid 就会**永远**判为「正在运行中」，容器与匿名卷永久留下（评审实测：把时钟拨到
+ * 30 天后仍是 `[]`）。6 小时远大于任何一次门禁运行（Q5 webServer 预算 180s、负载长档 30min），
+ * 所以正常运行的容器不会被它误判。
+ */
+const STALE_MAX_AGE_MS = 6 * 60 * 60_000
 const PORT_PUBLISH_POLL_MS = 250
 const LAUNCH_ATTEMPTS = 3
 const LAUNCH_BACKOFF_MS = 1_000
@@ -149,9 +158,10 @@ export async function launchWithPortRetry(
       // 删掉这个「活着但网络没发布」的容器，让下一次尝试拿到全新沙箱。
       try {
         // `-v` 必须带（#188）：这里删的是**活着**的容器，`--rm` 策略不会生效，
-        // 而 docker rm 默认**不回收匿名卷**——postgres 镜像在 /var/lib/postgresql/data
-        // 声明了 VOLUME，每次重试就会永久漏一个 ~45 MB 的卷。实测复现：中断一次运行
-        // 留下容器，事后 `docker rm -f`（无 -v）→ 卷永久残留。
+        // 而 docker rm 默认**不回收匿名卷**——postgres:18 的 Config.Volumes 实测为
+        // /var/lib/postgresql（PG18 改了布局，不是 /var/lib/postgresql/data），每次重试
+        // 就会永久漏一个 ~40 MB 的卷。实测复现：中断一次运行留下容器，事后
+        // `docker rm -f`（无 -v）→ 卷永久残留。
         await deps.docker(['rm', '-f', '-v', containerId])
       } catch {
         // --rm 容器可能已自清：删不掉不是本路径的判据，继续重试。
@@ -227,6 +237,8 @@ export interface StaleContainerDeps {
   now?: () => number
   /** 无 pid 标签的容器判为残留所需的年龄（默认 10 分钟）。 */
   graceMs?: number
+  /** 无论 pid 是否活着都判为残留的年龄上限（默认 6 小时；pid 复用兜底）。 */
+  maxAgeMs?: number
   /** 覆盖 scope（默认取当前 cwd 的 e2eScope）；测试用。 */
   scope?: string
 }
@@ -249,12 +261,22 @@ async function inspectScopedContainers(
     .filter((line) => line.length > 0)
   if (ids.length === 0) return []
   // 一次 inspect 拿全部（避免 N 次往返）：Id | StartedAt | runner-pid 标签。
-  const inspected = await runDocker([
-    'inspect',
-    '--format',
-    '{{.Id}}|{{.State.StartedAt}}|{{index .Config.Labels "whalepod.e2e-runner-pid"}}',
-    ...ids,
-  ])
+  // 注意（#190 评审 O1）：批量 inspect 只要有一个 id 在 ps 与 inspect 之间消失，docker 会
+  // 输出**部分**结果并以非零退出——真实 CLI 走 execFile 时即 reject。所以这里要保住部分结果，
+  // 否则「兄弟运行的正常 stop()」这类 20ms 窗口会让本轮清扫整体放弃。
+  let inspected: string
+  try {
+    inspected = await runDocker([
+      'inspect',
+      '--format',
+      '{{.Id}}|{{.State.StartedAt}}|{{index .Config.Labels "whalepod.e2e-runner-pid"}}',
+      ...ids,
+    ])
+  } catch (error) {
+    const partial = (error as { stdout?: string }).stdout
+    if (typeof partial !== 'string' || partial.trim().length === 0) throw error
+    inspected = partial
+  }
   return inspected
     .split('\n')
     .map((line) => line.trim())
@@ -277,13 +299,20 @@ export async function findStaleContainers(deps: StaleContainerDeps = {}): Promis
   const runDocker = deps.docker ?? docker
   const now = deps.now ?? (() => Date.now())
   const graceMs = deps.graceMs ?? STALE_GRACE_MS
+  const maxAgeMs = deps.maxAgeMs ?? STALE_MAX_AGE_MS
   const isPidAlive = deps.isPidAlive ?? defaultIsPidAlive
   const facts = await inspectScopedContainers(runDocker, deps.scope ?? e2eScope())
   return facts
     .filter((container) => {
-      if (container.runnerPid !== undefined) return !isPidAlive(container.runnerPid)
-      // 无 pid 标签：只有够老才算残留（历史版本留下的容器没有这个标签）。
-      return now() - container.startedAt > graceMs
+      const age = now() - container.startedAt
+      // 先看年龄上限：pid 会被复用，超过上限一律算残留（否则「恰好活着」的 pid 会让容器永留）。
+      if (age > maxAgeMs) return true
+      // pid 标签有效（>=2：0 会让 process.kill(0,0) 不抛、1 恒 EPERM，都不是真实 runner）。
+      if (container.runnerPid !== undefined && container.runnerPid >= 2) {
+        return !isPidAlive(container.runnerPid)
+      }
+      // 无（有效）pid 标签：只有够老才算残留（历史版本留下的容器没有这个标签）。
+      return age > graceMs
     })
     .map((container) => container.id)
 }
@@ -294,6 +323,11 @@ export async function findStaleContainers(deps: StaleContainerDeps = {}): Promis
  * 为什么必须有：`--rm` 只在容器**自己退出**时回收匿名卷。上一次运行若被 SIGKILL /
  * 超时打断（本机高负载时很常见），容器会一直活着，卷也就一直留着；等到有人（或某条清理
  * 命令）用 `docker rm -f` 收掉容器时，卷**不会**跟着走。实测复现过这条链。
+ *
+ * 已知口径（#190 评审 O2）：pid 标签记的是**启动者**（wrapper 进程），不是整棵运行树。
+ * 常规 Ctrl-C / SIGTERM 会转发给子进程并等待其退出，所以判据成立；但「只 SIGKILL wrapper
+ * 而让被包裹的子进程继续跑」这一形态下，下一次启动会把那个子进程**正在用**的库一并扫掉
+ *（评审实测）。要根治需记 pgid，本片不做，在此写明。
  *
  * 只清 `findStaleContainers` 判定的残留（活着的兄弟运行不碰），且一律 `rm -f -v`
  *（`-v` 才是回收匿名卷的那一位）。

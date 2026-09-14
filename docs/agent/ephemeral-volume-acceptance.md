@@ -25,7 +25,11 @@ npx tsx scripts/with-test-postgres.mts vitest run --project integration \
 npx vitest run --project unit scripts/tests/ephemeral-postgres.spec.ts
 
 # ③ 手工复现中断→自愈
-npx tsx scripts/with-test-postgres.mts node -e 'setTimeout(()=>{}, 40000)' &   # 然后 kill -9
+# 注意：要 kill **真 runner**，不是 npx/tsx 包装进程（否则子进程还在跑，
+# 下一次运行会（正确地）不打印「已清扫」——这正是 #190 评审 O7 的坑）。
+npx tsx scripts/with-test-postgres.mts node -e 'setTimeout(()=>{}, 40000)' &
+sleep 15
+kill -9 $(docker inspect --format '{{index .Config.Labels "whalepod.e2e-runner-pid"}}' $(docker ps -q | head -1))
 npx tsx scripts/with-test-postgres.mts node -e 'console.log("ok")'             # 应打印「已清扫…」
 ```
 
@@ -35,7 +39,7 @@ npx tsx scripts/with-test-postgres.mts node -e 'console.log("ok")'             #
 |---|---|---|
 | **净增卷 = 0**（真实 Docker） | 启停一次后 `docker volume ls` 差集为空（修复前必然多 1 个匿名卷） | PASS |
 | 中断后自愈 | kill -9 留下容器+卷 → 下次启动打印「已清扫上一次运行留下的 1 个容器（含其匿名卷）」→ 整轮净增卷 0 | PASS |
-| 三条删除路径都带 `-v` | `:150`（重试）、`:294`（removeContainer）、`q5-loop.sh` 均 `rm -f -v` | PASS |
+| **四处**删除点都带 `-v`（按角色分） | 回收路径：`ephemeral-postgres.mts:165`（端口重试）、`:352`（pid 感知清扫）、`:455`（`removeContainer`）——三处都是**真正在回收卷**的路径；护栏：`q5-loop.sh:34`（带 `status=exited`，见下方口径说明） | PASS |
 | **同 worktree 并发不互杀** | pid 活着的容器一律不碰（A/B 实测：后起者不再抽走先起者的库） | PASS |
 | 无 pid 标签的旧容器 | 只有启动超过宽限期（10 分钟）才判为残留 | PASS |
 | 启动链接线 | 第一条命令是按 `e2eScope()` 清扫、清扫在 `run` 之前、启动标签带**同值** scope + 启动者 pid | PASS |
@@ -43,8 +47,9 @@ npx tsx scripts/with-test-postgres.mts node -e 'console.log("ok")'             #
 
 ## 归因（失败先看哪层）
 
-- **净增卷不为 0** → 先看是哪条删除路径没带 `-v`：`scripts/lib/ephemeral-postgres.mts`
-  的 `:150` / `:294`、`scripts/e2e-serve.mts`（走共享清扫）、`scripts/q5-loop.sh`；
+- **净增卷不为 0** → 先看是哪条删除路径没带 `-v`：`scripts/lib/ephemeral-postgres.mts` 的
+  `:165` / `:352` / `:455`、`scripts/e2e-serve.mts`（已改为走共享清扫，本身不再删容器）、
+  `scripts/q5-loop.sh`（护栏位）；
 - **容器被误杀（并发场景）** → 看 `findStaleContainers` 的 pid 判据：容器是否带
   `whalepod.e2e-runner-pid`，以及 `isPidAlive` 是否把它误判为死；
 - **残留清不掉** → 看是否 `docker ps -aq --filter label=…scope=…` 筛不到：cwd 变化（符号链接）
@@ -55,8 +60,13 @@ npx tsx scripts/with-test-postgres.mts node -e 'console.log("ok")'             #
 
 - **cwd 变化时筛不到旧容器**：`e2eScope()` 由 cwd 派生，符号链接/非物理路径会得到不同 scope，
   旧容器不会被自愈清扫（只能靠人工 `docker volume prune`）。方向安全，未加判据。
-- **`q5-loop.sh` 仍是共用标签**：已加 `status=exited` 防止误杀活容器，但它无法只清自己 worktree
-  的残留（算不出 scope 哈希）；跨 worktree 的残留由各运行的 pid 感知清扫兜住。
+- **`q5-loop.sh` 那条是护栏、不是回收路径**（#190 评审 O3）：带 `--rm` 的容器退出即被自动删除，
+  所以它匹配到的通常是空集；它的价值是**保住「不杀兄弟 worktree 活容器」**（加 `status=exited`），
+  真正回收被打断运行的是各 worktree 的 pid 感知清扫。别把「四处都带 `-v`」读成「q5 在回收卷」。
+- **pid 复用**已有年龄上限兜底（6 小时，`:STALE_MAX_AGE_MS`）：超过上限一律算残留，
+  不再看 pid 是否活着（否则「恰好活着」的无关 pid 会让容器永留）。
+- **pid 记的是启动者、不是整棵运行树**（#190 评审 O2）：常规信号转发路径安全；「只 SIGKILL
+  wrapper 而让被包裹子进程续跑」时会误扫那个子进程正在用的库。要根治需记 pgid，本片不做。
 - **历史那 1332 个卷**已手工回收（`docker volume prune -f`，58.59 GB）；本片只保证不再产生新的。
 - **命名卷不受影响**：`docker volume prune` 默认只删匿名卷，`rm -f -v` 也只删匿名卷。
 - **e2e 全量未跑**：本机负载下未跑完整 `pnpm test:e2e`（评审按同路径启动耗时外推，sweep 增加

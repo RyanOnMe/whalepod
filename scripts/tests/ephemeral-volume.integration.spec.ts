@@ -1,6 +1,12 @@
 /**
  * 一次性 PostgreSQL 的**净增卷 = 0** 判据（#188 评审 S3）。
  *
+ * ⚠️ 本用例**刻意不做兜底清理**（#190 评审 R1）：早期版本在 afterAll 里用
+ * `docker ps -aq --filter ancestor=postgres:18 | docker rm -f -v` 兜底，结果把**外层**
+ * `with-test-postgres.mts` 的共享容器（以及兄弟 worktree 正在用的库）一起删了——
+ * CI 上实测自伤：345 条通过后 4 个 spec 文件的 beforeAll 拿到 undefined 而失败。
+ * 判据自身已把容器与卷清干净（实测跑完 0 容器 / 净增卷 0），不需要兜底。
+ *
  * 为什么需要它：修复前没有任何判据断言过 docker 卷——「不再漏卷」只是提交信息里的话，
  * 无法复跑、无法在回归时变红。评审实测的对照是：修复前每跑一次 `stop()` 漏 1 卷（15→20，
  * 5/5），修复后 0 漏。这条把那个对照固化成机器判据。
@@ -36,25 +42,6 @@ async function volumeNames(): Promise<string[]> {
 let available = false
 beforeAll(async () => {
   available = await dockerAvailable()
-})
-afterAll(async () => {
-  if (!available) return
-  // 兜底：本次若留下任何容器/匿名卷，这里清掉（避免判据本身制造垃圾）。
-  try {
-    const { stdout } = await execFileAsync('docker', [
-      'ps',
-      '-aq',
-      '--filter',
-      'ancestor=postgres:18',
-    ])
-    const ids = stdout
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-    if (ids.length > 0) await execFileAsync('docker', ['rm', '-f', '-v', ...ids])
-  } catch {
-    // 清理失败不影响判据结论（会体现在下一条运行里）。
-  }
 })
 
 describe('一次性 PostgreSQL 不漏匿名卷（#188）', () => {

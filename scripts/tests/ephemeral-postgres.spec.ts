@@ -350,6 +350,33 @@ describe('陈旧容器判定与清扫（#188 + 评审 B1/B2）', () => {
     expect(fake.calls.some((c) => c[0] === 'rm')).toBe(false)
   })
 
+  it('年龄超过上限时一律算残留，即使 pid 标签指向一个活着的进程（pid 复用兜底，评审 R2）', async () => {
+    // 判据：pid 复用会让「恰好活着」的无关 pid 永久豁免该容器（评审实测把时钟拨到 30 天后
+    // 仍判为「运行中」）→ 容器与匿名卷永留。年龄上限必须压过 pid 判定。
+    const fake = makeFakeDocker([
+      { id: 'old-but-pid-alive', startedAt: NOW - 7 * 60 * 60_000, pid: 4242 },
+    ])
+    const stale = await findStaleContainers({
+      docker: fake.docker,
+      now: () => NOW,
+      isPidAlive: () => true, // pid「活着」
+      scope: 'test-scope',
+    })
+    expect(stale).toEqual(['old-but-pid-alive'])
+  })
+
+  it('pid 标签为 0 / 1 这类非法值时退回宽限期判定（不是「活着」）', async () => {
+    const fake = makeFakeDocker([{ id: 'weird-pid', startedAt: NOW - 3_600_000, pid: 0 }])
+    const stale = await findStaleContainers({
+      docker: fake.docker,
+      now: () => NOW,
+      isPidAlive: () => true,
+      graceMs: 600_000,
+      scope: 'test-scope',
+    })
+    expect(stale).toEqual(['weird-pid'])
+  })
+
   it('pid 已死 = 那次运行结束了 → 清掉，且带 -v 回收匿名卷', async () => {
     const fake = makeFakeDocker([{ id: 'orphan', startedAt: NOW - 60_000, pid: 9999 }])
     const removed = await sweepStaleContainers({
@@ -406,7 +433,7 @@ describe('陈旧容器判定与清扫（#188 + 评审 B1/B2）', () => {
     expect(logged.join('\n')).toContain('清扫陈旧容器失败')
   })
 
-  it('inspect 输出异常（空/缺字段）不误判为残留', async () => {
+  it('inspect 的 StartedAt 解析不出来（时间戳为 0）时判为残留（保守选择）', async () => {
     const fake = makeFakeDocker([{ id: 'weird', startedAt: 0, pid: 'no-value' }])
     const stale = await findStaleContainers({
       docker: fake.docker,
@@ -415,7 +442,9 @@ describe('陈旧容器判定与清扫（#188 + 评审 B1/B2）', () => {
       isPidAlive: () => true,
       scope: 'test-scope',
     })
-    // startedAt 解析为 0（1970）→ 远早于宽限期 → 判为残留，这是可接受的保守选择。
+    // 断言与标题一致：解析不出的时间戳（0 = 1970）远早于宽限期 → **判为残留**（保守：
+    // 宁可多清一次可再生的临时库，也不留永久孤儿卷）。真实 Docker 产不出这种输入
+    //（StartedAt 是 RFC3339Nano，Date.parse 实测可解析），故这里是防未来改动的兜底。
     expect(stale).toEqual(['weird'])
   })
 })
