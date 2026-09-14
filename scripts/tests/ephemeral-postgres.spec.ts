@@ -7,7 +7,11 @@
  * 时钟与 sleep 均注入，红/绿两路径毫秒级确定性。
  */
 import { describe, expect, it } from 'vitest'
-import { launchWithPortRetry, waitPublishedPort } from '../lib/ephemeral-postgres.mts'
+import {
+  launchWithPortRetry,
+  sweepStaleContainers,
+  waitPublishedPort,
+} from '../lib/ephemeral-postgres.mts'
 import type { LaunchDeps } from '../lib/ephemeral-postgres.mts'
 
 interface FakeCall {
@@ -173,8 +177,10 @@ describe('launchWithPortRetry（发布失败删容器重建）', () => {
       attempts: 3,
       backoffMs: 1_000,
     })
-    // 第 1 个容器发布失败 → 必须被 rm -f 清掉，再拿全新沙箱（container-2）。
-    expect(fake.calls.some((c) => c.join(' ') === 'rm -f container-1')).toBe(true)
+    // 第 1 个容器发布失败 → 必须被清掉，再拿全新沙箱（container-2）。
+    // `-v` 是 #188 的回归判据：删的是**活着**的容器，`--rm` 不生效，而 docker rm 默认
+    // 不回收匿名卷（postgres 镜像声明了 VOLUME）——少了它每次重试永久漏 ~45 MB。
+    expect(fake.calls.some((c) => c.join(' ') === 'rm -f -v container-1')).toBe(true)
     expect(result.containerId).toBe('container-2')
     expect(result.port).toBe('55002')
   })
@@ -189,11 +195,14 @@ describe('launchWithPortRetry（发布失败删容器重建）', () => {
         backoffMs: 1_000,
       }),
     ).rejects.toThrow(/端口映射未在 5s 内发布/)
-    expect(fake.calls.filter((c) => c[0] === 'rm').map((c) => c[2])).toEqual([
+    const removals = fake.calls.filter((c) => c[0] === 'rm')
+    expect(removals.map((c) => c[c.length - 1])).toEqual([
       'container-1',
       'container-2',
       'container-3',
     ])
+    // 每一次都带 -v（#188）：三次重试就是三个匿名卷，漏一个都是永久的。
+    expect(removals.every((c) => c.includes('-v'))).toBe(true)
   })
 
   it('失败路径写结构化 WARN（attempt 计数可见，供归因）', async () => {
@@ -210,5 +219,49 @@ describe('launchWithPortRetry（发布失败删容器重建）', () => {
     ).rejects.toThrow()
     expect(logged.filter((l) => l.startsWith('WARN 第 1/2 次'))).toHaveLength(1)
     expect(logged.filter((l) => l.startsWith('WARN 第 2/2 次'))).toHaveLength(1)
+  })
+})
+
+describe('陈旧容器清扫（#188：中断的运行会留下容器 + 匿名卷）', () => {
+  it('按本 worktree 的 scope 标签筛，逐条 rm -f -v（卷跟着走）', async () => {
+    const calls: string[][] = []
+    const docker = async (args: string[]): Promise<string> => {
+      calls.push(args)
+      if (args[0] === 'ps') return 'aaa\nbbb\n'
+      return ''
+    }
+    await sweepStaleContainers({ docker, log: () => {} })
+    // 筛选用的是 scope 标签（并行 worktree 隔离），不是全量清扫。
+    expect(calls[0]?.slice(0, 3)).toEqual(['ps', '-aq', '--filter'])
+    expect(calls[0]?.[3]).toMatch(/^label=whalepod\.e2e-scope=/)
+    expect(calls.slice(1)).toEqual([
+      ['rm', '-f', '-v', 'aaa'],
+      ['rm', '-f', '-v', 'bbb'],
+    ])
+  })
+
+  it('没有陈旧容器时一条命令都不删', async () => {
+    const calls: string[][] = []
+    await sweepStaleContainers({
+      docker: async (args: string[]) => {
+        calls.push(args)
+        return '\n'
+      },
+      log: () => {},
+    })
+    expect(calls).toEqual([['ps', '-aq', '--filter', expect.stringContaining('label=')]])
+  })
+
+  it('docker ps 抖动时只告警、不抛错（清扫是尽力而为，不该挡住启动）', async () => {
+    const logged: string[] = []
+    await expect(
+      sweepStaleContainers({
+        docker: async () => {
+          throw new Error('docker daemon not running')
+        },
+        log: (message: string) => logged.push(message),
+      }),
+    ).resolves.toBeUndefined()
+    expect(logged.join('\n')).toContain('清扫陈旧容器失败')
   })
 })

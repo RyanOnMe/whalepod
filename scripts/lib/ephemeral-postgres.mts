@@ -143,7 +143,11 @@ export async function launchWithPortRetry(
       )
       // 删掉这个「活着但网络没发布」的容器，让下一次尝试拿到全新沙箱。
       try {
-        await deps.docker(['rm', '-f', containerId])
+        // `-v` 必须带（#188）：这里删的是**活着**的容器，`--rm` 策略不会生效，
+        // 而 docker rm 默认**不回收匿名卷**——postgres 镜像在 /var/lib/postgresql/data
+        // 声明了 VOLUME，每次重试就会永久漏一个 ~45 MB 的卷。实测复现：中断一次运行
+        // 留下容器，事后 `docker rm -f`（无 -v）→ 卷永久残留。
+        await deps.docker(['rm', '-f', '-v', containerId])
       } catch {
         // --rm 容器可能已自清：删不掉不是本路径的判据，继续重试。
       }
@@ -194,9 +198,54 @@ export function e2eScope(cwd: string = process.cwd()): string {
   return `${name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 24)}-${hash.toString(16).slice(0, 6)}`
 }
 
+/**
+ * 清扫本 worktree 上一次运行留下的容器与匿名卷（#188）。
+ *
+ * 为什么必须有：`--rm` 只在容器**自己退出**时回收匿名卷。上一次运行若被 SIGKILL /
+ * 超时打断（本机高负载时很常见），容器会一直活着，卷也就一直留着；等到有人（或某条清理
+ * 命令）用 `docker rm -f` 收掉容器时，卷**不会**跟着走。实测复现过这条链。
+ *
+ * 只按**本 worktree 的 scope 标签**筛，避免误删并行跑的兄弟 worktree 的库
+ *（`e2eScope()` 的隔离设计见上）。
+ */
+export async function sweepStaleContainers(
+  deps: {
+    docker?: (args: string[]) => Promise<string>
+    log?: (message: string) => void
+  } = {},
+): Promise<void> {
+  const runDocker = deps.docker ?? docker
+  const log = deps.log ?? ((message: string) => console.error(`[ephemeral-postgres] ${message}`))
+  const scope = e2eScope()
+  let ids: string[] = []
+  try {
+    const output = await runDocker(['ps', '-aq', '--filter', `label=whalepod.e2e-scope=${scope}`])
+    ids = output
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+  } catch (error) {
+    // 清扫是尽力而为：Docker 抖动不该挡住启动（真正的启动失败会在下面如实报错）。
+    log(
+      `WARN 清扫陈旧容器失败（继续启动）：${error instanceof Error ? error.message : String(error)}`,
+    )
+    return
+  }
+  if (ids.length === 0) return
+  for (const id of ids) {
+    try {
+      await runDocker(['rm', '-f', '-v', id])
+    } catch {
+      // 单条删不掉不影响其余：下轮启动还会再扫。
+    }
+  }
+  log(`已清扫上一次运行留下的 ${ids.length} 个容器（含其匿名卷）`)
+}
+
 export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
   await ensureDocker()
   await ensureImage()
+  await sweepStaleContainers()
 
   // 随机密码：一次性容器不落到任何文件，避免 secret-scan 语料与真实凭据混淆。
   const password = randomBytes(12).toString('base64url')
@@ -241,7 +290,8 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
     if (stopped) return
     stopped = true
     try {
-      await docker(['rm', '-f', containerId])
+      // `-v` 见上面重试路径的说明（#188）：强杀/超时路径下容器可能仍活着，不带 -v 就漏卷。
+      await docker(['rm', '-f', '-v', containerId])
       log(`容器 ${containerId.slice(0, 12)} 已删除`)
     } catch (error) {
       log(
