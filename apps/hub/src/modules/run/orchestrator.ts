@@ -33,6 +33,7 @@ import {
   setApprovalStatus,
   setRunStatus,
   setTaskStatus,
+  resolveInstructionRight,
   TERMINAL_RUN_STATUSES,
   transactCommand,
   unwrapPgError,
@@ -129,8 +130,14 @@ export class RunOrchestrator {
       .where(eq(schema.tasks.id, taskId))
       .for('update')
     if (task === undefined) throw new RunCommandError('NOT_FOUND', 'task not found')
-    if (task.assigneeUserId !== ctx.userId) {
-      throw new RunCommandError('FORBIDDEN', 'only the task assignee can start a run')
+    // 执行主体（ADR-0009 决策 4；#198）：责任人 ∪ 被授权成员。判定收敛在仓储的唯一入口里，
+    // 别在这里再写一遍条件——三处各写一份正是这轮要消灭的东西。
+    const right = await resolveInstructionRight(tx, taskId, ctx.userId)
+    if (right === 'none') {
+      throw new RunCommandError(
+        'FORBIDDEN',
+        'only the task assignee or a granted member can start a run',
+      )
     }
     if (task.assignmentStatus !== 'accepted') {
       throw new DomainError('ASSIGNMENT_NOT_ACCEPTED', 'assignment must be accepted first')
@@ -165,7 +172,9 @@ export class RunOrchestrator {
       .from(schema.devices)
       .where(eq(schema.devices.id, input.deviceId))
     // Device 必须属于 owner（§2.6）；存在性+归属合一，避免可枚举。
-    if (device === undefined || device.ownerUserId !== ctx.userId) {
+    // 设备/工作区属于**运行归属人**（= Task 责任人），不是"当前开口的人"：
+    // 被授权成员只是能说话，执行永远在责任人的设备与凭据上（#198 红线）。
+    if (device === undefined || device.ownerUserId !== task.assigneeUserId) {
       throw new RunCommandError('FORBIDDEN', 'device does not belong to the actor')
     }
     if (device.revokedAt !== null) {
@@ -177,7 +186,7 @@ export class RunOrchestrator {
       .where(eq(schema.workspaces.id, input.workspaceId))
     if (
       workspace === undefined ||
-      workspace.ownerUserId !== ctx.userId ||
+      workspace.ownerUserId !== task.assigneeUserId ||
       workspace.deviceId !== device.id
     ) {
       throw new RunCommandError('FORBIDDEN', 'workspace does not belong to the actor and device')

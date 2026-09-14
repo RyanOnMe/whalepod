@@ -9,14 +9,15 @@
  * 复用的是既有的两条路径（`sendRunFollowup` / `orchestrator.create`），所以 followup 的排队语义、
  * Run 的活跃唯一约束（`run_one_active_per_task`）、机器身份校验都不需要第二份实现。
  *
- * 授权：本片沿用既有守卫（`orchestrator.create` 里"只有 Task 责任人能起 Run"）——
- * **泛化到 `task_instruction_grant` 是切片④ 的事**，别在这里先造半套。
+ * 授权（切片④ #198 已落地）：责任人 ∪ 被授权成员（`resolveInstructionRight` 唯一判定入口）。
+ * 被授权成员只是"能开口"——设备/凭据仍是责任人的，Run 归属也仍是责任人。
  */
 import { and, desc, eq, inArray } from 'drizzle-orm'
 import type { Database, TaskMessageRow, Tx } from '@whalepod/db'
 import {
   findCommandReceipt,
   insertMessage,
+  resolveInstructionRight,
   schema,
   settleInstruction,
   TERMINAL_RUN_STATUSES,
@@ -99,6 +100,17 @@ export async function sendInstruction(
 ): Promise<SendInstructionOutcome> {
   const now = deps.now?.() ?? new Date()
 
+  // **先判权，再谈幂等**（评审 #204 阻断 1）：回执回放此前排在判权之前，于是「撤销授权后拿旧 key
+  // 重放」能拿回原 Run（撤销立刻失效被推翻），未授权的人猜到 key 还能读回别人指令的正文。
+  // 回执只服务「本人已成功的重试」，所以权限必须最先判定。
+  const right = await resolveInstructionRight(deps.database.db, taskId, actor.userId)
+  if (right === 'none') {
+    throw new RunCommandError(
+      'FORBIDDEN',
+      'only the task assignee or a granted member can send instructions',
+    )
+  }
+
   // **幂等优先**（评审 B1）：`orchestrator.create` 用 `run.create:<key>` 回执保证同一把 key 只建一个
   // Run，但"写指令消息 + 回填锚点"没有幂等——同 key 重发会插出第二条指令、覆盖 `trigger_message_id`，
   // 让第一条永远等不到 ack。所以在**任何副作用之前**先按同一把 key 查回执：命中说明上一次调用已经
@@ -110,7 +122,7 @@ export async function sendInstruction(
   if (priorReceipt !== undefined) {
     const priorRunId = (priorReceipt.result as { id?: unknown }).id
     if (typeof priorRunId === 'string') {
-      const replayed = await replayByRun(deps, priorRunId)
+      const replayed = await replayByRun(deps, priorRunId, taskId)
       if (replayed !== undefined) return replayed
     }
   }
@@ -132,10 +144,18 @@ export async function sendInstruction(
     return { kind: queued ? 'queued' : 'followup', message, runId: active.id }
   }
 
+  // 目标解析用**责任人**的设备/工作区：被授权成员只是"能开口"，执行永远在责任人的机器与凭据上。
+  const [task] = await deps.database.db
+    .select({ assigneeUserId: schema.tasks.assigneeUserId })
+    .from(schema.tasks)
+    .where(eq(schema.tasks.id, taskId))
+    .limit(1)
+  if (task === undefined) throw new RunCommandError('NOT_FOUND', 'task not found')
+
   // 没有活跃 Run → 建 Run。目标解析失败一律**明确拒绝**（不猜，也不落一条注定失败的指令）。
   const target = await resolveRunTarget(deps.database.db, {
     taskId,
-    assigneeUserId: actor.userId,
+    assigneeUserId: task.assigneeUserId,
     ...(input.deviceId !== undefined ? { deviceId: input.deviceId } : {}),
     ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
   })
@@ -279,9 +299,10 @@ export async function rejectInstruction(
 async function replayByRun(
   deps: SendInstructionDeps,
   runId: string,
+  taskId: string,
 ): Promise<SendInstructionOutcome | undefined> {
   const [run] = await deps.database.db
-    .select({ triggerMessageId: schema.runs.triggerMessageId })
+    .select({ triggerMessageId: schema.runs.triggerMessageId, taskId: schema.runs.taskId })
     .from(schema.runs)
     .where(eq(schema.runs.id, runId))
   if (run?.triggerMessageId == null) return undefined
@@ -290,5 +311,8 @@ async function replayByRun(
     .from(schema.taskMessages)
     .where(eq(schema.taskMessages.id, run.triggerMessageId))
   if (message === undefined) return undefined
+  // 纵深防御（评审 #204 阻断 1）：回执里的 Run 必须属于**本次请求的 Task**，
+  // 否则就是跨 Task 回放（即使 key 撞上了也不该把别人的指令读回去）。
+  if (run.taskId !== taskId) return undefined
   return { kind: 'started_run', message: toCommentView(message), runId }
 }

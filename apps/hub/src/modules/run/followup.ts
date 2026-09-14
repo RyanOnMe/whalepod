@@ -22,6 +22,7 @@ import {
   appendTeamEvent,
   INSTRUCTION_REFUSAL,
   insertMessage,
+  resolveInstructionRight,
   schema,
   settleInstruction,
   TERMINAL_RUN_STATUSES,
@@ -137,9 +138,14 @@ export async function sendRunFollowup(
     // 而其中一个本该在状态已变后被拒——ADR-0009 决策 5 的「按状态受理」要求判定串行）。
     const [run] = await tx.select().from(schema.runs).where(eq(schema.runs.id, runId)).for('update')
     if (run === undefined) throw new RunCommandError('NOT_FOUND', 'run not found')
-    // 执行主体不变量（ADR-0009 决策 4）：只有 Task 责任人能往 Run 里说话。切片④ 才引入授权名单。
-    if (task.assigneeUserId !== actor.userId) {
-      throw new RunCommandError('FORBIDDEN', 'only the task assignee can follow up on a run')
+    // 执行主体（ADR-0009 决策 4；切片④ #198 已落地）：责任人 ∪ 被授权成员。
+    // Run 归属不变——被授权成员的话记在他的名下（authorUserId = actor），运行仍归责任人。
+    const right = await resolveInstructionRight(tx, task.id, actor.userId)
+    if (right === 'none') {
+      throw new RunCommandError(
+        'FORBIDDEN',
+        'only the task assignee or a granted member can follow up on a run',
+      )
     }
 
     const messageId = uuidv7()

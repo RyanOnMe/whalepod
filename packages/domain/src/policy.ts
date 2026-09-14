@@ -32,7 +32,6 @@ export type Action =
   | 'submit_review'
   | 'complete_task'
   | 'cancel_task'
-  | 'create_run'
   | 'cancel_run'
   | 'revoke_device'
   | 'decide_approval'
@@ -72,8 +71,11 @@ export function authorize(actor: Actor, action: Action, resource: Resource = {})
     case 'submit_review':
     case 'complete_task':
     case 'cancel_task':
-    case 'create_run':
       return isAssignee && resource.assignmentStatus === 'accepted'
+    // 注意：本函数**不再**包含 `create_run`。切片④（#198）之后驱动权是**数据库事实**
+    // （责任人 ∪ `task_instruction_grant` 里的成员），纯函数拿不到授权名单、无法诚实表达；
+    // 真正的判定入口是 `packages/db/src/repositories/instruction-grant.ts` 的
+    // `resolveInstructionRight`。刻意不留一份会过期的第二真相，故该动作已从 Action 联合类型移除。
     case 'cancel_run':
     case 'revoke_device':
       return isOwner || isOwnerOrAdmin
