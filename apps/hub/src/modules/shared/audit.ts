@@ -20,6 +20,7 @@ export type AuditAction =
   | 'task.complete'
   | 'task.cancel'
   | 'comment.create'
+  | 'instruction.send'
   | 'agent.create'
   | 'agent.revision'
   | 'device.pair'

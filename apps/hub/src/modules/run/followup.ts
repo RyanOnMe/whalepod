@@ -322,3 +322,35 @@ export async function dispatchPendingInstructions(
   }
   return dispatched
 }
+
+/**
+ * 由指令起的 Run：`run.start` 的 ack 就是**那条指令**的命运（P1-196；ADR-0009 决策 3）。
+ *
+ * 锚点是 `runs.trigger_message_id`（migration 0005）——wire 帧载荷不可能夹带消息 id，所以
+ * commandId → 指令的映射只能落在 Hub 自己的 runs 行上（与追问走 `outbox.message_id` 同理）。
+ *
+ * 结算仍只从 `pending` 收敛一次（`settleInstruction` 的既有语义）：重复 ack 幂等，且不会把
+ * 已经落定的指令改写成别的命运。
+ */
+export async function settleTriggerInstruction(
+  tx: Tx,
+  run: RunRow,
+  ack: { accepted: boolean; error?: { code: string; message: string } | undefined },
+): Promise<void> {
+  if (run.triggerMessageId === null) return
+  await settleInstruction(
+    tx,
+    run.triggerMessageId,
+    ack.accepted
+      ? { state: 'accepted', runId: run.id }
+      : {
+          state: 'rejected',
+          // 拒绝理由**落库**（不能只写事件）：team_event 只有 24 小时窗口，而「我的指令为什么
+          // 没被受理」是长期问题（migration 0004 立的规矩）。
+          error: {
+            code: ack.error?.code ?? 'INTERNAL_ERROR',
+            message: ack.error?.message ?? 'device refused run.start without a reason',
+          },
+        },
+  )
+}

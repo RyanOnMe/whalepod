@@ -6,6 +6,7 @@ import {
   CreateTaskRequestSchema,
   ReassignTaskRequestSchema,
   UpdateTaskRequestSchema,
+  SendInstructionRequestSchema,
 } from '@whalepod/protocol'
 import { audit } from '../shared/audit.js'
 import { ApiError } from '../shared/http-error.js'
@@ -22,6 +23,8 @@ import {
   submitTaskForReview,
   updateTask,
 } from './commands.js'
+import { sendInstruction } from '../run/instruction.js'
+import type { RunOrchestrator } from '../run/orchestrator.js'
 import { listTaskViewsByProject } from './queries.js'
 import { getTaskRoom } from './view.js'
 
@@ -29,6 +32,9 @@ export interface TaskRouteDeps {
   readonly database: Database
   readonly requireActor: RequireActor
   readonly outbox: Outbox
+  /** 执行区指令要建 Run（#196）：复用既有的建 Run 路径，不另造一套。 */
+  readonly orchestrator: RunOrchestrator
+  readonly dshDistributionVersionFor: (deviceId: string) => Promise<string | undefined>
 }
 
 function actorFrom(session: SessionActor) {
@@ -168,5 +174,47 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
     })
     audit(request, 'comment.create', 'success', session.userId)
     return reply.code(201).send({ ok: true, data: comment })
+  })
+
+  /**
+   * POST /tasks/:taskId/instructions（#196）：**执行区**发一条指令驱动 Agent。
+   *
+   * 与 `/comments` 的分工是 ADR-0010 的核心：评论区只承载人际交流，指令走执行区。
+   * 有活跃 Run → 降级为追问（③c-1 的排队/下发语义）；没有 → 建 Run（设备/工作区三段式解析）。
+   * 解析不到目标时**明确拒绝**（409 `DEVICE_OFFLINE`，不猜、不落指令）。
+   */
+  app.post('/tasks/:taskId/instructions', async (request, reply) => {
+    const session = await deps.requireActor(request)
+    const { taskId } = request.params as { taskId: string }
+    const parsed = SendInstructionRequestSchema.safeParse(request.body)
+    if (!parsed.success) {
+      // `.parse()` 抛的 ZodError 会被全局处理吞成 500（#187 评审 B1 的教训），这里显式回 400。
+      return reply
+        .code(400)
+        .send({ ok: false, error: { code: 'VALIDATION_FAILED', message: parsed.error.message } })
+    }
+    const outcome = await sendInstruction(
+      {
+        database: deps.database,
+        outbox: deps.outbox,
+        orchestrator: deps.orchestrator,
+        dshDistributionVersionFor: deps.dshDistributionVersionFor,
+      },
+      actorFrom(session),
+      taskId,
+      {
+        text: parsed.data.text,
+        idempotencyKey: readIdempotencyKey(request),
+        ...(parsed.data.deviceId !== undefined ? { deviceId: parsed.data.deviceId } : {}),
+        ...(parsed.data.workspaceId !== undefined ? { workspaceId: parsed.data.workspaceId } : {}),
+        ...(parsed.data.agentId !== undefined ? { agentId: parsed.data.agentId } : {}),
+      },
+    )
+    audit(request, 'instruction.send', 'success', session.userId)
+    // 201：受理与否是**消息的命运**（可能已 rejected），不是请求的失败——与追问路由同一口径。
+    return reply.code(201).send({
+      ok: true,
+      data: { ...outcome.message, outcome: outcome.kind, runId: outcome.runId },
+    })
   })
 }

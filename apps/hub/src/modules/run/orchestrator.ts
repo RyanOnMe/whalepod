@@ -49,7 +49,7 @@ import type { ActorContext, CreateRunInput } from './commands.js'
 import { assertCreateRunInput } from './commands.js'
 import type { AuthenticatedDevice } from './device-gateway.js'
 import { isRunSemanticConflict, RunCommandError } from './errors.js'
-import { settleFollowupAck } from './followup.js'
+import { settleFollowupAck, settleTriggerInstruction } from './followup.js'
 import { applyRunStatus } from './run-status.js'
 import type { ApprovalView, RunView } from './queries.js'
 import { toApprovalView, toRunView } from './queries.js'
@@ -413,6 +413,9 @@ export class RunOrchestrator {
         .where(eq(schema.runs.id, runId))
         .for('update')
       if (run === undefined || run.status !== 'queued') return // 已迁移过：不重复迁移
+      // #196：由执行区指令起的 Run，其 run.start ack 就是**那条指令**的命运（决策 3「受理即落账」）。
+      // 与 followup 的区别只是锚点不同：这里是 runs.trigger_message_id，那边是 outbox.message_id。
+      await settleTriggerInstruction(tx, run, ack)
       if (ack.accepted) {
         this.applyRunTransition(run, { type: 'dispatch_acked' })
         await setRunStatus(tx, run.id, 'dispatching')

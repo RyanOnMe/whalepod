@@ -93,6 +93,20 @@ export const CreateCommentRequestSchema = z.strictObject({
 })
 
 /**
+ * POST /tasks/:taskId/instructions（#196；ADR-0010 决策 2 的执行区入口）。
+ *
+ * 与人际评论的区别：这条**驱动 Agent**——有活跃 Run 时降级为追问，没有时**建 Run**。
+ * 执行目标（设备/工作区）缺省走三段式自动解析（上一个 Run → 责任人最近在线设备 → 拒绝），
+ * 显式传入即覆盖；`agentId` 缺省取该 Task 上一个 Run 用过的 Agent。
+ */
+export const SendInstructionRequestSchema = z.strictObject({
+  text: z.string().min(1).max(10000),
+  deviceId: z.uuid().optional(),
+  workspaceId: z.uuid().optional(),
+  agentId: z.uuid().optional(),
+})
+
+/**
  * POST /tasks/:taskId/runs：Run 固化 Agent、Workspace 与 Profile Revision（§2.6）。
  * profileRevisionId 缺省时由 Hub 取 Agent 当前 Revision（§2.3）。
  * rerunOfRunId：显式重跑血缘（§2.6 rerun_of_run_id；P1-16 G7-04）——必须指向
@@ -211,6 +225,7 @@ export type CreateTaskRequest = z.infer<typeof CreateTaskRequestSchema>
 export type UpdateTaskRequest = z.infer<typeof UpdateTaskRequestSchema>
 export type ReassignTaskRequest = z.infer<typeof ReassignTaskRequestSchema>
 export type CreateCommentRequest = z.infer<typeof CreateCommentRequestSchema>
+export type SendInstructionRequest = z.infer<typeof SendInstructionRequestSchema>
 export type CreateRunRequest = z.infer<typeof CreateRunRequestSchema>
 export type CreateFollowupRequest = z.infer<typeof CreateFollowupRequestSchema>
 export type DecideApprovalRequest = z.infer<typeof DecideApprovalRequestSchema>
