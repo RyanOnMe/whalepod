@@ -141,13 +141,12 @@ export async function settleInstruction(
 }
 
 /**
- * 线程读取：按 `(createdAt, id)` 排序。`id` 是**决胜键**不是插入序（uuidv7 低位随机），
- * 它保证的是**确定性**——同一毫秒创建的多条消息每次读出的顺序一致。
- */
-/**
  * 列出任务的全部消息——**审计用全量查询**（含讨论、指令、追问）。
  *
- * 展示用请走下面两个按用途切开的口径（ADR-0010：评论区只承载人际交流）：
+ * 排序：按 `(created_at, id)`；`id` 是**决胜键**而不是插入序（uuidv7 低位随机），它保证的是
+ * **确定性**——同一毫秒创建的多条消息每次读出的顺序一致。
+ *
+ * **展示用不要用它**（ADR-0010：评论区只承载人际交流）：走下面两个按用途切开的口径——
  * `listDiscussionMessages`（讨论流）/ `listInstructionMessages`（执行流）。
  */
 export async function listMessages(handle: DbHandle, taskId: string): Promise<TaskMessageRow[]> {

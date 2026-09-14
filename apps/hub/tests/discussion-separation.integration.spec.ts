@@ -1,11 +1,16 @@
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@whalepod/db'
-import { insertMessage, listMessages, schema, setRunStatus } from '@whalepod/db'
+import { insertAgent, insertMessage, listMessages, schema, setRunStatus } from '@whalepod/db'
 import { sendRunFollowup } from '../src/modules/run/followup.js'
 import { getTaskRoom } from '../src/modules/task/view.js'
 import {
+  apiInject,
+  createTestApp,
   createTestDatabase,
+  driveSetup,
+  idemKey,
+  type TestApp,
   makeActor,
   makeCreateInput,
   makeHarness,
@@ -183,7 +188,81 @@ describe('discussion/execution separation (P1-194)', () => {
     expect(room?.instructions).toHaveLength(1)
   })
 
-  it('顺序在两条流里都按 (created_at, id)（同刻按 id 升序）——与线程展示顺序一致', async () => {
+  it('指令流也按 (created_at, id)：created_at 与 id 顺序故意相反 + 同刻次级键（评审 F）', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    const base = Date.parse('2026-08-25T00:00:00.000Z')
+    // 只造**指令流**（讨论流为空）：这样才能单独钉住执行区视图的顺序——
+    // 评审变异 F 证明：把 `listInstructionMessages` 改成倒序时，原先 6 条判据全绿
+    //（判据 2 用 Set 比较掩盖了顺序，判据 6 只造 discussion），而 03 §2.2 已对外承诺两条流同序。
+    const make = (id: string, body: string, createdAt: number) =>
+      insertMessage(database.db, {
+        id,
+        taskId: ids.taskId,
+        authorUserId: ids.userId,
+        body,
+        kind: 'instruction' as const,
+        origin: 'human' as const,
+        targetAgentId: ids.agentId,
+        instructionState: 'pending' as const,
+        createdAt: new Date(createdAt),
+      })
+    // 插入序 = 晚→中→早；created_at 升序（早→中→晚）；id 序与 created_at **相反**；
+    // 第 4 条与 middle 同 created_at 但 id 更小 → 钉住次级键。
+    const late = await make('ffffffff-0000-7000-8000-000000000001', 'C 最晚', base + 3000)
+    const middle = await make('ffffffff-0000-7000-8000-000000000002', 'B 中间', base + 2000)
+    const early = await make('ffffffff-0000-7000-8000-000000000003', 'A 最早', base + 1000)
+    const tieEarly = await make(
+      'aaaaaaaa-0000-7000-8000-000000000000',
+      'B′ 同刻但 id 更小',
+      base + 2000,
+    )
+
+    const room = await getTaskRoom(database.db, ids.taskId)
+    expect(room?.instructions.map((message) => message.id)).toEqual([
+      early.id,
+      tieEarly.id,
+      middle.id,
+      late.id,
+    ])
+    // 讨论流此时为空（本判据只针对执行区顺序，评审 F 的归因要精准）。
+    expect(room?.comments).toEqual([])
+  })
+
+  it('runId 的诚实断言：accepted / rejected 的指令必带 runId，pending 的可以没有（评审应改 2）', async () => {
+    const { ids, instruction, rejected } = await seedMixedTask()
+    const room = await getTaskRoom(database.db, ids.taskId)
+    const withRun = (room?.instructions ?? []).filter(
+      (message) =>
+        message.instructionState === 'accepted' || message.instructionState === 'rejected',
+    )
+    // 反例：合法 `pending` 指令可以 runId=null（DB 的 check 只约束 accepted），
+    // 所以「所有执行流条目都带 runId」不是不变量——只对受理/拒绝过的成立。
+    expect(withRun.length).toBeGreaterThanOrEqual(2)
+    expect(withRun.every((message) => message.runId !== null)).toBe(true)
+    expect(withRun.map((message) => message.id)).toEqual(
+      expect.arrayContaining([instruction.id, rejected.id]),
+    )
+
+    // 同一个任务里再造一条合法 `pending` 指令（可以 runId=null）：`seedRunPrereqs` 每用例只能调一次
+    //（team 是单例，再调一次会撞 `team_singleton`），所以复用本任务的夹具。
+    const pending = await insertMessage(database.db, {
+      id: randomUUID(),
+      taskId: ids.taskId,
+      authorUserId: ids.userId,
+      body: '还没建 Run 的指令（pending + runId=null）',
+      kind: 'instruction',
+      origin: 'human',
+      targetAgentId: ids.agentId,
+      instructionState: 'pending',
+    })
+    const pendingRoom = await getTaskRoom(database.db, ids.taskId)
+    expect(pendingRoom?.instructions.find((message) => message.id === pending.id)).toMatchObject({
+      instructionState: 'pending',
+      runId: null,
+    })
+  })
+
+  it('顺序在讨论流里按 (created_at, id)（同刻按 id 升序）——与线程展示顺序一致', async () => {
     const ids = await seedRunPrereqs(database.db)
     const base = Date.parse('2026-08-25T00:00:00.000Z')
     const make = (id: string, body: string, createdAt: number) =>
@@ -201,5 +280,75 @@ describe('discussion/execution separation (P1-194)', () => {
     const early = await make('ffffffff-0000-7000-8000-000000000002', '早', base + 1000)
     const room = await getTaskRoom(database.db, ids.taskId)
     expect(room?.comments.map((message) => message.id)).toEqual([early.id, late.id])
+  })
+})
+
+describe('讨论/执行分栏的 HTTP 面（P1-194 评审观察 3：判据不能只在函数层）', () => {
+  let database: Database
+  let ctx: TestApp
+  beforeAll(async () => {
+    database = await createTestDatabase()
+    ctx = await createTestApp(database)
+  })
+  beforeEach(async () => {
+    await resetDatabase(database)
+  })
+  afterAll(async () => {
+    await ctx.close()
+    await database.close()
+  })
+
+  it('GET /tasks/:taskId 的 JSON 里同时有 comments 与 instructions（执行区据此渲染）', async () => {
+    const alice = await driveSetup(ctx)
+    const project = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: '/api/v1/projects',
+      payload: { name: 'P' },
+      idempotencyKey: idemKey(),
+    })
+    const task = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/projects/${project.json().data.id}/tasks`,
+      payload: { title: 'T', assigneeUserId: alice.userId },
+      idempotencyKey: idemKey(),
+    })
+    const taskId = task.json().data.id as string
+
+    // 走真人路径造一条讨论（HTTP），再直接种一条指令（今天 API 还不产指令，见验收文档）。
+    await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/comments`,
+      payload: { body: '先讨论一下' },
+    })
+    // 团队/成员由 driveSetup 经 HTTP 建好，这里不再 seedRunPrereqs（team 是单例，会撞约束）；
+    // 指令需要 target_agent_id；`driveSetup` 只建团队与成员（不建 Agent），这里补一个最小 Agent 行
+    // （本判据验的是读模型在 HTTP 上的形状，不是 Agent 创建链——那条由 agent 相关用例覆盖）。
+    const agent = await insertAgent(database.db, {
+      id: randomUUID(),
+      name: 'agent-http',
+      createdBy: alice.userId,
+    })
+    await insertMessage(database.db, {
+      id: randomUUID(),
+      taskId,
+      authorUserId: alice.userId,
+      body: '执行区的指令',
+      kind: 'instruction',
+      origin: 'human',
+      targetAgentId: agent.id,
+      instructionState: 'pending',
+    })
+
+    const res = await apiInject(ctx, alice, { method: 'GET', url: `/api/v1/tasks/${taskId}` })
+    expect(res.statusCode).toBe(200)
+    const data = res.json().data as {
+      comments: Array<{ kind: string; body: string }>
+      instructions: Array<{ kind: string; body: string }>
+    }
+    // HTTP 契约：两条流都在，且各自只含该含的 kind。
+    expect(data.comments.map((message) => message.body)).toEqual(['先讨论一下'])
+    expect(data.comments.every((message) => message.kind === 'discussion')).toBe(true)
+    expect(data.instructions.map((message) => message.body)).toEqual(['执行区的指令'])
+    expect(data.instructions.every((message) => message.kind !== 'discussion')).toBe(true)
   })
 })
