@@ -79,7 +79,8 @@ npx tsx scripts/with-test-postgres.mts vitest run --project integration \
 - **路由层已补**（`followup-route.integration.spec.ts`，评审要求）：device/workspace 直接按外键
   关系铺行，不真配对（配对链另有 spec）；真配对的端到端仍归切片⑥ 的 Q5。
 - **`queued`/`dispatching` 的「排队」只在 Hub 侧成立**：「Node 收到后会不会先跑完首轮再读追问」
-  属 Node/Runtime 行为，本片只验 Hub 落了 pending 且命令按同一条 outbox 保序；端到端待 Q5/Q6。
+  属 Node/Runtime 行为，本片只验 Hub 落了 pending（**③c-1/P1-192 后：未 running 的窗口不再入队**，排队与补发见
+`instruction-queue-acceptance.md`）；端到端待 Q5/Q6。
 - **「指令在无活跃 Run 时自动起 Run」不在本片**：需要 `runs.trigger_message_id` 与自动触发
   降级规则（切片③c/⑦）。今天这类请求会被判「非活跃状态」而落 `rejected`——**不会**静默排队。
 - **`accepted=true` 仍不保证模型读到**：只到「Node 写进在管进程的 stdin」（切片② 的登记），
@@ -103,7 +104,7 @@ npx tsx scripts/with-test-postgres.mts vitest run --project integration \
 
 | 变异 | 期望 | 结果 |
 |---|---|---|
-| 受理集合收窄成只剩 `running` | `waiting_approval` 等用例变红 | ✅ 变红 |
+| 受理集合收窄成只剩 `running` | `waiting_approval` 等用例变红 | ✅ 变红（**注**：这条曾是变异，③c-1/P1-192 后它已是**实现本身的行为**——`queued`/`dispatching`/`waiting_approval` 只排队不下发，见 `instruction-queue-acceptance.md`） |
 | 受理集合放宽到 `+cancel_requested` | 必须变红 | ✅ 变红（**整改前**该变异 10 条全绿——`cancel_requested` 无覆盖，评审抓出） |
 | 删掉 `settleInstruction` 的 `pending` 守卫 | 必须变红 | ✅ 变红（**整改前**集成层测不到：重复 ack 被 `ackInTransaction` 先挡住，故补了直接调用的数据层用例） |
 | 删掉**终态清扫**的 `pending` 守卫 | 必须变红 | ✅ 变红（**整改前**项目自带 352 条 integration 一条都不红——既有用例只从 pending 方向验清扫，故补了反方向用例「已 accepted 的消息在 Run 终态后仍是 accepted」） |

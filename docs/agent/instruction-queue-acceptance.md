@@ -17,7 +17,7 @@ Run 还没到 `running` 时，人在线程里接着说一句话，Hub 怎么处�
 （真守卫在 `apps/node/src/run/run-manager.ts:481-484`；`:392` 只是解释该守则的注释）→ 消息经 ack 结算被写成 `rejected`，
 与 ADR-0009 决策 5「接着说永远成立」相反。
 
-## 判定（6 条机器判据，`apps/hub/tests/instruction-queue.integration.spec.ts`）
+## 判定（9 条机器判据，`apps/hub/tests/instruction-queue.integration.spec.ts`）
 
 | 判据 | 断言 | 结果 |
 |---|---|---|
@@ -25,15 +25,21 @@ Run 还没到 `running` 时，人在线程里接着说一句话，Hub 怎么处�
 | 进 running 按序补发 | 两条排队追问 → `runtime.ready` 后恰好 2 条命令，顺序 = `(created_at, id)` = 线程顺序 | PASS |
 | 载荷即 wire 帧 | 每条命令载荷**恰好** `{commandId, runId, text}`，`messageId` 落在 outbox 行 | PASS |
 | 入队≠受理 | 补发后消息仍 `pending`，由 ack 决定命运 | PASS |
-| 幂等 | 审批往返（`running → waiting_approval → running`）不重复下发旧指令；旧命令 id 不变 | PASS |
+| **真人路径** | 审批窗口排队 → **HTTP 决策**（`decideApproval`）通过 → 补齐下发，旧命令 id 不变 | PASS |
+| **reconciler 探活路径** | `run.snapshot` 把 `dispatching → running` 时同样放行排队指令 | PASS |
+| **审批过期清扫路径** | `expireApprovals` 让 `waiting_approval → running` 时同样放行 | PASS |
 | 终态不吊死 | 排队期间 Run 进终态 → 清扫成 `rejected(RUN_TERMINAL)`，且始终没下发过 | PASS |
-| Node 守卫语义 | `FakeDeviceGateway.refuseCommand` 复刻 not-ready 拒绝：回 `accepted=false` + 错误码、**不执行副作用**、同 commandId 重放同一份拒收 | PASS（4 条，`packages/testkit/tests/fake-device-gateway.spec.ts`） |
+| 顺序契约 | 按 `(created_at, id)` 补发——含**同 created_at** 时按 id 升序（次级键） | PASS |
+
+Node 侧的 not-ready 守卫**不在本文件验**：它由 `FakeDeviceGateway.refuseCommand` 的 4 条单测覆盖
+（`packages/testkit/tests/fake-device-gateway.spec.ts`）——该缝对所有帧生效，接进本文件会把正常
+链路的 `run.start` 也拒掉（首版曾放了一个从未接线的 `refuseUnlessRunning`，已删）。
 
 ## 变异验证（每条都确认变异已落盘、构建退出码为 0、结束时树还原）
 
 | 变异 | 红 | 归因 |
 |---|---|---|
-| A 把「未 running 也下发」改回去（=③b 错行为） | **6**（另有 ③b 验收的 3 条同时红，合计 9） | 三条排队窗口用例 + 顺序用例 + 幂等 + 终态 |
+| A 把「未 running 也下发」改回去（=③b 错行为） | **7**（本文件；另有 ③b 验收 3 条同时红，合计 10） | 三条排队窗口 + 顺序 + 幂等 + 终态 + 真人/探活路径（「过期清扫」在 A 下恰好仍绿） |
 | B 删掉审批闭环回 running 的补发点 | **1** | 恰是「审批往返」那条（本片首版就漏了这个入口） |
 | C 去掉补发里的 `message_id` 幂等判据 | **1** | 恰是「不重复下发」那条 |
 | D `decide.ts` 绕过收口（真人路径漏接） | **1** | 恰是「真人路径」那条 |
