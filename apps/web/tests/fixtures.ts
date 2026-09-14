@@ -134,6 +134,8 @@ export function makeComment(overrides: Partial<CommentView> = {}): CommentView {
     targetAgentId: null,
     runId: null,
     instructionState: null,
+    instructionErrorCode: null,
+    instructionErrorMessage: null,
     createdAt: '2026-08-25T01:00:00.000Z',
     editedAt: null,
     ...overrides,

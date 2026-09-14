@@ -33,6 +33,7 @@ import {
   setApprovalStatus,
   setRunStatus,
   setTaskStatus,
+  TERMINAL_RUN_STATUSES,
   transactCommand,
   unwrapPgError,
 } from '@whalepod/db'
@@ -48,13 +49,13 @@ import type { ActorContext, CreateRunInput } from './commands.js'
 import { assertCreateRunInput } from './commands.js'
 import type { AuthenticatedDevice } from './device-gateway.js'
 import { isRunSemanticConflict, RunCommandError } from './errors.js'
+import { settleFollowupAck } from './followup.js'
 import type { ApprovalView, RunView } from './queries.js'
 import { toApprovalView, toRunView } from './queries.js'
 
-const TERMINAL_RUN_STATUSES = ['completed', 'failed', 'cancelled', 'lost'] as const
-
+// 终态集合来自 packages/db 的单一事实源（#187 评审 N3；此前三处各写一份）。
 function isTerminal(status: RunRow['status']): boolean {
-  return (TERMINAL_RUN_STATUSES as readonly string[]).includes(status)
+  return TERMINAL_RUN_STATUSES.has(status)
 }
 
 export interface RunOrchestratorDeps {
@@ -395,6 +396,13 @@ export class RunOrchestrator {
       }
       const acked = await ackInTransaction(tx, ack.commandId, now)
       if (!acked) return // 重复 ack（R7 重发后的旧 ack 重放）
+      if (command.type === 'run.followup') {
+        // #186：追问的受理回执此前落到 outbox 就断了（`!== 'run.start'` 直接 return），
+        // 线程消息永远停在 pending——正是 ADR-0009 决策 3 禁止的「已受理、零痕迹」的镜像。
+        // 结算按消息行上的状态收敛（只从 pending 走一次），理由同事务落库。
+        await settleFollowupAck(tx, command, ack)
+        return
+      }
       if (command.type !== 'run.start') return
       const runId = (command.payload as { runId?: unknown }).runId
       if (typeof runId !== 'string') return
