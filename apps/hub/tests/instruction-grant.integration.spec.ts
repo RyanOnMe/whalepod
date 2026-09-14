@@ -653,5 +653,57 @@ describe('instruction grants：评审整改的回归判据（P1-198）', () => {
     }
     expect(chain.join('\n')).toMatch(/must be the task assignee/)
     expect(await listInstructionGrants(database.db, ids.taskId)).toEqual([])
+
+    // **UPDATE 路径同样不得绕过**（评审复核实测：只挂 insert 时 `set granted_by = <非责任人>` 能落地）。
+    const legit = await grantInstruction(database.db, {
+      id: randomUUID(),
+      taskId: ids.taskId,
+      userId: member,
+      grantedBy: ids.userId,
+    })
+    const updateError = await database.db
+      .update(schema.taskInstructionGrants)
+      .set({ grantedBy: member }) // 把授予人改成非责任人
+      .where(eq(schema.taskInstructionGrants.id, legit.id))
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      )
+    expect(updateError).toBeDefined()
+    const updateChain: string[] = []
+    let updateCursor: unknown = updateError
+    while (updateCursor instanceof Error) {
+      updateChain.push(updateCursor.message)
+      updateCursor = updateCursor.cause
+    }
+    expect(updateChain.join('\n')).toMatch(/must be the task assignee/)
+    // 且原行没被改动（拒绝不是"改了一半"）。
+    const [unchanged] = await listInstructionGrants(database.db, ids.taskId)
+    expect(unchanged?.grantedBy).toBe(ids.userId)
+  })
+
+  it('改派语义按文档钉住：改派**保留**授权名单，granted_by 保留"当时的责任人"', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    const member = await addMember('granted')
+    const newOwner = await addMember('newowner')
+    await grantInstruction(database.db, {
+      id: randomUUID(),
+      taskId: ids.taskId,
+      userId: member,
+      grantedBy: ids.userId,
+    })
+
+    await database.db
+      .update(schema.tasks)
+      .set({ assigneeUserId: newOwner })
+      .where(eq(schema.tasks.id, ids.taskId))
+
+    // 名单保留（新责任人接手的是同一批协作者）——这是 migration 0006 注释里写死的行为。
+    const grants = await listInstructionGrants(database.db, ids.taskId)
+    expect(grants).toHaveLength(1)
+    expect(grants[0]).toMatchObject({ userId: member, grantedBy: ids.userId })
+    // 现任责任人永远能驱动（与名单无关）；新任责任人也能驱动自己的任务。
+    expect(await resolveInstructionRight(database.db, ids.taskId, newOwner)).toBe('assignee')
+    expect(await resolveInstructionRight(database.db, ids.taskId, member)).toBe('granted')
   })
 })

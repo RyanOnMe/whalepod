@@ -41,9 +41,18 @@ begin
 end;
 $$ language plpgsql;
 
+-- 覆盖 INSERT **和 UPDATE**：只挂 insert 的话，`update task_instruction_grant set granted_by = <非责任人>`
+-- 能成功落地（评审复核实测），于是"granted_by 必须是责任人"这条不变量只守住了一半。
 create trigger task_instruction_grant_by_assignee_check
-  before insert on task_instruction_grant
+  before insert or update of granted_by, task_id on task_instruction_grant
   for each row execute function task_instruction_grant_by_assignee();
+
+-- 改派语义（评审复核发现的第二个缺口，这里**明确写死**当前行为，别留给读者猜）：
+--   Task 改派给新责任人时，**保留**既有授权名单（新责任人接手的是同一批协作者，撤销名单会把
+--   正在推进的工作打断）；但 `granted_by` 的含义随之是"**当时的**责任人"，不再等于现任责任人。
+--   要收走名单就显式撤销（`revokeInstruction`），或由新责任人自己重授。
+--   若将来产品决定"改派即清空授权"，改成 after update 触发器删行即可——这是**产品决定**，
+--   不是实现细节，改之前先写 ADR/决策记录。
 
 -- 撤回一条指令（#198 的判据 3「撤销后立刻失效」）：
 -- 直接 delete 该行即可——没有缓存，守卫每次都点查本表，所以"立刻"是真的立刻。
