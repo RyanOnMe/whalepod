@@ -265,7 +265,10 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
   app.get('/tasks/:taskId/instruction-grants', async (request) => {
     await deps.requireActor(request)
     const { taskId } = request.params as { taskId: string }
-    const drivers = await listInstructionDrivers(deps.database, taskId)
+    // 必须走 mapGrantErrors：`listInstructionDrivers` 抛的是 `RunCommandError('NOT_FOUND')`，
+    // 而运行面的映射不覆盖 task 模块，直落全局 handler 会变成 **500**（复核实测：未知 Task 的
+    // GET → 500，而同一资源的 POST/DELETE 是 404、既有 `GET /tasks/:id` 也是 404）。
+    const drivers = await mapGrantErrors(() => listInstructionDrivers(deps.database, taskId))
     return { ok: true, data: drivers }
   })
 

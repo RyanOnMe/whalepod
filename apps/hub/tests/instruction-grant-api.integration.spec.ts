@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { insertMember, insertUser, listTeamEvents, schema, type Database } from '@whalepod/db'
+import { RunCommandError } from '../src/modules/run/errors.js'
 import { sendInstruction } from '../src/modules/run/instruction.js'
 import { revokeInstructionRight } from '../src/modules/task/instruction-grants.js'
 import {
@@ -282,29 +283,86 @@ describe('instruction grant management (P1-198 ④b)', () => {
     ).toEqual([])
   })
 
-  it('授权变更**不泄露原始 SQL**：非成员授权被拒时响应里没有库结构（23514 翻译）', async () => {
-    const { alice, taskId } = await seedTask()
-    // 直连库绕过命令层：插一行"非责任人授予"，触发 23514，走翻译路径。
-    const member = randomUUID()
-    await insertUser(database.db, {
-      id: member,
-      username: `m-${member.slice(0, 6)}`,
-      displayName: 'M',
-      passwordHash: 'x',
-    })
-    const [team] = await database.db.select().from(schema.teams).limit(1)
-    await insertMember(database.db, { teamId: team!.id, userId: member, role: 'member' })
-
-    // 命令层会先拦（403/404），所以这里直接验"翻译函数"的作用：
-    // 触发器抛的错若不经翻译，Drizzle 最外层 message 会带 `Failed query: insert into ...`。
+  it('23514 翻译：真实形态的错误被翻成人话，且**不误翻**不相关的错误（正反例）', async () => {
     const { translateGrantConstraintError } =
       await import('../src/modules/task/instruction-grants.js')
+    // 正例：逐字复现真实的错误链形态（外层是 Drizzle 的 `Failed query: …`，内层是触发器文案）。
+    // 断言目标是**"真的被翻译了"**（类型 + 错误码），而不是"输出里没有 SQL 字样"——
+    // 后者是永真判据（复核 #205 观察 2 实测：把 fixture 换成不含 SQL 的文案，9/9 仍全绿）。
     const raw = Object.assign(new Error('Failed query: insert into "task_instruction_grant" ...'), {
       cause: new Error('task_instruction_grant.granted_by must be the task assignee'),
     })
-    const translated = translateGrantConstraintError(raw) as { code: string; message: string }
+    const translated = translateGrantConstraintError(raw) as { code?: string; message?: string }
+    expect(translated).not.toBe(raw) // 确实换了一个对象（没翻译时会原样返回）
     expect(translated.code).toBe('VALIDATION_FAILED')
+    expect(translated.message).toMatch(/assignee/)
     expect(translated.message).not.toMatch(/insert into|task_instruction_grant/)
+
+    // 反例（负对照）：不含该触发文案的 PG 错误**不得**被误翻成"授权必须由责任人"——
+    // 否则 0005 的 `run_trigger_message_same_task` 那类 23514 会被错误归因。
+    const unrelated = Object.assign(new Error('Failed query: insert into "run" ...'), {
+      cause: new Error('run.trigger_message_id must reference a message of the same task'),
+    })
+    expect(translateGrantConstraintError(unrelated)).toBe(unrelated)
+  })
+
+  it('GET 名单的错误面与 POST/DELETE 一致：未知 Task → **404**（复核 S1：此前是 500）', async () => {
+    const { alice } = await seedTask()
+    const missing = randomUUID()
+    for (const [method, url] of [
+      ['GET', `/api/v1/tasks/${missing}/instruction-grants`],
+      ['POST', `/api/v1/tasks/${missing}/instruction-grants`],
+    ] as const) {
+      const res = await apiInject(ctx, alice, {
+        method,
+        url,
+        ...(method === 'POST' ? { payload: { userId: missing }, idempotencyKey: idemKey() } : {}),
+      })
+      // 三条路由的错误面必须自相矛盾地一致：未知资源就是 404，不是 500。
+      expect(res.statusCode, `${method} 未知 Task`).toBe(404)
+    }
+  })
+
+  it('落库前的判权复核**有判据**（复核 S2）：撤销后复核必须抛 FORBIDDEN', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    const member = randomUUID()
+    await insertUser(database.db, {
+      id: member,
+      username: `guard-${member.slice(0, 6)}`,
+      displayName: 'Guard',
+      passwordHash: 'x',
+    })
+    const { grantInstruction } = await import('@whalepod/db')
+    const { RunOrchestrator } = await import('../src/modules/run/orchestrator.js')
+
+    // 授权在 → 复核通过（这是"删掉复核也全绿"的反面：这条断言要求它真的存在且不误拒）。
+    await grantInstruction(database.db, {
+      id: randomUUID(),
+      taskId: ids.taskId,
+      userId: member,
+      grantedBy: ids.userId,
+    })
+    await database.transaction(async (tx) => {
+      await RunOrchestrator.assertInstructionRightStillValid(tx, ids.taskId, member)
+    })
+
+    // **带外**删除（绕过 `revokeInstructionRight` 的 Task 锁，模拟运维脚本/批量接口）→ 复核必须拦住。
+    // 生产可达路径（走 revoke 服务）本来就被同一把 Task 行锁串行化（复核 PROBE C），
+    // 复核真正防的是这条带外路径。
+    await database.db
+      .delete(schema.taskInstructionGrants)
+      .where(eq(schema.taskInstructionGrants.taskId, ids.taskId))
+    const error = await database
+      .transaction(async (tx) => {
+        await RunOrchestrator.assertInstructionRightStillValid(tx, ids.taskId, member)
+      })
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      )
+    expect(error).toBeInstanceOf(RunCommandError)
+    expect((error as RunCommandError).code).toBe('FORBIDDEN')
+    expect((error as RunCommandError).message).toMatch(/revoked before the run could be created/)
   })
 
   it('撤销与建 Run 的竞态：撤销后**紧接着**发指令必被拒（判权在建 Run 前复读）', async () => {

@@ -237,17 +237,17 @@ export class RunOrchestrator {
       prompt: input.prompt,
     })
 
-    // 判权**复读**（复核 #204 观察 7）：本事务开头判过一次，但到落库之间隔着设备/工作区/Agent/
-    // Revision/Pack 一串读写，而撤销授权不阻塞这里的 Task 行锁（授权行只 insert/delete）。
-    // READ COMMITTED 下这次复读能看到期间提交的撤销，把窗口收到"复读到提交"这一段——比原先小得多，
-    // 但**没有消除**：真正原子化要么改用可串行化隔离、要么把授权纳入同一把锁，留待确有必要时再上。
-    const rightBeforeInsert = await resolveInstructionRight(tx, taskId, ctx.userId)
-    if (rightBeforeInsert === 'none') {
-      throw new RunCommandError(
-        'FORBIDDEN',
-        'instruction rights were revoked before the run could be created',
-      )
-    }
+    // 判权**复读**（复核 #204 观察 7 → #205 复核 S2 纠正了口径）：
+    //
+    // 事实订正：我原先在这里写「撤销授权不阻塞这里的 Task 行锁」——**这是反的**。
+    // `revokeInstructionRight` 第一步也是 `lockTask` 的 `for('update')`，与建 Run 抢**同一把 Task
+    // 行锁**，所以**生产可达路径上撤销与建 Run 本来就已串行**（复核 PROBE C：撤销在门后阻塞满 3s
+    // 超时，orchestrator 照常建出 Run）。窗口本来就是关着的，功劳在 Task 锁，不在这次复读。
+    //
+    // 那这次复读还防什么？防**带外删除**——绕过 `revokeInstructionRight`（不经 Task 锁）直接删授权行
+    // 的路径（运维脚本、将来的批量接口）。READ COMMITTED 下它能读到期间提交的删除（复核 PROBE B 复现）。
+    // 便宜、无害、方向正确，故保留。
+    await RunOrchestrator.assertInstructionRightStillValid(tx, taskId, ctx.userId)
     await insertRun(tx, {
       id: runId,
       taskId,
@@ -396,6 +396,24 @@ export class RunOrchestrator {
         return
       default:
         return
+    }
+  }
+
+  /**
+   * 落库前的判权复核（见 `createInTransaction` 里的说明）。抽成独立函数是为了**能被判据直接调用**：
+   * 复核 #205 实测「删掉复读整段 → 24/24 全绿」，即它此前零覆盖。
+   */
+  static async assertInstructionRightStillValid(
+    tx: Tx,
+    taskId: string,
+    userId: string,
+  ): Promise<void> {
+    const right = await resolveInstructionRight(tx, taskId, userId)
+    if (right === 'none') {
+      throw new RunCommandError(
+        'FORBIDDEN',
+        'instruction rights were revoked before the run could be created',
+      )
     }
   }
 

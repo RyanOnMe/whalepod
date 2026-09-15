@@ -109,7 +109,10 @@ export async function grantInstructionRight(
         'the assignee can always drive the task; no grant needed',
       )
     }
-    // 授权对象必须是**本 Team 的成员**：否则这条授权指向一个看不到该 Task 的人，是幽灵名单。
+    // 授权对象必须是**团队成员**：否则这条授权指向一个看不到该 Task 的人，是幽灵名单。
+    // 口径说明（复核 #205 观察 7）：本查询按 userId 判定，**没有**带 teamId——因为本部署是单 Team
+    // （`team_member` 有 `team_member_user_unique.on(user_id)`、`getTeam` 取 limit 1），两者等价。
+    // 若将来支持多 Team，这里必须补 teamId，否则会跨 Team 授权。
     const [member] = await tx
       .select({ userId: schema.teamMembers.userId })
       .from(schema.teamMembers)
