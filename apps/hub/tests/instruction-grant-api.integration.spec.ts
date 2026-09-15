@@ -304,26 +304,40 @@ describe('instruction grant management (P1-198 ④b)', () => {
       cause: new Error('run.trigger_message_id must reference a message of the same task'),
     })
     expect(translateGrantConstraintError(unrelated)).toBe(unrelated)
+    // 防御性断言（复核观察 5）：反例**不该**被翻成"授权必须由责任人"那套文案。
+    expect(String((unrelated as { message?: string }).message)).not.toMatch(/instruction grant/)
   })
 
   it('GET 名单的错误面与 POST/DELETE 一致：未知 Task → **404**（复核 S1：此前是 500）', async () => {
     const { alice } = await seedTask()
     const missing = randomUUID()
+    const { session: bob } = await driveInviteAndAccept(ctx, alice, {
+      username: `bob-${randomUUID().slice(0, 6)}`,
+      displayName: 'Bob',
+      password: 'correct horse battery staple',
+    })
     for (const [method, url] of [
       ['GET', `/api/v1/tasks/${missing}/instruction-grants`],
       ['POST', `/api/v1/tasks/${missing}/instruction-grants`],
+      ['DELETE', `/api/v1/tasks/${missing}/instruction-grants/${bob.userId}`],
     ] as const) {
       const res = await apiInject(ctx, alice, {
         method,
         url,
         ...(method === 'POST' ? { payload: { userId: missing }, idempotencyKey: idemKey() } : {}),
+        ...(method === 'DELETE' ? { idempotencyKey: idemKey() } : {}),
       })
-      // 三条路由的错误面必须自相矛盾地一致：未知资源就是 404，不是 500。
+      // 三条路由的错误面必须一致：未知资源就是 404，不是 500。
+      // 注意判别力分布（复核观察 3）：POST/DELETE 的处理器**本来就**会映射错误，
+      // 所以真正钉住这条修复的是 **GET** 那一轮——它才是"没包 mapGrantErrors 就变 500"的那条。
       expect(res.statusCode, `${method} 未知 Task`).toBe(404)
     }
   })
 
-  it('落库前的判权复核**有判据**（复核 S2）：撤销后复核必须抛 FORBIDDEN', async () => {
+  // 用例名如实（复核观察 4）：本条直接调复核函数，覆盖的是"**复核函数**在带外删除时会拒"，
+  // **不覆盖**"它接在 createRun 路径上"（只删调用点、保留函数 → 本条仍绿）。接线无判据这件事
+  // 已记在验收文档的"未覆盖"里，别让读者以为生产竞态被这条钉住了。
+  it('判权复核函数（非接线）：带外删除后必须抛 FORBIDDEN，授权在时不误拒', async () => {
     const ids = await seedRunPrereqs(database.db)
     const member = randomUUID()
     await insertUser(database.db, {
