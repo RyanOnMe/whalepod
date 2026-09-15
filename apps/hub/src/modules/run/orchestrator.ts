@@ -237,6 +237,17 @@ export class RunOrchestrator {
       prompt: input.prompt,
     })
 
+    // 判权**复读**（复核 #204 观察 7）：本事务开头判过一次，但到落库之间隔着设备/工作区/Agent/
+    // Revision/Pack 一串读写，而撤销授权不阻塞这里的 Task 行锁（授权行只 insert/delete）。
+    // READ COMMITTED 下这次复读能看到期间提交的撤销，把窗口收到"复读到提交"这一段——比原先小得多，
+    // 但**没有消除**：真正原子化要么改用可串行化隔离、要么把授权纳入同一把锁，留待确有必要时再上。
+    const rightBeforeInsert = await resolveInstructionRight(tx, taskId, ctx.userId)
+    if (rightBeforeInsert === 'none') {
+      throw new RunCommandError(
+        'FORBIDDEN',
+        'instruction rights were revoked before the run could be created',
+      )
+    }
     await insertRun(tx, {
       id: runId,
       taskId,

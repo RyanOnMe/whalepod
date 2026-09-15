@@ -93,6 +93,14 @@ export const CreateCommentRequestSchema = z.strictObject({
 })
 
 /**
+ * POST /tasks/:taskId/instruction-grants（切片④b #198）：责任人授予某人**指令权**。
+ * 只有责任人能授（被授权成员不能自我复制，团队管理员也不能替责任人授权）。
+ */
+export const CreateInstructionGrantRequestSchema = z.strictObject({
+  userId: z.uuid(),
+})
+
+/**
  * POST /tasks/:taskId/instructions（#196；ADR-0010 决策 2 的执行区入口）。
  *
  * 与人际评论的区别：这条**驱动 Agent**——有活跃 Run 时降级为追问，没有时**建 Run**。
@@ -226,6 +234,7 @@ export type UpdateTaskRequest = z.infer<typeof UpdateTaskRequestSchema>
 export type ReassignTaskRequest = z.infer<typeof ReassignTaskRequestSchema>
 export type CreateCommentRequest = z.infer<typeof CreateCommentRequestSchema>
 export type SendInstructionRequest = z.infer<typeof SendInstructionRequestSchema>
+export type CreateInstructionGrantRequest = z.infer<typeof CreateInstructionGrantRequestSchema>
 export type CreateRunRequest = z.infer<typeof CreateRunRequestSchema>
 export type CreateFollowupRequest = z.infer<typeof CreateFollowupRequestSchema>
 export type DecideApprovalRequest = z.infer<typeof DecideApprovalRequestSchema>
