@@ -7,6 +7,7 @@ import {
   ReassignTaskRequestSchema,
   UpdateTaskRequestSchema,
   SendInstructionRequestSchema,
+  CreateInstructionGrantRequestSchema,
 } from '@whalepod/protocol'
 import { audit } from '../shared/audit.js'
 import { ApiError } from '../shared/http-error.js'
@@ -23,9 +24,15 @@ import {
   submitTaskForReview,
   updateTask,
 } from './commands.js'
-import { sendInstruction } from '../run/instruction.js'
-import type { RunOrchestrator } from '../run/orchestrator.js'
 import { ERROR_HTTP_STATUS, errorCodeOf } from '../run/routes.js'
+import { sendInstruction } from '../run/instruction.js'
+import {
+  grantInstructionRight,
+  listInstructionDrivers,
+  revokeInstructionRight,
+  translateGrantConstraintError,
+} from './instruction-grants.js'
+import type { RunOrchestrator } from '../run/orchestrator.js'
 import { listTaskViewsByProject } from './queries.js'
 import { getTaskRoom } from './view.js'
 
@@ -36,6 +43,25 @@ export interface TaskRouteDeps {
   /** 执行区指令要建 Run（#196）：复用既有的建 Run 路径，不另造一套。 */
   readonly orchestrator: RunOrchestrator
   readonly dshDistributionVersionFor: (deviceId: string) => Promise<string | undefined>
+}
+
+/**
+ * 授权路由的错误映射（与执行区指令同一套）：
+ *   1. 表级触发器抛的 `23514` → 先翻译成人话（否则 Drizzle 最外层 message 会把原始 SQL 与参数
+ *      带进响应体——复核 #204 的提醒）；
+ *   2. `RunCommandError` → 用 run 模块导出的映射表定 HTTP 码（授权路由挂在 task 模块，
+ *      运行面的 `setErrorHandler` 不覆盖这里）；
+ *   3. 其余原样抛出，交给全局错误处理（500 + 不泄露细节）。
+ */
+async function mapGrantErrors<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run()
+  } catch (error) {
+    const translated = translateGrantConstraintError(error)
+    const { code, message } = errorCodeOf(translated)
+    if (code === 'INTERNAL_ERROR') throw translated
+    throw new ApiError(ERROR_HTTP_STATUS[code] ?? 500, code, message)
+  }
 }
 
 function actorFrom(session: SessionActor) {
@@ -230,5 +256,56 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
       ok: true,
       data: { ...outcome.message, outcome: outcome.kind, runId: outcome.runId },
     })
+  })
+
+  /**
+   * GET /tasks/:taskId/instruction-grants（切片④b）：谁能驱动这个 Task 的 Agent——
+   * **责任人 + 被授权成员**。团队成员可读（协作需要看得见"谁在驱动"），写入只有责任人。
+   */
+  app.get('/tasks/:taskId/instruction-grants', async (request) => {
+    await deps.requireActor(request)
+    const { taskId } = request.params as { taskId: string }
+    // 必须走 mapGrantErrors：`listInstructionDrivers` 抛的是 `RunCommandError('NOT_FOUND')`，
+    // 而运行面的映射不覆盖 task 模块，直落全局 handler 会变成 **500**（复核实测：未知 Task 的
+    // GET → 500，而同一资源的 POST/DELETE 是 404、既有 `GET /tasks/:id` 也是 404）。
+    const drivers = await mapGrantErrors(() => listInstructionDrivers(deps.database, taskId))
+    return { ok: true, data: drivers }
+  })
+
+  /** POST /tasks/:taskId/instruction-grants：责任人授予指令权（幂等）。 */
+  app.post('/tasks/:taskId/instruction-grants', async (request, reply) => {
+    const session = await deps.requireActor(request)
+    const { taskId } = request.params as { taskId: string }
+    const parsed = CreateInstructionGrantRequestSchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply
+        .code(400)
+        .send({ ok: false, error: { code: 'VALIDATION_FAILED', message: parsed.error.message } })
+    }
+    const grant = await mapGrantErrors(() =>
+      grantInstructionRight(deps.database, actorFrom(session), taskId, {
+        userId: parsed.data.userId,
+        idempotencyKey: readIdempotencyKey(request),
+      }),
+    )
+    audit(request, 'instruction.grant', 'success', session.userId)
+    return reply.code(201).send({ ok: true, data: grant })
+  })
+
+  /** DELETE /tasks/:taskId/instruction-grants/:userId：责任人撤销指令权（立刻生效）。 */
+  app.delete('/tasks/:taskId/instruction-grants/:userId', async (request) => {
+    const session = await deps.requireActor(request)
+    const { taskId, userId } = request.params as { taskId: string; userId: string }
+    const result = await mapGrantErrors(() =>
+      revokeInstructionRight(
+        deps.database,
+        actorFrom(session),
+        taskId,
+        userId,
+        readIdempotencyKey(request),
+      ),
+    )
+    audit(request, 'instruction.revoke', 'success', session.userId)
+    return { ok: true, data: result }
   })
 }

@@ -29,6 +29,7 @@ import { registerNodeWebsocket } from './modules/device/node-websocket.js'
 import { RunOrchestrator } from './modules/run/index.js'
 import { registerRunRoutes } from './modules/run/routes.js'
 import { getDeviceDshDistributionVersion } from './modules/run/queries.js'
+import { unwrapPgError } from '@whalepod/db'
 import { registerRealtimeRoutes } from './modules/realtime/routes.js'
 // P1-15：内容寻址 Artifact Store 与 HTTP 面。
 import { ArtifactStore } from './modules/artifact/store.js'
@@ -70,6 +71,33 @@ function failure(
   return reply.code(statusCode).send(body)
 }
 
+/** PG 错误的 code / constraint（结构化字段，不含 SQL 与参数）。 */
+function pgErrorCode(error: unknown): string | undefined {
+  const pg = unwrapPgError(error)
+  return typeof pg?.code === 'string' ? pg.code : undefined
+}
+
+function pgConstraintName(error: unknown): string | undefined {
+  const pg = unwrapPgError(error)
+  return typeof pg?.constraintName === 'string' ? pg.constraintName : undefined
+}
+
+/**
+ * cause 链上**最内层**的 message：Drizzle 把 PG 错误包在外层（那句带 SQL 与参数），
+ * 真正说明原因的是最里面那句（约束名 / 触发器文案）。
+ */
+function innermostErrorMessage(error: unknown): string {
+  let message = error instanceof Error ? error.message : String(error)
+  let cursor: unknown = error
+  while (cursor instanceof Error) {
+    const next: unknown = cursor.cause
+    if (!(next instanceof Error)) break
+    cursor = next
+    message = next.message
+  }
+  return message
+}
+
 function errorHandler(error: unknown, request: FastifyRequest, reply: FastifyReply): FastifyReply {
   const requestId = String(request.id)
   if (error instanceof ApiError) {
@@ -97,12 +125,21 @@ function errorHandler(error: unknown, request: FastifyRequest, reply: FastifyRep
     return failure(reply, statusCode, 'VALIDATION_FAILED', 'malformed request', requestId)
   }
   // 500 只记 name/message，不记 stack（绝对路径不进日志的红线）。
+  //
+  // 但"message"本身也不安全（复核 #205 观察 1 实测）：数据库错误经 Drizzle 上抛时，最外层 message
+  // 是 `Failed query: insert into "task_instruction_grant" (...) values ($1,$2,$3,$4, default) ...`
+  // ——**含完整列名，且 string 里能搜到参数值**。所以对 PG 错误只记 code/constraint/detail 这类
+  // 结构化字段，message 换成 cause 链上**最内层**那句（触发器/约束自己写的人话），
+  // 原始 SQL 留在栈里、不进日志。
+  const innermost = innermostErrorMessage(error)
   request.log.error(
     {
       component: 'hub.http',
       requestId,
       errorName: error instanceof Error ? error.name : 'UnknownError',
-      errorMessage: error instanceof Error ? error.message : String(error),
+      errorMessage: innermost,
+      pgCode: pgErrorCode(error),
+      pgConstraint: pgConstraintName(error),
     },
     'unhandled error',
   )

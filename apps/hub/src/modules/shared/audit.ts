@@ -21,6 +21,8 @@ export type AuditAction =
   | 'task.cancel'
   | 'comment.create'
   | 'instruction.send'
+  | 'instruction.grant'
+  | 'instruction.revoke'
   | 'agent.create'
   | 'agent.revision'
   | 'device.pair'
