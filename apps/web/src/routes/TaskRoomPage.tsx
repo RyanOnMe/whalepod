@@ -42,6 +42,18 @@ const ACTIVE_RUN: ReadonlySet<string> = new Set([
   'cancel_requested',
 ])
 
+/**
+ * **可以排队**的活跃 Run 状态集——必须与 hub 的 `FOLLOWUP_QUEUEING_STATUSES`
+ * （`apps/hub/src/modules/run/followup.ts`）逐字对齐：hub 只把
+ * `queued`/`dispatching`/`waiting_approval` 当作"指令可以排在它后面等放行"的窗口；
+ * `running` 是立即下发，`cancel_requested` 与各终态则**当场拒绝**（`RUN_CANCELLING`）。
+ *
+ * 复核 #209 R3 实测：我原先写成 `status !== 'running'`，于是 `cancel_requested` 也会显示
+ * 「已排队」——而 hub 其实已经把那条指令判死了。这条**可达**：Run 在排队窗口时用户发的指令
+ * 落成 `pending`，随后用户取消 Run，该指令仍是 `pending` 且挂在这个 Run 上。
+ */
+const QUEUEING_RUN: ReadonlySet<string> = new Set(['queued', 'dispatching', 'waiting_approval'])
+
 export function TaskRoomPage(): ReactNode {
   const { taskId } = useParams()
   const session = useSession()
@@ -80,16 +92,19 @@ export function TaskRoomPage(): ReactNode {
   }
 
   const { task, comments, runs, artifacts } = query.data
-  // `instructions` 是 ③c-2a 新增的字段：旧缓存或未跟上的 mock 可能没有它，
-  // 缺字段不该让整页炸掉（首版就是这么挂在 10 个既有用例上的）。
+  // `instructions` 是 ③c-2a 的字段，hub 侧**无条件**返回它（`task/view.ts`）。
+  // 复核 #209 观察 5 指出：本仓没有 query 持久化，"旧缓存可能没有它"这个理由不成立——
+  // 这里唯一能挡的是**服务端契约违约**，而静默兜成空列表会让用户看到"还没有人驱动过这个任务"
+  // 而不是"数据不完整"。所以缺字段时**显式呈现**（见下面的告警块），不假装成空。
+  const instructionsMissing = query.data.instructions === undefined
   const instructions = (query.data.instructions ?? []) as InstructionView[]
-  // ③c-1 的排队语义：指令是 `pending` 且**当前活跃 Run 还没进 running**（dispatching/queued）
-  // 时，它排在这个 Run 后面等着放行——「已排队」是这一刻的**显示态**，不是服务端状态
-  // （服务端只有 3 个枚举值）。复核 #209 的页面级变异证明：不算这个，四态里的「已排队」
-  // 在真实页面上**永远不会出现**。
+  // ③c-1 的排队语义：指令是 `pending` 且当前活跃 Run 处在**可排队窗口**
+  // （`QUEUEING_RUN`，与 hub 同源）时，它排在这个 Run 后面等放行——「已排队」是这一刻的
+  // **显示态**，不是服务端状态（服务端只有 3 个枚举值）。复核 #209 的页面级变异证明：
+  // 不算这个，四态里的「已排队」在真实页面上**永远不会出现**。
   const activeRun = runs.find((run) => ACTIVE_RUN.has(run.status))
   const queuedIds = new Set(
-    activeRun !== undefined && activeRun.status !== 'running'
+    activeRun !== undefined && QUEUEING_RUN.has(activeRun.status)
       ? instructions.filter((item) => item.instructionState === 'pending').map((item) => item.id)
       : [],
   )
@@ -121,6 +136,12 @@ export function TaskRoomPage(): ReactNode {
                   : '当前没有运行 · 这句话会起新运行'}
               </span>
             </div>
+            {instructionsMissing ? (
+              // 缺字段 ≠ 没有指令：显式说出来，不静默成空列表（复核 #209 观察 5 / R1）。
+              <p className="empty-state" role="status" data-testid="instructions-missing">
+                指令流读取不完整：服务端这次没有返回 instructions 字段（这**不是**"还没有指令"）。
+              </p>
+            ) : null}
             <InstructionList
               instructions={instructions}
               session={session}

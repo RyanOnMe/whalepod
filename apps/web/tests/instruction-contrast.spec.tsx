@@ -29,25 +29,40 @@ const TOKENS = readFileSync(join(STYLES, 'dsw-tokens.css'), 'utf8')
 
 /** 从 `.cls { ... }` 里取出某个声明值（CSS 文本级，够用且稳定）。 */
 function declaration(selector: string, property: string): string {
-  const start = CSS.indexOf(`${selector} {`)
-  expect(start, `CSS 里找不到 ${selector}`).toBeGreaterThan(-1)
-  const end = CSS.indexOf('}', start)
-  const body = CSS.slice(start, end)
-  const match = new RegExp(`${property}:\\s*([^;]+);`).exec(body)
-  expect(match, `${selector} 里找不到 ${property}`).not.toBeNull()
-  return (match as RegExpExecArray)[1]!.trim()
+  // 复核 R2：天真实现（indexOf 找第一块 + 取第一条声明）有假绿——
+  // ①同一规则体里重复声明时**浏览器取最后一条**，门却读第一条（实测能让文字 1.00:1 不可见而门 PASS）；
+  // ②文件后部再来一个同名规则块同样覆盖。
+  // 所以：断言该选择器只有一个规则块、该属性只声明一次，再取值。
+  const blocks = [...CSS.matchAll(new RegExp(`\\${selector} \\{([^}]*)\\}`, 'g'))].map((m) => m[1]!)
+  expect(blocks.length, `${selector} 只应有一个规则块（多块会互相覆盖，门会看不见）`).toBe(1)
+  const body = blocks[0]!
+  const matches = [...body.matchAll(new RegExp(`(?:^|[;\\s])${property}:\\s*([^;]+);`, 'g'))]
+  expect(matches.length, `${selector} 的 ${property} 只应声明一次（重复时浏览器取最后一条）`).toBe(
+    1,
+  )
+  return matches[0]![1]!.trim()
+}
+
+/** 从 `.cls` 的 `background: color-mix(in srgb, ... N%, ...)` 读混合比例（0..1）。 */
+function tintOf(selector: string): number {
+  const background = declaration(selector, 'background')
+  const percent = /(\d+(?:\.\d+)?)%/.exec(background)?.[1]
+  expect(percent, `${selector} 的 background 里没有 color-mix 比例`).toBeDefined()
+  return Number.parseFloat(percent!) / 100
 }
 
 // tint 是 0..1 的混合比例（`contrastOnTint` 的契约，不是百分数）。
+// tint **从 CSS 读**（复核 R2 实测：硬编码时把 CSS 的 12% 改成 44% 门也发现不了）。
 const STATES = [
-  { cls: '.instruction-state-pending', tint: 0.14, label: '待受理' },
-  { cls: '.instruction-state-accepted', tint: 0.12, label: '已受理' },
-  { cls: '.instruction-state-queued', tint: 0.1, label: '已排队' },
-  { cls: '.instruction-state-rejected', tint: 0.1, label: '已拒绝' },
+  { cls: '.instruction-state-pending', label: '待受理' },
+  { cls: '.instruction-state-accepted', label: '已受理' },
+  { cls: '.instruction-state-queued', label: '已排队' },
+  { cls: '.instruction-state-rejected', label: '已拒绝' },
 ] as const
 
 describe('指令四态的 AA 门', () => {
-  it.each(STATES)('$label：文字 vs 自身浅底 ≥ 4.5:1，且取值来自 CSS 真值', ({ cls, tint }) => {
+  it.each(STATES)('$label：文字 vs 自身浅底 ≥ 4.5:1，且取值来自 CSS 真值', ({ cls }) => {
+    const tint = tintOf(cls)
     const colorText = declaration(cls, 'color')
     const backgroundText = declaration(cls, 'background')
     // 两条声明都必须指向同一个语义 token（底与字是一家人，重绑时一起变深）。
@@ -72,7 +87,7 @@ describe('指令四态的 AA 门', () => {
     const remap = declaration('.instruction-error', '--dsw-alias-state-error-primary')
     expect(remap).toBe('var(--dsw-static-red-900)')
     const rgb = parseCssColor(readTokenValue(TOKENS, '--dsw-static-red-900'))
-    const ratio = round2(contrastOnTint(rgb, 0.1, WHITE))
+    const ratio = round2(contrastOnTint(rgb, tintOf('.instruction-error'), WHITE))
     expect(ratio).toBeGreaterThanOrEqual(4.5)
   })
 
@@ -89,12 +104,13 @@ describe('指令四态的 AA 门', () => {
 
   it('对照：改为不重映射（原始 500 档）时该门会红——判据不是恒真', () => {
     // 直接算 500 档的比值，确认它确实过不了 4.5（否则上面那条门就无从判别）。
-    for (const [name, tint] of [
-      ['--dsw-alias-state-success-primary', 0.12],
-      ['--dsw-alias-state-error-primary', 0.1],
-      ['--dsw-alias-state-business-primary', 0.1],
-      ['--dsw-alias-state-warn-primary', 0.14],
+    for (const [name, cls] of [
+      ['--dsw-alias-state-success-primary', '.instruction-state-accepted'],
+      ['--dsw-alias-state-error-primary', '.instruction-state-rejected'],
+      ['--dsw-alias-state-business-primary', '.instruction-state-queued'],
+      ['--dsw-alias-state-warn-primary', '.instruction-state-pending'],
     ] as const) {
+      const tint = tintOf(cls)
       const rgb = parseCssColor(readTokenValue(TOKENS, name))
       expect(
         round2(contrastOnTint(rgb, tint, WHITE)),

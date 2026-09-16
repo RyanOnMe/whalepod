@@ -363,7 +363,6 @@ describe('#162 Run 与来源运行的可读措辞', () => {
 describe('task-room 执行栏接线（⑥a 页面级）', () => {
   it('指令流真的接到页面上：四态可见，且作者写人名（不是半截 UUID）', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId })
-    const now = new Date().toISOString()
     const instructions = [
       makeInstruction({ id: 'i-pending', instructionState: 'pending', authorUserId: BOB.userId }),
       makeInstruction({ id: 'i-accepted', instructionState: 'accepted', authorUserId: BOB.userId }),
@@ -407,8 +406,33 @@ describe('task-room 执行栏接线（⑥a 页面级）', () => {
     expect(authors).toContain('你')
     expect(authors.some((text) => text?.includes(ALICE.displayName))).toBe(true)
     expect(screen.queryByText(/^[0-9a-f]{8}$/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/^[0-9a-f]{8}$/)).not.toBeInTheDocument()
-    void now
+  })
+
+  it('取消中的 Run **不算可排队窗口**：pending 指令显示「待受理」，不是「已排队」', async () => {
+    // 复核 R3 实测的语义错误：页面的 ACTIVE_RUN 含 `cancel_requested`，我原先写成
+    // `status !== 'running'` ⇒ 取消中的 Run 下 pending 指令被显示成「已排队」，
+    // 而 hub 的 `FOLLOWUP_QUEUEING_STATUSES` 只含 queued/dispatching/waiting_approval，
+    // cancel_requested 走 RUN_CANCELLING **当场拒绝**。可达：Run 在排队窗口时发的指令落成
+    // pending，随后用户取消该 Run，指令仍是 pending。
+    const task = makeTask({ assigneeUserId: BOB.userId })
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task, {
+          instructions: [
+            makeInstruction({
+              id: 'i-pending',
+              instructionState: 'pending',
+              authorUserId: BOB.userId,
+            }),
+          ],
+          runs: [makeRun({ status: 'cancel_requested' })],
+        }),
+      ]),
+    )
+    const state = (await screen.findAllByTestId('instruction-state'))[0]
+    expect(state?.textContent).toBe('待受理')
+    expect(state?.textContent).not.toBe('已排队')
   })
 
   it('「任务详情」默认展开且**仍可折叠**（复核 ⑥：这条此前零判据）', async () => {

@@ -90,6 +90,35 @@ describe('instruction list', () => {
     expect(onOpenRun).toHaveBeenCalledWith('run-abcdef12')
   })
 
+  it('追问的执行区呈现：kind=followup 写「追问」，普通指令写「指令」（ADR-0010 决策 2）', () => {
+    // 复核 R4：这条此前零覆盖——把三元恒写成 '指令' 时全部判据仍绿
+    // （`instruction-composer.spec.tsx` 里的 `outcome:'followup'` 是**发送响应**的 outcome，
+    // 不是 `InstructionView.kind`，两回事）。
+    render(
+      <InstructionList
+        instructions={[
+          instruction({ id: 'f', kind: 'followup' }),
+          instruction({ id: 'i', kind: 'instruction' }),
+        ]}
+        session={null}
+      />,
+    )
+    const kinds = screen.getAllByText(/^(追问|指令)$/).map((el) => el.textContent)
+    expect(kinds).toEqual(['追问', '指令'])
+  })
+
+  it('runId 为空串时不画运行入口（判空不能写成 !runId）', () => {
+    // 复核 R4 的另一条活变异：`runId === null` 改成 `!runId` 时全绿。
+    // 空串在契约里不该出现，但"不该出现"不等于"可以不判"——判据要能把它挡住。
+    render(
+      <InstructionList
+        instructions={[instruction({ id: 'empty-run', runId: '' })]}
+        session={null}
+      />,
+    )
+    expect(screen.queryByTestId('instruction-run')).toBeNull()
+  })
+
   it('自己发的写「你」，他人发的写人名（不是半截 UUID）', () => {
     render(
       <InstructionList

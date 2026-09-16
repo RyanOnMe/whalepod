@@ -65,6 +65,10 @@ export function InstructionList({
     <ol className="instruction-list" role="list">
       {instructions.map((instruction) => {
         const isMine = session !== null && instruction.authorUserId === session.userId
+        // 空串按"没有运行"处理：契约是 `string | null`，空串只会画出一个空的运行号入口
+        // （复核 R4：判空写成 `=== null` 时空串会画出坏入口，而且没有任何判据看得见）。
+        const runId =
+          instruction.runId !== null && instruction.runId !== '' ? instruction.runId : null
         // 排队态优先于"待受理"：对用户来说「我的话排在当前运行后面」比「还没回执」更准确。
         const queued =
           instruction.instructionState === 'pending' && (queuedIds?.has(instruction.id) ?? false)
@@ -82,28 +86,28 @@ export function InstructionList({
                 {instruction.kind === 'followup' ? '追问' : '指令'}
               </span>
               <RelativeTime iso={instruction.createdAt} />
-              <span className={`chip ${stateClass}`} data-testid="instruction-state">
+              <span className={stateClass} data-testid="instruction-state">
                 {stateLabel}
               </span>
             </div>
             <p className="instruction-body">{instruction.body}</p>
             {instruction.instructionState === 'rejected' ? (
               // 理由必须画出来——它正是「被拒了，为什么」的答案。
-              <p className="instruction-error" role="status" data-testid="instruction-error">
+              <p className="instruction-error" data-testid="instruction-error">
                 <span className="mono">{instruction.instructionErrorCode ?? 'REJECTED'}</span>
                 {' · '}
                 {instruction.instructionErrorMessage ?? '未给出理由'}
               </p>
             ) : null}
-            {instruction.runId === null ? null : (
+            {runId === null ? null : (
               <div className="instruction-foot">
                 <button
                   type="button"
                   className="link-button"
                   data-testid="instruction-run"
-                  onClick={() => onOpenRun?.(instruction.runId as string)}
+                  onClick={() => onOpenRun?.(runId)}
                 >
-                  运行 {instruction.runId.slice(0, 8)}
+                  运行 {runId.slice(0, 8)}
                 </button>
               </div>
             )}
