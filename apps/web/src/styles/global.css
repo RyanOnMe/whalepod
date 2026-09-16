@@ -848,11 +848,118 @@ select {
   flex-wrap: wrap;
 }
 
-.task-room-grid {
+/* 切片⑥a-2（ADR-0010）：任务房间 = **讨论｜执行** 两栏。
+   窄屏单栏堆叠，宽屏并列；配色一律走 --dsw-* 产品 token，不新造颜色。 */
+.task-room-split {
   display: grid;
   grid-template-columns: 1fr;
   gap: var(--space-4);
   min-width: 0;
+  align-items: start;
+}
+
+.room-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.room-column-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.room-column-note {
+  /* 必须用 secondary 而不是 tertiary：Q5 的对比度门实测 tertiary(rgb(129,133,140))
+     在白底上只有 3.71:1，低于正文 4.5:1 的要求（产品 token 里能当正文灰的只有这一档）。 */
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.8125rem;
+}
+
+/* 指令流（⑥a-1 的 InstructionList）。 */
+.instruction-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.instruction-item {
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 12px;
+  padding: var(--space-3);
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+.instruction-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.8125rem;
+}
+
+.instruction-kind {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.instruction-body {
+  margin: var(--space-2) 0 0;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* 四种状态各自的语义色（用产品 state-* 档，不手写 rgba）。 */
+.instruction-state-pending {
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent);
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.instruction-state-accepted {
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent);
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.instruction-state-queued {
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent);
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.instruction-state-rejected {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* 被拒的理由必须看得见——它是「为什么没被受理」的答案。 */
+.instruction-error {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 0.8125rem;
+}
+
+.instruction-foot {
+  margin-top: var(--space-2);
+}
+
+/* 任务详情：指派/启程/交付物/复核折进执行栏底部（默认折叠）。 */
+.task-details > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.task-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
 }
 
 .task-room-col {
@@ -1330,9 +1437,10 @@ select {
   overflow-wrap: anywhere;
 }
 
-@media (min-width: 760px) {
-  .task-room-grid {
-    grid-template-columns: 240px minmax(0, 1fr) 280px;
+@media (min-width: 1024px) {
+  /* 讨论栏略窄于执行栏：执行栏要放运行卡与审批卡，天然更高更宽（原型口径 46/54）。 */
+  .task-room-split {
+    grid-template-columns: minmax(0, 46fr) minmax(0, 54fr);
   }
 }
 

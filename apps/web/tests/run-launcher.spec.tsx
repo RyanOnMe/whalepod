@@ -198,7 +198,7 @@ describe('RunLauncher', () => {
       status: 'in_progress',
     })
     renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [taskRoomHandler(task)]))
-    expect(await screen.findByRole('heading', { name: 'Run' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: '运行' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: '启动 Run' })).not.toBeInTheDocument()
 
     // 责任人自己有活跃 Run 时同样不可见。

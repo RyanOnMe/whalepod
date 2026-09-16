@@ -97,7 +97,7 @@ describe('task-room', () => {
     expect(screen.getByText('还没有留言——向责任人说明下一步吧。')).toBeVisible()
   })
 
-  it('渲染中间 Run 区与审批插槽；有 Run 时展示状态文本', async () => {
+  it('渲染执行栏的运行区与审批插槽；有 Run 时展示状态文本', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId })
     renderApp(
       `/tasks/${task.id}`,
@@ -110,7 +110,10 @@ describe('task-room', () => {
         }),
       ]),
     )
-    expect(await screen.findByRole('heading', { name: 'Run' })).toBeVisible()
+    // 两栏形态（ADR-0010）：讨论与执行是两个并列区段，各有标题。
+    expect(await screen.findByRole('heading', { name: '讨论' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: '执行' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: '运行' })).toBeVisible()
     expect(await screen.findByText('运行中')).toBeVisible()
     expect(screen.getByText('已完成')).toBeVisible()
     expect(screen.getByRole('heading', { name: '审批' })).toBeVisible()
@@ -118,7 +121,7 @@ describe('task-room', () => {
     expect(screen.getByText('当前没有等待审批的操作。')).toBeVisible()
   })
 
-  it('渲染右侧交付物列表与复核插槽（区段标题是中文，#152）', async () => {
+  it('交付物与复核**折在执行栏底部的任务详情里**（切片⑥a-2 起默认折叠；区段标题中文）', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId })
     renderApp(
       `/tasks/${task.id}`,
