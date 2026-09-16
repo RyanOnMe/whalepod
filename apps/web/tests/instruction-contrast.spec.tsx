@@ -58,6 +58,8 @@ const STATES = [
   { cls: '.instruction-state-accepted', label: '已受理' },
   { cls: '.instruction-state-queued', label: '已排队' },
   { cls: '.instruction-state-rejected', label: '已拒绝' },
+  // 同一形态的第五处：「读取不完整」告警也是小字 + 同色浅底。
+  { cls: '.stream-incomplete', label: '读取不完整告警' },
 ] as const
 
 describe('指令四态的 AA 门', () => {
@@ -87,6 +89,10 @@ describe('指令四态的 AA 门', () => {
     const remap = declaration('.instruction-error', '--dsw-alias-state-error-primary')
     expect(remap).toBe('var(--dsw-static-red-900)')
     const rgb = parseCssColor(readTokenValue(TOKENS, '--dsw-static-red-900'))
+    // **必须读规则真正画的文字色**（复核 #209 R2 残留的真活口）：原先这条只读了重绑指令与 tint，
+    // 直接从红-900 算比值——于是把 `color` 换成浅色（red-100）时浏览器实测 1.00:1 文字不可见，
+    // 而门依然全绿，因为**根本没人请求过 `color` 这个属性**。
+    expect(declaration('.instruction-error', 'color')).toBe('var(--dsw-alias-state-error-primary)')
     const ratio = round2(contrastOnTint(rgb, tintOf('.instruction-error'), WHITE))
     expect(ratio).toBeGreaterThanOrEqual(4.5)
   })
@@ -109,6 +115,7 @@ describe('指令四态的 AA 门', () => {
       ['--dsw-alias-state-error-primary', '.instruction-state-rejected'],
       ['--dsw-alias-state-business-primary', '.instruction-state-queued'],
       ['--dsw-alias-state-warn-primary', '.instruction-state-pending'],
+      ['--dsw-alias-state-warn-primary', '.stream-incomplete'],
     ] as const) {
       const tint = tintOf(cls)
       const rgb = parseCssColor(readTokenValue(TOKENS, name))

@@ -959,6 +959,20 @@ select {
   font-size: 0.8125rem;
 }
 
+/* 「指令流读取不完整」告警（复核 #209 R1-缺陷 B）：**不复用 `.empty-state`**——
+   那个类与"真的还没有内容"的空态长得一模一样，会把"数据不完整"降级成"又一个空态"。
+   走警示档，并用 900 档保证小字对比度（与四态 chip 同一套算法与判据覆盖）。 */
+.stream-incomplete {
+  --dsw-alias-state-warn-primary: var(--dsw-static-amber-900);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 0.5px solid var(--dsw-alias-state-warn-primary);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent);
+  color: var(--dsw-alias-state-warn-primary);
+  font-size: 0.8125rem;
+}
+
 .instruction-foot {
   margin-top: var(--space-2);
 }

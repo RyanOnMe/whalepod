@@ -33,7 +33,13 @@ import { runOrdinalLabels } from '../features/task/runLabels.js'
 import { ApprovalSlot, RunTimeline } from '../features/task/RunTimeline.js'
 import { TaskHeader } from '../features/task/TaskHeader.js'
 
-/** 活跃 Run 状态集（03 §3.2：一任务同时至多一个）。 */
+/**
+ * 活跃 Run 状态集（03 §3.2：一任务同时至多一个）。
+ *
+ * 与 hub 的关系（复核 #209 O-1）：hub 侧对应的是"Run 是否还在跑"的那一族；本集合**比
+ * `QUEUEING_RUN` 多一个 `cancel_requested`**——取消中的 Run 仍算"活跃"（挡住重复起 Run），
+ * 但它**不是**指令可以排队的窗口。两个集合语义不同，别再各写第三份。
+ */
 const ACTIVE_RUN: ReadonlySet<string> = new Set([
   'queued',
   'dispatching',
@@ -138,16 +144,22 @@ export function TaskRoomPage(): ReactNode {
             </div>
             {instructionsMissing ? (
               // 缺字段 ≠ 没有指令：显式说出来，不静默成空列表（复核 #209 观察 5 / R1）。
-              <p className="empty-state" role="status" data-testid="instructions-missing">
-                指令流读取不完整：服务端这次没有返回 instructions 字段（这**不是**"还没有指令"）。
+              // ① 文案里不留 Markdown 星号（复核实测页面上会原样显示 `**`），也不夹协议字段名；
+              // ② 视觉档**不能复用 `.empty-state`**——复核实测它与同栏「还没有人驱动过这个任务」
+              //    渲染完全一致，用户只会读成"又一个空态"，而这正是要区分的两件事。
+              <p className="stream-incomplete" role="status" data-testid="instructions-missing">
+                指令流读取不完整：服务端这次的响应里没有指令流。请注意，这并不是"还没有指令"。
               </p>
-            ) : null}
-            <InstructionList
-              instructions={instructions}
-              session={session}
-              authorName={directory.personOf}
-              queuedIds={queuedIds}
-            />
+            ) : (
+              // 缺字段时**不渲染列表**：否则空态"还没有人驱动过这个任务"会与上面的告警同时出现，
+              // 两句话自相矛盾（判据实测抓到）。要么说"读取不完整"，要么说"还没有指令"，不并列。
+              <InstructionList
+                instructions={instructions}
+                session={session}
+                authorName={directory.personOf}
+                queuedIds={queuedIds}
+              />
+            )}
             {/* ⑥b：执行区输入——这里的一句话会驱动 Agent（与左栏讨论的分工是 ADR-0010 的核心）。 */}
             {session !== null ? (
               <InstructionComposer taskId={task.id} hasActiveRun={hasActiveRun} />

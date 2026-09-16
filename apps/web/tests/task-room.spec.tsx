@@ -408,6 +408,39 @@ describe('task-room 执行栏接线（⑥a 页面级）', () => {
     expect(screen.queryByText(/^[0-9a-f]{8}$/)).not.toBeInTheDocument()
   })
 
+  it('服务端没返回指令流时**显式告警**，不假装成"还没有指令"（复核 O-3：该分支此前零判据）', async () => {
+    // 复核实测：把 `instructionsMissing` 恒 false 或恒 true，判据**全绿**——整块 R1 修复没人守。
+    // 这里直接喂一个"契约违约"的响应体（不带 instructions 字段），断言：
+    //   ① 告警出现；② **不是**空态文案（这是这条修复的全部意义）。
+    const task = makeTask({ assigneeUserId: BOB.userId })
+    renderApp(`/tasks/${task.id}`, [
+      ...loggedInHandlers(BOB, [
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/tasks/${task.id}$`),
+          respond: () =>
+            new Response(
+              JSON.stringify({ ok: true, data: { task, comments: [], runs: [], artifacts: [] } }),
+              { status: 200 },
+            ),
+        },
+      ]),
+    ])
+    expect(await screen.findByTestId('instructions-missing')).toBeVisible()
+    expect(screen.queryByText(/还没有人驱动过这个任务/)).not.toBeInTheDocument()
+    // 文案不得夹协议字段名，也不得留 Markdown 星号（复核 R1 实测页面会原样显示 `**`）。
+    const text = screen.getByTestId('instructions-missing').textContent ?? ''
+    expect(text).not.toContain('instructions')
+    expect(text).not.toContain('**')
+  })
+
+  it('正常响应（带 instructions: []）**不**触发告警——空指令流与"读取不完整"是两回事', async () => {
+    const task = makeTask({ assigneeUserId: BOB.userId })
+    renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [taskRoomHandler(task)]))
+    expect(await screen.findByText(/还没有人驱动过这个任务/)).toBeVisible()
+    expect(screen.queryByTestId('instructions-missing')).not.toBeInTheDocument()
+  })
+
   it('取消中的 Run **不算可排队窗口**：pending 指令显示「待受理」，不是「已排队」', async () => {
     // 复核 R3 实测的语义错误：页面的 ACTIVE_RUN 含 `cancel_requested`，我原先写成
     // `status !== 'running'` ⇒ 取消中的 Run 下 pending 指令被显示成「已排队」，
