@@ -123,6 +123,30 @@ export function makeTask(overrides: Partial<TaskView> = {}): TaskView {
   }
 }
 
+/**
+ * 执行区的一条指令（切片⑥a 起与讨论分离的读模型）。
+ *
+ * 默认造"已受理的指令"（最普通的一种命运）；四态与拒绝理由由用例显式覆盖。
+ * 存在的理由：复核 #209 用变异证明——页面级**从没喂过非空 instructions**，
+ * 把页面里的指令流换成 `[]` 都是全绿，所以必须有这个夹具才能把接线钉住。
+ */
+export function makeInstruction(overrides: Partial<InstructionView> = {}): InstructionView {
+  return {
+    id: nextId(),
+    taskId: 'task',
+    authorUserId: ALICE.userId,
+    body: '让 Agent 跑一遍回归',
+    createdAt: '2026-08-25T01:00:00.000Z',
+    kind: 'instruction',
+    targetAgentId: null,
+    runId: null,
+    instructionState: 'accepted',
+    instructionErrorCode: null,
+    instructionErrorMessage: null,
+    ...overrides,
+  }
+}
+
 export function makeComment(overrides: Partial<CommentView> = {}): CommentView {
   return {
     id: nextId(),

@@ -15,6 +15,7 @@ import {
   loggedInHandlers,
   makeArtifact,
   makeComment,
+  makeInstruction,
   makeMember,
   makeRun,
   makeTask,
@@ -121,7 +122,7 @@ describe('task-room', () => {
     expect(screen.getByText('当前没有等待审批的操作。')).toBeVisible()
   })
 
-  it('交付物与复核**折在执行栏底部的任务详情里**（切片⑥a-2 起默认折叠；区段标题中文）', async () => {
+  it('交付物与复核折在执行栏底部的任务详情里（**默认展开**：默认折叠会断 G6-04 金路径；区段标题中文）', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId })
     renderApp(
       `/tasks/${task.id}`,
@@ -348,5 +349,84 @@ describe('#162 Run 与来源运行的可读措辞', () => {
       RUN_NOT_IN_TIMELINE_LABEL,
     )
     expect(document.body.textContent).not.toContain('ffffffff')
+  })
+})
+
+/**
+ * 切片⑥a 的页面级判据（复核 #209 应改 ③④ 补的缺口）：
+ *
+ * 为什么必须补：复核用变异证明——把 `TaskRoomPage` 里的 `instructions={instructions}` 换成
+ * `instructions={[]}`（整页指令流断掉）**218 条判据全绿**，因为**没有任何测试给页面级喂过非空
+ * instructions**；同理 `authorName={directory.personOf}` 删掉也全绿（真页面会退化成半截 UUID）。
+ * 这两条都是"组件测过了、接线没人管"的典型，所以这里从**页面**驱动。
+ */
+describe('task-room 执行栏接线（⑥a 页面级）', () => {
+  it('指令流真的接到页面上：四态可见，且作者写人名（不是半截 UUID）', async () => {
+    const task = makeTask({ assigneeUserId: BOB.userId })
+    const now = new Date().toISOString()
+    const instructions = [
+      makeInstruction({ id: 'i-pending', instructionState: 'pending', authorUserId: BOB.userId }),
+      makeInstruction({ id: 'i-accepted', instructionState: 'accepted', authorUserId: BOB.userId }),
+      makeInstruction({
+        id: 'i-accepted-other',
+        instructionState: 'accepted',
+        authorUserId: ALICE.userId,
+      }),
+      makeInstruction({
+        id: 'i-rejected',
+        authorUserId: BOB.userId,
+        instructionState: 'rejected',
+        instructionErrorCode: 'DEVICE_OFFLINE',
+        instructionErrorMessage: '没有可用的执行目标',
+      }),
+    ]
+    // 活跃 Run 还没进 running（dispatching）⇒ 那条 pending 应当显示为「已排队」（③c-1）。
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task, { instructions, runs: [makeRun({ status: 'dispatching' })] }),
+        // 成员目录要喂：人名解析走它（不喂就会印「未知成员」——这本身就是接线在生效的证据）。
+        teamMembersHandler([makeMember(), makeMember({ ...BOB, role: BOB.role })]),
+      ]),
+    )
+
+    // 三种服务端状态 + 一个派生显示态都必须渲染出来（把 instructions 换成 [] 时这条会红）。
+    const states = (await screen.findAllByTestId('instruction-state')).map((el) => el.textContent)
+    expect(states).toContain('已受理')
+    expect(states).toContain('已排队') // pending + 活跃 Run 未 running ⇒ 派生
+    expect(states).toContain('已拒绝')
+    expect(states).not.toContain('待受理') // 已排队比"待受理"对用户更准确（排队优先）
+
+    // 拒绝理由要落在页面上（④b/③b 把理由落库就是为了这一刻）。
+    expect(screen.getByTestId('instruction-error').textContent).toContain('DEVICE_OFFLINE')
+
+    // 作者必须写人名：删掉 authorName 注入时页面会印短 id，这条会红。
+    // 自己发的写「你」，他人发的写人名（两条路径都要走通：只断言一条的话，
+    // 删掉 `authorName` 注入仍会绿——复核正是这么变异活下来的）。
+    const authors = screen.getAllByTestId('instruction-author').map((el) => el.textContent)
+    expect(authors).toContain('你')
+    expect(authors.some((text) => text?.includes(ALICE.displayName))).toBe(true)
+    expect(screen.queryByText(/^[0-9a-f]{8}$/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/^[0-9a-f]{8}$/)).not.toBeInTheDocument()
+    void now
+  })
+
+  it('「任务详情」默认展开且**仍可折叠**（复核 ⑥：这条此前零判据）', async () => {
+    const user = userEvent.setup()
+    const task = makeTask({ assigneeUserId: BOB.userId })
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [taskRoomHandler(task, { artifacts: [makeArtifact()] })]),
+    )
+    // 默认展开：交付物可见（G6-04 要点发布按钮，折叠会断链——这是当初改成 open 的理由）。
+    expect(await screen.findByText('security-review.md')).toBeVisible()
+    const summary = screen.getByText(/任务详情/)
+    await user.click(summary)
+    // 收起后交付物必须真的不可见（不是"还在 DOM 里但假装收起"）。
+    await waitFor(() => {
+      expect(screen.queryByText('security-review.md')).not.toBeVisible()
+    })
+    await user.click(summary)
+    expect(await screen.findByText('security-review.md')).toBeVisible()
   })
 })

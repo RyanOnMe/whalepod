@@ -21,7 +21,7 @@ import { ErrorBanner } from '../app/ErrorBanner.js'
 import { useSession } from '../app/session.js'
 import { useMemberDirectory } from '../features/team/memberDirectory.js'
 import { queryKeys } from '../app/query-client.js'
-import type { TaskRoomView } from '../shared/api/types.js'
+import type { InstructionView, TaskRoomView } from '../shared/api/types.js'
 import { ArtifactList, ReviewerSlot } from '../features/task/ArtifactList.js'
 import { AssignmentPanel } from '../features/task/AssignmentPanel.js'
 import { CommentComposer, CommentList } from '../features/task/CommentComposer.js'
@@ -82,7 +82,17 @@ export function TaskRoomPage(): ReactNode {
   const { task, comments, runs, artifacts } = query.data
   // `instructions` 是 ③c-2a 新增的字段：旧缓存或未跟上的 mock 可能没有它，
   // 缺字段不该让整页炸掉（首版就是这么挂在 10 个既有用例上的）。
-  const instructions = query.data.instructions ?? []
+  const instructions = (query.data.instructions ?? []) as InstructionView[]
+  // ③c-1 的排队语义：指令是 `pending` 且**当前活跃 Run 还没进 running**（dispatching/queued）
+  // 时，它排在这个 Run 后面等着放行——「已排队」是这一刻的**显示态**，不是服务端状态
+  // （服务端只有 3 个枚举值）。复核 #209 的页面级变异证明：不算这个，四态里的「已排队」
+  // 在真实页面上**永远不会出现**。
+  const activeRun = runs.find((run) => ACTIVE_RUN.has(run.status))
+  const queuedIds = new Set(
+    activeRun !== undefined && activeRun.status !== 'running'
+      ? instructions.filter((item) => item.instructionState === 'pending').map((item) => item.id)
+      : [],
+  )
   const hasActiveRun = runs.some((run) => ACTIVE_RUN.has(run.status))
   return (
     <div className="task-room">
@@ -115,6 +125,7 @@ export function TaskRoomPage(): ReactNode {
               instructions={instructions}
               session={session}
               authorName={directory.personOf}
+              queuedIds={queuedIds}
             />
             {/* ⑥b：执行区输入——这里的一句话会驱动 Agent（与左栏讨论的分工是 ADR-0010 的核心）。 */}
             {session !== null ? (
