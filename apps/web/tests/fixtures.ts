@@ -8,6 +8,7 @@ import type { PluginPackView, TeamMemberView } from '@whalepod/protocol'
 import type {
   AgentView,
   CommentView,
+  InstructionView,
   DeviceView,
   InviteDetailsView,
   PairingCodeView,
@@ -310,7 +311,12 @@ export function createTaskHandler(createdTask: TaskView): MockHandler {
 /** GET /tasks/:taskId 的 Task Room 聚合。 */
 export function taskRoomHandler(
   task: TaskView,
-  extras: { comments?: CommentView[]; runs?: TaskRoomRun[]; artifacts?: TaskRoomArtifact[] } = {},
+  extras: {
+    comments?: CommentView[]
+    instructions?: InstructionView[]
+    runs?: TaskRoomRun[]
+    artifacts?: TaskRoomArtifact[]
+  } = {},
 ): MockHandler {
   return {
     method: 'GET',
@@ -319,6 +325,7 @@ export function taskRoomHandler(
       ok({
         task,
         comments: extras.comments ?? [],
+        instructions: extras.instructions ?? [],
         runs: extras.runs ?? [],
         artifacts: extras.artifacts ?? [],
       }),
@@ -595,7 +602,8 @@ export function statefulTaskRoom(task: TaskView): {
       {
         method: 'GET',
         url: new RegExp(`/api/v1/tasks/${task.id}$`),
-        respond: () => ok({ task: currentTask, comments, runs: [], artifacts: [] }),
+        respond: () =>
+          ok({ task: currentTask, comments, runs: [], artifacts: [], instructions: [] }),
       },
     ],
     setTask: (next) => {
