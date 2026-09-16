@@ -25,6 +25,7 @@ import type { TaskRoomView } from '../shared/api/types.js'
 import { ArtifactList, ReviewerSlot } from '../features/task/ArtifactList.js'
 import { AssignmentPanel } from '../features/task/AssignmentPanel.js'
 import { CommentComposer, CommentList } from '../features/task/CommentComposer.js'
+import { InstructionComposer } from '../features/task/InstructionComposer.js'
 import { InstructionList } from '../features/task/InstructionList.js'
 import { RunLauncher } from '../features/task/RunLauncher.js'
 import { RunLivePanel } from '../features/task/RunLivePanel.js'
@@ -115,6 +116,10 @@ export function TaskRoomPage(): ReactNode {
               session={session}
               authorName={directory.personOf}
             />
+            {/* ⑥b：执行区输入——这里的一句话会驱动 Agent（与左栏讨论的分工是 ADR-0010 的核心）。 */}
+            {session !== null ? (
+              <InstructionComposer taskId={task.id} hasActiveRun={hasActiveRun} />
+            ) : null}
           </div>
 
           <div className="card" aria-labelledby="runs-heading">
