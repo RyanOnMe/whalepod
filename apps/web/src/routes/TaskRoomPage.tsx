@@ -27,6 +27,7 @@ import { AssignmentPanel } from '../features/task/AssignmentPanel.js'
 import { CommentComposer, CommentList } from '../features/task/CommentComposer.js'
 import { InstructionComposer } from '../features/task/InstructionComposer.js'
 import { RunConsole } from '../features/task/RunConsole.js'
+import { TargetPicker } from '../features/task/TargetPicker.js'
 import { InstructionList } from '../features/task/InstructionList.js'
 import { RunLauncher } from '../features/task/RunLauncher.js'
 import { RunLivePanel } from '../features/task/RunLivePanel.js'
@@ -69,6 +70,12 @@ export function TaskRoomPage(): ReactNode {
   // ⑥d：Console 覆盖层显示哪个 Run（undefined = 关）。与 `selectedRunId`（内联面板）分开：
   // 内联面板是默认视图，覆盖层是"放大看"，两者可以同时存在。
   const [consoleRunId, setConsoleRunId] = useState<string | undefined>(undefined)
+  // ⑥c：显式执行目标（`null` = 走 Hub 的三段式自动解析）。状态放在页面里，因为目标条与输入框
+  // 是同一个"这次往哪儿发"的意图，不该各自持有一份。
+  const [explicitTarget, setExplicitTarget] = useState<{
+    deviceId: string
+    workspaceId: string
+  } | null>(null)
 
   const query = useQuery({
     queryKey: queryKeys.taskRoom(taskId ?? ''),
@@ -164,9 +171,25 @@ export function TaskRoomPage(): ReactNode {
                 queuedIds={queuedIds}
               />
             )}
+            {/* ⑥c：执行目标条——回答"这句话会在哪里跑"。
+                选择器只对**责任人**呈现：`GET /devices` 只列自己的设备，而执行永远用责任人的
+                设备与凭据（③c-2b），所以被授权成员看到的是只读说明。 */}
+            {session !== null ? (
+              <TargetPicker
+                isAssignee={task.assigneeUserId === session.userId}
+                value={explicitTarget}
+                onChange={setExplicitTarget}
+                assigneeName={directory.personOf(task.assigneeUserId)}
+                hasActiveRun={hasActiveRun}
+              />
+            ) : null}
             {/* ⑥b：执行区输入——这里的一句话会驱动 Agent（与左栏讨论的分工是 ADR-0010 的核心）。 */}
             {session !== null ? (
-              <InstructionComposer taskId={task.id} hasActiveRun={hasActiveRun} />
+              <InstructionComposer
+                taskId={task.id}
+                hasActiveRun={hasActiveRun}
+                target={explicitTarget}
+              />
             ) : null}
           </div>
 
