@@ -85,10 +85,20 @@ export async function apiRequest<T>(route: string, options: RequestOptions = {})
   )
 }
 
-/** 便捷封装：GET 查询与 POST 变更（非 GET 的幂等键由 apiRequest 统一生成）。 */
+/** 便捷封装：GET 查询、POST 变更、DELETE 撤销（非 GET 的幂等键由 apiRequest 统一生成）。 */
 export const api = {
   get<T>(route: string): Promise<T> {
     return apiRequest<T>(route)
+  },
+  /**
+   * DELETE（切片⑥e 起需要：撤销指令权是 `DELETE /tasks/:id/instruction-grants/:userId`）。
+   * 底层 `apiRequest` 本来就接 `'DELETE'`，只是此前没有调用方，所以没暴露。
+   */
+  remove<T>(route: string, options: { idempotencyKey?: string } = {}): Promise<T> {
+    return apiRequest<T>(route, {
+      method: 'DELETE',
+      ...(options.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}),
+    })
   },
   mutate<T>(route: string, options: { body?: unknown; idempotencyKey?: string } = {}): Promise<T> {
     return apiRequest<T>(route, {

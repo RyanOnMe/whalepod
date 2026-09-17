@@ -141,6 +141,17 @@ export interface TaskRoomArtifact {
 }
 
 // task/view.ts：GET /tasks/:taskId 的聚合视图。
+/**
+ * 任务级「谁能驱动 Agent」名单项（切片⑥e；④b 的 `GET /tasks/:id/instruction-grants`）。
+ * `assignee` 永远可驱动、不是一条可撤销的授权；`granted` 带"由谁何时授"（审计要能回答）。
+ */
+export interface InstructionDriverView {
+  userId: string
+  reason: 'assignee' | 'granted'
+  grantedBy?: string
+  grantedAt?: string
+}
+
 export interface TaskRoomView {
   task: TaskView
   comments: CommentView[]

@@ -29,6 +29,7 @@ import { DevicesPage } from '../routes/DevicesPage.js'
 import { InvitePage } from '../routes/InvitePage.js'
 import { LoginPage } from '../routes/LoginPage.js'
 import { MembersPage } from '../routes/MembersPage.js'
+import { TaskPermissionsPage } from '../routes/TaskPermissionsPage.js'
 import { ProjectsPage } from '../routes/ProjectsPage.js'
 import { SetupPage } from '../routes/SetupPage.js'
 import { TaskRoomPage } from '../routes/TaskRoomPage.js'
@@ -158,6 +159,7 @@ export function createAppRoutes(queryClient: QueryClient): RouteObject[] {
       children: [
         { index: true, element: <ProjectsPage /> },
         { path: 'tasks/:taskId', element: <TaskRoomPage /> },
+        { path: 'tasks/:taskId/permissions', element: <TaskPermissionsPage /> },
         { path: 'agents', element: <AgentsPage /> },
         { path: 'plugins', element: <PluginsPage /> },
         { path: 'devices', element: <DevicesPage /> },
