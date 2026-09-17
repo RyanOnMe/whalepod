@@ -60,6 +60,9 @@ const STATES = [
   { cls: '.instruction-state-rejected', label: '已拒绝' },
   // 同一形态的第五处：「读取不完整」告警也是小字 + 同色浅底。
   { cls: '.stream-incomplete', label: '读取不完整告警' },
+  // 第六、七处：⑥c 的目标来源 chip（Q5 先抓到，纳入本门后不再依赖 e2e 偶然覆盖）。
+  { cls: '.target-mode', label: '目标来源：自动选' },
+  { cls: '.target-mode-explicit', label: '目标来源：显式指定' },
 ] as const
 
 describe('指令四态的 AA 门', () => {
@@ -116,6 +119,7 @@ describe('指令四态的 AA 门', () => {
       ['--dsw-alias-state-business-primary', '.instruction-state-queued'],
       ['--dsw-alias-state-warn-primary', '.instruction-state-pending'],
       ['--dsw-alias-state-warn-primary', '.stream-incomplete'],
+      ['--dsw-alias-state-business-primary', '.target-mode'],
     ] as const) {
       const tint = tintOf(cls)
       const rgb = parseCssColor(readTokenValue(TOKENS, name))

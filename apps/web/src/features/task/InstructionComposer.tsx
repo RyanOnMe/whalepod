@@ -40,6 +40,11 @@ export interface InstructionComposerProps {
   /** 有活跃 Run 时提示"这句话会成为追问"，让用户提前知道自己的话会去哪。 */
   hasActiveRun: boolean
   /**
+   * 显式执行目标（⑥c）。`null` = 交给 Hub 三段式解析——**只有显式指定时才发** `deviceId`/`workspaceId`，
+   * 否则发了就等于把"自动"钉死成某台机器（与 ADR-0010 决策 3 的语义相反）。
+   */
+  target?: { deviceId: string; workspaceId: string } | null
+  /**
    * 这段话是给哪个 Agent 的（可空：Hub 会去继承上一个 Run 的 Agent）。
    * ⑥c 的目标选择器落地前，起**第一个**运行仍需要显式选 Agent——那种情况由
    * 调用方（常驻的启动器）承担，这里只在已经能确定 Agent 时才提示可发。
@@ -50,6 +55,7 @@ export interface InstructionComposerProps {
 export function InstructionComposer({
   taskId,
   hasActiveRun,
+  target,
   onOutcome,
 }: InstructionComposerProps): ReactNode {
   const queryClient = useQueryClient()
@@ -60,7 +66,11 @@ export function InstructionComposer({
   const mutation = useMutation({
     mutationFn: (body: string) =>
       api.mutate<InstructionOutcome>(`/tasks/${taskId}/instructions`, {
-        body: { text: body },
+        // 显式指定时两个字段一起发；自动解析时一个都不发（见 props 注释）。
+        body:
+          target === null || target === undefined || target.workspaceId === ''
+            ? { text: body }
+            : { text: body, deviceId: target.deviceId, workspaceId: target.workspaceId },
       }),
     onSuccess: (outcome) => {
       setText('')
