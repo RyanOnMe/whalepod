@@ -12,8 +12,10 @@
  * = ['task-room', id]——前缀不匹配 = 命中零个查询，远程变化永远刷不进任务房间，
  * 而既有 E2E 靠 reload 驱动，全门绿也照不出来）：
  *   project.changed      → ['projects']
- *   task.changed         → ['task-room', taskId] + ['project-tasks', projectId]
- *                          （任务变了既动任务房间也动项目页列表；取不到 id 时降级前缀）
+ *   task.changed         → ['task-room', taskId] + ['instruction-grants', taskId]
+ *                          + ['project-tasks', projectId]
+ *                          （任务变了既动任务房间、也动⑥e 权限页的名单、也动项目页列表；
+ *                            取不到 id 时降级前缀。授权/撤销发的就是本事件）
  *   comment.created      → ['task-room', taskId]    （评论时间线挂在 task room）
  *   run.changed/run.event→ ['run', runId]           （降级 ['run'] 前缀，同时覆盖 runEvents）
  *   approval.changed     → ['task-room', taskId]    （审批卡在 task room）

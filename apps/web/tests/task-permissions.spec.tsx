@@ -286,8 +286,9 @@ describe('任务权限页（⑥e）', () => {
     // 并显式断言"这一刻不是在加载"。
     // 用**只针对失败文案**的正则（ErrorBanner 把 message 与 requestId 分成不同节点，
     // 精确文本匹配不上）；关键是别再让"团队"这种词把加载提示也算进来。
+    // 复核指出紧随其后的"加载提示为 null"是恒真的（横幅出现时 isPending 已为 false），
+    // 不提供额外覆盖，故删掉——留着会让人以为这里钉了两件事。
     expect(await screen.findByText(/名册读取失败/)).toBeVisible()
-    expect(screen.queryByTestId('drivers-members-loading')).toBeNull()
     // 名单本身仍要能看（名册挂了不影响"谁能驱动"这个问题的答案）。
     expect(await screen.findByTestId('driver-item')).toBeVisible()
   })
