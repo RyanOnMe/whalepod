@@ -848,11 +848,179 @@ select {
   flex-wrap: wrap;
 }
 
-.task-room-grid {
+/* 切片⑥a-2（ADR-0010）：任务房间 = **讨论｜执行** 两栏。
+   窄屏单栏堆叠，宽屏并列；配色一律走 --dsw-* 产品 token，不新造颜色。 */
+.task-room-split {
   display: grid;
   grid-template-columns: 1fr;
   gap: var(--space-4);
   min-width: 0;
+  align-items: start;
+}
+
+.room-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.room-column-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.room-column-note {
+  /* 必须用 secondary 而不是 tertiary：Q5 的对比度门实测 tertiary(rgb(129,133,140))
+     在白底上只有 3.71:1，低于正文 4.5:1 的要求（产品 token 里能当正文灰的只有这一档）。 */
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.8125rem;
+}
+
+/* 指令流（⑥a-1 的 InstructionList）。 */
+.instruction-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.instruction-item {
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 12px;
+  padding: var(--space-3);
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+.instruction-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.8125rem;
+}
+
+.instruction-kind {
+  /* 与上面的 .room-column-note 同一条规矩：能当正文灰的只有 secondary
+     （tertiary 白底实测 3.706:1 < 4.5:1）。这条是我自己写下的规矩，第一次没贯彻到 10 行之外，
+     复核实测打红，改回 secondary。 */
+  color: var(--dsw-alias-label-secondary);
+}
+
+.instruction-body {
+  margin: var(--space-2) 0 0;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* 四种状态各自的语义色（用产品 state-* 档，不手写 rgba）。 */
+/* 四态的 AA 重映射（复核 #209 应改 ②）：与设备状态（.device-status-*）同一条范式——
+ * 上游的状态色是 500 档亮色，当小字用远不过 AA。复核实测（白卡片底，算法 apps/web/tests/contrast.ts）：
+ *   pending  2.86 · accepted 2.06 · queued 3.74 · rejected 3.80（要求 4.5:1）
+ * **当时没有任何门在看它们**：e2e 从不为 instructions 播种指令，InstructionList 一直走空态，
+ * 四态 chip 一次都没被渲染过 ⇒「Q5 含对比度门全绿」是真的但是空的。
+ * 现在按 900 档重绑（底/字同色系一起变深），并补判据真的把这四态渲染出来算比值。 */
+.instruction-state-pending {
+  --dsw-alias-state-warn-primary: var(--dsw-static-amber-900);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent);
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.instruction-state-accepted {
+  --dsw-alias-state-success-primary: var(--dsw-static-green-900);
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent);
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.instruction-state-queued {
+  --dsw-alias-state-business-primary: var(--dsw-static-blue-900);
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent);
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.instruction-state-rejected {
+  --dsw-alias-state-error-primary: var(--dsw-static-red-900);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* 被拒的理由必须看得见——它是「为什么没被受理」的答案。 */
+.instruction-error {
+  /* 与 rejected chip 同一套 900 档（小字 + 同色浅底，500 档只有 3.80:1）。 */
+  --dsw-alias-state-error-primary: var(--dsw-static-red-900);
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 0.8125rem;
+}
+
+/* 「指令流读取不完整」告警（复核 #209 R1-缺陷 B）：**不复用 `.empty-state`**——
+   那个类与"真的还没有内容"的空态长得一模一样，会把"数据不完整"降级成"又一个空态"。
+   走警示档，并用 900 档保证小字对比度（与四态 chip 同一套算法与判据覆盖）。 */
+.stream-incomplete {
+  --dsw-alias-state-warn-primary: var(--dsw-static-amber-900);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 0.5px solid var(--dsw-alias-state-warn-primary);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent);
+  color: var(--dsw-alias-state-warn-primary);
+  font-size: 0.8125rem;
+}
+
+.instruction-foot {
+  margin-top: var(--space-2);
+}
+
+/* 执行区输入（⑥b）。 */
+.instruction-composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 0.5px solid var(--dsw-alias-border-l1);
+}
+
+.instruction-composer textarea {
+  width: 100%;
+  font: inherit;
+  padding: var(--space-3);
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  resize: vertical;
+}
+
+.instruction-composer textarea:focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--dsw-alias-border-l4);
+  outline-offset: 1px;
+}
+
+/* 指令的四种命运（⑥b）：受理、追问、排队、被拒——被拒要连理由一起显示。 */
+.instruction-outcome {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* 任务详情：指派/启程/交付物/复核折进执行栏底部（默认折叠）。 */
+.task-details > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.task-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
 }
 
 .task-room-col {
@@ -1330,9 +1498,10 @@ select {
   overflow-wrap: anywhere;
 }
 
-@media (min-width: 760px) {
-  .task-room-grid {
-    grid-template-columns: 240px minmax(0, 1fr) 280px;
+@media (min-width: 1024px) {
+  /* 讨论栏略窄于执行栏：执行栏要放运行卡与审批卡，天然更高更宽（原型口径 46/54）。 */
+  .task-room-split {
+    grid-template-columns: minmax(0, 46fr) minmax(0, 54fr);
   }
 }
 

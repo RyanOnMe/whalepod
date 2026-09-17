@@ -204,7 +204,7 @@ function roomHandler(task: ReturnType<typeof makeTask>): MockHandler {
     url: new RegExp(`/api/v1/tasks/${task.id}$`),
     respond: () => ({
       status: 200,
-      body: { ok: true, data: { task, comments: [], runs: [], artifacts: [] } },
+      body: { ok: true, data: { task, comments: [], instructions: [], runs: [], artifacts: [] } },
     }),
   }
 }

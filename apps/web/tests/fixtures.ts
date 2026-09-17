@@ -8,6 +8,7 @@ import type { PluginPackView, TeamMemberView } from '@whalepod/protocol'
 import type {
   AgentView,
   CommentView,
+  InstructionView,
   DeviceView,
   InviteDetailsView,
   PairingCodeView,
@@ -118,6 +119,30 @@ export function makeTask(overrides: Partial<TaskView> = {}): TaskView {
     completedAt: null,
     createdAt: '2026-08-25T00:00:00.000Z',
     updatedAt: '2026-08-25T00:00:00.000Z',
+    ...overrides,
+  }
+}
+
+/**
+ * 执行区的一条指令（切片⑥a 起与讨论分离的读模型）。
+ *
+ * 默认造"已受理的指令"（最普通的一种命运）；四态与拒绝理由由用例显式覆盖。
+ * 存在的理由：复核 #209 用变异证明——页面级**从没喂过非空 instructions**，
+ * 把页面里的指令流换成 `[]` 都是全绿，所以必须有这个夹具才能把接线钉住。
+ */
+export function makeInstruction(overrides: Partial<InstructionView> = {}): InstructionView {
+  return {
+    id: nextId(),
+    taskId: 'task',
+    authorUserId: ALICE.userId,
+    body: '让 Agent 跑一遍回归',
+    createdAt: '2026-08-25T01:00:00.000Z',
+    kind: 'instruction',
+    targetAgentId: null,
+    runId: null,
+    instructionState: 'accepted',
+    instructionErrorCode: null,
+    instructionErrorMessage: null,
     ...overrides,
   }
 }
@@ -310,7 +335,12 @@ export function createTaskHandler(createdTask: TaskView): MockHandler {
 /** GET /tasks/:taskId 的 Task Room 聚合。 */
 export function taskRoomHandler(
   task: TaskView,
-  extras: { comments?: CommentView[]; runs?: TaskRoomRun[]; artifacts?: TaskRoomArtifact[] } = {},
+  extras: {
+    comments?: CommentView[]
+    instructions?: InstructionView[]
+    runs?: TaskRoomRun[]
+    artifacts?: TaskRoomArtifact[]
+  } = {},
 ): MockHandler {
   return {
     method: 'GET',
@@ -319,6 +349,7 @@ export function taskRoomHandler(
       ok({
         task,
         comments: extras.comments ?? [],
+        instructions: extras.instructions ?? [],
         runs: extras.runs ?? [],
         artifacts: extras.artifacts ?? [],
       }),
@@ -595,7 +626,8 @@ export function statefulTaskRoom(task: TaskView): {
       {
         method: 'GET',
         url: new RegExp(`/api/v1/tasks/${task.id}$`),
-        respond: () => ok({ task: currentTask, comments, runs: [], artifacts: [] }),
+        respond: () =>
+          ok({ task: currentTask, comments, runs: [], artifacts: [], instructions: [] }),
       },
     ],
     setTask: (next) => {
