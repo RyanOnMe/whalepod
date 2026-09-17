@@ -1856,43 +1856,78 @@ select {
   max-width: 520px;
 }
 
-/* ---- 切片⑥e：任务级权限页（谁能驱动这个任务的 Agent） ---- */
-.driver-list {
-  list-style: none;
-  margin: var(--space-3) 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
+/* ---- 切片⑥c：执行目标条（这句话会在哪里跑） ---- */
+.target-bar {
+  /* ---- 切片⑥e：任务级权限页（谁能驱动这个任务的 Agent） ---- */
+  .driver-list {
+    list-style: none;
+    margin: var(--space-3) 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
 
-.driver-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  padding: var(--space-2) 0;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
-}
+  .driver-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    padding: var(--space-2) 0;
+    border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+  }
 
-.driver-name {
-  font-weight: 600;
-}
+  .driver-name {
+    font-weight: 600;
+  }
 
-.driver-reason {
-  color: var(--dsw-alias-label-secondary);
-  font-size: 0.8125rem;
-}
+  .driver-reason {
+    color: var(--dsw-alias-label-secondary);
+    font-size: 0.8125rem;
+  }
 
-.driver-revoke {
-  margin-left: auto;
-}
+  .driver-revoke {
+    margin-left: auto;
+  }
 
-.driver-grant {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
+  .driver-grant {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    padding: var(--space-2) var(--space-3);
+    border: 0.5px solid var(--dsw-alias-border-l3);
+    border-radius: 11px;
+    background: var(--dsw-alias-bg-layer-3);
+    font-size: 0.8125rem;
+  }
+
+  /* 目标来源 chip：与指令四态同一范式——**必须重绑到 900 档**，否则 500 档亮色当小字用
+   过不了 AA（Q5 实测 business 500 压 10% 浅底只有 3.75:1，被对比度门打红）。 */
+  .target-mode {
+    --dsw-alias-state-business-primary: var(--dsw-static-blue-900);
+    padding: 2px var(--space-2);
+    border-radius: 99px;
+    background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent);
+    color: var(--dsw-alias-state-business-primary);
+    font-weight: 600;
+  }
+
+  /* 显式指定与"自动选"必须一眼可分（用户要能看出自己钉死了目标）。 */
+  .target-mode-explicit {
+    --dsw-alias-state-warn-primary: var(--dsw-static-amber-900);
+    background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent);
+    color: var(--dsw-alias-state-warn-primary);
+  }
+
+  .target-note {
+    color: var(--dsw-alias-label-secondary);
+  }
+
+  .target-actions,
+  .target-reset {
+    margin-left: auto;
+  }
   margin-top: var(--space-3);
 }
 

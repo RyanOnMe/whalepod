@@ -40,6 +40,12 @@ export interface InstructionComposerProps {
   /** 有活跃 Run 时提示"这句话会成为追问"，让用户提前知道自己的话会去哪。 */
   hasActiveRun: boolean
   /**
+   * 显式执行目标（⑥c）。`null` = 交给 Hub 三段式解析——目标字段按**实际钉住什么**发
+   * （只钉设备就只发 deviceId；见下面的注释）。**必填**：生产唯一调用点总传值，留成可选会多出
+   * 一个没人走的分支（评审 O6：`undefined` 那条实际上从没被验过）。
+   */
+  target: { deviceId: string; workspaceId: string } | null
+  /**
    * 这段话是给哪个 Agent 的（可空：Hub 会去继承上一个 Run 的 Agent）。
    * ⑥c 的目标选择器落地前，起**第一个**运行仍需要显式选 Agent——那种情况由
    * 调用方（常驻的启动器）承担，这里只在已经能确定 Agent 时才提示可发。
@@ -50,6 +56,7 @@ export interface InstructionComposerProps {
 export function InstructionComposer({
   taskId,
   hasActiveRun,
+  target,
   onOutcome,
 }: InstructionComposerProps): ReactNode {
   const queryClient = useQueryClient()
@@ -60,7 +67,20 @@ export function InstructionComposer({
   const mutation = useMutation({
     mutationFn: (body: string) =>
       api.mutate<InstructionOutcome>(`/tasks/${taskId}/instructions`, {
-        body: { text: body },
+        // 目标字段按**实际钉住了什么**发：
+        //   自动解析（target 为 null）→ 一个都不发；
+        //   只钉了设备（工作区还空）→ **只发 deviceId**（Hub 支持：会在该设备上挑可用工作区，
+        //     见 instruction-target.ts 的 findAvailableWorkspaceForDevice）；
+        //   设备与工作区都钉住 → 两个都发。
+        // 修正（评审 B1）：原先"workspaceId 为空就两个都不发"让**只选设备**这一态说了假话——
+        // 那时 chip 写着「显式指定」，载荷里却没有任何目标字段：用户以为钉死了设备 A，
+        // 实际可能落在"沿用上一轮"的设备 B 上，而这一片要回答的正是"这句话会在哪里跑"。
+        body:
+          target === null || target.deviceId === ''
+            ? { text: body }
+            : target.workspaceId === ''
+              ? { text: body, deviceId: target.deviceId }
+              : { text: body, deviceId: target.deviceId, workspaceId: target.workspaceId },
       }),
     onSuccess: (outcome) => {
       setText('')
