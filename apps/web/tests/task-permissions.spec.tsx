@@ -281,9 +281,73 @@ describe('任务权限页（⑥e）', () => {
         },
       ]),
     ])
-    expect(await screen.findByText(/名册读取失败|团队/)).toBeVisible()
+    // 复核：原先用 `/名册读取失败|团队/`，而 **"正在加载团队成员…"** 也含"团队"⇒ 断言被加载提示
+    // 满足；把失败横幅整条删掉仍全绿（与 B1 同类的假绿）。所以这里**精确断言失败文案**，
+    // 并显式断言"这一刻不是在加载"。
+    // 用**只针对失败文案**的正则（ErrorBanner 把 message 与 requestId 分成不同节点，
+    // 精确文本匹配不上）；关键是别再让"团队"这种词把加载提示也算进来。
+    expect(await screen.findByText(/名册读取失败/)).toBeVisible()
+    expect(screen.queryByTestId('drivers-members-loading')).toBeNull()
     // 名单本身仍要能看（名册挂了不影响"谁能驱动"这个问题的答案）。
     expect(await screen.findByTestId('driver-item')).toBeVisible()
+  })
+
+  it('未知的 reason 不静默落进「被授权」：显式标未知，且**不给**撤销入口（fail-closed）', async () => {
+    // 复核：这一改动此前**零判据**（把未知分支撤回两分支写法仍 7/7 全绿）。
+    // 要点是 fail-open 的反面：服务端将来加了第三种 reason 时，UI 不能替它编一个意思，
+    // 也不能因此给出一个语义不明写操作入口。
+    // 注意：**不能用 `grantsHandler`**——它按 reason 分支重写条目，会把契约外的值洗成 `granted`
+    // （我第一版就是这样，红在了"显示成被授权"，而根因在夹具不在组件）。这里原样透传。
+    const task = makeTask({ assigneeUserId: BOB.userId })
+    renderApp(`/tasks/${task.id}/permissions`, [
+      ...loggedInHandlers(BOB, [
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/tasks/${task.id}$`),
+          respond: () =>
+            new Response(
+              JSON.stringify({
+                ok: true,
+                data: { task, comments: [], instructions: [], runs: [], artifacts: [] },
+              }),
+              { status: 200 },
+            ),
+        },
+        {
+          method: 'GET',
+          url: /\/instruction-grants$/,
+          respond: () =>
+            new Response(
+              JSON.stringify({
+                ok: true,
+                data: [
+                  { userId: BOB.userId, reason: 'assignee' },
+                  // 契约外的第三种 reason：`InstructionDriverView` 是手写 interface，无运行期校验，
+                  // 服务端真加了第三种值时就是这个形状。
+                  {
+                    userId: ALICE.userId,
+                    reason: 'admin_override',
+                    grantedBy: BOB.userId,
+                    grantedAt: GRANTED_AT,
+                  },
+                ],
+              }),
+              { status: 200 },
+            ),
+        },
+        teamMembersHandler([
+          makeMember(),
+          makeMember({ ...BOB, role: BOB.role }),
+          makeMember({ ...ALICE, role: ALICE.role }),
+        ]),
+      ]),
+    ])
+    const reasons = (await screen.findAllByTestId('driver-reason')).map(
+      (el) => el.textContent ?? '',
+    )
+    expect(reasons[1]).toContain('未知来源')
+    expect(reasons[1]).toContain('admin_override')
+    expect(screen.queryByTestId('driver-revoke')).toBeNull()
   })
 
   it('两条不可让渡的边界写在页面上（审批不可授予 / 执行不换机器）', async () => {

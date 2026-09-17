@@ -15,7 +15,6 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
-import type { TeamMemberView } from '@whalepod/protocol'
 import type { InstructionDriverView, TaskView } from '../../shared/api/types.js'
 import { useMemberDirectory } from '../team/memberDirectory.js'
 import { SelectMenu } from '../../shared/SelectMenu.js'
@@ -97,7 +96,7 @@ export function InstructionDrivers({ task, sessionUserId }: InstructionDriversPr
         <ul className="driver-list" role="list">
           {drivers.map((driver) => (
             <li key={driver.userId} className="driver-item" data-testid="driver-item">
-              <span className="driver-name">{directoryState.nameOf(driver.userId)}</span>
+              <span className="driver-name">{directoryState.personOf(driver.userId)}</span>
               {driver.reason === 'assignee' ? (
                 <span className="driver-reason" data-testid="driver-reason">
                   责任人 · 永远可驱动
@@ -108,7 +107,7 @@ export function InstructionDrivers({ task, sessionUserId }: InstructionDriversPr
                   {driver.grantedAt === undefined ? null : (
                     <span className="mono">
                       {' '}
-                      · 由 {directoryState.nameOf(driver.grantedBy ?? '')} 于{' '}
+                      · 由 {directoryState.personOf(driver.grantedBy ?? '')} 于{' '}
                       {driver.grantedAt.slice(0, 10)}
                     </span>
                   )}
