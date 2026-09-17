@@ -6,7 +6,7 @@
 import { screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
-import type { CommentView } from '../src/shared/api/types.js'
+import type { CommentView, InstructionView } from '../src/shared/api/types.js'
 import {
   ALICE,
   BOB,
@@ -206,7 +206,11 @@ describe('auth-navigation', () => {
       editedAt: null,
     }
     // 可变的 Task Room 状态：接受/留言后 refetch 返回新快照（模拟 server reconciliation）。
-    let room = { task: { ...task }, comments: [] as CommentView[] }
+    let room = {
+      task: { ...task },
+      comments: [] as CommentView[],
+      instructions: [] as InstructionView[],
+    }
     const user = userEvent.setup()
     const { fetchMock } = renderApp('/login', [
       switchable.handler,
@@ -231,6 +235,7 @@ describe('auth-navigation', () => {
           room = {
             task: { ...task, assignmentStatus: 'accepted', acceptedAt: '2026-08-26T00:00:00.000Z' },
             comments: room.comments,
+            instructions: room.instructions,
           }
           return ok(room.task)
         },
@@ -239,7 +244,7 @@ describe('auth-navigation', () => {
         method: 'POST',
         url: new RegExp(`/api/v1/tasks/${task.id}/comments$`),
         respond: () => {
-          room = { task: room.task, comments: [...room.comments, comment] }
+          room = { task: room.task, comments: [...room.comments, comment], instructions: [] }
           return { status: 201, body: { ok: true, data: comment } }
         },
       },

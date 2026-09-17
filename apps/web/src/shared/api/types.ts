@@ -152,9 +152,35 @@ export interface InstructionDriverView {
   grantedAt?: string
 }
 
+/**
+ * 执行区的一条指令（③c-2a 的读模型：`GET /tasks/:id` 的 `instructions`）。
+ *
+ * 与 `CommentView`（讨论）是**两条流**（ADR-0010 决策 1）：指令会驱动 Agent，评论不会。
+ * `instructionState` 的四种取值就是执行区要画出来的四种状态；被拒时理由与状态**同列落库**
+ * （团队事件只有 24 小时窗口，而"我的指令为什么没被受理"是长期问题）。
+ */
+export interface InstructionView {
+  id: string
+  taskId: string
+  authorUserId: string
+  body: string
+  createdAt: string
+  /** `instruction` = 起 Run 的那句话；`followup` = 追问既有 Run。 */
+  kind: 'instruction' | 'followup'
+  targetAgentId: string | null
+  /** 起 Run 的指令在 `run.start` ack 之前可能还没有 Run。 */
+  runId: string | null
+  instructionState: 'pending' | 'accepted' | 'rejected'
+  instructionErrorCode: string | null
+  instructionErrorMessage: string | null
+}
+
 export interface TaskRoomView {
   task: TaskView
+  /** 讨论流：**只有人**说的话，永不触发运行（ADR-0010）。 */
   comments: CommentView[]
+  /** 执行流：驱动 Agent 的指令（③c-2a 起与 `comments` 分离）。 */
+  instructions: InstructionView[]
   runs: TaskRoomRun[]
   artifacts: TaskRoomArtifact[]
 }
