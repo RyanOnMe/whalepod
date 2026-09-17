@@ -21,11 +21,12 @@ import { ErrorBanner } from '../app/ErrorBanner.js'
 import { useSession } from '../app/session.js'
 import { useMemberDirectory } from '../features/team/memberDirectory.js'
 import { queryKeys } from '../app/query-client.js'
-import type { InstructionView, TaskRoomView } from '../shared/api/types.js'
+import type { InstructionView, RunEventItem, TaskRoomView } from '../shared/api/types.js'
 import { ArtifactList, ReviewerSlot } from '../features/task/ArtifactList.js'
 import { AssignmentPanel } from '../features/task/AssignmentPanel.js'
 import { CommentComposer, CommentList } from '../features/task/CommentComposer.js'
 import { InstructionComposer } from '../features/task/InstructionComposer.js'
+import { RunConsole } from '../features/task/RunConsole.js'
 import { TargetPicker } from '../features/task/TargetPicker.js'
 import { InstructionList } from '../features/task/InstructionList.js'
 import { RunLauncher } from '../features/task/RunLauncher.js'
@@ -66,6 +67,9 @@ export function TaskRoomPage(): ReactNode {
   const session = useSession()
   const directory = useMemberDirectory()
   const [selectedRunId, setSelectedRunId] = useState<string | undefined>(undefined)
+  // ⑥d：Console 覆盖层显示哪个 Run（undefined = 关）。与 `selectedRunId`（内联面板）分开：
+  // 内联面板是默认视图，覆盖层是"放大看"，两者可以同时存在。
+  const [consoleRunId, setConsoleRunId] = useState<string | undefined>(undefined)
   // ⑥c：显式执行目标（`null` = 走 Hub 的三段式自动解析）。状态放在页面里，因为目标条与输入框
   // 是同一个"这次往哪儿发"的意图，不该各自持有一份。
   const [explicitTarget, setExplicitTarget] = useState<{
@@ -197,6 +201,7 @@ export function TaskRoomPage(): ReactNode {
                 runId={selectedRunId}
                 session={session}
                 runLabels={runOrdinalLabels(runs)}
+                onOpenConsole={() => setConsoleRunId(selectedRunId)}
               />
             ) : null}
             <ApprovalSlot runs={runs} task={task} session={session} />
@@ -231,6 +236,45 @@ export function TaskRoomPage(): ReactNode {
           </details>
         </section>
       </div>
+      {consoleRunId === undefined ? null : (
+        <RunConsoleHost
+          runId={consoleRunId}
+          runs={runs}
+          onClose={() => setConsoleRunId(undefined)}
+        />
+      )}
     </div>
+  )
+}
+
+/**
+ * Console 的取数壳（⑥d）：事件由这里取，`RunConsole` 只负责展示与筛选——
+ * 这样筛选逻辑（`matchesFilter`）可以脱离请求单独判。
+ */
+function RunConsoleHost({
+  runId,
+  runs,
+  onClose,
+}: {
+  runId: string
+  runs: TaskRoomView['runs']
+  onClose: () => void
+}): ReactNode {
+  const eventsQuery = useQuery({
+    queryKey: queryKeys.runEvents(runId),
+    queryFn: () => api.get<{ events: RunEventItem[] }>(`/runs/${runId}/events`),
+  })
+  const label = runOrdinalLabels(runs).get(runId) ?? '运行'
+  return (
+    <RunConsole
+      runId={runId}
+      runLabel={label}
+      events={eventsQuery.data?.events ?? []}
+      eventsPending={eventsQuery.isPending}
+      // 取数失败必须传下去：console 拿到的空数组既可能是"真的没有事件"，也可能是"没读到"，
+      // 排障界面把后者说成前者就是在骗操作者（评审 S1）。
+      eventsError={eventsQuery.error ?? undefined}
+      onClose={onClose}
+    />
   )
 }

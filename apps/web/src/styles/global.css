@@ -1856,6 +1856,134 @@ select {
   max-width: 520px;
 }
 
+/* ---- 切片⑥d：Run Console 覆盖层（#179 决策：Console 是覆盖层） ---- */
+.console-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+}
+
+/* 遮罩是一个真按钮：点它关闭（键盘用户也能到），但不占视觉（仅背景色）。 */
+.console-scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  background: var(--dsw-alias-bg-mask-1);
+}
+
+.console {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(920px, 100%);
+  max-height: min(80vh, 760px);
+  border-radius: 14px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  box-shadow: var(--dsw-elevation-prominent);
+  overflow: hidden;
+}
+
+.console-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+}
+
+.console-head h2 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.console-close {
+  margin-left: auto;
+}
+
+.console-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) 0;
+  flex-wrap: wrap;
+}
+
+/* 筛选 chip：与目标条同一条 AA 纪律（白底小字必须 ≥4.5:1，故用 label-secondary）。 */
+.cf {
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 2px var(--space-3);
+  border-radius: 99px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.cf.on {
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-layer-2);
+  border-color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+
+.console-count {
+  margin-left: auto;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.8125rem;
+}
+
+.console-layers {
+  padding: var(--space-2) var(--space-4) 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.8125rem;
+}
+
+.console-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-4);
+}
+
+.run-event-layer {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.75rem;
+}
+
+/* 事件读取失败：与空态视觉上也分开（空态是"没有"，这是"没读到"）。 */
+.console-error {
+  margin: 0 0 var(--space-2);
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 0.875rem;
+}
+
+.console-foot {
+  padding: var(--space-3) var(--space-4);
+  border-top: 0.5px solid var(--dsw-alias-border-l1);
+}
+
+/* 只读提示：非交互，所以用 secondary 就够（不是可点击控件）。 */
+.chip-gray {
+  display: inline-block;
+  padding: 2px var(--space-3);
+  border-radius: 99px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.8125rem;
+}
+
+.live-console-open {
+  margin-left: auto;
+}
 /* ---- 切片⑥c：执行目标条（这句话会在哪里跑） ---- */
 .target-bar {
   /* ---- 切片⑥e：任务级权限页（谁能驱动这个任务的 Agent） ---- */
