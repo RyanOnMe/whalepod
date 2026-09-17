@@ -5,6 +5,7 @@
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
+import { Link } from 'react-router'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { ASSIGNMENT_STATUS_LABEL, TASK_STATUS_LABEL } from '../../shared/format.js'
@@ -101,6 +102,13 @@ export function TaskHeader({ task, session }: TaskHeaderProps): ReactNode {
         ) : null}
       </dl>
       {task.description !== '' ? <p className="task-description">{task.description}</p> : null}
+      {/* 切片⑥e：任务级「谁能驱动 Agent」入口。放头部而不是执行栏：授权是低频操作，
+          独立成页后从这里进（也可从成员页进）。 */}
+      <p className="mutation-hint">
+        <Link to={`/tasks/${task.id}/permissions`} data-testid="task-permissions-link">
+          谁能驱动这个任务的 Agent →
+        </Link>
+      </p>
 
       {canAct ? (
         <div className="task-actions" aria-label="任务行动">

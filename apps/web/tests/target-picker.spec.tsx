@@ -246,6 +246,46 @@ describe('执行目标条（⑥c）', () => {
     expect(task.assigneeUserId).toBe('someone-else') // 夹具前提：我确实不是责任人
   })
 
+  it('责任人**会**发起设备/工作区请求（正向对照：没有它，"0 次请求"可能只是恒真）', async () => {
+    // 复核指出：单挂组件能抓"去掉 enabled"（那种变异会让非责任人用例红），但抓不到
+    // "enabled 恒 false"——因为同页 RunLauncher 的三个 useQuery 没有 enabled 门、hooks 又先跑，
+    // 共享缓存会把数据兜住，页面级判据看不见。这条正向对照用**同一套 harness** 证明
+    // `seen` 真的会被填充：若把 enabled 写死 false，它立刻红。
+    const seen: string[] = []
+    const handlers: MockHandler[] = [
+      {
+        method: 'GET',
+        url: /\/devices$/,
+        respond: () => {
+          seen.push('devices')
+          return okJson([DEVICE])
+        },
+      },
+      {
+        method: 'GET',
+        url: /\/workspaces$/,
+        respond: () => {
+          seen.push('workspaces')
+          return okJson([WS])
+        },
+      },
+    ]
+    ;(await import('./fixtures.js')).installFetch(handlers)
+    render(
+      <QueryClientProvider client={makeQueryClient({ retry: false })}>
+        <TargetPicker
+          isAssignee
+          value={null}
+          onChange={() => {}}
+          assigneeName="老张"
+          hasActiveRun={false}
+        />
+      </QueryClientProvider>,
+    )
+    await waitFor(() => expect(seen).toContain('devices'))
+    expect(seen).toContain('workspaces')
+  })
+
   it('非责任人**不发起**设备/工作区请求（单独挂载组件，归因干净）', async () => {
     // 评审纠正：我原先认为"整页里旧启动器 RunLauncher 也在拉 ⇒ 计数无法归因"，理由不成立——
     // 单独挂载 `TargetPicker` 就绕开了整页，请求数可干净归因（评审实测：非责任人 0 次、

@@ -165,7 +165,7 @@ const revisionProbeDetailHandler = {
 
 // ---------- A. 反面钉：不再是原生 <select> ----------
 
-describe('#158 反面钉：7 处下拉不再是原生 <select>', () => {
+describe('#158 反面钉：全树不许有原生 <select>（逐落页点）', () => {
   it('apps/web/src 全树没有原生 <select> 开标签（vendor 子树除外）', () => {
     // 行内注释与块注释都要剔掉：`SelectMenu.tsx` 的注释里就写着「原生 <select>」四个字，
     // 不剔就会把说明文字当成违规（实测踩过）。
