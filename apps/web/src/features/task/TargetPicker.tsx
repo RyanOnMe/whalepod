@@ -40,7 +40,7 @@ export interface TargetPickerProps {
    * （`instruction.ts` 的 `sendRunFollowup`）。界面必须说清（评审 O5），
    * 否则用户会以为自己刚选的设备生效了。
    */
-  hasActiveRun?: boolean
+  hasActiveRun: boolean
 }
 
 export function TargetPicker({
@@ -48,7 +48,7 @@ export function TargetPicker({
   value,
   onChange,
   assigneeName,
-  hasActiveRun = false,
+  hasActiveRun,
 }: TargetPickerProps): ReactNode {
   // 只对责任人发请求：被授权成员本来就不该看到（也看不到）别人的设备。
   const devicesQuery = useQuery({

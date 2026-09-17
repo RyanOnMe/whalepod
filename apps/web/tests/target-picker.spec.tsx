@@ -155,7 +155,11 @@ describe('执行目标条（⑥c）', () => {
     renderAsAssignee(bodies)
     await selectOption(user, '指定设备', DEVICE.name)
     await selectOption(user, '工作区', WS.name)
-    expect(await screen.findByTestId('target-mode')).toHaveTextContent('显式指定')
+    const chip = await screen.findByTestId('target-mode')
+    expect(chip).toHaveTextContent('显式指定')
+    // 视觉区分必须有判据（评审 M6：去掉 `target-mode-explicit` 类时全绿）——
+    // CSS 注释自己写着"显式指定与自动选必须一眼可分"，光断言文案钉不住它。
+    expect(chip).toHaveClass('target-mode-explicit')
     await sendInstruction(user)
     await waitFor(() => expect(bodies).toHaveLength(1))
     expect(bodies[0]).toEqual({ text: '跑一遍', deviceId: DEVICE.id, workspaceId: WS.workspaceId })
@@ -229,7 +233,11 @@ describe('执行目标条（⑥c）', () => {
       `/tasks/${task.id}`,
       loggedInHandlers(ALICE, [roomHandler(task), teamMembersHandler([]), ...infraHandlers()]),
     )
-    expect(await screen.findByTestId('target-readonly')).toBeVisible()
+    const readonly = await screen.findByTestId('target-readonly')
+    expect(readonly).toBeVisible()
+    // S2 的回归保护（评审 M18）：门的规则只锚"标点相邻"的折行，句中折行它永远看不见，
+    // 所以在这里直接断言**渲染文本**——把折行放回去会让这句出现「要 换」。
+    expect(readonly).toHaveTextContent('）。要换目标请找责任人。')
     // 只读 = 没有可操作控件（不是"控件变灰"）。
     expect(screen.queryByTestId('target-bar')).toBeNull()
     expect(screen.queryByLabelText('指定设备')).toBeNull()
@@ -264,7 +272,13 @@ describe('执行目标条（⑥c）', () => {
     const fetchMock = (await import('./fixtures.js')).installFetch(handlers)
     render(
       <QueryClientProvider client={makeQueryClient({ retry: false })}>
-        <TargetPicker isAssignee={false} value={null} onChange={() => {}} assigneeName="老张" />
+        <TargetPicker
+          isAssignee={false}
+          value={null}
+          onChange={() => {}}
+          assigneeName="老张"
+          hasActiveRun={false}
+        />
       </QueryClientProvider>,
     )
     expect(await screen.findByTestId('target-readonly')).toBeVisible()

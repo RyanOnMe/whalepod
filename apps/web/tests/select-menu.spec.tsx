@@ -197,6 +197,58 @@ describe('#158 反面钉：7 处下拉不再是原生 <select>', () => {
     expect(document.querySelector('select#invite-role')).toBeNull()
   })
 
+  it('落页点 #target-device / #target-workspace（⑥c 执行目标条）：是 <button aria-haspopup="menu">', async () => {
+    // 评审 #213 S3：这两个落页点此前**在全部测试里出现 0 次**——#158 的反面钉是逐落页点的，
+    // 新落页点不加，就等于"原生 select 可以悄悄回到这里"。
+    // 本用例只钉按钮语义这一层；两档截图 / 390 视口 / 键盘回焦属 #158 的设备矩阵（另记）。
+    const { BOB, makeRun, makeTask } = await import('./fixtures.js')
+    const task = makeTask({ assigneeUserId: BOB.userId })
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/tasks/${task.id}$`),
+          respond: () =>
+            new Response(
+              JSON.stringify({
+                ok: true,
+                data: {
+                  task,
+                  comments: [],
+                  instructions: [],
+                  runs: [makeRun({ status: 'running' })],
+                  artifacts: [],
+                },
+              }),
+              { status: 200 },
+            ),
+        },
+        {
+          method: 'GET',
+          url: /\/devices$/,
+          respond: () => new Response(JSON.stringify({ ok: true, data: [] }), { status: 200 }),
+        },
+        {
+          method: 'GET',
+          url: /\/workspaces$/,
+          respond: () => new Response(JSON.stringify({ ok: true, data: [] }), { status: 200 }),
+        },
+        teamMembersHandler([]),
+      ]),
+    )
+    // 自动态：触发器可访问名是「指定设备」（显式态才叫「设备」，两态不同名是既有事实）
+    const device = await screen.findByLabelText('指定设备')
+    expect(device.tagName).toBe('BUTTON')
+    expect(device).toHaveAttribute('aria-haspopup', 'menu')
+    expect(device).toHaveAttribute('id', 'target-device')
+    expect(document.querySelector('select#target-device')).toBeNull()
+    // 工作区控件在自动态不渲染（先选设备才出现）——这条本身也是口径：
+    // 没选设备时给一个"选工作区"是误导（工作区属于设备）。
+    expect(document.querySelector('select#target-workspace')).toBeNull()
+    expect(screen.queryByLabelText('工作区')).toBeNull()
+  })
+
   it('落页点 #task-assignee-<projectId>：是按钮，且每个项目一个（不再按前缀命中原生 select）', async () => {
     const project: ProjectView = {
       id: '22222222-0000-4000-8000-000000000002',
