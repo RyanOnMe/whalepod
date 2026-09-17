@@ -19,6 +19,8 @@ import { RunActions } from '../run/RunActions.js'
 import { RunFailureNotice } from '../run/RunFailureNotice.js'
 
 export interface RunLivePanelProps {
+  /** 点「Console」时的回调（⑥d：覆盖层放大看）。不传则不渲染入口。 */
+  onOpenConsole?: () => void
   runId: string
   session: Session
   /**
@@ -38,7 +40,8 @@ const PHASE_LABEL: Record<string, string> = {
 }
 
 /** 已知事件类型 → 单行呈现；返回 null 表示未知类型（只显示类型名）。 */
-function describeEvent(item: RunEventItem): string | null {
+/** 事件 → 一行文案。**导出**给 Run Console（⑥d）复用：同一份协议不该有两套解读。 */
+export function describeEvent(item: RunEventItem): string | null {
   const event = item.event as { type?: unknown }
   switch (event.type) {
     case 'runtime.ready':
@@ -102,7 +105,12 @@ function describeEvent(item: RunEventItem): string | null {
   }
 }
 
-export function RunLivePanel({ runId, session, runLabels }: RunLivePanelProps): ReactNode {
+export function RunLivePanel({
+  runId,
+  session,
+  runLabels,
+  onOpenConsole,
+}: RunLivePanelProps): ReactNode {
   const runQuery = useQuery({
     queryKey: queryKeys.run(runId),
     queryFn: () => api.get<RunView>(`/runs/${runId}`),
@@ -153,6 +161,17 @@ export function RunLivePanel({ runId, session, runLabels }: RunLivePanelProps): 
         <span className={`badge badge-run badge-run-${run.status}`}>
           {RUN_STATUS_LABEL[run.status]}
         </span>
+        {/* ⑥d：把这次运行"放大看"——Console 覆盖层带按 component 分层与筛选。 */}
+        {onOpenConsole === undefined ? null : (
+          <button
+            type="button"
+            className="button live-console-open"
+            data-testid="open-run-console"
+            onClick={onOpenConsole}
+          >
+            打开 Console
+          </button>
+        )}
         {run.startedAt !== null ? (
           <span>
             开始 <RelativeTime iso={run.startedAt} />

@@ -21,11 +21,12 @@ import { ErrorBanner } from '../app/ErrorBanner.js'
 import { useSession } from '../app/session.js'
 import { useMemberDirectory } from '../features/team/memberDirectory.js'
 import { queryKeys } from '../app/query-client.js'
-import type { InstructionView, TaskRoomView } from '../shared/api/types.js'
+import type { InstructionView, RunEventItem, TaskRoomView } from '../shared/api/types.js'
 import { ArtifactList, ReviewerSlot } from '../features/task/ArtifactList.js'
 import { AssignmentPanel } from '../features/task/AssignmentPanel.js'
 import { CommentComposer, CommentList } from '../features/task/CommentComposer.js'
 import { InstructionComposer } from '../features/task/InstructionComposer.js'
+import { RunConsole } from '../features/task/RunConsole.js'
 import { InstructionList } from '../features/task/InstructionList.js'
 import { RunLauncher } from '../features/task/RunLauncher.js'
 import { RunLivePanel } from '../features/task/RunLivePanel.js'
@@ -65,6 +66,9 @@ export function TaskRoomPage(): ReactNode {
   const session = useSession()
   const directory = useMemberDirectory()
   const [selectedRunId, setSelectedRunId] = useState<string | undefined>(undefined)
+  // ⑥d：Console 覆盖层显示哪个 Run（undefined = 关）。与 `selectedRunId`（内联面板）分开：
+  // 内联面板是默认视图，覆盖层是"放大看"，两者可以同时存在。
+  const [consoleRunId, setConsoleRunId] = useState<string | undefined>(undefined)
 
   const query = useQuery({
     queryKey: queryKeys.taskRoom(taskId ?? ''),
@@ -174,6 +178,7 @@ export function TaskRoomPage(): ReactNode {
                 runId={selectedRunId}
                 session={session}
                 runLabels={runOrdinalLabels(runs)}
+                onOpenConsole={() => setConsoleRunId(selectedRunId)}
               />
             ) : null}
             <ApprovalSlot runs={runs} task={task} session={session} />
@@ -208,6 +213,42 @@ export function TaskRoomPage(): ReactNode {
           </details>
         </section>
       </div>
+      {consoleRunId === undefined ? null : (
+        <RunConsoleHost
+          runId={consoleRunId}
+          runs={runs}
+          onClose={() => setConsoleRunId(undefined)}
+        />
+      )}
     </div>
+  )
+}
+
+/**
+ * Console 的取数壳（⑥d）：事件由这里取，`RunConsole` 只负责展示与筛选——
+ * 这样筛选逻辑（`matchesFilter`）可以脱离请求单独判。
+ */
+function RunConsoleHost({
+  runId,
+  runs,
+  onClose,
+}: {
+  runId: string
+  runs: TaskRoomView['runs']
+  onClose: () => void
+}): ReactNode {
+  const eventsQuery = useQuery({
+    queryKey: queryKeys.runEvents(runId),
+    queryFn: () => api.get<{ events: RunEventItem[] }>(`/runs/${runId}/events`),
+  })
+  const label = runOrdinalLabels(runs).get(runId) ?? '运行'
+  return (
+    <RunConsole
+      runId={runId}
+      runLabel={label}
+      events={eventsQuery.data?.events ?? []}
+      eventsPending={eventsQuery.isPending}
+      onClose={onClose}
+    />
   )
 }
