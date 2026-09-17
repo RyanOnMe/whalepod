@@ -8,11 +8,13 @@
  *
  * 取数留在页面层的 `RunConsoleHost`，所以这里不必搭请求夹具（判定与展示各自可测）。
  */
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { useState, type ReactNode } from 'react'
 import { RunConsole, componentLayer, matchesFilter } from '../src/features/task/RunConsole.js'
+import { BOB, loggedInHandlers, makeRun, makeTask, teamMembersHandler } from './fixtures.js'
+import { renderApp } from './render.jsx'
 import type { RunEventItem } from '../src/shared/api/types.js'
 
 function event(over: Partial<RunEventItem> & { event: Record<string, unknown> }): RunEventItem {
@@ -56,13 +58,26 @@ describe('Console 筛选判定（纯函数）', () => {
     // 评审阻断：我第一版读 `event.component`，而 `ProjectedRunEventSchema.event` 是 13 个成员的
     // `z.strictObject` 判别联合、**没有** component（protocol 里该词出现 0 次）⇒ 真实数据上 100%
     // 落到兜底值，"按 component 分层"是死代码；旧判据喂的是**协议会拒收**的载荷所以才是绿的。
-    expect(componentLayer(event({ event: { type: 'tool.started', toolName: 'read_file' } }))).toBe(
-      'dsh',
-    )
-    expect(componentLayer(event({ event: { type: 'assistant.message', text: 'hi' } }))).toBe('dsh')
-    expect(componentLayer(event({ event: { type: 'approval.requested' } }))).toBe('hub')
-    expect(componentLayer(event({ event: { type: 'run.failed', code: 'X' } }))).toBe('hub')
-    expect(componentLayer(event({ event: { type: 'runtime.ready' } }))).toBe('runtime')
+    // **遍历协议的全部 13 个成员**（复核实测：只钉 5 个时，另外 8 个从映射表里删掉仍全绿——
+    // 那样三分之二的映射是"写了但没验"）。
+    const expected: Record<string, string> = {
+      'runtime.ready': 'runtime',
+      'run.phase': 'hub',
+      'run.completed': 'hub',
+      'run.failed': 'hub',
+      'run.cancelled': 'hub',
+      'approval.requested': 'hub',
+      'approval.decided': 'hub',
+      'artifact.candidate': 'hub',
+      'assistant.message': 'dsh',
+      'tool.started': 'dsh',
+      'tool.finished': 'dsh',
+      'subagent.started': 'dsh',
+      'subagent.finished': 'dsh',
+    }
+    for (const [type, layer] of Object.entries(expected)) {
+      expect(componentLayer(event({ event: { type } })), type).toBe(layer)
+    }
     // 协议加了新类型时归 other——看得见，而不是被静默塞进某一层
     expect(componentLayer(event({ event: { type: 'brand.new' } }))).toBe('other')
   })
@@ -287,11 +302,14 @@ describe('Console 覆盖层', () => {
         onClose={() => {}}
       />,
     )
-    const close = screen.getByTestId('console-close')
-    await user.click(close)
-    // 从最后一个可聚焦元素 Tab → 必须回到对话框内第一个
+    // 必须从**框内最后一个**可聚焦元素正向 Tab：我第一版点的是第一个（关闭钮）再 Tab，
+    // 落到第二个——**没有陷阱也会这样**，判据是虚的（复核实测：整块陷阱删掉仍全绿）。
+    await user.click(screen.getByTestId('console-filter-error'))
     await user.tab()
-    expect(screen.getByTestId('console-filter-all')).toHaveFocus()
+    expect(screen.getByTestId('console-close')).toHaveFocus()
+    // 反向同理：Shift+Tab 从第一个应回到最后一个（而不是落到遮罩）
+    await user.tab({ shift: true })
+    expect(screen.getByTestId('console-filter-error')).toHaveFocus()
   })
 
   it('事件还在加载时**不**说"没有事件"（加载失败与空列表必须分得开）', () => {
@@ -306,5 +324,79 @@ describe('Console 覆盖层', () => {
     )
     expect(screen.getByText('正在加载事件…')).toBeVisible()
     expect(screen.queryByTestId('console-empty')).toBeNull()
+  })
+})
+
+describe('Console 入口接线（页面级：整片最该有门的地方原先零覆盖）', () => {
+  it('点运行行 → 点「打开 Console」→ dialog 出现并带上那次运行的事件', async () => {
+    // 复核指出：`run-console.spec.tsx` 只直接渲染 `<RunConsole>`、从不经过 `RunConsoleHost`，
+    // 而 e2e 也从不打开 Console ⇒ **删掉 TaskRoomPage 里整条接线不会让任何门变红**（m7 变异存活）。
+    // 这条用真实 router + 真实 QueryClient 从页面点进来，把接线钉住。
+    const user = userEvent.setup()
+    const task = makeTask({ assigneeUserId: BOB.userId })
+    const run = makeRun({ id: 'run-console-1', status: 'running' })
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/tasks/${task.id}$`),
+          respond: () =>
+            new Response(
+              JSON.stringify({
+                ok: true,
+                data: { task, comments: [], instructions: [], runs: [run], artifacts: [] },
+              }),
+              { status: 200 },
+            ),
+        },
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/runs/${run.id}$`),
+          respond: () =>
+            new Response(
+              JSON.stringify({
+                ok: true,
+                data: { ...run, projectId: task.projectId, rerunOfRunId: null },
+              }),
+              { status: 200 },
+            ),
+        },
+        {
+          method: 'GET',
+          url: /\/events$/,
+          respond: () =>
+            new Response(
+              JSON.stringify({
+                ok: true,
+                data: {
+                  events: [
+                    {
+                      runId: run.id,
+                      seq: 1,
+                      type: 'run.event',
+                      audience: 'owner',
+                      event: { type: 'tool.started', toolName: 'read_file' },
+                      occurredAt: '2026-09-16T02:00:00.000Z',
+                      receivedAt: '2026-09-16T02:00:00.000Z',
+                    },
+                  ],
+                },
+              }),
+              { status: 200 },
+            ),
+        },
+        teamMembersHandler([]),
+      ]),
+    )
+    // 选中运行（时间线行）→ 内联面板出现 → 点它头部的 Console 入口
+    await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
+    const openButton = await screen.findByTestId('open-run-console')
+    await user.click(openButton)
+    // dialog 真的出现，并且带上了那次运行的事件（证明 RunConsoleHost 的取数与传参都通）
+    expect(await screen.findByTestId('run-console')).toBeVisible()
+    expect(screen.getByRole('dialog')).toHaveAccessibleName(/第 1 次运行/)
+    await waitFor(() => expect(screen.getAllByTestId('console-event')).toHaveLength(1))
+    expect(screen.getByTestId('console-event')).toHaveTextContent('工具开始：read_file')
   })
 })

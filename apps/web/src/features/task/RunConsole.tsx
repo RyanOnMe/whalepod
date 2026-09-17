@@ -56,6 +56,13 @@ export function matchesFilter(filter: ConsoleFilter, item: RunEventItem): boolea
  * 归因分层本身是仓库的口径（`hub.*` / `node.*` / `runtime.bridge` / `dsh.agent`），
  * 所以正确做法是**按事件类型映射**——类型是协议的一部分，不会漂。
  */
+/**
+ * **"层"的口径**：指事件所属的**域/权威层**，不是"谁把它发出来的"。这个区分有实际后果——
+ * `run.phase` / `run.completed` 其实是 **node projector** 发的（`apps/node/src/projection/
+ * projector.ts`），但它们是 Run 生命周期的权威叙述、排障时该去 Hub 侧看 Run 状态机；
+ * 而 `tool.*` / `assistant.message` 是 DSH agent 的产物（该去 dsh 侧看）。
+ * 若哪天要按"产生方"分层，`run.phase` 得挪到 node/runtime——那时这张表与注释都要一起改。
+ */
 const LAYER_BY_TYPE: Readonly<Record<string, string>> = {
   'runtime.ready': 'runtime',
   'run.phase': 'hub',
