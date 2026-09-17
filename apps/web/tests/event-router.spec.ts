@@ -70,6 +70,8 @@ describe('applyClientFrame (event-router)', () => {
     // 后者降级为前缀键 ['project-tasks']）——见 #137 的实时接线。
     expect(queryClient.calls).toEqual([
       { queryKey: ['task-room', 't-1'] },
+      // 切片⑥e 新增：task.changed 也要失效权限页（服务端授权/撤销发的就是它）。
+      { queryKey: ['instruction-grants', 't-1'] },
       { queryKey: ['project-tasks'] },
     ])
     expect(cursorStore.load()).toBe('42')
@@ -97,6 +99,9 @@ describe('applyClientFrame (event-router)', () => {
         { taskId: 't-1', projectId: 'p-1' },
         [
           ['task-room', 't-1'],
+          // 切片⑥e：权限页的键也必须被 task.changed 失效——服务端授权/撤销发的就是
+          // task.changed，漏了它，责任人撤销时对方的权限页永远不更新（而服务端已 403）。
+          ['instruction-grants', 't-1'],
           ['project-tasks', 'p-1'],
         ],
       ],
@@ -117,6 +122,7 @@ describe('applyClientFrame (event-router)', () => {
     // ['run'] 覆盖 ['run', id] 与 ['run', id, 'events']。
     expect(keysForPersistentEvent(persistentFrame('task.changed', {}).event)).toEqual([
       ['task-room'],
+      ['instruction-grants'],
       ['project-tasks'],
     ])
     expect(keysForPersistentEvent(persistentFrame('run.changed', {}).event)).toEqual([['run']])

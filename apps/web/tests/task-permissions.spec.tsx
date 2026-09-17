@@ -108,30 +108,78 @@ describe('任务权限页（⑥e）', () => {
     expect(reasons[1]).toContain(GRANTED_AT.slice(0, 10))
   })
 
-  it('责任人能撤销被授权成员，且请求必须走 **DELETE**（服务端只有 DELETE 路由）', async () => {
+  it('责任人能撤销被授权成员：请求走 DELETE，且撤销后那一行真的从名单上消失', async () => {
+    // 复核 B1：这条原本断言 `expect(calls).toContain('GET')`——挂载时就已经 GET 过一次，
+    // 于是断言被首次加载满足，与"撤销后重新拉名单"无关：删掉组件的 `invalidate()` 仍 5/5 全绿。
+    // 现在改成**有状态名单**（DELETE 后 GET 少一行），断言那一行**消失**——真实回归逃逸点。
     const user = userEvent.setup()
-    const calls: string[] = []
-    const view = renderPermissions(BOB, [
-      ...grantsHandler(
-        [
-          { userId: BOB.userId, reason: 'assignee' },
-          { userId: ALICE.userId, reason: 'granted' },
-        ],
-        (method) => calls.push(method),
-      ),
-      {
-        method: 'DELETE',
-        url: /\/instruction-grants\/[0-9a-f-]+$/,
-        respond: () =>
-          new Response(JSON.stringify({ ok: true, data: { revoked: true } }), { status: 200 }),
-      },
+    let revoked = false
+    const task = makeTask({ assigneeUserId: BOB.userId })
+    const view = renderApp(`/tasks/${task.id}/permissions`, [
+      ...loggedInHandlers(BOB, [
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/tasks/${task.id}$`),
+          respond: () =>
+            new Response(
+              JSON.stringify({
+                ok: true,
+                data: { task, comments: [], instructions: [], runs: [], artifacts: [] },
+              }),
+              { status: 200 },
+            ),
+        },
+        {
+          method: 'GET',
+          url: /\/instruction-grants$/,
+          respond: () =>
+            new Response(
+              JSON.stringify({
+                ok: true,
+                data: revoked
+                  ? [{ userId: BOB.userId, reason: 'assignee' }]
+                  : [
+                      { userId: BOB.userId, reason: 'assignee' },
+                      {
+                        userId: ALICE.userId,
+                        reason: 'granted',
+                        grantedBy: BOB.userId,
+                        grantedAt: GRANTED_AT,
+                      },
+                    ],
+              }),
+              { status: 200 },
+            ),
+        },
+        {
+          method: 'DELETE',
+          url: /\/instruction-grants\/[0-9a-f-]+$/,
+          respond: () => {
+            revoked = true
+            return new Response(JSON.stringify({ ok: true, data: { revoked: true } }), {
+              status: 200,
+            })
+          },
+        },
+        teamMembersHandler([
+          makeMember(),
+          makeMember({ ...BOB, role: BOB.role }),
+          makeMember({ ...ALICE, role: ALICE.role }),
+        ]),
+      ]),
     ])
+    expect(await screen.findAllByTestId('driver-item')).toHaveLength(2)
     await user.click(await screen.findByTestId('driver-revoke'))
+    // ① 请求方法必须是 DELETE（服务端只有 DELETE 路由）
     await waitFor(() => {
       const methods = view.fetchMock.mock.calls.map((call) => (call[1] as RequestInit).method)
       expect(methods).toContain('DELETE')
     })
-    expect(calls).toContain('GET') // 撤销后要重新拉名单
+    // ② 那一行必须消失——删掉 invalidate() 时这条会红
+    await waitFor(() => {
+      expect(screen.getAllByTestId('driver-item')).toHaveLength(1)
+    })
+    expect(screen.queryByText(ALICE.displayName)).toBeNull()
   })
 
   it('非责任人看到的是**只读**名单：有只读说明、没有任何写入口', async () => {
@@ -146,6 +194,96 @@ describe('任务权限页（⑥e）', () => {
     expect(await screen.findByTestId('drivers-readonly')).toBeVisible()
     expect(screen.queryByTestId('driver-revoke')).toBeNull()
     expect(screen.queryByRole('button', { name: '授权' })).toBeNull()
+  })
+
+  it('已停用成员不进「授权给」下拉（服务端不拦，落了库就是幽灵名单）', async () => {
+    // 复核 S2：服务端只查 team_members 有没有这行、**不看停用态**，所以 UI 漏了过滤就会真落库，
+    // 名单上多一个永远登不进来的人。同仓先例：ProjectsPage 的责任人选择器过滤 `enabled`。
+    //
+    // 夹具特意放**三个不同的人**，好把两种失败区分开：
+    //   要是名册压根没被采用（默认夹具只有 Alice/Bob），"Carol 可见"这条会先红；
+    //   要是过滤失效，Dave 会出现在下拉里。只断言"某人不在"是区分不出来的。
+    const user = userEvent.setup()
+    const task = makeTask({ assigneeUserId: BOB.userId })
+    const carol = {
+      userId: 'carol-1',
+      username: 'carol',
+      displayName: 'Carol',
+      role: 'member' as const,
+    }
+    const dave = {
+      userId: 'dave-1',
+      username: 'dave',
+      displayName: 'Dave',
+      role: 'member' as const,
+    }
+    renderApp(`/tasks/${task.id}/permissions`, [
+      ...loggedInHandlers(BOB, [
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/tasks/${task.id}$`),
+          respond: () =>
+            new Response(
+              JSON.stringify({
+                ok: true,
+                data: { task, comments: [], instructions: [], runs: [], artifacts: [] },
+              }),
+              { status: 200 },
+            ),
+        },
+        ...grantsHandler([{ userId: BOB.userId, reason: 'assignee' }]),
+        teamMembersHandler([
+          makeMember({ ...BOB, role: BOB.role }),
+          makeMember({ ...carol, enabled: true }),
+          makeMember({ ...dave, enabled: false }),
+        ]),
+      ]),
+    ])
+    const trigger = await screen.findByLabelText('授权给')
+    await user.click(trigger)
+    const menu = await screen.findByRole('menu')
+    // ① 名册确实被采用（否则这条会红，而不是让下面的"不在"假通过）
+    expect(within(menu).getByRole('menuitem', { name: carol.displayName })).toBeVisible()
+    // ② 停用成员不进下拉
+    expect(within(menu).queryByRole('menuitem', { name: dave.displayName })).toBeNull()
+  })
+
+  it('名册加载失败时**说清楚**，不是只剩一个"选择成员…"的假空态', async () => {
+    // 复核 S3：原先 `membersQuery.isPending/isError` 从不渲染，500 时下拉只剩占位项，
+    // 责任人会以为"团队里没别人可授"。空态必须与加载失败区分（仓库口径）。
+    const task = makeTask({ assigneeUserId: BOB.userId })
+    renderApp(`/tasks/${task.id}/permissions`, [
+      ...loggedInHandlers(BOB, [
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/tasks/${task.id}$`),
+          respond: () =>
+            new Response(
+              JSON.stringify({
+                ok: true,
+                data: { task, comments: [], instructions: [], runs: [], artifacts: [] },
+              }),
+              { status: 200 },
+            ),
+        },
+        ...grantsHandler([{ userId: BOB.userId, reason: 'assignee' }]),
+        {
+          method: 'GET',
+          url: /\/team\/members$/,
+          respond: () =>
+            new Response(
+              JSON.stringify({
+                ok: false,
+                error: { code: 'INTERNAL_ERROR', message: '名册读取失败', requestId: 'req-x' },
+              }),
+              { status: 500 },
+            ),
+        },
+      ]),
+    ])
+    expect(await screen.findByText(/名册读取失败|团队/)).toBeVisible()
+    // 名单本身仍要能看（名册挂了不影响"谁能驱动"这个问题的答案）。
+    expect(await screen.findByTestId('driver-item')).toBeVisible()
   })
 
   it('两条不可让渡的边界写在页面上（审批不可授予 / 执行不换机器）', async () => {

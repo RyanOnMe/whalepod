@@ -59,6 +59,12 @@ const EVENT_KEY_BUILDERS: Readonly<Record<string, (payload: unknown) => CacheKey
   'project.changed': () => [['projects']],
   'task.changed': (payload) => [
     ...keysWith(payload, 'taskId', 'task-room'),
+    // 切片⑥e 的权限页：服务端授权/撤销发的就是 `task.changed`（`change: instruction_granted
+    // /instruction_revoked`，见 apps/hub/src/modules/task/instruction-grants.ts）。漏了这条键，
+    // 责任人撤销某人授权时，对方若正开着权限页就**永远看不到那行消失**，而服务端下一次指令已经
+    // 403——页面回答的正是"谁能驱动"，却给出与服务端相反的答案（评核实测：task-room +1、
+    // instruction-grants +0）。event-router 的键表必须与 queryKeys 逐个对齐，这是本文件开头的契约。
+    ...keysWith(payload, 'taskId', 'instruction-grants'),
     // 项目页任务列表（#137）：payload 带 projectId 时一并失效——「别人建了任务」
     // 必须实时进我的列表，否则又回到「刷新才看见」。
     ...keysWith(payload, 'projectId', 'project-tasks'),
