@@ -248,6 +248,9 @@ function RunConsoleHost({
       runLabel={label}
       events={eventsQuery.data?.events ?? []}
       eventsPending={eventsQuery.isPending}
+      // 取数失败必须传下去：console 拿到的空数组既可能是"真的没有事件"，也可能是"没读到"，
+      // 排障界面把后者说成前者就是在骗操作者（评审 S1）。
+      eventsError={eventsQuery.error ?? undefined}
       onClose={onClose}
     />
   )

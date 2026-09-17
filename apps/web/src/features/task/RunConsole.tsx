@@ -43,11 +43,39 @@ export function matchesFilter(filter: ConsoleFilter, item: RunEventItem): boolea
   return type === 'tool.finished' && outcome === 'failed'
 }
 
-/** 事件的 component 分层（`hub.http` → `hub`）；事件没带 component 时归到 `other`。 */
+/**
+ * 事件 → **层**的静态映射。
+ *
+ * 我第一版读的是 `item.event.component`，那是**错的**：`ProjectedRunEventSchema.event`
+ * 是 13 个成员的 `z.strictObject` 判别联合（`packages/protocol/src/node-wire.ts`），
+ * **没有任何一个声明 component**；protocol 里 `component` 一词出现 0 次。也就是说真实数据上
+ * 100% 的事件都会落到兜底值——"按 component 分层"是**死代码**，而我的三条判据之所以绿，
+ * 是因为夹具喂了**协议会拒收**的载荷（评审用打包后的 protocol 实测：
+ * `unrecognized_keys: Unrecognized key: "component"`）。
+ *
+ * 归因分层本身是仓库的口径（`hub.*` / `node.*` / `runtime.bridge` / `dsh.agent`），
+ * 所以正确做法是**按事件类型映射**——类型是协议的一部分，不会漂。
+ */
+const LAYER_BY_TYPE: Readonly<Record<string, string>> = {
+  'runtime.ready': 'runtime',
+  'run.phase': 'hub',
+  'run.completed': 'hub',
+  'run.failed': 'hub',
+  'run.cancelled': 'hub',
+  'approval.requested': 'hub',
+  'approval.decided': 'hub',
+  'artifact.candidate': 'hub',
+  'assistant.message': 'dsh',
+  'tool.started': 'dsh',
+  'tool.finished': 'dsh',
+  'subagent.started': 'dsh',
+  'subagent.finished': 'dsh',
+}
+
+/** 未知类型归 `other`（协议加了新类型时看得见，而不是被静默塞进某一层）。 */
 export function componentLayer(item: RunEventItem): string {
-  const component = (item.event as { component?: unknown }).component
-  if (typeof component !== 'string' || component === '') return 'other'
-  return component.split('.')[0] ?? 'other'
+  const type = String((item.event as { type?: unknown }).type ?? '')
+  return LAYER_BY_TYPE[type] ?? 'other'
 }
 
 export interface RunConsoleProps {
@@ -56,6 +84,8 @@ export interface RunConsoleProps {
   events: RunEventItem[]
   /** 事件还在加载时不要假装"没有事件"。 */
   eventsPending: boolean
+  /** 取数失败也必须与"没有事件"分开（排障界面尤其不能说假话）——评审 S1。 */
+  eventsError?: unknown
   onClose: () => void
 }
 
@@ -64,20 +94,32 @@ export function RunConsole({
   runLabel,
   events,
   eventsPending,
+  eventsError,
   onClose,
 }: RunConsoleProps): ReactNode {
   const [filter, setFilter] = useState<ConsoleFilter>('all')
   const closeRef = useRef<HTMLButtonElement>(null)
+  const dialogRef = useRef<HTMLElement>(null)
+  // onClose 的身份每次父组件渲染都会变（内联箭头）。若把它放进依赖，effect 会在**每次重渲染**时
+  // 重跑并把焦点抢回关闭按钮——覆盖层最常见的场景就是"盯着一个会撞审批的 Run"，而审批事件一到
+  // 数据就变、父组件就重渲染（评审 S3 实测：聚焦在某个筛选上会被抢走）。所以用 ref 固定它。
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
-  // 打开即把焦点放进覆盖层（键盘用户不用 Tab 一圈才进来）；Esc 关闭。
+  // 打开即把焦点放进覆盖层；**卸载时还给触发按钮**（原型与键盘口径都要求，评审 S2：
+  // 原先关掉后焦点落在 document.body，键盘用户得从头 Tab 回去）。
   useEffect(() => {
+    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null
     closeRef.current?.focus()
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') onCloseRef.current()
     }
     document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      trigger?.focus()
+    }
+  }, [])
 
   const visible = events.filter((item) => matchesFilter(filter, item))
   const layers = [...new Set(visible.map((item) => componentLayer(item)))]
@@ -85,11 +127,15 @@ export function RunConsole({
   return (
     <div className="console-backdrop" data-testid="run-console">
       {/* 背景点击关闭：排障时常要一眼看完就退出（键盘用户走 Esc / 关闭按钮）。 */}
+      {/* 遮罩是"点击关闭"的便利，但**不进键盘序**（tabIndex=-1）：它是 aria-modal 之外的元素，
+          读屏会忽略它，键盘却能停上去——评审 S4 实测 Shift+Tab 从关闭钮就落到这个满屏按钮上。
+          键盘用户走 Esc 或关闭按钮。 */}
       <button
         type="button"
         className="console-scrim"
         aria-label="关闭 Console"
         data-testid="console-scrim"
+        tabIndex={-1}
         onClick={onClose}
       />
       <section
@@ -97,6 +143,24 @@ export function RunConsole({
         role="dialog"
         aria-modal="true"
         aria-labelledby="console-heading"
+        ref={dialogRef}
+        onKeyDown={(keyEvent) => {
+          // 焦点陷阱（评审 S4）：aria-modal 声明了"模态"，就得让 Tab 真的留在里面。
+          if (keyEvent.key !== 'Tab') return
+          const focusables = dialogRef.current?.querySelectorAll<HTMLElement>(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+          )
+          if (focusables === undefined || focusables.length === 0) return
+          const first = focusables[0]!
+          const last = focusables[focusables.length - 1]!
+          if (keyEvent.shiftKey && document.activeElement === first) {
+            keyEvent.preventDefault()
+            last.focus()
+          } else if (!keyEvent.shiftKey && document.activeElement === last) {
+            keyEvent.preventDefault()
+            first.focus()
+          }
+        }}
       >
         <div className="console-head">
           <h2 id="console-heading">Run Console · {runLabel}</h2>
@@ -137,12 +201,17 @@ export function RunConsole({
 
         <div className="console-body">
           {eventsPending ? <p className="mutation-hint">正在加载事件…</p> : null}
-          {!eventsPending && visible.length === 0 ? (
+          {eventsError === undefined ? null : (
+            <p className="console-error" role="status" data-testid="console-error">
+              事件读取失败——这不等于"没有事件"。请重试，或去 Hub 日志按 runId 查。
+            </p>
+          )}
+          {!eventsPending && eventsError === undefined && visible.length === 0 ? (
             <p className="empty-state" data-testid="console-empty">
               当前筛选下没有事件。换一个筛选，或确认这次运行是否真的产生了事件。
             </p>
           ) : null}
-          <ol className="run-event-list console-event-list">
+          <ol className="run-event-list">
             {visible.map((item) => {
               const text = describeEvent(item)
               return (

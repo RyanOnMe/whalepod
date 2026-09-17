@@ -1959,6 +1959,13 @@ select {
   font-size: 0.75rem;
 }
 
+/* 事件读取失败：与空态视觉上也分开（空态是"没有"，这是"没读到"）。 */
+.console-error {
+  margin: 0 0 var(--space-2);
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 0.875rem;
+}
+
 .console-foot {
   padding: var(--space-3) var(--space-4);
   border-top: 0.5px solid var(--dsw-alias-border-l1);

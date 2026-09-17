@@ -39,8 +39,10 @@ const PHASE_LABEL: Record<string, string> = {
   finalizing: '收尾中',
 }
 
-/** 已知事件类型 → 单行呈现；返回 null 表示未知类型（只显示类型名）。 */
-/** 事件 → 一行文案。**导出**给 Run Console（⑥d）复用：同一份协议不该有两套解读。 */
+/**
+ * 已知事件类型 → 单行呈现；返回 null 表示未知类型（只显示类型名）。
+ * **导出**给 Run Console（⑥d）复用：同一份协议不该有两套解读。
+ */
 export function describeEvent(item: RunEventItem): string | null {
   const event = item.event as { type?: unknown }
   switch (event.type) {
