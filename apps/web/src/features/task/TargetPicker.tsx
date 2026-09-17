@@ -35,6 +35,12 @@ export interface TargetPickerProps {
   onChange: (next: ExplicitTarget | null) => void
   /** 名单里被授权成员的人名（只读说明里要说清"谁来跑"）。 */
   assigneeName: string
+  /**
+   * 有活跃 Run 时目标字段会被服务端**忽略**：这条指令走追问路径、只带 text
+   * （`instruction.ts` 的 `sendRunFollowup`）。界面必须说清（评审 O5），
+   * 否则用户会以为自己刚选的设备生效了。
+   */
+  hasActiveRun?: boolean
 }
 
 export function TargetPicker({
@@ -42,6 +48,7 @@ export function TargetPicker({
   value,
   onChange,
   assigneeName,
+  hasActiveRun = false,
 }: TargetPickerProps): ReactNode {
   // 只对责任人发请求：被授权成员本来就不该看到（也看不到）别人的设备。
   const devicesQuery = useQuery({
@@ -58,8 +65,7 @@ export function TargetPicker({
   if (!isAssignee) {
     return (
       <p className="target-note" data-testid="target-readonly">
-        执行会在<b>{assigneeName}</b>的设备上进行，由 Hub 自动解析（沿用上一轮 → 他的在线设备）。要
-        换目标请找责任人。
+        {`执行会在 ${assigneeName} 的设备上进行，由 Hub 自动解析（沿用上一轮 → 他的在线设备）。要换目标请找责任人。`}
       </p>
     )
   }
@@ -75,7 +81,10 @@ export function TargetPicker({
         <span className="target-mode" data-testid="target-mode">
           自动选
         </span>
-        <span className="target-note">沿用上一轮的设备与工作区；没有就用你的在线设备。</span>
+        <span className="target-note">
+          沿用上一轮的设备与工作区；没有就用你的在线设备。
+          {hasActiveRun ? '（当前有运行：这条会成为追问，目标由该运行决定）' : null}
+        </span>
         <div className="target-actions">
           <SelectMenu
             id="target-device"
@@ -96,8 +105,10 @@ export function TargetPicker({
 
   return (
     <div className="target-bar" data-testid="target-bar">
+      {/* chip 必须如实描述**这一刻钉住了什么**（评审 B1）：只选了设备、还没选工作区时，
+          说"显式指定"是假的——工作区仍由 Hub 自动挑。 */}
       <span className="target-mode target-mode-explicit" data-testid="target-mode">
-        显式指定
+        {value.workspaceId === '' ? '指定设备（工作区自动选）' : '显式指定'}
       </span>
       <SelectMenu
         id="target-device"
@@ -109,6 +120,7 @@ export function TargetPicker({
           label: device.name,
           disabled: false,
         }))}
+        // 换设备必须重置工作区：工作区属于设备，留着上一台设备的 id 会组成一个不存在的组合。
         onChange={(deviceId) => onChange({ deviceId, workspaceId: '' })}
       />
       <SelectMenu
@@ -123,6 +135,11 @@ export function TargetPicker({
         }))}
         onChange={(workspaceId) => onChange({ ...value, workspaceId })}
       />
+      {hasActiveRun ? (
+        <span className="target-note" data-testid="target-inert">
+          当前有运行：这条会成为追问，目标由该运行决定（此处选择暂不生效）
+        </span>
+      ) : null}
       <button
         type="button"
         className="button target-reset"

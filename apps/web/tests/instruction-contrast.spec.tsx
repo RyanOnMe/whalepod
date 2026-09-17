@@ -120,6 +120,9 @@ describe('指令四态的 AA 门', () => {
       ['--dsw-alias-state-warn-primary', '.instruction-state-pending'],
       ['--dsw-alias-state-warn-primary', '.stream-incomplete'],
       ['--dsw-alias-state-business-primary', '.target-mode'],
+      // 评审 S1：反面钉只加了 .target-mode，漏了显式态那个（它不重映射只有 1.93:1，
+      // 比 business 那档更差）——主判据覆盖了它，但"门不是恒真"这条对它没证明。
+      ['--dsw-alias-state-warn-primary', '.target-mode-explicit'],
     ] as const) {
       const tint = tintOf(cls)
       const rgb = parseCssColor(readTokenValue(TOKENS, name))

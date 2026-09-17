@@ -176,6 +176,7 @@ export function TaskRoomPage(): ReactNode {
                 value={explicitTarget}
                 onChange={setExplicitTarget}
                 assigneeName={directory.personOf(task.assigneeUserId)}
+                hasActiveRun={hasActiveRun}
               />
             ) : null}
             {/* ⑥b：执行区输入——这里的一句话会驱动 Agent（与左栏讨论的分工是 ADR-0010 的核心）。 */}
