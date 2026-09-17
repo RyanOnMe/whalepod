@@ -142,6 +142,17 @@ export interface TaskRoomArtifact {
 
 // task/view.ts：GET /tasks/:taskId 的聚合视图。
 /**
+ * 任务级「谁能驱动 Agent」名单项（切片⑥e；④b 的 `GET /tasks/:id/instruction-grants`）。
+ * `assignee` 永远可驱动、不是一条可撤销的授权；`granted` 带"由谁何时授"（审计要能回答）。
+ */
+export interface InstructionDriverView {
+  userId: string
+  reason: 'assignee' | 'granted'
+  grantedBy?: string
+  grantedAt?: string
+}
+
+/**
  * 执行区的一条指令（③c-2a 的读模型：`GET /tasks/:id` 的 `instructions`）。
  *
  * 与 `CommentView`（讨论）是**两条流**（ADR-0010 决策 1）：指令会驱动 Agent，评论不会。

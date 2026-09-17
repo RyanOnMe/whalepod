@@ -12,8 +12,10 @@
  * = ['task-room', id]——前缀不匹配 = 命中零个查询，远程变化永远刷不进任务房间，
  * 而既有 E2E 靠 reload 驱动，全门绿也照不出来）：
  *   project.changed      → ['projects']
- *   task.changed         → ['task-room', taskId] + ['project-tasks', projectId]
- *                          （任务变了既动任务房间也动项目页列表；取不到 id 时降级前缀）
+ *   task.changed         → ['task-room', taskId] + ['instruction-grants', taskId]
+ *                          + ['project-tasks', projectId]
+ *                          （任务变了既动任务房间、也动⑥e 权限页的名单、也动项目页列表；
+ *                            取不到 id 时降级前缀。授权/撤销发的就是本事件）
  *   comment.created      → ['task-room', taskId]    （评论时间线挂在 task room）
  *   run.changed/run.event→ ['run', runId]           （降级 ['run'] 前缀，同时覆盖 runEvents）
  *   approval.changed     → ['task-room', taskId]    （审批卡在 task room）
@@ -59,6 +61,12 @@ const EVENT_KEY_BUILDERS: Readonly<Record<string, (payload: unknown) => CacheKey
   'project.changed': () => [['projects']],
   'task.changed': (payload) => [
     ...keysWith(payload, 'taskId', 'task-room'),
+    // 切片⑥e 的权限页：服务端授权/撤销发的就是 `task.changed`（`change: instruction_granted
+    // /instruction_revoked`，见 apps/hub/src/modules/task/instruction-grants.ts）。漏了这条键，
+    // 责任人撤销某人授权时，对方若正开着权限页就**永远看不到那行消失**，而服务端下一次指令已经
+    // 403——页面回答的正是"谁能驱动"，却给出与服务端相反的答案（评核实测：task-room +1、
+    // instruction-grants +0）。event-router 的键表必须与 queryKeys 逐个对齐，这是本文件开头的契约。
+    ...keysWith(payload, 'taskId', 'instruction-grants'),
     // 项目页任务列表（#137）：payload 带 projectId 时一并失效——「别人建了任务」
     // 必须实时进我的列表，否则又回到「刷新才看见」。
     ...keysWith(payload, 'projectId', 'project-tasks'),

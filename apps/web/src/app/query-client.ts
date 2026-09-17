@@ -20,6 +20,8 @@ export const queryKeys = {
   /** #137：项目内任务列表（离开 Task Room 后找回任务的入口）。 */
   projectTasks: (projectId: string) => ['project-tasks', projectId] as const,
   taskRoom: (taskId: string) => ['task-room', taskId] as const,
+  /** 切片⑥e：任务级「谁能驱动」名单（`GET /tasks/:id/instruction-grants`）。 */
+  instructionGrants: (taskId: string) => ['instruction-grants', taskId] as const,
   agents: ['agents'] as const,
   agentDetail: (agentId: string) => ['agent-detail', agentId] as const,
   /** P1-13：Run 详情/事件键前缀与 event-router 的 ['run', runId] 失效约定对齐。 */
