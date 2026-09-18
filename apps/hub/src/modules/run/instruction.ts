@@ -13,7 +13,7 @@
  * 被授权成员只是"能开口"——设备/凭据仍是责任人的，Run 归属也仍是责任人。
  */
 import { and, desc, eq, inArray } from 'drizzle-orm'
-import type { Database, TaskMessageRow, Tx } from '@whalepod/db'
+import type { Database, Tx } from '@whalepod/db'
 import {
   findCommandReceipt,
   insertMessage,
@@ -259,7 +259,7 @@ export async function sendInstruction(
     return created
   })
 
-  return { kind: 'started_run', message: toCommentView(message as TaskMessageRow), runId: run.id }
+  return { kind: 'started_run', message: toCommentView(message), runId: run.id }
 }
 
 /** 该 Task 上一个 Run 用过的 Agent（指令没显式指定时的默认）。 */

@@ -3,6 +3,7 @@
 export * from './errors.js'
 export * from './envelope.js'
 export * from './http.js'
+export * from './task-views.js'
 export * from './client-events.js'
 export * from './node-wire.js'
 export * from './runtime-wire.js'

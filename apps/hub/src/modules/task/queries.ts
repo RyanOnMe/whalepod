@@ -1,4 +1,5 @@
 import type { TaskMessageRow, TaskRow } from '@whalepod/db'
+import type { TaskMessageView } from '@whalepod/protocol'
 import { getTask, listTasksByProject } from '@whalepod/db'
 import type { DbHandle } from '@whalepod/db'
 
@@ -36,33 +37,30 @@ export function toTaskView(row: TaskRow): TaskView {
 }
 
 /**
- * 线程消息的 JSON 视图（03 §2.2；按 (createdAt, id) 稳定排序由 listMessages 保证）。
+ * 线程消息的 JSON 视图（03 §2.2）。
  *
- * #185 起实体是 `task_message`：除讨论外还承载指令与追问，因此多出 kind / origin /
- * targetAgentId / runId / instructionState 五个字段（既有讨论消息按默认值
+ * #185 起实体是 `task_message`：除讨论外还承载指令与追问（既有讨论消息按默认值
  * `discussion` / `human` 读出，老客户端不受影响）。
  *
- * 命名说明：**视图与 HTTP 路径暂时仍叫 Comment**（`/tasks/:taskId/comments`）——把公开
- * API 与前端一起改名属于切片③c（线程读模型 + UI），本片只升级实体，避免同一 Issue 里
- * 同时动 DB、Hub、Web 三处。**不新增 TODO**：改名点就是 ③c 的 Issue。
+ * #210 收敛：唯一真源是 `@whalepod/protocol` 的 `TaskMessageView`，这里只做派生——
+ * 此前是逐字段手写镜像，与 Web 的第二份副本互相漂移。
+ *
+ * 命名说明：**视图与 HTTP 路径暂时仍叫 Comment**（`/tasks/:taskId/comments`）。
+ * 改名属 #210 前半句"公开命名统一"，仍 OPEN（本片只收类型、不碰路径）。
  */
-export interface CommentView {
-  id: string
-  taskId: string
-  authorUserId: string
-  body: string
-  kind: 'discussion' | 'instruction' | 'followup'
-  origin: 'human' | 'auto_assignment'
-  targetAgentId: string | null
-  runId: string | null
-  instructionState: 'pending' | 'accepted' | 'rejected' | null
-  /** 拒绝理由（#186）：`team_event` 只有 24 小时窗口，理由必须能长期读到。 */
-  instructionErrorCode: string | null
-  instructionErrorMessage: string | null
-  createdAt: string
-  editedAt: string | null
-}
+export type CommentView = TaskMessageView
 
+/**
+ * DB 行 → 团队可见投影（#210：返回类型就是协议的 `TaskMessageView`，改返回形状时
+ * 类型与 `TaskMessageViewSchema` 会一起响）。
+ *
+ * 诚实记账（评审 S1）：下面三处 `as` 是类型断言、**不是运行时校验**——全 Hub 没有
+ * 任何 `TaskMessageViewSchema.safeParse/parse` 输出路径（输出路径是 routes →
+ * getTaskRoom → JSON 直出，Web 的 `client.ts` 又是 `as T`）。脏值今天进不来，
+ * 靠的是 DB 侧：`task_message` 的 kind/origin/state 约束（`schema/project.ts` +
+ * 迁移 `0003_task_message.sql`）与写入层只给合法值；集成测试的"真库过 schema"
+ * 判据是这条链唯一的运行时钉子。
+ */
 export function toCommentView(row: TaskMessageRow): CommentView {
   return {
     id: row.id,

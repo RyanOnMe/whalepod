@@ -947,6 +947,15 @@ select {
   color: var(--dsw-alias-state-error-primary);
 }
 
+/* 未知状态（#210）：收敛后 `instructionState` 类型可空（与 CommentView 同构），
+ * 服务端执行流永远发非空所以**今天不可达**；但组件里既然处理了 null，样式也得有归处——
+ * 中性灰（不是状态色：它不是四种命运之一，是"类型与现实对不上"的兜底）。
+ * 进中性 chip 门（同色浅底 + label 语义 token），不进状态门。 */
+.instruction-state-unknown {
+  color: var(--dsw-alias-label-secondary);
+  background: color-mix(in srgb, var(--dsw-alias-label-secondary) 12%, transparent);
+}
+
 /* 被拒的理由必须看得见——它是「为什么没被受理」的答案。 */
 .instruction-error {
   /* 与 rejected chip 同一套 900 档（小字 + 同色浅底，500 档只有 3.80:1）。 */

@@ -146,6 +146,22 @@ describe('discussion/execution separation (P1-194)', () => {
     expect(room?.instructions.every((message) => message.runId !== null)).toBe(true)
   })
 
+  it('读模型输出**过协议 schema**（#210：真 DB → toCommentView → TaskMessageViewSchema）', async () => {
+    // 链条里唯一的"真人路径"钉子：protocol 的 schema 是手写静态的、Hub 的 toCommentView
+    // 也是手写的，两边靠这条互相看着——Hub 多发/少发一个字段，或者 schema 不同步，这里红。
+    // （protocol 自己的单测只验 schema 自洽，验不到 Hub 的实现。）
+    const { TaskMessageViewSchema } = await import('@whalepod/protocol')
+    const { ids } = await seedMixedTask()
+    const room = await getTaskRoom(database.db, ids.taskId)
+    expect(room).toBeDefined()
+    for (const message of [...(room?.comments ?? []), ...(room?.instructions ?? [])]) {
+      const parsed = TaskMessageViewSchema.safeParse(message)
+      expect(parsed.success, `toCommentView 输出过不了 TaskMessageViewSchema：${message.id}`).toBe(
+        true,
+      )
+    }
+  })
+
   it('两条流**互斥不重叠**，且合计等于审计全量（不漏消息）', async () => {
     const { ids } = await seedMixedTask()
     const room = await getTaskRoom(database.db, ids.taskId)
