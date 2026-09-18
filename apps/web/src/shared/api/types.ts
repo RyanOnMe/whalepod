@@ -89,7 +89,8 @@ export interface TaskView {
 //
 // #185：实体已升级为 task_message（讨论/指令/追问同表）。此前这里是逐字段手写镜像，
 // `client.ts` 是 `as T` 不做运行期校验，副本漏字段不会有任何门报错、只会静默漂移——
-// #210 就是这么来的。改名与 UI 消费属切片③c。
+// #210 就是这么来的。改名属 #210 前半句"公开命名统一"、仍 OPEN
+//（③c 已合入但改名没发生，户头不在 ③c；本片只收类型、不碰路径）。
 export type CommentView = TaskMessageView
 
 // domain/run.ts 的状态集（03 §3.2）。
