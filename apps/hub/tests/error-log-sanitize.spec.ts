@@ -49,8 +49,13 @@ describe('sanitizeError', () => {
   it('errorMessage 取 cause 链最内层（不是外层 message——本次事故的精确形状）', () => {
     // 事故记录：`sanitizeError` 曾直接取外层 message（`innermostErrorMessage` 函数在、
     // 调用不在），脱敏等于没做。这一条钉住"必须调用"，而不是"函数存在"。
-    const source = readFileSync(join(HUB_SRC, 'modules/shared/error-log.ts'), 'utf-8')
-    const body = source.slice(source.indexOf('export function sanitizeError'))
+    // 只看代码行：本文件头注里就有 `innermostErrorMessage` 字样，不滤注释的话
+    // "换成透传、注释不动"这条仍绿（评审 S1 实测）——同一错误犯第二次。
+    const codeLines = readFileSync(join(HUB_SRC, 'modules/shared/error-log.ts'), 'utf-8')
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
+      .join('\n')
+    const body = codeLines.slice(codeLines.indexOf('export function sanitizeError'))
     expect(body).toContain('innermostErrorMessage(error)')
   })
 
@@ -80,12 +85,17 @@ describe('日志调用点反面钉（#206：三处共用一份，不许绕过）
       .split('\n')
       .filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
       .join('\n')
-    expect(codeLines).not.toMatch(/errorMessage:\s*error instanceof Error \? error\.message/)
+    // 禁一切字面 errorMessage：`errorMessage: String(error)` 同义旁路同样覆盖 spread、
+    // 同样泄 SQL（评审 S2）——当前代码行本就没有字面 errorMessage，收紧后现仍绿。
+    expect(codeLines).not.toMatch(/errorMessage\s*:/)
   })
 
   it('app.ts 的 errorHandler 走 sanitizeError（本地三函数不许加回来）', () => {
     const source = readFileSync(join(HUB_SRC, 'app.ts'), 'utf-8')
     expect(source).toContain('...sanitizeError(error)')
-    expect(source).not.toMatch(/function (pgErrorCode|pgConstraintName|innermostErrorMessage)/)
+    // function 声明与 const 箭头都禁（评审 S2：只禁前者的话 const 重写可绕过）。
+    expect(source).not.toMatch(
+      /(function|const) (pgErrorCode|pgConstraintName|innermostErrorMessage)\b/,
+    )
   })
 })
