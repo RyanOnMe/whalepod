@@ -1,6 +1,7 @@
 import { and, asc, count, eq, inArray } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { approvals, runs } from '../schema/run.js'
+import { devices, workspaces } from '../schema/device.js'
 import { taskMessages } from '../schema/project.js'
 
 export type RunRow = typeof runs.$inferSelect
@@ -55,6 +56,41 @@ export async function listRunsByTask(handle: DbHandle, taskId: string): Promise<
     .from(runs)
     .where(eq(runs.taskId, taskId))
     .orderBy(asc(runs.createdAt), asc(runs.id))
+}
+
+/**
+ * 本任务所有 Run 的落点显示名（#211 B1）：`runId → { deviceName, workspaceName }`。
+ *
+ * 一次 LEFT JOIN（不 N+1）：设备/工作区行不在时对应名给 null（不丢 Run 行——
+ * 读模型把 null 画成"未知设备"，见 `toTaskRoomRun`）。**只取 name**：id 这类
+ * 内部标识不出团队投影（02 Step 1 收窄后的口径）。
+ *
+ * 为什么是 LEFT 而不是 INNER（评审 O2）：即使 INNER，Run 行也不会消失（Hub 的 runs 源是
+ * 独立的 `listRunsByTask`，缺项只 fallback null → 误标"未知设备"）。但 INNER 会把
+ * "设备没了"静默变成"未知设备"，LEFT 让缺失显式化。当前 schema 下该路径不可达
+ * （`device_id`/`workspace_id` FK 无 ON DELETE；设备撤销只标 revokedAt；workspace 只删
+ * 无引用孤行）——故无 repo 级判据，书面接受，见 #219 评审 O2。
+ */
+export async function listRunPlacementNames(
+  handle: DbHandle,
+  taskId: string,
+): Promise<Map<string, { deviceName: string | null; workspaceName: string | null }>> {
+  const rows = await handle
+    .select({
+      runId: runs.id,
+      deviceName: devices.name,
+      workspaceName: workspaces.name,
+    })
+    .from(runs)
+    .leftJoin(devices, eq(runs.deviceId, devices.id))
+    .leftJoin(workspaces, eq(runs.workspaceId, workspaces.id))
+    .where(eq(runs.taskId, taskId))
+  return new Map(
+    rows.map((row) => [
+      row.runId,
+      { deviceName: row.deviceName, workspaceName: row.workspaceName },
+    ]),
+  )
 }
 
 /**

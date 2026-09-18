@@ -176,6 +176,47 @@ describe('task API (G2-01/03/06 + lifecycle)', () => {
     expect(JSON.stringify(data)).not.toMatch(/workspacePath|dshSession|modelApiKey/)
   })
 
+  it('#211 B1：运行卡带落点显示名（有 deviceName/workspaceName，无 deviceId/workspaceId）', async () => {
+    const alice = await driveSetup(ctx)
+    const { session: bob } = await driveInviteAndAccept(ctx, alice, {
+      username: 'bob',
+      displayName: 'Bob',
+      password: 'correct horse battery staple',
+    })
+    const projectId = await createProject(ctx, alice)
+    const task = (
+      await apiInject(ctx, alice, {
+        method: 'POST',
+        url: `/api/v1/projects/${projectId}/tasks`,
+        payload: { title: 'Room', assigneeUserId: bob.userId },
+      })
+    ).json().data
+    await apiInject(ctx, bob, { method: 'POST', url: `/api/v1/tasks/${task.id}/accept` })
+
+    // seedRunChainForUser 建设备名 `dev-<suffix>` / 工作区名 `ws-<suffix>`（真名进库）。
+    const chain = await seedRunChainForUser(database.db, bob.userId)
+    const runId = await insertRunRow(database.db, {
+      taskId: task.id,
+      ownerUserId: bob.userId,
+      ...chain,
+      status: 'completed',
+    })
+    // 被授权成员（alice，不是责任人）也能看到落点名——B1 口径：名随任务走。
+    const room = await apiInject(ctx, alice, { method: 'GET', url: `/api/v1/tasks/${task.id}` })
+    expect(room.statusCode).toBe(200)
+    const run = room.json().data.runs.find((r: { id: string }) => r.id === runId)
+    expect(run.deviceName).toMatch(/^dev-/)
+    expect(run.workspaceName).toMatch(/^ws-/)
+    // id 不出投影：有 id 就能按 id 查设备页（而设备页对非责任人是空的），口径破了。
+    expect(run).not.toHaveProperty('deviceId')
+    expect(run).not.toHaveProperty('workspaceId')
+    expect(run).not.toHaveProperty('dshSessionId')
+    // 注意：不是 `digest`——RunRow 里根本没有这个键，真摘要字段是下面两个。
+    // 第一版写 `digest` 是 vacuous 断言（带出真摘要字段时仍绿），评审 S1 抓到。
+    expect(run).not.toHaveProperty('profileDigest')
+    expect(run).not.toHaveProperty('pluginPackDigest')
+  })
+
   it('G2-06: comments keep stable (createdAt, id) order across authors', async () => {
     const alice = await driveSetup(ctx)
     const { session: bob } = await driveInviteAndAccept(ctx, alice, {
