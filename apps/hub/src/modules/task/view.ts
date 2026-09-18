@@ -10,12 +10,26 @@ import {
   listDiscussionMessages,
   listInstructionMessages,
   listRunsByTask,
+  listRunPlacementNames,
 } from '@whalepod/db'
 import type { DbHandle } from '@whalepod/db'
 import { toCommentView, toTaskView } from './queries.js'
 import type { CommentView, TaskView } from './queries.js'
 
-/** Team 可见的 Run 投影：剥离 dshSessionId / deviceId / workspaceId / digest（02 Step 1）。 */
+/**
+ * Team 可见的 Run 投影（#211 B1 口径：02 Step 1 的剥离**收窄**了）。
+ *
+ * 仍剥离：dshSessionId / deviceId / workspaceId / digest——id 这类内部标识不出团队投影。
+ * 新增：`deviceName` / `workspaceName`（**显示名，不是 id**）。"跑在哪台机器"是协作要回答
+ * 的问题（执行总是用责任人的设备，③c-2b）；名不是凭据，看得到名干不了任何事
+ * （配对/撤销都要走设备页权限）。
+ *
+ * 两个诚实点：
+ *  1. null 含义：设备/工作区行不在了（外键 RESTRICT 下极少）→ null，前端画"未知设备"，
+ *     不画 id、不编造；
+ *  2. **当前名、不是快照**：设备改名后历史 Run 显示新名（JOIN 的语义）。Run 不是审计
+ *     账本（审计链在 task_message + team_event），时间线读"现在叫什么"是对的。
+ */
 export interface TaskRoomRun {
   id: string
   status: RunRow['status']
@@ -23,9 +37,15 @@ export interface TaskRoomRun {
   startedAt: string | null
   finishedAt: string | null
   rerunOfRunId: string | null
+  deviceName: string | null
+  workspaceName: string | null
 }
 
-function toTaskRoomRun(row: RunRow): TaskRoomRun {
+function toTaskRoomRun(
+  row: RunRow,
+  names: Map<string, { deviceName: string | null; workspaceName: string | null }>,
+): TaskRoomRun {
+  const placement = names.get(row.id)
   return {
     id: row.id,
     status: row.status,
@@ -33,6 +53,8 @@ function toTaskRoomRun(row: RunRow): TaskRoomRun {
     startedAt: row.startedAt?.toISOString() ?? null,
     finishedAt: row.finishedAt?.toISOString() ?? null,
     rerunOfRunId: row.rerunOfRunId,
+    deviceName: placement?.deviceName ?? null,
+    workspaceName: placement?.workspaceName ?? null,
   }
 }
 
@@ -95,17 +117,19 @@ export async function getTaskRoom(
   if (task === undefined) return undefined
   // 讨论流与执行流分开取（ADR-0010 决策 1/2）：评论区只有人际评论，指令与追问进执行区。
   // 库里仍是同一张 `task_message`（审计链），隔离发生在读模型这一层。
-  const [comments, instructions, runs, artifacts] = await Promise.all([
+  const [comments, instructions, runs, artifacts, placementNames] = await Promise.all([
     listDiscussionMessages(handle, taskId),
     listInstructionMessages(handle, taskId),
     listRunsByTask(handle, taskId),
     listArtifactsByTask(handle, taskId),
+    // #211：一次查出本任务所有 Run 的设备名/工作区名（JOIN，不 N+1）。
+    listRunPlacementNames(handle, taskId),
   ])
   return {
     task: toTaskView(task),
     comments: comments.map(toCommentView),
     instructions: instructions.map(toCommentView),
-    runs: runs.map(toTaskRoomRun),
+    runs: runs.map((row) => toTaskRoomRun(row, placementNames)),
     artifacts: artifacts
       .filter(
         (a) =>

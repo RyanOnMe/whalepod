@@ -1,6 +1,7 @@
 import { and, asc, count, eq, inArray } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { approvals, runs } from '../schema/run.js'
+import { devices, workspaces } from '../schema/device.js'
 import { taskMessages } from '../schema/project.js'
 
 export type RunRow = typeof runs.$inferSelect
@@ -55,6 +56,35 @@ export async function listRunsByTask(handle: DbHandle, taskId: string): Promise<
     .from(runs)
     .where(eq(runs.taskId, taskId))
     .orderBy(asc(runs.createdAt), asc(runs.id))
+}
+
+/**
+ * 本任务所有 Run 的落点显示名（#211 B1）：`runId → { deviceName, workspaceName }`。
+ *
+ * 一次 LEFT JOIN（不 N+1）：设备/工作区行不在时对应名给 null（不丢 Run 行——
+ * 读模型把 null 画成"未知设备"，见 `toTaskRoomRun`）。**只取 name**：id 这类
+ * 内部标识不出团队投影（02 Step 1 收窄后的口径）。
+ */
+export async function listRunPlacementNames(
+  handle: DbHandle,
+  taskId: string,
+): Promise<Map<string, { deviceName: string | null; workspaceName: string | null }>> {
+  const rows = await handle
+    .select({
+      runId: runs.id,
+      deviceName: devices.name,
+      workspaceName: workspaces.name,
+    })
+    .from(runs)
+    .leftJoin(devices, eq(runs.deviceId, devices.id))
+    .leftJoin(workspaces, eq(runs.workspaceId, workspaces.id))
+    .where(eq(runs.taskId, taskId))
+  return new Map(
+    rows.map((row) => [
+      row.runId,
+      { deviceName: row.deviceName, workspaceName: row.workspaceName },
+    ]),
+  )
 }
 
 /**

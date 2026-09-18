@@ -106,6 +106,8 @@ export type RunStatus =
   | 'lost'
 
 // task/view.ts：TaskRoomRun（Hub 已剥离 runtime internals，03 §9）。
+// #211 B1：多了 `deviceName` / `workspaceName`（**显示名，不是 id**——id 这类内部标识
+// 不出团队投影，02 Step 1 收窄后的口径；null = 未知设备，不编造）。
 export interface TaskRoomRun {
   id: string
   status: RunStatus
@@ -113,6 +115,8 @@ export interface TaskRoomRun {
   startedAt: string | null
   finishedAt: string | null
   rerunOfRunId: string | null
+  deviceName: string | null
+  workspaceName: string | null
 }
 
 // packages/db schema/artifact.ts 的状态集（03 §3.4）。

@@ -57,6 +57,14 @@ export function RunTimeline({ runs, selectedRunId, onSelect }: RunTimelineProps)
               </span>
             </div>
             <dl className="run-item-meta">
+              {/* #211 B1：落点（显示名，不是 id）。null = 未知设备——不编造、不画 id。 */}
+              <div>
+                <dt>落点</dt>
+                <dd data-testid="run-placement">
+                  {run.deviceName ?? '未知设备'}
+                  {run.workspaceName === null ? '' : ` · ${run.workspaceName}`}
+                </dd>
+              </div>
               <div>
                 <dt>创建</dt>
                 <dd>

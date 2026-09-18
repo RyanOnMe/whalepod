@@ -122,6 +122,28 @@ describe('task-room', () => {
     expect(screen.getByText('当前没有等待审批的操作。')).toBeVisible()
   })
 
+  it('#211 B1：运行卡画落点显示名；未知落点画"未知设备"、不画 id', async () => {
+    const task = makeTask({ assigneeUserId: BOB.userId })
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task, {
+          runs: [
+            makeRun({ status: 'running', deviceName: 'MacBook-Pro', workspaceName: 'whalepod' }),
+            makeRun({ status: 'completed', finishedAt: '2026-08-25T03:00:00.000Z' }),
+          ],
+        }),
+      ]),
+    )
+    const placements = await screen.findAllByTestId('run-placement')
+    expect(placements).toHaveLength(2)
+    // 有名：设备名 · 工作区名（显示名，不是 id）
+    expect(placements[0]).toHaveTextContent('MacBook-Pro · whalepod')
+    // 无名（deviceName null）：画"未知设备"，不编造、不画 id
+    expect(placements[1]).toHaveTextContent('未知设备')
+    expect(placements[1]?.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/)
+  })
+
   it('交付物与复核折在执行栏底部的任务详情里（**默认展开**：默认折叠会断 G6-04 金路径；区段标题中文）', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId })
     renderApp(
