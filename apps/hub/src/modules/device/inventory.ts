@@ -9,6 +9,7 @@
 import type { Database } from '@whalepod/db'
 import { convergeDeviceWorkspaceRemovals, upsertWorkspace } from '@whalepod/db'
 import type { AuthenticatedDevice } from '../run/device-gateway.js'
+import { sanitizeError } from '../shared/error-log.js'
 
 export interface InventoryWorkspaceInput {
   readonly workspaceId: string
@@ -51,11 +52,13 @@ export class WorkspaceInventoryIngest {
         })
         upserted += 1
       } catch (error) {
-        console.error('INVENTORY_FAIL', error)
+        // #206：原来这里还有一行 `console.error('INVENTORY_FAIL', error)`——完整 Error 对象
+        // 进 stderr，Drizzle 外层 message 含原始 SQL 列名与参数值（复核 #205 实测）。
+        // 紧接着的 warn 已是结构化记账，删掉重复行而不是修它；warn 本身也换成共享脱敏。
         this.deps.warn?.('workspace inventory upsert failed', {
           deviceId: device.deviceId,
           workspaceId: ws.workspaceId,
-          errorName: error instanceof Error ? error.name : 'UnknownError',
+          ...sanitizeError(error),
         })
       }
     }

@@ -25,6 +25,7 @@ import { parseNodeFrame, RunEventAckSchema, RunResendFromSchema } from '@whalepo
 import type { RunOrchestrator } from '../run/orchestrator.js'
 import type { AuthenticatedDevice } from '../run/device-gateway.js'
 import { isRunSemanticConflict } from '../run/errors.js'
+import { sanitizeError } from '../shared/error-log.js'
 import { hashToken } from '../auth/token.js'
 import { nodeConnections } from './connection-registry.js'
 import { WorkspaceInventoryIngest } from './inventory.js'
@@ -178,12 +179,14 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
           // 判定共用 isRunSemanticConflict（run/errors.ts 单一事实源）：与
           // orchestrator 降级各写一遍，惩罚边界迟早漂移。
           const semanticConflict = isRunSemanticConflict(error)
+          // #206：原来 errorMessage 取原始 message——Drizzle 外层 message 就是
+          // `Failed query: …`（含 SQL 列名与参数值），与 app.ts 修掉的是同一缺陷。
+          // 换成共享脱敏（与 hub.http / inventory 同一份）。
           request.log.warn(
             {
               component: 'hub.node-ws',
               deviceId: identity.deviceId,
-              errorName: error instanceof Error ? error.name : 'UnknownError',
-              errorMessage: error instanceof Error ? error.message : String(error),
+              ...sanitizeError(error),
               disposition: semanticConflict ? 'connection-retained' : 'connection-closed',
             },
             'node upstream frame rejected',
