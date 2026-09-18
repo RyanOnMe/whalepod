@@ -1,4 +1,5 @@
 import type { TaskMessageRow, TaskRow } from '@whalepod/db'
+import type { TaskMessageView } from '@whalepod/protocol'
 import { getTask, listTasksByProject } from '@whalepod/db'
 import type { DbHandle } from '@whalepod/db'
 

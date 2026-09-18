@@ -138,11 +138,15 @@ export function makeInstruction(overrides: Partial<InstructionView> = {}): Instr
     body: '让 Agent 跑一遍回归',
     createdAt: '2026-08-25T01:00:00.000Z',
     kind: 'instruction',
+    // #210 收敛后 InstructionView 含 origin/editedAt（与服务端同形）：用户发的指令
+    // origin=human、从不编辑 editedAt=null——缺了它们类型检查会红，这正是收敛要的效果。
+    origin: 'human',
     targetAgentId: null,
     runId: null,
     instructionState: 'accepted',
     instructionErrorCode: null,
     instructionErrorMessage: null,
+    editedAt: null,
     ...overrides,
   }
 }

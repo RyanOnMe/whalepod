@@ -15,14 +15,16 @@ import type { ReactNode } from 'react'
 import type { InstructionView } from '../../shared/api/types.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 
-const STATE_LABEL: Record<InstructionView['instructionState'], string> = {
+type KnownState = NonNullable<InstructionView['instructionState']>
+
+const STATE_LABEL: Record<KnownState, string> = {
   pending: '待受理',
   accepted: '已受理',
   rejected: '已拒绝',
 }
 
 /** 状态 → 产品 token 的语义档（成功/警示/错误/中性）。 */
-const STATE_CLASS: Record<InstructionView['instructionState'], string> = {
+const STATE_CLASS: Record<KnownState, string> = {
   pending: 'instruction-state-pending',
   accepted: 'instruction-state-accepted',
   rejected: 'instruction-state-rejected',
@@ -72,10 +74,19 @@ export function InstructionList({
         // 排队态优先于"待受理"：对用户来说「我的话排在当前运行后面」比「还没回执」更准确。
         const queued =
           instruction.instructionState === 'pending' && (queuedIds?.has(instruction.id) ?? false)
-        const stateLabel = queued ? '已排队' : STATE_LABEL[instruction.instructionState]
+        // #210 收敛后类型如实说"可空"：服务端执行流永远发非空（该字段就是执行流的意义），
+        // 但类型是与 CommentView 同构的、可空就是可空。null 不崩——画"未知状态"。
+        const knownState: KnownState | null = instruction.instructionState
+        const stateLabel = queued
+          ? '已排队'
+          : knownState === null
+            ? '未知状态'
+            : STATE_LABEL[knownState]
         const stateClass = queued
           ? 'instruction-state-queued'
-          : STATE_CLASS[instruction.instructionState]
+          : knownState === null
+            ? 'instruction-state-unknown'
+            : STATE_CLASS[knownState]
         return (
           <li key={instruction.id} className="instruction-item" data-testid="instruction-item">
             <div className="instruction-head">

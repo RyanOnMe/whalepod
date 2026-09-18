@@ -5,9 +5,12 @@
  * 响应 data 形状没有单独的包承载——它们由 apps/hub 各模块的查询/视图层定义
  * （project/queries.ts、task/queries.ts、task/view.ts、agent/queries.ts、auth/routes.ts、
  * team/routes.ts）。apps/web 的边界规则只允许 import @whalepod/protocol，因此这里
- * 按 Hub 视图逐字段镜像，并注释各自来源；Hub 侧改动时需同步（P1-13 前后宜把
- * 响应 DTO 上收进 protocol，消除镜像）。
+ * 按 Hub 视图逐字段镜像，并注释各自来源；Hub 侧改动时需同步。
+ *
+ * 例外（#210）：`CommentView` / `InstructionView` 不再镜像——唯一真源是
+ * `@whalepod/protocol` 的 `TaskMessageView`，这里只做派生（见各自注释）。
  */
+import type { TaskMessageView } from '@whalepod/protocol'
 
 // auth/routes.ts：GET /auth/session、POST /auth/login 的 data。
 export type Role = 'owner' | 'admin' | 'member'
@@ -79,27 +82,15 @@ export interface TaskView {
   updatedAt: string
 }
 
-// task/queries.ts：CommentView。authorUserId 是原始 user id，显示名需成员接口
-// （P1-08 后）补齐；当前以短 id 呈现，不伪造姓名。
+// task/queries.ts：CommentView（#210 收敛后：唯一真源是 `@whalepod/protocol` 的
+// `TaskMessageView`，与 Hub 的 `CommentView` 同一定义——服务端 `comments` 与
+// `instructions` 本来就是同一种结构，同一份 `toCommentView` 发出）。
+// authorUserId 是原始 user id，显示名需成员接口补齐；当前以短 id 呈现，不伪造姓名。
 //
-// #185：实体已升级为 task_message（讨论/指令/追问同表），服务端视图多出五个字段。
-// 这里**跟着补上**而不是等 UI 用——`client.ts` 是 `as T` 不做运行期校验，副本漏字段
-// 不会有任何门报错，只会静默漂移（评审观察项）。改名与 UI 消费属切片③c。
-export interface CommentView {
-  id: string
-  taskId: string
-  authorUserId: string
-  body: string
-  kind: 'discussion' | 'instruction' | 'followup'
-  origin: 'human' | 'auto_assignment'
-  targetAgentId: string | null
-  runId: string | null
-  instructionState: 'pending' | 'accepted' | 'rejected' | null
-  instructionErrorCode: string | null
-  instructionErrorMessage: string | null
-  createdAt: string
-  editedAt: string | null
-}
+// #185：实体已升级为 task_message（讨论/指令/追问同表）。此前这里是逐字段手写镜像，
+// `client.ts` 是 `as T` 不做运行期校验，副本漏字段不会有任何门报错、只会静默漂移——
+// #210 就是这么来的。改名与 UI 消费属切片③c。
+export type CommentView = TaskMessageView
 
 // domain/run.ts 的状态集（03 §3.2）。
 export type RunStatus =
@@ -153,27 +144,16 @@ export interface InstructionDriverView {
 }
 
 /**
- * 执行区的一条指令（③c-2a 的读模型：`GET /tasks/:id` 的 `instructions`）。
+ * 执行区的一条指令（#210 收敛后：**派生**，不是第二份手写——此前是子集副本，
+ * 缺 `origin`/`editedAt`，服务端加字段时两边会漂）。
  *
  * 与 `CommentView`（讨论）是**两条流**（ADR-0010 决策 1）：指令会驱动 Agent，评论不会。
- * `instructionState` 的四种取值就是执行区要画出来的四种状态；被拒时理由与状态**同列落库**
+ * `kind` 在这里收窄到指令两态：`instruction` = 起 Run 的那句话；
+ * `followup` = 追问既有 Run。`runId` 在 `run.start` ack 之前可能还没有 Run。
+ * `instructionState` 的取值就是执行区要画出来的状态；被拒时理由与状态**同列落库**
  * （团队事件只有 24 小时窗口，而"我的指令为什么没被受理"是长期问题）。
  */
-export interface InstructionView {
-  id: string
-  taskId: string
-  authorUserId: string
-  body: string
-  createdAt: string
-  /** `instruction` = 起 Run 的那句话；`followup` = 追问既有 Run。 */
-  kind: 'instruction' | 'followup'
-  targetAgentId: string | null
-  /** 起 Run 的指令在 `run.start` ack 之前可能还没有 Run。 */
-  runId: string | null
-  instructionState: 'pending' | 'accepted' | 'rejected'
-  instructionErrorCode: string | null
-  instructionErrorMessage: string | null
-}
+export type InstructionView = TaskMessageView & { kind: 'instruction' | 'followup' }
 
 export interface TaskRoomView {
   task: TaskView

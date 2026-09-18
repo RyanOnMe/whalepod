@@ -76,6 +76,9 @@ const STATES = [
 const NEUTRAL_CHIPS = [
   { cls: '.ref-chip', label: '运行引用 chip' },
   { cls: '.chip-gray', label: '只读提示 chip' },
+  // 第三处：#210 的「未知状态」兜底（服务端今天不发 null 所以不可达，
+  // 但样式存在就必须达标——"画不出来的样式"不需要门，"画得出来的"都需要）。
+  { cls: '.instruction-state-unknown', label: '未知状态 chip' },
 ] as const
 
 describe('指令四态的 AA 门', () => {
