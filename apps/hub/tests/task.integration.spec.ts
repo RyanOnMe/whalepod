@@ -211,7 +211,10 @@ describe('task API (G2-01/03/06 + lifecycle)', () => {
     expect(run).not.toHaveProperty('deviceId')
     expect(run).not.toHaveProperty('workspaceId')
     expect(run).not.toHaveProperty('dshSessionId')
-    expect(run).not.toHaveProperty('digest')
+    // 注意：不是 `digest`——RunRow 里根本没有这个键，真摘要字段是下面两个。
+    // 第一版写 `digest` 是 vacuous 断言（带出真摘要字段时仍绿），评审 S1 抓到。
+    expect(run).not.toHaveProperty('profileDigest')
+    expect(run).not.toHaveProperty('pluginPackDigest')
   })
 
   it('G2-06: comments keep stable (createdAt, id) order across authors', async () => {
