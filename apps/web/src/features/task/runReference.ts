@@ -12,6 +12,11 @@
  *  2. **可读**：token 就是人看得懂的「运行 R-ab12cd34」，不是 `@run:ab12cd34` 这种机器语法。
  *     用户手打同样有效（同一套语法），不需要"必须点按钮才会被识别"的隐藏规则。
  *  3. **解析不到就不是引用**：删掉的那次运行、别的任务的短号，都只会显示原文。
+ *
+ * 一条**有意收窄**（复核指出、这里补记并钉住）：左边界让"两个裸 token 紧邻"
+ * （`R-aaaaaaaaR-bbbbbbbb`）只认第一个——第二个 `R-` 前面是十六进制字符，被断言挡住。
+ * 空格分隔的（`R-aaa… R-bbb…`）与组合框插入的（恒空格分隔）都是两个引用。
+ * 这个方向比"从长 token 中间切出半个引用"更符合"窄"，所以保留。
  */
 import type { TaskRoomRun } from '../../shared/api/types.js'
 import { shortId } from '../../shared/format.js'
@@ -22,11 +27,12 @@ import { shortId } from '../../shared/format.js'
  * 开头就写着"全仓共用一份，避免各行其是"）。
  *
  * 两个边界断言都是必要的（评测定点实测）：
- *  · 左边的 `(?<![0-9a-z])`：否则 `xR-aaaaaaaa` 会把 chip 从 `R-` 处切出来；
+ *  · 左边的 `(?<![0-9a-zA-Z])`：否则 `xR-aaaaaaaa` / `XR-aaaaaaaa` 会把 chip 从 `R-` 处切出来
+ *    （只写 `[0-9a-z]` 时**大写前缀仍会切**——复核实测 `XR-`/`AR-` 就是这样，漏了大小写）；
  *  · 右边的 `(?![0-9a-fA-F])`：只写 `[0-9a-f]` 时 `R-aaaaaaaaA` 会被认成"`R-aaaaaaaa` + 尾巴 A"，
  *    同一形状大小写不同待遇，与"窄"不自洽。
  */
-const REF_PATTERN = /(?<![0-9a-z])R-([0-9a-f]{8})(?![0-9a-fA-F])/g
+const REF_PATTERN = /(?<![0-9a-zA-Z])R-([0-9a-f]{8})(?![0-9a-fA-F])/g
 
 /** 把一次运行写成可被识别的引用文本（输入框里插入的就是它）。 */
 export function formatRunReference(runId: string): string {

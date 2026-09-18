@@ -74,10 +74,30 @@ describe('运行引用的解析（纯函数）', () => {
 
   it('左边必须有边界、右边不许跟十六进制（`xR-…` 与 `R-…A` 都不算引用）', () => {
     // 评审 O1/O2：`(?![0-9a-f])` 漏了大写（R-aaaaaaaaA 会被切出 chip），`R-` 左边无断言。
-    for (const body of ['前缀xR-aaaaaaaa', '0R-aaaaaaaa', 'R-aaaaaaaaA', 'R-aaaaaaaa1']) {
+    // 大小写前缀都要挡（复核实测：只写 [0-9a-z] 时 `XR-`/`AR-` 仍会切出 chip）
+    for (const body of [
+      '前缀xR-aaaaaaaa',
+      '0R-aaaaaaaa',
+      'XR-aaaaaaaa',
+      'AR-aaaaaaaa',
+      'R-aaaaaaaaA',
+      'R-aaaaaaaa1',
+    ]) {
       const segments = parseRunReferences(body, [run(RUN_A)])
       expect(segments, body).toEqual([{ text: body, runId: null }])
     }
+  })
+
+  it('两个**裸** token 紧邻时只认第一个（有意收窄：宁可少认，不从长串中间切）', () => {
+    // 复核指出的方向性收窄，这里钉住它——免得下次有人"顺手放宽左边界"变成从长 token 中间切。
+    const glued = parseRunReferences(`R-aaaaaaaaR-bbbbbbbb`, [run(RUN_A), run(RUN_B)])
+    expect(glued.filter((segment) => segment.runId !== null)).toHaveLength(1)
+    // 但空格分隔（组合框插入的形态）必须是两个引用
+    const spaced = parseRunReferences(`${formatRunReference(RUN_A)} ${formatRunReference(RUN_B)}`, [
+      run(RUN_A),
+      run(RUN_B),
+    ])
+    expect(spaced.filter((segment) => segment.runId !== null)).toHaveLength(2)
   })
 
   it('正文里没有引用时原样返回（不改变任何普通留言的渲染）', () => {
