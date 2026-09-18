@@ -249,6 +249,43 @@ describe('#158 反面钉：全树不许有原生 <select>（逐落页点）', ()
     expect(screen.queryByLabelText('工作区')).toBeNull()
   })
 
+  it('落页点 #comment-run-ref-<taskId>（⑥f 引用运行）：是 <button aria-haspopup="menu">', async () => {
+    // 评审 #216 S1：本片唯一的新用户入口此前**零判据**（源码侧 M4/M5 双变异全绿、浏览器侧
+    // e2e 的 Task Room 是 runs 空态所以从未渲染过它）。按 #158 的逐落页点约定补上。
+    const { BOB, loggedInHandlers, makeRun, makeTask, teamMembersHandler } =
+      await import('./fixtures.js')
+    const task = makeTask({ assigneeUserId: BOB.userId })
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/tasks/${task.id}$`),
+          respond: () =>
+            new Response(
+              JSON.stringify({
+                ok: true,
+                data: {
+                  task,
+                  comments: [],
+                  instructions: [],
+                  runs: [makeRun({ status: 'running' })],
+                  artifacts: [],
+                },
+              }),
+              { status: 200 },
+            ),
+        },
+        teamMembersHandler([]),
+      ]),
+    )
+    const control = await screen.findByLabelText('引用运行')
+    expect(control.tagName).toBe('BUTTON')
+    expect(control).toHaveAttribute('aria-haspopup', 'menu')
+    expect(control).toHaveAttribute('id', `comment-run-ref-${task.id}`)
+    expect(document.querySelector(`select#comment-run-ref-${task.id}`)).toBeNull()
+  })
+
   it('落页点 #task-assignee-<projectId>：是按钮，且每个项目一个（不再按前缀命中原生 select）', async () => {
     const project: ProjectView = {
       id: '22222222-0000-4000-8000-000000000002',

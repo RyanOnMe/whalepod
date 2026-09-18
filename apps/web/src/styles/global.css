@@ -1971,12 +1971,14 @@ select {
   border-top: 0.5px solid var(--dsw-alias-border-l1);
 }
 
-/* 只读提示：非交互，所以用 secondary 就够（不是可点击控件）。 */
+/* 只读提示：非交互，所以用 secondary 就够（不是可点击控件）。
+   底色与中性 chip 家族同形（同色 color-mix 浅底）——平面底色让对比度门读不出 tint，
+   等于这一处没有判据（新立的中性 chip 门就是这么把它抓出来的）。 */
 .chip-gray {
   display: inline-block;
   padding: 2px var(--space-3);
   border-radius: 99px;
-  background: var(--dsw-alias-bg-layer-3);
+  background: color-mix(in srgb, var(--dsw-alias-label-secondary) 12%, transparent);
   color: var(--dsw-alias-label-secondary);
   font-size: 0.8125rem;
 }
@@ -2064,4 +2066,24 @@ select {
   padding-left: var(--space-4);
   color: var(--dsw-alias-label-secondary);
   font-size: 0.8125rem;
+}
+
+/* ---- 切片⑥f：讨论里的运行引用 chip（可点，跳 ⑥d 的 Console） ---- */
+.ref-chip {
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 1px var(--space-2);
+  margin: 0 1px;
+  border-radius: 6px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  /* AA：可点小字压卡片面，用 secondary（tertiary 是 3.71:1，不达标）。
+     底色与指令四态/目标条用**同一形态**（同色 color-mix 浅底），这样对比度门能按同一口径
+     读它的 tint 百分比——平面底色会让门报"background 里没有 color-mix 比例"。 */
+  color: var(--dsw-alias-label-secondary);
+  background: color-mix(in srgb, var(--dsw-alias-label-secondary) 12%, transparent);
+  cursor: pointer;
+}
+
+.ref-chip:hover {
+  color: var(--dsw-alias-label-primary);
 }

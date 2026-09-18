@@ -65,6 +65,19 @@ const STATES = [
   { cls: '.target-mode-explicit', label: '目标来源：显式指定' },
 ] as const
 
+/**
+ * **中性 chip**（不是状态色）：`.ref-chip`（⑥f 的运行引用）、`.chip-gray`（⑥d 的只读提示）。
+ *
+ * 它们与状态家族同形（同色浅底 + 小字），但**不属于** `--dsw-alias-state-*` 那一族——
+ * 硬塞进上面那道门就得给它编一个状态色，那是造假。所以另立一条：仍然**从 CSS 读 tint**、
+ * 仍然按白底算比值，只是不要求颜色是状态 token。
+ * （这道口子本来就是门暴露出来的真实缺口：中性 chip 此前没有任何对比度判据。）
+ */
+const NEUTRAL_CHIPS = [
+  { cls: '.ref-chip', label: '运行引用 chip' },
+  { cls: '.chip-gray', label: '只读提示 chip' },
+] as const
+
 describe('指令四态的 AA 门', () => {
   it.each(STATES)('$label：文字 vs 自身浅底 ≥ 4.5:1，且取值来自 CSS 真值', ({ cls }) => {
     const tint = tintOf(cls)
@@ -131,5 +144,22 @@ describe('指令四态的 AA 门', () => {
         `${name} 原本的 500 档应当不过 AA（这正是要重映射的原因）`,
       ).toBeLessThan(4.5)
     }
+  })
+})
+
+describe('中性 chip 的 AA 门（同形不同族）', () => {
+  it.each(NEUTRAL_CHIPS)('$label：文字 vs 自身浅底 ≥ 4.5:1（取值来自 CSS 真值）', ({ cls }) => {
+    const tint = tintOf(cls)
+    const colorText = declaration(cls, 'color')
+    // 中性 chip 的字色是 label 语义 token（不是 state），底必须是**同一个** token 的浅底。
+    expect(colorText).toMatch(/^var\(--dsw-alias-label-/)
+    expect(declaration(cls, 'background')).toContain(colorText.replace('var(', '').replace(')', ''))
+    const tokenName = /var\((--dsw-alias-label-[a-z-]+)\)/.exec(colorText)![1]!
+    const rgb = parseCssColor(readTokenValue(TOKENS, tokenName))
+    const ratio = round2(contrastOnTint(rgb, tint, WHITE))
+    expect(
+      ratio,
+      `${cls} 的 ${tokenName} 在白底 ${tint}% 浅底上是 ${ratio}:1`,
+    ).toBeGreaterThanOrEqual(4.5)
   })
 })
