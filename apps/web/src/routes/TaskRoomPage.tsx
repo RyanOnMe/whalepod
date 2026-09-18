@@ -137,8 +137,15 @@ export function TaskRoomPage(): ReactNode {
               <h2 id="comments-heading">讨论</h2>
               <span className="room-column-note">团队成员之间 · 不触发 Agent</span>
             </div>
-            <CommentList comments={comments} session={session} />
-            <CommentComposer taskId={task.id} />
+            {/* ⑥f：讨论里可以引用某次运行——引用只能指向**本任务**的运行，所以把 runs 与
+                「点引用 → 开 Console」都从页面注入（解析逻辑在 runReference.ts，可单测）。 */}
+            <CommentList
+              comments={comments}
+              session={session}
+              runs={runs}
+              onOpenRun={setConsoleRunId}
+            />
+            <CommentComposer taskId={task.id} runs={runs} runLabels={runOrdinalLabels(runs)} />
           </div>
         </section>
 
