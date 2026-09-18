@@ -140,9 +140,16 @@ describe('视图类型收敛（#210）：不许再手写第二份', () => {
     // （`export type X = ...TaskMessageView...`），谁加回 `export interface` 手写块就红。
     const source = readFileSync(join(import.meta.dirname, '../src/shared/api/types.ts'), 'utf-8')
     expect(source).not.toMatch(/export interface (Comment|Instruction)View/)
-    // 派生还在（不是把类型删了绕过上一条）：
+    // 派生还在（不是把类型删了绕过上一条），且 InstructionView 必须是**精确交集**——
+    // `TaskMessageView & { 手写… }` 能同时通过上面两条（评审 O1 指出的窄缝），这里堵上：
+    // 该行只能以精确的 kind 收窄结尾，不含第二对花括号。
     expect(source).toMatch(/export type CommentView = TaskMessageView/)
-    expect(source).toMatch(/export type InstructionView = TaskMessageView & /)
+    const instructionLine = source
+      .split('\n')
+      .find((line) => line.startsWith('export type InstructionView'))
+    expect(instructionLine).toBe(
+      "export type InstructionView = TaskMessageView & { kind: 'instruction' | 'followup' }",
+    )
   })
 
   it('instructionState=null 的指令画"未知状态"而不是崩（#210 收敛暴露的可空面）', () => {

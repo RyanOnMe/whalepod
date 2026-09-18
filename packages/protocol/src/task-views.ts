@@ -4,12 +4,13 @@
  * 这是 **Hub 与 Web 共用的唯一真源**（#210）：`GET /tasks/:id` 的 `comments` 与
  * `instructions` 在服务端**本来就是同一种结构**（`apps/hub/src/modules/task/view.ts` 里
  * `instructions: CommentView[]`，同一份 `toCommentView`）。Web 曾手写第二份
- * `InstructionView`（子集副本：缺 `kind`/`origin`/`editedAt`），只因为 ③c 在展示层把
- * 两条流分开画——字段漂移后两边对不上就是 `#210` 这条 Issue。
+ * `InstructionView`（子集副本：缺 `origin`/`editedAt`，`kind` 被收窄为指令两态），
+ * 只因为 ③c 在展示层把两条流分开画——字段漂移后两边对不上就是 `#210` 这条 Issue。
  *
  * 收敛形状：
  *  - `TaskMessageView` = 完整 13 字段（`toCommentView` 实际发出的样子）；
- *  - Hub 的 `CommentView` = `TaskMessageView`（改名点仍是 ③c 遗留的公开路径命名，未动）；
+ *  - Hub 的 `CommentView` = `TaskMessageView`（公开路径仍叫 Comment，改名属 #210 前半句
+ *    "公开命名统一"、仍 OPEN——③c 已合入但改名没发生，户头不在 ③c；本片只收类型、不碰路径）；
  *  - Web 的 `InstructionView` = `TaskMessageView & { kind: 'instruction' | 'followup' }`
  *    （**派生**，不是第二份手写：服务端加字段时自动流过去）。
  *
