@@ -9,8 +9,9 @@
  *
  * 收敛形状：
  *  - `TaskMessageView` = 完整 13 字段（`toCommentView` 实际发出的样子）；
- *  - Hub 的 `CommentView` = `TaskMessageView`（公开路径仍叫 Comment，改名属 #210 前半句
- *    "公开命名统一"、仍 OPEN——③c 已合入但改名没发生，户头不在 ③c；本片只收类型、不碰路径）；
+ *  - Hub 的 `CommentView` = `TaskMessageView`（公开路径仍叫 Comment：#210 前半句
+ *    "公开命名统一"按 C 方案关闭——内外一致（类型/事件/路径全叫 comment），改名是审美
+ *    不是正确性；公开路径改名是破坏性变更，留待不得不 bump 协议的大版本时顺手做）；
  *  - Web 的 `InstructionView` = `TaskMessageView & { kind: 'instruction' | 'followup' }`
  *    （**派生**，不是第二份手写：服务端加字段时自动流过去）。
  *
