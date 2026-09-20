@@ -137,22 +137,31 @@ export function readTokenValue(cssText: string, name: string): string {
 /**
  * 取深色主题下变量的**生效值**（#214 A 方案：门不再只按白底算）。
  *
- * 语义与 focus-ring 的 `resolveTokenValue(token, dark)` 相同：在
- * `body[data-ds-dark-theme]` 段里找重定义，有则取之（再解一层 var），
- * 没有则回落浅色值（tokens 文件注释写明"两套取值相同的变量不重复声明"）。
- * chip 底所压的面、字色 token 都走这个函数——浅色值继续走 `readTokenValue`。
+ * 与 focus-ring 的 `resolveTokenValue(token, dark)` 同一语义：先取该变量在
+ * `body[data-ds-dark-theme]` 段里的重定义（无则回落浅色值——tokens 文件注释写明
+ * "两套取值相同的变量不重复声明"），再沿 var() 链跟进、**每一跳都优先深色段**
+ * （最多 4 跳，与 focus-ring 同上限）。单跳实现曾在这里错过 alias→alias 链
+ * （`--dsw-specific-menu → --dsw-alias-bg-layer-3` 取成浅色白，评审 S1 抓到），
+ * 所以不要退回单跳。
+ *
+ * `body[data-ds-dark-theme]` 段本身缺失时抛错（与 focus-ring 同形态）：静默回落
+ * 浅色会让深色门按浅色算出全绿、悄悄变盲（评审 S3）。单 token 无重定义则回落浅色，
+ * 那是 CSS 语义（浏览器里就是这个行为），不是 fail-open。
  */
 export function readTokenValueDark(cssText: string, name: string): string {
   const darkBlock = /body\[data-ds-dark-theme\]\s*\{([\s\S]*?)\n\}/.exec(cssText)?.[1]
-  if (darkBlock !== undefined) {
-    const override = new RegExp(`${name}\\s*:\\s*([^;]+);`).exec(darkBlock)?.[1]?.trim()
-    if (override !== undefined) {
-      const ref = /^var\((--[a-z0-9-]+)\)$/.exec(override)?.[1]
-      // 重定义可能是引用（如 `--dsw-alias-bg-layer-1: var(--dsw-static-…)`）——跟进去解。
-      return ref !== undefined ? readTokenValue(cssText, ref) : override
-    }
+  if (darkBlock === undefined) {
+    throw new Error('dsw-tokens.css 里找不到 body[data-ds-dark-theme] 段')
   }
-  return readTokenValue(cssText, name)
+  const readOrNull = (block: string, token: string): string | null =>
+    new RegExp(`${token}\\s*:\\s*([^;]+);`).exec(block)?.[1]?.trim() ?? null
+  let value = readOrNull(darkBlock, name) ?? readTokenValue(cssText, name)
+  for (let hop = 0; hop < 4; hop += 1) {
+    const target = /^var\((--[a-z0-9-]+)\)$/i.exec(value.trim())?.[1]
+    if (target === undefined) break
+    value = readOrNull(darkBlock, target) ?? readTokenValue(cssText, target)
+  }
+  return value.trim()
 }
 
 /**

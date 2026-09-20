@@ -205,18 +205,25 @@ describe('平面底色上的字（容器底 + 字色都是 CSS 真值）', () =>
   it.each([
     { cls: '.instruction-body', token: '--dsw-alias-label-primary', label: '指令正文' },
     { cls: '.instruction-head', token: '--dsw-alias-label-secondary', label: '指令头小字' },
-    { cls: '.target-note', token: '--dsw-alias-label-secondary', label: '目标条说明' },
-  ])('$label：浅深两底上字色 vs 容器底都 ≥ 4.5:1', ({ cls, token }) => {
+    // `.target-note` 坐页面底（`--dsw-alias-bg-module-platform`：浅 `rgb(245,246,247)`、
+    // 深 `rgb(53,54,56)`）上，不是卡片面——第一版注释写"页面底浅色是白"是错的（评审 S2），
+    // 错在注释不在判据（真底上 secondary 是 5.36:1，同样 ≥4.5）。
+    {
+      cls: '.target-note',
+      token: '--dsw-alias-label-secondary',
+      label: '目标条说明',
+      surface: '--dsw-alias-bg-module-platform',
+    },
+  ])('$label：浅深两底上字色 vs 容器底都 ≥ 4.5:1', ({ cls, token, surface }) => {
     // 字色声明必须是该 token（否则"字 vs 面"算的不是屏上真的那对）。
     expect(declaration(cls, 'color')).toBe(`var(${token})`)
     for (const dark of [false, true] as const) {
       const read = dark ? readTokenValueDark : readTokenValue
       const ink = parseCssColor(read(TOKENS, token))
-      // 容器底：instruction 系坐 `.instruction-item` 上，target 系坐页面底上——
-      // 页面底浅色是白、深色是 bg-layer-3 的深色值；instruction-item 的底浅深恰好也是
-      // （浅 `rgb(255,255,255)` / 深 `rgb(53,54,56)`）——同一对值，同一条判据。
-      const surface = parseCssColor(read(TOKENS, '--dsw-alias-bg-layer-3'))
-      const ratio = round2(contrastRatio(ink, surface))
+      // 容器底：instruction 系坐 `.instruction-item`（`bg-layer-3`）上；深色下两底恰好
+      // 相等（都是 `rgb(53,54,56)`），浅色下才分叉（卡片面白 / 页面底 245,246,247）。
+      const face = parseCssColor(read(TOKENS, surface ?? '--dsw-alias-bg-layer-3'))
+      const ratio = round2(contrastRatio(ink, face))
       expect(ratio, `${cls} 在${dark ? '深' : '浅'}色面上是 ${ratio}:1`).toBeGreaterThanOrEqual(4.5)
     }
   })
