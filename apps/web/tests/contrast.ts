@@ -135,6 +135,36 @@ export function readTokenValue(cssText: string, name: string): string {
 }
 
 /**
+ * 取深色主题下变量的**生效值**（#214 A 方案：门不再只按白底算）。
+ *
+ * 与 focus-ring 的 `resolveTokenValue(token, dark)` 同一语义：先取该变量在
+ * `body[data-ds-dark-theme]` 段里的重定义（无则回落浅色值——tokens 文件注释写明
+ * "两套取值相同的变量不重复声明"），再沿 var() 链跟进、**每一跳都优先深色段**
+ * （最多 4 跳，与 focus-ring 同上限）。单跳实现曾在这里错过 alias→alias 链
+ * （`--dsw-specific-menu → --dsw-alias-bg-layer-3` 取成浅色白，评审 S1 抓到），
+ * 所以不要退回单跳。
+ *
+ * `body[data-ds-dark-theme]` 段本身缺失时抛错（与 focus-ring 同形态）：静默回落
+ * 浅色会让深色门按浅色算出全绿、悄悄变盲（评审 S3）。单 token 无重定义则回落浅色，
+ * 那是 CSS 语义（浏览器里就是这个行为），不是 fail-open。
+ */
+export function readTokenValueDark(cssText: string, name: string): string {
+  const darkBlock = /body\[data-ds-dark-theme\]\s*\{([\s\S]*?)\n\}/.exec(cssText)?.[1]
+  if (darkBlock === undefined) {
+    throw new Error('dsw-tokens.css 里找不到 body[data-ds-dark-theme] 段')
+  }
+  const readOrNull = (block: string, token: string): string | null =>
+    new RegExp(`${token}\\s*:\\s*([^;]+);`).exec(block)?.[1]?.trim() ?? null
+  let value = readOrNull(darkBlock, name) ?? readTokenValue(cssText, name)
+  for (let hop = 0; hop < 4; hop += 1) {
+    const target = /^var\((--[a-z0-9-]+)\)$/i.exec(value.trim())?.[1]
+    if (target === undefined) break
+    value = readOrNull(darkBlock, target) ?? readTokenValue(cssText, target)
+  }
+  return value.trim()
+}
+
+/**
  * 取 Tag 里某个 tone 的浅底混合比例（success 10% / warning 12% / danger 10%）。
  * 比例不抄死在测试里：Tag.module.css 改了比例，判据跟着变。
  * @param tagCssText Tag.module.css 全文
