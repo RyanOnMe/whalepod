@@ -45,8 +45,10 @@ export function toTaskView(row: TaskRow): TaskView {
  * #210 收敛：唯一真源是 `@whalepod/protocol` 的 `TaskMessageView`，这里只做派生——
  * 此前是逐字段手写镜像，与 Web 的第二份副本互相漂移。
  *
- * 命名说明：**视图与 HTTP 路径暂时仍叫 Comment**（`/tasks/:taskId/comments`）。
- * 改名属 #210 前半句"公开命名统一"，仍 OPEN（本片只收类型、不碰路径）。
+ * 命名说明：**视图与 HTTP 路径叫 Comment**（`/tasks/:taskId/comments`）。
+ * 实体是 `task_message`（讨论/指令/追问同表），"comment" 在这里就是"消息"的意思——
+ * #210 前半句"公开命名统一"按 C 方案关闭：内外一致（类型/事件/路径全叫 comment），
+ * 改名是审美不是正确性，不值得一次破坏性迁移。
  */
 export type CommentView = TaskMessageView
 
