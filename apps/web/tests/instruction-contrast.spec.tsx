@@ -17,6 +17,7 @@ import {
   contrastRatio,
   parseCssColor,
   readTokenValue,
+  readTokenValueDark,
   round2,
   WHITE,
 } from './contrast.js'
@@ -148,6 +149,77 @@ describe('指令四态的 AA 门', () => {
       ).toBeLessThan(4.5)
     }
   })
+
+  // #214 A 方案：深色面缺口（`it.fails` 形态——"已知会红"，不是"绿了"）。
+  //
+  // 同一批 chip 在深色面（bg-layer-3 深色值）上的真实比值：900 档重绑在深色下是
+  // 1.01~1.23:1（高估约 10 倍，Issue 实测）。深色段今天不可达（index.html 不设
+  // `data-ds-dark-theme`），所以这条**不是"现在坏了"**，而是"启用深色的那天要修"——
+  // `it.fails` 修好之前保持"预期失败"形态，修好的那天它会自动提醒删掉自己
+  // （`it.fails` 在断言通过时会红："居然过了，快把我删掉"）。
+  //
+  // 比值**从 CSS 真值算**（深色 token 生效值 + 同一 tint），不是硬编码 1.01——
+  // 以后有人改了深色 token 或 900 档取值，这里的报告数字会跟着变。
+  it.fails.each(STATES)('$label：深色面（已知缺口，启用深色前必须修）', ({ cls }) => {
+    const tint = tintOf(cls)
+    const colorText = declaration(cls, 'color')
+    // 先断言颜色仍是状态 token：否则下面 exec 抛 TypeError 也会被 it.fails 吞掉，
+    // "颜色写坏"和"比值不够"两种失败混在一起，报告不诚实（中性门同理已显式断言）。
+    expect(colorText).toMatch(/^var\(--dsw-alias-state-/)
+    const tokenName = /var\((--dsw-alias-state-[a-z-]+)\)/.exec(colorText)![1]!
+    // 深色生效值：包裹重绑（900 档）浅深同值所以还是 900；state 原始值深色可能提亮
+    // （error/business 深色是 400 档），但 chip 类自己重绑了 token，读的是重绑后的 900。
+    const staticName = /var\((--dsw-static-[a-z]+-900)\)/.exec(declaration(cls, tokenName))![1]!
+    const rgb = parseCssColor(readTokenValueDark(TOKENS, staticName))
+    const surface = parseCssColor(readTokenValueDark(TOKENS, '--dsw-alias-bg-layer-3'))
+    const ratio = round2(contrastOnTint(rgb, tint, surface))
+    console.log(`[#214 深色缺口] ${cls} 深色面 ${ratio}:1（浅色门算的是白底，要求 4.5:1）`)
+    expect(ratio).toBeGreaterThanOrEqual(4.5)
+  })
+})
+
+/**
+ * 平面底色上的字（#214 第 3 条：复核 O2 指出 surface 从未被读取）。
+ *
+ * chip 门只验"tint 浅底"——但 `.instruction-item`（`background: var(--dsw-alias-bg-layer-3)`，
+ * 平面色、无 color-mix）上面还坐着两行字：`.instruction-body`（primary 正文）与
+ * `.instruction-head`（secondary 小字，含 `.instruction-kind`）。字色 token 与容器底 token
+ * 都是 CSS 真值，双底（浅 `:root` / 深 `body[data-ds-dark-theme]`）各算一次。
+ * 前提同样钉住：primary/secondary 在两底上都必须 ≥ 4.5（否则"字 vs 面"无从谈起）。
+ */
+describe('平面底色上的字（容器底 + 字色都是 CSS 真值）', () => {
+  it('前提：primary / secondary 在浅深两底上都 ≥ 4.5:1', () => {
+    for (const dark of [false, true] as const) {
+      const read = dark ? readTokenValueDark : readTokenValue
+      const surface = parseCssColor(read(TOKENS, '--dsw-alias-bg-layer-3'))
+      for (const token of ['--dsw-alias-label-primary', '--dsw-alias-label-secondary'] as const) {
+        const ink = parseCssColor(read(TOKENS, token))
+        const ratio = round2(contrastRatio(ink, surface))
+        expect(ratio, `${token} 在${dark ? '深' : '浅'}色面上是 ${ratio}:1`).toBeGreaterThanOrEqual(
+          4.5,
+        )
+      }
+    }
+  })
+
+  it.each([
+    { cls: '.instruction-body', token: '--dsw-alias-label-primary', label: '指令正文' },
+    { cls: '.instruction-head', token: '--dsw-alias-label-secondary', label: '指令头小字' },
+    { cls: '.target-note', token: '--dsw-alias-label-secondary', label: '目标条说明' },
+  ])('$label：浅深两底上字色 vs 容器底都 ≥ 4.5:1', ({ cls, token }) => {
+    // 字色声明必须是该 token（否则"字 vs 面"算的不是屏上真的那对）。
+    expect(declaration(cls, 'color')).toBe(`var(${token})`)
+    for (const dark of [false, true] as const) {
+      const read = dark ? readTokenValueDark : readTokenValue
+      const ink = parseCssColor(read(TOKENS, token))
+      // 容器底：instruction 系坐 `.instruction-item` 上，target 系坐页面底上——
+      // 页面底浅色是白、深色是 bg-layer-3 的深色值；instruction-item 的底浅深恰好也是
+      // （浅 `rgb(255,255,255)` / 深 `rgb(53,54,56)`）——同一对值，同一条判据。
+      const surface = parseCssColor(read(TOKENS, '--dsw-alias-bg-layer-3'))
+      const ratio = round2(contrastRatio(ink, surface))
+      expect(ratio, `${cls} 在${dark ? '深' : '浅'}色面上是 ${ratio}:1`).toBeGreaterThanOrEqual(4.5)
+    }
+  })
 })
 
 describe('中性 chip 的 AA 门（同形不同族）', () => {
@@ -164,5 +236,33 @@ describe('中性 chip 的 AA 门（同形不同族）', () => {
       ratio,
       `${cls} 的 ${tokenName} 在白底 ${tint}% 浅底上是 ${ratio}:1`,
     ).toBeGreaterThanOrEqual(4.5)
+  })
+
+  // #214 A 方案：中性 chip 的深色面（普通 `it` 真门——深色下 secondary 6:1 照样过）。
+  // 前提钉：深色下 secondary 必须过、且 chip 必须用 secondary（tertiary 深色只有 4.51:1，
+  // 擦线过——和浅色 3.706:1 同一个教训：能当小字灰的只有 secondary）。
+  it('深色面 secondary 同样达标（tertiary 深色擦线，不许用）', () => {
+    const surface = parseCssColor(readTokenValueDark(TOKENS, '--dsw-alias-bg-layer-3'))
+    const secondary = parseCssColor(readTokenValueDark(TOKENS, '--dsw-alias-label-secondary'))
+    const tertiary = parseCssColor(readTokenValueDark(TOKENS, '--dsw-alias-label-tertiary'))
+    // tint 同样从 CSS 读（复核 R2 的教训：硬编码 12% 的话，CSS 改成 44% 门也发现不了）。
+    for (const { cls } of NEUTRAL_CHIPS) {
+      const tint = tintOf(cls)
+      expect(
+        round2(contrastOnTint(secondary, tint, surface)),
+        `${cls} 深色面 secondary 是 ${round2(contrastOnTint(secondary, tint, surface))}:1`,
+      ).toBeGreaterThanOrEqual(4.5)
+      expect(round2(contrastOnTint(tertiary, tint, surface))).toBeLessThan(5)
+    }
+  })
+
+  it.each(NEUTRAL_CHIPS)('$label：深色面 ≥ 4.5:1（取值来自 CSS 真值）', ({ cls }) => {
+    const tint = tintOf(cls)
+    const colorText = declaration(cls, 'color')
+    expect(colorText).toMatch(/^var\(--dsw-alias-label-secondary\)$/)
+    const rgb = parseCssColor(readTokenValueDark(TOKENS, '--dsw-alias-label-secondary'))
+    const surface = parseCssColor(readTokenValueDark(TOKENS, '--dsw-alias-bg-layer-3'))
+    const ratio = round2(contrastOnTint(rgb, tint, surface))
+    expect(ratio, `${cls} 深色面是 ${ratio}:1`).toBeGreaterThanOrEqual(4.5)
   })
 })
