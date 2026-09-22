@@ -7,8 +7,10 @@
  *  - 与 GET /team 同级的鉴权：无 Session 401。
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { randomUUID } from 'node:crypto'
 import type { Database } from '@whalepod/db'
-import { listTeamEvents } from '@whalepod/db'
+import { insertUser, listTeamEvents } from '@whalepod/db'
+import { acceptInviteAsMember } from '../src/modules/team/commands.js'
 import {
   apiInject,
   createTestApp,
@@ -134,5 +136,42 @@ describe('#136 GET /team/members（集成 · PostgreSQL）', () => {
     expect(disable.statusCode).toBe(200)
     const after = (await listTeamEvents(database.db)).filter((e) => e.type === 'member.changed')
     expect(after.length).toBe(before.length + 1)
+  })
+
+  it('#163 契约：已登录成员走 acceptInviteAsMember 进队同样发 member.changed', async () => {
+    // 第二条加入腿（评审 M4 抓到零覆盖）：单 Team 下已登录者本来就在队里，要在命令层
+    // 造出 joined=true 必须先有一个"有账号、无成员行"的人——直接插 user 行（不插
+    // member 行），再直调 acceptInviteAsMember（真人同一条命令路径；路由层在
+    // invite-ui.integration.spec.ts 已覆盖）。这条腿发事件，重放（joined=false）不发。
+    const daveId = randomUUID()
+    await insertUser(database.db, {
+      id: daveId,
+      username: `dave-${daveId.slice(0, 6)}`,
+      displayName: 'Dave',
+      passwordHash: 'x',
+    })
+    const invite = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: '/api/v1/invites',
+      payload: { role: 'member' },
+    })
+    expect(invite.statusCode).toBe(201)
+    const { token } = invite.json().data as { token: string }
+
+    const before = (await listTeamEvents(database.db)).filter((e) => e.type === 'member.changed')
+    const joined = await acceptInviteAsMember(database, { token, userId: daveId })
+    expect(joined.joined).toBe(true)
+    expect(joined.alreadyMember).toBe(false)
+    const after = (await listTeamEvents(database.db)).filter((e) => e.type === 'member.changed')
+    expect(after.length).toBe(before.length + 1)
+
+    // 幂等重放（joined=false）：无状态变化，不发事件（发了是噪声）。
+    const replayed = await acceptInviteAsMember(database, { token, userId: daveId })
+    expect(replayed.joined).toBe(false)
+    expect(replayed.alreadyMember).toBe(true)
+    const afterReplay = (await listTeamEvents(database.db)).filter(
+      (e) => e.type === 'member.changed',
+    )
+    expect(afterReplay.length).toBe(after.length)
   })
 })
