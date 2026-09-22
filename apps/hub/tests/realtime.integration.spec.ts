@@ -284,6 +284,14 @@ describe('browser realtime WS /ws/v1/client', () => {
     )
     const aliceClient = await connectClient({ cookie: alice.cookie, cursor: '0' })
     const bobClient = await connectClient({ cookie: bob.session.cookie, cursor: '0' })
+    // #163 起 driveInviteAndAccept（bob 加入）会先产生一条 member.changed：cursor=0 的
+    // 两个连接都会先补发它。take 只看"前 n 条"不消费——下面的 live 断言改从索引 1 开始。
+    for (const client of [aliceClient, bobClient]) {
+      const replayed = await client.take(1)
+      if (replayed[0]?.kind !== 'persistent') {
+        throw new Error('expected the member.changed replay before live frames')
+      }
+    }
     await silence(50) // 等服务端完成回放并登记 live 订阅
 
     ctx.app.realtime.publishLive({
@@ -292,8 +300,8 @@ describe('browser realtime WS /ws/v1/client', () => {
       text: 'secret plan for alice only',
       ownerUserId: alice.userId,
     })
-    const frames = await aliceClient.take(1)
-    expect(frames[0]).toMatchObject({
+    const frames = await aliceClient.take(2)
+    expect(frames[1]).toMatchObject({
       kind: 'live',
       runId: '10000000-0000-4000-8000-000000000001',
       audience: 'owner',
@@ -308,7 +316,7 @@ describe('browser realtime WS /ws/v1/client', () => {
       text: "bob's private delta",
       ownerUserId: bob.session.userId,
     })
-    await bobClient.take(1)
+    await bobClient.take(2)
     await expectSilence(aliceClient, 'alice 永不收到 bob 的 owner 帧')
   })
 
@@ -353,16 +361,22 @@ describe('browser realtime WS /ws/v1/client', () => {
     const aliceClient = await connectClient({ cookie: alice.cookie, cursor: '0' })
     await silence(50) // 等服务端登记订阅（250ms 轮询起点）
 
+    // #163 起 driveInviteAndAccept（bob 加入）已先产生一条 member.changed（id=1）：
+    // cursor=0 的连接会先补发它。这条回放本身就是端到端证据（事件真的经 WS 到浏览器），
+    // 先断言掉；take 只看"前 n 条"不消费，下面的 task.changed 从索引 1 开始。
+    const replayed = (await aliceClient.take(1)).map(persistent)
+    expect(replayed[0]?.event.type).toBe('member.changed')
+
     // P1-13 起由 run/project/task 模块的 domain transaction 追加；此处直接走
     // repository 的同一 append 路径，模拟“bob 的操作产生 task.changed”。
     const event = await appendTeamEvent(database.db, {
       type: 'task.changed',
       payload: { taskId: 't-1' },
     })
-    const frames = (await aliceClient.take(1)).map(persistent)
-    expect(frames[0].cursor).toBe(String(event.id))
-    expect(frames[0].event.type).toBe('task.changed')
-    expect(frames[0].event.payload).toEqual({ taskId: 't-1' })
+    const frames = (await aliceClient.take(2)).map(persistent)
+    expect(frames[1]?.cursor).toBe(String(event.id))
+    expect(frames[1]?.event.type).toBe('task.changed')
+    expect(frames[1]?.event.payload).toEqual({ taskId: 't-1' })
     void bob
   })
 })
