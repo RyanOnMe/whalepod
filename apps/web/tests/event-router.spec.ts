@@ -111,6 +111,8 @@ describe('applyClientFrame (event-router)', () => {
       ['approval.changed', { taskId: 't-1' }, [['task-room', 't-1']]],
       ['artifact.changed', { taskId: 't-1' }, [['task-room', 't-1']]],
       ['device.changed', {}, [['devices']]],
+      // #163：成员变更 → 名册键（名册与责任人下拉同一缓存，一次失效全刷新）。
+      ['member.changed', { changedAt: '2026-09-20T00:00:00.000Z' }, [['team-members']]],
     ]
     for (const [type, payload, expected] of keys) {
       expect(keysForPersistentEvent(persistentFrame(type, payload).event)).toEqual(expected)

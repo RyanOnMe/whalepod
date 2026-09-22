@@ -43,7 +43,16 @@ export function MembersPage(): ReactNode {
   const membersQuery = useQuery({
     queryKey: queryKeys.teamMembers,
     queryFn: () => api.get<TeamMemberView[]>('/team/members'),
+    /**
+     * #163：成员变更走实时事件（`member.changed` → event-router 失效本键），
+     * 页面开着时新人加入会自动上屏。下面的手动刷新是**不依赖实时的兜底**
+     * （WS 断线/事件丢失时用户仍有路可走）——两个都是要的，不是二选一。
+     */
+    staleTime: 0,
   })
+  const manualRefresh = (): void => {
+    void membersQuery.refetch()
+  }
 
   const createInvite = useMutation({
     mutationFn: () => {
@@ -81,6 +90,14 @@ export function MembersPage(): ReactNode {
         <div className="page-col">
           <section className="card" aria-labelledby="members-list-heading">
             <h2 id="members-list-heading">团队成员</h2>
+            <button
+              type="button"
+              className="button button-ghost"
+              onClick={manualRefresh}
+              disabled={membersQuery.isFetching}
+            >
+              {membersQuery.isFetching ? '刷新中…' : '刷新名单'}
+            </button>
             {membersQuery.isPending ? (
               <p className="mutation-hint">正在加载成员名单…</p>
             ) : membersQuery.isError ? (

@@ -77,8 +77,8 @@ export function useMemberDirectory(): MemberDirectory {
     queryFn: () => api.get<TeamMemberView[]>('/team/members'),
     /**
      * 名册按「每次挂载都核对」处理（`staleTime: 0`）：成员会因为邀请/加入/停用而
-     * 变化，而 Hub 目前**不**扇出成员事件（`shared/realtime/event-router` 的键表
-     * 里没有 member.*），所以缓存里那份名册没有任何失效来源。默认 15s 的 staleTime
+     * 变化。#163 起 Hub 扇出 `member.changed`（event-router 失效本键），实时是主路；
+     * `staleTime: 0` 留作兜底（WS 断线/事件丢失时挂载仍核对）。默认 15s 的 staleTime
      * 会导致「刚加入的人在责任人下拉里缺席、任务列表把责任人显示成『未知成员』」
      * ——#152 的 p1-07 e2e 实测抓到（页面在 Bob 加入前已经取过一次名册）。
      * 名册是团队级小数据，重取的代价远小于把新人显示成陌生人。

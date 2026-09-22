@@ -21,6 +21,8 @@
  *   approval.changed     → ['task-room', taskId]    （审批卡在 task room）
  *   artifact.changed     → ['task-room', taskId]    （产物列表在 task room）
  *   device.changed       → ['devices']
+ *   member.changed       → ['team-members']   （#163：成员名册变更 → 名册 + 责任人下拉
+ *                                              同一份缓存，一次失效全刷新）
  * 一个事件可以命中多个查询（返回数组），例如将来 task.changed 还要带上项目任务列表。
  */
 import type { ClientFrame, ClientPersistentEvent } from '@whalepod/protocol'
@@ -77,6 +79,9 @@ const EVENT_KEY_BUILDERS: Readonly<Record<string, (payload: unknown) => CacheKey
   'approval.changed': (payload) => keysWith(payload, 'taskId', 'task-room'),
   'artifact.changed': (payload) => keysWith(payload, 'taskId', 'task-room'),
   'device.changed': () => [['devices']],
+  // #163：成员变更只带 changedAt（不点名），Web 不猜、直接重拉名册。
+  // 名册与责任人下拉是同一 queryKey（memberDirectory 注释），一次失效全刷新。
+  'member.changed': () => [['team-members']],
 }
 
 export async function applyClientFrame(
