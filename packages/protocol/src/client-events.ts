@@ -15,7 +15,7 @@ const clientEvent = <TType extends string>(type: TType) =>
     payload: z.json(),
   })
 
-/** persistent 帧里的 Team Event 类型（§5 的 8 个字面量）。 */
+/** persistent 帧里的 Team Event 类型（§5 的 8 个字面量 + #163 的成员变更）。 */
 export const ClientPersistentEventSchema = z.discriminatedUnion('type', [
   clientEvent('project.changed'),
   clientEvent('task.changed'),
@@ -25,6 +25,13 @@ export const ClientPersistentEventSchema = z.discriminatedUnion('type', [
   clientEvent('approval.changed'),
   clientEvent('artifact.changed'),
   clientEvent('device.changed'),
+  // #163：成员名册变更（加入/停用）。合并为**一个**事件、不细分 joined/disabled——
+  // ① ⑥ 的硬约束"不新造帧类型"是"能复用就复用"，但 8 个既有类型里没有一个语义贴合
+  // （device.changed 是设备，task.changed 是任务——硬塞等于撒谎）；
+  // ② payload 只带 `changedAt` 时间戳、不带 userId/role：成员"谁进来了"是隐私面最小化
+  // 问题——Web 收到后重拉 GET /team/members（本来就对全员可见），不需要事件里点名；
+  // ③ 订阅者过滤不需要它（eventVisibleTo 只对 run.event 分 audience，本事件全员可见）。
+  clientEvent('member.changed'),
 ])
 export type ClientPersistentEvent = z.infer<typeof ClientPersistentEventSchema>
 

@@ -1,6 +1,7 @@
 import { eq, sql } from 'drizzle-orm'
 import { digestPluginPack } from '@whalepod/protocol/plugin-pack-digest'
 import {
+  appendTeamEvent,
   consumeInvite,
   disableUser,
   findInviteByTokenHash,
@@ -16,16 +17,30 @@ import {
   schema,
   unwrapPgError,
 } from '@whalepod/db'
-import type { Database } from '@whalepod/db'
+import type { Database, DbHandle } from '@whalepod/db'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
 import { SESSION_TTL_MS } from '../auth/session.js'
 import { hashToken, issueOpaqueToken } from '../auth/token.js'
 
-export const CORE_EMPTY_PACK_NAME = 'core-empty'
+/**
+ * 成员名册变更进 Team Event 流（#163）：加入/停用后 Web 的名册没有任何失效来源，
+ * 已在线成员必须刷新才看得见新人。合并为**一个** `member.changed` 事件——
+ * 不细分 joined/disabled、不带 userId/role（protocol client-events.ts 注释）：
+ * Web 收到后重拉 GET /team/members（本来就对全员可见），不需要事件里点名。
+ * 同事务写：成员行与事件要么都在、要么都不在。
+ */
+async function publishMemberChanged(tx: DbHandle, now: Date): Promise<void> {
+  await appendTeamEvent(tx, {
+    type: 'member.changed',
+    payload: { changedAt: now.toISOString() },
+  })
+}
 
 /** invite.expires_at 默认 72 小时（03 §2.1）。 */
 const INVITE_TTL_MS = 72 * 60 * 60 * 1000
+
+export const CORE_EMPTY_PACK_NAME = 'core-empty'
 
 /**
  * core-empty Pack（02 Task 5 Step 3）：外部 installation 列表为空。
@@ -233,6 +248,8 @@ export async function acceptInvite(
         throw new ApiError(500, 'INTERNAL_ERROR', 'invite exists without a team')
       }
       await insertMember(tx, { teamId: team.id, userId, role: invite.role })
+      // #163：新人进队 → 名册变更事件（同事务，要么都有要么都没有）。
+      await publishMemberChanged(tx, new Date())
       await insertSession(tx, {
         id: uuidv7(),
         userId,
@@ -349,6 +366,8 @@ export async function acceptInviteAsMember(
       }
     }
     await insertMember(tx, { teamId: team.id, userId: input.userId, role: invite.role })
+    // #163：已登录成员进队 → 同样发名册变更事件（joined=true 的那条真人路径）。
+    await publishMemberChanged(tx, new Date())
     return {
       userId: input.userId,
       role: invite.role,
@@ -376,5 +395,8 @@ export async function disableMember(
     const now = new Date()
     await disableUser(tx, input.targetUserId, now)
     await revokeSessionsForUser(tx, input.targetUserId, now)
+    // #163：停用同样是名册变更（enabled:false 那行还在，但选择器要把它过滤掉——
+    // 对方开着的页面必须实时看到"已停用"徽标，而不是下次刷新才发现）。
+    await publishMemberChanged(tx, now)
   })
 }
