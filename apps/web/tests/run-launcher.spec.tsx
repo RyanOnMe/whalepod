@@ -31,7 +31,10 @@ const DEVICE_ID = 'd1d1d1d1-0000-4000-8000-00000000000c'
 const WORKSPACE_ID = 'e5e5e5e5-0000-4000-8000-00000000000d'
 const RUN_ID = 'f6f6f6f6-0000-4000-8000-00000000000e'
 
-function launcherHandlers(capture?: { body?: unknown; key?: unknown }): MockHandler[] {
+function launcherHandlers(
+  capture?: { body?: unknown; key?: unknown },
+  options: { failPost?: { message: string; requestId: string } } = {},
+): MockHandler[] {
   return [
     {
       method: 'GET',
@@ -114,6 +117,19 @@ function launcherHandlers(capture?: { body?: unknown; key?: unknown }): MockHand
         if (capture !== undefined) {
           capture.body = JSON.parse(String(init.body))
           capture.key = (init.headers as Record<string, string>)['idempotency-key']
+        }
+        if (options.failPost !== undefined) {
+          return {
+            status: 500,
+            body: {
+              ok: false,
+              error: {
+                code: 'INTERNAL_ERROR',
+                message: options.failPost.message,
+                requestId: options.failPost.requestId,
+              },
+            },
+          }
         }
         return created({ id: RUN_ID })
       },
@@ -299,5 +315,38 @@ describe('RunLivePanel', () => {
       appendLiveDelta(RUN_ID, 1, 'should-not-render')
     })
     expect(screen.queryByText('should-not-render')).not.toBeInTheDocument()
+  })
+})
+
+describe('#225 批次①：启动失败走统一错误口径', () => {
+  it('POST /runs 失败：ErrorBanner 呈现 message 与 requestId（与同页其它组件同口径）', async () => {
+    const task = makeTask({
+      assigneeUserId: BOB.userId,
+      assignmentStatus: 'accepted',
+      status: 'in_progress',
+    })
+    const user = userEvent.setup()
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task),
+        ...launcherHandlers(undefined, {
+          failPost: { message: 'agent not ready', requestId: 'req-run-500' },
+        }),
+      ]),
+    )
+    await openSelect(user, '选择 Agent')
+    await user.click(screen.getByRole('menuitem', { name: 'Fixer' }))
+    await waitFor(() => expect(screen.getByLabelText('选择 Revision')).toHaveTextContent('r3'))
+    await selectOption(user, '选择设备', 'm4-mini（在线）')
+    await selectOption(user, '选择 Workspace', 'whalepod')
+    await user.type(screen.getByLabelText('Run prompt'), '把登录页修好')
+    await user.click(screen.getByRole('button', { name: '启动 Run' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('agent not ready')
+    expect(alert).toHaveTextContent('req-run-500')
+    // 失败保留输入：重试不需要重打一遍 prompt。
+    expect(screen.getByLabelText('Run prompt')).toHaveValue('把登录页修好')
   })
 })

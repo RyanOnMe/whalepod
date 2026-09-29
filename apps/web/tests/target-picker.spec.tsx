@@ -328,3 +328,70 @@ describe('执行目标条（⑥c）', () => {
     expect(fetchMock.mock.calls).toHaveLength(0)
   })
 })
+
+describe('#225 批次①：目标条不说假话（加载中≠没有设备；失败≠静默）', () => {
+  it('设备还在读：说「正在读取设备…」，不说「没有在线设备」（加载中下结论就是撒谎）', async () => {
+    const { installFetch } = await import('./fixtures.js')
+    installFetch([
+      { method: 'GET', url: /\/devices$/, respond: () => new Promise(() => undefined) },
+      { method: 'GET', url: /\/workspaces$/, respond: () => okJson([]) },
+    ])
+    render(
+      <QueryClientProvider client={makeQueryClient({ retry: false })}>
+        <TargetPicker
+          isAssignee
+          value={null}
+          onChange={() => {}}
+          assigneeName="老张"
+          hasActiveRun={false}
+        />
+      </QueryClientProvider>,
+    )
+    await screen.findByTestId('target-bar')
+    expect(screen.getByText('正在读取设备…')).toBeVisible()
+    expect(screen.queryByText('没有在线设备')).toBeNull()
+  })
+
+  it('设备读取失败：显示错误与重试入口，不静默成「没有在线设备」', async () => {
+    const seen: string[] = []
+    const { installFetch } = await import('./fixtures.js')
+    installFetch([
+      {
+        method: 'GET',
+        url: /\/devices$/,
+        respond: () => {
+          seen.push('devices')
+          return {
+            status: 500,
+            body: {
+              ok: false,
+              error: { code: 'INTERNAL_ERROR', message: 'boom', requestId: 'req-dev-500' },
+            },
+          }
+        },
+      },
+      { method: 'GET', url: /\/workspaces$/, respond: () => okJson([]) },
+    ])
+    render(
+      <QueryClientProvider client={makeQueryClient({ retry: false })}>
+        <TargetPicker
+          isAssignee
+          value={null}
+          onChange={() => {}}
+          assigneeName="老张"
+          hasActiveRun={false}
+        />
+      </QueryClientProvider>,
+    )
+    // 错误要可见且带 requestId（排障口径），并给重试入口。
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('boom')
+    expect(alert).toHaveTextContent('req-dev-500')
+    expect(screen.queryByText('没有在线设备')).toBeNull()
+    const retry = screen.getByRole('button', { name: '重试' })
+    await userEvent.setup().click(retry)
+    await waitFor(() =>
+      expect(seen.filter((s) => s === 'devices').length).toBeGreaterThanOrEqual(2),
+    )
+  })
+})

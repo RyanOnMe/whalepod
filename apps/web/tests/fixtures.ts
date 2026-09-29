@@ -17,6 +17,7 @@ import type {
   TaskRoomArtifact,
   TaskRoomRun,
   TaskView,
+  WorkspaceView,
 } from '../src/shared/api/types.js'
 
 export const ALICE: Session = {
@@ -552,6 +553,11 @@ export function makeMember(overrides: Partial<TeamMemberView> = {}): TeamMemberV
 
 export function devicesHandler(devices: DeviceView[]): MockHandler {
   return { method: 'GET', url: /\/api\/v1\/devices$/, respond: () => ok(devices) }
+}
+
+/** #225：目标条如实报错后，责任人视角的用例都要喂它（否则名册之外又多一个 alert）。 */
+export function workspacesHandler(workspaces: WorkspaceView[]): MockHandler {
+  return { method: 'GET', url: /\/api\/v1\/workspaces$/, respond: () => ok(workspaces) }
 }
 
 /**

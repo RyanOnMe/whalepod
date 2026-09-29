@@ -8,9 +8,17 @@
  *   内联表单要求显式输入新指令（不静默复用旧 prompt），提交体带 rerunOfRunId
  *   指向来源 Run；幂等键在本次表单会话内固定（重复点击同键，服务端去重）。
  * - 不显示任何「恢复运行/重放工具」入口——Run 终态禁止复活。
+ *
+ * #225：走 react-query mutation——成功后本地失效 `run` 与 `task-room` 两个键
+ * （event-router 的 `run.changed` 只失效 `['run', runId]`，运行卡列表来自
+ * task-room 聚合，不补失效就只在 WS 事件到达时才更新）；错误走 ErrorBanner
+ * （message + requestId），与全站口径一致。
  */
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRef, useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
+import { ErrorBanner } from '../../app/ErrorBanner.js'
+import { queryKeys } from '../../app/query-client.js'
 import type { RunView, Session } from '../../shared/api/types.js'
 
 const TERMINAL_RUN: ReadonlySet<string> = new Set(['completed', 'failed', 'cancelled', 'lost'])
@@ -20,69 +28,70 @@ function isOwnerOrAdmin(session: Session): boolean {
 }
 
 export function RunActions({ run, session }: { run: RunView; session: Session }): ReactNode {
+  const queryClient = useQueryClient()
   const canCancel = run.ownerUserId === session.userId || isOwnerOrAdmin(session)
   const canRerun = run.ownerUserId === session.userId
   const isTerminal = TERMINAL_RUN.has(run.status)
 
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [localError, setLocalError] = useState<string | null>(null)
   const [rerunOpen, setRerunOpen] = useState(false)
   const [prompt, setPrompt] = useState('')
   // 本次重跑表单会话的幂等键：打开时生成一次，重复确认共用（服务端幂等去重）。
   const rerunKey = useRef<string | null>(null)
 
-  const cancel = (): void => {
-    setBusy(true)
-    setError(null)
-    void api
-      .mutate(`/runs/${run.id}/cancel`, {
+  const invalidateRunState = (): void => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.run(run.id) })
+    void queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(run.taskId) })
+  }
+
+  const cancel = useMutation({
+    mutationFn: () =>
+      api.mutate(`/runs/${run.id}/cancel`, {
         // 按 Run 固定：取消是一次意图，重复请求必须命中同一条服务端路径。
         idempotencyKey: `cancel-${run.id}`,
-      })
-      .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : '取消失败，请重试')
-      })
-      .finally(() => {
-        setBusy(false)
-      })
-  }
-
-  const openRerun = (): void => {
-    setRerunOpen(true)
-    setError(null)
-    if (rerunKey.current === null) rerunKey.current = crypto.randomUUID()
-  }
-
-  const confirmRerun = (): void => {
-    if (prompt.trim() === '') {
-      setError('请填写新 Run 的指令')
-      return
-    }
-    setBusy(true)
-    setError(null)
-    void api
-      .mutate(`/tasks/${run.taskId}/runs`, {
+      }),
+    onSuccess: invalidateRunState,
+  })
+  const rerun = useMutation({
+    mutationFn: (body: { prompt: string }) =>
+      api.mutate(`/tasks/${run.taskId}/runs`, {
         idempotencyKey: rerunKey.current ?? crypto.randomUUID(),
         body: {
           agentId: run.agentId,
           deviceId: run.deviceId,
           workspaceId: run.workspaceId,
-          prompt: prompt.trim(),
+          prompt: body.prompt,
           rerunOfRunId: run.id,
         },
-      })
-      .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : '重跑失败，请重试')
-      })
-      .finally(() => {
-        setBusy(false)
-      })
+      }),
+    onSuccess: () => {
+      invalidateRunState()
+      setRerunOpen(false)
+      setPrompt('')
+    },
+  })
+
+  const busy = cancel.isPending || rerun.isPending
+
+  const openRerun = (): void => {
+    setRerunOpen(true)
+    if (rerunKey.current === null) rerunKey.current = crypto.randomUUID()
+  }
+
+  const confirmRerun = (): void => {
+    // 本地校验不是 API 错误（没有 requestId）：行内说清即可，不走 ErrorBanner。
+    if (prompt.trim() === '') {
+      setLocalError('请填写新 Run 的指令')
+      return
+    }
+    setLocalError(null)
+    rerun.mutate({ prompt: prompt.trim() })
   }
 
   return (
     <div className="run-actions">
       {!isTerminal && canCancel ? (
-        <button type="button" className="button" disabled={busy} onClick={cancel}>
+        <button type="button" className="button" disabled={busy} onClick={() => cancel.mutate()}>
           取消 Run
         </button>
       ) : null}
@@ -107,11 +116,13 @@ export function RunActions({ run, session }: { run: RunView; session: Session })
           </button>
         )
       ) : null}
-      {error !== null ? (
+      {localError !== null ? (
         <p role="alert" className="run-actions-error">
-          {error}
+          {localError}
         </p>
       ) : null}
+      {cancel.isError ? <ErrorBanner error={cancel.error} /> : null}
+      {rerun.isError ? <ErrorBanner error={rerun.error} /> : null}
     </div>
   )
 }

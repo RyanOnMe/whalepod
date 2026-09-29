@@ -28,3 +28,4 @@ artifacts/evidence/
 .dsh/
 artifacts/q5/
 artifacts/sbom/
+.zcode/

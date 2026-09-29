@@ -17,6 +17,7 @@
 import { useQuery } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
+import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
 import { SelectMenu } from '../../shared/SelectMenu.js'
 import type { DeviceView, WorkspaceView } from '../../shared/api/types.js'
@@ -70,10 +71,42 @@ export function TargetPicker({
     )
   }
 
+  // #225：加载中不下「没有在线设备」的结论，失败不静默成空列表——两者都与
+  //「真的没有」是三件事（与 InstructionDrivers「名册状态必须渲染出来」同口径）。
+  if (devicesQuery.isError || workspacesQuery.isError) {
+    const firstError = devicesQuery.error ?? workspacesQuery.error
+    return (
+      <div className="target-error" data-testid="target-error">
+        <ErrorBanner error={firstError} />
+        <button
+          type="button"
+          className="button"
+          onClick={() => {
+            void devicesQuery.refetch()
+            void workspacesQuery.refetch()
+          }}
+        >
+          重试
+        </button>
+      </div>
+    )
+  }
+
   const devices = (devicesQuery.data ?? []).filter((device) => device.status === 'online')
   const workspaces = (workspacesQuery.data ?? []).filter(
     (ws) => ws.deviceId === (value?.deviceId ?? '') && ws.available,
   )
+  // pending 与空态分开说：加载中是「还不知道」，空态才是「知道且没有」。
+  const devicePlaceholder = devicesQuery.isPending
+    ? '正在读取设备…'
+    : devices.length === 0
+      ? '没有在线设备'
+      : '选择设备…'
+  const workspacePlaceholder = workspacesQuery.isPending
+    ? '正在读取工作区…'
+    : workspaces.length === 0
+      ? '这台设备没有可用工作区'
+      : '选择工作区…'
 
   if (value === null) {
     return (
@@ -90,7 +123,7 @@ export function TargetPicker({
             id="target-device"
             label="指定设备"
             value=""
-            placeholder={devices.length === 0 ? '没有在线设备' : '选择设备…'}
+            placeholder={devicePlaceholder}
             options={devices.map((device) => ({
               value: device.id,
               label: device.name,
@@ -114,7 +147,7 @@ export function TargetPicker({
         id="target-device"
         label="设备"
         value={value.deviceId}
-        placeholder="选择设备…"
+        placeholder={devicePlaceholder}
         options={devices.map((device) => ({
           value: device.id,
           label: device.name,
@@ -127,7 +160,7 @@ export function TargetPicker({
         id="target-workspace"
         label="工作区"
         value={value.workspaceId}
-        placeholder={workspaces.length === 0 ? '这台设备没有可用工作区' : '选择工作区…'}
+        placeholder={workspacePlaceholder}
         options={workspaces.map((ws) => ({
           value: ws.workspaceId,
           label: ws.name,
