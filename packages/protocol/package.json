@@ -9,10 +9,12 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
       "default": "./dist/index.js"
     },
     "./plugin-pack-digest": {
       "types": "./dist/plugin-pack-digest.d.ts",
+      "development": "./src/plugin-pack-digest.ts",
       "default": "./dist/plugin-pack-digest.js"
     }
   },
