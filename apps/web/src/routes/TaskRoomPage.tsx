@@ -176,6 +176,7 @@ export function TaskRoomPage(): ReactNode {
                 session={session}
                 authorName={directory.personOf}
                 queuedIds={queuedIds}
+                onOpenRun={setConsoleRunId}
               />
             )}
             {/* ⑥c：执行目标条——回答"这句话会在哪里跑"。

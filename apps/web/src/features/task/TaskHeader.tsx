@@ -63,6 +63,12 @@ export function TaskHeader({ task, session }: TaskHeaderProps): ReactNode {
 
   return (
     <header className="task-header">
+      {/* #225：离开任务房间不只有侧栏一条路（与权限页「回到任务房间」方向一致）。 */}
+      <p className="mutation-hint">
+        <Link to="/" data-testid="task-back-link">
+          ← 回到项目列表
+        </Link>
+      </p>
       <div className="task-header-title">
         <h1>{task.title}</h1>
         <span className={`badge badge-task badge-task-${task.status}`}>

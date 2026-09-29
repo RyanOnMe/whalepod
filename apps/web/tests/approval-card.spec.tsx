@@ -14,11 +14,13 @@ import {
   ALICE,
   BOB,
   apiFailure,
+  devicesHandler,
   loggedInHandlers,
   makeRun,
   makeTask,
   ok,
   taskRoomHandler,
+  workspacesHandler,
   type MockHandler,
   type MockResponse,
 } from './fixtures.js'
@@ -214,6 +216,9 @@ describe('task room approval card', () => {
           undefined,
           apiFailure('APPROVAL_ALREADY_DECIDED', 'approval already decided'),
         ),
+        // #225：目标条对设备/工作区读取失败不再静默——喂上，本用例只断言审批错误。
+        devicesHandler([]),
+        workspacesHandler([]),
       ]),
     )
     await screen.findByTestId('approval-card')

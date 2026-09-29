@@ -1996,6 +1996,14 @@ select {
   margin-left: auto;
 }
 /* ---- 切片⑥c：执行目标条（这句话会在哪里跑） ---- */
+/* #225：目标条读取失败时的呈现（错误 banner + 重试），不静默成空列表。 */
+.target-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+}
 .target-bar {
   /* ---- 切片⑥e：任务级权限页（谁能驱动这个任务的 Agent） ---- */
   .driver-list {

@@ -509,3 +509,42 @@ describe('task-room 执行栏接线（⑥a 页面级）', () => {
     expect(await screen.findByText('security-review.md')).toBeVisible()
   })
 })
+
+describe('#225 交互批次①：指令流运行号是活口 + 返回项目入口', () => {
+  it('点指令流的「运行 R-xxxx」打开 Run Console 覆盖层（此前是死链：组件支持但页面没接线）', async () => {
+    const task = makeTask({ assigneeUserId: BOB.userId })
+    const user = userEvent.setup()
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task, {
+          instructions: [
+            makeInstruction({ id: 'i-1', instructionState: 'accepted', runId: RUN_ID }),
+          ],
+          runs: [makeRun({ id: RUN_ID, status: 'completed' })],
+        }),
+        teamMembersHandler([]),
+        // Console 打开时拉事件流（RunConsoleHost）。
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/runs/${RUN_ID}/events`),
+          respond: () => ok({ events: [] }),
+        },
+      ]),
+    )
+    const runLink = await screen.findByTestId('instruction-run')
+    await user.click(runLink)
+    // 死链形态下点击后什么都不发生（页面上没有 dialog）；接通后 Console 是 dialog。
+    expect(await screen.findByRole('dialog')).toBeVisible()
+  })
+
+  it('头部有「回到项目列表」入口（与权限页的返回方向一致，不依赖侧栏）', async () => {
+    const task = makeTask({ assigneeUserId: BOB.userId })
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [taskRoomHandler(task), teamMembersHandler([])]),
+    )
+    const back = await screen.findByRole('link', { name: /回到项目列表/ })
+    expect(back).toHaveAttribute('href', '/')
+  })
+})

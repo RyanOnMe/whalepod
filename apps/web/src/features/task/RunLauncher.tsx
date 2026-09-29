@@ -9,7 +9,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
-import { isApiError } from '../../shared/api/errors.js'
+import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
 import { SelectMenu } from '../../shared/SelectMenu.js'
 import type {
@@ -204,11 +204,8 @@ export function RunLauncher({ task, session, hasActiveRun }: RunLauncherProps): 
             rows={4}
           />
         </label>
-        {start.isError && isApiError(start.error) ? (
-          <p className="mutation-error" role="alert">
-            {start.error.message}（{start.error.code}）
-          </p>
-        ) : null}
+        {/* #225：错误走全站口径（message + requestId），不再自写第二套错误段。 */}
+        {start.isError ? <ErrorBanner error={start.error} /> : null}
         <button
           type="submit"
           className="button button-primary"

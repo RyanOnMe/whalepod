@@ -21,6 +21,7 @@ import {
   makeTask,
   ok,
   taskRoomHandler,
+  teamMembersHandler,
   type MockHandler,
 } from './fixtures.js'
 import type { RunView } from '../src/shared/api/types.js'
@@ -262,5 +263,84 @@ describe('G7-04: UI 血缘与 Run 行动', () => {
     await screen.findByText('事件')
     expect(screen.queryByRole('button', { name: '取消 Run' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '重跑此 Run' })).not.toBeInTheDocument()
+  })
+})
+
+describe('#225 批次①：取消/重跑后页面数据真的刷新；错误走统一口径', () => {
+  it('取消成功后 task-room 被重新拉取（运行卡列表不再靠 WS 事件才更新）', async () => {
+    const task = taskWith([])
+    let roomGets = 0
+    const user = userEvent.setup()
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/tasks/${task.id}$`),
+          respond: () => {
+            roomGets += 1
+            return ok({
+              task,
+              comments: [],
+              instructions: [],
+              runs: [makeRun({ id: RUN_ID, status: 'running' })],
+              artifacts: [],
+            })
+          },
+        },
+        // makeRunView 的 taskId 必须对齐真实 task.id：RunActions 的失效键用它
+        // （写成两套 id 时 invalidate 打不中页面 query，这正是这条判据要抓的）。
+        ...runDetailHandlers(makeRunView({ status: 'running', taskId: task.id })),
+      ]),
+    )
+    await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
+    const beforeCancel = roomGets
+    await user.click(await screen.findByRole('button', { name: '取消 Run' }))
+    // invalidate 的机器判据：active 的 task-room query 被重新请求。
+    await waitFor(() => expect(roomGets).toBeGreaterThan(beforeCancel))
+  })
+
+  it('取消失败：ErrorBanner 呈现 message 与 requestId（不再是裸 message 字符串）', async () => {
+    const task = taskWith([])
+    const user = userEvent.setup()
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task, { runs: [makeRun({ id: RUN_ID, status: 'running' })] }),
+        teamMembersHandler([]),
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/runs/${RUN_ID}$`),
+          respond: () => ok(makeRunView({ status: 'running', taskId: task.id })),
+        },
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/runs/${RUN_ID}/events`),
+          respond: () => ok({ events: [] }),
+        },
+        {
+          method: 'POST',
+          url: new RegExp(`/api/v1/runs/${RUN_ID}/cancel$`),
+          respond: () => ({
+            status: 500,
+            body: {
+              ok: false,
+              error: {
+                code: 'INTERNAL_ERROR',
+                message: 'cancel blew up',
+                requestId: 'req-cancel-500',
+              },
+            },
+          }),
+        },
+      ]),
+    )
+    await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
+    await user.click(await screen.findByRole('button', { name: '取消 Run' }))
+    // 页面可能同时有名册等其它 alert：按内容定位属于本次取消的那一条。
+    const alerts = await screen.findAllByRole('alert')
+    const cancelAlert = alerts.find((el) => el.textContent?.includes('cancel blew up'))
+    expect(cancelAlert).toBeDefined()
+    expect(cancelAlert).toHaveTextContent('req-cancel-500')
   })
 })

@@ -11,9 +11,11 @@ import {
   ALICE,
   BOB,
   deferredResponse,
+  devicesHandler,
   loggedInHandlers,
   makeTask,
   statefulTaskRoom,
+  workspacesHandler,
 } from './fixtures.js'
 import type { MockHandler } from './fixtures.js'
 import { renderApp } from './render.jsx'
@@ -125,7 +127,12 @@ describe('assignment', () => {
     const task = makeTask({ assigneeUserId: BOB.userId })
     const user = userEvent.setup()
     renderApp(`/tasks/${task.id}`, [
-      ...loggedInHandlers(BOB, [roomHandler(task)]),
+      ...loggedInHandlers(BOB, [
+        roomHandler(task),
+        // #225：目标条对设备/工作区读取失败不再静默——喂上，本用例只断言接受失败。
+        devicesHandler([]),
+        workspacesHandler([]),
+      ]),
       {
         method: 'POST',
         url: new RegExp(`/api/v1/tasks/${task.id}/accept$`),
