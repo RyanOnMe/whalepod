@@ -15,6 +15,7 @@
 | [instruction-queue-acceptance.md](./instruction-queue-acceptance.md) | P1-192（切片③c-1）：未 running 的追问只落 `pending`、进 `running` 时按 `(created_at, id)` 补发——含幂等、终态清扫、Node not-ready 守卫的复刻 |
 | [ephemeral-volume-acceptance.md](./ephemeral-volume-acceptance.md) | #188：一次性 PostgreSQL 的卷回收与陈旧容器清扫——净增卷=0（真实 Docker 判据）、pid 感知清扫（同 worktree 并发不互杀；pid 复用有 6h 年龄兜底）、四处删除点的 `-v` |
 | [typecheck-coverage-acceptance.md](./typecheck-coverage-acceptance.md) | #178：`tests/` 纳入 typecheck 面（给**门**立档）——已接线 5 包 / 未覆盖 4 包及各自实测存量错误数、变异验证、接线护栏、`--if-present` 静默跳过风险 |
+| [module-resolution-acceptance.md](./module-resolution-acceptance.md) | #35：vitest 面解析到 src——包 exports 加 development 条件，测试永远打新鲜源码；tsx scripts 仍走 dist（先 typecheck）；自证 spec 与红绿证据 |
 | [dsh-ui-vendoring.md](./dsh-ui-vendoring.md) | vendored 第三方代码的出处台账：上游钉版 SHA、逐文件映射、同步纪律、许可/商标义务落点（ADR-0008 / #138） |
 | [setup-auth-invite-acceptance.md](./setup-auth-invite-acceptance.md) | G1-01..06：Setup/登录/邀请/角色/Origin gate 验收（P1-05）；#55 迁移并发串行化与等锁超时判据 |
 | [project-task-agent-acceptance.md](./project-task-agent-acceptance.md) | G2-01..06：Project/Task/Comment/Assignment + Task Room 聚合 + Agent Revision 验收（P1-06） |

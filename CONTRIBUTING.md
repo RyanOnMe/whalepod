@@ -59,6 +59,11 @@ project's license (Apache-2.0).
 
 - Run the quality gates relevant to your change (see the gate table in
   AGENTS.md). At minimum, `pnpm check` must pass.
+- Vitest resolves `@whalepod/*` workspace packages to their `src/` (via the
+  `development` export condition), so `pnpm test:unit` always tests fresh
+  source. Tools that bypass vitest — the `tsx`-run scripts such as
+  `phase1-drive` — still resolve to `dist/`: run `pnpm typecheck` (which
+  rebuilds via `tsc -b`) before launching them after source changes.
 - Run the secret scan over anything you are about to commit:
 
   ```bash

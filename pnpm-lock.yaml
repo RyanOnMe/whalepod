@@ -128,9 +128,18 @@ importers:
       '@whalepod/db':
         specifier: workspace:*
         version: link:packages/db
+      '@whalepod/domain':
+        specifier: workspace:*
+        version: link:packages/domain
       '@whalepod/protocol':
         specifier: workspace:*
         version: link:packages/protocol
+      '@whalepod/runtime-dsh':
+        specifier: workspace:*
+        version: link:packages/runtime-dsh
+      '@whalepod/testkit':
+        specifier: workspace:*
+        version: link:packages/testkit
       drizzle-orm:
         specifier: 'catalog:'
         version: 0.45.2(@opentelemetry/api@1.9.1)(postgres@3.4.9)
