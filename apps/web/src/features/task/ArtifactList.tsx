@@ -14,6 +14,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { queryKeys } from '../../app/query-client.js'
+import { pushToast } from '../../app/toast.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { formatBytes, shortId } from '../../shared/format.js'
 import { RUN_NOT_IN_TIMELINE_LABEL, runOrdinalLabels } from './runLabels.js'
@@ -97,17 +98,16 @@ function ArtifactRows({
   runLabels: ReadonlyMap<string, string>
 }): ReactNode {
   const [busyId, setBusyId] = useState<string | undefined>(undefined)
-  const [error, setError] = useState<string | undefined>(undefined)
 
   async function download(artifact: TaskRoomArtifact): Promise<void> {
     setBusyId(artifact.id)
-    setError(undefined)
     try {
       const response = await fetch(`/api/v1/artifacts/${artifact.id}/content`, {
         credentials: 'include',
       })
       if (!response.ok) {
-        setError('下载失败，请稍后重试。')
+        // #229：下载失败是短暂挫折，重试就是再点一次按钮——toast 足够。
+        pushToast(`下载失败（${artifact.title}），请稍后重试。`)
         return
       }
       const blob = await response.blob()
@@ -162,11 +162,6 @@ function ArtifactRows({
           </div>
         </li>
       ))}
-      {error !== undefined ? (
-        <p className="mutation-hint" role="alert">
-          {error}
-        </p>
-      ) : null}
     </ul>
   )
 }

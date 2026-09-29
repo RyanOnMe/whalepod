@@ -118,6 +118,13 @@ export function InstructionComposer({
         value={text}
         placeholder="让 Agent 干这个…"
         onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          // #229：Cmd/Ctrl+Enter 直发（与提交按钮同一条 form 路径）；纯 Enter 仍是换行。
+          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault()
+            event.currentTarget.form?.requestSubmit()
+          }
+        }}
       />
       <div className="composer-actions">
         <button type="submit" className="button button-primary" disabled={mutation.isPending}>

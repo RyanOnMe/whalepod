@@ -8,6 +8,7 @@ import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
+import { ConfirmDialog } from '../../shared/ConfirmDialog.js'
 import { ASSIGNMENT_STATUS_LABEL, TASK_STATUS_LABEL } from '../../shared/format.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { useMemberDirectory } from '../team/memberDirectory.js'
@@ -21,6 +22,12 @@ export interface TaskHeaderProps {
 
 type TaskAction = 'submit-review' | 'complete' | 'cancel'
 
+const ACTION_LABEL: Readonly<Record<TaskAction, string>> = {
+  'submit-review': '提交验收',
+  complete: '完成任务',
+  cancel: '取消任务',
+}
+
 const ACTION_CONFIRM: Readonly<Record<TaskAction, string>> = {
   'submit-review': '将任务提交验收？提交后由你或 Reviewer 复核并完成。',
   complete: '确认任务已完成并标记 done？',
@@ -29,7 +36,8 @@ const ACTION_CONFIRM: Readonly<Record<TaskAction, string>> = {
 
 export function TaskHeader({ task, session }: TaskHeaderProps): ReactNode {
   const queryClient = useQueryClient()
-  const [action, setAction] = useState<TaskAction | null>(null)
+  // #229：确认中（待确认的行动）；null = 无对话框。
+  const [confirming, setConfirming] = useState<TaskAction | null>(null)
   const [error, setError] = useState<unknown>(null)
   const directory = useMemberDirectory()
 
@@ -39,7 +47,7 @@ export function TaskHeader({ task, session }: TaskHeaderProps): ReactNode {
   const mutation = useMutation({
     mutationFn: (kind: TaskAction) => api.mutate<TaskView>(`/tasks/${task.id}/${kind}`),
     onSuccess: () => {
-      setAction(null)
+      setConfirming(null)
       setError(null)
       // 成功后精确失效该 Task 的 Room 查询（02 Task 7 Step 6）。
       void queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(task.id) })
@@ -52,9 +60,9 @@ export function TaskHeader({ task, session }: TaskHeaderProps): ReactNode {
   const run = (kind: TaskAction): void => {
     if (mutation.isPending) return
     setError(null)
-    if (!window.confirm(ACTION_CONFIRM[kind])) return
-    setAction(kind)
-    mutation.mutate(kind)
+    // #229：window.confirm → ConfirmDialog（原生 confirm 阻塞主线程、键盘与
+    // 焦点行为与产品形态脱节）；确认才发 mutation，语义不变。
+    setConfirming(kind)
   }
 
   // #162：责任人写人名（显示名（@用户名）），不写 `shortId()`。视角词「你」保留：
@@ -155,6 +163,18 @@ export function TaskHeader({ task, session }: TaskHeaderProps): ReactNode {
         <p className="mutation-hint">接受任务后即可提交验收、完成或取消任务。</p>
       ) : null}
       {error !== null ? <ErrorBanner error={error} /> : null}
+      {confirming !== null ? (
+        <ConfirmDialog
+          open
+          title={`${ACTION_LABEL[confirming]}？`}
+          body={ACTION_CONFIRM[confirming]}
+          confirmLabel={`确认${ACTION_LABEL[confirming]}`}
+          danger={confirming === 'cancel'}
+          pending={mutation.isPending}
+          onConfirm={() => mutation.mutate(confirming)}
+          onCancel={() => setConfirming(null)}
+        />
+      ) : null}
     </header>
   )
 }
