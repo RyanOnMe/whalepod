@@ -2157,3 +2157,48 @@ select {
   font-size: 0.875rem;
   max-width: 420px;
 }
+
+/* ---- #231 批次④：执行活动提示与加载骨架 ---- */
+.execution-activity-hint {
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: color-mix(
+    in srgb,
+    var(--dsw-alias-state-warn-primary, var(--color-ink)) 8%,
+    transparent
+  );
+  padding: var(--space-1) var(--space-3);
+  margin-bottom: var(--space-2);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.room-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.task-room-split .room-skeleton,
+.room-skeleton .task-room-split {
+  display: contents;
+}
+.skeleton-line {
+  display: block;
+  height: 1rem;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-line {
+    animation: none;
+  }
+}

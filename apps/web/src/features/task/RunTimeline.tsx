@@ -30,7 +30,7 @@ export function RunTimeline({ runs, selectedRunId, onSelect }: RunTimelineProps)
   if (runs.length === 0) {
     return (
       <p className="empty-state">
-        还没有 Run。接受任务后，用上方「启动 Run」发起执行，历史会出现在这里。
+        还没有 Run。接受任务后，在执行区说一句指令（或用「启动 Run」）发起，历史会出现在这里。
       </p>
     )
   }

@@ -173,8 +173,10 @@ describe('task-room', () => {
       `/tasks/${task.id}`,
       loggedInHandlers(BOB, [pendingHandler('GET', new RegExp(`/api/v1/tasks/${task.id}$`))]),
     )
-    expect(await screen.findByText('正在加载任务…')).toBeVisible()
+    // #231：加载态是骨架行（aria-busy），同样不出现任何空态文案。
+    expect(await screen.findByTestId('room-skeleton')).toHaveAttribute('aria-busy', 'true')
     expect(screen.queryByText('还没有 Run。')).not.toBeInTheDocument()
+    expect(screen.queryByText('还没有人驱动过这个任务。')).not.toBeInTheDocument()
   })
 
   it('错误态展示 message 与 requestId，且不伪装成空数据', async () => {

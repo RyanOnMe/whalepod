@@ -59,7 +59,13 @@ export function ProjectsPage(): ReactNode {
           }}
         />
       ) : null}
-      {listQuery.isPending ? <p className="mutation-hint">正在加载项目…</p> : null}
+      {listQuery.isPending ? (
+        <div className="room-skeleton" aria-busy="true" data-testid="projects-skeleton">
+          {Array.from({ length: 3 }, (_, i) => (
+            <span key={i} className="skeleton-line" />
+          ))}
+        </div>
+      ) : null}
       {listQuery.isError ? <ErrorBanner error={listQuery.error} /> : null}
       {listQuery.isSuccess && listQuery.data.length === 0 ? (
         <p className="empty-state">还没有项目——先创建第一个项目，再为它建 Task。</p>
@@ -132,7 +138,14 @@ function ProjectTaskList({
   })
   const { nameOf } = useMemberDirectory()
 
-  if (tasksQuery.isPending) return <p className="mutation-hint">正在加载任务…</p>
+  if (tasksQuery.isPending)
+    return (
+      <div className="room-skeleton" aria-busy="true">
+        {Array.from({ length: 3 }, (_, i) => (
+          <span key={i} className="skeleton-line" />
+        ))}
+      </div>
+    )
   if (tasksQuery.isError) return <ErrorBanner error={tasksQuery.error} />
   const tasks = tasksQuery.data ?? []
   if (tasks.length === 0) return <p className="empty-state">这个项目还没有任务。</p>
