@@ -17,6 +17,11 @@ export interface TeamEventSocketCallbacks {
   onFrame(frame: ClientFrame): void | Promise<void>
   /** resync.required / 协议异常 → 上层全量快照重拉。latestCursor 为服务端提示（可能缺失）。 */
   onResync(latestCursor?: string): void
+  /**
+   * 连接状态上报（#227）：connecting（首次建立）→ open；断线进入退避重连时
+   * reconnecting。手动 close 不上报（用户主动行为不是断线）。
+   */
+  onStatusChange?(status: 'connecting' | 'open' | 'reconnecting'): void
 }
 
 /** 最小 WebSocket 结构（tsconfig 无 DOM lib，测试注入 FakeWebSocket 无需真实实现）。 */
@@ -68,6 +73,7 @@ export class TeamEventSocket {
   connect(): void {
     this.manuallyClosed = false
     this.clearTimer()
+    this.options.callbacks.onStatusChange?.('connecting')
     this.open()
   }
 
@@ -85,6 +91,7 @@ export class TeamEventSocket {
     this.current = ws
     ws.onopen = () => {
       this.reconnectAttempts = 0
+      this.options.callbacks.onStatusChange?.('open')
     }
     ws.onmessage = (event) => {
       this.handleMessage(event.data)
@@ -131,6 +138,8 @@ export class TeamEventSocket {
 
   private scheduleReconnect(): void {
     if (this.manuallyClosed) return
+    // 只有真的要进入退避重连才报 reconnecting（手动 close 不报：用户主动行为不是断线）。
+    this.options.callbacks.onStatusChange?.('reconnecting')
     const exponential = Math.min(this.maxDelayMs, this.baseDelayMs * 2 ** this.reconnectAttempts)
     const delay = Math.floor(this.random() * exponential) // full jitter
     this.reconnectAttempts += 1

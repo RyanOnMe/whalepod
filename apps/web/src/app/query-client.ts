@@ -4,8 +4,9 @@
  * 同一 QueryClient，mutation 成功后按 query key 精确失效（02 Task 7 Step 6）。
  * 测试环境传 { retry: false }，让错误立刻呈现（生产默认 2 次退避重试）。
  */
-import { QueryClient } from '@tanstack/react-query'
+import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query'
 import { isSessionError } from '../shared/api/errors.js'
+import { emitSessionExpired } from '../shared/session-expiry.js'
 
 /** 集中管理的 query key（失效时用同一字面量，避免漂移）。 */
 export const queryKeys = {
@@ -42,8 +43,19 @@ function retryLimit(failureCount: number, error: unknown): boolean {
   return failureCount < 2
 }
 
+/**
+ * #227：页面内 query/mutation 的会话类失败（AUTH_REQUIRED/SESSION_EXPIRED）
+ * 统一发事件，AppShell 订阅后跳 /login——此前只在 ErrorBanner 里给链接，
+ * 用户停在原页每个按钮都再报一次。重试逻辑不因此改变（会话错误本就不重试）。
+ */
+function onCacheError(error: unknown): void {
+  if (isSessionError(error)) emitSessionExpired()
+}
+
 export function makeQueryClient(options: { retry?: boolean } = {}): QueryClient {
   return new QueryClient({
+    queryCache: new QueryCache({ onError: onCacheError }),
+    mutationCache: new MutationCache({ onError: onCacheError }),
     defaultOptions: {
       queries: {
         retry: options.retry === false ? false : retryLimit,

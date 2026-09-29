@@ -1996,6 +1996,17 @@ select {
   margin-left: auto;
 }
 /* ---- 切片⑥c：执行目标条（这句话会在哪里跑） ---- */
+/* #227 批次②：断线重连横幅——警示（amber）档、非紧急通道（role=status 不抢 alert），
+   配色与指令流 pending 态同款（文字 12:1、底为 14% 混合，对比度门已覆盖该取值组合）。 */
+.connection-banner {
+  --dsw-alias-state-warn-primary: var(--dsw-static-amber-900);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent);
+  color: var(--dsw-alias-state-warn-primary);
+  font-size: 0.875rem;
+}
 /* #225：目标条读取失败时的呈现（错误 banner + 重试），不静默成空列表。 */
 .target-error {
   display: flex;
