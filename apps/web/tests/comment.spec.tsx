@@ -12,6 +12,7 @@ import {
   BOB,
   deferredResponse,
   devicesHandler,
+  ok,
   loggedInHandlers,
   makeComment,
   makeTask,
@@ -133,6 +134,46 @@ describe('comment', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('req-comment-409')
     // 失败恢复输入：内容保留，便于重试
     expect(screen.getByLabelText('留言')).toHaveValue('这条不能丢')
+  })
+
+  it('#229 Cmd+Enter 直发（与按钮同一条 form 路径）；纯 Enter 仍是换行', async () => {
+    const task = makeTask({ assigneeUserId: BOB.userId })
+    const user = userEvent.setup()
+    const bodies: unknown[] = []
+    const { fetchMock } = renderApp(`/tasks/${task.id}`, [
+      ...loggedInHandlers(BOB, [
+        roomHandler(task),
+        {
+          method: 'POST',
+          url: new RegExp(`/api/v1/tasks/${task.id}/comments$`),
+          respond: (init) => {
+            bodies.push(JSON.parse(String((init as RequestInit | undefined)?.body ?? '{}')))
+            return ok({
+              id: 'c1',
+              taskId: task.id,
+              authorUserId: BOB.userId,
+              body: 'x',
+              createdAt: new Date().toISOString(),
+              kind: 'discussion',
+              origin: 'human',
+              editedAt: null,
+            })
+          },
+        },
+        teamMembersHandler(),
+      ]),
+    ])
+    const box = await screen.findByLabelText('留言')
+    // 纯 Enter：换行，不提交。
+    await user.type(box, '第一行{Enter}第二行')
+    const commentCalls0 = fetchMock.mock.calls.filter(([input]) =>
+      String(input).endsWith('/comments'),
+    )
+    expect(commentCalls0).toHaveLength(0)
+    // Cmd+Enter（Mac）/ Ctrl+Enter（其它平台同一行为）：提交。
+    await user.keyboard('{Meta>}{Enter}{/Meta}')
+    await waitFor(() => expect(bodies).toHaveLength(1))
+    expect(bodies[0]).toMatchObject({ body: '第一行\n第二行' })
   })
 
   it('空输入不发送', async () => {

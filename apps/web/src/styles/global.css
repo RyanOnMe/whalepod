@@ -2115,3 +2115,45 @@ select {
 .ref-chip:hover {
   color: var(--dsw-alias-label-primary);
 }
+
+/* ---- #229 批次③：确认对话框与 toast ---- */
+.confirm-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  min-width: min(420px, 84vw);
+}
+.confirm-dialog-title {
+  margin: 0;
+  font-size: 1rem;
+}
+.confirm-dialog-body {
+  margin: 0;
+  color: var(--color-ink-soft);
+}
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.toast-stack {
+  position: fixed;
+  bottom: var(--space-4);
+  right: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  z-index: 60;
+}
+.toast-item {
+  background: var(--color-surface);
+  color: var(--color-ink);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+  padding: var(--space-2) var(--space-3);
+  font-size: 0.875rem;
+  max-width: 420px;
+}

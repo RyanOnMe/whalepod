@@ -22,6 +22,7 @@ import type { Session } from '../shared/api/types.js'
 import { queryKeys } from './query-client.js'
 import { ConnectionBanner } from './ConnectionBanner.js'
 import { FlashBanner } from './FlashBanner.js'
+import { ToastHost } from './toast.js'
 import { RealtimeBridge } from './realtime.js'
 
 const SessionContext = createContext<Session | null>(null)
@@ -89,6 +90,22 @@ export function AppShell(): ReactNode {
   useEffect(() => {
     if (navMenu.current !== null) navMenu.current.open = false
   }, [location.pathname])
+
+  /**
+   * #229：窄屏导航面板打开时 Esc 收起并还焦菜单钮——面板是绝对定位浮层，
+   * 此前只能换页或再点一次才收（键盘用户被浮层困住）。
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      const details = navMenu.current
+      if (details === null || !details.open) return
+      details.open = false
+      details.querySelector('summary')?.focus()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [])
   /**
    * #227：页面内 query/mutation 的会话类失败 → 自动跳登录（带 from 回跳）。
    * 此前只在 ErrorBanner 里给「重新登录」链接，用户停在原页反复撞同一堵墙。
@@ -210,6 +227,8 @@ export function AppShell(): ReactNode {
               </div>
             ) : null}
             <FlashBanner />
+            {/* #229：短暂成败反馈（plugin/artifact 等就地动作）。 */}
+            <ToastHost />
             {/* #227：断线重连中的可见横幅（在线与首次连接保持安静）。 */}
             <ConnectionBanner />
             <main className="app-main">

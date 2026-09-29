@@ -198,3 +198,32 @@ describe('instruction composer', () => {
     )
   })
 })
+
+describe('#229 Cmd+Enter 直发（指令输入框）', () => {
+  it('Cmd+Enter 提交指令；纯 Enter 仍是换行不提交', async () => {
+    const user = userEvent.setup()
+    let posts = 0
+    renderApp(`/tasks/${TASK.id}`, [
+      ...loggedInHandlers(BOB, [
+        taskRoomHandler(TASK),
+        {
+          method: 'POST',
+          url: new RegExp(`/api/v1/tasks/${TASK.id}/instructions$`),
+          respond: () => {
+            posts += 1
+            return new Response(
+              JSON.stringify({ ok: true, data: message({ instructionState: 'accepted' }) }),
+              { status: 201 },
+            )
+          },
+        },
+        teamMembersHandler(),
+      ]),
+    ])
+    const box = await screen.findByLabelText('指令')
+    await user.type(box, '让 Agent{Enter}再跑一遍')
+    expect(posts).toBe(0)
+    await user.keyboard('{Control>}{Enter}{/Control}')
+    await waitFor(() => expect(posts).toBe(1))
+  })
+})
