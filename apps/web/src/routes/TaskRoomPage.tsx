@@ -14,7 +14,7 @@
  * 区段标题一律中文（#152）；Agent/Run/Task 这类领域术语保留英文（CONTEXT.md 的领域语言）。
  */
 import { useQuery } from '@tanstack/react-query'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { api } from '../shared/api/client.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
@@ -83,6 +83,17 @@ export function TaskRoomPage(): ReactNode {
     enabled: taskId !== undefined,
   })
 
+  // #231（ADR-0010 决策 6 的信息真空债）：只盯讨论栏的用户要能知道执行区来了
+  // 新动静。首屏数据是基线（不算「新」）；活动数（指令+运行）超过已看过的值才提示。
+  const execHeadingRef = useRef<HTMLHeadingElement>(null)
+  // Hooks 必须先于下方所有条件 return（pending/error 分支不经过它们时 Hooks 数不一致）。
+  const activityCount = (query.data?.instructions?.length ?? 0) + (query.data?.runs.length ?? 0)
+  const [seenActivity, setSeenActivity] = useState<number | undefined>(undefined)
+  useEffect(() => {
+    if (query.isSuccess && seenActivity === undefined) setSeenActivity(activityCount)
+  }, [query.isSuccess, activityCount, seenActivity])
+  const hasNewActivity = seenActivity !== undefined && activityCount > seenActivity
+
   if (taskId === undefined) {
     return (
       <div className="card error-state" role="alert">
@@ -95,7 +106,19 @@ export function TaskRoomPage(): ReactNode {
   }
 
   if (query.isPending) {
-    return <p className="mutation-hint">正在加载任务…</p>
+    // #231：骨架行预告两栏布局（纯文本「正在加载」会让页面结构跳变）。
+    return (
+      <div className="room-skeleton" aria-busy="true" data-testid="room-skeleton">
+        <div className="task-room-split">
+          {Array.from({ length: 4 }, (_, i) => (
+            <span key={`l-${i}`} className="skeleton-line" />
+          ))}
+          {Array.from({ length: 4 }, (_, i) => (
+            <span key={`r-${i}`} className="skeleton-line" />
+          ))}
+        </div>
+      </div>
+    )
   }
   if (query.isError) {
     return (
@@ -137,6 +160,19 @@ export function TaskRoomPage(): ReactNode {
               <h2 id="comments-heading">讨论</h2>
               <span className="room-column-note">团队成员之间 · 不触发 Agent</span>
             </div>
+            {hasNewActivity ? (
+              <button
+                type="button"
+                className="execution-activity-hint"
+                data-testid="execution-activity-hint"
+                onClick={() => {
+                  setSeenActivity(activityCount)
+                  execHeadingRef.current?.focus()
+                }}
+              >
+                执行区有新活动——点开看看
+              </button>
+            ) : null}
             {/* ⑥f：讨论里可以引用某次运行——引用只能指向**本任务**的运行，所以把 runs 与
                 「点引用 → 开 Console」都从页面注入（解析逻辑在 runReference.ts，可单测）。 */}
             <CommentList
@@ -153,7 +189,9 @@ export function TaskRoomPage(): ReactNode {
         <section className="task-room-col" aria-labelledby="instructions-heading">
           <div className="card room-column">
             <div className="room-column-head">
-              <h2 id="instructions-heading">执行</h2>
+              <h2 id="instructions-heading" ref={execHeadingRef} tabIndex={-1}>
+                执行
+              </h2>
               <span className="room-column-note">
                 {hasActiveRun
                   ? '当前有运行进行中 · 继续说会成为追问'

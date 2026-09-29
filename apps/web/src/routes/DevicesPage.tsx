@@ -102,7 +102,7 @@ export function DevicesPage(): ReactNode {
             {listQuery.isSuccess && listQuery.data.length === 0 ? (
               <p className="empty-state">
                 {/* #152：两栏后 CLI 步骤在宽屏位于右列、窄屏位于下方——指路文案不再写方位。 */}
-                还没有设备——先点上方「生成配对码」，再按 CLI
+                还没有设备——先点「生成配对码」，再按 CLI
                 步骤在成员本机完成配对；配对成功后设备会自动出现在这里，不用刷新。
               </p>
             ) : null}
