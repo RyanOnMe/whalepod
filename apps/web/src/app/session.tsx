@@ -16,8 +16,11 @@ import { Link, NavLink, Outlet, useLoaderData, useLocation, useNavigate } from '
 import { api } from '../shared/api/client.js'
 import { isApiError } from '../shared/api/errors.js'
 import { ROLE_LABEL } from '../shared/format.js'
+import { setFlash } from '../shared/flash.js'
+import { subscribeSessionExpired } from '../shared/session-expiry.js'
 import type { Session } from '../shared/api/types.js'
 import { queryKeys } from './query-client.js'
+import { ConnectionBanner } from './ConnectionBanner.js'
 import { FlashBanner } from './FlashBanner.js'
 import { RealtimeBridge } from './realtime.js'
 
@@ -86,6 +89,30 @@ export function AppShell(): ReactNode {
   useEffect(() => {
     if (navMenu.current !== null) navMenu.current.open = false
   }, [location.pathname])
+  /**
+   * #227：页面内 query/mutation 的会话类失败 → 自动跳登录（带 from 回跳）。
+   * 此前只在 ErrorBanner 里给「重新登录」链接，用户停在原页反复撞同一堵墙。
+   */
+  useEffect(() => {
+    /**
+     * #227：页面内 query/mutation 的会话类失败 → 自动跳登录（带 from 回跳）。
+     * 此前只在 ErrorBanner 里给「重新登录」链接，用户停在原页反复撞同一堵墙。
+     *
+     * 跳转前先退订：loader 的 fetchQuery 失败同样会触发 cache onError——若订阅
+     * 还活着，login loader 的 401 会再发一次事件 → 再 navigate → loader 再跑
+     * 的死循环（loader revalidation 期间旧 UI 仍挂载，退订时机必须先于 navigate）。
+     */
+    const unsubscribe = subscribeSessionExpired(() => {
+      unsubscribe()
+      // 会话缓存一并清掉：login loader 会重新探测会话，stale 的缓存会让它
+      // 误判「已登录」弹回首页（logout 流同款处理）。
+      queryClient.removeQueries({ queryKey: queryKeys.session })
+      setFlash('登录已过期，请重新登录')
+      const from = encodeURIComponent(location.pathname + location.search)
+      navigate(`/login?from=${from}`, { replace: true })
+    })
+    return unsubscribe
+  }, [navigate, location, queryClient])
   const logout = useMutation({
     mutationFn: () => api.mutate<Record<string, never>>('/auth/logout', { body: {} }),
     onSuccess: () => {
@@ -183,6 +210,8 @@ export function AppShell(): ReactNode {
               </div>
             ) : null}
             <FlashBanner />
+            {/* #227：断线重连中的可见横幅（在线与首次连接保持安静）。 */}
+            <ConnectionBanner />
             <main className="app-main">
               <Outlet />
             </main>

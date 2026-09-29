@@ -16,6 +16,7 @@ import { CursorStore } from '../shared/realtime/cursor-store.js'
 import { TeamEventSocket } from '../shared/realtime/socket.js'
 import type { TeamEventSocketCallbacks } from '../shared/realtime/socket.js'
 import { appendLiveDelta } from '../shared/realtime/run-buffer.js'
+import { setConnectionStatus } from '../shared/realtime/connection-store.js'
 
 export interface RealtimeSocketHandle {
   connect(): void
@@ -45,6 +46,10 @@ export function RealtimeBridge(): null {
   useEffect(() => {
     const cursorStore = new CursorStore()
     const resync = () => void queryClient.invalidateQueries()
+    // #227：断线窗口漏掉的持久事件，在「重连成功」那一刻全量补拉兜底
+    // （refetchOnWindowFocus 已关，fetch 通着不会自愈；此前只有 control 帧
+    // 触发 resync——服务端不主动发就永远旧下去）。
+    let wasReconnecting = false
     const callbacks: TeamEventSocketCallbacks = {
       onFrame: (frame) =>
         applyClientFrame(queryClient, frame, {
@@ -53,6 +58,15 @@ export function RealtimeBridge(): null {
           onLive: (runId, deltaSeq, deltaText) => appendLiveDelta(runId, deltaSeq, deltaText),
         }),
       onResync: resync,
+      onStatusChange: (status) => {
+        setConnectionStatus(status)
+        if (status === 'reconnecting') {
+          wasReconnecting = true
+        } else if (status === 'open' && wasReconnecting) {
+          wasReconnecting = false
+          resync()
+        }
+      },
     }
     const socket =
       socketFactoryOverride?.(socketUrl(), cursorStore, callbacks) ??

@@ -51,19 +51,21 @@ function makeSocket(
     cursorStore?: CursorStore
     onFrame?: (frame: ClientFrame) => void
     onResync?: (latestCursor?: string) => void
+    onStatusChange?: (status: 'connecting' | 'open' | 'reconnecting') => void
   } = {},
 ) {
   const cursorStore = options.cursorStore ?? new CursorStore()
   const onFrame = vi.fn((frame: ClientFrame) => options.onFrame?.(frame))
   const onResync = vi.fn((latestCursor?: string) => options.onResync?.(latestCursor))
+  const onStatusChange = vi.fn(options.onStatusChange)
   const socket = new TeamEventSocket({
     url: 'ws://hub.test/ws/v1/client',
     cursorStore,
-    callbacks: { onFrame, onResync },
+    callbacks: { onFrame, onResync, onStatusChange },
     WebSocketImpl: FakeWebSocket,
     random: () => 0.5, // 确定性 jitter：delay = 退避/2
   })
-  return { socket, cursorStore, onFrame, onResync }
+  return { socket, cursorStore, onFrame, onResync, onStatusChange }
 }
 
 describe('TeamEventSocket (reconnect)', () => {
@@ -163,5 +165,41 @@ describe('TeamEventSocket (reconnect)', () => {
     socket.close()
     await vi.advanceTimersByTimeAsync(60_000)
     expect(FakeWebSocket.instances).toHaveLength(1)
+  })
+})
+
+describe('TeamEventSocket 状态上报（#227）', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    FakeWebSocket.instances.length = 0
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('connect→connecting、open→open、断线→reconnecting、重连成功→open', async () => {
+    const statuses: string[] = []
+    const { socket } = makeSocket({ onStatusChange: (status) => statuses.push(status) })
+    socket.connect()
+    expect(statuses).toEqual(['connecting'])
+    FakeWebSocket.instances[0]?.open()
+    expect(statuses).toEqual(['connecting', 'open'])
+    // 断线（服务端关闭）：进入重连态。
+    FakeWebSocket.instances[0]?.close(1006, 'abnormal')
+    expect(statuses).toEqual(['connecting', 'open', 'reconnecting'])
+    // 退避后重连成功：恢复 open。
+    await vi.advanceTimersByTimeAsync(125) // 确定性 jitter：250*0.5
+    FakeWebSocket.instances[1]?.open()
+    expect(statuses).toEqual(['connecting', 'open', 'reconnecting', 'open'])
+    socket.close()
+  })
+
+  it('手动 close 不上报 reconnecting（用户主动行为不是断线）', () => {
+    const statuses: string[] = []
+    const { socket } = makeSocket({ onStatusChange: (status) => statuses.push(status) })
+    socket.connect()
+    FakeWebSocket.instances[0]?.open()
+    socket.close()
+    expect(statuses).toEqual(['connecting', 'open'])
   })
 })
