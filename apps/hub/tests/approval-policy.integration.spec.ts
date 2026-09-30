@@ -87,6 +87,14 @@ describe('approval policy resolution chain (ADR-0009 slice 8, #241)', () => {
     expect(accept.statusCode).toBe(200)
   }
 
+  /** 把 Run 置终态：同 Task 只允许一个活跃 Run，连续建 Run 的用例之间先终态化上一个。 */
+  async function terminalizeRun(runId: string): Promise<void> {
+    await database.db
+      .update(schema.runs)
+      .set({ status: 'completed', finishedAt: new Date() })
+      .where(eq(schema.runs.id, runId))
+  }
+
   async function createRun(): Promise<{
     status: number
     data?: { id: string; approvalPolicy: string }
@@ -153,6 +161,7 @@ describe('approval policy resolution chain (ADR-0009 slice 8, #241)', () => {
 
     // Task 覆盖 full_access（责任人 bob 自己）→ 新 Run 解析为 full_access。
     expect(await patchPolicy(bob, 'full_access')).toBe(200)
+    await terminalizeRun(first.data!.id)
     const second = await createRun()
     expect(second.data?.approvalPolicy).toBe('full_access')
     // run.start payload 与 runs 行成对同值（Node 透传的依据）。
@@ -169,11 +178,13 @@ describe('approval policy resolution chain (ADR-0009 slice 8, #241)', () => {
     //    改成显式 approval_required 也**不跟**（Task 覆盖优先）。
     const v2 = await createRevision('approval_required')
     expect(v2.status).toBe(201)
+    await terminalizeRun(second.data!.id)
     const third = await createRun()
     expect(third.data?.approvalPolicy).toBe('full_access') // 覆盖优先，不跟 v2
 
     // ③ 清除覆盖（null）→ 回跟 Revision 默认（v2 = approval_required）。
     expect(await patchPolicy(bob, null)).toBe(200)
+    await terminalizeRun(third.data!.id)
     const fourth = await createRun()
     expect(fourth.data?.approvalPolicy).toBe('approval_required')
   })
