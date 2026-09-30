@@ -209,15 +209,17 @@ describe('approval policy resolution chain (ADR-0009 slice 8, #241)', () => {
       .select({ revisionId: schema.runs.profileRevisionId })
       .from(schema.runs)
       .where(eq(schema.runs.id, run.data!.id))
-    const [v2row] = await database.db
+    const [latest] = await database.db
       .select({
         id: schema.agentProfileRevisions.id,
         revision: schema.agentProfileRevisions.revision,
       })
       .from(schema.agentProfileRevisions)
       .where(eq(schema.agentProfileRevisions.agentId, bobChain.agentId))
-    expect(v2row?.revision).toBe(2)
-    expect(row?.revisionId).toBe(v2row?.id)
+      .orderBy(desc(schema.agentProfileRevisions.revision))
+      .limit(1)
+    expect(latest?.revision).toBe(2)
+    expect(row?.revisionId).toBe(latest?.id)
   })
 
   it('guards: PATCH by non-assignee → 403; invalid enum → 400; view carries override state', async () => {
