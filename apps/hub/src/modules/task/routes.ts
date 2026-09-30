@@ -25,7 +25,7 @@ import {
   updateTask,
 } from './commands.js'
 import { ERROR_HTTP_STATUS, errorCodeOf } from '../run/routes.js'
-import { sendInstruction } from '../run/instruction.js'
+import { sendInstruction, agentAssignmentText } from '../run/instruction.js'
 import {
   grantInstructionRight,
   listInstructionDrivers,
@@ -68,8 +68,52 @@ function actorFrom(session: SessionActor) {
   return { userId: asUserId(session.userId), role: session.role }
 }
 
+/**
+ * 指派 Agent 后的自动驱动结果（#239；ADR-0009 决策 6「指派即指令」）。
+ * `outcome` 与人发指令同四种命运（started_run/followup/queued/rejected），
+ * 外加 `failed`：指派事务已提交、但驱动没起来（如设备离线）——**不谎报任务失败**，
+ * 错误码如实放进响应，UI 引导到执行区手动发起。
+ */
+type AssignmentDrive =
+  | { outcome: 'started_run' | 'followup' | 'queued' | 'rejected'; runId: string }
+  | { outcome: 'failed'; error: { code: string; message: string } }
+
+async function driveAgentAssignment(
+  deps: TaskRouteDeps,
+  actor: ReturnType<typeof actorFrom>,
+  task: { id: string; title: string; description: string; assigneeAgentId: string | null },
+  input: { instruction?: string; idempotencyKey: string },
+): Promise<AssignmentDrive> {
+  try {
+    const outcome = await sendInstruction(
+      {
+        database: deps.database,
+        outbox: deps.outbox,
+        orchestrator: deps.orchestrator,
+        dshDistributionVersionFor: deps.dshDistributionVersionFor,
+      },
+      actor,
+      task.id,
+      {
+        // 幂等键沿用指派请求的同一把 key：createTask/reassign 的重放会命中
+        // run.create:<key> 回执读回首次结果，不会二次驱动。
+        text: input.instruction ?? agentAssignmentText(task),
+        idempotencyKey: input.idempotencyKey,
+        agentId: task.assigneeAgentId!,
+        origin: 'auto_assignment',
+      },
+    )
+    return { outcome: outcome.kind, runId: outcome.runId }
+  } catch (error) {
+    const { code, message } = errorCodeOf(error)
+    if (code === 'INTERNAL_ERROR') throw error
+    return { outcome: 'failed', error: { code, message } }
+  }
+}
+
 export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): void {
-  // POST /projects/:projectId/tasks：Member 创建 Task（Assignment 始终 pending）。
+  // POST /projects/:projectId/tasks：Member 创建 Task（Assignment 始终 pending；
+  // 指派 Agent 时例外——出生 accepted，且指派提交后自动驱动，无需人再点一次，#239）。
   app.post('/projects/:projectId/tasks', async (request, reply) => {
     const session = await deps.requireActor(request)
     const { projectId } = request.params as { projectId: string }
@@ -77,11 +121,26 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
     const task = await createTask(deps.database, actorFrom(session), projectId, {
       title: body.title,
       ...(body.description !== undefined ? { description: body.description } : {}),
-      assigneeUserId: body.assigneeUserId,
+      ...(body.assigneeUserId !== undefined ? { assigneeUserId: body.assigneeUserId } : {}),
+      ...(body.assigneeAgentId !== undefined ? { assigneeAgentId: body.assigneeAgentId } : {}),
       idempotencyKey: readIdempotencyKey(request),
     })
     audit(request, 'task.create', 'success', session.userId)
-    return reply.code(201).send({ ok: true, data: task })
+    // Agent 指派 → 自动驱动（指派事务已提交后才发起；失败进 drive 字段，不吞 201）。
+    const drive =
+      task.assigneeAgentId !== null
+        ? await driveAgentAssignment(deps, actorFrom(session), task, {
+            idempotencyKey: readIdempotencyKey(request),
+          })
+        : undefined
+    if (drive !== undefined && drive.outcome !== 'failed') {
+      audit(request, 'instruction.send', 'success', session.userId)
+    }
+    return reply.code(201).send({
+      ok: true,
+      data: task,
+      ...(drive !== undefined ? { drive } : {}),
+    })
   })
 
   // GET /projects/:projectId/tasks：项目任务列表（#137）。
@@ -141,20 +200,34 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
     return { ok: true, data: task }
   })
 
-  // POST /tasks/:taskId/reassign：Owner/Admin 重新指派（assignee 变化后重置 pending）。
-  app.post('/tasks/:taskId/reassign', async (request) => {
+  // POST /tasks/:taskId/reassign：Owner/Admin 重新指派（member 目标：assignee 变化后
+  // 重置 pending；Agent 目标（#239）：指派即受理 + 自动驱动）。
+  app.post('/tasks/:taskId/reassign', async (request, reply) => {
     const session = await deps.requireActor(request)
     const { taskId } = request.params as { taskId: string }
     const body = ReassignTaskRequestSchema.parse(request.body)
     try {
-      const task = await reassignAssignment(
-        deps.database,
-        actorFrom(session),
-        taskId,
-        body.assigneeUserId,
-      )
+      const task = await reassignAssignment(deps.database, actorFrom(session), taskId, {
+        ...(body.assigneeUserId !== undefined ? { assigneeUserId: body.assigneeUserId } : {}),
+        ...(body.assigneeAgentId !== undefined ? { assigneeAgentId: body.assigneeAgentId } : {}),
+        ...(body.instruction !== undefined ? { instruction: body.instruction } : {}),
+      })
       audit(request, 'task.reassign', 'success', session.userId)
-      return { ok: true, data: task }
+      const drive =
+        task.assigneeAgentId !== null
+          ? await driveAgentAssignment(deps, actorFrom(session), task, {
+              ...(body.instruction !== undefined ? { instruction: body.instruction } : {}),
+              idempotencyKey: readIdempotencyKey(request),
+            })
+          : undefined
+      if (drive !== undefined && drive.outcome !== 'failed') {
+        audit(request, 'instruction.send', 'success', session.userId)
+      }
+      return reply.code(200).send({
+        ok: true,
+        data: task,
+        ...(drive !== undefined ? { drive } : {}),
+      })
     } catch (error) {
       if (error instanceof ApiError && error.code === 'FORBIDDEN') {
         audit(request, 'task.reassign', 'denied', session.userId)

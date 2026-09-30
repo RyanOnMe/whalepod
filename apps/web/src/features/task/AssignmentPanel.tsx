@@ -12,6 +12,7 @@ import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { ASSIGNMENT_STATUS_LABEL } from '../../shared/format.js'
 import { useMemberDirectory } from '../team/memberDirectory.js'
+import { useAgentName } from './useAgentName.js'
 import type { Session, TaskView } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
 
@@ -25,6 +26,8 @@ export function AssignmentPanel({ task, session }: AssignmentPanelProps): ReactN
   const [error, setError] = useState<unknown>(null)
   const isAssignee = session !== null && task.assigneeUserId === session.userId
   const directory = useMemberDirectory()
+  // #239：Agent 执行者的显示名（member 指派为 null，不发请求）。
+  const agent = useAgentName(task.assigneeAgentId)
 
   const mutation = useMutation({
     mutationFn: (kind: 'accept' | 'reject') => api.mutate<TaskView>(`/tasks/${task.id}/${kind}`),
@@ -44,7 +47,18 @@ export function AssignmentPanel({ task, session }: AssignmentPanelProps): ReactN
   }
 
   let body: ReactNode
-  if (task.assignmentStatus === 'accepted') {
+  if (task.assigneeAgentId !== null) {
+    // #239（ADR-0009 决策 6）：Agent 指派没有受理动作——指派即受理即驱动。
+    // 不渲染 accept/reject（对 Agent-task 这两个端点恒 409），把「谁负责」说清楚。
+    body = (
+      <p className="assignment-note" data-testid="assignment-agent-note">
+        此任务由 {isAssignee ? '你' : directory.personOf(task.assigneeUserId)} 指派给 Agent
+        {agent === null ? '' : `「${agent.name}」`}执行——指派即驱动，无需接受。责任人
+        {isAssignee ? '是你' : `是 ${directory.personOf(task.assigneeUserId)}`}
+        ，验收与审批都在责任人手上。
+      </p>
+    )
+  } else if (task.assignmentStatus === 'accepted') {
     body = (
       <>
         <p className="assignment-note">

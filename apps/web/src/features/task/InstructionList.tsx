@@ -94,7 +94,11 @@ export function InstructionList({
                 {isMine ? '你' : nameOf(instruction.authorUserId)}
               </strong>
               <span className="instruction-kind">
-                {instruction.kind === 'followup' ? '追问' : '指令'}
+                {instruction.origin === 'auto_assignment'
+                  ? '指派自动驱动'
+                  : instruction.kind === 'followup'
+                    ? '追问'
+                    : '指令'}
               </span>
               <RelativeTime iso={instruction.createdAt} />
               <span className={stateClass} data-testid="instruction-state">

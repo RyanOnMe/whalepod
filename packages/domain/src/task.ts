@@ -38,6 +38,11 @@ export type AssignmentStatus = 'pending' | 'accepted' | 'rejected'
 
 export type AssignmentEvent = { type: 'accept' } | { type: 'reject' } | { type: 'reassign' }
 
+// 这张表只描述**人的**受理语义（pending → accepted/rejected）。Agent 指派
+// （ADR-0009 决策 6，#239）不走它：Agent 没有受理动作，指派即受理——出生直接
+// accepted（写库见 db/repositories/task.ts 的 reassignTask/insertTask 调用方），
+// 因此也不存在「Agent 任务的 accept/reject 迁移」这条边；Hub 命令层对 Agent 任务的
+// accept/reject 请求一律 409。
 const ASSIGNMENT_NEXT: Readonly<
   Record<AssignmentStatus, Partial<Record<AssignmentEvent['type'], AssignmentStatus>>>
 > = {

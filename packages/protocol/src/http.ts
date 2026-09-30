@@ -65,12 +65,27 @@ export const CreateProjectRequestSchema = z.strictObject({
   description: z.string().max(4000).optional(),
 })
 
-/** POST /projects/:projectId/tasks（§2.2：title 1–200，description ≤20000）。 */
-export const CreateTaskRequestSchema = z.strictObject({
-  title: z.string().min(1).max(200),
-  description: z.string().max(20000).optional(),
-  assigneeUserId: z.uuid(),
-})
+/**
+ * POST /projects/:projectId/tasks（§2.2：title 1–200，description ≤20000）。
+ *
+ * assignee 二选一（ADR-0009 决策 6，#239）：`assigneeUserId`（成员，语义不变）或
+ * `assigneeAgentId`（Agent——指派即指令：Hub 自动产生 `origin='auto_assignment'` 的
+ * 指令消息并驱动，指派人成为责任人）。同请求双带或双空都是畸形，fail-closed。
+ */
+export const CreateTaskRequestSchema = z
+  .strictObject({
+    title: z.string().min(1).max(200),
+    description: z.string().max(20000).optional(),
+    assigneeUserId: z.uuid().optional(),
+    assigneeAgentId: z.uuid().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.assigneeUserId !== undefined) !== (value.assigneeAgentId !== undefined)) return
+    ctx.addIssue({
+      code: 'custom',
+      message: 'exactly one of assigneeUserId or assigneeAgentId is required',
+    })
+  })
 
 /** PATCH /tasks/:taskId：只允许非状态字段。 */
 export const UpdateTaskRequestSchema = z.strictObject({
@@ -82,10 +97,25 @@ export const UpdateTaskRequestSchema = z.strictObject({
  * POST /tasks/:taskId/reassign（03 §2.2/§3.1：assignee 变化后 assignment_status
  * 重置为 pending）。05 里程碑把「重新指派」列为 P1-06 交付；03 §4 路由表未单列，
  * 此处按 accept/reject 同形补一条限定命令。
+ *
+ * #239（ADR-0009 决策 6）：assignee 二选一同 CreateTaskRequest。`instruction`
+ * 只在指派 Agent 时有意义（显式指令文本；缺省用 Task 标题+描述）——指给成员时
+ * 带上它没有对象，但拒绝它会连「换个人接手」一起挡掉，这里只做字段存在性收口，
+ * 语义由 Hub 命令层决定。
  */
-export const ReassignTaskRequestSchema = z.strictObject({
-  assigneeUserId: z.uuid(),
-})
+export const ReassignTaskRequestSchema = z
+  .strictObject({
+    assigneeUserId: z.uuid().optional(),
+    assigneeAgentId: z.uuid().optional(),
+    instruction: z.string().min(1).max(20000).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.assigneeUserId !== undefined) !== (value.assigneeAgentId !== undefined)) return
+    ctx.addIssue({
+      code: 'custom',
+      message: 'exactly one of assigneeUserId or assigneeAgentId is required',
+    })
+  })
 
 /** POST /tasks/:taskId/comments（§2.2：body 1–10000）。 */
 export const CreateCommentRequestSchema = z.strictObject({

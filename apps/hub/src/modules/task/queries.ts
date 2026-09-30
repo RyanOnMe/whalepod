@@ -10,7 +10,13 @@ export interface TaskView {
   title: string
   description: string
   status: TaskRow['status']
+  /**
+   * 真人责任人（#239 口径）：member 指派 = 受派人；Agent 指派 = 做出指派的人。
+   * 设备归属、Run owner、指令权/验收权都看它——「责任在人」的列表达。
+   */
   assigneeUserId: string
+  /** Agent 执行者（#239）：null = member 指派；非空 = 该 Agent 执行（指派即指令）。 */
+  assigneeAgentId: string | null
   assignmentStatus: TaskRow['assignmentStatus']
   createdBy: string
   acceptedAt: string | null
@@ -27,6 +33,7 @@ export function toTaskView(row: TaskRow): TaskView {
     description: row.description,
     status: row.status,
     assigneeUserId: row.assigneeUserId,
+    assigneeAgentId: row.assigneeAgentId,
     assignmentStatus: row.assignmentStatus,
     createdBy: row.createdBy,
     acceptedAt: row.acceptedAt?.toISOString() ?? null,

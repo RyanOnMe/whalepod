@@ -17,12 +17,12 @@ _Avoid_：User Agent、Account Role
 _Avoid_：Space、共享目录、运行容器
 
 **Task**：
-Project 中由一名真人责任人承诺推进的工作单元，也是多个 Run 和 Artifact 的业务归属点。
+Project 中由一名真人责任人承诺推进的工作单元，也是多个 Run 和 Artifact 的业务归属点。受派人可以是成员或 Agent（#239）——Agent 受派时由指派人出任责任人，指派即指令自动驱动。
 _Avoid_：Session、Prompt、Job
 
 **Assignment**：
-Task 与真人责任人之间需要接受或拒绝的责任关系。
-_Avoid_：Agent assignment、Run owner
+Task 与责任人之间的受派关系。受派给成员时要接受或拒绝；受派给 Agent 时没有受理动作（指派即受理即驱动），但责任人恒为做出指派的真人。
+_Avoid_：Run owner（那是 Run 的发起/审批主体，恒真人）
 
 **Comment**：
 成员围绕 Task 留下的团队可见协作消息。

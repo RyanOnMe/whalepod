@@ -95,6 +95,8 @@ const REFUSAL_RUN_CANCELLING = INSTRUCTION_REFUSAL.RUN_CANCELLING
 export interface SendFollowupInput {
   text: string
   idempotencyKey: string
+  /** 触发来源（#239）：默认 human；指派 Agent 的自动驱动降级成追问时记 auto_assignment。 */
+  origin?: 'human' | 'auto_assignment'
 }
 
 /**
@@ -155,7 +157,7 @@ export async function sendRunFollowup(
       authorUserId: actor.userId,
       body: input.text,
       kind: 'followup' as const,
-      origin: 'human' as const,
+      origin: input.origin ?? ('human' as const),
       targetAgentId: run.agentId,
       runId: run.id,
     }

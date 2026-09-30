@@ -54,10 +54,15 @@ export const tasks = pgTable(
     title: varchar('title', { length: 200 }).notNull(),
     description: text('description').notNull().default(''),
     status: taskStatus('status').notNull().default('open'),
-    // Task 始终有一名真人 assignee（03 §2.2 不变量）。
+    // Task 始终有一名真人责任人（03 §2.2 不变量；#239 起「责任在人」的列表达）：
+    // member 指派时 = 受派人本人；Agent 指派时 = 做出指派的人。设备归属、Run owner、
+    // 指令权第一分支、0006 grant 触发器读的都是这一列——语义连续。
     assigneeUserId: uuid('assignee_user_id')
       .notNull()
       .references(() => userAccounts.id),
+    // Agent 指派（ADR-0009 决策 6）：非空 = 该 Task 由这个 Agent 执行，指派动作
+    // 本身即一条 origin='auto_assignment' 的指令（Hub 自动驱动）。member 指派恒空。
+    assigneeAgentId: uuid('assignee_agent_id').references(() => agents.id),
     assignmentStatus: assignmentStatus('assignment_status').notNull().default('pending'),
     createdBy: uuid('created_by')
       .notNull()
