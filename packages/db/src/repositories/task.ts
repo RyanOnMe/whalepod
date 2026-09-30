@@ -199,15 +199,24 @@ export async function listProjects(handle: DbHandle): Promise<ProjectRow[]> {
   return handle.select().from(projects).orderBy(asc(projects.createdAt))
 }
 
-/** PATCH /tasks/:taskId：只改非状态字段；updatedAt 由 task_set_updated_at 触发器写。 */
+/**
+ * PATCH /tasks/:taskId：只改非状态字段；updatedAt 由 task_set_updated_at 触发器写。
+ * approvalPolicy（#241）：`null` = 清除覆盖回继承（键**在场**即生效——与 title 的
+ * 「缺省=不动」同构：undefined 不动，null 显式清空）。
+ */
 export async function updateTaskFields(
   handle: DbHandle,
   id: string,
-  patch: { title?: string; description?: string },
+  patch: {
+    title?: string
+    description?: string
+    approvalPolicy?: 'approval_required' | 'full_access' | null
+  },
 ): Promise<TaskRow | undefined> {
   const set: Record<string, unknown> = {}
   if (patch.title !== undefined) set.title = patch.title
   if (patch.description !== undefined) set.description = patch.description
+  if (patch.approvalPolicy !== undefined) set.approvalPolicy = patch.approvalPolicy
   if (Object.keys(set).length === 0) return getTask(handle, id)
   const [row] = await handle.update(tasks).set(set).where(eq(tasks.id, id)).returning()
   return row

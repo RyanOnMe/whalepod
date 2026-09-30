@@ -61,6 +61,7 @@ function taskChangedPayload(task: TaskRow): unknown {
     assignmentStatus: task.assignmentStatus,
     assigneeUserId: task.assigneeUserId,
     assigneeAgentId: task.assigneeAgentId,
+    approvalPolicy: task.approvalPolicy,
   }
 }
 
@@ -230,15 +231,27 @@ export async function reassignAssignment(
   })
 }
 
-/** PATCH /tasks/:taskId：只改非状态字段（03 §4）。 */
+/**
+ * PATCH /tasks/:taskId：只改非状态字段（03 §4）。
+ * approvalPolicy（#241）：**仅 Task 责任人**能改——档位放松的是责任人的凭据风险，
+ * 比本路由其余字段（Member 可改 title/description）更严；`null` = 清除覆盖回继承。
+ */
 export async function updateTask(
   database: Database,
+  actor: Actor,
   taskId: string,
-  patch: { title?: string; description?: string },
+  patch: {
+    title?: string
+    description?: string
+    approvalPolicy?: 'approval_required' | 'full_access' | null
+  },
   idempotencyKey: string,
 ): Promise<TaskView> {
   return transactCommand(database, `task.update:${idempotencyKey}`, async (tx) => {
-    await lockTask(tx, taskId)
+    const task = await lockTask(tx, taskId)
+    if (patch.approvalPolicy !== undefined && task.assigneeUserId !== actor.userId) {
+      throw new ApiError(403, 'FORBIDDEN', 'only the task assignee can change the approval policy')
+    }
     const updated = await updateTaskFields(tx, taskId, patch)
     if (updated === undefined) throw new Error('task vanished in its own transaction')
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })

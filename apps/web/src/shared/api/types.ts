@@ -80,6 +80,8 @@ export interface TaskView {
   assigneeUserId: string
   /** Agent 执行者（#239）：null = member 指派；非空 = 该 Agent 执行（指派即指令）。 */
   assigneeAgentId: string | null
+  /** 审批档覆盖（#241）：null = 继承 Revision 默认（不物化）。 */
+  approvalPolicy: 'approval_required' | 'full_access' | null
   assignmentStatus: AssignmentStatus
   createdBy: string
   acceptedAt: string | null
@@ -127,6 +129,8 @@ export interface TaskRoomRun {
   finishedAt: string | null
   rerunOfRunId: string | null
   resumeFromRunId: string | null
+  /** 本 Run 固化的审批档（#241）：full_access 时运行卡标记「完全权限」。 */
+  approvalPolicy: 'approval_required' | 'full_access'
   deviceName: string | null
   workspaceName: string | null
 }
@@ -200,6 +204,8 @@ export interface ProfileRevisionView {
   model: string
   credentialSlot: string
   maxTokens: number | null
+  /** 默认审批档（#241）：Task 未覆盖时建 Run 解析用它的值。 */
+  approvalPolicy: 'approval_required' | 'full_access'
   pluginPackId: string
   profileDigest: string
   createdBy: string
@@ -255,6 +261,8 @@ export interface RunView {
   // P1-16 G7-04：显式重跑血缘（03 §2.6 rerun_of_run_id）。
   rerunOfRunId: string | null
   resumeFromRunId: string | null
+  /** 本 Run 固化的审批档（#241）：full_access 时运行卡标记「完全权限」。 */
+  approvalPolicy: 'approval_required' | 'full_access'
   profileDigest: string
   createdAt: string
   startedAt: string | null

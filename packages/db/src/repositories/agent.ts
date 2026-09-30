@@ -59,6 +59,8 @@ export interface NewProfileRevision {
   model: string
   credentialSlot: string
   maxTokens?: number | null
+  /** 默认审批档（#241）：缺省 = approval_required（DB default 同值）。 */
+  approvalPolicy?: 'approval_required' | 'full_access'
   pluginPackId: string
   profileDigest: string
   createdBy: string

@@ -2,6 +2,7 @@
 // PROTOCOL_VERSION 在 envelope.ts 定义，由此 re-export。
 export * from './errors.js'
 export * from './envelope.js'
+export * from './approval.js'
 export * from './http.js'
 export * from './task-views.js'
 export * from './client-events.js'

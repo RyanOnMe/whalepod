@@ -38,6 +38,7 @@ export interface TaskRoomRun {
   finishedAt: string | null
   rerunOfRunId: string | null
   resumeFromRunId: string | null
+  approvalPolicy: 'approval_required' | 'full_access'
   deviceName: string | null
   workspaceName: string | null
 }
@@ -55,6 +56,7 @@ function toTaskRoomRun(
     finishedAt: row.finishedAt?.toISOString() ?? null,
     rerunOfRunId: row.rerunOfRunId,
     resumeFromRunId: row.resumeFromRunId,
+    approvalPolicy: row.approvalPolicy,
     deviceName: placement?.deviceName ?? null,
     workspaceName: placement?.workspaceName ?? null,
   }

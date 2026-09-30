@@ -7,9 +7,11 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  CreateAgentRevisionRequestSchema,
   CreateRunRequestSchema,
   CreateTaskRequestSchema,
   ReassignTaskRequestSchema,
+  UpdateTaskRequestSchema,
 } from '../src/index.js'
 
 const AGENT_ID = '01905f7c-0000-7000-8000-0000000004a1'
@@ -67,6 +69,36 @@ describe('CreateTaskRequestSchema（assignee 二选一，#239）', () => {
     expect(
       CreateTaskRequestSchema.parse({ ...BASE, assigneeAgentId: AGENT_ID }).assigneeAgentId,
     ).toBe(AGENT_ID)
+  })
+})
+
+describe('审批档位字段（#241）', () => {
+  it('UpdateTaskRequest：approvalPolicy 只认两档（enum 外值拒绝），可空可缺省', () => {
+    expect(() => UpdateTaskRequestSchema.parse({ approvalPolicy: 'sometimes' as never })).toThrow()
+    expect(UpdateTaskRequestSchema.parse({ approvalPolicy: 'full_access' }).approvalPolicy).toBe(
+      'full_access',
+    )
+    // null = 清除覆盖回继承（键在场即生效）；缺省 = 不动。
+    expect(UpdateTaskRequestSchema.parse({ approvalPolicy: null }).approvalPolicy).toBeNull()
+    expect(UpdateTaskRequestSchema.parse({}).approvalPolicy).toBeUndefined()
+  })
+
+  it('CreateAgentRevisionRequest：approvalPolicy 只认两档，缺省合法', () => {
+    const base = {
+      persona: 'p',
+      provider: 'dsh',
+      model: 'm',
+      credentialSlot: 'default',
+      pluginPackId: AGENT_ID,
+    } as const
+    expect(() =>
+      CreateAgentRevisionRequestSchema.parse({ ...base, approvalPolicy: 'yolo' as never }),
+    ).toThrow()
+    expect(
+      CreateAgentRevisionRequestSchema.parse({ ...base, approvalPolicy: 'full_access' })
+        .approvalPolicy,
+    ).toBe('full_access')
+    expect(CreateAgentRevisionRequestSchema.parse(base).approvalPolicy).toBeUndefined()
   })
 })
 

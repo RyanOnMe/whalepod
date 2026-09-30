@@ -47,11 +47,14 @@
             "prompt": {
               "$ref": "#/$defs/__schema10"
             },
-            "resumeOfRunId": {
+            "approvalPolicy": {
               "$ref": "#/$defs/__schema11"
             },
-            "resumeSessionId": {
+            "resumeOfRunId": {
               "$ref": "#/$defs/__schema12"
+            },
+            "resumeSessionId": {
+              "$ref": "#/$defs/__schema13"
             }
           },
           "required": [
@@ -527,10 +530,17 @@
     },
     "__schema11": {
       "type": "string",
+      "enum": [
+        "approval_required",
+        "full_access"
+      ]
+    },
+    "__schema12": {
+      "type": "string",
       "format": "uuid",
       "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
     },
-    "__schema12": {
+    "__schema13": {
       "type": "string",
       "minLength": 1,
       "maxLength": 128

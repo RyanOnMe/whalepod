@@ -7,6 +7,7 @@
 import { z } from 'zod'
 import { PROTOCOL_VERSION, envelope, parseWireFrame } from './envelope.js'
 import { ErrorCodeSchema, WireErrorSchema } from './errors.js'
+import { ApprovalPolicySchema } from './approval.js'
 
 const Sha256DigestSchema = z.string().regex(/^[a-f0-9]{64}$/)
 const DshSessionIdSchema = z.string().min(1).max(128)
@@ -257,6 +258,10 @@ export const RunStartSchema = envelope(
       expectedProfileDigest: Sha256DigestSchema,
       expectedPluginPackDigest: Sha256DigestSchema,
       prompt: z.string().min(1).max(20_000),
+      // ADR-0009 切片⑧（审批档位，#241）：Hub 已解析固化的档位（Task 覆盖 ??
+      // Revision 默认），Node 原样透传进 runtime.initialize。缺省 =
+      // approval_required（与既有行为一致）。
+      approvalPolicy: ApprovalPolicySchema.optional(),
       // ADR-0009 切片⑤（resume 续跑）：成对携带——resumeOfRunId 让 Node 把
       // initialize 的 dshHomePath 指向**来源 Run** 的 home（per-run 隔离下新
       // runId 的 home 里没有旧日志）；resumeSessionId（= 来源 Run 的

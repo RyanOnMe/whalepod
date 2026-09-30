@@ -17,6 +17,8 @@ export interface TaskView {
   assigneeUserId: string
   /** Agent 执行者（#239）：null = member 指派；非空 = 该 Agent 执行（指派即指令）。 */
   assigneeAgentId: string | null
+  /** 审批档覆盖（#241）：null = 继承 Revision 默认（不物化）。 */
+  approvalPolicy: 'approval_required' | 'full_access' | null
   assignmentStatus: TaskRow['assignmentStatus']
   createdBy: string
   acceptedAt: string | null
@@ -34,6 +36,7 @@ export function toTaskView(row: TaskRow): TaskView {
     status: row.status,
     assigneeUserId: row.assigneeUserId,
     assigneeAgentId: row.assigneeAgentId,
+    approvalPolicy: row.approvalPolicy,
     assignmentStatus: row.assignmentStatus,
     createdBy: row.createdBy,
     acceptedAt: row.acceptedAt?.toISOString() ?? null,

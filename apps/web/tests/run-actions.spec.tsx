@@ -48,6 +48,7 @@ function makeRunView(overrides: Partial<RunView> = {}): RunView {
     failureSummary: 'runtime exited unexpectedly (code=1)',
     rerunOfRunId: null,
     resumeFromRunId: null,
+    approvalPolicy: 'approval_required',
     profileDigest: 'b'.repeat(64),
     createdAt: '2026-08-25T00:00:00.000Z',
     startedAt: '2026-08-25T00:01:00.000Z',

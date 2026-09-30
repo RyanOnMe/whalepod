@@ -116,6 +116,8 @@ export function makeTask(overrides: Partial<TaskView> = {}): TaskView {
     assigneeUserId: BOB.userId,
     // #239：Agent 执行者（默认 null = member 指派）。
     assigneeAgentId: null,
+    // #241：审批档覆盖（默认 null = 继承 Revision 默认）。
+    approvalPolicy: null,
     assignmentStatus: 'pending',
     createdBy: ALICE.userId,
     acceptedAt: null,
@@ -183,6 +185,8 @@ export function makeRun(overrides: Partial<TaskRoomRun> = {}): TaskRoomRun {
     finishedAt: null,
     rerunOfRunId: null,
     resumeFromRunId: null,
+    // #241：本 Run 固化的审批档（默认 approval_required）。
+    approvalPolicy: 'approval_required',
     // #211：落点显示名（默认未知，由各用例按需覆盖有名字的）。
     deviceName: null,
     workspaceName: null,

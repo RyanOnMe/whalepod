@@ -13,7 +13,7 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core'
 import type { AnyPgColumn } from 'drizzle-orm/pg-core'
-import { agents, agentProfileRevisions } from './agent.js'
+import { agents, agentProfileRevisions, approvalPolicy } from './agent.js'
 import { devices, workspaces } from './device.js'
 import { userAccounts } from './identity.js'
 import { taskMessages, tasks } from './project.js'
@@ -83,6 +83,9 @@ export const runs = pgTable(
     profileDigest: char('profile_digest', { length: 64 }).notNull(),
     pluginPackDigest: char('plugin_pack_digest', { length: 64 }).notNull(),
     dshDistributionVersion: varchar('dsh_distribution_version', { length: 64 }).notNull(),
+    // 审批档位快照（#241）：建 Run 时解析固化（Task 覆盖 ?? Revision 默认）。
+    // 档位是 Run 的执行姿态（与 profileDigest 同类的固化事实），运行卡据此标记。
+    approvalPolicy: approvalPolicy('approval_policy').notNull().default('approval_required'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     startedAt: timestamp('started_at', { withTimezone: true }),
     finishedAt: timestamp('finished_at', { withTimezone: true }),

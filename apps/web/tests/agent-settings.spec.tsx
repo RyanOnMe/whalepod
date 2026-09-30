@@ -47,6 +47,7 @@ const revision: ProfileRevisionView = {
   model: 'deepseek-chat',
   credentialSlot: 'default',
   maxTokens: 8192,
+  approvalPolicy: 'approval_required',
   pluginPackId: 'eeeeeeee-0000-4000-8000-000000000001',
   profileDigest: 'a'.repeat(64),
   createdBy: ALICE.userId,
@@ -307,6 +308,8 @@ describe('agent-settings', () => {
       provider: 'deepseek',
       model: 'deepseek-chat',
       credentialSlot: 'default',
+      // #241：预填的当前 Revision 档位（fixture 为 approval_required）随载荷发出。
+      approvalPolicy: 'approval_required',
       pluginPackId: reviewPack.id,
     })
   })

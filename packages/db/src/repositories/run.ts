@@ -22,6 +22,8 @@ export interface NewRun {
   status?: RunRow['status']
   rerunOfRunId?: string
   resumeFromRunId?: string
+  /** 审批档位快照（#241）：orchestrator 显式传入（解析链 Task 覆盖 ?? Revision 默认）。 */
+  approvalPolicy?: 'approval_required' | 'full_access'
   dshSessionId?: string
   failureCode?: string
   failureSummary?: string

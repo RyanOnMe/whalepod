@@ -10,7 +10,7 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core'
-import { agents } from './agent.js'
+import { agents, approvalPolicy } from './agent.js'
 import { userAccounts } from './identity.js'
 import { runs } from './run.js'
 
@@ -63,6 +63,10 @@ export const tasks = pgTable(
     // Agent 指派（ADR-0009 决策 6）：非空 = 该 Task 由这个 Agent 执行，指派动作
     // 本身即一条 origin='auto_assignment' 的指令（Hub 自动驱动）。member 指派恒空。
     assigneeAgentId: uuid('assignee_agent_id').references(() => agents.id),
+    // 审批档覆盖（#241；ADR-0009 决策 7）：NULL = 继承 Revision 默认（不物化——
+    // Revision 更新后未覆盖的 Task 跟新默认）；非空 = 覆盖，建 Run 时以此为准。
+    // 仅 Task 责任人可设置（放权放松的是他的凭据风险）。
+    approvalPolicy: approvalPolicy('approval_policy'),
     assignmentStatus: assignmentStatus('assignment_status').notNull().default('pending'),
     createdBy: uuid('created_by')
       .notNull()

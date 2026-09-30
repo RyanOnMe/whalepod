@@ -15,6 +15,7 @@ import { useSession } from '../app/session.js'
 import { queryKeys } from '../app/query-client.js'
 import type { TaskRoomView } from '../shared/api/types.js'
 import { InstructionDrivers } from '../features/task/InstructionDrivers.js'
+import { ApprovalPolicyBlock } from '../features/task/ApprovalPolicyBlock.js'
 
 export function TaskPermissionsPage(): ReactNode {
   const { taskId } = useParams()
@@ -57,6 +58,7 @@ export function TaskPermissionsPage(): ReactNode {
           <Link to={`/tasks/${task.id}`}>← 回到任务房间</Link>
         </p>
         <InstructionDrivers task={task} sessionUserId={session.userId} />
+        <ApprovalPolicyBlock task={task} sessionUserId={session.userId} />
       </div>
     </div>
   )

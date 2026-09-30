@@ -53,11 +53,14 @@
             "resumeSessionId": {
               "$ref": "#/$defs/__schema12"
             },
-            "artifactInputs": {
+            "approvalPolicy": {
               "$ref": "#/$defs/__schema13"
             },
+            "artifactInputs": {
+              "$ref": "#/$defs/__schema14"
+            },
             "artifactInputsDir": {
-              "$ref": "#/$defs/__schema15"
+              "$ref": "#/$defs/__schema16"
             }
           },
           "required": [
@@ -379,13 +382,20 @@
       "maxLength": 128
     },
     "__schema13": {
+      "type": "string",
+      "enum": [
+        "approval_required",
+        "full_access"
+      ]
+    },
+    "__schema14": {
       "maxItems": 64,
       "type": "array",
       "items": {
-        "$ref": "#/$defs/__schema14"
+        "$ref": "#/$defs/__schema15"
       }
     },
-    "__schema14": {
+    "__schema15": {
       "type": "object",
       "properties": {
         "artifactId": {
@@ -421,7 +431,7 @@
       ],
       "additionalProperties": false
     },
-    "__schema15": {
+    "__schema16": {
       "type": "string",
       "minLength": 1
     }

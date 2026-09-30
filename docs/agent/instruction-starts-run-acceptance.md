@@ -55,8 +55,8 @@ HTTP 面走 `POST /api/v1/tasks/:taskId/instructions` 的 Fastify inject。
 - **授权仍是「责任人」**：`orchestrator.create` 里的守卫没动，泛化到 `task_instruction_grant`
   是**切片④**的事（别在本片先造半套）。
 - **UI 未跟上**：执行区输入框与设备选择器属于切片⑥；今天 `POST /instructions` 只有 API 调用方。
-- **审批档位**：与手工起 Run 同档（ADR-0010 决策 5，不做自动降级）；`approval_policy` 字段本身
-  在切片⑧。
+- **审批档位**：与手工起 Run 同档（ADR-0010 决策 5，不做自动降级）；`approval_policy` 字段
+  已随切片⑧（#241）落地——指令自动起的 Run 与手工起的一样按解析链固化档位。
 - **同 Task 并发指令**：靠 `run_one_active_per_task` + Task 行锁串行化（既有语义），本片不新增机制。
 
 ## 复跑

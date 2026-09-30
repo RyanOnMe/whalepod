@@ -167,6 +167,12 @@ export class RunOrchestrator {
       .where(eq(schema.pluginPacks.id, revision.pluginPackId))
     if (pack === undefined) throw new RunCommandError('NOT_FOUND', 'plugin pack not found')
 
+    // 审批档位解析（#241；ADR-0009 决策 7）：Task 覆盖（NULL=继承，不物化）??
+    // Revision 默认 → 本次 Run 的固化档位。所以「Revision 更新后 Task 跟不跟」有唯一
+    // 答案：未覆盖的跟（每次建 Run 重新解析），已覆盖的不跟（Task 值优先）。
+    // 口径（ADR-0010 决策 5）：不做「自动触发降级」，触发方式不影响档位。
+    const approvalPolicy = task.approvalPolicy ?? revision.approvalPolicy
+
     const [device] = await tx
       .select()
       .from(schema.devices)
@@ -267,6 +273,8 @@ export class RunOrchestrator {
       expectedProfileDigest: revision.profileDigest,
       expectedPluginPackDigest: pack.packDigest,
       prompt: input.prompt,
+      // 切片⑧：解析后的档位成对固化（run.start 与 runs 行同值，Node 只透传）。
+      approvalPolicy,
       // 切片⑤：成对下发——resumeOfRunId 让 Node 把 dshHomePath 指向来源 Run 的
       // home（per-run 隔离下新 home 没有旧日志）；resumeSessionId 直达装载身份。
       ...(resumeSource !== undefined
@@ -296,6 +304,7 @@ export class RunOrchestrator {
       profileDigest: revision.profileDigest,
       pluginPackDigest: pack.packDigest,
       dshDistributionVersion: input.dshDistributionVersion,
+      approvalPolicy,
       createdAt: now, // #119：领域时钟出生时间，reconcile 新生儿宽限的对表基准
       ...(input.rerunOfRunId !== undefined ? { rerunOfRunId: input.rerunOfRunId } : {}),
       ...(input.resumeFromRunId !== undefined ? { resumeFromRunId: input.resumeFromRunId } : {}),
