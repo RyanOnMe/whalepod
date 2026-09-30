@@ -115,6 +115,19 @@ describe('transitionAssignment', () => {
     })
   })
 
+  // #239（ADR-0009 决策 6）：Agent 指派的出生态是 accepted（指派即受理，不走 pending），
+  // 而人的 accept/reject 对这个态无边——「Agent 任务不经过人的受理」在状态机层的钉子。
+  it('agent-assignment birth state (accepted) has no human accept/reject edge', () => {
+    expectDomainError(
+      () => transitionAssignment({ assignmentStatus: 'accepted' }, { type: 'accept' }),
+      'INVALID_ASSIGNMENT_TRANSITION',
+    )
+    expectDomainError(
+      () => transitionAssignment({ assignmentStatus: 'accepted' }, { type: 'reject' }),
+      'INVALID_ASSIGNMENT_TRANSITION',
+    )
+  })
+
   it.each(
     ASSIGNMENT_STATUSES.flatMap((status) =>
       ASSIGNMENT_EVENTS.map((event) => [status, event] as const),

@@ -73,7 +73,13 @@ export interface TaskView {
   title: string
   description: string
   status: TaskStatus
+  /**
+   * 真人责任人（#239 口径）：member 指派 = 受派人；Agent 指派 = 做出指派的人。
+   * 验收/取消/指令权都看它。
+   */
   assigneeUserId: string
+  /** Agent 执行者（#239）：null = member 指派；非空 = 该 Agent 执行（指派即指令）。 */
+  assigneeAgentId: string | null
   assignmentStatus: AssignmentStatus
   createdBy: string
   acceptedAt: string | null
@@ -81,6 +87,11 @@ export interface TaskView {
   createdAt: string
   updatedAt: string
 }
+
+/** 指派 Agent 后自动驱动的结果（#239；create/reassign 响应的 drive 字段）。 */
+export type AssignmentDriveView =
+  | { outcome: 'started_run' | 'followup' | 'queued' | 'rejected'; runId: string }
+  | { outcome: 'failed'; error: { code: string; message: string } }
 
 // task/queries.ts：CommentView（#210 收敛后：唯一真源是 `@whalepod/protocol` 的
 // `TaskMessageView`，与 Hub 的 `CommentView` 同一定义——服务端 `comments` 与

@@ -114,6 +114,8 @@ export function makeTask(overrides: Partial<TaskView> = {}): TaskView {
     description: '发布第一个版本的实现',
     status: 'open',
     assigneeUserId: BOB.userId,
+    // #239：Agent 执行者（默认 null = member 指派）。
+    assigneeAgentId: null,
     assignmentStatus: 'pending',
     createdBy: ALICE.userId,
     acceptedAt: null,

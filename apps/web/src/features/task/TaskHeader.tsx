@@ -12,6 +12,7 @@ import { ConfirmDialog } from '../../shared/ConfirmDialog.js'
 import { ASSIGNMENT_STATUS_LABEL, TASK_STATUS_LABEL } from '../../shared/format.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { useMemberDirectory } from '../team/memberDirectory.js'
+import { useAgentName } from './useAgentName.js'
 import type { Session, TaskView } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
 
@@ -40,6 +41,8 @@ export function TaskHeader({ task, session }: TaskHeaderProps): ReactNode {
   const [confirming, setConfirming] = useState<TaskAction | null>(null)
   const [error, setError] = useState<unknown>(null)
   const directory = useMemberDirectory()
+  // #239：Agent 执行者的显示名（member 指派为 null，不发请求）。
+  const agent = useAgentName(task.assigneeAgentId)
 
   const isAssignee = session !== null && task.assigneeUserId === session.userId
   const canAct = isAssignee && task.assignmentStatus === 'accepted'
@@ -89,9 +92,16 @@ export function TaskHeader({ task, session }: TaskHeaderProps): ReactNode {
       <dl className="task-meta">
         <div>
           <dt>当前责任人</dt>
-          {/* #162 判据锚点：这一格必须说出「是谁」（显示名或明确兜底），不得是短 id。 */}
+          {/* #162 判据锚点：这一格必须说出「是谁」（显示名或明确兜底），不得是短 id。
+              #239：Agent 指派时这格仍是**真人**（做出指派的人）——责任在人；Agent 另列一格。 */}
           <dd data-testid="task-assignee">{assigneeLabel}</dd>
         </div>
+        {task.assigneeAgentId !== null ? (
+          <div>
+            <dt>执行 Agent</dt>
+            <dd data-testid="task-agent">{agent?.name}</dd>
+          </div>
+        ) : null}
         <div>
           <dt>创建时间</dt>
           <dd>

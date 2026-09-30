@@ -49,6 +49,13 @@ export interface SendInstructionInput {
   workspaceId?: string
   /** 用哪个 Agent（缺省：该 Task 上一个 Run 用过的 Agent）。 */
   agentId?: string
+  /**
+   * 触发来源（#239）：human = 执行区里人发的（默认，语义不变）；auto_assignment =
+   * 指派给 Agent 时 Hub 自动产生的（ADR-0009 决策 6「指派即指令」）。只影响消息的
+   * origin 记账（审计问「谁让它跑的」时区分「人说的」与「指派带出来的」），受理、
+   * 降级、排队语义与 human 完全同路。
+   */
+  origin?: 'human' | 'auto_assignment'
 }
 
 export type SendInstructionOutcome =
@@ -133,6 +140,7 @@ export async function sendInstruction(
     const message = await sendRunFollowup(deps.database, deps.outbox, actor, active.id, {
       text: input.text,
       idempotencyKey: input.idempotencyKey,
+      ...(input.origin !== undefined ? { origin: input.origin } : {}),
     })
     // 追问的受理/排队由 ③c-1 决定：状态 pending 且没有命令 = 排队（Node 还没到 running）。
     // outcome 要与消息的真实命运一致（评审应改 5）：被拒的消息没有 outbox 行，但绝不是"排队中"，
@@ -200,6 +208,7 @@ export async function sendInstruction(
         const message = await sendRunFollowup(deps.database, deps.outbox, actor, raced.id, {
           text: input.text,
           idempotencyKey: input.idempotencyKey,
+          ...(input.origin !== undefined ? { origin: input.origin } : {}),
         })
         return {
           kind:
@@ -246,7 +255,7 @@ export async function sendInstruction(
       authorUserId: actor.userId,
       body: input.text,
       kind: 'instruction',
-      origin: 'human',
+      origin: input.origin ?? 'human',
       targetAgentId: agentId,
       runId: run.id,
       instructionState: 'pending',
@@ -293,6 +302,14 @@ export async function rejectInstruction(
   error: { code: string; message: string },
 ): Promise<void> {
   await settleInstruction(tx, messageId, { state: 'rejected', error })
+}
+
+/**
+ * Agent 指派的自动指令文本（#239）：显式 instruction 优先；缺省用 Task 标题
+ * （+描述）——「拆完任务指派给 Agent 即走」的单人动线里，任务简报就是指令。
+ */
+export function agentAssignmentText(task: { title: string; description: string }): string {
+  return task.description === '' ? task.title : `${task.title}\n\n${task.description}`
 }
 
 /** 按 Run 的触发锚点把指令读回来（幂等重放用）：没有锚点/消息则返回 undefined。 */

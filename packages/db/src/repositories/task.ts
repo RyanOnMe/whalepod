@@ -31,6 +31,8 @@ export interface NewTask {
   description?: string
   status?: TaskRow['status']
   assigneeUserId: string
+  /** Agent 指派（#239）：非空时 assignment 由命令层直接落 accepted（Agent 不走人的受理）。 */
+  assigneeAgentId?: string
   assignmentStatus?: TaskRow['assignmentStatus']
   createdBy: string
   acceptedAt?: Date
@@ -226,18 +228,34 @@ export async function setAssignment(
   return row
 }
 
+/** 重新指派的目标（#239 起 assignee 多态）：member（只有 userId）或 Agent（两者都有）。 */
+export interface ReassignTarget {
+  assigneeUserId: string
+  /** Agent 指派：非空 = 该 Agent 执行；此时 assignment 直接落 accepted（Agent 不走人的受理）。 */
+  assigneeAgentId?: string
+}
+
 /**
- * 重新指派：assignee 变化后 assignment_status 重置为 pending（03 §2.2/§3.1）。
- * 调用方负责「无活跃 Run」守卫（G2-05）与新 assignee 存在性校验。
+ * 重新指派：assignee 变化后 assignment_status 重置 pending（03 §2.2/§3.1）。
+ * Agent 目标例外（#239/ADR-0009 决策 6）：指派即受理，直接 accepted + acceptedAt=now
+ * （Agent 没有受理动作，pending 等的会是永远不来的人）。
+ * 调用方负责「无活跃 Run」守卫（G2-05）与目标存在性/有效性校验。
  */
 export async function reassignTask(
   handle: DbHandle,
   id: string,
-  assigneeUserId: string,
+  target: ReassignTarget,
+  now: Date,
 ): Promise<TaskRow | undefined> {
+  const agentAssigned = target.assigneeAgentId !== undefined
   const [row] = await handle
     .update(tasks)
-    .set({ assigneeUserId, assignmentStatus: 'pending', acceptedAt: null })
+    .set({
+      assigneeUserId: target.assigneeUserId,
+      assigneeAgentId: target.assigneeAgentId ?? null,
+      assignmentStatus: agentAssigned ? 'accepted' : 'pending',
+      acceptedAt: agentAssigned ? now : null,
+    })
     .where(eq(tasks.id, id))
     .returning()
   return row

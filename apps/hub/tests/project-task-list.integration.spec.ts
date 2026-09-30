@@ -89,6 +89,7 @@ describe('#137 GET /projects/:projectId/tasks（集成 · PostgreSQL）', () => 
     expect(Object.keys(tasks[0] ?? {}).sort()).toEqual(
       [
         'acceptedAt',
+        'assigneeAgentId',
         'assignmentStatus',
         'assigneeUserId',
         'completedAt',

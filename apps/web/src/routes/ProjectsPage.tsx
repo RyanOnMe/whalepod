@@ -14,11 +14,12 @@ import { useNavigate } from 'react-router'
 import { api } from '../shared/api/client.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
 import { useSession } from '../app/session.js'
+import { pushToast } from '../app/toast.js'
 import { SelectMenu } from '../shared/SelectMenu.js'
 import { RelativeTime } from '../shared/RelativeTime.js'
 import { TASK_STATUS_LABEL } from '../shared/format.js'
 import { useMemberDirectory } from '../features/team/memberDirectory.js'
-import type { ProjectView, TaskView } from '../shared/api/types.js'
+import type { AssignmentDriveView, AgentView, ProjectView, TaskView } from '../shared/api/types.js'
 import { queryKeys } from '../app/query-client.js'
 
 export function ProjectsPage(): ReactNode {
@@ -233,35 +234,67 @@ function CreateTaskForm({
   onCreated: (task: TaskView) => void
   onClose: () => void
 }): ReactNode {
-  const [values, setValues] = useState({ title: '', description: '', assigneeUserId: '' })
+  // #239：责任人选择是多态的——成员（value = userId）或 Agent（value = 'agent:<id>'）。
+  // 前缀编码而不是第二个 state：SelectMenu 是单值控件，一个受控值就够了。
+  const [values, setValues] = useState({ title: '', description: '', assignee: '' })
   const [error, setError] = useState<unknown>(null)
   const session = useSession()
   // 责任人下拉与项目卡/任务列表共用同一份名册（#152 的共用 hook，同一 queryKey）：
   // 只在 hook 里定义策略，避免「同一个 key 两套 staleTime」这种漂移。
   const directory = useMemberDirectory()
-  // 停用成员不进选择器（03 §2.2 assignee 必须未停用；后端同规则 fail-closed）。
+  // Agent 候选与 RunLauncher 共用同一 queryKey（queryKeys.agents）。
+  const agentsQuery = useQuery({
+    queryKey: queryKeys.agents,
+    queryFn: () => api.get<AgentView[]>('/agents'),
+  })
+  // 停用成员不进选择器（03 §2.2 assignee 必须未停用；后端同规则 fail-closed）；
+  // 归档 Agent 同理不进（指派给归档 Agent 会被 Hub 400 拒）。
   const selectableMembers = directory.members.filter((m) => m.enabled)
+  const selectableAgents = (agentsQuery.data ?? []).filter((a) => a.archivedAt === null)
+  const selectedAgentId = values.assignee.startsWith('agent:')
+    ? values.assignee.slice('agent:'.length)
+    : null
   // 列表就绪后默认选中自己（多数场景是给自己建任务）；用户改选后不覆盖。
   useEffect(() => {
     const preferred =
       selectableMembers.find((m) => m.userId === session?.userId) ?? selectableMembers[0]
     if (preferred === undefined) return
-    setValues((prev) =>
-      prev.assigneeUserId === '' ? { ...prev, assigneeUserId: preferred.userId } : prev,
-    )
+    setValues((prev) => (prev.assignee === '' ? { ...prev, assignee: preferred.userId } : prev))
   }, [directory.members, session?.userId])
   const mutation = useMutation({
     mutationFn: () => {
-      const body: CreateTaskRequest = {
-        title: values.title.trim(),
-        assigneeUserId: values.assigneeUserId.trim(),
-        ...(values.description.trim() !== '' ? { description: values.description.trim() } : {}),
-      }
-      return api.mutate<TaskView>(`/projects/${projectId}/tasks`, { body })
+      const body: CreateTaskRequest =
+        selectedAgentId !== null
+          ? {
+              title: values.title.trim(),
+              assigneeAgentId: selectedAgentId,
+              ...(values.description.trim() !== ''
+                ? { description: values.description.trim() }
+                : {}),
+            }
+          : {
+              title: values.title.trim(),
+              assigneeUserId: values.assignee,
+              ...(values.description.trim() !== ''
+                ? { description: values.description.trim() }
+                : {}),
+            }
+      return api.mutate<TaskView & { drive?: AssignmentDriveView }>(
+        `/projects/${projectId}/tasks`,
+        {
+          body,
+        },
+      )
     },
-    onSuccess: (task) => {
+    onSuccess: (result) => {
       setError(null)
-      onCreated(task)
+      // #239：指派 Agent 的自动驱动结果如实告知（指派成功≠执行已开始）。
+      if (result.drive?.outcome === 'failed') {
+        pushToast(`任务已创建，但自动执行未开始（${result.drive.error.code}）——可在执行区手动发起`)
+      } else if (result.drive !== undefined) {
+        pushToast('任务已创建，Agent 已自动开始执行')
+      }
+      onCreated(result)
     },
     onError: (mutationError: unknown) => {
       setError(mutationError)
@@ -302,34 +335,49 @@ function CreateTaskForm({
         <SelectMenu
           id={`task-assignee-${projectId}`}
           label="责任人"
-          value={values.assigneeUserId}
+          value={values.assignee}
           placeholder={
             directory.isPending
               ? '正在加载成员…'
-              : selectableMembers.length === 0
-                ? '没有可选成员'
+              : selectableMembers.length === 0 && selectableAgents.length === 0
+                ? '没有可选项'
                 : '选择责任人'
           }
-          options={selectableMembers.map((m) => ({
-            value: m.userId,
-            label: `${m.displayName}（@${m.username}）${m.userId === session?.userId ? ' · 你' : ''}`,
-            disabled: false,
-          }))}
-          onChange={(next) => setValues((prev) => ({ ...prev, assigneeUserId: next }))}
+          options={[
+            ...selectableMembers.map((m) => ({
+              value: m.userId,
+              label: `${m.displayName}（@${m.username}）${m.userId === session?.userId ? ' · 你' : ''}`,
+              disabled: false,
+            })),
+            ...selectableAgents.map((a) => ({
+              value: `agent:${a.id}`,
+              label: `${a.name}（Agent · 指派即执行）`,
+              disabled: false,
+            })),
+          ]}
+          onChange={(next) => setValues((prev) => ({ ...prev, assignee: next }))}
           disabled={directory.isPending}
         />
         {directory.isError ? <ErrorBanner error={directory.error} /> : null}
+        {agentsQuery.isError ? <ErrorBanner error={agentsQuery.error} /> : null}
+        {/* #239：选了 Agent 就说清「指派会发生什么」——不让人在不知情下触发执行。 */}
+        {selectedAgentId !== null ? (
+          <p className="mutation-hint" data-testid="agent-assign-hint">
+            指派给 Agent 会立即以任务标题与描述作为指令开始执行；验收与审批仍在你手上。
+          </p>
+        ) : null}
       </div>
       <div className="form-actions">
         {/* #158 起这条空值守卫是本表单**唯一**的拦截：责任人从原生
             `<select required>` 换成按钮触发器后，浏览器侧的「不选不放行」随 required
             一起消失（按钮不是表单可校验元素）。评审实测：成员列表未落地时默认选中
             拿不到值，缺这条守卫会发出 `assigneeUserId: ""` 的请求，被协议层
-            z.uuid() 拒成 400（packages/protocol/src/http.ts）。别删。 */}
+            z.uuid() 拒成 400（packages/protocol/src/http.ts）。别删。
+            #239：守卫口径从「assigneeUserId 非空」改为「选择值非空」（成员或 Agent）。 */}
         <button
           type="submit"
           className="button button-primary"
-          disabled={mutation.isPending || values.assigneeUserId === ''}
+          disabled={mutation.isPending || values.assignee === ''}
         >
           {mutation.isPending ? '创建中…' : '创建任务'}
         </button>
