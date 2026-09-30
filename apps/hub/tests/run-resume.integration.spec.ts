@@ -38,6 +38,7 @@ describe('resume lineage (ADR-0009 slice 5)', () => {
   let bob: Session
   let bobChain: Awaited<ReturnType<typeof seedRunChainForUser>>
   let taskId: string
+  let projectId: string
   let bobUserId: string
 
   beforeAll(async () => {
@@ -68,7 +69,7 @@ describe('resume lineage (ADR-0009 slice 5)', () => {
       url: '/api/v1/projects',
       payload: { name: 'resume-project' },
     })
-    const projectId = (project.json() as { data: { id: string } }).data.id
+    projectId = (project.json() as { data: { id: string } }).data.id
     const session = await apiInject(ctx, bob, { method: 'GET', url: '/api/v1/auth/session' })
     bobUserId = (session.json() as { data: { userId: string } }).data.userId
     const task = await apiInject(ctx, alice, {
@@ -199,9 +200,16 @@ describe('resume lineage (ADR-0009 slice 5)', () => {
     expect(noSession.status).toBe(409)
     expect(noSession.error?.message).toContain('no session')
 
-    // 跨 Task：404 同形（不可枚举）。
+    // 跨 Task：404 同形（不可枚举）。seedRunChainForUser 不暴露它自己的 task，
+    // 这里真建第二个 task 种来源 Run。
+    const task2 = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/projects/${projectId}/tasks`,
+      payload: { title: 'other task', assigneeUserId: bobUserId },
+    })
+    const task2Id = (task2.json() as { data: { id: string } }).data.id
     const otherTaskRun = await insertRunRow(database.db, {
-      taskId: bobChain.taskId,
+      taskId: task2Id,
       ownerUserId: bobUserId,
       agentId: bobChain.agentId,
       profileRevisionId: bobChain.profileRevisionId,
@@ -226,6 +234,7 @@ describe('resume lineage (ADR-0009 slice 5)', () => {
         ownerUserId: bobUserId,
         name: 'other-ws',
         kind: 'directory',
+        capabilities: { read: true, write: true },
         available: true,
       })
       .returning({ id: schema.workspaces.id })
