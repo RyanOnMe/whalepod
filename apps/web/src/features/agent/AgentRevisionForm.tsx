@@ -14,13 +14,14 @@
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent, type ReactNode } from 'react'
-import type { CreateAgentRequest } from '@whalepod/protocol'
+import type { ApprovalPolicy, CreateAgentRequest } from '@whalepod/protocol'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { CREDENTIAL_SLOT_HINT, CREDENTIAL_SLOT_LABEL, PERSONA_LABEL } from '../../shared/format.js'
 import type { AgentView } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
 import { PackSelect } from './PackSelect.js'
+import { SelectMenu } from '../../shared/SelectMenu.js'
 
 export interface AgentRevisionFormProps {
   onCreated?: () => void
@@ -35,7 +36,18 @@ const DEFAULT_VALUES = {
   credentialSlot: 'default',
   maxTokens: '',
   pluginPackId: '',
+  approvalPolicy: 'approval_required' as ApprovalPolicy,
 }
+
+/** 审批档选项（#241）：full_access 的风险写进描述——选择时就知道在放权什么。 */
+export const APPROVAL_POLICY_OPTIONS: ReadonlyArray<{
+  value: ApprovalPolicy
+  label: string
+  disabled: boolean
+}> = [
+  { value: 'approval_required', label: '每次工具调用需批准（默认）', disabled: false },
+  { value: 'full_access', label: '完全权限（工具调用直接放行）', disabled: false },
+]
 
 export function AgentRevisionForm({ onCreated }: AgentRevisionFormProps): ReactNode {
   const queryClient = useQueryClient()
@@ -53,6 +65,7 @@ export function AgentRevisionForm({ onCreated }: AgentRevisionFormProps): ReactN
         ...(values.description.trim() !== '' ? { description: values.description.trim() } : {}),
         ...(values.maxTokens.trim() !== '' ? { maxTokens: Number(values.maxTokens) } : {}),
         pluginPackId: values.pluginPackId.trim(),
+        approvalPolicy: values.approvalPolicy,
       }
       return api.mutate<AgentView>('/agents', { body })
     },
@@ -173,6 +186,20 @@ export function AgentRevisionForm({ onCreated }: AgentRevisionFormProps): ReactN
         />
         <p className="field-hint">
           选择 Agent 首个 Revision 使用的 Plugin Pack（列表来自插件管理）。
+        </p>
+      </div>
+      <div className="field">
+        <SelectMenu
+          id="agent-approval-policy"
+          label="审批档位（Approval Policy）"
+          ariaLabel="选择审批档位"
+          value={values.approvalPolicy}
+          options={APPROVAL_POLICY_OPTIONS}
+          onChange={(next) => set('approvalPolicy')(next as ApprovalPolicy)}
+        />
+        <p className="field-hint">
+          这是 Revision 的默认档；Task 可以覆盖。完全权限 = 用这个 Revision 的 Run
+          不再逐次请求批准，工具直接执行——放权前先确认 persona 与插件组合可信。
         </p>
       </div>
       <div className="form-actions">

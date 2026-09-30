@@ -7,6 +7,7 @@
  */
 import { z } from 'zod'
 import { envelope, parseWireFrame } from './envelope.js'
+import { ApprovalPolicySchema } from './approval.js'
 import { ErrorCodeSchema } from './errors.js'
 
 const Sha256DigestSchema = z.string().regex(/^[a-f0-9]{64}$/)
@@ -52,6 +53,11 @@ const RuntimeInitializePayloadSchema = z
     // 同日志原地追加），而不是新建 session。期望装载 id 对不上存储日志时
     // bridge 的身份一致性校验当场抛（「日志不在本机/已丢」的 fail-loud 闸）。
     resumeSessionId: DshSessionIdSchema.optional(),
+    // ADR-0009 切片⑧（审批档位，#241）：本 Run 的工具授权姿态。缺省 =
+    // approval_required（与既有 ask-all 行为一致）；full_access 时 Runtime 的
+    // pre-execute 直接放行，不发 approval.requested。值由 Hub 解析固化
+    //（Task 覆盖 ?? Revision 默认），Runtime 不再自行判断。
+    approvalPolicy: ApprovalPolicySchema.optional(),
     // P1-15：Reviewer 输入清单 + 下载副本目录（本地 wire 绝对路径，红线同上）。
     // 清单条目上限 64——单任务已发布交付物的现实上界，防止单次 initialize 无界膨胀。
     // 与 http.ts 的 ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES 同值互指（Node 1:1 映射

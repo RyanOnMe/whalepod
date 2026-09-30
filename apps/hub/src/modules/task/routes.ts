@@ -165,17 +165,22 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
     return { ok: true, data: room }
   })
 
-  // PATCH /tasks/:taskId：只改非状态字段（03 §4）。
+  // PATCH /tasks/:taskId：只改非状态字段（03 §4）；approvalPolicy 仅责任人（#241，
+  // 命令层守卫——路由不复制判权逻辑）。键在场即生效：值=覆盖，null=清除回继承。
   app.patch('/tasks/:taskId', async (request) => {
-    await deps.requireActor(request)
+    const session = await deps.requireActor(request)
     const { taskId } = request.params as { taskId: string }
     const body = UpdateTaskRequestSchema.parse(request.body)
     const task = await updateTask(
       deps.database,
+      actorFrom(session),
       taskId,
       {
         ...(body.title !== undefined ? { title: body.title } : {}),
         ...(body.description !== undefined ? { description: body.description } : {}),
+        ...('approvalPolicy' in body && body.approvalPolicy !== undefined
+          ? { approvalPolicy: body.approvalPolicy }
+          : {}),
       },
       readIdempotencyKey(request),
     )

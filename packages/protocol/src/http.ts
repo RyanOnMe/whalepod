@@ -5,6 +5,7 @@
  * Cookie 是 Hub 中间件职责（header 级约束，不属于 body DTO，见 §4 末两段）。
  */
 import { z } from 'zod'
+import { ApprovalPolicySchema } from './approval.js'
 import { ErrorCodeSchema } from './errors.js'
 
 export const ApiFailureSchema = z.strictObject({
@@ -87,10 +88,16 @@ export const CreateTaskRequestSchema = z
     })
   })
 
-/** PATCH /tasks/:taskId：只允许非状态字段。 */
+/**
+ * PATCH /tasks/:taskId：只允许非状态字段。
+ * approvalPolicy（切片⑧ #241）：Task 级审批档覆盖——**仅 Task 责任人**能改（命令层
+ * 守卫，比本路由其余字段的 Member 权限更严：放权放松的是责任人的凭据风险）。
+ * 语义：值 = 覆盖；null = 清除回继承 Revision 默认；缺省 = 不动。
+ */
 export const UpdateTaskRequestSchema = z.strictObject({
   title: z.string().min(1).max(200).optional(),
   description: z.string().max(20000).optional(),
+  approvalPolicy: ApprovalPolicySchema.nullable().optional(),
 })
 
 /**
@@ -239,6 +246,9 @@ const RevisionRequestShape = {
   credentialSlot: z.string().min(1).max(80),
   maxTokens: z.number().int().positive().optional(),
   pluginPackId: z.uuid(),
+  // 切片⑧（#241）：该 Revision 的默认审批档。缺省 = approval_required（与既有
+  // 行为一致）；进 profileDigest 的 canonical JSON（档位是 Revision 行为的一部分）。
+  approvalPolicy: ApprovalPolicySchema.optional(),
 } as const
 
 /** POST /agents（Owner/Admin）。description 与 Project/Task 同形可选缺省。 */

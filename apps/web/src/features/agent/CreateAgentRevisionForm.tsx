@@ -15,13 +15,15 @@
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent, type ReactNode } from 'react'
-import type { CreateAgentRevisionRequest } from '@whalepod/protocol'
+import type { ApprovalPolicy, CreateAgentRevisionRequest } from '@whalepod/protocol'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { CREDENTIAL_SLOT_HINT, CREDENTIAL_SLOT_LABEL, PERSONA_LABEL } from '../../shared/format.js'
 import type { AgentDetailView, ProfileRevisionView } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
 import { PackSelect } from './PackSelect.js'
+import { APPROVAL_POLICY_OPTIONS } from './AgentRevisionForm.js'
+import { SelectMenu } from '../../shared/SelectMenu.js'
 
 export interface CreateAgentRevisionFormProps {
   agent: AgentDetailView
@@ -39,6 +41,7 @@ function initialValues(agent: AgentDetailView) {
         ? String(current.maxTokens)
         : '',
     pluginPackId: current?.pluginPackId ?? '',
+    approvalPolicy: current?.approvalPolicy ?? 'approval_required',
   }
 }
 
@@ -57,6 +60,7 @@ export function CreateAgentRevisionForm({ agent }: CreateAgentRevisionFormProps)
         credentialSlot: values.credentialSlot.trim(),
         ...(values.maxTokens.trim() !== '' ? { maxTokens: Number(values.maxTokens) } : {}),
         pluginPackId: values.pluginPackId,
+        approvalPolicy: values.approvalPolicy,
       }
       return api.mutate<ProfileRevisionView>(`/agents/${agent.id}/revisions`, { body })
     },
@@ -157,6 +161,19 @@ export function CreateAgentRevisionForm({ agent }: CreateAgentRevisionFormProps)
           onChange={set('pluginPackId')}
         />
         <p className="field-hint">选择新 Revision 使用的 Plugin Pack（列表来自插件管理）。</p>
+      </div>
+      <div className="field">
+        <SelectMenu
+          id="revision-approval-policy"
+          label="审批档位（Approval Policy）"
+          ariaLabel="选择审批档位"
+          value={values.approvalPolicy}
+          options={APPROVAL_POLICY_OPTIONS}
+          onChange={(next) => set('approvalPolicy')(next as ApprovalPolicy)}
+        />
+        <p className="field-hint">
+          预填当前 Revision 的档位；未覆盖审批档的 Task 会跟随这里的新默认（每次建 Run 重新解析）。
+        </p>
       </div>
       <div className="form-actions">
         <button

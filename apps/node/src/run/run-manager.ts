@@ -348,6 +348,11 @@ export class RunManager {
           model: payload.agent.model,
           ...(payload.agent.maxTokens !== undefined ? { maxTokens: payload.agent.maxTokens } : {}),
           persona: payload.agent.persona,
+          // 切片⑧（#241）：Hub 解析固化的档位原样透传（缺省不携带 = 旧 Runtime 的
+          // approval_required 语义）。
+          ...(payload.approvalPolicy !== undefined
+            ? { approvalPolicy: payload.approvalPolicy }
+            : {}),
         },
       }
       this.deps.supervisor.dispatchToRuntime(runId, initialize)

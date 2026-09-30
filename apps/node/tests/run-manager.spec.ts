@@ -287,6 +287,29 @@ describe('run.start 处理链', () => {
     expect(payload.dshHomePath).not.toContain(join('runtime-home', RUN_ID))
   })
 
+  it('切片⑧ 审批档位：initialize 透传 approvalPolicy（缺省不携带 = 旧语义）', async () => {
+    // 同一 harness 起两个 Run（makeHarness 不能调两次——workspace 名会撞）：第一个
+    // 不带字段（对照），第二个带 full_access。
+    const h = await makeHarness()
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    const init1 = h.runtimes[0]!.stdin[0]! as Extract<
+      RuntimeCommand,
+      { type: 'runtime.initialize' }
+    >
+    expect(init1.payload.approvalPolicy).toBeUndefined()
+
+    const FULL_ACCESS_RUN_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    await h.manager.handleFrame(
+      runStartFrame(h.workspaceId, {
+        commandId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        runId: FULL_ACCESS_RUN_ID,
+        approvalPolicy: 'full_access',
+      }),
+    )
+    const init2 = h.runtimes[1]!.stdin[0] as Extract<RuntimeCommand, { type: 'runtime.initialize' }>
+    expect(init2.payload.approvalPolicy).toBe('full_access')
+  })
+
   it('容量满 → ack accepted=false NODE_CAPACITY_REACHED，第三个不 spawn', async () => {
     const h = await makeHarness()
     await h.manager.handleFrame(runStartFrame(h.workspaceId))

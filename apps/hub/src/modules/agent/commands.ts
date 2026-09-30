@@ -23,6 +23,8 @@ export interface ProfileFields {
   credentialSlot: string
   maxTokens?: number | null
   pluginPackId: string
+  /** 默认审批档（#241）：缺省 = approval_required（与既有行为一致）。 */
+  approvalPolicy?: 'approval_required' | 'full_access'
 }
 
 /**
@@ -30,7 +32,11 @@ export interface ProfileFields {
  * 固定按字典序排列字段键，确保同语义输入必得同 digest（可重算）。
  */
 export function computeProfileDigest(input: ProfileFields): string {
+  // #241：approvalPolicy 进 canonical JSON——档位是 Revision 行为的一部分，两个只差
+  // 档位的 Revision 就是不同的 Revision。存量 Revision 的 digest 是存库值、不重算
+  //（Run 固化的也是存库值），互不影响；只有新建的 Revision 用七键口径。
   const canonical = JSON.stringify({
+    approvalPolicy: input.approvalPolicy ?? 'approval_required',
     credentialSlot: input.credentialSlot,
     maxTokens: input.maxTokens ?? null,
     model: input.model,
@@ -97,6 +103,7 @@ export async function createAgent(
         ...(input.maxTokens !== undefined && input.maxTokens !== null
           ? { maxTokens: input.maxTokens }
           : {}),
+        ...(input.approvalPolicy !== undefined ? { approvalPolicy: input.approvalPolicy } : {}),
         pluginPackId: input.pluginPackId,
         profileDigest,
         createdBy: input.createdBy,
@@ -165,6 +172,7 @@ export async function createProfileRevision(
       ...(input.maxTokens !== undefined && input.maxTokens !== null
         ? { maxTokens: input.maxTokens }
         : {}),
+      ...(input.approvalPolicy !== undefined ? { approvalPolicy: input.approvalPolicy } : {}),
       pluginPackId: input.pluginPackId,
       profileDigest,
       createdBy: input.createdBy,

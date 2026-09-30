@@ -59,6 +59,7 @@ function runDetailHandlers(run: TaskRoomRun): MockHandler[] {
     failureSummary: null,
     rerunOfRunId: run.rerunOfRunId,
     resumeFromRunId: run.resumeFromRunId ?? null,
+    approvalPolicy: 'approval_required',
     profileDigest: 'b'.repeat(64),
     createdAt: run.createdAt,
     startedAt: run.startedAt,

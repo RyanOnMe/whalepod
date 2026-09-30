@@ -3,6 +3,7 @@ import {
   char,
   check,
   integer,
+  pgEnum,
   pgTable,
   text,
   timestamp,
@@ -15,6 +16,9 @@ import { userAccounts } from './identity.js'
 import { pluginPacks } from './plugin.js'
 
 // Agent/Profile 域表结构以 03-领域模型与运行协议.md §2.3 为准。
+/** 审批档位（#241；ADR-0009 决策 7）：Run 内工具调用的授权姿态。 */
+export const approvalPolicy = pgEnum('approval_policy', ['approval_required', 'full_access'])
+
 export const agents = pgTable('agent', {
   id: uuid('id').primaryKey(),
   name: varchar('name', { length: 80 }).notNull().unique(),
@@ -42,6 +46,9 @@ export const agentProfileRevisions = pgTable(
     model: varchar('model', { length: 200 }).notNull(),
     credentialSlot: varchar('credential_slot', { length: 80 }).notNull(),
     maxTokens: integer('max_tokens'),
+    // 默认审批档（#241）：非空，默认 approval_required。进 profileDigest 的
+    // canonical JSON（档位是 Revision 行为的一部分）；Task 可覆盖（见 task 表）。
+    approvalPolicy: approvalPolicy('approval_policy').notNull().default('approval_required'),
     pluginPackId: uuid('plugin_pack_id')
       .notNull()
       .references(() => pluginPacks.id),

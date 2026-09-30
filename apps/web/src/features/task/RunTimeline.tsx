@@ -95,6 +95,13 @@ export function RunTimeline({ runs, selectedRunId, onSelect }: RunTimelineProps)
                 {resumeLineageLabel(ordinal.get(run.resumeFromRunId))}
               </p>
             ) : null}
+            {/* #241（ADR-0009 决策 7）：full_access 是显式放权，运行卡必须显著标记——
+                团队里谁都能看出「这次没走逐次批准」，不靠翻设置页。 */}
+            {run.approvalPolicy === 'full_access' ? (
+              <p className="run-lineage" data-testid="run-full-access">
+                完全权限（工具调用未逐次批准）
+              </p>
+            ) : null}
           </button>
         </li>
       ))}

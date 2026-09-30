@@ -108,12 +108,22 @@ export class SessionOwner {
         )
       }
       ports.approval.install(agentCtx)
-      // Runtime 姿态：本 Run 内每次工具调用都要回 Node 拿一次性批准（不永久授权）。
+      // Runtime 姿态（#241 起）
+      // 档位化——值来自 Hub 解析固化（Task 覆盖 ?? Revision 默认），Runtime 不自行判断：
+      //   * approval_required（缺省，现状语义）：本 Run 内每次工具调用都回 Node 拿
+      //     一次性批准（不永久授权）；
+      //   * full_access：直接放行（责任人对**自己凭据**的显式放权，ADR-0009 决策 7；
+      //     口径按 ADR-0010 决策 5：触发方式不影响档位，不做自动降级）。ApprovalPort
+      //     仍装配——full_access 下 pre-execute 不再产生询问，port 只是静默闲置。
       agentCtx.on('tools/pre-execute', (exec): Promise<PreToolDecision> =>
-        Promise.resolve({
-          kind: 'ask',
-          reason: `Run tool call requires approval: ${exec.name}`,
-        }),
+        Promise.resolve(
+          spec.approvalPolicy === 'full_access'
+            ? { kind: 'allow' }
+            : {
+                kind: 'ask',
+                reason: `Run tool call requires approval: ${exec.name}`,
+              },
+        ),
       )
       const systemPrompt = agentCtx.get('systemPrompt') as SystemPromptLike | undefined
       systemPrompt?.section({ name: PERSONA_SECTION, order: 0, text: spec.persona })

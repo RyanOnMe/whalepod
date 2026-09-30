@@ -151,6 +151,7 @@ function runDetailHandlers(ownerUserId: string, events: unknown[]): MockHandler[
     failureCode: null,
     failureSummary: null,
     resumeFromRunId: null,
+    approvalPolicy: 'approval_required',
     rerunOfRunId: null,
     profileDigest: 'b'.repeat(64),
     createdAt: '2026-08-25T00:00:00.000Z',

@@ -12,6 +12,7 @@ import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
 import { SelectMenu } from '../../shared/SelectMenu.js'
+import { ConfirmDialog } from '../../shared/ConfirmDialog.js'
 import type {
   AgentDetailView,
   AgentView,
@@ -103,6 +104,13 @@ export function RunLauncher({ task, session, hasActiveRun }: RunLauncherProps): 
     [deviceWorkspaces],
   )
 
+  // #241：本次 Run 将解析到的审批档 = Task 覆盖 ?? 所选（缺省当前）Revision 的默认。
+  // 与 Hub 建Run时的解析同式——UI 只用于「要不要二次确认」与提示，不越权预判结果。
+  const selectedRevision = revisions.find((revision) => revision.id === effectiveRevisionId)
+  const resolvedApprovalPolicy =
+    task.approvalPolicy ?? selectedRevision?.approvalPolicy ?? 'approval_required'
+  const [confirmingFullAccess, setConfirmingFullAccess] = useState(false)
+
   const start = useMutation({
     mutationFn: () =>
       api.mutate<RunView>(`/tasks/${task.id}/runs`, {
@@ -111,8 +119,19 @@ export function RunLauncher({ task, session, hasActiveRun }: RunLauncherProps): 
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(task.id) })
       setPrompt('')
+      setConfirmingFullAccess(false)
     },
   })
+
+  const submitRun = (): void => {
+    if (!ready || start.isPending) return
+    // 完全权限是显式放权（ADR-0009 决策 7）：确认一次再发。
+    if (resolvedApprovalPolicy === 'full_access') {
+      setConfirmingFullAccess(true)
+      return
+    }
+    start.mutate()
+  }
 
   // 只有已接受指派的责任人、非终态任务、无活跃 Run 时可启动（03 §3.2 前置守卫；
   // Hub 侧仍有完整校验，这里是诚实呈现而非安全边界）。
@@ -138,7 +157,7 @@ export function RunLauncher({ task, session, hasActiveRun }: RunLauncherProps): 
       <form
         onSubmit={(event) => {
           event.preventDefault()
-          if (ready && !start.isPending) start.mutate()
+          submitRun()
         }}
       >
         <div className="field">
@@ -205,6 +224,13 @@ export function RunLauncher({ task, session, hasActiveRun }: RunLauncherProps): 
           />
         </label>
         {/* #225：错误走全站口径（message + requestId），不再自写第二套错误段。 */}
+        {/* #241：解析结果可见——选了完全权限（覆盖或 Revision 默认）就说出来，
+            不等人发现运行卡上的标记才知道自己放权了。 */}
+        {resolvedApprovalPolicy === 'full_access' ? (
+          <p className="mutation-hint" data-testid="run-policy-hint">
+            本次 Run 将以「完全权限」运行：工具调用不再逐次请求批准。
+          </p>
+        ) : null}
         {start.isError ? <ErrorBanner error={start.error} /> : null}
         <button
           type="submit"
@@ -214,6 +240,18 @@ export function RunLauncher({ task, session, hasActiveRun }: RunLauncherProps): 
           {start.isPending ? '启动中…' : '启动 Run'}
         </button>
       </form>
+      {confirmingFullAccess ? (
+        <ConfirmDialog
+          open
+          title="以完全权限启动 Run？"
+          body="这次 Run 的工具调用将直接执行、不再逐次请求批准（档位：任务覆盖或 Revision 默认的完全权限）。运行卡会标记「完全权限」。确认前请确信 Agent 的 persona 与插件组合可信。"
+          confirmLabel="确认以完全权限启动"
+          danger
+          pending={start.isPending}
+          onConfirm={() => start.mutate()}
+          onCancel={() => setConfirmingFullAccess(false)}
+        />
+      ) : null}
     </section>
   )
 }

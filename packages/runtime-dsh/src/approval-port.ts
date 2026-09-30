@@ -1,8 +1,13 @@
 /**
  * Approval answerer（03 §7.1/§7.2）：把 DSH 的 `approval/request` 瀑布转成
  * `approval.requested` output 帧，挂起等待 Node 下行的 `approval.decide`，
- * 一次性映射回 DSH outcome。WhalePod 红线：只有 `allowed-once` 是授权
+ * 一次性映射回 DSH outcome。WhalePod 红线：**逐次**授权只有 `allowed-once`
  * （07 §2 user-approval 结论），不做任何永久授权。
+ *
+ * #241（ADR-0009 决策 7）的口径：`full_access` 档位**不是**这里的新授权形态——
+ * 它是建 Run 时由 Task 责任人显式设置、经 `runs.approval_policy` 快照固化的
+ * 放权，落点在 session-owner 的 pre-execute（直接 allow，不产生询问）；本 Port
+ * 在 full_access 下静默闲置（装配保留，装与不装不改变该档行为）。
  *
  * 决定迟到（turn 已被取消/请求已被 signal 撤回）时静默丢弃并记日志——
  * Node 与 Runtime 之间的 decide/取消竞态是常态，不是错误。

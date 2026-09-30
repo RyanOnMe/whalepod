@@ -69,6 +69,51 @@ describe('probe: approval interception and tool registration', () => {
     }
   })
 
+  /**
+   * 切片⑧（#241；ADR-0009 决策 7）：full_access 档——initialize 带
+   * approvalPolicy='full_access' 时 pre-execute 直接放行：
+   *   * 全程**零** approval.requested（不存在等待人批准的中间态）；
+   *   * 工具照常执行并产出 artifact.candidate；
+   *   * 与 approval_required 的差别只在拦截层，工具语义不变。
+   * 判据是可失败的：`until('approval.requested')` 的竞速版本——等 run.completed
+   * 后断言输出流里没有 approval.requested 帧（有就是档位没生效）。
+   */
+  it('full_access: tool runs without any approval.requested frame, candidate still emitted', async () => {
+    const base = runtimeSpec()
+    const spec = { ...base, approvalPolicy: 'full_access' as const }
+    // 场景复用 tool-approval 的 fixture：模型侧剧本（调工具、收结果）与档位无关，
+    // 档位只改变 runtime 的 pre-exec 决策——这正是本用例要验的差别面。
+    const runtime = await startReplayRuntime('tool-approval', spec)
+    try {
+      await runtime.send(initializeCommand(spec))
+      await runtime.until('runtime.ready')
+      await runtime.send(
+        commandFrame('run.prompt', { runId: spec.runId, text: 'publish the report' }),
+      )
+
+      const candidate = await runtime.until('artifact.candidate')
+      expect(candidate.payload).toMatchObject({
+        runId: spec.runId,
+        relativePath: 'out/report.md',
+        title: 'Report',
+        mediaType: 'text/markdown',
+      })
+      await runtime.until('run.completed')
+
+      expect(
+        runtime.outputs.some((frame) => frame.type === 'approval.requested'),
+        'full_access 下不应有任何 approval.requested 帧',
+      ).toBe(false)
+
+      const events = sessionEventsOf(runtime.outputs)
+      const result = events.find((e) => e.type === 'tool/result')
+      expect(result).toBeDefined()
+      expect(JSON.stringify(result?.data)).not.toContain('"isError":true')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('rejected blocks the tool call: no artifact.candidate, error tool result, run still completes', async () => {
     const spec = runtimeSpec()
     const runtime = await startReplayRuntime('tool-approval', spec)

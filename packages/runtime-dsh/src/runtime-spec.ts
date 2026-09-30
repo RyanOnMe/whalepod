@@ -35,6 +35,13 @@ export interface RuntimeSpec {
    * 日志不在本机，装载会退化/失败（bridge 的身份校验 fail loud）。
    */
   readonly resumeSessionId?: string
+  /**
+   * ADR-0009 切片⑧（审批档位，#241）：本 Run 的工具授权姿态。缺省 =
+   * approval_required（ask-all，现状语义）；full_access 时 SessionOwner 的
+   * pre-execute 直接放行，不发 approval.requested。值由 Hub 解析固化后经
+   * initialize 下发，Runtime 不自行判断。
+   */
+  readonly approvalPolicy?: 'approval_required' | 'full_access'
 }
 
 type InitializeCommand = Extract<RuntimeCommand, { type: 'runtime.initialize' }>
@@ -46,6 +53,7 @@ export function runtimeSpecFromInitialize(command: InitializeCommand): RuntimeSp
     artifactInputs,
     artifactInputsDir,
     resumeSessionId,
+    approvalPolicy,
     ...rest
   } = command.payload
   // exactOptionalPropertyTypes：zod 的 optional 产出 `number | undefined`，
@@ -57,6 +65,7 @@ export function runtimeSpecFromInitialize(command: InitializeCommand): RuntimeSp
     ...(artifactInputs === undefined ? {} : { artifactInputs }),
     ...(artifactInputsDir === undefined ? {} : { artifactInputsDir }),
     ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
+    ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
   }
 }
 

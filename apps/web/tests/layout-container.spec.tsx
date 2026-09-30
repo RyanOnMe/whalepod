@@ -49,6 +49,7 @@ const BUILDER_REVISION: ProfileRevisionView = {
   model: 'deepseek-chat',
   credentialSlot: 'default',
   maxTokens: 8192,
+  approvalPolicy: 'approval_required',
   pluginPackId: 'eeeeeeee-0000-4000-8000-000000000001',
   profileDigest: 'a'.repeat(64),
   createdBy: ALICE.userId,

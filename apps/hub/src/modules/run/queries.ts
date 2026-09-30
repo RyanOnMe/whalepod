@@ -24,6 +24,8 @@ export interface RunView {
   failureSummary: string | null
   rerunOfRunId: string | null
   resumeFromRunId: string | null
+  /** 本 Run 固化的审批档（#241）：运行卡据此标记「完全权限」。 */
+  approvalPolicy: 'approval_required' | 'full_access'
   profileDigest: string
   pluginPackDigest: string
   dshDistributionVersion: string
@@ -47,6 +49,7 @@ export function toRunView(row: RunRow): RunView {
     failureSummary: row.failureSummary,
     rerunOfRunId: row.rerunOfRunId,
     resumeFromRunId: row.resumeFromRunId,
+    approvalPolicy: row.approvalPolicy,
     profileDigest: row.profileDigest,
     pluginPackDigest: row.pluginPackDigest,
     dshDistributionVersion: row.dshDistributionVersion,
