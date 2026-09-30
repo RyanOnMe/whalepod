@@ -11,7 +11,7 @@
  *   digest 必不同；
  * - 口径（ADR-0010 决策 5）：不做自动触发降级——触发方式不影响档位，不在本 spec 范围。
  */
-import { eq, sql } from 'drizzle-orm'
+import { desc, eq, sql } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@whalepod/db'
 import { schema } from '@whalepod/db'
@@ -198,6 +198,8 @@ describe('approval policy resolution chain (ADR-0009 slice 8, #241)', () => {
       .select({ approvalPolicy: schema.agentProfileRevisions.approvalPolicy })
       .from(schema.agentProfileRevisions)
       .where(eq(schema.agentProfileRevisions.agentId, bobChain.agentId))
+      .orderBy(desc(schema.agentProfileRevisions.revision))
+      .limit(1)
     expect(v2rowPolicy?.approvalPolicy).toBe('full_access')
 
     const run = await createRun()
