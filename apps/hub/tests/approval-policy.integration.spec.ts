@@ -193,6 +193,13 @@ describe('approval policy resolution chain (ADR-0009 slice 8, #241)', () => {
     await seedWorld()
     const v2 = await createRevision('full_access')
     expect(v2.status).toBe(201)
+    // 行级判据（CI 教训）：digest 差分只证明入参层，这里先钉住 v2 行真的带 full_access。
+    const [v2rowPolicy] = await database.db
+      .select({ approvalPolicy: schema.agentProfileRevisions.approvalPolicy })
+      .from(schema.agentProfileRevisions)
+      .where(eq(schema.agentProfileRevisions.agentId, bobChain.agentId))
+    expect(v2rowPolicy?.approvalPolicy).toBe('full_access')
+
     const run = await createRun()
     expect(run.data?.approvalPolicy).toBe('full_access')
     // 且用的是当前 Revision（v2）。

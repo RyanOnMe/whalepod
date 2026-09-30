@@ -83,6 +83,9 @@ export async function insertProfileRevision(
       ...(revision.maxTokens !== undefined && revision.maxTokens !== null
         ? { maxTokens: revision.maxTokens }
         : {}),
+      // #241：缺省不携带 → DB default（approval_required）兜底；显式值必须落行——
+      // digest 由入参算出，行值丢字段时 digest 用例抓不到（CI 实测教训）。
+      ...(revision.approvalPolicy !== undefined ? { approvalPolicy: revision.approvalPolicy } : {}),
       pluginPackId: revision.pluginPackId,
       profileDigest: revision.profileDigest,
       createdBy: revision.createdBy,
