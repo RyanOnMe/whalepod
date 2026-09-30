@@ -119,15 +119,29 @@ export const SendInstructionRequestSchema = z.strictObject({
  * profileRevisionId 缺省时由 Hub 取 Agent 当前 Revision（§2.3）。
  * rerunOfRunId：显式重跑血缘（§2.6 rerun_of_run_id；P1-16 G7-04）——必须指向
  * 同 Task 的终态 Run，存在性/终态/同 Task 校验在 Hub 命令层（orchestrator）。
+ * resumeFromRunId（ADR-0009 切片⑤）：续跑血缘——接着上次会话聊，与 rerun
+ * （不带上下文重来）是两个动作，**互斥**（同请求同时带两者即畸形，fail-closed）。
+ * 除 rerun 的守卫外，Hub 还要求来源 Run 同 Workspace 且同 Device（ResumeAgentOptions
+ * 不收 cwd，工作目录来自持久化 header；换设备连日志都没有）。
  */
-export const CreateRunRequestSchema = z.strictObject({
-  agentId: z.uuid(),
-  profileRevisionId: z.uuid().optional(),
-  deviceId: z.uuid(),
-  workspaceId: z.uuid(),
-  prompt: z.string().min(1).max(20_000),
-  rerunOfRunId: z.uuid().optional(),
-})
+export const CreateRunRequestSchema = z
+  .strictObject({
+    agentId: z.uuid(),
+    profileRevisionId: z.uuid().optional(),
+    deviceId: z.uuid(),
+    workspaceId: z.uuid(),
+    prompt: z.string().min(1).max(20_000),
+    rerunOfRunId: z.uuid().optional(),
+    resumeFromRunId: z.uuid().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.rerunOfRunId !== undefined && value.resumeFromRunId !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'rerunOfRunId and resumeFromRunId are mutually exclusive',
+      })
+    }
+  })
 
 /**
  * POST /runs/:runId/followup（§6.3；ADR-0009 决策 3）：往活跃 Run 里继续说话。

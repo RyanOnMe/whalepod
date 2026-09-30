@@ -47,7 +47,7 @@ _Avoid_：Agent、Workspace、Team Server
 _Avoid_：Project、共享文件夹、仓库对象
 
 **Run**：
-Task 的一次可独立取消、失败、完成或重跑的执行尝试，固化 Agent、责任人、Workspace 与 Profile Revision。
+Task 的一次可独立取消、失败、完成或重跑（rerun，不带上下文重来）或续跑（resume，接着来源 Run 的上次会话聊）的执行尝试，固化 Agent、责任人、Workspace 与 Profile Revision。
 _Avoid_：Task、DSH Session、进程
 
 **Runtime**：
@@ -55,7 +55,7 @@ _Avoid_：Task、DSH Session、进程
 _Avoid_：Hub、Agent、Device Node
 
 **DSH Session**：
-Runtime 内部的追加式执行日志与 Agent 上下文来源；它不承担团队权限或 Task 生命周期。
+Runtime 内部的追加式执行日志与 Agent 上下文来源；它不承担团队权限或 Task 生命周期。续跑（resume）就是按同一 session id 把这份日志装载回来继续追加。
 _Avoid_：Run、Task Room、团队活动流
 
 **Run Projection**：

@@ -81,12 +81,12 @@ export class SessionOwner {
     events: SessionOwnerEvents,
     log: LogSink,
     /**
-     * **探针专用**（#176 切片①）：非空时改走 DSH 的 persisted load
-     * （`ctx.agents.resume({ resumeSessionId })`），把既有会话日志按**同一 session id**
-     * 重新装载并继续追加，而不是新建会话。生产路径当前恒为 undefined（Hub 还没有
-     * resume 语义）；切片⑤ 把它提升为产品面时，本参数与 wire 字段一并转正。
+     * 续跑的装载身份（ADR-0009 切片⑤转正）：非空时改走 DSH 的 persisted load
+     * （`ctx.agents.resume({ resumeSessionId })`），把既有会话日志按**同一
+     * session id** 重新装载并继续追加，而不是新建会话。产品面来自 wire 字段
+     * （initialize.resumeSessionId，经 spec 传入）；探针路径仍可显式注入。
      */
-    probeResumeSessionId?: string,
+    resumeSessionId?: string,
   ): Promise<SessionOwner> {
     const agentOptions = {
       provider: spec.provider,
@@ -119,7 +119,7 @@ export class SessionOwner {
       systemPrompt?.section({ name: PERSONA_SECTION, order: 0, text: spec.persona })
     }
     const handle =
-      probeResumeSessionId === undefined
+      resumeSessionId === undefined
         ? await ctx.agents.create({
             sessionId: SessionId(dshSessionIdOf(spec)),
             meta: { cwd: spec.workspacePath },
@@ -127,7 +127,7 @@ export class SessionOwner {
             setup,
           })
         : await ctx.agents.resume({
-            resumeSessionId: SessionId(probeResumeSessionId),
+            resumeSessionId: SessionId(resumeSessionId),
             agentOptions,
             setup,
           })

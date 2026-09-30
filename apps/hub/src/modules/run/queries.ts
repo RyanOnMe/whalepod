@@ -23,6 +23,7 @@ export interface RunView {
   failureCode: string | null
   failureSummary: string | null
   rerunOfRunId: string | null
+  resumeFromRunId: string | null
   profileDigest: string
   pluginPackDigest: string
   dshDistributionVersion: string
@@ -45,6 +46,7 @@ export function toRunView(row: RunRow): RunView {
     failureCode: row.failureCode,
     failureSummary: row.failureSummary,
     rerunOfRunId: row.rerunOfRunId,
+    resumeFromRunId: row.resumeFromRunId,
     profileDigest: row.profileDigest,
     pluginPackDigest: row.pluginPackDigest,
     dshDistributionVersion: row.dshDistributionVersion,

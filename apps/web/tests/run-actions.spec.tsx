@@ -47,6 +47,7 @@ function makeRunView(overrides: Partial<RunView> = {}): RunView {
     failureCode: 'RUNTIME_LOST',
     failureSummary: 'runtime exited unexpectedly (code=1)',
     rerunOfRunId: null,
+    resumeFromRunId: null,
     profileDigest: 'b'.repeat(64),
     createdAt: '2026-08-25T00:00:00.000Z',
     startedAt: '2026-08-25T00:01:00.000Z',
@@ -342,5 +343,73 @@ describe('#225 批次①：取消/重跑后页面数据真的刷新；错误走�
     const cancelAlert = alerts.find((el) => el.textContent?.includes('cancel blew up'))
     expect(cancelAlert).toBeDefined()
     expect(cancelAlert).toHaveTextContent('req-cancel-500')
+  })
+})
+
+describe('切片⑤ resume：终态 Run 的「接着聊」与血缘句（#237）', () => {
+  it('「接着上次聊」提交体带 resumeFromRunId 与来源 Run 的目标（不换设备/工作区）', async () => {
+    const task = taskWith([])
+    const captures: { resumeBodies: unknown[] } = { resumeBodies: [] }
+    const user = userEvent.setup()
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task, { runs: [makeRun({ id: RUN_ID, status: 'completed' })] }),
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/runs/${RUN_ID}$`),
+          respond: () => ok(makeRunView({ status: 'completed', taskId: task.id })),
+        },
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/runs/${RUN_ID}/events`),
+          respond: () => ok({ events: [] }),
+        },
+        {
+          method: 'POST',
+          url: /\/api\/v1\/tasks\/[^/]+\/runs$/,
+          respond: (init) => {
+            captures.resumeBodies.push(JSON.parse(String(init.body ?? '{}')))
+            return created({ id: 'new-resume-run', status: 'queued' })
+          },
+        },
+        teamMembersHandler([]),
+      ]),
+    )
+    await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
+    await user.click(await screen.findByRole('button', { name: '接着上次聊' }))
+    const box = await screen.findByTestId('rerun-prompt')
+    await user.type(box, '继续刚才的思路')
+    await user.click(screen.getByRole('button', { name: '确认续跑' }))
+    await waitFor(() => expect(captures.resumeBodies).toHaveLength(1))
+    expect(captures.resumeBodies[0]).toMatchObject({
+      agentId: AGENT_ID,
+      deviceId: DEVICE_ID,
+      workspaceId: WORKSPACE_ID,
+      resumeFromRunId: RUN_ID,
+      prompt: '继续刚才的思路',
+    })
+    // resume 语义下不带 rerunOfRunId（协议互斥，superRefine fail-closed）。
+    expect(captures.resumeBodies[0]).not.toHaveProperty('rerunOfRunId')
+  })
+
+  it('血缘句区分两个动作：「续跑自第 N 次运行」不上 rerun 的措辞', async () => {
+    const task = taskWith([])
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task, {
+          runs: [
+            makeRun({ id: SOURCE_RUN_ID, status: 'completed' }),
+            makeRun({ id: RUN_ID, status: 'queued', resumeFromRunId: SOURCE_RUN_ID }),
+          ],
+        }),
+        teamMembersHandler([]),
+      ]),
+    )
+    const lineage = await screen.findByTestId('run-lineage')
+    expect(lineage).toHaveTextContent('续跑自第 1 次运行')
+    expect(lineage.textContent ?? '').not.toContain('重跑自')
+    expect(lineage).toHaveAttribute('title', SOURCE_RUN_ID)
   })
 })

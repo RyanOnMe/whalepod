@@ -110,6 +110,10 @@ export function registerRunRoutes(app: FastifyInstance, deps: RunRoutesDeps): vo
         dshDistributionVersion,
         // G7-04：显式重跑血缘（同 Task 终态 Run 的存在性/终态校验在命令层）。
         ...(body.data.rerunOfRunId !== undefined ? { rerunOfRunId: body.data.rerunOfRunId } : {}),
+        // ADR-0009 切片⑤：续跑血缘（与 rerun 互斥由协议 superRefine 拒绝）。
+        ...(body.data.resumeFromRunId !== undefined
+          ? { resumeFromRunId: body.data.resumeFromRunId }
+          : {}),
       })
       return reply.status(201).send({ ok: true, data: run })
     } catch (error) {

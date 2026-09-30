@@ -16,7 +16,7 @@ import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
 import { RUN_STATUS_LABEL } from '../../shared/format.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
-import { rerunLineageLabel, runOrdinalLabels } from './runLabels.js'
+import { resumeLineageLabel, rerunLineageLabel, runOrdinalLabels } from './runLabels.js'
 import type { RunEventItem, Session, TaskRoomRun, TaskView } from '../../shared/api/types.js'
 
 export interface RunTimelineProps {
@@ -84,10 +84,15 @@ export function RunTimeline({ runs, selectedRunId, onSelect }: RunTimelineProps)
                 </dd>
               </div>
             </dl>
-            {/* P1-16 G7-04：显式重跑血缘（03 §2.6 rerun_of_run_id）。 */}
+            {/* P1-16 G7-04：显式重跑血缘；切片⑤：续跑血缘（两个动作，措辞分开）。 */}
             {run.rerunOfRunId !== null ? (
               <p className="run-lineage" data-testid="run-lineage" title={run.rerunOfRunId}>
                 {rerunLineageLabel(ordinal.get(run.rerunOfRunId))}
+              </p>
+            ) : null}
+            {run.resumeFromRunId !== null ? (
+              <p className="run-lineage" data-testid="run-lineage" title={run.resumeFromRunId}>
+                {resumeLineageLabel(ordinal.get(run.resumeFromRunId))}
               </p>
             ) : null}
           </button>

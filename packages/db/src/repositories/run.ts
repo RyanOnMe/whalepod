@@ -21,6 +21,7 @@ export interface NewRun {
   dshDistributionVersion: string
   status?: RunRow['status']
   rerunOfRunId?: string
+  resumeFromRunId?: string
   dshSessionId?: string
   failureCode?: string
   failureSummary?: string

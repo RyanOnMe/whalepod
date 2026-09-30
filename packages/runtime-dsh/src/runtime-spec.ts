@@ -28,13 +28,26 @@ export interface RuntimeSpec {
    */
   readonly artifactInputs?: readonly RuntimeArtifactInput[]
   readonly artifactInputsDir?: string
+  /**
+   * ADR-0009 切片⑤（resume 续跑）的装载身份：携带时 Runtime 用
+   * ctx.agents.resume 续既有会话（persisted load），而不是新建 session。
+   * 它必须配合 dshHomePath 指向来源 Run 的 home（Node 侧保证）——否则存储
+   * 日志不在本机，装载会退化/失败（bridge 的身份校验 fail loud）。
+   */
+  readonly resumeSessionId?: string
 }
 
 type InitializeCommand = Extract<RuntimeCommand, { type: 'runtime.initialize' }>
 
 export function runtimeSpecFromInitialize(command: InitializeCommand): RuntimeSpec {
-  const { maxTokens, pluginPackOverlayPath, artifactInputs, artifactInputsDir, ...rest } =
-    command.payload
+  const {
+    maxTokens,
+    pluginPackOverlayPath,
+    artifactInputs,
+    artifactInputsDir,
+    resumeSessionId,
+    ...rest
+  } = command.payload
   // exactOptionalPropertyTypes：zod 的 optional 产出 `number | undefined`，
   // 桥内形态要求键存在即有效值。
   return {
@@ -43,6 +56,7 @@ export function runtimeSpecFromInitialize(command: InitializeCommand): RuntimeSp
     ...(pluginPackOverlayPath === undefined ? {} : { pluginPackOverlayPath }),
     ...(artifactInputs === undefined ? {} : { artifactInputs }),
     ...(artifactInputsDir === undefined ? {} : { artifactInputsDir }),
+    ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
   }
 }
 

@@ -22,6 +22,7 @@
         "sha256": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
       }
     ],
-    "artifactInputsDir": "<runtime-inputs>/01905f7c-0000-7000-8000-000000000301"
+    "artifactInputsDir": "<runtime-inputs>/01905f7c-0000-7000-8000-000000000301",
+    "resumeSessionId": "whalepod-run-01905f7c-0000-7000-8000-000000000301"
   }
 }

@@ -328,7 +328,13 @@ export class RunManager {
         payload: {
           runId,
           workspacePath,
-          dshHomePath: this.deps.runtimeHomeFor(runId),
+          // 切片⑤（resume）：续跑 Run 的 DSH_HOME 必须指向**来源 Run** 的 home——
+          // runtimeHomeFor 按 runId 隔离，新 runId 的 home 里没有旧日志，resume
+          // 的 persisted load 会找不到存储。resumeSessionId 直达装载身份。
+          dshHomePath: this.deps.runtimeHomeFor(payload.resumeOfRunId ?? runId),
+          ...(payload.resumeSessionId !== undefined
+            ? { resumeSessionId: payload.resumeSessionId }
+            : {}),
           profileDigest: payload.expectedProfileDigest,
           pluginPackDigest: payload.expectedPluginPackDigest,
           ...(pluginPackOverlayPath !== undefined ? { pluginPackOverlayPath } : {}),

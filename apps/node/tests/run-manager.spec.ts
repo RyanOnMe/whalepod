@@ -267,6 +267,26 @@ describe('run.start 处理链', () => {
     expect(payload.persona).toBe('test persona')
   })
 
+  it('切片⑤ resume：initialize 的 resumeSessionId 透传、dshHomePath 指向**来源 Run** 的 home', async () => {
+    const h = await makeHarness()
+    const SOURCE_RUN_ID = '99999999-9999-4999-8999-999999999999'
+    await h.manager.handleFrame(
+      runStartFrame(h.workspaceId, {
+        resumeOfRunId: SOURCE_RUN_ID,
+        resumeSessionId: `whalepod-run-${SOURCE_RUN_ID}`,
+      }),
+    )
+    const init = h.runtimes[0]!.stdin[0]!
+    expect(init.type).toBe('runtime.initialize')
+    const payload = (init as Extract<RuntimeCommand, { type: 'runtime.initialize' }>).payload
+    // 装载身份直达 Runtime（ctx.agents.resume 的对象）。
+    expect(payload.resumeSessionId).toBe(`whalepod-run-${SOURCE_RUN_ID}`)
+    // DSH_HOME 复用来源 Run 的隔离目录——新 runId 的 home 里没有旧日志，
+    // persisted load 会找不到存储（探针 #176 的复用前提，Node 侧的落点）。
+    expect(payload.dshHomePath).toContain(join('runtime-home', SOURCE_RUN_ID))
+    expect(payload.dshHomePath).not.toContain(join('runtime-home', RUN_ID))
+  })
+
   it('容量满 → ack accepted=false NODE_CAPACITY_REACHED，第三个不 spawn', async () => {
     const h = await makeHarness()
     await h.manager.handleFrame(runStartFrame(h.workspaceId))

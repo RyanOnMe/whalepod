@@ -59,6 +59,7 @@ export const HTTP_FIXTURE_SCHEMAS: Record<string, ZodType> = {
   'create-pairing-code-request': CreatePairingCodeRequestSchema,
   'create-project-request': CreateProjectRequestSchema,
   'create-run-request': CreateRunRequestSchema,
+  'create-run-resume-request': CreateRunRequestSchema,
   'create-task-request': CreateTaskRequestSchema,
   'decide-approval-request': DecideApprovalRequestSchema,
   'login-request': LoginRequestSchema,

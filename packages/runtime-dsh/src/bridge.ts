@@ -270,7 +270,9 @@ export class RuntimeBridge {
      * 「接上的是同一条线程」会变成同义反复。所以先立期望值（在 owner 创建前，
      * 事件回调闭包要用），owner 起来后立刻用真实值覆盖并**对不上就抛**（fail loud）。
      */
-    let dshSessionId = options.probeResumeSessionId ?? dshSessionIdOf(spec)
+    // 切片⑤：wire 字段（spec.resumeSessionId）是产品真源；探针注入是兼容口。
+    const resumeSessionId = spec.resumeSessionId ?? options.probeResumeSessionId
+    let dshSessionId = resumeSessionId ?? dshSessionIdOf(spec)
     const emit = (output: RuntimeOutput): void => options.emit(output)
 
     // DSH_HOME 是本进程级契约（dsh-home-paths 经 $DSH_HOME 解析）；一个 Runtime
@@ -335,7 +337,7 @@ export class RuntimeBridge {
       },
       events,
       log,
-      options.probeResumeSessionId,
+      resumeSessionId,
     )
     // 真实值覆盖 + 一致性校验：resume 探测时若 DSH 装载的 id 与请求不符（例如退化成新建），
     // 这里当场炸，而不是让探针"绿着"。
