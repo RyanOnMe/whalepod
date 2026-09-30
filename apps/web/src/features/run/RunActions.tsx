@@ -124,12 +124,7 @@ export function RunActions({ run, session }: { run: RunView; session: Session })
             </button>
           </div>
         ) : (
-          <button
-            type="button"
-            className="button"
-            data-testid="rerun-button"
-            onClick={openRerun}
-          >
+          <button type="button" className="button" data-testid="rerun-button" onClick={openRerun}>
             重跑此 Run
           </button>
         )
