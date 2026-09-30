@@ -38,6 +38,14 @@ export function rerunLineageLabel(sourceRunLabel: string | undefined): string {
   return sourceRunLabel === undefined ? '重跑自来源运行' : `重跑自${sourceRunLabel}`
 }
 
+/**
+ * 切片⑤（#237）：续跑血缘句——与 rerun 是两个动作（rerun=不带上下文重来，
+ * resume=接着上次会话聊），措辞必须分开，用户才读得出「这条会记得上文」。
+ */
+export function resumeLineageLabel(sourceRunLabel: string | undefined): string {
+  return sourceRunLabel === undefined ? '续跑自来源运行' : `续跑自${sourceRunLabel}`
+}
+
 /** Artifact 的来源运行格：那个 Run 不在本任务的运行记录里时的人话兜底。 */
 export const RUN_NOT_IN_TIMELINE_LABEL = '不在本任务的运行记录中'
 

@@ -77,6 +77,9 @@ export const runs = pgTable(
     failureCode: varchar('failure_code', { length: 64 }),
     failureSummary: varchar('failure_summary', { length: 1000 }),
     rerunOfRunId: uuid('rerun_of_run_id').references((): AnyPgColumn => runs.id),
+    // ADR-0009 切片⑤（#237）：续跑血缘——接着上次会话聊；与 rerun_of_run_id
+    // 并存（rerun=不带上下文重来），互斥由协议 superRefine + Hub 命令层保证。
+    resumeFromRunId: uuid('resume_from_run_id').references((): AnyPgColumn => runs.id),
     profileDigest: char('profile_digest', { length: 64 }).notNull(),
     pluginPackDigest: char('plugin_pack_digest', { length: 64 }).notNull(),
     dshDistributionVersion: varchar('dsh_distribution_version', { length: 64 }).notNull(),

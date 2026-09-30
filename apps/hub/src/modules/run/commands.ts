@@ -27,6 +27,12 @@ export interface CreateRunInput {
   dshDistributionVersion: string
   /** 重跑血缘：同 Task 的终态 Run（G7-04）。 */
   rerunOfRunId?: string
+  /**
+   * 续跑血缘（ADR-0009 切片⑤）：接着来源 Run 的上次会话聊（persisted load）。
+   * 与 rerunOfRunId 互斥（协议 superRefine 已 fail-closed）；来源还必须同 Device
+   * 且同 Workspace、dshSessionId 非空——守卫在 orchestrator。
+   */
+  resumeFromRunId?: string
 }
 
 /**

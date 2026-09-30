@@ -52,8 +52,8 @@ describe('ConfirmDialog（#229）', () => {
     const dialog = await screen.findByRole('dialog')
     expect(dialog).toBeVisible()
     expect(dialog).toHaveAttribute('aria-modal', 'true')
-    // 打开即聚焦在对话框内（确认/取消钮之一）。
-    expect(dialog.contains(document.activeElement)).toBe(true)
+    // 打开即聚焦在对话框内（rAF 异步，全量运行下时序抖动——waitFor 而非立即断言）。
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true))
     // Esc = 取消。
     await user.keyboard('{Escape}')
     expect(onCancel).toHaveBeenCalledTimes(1)
@@ -69,7 +69,7 @@ describe('ConfirmDialog（#229）', () => {
         onCancel={onCancel}
       />,
     )
-    expect(document.activeElement).toBe(trigger)
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
     trigger.remove()
   })
 

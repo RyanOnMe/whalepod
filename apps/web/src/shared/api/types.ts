@@ -115,6 +115,7 @@ export interface TaskRoomRun {
   startedAt: string | null
   finishedAt: string | null
   rerunOfRunId: string | null
+  resumeFromRunId: string | null
   deviceName: string | null
   workspaceName: string | null
 }
@@ -242,6 +243,7 @@ export interface RunView {
   failureSummary: string | null
   // P1-16 G7-04：显式重跑血缘（03 §2.6 rerun_of_run_id）。
   rerunOfRunId: string | null
+  resumeFromRunId: string | null
   profileDigest: string
   createdAt: string
   startedAt: string | null

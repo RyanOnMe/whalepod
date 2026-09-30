@@ -20,6 +20,8 @@
     "workspaceId": "01905f7c-0000-7000-8000-000000000601",
     "expectedProfileDigest": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
     "expectedPluginPackDigest": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
-    "prompt": "Review the protocol fixtures."
+    "prompt": "Review the protocol fixtures.",
+    "resumeOfRunId": "01905f7c-0000-7000-8000-000000000309",
+    "resumeSessionId": "whalepod-run-01905f7c-0000-7000-8000-000000000301"
   }
 }

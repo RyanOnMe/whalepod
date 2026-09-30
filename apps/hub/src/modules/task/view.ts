@@ -37,6 +37,7 @@ export interface TaskRoomRun {
   startedAt: string | null
   finishedAt: string | null
   rerunOfRunId: string | null
+  resumeFromRunId: string | null
   deviceName: string | null
   workspaceName: string | null
 }
@@ -53,6 +54,7 @@ function toTaskRoomRun(
     startedAt: row.startedAt?.toISOString() ?? null,
     finishedAt: row.finishedAt?.toISOString() ?? null,
     rerunOfRunId: row.rerunOfRunId,
+    resumeFromRunId: row.resumeFromRunId,
     deviceName: placement?.deviceName ?? null,
     workspaceName: placement?.workspaceName ?? null,
   }

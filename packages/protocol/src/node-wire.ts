@@ -246,17 +246,32 @@ export type AgentRunSpec = z.infer<typeof AgentRunSpecSchema>
 
 export const RunStartSchema = envelope(
   'run.start',
-  z.strictObject({
-    commandId: z.uuid(),
-    runId: z.uuid(),
-    taskId: z.uuid(),
-    ownerUserId: z.uuid(),
-    agent: AgentRunSpecSchema,
-    workspaceId: z.uuid(),
-    expectedProfileDigest: Sha256DigestSchema,
-    expectedPluginPackDigest: Sha256DigestSchema,
-    prompt: z.string().min(1).max(20_000),
-  }),
+  z
+    .strictObject({
+      commandId: z.uuid(),
+      runId: z.uuid(),
+      taskId: z.uuid(),
+      ownerUserId: z.uuid(),
+      agent: AgentRunSpecSchema,
+      workspaceId: z.uuid(),
+      expectedProfileDigest: Sha256DigestSchema,
+      expectedPluginPackDigest: Sha256DigestSchema,
+      prompt: z.string().min(1).max(20_000),
+      // ADR-0009 切片⑤（resume 续跑）：成对携带——resumeOfRunId 让 Node 把
+      // initialize 的 dshHomePath 指向**来源 Run** 的 home（per-run 隔离下新
+      // runId 的 home 里没有旧日志）；resumeSessionId（= 来源 Run 的
+      // dsh_session_id）直达 Runtime 的装载身份。只带其一即畸形，fail-closed。
+      resumeOfRunId: z.uuid().optional(),
+      resumeSessionId: DshSessionIdSchema.optional(),
+    })
+    .superRefine((value, ctx) => {
+      if ((value.resumeOfRunId !== undefined) !== (value.resumeSessionId !== undefined)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'resumeOfRunId and resumeSessionId must be provided together',
+        })
+      }
+    }),
 )
 
 export const RunCancelSchema = envelope(

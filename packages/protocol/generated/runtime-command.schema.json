@@ -50,11 +50,14 @@
             "persona": {
               "$ref": "#/$defs/__schema11"
             },
-            "artifactInputs": {
+            "resumeSessionId": {
               "$ref": "#/$defs/__schema12"
             },
+            "artifactInputs": {
+              "$ref": "#/$defs/__schema13"
+            },
             "artifactInputsDir": {
-              "$ref": "#/$defs/__schema14"
+              "$ref": "#/$defs/__schema15"
             }
           },
           "required": [
@@ -371,13 +374,18 @@
       "maxLength": 20000
     },
     "__schema12": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "__schema13": {
       "maxItems": 64,
       "type": "array",
       "items": {
-        "$ref": "#/$defs/__schema13"
+        "$ref": "#/$defs/__schema14"
       }
     },
-    "__schema13": {
+    "__schema14": {
       "type": "object",
       "properties": {
         "artifactId": {
@@ -413,7 +421,7 @@
       ],
       "additionalProperties": false
     },
-    "__schema14": {
+    "__schema15": {
       "type": "string",
       "minLength": 1
     }

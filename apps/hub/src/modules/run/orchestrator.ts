@@ -205,6 +205,38 @@ export class RunOrchestrator {
       }
     }
 
+    // ADR-0009 切片⑤（resume 续跑）四重守卫——「同 Workspace」是机器判据，不是口头约束：
+    // ① 同 Task（与 rerun 同口径，NOT_FOUND 同形防枚举）；
+    // ② 来源终态（活着的 Run 走追问路径，不该出现在这里）；
+    // ③ dshSessionId 非空（没到过 running 就没有会话可续）；
+    // ④ Device 与 Workspace 与本次输入**全等**——ResumeAgentOptions 不收 cwd，续跑的
+    //    工作目录来自持久化 header（旧值）；换 workspace 会「工具在新目录跑、会话按旧
+    //    cwd 续」的静默错位，换 device 连日志都没有（日志在来源设备的 DSH_HOME）。
+    //    拒绝换目标，不静默降级成摘要 fallback（那是后续独立组件）。
+    let resumeSource: RunRow | undefined
+    if (input.resumeFromRunId !== undefined) {
+      const prior = await getRun(tx, input.resumeFromRunId)
+      if (prior === undefined || prior.taskId !== taskId) {
+        throw new RunCommandError('NOT_FOUND', 'resume source run not found')
+      }
+      if (!isTerminal(prior.status)) {
+        throw new RunCommandError('CONFLICT', 'resume source run must be terminal')
+      }
+      if (prior.dshSessionId === null) {
+        throw new RunCommandError(
+          'CONFLICT',
+          'resume source run has no session to continue (never reached running)',
+        )
+      }
+      if (prior.deviceId !== device.id || prior.workspaceId !== workspace.id) {
+        throw new RunCommandError(
+          'CONFLICT',
+          'resume must keep the same device and workspace as the source run',
+        )
+      }
+      resumeSource = prior
+    }
+
     const active = await tx
       .select({ id: schema.runs.id })
       .from(schema.runs)
@@ -235,6 +267,11 @@ export class RunOrchestrator {
       expectedProfileDigest: revision.profileDigest,
       expectedPluginPackDigest: pack.packDigest,
       prompt: input.prompt,
+      // 切片⑤：成对下发——resumeOfRunId 让 Node 把 dshHomePath 指向来源 Run 的
+      // home（per-run 隔离下新 home 没有旧日志）；resumeSessionId 直达装载身份。
+      ...(resumeSource !== undefined
+        ? { resumeOfRunId: resumeSource.id, resumeSessionId: resumeSource.dshSessionId! }
+        : {}),
     })
 
     // 判权**复读**（复核 #204 观察 7 → #205 复核 S2 纠正了口径）：
@@ -261,6 +298,7 @@ export class RunOrchestrator {
       dshDistributionVersion: input.dshDistributionVersion,
       createdAt: now, // #119：领域时钟出生时间，reconcile 新生儿宽限的对表基准
       ...(input.rerunOfRunId !== undefined ? { rerunOfRunId: input.rerunOfRunId } : {}),
+      ...(input.resumeFromRunId !== undefined ? { resumeFromRunId: input.resumeFromRunId } : {}),
     })
     // 首个 Run 把 Task 推进到 in_progress（§3.1）；in_progress 上重复 run_started 无边。
     if (task.status === 'open' || task.status === 'in_review') {

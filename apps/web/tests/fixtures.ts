@@ -180,6 +180,7 @@ export function makeRun(overrides: Partial<TaskRoomRun> = {}): TaskRoomRun {
     startedAt: '2026-08-25T02:00:05.000Z',
     finishedAt: null,
     rerunOfRunId: null,
+    resumeFromRunId: null,
     // #211：落点显示名（默认未知，由各用例按需覆盖有名字的）。
     deviceName: null,
     workspaceName: null,

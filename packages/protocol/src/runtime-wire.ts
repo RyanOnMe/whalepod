@@ -47,6 +47,11 @@ const RuntimeInitializePayloadSchema = z
     model: z.string().min(1).max(200),
     maxTokens: z.number().int().positive().optional(),
     persona: z.string().min(1).max(20_000),
+    // ADR-0009 切片⑤（resume 续跑）：装载身份——携带时 Runtime 用
+    // ctx.agents.resume({ resumeSessionId }) 续既有会话（persisted load，同 id
+    // 同日志原地追加），而不是新建 session。期望装载 id 对不上存储日志时
+    // bridge 的身份一致性校验当场抛（「日志不在本机/已丢」的 fail-loud 闸）。
+    resumeSessionId: DshSessionIdSchema.optional(),
     // P1-15：Reviewer 输入清单 + 下载副本目录（本地 wire 绝对路径，红线同上）。
     // 清单条目上限 64——单任务已发布交付物的现实上界，防止单次 initialize 无界膨胀。
     // 与 http.ts 的 ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES 同值互指（Node 1:1 映射

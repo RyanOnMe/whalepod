@@ -220,6 +220,48 @@ describe('probe: resume（#176 切片①，ADR-0009 决策 3 前置）', () => {
   }, 180_000)
 
   /**
+   * 切片⑤（#237）：**wire 字段驱动**的 resume——initialize.resumeSessionId 是产品真源
+   * （Hub 下发 → Node 透传），上一条用例走的是探针接缝（probeResumeSessionId）。
+   * 本用例不传接缝、只把字段放进 spec（initializeCommand 原样透传进 wire 帧），
+   * 验证的是切片⑤ 实际投产的那条驱动面。判据与接缝版同源：同 session id +
+   * 上下文命中（replay 的 fromRequest 占位符解析不出就抛）。
+   */
+  it('wire 驱动：initialize.resumeSessionId 续上同一条会话且上下文在场', async () => {
+    const specA = runtimeSpec()
+    try {
+      const runtimeA = await startReplayRuntime('resume', specA, { keepTempDirs: true })
+      let sessionId = ''
+      try {
+        await runtimeA.send(initializeCommand(specA))
+        const ready = await runtimeA.until('runtime.ready')
+        sessionId = ready.payload.dshSessionId
+        await runtimeA.send(commandFrame('run.prompt', { runId: specA.runId, text: FIRST_PROMPT }))
+        await runtimeA.until('run.completed')
+      } finally {
+        await runtimeA.dispose()
+      }
+      expect(sessionLogPath(specA.dshHomePath, sessionId), '第一轮日志没落盘').toBeDefined()
+
+      // wire 驱动：spec 带 resumeSessionId（不传 probeResumeSessionId 接缝）。
+      const specB = { ...specA, runId: randomUUID(), resumeSessionId: sessionId }
+      const runtimeB = await startReplayRuntime('resume-continue', specB, { keepTempDirs: true })
+      try {
+        await runtimeB.send(initializeCommand(specB))
+        const ready = await runtimeB.until('runtime.ready')
+        expect(ready.payload.dshSessionId, 'wire 驱动没接到同一条会话').toBe(sessionId)
+        await runtimeB.send(commandFrame('run.prompt', { runId: specB.runId, text: SECOND_PROMPT }))
+        await runtimeB.until('run.completed')
+        expect(assistantTexts(runtimeB.outputs), '上下文没进模型请求').toContain(SECRET)
+      } finally {
+        await runtimeB.dispose()
+      }
+    } finally {
+      rmSync(specA.workspacePath, { recursive: true, force: true })
+      rmSync(specA.dshHomePath, { recursive: true, force: true })
+    }
+  }, 180_000)
+
+  /**
    * 判据不恒真的反证（本仓的变异验证习惯）：把续跑脚本用在**没有 resume 的新会话**上，
    * 那个 `{{fromRequest:请记住：验证码是 (\d{4})}}` 占位符就无内容可匹配——上游 llm-replay 会抛
    * `fromRequest pattern ... matched nothing`，turn 以错误收敛、bridge 发 `runtime.fatal`，
