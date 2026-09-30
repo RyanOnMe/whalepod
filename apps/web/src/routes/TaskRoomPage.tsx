@@ -32,35 +32,9 @@ import { InstructionList } from '../features/task/InstructionList.js'
 import { RunLauncher } from '../features/task/RunLauncher.js'
 import { RunLivePanel } from '../features/task/RunLivePanel.js'
 import { runOrdinalLabels } from '../features/task/runLabels.js'
+import { ACTIVE_RUN, QUEUEING_RUN } from '../features/task/run-states.js'
 import { ApprovalSlot, RunTimeline } from '../features/task/RunTimeline.js'
 import { TaskHeader } from '../features/task/TaskHeader.js'
-
-/**
- * 活跃 Run 状态集（03 §3.2：一任务同时至多一个）。
- *
- * 与 hub 的关系（复核 #209 O-1）：hub 侧对应的是"Run 是否还在跑"的那一族；本集合**比
- * `QUEUEING_RUN` 多一个 `cancel_requested`**——取消中的 Run 仍算"活跃"（挡住重复起 Run），
- * 但它**不是**指令可以排队的窗口。两个集合语义不同，别再各写第三份。
- */
-const ACTIVE_RUN: ReadonlySet<string> = new Set([
-  'queued',
-  'dispatching',
-  'running',
-  'waiting_approval',
-  'cancel_requested',
-])
-
-/**
- * **可以排队**的活跃 Run 状态集——必须与 hub 的 `FOLLOWUP_QUEUEING_STATUSES`
- * （`apps/hub/src/modules/run/followup.ts`）逐字对齐：hub 只把
- * `queued`/`dispatching`/`waiting_approval` 当作"指令可以排在它后面等放行"的窗口；
- * `running` 是立即下发，`cancel_requested` 与各终态则**当场拒绝**（`RUN_CANCELLING`）。
- *
- * 复核 #209 R3 实测：我原先写成 `status !== 'running'`，于是 `cancel_requested` 也会显示
- * 「已排队」——而 hub 其实已经把那条指令判死了。这条**可达**：Run 在排队窗口时用户发的指令
- * 落成 `pending`，随后用户取消 Run，该指令仍是 `pending` 且挂在这个 Run 上。
- */
-const QUEUEING_RUN: ReadonlySet<string> = new Set(['queued', 'dispatching', 'waiting_approval'])
 
 export function TaskRoomPage(): ReactNode {
   const { taskId } = useParams()

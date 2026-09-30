@@ -13,6 +13,7 @@ import { queryKeys } from '../../app/query-client.js'
 import { RUN_STATUS_LABEL } from '../../shared/format.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { rerunLineageLabel, SELECTED_RUN_LABEL } from './runLabels.js'
+import { TERMINAL_RUN } from './run-states.js'
 import type { RunEventItem, RunView, Session } from '../../shared/api/types.js'
 import { dropRunLive, getRunLiveText, subscribeRunLive } from '../../shared/realtime/run-buffer.js'
 import { RunActions } from '../run/RunActions.js'
@@ -30,8 +31,6 @@ export interface RunLivePanelProps {
    */
   runLabels: ReadonlyMap<string, string>
 }
-
-const TERMINAL_RUN: ReadonlySet<string> = new Set(['completed', 'failed', 'cancelled', 'lost'])
 
 const PHASE_LABEL: Record<string, string> = {
   thinking: '思考中',
