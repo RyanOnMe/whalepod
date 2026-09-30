@@ -91,7 +91,13 @@ export function RunActions({ run, session }: { run: RunView; session: Session })
   return (
     <div className="run-actions">
       {!isTerminal && canCancel ? (
-        <button type="button" className="button" disabled={busy} onClick={() => cancel.mutate()}>
+        <button
+          type="button"
+          className="button"
+          data-testid="cancel-run-button"
+          disabled={busy}
+          onClick={() => cancel.mutate()}
+        >
           取消 Run
         </button>
       ) : null}
@@ -101,17 +107,24 @@ export function RunActions({ run, session }: { run: RunView; session: Session })
             <label htmlFor="run-rerun-prompt">新 Run 的指令</label>
             <textarea
               id="run-rerun-prompt"
+              data-testid="rerun-prompt"
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
               rows={3}
               placeholder="重跑会创建全新的 Run（不会自动重放上一次的工具调用）"
             />
-            <button type="button" className="button" disabled={busy} onClick={confirmRerun}>
+            <button
+              type="button"
+              className="button"
+              data-testid="rerun-confirm-button"
+              disabled={busy}
+              onClick={confirmRerun}
+            >
               确认重跑
             </button>
           </div>
         ) : (
-          <button type="button" className="button" onClick={openRerun}>
+          <button type="button" className="button" data-testid="rerun-button" onClick={openRerun}>
             重跑此 Run
           </button>
         )
