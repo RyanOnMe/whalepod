@@ -20,8 +20,7 @@ import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
 import type { RunView, Session } from '../../shared/api/types.js'
-
-const TERMINAL_RUN: ReadonlySet<string> = new Set(['completed', 'failed', 'cancelled', 'lost'])
+import { TERMINAL_RUN } from '../task/run-states.js'
 
 function isOwnerOrAdmin(session: Session): boolean {
   return session.role === 'owner' || session.role === 'admin'

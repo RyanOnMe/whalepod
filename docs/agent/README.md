@@ -21,6 +21,7 @@
 | [feedback-consistency-acceptance.md](./feedback-consistency-acceptance.md) | #229 前端交互批次③：ConfirmDialog 替代 window.confirm（焦点陷阱/还焦/Esc）、toast 通道（4s 消退/上限 3）、Cmd+Enter 发送、Esc 关窄屏导航；Plugin 页 notice 保留的取舍 |
 | [room-polish-acceptance.md](./room-polish-acceptance.md) | #231 前端交互批次④：执行活动提示（ADR-0010 信息真空债核销）、加载骨架（reduced-motion 尊重）、「上方」方位词清理；Hooks 早退陷阱记录 |
 | [testid-inventory-acceptance.md](./testid-inventory-acceptance.md) | #85：关键动作可测性盘点——选择器清单与 e2e 证据、键盘路径结论（无不可达项）、UI 驱动 vs HTTP 旁路分工表；RunActions 四处 testid 补齐（零行为变化） |
+| [run-states-acceptance.md](./run-states-acceptance.md) | #234：运行状态集合三处收敛到 run-states.ts 单一真源；关系判据对协议 RunStatusSchema 防漂移（协议加状态必红） |
 | [dsh-ui-vendoring.md](./dsh-ui-vendoring.md) | vendored 第三方代码的出处台账：上游钉版 SHA、逐文件映射、同步纪律、许可/商标义务落点（ADR-0008 / #138） |
 | [setup-auth-invite-acceptance.md](./setup-auth-invite-acceptance.md) | G1-01..06：Setup/登录/邀请/角色/Origin gate 验收（P1-05）；#55 迁移并发串行化与等锁超时判据 |
 | [project-task-agent-acceptance.md](./project-task-agent-acceptance.md) | G2-01..06：Project/Task/Comment/Assignment + Task Room 聚合 + Agent Revision 验收（P1-06） |
