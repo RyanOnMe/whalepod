@@ -328,7 +328,7 @@ function CandidateRows({
 /** 复核插槽：已发布交付物即 Reviewer Run 的输入面（Reviewer 链由 P1-15 完成）。 */
 export function ReviewerSlot(): ReactNode {
   return (
-    <section className="card snapshot-slot" aria-label="复核">
+    <section className="snapshot-slot" aria-label="复核">
       <h3>复核</h3>
       <p className="empty-state">
         为 Task 启动 Reviewer Agent 的 Run 时，以上已发布交付物会作为只读输入清单 送达该

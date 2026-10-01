@@ -1114,6 +1114,17 @@ p.app-sidebar-heading {
   color: var(--color-ink-soft);
 }
 
+/*
+ * #257 密度减法：snapshot-slot 不再自带卡片面（AssignmentPanel 先例），嵌在卡片里时
+ * 靠上边框分层——第二层卡片边框是装饰不是信息（审批卡/复核卡原 card-in-card 实测
+ * 是任务房密度最重处，density-gate 门禁上限 cardDepth ≤ 1 钉住不回弹）。
+ */
+.snapshot-slot {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 0.5px solid var(--dsw-alias-border-l3);
+}
+
 .snapshot-slot h3 {
   font-size: 15px;
   margin-bottom: var(--space-2);
