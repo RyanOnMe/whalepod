@@ -1,6 +1,6 @@
 import type { TaskMessageRow, TaskRow } from '@whalepod/db'
 import type { TaskMessageView } from '@whalepod/protocol'
-import { getTask, listRecentTasks, listTasksByProject } from '@whalepod/db'
+import { getTask, listRecentTasks, listTasksByProject, searchTasksByTitle } from '@whalepod/db'
 import type { DbHandle } from '@whalepod/db'
 
 /** Task 的 JSON 视图（03 §2.2；时间为 ISO 字符串）。 */
@@ -116,16 +116,33 @@ export interface RecentTaskView {
   lastActiveAt: string
 }
 
-export async function listRecentTaskViews(
-  handle: DbHandle,
-  limit: number,
-): Promise<RecentTaskView[]> {
-  return (await listRecentTasks(handle, limit)).map((row) => ({
+function toRecentTaskView(row: {
+  task: TaskRow
+  projectName: string | null
+  lastActiveAt: Date
+}): RecentTaskView {
+  return {
     id: row.task.id,
     projectId: row.task.projectId,
     projectName: row.projectName,
     title: row.task.title,
     status: row.task.status,
     lastActiveAt: row.lastActiveAt.toISOString(),
-  }))
+  }
+}
+
+export async function listRecentTaskViews(
+  handle: DbHandle,
+  limit: number,
+): Promise<RecentTaskView[]> {
+  return (await listRecentTasks(handle, limit)).map(toRecentTaskView)
+}
+
+/** #254 ⌘K 搜索：与最近任务同形状（侧栏/搜索两个入口共用一张卡片的画法）。 */
+export async function searchTaskViews(
+  handle: DbHandle,
+  q: string,
+  limit: number,
+): Promise<RecentTaskView[]> {
+  return (await searchTasksByTitle(handle, q, limit)).map(toRecentTaskView)
 }

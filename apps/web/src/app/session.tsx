@@ -25,6 +25,7 @@ import { ConnectionBanner } from './ConnectionBanner.js'
 import { FlashBanner } from './FlashBanner.js'
 import { ToastHost } from './toast.js'
 import { RealtimeBridge } from './realtime.js'
+import { GlobalSearch } from './GlobalSearch.js'
 
 const SessionContext = createContext<Session | null>(null)
 
@@ -218,6 +219,8 @@ export function AppShell(): ReactNode {
                   WhalePod
                 </Link>
               </div>
+              {/* #254：搜索入口（鼠标路径；⌘K 是键盘路径，都在 GlobalSearch 里）。 */}
+              <GlobalSearch />
               <nav className="app-nav" aria-label="主导航">
                 {NAV_ITEMS.map((item) => (
                   <NavLink key={item.to} to={item.to} end={item.end}>
