@@ -246,7 +246,7 @@ export function ApprovalSlot({ runs, task, session }: ApprovalSlotProps): ReactN
   }
 
   return (
-    <section className="card snapshot-slot" aria-label="审批">
+    <section className="snapshot-slot" aria-label="审批">
       <h3>审批</h3>
       {error !== null ? <ErrorBanner error={error} /> : null}
       {waitingRun === undefined ? (
