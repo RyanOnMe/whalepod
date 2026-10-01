@@ -1119,6 +1119,24 @@ select {
   gap: var(--space-3);
 }
 
+/*
+ * #244 审批档位胶囊（发送前知情）：中性态（approval_required / 未知）只是小字，
+ * full_access 才升格成带底的胶囊——放权要显著，与运行卡的「完全权限」标记同族。
+ * 配色全部来自既有 L1：字色 warn-900 档（与被拒理由块同档，小字过 AA 门，见
+ * instruction-contrast.spec.tsx 的 900 档判据），底色 warn-soft（amber-100）。
+ */
+.composer-approval-pill {
+  color: var(--color-muted);
+  font-size: 14px;
+}
+
+.composer-approval-pill[data-policy='full_access'] {
+  color: var(--dsw-alias-state-warn-primary);
+  background: var(--color-warn-soft);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
 .run-item-head {
   display: flex;
   align-items: center;

@@ -63,15 +63,26 @@ function message(over: Record<string, unknown> = {}): Record<string, unknown> {
 /**
  * 走**真实页面**渲染（⑥b 的交付物是"执行栏里能发指令"，而不只是一个孤立组件）：
  * `renderApp` 带真实 router + QueryClient，只替换 fetch。
+ *
+ * #244 起新增 `room` 参数：审批档位预览走服务端房间视图字段（`nextRunApprovalPolicy`），
+ * 不能只靠 task/runs 本地拼——「无覆盖+无活跃 Run」时前端无从知道会继承哪个 Agent。
  */
 function renderComposer(
   handlers: readonly MockHandler[],
   hasActiveRun = false,
+  room: {
+    task?: ReturnType<typeof makeTask>
+    nextRunApprovalPolicy?: 'approval_required' | 'full_access' | null
+  } = {},
 ): ReturnType<typeof renderApp> {
-  return renderApp(`/tasks/${TASK.id}`, [
+  const task = room.task ?? TASK
+  return renderApp(`/tasks/${task.id}`, [
     ...loggedInHandlers(BOB, [
-      taskRoomHandler(TASK, {
+      taskRoomHandler(task, {
         runs: hasActiveRun ? [makeRun({ status: 'running' })] : [],
+        ...(room.nextRunApprovalPolicy !== undefined
+          ? { nextRunApprovalPolicy: room.nextRunApprovalPolicy }
+          : {}),
       }),
       ...handlers,
     ]),
@@ -225,5 +236,132 @@ describe('#229 Cmd+Enter 直发（指令输入框）', () => {
     expect(posts).toBe(0)
     await user.keyboard('{Control>}{Enter}{/Control}')
     await waitFor(() => expect(posts).toBe(1))
+  })
+})
+
+/**
+ * #244 composer 级审批档位胶囊：发送前就要知道「这句话将以什么权限跑」。
+ *
+ * 档位解析三条来源（与 Hub 同式，优先级从高到低）：
+ *   有活跃 Run → 这句话会成为追问，档位 = 该 Run 已固化的档（来源「当前运行」）；
+ *   Task 覆盖 → 档位 = task.approvalPolicy（来源「任务覆盖」）；
+ *   其余 → 服务端预解析的 Revision 默认（房间视图 nextRunApprovalPolicy，来源「Revision 默认」）。
+ * full_access 是显式放权（ADR-0009 决策 7）：发送前必须过一次确认。
+ */
+describe('#244 审批档位胶囊（知情 + full_access 确认）', () => {
+  it('知情·追问：有活跃 Run 时档位=该 Run 固化档，来源=当前运行', async () => {
+    renderComposer([], true, { nextRunApprovalPolicy: 'approval_required' })
+    // 活跃 Run 默认 approval_required：默认态也要可见，不是只有放权才亮胶囊。
+    const pill = await screen.findByTestId('instruction-approval-pill')
+    expect(pill.textContent).toContain('需要逐次批准')
+    expect(pill.textContent).toContain('当前运行')
+  })
+
+  it('知情·追问（完全权限）：Run 固化 full_access 时胶囊照实说', async () => {
+    renderApp(`/tasks/${TASK.id}`, [
+      ...loggedInHandlers(BOB, [
+        taskRoomHandler(TASK, {
+          runs: [makeRun({ status: 'running', approvalPolicy: 'full_access' })],
+        }),
+      ]),
+      teamMembersHandler([]),
+    ])
+    const pill = await screen.findByTestId('instruction-approval-pill')
+    expect(pill.textContent).toContain('完全权限')
+    expect(pill.textContent).toContain('当前运行')
+  })
+
+  it('知情·任务覆盖：Task 覆盖 full_access 时胶囊显示档位与来源', async () => {
+    const task = makeTask({ approvalPolicy: 'full_access' })
+    renderComposer([], false, {
+      task,
+      nextRunApprovalPolicy: 'full_access',
+    })
+    const pill = await screen.findByTestId('instruction-approval-pill')
+    expect(pill.textContent).toContain('完全权限')
+    expect(pill.textContent).toContain('任务覆盖')
+  })
+
+  it('知情·Revision 默认：无覆盖时显示服务端预解析的默认档', async () => {
+    renderComposer([], false, { nextRunApprovalPolicy: 'full_access' })
+    const pill = await screen.findByTestId('instruction-approval-pill')
+    expect(pill.textContent).toContain('完全权限')
+    expect(pill.textContent).toContain('Revision 默认')
+  })
+
+  it('知情·不可预解析：无可继承 Run 时胶囊说未知，不编造档位', async () => {
+    renderComposer([], false, { nextRunApprovalPolicy: null })
+    const pill = await screen.findByTestId('instruction-approval-pill')
+    expect(pill.textContent).toContain('未知')
+    expect(pill.textContent).not.toContain('完全权限')
+    expect(pill.textContent).not.toContain('需要逐次批准')
+  })
+
+  it('确认：full_access 时先弹确认；取消不发，确认后只发一次', async () => {
+    const user = userEvent.setup()
+    let posts = 0
+    const task = makeTask({ approvalPolicy: 'full_access' })
+    renderApp(`/tasks/${task.id}`, [
+      ...loggedInHandlers(BOB, [
+        taskRoomHandler(task, { nextRunApprovalPolicy: 'full_access' }),
+        {
+          method: 'POST',
+          url: new RegExp(`/api/v1/tasks/${task.id}/instructions$`),
+          respond: () => {
+            posts += 1
+            return new Response(
+              JSON.stringify({
+                ok: true,
+                data: { ...message({ taskId: task.id }), outcome: 'started_run', runId: null },
+              }),
+              { status: 201 },
+            )
+          },
+        },
+        teamMembersHandler(),
+      ]),
+    ])
+    await user.type(await screen.findByLabelText('指令'), '直接改文件')
+    await user.click(screen.getByRole('button', { name: '发送指令' }))
+    // 确认框弹出，请求没发。
+    expect(await screen.findByRole('heading', { name: '以完全权限发送指令？' })).toBeVisible()
+    expect(posts).toBe(0)
+    // 取消：不发，可继续编辑。
+    await user.click(screen.getByRole('button', { name: '返回' }))
+    expect(screen.queryByRole('heading', { name: '以完全权限发送指令？' })).not.toBeInTheDocument()
+    expect(posts).toBe(0)
+    expect(screen.getByLabelText('指令')).toHaveValue('直接改文件')
+    // 再发并确认：恰好一次。
+    await user.click(screen.getByRole('button', { name: '发送指令' }))
+    await user.click(await screen.findByRole('button', { name: '确认以完全权限发送' }))
+    await waitFor(() => expect(posts).toBe(1))
+  })
+
+  it('不打扰：approval_required 直接发送，不弹确认', async () => {
+    const user = userEvent.setup()
+    let posts = 0
+    renderComposer(
+      [
+        {
+          method: 'POST',
+          url: new RegExp(`/api/v1/tasks/${TASK.id}/instructions$`),
+          respond: () => {
+            posts += 1
+            return new Response(
+              JSON.stringify({
+                ok: true,
+                data: { ...message(), outcome: 'followup', runId: 'run-abcdef12' },
+              }),
+              { status: 201 },
+            )
+          },
+        },
+      ],
+      true,
+    )
+    await user.type(await screen.findByLabelText('指令'), '跑吧')
+    await user.click(screen.getByRole('button', { name: '发送指令' }))
+    await waitFor(() => expect(posts).toBe(1))
+    expect(screen.queryByRole('heading', { name: '以完全权限发送指令？' })).not.toBeInTheDocument()
   })
 })

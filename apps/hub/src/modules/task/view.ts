@@ -3,8 +3,10 @@
  * 已发布 Artifact metadata，不暴露 runtime internals（Device Token、Workspace path、
  * 原始 Session event、dshSessionId、digest 等——03 §9 脱敏 + 02 Step 1 断言）。
  */
-import type { ArtifactRow, RunRow } from '@whalepod/db'
+import type { ArtifactRow, RunRow, TaskRow } from '@whalepod/db'
 import {
+  getAgent,
+  getProfileRevision,
   getTask,
   listArtifactsByTask,
   listDiscussionMessages,
@@ -102,6 +104,40 @@ export interface TaskRoomView {
   instructions: CommentView[]
   runs: TaskRoomRun[]
   artifacts: TaskRoomArtifact[]
+  /**
+   * 若现在发一句起新 Run，将解析并固化的审批档（#244）：`task.approvalPolicy ?? 上一 Run
+   * 的 Agent 当前 Revision 默认`。给 composer 的审批胶囊做**发送前知情**——Run 投影按
+   * #211 口径不出 agentId，前端无法自行解析「会继承谁」，所以这条链在服务端算好。
+   * null = 无法预解析（还没有 Run 可继承，或其 Agent 已归档/无当前 Revision），前端
+   * 如实显示「未知」。
+   * 注意：有活跃 Run 时这句话走追问，档位以该 Run 已固化的 `runs[].approvalPolicy` 为准，
+   * 前端只在「无活跃 Run」分支消费本字段。
+   */
+  nextRunApprovalPolicy: 'approval_required' | 'full_access' | null
+}
+
+/**
+ * 下一 Run 审批档预解析（#244）：`task.approvalPolicy ?? 上一 Run 的 Agent 当前
+ * Revision 默认`——与 `orchestrator.create` 建 Run 时的解析**同式**（run/orchestrator.ts
+ * 的同名注释），这条链只此两处，改要成对改。预览跟的是 Agent 的**当前** Revision，
+ * 不是上一 Run 自己固化的档（Revision 默认可能在上一 Run 之后改过，新 Run 每次重新解析）。
+ */
+async function resolveNextRunApprovalPolicy(
+  handle: DbHandle,
+  task: TaskRow,
+  runs: RunRow[],
+): Promise<'approval_required' | 'full_access' | null> {
+  if (task.approvalPolicy !== null) return task.approvalPolicy
+  // listRunsByTask 按 createdAt/id 升序，最后一条就是最近 Run（instruction 继承同源）。
+  const lastRun = runs.at(-1)
+  if (lastRun === undefined) return null
+  const agent = await getAgent(handle, lastRun.agentId)
+  if (agent === undefined || agent.archivedAt !== null || agent.currentRevisionId === null) {
+    return null
+  }
+  const revision = await getProfileRevision(handle, agent.currentRevisionId)
+  if (revision === undefined) return null
+  return revision.approvalPolicy
 }
 
 /**
@@ -129,11 +165,15 @@ export async function getTaskRoom(
     // #211：一次查出本任务所有 Run 的设备名/工作区名（JOIN，不 N+1）。
     listRunPlacementNames(handle, taskId),
   ])
+  // #244：预解析依赖上面的 runs（要先知道会继承哪个 Agent），没法进同一个
+  // Promise.all；顺序两查（agent → revision）+ 读模型路径，代价可接受。
+  const nextRunApprovalPolicy = await resolveNextRunApprovalPolicy(handle, task, runs)
   return {
     task: toTaskView(task),
     comments: comments.map(toCommentView),
     instructions: instructions.map(toCommentView),
     runs: runs.map((row) => toTaskRoomRun(row, placementNames)),
+    nextRunApprovalPolicy,
     artifacts: artifacts
       .filter(
         (a) =>

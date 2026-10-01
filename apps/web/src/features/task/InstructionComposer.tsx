@@ -19,6 +19,7 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
+import { ConfirmDialog } from '../../shared/ConfirmDialog.js'
 import { isApiError } from '../../shared/api/errors.js'
 import type { InstructionView } from '../../shared/api/types.js'
 
@@ -26,6 +27,33 @@ import type { InstructionView } from '../../shared/api/types.js'
 export interface InstructionOutcome extends InstructionView {
   outcome: 'started_run' | 'followup' | 'queued' | 'rejected'
   runId: string | null
+}
+
+/**
+ * #244 composer 审批档位预览：这句话将以什么权限跑。
+ *
+ * 三条来源（优先级从高到低，**由 TaskRoomPage 按服务端数据解析**，本组件只渲染）：
+ * - `active_run`：有活跃 Run，这句话会成为追问，档位 = 该 Run 已固化的档；
+ * - `task_override`：Task 覆盖档（`task.approvalPolicy`）；
+ * - `revision_default`：无覆盖时服务端预解析的 Revision 默认（房间视图字段）。
+ *
+ * `null` = 无法预解析（本任务还没有 Run 可继承 Agent，首句本就走启动器）——如实显示
+ * 「未知」，不猜。档位为 full_access 时发送前必须过确认（ADR-0009 决策 7：显式放权）。
+ */
+export type ApprovalPreview = {
+  policy: 'approval_required' | 'full_access'
+  source: 'active_run' | 'task_override' | 'revision_default'
+} | null
+
+const APPROVAL_POLICY_TEXT: Record<Exclude<ApprovalPreview, null>['policy'], string> = {
+  approval_required: '需要逐次批准',
+  full_access: '完全权限',
+}
+
+const APPROVAL_SOURCE_TEXT: Record<Exclude<ApprovalPreview, null>['source'], string> = {
+  active_run: '当前运行',
+  task_override: '任务覆盖',
+  revision_default: 'Revision 默认',
 }
 
 const OUTCOME_TEXT: Record<InstructionOutcome['outcome'], string> = {
@@ -50,6 +78,12 @@ export interface InstructionComposerProps {
    * ⑥c 的目标选择器落地前，起**第一个**运行仍需要显式选 Agent——那种情况由
    * 调用方（常驻的启动器）承担，这里只在已经能确定 Agent 时才提示可发。
    */
+  /**
+   * #244 审批档位预览（解析在 TaskRoomPage，见 `ApprovalPreview`）：只读展示 +
+   * full_access 时的发送确认。**不提供就地改档**——改档是责任人动作（ApprovalPolicyBlock），
+   * composer 的读者可能是被授权成员。
+   */
+  approvalPreview: ApprovalPreview
   onOutcome?: (outcome: InstructionOutcome) => void
 }
 
@@ -57,12 +91,17 @@ export function InstructionComposer({
   taskId,
   hasActiveRun,
   target,
+  approvalPreview,
   onOutcome,
 }: InstructionComposerProps): ReactNode {
   const queryClient = useQueryClient()
   const [text, setText] = useState('')
   const [error, setError] = useState<unknown>(null)
   const [last, setLast] = useState<InstructionOutcome | null>(null)
+  // #244：full_access 确认闸。pendingBody 存「点了发送那一刻」的正文——对话框是模态的，
+  // 打开期间正文不可编辑，但确认动作必须发送用户看到的那句话，别在关闭时重读 state。
+  const [confirmingFullAccess, setConfirmingFullAccess] = useState(false)
+  const [pendingBody, setPendingBody] = useState('')
 
   const mutation = useMutation({
     mutationFn: (body: string) =>
@@ -100,6 +139,13 @@ export function InstructionComposer({
     event.preventDefault()
     const body = text.trim()
     if (body === '' || mutation.isPending) return
+    // 显式放权（ADR-0009 决策 7）要过一次确认——与 RunLauncher 的启动确认同口径，
+    // 只不过这里挂在了「说这句话」的动作上（#244：放权确认长在放权发生的地方）。
+    if (approvalPreview?.policy === 'full_access') {
+      setPendingBody(body)
+      setConfirmingFullAccess(true)
+      return
+    }
     setError(null)
     mutation.mutate(body)
   }
@@ -133,6 +179,17 @@ export function InstructionComposer({
         <span className="mutation-hint" data-testid="instruction-routing-hint">
           {hasActiveRun ? '当前有运行 · 这句话会成为追问' : '当前没有运行 · 这句话会起新运行'}
         </span>
+        {/* #244 审批档位胶囊：发送前可见「这句话将以什么权限跑」及其来源。
+            full_access 时加 warn 视觉（与运行卡的放权标记同族），approval_required/未知保持中性。 */}
+        <span
+          className="composer-approval-pill"
+          data-testid="instruction-approval-pill"
+          data-policy={approvalPreview === null ? 'unknown' : approvalPreview.policy}
+        >
+          {approvalPreview === null
+            ? '审批 · 未知（还没有可继承的运行）'
+            : `审批 · ${APPROVAL_POLICY_TEXT[approvalPreview.policy]} · ${APPROVAL_SOURCE_TEXT[approvalPreview.source]}`}
+        </span>
       </div>
       {last !== null ? (
         <p className="instruction-outcome" role="status" data-testid="instruction-outcome">
@@ -154,6 +211,26 @@ export function InstructionComposer({
           这台任务当前没有可用的执行目标：可以让责任人的设备上线（在「设备」页确认已上报），或
           在目标选择里显式指定设备与工作区。
         </p>
+      ) : null}
+      {confirmingFullAccess ? (
+        <ConfirmDialog
+          open
+          title="以完全权限发送指令？"
+          body="这句话将以完全权限执行：工具调用不再逐次请求批准，运行卡会标记「完全权限」。确认前请确信 Agent 的 persona 与插件组合可信。"
+          confirmLabel="确认以完全权限发送"
+          danger
+          pending={mutation.isPending}
+          onConfirm={() => {
+            setConfirmingFullAccess(false)
+            setError(null)
+            mutation.mutate(pendingBody)
+            setPendingBody('')
+          }}
+          onCancel={() => {
+            setConfirmingFullAccess(false)
+            setPendingBody('')
+          }}
+        />
       ) : null}
     </form>
   )
