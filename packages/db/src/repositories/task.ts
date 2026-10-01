@@ -87,12 +87,22 @@ export async function listRecentTasks(handle: DbHandle, limit: number): Promise<
     coalesce(${lastMessageAt}, ${tasks.updatedAt}),
     coalesce(${lastRunAt}, ${tasks.updatedAt})
   )`
-  return handle
+  const rows = await handle
     .select({ task: tasks, projectName: projects.name, lastActiveAt: lastActive })
     .from(tasks)
     .leftJoin(projects, eq(projects.id, tasks.projectId))
     .orderBy(desc(lastActive), desc(tasks.id))
     .limit(limit)
+  // **裸 sql 字段拿到的是字符串**：drizzle 的 postgres-js 驱动把 timestamptz 等类型的
+  // 解析器换成透传（driver.cjs 的 transparentParser），普通列靠列映射器转 Date，
+  // raw sql 表达式绕过映射器——直接 .toISOString() 就是 TypeError（CI 第三轮 500 的
+  // 根因，TEMP-DEBUG 直调定位：仓储不炸、视图层炸）。仓储对调用方承诺 Date，
+  // 归一化收敛在这一层，别让每个调用点各自 new Date。
+  return rows.map((row) => ({
+    task: row.task,
+    projectName: row.projectName,
+    lastActiveAt: row.lastActiveAt instanceof Date ? row.lastActiveAt : new Date(row.lastActiveAt),
+  }))
 }
 
 export async function setTaskStatus(
