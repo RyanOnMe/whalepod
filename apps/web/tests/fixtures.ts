@@ -355,6 +355,8 @@ export function taskRoomHandler(
     instructions?: InstructionView[]
     runs?: TaskRoomRun[]
     artifacts?: TaskRoomArtifact[]
+    /** #244：服务端预解析的下一 Run 审批档（无覆盖+无活跃 Run 时 composer 胶囊的数据源）。 */
+    nextRunApprovalPolicy?: 'approval_required' | 'full_access' | null
   } = {},
 ): MockHandler {
   return {
@@ -367,6 +369,7 @@ export function taskRoomHandler(
         instructions: extras.instructions ?? [],
         runs: extras.runs ?? [],
         artifacts: extras.artifacts ?? [],
+        nextRunApprovalPolicy: extras.nextRunApprovalPolicy ?? null,
       }),
   }
 }

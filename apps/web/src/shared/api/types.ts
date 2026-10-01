@@ -184,6 +184,14 @@ export interface TaskRoomView {
   instructions: InstructionView[]
   runs: TaskRoomRun[]
   artifacts: TaskRoomArtifact[]
+  /**
+   * 若现在发一句起新 Run，将解析并固化的审批档（#244）：Task 覆盖 ?? 上一 Run 的
+   * Agent 当前 Revision 默认（Hub 侧解析，前端不复制这条链）。null = 无法预解析
+   * （本任务还没有 Run 可继承，或其 Agent 已归档）——composer 胶囊如实显示「未知」。
+   * 注意：有活跃 Run 时这句话走追问，档位以该 Run 已固化的 `runs[].approvalPolicy` 为准，
+   * 本字段只在「无活跃 Run」的分支被消费。
+   */
+  nextRunApprovalPolicy: 'approval_required' | 'full_access' | null
 }
 
 // agent/queries.ts：AgentView / AgentDetailView / ProfileRevisionView。

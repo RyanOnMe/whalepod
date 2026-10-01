@@ -26,6 +26,7 @@ import { ArtifactList, ReviewerSlot } from '../features/task/ArtifactList.js'
 import { AssignmentPanel } from '../features/task/AssignmentPanel.js'
 import { CommentComposer, CommentList } from '../features/task/CommentComposer.js'
 import { InstructionComposer } from '../features/task/InstructionComposer.js'
+import type { ApprovalPreview } from '../features/task/InstructionComposer.js'
 import { RunConsole } from '../features/task/RunConsole.js'
 import { TargetPicker } from '../features/task/TargetPicker.js'
 import { InstructionList } from '../features/task/InstructionList.js'
@@ -123,6 +124,19 @@ export function TaskRoomPage(): ReactNode {
       : [],
   )
   const hasActiveRun = runs.some((run) => ACTIVE_RUN.has(run.status))
+  // #244 审批档位预览（与 Hub 同式，优先级从高到低）：
+  //   有活跃 Run → 追问，档位 = 该 Run 已固化的档（`activeRun.approvalPolicy`）；
+  //   Task 覆盖 → `task.approvalPolicy`；
+  //   其余 → 服务端预解析的 Revision 默认（房间视图 `nextRunApprovalPolicy`；null = 无可继承 Run）。
+  // 解析只在此处做一遍，InstructionComposer 只消费（`ApprovalPreview`），别处不复制这条链。
+  const approvalPreview: ApprovalPreview =
+    activeRun !== undefined
+      ? { policy: activeRun.approvalPolicy, source: 'active_run' }
+      : task.approvalPolicy !== null
+        ? { policy: task.approvalPolicy, source: 'task_override' }
+        : query.data.nextRunApprovalPolicy !== null
+          ? { policy: query.data.nextRunApprovalPolicy, source: 'revision_default' }
+          : null
   return (
     <div className="task-room">
       <TaskHeader task={task} session={session} />
@@ -209,6 +223,7 @@ export function TaskRoomPage(): ReactNode {
                 taskId={task.id}
                 hasActiveRun={hasActiveRun}
                 target={explicitTarget}
+                approvalPreview={approvalPreview}
               />
             ) : null}
           </div>

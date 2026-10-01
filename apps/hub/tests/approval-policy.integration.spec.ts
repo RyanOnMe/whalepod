@@ -251,4 +251,42 @@ describe('approval policy resolution chain (ADR-0009 slice 8, #241)', () => {
     expect(v3.status).toBe(201)
     expect(v3.digest).not.toBe(v2.digest)
   })
+
+  /** #244：房间视图的下一 Run 审批档预览（composer 胶囊的数据源）。 */
+  async function roomPreview(): Promise<string | null> {
+    const room = await apiInject(ctx, bob, { method: 'GET', url: `/api/v1/tasks/${taskId}` })
+    return (room.json() as { data: { nextRunApprovalPolicy: string | null } }).data
+      .nextRunApprovalPolicy
+  }
+
+  it('#244 room preview: no runs → null; follows agent CURRENT revision (not last run frozen policy); task override wins', async () => {
+    await seedWorld()
+    // ① 本任务还没有 Run：无从继承 Agent → 无法预解析，如实 null。
+    expect(await roomPreview()).toBeNull()
+
+    // ② 跑过一次（v1 默认 approval_required）→ 预览 = 当前 Revision 默认。
+    const run = await createRun()
+    expect(run.status).toBe(201)
+    await terminalizeRun(run.data!.id)
+    expect(await roomPreview()).toBe('approval_required')
+
+    // ③ 关键区分度：新建 v2 默认 full_access 后，预览跟**当前 Revision**（full_access），
+    //    而不是上一 Run 自己固化的档（那次是 approval_required）——同一载荷里两值并存，
+    //    证明预览不是把 runs[].approvalPolicy 抄一遍。
+    const v2 = await createRevision('full_access')
+    expect(v2.status).toBe(201)
+    const room = await apiInject(ctx, bob, { method: 'GET', url: `/api/v1/tasks/${taskId}` })
+    const payload = room.json() as {
+      data: { nextRunApprovalPolicy: string | null; runs: { approvalPolicy: string }[] }
+    }
+    expect(payload.data.nextRunApprovalPolicy).toBe('full_access')
+    expect(payload.data.runs[0]?.approvalPolicy).toBe('approval_required')
+
+    // ④ Task 覆盖优先：覆盖 approval_required（与 v2 默认相反）→ 预览取覆盖值。
+    expect(await patchPolicy(bob, 'approval_required')).toBe(200)
+    expect(await roomPreview()).toBe('approval_required')
+    // 反向亦然：清除覆盖 → 回跟 v2 默认。
+    expect(await patchPolicy(bob, null)).toBe(200)
+    expect(await roomPreview()).toBe('full_access')
+  })
 })
