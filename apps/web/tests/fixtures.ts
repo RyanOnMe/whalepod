@@ -352,6 +352,15 @@ export function createTaskHandler(createdTask: TaskView): MockHandler {
   }
 }
 
+/** #252：侧栏最近任务的空态（多数用例只关心别的区域，别让侧栏报错干扰）。 */
+export function recentTasksEmptyHandler(): MockHandler {
+  return {
+    method: 'GET',
+    url: /\/api\/v1\/tasks\/recent$/,
+    respond: () => ok([]),
+  }
+}
+
 /** GET /tasks/:taskId 的 Task Room 聚合。 */
 export function taskRoomHandler(
   task: TaskView,

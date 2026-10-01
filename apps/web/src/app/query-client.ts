@@ -22,6 +22,8 @@ export const queryKeys = {
   projectTasks: (projectId: string) => ['project-tasks', projectId] as const,
   /** #252：侧栏「最近任务」（按最近活动排序，Hub 保证口径）。 */
   recentTasks: ['recent-tasks'] as const,
+  /** #254：⌘K 任务搜索（按关键词键控缓存）。 */
+  taskSearch: (q: string) => ['task-search', q] as const,
   taskRoom: (taskId: string) => ['task-room', taskId] as const,
   /** 切片⑥e：任务级「谁能驱动」名单（`GET /tasks/:id/instruction-grants`）。 */
   instructionGrants: (taskId: string) => ['instruction-grants', taskId] as const,

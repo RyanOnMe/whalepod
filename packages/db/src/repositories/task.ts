@@ -105,6 +105,40 @@ export async function listRecentTasks(handle: DbHandle, limit: number): Promise<
   }))
 }
 
+/**
+ * 标题检索（#254 ⌘K 全局搜索）：ILIKE 不区分大小写，%/_/\\ 按字面（先转义再 ESCAPE，
+ * 用户输入不当通配符）；结果按最近活动排序（与 listRecentTasks 同式），复用窄投影。
+ * 关键词走 drizzle 参数（模板里的 ${pattern} 是绑定参数），不拼进 SQL 文本。
+ */
+export async function searchTasksByTitle(
+  handle: DbHandle,
+  q: string,
+  limit: number,
+): Promise<RecentTaskRow[]> {
+  const escaped = q.replace(/[\\%_]/g, (ch) => `\\${ch}`)
+  const pattern = `%${escaped}%`
+  const lastMessageAt = sql<Date>`(select max(${taskMessages.createdAt}) from ${taskMessages} where ${taskMessages.taskId} = ${tasks.id})`
+  const lastRunAt = sql<Date>`(select max(${runs.createdAt}) from ${runs} where ${runs.taskId} = ${tasks.id})`
+  const lastActive = sql<Date>`greatest(
+    ${tasks.updatedAt},
+    coalesce(${lastMessageAt}, ${tasks.updatedAt}),
+    coalesce(${lastRunAt}, ${tasks.updatedAt})
+  )`
+  const rows = await handle
+    .select({ task: tasks, projectName: projects.name, lastActiveAt: lastActive })
+    .from(tasks)
+    .leftJoin(projects, eq(projects.id, tasks.projectId))
+    .where(sql`${tasks.title} ilike ${pattern} escape '\\'`)
+    .orderBy(desc(lastActive), desc(tasks.id))
+    .limit(limit)
+  // 与 listRecentTasks 同款：裸 sql 时间字段是字符串（drizzle 透传解析器），仓储归一化。
+  return rows.map((row) => ({
+    task: row.task,
+    projectName: row.projectName,
+    lastActiveAt: row.lastActiveAt instanceof Date ? row.lastActiveAt : new Date(row.lastActiveAt),
+  }))
+}
+
 export async function setTaskStatus(
   handle: DbHandle,
   id: string,

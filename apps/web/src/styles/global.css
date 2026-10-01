@@ -2285,3 +2285,94 @@ p.app-sidebar-heading {
     animation: none;
   }
 }
+
+/*
+ * #254 侧栏搜索钮与 ⌘K 浮层：按钮复用 nav item 的形态（视觉上就是导航的一员），
+ * 浮层是全局覆盖的对话框（Modal portal 内），取值全部来自 L1 白名单。
+ */
+.app-sidebar-search {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 40px;
+  margin: 0 0 4px;
+  padding: 9px 16px 9px 12px;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: none;
+  color: var(--color-ink);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-sidebar-search:hover {
+  background: var(--dsw-specific-sidebar-nav-item-hover);
+}
+
+.kbd-hint {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.global-search {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(520px, 90vw);
+  padding: 12px;
+}
+
+.global-search input {
+  padding: 8px 12px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--radius-lg);
+  font-size: 14px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
+.global-search ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.global-search-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.global-search-item.active,
+.global-search-item:hover {
+  background: var(--dsw-specific-sidebar-nav-item-hover);
+}
+
+.global-search-title {
+  display: block;
+  font-size: 14px;
+  color: var(--color-ink);
+}
+
+.global-search-meta {
+  display: block;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.global-search-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-muted);
+}

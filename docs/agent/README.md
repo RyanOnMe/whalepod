@@ -30,6 +30,7 @@
 | [run-duration-acceptance.md](./run-duration-acceptance.md) | #248 P1-UX-8：运行时长（时间感）——运行卡时长行（终态固定总时长/活跃已耗时 30s 自跳/未开始不画）；formatDuration 四档纯函数；fake timers 只 fake Date 的测试教训 |
 | [artifact-preview-acceptance.md](./artifact-preview-acceptance.md) | #250 P1-UX-9：交付物有脸——文本类工件页内预览（512KiB 资格/64KiB 截断/三态诚实）+「对这个工件继续说」注入 #216 引用 token 到讨论框；重预览器不做、candidate 不加入口的取舍 |
 | [recent-tasks-acceptance.md](./recent-tasks-acceptance.md) | #252 P1-UX-10：侧栏最近任务——按活动排序（greatest(updated_at,最新消息,最新 Run)）的 ≤1 击回现场入口；窄投影含 projectName；小节标签不进标题层级（h2 判据教训）与「重试」撞名消歧 |
+| [global-search-acceptance.md](./global-search-acceptance.md) | #254 P1-UX-11：⌘K 全局搜索——title ILIKE（转义通配符/参数化/空 q 400）+ 浮层（option 语义/键盘路径/还焦）；mock respond 拿不到 URL 等三条踩坑记录 |
 | [dsh-ui-vendoring.md](./dsh-ui-vendoring.md) | vendored 第三方代码的出处台账：上游钉版 SHA、逐文件映射、同步纪律、许可/商标义务落点（ADR-0008 / #138） |
 | [setup-auth-invite-acceptance.md](./setup-auth-invite-acceptance.md) | G1-01..06：Setup/登录/邀请/角色/Origin gate 验收（P1-05）；#55 迁移并发串行化与等锁超时判据 |
 | [project-task-agent-acceptance.md](./project-task-agent-acceptance.md) | G2-01..06：Project/Task/Comment/Assignment + Task Room 聚合 + Agent Revision 验收（P1-06） |

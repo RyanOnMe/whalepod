@@ -33,7 +33,7 @@ import {
   translateGrantConstraintError,
 } from './instruction-grants.js'
 import type { RunOrchestrator } from '../run/orchestrator.js'
-import { listRecentTaskViews, listTaskViewsByProject } from './queries.js'
+import { listRecentTaskViews, listTaskViewsByProject, searchTaskViews } from './queries.js'
 import { getTaskRoom } from './view.js'
 
 export interface TaskRouteDeps {
@@ -161,6 +161,19 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
   app.get('/tasks/recent', async (request) => {
     await deps.requireActor(request)
     return { ok: true, data: await listRecentTaskViews(deps.database.db, 8) }
+  })
+
+  // GET /tasks/search?q=：⌘K 全局搜索（#254）。title ILIKE（参数化 + 通配符转义），
+  // ≤8 条，结果按最近活动排序——与最近任务同形状。空 q/全空白 → 400：搜索必须
+  // 有关键词，静默全量等于把「搜索」降级成「列表」。
+  app.get('/tasks/search', async (request) => {
+    await deps.requireActor(request)
+    const raw = (request.query as { q?: unknown }).q
+    const q = typeof raw === 'string' ? raw.trim() : ''
+    if (q === '') {
+      throw new ApiError(400, 'VALIDATION_FAILED', 'search query must not be empty')
+    }
+    return { ok: true, data: await searchTaskViews(deps.database.db, q, 8) }
   })
 
   // GET /tasks/:taskId：Task Room 聚合（不暴露 runtime internals，03 §9/02 Step 1）。
