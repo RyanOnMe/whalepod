@@ -14,11 +14,14 @@ import type {
   PairingCodeView,
   ProjectView,
   Session,
+  RecentTaskView,
   TaskRoomArtifact,
   TaskRoomRun,
   TaskView,
   WorkspaceView,
 } from '../src/shared/api/types.js'
+
+export type { RecentTaskView }
 
 export const ALICE: Session = {
   userId: 'aaaaaaaa-0000-4000-8000-000000000001',

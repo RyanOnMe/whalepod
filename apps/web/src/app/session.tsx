@@ -10,15 +10,16 @@
  * 用户卡置底），窄屏回落顶栏 + 折叠菜单；导航链接从 Link 换成 NavLink，
  * aria-current="page" 由路由真实给出（此前 CSS 里那条 [aria-current] 从未命中过）。
  */
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, Outlet, useLoaderData, useLocation, useNavigate } from 'react-router'
 import { api } from '../shared/api/client.js'
 import { isApiError } from '../shared/api/errors.js'
-import { ROLE_LABEL } from '../shared/format.js'
+import { ROLE_LABEL, TASK_STATUS_LABEL } from '../shared/format.js'
+import { RelativeTime } from '../shared/RelativeTime.js'
 import { setFlash } from '../shared/flash.js'
 import { subscribeSessionExpired } from '../shared/session-expiry.js'
-import type { Session } from '../shared/api/types.js'
+import type { RecentTaskView, Session } from '../shared/api/types.js'
 import { queryKeys } from './query-client.js'
 import { ConnectionBanner } from './ConnectionBanner.js'
 import { FlashBanner } from './FlashBanner.js'
@@ -43,6 +44,58 @@ const NAV_ITEMS = [
 
 /** 上游布局约定（dsh-client-ui-layout 的 SIDEBAR_AUTO_COLLAPSE）：1024px 是侧栏收放断点。 */
 const WIDE_QUERY = '(min-width: 1024px)'
+
+/**
+ * #252 侧栏「最近任务」：按「最近活动」排序的直达入口——登录后 ≤1 击回到现场。
+ * 错误**不遮挡主导航**（小字 + 重试）；空态如实说没有。窄屏顶栏不渲染（空间受限）。
+ */
+function RecentTasksNav(): ReactNode {
+  const query = useQuery({
+    queryKey: queryKeys.recentTasks,
+    queryFn: () => api.get<RecentTaskView[]>('/tasks/recent'),
+    staleTime: 60_000,
+  })
+  let body: ReactNode
+  if (query.isError) {
+    body = (
+      <p className="sidebar-recent-error" role="status">
+        最近任务读取失败。
+        <button type="button" className="link-button" onClick={() => void query.refetch()}>
+          重试
+        </button>
+      </p>
+    )
+  } else if (query.isPending) {
+    // 加载中不占视觉重量（首屏主导航先出，最近任务迟到半拍没关系）。
+    body = null
+  } else if (query.data.length === 0) {
+    body = <p className="sidebar-recent-empty">最近还没有任务</p>
+  } else {
+    body = (
+      <ul role="list">
+        {query.data.slice(0, 6).map((task) => (
+          <li key={task.id}>
+            <Link to={`/tasks/${task.id}`} className="sidebar-recent-link">
+              <span className="sidebar-recent-title">{task.title}</span>
+              <span className="sidebar-recent-meta">
+                {TASK_STATUS_LABEL[task.status]} · {task.projectName ?? '未知项目'} ·{' '}
+                <RelativeTime iso={task.lastActiveAt} />
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    )
+  }
+  return (
+    <nav className="app-sidebar-recent" aria-label="最近任务">
+      {/* 小节标签不是标题元素（ChatGPT 侧栏同款处理）：不进文档大纲，也不会把
+          各页「只有一个 h2」的层级判据打红。导航的可达名由 nav 的 aria-label 提供。 */}
+      <p className="app-sidebar-heading">最近任务</p>
+      {body}
+    </nav>
+  )
+}
 
 /**
  * 宽屏（侧栏 chrome）↔ 窄屏（顶栏 + 折叠菜单）的**互斥渲染**开关。
@@ -172,6 +225,7 @@ export function AppShell(): ReactNode {
                   </NavLink>
                 ))}
               </nav>
+              <RecentTasksNav />
               <div className="app-sidebar-user">
                 <span className="app-sidebar-user-name" title={userTitle}>
                   {session.displayName}

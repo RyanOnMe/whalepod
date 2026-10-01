@@ -1,6 +1,6 @@
 import type { TaskMessageRow, TaskRow } from '@whalepod/db'
 import type { TaskMessageView } from '@whalepod/protocol'
-import { getTask, listTasksByProject } from '@whalepod/db'
+import { getTask, listRecentTasks, listTasksByProject } from '@whalepod/db'
 import type { DbHandle } from '@whalepod/db'
 
 /** Task 的 JSON 视图（03 §2.2；时间为 ISO 字符串）。 */
@@ -101,4 +101,31 @@ export async function listTaskViewsByProject(
   projectId: string,
 ): Promise<TaskView[]> {
   return (await listTasksByProject(handle, projectId)).map(toTaskView)
+}
+
+/**
+ * 侧栏「最近任务」的精简视图（#252）：只带侧栏条目要画的字段（标题/状态/项目名/
+ * 最近活动时间），不搬整个 TaskView——窄投影，别把列表页的形状扩散到侧栏。
+ */
+export interface RecentTaskView {
+  id: string
+  projectId: string
+  projectName: string | null
+  title: string
+  status: TaskRow['status']
+  lastActiveAt: string
+}
+
+export async function listRecentTaskViews(
+  handle: DbHandle,
+  limit: number,
+): Promise<RecentTaskView[]> {
+  return (await listRecentTasks(handle, limit)).map((row) => ({
+    id: row.task.id,
+    projectId: row.task.projectId,
+    projectName: row.projectName,
+    title: row.task.title,
+    status: row.task.status,
+    lastActiveAt: row.lastActiveAt.toISOString(),
+  }))
 }

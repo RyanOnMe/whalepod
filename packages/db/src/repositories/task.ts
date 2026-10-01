@@ -1,6 +1,7 @@
-import { and, asc, desc, eq, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { projects, taskMessages, tasks } from '../schema/project.js'
+import { runs } from '../schema/run.js'
 
 export type ProjectRow = typeof projects.$inferSelect
 export type TaskRow = typeof tasks.$inferSelect
@@ -60,6 +61,44 @@ export async function listTasksByProject(handle: DbHandle, projectId: string): P
     .from(tasks)
     .where(eq(tasks.projectId, projectId))
     .orderBy(desc(tasks.updatedAt), desc(tasks.id))
+}
+
+/**
+ * 最近活动任务（#252 侧栏「最近任务」）：按「最近活动」排序，活动 =
+ * greatest(task.updated_at, 该任务最新 task_message.created_at, 该任务最新 run.created_at)。
+ * **按活动不按建单**——昨天建、今天有人发言的旧任务要排在刚建的新任务前面。
+ * 两个活动聚合用子查询 + LEFT JOIN（无活动的任务回落到自身 updated_at），一条 SQL 不 N+1。
+ */
+export interface RecentTaskRow {
+  task: TaskRow
+  projectName: string | null
+  lastActiveAt: Date
+}
+
+export async function listRecentTasks(handle: DbHandle, limit: number): Promise<RecentTaskRow[]> {
+  const lastMessage = handle
+    .select({ taskId: taskMessages.taskId, last: sql<Date>`max(${taskMessages.createdAt})` })
+    .from(taskMessages)
+    .groupBy(taskMessages.taskId)
+    .as('last_message')
+  const lastRun = handle
+    .select({ taskId: runs.taskId, last: sql<Date>`max(${runs.createdAt})` })
+    .from(runs)
+    .groupBy(runs.taskId)
+    .as('last_run')
+  const lastActive = sql<Date>`greatest(
+    ${tasks.updatedAt},
+    coalesce(${lastMessage.last}, ${tasks.updatedAt}),
+    coalesce(${lastRun.last}, ${tasks.updatedAt})
+  )`
+  return handle
+    .select({ task: tasks, projectName: projects.name, lastActiveAt: lastActive })
+    .from(tasks)
+    .leftJoin(lastMessage, eq(lastMessage.taskId, tasks.id))
+    .leftJoin(lastRun, eq(lastRun.taskId, tasks.id))
+    .leftJoin(projects, eq(projects.id, tasks.projectId))
+    .orderBy(desc(lastActive), desc(tasks.id))
+    .limit(limit)
 }
 
 export async function setTaskStatus(

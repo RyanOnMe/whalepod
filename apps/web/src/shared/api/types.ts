@@ -95,6 +95,20 @@ export type AssignmentDriveView =
   | { outcome: 'started_run' | 'followup' | 'queued' | 'rejected'; runId: string }
   | { outcome: 'failed'; error: { code: string; message: string } }
 
+/**
+ * 侧栏「最近任务」的精简视图（#252；GET /tasks/recent）：只带侧栏条目要画的字段，
+ * 与 TaskView 是两种形状——窄投影，别互相搬字段。排序口径是「最近活动」
+ * （greatest(updated_at, 最新消息, 最新 Run)），由 Hub 保证，UI 不重排。
+ */
+export interface RecentTaskView {
+  id: string
+  projectId: string
+  projectName: string | null
+  title: string
+  status: TaskStatus
+  lastActiveAt: string
+}
+
 // task/queries.ts：CommentView（#210 收敛后：唯一真源是 `@whalepod/protocol` 的
 // `TaskMessageView`，与 Hub 的 `CommentView` 同一定义——服务端 `comments` 与
 // `instructions` 本来就是同一种结构，同一份 `toCommentView` 发出）。

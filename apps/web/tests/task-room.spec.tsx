@@ -269,7 +269,9 @@ describe('task-room', () => {
     )
     expect(await screen.findByRole('alert')).toHaveTextContent('internal error')
     expect(screen.getByRole('alert')).toHaveTextContent('req-task-500')
-    expect(screen.getByRole('button', { name: '重试' })).toBeVisible()
+    // #252 起侧栏「最近任务」错误态也有一个「重试」——本判据指的是主区任务房的
+    // 那个，scope 到 main 区消歧（不是全局唯一了）。
+    expect(within(screen.getByRole('main')).getByRole('button', { name: '重试' })).toBeVisible()
     expect(screen.queryByText('还没有 Run。')).not.toBeInTheDocument()
   })
 
