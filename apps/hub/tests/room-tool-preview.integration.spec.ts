@@ -149,11 +149,13 @@ describe('room view tool trace preview (#246)', () => {
     expect((await roomRuns())[0]?.lastToolCall).toBeNull()
 
     // ② projector 真实形态：双受众成对（owner preview 带命令正文，project 只剩类别）。
+    // 注意 seq 的语义：唯一键是 (run_id, seq)——**不含 audience**，双受众行各有各的
+    // seq（node spool 逐行编号）。这里按真实形态给两行不同 seq。
     await insertToolStarted(runId, 1, 'bash', 'owner')
-    await insertToolStarted(runId, 1, 'bash', 'project')
-    await insertToolStarted(runId, 2, 'edit_file', 'owner')
-    await insertToolStarted(runId, 2, 'edit_file', 'project')
-    // 取**最新**一条（seq 2），不是第一条。
+    await insertToolStarted(runId, 2, 'bash', 'project')
+    await insertToolStarted(runId, 3, 'edit_file', 'owner')
+    await insertToolStarted(runId, 4, 'edit_file', 'project')
+    // 取**最新**一条（project 行里 seq 最大的），不是第一条。
     expect((await roomRuns())[0]?.lastToolCall).toMatchObject({ tool: 'edit_file' })
   })
 
