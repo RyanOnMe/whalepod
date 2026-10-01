@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { teamEvents } from '../schema/outbox.js'
 import { runEvents } from '../schema/run.js'
@@ -39,6 +39,46 @@ export interface ListRunEventsOptions {
   /** 只取 seq 大于该值的事件（增量拉取）。 */
   readonly afterSeq?: number
   readonly limit?: number
+}
+
+/**
+ * 每 Run 最近一次工具调用的工具名（#246 工具轨迹内联摘要）。
+ *
+ * 只取 **project 受众**的 `tool.started` 行：projector 对 tool.started 是双受众投影，
+ * 两行的 `toolName` 相同、project 行的 preview 已收缩到只剩类别（§9 二层收缩）——
+ * 这个摘要进的是全员可见的任务房间视图，取 project 行就不会把 owner 详情带出去。
+ * 一条 DISTINCT ON（run_id 取 seq 最大行），不 N+1、不拉全量工具历史。
+ */
+export async function latestToolStartsByRun(
+  handle: DbHandle,
+  runIds: readonly string[],
+): Promise<Map<string, { tool: string; at: Date }>> {
+  const result = new Map<string, { tool: string; at: Date }>()
+  if (runIds.length === 0) return result
+  const rows = await handle
+    .selectDistinctOn([runEvents.runId], {
+      runId: runEvents.runId,
+      payload: runEvents.payload,
+      occurredAt: runEvents.occurredAt,
+    })
+    .from(runEvents)
+    .where(
+      and(
+        inArray(runEvents.runId, [...runIds]),
+        eq(runEvents.type, 'tool.started'),
+        eq(runEvents.audience, 'project'),
+      ),
+    )
+    .orderBy(runEvents.runId, desc(runEvents.seq))
+  for (const row of rows) {
+    const toolName = (row.payload as { toolName?: unknown }).toolName
+    // payload 形状由协议保证（tool.started 带 toolName），但读模型不信任写路径：
+    // 拿不到合法工具名就当「没有工具调用」，不抛、不画。
+    if (typeof toolName === 'string' && toolName !== '') {
+      result.set(row.runId, { tool: toolName, at: row.occurredAt })
+    }
+  }
+  return result
 }
 
 /** Run Event 时间线：seq 升序；受众/游标/条数可选过滤（P1-13 GET /runs/:id/events）。 */

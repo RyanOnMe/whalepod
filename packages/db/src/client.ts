@@ -9,7 +9,10 @@ export type Db = PostgresJsDatabase<Schema>
 export type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
 
 /** 仓储与命令共用的查询句柄：普通连接（Db）与事务连接（Tx）皆可。 */
-export type DbHandle = Pick<Db, 'select' | 'insert' | 'update' | 'delete' | 'execute'>
+export type DbHandle = Pick<
+  Db,
+  'select' | 'selectDistinctOn' | 'insert' | 'update' | 'delete' | 'execute'
+>
 
 export interface DatabaseOptions {
   connectionString: string

@@ -38,6 +38,12 @@ export interface InstructionListProps {
    * 它是「pending 且当前 Run 还没进 running」，需要 Run 的信息才能判断。
    */
   queuedIds?: ReadonlySet<string>
+  /**
+   * #246 工具轨迹内联：runId → 该 Run 最近一次工具调用的摘要（服务端解析，见
+   * `TaskRoomRun.lastToolCall`）。由调用方从房间视图的 runs 构建——保持本组件
+   * 纯展示（不挂 react-query）。缺省/无映射 = 该 Run 没有工具调用，不画 chip。
+   */
+  lastToolCallByRun?: ReadonlyMap<string, { tool: string; at: string }>
   /** 点运行号 → 打开该 Run 的 Console（#179 决策：卡内覆盖层）。 */
   onOpenRun?: (runId: string) => void
   /**
@@ -52,6 +58,7 @@ export function InstructionList({
   instructions,
   session,
   queuedIds,
+  lastToolCallByRun,
   onOpenRun,
   authorName,
 }: InstructionListProps): ReactNode {
@@ -124,6 +131,18 @@ export function InstructionList({
                 >
                   运行 {runId.slice(0, 8)}
                 </button>
+                {/* #246 工具轨迹 chip：回答「它最近在用什么工具」，点了直达 Console（渐进
+                    展开——Console 仍是审计真源，这里只是一层内联摘要）。与运行号入口并存。 */}
+                {lastToolCallByRun?.get(runId) === undefined ? null : (
+                  <button
+                    type="button"
+                    className="link-button instruction-tool-chip"
+                    data-testid="instruction-tool-chip"
+                    onClick={() => onOpenRun?.(runId)}
+                  >
+                    已用工具：{lastToolCallByRun.get(runId)!.tool}
+                  </button>
+                )}
               </div>
             )}
           </li>

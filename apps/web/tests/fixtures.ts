@@ -190,6 +190,8 @@ export function makeRun(overrides: Partial<TaskRoomRun> = {}): TaskRoomRun {
     // #211：落点显示名（默认未知，由各用例按需覆盖有名字的）。
     deviceName: null,
     workspaceName: null,
+    // #246：最近一次工具调用摘要（默认 null = 没有工具调用）。
+    lastToolCall: null,
     ...overrides,
   }
 }

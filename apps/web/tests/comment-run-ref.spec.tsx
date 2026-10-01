@@ -27,6 +27,8 @@ function run(id: string, over: Partial<TaskRoomRun> = {}): TaskRoomRun {
     // #211 起 TaskRoomRun 含落点显示名（与 fixtures.makeRun 同步；缺了类型检查会红）。
     deviceName: null,
     workspaceName: null,
+    // #246：与 fixtures.makeRun 同步（新必填字段，缺了类型检查会红）。
+    lastToolCall: null,
     ...over,
   }
 }

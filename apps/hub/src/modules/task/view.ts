@@ -8,6 +8,7 @@ import {
   getAgent,
   getProfileRevision,
   getTask,
+  latestToolStartsByRun,
   listArtifactsByTask,
   listDiscussionMessages,
   listInstructionMessages,
@@ -43,11 +44,18 @@ export interface TaskRoomRun {
   approvalPolicy: 'approval_required' | 'full_access'
   deviceName: string | null
   workspaceName: string | null
+  /**
+   * 最近一次工具调用摘要（#246 工具轨迹内联）：来自 **project 受众**的
+   * `tool.started` 行（toolName 两受众相同、project 行 preview 已收缩），全员可见
+   * 的房间视图取 project 行不越受众。null = 该 Run 还没有工具调用。
+   */
+  lastToolCall: { tool: string; at: string } | null
 }
 
 function toTaskRoomRun(
   row: RunRow,
   names: Map<string, { deviceName: string | null; workspaceName: string | null }>,
+  lastToolCall: { tool: string; at: Date } | undefined,
 ): TaskRoomRun {
   const placement = names.get(row.id)
   return {
@@ -61,6 +69,10 @@ function toTaskRoomRun(
     approvalPolicy: row.approvalPolicy,
     deviceName: placement?.deviceName ?? null,
     workspaceName: placement?.workspaceName ?? null,
+    lastToolCall:
+      lastToolCall === undefined
+        ? null
+        : { tool: lastToolCall.tool, at: lastToolCall.at.toISOString() },
   }
 }
 
@@ -167,12 +179,19 @@ export async function getTaskRoom(
   ])
   // #244：预解析依赖上面的 runs（要先知道会继承哪个 Agent），没法进同一个
   // Promise.all；顺序两查（agent → revision）+ 读模型路径，代价可接受。
-  const nextRunApprovalPolicy = await resolveNextRunApprovalPolicy(handle, task, runs)
+  // #246：工具摘要同样依赖 runs（按 runId 批查），与预解析并行。
+  const [nextRunApprovalPolicy, lastToolCalls] = await Promise.all([
+    resolveNextRunApprovalPolicy(handle, task, runs),
+    latestToolStartsByRun(
+      handle,
+      runs.map((row) => row.id),
+    ),
+  ])
   return {
     task: toTaskView(task),
     comments: comments.map(toCommentView),
     instructions: instructions.map(toCommentView),
-    runs: runs.map((row) => toTaskRoomRun(row, placementNames)),
+    runs: runs.map((row) => toTaskRoomRun(row, placementNames, lastToolCalls.get(row.id))),
     nextRunApprovalPolicy,
     artifacts: artifacts
       .filter(

@@ -165,3 +165,58 @@ describe('视图类型收敛（#210）：不许再手写第二份', () => {
     expect(screen.getByTestId('instruction-state')).toHaveTextContent('未知状态')
   })
 })
+
+/**
+ * #246（#243 第 2 条）工具轨迹内联：指令条目回答「它最近在用什么工具」，
+ * 点 chip 直达该 Run 的 Console——「说了什么」与「做了什么」同一条流渐进展开，
+ * 不再为扫一眼工具把人赶进排障覆盖层。
+ */
+describe('#246 工具轨迹 chip（渐进展开）', () => {
+  it('Run 有工具调用时渲染 chip：工具名可见，点击打开该 Run 的 Console', () => {
+    const onOpenRun = vi.fn()
+    render(
+      <InstructionList
+        instructions={[instruction({ runId: 'r-1' })]}
+        session={null}
+        lastToolCallByRun={new Map([['r-1', { tool: 'bash', at: '2026-10-01T00:00:00.000Z' }]])}
+        onOpenRun={onOpenRun}
+      />,
+    )
+    const chip = screen.getByTestId('instruction-tool-chip')
+    expect(chip.textContent).toContain('bash')
+    expect(chip.textContent).toContain('已用工具')
+    chip.click()
+    expect(onOpenRun).toHaveBeenCalledWith('r-1')
+  })
+
+  it('Run 没有工具调用（或指令未绑定 Run）时不画 chip——没有就不假装有', () => {
+    render(
+      <InstructionList
+        instructions={[
+          instruction({ id: 'i-no-tool', runId: 'r-bare' }),
+          instruction({ id: 'i-no-run', runId: null }),
+        ]}
+        session={null}
+        lastToolCallByRun={new Map()}
+      />,
+    )
+    expect(screen.queryByTestId('instruction-tool-chip')).not.toBeInTheDocument()
+  })
+
+  it('chip 与运行号入口并存：两个入口都能到 Console，互不替代', () => {
+    const onOpenRun = vi.fn()
+    render(
+      <InstructionList
+        instructions={[instruction({ runId: 'r-1' })]}
+        session={null}
+        lastToolCallByRun={new Map([['r-1', { tool: 'edit', at: '2026-10-01T00:00:00.000Z' }]])}
+        onOpenRun={onOpenRun}
+      />,
+    )
+    screen.getByTestId('instruction-run').click()
+    screen.getByTestId('instruction-tool-chip').click()
+    expect(onOpenRun).toHaveBeenCalledTimes(2)
+    expect(onOpenRun).toHaveBeenNthCalledWith(1, 'r-1')
+    expect(onOpenRun).toHaveBeenNthCalledWith(2, 'r-1')
+  })
+})

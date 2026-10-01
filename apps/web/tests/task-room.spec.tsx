@@ -146,6 +146,37 @@ describe('task-room', () => {
     expect(placements[1]?.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/)
   })
 
+  it('#246 页面级接线：指令的 Run 有工具摘要时指令流出 chip，点击打开该 Run 的 Console', async () => {
+    const user = userEvent.setup()
+    const task = makeTask({ assigneeUserId: BOB.userId })
+    const run = makeRun({
+      status: 'running',
+      lastToolCall: { tool: 'bash', at: '2026-10-01T00:00:00.000Z' },
+    })
+    const withRun = makeInstruction({ runId: run.id, instructionState: 'accepted' })
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task, {
+          runs: [run],
+          instructions: [withRun],
+        }),
+        // Console 打开时会拉该 Run 的事件（这里只需要空列表：判据是覆盖层开没开）。
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/runs/${run.id}/events$`),
+          respond: () => ok({ events: [] }),
+        },
+      ]),
+    )
+    // 指令流的 chip（页面把 runs 的 lastToolCall 组 map 传进指令流——组件 spec 验不了这根线）。
+    const chip = await screen.findByTestId('instruction-tool-chip')
+    expect(chip).toHaveTextContent('已用工具：bash')
+    // 点击 = 打开该 Run 的 Console 覆盖层（与运行号入口同一个目的地）。
+    await user.click(chip)
+    expect(await screen.findByTestId('run-console')).toBeVisible()
+  })
+
   it('交付物与复核折在执行栏底部的任务详情里（**默认展开**：默认折叠会断 G6-04 金路径；区段标题中文）', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId })
     renderApp(
