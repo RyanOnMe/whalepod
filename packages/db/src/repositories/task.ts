@@ -76,13 +76,16 @@ export interface RecentTaskRow {
 }
 
 export async function listRecentTasks(handle: DbHandle, limit: number): Promise<RecentTaskRow[]> {
+  // 子查询里的 sql 片段必须显式 .as()：没有别名时 PG 生成 `max` 这种自动列名，
+  // 外层引用 `lastMessage.last` 就成了不存在的列（CI 真 PostgreSQL 抓的 500，
+  // 本地面无 DB 看不到——drizzle 的位置映射只救外层 select，救不了子查询引用）。
   const lastMessage = handle
-    .select({ taskId: taskMessages.taskId, last: sql<Date>`max(${taskMessages.createdAt})` })
+    .select({ taskId: taskMessages.taskId, last: sql<Date>`max(${taskMessages.createdAt})`.as('last') })
     .from(taskMessages)
     .groupBy(taskMessages.taskId)
     .as('last_message')
   const lastRun = handle
-    .select({ taskId: runs.taskId, last: sql<Date>`max(${runs.createdAt})` })
+    .select({ taskId: runs.taskId, last: sql<Date>`max(${runs.createdAt})`.as('last') })
     .from(runs)
     .groupBy(runs.taskId)
     .as('last_run')
