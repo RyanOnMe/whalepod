@@ -67,7 +67,6 @@ export async function listTasksByProject(handle: DbHandle, projectId: string): P
  * 最近活动任务（#252 侧栏「最近任务」）：按「最近活动」排序，活动 =
  * greatest(task.updated_at, 该任务最新 task_message.created_at, 该任务最新 run.created_at)。
  * **按活动不按建单**——昨天建、今天有人发言的旧任务要排在刚建的新任务前面。
- * 两个活动聚合用子查询 + LEFT JOIN（无活动的任务回落到自身 updated_at），一条 SQL 不 N+1。
  */
 export interface RecentTaskRow {
   task: TaskRow
@@ -76,29 +75,21 @@ export interface RecentTaskRow {
 }
 
 export async function listRecentTasks(handle: DbHandle, limit: number): Promise<RecentTaskRow[]> {
-  // 子查询里的 sql 片段必须显式 .as()：没有别名时 PG 生成 `max` 这种自动列名，
-  // 外层引用 `lastMessage.last` 就成了不存在的列（CI 真 PostgreSQL 抓的 500，
-  // 本地面无 DB 看不到——drizzle 的位置映射只救外层 select，救不了子查询引用）。
-  const lastMessage = handle
-    .select({ taskId: taskMessages.taskId, last: sql<Date>`max(${taskMessages.createdAt})`.as('last') })
-    .from(taskMessages)
-    .groupBy(taskMessages.taskId)
-    .as('last_message')
-  const lastRun = handle
-    .select({ taskId: runs.taskId, last: sql<Date>`max(${runs.createdAt})`.as('last') })
-    .from(runs)
-    .groupBy(runs.taskId)
-    .as('last_run')
+  // 活动聚合用**内联相关子查询**，不用「聚合子查询 + LEFT JOIN + 外层引用」：
+  // drizzle 0.45 对子查询里 `sql.as()` 字段的外层引用会丢限定名——`lastMessage.last`
+  // 渲染成裸 `"last"` 而不是 `"last_message"."last"`（两个子查询还同名撞列），真
+  // PostgreSQL 上直接 column not exists。toSQL() 文本可本地复现（无需连库），CI 两轮
+  // 500 的教训。相关子查询每行两扫，团队规模（3–10 人）下代价可接受。
+  const lastMessageAt = sql<Date>`(select max(${taskMessages.createdAt}) from ${taskMessages} where ${taskMessages.taskId} = ${tasks.id})`
+  const lastRunAt = sql<Date>`(select max(${runs.createdAt}) from ${runs} where ${runs.taskId} = ${tasks.id})`
   const lastActive = sql<Date>`greatest(
     ${tasks.updatedAt},
-    coalesce(${lastMessage.last}, ${tasks.updatedAt}),
-    coalesce(${lastRun.last}, ${tasks.updatedAt})
+    coalesce(${lastMessageAt}, ${tasks.updatedAt}),
+    coalesce(${lastRunAt}, ${tasks.updatedAt})
   )`
   return handle
     .select({ task: tasks, projectName: projects.name, lastActiveAt: lastActive })
     .from(tasks)
-    .leftJoin(lastMessage, eq(lastMessage.taskId, tasks.id))
-    .leftJoin(lastRun, eq(lastRun.taskId, tasks.id))
     .leftJoin(projects, eq(projects.id, tasks.projectId))
     .orderBy(desc(lastActive), desc(tasks.id))
     .limit(limit)
