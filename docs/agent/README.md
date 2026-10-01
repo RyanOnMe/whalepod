@@ -26,6 +26,7 @@
 | [agent-assignable-acceptance.md](./agent-assignable-acceptance.md) | #239 ADR-0009 切片⑦：Agent 可被指派——assignee_user_id 恒真人（责任人=指派人）+ assignee_agent_id 多态、指派即指令自动驱动（sendInstruction 同链复用）、出生 accepted；边界（followup 分支不可达、crash window 手动恢复） |
 | [approval-policy-acceptance.md](./approval-policy-acceptance.md) | #241 ADR-0009 切片⑧：审批档位（approval_required/full_access）——Revision 默认→Task 覆盖→Run 固化解析链、digest 七键口径、Q3 full_access 零审批帧契约、放权三显式面（设置确认/启动确认/运行卡标记）；ADR-0010 撤销自动降级的口径收口 |
 | [composer-approval-pill-acceptance.md](./composer-approval-pill-acceptance.md) | #244 P1-UX-6：composer 审批档位胶囊——发送前知情（档位+来源三条解析：追问=Run 固化档/任务覆盖/服务端预解析 Revision 默认 `nextRunApprovalPolicy`）+ full_access 发送确认；与 orchestrator 解析同式两处成对；「发送前可见≠发送时可改」的取舍 |
+| [tool-trace-chip-acceptance.md](./tool-trace-chip-acceptance.md) | #246 P1-UX-7：工具轨迹内联——指令条目 chip「已用工具：x」点开直达 Console（渐进展开，Console 仍是审计真源）；服务端 DISTINCT ON 取每 Run 最新 project 受众 tool.started；受众收缩判据（owner-only 高 seq 不进全员摘要） |
 | [dsh-ui-vendoring.md](./dsh-ui-vendoring.md) | vendored 第三方代码的出处台账：上游钉版 SHA、逐文件映射、同步纪律、许可/商标义务落点（ADR-0008 / #138） |
 | [setup-auth-invite-acceptance.md](./setup-auth-invite-acceptance.md) | G1-01..06：Setup/登录/邀请/角色/Origin gate 验收（P1-05）；#55 迁移并发串行化与等锁超时判据 |
 | [project-task-agent-acceptance.md](./project-task-agent-acceptance.md) | G2-01..06：Project/Task/Comment/Assignment + Task Room 聚合 + Agent Revision 验收（P1-06） |

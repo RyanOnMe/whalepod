@@ -133,6 +133,12 @@ export interface TaskRoomRun {
   approvalPolicy: 'approval_required' | 'full_access'
   deviceName: string | null
   workspaceName: string | null
+  /**
+   * 最近一次工具调用摘要（#246 工具轨迹内联）：服务端取 **project 受众**的
+   * `tool.started` 最新一条（只带工具名，参数属 owner 受众面不外带）。
+   * null = 该 Run 还没有工具调用。
+   */
+  lastToolCall: { tool: string; at: string } | null
 }
 
 // packages/db schema/artifact.ts 的状态集（03 §3.4）。

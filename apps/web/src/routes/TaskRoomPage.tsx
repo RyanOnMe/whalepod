@@ -124,6 +124,13 @@ export function TaskRoomPage(): ReactNode {
       : [],
   )
   const hasActiveRun = runs.some((run) => ACTIVE_RUN.has(run.status))
+  // #246 工具轨迹内联：runId → 最近一次工具调用摘要（服务端已按 project 受众解析），
+  // 供指令流的 chip 只读消费。
+  const lastToolCallByRun = new Map(
+    runs
+      .filter((run) => run.lastToolCall !== null)
+      .map((run) => [run.id, run.lastToolCall!] as const),
+  )
   // #244 审批档位预览（与 Hub 同式，优先级从高到低）：
   //   有活跃 Run → 追问，档位 = 该 Run 已固化的档（`activeRun.approvalPolicy`）；
   //   Task 覆盖 → `task.approvalPolicy`；
@@ -202,6 +209,7 @@ export function TaskRoomPage(): ReactNode {
                 session={session}
                 authorName={directory.personOf}
                 queuedIds={queuedIds}
+                lastToolCallByRun={lastToolCallByRun}
                 onOpenRun={setConsoleRunId}
               />
             )}
