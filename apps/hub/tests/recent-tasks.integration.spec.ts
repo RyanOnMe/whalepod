@@ -11,7 +11,7 @@
 import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@whalepod/db'
-import { schema } from '@whalepod/db'
+import { listRecentTasks, schema } from '@whalepod/db'
 import {
   apiInject,
   createTestApp,
@@ -91,6 +91,15 @@ describe('recent tasks (GET /tasks/recent, #252)', () => {
 
   async function recent(): Promise<RecentItem[]> {
     const res = await apiInject(ctx, bob, { method: 'GET', url: '/api/v1/tasks/recent' })
+    if (res.statusCode !== 200) {
+      // TEMP-DEBUG(#252)：CI 定位用——直接调仓储把完整错误链打进日志（定位后删）。
+      try {
+        await listRecentTasks(database.db, 8)
+      } catch (repoError) {
+        console.error('TEMP-DEBUG recent repo error:', repoError)
+      }
+      console.error('TEMP-DEBUG recent http body:', JSON.stringify(res.body))
+    }
     expect(res.statusCode).toBe(200)
     return (res.json() as { data: RecentItem[] }).data
   }
