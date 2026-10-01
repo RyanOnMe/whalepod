@@ -37,6 +37,20 @@ task_message.created_at, 该任务最新 run.created_at)**。集成 spec 的核�
   「我参与过的」——个人化过滤与 ⌘K 搜索一起在刀二考虑。
 - 缓存 staleTime 60s；任务房内变更对最近列表的失效接线在刀二统一处理。
 
+## CI 三轮 500 的三条 drizzle 教训（都是本切片抓的，写下来别再踩）
+
+1. **子查询里 `sql.as()` 字段的外层引用会丢限定名**：`lastMessage.last` 渲染成裸 `"last"`
+   而不是 `"last_message"."last"`，两个子查询还同名撞列 → column not exists。**定位手法：
+   `toSQL()` 探针本地复现（临时脚本 + lazy postgres 工厂，不连库）**——SQL 类问题不必烧
+   CI 轮次。规避：活动聚合改内联相关子查询（每行两扫，团队规模下可接受）。
+2. **裸 sql 字段的时间值是字符串**：drizzle postgres-js 驱动把 timestamptz（1184 等）
+   解析器换成透传，普通列靠**列映射器**转 Date，raw sql 表达式绕过映射器——视图层
+   `.toISOString()` 收到字符串直接 TypeError。**定位手法：TEMP-DEBUG 直调仓储**（仓储
+   不炸、路由炸 ⇒ 错误在映射层不在 SQL 层）。归一化收敛在仓储（承诺 Date），调用点
+   不各自 new Date。#246 的 `latestToolStartsByRun` 没踩是因为取的是真实列。
+3. **教训的教训**：本地面无 Docker 时，SQL/映射类失败不要只靠 CI 轮次试错——toSQL 探针
+   （第 1 条）与 TEMP-DEBUG 直调（第 2 条）各定位一轮，比盲改快一倍以上。
+
 ## 边界与债
 
 - 窄屏顶栏不渲染最近区（空间受限）；折叠菜单里加最近入口属 Q5 面的后续。
