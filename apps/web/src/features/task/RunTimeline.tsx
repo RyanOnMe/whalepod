@@ -10,13 +10,15 @@
  *   客户端不做二次裁剪，也不伪造决定入口）。
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
 import { RUN_STATUS_LABEL } from '../../shared/format.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { resumeLineageLabel, rerunLineageLabel, runOrdinalLabels } from './runLabels.js'
+import { runDurationText } from './runDuration.js'
+import { ACTIVE_RUN } from './run-states.js'
 import type { RunEventItem, Session, TaskRoomRun, TaskView } from '../../shared/api/types.js'
 
 export interface RunTimelineProps {
@@ -26,7 +28,27 @@ export interface RunTimelineProps {
   onSelect?: (runId: string) => void
 }
 
+/**
+ * #248 活跃 Run 的已耗时需要随时间走：有活跃且已开始的 Run 时每 30s 跳一次。
+ * 挂钟状态放模块内小 hook：没有活跃 Run 就不挂 interval（空闲房间零定时器），
+ * 卸载即清。30s 粒度与「分钟级预期管理」的用途匹配，不做秒级跳动。
+ */
+function useDurationTick(hasActiveStartedRun: boolean): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!hasActiveStartedRun) return
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [hasActiveStartedRun])
+  return now
+}
+
 export function RunTimeline({ runs, selectedRunId, onSelect }: RunTimelineProps): ReactNode {
+  // Hooks 必须先于空态早退（runs 从 0→N 时 Hooks 数不能变，TaskRoomPage 同款纪律）。
+  // #248：时长随挂钟走（终态是固定值不受 tick 影响，活跃的每 30s 重算）。
+  const now = useDurationTick(
+    runs.some((run) => ACTIVE_RUN.has(run.status) && run.startedAt !== null),
+  )
   if (runs.length === 0) {
     return (
       <p className="empty-state">
@@ -83,6 +105,17 @@ export function RunTimeline({ runs, selectedRunId, onSelect }: RunTimelineProps)
                   <RelativeTime iso={run.finishedAt} />
                 </dd>
               </div>
+              {/* #248 时长（时间感）：终态=固定总时长，活跃=已耗时（30s 自跳）。
+                  runDurationText 给 null（未开始/数据不完整）就不画这一行——不假装。 */}
+              {(() => {
+                const duration = runDurationText(run, now)
+                return duration === null ? null : (
+                  <div>
+                    <dt>时长</dt>
+                    <dd data-testid="run-duration">{duration}</dd>
+                  </div>
+                )
+              })()}
             </dl>
             {/* P1-16 G7-04：显式重跑血缘；切片⑤：续跑血缘（两个动作，措辞分开）。 */}
             {run.rerunOfRunId !== null ? (

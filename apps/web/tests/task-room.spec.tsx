@@ -8,7 +8,7 @@
  */
 import { screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   ALICE,
   BOB,
@@ -144,6 +144,39 @@ describe('task-room', () => {
     // 无名（deviceName null）：画"未知设备"，不编造、不画 id
     expect(placements[1]).toHaveTextContent('未知设备')
     expect(placements[1]?.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/)
+  })
+
+  it('#248 运行时长：终态=固定总时长、活跃=已耗时、未开始=不画时长行', async () => {
+    // 已耗时随 now 走，页面级钉住挂钟保证判据确定。只 fake Date：waitFor 的轮询
+    // 定时器保持真实，否则 testing-library 的异步查询会一起被冻死（5s 超时）。
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-01T03:00:00.000Z'))
+    try {
+      const task = makeTask({ assigneeUserId: BOB.userId })
+      const running = makeRun({
+        status: 'running',
+        startedAt: '2026-10-01T00:00:05.000Z',
+      })
+      const completed = makeRun({
+        status: 'completed',
+        startedAt: '2026-10-01T00:00:00.000Z',
+        finishedAt: '2026-10-01T00:21:09.000Z',
+      })
+      const queued = makeRun({ status: 'queued', startedAt: null })
+      renderApp(
+        `/tasks/${task.id}`,
+        loggedInHandlers(BOB, [taskRoomHandler(task, { runs: [running, completed, queued] })]),
+      )
+      await screen.findByRole('heading', { name: '运行' })
+      const durations = screen.getAllByTestId('run-duration').map((el) => el.textContent)
+      // 顺序同 runs：活跃（随 now 走的已耗时）→ 终态（固定 21分9秒，对照物口径）。
+      expect(durations[0]).toBe('2小时59分')
+      expect(durations[1]).toBe('21分9秒')
+      // 未开始（无 startedAt）：不画时长行——没有时间事实就不假装。
+      expect(screen.getAllByTestId('run-duration')).toHaveLength(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('#246 页面级接线：指令的 Run 有工具摘要时指令流出 chip，点击打开该 Run 的 Console', async () => {
