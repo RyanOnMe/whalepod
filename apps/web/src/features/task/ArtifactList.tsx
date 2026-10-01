@@ -18,6 +18,7 @@ import { pushToast } from '../../app/toast.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { formatBytes, shortId } from '../../shared/format.js'
 import { RUN_NOT_IN_TIMELINE_LABEL, runOrdinalLabels } from './runLabels.js'
+import { isTextPreviewable, truncatePreview } from './artifactPreview.js'
 import type { Session } from '../../shared/api/types.js'
 import type { TaskRoomArtifact, TaskRoomRun } from '../../shared/api/types.js'
 
@@ -31,6 +32,11 @@ export interface ArtifactListProps {
    * （「第 N 次运行」，与时间线行同款，可对照）。id 本身仍留在 `title` 上。
    */
   runs: TaskRoomRun[]
+  /**
+   * #250「对这个工件继续说」：把来源运行的引用 token 注入讨论输入框（#216 同一套
+   * 窄解析语法，渲染端零改动）。由页面注入——组件不管输入框在哪。
+   */
+  onReferenceRun?: (runId: string) => void
 }
 
 /** 下载文件名：标题里的路径分隔与控制字符折叠成「-」，回退用 artifact 短 id。 */
@@ -42,7 +48,13 @@ function safeFileName(artifact: TaskRoomArtifact): string {
   return base === '' ? `artifact-${shortId(artifact.id)}` : base
 }
 
-export function ArtifactList({ artifacts, session, taskId, runs }: ArtifactListProps): ReactNode {
+export function ArtifactList({
+  artifacts,
+  session,
+  taskId,
+  runs,
+  onReferenceRun,
+}: ArtifactListProps): ReactNode {
   const published = artifacts.filter((a) => a.status === 'published')
   // 候选行的可见性以会话为准（Hub 只给 owner 下发 candidate；此处仍按 owner 过滤，
   // 防御未来服务端形状变化时把他人候选渲染出来）。
@@ -52,7 +64,13 @@ export function ArtifactList({ artifacts, session, taskId, runs }: ArtifactListP
   const runLabels = runOrdinalLabels(runs)
   return (
     <div>
-      <ArtifactRows artifacts={published} session={session} taskId={taskId} runLabels={runLabels} />
+      <ArtifactRows
+        artifacts={published}
+        session={session}
+        taskId={taskId}
+        runLabels={runLabels}
+        onReferenceRun={onReferenceRun}
+      />
       <CandidateRows artifacts={candidates} taskId={taskId} runLabels={runLabels} />
       {published.length === 0 && candidates.length === 0 ? (
         <p className="empty-state">
@@ -91,11 +109,13 @@ function SourceRunCell({
 function ArtifactRows({
   artifacts,
   runLabels,
+  onReferenceRun,
 }: {
   artifacts: TaskRoomArtifact[]
   session: Session | null
   taskId: string
   runLabels: ReadonlyMap<string, string>
+  onReferenceRun?: ((runId: string) => void) | undefined
 }): ReactNode {
   const [busyId, setBusyId] = useState<string | undefined>(undefined)
 
@@ -150,6 +170,7 @@ function ArtifactRows({
             </div>
           </dl>
           <div className="artifact-actions">
+            <ArtifactPreview artifact={artifact} />
             <button
               type="button"
               className="button"
@@ -159,10 +180,78 @@ function ArtifactRows({
             >
               下载
             </button>
+            {/* #250：指着这个工件说话——注入来源运行的引用 token（#216 窄解析），
+                落点是讨论输入框（人对人）；驱动 Agent 仍由用户自己去执行栏说。 */}
+            {onReferenceRun === undefined ? null : (
+              <button
+                type="button"
+                className="button button-quiet"
+                data-testid="artifact-reference-button"
+                onClick={() => onReferenceRun(artifact.runId)}
+              >
+                对这个工件继续说
+              </button>
+            )}
           </div>
         </li>
       ))}
     </ul>
+  )
+}
+
+/**
+ * #250 文本预览：能预览的（`isTextPreviewable`）才画按钮；点击走同一个受控下载接口
+ * 取文本，页内 `<pre>` 展示（64KiB 截断）。加载/失败/截断三态诚实呈现，失败不吞下载。
+ */
+function ArtifactPreview({ artifact }: { artifact: TaskRoomArtifact }): ReactNode {
+  const [state, setState] = useState<
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | { kind: 'error' }
+    | { kind: 'shown'; text: string; truncated: boolean }
+  >({ kind: 'idle' })
+
+  if (!isTextPreviewable(artifact.mediaType, artifact.byteSize)) return null
+
+  async function load(): Promise<void> {
+    setState({ kind: 'loading' })
+    try {
+      const response = await fetch(`/api/v1/artifacts/${artifact.id}/content`, {
+        credentials: 'include',
+      })
+      if (!response.ok) {
+        setState({ kind: 'error' })
+        return
+      }
+      setState({ kind: 'shown', ...truncatePreview(await response.text()) })
+    } catch {
+      setState({ kind: 'error' })
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        className="button"
+        data-testid="artifact-preview-button"
+        disabled={state.kind === 'loading'}
+        onClick={() => void load()}
+      >
+        {state.kind === 'loading' ? '加载中…' : '预览'}
+      </button>
+      {state.kind === 'error' ? (
+        <p className="mutation-hint" data-testid="artifact-preview-error" role="alert">
+          预览加载失败，可下载后查看。
+        </p>
+      ) : null}
+      {state.kind === 'shown' ? (
+        <div className="artifact-preview">
+          <pre data-testid="artifact-preview">{state.text}</pre>
+          {state.truncated ? <p className="mutation-hint">内容已截断，完整内容请下载。</p> : null}
+        </div>
+      ) : null}
+    </>
   )
 }
 
