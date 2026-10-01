@@ -3,7 +3,7 @@
  * 提交后精确失效 task-room 查询；失败时保留输入内容并显示 requestId。
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
@@ -81,16 +81,35 @@ export interface CommentComposerProps {
   runs?: readonly TaskRoomRun[]
   /** 运行短号 → 展示名（「第 N 次运行」）；由页面注入，避免这里重新发明编号规则。 */
   runLabels?: ReadonlyMap<string, string>
+  /**
+   * #250 外部注入的引用 token（「对这个工件继续说」）：页面把来源运行的引用文本从
+   * 交付物区递进来，这里追加到正文尾部并聚焦。`nonce` 每次注入都变——同一 token
+   * 连点两次也要落两次账。消费后回调页面清状态，避免重渲染时重复追加。
+   */
+  insertToken?: { text: string; nonce: number } | null
+  onInsertTokenConsumed?: () => void
 }
 
 export function CommentComposer({
   taskId,
   runs = [],
   runLabels = new Map<string, string>(),
+  insertToken = null,
+  onInsertTokenConsumed,
 }: CommentComposerProps): ReactNode {
   const queryClient = useQueryClient()
   const [body, setBody] = useState('')
   const [error, setError] = useState<unknown>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (insertToken === null) return
+    // 追加而非覆盖：用户可能已经打了半句话（#250 从交付物区点进来时正文通常为空，
+    // 但不假设）。分隔恒用空格——窄解析对紧邻 token 的边界有断言（runReference.ts）。
+    setBody((current) => (current === '' ? insertToken.text : `${current} ${insertToken.text}`))
+    textareaRef.current?.focus()
+    onInsertTokenConsumed?.()
+  }, [insertToken, onInsertTokenConsumed])
 
   const mutation = useMutation({
     mutationFn: (text: string) =>
@@ -123,6 +142,7 @@ export function CommentComposer({
         rows={3}
         maxLength={10_000}
         value={body}
+        ref={textareaRef}
         onChange={(event) => setBody(event.target.value)}
         onKeyDown={(event) => {
           // #229：Cmd/Ctrl+Enter 直发（与提交按钮同一条 form 路径）；纯 Enter 仍是换行。

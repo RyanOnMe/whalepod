@@ -28,6 +28,7 @@
 | [composer-approval-pill-acceptance.md](./composer-approval-pill-acceptance.md) | #244 P1-UX-6：composer 审批档位胶囊——发送前知情（档位+来源三条解析：追问=Run 固化档/任务覆盖/服务端预解析 Revision 默认 `nextRunApprovalPolicy`）+ full_access 发送确认；与 orchestrator 解析同式两处成对；「发送前可见≠发送时可改」的取舍 |
 | [tool-trace-chip-acceptance.md](./tool-trace-chip-acceptance.md) | #246 P1-UX-7：工具轨迹内联——指令条目 chip「已用工具：x」点开直达 Console（渐进展开，Console 仍是审计真源）；服务端 DISTINCT ON 取每 Run 最新 project 受众 tool.started；受众收缩判据（owner-only 高 seq 不进全员摘要） |
 | [run-duration-acceptance.md](./run-duration-acceptance.md) | #248 P1-UX-8：运行时长（时间感）——运行卡时长行（终态固定总时长/活跃已耗时 30s 自跳/未开始不画）；formatDuration 四档纯函数；fake timers 只 fake Date 的测试教训 |
+| [artifact-preview-acceptance.md](./artifact-preview-acceptance.md) | #250 P1-UX-9：交付物有脸——文本类工件页内预览（512KiB 资格/64KiB 截断/三态诚实）+「对这个工件继续说」注入 #216 引用 token 到讨论框；重预览器不做、candidate 不加入口的取舍 |
 | [dsh-ui-vendoring.md](./dsh-ui-vendoring.md) | vendored 第三方代码的出处台账：上游钉版 SHA、逐文件映射、同步纪律、许可/商标义务落点（ADR-0008 / #138） |
 | [setup-auth-invite-acceptance.md](./setup-auth-invite-acceptance.md) | G1-01..06：Setup/登录/邀请/角色/Origin gate 验收（P1-05）；#55 迁移并发串行化与等锁超时判据 |
 | [project-task-agent-acceptance.md](./project-task-agent-acceptance.md) | G2-01..06：Project/Task/Comment/Assignment + Task Room 聚合 + Agent Revision 验收（P1-06） |

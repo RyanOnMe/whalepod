@@ -34,6 +34,7 @@ import { RunLauncher } from '../features/task/RunLauncher.js'
 import { RunLivePanel } from '../features/task/RunLivePanel.js'
 import { runOrdinalLabels } from '../features/task/runLabels.js'
 import { ACTIVE_RUN, QUEUEING_RUN } from '../features/task/run-states.js'
+import { formatRunReference } from '../features/task/runReference.js'
 import { ApprovalSlot, RunTimeline } from '../features/task/RunTimeline.js'
 import { TaskHeader } from '../features/task/TaskHeader.js'
 
@@ -51,6 +52,9 @@ export function TaskRoomPage(): ReactNode {
     deviceId: string
     workspaceId: string
   } | null>(null)
+  // #250「对这个工件继续说」：交付物区注入的引用 token，落点是左栏讨论输入框。
+  // nonce 保证同一 token 连点两次也落两次账；composer 消费后回调清状态。
+  const [insertToken, setInsertToken] = useState<{ text: string; nonce: number } | null>(null)
 
   const query = useQuery({
     queryKey: queryKeys.taskRoom(taskId ?? ''),
@@ -176,7 +180,13 @@ export function TaskRoomPage(): ReactNode {
               runs={runs}
               onOpenRun={setConsoleRunId}
             />
-            <CommentComposer taskId={task.id} runs={runs} runLabels={runOrdinalLabels(runs)} />
+            <CommentComposer
+              taskId={task.id}
+              runs={runs}
+              runLabels={runOrdinalLabels(runs)}
+              insertToken={insertToken}
+              onInsertTokenConsumed={() => setInsertToken(null)}
+            />
           </div>
         </section>
 
@@ -272,6 +282,9 @@ export function TaskRoomPage(): ReactNode {
                   session={session}
                   taskId={task.id}
                   runs={runs}
+                  onReferenceRun={(runId) =>
+                    setInsertToken({ text: formatRunReference(runId), nonce: Date.now() })
+                  }
                 />
               </section>
               <ReviewerSlot />
