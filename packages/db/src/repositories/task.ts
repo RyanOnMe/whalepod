@@ -1,6 +1,7 @@
-import { and, asc, desc, eq, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { projects, taskMessages, tasks } from '../schema/project.js'
+import { runs } from '../schema/run.js'
 
 export type ProjectRow = typeof projects.$inferSelect
 export type TaskRow = typeof tasks.$inferSelect
@@ -60,6 +61,48 @@ export async function listTasksByProject(handle: DbHandle, projectId: string): P
     .from(tasks)
     .where(eq(tasks.projectId, projectId))
     .orderBy(desc(tasks.updatedAt), desc(tasks.id))
+}
+
+/**
+ * 最近活动任务（#252 侧栏「最近任务」）：按「最近活动」排序，活动 =
+ * greatest(task.updated_at, 该任务最新 task_message.created_at, 该任务最新 run.created_at)。
+ * **按活动不按建单**——昨天建、今天有人发言的旧任务要排在刚建的新任务前面。
+ */
+export interface RecentTaskRow {
+  task: TaskRow
+  projectName: string | null
+  lastActiveAt: Date
+}
+
+export async function listRecentTasks(handle: DbHandle, limit: number): Promise<RecentTaskRow[]> {
+  // 活动聚合用**内联相关子查询**，不用「聚合子查询 + LEFT JOIN + 外层引用」：
+  // drizzle 0.45 对子查询里 `sql.as()` 字段的外层引用会丢限定名——`lastMessage.last`
+  // 渲染成裸 `"last"` 而不是 `"last_message"."last"`（两个子查询还同名撞列），真
+  // PostgreSQL 上直接 column not exists。toSQL() 文本可本地复现（无需连库），CI 两轮
+  // 500 的教训。相关子查询每行两扫，团队规模（3–10 人）下代价可接受。
+  const lastMessageAt = sql<Date>`(select max(${taskMessages.createdAt}) from ${taskMessages} where ${taskMessages.taskId} = ${tasks.id})`
+  const lastRunAt = sql<Date>`(select max(${runs.createdAt}) from ${runs} where ${runs.taskId} = ${tasks.id})`
+  const lastActive = sql<Date>`greatest(
+    ${tasks.updatedAt},
+    coalesce(${lastMessageAt}, ${tasks.updatedAt}),
+    coalesce(${lastRunAt}, ${tasks.updatedAt})
+  )`
+  const rows = await handle
+    .select({ task: tasks, projectName: projects.name, lastActiveAt: lastActive })
+    .from(tasks)
+    .leftJoin(projects, eq(projects.id, tasks.projectId))
+    .orderBy(desc(lastActive), desc(tasks.id))
+    .limit(limit)
+  // **裸 sql 字段拿到的是字符串**：drizzle 的 postgres-js 驱动把 timestamptz 等类型的
+  // 解析器换成透传（driver.cjs 的 transparentParser），普通列靠列映射器转 Date，
+  // raw sql 表达式绕过映射器——直接 .toISOString() 就是 TypeError（CI 第三轮 500 的
+  // 根因，TEMP-DEBUG 直调定位：仓储不炸、视图层炸）。仓储对调用方承诺 Date，
+  // 归一化收敛在这一层，别让每个调用点各自 new Date。
+  return rows.map((row) => ({
+    task: row.task,
+    projectName: row.projectName,
+    lastActiveAt: row.lastActiveAt instanceof Date ? row.lastActiveAt : new Date(row.lastActiveAt),
+  }))
 }
 
 export async function setTaskStatus(

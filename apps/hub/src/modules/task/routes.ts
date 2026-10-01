@@ -33,7 +33,7 @@ import {
   translateGrantConstraintError,
 } from './instruction-grants.js'
 import type { RunOrchestrator } from '../run/orchestrator.js'
-import { listTaskViewsByProject } from './queries.js'
+import { listRecentTaskViews, listTaskViewsByProject } from './queries.js'
 import { getTaskRoom } from './view.js'
 
 export interface TaskRouteDeps {
@@ -153,6 +153,14 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
     const project = await getProject(deps.database.db, projectId)
     if (project === undefined) throw new ApiError(404, 'NOT_FOUND', 'project not found')
     return { ok: true, data: await listTaskViewsByProject(deps.database.db, projectId) }
+  })
+
+  // GET /tasks/recent：侧栏「最近任务」（#252）。静态段在 Fastify 路由树里优先于
+  // /tasks/:taskId 的参数段，不会被当成 taskId。排序口径见 listRecentTasks：
+  // 按最近活动（greatest(updated_at, 最新消息, 最新 Run)），不按建单。
+  app.get('/tasks/recent', async (request) => {
+    await deps.requireActor(request)
+    return { ok: true, data: await listRecentTaskViews(deps.database.db, 8) }
   })
 
   // GET /tasks/:taskId：Task Room 聚合（不暴露 runtime internals，03 §9/02 Step 1）。
