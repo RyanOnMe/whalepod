@@ -60,8 +60,8 @@ describe('⌘K 全局搜索（#254）', () => {
     ])
     await screen.findByRole('navigation', { name: '主导航' })
     await user.keyboard('{Meta>}k')
-    const dialog = await screen.findByRole('dialog', { name: '搜索任务' })
-    const input = within(dialog).getByLabelText('搜索任务')
+    const dialog = await screen.findByRole('dialog', { name: '全局搜索' })
+    const input = within(dialog).getByLabelText('搜索关键词')
     expect(input).toHaveFocus()
     await user.type(input, '登录')
     const hit = await within(dialog).findByRole('option', { name: /修复登录页/ })
@@ -73,7 +73,7 @@ describe('⌘K 全局搜索（#254）', () => {
     const user = userEvent.setup()
     renderHome([searchHandler([])])
     await user.click(await screen.findByRole('button', { name: '搜索' }))
-    expect(await screen.findByRole('dialog', { name: '搜索任务' })).toBeVisible()
+    expect(await screen.findByRole('dialog', { name: '全局搜索' })).toBeVisible()
   })
 
   it('Esc 关闭并还焦触发钮', async () => {
@@ -81,10 +81,10 @@ describe('⌘K 全局搜索（#254）', () => {
     renderHome([searchHandler([])])
     const trigger = await screen.findByRole('button', { name: '搜索' })
     await user.click(trigger)
-    expect(await screen.findByRole('dialog', { name: '搜索任务' })).toBeVisible()
+    expect(await screen.findByRole('dialog', { name: '全局搜索' })).toBeVisible()
     await user.keyboard('{Escape}')
     await waitFor(() => {
-      expect(screen.queryByRole('dialog', { name: '搜索任务' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: '全局搜索' })).not.toBeInTheDocument()
     })
     expect(document.activeElement).toBe(trigger)
   })
@@ -93,8 +93,8 @@ describe('⌘K 全局搜索（#254）', () => {
     const user = userEvent.setup()
     const view = renderHome([searchHandler([])])
     await user.click(await screen.findByRole('button', { name: '搜索' }))
-    const dialog = await screen.findByRole('dialog', { name: '搜索任务' })
-    const input = within(dialog).getByLabelText('搜索任务')
+    const dialog = await screen.findByRole('dialog', { name: '全局搜索' })
+    const input = within(dialog).getByLabelText('搜索关键词')
     // 空关键词：没有搜索请求。
     await user.type(input, '不存在的词')
     expect(await within(dialog).findByText(/没有匹配的任务/)).toBeVisible()
@@ -123,8 +123,8 @@ describe('⌘K 全局搜索（#254）', () => {
       taskRoomHandler(taskB),
     ])
     await user.click(await screen.findByRole('button', { name: '搜索' }))
-    const dialog = await screen.findByRole('dialog', { name: '搜索任务' })
-    const input = within(dialog).getByLabelText('搜索任务')
+    const dialog = await screen.findByRole('dialog', { name: '全局搜索' })
+    const input = within(dialog).getByLabelText('搜索关键词')
     await user.type(input, '*')
     await within(dialog).findByRole('option', { name: /登录国际化/ })
     // ↓ 选中第二项，Enter 直达它。
