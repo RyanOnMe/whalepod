@@ -26,6 +26,7 @@ import { FlashBanner } from './FlashBanner.js'
 import { ToastHost } from './toast.js'
 import { RealtimeBridge } from './realtime.js'
 import { GlobalSearch } from './GlobalSearch.js'
+import { NotificationBell, RunNotifications } from './RunNotifications.js'
 
 const SessionContext = createContext<Session | null>(null)
 
@@ -204,6 +205,8 @@ export function AppShell(): ReactNode {
     <SessionContext.Provider value={session}>
       {/* 登录会话存活期持有 Browser WS：持久事件→query 失效，live→run 缓冲（P1-13）。 */}
       <RealtimeBridge />
+      {/* #259：tab 标题徽标 + 进任务房间即已读（无头；窄屏没有侧栏也要有徽标）。 */}
+      <RunNotifications />
       {/*
         #173 壳结构：灰平台（body 底）上放一张白色应用卡（.app-frame，圆角 20 + 软投影），
         卡里左侧栏（品牌 / 胶囊导航 / 用户卡置底）+ 右内容列；窄屏（<1024px）应用卡
@@ -221,6 +224,8 @@ export function AppShell(): ReactNode {
               </div>
               {/* #254：搜索入口（鼠标路径；⌘K 是键盘路径，都在 GlobalSearch 里）。 */}
               <GlobalSearch />
+              {/* #259：完成提醒开关（宽屏侧栏；权限只在点击时请求）。 */}
+              <NotificationBell />
               <nav className="app-nav" aria-label="主导航">
                 {NAV_ITEMS.map((item) => (
                   <NavLink key={item.to} to={item.to} end={item.end}>

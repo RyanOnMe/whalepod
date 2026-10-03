@@ -12,12 +12,14 @@ export function persistentFrame(
   type: string,
   payload: unknown,
   cursor = '7',
+  /** #259：通知要区分「当场发生」与「24h 窗口重放」——后者用 OCCURRED_AT（过去）。 */
+  occurredAt = OCCURRED_AT,
 ): PersistentClientFrame {
   return {
     protocolVersion: PROTOCOL_VERSION,
     kind: 'persistent',
     cursor,
-    occurredAt: OCCURRED_AT,
+    occurredAt,
     event: { type, payload },
   } as unknown as PersistentClientFrame
 }
