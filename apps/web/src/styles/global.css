@@ -571,6 +571,16 @@ p.app-sidebar-heading {
   color: var(--color-danger-strong);
 }
 
+/*
+ * #261 阶段徽标（运行卡「正在做什么」）：比状态徽标轻一档——状态是主、阶段是辅。
+ * 中性面（muted 文字 + 发丝边），不抢状态色的语义（蓝=进行、amber=等待、绿=完成）。
+ */
+.badge-phase {
+  background: transparent;
+  border-color: var(--dsw-alias-border-l4);
+  color: var(--color-muted);
+}
+
 .empty-state {
   color: var(--color-muted);
   border: 0.5px dashed var(--dsw-alias-border-l4);

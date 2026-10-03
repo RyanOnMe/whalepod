@@ -10,11 +10,11 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { queryKeys } from '../../app/query-client.js'
-import { RUN_STATUS_LABEL } from '../../shared/format.js'
+import { RUN_PHASE_LABEL, RUN_STATUS_LABEL } from '../../shared/format.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { rerunLineageLabel, SELECTED_RUN_LABEL } from './runLabels.js'
 import { TERMINAL_RUN } from './run-states.js'
-import type { RunEventItem, RunView, Session } from '../../shared/api/types.js'
+import type { RunEventItem, RunPhase, RunView, Session } from '../../shared/api/types.js'
 import { dropRunLive, getRunLiveText, subscribeRunLive } from '../../shared/realtime/run-buffer.js'
 import { RunActions } from '../run/RunActions.js'
 import { RunFailureNotice } from '../run/RunFailureNotice.js'
@@ -32,12 +32,6 @@ export interface RunLivePanelProps {
   runLabels: ReadonlyMap<string, string>
 }
 
-const PHASE_LABEL: Record<string, string> = {
-  thinking: '思考中',
-  tool: '工具执行中',
-  finalizing: '收尾中',
-}
-
 /**
  * 已知事件类型 → 单行呈现；返回 null 表示未知类型（只显示类型名）。
  * **导出**给 Run Console（⑥d）复用：同一份协议不该有两套解读。
@@ -49,7 +43,10 @@ export function describeEvent(item: RunEventItem): string | null {
       return 'DSH 运行时就绪'
     case 'run.phase': {
       const phase = (item.event as { phase?: unknown }).phase
-      return `阶段：${typeof phase === 'string' ? (PHASE_LABEL[phase] ?? phase) : '未知'}`
+      // 取值表是协议枚举的全集（Record<RunPhase, string>，协议加阶段这里编译红）；
+      // wire 上仍可能来未知值——原样呈现，不猜、不丢。
+      const label = typeof phase === 'string' ? RUN_PHASE_LABEL[phase as RunPhase] : undefined
+      return `阶段：${label ?? (typeof phase === 'string' ? phase : '未知')}`
     }
     case 'assistant.message': {
       const text = (item.event as { text?: unknown }).text

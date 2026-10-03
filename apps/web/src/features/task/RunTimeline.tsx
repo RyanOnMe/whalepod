@@ -14,7 +14,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
-import { RUN_STATUS_LABEL } from '../../shared/format.js'
+import { RUN_PHASE_LABEL, RUN_STATUS_LABEL } from '../../shared/format.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { resumeLineageLabel, rerunLineageLabel, runOrdinalLabels } from './runLabels.js'
 import { runDurationText } from './runDuration.js'
@@ -60,84 +60,100 @@ export function RunTimeline({ runs, selectedRunId, onSelect }: RunTimelineProps)
   const ordinal = runOrdinalLabels(runs)
   return (
     <ul className="run-list" role="list">
-      {runs.map((run) => (
-        <li key={run.id} className="run-item">
-          <button
-            type="button"
-            className={`run-item-button${selectedRunId === run.id ? ' selected' : ''}`}
-            data-run-id={run.id}
-            onClick={() => onSelect?.(run.id)}
-            aria-pressed={selectedRunId === run.id}
-          >
-            <div className="run-item-head">
-              {/* 完整 id 悬停在 title 里（原始值不丢，只是不冒充标签）。 */}
-              <span className="run-label" title={run.id}>
-                {ordinal.get(run.id)}
-              </span>
-              <span className={`badge badge-run badge-run-${run.status}`}>
-                {RUN_STATUS_LABEL[run.status]}
-              </span>
-            </div>
-            <dl className="run-item-meta">
-              {/* #211 B1：落点（显示名，不是 id）。null = 未知设备——不编造、不画 id。 */}
-              <div>
-                <dt>落点</dt>
-                <dd data-testid="run-placement">
-                  {run.deviceName ?? '未知设备'}
-                  {run.workspaceName === null ? '' : ` · ${run.workspaceName}`}
-                </dd>
+      {runs.map((run) => {
+        // wire 上的 lastPhase 可能整块缺失（老 Hub / 手工拼的载荷）或取值未知——
+        // 取不到合法标签就不画，绝不把 undefined 当成"有阶段"。
+        const phase = run.lastPhase?.phase
+        const phaseLabel = phase === undefined ? undefined : RUN_PHASE_LABEL[phase]
+        return (
+          <li key={run.id} className="run-item">
+            <button
+              type="button"
+              className={`run-item-button${selectedRunId === run.id ? ' selected' : ''}`}
+              data-run-id={run.id}
+              onClick={() => onSelect?.(run.id)}
+              aria-pressed={selectedRunId === run.id}
+            >
+              <div className="run-item-head">
+                {/* 完整 id 悬停在 title 里（原始值不丢，只是不冒充标签）。 */}
+                <span className="run-label" title={run.id}>
+                  {ordinal.get(run.id)}
+                </span>
+                <span className={`badge badge-run badge-run-${run.status}`}>
+                  {RUN_STATUS_LABEL[run.status]}
+                </span>
+                {/* #261「正在做什么」：只对运行中的 Run 画阶段徽标。
+                  终态 Run 的投影里也有末次阶段（读模型只给事实），但「收尾中」挂在
+                  已完成的 Run 上就是撒谎；等待审批是人在等、不是它在跑，同样不画。
+                  形状不信任 wire（老载荷可能整个没有 lastPhase，未知 phase 也可能出现）：
+                  取不到合法标签就不画——一次 undefined 取值就能把整页白屏（实测过）。 */}
+                {run.status === 'running' && phaseLabel !== undefined ? (
+                  <span className="badge badge-phase" data-testid="run-phase">
+                    {phaseLabel}
+                  </span>
+                ) : null}
               </div>
-              <div>
-                <dt>创建</dt>
-                <dd>
-                  <RelativeTime iso={run.createdAt} />
-                </dd>
-              </div>
-              <div>
-                <dt>开始</dt>
-                <dd>
-                  <RelativeTime iso={run.startedAt} />
-                </dd>
-              </div>
-              <div>
-                <dt>结束</dt>
-                <dd>
-                  <RelativeTime iso={run.finishedAt} />
-                </dd>
-              </div>
-              {/* #248 时长（时间感）：终态=固定总时长，活跃=已耗时（30s 自跳）。
+              <dl className="run-item-meta">
+                {/* #211 B1：落点（显示名，不是 id）。null = 未知设备——不编造、不画 id。 */}
+                <div>
+                  <dt>落点</dt>
+                  <dd data-testid="run-placement">
+                    {run.deviceName ?? '未知设备'}
+                    {run.workspaceName === null ? '' : ` · ${run.workspaceName}`}
+                  </dd>
+                </div>
+                <div>
+                  <dt>创建</dt>
+                  <dd>
+                    <RelativeTime iso={run.createdAt} />
+                  </dd>
+                </div>
+                <div>
+                  <dt>开始</dt>
+                  <dd>
+                    <RelativeTime iso={run.startedAt} />
+                  </dd>
+                </div>
+                <div>
+                  <dt>结束</dt>
+                  <dd>
+                    <RelativeTime iso={run.finishedAt} />
+                  </dd>
+                </div>
+                {/* #248 时长（时间感）：终态=固定总时长，活跃=已耗时（30s 自跳）。
                   runDurationText 给 null（未开始/数据不完整）就不画这一行——不假装。 */}
-              {(() => {
-                const duration = runDurationText(run, now)
-                return duration === null ? null : (
-                  <div>
-                    <dt>时长</dt>
-                    <dd data-testid="run-duration">{duration}</dd>
-                  </div>
-                )
-              })()}
-            </dl>
-            {/* P1-16 G7-04：显式重跑血缘；切片⑤：续跑血缘（两个动作，措辞分开）。 */}
-            {run.rerunOfRunId !== null ? (
-              <p className="run-lineage" data-testid="run-lineage" title={run.rerunOfRunId}>
-                {rerunLineageLabel(ordinal.get(run.rerunOfRunId))}
-              </p>
-            ) : null}
-            {run.resumeFromRunId !== null ? (
-              <p className="run-lineage" data-testid="run-lineage" title={run.resumeFromRunId}>
-                {resumeLineageLabel(ordinal.get(run.resumeFromRunId))}
-              </p>
-            ) : null}
-            {/* #241（ADR-0009 决策 7）：full_access 是显式放权，运行卡必须显著标记——
+                {(() => {
+                  const duration = runDurationText(run, now)
+                  return duration === null ? null : (
+                    <div>
+                      <dt>时长</dt>
+                      <dd data-testid="run-duration">{duration}</dd>
+                    </div>
+                  )
+                })()}
+              </dl>
+              {/* P1-16 G7-04：显式重跑血缘；切片⑤：续跑血缘（两个动作，措辞分开）。 */}
+              {run.rerunOfRunId !== null ? (
+                <p className="run-lineage" data-testid="run-lineage" title={run.rerunOfRunId}>
+                  {rerunLineageLabel(ordinal.get(run.rerunOfRunId))}
+                </p>
+              ) : null}
+              {run.resumeFromRunId !== null ? (
+                <p className="run-lineage" data-testid="run-lineage" title={run.resumeFromRunId}>
+                  {resumeLineageLabel(ordinal.get(run.resumeFromRunId))}
+                </p>
+              ) : null}
+              {/* #241（ADR-0009 决策 7）：full_access 是显式放权，运行卡必须显著标记——
                 团队里谁都能看出「这次没走逐次批准」，不靠翻设置页。 */}
-            {run.approvalPolicy === 'full_access' ? (
-              <p className="run-lineage" data-testid="run-full-access">
-                完全权限（工具调用未逐次批准）
-              </p>
-            ) : null}
-          </button>
-        </li>
-      ))}
+              {run.approvalPolicy === 'full_access' ? (
+                <p className="run-lineage" data-testid="run-full-access">
+                  完全权限（工具调用未逐次批准）
+                </p>
+              ) : null}
+            </button>
+          </li>
+        )
+      })}
     </ul>
   )
 }

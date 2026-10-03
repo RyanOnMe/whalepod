@@ -106,8 +106,29 @@ describe('applyClientFrame (event-router)', () => {
         ],
       ],
       ['comment.created', { taskId: 't-1' }, [['task-room', 't-1']]],
-      ['run.changed', { runId: 'r-1' }, [['run', 'r-1']]],
-      ['run.event', { runId: 'r-1' }, [['run', 'r-1']]],
+      // #261：run.changed 带 taskId——运行卡（状态徽标）在任务房间里，不失效它
+      // 就要等刷新或别的 mutation 才动（event-router 开头的键表契约）。
+      [
+        'run.changed',
+        { runId: 'r-1', taskId: 't-1' },
+        [
+          ['run', 'r-1'],
+          ['task-room', 't-1'],
+        ],
+      ],
+      // #261：run.phase 是「正在做什么」的唯一信号（阶段徽标的取数）。载荷没有
+      // taskId（orchestrator 只带 runId/seq/audience/ownerUserId/event）→ 前缀失效房间。
+      [
+        'run.event',
+        { runId: 'r-1', event: { type: 'run.phase', phase: 'tool' } },
+        [['run', 'r-1'], ['task-room']],
+      ],
+      // 其他 Run 事件不动房间：事件频率（tool/assistant 每条都来）不该变成房间重拉频率。
+      [
+        'run.event',
+        { runId: 'r-2', event: { type: 'tool.started', toolName: 'bash' } },
+        [['run', 'r-2']],
+      ],
       ['approval.changed', { taskId: 't-1' }, [['task-room', 't-1']]],
       ['artifact.changed', { taskId: 't-1' }, [['task-room', 't-1']]],
       ['device.changed', {}, [['devices']]],
@@ -127,7 +148,18 @@ describe('applyClientFrame (event-router)', () => {
       ['instruction-grants'],
       ['project-tasks'],
     ])
-    expect(keysForPersistentEvent(persistentFrame('run.changed', {}).event)).toEqual([['run']])
+    // run.changed 缺 taskId：房间键降级为前缀（#261 起 run.changed 也失效房间）。
+    expect(keysForPersistentEvent(persistentFrame('run.changed', {}).event)).toEqual([
+      ['run'],
+      ['task-room'],
+    ])
+    // 没有 runId 的 run.event 同降级；带 runId 但不是 run.phase 时同样不动房间。
+    expect(keysForPersistentEvent(persistentFrame('run.event', {}).event)).toEqual([['run']])
+    expect(
+      keysForPersistentEvent(
+        persistentFrame('run.event', { runId: 'r-1', event: { type: 'assistant.message' } }).event,
+      ),
+    ).toEqual([['run', 'r-1']])
   })
 
   it('forwards live frames to the live sink without touching the cursor', async () => {

@@ -81,6 +81,51 @@ export async function latestToolStartsByRun(
   return result
 }
 
+/**
+ * 每 Run 最近一次阶段（#261 运行卡「正在做什么」）。
+ *
+ * 与 latestToolStartsByRun 同式同口径：只取 **project 受众**的 `run.phase` 行——
+ * projector 对阶段是双受众投影（两行 phase 相同，owner 行是镜像），进的是全员可见的
+ * 任务房间视图，取 project 行就不会把 owner 行带出去。DISTINCT ON (run_id) 取
+ * seq 最大行，不 N+1。
+ *
+ * 读模型不信任写路径（同 #246）：最新那条的 phase 不在协议枚举里就当没有——
+ * 不为了「有东西可画」回退到更旧的行（旧阶段挂在现在这一刻上同样是撒谎）。
+ */
+export type RunPhaseName = 'thinking' | 'tool' | 'finalizing'
+
+const RUN_PHASE_NAMES: readonly RunPhaseName[] = ['thinking', 'tool', 'finalizing']
+
+export async function latestPhasesByRun(
+  handle: DbHandle,
+  runIds: readonly string[],
+): Promise<Map<string, { phase: RunPhaseName; at: Date }>> {
+  const result = new Map<string, { phase: RunPhaseName; at: Date }>()
+  if (runIds.length === 0) return result
+  const rows = await handle
+    .selectDistinctOn([runEvents.runId], {
+      runId: runEvents.runId,
+      payload: runEvents.payload,
+      occurredAt: runEvents.occurredAt,
+    })
+    .from(runEvents)
+    .where(
+      and(
+        inArray(runEvents.runId, [...runIds]),
+        eq(runEvents.type, 'run.phase'),
+        eq(runEvents.audience, 'project'),
+      ),
+    )
+    .orderBy(runEvents.runId, desc(runEvents.seq))
+  for (const row of rows) {
+    const phase = (row.payload as { phase?: unknown }).phase
+    if (RUN_PHASE_NAMES.includes(phase as RunPhaseName)) {
+      result.set(row.runId, { phase: phase as RunPhaseName, at: row.occurredAt })
+    }
+  }
+  return result
+}
+
 /** Run Event 时间线：seq 升序；受众/游标/条数可选过滤（P1-13 GET /runs/:id/events）。 */
 export async function listRunEvents(
   handle: DbHandle,

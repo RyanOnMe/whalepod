@@ -8,6 +8,7 @@ import {
   getAgent,
   getProfileRevision,
   getTask,
+  latestPhasesByRun,
   latestToolStartsByRun,
   listArtifactsByTask,
   listDiscussionMessages,
@@ -50,12 +51,20 @@ export interface TaskRoomRun {
    * 的房间视图取 project 行不越受众。null = 该 Run 还没有工具调用。
    */
   lastToolCall: { tool: string; at: string } | null
+  /**
+   * 最近一次阶段（#261 运行卡「正在做什么」）：同样来自 **project 受众**的
+   * `run.phase` 行（projector 对阶段是双受众投影，两行 phase 相同）。null = 该 Run
+   * 还没有阶段事件。读模型只给事实（终态 Run 也有末次阶段），「终态不显示阶段」
+   * 是展示层规则。
+   */
+  lastPhase: { phase: 'thinking' | 'tool' | 'finalizing'; at: string } | null
 }
 
 function toTaskRoomRun(
   row: RunRow,
   names: Map<string, { deviceName: string | null; workspaceName: string | null }>,
   lastToolCall: { tool: string; at: Date } | undefined,
+  lastPhase: { phase: 'thinking' | 'tool' | 'finalizing'; at: Date } | undefined,
 ): TaskRoomRun {
   const placement = names.get(row.id)
   return {
@@ -73,6 +82,8 @@ function toTaskRoomRun(
       lastToolCall === undefined
         ? null
         : { tool: lastToolCall.tool, at: lastToolCall.at.toISOString() },
+    lastPhase:
+      lastPhase === undefined ? null : { phase: lastPhase.phase, at: lastPhase.at.toISOString() },
   }
 }
 
@@ -180,9 +191,14 @@ export async function getTaskRoom(
   // #244：预解析依赖上面的 runs（要先知道会继承哪个 Agent），没法进同一个
   // Promise.all；顺序两查（agent → revision）+ 读模型路径，代价可接受。
   // #246：工具摘要同样依赖 runs（按 runId 批查），与预解析并行。
-  const [nextRunApprovalPolicy, lastToolCalls] = await Promise.all([
+  const [nextRunApprovalPolicy, lastToolCalls, lastPhases] = await Promise.all([
     resolveNextRunApprovalPolicy(handle, task, runs),
     latestToolStartsByRun(
+      handle,
+      runs.map((row) => row.id),
+    ),
+    // #261：阶段摘要同式（按 runId 批查，别的 Run 不串档）。
+    latestPhasesByRun(
       handle,
       runs.map((row) => row.id),
     ),
@@ -191,7 +207,9 @@ export async function getTaskRoom(
     task: toTaskView(task),
     comments: comments.map(toCommentView),
     instructions: instructions.map(toCommentView),
-    runs: runs.map((row) => toTaskRoomRun(row, placementNames, lastToolCalls.get(row.id))),
+    runs: runs.map((row) =>
+      toTaskRoomRun(row, placementNames, lastToolCalls.get(row.id), lastPhases.get(row.id)),
+    ),
     nextRunApprovalPolicy,
     artifacts: artifacts
       .filter(

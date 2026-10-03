@@ -29,6 +29,8 @@ function run(id: string, over: Partial<TaskRoomRun> = {}): TaskRoomRun {
     workspaceName: null,
     // #246：与 fixtures.makeRun 同步（新必填字段，缺了类型检查会红）。
     lastToolCall: null,
+    // #261：同上。
+    lastPhase: null,
     ...over,
   }
 }
