@@ -21,6 +21,7 @@ import { TASK_STATUS_LABEL } from '../shared/format.js'
 import { useMemberDirectory } from '../features/team/memberDirectory.js'
 import type { AssignmentDriveView, AgentView, ProjectView, TaskView } from '../shared/api/types.js'
 import { queryKeys } from '../app/query-client.js'
+import { useHashFocus } from '../shared/useHashFocus.js'
 
 export function ProjectsPage(): ReactNode {
   const queryClient = useQueryClient()
@@ -29,6 +30,8 @@ export function ProjectsPage(): ReactNode {
     queryKey: queryKeys.projects,
     queryFn: () => api.get<ProjectView[]>('/projects'),
   })
+  // #263：⌘K 搜到项目后落到 `/#project-<id>`——列表落地后把目标卡片标出来。
+  useHashFocus(listQuery.isSuccess)
   // 创建者姓名（#152）：成员名录解析，解析不到给「未知成员」——不把创建者写成
   // 截断 UUID（实测截图里的 `by 01a08c11`）。
   const { nameOf } = useMemberDirectory()
@@ -74,7 +77,7 @@ export function ProjectsPage(): ReactNode {
       {listQuery.isSuccess && listQuery.data.length > 0 ? (
         <ul className="project-list" role="list">
           {listQuery.data.map((project) => (
-            <li key={project.id} className="card project-item">
+            <li key={project.id} id={`project-${project.id}`} className="card project-item">
               <div className="project-title">
                 <h2>{project.name}</h2>
                 <span className="project-meta">

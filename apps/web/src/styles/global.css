@@ -2413,3 +2413,24 @@ p.app-sidebar-heading {
   font-size: 13px;
   color: var(--color-muted);
 }
+
+/*
+ * #263 三段结果的段头（任务/项目/Agent）：与侧栏小节标签同款处理——小字、不是
+ * 标题元素（搜索浮层里不该多出一套大纲节点）。
+ */
+.global-search-section {
+  margin: 8px 0 2px 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-muted);
+}
+
+/*
+ * #263 ⌘K 结果落点：项目卡/Agent 卡被 hash 锚点命中时短暂描边（2s，useHashFocus 移除）。
+ * 用非文字对比度（描边/底色块），不动文字色——不引入新的对比度判据。
+ */
+.hash-focus {
+  outline: 2px solid var(--color-signal-strong);
+  outline-offset: 2px;
+  border-radius: var(--radius-lg);
+}

@@ -25,6 +25,7 @@ import { CREDENTIAL_SLOT_LABEL, ROLE_LABEL, shortId } from '../../shared/format.
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import type { AgentDetailView, AgentView, Session } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
+import { useHashFocus } from '../../shared/useHashFocus.js'
 import { AgentRevisionForm } from './AgentRevisionForm.js'
 import { CreateAgentRevisionForm } from './CreateAgentRevisionForm.js'
 
@@ -46,6 +47,8 @@ export function AgentList({
     queryKey: queryKeys.agents,
     queryFn: () => api.get<AgentView[]>('/agents'),
   })
+  // #263：⌘K 搜到 Agent 后落到 `/agents#agent-<id>`——列表落地后把目标卡片标出来。
+  useHashFocus(listQuery.isSuccess)
   const detailQuery = useQuery({
     queryKey: queryKeys.agentDetail(selectedId ?? ''),
     queryFn: () => api.get<AgentDetailView>(`/agents/${selectedId ?? ''}`),
@@ -83,7 +86,7 @@ export function AgentList({
         {listQuery.isSuccess && listQuery.data.length > 0 ? (
           <ul className="agent-list" role="list">
             {listQuery.data.map((agent) => (
-              <li key={agent.id}>
+              <li key={agent.id} id={`agent-${agent.id}`}>
                 <button
                   type="button"
                   className={`agent-card ${agent.id === selectedId ? 'agent-card-selected' : ''}`}
