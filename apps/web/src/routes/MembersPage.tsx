@@ -13,7 +13,7 @@
  * - 复制失败如实报错，不伪造「已复制」（shared/CopyButton 统一行为）。
  */
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import type { CreateInviteRequest, TeamMemberView } from '@whalepod/protocol'
 import { api } from '../shared/api/client.js'
 import { CopyButton } from '../shared/CopyButton.js'
@@ -23,7 +23,7 @@ import { queryKeys } from '../app/query-client.js'
 import { useSession } from '../app/session.js'
 import { RelativeTime } from '../shared/RelativeTime.js'
 import { ROLE_LABEL } from '../shared/format.js'
-import { takeFlash } from '../shared/flash.js'
+import { clearFlash, peekFlash } from '../shared/flash.js'
 
 interface CreatedInviteView {
   inviteId: string
@@ -37,7 +37,11 @@ export function MembersPage(): ReactNode {
   const [role, setRole] = useState<'member' | 'admin'>('member')
   const [created, setCreated] = useState<CreatedInviteView | null>(null)
   // 加入成功的一次性提示（跳转回来时仍在同一标签页的 sessionStorage 里）。
-  const [flash] = useState<string | null>(() => takeFlash())
+  // #267：渲染期只读、提交后清——渲染期消费会被丢弃的渲染吞掉。
+  const [flash] = useState<string | null>(() => peekFlash())
+  useEffect(() => {
+    if (flash !== null) clearFlash()
+  }, [flash])
   const canInvite = session !== null && (session.role === 'owner' || session.role === 'admin')
 
   const membersQuery = useQuery({

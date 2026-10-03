@@ -59,7 +59,9 @@ describe('session 过期自动跳转（#227）', () => {
     // 重拉带回 401 → cache onError 发事件 → AppShell 跳登录（并清 session 缓存）。
     void view.queryClient.invalidateQueries()
     await waitFor(() => expect(screen.getByRole('button', { name: '登录' })).toBeInTheDocument())
-    expect(screen.getByText(/登录已过期/)).toBeVisible()
+    // #267：「登录钮出现」与「闪屏渲染出来」不保证同一次提交（/login 有两条到达路径，
+    // 这条流程里 FlashBanner 实测挂载三次）。等我们真正要断言的那件事，而不是加 timeout 掩盖。
+    expect(await screen.findByText(/登录已过期/)).toBeVisible()
     view.unmount()
   })
 
