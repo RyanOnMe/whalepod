@@ -27,6 +27,7 @@ import { ToastHost } from './toast.js'
 import { RealtimeBridge } from './realtime.js'
 import { GlobalSearch } from './GlobalSearch.js'
 import { NotificationBell, RunNotifications } from './RunNotifications.js'
+import { ShortcutHelp } from './ShortcutHelp.js'
 
 const SessionContext = createContext<Session | null>(null)
 
@@ -207,6 +208,8 @@ export function AppShell(): ReactNode {
       <RealtimeBridge />
       {/* #259：tab 标题徽标 + 进任务房间即已读（无头；窄屏没有侧栏也要有徽标）。 */}
       <RunNotifications />
+      {/* #265：`?` 开快捷键速查（无头；说明书只列已实现的键）。 */}
+      <ShortcutHelp />
       {/*
         #173 壳结构：灰平台（body 底）上放一张白色应用卡（.app-frame，圆角 20 + 软投影），
         卡里左侧栏（品牌 / 胶囊导航 / 用户卡置底）+ 右内容列；窄屏（<1024px）应用卡
