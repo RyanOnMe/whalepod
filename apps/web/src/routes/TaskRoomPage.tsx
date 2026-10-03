@@ -67,6 +67,12 @@ export function TaskRoomPage(): ReactNode {
     enabled: taskId !== undefined,
   })
 
+  // #277：加载骨架也有在场语义——数据到达后它先演完退场，再卸载（硬切就是从这儿来的）。
+  const skeletonPresence = usePresence(
+    query.isPending ? ('skeleton' as const) : null,
+    EXIT_PRESENCE_MS,
+  )
+
   // #231（ADR-0010 决策 6 的信息真空债）：只盯讨论栏的用户要能知道执行区来了
   // 新动静。首屏数据是基线（不算「新」）；活动数（指令+运行）超过已看过的值才提示。
   const execHeadingRef = useRef<HTMLHeadingElement>(null)
@@ -91,18 +97,8 @@ export function TaskRoomPage(): ReactNode {
 
   if (query.isPending) {
     // #231：骨架行预告两栏布局（纯文本「正在加载」会让页面结构跳变）。
-    return (
-      <div className="room-skeleton" aria-busy="true" data-testid="room-skeleton">
-        <div className="task-room-split">
-          {Array.from({ length: 4 }, (_, i) => (
-            <span key={`l-${i}`} className="skeleton-line" />
-          ))}
-          {Array.from({ length: 4 }, (_, i) => (
-            <span key={`r-${i}`} className="skeleton-line" />
-          ))}
-        </div>
-      </div>
-    )
+    // #277：数据到达后它不立刻消失——见下面 `.crossfade-stack` 的退场叠加。
+    return <RoomSkeleton />
   }
   if (query.isError) {
     return (
@@ -114,6 +110,10 @@ export function TaskRoomPage(): ReactNode {
       </div>
     )
   }
+  // #277：数据到了——骨架再留 `EXIT_PRESENCE_MS` 演完退场（叠在内容之上淡出，见
+  // `.crossfade-stack`）；内容只在"从骨架过来"时挂入场类（普通路由进入不演，
+  // 免得变成只对部分页面生效的"路由过渡"）。这就是原先硬切的那一刀。
+  const fromSkeleton = skeletonPresence.value !== null
 
   const { task, comments, runs, artifacts } = query.data
   // `instructions` 是 ③c-2a 的字段，hub 侧**无条件**返回它（`task/view.ts`）。
@@ -154,157 +154,183 @@ export function TaskRoomPage(): ReactNode {
           ? { policy: query.data.nextRunApprovalPolicy, source: 'revision_default' }
           : null
   return (
-    <div className="task-room">
-      <TaskHeader task={task} session={session} />
-      <div className="task-room-split">
-        {/* 讨论栏：只有人说话，永不触发运行 */}
-        <section className="task-room-col" aria-labelledby="comments-heading">
-          <div className="card room-column">
-            <div className="room-column-head">
-              <h2 id="comments-heading">讨论</h2>
-              <span className="room-column-note">团队成员之间 · 不触发 Agent</span>
-            </div>
-            {hasNewActivity ? (
-              <button
-                type="button"
-                className="execution-activity-hint"
-                data-testid="execution-activity-hint"
-                onClick={() => {
-                  setSeenActivity(activityCount)
-                  execHeadingRef.current?.focus()
-                }}
-              >
-                执行区有新活动——点开看看
-              </button>
-            ) : null}
-            {/* ⑥f：讨论里可以引用某次运行——引用只能指向**本任务**的运行，所以把 runs 与
+    <div className="crossfade-stack">
+      {fromSkeleton ? <RoomSkeleton leaving={skeletonPresence.leaving} /> : null}
+      <div className={fromSkeleton ? 'task-room crossfade-in' : 'task-room'}>
+        <TaskHeader task={task} session={session} />
+        <div className="task-room-split">
+          {/* 讨论栏：只有人说话，永不触发运行 */}
+          <section className="task-room-col" aria-labelledby="comments-heading">
+            <div className="card room-column">
+              <div className="room-column-head">
+                <h2 id="comments-heading">讨论</h2>
+                <span className="room-column-note">团队成员之间 · 不触发 Agent</span>
+              </div>
+              {hasNewActivity ? (
+                <button
+                  type="button"
+                  className="execution-activity-hint"
+                  data-testid="execution-activity-hint"
+                  onClick={() => {
+                    setSeenActivity(activityCount)
+                    execHeadingRef.current?.focus()
+                  }}
+                >
+                  执行区有新活动——点开看看
+                </button>
+              ) : null}
+              {/* ⑥f：讨论里可以引用某次运行——引用只能指向**本任务**的运行，所以把 runs 与
                 「点引用 → 开 Console」都从页面注入（解析逻辑在 runReference.ts，可单测）。 */}
-            <CommentList
-              comments={comments}
-              session={session}
-              runs={runs}
-              onOpenRun={setConsoleRunId}
-            />
-            <CommentComposer
-              taskId={task.id}
-              runs={runs}
-              runLabels={runOrdinalLabels(runs)}
-              insertToken={insertToken}
-              onInsertTokenConsumed={() => setInsertToken(null)}
-            />
-          </div>
-        </section>
-
-        {/* 执行栏：指令 + 运行 + 审批 */}
-        <section className="task-room-col" aria-labelledby="instructions-heading">
-          <div className="card room-column">
-            <div className="room-column-head">
-              <h2 id="instructions-heading" ref={execHeadingRef} tabIndex={-1}>
-                执行
-              </h2>
-              <span className="room-column-note">
-                {hasActiveRun
-                  ? '当前有运行进行中 · 继续说会成为追问'
-                  : '当前没有运行 · 这句话会起新运行'}
-              </span>
-            </div>
-            {instructionsMissing ? (
-              // 缺字段 ≠ 没有指令：显式说出来，不静默成空列表（复核 #209 观察 5 / R1）。
-              // ① 文案里不留 Markdown 星号（复核实测页面上会原样显示 `**`），也不夹协议字段名；
-              // ② 视觉档**不能复用 `.empty-state`**——复核实测它与同栏「还没有人驱动过这个任务」
-              //    渲染完全一致，用户只会读成"又一个空态"，而这正是要区分的两件事。
-              <p className="stream-incomplete" role="status" data-testid="instructions-missing">
-                指令流读取不完整：服务端这次的响应里没有指令流。请注意，这并不是"还没有指令"。
-              </p>
-            ) : (
-              // 缺字段时**不渲染列表**：否则空态"还没有人驱动过这个任务"会与上面的告警同时出现，
-              // 两句话自相矛盾（判据实测抓到）。要么说"读取不完整"，要么说"还没有指令"，不并列。
-              <InstructionList
-                instructions={instructions}
+              <CommentList
+                comments={comments}
                 session={session}
-                authorName={directory.personOf}
-                queuedIds={queuedIds}
-                lastToolCallByRun={lastToolCallByRun}
+                runs={runs}
                 onOpenRun={setConsoleRunId}
               />
-            )}
-            {/* ⑥c：执行目标条——回答"这句话会在哪里跑"。
+              <CommentComposer
+                taskId={task.id}
+                runs={runs}
+                runLabels={runOrdinalLabels(runs)}
+                insertToken={insertToken}
+                onInsertTokenConsumed={() => setInsertToken(null)}
+              />
+            </div>
+          </section>
+
+          {/* 执行栏：指令 + 运行 + 审批 */}
+          <section className="task-room-col" aria-labelledby="instructions-heading">
+            <div className="card room-column">
+              <div className="room-column-head">
+                <h2 id="instructions-heading" ref={execHeadingRef} tabIndex={-1}>
+                  执行
+                </h2>
+                <span className="room-column-note">
+                  {hasActiveRun
+                    ? '当前有运行进行中 · 继续说会成为追问'
+                    : '当前没有运行 · 这句话会起新运行'}
+                </span>
+              </div>
+              {instructionsMissing ? (
+                // 缺字段 ≠ 没有指令：显式说出来，不静默成空列表（复核 #209 观察 5 / R1）。
+                // ① 文案里不留 Markdown 星号（复核实测页面上会原样显示 `**`），也不夹协议字段名；
+                // ② 视觉档**不能复用 `.empty-state`**——复核实测它与同栏「还没有人驱动过这个任务」
+                //    渲染完全一致，用户只会读成"又一个空态"，而这正是要区分的两件事。
+                <p className="stream-incomplete" role="status" data-testid="instructions-missing">
+                  指令流读取不完整：服务端这次的响应里没有指令流。请注意，这并不是"还没有指令"。
+                </p>
+              ) : (
+                // 缺字段时**不渲染列表**：否则空态"还没有人驱动过这个任务"会与上面的告警同时出现，
+                // 两句话自相矛盾（判据实测抓到）。要么说"读取不完整"，要么说"还没有指令"，不并列。
+                <InstructionList
+                  instructions={instructions}
+                  session={session}
+                  authorName={directory.personOf}
+                  queuedIds={queuedIds}
+                  lastToolCallByRun={lastToolCallByRun}
+                  onOpenRun={setConsoleRunId}
+                />
+              )}
+              {/* ⑥c：执行目标条——回答"这句话会在哪里跑"。
                 选择器只对**责任人**呈现：`GET /devices` 只列自己的设备，而执行永远用责任人的
                 设备与凭据（③c-2b），所以被授权成员看到的是只读说明。 */}
-            {session !== null ? (
-              <TargetPicker
-                isAssignee={task.assigneeUserId === session.userId}
-                value={explicitTarget}
-                onChange={setExplicitTarget}
-                assigneeName={directory.personOf(task.assigneeUserId)}
-                hasActiveRun={hasActiveRun}
-              />
-            ) : null}
-            {/* ⑥b：执行区输入——这里的一句话会驱动 Agent（与左栏讨论的分工是 ADR-0010 的核心）。 */}
-            {session !== null ? (
-              <InstructionComposer
-                taskId={task.id}
-                hasActiveRun={hasActiveRun}
-                target={explicitTarget}
-                approvalPreview={approvalPreview}
-              />
-            ) : null}
-          </div>
+              {session !== null ? (
+                <TargetPicker
+                  isAssignee={task.assigneeUserId === session.userId}
+                  value={explicitTarget}
+                  onChange={setExplicitTarget}
+                  assigneeName={directory.personOf(task.assigneeUserId)}
+                  hasActiveRun={hasActiveRun}
+                />
+              ) : null}
+              {/* ⑥b：执行区输入——这里的一句话会驱动 Agent（与左栏讨论的分工是 ADR-0010 的核心）。 */}
+              {session !== null ? (
+                <InstructionComposer
+                  taskId={task.id}
+                  hasActiveRun={hasActiveRun}
+                  target={explicitTarget}
+                  approvalPreview={approvalPreview}
+                />
+              ) : null}
+            </div>
 
-          <div className="card" aria-labelledby="runs-heading">
-            <h2 id="runs-heading">运行</h2>
-            <RunTimeline runs={runs} selectedRunId={selectedRunId} onSelect={setSelectedRunId} />
-            {selectedRunId !== undefined && session !== null ? (
-              <RunLivePanel
-                runId={selectedRunId}
-                session={session}
-                runLabels={runOrdinalLabels(runs)}
-                onOpenConsole={() => setConsoleRunId(selectedRunId)}
-              />
-            ) : null}
-            <ApprovalSlot runs={runs} task={task} session={session} />
-          </div>
+            <div className="card" aria-labelledby="runs-heading">
+              <h2 id="runs-heading">运行</h2>
+              <RunTimeline runs={runs} selectedRunId={selectedRunId} onSelect={setSelectedRunId} />
+              {selectedRunId !== undefined && session !== null ? (
+                <RunLivePanel
+                  runId={selectedRunId}
+                  session={session}
+                  runLabels={runOrdinalLabels(runs)}
+                  onOpenConsole={() => setConsoleRunId(selectedRunId)}
+                />
+              ) : null}
+              <ApprovalSlot runs={runs} task={task} session={session} />
+            </div>
 
-          {/* 指派与启程：**常驻**，不折进详情——接受指派是责任人进入工作前的必经一步
+            {/* 指派与启程：**常驻**，不折进详情——接受指派是责任人进入工作前的必经一步
               （没接受就不能起 Run），把它藏进折叠区等于把门藏在门后。
               ⑥b 的执行区输入框落地后，RunLauncher 会被它取代。 */}
-          <AssignmentPanel task={task} session={session} />
-          {session !== null ? (
-            <RunLauncher task={task} session={session} hasActiveRun={hasActiveRun} />
-          ) : null}
+            <AssignmentPanel task={task} session={session} />
+            {session !== null ? (
+              <RunLauncher task={task} session={session} hasActiveRun={hasActiveRun} />
+            ) : null}
 
-          {/* 任务详情：交付物与复核——低频，折起来不占视觉重量（用户选定方案①） */}
-          {/* **默认展开**（仍可手动折叠）：Q5 的 G6-04 证明「发布交付物」是金路径的一部分
+            {/* 任务详情：交付物与复核——低频，折起来不占视觉重量（用户选定方案①） */}
+            {/* **默认展开**（仍可手动折叠）：Q5 的 G6-04 证明「发布交付物」是金路径的一部分
               （e2e 要点发布按钮），默认折叠会让它 hidden、直接断链；折叠能力保留，
               但默认不把必经动作藏起来。 */}
-          <details className="card task-details" open>
-            <summary>任务详情（交付物 · 复核）</summary>
-            <div className="task-details-body">
-              <section aria-labelledby="artifacts-heading">
-                <h3 id="artifacts-heading">交付物</h3>
-                <ArtifactList
-                  artifacts={artifacts}
-                  session={session}
-                  taskId={task.id}
-                  runs={runs}
-                  onReferenceRun={(runId) =>
-                    setInsertToken({ text: formatRunReference(runId), nonce: Date.now() })
-                  }
-                />
-              </section>
-              <ReviewerSlot />
-            </div>
-          </details>
-        </section>
+            <details className="card task-details" open>
+              <summary>任务详情（交付物 · 复核）</summary>
+              <div className="task-details-body">
+                <section aria-labelledby="artifacts-heading">
+                  <h3 id="artifacts-heading">交付物</h3>
+                  <ArtifactList
+                    artifacts={artifacts}
+                    session={session}
+                    taskId={task.id}
+                    runs={runs}
+                    onReferenceRun={(runId) =>
+                      setInsertToken({ text: formatRunReference(runId), nonce: Date.now() })
+                    }
+                  />
+                </section>
+                <ReviewerSlot />
+              </div>
+            </details>
+          </section>
+        </div>
+        {consolePresence.value === null ? null : (
+          <RunConsoleHost
+            runId={consolePresence.value}
+            runs={runs}
+            leaving={consolePresence.leaving}
+            onClose={() => setConsoleRunId(undefined)}
+          />
+        )}
       </div>
-      {consolePresence.value === null ? null : (
-        <RunConsoleHost
-          runId={consolePresence.value}
-          runs={runs}
-          leaving={consolePresence.leaving}
-          onClose={() => setConsoleRunId(undefined)}
-        />
-      )}
+    </div>
+  )
+}
+
+/**
+ * 加载骨架（#231 的形态 + #277 的退场）：两栏各 4 条，形状与真内容对齐——所以退场时
+ * 可以**绝对定位叠在内容之上**淡出（见 `.crossfade-stack`），不错位、也不多占高度。
+ */
+function RoomSkeleton({ leaving = false }: { leaving?: boolean }): ReactNode {
+  return (
+    <div
+      className={`room-skeleton${leaving ? ' leaving' : ''}`}
+      aria-busy="true"
+      data-testid="room-skeleton"
+    >
+      <div className="task-room-split">
+        {Array.from({ length: 4 }, (_, i) => (
+          <span key={`l-${i}`} className="skeleton-line" />
+        ))}
+        {Array.from({ length: 4 }, (_, i) => (
+          <span key={`r-${i}`} className="skeleton-line" />
+        ))}
+      </div>
     </div>
   )
 }

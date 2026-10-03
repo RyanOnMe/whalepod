@@ -547,6 +547,12 @@ p.app-sidebar-heading {
   font-size: 13px;
   border: 0.5px solid var(--dsw-alias-border-l3);
   white-space: nowrap;
+  /* #277：状态徽标换态（运行中→已完成、待受理→已受理）是**就地换色**——整块跳变会让人
+     怀疑"是不是页面刷新了"，给它一段 120ms 的颜色过渡（换的是 class，过渡跟着走）。 */
+  transition:
+    background-color var(--duration-quick) ease,
+    border-color var(--duration-quick) ease,
+    color var(--duration-quick) ease;
 }
 
 /*
@@ -607,11 +613,29 @@ p.app-sidebar-heading {
   color: var(--color-muted);
 }
 
+/*
+ * #277 空态与列表的首次出现：两者都在**挂载那一帧**从透明起（`@starting-style`），
+ * 于是"空态 ↔ 列表"的替换是淡入淡出而不是硬切。放在这里而不是逐组件加类：
+ * 这两处的挂载时机本来就等于"内容形态换了"。
+ */
+@starting-style {
+  .empty-state,
+  .comment-list,
+  .run-list,
+  .artifact-list,
+  .agent-list,
+  .revision-history ul {
+    opacity: 0;
+  }
+}
+
 .empty-state {
   color: var(--color-muted);
   border: 0.5px dashed var(--dsw-alias-border-l4);
   border-radius: var(--radius-lg);
   padding: var(--space-3) var(--space-4);
+  opacity: 1;
+  transition: opacity var(--duration-base) var(--ease-out);
 }
 
 .mutation-hint {
@@ -1195,6 +1219,11 @@ p.app-sidebar-heading {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  /* #277：容器盖在挂载时淡入一次（见下面 `@starting-style`）——空态 ↔ 列表的整块替换
+     因此不再硬切。**只有容器挂载**会演：实时插进已有列表的行不逐行动画（高频面不给
+     动效，口径见 #271）。 */
+  opacity: 1;
+  transition: opacity var(--duration-base) var(--ease-out);
 }
 
 .comment-item,
@@ -2495,6 +2524,10 @@ p.app-sidebar-heading {
 }
 
 /* ---- #231 批次④：执行活动提示与加载骨架 ---- */
+/*
+ * #277：这个提示是个 `<button>`（`cursor: pointer`）却一直没有 hover/按压面——看起来
+ * 像"没写样式的元素"。补上与全站同口径的两档（换面 + 按下）。
+ */
 .execution-activity-hint {
   border: 1px solid var(--color-line);
   border-radius: var(--radius-md);
@@ -2507,11 +2540,62 @@ p.app-sidebar-heading {
   margin-bottom: var(--space-2);
   font-size: 0.875rem;
   cursor: pointer;
+  transition:
+    background-color var(--duration-quick) ease,
+    transform var(--duration-base) var(--ease-out);
 }
+
+.execution-activity-hint:hover {
+  background: color-mix(
+    in srgb,
+    var(--dsw-alias-state-warn-primary, var(--color-ink)) 14%,
+    transparent
+  );
+}
+
+.execution-activity-hint:active {
+  transform: scale(var(--press-scale));
+}
+
+/*
+ * #277 骨架 → 内容的交叉淡入。原先 `isPending` 一变就整块换树（早退分支换真树），
+ * 形状虽然对齐，换的那一下仍是硬切。现在：骨架多留 `EXIT_PRESENCE_MS`（JS 侧
+ * `usePresence`），期间**绝对定位叠在内容之上**淡出——骨架与内容形状对齐，所以叠住
+ * 不错位、也不多占高度。判据（web spec）：过渡窗口内两者同时在 DOM。
+ */
+.crossfade-stack {
+  position: relative;
+}
+
+.crossfade-stack > .room-skeleton {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* 内容侧只在"从骨架过来"时挂这个类（普通路由进入不演——那会变成只对部分页面生效的
+   路由过渡）；`@starting-style` 让它在**挂载的那一帧**从 0 起，不需要 JS 补第二帧。 */
+.crossfade-in {
+  opacity: 1;
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+
+@starting-style {
+  .crossfade-in {
+    opacity: 0;
+  }
+}
+
 .room-skeleton {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  opacity: 1;
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+
+.room-skeleton.leaving {
+  opacity: 0;
 }
 .task-room-split .room-skeleton,
 .room-skeleton .task-room-split {
