@@ -39,6 +39,7 @@
 | [motion-foundation-acceptance.md](./motion-foundation-acceptance.md) | #271 P1-UX-17：动效底座——全仓自有 CSS 原本 `transition` 为 0（唯一的动效是骨架脉冲）；token 化取值（强曲线，对齐 vendored 120/160ms 约定）+ 10 个具名交互面的过渡 + `:active` 按下反馈（token 化以便 reduced-motion 一处关位移）；控制族期望表登记与「变异没生效的绿」复踩记录 |
 | [presence-acceptance.md](./presence-acceptance.md) | #273 P1-UX-18：在场与退场——`usePresence`（保留上一次值 + 可打断退场）；Console/toast/断线横幅两段式消失；退场时长 JS 与 CSS 两端一致的现场解析判据；「断言要打在真正生效的那一端」（只断言 data 属性时删类名变异存活） |
 | [run-live-stream-acceptance.md](./run-live-stream-acceptance.md) | #275 P1-UX-19：直播产出区连续性——流式光标、跟随滚动可被用户接管（「回到最新」）、订阅下沉使每帧重渲染收窄；**度量注入**口径（jsdom 无布局，不注入就只有一条分支被真执行）与防空转断言 |
+| [crossfade-acceptance.md](./crossfade-acceptance.md) | #277 P1-UX-20：内容形态切换——骨架→内容的交叉淡入（判据是"两者同时在 DOM"，硬切不可能满足）、空态/列表的挂载入场、状态徽标换色；「在场对象不是 value\|null」与「取规则体要按行首锚定」两处踩坑 |
 | [dsh-ui-vendoring.md](./dsh-ui-vendoring.md) | vendored 第三方代码的出处台账：上游钉版 SHA、逐文件映射、同步纪律、许可/商标义务落点（ADR-0008 / #138） |
 | [setup-auth-invite-acceptance.md](./setup-auth-invite-acceptance.md) | G1-01..06：Setup/登录/邀请/角色/Origin gate 验收（P1-05）；#55 迁移并发串行化与等锁超时判据 |
 | [project-task-agent-acceptance.md](./project-task-agent-acceptance.md) | G2-01..06：Project/Task/Comment/Assignment + Task Room 聚合 + Agent Revision 验收（P1-06） |

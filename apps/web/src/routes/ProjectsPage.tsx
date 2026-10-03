@@ -21,7 +21,9 @@ import { TASK_STATUS_LABEL } from '../shared/format.js'
 import { useMemberDirectory } from '../features/team/memberDirectory.js'
 import type { AssignmentDriveView, AgentView, ProjectView, TaskView } from '../shared/api/types.js'
 import { queryKeys } from '../app/query-client.js'
+import { EXIT_PRESENCE_MS } from '../shared/motion.js'
 import { useHashFocus } from '../shared/useHashFocus.js'
+import { usePresence } from '../shared/usePresence.js'
 
 export function ProjectsPage(): ReactNode {
   const queryClient = useQueryClient()
@@ -32,6 +34,11 @@ export function ProjectsPage(): ReactNode {
   })
   // #263：⌘K 搜到项目后落到 `/#project-<id>`——列表落地后把目标卡片标出来。
   useHashFocus(listQuery.isSuccess)
+  // #277：骨架的在场语义（数据到了先演完退场再卸载），与任务房同一处理。
+  const projectsSkeleton = usePresence(
+    listQuery.isPending ? ('skeleton' as const) : null,
+    EXIT_PRESENCE_MS,
+  )
   // 创建者姓名（#152）：成员名录解析，解析不到给「未知成员」——不把创建者写成
   // 截断 UUID（实测截图里的 `by 01a08c11`）。
   const { nameOf } = useMemberDirectory()
@@ -63,63 +70,81 @@ export function ProjectsPage(): ReactNode {
           }}
         />
       ) : null}
-      {listQuery.isPending ? (
-        <div className="room-skeleton" aria-busy="true" data-testid="projects-skeleton">
-          {Array.from({ length: 3 }, (_, i) => (
-            <span key={i} className="skeleton-line" />
-          ))}
-        </div>
-      ) : null}
-      {listQuery.isError ? <ErrorBanner error={listQuery.error} /> : null}
-      {listQuery.isSuccess && listQuery.data.length === 0 ? (
-        <p className="empty-state">还没有项目——先创建第一个项目，再为它建 Task。</p>
-      ) : null}
-      {listQuery.isSuccess && listQuery.data.length > 0 ? (
-        <ul className="project-list" role="list">
-          {listQuery.data.map((project) => (
-            <li key={project.id} id={`project-${project.id}`} className="card project-item">
-              <div className="project-title">
-                <h2>{project.name}</h2>
-                <span className="project-meta">
-                  创建于 <RelativeTime iso={project.createdAt} /> · 创建者{' '}
-                  {nameOf(project.createdBy)}
-                </span>
-              </div>
-              {project.description !== '' ? (
-                <p className="project-description">{project.description}</p>
-              ) : null}
-              <div className="project-actions">
-                <button
-                  type="button"
-                  className="button button-quiet"
-                  aria-expanded={creatingFor === project.id}
-                  onClick={() => setCreatingFor(creatingFor === project.id ? null : project.id)}
-                >
-                  {creatingFor === project.id ? '收起' : '创建任务'}
-                </button>
-                <button
-                  type="button"
-                  className="button button-quiet"
-                  aria-expanded={listOpenFor === project.id}
-                  onClick={() => setListOpenFor(listOpenFor === project.id ? null : project.id)}
-                >
-                  {listOpenFor === project.id ? '收起任务列表' : '任务列表'}
-                </button>
-              </div>
-              {listOpenFor === project.id ? (
-                <ProjectTaskList projectId={project.id} onOpen={(id) => navigate(`/tasks/${id}`)} />
-              ) : null}
-              {creatingFor === project.id ? (
-                <CreateTaskForm
-                  projectId={project.id}
-                  onCreated={(task) => navigate(`/tasks/${task.id}`)}
-                  onClose={() => setCreatingFor(null)}
-                />
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      {/*
+        #277：骨架退场期间叠在列表之上淡出（`.crossfade-stack`），列表侧挂入场类——
+        与任务房同一处理，别让两个页面一个硬切一个不硬切。
+      */}
+      <div className="crossfade-stack">
+        {projectsSkeleton.value === null ? null : (
+          <div
+            className={`room-skeleton${projectsSkeleton.leaving ? ' leaving' : ''}`}
+            aria-busy="true"
+            data-testid="projects-skeleton"
+          >
+            {Array.from({ length: 3 }, (_, i) => (
+              <span key={i} className="skeleton-line" />
+            ))}
+          </div>
+        )}
+        {listQuery.isError ? <ErrorBanner error={listQuery.error} /> : null}
+        {listQuery.isSuccess && listQuery.data.length === 0 ? (
+          <p className="empty-state">还没有项目——先创建第一个项目，再为它建 Task。</p>
+        ) : null}
+        {listQuery.isSuccess && listQuery.data.length > 0 ? (
+          <ul
+            className={
+              projectsSkeleton.value === null ? 'project-list' : 'project-list crossfade-in'
+            }
+            role="list"
+          >
+            {listQuery.data.map((project) => (
+              <li key={project.id} id={`project-${project.id}`} className="card project-item">
+                <div className="project-title">
+                  <h2>{project.name}</h2>
+                  <span className="project-meta">
+                    创建于 <RelativeTime iso={project.createdAt} /> · 创建者{' '}
+                    {nameOf(project.createdBy)}
+                  </span>
+                </div>
+                {project.description !== '' ? (
+                  <p className="project-description">{project.description}</p>
+                ) : null}
+                <div className="project-actions">
+                  <button
+                    type="button"
+                    className="button button-quiet"
+                    aria-expanded={creatingFor === project.id}
+                    onClick={() => setCreatingFor(creatingFor === project.id ? null : project.id)}
+                  >
+                    {creatingFor === project.id ? '收起' : '创建任务'}
+                  </button>
+                  <button
+                    type="button"
+                    className="button button-quiet"
+                    aria-expanded={listOpenFor === project.id}
+                    onClick={() => setListOpenFor(listOpenFor === project.id ? null : project.id)}
+                  >
+                    {listOpenFor === project.id ? '收起任务列表' : '任务列表'}
+                  </button>
+                </div>
+                {listOpenFor === project.id ? (
+                  <ProjectTaskList
+                    projectId={project.id}
+                    onOpen={(id) => navigate(`/tasks/${id}`)}
+                  />
+                ) : null}
+                {creatingFor === project.id ? (
+                  <CreateTaskForm
+                    projectId={project.id}
+                    onCreated={(task) => navigate(`/tasks/${task.id}`)}
+                    onClose={() => setCreatingFor(null)}
+                  />
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
     </div>
   )
 }
