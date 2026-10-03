@@ -37,6 +37,7 @@
 | [global-search-entities-acceptance.md](./global-search-entities-acceptance.md) | #263 P1-UX-15：⌘K 三类实体——任务（服务端）+ 项目/Agent（本地过滤缓存，零新端点）、扁平跨段键盘、项目/Agent 落点 hash 锚点高亮（useHashFocus）；可访问名改口与「变异没生效的绿」教训 |
 | [shortcut-help-acceptance.md](./shortcut-help-acceptance.md) | #265 P1-UX-16：`?` 快捷键速查——「只列已实现的键」（四条各有可按性判据的账本）、输入焦点不抢键、空转判据（还焦）被变异逼出关闭钮；与 #267 偶发红同族的负载敏感记录 |
 | [motion-foundation-acceptance.md](./motion-foundation-acceptance.md) | #271 P1-UX-17：动效底座——全仓自有 CSS 原本 `transition` 为 0（唯一的动效是骨架脉冲）；token 化取值（强曲线，对齐 vendored 120/160ms 约定）+ 10 个具名交互面的过渡 + `:active` 按下反馈（token 化以便 reduced-motion 一处关位移）；控制族期望表登记与「变异没生效的绿」复踩记录 |
+| [presence-acceptance.md](./presence-acceptance.md) | #273 P1-UX-18：在场与退场——`usePresence`（保留上一次值 + 可打断退场）；Console/toast/断线横幅两段式消失；退场时长 JS 与 CSS 两端一致的现场解析判据；「断言要打在真正生效的那一端」（只断言 data 属性时删类名变异存活） |
 | [dsh-ui-vendoring.md](./dsh-ui-vendoring.md) | vendored 第三方代码的出处台账：上游钉版 SHA、逐文件映射、同步纪律、许可/商标义务落点（ADR-0008 / #138） |
 | [setup-auth-invite-acceptance.md](./setup-auth-invite-acceptance.md) | G1-01..06：Setup/登录/邀请/角色/Origin gate 验收（P1-05）；#55 迁移并发串行化与等锁超时判据 |
 | [project-task-agent-acceptance.md](./project-task-agent-acceptance.md) | G2-01..06：Project/Task/Comment/Assignment + Task Room 聚合 + Agent Revision 验收（P1-06） |

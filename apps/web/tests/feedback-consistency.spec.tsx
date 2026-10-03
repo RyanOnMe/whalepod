@@ -159,7 +159,7 @@ describe('toast（#229）', () => {
     view.unmount()
   })
 
-  it('堆叠上限 3 条：新的挤掉最旧的', () => {
+  it('堆叠上限 3 条：新的挤掉最旧的（#273 起先退场再移除，不瞬间摘）', () => {
     const view = renderUi(<ToastHost />)
     act(() => {
       pushToast('一')
@@ -171,6 +171,13 @@ describe('toast（#229）', () => {
     expect(live).toHaveTextContent('二')
     expect(live).toHaveTextContent('三')
     expect(live).toHaveTextContent('四')
+    // 被挤掉的「一」先进入退场：**还在 DOM 里**（让位给退场动画），但已标记 leaving。
+    const evicted = screen.getByText('一').closest('.toast-item')
+    expect(evicted).toHaveClass('leaving')
+    // 退场演完才真的消失。
+    act(() => {
+      vi.advanceTimersByTime(200)
+    })
     expect(live.textContent).not.toContain('一')
     view.unmount()
   })

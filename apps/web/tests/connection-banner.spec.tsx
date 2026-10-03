@@ -7,7 +7,7 @@
  * - session 过期的全局跳转见 session-expiry.spec.tsx。
  */
 import { act, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ALICE, loggedInHandlers, makeTask, ok } from './fixtures.js'
 import type { MockHandler } from './fixtures.js'
 import { renderApp, renderUi } from './render.js'
@@ -21,8 +21,9 @@ import { setRealtimeSocketFactoryForTest } from '../src/app/realtime.js'
 import type { TeamEventSocketCallbacks } from '../src/shared/realtime/socket.js'
 
 describe('连接横幅（#227）', () => {
-  it('断线重连中显示横幅并说明数据可能陈旧；恢复后消失；在线/首次连接不显示', () => {
+  it('断线重连中显示横幅并说明数据可能陈旧；恢复后消失；在线/首次连接不显示', async () => {
     resetConnectionStatusForTest()
+    vi.useFakeTimers()
     const first = renderUi(<ConnectionBanner />)
     // 在线（open）：安静。
     act(() => setConnectionStatus('open'))
@@ -34,10 +35,17 @@ describe('连接横幅（#227）', () => {
     act(() => setConnectionStatus('reconnecting'))
     expect(screen.getByRole('status')).toHaveTextContent('连接已断开，正在重连')
     expect(screen.getByRole('status')).toHaveTextContent('不是最新')
-    // 恢复：横幅消失。
+    // 恢复：#273 起消失是**两段式**——先收起（仍在 DOM 里、仍是 role=status，
+    // 内容还在屏幕上，语义就不该先没），退场演完才卸载。
     act(() => setConnectionStatus('open'))
+    expect(screen.getByRole('status')).toBeInTheDocument()
+    expect(document.querySelector('.connection-banner-slot')).toHaveClass('leaving')
+    act(() => {
+      vi.advanceTimersByTime(200)
+    })
     expect(screen.queryByRole('status')).toBeNull()
     first.unmount()
+    vi.useRealTimers()
     resetConnectionStatusForTest()
   })
 
