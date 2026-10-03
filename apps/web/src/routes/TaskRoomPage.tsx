@@ -17,6 +17,8 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { api } from '../shared/api/client.js'
+import { EXIT_PRESENCE_MS } from '../shared/motion.js'
+import { usePresence } from '../shared/usePresence.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
 import { useSession } from '../app/session.js'
 import { useMemberDirectory } from '../features/team/memberDirectory.js'
@@ -46,6 +48,9 @@ export function TaskRoomPage(): ReactNode {
   // ⑥d：Console 覆盖层显示哪个 Run（undefined = 关）。与 `selectedRunId`（内联面板）分开：
   // 内联面板是默认视图，覆盖层是"放大看"，两者可以同时存在。
   const [consoleRunId, setConsoleRunId] = useState<string | undefined>(undefined)
+  // #273：关掉 Console 时先把退场演完再卸载（`usePresence` 保留上一次的 runId + 挂 leaving）。
+  // 退场中途又打开另一个 Run 会**取消**退场（hook 的语义），不会出现"新的被旧的定时器摘掉"。
+  const consolePresence = usePresence(consoleRunId ?? null, EXIT_PRESENCE_MS)
   // ⑥c：显式执行目标（`null` = 走 Hub 的三段式自动解析）。状态放在页面里，因为目标条与输入框
   // 是同一个"这次往哪儿发"的意图，不该各自持有一份。
   const [explicitTarget, setExplicitTarget] = useState<{
@@ -292,10 +297,11 @@ export function TaskRoomPage(): ReactNode {
           </details>
         </section>
       </div>
-      {consoleRunId === undefined ? null : (
+      {consolePresence.value === null ? null : (
         <RunConsoleHost
-          runId={consoleRunId}
+          runId={consolePresence.value}
           runs={runs}
+          leaving={consolePresence.leaving}
           onClose={() => setConsoleRunId(undefined)}
         />
       )}
@@ -310,10 +316,13 @@ export function TaskRoomPage(): ReactNode {
 function RunConsoleHost({
   runId,
   runs,
+  leaving,
   onClose,
 }: {
   runId: string
   runs: TaskRoomView['runs']
+  /** #273：正在退场（`usePresence` 给的窗口），透传给 `RunConsole` 挂 `.leaving`。 */
+  leaving: boolean
   onClose: () => void
 }): ReactNode {
   const eventsQuery = useQuery({
@@ -325,6 +334,7 @@ function RunConsoleHost({
     <RunConsole
       runId={runId}
       runLabel={label}
+      leaving={leaving}
       events={eventsQuery.data?.events ?? []}
       eventsPending={eventsQuery.isPending}
       // 取数失败必须传下去：console 拿到的空数组既可能是"真的没有事件"，也可能是"没读到"，

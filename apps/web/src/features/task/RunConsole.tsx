@@ -93,6 +93,11 @@ export interface RunConsoleProps {
   eventsPending: boolean
   /** 取数失败也必须与"没有事件"分开（排障界面尤其不能说假话）——评审 S1。 */
   eventsError?: unknown
+  /**
+   * #273 正在退场：调用方（`TaskRoomPage`）用 `usePresence` 把卸载推迟到退场演完之后，
+   * 期间传 `true` —— 这里据此挂 `.leaving`（淡出 + 回落）。默认 false = 在场。
+   */
+  leaving?: boolean
   onClose: () => void
 }
 
@@ -102,6 +107,7 @@ export function RunConsole({
   events,
   eventsPending,
   eventsError,
+  leaving = false,
   onClose,
 }: RunConsoleProps): ReactNode {
   const [filter, setFilter] = useState<ConsoleFilter>('all')
@@ -132,7 +138,11 @@ export function RunConsole({
   const layers = [...new Set(visible.map((item) => componentLayer(item)))]
 
   return (
-    <div className="console-backdrop" data-testid="run-console">
+    <div
+      className={`console-backdrop${leaving ? ' leaving' : ''}`}
+      data-testid="run-console"
+      data-leaving={leaving ? 'true' : undefined}
+    >
       {/* 背景点击关闭：排障时常要一眼看完就退出（键盘用户走 Esc / 关闭按钮）。 */}
       {/* 遮罩是"点击关闭"的便利，但**不进键盘序**（tabIndex=-1）：它是 aria-modal 之外的元素，
           读屏会忽略它，键盘却能停上去——评审 S4 实测 Shift+Tab 从关闭钮就落到这个满屏按钮上。
