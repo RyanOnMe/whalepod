@@ -1297,6 +1297,9 @@ p.app-sidebar-heading {
 
 .run-item-meta dd {
   margin: 0;
+  /* #275：这一格里是**会自己跳**的时长（活跃 Run 每 30s 重算），比例数字会让整行宽度
+     一抖一抖；等宽数字把它按住（`tabular-nums` 对中文/等宽字体无副作用）。 */
+  font-variant-numeric: tabular-nums;
 }
 
 .artifact-title {
@@ -1737,6 +1740,12 @@ p.app-sidebar-heading {
   align-items: center;
   gap: var(--space-3);
 }
+/* #275：滚动容器（<pre>）与「回到最新」按钮同处一层——按钮绝对定位，浮在文本上，
+   出现/消失不推挤布局。 */
+.run-live-scroll {
+  position: relative;
+}
+
 .run-live-text {
   max-height: 320px;
   overflow-y: auto;
@@ -1746,6 +1755,62 @@ p.app-sidebar-heading {
   white-space: pre-wrap;
   word-break: break-word;
   font-size: var(--font-size-sm);
+  /* scroll-behavior 保持默认（瞬时）：跟随滚动是每个 token 都在发生的高频动作，
+     把它做成"平滑滚动"只会让文本永远追不上（AUDIT §1 的高频面同理）。 */
+}
+
+/* #275 流式光标：还在跑的时候，文本末尾有个"正在写"的标记。
+   纯装饰（aria-hidden），不参与文本内容断言；终态不画。 */
+.run-live-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: currentcolor;
+  animation: run-live-caret-blink 1.06s steps(1, end) infinite;
+}
+
+@keyframes run-live-caret-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/*
+ * #275「回到最新」：用户往上翻以后才出现（跟随态下不显示——没有要回的东西）。
+ * 与 toast 同族的浮起处理：不改变文本区高度。
+ */
+.run-live-jump {
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-2);
+  transform: translateX(-50%);
+  padding: 2px var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: 99px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 16%);
+  transition: background-color var(--duration-quick) ease;
+}
+
+.run-live-jump:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* 减少动效：光标不再闪（保留字形本身——它是"还在写"的信息，不是装饰）。 */
+@media (prefers-reduced-motion: reduce) {
+  .run-live-caret {
+    animation: none;
+  }
 }
 .run-event-list {
   list-style: none;
@@ -2170,6 +2235,8 @@ p.app-sidebar-heading {
   margin-left: auto;
   color: var(--dsw-alias-label-secondary);
   font-size: 0.8125rem;
+  /* #275：条数会随着筛选与实时事件变，等宽数字免得计数一改整行右移。 */
+  font-variant-numeric: tabular-nums;
 }
 
 .console-layers {

@@ -7,11 +7,19 @@
  * 事件渲染按已知类型映射；未知类型只显示类型名——不猜载荷形状（fail-closed 呈现）。
  */
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useRef, useSyncExternalStore, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useSyncExternalStore,
+  useState,
+  type ReactNode,
+} from 'react'
 import { api } from '../../shared/api/client.js'
 import { queryKeys } from '../../app/query-client.js'
 import { RUN_PHASE_LABEL, RUN_STATUS_LABEL } from '../../shared/format.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
+import { useStickToBottom } from '../../shared/useStickToBottom.js'
 import { rerunLineageLabel, SELECTED_RUN_LABEL } from './runLabels.js'
 import { TERMINAL_RUN } from './run-states.js'
 import type { RunEventItem, RunPhase, RunView, Session } from '../../shared/api/types.js'
@@ -117,22 +125,11 @@ export function RunLivePanel({
     queryKey: queryKeys.runEvents(runId),
     queryFn: () => api.get<{ events: RunEventItem[] }>(`/runs/${runId}/events`),
   })
-  const liveText = useSyncExternalStore(
-    (listener) => subscribeRunLive(runId, listener),
-    () => getRunLiveText(runId),
-  )
-  const liveRef = useRef<HTMLPreElement>(null)
-
   const run = runQuery.data
   const isOwner = run !== undefined && run.ownerUserId === session.userId
   const isActive = run !== undefined && !TERMINAL_RUN.has(run.status)
 
-  // 直播区自动滚到底；Run 终态且无人再看时释放缓冲（可丢语义，03 §8）。
-  useEffect(() => {
-    // 直接赋 scrollTop（jsdom 无 scrollTo；属性赋值各处安全）。
-    const el = liveRef.current
-    if (el !== null) el.scrollTop = el.scrollHeight
-  }, [liveText])
+  // Run 终态且无人再看时释放缓冲（可丢语义，03 §8）。
   useEffect(() => {
     return () => {
       dropRunLive(runId)
@@ -195,17 +192,9 @@ export function RunLivePanel({
       {isOwner ? (
         <div className="run-live-stream">
           <h4>实时输出</h4>
-          {liveText === '' ? (
-            <p className="empty-state">
-              {isActive
-                ? '等待输出…（直播帧不落库，断线期间的内容以最终消息为准）'
-                : '无直播内容。'}
-            </p>
-          ) : (
-            <pre ref={liveRef} className="run-live-text" data-testid="run-live-text">
-              {liveText}
-            </pre>
-          )}
+          {/* #275：订阅下沉到这个子组件——面板头部/失败提示/动作区/事件列表不再因为
+              "多了一个 token"而跟着重渲染（原先订阅在面板上，每帧整棵子树 reconcile）。 */}
+          <RunLiveStream runId={runId} isActive={isActive} />
         </div>
       ) : null}
 
@@ -232,5 +221,57 @@ export function RunLivePanel({
         </ol>
       </div>
     </section>
+  )
+}
+
+/**
+ * 直播文本（#275）：**唯一**订阅直播缓冲的组件。
+ *
+ * 为什么要单独拆出来：原先订阅挂在整块 `RunLivePanel` 上，而 delta 是按 token 来的
+ * ——每来一个 token，标题、`RunFailureNotice`、`RunActions`、≤64KB 的 `<pre>` 与整段
+ * 事件 `<ol>` 全部重新 reconcile，`scrollHeight` 的读取还构成每 token 一次的强制同步
+ * 布局。订阅下沉以后，一帧的代价只剩这段文本自己。
+ *
+ * 另外两件"像 ChatGPT/Claude"的事也在这里：
+ *   · **流式光标**：还在跑的时候，文本末尾有一个"正在写"的标记（纯装饰，`aria-hidden`，
+ *     不改文本内容——按文本断言的既有用例不受影响）；终态即消失。
+ *   · **跟随滚动可被用户接管**：往上翻就停止跟随并给出「回到最新」（见
+ *     `shared/useStickToBottom.ts` 的语义与判据）。
+ */
+function RunLiveStream({ runId, isActive }: { runId: string; isActive: boolean }): ReactNode {
+  const subscribe = useCallback(
+    (listener: () => void) => subscribeRunLive(runId, listener),
+    [runId],
+  )
+  const liveText = useSyncExternalStore(subscribe, () => getRunLiveText(runId))
+  // 容器可能后挂载（空态是 <p>，有内容才是 <pre>），所以用回调 ref 换成 state，
+  // 让下面两个 effect 在容器真的出现时重跑——用 useRef 的话滚动监听会永远挂不上。
+  const [scroller, setScroller] = useState<HTMLPreElement | null>(null)
+  const { following, resume } = useStickToBottom(scroller, liveText, isActive)
+
+  if (liveText === '') {
+    return (
+      <p className="empty-state">
+        {isActive ? '等待输出…（直播帧不落库，断线期间的内容以最终消息为准）' : '无直播内容。'}
+      </p>
+    )
+  }
+  return (
+    <div className="run-live-scroll">
+      <pre ref={setScroller} className="run-live-text" data-testid="run-live-text">
+        {liveText}
+        {isActive ? <span className="run-live-caret" aria-hidden="true" /> : null}
+      </pre>
+      {isActive && !following ? (
+        <button
+          type="button"
+          className="run-live-jump"
+          data-testid="run-live-jump"
+          onClick={resume}
+        >
+          回到最新
+        </button>
+      ) : null}
+    </div>
   )
 }
