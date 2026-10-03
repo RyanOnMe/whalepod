@@ -140,6 +140,12 @@ select {
   text-decoration: none;
   font-size: 14px;
   line-height: 22px;
+  /* #271 换面是 120ms 的颜色过渡，不是硬切。全站动效取值只有 tokens.css 一处
+     （曲线与时长都不写进组件）。这条同时管 hover 与 `[aria-current='page']`：
+     路由切换时上一项的底色淡出、不是瞬移。 */
+  transition:
+    background-color var(--duration-quick) ease,
+    color var(--duration-quick) ease;
 }
 
 .app-nav a:hover {
@@ -182,6 +188,9 @@ p.app-sidebar-heading {
   border-radius: var(--radius-lg);
   text-decoration: none;
   color: var(--color-ink);
+  transition:
+    background-color var(--duration-quick) ease,
+    color var(--duration-quick) ease;
 }
 
 .sidebar-recent-link:hover {
@@ -307,6 +316,7 @@ p.app-sidebar-heading {
   font-size: 14px;
   cursor: pointer;
   list-style: none;
+  transition: background-color var(--duration-quick) ease;
 }
 
 .app-nav-toggle:hover {
@@ -460,6 +470,22 @@ p.app-sidebar-heading {
   line-height: 22px;
   font-weight: 500;
   cursor: pointer;
+  /* #271：换面 120ms、按下 160ms。`transform` 只为按下反馈（下面那条 :active），
+     不动几何——过渡里出现 width/height/margin 这类布局属性一律不要（会触发重排）。 */
+  transition:
+    background-color var(--duration-quick) ease,
+    border-color var(--duration-quick) ease,
+    color var(--duration-quick) ease,
+    transform var(--duration-base) var(--ease-out);
+}
+
+/*
+ * #271 按下反馈：vendored `Button.module.css` 的 `.ghost:active` 有这一档，本仓移植
+ * `.button-quiet` 时丢了——同一个控件族在两条路径上手感不同（一致性漂移）。
+ * 缩放比走 token：reduced-motion 在 tokens.css 里把它改写成 1，一处关掉全站位移。
+ */
+.button:active:not(:disabled) {
+  transform: scale(var(--press-scale));
 }
 
 /* hover 只换面（elevated → floating-hover），描边不动——上游「新会话」同一写法。 */
@@ -732,6 +758,8 @@ p.app-sidebar-heading {
   font-size: 14px;
   text-align: left;
   cursor: pointer;
+  /* #271 换面过渡（底色不动，只描边色变）。 */
+  transition: border-color var(--duration-quick) ease;
 }
 
 .select-menu .select-menu-trigger:hover:not(:disabled) {
@@ -1376,6 +1404,17 @@ p.app-sidebar-heading {
   min-height: var(--touch-min);
   cursor: pointer;
   width: 220px;
+  /* #271：卡片此前没有任何 hover 反馈，选中（`.agent-card-selected` 的描边 +
+     双层焦点环）是整块弹出。底色/描边/环各给一条过渡，选中就从"跳出来"变成"亮起来"，
+     环的淡入也更像"被选中"而不是"被点坏"。 */
+  transition:
+    background-color var(--duration-quick) ease,
+    border-color var(--duration-quick) ease,
+    box-shadow var(--duration-base) var(--ease-out);
+}
+
+.agent-card:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .agent-card-selected {
@@ -1670,7 +1709,24 @@ p.app-sidebar-heading {
   background: none;
   text-align: left;
   cursor: pointer;
+  border-radius: var(--radius-md);
+  /* #271：整行是唯一的点选目标，此前连 hover 都没有。 */
+  transition: background-color var(--duration-quick) ease;
 }
+
+/*
+ * hover 底色要比文字左右各宽出 8px（行内文字贴边会显得像"选中了一段"），
+ * 但不许把行推窄：padding 与等量负 margin 相抵，内容位置与布局**逐像素不变**
+ * （`box-sizing: border-box` 由 global.css 开头的通用规则给）。
+ */
+.run-item-button:hover {
+  padding: 0 var(--space-2);
+  margin: 0 calc(-1 * var(--space-2));
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* 选中态是键盘可达性标记（`:focus-visible` 同族），**刻意不做过渡**：
+   键盘操作上的动画只会让人等它（AUDIT §1）。 */
 .run-item-button.selected {
   outline: 2px solid var(--color-accent, #4f6ef7);
   outline-offset: 2px;
@@ -2055,6 +2111,17 @@ p.app-sidebar-heading {
   background: transparent;
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
+  /* #271：chip 是可反复开合的开关，整块换底换字重属于"能被打断也必须能重定向"的一类
+     ——过渡（而非关键帧）才会从当前状态接着走。 */
+  transition:
+    background-color var(--duration-quick) ease,
+    border-color var(--duration-quick) ease,
+    color var(--duration-quick) ease;
+}
+
+/* 未选中才有 hover 面：选中档是深底，再叠一层浅底会把它洗淡。 */
+.cf:hover:not(.on) {
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .cf.on {
@@ -2230,6 +2297,7 @@ p.app-sidebar-heading {
   color: var(--dsw-alias-label-secondary);
   background: color-mix(in srgb, var(--dsw-alias-label-secondary) 12%, transparent);
   cursor: pointer;
+  transition: color var(--duration-quick) ease;
 }
 
 .ref-chip:hover {
@@ -2341,6 +2409,7 @@ p.app-sidebar-heading {
   font-size: 14px;
   text-align: left;
   cursor: pointer;
+  transition: background-color var(--duration-quick) ease;
 }
 
 .app-sidebar-search:hover {

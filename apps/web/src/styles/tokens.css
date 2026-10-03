@@ -62,6 +62,26 @@
   /* 字号：只补被引用过的那一档，不趁机发明整套字号尺度 */
   --font-size-sm: 13px;
 
+  /* 动效（#271）：全站过渡只此一套取值，不给组件留「自己调一个」的口子。
+     缓动与时长档**对齐 vendored dsh-ui 的既有约定**（Switch 120ms ease /
+     DisclosureRow 100ms ease / ConnectionIndicator 160ms ease-out），不新造第五条平行约定。
+
+       · `--ease-out` 给「进入/退出」这一类：起点快，用户盯着的那一刻已经在动。
+         `ease-in` 在 UI 上永远不要——它把用户正在看的那一帧拖慢；门
+         （apps/web/tests/motion-foundation.spec.tsx，去注释后扫描）会直接判红。
+       · `--ease-in-out` 给「屏幕上位移/形变」。
+       · 颜色/底色换面用裸 `ease`（与 vendored 那三处同款），不套强曲线：强曲线在纯色
+         差值上显得「先快后拖」，观感反而假。
+     取值不写进组件：曲线与时长各只有一处来源，改这里全站一起改。 */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --duration-quick: 120ms; /* hover / 底色换面 */
+  --duration-base: 160ms; /* 按下反馈 / 控件换面 */
+  /* 按下缩放比（#271）：写成 token 是为了 reduced-motion 能**一处**关掉位移——
+     在媒体查询里改一个变量，比在每条选择器上再抄一遍规则稳（把选择器复制进 @media
+     正是本仓若干文本门要抓的东西）。 */
+  --press-scale: 0.97;
+
   /* 焦点环（#164）：**双层同心环**——内层 2px 贴元素、外层 2px 在其外（总外扩 4px）。
      为什么不是"把蓝色加深成单色"：焦点指示要同时面对三类相邻色（页面底 paper、卡片面
      surface、深底 ink），旧值（signal 40% 混合）实测
@@ -84,4 +104,19 @@
      数字、红→绿实测与复跑命令见 apps/web/tests/focus-ring.spec.ts 与
      docs/agent/focus-ring-acceptance.md。 */
   --focus-ring: 0 0 0 2px var(--color-surface), 0 0 0 4px var(--color-ink);
+}
+
+/*
+ * #271 减少动效：**减少不是清零**（AUDIT §6）——颜色/底色类过渡保留（它们帮助理解
+ * 状态变化，且不产生位移），位移与缩放关掉。这里只改一个变量：全站的按下反馈都
+ * 走 `scale(var(--press-scale))`，改这一处就够，不需要在每条选择器上再抄一遍规则
+ * （把选择器复制进 @media 会踩本仓若干「同名规则只应有一块」的文本门）。
+ *
+ * 注：骨架屏的 `animation: none` 在 global.css 自己那条 reduced-motion 块里（#231），
+ * 与本块是两件事，别合并。
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --press-scale: 1;
+  }
 }
