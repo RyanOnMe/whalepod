@@ -2042,6 +2042,12 @@ p.app-sidebar-heading {
 }
 
 /* ---- 切片⑥d：Run Console 覆盖层（#179 决策：Console 是覆盖层） ---- */
+/*
+ * #273 进出：遮罩淡入淡出，对话框另加一段形变。用 `@starting-style` 而不是"挂载后
+ * 再加类"——进场不需要 JS 参与，也就没有"第二帧才开始动"的闪烁；退场由 `.leaving`
+ * （在场原语给的窗口）驱动，**可中途打断**：退场演到一半又打开另一个 Run，是从当前
+ * 位置接着走，不会跳回起点。
+ */
 .console-backdrop {
   position: fixed;
   inset: 0;
@@ -2050,6 +2056,18 @@ p.app-sidebar-heading {
   align-items: center;
   justify-content: center;
   padding: var(--space-5);
+  opacity: 1;
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+
+@starting-style {
+  .console-backdrop {
+    opacity: 0;
+  }
+}
+
+.console-backdrop.leaving {
+  opacity: 0;
 }
 
 /* 遮罩是一个真按钮：点它关闭（键盘用户也能到），但不占视觉（仅背景色）。 */
@@ -2074,6 +2092,23 @@ p.app-sidebar-heading {
   color: var(--dsw-alias-label-primary);
   box-shadow: var(--dsw-elevation-prominent);
   overflow: hidden;
+  /* 居中的模态用默认的 `transform-origin: center`（AUDIT §3 明确豁免）——"从触发按钮
+     方向展开"只适用于贴着触发器的浮层；居中的对话框从中心长出来才不别扭。 */
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
+}
+
+@starting-style {
+  .console {
+    opacity: 0;
+    transform: var(--presence-transform);
+  }
+}
+
+.console-backdrop.leaving .console {
+  opacity: 0;
+  transform: var(--presence-transform);
 }
 
 .console-head {
@@ -2185,6 +2220,32 @@ p.app-sidebar-heading {
 /* ---- 切片⑥c：执行目标条（这句话会在哪里跑） ---- */
 /* #227 批次②：断线重连横幅——警示（amber）档、非紧急通道（role=status 不抢 alert），
    配色与指令流 pending 态同款（文字 12:1、底为 14% 混合，对比度门已覆盖该取值组合）。 */
+/*
+ * #273 进出：横幅在 `<main>` 上方的正常流里，原先 `return null` 会把整页内容瞬间顶下去、
+ * 再弹回来——淡入淡出盖不住布局跳动，所以高度本身要能过渡：槽位用 grid 行高 0fr ↔ 1fr
+ * （不知道横幅多高也能展开，不用写死 px）。行谷为 0 时子项必须 `min-height: 0`——
+ * grid 子项默认 `min-height: auto` 会拿内容高度顶住，"收不起来"就是这么踩的。
+ */
+.connection-banner-slot {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--expand-duration) var(--ease-out);
+}
+
+@starting-style {
+  .connection-banner-slot {
+    grid-template-rows: 0fr;
+  }
+}
+
+.connection-banner-slot.leaving {
+  grid-template-rows: 0fr;
+}
+
+.connection-banner-slot > .connection-banner {
+  min-height: 0;
+}
+
 .connection-banner {
   --dsw-alias-state-warn-primary: var(--dsw-static-amber-900);
   margin: 0 0 var(--space-3);
@@ -2344,6 +2405,26 @@ p.app-sidebar-heading {
   padding: var(--space-2) var(--space-3);
   font-size: 0.875rem;
   max-width: 420px;
+  /* #273 进出：进场靠 @starting-style，退场靠 `.leaving`（store 到点前先标记，
+     退场演完才真的从数组里移除）。栈内重排仍是瞬时的——那需要 FLIP 测量补偿，
+     不在本切片（登记在 docs/agent/presence-acceptance.md 的边界里）。 */
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
+}
+
+@starting-style {
+  .toast-item {
+    opacity: 0;
+    transform: var(--presence-transform);
+  }
+}
+
+.toast-item.leaving {
+  opacity: 0;
+  transform: var(--presence-transform);
 }
 
 /* ---- #231 批次④：执行活动提示与加载骨架 ---- */
