@@ -33,6 +33,7 @@
 | [global-search-acceptance.md](./global-search-acceptance.md) | #254 P1-UX-11：⌘K 全局搜索——title ILIKE（转义通配符/参数化/空 q 400）+ 浮层（option 语义/键盘路径/还焦）；mock respond 拿不到 URL 等三条踩坑记录 |
 | [density-audit-acceptance.md](./density-audit-acceptance.md) | #257 P1-UX-12：视觉密度审计+门禁——七页 cardDepth/hintCount 实测基线、删留逐条决定（审批/复核卡去 card-in-card）、density-gate 上限进 Q1（变异自证非恒真） |
 | [run-completion-notifications-acceptance.md](./run-completion-notifications-acceptance.md) | #259 P1-UX-13：运行完成通知——tab 徽标 + 可选系统通知；已读水位落 localStorage（纯内存游标每次刷新重放 24h 窗口）、重放 vs 当场（occurredAt ±60s 容差）；「初版判据是盲的」变异自测教训 |
+| [run-phase-badge-acceptance.md](./run-phase-badge-acceptance.md) | #261 P1-UX-14：运行卡阶段徽标——服务端投影 lastPhase（DISTINCT ON + project 受众 + 未知值当没有）、只对 running 画（终态「收尾中」=撒谎）、补 run.changed→task-room 的实时缺口；`!== null` 放过 undefined 致整页白屏（既有 spec 抓出）与 SQL 探针证据 |
 | [dsh-ui-vendoring.md](./dsh-ui-vendoring.md) | vendored 第三方代码的出处台账：上游钉版 SHA、逐文件映射、同步纪律、许可/商标义务落点（ADR-0008 / #138） |
 | [setup-auth-invite-acceptance.md](./setup-auth-invite-acceptance.md) | G1-01..06：Setup/登录/邀请/角色/Origin gate 验收（P1-05）；#55 迁移并发串行化与等锁超时判据 |
 | [project-task-agent-acceptance.md](./project-task-agent-acceptance.md) | G2-01..06：Project/Task/Comment/Assignment + Task Room 聚合 + Agent Revision 验收（P1-06） |

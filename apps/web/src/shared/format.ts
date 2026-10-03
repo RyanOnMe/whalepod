@@ -2,7 +2,14 @@
  * 展示层格式化与状态文案（状态同时用文字+色块，见 prototype DESIGN.md §8：
  * 不能只靠颜色传达状态）。
  */
-import type { AssignmentStatus, DeviceView, Role, RunStatus, TaskStatus } from './api/types.js'
+import type {
+  AssignmentStatus,
+  DeviceView,
+  Role,
+  RunPhase,
+  RunStatus,
+  TaskStatus,
+} from './api/types.js'
 
 export const TASK_STATUS_LABEL: Readonly<Record<TaskStatus, string>> = {
   open: '未开始',
@@ -28,6 +35,16 @@ export const RUN_STATUS_LABEL: Readonly<Record<RunStatus, string>> = {
   failed: '失败',
   cancelled: '已取消',
   lost: '丢失',
+}
+
+/**
+ * 运行阶段文案（#261 运行卡「正在做什么」）。全站唯一一份——Run Console 的事件行
+ * （RunLivePanel.describeEvent）与运行卡的阶段徽标同取这里，协议加阶段时两处一起红。
+ */
+export const RUN_PHASE_LABEL: Readonly<Record<RunPhase, string>> = {
+  thinking: '思考中',
+  tool: '工具执行中',
+  finalizing: '收尾中',
 }
 
 /** 设备在线状态文案（#142；Hub 侧 deriveDeviceStatus 的 online/offline/revoked）。 */

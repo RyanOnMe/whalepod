@@ -46,6 +46,12 @@ function payloadString(payload: unknown, key: string): string | undefined {
   return typeof value === 'string' ? value : undefined
 }
 
+/** run.event 载荷里被投影的内层事件类型（形状：`{ runId, event: { type, … } }`）。 */
+function payloadEventType(payload: unknown): string | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined
+  return payloadString((payload as { event?: unknown }).event, 'type')
+}
+
 /** 一次事件要失效的缓存键集合（可多个）。 */
 type CacheKeys = readonly (readonly unknown[])[]
 
@@ -74,8 +80,20 @@ const EVENT_KEY_BUILDERS: Readonly<Record<string, (payload: unknown) => CacheKey
     ...keysWith(payload, 'projectId', 'project-tasks'),
   ],
   'comment.created': (payload) => keysWith(payload, 'taskId', 'task-room'),
-  'run.changed': (payload) => keysWith(payload, 'runId', 'run'),
-  'run.event': (payload) => keysWith(payload, 'runId', 'run'),
+  // #261：房间里的运行卡要跟着状态动——只失效 ['run', runId] 时，运行卡的状态徽标
+  // 要等刷新或别的 mutation 才更新（run.changed 载荷本来就带 taskId，精确失效）。
+  'run.changed': (payload) => [
+    ...keysWith(payload, 'runId', 'run'),
+    ...keysWith(payload, 'taskId', 'task-room'),
+  ],
+  // #261：run.phase 是「正在做什么」的唯一信号（阶段徽标取数），必须让房间重拉。
+  // 载荷没有 taskId（orchestrator 只带 runId/seq/audience/ownerUserId/event）→ 前缀
+  // 失效；**只对 run.phase 做**：tool.started/assistant.message 每条都来，把事件频率
+  // 变成房间重拉频率会把读模型打爆。
+  'run.event': (payload) => [
+    ...keysWith(payload, 'runId', 'run'),
+    ...(payloadEventType(payload) === 'run.phase' ? [['task-room']] : []),
+  ],
   'approval.changed': (payload) => keysWith(payload, 'taskId', 'task-room'),
   'artifact.changed': (payload) => keysWith(payload, 'taskId', 'task-room'),
   'device.changed': () => [['devices']],

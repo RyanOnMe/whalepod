@@ -195,6 +195,8 @@ export function makeRun(overrides: Partial<TaskRoomRun> = {}): TaskRoomRun {
     workspaceName: null,
     // #246：最近一次工具调用摘要（默认 null = 没有工具调用）。
     lastToolCall: null,
+    // #261：最近一次阶段（默认 null = 还没有阶段事件）。
+    lastPhase: null,
     ...overrides,
   }
 }

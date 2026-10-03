@@ -153,7 +153,16 @@ export interface TaskRoomRun {
    * null = 该 Run 还没有工具调用。
    */
   lastToolCall: { tool: string; at: string } | null
+  /**
+   * 最近一次阶段（#261 运行卡「正在做什么」）：服务端取 **project 受众**的
+   * `run.phase` 最新一条。null = 该 Run 还没有阶段事件。终态 Run 也可能带末次
+   * 阶段——「只对 running 显示」是展示层规则（撒谎判据在 RunTimeline）。
+   */
+  lastPhase: { phase: RunPhase; at: string } | null
 }
+
+/** 协议 run.phase 的枚举（packages/protocol/src/node-wire.ts:102 同集）。 */
+export type RunPhase = 'thinking' | 'tool' | 'finalizing'
 
 // packages/db schema/artifact.ts 的状态集（03 §3.4）。
 export type ArtifactStatus = 'candidate' | 'published' | 'rejected'
