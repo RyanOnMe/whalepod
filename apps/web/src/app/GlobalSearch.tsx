@@ -160,7 +160,12 @@ export function GlobalSearch(): ReactNode {
 
   let body: ReactNode
   if (trimmed === '') {
-    body = <p className="global-search-hint">输入关键词搜索任务、项目或 Agent。</p>
+    // #265：空态顺手教一次键位——「有 ⌘K/?」这件事得有人告诉（发现路径不只靠记住）。
+    body = (
+      <p className="global-search-hint">
+        输入关键词搜索任务、项目或 Agent。⌘K 呼出搜索 · ⌘↵ 提交 · ? 查看快捷键
+      </p>
+    )
   } else if (taskQuery.isPending || localPending) {
     body = <p className="global-search-hint">搜索中…</p>
   } else if (taskQuery.isError) {
