@@ -285,6 +285,8 @@ const BASE_OF: Record<string, string> = {
   '.button-quiet:hover:not(:disabled)': '.button-quiet',
   '.app-topbar-user .button': '.button',
   '.button-danger': '.button',
+  // #271 按下反馈：只声明 transform，颜色三条靠链上的 `.button`。
+  '.button:active:not(:disabled)': '.button',
 }
 
 /**
@@ -406,6 +408,14 @@ const rules: ExpectedRule[] = [
     // `color: #123456`"会被"声明了未登记的属性"那条判据挡下。
     selector: '.button:disabled',
     mustDeclare: 'opacity',
+    colors: {},
+  },
+  {
+    // #271 按下反馈：**只声明 transform**（缩放比走 `--press-scale`，reduced-motion 在
+    // tokens.css 里改写它）。不填 border/radius 就是要求它确实没声明度量——在按下态里
+    // 复制一份圆角/描边会被抓出来。
+    selector: '.button:active:not(:disabled)',
+    mustDeclare: 'transform',
     colors: {},
   },
   {
