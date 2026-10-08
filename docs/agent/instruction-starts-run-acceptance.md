@@ -25,7 +25,7 @@ HTTP 面走 `POST /api/v1/tasks/:taskId/instructions` 的 Fastify inject。
 | 三段式③ | 无可用目标 → `undefined` / 409，**不建 Run、不落指令**（不猜） | PASS |
 | Agent 不猜 | 无上一轮 Run 可继承且未显式给 `agentId` → 明确要求显式指定，且不留半成品 | PASS |
 | 显式覆盖校验 | 别人的设备 → FORBIDDEN；工作区不可用 → VALIDATION_FAILED；已撤销 → DEVICE_OFFLINE | PASS |
-| 库级约束（0005） | 触发消息必须与 Run **同 Task**（触发器拒绝跨 Task 锚点，且不留坏账行）。**已知可绕过**（评审实测）：触发器只挂在 `run` 表上，直接 `update task_message set task_id = …` 仍能造出不一致的锚点——属"尽力而为"，不是不可绕过的库级不变式（补 `task_message` 侧触发器见 #199） | PASS（含已知偏差） |
+| 库级约束（0005+0010） | 触发消息必须与 Run **同 Task**，双侧触发器钉住：Run 侧 `run_trigger_message_same_task_check`（0005，建锚点时拒跨 Task）+ 消息侧 `task_message_same_task_check`（0010，#199：已被锚定的消息搬 Task 即 23514）。未被锚定的消息搬 Task、同 Task 内 touch 不误伤（`packages/db/tests/anchor-same-task.integration.spec.ts` 3 条，Q2）。生产代码无改 `task_id` 路径，绕过只剩 SQL 直写 | PASS |
 | HTTP 201 | 显式目标 → 201，`outcome='started_run'`，指令 pending（命运由 ack 定） | PASS |
 | HTTP 400 | body 非法 → **400**（不是 500：③b 的 `.parse()` 教训） | PASS |
 | HTTP 409 | 无可用目标 → 409 `DEVICE_OFFLINE`，不建 Run、不落指令 | PASS |
