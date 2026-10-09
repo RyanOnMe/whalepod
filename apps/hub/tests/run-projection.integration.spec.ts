@@ -30,6 +30,7 @@ import {
   resetDatabase,
   seedRunChainForUser,
   insertRunRow,
+  waitForValue,
   type Session,
   type TestApp,
 } from './helpers.js'
@@ -176,6 +177,17 @@ describe('P1-13 run projection（Hub 侧）', () => {
     })
   }
 
+  /** #256：等 hello 回填 dsh 版本列落库（可观察条件），不猜 150ms。 */
+  async function waitForHelloLanded(deviceId: string): Promise<void> {
+    await waitForValue(async () => {
+      const [row] = await database.db
+        .select()
+        .from(schema.devices)
+        .where(eq(schema.devices.id, deviceId))
+      return row?.dshDistributionVersion === '0.1.0-rc.8' ? true : undefined
+    }, 'node.hello 未在超时内回填 dsh 版本列')
+  }
+
   // 常驻 message 监听 + take(n) 等待：once 式监听在回连帧同 tick 到达时会丢帧。
   interface NodeClient {
     readonly frames: Array<{ type: string; payload: Record<string, unknown> }>
@@ -276,7 +288,15 @@ describe('P1-13 run projection（Hub 侧）', () => {
     expect(acks[0]).toMatchObject({ type: 'run.event_ack', payload: { runId, throughSeq: 1 } })
     expect(acks[1]?.payload.throughSeq).toBe(2)
     expect(acks[2]?.payload.throughSeq).toBe(2)
-    await silence(150)
+    // #256：ack 即"已落库"的回执，但仍以可观察条件收敛（幂等重放不该多一行）。
+    await waitForValue(
+      async () =>
+        (await database.db.select().from(schema.runEvents).where(eq(schema.runEvents.runId, runId)))
+          .length === 2
+          ? true
+          : undefined,
+      '两条 run_event 未在超时内落库（幂等重放不得产生第二行）',
+    )
     const rows = await database.db
       .select()
       .from(schema.runEvents)
@@ -455,7 +475,7 @@ describe('P1-13 run projection（Hub 侧）', () => {
         pluginPackDigests: [],
       }),
     )
-    await silence(150)
+    await waitForHelloLanded(deviceId)
 
     const chain = await seedRunChainForUser(database.db, alice.userId)
     const projectId = randomUUID()
@@ -553,7 +573,7 @@ describe('P1-13 run projection（Hub 侧）', () => {
         pluginPackDigests: [],
       }),
     )
-    await silence(150)
+    await waitForHelloLanded(deviceId)
 
     const chain = await seedRunChainForUser(database.db, alice.userId)
     const workspaceId = randomUUID()

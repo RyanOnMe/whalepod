@@ -11,6 +11,7 @@ import {
   driveInviteAndAccept,
   driveSetup,
   resetDatabase,
+  waitForValue,
   type Session,
   type TestApp,
 } from './helpers.js'
@@ -138,7 +139,14 @@ describe('node websocket (/ws/v1/node)', () => {
         pluginPackDigests: ['a'.repeat(64)],
       }),
     )
-    await new Promise((r) => setTimeout(r, 150))
+    // 等 hello 的版本事实落库（可观察条件），不猜时长。
+    await waitForValue(async () => {
+      const [row] = await database.db
+        .select()
+        .from(schema.devices)
+        .where(eq(schema.devices.id, deviceId))
+      return row?.dshDistributionVersion === '0.1.0-rc.8' ? row : undefined
+    }, 'node.hello 的运行时候选事实未在超时内落库')
     const [row] = await database.db
       .select()
       .from(schema.devices)
@@ -176,19 +184,24 @@ describe('node websocket (/ws/v1/node)', () => {
         pluginPackDigests: [],
       }),
     )
-    await new Promise((r) => setTimeout(r, 120))
-    const [before] = await database.db
-      .select()
-      .from(schema.devices)
-      .where(eq(schema.devices.id, deviceId))
-    await new Promise((r) => setTimeout(r, 20))
+    // 等到 hello 落库（可观察条件：版本已写），而不是猜它要 120ms。
+    const before = await waitForValue(
+      async () =>
+        (await database.db.select().from(schema.devices).where(eq(schema.devices.id, deviceId)))[0]
+          ?.lastSeenAt ?? undefined,
+      'node.hello 未在超时内刷新 lastSeenAt',
+    )
     socket.send(nodeFrame('node.heartbeat', { deviceId, activeRunIds: [], lastEventSeqByRun: {} }))
-    await new Promise((r) => setTimeout(r, 120))
-    const [after] = await database.db
-      .select()
-      .from(schema.devices)
-      .where(eq(schema.devices.id, deviceId))
-    expect(after!.lastSeenAt!.getTime()).toBeGreaterThanOrEqual(before!.lastSeenAt!.getTime())
+    // 判据是**严格变大**（刷新语义），不是 >=——同毫秒的 >= 无法证明心跳生效。
+    await waitForValue(async () => {
+      const [after] = await database.db
+        .select()
+        .from(schema.devices)
+        .where(eq(schema.devices.id, deviceId))
+      return after?.lastSeenAt != null && after.lastSeenAt.getTime() > before.getTime()
+        ? after
+        : undefined
+    }, '心跳未在超时内推进 lastSeenAt')
   })
 
   it('撤销后连接收到 node.token_revoked 并被关闭', async () => {

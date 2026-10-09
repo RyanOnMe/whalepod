@@ -28,7 +28,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { schema } from '@whalepod/db'
 import type { ClientFrame } from '@whalepod/protocol'
-import { createTestDatabase, idemKey } from '../../../hub/tests/helpers.js'
+import { createTestDatabase, idemKey, waitForValue } from '../../../hub/tests/helpers.js'
 import type { Database } from '@whalepod/db'
 import {
   assembleChain,
@@ -554,8 +554,34 @@ describe('P1-13 全链路（真 Hub + 真 Node + 真 Runtime/replay）', () => {
     const rows = await waitForRunEvent(runId, (rs) =>
       rs.some((r) => r.type === 'run.completed' && r.audience === 'owner'),
     )
-    // 等 alice 的直播帧到齐（completed 之前的 live delta）。
-    await silence(500)
+    // #256：同一 socket 上帧有序——alice 收到 run.completed（持久帧）即证明此前
+    // 所有直播帧都已进入 frames 数组。用它替代「等 500ms 猜直播帧到齐」的窗口，
+    // 让"零出现"断言有确定性边界。
+    await waitForValue(
+      () =>
+        aliceWs.frames.some(
+          (f) =>
+            f.kind === 'persistent' &&
+            f.event.type === 'run.event' &&
+            JSON.stringify(f.event.payload).includes('"run.completed"'),
+        )
+          ? true
+          : undefined,
+      'alice 未在超时内收到 run.completed（无法为直播帧零出现断言定界）',
+    )
+    // bob 的零出现断言同样要定界：他收的是 project 受众的持久帧，等同一终局帧到齐。
+    await waitForValue(
+      () =>
+        bobWs.frames.some(
+          (f) =>
+            f.kind === 'persistent' &&
+            f.event.type === 'run.event' &&
+            JSON.stringify(f.event.payload).includes('"run.completed"'),
+        )
+          ? true
+          : undefined,
+      'bob 未在超时内收到 run.completed（无法为 project 帧零出现断言定界）',
+    )
 
     // 1) Hub DB：六件语料零出现。
     const dbText = JSON.stringify(rows)

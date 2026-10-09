@@ -23,6 +23,7 @@ import {
   driveInviteAndAccept,
   driveSetup,
   resetDatabase,
+  waitForValue,
   type Session,
   type TestApp,
 } from './helpers.js'
@@ -140,7 +141,11 @@ describe('device inventory → workspaces 投影', () => {
         lastCheckedAt: new Date().toISOString(),
       },
     ])
-    await new Promise((resolve) => setTimeout(resolve, 300))
+    await waitForValue(
+      async () =>
+        (await database.db.select().from(schema.workspaces)).length === 2 ? true : undefined,
+      '两份 inventory 未在超时内落库（期望 2 行投影）',
+    )
 
     // owner 恒等 Alice；不透明投影：无任何路径字段。
     const rows = await database.db.select().from(schema.workspaces)
@@ -189,7 +194,13 @@ describe('device inventory → workspaces 投影', () => {
         lastCheckedAt: new Date().toISOString(),
       },
     ])
-    await new Promise((resolve) => setTimeout(resolve, 300))
+    await waitForValue(
+      async () =>
+        (await database.db.select().from(schema.workspaces)).some((r) => r.id === oldId)
+          ? true
+          : undefined,
+      '首轮 inventory 未在超时内落库（期望旧 id 出现）',
+    )
 
     // Node 侧重注册（新 id、同名）后的第二轮 inventory。
     const newId = randomUUID()
@@ -203,7 +214,10 @@ describe('device inventory → workspaces 投影', () => {
         lastCheckedAt: new Date().toISOString(),
       },
     ])
-    await new Promise((resolve) => setTimeout(resolve, 300))
+    await waitForValue(async () => {
+      const current = await database.db.select().from(schema.workspaces)
+      return current.length === 1 && current[0]?.id === newId ? true : undefined
+    }, '同名重注册未在超时内完成投影替换（期望只剩新 id 一行）')
 
     const rows = await database.db.select().from(schema.workspaces)
     expect(rows).toHaveLength(1)
@@ -217,7 +231,10 @@ describe('device inventory → workspaces 投影', () => {
     const { deviceId, deviceToken: token } = await pair(alice)
     const socket = await connect(token)
     sendInventory(socket, deviceId, [])
-    await new Promise((resolve) => setTimeout(resolve, 300))
+    await waitForValue(
+      async () => (await database.db.select().from(schema.devices))[0]?.lastSeenAt ?? undefined,
+      'inventory 未在超时内刷新 lastSeenAt',
+    )
 
     const [device] = await database.db.select().from(schema.devices).limit(1)
     expect(device?.lastSeenAt).not.toBeNull()
@@ -250,12 +267,19 @@ describe('device inventory → workspaces 投影', () => {
       lastCheckedAt: new Date().toISOString(),
     })
     sendInventory(socket, deviceId, [ws(keepId, 'keep-me'), ws(removedId, 'removed-one')])
-    await new Promise((resolve) => setTimeout(resolve, 300))
-    expect(await database.db.select().from(schema.workspaces)).toHaveLength(2)
+    await waitForValue(
+      async () =>
+        (await database.db.select().from(schema.workspaces)).length === 2 ? true : undefined,
+      '两份 inventory 未在超时内落库',
+    )
 
     // Node 侧 workspace remove 后的第二轮 inventory（全量快照只列存活项）。
     sendInventory(socket, deviceId, [ws(keepId, 'keep-me')])
-    await new Promise((resolve) => setTimeout(resolve, 300))
+    await waitForValue(
+      async () =>
+        (await database.db.select().from(schema.workspaces)).length === 1 ? true : undefined,
+      'workspace remove 未在超时内收敛（期望只剩 keep-me 一行）',
+    )
 
     const rows = await database.db.select().from(schema.workspaces)
     // 无 Run 引用的移除项：行被删除——投影与 Node registry 镜像一致。
@@ -266,7 +290,13 @@ describe('device inventory → workspaces 投影', () => {
     // 有 Run 引用的移除项：行必须保留（runs.workspaceId FK），降级为 unavailable。
     const referencedId = randomUUID()
     sendInventory(socket, deviceId, [ws(keepId, 'keep-me'), ws(referencedId, 'has-runs')])
-    await new Promise((resolve) => setTimeout(resolve, 300))
+    await waitForValue(
+      async () =>
+        (await database.db.select().from(schema.workspaces)).some((r) => r.id === referencedId)
+          ? true
+          : undefined,
+      'has-runs 工作区未在超时内出现在 Hub 投影',
+    )
     const project = await apiInject(ctx, alice, {
       method: 'POST',
       url: '/api/v1/projects',
@@ -290,7 +320,14 @@ describe('device inventory → workspaces 投影', () => {
       status: 'completed',
     })
     sendInventory(socket, deviceId, [ws(keepId, 'keep-me')])
-    await new Promise((resolve) => setTimeout(resolve, 300))
+    await waitForValue(
+      async () =>
+        (await database.db.select().from(schema.workspaces)).find((r) => r.id === referencedId)
+          ?.available === false
+          ? true
+          : undefined,
+      'has-runs 工作区未在超时内降级为 unavailable',
+    )
     const after = await database.db.select().from(schema.workspaces)
     const referenced = after.find((r) => r.id === referencedId)
     expect(referenced).toBeDefined() // 行保留
@@ -298,7 +335,14 @@ describe('device inventory → workspaces 投影', () => {
 
     // 重新 add → 下一份全量清单带回 → 恢复 available（镜像语义闭环）。
     sendInventory(socket, deviceId, [ws(keepId, 'keep-me'), ws(referencedId, 'has-runs')])
-    await new Promise((resolve) => setTimeout(resolve, 300))
+    await waitForValue(
+      async () =>
+        (await database.db.select().from(schema.workspaces)).find((r) => r.id === referencedId)
+          ?.available === true
+          ? true
+          : undefined,
+      'has-runs 工作区未在超时内恢复 available',
+    )
     const restored = await database.db.select().from(schema.workspaces)
     expect(restored.find((r) => r.id === referencedId)?.available).toBe(true)
   })

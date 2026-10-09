@@ -64,6 +64,7 @@
 | [jargon-ids-acceptance.md](./jargon-ids-acceptance.md) | #152/#162 术语泄漏：内部 id 不冒充人名/标签——指人槽位判据（位置敏感、期望值取自真名册）、Run/交付物的人话句柄、红→绿变异复跑清单 |
 | [2026-10-08-release-harden-validate-handoff-plan.md](./2026-10-08-release-harden-validate-handoff-plan.md) | 2026-10-08 下一阶段总纲：先发布收口、再外部验证、后强化 Handoff——A0 收口 8 项、3 队 Alpha、最小 Handoff、门禁重分级与范围控制 |
 | [2026-10-08-q-gates-g0g1g2-tiers.md](./2026-10-08-q-gates-g0g1g2-tiers.md) | 2026-10-08 门禁分级：Q0–Q9 落到 G0/G1/G2——PR 触发规则、release 发布门、本地无 Docker 口径 |
+| [poll-until-acceptance.md](./poll-until-acceptance.md) | #256 固定 sleep 改 poll-until：17 处转换（含 lastSeenAt 严格变大）、全仓 62 处普查与五类保留理由、waitForValue 约定 |
 
 规矩只有一条：**验过就要留下**。验收步骤、探针跑法、上次结果、坑在哪，写进这里的 acceptance 文档；能直接复跑的脚本放 `scripts/`。只留在 `/tmp` 或对话里的验证，等于没验。
 

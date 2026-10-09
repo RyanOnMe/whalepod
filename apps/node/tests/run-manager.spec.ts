@@ -42,6 +42,23 @@ afterEach(async () => {
 const RUN_ID = '11111111-1111-4111-8111-111111111111'
 const COMMAND_ID = '22222222-2222-4222-8222-222222222222'
 
+/** #256：轮询到条件成立或超时（等待异步链不得用固定 sleep 猜时长）。 */
+async function waitForValue<T>(
+  probe: () => T | undefined,
+  describe: string,
+  timeoutMs = 3_000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const value = probe()
+    if (value !== undefined) return value
+    if (Date.now() > deadline) {
+      throw new Error(`${describe}（等待上限 ${timeoutMs}ms，判据是条件成立而不是固定时长）`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
 function runStartFrame(
   workspaceId: string,
   overrides: Record<string, unknown> = {},
@@ -988,8 +1005,11 @@ describe('P1-15：Artifact 采集与 Reviewer 输入接线', () => {
     const h = await makeHarness({ managerDeps: { artifactCollector: a.collector } })
     await h.manager.handleFrame(runStartFrame(h.workspaceId))
     h.runtimes[0]!.emitStdout(stdoutArtifactCandidate(RUN_ID))
-    // 采集是异步链：让微任务队列排空。
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    // #256：等采集链真的产出（可观察条件），不猜 20ms。
+    await waitForValue(
+      () => (a.calls.length > 0 ? true : undefined),
+      'artifact 采集链未在超时内产出（collector 从未被调用）',
+    )
     expect(a.calls).toHaveLength(1)
     expect(a.calls[0]?.workspacePath).toBe(await realpath(workspaceDir))
     const runEvents = h
@@ -1018,7 +1038,13 @@ describe('P1-15：Artifact 采集与 Reviewer 输入接线', () => {
     const h = await makeHarness({ managerDeps: { artifactCollector: a.collector } })
     await h.manager.handleFrame(runStartFrame(h.workspaceId))
     h.runtimes[0]!.emitStdout(stdoutArtifactCandidate(RUN_ID))
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    // #256：负向断言（不得产事件）。先等采集链真的跑过（可观察：collector 被调），
+    // 再排空一个宏任务让 catch 分支走完——不用固定 20ms 猜时长。
+    await waitForValue(
+      () => (a.calls.length > 0 ? true : undefined),
+      'artifact 采集链未在超时内运行（collector 从未被调用）',
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
     expect(h.sentFrames().filter((f) => f.type === 'run.event')).toHaveLength(0)
     expect(h.supervisor.isActive(RUN_ID)).toBe(true)
   })
@@ -1037,7 +1063,11 @@ describe('P1-15：Artifact 采集与 Reviewer 输入接线', () => {
         payload: { runId: RUN_ID, dshSessionId: 'session-1' },
       }),
     )
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    // #256：等清理真的发生（可观察条件），不猜 20ms。
+    await waitForValue(
+      () => (inputs.cleaned.includes(RUN_ID) ? true : undefined),
+      'run.completed 未在超时内触发输入副本清理',
+    )
     expect(inputs.cleaned).toEqual([RUN_ID])
   })
 })
