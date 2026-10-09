@@ -72,5 +72,52 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r --if-present build
+      # #116：报告必须落 artifact（判定在日志里，数字在 JSON 里）——runner 实测
+      # ingest 144.5ms 贫血 vs 判据环境 15.4ms 这类趋势对比靠的就是归档的 JSON。
+      # `set -o pipefail`：管道给 tee 不给退出码兜底，缺它会让失败被 tee 吞成绿。
       - name: Run Q8 load profile (short)
-        run: pnpm test:load
+        run: |
+          mkdir -p artifacts/q8
+          set -o pipefail
+          pnpm test:load | tee artifacts/q8/load-report.txt
+
+      - name: Upload Q8 report (evidence)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: q8-load-report
+          path: artifacts/q8/
+          if-no-files-found: warn
+          retention-days: 90
+
+  # Q9 安装门（#116 延迟项收口）：空卷 + **生产同一份 compose.yml** 的全新安装冒烟。
+  # 不挂 per-PR：镜像构建（冷缓存 3–6 分钟）与 runner 资源画像都和判据环境不同，
+  # 它是发布/手动的证据级门——口径与判据清单见 docs/agent/compose-standard-loop-acceptance.md。
+  # 挂法：push tag v*（与 Q5 同一次发布取证）+ workflow_dispatch 预验。
+  compose-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # 冒烟在**宿主**上跑真 node CLI（pair/workspace add/start）——那需要 dist，
+      # 镜像内的构建不给宿主用（Q5 同规）。
+      - run: pnpm -r --if-present build
+      - name: Run Q9 compose smoke (fresh volumes)
+        run: |
+          mkdir -p artifacts/q9
+          set -o pipefail
+          pnpm test:compose-smoke | tee artifacts/q9/compose-smoke.log
+      - name: Upload Q9 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: q9-compose-smoke
+          path: artifacts/q9/
+          if-no-files-found: warn
+          retention-days: 90

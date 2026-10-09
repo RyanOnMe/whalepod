@@ -97,7 +97,8 @@ describe('approval policy resolution chain (ADR-0009 slice 8, #241)', () => {
 
   async function createRun(): Promise<{
     status: number
-    data?: { id: string; approvalPolicy: string }
+    // `| undefined` 是 exactOptionalPropertyTypes 下的显式允许：失败路径会带 undefined 回。
+    data?: { id: string; approvalPolicy: string } | undefined
   }> {
     const res = await apiInject(ctx, bob, {
       method: 'POST',
@@ -130,7 +131,7 @@ describe('approval policy resolution chain (ADR-0009 slice 8, #241)', () => {
   /** 建 Revision（Owner/Admin=alice）。返回 { status, revision, digest }。 */
   async function createRevision(
     approvalPolicy?: 'full_access' | 'approval_required',
-  ): Promise<{ status: number; revision?: number; digest?: string }> {
+  ): Promise<{ status: number; revision?: number | undefined; digest?: string | undefined }> {
     const res = await apiInject(ctx, alice, {
       method: 'POST',
       url: `/api/v1/agents/${bobChain.agentId}/revisions`,

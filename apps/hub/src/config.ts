@@ -21,7 +21,13 @@ export interface HubConfig {
   readonly setupTokenPath: string
   readonly host: string
   readonly port: number
-  readonly rateLimit?: RateLimitConfig | undefined
+  /**
+   * 速率限制覆盖值（**部分即可**）：app.ts 以 `{...DEFAULT_RATE_LIMIT, ...deps.config.rateLimit}`
+   * 合并，所以只给一个字段是本就有意的用法（测试用小配额驱动限流路径也这么用）。
+   * #183 接线时把类型收紧到 Partial：原先要求全量字段，逼得测试要么抄默认值、
+   * 要么绕类型——而真正的契约是「覆盖，缺省回落」。
+   */
+  readonly rateLimit?: Partial<RateLimitConfig> | undefined
   /**
    * Curated 插件 catalog 目录（catalog/*.json + locks/*.lock.yaml，02 Task 17）。
    * 缺省 = 仓库根 plugins/（见 defaultPluginCatalogDir）。

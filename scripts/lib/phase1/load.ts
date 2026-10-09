@@ -34,6 +34,13 @@ export interface EnvFacts {
   cpus: number
   totalMemGiB: number
   docker: boolean
+  /**
+   * 取值的**约束来源**（#114）：`os` = 进程视角（v8 沙箱外是宿主值），
+   * `cgroup` = 容器配额更小、按配额判。写进报告是为了让「为什么这个环境被拒/放行」
+   * 可复核——只看数字看不出它是不是被配额压过。
+   */
+  cpuSource: 'os' | 'cgroup'
+  memSource: 'os' | 'cgroup'
 }
 
 export function assessEnvironment(f: EnvFacts): { eligible: boolean; reasons: string[] } {
@@ -45,6 +52,71 @@ export function assessEnvironment(f: EnvFacts): { eligible: boolean; reasons: st
     reasons.push(`mem=${f.totalMemGiB.toFixed(1)}GiB < ${REQUIRED_MEM_GIB}GiB`)
   if (!f.docker) reasons.push('docker 不可用（PostgreSQL 同机容器是判据环境的一部分）')
   return { eligible: reasons.length === 0, reasons }
+}
+
+/**
+ * cgroup 配额读取（#114 / #110 一审 B2）：`os.cpus()/totalmem()` 是**过程视角**——
+ * 在配额限死的容器里会虚报宿主值，于是「假 eligible」方向存在（判据环境被骗过）。
+ * 真值取 `/sys/fs/cgroup` 的配额与 os 值的较小者；读不到（非 Linux / v1 无配额 /
+ * 值为哨兵 'max'）就退回 os 值，并在 EnvFacts 里标出来源。
+ *
+ * reader 注入是为了红测：模拟 cgroup 文件内容，不必真在容器里。
+ */
+export type ReadTextFile = (path: string) => string | undefined
+
+export const CGROUP_PATHS = {
+  v2CpuMax: '/sys/fs/cgroup/cpu.max',
+  v2MemoryMax: '/sys/fs/cgroup/memory.max',
+  v1CpuQuota: '/sys/fs/cgroup/cpu/cpu.cfs_quota_us',
+  v1CpuPeriod: '/sys/fs/cgroup/cpu/cpu.cfs_period_us',
+  v1MemoryLimit: '/sys/fs/cgroup/memory/memory.limit_in_bytes',
+} as const
+
+/** v1 的「无限制」是一个巨大哨兵值；≥ 1 TiB 一律视为无配额。 */
+const V1_UNLIMITED_BYTES = 1024 ** 4
+
+export interface CgroupQuota {
+  cpus?: number
+  memGiB?: number
+}
+
+export function readCgroupQuota(readText: ReadTextFile): CgroupQuota {
+  const quota: CgroupQuota = {}
+  // v2：cpu.max = "<quota|max> <period>"（微秒）。
+  const cpuMax = readText(CGROUP_PATHS.v2CpuMax)?.trim()
+  if (cpuMax !== undefined && cpuMax !== '') {
+    const [quotaRaw, periodRaw] = cpuMax.split(/\s+/)
+    const raw = Number(quotaRaw)
+    const period = Number(periodRaw)
+    if (
+      quotaRaw !== 'max' &&
+      Number.isFinite(raw) &&
+      raw > 0 &&
+      Number.isFinite(period) &&
+      period > 0
+    ) {
+      quota.cpus = raw / period
+    }
+  }
+  if (quota.cpus === undefined) {
+    const raw = Number(readText(CGROUP_PATHS.v1CpuQuota)?.trim())
+    const period = Number(readText(CGROUP_PATHS.v1CpuPeriod)?.trim())
+    // v1 无限制写作 -1。
+    if (Number.isFinite(raw) && raw > 0 && Number.isFinite(period) && period > 0) {
+      quota.cpus = raw / period
+    }
+  }
+  const memMax = readText(CGROUP_PATHS.v2MemoryMax)?.trim()
+  if (memMax !== undefined && memMax !== '' && memMax !== 'max') {
+    const bytes = Number(memMax)
+    if (Number.isFinite(bytes) && bytes > 0) quota.memGiB = bytes / 1024 ** 3
+  } else if (memMax === undefined || memMax === '') {
+    const bytes = Number(readText(CGROUP_PATHS.v1MemoryLimit)?.trim())
+    if (Number.isFinite(bytes) && bytes > 0 && bytes < V1_UNLIMITED_BYTES) {
+      quota.memGiB = bytes / 1024 ** 3
+    }
+  }
+  return quota
 }
 
 /** 最近秩法取真实样本点（不插值——判据要能对得上原始数据）。 */
@@ -148,16 +220,39 @@ export function verdictLoadSample(input: LoadSampleInput): LoadVerdict {
 
 // ---------- 执行器（跑在环境闸之后；判定数学在上方纯函数） ----------
 import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { cpus, totalmem, platform } from 'node:os'
 import { WebSocket } from 'ws'
 import { assembleChain } from './chain.js'
 
-export function readEnvFacts(): EnvFacts {
+export function readEnvFacts(readText: ReadTextFile = defaultReadText): EnvFacts {
   const docker =
     spawnSync('docker', ['info', '--format', '{{.ServerVersion}}'], { encoding: 'utf8' }).status ===
     0
-  return { platform: platform(), cpus: cpus().length, totalMemGiB: totalmem() / 1024 ** 3, docker }
+  const osCpus = cpus().length
+  const osMemGiB = totalmem() / 1024 ** 3
+  const quota = readCgroupQuota(readText)
+  // 取较小者：容器配额只会让环境**更小**，不可能比宿主大（#114）。
+  const useCgroupCpu = quota.cpus !== undefined && quota.cpus < osCpus
+  const useCgroupMem = quota.memGiB !== undefined && quota.memGiB < osMemGiB
+  return {
+    platform: platform(),
+    cpus: useCgroupCpu ? Math.round(quota.cpus! * 100) / 100 : osCpus,
+    totalMemGiB: useCgroupMem ? quota.memGiB! : osMemGiB,
+    docker,
+    cpuSource: useCgroupCpu ? 'cgroup' : 'os',
+    memSource: useCgroupMem ? 'cgroup' : 'os',
+  }
+}
+
+/** 默认 reader：读不到（无权限/不存在）一律 undefined，不抛。 */
+function defaultReadText(path: string): string | undefined {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return undefined
+  }
 }
 
 /** 上行帧信封：与 hub-socket.ts:171-184 同形（形状错了 ack 就不来，无漂移风险）。 */

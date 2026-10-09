@@ -42,7 +42,7 @@
 
 | 门 | 命令 | 状态 |
 |---|---|---|
-| Q0 静态门 | `pnpm check` | 生效中（P1-01 起） |
+| Q0 静态门 | `pnpm check` | 生效中（P1-01 起）；含**测试代码 typecheck 接入面**与存量错误基线棘轮（#183，`scripts/lib/typecheck-test-baseline.ts`） |
 | Q1 单元门 | `pnpm test:unit`（领域分支覆盖 ≥95%） | 生效中（P1-02 起；覆盖率阈值见 packages/domain/vitest.config.ts） |
 | Q2 数据门 | `pnpm test:integration`（真实 PostgreSQL） | 生效中（P1-04 起，Docker 一次性容器；#43 起 CI 同跑） |
 | Q3 DSH 契约门 | `pnpm test:dsh-contract` | 生效中（P1-11 起；**A0-6 起接 CI** check job）；能力边界见 docs/agent/runtime-capability-contract.md |

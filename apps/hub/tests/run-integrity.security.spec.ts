@@ -178,8 +178,9 @@ describe('专家6：含密钥的 owner 内容不进其他成员的投影（受�
 
     // 正控：owner（bob）的通道确实能看到这条内容——证明帧真的存在、不是"没发出去"。
     const bobClient = await connectClient(c.bob.cookie)
+    // 探针写成 async（#183 接线：waitForValue 的契约是 Promise 探针，同步返回不算数）。
     await waitForValue(
-      () =>
+      async () =>
         bobClient.frames.some((f) => JSON.stringify(f).includes(CORPUS[0])) ? true : undefined,
       'owner 通道未在超时内收到含密钥的 owner 帧（无法证明受众门在起作用）',
     )
@@ -193,7 +194,7 @@ describe('专家6：含密钥的 owner 内容不进其他成员的投影（受�
       runEventFrame(runId, 2, { type: 'run.phase', phase: 'tool' }, 'project'),
     )
     await waitForValue(
-      () =>
+      async () =>
         carolClient.frames.some((f) => JSON.stringify(f).includes('"run.phase"'))
           ? true
           : undefined,

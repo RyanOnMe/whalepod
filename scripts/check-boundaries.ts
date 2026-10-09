@@ -193,10 +193,10 @@ function* walkSourceFiles(dir: string): Generator<string> {
  * 「表内条目其实已经接线了却忘了删行」由 `check-boundaries.spec.ts` 的机器判据兜住。
  */
 export const TYPECHECK_WIRING_DEFERRED = new Map<string, string>([
-  ['apps/hub', '#183：30 个存量错误'],
-  ['apps/node', '#183：29 个存量错误（另需先拆对 hub/tests/helpers.js 的跨包 import）'],
-  ['packages/db', '#183：1 个存量错误'],
-  ['packages/protocol', '#183：1 个存量错误'],
+  // 存量错误数的**真值**在 scripts/lib/typecheck-test-baseline.ts（机检、只许向下）；
+  // 本表的职责只是「声明该包尚未接线」。两处键必须一一对应（有测试盯着）。
+  ['apps/hub', '#183：25 个存量错误（A0-7 已修安全/审批链路的 14 处）'],
+  ['apps/node', '#183：31 个存量错误（另需先拆对 hub/tests/helpers.js 的跨包 import）'],
 ])
 
 export function checkTypecheckWiring(repoRoot: string): string[] {

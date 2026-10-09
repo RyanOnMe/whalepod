@@ -325,7 +325,11 @@ describe('core-empty pack digest 断代迁移（P1-17 M10）', () => {
         ])
         // 都成功：并发不得以 dup key / 序列化失败等形式冒出来。
         if (a.status === 'rejected' || b.status === 'rejected') {
-          throw new Error(`并发迁移调用失败（round ${round}）：${String(a.reason ?? b.reason)}`)
+          // #183 接线：`a.reason ?? b.reason` 取不到（TS 无法从 `a || b` 收窄出「哪个被拒」），
+          // 改成显式三目——最后一个分支不可达，只为类型闭合，不引入 as。
+          const reason =
+            a.status === 'rejected' ? a.reason : b.status === 'rejected' ? b.reason : undefined
+          throw new Error(`并发迁移调用失败（round ${round}）：${String(reason)}`)
         }
         // 恰好一次：只有一个调用观察到旧值并完成迁移，另一个等锁后见现算值返回 false。
         expect([a.value, b.value].filter(Boolean)).toHaveLength(1)

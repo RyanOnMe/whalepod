@@ -74,6 +74,14 @@ spawn 前抛 `RuntimeEnvError('MODEL_CREDENTIAL_UNAVAILABLE')` → Node 以 `com
 合计约 5 秒**。预算不是瓶颈，冷构建才是——加判据几乎不花钱，改仓库任何文件都会让
 镜像重建（`COPY . .`）回到冷态。
 
+## CI 触发面（#116 收口，2026-10-09）
+
+`q5-release.yml` 新增 `compose-smoke` job：push tag `v*`（与 Q5 20 连跑同一次发布取证）
+或 `workflow_dispatch`。范围内做三件：宿主 build（冒烟要宿主 dist 跑真 node CLI）→
+`pnpm test:compose-smoke` 并把日志 `tee` 进 `artifacts/q9/` → `upload-artifact`（保留 90 天）。
+**不挂 per-PR**：冷构建 3–6 分钟 + runner 资源画像与判据环境不同，它是发布级证据门
+（口径见上表 A/B 两段；门禁分级文档同口径）。
+
 ## 未覆盖 / 边界（别读成已验）
 
 - **B 段全部**：审批桥、Artifact、Reviewer、验收、取消/故障收敛——需真密钥，归 Phase 2

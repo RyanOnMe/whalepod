@@ -48,7 +48,9 @@ describe('outbox', () => {
       .where(eq(dispatchOutbox.id, commandId))
     expect(row).toMatchObject({ attemptCount: 1 })
     // random=()=>0：退避精确为 min(30s, 250ms * 2^0) = 250ms。
-    expect(row?.nextAttemptAt.getTime() - fixedNow.getTime()).toBe(250)
+    // 写成「期望值」而不是「相减」：#183 接线时 tsc 指出 `row?.x.getTime() - y` 的左操作数
+    // 可能是 undefined（算术不允许），改这一形态后类型与判据强度都不变。
+    expect(row?.nextAttemptAt.getTime()).toBe(fixedNow.getTime() + 250)
   })
 
   it('未给 notBefore = 立即可投：next_attempt_at 用 Outbox 的时钟，不是 DB 默认 now()', async () => {
