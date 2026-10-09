@@ -116,9 +116,28 @@ bash scripts/secret-scan.sh apps/web scripts docs/agent
 （加一个无消费者的 `--dsw-static-orphan-proof-999` → 变红，还原 → 绿，该文件在含 #156 的
 main 上是 **56** 个用例；#156 之前是 25 个——引用计数时要说清是哪棵树）。
 
+**2026-10-09（A0-8 发布取证）补的两条扫到的真问题**：
+
+1. **composer placeholder 未声明颜色**：`.instruction-composer textarea` 只声明 `color`，
+   placeholder 走浏览器默认色 → 4.06:1（AA 4.5:1）。CI 的违规原文只此一条。修在全局层
+   （`input/textarea::placeholder` → `label-secondary`，白底 5.8:1；`opacity: 1` 归位 UA 叠的
+   不透明度），并在 `instruction-contrast.spec.tsx` 补了 **Q0 快判据**（缺声明即红）——
+   这类缺陷此前**只有发布级 Q5 看得见**，PR 期全绿是空的。
+2. **扫描器会在动画中间态采样（门自身的缺陷）**：沿祖先链累乘 `opacity` 的机制（本意防
+   "父级淡出"漏判）碰上 UX 动效批次（骨架交叉淡入/列表入场）时，淡入中途取样会把整页文字
+   算低——本机实录 12 条假违规（3.03–4.46:1，稳态 5.8:1），而同一棵树在 CI 上只量到真那条。
+   已加 `settleAnimations`：有界（3s）等**一次性**动画收口，`iterations === Infinity` 的常驻
+   动画（流式光标脉冲）不等；等不满时 `console.warn` 留痕，判定照做。
+
+**e2e 断言的一条新纪律（同次取证）**：**断言任务标题/项目名必须给角色或作用域**。
+p1-140 曾用 `getByText('协作观察用例')` 断言任务标题，而 UX-10 起侧栏「最近任务」也渲染任务
+标题且是**异步拉取**——侧栏到货前匹配 1 个（过）、到货后匹配 2 个（strict mode violation，红）。
+Q5 20 连跑到第 15 轮才踩到（上一次跑 20 连还在 UX-10 之前）。现钉 `getByRole('heading', …)`。
+
 **已知盲区（诚实列出，当前仓库 0 命中，但它们是"未判定"而非"通过"）**：
 `::before/::after` 生成的文本；`-webkit-text-fill-color`；非祖先覆盖层（浮层压住文字）；
-动画中间态（单次取样，无重试）；**深色主题**（本仓无切换入口，扫描只跑浅色）；Firefox /
+**常驻动画（infinite）的 opacity 中间态**（一次性动画已由 `settleAnimations` 收口，无限循环
+动画等不到收口——形态见上条）；**深色主题**（本仓无切换入口，扫描只跑浅色）；Firefox /
 Safari（Q5 用系统 Chrome）；悬停 / 焦点态；非文字对比度（3:1）目前只在设备状态色块一处断言
 ——**焦点环就是其中一条真缺口**：`--focus-ring` = signal@40%，实测压 paper **1.77:1**、
 压 ink **1.53:1**，低于 3:1，已单列 #164。
