@@ -213,6 +213,9 @@ async function killStaleByArgMarker(marker: string): Promise<void> {
   }
 }
 await killStaleByArgMarker('scripts/e2e-node.mts')
+// #99-A：Runtime 入口已切包解析（dist/bin.js），陈旧标记同步跟进；
+// 源码路径标记保留一条——切装配前的残留进程仍需覆盖一轮。
+await killStaleByArgMarker('apps/runtime/dist/bin.js')
 await killStaleByArgMarker('apps/runtime/src/bin.ts')
 // 残留的其它 e2e-serve 实例（历史双进程包装泄漏）：会占住 18080/5173 并互相
 // 覆盖 env 清单，先清掉。判据必须 comm==node——调用方 bash/playwright-runner 的

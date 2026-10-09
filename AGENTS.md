@@ -74,6 +74,7 @@
 - 业务代码不得直接 import `@deepseek-ai/*`；只有 `packages/runtime-dsh` 和 `apps/runtime` 可以。
 - DSH 锁精确版本，禁 `latest`/range；升级走 `dsh-upgrade` 流程。
 - Run 终态禁止复活；Runtime 崩溃后不自动重放可能有副作用的工具。
+- 测试与 harness 必须走生产装配（#99）：真 bin + 真包解析。harness 禁止直插业务表建运行时状态（投影/状态只由协议帧或 HTTP 真人路径产生）；禁止用源码路径替代包解析启动 Runtime/Hub。确需凑前置条件时，必须在代码注记理由与删除条件，并在 `scripts/check-boundaries.ts` 的白名单登记——两条都有机检红绿自证，无判据的规则等于没有。
 
 ## 目录地图
 

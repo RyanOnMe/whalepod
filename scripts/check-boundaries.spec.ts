@@ -298,3 +298,61 @@ describe('checkRunStatusChokePoint（P1-192：Run 唯一写入口）', () => {
     expect(checkRunStatusChokePoint(root)).toEqual([])
   })
 })
+
+describe('harness assembly hygiene (#99)', () => {
+  it('未登记的直插即违规，并指出去向（白名单或真人路径）', async () => {
+    const { checkHarnessDbSeeds } = await import('./check-boundaries.js')
+    const root = mkdtempSync(join(tmpdir(), 'seed-'))
+    const dir = join(root, 'scripts')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, 'sneaky.mts'),
+      'await database.db.insert(schema.workspaces).values({})\n',
+    )
+    const violations = checkHarnessDbSeeds(root)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]).toContain('sneaky.mts:1')
+    expect(violations[0]).toContain('HARNESS_SEED_ALLOWLIST')
+  })
+
+  it('白名单只允许缩小：每项在当前仓库必须仍真实存在（删了种子不删登记即红）', async () => {
+    const { HARNESS_SEED_ALLOWLIST } = await import('./check-boundaries.js')
+    const repoRoot = resolve(fileURLToPath(import.meta.url), '../..')
+    for (const key of Object.keys(HARNESS_SEED_ALLOWLIST)) {
+      const sep = key.lastIndexOf(':schema.')
+      const file = key.slice(0, sep)
+      const table = key.slice(sep + ':schema.'.length)
+      const source = readFileSync(join(repoRoot, file), 'utf8')
+      expect(
+        source.includes(`.insert(schema.${table})`),
+        `${key} 的种子已删——请把白名单这行也删掉（该表只允许缩小）`,
+      ).toBe(true)
+    }
+  })
+
+  it('spawn 入口写源码路径即违规；createRequire 锚点不误报', async () => {
+    const { checkHarnessEntryAssembly } = await import('./check-boundaries.js')
+    const root = mkdtempSync(join(tmpdir(), 'entry-'))
+    const dir = join(root, 'scripts')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, 'sneaky.mts'),
+      "const BIN = join(REPO_ROOT, 'apps/runtime/src/bin.ts')\n",
+    )
+    writeFileSync(
+      join(dir, 'ok.mts'),
+      "const BIN = createRequire(join(REPO_ROOT, 'apps/node/src/cli.ts')).resolve('@whalepod/runtime/bin')\n",
+    )
+    const violations = checkHarnessEntryAssembly(root)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]).toContain('sneaky.mts:1')
+    expect(violations[0]).toContain('apps/runtime/src/bin.ts')
+  })
+
+  it('本仓库当前无违规（两处 pack 种子与 Hub/残留标记均已登记）', async () => {
+    const { checkHarnessDbSeeds, checkHarnessEntryAssembly } = await import('./check-boundaries.js')
+    const repoRoot = resolve(fileURLToPath(import.meta.url), '../..')
+    expect(checkHarnessDbSeeds(repoRoot)).toEqual([])
+    expect(checkHarnessEntryAssembly(repoRoot)).toEqual([])
+  })
+})
