@@ -1138,6 +1138,26 @@ p.app-sidebar-heading {
   border-top: 0.5px solid var(--dsw-alias-border-l1);
 }
 
+/**
+ * placeholder 的对比度：**不要依赖浏览器默认色**。
+ *
+ * 2026-10-09（A0-8 发布取证）实测：`.instruction-composer textarea` 只声明了 `color`，
+ * placeholder 走浏览器默认（Chrome ≈ 黑 54% 合成后 4.06:1）——低于 AA 4.5:1，
+ * 被 Q5 的对比度扫描在 task-room 页拦下（`placeholder: 让 Agent 干这个…`）。
+ * 那一条只在发布级门可见（Q0 的 instruction-contrast 此前只覆盖四态 chip），
+ * 所以这里修在**全局层**（所有 input/textarea 一起），并由
+ * `apps/web/tests/instruction-contrast.spec.tsx` 加一条快判据守住声明本身。
+ *
+ * 取 `label-secondary`（浅色 rgb(97,102,107)）：在 bg-layer-2 上 ≥4.5:1，且与已输入
+ * 文字（label-primary）仍有层级差——placeholder 要"看得见但不假装是内容"。
+ */
+input::placeholder,
+textarea::placeholder {
+  color: var(--dsw-alias-label-secondary);
+  /* 有些 UA 会给 placeholder 叠不透明度；显式归位，避免"声明的颜色"与"渲染的颜色"两套账。 */
+  opacity: 1;
+}
+
 .instruction-composer textarea {
   width: 100%;
   font: inherit;

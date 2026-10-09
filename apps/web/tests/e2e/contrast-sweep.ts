@@ -355,7 +355,49 @@ export async function findContrastOffenders(page: Page, min = 4.5): Promise<Cont
  *   - 无法判定：门看不懂（未解析颜色 / 渐变底）——要么改写法，要么显式登记例外；
  *   - 一条都没量到：说明扫描点在"页面还没渲染出内容"的时刻取样，是**假绿**，必须补等待。
  */
+/**
+ * 等**一次性**动画收口再采样（有界，poll-until 形态）。
+ *
+ * 为什么必须等（2026-10-09 A0-8 发布取证实录）：扫描器沿祖先链累乘 `opacity` 再合成文字色
+ * （防"父级淡出"漏判）——但**淡入/交叉淡入进行到一半**时，同一批文字会被算成 3.0–4.5:1，
+ * 而它们在稳态是 5.8:1。本机因此在 task room 一次量出 12 条**假违规**（同一棵树在 CI 上只
+ * 量到 placeholder 那一条真的）；Q5「20 连跑偶发红」的噪声里有这一份。
+ *
+ * 口径：只等 `playState === 'running'` 且**迭代次数有限**的动画（入场/淡入）；
+ * `iterations === Infinity` 的常驻动画（如流式光标脉冲）不等——等它等于永远等不到。
+ * 超时（默认 3s）不抛：把"还有几个在跑"留痕给日志，判定照做。
+ */
+async function settleAnimations(
+  page: Page,
+  timeoutMs = 3_000,
+): Promise<{ running: number; timedOut: boolean }> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const running = await page.evaluate(
+      () =>
+        document
+          .getAnimations()
+          .filter((a) => a.playState === 'running')
+          .filter((a) => {
+            const timing = a.effect?.getComputedTiming()
+            return timing === undefined || timing.iterations !== Infinity
+          }).length,
+    )
+    if (running === 0) return { running: 0, timedOut: false }
+    if (Date.now() > deadline) return { running, timedOut: true }
+    await page.waitForTimeout(100)
+  }
+}
+
 export async function expectNoContrastOffenders(page: Page, min = 4.5): Promise<void> {
+  const settled = await settleAnimations(page)
+  if (settled.timedOut) {
+    // 不抛（常驻动画是合法形态），但必须留痕：采样时仍有一次性动画在跑 = 这次判定的
+    // 置信度较低，日志里要能看见，否则又会把假违规当产品缺陷去改样式。
+    console.warn(
+      `[contrast-sweep] 采样时仍有 ${settled.running} 个一次性动画在跑（等满 3000ms）：${page.url()}`,
+    )
+  }
   const { offenders, undecidable, checked } = await sweepContrast(page, min)
   expect(
     checked,
