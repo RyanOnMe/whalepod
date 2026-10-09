@@ -30,6 +30,23 @@
 | Q8 性能门 `pnpm test:load` | — | — | release 证据（短档）；30min/50Run 长档挂 release 手动；判据以 ubuntu runner 为准 |
 | Q9 安装门 `pnpm test:compose-smoke` | release 必跑（空卷 15 分钟硬闸；口径=A0-5 收窄的「安装面段」，见 [compose-standard-loop-acceptance](./compose-standard-loop-acceptance.md)） | A0-5 起：动 `scripts/compose-smoke.mts`、`deploy/`、Hub 启动面（migrate/server/inventory 上报）或邀请/配对/workspace 投影面的 PR 手工跑一次（CI 触发面见 #116 延迟项） | 日常功能 PR 不跑 |
 
+## 二·补、CI 接线现状（A0-6 核对并修正，2026-10-09）
+
+盘点发现一处治理缺陷：本文把 Q3/Q6/Q7 写成 G0「release 必跑、PR 必跑」，但
+`.github/workflows/check.yml` 当时只跑 Q0（`pnpm check`）与 Q2——**「必跑」是人心里的门**。
+A0-6 把它们接到既有必检 job 上（不新增 job = 不改仓库保护规则）：
+
+| 门 | 接线位置 | 本机实测 | 备注 |
+|---|---|---|---|
+| Q3 `pnpm test:dsh-contract` | `check.yml` · `check` job | 39 用例 ~3.5s | 无 PG/Docker/网络 |
+| Q7 `pnpm test:security` | `check.yml` · `integration` job | ~17.5s（含一次性 PG） | secret-scan 自检 + 实扫 + 许可门同命令 |
+| Q6 `pnpm test:resilience` | `check.yml` · `integration` job | 32 用例 9.5s | 含一次性 PG |
+| Q5 / Q8 / Q9 | 保持 release 级（q5-release.yml / 手动） | — | 真实浏览器 / 机器规格判据 / 镜像构建；口径见 compose-standard-loop-acceptance |
+
+口径（写文档时照这条）：**「必跑」只许写在 CI 真会跑的门上**；不接 CI 的门要写清为什么，
+以及「它因此不能作为 PR 门」这一事实。能力边界与判据清单见
+[runtime-capability-contract](./runtime-capability-contract.md)。
+
 ## 三、PR 触发规则（按改动面）
 
 | 改动面 | 必跑 |

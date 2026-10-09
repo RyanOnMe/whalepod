@@ -139,4 +139,76 @@ describe('probe: approval interception and tool registration', () => {
       await runtime.dispose()
     }
   })
+
+  /**
+   * A0-6（#288）「未知 Approval 只拒不放行」——**Runtime 层**负向面。
+   *
+   * 这一层此前零测试：`ApprovalPort.decide` 对未知/已 settle 的 callId 只记 warn、
+   * 不产生任何 outcome（`approval-port.ts` 的 settle 分支），Hub/Node/projector 侧的
+   * 未知 id 判据都在别处（approval-decision.integration / run-authorization.security /
+   * projector.spec），唯独「最靠近模型执行的那一层」没被钉过。
+   *
+   * 双向夹逼，**不用 sleep 猜时间**（与 #256 纪律同形：先用一个决定把状态推坏，
+   * 再用真正生效的那个决定把终局拉出来，比较终局）：
+   *   A. 未知 callId 先发 allowed_once，再用**正确** callId 发 rejected：
+   *      若未知决定被误认领（fail-open），工具就已执行 ⟹ 终局会出现 artifact.candidate ⟹ 红。
+   *   B. 未知 callId 先发 rejected，再用**正确** callId 发 allowed_once：
+   *      若未知决定被误认领（把待决吞成拒绝），工具永远不会执行 ⟹ 终局没有 candidate ⟹ 红。
+   * 两条都绿 = 未知 callId 是 no-op，且**待决的请求仍然待决**（决定权完好无损）。
+   */
+  it('A0-6: unknown callId decide is a no-op — neither grants (A) nor swallows (B) the pending approval', async () => {
+    // A：未知的 allowed_once 不得放行。
+    const specA = runtimeSpec()
+    const runtimeA = await startReplayRuntime('tool-approval', specA)
+    try {
+      const requested = await driveToApproval(runtimeA)
+      await runtimeA.send(
+        commandFrame('approval.decide', {
+          runId: specA.runId,
+          callId: 'call-unknown-ghost',
+          decision: 'allowed_once',
+        }),
+      )
+      await runtimeA.send(
+        commandFrame('approval.decide', {
+          runId: specA.runId,
+          callId: requested.payload.callId,
+          decision: 'rejected',
+        }),
+      )
+      await runtimeA.until('run.completed')
+      expect(
+        runtimeA.outputs.some((frame) => frame.type === 'artifact.candidate'),
+        '未知 callId 的 allowed_once 被误认领：工具执行了（fail-open）',
+      ).toBe(false)
+    } finally {
+      await runtimeA.dispose()
+    }
+
+    // B：未知的 rejected 不得吞掉待决请求。
+    const specB = runtimeSpec()
+    const runtimeB = await startReplayRuntime('tool-approval', specB)
+    try {
+      const requested = await driveToApproval(runtimeB)
+      await runtimeB.send(
+        commandFrame('approval.decide', {
+          runId: specB.runId,
+          callId: 'call-unknown-ghost',
+          decision: 'rejected',
+        }),
+      )
+      await runtimeB.send(
+        commandFrame('approval.decide', {
+          runId: specB.runId,
+          callId: requested.payload.callId,
+          decision: 'allowed_once',
+        }),
+      )
+      const candidate = await runtimeB.until('artifact.candidate')
+      expect(candidate.payload).toMatchObject({ runId: specB.runId, relativePath: 'out/report.md' })
+      await runtimeB.until('run.completed')
+    } finally {
+      await runtimeB.dispose()
+    }
+  })
 })
