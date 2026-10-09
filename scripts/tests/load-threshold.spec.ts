@@ -214,6 +214,7 @@ describe('环境闸（04 §8：4 CPU / 8 GiB / Linux / Docker）', () => {
     cpus: 4,
     totalMemGiB: 16,
     docker: true,
+    sharedCi: false,
     cpuSource: 'os' as const,
     memSource: 'os' as const,
   }
@@ -229,11 +230,31 @@ describe('环境闸（04 §8：4 CPU / 8 GiB / Linux / Docker）', () => {
       cpus: 2,
       totalMemGiB: 4,
       docker: false,
+      sharedCi: false,
       cpuSource: 'os',
       memSource: 'os',
     })
     expect(r.eligible).toBe(false)
     expect(r.reasons.length).toBe(3)
+  })
+})
+
+describe('共享 CI runner 不作判据环境（2026-10-09 尺子账其六）', () => {
+  it('名义规格达标但 sharedCi=true ⟹ 不 eligible，且原因写明为什么', () => {
+    const runner = {
+      platform: 'linux',
+      cpus: 4,
+      totalMemGiB: 16,
+      docker: true,
+      sharedCi: true,
+      cpuSource: 'os' as const,
+      memSource: 'os' as const,
+    }
+    const verdict = assessEnvironment(runner)
+    expect(verdict.eligible).toBe(false)
+    expect(verdict.reasons.join('；')).toMatch(/共享 CI runner/)
+    // 反证：同规格但不是共享 CI ⟹ 合格（这一条不许把"规格达标"一起否掉）。
+    expect(assessEnvironment({ ...runner, sharedCi: false }).eligible).toBe(true)
   })
 })
 
