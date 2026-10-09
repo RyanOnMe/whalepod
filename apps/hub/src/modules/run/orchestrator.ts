@@ -569,6 +569,22 @@ export class RunOrchestrator {
       // append 成功，若都推状态机，第二行必撞 INVALID_RUN_TRANSITION——状态
       // 迁移只由 owner（全量）行驱动，project（收缩）行是纯镜像。
       if (payload.audience !== 'owner') return
+      // ADR-0012「事件即受理证据」：ack 是背书不是许可。ack 可能丢失（传输/崩溃窗），
+      // 而 Node 一旦受理就会把 Runtime 起起来并上行事件——此时若还停在 queued，按表边
+      // 处理会把 Run 误判 failed(INVALID_RUN_TRANSITION)（A0-8 取证实测：丢一次 ack
+      // 即复现，R7 连跑不稳）。先把"受理"按事件所证补上，再走正常事件迁移。
+      // 不伪造 ack：outbox 行的 acked_at 只由真实 command.ack 写。
+      if (run.status === 'queued') {
+        // applyRunTransition 是**纯校验器**（返回目标态、不改行）：这里必须把内存行一起推进
+        // ——紧接着的 applyProjectedEvent 读的就是这个对象（首版漏了这步，判据立刻抓到）。
+        const dispatched = this.applyRunTransition(run, { type: 'dispatch_acked' })
+        await setRunStatus(tx, run.id, dispatched.status)
+        run.status = dispatched.status
+        await appendTeamEvent(tx, {
+          type: 'run.changed',
+          payload: { runId: run.id, taskId: run.taskId, status: dispatched.status },
+        })
+      }
       try {
         await this.applyProjectedEvent(tx, run, payload.event, now)
       } catch (error) {
