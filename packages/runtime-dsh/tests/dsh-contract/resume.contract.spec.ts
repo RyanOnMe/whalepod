@@ -284,4 +284,66 @@ describe('probe: resume（#176 切片①，ADR-0009 决策 3 前置）', () => {
       await runtime.dispose()
     }
   }, 120_000)
+
+  /**
+   * A0-6（#288）「建不起归属不确认成功」——续跑侧的负向面（此前零测试）。
+   *
+   * 归属就是「这条会话真的存在、且就是请求的那一条」。请求一条**不存在**的会话 id 时，
+   * 正确行为是**拒绝启动**（不发 runtime.ready、不假装续上），而不是静默新建一条会话
+   * 继续跑——后者用户会以为上下文在场，实际全丢。
+   *
+   * 行为先探后钉（不猜）：DSH `agents.resume` 对未知 id 抛 `session "<id>" not found`，
+   * bridge 不吞错，initialize 直接 reject、零帧。
+   *
+   * 变异自证（A0-6 实测）：把 resume 包成「失败就退化成新建会话」（一个很自然的
+   * `catch` 写法）后本用例仍绿——因为 `bridge.ts` 的 `session identity mismatch` 硬闸
+   * 接住了退化（探针实录：`bridge: session identity mismatch — expected <ghost>,
+   * DSH reports <新会话 id>`、零帧）。即「拒绝启动、不假装续上」这条不变量由两层守：
+   * DSH 的 not-found 与本仓的身份硬闸；断言因此按归因二选一（`/not found|mismatch/i`）
+   * 写，钉的是**行为**（拒、零帧、可归因），不是某一层的措辞。
+   */
+  it('A0-6: 续跑一条不存在的会话 id ⟹ 拒绝启动、零帧、bridge 不可复用（不静默新建）', async () => {
+    const specA = runtimeSpec()
+    try {
+      const runtimeA = await startReplayRuntime('resume', specA, { keepTempDirs: true })
+      let sessionId = ''
+      try {
+        await runtimeA.send(initializeCommand(specA))
+        sessionId = (await runtimeA.until('runtime.ready')).payload.dshSessionId
+      } finally {
+        await runtimeA.dispose()
+      }
+
+      const specB = { ...specA, runId: randomUUID() }
+      const ghost = `${sessionId}-ghost` // 形态合法、绝不存在的 id
+      const runtimeB = await startReplayRuntime('resume-continue', specB, {
+        probeResumeSessionId: ghost,
+        keepTempDirs: true,
+      })
+      try {
+        const error: unknown = await runtimeB.send(initializeCommand(specB)).then(
+          () => undefined,
+          (caught: unknown) => caught,
+        )
+        expect(error).toBeInstanceOf(Error)
+        const message = error instanceof Error ? error.message : String(error)
+        // 归因钉到会话 id 本身（不是「某个字符串」）。
+        expect(message).toContain(ghost)
+        expect(message).toMatch(/not found|mismatch/i)
+
+        // 拒绝启动：零帧（尤其没有 runtime.ready——它一旦发出就等于向 Node 确认了续跑）。
+        expect(runtimeB.outputs).toEqual([])
+
+        // bridge 不可复用：start 失败后后续命令 fail-closed。
+        await expect(
+          runtimeB.send(commandFrame('run.prompt', { runId: specB.runId, text: 'after ghost' })),
+        ).rejects.toThrow(/before runtime\.initialize/)
+      } finally {
+        await runtimeB.dispose()
+      }
+    } finally {
+      rmSync(specA.workspacePath, { recursive: true, force: true })
+      rmSync(specA.dshHomePath, { recursive: true, force: true })
+    }
+  }, 120_000)
 })

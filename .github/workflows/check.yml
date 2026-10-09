@@ -47,6 +47,13 @@ jobs:
       - name: Run static checks
         run: pnpm check
 
+      # Q3 DSH 契约门（A0-6/#288）：此前它只是**文档上的** release/PR 必跑项——
+      # .github 里没有任何接线，版本锁复算（dsh.lock ↔ catalog ↔ pnpm-lock）与 10 个
+      # 契约探针只在本地跑。接进 check job（复用同一份 install+build）：37 用例约 3.5s，
+      # 无网络、无 PG、无 Docker——没有理由让它继续待在「人心里的门」里。
+      - name: Run DSH contract probes (Q3)
+        run: pnpm test:dsh-contract
+
   # Q2 数据门（#43）：真实 PostgreSQL 18 一次性容器，与本地同判据。
   # ubuntu-latest 自带 Docker，scripts/with-test-postgres.mts 自管容器生命周期。
   # 先 build 再测：integration 经包名 import 走 dist/，不 build 会测到陈旧构建（#35）。
@@ -74,3 +81,17 @@ jobs:
 
       - name: Run integration tests (Q2, real PostgreSQL)
         run: pnpm test:integration
+
+      # Q7 安全门（A0-6/#288）：与 Q3 同病——门禁分级文档把它记为 G0「release 必跑；
+      # 动认证/授权/审批/投影的 PR 必跑」，CI 却只跑 Q0/Q2。放 integration job 是因为
+      # 它要真 PG（security project 起自己的容器）；secret-scan 自检与实扫、许可 gate
+      # 同一条命令内三半边的既有口径不变。本机实测全程 17.5s。
+      - name: Run security gate (Q7)
+        run: pnpm test:security
+
+      # Q6 故障门（A0-6/#288）：同属「文档记为必跑、CI 无接线」。本机实测 32 用例 9.5s，
+      # 与 Q2/Q7 同吃真 PG。故障注入类用例在 runner 上的抖动风险高于本机——若它开始
+      # 偶发变红，正确的处理是修确定性（bounded poll，见 poll-until-acceptance），
+      # 不是把它挪回「人心里的门」。
+      - name: Run resilience gate (Q6)
+        run: pnpm test:resilience
