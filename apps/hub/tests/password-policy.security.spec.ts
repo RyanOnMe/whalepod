@@ -8,7 +8,13 @@
 import { randomBytes } from 'node:crypto'
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
 import { hashPassword } from '../src/modules/auth/password.js'
-import { createTestApp, createTestDatabase, extractSessionCookie, type TestApp } from './helpers.js'
+import {
+  createTestApp,
+  createTestDatabase,
+  extractSessionCookie,
+  resetDatabase,
+  type TestApp,
+} from './helpers.js'
 
 const idem = () => `idem-${randomBytes(12).toString('hex')}`
 
@@ -19,6 +25,9 @@ describe('口令政策：建账两腿封、登录腿豁免（#106）', () => {
 
   beforeAll(async () => {
     db = await createTestDatabase()
+    // security project 现在有多个文件共享同一 PG（fileParallelism:false 串行）：
+    // 本文件依赖「实例未初始化」的空白起点，文件内自清，不吃别家留下的 Team。
+    await resetDatabase(db)
     ctx = await createTestApp(db)
   })
   afterAll(async () => {
