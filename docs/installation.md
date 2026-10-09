@@ -1,9 +1,9 @@
-# WhalePod 安装（v0.1.0-alpha.6）
+# WhalePod 安装（v0.1.0-alpha.7）
 
 适用对象：**没有开发背景的试用团队**。全程约 30 分钟。产品命题与边界见
 [README](../README.md)；这里只有"装到哪一步、看到什么算对"。
 
-> 装之前请先读本版的**限制声明与已知问题**：[v0.1.0-alpha.6 release notes](./release-notes/v0.1.0-alpha.6.md)。
+> 装之前请先读本版的**限制声明与已知问题**：[v0.1.0-alpha.7 release notes](./release-notes/v0.1.0-alpha.7.md)。
 > 其中两条最影响试用体验：**Agent 真执行需要真实模型密钥**（没配密钥的 Run 会如实
 > 失败为 `MODEL_CREDENTIAL_UNAVAILABLE`）；**Alpha 期锁 DSH 一版，别自行升级**。
 
@@ -29,7 +29,7 @@ Hub 的网页。3–10 人团队 = 一台 Hub + 每人一个 Node。
 ```bash
 git clone https://github.com/RyanOnMe/whalepod.git
 cd whalepod
-git checkout v0.1.0-alpha.6        # 锁版本；main 是开发分支，试用勿用
+git checkout v0.1.0-alpha.7        # 锁版本；main 是开发分支，试用勿用
 
 # 1) 生成两个只此一份的机密，写进 .env（权限 0600）
 umask 077
@@ -67,7 +67,7 @@ docker compose --env-file .env -f deploy/compose.yml exec hub node dist/cli.js s
 
 ```bash
 git clone https://github.com/RyanOnMe/whalepod.git
-cd whalepod && git checkout v0.1.0-alpha.6
+cd whalepod && git checkout v0.1.0-alpha.7
 corepack enable
 pnpm install --frozen-lockfile
 pnpm -r --if-present build                    # 约 1-2 分钟
@@ -128,7 +128,7 @@ Caddy 自动签发/续期 Let's Encrypt；`WHALEPOD_PUBLIC_ORIGIN` 填 `https://
 
 ```bash
 # 升级：切 tag → 重建 → 启动（数据自动向前迁移，见下）
-git fetch --tags && git checkout v0.1.0-alpha.6
+git fetch --tags && git checkout v0.1.0-alpha.7
 docker compose --env-file .env -f deploy/compose.yml up -d --build   # Hub 侧
 pnpm install --frozen-lockfile && pnpm -r --if-present build   # 每台 Node 机器
 node apps/node/dist/cli.js start                          # 重启各 Node
