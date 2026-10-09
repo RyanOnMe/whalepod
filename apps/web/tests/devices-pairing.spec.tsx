@@ -50,6 +50,24 @@ function inTenMinutes(): string {
   return new Date(Date.now() + TTL_MS).toISOString()
 }
 
+/**
+ * 倒计时只钉「形状 + 落在合理窗口」，**不钉秒数**：机器速度不该进判据——原先钉
+ * `(10:00|09:59)` 这种秒级值，码生成到断言之间越过 1 秒就红（并行加压实测越过 2 秒
+ * 到 09:58），而且窗口一旦错过就再也不出现，等多久都没用。到期翻转另有专用用例
+ * （2.5s 短码）钉住，这里只负责「上屏的是个活着的倒计时」。
+ */
+function expectCountdownWindow(minSeconds: number, maxSeconds: number): void {
+  const node = screen.getByRole('timer')
+  const parsed = /(\d{2}):(\d{2})/.exec(node.textContent ?? '')
+  expect(parsed, `倒计时文本形状不对：${node.textContent ?? ''}`).not.toBeNull()
+  const seconds = Number(parsed?.[1]) * 60 + Number(parsed?.[2])
+  expect(
+    seconds,
+    `倒计时 ${node.textContent ?? ''} 不在 [${minSeconds}s, ${maxSeconds}s] 内`,
+  ).toBeGreaterThanOrEqual(minSeconds)
+  expect(seconds).toBeLessThanOrEqual(maxSeconds)
+}
+
 /** jsdom 没有 navigator.clipboard：临时注入并在用例结束恢复（与插件页用例同法）。 */
 function stubClipboard(options: { reject?: boolean } = {}): {
   writeText: ReturnType<typeof vi.fn>
@@ -110,7 +128,7 @@ describe('DevicesPage 生成配对码（#142 A/D）', () => {
       expect(code.textContent?.trim()).toBe(CODE)
       expect(code.textContent?.trim()).toMatch(CODE_PATTERN)
       expect(screen.getByText(/此码只显示一次/)).toBeVisible()
-      expect(screen.getByText(/有效期剩余 (10:00|09:59)/)).toBeVisible()
+      expectCountdownWindow(TTL_MS / 1000 - 60, TTL_MS / 1000)
 
       await user.click(screen.getByRole('button', { name: '复制配对码' }))
       expect(await screen.findByText('已复制')).toBeVisible()
@@ -159,7 +177,9 @@ describe('DevicesPage 生成配对码（#142 A/D）', () => {
 
     await user.click(await screen.findByRole('button', { name: '生成配对码' }))
     expect(await screen.findByTestId('pairing-code')).toBeVisible()
-    expect(screen.getByText(/有效期剩余 00:0[123]/)).toBeVisible()
+    // 2.5s 短码：只要还没过期，屏上就该是倒计时（末帧 00:00 也算活着的）——到点
+    // 翻转交给下一条断言，别在这里钉具体秒数。
+    expectCountdownWindow(0, 3)
 
     expect(
       await screen.findByText('配对码已过期，请重新生成。', undefined, { timeout: 6000 }),
@@ -191,7 +211,7 @@ describe('DevicesPage 生成配对码（#142 A/D）', () => {
 
     await user.click(screen.getByRole('button', { name: '重新生成配对码' }))
     expect(await screen.findByText(freshCode)).toBeVisible()
-    expect(screen.getByText(/有效期剩余 (10:00|09:59)/)).toBeVisible()
+    expectCountdownWindow(TTL_MS / 1000 - 60, TTL_MS / 1000)
     expect(screen.queryByText('配对码已过期，请重新生成。')).not.toBeInTheDocument()
   })
 

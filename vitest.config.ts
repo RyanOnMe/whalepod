@@ -75,6 +75,11 @@ export default defineConfig({
           exclude: ['**/node_modules/**', '**/dist/**'],
           environment: 'jsdom',
           setupFiles: ['tests/setup.ts'],
+          // 一个用例里常有 3–5 次串行 findBy*/waitFor——单次发现超时放宽到 5s
+          // （见 tests/setup.ts），但 vitest 默认 5s 的用例上限会把「慢机器」误判成
+          // 「用例挂」：实测并行加压下两条用例以 5.05–5.21s 收场。放宽到 15s 是给
+          // 串行发现留和后端一致的余量，判据本身不变。
+          testTimeout: 15_000,
         },
       },
       {
