@@ -12,7 +12,10 @@ import { describe, expect, it } from 'vitest'
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
 
 describe('#99-A RUNTIME_BIN walks the production assembly', () => {
-  it('chain.ts 的 RUNTIME_BIN 等于包解析产物（非 src 路径）', async () => {
+  // 本用例的重活是 import('./lib/phase1/chain.js')：chain 拉进 protocol/testkit 一大片
+  // 模块，vite 需现场 transform（单跑 ~1.0s）。全量并行加压时这段 transform 会越过
+  // vitest 默认 5s，红的是机器而不是装配结果——判据是「等于包解析产物」，给它 30s。
+  it('chain.ts 的 RUNTIME_BIN 等于包解析产物（非 src 路径）', { timeout: 30_000 }, async () => {
     const chain = (await import('./lib/phase1/chain.js')) as {
       RUNTIME_BIN: string
     }
