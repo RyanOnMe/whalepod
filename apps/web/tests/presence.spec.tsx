@@ -10,7 +10,7 @@
  * "setState → 重渲染 → 再 setState" 的死循环（测试会以"超出渲染上限"炸掉，
  * 也算一种机器证据）。
  */
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -155,7 +155,12 @@ describe('#273 页面级：Console 关闭是两段式', () => {
     await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
     await user.click(await screen.findByTestId('open-run-console'))
     expect(await screen.findByTestId('run-console')).toBeVisible()
-    await user.click(screen.getByTestId('console-close'))
+    // 关闭**必须**用 fireEvent 直发：本用例要判的就是「这一帧它还在」——userEvent 的
+    // click 内部若干次 await 会把控制权让给事件循环，退场定时器（EXIT_PRESENCE_MS）
+    // 在慢机器上会在断言之前到点，用例红在机器速度上（并行加压实测 3.5s 红）。fireEvent
+    // 同步派发 + RTL 在同一 tick 内 act 收敛，退场窗口不会在断言前关闭。
+    // 同一处 React 处理路径、同一个 DOM 元素，不是测试专用近道。
+    fireEvent.click(screen.getByTestId('console-close'))
     // 关键：**这一帧**它还在，而且明确标了退场——直接卸载就没有退场动画可言。
     // 类名与 data 属性都要断言：只断言其中一个时删掉另一个门会照样绿（实测：只断言
     // data-leaving 时，删掉 className 里的 leaving 变异存活，而 CSS 正是靠类名触发的
