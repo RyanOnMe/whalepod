@@ -273,3 +273,52 @@ describe('中性 chip 的 AA 门（同形不同族）', () => {
     expect(ratio, `${cls} 深色面是 ${ratio}:1`).toBeGreaterThanOrEqual(4.5)
   })
 })
+
+/**
+ * placeholder 的 AA 门（A0-8 补，2026-10-09）。
+ *
+ * 为什么补：`.instruction-composer textarea` 原先只声明 `color`，placeholder 走**浏览器默认色**
+ * （Chrome 黑 54% 合成后 4.06:1）——这条只在**发布级** Q5 的对比度扫描里可见，PR 期的 Q0 全绿
+ * 却是空的。2026-10-09 的发布取证里 Q5 正是被它拦下（`placeholder: 让 Agent 干这个…`）。
+ * 所以这里补一条**快判据**：全局 placeholder 声明必须存在、且取色满足 AA——
+ * 缺了声明 = 退回浏览器默认 = 立即红，不必等到发布前才看得见。
+ */
+describe('placeholder 的 AA 门（A0-8 补：此前只有 Q5 扫得见）', () => {
+  /** 取 `…::placeholder { … }` 规则体（选择器可多行/多选择器，故用宽松匹配后取第一个含 textarea 的块）。 */
+  function placeholderBlock(): string {
+    const blocks = [...CSS.matchAll(/([^{}]*::placeholder[^{}]*)\{([^}]*)\}/g)]
+    const block = blocks.find((match) => (match[1] ?? '').includes('textarea'))?.[2]
+    expect(
+      block,
+      'global.css 缺 input/textarea 的 ::placeholder 规则——placeholder 会退回浏览器默认色（实测 4.06:1）',
+    ).toBeDefined()
+    return block as string
+  }
+
+  it('声明存在且取色在输入底（bg-layer-2）与白底上都 ≥ 4.5:1', () => {
+    const block = placeholderBlock()
+    const colorDecl = /(?:^|[;\s])color:\s*var\((--[\w-]+)\)/.exec(block)
+    expect(colorDecl?.[1], 'placeholder 的颜色必须走 token（硬编码色值会在换肤时静默漂移）').toBe(
+      '--dsw-alias-label-secondary',
+    )
+    const fg = parseCssColor(readTokenValue(TOKENS, colorDecl![1]!))
+    // 两处底：composer 的输入底（bg-layer-2，浅色=白）与页面白底（登录/初始化页的表单）。
+    for (const surface of [
+      parseCssColor(readTokenValue(TOKENS, '--dsw-alias-bg-layer-2')),
+      WHITE,
+    ]) {
+      const ratio = round2(contrastRatio(fg, surface))
+      expect(ratio, `placeholder 对比度 ${ratio}:1 < 4.5:1`).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  it('反证：把取色换成过浅的 dimmed token（#757575 一档）必须不达标——门不是恒真', () => {
+    // 反证要能用**本仓同一套公式**复算：light 主题下 dimmed 别名解析到 neutral-bluish-200，
+    // 它在白底上远低于 4.5:1。若有人把 placeholder 改成 dimmed（一个很自然的"淡一点"的念头），
+    // 这条会红——这正是本轮要防的方向。
+    // （不提"浏览器默认色是 4.06:1"：那个数字来自 Q5 扫描器的合成口径，本文件复算不出，
+    //   不把未复算的算术写进判据。）
+    const dimmed = parseCssColor(readTokenValue(TOKENS, '--dsw-static-neutral-bluish-200'))
+    expect(round2(contrastRatio(dimmed, WHITE)), 'dimmed 档在白底上不该达标').toBeLessThan(4.5)
+  })
+})
