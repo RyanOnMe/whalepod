@@ -133,7 +133,12 @@ test.describe('#140 同组成员零操作实时可见', () => {
     await bob.press('#login-password', 'Enter')
     await expect(bob.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
     await bob.goto(`/tasks/${taskId}`)
-    await expect(bob.getByText('协作观察用例')).toBeVisible()
+    // 用 heading 而不是 getByText（2026-10-09，Q5 20 连跑第 15 轮实测）：UX-10 起侧栏
+    // 「最近任务」也会渲染**任务标题**（`span.sidebar-recent-title`），而它是异步拉取——
+    // 同一句 `getByText('协作观察用例')` 在侧栏到货前只匹配 h1（过）、到货后匹配两个
+    // （strict mode violation，红）。这是"断言任务标题"与"侧栏列任务标题"的碰撞，
+    // 不是产品缺陷；钉到 heading 角色后与侧栏无关，判定不再看时机。
+    await expect(bob.getByRole('heading', { name: '协作观察用例' })).toBeVisible()
 
     // ---- Alice：同任务页面里经 UI 留言 ----
     await alice.goto(`/tasks/${taskId}`)
