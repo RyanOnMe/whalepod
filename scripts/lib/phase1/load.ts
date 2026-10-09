@@ -35,6 +35,17 @@ export interface EnvFacts {
   totalMemGiB: number
   docker: boolean
   /**
+   * 是否跑在**共享 CPU 的 CI runner** 上（`GITHUB_ACTIONS=true`）。
+   *
+   * 为什么要单独标（2026-10-09，tag v0.1.0-alpha.5 取证实测）：GitHub runner 已从
+   * 2 vCPU 升到 **4 vCPU / 16 GiB**——名义规格从此**达** 04 §8，环境闸于是把它当
+   * 判据环境，一次 ingest p95=116.4ms 被判成「权威 FAIL」。但同一份度量在合格环境是
+   * 14.9ms、在空闲 M4 本机是 24.8ms，而被 250ms 轮询节拍压住的传播 p95 三者几乎一样
+   * （256.2 / 262.4 / 290.9）——被共享掉的只是**逐帧处理延迟**。这不是代码回归的形状，
+   * 是共享 vCPU 的形状：名义达标 ≠ 可作判据（旧 runner 因规格不达标反而走了保守口径）。
+   */
+  sharedCi: boolean
+  /**
    * 取值的**约束来源**（#114）：`os` = 进程视角（v8 沙箱外是宿主值），
    * `cgroup` = 容器配额更小、按配额判。写进报告是为了让「为什么这个环境被拒/放行」
    * 可复核——只看数字看不出它是不是被配额压过。
@@ -47,6 +58,11 @@ export function assessEnvironment(f: EnvFacts): { eligible: boolean; reasons: st
   const reasons: string[] = []
   if (f.platform !== 'linux')
     reasons.push(`platform=${f.platform}（04 §8 判据环境为 Linux Docker）`)
+  if (f.sharedCi)
+    reasons.push(
+      '共享 CI runner（CPU 是共享的：同一份度量里 ingest 是判据环境的 4.7–7.8x，' +
+        '而节拍压住的传播几乎不变——名义规格达标也不作权威判，见 load-performance-acceptance 尺子账其六）',
+    )
   if (f.cpus < REQUIRED_CPUS) reasons.push(`cpus=${f.cpus} < ${REQUIRED_CPUS}`)
   if (f.totalMemGiB < REQUIRED_MEM_GIB)
     reasons.push(`mem=${f.totalMemGiB.toFixed(1)}GiB < ${REQUIRED_MEM_GIB}GiB`)
@@ -241,6 +257,7 @@ export function readEnvFacts(readText: ReadTextFile = defaultReadText): EnvFacts
     cpus: useCgroupCpu ? Math.round(quota.cpus! * 100) / 100 : osCpus,
     totalMemGiB: useCgroupMem ? quota.memGiB! : osMemGiB,
     docker,
+    sharedCi: process.env.GITHUB_ACTIONS === 'true',
     cpuSource: useCgroupCpu ? 'cgroup' : 'os',
     memSource: useCgroupMem ? 'cgroup' : 'os',
   }

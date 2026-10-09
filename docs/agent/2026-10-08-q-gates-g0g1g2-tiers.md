@@ -27,7 +27,7 @@
 | Q5 浏览器门 `pnpm test:e2e` | release 必跑：真实装配双人闭环 + 故障变体（R1/R2/R4–R9 关键项）；动 run/node/runtime/orchestrator 的 PR 跑受影响 project | Web 改动 PR 跑受影响 project | 连续 20 次（`bash scripts/q5-loop.sh 20`）只在 release 前跑；日常不把 20 连跑当最高优先级 |
 | Q6 故障门 `pnpm test:resilience` | release 必跑（R1–R9 关键场景） | 动 run/node/supervisor/outbox 的 PR 必跑 | — |
 | Q7 安全门 `pnpm test:security` | release 必跑；动认证/授权/审批/投影/artifact/插件面的 PR 必跑（fail-closed + 负向测试） | — | 非安全面 PR 可不跑 |
-| Q8 性能门 `pnpm test:load` | — | — | release 证据（短档）；30min/50Run 长档挂 release 手动；判据以 ubuntu runner 为准 |
+| Q8 性能门 `pnpm test:load` | — | — | release **证据**（短档，归档 JSON）；**runner 是证据不是判据**（共享 CPU，见尺子账其六）：权威判需专用 4CPU/8GiB Linux，当前未取得（#298）——Alpha 期不声称性能达标；30min/50Run 长档挂 release 手动 |
 | Q9 安装门 `pnpm test:compose-smoke` | release 必跑（空卷 15 分钟硬闸；口径=A0-5 收窄的「安装面段」，见 [compose-standard-loop-acceptance](./compose-standard-loop-acceptance.md)） | A0-5 起：动 `scripts/compose-smoke.mts`、`deploy/`、Hub 启动面（migrate/server/inventory 上报）或邀请/配对/workspace 投影面的 PR 手工跑一次（CI 触发面见 #116 延迟项） | 日常功能 PR 不跑 |
 
 ## 二·补、CI 接线现状（A0-6 核对并修正，2026-10-09）

@@ -30,6 +30,30 @@
 空闲 30s——口径变更在此留账，04 §8 原口径保留为长档未覆盖）。改后同机实测：
 空闲斜率 -184（GC 释放，方向不判红）、净增 -125MiB。
 
+## 尺子账其六：共享 CI runner 不作判据环境（2026-10-09，tag 取证实录）
+
+GitHub runner 从 2 vCPU 升到 **4 vCPU / 16 GiB**，名义规格从此**达** 04 §8，环境闸于是把它当
+判据环境——一次 ingest p95=116.4ms 被判「权威 FAIL」。同一份度量的对照：
+
+| 环境 | 规格 | ingest p95 | 传播 p95（被 250ms 节拍压住） |
+|---|---|---|---|
+| 判据环境（本文件历史实录） | 4 核专用 Linux | 14.9ms | 256.2ms |
+| 本机（M4，空闲，macOS 欠规） | 10 核 | 24.8ms | 262.4ms |
+| CI runner（新） | 共享 4 vCPU | **116.4ms** | 290.9ms |
+| CI runner（旧） | 共享 2 vCPU | 144.5ms | — |
+
+读法：被共享掉的是**逐帧处理延迟**（ingest），而节拍压住的传播三者几乎一样——这是共享 vCPU
+的形状，不是代码回归的形状。旧 runner 当年因规格不达标反而走了保守口径；升规格后「名义达标」
+把同一类噪声升格成了权威判，这是**闸的规格判据被环境变化骗过**的一次实例。
+
+处置（本批）：`EnvFacts` 增 `sharedCi`（`GITHUB_ACTIONS=true`），`assessEnvironment` 把它列为
+不 eligible 并写明原因——**判定语义一点没动**（欠规 + FAIL ⇒ INCONCLUSIVE exit 3，不许放行；
+PASS ⇒ PASS-CONSERVATIVE 绿）。也就是说：release 的 Q8 job 在共享 runner 上**不再可能给出权威绿**，
+这正是实话；权威判要等专用环境（#298）。
+
+对发布的口径后果：`v0.1.0-alpha.6` 的 release notes 明写「Q8 未取得权威判，本版不声称性能达标」，
+并把 runner 数字连同标签一起归档——**不把 INCONCLUSIVE 洗成绿**，也不放松任何阈值。
+
 ## 边界与未覆盖（不许转述成"性能全验了"）
 1. **测不出 §8 的 Hub RSS<400MiB / Node RSS<250MiB 行**（同进程混合）——
    per-process 判据要 Q5 拓扑（e2e-serve 子进程）+ 30min 长档，归 release soak；
