@@ -66,6 +66,7 @@
 | [2026-10-08-q-gates-g0g1g2-tiers.md](./2026-10-08-q-gates-g0g1g2-tiers.md) | 2026-10-08 门禁分级：Q0–Q9 落到 G0/G1/G2——PR 触发规则、release 发布门、本地无 Docker 口径 |
 | [poll-until-acceptance.md](./poll-until-acceptance.md) | #256 固定 sleep 改 poll-until：17 处转换（含 lastSeenAt 严格变大）、全仓 62 处普查与五类保留理由、waitForValue 约定 |
 | [security-negative-acceptance.md](./security-negative-acceptance.md) | A0（2026-10-09）安全负向 8 项 → 11 条判据：审批归属/一次性时效/Device 撤销/失效授权/终态不复活/受众门/不谎称副作用已停/伪造身份；含两处变异自证 |
+| [compose-standard-loop-acceptance.md](./compose-standard-loop-acceptance.md) | A0-5/#286 空卷安装的标准闭环：A 段机检（邀请/双设备/双 Workspace 隔离/Agent 装配/Task 指派/双 Run/凭证边界/跨成员拒绝）+ B 段边界（Agent 真执行需真密钥，归 Phase 2）+ 变异自证与 15 分钟预算账 |
 
 规矩只有一条：**验过就要留下**。验收步骤、探针跑法、上次结果、坑在哪，写进这里的 acceptance 文档；能直接复跑的脚本放 `scripts/`。只留在 `/tmp` 或对话里的验证，等于没验。
 
