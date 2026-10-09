@@ -269,6 +269,110 @@ export function checkRunStatusChokePoint(repoRoot: string): string[] {
   return violations
 }
 
+/**
+ * Harness assembly hygiene (#99): production entries and test/harness entries
+ * must walk the same assembly. Two machine checks, both scoped to `scripts/`
+ * (harness assembly runtime; `tests/` setup fixtures are declarative
+ * preconditions, out of scope):
+ *
+ * 1. checkHarnessDbSeeds: no direct business-table writes. A line matching
+ *    `.insert(schema.<Table>)` in scripts/ is a violation unless the
+ *    (file, table) pair is registered in HARNESS_SEED_ALLOWLIST with
+ *    reason + removeWhen. (Docstring prose must not spell the full call
+ *    shape, or this file flags itself.)
+ * 2. checkHarnessEntryAssembly: no source paths standing in for package
+ *    resolution. A string literal containing `apps/<app>/src/` in scripts/ is
+ *    a violation (spawn entries and argv markers must match the production
+ *    artifact), except inside a `createRequire(...)` anchor: borrowing a
+ *    package's dependency view to resolve the dist artifact is the fix, not
+ *    the violation. Import statements (`from '../../../apps/...'`) are
+ *    compile-time reuse and out of scope; only string literals are scanned.
+ */
+export interface HarnessSeedException {
+  /** 理由（一句话）：为什么走不通真人路径。 */
+  reason: string
+  /** 删除条件：什么落地后这条种子必须删除。 */
+  removeWhen: string
+}
+
+export const HARNESS_SEED_ALLOWLIST: Record<string, HarnessSeedException> = {
+  'scripts/lib/phase1/chain.ts:schema.pluginPacks': {
+    reason:
+      'Pack 管理流要求 catalog 安装校验；chain 用假 digest（aa..aa）种子，走真人 POST /plugin-packs 会被 fail-closed 拒绝',
+    removeWhen: 'Pack 管理流支持测试 fixture 安装（或 chain 改走真 digest 种子）后删除',
+  },
+  'scripts/e2e-serve.mts:schema.pluginPacks': {
+    reason:
+      '/control/plugin-pack/seed 是 E2E 控制面种子（真 digest 实算），Pack 管理流不在 E2E 复跑',
+    removeWhen: 'E2E 改走真人 Pack 管理流后删除该控制面路由与种子',
+  },
+}
+
+/** 源码位置常量（非执行入口）：文件身份引用，不 spawn。 */
+export const HARNESS_SRC_PATH_ALLOWLIST: readonly string[] = [
+  // check-boundaries 自身的判据常量与测试字符串。
+  'scripts/check-boundaries.ts',
+  'scripts/check-boundaries.spec.ts',
+  // 陈旧残留清理：切装配前的历史进程仍需覆盖一轮（e2e-serve.mts 内已注记）。
+  'scripts/e2e-serve.mts:apps/runtime/src/bin.ts',
+  // E2E Hub 仍走源码 spawn（tsx）：与 RUNTIME_BIN 同族的双装配，待 #281
+  // 切 dist（涉 Q5 关键路径，本批只立规则不断装配）。
+  'scripts/e2e-serve.mts:apps/hub/src/server.ts',
+]
+
+export function checkHarnessDbSeeds(repoRoot: string): string[] {
+  const violations: string[] = []
+  const scriptsDir = join(repoRoot, 'scripts')
+  if (!existsSync(scriptsDir)) return violations
+  for (const filePath of walkSourceFiles(scriptsDir)) {
+    const relativePath = relative(repoRoot, filePath).split(sep).join('/')
+    // spec 是断言（含本规则的红测试固件字符串），不是装配运行时。
+    if (relativePath.endsWith('.spec.ts')) continue
+    const source = readFileSync(filePath, 'utf8')
+    source.split('\n').forEach((line, index) => {
+      const match = /\.insert\(schema\.([A-Za-z0-9_]+)\)/.exec(line)
+      if (!match) return
+      const key = `${relativePath}:schema.${match[1]}`
+      if (HARNESS_SEED_ALLOWLIST[key] !== undefined) return
+      violations.push(
+        `${relativePath}:${index + 1}: harness writes business table directly (.insert(schema.${match[1]})); ` +
+          `route via the human path or register in HARNESS_SEED_ALLOWLIST with reason + removeWhen (#99)`,
+      )
+    })
+  }
+  return violations
+}
+
+export function checkHarnessEntryAssembly(repoRoot: string): string[] {
+  const violations: string[] = []
+  const scriptsDir = join(repoRoot, 'scripts')
+  if (!existsSync(scriptsDir)) return violations
+  for (const filePath of walkSourceFiles(scriptsDir)) {
+    const relativePath = relative(repoRoot, filePath).split(sep).join('/')
+    if (relativePath === 'scripts/check-boundaries.ts') continue
+    // spec 是断言（含本规则的红测试固件字符串），不是装配运行时。
+    if (relativePath.endsWith('.spec.ts')) continue
+    const source = readFileSync(filePath, 'utf8')
+    const lines = source.split('\n')
+    lines.forEach((line, index) => {
+      // createRequire 锚点除外：借某包的依赖视角解析 dist 产物正是修复手法，不是违规。
+      // 锚点可能跨行（createRequire( 换行 join(...)），故看本行与上一行。
+      if (line.includes('createRequire(') || (lines[index - 1] ?? '').includes('createRequire('))
+        return
+      const match = /['"]apps\/[a-z-]+\/src\/[^'"]*['"]/.exec(line)
+      if (!match) return
+      const key = `${relativePath}:${match[0].slice(1, -1)}`
+      if (HARNESS_SRC_PATH_ALLOWLIST.some((allowed) => relativePath === allowed || key === allowed))
+        return
+      violations.push(
+        `${relativePath}:${index + 1}: harness references source path ${match[0]}; ` +
+          `resolve the production artifact (dist) via package exports instead (#99-A)`,
+      )
+    })
+  }
+  return violations
+}
+
 /** Scans the repo and returns one human-readable line per violation. */
 export async function checkBoundaries(repoRoot: string): Promise<string[]> {
   const violations: string[] = []
@@ -299,6 +403,8 @@ if (invokedAsScript) {
     ...(await checkBoundaries(repoRoot)),
     ...checkTypecheckWiring(repoRoot),
     ...checkRunStatusChokePoint(repoRoot),
+    ...checkHarnessDbSeeds(repoRoot),
+    ...checkHarnessEntryAssembly(repoRoot),
   ]
   for (const violation of violations) console.error(violation)
   if (violations.length > 0) {

@@ -62,10 +62,15 @@ import { uploadArtifactCandidate } from '../../../apps/node/src/artifact/upload-
 import { Phase1Recorder, redactText } from './events.js'
 
 export const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
-// 子进程 cwd 是临时 workspace（无 node_modules）：--import 必须用绝对路径，
-// 与 Q3 stdio 探针同形态但 cwd 无关。
-export const TSX_LOADER = createRequire(import.meta.url).resolve('tsx')
-export const RUNTIME_BIN = join(REPO_ROOT, 'apps/runtime/src/bin.ts')
+// #99-A：Runtime 入口与生产同一装配——经 apps/node 的模块上下文按
+// `@whalepod/runtime/bin` 公开子路径解析到 dist 产物（与 cli.ts 同一依赖视角，
+// 见 apps/node/tests/runtime-entry-resolution.spec.ts），不再用源码路径直跑。
+// 没 build 时这里抛 MODULE_NOT_FOUND 即 fail-fast：harness 不得在与生产不同的
+// 装配上变绿。故障注入（fault=runtime 的必崩 stub）仍经 options.runtimeEntry
+// 显式覆盖，与默认路径无关。
+export const RUNTIME_BIN = createRequire(join(REPO_ROOT, 'apps/node/src/cli.ts')).resolve(
+  '@whalepod/runtime/bin',
+)
 export const REPLAY_PATCH = join(REPO_ROOT, 'packages/runtime-dsh/config/replay.yml')
 
 export const FIXTURE_BASIC = join(
@@ -341,9 +346,9 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
       driver: new StderrRecordingDriver(
         new DshRuntimeDriver({
           runtimeEntry: options.runtimeEntry ?? RUNTIME_BIN,
-          // TS 源直跑需要 tsx loader（子进程 cwd 是临时 workspace，裸名解析不到）；
-          // fault=runtime 的 .mjs stub 由调用方显式传 [] 覆盖。
-          nodeArgs: [...(options.nodeArgs ?? ['--import', TSX_LOADER])],
+          // #99-A：默认跑 dist 产物（与生产同一装配），nodeArgs 默认为空；
+          // fault=runtime 的 .mjs stub 由调用方显式传 [] 覆盖（本就无 loader）。
+          nodeArgs: [...(options.nodeArgs ?? [])],
         }),
         recorder,
       ),

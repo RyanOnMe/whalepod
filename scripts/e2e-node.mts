@@ -59,8 +59,10 @@ import { ArtifactCollector } from '../apps/node/src/artifact/collect.js'
 import { uploadArtifactCandidate } from '../apps/node/src/artifact/upload-client.js'
 
 const REPO_ROOT = join(import.meta.dirname, '..')
-const TSX_LOADER = createRequire(import.meta.url).resolve('tsx')
-const RUNTIME_BIN = join(REPO_ROOT, 'apps/runtime/src/bin.ts')
+// #99-A：与 chain.ts 同一装配——经 apps/node 上下文包解析 dist 产物（见该处注释）。
+const RUNTIME_BIN = createRequire(join(REPO_ROOT, 'apps/node/src/cli.ts')).resolve(
+  '@whalepod/runtime/bin',
+)
 const REPLAY_PATCH = join(REPO_ROOT, 'packages/runtime-dsh/config/replay.yml')
 const FIXTURES: Record<string, string> = {
   approval: join(
@@ -195,9 +197,7 @@ class PidRecordingDriver implements RuntimeDriver {
 }
 
 const supervisor = new RuntimeSupervisor({
-  driver: new PidRecordingDriver(
-    new DshRuntimeDriver({ runtimeEntry: RUNTIME_BIN, nodeArgs: ['--import', TSX_LOADER] }),
-  ),
+  driver: new PidRecordingDriver(new DshRuntimeDriver({ runtimeEntry: RUNTIME_BIN })),
   registry,
   secrets,
   stateDbPath: join(stateDir, 'supervisor.sqlite'),

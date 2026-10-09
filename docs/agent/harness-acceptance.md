@@ -151,6 +151,12 @@ tmpdir 形态，`--self-test` 逐条语料断言防模式退化）。证据只�
 - fault=hub 的 OutboxWorker 重投退避窗口内 acked_at 恒空——归因不依赖
   attempts 计数，只依赖探活与两侧产出对比。
 - `pnpm test:e2e`（Q5）与本 harness 不重叠：Q5 管界面，本 harness 管链路事实。
+- 装配卫生（#99，2026-10-09）：harness 的 Runtime 入口与生产同一装配——
+  `RUNTIME_BIN` 经 `apps/node` 上下文按 `@whalepod/runtime/bin` 包解析到 dist
+  产物（`scripts/lib/phase1/chain.ts` + `scripts/e2e-node.mts`），不再用
+  `apps/runtime/src/bin.ts` 源码路径直跑；`check-boundaries` 新增两条机检
+  （禁直插业务表 + 禁源码路径替代包解析，各带白名单与红绿自证）；
+  E2E Hub 仍走源码 spawn（`e2e-serve.mts:82`，已登记待独立 Issue 切 dist）。
 
 ## 复跑
 
