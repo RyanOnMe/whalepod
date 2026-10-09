@@ -4,7 +4,7 @@
  * descriptor 形态与 manifest/lockfile 组合。
  */
 import { describe, expect, it } from 'vitest'
-import type { PluginManifest } from './src/plugin-manifest.js'
+import type { PluginManifest } from '../src/plugin-manifest.js'
 import {
   PluginCatalogEntryViewSchema,
   PluginInstallRequestSchema,

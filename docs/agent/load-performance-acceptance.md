@@ -53,6 +53,35 @@ pnpm test:load -- --dev-report      # 开发机调试（数字打印但不判，
 pnpm exec vitest run --project unit scripts/tests/load-threshold.spec.ts  # 尺子自检
 ```
 
+## 尺子账其四：环境闸读 cgroup 配额（#114 收口，2026-10-09 / A0-7）
+
+起因（#110 一审 B2）：环境闸读的是**过程视角**（`os.cpus()/totalmem()`，v8 沙箱外即宿主值）——
+在配额限死的容器里会虚报宿主资源，于是存在「假 eligible」方向：判据环境被容器形态骗过。
+现状风险低（ubuntu-latest 实测诚实、Node 24 多数接口已按 cgroup v2 归约），但它是个**方向性**漏洞：
+虚报只会让不该放行的环境放行。
+
+修法：`readEnvFacts` 额外读 cgroup 配额并与 os 值**取较小者**，并在 `EnvFacts` 里记
+`cpuSource/memSource ∈ {os, cgroup}`（报告里能看出这个环境是被配额压过还是本来就这么大）：
+
+| 来源 | 读法 | 无配额的形态 |
+|---|---|---|
+| cgroup v2 | `/sys/fs/cgroup/cpu.max`（`"<quota|max> <period>"` 微秒）、`memory.max` | `max` |
+| cgroup v1 兜底 | `cpu.cfs_quota_us` / `cpu.cfs_period_us`、`memory.limit_in_bytes` | `-1` / ≥1 TiB 哨兵值 |
+
+判据（红样，`scripts/tests/load-threshold.spec.ts` 三例）：配额 2C/4G 而宿主 32C/64G ⟹
+`assessEnvironment` 判**欠规**且原因里出现 `cpus=2` / `mem=4.0GiB`；哨兵值要退回 os 值；
+v1 单独存在时也要能读出。reader 注入——不必真进容器就能红。
+
+未覆盖：cgroup v1 的嵌套层级（`/sys/fs/cgroup/*/<slice>/...`）只读根文件；真实容器形态下的
+判据由 ubuntu runner 的 Q8 job 间接覆盖（runner 实测诚实）。
+
+## 尺子账其五：Q8 报告归档（#116 收口）
+
+`q5-release.yml` 的 load job 现在把 Q8 的 JSON 报告 `tee` 到 `artifacts/q8/load-report.txt`
+并 `upload-artifact`（保留 90 天）。动机是数字面的既有先例：runner ingest 144.5ms（贫血）
+vs 判据环境 15.4ms 这类对比，靠的就是**归档的原始 JSON**，而不是日志里的几行结论。
+管道加 `set -o pipefail`：不给 tee 兜底会把失败吞成绿。
+
 ## 尺子账其二：环境判据的前提被闸亲手证伪（#109 修订）
 
 裁决时假设"ubuntu-latest = 4vCPU/16GB"（checkpoint 原话，**未验证**）。

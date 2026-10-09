@@ -88,7 +88,9 @@ describe('task_message migration: 老库带真实数据升级', () => {
       }
       // 旧表名此时还在：这条断言本身就是「0003 尚未应用」的证据。
       const before = await tx.unsafe(`select count(*)::int as n from task_comment`)
-      expect((before[0] as { n: number }).n).toBe(rows.length)
+      // #183 接线：`before[0] as { n: number }` 是无效断言（Row & Iterable 与 {n} 不重叠），
+      // 改走 Row 的索引签名取值 + Number() 归一，类型上不再需要绕过。
+      expect(Number(before[0]?.n)).toBe(rows.length)
 
       await tx.unsafe(migration('0003_task_message.sql'))
     })

@@ -1,0 +1,10 @@
+// tests 的 typecheck 项目（#183）：**尚未接线**（package.json 的 typecheck 仍是 tsc -b）。
+// 它的用途是让 scripts/tests/typecheck-test-baseline.spec.ts 能测量存量错误数——
+// 数字只许向下（棘轮就在那个 spec 里）。接线（并删掉 check-boundaries 的 deferral 行）
+// 的前置条件是 apps/node 对 apps/hub/tests/helpers.js 的跨包 import 先拆掉。
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "composite": false, "noEmit": true, "rootDir": "../.." },
+  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["dist", "node_modules"]
+}

@@ -6,11 +6,71 @@
 import { describe, expect, it } from 'vitest'
 import {
   assessEnvironment,
+  CGROUP_PATHS,
   finalVerdict,
   p95,
+  readCgroupQuota,
+  readEnvFacts,
   regressionSlope,
   verdictLoadSample,
 } from '../lib/phase1/load.js'
+
+/** #114 红测用：把 cgroup 文件内容喂成读者，不依赖真容器。 */
+function fakeCgroupReader(files: Record<string, string>) {
+  return (path: string): string | undefined => files[path]
+}
+
+describe('环境闸必须认 cgroup 配额（#114 / #110 一审 B2）', () => {
+  it('cgroup v2：配额 2C/4G 而宿主 32C/64G ⟹ 判欠规（不许被宿主值骗过）', () => {
+    const reader = fakeCgroupReader({
+      [CGROUP_PATHS.v2CpuMax]: '200000 100000\n', // 2 核
+      [CGROUP_PATHS.v2MemoryMax]: String(4 * 1024 ** 3),
+    })
+    const quota = readCgroupQuota(reader)
+    expect(quota.cpus).toBeCloseTo(2)
+    expect(quota.memGiB).toBeCloseTo(4)
+
+    const facts = readEnvFacts(reader)
+    // 宿主值（本机）必然大于配额 ⟹ 取配额那侧。
+    if (facts.cpuSource === 'cgroup') expect(facts.cpus).toBeCloseTo(2)
+    expect(facts.cpuSource).toBe('cgroup')
+    expect(facts.memSource).toBe('cgroup')
+    const verdict = assessEnvironment(facts)
+    expect(verdict.eligible).toBe(false)
+    expect(verdict.reasons.join('；')).toMatch(/cpus=2/)
+    expect(verdict.reasons.join('；')).toMatch(/mem=4\.0GiB/)
+  })
+
+  it('哨兵与残缺形态都不算配额：cpu.max=max 与 v1 的 -1 / 巨大值都退回 os 值', () => {
+    expect(
+      readCgroupQuota(
+        fakeCgroupReader({
+          [CGROUP_PATHS.v2CpuMax]: 'max 100000\n',
+          [CGROUP_PATHS.v2MemoryMax]: 'max\n',
+          [CGROUP_PATHS.v1CpuQuota]: '-1',
+          [CGROUP_PATHS.v1MemoryLimit]: '9223372036854771712',
+        }),
+      ),
+    ).toEqual({})
+
+    const facts = readEnvFacts(fakeCgroupReader({}))
+    expect(facts.cpuSource).toBe('os')
+    expect(facts.memSource).toBe('os')
+    expect(facts.cpus).toBeGreaterThan(0)
+  })
+
+  it('v1 兜底：只有 v1 文件时也能读出配额', () => {
+    const quota = readCgroupQuota(
+      fakeCgroupReader({
+        [CGROUP_PATHS.v1CpuQuota]: '150000',
+        [CGROUP_PATHS.v1CpuPeriod]: '100000',
+        [CGROUP_PATHS.v1MemoryLimit]: String(2 * 1024 ** 3),
+      }),
+    )
+    expect(quota.cpus).toBeCloseTo(1.5)
+    expect(quota.memGiB).toBeCloseTo(2)
+  })
+})
 
 describe('p95', () => {
   it('样本不足必红（30 份是 Q8 短档下限，缺数据不得外推）', () => {
@@ -147,7 +207,16 @@ describe('负载判决（Q8 短档判据，界值各钉双向）', () => {
 })
 
 describe('环境闸（04 §8：4 CPU / 8 GiB / Linux / Docker）', () => {
-  const ok = { platform: 'linux', cpus: 4, totalMemGiB: 16, docker: true }
+  // #114 起 EnvFacts 带取值来源（os/cgroup），样本里显式写死为 'os'——
+  // 配额形态另有专测（见上方 cgroup 一组）。
+  const ok = {
+    platform: 'linux',
+    cpus: 4,
+    totalMemGiB: 16,
+    docker: true,
+    cpuSource: 'os' as const,
+    memSource: 'os' as const,
+  }
   it('满足 ⟹ ELIGIBLE', () => {
     expect(assessEnvironment(ok).eligible).toBe(true)
   })
@@ -155,7 +224,14 @@ describe('环境闸（04 §8：4 CPU / 8 GiB / Linux / Docker）', () => {
     expect(assessEnvironment({ ...ok, platform: 'darwin' }).eligible).toBe(false)
   })
   it('CPU/内存/docker 任一不足 ⟹ 不合格，且逐条给原因（不许笼统）', () => {
-    const r = assessEnvironment({ platform: 'linux', cpus: 2, totalMemGiB: 4, docker: false })
+    const r = assessEnvironment({
+      platform: 'linux',
+      cpus: 2,
+      totalMemGiB: 4,
+      docker: false,
+      cpuSource: 'os',
+      memSource: 'os',
+    })
     expect(r.eligible).toBe(false)
     expect(r.reasons.length).toBe(3)
   })
