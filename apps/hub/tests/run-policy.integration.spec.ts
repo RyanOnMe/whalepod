@@ -165,8 +165,12 @@ describe('run policy: cancel and transitions', () => {
       makeCreateInput(ids),
     )
 
-    // queued 上收到 run.completed 是表外边（§3.2 有意不开）：旧姿势是抛错→连接级
-    // 惩罚（毒帧循环的引擎）；新姿势是事件照常落库留证 + 单 Run 收敛为终态。
+    // queued 上收到 run.completed 仍是表外边（§3.2 有意不开）：ADR-0012 之前它直接
+    // 撞 queued 的边表；之后该事件本身就是「派发已被受理」的证据（丢 ack 时 Node 只
+    // 会发事件），所以先隐式推进 queued→dispatching 再判 completed——dispatching 上
+    // 它依然表外（§3.2 要求 runtime.ready 先行，终态裁决不许抢跑），收敛结论不变。
+    // 旧姿势是抛错→连接级惩罚（毒帧循环的引擎）；新姿势是事件照常落库留证 + 单 Run
+    // 收敛为终态。
     await harness.orchestrator.ingestNodeEvent(
       harness.deviceFor(ids),
       runEventFrame(run.id, 1, { type: 'run.completed', finalText: 'premature' }, 'owner'),
@@ -189,7 +193,7 @@ describe('run policy: cancel and transitions', () => {
       component: 'hub.run.orchestrator.transition-violation',
       runId: run.id,
       deviceId: ids.deviceId,
-      fromStatus: 'queued',
+      fromStatus: 'dispatching', // ADR-0012：事件先行即是隐式受理，起点已推进一格
     })
     expect(String(violations[0]?.context.reason)).toContain('cannot apply')
   })
