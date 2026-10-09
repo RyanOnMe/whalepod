@@ -28,7 +28,7 @@
 | Q6 故障门 `pnpm test:resilience` | release 必跑（R1–R9 关键场景） | 动 run/node/supervisor/outbox 的 PR 必跑 | — |
 | Q7 安全门 `pnpm test:security` | release 必跑；动认证/授权/审批/投影/artifact/插件面的 PR 必跑（fail-closed + 负向测试） | — | 非安全面 PR 可不跑 |
 | Q8 性能门 `pnpm test:load` | — | — | release 证据（短档）；30min/50Run 长档挂 release 手动；判据以 ubuntu runner 为准 |
-| Q9 安装门 `pnpm test:compose-smoke` | release 必跑（空卷 15 分钟硬闸） | — | 日常 PR 不跑（CI 触发面见 #116 延迟项，补上之前以 release 手动跑为准） |
+| Q9 安装门 `pnpm test:compose-smoke` | release 必跑（空卷 15 分钟硬闸；口径=A0-5 收窄的「安装面段」，见 [compose-standard-loop-acceptance](./compose-standard-loop-acceptance.md)） | A0-5 起：动 `scripts/compose-smoke.mts`、`deploy/`、Hub 启动面（migrate/server/inventory 上报）或邀请/配对/workspace 投影面的 PR 手工跑一次（CI 触发面见 #116 延迟项） | 日常功能 PR 不跑 |
 
 ## 三、PR 触发规则（按改动面）
 
