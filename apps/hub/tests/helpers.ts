@@ -682,3 +682,28 @@ export function heartbeatFrame(deviceId: string, activeRunIds: string[] = []): u
     payload: { deviceId, activeRunIds, lastEventSeqByRun: {} },
   }
 }
+
+/**
+ * 轮询到条件成立或超时（#256）：测试等待异步落库不得用固定 sleep——
+ * 那是「猜系统要跑多久」，CI 负载升高即抖红，且可能掩盖真实时序缺陷。
+ *
+ * 判据是**可观察条件**（返回值非空/falsy 由调用方决定），超时给明确失败消息。
+ * `describe` 是超时消息里的读法提示（如「workspace available 未在 3s 内恢复」）。
+ */
+export async function waitForValue<T>(
+  probe: () => Promise<T | undefined>,
+  describe: string,
+  options: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<T> {
+  const timeoutMs = options.timeoutMs ?? 3_000
+  const intervalMs = options.intervalMs ?? 25
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const value = await probe()
+    if (value !== undefined) return value
+    if (Date.now() > deadline) {
+      throw new Error(`${describe}（等待上限 ${timeoutMs}ms，判据是条件成立而不是固定时长）`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
+}

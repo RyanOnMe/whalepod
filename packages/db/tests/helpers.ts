@@ -219,3 +219,20 @@ export function makeArtifactInput(ids: SeedIds, runId: string) {
     storageKey: `sha256/${sha256.slice(0, 2)}/${sha256.slice(2, 4)}/${sha256}`,
   }
 }
+
+/** #256：轮询到条件成立或超时（等待异步落库不得用固定 sleep 猜时长）。 */
+export async function waitForValue<T>(
+  probe: () => Promise<T | undefined> | T | undefined,
+  describe: string,
+  timeoutMs = 3_000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const value = await probe()
+    if (value !== undefined) return value
+    if (Date.now() > deadline) {
+      throw new Error(`${describe}（等待上限 ${timeoutMs}ms，判据是条件成立而不是固定时长）`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+}

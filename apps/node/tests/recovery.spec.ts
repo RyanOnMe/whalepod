@@ -56,6 +56,23 @@ async function alive(pid: number): Promise<boolean> {
   }
 }
 
+/** #256：轮询到条件成立或超时（等待异步回收不得用固定 sleep 猜时长）。 */
+async function waitForValue<T>(
+  probe: () => Promise<T | undefined>,
+  describe: string,
+  timeoutMs = 3_000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const value = await probe()
+    if (value !== undefined) return value
+    if (Date.now() > deadline) {
+      throw new Error(`${describe}（等待上限 ${timeoutMs}ms，判据是条件成立而不是固定时长）`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+}
+
 function spec(runId: string): RuntimeStartSpec {
   return {
     runId,
@@ -124,7 +141,8 @@ describe('Node 重启无孤儿恢复', () => {
     second.onLost((id, reason) => lost.push({ runId: id, reason }))
 
     await second.recoverOrphans()
-    await new Promise((resolve) => setTimeout(resolve, 400))
+    // #256：等进程真的消失（可观察条件），不猜 400ms 够不够。
+    await waitForValue(async () => ((await alive(childPid)) ? undefined : true), '孤儿进程未被终止')
 
     expect(await alive(childPid)).toBe(false) // 进程组确被终止
     expect(lost).toEqual([{ runId, reason: 'orphaned_after_node_restart' }])
@@ -150,6 +168,8 @@ describe('Node 重启无孤儿恢复', () => {
     second.onLost((id, reason) => lost.push({ runId: id, reason }))
 
     await second.recoverOrphans()
+    // #256 保留静默窗（负向判据）：要证的是「未发信号」——recoverOrphans 已 await，
+    // 但异步误杀会在其后才生效，必须留一个有界窗口观察「进程仍活着」。
     await new Promise((resolve) => setTimeout(resolve, 300))
 
     expect(await alive(childPid)).toBe(true) // 进程仍活着（未被误杀）

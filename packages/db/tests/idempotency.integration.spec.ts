@@ -9,7 +9,13 @@ import {
   listTeamEvents,
   transactCommand,
 } from '../src/index.js'
-import { createTestDatabase, makeRunInput, resetDatabase, seedRunPrereqs } from './helpers.js'
+import {
+  createTestDatabase,
+  makeRunInput,
+  resetDatabase,
+  seedRunPrereqs,
+  waitForValue,
+} from './helpers.js'
 import { commandReceipts } from '../src/schema/index.js'
 
 // 02-第一阶段实施计划.md Task 4 Step 4：命令回执幂等（含并发同 key）。
@@ -91,7 +97,9 @@ describe('command idempotency', () => {
       return { cursor: event.id }
     })
     // 让 B 完成事务内 SELECT（看不到 A 未提交的回执）后再放行 A 提交。
-    await new Promise((resolve) => setTimeout(resolve, 100))
+    // #256：以 bExecuted 作确定性信号而不是猜 100ms——transactCommand 先 SELECT
+    // 后调 execute，bExecuted=true 即证明 SELECT 已完成（把时序从"碰巧"变"必然"）。
+    await waitForValue(() => (bExecuted ? true : undefined), 'B 的事务未在超时内完成回执 SELECT')
     releaseA()
 
     const [a, b] = await Promise.all([txA, bPromise])

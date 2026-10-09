@@ -33,6 +33,23 @@ const LONG_SCRIPT = 'setInterval(() => {}, 1000)' // 直到被杀才退出
 
 const CREDENTIAL_ENV = { WHALEPOD_DSH_SECRET_DSH_API_KEY: 'sk-test-123' }
 
+/** #256：轮询到条件成立或超时（等待定时器/回收不得用固定 sleep 猜时长）。 */
+async function waitForValue<T>(
+  probe: () => T | undefined,
+  describe: string,
+  timeoutMs = 3_000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const value = probe()
+    if (value !== undefined) return value
+    if (Date.now() > deadline) {
+      throw new Error(`${describe}（等待上限 ${timeoutMs}ms，判据是条件成立而不是固定时长）`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+}
+
 function makeSpec(runId: string): RuntimeStartSpec {
   return {
     runId,
@@ -225,7 +242,11 @@ describe('RuntimeSupervisor', () => {
     const lost: Array<{ runId: string; reason: string }> = []
     tight.onLost((runId, reason) => lost.push({ runId, reason }))
     await tight.start(makeSpec('r-timeout'), { workspaceId: tightWs.id })
-    await new Promise((resolve) => setTimeout(resolve, 600))
+    // #256：等超时回收真的发生（可观察条件：lost 记录出现），不猜 600ms。
+    await waitForValue(
+      () => (lost.length > 0 ? lost[0] : undefined),
+      'runtime 超时回收未在超时内触发',
+    )
     expect(lost).toEqual([{ runId: 'r-timeout', reason: 'runtime_timeout' }])
     expect(await tight.activeRuns()).toEqual([])
     await tight.stopAll()
