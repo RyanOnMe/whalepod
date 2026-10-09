@@ -69,6 +69,7 @@
 | [test-typecheck-baseline-acceptance.md](./test-typecheck-baseline-acceptance.md) | #178/#183（A0-7）：测试代码 typecheck 接入面（protocol/db 已接线）+ 存量错误**基线棘轮**（数字机检、只许向下）——含 hub 39→25 的修复清单与「基线已经烂过」的实证 |
 | [runtime-capability-contract.md](./runtime-capability-contract.md) | A0-6：DSH 熔断的单一登记处——六项能力 + 四条规则逐条给判据或挂 Issue（#288/#289/#290）、版本锁现状、CI 接线（Q3/Q6/Q7 从「文档说必跑」改成真跑）、未覆盖清单；表本身由 scripts/tests 的漂移哨兵机检 |
 | [compose-standard-loop-acceptance.md](./compose-standard-loop-acceptance.md) | A0-5/#286 空卷安装的标准闭环：A 段机检（邀请/双设备/双 Workspace 隔离/Agent 装配/Task 指派/双 Run/凭证边界/跨成员拒绝）+ B 段边界（Agent 真执行需真密钥，归 Phase 2）+ 变异自证与 15 分钟预算账 |
+| [test-load-sensitivity-acceptance.md](./test-load-sensitivity-acceptance.md) | #296 判据的负载敏感性收口：加压口径（并发两遍全量）8/12 红 → 0 红、四类根因（RTL 发现超时/vitest 上限/秒级钉值/同帧判据）、四个变异自证、复跑命令 |
 
 规矩只有一条：**验过就要留下**。验收步骤、探针跑法、上次结果、坑在哪，写进这里的 acceptance 文档；能直接复跑的脚本放 `scripts/`。只留在 `/tmp` 或对话里的验证，等于没验。
 
