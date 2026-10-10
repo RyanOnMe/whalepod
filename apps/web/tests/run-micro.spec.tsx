@@ -2,7 +2,7 @@
 import { QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeQueryClient, queryKeys } from '../src/app/query-client.js'
 import { RunConsole } from '../src/features/task/RunConsole.js'
 import { RunLivePanel } from '../src/features/task/RunLivePanel.js'
@@ -82,6 +82,27 @@ beforeEach(() => setConnectionStatus('open'))
 afterEach(() => resetConnectionStatusForTest())
 
 describe('#306 Run 状态图形', () => {
+  it('页面进入后台时停止活动；返回页面后只恢复仍 running 的状态', () => {
+    const visible = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    try {
+      const view = render(
+        <RunTimeline runs={[makeRun({ status: 'running' }), makeRun({ status: 'completed' })]} />,
+      )
+      expect(view.container.querySelectorAll('[data-indeterminate]')).toHaveLength(1)
+      act(() => {
+        visible.mockReturnValue('hidden')
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+      expect(view.container.querySelectorAll('[data-indeterminate]')).toHaveLength(0)
+      act(() => {
+        visible.mockReturnValue('visible')
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+      expect(view.container.querySelectorAll('[data-indeterminate]')).toHaveLength(1)
+    } finally {
+      visible.mockRestore()
+    }
+  })
   it('九种状态保留中文标签；图形不额外朗读英文、完成不划掉文字', () => {
     render(<RunTimeline runs={states.map((status) => makeRun({ status }))} />)
     const buttons = screen.getAllByRole('button')
@@ -213,9 +234,7 @@ describe('#306 工具事实', () => {
         method: 'GET',
         url: new RegExp(`/runs/${RUN_ID}/events$`),
         respond: () =>
-          fail
-            ? apiFailure('TEST_EVENT_READ_FAILED', '事件读取失败')
-            : ok({ events: [started(), finished()] }),
+          fail ? apiFailure('NOT_FOUND', '事件读取失败') : ok({ events: [started(), finished()] }),
       },
     ])
     const client = makeQueryClient({ retry: false })
@@ -234,7 +253,8 @@ describe('#306 工具事实', () => {
     await act(async () => {
       await client.invalidateQueries({ queryKey: queryKeys.runEvents(RUN_ID) })
     })
-    expect(await within(panel).findByRole('alert')).toHaveTextContent('事件读取失败')
+    expect(await within(panel).findByTestId('run-events-error')).toHaveTextContent('事件读取失败')
+    expect(within(panel).getByRole('alert')).toBeVisible()
     expect(within(panel).queryByText('还没有事件。')).toBeNull()
   })
 })
