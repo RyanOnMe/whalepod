@@ -14,7 +14,8 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
-import { RUN_PHASE_LABEL, RUN_STATUS_LABEL } from '../../shared/format.js'
+import { RUN_PHASE_LABEL } from '../../shared/format.js'
+import { RunStatusBadge } from '../../shared/micro/RunStatusBadge.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { resumeLineageLabel, rerunLineageLabel, runOrdinalLabels } from './runLabels.js'
 import { runDurationText } from './runDuration.js'
@@ -79,9 +80,7 @@ export function RunTimeline({ runs, selectedRunId, onSelect }: RunTimelineProps)
                 <span className="run-label" title={run.id}>
                   {ordinal.get(run.id)}
                 </span>
-                <span className={`badge badge-run badge-run-${run.status}`}>
-                  {RUN_STATUS_LABEL[run.status]}
-                </span>
+                <RunStatusBadge status={run.status} />
                 {/* #261「正在做什么」：只对运行中的 Run 画阶段徽标。
                   终态 Run 的投影里也有末次阶段（读模型只给事实），但「收尾中」挂在
                   已完成的 Run 上就是撒谎；等待审批是人在等、不是它在跑，同样不画。

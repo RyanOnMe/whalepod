@@ -1,0 +1,33 @@
+{
+  "upstream": "https://github.com/DavidHDev/react-bits",
+  "revision": "d86fccbd477786f94ca7eb891fbe0ec039d3cd3b",
+  "license": "MIT + Commons Clause License Condition v1.0",
+  "scope": "Application-internal adaptations in WhalePod; no standalone component package",
+  "licenseSha256": "f4c33af6739191537738662d223b68d77bc226f4b57ea883e16481d8cc5c73c9",
+  "files": [
+    {
+      "local": "CallChip.tsx",
+      "upstreamPath": "src/ts-default/Micro/CallChip/CallChip.tsx",
+      "originalSha256": "1199c1a25281d3ecb12dd23423f04a0256242a1f82b36cf1eedf59101722f5b0",
+      "changes": "Controlled application presentation; semantic theme and motion tokens; timers, guessed progress, retry, strike and external icon/Motion dependencies removed. See README.md."
+    },
+    {
+      "local": "CallChip.css",
+      "upstreamPath": "src/ts-default/Micro/CallChip/CallChip.css",
+      "originalSha256": "772aea95a1ca3d0c6de2708353b119e59fa437ba2ee08bf37eb5e0eef3f2f676",
+      "changes": "Controlled application presentation; semantic theme and motion tokens; timers, guessed progress, retry, strike and external icon/Motion dependencies removed. See README.md."
+    },
+    {
+      "local": "StatusMark.tsx",
+      "upstreamPath": "src/ts-default/Micro/StatusMark/StatusMark.tsx",
+      "originalSha256": "569d152892cb788cf5f1b602542fc67bc77faa89fde7cc1f1482cdfc7d3a8959",
+      "changes": "Controlled application presentation; semantic theme and motion tokens; timers, guessed progress, retry, strike and external icon/Motion dependencies removed. See README.md."
+    },
+    {
+      "local": "StatusMark.css",
+      "upstreamPath": "src/ts-default/Micro/StatusMark/StatusMark.css",
+      "originalSha256": "9c46c47df3729a4e1d258d7a77521faa08fc445fd1ea8b8c4ade8bdb8c2e45c9",
+      "changes": "Controlled application presentation; semantic theme and motion tokens; timers, guessed progress, retry, strike and external icon/Motion dependencies removed. See README.md."
+    }
+  ]
+}
