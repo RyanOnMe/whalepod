@@ -13,9 +13,11 @@
  * 内联面板保留为默认视图。这一点与原型不同，是有意的取舍，写在这里免得下次被"改回原型"。
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import type { RunEventItem } from '../../shared/api/types.js'
+import type { RunEventItem, RunStatus } from '../../shared/api/types.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { describeEvent } from './RunLivePanel.js'
+import { ToolEventChip } from './ToolEventChip.js'
+import { eventIdentity, orderedRunEvents, toolResults } from './tool-call-state.js'
 
 /** 原型定的四个筛选口径。 */
 const FILTERS = [
@@ -87,6 +89,7 @@ export function componentLayer(item: RunEventItem): string {
 
 export interface RunConsoleProps {
   runId: string
+  runStatus?: RunStatus | undefined
   runLabel: string
   events: RunEventItem[]
   /** 事件还在加载时不要假装"没有事件"。 */
@@ -103,6 +106,7 @@ export interface RunConsoleProps {
 
 export function RunConsole({
   runId,
+  runStatus,
   runLabel,
   events,
   eventsPending,
@@ -134,7 +138,9 @@ export function RunConsole({
     }
   }, [])
 
-  const visible = events.filter((item) => matchesFilter(filter, item))
+  const ordered = orderedRunEvents(events, runId)
+  const results = toolResults(ordered)
+  const visible = ordered.filter((item) => matchesFilter(filter, item))
   const layers = [...new Set(visible.map((item) => componentLayer(item)))]
 
   return (
@@ -207,7 +213,7 @@ export function RunConsole({
             </button>
           ))}
           <span className="console-count" data-testid="console-count">
-            {visible.length} / {events.length} 条
+            {visible.length} / {ordered.length} 条
           </span>
         </div>
 
@@ -233,14 +239,27 @@ export function RunConsole({
               const text = describeEvent(item)
               return (
                 <li
-                  key={`${item.audience}-${item.seq}`}
+                  key={eventIdentity(item)}
                   className={`run-event audience-${item.audience}`}
                   data-testid="console-event"
                   data-layer={componentLayer(item)}
                 >
                   <span className="run-event-seq">#{item.seq}</span>
                   <span className="run-event-layer mono">{componentLayer(item)}</span>
-                  <span className="run-event-text">{text ?? item.type}</span>
+                  <span
+                    className={`run-event-text${item.event['type'] === 'tool.started' ? ' tool-event' : ''}`}
+                  >
+                    {item.event['type'] === 'tool.started' ? (
+                      <ToolEventChip
+                        item={item}
+                        results={results}
+                        runStatus={runStatus}
+                        eventsError={eventsError !== undefined}
+                      />
+                    ) : (
+                      (text ?? item.type)
+                    )}
+                  </span>
                   <RelativeTime iso={item.occurredAt} />
                 </li>
               )

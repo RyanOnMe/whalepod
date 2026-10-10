@@ -360,6 +360,7 @@ function RunConsoleHost({
     <RunConsole
       runId={runId}
       runLabel={label}
+      runStatus={runs.find((run) => run.id === runId)?.status}
       leaving={leaving}
       events={eventsQuery.data?.events ?? []}
       eventsPending={eventsQuery.isPending}

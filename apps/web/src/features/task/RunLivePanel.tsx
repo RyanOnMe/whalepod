@@ -17,7 +17,11 @@ import {
 } from 'react'
 import { api } from '../../shared/api/client.js'
 import { queryKeys } from '../../app/query-client.js'
-import { RUN_PHASE_LABEL, RUN_STATUS_LABEL } from '../../shared/format.js'
+import { RUN_PHASE_LABEL } from '../../shared/format.js'
+import { RunStatusBadge } from '../../shared/micro/RunStatusBadge.js'
+import { ErrorBanner } from '../../app/ErrorBanner.js'
+import { ToolEventChip } from './ToolEventChip.js'
+import { eventIdentity, orderedRunEvents, toolResults } from './tool-call-state.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { useStickToBottom } from '../../shared/useStickToBottom.js'
 import { rerunLineageLabel, SELECTED_RUN_LABEL } from './runLabels.js'
@@ -141,7 +145,8 @@ export function RunLivePanel({
     return <p className="empty-state">Run 加载失败或不存在。</p>
   }
 
-  const events = eventsQuery.data?.events ?? []
+  const events = orderedRunEvents(eventsQuery.data?.events ?? [], runId)
+  const results = toolResults(events)
   return (
     <section
       className="card run-live"
@@ -153,9 +158,7 @@ export function RunLivePanel({
         <h3 id="run-live-heading" title={run.id}>
           {SELECTED_RUN_LABEL}
         </h3>
-        <span className={`badge badge-run badge-run-${run.status}`}>
-          {RUN_STATUS_LABEL[run.status]}
-        </span>
+        <RunStatusBadge status={run.status} />
         {/* ⑥d：把这次运行"放大看"——Console 覆盖层带按 component 分层与筛选。 */}
         {onOpenConsole === undefined ? null : (
           <button
@@ -201,19 +204,35 @@ export function RunLivePanel({
       <div className="run-live-events" data-testid="run-live-events">
         <h4>事件</h4>
         {eventsQuery.isPending ? <p className="mutation-hint">正在加载事件…</p> : null}
-        {events.length === 0 && !eventsQuery.isPending ? (
+        {eventsQuery.isError ? (
+          <div data-testid="run-events-error">
+            <p>事件读取失败，请稍后重试。</p>
+            <ErrorBanner error={eventsQuery.error} />
+          </div>
+        ) : null}
+        {events.length === 0 && !eventsQuery.isPending && !eventsQuery.isError ? (
           <p className="empty-state">还没有事件。</p>
         ) : null}
         <ol className="run-event-list">
           {events.map((item) => {
             const text = describeEvent(item)
             return (
-              <li
-                key={`${item.audience}-${item.seq}`}
-                className={`run-event audience-${item.audience}`}
-              >
+              <li key={eventIdentity(item)} className={`run-event audience-${item.audience}`}>
                 <span className="run-event-seq">#{item.seq}</span>
-                <span className="run-event-text">{text ?? item.type}</span>
+                <span
+                  className={`run-event-text${item.event['type'] === 'tool.started' ? ' tool-event' : ''}`}
+                >
+                  {item.event['type'] === 'tool.started' ? (
+                    <ToolEventChip
+                      item={item}
+                      results={results}
+                      runStatus={run.status}
+                      eventsError={eventsQuery.isError}
+                    />
+                  ) : (
+                    (text ?? item.type)
+                  )}
+                </span>
                 <RelativeTime iso={item.occurredAt} />
               </li>
             )

@@ -97,7 +97,7 @@ describe('Console 覆盖层', () => {
   it('默认显示全部事件，并按 component 给出分层清单', () => {
     render(
       <RunConsole
-        runId="r-12345678"
+        runId="r-1"
         runLabel="第 1 次运行"
         events={events}
         eventsPending={false}

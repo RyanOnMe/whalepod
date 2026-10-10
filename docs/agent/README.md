@@ -8,6 +8,7 @@
 | [issue-workflow.md](./issue-workflow.md) | 问题从发现到合入的完整走法 |
 | [evidence-map.md](./evidence-map.md) | 出问题时去哪一层找哪份证据 |
 | [acceptance-template.md](./acceptance-template.md) | 验收文档模板；新验收一律按它写 |
+| [run-micro-acceptance.md](./run-micro-acceptance.md) | #306 React Bits Micro 第一批：Run 九态与工具事实配对、断线/后台/减少动态、真实双人 Q5、源码许可和来源登记 |
 | [instruction-path-acceptance.md](./instruction-path-acceptance.md) | #186（ADR-0009 切片③b）：追问受理→命令入队→ack 结算 `instruction_state`（含拒绝理由落库、状态受理规则、幂等与授权不变量的 10 条用例） |
 | [instruction-grant-acceptance.md](./instruction-grant-acceptance.md) | P1-198（切片④）：指令权授权——责任人 ∪ 被授权成员；审批权/Run 归属/讨论区三条红线不变 |
 | [instruction-starts-run-acceptance.md](./instruction-starts-run-acceptance.md) | P1-196（切片③c-2b）：执行区指令起 Run——有活跃 Run 降级为追问、无则由设备/工作区三段式解析后建 Run，指令命运由 run.start ack 结算 |

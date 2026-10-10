@@ -1,0 +1,60 @@
+/* React Bits CallChip, adapted for WhalePod. See LICENSE.md / manifest.json. */
+.call-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  vertical-align: middle;
+}
+.call-chip__fill {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: var(--color-run-soft);
+  transition: opacity var(--duration-base) ease;
+}
+.call-chip[data-status='done'] .call-chip__fill,
+.call-chip[data-status='error'] .call-chip__fill,
+.call-chip[data-status='paused'] .call-chip__fill { opacity: 1; }
+.call-chip[data-status='error'] .call-chip__fill { background: var(--color-danger-soft); }
+.call-chip[data-status='paused'] .call-chip__fill { background: var(--color-warn-soft); }
+.call-chip__slot {
+  position: relative;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  overflow: hidden;
+}
+.call-chip__glyph {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  transition: opacity var(--duration-base) ease;
+}
+.call-chip__glyph[data-state='in'] { opacity: 1; }
+.call-chip__name,
+.call-chip__arg { position: relative; }
+.call-chip__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+.call-chip__arg { flex: none; }
+.call-chip[data-status='done'] { color: var(--color-run); background: var(--color-run-soft); }
+.call-chip[data-status='error'] { color: var(--color-danger); background: var(--color-danger-soft); }
+.call-chip[data-status='paused'] { color: var(--color-warn); background: var(--color-warn-soft); }

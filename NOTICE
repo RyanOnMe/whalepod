@@ -18,6 +18,27 @@ limitations under the License.
 Third-party components included in this product
 --------------------------------------------------------------------------------
 
+React Bits Micro (application-internal source adaptations)
+Copyright (c) 2026 David Haz
+Licensed under MIT + Commons Clause License Condition v1.0, NOT plain MIT.
+
+  Upstream project : https://github.com/DavidHDev/react-bits
+  Vendored revision: d86fccbd477786f94ca7eb891fbe0ec039d3cd3b
+  Vendored scope   : selected CallChip and StatusMark TypeScript/CSS files,
+                     adapted inside apps/web/src/vendor/react-bits-micro/.
+
+The full upstream terms are retained in that directory's LICENSE.md. These
+third-party files and their adaptations are governed by those terms, rather
+than WhalePod's Apache-2.0 license. The terms allow use and distribution as part
+of an application, website or product and restrict selling, sublicensing or
+redistributing the components themselves, including bundles and ported versions.
+This product includes the adaptations for its internal application UI and does
+not publish them as a standalone component library. Provenance, original hashes
+and local changes are recorded in manifest.json and README.md in that directory.
+Nothing here implies endorsement or additional permission from the author.
+
+--------------------------------------------------------------------------------
+
 DeepSeek Harness client UI (source-vendored copy)
 Copyright (c) 2026 DeepSeek
 Licensed under the MIT License.

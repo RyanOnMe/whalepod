@@ -26,12 +26,13 @@
  * 进程退出/收到 SIGTERM/SIGINT 时清理子进程与容器。
  */
 import { spawn, type ChildProcess } from 'node:child_process'
+import { createRequire } from 'node:module'
 import type { EphemeralPostgres } from './lib/ephemeral-postgres.mts'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { eq, sql } from 'drizzle-orm'
 import { schema } from '@whalepod/db'
 import { digestPluginPack } from '@whalepod/protocol/plugin-pack-digest'
@@ -79,7 +80,21 @@ let hub: ChildProcess | undefined
 let hubIntentional = false
 
 async function spawnHub(databaseUrl: string, setupTokenPath: string): Promise<ChildProcess> {
-  const child = spawn(process.execPath, ['--import', 'tsx', 'apps/hub/src/server.ts'], {
+  // #306：新浏览器链必须走生产包装配；旧场景的默认入口留给 #281 单独迁移。
+  // Hub CLI 目前只有 setup-token，生产服务入口是包内 dist/server.js（与 Docker 同形）。
+  const args = process.argv.includes('--built-hub')
+    ? [
+        join(
+          dirname(
+            createRequire(new URL('../apps/hub/package.json', import.meta.url)).resolve(
+              '@whalepod/hub',
+            ),
+          ),
+          'server.js',
+        ),
+      ]
+    : ['--import', 'tsx', 'apps/hub/src/server.ts']
+  const child = spawn(process.execPath, args, {
     env: {
       ...process.env,
       DATABASE_URL: databaseUrl,
