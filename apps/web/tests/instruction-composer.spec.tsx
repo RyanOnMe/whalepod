@@ -91,6 +91,22 @@ function renderComposer(
 }
 
 describe('instruction composer', () => {
+  it.each(['started_run', 'followup', 'queued', 'rejected'])(
+    '#306 %s 的图形来自响应 outcome，不能把拒绝画成成功',
+    async (outcome) => {
+      const user = userEvent.setup()
+      renderComposer([instructionOk({ ...message(), outcome, runId: null })])
+      const box = await screen.findByLabelText('指令')
+      await user.type(box, '检查报告')
+      await user.click(screen.getByRole('button', { name: '发送指令' }))
+      await screen.findByTestId('instruction-outcome')
+      const button = screen.getByRole('button', { name: '发送指令' })
+      expect(button).toHaveAttribute('data-feedback', outcome)
+      expect(button.querySelector('.instruction-send-icon')).toHaveAttribute('aria-hidden', 'true')
+      await user.type(box, '新的草稿')
+      expect(button).toHaveAttribute('data-feedback', 'idle')
+    },
+  )
   it('起新运行：如实说「已起新运行」并给出运行号；输入被清空', async () => {
     const user = userEvent.setup()
     renderComposer([instructionOk({ ...message(), outcome: 'started_run', runId: 'run-abcdef12' })])
@@ -176,6 +192,10 @@ describe('instruction composer', () => {
     })
     expect(box).toHaveValue('这句要留住') // 输入内容保留
     expect(screen.getByText(/req-1/)).toBeTruthy() // requestId 原样展示
+    expect(screen.getByRole('button', { name: '发送指令' })).toHaveAttribute(
+      'data-feedback',
+      'failed',
+    )
   })
 
   it('409 DEVICE_OFFLINE 给的是**下一步怎么做**，不是只丢一个错误码', async () => {
@@ -191,16 +211,28 @@ describe('instruction composer', () => {
   it('提交中禁用按钮（不重复下发同一条指令）', async () => {
     const user = userEvent.setup()
     const gate = deferredResponse()
+    let posts = 0
     renderComposer([
       {
         method: 'POST',
         url: new RegExp(`/api/v1/tasks/${TASK.id}/instructions$`),
-        respond: () => gate.promise,
+        respond: () => {
+          posts += 1
+          return gate.promise
+        },
       },
     ])
     await user.type(await screen.findByLabelText('指令'), '跑吧')
-    await user.click(screen.getByRole('button', { name: '发送指令' }))
+    await user.keyboard('{Control>}{Enter}{/Control}')
     expect(await screen.findByRole('button', { name: '发送中…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '发送中…' })).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('button', { name: '发送中…' })).toHaveAttribute(
+      'data-feedback',
+      'pending',
+    )
+    expect(screen.getByRole('button', { name: '发送中…' })).toHaveAttribute('data-instant', '')
+    await user.keyboard('{Control>}{Enter}{/Control}')
+    expect(posts).toBe(1)
     gate.resolve(
       new Response(
         JSON.stringify({ ok: true, data: { ...message(), outcome: 'started_run', runId: null } }),

@@ -1,13 +1,13 @@
 /** #306：走生产展示入口，状态只能来自 Run/工具事件；缺失、串受众、断线均不能报成功。 */
 import { QueryClientProvider } from '@tanstack/react-query'
-import { act, render, screen, within } from '@testing-library/react'
+import { act, render, screen, within, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeQueryClient, queryKeys } from '../src/app/query-client.js'
 import { RunConsole } from '../src/features/task/RunConsole.js'
 import { RunLivePanel } from '../src/features/task/RunLivePanel.js'
 import { RunTimeline } from '../src/features/task/RunTimeline.js'
-import { RUN_STATUS_LABEL } from '../src/shared/format.js'
+import { RUN_PHASE_LABEL, RUN_STATUS_LABEL } from '../src/shared/format.js'
 import type { RunEventItem, RunStatus, RunView } from '../src/shared/api/types.js'
 import {
   resetConnectionStatusForTest,
@@ -256,5 +256,148 @@ describe('#306 工具事实', () => {
     expect(await within(panel).findByTestId('run-events-error')).toHaveTextContent('事件读取失败')
     expect(within(panel).getByRole('alert')).toBeVisible()
     expect(within(panel).queryByText('还没有事件。')).toBeNull()
+  })
+})
+
+function activityView(status: RunStatus, events: RunEventItem[], fail = false) {
+  const run: RunView = {
+    ...makeRun({ id: RUN_ID, status }),
+    taskId: 'task-1',
+    ownerUserId: BOB.userId,
+    agentId: 'agent-1',
+    profileRevisionId: 'revision-1',
+    deviceId: 'device-1',
+    workspaceId: 'workspace-1',
+    dshSessionId: null,
+    failureCode: null,
+    failureSummary: null,
+    profileDigest: 'b'.repeat(64),
+  }
+  installFetch([
+    { method: 'GET', url: new RegExp(`/runs/${RUN_ID}$`), respond: () => ok(run) },
+    {
+      method: 'GET',
+      url: new RegExp(`/runs/${RUN_ID}/events$`),
+      respond: () => (fail ? apiFailure('NOT_FOUND', '事件读取失败') : ok({ events })),
+    },
+  ])
+  const client = makeQueryClient({ retry: false })
+  render(
+    <QueryClientProvider client={client}>
+      <RunLivePanel runId={RUN_ID} runLabels={new Map()} session={BOB} />
+    </QueryClientProvider>,
+  )
+  return client
+}
+
+describe('#306 当前活动与分段筛选', () => {
+  it.each(['thinking', 'tool', 'finalizing'] as const)(
+    '%s 仅使用 project 阶段事实，不泄露思维/参数',
+    async (phase) => {
+      activityView('running', [
+        event(3, { type: 'run.phase', phase }),
+        event(1, { type: 'run.phase', phase: 'thinking' }),
+        event(4, { type: 'assistant.message', text: 'private-thought-canary' }, 'owner'),
+        { ...started(5), audience: 'owner' },
+        event(6, { type: 'run.phase', phase: 'tool' }, 'owner'),
+        event(9, { type: 'run.phase', phase: 'tool' }, 'project', 'another-run'),
+      ])
+      const line = await screen.findByTestId('run-activity')
+      await waitFor(() => expect(line).toHaveTextContent(RUN_PHASE_LABEL[phase]))
+      expect(line).toHaveAttribute('data-working', '')
+      expect(line).not.toHaveTextContent('private-thought-canary')
+      expect(line).not.toHaveTextContent('must-not-render')
+      expect(line.querySelector('button')).toBeNull()
+      expect(line.querySelector('[role="status"]')?.textContent).toBe(RUN_PHASE_LABEL[phase])
+    },
+  )
+
+  it.each(states.filter((status) => status !== 'running'))(
+    '%s 压过末次阶段，不假装还在执行',
+    async (status) => {
+      activityView(status, [event(1, { type: 'run.phase', phase: 'tool' })])
+      const line = await screen.findByTestId('run-activity')
+      expect(line).not.toHaveAttribute('data-working')
+      expect(line).not.toHaveTextContent('工具执行中')
+      expect(line).toHaveTextContent(
+        status === 'waiting_approval'
+          ? '等待责任人审批'
+          : status === 'cancel_requested'
+            ? '正在取消'
+            : RUN_STATUS_LABEL[status],
+      )
+    },
+  )
+
+  it.each([
+    [],
+    [event(1, { type: 'run.phase', phase: 'unknown' })],
+    [event(1, { type: 'run.phase', phase: 'tool' }, 'owner')],
+    [
+      event(1, { type: 'run.phase', phase: 'thinking' }),
+      event(2, { type: 'run.phase', phase: '__proto__' }),
+    ],
+  ])('缺失/未知/非 project 阶段只等待更新', async (...items) => {
+    const events = items as RunEventItem[]
+    activityView('running', events)
+    const line = await screen.findByTestId('run-activity')
+    await waitFor(() => expect(line).toHaveTextContent('等待活动更新'))
+    expect(line).not.toHaveAttribute('data-working')
+  })
+
+  it('事件失败与断线明确给反馈；后台停用、返回只恢复真实 running', async () => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    try {
+      const client = activityView('running', [event(1, { type: 'run.phase', phase: 'thinking' })])
+      const line = await screen.findByTestId('run-activity')
+      await waitFor(() => expect(line).toHaveAttribute('data-working', ''))
+      act(() => setConnectionStatus('reconnecting'))
+      expect(line).toHaveTextContent('连接中断')
+      expect(line).not.toHaveAttribute('data-working')
+      act(() => setConnectionStatus('open'))
+      expect(line).toHaveAttribute('data-working', '')
+      act(() => {
+        visibility.mockReturnValue('hidden')
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+      expect(line).not.toHaveAttribute('data-working')
+      act(() => {
+        visibility.mockReturnValue('visible')
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+      expect(line).toHaveAttribute('data-working', '')
+      installFetch([
+        {
+          method: 'GET',
+          url: new RegExp(`/runs/${RUN_ID}/events$`),
+          respond: () => apiFailure('NOT_FOUND', '事件读取失败'),
+        },
+      ])
+      await act(async () => {
+        await client.invalidateQueries({ queryKey: queryKeys.runEvents(RUN_ID) })
+      })
+      expect(line).toHaveTextContent('活动信息读取失败')
+      expect(line).not.toHaveAttribute('data-working')
+    } finally {
+      visibility.mockRestore()
+    }
+  })
+
+  it('筛选仍为原生 group 按钮，指示面键盘即时切换，焦点不被重绘抢走', async () => {
+    const user = userEvent.setup()
+    consoleView([started(), finished(2, 'failed')])
+    const group = screen.getByRole('group', { name: '事件筛选' })
+    expect(within(group).getAllByRole('button')).toHaveLength(4)
+    expect(screen.queryByRole('tablist')).toBeNull()
+    expect(screen.queryByRole('radiogroup')).toBeNull()
+    expect(group.querySelector('.rubber-segment__thumb')).toHaveAttribute('aria-hidden', 'true')
+    await user.click(screen.getByTestId('console-filter-tool'))
+    expect(group).not.toHaveAttribute('data-instant')
+    act(() => screen.getByTestId('console-filter-error').focus())
+    await user.keyboard('{Enter}')
+    expect(group).toHaveAttribute('data-instant', '')
+    expect(screen.getByTestId('console-filter-error')).toHaveFocus()
+    expect(screen.getByTestId('console-filter-error')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getAllByTestId('console-event')).toHaveLength(1)
   })
 })
