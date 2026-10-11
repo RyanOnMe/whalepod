@@ -2,6 +2,7 @@ import { useSyncExternalStore, type ReactNode } from 'react'
 import type { RunStatus } from '../api/types.js'
 import { RUN_STATUS_LABEL } from '../format.js'
 import { getConnectionStatus, subscribeConnectionStatus } from '../realtime/connection-store.js'
+import { usePageVisible } from '../usePageVisible.js'
 import StatusMark, { type StatusMarkStatus } from '../../vendor/react-bits-micro/StatusMark.js'
 
 const MARK: Readonly<Record<RunStatus, StatusMarkStatus>> = {
@@ -16,16 +17,10 @@ const MARK: Readonly<Record<RunStatus, StatusMarkStatus>> = {
   lost: 'failed',
 }
 
-function subscribeVisibility(listener: () => void): () => void {
-  document.addEventListener('visibilitychange', listener)
-  return () => document.removeEventListener('visibilitychange', listener)
-}
-const isVisible = (): boolean => document.visibilityState === 'visible'
-
 /** 订阅只作用于小徽标；连接更新不触发整个运行列表/直播区重渲染。 */
 export function RunStatusBadge({ status }: { status: RunStatus }): ReactNode {
   const connection = useSyncExternalStore(subscribeConnectionStatus, getConnectionStatus)
-  const visible = useSyncExternalStore(subscribeVisibility, isVisible)
+  const visible = usePageVisible()
   return (
     <span className={`badge badge-run badge-run-${status}`}>
       <StatusMark

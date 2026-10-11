@@ -105,6 +105,7 @@ describe('instruction composer', () => {
       expect(button.querySelector('.instruction-send-icon')).toHaveAttribute('aria-hidden', 'true')
       await user.type(box, '新的草稿')
       expect(button).toHaveAttribute('data-feedback', 'idle')
+      expect(screen.getByTestId('instruction-outcome')).toBeVisible()
     },
   )
   it('起新运行：如实说「已起新运行」并给出运行号；输入被清空', async () => {

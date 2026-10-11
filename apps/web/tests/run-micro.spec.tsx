@@ -13,7 +13,15 @@ import {
   resetConnectionStatusForTest,
   setConnectionStatus,
 } from '../src/shared/realtime/connection-store.js'
-import { BOB, apiFailure, installFetch, makeRun, ok } from './fixtures.js'
+import {
+  BOB,
+  apiFailure,
+  deferredResponse,
+  installFetch,
+  makeRun,
+  ok,
+  type MockHandler,
+} from './fixtures.js'
 
 const RUN_ID = '33333333-3333-4333-8333-333333333333'
 const states: RunStatus[] = [
@@ -259,7 +267,11 @@ describe('#306 工具事实', () => {
   })
 })
 
-function activityView(status: RunStatus, events: RunEventItem[], fail = false) {
+function activityView(
+  status: RunStatus,
+  events: RunEventItem[],
+  respondEvents: MockHandler['respond'] = () => ok({ events }),
+) {
   const run: RunView = {
     ...makeRun({ id: RUN_ID, status }),
     taskId: 'task-1',
@@ -278,7 +290,7 @@ function activityView(status: RunStatus, events: RunEventItem[], fail = false) {
     {
       method: 'GET',
       url: new RegExp(`/runs/${RUN_ID}/events$`),
-      respond: () => (fail ? apiFailure('NOT_FOUND', '事件读取失败') : ok({ events })),
+      respond: respondEvents,
     },
   ])
   const client = makeQueryClient({ retry: false })
@@ -291,6 +303,18 @@ function activityView(status: RunStatus, events: RunEventItem[], fail = false) {
 }
 
 describe('#306 当前活动与分段筛选', () => {
+  it('事件尚未返回时只显示读取中，不依据等待时长猜活动阶段', async () => {
+    const gate = deferredResponse()
+    activityView('running', [], () => gate.promise)
+    const line = await screen.findByTestId('run-activity')
+    expect(line).toHaveTextContent('正在读取活动信息')
+    expect(line).not.toHaveAttribute('data-working')
+    await act(async () => {
+      gate.resolve(ok({ events: [event(1, { type: 'run.phase', phase: 'tool' })] }))
+    })
+    await waitFor(() => expect(line).toHaveTextContent('工具执行中'))
+    expect(line).toHaveAttribute('data-working', '')
+  })
   it.each(['thinking', 'tool', 'finalizing'] as const)(
     '%s 仅使用 project 阶段事实，不泄露思维/参数',
     async (phase) => {
@@ -376,7 +400,7 @@ describe('#306 当前活动与分段筛选', () => {
       await act(async () => {
         await client.invalidateQueries({ queryKey: queryKeys.runEvents(RUN_ID) })
       })
-      expect(line).toHaveTextContent('活动信息读取失败')
+      await waitFor(() => expect(line).toHaveTextContent('活动信息读取失败'))
       expect(line).not.toHaveAttribute('data-working')
     } finally {
       visibility.mockRestore()

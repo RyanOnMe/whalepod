@@ -21,6 +21,7 @@ import { RUN_PHASE_LABEL } from '../../shared/format.js'
 import { RunStatusBadge } from '../../shared/micro/RunStatusBadge.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { ToolEventChip } from './ToolEventChip.js'
+import { RunActivityLine } from './RunActivityLine.js'
 import { eventIdentity, orderedRunEvents, toolResults } from './tool-call-state.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { useStickToBottom } from '../../shared/useStickToBottom.js'
@@ -181,6 +182,14 @@ export function RunLivePanel({
           </span>
         ) : null}
       </div>
+
+      <RunActivityLine
+        runId={runId}
+        status={run.status}
+        events={events}
+        pending={eventsQuery.isPending}
+        failed={eventsQuery.isError}
+      />
 
       {run.rerunOfRunId !== null ? (
         <p className="run-lineage" data-testid="run-lineage" title={run.rerunOfRunId}>

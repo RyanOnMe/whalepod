@@ -1,6 +1,6 @@
 # React Bits Micro：WhalePod 应用内源码适配
 
-仅选取 CallChip 和 StatusMark 的 TypeScript/CSS 版本，固定版本与逐文件原始 SHA-256 见 [manifest.json](./manifest.json)。来源为 [DavidHDev/react-bits](https://github.com/DavidHDev/react-bits)，版权属于 David Haz。
+仅选取 CallChip、StatusMark、ThoughtLine 和 RubberSegment 的 TypeScript/CSS 版本，固定版本与逐文件原始 SHA-256 见 [manifest.json](./manifest.json)。来源为 [DavidHDev/react-bits](https://github.com/DavidHDev/react-bits)，版权属于 David Haz。
 
 ## 许可与使用范围
 
@@ -12,6 +12,9 @@
 
 - StatusMark 保留圆环、虚线、勾与叉的几何和状态结构。Motion 控制改成事实驱动的 CSS；只对在线 running Run 绘制不定进度活动，不接收百分比。新增暂停图形；标签取 WhalePod 完整九态中文表，删除英文重复朗读和完成划线。
 - CallChip 保留芯片、底色、图标槽、名称和结果的结构。图标由宿主现有 DSH 图标提供；仅呈现匹配的真实结束事件，不展示工具参数。删去 expectedMs 填充、本地计时器、shake、重试按钮和本地状态回调。
+- ThoughtLine 保留标题、点状 glyph 与标签结构，改为受控公开阶段摘要。移除思维 trace、计时器、自动 settle、shimmer、blur 和外部依赖；当前面板已有状态环，因此标签不再添加另一处循环动效。
+- RubberSegment 保留轨道、等宽按钮与指示面结构。仅用于 Console 筛选，改为原生 group + aria-pressed，保留全部按钮的 Tab 顺序；取消拖拽、惯性、弹性、拉伸与 radio 键位。鼠标指示面 transform 160ms 可打断，键盘与减少动态即时切换。
+- 指令按钮反馈使用 WhalePod 自有实现，保留原 InstructionComposer 的权限、目标和提交路径，没有复制 PromptBar 或扩展不存在的功能。
 - 所有颜色、圆角、字体、过渡均消费现有语义 token。在线状态环周期沿用上游 1100ms，集中登记为活动 token。减少动态模式彻底停用旋转；无需新增 Motion/Hugeicons 依赖。
 - 组件仅负责呈现，状态/事件配对在应用层；不变更 Run、审批或 Task 的业务语义。
 

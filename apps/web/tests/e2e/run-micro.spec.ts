@@ -80,7 +80,7 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
 
     const pairing = await hubApi(cookie, 'POST', '/devices/pairing-codes', {})
     expect(pairing.status).toBe(201)
-    await startNode({ pairingCode: (pairing.data as { code: string }).code })
+    const node = await startNode({ pairingCode: (pairing.data as { code: string }).code })
     await setRuntimeFixture('approval')
     await owner.goto('/')
     await owner.getByRole('button', { name: '新建项目' }).click()
@@ -111,11 +111,22 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     await expect(owner.getByTestId('approval-card')).toBeVisible()
     await expect(member.getByTestId('approval-waiting')).toBeVisible()
     await expect(member.getByTestId('approval-card')).toHaveCount(0)
+    await member.locator(`button[data-run-id="${runId}"]`).click()
+    const activity = []
     for (const page of [owner, member]) {
       const badge = page.locator(`button[data-run-id="${runId}"] .status-mark`)
       await expect(badge).toHaveAttribute('data-paused', '')
       await expect(badge).not.toHaveAttribute('data-indeterminate')
       await expect(badge).toHaveText('等待审批')
+      await expect(page.getByTestId('run-activity')).toHaveText('等待责任人审批')
+      await expect(page.getByTestId('run-activity')).not.toHaveAttribute('data-working')
+      activity.push({
+        component: 'web.activity',
+        viewer: page === owner ? 'owner' : 'member',
+        runId,
+        status: 'waiting_approval',
+        working: false,
+      })
     }
     await owner.getByTestId('open-run-console').click()
     await owner.getByTestId('console-filter-approval').focus()
@@ -125,6 +136,17 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
       'true',
     )
     await expect(owner.getByTestId('console-event').first()).toBeVisible()
+    await expect(owner.getByRole('group', { name: '事件筛选' })).toHaveAttribute('data-instant', '')
+    const keyboardFilterDuration = await owner
+      .locator('.rubber-segment__thumb')
+      .evaluate((element) => getComputedStyle(element).transitionDuration)
+    expect(keyboardFilterDuration).toBe('0s')
+    await owner.getByTestId('console-filter-tool').click()
+    await expect(owner.getByTestId('console-filter-tool')).toHaveAttribute('aria-pressed', 'true')
+    const pointerFilterDuration = await owner
+      .locator('.rubber-segment__thumb')
+      .evaluate((element) => getComputedStyle(element).transitionDuration)
+    expect(pointerFilterDuration).toBe('0.16s')
     await owner.keyboard.press('Escape')
     await expect(owner.getByTestId('run-console')).toHaveCount(0)
     await expect(owner.getByTestId('open-run-console')).toBeFocused()
@@ -140,6 +162,17 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
       'done',
     )
     await expect(owner.locator('[data-indeterminate]')).toHaveCount(0)
+    for (const page of [owner, member]) {
+      await expect(page.getByTestId('run-activity')).toHaveText('本次运行已完成')
+      await expect(page.getByTestId('run-activity')).not.toHaveAttribute('data-working')
+      activity.push({
+        component: 'web.activity',
+        viewer: page === owner ? 'owner' : 'member',
+        runId,
+        status: 'completed',
+        working: false,
+      })
+    }
     const room = (await hubApi(cookie, 'GET', `/tasks/${taskId}`)).data as {
       task: { status: string }
     }
@@ -174,11 +207,12 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
           type: item.event['type'],
           callId: item.event['callId'],
           outcome: item.event['outcome'],
+          phase: item.event['type'] === 'run.phase' ? item.event['phase'] : undefined,
         })),
       })
     }
     const layout = []
-    for (const width of [1280, 390]) {
+    for (const width of [1280, 390, 320]) {
       await owner.setViewportSize({ width, height: 900 })
       // 壳由 matchMedia 驱动 React 互斥渲染：等真实断点切换，不量旧的 264px 侧栏。
       await expect(owner.locator('.app-sidebar')).toHaveCount(width >= 1024 ? 1 : 0)
@@ -249,6 +283,132 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     await owner.getByTestId('console-filter-tool').click()
     await expect(owner.getByTestId('tool-call-chip').last()).toHaveAttribute('data-status', 'done')
     await expect(owner.getByTestId('console-filter-tool')).toBeFocused()
+    const reducedFilterDuration = await owner
+      .locator('.rubber-segment__thumb')
+      .evaluate((element) => getComputedStyle(element).transitionDuration)
+    expect(reducedFilterDuration).toBe('0s')
+    await owner
+      .getByRole('dialog', { name: 'Run Console' })
+      .screenshot({ path: join(evidence, 'console-desktop.png') })
+    await owner.setViewportSize({ width: 390, height: 900 })
+    await expect(owner.locator('.app-sidebar')).toHaveCount(0)
+    expect(await owner.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      391,
+    )
+    await owner
+      .getByRole('dialog', { name: 'Run Console' })
+      .screenshot({ path: join(evidence, 'console-mobile.png') })
+    await owner.keyboard.press('Escape')
+    await expect(owner.getByTestId('open-run-console')).toBeFocused()
+    await owner.setViewportSize({ width: 1280, height: 900 })
+    await owner.emulateMedia({ reducedMotion: 'no-preference' })
+
+    // Slow the transport without manufacturing a response: release forwards the real request to Hub.
+    await setRuntimeFixture('basic')
+    const instructionUrl = `**/api/v1/tasks/${taskId}/instructions`
+    let releaseRequest!: () => void
+    const requestGate = new Promise<void>((resolve) => {
+      releaseRequest = resolve
+    })
+    let pendingRequests = 0
+    await owner.route(instructionUrl, async (route) => {
+      pendingRequests += 1
+      await requestGate
+      await route.continue()
+    })
+    const box = owner.getByLabel('指令', { exact: true })
+    await box.fill('检查报告')
+    const sent = owner.waitForResponse(
+      (response) =>
+        response.url().endsWith(`/tasks/${taskId}/instructions`) &&
+        response.request().method() === 'POST',
+    )
+    await box.press('Control+Enter')
+    const pendingButton = owner.getByRole('button', { name: '发送中…', exact: true })
+    await expect(pendingButton).toBeDisabled()
+    await expect(pendingButton).toHaveAttribute('aria-busy', 'true')
+    await expect(pendingButton).toHaveAttribute('data-feedback', 'pending')
+    await expect(pendingButton).toHaveAttribute('data-instant', '')
+    await box.press('Control+Enter')
+    expect(pendingRequests).toBe(1)
+    await owner
+      .locator('.instruction-composer')
+      .screenshot({ path: join(evidence, 'composer-pending.png') })
+    releaseRequest()
+    const sentResponse = await sent
+    expect(sentResponse.status()).toBe(201)
+    const outcome = (await sentResponse.json()).data as { outcome: string; runId: string }
+    expect(outcome.outcome).toBe('started_run')
+    await owner.unroute(instructionUrl)
+    const sendButton = owner.getByRole('button', { name: '发送指令', exact: true })
+    await expect(sendButton).toHaveAttribute('data-feedback', 'started_run')
+    await expect(owner.getByTestId('instruction-outcome')).toContainText('已起新运行')
+    await expect(box).toHaveValue('')
+    await waitForRunStatus(outcome.runId, 'completed', 120_000)
+    await waitForRuntimeReleased(outcome.runId)
+    await owner
+      .locator('.instruction-composer')
+      .screenshot({ path: join(evidence, 'composer-accepted.png') })
+
+    // Real public revoke endpoint removes the only available execution target in this disposable team.
+    expect((await hubApi(cookie, 'DELETE', `/devices/${node.deviceId}`, {})).status).toBe(200)
+    const failedSend = owner.waitForResponse(
+      (response) =>
+        response.url().endsWith(`/tasks/${taskId}/instructions`) &&
+        response.request().method() === 'POST',
+    )
+    await box.fill('这句要保留')
+    await box.press('Control+Enter')
+    const failedResponse = await failedSend
+    expect(failedResponse.status()).toBe(409)
+    const failedEnvelope = (await failedResponse.json()).error as {
+      code: string
+      requestId: string
+    }
+    expect(failedEnvelope.code).toBe('DEVICE_OFFLINE')
+    expect(failedEnvelope.requestId).toBeTruthy()
+    await expect(sendButton).toHaveAttribute('data-feedback', 'failed')
+    await expect(box).toHaveValue('这句要保留')
+    await expect(owner.getByTestId('instruction-offline-guidance')).toBeVisible()
+    await expect(owner.getByTestId('instruction-outcome')).toHaveCount(0)
+    await expect(owner.getByRole('alert')).toContainText(failedEnvelope.requestId)
+    const afterFailure = (await hubApi(cookie, 'GET', `/tasks/${taskId}`)).data as {
+      task: { status: string }
+      runs: Array<{ id: string; status: string }>
+    }
+    expect(afterFailure.task.status).toBe('in_progress')
+    expect(afterFailure.runs.map((run) => run.id).sort()).toEqual([runId, outcome.runId].sort())
+    await owner
+      .locator('.instruction-composer')
+      .screenshot({ path: join(evidence, 'composer-failed.png') })
+    const sends = {
+      component: 'web.instruction',
+      pendingRequests,
+      accepted: { httpStatus: 201, outcome: outcome.outcome, runId: outcome.runId },
+      failed: {
+        httpStatus: 409,
+        code: failedEnvelope.code,
+        requestIdPresent: true,
+        draftRetained: true,
+        runCreated: false,
+      },
+    }
+    await owner.setViewportSize({ width: 320, height: 900 })
+    await expect(owner.locator('.app-sidebar')).toHaveCount(0)
+    expect(await owner.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      321,
+    )
+    await owner
+      .locator('.instruction-composer')
+      .screenshot({ path: join(evidence, 'composer-320.png') })
+    await owner.setViewportSize({ width: 390, height: 900 })
+    await expect(owner.locator('.app-sidebar')).toHaveCount(0)
+    expect(await owner.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      391,
+    )
+    await owner
+      .locator('.instruction-composer')
+      .screenshot({ path: join(evidence, 'composer-mobile.png') })
     expect(errors).toEqual([])
     await writeFile(
       join(evidence, 'result.json'),
@@ -259,6 +419,16 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
           component: 'web.micro',
           runId,
           taskStatus: room.task.status,
+          activity,
+          sends,
+          filters: {
+            component: 'web.console',
+            keyboardFilterDuration,
+            pointerFilterDuration,
+            reducedFilterDuration,
+            nativeButtons: true,
+            focusReturned: true,
+          },
           projections,
           layout,
           reducedMotion: {

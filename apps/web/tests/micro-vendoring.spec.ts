@@ -21,8 +21,12 @@ describe('#306 第三方来源与许可', () => {
     expect(manifest.files.map((file) => file.local).sort()).toEqual([
       'CallChip.css',
       'CallChip.tsx',
+      'RubberSegment.css',
+      'RubberSegment.tsx',
       'StatusMark.css',
       'StatusMark.tsx',
+      'ThoughtLine.css',
+      'ThoughtLine.tsx',
     ])
     for (const file of manifest.files) {
       expect(file.originalSha256).toMatch(/^[0-9a-f]{64}$/)

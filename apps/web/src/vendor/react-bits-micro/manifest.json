@@ -28,6 +28,30 @@
       "upstreamPath": "src/ts-default/Micro/StatusMark/StatusMark.css",
       "originalSha256": "9c46c47df3729a4e1d258d7a77521faa08fc445fd1ea8b8c4ade8bdb8c2e45c9",
       "changes": "Controlled application presentation; semantic theme and motion tokens; timers, guessed progress, retry, strike and external icon/Motion dependencies removed. See README.md."
+    },
+    {
+      "local": "ThoughtLine.tsx",
+      "upstreamPath": "src/ts-default/Micro/ThoughtLine/ThoughtLine.tsx",
+      "originalSha256": "170a4cd745c2041bbfad79f408bd7f9b08e54891c7ffd48edfd36212d216fc69",
+      "changes": "Controlled public phase label; trace, shimmer, timers, auto-settle, blur and Motion/Hugeicons removed. No payload forwarding; one existing adjacent activity ring."
+    },
+    {
+      "local": "ThoughtLine.css",
+      "upstreamPath": "src/ts-default/Micro/ThoughtLine/ThoughtLine.css",
+      "originalSha256": "fcf125579ead2806c69ecd109c88f14007eaf5fb54ffe46c867482d03add2ef7",
+      "changes": "Controlled public phase label; trace, shimmer, timers, auto-settle, blur and Motion/Hugeicons removed. No payload forwarding; one existing adjacent activity ring."
+    },
+    {
+      "local": "RubberSegment.tsx",
+      "upstreamPath": "src/ts-default/Micro/RubberSegment/RubberSegment.tsx",
+      "originalSha256": "69d1cc3af5718faaf5d1d9a9fdab59edb26f05ea61d5c85694edd1e51664d88f",
+      "changes": "Controlled Console filter group with native aria-pressed buttons; 160ms CSS indicator, immediate keyboard/reduced motion. Drag, springs, momentum and radio semantics removed."
+    },
+    {
+      "local": "RubberSegment.css",
+      "upstreamPath": "src/ts-default/Micro/RubberSegment/RubberSegment.css",
+      "originalSha256": "8e27a0daf7c64dc09939020db11d0461b03368763bceaaa60b88accad1b06cb4",
+      "changes": "Controlled Console filter group with native aria-pressed buttons; 160ms CSS indicator, immediate keyboard/reduced motion. Drag, springs, momentum and radio semantics removed."
     }
   ]
 }

@@ -13,6 +13,7 @@
  * 内联面板保留为默认视图。这一点与原型不同，是有意的取舍，写在这里免得下次被"改回原型"。
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import RubberSegment from '../../vendor/react-bits-micro/RubberSegment.js'
 import type { RunEventItem, RunStatus } from '../../shared/api/types.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { describeEvent } from './RunLivePanel.js'
@@ -199,19 +200,14 @@ export function RunConsole({
           </button>
         </div>
 
-        <div className="console-filters" role="group" aria-label="事件筛选">
-          {FILTERS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={`cf${filter === item.id ? ' on' : ''}`}
-              data-testid={`console-filter-${item.id}`}
-              aria-pressed={filter === item.id}
-              onClick={() => setFilter(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
+        <div className="console-filters">
+          <RubberSegment
+            items={FILTERS.map((item) => ({ value: item.id, label: item.label }))}
+            value={filter}
+            onChange={setFilter}
+            label="事件筛选"
+            testIdPrefix="console-filter-"
+          />
           <span className="console-count" data-testid="console-count">
             {visible.length} / {ordered.length} 条
           </span>
