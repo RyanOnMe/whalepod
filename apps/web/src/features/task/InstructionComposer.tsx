@@ -22,6 +22,7 @@ import { queryKeys } from '../../app/query-client.js'
 import { ConfirmDialog } from '../../shared/ConfirmDialog.js'
 import { isApiError } from '../../shared/api/errors.js'
 import type { InstructionView } from '../../shared/api/types.js'
+import { InstructionSendIcon, type SendFeedback } from './InstructionSendIcon.js'
 
 /** POST /tasks/:taskId/instructions 的响应：指令本体 + 它的命运。 */
 export interface InstructionOutcome extends InstructionView {
@@ -98,6 +99,7 @@ export function InstructionComposer({
   const [text, setText] = useState('')
   const [error, setError] = useState<unknown>(null)
   const [last, setLast] = useState<InstructionOutcome | null>(null)
+  const [instant, setInstant] = useState(true)
   // #244：full_access 确认闸。pendingBody 存「点了发送那一刻」的正文——对话框是模态的，
   // 打开期间正文不可编辑，但确认动作必须发送用户看到的那句话，别在关闭时重读 state。
   const [confirmingFullAccess, setConfirmingFullAccess] = useState(false)
@@ -152,6 +154,13 @@ export function InstructionComposer({
 
   // `ApiError` 自带 wire 上的 code（errors.ts），不需要另造助手。
   const offlineGuidance = isApiError(error) && error.code === 'DEVICE_OFFLINE'
+  const feedback: SendFeedback = mutation.isPending
+    ? 'pending'
+    : error !== null
+      ? 'failed'
+      : text !== ''
+        ? 'idle'
+        : (last?.outcome ?? 'idle')
 
   return (
     <form className="instruction-composer" onSubmit={submit}>
@@ -168,12 +177,25 @@ export function InstructionComposer({
           // #229：Cmd/Ctrl+Enter 直发（与提交按钮同一条 form 路径）；纯 Enter 仍是换行。
           if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
             event.preventDefault()
+            setInstant(true)
             event.currentTarget.form?.requestSubmit()
           }
         }}
       />
       <div className="composer-actions">
-        <button type="submit" className="button button-primary" disabled={mutation.isPending}>
+        <button
+          type="submit"
+          className="button button-primary instruction-send"
+          disabled={mutation.isPending}
+          aria-busy={mutation.isPending}
+          data-feedback={feedback}
+          data-instant={instant ? '' : undefined}
+          onPointerDown={() => setInstant(false)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') setInstant(true)
+          }}
+        >
+          <InstructionSendIcon feedback={feedback} />
           {mutation.isPending ? '发送中…' : '发送指令'}
         </button>
         <span className="mutation-hint" data-testid="instruction-routing-hint">

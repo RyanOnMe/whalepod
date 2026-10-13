@@ -1294,8 +1294,29 @@ textarea::placeholder {
 
 .composer-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
+}
+
+.instruction-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-inline-size: 8em;
+}
+.instruction-send-icon {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+.instruction-send[data-instant] {
+  transition: none;
+}
+.instruction-send[data-instant]:active {
+  transform: none;
 }
 
 /*
@@ -1787,6 +1808,7 @@ textarea::placeholder {
 .run-live-head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-3);
 }
 /* #275：滚动容器（<pre>）与「回到最新」按钮同处一层——按钮绝对定位，浮在文本上，
@@ -1878,6 +1900,10 @@ textarea::placeholder {
 .run-event-seq {
   color: var(--color-text-muted, #8a8f9e);
   font-variant-numeric: tabular-nums;
+}
+.run-event-text.tool-event {
+  min-width: 0;
+  flex: 1;
 }
 .run-event.audience-owner .run-event-text {
   /* owner 全量行与普通行同呈现；受众边界在服务端，不靠样式暗示 */
@@ -2240,6 +2266,8 @@ textarea::placeholder {
 
 .console-close {
   margin-left: auto;
+  flex: none;
+  white-space: nowrap;
 }
 
 .console-filters {
