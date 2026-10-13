@@ -1,0 +1,68 @@
+/* React Bits SwipeToast, adapted for WhalePod. See LICENSE.md / manifest.json. */
+/*
+ * 卡片本体（面、描边、进出场）沿用 `styles/global.css` 的 `.toast-item`——
+ * 它已经在场原语（#273）的契约里。这里只加这套组件自己的三件事：
+ * 关闭按钮、fuse（真实剩余时间）、拖拽时的位移与光标。
+ */
+.toast-item__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+  transition: background-color var(--duration-quick) ease;
+}
+
+.toast-item__close:hover {
+  background: var(--color-signal-soft);
+  color: var(--color-ink);
+}
+
+/* fuse：一条从满到空的进度线，长度 = 这张卡真实剩余的可读窗口。 */
+.toast-item__fuse {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: var(--color-signal);
+  transform-origin: left center;
+  animation-name: toast-fuse;
+  animation-duration: var(--toast-fuse-ms);
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@keyframes toast-fuse {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+/* 悬停 / 聚焦 / 页面隐藏 / 正在拖拽：计时与 fuse 一起停住（卡在，时间也在）。 */
+.toast-item[data-paused='true'] .toast-item__fuse {
+  animation-play-state: paused;
+}
+
+/* 拖拽中不套过渡：位移必须跟着手指，回落才走既有过渡。 */
+.toast-item[data-dragging] {
+  transition: none;
+  cursor: grabbing;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* 减少动态：不画走动的 fuse——但计时器照常到期（消失行为不依赖动画）。 */
+  .toast-item__fuse {
+    animation: none;
+  }
+}

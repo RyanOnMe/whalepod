@@ -26,6 +26,7 @@ import { FlashBanner } from './FlashBanner.js'
 import { ToastHost } from './toast.js'
 import { RealtimeBridge } from './realtime.js'
 import { GlobalSearch } from './GlobalSearch.js'
+import { HintGroup } from '../shared/micro/Hint.js'
 import { NotificationBell, RunNotifications } from './RunNotifications.js'
 import { ShortcutHelp } from './ShortcutHelp.js'
 
@@ -204,104 +205,111 @@ export function AppShell(): ReactNode {
 
   return (
     <SessionContext.Provider value={session}>
-      {/* 登录会话存活期持有 Browser WS：持久事件→query 失效，live→run 缓冲（P1-13）。 */}
-      <RealtimeBridge />
-      {/* #259：tab 标题徽标 + 进任务房间即已读（无头；窄屏没有侧栏也要有徽标）。 */}
-      <RunNotifications />
-      {/* #265：`?` 开快捷键速查（无头；说明书只列已实现的键）。 */}
-      <ShortcutHelp />
       {/*
+        #308：提示层的**唯一**宿主。整个壳共用一个提示层，相邻目标之间才有「warm」——
+        第一次悬停要等，窗口内移到下一个目标即时出现（上游 WarmTooltip 的语义）。
+        它只渲染提示自身，不包任何布局，放在这里不改变页面结构。
+      */}
+      <HintGroup>
+        {/* 登录会话存活期持有 Browser WS：持久事件→query 失效，live→run 缓冲（P1-13）。 */}
+        <RealtimeBridge />
+        {/* #259：tab 标题徽标 + 进任务房间即已读（无头；窄屏没有侧栏也要有徽标）。 */}
+        <RunNotifications />
+        {/* #265：`?` 开快捷键速查（无头；说明书只列已实现的键）。 */}
+        <ShortcutHelp />
+        {/*
         #173 壳结构：灰平台（body 底）上放一张白色应用卡（.app-frame，圆角 20 + 软投影），
         卡里左侧栏（品牌 / 胶囊导航 / 用户卡置底）+ 右内容列；窄屏（<1024px）应用卡
         全幅直角，侧栏换成顶栏 + 折叠菜单。侧栏与顶栏由 useWideLayout **互斥渲染**
         （DOM 里同一时刻只有一套 chrome），断点判定见该 hook 的注释。
       */}
-      <div className="app-shell">
-        <div className="app-frame">
-          {wide ? (
-            <aside className="app-sidebar">
-              <div className="app-brand-row">
-                <Link to="/" className="app-brand">
-                  WhalePod
-                </Link>
-              </div>
-              {/* #254：搜索入口（鼠标路径；⌘K 是键盘路径，都在 GlobalSearch 里）。 */}
-              <GlobalSearch />
-              {/* #259：完成提醒开关（宽屏侧栏；权限只在点击时请求）。 */}
-              <NotificationBell />
-              <nav className="app-nav" aria-label="主导航">
-                {NAV_ITEMS.map((item) => (
-                  <NavLink key={item.to} to={item.to} end={item.end}>
-                    {item.label}
-                  </NavLink>
-                ))}
-              </nav>
-              <RecentTasksNav />
-              <div className="app-sidebar-user">
-                <span className="app-sidebar-user-name" title={userTitle}>
-                  {session.displayName}
-                </span>
-                <span className="app-sidebar-user-role">{ROLE_LABEL[session.role]}</span>
-                <button
-                  type="button"
-                  className="button button-quiet app-sidebar-logout"
-                  disabled={logout.isPending}
-                  onClick={() => logout.mutate()}
-                >
-                  {logoutLabel}
-                </button>
-              </div>
-            </aside>
-          ) : null}
-          <div className="app-body">
-            {wide ? null : (
-              <header className="app-topbar">
-                <details className="app-nav-menu" ref={navMenu}>
-                  <summary className="app-nav-toggle" aria-label="主导航菜单">
-                    菜单
-                  </summary>
-                  <nav className="app-nav app-nav-overlay" aria-label="主导航">
-                    {NAV_ITEMS.map((item) => (
-                      <NavLink key={item.to} to={item.to} end={item.end}>
-                        {item.label}
-                      </NavLink>
-                    ))}
-                  </nav>
-                </details>
-                <Link to="/" className="app-brand">
-                  WhalePod
-                </Link>
-                <div className="app-topbar-user">
-                  <span className="app-topbar-user-name" title={userTitle}>
+        <div className="app-shell">
+          <div className="app-frame">
+            {wide ? (
+              <aside className="app-sidebar">
+                <div className="app-brand-row">
+                  <Link to="/" className="app-brand">
+                    WhalePod
+                  </Link>
+                </div>
+                {/* #254：搜索入口（鼠标路径；⌘K 是键盘路径，都在 GlobalSearch 里）。 */}
+                <GlobalSearch />
+                {/* #259：完成提醒开关（宽屏侧栏；权限只在点击时请求）。 */}
+                <NotificationBell />
+                <nav className="app-nav" aria-label="主导航">
+                  {NAV_ITEMS.map((item) => (
+                    <NavLink key={item.to} to={item.to} end={item.end}>
+                      {item.label}
+                    </NavLink>
+                  ))}
+                </nav>
+                <RecentTasksNav />
+                <div className="app-sidebar-user">
+                  <span className="app-sidebar-user-name" title={userTitle}>
                     {session.displayName}
                   </span>
+                  <span className="app-sidebar-user-role">{ROLE_LABEL[session.role]}</span>
                   <button
                     type="button"
-                    className="button button-quiet"
+                    className="button button-quiet app-sidebar-logout"
                     disabled={logout.isPending}
                     onClick={() => logout.mutate()}
                   >
                     {logoutLabel}
                   </button>
                 </div>
-              </header>
-            )}
-            {logoutError !== null ? (
-              <div className="app-logout-error" role="alert">
-                退出失败：{logoutError}
-              </div>
+              </aside>
             ) : null}
-            <FlashBanner />
-            {/* #229：短暂成败反馈（plugin/artifact 等就地动作）。 */}
-            <ToastHost />
-            {/* #227：断线重连中的可见横幅（在线与首次连接保持安静）。 */}
-            <ConnectionBanner />
-            <main className="app-main">
-              <Outlet />
-            </main>
+            <div className="app-body">
+              {wide ? null : (
+                <header className="app-topbar">
+                  <details className="app-nav-menu" ref={navMenu}>
+                    <summary className="app-nav-toggle" aria-label="主导航菜单">
+                      菜单
+                    </summary>
+                    <nav className="app-nav app-nav-overlay" aria-label="主导航">
+                      {NAV_ITEMS.map((item) => (
+                        <NavLink key={item.to} to={item.to} end={item.end}>
+                          {item.label}
+                        </NavLink>
+                      ))}
+                    </nav>
+                  </details>
+                  <Link to="/" className="app-brand">
+                    WhalePod
+                  </Link>
+                  <div className="app-topbar-user">
+                    <span className="app-topbar-user-name" title={userTitle}>
+                      {session.displayName}
+                    </span>
+                    <button
+                      type="button"
+                      className="button button-quiet"
+                      disabled={logout.isPending}
+                      onClick={() => logout.mutate()}
+                    >
+                      {logoutLabel}
+                    </button>
+                  </div>
+                </header>
+              )}
+              {logoutError !== null ? (
+                <div className="app-logout-error" role="alert">
+                  退出失败：{logoutError}
+                </div>
+              ) : null}
+              <FlashBanner />
+              {/* #229：短暂成败反馈（plugin/artifact 等就地动作）。 */}
+              <ToastHost />
+              {/* #227：断线重连中的可见横幅（在线与首次连接保持安静）。 */}
+              <ConnectionBanner />
+              <main className="app-main">
+                <Outlet />
+              </main>
+            </div>
           </div>
         </div>
-      </div>
+      </HintGroup>
     </SessionContext.Provider>
   )
 }

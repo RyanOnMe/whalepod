@@ -24,8 +24,8 @@ Licensed under MIT + Commons Clause License Condition v1.0, NOT plain MIT.
 
   Upstream project : https://github.com/DavidHDev/react-bits
   Vendored revision: d86fccbd477786f94ca7eb891fbe0ec039d3cd3b
-  Vendored scope   : selected CallChip, StatusMark, ThoughtLine and
-                     RubberSegment TypeScript/CSS files,
+  Vendored scope   : selected CallChip, StatusMark, ThoughtLine, RubberSegment,
+                     WarmTooltip, BellToggle and SwipeToast TypeScript/CSS files,
                      adapted inside apps/web/src/vendor/react-bits-micro/.
 
 The full upstream terms are retained in that directory's LICENSE.md. These

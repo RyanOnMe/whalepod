@@ -1,0 +1,58 @@
+/* React Bits WarmTooltip, adapted for WhalePod. See LICENSE.md / manifest.json. */
+/*
+ * 提示层只消费既有语义 token（面/墨/描边/圆角/时长），不新造配色与曲线。
+ * 位置由 JS 写在内层元素的行内 transform 上；这里的过渡只负责「出现/消失」，
+ * 因此没有位移弹簧，也没有倾斜。
+ */
+.hint-anchor {
+  display: inline-flex;
+}
+
+/*
+ * 触发元素是块级/整行按钮（例如运行列表项）时用这个变体：锚点跟它同宽同流，
+ * 否则按钮会被 inline-flex 锚点收窄，整行排版随之改变。
+ */
+.hint-anchor[data-block='true'] {
+  display: block;
+  width: 100%;
+}
+
+.hint-layer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 70;
+  max-width: 280px;
+  pointer-events: none;
+}
+
+.hint-layer__box {
+  display: inline-block;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 10%);
+  padding: var(--space-1) 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  opacity: 0;
+  transform: translateY(2px);
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
+}
+
+.hint-layer[data-state='open'] .hint-layer__box {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* 减少动态：只保留淡入淡出，位移归零（不是清零整个提示）。 */
+  .hint-layer__box {
+    transform: none;
+    transition: opacity var(--duration-base) var(--ease-out);
+  }
+}

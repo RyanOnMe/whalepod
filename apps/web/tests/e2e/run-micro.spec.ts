@@ -23,7 +23,9 @@ const PASSWORD = 'correct horse battery staple'
 const tag = randomUUID().slice(0, 8)
 const evidence = join(process.cwd(), 'artifacts/evidence/run-micro', tag)
 
-test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减少动态', async ({ browser }) => {
+test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减少动态 × 提示层/铃铛/可关闭 toast', async ({
+  browser,
+}) => {
   test.setTimeout(180_000)
   const ownerContext = await browser.newContext({ viewport: { width: 1280, height: 900 } })
   const memberContext = await browser.newContext({ viewport: { width: 1280, height: 900 } })
@@ -41,6 +43,35 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     await owner.fill('#setup-display-name', 'Alice')
     await fillAndEnter(owner, '#setup-password', PASSWORD)
     await expect(owner.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
+
+    /*
+     * #308 完成提醒开关（Micro 铃铛）两条真实路径。
+     * 先在**没有权限**的情况下点一次：headless Chromium 会拒绝，开关不许因此变成已开、
+     * 也不许响铃（图形不能替代授权结果）；再授予通知权限并重载，点击后才是真的开。
+     */
+    const bell = owner.locator('.bell-toggle')
+    await expect(bell).toHaveAttribute('data-on', 'false')
+    await expect(bell).toHaveAttribute('data-ring', '0')
+    await owner.getByRole('button', { name: '完成提醒' }).click()
+    await expect(owner.getByText('浏览器已拒绝通知权限')).toBeVisible()
+    await expect(owner.locator('.bell-toggle')).toHaveCount(0)
+    await ownerContext.grantPermissions(['notifications'], { origin: env().webOrigin })
+    await owner.reload()
+    await expect(owner.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
+    await owner.getByRole('button', { name: '完成提醒' }).click()
+    await expect(owner.locator('.bell-toggle')).toHaveAttribute('data-on', 'true')
+    await expect(owner.locator('.bell-toggle')).toHaveAttribute('data-ring', '1')
+    expect(
+      await owner.evaluate(() => window.localStorage.getItem('whalepod.notifications.system')),
+    ).toBe('on')
+    const bellFact = {
+      component: 'web.bell',
+      deniedStaysOff: true,
+      deniedShowsReadOnly: true,
+      grantedTurnsOn: true,
+      ringAfterGrant: 1,
+    }
+
     const cookie = await sessionCookie(ownerContext)
     const session = (await hubApi(cookie, 'GET', '/auth/session')).data as { userId: string }
 
@@ -106,6 +137,38 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     const runId = (await runButton.getAttribute('data-run-id'))!
     observedRunId = runId
     expect(runId).toMatch(/^[0-9a-f-]{36}$/)
+    /*
+     * #308 提示层：运行列表项只显示序号，完整 Run id 必须可达。
+     * 鼠标路径要**先等**（冷启动，测出等待下界而不是上界）；键盘路径不等待；
+     * Escape 关闭且撤掉 aria-describedby（描述只在提示真的可见时挂）。
+     */
+    const hintStarted = Date.now()
+    await runButton.hover()
+    await expect(owner.getByRole('tooltip')).toHaveText(runId, { timeout: 3_000 })
+    const hintWaitedMs = Date.now() - hintStarted
+    expect(hintWaitedMs).toBeGreaterThanOrEqual(300)
+    const describedId = await runButton.getAttribute('aria-describedby')
+    expect(describedId).not.toBeNull()
+    expect(await owner.locator(`#${describedId}`).getAttribute('role')).toBe('tooltip')
+    // 鼠标路径的收场是「指针移开」——提示不许挂在屏幕上不走（也不许留着描述）。
+    await owner.mouse.move(2, 2)
+    await expect(owner.getByRole('tooltip')).toHaveCount(0)
+    expect(await runButton.getAttribute('aria-describedby')).toBeNull()
+    // 键盘路径：焦点到了就显示（不用等冷启动的 400ms），Escape 关闭并撤掉描述。
+    await runButton.focus()
+    await expect(owner.getByRole('tooltip')).toHaveText(runId)
+    const keyboardDescribed = await runButton.getAttribute('aria-describedby')
+    expect(keyboardDescribed).not.toBeNull()
+    await owner.keyboard.press('Escape')
+    await expect(owner.getByRole('tooltip')).toHaveCount(0)
+    expect(await runButton.getAttribute('aria-describedby')).toBeNull()
+    const hintFact = {
+      component: 'web.hint',
+      mouseWaitedMs: hintWaitedMs,
+      describedOnlyWhileVisible: true,
+      escapeCloses: true,
+      keyboardShowsAtOnce: true,
+    }
     await runButton.click()
     await waitForRunStatus(runId, 'waiting_approval', 120_000)
     await expect(owner.getByTestId('approval-card')).toBeVisible()
@@ -177,6 +240,48 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
       task: { status: string }
     }
     expect(room.task.status).toBe('in_progress')
+
+    /*
+     * #308 可关闭 toast（浏览器路径）。真实触发点是「下载失败」——#229 登记的唯一
+     * 就地失败通道：在 fetch 边界注入 500，页面走它自己的失败分支（不碰任何别的状态）。
+     * 顺手在真实浏览器里量三件事：fuse 时长 = 卡片真实窗口、悬停时 fuse 与计时一起暂停、
+     * 关闭按钮是真的关闭（关掉之后不再回来）。
+     */
+    await owner.route('**/api/v1/artifacts/*/content', (route) => route.fulfill({ status: 500 }))
+    // 交付物此刻还是 candidate：先走真实的「发布」，下载入口才会出现（#250 的两态）。
+    await owner.getByTestId('artifact-publish-button').first().click()
+    const downloadButton = owner.getByTestId('artifact-download-button').first()
+    await expect(downloadButton).toBeVisible()
+    await downloadButton.click()
+    const toast = owner.locator('.toast-item').first()
+    await expect(toast).toBeVisible()
+    await expect(toast).toContainText('下载失败')
+    const fuseMs = await toast.evaluate((el) =>
+      getComputedStyle(el).getPropertyValue('--toast-fuse-ms').trim(),
+    )
+    expect(fuseMs).toBe('3840ms')
+    await toast.hover()
+    await expect(toast).toHaveAttribute('data-paused', 'true')
+    const fusePlayState = await toast
+      .locator('.toast-item__fuse')
+      .evaluate((el) => getComputedStyle(el).animationPlayState)
+    expect(fusePlayState).toBe('paused')
+    await owner.mouse.move(2, 2)
+    await expect(toast).toHaveAttribute('data-paused', 'false')
+    await toast.getByRole('button', { name: '关闭提示' }).click()
+    await expect(owner.locator('.toast-item')).toHaveCount(0)
+    // 关掉之后不许再自动消退回来（同一张卡不复活）。
+    await owner.waitForTimeout(4_200)
+    await expect(owner.locator('.toast-item')).toHaveCount(0)
+    await owner.unroute('**/api/v1/artifacts/*/content')
+    const toastFact = {
+      component: 'web.toast',
+      trigger: 'artifact-download-500',
+      fuseMs,
+      fusePlayStateOnHover: fusePlayState,
+      closedByButton: true,
+      staysClosed: true,
+    }
 
     await mkdir(evidence, { recursive: true })
     const projections = []
@@ -279,6 +384,37 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
       ),
     )
     expect(activeRingSuppressed).toBe(true)
+    /*
+     * #308：减少动态下铃铛不响、fuse 不走——**规则必须被浏览器真的加载**（删规则会红），
+     * 而不是只在本文件里声明过；铃铛此刻是已开状态（data-ring=1），条件选择器是活的。
+     */
+    const batch2Suppressed = await owner.evaluate(() => {
+      const wanted = ['.bell-toggle__glyph', '.toast-item__fuse']
+      const found: string[] = []
+      for (const sheet of [...document.styleSheets]) {
+        for (const rule of [...sheet.cssRules]) {
+          if (!(rule instanceof CSSMediaRule)) continue
+          if (!rule.conditionText.includes('prefers-reduced-motion')) continue
+          if (!window.matchMedia(rule.conditionText).matches) continue
+          for (const inner of [...rule.cssRules]) {
+            if (
+              inner instanceof CSSStyleRule &&
+              wanted.includes(inner.selectorText) &&
+              inner.style.animationName === 'none'
+            ) {
+              found.push(inner.selectorText)
+            }
+          }
+        }
+      }
+      return found
+    })
+    expect(batch2Suppressed).toContain('.bell-toggle__glyph')
+    expect(batch2Suppressed).toContain('.toast-item__fuse')
+    const bellRingUnderReduce = await owner
+      .locator('.bell-toggle__glyph')
+      .evaluate((element) => getComputedStyle(element).animationName)
+    expect(bellRingUnderReduce).toBe('none')
     await owner.getByTestId('open-run-console').click()
     await owner.getByTestId('console-filter-tool').click()
     await expect(owner.getByTestId('tool-call-chip').last()).toHaveAttribute('data-status', 'done')
@@ -409,7 +545,42 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     await owner
       .locator('.instruction-composer')
       .screenshot({ path: join(evidence, 'composer-mobile.png') })
+    /*
+     * #308 布局证据（放在任务页判据之后，避免打扰这一页的选中状态）：提示层在按钮外面
+     * 包了一层锚点，必须证明按钮自己的盒子没变——复制按钮走 inline-flex 锚点，
+     * 运行列表项走 block 锚点（后者由既有 320/390 溢出判据覆盖）。这里量设备页的
+     * 「复制配对码」：生成配对码是真实用户动作，锚点与按钮的盒子必须完全一致。
+     */
+    await owner.setViewportSize({ width: 1280, height: 900 })
+    await owner.goto('/devices')
+    await owner.getByRole('button', { name: '生成配对码' }).click()
+    const copyButton = owner.getByRole('button', { name: '复制配对码' })
+    await expect(copyButton).toBeVisible()
+    const anchorBox = await copyButton.evaluate((button) => {
+      const anchor = button.closest('[data-testid="hint-anchor"]') as HTMLElement | null
+      if (anchor === null) return { anchored: false }
+      const a = anchor.getBoundingClientRect()
+      const b = button.getBoundingClientRect()
+      return {
+        anchored: true,
+        anchorWidth: Math.round(a.width),
+        buttonWidth: Math.round(b.width),
+        anchorHeight: Math.round(a.height),
+        buttonHeight: Math.round(b.height),
+        anchorLeft: Math.round(a.left),
+        buttonLeft: Math.round(b.left),
+      }
+    })
+    expect(anchorBox.anchored).toBe(true)
+    expect(anchorBox.anchorWidth).toBe(anchorBox.buttonWidth)
+    expect(anchorBox.anchorHeight).toBe(anchorBox.buttonHeight)
+    expect(anchorBox.anchorLeft).toBe(anchorBox.buttonLeft)
+    expect(await owner.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      1281,
+    )
+    const hintAnchorFact = { component: 'web.hint', ...anchorBox, boxUnchanged: true }
     expect(errors).toEqual([])
+
     await writeFile(
       join(evidence, 'result.json'),
       JSON.stringify(
@@ -435,6 +606,15 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
             matched: true,
             terminalRingAnimation: ringAnimation,
             activeRingSuppressed,
+            bellRingSuppressed: batch2Suppressed.includes('.bell-toggle__glyph'),
+            fuseSuppressed: batch2Suppressed.includes('.toast-item__fuse'),
+          },
+          batch2: {
+            issue: 308,
+            hint: hintFact,
+            hintAnchor: hintAnchorFact,
+            bell: bellFact,
+            toast: toastFact,
           },
           pageErrors: errors,
           runFact: await getRunFact(runId),

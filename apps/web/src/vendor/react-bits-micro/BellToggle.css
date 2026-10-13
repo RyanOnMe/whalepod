@@ -1,0 +1,124 @@
+/* React Bits BellToggle, adapted for WhalePod. See LICENSE.md / manifest.json. */
+/*
+ * 铃铛开关：胶囊形，图标槽 + 交叉淡入的文案。状态面（底色/文字色）用语义 token，
+ * 响应 `data-on`；响铃是 CSS keyframe，由 `data-ring` 计数驱动（组件用 key 重挂
+ * 图标来重放动画），减少动态下关掉。
+ */
+.bell-toggle {
+  display: inline-flex;
+}
+
+.bell-toggle__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-ink-soft);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick) ease,
+    border-color var(--duration-quick) ease,
+    color var(--duration-quick) ease;
+}
+
+.bell-toggle__button:hover:not(:disabled) {
+  border-color: var(--color-ink-soft);
+  color: var(--color-ink);
+}
+
+.bell-toggle__button:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.bell-toggle[data-on='true'] .bell-toggle__button {
+  background: var(--color-signal-soft);
+  border-color: var(--color-signal);
+  color: var(--color-signal-strong);
+}
+
+.bell-toggle__bell {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.bell-toggle__glyph {
+  display: inline-flex;
+  transform-origin: 50% 12%;
+}
+
+.bell-toggle__glyph svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+/* 响铃：只在真的响过之后（data-ring 离开 0）才参与，且每次计数变化重挂图标重放。 */
+.bell-toggle:not([data-ring='0']) .bell-toggle__glyph {
+  animation: bt-ring 520ms var(--ease-in-out);
+}
+
+@keyframes bt-ring {
+  0% {
+    transform: rotate(0deg);
+  }
+  18% {
+    transform: rotate(14deg);
+  }
+  38% {
+    transform: rotate(-11deg);
+  }
+  58% {
+    transform: rotate(7deg);
+  }
+  78% {
+    transform: rotate(-4deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+.bell-toggle__badge {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--color-danger);
+  color: var(--color-surface);
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 文案交叉淡入：两态同长（「完成提醒：已关」/「完成提醒：已开」），不撑宽不跳动。 */
+.bell-toggle__say {
+  display: grid;
+}
+
+.bell-toggle__face {
+  grid-area: 1 / 1;
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+
+.bell-toggle[data-on='false'] .bell-toggle__face[data-face='on'],
+.bell-toggle[data-on='true'] .bell-toggle__face[data-face='off'] {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* 减少动态：铃铛不响（动画关闭）——「开关真的开了」由 aria-pressed 与底色表达。 */
+  .bell-toggle__glyph {
+    animation: none !important;
+  }
+}

@@ -6,6 +6,42 @@
   "licenseSha256": "f4c33af6739191537738662d223b68d77bc226f4b57ea883e16481d8cc5c73c9",
   "files": [
     {
+      "local": "WarmTooltip.tsx",
+      "upstreamPath": "src/ts-default/Micro/WarmTooltip/WarmTooltip.tsx",
+      "originalSha256": "69ffa99b90c0b3238bef118ad9f73f3e346eb3694dc5983853fc38508df3762e",
+      "changes": "One shell-wide hint layer; cold delay then instant while warm; focus shows at once and Escape closes; lean/travel springs, blur layers, long-press, arming fuse and colour props removed together with the Motion dependency; text is only the caller's static label; block variant for full-width list buttons. See README.md."
+    },
+    {
+      "local": "WarmTooltip.css",
+      "upstreamPath": "src/ts-default/Micro/WarmTooltip/WarmTooltip.css",
+      "originalSha256": "241941731b1a83626caa3df16bb535e55ece65591154d5eac4ea9c5e3e940386",
+      "changes": "Semantic theme tokens only; no arrow (viewport clamping can make it point away from its trigger), no motion springs; reduced motion keeps the fade and drops the offset. See README.md."
+    },
+    {
+      "local": "BellToggle.tsx",
+      "upstreamPath": "src/ts-default/Micro/BellToggle/BellToggle.tsx",
+      "originalSha256": "5c099607b3d648600cc67d6a1f3120bd556b8d46eddf07cfdaa03ad5fee7bf3b",
+      "changes": "Fully controlled, so a click can never look on before the real permission result arrives; the ring is a counted receipt played by CSS keyframes; the badge shows only the real unread count; sonar waves, clapper, spring reveal, count wobble, size/colour props and the Motion/Hugeicons dependencies removed; the bell glyph is the upstream inline path. See README.md."
+    },
+    {
+      "local": "BellToggle.css",
+      "upstreamPath": "src/ts-default/Micro/BellToggle/BellToggle.css",
+      "originalSha256": "376be7cd67a1c9f3c7d5837ba250367bbce6d8ab99e25cd9305845d5533c42ca",
+      "changes": "Pill face driven by data-on with semantic tokens; label crossfade instead of a measured clip; one ring keyframe; reduced motion removes the ring animation. See README.md."
+    },
+    {
+      "local": "SwipeToast.tsx",
+      "upstreamPath": "src/ts-default/Micro/SwipeToast/SwipeToast.tsx",
+      "originalSha256": "e133570fee810e66a610f9b13fe7b6418787ee0bb14d7bc16c94f9965980257f",
+      "changes": "Maps one store item and owns the real countdown, so hover, focus, page-hidden and mid-drag can pause it; four dismissal paths (swipe, Escape, close button, real deadline); action slot, inline mode, spring settle and the Motion/Hugeicons dependencies removed; offsets go through a CSS variable instead of Motion values. See README.md."
+    },
+    {
+      "local": "SwipeToast.css",
+      "upstreamPath": "src/ts-default/Micro/SwipeToast/SwipeToast.css",
+      "originalSha256": "dcb13f804fa6c3012b48bfa3c2c3c2ca35369209c4fe0687283191b516db22be",
+      "changes": "Close button and fuse only: the card face and its presence rules stay in styles/global.css (#273 contract); the fuse length comes from the component's real remaining window; reduced motion stops the fuse animation while the timer still expires. See README.md."
+    },
+    {
       "local": "CallChip.tsx",
       "upstreamPath": "src/ts-default/Micro/CallChip/CallChip.tsx",
       "originalSha256": "1199c1a25281d3ecb12dd23423f04a0256242a1f82b36cf1eedf59101722f5b0",
