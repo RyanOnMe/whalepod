@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 const vendor = new URL('../src/vendor/react-bits-micro/', import.meta.url)
 const licenseHash = 'f4c33af6739191537738662d223b68d77bc226f4b57ea883e16481d8cc5c73c9'
 
-describe('#306 第三方来源与许可', () => {
+describe('#306 #308 第三方来源与许可', () => {
   it('完整保留固定上游许可，不能静默改标纯 MIT / Apache-2.0', () => {
     const license = readFileSync(new URL('LICENSE.md', vendor))
     expect(createHash('sha256').update(license).digest('hex')).toBe(licenseHash)
@@ -19,14 +19,20 @@ describe('#306 第三方来源与许可', () => {
     expect(manifest.license).toBe('MIT + Commons Clause License Condition v1.0')
     expect(manifest.licenseSha256).toBe(licenseHash)
     expect(manifest.files.map((file) => file.local).sort()).toEqual([
+      'BellToggle.css',
+      'BellToggle.tsx',
       'CallChip.css',
       'CallChip.tsx',
       'RubberSegment.css',
       'RubberSegment.tsx',
       'StatusMark.css',
       'StatusMark.tsx',
+      'SwipeToast.css',
+      'SwipeToast.tsx',
       'ThoughtLine.css',
       'ThoughtLine.tsx',
+      'WarmTooltip.css',
+      'WarmTooltip.tsx',
     ])
     for (const file of manifest.files) {
       expect(file.originalSha256).toMatch(/^[0-9a-f]{64}$/)

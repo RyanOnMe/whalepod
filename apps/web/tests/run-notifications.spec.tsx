@@ -17,6 +17,8 @@
  */
 import { act, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ALICE,
@@ -262,5 +264,89 @@ describe('运行完成通知（#259）', () => {
     expect(document.title).toBe('(1) WhalePod')
     expect(FakeNotification.instances).toHaveLength(0)
     view.unmount()
+  })
+})
+
+/**
+ * #308：铃铛从「文本按钮」变成真开关（Bell Toggle 应用内适配）。
+ *
+ * 判据（Issue 的「怎样算修好」第 3 条）：
+ * 1. 响铃是**事件回执**，不是装饰：只有真实授权且启用之后才响一次；未授权/被拒
+ *    一次也不响（图形不许替代授权结果）；
+ * 2. 徽标只显示真实未读运行数，与 `document.title` 同源；进房即已读两边一起归零；
+ * 3. 减少动态下关掉响铃动画——但「开关真的开了」这件事不能靠动画表达。
+ */
+const toggleOf = (): HTMLElement =>
+  screen.getByRole('button', { name: /完成提醒/ }).closest('.bell-toggle') as HTMLElement
+
+describe('#308 完成提醒开关（Micro 铃铛）', () => {
+  it('未授权就不响铃：默认关、响铃计数为 0', async () => {
+    const { view } = await mountApp()
+    const toggle = toggleOf()
+    expect(toggle).toHaveAttribute('data-on', 'false')
+    expect(toggle).toHaveAttribute('data-ring', '0')
+    expect(screen.getByRole('button', { name: /完成提醒/ })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    view.unmount()
+  })
+
+  it('真实授权并启用后才响一次；偏好写入本地;再点关闭不再响', async () => {
+    const user = userEvent.setup()
+    FakeNotification.permission = 'default'
+    const { view } = await mountApp()
+    FakeNotification.permission = 'granted'
+    await user.click(screen.getByRole('button', { name: /完成提醒/ }))
+    await waitFor(() => expect(toggleOf()).toHaveAttribute('data-on', 'true'))
+    expect(toggleOf()).toHaveAttribute('data-ring', '1')
+    expect(window.localStorage.getItem('whalepod.notifications.system')).toBe('on')
+    // 关闭：不响（关掉不是可庆祝的事件），状态如实回落。
+    await user.click(screen.getByRole('button', { name: /完成提醒/ }))
+    expect(toggleOf()).toHaveAttribute('data-on', 'false')
+    expect(toggleOf()).toHaveAttribute('data-ring', '1')
+    expect(window.localStorage.getItem('whalepod.notifications.system')).toBe('off')
+    view.unmount()
+  })
+
+  it('权限被拒：不响铃、不写偏好、状态不进入已开', async () => {
+    const user = userEvent.setup()
+    FakeNotification.permission = 'default'
+    const { view } = await mountApp()
+    FakeNotification.permission = 'denied'
+    await user.click(screen.getByRole('button', { name: /完成提醒/ }))
+    expect(await screen.findByText(/浏览器已拒绝通知/)).toBeVisible()
+    expect(window.localStorage.getItem('whalepod.notifications.system')).not.toBe('on')
+    // 拒绝后只读：不再有可点的开关（DOM 里连开关都不该在）。
+    expect(screen.queryByRole('button', { name: /完成提醒/ })).toBeNull()
+    view.unmount()
+  })
+
+  it('徽标显示真实未读运行数：与标题同源，进房一起归零', async () => {
+    const user = userEvent.setup()
+    const { view, sink } = await mountApp()
+    expect(screen.queryByTestId('bell-badge')).toBeNull()
+    act(() => sink.onFrame(runChanged('r1', TASK_A, 'completed', liveNow())))
+    act(() => sink.onFrame(runChanged('r2', TASK_A, 'failed', liveNow())))
+    expect(screen.getByTestId('bell-badge')).toHaveTextContent('2')
+    expect(document.title).toBe('(2) WhalePod')
+    await user.click(screen.getByRole('link', { name: /修登录页/ }))
+    expect(await screen.findByRole('heading', { name: '修登录页' })).toBeVisible()
+    await waitFor(() => expect(screen.queryByTestId('bell-badge')).toBeNull())
+    expect(document.title).toBe('WhalePod')
+    view.unmount()
+  })
+
+  it('样式契约：响铃是 CSS 动画，减少动态下必须关掉', () => {
+    const bellCss = readFileSync(
+      resolve(process.cwd(), 'apps/web/src/vendor/react-bits-micro/BellToggle.css'),
+      'utf8',
+    )
+    expect(bellCss).toMatch(/\.bell-toggle\s*\{/)
+    expect(bellCss).toMatch(/\.bell-toggle__glyph/)
+    // 响铃动画真的挂在「已响过」的条件上，而不是无条件播放。
+    expect(bellCss).toMatch(/data-ring='0'[\s\S]*?animation/)
+    const reduced = bellCss.split('@media (prefers-reduced-motion: reduce)').slice(1).join('')
+    expect(reduced).toContain('.bell-toggle__glyph')
   })
 })
