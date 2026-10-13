@@ -72,7 +72,11 @@ export default function SwipeToast({
 
   // 真实剩余时间只在两个地方推进：这里（真实的计时器）与 CSS 的 fuse（同一时长）。
   useEffect(() => {
-    if (leaving || closed.current) return undefined
+    // 退场一起步就不再需要这个计时器：留着它只会是一个「没人看结果」的散计时器。
+    if (leaving || closed.current) {
+      clearTimeout(timer.current)
+      return undefined
+    }
     const schedule = (ms: number): void => {
       clearTimeout(timer.current)
       startedAt.current = Date.now()
