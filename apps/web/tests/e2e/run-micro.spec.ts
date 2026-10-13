@@ -49,9 +49,11 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
      * 先在**没有权限**的情况下点一次：headless Chromium 会拒绝，开关不许因此变成已开、
      * 也不许响铃（图形不能替代授权结果）；再授予通知权限并重载，点击后才是真的开。
      */
+    await mkdir(evidence, { recursive: true })
     const bell = owner.locator('.bell-toggle')
     await expect(bell).toHaveAttribute('data-on', 'false')
     await expect(bell).toHaveAttribute('data-ring', '0')
+    await bell.screenshot({ path: join(evidence, 'bell-off.png') })
     await owner.getByRole('button', { name: '完成提醒' }).click()
     await expect(owner.getByText('浏览器已拒绝通知权限')).toBeVisible()
     await expect(owner.locator('.bell-toggle')).toHaveCount(0)
@@ -61,6 +63,7 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     await owner.getByRole('button', { name: '完成提醒' }).click()
     await expect(owner.locator('.bell-toggle')).toHaveAttribute('data-on', 'true')
     await expect(owner.locator('.bell-toggle')).toHaveAttribute('data-ring', '1')
+    await owner.locator('.bell-toggle').screenshot({ path: join(evidence, 'bell-on.png') })
     expect(
       await owner.evaluate(() => window.localStorage.getItem('whalepod.notifications.system')),
     ).toBe('on')
@@ -147,6 +150,20 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     await expect(owner.getByRole('tooltip')).toHaveText(runId, { timeout: 3_000 })
     const hintWaitedMs = Date.now() - hintStarted
     expect(hintWaitedMs).toBeGreaterThanOrEqual(300)
+    // 提示层 portal 到 body：元素截图拍不到浮层，必须整页截图 + 裁剪「运行项 ∪ 提示」的并集。
+    const hintClip = await owner.evaluate(() => {
+      const layer = document.querySelector('.hint-layer')?.getBoundingClientRect()
+      const trigger = document.querySelector('button[data-run-id]')?.getBoundingClientRect()
+      if (layer === undefined || trigger === undefined) return null
+      const pad = 8
+      const x = Math.max(0, Math.min(trigger.left, layer.left) - pad)
+      const y = Math.max(0, Math.min(trigger.top, layer.top) - pad)
+      const right = Math.max(trigger.right, layer.right) + pad
+      const bottom = Math.max(trigger.bottom, layer.bottom) + pad
+      return { x, y, width: right - x, height: bottom - y }
+    })
+    expect(hintClip).not.toBeNull()
+    await owner.screenshot({ path: join(evidence, 'hint-run-id.png'), clip: hintClip! })
     const describedId = await runButton.getAttribute('aria-describedby')
     expect(describedId).not.toBeNull()
     expect(await owner.locator(`#${describedId}`).getAttribute('role')).toBe('tooltip')
@@ -266,6 +283,9 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
       .locator('.toast-item__fuse')
       .evaluate((el) => getComputedStyle(el).animationPlayState)
     expect(fusePlayState).toBe('paused')
+    // 截图留证：卡上能看到已烧掉一段的 fuse 与关闭按钮（此刻悬停暂停）；再留一张带位置的全屏。
+    await toast.screenshot({ path: join(evidence, 'toast-fuse.png') })
+    await owner.screenshot({ path: join(evidence, 'toast-context.png') })
     await owner.mouse.move(2, 2)
     await expect(toast).toHaveAttribute('data-paused', 'false')
     await toast.getByRole('button', { name: '关闭提示' }).click()
