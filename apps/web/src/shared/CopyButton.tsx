@@ -4,8 +4,12 @@
  * navigator.clipboard 不可用或写入失败时明确报失败并指向手动复制入口
  * （取值本身始终在页面上可见），**不伪造「已复制」**——复制失败与成功是两种
  * 可区分的用户可见状态（六原语·观测）。
+ *
+ * #308：按钮可见文案是泛指的「复制」，真正复制什么只有 `label` 说明——
+ * 用它给**鼠标用户**也补上同一个说法（此前只有 aria-label 知道）。
  */
 import { useState, type ReactNode } from 'react'
+import { Hint } from './micro/Hint.js'
 
 export interface CopyButtonProps {
   /** 要写入剪贴板的完整值。 */
@@ -39,9 +43,11 @@ export function CopyButton({
   }
   return (
     <span className="copy-value">
-      <button type="button" className="button button-quiet" aria-label={label} onClick={copy}>
-        {children ?? '复制'}
-      </button>
+      <Hint label={label}>
+        <button type="button" className="button button-quiet" aria-label={label} onClick={copy}>
+          {children ?? '复制'}
+        </button>
+      </Hint>
       {copied === 'copied' ? <span role="status">已复制</span> : null}
       {copied === 'failed' ? <span role="status">复制失败，请手动复制{valueLabel}</span> : null}
     </span>

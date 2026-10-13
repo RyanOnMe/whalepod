@@ -255,12 +255,12 @@ p.app-sidebar-heading {
 }
 
 /*
- * #259 完成提醒开关：搜索入口下面一行，quiet 按钮形态（与「退出登录」同族，
- * 焦点环与对比度沿用 .button-quiet 的既有取值，不新造一套）。
+ * #259 完成提醒开关（#308 起由 Bell Toggle 适配件承载）：搜索入口下面一行。
+ * 面、描边、响铃动画都在组件自己的 CSS（vendor/react-bits-micro/BellToggle.css），
+ * 这里只留侧栏这一列的排布。
  */
-.app-sidebar-notify-toggle {
+.app-sidebar-notify {
   align-self: flex-start;
-  font-size: 13px;
 }
 
 .app-sidebar-notify-hint {
@@ -2541,6 +2541,11 @@ textarea::placeholder {
   z-index: 60;
 }
 .toast-item {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   background: var(--color-surface);
   color: var(--color-ink);
   border: 1px solid var(--color-line);
@@ -2551,9 +2556,10 @@ textarea::placeholder {
   max-width: 420px;
   /* #273 进出：进场靠 @starting-style，退场靠 `.leaving`（store 到点前先标记，
      退场演完才真的从数组里移除）。栈内重排仍是瞬时的——那需要 FLIP 测量补偿，
-     不在本切片（登记在 docs/agent/presence-acceptance.md 的边界里）。 */
+     不在本切片（登记在 docs/agent/presence-acceptance.md 的边界里）。
+     #308：拖拽位移由 `--toast-offset` 注入，退场仍用 `--presence-transform`。 */
   opacity: 1;
-  transform: none;
+  transform: translateY(var(--toast-offset, 0px));
   transition:
     opacity var(--duration-base) var(--ease-out),
     transform var(--duration-base) var(--ease-out);

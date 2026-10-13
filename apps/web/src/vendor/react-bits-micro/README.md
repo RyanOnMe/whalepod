@@ -1,6 +1,6 @@
 # React Bits Micro：WhalePod 应用内源码适配
 
-仅选取 CallChip、StatusMark、ThoughtLine 和 RubberSegment 的 TypeScript/CSS 版本，固定版本与逐文件原始 SHA-256 见 [manifest.json](./manifest.json)。来源为 [DavidHDev/react-bits](https://github.com/DavidHDev/react-bits)，版权属于 David Haz。
+仅选取 CallChip、StatusMark、ThoughtLine、RubberSegment、WarmTooltip、BellToggle 和 SwipeToast 的 TypeScript/CSS 版本，固定版本与逐文件原始 SHA-256 见 [manifest.json](./manifest.json)。来源为 [DavidHDev/react-bits](https://github.com/DavidHDev/react-bits)，版权属于 David Haz。
 
 ## 许可与使用范围
 
@@ -15,8 +15,11 @@
 - ThoughtLine 保留标题、点状 glyph 与标签结构，改为受控公开阶段摘要。移除思维 trace、计时器、自动 settle、shimmer、blur 和外部依赖；当前面板已有状态环，因此标签不再添加另一处循环动效。
 - RubberSegment 保留轨道、等宽按钮与指示面结构。仅用于 Console 筛选，改为原生 group + aria-pressed，保留全部按钮的 Tab 顺序；取消拖拽、惯性、弹性、拉伸与 radio 键位。鼠标指示面 transform 160ms 可打断，键盘与减少动态即时切换。
 - 指令按钮反馈使用 WhalePod 自有实现，保留原 InstructionComposer 的权限、目标和提交路径，没有复制 PromptBar 或扩展不存在的功能。
-- 所有颜色、圆角、字体、过渡均消费现有语义 token。在线状态环周期沿用上游 1100ms，集中登记为活动 token。减少动态模式彻底停用旋转；无需新增 Motion/Hugeicons 依赖。
-- 组件仅负责呈现，状态/事件配对在应用层；不变更 Run、审批或 Task 的业务语义。
+- WarmTooltip 保留「首个等待、窗口内相邻即时」的 warm 语义与单例提示层，改由应用壳挂一个 `HintGroup`（`shared/micro/Hint.tsx`）。删除倾斜、行程弹簧、模糊层、长按与武装进度条，以及 Motion 依赖。触发元素必须是真实 DOM 元素（`aria-describedby` 要挂在会渲染它的节点上）；已聚焦元素上的提示不等待，鼠标按下后不再补弹。只有「可见文案够不着真目标」的可聚焦控件才用它（复制按钮、运行列表项），不给纯展示元素加 tab 停靠点。
+- BellToggle 改成**完全受控**：`pressed` 由调用方按真实权限结果给，组件只在真的从关变开（或已开时真实未读增加）时响一次铃，计数写在 `data-ring` 上、由 CSS keyframe 播放。删除声呐波纹、铃舌、弹簧展开、未读晃动、尺寸与配色参数，以及 Motion/Hugeicons 依赖（铃铛图形用上游同文件里的内联路径）。徽标只渲染传入的真实未读数，为 0 不渲染空徽标。
+- SwipeToast 保留下滑关闭、fuse 与可暂停语义，改成承载 store 里的一条 toast：**计时器由卡片持有**，因此悬停、聚焦、页面隐藏、拖拽中都能暂停并按剩余时间继续；关闭路径是滑动、Escape、关闭按钮与真实到期四条。删除动作按钮槽、inline 模式、弹簧回落与 Motion/Hugeicons 依赖；位移走 CSS 变量而不是 Motion 值。卡片本体样式与 `.leaving` 退场仍在 `styles/global.css`（#273 契约）。
+- 所有颜色、圆角、字体、过渡均消费现有语义 token。在线状态环周期沿用上游 1100ms，集中登记为活动 token。减少动态模式彻底停用旋转、弹入与 fuse 动画（消退行为不依赖动画）；无需新增 Motion/Hugeicons 依赖。
+- 组件仅负责呈现，状态/事件配对在应用层；不变更 Run、审批或 Task 的业务语义。提示层只显示调用方传入的静态标签，不读取 Run/事件/投影数据；铃铛不改变通知投递逻辑本身；toast 的关闭不推进任何系统状态。
 
 ## 同步纪律
 

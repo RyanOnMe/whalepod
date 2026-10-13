@@ -26,6 +26,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useState, type ReactNode } from 'react'
 import { api } from '../shared/api/client.js'
+import { Hint } from '../shared/micro/Hint.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
 import { queryKeys } from '../app/query-client.js'
 import { RelativeTime } from '../shared/RelativeTime.js'
@@ -245,14 +246,16 @@ function IssuedPairingCode({
       </p>
       <div className="form-actions">
         <span className="copy-value">
-          <button
-            type="button"
-            className="button button-primary"
-            aria-label="复制配对码"
-            onClick={copy}
-          >
-            复制
-          </button>
+          <Hint label="复制配对码">
+            <button
+              type="button"
+              className="button button-primary"
+              aria-label="复制配对码"
+              onClick={copy}
+            >
+              复制
+            </button>
+          </Hint>
           {copied === 'copied' ? <span role="status">已复制</span> : null}
           {copied === 'failed' ? <span role="status">复制失败，请手动复制配对码</span> : null}
         </span>
