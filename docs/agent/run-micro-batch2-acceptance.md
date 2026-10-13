@@ -70,12 +70,14 @@ scripts/secret-scan.sh apps/web/src/vendor/react-bits-micro
 
 - TDD：先写会红的判据（`micro-hint.spec.tsx` 模块不存在、`data-testid="toast-item"` 未挂、铃铛没有 `data-ring`），实现后转绿；`micro-vendoring` 门在补 manifest 前红（文件清单 14 条），补后绿——期间它真抓到一次抄错的原始哈希（62 位）。
 - Q0：`pnpm check` PASS——126 文件、1484 条通过、7 条既有 expected-fail（第一批 1466 条 → 本批 +18）。含格式、lint、类型、边界、生成与插件 fixture。
-- Q5：`pnpm test:e2e:micro` PASS（场景 14.5s / 含构建冷启 29.8s，1 worker）。本批新增实测：提示层鼠标等待 844ms（冷启动下界 ≥300ms 通过）且移开即关、键盘焦点即显、Escape 关闭并撤掉描述；铃铛未授权点击后保持关闭且只剩只读说明、授权后 `data-on` 真且 `data-ring` 0→1、偏好落 `whalepod.notifications.system=on`；toast fuse 实测 `3840ms`、悬停时 `animation-play-state: paused`、关闭按钮点掉后 4.2s 内不再出现。`pageErrors` 为空。
+- Q5：`pnpm test:e2e:micro` PASS（场景 15.2s / 含构建冷启 33.0s，1 worker）。本批新增实测：提示层鼠标等待 846ms（冷启动下界 ≥300ms 通过）且移开即关、键盘焦点即显、Escape 关闭并撤掉描述；铃铛未授权点击后保持关闭且只剩只读说明、授权后 `data-on` 真且 `data-ring` 0→1、偏好落 `whalepod.notifications.system=on`；toast fuse 实测 `3840ms`、悬停时 `animation-play-state: paused`、关闭按钮点掉后 4.2s 内不再出现。`pageErrors` 为空。
 - 减少动态：浏览器实际加载的规则里 `.bell-toggle__glyph` 与 `.toast-item__fuse` 都是 `animation: none`（`bellRingSuppressed` / `fuseSuppressed` 均 true，删规则即红）。
 - 布局与主题：1280 / 390 / 320px 在浅色与强制深色 token 下 `documentWidth` 等于视口、无横向溢出（复用第一批判据，成功 chip 对比度 10.98:1）。本批新增一条**锚点盒子**证据：设备页「复制配对码」按钮与它外面的提示锚点尺寸逐项相等（62×40，左边界 317 一致，`batch2.hintAnchor.boxUnchanged`）——提示层包在按钮外面，必须证明它没有改变按钮自己的盒子；运行列表项的 block 锚点由既有的 320/390 溢出判据覆盖。
 - `pnpm test:licenses` 626 包通过（**无新增依赖、未改 catalog/lockfile**）；`scripts/secret-scan.sh` 对 vendor 目录、`shared/micro` 与 web 测试面均未命中。
 
-本次证据目录：`artifacts/evidence/run-micro/bd9d864e/`。`result.json` 新增 `batch2` 段（按 web.hint / web.bell / web.toast 分层）与 `reducedMotion.bellRingSuppressed`、`reducedMotion.fuseSuppressed`；toast 的触发方式记在 `batch2.toast.trigger = artifact-download-500`（在 fetch 边界注入 500，页面走自己的失败分支）。证据不入 git，复跑产生新 attempt，失败写 `failure.json`，不覆盖旧 PASS。
+本次证据目录：`artifacts/evidence/run-micro/b446d729/`。`result.json` 新增 `batch2` 段（按 web.hint / web.bell / web.toast 分层）与 `reducedMotion.bellRingSuppressed`、`reducedMotion.fuseSuppressed`；toast 的触发方式记在 `batch2.toast.trigger = artifact-download-500`（在 fetch 边界注入 500，页面走自己的失败分支）。证据不入 git，复跑产生新 attempt，失败写 `failure.json`，不覆盖旧 PASS。
+
+供人复核的截图（与第一批同口径：**机器判定不依赖截图**）：`hint-run-id.png`（提示层显示完整 Run id，**整页裁剪「运行项 ∪ 提示」的并集**——提示 portal 到 body，元素截图拍不到它在按钮上方那一块）、`bell-off.png` / `bell-on.png`（授权前后的开关本体）、`toast-fuse.png`（悬停暂停时的卡与已烧一段的 fuse）、`toast-context.png`（toast 在页面右下角的实际位置）。铃铛徽标显示真实未读数由 web 判据钉住（有未读才渲染、进任务房归零），本链没有「离开任务房时正好跑完」的时刻，故不留徽标截图。
 
 ## 归因与边界
 
