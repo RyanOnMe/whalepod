@@ -6,7 +6,8 @@
 import { randomUUID } from 'node:crypto'
 import type { WebSocket } from 'ws'
 import type { AuthenticatedDevice } from '../run/device-gateway.js'
-import type { NodeDownstream } from '@whalepod/protocol'
+import { NodePreparationCheckSchema } from '@whalepod/protocol'
+import type { NodePreparationResult, NodeDownstream } from '@whalepod/protocol'
 
 export interface NodeConnection extends AuthenticatedDevice {
   readonly socket: WebSocket
@@ -33,15 +34,93 @@ function envelope(type: NodeDownstream['type'], payload: unknown): NodeDownstrea
 
 export class NodeConnectionRegistry {
   private readonly byDevice = new Map<string, NodeConnection>()
+  private readonly preparation = new Map<
+    string,
+    {
+      deviceId: string
+      socket: WebSocket
+      timer: ReturnType<typeof setTimeout>
+      resolve: (result: NodePreparationResult) => void
+      reject: (error: Error) => void
+    }
+  >()
+
+  private rejectPreparation(socket: WebSocket): void {
+    for (const [id, pending] of this.preparation) {
+      if (pending.socket !== socket) continue
+      clearTimeout(pending.timer)
+      this.preparation.delete(id)
+      pending.reject(new NodeOfflineError('preparation connection changed'))
+    }
+  }
+
+  /** 有界只读请求；不进 Outbox。只接受同一 Device 的同一活跃连接回报。 */
+  requestPreparation(
+    deviceId: string,
+    input: { workspaceId: string; provider: string; credentialSlot: string },
+    timeoutMs = 5_000,
+  ): Promise<NodePreparationResult> {
+    const connection = this.byDevice.get(deviceId)
+    if (connection === undefined || !this.isOnline(deviceId))
+      return Promise.reject(new NodeOfflineError())
+    if (
+      this.preparation.size >= 128 ||
+      [...this.preparation.values()].filter((row) => row.deviceId === deviceId).length >= 8
+    )
+      return Promise.reject(new NodeOfflineError('preparation busy'))
+    const requestId = randomUUID()
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.preparation.delete(requestId)
+        reject(new NodeOfflineError('preparation timed out'))
+      }, timeoutMs)
+      this.preparation.set(requestId, {
+        deviceId,
+        socket: connection.socket,
+        timer,
+        resolve,
+        reject,
+      })
+      try {
+        this.send(
+          deviceId,
+          NodePreparationCheckSchema.parse(
+            envelope('node.preparation_check', { requestId, ...input }),
+          ),
+        )
+      } catch {
+        clearTimeout(timer)
+        this.preparation.delete(requestId)
+        reject(new NodeOfflineError())
+      }
+    })
+  }
+
+  deliverPreparation(deviceId: string, socket: WebSocket, result: NodePreparationResult): boolean {
+    const pending = this.preparation.get(result.requestId)
+    if (
+      pending === undefined ||
+      pending.deviceId !== deviceId ||
+      pending.socket !== socket ||
+      this.byDevice.get(deviceId)?.socket !== socket
+    )
+      return false
+    clearTimeout(pending.timer)
+    this.preparation.delete(result.requestId)
+    pending.resolve(result)
+    return true
+  }
 
   /** 注册新连接；同 Device 旧连接以 4008 替换。返回是否为新挂载。 */
   attach(connection: NodeConnection): void {
     const previous = this.byDevice.get(connection.deviceId)
     if (previous !== undefined && previous.socket !== connection.socket) {
+      this.rejectPreparation(previous.socket)
       previous.socket.close(4008, 'replaced by a newer connection')
     }
     this.byDevice.set(connection.deviceId, connection)
     connection.socket.once('close', () => {
+      this.rejectPreparation(connection.socket)
       if (this.byDevice.get(connection.deviceId)?.socket === connection.socket) {
         this.byDevice.delete(connection.deviceId)
       }
@@ -49,6 +128,7 @@ export class NodeConnectionRegistry {
   }
 
   detach(deviceId: string, socket: WebSocket): void {
+    this.rejectPreparation(socket)
     if (this.byDevice.get(deviceId)?.socket === socket) this.byDevice.delete(deviceId)
   }
 
@@ -75,6 +155,7 @@ export class NodeConnectionRegistry {
     } catch {
       // 发送失败不阻碍关闭。
     }
+    this.rejectPreparation(connection.socket)
     connection.socket.close(4008, 'token revoked')
     this.byDevice.delete(deviceId)
     return true

@@ -7,11 +7,12 @@
  * Revision 走（credentialSlot 在 Hub 侧快照进 run.start 载荷，UI 不碰凭据）。
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { useMemberDirectory } from '../team/memberDirectory.js'
+import { ExecutionPreparation } from './ExecutionPreparation.js'
 import { TargetPicker } from './TargetPicker.js'
 import { InstructionSendIcon } from './InstructionSendIcon.js'
 import type { InstructionOutcome } from './InstructionComposer.js'
@@ -66,6 +67,12 @@ export function RunLauncher({
     else setLocalPrompt(text)
   }
   const [instant, setInstant] = useState(true)
+  const [preparationBlocked, setPreparationBlocked] = useState(false)
+  const onPreparationBlocked = useCallback((blocked: boolean) => setPreparationBlocked(blocked), [])
+  const onPreparationTarget = useCallback((target: { deviceId: string; workspaceId: string }) => {
+    setDeviceId(target.deviceId)
+    setWorkspaceId(target.workspaceId)
+  }, [])
   const intentKey = useRef<{ signature: string; key: string } | null>(null)
   const isAssignee = task.assigneeUserId === session.userId
 
@@ -215,6 +222,7 @@ export function RunLauncher({
 
   const ready =
     agentId !== '' &&
+    !preparationBlocked &&
     selectedRevision !== undefined &&
     !hasActiveRun &&
     (!isAssignee ||
@@ -306,6 +314,33 @@ export function RunLauncher({
           <p className="mutation-hint" role="status">
             尚无在线且可用的执行环境。请先在<Link to="/devices">设备页</Link>
             完成配对并登记工作目录。
+          </p>
+        ) : null}
+        {isAssignee &&
+        selectedRevision !== undefined &&
+        typeof selectedRevision.credentialSlot === 'string' &&
+        typeof selectedRevision.provider === 'string' ? (
+          <ExecutionPreparation
+            taskId={task.id}
+            selection={{
+              agentId,
+              profileRevisionId: selectedRevision.id,
+              ...(deviceId === '' ? {} : { deviceId }),
+              ...(workspaceId === '' ? {} : { workspaceId }),
+            }}
+            provider={selectedRevision.provider}
+            credentialSlot={selectedRevision.credentialSlot}
+            draft={prompt}
+            onTrialDraft={setPrompt}
+            onTarget={onPreparationTarget}
+            onBlocked={onPreparationBlocked}
+          />
+        ) : null}
+        {isAssignee &&
+        selectedRevision !== undefined &&
+        typeof selectedRevision.credentialSlot !== 'string' ? (
+          <p className="mutation-hint" role="status">
+            配置版本的凭据信息读取不完整，请重新读取配置；准备条件尚未确认。
           </p>
         ) : null}
         <details className="execution-settings">

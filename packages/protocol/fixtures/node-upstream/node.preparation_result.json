@@ -1,0 +1,11 @@
+{
+  "protocolVersion": 1,
+  "messageId": "99382dbf-0222-443f-8255-4d3d85cd1574",
+  "sentAt": "2026-10-14T00:00:00.000Z",
+  "type": "node.preparation_result",
+  "payload": {
+    "requestId": "a66b36aa-0587-4f06-b935-b2fe77f834bf",
+    "workspace": "available",
+    "credential": "configured"
+  }
+}

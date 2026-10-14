@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import { NodePreparationResultSchema, type PreparationFacts } from '@whalepod/protocol'
 /**
  * Node 出站会话循环（02 Task 9 Step 5；03 §6）。
  *
@@ -35,6 +37,11 @@ export interface DeviceSessionDeps {
    * P1-13：run 相关下行帧委托（run.start/run.cancel/approval.decide/
    * run.event_ack/run.resend_from）。node.token_revoked 由本模块先行处理，不委托。
    */
+  readonly preparationCheck?: (request: {
+    workspaceId: string
+    provider: string
+    credentialSlot: string
+  }) => Promise<PreparationFacts>
   readonly onFrame?: (frame: NodeDownstream) => void
   /** P1-13：连接（重）建立、hello 发出后回调——spool 全量补发的触发点（R1）。 */
   readonly onConnected?: () => void
@@ -174,6 +181,34 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
             revoked = true
             deps.onRevoked()
             current?.close(1000, 'token revoked locally')
+            return
+          }
+          if (frame.type === 'node.preparation_check') {
+            // 检查与响应均留在当前连接；断线/替换后不把旧结果发到另一条连接。
+            const checkedSocket = socket
+            void deps
+              .preparationCheck?.(frame.payload)
+              .then((facts) => {
+                if (
+                  current !== (checkedSocket as unknown as SocketLike) ||
+                  checkedSocket.readyState !== 1
+                )
+                  return
+                checkedSocket.send(
+                  JSON.stringify(
+                    NodePreparationResultSchema.parse({
+                      protocolVersion: 1,
+                      messageId: randomUUID(),
+                      sentAt: new Date().toISOString(),
+                      type: 'node.preparation_result',
+                      payload: { requestId: frame.payload.requestId, ...facts },
+                    }),
+                  ),
+                )
+              })
+              .catch(() => {
+                // 无检查器/失败即沉默，由Hub超时给出“未确认”；不记录敏感本机错误。
+              })
             return
           }
           // P1-13：其余已认证下行帧委托运行会话层（RunManager）。

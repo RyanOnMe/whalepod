@@ -220,10 +220,32 @@ export const RunLiveDeltaSchema = envelope(
   }),
 )
 
+/** #320：只读准备检查，结果不能夹带秘密、路径或模型调用结论。 */
+export const PreparationFactsSchema = z.strictObject({
+  workspace: z.enum(['available', 'unavailable', 'unconfirmed']),
+  credential: z.enum(['configured', 'unconfigured', 'unconfirmed']),
+})
+export type PreparationFacts = z.infer<typeof PreparationFactsSchema>
+export const NodePreparationResultSchema = envelope(
+  'node.preparation_result',
+  z.strictObject({ requestId: z.uuid(), ...PreparationFactsSchema.shape }),
+)
+export type NodePreparationResult = z.infer<typeof NodePreparationResultSchema>['payload']
+export const NodePreparationCheckSchema = envelope(
+  'node.preparation_check',
+  z.strictObject({
+    requestId: z.uuid(),
+    workspaceId: z.uuid(),
+    provider: z.string().min(1).max(100),
+    credentialSlot: z.string().min(1).max(80),
+  }),
+)
+
 export const NodeUpstreamSchema = z.discriminatedUnion('type', [
   NodeHelloSchema,
   NodeHeartbeatSchema,
   NodeInventorySchema,
+  NodePreparationResultSchema,
   CommandAckSchema,
   RunSnapshotFrameSchema,
   RunEventFrameSchema,
@@ -358,6 +380,7 @@ export const NodeDownstreamSchema = z.discriminatedUnion('type', [
   RunStartSchema,
   RunCancelSchema,
   RunStatusRequestSchema,
+  NodePreparationCheckSchema,
   RunEventAckSchema,
   RunResendFromSchema,
   RunFollowupSchema,

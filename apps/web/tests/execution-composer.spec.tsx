@@ -43,6 +43,7 @@ function agentHandlers(): MockHandler[] {
               revision: 1,
               approvalPolicy: 'approval_required',
               provider: 'replay',
+              credentialSlot: 'default',
               model: 'replay',
             },
             {
@@ -50,6 +51,7 @@ function agentHandlers(): MockHandler[] {
               revision: 2,
               approvalPolicy: 'full_access',
               provider: 'replay',
+              credentialSlot: 'default',
               model: 'replay',
             },
           ],

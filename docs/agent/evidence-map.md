@@ -47,3 +47,7 @@
 ## 绝不进入证据的东西
 
 密码、Setup/Invite/Device Token、模型密钥、绝对路径、完整 DSH Session JSONL、未发布 Artifact 正文（04 文档 §9）。
+
+## 首次执行准备（#320）
+
+准备检查无法确认：先查hub.device连接/Node版本与node.preparation；缺项查本机registry/SecretStore；旧结果被复用查web.preparation的版本/目标scope。复跑与证据见[execution-preparation-acceptance](./execution-preparation-acceptance.md)。

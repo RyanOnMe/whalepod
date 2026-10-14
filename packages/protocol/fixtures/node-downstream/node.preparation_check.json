@@ -1,0 +1,12 @@
+{
+  "protocolVersion": 1,
+  "messageId": "72e5c0ee-8f96-4717-b763-66d0982d4953",
+  "sentAt": "2026-10-14T00:00:00.000Z",
+  "type": "node.preparation_check",
+  "payload": {
+    "requestId": "57d1666c-6f80-4d82-abe6-896dea7bf901",
+    "workspaceId": "813b0ff8-7499-4b1e-8d65-93e66da96364",
+    "provider": "fixture-provider",
+    "credentialSlot": "default"
+  }
+}
