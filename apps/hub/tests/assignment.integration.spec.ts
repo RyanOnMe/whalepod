@@ -70,6 +70,7 @@ describe('assignment API (G2-04/05)', () => {
     const reassigned = await apiInject(ctx, alice, {
       method: 'POST',
       url: `/api/v1/tasks/${task.id}/reassign`,
+      headers: { 'idempotency-key': 'reassign-retry-key' },
       payload: { assigneeUserId: alice.userId },
     })
     expect(reassigned.statusCode).toBe(200)
@@ -78,6 +79,14 @@ describe('assignment API (G2-04/05)', () => {
       assignmentStatus: 'pending',
     })
     expect(reassigned.json().data.acceptedAt).toBeNull()
+    const retry = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${task.id}/reassign`,
+      headers: { 'idempotency-key': 'reassign-retry-key' },
+      payload: { assigneeUserId: alice.userId },
+    })
+    expect(retry.statusCode).toBe(200)
+    expect(retry.json().data).toEqual(reassigned.json().data)
   })
 
   it('G2-05: reassigning a task with an active run is rejected with 409', async () => {
