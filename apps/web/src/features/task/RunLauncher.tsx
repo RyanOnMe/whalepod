@@ -186,6 +186,24 @@ export function RunLauncher({
     return null
   }
 
+  const selectedDevice = devicesQuery.data?.find((row) => row.id === deviceId)
+  const selectedWorkspace = workspacesQuery.data?.find(
+    (row) => row.workspaceId === workspaceId && row.deviceId === deviceId,
+  )
+  const explicitTargetReady =
+    selectedDevice?.status === 'online' &&
+    (workspaceId === '' ? deviceWorkspaces.length > 0 : selectedWorkspace?.available === true)
+  const targetBlocker =
+    isAssignee && deviceId !== '' && devicesQuery.isSuccess && workspacesQuery.isSuccess
+      ? selectedDevice?.status !== 'online'
+        ? '所选设备已离线或不可用，请让它上线或明确重新选择。草稿仍保留。'
+        : workspaceId !== '' && selectedWorkspace?.available !== true
+          ? '所选工作目录已不可用，请明确重新选择。草稿仍保留。'
+          : deviceWorkspaces.length === 0
+            ? '所选设备没有可用工作目录，请先登记或明确重新选择。'
+            : null
+      : null
+
   const ready =
     agentId !== '' &&
     selectedRevision !== undefined &&
@@ -196,7 +214,7 @@ export function RunLauncher({
         !workspacesQuery.isPending &&
         !workspacesQuery.isError &&
         (deviceId !== ''
-          ? deviceWorkspaces.length > 0
+          ? explicitTargetReady
           : (workspacesQuery.data ?? []).some(
               (ws) =>
                 ws.available &&
@@ -245,10 +263,19 @@ export function RunLauncher({
             所选配置版本不可用，请重新选择版本或 Agent。
           </p>
         ) : null}
-        <p className="mutation-hint">
+        <p className="mutation-hint" data-testid="execution-target-summary">
           执行环境：
-          {isAssignee ? '自动选择你的可用环境，可在执行设置中指定。' : '使用责任人的环境。'}
+          {!isAssignee
+            ? '使用责任人的环境。'
+            : deviceId === ''
+              ? '自动选择你的可用环境，可在执行设置中指定。'
+              : `显式指定：${selectedDevice?.name ?? '所选设备'} · ${workspaceId === '' ? '工作目录自动选择' : (selectedWorkspace?.name ?? '所选工作目录')}`}
         </p>
+        {targetBlocker !== null ? (
+          <p className="mutation-hint" role="status" data-testid="execution-target-blocker">
+            {targetBlocker}
+          </p>
+        ) : null}
         {isAssignee &&
         devicesQuery.isSuccess &&
         workspacesQuery.isSuccess &&
