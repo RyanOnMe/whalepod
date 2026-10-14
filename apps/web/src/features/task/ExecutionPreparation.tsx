@@ -5,6 +5,7 @@ import {
   ExecutionPreparationViewSchema,
   type ExecutionPreparationRequest,
 } from '@whalepod/protocol'
+import { NODE_CLI_COMMAND } from '../../shared/node-installation.js'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 
@@ -94,13 +95,13 @@ export function ExecutionPreparation({
           ，保持服务启动；仅讨论和接受任务无需配置电脑。
         </li>
         <li>
-          在你的电脑登记工作目录：
-          <code>whalepod-node workspace add &lt;你的目录&gt; --name &lt;显示名&gt;</code>
+          在你的电脑的 WhalePod 源码目录执行并登记工作目录（替换占位符）：
+          <code>{`${NODE_CLI_COMMAND} workspace add <你的目录> --name <显示名>`}</code>
           。目录路径只留本机。
         </li>
         <li>
           本次Agent使用 {provider}。本机配置对应凭据：
-          <code>{`whalepod-node secret set ${shellQuote(provider)} ${shellQuote(credentialSlot)}`}</code>
+          <code>{`${NODE_CLI_COMMAND} secret set ${shellQuote(provider)} ${shellQuote(credentialSlot)}`}</code>
           。按本机提示输入，网页不接收密钥。
         </li>
       </ol>
