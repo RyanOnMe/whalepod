@@ -132,35 +132,14 @@ export async function sendInstruction(
   }
 
   if (input.intent?.kind === 'followup') {
-    const prior = await findCommandReceipt(deps.database.db, `run.followup:${input.idempotencyKey}`)
-    if (prior !== undefined) {
-      const priorId = (prior.result as { id?: unknown }).id
-      const [message] =
-        typeof priorId === 'string'
-          ? await deps.database.db
-              .select()
-              .from(schema.taskMessages)
-              .where(eq(schema.taskMessages.id, priorId))
-          : []
-      if (
-        message === undefined ||
-        message.taskId !== taskId ||
-        message.runId !== input.intent.runId ||
-        message.authorUserId !== actor.userId
-      )
-        throw new RunCommandError('CONFLICT', '重试标识与当前指令来源不一致，请重新确认')
-      const view = toCommentView(message)
-      return {
-        kind:
-          view.instructionState === 'rejected'
-            ? 'rejected'
-            : (await isQueued(deps, message.id))
-              ? 'queued'
-              : 'followup',
-        message: view,
-        runId: input.intent.runId,
-      }
-    }
+    const replayed = await replayFollowup(
+      deps,
+      taskId,
+      actor.userId,
+      input.intent.runId,
+      input.idempotencyKey,
+    )
+    if (replayed !== undefined) return replayed
   }
 
   // 先看有没有活跃 Run：有 → 复用追问路径（③c-1 的排队/下发语义原样生效）。
@@ -169,6 +148,15 @@ export async function sendInstruction(
     input.intent?.kind === 'followup' &&
     (active === undefined || active.id !== input.intent.runId)
   ) {
+    // 早查后同 key 请求可能提交且来源终止；拒绝之前复读，保持已成功意图的幂等回放。
+    const replayed = await replayFollowup(
+      deps,
+      taskId,
+      actor.userId,
+      input.intent.runId,
+      input.idempotencyKey,
+    )
+    if (replayed !== undefined) return replayed
     throw new RunCommandError(
       'CONFLICT',
       '所选执行已结束或不再活跃；请保留草稿，选择继续会话或开始新执行',
@@ -383,6 +371,45 @@ async function replayByRun(
   return {
     kind: message.instructionState === 'rejected' ? 'rejected' : 'started_run',
     message: toCommentView(message),
+    runId,
+  }
+}
+
+/** 调用者先判权；回执必须绑本人、同任务与同来源，返回当前真实消息命运。 */
+async function replayFollowup(
+  deps: SendInstructionDeps,
+  taskId: string,
+  authorUserId: string,
+  runId: string,
+  idempotencyKey: string,
+): Promise<SendInstructionOutcome | undefined> {
+  const prior = await findCommandReceipt(deps.database.db, `run.followup:${idempotencyKey}`)
+  if (prior === undefined) return undefined
+  const priorId = (prior.result as { id?: unknown }).id
+  const [message] =
+    typeof priorId === 'string'
+      ? await deps.database.db
+          .select()
+          .from(schema.taskMessages)
+          .where(eq(schema.taskMessages.id, priorId))
+      : []
+  if (
+    message === undefined ||
+    message.kind !== 'followup' ||
+    message.taskId !== taskId ||
+    message.runId !== runId ||
+    message.authorUserId !== authorUserId
+  )
+    throw new RunCommandError('CONFLICT', '重试标识与当前指令来源不一致，请重新确认')
+  const view = toCommentView(message)
+  return {
+    kind:
+      view.instructionState === 'rejected'
+        ? 'rejected'
+        : (await isQueued(deps, message.id))
+          ? 'queued'
+          : 'followup',
+    message: view,
     runId,
   }
 }
