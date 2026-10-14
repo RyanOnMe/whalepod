@@ -1,4 +1,5 @@
-import { eq } from 'drizzle-orm'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { eq, sql } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@whalepod/db'
 import { schema } from '@whalepod/db'
@@ -88,6 +89,113 @@ describe('assignment API (G2-04/05)', () => {
     expect(retry.statusCode).toBe(200)
     expect(retry.json().data).toEqual(reassigned.json().data)
   })
+
+  it('#314 同 key 并发重新指派在 Task 锁后回放首次结果', async () => {
+    const alice = await driveSetup(ctx)
+    const { session: bob } = await driveInviteAndAccept(ctx, alice, {
+      username: 'bob',
+      displayName: 'Bob',
+      password: 'correct horse battery staple',
+    })
+    const projectId = await createProject(ctx, alice)
+    const task = (
+      await apiInject(ctx, alice, {
+        method: 'POST',
+        url: `/api/v1/projects/${projectId}/tasks`,
+        payload: { title: 'concurrent reassignment', assigneeUserId: bob.userId },
+      })
+    ).json().data
+    await apiInject(ctx, bob, { method: 'POST', url: `/api/v1/tasks/${task.id}/reject` })
+    const [{ count: beforeEvents }] = await database.sql`
+      select count(*)::int as count from team_event
+      where type = 'task.changed' and payload->>'taskId' = ${task.id}
+    `
+
+    let release!: () => void
+    const releaseGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let locked!: (pid: number) => void
+    const lockedGate = new Promise<number>((resolve) => {
+      locked = resolve
+    })
+    // 只锁既有 Task，不注入业务状态；两请求仍走生产 HTTP 与事务路径。
+    // pg_blocking_pids 证明两请求均已越过事务开头的回执早查，避免靠定时猜竞态。
+    const holder = database.transaction(async (tx) => {
+      const [{ pid }] = await tx.execute<{ pid: number }>(
+        // 驱动参数来自已创建 Task；后台 pid 只用于观测锁等待。
+        sql`select pg_backend_pid() as pid`,
+      )
+      await tx.select().from(schema.tasks).where(eq(schema.tasks.id, task.id)).for('update')
+      locked(pid!)
+      await releaseGate
+    })
+    const blockerPid = await lockedGate
+    const request = () =>
+      apiInject(ctx, alice, {
+        method: 'POST',
+        url: `/api/v1/tasks/${task.id}/reassign`,
+        idempotencyKey: 'concurrent-reassign-key',
+        payload: { assigneeUserId: alice.userId },
+      })
+    const responses = Promise.all([request(), request()])
+    try {
+      await expect
+        .poll(
+          async () => {
+            const [{ count }] = await database.sql`
+          select count(*)::int as count from pg_stat_activity
+          where datname = current_database() and wait_event_type = 'Lock'
+            and pid <> ${blockerPid} and cardinality(pg_blocking_pids(pid)) > 0
+            and exists (select 1 from pg_locks where pg_locks.pid = pg_stat_activity.pid
+              and relation = 'task'::regclass and mode = 'RowShareLock' and granted)
+        `
+            return count
+          },
+          { timeout: 5_000 },
+        )
+        .toBe(2)
+    } finally {
+      release()
+      await holder
+    }
+    const [first, second] = await responses
+    expect([first.statusCode, second.statusCode]).toEqual([200, 200])
+    expect(second.json().data).toEqual(first.json().data)
+    expect(first.json().data).toMatchObject({
+      id: task.id,
+      assigneeUserId: alice.userId,
+      assignmentStatus: 'pending',
+    })
+    const [{ count: afterEvents }] = await database.sql`
+      select count(*)::int as count from team_event
+      where type = 'task.changed' and payload->>'taskId' = ${task.id}
+    `
+    expect(afterEvents - beforeEvents).toBe(1)
+    const receiptKey = `task.reassign:${alice.userId}:${task.id}:concurrent-reassign-key`
+    const [{ count: receipts }] = await database.sql`
+      select count(*)::int as count from command_receipt where key = ${receiptKey}
+    `
+    expect(receipts).toBe(1)
+    await mkdir('artifacts/evidence/task-reassignment', { recursive: true })
+    await writeFile(
+      'artifacts/evidence/task-reassignment/concurrency.json',
+      JSON.stringify(
+        {
+          component: 'hub.task',
+          scenario: 'same-key-concurrent-reassignment',
+          taskId: task.id,
+          responseStatuses: [first.statusCode, second.statusCode],
+          sameResult: true,
+          assignmentStatus: first.json().data.assignmentStatus,
+          taskChangedEvents: afterEvents - beforeEvents,
+          commandReceipts: receipts,
+        },
+        null,
+        2,
+      ),
+    )
+  }, 15_000)
 
   it('G2-05: reassigning a task with an active run is rejected with 409', async () => {
     const alice = await driveSetup(ctx)
