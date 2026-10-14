@@ -17,7 +17,7 @@
 - 明确选择现场后持续显示该选择；所选设备/工作目录失效时阻止发送并保留草稿，不改投其他可用现场。
 - 父级统一持有 sending，在请求完成前锁执行方式/来源/表单，旧请求不会清空切换后的草稿。
 - 触发消息/Run/Outbox/回执原子创建；在 create 返回前到达的 accepted/rejected ack 已有锚点可结算，初始 prompt 只发送一次。ready 先于 ack 也不触发补发；迟到 ack 仅结算消息，不重复改变 Run。
-- 已成功追问在来源结束后，或早查无回执后同 key 提交/结束的竞争窗口，都回放本人/同任务/同来源的真实消息命运；新意图过期仍拒绝。
+- 已成功追问在来源结束后，或早查无回执后同 key 提交/结束的竞争窗口，都回放本人/同任务/同来源的真实消息命运；活跃分支在命令提交后再次验证回执绑定，异作者/任务/来源的晚提交回执不能返回正文。新意图过期仍拒绝。
 - Node 已拒收的首次启动保持原文与新执行方式，显示拒收理由；已明确拒收后重新点击属于新的发送尝试。
 - A/B/C 合并保留发布确认与重新指派，迁移 B 的旧启动入口检查，并统一隔离环境清单读取。
 
@@ -75,9 +75,9 @@ pnpm --filter @whalepod/runtime... build
 pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration apps/hub/tests/instruction-start-run.integration.spec.ts apps/hub/tests/run-resume.integration.spec.ts apps/hub/tests/instruction-grant.integration.spec.ts
 pnpm exec vitest run --project dsh-contract packages/runtime-dsh/tests/dsh-contract/resume.contract.spec.ts
 pnpm exec tsx scripts/with-test-postgres.mts vitest run --project security apps/hub/tests/run-authorization.security.spec.ts apps/hub/tests/run-integrity.security.spec.ts
-pnpm exec playwright test --project p1-315
-pnpm test:e2e:micro
+pnpm exec playwright test --config playwright.operations.config.ts --project p1-315
+pnpm exec playwright test --config playwright.operations.config.ts --project p1-306
 bash scripts/secret-scan.sh artifacts/evidence/unified-execution
 ```
 
-本地实测使用第一批 P1-313 提供的隔离 harness：独立端口与环境清单，避免干扰别的工作树运行中的服务。该 harness 不属于本 PR 的业务依赖；P1-313 合入后，可用 `playwright.operations.config.ts --project p1-315` 复跑同一 production 路径。
+本地实测使用第一批 P1-313 提供的隔离 harness：独立端口与环境清单，避免干扰别的工作树运行中的服务。P1-313 已合入，可用 `playwright.operations.config.ts --project p1-315` 复跑同一 production 路径。
