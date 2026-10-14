@@ -34,7 +34,7 @@ const RUN_ID = 'f6f6f6f6-0000-4000-8000-00000000000e'
 
 function launcherHandlers(
   capture?: { body?: unknown; key?: unknown },
-  options: { failPost?: { message: string; requestId: string } } = {},
+  options: { failPost?: { message: string; requestId: string }; rejectPost?: boolean } = {},
 ): MockHandler[] {
   return [
     {
@@ -119,6 +119,14 @@ function launcherHandlers(
           capture.body = JSON.parse(String(init.body))
           capture.key = (init.headers as Record<string, string>)['idempotency-key']
         }
+        if (options.rejectPost)
+          return created({
+            outcome: 'rejected',
+            runId: RUN_ID,
+            instructionState: 'rejected',
+            instructionErrorCode: 'WORKSPACE_UNAVAILABLE',
+            instructionErrorMessage: '工作目录不可用',
+          })
         if (options.failPost !== undefined) {
           return {
             status: 500,
@@ -243,6 +251,28 @@ describe('RunLauncher', () => {
     expect(await screen.findByText('运行中')).toBeVisible()
     expect(screen.queryByRole('heading', { name: '开始执行' })).not.toBeInTheDocument()
   })
+  it('评审：Node 已拒收的首次启动保留草稿，不假装进入追问', async () => {
+    const task = makeTask({ assignmentStatus: 'accepted', assigneeUserId: BOB.userId })
+    const user = userEvent.setup()
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task),
+        ...launcherHandlers(undefined, { rejectPost: true }),
+      ]),
+    )
+    await selectOption(user, '选择 Agent', 'Fixer')
+    await user.type(screen.getByLabelText('指令'), '保留被拒收的原文')
+    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    expect(await screen.findByTestId('execution-start-refusal')).toHaveTextContent('工作目录不可用')
+    expect(screen.getByLabelText('指令')).toHaveValue('保留被拒收的原文')
+    expect(screen.getByLabelText('执行方式')).toHaveTextContent('开始新执行')
+    expect(screen.getByRole('button', { name: '开始执行' })).toHaveAttribute(
+      'data-feedback',
+      'rejected',
+    )
+  })
+
   it('评审：收起设置后仍如实展示显式设备与工作区', async () => {
     const task = makeTask({ assignmentStatus: 'accepted', assigneeUserId: BOB.userId })
     const user = userEvent.setup()

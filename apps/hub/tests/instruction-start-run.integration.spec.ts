@@ -536,6 +536,7 @@ describe('instruction starts a run (P1-196)', () => {
         const messages = await listMessages(database.db, ids.taskId)
         expect(messages).toHaveLength(1)
         expect(messages[0]?.instructionState).toBe(accepted ? 'accepted' : 'rejected')
+        expect(outcome.kind).toBe(accepted ? 'started_run' : 'rejected')
         if (accepted) {
           await harness.orchestrator.ingestNodeEvent(
             harness.deviceFor(ids),
