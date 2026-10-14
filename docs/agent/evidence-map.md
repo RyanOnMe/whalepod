@@ -47,3 +47,7 @@
 ## 绝不进入证据的东西
 
 密码、Setup/Invite/Device Token、模型密钥、绝对路径、完整 DSH Session JSONL、未发布 Artifact 正文（04 文档 §9）。
+
+## 操作条件（#319）
+
+提交验收提示与行为不一致：先查 hub.task 的 reviewEligibility 与 web.task 条件解析；处理人未知查成员名录；复跑与取证见 [action-conditions-acceptance](./action-conditions-acceptance.md)。

@@ -10,7 +10,7 @@
  * 例外（#210）：`CommentView` / `InstructionView` 不再镜像——唯一真源是
  * `@whalepod/protocol` 的 `TaskMessageView`，这里只做派生（见各自注释）。
  */
-import type { TaskMessageView } from '@whalepod/protocol'
+import type { TaskMessageView, TaskReviewEligibility } from '@whalepod/protocol'
 
 // auth/routes.ts：GET /auth/session、POST /auth/login 的 data。
 export type Role = 'owner' | 'admin' | 'member'
@@ -206,6 +206,8 @@ export interface InstructionDriverView {
 export type InstructionView = TaskMessageView & { kind: 'instruction' | 'followup' }
 
 export interface TaskRoomView {
+  /** 缺失表示服务端条件未确认，不能据此提交。 */
+  reviewEligibility?: TaskReviewEligibility
   task: TaskView
   /** 讨论流：**只有人**说的话，永不触发运行（ADR-0010）。 */
   comments: CommentView[]

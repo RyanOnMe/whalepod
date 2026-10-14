@@ -1,6 +1,16 @@
-import { screen } from '@testing-library/react'
+import { act, screen, waitFor } from '@testing-library/react'
+import { userEvent } from '@testing-library/user-event'
+import { queryKeys } from '../src/app/query-client.js'
 import { describe, expect, it } from 'vitest'
-import { ALICE, BOB, loggedInHandlers, makeTask, ok, taskRoomHandler } from './fixtures.js'
+import {
+  ALICE,
+  BOB,
+  loggedInHandlers,
+  makeTask,
+  ok,
+  taskRoomHandler,
+  teamMembersHandler,
+} from './fixtures.js'
 import { renderApp } from './render.jsx'
 
 const task = makeTask({
@@ -38,6 +48,38 @@ describe('操作前说明（#319）', () => {
     expect(await screen.findByRole('button', { name: '提交验收' })).toBeDisabled()
     expect(screen.getByTestId('review-condition')).toHaveTextContent('无法确认')
   })
+  it('确认期间条件失效关闭旧确认，不发提交请求', async () => {
+    const user = userEvent.setup()
+    const view = renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [room({ allowed: true, reason: null })]),
+    )
+    await user.click(await screen.findByRole('button', { name: '提交验收' }))
+    expect(await screen.findByRole('dialog')).toBeVisible()
+    act(() => {
+      view.queryClient.setQueryData(queryKeys.taskRoom(task.id), {
+        task,
+        comments: [],
+        instructions: [],
+        runs: [],
+        artifacts: [],
+        reviewEligibility: { allowed: false, reason: 'active_run' },
+      })
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: '提交验收' })).toBeDisabled()
+    expect(
+      view.fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/submit-review')),
+    ).toHaveLength(0)
+  })
+  it('自相矛盾的条件不能冒充可提交', async () => {
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [room({ allowed: true, reason: 'active_run' })]),
+    )
+    expect(await screen.findByRole('button', { name: '提交验收' })).toBeDisabled()
+    expect(screen.getByTestId('review-condition')).toHaveTextContent('无法确认')
+  })
   it('明确可提交仍允许真人操作', async () => {
     renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [room({ allowed: true, reason: null })]))
     expect(await screen.findByRole('button', { name: '提交验收' })).toBeEnabled()
@@ -47,6 +89,7 @@ describe('操作前说明（#319）', () => {
       `/tasks/${task.id}`,
       loggedInHandlers(ALICE, [
         room(),
+        teamMembersHandler(),
         {
           method: 'GET',
           url: /instruction-grants$/,
@@ -54,7 +97,9 @@ describe('操作前说明（#319）', () => {
         },
       ]),
     )
-    expect(await screen.findByTestId('execution-responsibility')).toHaveTextContent('Bob')
+    await waitFor(() =>
+      expect(screen.getByTestId('execution-responsibility')).toHaveTextContent('Bob'),
+    )
     expect(screen.getByTestId('execution-responsibility')).toHaveTextContent('审批')
     expect(screen.getByRole('link', { name: '前往讨论' })).toHaveAttribute(
       'href',
