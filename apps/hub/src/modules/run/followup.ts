@@ -29,6 +29,7 @@ import {
   transactCommand,
 } from '@whalepod/db'
 import { DomainError } from '@whalepod/domain'
+import { instructionAuthorAllowed, rejectUndeliveredInstruction } from './instruction-revocation.js'
 import { RunCommandError } from './errors.js'
 import { toCommentView } from '../task/queries.js'
 import type { CommentView } from '../task/queries.js'
@@ -320,6 +321,10 @@ export async function dispatchPendingInstructions(
   let dispatched = 0
   for (const message of pending) {
     if (queuedIds.has(message.id)) continue // 已入队过：不重复下发
+    if (!(await instructionAuthorAllowed(tx, message.taskId, message.authorUserId))) {
+      await rejectUndeliveredInstruction(tx, message)
+      continue
+    }
     const commandId = uuidv7()
     await outbox.enqueue(tx, {
       id: commandId,

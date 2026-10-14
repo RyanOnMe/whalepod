@@ -95,6 +95,28 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     expect(firstReply.status()).toBe(201)
     const firstRunId = (await firstReply.json()).data.runId as string
     await waitForRunStatus(firstRunId, 'waiting_approval')
+    // 真实权限页授予，再在审批窗口排队；撤销后不让该句进入Node。
+    await owner.goto(`/tasks/${taskId}/permissions`)
+    await selectFromMenu(owner.getByLabel('授权给'), /Bob/)
+    await owner.getByRole('button', { name: '授权', exact: true }).click()
+    await expect(owner.getByTestId('driver-revoke')).toBeVisible()
+    await selectFromMenu(member.getByLabel('执行方式'), /发送追问/)
+    const memberDraft = member.getByLabel('指令', { exact: true })
+    await memberDraft.fill('撤销前排队的协作者追问')
+    const queuedResponse = member.waitForResponse(
+      (response) =>
+        response.url().endsWith(`/tasks/${taskId}/instructions`) &&
+        response.request().method() === 'POST',
+    )
+    await member.getByRole('button', { name: '发送追问', exact: true }).click()
+    expect((await (await queuedResponse).json()).data.outcome).toBe('queued')
+    await memberDraft.fill('保留撤销时正在编辑的草稿')
+    await owner.getByTestId('driver-revoke').click()
+    await expect(memberDraft).toBeDisabled()
+    await expect(memberDraft).toHaveValue('保留撤销时正在编辑的草稿')
+    await expect(member.getByTestId('instruction-error')).toContainText('发送者已失去指令权限')
+    await owner.goto(`/tasks/${taskId}`)
+
     const draft = '请保留上文继续检查'
     const box = owner.getByLabel('指令', { exact: true })
     await expect(owner.getByRole('button', { name: '发送追问' })).toBeEnabled()
@@ -155,6 +177,8 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
           resumedRunId,
           resumeFromRunId: after.resumeFromRunId,
           uniqueInput: 1,
+          queuedMemberRejectedBeforeApproval: true,
+          revokedMemberDraftPreserved: true,
           staleDraftPreserved: true,
           memberHasNoInstructionInput: true,
           sourceRevisionKept: after.profileRevisionId === before.profileRevisionId,
