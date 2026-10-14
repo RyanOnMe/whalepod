@@ -870,10 +870,12 @@ test.describe('P1-19 Run 行动（G7-01 取消 / G7-04 重跑血缘）', () => {
     // 本 Task 到此刻已有几次运行，所以用正则锚形态、不写死 N。
     await expect(lineage).toHaveText(/^重跑自第 \d+ 次运行$/)
     await expect(lineage).toHaveAttribute('title', sourceRunId!)
-    // 行标签是人话句柄「第 N 次运行」（完整 id 在 title 上），面板标题说「本次运行」。
+    // 行标签是人话句柄「第 N 次运行」；#308 的完整 id 由可聚焦提示层提供。
     const rowLabel = shared.bob!.locator(`.run-item-button[data-run-id="${newRunId}"] .run-label`)
     await expect(rowLabel).toHaveText(/^第 \d+ 次运行$/)
-    await expect(rowLabel).toHaveAttribute('title', newRunId)
+    await shared.bob!.locator(`.run-item-button[data-run-id="${newRunId}"]`).focus()
+    await expect(shared.bob!.getByRole('tooltip')).toHaveText(newRunId)
+    await shared.bob!.keyboard.press('Escape')
     const panelHeading = panel.getByRole('heading', { name: '本次运行' })
     await expect(panelHeading).toHaveAttribute('title', newRunId)
     await approveAndCompleteLoose(newRunId)

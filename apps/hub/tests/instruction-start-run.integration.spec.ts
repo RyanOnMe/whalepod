@@ -678,7 +678,7 @@ describe('instruction starts a run (P1-196)', () => {
       const observed = new Proxy(query, {
         get(target, property) {
           const value = Reflect.get(target, property)
-          if (property === 'then')
+          if (property === 'then' && typeof value === 'function')
             return async (
               fulfilled: (rows: unknown) => unknown,
               rejected: (error: unknown) => unknown,
@@ -686,7 +686,9 @@ describe('instruction starts a run (P1-196)', () => {
               const rows = await new Promise<unknown>((resolve, reject) => {
                 Reflect.apply(value, target, [resolve, reject])
               })
-              const statement = Reflect.apply(Reflect.get(target, 'toSQL'), target, []) as {
+              const toSQL: unknown = Reflect.get(target, 'toSQL')
+              if (typeof toSQL !== 'function') throw new Error('receipt query must expose toSQL')
+              const statement = Reflect.apply(toSQL, target, []) as {
                 params: unknown[]
               }
               if (
@@ -727,7 +729,10 @@ describe('instruction starts a run (P1-196)', () => {
                 if (method !== 'from') return Reflect.get(select, method)
                 return (table: unknown) => {
                   const query = Reflect.apply(select.from, select, [table])
-                  return table === schema.commandReceipts ? observeReceiptQuery(query) : query
+                  if (table !== schema.commandReceipts) return query
+                  if (query === null || typeof query !== 'object')
+                    throw new Error('receipt query must be an object')
+                  return observeReceiptQuery(query)
                 }
               },
             })
