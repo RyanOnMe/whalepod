@@ -37,6 +37,7 @@
 | 提示层位置/文案不对，或完成提醒开关「看起来开了但没授权」，或 toast 不消失/关不掉 | 同一份 `result.json` 的 `batch2` 段：hint 的等待与描述可达性 → web.hint；`data-on`/`data-ring`/偏好 → web.bell；fuse 时长与暂停 → web.toast；复跑 `pnpm test:e2e:micro`，见 run-micro-batch2-acceptance |
 | 事件重复/缺序 | `run_event` 表 `(run_id, seq)` 是否有缺口/重复 → node spool 是否重发 |
 | 审批卡住 | hub.domain `approval` 行状态 → node.gateway 决定帧 → runtime.bridge answerer |
+| 候选无法检查或发布可见范围错误 | `artifacts/evidence/candidate-inspection/result.json`：web.artifact → Hub 内容读取鉴权 → artifact.store digest；复跑见 candidate-inspection-acceptance |
 | Artifact 打不开 | artifact.store digest 与 DB metadata 比对 → hub.http 权限判定 |
 | 疑似泄露 | 直接跑 `scripts/secret-scan.sh` 扫相关证据与日志 |
 | 性能回归疑云 | `pnpm test:load`（Q8 短档）报告 JSON：传播/ingest p95、空闲段 RSS 斜率、droppedConnections；判据/边界见 `docs/agent/load-performance-acceptance.md` |

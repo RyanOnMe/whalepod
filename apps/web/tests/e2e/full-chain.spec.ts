@@ -22,6 +22,7 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
+import { mkdir, writeFile } from 'node:fs/promises'
 import {
   env,
   hubApi,
@@ -415,7 +416,24 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     const publish = shared.bob!.getByTestId('artifact-publish-button')
     await expect(publish).toBeVisible({ timeout: 30_000 })
     await expect(shared.bob!.locator('.artifact-item').first()).toContainText('仅你可见，待发布')
+    // #313：拥有者先检查，candidate 读取仍私有且没有发布副作用。
+    await shared.bob!.getByRole('button', { name: '预览', exact: true }).click()
+    await expect(shared.bob!.getByTestId('artifact-preview')).toContainText('E2E 验收交付物')
+    const beforePublish = (await getRunFact(shared.builderRunId!)).artifacts.find(
+      (a) => a.id === shared.artifactId,
+    )
+    expect(beforePublish?.status).toBe('candidate')
+    await shared.alice!.reload()
+    await expect(shared.alice!.getByTestId('artifact-download-button')).toHaveCount(0)
+    const deniedCandidate = await fetch(
+      `${env().hubOrigin}/api/v1/artifacts/${shared.artifactId}/content`,
+      {
+        headers: { cookie: await sessionCookie(shared.aliceContext!) },
+      },
+    )
+    expect(deniedCandidate.status).toBe(404)
     await publish.click()
+    await shared.bob!.getByRole('button', { name: '确认发布给团队' }).click()
 
     // Alice（另一浏览器上下文）立即能下载（UI 下载 + HTTP 双核验）。
     await shared.alice!.reload()
@@ -454,6 +472,26 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     })
     expect(createHash('sha256').update(Buffer.concat(parts)).digest('hex')).toBe(
       artifactRow!.sha256,
+    )
+    const evidenceDir = join(process.cwd(), 'artifacts', 'evidence', 'candidate-inspection')
+    await mkdir(evidenceDir, { recursive: true })
+    await writeFile(
+      join(evidenceDir, 'result.json'),
+      JSON.stringify(
+        {
+          component: 'web.artifact',
+          scenario: 'candidate-inspection',
+          runId: shared.builderRunId,
+          artifactId: shared.artifactId,
+          beforePublishStatus: beforePublish!.status,
+          otherMemberCandidateReadStatus: deniedCandidate.status,
+          publishedStatus: artifactRow!.status,
+          declaredSha256: artifactRow!.sha256,
+          downloadedSha256: createHash('sha256').update(Buffer.concat(parts)).digest('hex'),
+        },
+        null,
+        2,
+      ),
     )
   })
 

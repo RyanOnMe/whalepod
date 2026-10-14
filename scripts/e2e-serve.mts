@@ -38,14 +38,25 @@ import { schema } from '@whalepod/db'
 import { digestPluginPack } from '@whalepod/protocol/plugin-pack-digest'
 import { redactText } from './lib/phase1/events.js'
 
-const HUB_PORT = 18080
-const WEB_PORT = 5173
+// 操作逻辑验收与正在使用的开发现场隔离；仍走同一生产 Hub/Node/Runtime 装配。
+const isolatedOperations = process.env['WHALEPOD_E2E_OPERATIONS'] === '1'
+const HUB_PORT = isolatedOperations ? 18183 : 18080
+const WEB_PORT = isolatedOperations ? 5313 : 5173
 const WEB_ORIGIN = `http://localhost:${WEB_PORT}`
-const ENV_FILE = join(tmpdir(), 'whalepod-e2e-env.json')
-const NODE_STATE_ROOT = join(tmpdir(), 'whalepod-e2e-node')
+const ENV_FILE = join(
+  tmpdir(),
+  isolatedOperations ? 'whalepod-operations-e2e-env.json' : 'whalepod-e2e-env.json',
+)
+const NODE_STATE_ROOT = join(
+  tmpdir(),
+  isolatedOperations ? 'whalepod-operations-e2e-node' : 'whalepod-e2e-node',
+)
 // Artifact store：Hub 默认落在 ./data（仓库目录，E2E 不该污染）；固定 tmp 路径让
 // Hub 重启前后 blob 连续，启动时整体清空。
-const HUB_ARTIFACT_STORE = join(tmpdir(), 'whalepod-e2e-hub-artifacts')
+const HUB_ARTIFACT_STORE = join(
+  tmpdir(),
+  isolatedOperations ? 'whalepod-operations-e2e-hub-artifacts' : 'whalepod-e2e-hub-artifacts',
+)
 const READY_TIMEOUT_MS = 90_000
 const READY_POLL_MS = 400
 const NODE_READY_TIMEOUT_MS = 60_000
@@ -227,11 +238,11 @@ async function killStaleByArgMarker(marker: string): Promise<void> {
     // 无残留。
   }
 }
-await killStaleByArgMarker('scripts/e2e-node.mts')
+if (!isolatedOperations) await killStaleByArgMarker('scripts/e2e-node.mts')
 // #99-A：Runtime 入口已切包解析（dist/bin.js），陈旧标记同步跟进；
 // 源码路径标记保留一条——切装配前的残留进程仍需覆盖一轮。
-await killStaleByArgMarker('apps/runtime/dist/bin.js')
-await killStaleByArgMarker('apps/runtime/src/bin.ts')
+if (!isolatedOperations) await killStaleByArgMarker('apps/runtime/dist/bin.js')
+if (!isolatedOperations) await killStaleByArgMarker('apps/runtime/src/bin.ts')
 // 残留的其它 e2e-serve 实例（历史双进程包装泄漏）：会占住 18080/5173 并互相
 // 覆盖 env 清单，先清掉。判据必须 comm==node——调用方 bash/playwright-runner 的
 // 命令行里也可能含同样的脚本路径字样（pkill 参数、日志等），按 cmdline 直杀是
@@ -267,6 +278,7 @@ try {
       .find((line) => line.startsWith('n'))
       ?.slice(1)
     if (otherCwd !== undefined && otherCwd !== process.cwd()) {
+      if (isolatedOperations) continue
       process.stderr.write(
         `[e2e-serve] 另一个 worktree 正在跑 e2e（pid=${pid} cwd=${otherCwd}）——` +
           `本实例不抢端口，直接退出。请在那边跑完释放 5173/18080 后再起。\n`,
