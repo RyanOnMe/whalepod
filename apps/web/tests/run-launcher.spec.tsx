@@ -243,6 +243,72 @@ describe('RunLauncher', () => {
     expect(await screen.findByText('运行中')).toBeVisible()
     expect(screen.queryByRole('heading', { name: '开始执行' })).not.toBeInTheDocument()
   })
+  it('评审：收起设置后仍如实展示显式设备与工作区', async () => {
+    const task = makeTask({ assignmentStatus: 'accepted', assigneeUserId: BOB.userId })
+    const user = userEvent.setup()
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [taskRoomHandler(task), ...launcherHandlers()]),
+    )
+    await selectOption(user, '选择 Agent', 'Fixer')
+    await selectOption(user, '选择设备', 'm4-mini（在线）')
+    await selectOption(user, '选择 Workspace', 'whalepod')
+    await user.click(screen.getByText('执行设置（配置版本与环境）'))
+    expect(screen.getByTestId('execution-target-summary')).toHaveTextContent(
+      '显式指定：m4-mini · whalepod',
+    )
+    expect(screen.getByTestId('execution-target-summary')).not.toHaveTextContent(
+      '自动选择你的可用环境',
+    )
+  })
+
+  it.each(['device', 'workspace'] as const)(
+    '评审：显式选择的 %s 失效时保留草稿，不改投其他可用现场',
+    async (kind) => {
+      const task = makeTask({ assignmentStatus: 'accepted', assigneeUserId: BOB.userId })
+      const user = userEvent.setup()
+      const view = renderApp(
+        `/tasks/${task.id}`,
+        loggedInHandlers(BOB, [taskRoomHandler(task), ...launcherHandlers()]),
+      )
+      await selectOption(user, '选择 Agent', 'Fixer')
+      await selectOption(user, '选择设备', 'm4-mini（在线）')
+      await selectOption(user, '选择 Workspace', 'whalepod')
+      await user.type(screen.getByLabelText('指令'), '保留这段草稿')
+      expect(screen.getByRole('button', { name: '开始执行' })).toBeEnabled()
+      act(() => {
+        if (kind === 'device') {
+          const devices = view.queryClient.getQueryData<
+            import('../src/shared/api/types.js').DeviceView[]
+          >(queryKeys.devices)!
+          view.queryClient.setQueryData(
+            queryKeys.devices,
+            devices.map((row) => ({ ...row, status: 'offline' })),
+          )
+        } else {
+          const workspaces = view.queryClient.getQueryData<
+            import('../src/shared/api/types.js').WorkspaceView[]
+          >(queryKeys.workspaces)!
+          view.queryClient.setQueryData(queryKeys.workspaces, [
+            ...workspaces.map((row) => ({ ...row, available: false })),
+            {
+              ...workspaces[0]!,
+              workspaceId: 'e5e5e5e5-0000-4000-8000-00000000000e',
+              name: 'other',
+              available: true,
+            },
+          ])
+        }
+      })
+      expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
+      expect(screen.getByTestId('execution-target-blocker')).toBeVisible()
+      expect(screen.getByLabelText('指令')).toHaveValue('保留这段草稿')
+      expect(
+        view.fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/instructions')),
+      ).toHaveLength(0)
+    },
+  )
+
   it('#315 编辑草稿时 Agent 更新不替换已展示的版本', async () => {
     const task = makeTask({ assignmentStatus: 'accepted', assigneeUserId: BOB.userId })
     const capture: { body?: unknown } = {}
