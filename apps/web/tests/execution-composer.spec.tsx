@@ -9,6 +9,7 @@ import {
   devicesHandler,
   loggedInHandlers,
   makeRun,
+  makeDevice,
   makeTask,
   ok,
   taskRoomHandler,
@@ -81,6 +82,122 @@ async function mode(user: ReturnType<typeof userEvent.setup>, label: RegExp): Pr
   await user.click(screen.getByRole('menuitem', { name: label }))
 }
 describe('#315 统一执行入口的真人页面', () => {
+  it.each(['success', 'failure'] as const)(
+    '首次执行请求 %s 返回前锁定方式与草稿，返回后恢复操作',
+    async (result) => {
+      const task = makeTask({ assignmentStatus: 'accepted', approvalPolicy: 'approval_required' })
+      const history = makeRun({ status: 'completed' })
+      const device = makeDevice()
+      const request = deferredResponse()
+      const user = userEvent.setup()
+      const view = renderApp(
+        `/tasks/${task.id}`,
+        loggedInHandlers(BOB, [
+          taskRoomHandler(task, { runs: [history] }),
+          sourceHandler(task, history),
+          ...agentHandlers(),
+          teamMembersHandler(),
+          devicesHandler([device]),
+          workspacesHandler([
+            {
+              workspaceId: '00000000-0000-4000-8000-000000000021',
+              deviceId: device.id,
+              name: 'repo',
+              kind: 'directory',
+              available: true,
+            },
+          ]),
+          { method: 'POST', url: /\/instructions$/, respond: () => request.promise },
+        ]),
+      )
+      await user.click(await screen.findByLabelText('选择 Agent'))
+      await user.click(await screen.findByRole('menuitem', { name: 'Builder' }))
+      const box = await screen.findByLabelText('指令')
+      await user.type(box, '这次先提交的草稿')
+      const send = screen.getByRole('button', { name: '开始执行' })
+      await waitFor(() => expect(send).toBeEnabled())
+      await user.click(send)
+      await waitFor(() => expect(send).toHaveAttribute('data-feedback', 'pending'))
+      const chooser = screen.getByLabelText('执行方式')
+      expect(chooser).toBeDisabled()
+      await user.click(chooser)
+      expect(screen.queryByRole('menu')).toBeNull()
+      expect(box).toBeDisabled()
+      expect(box).toHaveValue('这次先提交的草稿')
+      expect(
+        view.fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/instructions')),
+      ).toHaveLength(1)
+      request.resolve(
+        result === 'success'
+          ? ok({ outcome: 'started_run', runId: history.id, instructionState: 'pending' })
+          : {
+              status: 503,
+              body: {
+                ok: false,
+                error: { code: 'INTERNAL_ERROR', message: '稍后重试', requestId: 'pending-new' },
+              },
+            },
+      )
+      await waitFor(() => expect(chooser).toBeEnabled())
+      if (result === 'failure') {
+        expect(box).toHaveValue('这次先提交的草稿')
+        expect(await screen.findByText(/稍后重试/)).toBeVisible()
+      }
+      await mode(user, /继续会话/)
+      const continued = await screen.findByLabelText('指令')
+      await waitFor(() => expect(continued).toBeEnabled())
+      await user.clear(continued)
+      await user.type(continued, '返回后继续编辑的新草稿')
+      expect(continued).toHaveValue('返回后继续编辑的新草稿')
+      expect(screen.getByLabelText('来源执行')).toBeEnabled()
+    },
+  )
+
+  it('续跑请求未返回时，锁定来源、执行方式及草稿；失败后保留原意图', async () => {
+    const task = makeTask({ assignmentStatus: 'accepted' })
+    const first = makeRun({ status: 'completed' })
+    const second = makeRun({ status: 'completed' })
+    const request = deferredResponse()
+    const user = userEvent.setup()
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task, { runs: [first, second] }),
+        sourceHandler(task, first),
+        sourceHandler(task, second),
+        ...agentHandlers(),
+        teamMembersHandler(),
+        devicesHandler([]),
+        workspacesHandler([]),
+        { method: 'POST', url: /\/instructions$/, respond: () => request.promise },
+      ]),
+    )
+    await screen.findByLabelText('执行方式')
+    await mode(user, /继续会话/)
+    const source = screen.getByLabelText('来源执行')
+    const chosenLabel = source.textContent
+    const box = await screen.findByLabelText('指令')
+    await waitFor(() => expect(box).toBeEnabled())
+    await user.type(box, '继续原会话的草稿')
+    await user.click(screen.getByRole('button', { name: '继续会话', exact: true }))
+    await waitFor(() => expect(source).toBeDisabled())
+    expect(screen.getByLabelText('执行方式')).toBeDisabled()
+    expect(box).toBeDisabled()
+    await user.click(source)
+    expect(screen.queryByRole('menu')).toBeNull()
+    request.resolve({
+      status: 503,
+      body: {
+        ok: false,
+        error: { code: 'INTERNAL_ERROR', message: '发送失败', requestId: 'pending-resume' },
+      },
+    })
+    await waitFor(() => expect(source).toBeEnabled())
+    expect(source).toHaveTextContent(chosenLabel!)
+    expect(box).toBeEnabled()
+    expect(box).toHaveValue('继续原会话的草稿')
+  })
+
   it('追问钉住接收者、来源和运行固化审批档', async () => {
     const task = makeTask({ assignmentStatus: 'accepted' })
     const run = makeRun({ status: 'running' })
