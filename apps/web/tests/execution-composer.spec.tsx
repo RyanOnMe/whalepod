@@ -179,7 +179,7 @@ describe('#315 统一执行入口的真人页面', () => {
     const box = await screen.findByLabelText('指令')
     await waitFor(() => expect(box).toBeEnabled())
     await user.type(box, '继续原会话的草稿')
-    await user.click(screen.getByRole('button', { name: '继续会话', exact: true }))
+    await user.click(screen.getByRole('button', { name: '继续会话' }))
     await waitFor(() => expect(source).toBeDisabled())
     expect(screen.getByLabelText('执行方式')).toBeDisabled()
     expect(box).toBeDisabled()
