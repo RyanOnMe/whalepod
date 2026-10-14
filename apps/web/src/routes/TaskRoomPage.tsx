@@ -270,7 +270,7 @@ export function TaskRoomPage(): ReactNode {
             {/* 指派与启程：**常驻**，不折进详情——接受指派是责任人进入工作前的必经一步
               （没接受就不能起 Run），把它藏进折叠区等于把门藏在门后。
               ⑥b 的执行区输入框落地后，RunLauncher 会被它取代。 */}
-            <AssignmentPanel task={task} session={session} />
+            <AssignmentPanel task={task} session={session} hasActiveRun={hasActiveRun} />
             {session !== null ? (
               <RunLauncher task={task} session={session} hasActiveRun={hasActiveRun} />
             ) : null}
