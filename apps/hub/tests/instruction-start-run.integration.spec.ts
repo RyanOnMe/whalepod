@@ -650,6 +650,107 @@ describe('instruction starts a run (P1-196)', () => {
     ).rejects.toMatchObject({ code: 'CONFLICT' })
   })
 
+  it('#315 追问早查回执后同 key 已提交且来源结束，晚回读仍回放首次结果', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    const actor = makeActor(ids.userId)
+    const deps = makeInstructionDeps(harness)
+    const source = await harness.orchestrator.create(actor, ids.taskId, makeCreateInput(ids))
+    await harness.worker.dispatchOnce()
+    for (const frame of harness.gateway.drainUpstream())
+      await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(source.id, 1, { type: 'runtime.ready', dshSessionId: 'late-receipt-session' }),
+    )
+    const input = {
+      text: '只追问一次',
+      idempotencyKey: 'followup-late-receipt',
+      intent: { kind: 'followup' as const, runId: source.id },
+    }
+    let intercepted = false
+    let committed: Awaited<ReturnType<typeof sendInstruction>> | undefined
+
+    // 只延迟真实 SELECT 结果返回给调用方：不替换查询结果、不伪造消息/Run/回执。
+    // 查询已真实读到无回执后，另一请求走生产路径提交，并由 ack/事件帧完成来源。
+    function observeReceiptQuery<T extends object>(query: T): T {
+      const observed = new Proxy(query, {
+        get(target, property) {
+          const value = Reflect.get(target, property)
+          if (property === 'then')
+            return async (
+              fulfilled: (rows: unknown) => unknown,
+              rejected: (error: unknown) => unknown,
+            ) => {
+              const rows = await new Promise<unknown>((resolve, reject) => {
+                Reflect.apply(value, target, [resolve, reject])
+              })
+              const statement = Reflect.apply(Reflect.get(target, 'toSQL'), target, []) as {
+                params: unknown[]
+              }
+              if (
+                !intercepted &&
+                statement.params.includes(`run.followup:${input.idempotencyKey}`)
+              ) {
+                intercepted = true
+                expect(rows).toEqual([])
+                committed = await sendInstruction(deps, actor, ids.taskId, input)
+                await harness.worker.dispatchOnce()
+                for (const frame of harness.gateway.drainUpstream())
+                  await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+                await harness.orchestrator.ingestNodeEvent(
+                  harness.deviceFor(ids),
+                  runEventFrame(source.id, 2, { type: 'run.completed', finalText: 'done' }),
+                )
+              }
+              return Promise.resolve(rows).then(fulfilled, rejected)
+            }
+          if (typeof value !== 'function') return value
+          return (...args: unknown[]) => {
+            const result = Reflect.apply(value, target, args)
+            return result === target ? observed : result
+          }
+        },
+      })
+      return observed
+    }
+    const probeDatabase: Database = {
+      ...database,
+      db: new Proxy(database.db, {
+        get(target, property) {
+          if (property !== 'select') return Reflect.get(target, property)
+          return (...args: unknown[]) => {
+            const builder = Reflect.apply(target.select, target, args)
+            return new Proxy(builder, {
+              get(select, method) {
+                if (method !== 'from') return Reflect.get(select, method)
+                return (table: unknown) => {
+                  const query = Reflect.apply(select.from, select, [table])
+                  return table === schema.commandReceipts ? observeReceiptQuery(query) : query
+                }
+              },
+            })
+          }
+        },
+      }),
+    }
+    const replayed = await sendInstruction(
+      { ...deps, database: probeDatabase },
+      actor,
+      ids.taskId,
+      input,
+    )
+    expect(intercepted).toBe(true)
+    expect(committed).toBeDefined()
+    expect(replayed.runId).toBe(source.id)
+    expect(replayed.message.id).toBe(committed?.message.id)
+    expect(replayed.message.instructionState).toBe('accepted')
+    expect(replayed.kind).toBe('followup')
+    expect(await listMessages(database.db, ids.taskId)).toHaveLength(1)
+    expect(harness.gateway.sent.filter((row) => row.frame.type === 'run.followup')).toHaveLength(1)
+  })
+
   it('#315 同 key 并发首次执行只有一条触发指令', async () => {
     const ids = await seedRunPrereqs(database.db)
     await bringDeviceOnline(ids.deviceId)
