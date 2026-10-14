@@ -531,10 +531,12 @@ export class RunOrchestrator {
         .from(schema.runs)
         .where(eq(schema.runs.id, runId))
         .for('update')
-      if (run === undefined || run.status !== 'queued') return // 已迁移过：不重复迁移
+      if (run === undefined) return
       // #196：由执行区指令起的 Run，其 run.start ack 就是**那条指令**的命运（决策 3「受理即落账」）。
       // 与 followup 的区别只是锚点不同：这里是 runs.trigger_message_id，那边是 outbox.message_id。
       await settleTriggerInstruction(tx, run, ack)
+      // 迟到 ack 仍结算消息；已推进的 Run 不重复迁移，终态不复活。
+      if (run.status !== 'queued') return
       if (ack.accepted) {
         this.applyRunTransition(run, { type: 'dispatch_acked' })
         await setRunStatus(tx, run.id, 'dispatching')

@@ -160,11 +160,16 @@ export function RunLauncher({
     },
     onSuccess: (outcome) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(task.id) })
-      setPrompt('')
+      if (outcome.outcome !== 'rejected') setPrompt('')
       intentKey.current = null
       setConfirmingFullAccess(false)
       onOutcome?.(outcome)
-      if (outcome.runId !== null && typeof outcome.runId === 'string') onStarted?.(outcome.runId)
+      if (
+        outcome.outcome === 'started_run' &&
+        outcome.runId !== null &&
+        typeof outcome.runId === 'string'
+      )
+        onStarted?.(outcome.runId)
     },
   })
 
@@ -227,6 +232,14 @@ export function RunLauncher({
                 ),
             )))) &&
     prompt.trim().length > 0
+
+  const feedback = start.isPending
+    ? 'pending'
+    : start.isError
+      ? 'failed'
+      : start.data?.outcome === 'rejected'
+        ? 'rejected'
+        : 'idle'
 
   return (
     <section
@@ -367,21 +380,28 @@ export function RunLauncher({
           </p>
         ) : null}
         {start.isError ? <ErrorBanner error={start.error} /> : null}
+        {start.data?.outcome === 'rejected' ? (
+          <p className="mutation-hint" role="alert" data-testid="execution-start-refusal">
+            指令未被受理：
+            {start.data.instructionErrorMessage ??
+              start.data.instructionErrorCode ??
+              '设备拒绝启动'}
+            。草稿仍保留。
+          </p>
+        ) : null}
         <button
           type="submit"
           className="button button-primary instruction-send"
           disabled={!ready || start.isPending}
           aria-busy={start.isPending}
-          data-feedback={start.isPending ? 'pending' : start.isError ? 'failed' : 'idle'}
+          data-feedback={feedback}
           data-instant={instant ? '' : undefined}
           onPointerDown={() => setInstant(false)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' || event.key === ' ') setInstant(true)
           }}
         >
-          <InstructionSendIcon
-            feedback={start.isPending ? 'pending' : start.isError ? 'failed' : 'idle'}
-          />
+          <InstructionSendIcon feedback={feedback} />
           {start.isPending ? '发送中…' : '开始执行'}
         </button>
       </form>

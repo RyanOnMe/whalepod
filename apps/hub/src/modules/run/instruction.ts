@@ -380,5 +380,9 @@ async function replayByRun(
   // 纵深防御（评审 #204 阻断 1）：回执里的 Run 必须属于**本次请求的 Task**，
   // 否则就是跨 Task 回放（即使 key 撞上了也不该把别人的指令读回去）。
   if (run.taskId !== taskId || message.authorUserId !== authorUserId) return undefined
-  return { kind: 'started_run', message: toCommentView(message), runId }
+  return {
+    kind: message.instructionState === 'rejected' ? 'rejected' : 'started_run',
+    message: toCommentView(message),
+    runId,
+  }
 }
