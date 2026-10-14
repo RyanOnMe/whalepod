@@ -8,6 +8,7 @@ import { screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  ALICE,
   BOB,
   loggedInHandlers,
   makeArtifact,
@@ -73,6 +74,7 @@ describe('artifact-list（Task Room 右侧）', () => {
     expect(screen.getByText('仅你可见，待发布')).toBeVisible()
     const publish = screen.getByRole('button', { name: '发布' })
     await user.click(publish)
+    await user.click(await screen.findByRole('button', { name: '确认发布给团队' }))
     await waitFor(() => {
       const calls = view.fetchMock.mock.calls
       expect(
@@ -221,3 +223,100 @@ function publishHandler(artifactId: string): MockHandler {
       }),
   }
 }
+
+describe('#313 候选发布前检查', () => {
+  it('拥有者可检查候选文本，读取携带会话且不发布', async () => {
+    const user = userEvent.setup()
+    const candidate = makeArtifact({ status: 'candidate', ownerUserId: BOB.userId })
+    const task = makeTask()
+    const view = renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task, { artifacts: [candidate] }),
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/artifacts/${candidate.id}/content$`),
+          respond: () => new Response('<script>unsafe()</script>候选内容', { status: 200 }),
+        },
+      ]),
+    )
+    await user.click(await screen.findByRole('button', { name: '预览' }))
+    expect(await screen.findByTestId('artifact-preview')).toHaveTextContent(
+      '<script>unsafe()</script>候选内容',
+    )
+    expect(document.querySelector('.artifact-preview script')).toBeNull()
+    expect(
+      view.fetchMock.mock.calls.filter(
+        ([url, init]) =>
+          String(url).endsWith('/publish') && (init as RequestInit)?.method === 'POST',
+      ),
+    ).toHaveLength(0)
+    expect(
+      view.fetchMock.mock.calls.some(
+        ([url, init]) =>
+          String(url).endsWith(`/${candidate.id}/content`) &&
+          (init as RequestInit)?.credentials === 'include',
+      ),
+    ).toBe(true)
+  })
+
+  it('二进制候选可下载检查，并明确在线预览不可用', async () => {
+    const user = userEvent.setup()
+    const candidate = makeArtifact({ status: 'candidate', mediaType: 'application/pdf' })
+    const task = makeTask()
+    const view = renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task, { artifacts: [candidate] }),
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/artifacts/${candidate.id}/content$`),
+          respond: () => new Response('pdf', { status: 200 }),
+        },
+      ]),
+    )
+    expect(await screen.findByText('暂不支持在线预览，请下载检查。')).toBeVisible()
+    expect(screen.queryByRole('button', { name: '预览' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: '下载' }))
+    await waitFor(() =>
+      expect(
+        view.fetchMock.mock.calls.some(([url]) => String(url).endsWith(`/${candidate.id}/content`)),
+      ).toBe(true),
+    )
+  })
+
+  it('确认团队可见范围前不发布，返回保留私有候选', async () => {
+    const user = userEvent.setup()
+    const candidate = makeArtifact({ status: 'candidate' })
+    const task = makeTask()
+    const view = renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task, { artifacts: [candidate] }),
+        publishHandler(candidate.id),
+      ]),
+    )
+    await user.click(await screen.findByRole('button', { name: '发布' }))
+    expect(await screen.findByRole('dialog')).toHaveTextContent('团队成员可以查看或下载')
+    expect(screen.getByRole('dialog')).toHaveTextContent(candidate.title)
+    expect(
+      view.fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/publish')),
+    ).toHaveLength(0)
+    await user.click(screen.getByRole('button', { name: '返回' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByText('仅你可见，待发布')).toBeVisible()
+  })
+
+  it('改派后的新责任人不会获得旧拥有者候选的检查入口', async () => {
+    const task = makeTask({ assigneeUserId: ALICE.userId })
+    const candidate = makeArtifact({ status: 'candidate', ownerUserId: BOB.userId })
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(ALICE, [taskRoomHandler(task, { artifacts: [candidate] })]),
+    )
+    await screen.findByRole('heading', { name: task.title })
+    expect(screen.queryByText(candidate.title)).toBeNull()
+    expect(screen.queryByRole('button', { name: '下载' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '预览' })).toBeNull()
+  })
+})

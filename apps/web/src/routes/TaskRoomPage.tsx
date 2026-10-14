@@ -243,7 +243,7 @@ export function TaskRoomPage(): ReactNode {
 
             {/* 指派与启程：**常驻**，不折进详情——接受指派是责任人进入工作前的必经一步
               （没接受就不能起 Run），把它藏进折叠区等于把门藏在门后。 */}
-            <AssignmentPanel task={task} session={session} />
+            <AssignmentPanel task={task} session={session} hasActiveRun={activeRun !== undefined} />
 
             {/* 任务详情：交付物与复核——低频，折起来不占视觉重量（用户选定方案①） */}
             {/* **默认展开**（仍可手动折叠）：Q5 的 G6-04 证明「发布交付物」是金路径的一部分

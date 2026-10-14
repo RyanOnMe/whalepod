@@ -32,12 +32,14 @@
 | 现象 | 先看 |
 |---|---|
 | 指令去向变化、来源续跑或草稿丢失 | `artifacts/evidence/unified-execution/result.json`：web.execution 的草稿/唯一输入 → hub.run 的血缘/来源版本/现场 → runtime.bridge 会话身份；上下文在场另外复跑 Q3 resume 契约。见 unified-execution-acceptance |
+| 拒绝后无法改派或改派重试冲突 | `artifacts/evidence/task-reassignment/result.json`：web.assignment → hub.task 的 pending/assignee → command_receipt → 新 Run 的 owner/device |
 | Run 状态不动 | hub.outbox 是否派发 → node.gateway 是否 ack → node.supervisor 是否拉起子进程 |
 | 浏览器看不到进度 | hub.ws cursor 是否推进 → 浏览器是否收到 `resync.required` → hub.domain 是否产事件 |
 | Run/工具/活动/发送图形与事实不符，或 Micro 窄屏溢出 | `artifacts/evidence/run-micro/<attempt>/result.json`：hub.run-projection 的 runId/seq/audience/callId/outcome/phase → web.micro/activity；HTTP outcome → web.instruction；筛选焦点/动效 → web.console；复跑 `pnpm test:e2e:micro`，见 run-micro-acceptance |
 | 提示层位置/文案不对，或完成提醒开关「看起来开了但没授权」，或 toast 不消失/关不掉 | 同一份 `result.json` 的 `batch2` 段：hint 的等待与描述可达性 → web.hint；`data-on`/`data-ring`/偏好 → web.bell；fuse 时长与暂停 → web.toast；复跑 `pnpm test:e2e:micro`，见 run-micro-batch2-acceptance |
 | 事件重复/缺序 | `run_event` 表 `(run_id, seq)` 是否有缺口/重复 → node spool 是否重发 |
 | 审批卡住 | hub.domain `approval` 行状态 → node.gateway 决定帧 → runtime.bridge answerer |
+| 候选无法检查或发布可见范围错误 | `artifacts/evidence/candidate-inspection/result.json`：web.artifact → Hub 内容读取鉴权 → artifact.store digest；复跑见 candidate-inspection-acceptance |
 | Artifact 打不开 | artifact.store digest 与 DB metadata 比对 → hub.http 权限判定 |
 | 疑似泄露 | 直接跑 `scripts/secret-scan.sh` 扫相关证据与日志 |
 | 性能回归疑云 | `pnpm test:load`（Q8 短档）报告 JSON：传播/ingest p95、空闲段 RSS 斜率、droppedConnections；判据/边界见 `docs/agent/load-performance-acceptance.md` |

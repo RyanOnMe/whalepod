@@ -24,6 +24,7 @@ export default defineConfig({
   // 全新冷启；--project 过滤见根 package.json。
   projects: [
     { name: 'p1-315', testMatch: /unified-execution\.spec\.ts/ },
+    { name: 'p1-314', testMatch: /task-reassignment\.spec\.ts/ },
     { name: 'p1-07', testMatch: /task-room\.spec\.ts/ },
     { name: 'p1-19', testMatch: /full-chain\.spec\.ts/ },
     // #140：实时观察用例独立成套——判据是「对端零操作」，与既有两条「显式

@@ -52,7 +52,17 @@ let envCache: E2eEnv | undefined
 
 export function env(): E2eEnv {
   if (envCache === undefined) {
-    envCache = JSON.parse(readFileSync(join(tmpdir(), 'whalepod-e2e-env.json'), 'utf8')) as E2eEnv
+    envCache = JSON.parse(
+      readFileSync(
+        join(
+          tmpdir(),
+          process.env['WHALEPOD_E2E_OPERATIONS'] === '1'
+            ? 'whalepod-operations-e2e-env.json'
+            : 'whalepod-e2e-env.json',
+        ),
+        'utf8',
+      ),
+    ) as E2eEnv
   }
   if (envCache.controlPort === undefined || envCache.controlToken === undefined) {
     throw new Error('环境清单缺控制面字段（e2e-serve 版本过旧？）')

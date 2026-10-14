@@ -7,8 +7,10 @@
  * 创建后将显示什么」，不伪造内容。
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
+import { isApiError } from '../../shared/api/errors.js'
+import { SelectMenu } from '../../shared/SelectMenu.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { ASSIGNMENT_STATUS_LABEL } from '../../shared/format.js'
 import { useMemberDirectory } from '../team/memberDirectory.js'
@@ -19,9 +21,10 @@ import { queryKeys } from '../../app/query-client.js'
 export interface AssignmentPanelProps {
   task: TaskView
   session: Session | null
+  hasActiveRun: boolean
 }
 
-export function AssignmentPanel({ task, session }: AssignmentPanelProps): ReactNode {
+export function AssignmentPanel({ task, session, hasActiveRun }: AssignmentPanelProps): ReactNode {
   const queryClient = useQueryClient()
   const [error, setError] = useState<unknown>(null)
   const isAssignee = session !== null && task.assigneeUserId === session.userId
@@ -121,7 +124,113 @@ export function AssignmentPanel({ task, session }: AssignmentPanelProps): ReactN
         </span>
       </div>
       {body}
+      {task.assignmentStatus === 'rejected' &&
+      task.status !== 'done' &&
+      task.status !== 'cancelled' &&
+      session !== null &&
+      (session.role === 'owner' || session.role === 'admin') ? (
+        hasActiveRun ? (
+          <p className="mutation-hint">有运行进行中，结束后才能重新指派。</p>
+        ) : (
+          <ReassignmentForm task={task} />
+        )
+      ) : null}
       {error !== null ? <ErrorBanner error={error} /> : null}
     </section>
+  )
+}
+
+/** 拒绝后的恢复入口：保留既有授权与候选拥有关系，不自动接受新责任。 */
+function ReassignmentForm({ task }: { task: TaskView }): ReactNode {
+  const directory = useMemberDirectory()
+  const queryClient = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [userId, setUserId] = useState('')
+  const key = useRef<string | null>(null)
+  const candidates = directory.members.filter((member) => member.enabled)
+  const mutation = useMutation({
+    mutationFn: () =>
+      api.mutate<TaskView>(`/tasks/${task.id}/reassign`, {
+        body: { assigneeUserId: userId },
+        ...(key.current === null ? {} : { idempotencyKey: key.current }),
+      }),
+    onSuccess: () => {
+      setOpen(false)
+      setUserId('')
+      key.current = null
+      for (const queryKey of [
+        queryKeys.taskRoom(task.id),
+        queryKeys.projectTasks(task.projectId),
+        queryKeys.recentTasks,
+        queryKeys.instructionGrants(task.id),
+      ]) {
+        void queryClient.invalidateQueries({ queryKey })
+      }
+    },
+  })
+  const submit = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault()
+    if (userId === '' || mutation.isPending || directory.isPending || directory.isError) return
+    key.current ??= crypto.randomUUID()
+    mutation.mutate()
+  }
+  if (!open)
+    return (
+      <button type="button" className="button button-primary" onClick={() => setOpen(true)}>
+        重新指派
+      </button>
+    )
+  return (
+    <form onSubmit={submit} aria-label="重新指派任务">
+      {directory.isPending ? <p className="mutation-hint">正在读取可指派成员…</p> : null}
+      {directory.isError ? <ErrorBanner error={directory.error} /> : null}
+      {!directory.isPending && !directory.isError && candidates.length === 0 ? (
+        <p className="empty-state">没有可指派的启用成员。</p>
+      ) : null}
+      <SelectMenu
+        id={`reassign-member-${task.id}`}
+        label="新责任人"
+        value={userId}
+        placeholder="选择启用成员…"
+        options={candidates.map((member) => ({
+          value: member.userId,
+          label: directory.personOf(member.userId),
+          disabled: false,
+        }))}
+        disabled={directory.isPending || directory.isError || mutation.isPending}
+        onChange={(value) => {
+          setUserId(value)
+          key.current = null
+          mutation.reset()
+        }}
+      />
+      <p className="mutation-hint">
+        新责任人需要接受任务。现有指令授权名单会保留，可在权限页检查；历史候选产出仍只属于原拥有者。
+      </p>
+      {mutation.isError ? <ErrorBanner error={mutation.error} /> : null}
+      {isApiError(mutation.error) && mutation.error.code === 'CONFLICT' ? (
+        <p className="mutation-hint">运行状态已变化，请查看当前运行，结束后再重新指派。</p>
+      ) : null}
+      <div className="form-actions">
+        <button
+          type="submit"
+          className="button button-primary"
+          disabled={userId === '' || directory.isPending || directory.isError || mutation.isPending}
+        >
+          确认重新指派
+        </button>
+        <button
+          type="button"
+          className="button"
+          disabled={mutation.isPending}
+          onClick={() => {
+            setOpen(false)
+            mutation.reset()
+          }}
+        >
+          返回
+        </button>
+      </div>
+    </form>
   )
 }

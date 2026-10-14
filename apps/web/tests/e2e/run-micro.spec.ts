@@ -274,6 +274,7 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     await owner.route('**/api/v1/artifacts/*/content', (route) => route.fulfill({ status: 500 }))
     // 交付物此刻还是 candidate：先走真实的「发布」，下载入口才会出现（#250 的两态）。
     await owner.getByTestId('artifact-publish-button').first().click()
+    await owner.getByRole('button', { name: '确认发布给团队' }).click()
     const downloadButton = owner.getByTestId('artifact-download-button').first()
     await expect(downloadButton).toBeVisible()
     await downloadButton.click()

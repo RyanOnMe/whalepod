@@ -15,6 +15,7 @@ import { useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { queryKeys } from '../../app/query-client.js'
 import { pushToast } from '../../app/toast.js'
+import { ConfirmDialog } from '../../shared/ConfirmDialog.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { formatBytes, shortId } from '../../shared/format.js'
 import { RUN_NOT_IN_TIMELINE_LABEL, runOrdinalLabels } from './runLabels.js'
@@ -117,31 +118,6 @@ function ArtifactRows({
   runLabels: ReadonlyMap<string, string>
   onReferenceRun?: ((runId: string) => void) | undefined
 }): ReactNode {
-  const [busyId, setBusyId] = useState<string | undefined>(undefined)
-
-  async function download(artifact: TaskRoomArtifact): Promise<void> {
-    setBusyId(artifact.id)
-    try {
-      const response = await fetch(`/api/v1/artifacts/${artifact.id}/content`, {
-        credentials: 'include',
-      })
-      if (!response.ok) {
-        // #229：下载失败是短暂挫折，重试就是再点一次按钮——toast 足够。
-        pushToast(`下载失败（${artifact.title}），请稍后重试。`)
-        return
-      }
-      const blob = await response.blob()
-      const url = URL.createObjectURL(blob)
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = safeFileName(artifact)
-      anchor.click()
-      URL.revokeObjectURL(url)
-    } finally {
-      setBusyId(undefined)
-    }
-  }
-
   if (artifacts.length === 0) return null
   return (
     <ul className="artifact-list" role="list">
@@ -171,15 +147,7 @@ function ArtifactRows({
           </dl>
           <div className="artifact-actions">
             <ArtifactPreview artifact={artifact} />
-            <button
-              type="button"
-              className="button"
-              data-testid="artifact-download-button"
-              disabled={busyId === artifact.id}
-              onClick={() => void download(artifact)}
-            >
-              下载
-            </button>
+            <ArtifactDownload artifact={artifact} />
             {/* #250：指着这个工件说话——注入来源运行的引用 token（#216 窄解析），
                 落点是讨论输入框（人对人）；驱动 Agent 仍由用户自己去执行栏说。 */}
             {onReferenceRun === undefined ? null : (
@@ -196,6 +164,45 @@ function ArtifactRows({
         </li>
       ))}
     </ul>
+  )
+}
+
+/** 同一受控内容接口：发布前的拥有者与发布后的团队共用下载路径。 */
+function ArtifactDownload({ artifact }: { artifact: TaskRoomArtifact }): ReactNode {
+  const [busy, setBusy] = useState(false)
+  async function download(): Promise<void> {
+    if (busy) return
+    setBusy(true)
+    try {
+      const response = await fetch(`/api/v1/artifacts/${artifact.id}/content`, {
+        credentials: 'include',
+      })
+      if (!response.ok) throw new Error('content unavailable')
+      const url = URL.createObjectURL(await response.blob())
+      try {
+        const anchor = document.createElement('a')
+        anchor.href = url
+        anchor.download = safeFileName(artifact)
+        anchor.click()
+      } finally {
+        URL.revokeObjectURL(url)
+      }
+    } catch {
+      pushToast(`下载失败（${artifact.title}），请稍后重试。`)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <button
+      type="button"
+      className="button"
+      data-testid="artifact-download-button"
+      disabled={busy}
+      onClick={() => void download()}
+    >
+      {busy ? '下载中…' : '下载'}
+    </button>
   )
 }
 
@@ -266,9 +273,12 @@ function CandidateRows({
 }): ReactNode {
   const queryClient = useQueryClient()
   const [busyId, setBusyId] = useState<string | undefined>(undefined)
+  const [confirming, setConfirming] = useState<TaskRoomArtifact | null>(null)
   const [error, setError] = useState<string | undefined>(undefined)
 
   async function publish(artifact: TaskRoomArtifact): Promise<void> {
+    if (busyId !== undefined) return
+    setConfirming(null)
     setBusyId(artifact.id)
     setError(undefined)
     try {
@@ -303,19 +313,35 @@ function CandidateRows({
               <dd>{artifact.sha256.slice(0, 12)}</dd>
             </div>
           </dl>
+          {!isTextPreviewable(artifact.mediaType, artifact.byteSize) ? (
+            <p className="mutation-hint">暂不支持在线预览，请下载检查。</p>
+          ) : null}
           <div className="artifact-actions">
+            <ArtifactPreview artifact={artifact} />
+            <ArtifactDownload artifact={artifact} />
             <button
               type="button"
               className="button"
               data-testid="artifact-publish-button"
-              disabled={busyId === artifact.id}
-              onClick={() => void publish(artifact)}
+              disabled={busyId !== undefined}
+              onClick={() => setConfirming(artifact)}
             >
               发布
             </button>
           </div>
         </li>
       ))}
+      {confirming !== null ? (
+        <ConfirmDialog
+          open
+          title="发布给团队？"
+          body={`发布「${confirming.title}」（内容摘要 ${confirming.sha256.slice(0, 12)}）后，团队成员可以查看或下载。目前仅你可见。`}
+          confirmLabel="确认发布给团队"
+          pending={busyId !== undefined}
+          onConfirm={() => void publish(confirming)}
+          onCancel={() => setConfirming(null)}
+        />
+      ) : null}
       {error !== undefined ? (
         <p className="mutation-hint" role="alert">
           {error}

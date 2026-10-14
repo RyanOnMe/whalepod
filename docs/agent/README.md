@@ -31,6 +31,7 @@
 | [composer-approval-pill-acceptance.md](./composer-approval-pill-acceptance.md) | #244 P1-UX-6：composer 审批档位胶囊——发送前知情（档位+来源三条解析：追问=Run 固化档/任务覆盖/服务端预解析 Revision 默认 `nextRunApprovalPolicy`）+ full_access 发送确认；与 orchestrator 解析同式两处成对；「发送前可见≠发送时可改」的取舍 |
 | [tool-trace-chip-acceptance.md](./tool-trace-chip-acceptance.md) | #246 P1-UX-7：工具轨迹内联——指令条目 chip「已用工具：x」点开直达 Console（渐进展开，Console 仍是审计真源）；服务端 DISTINCT ON 取每 Run 最新 project 受众 tool.started；受众收缩判据（owner-only 高 seq 不进全员摘要） |
 | [run-duration-acceptance.md](./run-duration-acceptance.md) | #248 P1-UX-8：运行时长（时间感）——运行卡时长行（终态固定总时长/活跃已耗时 30s 自跳/未开始不画）；formatDuration 四档纯函数；fake timers 只 fake Date 的测试教训 |
+| [candidate-inspection-acceptance.md](./candidate-inspection-acceptance.md) | #313：拥有者发布前预览/下载、显式团队可见范围、双成员私有读取与发布后 digest；独立端口生产装配 Q5 |
 | [artifact-preview-acceptance.md](./artifact-preview-acceptance.md) | #250 P1-UX-9：交付物有脸——文本类工件页内预览（512KiB 资格/64KiB 截断/三态诚实）+「对这个工件继续说」注入 #216 引用 token 到讨论框；重预览器不做、candidate 不加入口的取舍 |
 | [recent-tasks-acceptance.md](./recent-tasks-acceptance.md) | #252 P1-UX-10：侧栏最近任务——按活动排序（greatest(updated_at,最新消息,最新 Run)）的 ≤1 击回现场入口；窄投影含 projectName；小节标签不进标题层级（h2 判据教训）与「重试」撞名消歧 |
 | [global-search-acceptance.md](./global-search-acceptance.md) | #254 P1-UX-11：⌘K 全局搜索——title ILIKE（转义通配符/参数化/空 q 400）+ 浮层（option 语义/键盘路径/还焦）；mock respond 拿不到 URL 等三条踩坑记录 |
@@ -45,6 +46,7 @@
 | [crossfade-acceptance.md](./crossfade-acceptance.md) | #277 P1-UX-20：内容形态切换——骨架→内容的交叉淡入（判据是"两者同时在 DOM"，硬切不可能满足）、空态/列表的挂载入场、状态徽标换色；「在场对象不是 value\|null」与「取规则体要按行首锚定」两处踩坑 |
 | [dsh-ui-vendoring.md](./dsh-ui-vendoring.md) | vendored 第三方代码的出处台账：上游钉版 SHA、逐文件映射、同步纪律、许可/商标义务落点（ADR-0008 / #138） |
 | [setup-auth-invite-acceptance.md](./setup-auth-invite-acceptance.md) | G1-01..06：Setup/登录/邀请/角色/Origin gate 验收（P1-05）；#55 迁移并发串行化与等锁超时判据 |
+| [task-reassignment-acceptance.md](./task-reassignment-acceptance.md) | #314：拒绝后网页改派/等待接受/新责任人自己的现场执行；HTTP 幂等重试、权限与活跃运行守卫 |
 | [project-task-agent-acceptance.md](./project-task-agent-acceptance.md) | G2-01..06：Project/Task/Comment/Assignment + Task Room 聚合 + Agent Revision 验收（P1-06） |
 | [run-orchestrator-acceptance.md](./run-orchestrator-acceptance.md) | G4-01..03、R7/R8：Run Orchestrator 与事务 Outbox 派发（P1-10） |
 | [browser-realtime-acceptance.md](./browser-realtime-acceptance.md) | G2-06、R2/R3、§6.2：Browser Team Event 实时链路与断线补洞（P1-08） |
