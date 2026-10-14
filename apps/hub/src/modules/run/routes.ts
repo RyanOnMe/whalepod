@@ -100,6 +100,9 @@ export function registerRunRoutes(app: FastifyInstance, deps: RunRoutesDeps): vo
       }
       const run = await deps.orchestrator.create(actor, taskId, {
         agentId: body.data.agentId,
+        ...(body.data.expectedApprovalPolicy !== undefined
+          ? { expectedApprovalPolicy: body.data.expectedApprovalPolicy }
+          : {}),
         ...(body.data.profileRevisionId !== undefined
           ? { profileRevisionId: body.data.profileRevisionId }
           : {}),

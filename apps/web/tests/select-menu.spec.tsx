@@ -201,8 +201,8 @@ describe('#158 反面钉：全树不许有原生 <select>（逐落页点）', ()
     // 评审 #213 S3：这两个落页点此前**在全部测试里出现 0 次**——#158 的反面钉是逐落页点的，
     // 新落页点不加，就等于"原生 select 可以悄悄回到这里"。
     // 本用例只钉按钮语义这一层；两档截图 / 390 视口 / 键盘回焦属 #158 的设备矩阵（另记）。
-    const { BOB, makeRun, makeTask } = await import('./fixtures.js')
-    const task = makeTask({ assigneeUserId: BOB.userId })
+    const { BOB, makeTask } = await import('./fixtures.js')
+    const task = makeTask({ assignmentStatus: 'accepted', assigneeUserId: BOB.userId })
     renderApp(
       `/tasks/${task.id}`,
       loggedInHandlers(BOB, [
@@ -217,7 +217,7 @@ describe('#158 反面钉：全树不许有原生 <select>（逐落页点）', ()
                   task,
                   comments: [],
                   instructions: [],
-                  runs: [makeRun({ status: 'running' })],
+                  runs: [],
                   artifacts: [],
                 },
               }),
@@ -237,8 +237,8 @@ describe('#158 反面钉：全树不许有原生 <select>（逐落页点）', ()
         teamMembersHandler([]),
       ]),
     )
-    // 自动态：触发器可访问名是「指定设备」（显式态才叫「设备」，两态不同名是既有事实）
-    const device = await screen.findByLabelText('指定设备')
+    // 统一入口复用目标选择器，可访问名稳定为「选择设备」。
+    const device = await screen.findByLabelText('选择设备')
     expect(device.tagName).toBe('BUTTON')
     expect(device).toHaveAttribute('aria-haspopup', 'menu')
     expect(device).toHaveAttribute('id', 'target-device')
@@ -299,7 +299,7 @@ describe('#158 反面钉：全树不许有原生 <select>（逐落页点）', ()
     const user = userEvent.setup()
     renderApp('/', loggedInHandlers(ALICE, [projectsHandler([project]), teamMembersHandler()]))
     await user.click(await screen.findByRole('button', { name: '创建任务' }))
-    const control = await screen.findByLabelText('责任人')
+    const control = await screen.findByLabelText('交给谁')
     expect(control.tagName).toBe('BUTTON')
     expect(control).toHaveAttribute('id', `task-assignee-${project.id}`)
     expect(document.querySelectorAll('select[id^="task-assignee-"]')).toHaveLength(0)

@@ -23,6 +23,7 @@ import {
   type MockHandler,
 } from './fixtures.js'
 import { appendLiveDelta } from '../src/shared/realtime/run-buffer.js'
+import { queryKeys } from '../src/app/query-client.js'
 import type { RunView } from '../src/shared/api/types.js'
 
 const AGENT_ID = 'a1a1a1a1-0000-4000-8000-00000000000a'
@@ -241,6 +242,41 @@ describe('RunLauncher', () => {
     )
     expect(await screen.findByText('运行中')).toBeVisible()
     expect(screen.queryByRole('heading', { name: '开始执行' })).not.toBeInTheDocument()
+  })
+  it('#315 编辑草稿时 Agent 更新不替换已展示的版本', async () => {
+    const task = makeTask({ assignmentStatus: 'accepted', assigneeUserId: BOB.userId })
+    const capture: { body?: unknown } = {}
+    const user = userEvent.setup()
+    const view = renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [taskRoomHandler(task, { runs: [] }), ...launcherHandlers(capture)]),
+    )
+    await selectOption(user, '选择 Agent', 'Fixer')
+    await waitFor(() => expect(screen.getByTestId('execution-revision')).toHaveTextContent('r3'))
+    const original = view.queryClient.getQueryData<
+      import('../src/shared/api/types.js').AgentDetailView
+    >(queryKeys.agentDetail(AGENT_ID))
+    const nextId = 'a2a2a2a2-0000-4000-8000-00000000000c'
+    act(() =>
+      view.queryClient.setQueryData(queryKeys.agentDetail(AGENT_ID), {
+        ...original,
+        currentRevisionId: nextId,
+        revisions: [
+          ...original!.revisions,
+          { ...original!.revisions[0], id: nextId, revision: 4, approvalPolicy: 'full_access' },
+        ],
+      }),
+    )
+    expect(screen.getByTestId('execution-revision')).toHaveTextContent('r3')
+    await user.type(screen.getByLabelText('指令'), '使用已确认的版本')
+    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    await waitFor(() =>
+      expect(capture.body).toMatchObject({
+        profileRevisionId: REVISION_ID,
+        expectedApprovalPolicy: 'approval_required',
+      }),
+    )
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
 

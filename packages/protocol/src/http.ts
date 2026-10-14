@@ -144,12 +144,45 @@ export const CreateInstructionGrantRequestSchema = z.strictObject({
  * 执行目标（设备/工作区）缺省走三段式自动解析（上一个 Run → 责任人最近在线设备 → 拒绝），
  * 显式传入即覆盖；`agentId` 缺省取该 Task 上一个 Run 用过的 Agent。
  */
-export const SendInstructionRequestSchema = z.strictObject({
-  text: z.string().min(1).max(10000),
-  deviceId: z.uuid().optional(),
-  workspaceId: z.uuid().optional(),
-  agentId: z.uuid().optional(),
-})
+export const SendInstructionRequestSchema = z
+  .strictObject({
+    text: z.string().min(1).max(10000),
+    deviceId: z.uuid().optional(),
+    workspaceId: z.uuid().optional(),
+    agentId: z.uuid().optional(),
+    profileRevisionId: z.uuid().optional(),
+    expectedApprovalPolicy: z.enum(['approval_required', 'full_access']).optional(),
+    /** Web 显式意图；缺省保留自动指派与旧客户端的路由语义。 */
+    intent: z
+      .discriminatedUnion('kind', [
+        z.strictObject({ kind: z.literal('new') }),
+        z.strictObject({ kind: z.literal('followup'), runId: z.uuid() }),
+        z.strictObject({ kind: z.literal('resume'), runId: z.uuid() }),
+      ])
+      .optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.intent?.kind === 'new' && value.agentId === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['agentId'],
+        message: 'new execution requires an explicit agent',
+      })
+    }
+    if (
+      value.intent !== undefined &&
+      value.intent.kind !== 'new' &&
+      (value.agentId !== undefined ||
+        value.profileRevisionId !== undefined ||
+        value.deviceId !== undefined ||
+        value.workspaceId !== undefined)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'followup and resume inherit their source run; target overrides are not allowed',
+      })
+    }
+  })
 
 /**
  * POST /tasks/:taskId/runs：Run 固化 Agent、Workspace 与 Profile Revision（§2.6）。
@@ -165,6 +198,7 @@ export const CreateRunRequestSchema = z
   .strictObject({
     agentId: z.uuid(),
     profileRevisionId: z.uuid().optional(),
+    expectedApprovalPolicy: z.enum(['approval_required', 'full_access']).optional(),
     deviceId: z.uuid(),
     workspaceId: z.uuid(),
     prompt: z.string().min(1).max(20_000),

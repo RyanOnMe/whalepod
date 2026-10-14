@@ -133,7 +133,7 @@ test.describe('#158 七处下拉的两档审计', () => {
     await owner.getByRole('button', { name: '创建任务' }).click()
     await owner.locator('input[id^="task-title-"]').fill('审计用任务')
     const assignee = taskForm.locator('button[id^="task-assignee-"]')
-    await assertNotNativeSelect(assignee, taskForm, '责任人')
+    await assertNotNativeSelect(assignee, taskForm, '交给谁')
     await assertMenuTriggerTokens(assignee)
     for (const vp of VIEWPORTS) {
       await owner.setViewportSize({ width: vp.width, height: vp.height })
@@ -180,8 +180,11 @@ test.describe('#158 七处下拉的两档审计', () => {
     await setRuntimeFixture('approval')
     await bob.reload()
     await bob.goto(`/tasks/${taskId}`)
-    await expect(bob.getByRole('heading', { name: '启动 Run' })).toBeVisible()
+    await expect(bob.getByRole('heading', { name: '开始新执行' })).toBeVisible()
 
+    await bob.locator('.execution-settings > summary').click()
+    await selectFromMenu(bob.getByLabel('选择 Agent'), `审计代理 ${RUN_TAG}`)
+    await selectFromMenu(bob.getByLabel('选择设备'), /e2e-node（在线）/)
     const launcher = bob.locator('.run-launcher')
     const launchPoints = [
       { label: '选择 Agent', id: 'run-agent', shot: 'run-agent' },
@@ -194,9 +197,7 @@ test.describe('#158 七处下拉的两档审计', () => {
       await assertNotNativeSelect(trigger, launcher, point.label)
       await assertMenuTriggerTokens(trigger)
     }
-    // Agent → 设备 → Workspace 依次可选项（Revision 由 Agent 带出来，缺省即当前 Revision）
-    await selectFromMenu(bob.getByLabel('选择 Agent'), `审计代理 ${RUN_TAG}`)
-    await selectFromMenu(bob.getByLabel('选择设备'), /e2e-node（在线）/)
+    // 显式设备选定后才展开所属 Workspace；配置版本默认已固定。
     await selectFromMenu(bob.getByLabel('选择 Workspace'), 'e2e-ws')
 
     // 两档截图：RunLauncher 四处（Agent 已选，其余按可选项打开）

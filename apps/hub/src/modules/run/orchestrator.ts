@@ -172,6 +172,12 @@ export class RunOrchestrator {
     // 答案：未覆盖的跟（每次建 Run 重新解析），已覆盖的不跟（Task 值优先）。
     // 口径（ADR-0010 决策 5）：不做「自动触发降级」，触发方式不影响档位。
     const approvalPolicy = task.approvalPolicy ?? revision.approvalPolicy
+    if (
+      input.expectedApprovalPolicy !== undefined &&
+      input.expectedApprovalPolicy !== approvalPolicy
+    ) {
+      throw new RunCommandError('CONFLICT', '审批档位已变化，请重新确认后发送')
+    }
 
     const [device] = await tx
       .select()

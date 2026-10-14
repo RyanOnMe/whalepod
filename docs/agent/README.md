@@ -12,6 +12,7 @@
 | [run-micro-batch2-acceptance.md](./run-micro-batch2-acceptance.md) | #308 Micro 第二批：提示层（Run id 可达、键盘优先）、完成提醒开关的授权真实路径、可关闭 toast（fuse/暂停/关闭），含 34 个上游组件的取用与不取用清单 |
 | [instruction-path-acceptance.md](./instruction-path-acceptance.md) | #186（ADR-0009 切片③b）：追问受理→命令入队→ack 结算 `instruction_state`（含拒绝理由落库、状态受理规则、幂等与授权不变量的 10 条用例） |
 | [instruction-grant-acceptance.md](./instruction-grant-acceptance.md) | P1-198（切片④）：指令权授权——责任人 ∪ 被授权成员；审批权/Run 归属/讨论区三条红线不变 |
+| [unified-execution-acceptance.md](./unified-execution-acceptance.md) | #315：首次执行/追问/来源续跑的统一输入，状态变化保留草稿，来源版本与审批预览条件、并发幂等及真实 Q5 |
 | [instruction-starts-run-acceptance.md](./instruction-starts-run-acceptance.md) | P1-196（切片③c-2b）：执行区指令起 Run——有活跃 Run 降级为追问、无则由设备/工作区三段式解析后建 Run，指令命运由 run.start ack 结算 |
 | [discussion-separation-acceptance.md](./discussion-separation-acceptance.md) | P1-194（切片③c-2a，ADR-0010）：讨论流只含 `discussion`、执行流只含 instruction/followup（带状态与拒绝理由）——评论区纯人际，执行状态不外溢 |
 | [instruction-queue-acceptance.md](./instruction-queue-acceptance.md) | P1-192（切片③c-1）：未 running 的追问只落 `pending`、进 `running` 时按 `(created_at, id)` 补发——含幂等、终态清扫、Node not-ready 守卫的复刻 |

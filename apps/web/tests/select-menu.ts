@@ -48,6 +48,15 @@ export async function openSelect(
   name: string | RegExp,
   scope: QueryScope = screen,
 ): Promise<ReturnType<typeof within>> {
+  const advanced = document.querySelector<HTMLDetailsElement>('details.execution-settings')
+  if (
+    advanced !== null &&
+    !advanced.open &&
+    typeof name === 'string' &&
+    ['选择 Revision', '选择设备', '选择 Workspace', '指定设备'].includes(name)
+  ) {
+    await user.click(advanced.querySelector('summary')!)
+  }
   await user.click(await selectTrigger(name, scope))
   const list = await screen.findByRole('menu')
   return within(list)

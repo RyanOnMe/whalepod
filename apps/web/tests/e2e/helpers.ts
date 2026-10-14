@@ -413,6 +413,10 @@ export async function assertControlTokens(
  * @param optionText 选项文案（按可访问名匹配）
  */
 export async function selectFromMenu(trigger: Locator, optionText: string | RegExp): Promise<void> {
+  const advanced = trigger.locator('xpath=ancestor::details')
+  if ((await advanced.count()) > 0 && (await advanced.first().getAttribute('open')) === null) {
+    await advanced.first().locator('summary').click()
+  }
   await expect(trigger).toHaveAttribute('aria-expanded', 'false')
   await trigger.click()
   await expect(trigger).toHaveAttribute('aria-expanded', 'true')

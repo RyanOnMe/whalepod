@@ -125,7 +125,7 @@ describe('#137 项目任务列表', () => {
     await user.click(await screen.findByRole('button', { name: '创建任务' }))
     await user.type(await screen.findByLabelText('任务标题'), '起草验收报告')
 
-    const assignee = await screen.findByLabelText('责任人')
+    const assignee = await screen.findByLabelText('交给谁')
     expect(assignee).toHaveAttribute('id', `task-assignee-${PROJECT.id}`)
     expect(assignee.tagName).toBe('BUTTON') // #158 反面钉：这一处不再是原生 select
     expect(assignee).toBeDisabled() // 成员未落地 → 触发器禁用
@@ -238,7 +238,7 @@ describe('#152 名册新鲜度：挂载后加入的成员必须出现在责任�
     // #158：这一处下拉已迁到 vendored Menu，项是 `role=menuitem` 且只在菜单打开时
     // 渲染（原来 `findByRole('option', …)` 的写法在迁移后恒为空集）。
     await user.click(screen.getByRole('button', { name: '创建任务' }))
-    const list = await openSelect(user, '责任人')
+    const list = await openSelect(user, '交给谁')
     expect(list.getByRole('menuitem', { name: /Bob（@bob）/ })).toBeVisible()
     expect(membership.calls()).toBeGreaterThan(callsAfterMount)
   })

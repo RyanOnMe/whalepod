@@ -31,6 +31,7 @@
 
 | 现象 | 先看 |
 |---|---|
+| 指令去向变化、来源续跑或草稿丢失 | `artifacts/evidence/unified-execution/result.json`：web.execution 的草稿/唯一输入 → hub.run 的血缘/来源版本/现场 → runtime.bridge 会话身份；上下文在场另外复跑 Q3 resume 契约。见 unified-execution-acceptance |
 | Run 状态不动 | hub.outbox 是否派发 → node.gateway 是否 ack → node.supervisor 是否拉起子进程 |
 | 浏览器看不到进度 | hub.ws cursor 是否推进 → 浏览器是否收到 `resync.required` → hub.domain 是否产事件 |
 | Run/工具/活动/发送图形与事实不符，或 Micro 窄屏溢出 | `artifacts/evidence/run-micro/<attempt>/result.json`：hub.run-projection 的 runId/seq/audience/callId/outcome/phase → web.micro/activity；HTTP outcome → web.instruction；筛选焦点/动效 → web.console；复跑 `pnpm test:e2e:micro`，见 run-micro-acceptance |

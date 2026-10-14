@@ -11,6 +11,7 @@ import {
   schema,
   setRunStatus,
 } from '@whalepod/db'
+import { createProfileRevision } from '../src/modules/agent/commands.js'
 import { sendInstruction } from '../src/modules/run/instruction.js'
 import { resolveRunTarget } from '../src/modules/run/instruction-target.js'
 import {
@@ -25,6 +26,7 @@ import {
   resetDatabase,
   runEventFrame,
   seedRunPrereqs,
+  seedRunChainForUser,
   type TestApp,
 } from './helpers.js'
 
@@ -433,6 +435,113 @@ describe('instruction starts a run (P1-196)', () => {
     expect(rows).toEqual([])
   })
 
+  it('#315 HTTP 指令与高级运行入口都传递审批预览条件', async () => {
+    const ctx = await createTestApp(database)
+    try {
+      const actor = await driveSetup(ctx)
+      const chain = await seedRunChainForUser(database.db, actor.userId)
+      await bringDeviceOnline(chain.deviceId)
+      const project = await apiInject(ctx, actor, {
+        method: 'POST',
+        url: '/api/v1/projects',
+        payload: { name: 'explicit policy' },
+      })
+      const task = await apiInject(ctx, actor, {
+        method: 'POST',
+        url: `/api/v1/projects/${project.json().data.id}/tasks`,
+        payload: { title: 'policy precondition', assigneeUserId: actor.userId },
+      })
+      const taskId = task.json().data.id as string
+      await apiInject(ctx, actor, { method: 'POST', url: `/api/v1/tasks/${taskId}/accept` })
+      const common = {
+        agentId: chain.agentId,
+        profileRevisionId: chain.profileRevisionId,
+        deviceId: chain.deviceId,
+        workspaceId: chain.workspaceId,
+        expectedApprovalPolicy: 'full_access',
+      }
+      for (const [path, body] of [
+        ['instructions', { ...common, text: 'explicit', intent: { kind: 'new' } }],
+        ['runs', { ...common, prompt: 'advanced' }],
+      ] as const) {
+        const response = await apiInject(ctx, actor, {
+          method: 'POST',
+          url: `/api/v1/tasks/${taskId}/${path}`,
+          payload: body,
+        })
+        expect(response.statusCode).toBe(409)
+        expect(response.json().error.code).toBe('CONFLICT')
+      }
+      expect(await listMessages(database.db, taskId)).toHaveLength(0)
+    } finally {
+      await ctx.close()
+    }
+  })
+
+  it('#315 审批预览变化时拒绝新建，不静默放宽权限', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    await expect(
+      sendInstruction(makeInstructionDeps(harness), makeActor(ids.userId), ids.taskId, {
+        text: 'preview changed',
+        idempotencyKey: 'policy-precondition',
+        agentId: ids.agentId,
+        expectedApprovalPolicy: 'full_access',
+        intent: { kind: 'new' },
+      }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+    expect(await listMessages(database.db, ids.taskId)).toHaveLength(0)
+  })
+
+  it('#315 同 key 并发首次执行只有一条触发指令', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    const input = {
+      text: 'single explicit intent',
+      idempotencyKey: 'explicit-race',
+      agentId: ids.agentId,
+      intent: { kind: 'new' as const },
+    }
+    const same = await Promise.all([
+      sendInstruction(makeInstructionDeps(harness), makeActor(ids.userId), ids.taskId, input),
+      sendInstruction(makeInstructionDeps(harness), makeActor(ids.userId), ids.taskId, input),
+    ])
+    expect(same[0].runId).toBe(same[1].runId)
+    expect(same[0].message.id).toBe(same[1].message.id)
+    expect(await listMessages(database.db, ids.taskId)).toHaveLength(1)
+    const [run] = await database.db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, same[0].runId))
+    expect(run?.triggerMessageId).toBe(same[0].message.id)
+  })
+
+  it('#315 不同 key 并发新执行只启动一个，不产生意外追问', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    const results = await Promise.allSettled(
+      ['new-a', 'new-b'].map((key) =>
+        sendInstruction(makeInstructionDeps(harness), makeActor(ids.userId), ids.taskId, {
+          text: key,
+          idempotencyKey: key,
+          agentId: ids.agentId,
+          intent: { kind: 'new' },
+        }),
+      ),
+    )
+    const success = results.filter((row) => row.status === 'fulfilled')
+    const failure = results.filter((row) => row.status === 'rejected')
+    expect(success).toHaveLength(1)
+    expect(failure).toHaveLength(1)
+    expect(failure[0]).toMatchObject({ reason: { code: 'RUN_ALREADY_ACTIVE' } })
+    expect((await listMessages(database.db, ids.taskId)).map((row) => row.kind)).toEqual([
+      'instruction',
+    ])
+  })
+
   it('#315 显式新执行不得在已有活跃 Run 时改投追问', async () => {
     const ids = await seedRunPrereqs(database.db)
     await bringDeviceOnline(ids.deviceId)
@@ -484,6 +593,18 @@ describe('instruction starts a run (P1-196)', () => {
       }),
     ).rejects.toMatchObject({ code: 'CONFLICT' })
     expect(await listMessages(database.db, ids.taskId)).toHaveLength(before)
+    const upgraded = await createProfileRevision(database, makeActor(ids.userId), {
+      agentId: ids.agentId,
+      createdBy: ids.userId,
+      idempotencyKey: 'upgrade-after-source',
+      persona: 'new persona',
+      provider: 'replay',
+      model: 'replay',
+      credentialSlot: 'default',
+      pluginPackId: ids.pluginPackId,
+      approvalPolicy: 'full_access',
+    })
+    expect(upgraded.id).not.toBe(source.profileRevisionId)
     const continued = await sendInstruction(
       makeInstructionDeps(harness),
       makeActor(ids.userId),

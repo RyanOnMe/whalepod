@@ -1,13 +1,9 @@
 /**
  * 执行区的指令动作（P1-196 切片③c-2b；ADR-0010 决策 2 的执行区入口）。
  *
- * 一句话语义（ADR-0009 决策 5 的"接着说永远成立"）：
- *   * 该 Task **已有活跃 Run** → 这条指令**降级为追问**（排队或下发由 ③c-1 的状态语义决定）；
- *   * **没有活跃 Run** → **建 Run**：解析执行目标（设备/工作区三段式）、把指令与 Run 双向锚定。
- *
- * 为什么不做成"两套 API"：对人来说只有"让 Agent 干这个"一个动作，分叉是 Hub 的内部事实。
- * 复用的是既有的两条路径（`sendRunFollowup` / `orchestrator.create`），所以 followup 的排队语义、
- * Run 的活跃唯一约束（`run_one_active_per_task`）、机器身份校验都不需要第二份实现。
+ * Web 显式意图（ADR-0013）：新执行不改投追问；追问绑定来源；续跑保留来源配置与现场。
+ * 缺省 intent 的旧客户端和 Agent 自动指派维持 ADR-0010 自动路由。
+ * 两种入口复用 sendRunFollowup/orchestrator.create 的状态、权限、单活跃与审批守卫。
  *
  * 授权（切片④ #198 已落地）：责任人 ∪ 被授权成员（`resolveInstructionRight` 唯一判定入口）。
  * 被授权成员只是"能开口"——设备/凭据仍是责任人的，Run 归属也仍是责任人。
@@ -16,12 +12,14 @@ import { and, desc, eq, inArray } from 'drizzle-orm'
 import type { Database, Tx } from '@whalepod/db'
 import {
   findCommandReceipt,
+  getRun,
   insertMessage,
   resolveInstructionRight,
   schema,
   settleInstruction,
   TERMINAL_RUN_STATUSES,
 } from '@whalepod/db'
+import type { SendInstructionRequest } from '@whalepod/protocol'
 import type { ActorContext } from './commands.js'
 import { toCommentView } from '../task/queries.js'
 import type { CommentView } from '../task/queries.js'
@@ -49,6 +47,9 @@ export interface SendInstructionInput {
   workspaceId?: string
   /** 用哪个 Agent（缺省：该 Task 上一个 Run 用过的 Agent）。 */
   agentId?: string
+  expectedApprovalPolicy?: 'approval_required' | 'full_access'
+  profileRevisionId?: string
+  intent?: SendInstructionRequest['intent']
   /**
    * 触发来源（#239）：human = 执行区里人发的（默认，语义不变）；auto_assignment =
    * 指派给 Agent 时 Hub 自动产生的（ADR-0009 决策 6「指派即指令」）。只影响消息的
@@ -136,7 +137,27 @@ export async function sendInstruction(
 
   // 先看有没有活跃 Run：有 → 复用追问路径（③c-1 的排队/下发语义原样生效）。
   const active = await activeRunForTask(deps.database.db, taskId)
+  if (
+    input.intent?.kind === 'followup' &&
+    (active === undefined || active.id !== input.intent.runId)
+  ) {
+    throw new RunCommandError(
+      'CONFLICT',
+      '所选执行已结束或不再活跃；请保留草稿，选择继续会话或开始新执行',
+    )
+  }
+  if (input.intent !== undefined && input.intent.kind !== 'followup' && active !== undefined) {
+    throw new RunCommandError('RUN_ALREADY_ACTIVE', '已有执行进行中；新执行或续跑不能自动改投追问')
+  }
+  if (input.intent?.kind === 'new' && input.agentId === undefined) {
+    throw new RunCommandError('VALIDATION_FAILED', '新执行必须明确选择 Agent')
+  }
   if (active !== undefined) {
+    if (input.expectedApprovalPolicy !== undefined) {
+      const pinned = await getRun(deps.database.db, active.id)
+      if (pinned?.approvalPolicy !== input.expectedApprovalPolicy)
+        throw new RunCommandError('CONFLICT', '审批档位与所选执行不一致，请重新确认')
+    }
     const message = await sendRunFollowup(deps.database, deps.outbox, actor, active.id, {
       text: input.text,
       idempotencyKey: input.idempotencyKey,
@@ -161,12 +182,27 @@ export async function sendInstruction(
   if (task === undefined) throw new RunCommandError('NOT_FOUND', 'task not found')
 
   // 没有活跃 Run → 建 Run。目标解析失败一律**明确拒绝**（不猜，也不落一条注定失败的指令）。
-  const target = await resolveRunTarget(deps.database.db, {
-    taskId,
-    assigneeUserId: task.assigneeUserId,
-    ...(input.deviceId !== undefined ? { deviceId: input.deviceId } : {}),
-    ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
-  })
+  const resumeSource =
+    input.intent?.kind === 'resume' ? await getRun(deps.database.db, input.intent.runId) : undefined
+  if (
+    input.intent?.kind === 'resume' &&
+    (resumeSource === undefined || resumeSource.taskId !== taskId)
+  ) {
+    throw new RunCommandError('NOT_FOUND', '续跑来源不在本任务中')
+  }
+  const target =
+    resumeSource !== undefined
+      ? {
+          deviceId: resumeSource.deviceId,
+          workspaceId: resumeSource.workspaceId,
+          source: 'explicit' as const,
+        }
+      : await resolveRunTarget(deps.database.db, {
+          taskId,
+          assigneeUserId: task.assigneeUserId,
+          ...(input.deviceId !== undefined ? { deviceId: input.deviceId } : {}),
+          ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
+        })
   if (target === undefined) {
     throw new RunCommandError(
       'DEVICE_OFFLINE',
@@ -176,7 +212,7 @@ export async function sendInstruction(
   // 用哪个 Agent：显式给就用它；否则沿用**上一个 Run 用过的**（"接着说"的直觉）。
   // 没有上一轮可继承时**不猜**——这个 Task 还没跑过，Agent 是产品选择（原型里是 @Agent 的那个），
   // 让调用方明确指定；错误信息写清怎么修。
-  const agentId = input.agentId ?? (await agentFromLastRun(deps, taskId))
+  const agentId = resumeSource?.agentId ?? input.agentId ?? (await agentFromLastRun(deps, taskId))
   if (agentId === undefined) {
     throw new RunCommandError(
       'VALIDATION_FAILED',
@@ -193,6 +229,14 @@ export async function sendInstruction(
     run = await deps.orchestrator.create(actor, taskId, {
       idempotencyKey: input.idempotencyKey,
       agentId,
+      ...(input.expectedApprovalPolicy !== undefined
+        ? { expectedApprovalPolicy: input.expectedApprovalPolicy }
+        : {}),
+      ...(resumeSource !== undefined
+        ? { profileRevisionId: resumeSource.profileRevisionId, resumeFromRunId: resumeSource.id }
+        : input.profileRevisionId !== undefined
+          ? { profileRevisionId: input.profileRevisionId }
+          : {}),
       deviceId: target.deviceId,
       workspaceId: target.workspaceId,
       dshDistributionVersion: dshVersion,
@@ -202,7 +246,11 @@ export async function sendInstruction(
     // 并发窗口（评审应改 1）：上面那次"有没有活跃 Run"是无锁读，两条指令同时到会一成一败。
     // ADR-0010 的语义是**有活跃 Run 就接着说**，所以这里不该把用户的话丢掉、回 409——
     // 退化成追问，与"先看到活跃 Run"的分支同路。
-    if (error instanceof RunCommandError && error.code === 'RUN_ALREADY_ACTIVE') {
+    if (
+      input.intent === undefined &&
+      error instanceof RunCommandError &&
+      error.code === 'RUN_ALREADY_ACTIVE'
+    ) {
       const raced = await activeRunForTask(deps.database.db, taskId)
       if (raced !== undefined) {
         const message = await sendRunFollowup(deps.database, deps.outbox, actor, raced.id, {
@@ -225,30 +273,22 @@ export async function sendInstruction(
     throw error
   }
 
-  // **幂等**（评审 B1）：`orchestrator.create` 按 idempotencyKey 回放同一个 Run，但消息写入没有
-  // 幂等——同 key 重发会插出第二条指令，并把 `trigger_message_id` 覆盖掉，让第一条永远等不到 ack。
-  // 判据就是锚点本身：这个 Run 已经有触发消息 = 上一次同 key 的调用已经落过账，直接读回来返回。
-  const [existingRun] = await deps.database.db
-    .select({ triggerMessageId: schema.runs.triggerMessageId })
-    .from(schema.runs)
-    .where(eq(schema.runs.id, run.id))
-  if (existingRun?.triggerMessageId != null) {
-    const [prior] = await deps.database.db
-      .select()
-      .from(schema.taskMessages)
-      .where(eq(schema.taskMessages.id, existingRun.triggerMessageId))
-    if (prior !== undefined) {
-      return {
-        kind: 'started_run',
-        message: toCommentView(prior),
-        runId: run.id,
-      }
-    }
-  }
-
   // 双向锚定（migration 0005）：Run 记触发它的消息，消息记 run_id；指令停在 pending，
   // 由该 Run 的 run.start ack 结算（accepted / rejected + 理由）。
   const message = await deps.database.transaction(async (tx) => {
+    // 同 key 并发可回放同一 Run。锁住触发锚点的检查与创建，避免重复消息/覆盖锚点。
+    const [existingRun] = await tx
+      .select({ triggerMessageId: schema.runs.triggerMessageId })
+      .from(schema.runs)
+      .where(eq(schema.runs.id, run.id))
+      .for('update')
+    if (existingRun?.triggerMessageId != null) {
+      const [prior] = await tx
+        .select()
+        .from(schema.taskMessages)
+        .where(eq(schema.taskMessages.id, existingRun.triggerMessageId))
+      if (prior !== undefined) return prior
+    }
     const created = await insertMessage(tx, {
       id: uuidv7(),
       taskId,

@@ -134,7 +134,7 @@ async function setupTeamAndTask(): Promise<void> {
   await alice.locator('input[id^="task-title-"]').fill('产出并复核验收报告')
   // #158：责任人下拉是 vendored Menu（不再是原生 <select>）——反面钉 + 真人路径。
   const assignee = createTaskForm.locator('button[id^="task-assignee-"]')
-  await assertNotNativeSelect(assignee, createTaskForm, '责任人')
+  await assertNotNativeSelect(assignee, createTaskForm, '交给谁')
   await selectFromMenu(assignee, /Bob/)
   await expect(assignee).toContainText('Bob')
   await createTaskForm.getByRole('button', { name: /创建任务/ }).click()
@@ -220,8 +220,8 @@ async function startRunViaUi(agentName: string, promptText: string): Promise<str
   // 离线设备仍在列表里但不可选——这里按「在线」文案点，正好也钉住禁用项没被误点。
   await selectFromMenu(bob.getByLabel('选择设备'), /e2e-node（在线）/)
   await selectFromMenu(bob.getByLabel('选择 Workspace'), 'e2e-ws')
-  await bob.getByLabel('Run prompt').fill(promptText)
-  await bob.getByRole('button', { name: '启动 Run' }).click()
+  await bob.getByLabel('指令').fill(promptText)
+  await bob.getByRole('button', { name: '开始执行' }).click()
   // Run 行进时间线（责任人真人路径）。
   await expect(bob.locator('.run-item').first()).toBeVisible()
   const runId = await waitForFreshRunId()

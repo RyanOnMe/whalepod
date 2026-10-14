@@ -1,5 +1,5 @@
 /**
- * P1-13 Task Room 的 Run 启动器（03 §4 POST /tasks/:taskId/runs）。
+ * Task Room 统一执行入口的新执行设置（#315；POST /tasks/:taskId/instructions）。
  *
  * 责任人（已接受指派）选 Agent + Revision（快照语义：选定即固定 digest，
  * 04 G4-06 的「运行中改设定不动本次 Run」由 Revision 不可变保证）、
@@ -7,9 +7,14 @@
  * Revision 走（credentialSlot 在 Hub 侧快照进 run.start 载荷，UI 不碰凭据）。
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Link } from 'react-router'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
+import { useMemberDirectory } from '../team/memberDirectory.js'
+import { TargetPicker } from './TargetPicker.js'
+import { InstructionSendIcon } from './InstructionSendIcon.js'
+import type { InstructionOutcome } from './InstructionComposer.js'
 import { queryKeys } from '../../app/query-client.js'
 import { SelectMenu } from '../../shared/SelectMenu.js'
 import { ConfirmDialog } from '../../shared/ConfirmDialog.js'
@@ -17,7 +22,6 @@ import type {
   AgentDetailView,
   AgentView,
   DeviceView,
-  RunView,
   TaskView,
   WorkspaceView,
 } from '../../shared/api/types.js'
@@ -28,17 +32,40 @@ export interface RunLauncherProps {
   session: Session
   /** 当前已有活跃 Run（一任务一活跃，03 §3.2）时不渲染。 */
   hasActiveRun: boolean
+  embedded?: boolean
+  onStarted?: (runId: string) => void
+  onOutcome?: (outcome: InstructionOutcome) => void
+  draft?: string
+  onDraftChange?: (text: string) => void
 }
 
 const TERMINAL_TASK: ReadonlySet<string> = new Set(['done', 'cancelled'])
 
-export function RunLauncher({ task, session, hasActiveRun }: RunLauncherProps): ReactNode {
+export function RunLauncher({
+  task,
+  session,
+  hasActiveRun,
+  embedded = false,
+  onStarted,
+  onOutcome,
+  draft,
+  onDraftChange,
+}: RunLauncherProps): ReactNode {
   const queryClient = useQueryClient()
+  const directory = useMemberDirectory()
   const [agentId, setAgentId] = useState('')
   const [profileRevisionId, setProfileRevisionId] = useState('')
   const [deviceId, setDeviceId] = useState('')
   const [workspaceId, setWorkspaceId] = useState('')
-  const [prompt, setPrompt] = useState('')
+  const [localPrompt, setLocalPrompt] = useState('')
+  const prompt = draft ?? localPrompt
+  const setPrompt = (text: string): void => {
+    if (onDraftChange !== undefined) onDraftChange(text)
+    else setLocalPrompt(text)
+  }
+  const [instant, setInstant] = useState(true)
+  const intentKey = useRef<{ signature: string; key: string } | null>(null)
+  const isAssignee = task.assigneeUserId === session.userId
 
   const agentsQuery = useQuery({
     queryKey: queryKeys.agents,
@@ -52,13 +79,24 @@ export function RunLauncher({ task, session, hasActiveRun }: RunLauncherProps): 
   const devicesQuery = useQuery({
     queryKey: queryKeys.devices,
     queryFn: () => api.get<DeviceView[]>('/devices'),
+    enabled: isAssignee,
   })
   const workspacesQuery = useQuery({
     queryKey: queryKeys.workspaces,
     queryFn: () => api.get<WorkspaceView[]>('/workspaces'),
+    enabled: isAssignee,
   })
 
-  // Revision 缺省 = Agent 当前 Revision；显式选择则是「为这次 Run 钉住快照」。
+  // 初次选择 Agent 时固定当前 Revision；后台更新不得改变正在编辑的选择。
+  useEffect(() => {
+    if (
+      profileRevisionId === '' &&
+      agentDetailQuery.data?.id === agentId &&
+      agentDetailQuery.data.currentRevisionId !== null
+    ) {
+      setProfileRevisionId(agentDetailQuery.data.currentRevisionId)
+    }
+  }, [agentId, agentDetailQuery.data, profileRevisionId])
   const revisions = agentDetailQuery.data?.revisions ?? []
   const effectiveRevisionId =
     profileRevisionId !== '' ? profileRevisionId : (agentDetailQuery.data?.currentRevisionId ?? '')
@@ -89,21 +127,6 @@ export function RunLauncher({ task, session, hasActiveRun }: RunLauncherProps): 
       })),
     [revisions, agentDetailQuery.data],
   )
-  const deviceOptions = useMemo(
-    () =>
-      (devicesQuery.data ?? []).map((device) => ({
-        value: device.id,
-        label: `${device.name}（${device.status === 'online' ? '在线' : '离线'}）`,
-        disabled: device.status !== 'online',
-      })),
-    [devicesQuery.data],
-  )
-  const workspaceOptions = useMemo(
-    () =>
-      deviceWorkspaces.map((ws) => ({ value: ws.workspaceId, label: ws.name, disabled: false })),
-    [deviceWorkspaces],
-  )
-
   // #241：本次 Run 将解析到的审批档 = Task 覆盖 ?? 所选（缺省当前）Revision 的默认。
   // 与 Hub 建Run时的解析同式——UI 只用于「要不要二次确认」与提示，不越权预判结果。
   const selectedRevision = revisions.find((revision) => revision.id === effectiveRevisionId)
@@ -112,14 +135,32 @@ export function RunLauncher({ task, session, hasActiveRun }: RunLauncherProps): 
   const [confirmingFullAccess, setConfirmingFullAccess] = useState(false)
 
   const start = useMutation({
-    mutationFn: () =>
-      api.mutate<RunView>(`/tasks/${task.id}/runs`, {
-        body: { agentId, profileRevisionId: effectiveRevisionId, deviceId, workspaceId, prompt },
-      }),
-    onSuccess: () => {
+    mutationFn: () => {
+      const body = {
+        agentId,
+        profileRevisionId: effectiveRevisionId,
+        ...(isAssignee && deviceId !== ''
+          ? { deviceId, ...(workspaceId !== '' ? { workspaceId } : {}) }
+          : {}),
+        text: prompt,
+        intent: { kind: 'new' as const },
+        expectedApprovalPolicy: resolvedApprovalPolicy,
+      }
+      const signature = JSON.stringify(body)
+      if (intentKey.current?.signature !== signature)
+        intentKey.current = { signature, key: crypto.randomUUID() }
+      return api.mutate<InstructionOutcome>(`/tasks/${task.id}/instructions`, {
+        body,
+        idempotencyKey: intentKey.current.key,
+      })
+    },
+    onSuccess: (outcome) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(task.id) })
       setPrompt('')
+      intentKey.current = null
       setConfirmingFullAccess(false)
+      onOutcome?.(outcome)
+      if (outcome.runId !== null && typeof outcome.runId === 'string') onStarted?.(outcome.runId)
     },
   })
 
@@ -136,25 +177,44 @@ export function RunLauncher({ task, session, hasActiveRun }: RunLauncherProps): 
   // 只有已接受指派的责任人、非终态任务、无活跃 Run 时可启动（03 §3.2 前置守卫；
   // Hub 侧仍有完整校验，这里是诚实呈现而非安全边界）。
   if (
-    session.userId !== task.assigneeUserId ||
-    task.assignmentStatus !== 'accepted' ||
-    TERMINAL_TASK.has(task.status) ||
-    hasActiveRun
+    !embedded &&
+    (session.userId !== task.assigneeUserId ||
+      task.assignmentStatus !== 'accepted' ||
+      TERMINAL_TASK.has(task.status) ||
+      hasActiveRun)
   ) {
     return null
   }
 
   const ready =
     agentId !== '' &&
-    effectiveRevisionId !== '' &&
-    deviceId !== '' &&
-    workspaceId !== '' &&
+    selectedRevision !== undefined &&
+    !hasActiveRun &&
+    (!isAssignee ||
+      (!devicesQuery.isPending &&
+        !devicesQuery.isError &&
+        !workspacesQuery.isPending &&
+        !workspacesQuery.isError &&
+        (deviceId !== ''
+          ? deviceWorkspaces.length > 0
+          : (workspacesQuery.data ?? []).some(
+              (ws) =>
+                ws.available &&
+                (devicesQuery.data ?? []).some(
+                  (device) => device.id === ws.deviceId && device.status === 'online',
+                ),
+            )))) &&
     prompt.trim().length > 0
 
   return (
-    <section className="card run-launcher" aria-labelledby="run-launcher-heading">
-      <h3 id="run-launcher-heading">启动 Run</h3>
+    <section
+      className={embedded ? 'run-launcher' : 'card run-launcher'}
+      aria-labelledby="run-launcher-heading"
+    >
+      <h3 id="run-launcher-heading">开始新执行</h3>
+      <p className="mutation-hint">新执行不接续旧会话；配置版本与审批档将在开始时固定。</p>
       <form
+        className="instruction-composer"
         onSubmit={(event) => {
           event.preventDefault()
           submitRun()
@@ -174,51 +234,95 @@ export function RunLauncher({ task, session, hasActiveRun }: RunLauncherProps): 
             }}
           />
         </div>
-        <div className="field">
-          <SelectMenu
-            id="run-revision"
-            label="Revision（选定即快照）"
-            ariaLabel="选择 Revision"
-            value={effectiveRevisionId}
-            placeholder="先选 Agent…"
-            options={revisionOptions}
-            onChange={setProfileRevisionId}
-            disabled={agentId === ''}
-          />
-        </div>
-        <div className="field">
-          <SelectMenu
-            id="run-device"
-            label="设备"
-            ariaLabel="选择设备"
-            value={deviceId}
-            placeholder="选择设备…"
-            options={deviceOptions}
+        {selectedRevision !== undefined ? (
+          <p className="mutation-hint" data-testid="execution-revision">
+            配置版本：r{selectedRevision.revision} · {selectedRevision.provider}/
+            {selectedRevision.model}
+          </p>
+        ) : null}
+        {agentId !== '' && agentDetailQuery.isSuccess && selectedRevision === undefined ? (
+          <p className="mutation-hint" role="status">
+            所选配置版本不可用，请重新选择版本或 Agent。
+          </p>
+        ) : null}
+        <p className="mutation-hint">
+          执行环境：
+          {isAssignee ? '自动选择你的可用环境，可在执行设置中指定。' : '使用责任人的环境。'}
+        </p>
+        {isAssignee &&
+        devicesQuery.isSuccess &&
+        workspacesQuery.isSuccess &&
+        !(workspacesQuery.data ?? []).some(
+          (ws) =>
+            ws.available &&
+            (devicesQuery.data ?? []).some(
+              (device) => device.id === ws.deviceId && device.status === 'online',
+            ),
+        ) ? (
+          <p className="mutation-hint" role="status">
+            尚无在线且可用的执行环境。请先在<Link to="/devices">设备页</Link>
+            完成配对并登记工作目录。
+          </p>
+        ) : null}
+        <details className="execution-settings">
+          <summary>执行设置（配置版本与环境）</summary>
+          <div className="field">
+            <SelectMenu
+              id="run-revision"
+              label="Revision（选定即快照）"
+              ariaLabel="选择 Revision"
+              value={effectiveRevisionId}
+              placeholder="先选 Agent…"
+              options={revisionOptions}
+              onChange={setProfileRevisionId}
+              disabled={agentId === ''}
+            />
+          </div>
+          <TargetPicker
+            isAssignee={isAssignee}
+            value={deviceId === '' ? null : { deviceId, workspaceId }}
             onChange={(next) => {
-              setDeviceId(next)
-              setWorkspaceId('')
+              setDeviceId(next?.deviceId ?? '')
+              setWorkspaceId(next?.workspaceId ?? '')
             }}
+            assigneeName={directory.personOf(task.assigneeUserId)}
+            hasActiveRun={hasActiveRun}
+            deviceAriaLabel="选择设备"
+            workspaceAriaLabel="选择 Workspace"
+            showDeviceStatus
           />
-        </div>
-        <div className="field">
-          <SelectMenu
-            id="run-workspace"
-            label="Workspace"
-            ariaLabel="选择 Workspace"
-            value={workspaceId}
-            placeholder={deviceId === '' ? '先选设备…' : '选择 Workspace…'}
-            options={workspaceOptions}
-            onChange={setWorkspaceId}
-            disabled={deviceId === ''}
-          />
-        </div>
+        </details>
+        {[agentsQuery, agentDetailQuery, ...(isAssignee ? [devicesQuery, workspacesQuery] : [])]
+          .filter((query) => query.isError)
+          .map((query, i) => (
+            <ErrorBanner key={i} error={query.error} />
+          ))}
+        <span
+          className="composer-approval-pill"
+          data-testid="instruction-approval-pill"
+          data-policy={
+            agentId === '' && task.approvalPolicy === null ? 'unknown' : resolvedApprovalPolicy
+          }
+        >
+          {agentId === '' && task.approvalPolicy === null
+            ? '审批 · 未知（请先选择 Agent）'
+            : `审批 · ${resolvedApprovalPolicy === 'full_access' ? '完全权限' : '需要逐次批准'} · ${task.approvalPolicy === null ? 'Revision 默认' : '任务覆盖'}`}
+        </span>
         <label>
-          Prompt
+          指令
           <textarea
-            aria-label="Run prompt"
+            aria-label="指令"
             value={prompt}
-            maxLength={20_000}
+            maxLength={10_000}
+            disabled={start.isPending}
             onChange={(event) => setPrompt(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault()
+                setInstant(true)
+                event.currentTarget.form?.requestSubmit()
+              }
+            }}
             placeholder="这次 Run 要做什么（任务上下文由 Hub 注入）…"
             rows={4}
           />
@@ -234,10 +338,20 @@ export function RunLauncher({ task, session, hasActiveRun }: RunLauncherProps): 
         {start.isError ? <ErrorBanner error={start.error} /> : null}
         <button
           type="submit"
-          className="button button-primary"
+          className="button button-primary instruction-send"
           disabled={!ready || start.isPending}
+          aria-busy={start.isPending}
+          data-feedback={start.isPending ? 'pending' : start.isError ? 'failed' : 'idle'}
+          data-instant={instant ? '' : undefined}
+          onPointerDown={() => setInstant(false)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') setInstant(true)
+          }}
         >
-          {start.isPending ? '启动中…' : '启动 Run'}
+          <InstructionSendIcon
+            feedback={start.isPending ? 'pending' : start.isError ? 'failed' : 'idle'}
+          />
+          {start.isPending ? '发送中…' : '开始执行'}
         </button>
       </form>
       {confirmingFullAccess ? (

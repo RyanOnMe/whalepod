@@ -47,12 +47,13 @@ import { expect, type Page } from '@playwright/test'
  *
  * 注意 `matches()` 是**逐元素**判定、不下沉子树，所以 `[disabled]` 不会顺带放过禁用控件
  * 里的子节点文字（这点被一审确认过：不必担心"豁免过宽"）。
+ * #315：`:disabled` 也识别 fieldset 的继承禁用；普通说明文字仍逐元素接受扫描。
  * `[aria-disabled="true"]` 当前全仓 0 命中（实测 grep），保留是因为它是 WCAG 认可的
  * inactive 形态，将来只需在组件上写属性、不必回来改这张表。
  */
 export const CONTRAST_EXEMPT: ReadonlyArray<{ selector: string; reason: string }> = [
   {
-    selector: '[disabled], [aria-disabled="true"]',
+    selector: '[disabled], :disabled, [aria-disabled="true"]',
     reason: '禁用态按 WCAG 1.4.3 例外（inactive UI component），其文字无需满足对比度',
   },
   // 一审删掉了原先的 `.mutation-hint, .field-hint` 一条：它们是 **color: var(--color-muted)**

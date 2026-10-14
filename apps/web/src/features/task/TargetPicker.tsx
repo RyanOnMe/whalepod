@@ -42,6 +42,9 @@ export interface TargetPickerProps {
    * 否则用户会以为自己刚选的设备生效了。
    */
   hasActiveRun: boolean
+  deviceAriaLabel?: string
+  workspaceAriaLabel?: string
+  showDeviceStatus?: boolean
 }
 
 export function TargetPicker({
@@ -50,6 +53,9 @@ export function TargetPicker({
   onChange,
   assigneeName,
   hasActiveRun,
+  deviceAriaLabel,
+  workspaceAriaLabel,
+  showDeviceStatus = false,
 }: TargetPickerProps): ReactNode {
   // 只对责任人发请求：被授权成员本来就不该看到（也看不到）别人的设备。
   const devicesQuery = useQuery({
@@ -122,11 +128,12 @@ export function TargetPicker({
           <SelectMenu
             id="target-device"
             label="指定设备"
+            {...(deviceAriaLabel !== undefined ? { ariaLabel: deviceAriaLabel } : {})}
             value=""
             placeholder={devicePlaceholder}
             options={devices.map((device) => ({
               value: device.id,
-              label: device.name,
+              label: showDeviceStatus ? `${device.name}（在线）` : device.name,
               disabled: false,
             }))}
             onChange={(deviceId) => onChange({ deviceId, workspaceId: '' })}
@@ -146,11 +153,12 @@ export function TargetPicker({
       <SelectMenu
         id="target-device"
         label="设备"
+        {...(deviceAriaLabel !== undefined ? { ariaLabel: deviceAriaLabel } : {})}
         value={value.deviceId}
         placeholder={devicePlaceholder}
         options={devices.map((device) => ({
           value: device.id,
-          label: device.name,
+          label: showDeviceStatus ? `${device.name}（在线）` : device.name,
           disabled: false,
         }))}
         // 换设备必须重置工作区：工作区属于设备，留着上一台设备的 id 会组成一个不存在的组合。
@@ -159,6 +167,7 @@ export function TargetPicker({
       <SelectMenu
         id="target-workspace"
         label="工作区"
+        {...(workspaceAriaLabel !== undefined ? { ariaLabel: workspaceAriaLabel } : {})}
         value={value.workspaceId}
         placeholder={workspacePlaceholder}
         options={workspaces.map((ws) => ({

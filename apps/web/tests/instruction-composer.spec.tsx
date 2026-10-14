@@ -6,23 +6,22 @@
  *   起新运行 / 追问 / 排队 / **未受理（连理由一起）**。
  * 另外两条：失败**不吞用户打的字**；`DEVICE_OFFLINE` 要给"下一步做什么"而不是只丢个错误码。
  */
-import { screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
-import { renderApp } from './render.jsx'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { makeQueryClient } from '../src/app/query-client.js'
 import {
-  BOB,
-  deferredResponse,
-  loggedInHandlers,
-  makeRun,
-  makeTask,
-  taskRoomHandler,
-  teamMembersHandler,
-} from './fixtures.js'
+  InstructionComposer,
+  type ApprovalPreview,
+} from '../src/features/task/InstructionComposer.js'
+import { installFetch } from './fixtures.js'
+import type { TestAppResult } from './render.jsx'
+import { deferredResponse, makeTask } from './fixtures.js'
 import type { MockHandler } from './fixtures.js'
 
-// 责任人是 BOB：执行区输入框要求"有权限驱动"，用责任人登录最直接。
-const TASK = makeTask({ assigneeUserId: BOB.userId })
+// 组件单元只驱动发送路径；权限装配在 execution-composer 的页面测试中验证。
+const TASK = makeTask()
 
 function instructionOk(data: Record<string, unknown>, status = 201): MockHandler {
   return {
@@ -60,34 +59,28 @@ function message(over: Record<string, unknown> = {}): Record<string, unknown> {
   }
 }
 
-/**
- * 走**真实页面**渲染（⑥b 的交付物是"执行栏里能发指令"，而不只是一个孤立组件）：
- * `renderApp` 带真实 router + QueryClient，只替换 fetch。
- *
- * #244 起新增 `room` 参数：审批档位预览走服务端房间视图字段（`nextRunApprovalPolicy`），
- * 不能只靠 task/runs 本地拼——「无覆盖+无活跃 Run」时前端无从知道会继承哪个 Agent。
- */
+/** 发送组件的 HTTP/反馈单元；页面权限、模式与审批解析由 execution-composer.spec 覆盖。 */
 function renderComposer(
   handlers: readonly MockHandler[],
   hasActiveRun = false,
-  room: {
-    task?: ReturnType<typeof makeTask>
-    nextRunApprovalPolicy?: 'approval_required' | 'full_access' | null
-  } = {},
-): ReturnType<typeof renderApp> {
-  const task = room.task ?? TASK
-  return renderApp(`/tasks/${task.id}`, [
-    ...loggedInHandlers(BOB, [
-      taskRoomHandler(task, {
-        runs: hasActiveRun ? [makeRun({ status: 'running' })] : [],
-        ...(room.nextRunApprovalPolicy !== undefined
-          ? { nextRunApprovalPolicy: room.nextRunApprovalPolicy }
-          : {}),
-      }),
-      ...handlers,
-    ]),
-    teamMembersHandler([]),
-  ])
+  room: { taskId?: string; approvalPreview?: ApprovalPreview } = {},
+): TestAppResult {
+  const fetchMock = installFetch(handlers)
+  const queryClient = makeQueryClient({ retry: false })
+  const view = render(
+    <QueryClientProvider client={queryClient}>
+      <InstructionComposer
+        taskId={room.taskId ?? TASK.id}
+        hasActiveRun={hasActiveRun}
+        target={null}
+        approvalPreview={
+          room.approvalPreview ??
+          (hasActiveRun ? { policy: 'approval_required', source: 'active_run' } : null)
+        }
+      />
+    </QueryClientProvider>,
+  )
+  return { ...view, queryClient, fetchMock }
 }
 
 describe('instruction composer', () => {
@@ -247,22 +240,21 @@ describe('#229 Cmd+Enter 直发（指令输入框）', () => {
   it('Cmd+Enter 提交指令；纯 Enter 仍是换行不提交', async () => {
     const user = userEvent.setup()
     let posts = 0
-    renderApp(`/tasks/${TASK.id}`, [
-      ...loggedInHandlers(BOB, [
-        taskRoomHandler(TASK),
-        {
-          method: 'POST',
-          url: new RegExp(`/api/v1/tasks/${TASK.id}/instructions$`),
-          respond: () => {
-            posts += 1
-            return new Response(
-              JSON.stringify({ ok: true, data: message({ instructionState: 'accepted' }) }),
-              { status: 201 },
-            )
-          },
+    renderComposer([
+      {
+        method: 'POST',
+        url: new RegExp(`/api/v1/tasks/${TASK.id}/instructions$`),
+        respond: () => {
+          posts += 1
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              data: { ...message({ instructionState: 'accepted' }), outcome: 'followup' },
+            }),
+            { status: 201 },
+          )
         },
-        teamMembersHandler(),
-      ]),
+      },
     ])
     const box = await screen.findByLabelText('指令')
     await user.type(box, '让 Agent{Enter}再跑一遍')
@@ -283,7 +275,7 @@ describe('#229 Cmd+Enter 直发（指令输入框）', () => {
  */
 describe('#244 审批档位胶囊（知情 + full_access 确认）', () => {
   it('知情·追问：有活跃 Run 时档位=该 Run 固化档，来源=当前运行', async () => {
-    renderComposer([], true, { nextRunApprovalPolicy: 'approval_required' })
+    renderComposer([], true)
     // 活跃 Run 默认 approval_required：默认态也要可见，不是只有放权才亮胶囊。
     const pill = await screen.findByTestId('instruction-approval-pill')
     expect(pill.textContent).toContain('需要逐次批准')
@@ -291,24 +283,15 @@ describe('#244 审批档位胶囊（知情 + full_access 确认）', () => {
   })
 
   it('知情·追问（完全权限）：Run 固化 full_access 时胶囊照实说', async () => {
-    renderApp(`/tasks/${TASK.id}`, [
-      ...loggedInHandlers(BOB, [
-        taskRoomHandler(TASK, {
-          runs: [makeRun({ status: 'running', approvalPolicy: 'full_access' })],
-        }),
-      ]),
-      teamMembersHandler([]),
-    ])
+    renderComposer([], true, { approvalPreview: { policy: 'full_access', source: 'active_run' } })
     const pill = await screen.findByTestId('instruction-approval-pill')
     expect(pill.textContent).toContain('完全权限')
     expect(pill.textContent).toContain('当前运行')
   })
 
   it('知情·任务覆盖：Task 覆盖 full_access 时胶囊显示档位与来源', async () => {
-    const task = makeTask({ approvalPolicy: 'full_access' })
     renderComposer([], false, {
-      task,
-      nextRunApprovalPolicy: 'full_access',
+      approvalPreview: { policy: 'full_access', source: 'task_override' },
     })
     const pill = await screen.findByTestId('instruction-approval-pill')
     expect(pill.textContent).toContain('完全权限')
@@ -316,14 +299,16 @@ describe('#244 审批档位胶囊（知情 + full_access 确认）', () => {
   })
 
   it('知情·Revision 默认：无覆盖时显示服务端预解析的默认档', async () => {
-    renderComposer([], false, { nextRunApprovalPolicy: 'full_access' })
+    renderComposer([], false, {
+      approvalPreview: { policy: 'full_access', source: 'revision_default' },
+    })
     const pill = await screen.findByTestId('instruction-approval-pill')
     expect(pill.textContent).toContain('完全权限')
     expect(pill.textContent).toContain('Revision 默认')
   })
 
   it('知情·不可预解析：无可继承 Run 时胶囊说未知，不编造档位', async () => {
-    renderComposer([], false, { nextRunApprovalPolicy: null })
+    renderComposer([], false, { approvalPreview: null })
     const pill = await screen.findByTestId('instruction-approval-pill')
     expect(pill.textContent).toContain('未知')
     expect(pill.textContent).not.toContain('完全权限')
@@ -331,12 +316,11 @@ describe('#244 审批档位胶囊（知情 + full_access 确认）', () => {
   })
 
   it('确认：full_access 时先弹确认；取消不发，确认后只发一次', async () => {
+    const task = makeTask({ approvalPolicy: 'full_access' })
     const user = userEvent.setup()
     let posts = 0
-    const task = makeTask({ approvalPolicy: 'full_access' })
-    renderApp(`/tasks/${task.id}`, [
-      ...loggedInHandlers(BOB, [
-        taskRoomHandler(task, { nextRunApprovalPolicy: 'full_access' }),
+    renderComposer(
+      [
         {
           method: 'POST',
           url: new RegExp(`/api/v1/tasks/${task.id}/instructions$`),
@@ -351,9 +335,10 @@ describe('#244 审批档位胶囊（知情 + full_access 确认）', () => {
             )
           },
         },
-        teamMembersHandler(),
-      ]),
-    ])
+      ],
+      false,
+      { taskId: task.id, approvalPreview: { policy: 'full_access', source: 'task_override' } },
+    )
     await user.type(await screen.findByLabelText('指令'), '直接改文件')
     await user.click(screen.getByRole('button', { name: '发送指令' }))
     // 确认框弹出，请求没发。
