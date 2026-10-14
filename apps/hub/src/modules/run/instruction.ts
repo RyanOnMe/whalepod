@@ -13,7 +13,6 @@ import type { Database, Tx } from '@whalepod/db'
 import {
   findCommandReceipt,
   getRun,
-  insertMessage,
   resolveInstructionRight,
   schema,
   settleInstruction,
@@ -24,7 +23,6 @@ import type { ActorContext } from './commands.js'
 import { toCommentView } from '../task/queries.js'
 import type { CommentView } from '../task/queries.js'
 import { RunCommandError } from './errors.js'
-import { uuidv7 } from '../shared/uuid.js'
 import { sendRunFollowup } from './followup.js'
 import { resolveRunTarget } from './instruction-target.js'
 import type { Outbox } from '@whalepod/db'
@@ -106,8 +104,6 @@ export async function sendInstruction(
   taskId: string,
   input: SendInstructionInput,
 ): Promise<SendInstructionOutcome> {
-  const now = deps.now?.() ?? new Date()
-
   // **先判权，再谈幂等**（评审 #204 阻断 1）：回执回放此前排在判权之前，于是「撤销授权后拿旧 key
   // 重放」能拿回原 Run（撤销立刻失效被推翻），未授权的人猜到 key 还能读回别人指令的正文。
   // 回执只服务「本人已成功的重试」，所以权限必须最先判定。
@@ -130,8 +126,40 @@ export async function sendInstruction(
   if (priorReceipt !== undefined) {
     const priorRunId = (priorReceipt.result as { id?: unknown }).id
     if (typeof priorRunId === 'string') {
-      const replayed = await replayByRun(deps, priorRunId, taskId)
+      const replayed = await replayByRun(deps, priorRunId, taskId, actor.userId)
       if (replayed !== undefined) return replayed
+    }
+  }
+
+  if (input.intent?.kind === 'followup') {
+    const prior = await findCommandReceipt(deps.database.db, `run.followup:${input.idempotencyKey}`)
+    if (prior !== undefined) {
+      const priorId = (prior.result as { id?: unknown }).id
+      const [message] =
+        typeof priorId === 'string'
+          ? await deps.database.db
+              .select()
+              .from(schema.taskMessages)
+              .where(eq(schema.taskMessages.id, priorId))
+          : []
+      if (
+        message === undefined ||
+        message.taskId !== taskId ||
+        message.runId !== input.intent.runId ||
+        message.authorUserId !== actor.userId
+      )
+        throw new RunCommandError('CONFLICT', '重试标识与当前指令来源不一致，请重新确认')
+      const view = toCommentView(message)
+      return {
+        kind:
+          view.instructionState === 'rejected'
+            ? 'rejected'
+            : (await isQueued(deps, message.id))
+              ? 'queued'
+              : 'followup',
+        message: view,
+        runId: input.intent.runId,
+      }
     }
   }
 
@@ -147,6 +175,13 @@ export async function sendInstruction(
     )
   }
   if (input.intent !== undefined && input.intent.kind !== 'followup' && active !== undefined) {
+    // 第一次回执读取与活跃读取之间可能已有同 key 请求提交；原子触发锚点让晚回读可安全回放。
+    const prior = await findCommandReceipt(deps.database.db, `run.create:${input.idempotencyKey}`)
+    const priorId = (prior?.result as { id?: unknown } | undefined)?.id
+    if (typeof priorId === 'string') {
+      const replayed = await replayByRun(deps, priorId, taskId, actor.userId)
+      if (replayed !== undefined) return replayed
+    }
     throw new RunCommandError('RUN_ALREADY_ACTIVE', '已有执行进行中；新执行或续跑不能自动改投追问')
   }
   if (input.intent?.kind === 'new' && input.agentId === undefined) {
@@ -226,22 +261,27 @@ export async function sendInstruction(
 
   let run: Awaited<ReturnType<typeof deps.orchestrator.create>>
   try {
-    run = await deps.orchestrator.create(actor, taskId, {
-      idempotencyKey: input.idempotencyKey,
-      agentId,
-      ...(input.expectedApprovalPolicy !== undefined
-        ? { expectedApprovalPolicy: input.expectedApprovalPolicy }
-        : {}),
-      ...(resumeSource !== undefined
-        ? { profileRevisionId: resumeSource.profileRevisionId, resumeFromRunId: resumeSource.id }
-        : input.profileRevisionId !== undefined
-          ? { profileRevisionId: input.profileRevisionId }
+    run = await deps.orchestrator.create(
+      actor,
+      taskId,
+      {
+        idempotencyKey: input.idempotencyKey,
+        agentId,
+        ...(input.expectedApprovalPolicy !== undefined
+          ? { expectedApprovalPolicy: input.expectedApprovalPolicy }
           : {}),
-      deviceId: target.deviceId,
-      workspaceId: target.workspaceId,
-      dshDistributionVersion: dshVersion,
-      prompt: input.text,
-    })
+        ...(resumeSource !== undefined
+          ? { profileRevisionId: resumeSource.profileRevisionId, resumeFromRunId: resumeSource.id }
+          : input.profileRevisionId !== undefined
+            ? { profileRevisionId: input.profileRevisionId }
+            : {}),
+        deviceId: target.deviceId,
+        workspaceId: target.workspaceId,
+        dshDistributionVersion: dshVersion,
+        prompt: input.text,
+      },
+      { origin: input.origin ?? 'human' },
+    )
   } catch (error) {
     // 并发窗口（评审应改 1）：上面那次"有没有活跃 Run"是无锁读，两条指令同时到会一成一败。
     // ADR-0010 的语义是**有活跃 Run 就接着说**，所以这里不该把用户的话丢掉、回 409——
@@ -273,42 +313,10 @@ export async function sendInstruction(
     throw error
   }
 
-  // 双向锚定（migration 0005）：Run 记触发它的消息，消息记 run_id；指令停在 pending，
-  // 由该 Run 的 run.start ack 结算（accepted / rejected + 理由）。
-  const message = await deps.database.transaction(async (tx) => {
-    // 同 key 并发可回放同一 Run。锁住触发锚点的检查与创建，避免重复消息/覆盖锚点。
-    const [existingRun] = await tx
-      .select({ triggerMessageId: schema.runs.triggerMessageId })
-      .from(schema.runs)
-      .where(eq(schema.runs.id, run.id))
-      .for('update')
-    if (existingRun?.triggerMessageId != null) {
-      const [prior] = await tx
-        .select()
-        .from(schema.taskMessages)
-        .where(eq(schema.taskMessages.id, existingRun.triggerMessageId))
-      if (prior !== undefined) return prior
-    }
-    const created = await insertMessage(tx, {
-      id: uuidv7(),
-      taskId,
-      authorUserId: actor.userId,
-      body: input.text,
-      kind: 'instruction',
-      origin: input.origin ?? 'human',
-      targetAgentId: agentId,
-      runId: run.id,
-      instructionState: 'pending',
-      createdAt: now,
-    })
-    await tx
-      .update(schema.runs)
-      .set({ triggerMessageId: created.id })
-      .where(eq(schema.runs.id, run.id))
-    return created
-  })
-
-  return { kind: 'started_run', message: toCommentView(message), runId: run.id }
+  const replayed = await replayByRun(deps, run.id, taskId, actor.userId)
+  if (replayed === undefined)
+    throw new RunCommandError('CONFLICT', '该重试标识不能回放当前指令，请重新确认发送')
+  return replayed
 }
 
 /** 该 Task 上一个 Run 用过的 Agent（指令没显式指定时的默认）。 */
@@ -357,6 +365,7 @@ async function replayByRun(
   deps: SendInstructionDeps,
   runId: string,
   taskId: string,
+  authorUserId: string,
 ): Promise<SendInstructionOutcome | undefined> {
   const [run] = await deps.database.db
     .select({ triggerMessageId: schema.runs.triggerMessageId, taskId: schema.runs.taskId })
@@ -370,6 +379,6 @@ async function replayByRun(
   if (message === undefined) return undefined
   // 纵深防御（评审 #204 阻断 1）：回执里的 Run 必须属于**本次请求的 Task**，
   // 否则就是跨 Task 回放（即使 key 撞上了也不该把别人的指令读回去）。
-  if (run.taskId !== taskId) return undefined
+  if (run.taskId !== taskId || message.authorUserId !== authorUserId) return undefined
   return { kind: 'started_run', message: toCommentView(message), runId }
 }
