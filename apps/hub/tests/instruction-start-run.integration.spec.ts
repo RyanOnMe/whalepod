@@ -556,6 +556,39 @@ describe('instruction starts a run (P1-196)', () => {
     },
   )
 
+  it('#315 runtime.ready 先于启动 ack 也不把初始指令重发为追问', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    const outcome = await sendInstruction(
+      makeInstructionDeps(harness),
+      makeActor(ids.userId),
+      ids.taskId,
+      {
+        text: '保持一次启动',
+        idempotencyKey: 'ready-before-ack',
+        agentId: ids.agentId,
+        intent: { kind: 'new' },
+      },
+    )
+    await harness.worker.dispatchOnce()
+    const delayedAcks = harness.gateway.drainUpstream()
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(outcome.runId, 1, {
+        type: 'runtime.ready',
+        dshSessionId: 'ready-before-ack-session',
+      }),
+    )
+    await harness.worker.dispatchOnce()
+    expect(harness.gateway.sent.filter((row) => row.frame.type === 'run.followup')).toHaveLength(0)
+    for (const frame of delayedAcks)
+      await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+    const messages = await listMessages(database.db, ids.taskId)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.instructionState).toBe('accepted')
+  })
+
   it('#315 已受理追问在来源完成后同 key 回放，不重复投递或误报未发送', async () => {
     const ids = await seedRunPrereqs(database.db)
     await bringDeviceOnline(ids.deviceId)
