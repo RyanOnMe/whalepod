@@ -54,6 +54,11 @@ async function setup() {
   await apiInject(ctx, owner, { method: 'POST', url: `/api/v1/tasks/${taskId}/accept` })
   const chain = await seedRunChainForUser(db.db, owner.userId)
   const harness = makeHarness(db)
+  harness.clock.advance(Date.now() - harness.clock.now().getTime())
+  const dispatch = () => {
+    harness.clock.advance(Math.max(0, Date.now() - harness.clock.now().getTime()) + 1)
+    return harness.worker.dispatchOnce()
+  }
   const run = await harness.orchestrator.create(makeActor(owner.userId), taskId, {
     ...chain,
     idempotencyKey: randomUUID(),
@@ -84,7 +89,7 @@ async function setup() {
       url: `/api/v1/tasks/${taskId}/instruction-grants/${member.userId}`,
     })
   const ready = async () => {
-    await harness.worker.dispatchOnce()
+    await dispatch()
     for (const frame of harness.gateway.drainUpstream())
       await harness.orchestrator.ingestNodeEvent(
         { deviceId: chain.deviceId, ownerUserId: owner.userId },
@@ -98,7 +103,7 @@ async function setup() {
       }),
     )
   }
-  return { taskId, chain, harness, run, send, revoke, ready }
+  return { taskId, chain, harness, run, send, revoke, ready, dispatch }
 }
 describe('授权撤销的派发边界（#321）', () => {
   it('撤销先完成：排队追问拒绝，责任人的合法追问仍补发', async () => {
@@ -112,7 +117,7 @@ describe('授权撤销的派发边界（#321）', () => {
       instructionErrorCode: 'FORBIDDEN',
     })
     await flow.ready()
-    await flow.harness.worker.dispatchOnce()
+    await flow.dispatch()
     const followups = flow.harness.gateway.sent.filter((row) => row.frame.type === 'run.followup')
     expect(followups).toHaveLength(1)
     expect(followups[0]!.frame.payload).toMatchObject({ text: 'owner queued' })
@@ -143,13 +148,13 @@ describe('授权撤销的派发边界（#321）', () => {
       instructionState: 'rejected',
       instructionErrorCode: 'FORBIDDEN',
     })
-    expect((await flow.harness.worker.dispatchOnce()).sent).toBe(0)
+    expect((await flow.dispatch()).sent).toBe(0)
   })
   it('已派发但ack迟到：撤销不伪造撤回，真实ack仍accepted', async () => {
     const flow = await setup()
     await flow.ready()
     await flow.send(member, 'already attempted')
-    await flow.harness.worker.dispatchOnce()
+    await flow.dispatch()
     const acks = flow.harness.gateway.drainUpstream()
     await flow.revoke()
     expect((await listMessages(db.db, flow.taskId))[0]!.instructionState).toBe('pending')
@@ -172,7 +177,7 @@ describe('授权撤销的派发边界（#321）', () => {
       ).statusCode,
     ).toBe(200)
     await flow.ready()
-    await flow.harness.worker.dispatchOnce()
+    await flow.dispatch()
     expect(
       flow.harness.gateway.sent.filter((row) => row.frame.type === 'run.followup'),
     ).toHaveLength(0)
