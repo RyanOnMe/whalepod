@@ -300,7 +300,7 @@ describe('RunLauncher', () => {
           ])
         }
       })
-      expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
+      await waitFor(() => expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled())
       expect(screen.getByTestId('execution-target-blocker')).toBeVisible()
       expect(screen.getByLabelText('指令')).toHaveValue('保留这段草稿')
       expect(
