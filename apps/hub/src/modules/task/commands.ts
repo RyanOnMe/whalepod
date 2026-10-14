@@ -4,6 +4,7 @@ import type { Actor } from '@whalepod/domain'
 import type { Database, Outbox, TaskRow, Tx } from '@whalepod/db'
 import {
   appendTeamEvent,
+  findCommandReceipt,
   getEnabledMember,
   getTeam,
   hasPublishedArtifactByTask,
@@ -211,29 +212,30 @@ export async function reassignAssignment(
   }
   const agentAssigned = input.assigneeAgentId !== undefined
   const assigneeUserId = agentAssigned ? actor.userId : input.assigneeUserId!
-  return transactCommand(
-    database,
-    `task.reassign:${actor.userId}:${taskId}:${input.idempotencyKey}`,
-    async (tx) => {
-      const task = await lockTask(tx, taskId)
-      const active = await listActiveRunsByTask(tx, taskId)
-      if (active.length > 0) {
-        throw new ApiError(409, 'CONFLICT', 'cannot reassign a task with an active run')
-      }
-      transitionAssignment({ assignmentStatus: task.assignmentStatus }, { type: 'reassign' })
-      if (agentAssigned) await requireAssignableAgent(tx, input.assigneeAgentId!)
-      else await requireActiveAssignee(tx, assigneeUserId)
-      const updated = await reassignTask(
-        tx,
-        taskId,
-        { assigneeUserId, ...(agentAssigned ? { assigneeAgentId: input.assigneeAgentId } : {}) },
-        new Date(),
-      )
-      if (updated === undefined) throw new Error('task vanished in its own transaction')
-      await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
-      return toTaskView(updated)
-    },
-  )
+  const key = `task.reassign:${actor.userId}:${taskId}:${input.idempotencyKey}`
+  return transactCommand(database, key, async (tx) => {
+    const task = await lockTask(tx, taskId)
+    // 同 key 请求可在事务早查时都未见回执；等待 Task 锁后，胜者已提交。
+    // 必须在 pending 状态守卫前回放，授权仍由上方先判定。
+    const prior = await findCommandReceipt(tx, key)
+    if (prior !== undefined) return prior.result as TaskView
+    const active = await listActiveRunsByTask(tx, taskId)
+    if (active.length > 0) {
+      throw new ApiError(409, 'CONFLICT', 'cannot reassign a task with an active run')
+    }
+    transitionAssignment({ assignmentStatus: task.assignmentStatus }, { type: 'reassign' })
+    if (agentAssigned) await requireAssignableAgent(tx, input.assigneeAgentId!)
+    else await requireActiveAssignee(tx, assigneeUserId)
+    const updated = await reassignTask(
+      tx,
+      taskId,
+      { assigneeUserId, ...(agentAssigned ? { assigneeAgentId: input.assigneeAgentId } : {}) },
+      new Date(),
+    )
+    if (updated === undefined) throw new Error('task vanished in its own transaction')
+    await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
+    return toTaskView(updated)
+  })
 }
 
 /**
