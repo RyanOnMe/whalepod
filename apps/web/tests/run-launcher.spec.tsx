@@ -112,7 +112,7 @@ function launcherHandlers(
     },
     {
       method: 'POST',
-      url: /\/api\/v1\/tasks\/[^/]+\/runs$/,
+      url: /\/api\/v1\/tasks\/[^/]+\/instructions$/,
       respond: (init) => {
         if (capture !== undefined) {
           capture.body = JSON.parse(String(init.body))
@@ -131,7 +131,7 @@ function launcherHandlers(
             },
           }
         }
-        return created({ id: RUN_ID })
+        return created({ outcome: 'started_run', runId: RUN_ID })
       },
     },
   ]
@@ -192,9 +192,14 @@ describe('RunLauncher', () => {
     await waitFor(() => expect(screen.getByLabelText('选择 Revision')).toHaveTextContent('r3'))
     await selectOption(user, '选择设备', 'm4-mini（在线）')
     await selectOption(user, '选择 Workspace', 'whalepod')
-    await user.type(screen.getByLabelText('Run prompt'), '把登录页修好')
+    await user.type(screen.getByLabelText('指令'), '把登录页修好')
 
-    const submit = screen.getByRole('button', { name: '启动 Run' })
+    expect(
+      document
+        .querySelector('[aria-labelledby="instructions-heading"]')
+        ?.querySelectorAll('textarea'),
+    ).toHaveLength(1)
+    const submit = screen.getByRole('button', { name: '开始执行' })
     expect(submit).toBeEnabled()
     await user.click(submit)
 
@@ -204,7 +209,9 @@ describe('RunLauncher', () => {
       profileRevisionId: REVISION_ID,
       deviceId: DEVICE_ID,
       workspaceId: WORKSPACE_ID,
-      prompt: '把登录页修好',
+      text: '把登录页修好',
+      intent: { kind: 'new' },
+      expectedApprovalPolicy: 'approval_required',
     })
     expect(typeof capture.key).toBe('string')
   })
@@ -217,7 +224,7 @@ describe('RunLauncher', () => {
     })
     renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [taskRoomHandler(task)]))
     expect(await screen.findByRole('heading', { name: '运行' })).toBeVisible()
-    expect(screen.queryByRole('heading', { name: '启动 Run' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '开始执行' })).not.toBeInTheDocument()
 
     // 责任人自己有活跃 Run 时同样不可见。
     const task2 = makeTask({
@@ -233,7 +240,7 @@ describe('RunLauncher', () => {
       ]),
     )
     expect(await screen.findByText('运行中')).toBeVisible()
-    expect(screen.queryByRole('heading', { name: '启动 Run' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '开始执行' })).not.toBeInTheDocument()
   })
 })
 
@@ -342,13 +349,13 @@ describe('#225 批次①：启动失败走统一错误口径', () => {
     await waitFor(() => expect(screen.getByLabelText('选择 Revision')).toHaveTextContent('r3'))
     await selectOption(user, '选择设备', 'm4-mini（在线）')
     await selectOption(user, '选择 Workspace', 'whalepod')
-    await user.type(screen.getByLabelText('Run prompt'), '把登录页修好')
-    await user.click(screen.getByRole('button', { name: '启动 Run' }))
+    await user.type(screen.getByLabelText('指令'), '把登录页修好')
+    await user.click(screen.getByRole('button', { name: '开始执行' }))
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('agent not ready')
     expect(alert).toHaveTextContent('req-run-500')
     // 失败保留输入：重试不需要重打一遍 prompt。
-    expect(screen.getByLabelText('Run prompt')).toHaveValue('把登录页修好')
+    expect(screen.getByLabelText('指令')).toHaveValue('把登录页修好')
   })
 })

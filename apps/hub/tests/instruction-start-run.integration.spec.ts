@@ -432,6 +432,81 @@ describe('instruction starts a run (P1-196)', () => {
       .where(eq(schema.runs.triggerMessageId, foreign.id))
     expect(rows).toEqual([])
   })
+
+  it('#315 显式新执行不得在已有活跃 Run 时改投追问', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    await harness.orchestrator.create(makeActor(ids.userId), ids.taskId, makeCreateInput(ids))
+    const before = (await listMessages(database.db, ids.taskId)).length
+    await expect(
+      sendInstruction(makeInstructionDeps(harness), makeActor(ids.userId), ids.taskId, {
+        text: '全新会话',
+        idempotencyKey: 'explicit-new',
+        agentId: ids.agentId,
+        deviceId: ids.deviceId,
+        workspaceId: ids.workspaceId,
+        intent: { kind: 'new' },
+      }),
+    ).rejects.toMatchObject({ code: 'RUN_ALREADY_ACTIVE' })
+    expect(await listMessages(database.db, ids.taskId)).toHaveLength(before)
+  })
+
+  it('#315 指定来源已结束时追问不得变成新运行；续跑固化来源版本与血缘', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    const source = await harness.orchestrator.create(
+      makeActor(ids.userId),
+      ids.taskId,
+      makeCreateInput(ids),
+    )
+    await harness.worker.dispatchOnce()
+    for (const frame of harness.gateway.drainUpstream())
+      await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(source.id, 1, {
+        type: 'runtime.ready',
+        dshSessionId: 'explicit-source-context',
+      }),
+    )
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(source.id, 2, { type: 'run.completed', finalText: 'done' }),
+    )
+    const before = (await listMessages(database.db, ids.taskId)).length
+    await expect(
+      sendInstruction(makeInstructionDeps(harness), makeActor(ids.userId), ids.taskId, {
+        text: '仍是追问',
+        idempotencyKey: 'stale-followup',
+        intent: { kind: 'followup', runId: source.id },
+      }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+    expect(await listMessages(database.db, ids.taskId)).toHaveLength(before)
+    const continued = await sendInstruction(
+      makeInstructionDeps(harness),
+      makeActor(ids.userId),
+      ids.taskId,
+      {
+        text: '接着上文',
+        idempotencyKey: 'explicit-resume',
+        intent: { kind: 'resume', runId: source.id },
+      },
+    )
+    expect(continued.kind).toBe('started_run')
+    const [run] = await database.db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, continued.runId))
+    expect(run).toMatchObject({
+      resumeFromRunId: source.id,
+      profileRevisionId: source.profileRevisionId,
+      agentId: source.agentId,
+      deviceId: source.deviceId,
+      workspaceId: source.workspaceId,
+    })
+  })
 })
 
 describe('执行区指令的 HTTP 面（P1-196：路由 201 / 400 / 409）', () => {
