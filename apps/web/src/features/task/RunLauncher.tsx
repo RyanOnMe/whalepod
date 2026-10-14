@@ -37,6 +37,7 @@ export interface RunLauncherProps {
   onOutcome?: (outcome: InstructionOutcome) => void
   draft?: string
   onDraftChange?: (text: string) => void
+  onSendingChange?: (sending: boolean) => void
 }
 
 const TERMINAL_TASK: ReadonlySet<string> = new Set(['done', 'cancelled'])
@@ -50,6 +51,7 @@ export function RunLauncher({
   onOutcome,
   draft,
   onDraftChange,
+  onSendingChange,
 }: RunLauncherProps): ReactNode {
   const queryClient = useQueryClient()
   const directory = useMemberDirectory()
@@ -135,6 +137,8 @@ export function RunLauncher({
   const [confirmingFullAccess, setConfirmingFullAccess] = useState(false)
 
   const start = useMutation({
+    onMutate: () => onSendingChange?.(true),
+    onSettled: () => onSendingChange?.(false),
     mutationFn: () => {
       const body = {
         agentId,

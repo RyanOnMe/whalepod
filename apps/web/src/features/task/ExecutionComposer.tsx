@@ -40,6 +40,8 @@ export function ExecutionComposer({
   const terminal = runs.filter((run) => TERMINAL_RUN.has(run.status))
   const [lastOutcome, setLastOutcome] = useState<InstructionOutcome | null>(null)
   const [draft, setDraft] = useState('')
+  // 发送状态属于整个入口；切换子表单不能解锁仍在处理的请求。
+  const [sending, setSending] = useState(false)
   const [mode, setMode] = useState<Mode>(active === undefined ? 'new' : 'followup')
   const [sourceId, setSourceId] = useState(active?.id ?? terminal.at(-1)?.id ?? '')
   const isAssignee = task.assigneeUserId === session.userId
@@ -116,6 +118,7 @@ export function ExecutionComposer({
         id={`execution-mode-${task.id}`}
         label="执行方式"
         value={mode}
+        disabled={sending}
         options={[
           { value: 'new', label: '开始新执行（不接旧会话）', disabled: false },
           {
@@ -137,6 +140,7 @@ export function ExecutionComposer({
           id={`execution-source-${task.id}`}
           label="来源执行"
           value={sourceId}
+          disabled={sending}
           placeholder="选择要继续的会话…"
           options={terminal.map((run) => ({
             value: run.id,
@@ -186,7 +190,10 @@ export function ExecutionComposer({
         task.status !== 'done' &&
         task.status !== 'cancelled') ||
       draft !== '' ? (
-        <fieldset disabled={reason !== null} style={{ border: 0, padding: 0, margin: 0 }}>
+        <fieldset
+          disabled={reason !== null || sending}
+          style={{ border: 0, padding: 0, margin: 0 }}
+        >
           {mode === 'new' ? (
             <RunLauncher
               task={task}
@@ -196,6 +203,7 @@ export function ExecutionComposer({
               onOutcome={setLastOutcome}
               draft={draft}
               onDraftChange={setDraft}
+              onSendingChange={setSending}
               onStarted={(runId) => {
                 setMode('followup')
                 setSourceId(runId)
@@ -212,6 +220,7 @@ export function ExecutionComposer({
               target={null}
               draft={draft}
               onDraftChange={setDraft}
+              onSendingChange={setSending}
               approvalPreview={policy}
               intent={{ kind: mode, runId: sourceId }}
               onOutcome={started}

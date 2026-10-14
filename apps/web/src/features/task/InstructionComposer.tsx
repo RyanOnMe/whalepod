@@ -90,6 +90,7 @@ export interface InstructionComposerProps {
   initialOutcome?: InstructionOutcome | null
   draft?: string
   onDraftChange?: (text: string) => void
+  onSendingChange?: (sending: boolean) => void
   onOutcome?: (outcome: InstructionOutcome) => void
 }
 
@@ -103,6 +104,7 @@ export function InstructionComposer({
   initialOutcome,
   draft,
   onDraftChange,
+  onSendingChange,
 }: InstructionComposerProps): ReactNode {
   const queryClient = useQueryClient()
   const intentKey = useRef<{ signature: string; key: string } | null>(null)
@@ -122,6 +124,8 @@ export function InstructionComposer({
   const [pendingBody, setPendingBody] = useState('')
 
   const mutation = useMutation({
+    onMutate: () => onSendingChange?.(true),
+    onSettled: () => onSendingChange?.(false),
     mutationFn: (body: string) => {
       const payload = {
         text: body,
