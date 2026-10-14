@@ -873,6 +873,8 @@ test.describe('P1-19 Run 行动（G7-01 取消 / G7-04 重跑血缘）', () => {
     // 行标签是人话句柄「第 N 次运行」；#308 的完整 id 由可聚焦提示层提供。
     const rowLabel = shared.bob!.locator(`.run-item-button[data-run-id="${newRunId}"] .run-label`)
     await expect(rowLabel).toHaveText(/^第 \d+ 次运行$/)
+    // selectRun 已通过点击聚焦该按钮；先离开，再验证键盘重新进入时的提示。
+    await shared.bob!.getByLabel('指令').focus()
     await shared.bob!.locator(`.run-item-button[data-run-id="${newRunId}"]`).focus()
     await expect(shared.bob!.getByRole('tooltip')).toHaveText(newRunId)
     await shared.bob!.keyboard.press('Escape')
