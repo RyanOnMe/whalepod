@@ -234,6 +234,7 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
     const body = ReassignTaskRequestSchema.parse(request.body)
     try {
       const task = await reassignAssignment(deps.database, actorFrom(session), taskId, {
+        idempotencyKey: readIdempotencyKey(request),
         ...(body.assigneeUserId !== undefined ? { assigneeUserId: body.assigneeUserId } : {}),
         ...(body.assigneeAgentId !== undefined ? { assigneeAgentId: body.assigneeAgentId } : {}),
         ...(body.instruction !== undefined ? { instruction: body.instruction } : {}),

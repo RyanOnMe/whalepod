@@ -17,9 +17,9 @@ import {
 import { renderApp } from './render.jsx'
 
 async function choose(user: ReturnType<typeof userEvent.setup>, name = 'Alice') {
-  await user.click(await screen.findByRole('button', { name: '重新指派', exact: true }))
+  await user.click(await screen.findByRole('button', { name: '重新指派' }))
   await user.click(await screen.findByLabelText('新责任人'))
-  await user.click(screen.getByRole('menuitem', { name: new RegExp(name) }))
+  await user.click(await screen.findByRole('menuitem', { name: new RegExp(name) }))
 }
 
 describe('#314 拒绝后的重新指派', () => {
@@ -31,6 +31,7 @@ describe('#314 拒绝后的重新指派', () => {
     const view = renderApp(
       `/tasks/${task.id}`,
       loggedInHandlers(ALICE, [
+        teamMembersHandler(),
         ...room.handlers,
         {
           method: 'POST',
@@ -77,7 +78,7 @@ describe('#314 拒绝后的重新指派', () => {
         { method: 'POST', url: /reassign$/, respond: () => slow.promise },
       ]),
     )
-    await user.click(await screen.findByRole('button', { name: '重新指派', exact: true }))
+    await user.click(await screen.findByRole('button', { name: '重新指派' }))
     await user.click(screen.getByLabelText('新责任人'))
     expect(screen.queryByRole('menuitem', { name: /Bob/ })).toBeNull()
     await user.click(screen.getByRole('menuitem', { name: /Alice/ }))
@@ -97,6 +98,7 @@ describe('#314 拒绝后的重新指派', () => {
     renderApp(
       `/tasks/${task.id}`,
       loggedInHandlers(ALICE, [
+        teamMembersHandler(),
         taskRoomHandler(task),
         {
           method: 'POST',

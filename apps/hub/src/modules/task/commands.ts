@@ -186,6 +186,7 @@ export async function rejectAssignment(
 }
 
 export interface ReassignInput {
+  idempotencyKey: string
   /** member 目标（与 assigneeAgentId 二选一——协议 superRefine fail-closed）。 */
   assigneeUserId?: string
   /** Agent 目标（#239）：指派即指令，责任人转为做出指派的人，assignment 直接 accepted。 */
@@ -210,25 +211,29 @@ export async function reassignAssignment(
   }
   const agentAssigned = input.assigneeAgentId !== undefined
   const assigneeUserId = agentAssigned ? actor.userId : input.assigneeUserId!
-  return database.transaction(async (tx) => {
-    const task = await lockTask(tx, taskId)
-    const active = await listActiveRunsByTask(tx, taskId)
-    if (active.length > 0) {
-      throw new ApiError(409, 'CONFLICT', 'cannot reassign a task with an active run')
-    }
-    transitionAssignment({ assignmentStatus: task.assignmentStatus }, { type: 'reassign' })
-    if (agentAssigned) await requireAssignableAgent(tx, input.assigneeAgentId!)
-    else await requireActiveAssignee(tx, assigneeUserId)
-    const updated = await reassignTask(
-      tx,
-      taskId,
-      { assigneeUserId, ...(agentAssigned ? { assigneeAgentId: input.assigneeAgentId } : {}) },
-      new Date(),
-    )
-    if (updated === undefined) throw new Error('task vanished in its own transaction')
-    await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
-    return toTaskView(updated)
-  })
+  return transactCommand(
+    database,
+    `task.reassign:${actor.userId}:${taskId}:${input.idempotencyKey}`,
+    async (tx) => {
+      const task = await lockTask(tx, taskId)
+      const active = await listActiveRunsByTask(tx, taskId)
+      if (active.length > 0) {
+        throw new ApiError(409, 'CONFLICT', 'cannot reassign a task with an active run')
+      }
+      transitionAssignment({ assignmentStatus: task.assignmentStatus }, { type: 'reassign' })
+      if (agentAssigned) await requireAssignableAgent(tx, input.assigneeAgentId!)
+      else await requireActiveAssignee(tx, assigneeUserId)
+      const updated = await reassignTask(
+        tx,
+        taskId,
+        { assigneeUserId, ...(agentAssigned ? { assigneeAgentId: input.assigneeAgentId } : {}) },
+        new Date(),
+      )
+      if (updated === undefined) throw new Error('task vanished in its own transaction')
+      await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
+      return toTaskView(updated)
+    },
+  )
 }
 
 /**

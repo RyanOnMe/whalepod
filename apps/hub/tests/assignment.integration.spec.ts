@@ -70,7 +70,7 @@ describe('assignment API (G2-04/05)', () => {
     const reassigned = await apiInject(ctx, alice, {
       method: 'POST',
       url: `/api/v1/tasks/${task.id}/reassign`,
-      headers: { 'idempotency-key': 'reassign-retry-key' },
+      idempotencyKey: 'reassign-retry-key',
       payload: { assigneeUserId: alice.userId },
     })
     expect(reassigned.statusCode).toBe(200)
@@ -82,7 +82,7 @@ describe('assignment API (G2-04/05)', () => {
     const retry = await apiInject(ctx, alice, {
       method: 'POST',
       url: `/api/v1/tasks/${task.id}/reassign`,
-      headers: { 'idempotency-key': 'reassign-retry-key' },
+      idempotencyKey: 'reassign-retry-key',
       payload: { assigneeUserId: alice.userId },
     })
     expect(retry.statusCode).toBe(200)
