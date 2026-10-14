@@ -16,7 +16,7 @@ import {
   waitForRunStatus,
   waitForRuntimeReleased,
 } from './helpers.js'
-import { expectNoContrastOffenders } from './contrast-sweep.js'
+import { expectNoContrastOffenders, sweepContrast } from './contrast-sweep.js'
 import { contrastRatio, parseCssColor } from '../contrast.js'
 
 const PASSWORD = 'correct horse battery staple'
@@ -36,6 +36,13 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
   owner.on('pageerror', (error) => errors.push(error.name))
   member.on('pageerror', (error) => errors.push(error.name))
   try {
+    // #315：继承 fieldset 禁用的按钮适用 inactive 例外；同区域说明仍必须可读。
+    await owner.setContent(
+      '<fieldset disabled><button style="color:#ddd;background:#fff">禁用按钮</button><p style="color:#ddd;background:#fff">受阻说明</p></fieldset>',
+    )
+    const disabledSweep = await sweepContrast(owner)
+    expect(disabledSweep.offenders.map((row) => row.text)).toContain('受阻说明')
+    expect(disabledSweep.offenders.some((row) => row.text === '禁用按钮')).toBe(false)
     await owner.goto('/setup')
     await owner.fill('#setup-token', env().setupToken)
     await owner.fill('#team-name', `Micro 验收 ${tag}`)
@@ -133,8 +140,8 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     await selectFromMenu(owner.getByLabel('选择 Agent'), 'Builder')
     await selectFromMenu(owner.getByLabel('选择设备'), /e2e-node（在线）/)
     await selectFromMenu(owner.getByLabel('选择 Workspace'), 'e2e-ws')
-    await owner.getByLabel('Run prompt').fill('生成团队验收报告')
-    await owner.getByRole('button', { name: '启动 Run' }).click()
+    await owner.getByLabel('指令').fill('生成团队验收报告')
+    await owner.getByRole('button', { name: '开始执行' }).click()
     const runButton = owner.locator('button[data-run-id]').first()
     await expect(runButton).toBeVisible()
     const runId = (await runButton.getAttribute('data-run-id'))!
@@ -473,6 +480,7 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
       await requestGate
       await route.continue()
     })
+    await selectFromMenu(owner.getByLabel('执行方式'), /继续会话/)
     const box = owner.getByLabel('指令', { exact: true })
     await box.fill('检查报告')
     const sent = owner.waitForResponse(
@@ -497,7 +505,7 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     const outcome = (await sentResponse.json()).data as { outcome: string; runId: string }
     expect(outcome.outcome).toBe('started_run')
     await owner.unroute(instructionUrl)
-    const sendButton = owner.getByRole('button', { name: '发送指令', exact: true })
+    const sendButton = owner.getByRole('button', { name: '发送追问', exact: true })
     await expect(sendButton).toHaveAttribute('data-feedback', 'started_run')
     await expect(owner.getByTestId('instruction-outcome')).toContainText('已起新运行')
     await expect(box).toHaveValue('')
@@ -509,6 +517,7 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
 
     // Real public revoke endpoint removes the only available execution target in this disposable team.
     expect((await hubApi(cookie, 'DELETE', `/devices/${node.deviceId}`, {})).status).toBe(200)
+    await selectFromMenu(owner.getByLabel('执行方式'), /继续会话/)
     const failedSend = owner.waitForResponse(
       (response) =>
         response.url().endsWith(`/tasks/${taskId}/instructions`) &&
@@ -522,9 +531,12 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
       code: string
       requestId: string
     }
-    expect(failedEnvelope.code).toBe('DEVICE_OFFLINE')
+    expect(failedEnvelope.code).toBe('DEVICE_REVOKED')
     expect(failedEnvelope.requestId).toBeTruthy()
-    await expect(sendButton).toHaveAttribute('data-feedback', 'failed')
+    await expect(owner.getByRole('button', { name: '继续会话', exact: true })).toHaveAttribute(
+      'data-feedback',
+      'failed',
+    )
     await expect(box).toHaveValue('这句要保留')
     await expect(owner.getByTestId('instruction-offline-guidance')).toBeVisible()
     await expect(owner.getByTestId('instruction-outcome')).toHaveCount(0)

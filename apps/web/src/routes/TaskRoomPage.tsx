@@ -4,7 +4,7 @@
  * - **左栏「讨论」**：团队成员之间的话（CommentList/CommentComposer）——这一栏**永不触发运行**
  *   （ADR-0010 决策 4：`@Agent` 不再是评论语法）；
  * - **右栏「执行」**：驱动 Agent 的指令流（InstructionList）+ Run 与审批（RunTimeline/
- *   ApprovalSlot/RunLauncher），以及**可折叠的任务详情**（指派接受/拒绝 + 交付物 + 复核）。
+ *   ApprovalSlot/ExecutionComposer），以及**可折叠的任务详情**（指派接受/拒绝 + 交付物 + 复核）。
  *
  * 为什么把指派与交付物折进执行栏底部（用户 2026-09-15 选定）：这两件事都不是高频动作，
  * 为它们留一条常驻窄栏会让两栏（讨论｜执行）的对比被削弱；折叠后默认不占视觉重量，
@@ -27,12 +27,10 @@ import type { InstructionView, RunEventItem, TaskRoomView } from '../shared/api/
 import { ArtifactList, ReviewerSlot } from '../features/task/ArtifactList.js'
 import { AssignmentPanel } from '../features/task/AssignmentPanel.js'
 import { CommentComposer, CommentList } from '../features/task/CommentComposer.js'
-import { InstructionComposer } from '../features/task/InstructionComposer.js'
+import { ExecutionComposer } from '../features/task/ExecutionComposer.js'
 import type { ApprovalPreview } from '../features/task/InstructionComposer.js'
 import { RunConsole } from '../features/task/RunConsole.js'
-import { TargetPicker } from '../features/task/TargetPicker.js'
 import { InstructionList } from '../features/task/InstructionList.js'
-import { RunLauncher } from '../features/task/RunLauncher.js'
 import { RunLivePanel } from '../features/task/RunLivePanel.js'
 import { runOrdinalLabels } from '../features/task/runLabels.js'
 import { ACTIVE_RUN, QUEUEING_RUN } from '../features/task/run-states.js'
@@ -51,12 +49,6 @@ export function TaskRoomPage(): ReactNode {
   // #273：关掉 Console 时先把退场演完再卸载（`usePresence` 保留上一次的 runId + 挂 leaving）。
   // 退场中途又打开另一个 Run 会**取消**退场（hook 的语义），不会出现"新的被旧的定时器摘掉"。
   const consolePresence = usePresence(consoleRunId ?? null, EXIT_PRESENCE_MS)
-  // ⑥c：显式执行目标（`null` = 走 Hub 的三段式自动解析）。状态放在页面里，因为目标条与输入框
-  // 是同一个"这次往哪儿发"的意图，不该各自持有一份。
-  const [explicitTarget, setExplicitTarget] = useState<{
-    deviceId: string
-    workspaceId: string
-  } | null>(null)
   // #250「对这个工件继续说」：交付物区注入的引用 token，落点是左栏讨论输入框。
   // nonce 保证同一 token 连点两次也落两次账；composer 消费后回调清状态。
   const [insertToken, setInsertToken] = useState<{ text: string; nonce: number } | null>(null)
@@ -132,7 +124,6 @@ export function TaskRoomPage(): ReactNode {
       ? instructions.filter((item) => item.instructionState === 'pending').map((item) => item.id)
       : [],
   )
-  const hasActiveRun = runs.some((run) => ACTIVE_RUN.has(run.status))
   // #246 工具轨迹内联：runId → 最近一次工具调用摘要（服务端已按 project 受众解析），
   // 供指令流的 chip 只读消费。
   const lastToolCallByRun = new Map(
@@ -204,11 +195,6 @@ export function TaskRoomPage(): ReactNode {
                 <h2 id="instructions-heading" ref={execHeadingRef} tabIndex={-1}>
                   执行
                 </h2>
-                <span className="room-column-note">
-                  {hasActiveRun
-                    ? '当前有运行进行中 · 继续说会成为追问'
-                    : '当前没有运行 · 这句话会起新运行'}
-                </span>
               </div>
               {instructionsMissing ? (
                 // 缺字段 ≠ 没有指令：显式说出来，不静默成空列表（复核 #209 观察 5 / R1）。
@@ -230,24 +216,12 @@ export function TaskRoomPage(): ReactNode {
                   onOpenRun={setConsoleRunId}
                 />
               )}
-              {/* ⑥c：执行目标条——回答"这句话会在哪里跑"。
-                选择器只对**责任人**呈现：`GET /devices` 只列自己的设备，而执行永远用责任人的
-                设备与凭据（③c-2b），所以被授权成员看到的是只读说明。 */}
               {session !== null ? (
-                <TargetPicker
-                  isAssignee={task.assigneeUserId === session.userId}
-                  value={explicitTarget}
-                  onChange={setExplicitTarget}
-                  assigneeName={directory.personOf(task.assigneeUserId)}
-                  hasActiveRun={hasActiveRun}
-                />
-              ) : null}
-              {/* ⑥b：执行区输入——这里的一句话会驱动 Agent（与左栏讨论的分工是 ADR-0010 的核心）。 */}
-              {session !== null ? (
-                <InstructionComposer
-                  taskId={task.id}
-                  hasActiveRun={hasActiveRun}
-                  target={explicitTarget}
+                <ExecutionComposer
+                  key={task.id}
+                  task={task}
+                  session={session}
+                  runs={runs}
                   approvalPreview={approvalPreview}
                 />
               ) : null}
@@ -268,12 +242,8 @@ export function TaskRoomPage(): ReactNode {
             </div>
 
             {/* 指派与启程：**常驻**，不折进详情——接受指派是责任人进入工作前的必经一步
-              （没接受就不能起 Run），把它藏进折叠区等于把门藏在门后。
-              ⑥b 的执行区输入框落地后，RunLauncher 会被它取代。 */}
-            <AssignmentPanel task={task} session={session} hasActiveRun={hasActiveRun} />
-            {session !== null ? (
-              <RunLauncher task={task} session={session} hasActiveRun={hasActiveRun} />
-            ) : null}
+              （没接受就不能起 Run），把它藏进折叠区等于把门藏在门后。 */}
+            <AssignmentPanel task={task} session={session} hasActiveRun={activeRun !== undefined} />
 
             {/* 任务详情：交付物与复核——低频，折起来不占视觉重量（用户选定方案①） */}
             {/* **默认展开**（仍可手动折叠）：Q5 的 G6-04 证明「发布交付物」是金路径的一部分

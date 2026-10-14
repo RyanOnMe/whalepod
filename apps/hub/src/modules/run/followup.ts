@@ -290,6 +290,8 @@ export async function dispatchPendingInstructions(
     .where(
       and(
         eq(schema.taskMessages.runId, run.id),
+        // 初始指令仅随 run.start 派发；ready 早于 ack 也不能再作为追问执行。
+        eq(schema.taskMessages.kind, 'followup'),
         eq(schema.taskMessages.instructionState, 'pending'),
       ),
     )

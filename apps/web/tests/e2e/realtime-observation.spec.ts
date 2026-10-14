@@ -14,19 +14,12 @@
  * 通道纪律（六原语·驱动）：项目与 Task 的**建**走 Hub HTTP（创建 UI 由 #136
  * 的用例覆盖，此处不重复）；**观察**必须走浏览器，且不得用 reload 兜底。
  */
-import { readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { env as readEnv } from './helpers.js'
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 
-interface E2eEnv {
-  hubOrigin: string
-  webOrigin: string
-  setupToken: string
-}
-
-const env = JSON.parse(readFileSync(join(tmpdir(), 'whalepod-e2e-env.json'), 'utf8')) as E2eEnv
+// 与其他 Q5 共用环境入口，隔离运行不读取其他工作树的凭据清单。
+const env = readEnv()
 
 const PASSWORD = 'correct horse battery staple'
 const RUN_TAG = randomUUID().slice(0, 8)

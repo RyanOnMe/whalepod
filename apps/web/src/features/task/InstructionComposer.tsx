@@ -15,7 +15,8 @@
  * 这句拒绝的含义是"没有可用的执行目标"，用户需要知道下一步该做什么，而不是只看到错误码。
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useRef, useState, type FormEvent, type ReactNode } from 'react'
+import type { SendInstructionRequest } from '@whalepod/protocol'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
@@ -33,12 +34,12 @@ export interface InstructionOutcome extends InstructionView {
 /**
  * #244 composer 审批档位预览：这句话将以什么权限跑。
  *
- * 三条来源（优先级从高到低，**由 TaskRoomPage 按服务端数据解析**，本组件只渲染）：
+ * 三条来源（由页面/ExecutionComposer 按服务端数据解析，本组件只渲染）：
  * - `active_run`：有活跃 Run，这句话会成为追问，档位 = 该 Run 已固化的档；
  * - `task_override`：Task 覆盖档（`task.approvalPolicy`）；
  * - `revision_default`：无覆盖时服务端预解析的 Revision 默认（房间视图字段）。
  *
- * `null` = 无法预解析（本任务还没有 Run 可继承 Agent，首句本就走启动器）——如实显示
+ * `null` = 尚未确认所选来源配置或 Agent 的审批档——如实显示
  * 「未知」，不猜。档位为 full_access 时发送前必须过确认（ADR-0009 决策 7：显式放权）。
  */
 export type ApprovalPreview = {
@@ -85,6 +86,11 @@ export interface InstructionComposerProps {
    * composer 的读者可能是被授权成员。
    */
   approvalPreview: ApprovalPreview
+  intent?: SendInstructionRequest['intent']
+  initialOutcome?: InstructionOutcome | null
+  draft?: string
+  onDraftChange?: (text: string) => void
+  onSendingChange?: (sending: boolean) => void
   onOutcome?: (outcome: InstructionOutcome) => void
 }
 
@@ -94,11 +100,23 @@ export function InstructionComposer({
   target,
   approvalPreview,
   onOutcome,
+  intent,
+  initialOutcome,
+  draft,
+  onDraftChange,
+  onSendingChange,
 }: InstructionComposerProps): ReactNode {
   const queryClient = useQueryClient()
-  const [text, setText] = useState('')
+  const intentKey = useRef<{ signature: string; key: string } | null>(null)
+  const [localText, setLocalText] = useState('')
+  const text = draft ?? localText
+  const setText = (value: string): void => {
+    if (onDraftChange !== undefined) onDraftChange(value)
+    else setLocalText(value)
+  }
   const [error, setError] = useState<unknown>(null)
-  const [last, setLast] = useState<InstructionOutcome | null>(null)
+  const [submittedText, setSubmittedText] = useState('')
+  const [last, setLast] = useState<InstructionOutcome | null>(initialOutcome ?? null)
   const [instant, setInstant] = useState(true)
   // #244：full_access 确认闸。pendingBody 存「点了发送那一刻」的正文——对话框是模态的，
   // 打开期间正文不可编辑，但确认动作必须发送用户看到的那句话，别在关闭时重读 state。
@@ -106,25 +124,40 @@ export function InstructionComposer({
   const [pendingBody, setPendingBody] = useState('')
 
   const mutation = useMutation({
-    mutationFn: (body: string) =>
-      api.mutate<InstructionOutcome>(`/tasks/${taskId}/instructions`, {
-        // 目标字段按**实际钉住了什么**发：
-        //   自动解析（target 为 null）→ 一个都不发；
-        //   只钉了设备（工作区还空）→ **只发 deviceId**（Hub 支持：会在该设备上挑可用工作区，
-        //     见 instruction-target.ts 的 findAvailableWorkspaceForDevice）；
-        //   设备与工作区都钉住 → 两个都发。
-        // 修正（评审 B1）：原先"workspaceId 为空就两个都不发"让**只选设备**这一态说了假话——
-        // 那时 chip 写着「显式指定」，载荷里却没有任何目标字段：用户以为钉死了设备 A，
-        // 实际可能落在"沿用上一轮"的设备 B 上，而这一片要回答的正是"这句话会在哪里跑"。
-        body:
-          target === null || target.deviceId === ''
-            ? { text: body }
-            : target.workspaceId === ''
-              ? { text: body, deviceId: target.deviceId }
-              : { text: body, deviceId: target.deviceId, workspaceId: target.workspaceId },
-      }),
-    onSuccess: (outcome) => {
-      setText('')
+    onMutate: () => onSendingChange?.(true),
+    onSettled: () => onSendingChange?.(false),
+    mutationFn: (body: string) => {
+      const payload = {
+        text: body,
+        ...(target !== null && target.deviceId !== ''
+          ? {
+              deviceId: target.deviceId,
+              ...(target.workspaceId !== '' ? { workspaceId: target.workspaceId } : {}),
+            }
+          : {}),
+        ...(intent !== undefined
+          ? {
+              intent,
+              ...(approvalPreview !== null
+                ? { expectedApprovalPolicy: approvalPreview.policy }
+                : {}),
+            }
+          : {}),
+      }
+      const signature = JSON.stringify(payload)
+      if (intentKey.current?.signature !== signature)
+        intentKey.current = { signature, key: crypto.randomUUID() }
+      return api.mutate<InstructionOutcome>(`/tasks/${taskId}/instructions`, {
+        body: payload,
+        idempotencyKey: intentKey.current.key,
+      })
+    },
+    onSuccess: (outcome, sentText) => {
+      setSubmittedText(sentText)
+      if (outcome.outcome !== 'rejected') {
+        setText('')
+        intentKey.current = null
+      }
       setError(null)
       setLast(outcome)
       onOutcome?.(outcome)
@@ -153,12 +186,13 @@ export function InstructionComposer({
   }
 
   // `ApiError` 自带 wire 上的 code（errors.ts），不需要另造助手。
-  const offlineGuidance = isApiError(error) && error.code === 'DEVICE_OFFLINE'
+  const offlineGuidance =
+    isApiError(error) && (error.code === 'DEVICE_OFFLINE' || error.code === 'DEVICE_REVOKED')
   const feedback: SendFeedback = mutation.isPending
     ? 'pending'
     : error !== null
       ? 'failed'
-      : text !== ''
+      : text !== '' && !(last?.outcome === 'rejected' && text === submittedText)
         ? 'idle'
         : (last?.outcome ?? 'idle')
 
@@ -170,8 +204,9 @@ export function InstructionComposer({
         name="text"
         rows={2}
         maxLength={10_000}
+        disabled={mutation.isPending}
         value={text}
-        placeholder="让 Agent 干这个…"
+        placeholder={intent?.kind === 'resume' ? '接着来源会话继续…' : '让 Agent 干这个…'}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={(event) => {
           // #229：Cmd/Ctrl+Enter 直发（与提交按钮同一条 form 路径）；纯 Enter 仍是换行。
@@ -196,10 +231,22 @@ export function InstructionComposer({
           }}
         >
           <InstructionSendIcon feedback={feedback} />
-          {mutation.isPending ? '发送中…' : '发送指令'}
+          {mutation.isPending
+            ? '发送中…'
+            : intent?.kind === 'resume'
+              ? '继续会话'
+              : intent?.kind === 'followup'
+                ? '发送追问'
+                : '发送指令'}
         </button>
         <span className="mutation-hint" data-testid="instruction-routing-hint">
-          {hasActiveRun ? '当前有运行 · 这句话会成为追问' : '当前没有运行 · 这句话会起新运行'}
+          {intent?.kind === 'resume'
+            ? '续接指定会话，并创建新执行记录'
+            : intent?.kind === 'followup'
+              ? '只追问指定执行，状态变化时需重新选择'
+              : hasActiveRun
+                ? '当前有运行 · 这句话会成为追问'
+                : '当前没有运行 · 这句话会起新运行'}
         </span>
         {/* #244 审批档位胶囊：发送前可见「这句话将以什么权限跑」及其来源。
             full_access 时加 warn 视觉（与运行卡的放权标记同族），approval_required/未知保持中性。 */}
@@ -230,8 +277,9 @@ export function InstructionComposer({
       {offlineGuidance ? (
         // 409 的含义不是"你写错了"，而是"没有可用的执行目标"——必须告诉用户下一步做什么。
         <p className="mutation-hint" data-testid="instruction-offline-guidance">
-          这台任务当前没有可用的执行目标：可以让责任人的设备上线（在「设备」页确认已上报），或
-          在目标选择里显式指定设备与工作区。
+          {isApiError(error) && error.code === 'DEVICE_REVOKED'
+            ? '来源设备已撤销，无法在该现场续跑；请明确选择开始新执行并重新确认环境。'
+            : '这个任务当前没有可用的执行目标：可以让责任人的设备上线（在「设备」页确认已上报），或在目标选择里显式指定设备与工作区。'}
         </p>
       ) : null}
       {confirmingFullAccess ? (

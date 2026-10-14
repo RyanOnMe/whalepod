@@ -339,6 +339,13 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
             ? { workspaceId: parsed.data.workspaceId }
             : {}),
           ...(parsed.data.agentId !== undefined ? { agentId: parsed.data.agentId } : {}),
+          ...(parsed.data.profileRevisionId !== undefined
+            ? { profileRevisionId: parsed.data.profileRevisionId }
+            : {}),
+          ...(parsed.data.expectedApprovalPolicy !== undefined
+            ? { expectedApprovalPolicy: parsed.data.expectedApprovalPolicy }
+            : {}),
+          ...(parsed.data.intent !== undefined ? { intent: parsed.data.intent } : {}),
         },
       )
     } catch (error) {

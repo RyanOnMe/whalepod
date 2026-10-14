@@ -86,7 +86,7 @@ describe('#239 创建任务：责任人可选 Agent（指派即执行）', () =>
     await user.click(await screen.findByRole('button', { name: '创建任务' }))
     await user.type(await screen.findByLabelText('任务标题'), '把登录页改成深色')
 
-    const list = await openSelect(user, '责任人')
+    const list = await openSelect(user, '交给谁')
     // 归档 Agent 不进候选。
     expect(list.queryByRole('menuitem', { name: /old-agent/ })).toBeNull()
     await user.click(list.getByRole('menuitem', { name: /report-writer（Agent · 指派即执行）/ }))
@@ -126,7 +126,7 @@ describe('#239 创建任务：责任人可选 Agent（指派即执行）', () =>
     )
     await user.click(await screen.findByRole('button', { name: '创建任务' }))
     await user.type(await screen.findByLabelText('任务标题'), '再一个任务')
-    await selectOption(user, '责任人', /report-writer（Agent · 指派即执行）/)
+    await selectOption(user, '交给谁', /report-writer（Agent · 指派即执行）/)
     await user.click(screen.getByRole('button', { name: /创建任务/ }))
     await waitFor(() =>
       expect(

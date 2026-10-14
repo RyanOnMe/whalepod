@@ -100,8 +100,8 @@ test('拒绝 → 网页重新指派 → 新责任人接受 → 在自己的环�
     await selectFromMenu(owner.getByLabel('选择 Agent'), 'Builder')
     await selectFromMenu(owner.getByLabel('选择设备'), /e2e-node（在线）/)
     await selectFromMenu(owner.getByLabel('选择 Workspace'), 'e2e-ws')
-    await owner.getByLabel('Run prompt').fill('接手后生成交付物')
-    await owner.getByRole('button', { name: '启动 Run' }).click()
+    await owner.getByLabel('指令', { exact: true }).fill('接手后生成交付物')
+    await owner.getByRole('button', { name: '开始执行' }).click()
     const row = owner.locator('button[data-run-id]').first()
     await expect(row).toBeVisible()
     const runId = (await row.getAttribute('data-run-id'))!

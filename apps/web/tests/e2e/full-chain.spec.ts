@@ -135,7 +135,7 @@ async function setupTeamAndTask(): Promise<void> {
   await alice.locator('input[id^="task-title-"]').fill('产出并复核验收报告')
   // #158：责任人下拉是 vendored Menu（不再是原生 <select>）——反面钉 + 真人路径。
   const assignee = createTaskForm.locator('button[id^="task-assignee-"]')
-  await assertNotNativeSelect(assignee, createTaskForm, '责任人')
+  await assertNotNativeSelect(assignee, createTaskForm, '交给谁')
   await selectFromMenu(assignee, /Bob/)
   await expect(assignee).toContainText('Bob')
   await createTaskForm.getByRole('button', { name: /创建任务/ }).click()
@@ -221,8 +221,8 @@ async function startRunViaUi(agentName: string, promptText: string): Promise<str
   // 离线设备仍在列表里但不可选——这里按「在线」文案点，正好也钉住禁用项没被误点。
   await selectFromMenu(bob.getByLabel('选择设备'), /e2e-node（在线）/)
   await selectFromMenu(bob.getByLabel('选择 Workspace'), 'e2e-ws')
-  await bob.getByLabel('Run prompt').fill(promptText)
-  await bob.getByRole('button', { name: '启动 Run' }).click()
+  await bob.getByLabel('指令').fill(promptText)
+  await bob.getByRole('button', { name: '开始执行' }).click()
   // Run 行进时间线（责任人真人路径）。
   await expect(bob.locator('.run-item').first()).toBeVisible()
   const runId = await waitForFreshRunId()
@@ -870,10 +870,14 @@ test.describe('P1-19 Run 行动（G7-01 取消 / G7-04 重跑血缘）', () => {
     // 本 Task 到此刻已有几次运行，所以用正则锚形态、不写死 N。
     await expect(lineage).toHaveText(/^重跑自第 \d+ 次运行$/)
     await expect(lineage).toHaveAttribute('title', sourceRunId!)
-    // 行标签是人话句柄「第 N 次运行」（完整 id 在 title 上），面板标题说「本次运行」。
+    // 行标签是人话句柄「第 N 次运行」；#308 的完整 id 由可聚焦提示层提供。
     const rowLabel = shared.bob!.locator(`.run-item-button[data-run-id="${newRunId}"] .run-label`)
     await expect(rowLabel).toHaveText(/^第 \d+ 次运行$/)
-    await expect(rowLabel).toHaveAttribute('title', newRunId)
+    // selectRun 已通过点击聚焦该按钮；先离开，再验证键盘重新进入时的提示。
+    await shared.bob!.getByLabel('指令').focus()
+    await shared.bob!.locator(`.run-item-button[data-run-id="${newRunId}"]`).focus()
+    await expect(shared.bob!.getByRole('tooltip')).toHaveText(newRunId)
+    await shared.bob!.keyboard.press('Escape')
     const panelHeading = panel.getByRole('heading', { name: '本次运行' })
     await expect(panelHeading).toHaveAttribute('title', newRunId)
     await approveAndCompleteLoose(newRunId)

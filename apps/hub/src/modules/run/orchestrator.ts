@@ -13,6 +13,7 @@
  *   事件留证 + 非终态 Run 收敛 failed(INVALID_RUN_TRANSITION) + 连接保留。
  */
 import { randomUUID } from 'node:crypto'
+import { uuidv7 } from '../shared/uuid.js'
 import { and, eq, inArray } from 'drizzle-orm'
 import { asUserId, authorize, DomainError, transitionRun, transitionTask } from '@whalepod/domain'
 import type { RunEvent as DomainRunEvent } from '@whalepod/domain'
@@ -28,6 +29,7 @@ import {
   getRun,
   insertApprovalIfAbsent,
   insertRun,
+  insertMessage,
   Outbox,
   schema,
   setApprovalStatus,
@@ -94,14 +96,40 @@ export class RunOrchestrator {
    * 同 key 并发时败者可能先撞活跃唯一（它在 Task 锁释放后才做预检，读不到
    * 回执早查的结果）：此时回读回执，返回胜者结果而非报 RUN_ALREADY_ACTIVE。
    */
-  async create(ctx: ActorContext, taskId: string, input: CreateRunInput): Promise<RunView> {
+  async create(
+    ctx: ActorContext,
+    taskId: string,
+    input: CreateRunInput,
+    trigger?: { origin: 'human' | 'auto_assignment' },
+  ): Promise<RunView> {
     assertCreateRunInput(input)
     const now = this.nowFn()
     const key = `run.create:${input.idempotencyKey}`
     try {
-      return await transactCommand(this.database, key, (tx) =>
-        this.createInTransaction(tx, ctx, taskId, input, now),
-      )
+      return await transactCommand(this.database, key, async (tx) => {
+        const run = await this.createInTransaction(tx, ctx, taskId, input, now)
+        if (trigger !== undefined) {
+          // 初始指令、Run 锚点、run.start 与回执同事务提交。派发者看见命令时消息必已存在，
+          // ack 不会漏结算，也不会把初始 prompt 当成尚未派发的追问再次执行。
+          const message = await insertMessage(tx, {
+            id: uuidv7(),
+            taskId,
+            authorUserId: ctx.userId,
+            body: input.prompt,
+            kind: 'instruction',
+            origin: trigger.origin,
+            targetAgentId: run.agentId,
+            runId: run.id,
+            instructionState: 'pending',
+            createdAt: now,
+          })
+          await tx
+            .update(schema.runs)
+            .set({ triggerMessageId: message.id })
+            .where(eq(schema.runs.id, run.id))
+        }
+        return run
+      })
     } catch (error) {
       const pg = unwrapPgError(error)
       const activeConflict =
@@ -172,6 +200,12 @@ export class RunOrchestrator {
     // 答案：未覆盖的跟（每次建 Run 重新解析），已覆盖的不跟（Task 值优先）。
     // 口径（ADR-0010 决策 5）：不做「自动触发降级」，触发方式不影响档位。
     const approvalPolicy = task.approvalPolicy ?? revision.approvalPolicy
+    if (
+      input.expectedApprovalPolicy !== undefined &&
+      input.expectedApprovalPolicy !== approvalPolicy
+    ) {
+      throw new RunCommandError('CONFLICT', '审批档位已变化，请重新确认后发送')
+    }
 
     const [device] = await tx
       .select()
@@ -497,10 +531,12 @@ export class RunOrchestrator {
         .from(schema.runs)
         .where(eq(schema.runs.id, runId))
         .for('update')
-      if (run === undefined || run.status !== 'queued') return // 已迁移过：不重复迁移
+      if (run === undefined) return
       // #196：由执行区指令起的 Run，其 run.start ack 就是**那条指令**的命运（决策 3「受理即落账」）。
       // 与 followup 的区别只是锚点不同：这里是 runs.trigger_message_id，那边是 outbox.message_id。
       await settleTriggerInstruction(tx, run, ack)
+      // 迟到 ack 仍结算消息；已推进的 Run 不重复迁移，终态不复活。
+      if (run.status !== 'queued') return
       if (ack.accepted) {
         this.applyRunTransition(run, { type: 'dispatch_acked' })
         await setRunStatus(tx, run.id, 'dispatching')

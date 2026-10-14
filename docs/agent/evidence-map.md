@@ -31,6 +31,7 @@
 
 | 现象 | 先看 |
 |---|---|
+| 指令去向变化、来源续跑或草稿丢失 | `artifacts/evidence/unified-execution/result.json`：web.execution 的草稿/唯一输入 → hub.run 的血缘/来源版本/现场 → runtime.bridge 会话身份；上下文在场另外复跑 Q3 resume 契约。见 unified-execution-acceptance |
 | 拒绝后无法改派或改派重试冲突 | `artifacts/evidence/task-reassignment/result.json`：web.assignment → hub.task 的 pending/assignee → command_receipt → 新 Run 的 owner/device |
 | Run 状态不动 | hub.outbox 是否派发 → node.gateway 是否 ack → node.supervisor 是否拉起子进程 |
 | 浏览器看不到进度 | hub.ws cursor 是否推进 → 浏览器是否收到 `resync.required` → hub.domain 是否产事件 |

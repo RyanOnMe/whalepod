@@ -244,7 +244,7 @@ describe('#241 RunLauncher：解析为 full_access 时先确认再发', () => {
         ]),
         {
           method: 'POST',
-          url: /\/api\/v1\/tasks\/[^/]+\/runs$/,
+          url: /\/api\/v1\/tasks\/[^/]+\/instructions$/,
           respond: (init) => {
             captures.bodies.push(JSON.parse(String(init.body ?? '{}')))
             return ok({ id: 'run-1' })
@@ -261,15 +261,19 @@ describe('#241 RunLauncher：解析为 full_access 时先确认再发', () => {
     // 填齐目标与指令后提交 → 先出确认对话框；**取消**不发，**确认**才发 POST。
     await selectOption(user, '选择设备', 'm4-mini（在线）')
     await selectOption(user, '选择 Workspace', 'whalepod')
-    await user.type(screen.getByLabelText('Run prompt'), '发布周报')
-    await user.click(screen.getByRole('button', { name: '启动 Run' }))
+    await user.type(screen.getByLabelText('指令'), '发布周报')
+    await user.click(screen.getByRole('button', { name: '开始执行' }))
     const dialog = await screen.findByRole('dialog')
     expect(dialog).toHaveTextContent('完全权限')
     expect(captures.bodies).toHaveLength(0) // 对话框没确认前一个请求都不该有
 
     await user.click(screen.getByRole('button', { name: '确认以完全权限启动' }))
     await waitFor(() => expect(captures.bodies).toHaveLength(1))
-    expect(captures.bodies[0]).toMatchObject({ prompt: '发布周报' })
+    expect(captures.bodies[0]).toMatchObject({
+      text: '发布周报',
+      expectedApprovalPolicy: 'full_access',
+      intent: { kind: 'new' },
+    })
   })
 })
 

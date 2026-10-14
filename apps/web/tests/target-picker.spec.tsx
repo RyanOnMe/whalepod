@@ -22,7 +22,10 @@ import { ALICE, BOB, loggedInHandlers, makeTask, teamMembersHandler } from './fi
 import type { MockHandler } from './fixtures.js'
 import { makeQueryClient } from '../src/app/query-client.js'
 import { TargetPicker } from '../src/features/task/TargetPicker.js'
-import { renderApp } from './render.jsx'
+import { useState } from 'react'
+import { InstructionComposer } from '../src/features/task/InstructionComposer.js'
+import { installFetch } from './fixtures.js'
+import type { TestAppResult } from './render.jsx'
 import { selectOption } from './select-menu.js'
 
 const DEVICE = {
@@ -219,6 +222,8 @@ describe('执行目标条（⑥c）', () => {
         teamMembersHandler([]),
         ...infraHandlers(),
       ]),
+      true,
+      true,
     )
     // 自动态也要说（一进来就该知道）
     expect(await screen.findByText(/目标由该运行决定/)).toBeVisible()
@@ -232,6 +237,7 @@ describe('执行目标条（⑥c）', () => {
     renderApp(
       `/tasks/${task.id}`,
       loggedInHandlers(ALICE, [roomHandler(task), teamMembersHandler([]), ...infraHandlers()]),
+      false,
     )
     const readonly = await screen.findByTestId('target-readonly')
     expect(readonly).toBeVisible()
@@ -395,3 +401,41 @@ describe('#225 批次①：目标条不说假话（加载中≠没有设备；�
     )
   })
 })
+
+/** 目标组件局部判据；页面装配与显式运行意图见 execution-composer/run-launcher。 */
+function renderApp(
+  path: string,
+  handlers: readonly MockHandler[],
+  isAssignee = true,
+  hasActiveRun = false,
+): TestAppResult {
+  const taskId = path.split('/').at(-1)!
+  const fetchMock = installFetch(handlers)
+  const queryClient = makeQueryClient({ retry: false })
+  function Harness() {
+    const [target, setTarget] = useState<{ deviceId: string; workspaceId: string } | null>(null)
+    return (
+      <>
+        <TargetPicker
+          isAssignee={isAssignee}
+          value={target}
+          onChange={setTarget}
+          assigneeName="Bob"
+          hasActiveRun={hasActiveRun}
+        />
+        <InstructionComposer
+          taskId={taskId}
+          hasActiveRun={hasActiveRun}
+          target={target}
+          approvalPreview={null}
+        />
+      </>
+    )
+  }
+  const view = render(
+    <QueryClientProvider client={queryClient}>
+      <Harness />
+    </QueryClientProvider>,
+  )
+  return { ...view, queryClient, fetchMock }
+}

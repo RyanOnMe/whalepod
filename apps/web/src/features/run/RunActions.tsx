@@ -79,6 +79,8 @@ export function RunActions({ run, session }: { run: RunView; session: Session })
         idempotencyKey: againKey.current ?? crypto.randomUUID(),
         body: {
           agentId: run.agentId,
+          profileRevisionId: run.profileRevisionId,
+          expectedApprovalPolicy: run.approvalPolicy,
           deviceId: run.deviceId,
           workspaceId: run.workspaceId,
           prompt: input.prompt,

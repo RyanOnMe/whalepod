@@ -23,6 +23,7 @@ import {
   type MockHandler,
 } from './fixtures.js'
 import { appendLiveDelta } from '../src/shared/realtime/run-buffer.js'
+import { queryKeys } from '../src/app/query-client.js'
 import type { RunView } from '../src/shared/api/types.js'
 
 const AGENT_ID = 'a1a1a1a1-0000-4000-8000-00000000000a'
@@ -33,7 +34,7 @@ const RUN_ID = 'f6f6f6f6-0000-4000-8000-00000000000e'
 
 function launcherHandlers(
   capture?: { body?: unknown; key?: unknown },
-  options: { failPost?: { message: string; requestId: string } } = {},
+  options: { failPost?: { message: string; requestId: string }; rejectPost?: boolean } = {},
 ): MockHandler[] {
   return [
     {
@@ -112,12 +113,20 @@ function launcherHandlers(
     },
     {
       method: 'POST',
-      url: /\/api\/v1\/tasks\/[^/]+\/runs$/,
+      url: /\/api\/v1\/tasks\/[^/]+\/instructions$/,
       respond: (init) => {
         if (capture !== undefined) {
           capture.body = JSON.parse(String(init.body))
           capture.key = (init.headers as Record<string, string>)['idempotency-key']
         }
+        if (options.rejectPost)
+          return created({
+            outcome: 'rejected',
+            runId: RUN_ID,
+            instructionState: 'rejected',
+            instructionErrorCode: 'WORKSPACE_UNAVAILABLE',
+            instructionErrorMessage: '工作目录不可用',
+          })
         if (options.failPost !== undefined) {
           return {
             status: 500,
@@ -131,7 +140,7 @@ function launcherHandlers(
             },
           }
         }
-        return created({ id: RUN_ID })
+        return created({ outcome: 'started_run', runId: RUN_ID })
       },
     },
   ]
@@ -192,9 +201,14 @@ describe('RunLauncher', () => {
     await waitFor(() => expect(screen.getByLabelText('选择 Revision')).toHaveTextContent('r3'))
     await selectOption(user, '选择设备', 'm4-mini（在线）')
     await selectOption(user, '选择 Workspace', 'whalepod')
-    await user.type(screen.getByLabelText('Run prompt'), '把登录页修好')
+    await user.type(screen.getByLabelText('指令'), '把登录页修好')
 
-    const submit = screen.getByRole('button', { name: '启动 Run' })
+    expect(
+      document
+        .querySelector('[aria-labelledby="instructions-heading"]')
+        ?.querySelectorAll('textarea'),
+    ).toHaveLength(1)
+    const submit = screen.getByRole('button', { name: '开始执行' })
     expect(submit).toBeEnabled()
     await user.click(submit)
 
@@ -204,7 +218,9 @@ describe('RunLauncher', () => {
       profileRevisionId: REVISION_ID,
       deviceId: DEVICE_ID,
       workspaceId: WORKSPACE_ID,
-      prompt: '把登录页修好',
+      text: '把登录页修好',
+      intent: { kind: 'new' },
+      expectedApprovalPolicy: 'approval_required',
     })
     expect(typeof capture.key).toBe('string')
   })
@@ -217,7 +233,7 @@ describe('RunLauncher', () => {
     })
     renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [taskRoomHandler(task)]))
     expect(await screen.findByRole('heading', { name: '运行' })).toBeVisible()
-    expect(screen.queryByRole('heading', { name: '启动 Run' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '开始执行' })).not.toBeInTheDocument()
 
     // 责任人自己有活跃 Run 时同样不可见。
     const task2 = makeTask({
@@ -233,7 +249,130 @@ describe('RunLauncher', () => {
       ]),
     )
     expect(await screen.findByText('运行中')).toBeVisible()
-    expect(screen.queryByRole('heading', { name: '启动 Run' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '开始执行' })).not.toBeInTheDocument()
+  })
+  it('评审：Node 已拒收的首次启动保留草稿，不假装进入追问', async () => {
+    const task = makeTask({ assignmentStatus: 'accepted', assigneeUserId: BOB.userId })
+    const user = userEvent.setup()
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task),
+        ...launcherHandlers(undefined, { rejectPost: true }),
+      ]),
+    )
+    await selectOption(user, '选择 Agent', 'Fixer')
+    await user.type(screen.getByLabelText('指令'), '保留被拒收的原文')
+    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    expect(await screen.findByTestId('execution-start-refusal')).toHaveTextContent('工作目录不可用')
+    expect(screen.getByLabelText('指令')).toHaveValue('保留被拒收的原文')
+    expect(screen.getByLabelText('执行方式')).toHaveTextContent('开始新执行')
+    expect(screen.getByRole('button', { name: '开始执行' })).toHaveAttribute(
+      'data-feedback',
+      'rejected',
+    )
+  })
+
+  it('评审：收起设置后仍如实展示显式设备与工作区', async () => {
+    const task = makeTask({ assignmentStatus: 'accepted', assigneeUserId: BOB.userId })
+    const user = userEvent.setup()
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [taskRoomHandler(task), ...launcherHandlers()]),
+    )
+    await selectOption(user, '选择 Agent', 'Fixer')
+    await selectOption(user, '选择设备', 'm4-mini（在线）')
+    await selectOption(user, '选择 Workspace', 'whalepod')
+    await user.click(screen.getByText('执行设置（配置版本与环境）'))
+    expect(screen.getByTestId('execution-target-summary')).toHaveTextContent(
+      '显式指定：m4-mini · whalepod',
+    )
+    expect(screen.getByTestId('execution-target-summary')).not.toHaveTextContent(
+      '自动选择你的可用环境',
+    )
+  })
+
+  it.each(['device', 'workspace'] as const)(
+    '评审：显式选择的 %s 失效时保留草稿，不改投其他可用现场',
+    async (kind) => {
+      const task = makeTask({ assignmentStatus: 'accepted', assigneeUserId: BOB.userId })
+      const user = userEvent.setup()
+      const view = renderApp(
+        `/tasks/${task.id}`,
+        loggedInHandlers(BOB, [taskRoomHandler(task), ...launcherHandlers()]),
+      )
+      await selectOption(user, '选择 Agent', 'Fixer')
+      await selectOption(user, '选择设备', 'm4-mini（在线）')
+      await selectOption(user, '选择 Workspace', 'whalepod')
+      await user.type(screen.getByLabelText('指令'), '保留这段草稿')
+      expect(screen.getByRole('button', { name: '开始执行' })).toBeEnabled()
+      act(() => {
+        if (kind === 'device') {
+          const devices = view.queryClient.getQueryData<
+            import('../src/shared/api/types.js').DeviceView[]
+          >(queryKeys.devices)!
+          view.queryClient.setQueryData(
+            queryKeys.devices,
+            devices.map((row) => ({ ...row, status: 'offline' })),
+          )
+        } else {
+          const workspaces = view.queryClient.getQueryData<
+            import('../src/shared/api/types.js').WorkspaceView[]
+          >(queryKeys.workspaces)!
+          view.queryClient.setQueryData(queryKeys.workspaces, [
+            ...workspaces.map((row) => ({ ...row, available: false })),
+            {
+              ...workspaces[0]!,
+              workspaceId: 'e5e5e5e5-0000-4000-8000-00000000000e',
+              name: 'other',
+              available: true,
+            },
+          ])
+        }
+      })
+      await waitFor(() => expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled())
+      expect(screen.getByTestId('execution-target-blocker')).toBeVisible()
+      expect(screen.getByLabelText('指令')).toHaveValue('保留这段草稿')
+      expect(
+        view.fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/instructions')),
+      ).toHaveLength(0)
+    },
+  )
+
+  it('#315 编辑草稿时 Agent 更新不替换已展示的版本', async () => {
+    const task = makeTask({ assignmentStatus: 'accepted', assigneeUserId: BOB.userId })
+    const capture: { body?: unknown } = {}
+    const user = userEvent.setup()
+    const view = renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [taskRoomHandler(task, { runs: [] }), ...launcherHandlers(capture)]),
+    )
+    await selectOption(user, '选择 Agent', 'Fixer')
+    await waitFor(() => expect(screen.getByTestId('execution-revision')).toHaveTextContent('r3'))
+    const original = view.queryClient.getQueryData<
+      import('../src/shared/api/types.js').AgentDetailView
+    >(queryKeys.agentDetail(AGENT_ID))
+    const nextId = 'a2a2a2a2-0000-4000-8000-00000000000c'
+    act(() =>
+      view.queryClient.setQueryData(queryKeys.agentDetail(AGENT_ID), {
+        ...original,
+        currentRevisionId: nextId,
+        revisions: [
+          ...original!.revisions,
+          { ...original!.revisions[0], id: nextId, revision: 4, approvalPolicy: 'full_access' },
+        ],
+      }),
+    )
+    expect(screen.getByTestId('execution-revision')).toHaveTextContent('r3')
+    await user.type(screen.getByLabelText('指令'), '使用已确认的版本')
+    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    await waitFor(() =>
+      expect(capture.body).toMatchObject({
+        profileRevisionId: REVISION_ID,
+        expectedApprovalPolicy: 'approval_required',
+      }),
+    )
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
 
@@ -342,13 +481,13 @@ describe('#225 批次①：启动失败走统一错误口径', () => {
     await waitFor(() => expect(screen.getByLabelText('选择 Revision')).toHaveTextContent('r3'))
     await selectOption(user, '选择设备', 'm4-mini（在线）')
     await selectOption(user, '选择 Workspace', 'whalepod')
-    await user.type(screen.getByLabelText('Run prompt'), '把登录页修好')
-    await user.click(screen.getByRole('button', { name: '启动 Run' }))
+    await user.type(screen.getByLabelText('指令'), '把登录页修好')
+    await user.click(screen.getByRole('button', { name: '开始执行' }))
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('agent not ready')
     expect(alert).toHaveTextContent('req-run-500')
     // 失败保留输入：重试不需要重打一遍 prompt。
-    expect(screen.getByLabelText('Run prompt')).toHaveValue('把登录页修好')
+    expect(screen.getByLabelText('指令')).toHaveValue('把登录页修好')
   })
 })

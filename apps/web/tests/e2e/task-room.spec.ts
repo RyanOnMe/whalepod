@@ -10,16 +10,13 @@
  * Bob 的账号经 HTTP API 以 Alice 会话开通（邀请开通不在本场景 UI 范围——成员管理
  * UI 属后续版本），Bob 之后的一切动作都走真实浏览器路径。
  */
-import { readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 import {
   CONTROL_PRIMARY_FILL_TOKEN,
   CONTROL_PRIMARY_LABEL_TOKEN,
 } from '../../src/shared/control-style-tokens.js'
-import { assertControlTokens, assertNotNativeSelect } from './helpers.js'
+import { assertControlTokens, assertNotNativeSelect, env as readEnv } from './helpers.js'
 import { expectNoContrastOffenders } from './contrast-sweep.js'
 import {
   PERSON_SLOTS,
@@ -31,13 +28,8 @@ import {
   type PersonSlotSample,
 } from '../person-identity.js'
 
-interface E2eEnv {
-  hubOrigin: string
-  webOrigin: string
-  setupToken: string
-}
-
-const env = JSON.parse(readFileSync(join(tmpdir(), 'whalepod-e2e-env.json'), 'utf8')) as E2eEnv
+// 使用同一环境清单入口，隔离运行不读取其他工作树的 Setup Token。
+const env = readEnv()
 
 const ALICE_PASSWORD = 'correct horse battery staple'
 const BOB_PASSWORD = 'correct horse battery staple'
@@ -325,7 +317,7 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     )
     await taskIdInput.fill('起草验收报告')
     const assignee = createTaskForm.locator('button[id^="task-assignee-"]')
-    await assertNotNativeSelect(assignee, createTaskForm, '责任人')
+    await assertNotNativeSelect(assignee, createTaskForm, '交给谁')
     await assignee.click()
     await expect(assignee).toHaveAttribute('aria-expanded', 'true')
     // 菜单项的顺序 = [placeholder(disabled), 各成员…]：placeholder 占 **index 0** 且不可选，

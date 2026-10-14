@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Database } from '@whalepod/db'
 import {
   insertAgent,
@@ -11,6 +11,8 @@ import {
   schema,
   setRunStatus,
 } from '@whalepod/db'
+import { grantInstructionRight } from '../src/modules/task/instruction-grants.js'
+import { createProfileRevision } from '../src/modules/agent/commands.js'
 import { sendInstruction } from '../src/modules/run/instruction.js'
 import { resolveRunTarget } from '../src/modules/run/instruction-target.js'
 import {
@@ -25,6 +27,8 @@ import {
   resetDatabase,
   runEventFrame,
   seedRunPrereqs,
+  seedRunChainForUser,
+  seedSecondUserDevice,
   type TestApp,
 } from './helpers.js'
 
@@ -431,6 +435,599 @@ describe('instruction starts a run (P1-196)', () => {
       .from(schema.runs)
       .where(eq(schema.runs.triggerMessageId, foreign.id))
     expect(rows).toEqual([])
+  })
+
+  it('#315 HTTP 指令与高级运行入口都传递审批预览条件', async () => {
+    const ctx = await createTestApp(database)
+    try {
+      const actor = await driveSetup(ctx)
+      const chain = await seedRunChainForUser(database.db, actor.userId)
+      await bringDeviceOnline(chain.deviceId)
+      const project = await apiInject(ctx, actor, {
+        method: 'POST',
+        url: '/api/v1/projects',
+        payload: { name: 'explicit policy' },
+      })
+      const task = await apiInject(ctx, actor, {
+        method: 'POST',
+        url: `/api/v1/projects/${project.json().data.id}/tasks`,
+        payload: { title: 'policy precondition', assigneeUserId: actor.userId },
+      })
+      const taskId = task.json().data.id as string
+      await apiInject(ctx, actor, { method: 'POST', url: `/api/v1/tasks/${taskId}/accept` })
+      const common = {
+        agentId: chain.agentId,
+        profileRevisionId: chain.profileRevisionId,
+        deviceId: chain.deviceId,
+        workspaceId: chain.workspaceId,
+        expectedApprovalPolicy: 'full_access',
+      }
+      for (const [path, body] of [
+        ['instructions', { ...common, text: 'explicit', intent: { kind: 'new' } }],
+        ['runs', { ...common, prompt: 'advanced' }],
+      ] as const) {
+        const response = await apiInject(ctx, actor, {
+          method: 'POST',
+          url: `/api/v1/tasks/${taskId}/${path}`,
+          payload: body,
+        })
+        expect(response.statusCode).toBe(409)
+        expect(response.json().error.code).toBe('CONFLICT')
+      }
+      expect(await listMessages(database.db, taskId)).toHaveLength(0)
+    } finally {
+      await ctx.close()
+    }
+  })
+
+  it('#315 审批预览变化时拒绝新建，不静默放宽权限', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    await expect(
+      sendInstruction(makeInstructionDeps(harness), makeActor(ids.userId), ids.taskId, {
+        text: 'preview changed',
+        idempotencyKey: 'policy-precondition',
+        agentId: ids.agentId,
+        expectedApprovalPolicy: 'full_access',
+        intent: { kind: 'new' },
+      }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+    expect(await listMessages(database.db, ids.taskId)).toHaveLength(0)
+  })
+
+  it.each([true, false])(
+    '#315 回执在 create 返回前抵达（accepted=%s）：触发消息已结算且不会重发初始指令',
+    async (accepted) => {
+      const ids = await seedRunPrereqs(database.db)
+      await bringDeviceOnline(ids.deviceId)
+      const harness = makeHarness(
+        database,
+        accepted
+          ? {}
+          : {
+              refuseCommand: (frame) =>
+                frame.type === 'run.start'
+                  ? { code: 'WORKSPACE_UNAVAILABLE', message: 'workspace unavailable' }
+                  : undefined,
+            },
+      )
+      const originalCreate = harness.orchestrator.create.bind(harness.orchestrator)
+      // 只改变真实生产 create 与 HTTP 返回之间的时序；Run、outbox、消息和 ack 均走原装配。
+      const barrier = vi
+        .spyOn(harness.orchestrator, 'create')
+        .mockImplementation(async (...args) => {
+          const run = await originalCreate(...args)
+          await harness.worker.dispatchOnce()
+          for (const frame of harness.gateway.drainUpstream())
+            await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+          return run
+        })
+      try {
+        const outcome = await sendInstruction(
+          makeInstructionDeps(harness),
+          makeActor(ids.userId),
+          ids.taskId,
+          {
+            text: '只执行一次',
+            idempotencyKey: 'ack-before-return',
+            agentId: ids.agentId,
+            intent: { kind: 'new' },
+          },
+        )
+        const messages = await listMessages(database.db, ids.taskId)
+        expect(messages).toHaveLength(1)
+        expect(messages[0]?.instructionState).toBe(accepted ? 'accepted' : 'rejected')
+        expect(outcome.kind).toBe(accepted ? 'started_run' : 'rejected')
+        if (accepted) {
+          await harness.orchestrator.ingestNodeEvent(
+            harness.deviceFor(ids),
+            runEventFrame(outcome.runId, 1, {
+              type: 'runtime.ready',
+              dshSessionId: 'fast-node-session',
+            }),
+          )
+          await harness.worker.dispatchOnce()
+        }
+        expect(
+          harness.gateway.sent.filter((row) => row.frame.type === 'run.followup'),
+        ).toHaveLength(0)
+        expect(harness.gateway.runtimeStartCount).toBe(accepted ? 1 : 0)
+      } finally {
+        barrier.mockRestore()
+      }
+    },
+  )
+
+  it('#315 runtime.ready 先于启动 ack 也不把初始指令重发为追问', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    const outcome = await sendInstruction(
+      makeInstructionDeps(harness),
+      makeActor(ids.userId),
+      ids.taskId,
+      {
+        text: '保持一次启动',
+        idempotencyKey: 'ready-before-ack',
+        agentId: ids.agentId,
+        intent: { kind: 'new' },
+      },
+    )
+    await harness.worker.dispatchOnce()
+    const delayedAcks = harness.gateway.drainUpstream()
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(outcome.runId, 1, {
+        type: 'runtime.ready',
+        dshSessionId: 'ready-before-ack-session',
+      }),
+    )
+    await harness.worker.dispatchOnce()
+    expect(harness.gateway.sent.filter((row) => row.frame.type === 'run.followup')).toHaveLength(0)
+    for (const frame of delayedAcks)
+      await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+    const messages = await listMessages(database.db, ids.taskId)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.instructionState).toBe('accepted')
+  })
+
+  it('#315 已受理追问在来源完成后同 key 回放，不重复投递或误报未发送', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    const source = await harness.orchestrator.create(
+      makeActor(ids.userId),
+      ids.taskId,
+      makeCreateInput(ids),
+    )
+    await harness.worker.dispatchOnce()
+    for (const frame of harness.gateway.drainUpstream())
+      await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(source.id, 1, {
+        type: 'runtime.ready',
+        dshSessionId: 'retry-session',
+      }),
+    )
+    const input = {
+      text: '继续该工作',
+      idempotencyKey: 'followup-response-lost',
+      intent: { kind: 'followup' as const, runId: source.id },
+    }
+    const first = await sendInstruction(
+      makeInstructionDeps(harness),
+      makeActor(ids.userId),
+      ids.taskId,
+      input,
+    )
+    await harness.worker.dispatchOnce()
+    for (const frame of harness.gateway.drainUpstream())
+      await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(source.id, 2, {
+        type: 'run.completed',
+        finalText: 'done',
+      }),
+    )
+    const replayed = await sendInstruction(
+      makeInstructionDeps(harness),
+      makeActor(ids.userId),
+      ids.taskId,
+      input,
+    )
+    expect(replayed.runId).toBe(source.id)
+    expect(replayed.message.id).toBe(first.message.id)
+    expect(replayed.message.instructionState).toBe('accepted')
+    expect(replayed.kind).toBe('followup')
+    expect(await listMessages(database.db, ids.taskId)).toHaveLength(1)
+    expect(harness.gateway.sent.filter((row) => row.frame.type === 'run.followup')).toHaveLength(1)
+    await expect(
+      sendInstruction(makeInstructionDeps(harness), makeActor(ids.userId), ids.taskId, {
+        ...input,
+        intent: { kind: 'followup', runId: randomUUID() },
+      }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+  })
+
+  it('#315 追问早查回执后同 key 已提交且来源结束，晚回读仍回放首次结果', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    const actor = makeActor(ids.userId)
+    const deps = makeInstructionDeps(harness)
+    const source = await harness.orchestrator.create(actor, ids.taskId, makeCreateInput(ids))
+    await harness.worker.dispatchOnce()
+    for (const frame of harness.gateway.drainUpstream())
+      await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(source.id, 1, { type: 'runtime.ready', dshSessionId: 'late-receipt-session' }),
+    )
+    const input = {
+      text: '只追问一次',
+      idempotencyKey: 'followup-late-receipt',
+      intent: { kind: 'followup' as const, runId: source.id },
+    }
+    let intercepted = false
+    let committed: Awaited<ReturnType<typeof sendInstruction>> | undefined
+
+    // 只延迟真实 SELECT 结果返回给调用方：不替换查询结果、不伪造消息/Run/回执。
+    // 查询已真实读到无回执后，另一请求走生产路径提交，并由 ack/事件帧完成来源。
+    function observeReceiptQuery<T extends object>(query: T): T {
+      const observed = new Proxy(query, {
+        get(target, property) {
+          const value = Reflect.get(target, property)
+          if (property === 'then' && typeof value === 'function')
+            return async (
+              fulfilled: (rows: unknown) => unknown,
+              rejected: (error: unknown) => unknown,
+            ) => {
+              const rows = await new Promise<unknown>((resolve, reject) => {
+                Reflect.apply(value, target, [resolve, reject])
+              })
+              const toSQL: unknown = Reflect.get(target, 'toSQL')
+              if (typeof toSQL !== 'function') throw new Error('receipt query must expose toSQL')
+              const statement = Reflect.apply(toSQL, target, []) as {
+                params: unknown[]
+              }
+              if (
+                !intercepted &&
+                statement.params.includes(`run.followup:${input.idempotencyKey}`)
+              ) {
+                intercepted = true
+                expect(rows).toEqual([])
+                committed = await sendInstruction(deps, actor, ids.taskId, input)
+                await harness.worker.dispatchOnce()
+                for (const frame of harness.gateway.drainUpstream())
+                  await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+                await harness.orchestrator.ingestNodeEvent(
+                  harness.deviceFor(ids),
+                  runEventFrame(source.id, 2, { type: 'run.completed', finalText: 'done' }),
+                )
+              }
+              return Promise.resolve(rows).then(fulfilled, rejected)
+            }
+          if (typeof value !== 'function') return value
+          return (...args: unknown[]) => {
+            const result = Reflect.apply(value, target, args)
+            return result === target ? observed : result
+          }
+        },
+      })
+      return observed
+    }
+    const probeDatabase: Database = {
+      ...database,
+      db: new Proxy(database.db, {
+        get(target, property) {
+          if (property !== 'select') return Reflect.get(target, property)
+          return (...args: unknown[]) => {
+            const builder = Reflect.apply(target.select, target, args)
+            return new Proxy(builder, {
+              get(select, method) {
+                if (method !== 'from') return Reflect.get(select, method)
+                return (table: unknown) => {
+                  const query = Reflect.apply(select.from, select, [table])
+                  if (table !== schema.commandReceipts) return query
+                  if (query === null || typeof query !== 'object')
+                    throw new Error('receipt query must be an object')
+                  return observeReceiptQuery(query)
+                }
+              },
+            })
+          }
+        },
+      }),
+    }
+    const replayed = await sendInstruction(
+      { ...deps, database: probeDatabase },
+      actor,
+      ids.taskId,
+      input,
+    )
+    expect(intercepted).toBe(true)
+    expect(committed).toBeDefined()
+    expect(replayed.runId).toBe(source.id)
+    expect(replayed.message.id).toBe(committed?.message.id)
+    expect(replayed.message.instructionState).toBe('accepted')
+    expect(replayed.kind).toBe('followup')
+    expect(await listMessages(database.db, ids.taskId)).toHaveLength(1)
+    expect(harness.gateway.sent.filter((row) => row.frame.type === 'run.followup')).toHaveLength(1)
+  })
+
+  it.each(['task', 'author'] as const)(
+    '#315 活跃追问早查未命中后提交的异 %s 回执不能泄漏或改投',
+    async (mismatch) => {
+      const ids = await seedRunPrereqs(database.db)
+      await bringDeviceOnline(ids.deviceId)
+      const harness = makeHarness(database)
+      const deps = makeInstructionDeps(harness)
+      const actor = makeActor(ids.userId)
+      const source = await harness.orchestrator.create(actor, ids.taskId, makeCreateInput(ids))
+      let otherTaskId = ids.taskId
+      let otherActor = actor
+      if (mismatch === 'task') {
+        otherTaskId = randomUUID()
+        // 静态任务前置；Run 与消息仍由生产命令和协议帧产生。
+        await insertTask(database.db, {
+          id: otherTaskId,
+          projectId: ids.projectId,
+          title: 'other task',
+          assigneeUserId: ids.userId,
+          assignmentStatus: 'accepted',
+          acceptedAt: new Date(),
+          createdBy: ids.userId,
+        })
+      } else {
+        const second = await seedSecondUserDevice(database.db, ids)
+        otherActor = makeActor(second.userId, 'member')
+        await grantInstructionRight(database, actor, ids.taskId, {
+          userId: second.userId,
+          idempotencyKey: 'grant-late-receipt-author',
+        })
+      }
+      const otherRun =
+        mismatch === 'task'
+          ? await harness.orchestrator.create(actor, otherTaskId, {
+              ...makeCreateInput(ids),
+              idempotencyKey: 'other-source-run',
+            })
+          : source
+      await harness.worker.dispatchOnce()
+      for (const frame of harness.gateway.drainUpstream())
+        await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+      for (const run of new Map([source, otherRun].map((row) => [row.id, row])).values())
+        await harness.orchestrator.ingestNodeEvent(
+          harness.deviceFor(ids),
+          runEventFrame(run.id, 1, {
+            type: 'runtime.ready',
+            dshSessionId: `late-bound-${run.id}`,
+          }),
+        )
+      const input = {
+        text: '本人的这次追问',
+        idempotencyKey: `late-bound-${mismatch}`,
+        intent: { kind: 'followup' as const, runId: source.id },
+      }
+      let intercepted = false
+      let committed: Awaited<ReturnType<typeof sendInstruction>> | undefined
+      function observeReceiptQuery<T extends object>(query: T): T {
+        const observed = new Proxy(query, {
+          get(target, property) {
+            const value = Reflect.get(target, property)
+            if (property === 'then' && typeof value === 'function')
+              return async (
+                fulfilled: (rows: unknown) => unknown,
+                rejected: (error: unknown) => unknown,
+              ) => {
+                const rows = await new Promise<unknown>((resolve, reject) => {
+                  Reflect.apply(value, target, [resolve, reject])
+                })
+                const toSQL = Reflect.get(target, 'toSQL')
+                if (typeof toSQL !== 'function') throw new Error('query has no statement')
+                const statement = Reflect.apply(toSQL, target, [])
+                if (
+                  typeof statement !== 'object' ||
+                  statement === null ||
+                  !('params' in statement) ||
+                  !Array.isArray(statement.params)
+                )
+                  throw new Error('query has no parameters')
+                if (
+                  !intercepted &&
+                  statement.params.includes(`run.followup:${input.idempotencyKey}`)
+                ) {
+                  intercepted = true
+                  expect(rows).toEqual([])
+                  // 只延迟真实早查结果；另一合法请求通过同一生产入口提交，来源保持活跃。
+                  committed = await sendInstruction(deps, otherActor, otherTaskId, {
+                    ...input,
+                    text: '不能向另一个请求返回的正文',
+                    intent: { kind: 'followup', runId: otherRun.id },
+                  })
+                }
+                return Promise.resolve(rows).then(fulfilled, rejected)
+              }
+            if (typeof value !== 'function') return value
+            return (...args: unknown[]) => {
+              const result = Reflect.apply(value, target, args)
+              return result === target ? observed : result
+            }
+          },
+        })
+        return observed
+      }
+      const probeDatabase: Database = {
+        ...database,
+        db: new Proxy(database.db, {
+          get(target, property) {
+            if (property !== 'select') return Reflect.get(target, property)
+            return (...args: unknown[]) => {
+              const builder = Reflect.apply(target.select, target, args)
+              return new Proxy(builder, {
+                get(select, method) {
+                  if (method !== 'from') return Reflect.get(select, method)
+                  return (table: unknown) => {
+                    const query = Reflect.apply(select.from, select, [table])
+                    if (table !== schema.commandReceipts) return query
+                    if (typeof query !== 'object' || query === null)
+                      throw new Error('query missing')
+                    return observeReceiptQuery(query)
+                  }
+                },
+              })
+            }
+          },
+        }),
+      }
+      await expect(
+        sendInstruction({ ...deps, database: probeDatabase }, actor, ids.taskId, input),
+      ).rejects.toMatchObject({ code: 'CONFLICT' })
+      expect(intercepted).toBe(true)
+      expect(committed).toBeDefined()
+      expect(committed?.message.authorUserId).toBe(otherActor.userId)
+      expect(committed?.message.taskId).toBe(otherTaskId)
+      expect(committed?.runId).toBe(otherRun.id)
+      expect(await database.db.select().from(schema.taskMessages)).toHaveLength(1)
+    },
+  )
+
+  it('#315 同 key 并发首次执行只有一条触发指令', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    const input = {
+      text: 'single explicit intent',
+      idempotencyKey: 'explicit-race',
+      agentId: ids.agentId,
+      intent: { kind: 'new' as const },
+    }
+    const same = await Promise.all([
+      sendInstruction(makeInstructionDeps(harness), makeActor(ids.userId), ids.taskId, input),
+      sendInstruction(makeInstructionDeps(harness), makeActor(ids.userId), ids.taskId, input),
+    ])
+    expect(same[0].runId).toBe(same[1].runId)
+    expect(same[0].message.id).toBe(same[1].message.id)
+    expect(await listMessages(database.db, ids.taskId)).toHaveLength(1)
+    const [run] = await database.db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, same[0].runId))
+    expect(run?.triggerMessageId).toBe(same[0].message.id)
+  })
+
+  it('#315 不同 key 并发新执行只启动一个，不产生意外追问', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    const results = await Promise.allSettled(
+      ['new-a', 'new-b'].map((key) =>
+        sendInstruction(makeInstructionDeps(harness), makeActor(ids.userId), ids.taskId, {
+          text: key,
+          idempotencyKey: key,
+          agentId: ids.agentId,
+          intent: { kind: 'new' },
+        }),
+      ),
+    )
+    const success = results.filter((row) => row.status === 'fulfilled')
+    const failure = results.filter((row) => row.status === 'rejected')
+    expect(success).toHaveLength(1)
+    expect(failure).toHaveLength(1)
+    expect(failure[0]).toMatchObject({ reason: { code: 'RUN_ALREADY_ACTIVE' } })
+    expect((await listMessages(database.db, ids.taskId)).map((row) => row.kind)).toEqual([
+      'instruction',
+    ])
+  })
+
+  it('#315 显式新执行不得在已有活跃 Run 时改投追问', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    await harness.orchestrator.create(makeActor(ids.userId), ids.taskId, makeCreateInput(ids))
+    const before = (await listMessages(database.db, ids.taskId)).length
+    await expect(
+      sendInstruction(makeInstructionDeps(harness), makeActor(ids.userId), ids.taskId, {
+        text: '全新会话',
+        idempotencyKey: 'explicit-new',
+        agentId: ids.agentId,
+        deviceId: ids.deviceId,
+        workspaceId: ids.workspaceId,
+        intent: { kind: 'new' },
+      }),
+    ).rejects.toMatchObject({ code: 'RUN_ALREADY_ACTIVE' })
+    expect(await listMessages(database.db, ids.taskId)).toHaveLength(before)
+  })
+
+  it('#315 指定来源已结束时追问不得变成新运行；续跑固化来源版本与血缘', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    const source = await harness.orchestrator.create(
+      makeActor(ids.userId),
+      ids.taskId,
+      makeCreateInput(ids),
+    )
+    await harness.worker.dispatchOnce()
+    for (const frame of harness.gateway.drainUpstream())
+      await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(source.id, 1, {
+        type: 'runtime.ready',
+        dshSessionId: 'explicit-source-context',
+      }),
+    )
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(source.id, 2, { type: 'run.completed', finalText: 'done' }),
+    )
+    const before = (await listMessages(database.db, ids.taskId)).length
+    await expect(
+      sendInstruction(makeInstructionDeps(harness), makeActor(ids.userId), ids.taskId, {
+        text: '仍是追问',
+        idempotencyKey: 'stale-followup',
+        intent: { kind: 'followup', runId: source.id },
+      }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+    expect(await listMessages(database.db, ids.taskId)).toHaveLength(before)
+    const upgraded = await createProfileRevision(database, makeActor(ids.userId), {
+      agentId: ids.agentId,
+      createdBy: ids.userId,
+      idempotencyKey: 'upgrade-after-source',
+      persona: 'new persona',
+      provider: 'replay',
+      model: 'replay',
+      credentialSlot: 'default',
+      pluginPackId: ids.pluginPackId,
+      approvalPolicy: 'full_access',
+    })
+    expect(upgraded.id).not.toBe(source.profileRevisionId)
+    const continued = await sendInstruction(
+      makeInstructionDeps(harness),
+      makeActor(ids.userId),
+      ids.taskId,
+      {
+        text: '接着上文',
+        idempotencyKey: 'explicit-resume',
+        intent: { kind: 'resume', runId: source.id },
+      },
+    )
+    expect(continued.kind).toBe('started_run')
+    const [run] = await database.db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, continued.runId))
+    expect(run).toMatchObject({
+      resumeFromRunId: source.id,
+      profileRevisionId: source.profileRevisionId,
+      agentId: source.agentId,
+      deviceId: source.deviceId,
+      workspaceId: source.workspaceId,
+    })
   })
 })
 

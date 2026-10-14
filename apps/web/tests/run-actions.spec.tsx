@@ -237,6 +237,8 @@ describe('G7-04: UI 血缘与 Run 行动', () => {
       deviceId: DEVICE_ID,
       workspaceId: WORKSPACE_ID,
       rerunOfRunId: RUN_ID,
+      profileRevisionId: REVISION_ID,
+      expectedApprovalPolicy: 'approval_required',
       prompt: '重试并修复上次的问题',
     })
     expect(captures.rerunKeys[0]).toBeTruthy()
@@ -388,6 +390,8 @@ describe('切片⑤ resume：终态 Run 的「接着聊」与血缘句（#237）
       deviceId: DEVICE_ID,
       workspaceId: WORKSPACE_ID,
       resumeFromRunId: RUN_ID,
+      profileRevisionId: REVISION_ID,
+      expectedApprovalPolicy: 'approval_required',
       prompt: '继续刚才的思路',
     })
     // resume 语义下不带 rerunOfRunId（协议互斥，superRefine fail-closed）。

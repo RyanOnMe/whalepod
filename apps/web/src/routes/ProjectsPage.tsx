@@ -362,14 +362,14 @@ function CreateTaskForm({
             label 仍指向它；只是元素变成 <button aria-haspopup="menu">。 */}
         <SelectMenu
           id={`task-assignee-${projectId}`}
-          label="责任人"
+          label="交给谁"
           value={values.assignee}
           placeholder={
             directory.isPending
               ? '正在加载成员…'
               : selectableMembers.length === 0 && selectableAgents.length === 0
                 ? '没有可选项'
-                : '选择责任人'
+                : '选择成员或 Agent'
           }
           options={[
             ...selectableMembers.map((m) => ({
@@ -389,9 +389,15 @@ function CreateTaskForm({
         {directory.isError ? <ErrorBanner error={directory.error} /> : null}
         {agentsQuery.isError ? <ErrorBanner error={agentsQuery.error} /> : null}
         {/* #239：选了 Agent 就说清「指派会发生什么」——不让人在不知情下触发执行。 */}
+        {selectedAgentId === null && values.assignee !== '' ? (
+          <p className="mutation-hint">
+            真人责任人：{directory.personOf(values.assignee)}；接受任务后再安排 Agent 执行。
+          </p>
+        ) : null}
         {selectedAgentId !== null ? (
           <p className="mutation-hint" data-testid="agent-assign-hint">
-            指派给 Agent 会立即以任务标题与描述作为指令开始执行；验收与审批仍在你手上。
+            真人责任人是你。指派给 Agent
+            会立即以任务标题与描述尝试执行，使用你的环境；你负责验收与权限决策。
           </p>
         ) : null}
       </div>
