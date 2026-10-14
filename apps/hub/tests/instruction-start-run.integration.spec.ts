@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Database } from '@whalepod/db'
 import {
   insertAgent,
@@ -492,6 +492,128 @@ describe('instruction starts a run (P1-196)', () => {
       }),
     ).rejects.toMatchObject({ code: 'CONFLICT' })
     expect(await listMessages(database.db, ids.taskId)).toHaveLength(0)
+  })
+
+  it.each([true, false])(
+    '#315 回执在 create 返回前抵达（accepted=%s）：触发消息已结算且不会重发初始指令',
+    async (accepted) => {
+      const ids = await seedRunPrereqs(database.db)
+      await bringDeviceOnline(ids.deviceId)
+      const harness = makeHarness(
+        database,
+        accepted
+          ? {}
+          : {
+              refuseCommand: (frame) =>
+                frame.type === 'run.start'
+                  ? { code: 'WORKSPACE_UNAVAILABLE', message: 'workspace unavailable' }
+                  : undefined,
+            },
+      )
+      const originalCreate = harness.orchestrator.create.bind(harness.orchestrator)
+      // 只改变真实生产 create 与 HTTP 返回之间的时序；Run、outbox、消息和 ack 均走原装配。
+      const barrier = vi
+        .spyOn(harness.orchestrator, 'create')
+        .mockImplementation(async (...args) => {
+          const run = await originalCreate(...args)
+          await harness.worker.dispatchOnce()
+          for (const frame of harness.gateway.drainUpstream())
+            await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+          return run
+        })
+      try {
+        const outcome = await sendInstruction(
+          makeInstructionDeps(harness),
+          makeActor(ids.userId),
+          ids.taskId,
+          {
+            text: '只执行一次',
+            idempotencyKey: 'ack-before-return',
+            agentId: ids.agentId,
+            intent: { kind: 'new' },
+          },
+        )
+        const messages = await listMessages(database.db, ids.taskId)
+        expect(messages).toHaveLength(1)
+        expect(messages[0]?.instructionState).toBe(accepted ? 'accepted' : 'rejected')
+        if (accepted) {
+          await harness.orchestrator.ingestNodeEvent(
+            harness.deviceFor(ids),
+            runEventFrame(outcome.runId, 1, {
+              type: 'runtime.ready',
+              dshSessionId: 'fast-node-session',
+            }),
+          )
+          await harness.worker.dispatchOnce()
+        }
+        expect(
+          harness.gateway.sent.filter((row) => row.frame.type === 'run.followup'),
+        ).toHaveLength(0)
+        expect(harness.gateway.runtimeStartCount).toBe(accepted ? 1 : 0)
+      } finally {
+        barrier.mockRestore()
+      }
+    },
+  )
+
+  it('#315 已受理追问在来源完成后同 key 回放，不重复投递或误报未发送', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    const source = await harness.orchestrator.create(
+      makeActor(ids.userId),
+      ids.taskId,
+      makeCreateInput(ids),
+    )
+    await harness.worker.dispatchOnce()
+    for (const frame of harness.gateway.drainUpstream())
+      await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(source.id, 1, {
+        type: 'runtime.ready',
+        dshSessionId: 'retry-session',
+      }),
+    )
+    const input = {
+      text: '继续该工作',
+      idempotencyKey: 'followup-response-lost',
+      intent: { kind: 'followup' as const, runId: source.id },
+    }
+    const first = await sendInstruction(
+      makeInstructionDeps(harness),
+      makeActor(ids.userId),
+      ids.taskId,
+      input,
+    )
+    await harness.worker.dispatchOnce()
+    for (const frame of harness.gateway.drainUpstream())
+      await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(source.id, 2, {
+        type: 'run.completed',
+        finalText: 'done',
+      }),
+    )
+    const replayed = await sendInstruction(
+      makeInstructionDeps(harness),
+      makeActor(ids.userId),
+      ids.taskId,
+      input,
+    )
+    expect(replayed.runId).toBe(source.id)
+    expect(replayed.message.id).toBe(first.message.id)
+    expect(replayed.message.instructionState).toBe('accepted')
+    expect(replayed.kind).toBe('followup')
+    expect(await listMessages(database.db, ids.taskId)).toHaveLength(1)
+    expect(harness.gateway.sent.filter((row) => row.frame.type === 'run.followup')).toHaveLength(1)
+    await expect(
+      sendInstruction(makeInstructionDeps(harness), makeActor(ids.userId), ids.taskId, {
+        ...input,
+        intent: { kind: 'followup', runId: randomUUID() },
+      }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
   })
 
   it('#315 同 key 并发首次执行只有一条触发指令', async () => {
