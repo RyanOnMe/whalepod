@@ -186,6 +186,19 @@ export async function sendInstruction(
       idempotencyKey: input.idempotencyKey,
       ...(input.origin !== undefined ? { origin: input.origin } : {}),
     })
+    if (input.intent?.kind === 'followup') {
+      // 早查未命中后其他请求仍可能提交同 key 回执。下层全局回放不可绕过本人/任务/来源绑定。
+      const replayed = await replayFollowup(
+        deps,
+        taskId,
+        actor.userId,
+        input.intent.runId,
+        input.idempotencyKey,
+      )
+      if (replayed === undefined)
+        throw new RunCommandError('CONFLICT', '未能确认追问回执，请保留草稿并重新确认')
+      return replayed
+    }
     // 追问的受理/排队由 ③c-1 决定：状态 pending 且没有命令 = 排队（Node 还没到 running）。
     // outcome 要与消息的真实命运一致（评审应改 5）：被拒的消息没有 outbox 行，但绝不是"排队中"，
     // 否则 UI 会把 `outcome:'queued'` 与 `instructionState:'rejected'` 同时显示，误导人。
