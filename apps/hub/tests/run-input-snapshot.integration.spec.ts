@@ -351,6 +351,41 @@ describe('immutable run input manifest (#325)', () => {
         .data.artifacts.map((r: { artifactId: string }) => r.artifactId),
     ).toEqual([a])
   })
+  it('canonicalizes uppercase Task routes for stored input reads and inherited resume', async () => {
+    const producer = await started()
+    const id = await upload(producer, 'task identity report')
+    await finish(producer)
+    const originalTask = taskId
+    taskId = taskId.toUpperCase()
+    try {
+      const reviewer = await started()
+      const nodeView = await manifest(reviewer)
+      expect(nodeView.statusCode, nodeView.body).toBe(200)
+      expect(nodeView.json().data.taskId).toBe(originalTask)
+      const memberView = await apiInject(ctx, owner, {
+        method: 'GET',
+        url: `/api/v1/runs/${reviewer}/input-manifest`,
+      })
+      expect(memberView.statusCode, memberView.body).toBe(200)
+      expect(memberView.json().data).toEqual(nodeView.json().data)
+      await finish(reviewer)
+      const resumed = await started({ resumeFromRunId: reviewer })
+      expect((await manifest(resumed)).json().data).toEqual(nodeView.json().data)
+      await finish(resumed)
+      const unified = await command(`/tasks/${taskId}/instructions`, {
+        text: 'continue report',
+        intent: { kind: 'resume', runId: resumed },
+      })
+      expect(unified.statusCode, unified.body).toBe(201)
+      expect(
+        (await manifest(unified.json().data.runId))
+          .json()
+          .data.artifacts.map((row: { artifactId: string }) => row.artifactId),
+      ).toEqual([id])
+    } finally {
+      taskId = originalTask
+    }
+  })
   it('another device cannot read the snapshot of a run it does not carry', async () => {
     const run = await started()
     const second = await pair()
