@@ -103,6 +103,8 @@ export class RunOrchestrator {
     input: CreateRunInput,
     trigger?: { origin: 'human' | 'auto_assignment' },
   ): Promise<RunView> {
+    // UUID route spelling must not change the persisted input identity.
+    taskId = taskId.toLowerCase()
     assertCreateRunInput(input)
     const now = this.nowFn()
     const key = `run.create:${input.idempotencyKey}`
@@ -292,7 +294,7 @@ export class RunOrchestrator {
 
     const artifactInputManifest = await snapshotRunInputs(
       tx,
-      taskId,
+      task.id,
       input.artifactInputIds,
       resumeSource ?? rerunSource,
     )
