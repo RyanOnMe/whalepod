@@ -1,6 +1,6 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { AttentionItem } from '@whalepod/protocol'
 import { renderApp } from './render.js'
 import {
@@ -26,7 +26,11 @@ const labels = {
   inspect_candidate: '检查候选',
   complete_task: '确认完成',
 } as const
-function fixture(kind: AttentionItem['kind'] = 'accept_assignment', gate?: Promise<void>) {
+function fixture(
+  kind: AttentionItem['kind'] = 'accept_assignment',
+  gate?: Promise<void>,
+  eventsGate?: Promise<void>,
+) {
   const task = makeTask({
     title: '待我处理的工作',
     assignmentStatus:
@@ -45,7 +49,13 @@ function fixture(kind: AttentionItem['kind'] = 'accept_assignment', gate?: Promi
     runId: kind === 'inspect_candidate' || kind === 'decide_approval' ? run.id : null,
     createdAt: task.createdAt,
   }
-  const state = { items: [item] as unknown[], hasMore: false, fail: false, accepted: false }
+  const state = {
+    items: [item] as unknown[],
+    hasMore: false,
+    fail: false,
+    accepted: false,
+    refreshGate: undefined as Promise<void> | undefined,
+  }
   let eventReads = 0
   const handlers: MockHandler[] = [
     { method: 'GET', url: /\/projects$/, respond: () => ok([]) },
@@ -55,6 +65,7 @@ function fixture(kind: AttentionItem['kind'] = 'accept_assignment', gate?: Promi
       url: /\/tasks\/attention$/,
       respond: async () => {
         await gate
+        await state.refreshGate
         return state.fail
           ? apiFailure('INTERNAL_ERROR', '读取失败')
           : ok({ items: state.items, hasMore: state.hasMore })
@@ -152,8 +163,8 @@ describe('首页个人行动入口 (#332)', () => {
     await act(async () => {
       await f.queryClient.invalidateQueries({ queryKey: ['attention'] })
     })
+    expect(await within(region()).findByRole('button', { name: '重新读取待办' })).toBeVisible()
     expect(within(region()).queryByRole('link')).not.toBeInTheDocument()
-    expect(within(region()).getByRole('button', { name: '重新读取待办' })).toBeVisible()
     f.state.fail = false
     f.state.items = []
     await userEvent.setup().click(within(region()).getByRole('button', { name: '重新读取待办' }))
@@ -234,6 +245,49 @@ describe('首页个人行动入口 (#332)', () => {
       expect(within(region()).getByRole('button', { name: '重新读取待办' })).toBeVisible(),
     )
     expect(within(region()).queryByRole('link')).not.toBeInTheDocument()
+  })
+  it('后台刷新保留链接与键盘焦点，错误仍撤下失效列表', async () => {
+    const f = fixture()
+    const link = await screen.findByRole('link', { name: `接受任务 · ${f.task.title}` })
+    link.focus()
+    let release!: () => void
+    f.state.refreshGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let pending!: Promise<void>
+    await act(async () => {
+      pending = f.queryClient.invalidateQueries({ queryKey: ['attention'] })
+    })
+    expect(link).toHaveFocus()
+    expect(link).toBeVisible()
+    await act(async () => {
+      release()
+      await pending
+    })
+    expect(screen.getByRole('link', { name: `接受任务 · ${f.task.title}` })).toHaveFocus()
+  })
+  it('没有全员候选事件时，可见首页仍定期重新读取', async () => {
+    vi.useFakeTimers()
+    try {
+      const f = fixture()
+      for (
+        let i = 0;
+        i < 10 && screen.queryByRole('link', { name: `接受任务 · ${f.task.title}` }) === null;
+        i++
+      ) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(50)
+        })
+      }
+      expect(screen.getByRole('link', { name: `接受任务 · ${f.task.title}` })).toBeVisible()
+      f.state.items = []
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15050)
+      })
+      expect(screen.getByText('目前没有待接受、审批、改派、候选检查或验收事项。')).toBeVisible()
+    } finally {
+      vi.useRealTimers()
+    }
   })
   it('各类动作与权限变化均失效个人队列；普通流式事件不放大请求', () => {
     for (const type of [

@@ -176,6 +176,15 @@ async function assertProjectFirstScreen(
   viewport: { width: number; height: number },
 ): Promise<void> {
   await page.setViewportSize(viewport)
+  // useWideLayout follows matchMedia asynchronously. Measure the settled shell,
+  // not the one frame with a desktop sidebar inside a phone-width viewport.
+  if (viewport.width < 1024) {
+    await expect(page.locator('.app-sidebar')).toHaveCount(0)
+    await expect(page.locator('.app-topbar')).toBeVisible()
+  } else {
+    await expect(page.locator('.app-sidebar')).toBeVisible()
+    await expect(page.locator('.app-topbar')).toHaveCount(0)
+  }
   await page.evaluate(() => window.scrollTo(0, 0))
   const item = await page.locator('.project-list > li').first().boundingBox()
   const taskListButton = await page.getByRole('button', { name: '任务列表' }).first().boundingBox()

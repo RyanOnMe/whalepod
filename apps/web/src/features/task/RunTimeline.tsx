@@ -13,6 +13,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
+import { useHashFocus } from '../../shared/useHashFocus.js'
 import { queryKeys } from '../../app/query-client.js'
 import { RUN_PHASE_LABEL } from '../../shared/format.js'
 import { Hint } from '../../shared/micro/Hint.js'
@@ -235,6 +236,8 @@ export function ApprovalSlot({ runs, task, session }: ApprovalSlotProps): ReactN
     enabled: waitingRun !== undefined,
   })
 
+  useHashFocus(eventsQuery.isSuccess, true)
+
   // 决定提交走真人同一条 HTTP 路径；成功后失效 Run 事件查询翻转卡片状态。
   const decide = useMutation({
     mutationFn: (input: {
@@ -274,7 +277,13 @@ export function ApprovalSlot({ runs, task, session }: ApprovalSlotProps): ReactN
         <>
           {canDecide
             ? pending.map((card) => (
-                <div key={card.approvalId} className="approval-card" data-testid="approval-card">
+                <div
+                  key={card.approvalId}
+                  id={`approval-${card.approvalId}`}
+                  tabIndex={-1}
+                  className="approval-card"
+                  data-testid="approval-card"
+                >
                   <div className="approval-head">
                     <span data-testid="approval-tool">{card.toolName}</span>
                     <span>

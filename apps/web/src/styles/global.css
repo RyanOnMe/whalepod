@@ -2855,3 +2855,28 @@ textarea::placeholder {
 .run-input-manifest code {
   overflow-wrap: anywhere;
 }
+
+.personal-attention {
+  margin-bottom: 1rem;
+}
+.attention-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.attention-head h2 {
+  margin: 0;
+}
+.attention-list {
+  max-height: 16rem;
+  overflow-y: auto;
+  padding-left: 1.25rem;
+}
+.attention-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin-block: 0.5rem;
+  overflow-wrap: anywhere;
+}

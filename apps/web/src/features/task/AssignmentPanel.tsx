@@ -115,7 +115,12 @@ export function AssignmentPanel({ task, session, hasActiveRun }: AssignmentPanel
   }
 
   return (
-    <section className="card assignment-panel" aria-labelledby="assignment-heading">
+    <section
+      id="task-assignment"
+      tabIndex={-1}
+      className="card assignment-panel"
+      aria-labelledby="assignment-heading"
+    >
       <h2 id="assignment-heading">任务分配</h2>
       <div className="assignment-status">
         状态：

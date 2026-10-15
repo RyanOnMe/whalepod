@@ -66,7 +66,7 @@ function keysWith(payload: unknown, idKey: string, prefix: string): CacheKeys {
 }
 
 const EVENT_KEY_BUILDERS: Readonly<Record<string, (payload: unknown) => CacheKeys>> = {
-  'project.changed': () => [['projects']],
+  'project.changed': () => [['projects'], ['attention'], ['recent-tasks']],
   'task.changed': (payload) => [
     ...keysWith(payload, 'taskId', 'task-room'),
     // 切片⑥e 的权限页：服务端授权/撤销发的就是 `task.changed`（`change: instruction_granted
@@ -78,13 +78,17 @@ const EVENT_KEY_BUILDERS: Readonly<Record<string, (payload: unknown) => CacheKey
     // 项目页任务列表（#137）：payload 带 projectId 时一并失效——「别人建了任务」
     // 必须实时进我的列表，否则又回到「刷新才看见」。
     ...keysWith(payload, 'projectId', 'project-tasks'),
+    ['attention'],
+    ['recent-tasks'],
   ],
-  'comment.created': (payload) => keysWith(payload, 'taskId', 'task-room'),
+  'comment.created': (payload) => [...keysWith(payload, 'taskId', 'task-room'), ['recent-tasks']],
   // #261：房间里的运行卡要跟着状态动——只失效 ['run', runId] 时，运行卡的状态徽标
   // 要等刷新或别的 mutation 才更新（run.changed 载荷本来就带 taskId，精确失效）。
   'run.changed': (payload) => [
     ...keysWith(payload, 'runId', 'run'),
     ...keysWith(payload, 'taskId', 'task-room'),
+    ['attention'],
+    ['recent-tasks'],
   ],
   // #261：run.phase 是「正在做什么」的唯一信号（阶段徽标取数），必须让房间重拉。
   // 载荷没有 taskId（orchestrator 只带 runId/seq/audience/ownerUserId/event）→ 前缀
@@ -94,12 +98,12 @@ const EVENT_KEY_BUILDERS: Readonly<Record<string, (payload: unknown) => CacheKey
     ...keysWith(payload, 'runId', 'run'),
     ...(payloadEventType(payload) === 'run.phase' ? [['task-room']] : []),
   ],
-  'approval.changed': (payload) => keysWith(payload, 'taskId', 'task-room'),
-  'artifact.changed': (payload) => keysWith(payload, 'taskId', 'task-room'),
+  'approval.changed': (payload) => [...keysWith(payload, 'taskId', 'task-room'), ['attention']],
+  'artifact.changed': (payload) => [...keysWith(payload, 'taskId', 'task-room'), ['attention']],
   'device.changed': () => [['devices']],
   // #163：成员变更只带 changedAt（不点名），Web 不猜、直接重拉名册。
   // 名册与责任人下拉是同一 queryKey（memberDirectory 注释），一次失效全刷新。
-  'member.changed': () => [['team-members']],
+  'member.changed': () => [['team-members'], ['attention']],
 }
 
 export async function applyClientFrame(

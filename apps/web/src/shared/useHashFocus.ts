@@ -17,13 +17,19 @@ import { useLocation } from 'react-router'
 
 const HIGHLIGHT_MS = 2000
 
-export function useHashFocus(ready = true): void {
+export function useHashFocus(ready = true, focus = false): void {
   const { hash } = useLocation()
   useEffect(() => {
     const id = hash.replace(/^#/, '')
     if (id === '' || !ready) return
     const target = document.getElementById(id)
     if (target === null) return
+    if (focus) {
+      for (let parent = target.parentElement; parent !== null; parent = parent.parentElement) {
+        if (parent instanceof HTMLDetailsElement) parent.open = true
+      }
+      target.focus({ preventScroll: true })
+    }
     if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'center' })
     target.classList.add('hash-focus')
     const timer = window.setTimeout(() => target.classList.remove('hash-focus'), HIGHLIGHT_MS)
@@ -31,5 +37,5 @@ export function useHashFocus(ready = true): void {
       window.clearTimeout(timer)
       target.classList.remove('hash-focus')
     }
-  }, [hash, ready])
+  }, [hash, ready, focus])
 }

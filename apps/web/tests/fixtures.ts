@@ -629,7 +629,12 @@ export function pairingCodeHandler(code: PairingCodeView): MockHandler {
 
 /** 已登录页面的默认 handler 组合（setup/status + session + 页面级 extras）。 */
 export function loggedInHandlers(session: Session, extra: MockHandler[] = []): MockHandler[] {
-  return [setupStatusHandler(true), sessionHandler(session), ...extra]
+  return [
+    setupStatusHandler(true),
+    sessionHandler(session),
+    ...extra,
+    { method: 'GET', url: /\/tasks\/attention$/, respond: () => ok({ items: [], hasMore: false }) },
+  ]
 }
 
 /** 永不 resolve 的 handler：模拟慢请求（加载态断言）。 */

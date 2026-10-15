@@ -18,6 +18,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { api } from '../shared/api/client.js'
 import { EXIT_PRESENCE_MS } from '../shared/motion.js'
+import { useHashFocus } from '../shared/useHashFocus.js'
 import { usePresence } from '../shared/usePresence.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
 import { useSession } from '../app/session.js'
@@ -72,6 +73,8 @@ function TaskRoom(): ReactNode {
     queryFn: () => api.get<TaskRoomView>(`/tasks/${taskId ?? ''}`),
     enabled: taskId !== undefined,
   })
+
+  useHashFocus(query.isSuccess, true)
 
   // #277：加载骨架也有在场语义——数据到达后它先演完退场，再卸载（硬切就是从这儿来的）。
   const skeletonPresence = usePresence(
