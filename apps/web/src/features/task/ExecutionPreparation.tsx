@@ -51,8 +51,13 @@ export function ExecutionPreparation({
           result.workspaceId !== input.selection.workspaceId)
       )
         throw new Error('检查结果与所选配置或现场不一致，请重新确认')
+      const checkedAt = Date.parse(result.checkedAt)
+      const expiresAt = checkedAt + 30_000
+      if (!Number.isFinite(checkedAt) || checkedAt > Date.now() || expiresAt <= Date.now())
+        throw new Error('检查结果已过期或时间无效，请重新检查')
       return {
         result,
+        expiresAt,
         originalSignature: input.signature,
         boundSignature: JSON.stringify({
           ...input.selection,
@@ -62,13 +67,20 @@ export function ExecutionPreparation({
       }
     },
     onSuccess: (data) => {
-      if (!alive.current || current.current !== data.originalSignature) return
+      if (
+        !alive.current ||
+        current.current !== data.originalSignature ||
+        data.expiresAt <= Date.now()
+      )
+        return
       setExpired(false)
       onTarget({ deviceId: data.result.deviceId, workspaceId: data.result.workspaceId })
     },
   })
   const result =
-    check.data?.boundSignature === signature && !expired ? check.data.result : undefined
+    check.data?.boundSignature === signature && !expired && check.data.expiresAt > Date.now()
+      ? check.data.result
+      : undefined
   useEffect(() => {
     onBlocked(
       result !== undefined &&
@@ -78,7 +90,7 @@ export function ExecutionPreparation({
   }, [result, onBlocked])
   useEffect(() => {
     if (check.data === undefined) return
-    const timer = setTimeout(() => setExpired(true), 30_000)
+    const timer = setTimeout(() => setExpired(true), Math.max(0, check.data.expiresAt - Date.now()))
     return () => clearTimeout(timer)
   }, [check.data])
   // Shell 引号是显示命令的一部分，provider/slot 的任意字符不得变成命令替换。
@@ -166,6 +178,8 @@ export function ExecutionPreparation({
           result.credential !== 'configured'
         }
         onClick={() =>
+          check.data !== undefined &&
+          check.data.expiresAt > Date.now() &&
           onTrialDraft('请用一句话确认你已收到这条试运行指令，不需要调用工具或修改文件。')
         }
       >

@@ -35,3 +35,5 @@ bash scripts/secret-scan.sh artifacts/evidence/execution-preparation
 先红提交710a0be。具体最终提交与门禁结果见证据目录；真实远端provider和用户理解成本不由replay替代，DSH/Runtime wire及Task责任规则未改变。旧Node不支持只读探针时提示连接/版本未确认，不阻止参与讨论。
 
 评审回归：已完成响应后由真实新WS替换旧连接，HTTP必须409；完全权限确认期间迟到的未配置结果必须关闭确认、禁用启动并保留草稿。先红提交9688971，连接单元检查和网页确认检查均已复现失败。
+
+新鲜度回归：按checkedAt计算30秒截止时间；过期或未来时间的响应不得就绪，临近到期只保留剩余时长。先红提交a73c164，旧响应和近到期响应均有可失败检查。
