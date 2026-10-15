@@ -14,3 +14,5 @@
 - 发现：本页、evidence-map与第三批实施方案登记。
 
 复跑pnpm check；Web delivery-review/artifact-list/execution-composer/approval-policy；pnpm build后隔离Q5的p1-19（本包聚焦4项，最终组合跑完整链）。最终组合全量Q5按第三批方案执行。真实用户理解与远端模型质量不由replay替代。
+
+评审回归：最近任务在两个已缓存房间间往返导航，选中执行、展开输入与待处理意图按任务隔离；新房间不得显示旧任务材料，清单渲染再次校验任务归属。`delivery-review.spec.tsx` 的缓存导航用例走真实 Router 与 QueryClient。

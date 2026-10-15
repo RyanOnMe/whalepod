@@ -27,6 +27,8 @@ export function RunInputManifest({
       return data
     },
   })
+  // A cached response must satisfy the current room boundary before rendering too.
+  const belongsToTask = query.data === null || query.data?.taskId === taskId
   return (
     <section className="run-input-manifest" aria-label="本次固定输入">
       <button
@@ -48,10 +50,13 @@ export function RunInputManifest({
               </button>
             </>
           ) : null}
-          {query.isSuccess && query.data === null ? (
+          {query.isSuccess && !belongsToTask ? (
+            <p role="alert">输入记录与本任务不一致，请重新选择执行。</p>
+          ) : null}
+          {query.isSuccess && belongsToTask && query.data === null ? (
             <p>历史输入无法确认，不能用当前材料列表代替。请明确选择材料后开始新执行。</p>
           ) : null}
-          {query.isSuccess && query.data !== null ? (
+          {query.isSuccess && belongsToTask && query.data !== null ? (
             <>
               <p className="mutation-hint">
                 这是本次执行创建时固定的材料；后续发布不会改变此清单。续跑仍可能保留旧会话上下文。
