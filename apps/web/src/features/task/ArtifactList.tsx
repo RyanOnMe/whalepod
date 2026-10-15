@@ -369,7 +369,7 @@ export function ReviewerSlot(): ReactNode {
       <h3>复核</h3>
       <p className="empty-state">
         {
-          '从已发布产出选择“发起复核”，在执行区确认材料并选择 Agent，再由你启动。材料以只读输入清单和受控副本送达，不继承 Builder 的 Workspace；工具与审批仍沿所选执行设置。'
+          '从已发布产出选择“发起复核”，在执行区确认材料并选择 Agent，再由你启动。交付物以只读输入清单和受控副本提供；本次执行环境、工具与审批仍按执行设置决定。'
         }
       </p>
     </section>
