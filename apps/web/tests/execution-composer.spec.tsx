@@ -21,7 +21,7 @@ import { renderApp } from './render.jsx'
 const AGENT = '00000000-0000-4000-8000-000000000010'
 const REVISION = '00000000-0000-4000-8000-000000000011'
 const NEW_REVISION = '00000000-0000-4000-8000-000000000012'
-function agentHandlers(): MockHandler[] {
+function agentHandlers(archived: () => boolean = () => false): MockHandler[] {
   return [
     {
       method: 'GET',
@@ -36,6 +36,7 @@ function agentHandlers(): MockHandler[] {
         ok({
           id: AGENT,
           name: 'Builder',
+          archivedAt: archived() ? '2026-08-25T00:00:00.000Z' : null,
           currentRevisionId: NEW_REVISION,
           revisions: [
             {
@@ -422,6 +423,7 @@ function draftNavigationFixture(active = false, history = false, delegated = fal
     roomGate: undefined as Promise<void> | undefined,
     grantsGate: undefined as Promise<void> | undefined,
     grantError: false,
+    roomFail: false,
     granted: delegated,
     archived: false,
     running: active,
@@ -468,6 +470,18 @@ function draftNavigationFixture(active = false, history = false, delegated = fal
         url: new RegExp(`/tasks/${task.id}$`),
         respond: async () => {
           await state.roomGate
+          if (state.roomFail)
+            return {
+              status: 503,
+              body: {
+                ok: false,
+                error: {
+                  code: 'INTERNAL_ERROR',
+                  message: '任务暂不可读',
+                  requestId: 'task-recheck',
+                },
+              },
+            }
           return state.session === null
             ? {
                 status: 401,
@@ -504,7 +518,7 @@ function draftNavigationFixture(active = false, history = false, delegated = fal
             },
           ]),
       },
-      ...agentHandlers(),
+      ...agentHandlers(() => state.archived),
       teamMembersHandler(),
       devicesHandler([device]),
       workspacesHandler([
@@ -838,7 +852,9 @@ describe('#338 首次准备往返与当前条件', () => {
       expect(screen.getByTestId('execution-target-blocker')).toHaveTextContent('离线'),
     )
     expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
-    expect(screen.getByLabelText('选择设备')).toHaveTextContent(f.device.name)
+    expect(screen.getByTestId('execution-target-summary')).toHaveTextContent(
+      `显式指定：${f.device.name}`,
+    )
     expect(screen.getByLabelText('指令')).toHaveValue('固定本人执行现场')
   })
   it.each(['revoked', 'error'] as const)('返回重新确认协作权限：%s', async (result) => {
@@ -891,5 +907,100 @@ describe('#338 首次准备往返与当前条件', () => {
         ([url, init]) => String(url).endsWith('/preparation-check') && init?.method === 'POST',
       ),
     ).toHaveLength(1)
+  })
+})
+
+describe('#338 返回边界与读取恢复', () => {
+  it.each(['https://example.invalid/task', '00000000-0000-4000-8000-000000000099'])(
+    '设备页不从外部或其他会话参数制造返回上下文：%s',
+    async (value) => {
+      const f = renderApp(
+        `/devices?preparationTask=${encodeURIComponent(value)}`,
+        loggedInHandlers(BOB, [
+          devicesHandler([]),
+          { method: 'GET', url: /\/tasks\/recent$/, respond: () => ok([]) },
+        ]),
+      )
+      await screen.findByRole('heading', { name: '设备', level: 1 })
+      expect(screen.queryByRole('link', { name: '返回任务继续准备' })).toBeNull()
+      expect(
+        f.fetchMock.mock.calls.some(([url]) =>
+          /\/tasks\/[0-9a-f-]{36}(?:$|[/?#])/.test(String(url)),
+        ),
+      ).toBe(false)
+    },
+  )
+  it('缓存授权仍在时等待新读数，不把未知权限当作已允许', async () => {
+    const user = userEvent.setup()
+    const f = draftNavigationFixture(false, false, true)
+    await selectDraftAgent(user)
+    await user.type(screen.getByLabelText('指令'), '等待当前授权确认')
+    await leaveForDevices(user)
+    let release!: () => void
+    f.state.grantsGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await returnToDraft(user, f.task.title)
+    await waitFor(() =>
+      expect(screen.getByTestId('execution-blocker')).toHaveTextContent('正在确认操作权限'),
+    )
+    expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
+    f.state.granted = false
+    await act(async () => release())
+    await waitFor(() =>
+      expect(screen.getByTestId('execution-blocker')).toHaveTextContent('只有责任人和已授权成员'),
+    )
+    expect(screen.getByLabelText('指令')).toHaveValue('等待当前授权确认')
+  })
+  it('权限读取失败可重试恢复，正文不丢且不触发执行', async () => {
+    const user = userEvent.setup()
+    const f = draftNavigationFixture(false, false, true)
+    await selectDraftAgent(user)
+    await user.type(screen.getByLabelText('指令'), '读取失败也保留正文')
+    await leaveForDevices(user)
+    f.state.grantError = true
+    await returnToDraft(user, f.task.title)
+    await waitFor(() =>
+      expect(screen.getByTestId('execution-blocker')).toHaveTextContent('暂时无法确认权限'),
+    )
+    f.state.grantError = false
+    await user.click(screen.getByRole('button', { name: '重新确认' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '开始执行' })).toBeEnabled())
+    expect(screen.getByLabelText('指令')).toHaveValue('读取失败也保留正文')
+    expect(
+      f.fetchMock.mock.calls.some(
+        ([url, init]) => String(url).endsWith('/instructions') && init?.method === 'POST',
+      ),
+    ).toBe(false)
+  })
+  it('来源Agent归档后不静默开新执行', async () => {
+    const user = userEvent.setup()
+    const f = draftNavigationFixture(false, true)
+    await screen.findByLabelText('执行方式')
+    await mode(user, /继续会话/)
+    const box = await screen.findByLabelText('指令')
+    await waitFor(() => expect(box).toBeEnabled())
+    await user.type(box, '只继续这个来源会话')
+    await leaveForDevices(user)
+    f.state.archived = true
+    await returnToDraft(user, f.task.title)
+    await waitFor(() =>
+      expect(screen.getByTestId('execution-blocker')).toHaveTextContent('来源 Agent 已归档'),
+    )
+    expect(screen.getByLabelText('执行方式')).toHaveTextContent('继续会话')
+    expect(screen.getByLabelText('指令')).toHaveValue('只继续这个来源会话')
+  })
+  it('返回任务读取失败后可重试找回草稿', async () => {
+    const user = userEvent.setup()
+    const f = draftNavigationFixture()
+    await user.type(await screen.findByLabelText('指令'), '暂时断网仍可恢复的正文')
+    await leaveForDevices(user)
+    f.state.roomFail = true
+    await user.click(screen.getByRole('link', { name: new RegExp(`^${f.task.title}`) }))
+    await screen.findByText(/任务暂不可读/)
+    expect(screen.queryByLabelText('指令')).toBeNull()
+    f.state.roomFail = false
+    await user.click(screen.getByRole('button', { name: '重试' }))
+    expect(await screen.findByLabelText('指令')).toHaveValue('暂时断网仍可恢复的正文')
   })
 })

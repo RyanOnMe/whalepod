@@ -17,6 +17,7 @@ import {
   type SetStateAction,
 } from 'react'
 import { Link } from 'react-router'
+import { preparationDeviceHref } from '../../shared/preparation-navigation.js'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { useMemberDirectory } from '../team/memberDirectory.js'
@@ -112,21 +113,25 @@ export function RunLauncher({
   const agentsQuery = useQuery({
     queryKey: queryKeys.agents,
     queryFn: () => api.get<AgentView[]>('/agents'),
+    refetchOnMount: 'always',
   })
   const agentDetailQuery = useQuery({
     queryKey: queryKeys.agentDetail(agentId),
     queryFn: () => api.get<AgentDetailView>(`/agents/${agentId}`),
     enabled: agentId !== '',
+    refetchOnMount: 'always',
   })
   const devicesQuery = useQuery({
     queryKey: queryKeys.devices,
     queryFn: () => api.get<DeviceView[]>('/devices'),
     enabled: isAssignee,
+    refetchOnMount: 'always',
   })
   const workspacesQuery = useQuery({
     queryKey: queryKeys.workspaces,
     queryFn: () => api.get<WorkspaceView[]>('/workspaces'),
     enabled: isAssignee,
+    refetchOnMount: 'always',
   })
 
   // 初次选择 Agent 时固定当前 Revision；后台更新不得改变正在编辑的选择。
@@ -240,6 +245,31 @@ export function RunLauncher({
     return null
   }
 
+  const checkingConfiguration =
+    agentsQuery.isPending ||
+    (agentsQuery.isFetching && !agentsQuery.isFetchedAfterMount) ||
+    agentDetailQuery.isPending ||
+    (agentDetailQuery.isFetching && !agentDetailQuery.isFetchedAfterMount)
+  const configurationError = agentsQuery.isError || agentDetailQuery.isError
+  const selectedAgentAvailable =
+    (agentsQuery.data ?? []).some((agent) => agent.id === agentId && agent.archivedAt === null) &&
+    typeof agentDetailQuery.data?.archivedAt !== 'string'
+  const configurationBlocker =
+    agentId === ''
+      ? null
+      : configurationError
+        ? '暂时无法确认所选Agent与配置，请重新读取。草稿仍保留。'
+        : checkingConfiguration
+          ? '正在确认所选Agent与固定配置版本…'
+          : !selectedAgentAvailable
+            ? '所选Agent已归档或不可用，请明确重新选择。草稿仍保留。'
+            : null
+  const checkingTargets =
+    isAssignee &&
+    (devicesQuery.isPending ||
+      (devicesQuery.isFetching && !devicesQuery.isFetchedAfterMount) ||
+      workspacesQuery.isPending ||
+      (workspacesQuery.isFetching && !workspacesQuery.isFetchedAfterMount))
   const selectedDevice = devicesQuery.data?.find((row) => row.id === deviceId)
   const selectedWorkspace = workspacesQuery.data?.find(
     (row) => row.workspaceId === workspaceId && row.deviceId === deviceId,
@@ -247,19 +277,26 @@ export function RunLauncher({
   const explicitTargetReady =
     selectedDevice?.status === 'online' &&
     (workspaceId === '' ? deviceWorkspaces.length > 0 : selectedWorkspace?.available === true)
-  const targetBlocker =
-    isAssignee && deviceId !== '' && devicesQuery.isSuccess && workspacesQuery.isSuccess
-      ? selectedDevice?.status !== 'online'
-        ? '所选设备已离线或不可用，请让它上线或明确重新选择。草稿仍保留。'
-        : workspaceId !== '' && selectedWorkspace?.available !== true
-          ? '所选工作目录已不可用，请明确重新选择。草稿仍保留。'
-          : deviceWorkspaces.length === 0
-            ? '所选设备没有可用工作目录，请先登记或明确重新选择。'
-            : null
-      : null
+  const targetBlocker = checkingTargets
+    ? '正在重新确认执行环境，草稿仍保留…'
+    : isAssignee && (devicesQuery.isError || workspacesQuery.isError)
+      ? '暂时无法确认执行环境，请重新读取。草稿仍保留。'
+      : isAssignee && deviceId !== '' && devicesQuery.isSuccess && workspacesQuery.isSuccess
+        ? selectedDevice?.status !== 'online'
+          ? '所选设备已离线或不可用，请让它上线或明确重新选择。草稿仍保留。'
+          : workspaceId !== '' && selectedWorkspace?.available !== true
+            ? '所选工作目录已不可用，请明确重新选择。草稿仍保留。'
+            : deviceWorkspaces.length === 0
+              ? '所选设备没有可用工作目录，请先登记或明确重新选择。'
+              : null
+        : null
 
   const ready =
     agentId !== '' &&
+    selectedAgentAvailable &&
+    !configurationError &&
+    !checkingConfiguration &&
+    !checkingTargets &&
     !blocked &&
     !preparationBlocked &&
     selectedRevision !== undefined &&
@@ -335,6 +372,27 @@ export function RunLauncher({
               ? '自动选择你的可用环境，可在执行设置中指定。'
               : `显式指定：${selectedDevice?.name ?? '所选设备'} · ${workspaceId === '' ? '工作目录自动选择' : (selectedWorkspace?.name ?? '所选工作目录')}`}
         </p>
+        {configurationBlocker !== null ? (
+          <p className="mutation-hint" role="status" data-testid="execution-configuration-blocker">
+            {configurationBlocker}
+          </p>
+        ) : null}
+        {configurationError || (isAssignee && (devicesQuery.isError || workspacesQuery.isError)) ? (
+          <button
+            type="button"
+            className="button"
+            onClick={() => {
+              void agentsQuery.refetch()
+              if (agentId !== '') void agentDetailQuery.refetch()
+              if (isAssignee) {
+                void devicesQuery.refetch()
+                void workspacesQuery.refetch()
+              }
+            }}
+          >
+            重新读取执行设置
+          </button>
+        ) : null}
         {targetBlocker !== null ? (
           <p className="mutation-hint" role="status" data-testid="execution-target-blocker">
             {targetBlocker}
@@ -351,7 +409,7 @@ export function RunLauncher({
             ),
         ) ? (
           <p className="mutation-hint" role="status">
-            尚无在线且可用的执行环境。请先在<Link to="/devices">设备页</Link>
+            尚无在线且可用的执行环境。请先在<Link to={preparationDeviceHref(task.id)}>设备页</Link>
             完成配对并登记工作目录。
           </p>
         ) : null}

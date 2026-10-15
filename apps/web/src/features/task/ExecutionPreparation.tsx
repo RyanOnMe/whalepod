@@ -6,6 +6,7 @@ import {
   type ExecutionPreparationRequest,
 } from '@whalepod/protocol'
 import { NODE_CLI_COMMAND } from '../../shared/node-installation.js'
+import { preparationDeviceHref } from '../../shared/preparation-navigation.js'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 
@@ -103,7 +104,7 @@ export function ExecutionPreparation({
       </p>
       <ol>
         <li>
-          <Link to="/devices">安装并配对执行服务</Link>
+          <Link to={preparationDeviceHref(taskId)}>安装并配对执行服务</Link>
           ，保持服务启动；仅讨论和接受任务无需配置电脑。
         </li>
         <li>
