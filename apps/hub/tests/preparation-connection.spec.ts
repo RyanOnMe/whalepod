@@ -74,4 +74,21 @@ describe('准备结果绑定连接（#320）', () => {
     registry.deliverPreparation('device', socket as unknown as WebSocket, response)
     expect(await pending).toEqual(response)
   })
+  it('已交付结果在连接替换后失效，即使新连接在线', async () => {
+    const registry = new NodeConnectionRegistry()
+    const socket = new Socket()
+    attach(registry, 'device', socket)
+    const pending = registry.requestPreparation('device', input)
+    registry.deliverPreparation('device', socket as unknown as WebSocket, {
+      requestId: socket.frames[0]!.payload.requestId,
+      workspace: 'available',
+      credential: 'configured',
+    })
+    const received = await pending
+    expect(received.isCurrent()).toBe(true)
+    attach(registry, 'device', new Socket())
+    expect(registry.isOnline('device')).toBe(true)
+    expect(received.isCurrent()).toBe(false)
+  })
+
 })
