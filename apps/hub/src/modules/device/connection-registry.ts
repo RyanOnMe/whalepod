@@ -32,6 +32,12 @@ function envelope(type: NodeDownstream['type'], payload: unknown): NodeDownstrea
   } as NodeDownstream
 }
 
+export interface PreparationSnapshot {
+  readonly facts: NodePreparationResult
+  /** 只留在进程内；HTTP返回前再次确认收到结果的连接仍有效。 */
+  isCurrent(): boolean
+}
+
 export class NodeConnectionRegistry {
   private readonly byDevice = new Map<string, NodeConnection>()
   private readonly preparation = new Map<
@@ -59,7 +65,7 @@ export class NodeConnectionRegistry {
     deviceId: string,
     input: { workspaceId: string; provider: string; credentialSlot: string },
     timeoutMs = 5_000,
-  ): Promise<NodePreparationResult> {
+  ): Promise<PreparationSnapshot> {
     const connection = this.byDevice.get(deviceId)
     if (connection === undefined || !this.isOnline(deviceId))
       return Promise.reject(new NodeOfflineError())
@@ -78,7 +84,11 @@ export class NodeConnectionRegistry {
         deviceId,
         socket: connection.socket,
         timer,
-        resolve,
+        resolve: (facts) =>
+          resolve({
+            facts,
+            isCurrent: () => this.byDevice.get(deviceId) === connection && this.isOnline(deviceId),
+          }),
         reject,
       })
       try {

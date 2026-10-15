@@ -38,7 +38,7 @@ describe('准备结果绑定连接（#320）', () => {
     expect(registry.deliverPreparation('other', other as unknown as WebSocket, result)).toBe(false)
     expect(registry.deliverPreparation('device', other as unknown as WebSocket, result)).toBe(false)
     expect(registry.deliverPreparation('device', socket as unknown as WebSocket, result)).toBe(true)
-    expect(await pending).toEqual(result)
+    expect((await pending).facts).toEqual(result)
     expect(registry.deliverPreparation('device', socket as unknown as WebSocket, result)).toBe(
       false,
     )
@@ -72,7 +72,7 @@ describe('准备结果绑定连接（#320）', () => {
       credential: 'unconfigured' as const,
     }
     registry.deliverPreparation('device', socket as unknown as WebSocket, response)
-    expect(await pending).toEqual(response)
+    expect((await pending).facts).toEqual(response)
   })
   it('已交付结果在连接替换后失效，即使新连接在线', async () => {
     const registry = new NodeConnectionRegistry()
@@ -90,5 +90,4 @@ describe('准备结果绑定连接（#320）', () => {
     expect(registry.isOnline('device')).toBe(true)
     expect(received.isCurrent()).toBe(false)
   })
-
 })

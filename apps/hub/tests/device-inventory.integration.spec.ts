@@ -9,11 +9,12 @@
  */
 import { eq } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Database } from '@whalepod/db'
 import { schema } from '@whalepod/db'
 import type { FastifyInstance } from 'fastify'
 import WebSocket from 'ws'
+import { nodeConnections } from '../src/modules/device/connection-registry.js'
 import {
   apiInject,
   createTestApp,
@@ -72,6 +73,7 @@ describe('device inventory → workspaces 投影', () => {
     url = await listen(ctx.app)
   })
   afterEach(async () => {
+    vi.restoreAllMocks()
     for (const s of sockets.splice(0)) s.terminate()
     await ctx.app.close()
   })
@@ -238,6 +240,22 @@ describe('device inventory → workspaces 投影', () => {
     expect(probes).toBe(1)
     expect(JSON.stringify(checked.json())).not.toMatch(/deviceToken|canonicalPath|secretValue/)
     expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+    // 在真实连接已交付结果后暂停HTTP继续；用另一条真实WS替换，再让路由收尾。
+    const requestPreparation = nodeConnections.requestPreparation.bind(nodeConnections)
+    vi.spyOn(nodeConnections, 'requestPreparation').mockImplementationOnce(async (...args) => {
+      const snapshot = await requestPreparation(...args)
+      await connect(paired.deviceToken)
+      await waitForValue(async () => !snapshot.isCurrent(), '等待已交付快照的连接被替换')
+      expect(nodeConnections.isOnline(paired.deviceId)).toBe(true)
+      return snapshot
+    })
+    const replaced = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/preparation-check`,
+      payload,
+    })
+    expect(replaced.statusCode).toBe(409)
+    expect(replaced.json().data).toBeUndefined()
   })
 
   it('G3-04: inventory 上行 → 投影落库（owner 恒等 Device owner，无路径字段）', async () => {

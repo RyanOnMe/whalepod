@@ -190,6 +190,10 @@ export function RunLauncher({
     start.mutate()
   }
 
+  useEffect(() => {
+    if (preparationBlocked || hasActiveRun) setConfirmingFullAccess(false)
+  }, [preparationBlocked, hasActiveRun])
+
   // 只有已接受指派的责任人、非终态任务、无活跃 Run 时可启动（03 §3.2 前置守卫；
   // Hub 侧仍有完整校验，这里是诚实呈现而非安全边界）。
   if (
@@ -448,7 +452,9 @@ export function RunLauncher({
           confirmLabel="确认以完全权限启动"
           danger
           pending={start.isPending}
-          onConfirm={() => start.mutate()}
+          onConfirm={() => {
+            if (ready && !start.isPending) start.mutate()
+          }}
           onCancel={() => setConfirmingFullAccess(false)}
         />
       ) : null}

@@ -67,9 +67,9 @@ export function registerPreparationRoutes(
       workspace.deviceId !== device.id
     )
       throw new ApiError(403, 'FORBIDDEN', '只能检查本人设备和工作目录')
-    let facts
+    let snapshot
     try {
-      facts = await nodeConnections.requestPreparation(device.id, {
+      snapshot = await nodeConnections.requestPreparation(device.id, {
         workspaceId: workspace.id,
         provider: revision.provider,
         credentialSlot: revision.credentialSlot,
@@ -86,7 +86,7 @@ export function registerPreparationRoutes(
     if (
       currentTask?.assigneeUserId !== actor.userId ||
       currentDevice?.revokedAt !== null ||
-      !nodeConnections.isOnline(device.id)
+      !snapshot.isCurrent()
     )
       throw new ApiError(409, 'CONFLICT', '责任人或设备状态已变化，请重新检查')
     return reply.header('cache-control', 'no-store').send({
@@ -99,8 +99,8 @@ export function registerPreparationRoutes(
         deviceName: device.name,
         workspaceName: workspace.name,
         modelCall: 'not_tested',
-        workspace: facts.workspace,
-        credential: facts.credential,
+        workspace: snapshot.facts.workspace,
+        credential: snapshot.facts.credential,
       }),
     })
   })
