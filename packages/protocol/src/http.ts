@@ -137,6 +137,12 @@ export const CreateInstructionGrantRequestSchema = z.strictObject({
   userId: z.uuid(),
 })
 
+/** Exact published input identities for a new run; never an active followup update. */
+export const ArtifactInputIdsSchema = z
+  .array(z.uuid().transform((id) => id.toLowerCase()))
+  .max(64)
+  .refine((ids) => new Set(ids).size === ids.length, 'artifact input identities must be unique')
+
 /**
  * POST /tasks/:taskId/instructions（#196；ADR-0010 决策 2 的执行区入口）。
  *
@@ -152,6 +158,7 @@ export const SendInstructionRequestSchema = z
     agentId: z.uuid().optional(),
     profileRevisionId: z.uuid().optional(),
     expectedApprovalPolicy: z.enum(['approval_required', 'full_access']).optional(),
+    artifactInputIds: ArtifactInputIdsSchema.optional(),
     /** Web 显式意图；缺省保留自动指派与旧客户端的路由语义。 */
     intent: z
       .discriminatedUnion('kind', [
@@ -162,6 +169,15 @@ export const SendInstructionRequestSchema = z
       .optional(),
   })
   .superRefine((value, ctx) => {
+    if (
+      value.artifactInputIds !== undefined &&
+      (value.intent === undefined || value.intent.kind === 'followup')
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'input selection requires an explicit new or resume execution',
+      })
+    }
     if (value.intent?.kind === 'new' && value.agentId === undefined) {
       ctx.addIssue({
         code: 'custom',
@@ -199,6 +215,7 @@ export const CreateRunRequestSchema = z
     agentId: z.uuid(),
     profileRevisionId: z.uuid().optional(),
     expectedApprovalPolicy: z.enum(['approval_required', 'full_access']).optional(),
+    artifactInputIds: ArtifactInputIdsSchema.optional(),
     deviceId: z.uuid(),
     workspaceId: z.uuid(),
     prompt: z.string().min(1).max(20_000),

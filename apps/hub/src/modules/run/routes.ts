@@ -43,6 +43,7 @@ export const ERROR_HTTP_STATUS: Readonly<Partial<Record<ErrorCode, number>>> = {
   NOT_FOUND: 404,
   CONFLICT: 409,
   RUN_ALREADY_ACTIVE: 409,
+  ARTIFACT_INPUT_MANIFEST_TOO_LARGE: 409,
   TASK_TERMINAL: 409,
   ASSIGNMENT_NOT_ACCEPTED: 409,
   INVALID_RUN_TRANSITION: 409,
@@ -100,6 +101,9 @@ export function registerRunRoutes(app: FastifyInstance, deps: RunRoutesDeps): vo
       }
       const run = await deps.orchestrator.create(actor, taskId, {
         agentId: body.data.agentId,
+        ...(body.data.artifactInputIds === undefined
+          ? {}
+          : { artifactInputIds: body.data.artifactInputIds }),
         ...(body.data.expectedApprovalPolicy !== undefined
           ? { expectedApprovalPolicy: body.data.expectedApprovalPolicy }
           : {}),

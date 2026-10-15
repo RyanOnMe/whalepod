@@ -13,6 +13,7 @@ export type ActorContext = Actor
 export interface CreateRunInput {
   idempotencyKey: string
   agentId: string
+  artifactInputIds?: string[]
   /** 发送前已展示的审批档；实际解析不同则冲突，不静默扩大工具权限。 */
   expectedApprovalPolicy?: 'approval_required' | 'full_access'
   /** 缺省时取 Agent 当前 Revision（§2.3）。 */
@@ -47,6 +48,9 @@ export function assertCreateRunInput(input: CreateRunInput): void {
   }
   const body = CreateRunRequestSchema.safeParse({
     agentId: input.agentId,
+    ...(input.artifactInputIds === undefined ? {} : { artifactInputIds: input.artifactInputIds }),
+    ...(input.resumeFromRunId === undefined ? {} : { resumeFromRunId: input.resumeFromRunId }),
+    ...(input.rerunOfRunId === undefined ? {} : { rerunOfRunId: input.rerunOfRunId }),
     ...(input.expectedApprovalPolicy !== undefined
       ? { expectedApprovalPolicy: input.expectedApprovalPolicy }
       : {}),

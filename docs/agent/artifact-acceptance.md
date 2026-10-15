@@ -73,7 +73,7 @@ pnpm vitest run --project web apps/web/tests/artifact-list.spec.tsx
 | G6-04 Bob 发布 candidate → Alice 立即可下载，内容与 digest 一致 | 发布 200（published/publishedAt）；Alice 下载 200 且 sha256 一致；`artifact.changed` Team Event 一条 | apps/hub/tests/artifact.integration.spec.ts「G6-04」；Web 下载按钮 apps/web/tests/artifact-list.spec.tsx「已发布 Artifact 展示元数据与下载按钮」 |
 | G6-05 Alice/Bob 试图发布别人的 candidate → 403 | 403 FORBIDDEN（状态仍 candidate）；owner 发布成功；重复发布 409 INVALID_ARTIFACT_TRANSITION | apps/hub/tests/artifact.integration.spec.ts「G6-05」 |
 | G6-06 Bob 启动 Reviewer Run → 新 Run 用 Reviewer Revision，Session 分离 | run.start 时拉输入清单；initialize 载荷带 artifactInputs+artifactInputsDir（成对，fail-closed）；每个 Run 的 DSH Session id 独立（`project311-run-<runId>`，P1-11 既有契约） | apps/node/tests/run-manager.spec.ts「Reviewer Run：initialize 带 artifactInputs+dir」「Builder Run：initialize 不携带输入字段」；packages/protocol/tests/artifact-inputs.spec.ts（pair 规则） |
-| G6-07 Reviewer 读取发布 Artifact → 受控下载副本，不继承 Builder Workspace，无路径泄露 | manifest 只含已发布且 JSON 无 storageKey/sourceRelativePath；Node 下载副本经 sha256 校验（文件名=artifactId）；Reviewer 只读工具按清单白名单读取、拒绝消息无绝对路径 | apps/hub/tests/artifact.integration.spec.ts「G6-07」；apps/node/tests/artifact-inputs.spec.ts（含篡改→ARTIFACT_HASH_MISMATCH）；packages/runtime-dsh/tests/artifact-input-tool.spec.ts（遍历形 id 不得成路径） |
+| G6-07 Reviewer 读取发布 Artifact → 受控下载副本，不继承 Builder Workspace，无路径泄露 | manifest 只含已发布且 JSON 无 storageKey/sourceRelativePath；Node 下载副本经 sha256 校验（文件名=artifactId）；Reviewer 只读工具按清单白名单读取、拒绝消息无绝对路径 | apps/hub/tests/run-input-snapshot.integration.spec.ts（创建时固化、选择子集与无路径）；apps/hub/tests/artifact.integration.spec.ts「G6-07」（旧未知拒绝）；apps/node/tests/artifact-inputs.spec.ts（含篡改→ARTIFACT_HASH_MISMATCH）；packages/runtime-dsh/tests/artifact-input-tool.spec.ts（遍历形 id 不得成路径） |
 | G6-08 Reviewer 提交脱敏复核摘要或 Artifact → 时间线闭环 | Reviewer Run 的 run.completed 摘要走 P1-13 双受众投影（project 行 ≤500 字符折叠）；Reviewer 自产的 Artifact 复用 G6-01 全链 | packages/protocol fixture run-event（既有）+ apps/node/tests/run-manager.spec.ts 双受众断言；G6-08 的两浏览器 UI 级断言归 P1-19（见「边界与未覆盖」） |
 | #62 全部终态路径清理输入副本（P1-15 评审跟进） | 终态帧（completed/cancelled/runtime.fatal）、协议违例 fail-closed、退出归因（cancelled_forced/runtime_lost）、supervisor lost（runtime_timeout/orphaned_after_node_restart）每条路径终态后 `runtime-inputs/<runId>` 目录真实消失（文件系统断言，非回调记录）；清理收敛在 RunManager 终态单一收敛点 finalizeRun | apps/node/tests/resilience/artifact-inputs-cleanup.spec.ts（8 tests，Q6） |
 
@@ -133,7 +133,7 @@ pnpm test:integration -- apps/hub/tests/artifact.integration.spec.ts
   Node 进程崩溃（清理代码来不及执行）后的残留目录不自动回收——P1-16 孤儿回收
   只回收进程；残留按 runId 目录隔离不串扰，待显式重跑或人工清理。
 - **Reviewer 输入清单条目上限 64**（协议层 hard cap；#64 修订申报）：Hub
-  input-manifest 在 Task 已发布 Artifact 超 64 条时 **fail-closed 显式拒绝**
+  创建Run时默认输入集合超过64条，且未显式选择子集时 **fail-closed 显式拒绝**
   （409 `ARTIFACT_INPUT_MANIFEST_TOO_LARGE`，不下发半份清单、不静默溢出）；
   Node 侧 prepareArtifactInputs 把该码原样透传为 run.start 拒绝（ack
   accepted=false）。版本偏斜全部 fail-closed：本 PR 的 Node 面对未来未知码

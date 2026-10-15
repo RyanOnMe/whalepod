@@ -1,3 +1,4 @@
+import type { ArtifactInputManifest } from '@whalepod/protocol'
 import { and, asc, count, eq, inArray } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { approvals, runs } from '../schema/run.js'
@@ -16,6 +17,7 @@ export interface NewRun {
   profileRevisionId: string
   deviceId: string
   workspaceId: string
+  artifactInputManifest?: ArtifactInputManifest | null
   profileDigest: string
   pluginPackDigest: string
   dshDistributionVersion: string

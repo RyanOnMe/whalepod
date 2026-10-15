@@ -333,6 +333,9 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
         taskId,
         {
           text: parsed.data.text,
+          ...(parsed.data.artifactInputIds === undefined
+            ? {}
+            : { artifactInputIds: parsed.data.artifactInputIds }),
           idempotencyKey: readIdempotencyKey(request),
           ...(parsed.data.deviceId !== undefined ? { deviceId: parsed.data.deviceId } : {}),
           ...(parsed.data.workspaceId !== undefined

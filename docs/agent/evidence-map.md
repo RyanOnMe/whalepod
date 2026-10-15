@@ -59,3 +59,7 @@
 ## 指令授权撤销（#321）
 
 撤销后仍驱动：先查hub.task-grants、作者启用态与Outbox attempt_count；拒绝消息长期pending查状态结算/事件；旧页权限不变查web.execution真实帧失效。复跑见[instruction-revocation-acceptance](./instruction-revocation-acceptance.md)。
+
+### 交付输入快照（#325）
+
+输入集合漂移先对照GET /runs/:id/input-manifest与Node同源清单，查hub.run创建事务；旧未知409是明确的兼容边界。Node下载/摘要校验查node.artifact，再查runtime.bridge输入。复跑见run-input-snapshot-acceptance，证据artifacts/evidence/operation-flow-batch3/input-snapshot/。
