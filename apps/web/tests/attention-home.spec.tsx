@@ -56,6 +56,8 @@ function fixture(
     accepted: false,
     refreshGate: undefined as Promise<void> | undefined,
     roomGate: undefined as Promise<void> | undefined,
+    waitingRun: false,
+    approvalToolName: 'bash',
   }
   let eventReads = 0
   const handlers: MockHandler[] = [
@@ -80,7 +82,10 @@ function fixture(
         return taskRoomHandler(
           { ...task, assignmentStatus: state.accepted ? 'accepted' : task.assignmentStatus },
           {
-            runs: kind === 'decide_approval' ? [run] : [],
+            runs:
+              kind === 'decide_approval' || state.waitingRun
+                ? [{ ...run, status: 'waiting_approval' }]
+                : [],
             artifacts: kind === 'inspect_candidate' ? [artifact] : [],
           },
         ).respond({})
@@ -105,7 +110,7 @@ function fixture(
                 type: 'approval.requested',
                 approval: {
                   approvalId: CARD,
-                  toolName: 'bash',
+                  toolName: state.approvalToolName,
                   preview: {},
                   status: 'pending',
                   requestedAt: task.createdAt,
@@ -216,14 +221,17 @@ describe('首页个人行动入口 (#332)', () => {
         release = resolve
       })
       const f = fixture(kind, undefined, kind === 'decide_approval' ? gate : undefined)
-      if (kind === 'inspect_candidate') f.state.roomGate = gate
+      if (kind === 'inspect_candidate') {
+        f.state.roomGate = gate
+        f.state.waitingRun = true
+      }
       await screen.findByRole('link', { name: `${labels[kind]} · ${f.task.title}` })
       const cached = {
         task: f.task,
         comments: [],
         instructions: [],
         artifacts: [],
-        runs: kind === 'decide_approval' ? [f.run] : [],
+        runs: [{ ...f.run, status: 'waiting_approval' }],
         nextRunApprovalPolicy: null,
       }
       f.queryClient.setQueryData(['task-room', f.task.id], cached, { updatedAt: 1 })
@@ -243,19 +251,19 @@ describe('首页个人行动入口 (#332)', () => {
       const back = screen.getByTestId('task-back-link')
       back.focus()
       await act(async () => {
-        if (kind === 'inspect_candidate') {
-          f.queryClient.setQueryData(['task-room', f.task.id], {
-            ...cached,
-            artifacts: [f.artifact],
-            task: { ...f.task, title: '后台更新标题' },
-          })
-        } else {
-          f.queryClient.setQueryData(
-            ['run', f.run.id, 'events'],
-            (old: { events: unknown[] } | undefined) => ({ ...old, refreshed: true }),
-          )
-        }
+        f.queryClient.setQueryData(['task-room', f.task.id], {
+          ...cached,
+          artifacts: kind === 'inspect_candidate' ? [f.artifact] : [],
+          task: { ...f.task, title: '后台更新标题' },
+        })
       })
+      await screen.findByRole('heading', { name: '后台更新标题' })
+      expect(back).toHaveFocus()
+      f.state.approvalToolName = '审批工具更新'
+      await act(async () => {
+        await f.queryClient.invalidateQueries({ queryKey: ['run', f.run.id, 'events'] })
+      })
+      await screen.findByText('审批工具更新', { exact: true })
       expect(back).toHaveFocus()
     },
   )

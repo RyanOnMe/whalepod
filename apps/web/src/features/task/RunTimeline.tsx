@@ -11,6 +11,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState, type ReactNode } from 'react'
+import { useLocation } from 'react-router'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { useHashFocus } from '../../shared/useHashFocus.js'
@@ -236,7 +237,8 @@ export function ApprovalSlot({ runs, task, session }: ApprovalSlotProps): ReactN
     enabled: waitingRun !== undefined,
   })
 
-  useHashFocus(eventsQuery.isSuccess, true, eventsQuery.data)
+  const approvalAnchor = useLocation().hash.startsWith('#approval-')
+  useHashFocus(eventsQuery.isSuccess && approvalAnchor, true, eventsQuery.data)
 
   // 决定提交走真人同一条 HTTP 路径；成功后失效 Run 事件查询翻转卡片状态。
   const decide = useMutation({
