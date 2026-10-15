@@ -87,3 +87,5 @@
 离开任务后丢稿、串任务/身份、待发请求重复：先看web.execution.draft的AppShell会话作用域与mode/source/owner绑定，再对HTTP载荷和幂等键。复跑execution-draft-acceptance；脱敏证据入operation-flow-batch5/draft，不记录草稿正文、秘密和本机路径。
 
 准备页无返回/回错任务先看web.route的preparationTask与当前会话已访问上下文；返回后仍用旧授权/设备则看web.query首次重读与web.execution阻塞。复跑preparation-return-acceptance，证据入operation-flow-batch5/return；准备快照不进入草稿，协作者仍不探查责任人现场。
+
+首次准备往返组合证据：web.preparation.return → preparation-return-production-acceptance；生产原件artifacts/evidence/preparation-return/result.json，独立verify-preparation-return-evidence判定，脱敏整包operation-flow-batch5/production。逐项缺失/目标改变/导航副作用/未完成Run必须FAIL，真人结果保持not_measured。
