@@ -114,4 +114,49 @@ describe('执行准备（#320）', () => {
     expect(await screen.findByText('暂时无法确认本次准备条件，请重新检查。')).toBeVisible()
     expect(screen.getByTestId('preparation-status')).toHaveTextContent('尚未确认')
   })
+  it('过期响应不能重新获得30秒有效期', async () => {
+    installFetch([
+      {
+        method: 'POST',
+        url: /preparation-check$/,
+        respond: () =>
+          ok(
+            reply('configured', {
+              checkedAt: new Date(Date.now() - 31_000).toISOString(),
+            }),
+          ),
+      },
+    ])
+    const user = userEvent.setup()
+    renderUi(<Harness />)
+    await user.click(screen.getByRole('button', { name: '检查本次准备条件' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '检查本次准备条件' })).toBeEnabled(),
+    )
+    expect(screen.getByTestId('preparation-status')).toHaveTextContent('尚未确认')
+    expect(screen.getByRole('button', { name: '填入试运行指令' })).toBeDisabled()
+  })
+  it('临近到期的响应只保留剩余有效时间', async () => {
+    installFetch([
+      {
+        method: 'POST',
+        url: /preparation-check$/,
+        respond: () =>
+          ok(
+            reply('configured', {
+              checkedAt: new Date(Date.now() - 29_500).toISOString(),
+            }),
+          ),
+      },
+    ])
+    const user = userEvent.setup()
+    renderUi(<Harness />)
+    await user.click(screen.getByRole('button', { name: '检查本次准备条件' }))
+    expect(await screen.findByText(/本次检查截至/)).toBeVisible()
+    await waitFor(
+      () => expect(screen.getByTestId('preparation-status')).toHaveTextContent('已过期'),
+      { timeout: 2_000 },
+    )
+    expect(screen.getByRole('button', { name: '填入试运行指令' })).toBeDisabled()
+  })
 })

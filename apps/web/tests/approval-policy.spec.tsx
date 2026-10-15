@@ -337,17 +337,19 @@ describe('#241 RunLauncher：解析为 full_access 时先确认再发', () => {
     expect(dialog).toHaveTextContent('完全权限')
     expect(captures.bodies).toHaveLength(0) // 对话框没确认前一个请求都不该有
 
-    pendingCheck.resolve(ok({
-      checkedAt: new Date().toISOString(),
-      profileRevisionId: revisionId,
-      deviceId: DEVICE_ID,
-      workspaceId: WORKSPACE_ID,
-      deviceName: 'm4-mini',
-      workspaceName: 'whalepod',
-      workspace: 'available',
-      credential: 'unconfigured',
-      modelCall: 'not_tested',
-    }))
+    pendingCheck.resolve(
+      ok({
+        checkedAt: new Date().toISOString(),
+        profileRevisionId: revisionId,
+        deviceId: DEVICE_ID,
+        workspaceId: WORKSPACE_ID,
+        deviceName: 'm4-mini',
+        workspaceName: 'whalepod',
+        workspace: 'available',
+        credential: 'unconfigured',
+        modelCall: 'not_tested',
+      }),
+    )
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
     expect(screen.getByLabelText('指令')).toHaveValue('发布周报')
