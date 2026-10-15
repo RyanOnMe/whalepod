@@ -15,7 +15,7 @@
  * 这句拒绝的含义是"没有可用的执行目标"，用户需要知道下一步该做什么，而不是只看到错误码。
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import type { SendInstructionRequest } from '@whalepod/protocol'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
@@ -87,6 +87,8 @@ export interface InstructionComposerProps {
    */
   approvalPreview: ApprovalPreview
   intent?: SendInstructionRequest['intent']
+  artifactInputIds?: string[] | undefined
+  blocked?: boolean
   initialOutcome?: InstructionOutcome | null
   draft?: string
   onDraftChange?: (text: string) => void
@@ -101,6 +103,8 @@ export function InstructionComposer({
   approvalPreview,
   onOutcome,
   intent,
+  artifactInputIds,
+  blocked = false,
   initialOutcome,
   draft,
   onDraftChange,
@@ -122,6 +126,12 @@ export function InstructionComposer({
   // 打开期间正文不可编辑，但确认动作必须发送用户看到的那句话，别在关闭时重读 state。
   const [confirmingFullAccess, setConfirmingFullAccess] = useState(false)
   const [pendingBody, setPendingBody] = useState('')
+  useEffect(() => {
+    if (blocked) {
+      setConfirmingFullAccess(false)
+      setPendingBody('')
+    }
+  }, [blocked])
 
   const mutation = useMutation({
     onMutate: () => onSendingChange?.(true),
@@ -129,6 +139,7 @@ export function InstructionComposer({
     mutationFn: (body: string) => {
       const payload = {
         text: body,
+        ...(artifactInputIds === undefined ? {} : { artifactInputIds }),
         ...(target !== null && target.deviceId !== ''
           ? {
               deviceId: target.deviceId,
@@ -173,7 +184,7 @@ export function InstructionComposer({
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
     const body = text.trim()
-    if (body === '' || mutation.isPending) return
+    if (blocked || body === '' || mutation.isPending) return
     // 显式放权（ADR-0009 决策 7）要过一次确认——与 RunLauncher 的启动确认同口径，
     // 只不过这里挂在了「说这句话」的动作上（#244：放权确认长在放权发生的地方）。
     if (approvalPreview?.policy === 'full_access') {
@@ -204,7 +215,7 @@ export function InstructionComposer({
         name="text"
         rows={2}
         maxLength={10_000}
-        disabled={mutation.isPending}
+        disabled={blocked || mutation.isPending}
         value={text}
         placeholder={intent?.kind === 'resume' ? '接着来源会话继续…' : '让 Agent 干这个…'}
         onChange={(event) => setText(event.target.value)}
@@ -221,7 +232,7 @@ export function InstructionComposer({
         <button
           type="submit"
           className="button button-primary instruction-send"
-          disabled={mutation.isPending}
+          disabled={blocked || mutation.isPending}
           aria-busy={mutation.isPending}
           data-feedback={feedback}
           data-instant={instant ? '' : undefined}
@@ -291,6 +302,7 @@ export function InstructionComposer({
           danger
           pending={mutation.isPending}
           onConfirm={() => {
+            if (blocked || mutation.isPending) return
             setConfirmingFullAccess(false)
             setError(null)
             mutation.mutate(pendingBody)

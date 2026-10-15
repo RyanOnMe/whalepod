@@ -27,6 +27,7 @@ import type { InstructionView, RunEventItem, TaskRoomView } from '../shared/api/
 import { ArtifactList, ReviewerSlot } from '../features/task/ArtifactList.js'
 import { AssignmentPanel } from '../features/task/AssignmentPanel.js'
 import { CommentComposer, CommentList } from '../features/task/CommentComposer.js'
+import { DeliveryFlow } from '../features/task/DeliveryFlow.js'
 import { RunInputManifest } from '../features/task/RunInputManifest.js'
 import {
   ExecutionComposer,
@@ -46,6 +47,7 @@ export function TaskRoomPage(): ReactNode {
   const { taskId } = useParams()
   const session = useSession()
   const directory = useMemberDirectory()
+  const [revisionRequest, setRevisionRequest] = useState<ArtifactReviewRequest | null>(null)
   const [reviewRequest, setReviewRequest] = useState<ArtifactReviewRequest | null>(null)
   const [selectedRunId, setSelectedRunId] = useState<string | undefined>(undefined)
   // ⑥d：Console 覆盖层显示哪个 Run（undefined = 关）。与 `selectedRunId`（内联面板）分开：
@@ -236,6 +238,7 @@ export function TaskRoomPage(): ReactNode {
                   approvalPreview={approvalPreview}
                   artifacts={artifacts}
                   reviewRequest={reviewRequest}
+                  revisionRequest={revisionRequest}
                 />
               ) : null}
             </div>
@@ -280,6 +283,14 @@ export function TaskRoomPage(): ReactNode {
                     session={session}
                     taskId={task.id}
                     runs={runs}
+                    onRequestRevision={(artifactId) => {
+                      setRevisionRequest({
+                        taskId: task.id,
+                        artifactId,
+                        nonce: crypto.randomUUID(),
+                      })
+                      execHeadingRef.current?.focus()
+                    }}
                     onRequestReview={(artifactId) => {
                       setReviewRequest({ taskId: task.id, artifactId, nonce: crypto.randomUUID() })
                       execHeadingRef.current?.focus()
@@ -290,6 +301,13 @@ export function TaskRoomPage(): ReactNode {
                   />
                 </section>
                 <ReviewerSlot />
+                <DeliveryFlow
+                  task={task}
+                  session={session}
+                  artifacts={artifacts}
+                  runs={runs}
+                  reviewEligibility={query.data.reviewEligibility}
+                />
               </div>
             </details>
           </section>

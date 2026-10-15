@@ -4,7 +4,7 @@
  * （{ ok:true, data } / { ok:false, error:{ code, message, requestId } }）。
  */
 import { vi } from 'vitest'
-import type { PluginPackView, TeamMemberView } from '@whalepod/protocol'
+import type { PluginPackView, TeamMemberView, TaskReviewEligibility } from '@whalepod/protocol'
 import type {
   AgentView,
   CommentView,
@@ -371,6 +371,7 @@ export function taskRoomHandler(
     instructions?: InstructionView[]
     runs?: TaskRoomRun[]
     artifacts?: TaskRoomArtifact[]
+    reviewEligibility?: TaskReviewEligibility
     /** #244：服务端预解析的下一 Run 审批档（无覆盖+无活跃 Run 时 composer 胶囊的数据源）。 */
     nextRunApprovalPolicy?: 'approval_required' | 'full_access' | null
   } = {},
@@ -386,6 +387,9 @@ export function taskRoomHandler(
         runs: extras.runs ?? [],
         artifacts: extras.artifacts ?? [],
         nextRunApprovalPolicy: extras.nextRunApprovalPolicy ?? null,
+        ...(extras.reviewEligibility === undefined
+          ? {}
+          : { reviewEligibility: extras.reviewEligibility }),
       }),
   }
 }
