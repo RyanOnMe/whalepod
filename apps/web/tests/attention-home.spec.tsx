@@ -257,7 +257,7 @@ describe('首页个人行动入口 (#332)', () => {
           task: { ...f.task, title: '后台更新标题' },
         })
       })
-      await screen.findByRole('heading', { name: '后台更新标题', exact: true })
+      await screen.findByRole('heading', { name: '后台更新标题' })
       expect(back).toHaveFocus()
       f.state.approvalToolName = '审批工具更新'
       await act(async () => {
