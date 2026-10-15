@@ -25,6 +25,7 @@
  */
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useState, type ReactNode } from 'react'
+import { NODE_BUILD_COMMANDS, NODE_CLI_COMMAND } from '../shared/node-installation.js'
 import { api } from '../shared/api/client.js'
 import { Hint } from '../shared/micro/Hint.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
@@ -298,14 +299,16 @@ function CliSteps(): ReactNode {
       <h2 id="devices-cli-heading">CLI 安装与配对</h2>
       <ol className="cli-steps">
         <li>
-          在成员本机安装 CLI：
+          在成员本机准备 Git、Node.js 24 和 pnpm
+          11。将版本占位符替换为团队管理员提供的服务器发布版本，再构建执行服务：
           <pre>
-            <code>npm install -g whalepod-node</code>
+            <code>{NODE_BUILD_COMMANDS}</code>
           </pre>
         </li>
         <li>
           {/* #152：配对码面板在宽屏位于左列——同样只留动作名，不写方位。 */}
-          用「生成配对码」拿到一次性码后，在成员本机执行：
+          以下命令在刚构建的 WhalePod
+          源码目录运行。用「生成配对码」拿到一次性码后，将服务器地址与配对码占位符替换为实际值：
           <pre>
             {/*
               #152：这条命令在侧列（368px）与 390px 单列里都放不下（整块已按空格软换行，
@@ -314,7 +317,7 @@ function CliSteps(): ReactNode {
               命令文本（单测逐字比对 textContent）。
             */}
             <code>
-              {'whalepod-node pair '}
+              {`${NODE_CLI_COMMAND} pair `}
               <span className="cli-token">--hub &lt;hub-url&gt;</span>{' '}
               <span className="cli-token">--code &lt;code&gt;</span>
             </code>
@@ -323,7 +326,7 @@ function CliSteps(): ReactNode {
         <li>
           启动节点守护进程：
           <pre>
-            <code>whalepod-node start</code>
+            <code>{`${NODE_CLI_COMMAND} start`}</code>
           </pre>
         </li>
       </ol>

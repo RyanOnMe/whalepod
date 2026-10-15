@@ -85,6 +85,26 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     const execute = owner.locator('[aria-labelledby="instructions-heading"]')
     await expect(execute.locator('textarea')).toHaveCount(1)
     await selectFromMenu(owner.getByLabel('选择 Agent'), 'Builder')
+    await owner.getByRole('button', { name: '检查本次准备条件' }).click()
+    await expect(owner.getByTestId('preparation-status')).toContainText(
+      '本机已配置；未验证模型调用',
+    )
+    await expect(owner.getByTestId('preparation-status')).toContainText('已确认可用')
+    await expect(owner.getByTestId('preparation-status')).toContainText('已过期', {
+      timeout: 35_000,
+    })
+    await owner.getByRole('button', { name: '检查本次准备条件' }).click()
+    await expect(owner.getByTestId('preparation-status')).toContainText(
+      '本机已配置；未验证模型调用',
+    )
+    expect(
+      ((await hubApi(cookie, 'GET', `/tasks/${taskId}`)).data as { runs: unknown[] }).runs,
+    ).toHaveLength(0)
+    await owner.getByRole('button', { name: '填入试运行指令' }).click()
+    await expect(owner.getByLabel('指令', { exact: true })).toHaveValue(
+      '请用一句话确认你已收到这条试运行指令，不需要调用工具或修改文件。',
+    )
+
     // 已就绪时沿用明确标注的自动环境，不要求首次再填另一张表单。
     await owner.getByLabel('指令', { exact: true }).fill('生成候选报告')
     await expect(owner.getByRole('button', { name: '开始执行' })).toBeEnabled()
@@ -162,6 +182,10 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
           resumedRunId,
           resumeFromRunId: after.resumeFromRunId,
           uniqueInput: 1,
+          preparationCheckedByProductionNode: true,
+          preparationCreatesNoRun: true,
+          trialOnlyPrefillsDraft: true,
+          preparationExpiresAndRechecks: true,
           staleDraftPreserved: true,
           memberHasNoInstructionInput: true,
           reviewBlockedUntilPublished: true,

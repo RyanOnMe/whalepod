@@ -9,11 +9,12 @@
  */
 import { eq } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Database } from '@whalepod/db'
 import { schema } from '@whalepod/db'
 import type { FastifyInstance } from 'fastify'
 import WebSocket from 'ws'
+import { nodeConnections } from '../src/modules/device/connection-registry.js'
 import {
   apiInject,
   createTestApp,
@@ -72,6 +73,7 @@ describe('device inventory → workspaces 投影', () => {
     url = await listen(ctx.app)
   })
   afterEach(async () => {
+    vi.restoreAllMocks()
     for (const s of sockets.splice(0)) s.terminate()
     await ctx.app.close()
   })
@@ -119,6 +121,142 @@ describe('device inventory → workspaces 投影', () => {
   ): void {
     socket.send(nodeFrame('node.inventory', { deviceId, workspaces, credentialSlots }))
   }
+
+  it('#320 责任人HTTP经本人Node连接检查固定版本；非责任人零探针', async () => {
+    const ids = await seedRunChainForUser(database.db, alice.userId)
+    // 静态Agent/Task前置沿用已登记fixtures；只把任务指派给真人，设备由真实配对建立。
+    const createdProject = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: '/api/v1/projects',
+      payload: { name: '准备' },
+    })
+    const task = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/projects/${createdProject.json().data.id}/tasks`,
+      payload: { title: '准备检查', assigneeUserId: alice.userId },
+    })
+    const taskId = task.json().data.id as string
+    const paired = await pair(alice)
+    const socket = await connect(paired.deviceToken)
+    const workspaceId = randomUUID()
+    socket.send(
+      nodeFrame('node.hello', {
+        deviceId: paired.deviceId,
+        nodeVersion: '24.12.0',
+        platform: 'darwin',
+        architecture: 'arm64',
+        supportedProtocolVersions: [1],
+        dshDistributionVersion: 'fixture-version',
+        pluginPackDigests: [],
+      }),
+    )
+    sendInventory(socket, paired.deviceId, [
+      {
+        workspaceId,
+        name: 'private-work',
+        kind: 'directory',
+        capabilities: { read: true, write: true, git: false },
+        available: true,
+        lastCheckedAt: new Date().toISOString(),
+      },
+    ])
+    await waitForValue(
+      async () =>
+        (await apiInject(ctx, alice, { method: 'GET', url: '/api/v1/workspaces' }))
+          .json()
+          .data.find((row: { workspaceId: string }) => row.workspaceId === workspaceId),
+      '等待本次检查的工作目录投影',
+    )
+    let probes = 0
+    socket.on('message', (raw) => {
+      const frame = JSON.parse(String(raw)) as {
+        type: string
+        payload: { requestId: string; provider: string; credentialSlot: string }
+      }
+      if (frame.type !== 'node.preparation_check') return
+      probes++
+      expect(frame.payload.provider).toBe('deepseek-official')
+      expect(frame.payload.credentialSlot).toBe('default')
+      socket.send(
+        nodeFrame('node.preparation_result', {
+          requestId: frame.payload.requestId,
+          workspace: 'available',
+          credential: 'configured',
+        }),
+      )
+    })
+    const payload = {
+      agentId: ids.agentId,
+      profileRevisionId: ids.profileRevisionId,
+      deviceId: paired.deviceId,
+      workspaceId,
+    }
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/tasks/${taskId}/instruction-grants`,
+          payload: { userId: bob.userId },
+        })
+      ).statusCode,
+    ).toBe(201)
+    const denied = await apiInject(ctx, bob, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/preparation-check`,
+      payload,
+    })
+    expect(denied.statusCode).toBe(403)
+    expect(probes).toBe(0)
+    const otherTask = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/projects/${createdProject.json().data.id}/tasks`,
+      payload: { title: '成员自己的任务', assigneeUserId: bob.userId },
+    })
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/tasks/${otherTask.json().data.id}/preparation-check`,
+          payload,
+        })
+      ).statusCode,
+    ).toBe(403)
+    expect(probes).toBe(0)
+    const checked = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/preparation-check`,
+      payload,
+    })
+    expect(checked.statusCode).toBe(200)
+    expect(checked.headers['cache-control']).toBe('no-store')
+    expect(checked.json().data).toMatchObject({
+      profileRevisionId: ids.profileRevisionId,
+      deviceId: paired.deviceId,
+      workspaceId,
+      workspace: 'available',
+      credential: 'configured',
+      modelCall: 'not_tested',
+    })
+    expect(probes).toBe(1)
+    expect(JSON.stringify(checked.json())).not.toMatch(/deviceToken|canonicalPath|secretValue/)
+    expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+    // 在真实连接已交付结果后暂停HTTP继续；用另一条真实WS替换，再让路由收尾。
+    const requestPreparation = nodeConnections.requestPreparation.bind(nodeConnections)
+    vi.spyOn(nodeConnections, 'requestPreparation').mockImplementationOnce(async (...args) => {
+      const snapshot = await requestPreparation(...args)
+      await connect(paired.deviceToken)
+      await waitForValue(async () => !snapshot.isCurrent(), '等待已交付快照的连接被替换')
+      expect(nodeConnections.isOnline(paired.deviceId)).toBe(true)
+      return snapshot
+    })
+    const replaced = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/preparation-check`,
+      payload,
+    })
+    expect(replaced.statusCode).toBe(409)
+    expect(replaced.json().data).toBeUndefined()
+  })
 
   it('G3-04: inventory 上行 → 投影落库（owner 恒等 Device owner，无路径字段）', async () => {
     const { deviceId, deviceToken: token } = await pair(alice)

@@ -51,3 +51,7 @@
 ## 操作条件（#319）
 
 提交验收提示与行为不一致：先查 hub.task 的 reviewEligibility 与 web.task 条件解析；处理人未知查成员名录；复跑与取证见 [action-conditions-acceptance](./action-conditions-acceptance.md)。
+
+## 首次执行准备（#320）
+
+准备检查无法确认：先查hub.device连接/Node版本与node.preparation；缺项查本机registry/SecretStore；旧结果被复用查web.preparation的版本/目标scope。复跑与证据见[execution-preparation-acceptance](./execution-preparation-acceptance.md)。

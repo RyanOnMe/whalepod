@@ -126,9 +126,9 @@ describe('#152 布局：内容容器与两栏栅格', () => {
       (element) => element.textContent,
     )
     expect(commands).toEqual([
-      'npm install -g whalepod-node',
-      'whalepod-node pair --hub <hub-url> --code <code>',
-      'whalepod-node start',
+      'git clone https://github.com/RyanOnMe/whalepod.git\ncd whalepod\ngit checkout <与服务器一致的发布版本>\ncorepack enable\npnpm install --frozen-lockfile\npnpm -r --if-present build',
+      'node apps/node/dist/cli.js pair --hub <hub-url> --code <code>',
+      'node apps/node/dist/cli.js start',
     ])
   })
 
