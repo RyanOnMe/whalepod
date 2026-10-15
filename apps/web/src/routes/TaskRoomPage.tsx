@@ -74,7 +74,7 @@ function TaskRoom(): ReactNode {
     enabled: taskId !== undefined,
   })
 
-  useHashFocus(query.isSuccess, true)
+  useHashFocus(query.isSuccess, true, query.data)
 
   // #277：加载骨架也有在场语义——数据到达后它先演完退场，再卸载（硬切就是从这儿来的）。
   const skeletonPresence = usePresence(

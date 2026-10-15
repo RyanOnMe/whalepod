@@ -236,7 +236,7 @@ export function ApprovalSlot({ runs, task, session }: ApprovalSlotProps): ReactN
     enabled: waitingRun !== undefined,
   })
 
-  useHashFocus(eventsQuery.isSuccess, true)
+  useHashFocus(eventsQuery.isSuccess, true, eventsQuery.data)
 
   // 决定提交走真人同一条 HTTP 路径；成功后失效 Run 事件查询翻转卡片状态。
   const decide = useMutation({
