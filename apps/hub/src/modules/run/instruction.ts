@@ -105,6 +105,7 @@ export async function sendInstruction(
   taskId: string,
   input: SendInstructionInput,
 ): Promise<SendInstructionOutcome> {
+  taskId = taskId.toLowerCase()
   if (
     input.artifactInputIds !== undefined &&
     (input.intent === undefined || input.intent.kind === 'followup')
