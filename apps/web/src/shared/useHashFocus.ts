@@ -12,18 +12,28 @@
  * - 数据未就绪时元素还不存在——所以 `ready` 进依赖，列表落地后再找一次；
  * - jsdom 没有 `scrollIntoView`（同 window.focus）：没有就只标亮不滚动，不抛。
  */
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useLocation } from 'react-router'
 
 const HIGHLIGHT_MS = 2000
 
-export function useHashFocus(ready = true): void {
-  const { hash } = useLocation()
+export function useHashFocus(ready = true, focus = false, content?: unknown): void {
+  const { hash, key } = useLocation()
+  const resolvedNavigation = useRef<string | null>(null)
   useEffect(() => {
     const id = hash.replace(/^#/, '')
-    if (id === '' || !ready) return
+    if (id === '' || !ready || resolvedNavigation.current === key) return
     const target = document.getElementById(id)
     if (target === null) return
+    // A successful cache may not contain a newly actionable object. Retry when
+    // content arrives, then leave the user's later focus alone on background updates.
+    resolvedNavigation.current = key
+    if (focus) {
+      for (let parent = target.parentElement; parent !== null; parent = parent.parentElement) {
+        if (parent instanceof HTMLDetailsElement) parent.open = true
+      }
+      target.focus({ preventScroll: true })
+    }
     if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'center' })
     target.classList.add('hash-focus')
     const timer = window.setTimeout(() => target.classList.remove('hash-focus'), HIGHLIGHT_MS)
@@ -31,5 +41,5 @@ export function useHashFocus(ready = true): void {
       window.clearTimeout(timer)
       target.classList.remove('hash-focus')
     }
-  }, [hash, ready])
+  }, [hash, key, ready, focus, content])
 }

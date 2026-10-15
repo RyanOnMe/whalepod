@@ -73,6 +73,8 @@ describe('applyClientFrame (event-router)', () => {
       // 切片⑥e 新增：task.changed 也要失效权限页（服务端授权/撤销发的就是它）。
       { queryKey: ['instruction-grants', 't-1'] },
       { queryKey: ['project-tasks'] },
+      { queryKey: ['attention'] },
+      { queryKey: ['recent-tasks'] },
     ])
     expect(cursorStore.load()).toBe('42')
   })
@@ -93,7 +95,7 @@ describe('applyClientFrame (event-router)', () => {
     // Task Room 是 queryKeys.taskRoom = ['task-room', id]（#140 前这里错写成
     // ['task', id]，前缀不匹配 → 远程变化刷不进任务房间，且本测试把 bug 钉成了期望）。
     const keys: Array<[string, unknown, readonly (readonly unknown[])[]]> = [
-      ['project.changed', {}, [['projects']]],
+      ['project.changed', {}, [['projects'], ['attention'], ['recent-tasks']]],
       [
         'task.changed',
         { taskId: 't-1', projectId: 'p-1' },
@@ -103,18 +105,17 @@ describe('applyClientFrame (event-router)', () => {
           // task.changed，漏了它，责任人撤销时对方的权限页永远不更新（而服务端已 403）。
           ['instruction-grants', 't-1'],
           ['project-tasks', 'p-1'],
+          ['attention'],
+          ['recent-tasks'],
         ],
       ],
-      ['comment.created', { taskId: 't-1' }, [['task-room', 't-1']]],
+      ['comment.created', { taskId: 't-1' }, [['task-room', 't-1'], ['recent-tasks']]],
       // #261：run.changed 带 taskId——运行卡（状态徽标）在任务房间里，不失效它
       // 就要等刷新或别的 mutation 才动（event-router 开头的键表契约）。
       [
         'run.changed',
         { runId: 'r-1', taskId: 't-1' },
-        [
-          ['run', 'r-1'],
-          ['task-room', 't-1'],
-        ],
+        [['run', 'r-1'], ['task-room', 't-1'], ['attention'], ['recent-tasks']],
       ],
       // #261：run.phase 是「正在做什么」的唯一信号（阶段徽标的取数）。载荷没有
       // taskId（orchestrator 只带 runId/seq/audience/ownerUserId/event）→ 前缀失效房间。
@@ -129,11 +130,15 @@ describe('applyClientFrame (event-router)', () => {
         { runId: 'r-2', event: { type: 'tool.started', toolName: 'bash' } },
         [['run', 'r-2']],
       ],
-      ['approval.changed', { taskId: 't-1' }, [['task-room', 't-1']]],
-      ['artifact.changed', { taskId: 't-1' }, [['task-room', 't-1']]],
+      ['approval.changed', { taskId: 't-1' }, [['task-room', 't-1'], ['attention']]],
+      ['artifact.changed', { taskId: 't-1' }, [['task-room', 't-1'], ['attention']]],
       ['device.changed', {}, [['devices']]],
       // #163：成员变更 → 名册键（名册与责任人下拉同一缓存，一次失效全刷新）。
-      ['member.changed', { changedAt: '2026-09-20T00:00:00.000Z' }, [['team-members']]],
+      [
+        'member.changed',
+        { changedAt: '2026-09-20T00:00:00.000Z' },
+        [['team-members'], ['attention']],
+      ],
     ]
     for (const [type, payload, expected] of keys) {
       expect(keysForPersistentEvent(persistentFrame(type, payload).event)).toEqual(expected)
@@ -147,11 +152,15 @@ describe('applyClientFrame (event-router)', () => {
       ['task-room'],
       ['instruction-grants'],
       ['project-tasks'],
+      ['attention'],
+      ['recent-tasks'],
     ])
     // run.changed 缺 taskId：房间键降级为前缀（#261 起 run.changed 也失效房间）。
     expect(keysForPersistentEvent(persistentFrame('run.changed', {}).event)).toEqual([
       ['run'],
       ['task-room'],
+      ['attention'],
+      ['recent-tasks'],
     ])
     // 没有 runId 的 run.event 同降级；带 runId 但不是 run.phase 时同样不动房间。
     expect(keysForPersistentEvent(persistentFrame('run.event', {}).event)).toEqual([['run']])

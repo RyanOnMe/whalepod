@@ -13,6 +13,7 @@ export const queryKeys = {
   setupStatus: ['setup-status'] as const,
   session: ['session'] as const,
   projects: ['projects'] as const,
+  attention: (userId: string) => ['attention', userId] as const,
   /**
    * #136：成员列表——创建任务的责任人选择器数据源；#141 成员页复用同一键
    * （本分支原带一份重复定义，收编时删除）。
@@ -58,9 +59,15 @@ function onCacheError(error: unknown): void {
 }
 
 export function makeQueryClient(options: { retry?: boolean } = {}): QueryClient {
-  return new QueryClient({
+  const queryClient: QueryClient = new QueryClient({
     queryCache: new QueryCache({ onError: onCacheError }),
-    mutationCache: new MutationCache({ onError: onCacheError }),
+    mutationCache: new MutationCache({
+      onError: onCacheError,
+      onSuccess: () => {
+        void queryClient.invalidateQueries({ queryKey: ['attention'] })
+        void queryClient.invalidateQueries({ queryKey: queryKeys.recentTasks })
+      },
+    }),
     defaultOptions: {
       queries: {
         retry: options.retry === false ? false : retryLimit,
@@ -72,4 +79,5 @@ export function makeQueryClient(options: { retry?: boolean } = {}): QueryClient 
       },
     },
   })
+  return queryClient
 }

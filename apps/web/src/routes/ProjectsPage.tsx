@@ -20,6 +20,7 @@ import { RelativeTime } from '../shared/RelativeTime.js'
 import { TASK_STATUS_LABEL } from '../shared/format.js'
 import { useMemberDirectory } from '../features/team/memberDirectory.js'
 import type { AssignmentDriveView, AgentView, ProjectView, TaskView } from '../shared/api/types.js'
+import { PersonalAttention } from '../features/attention/PersonalAttention.js'
 import { queryKeys } from '../app/query-client.js'
 import { EXIT_PRESENCE_MS } from '../shared/motion.js'
 import { useHashFocus } from '../shared/useHashFocus.js'
@@ -61,6 +62,7 @@ export function ProjectsPage(): ReactNode {
           {creatingProject ? '收起' : '新建项目'}
         </button>
       </div>
+      <PersonalAttention />
       {creatingProject ? (
         <CreateProjectForm
           onCreated={() => {

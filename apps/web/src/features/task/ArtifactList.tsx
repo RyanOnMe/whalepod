@@ -133,7 +133,12 @@ function ArtifactRows({
   return (
     <ul className="artifact-list" role="list">
       {artifacts.map((artifact) => (
-        <li key={artifact.id} className="artifact-item">
+        <li
+          key={artifact.id}
+          id={`artifact-${artifact.id}`}
+          tabIndex={-1}
+          className="artifact-item"
+        >
           <div className="artifact-title">{artifact.title}</div>
           <dl className="artifact-meta">
             <div>
@@ -320,7 +325,12 @@ function CandidateRows({
   return (
     <ul className="artifact-list" role="list" aria-label="候选交付物">
       {artifacts.map((artifact) => (
-        <li key={artifact.id} className="artifact-item">
+        <li
+          key={artifact.id}
+          id={`artifact-${artifact.id}`}
+          tabIndex={-1}
+          className="artifact-item"
+        >
           <div className="artifact-title">{artifact.title}</div>
           <p className="mutation-hint">仅你可见，待发布</p>
           <dl className="artifact-meta">
