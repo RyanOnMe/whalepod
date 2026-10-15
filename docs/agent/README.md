@@ -17,6 +17,7 @@
 | [operation-flow-usability-trial.md](./operation-flow-usability-trial.md) | 第四/五批真实团队试用脚本与空记录表；尚未执行 |
 | [personal-attention-acceptance.md](./personal-attention-acceptance.md) | #331 按当前身份/角色与拥有关系生成有限个人行动投影 |
 | [operation-flow-batch4-plan.md](./operation-flow-batch4-plan.md) | 第四批剩余事项、个人行动入口与真人试用验证方案 |
+| [operation-flow-batch5-plan.md](./operation-flow-batch5-plan.md) | 第五批剩余事项、会话草稿、准备返回与生产验收方案 |
 | [action-conditions-acceptance.md](./action-conditions-acceptance.md) | #319 操作处理人、服务端验收条件与讨论定位 |
 | [delivery-revision-acceptance.md](./delivery-revision-acceptance.md) | #327 显式产出来源/意见材料、修订重新发布与真人验收完成 |
 | [artifact-review-entry-acceptance.md](./artifact-review-entry-acceptance.md) | #326 产出发起复核、明确材料/Agent、草稿与权限、历史输入查看 |

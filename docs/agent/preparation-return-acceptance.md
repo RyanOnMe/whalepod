@@ -17,3 +17,7 @@ execution-composer.spec.tsx用真实Router/会话壳/QueryClient，公开HTTP边
 驱动pnpm exec vitest run --project web apps/web/tests/execution-composer.spec.tsx；Q0 pnpm check。生产主链与第五批组合Q5见#339；不直写运行投影，不用截图判断权限或受理。web.route看参数/锚点，web.execution看会话与mode/source/owner，web.query看首次缓存重读，hub命令仍是最终授权与环境守卫。
 
 脱敏证据入artifacts/evidence/operation-flow-batch5/return；出包secret-scan。模型真实网络、额度与真人理解效果仍未测。原#312在途代码不纳入。
+
+## 云端负载下的同帧检查
+
+#341首次云端check暴露既有crossfade.spec的真实时间竞争：内容查询返回后，繁忙调度可能已用尽短退场窗口，断言再看骨架就太迟。测试现在只控制setTimeout/clearTimeout，在数据放行后先断言内容与退场骨架共存，再推进计时断言卸载；不改生产动画时长，不删除判据。项目页同族检查也使用同一策略。原失败和修复后的完整Q0/CI均保留在return证据包。
