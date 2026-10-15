@@ -19,6 +19,7 @@ import {
   updateTaskFields,
 } from '@whalepod/db'
 import { cancelRunInTransaction } from '../run/cancel.js'
+import { reviewPrerequisiteReason } from './review-conditions.js'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
 import { toCommentView, toTaskView } from './queries.js'
@@ -282,10 +283,13 @@ export async function submitTaskForReview(
       assignmentStatus: task.assignmentStatus,
     })
     const active = await listActiveRunsByTask(tx, taskId)
-    if (active.length > 0) {
+    if (reviewPrerequisiteReason(active.length > 0, true) === 'active_run') {
       throw new ApiError(409, 'CONFLICT', 'cannot submit a task with an active run for review')
     }
-    if (!(await hasPublishedArtifactByTask(tx, taskId))) {
+    if (
+      reviewPrerequisiteReason(false, await hasPublishedArtifactByTask(tx, taskId)) ===
+      'no_published_artifact'
+    ) {
       throw new ApiError(409, 'CONFLICT', 'task has no published artifact to review')
     }
     const next = transitionTask({ status: task.status }, { type: 'review_submitted' })

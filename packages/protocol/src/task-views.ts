@@ -37,3 +37,20 @@ export const TaskMessageViewSchema = z.strictObject({
 })
 
 export type TaskMessageView = z.infer<typeof TaskMessageViewSchema>
+
+/** #319：服务端生成的提交验收条件；缺失/未知不能被客户端视作可提交。 */
+export const TaskReviewEligibilitySchema = z
+  .strictObject({
+    allowed: z.boolean(),
+    reason: z
+      .enum([
+        'not_assignee',
+        'not_accepted',
+        'task_not_in_progress',
+        'active_run',
+        'no_published_artifact',
+      ])
+      .nullable(),
+  })
+  .refine((value) => value.allowed === (value.reason === null), 'allowed and reason must agree')
+export type TaskReviewEligibility = z.infer<typeof TaskReviewEligibilitySchema>

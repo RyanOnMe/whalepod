@@ -11,7 +11,14 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { BOB, loggedInHandlers, makeTask, ok, teamMembersHandler } from './fixtures.js'
+import {
+  BOB,
+  loggedInHandlers,
+  makeArtifact,
+  makeTask,
+  ok,
+  teamMembersHandler,
+} from './fixtures.js'
 import type { MockHandler } from './fixtures.js'
 import { renderApp, renderUi } from './render.js'
 import { ConfirmDialog } from '../src/shared/ConfirmDialog.js'
@@ -109,7 +116,15 @@ describe('ConfirmDialog（#229）', () => {
       {
         method: 'GET',
         url: new RegExp(`/api/v1/tasks/${task.id}$`),
-        respond: () => ok({ task, comments: [], instructions: [], runs: [], artifacts: [] }),
+        respond: () =>
+          ok({
+            task,
+            comments: [],
+            instructions: [],
+            runs: [],
+            artifacts: [makeArtifact({ status: 'published' })],
+            reviewEligibility: { allowed: true, reason: null },
+          }),
       },
       {
         method: 'POST',

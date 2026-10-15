@@ -148,13 +148,19 @@ export function TaskRoomPage(): ReactNode {
     <div className="crossfade-stack">
       {fromSkeleton ? <RoomSkeleton leaving={skeletonPresence.leaving} /> : null}
       <div className={fromSkeleton ? 'task-room crossfade-in' : 'task-room'}>
-        <TaskHeader task={task} session={session} />
+        <TaskHeader
+          task={task}
+          session={session}
+          reviewEligibility={query.data.reviewEligibility}
+        />
         <div className="task-room-split">
           {/* 讨论栏：只有人说话，永不触发运行 */}
           <section className="task-room-col" aria-labelledby="comments-heading">
             <div className="card room-column">
               <div className="room-column-head">
-                <h2 id="comments-heading">讨论</h2>
+                <h2 id="comments-heading" tabIndex={-1}>
+                  讨论
+                </h2>
                 <span className="room-column-note">团队成员之间 · 不触发 Agent</span>
               </div>
               {hasNewActivity ? (

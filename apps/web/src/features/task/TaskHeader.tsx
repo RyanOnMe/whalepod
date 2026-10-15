@@ -3,8 +3,10 @@
  * 以及只对「已接受任务的当前责任人」开放的 提交验收/完成/取消 行动。
  * 行动走真实 mutation；pending 时禁用；失败展示 requestId。
  */
+import { TaskReviewEligibilitySchema } from '@whalepod/protocol'
+import type { TaskReviewEligibility } from '@whalepod/protocol'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
@@ -19,6 +21,7 @@ import { queryKeys } from '../../app/query-client.js'
 export interface TaskHeaderProps {
   task: TaskView
   session: Session | null
+  reviewEligibility?: TaskReviewEligibility | undefined
 }
 
 type TaskAction = 'submit-review' | 'complete' | 'cancel'
@@ -35,7 +38,7 @@ const ACTION_CONFIRM: Readonly<Record<TaskAction, string>> = {
   cancel: '取消任务？有活跃 Run 时 Hub 会同步请求取消。',
 }
 
-export function TaskHeader({ task, session }: TaskHeaderProps): ReactNode {
+export function TaskHeader({ task, session, reviewEligibility }: TaskHeaderProps): ReactNode {
   const queryClient = useQueryClient()
   // #229：确认中（待确认的行动）；null = 无对话框。
   const [confirming, setConfirming] = useState<TaskAction | null>(null)
@@ -46,6 +49,21 @@ export function TaskHeader({ task, session }: TaskHeaderProps): ReactNode {
 
   const isAssignee = session !== null && task.assigneeUserId === session.userId
   const canAct = isAssignee && task.assignmentStatus === 'accepted'
+  const checked = TaskReviewEligibilitySchema.safeParse(reviewEligibility)
+  const canSubmit = checked.success && checked.data.allowed
+  const reviewReason = !checked.success
+    ? '暂时无法确认验收条件，请刷新任务后重试。'
+    : checked.data.reason === 'active_run'
+      ? '执行仍在进行。请由责任人等待执行结束或取消后再提交。'
+      : checked.data.reason === 'no_published_artifact'
+        ? '请先检查并发布至少一个交付物，再由责任人提交验收。'
+        : checked.data.reason === null
+          ? '已满足提交条件；提交和最终完成由真人确认。'
+          : '当前责任人接受任务并开始推进后，才能提交验收。'
+
+  useEffect(() => {
+    if (confirming === 'submit-review' && !canSubmit) setConfirming(null)
+  }, [confirming, canSubmit])
 
   const mutation = useMutation({
     mutationFn: (kind: TaskAction) => api.mutate<TaskView>(`/tasks/${task.id}/${kind}`),
@@ -141,7 +159,7 @@ export function TaskHeader({ task, session }: TaskHeaderProps): ReactNode {
             <button
               type="button"
               className="button"
-              disabled={mutation.isPending}
+              disabled={mutation.isPending || !canSubmit}
               onClick={() => run('submit-review')}
             >
               提交验收
@@ -172,6 +190,11 @@ export function TaskHeader({ task, session }: TaskHeaderProps): ReactNode {
       ) : isAssignee ? (
         <p className="mutation-hint">接受任务后即可提交验收、完成或取消任务。</p>
       ) : null}
+      {canAct && task.status === 'in_progress' ? (
+        <p className="mutation-hint" role="status" data-testid="review-condition">
+          {reviewReason}
+        </p>
+      ) : null}
       {error !== null ? <ErrorBanner error={error} /> : null}
       {confirming !== null ? (
         <ConfirmDialog
@@ -181,7 +204,9 @@ export function TaskHeader({ task, session }: TaskHeaderProps): ReactNode {
           confirmLabel={`确认${ACTION_LABEL[confirming]}`}
           danger={confirming === 'cancel'}
           pending={mutation.isPending}
-          onConfirm={() => mutation.mutate(confirming)}
+          onConfirm={() => {
+            if (confirming !== 'submit-review' || canSubmit) mutation.mutate(confirming)
+          }}
           onCancel={() => setConfirming(null)}
         />
       ) : null}
