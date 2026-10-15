@@ -7,9 +7,10 @@
  * 与讨论区无关：评论永远不需要授权（ADR-0010 决策 1/4）。
  * 与审批无关：审批决定权**不可授予**，永远只属于责任人（`decide_approval`）。
  */
-import { eq } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 import type { Actor } from '@whalepod/domain'
 import {
+  ACTIVE_RUN_STATUSES,
   appendTeamEvent,
   findInstructionGrant,
   grantInstruction,
@@ -20,6 +21,7 @@ import {
   type Database,
   type Tx,
 } from '@whalepod/db'
+import { rejectUnattemptedFollowups } from '../run/instruction-revocation.js'
 import { uuidv7 } from '../shared/uuid.js'
 import { RunCommandError } from '../run/errors.js'
 
@@ -172,7 +174,17 @@ export async function revokeInstructionRight(
       // 责任人的驱动权不是"授权来的"，所以也撤不掉——这条要拒绝，而不是静默成功。
       throw new RunCommandError('VALIDATION_FAILED', 'the assignee always keeps instruction rights')
     }
+    // 固定Task→Run锁序，与进入running的补发串行。先锁Run，再删授权，不留可投递竞争窗。
+    await tx
+      .select({ id: schema.runs.id })
+      .from(schema.runs)
+      .where(
+        and(eq(schema.runs.taskId, taskId), inArray(schema.runs.status, [...ACTIVE_RUN_STATUSES])),
+      )
+      .orderBy(asc(schema.runs.id))
+      .for('update')
     const revoked = await revokeInstruction(tx, taskId, targetUserId)
+    await rejectUnattemptedFollowups(tx, taskId, targetUserId)
     if (revoked) {
       await appendTeamEvent(tx, {
         type: 'task.changed',
