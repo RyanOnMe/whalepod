@@ -4,6 +4,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [execution-draft-acceptance.md](./execution-draft-acceptance.md) | #337：会话内执行草稿、跨任务/身份隔离、请求连续性与清除边界 |
 | [ai-harness-principles.md](./ai-harness-principles.md) | 六原语：驱动、观测、判定、归因、取证、发现 |
 | [issue-workflow.md](./issue-workflow.md) | 问题从发现到合入的完整走法 |
 | [evidence-map.md](./evidence-map.md) | 出问题时去哪一层找哪份证据 |

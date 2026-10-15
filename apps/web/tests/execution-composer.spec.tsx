@@ -1,6 +1,6 @@
 import { act, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { queryKeys } from '../src/app/query-client.js'
 import {
   ALICE,
@@ -402,7 +402,7 @@ describe('#315 统一执行入口的真人页面', () => {
   })
 })
 
-function draftNavigationFixture() {
+function draftNavigationFixture(active = false, history = false) {
   const task = makeTask({
     title: '准备工作甲',
     assignmentStatus: 'accepted',
@@ -413,23 +413,73 @@ function draftNavigationFixture() {
     assignmentStatus: 'accepted',
     approvalPolicy: 'approval_required',
   })
-  const run = makeRun({ status: 'running' })
+  const run = makeRun({ status: active ? 'running' : 'completed' })
   const device = makeDevice()
   const workspaceId = '00000000-0000-4000-8000-000000000021'
   const state = {
     task,
-    running: false,
+    running: active,
+    history,
+    session: BOB as typeof BOB | null,
+    nextSession: BOB,
     request: undefined as ReturnType<typeof deferredResponse> | undefined,
     fail: false,
   }
-  const view = renderApp(
-    `/tasks/${task.id}`,
-    loggedInHandlers(BOB, [
+  const handlers: MockHandler[] = [
+    {
+      method: 'GET',
+      url: /\/auth\/session$/,
+      respond: () =>
+        state.session
+          ? ok(state.session)
+          : {
+              status: 401,
+              body: {
+                ok: false,
+                error: { code: 'AUTH_REQUIRED', message: '请登录', requestId: 'draft-session' },
+              },
+            },
+    },
+    {
+      method: 'POST',
+      url: /\/auth\/logout$/,
+      respond: () => {
+        state.session = null
+        return ok({})
+      },
+    },
+    {
+      method: 'POST',
+      url: /\/auth\/login$/,
+      respond: () => {
+        state.session = state.nextSession
+        return ok({ userId: state.nextSession.userId })
+      },
+    },
+    ...loggedInHandlers(BOB, [
       {
         method: 'GET',
         url: new RegExp(`/tasks/${task.id}$`),
         respond: () =>
-          taskRoomHandler(state.task, { runs: state.running ? [run] : [] }).respond({}),
+          state.session === null
+            ? {
+                status: 401,
+                body: {
+                  ok: false,
+                  error: {
+                    code: 'AUTH_REQUIRED',
+                    message: '登录已过期',
+                    requestId: 'draft-expired',
+                  },
+                },
+              }
+            : taskRoomHandler(state.task, {
+                runs: state.running
+                  ? [{ ...run, status: 'running' }]
+                  : state.history
+                    ? [{ ...run, status: 'completed' }]
+                    : [],
+              }).respond({}),
       },
       taskRoomHandler(other),
       sourceHandler(task, run),
@@ -477,8 +527,9 @@ function draftNavigationFixture() {
               : ok({ outcome: 'started_run', runId: run.id, instructionState: 'pending' }),
       },
     ]),
-  )
-  return { ...view, task, other, run, device, workspaceId, state }
+  ]
+  const view = renderApp(`/tasks/${task.id}`, handlers)
+  return { ...view, handlers, task, other, run, device, workspaceId, state }
 }
 async function selectDraftAgent(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByLabelText('选择 Agent'))
@@ -498,12 +549,21 @@ describe('#337 当前会话中的执行草稿', () => {
     const user = userEvent.setup()
     const f = draftNavigationFixture()
     await selectDraftAgent(user)
+    await user.click(screen.getByText('执行设置（配置版本与环境）'))
+    await user.click(screen.getByLabelText('选择 Revision'))
+    await user.click(screen.getByRole('menuitem', { name: /^r1 / }))
+    await user.click(screen.getByLabelText('选择设备'))
+    await user.click(screen.getByRole('menuitem', { name: new RegExp(f.device.name) }))
+    await user.click(screen.getByLabelText('选择 Workspace'))
+    await user.click(screen.getByRole('menuitem', { name: 'repo' }))
     await user.type(screen.getByLabelText('指令'), '离开准备页也不能丢失的正文')
     await leaveForDevices(user)
     await returnToDraft(user, f.task.title)
     expect(screen.getByLabelText('指令')).toHaveValue('离开准备页也不能丢失的正文')
     expect(screen.getByLabelText('选择 Agent')).toHaveTextContent('Builder')
-    expect(screen.getByLabelText('选择 Revision')).toHaveTextContent('r2')
+    expect(screen.getByLabelText('选择 Revision')).toHaveTextContent('r1')
+    expect(screen.getByLabelText('选择设备')).toHaveTextContent(f.device.name)
+    expect(screen.getByLabelText('选择 Workspace')).toHaveTextContent('repo')
     expect(
       f.fetchMock.mock.calls.some(
         ([url, init]) => String(url).endsWith('/instructions') && init?.method === 'POST',
@@ -586,4 +646,88 @@ describe('#337 当前会话中的执行草稿', () => {
     expect(screen.getByTestId('execution-blocker')).toHaveTextContent('责任人已变化')
     expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
   })
+})
+
+describe('#337 草稿身份与来源边界', () => {
+  it('来源执行在离开期间结束后保留追问意图，不转成新执行', async () => {
+    const user = userEvent.setup()
+    const f = draftNavigationFixture(true)
+    const box = await screen.findByLabelText('指令')
+    await waitFor(() => expect(box).toBeEnabled())
+    await user.type(box, '仅发往原活跃执行')
+    expect(box).toHaveValue('仅发往原活跃执行')
+    await leaveForDevices(user)
+    f.state.running = false
+    await f.queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(f.task.id) })
+    await returnToDraft(user, f.task.title)
+    expect(screen.getByLabelText('指令')).toHaveValue('仅发往原活跃执行')
+    expect(screen.getByLabelText('执行方式')).toHaveTextContent('发送追问')
+    expect(screen.getByTestId('execution-blocker')).toHaveTextContent('所选执行已结束')
+    expect(
+      f.fetchMock.mock.calls.some(
+        ([url, init]) => String(url).endsWith('/instructions') && init?.method === 'POST',
+      ),
+    ).toBe(false)
+  })
+  it('返回仍使用指定续跑来源与不可变版本，不选最新Agent配置', async () => {
+    const user = userEvent.setup()
+    const f = draftNavigationFixture(false, true)
+    await screen.findByLabelText('执行方式')
+    await mode(user, /继续会话/)
+    await user.type(await screen.findByLabelText('指令'), '接着明确选择的来源继续')
+    await leaveForDevices(user)
+    await returnToDraft(user, f.task.title)
+    expect(screen.getByLabelText('执行方式')).toHaveTextContent('继续会话')
+    expect(screen.getByLabelText('指令')).toHaveValue('接着明确选择的来源继续')
+    expect(screen.getByLabelText('来源执行')).toHaveTextContent('第 1 次运行')
+    await waitFor(() => expect(screen.getByTestId('execution-context')).toHaveTextContent('r1'))
+  })
+  it.each(['same', 'other'] as const)('退出再登录清空草稿：%s actor', async (actor) => {
+    const user = userEvent.setup()
+    const f = draftNavigationFixture()
+    await user.type(await screen.findByLabelText('指令'), '只属于旧登录会话的文字')
+    await user.click(screen.getByRole('button', { name: '退出登录' }))
+    await screen.findByRole('heading', { name: '登录', level: 1 })
+    f.state.nextSession = actor === 'same' ? BOB : ALICE
+    await user.type(screen.getByLabelText('用户名'), 'fixture-member')
+    await user.type(screen.getByLabelText('密码'), 'correct horse battery staple')
+    await user.click(screen.getByRole('button', { name: '登录' }))
+    await screen.findByRole('button', { name: '退出登录' })
+    await returnToDraft(user, f.task.title)
+    if (actor === 'same') expect(screen.getByLabelText('指令')).toHaveValue('')
+    else expect(screen.queryByLabelText('指令')).toBeNull()
+    expect(screen.queryByDisplayValue('只属于旧登录会话的文字')).toBeNull()
+  })
+  it('刷新式重挂不恢复草稿，不向浏览器持久存储写正文', async () => {
+    const user = userEvent.setup()
+    const f = draftNavigationFixture()
+    const storage = vi.spyOn(Storage.prototype, 'setItem')
+    await user.type(await screen.findByLabelText('指令'), '只允许当前页面内存保存')
+    await leaveForDevices(user)
+    await returnToDraft(user, f.task.title)
+    expect(screen.getByLabelText('指令')).toHaveValue('只允许当前页面内存保存')
+    expect(storage.mock.calls.some(([, value]) => value.includes('只允许当前页面内存保存'))).toBe(
+      false,
+    )
+    storage.mockRestore()
+    f.unmount()
+    renderApp(`/tasks/${f.task.id}`, f.handlers)
+    expect(await screen.findByLabelText('指令')).toHaveValue('')
+  })
+})
+
+it('#337 会话过期后重新登录不恢复旧正文', async () => {
+  const user = userEvent.setup()
+  const f = draftNavigationFixture()
+  await user.type(await screen.findByLabelText('指令'), '会话过期应丢弃的正文')
+  f.state.session = null
+  await act(async () => {
+    await f.queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(f.task.id) })
+  })
+  await screen.findByRole('button', { name: '登录' })
+  await user.type(screen.getByLabelText('用户名'), 'fixture-member')
+  await user.type(screen.getByLabelText('密码'), 'correct horse battery staple')
+  await user.click(screen.getByRole('button', { name: '登录' }))
+  await screen.findByRole('heading', { name: f.task.title, level: 1 })
+  expect(await screen.findByLabelText('指令')).toHaveValue('')
 })

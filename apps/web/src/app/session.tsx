@@ -29,6 +29,7 @@ import { GlobalSearch } from './GlobalSearch.js'
 import { HintGroup } from '../shared/micro/Hint.js'
 import { NotificationBell, RunNotifications } from './RunNotifications.js'
 import { ShortcutHelp } from './ShortcutHelp.js'
+import { ExecutionDraftProvider } from '../features/task/execution-drafts.js'
 
 const SessionContext = createContext<Session | null>(null)
 
@@ -304,7 +305,9 @@ export function AppShell(): ReactNode {
               {/* #227：断线重连中的可见横幅（在线与首次连接保持安静）。 */}
               <ConnectionBanner />
               <main className="app-main">
-                <Outlet />
+                <ExecutionDraftProvider key={session.userId} userId={session.userId}>
+                  <Outlet />
+                </ExecutionDraftProvider>
               </main>
             </div>
           </div>

@@ -81,3 +81,7 @@
 ## 第四批组合验收
 
 个人入口五类动作/隐私/实时失效：先看web.attention的personal-attention/result.json，再运行verify-attention-evidence；断点按attention-trial-acceptance定位到web.realtime、hub.task/approval/artifact或runtime.bridge。脱敏组合包位于artifacts/evidence/operation-flow-batch4/trial-validation。真人记录独立使用operation-flow-trial-template.json，not_run不能写成PASS。
+
+## 第五批执行准备往返
+
+离开任务后丢稿、串任务/身份、待发请求重复：先看web.execution.draft的AppShell会话作用域与mode/source/owner绑定，再对HTTP载荷和幂等键。复跑execution-draft-acceptance；脱敏证据入operation-flow-batch5/draft，不记录草稿正文、秘密和本机路径。
