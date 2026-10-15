@@ -234,6 +234,48 @@ describe('immutable run input manifest (#325)', () => {
     const empty = await started({ artifactInputIds: [] })
     expect((await manifest(empty)).json().data.artifacts).toEqual([])
   })
+  it('accepts uppercase material UUIDs and rejects mixed-case duplicates without changing snapshots', async () => {
+    const producer = await started()
+    const id = await upload(producer, 'case-insensitive identity')
+    await finish(producer)
+    const selected = await started({ artifactInputIds: [id.toUpperCase()] })
+    const before = (await manifest(selected)).json().data
+    expect(before.artifacts.map((row: { artifactId: string }) => row.artifactId)).toEqual([id])
+    await finish(selected)
+    for (const url of [`/tasks/${taskId}/runs`, `/tasks/${taskId}/instructions`]) {
+      const duplicate = await command(
+        url,
+        url.endsWith('/runs')
+          ? {
+              agentId,
+              deviceId,
+              workspaceId,
+              prompt: 'duplicate',
+              artifactInputIds: [id, id.toUpperCase()],
+            }
+          : {
+              agentId,
+              text: 'duplicate',
+              intent: { kind: 'new' },
+              artifactInputIds: [id, id.toUpperCase()],
+            },
+      )
+      expect(duplicate.statusCode, duplicate.body).toBe(400)
+    }
+    const unified = await command(`/tasks/${taskId}/instructions`, {
+      agentId,
+      text: 'uppercase',
+      intent: { kind: 'new' },
+      artifactInputIds: [id.toUpperCase()],
+    })
+    expect(unified.statusCode, unified.body).toBe(201)
+    expect(
+      (await manifest(unified.json().data.runId))
+        .json()
+        .data.artifacts.map((row: { artifactId: string }) => row.artifactId),
+    ).toEqual([id])
+    expect((await manifest(selected)).json().data).toEqual(before)
+  })
   it('candidate, unknown and artifacts on another task cannot be selected', async () => {
     const producer = await started()
     const candidate = await upload(producer, 'private candidate', false)
