@@ -45,7 +45,7 @@ export function verifyPreparationReturnEvidence(input: unknown): PreparationRetu
   const before = record(data['selectionBefore'])
   for (const key of fields) {
     if (!identity(before[key])) problems.push(`selectionBefore ${key} missing`)
-    for (const name of ['selectionAfter', 'submittedSelection']) {
+    for (const name of ['selectionAfter', 'submittedSelection', 'actualSelection']) {
       const selection = record(data[name])
       if (!identity(selection[key]) || selection[key] !== before[key])
         problems.push(`${name} ${key} mismatch`)

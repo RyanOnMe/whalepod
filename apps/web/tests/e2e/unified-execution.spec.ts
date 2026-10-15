@@ -224,11 +224,19 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     await expect(box).toHaveValue(draft)
     await expect(owner.getByRole('button', { name: '发送追问' })).toBeDisabled()
     const before = (await hubApi(cookie, 'GET', `/runs/${firstRunId}`)).data as {
+      agentId: string
       dshSessionId: string
       profileRevisionId: string
       deviceId: string
       workspaceId: string
     }
+    const actualSelection = {
+      agentId: before.agentId,
+      profileRevisionId: before.profileRevisionId,
+      deviceId: before.deviceId,
+      workspaceId: before.workspaceId,
+    }
+    expect(actualSelection).toEqual(selectionBefore)
     await selectFromMenu(owner.getByLabel('执行方式'), /继续会话/)
     await expect(owner.getByLabel('指令', { exact: true })).toHaveValue(draft)
     await expect(owner.getByRole('button', { name: '继续会话', exact: true })).toBeEnabled()
@@ -275,6 +283,7 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
           selectionBefore,
           selectionAfter,
           submittedSelection,
+          actualSelection,
           targetId: 'task-execution',
           focusedTargetId: 'task-execution',
           draftPreserved: true,

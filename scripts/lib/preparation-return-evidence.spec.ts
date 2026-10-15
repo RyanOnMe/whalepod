@@ -13,6 +13,7 @@ function valid(): Record<string, unknown> {
     selectionBefore: { ...selection },
     selectionAfter: { ...selection },
     submittedSelection: { ...selection },
+    actualSelection: { ...selection },
     targetId: 'task-execution',
     focusedTargetId: 'task-execution',
     draftPreserved: true,
@@ -51,7 +52,12 @@ describe('production preparation return evidence', () => {
     }
   })
   it('rejects changed selections, incomplete fields and invalid identities', () => {
-    for (const field of ['selectionBefore', 'selectionAfter', 'submittedSelection']) {
+    for (const field of [
+      'selectionBefore',
+      'selectionAfter',
+      'submittedSelection',
+      'actualSelection',
+    ]) {
       for (const key of ['agentId', 'profileRevisionId', 'deviceId', 'workspaceId']) {
         const changed = valid()
         changed[field] = { ...(changed[field] as object), [key]: other }
