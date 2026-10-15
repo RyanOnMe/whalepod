@@ -33,6 +33,7 @@ function fixture(
     revisionHistory?: boolean
     taskStatus?: 'in_progress' | 'in_review'
     candidateOnly?: boolean
+    instructionGate?: Promise<void>
   } = {},
 ) {
   const task = makeTask({
@@ -113,8 +114,9 @@ function fixture(
     {
       method: 'POST',
       url: /\/instructions$/,
-      respond: (init) => {
+      respond: async (init) => {
         posts.push(JSON.parse(String(init.body)))
+        await options.instructionGate
         return ok({ outcome: 'started_run', runId: producer.id, instructionState: 'pending' })
       },
     },
@@ -274,6 +276,41 @@ describe('从交付物发起复核 (#326)', () => {
 })
 
 describe('根据意见修订与真人验收 (#327)', () => {
+  it.each(['review-then-revision', 'revision-then-review'] as const)(
+    '发送期间连续选择按最后意图执行：%s',
+    async (order) => {
+      const user = userEvent.setup()
+      let release!: () => void
+      const instructionGate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const f = fixture({ instructionGate })
+      await user.type(await screen.findByLabelText('指令'), '当前执行要求')
+      await selectOption(user, '选择 Agent', 'Builder')
+      await user.click(screen.getByRole('button', { name: '开始执行' }))
+      await waitFor(() => expect(f.posts).toHaveLength(1))
+      expect(screen.getByRole('button', { name: '执行方式' })).toBeDisabled()
+      for (const name of order === 'review-then-revision'
+        ? ['发起复核', '根据意见修订']
+        : ['根据意见修订', '发起复核']) {
+        await user.click(screen.getByRole('button', { name }))
+      }
+      await act(async () => {
+        release()
+      })
+      await waitFor(() => expect(screen.getByRole('button', { name: '执行方式' })).toBeEnabled())
+      expect(f.posts).toHaveLength(1)
+      if (order === 'review-then-revision') {
+        expect(screen.getByTestId('revision-context')).toHaveTextContent(f.artifact.title)
+        expect(screen.getByLabelText('来源执行')).toHaveTextContent('选择要继续的会话')
+        expect(screen.queryByTestId('review-scope')).not.toBeInTheDocument()
+      } else {
+        expect(screen.queryByTestId('revision-context')).not.toBeInTheDocument()
+        expect(screen.getByTestId('review-scope')).toBeVisible()
+        expect(screen.getByLabelText(`复核材料：${f.artifact.title}`)).toBeChecked()
+      }
+    },
+  )
   it('最近执行是Reviewer时仍不自动选来源；手动回到Builder并携带意见材料', async () => {
     const user = userEvent.setup()
     const f = fixture({ revisionHistory: true })
