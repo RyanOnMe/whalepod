@@ -46,6 +46,35 @@ describe('task API (G2-01/03/06 + lifecycle)', () => {
     await database.close()
   })
 
+  it('#319 验收条件来自生产任务事实，非责任人不能借条件获得行动权', async () => {
+    const owner = await driveSetup(ctx)
+    const { session: member } = await driveInviteAndAccept(ctx, owner, {
+      username: 'reader',
+      displayName: 'Reader',
+      password: 'correct horse battery staple',
+    })
+    const projectId = await createProject(ctx, owner)
+    const created = await apiInject(ctx, owner, {
+      method: 'POST',
+      url: `/api/v1/projects/${projectId}/tasks`,
+      payload: { title: '前置条件', assigneeUserId: owner.userId },
+    })
+    const taskId = created.json().data.id as string
+    const pending = await apiInject(ctx, owner, { method: 'GET', url: `/api/v1/tasks/${taskId}` })
+    expect(pending.json().data.reviewEligibility).toEqual({
+      allowed: false,
+      reason: 'not_accepted',
+    })
+    await apiInject(ctx, owner, { method: 'POST', url: `/api/v1/tasks/${taskId}/accept` })
+    const reader = await apiInject(ctx, member, { method: 'GET', url: `/api/v1/tasks/${taskId}` })
+    expect(reader.json().data.reviewEligibility).toEqual({ allowed: false, reason: 'not_assignee' })
+    const accepted = await apiInject(ctx, owner, { method: 'GET', url: `/api/v1/tasks/${taskId}` })
+    expect(accepted.json().data.reviewEligibility).toEqual({
+      allowed: false,
+      reason: 'task_not_in_progress',
+    })
+  })
+
   it('G2-01: creates a Task with pending assignment, both members see it', async () => {
     const alice = await driveSetup(ctx)
     const { session: bob } = await driveInviteAndAccept(ctx, alice, {

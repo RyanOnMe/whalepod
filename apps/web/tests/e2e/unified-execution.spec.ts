@@ -77,6 +77,9 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     await owner.getByRole('button', { name: '接受任务' }).click()
     await expect(owner.getByText('你已接受此任务。')).toBeVisible()
     await member.goto(`/tasks/${taskId}`)
+    await expect(member.getByTestId('execution-responsibility')).toContainText('Alice')
+    await member.getByRole('link', { name: '前往讨论' }).click()
+    await expect(member.locator('#comments-heading')).toBeFocused()
     await expect(member.getByTestId('execution-blocker')).toContainText('只有责任人和已授权成员')
     await expect(member.getByLabel('指令', { exact: true })).toHaveCount(0)
     const execute = owner.locator('[aria-labelledby="instructions-heading"]')
@@ -115,6 +118,8 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     expect(firstReply.status()).toBe(201)
     const firstRunId = (await firstReply.json()).data.runId as string
     await waitForRunStatus(firstRunId, 'waiting_approval')
+    await expect(owner.getByRole('button', { name: '提交验收', exact: true })).toBeDisabled()
+    await expect(owner.getByTestId('review-condition')).toContainText('执行仍在进行')
     const draft = '请保留上文继续检查'
     const box = owner.getByLabel('指令', { exact: true })
     await expect(owner.getByRole('button', { name: '发送追问' })).toBeEnabled()
@@ -161,6 +166,8 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     expect(after.profileRevisionId).toBe(before.profileRevisionId)
     expect(after.deviceId).toBe(before.deviceId)
     expect(after.workspaceId).toBe(before.workspaceId)
+    await expect(owner.getByRole('button', { name: '提交验收', exact: true })).toBeDisabled()
+    await expect(owner.getByTestId('review-condition')).toContainText('发布至少一个交付物')
     const evidence = join(process.cwd(), 'artifacts', 'evidence', 'unified-execution')
     await mkdir(evidence, { recursive: true })
     await writeFile(
@@ -181,6 +188,9 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
           preparationExpiresAndRechecks: true,
           staleDraftPreserved: true,
           memberHasNoInstructionInput: true,
+          reviewBlockedUntilPublished: true,
+          activeRunBlocksReview: true,
+          namedResponsibleAndDiscussionFocus: true,
           sourceRevisionKept: after.profileRevisionId === before.profileRevisionId,
           sourceDeviceKept: after.deviceId === before.deviceId,
           sourceWorkspaceKept: after.workspaceId === before.workspaceId,

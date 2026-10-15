@@ -3,8 +3,11 @@
  * 已发布 Artifact metadata，不暴露 runtime internals（Device Token、Workspace path、
  * 原始 Session event、dshSessionId、digest 等——03 §9 脱敏 + 02 Step 1 断言）。
  */
+import type { TaskReviewEligibility } from '@whalepod/protocol'
+import { reviewPrerequisiteReason } from './review-conditions.js'
 import type { ArtifactRow, RunRow, TaskRow } from '@whalepod/db'
 import {
+  TERMINAL_RUN_STATUSES,
   getAgent,
   getProfileRevision,
   getTask,
@@ -118,6 +121,7 @@ function toTaskRoomArtifact(row: ArtifactRow): TaskRoomArtifact {
 
 export interface TaskRoomView {
   task: TaskView
+  reviewEligibility: TaskReviewEligibility
   /** 讨论流（ADR-0010 决策 1）：**只含** `kind='discussion'` 的人际评论。 */
   comments: CommentView[]
   /**
@@ -205,6 +209,20 @@ export async function getTaskRoom(
   ])
   return {
     task: toTaskView(task),
+    reviewEligibility: (() => {
+      const reason =
+        viewerUserId !== task.assigneeUserId
+          ? 'not_assignee'
+          : task.assignmentStatus !== 'accepted'
+            ? 'not_accepted'
+            : task.status !== 'in_progress'
+              ? 'task_not_in_progress'
+              : reviewPrerequisiteReason(
+                  runs.some((row) => !TERMINAL_RUN_STATUSES.has(row.status)),
+                  artifacts.some((row) => row.status === 'published'),
+                )
+      return { allowed: reason === null, reason }
+    })(),
     comments: comments.map(toCommentView),
     instructions: instructions.map(toCommentView),
     runs: runs.map((row) =>
