@@ -15,7 +15,10 @@ export async function snapshotRunInputs(
   selectedIds: string[] | undefined,
   source?: RunRow,
 ): Promise<ArtifactInputManifest> {
-  if (selectedIds === undefined && source !== undefined) {
+  // PostgreSQL UUID identities are case insensitive and are returned in lowercase.
+  // Internal command callers also pass through here, beyond HTTP schema normalization.
+  const ids = selectedIds?.map((id) => id.toLowerCase())
+  if (ids === undefined && source !== undefined) {
     if (source.artifactInputManifest === null)
       throw new RunCommandError(
         'CONFLICT',
@@ -26,7 +29,7 @@ export async function snapshotRunInputs(
       throw new RunCommandError('CONFLICT', 'source input task mismatch')
     return pinned
   }
-  if (selectedIds?.length === 0) return { taskId, artifacts: [] }
+  if (ids?.length === 0) return { taskId, artifacts: [] }
   const rows = await tx
     .select()
     .from(schema.artifacts)
@@ -34,7 +37,7 @@ export async function snapshotRunInputs(
       and(
         eq(schema.artifacts.taskId, taskId),
         eq(schema.artifacts.status, 'published'),
-        ...(selectedIds === undefined ? [] : [inArray(schema.artifacts.id, selectedIds)]),
+        ...(ids === undefined ? [] : [inArray(schema.artifacts.id, ids)]),
       ),
     )
     .orderBy(asc(schema.artifacts.createdAt), asc(schema.artifacts.id))
@@ -44,14 +47,12 @@ export async function snapshotRunInputs(
       'ARTIFACT_INPUT_MANIFEST_TOO_LARGE',
       '已发布材料超过64项，请明确选择本次输入',
     )
-  if (selectedIds !== undefined && rows.length !== selectedIds.length)
+  if (ids !== undefined && rows.length !== ids.length)
     throw new RunCommandError('NOT_FOUND', '所选材料不在本任务的已发布交付物中')
   const byId = new Map(rows.map((row) => [row.id, row]))
   return ArtifactInputManifestSchema.parse({
     taskId,
-    artifacts: (selectedIds === undefined ? rows : selectedIds.map((id) => byId.get(id)!)).map(
-      toManifestEntry,
-    ),
+    artifacts: (ids === undefined ? rows : ids.map((id) => byId.get(id)!)).map(toManifestEntry),
   })
 }
 
