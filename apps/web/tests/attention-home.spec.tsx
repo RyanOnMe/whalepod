@@ -55,6 +55,7 @@ function fixture(
     fail: false,
     accepted: false,
     refreshGate: undefined as Promise<void> | undefined,
+    roomGate: undefined as Promise<void> | undefined,
   }
   let eventReads = 0
   const handlers: MockHandler[] = [
@@ -74,14 +75,16 @@ function fixture(
     {
       method: 'GET',
       url: new RegExp(`/tasks/${task.id}$`),
-      respond: () =>
-        taskRoomHandler(
+      respond: async () => {
+        await state.roomGate
+        return taskRoomHandler(
           { ...task, assignmentStatus: state.accepted ? 'accepted' : task.assignmentStatus },
           {
             runs: kind === 'decide_approval' ? [run] : [],
             artifacts: kind === 'inspect_candidate' ? [artifact] : [],
           },
-        ).respond({}),
+        ).respond({})
+      },
     },
     {
       method: 'GET',
@@ -134,7 +137,7 @@ function fixture(
     teamMembersHandler(),
   ]
   const view = renderApp('/', loggedInHandlers(kind === 'reassign_task' ? ALICE : BOB, handlers))
-  return { ...view, task, artifact, item, state, eventReads: () => eventReads }
+  return { ...view, task, run, artifact, item, state, eventReads: () => eventReads }
 }
 function region() {
   return screen.getByRole('region', { name: '需要我处理' })
@@ -204,6 +207,58 @@ describe('首页个人行动入口 (#332)', () => {
     expect(f.eventReads()).toBeGreaterThan(0)
     expect(f.fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
   })
+  it.each(['inspect_candidate', 'decide_approval'] as const)(
+    '成功旧缓存补入新对象后仍定位，后续刷新不抢焦点：%s',
+    async (kind) => {
+      const user = userEvent.setup()
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const f = fixture(kind, undefined, kind === 'decide_approval' ? gate : undefined)
+      if (kind === 'inspect_candidate') f.state.roomGate = gate
+      await screen.findByRole('link', { name: `${labels[kind]} · ${f.task.title}` })
+      const cached = {
+        task: f.task,
+        comments: [],
+        instructions: [],
+        artifacts: [],
+        runs: kind === 'decide_approval' ? [f.run] : [],
+        nextRunApprovalPolicy: null,
+      }
+      f.queryClient.setQueryData(['task-room', f.task.id], cached, { updatedAt: 1 })
+      if (kind === 'decide_approval') {
+        f.queryClient.setQueryData(['run', f.run.id, 'events'], { events: [] }, { updatedAt: 1 })
+      }
+      await user.click(screen.getByRole('link', { name: `${labels[kind]} · ${f.task.title}` }))
+      await screen.findByTestId('task-back-link')
+      const id = kind === 'inspect_candidate' ? `artifact-${f.artifact.id}` : `approval-${CARD}`
+      expect(document.getElementById(id)).toBeNull()
+      expect(f.queryClient.getQueryState(['task-room', f.task.id])?.status).toBe('success')
+      if (kind === 'decide_approval')
+        expect(f.queryClient.getQueryState(['run', f.run.id, 'events'])?.status).toBe('success')
+      await act(async () => release())
+      await waitFor(() => expect(document.getElementById(id)).toHaveFocus())
+      expect(f.fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
+      const back = screen.getByTestId('task-back-link')
+      back.focus()
+      await act(async () => {
+        if (kind === 'inspect_candidate') {
+          f.queryClient.setQueryData(['task-room', f.task.id], {
+            ...cached,
+            artifacts: [f.artifact],
+            task: { ...f.task, title: '后台更新标题' },
+          })
+        } else {
+          f.queryClient.setQueryData(
+            ['run', f.run.id, 'events'],
+            (old: { events: unknown[] } | undefined) => ({ ...old, refreshed: true }),
+          )
+        }
+      })
+      expect(back).toHaveFocus()
+    },
+  )
   it('本人接受后回到缓存首页，旧事项消失，无需WS补偿', async () => {
     const user = userEvent.setup()
     const f = fixture()
