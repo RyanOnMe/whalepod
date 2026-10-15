@@ -77,3 +77,7 @@
 个人队列错项/缺项先看hub.task的GET /tasks/attention与Session身份、对象状态；严格响应判据见personal-attention-acceptance。设备输入与运行状态沿原node/runtime证据地图；脱敏日志位于artifacts/evidence/operation-flow-batch4/input-projection。
 
 首页个人待办/最近任务不更新：先对hub.task响应与web.query事件失效键，再看WS重连和候选可见页轮询；动作未定位先看web.route锚点与异步审批事件。复跑见attention-entry-acceptance，证据入operation-flow-batch4/home-entry。
+
+## 第四批组合验收
+
+个人入口五类动作/隐私/实时失效：先看web.attention的personal-attention/result.json，再运行verify-attention-evidence；断点按attention-trial-acceptance定位到web.realtime、hub.task/approval/artifact或runtime.bridge。脱敏组合包位于artifacts/evidence/operation-flow-batch4/trial-validation。真人记录独立使用operation-flow-trial-template.json，not_run不能写成PASS。
