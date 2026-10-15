@@ -1097,3 +1097,252 @@ test('交付闭环：意见发布 → 明确返回产出会话修订 → 重新�
     ),
   )
 })
+
+test('个人行动入口：双用户五类事项只读定位、真人确认与实时移除', async () => {
+  test.setTimeout(180_000)
+  const bobHome = await shared.bobContext!.newPage()
+  const aliceHome = await shared.aliceContext!.newPage()
+  const actions: Array<Record<string, unknown>> = []
+  let commandCount = 0
+  for (const page of [bobHome, aliceHome])
+    page.on('request', (request) => {
+      if (request.method() === 'POST' && request.url().includes('/api/v1/')) commandCount++
+    })
+  const region = (page: Page) => page.getByRole('region', { name: '需要我处理' })
+  const attention = async (cookie: string) => {
+    const response = await hubApi(cookie, 'GET', '/tasks/attention')
+    expect(response.status).toBe(200)
+    return response.data as { items: Array<{ kind: string; taskId: string; objectId: string }> }
+  }
+  const taskFact = async (id: string) => {
+    const response = await hubApi(shared.bobCookie!, 'GET', `/tasks/${id}`)
+    expect(response.status).toBe(200)
+    return (
+      response.data as { task: { projectId: string; status: string; assignmentStatus: string } }
+    ).task
+  }
+  const navigate = async (page: Page, label: string, targetId: string) => {
+    const before = commandCount
+    await region(page).getByRole('link', { name: label, exact: true }).click()
+    await expect(page.locator(`[id="${targetId}"]`)).toBeFocused()
+    expect(commandCount).toBe(before)
+    return {
+      targetId,
+      focusedTargetId: await page.evaluate(() => document.activeElement?.id),
+      commandsBeforeNavigation: before,
+      commandsAfterNavigation: commandCount,
+    }
+  }
+  try {
+    await Promise.all([bobHome.goto('/'), aliceHome.goto('/')])
+    await expect(region(bobHome)).toHaveAttribute('aria-busy', 'false')
+    await expect(region(aliceHome)).toHaveAttribute('aria-busy', 'false')
+    const projectId = (await taskFact(shared.taskId!)).projectId
+    const create = async (title: string) => {
+      const response = await hubApi(shared.aliceCookie!, 'POST', `/projects/${projectId}/tasks`, {
+        title,
+        assigneeUserId: shared.bobUserId,
+      })
+      expect(response.status).toBe(201)
+      return (response.data as { id: string }).id
+    }
+    const title = '从个人入口完成验收'
+    const taskId = await create(title)
+    // Keep both homepages open: these assertions require real task.changed delivery.
+    await expect(
+      region(bobHome).getByRole('link', { name: `接受任务 · ${title}`, exact: true }),
+    ).toBeVisible()
+    await expect(
+      bobHome
+        .getByRole('navigation', { name: '最近任务' })
+        .getByRole('link', { name: new RegExp(`^${title}`) }),
+    ).toBeVisible()
+    const recentTasksUpdatedWithoutReload = true
+    await expect(
+      region(aliceHome).getByRole('link', { name: `接受任务 · ${title}`, exact: true }),
+    ).toHaveCount(0)
+    const acceptedNavigation = await navigate(bobHome, `接受任务 · ${title}`, 'task-assignment')
+    const beforeAccept = (await taskFact(taskId)).assignmentStatus
+    await bobHome.getByRole('button', { name: '接受任务', exact: true }).click()
+    await expect(bobHome.getByText('你已接受此任务。', { exact: true })).toBeVisible()
+    actions.push({
+      kind: 'accept_assignment',
+      taskId,
+      objectId: taskId,
+      before: beforeAccept,
+      after: (await taskFact(taskId)).assignmentStatus,
+      ...acceptedNavigation,
+    })
+    await bobHome.goto('/')
+    await expect(region(bobHome)).toHaveAttribute('aria-busy', 'false')
+    await expect(
+      region(bobHome).getByRole('link', { name: `接受任务 · ${title}`, exact: true }),
+    ).toHaveCount(0)
+
+    const rejectedTitle = '拒绝后由所有者恢复'
+    const rejectedId = await create(rejectedTitle)
+    await region(bobHome)
+      .getByRole('link', { name: `接受任务 · ${rejectedTitle}`, exact: true })
+      .click()
+    await bobHome.getByRole('button', { name: '拒绝任务', exact: true }).click()
+    await expect(bobHome.getByText('此任务已被拒绝，等待所有者或管理员重新指派。')).toBeVisible()
+    await expect(
+      region(aliceHome).getByRole('link', { name: `重新指派 · ${rejectedTitle}`, exact: true }),
+    ).toBeVisible()
+    const reassignedNavigation = await navigate(
+      aliceHome,
+      `重新指派 · ${rejectedTitle}`,
+      'task-assignment',
+    )
+    const beforeReassign = (await taskFact(rejectedId)).assignmentStatus
+    await aliceHome.getByRole('button', { name: '重新指派', exact: true }).click()
+    await selectFromMenu(aliceHome.getByLabel('新责任人'), 'Alice')
+    await aliceHome.getByRole('button', { name: '确认重新指派' }).click()
+    await expect(aliceHome.getByRole('button', { name: '接受任务', exact: true })).toBeVisible()
+    actions.push({
+      kind: 'reassign_task',
+      taskId: rejectedId,
+      objectId: rejectedId,
+      before: beforeReassign,
+      after: (await taskFact(rejectedId)).assignmentStatus,
+      ...reassignedNavigation,
+    })
+    await aliceHome.getByRole('button', { name: '接受任务', exact: true }).click()
+    await expect(aliceHome.getByText('你已接受此任务。', { exact: true })).toBeVisible()
+    await Promise.all([bobHome.goto('/'), aliceHome.goto('/')])
+    await expect(region(aliceHome)).toHaveAttribute('aria-busy', 'false')
+    await expect(
+      region(aliceHome).getByRole('link', { name: `重新指派 · ${rejectedTitle}`, exact: true }),
+    ).toHaveCount(0)
+
+    await waitDeviceOnline()
+    const bob = shared.bob!
+    await bob.goto(`/tasks/${taskId}`)
+    await selectFromMenu(bob.getByLabel('选择 Agent'), 'builder')
+    await selectFromMenu(bob.getByLabel('选择设备'), /e2e-node（在线）/)
+    await selectFromMenu(bob.getByLabel('选择 Workspace'), 'e2e-ws')
+    await bob.getByLabel('指令', { exact: true }).fill('通过个人入口检查并发布验收交付物')
+    const start = bob.waitForResponse(
+      (response) =>
+        response.url().endsWith(`/tasks/${taskId}/instructions`) &&
+        response.request().method() === 'POST',
+    )
+    await bob.getByRole('button', { name: '开始执行', exact: true }).click()
+    const started = await start
+    expect(started.status()).toBe(201)
+    const runId = (await started.json()).data.runId as string
+    shared.runIds.push(runId)
+    await waitForRunStatus(runId, 'waiting_approval', 120_000)
+    const pending = (await getRunFact(runId)).approvals[0]!
+    expect(pending.status).toBe('pending')
+    const observerHasNoApprovalAction = !(await attention(shared.aliceCookie!)).items.some(
+      (item) => item.kind === 'decide_approval' && item.taskId === taskId,
+    )
+    expect(observerHasNoApprovalAction).toBe(true)
+    await expect(
+      region(aliceHome).getByRole('link', { name: `处理审批 · ${title}`, exact: true }),
+    ).toHaveCount(0)
+    await expect(
+      region(bobHome).getByRole('link', { name: `处理审批 · ${title}`, exact: true }),
+    ).toBeVisible()
+    const approvalNavigation = await navigate(
+      bobHome,
+      `处理审批 · ${title}`,
+      `approval-${pending.id}`,
+    )
+    const beforeApprove = (await getRunFact(runId)).approvals[0]!.status
+    await bobHome.getByTestId('approve-button').click()
+    await waitForRunStatus(runId, 'completed', 120_000)
+    await waitForRuntimeReleased(runId)
+    const completed = await getRunFact(runId)
+    actions.push({
+      kind: 'decide_approval',
+      taskId,
+      objectId: pending.id,
+      before: beforeApprove,
+      after: completed.approvals[0]!.status,
+      ...approvalNavigation,
+    })
+    const candidate = completed.artifacts.find((item) => item.status === 'candidate')!
+    expect(candidate).toBeDefined()
+    const observerItems = await attention(shared.aliceCookie!)
+    const privateCandidateIdentityHidden =
+      !JSON.stringify(observerItems).includes(candidate.id) &&
+      !observerItems.items.some(
+        (item) => item.taskId === taskId && item.kind === 'inspect_candidate',
+      )
+    expect(privateCandidateIdentityHidden).toBe(true)
+    await expect(
+      region(aliceHome).getByRole('link', { name: `检查候选 · ${title}`, exact: true }),
+    ).toHaveCount(0)
+    await bobHome.goto('/')
+    const candidateNavigation = await navigate(
+      bobHome,
+      `检查候选 · ${title}`,
+      `artifact-${candidate.id}`,
+    )
+    const beforePublish = (await getRunFact(runId)).artifacts.find(
+      (item) => item.id === candidate.id,
+    )!.status
+    const row = bobHome.locator(`[id="artifact-${candidate.id}"]`)
+    await row.getByRole('button', { name: '预览', exact: true }).click()
+    await expect(row.getByTestId('artifact-preview')).toContainText('E2E 验收交付物')
+    await row.getByTestId('artifact-publish-button').click()
+    await bobHome.getByRole('button', { name: '确认发布给团队' }).click()
+    await expect(row.getByTestId('artifact-publish-button')).toHaveCount(0)
+    actions.push({
+      kind: 'inspect_candidate',
+      taskId,
+      objectId: candidate.id,
+      before: beforePublish,
+      after: (await getRunFact(runId)).artifacts.find((item) => item.id === candidate.id)!.status,
+      ...candidateNavigation,
+    })
+    await bobHome.getByRole('button', { name: '提交验收', exact: true }).click()
+    await bobHome.getByRole('button', { name: '确认提交验收' }).click()
+    await expect(bobHome.locator('.badge-task-in_review')).toBeVisible()
+    await bobHome.goto('/')
+    await expect(region(bobHome)).toHaveAttribute('aria-busy', 'false')
+    await expect(
+      region(bobHome).getByRole('link', { name: `检查候选 · ${title}`, exact: true }),
+    ).toHaveCount(0)
+    const completeNavigation = await navigate(bobHome, `确认完成 · ${title}`, 'task-actions')
+    const beforeComplete = (await taskFact(taskId)).status
+    await bobHome.getByRole('button', { name: '完成任务', exact: true }).click()
+    expect((await taskFact(taskId)).status).toBe('in_review')
+    await bobHome.getByRole('button', { name: '确认完成任务' }).click()
+    await expect(bobHome.locator('.badge-task-done')).toBeVisible()
+    actions.push({
+      kind: 'complete_task',
+      taskId,
+      objectId: taskId,
+      before: beforeComplete,
+      after: (await taskFact(taskId)).status,
+      ...completeNavigation,
+    })
+    await bobHome.goto('/')
+    await expect(region(bobHome)).toHaveAttribute('aria-busy', 'false')
+    await expect(
+      region(bobHome).getByRole('link', { name: `确认完成 · ${title}`, exact: true }),
+    ).toHaveCount(0)
+    const evidence = {
+      component: 'web.attention',
+      source: 'production-http-ws-node-runtime',
+      actions,
+      privateCandidateIdentityHidden,
+      observerHasNoApprovalAction,
+      recentTasksUpdatedWithoutReload,
+      runtimeRunStatus: completed.run.status,
+      actionItemsAfterDone: (await attention(shared.bobCookie!)).items.filter(
+        (item) => item.taskId === taskId,
+      ).length,
+      humanUsability: 'not_measured',
+    }
+    const dir = join(process.cwd(), 'artifacts', 'evidence', 'personal-attention')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'result.json'), JSON.stringify(evidence, null, 2))
+  } finally {
+    await bobHome.close()
+    await aliceHome.close()
+  }
+})

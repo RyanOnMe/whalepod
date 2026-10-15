@@ -1,0 +1,27 @@
+{
+  "status": "not_run",
+  "baselineCommit": "366fea41c13413b0ee1bba72a48cff02908818e4",
+  "candidateCommit": null,
+  "teams": [],
+  "observations": [],
+  "observationFields": {
+    "teamCode": null,
+    "participantCode": null,
+    "version": null,
+    "order": null,
+    "journey": null,
+    "actionKind": null,
+    "locateMs": null,
+    "operationMs": null,
+    "providerWaitMs": null,
+    "setupMs": null,
+    "correctExplanation": null,
+    "independentCompletion": null,
+    "helpCount": null,
+    "mistake": null,
+    "blockerComponent": null,
+    "sanitizedQuote": null,
+    "recentTasksStale": null
+  },
+  "conclusions": null
+}
