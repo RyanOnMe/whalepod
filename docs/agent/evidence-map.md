@@ -67,3 +67,7 @@
 ### 产出复核入口（#326）
 
 所选材料与运行不符时先比对web.delivery.review中的artifactId和GET /runs/:id/input-manifest；新发布不得替代旧输入。无权/活跃阻塞查web.execution，准备与审批仍沿原链。复跑artifact-review-entry-acceptance，证据artifacts/evidence/delivery-review/。
+
+### 意见修订与人工验收（#327）
+
+修订误接Reviewer先查web.delivery.revision的producerRunId、实际请求intent及Run血缘；材料看新Run固定manifest与旧Reviewer清单对比。状态应由新Run将in_review退回in_progress，done仅由真人complete命令产生。复跑delivery-revision-acceptance，证据artifacts/evidence/delivery-revision/。

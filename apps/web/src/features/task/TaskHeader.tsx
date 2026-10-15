@@ -33,8 +33,8 @@ const ACTION_LABEL: Readonly<Record<TaskAction, string>> = {
 }
 
 const ACTION_CONFIRM: Readonly<Record<TaskAction, string>> = {
-  'submit-review': '将任务提交验收？提交后由你或 Reviewer 复核并完成。',
-  complete: '确认任务已完成并标记 done？',
+  'submit-review': '将任务提交验收？提交后进入待验收；复核意见由你判断，最终仍需责任人确认完成。',
+  complete: '确认已检查交付物并完成任务？Agent 复核不会自动完成任务。',
   cancel: '取消任务？有活跃 Run 时 Hub 会同步请求取消。',
 }
 
@@ -61,9 +61,16 @@ export function TaskHeader({ task, session, reviewEligibility }: TaskHeaderProps
           ? '已满足提交条件；提交和最终完成由真人确认。'
           : '当前责任人接受任务并开始推进后，才能提交验收。'
 
+  const confirmingAllowed =
+    canAct &&
+    (confirming === 'submit-review'
+      ? task.status === 'in_progress' && canSubmit
+      : confirming === 'complete'
+        ? task.status === 'in_review'
+        : confirming === 'cancel' && task.status !== 'done' && task.status !== 'cancelled')
   useEffect(() => {
-    if (confirming === 'submit-review' && !canSubmit) setConfirming(null)
-  }, [confirming, canSubmit])
+    if (confirming !== null && !confirmingAllowed) setConfirming(null)
+  }, [confirming, confirmingAllowed])
 
   const mutation = useMutation({
     mutationFn: (kind: TaskAction) => api.mutate<TaskView>(`/tasks/${task.id}/${kind}`),
@@ -153,7 +160,7 @@ export function TaskHeader({ task, session, reviewEligibility }: TaskHeaderProps
       </p>
 
       {canAct ? (
-        <div className="task-actions" aria-label="任务行动">
+        <div id="task-actions" tabIndex={-1} className="task-actions" aria-label="任务行动">
           <span className="visually-hidden">仅当前责任人可用</span>
           {task.status === 'in_progress' ? (
             <button
@@ -205,7 +212,7 @@ export function TaskHeader({ task, session, reviewEligibility }: TaskHeaderProps
           danger={confirming === 'cancel'}
           pending={mutation.isPending}
           onConfirm={() => {
-            if (confirming !== 'submit-review' || canSubmit) mutation.mutate(confirming)
+            if (confirmingAllowed) mutation.mutate(confirming)
           }}
           onCancel={() => setConfirming(null)}
         />

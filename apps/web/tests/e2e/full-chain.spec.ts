@@ -72,6 +72,7 @@ const shared: {
   bobUserId?: string
   deviceId?: string
   builderRunId?: string
+  reviewerRunId?: string
   artifactId?: string
   lostRunId?: string
   cancelledRunId?: string
@@ -525,6 +526,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     })
     const runId = (await response.json()).data.runId as string
     shared.runIds.push(runId)
+    shared.reviewerRunId = runId
 
     // Reviewer 同样触发 ask（replay 快照）→ 再走一次真人批准。
     await waitForRunStatus(runId, 'waiting_approval', 120_000)
@@ -950,3 +952,148 @@ async function approveAndCompleteLoose(runId: string): Promise<void> {
   await waitForRunStatus(runId, 'completed', 120_000)
   await waitForRuntimeReleased(runId)
 }
+
+test('交付闭环：意见发布 → 明确返回产出会话修订 → 重新发布 → 真人验收完成', async () => {
+  test.setTimeout(180_000)
+  const bob = shared.bob!
+  const alice = shared.alice!
+  const reviewerId = shared.reviewerRunId!
+  const builderId = shared.builderRunId!
+  expect(reviewerId).toBeTruthy()
+  const feedback = (await getRunFact(reviewerId)).artifacts.find((a) => a.status === 'candidate')
+  expect(feedback).toBeDefined()
+  const oldManifest = await hubApi(shared.bobCookie!, 'GET', `/runs/${reviewerId}/input-manifest`)
+  const builderSource = (await hubApi(shared.bobCookie!, 'GET', `/runs/${builderId}`)).data as {
+    agentId: string
+    profileRevisionId: string
+    dshSessionId: string
+  }
+  await bob.reload()
+  const feedbackRow = bob
+    .locator('.artifact-item')
+    .filter({ has: bob.locator(`dd[title="${reviewerId}"]`) })
+  await feedbackRow.getByRole('button', { name: '预览', exact: true }).click()
+  await feedbackRow.getByTestId('artifact-publish-button').click()
+  await bob.getByRole('button', { name: '确认发布给团队' }).click()
+  await expect(feedbackRow.getByRole('button', { name: '根据意见修订' })).toBeVisible()
+  expect(
+    (await hubApi(shared.bobCookie!, 'GET', `/runs/${reviewerId}/input-manifest`)).data,
+  ).toEqual(oldManifest.data)
+  // 复核可选，仍由真人先提交验收；有修订时开始新记录回到in_progress。
+  await bob.getByRole('button', { name: '提交验收', exact: true }).click()
+  await bob.getByRole('button', { name: '确认提交验收' }).click()
+  await expect(bob.locator('.badge-task-in_review')).toBeVisible()
+  await alice.reload()
+  await expect(alice.getByRole('button', { name: '完成任务', exact: true })).toHaveCount(0)
+  const draft = '根据已发布复核意见调整初稿，并说明修订内容。'
+  await bob.getByLabel('指令', { exact: true }).fill(draft)
+  await feedbackRow.getByRole('button', { name: '根据意见修订' }).click()
+  await expect(bob.getByLabel('指令', { exact: true })).toHaveValue(draft)
+  await expect(bob.getByLabel('来源执行')).toContainText('选择要继续的会话')
+  await expect(bob.getByRole('button', { name: '继续会话', exact: true })).toBeDisabled()
+  await selectFromMenu(bob.getByLabel('来源执行'), /^第 1 次运行$/)
+  await expect(bob.getByTestId('execution-context')).toContainText('builder')
+  const responsePromise = bob.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/tasks/${shared.taskId}/instructions`) &&
+      response.request().method() === 'POST',
+  )
+  const evidence = join(process.cwd(), 'artifacts', 'evidence', 'delivery-revision')
+  await mkdir(evidence, { recursive: true })
+  await bob.screenshot({ path: join(evidence, 'explicit-producer.png'), fullPage: true })
+  await bob.getByRole('button', { name: '继续会话', exact: true }).click()
+  const response = await responsePromise
+  expect(response.status()).toBe(201)
+  expect(response.request().postDataJSON()).toMatchObject({
+    intent: { kind: 'resume', runId: builderId },
+    artifactInputIds: [feedback!.id],
+    text: draft,
+  })
+  const revisedId = (await response.json()).data.runId as string
+  shared.runIds.push(revisedId)
+  const revised = (await hubApi(shared.bobCookie!, 'GET', `/runs/${revisedId}`)).data as {
+    agentId: string
+    profileRevisionId: string
+    dshSessionId: string
+    resumeFromRunId: string
+  }
+  expect(revised.agentId).toBe(builderSource.agentId)
+  expect(revised.profileRevisionId).toBe(builderSource.profileRevisionId)
+  expect(revised.resumeFromRunId).toBe(builderId)
+  expect(
+    (
+      (await hubApi(shared.bobCookie!, 'GET', `/tasks/${shared.taskId}`)).data as {
+        task: { status: string }
+      }
+    ).task.status,
+  ).toBe('in_progress')
+  const selectedInputs = (
+    await hubApi(shared.bobCookie!, 'GET', `/runs/${revisedId}/input-manifest`)
+  ).data as { artifacts: Array<{ artifactId: string }> }
+  expect(selectedInputs.artifacts.map((a) => a.artifactId)).toEqual([feedback!.id])
+  await waitForRunStatus(revisedId, 'waiting_approval', 120_000)
+  await approveAndCompleteLoose(revisedId)
+  const revisedArtifact = (await getRunFact(revisedId)).artifacts.find(
+    (a) => a.status === 'candidate',
+  )
+  expect(revisedArtifact).toBeDefined()
+  await bob.reload()
+  const revisedRow = bob
+    .locator('.artifact-item')
+    .filter({ has: bob.locator(`dd[title="${revisedId}"]`) })
+  await alice.reload()
+  await expect(
+    alice.locator('.artifact-item').filter({ has: alice.locator(`dd[title="${revisedId}"]`) }),
+  ).toHaveCount(0)
+  await revisedRow.getByRole('button', { name: '预览', exact: true }).click()
+  await expect(revisedRow.getByTestId('artifact-preview')).toContainText('E2E 验收交付物')
+  await revisedRow.getByTestId('artifact-publish-button').click()
+  await bob.getByRole('button', { name: '确认发布给团队' }).click()
+  await alice.reload()
+  await expect(
+    alice.locator('.artifact-item').filter({ has: alice.locator(`dd[title="${revisedId}"]`) }),
+  ).toHaveCount(1)
+  expect(
+    (await hubApi(shared.bobCookie!, 'GET', `/runs/${reviewerId}/input-manifest`)).data,
+  ).toEqual(oldManifest.data)
+  await bob.getByRole('button', { name: '提交验收', exact: true }).click()
+  await bob.getByRole('button', { name: '确认提交验收' }).click()
+  await expect(bob.locator('.badge-task-in_review')).toBeVisible()
+  await bob.getByRole('button', { name: '完成任务', exact: true }).click()
+  await expect(bob.getByRole('dialog')).toBeVisible()
+  expect(
+    (
+      (await hubApi(shared.bobCookie!, 'GET', `/tasks/${shared.taskId}`)).data as {
+        task: { status: string }
+      }
+    ).task.status,
+  ).toBe('in_review')
+  await bob.getByRole('button', { name: '确认完成任务' }).click()
+  await expect(bob.locator('.badge-task-done')).toBeVisible()
+  await alice.reload()
+  await expect(alice.locator('.badge-task-done')).toBeVisible()
+  await writeFile(
+    join(evidence, 'result.json'),
+    JSON.stringify(
+      {
+        component: 'web.delivery.revision',
+        producerRunId: builderId,
+        reviewerRunId: reviewerId,
+        revisedRunId: revisedId,
+        explicitProducerContext:
+          revised.agentId === builderSource.agentId && revised.resumeFromRunId === builderId,
+        sourceRevisionPreserved: revised.profileRevisionId === builderSource.profileRevisionId,
+        exactFeedbackIds: selectedInputs.artifacts.map((a) => a.artifactId),
+        oldReviewInputsUnchanged: true,
+        draftPreserved: true,
+        taskReopenedOnRevision: true,
+        revisedCandidatePrivateUntilPublished: true,
+        republishedByHuman: true,
+        doneOnlyAfterHumanConfirmation: true,
+        observerSeesDone: true,
+      },
+      null,
+      2,
+    ),
+  )
+})

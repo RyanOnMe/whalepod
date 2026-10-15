@@ -39,6 +39,7 @@ export interface ArtifactListProps {
    */
   onReferenceRun?: (runId: string) => void
   onRequestReview?: (artifactId: string) => void
+  onRequestRevision?: (artifactId: string) => void
 }
 
 /** 下载文件名：标题里的路径分隔与控制字符折叠成「-」，回退用 artifact 短 id。 */
@@ -57,6 +58,7 @@ export function ArtifactList({
   runs,
   onReferenceRun,
   onRequestReview,
+  onRequestRevision,
 }: ArtifactListProps): ReactNode {
   const published = artifacts.filter((a) => a.status === 'published')
   // 候选行的可见性以会话为准（Hub 只给 owner 下发 candidate；此处仍按 owner 过滤，
@@ -74,6 +76,7 @@ export function ArtifactList({
         runLabels={runLabels}
         onReferenceRun={onReferenceRun}
         onRequestReview={onRequestReview}
+        onRequestRevision={onRequestRevision}
       />
       <CandidateRows artifacts={candidates} taskId={taskId} runLabels={runLabels} />
       {published.length === 0 && candidates.length === 0 ? (
@@ -116,6 +119,7 @@ function ArtifactRows({
   runLabels,
   onReferenceRun,
   onRequestReview,
+  onRequestRevision,
 }: {
   artifacts: TaskRoomArtifact[]
   session: Session | null
@@ -123,6 +127,7 @@ function ArtifactRows({
   runLabels: ReadonlyMap<string, string>
   onReferenceRun?: ((runId: string) => void) | undefined
   onRequestReview?: ((artifactId: string) => void) | undefined
+  onRequestRevision?: ((artifactId: string) => void) | undefined
 }): ReactNode {
   if (artifacts.length === 0) return null
   return (
@@ -155,6 +160,15 @@ function ArtifactRows({
             {onRequestReview === undefined ? null : (
               <button type="button" className="button" onClick={() => onRequestReview(artifact.id)}>
                 发起复核
+              </button>
+            )}
+            {onRequestRevision === undefined ? null : (
+              <button
+                type="button"
+                className="button button-quiet"
+                onClick={() => onRequestRevision(artifact.id)}
+              >
+                根据意见修订
               </button>
             )}
             <ArtifactPreview artifact={artifact} />

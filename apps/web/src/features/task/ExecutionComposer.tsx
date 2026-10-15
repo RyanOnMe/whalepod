@@ -39,6 +39,7 @@ export function ExecutionComposer({
   approvalPreview,
   artifacts,
   reviewRequest = null,
+  revisionRequest = null,
 }: {
   task: TaskView
   session: Session
@@ -46,6 +47,7 @@ export function ExecutionComposer({
   approvalPreview: ApprovalPreview
   artifacts: TaskRoomArtifact[]
   reviewRequest?: ArtifactReviewRequest | null
+  revisionRequest?: ArtifactReviewRequest | null
 }): ReactNode {
   const directory = useMemberDirectory()
   const responsible = directory.personOf(task.assigneeUserId)
@@ -60,6 +62,26 @@ export function ExecutionComposer({
   const published = artifacts.filter((artifact) => artifact.status === 'published')
   const [reviewArtifactIds, setReviewArtifactIds] = useState<string[]>([])
   const handledRequest = useRef<string | null>(null)
+  const [revisionContext, setRevisionContext] = useState<ArtifactReviewRequest | null>(null)
+  const revisionMaterial = published.find((a) => a.id === revisionContext?.artifactId)
+  const handledRevision = useRef<string | null>(null)
+  useEffect(() => {
+    if (
+      revisionRequest === null ||
+      revisionRequest.taskId !== task.id ||
+      sending ||
+      handledRevision.current === revisionRequest.nonce
+    )
+      return
+    handledRevision.current = revisionRequest.nonce
+    setRevisionContext(revisionRequest)
+    setMode('resume')
+    setSourceId('')
+    setDraft((current) =>
+      current.trim() === '' ? '请根据所选交付物中的意见修订产出，并说明本次调整。' : current,
+    )
+  }, [revisionRequest, task.id, sending])
+
   const isNewExecution = mode === 'new' || mode === 'review'
   const isSourceMode = mode === 'followup' || mode === 'resume'
   useEffect(() => {
@@ -71,6 +93,7 @@ export function ExecutionComposer({
     )
       return
     handledRequest.current = reviewRequest.nonce
+    setRevisionContext(null)
     setReviewArtifactIds([reviewRequest.artifactId])
     setMode('review')
     setSourceId('')
@@ -113,6 +136,8 @@ export function ExecutionComposer({
   else if (task.assignmentStatus !== 'accepted') reason = '责任人接受任务后才能开始执行。'
   else if (task.status === 'done' || task.status === 'cancelled')
     reason = '任务已结束，不能继续执行。'
+  else if (revisionContext !== null && revisionMaterial === undefined)
+    reason = '修订依据已不可用，请重新选择已发布意见。草稿仍保留。'
   else if (isNewExecution && active !== undefined)
     reason = '已有执行进行中，请明确选择发送追问，或等它结束后开始新执行。'
   else if (mode === 'review' && reviewArtifactIds.length === 0) reason = '请明确选择本次复核材料。'
@@ -125,11 +150,17 @@ export function ExecutionComposer({
   else if (isSourceMode && sourceId === '') reason = '请先选择来源执行。'
   else if (isSourceMode && source.isError) reason = '无法读取来源执行，请重试。'
   else if (isSourceMode && !source.isSuccess) reason = '正在读取来源执行…'
+  else if (isSourceMode && source.isSuccess && source.data.taskId !== task.id)
+    reason = '来源执行不属于当前任务，请重新选择。'
+  else if (mode === 'resume' && source.isSuccess && !TERMINAL_RUN.has(source.data.status))
+    reason = '来源执行尚未结束，请等待结束后再继续会话。'
   else if (mode === 'resume' && source.data?.ownerUserId !== task.assigneeUserId)
     reason = '来源执行属于此前的责任人，请基于已发布交接材料开始新执行。'
   else if (mode === 'resume' && source.data?.dshSessionId === null)
     reason = '这次执行没有可续接的会话，请开始新执行。'
   else if (mode === 'resume' && sourceAgent.isError) reason = '无法读取来源配置版本，请重试。'
+  else if (mode === 'resume' && typeof sourceAgent.data?.archivedAt === 'string')
+    reason = '来源 Agent 已归档，请明确选择可用 Agent 开始新执行。'
   else if (mode === 'resume' && sourceAgent.isSuccess && revision === undefined)
     reason = '来源配置版本已不可用，请开始新执行。'
   else if (mode === 'resume' && revision === undefined) reason = '正在确认来源配置版本…'
@@ -145,6 +176,7 @@ export function ExecutionComposer({
   const started = (outcome: InstructionOutcome): void => {
     setLastOutcome(outcome)
     if (outcome.outcome === 'started_run' && outcome.runId !== null) {
+      setRevisionContext(null)
       setMode('followup')
       setSourceId(outcome.runId)
     }
@@ -171,17 +203,48 @@ export function ExecutionComposer({
           {
             value: 'followup',
             label: '发送追问（指定活跃执行）',
-            disabled: active === undefined && mode !== 'followup',
+            disabled: revisionContext !== null || (active === undefined && mode !== 'followup'),
           },
           { value: 'resume', label: '继续会话（创建新执行记录）', disabled: terminal.length === 0 },
         ]}
         onChange={(next) => {
           setMode(next as Mode)
+          if (next === 'review') setRevisionContext(null)
           if (next === 'followup' && active !== undefined) setSourceId(active.id)
-          if (next === 'resume' && !terminal.some((run) => run.id === sourceId))
+          if (
+            next === 'resume' &&
+            revisionContext === null &&
+            !terminal.some((run) => run.id === sourceId)
+          )
             setSourceId(terminal.at(-1)?.id ?? '')
         }}
       />
+      {revisionContext !== null ? (
+        <section
+          className="review-settings"
+          aria-labelledby="revision-settings"
+          data-testid="revision-context"
+        >
+          <h3 id="revision-settings">修订设置</h3>
+          <p className="mutation-hint">
+            修订依据：{revisionMaterial?.title ?? '所选材料已不可用'} ·{' '}
+            {revisionMaterial?.sha256.slice(0, 12)}
+          </p>
+          <p className="mutation-hint">
+            {
+              '请选择产出 Agent 的来源会话，或明确选择开始新执行并重新选 Agent，不自动沿用最近的 Reviewer。本次新记录固定所选意见材料，续跑仍保留旧会话上下文；开始后任务回到进行中，修订产出须重新检查、发布和提交验收。'
+            }
+          </p>
+          <button
+            type="button"
+            className="button button-quiet"
+            disabled={sending}
+            onClick={() => setRevisionContext(null)}
+          >
+            取消修订设置（保留草稿）
+          </button>
+        </section>
+      ) : null}
       {mode === 'review' ? (
         <section className="review-settings" aria-labelledby="artifact-review-settings">
           <h3 id="artifact-review-settings">复核设置</h3>
@@ -298,10 +361,16 @@ export function ExecutionComposer({
         >
           {isNewExecution ? (
             <RunLauncher
-              key={mode}
+              key={`${mode}-${revisionContext?.nonce ?? ''}`}
               task={task}
               blocked={reason !== null}
-              artifactInputIds={mode === 'review' ? reviewArtifactIds : undefined}
+              artifactInputIds={
+                revisionContext !== null
+                  ? [revisionContext.artifactId]
+                  : mode === 'review'
+                    ? reviewArtifactIds
+                    : undefined
+              }
               buttonLabel={mode === 'review' ? '开始复核' : '开始执行'}
               session={session}
               hasActiveRun={active !== undefined}
@@ -311,13 +380,20 @@ export function ExecutionComposer({
               onDraftChange={setDraft}
               onSendingChange={setSending}
               onStarted={(runId) => {
+                setRevisionContext(null)
                 setMode('followup')
                 setSourceId(runId)
               }}
             />
           ) : (
             <InstructionComposer
-              key={`${task.id}-${mode}-${sourceId}`}
+              key={`${task.id}-${mode}-${sourceId}-${revisionContext?.nonce ?? ''}`}
+              blocked={reason !== null}
+              artifactInputIds={
+                mode === 'resume' && revisionContext !== null
+                  ? [revisionContext.artifactId]
+                  : undefined
+              }
               initialOutcome={
                 mode === 'followup' && lastOutcome?.runId === sourceId ? lastOutcome : null
               }
