@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { api } from '../../shared/api/client.js'
 import { SelectMenu } from '../../shared/SelectMenu.js'
@@ -11,6 +11,7 @@ import type {
   RunView,
   Session,
   TaskRoomRun,
+  TaskRoomArtifact,
   TaskView,
 } from '../../shared/api/types.js'
 import {
@@ -23,7 +24,12 @@ import { useMemberDirectory } from '../team/memberDirectory.js'
 import { ACTIVE_RUN, TERMINAL_RUN } from './run-states.js'
 import { runOrdinalLabels } from './runLabels.js'
 
-type Mode = 'new' | 'followup' | 'resume'
+type Mode = 'new' | 'followup' | 'resume' | 'review'
+export interface ArtifactReviewRequest {
+  taskId: string
+  artifactId: string
+  nonce: string
+}
 
 /** 模式与来源属于草稿意图：后台状态变化只阻塞，不替用户改投。 */
 export function ExecutionComposer({
@@ -31,11 +37,15 @@ export function ExecutionComposer({
   session,
   runs,
   approvalPreview,
+  artifacts,
+  reviewRequest = null,
 }: {
   task: TaskView
   session: Session
   runs: TaskRoomRun[]
   approvalPreview: ApprovalPreview
+  artifacts: TaskRoomArtifact[]
+  reviewRequest?: ArtifactReviewRequest | null
 }): ReactNode {
   const directory = useMemberDirectory()
   const responsible = directory.personOf(task.assigneeUserId)
@@ -47,6 +57,27 @@ export function ExecutionComposer({
   const [sending, setSending] = useState(false)
   const [mode, setMode] = useState<Mode>(active === undefined ? 'new' : 'followup')
   const [sourceId, setSourceId] = useState(active?.id ?? terminal.at(-1)?.id ?? '')
+  const published = artifacts.filter((artifact) => artifact.status === 'published')
+  const [reviewArtifactIds, setReviewArtifactIds] = useState<string[]>([])
+  const handledRequest = useRef<string | null>(null)
+  const isNewExecution = mode === 'new' || mode === 'review'
+  const isSourceMode = mode === 'followup' || mode === 'resume'
+  useEffect(() => {
+    if (
+      reviewRequest === null ||
+      reviewRequest.taskId !== task.id ||
+      handledRequest.current === reviewRequest.nonce ||
+      sending
+    )
+      return
+    handledRequest.current = reviewRequest.nonce
+    setReviewArtifactIds([reviewRequest.artifactId])
+    setMode('review')
+    setSourceId('')
+    setDraft((current) =>
+      current.trim() === '' ? '请复核所选已发布交付物，指出问题与可执行的修订建议。' : current,
+    )
+  }, [reviewRequest, task.id, sending])
   const isAssignee = task.assigneeUserId === session.userId
   const grants = useQuery({
     queryKey: queryKeys.instructionGrants(task.id),
@@ -58,7 +89,7 @@ export function ExecutionComposer({
   const source = useQuery({
     queryKey: queryKeys.run(sourceId),
     queryFn: () => api.get<RunView>(`/runs/${sourceId}`),
-    enabled: allowed && mode !== 'new' && sourceId !== '',
+    enabled: allowed && isSourceMode && sourceId !== '',
   })
   const agents = useQuery({
     queryKey: queryKeys.agents,
@@ -82,15 +113,18 @@ export function ExecutionComposer({
   else if (task.assignmentStatus !== 'accepted') reason = '责任人接受任务后才能开始执行。'
   else if (task.status === 'done' || task.status === 'cancelled')
     reason = '任务已结束，不能继续执行。'
-  else if (mode === 'new' && active !== undefined)
+  else if (isNewExecution && active !== undefined)
     reason = '已有执行进行中，请明确选择发送追问，或等它结束后开始新执行。'
+  else if (mode === 'review' && reviewArtifactIds.length === 0) reason = '请明确选择本次复核材料。'
+  else if (mode === 'review' && reviewArtifactIds.some((id) => !published.some((a) => a.id === id)))
+    reason = '所选材料已不可用，请重新选择已发布交付物。草稿仍保留。'
   else if (mode === 'followup' && (active === undefined || active.id !== sourceId))
     reason = '所选执行已结束或发生变化。草稿仍保留，请选择继续会话或开始新执行。'
   else if (mode === 'resume' && active !== undefined)
     reason = '已有执行进行中，结束后才能继续会话。'
-  else if (mode !== 'new' && sourceId === '') reason = '请先选择来源执行。'
-  else if (mode !== 'new' && source.isError) reason = '无法读取来源执行，请重试。'
-  else if (mode !== 'new' && !source.isSuccess) reason = '正在读取来源执行…'
+  else if (isSourceMode && sourceId === '') reason = '请先选择来源执行。'
+  else if (isSourceMode && source.isError) reason = '无法读取来源执行，请重试。'
+  else if (isSourceMode && !source.isSuccess) reason = '正在读取来源执行…'
   else if (mode === 'resume' && source.data?.ownerUserId !== task.assigneeUserId)
     reason = '来源执行属于此前的责任人，请基于已发布交接材料开始新执行。'
   else if (mode === 'resume' && source.data?.dshSessionId === null)
@@ -130,6 +164,11 @@ export function ExecutionComposer({
         options={[
           { value: 'new', label: '开始新执行（不接旧会话）', disabled: false },
           {
+            value: 'review',
+            label: '复核交付物（单独执行）',
+            disabled: published.length === 0 && mode !== 'review',
+          },
+          {
             value: 'followup',
             label: '发送追问（指定活跃执行）',
             disabled: active === undefined && mode !== 'followup',
@@ -143,6 +182,54 @@ export function ExecutionComposer({
             setSourceId(terminal.at(-1)?.id ?? '')
         }}
       />
+      {mode === 'review' ? (
+        <section className="review-settings" aria-labelledby="artifact-review-settings">
+          <h3 id="artifact-review-settings">复核设置</h3>
+          <p data-testid="review-scope" className="mutation-hint">
+            {
+              '材料副本只读，不代表整次执行只读；所选 Agent 仍可使用工具，沿用当前审批设置。请明确选择复核 Agent。已有草稿会保留，选择材料不会自动发送。'
+            }
+          </p>
+          {published.map((artifact) => (
+            <label key={artifact.id} className="review-material">
+              <input
+                type="checkbox"
+                aria-label={`复核材料：${artifact.title}`}
+                checked={reviewArtifactIds.includes(artifact.id)}
+                disabled={
+                  sending ||
+                  (!reviewArtifactIds.includes(artifact.id) && reviewArtifactIds.length >= 64)
+                }
+                onChange={(event) =>
+                  setReviewArtifactIds((ids) =>
+                    event.target.checked
+                      ? [...ids, artifact.id]
+                      : ids.filter((id) => id !== artifact.id),
+                  )
+                }
+              />
+              {artifact.title} · {artifact.sha256.slice(0, 12)}
+            </label>
+          ))}
+          <p className="mutation-hint">
+            已选择 {reviewArtifactIds.length} 项，最多64项；新发布不会自动加入。
+          </p>
+          {reviewArtifactIds.some((id) => !published.some((a) => a.id === id)) ? (
+            <button
+              type="button"
+              className="button"
+              disabled={sending}
+              onClick={() =>
+                setReviewArtifactIds((ids) =>
+                  ids.filter((id) => published.some((a) => a.id === id)),
+                )
+              }
+            >
+              清除失效材料选择
+            </button>
+          ) : null}
+        </section>
+      ) : null}
       {mode === 'resume' ? (
         <SelectMenu
           id={`execution-source-${task.id}`}
@@ -158,7 +245,7 @@ export function ExecutionComposer({
           onChange={setSourceId}
         />
       ) : null}
-      {mode !== 'new' ? (
+      {isSourceMode ? (
         <p className="mutation-hint" data-testid="execution-context">
           接收 Agent：
           {agents.data?.find((agent) => agent.id === source.data?.agentId)?.name ??
@@ -185,7 +272,9 @@ export function ExecutionComposer({
       {!allowed ? (
         <Link to={`/tasks/${task.id}/permissions`}>查看谁能驱动这个任务的 Agent</Link>
       ) : null}
-      {grants.isError || source.isError || sourceAgent.isError ? (
+      {grants.isError ||
+      (isSourceMode && source.isError) ||
+      (mode === 'resume' && sourceAgent.isError) ? (
         <button
           type="button"
           className="button"
@@ -207,9 +296,13 @@ export function ExecutionComposer({
           disabled={reason !== null || sending}
           style={{ border: 0, padding: 0, margin: 0 }}
         >
-          {mode === 'new' ? (
+          {isNewExecution ? (
             <RunLauncher
+              key={mode}
               task={task}
+              blocked={reason !== null}
+              artifactInputIds={mode === 'review' ? reviewArtifactIds : undefined}
+              buttonLabel={mode === 'review' ? '开始复核' : '开始执行'}
               session={session}
               hasActiveRun={active !== undefined}
               embedded

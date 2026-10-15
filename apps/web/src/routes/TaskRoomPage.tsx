@@ -27,7 +27,11 @@ import type { InstructionView, RunEventItem, TaskRoomView } from '../shared/api/
 import { ArtifactList, ReviewerSlot } from '../features/task/ArtifactList.js'
 import { AssignmentPanel } from '../features/task/AssignmentPanel.js'
 import { CommentComposer, CommentList } from '../features/task/CommentComposer.js'
-import { ExecutionComposer } from '../features/task/ExecutionComposer.js'
+import { RunInputManifest } from '../features/task/RunInputManifest.js'
+import {
+  ExecutionComposer,
+  type ArtifactReviewRequest,
+} from '../features/task/ExecutionComposer.js'
 import type { ApprovalPreview } from '../features/task/InstructionComposer.js'
 import { RunConsole } from '../features/task/RunConsole.js'
 import { InstructionList } from '../features/task/InstructionList.js'
@@ -40,8 +44,16 @@ import { TaskHeader } from '../features/task/TaskHeader.js'
 
 export function TaskRoomPage(): ReactNode {
   const { taskId } = useParams()
+  return <TaskRoom key={taskId} />
+}
+
+// Route parameters can change while both rooms remain cached. Keep local intent
+// and selected Run state within one Task, including expanded input/console views.
+function TaskRoom(): ReactNode {
+  const { taskId } = useParams()
   const session = useSession()
   const directory = useMemberDirectory()
+  const [reviewRequest, setReviewRequest] = useState<ArtifactReviewRequest | null>(null)
   const [selectedRunId, setSelectedRunId] = useState<string | undefined>(undefined)
   // ⑥d：Console 覆盖层显示哪个 Run（undefined = 关）。与 `selectedRunId`（内联面板）分开：
   // 内联面板是默认视图，覆盖层是"放大看"，两者可以同时存在。
@@ -229,6 +241,8 @@ export function TaskRoomPage(): ReactNode {
                   session={session}
                   runs={runs}
                   approvalPreview={approvalPreview}
+                  artifacts={artifacts}
+                  reviewRequest={reviewRequest}
                 />
               ) : null}
             </div>
@@ -237,12 +251,20 @@ export function TaskRoomPage(): ReactNode {
               <h2 id="runs-heading">运行</h2>
               <RunTimeline runs={runs} selectedRunId={selectedRunId} onSelect={setSelectedRunId} />
               {selectedRunId !== undefined && session !== null ? (
-                <RunLivePanel
-                  runId={selectedRunId}
-                  session={session}
-                  runLabels={runOrdinalLabels(runs)}
-                  onOpenConsole={() => setConsoleRunId(selectedRunId)}
-                />
+                <>
+                  <RunLivePanel
+                    runId={selectedRunId}
+                    session={session}
+                    runLabels={runOrdinalLabels(runs)}
+                    onOpenConsole={() => setConsoleRunId(selectedRunId)}
+                  />
+                  <RunInputManifest
+                    key={selectedRunId}
+                    runId={selectedRunId}
+                    taskId={task.id}
+                    runLabels={runOrdinalLabels(runs)}
+                  />
+                </>
               ) : null}
               <ApprovalSlot runs={runs} task={task} session={session} />
             </div>
@@ -265,6 +287,10 @@ export function TaskRoomPage(): ReactNode {
                     session={session}
                     taskId={task.id}
                     runs={runs}
+                    onRequestReview={(artifactId) => {
+                      setReviewRequest({ taskId: task.id, artifactId, nonce: crypto.randomUUID() })
+                      execHeadingRef.current?.focus()
+                    }}
                     onReferenceRun={(runId) =>
                       setInsertToken({ text: formatRunReference(runId), nonce: Date.now() })
                     }

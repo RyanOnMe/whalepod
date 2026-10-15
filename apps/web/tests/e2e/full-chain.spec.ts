@@ -498,7 +498,33 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
   test('G6-07 Reviewer Run 经输入清单受控消费 Artifact', async () => {
     test.setTimeout(240_000)
     await shared.bob!.reload()
-    const runId = await startRunViaUi('reviewer', '复核已发布报告')
+    // #326：从具体已发布产出进入统一入口，不靠用户自己拼通用运行路径。
+    await shared.bob!.getByRole('button', { name: '发起复核', exact: true }).click()
+    await expect(shared.bob!.getByTestId('review-scope')).toContainText('材料副本只读')
+    await expect(shared.bob!.getByRole('checkbox', { name: '复核材料：Report' })).toBeChecked()
+    await expect(shared.bob!.getByRole('button', { name: '开始复核', exact: true })).toBeDisabled()
+    await selectFromMenu(shared.bob!.getByLabel('选择 Agent'), 'reviewer')
+    await shared.bob!.getByLabel('指令').fill('复核已发布报告')
+    const responsePromise = shared.bob!.waitForResponse(
+      (response) =>
+        response.url().endsWith(`/tasks/${shared.taskId}/instructions`) &&
+        response.request().method() === 'POST',
+    )
+    const reviewEvidence = join(process.cwd(), 'artifacts', 'evidence', 'delivery-review')
+    await mkdir(reviewEvidence, { recursive: true })
+    await shared.bob!.screenshot({
+      path: join(reviewEvidence, 'review-settings.png'),
+      fullPage: true,
+    })
+    await shared.bob!.getByRole('button', { name: '开始复核', exact: true }).click()
+    const response = await responsePromise
+    expect(response.status()).toBe(201)
+    expect(response.request().postDataJSON()).toMatchObject({
+      artifactInputIds: [shared.artifactId],
+      intent: { kind: 'new' },
+    })
+    const runId = (await response.json()).data.runId as string
+    shared.runIds.push(runId)
 
     // Reviewer 同样触发 ask（replay 快照）→ 再走一次真人批准。
     await waitForRunStatus(runId, 'waiting_approval', 120_000)
@@ -528,6 +554,33 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     await shared.alice!.reload()
     await selectRun(shared.alice!, runId)
     await expect(shared.alice!.getByTestId('run-live-events')).not.toContainText(builderWsPath)
+    await shared.bob!.getByRole('button', { name: '查看本次固定输入' }).click()
+    await expect(shared.bob!.getByTestId('run-input-manifest')).toContainText(shared.artifactId!)
+    await expect(shared.bob!.getByTestId('run-input-manifest')).toContainText(
+      builderArtifact.sha256.slice(0, 12),
+    )
+    const pinned = await hubApi(shared.bobCookie!, 'GET', `/runs/${runId}/input-manifest`)
+    const ids = (pinned.data as { artifacts: Array<{ artifactId: string }> }).artifacts.map(
+      (a) => a.artifactId,
+    )
+    expect(ids).toEqual([shared.artifactId])
+    await writeFile(
+      join(reviewEvidence, 'result.json'),
+      JSON.stringify(
+        {
+          component: 'web.delivery.review',
+          reviewerRunId: runId,
+          explicitArtifactIds: ids,
+          requestMatchesSelectedMaterial: true,
+          manualAgentSelection: true,
+          readonlyScopeExplained: true,
+          productionNodeManifestMatchesHash: manifest.manifestText.includes(builderArtifact.sha256),
+          historicalInputVisible: true,
+        },
+        null,
+        2,
+      ),
+    )
     // Reviewer 消费位真实存在（受控输入不是一句空话）。
     expect(manifest.manifestText).toContain(join('runtime-inputs', runId))
   })

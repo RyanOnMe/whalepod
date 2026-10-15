@@ -72,6 +72,7 @@ describe('artifact-list（Task Room 右侧）', () => {
     ])
     expect(await screen.findByText('security-review.md')).toBeVisible()
     expect(screen.getByText('仅你可见，待发布')).toBeVisible()
+    expect(screen.queryByRole('button', { name: '发起复核' })).not.toBeInTheDocument()
     const publish = screen.getByRole('button', { name: '发布' })
     await user.click(publish)
     await user.click(await screen.findByRole('button', { name: '确认发布给团队' }))
