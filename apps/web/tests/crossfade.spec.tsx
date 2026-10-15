@@ -8,10 +8,10 @@
  * 其余几条是 CSS 源文本口径（与 #231 骨架门、#271 动效门同款）：`@starting-style`
  * 入场块、列表/空态的 opacity 过渡、徽标的颜色过渡、提示按钮的 hover/按压。
  */
-import { screen, waitFor } from '@testing-library/react'
+import { act, screen } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { BOB, loggedInHandlers, makeTask, ok } from './fixtures.js'
 import type { MockHandler } from './fixtures.js'
 import { renderApp } from './render.js'
@@ -70,16 +70,29 @@ describe('#277 骨架 → 内容的交叉淡入（可证伪判据：两者同时
     const skeleton = await screen.findByTestId('room-skeleton')
     expect(skeleton).toHaveAttribute('aria-busy', 'true')
 
-    release()
-    // 内容到了——但骨架**不许**在这一帧消失：它还要演完退场（这就是"交叉"）。
-    await screen.findByRole('heading', { name: task.title })
-    const leavingSkeleton = screen.getByTestId('room-skeleton')
-    expect(leavingSkeleton).toHaveClass('leaving')
-    // 内容挂上了入场类（只在"从骨架过来"时挂）。
-    expect(document.querySelector('.task-room')).toHaveClass('crossfade-in')
+    // Freeze the exit timer: a busy CI event loop must not consume the overlap window
+    // before this assertion gets CPU time. Production rendering and query delivery stay real.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await act(async () => {
+        release()
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      // 内容到了——但骨架**不许**在这一帧消失：它还要演完退场（这就是"交叉"）。
+      expect(screen.getByRole('heading', { name: task.title })).toBeInTheDocument()
+      const leavingSkeleton = screen.getByTestId('room-skeleton')
+      expect(leavingSkeleton).toHaveClass('leaving')
+      // 内容挂上了入场类（只在"从骨架过来"时挂）。
+      expect(document.querySelector('.task-room')).toHaveClass('crossfade-in')
 
-    // 退场演完才真的卸载。
-    await waitFor(() => expect(screen.queryByTestId('room-skeleton')).toBeNull())
+      // 退场演完才真的卸载。
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000)
+      })
+      expect(screen.queryByTestId('room-skeleton')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('项目页同一处理：骨架与列表也有一段共存窗口', async () => {
@@ -99,11 +112,22 @@ describe('#277 骨架 → 内容的交叉淡入（可证伪判据：两者同时
     ]
     renderApp('/', loggedInHandlers(BOB, handlers))
     expect(await screen.findByTestId('projects-skeleton')).toBeInTheDocument()
-    release()
-    // 空态到了，骨架仍在退场（空态自身由全局 @starting-style 淡入）。
-    await screen.findByText(/还没有项目/)
-    expect(screen.getByTestId('projects-skeleton')).toHaveClass('leaving')
-    await waitFor(() => expect(screen.queryByTestId('projects-skeleton')).toBeNull())
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await act(async () => {
+        release()
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      // 空态到了，骨架仍在退场（空态自身由全局 @starting-style 淡入）。
+      expect(screen.getByText(/还没有项目/)).toBeInTheDocument()
+      expect(screen.getByTestId('projects-skeleton')).toHaveClass('leaving')
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000)
+      })
+      expect(screen.queryByTestId('projects-skeleton')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
