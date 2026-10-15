@@ -45,6 +45,13 @@ import { TaskHeader } from '../features/task/TaskHeader.js'
 
 export function TaskRoomPage(): ReactNode {
   const { taskId } = useParams()
+  return <TaskRoom key={taskId} />
+}
+
+// Route parameters can change while both rooms remain cached. Keep local intent
+// and selected Run state within one Task, including expanded input/console views.
+function TaskRoom(): ReactNode {
+  const { taskId } = useParams()
   const session = useSession()
   const directory = useMemberDirectory()
   const [revisionRequest, setRevisionRequest] = useState<ArtifactReviewRequest | null>(null)

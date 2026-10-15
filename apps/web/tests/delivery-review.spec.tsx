@@ -34,12 +34,18 @@ function fixture(
     taskStatus?: 'in_progress' | 'in_review'
     candidateOnly?: boolean
     instructionGate?: Promise<void>
+    cachedNavigation?: boolean
   } = {},
 ) {
   const task = makeTask({
     assignmentStatus: 'accepted',
     status: options.taskStatus ?? 'in_progress',
     approvalPolicy: options.fullAccess ? 'full_access' : 'approval_required',
+  })
+  const other = makeTask({
+    title: '缓存中的另一个任务',
+    assignmentStatus: 'accepted',
+    status: 'in_progress',
   })
   const producer = makeRun({ status: options.active ? 'running' : 'completed' })
   const reviewer = makeRun({ status: 'completed' })
@@ -60,6 +66,25 @@ function fixture(
     { id: REVIEWER, name: 'Reviewer', archivedAt: null, currentRevisionId: REVISION },
   ]
   const handlers: MockHandler[] = [
+    ...(options.cachedNavigation
+      ? [
+          taskRoomHandler(other),
+          {
+            method: 'GET',
+            url: /\/tasks\/recent$/,
+            respond: () =>
+              ok(
+                [task, other].map((row) => ({
+                  id: row.id,
+                  title: row.title,
+                  status: row.status,
+                  projectName: '导航测试',
+                  lastActiveAt: row.createdAt,
+                })),
+              ),
+          },
+        ]
+      : []),
     taskRoomHandler(task, {
       runs: options.revisionHistory ? [producer, reviewer] : [producer],
       artifacts: [artifact],
@@ -175,7 +200,7 @@ function fixture(
     `/tasks/${task.id}`,
     loggedInHandlers(options.unauthorized ? ALICE : BOB, handlers),
   )
-  return { ...view, task, producer, reviewer, artifact, late, posts }
+  return { ...view, task, other, producer, reviewer, artifact, late, posts }
 }
 async function review(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole('button', { name: '发起复核' }))
@@ -246,6 +271,28 @@ describe('从交付物发起复核 (#326)', () => {
       expectedApprovalPolicy: 'full_access',
       artifactInputIds: [f.artifact.id],
     })
+  })
+  it('往返两个已缓存任务后不在新任务显示旧执行输入', async () => {
+    const user = userEvent.setup()
+    const f = fixture({ cachedNavigation: true })
+    await user.click(await screen.findByRole('link', { name: new RegExp(f.other.title) }))
+    expect(await screen.findByRole('heading', { name: f.other.title })).toBeVisible()
+    await user.click(screen.getByRole('link', { name: new RegExp(f.task.title) }))
+    expect(await screen.findByRole('heading', { name: f.task.title })).toBeVisible()
+    await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
+    await user.click(await screen.findByRole('button', { name: '查看本次固定输入' }))
+    expect(await screen.findByTestId('run-input-manifest')).toHaveTextContent(f.artifact.title)
+    const reads = () =>
+      f.fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/input-manifest')).length
+    expect(reads()).toBe(1)
+    await user.click(screen.getByRole('link', { name: new RegExp(f.other.title) }))
+    expect(await screen.findByRole('heading', { name: f.other.title })).toBeVisible()
+    expect(screen.queryByTestId('run-input-manifest')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /本次固定输入/ })).not.toBeInTheDocument()
+    expect(reads()).toBe(1)
+    await user.click(screen.getByRole('link', { name: new RegExp(f.task.title) }))
+    expect(await screen.findByRole('heading', { name: f.task.title })).toBeVisible()
+    expect(screen.queryByTestId('run-input-manifest')).not.toBeInTheDocument()
   })
   it('历史执行读取实际固定清单，不能用当前材料列表代替', async () => {
     const user = userEvent.setup()
