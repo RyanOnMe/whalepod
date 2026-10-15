@@ -291,6 +291,7 @@ function TaskRoom(): ReactNode {
                     taskId={task.id}
                     runs={runs}
                     onRequestRevision={(artifactId) => {
+                      setReviewRequest(null)
                       setRevisionRequest({
                         taskId: task.id,
                         artifactId,
@@ -299,6 +300,7 @@ function TaskRoom(): ReactNode {
                       execHeadingRef.current?.focus()
                     }}
                     onRequestReview={(artifactId) => {
+                      setRevisionRequest(null)
                       setReviewRequest({ taskId: task.id, artifactId, nonce: crypto.randomUUID() })
                       execHeadingRef.current?.focus()
                     }}
