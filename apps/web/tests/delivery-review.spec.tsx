@@ -30,16 +30,21 @@ function fixture(
     unauthorized?: boolean
     fullAccess?: boolean
     unknownHistory?: boolean
+    revisionHistory?: boolean
+    taskStatus?: 'in_progress' | 'in_review'
+    candidateOnly?: boolean
   } = {},
 ) {
   const task = makeTask({
     assignmentStatus: 'accepted',
+    status: options.taskStatus ?? 'in_progress',
     approvalPolicy: options.fullAccess ? 'full_access' : 'approval_required',
   })
   const producer = makeRun({ status: options.active ? 'running' : 'completed' })
+  const reviewer = makeRun({ status: 'completed' })
   const artifact = makeArtifact({
-    runId: producer.id,
-    status: 'published',
+    runId: options.revisionHistory ? reviewer.id : producer.id,
+    status: options.candidateOnly ? 'candidate' : 'published',
     title: '待复核报告.md',
   })
   const late = makeArtifact({
@@ -54,18 +59,35 @@ function fixture(
     { id: REVIEWER, name: 'Reviewer', archivedAt: null, currentRevisionId: REVISION },
   ]
   const handlers: MockHandler[] = [
-    taskRoomHandler(task, { runs: [producer], artifacts: [artifact] }),
+    taskRoomHandler(task, {
+      runs: options.revisionHistory ? [producer, reviewer] : [producer],
+      artifacts: [artifact],
+      reviewEligibility: {
+        allowed:
+          !options.active &&
+          !options.unauthorized &&
+          !options.candidateOnly &&
+          task.status === 'in_progress',
+        reason: options.active
+          ? 'active_run'
+          : options.unauthorized
+            ? 'not_assignee'
+            : options.candidateOnly
+              ? 'no_published_artifact'
+              : task.status === 'in_review'
+                ? 'task_not_in_progress'
+                : null,
+      },
+    }),
     teamMembersHandler(),
     { method: 'GET', url: /\/instruction-grants$/, respond: () => ok([]) },
     { method: 'GET', url: /\/agents$/, respond: () => ok(agents) },
-    {
+    ...agents.map((agent) => ({
       method: 'GET',
-      url: /\/agents\/[^/]+$/,
+      url: new RegExp(`/agents/${agent.id}$`),
       respond: () =>
         ok({
-          id: REVIEWER,
-          name: 'Reviewer',
-          currentRevisionId: REVISION,
+          ...agent,
           revisions: [
             {
               id: REVISION,
@@ -77,7 +99,7 @@ function fixture(
             },
           ],
         }),
-    },
+    })),
     devicesHandler([device]),
     workspacesHandler([
       {
@@ -109,6 +131,19 @@ function fixture(
           dshSessionId: 'producer-session',
         }),
     },
+    {
+      method: 'GET',
+      url: new RegExp(`/runs/${reviewer.id}$`),
+      respond: () =>
+        ok({
+          ...reviewer,
+          taskId: task.id,
+          agentId: REVIEWER,
+          profileRevisionId: REVISION,
+          ownerUserId: BOB.userId,
+          dshSessionId: 'reviewer-session',
+        }),
+    },
     { method: 'GET', url: /\/events(?:\?.*)?$/, respond: () => ok([]) },
     {
       method: 'GET',
@@ -138,7 +173,7 @@ function fixture(
     `/tasks/${task.id}`,
     loggedInHandlers(options.unauthorized ? ALICE : BOB, handlers),
   )
-  return { ...view, task, producer, artifact, late, posts }
+  return { ...view, task, producer, reviewer, artifact, late, posts }
 }
 async function review(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole('button', { name: '发起复核' }))
@@ -235,5 +270,76 @@ describe('从交付物发起复核 (#326)', () => {
     await user.click(await screen.findByRole('button', { name: '查看本次固定输入' }))
     expect(await screen.findByTestId('run-input-manifest')).toHaveTextContent('历史输入无法确认')
     expect(screen.getByTestId('run-input-manifest')).not.toHaveTextContent('未选择交付物')
+  })
+})
+
+describe('根据意见修订与真人验收 (#327)', () => {
+  it('最近执行是Reviewer时仍不自动选来源；手动回到Builder并携带意见材料', async () => {
+    const user = userEvent.setup()
+    const f = fixture({ revisionHistory: true })
+    await user.type(await screen.findByLabelText('指令'), '请保留这段修订要求')
+    await user.click(screen.getByRole('button', { name: '根据意见修订' }))
+    expect(screen.getByLabelText('来源执行')).toHaveTextContent('选择要继续的会话')
+    expect(screen.getByLabelText('指令')).toHaveValue('请保留这段修订要求')
+    expect(screen.getByRole('button', { name: '继续会话', exact: true })).toBeDisabled()
+    expect(f.posts).toHaveLength(0)
+    await selectOption(user, '来源执行', '第 1 次运行')
+    expect(await screen.findByTestId('execution-context')).toHaveTextContent('Builder')
+    expect(screen.getByTestId('revision-context')).toHaveTextContent(f.artifact.title)
+    await user.click(screen.getByRole('button', { name: '继续会话', exact: true }))
+    await waitFor(() => expect(f.posts).toHaveLength(1))
+    expect(f.posts[0]).toMatchObject({
+      intent: { kind: 'resume', runId: f.producer.id },
+      artifactInputIds: [f.artifact.id],
+      text: '请保留这段修订要求',
+    })
+  })
+  it('可选择新执行修订，但必须重新选择产出Agent，不能继承Reviewer', async () => {
+    const user = userEvent.setup()
+    const f = fixture({ revisionHistory: true })
+    await user.click(await screen.findByRole('button', { name: '根据意见修订' }))
+    await selectOption(user, '执行方式', '开始新执行（不接旧会话）')
+    expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
+    await selectOption(user, '选择 Agent', 'Builder')
+    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    await waitFor(() => expect(f.posts).toHaveLength(1))
+    expect(f.posts[0]).toMatchObject({
+      intent: { kind: 'new' },
+      agentId: BUILDER,
+      artifactInputIds: [f.artifact.id],
+    })
+  })
+  it('复核可选，不新增验收闸门；完成始终由真人确认，状态变化关闭旧确认', async () => {
+    const user = userEvent.setup()
+    const f = fixture({ taskStatus: 'in_review' })
+    expect(await screen.findByTestId('delivery-next')).toHaveTextContent('确认完成')
+    expect(screen.getByTestId('delivery-flow')).toHaveTextContent('可选复核')
+    expect(
+      f.fetchMock.mock.calls.filter(
+        ([url, init]) => String(url).endsWith('/complete') && init?.method === 'POST',
+      ),
+    ).toHaveLength(0)
+    await user.click(screen.getByRole('button', { name: '完成任务', exact: true }))
+    expect(await screen.findByRole('dialog')).toBeVisible()
+    await act(async () =>
+      f.queryClient.setQueryData(queryKeys.taskRoom(f.task.id), (old: object | undefined) => ({
+        ...old,
+        task: { ...f.task, status: 'in_progress' },
+      })),
+    )
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(
+      f.fetchMock.mock.calls.filter(
+        ([url, init]) => String(url).endsWith('/complete') && init?.method === 'POST',
+      ),
+    ).toHaveLength(0)
+  })
+  it('候选下一步是拥有者检查并发布，不把候选直接送给Reviewer', async () => {
+    const f = fixture({ candidateOnly: true })
+    expect(await screen.findByTestId('delivery-next')).toHaveTextContent('检查')
+    expect(screen.getByTestId('delivery-next')).toHaveTextContent('发布')
+    expect(screen.queryByRole('button', { name: '根据意见修订' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '发起复核' })).not.toBeInTheDocument()
+    expect(f.posts).toHaveLength(0)
   })
 })
