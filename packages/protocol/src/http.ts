@@ -139,7 +139,7 @@ export const CreateInstructionGrantRequestSchema = z.strictObject({
 
 /** Exact published input identities for a new run; never an active followup update. */
 export const ArtifactInputIdsSchema = z
-  .array(z.uuid())
+  .array(z.uuid().transform((id) => id.toLowerCase()))
   .max(64)
   .refine((ids) => new Set(ids).size === ids.length, 'artifact input identities must be unique')
 
