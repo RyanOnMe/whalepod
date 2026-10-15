@@ -31,6 +31,7 @@ export const queryKeys = {
   agentDetail: (agentId: string) => ['agent-detail', agentId] as const,
   /** P1-13：Run 详情/事件键前缀与 event-router 的 ['run', runId] 失效约定对齐。 */
   run: (runId: string) => ['run', runId] as const,
+  runInputManifest: (runId: string) => ['run', runId, 'input-manifest'] as const,
   runEvents: (runId: string) => ['run', runId, 'events'] as const,
   devices: ['devices'] as const,
   workspaces: ['workspaces'] as const,

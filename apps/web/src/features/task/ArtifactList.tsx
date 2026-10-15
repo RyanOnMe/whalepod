@@ -38,6 +38,7 @@ export interface ArtifactListProps {
    * 窄解析语法，渲染端零改动）。由页面注入——组件不管输入框在哪。
    */
   onReferenceRun?: (runId: string) => void
+  onRequestReview?: (artifactId: string) => void
 }
 
 /** 下载文件名：标题里的路径分隔与控制字符折叠成「-」，回退用 artifact 短 id。 */
@@ -55,6 +56,7 @@ export function ArtifactList({
   taskId,
   runs,
   onReferenceRun,
+  onRequestReview,
 }: ArtifactListProps): ReactNode {
   const published = artifacts.filter((a) => a.status === 'published')
   // 候选行的可见性以会话为准（Hub 只给 owner 下发 candidate；此处仍按 owner 过滤，
@@ -71,6 +73,7 @@ export function ArtifactList({
         taskId={taskId}
         runLabels={runLabels}
         onReferenceRun={onReferenceRun}
+        onRequestReview={onRequestReview}
       />
       <CandidateRows artifacts={candidates} taskId={taskId} runLabels={runLabels} />
       {published.length === 0 && candidates.length === 0 ? (
@@ -80,7 +83,8 @@ export function ArtifactList({
       ) : null}
       {published.length > 0 ? (
         <p className="artifact-reviewer-note">
-          以上已发布交付物将作为 Reviewer Run 的只读输入（按内容摘要 sha256 固定）。
+          已发布交付物可选为 Reviewer Run
+          的只读输入；本次身份与内容摘要在启动时固定，后续发布不改变旧输入。
         </p>
       ) : null}
     </div>
@@ -111,12 +115,14 @@ function ArtifactRows({
   artifacts,
   runLabels,
   onReferenceRun,
+  onRequestReview,
 }: {
   artifacts: TaskRoomArtifact[]
   session: Session | null
   taskId: string
   runLabels: ReadonlyMap<string, string>
   onReferenceRun?: ((runId: string) => void) | undefined
+  onRequestReview?: ((artifactId: string) => void) | undefined
 }): ReactNode {
   if (artifacts.length === 0) return null
   return (
@@ -146,6 +152,11 @@ function ArtifactRows({
             </div>
           </dl>
           <div className="artifact-actions">
+            {onRequestReview === undefined ? null : (
+              <button type="button" className="button" onClick={() => onRequestReview(artifact.id)}>
+                发起复核
+              </button>
+            )}
             <ArtifactPreview artifact={artifact} />
             <ArtifactDownload artifact={artifact} />
             {/* #250：指着这个工件说话——注入来源运行的引用 token（#216 窄解析），
@@ -357,8 +368,9 @@ export function ReviewerSlot(): ReactNode {
     <section className="snapshot-slot" aria-label="复核">
       <h3>复核</h3>
       <p className="empty-state">
-        为 Task 启动 Reviewer Agent 的 Run 时，以上已发布交付物会作为只读输入清单 送达该
-        Run（受控副本，不继承 Builder 的 Workspace）。
+        {
+          '从已发布产出选择“发起复核”，在执行区确认材料并选择 Agent，再由你启动。材料以只读输入清单和受控副本送达，不继承 Builder 的 Workspace；工具与审批仍沿所选执行设置。'
+        }
       </p>
     </section>
   )

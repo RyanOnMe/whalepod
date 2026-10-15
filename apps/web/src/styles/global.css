@@ -2835,3 +2835,23 @@ textarea::placeholder {
   outline-offset: 2px;
   border-radius: var(--radius-lg);
 }
+
+/* Delivery material choice stays readable in the narrow execution column. */
+.review-settings {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.review-material {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+.review-material input {
+  flex: 0 0 auto;
+  margin-top: 4px;
+}
+.run-input-manifest code {
+  overflow-wrap: anywhere;
+}

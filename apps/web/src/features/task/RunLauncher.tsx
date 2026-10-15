@@ -34,6 +34,9 @@ export interface RunLauncherProps {
   /** 当前已有活跃 Run（一任务一活跃，03 §3.2）时不渲染。 */
   hasActiveRun: boolean
   embedded?: boolean
+  artifactInputIds?: string[] | undefined
+  buttonLabel?: string | undefined
+  blocked?: boolean
   onStarted?: (runId: string) => void
   onOutcome?: (outcome: InstructionOutcome) => void
   draft?: string
@@ -48,6 +51,9 @@ export function RunLauncher({
   session,
   hasActiveRun,
   embedded = false,
+  artifactInputIds,
+  buttonLabel = '开始执行',
+  blocked = false,
   onStarted,
   onOutcome,
   draft,
@@ -149,6 +155,7 @@ export function RunLauncher({
     mutationFn: () => {
       const body = {
         agentId,
+        ...(artifactInputIds === undefined ? {} : { artifactInputIds }),
         profileRevisionId: effectiveRevisionId,
         ...(isAssignee && deviceId !== ''
           ? { deviceId, ...(workspaceId !== '' ? { workspaceId } : {}) }
@@ -191,8 +198,8 @@ export function RunLauncher({
   }
 
   useEffect(() => {
-    if (preparationBlocked || hasActiveRun) setConfirmingFullAccess(false)
-  }, [preparationBlocked, hasActiveRun])
+    if (blocked || preparationBlocked || hasActiveRun) setConfirmingFullAccess(false)
+  }, [blocked, preparationBlocked, hasActiveRun])
 
   // 只有已接受指派的责任人、非终态任务、无活跃 Run 时可启动（03 §3.2 前置守卫；
   // Hub 侧仍有完整校验，这里是诚实呈现而非安全边界）。
@@ -226,6 +233,7 @@ export function RunLauncher({
 
   const ready =
     agentId !== '' &&
+    !blocked &&
     !preparationBlocked &&
     selectedRevision !== undefined &&
     !hasActiveRun &&
@@ -441,7 +449,7 @@ export function RunLauncher({
           }}
         >
           <InstructionSendIcon feedback={feedback} />
-          {start.isPending ? '发送中…' : '开始执行'}
+          {start.isPending ? '发送中…' : buttonLabel}
         </button>
       </form>
       {confirmingFullAccess ? (

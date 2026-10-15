@@ -38,13 +38,11 @@ function fixture(
   })
   const producer = makeRun({ status: options.active ? 'running' : 'completed' })
   const artifact = makeArtifact({
-    taskId: task.id,
     runId: producer.id,
     status: 'published',
     title: '待复核报告.md',
   })
   const late = makeArtifact({
-    taskId: task.id,
     runId: producer.id,
     status: 'published',
     title: '后来发布的报告.md',
@@ -161,7 +159,7 @@ describe('从交付物发起复核 (#326)', () => {
         artifacts: [f.artifact, f.late],
       })),
     )
-    expect(screen.getByLabelText(`复核材料：${f.late.title}`)).not.toBeChecked()
+    expect(await screen.findByLabelText(`复核材料：${f.late.title}`)).not.toBeChecked()
     await selectOption(user, '选择 Agent', 'Reviewer')
     await user.click(screen.getByRole('button', { name: '开始复核' }))
     await waitFor(() => expect(f.posts).toHaveLength(1))
@@ -224,6 +222,7 @@ describe('从交付物发起复核 (#326)', () => {
         artifacts: [f.artifact, f.late],
       })),
     )
+    await screen.findByText(f.late.title, { selector: '.artifact-title' })
     expect(screen.getByTestId('run-input-manifest')).not.toHaveTextContent(f.late.title)
     expect(screen.getByTestId('run-input-manifest')).toHaveTextContent(
       f.artifact.sha256.slice(0, 12),

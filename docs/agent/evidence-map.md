@@ -63,3 +63,7 @@
 ### 交付输入快照（#325）
 
 输入集合漂移先对照GET /runs/:id/input-manifest与Node同源清单，查hub.run创建事务；旧未知409是明确的兼容边界。Node下载/摘要校验查node.artifact，再查runtime.bridge输入。复跑见run-input-snapshot-acceptance，证据artifacts/evidence/operation-flow-batch3/input-snapshot/。
+
+### 产出复核入口（#326）
+
+所选材料与运行不符时先比对web.delivery.review中的artifactId和GET /runs/:id/input-manifest；新发布不得替代旧输入。无权/活跃阻塞查web.execution，准备与审批仍沿原链。复跑artifact-review-entry-acceptance，证据artifacts/evidence/delivery-review/。
