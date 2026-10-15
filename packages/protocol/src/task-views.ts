@@ -19,6 +19,7 @@
  * 响——"静默多出字段"是另一种漂移。
  */
 import { z } from 'zod'
+import { PreparationFactsSchema } from './node-wire.js'
 
 export const TaskMessageViewSchema = z.strictObject({
   id: z.string(),
@@ -37,3 +38,44 @@ export const TaskMessageViewSchema = z.strictObject({
 })
 
 export type TaskMessageView = z.infer<typeof TaskMessageViewSchema>
+
+/** #319：服务端生成的提交验收条件；缺失/未知不能被客户端视作可提交。 */
+export const TaskReviewEligibilitySchema = z
+  .strictObject({
+    allowed: z.boolean(),
+    reason: z
+      .enum([
+        'not_assignee',
+        'not_accepted',
+        'task_not_in_progress',
+        'active_run',
+        'no_published_artifact',
+      ])
+      .nullable(),
+  })
+  .refine((value) => value.allowed === (value.reason === null), 'allowed and reason must agree')
+export type TaskReviewEligibility = z.infer<typeof TaskReviewEligibilitySchema>
+
+export const ExecutionPreparationRequestSchema = z
+  .strictObject({
+    agentId: z.uuid(),
+    profileRevisionId: z.uuid(),
+    deviceId: z.uuid().optional(),
+    workspaceId: z.uuid().optional(),
+  })
+  .refine(
+    (value) => value.workspaceId === undefined || value.deviceId !== undefined,
+    'workspace requires device',
+  )
+export const ExecutionPreparationViewSchema = z.strictObject({
+  checkedAt: z.iso.datetime(),
+  profileRevisionId: z.uuid(),
+  deviceId: z.uuid(),
+  workspaceId: z.uuid(),
+  deviceName: z.string(),
+  workspaceName: z.string(),
+  modelCall: z.literal('not_tested'),
+  ...PreparationFactsSchema.shape,
+})
+export type ExecutionPreparationRequest = z.infer<typeof ExecutionPreparationRequestSchema>
+export type ExecutionPreparationView = z.infer<typeof ExecutionPreparationViewSchema>

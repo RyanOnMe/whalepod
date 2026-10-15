@@ -90,6 +90,10 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
       const handleUpstream = async (raw: string): Promise<void> => {
         try {
           const frame = parseNodeFrame(JSON.parse(raw), 'upstream')
+          if (frame.type === 'node.preparation_result') {
+            nodeConnections.deliverPreparation(identity.deviceId, socket, frame.payload)
+            return
+          }
           if (frame.type === 'node.inventory' && frame.payload.deviceId === identity.deviceId) {
             // inventory：先刷 lastSeenAt（与 hello/heartbeat 同职责，不动 #37 事实列），
             // 再做投影 upsert。

@@ -336,8 +336,8 @@ describe('DevicesPage 设备列表（#142 B/C）', () => {
     expect(await screen.findByText(/还没有设备/)).toBeVisible()
     // 第二步不再写「后续版本提供」：控件就在本页。
     expect(screen.queryByText(/后续版本提供/)).not.toBeInTheDocument()
-    expect(screen.getByText(/whalepod-node pair/)).toBeVisible()
-    expect(screen.getByText(/whalepod-node start/)).toBeVisible()
+    expect(screen.getByText(/node apps\/node\/dist\/cli\.js pair/)).toBeVisible()
+    expect(screen.getByText(/node apps\/node\/dist\/cli\.js start/)).toBeVisible()
     expect(screen.getByRole('button', { name: '生成配对码' })).toBeEnabled()
   })
 

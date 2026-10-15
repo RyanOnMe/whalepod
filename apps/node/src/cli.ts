@@ -1,3 +1,4 @@
+import { checkPreparation } from './workspace/preparation.js'
 /**
  * Node CLI（02 Task 9 Step 3/5）。
  *   whalepod-node pair --hub <url> --code <code> [--name <n>] ...
@@ -242,6 +243,7 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     // #89：连接建立后上报 inventory（Hub 的 Workspace 投影唯一来源；此前生产
     // 链路一帧不发，真实用户 RunLauncher 选不到任何 Workspace）。
     inventoryFacts: () => inventory.build(),
+    preparationCheck: (request) => checkPreparation(request, { registry, secrets }),
     // #94：变化时重报——registry 文件指纹随心跳节拍探测，`workspace add/remove`
     // （独立短进程写库）无需重启 node 即收敛到 Hub 投影。
     inventoryRevision: () => registryFileRevision(join(stateDir, 'workspace-registry.sqlite')),

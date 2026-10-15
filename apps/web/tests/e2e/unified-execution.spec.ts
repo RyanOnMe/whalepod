@@ -77,11 +77,34 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     await owner.getByRole('button', { name: '接受任务' }).click()
     await expect(owner.getByText('你已接受此任务。')).toBeVisible()
     await member.goto(`/tasks/${taskId}`)
+    await expect(member.getByTestId('execution-responsibility')).toContainText('Alice')
+    await member.getByRole('link', { name: '前往讨论' }).click()
+    await expect(member.locator('#comments-heading')).toBeFocused()
     await expect(member.getByTestId('execution-blocker')).toContainText('只有责任人和已授权成员')
     await expect(member.getByLabel('指令', { exact: true })).toHaveCount(0)
     const execute = owner.locator('[aria-labelledby="instructions-heading"]')
     await expect(execute.locator('textarea')).toHaveCount(1)
     await selectFromMenu(owner.getByLabel('选择 Agent'), 'Builder')
+    await owner.getByRole('button', { name: '检查本次准备条件' }).click()
+    await expect(owner.getByTestId('preparation-status')).toContainText(
+      '本机已配置；未验证模型调用',
+    )
+    await expect(owner.getByTestId('preparation-status')).toContainText('已确认可用')
+    await expect(owner.getByTestId('preparation-status')).toContainText('已过期', {
+      timeout: 35_000,
+    })
+    await owner.getByRole('button', { name: '检查本次准备条件' }).click()
+    await expect(owner.getByTestId('preparation-status')).toContainText(
+      '本机已配置；未验证模型调用',
+    )
+    expect(
+      ((await hubApi(cookie, 'GET', `/tasks/${taskId}`)).data as { runs: unknown[] }).runs,
+    ).toHaveLength(0)
+    await owner.getByRole('button', { name: '填入试运行指令' }).click()
+    await expect(owner.getByLabel('指令', { exact: true })).toHaveValue(
+      '请用一句话确认你已收到这条试运行指令，不需要调用工具或修改文件。',
+    )
+
     // 已就绪时沿用明确标注的自动环境，不要求首次再填另一张表单。
     await owner.getByLabel('指令', { exact: true }).fill('生成候选报告')
     await expect(owner.getByRole('button', { name: '开始执行' })).toBeEnabled()
@@ -95,6 +118,9 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     expect(firstReply.status()).toBe(201)
     const firstRunId = (await firstReply.json()).data.runId as string
     await waitForRunStatus(firstRunId, 'waiting_approval')
+    await expect(owner.getByRole('button', { name: '提交验收', exact: true })).toBeDisabled()
+    await expect(owner.getByTestId('review-condition')).toContainText('执行仍在进行')
+
     // 真实权限页授予，再在审批窗口排队；撤销后不让该句进入Node。
     await owner.goto(`/tasks/${taskId}/permissions`)
     await selectFromMenu(owner.getByLabel('授权给'), /Bob/)
@@ -163,6 +189,8 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     expect(after.profileRevisionId).toBe(before.profileRevisionId)
     expect(after.deviceId).toBe(before.deviceId)
     expect(after.workspaceId).toBe(before.workspaceId)
+    await expect(owner.getByRole('button', { name: '提交验收', exact: true })).toBeDisabled()
+    await expect(owner.getByTestId('review-condition')).toContainText('发布至少一个交付物')
     const evidence = join(process.cwd(), 'artifacts', 'evidence', 'unified-execution')
     await mkdir(evidence, { recursive: true })
     await writeFile(
@@ -177,10 +205,18 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
           resumedRunId,
           resumeFromRunId: after.resumeFromRunId,
           uniqueInput: 1,
+          preparationCheckedByProductionNode: true,
+          preparationCreatesNoRun: true,
+          trialOnlyPrefillsDraft: true,
+          preparationExpiresAndRechecks: true,
+
           queuedMemberRejectedBeforeApproval: true,
           revokedMemberDraftPreserved: true,
           staleDraftPreserved: true,
           memberHasNoInstructionInput: true,
+          reviewBlockedUntilPublished: true,
+          activeRunBlocksReview: true,
+          namedResponsibleAndDiscussionFocus: true,
           sourceRevisionKept: after.profileRevisionId === before.profileRevisionId,
           sourceDeviceKept: after.deviceId === before.deviceId,
           sourceWorkspaceKept: after.workspaceId === before.workspaceId,

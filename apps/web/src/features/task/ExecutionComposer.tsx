@@ -19,6 +19,7 @@ import {
   type InstructionOutcome,
 } from './InstructionComposer.js'
 import { RunLauncher } from './RunLauncher.js'
+import { useMemberDirectory } from '../team/memberDirectory.js'
 import { ACTIVE_RUN, TERMINAL_RUN } from './run-states.js'
 import { runOrdinalLabels } from './runLabels.js'
 
@@ -36,6 +37,8 @@ export function ExecutionComposer({
   runs: TaskRoomRun[]
   approvalPreview: ApprovalPreview
 }): ReactNode {
+  const directory = useMemberDirectory()
+  const responsible = directory.personOf(task.assigneeUserId)
   const active = runs.find((run) => ACTIVE_RUN.has(run.status))
   const terminal = runs.filter((run) => TERMINAL_RUN.has(run.status))
   const [lastOutcome, setLastOutcome] = useState<InstructionOutcome | null>(null)
@@ -114,6 +117,11 @@ export function ExecutionComposer({
   }
   return (
     <div className="execution-composer" data-testid="execution-composer">
+      <p className="mutation-hint" data-testid="execution-responsibility">
+        {isAssignee
+          ? '你是当前责任人。执行使用你的环境与凭据，审批由你处理。'
+          : `当前责任人：${responsible}。执行使用其环境与凭据，审批由${responsible}处理。指令权不授予审批权、凭据读取权或私有候选访问权。`}
+      </p>
       <SelectMenu
         id={`execution-mode-${task.id}`}
         label="执行方式"
@@ -166,8 +174,13 @@ export function ExecutionComposer({
           {reason}
         </p>
       ) : null}
-      {!isAssignee ? (
-        <p className="mutation-hint">执行使用责任人的环境与凭据，审批仍由责任人处理。</p>
+      {!allowed ? (
+        <a
+          href="#comments-heading"
+          onClick={() => document.getElementById('comments-heading')?.focus()}
+        >
+          前往讨论
+        </a>
       ) : null}
       {!allowed ? (
         <Link to={`/tasks/${task.id}/permissions`}>查看谁能驱动这个任务的 Agent</Link>

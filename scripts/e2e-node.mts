@@ -53,12 +53,15 @@ import type {
   RuntimeStartSpec,
 } from '../apps/node/src/runtime-driver.js'
 import { RunManager } from '../apps/node/src/run/run-manager.js'
-import { startDeviceSession } from '../apps/node/src/gateway/session.js'
 import { ArtifactInputsManager } from '../apps/node/src/artifact/inputs.js'
 import { ArtifactCollector } from '../apps/node/src/artifact/collect.js'
 import { uploadArtifactCandidate } from '../apps/node/src/artifact/upload-client.js'
 
 const REPO_ROOT = join(import.meta.dirname, '..')
+// #320：Q5 与 CLI 使用同一生产包的 session/preparation 装配，不补测试专用响应。
+const { startDeviceSession, checkPreparation } = await import(
+  createRequire(join(REPO_ROOT, 'apps/node/package.json')).resolve('@whalepod/node')
+)
 // #99-A：与 chain.ts 同一装配——经 apps/node 上下文包解析 dist 产物（见该处注释）。
 const RUNTIME_BIN = createRequire(join(REPO_ROOT, 'apps/node/src/cli.ts')).resolve(
   '@whalepod/runtime/bin',
@@ -397,6 +400,8 @@ const session = startDeviceSession({
   heartbeatFacts: () => runManager.heartbeatFacts(),
   // #89 后本进程与生产 cli 走同一条上报路径：只提供事实源，发帧由 session 层负责。
   inventoryFacts: () => inventory.build(),
+  preparationCheck: (request: { workspaceId: string; provider: string; credentialSlot: string }) =>
+    checkPreparation(request, { registry, secrets }),
   // #94：与 cli.ts 同一注入——registry 文件指纹随心跳探测，变化即重报。
   inventoryRevision: () => registryFileRevision(join(stateDir, 'workspace-registry.sqlite')),
   onInventoryError: (error: unknown) => {

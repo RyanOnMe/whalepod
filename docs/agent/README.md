@@ -9,6 +9,9 @@
 | [evidence-map.md](./evidence-map.md) | 出问题时去哪一层找哪份证据 |
 | [acceptance-template.md](./acceptance-template.md) | 验收文档模板；新验收一律按它写 |
 | [run-micro-acceptance.md](./run-micro-acceptance.md) | #306 完整 Micro：Run/工具事实、公开活动摘要、Console 筛选、发送反馈、断线/后台/减少动态、真实双人 Q5 与来源许可 |
+| [action-conditions-acceptance.md](./action-conditions-acceptance.md) | #319 操作处理人、服务端验收条件与讨论定位 |
+| [operation-flow-roadmap.md](./operation-flow-roadmap.md) | 操作优化三批路线、当前第二批Issue与边界 |
+| [execution-preparation-acceptance.md](./execution-preparation-acceptance.md) | #320 固定版本/现场的只读本机检查、凭据/目录修复引导、显式试运行 |
 | [instruction-revocation-acceptance.md](./instruction-revocation-acceptance.md) | #321 排队/未尝试追问撤销、派发回执真实命运、交接边界 |
 | [run-micro-batch2-acceptance.md](./run-micro-batch2-acceptance.md) | #308 Micro 第二批：提示层（Run id 可达、键盘优先）、完成提醒开关的授权真实路径、可关闭 toast（fuse/暂停/关闭），含 34 个上游组件的取用与不取用清单 |
 | [instruction-path-acceptance.md](./instruction-path-acceptance.md) | #186（ADR-0009 切片③b）：追问受理→命令入队→ack 结算 `instruction_state`（含拒绝理由落库、状态受理规则、幂等与授权不变量的 10 条用例） |

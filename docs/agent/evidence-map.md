@@ -48,6 +48,14 @@
 
 密码、Setup/Invite/Device Token、模型密钥、绝对路径、完整 DSH Session JSONL、未发布 Artifact 正文（04 文档 §9）。
 
+## 操作条件（#319）
+
+提交验收提示与行为不一致：先查 hub.task 的 reviewEligibility 与 web.task 条件解析；处理人未知查成员名录；复跑与取证见 [action-conditions-acceptance](./action-conditions-acceptance.md)。
+
+## 首次执行准备（#320）
+
+准备检查无法确认：先查hub.device连接/Node版本与node.preparation；缺项查本机registry/SecretStore；旧结果被复用查web.preparation的版本/目标scope。复跑与证据见[execution-preparation-acceptance](./execution-preparation-acceptance.md)。
+
 ## 指令授权撤销（#321）
 
 撤销后仍驱动：先查hub.task-grants、作者启用态与Outbox attempt_count；拒绝消息长期pending查状态结算/事件；旧页权限不变查web.execution真实帧失效。复跑见[instruction-revocation-acceptance](./instruction-revocation-acceptance.md)。

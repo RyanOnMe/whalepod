@@ -18,6 +18,7 @@ import {
   BOB,
   agentsHandler,
   devicesHandler,
+  deferredResponse,
   loggedInHandlers,
   makeMember,
   makeRun,
@@ -34,7 +35,7 @@ import { selectOption } from './select-menu.js'
 
 const AGENT_ID = '22222222-0000-4000-8000-00000000000a'
 const DEVICE_ID = '77777777-0000-4000-8000-00000000000d'
-const WORKSPACE_ID = '88888888-0000-4000-8000-00000000000w'
+const WORKSPACE_ID = '88888888-0000-4000-8000-00000000000e'
 
 const CORE_PACK = {
   id: 'eeeeeeee-0000-4000-8000-000000000001',
@@ -274,6 +275,85 @@ describe('#241 RunLauncher：解析为 full_access 时先确认再发', () => {
       expectedApprovalPolicy: 'full_access',
       intent: { kind: 'new' },
     })
+  })
+  it('#320 检查的负结果抵达时，关闭完全权限确认并保留草稿', async () => {
+    const captures: { bodies: unknown[] } = { bodies: [] }
+    const user = userEvent.setup()
+    const t = makeTask({ assigneeUserId: BOB.userId, assignmentStatus: 'accepted' })
+    const detail = agentDetail('full_access')
+    const revisionId = '22222222-0000-4000-8000-00000000000b'
+    detail.revisions[0]!.id = revisionId
+    detail.currentRevisionId = revisionId
+    const pendingCheck = deferredResponse()
+    renderApp(
+      `/tasks/${t.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(t),
+        teamMembersHandler([makeMember(BOB), makeMember(ALICE)]),
+        ...agentDetailHandlers(detail),
+        { method: 'POST', url: /preparation-check$/, respond: () => pendingCheck.promise },
+        devicesHandler([
+          {
+            id: DEVICE_ID,
+            name: 'm4-mini',
+            platform: 'darwin',
+            status: 'online',
+            dshDistributionVersion: '0.1.0-rc.8',
+            lastSeenAt: '2026-08-25T00:00:00.000Z',
+          },
+        ]),
+        workspacesHandler([
+          {
+            workspaceId: WORKSPACE_ID,
+            deviceId: DEVICE_ID,
+            name: 'whalepod',
+            kind: 'directory',
+            available: true,
+          },
+        ]),
+        {
+          method: 'POST',
+          url: /\/api\/v1\/tasks\/[^/]+\/instructions$/,
+          respond: (init) => {
+            captures.bodies.push(JSON.parse(String(init.body ?? '{}')))
+            return ok({ id: 'run-1' })
+          },
+        },
+      ]),
+    )
+    // 选 Agent 后 Revision 默认选中当前 → 提示出现（解析结果可见）。
+    await selectOption(user, '选择 Agent', 'report-writer')
+    expect(await screen.findByTestId('run-policy-hint')).toHaveTextContent('完全权限')
+    // 此时尚未提交任何 Run。
+    expect(captures.bodies).toHaveLength(0)
+
+    // 填齐目标与指令后提交 → 先出确认对话框；**取消**不发，**确认**才发 POST。
+    await selectOption(user, '选择设备', 'm4-mini（在线）')
+    await selectOption(user, '选择 Workspace', 'whalepod')
+    await user.type(screen.getByLabelText('指令'), '发布周报')
+    await user.click(screen.getByRole('button', { name: '检查本次准备条件' }))
+    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent('完全权限')
+    expect(captures.bodies).toHaveLength(0) // 对话框没确认前一个请求都不该有
+
+    pendingCheck.resolve(
+      ok({
+        checkedAt: new Date().toISOString(),
+        profileRevisionId: revisionId,
+        deviceId: DEVICE_ID,
+        workspaceId: WORKSPACE_ID,
+        deviceName: 'm4-mini',
+        workspaceName: 'whalepod',
+        workspace: 'available',
+        credential: 'unconfigured',
+        modelCall: 'not_tested',
+      }),
+    )
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
+    expect(screen.getByLabelText('指令')).toHaveValue('发布周报')
+    expect(captures.bodies).toHaveLength(0)
   })
 })
 

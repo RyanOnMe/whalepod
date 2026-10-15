@@ -24,6 +24,7 @@ import { registerTaskRoutes } from './modules/task/routes.js'
 import { registerAgentRoutes } from './modules/agent/routes.js'
 import { loadPluginCatalog } from './modules/plugin/catalog.js'
 import { registerPluginRoutes } from './modules/plugin/routes.js'
+import { registerPreparationRoutes } from './modules/device/preparation-routes.js'
 import { registerDeviceRoutes } from './modules/device/routes.js'
 import { registerWorkspaceRoutes } from './modules/device/workspace-routes.js'
 import { registerNodeWebsocket } from './modules/device/node-websocket.js'
@@ -218,6 +219,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         catalog: pluginCatalog,
         allowLocalDevelopment: config.pluginDevMode ?? false,
       })
+      registerPreparationRoutes(api, { database, requireActor })
       registerDeviceRoutes(api, { database, requireActor, anonymousLimiter })
       registerWorkspaceRoutes(api, { database, requireActor })
       // P1-15：Artifact 面——Node 上传/manifest/受控下载 + owner 发布 + 内容下载。
