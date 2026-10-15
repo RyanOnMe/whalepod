@@ -24,14 +24,10 @@ import {
   getRun,
   insertArtifact,
   deviceHasRunOnTask,
-  listPublishedArtifactsByTask,
   transactCommand,
 } from '@whalepod/db'
 import type { Database } from '@whalepod/db'
-import {
-  ArtifactUploadMetadataSchema,
-  ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES,
-} from '@whalepod/protocol'
+import { ArtifactUploadMetadataSchema } from '@whalepod/protocol'
 import type { ArtifactUploadMetadata } from '@whalepod/protocol'
 import { authenticateDevice } from '../plugin/pack-resolver.js'
 import type { RequireActor } from '../auth/session.js'
@@ -39,7 +35,8 @@ import { readIdempotencyKey } from '../auth/idempotency.js'
 import { audit } from '../shared/audit.js'
 import { ApiError } from '../shared/http-error.js'
 import { publishArtifact, requireArtifactRow } from './commands.js'
-import { toArtifactView, toManifestEntry } from './queries.js'
+import { savedRunInputs } from '../run/input-manifest.js'
+import { toArtifactView } from './queries.js'
 import { ArtifactStore, ARTIFACT_MAX_BYTES } from './store.js'
 
 export interface ArtifactRoutesDeps {
@@ -152,11 +149,7 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
       },
     )
 
-    // GET /node/runs/:runId/input-manifest：Reviewer Run 的只读输入清单
-    // （只含已发布；无 storageKey/sourceRelativePath——G6-07 无路径泄露）。
-    // #64 fail-closed：已发布数超协议条目上限时不静默下发（Node 侧 schema
-    // 校验会炸成不显式的 VALIDATION_FAILED），返回专用码显式拒绝。409 =
-    // 请求与目标资源当前状态冲突（已发布数超上限），同状态机拒绝的归位。
+    // Run创建时固化的输入清单。旧NULL不以当前发布列表回填，避免伪造历史。
     artifact.get('/node/runs/:runId/input-manifest', async (request) => {
       const identity = await authenticateDevice(deps.database, request)
       const { runId } = request.params as { runId: string }
@@ -164,18 +157,23 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
       if (run === undefined || run.deviceId !== identity.deviceId) {
         throw new ApiError(404, 'NOT_FOUND', 'run not found')
       }
-      const rows = await listPublishedArtifactsByTask(deps.database.db, run.taskId)
-      if (rows.length > ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES) {
+      const manifest = savedRunInputs(run)
+      if (manifest === null)
         throw new ApiError(
           409,
-          'ARTIFACT_INPUT_MANIFEST_TOO_LARGE',
-          `task has more than ${ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES} published artifacts; reviewer input manifest refused`,
+          'CONFLICT',
+          '该旧执行的历史输入无法确认，请开始新执行或显式选择材料后重跑',
         )
-      }
-      return {
-        ok: true,
-        data: { taskId: run.taskId, artifacts: rows.map(toManifestEntry) },
-      }
+      return { ok: true, data: manifest }
+    })
+
+    // Team members can inspect only the immutable, published-material metadata.
+    artifact.get('/runs/:runId/input-manifest', async (request, reply) => {
+      await deps.requireActor(request)
+      const { runId } = request.params as { runId: string }
+      const run = await getRun(deps.database.db, runId)
+      if (run === undefined) throw new ApiError(404, 'NOT_FOUND', 'run not found')
+      return reply.header('cache-control', 'no-store').send({ ok: true, data: savedRunInputs(run) })
     })
 
     // GET /node/artifacts/:artifactId/content：Node 受控下载已发布副本

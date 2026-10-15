@@ -2,7 +2,7 @@
  * Reviewer Run 输入准备（P1-15；G6-06/07 Node 半场）。
  *
  * run.start 后、Runtime 启动前：
- * 1. `GET /node/runs/:runId/input-manifest`（Device Token）拉取任务已发布
+ * 1. `GET /node/runs/:runId/input-manifest`（Device Token）拉取该Run创建时已固化的
  *    Artifact 清单（协议 ArtifactInputManifestSchema fail-closed 解析；
  *    taskId 与 Run 不一致 → VALIDATION_FAILED；Hub 显式拒绝（如 #64 超上限
  *    ARTIFACT_INPUT_MANIFEST_TOO_LARGE）→ 错误码原样透传为 run.start 拒绝）；
@@ -63,7 +63,7 @@ export class ArtifactInputsManager {
     this.deps = deps
   }
 
-  /** 拉取清单并下载全部已发布副本；失败不留下半成品目录。 */
+  /** 拉取固化清单并下载所选已发布副本；失败不留下半成品目录。 */
   async prepare(runId: string, taskId: string): Promise<PreparedInputs> {
     const dir = join(this.deps.inputsRoot, runId)
     try {

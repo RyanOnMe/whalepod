@@ -10,6 +10,8 @@
 | [acceptance-template.md](./acceptance-template.md) | 验收文档模板；新验收一律按它写 |
 | [run-micro-acceptance.md](./run-micro-acceptance.md) | #306 完整 Micro：Run/工具事实、公开活动摘要、Console 筛选、发送反馈、断线/后台/减少动态、真实双人 Q5 与来源许可 |
 | [action-conditions-acceptance.md](./action-conditions-acceptance.md) | #319 操作处理人、服务端验收条件与讨论定位 |
+| [run-input-snapshot-acceptance.md](./run-input-snapshot-acceptance.md) | #325 输入创建时固定、迟到发布/幂等/选择/旧未知与来源继承 |
+| [operation-flow-batch3-plan.md](./operation-flow-batch3-plan.md) | 第三批交付闭环的剩余事项、方案、边界与验收 |
 | [operation-flow-roadmap.md](./operation-flow-roadmap.md) | 操作优化三批路线、当前第二批Issue与边界 |
 | [execution-preparation-acceptance.md](./execution-preparation-acceptance.md) | #320 固定版本/现场的只读本机检查、凭据/目录修复引导、显式试运行 |
 | [instruction-revocation-acceptance.md](./instruction-revocation-acceptance.md) | #321 排队/未尝试追问撤销、派发回执真实命运、交接边界 |

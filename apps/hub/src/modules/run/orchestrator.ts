@@ -13,6 +13,7 @@
  *   事件留证 + 非终态 Run 收敛 failed(INVALID_RUN_TRANSITION) + 连接保留。
  */
 import { randomUUID } from 'node:crypto'
+import { snapshotRunInputs } from './input-manifest.js'
 import { uuidv7 } from '../shared/uuid.js'
 import { and, eq, inArray } from 'drizzle-orm'
 import { asUserId, authorize, DomainError, transitionRun, transitionTask } from '@whalepod/domain'
@@ -235,6 +236,7 @@ export class RunOrchestrator {
       throw new RunCommandError('WORKSPACE_UNAVAILABLE', 'workspace is not available')
     }
 
+    let rerunSource: RunRow | undefined
     if (input.rerunOfRunId !== undefined) {
       const prior = await getRun(tx, input.rerunOfRunId)
       if (prior === undefined || prior.taskId !== taskId) {
@@ -243,6 +245,7 @@ export class RunOrchestrator {
       if (!isTerminal(prior.status)) {
         throw new RunCommandError('CONFLICT', 'rerun source run must be terminal')
       }
+      rerunSource = prior
     }
 
     // ADR-0009 切片⑤（resume 续跑）四重守卫——「同 Workspace」是机器判据，不是口头约束：
@@ -287,6 +290,12 @@ export class RunOrchestrator {
       throw new RunCommandError('RUN_ALREADY_ACTIVE', 'task already has an active run')
     }
 
+    const artifactInputManifest = await snapshotRunInputs(
+      tx,
+      taskId,
+      input.artifactInputIds,
+      resumeSource ?? rerunSource,
+    )
     const runId = randomUUID()
     const commandId = randomUUID()
     const runStartPayload = RunStartSchema.shape.payload.parse({
@@ -335,6 +344,7 @@ export class RunOrchestrator {
       profileRevisionId: revision.id,
       deviceId: device.id,
       workspaceId: workspace.id,
+      artifactInputManifest,
       profileDigest: revision.profileDigest,
       pluginPackDigest: pack.packDigest,
       dshDistributionVersion: input.dshDistributionVersion,

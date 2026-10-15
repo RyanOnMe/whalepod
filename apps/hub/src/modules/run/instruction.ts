@@ -47,6 +47,7 @@ export interface SendInstructionInput {
   agentId?: string
   expectedApprovalPolicy?: 'approval_required' | 'full_access'
   profileRevisionId?: string
+  artifactInputIds?: string[]
   intent?: SendInstructionRequest['intent']
   /**
    * 触发来源（#239）：human = 执行区里人发的（默认，语义不变）；auto_assignment =
@@ -104,6 +105,15 @@ export async function sendInstruction(
   taskId: string,
   input: SendInstructionInput,
 ): Promise<SendInstructionOutcome> {
+  if (
+    input.artifactInputIds !== undefined &&
+    (input.intent === undefined || input.intent.kind === 'followup')
+  )
+    throw new RunCommandError(
+      'VALIDATION_FAILED',
+      'input selection requires an explicit new or resume execution',
+    )
+
   // **先判权，再谈幂等**（评审 #204 阻断 1）：回执回放此前排在判权之前，于是「撤销授权后拿旧 key
   // 重放」能拿回原 Run（撤销立刻失效被推翻），未授权的人猜到 key 还能读回别人指令的正文。
   // 回执只服务「本人已成功的重试」，所以权限必须最先判定。
@@ -267,6 +277,9 @@ export async function sendInstruction(
       taskId,
       {
         idempotencyKey: input.idempotencyKey,
+        ...(input.artifactInputIds === undefined
+          ? {}
+          : { artifactInputIds: input.artifactInputIds }),
         agentId,
         ...(input.expectedApprovalPolicy !== undefined
           ? { expectedApprovalPolicy: input.expectedApprovalPolicy }

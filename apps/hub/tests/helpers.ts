@@ -1,3 +1,4 @@
+import type { ArtifactInputManifest } from '@whalepod/protocol'
 /**
  * Hub integration spec 的统一入口与驱动助手。
  *
@@ -553,6 +554,7 @@ export async function insertRunRow(
       | 'cancelled'
       | 'lost'
     dshSessionId?: string
+    artifactInputManifest?: ArtifactInputManifest | null
   },
 ): Promise<string> {
   const runId = randomUUID()
@@ -569,6 +571,9 @@ export async function insertRunRow(
     pluginPackDigest: 'a'.repeat(64),
     dshDistributionVersion: TEST_DSH_VERSION,
     ...(input.dshSessionId !== undefined ? { dshSessionId: input.dshSessionId } : {}),
+    ...(input.artifactInputManifest === undefined
+      ? {}
+      : { artifactInputManifest: input.artifactInputManifest }),
   })
   return runId
 }

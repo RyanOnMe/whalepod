@@ -89,7 +89,7 @@ describe('resume lineage (ADR-0009 slice 5)', () => {
 
   /** 种一个终态、有会话的来源 Run（resume 的正常前提）。 */
   async function seedTerminalSourceRun(
-    overrides: { status?: string; dshSessionId?: string | null } = {},
+    overrides: { status?: string; dshSessionId?: string | null; legacy?: boolean } = {},
   ): Promise<string> {
     return insertRunRow(database.db, {
       taskId,
@@ -98,6 +98,7 @@ describe('resume lineage (ADR-0009 slice 5)', () => {
       profileRevisionId: bobChain.profileRevisionId,
       deviceId: bobChain.deviceId,
       workspaceId: bobChain.workspaceId,
+      artifactInputManifest: overrides.legacy ? null : { taskId, artifacts: [] },
       status: (overrides.status ?? 'completed') as 'completed',
       dshSessionId:
         overrides.dshSessionId === undefined ? 'whalepod-run-source' : overrides.dshSessionId,
@@ -105,6 +106,7 @@ describe('resume lineage (ADR-0009 slice 5)', () => {
   }
 
   interface RunBody {
+    artifactInputIds?: string[]
     resumeFromRunId?: string
     rerunOfRunId?: string
     deviceId?: string
@@ -122,6 +124,7 @@ describe('resume lineage (ADR-0009 slice 5)', () => {
       url: `/api/v1/tasks/${taskId}/runs`,
       payload: {
         agentId: bobChain.agentId,
+        ...(body.artifactInputIds === undefined ? {} : { artifactInputIds: body.artifactInputIds }),
         deviceId: body.deviceId ?? bobChain.deviceId,
         workspaceId: body.workspaceId ?? bobChain.workspaceId,
         prompt: 'continue where we left off',
@@ -267,5 +270,22 @@ describe('resume lineage (ADR-0009 slice 5)', () => {
     expect(first.status).toBe(201)
     expect(second.status).toBe(201)
     expect(second.data?.id).toBe(first.data?.id)
+  })
+  it('legacy source inputs remain unknown; explicit material confirmation permits a new resume record', async () => {
+    await seedWorld()
+    const sourceId = await seedTerminalSourceRun({ legacy: true })
+    const unknown = await apiInject(ctx, bob, {
+      method: 'GET',
+      url: `/api/v1/runs/${sourceId}/input-manifest`,
+    })
+    expect(unknown.statusCode).toBe(200)
+    expect(unknown.json().data).toBeNull()
+    expect((await createRun({ resumeFromRunId: sourceId })).status).toBe(409)
+    expect((await createRun({ resumeFromRunId: sourceId, artifactInputIds: [] })).status).toBe(201)
+    expect(
+      (
+        await apiInject(ctx, bob, { method: 'GET', url: `/api/v1/runs/${sourceId}/input-manifest` })
+      ).json().data,
+    ).toBeNull()
   })
 })
