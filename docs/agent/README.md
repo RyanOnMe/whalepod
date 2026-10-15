@@ -9,6 +9,8 @@
 | [evidence-map.md](./evidence-map.md) | 出问题时去哪一层找哪份证据 |
 | [acceptance-template.md](./acceptance-template.md) | 验收文档模板；新验收一律按它写 |
 | [run-micro-acceptance.md](./run-micro-acceptance.md) | #306 完整 Micro：Run/工具事实、公开活动摘要、Console 筛选、发送反馈、断线/后台/减少动态、真实双人 Q5 与来源许可 |
+| [personal-attention-acceptance.md](./personal-attention-acceptance.md) | #331 按当前身份/角色与拥有关系生成有限个人行动投影 |
+| [operation-flow-batch4-plan.md](./operation-flow-batch4-plan.md) | 第四批剩余事项、个人行动入口与真人试用验证方案 |
 | [action-conditions-acceptance.md](./action-conditions-acceptance.md) | #319 操作处理人、服务端验收条件与讨论定位 |
 | [delivery-revision-acceptance.md](./delivery-revision-acceptance.md) | #327 显式产出来源/意见材料、修订重新发布与真人验收完成 |
 | [artifact-review-entry-acceptance.md](./artifact-review-entry-acceptance.md) | #326 产出发起复核、明确材料/Agent、草稿与权限、历史输入查看 |

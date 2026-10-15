@@ -71,3 +71,7 @@
 ### 意见修订与人工验收（#327）
 
 修订误接Reviewer先查web.delivery.revision的producerRunId、实际请求intent及Run血缘；材料看新Run固定manifest与旧Reviewer清单对比。状态应由新Run将in_review退回in_progress，done仅由真人complete命令产生。复跑delivery-revision-acceptance，证据artifacts/evidence/delivery-revision/。
+
+## 第四批个人行动投影
+
+个人队列错项/缺项先看hub.task的GET /tasks/attention与Session身份、对象状态；严格响应判据见personal-attention-acceptance。设备输入与运行状态沿原node/runtime证据地图；脱敏日志位于artifacts/evidence/operation-flow-batch4/input-projection。
