@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { queryKeys } from '../src/app/query-client.js'
@@ -399,5 +399,191 @@ describe('#315 统一执行入口的真人页面', () => {
     expect(
       view.fetchMock.mock.calls.some(([url]) => /\/(devices|workspaces)$/.test(String(url))),
     ).toBe(false)
+  })
+})
+
+function draftNavigationFixture() {
+  const task = makeTask({
+    title: '准备工作甲',
+    assignmentStatus: 'accepted',
+    approvalPolicy: 'approval_required',
+  })
+  const other = makeTask({
+    title: '准备工作乙',
+    assignmentStatus: 'accepted',
+    approvalPolicy: 'approval_required',
+  })
+  const run = makeRun({ status: 'running' })
+  const device = makeDevice()
+  const workspaceId = '00000000-0000-4000-8000-000000000021'
+  const state = {
+    task,
+    running: false,
+    request: undefined as ReturnType<typeof deferredResponse> | undefined,
+    fail: false,
+  }
+  const view = renderApp(
+    `/tasks/${task.id}`,
+    loggedInHandlers(BOB, [
+      {
+        method: 'GET',
+        url: new RegExp(`/tasks/${task.id}$`),
+        respond: () =>
+          taskRoomHandler(state.task, { runs: state.running ? [run] : [] }).respond({}),
+      },
+      taskRoomHandler(other),
+      sourceHandler(task, run),
+      ...agentHandlers(),
+      teamMembersHandler(),
+      devicesHandler([device]),
+      workspacesHandler([
+        { workspaceId, deviceId: device.id, name: 'repo', kind: 'directory', available: true },
+      ]),
+      { method: 'GET', url: /\/projects$/, respond: () => ok([]) },
+      {
+        method: 'GET',
+        url: /\/tasks\/recent$/,
+        respond: () =>
+          ok(
+            [task, other].map((t) => ({
+              id: t.id,
+              title: t.title,
+              status: t.status,
+              projectName: '项目甲',
+              lastActiveAt: t.updatedAt,
+            })),
+          ),
+      },
+      { method: 'GET', url: /\/events(?:\?.*)?$/, respond: () => ok({ events: [] }) },
+      { method: 'GET', url: /\/instruction-grants$/, respond: () => ok([]) },
+      {
+        method: 'POST',
+        url: /\/instructions$/,
+        respond: () =>
+          state.request
+            ? state.request.promise
+            : state.fail
+              ? {
+                  status: 503,
+                  body: {
+                    ok: false,
+                    error: {
+                      code: 'INTERNAL_ERROR',
+                      message: '暂时无法确认受理',
+                      requestId: 'draft-request',
+                    },
+                  },
+                }
+              : ok({ outcome: 'started_run', runId: run.id, instructionState: 'pending' }),
+      },
+    ]),
+  )
+  return { ...view, task, other, run, device, workspaceId, state }
+}
+async function selectDraftAgent(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByLabelText('选择 Agent'))
+  await user.click(await screen.findByRole('menuitem', { name: 'Builder' }))
+  await waitFor(() => expect(screen.getByLabelText('选择 Revision')).toHaveTextContent('r2'))
+}
+async function leaveForDevices(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('link', { name: '设备' }))
+  await screen.findByRole('heading', { name: '设备', level: 1 })
+}
+async function returnToDraft(user: ReturnType<typeof userEvent.setup>, title: string) {
+  await user.click(screen.getByRole('link', { name: new RegExp(`^${title}`) }))
+  await screen.findByRole('heading', { name: title, level: 1 })
+}
+describe('#337 当前会话中的执行草稿', () => {
+  it('去设备页再回任务保留草稿和固定Agent版本，不发指令', async () => {
+    const user = userEvent.setup()
+    const f = draftNavigationFixture()
+    await selectDraftAgent(user)
+    await user.type(screen.getByLabelText('指令'), '离开准备页也不能丢失的正文')
+    await leaveForDevices(user)
+    await returnToDraft(user, f.task.title)
+    expect(screen.getByLabelText('指令')).toHaveValue('离开准备页也不能丢失的正文')
+    expect(screen.getByLabelText('选择 Agent')).toHaveTextContent('Builder')
+    expect(screen.getByLabelText('选择 Revision')).toHaveTextContent('r2')
+    expect(
+      f.fetchMock.mock.calls.some(
+        ([url, init]) => String(url).endsWith('/instructions') && init?.method === 'POST',
+      ),
+    ).toBe(false)
+  })
+  it('两个任务分别保留自己的草稿，显式清除不发请求', async () => {
+    const user = userEvent.setup()
+    const f = draftNavigationFixture()
+    await user.type(await screen.findByLabelText('指令'), '甲的草稿')
+    await returnToDraft(user, f.other.title)
+    expect(screen.getByLabelText('指令')).toHaveValue('')
+    await user.type(screen.getByLabelText('指令'), '乙的草稿')
+    await returnToDraft(user, f.task.title)
+    expect(screen.getByLabelText('指令')).toHaveValue('甲的草稿')
+    await user.click(screen.getByRole('button', { name: '清除当前执行草稿' }))
+    expect(screen.getByLabelText('指令')).toHaveValue('')
+    await returnToDraft(user, f.other.title)
+    expect(screen.getByLabelText('指令')).toHaveValue('乙的草稿')
+  })
+  it('待发请求跨页仍锁定，返回不重发，确认受理后才清理正文', async () => {
+    const user = userEvent.setup()
+    const f = draftNavigationFixture()
+    f.state.request = deferredResponse()
+    await selectDraftAgent(user)
+    await user.type(screen.getByLabelText('指令'), '等待确认受理的正文')
+    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    await waitFor(() => expect(screen.getByLabelText('执行方式')).toBeDisabled())
+    await leaveForDevices(user)
+    await returnToDraft(user, f.task.title)
+    expect(screen.getByLabelText('执行方式')).toBeDisabled()
+    expect(screen.getByLabelText('指令')).toHaveValue('等待确认受理的正文')
+    expect(
+      f.fetchMock.mock.calls.filter(
+        ([url, init]) => String(url).endsWith('/instructions') && init?.method === 'POST',
+      ),
+    ).toHaveLength(1)
+    await act(async () => {
+      f.state.running = true
+      f.state.request!.resolve(
+        ok({ outcome: 'started_run', runId: f.run.id, instructionState: 'pending' }),
+      )
+    })
+    await waitFor(() => expect(screen.getByLabelText('执行方式')).toBeEnabled())
+    expect(screen.getByLabelText('指令')).toHaveValue('')
+    await leaveForDevices(user)
+    await returnToDraft(user, f.task.title)
+    expect(screen.getByLabelText('指令')).toHaveValue('')
+  })
+  it('未确认受理的相同正文返回重试沿用幂等键', async () => {
+    const user = userEvent.setup()
+    const f = draftNavigationFixture()
+    f.state.fail = true
+    await selectDraftAgent(user)
+    await user.type(screen.getByLabelText('指令'), '失败后不应变成另一次指令')
+    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    await screen.findByText(/暂时无法确认受理/)
+    const calls = () =>
+      f.fetchMock.mock.calls.filter(
+        ([url, init]) => String(url).endsWith('/instructions') && init?.method === 'POST',
+      )
+    const first = new Headers(calls()[0]?.[1]?.headers).get('idempotency-key')
+    await leaveForDevices(user)
+    await returnToDraft(user, f.task.title)
+    expect(screen.getByLabelText('指令')).toHaveValue('失败后不应变成另一次指令')
+    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    await waitFor(() => expect(calls()).toHaveLength(2))
+    expect(new Headers(calls()[1]?.[1]?.headers).get('idempotency-key')).toBe(first)
+  })
+  it('责任人改变后保留正文但不沿旧安排发送', async () => {
+    const user = userEvent.setup()
+    const f = draftNavigationFixture()
+    await selectDraftAgent(user)
+    await user.type(screen.getByLabelText('指令'), '只针对原责任人环境的安排')
+    await leaveForDevices(user)
+    f.state.task = { ...f.task, assigneeUserId: ALICE.userId }
+    await f.queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(f.task.id) })
+    await returnToDraft(user, f.task.title)
+    expect(screen.getByLabelText('指令')).toHaveValue('只针对原责任人环境的安排')
+    expect(screen.getByTestId('execution-blocker')).toHaveTextContent('责任人已变化')
+    expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
   })
 })
