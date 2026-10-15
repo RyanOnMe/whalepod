@@ -34,6 +34,7 @@ import {
 } from './instruction-grants.js'
 import type { RunOrchestrator } from '../run/orchestrator.js'
 import { listRecentTaskViews, listTaskViewsByProject, searchTaskViews } from './queries.js'
+import { personalAttention } from './attention.js'
 import { getTaskRoom } from './view.js'
 
 export interface TaskRouteDeps {
@@ -153,6 +154,13 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
     const project = await getProject(deps.database.db, projectId)
     if (project === undefined) throw new ApiError(404, 'NOT_FOUND', 'project not found')
     return { ok: true, data: await listTaskViewsByProject(deps.database.db, projectId) }
+  })
+
+  app.get('/tasks/attention', async (request, reply) => {
+    const actor = await deps.requireActor(request)
+    return reply
+      .header('cache-control', 'private, no-store')
+      .send({ ok: true, data: await personalAttention(deps.database.db, actor) })
   })
 
   // GET /tasks/recent：侧栏「最近任务」（#252）。静态段在 Fastify 路由树里优先于

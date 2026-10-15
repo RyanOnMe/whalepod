@@ -288,6 +288,11 @@ describe('personal attention via production commands (#331)', () => {
       objectId: task,
     })
   })
+  it('disabled members cannot use a previously issued session to read their queue', async () => {
+    await assigned()
+    expect((await command(`/team/members/${bob.userId}/disable`)).statusCode).toBe(200)
+    expect((await attention(bob)).statusCode).toBe(401)
+  })
   it('accept/reject/reassign update the actual actor actions; members never gain admin repair work', async () => {
     const task = await assigned()
     expect((await as(bob, `/tasks/${task}/reject`)).statusCode).toBe(200)
@@ -300,7 +305,7 @@ describe('personal attention via production commands (#331)', () => {
       (await command(`/tasks/${task}/reassign`, { assigneeUserId: bob.userId })).statusCode,
     ).toBe(200)
     expect(await items(owner)).toEqual([])
-    expect((await items(bob))[0].kind).toBe('accept_assignment')
+    expect((await items(bob))[0]?.kind).toBe('accept_assignment')
     expect((await as(bob, `/tasks/${task}/accept`)).statusCode).toBe(200)
     expect(await items(bob)).toEqual([])
   })
@@ -362,7 +367,8 @@ describe('personal attention via production commands (#331)', () => {
   })
   it('terminal tasks do not retain pending or candidate reminders', async () => {
     const pending = await assigned()
-    expect((await command(`/tasks/${pending}/cancel`)).statusCode).toBe(200)
+    expect((await as(bob, `/tasks/${pending}/accept`)).statusCode).toBe(200)
+    expect((await as(bob, `/tasks/${pending}/cancel`)).statusCode).toBe(200)
     expect(await items(bob)).toEqual([])
     const run = await started()
     await upload(run, 'left candidate', false)
@@ -385,7 +391,7 @@ describe('personal attention via production commands (#331)', () => {
     const mine = await assigned(owner)
     const ordered = await items(owner)
     expect(ordered.map((i) => i.kind)).toEqual(['decide_approval', 'accept_assignment'])
-    expect(ordered[0].objectId).toBe(card.id)
-    expect(ordered[1].objectId).toBe(mine)
+    expect(ordered[0]?.objectId).toBe(card.id)
+    expect(ordered[1]?.objectId).toBe(mine)
   })
 })
