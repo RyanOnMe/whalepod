@@ -18,6 +18,16 @@ describe('explicit artifact input selection (#325)', () => {
     for (const artifactInputIds of [[id, id], Array.from({ length: 65 }, () => id), ['invalid']])
       expect(CreateRunRequestSchema.safeParse({ ...base, artifactInputIds }).success).toBe(false)
   })
+  it('normalizes UUID case before checking duplicate material identities', () => {
+    const lower = 'abcdefab-1234-4000-8000-abcdefabcdef'
+    const upper = lower.toUpperCase()
+    expect(
+      CreateRunRequestSchema.parse({ ...base, artifactInputIds: [upper] }).artifactInputIds,
+    ).toEqual([lower])
+    expect(
+      CreateRunRequestSchema.safeParse({ ...base, artifactInputIds: [lower, upper] }).success,
+    ).toBe(false)
+  })
   it('cannot silently discard input changes as an active followup or implicit instruction', () => {
     for (const intent of [undefined, { kind: 'followup', runId: id }])
       expect(
