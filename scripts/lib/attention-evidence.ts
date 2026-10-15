@@ -40,7 +40,7 @@ export function verifyAttentionEvidence(input: unknown): AttentionVerdict {
     const action = record(value)
     const kind = typeof action['kind'] === 'string' ? action['kind'] : ''
     const states = EXPECTED[kind]
-    if (!states || seen.has(kind)) {
+    if (!Object.hasOwn(EXPECTED, kind) || !states || seen.has(kind)) {
       problems.push('unknown or duplicate action')
       continue
     }

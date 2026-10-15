@@ -61,6 +61,23 @@ describe('personal attention evidence fails closed', () => {
       expect(verifyAttentionEvidence(bad).verdict).toBe('FAIL')
     }
   })
+  it('rejects inherited object properties as action kinds', () => {
+    const data = valid()
+    data.actions = ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__'].map(
+      (kind) => ({
+        kind,
+        taskId,
+        objectId: taskId,
+        before: undefined,
+        after: undefined,
+        targetId: 'task-assignment',
+        focusedTargetId: 'task-assignment',
+        commandsBeforeNavigation: 0,
+        commandsAfterNavigation: 0,
+      }),
+    )
+    expect(verifyAttentionEvidence(data).verdict).toBe('FAIL')
+  })
   it('rejects incomplete privacy, runtime, freshness or final-state evidence', () => {
     const checks = [
       { privateCandidateIdentityHidden: false },
