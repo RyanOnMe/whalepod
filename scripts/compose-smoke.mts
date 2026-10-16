@@ -169,8 +169,12 @@ function runNodeCli(
   home: string,
 ): { child: ReturnType<typeof spawn>; tail: () => string } {
   const buf: string[] = []
+  // #288：剔除操作者的版本声明（WHALEPOD_DSH_VERSION）——否则探针失败会被 hello 的
+  // 诚实兜底掩盖，「设备事实 == dsh.lock.json」的断言会在带该 env 的机器上假绿。
+  const env = { ...process.env, HOME: home }
+  delete env['WHALEPOD_DSH_VERSION']
   const child = spawn(process.execPath, [join(REPO_ROOT, 'apps/node/dist/cli.js'), ...args], {
-    env: { ...process.env, HOME: home },
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   child.stdout.on('data', (c: Buffer) => buf.push(c.toString())) // 必须消费：管道满会卡死子进程
@@ -316,8 +320,9 @@ async function main(): Promise<void> {
     })
     phase('inventory projection visible')
 
-    // #288：真 cli 的「探针 → node.hello」装配面（Q9 是唯一跑真实 `whalepod-node start`
-    // 的门）：设备事实里的 dshDistributionVersion 必须等于 dsh.lock.json 锁定的版本。
+    // #288：真 cli 的「探针 → node.hello」装配面（Q9 是唯一跑**发布产物**、且唯一对
+    // 探针结果下判定的门；Q2/Q6 也跑真 cli，但走源码 tsx）：设备事实里的
+    // dshDistributionVersion 必须等于 dsh.lock.json 锁定的版本。
     // 版本的真实来源是 Runtime 自报（`--print-dsh-version`），锁文件是同一事实源；
     // 接错（报声明值、恒 null/'unmanaged'、或探针失败）在这里当场红。
     const lockedDshVersion = (

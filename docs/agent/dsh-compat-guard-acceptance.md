@@ -42,9 +42,10 @@ pnpm test:compose-smoke           # Q9：真 `whalepod-node start` 的探针→h
 
 - 探针：Runtime bin 的 stdout 一行 `{"dshName","dshVersion"}`（**不是协议帧**）；不可知时 stderr
   结构化日志 `runtime.bin` + exit 1。Node 侧 `node.hello` 的 `dshDistributionVersion` 现在来自它。
-- 兼容闸：spawn Runtime **之前**就拒绝 Run——`command.ack accepted=false` 且 `error.code=PLUGIN_PACK_MISMATCH`，
-  消息形如 `plugin <name> is reviewed for DSH <x>, local DSH is <y>` / `local DSH distribution version
-  is unknown; refusing plugin pack (<name> requires <x>)`；**不下载 tarball**（拒绝发生在安装之前）。
+- 兼容闸：spawn Runtime **之前**就拒绝 Run——`command.ack accepted=false` 且 `error.code=PLUGIN_PACK_MISMATCH`。
+  两种消息形态（运维按此归因）：逐包不匹配 `plugin <name> is reviewed for DSH <x>, local DSH is <y>`；
+  本机版本不可知（入口短路）`local DSH distribution version is unknown; refusing plugin pack
+  (rebuild the runtime entry so --print-dsh-version answers)`。**不下载 tarball**（拒绝发生在安装之前）。
 - 对照点：`runtime.ready` 帧带 `profileDigest`；不符时 Node 合成 `runtime.fatal` →
   `run.failed`（code `PROFILE_MISMATCH`，summary 给两个 digest），并 `supervisor.cancel` 收掉 Runtime。
 
@@ -82,7 +83,7 @@ ready 无回声；实现后全绿。
 文件与 `git log` 同一位置可查。要落盘复核：
 
 ```bash
-git log --oneline 3479afe^..4338604          # 红→绿（含评审修复）
+git log --oneline 3479afe^..73c0485          # 红→绿（含两轮评审修复）
 pnpm test:dsh-contract && pnpm test:unit
 ```
 
@@ -104,9 +105,12 @@ pnpm test:dsh-contract && pnpm test:unit
   先定一份独立 canonical 口径，未做；本轮的对照点只覆盖 Node↔Runtime 往返一致。
 - DSH 版本在 Node **启动时探针一次**：升级 DSH 之后必须重启 Node 才生效（`dsh-upgrade` 流程
   本来就要求重启；本轮把这条前提写进了 CLI 注释）。
-- **升级后设备视图会短暂少报 pack**：`node.hello.pluginPackDigests` 只上报 marker 校验通过的
-  目录，而旧 marker（缺 `dshCompatibility`）解析失败 → 暂不上报，直到该 pack 下次 preflight 重建。
-  已核实 Hub 只把它落库/展示（无准入依赖），跑一次该 pack 的 Run 即自愈。
+- **升级后设备视图会少报 pack，直到 Node 重启**：`node.hello` 的 facts（含
+  `pluginPackDigests` 与 `dshDistributionVersion`）是 Node **启动时冻结**的一份对象，每次
+  重连发的都是同一份（`apps/node/src/cli.ts` 装配 → `gateway/session.ts`）；旧 marker（缺
+  `dshCompatibility`）解析失败 → 该 pack 不上报，即使本地已由下次 preflight 重建，设备视图
+  也要等 Node 重启才刷新。已核实 Hub 只把它落库/展示（无准入依赖），本地 pack 是即时自愈的
+  ——**设备视图的滞后单独记为观察面 Issue**，不当作已修。
 - **旧 Runtime 产物 + 新 Node**：ready 帧缺必填 `profileDigest` 会被 strict schema 拒（按 main 的
   bin 行为静态推断的形态：`runtime output failed wire schema` → 该 Run 失败），未实机复现旧产物；
   部署带新鲜构建即无此形态（上一条 dist 前提的姊妹面）。
