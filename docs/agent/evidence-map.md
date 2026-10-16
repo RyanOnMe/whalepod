@@ -33,6 +33,8 @@
 |---|---|
 | 指令去向变化、来源续跑或草稿丢失 | `artifacts/evidence/unified-execution/result.json`：web.execution 的草稿/唯一输入 → hub.run 的血缘/来源版本/现场 → runtime.bridge 会话身份；上下文在场另外复跑 Q3 resume 契约。见 unified-execution-acceptance |
 | 拒绝后无法改派或改派重试冲突 | `artifacts/evidence/task-reassignment/result.json`：web.assignment → hub.task 的 pending/assignee → command_receipt → 新 Run 的 owner/device |
+| 创建任务重复建出两个 / 重试后多一个任务 | `artifacts/evidence/create-recovery/result.json`：web.api 的幂等键（同义键要同值）→ hub.task 的 `task.create:<key>` 回放与命令回执；复跑 `pnpm exec playwright test --project=p1-345`，见 create-to-recovery-acceptance |
+| 执行归错人 / 用错设备（创建者 vs 责任人） | 同一份 `result.json` 的路径 2/3 段：hub.run 的 ownerUserId 与 deviceId（`GET /runs/:id`）→ 双方各自的 `GET /devices`；对照任务 `assigneeUserId/assigneeAgentId` 与 `assignmentStatus` |
 | 指派 Agent 建任务时看不到执行命运（toast 不出现，或把受理/排队说成已开始执行） | `artifacts/evidence/p1-312/`：web.api 的信封读法（`data.drive` 恒 undefined 即 #312 复发——`drive` 是 `data` 的兄弟）→ web.assignment 的收窄与如实文案 → web.toast；任务与执行事实对 hub.task 的 201 与 `GET /tasks/:id` 聚合（有没有 Run）。复跑 `pnpm exec playwright test --project=p1-312`，见 create-drive-toast-acceptance |
 | Run 状态不动 | hub.outbox 是否派发 → node.gateway 是否 ack → node.supervisor 是否拉起子进程 |
 | 浏览器看不到进度 | hub.ws cursor 是否推进 → 浏览器是否收到 `resync.required` → hub.domain 是否产事件 |

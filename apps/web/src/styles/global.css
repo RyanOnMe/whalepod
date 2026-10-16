@@ -711,6 +711,9 @@ p.app-sidebar-heading {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  /* 整行是命中区（label 包 Switch）：光标也要说这件事，别只在轨道上才变手型。 */
+  cursor: pointer;
+  width: fit-content;
 }
 
 .field-switch-label {
