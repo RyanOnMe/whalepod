@@ -68,7 +68,7 @@ G0「release 必跑、PR 必跑」，而 `.github/workflows/check.yml` 只跑 Q0
 
 | 门 | 位置 | 本机实测 |
 |---|---|---|
-| Q3（`pnpm test:dsh-contract`） | `check.yml` · `check` job 末尾 | 51 用例 ~2.3s（无 PG/Docker/网络；A0-6 接线时 39，#288/#289 新增 12 条） |
+| Q3（`pnpm test:dsh-contract`） | `check.yml` · `check` job 末尾 | 52 用例 ~2.5s（无 PG/Docker/网络；A0-6 接线时 39，#288/#289 新增 13 条） |
 | Q7（`pnpm test:security`） | `check.yml` · `integration` job 末尾 | 17.5s（含一次性 PG） |
 | Q6（`pnpm test:resilience`） | `check.yml` · `integration` job 末尾 | 32 用例 9.5s（含一次性 PG） |
 | Q5 / Q8 / Q9 | 保持 release 级 | 有明确理由：真实浏览器 / 机器规格判据 / 镜像构建；见 g0g1g2-tiers 与 compose-standard-loop-acceptance |
@@ -97,7 +97,7 @@ G0「release 必跑、PR 必跑」，而 `.github/workflows/check.yml` 只跑 Q0
 ## 六、复跑
 
 ```bash
-pnpm test:dsh-contract     # Q3：15 spec / 51 用例（含 apps/runtime 两文件 4 条），约 2.3s
+pnpm test:dsh-contract     # Q3：15 spec / 52 用例（含 apps/runtime 两文件 5 条），约 2.5s
 pnpm test:security         # Q7：18 用例 + secret-scan 自检/实扫 + 许可门
 pnpm test:resilience       # Q6：32 用例
 pnpm check                 # Q0（含本文件的机检：scripts/tests/runtime-capability-contract.spec.ts）

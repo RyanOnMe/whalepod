@@ -3,7 +3,7 @@
 - 对应场景/门禁：**Q3**（`pnpm test:dsh-contract`，CI check job）；总纲 §工程治理「DSH 熔断」的能力契约面
 - 对应 Issue：#289（余项 cancel 竞态/followup 中断边界 → #353）
 - 上次验证：2026-10-16 · `9e391bc` · **PASS**（实现红绿三段 `673ce00 → 3c3dc9b → eb2b4c1`；评审修复 `5c27cb3`、文档 `9e391bc`）
-- 全量门（同一工作树实测）：Q0（`pnpm check`，含 test:unit + web，1662 passed + 7 expected fail）/Q2（68 文件 491 用例）/Q3（15 spec 51 用例）/Q5（`pnpm test:e2e` 1 passed exit 0）/Q6（6 文件 32 用例）/Q7（18 用例 + secret-scan 自检/实扫 + 许可门）/Q9（`pnpm test:compose-smoke` PASS total=64.8s）全绿
+- 全量门（同一工作树实测）：Q0（`pnpm check`，含 test:unit + web，1662 passed + 7 expected fail）/Q2（68 文件 491 用例）/Q3（15 spec 52 用例）/Q5（`pnpm test:e2e` 1 passed exit 0）/Q6（6 文件 32 用例）/Q7（18 用例 + secret-scan 自检/实扫 + 许可门）/Q9（`pnpm test:compose-smoke` PASS total=64.8s）全绿
 - 登记处：覆盖状态列在 [runtime-capability-contract.md](./runtime-capability-contract.md)
 
 ## 验的是哪条用户路径
@@ -51,10 +51,19 @@ pnpm test:dsh-contract   # Q3：三个新探针 + 既有十二个契约 spec 一
    - 事件流范围另做**变异自证**（实测，两条过滤各自单点削弱即红）：
      ① `deliverSessionEvent` 的会话过滤改成恒不返回 → `foreign/probe` 泄漏进帧流；
      ② `deliverAgentStatus` 的 agent 过滤改成恒不返回 → ready 时刻就多出 agent.status 帧。
+   - 单 Run 隔离的**「先执行后拒绝」变异自证**（实测）：把 `handleCommand` 的 runId 闸
+     改成 try/finally——先照常执行命令、最后才抛拒绝（最容易被误判为"有闸"的假绿形态）。
+     五个用例全红，且红点全在**屏障**上而不只是 rejection 断言：prompt（拒绝时已有会话
+     事件）、followup（3× turn/start）、cancel（turn/end 的中止原因是 `parent` 而非 `user`）、
+     approval（`artifact.candidate` 为 0——审批被跨 Run 的拒绝消费）、shutdown（随后的
+     正控撞 `after runtime shutdown`）。
 2. 正控都在：拒绝之后本桥照常起 turn/收敛；本 Run 的 followup/cancel/shutdown 照常；
-   本 Run 的事件与 running→idle 状态照常转发。
-3. 零副作用有**屏障**：每个负向用例在正控收敛后清总账（turn/结算计数、越界文本不得出现），
-   不只查拒绝时刻的即时帧流——「先执行后拒绝」型的退化躲不过。
+   本 Run 的事件与 running→idle 状态照常转发（另有一条**同会话哨兵事件**必须被转发——
+   证明注入面是活的、过滤是有选择性的，负向不会因"接缝退化成丢弃一切的桩"而空转）。
+3. 零副作用有**屏障**（不是只查拒绝时刻的帧流——那里异步帧还没产出）：prompt/followup
+   用例在正控收敛后清总账（turn/结算计数、越界文本）；cancel 判在 turn/end 的中止原因
+   （`user` vs 泄漏的 `parent`）而不是 `run.cancelled` 计数；approval 跨 Run 用**真实
+   pending callId** 决定并判 `artifact.candidate` 恰好一条（审批若被消费，工具永不发布）。
 
 ## 归因（失败先看哪层）
 
@@ -104,7 +113,7 @@ git checkout -- packages/runtime-dsh/src/session-owner.ts
 ## 复跑
 
 ```bash
-pnpm test:dsh-contract   # Q3：15 spec / 51 用例（含 apps/runtime 两文件 4 条），约 2.3s
+pnpm test:dsh-contract   # Q3：15 spec / 52 用例（含 apps/runtime 两文件 5 条），约 2.5s
 pnpm exec vitest run --project dsh-contract \
   packages/runtime-dsh/tests/dsh-contract/single-run-isolation.contract.spec.ts \
   packages/runtime-dsh/tests/dsh-contract/instruction-receipt.contract.spec.ts \
