@@ -7,7 +7,15 @@
  * Revision 走（credentialSlot 在 Hub 侧快照进 run.start 载荷，UI 不碰凭据）。
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type SetStateAction,
+} from 'react'
 import { Link } from 'react-router'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
@@ -26,6 +34,11 @@ import type {
   TaskView,
   WorkspaceView,
 } from '../../shared/api/types.js'
+import {
+  EMPTY_EXECUTION_SETTINGS,
+  type ExecutionSettings,
+  type InstructionIntentKeyRef,
+} from './execution-drafts.js'
 import type { Session } from '../../shared/api/types.js'
 
 export interface RunLauncherProps {
@@ -40,6 +53,9 @@ export interface RunLauncherProps {
   onStarted?: (runId: string) => void
   onOutcome?: (outcome: InstructionOutcome) => void
   draft?: string
+  settings?: ExecutionSettings
+  onSettingsChange?: (change: SetStateAction<ExecutionSettings>) => void
+  intentKeyRef?: InstructionIntentKeyRef
   onDraftChange?: (text: string) => void
   onSendingChange?: (sending: boolean) => void
 }
@@ -57,15 +73,23 @@ export function RunLauncher({
   onStarted,
   onOutcome,
   draft,
+  settings: controlledSettings,
+  onSettingsChange,
+  intentKeyRef,
   onDraftChange,
   onSendingChange,
 }: RunLauncherProps): ReactNode {
   const queryClient = useQueryClient()
   const directory = useMemberDirectory()
-  const [agentId, setAgentId] = useState('')
-  const [profileRevisionId, setProfileRevisionId] = useState('')
-  const [deviceId, setDeviceId] = useState('')
-  const [workspaceId, setWorkspaceId] = useState('')
+  const [localSettings, setLocalSettings] = useState<ExecutionSettings>({
+    ...EMPTY_EXECUTION_SETTINGS,
+  })
+  const settings = controlledSettings ?? localSettings
+  const setSettings = onSettingsChange ?? setLocalSettings
+  const { agentId, profileRevisionId, deviceId, workspaceId } = settings
+  const setAgentId = (agentId: string): void => setSettings((old) => ({ ...old, agentId }))
+  const setProfileRevisionId = (profileRevisionId: string): void =>
+    setSettings((old) => ({ ...old, profileRevisionId }))
   const [localPrompt, setLocalPrompt] = useState('')
   const prompt = draft ?? localPrompt
   const setPrompt = (text: string): void => {
@@ -75,11 +99,14 @@ export function RunLauncher({
   const [instant, setInstant] = useState(true)
   const [preparationBlocked, setPreparationBlocked] = useState(false)
   const onPreparationBlocked = useCallback((blocked: boolean) => setPreparationBlocked(blocked), [])
-  const onPreparationTarget = useCallback((target: { deviceId: string; workspaceId: string }) => {
-    setDeviceId(target.deviceId)
-    setWorkspaceId(target.workspaceId)
-  }, [])
-  const intentKey = useRef<{ signature: string; key: string } | null>(null)
+  const onPreparationTarget = useCallback(
+    (target: { deviceId: string; workspaceId: string }) => {
+      setSettings((old) => ({ ...old, ...target }))
+    },
+    [setSettings],
+  )
+  const localIntentKey = useRef<{ signature: string; key: string } | null>(null)
+  const intentKey = intentKeyRef ?? localIntentKey
   const isAssignee = task.assigneeUserId === session.userId
 
   const agentsQuery = useQuery({
@@ -373,8 +400,11 @@ export function RunLauncher({
             isAssignee={isAssignee}
             value={deviceId === '' ? null : { deviceId, workspaceId }}
             onChange={(next) => {
-              setDeviceId(next?.deviceId ?? '')
-              setWorkspaceId(next?.workspaceId ?? '')
+              setSettings((old) => ({
+                ...old,
+                deviceId: next?.deviceId ?? '',
+                workspaceId: next?.workspaceId ?? '',
+              }))
             }}
             assigneeName={directory.personOf(task.assigneeUserId)}
             hasActiveRun={hasActiveRun}

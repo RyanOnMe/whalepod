@@ -15,6 +15,7 @@
  * 这句拒绝的含义是"没有可用的执行目标"，用户需要知道下一步该做什么，而不是只看到错误码。
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import type { InstructionIntentKeyRef } from './execution-drafts.js'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import type { SendInstructionRequest } from '@whalepod/protocol'
 import { api } from '../../shared/api/client.js'
@@ -91,6 +92,7 @@ export interface InstructionComposerProps {
   blocked?: boolean
   initialOutcome?: InstructionOutcome | null
   draft?: string
+  intentKeyRef?: InstructionIntentKeyRef
   onDraftChange?: (text: string) => void
   onSendingChange?: (sending: boolean) => void
   onOutcome?: (outcome: InstructionOutcome) => void
@@ -107,11 +109,13 @@ export function InstructionComposer({
   blocked = false,
   initialOutcome,
   draft,
+  intentKeyRef,
   onDraftChange,
   onSendingChange,
 }: InstructionComposerProps): ReactNode {
   const queryClient = useQueryClient()
-  const intentKey = useRef<{ signature: string; key: string } | null>(null)
+  const localIntentKey = useRef<{ signature: string; key: string } | null>(null)
+  const intentKey = intentKeyRef ?? localIntentKey
   const [localText, setLocalText] = useState('')
   const text = draft ?? localText
   const setText = (value: string): void => {

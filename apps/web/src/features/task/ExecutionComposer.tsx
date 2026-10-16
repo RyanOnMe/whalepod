@@ -1,5 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type SetStateAction,
+} from 'react'
 import { Link } from 'react-router'
 import { api } from '../../shared/api/client.js'
 import { SelectMenu } from '../../shared/SelectMenu.js'
@@ -24,7 +31,13 @@ import { useMemberDirectory } from '../team/memberDirectory.js'
 import { ACTIVE_RUN, TERMINAL_RUN } from './run-states.js'
 import { runOrdinalLabels } from './runLabels.js'
 
-type Mode = 'new' | 'followup' | 'resume' | 'review'
+import {
+  useExecutionDraft,
+  EMPTY_EXECUTION_SETTINGS,
+  type ExecutionDraft,
+  type ExecutionSettings,
+  type ExecutionMode as Mode,
+} from './execution-drafts.js'
 export interface ArtifactReviewRequest {
   taskId: string
   artifactId: string
@@ -54,15 +67,68 @@ export function ExecutionComposer({
   const active = runs.find((run) => ACTIVE_RUN.has(run.status))
   const terminal = runs.filter((run) => TERMINAL_RUN.has(run.status))
   const [lastOutcome, setLastOutcome] = useState<InstructionOutcome | null>(null)
-  const [draft, setDraft] = useState('')
-  // 发送状态属于整个入口；切换子表单不能解锁仍在处理的请求。
-  const [sending, setSending] = useState(false)
-  const [mode, setMode] = useState<Mode>(active === undefined ? 'new' : 'followup')
-  const [sourceId, setSourceId] = useState(active?.id ?? terminal.at(-1)?.id ?? '')
+  const initialDraft = (): ExecutionDraft => ({
+    ownerId: task.assigneeUserId,
+    text: '',
+    mode: active === undefined ? 'new' : 'followup',
+    sourceId: active?.id ?? terminal.at(-1)?.id ?? '',
+    reviewArtifactIds: [],
+    revisionContext: null,
+    launch: { key: 'new-', settings: { ...EMPTY_EXECUTION_SETTINGS } },
+    sending: false,
+  })
+  const memory = useExecutionDraft(task.id, session.userId, initialDraft)
+  const {
+    text: draft,
+    sending,
+    mode,
+    sourceId,
+    reviewArtifactIds,
+    revisionContext,
+  } = memory.snapshot
+  const setDraft = useCallback(
+    (change: SetStateAction<string>) =>
+      memory.update((old) => ({
+        ...old,
+        text: typeof change === 'function' ? change(old.text) : change,
+      })),
+    [memory.update],
+  )
+  const setSending = useCallback(
+    (sending: boolean) => memory.update((old) => ({ ...old, sending })),
+    [memory.update],
+  )
+  const setMode = (mode: Mode) => memory.update((old) => ({ ...old, mode }))
+  const setSourceId = (sourceId: string) => memory.update((old) => ({ ...old, sourceId }))
+  const setReviewArtifactIds = (change: SetStateAction<string[]>) =>
+    memory.update((old) => ({
+      ...old,
+      reviewArtifactIds: typeof change === 'function' ? change(old.reviewArtifactIds) : change,
+    }))
+  const setRevisionContext = (revisionContext: ArtifactReviewRequest | null) =>
+    memory.update((old) => ({ ...old, revisionContext }))
+  const launcherKey = `${mode}-${revisionContext?.nonce ?? ''}`
+  const launchSettings =
+    memory.snapshot.launch.key === launcherKey
+      ? memory.snapshot.launch.settings
+      : EMPTY_EXECUTION_SETTINGS
+  const setLaunchSettings = useCallback(
+    (change: SetStateAction<ExecutionSettings>) =>
+      memory.update((old) => {
+        const before =
+          old.launch.key === launcherKey ? old.launch.settings : EMPTY_EXECUTION_SETTINGS
+        return {
+          ...old,
+          launch: {
+            key: launcherKey,
+            settings: typeof change === 'function' ? change(before) : change,
+          },
+        }
+      }),
+    [memory.update, launcherKey],
+  )
   const published = artifacts.filter((artifact) => artifact.status === 'published')
-  const [reviewArtifactIds, setReviewArtifactIds] = useState<string[]>([])
   const handledRequest = useRef<string | null>(null)
-  const [revisionContext, setRevisionContext] = useState<ArtifactReviewRequest | null>(null)
   const revisionMaterial = published.find((a) => a.id === revisionContext?.artifactId)
   const handledRevision = useRef<string | null>(null)
   useEffect(() => {
@@ -130,7 +196,9 @@ export function ExecutionComposer({
   const sourcePlacement = runs.find((run) => run.id === sourceId)
   const sourceLabel = runOrdinalLabels(runs).get(sourceId) ?? '所选执行'
   let reason: string | null = null
-  if (!isAssignee && grants.isPending) reason = '正在确认操作权限…'
+  if (memory.snapshot.ownerId !== task.assigneeUserId)
+    reason = '任务责任人已变化。草稿仍保留，请重新确认责任人与执行安排。'
+  else if (!isAssignee && grants.isPending) reason = '正在确认操作权限…'
   else if (!isAssignee && grants.isError) reason = '暂时无法确认权限，请重试。'
   else if (!allowed) reason = '只有责任人和已授权成员可以发送指令；你仍可在讨论区协作。'
   else if (task.assignmentStatus !== 'accepted') reason = '责任人接受任务后才能开始执行。'
@@ -183,6 +251,35 @@ export function ExecutionComposer({
   }
   return (
     <div className="execution-composer" data-testid="execution-composer">
+      <p className="mutation-hint">
+        草稿仅在当前登录页面会话内暂存；切换任务可保留，刷新或退出后清除。
+      </p>
+      <button
+        type="button"
+        className="button button-quiet"
+        disabled={sending}
+        onClick={() => memory.clear(initialDraft())}
+      >
+        清除当前执行草稿
+      </button>
+      {memory.snapshot.ownerId !== task.assigneeUserId ? (
+        <button
+          type="button"
+          className="button"
+          disabled={sending}
+          onClick={() => {
+            memory.intentKey.current = null
+            memory.update((old) => ({
+              ...initialDraft(),
+              text: old.text,
+              mode: 'new',
+              sourceId: '',
+            }))
+          }}
+        >
+          重新确认执行安排（保留正文）
+        </button>
+      ) : null}
       <p className="mutation-hint" data-testid="execution-responsibility">
         {isAssignee
           ? '你是当前责任人。执行使用你的环境与凭据，审批由你处理。'
@@ -361,7 +458,7 @@ export function ExecutionComposer({
         >
           {isNewExecution ? (
             <RunLauncher
-              key={`${mode}-${revisionContext?.nonce ?? ''}`}
+              key={launcherKey}
               task={task}
               blocked={reason !== null}
               artifactInputIds={
@@ -372,11 +469,14 @@ export function ExecutionComposer({
                     : undefined
               }
               buttonLabel={mode === 'review' ? '开始复核' : '开始执行'}
+              settings={launchSettings}
+              onSettingsChange={setLaunchSettings}
               session={session}
               hasActiveRun={active !== undefined}
               embedded
               onOutcome={setLastOutcome}
               draft={draft}
+              intentKeyRef={memory.intentKey}
               onDraftChange={setDraft}
               onSendingChange={setSending}
               onStarted={(runId) => {
@@ -401,6 +501,7 @@ export function ExecutionComposer({
               hasActiveRun={mode === 'followup'}
               target={null}
               draft={draft}
+              intentKeyRef={memory.intentKey}
               onDraftChange={setDraft}
               onSendingChange={setSending}
               approvalPreview={policy}
