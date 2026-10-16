@@ -90,4 +90,4 @@
 
 首次准备往返组合证据：web.preparation.return → preparation-return-production-acceptance；生产原件artifacts/evidence/preparation-return/result.json，独立verify-preparation-return-evidence判定，脱敏整包operation-flow-batch5/production。逐项缺失/目标改变/导航副作用/未完成Run必须FAIL，真人结果保持not_measured。
 
-准备验收重跑失败后仍显示成功：先核对web.preparation.return.failed-attempt；scripts/check-preparation-return-failed-attempt.mts驱动真实入口失败，确认旧result被失效、独立CLI拒绝。观测位于artifacts/evidence/preparation-return-failed-attempt/result.json；负向后必须重新生成成功证据，不能恢复旧文件。
+准备验收重跑失败后仍显示成功：先核对web.preparation.return.failed-attempt；scripts/run-preparation-return.mts在Playwright前清理且非正常退出后再次失效；scripts/check-preparation-return-failed-attempt.mts覆盖导航/服务启动/收尾三段真实Playwright失败，确认旧result被失效、独立CLI拒绝。观测位于artifacts/evidence/preparation-return-failed-attempt/result.json；负向后必须重新生成成功证据，不能恢复旧文件。

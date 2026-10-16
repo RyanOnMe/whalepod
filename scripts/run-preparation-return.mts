@@ -16,4 +16,7 @@ const drive = spawnSync(
     stdio: 'inherit',
   },
 )
+// A result written before a failing reporter/teardown is not a successful attempt either.
+if (drive.status !== 0 || drive.signal !== null || drive.error !== undefined)
+  await rm(resultPath, { force: true })
 process.exitCode = drive.status ?? 2
