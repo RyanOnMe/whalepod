@@ -2,7 +2,8 @@
 
 - 对应场景/门禁：**Q3**（`pnpm test:dsh-contract`，CI check job）；总纲 §工程治理「DSH 熔断」的能力契约面
 - 对应 Issue：#289（余项 cancel 竞态/followup 边界 → #353）
-- 上次验证：2026-10-16 · `feat/p1-289-contract-negatives` · **PASS**（红测试先提交，见下）
+- 上次验证：2026-10-16 · `eb2b4c1` · **PASS**（红提交 `673ce00` 先红、实现 `3c3dc9b` 转绿）
+- 全量门（同一工作树实测，计数口径 `pnpm test:unit`）：Q0（1662 passed + 7 expected fail）/Q1/Q2（68 文件 491 用例）/Q3（15 spec 49 用例）/Q5（`pnpm test:e2e` 全链 exit 0）/Q6（32 用例）/Q7/Q9（`pnpm test:compose-smoke` PASS total=70.5s）全绿
 - 登记处：覆盖状态列在 [runtime-capability-contract.md](./runtime-capability-contract.md)
 
 ## 验的是哪条用户路径
