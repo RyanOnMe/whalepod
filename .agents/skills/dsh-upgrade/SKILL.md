@@ -29,6 +29,32 @@ DSH 是预览版，升级是高风险动作。三条红线（06 文档 §2.1）�
 
 ## 回滚
 
+回滚分两半，**机检半边**与**人工门半边**都要走（#290）：
+
+**机检（Q3 内，离线、秒级）**：`pnpm test:dsh-contract` 里的回滚演练
+（`packages/runtime-dsh/tests/dsh-contract/rollback-drill.contract.spec.ts`）在临时副本上判
+「部分升级必红（哪一处漏改就点名哪一处）/ 装错 tarball 必红 / catalog 写 range 必红 /
+整体升级三处自洽不红 / 回滚到锁定副本必绿且逐字节相同 / 锁 == 实际安装树」。
+改了锁或升级后，看的是它 + `lock-drift.spec.ts` 两条都绿。
+
+**人工门（需要 registry/网络与真安装，CI 不做）**——步骤与**预期输出**：
+
+1. 记录现状：`node apps/runtime/dist/bin.js --print-dsh-version` → 期望 stdout 恰一行
+   `{"dshName":"@deepseek-ai/dsh","dshVersion":"<锁版本>"}`（与 `dsh.lock.json` 一致）。
+2. 制造升级失败：按「步骤」升到新版跑一遍 `pnpm install` + `pnpm -r build`（**不提交**），
+   触发一次已知不兼容（最省事的形态：把某个 pack 的 `dshCompatibility` 留在旧版 →
+   启动即 `PLUGIN_PACK_MISMATCH`；或 `pnpm test:dsh-contract` 红）。
+3. 回滚：`git checkout <pin> -- dsh.lock.json pnpm-workspace.yaml pnpm-lock.yaml packages/runtime-dsh/package.json`
+   → `pnpm install --frozen-lockfile` → `pnpm -r build`。
+   预期：install 不打 registry 的版本解析错误（frozen 锁）；build 绿。
+4. 验收回滚：`pnpm test:dsh-contract`（含回滚演练与 lock-drift）全绿；
+   `--print-dsh-version` 回到锁定版本（**必须重启 Node** 才反映到 `node.hello.dshDistributionVersion`，
+   探针只在启动时跑一次）；对一个**既有 Workspace** 起一次 Run，历史投影可读（跨版本会话
+   日志兼容性——这一条需要两个版本都用过才判得出来，是本门存在的主要理由）。
+5. 残留自查：`node_modules/.pnpm` 里不应再有新版包（`ls -d node_modules/.pnpm/@deepseek-ai+dsh-session@*` 只应剩锁定版）。
+
+数据与历史语义：
+
 - Hub 数据 migration 不依赖 DSH schema，DSH image 可独立回滚。
 - 已创建 Run 固化其 DSH version，回滚不改历史 Run。
 - 回滚后不恢复新版本上正在跑的 Runtime：标记 `failed(runtime_version_rolled_back)`，用户显式 rerun。

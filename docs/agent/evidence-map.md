@@ -32,6 +32,7 @@
 | 现象 | 先看 |
 |---|---|
 | 指令串到别的 Run、或 Run 被别的会话事件提前结算、或出现本 Run 不该有的 running/idle、或指令发出无回执 | Q3 三个契约探针（single-run-isolation / instruction-receipt / event-stream-scope）：先看 `bridge.handleCommand` 的 runId 闸与 `session-owner.deliverSessionEvent` / `deliverAgentStatus` 的两条过滤，再看 `node.run` 的 protocolViolation 日志；复跑与边界见 [runtime-contract-negatives-acceptance](./runtime-contract-negatives-acceptance.md) |
+| DSH 升级半途失败 / 回滚后版本对不上 | Q3 的 lock-drift + 回滚演练（`helpers/lock-drift.ts` 的 findings：kind 点名哪一处漏改）；真实安装面看 `--print-dsh-version` 的自报与 `node_modules/.pnpm/@deepseek-ai+dsh-session@*` 残留；复跑与人工门步骤见 [dsh-rollback-drill-acceptance](./dsh-rollback-drill-acceptance.md) 与 dsh-upgrade skill |
 | 指令去向变化、来源续跑或草稿丢失 | `artifacts/evidence/unified-execution/result.json`：web.execution 的草稿/唯一输入 → hub.run 的血缘/来源版本/现场 → runtime.bridge 会话身份；上下文在场另外复跑 Q3 resume 契约。见 unified-execution-acceptance |
 | 拒绝后无法改派或改派重试冲突 | `artifacts/evidence/task-reassignment/result.json`：web.assignment → hub.task 的 pending/assignee → command_receipt → 新 Run 的 owner/device |
 | 创建任务重复建出两个 / 重试后多一个任务 | `artifacts/evidence/create-recovery/result.json`：web.api 的幂等键（同义键要同值）→ hub.task 的 `task.create:<key>` 回放与命令回执；复跑 `pnpm exec playwright test --project=p1-345`，见 create-to-recovery-acceptance |
