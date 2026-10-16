@@ -6,7 +6,7 @@
 |---|---|
 | [execution-draft-acceptance.md](./execution-draft-acceptance.md) | #337：会话内执行草稿、跨任务/身份隔离、请求连续性与清除边界 |
 | [preparation-return-acceptance.md](./preparation-return-acceptance.md) | #338：设备准备返回、首次当前条件复核与失败恢复 |
-| [preparation-return-production-acceptance.md](./preparation-return-production-acceptance.md) | #339：真实准备往返、独立证据判定与全量Q5 |
+| [preparation-return-production-acceptance.md](./preparation-return-production-acceptance.md) | #339：真实准备往返、失败重跑旧证据失效、独立判定与全量Q5 |
 | [ai-harness-principles.md](./ai-harness-principles.md) | 六原语：驱动、观测、判定、归因、取证、发现 |
 | [issue-workflow.md](./issue-workflow.md) | 问题从发现到合入的完整走法 |
 | [evidence-map.md](./evidence-map.md) | 出问题时去哪一层找哪份证据 |

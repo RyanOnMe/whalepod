@@ -21,6 +21,7 @@ function results(suite: ReportSuite): { status: string; errors?: { message?: str
   ]
 }
 try {
+  await rm(join(output, 'result.json'), { force: true })
   const previous = JSON.parse(await readFile(resultPath, 'utf8')) as unknown
   if (verifyPreparationReturnEvidence(previous).verdict !== 'PASS')
     throw new Error('run the successful production preparation scenario first')
@@ -91,9 +92,14 @@ export default { ...base,
   process.exitCode = passed ? 0 : 2
 } catch {
   // Keep paths, raw driver payloads and credentials out of diagnostics.
-  process.stdout.write(
-    `${JSON.stringify({ component: 'web.preparation.return.failed-attempt', verdict: 'FAIL', reason: 'control not completed; require prior valid evidence and an available browser' })}\n`,
-  )
+  const observation = {
+    component: 'web.preparation.return.failed-attempt',
+    verdict: 'FAIL',
+    reason: 'control not completed; require prior valid evidence and an available browser',
+  }
+  await mkdir(output, { recursive: true })
+  await writeFile(join(output, 'result.json'), `${JSON.stringify(observation, null, 2)}\n`)
+  process.stdout.write(`${JSON.stringify(observation)}\n`)
   process.exitCode = 2
 } finally {
   await rm(temporary, { recursive: true, force: true })

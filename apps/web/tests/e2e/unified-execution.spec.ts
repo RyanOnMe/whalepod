@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   env,
@@ -13,6 +13,12 @@ import {
   waitForRunStatus,
   waitForRuntimeReleased,
 } from './helpers.js'
+
+const preparationEvidence = join(process.cwd(), 'artifacts', 'evidence', 'preparation-return')
+// Before browser fixtures and any driver step: a failed attempt must have no previous success.
+test.beforeAll(async () => {
+  await rm(join(preparationEvidence, 'result.json'), { force: true })
+})
 
 test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式续跑来源会话', async ({ browser }) => {
   test.setTimeout(180_000)
@@ -269,10 +275,9 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     expect(after.workspaceId).toBe(before.workspaceId)
     await expect(owner.getByRole('button', { name: '提交验收', exact: true })).toBeDisabled()
     await expect(owner.getByTestId('review-condition')).toContainText('发布至少一个交付物')
-    const returnEvidence = join(process.cwd(), 'artifacts', 'evidence', 'preparation-return')
-    await mkdir(returnEvidence, { recursive: true })
+    await mkdir(preparationEvidence, { recursive: true })
     await writeFile(
-      join(returnEvidence, 'result.json'),
+      join(preparationEvidence, 'result.json'),
       JSON.stringify(
         {
           component: 'web.preparation.return',

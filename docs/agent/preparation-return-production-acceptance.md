@@ -8,7 +8,7 @@ p1-315的双用户浏览器场景走已构建Hub/Node/Runtime包、真实HTTP/WS
 
 ## 观测、判定、归因
 
-结构化component=web.preparation.return，source=production-http-ws-node-runtime；只记不透明身份、前后设置、请求计数、焦点、状态、布尔判据和时间，不记录正文、路径、凭据或dshSessionId。浏览器每项断言通过后才落result.json；缺关键步骤没有文件，或不完整文件均不能通过独立判定。
+结构化component=web.preparation.return，source=production-http-ws-node-runtime；只记不透明身份、前后设置、请求计数、焦点、状态、布尔判据和时间，不记录正文、路径、凭据或dshSessionId。浏览器驱动beforeAll在浏览器fixture与业务步骤之前删除本场景上次result.json，所有关键断言通过后才写新文件。本次准备/导航/发送失败不能留下上次成功结果；独立判定对缺文件或不完整事实必须失败。
 
 脚本scripts/verify-preparation-return-evidence.mts独立读取JSON。字段缺失、身份无效、固定设置变化、焦点错误、导航发指令/自动检查、重复发送、准备结果复用、Run未完成及冒充真人结论都FAIL并exit 2；PASS exit 0。单元负向逐字段删除，并检验错误状态/计数/选择；先红提交保留完整事实尚不通过的失败。验收器不是证据真实性签名，机器事实来自上述生产驱动，不接受人工写一份JSON替代浏览器。
 
@@ -19,7 +19,7 @@ web.route归因返回上下文/焦点，web.execution归因编辑意图与发送
 1. pnpm check；pnpm build。
 2. pnpm exec playwright test --config playwright.operations.config.ts --project p1-315。
 3. pnpm exec tsx scripts/verify-preparation-return-evidence.mts artifacts/evidence/preparation-return/result.json。
-4. 对空文件路径/空对象/删除selectionAfter/增导航计数分别运行判定，须exit 2。不要在正式证据原件上改写。
+4. 对空文件路径/空对象/删除selectionAfter/增导航计数分别运行判定，须exit 2。不要在正式证据原件上改写。 另外在刚成功生成真实证据后运行pnpm exec tsx scripts/check-preparation-return-failed-attempt.mts：它先确认旧证据有效，再让同一p1-315真实浏览器驱动在入口导航失败（仅负向配置指向不可用地址，不启动Hub/Node，不发业务命令）。从Playwright JSON结果确认实际到达page.goto且失败，再检查旧文件消失、独立CLI为FAIL/exit 2；整个负向控制为PASS。缺前置成功证据、浏览器未启动、配置错误或失败未到指定步骤都不能当作通过。此操作故意留下无当前成功文件，随后必须重跑第2/3步生成新的本次成功证据，不恢复旧文件。
 5. 共用任务执行入口变化，隔离端口依次冷启动运行全部Q5九项目：p1-19、p1-07、p1-140、p1-141、p1-142、p1-158、p1-314、p1-315、p1-306。不得把不同项目合跑到已完成setup的同一Hub。
 6. 源码与脱敏证据运行secret-scan，原件和判定结果入artifacts/evidence/operation-flow-batch5/production。先红/绿、Q0、构建与各Q5日志同包；不能只留临时目录。
 
