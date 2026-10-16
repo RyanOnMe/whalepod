@@ -31,6 +31,7 @@
 
 | 现象 | 先看 |
 |---|---|
+| 指令串到别的 Run、或 Run 被别的会话事件提前结算、或指令发出无回执 | Q3 三个契约探针（single-run-isolation / instruction-receipt / event-stream-scope）：先看 `bridge.handleCommand` 的 runId 闸与 `session-owner.deliverSessionEvent` 的会话过滤，再看 `node.run` 的 protocolViolation 日志；复跑与边界见 [runtime-contract-negatives-acceptance](./runtime-contract-negatives-acceptance.md) |
 | 指令去向变化、来源续跑或草稿丢失 | `artifacts/evidence/unified-execution/result.json`：web.execution 的草稿/唯一输入 → hub.run 的血缘/来源版本/现场 → runtime.bridge 会话身份；上下文在场另外复跑 Q3 resume 契约。见 unified-execution-acceptance |
 | 拒绝后无法改派或改派重试冲突 | `artifacts/evidence/task-reassignment/result.json`：web.assignment → hub.task 的 pending/assignee → command_receipt → 新 Run 的 owner/device |
 | 创建任务重复建出两个 / 重试后多一个任务 | `artifacts/evidence/create-recovery/result.json`：web.api 的幂等键（同义键要同值）→ hub.task 的 `task.create:<key>` 回放与命令回执；复跑 `pnpm exec playwright test --project=p1-345`，见 create-to-recovery-acceptance |

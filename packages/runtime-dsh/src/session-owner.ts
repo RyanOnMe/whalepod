@@ -165,12 +165,27 @@ export class SessionOwner {
     return this.ctx.sessions.flush(this.session)
   }
 
-  private subscribe(): void {
+  /**
+   * 会话事件的**生产订阅处理器**（`ctx.on('session/event')` 的回调体本身）：
+   * 异会话事件直接丢弃、不结算；本会话事件透传并驱动 turn 收敛。
+   *
+   * #289 起它对契约探针可见（`RuntimeBridgeOptions.probeAfterReady` 送进来的合成
+   * 事件走的就是这个函数）——探针判「越界事件被拒」而不向真实总线注入合成流量：
+   * DSH 的其他订阅者（如 session-projection）对畸形会话事件会当场抛错，那是它们的
+   * 正确行为，不该由探针引入。
+   */
+  deliverSessionEvent(eventSession: unknown, event: unknown): void {
     const sessionId = String(this.session.id)
+    const candidate = eventSession as { id?: unknown } | null | undefined
+    if (String(candidate?.id) !== sessionId) return
+    const sessionEvent = event as SessionEvent
+    this.events.sessionEvent(sessionEvent)
+    if (sessionEvent.type === 'turn/end') this.queueSettle(sessionEvent.data.reason)
+  }
+
+  private subscribe(): void {
     this.ctx.on('session/event', (eventSession, event) => {
-      if (String(eventSession.id) !== sessionId) return
-      this.events.sessionEvent(event)
-      if (event.type === 'turn/end') this.queueSettle(event.data.reason)
+      this.deliverSessionEvent(eventSession, event)
     })
     this.ctx.on('agent/status', (payload) => {
       if (payload.agent !== this.agent) return
