@@ -45,7 +45,7 @@
 | 未知事件不给权 / **未知 Approval 只拒不放行** | `pnpm test:dsh-contract`、`pnpm test:unit`、`pnpm test:security` | Runtime 层：`approval.contract.spec.ts` 的未知 callId 双向夹逼（放行腿/拦截腿都不得被误认领，A0-6 新增）；Node 层：`apps/node/tests/projector.spec.ts`（未知 callId 回显零事件）；Hub 层：`run-authorization.security.spec.ts`（伪造 403 / 未知 404 且命令零新增）；协议层：`strictObject` 拒多余字段 | 三层都有判据（**A0-6 补齐了最靠近模型执行的那一层**） |
 | **建不起归属不确认成功** | `pnpm test:dsh-contract`、`pnpm test:integration` | 续跑 ghost id → 拒绝启动、零帧（A0-6 新增）；Hub 非本设备 `run.event` → FORBIDDEN；artifact 实收字节 sha256 ≠ 声明 → `ARTIFACT_HASH_MISMATCH` 不落库；pack digest 三方复算；catalog↔tarball↔加载树闭环 | 有判据 |
 | **敏感不兼容禁启动** | `pnpm test:dsh-contract`、`pnpm test:unit`、`pnpm test:integration` | #288 起有判据：Runtime 自报发行版身份（与 boot 锚同源，`dsh-distribution.contract.spec.ts`）、`--print-dsh-version` 真 bin 探针（`apps/runtime/tests/dsh-contract/dsh-version-probe.contract.spec.ts`）、pack 逐包 `dshCompatibility` 与本机版本 fail-closed 比对（descriptor 与本地命中两条路径 + 版本不可知都拒绝，`apps/node/tests/plugin-preflight.spec.ts`）、`profileDigest` 的 Node↔Runtime **往返**对照点（`boot.contract.spec.ts` 回声 + `apps/node/tests/run-manager.spec.ts` 不符即 `PROFILE_MISMATCH` 并终止；不校验 Runtime 装载内容）。原有：凭据缺失 spawn 前即 `MODEL_CREDENTIAL_UNAVAILABLE`、pack digest/信任级/lockfile 校验、overlay 行契约 fail-closed | **有判据**（#288；操作面与边界见 [dsh-compat-guard-acceptance](./dsh-compat-guard-acceptance.md)） |
-| **升级失败回滚固定版** | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/lock-drift.spec.ts`（三方一致：`dsh.lock.json` ↔ catalog ↔ pnpm-lock，判定实现见 `packages/runtime-dsh/tests/dsh-contract/helpers/lock-drift.ts`）+ `rollback-drill.contract.spec.ts`（#290 回滚演练：部分升级/装错 tarball/catalog 写 range/空清单必红，整体升级三处自洽不红，回滚到锁定副本必绿且逐字节相同，锁 == 实际安装树；四条变异自证）；真实安装回滚的步骤与预期输出在 `.agents/skills/dsh-upgrade/SKILL.md` 的「回滚」节 | **有判据（#290；锁三方一致 A0-6 起进 CI，回滚演练随之进 Q3）**；**真实「装另一版 → 触发不兼容 → 回滚安装树」仍是人工门**（需 registry/网络与真安装，含跨版本会话日志兼容性）——边界与演练复跑见 [dsh-rollback-drill-acceptance](./dsh-rollback-drill-acceptance.md) |
+| **升级失败回滚固定版** | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/lock-drift.spec.ts`（三方一致：`dsh.lock.json` ↔ catalog ↔ pnpm-lock，判定实现见 `packages/runtime-dsh/tests/dsh-contract/helpers/lock-drift.ts`）+ `rollback-drill.contract.spec.ts`（#290 回滚演练：部分升级三种顺序（漏改 pnpm-lock / 只改 catalog / 登记项被删）、装错 tarball、catalog 写 range、空清单必红，单包三处自洽升级不红，回滚到锁定副本必绿且逐字节相同，锁 == 实际安装树（十项依赖）；七条变异自证）；真实安装回滚的步骤与预期输出在 `.agents/skills/dsh-upgrade/SKILL.md` 的「回滚」节 | **有判据（#290；锁三方一致 A0-6 起进 CI，回滚演练随之进 Q3）**；**真实「装另一版 → 触发不兼容 → 回滚安装树」仍是人工门**（需 registry/网络与真安装，含跨版本会话日志兼容性）——边界与演练复跑见 [dsh-rollback-drill-acceptance](./dsh-rollback-drill-acceptance.md) |
 
 ## 三、版本锁现状（2026-10-09 核对）
 
@@ -71,7 +71,7 @@ G0「release 必跑、PR 必跑」，而 `.github/workflows/check.yml` 只跑 Q0
 
 | 门 | 位置 | 本机实测 |
 |---|---|---|
-| Q3（`pnpm test:dsh-contract`） | `check.yml` · `check` job 末尾 | 16 spec / 61 用例 ~2.5s（无 PG/Docker/网络；A0-6 接线时 39，#288/#289/#290 新增 22 条） |
+| Q3（`pnpm test:dsh-contract`） | `check.yml` · `check` job 末尾 | 16 spec / 63 用例 ~3s（无 PG/Docker/网络；A0-6 接线时 39，#288/#289/#290 新增 24 条） |
 | Q7（`pnpm test:security`） | `check.yml` · `integration` job 末尾 | 17.5s（含一次性 PG） |
 | Q6（`pnpm test:resilience`） | `check.yml` · `integration` job 末尾 | 32 用例 9.5s（含一次性 PG） |
 | Q5 / Q8 / Q9 | 保持 release 级 | 有明确理由：真实浏览器 / 机器规格判据 / 镜像构建；见 g0g1g2-tiers 与 compose-standard-loop-acceptance |
@@ -104,7 +104,7 @@ G0「release 必跑、PR 必跑」，而 `.github/workflows/check.yml` 只跑 Q0
 ## 六、复跑
 
 ```bash
-pnpm test:dsh-contract     # Q3：16 spec / 61 用例（含 apps/runtime 两文件 5 条），约 2.5s
+pnpm test:dsh-contract     # Q3：16 spec / 63 用例（含 apps/runtime 两文件 5 条），约 3s
 pnpm test:security         # Q7：18 用例 + secret-scan 自检/实扫 + 许可门
 pnpm test:resilience       # Q6：32 用例
 pnpm check                 # Q0（含本文件的机检：scripts/tests/runtime-capability-contract.spec.ts）

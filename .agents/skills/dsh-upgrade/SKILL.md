@@ -43,7 +43,8 @@ DSH 是预览版，升级是高风险动作。三条红线（06 文档 §2.1）�
    `{"dshName":"@deepseek-ai/dsh","dshVersion":"<锁版本>"}`（与 `dsh.lock.json` 一致）。
 2. 制造升级失败：按「步骤」升到新版跑一遍 `pnpm install` + `pnpm -r build`（**不提交**），
    触发一次已知不兼容（最省事的形态：把某个 pack 的 `dshCompatibility` 留在旧版 →
-   启动即 `PLUGIN_PACK_MISMATCH`；或 `pnpm test:dsh-contract` 红）。
+   该 pack 的 **Run 启动即拒**（preflight 在 `runtime.initialize`/spawn 之前，`PLUGIN_PACK_MISMATCH`）；
+   或 `pnpm test:dsh-contract` 红）。
 3. 回滚：`git checkout <pin> -- dsh.lock.json pnpm-workspace.yaml pnpm-lock.yaml packages/runtime-dsh/package.json`
    → `pnpm install --frozen-lockfile` → `pnpm -r build`。
    预期：install 不打 registry 的版本解析错误（frozen 锁）；build 绿。
@@ -51,13 +52,17 @@ DSH 是预览版，升级是高风险动作。三条红线（06 文档 §2.1）�
    `--print-dsh-version` 回到锁定版本（**必须重启 Node** 才反映到 `node.hello.dshDistributionVersion`，
    探针只在启动时跑一次）；对一个**既有 Workspace** 起一次 Run，历史投影可读（跨版本会话
    日志兼容性——这一条需要两个版本都用过才判得出来，是本门存在的主要理由）。
-5. 残留自查：`node_modules/.pnpm` 里不应再有新版包（`ls -d node_modules/.pnpm/@deepseek-ai+dsh-session@*` 只应剩锁定版）。
+5. 残留自查：`node_modules/.pnpm` 里不应再有新版包——`ls -d node_modules/.pnpm/@deepseek-ai+*@*`，
+   逐项对照 `dsh.lock.json` 的十项版本（多出条目或版本不符都说明回滚没重装；grep 按包名前缀，
+   不是抽样单包）。
 
 数据与历史语义：
 
 - Hub 数据 migration 不依赖 DSH schema，DSH image 可独立回滚。
 - 已创建 Run 固化其 DSH version，回滚不改历史 Run。
-- 回滚后不恢复新版本上正在跑的 Runtime：标记 `failed(runtime_version_rolled_back)`，用户显式 rerun。
+- 回滚后不恢复新版本上正在跑的 Runtime：用户显式 rerun。**现状**：没有专门的
+  `runtime_version_rolled_back` 码（全仓无实现，见 #356）——心跳断掉后由 Hub 的 reconciler 按
+  既有语义收敛（`failed(RUNTIME_LOST)`），「Run 终态禁止复活」保证它不会被自动拉起。
 
 ## 其他依赖
 

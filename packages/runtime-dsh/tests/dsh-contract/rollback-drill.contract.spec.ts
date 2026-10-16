@@ -21,6 +21,7 @@
  * `.agents/skills/dsh-upgrade` 的「回滚」节，并如实标为人工门。
  */
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -117,10 +118,30 @@ function setRuntimeDshDependency(root: string, name: string, spec: string): void
   writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`)
 }
 
+/** 抹掉 catalog 行（"锁与包清单登记了、catalog 没有"）。 */
+function removeCatalogEntry(root: string, name: string): void {
+  const path = join(root, 'pnpm-workspace.yaml')
+  const text = readFileSync(path, 'utf8')
+  const line = new RegExp(`^  '${escapeRegExp(name)}': .*\\n`, 'm')
+  expect(text, `${name} must be in the catalog`).toMatch(line)
+  writeFileSync(path, text.replace(line, ''))
+}
+
+/** 抹掉 lockfile 的整条 resolution（"pnpm-lock 里这个包不见了"）。 */
+function removeLockfileEntry(root: string, name: string): void {
+  const path = join(root, 'pnpm-lock.yaml')
+  const text = readFileSync(path, 'utf8')
+  const block = new RegExp(
+    `^  '?${escapeRegExp(name)}@[0-9][^':]*'?:\\n    resolution: \\{integrity: [^}]+\\}\\n`,
+    'm',
+  )
+  expect(text, `${name} must resolve in pnpm-lock.yaml`).toMatch(block)
+  writeFileSync(path, text.replace(block, ''))
+}
+
 function findingsOf(root: string): LockDriftFinding[] {
   return checkDshLockDrift(readDshLockState(root))
 }
-
 function kindsFor(findings: readonly LockDriftFinding[], name: string): string[] {
   return findings.filter((finding) => finding.package === name).map((finding) => finding.kind)
 }
@@ -153,6 +174,23 @@ describe('probe: DSH rollback drill (#290)', () => {
     expect(kindsFor(findingsOf(root), PROBE_PACKAGE)).toEqual(['lockfile-integrity-mismatch'])
   })
 
+  it('只改了 catalog（锁与 pnpm-lock 没动）→ 必红并点名 catalog 一侧', () => {
+    const root = copyLockStateToTemp()
+    setCatalogEntry(root, PROBE_PACKAGE, NEXT_VERSION)
+
+    expect(kindsFor(findingsOf(root), PROBE_PACKAGE)).toEqual(['catalog-version-mismatch'])
+  })
+
+  it('catalog 行被删 / pnpm-lock 整条 resolution 消失 → 必红（登记项缺失不是"跳过"）', () => {
+    const catalogRoot = copyLockStateToTemp()
+    removeCatalogEntry(catalogRoot, PROBE_PACKAGE)
+    expect(kindsFor(findingsOf(catalogRoot), PROBE_PACKAGE)).toEqual(['catalog-missing'])
+
+    const lockfileRoot = copyLockStateToTemp()
+    removeLockfileEntry(lockfileRoot, PROBE_PACKAGE)
+    expect(kindsFor(findingsOf(lockfileRoot), PROBE_PACKAGE)).toEqual(['lockfile-missing'])
+  })
+
   it('catalog 写成 latest 或 range → 必红（精确版本才作数）', () => {
     const root = copyLockStateToTemp()
     setCatalogEntry(root, PROBE_PACKAGE, 'latest')
@@ -178,19 +216,23 @@ describe('probe: DSH rollback drill (#290)', () => {
     expect(kindsFor(findingsOf(root), '*')).toEqual(['manifest-empty'])
   })
 
-  it('整体升级三处自洽 → 门不红；按流程回滚到锁定副本 → 绿且与仓库文件逐字节相同', () => {
+  it('单包三处自洽升级 → 门不红（升级本身不是漂移）；回滚到锁定副本 → 绿且逐字节相同', () => {
     const root = copyLockStateToTemp()
     const pinned = readDshLockState(REPO_ROOT).manifest.packages[PROBE_PACKAGE]
     expect(pinned).toBeDefined()
 
-    // 升级：三处一起到新版本、integrity 一起换新（自洽的新锁定态）——门判一致性，不判新旧。
+    // 升级：一个探针包的三处一起到新版本、integrity 一起换新（自洽的新锁定态）——门判一致性，
+    // 不判新旧。注意本检查**没有十包版本联动（lockstep）语义**：只升一包、其余留旧版也是绿的，
+    // 那属于升级流程约定（skill 的步骤），不是锁一致性。
     setManifestEntry(root, PROBE_PACKAGE, NEXT_VERSION, NEXT_INTEGRITY)
     setCatalogEntry(root, PROBE_PACKAGE, NEXT_VERSION)
     setLockfileEntry(root, PROBE_PACKAGE, pinned?.version ?? '', NEXT_VERSION, NEXT_INTEGRITY)
     expect(findingsOf(root)).toEqual([])
 
-    // 回滚：还原成仓库当前锁定副本 → 门绿，且回到的是**固定版**（逐字节相同），
-    // 不是"某个自洽态"。
+    // 回滚：还原成仓库当前锁定副本 → 门绿，且回到的与锁定副本**逐字节相同**。
+    // 本段的判别力在"回滚实现是 no-op / 少还原一份文件"（那时副本仍是升级态，断言红）；
+    // "回到的是固定版而不是任意自洽态"里的**哪一版是固定版**由人工门的 `git checkout <pin>`
+    // 保证（见 SKILL 回滚节），本探针不重复判。
     rollbackToPinned(root)
     expect(findingsOf(root)).toEqual([])
     for (const file of LOCK_FILES) {
@@ -200,12 +242,19 @@ describe('probe: DSH rollback drill (#290)', () => {
     }
   })
 
-  it('锁 ↔ 实际安装树一致：版本自报（#288）必须等于 dsh.lock 登记版本', () => {
-    // 这一条判的是"回滚只还原了 lock 而没重装/重建"的形态：树里装的是新版、锁是旧版
-    // 时，本断言红。它同时是 Q9 设备视图判据（dshDistributionVersion == lock）的本机版。
+  it('锁 ↔ 实际安装树一致：十项直接依赖的安装版本都必须等于 dsh.lock 登记版本', () => {
+    // 这一条判的是"回滚只还原了锁而没重装/重建"：树里装的是新版、锁是旧版时红。
+    // 在干净 CI 上它主要由"node_modules 从同一份 lockfile 冻结安装"保证（近重言），
+    // 有牙的是本机残留场景；它不读临时副本，是仓库态断言。抓不到的场景见验收文档边界节。
     const state = readDshLockState(REPO_ROOT)
-    const locked = state.manifest.packages['@deepseek-ai/dsh']
-    expect(locked).toBeDefined()
-    expect(dshDistributionInfo().version).toBe(locked?.version)
+    const require = createRequire(import.meta.url)
+    for (const [name, locked] of Object.entries(state.manifest.packages)) {
+      const manifestPath = require.resolve(`${name}/package.json`)
+      const installed = JSON.parse(readFileSync(manifestPath, 'utf8')) as { version: string }
+      expect(installed.version, `${name} installed tree vs dsh.lock.json`).toBe(locked.version)
+    }
+    // @deepseek-ai/dsh 另走一遍**生产自报路径**（#288：与 boot 锚同源），
+    // 同时是 Q9 设备视图判据（dshDistributionVersion == lock）的本机版。
+    expect(dshDistributionInfo().version).toBe(state.manifest.packages['@deepseek-ai/dsh']?.version)
   })
 })

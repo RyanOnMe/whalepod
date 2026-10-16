@@ -2,9 +2,9 @@
 
 - 对应场景/门禁：**Q3**（`pnpm test:dsh-contract`，CI check job）；总纲 §工程治理「DSH 熔断」规则 4
 - 对应 Issue：#290
-- 判定文件：`packages/runtime-dsh/tests/dsh-contract/rollback-drill.contract.spec.ts`（8 用例）
+- 判定文件：`packages/runtime-dsh/tests/dsh-contract/rollback-drill.contract.spec.ts`（10 用例）
   + 共享检查 `packages/runtime-dsh/tests/dsh-contract/helpers/lock-drift.ts`
-- 上次验证：2026-10-16 · `eaa57fa` · **PASS**（红 `bb7d2f7` → 绿 `eaa57fa`；四条变异自证见「判定」第 8 条）
+- 上次验证：2026-10-16 · `3f927f4` 内容 · **PASS**（红 `bb7d2f7` → 绿 `eaa57fa`；`3f927f4` = spec 的 oxfmt 重排 + 契约表机检修复，全量门就在这份内容上实测；评审修复见紧随其后的 round-1 提交）
 - 全量门（同一工作树实测）：Q0（1662 passed + 7 expected fail，含本文件登记的契约表漂移哨兵）/Q2（68 文件 491 用例）/Q3（16 spec 61 用例）/Q5（`pnpm test:e2e` 1 passed 30.5s exit 0）/Q6（32 用例）/Q7（18 用例 + secret-scan + 许可门）/Q9（`pnpm test:compose-smoke` PASS total=64.5s）全绿
 - 登记处：覆盖状态列在 [runtime-capability-contract.md](./runtime-capability-contract.md)
 
@@ -41,20 +41,28 @@ pnpm exec vitest run --project dsh-contract \
 ## 判定（成功长什么样）
 
 1. 起点基线：仓库当前锁定态在副本上 findings 为空（先立基线，避免"检查本身坏了"被当绿）。
-2. **部分升级必红**：lock + catalog 升了、pnpm-lock 漏改 → findings 恰好
-   `lockfile-version-mismatch`（门有牙）。
+2. **部分升级必红**（三种顺序各一条）：lock + catalog 升了、pnpm-lock 漏改 → `lockfile-version-mismatch`；
+   只改了 catalog（锁与 pnpm-lock 没动）→ `catalog-version-mismatch`；catalog 行被删 → `catalog-missing`；
+   pnpm-lock 整条 resolution 消失 → `lockfile-missing`（登记项缺失是红，不是"跳过"）。
 3. **装错包必红**：三处版本一起换新但 lockfile 的 integrity 还是旧包的 → `lockfile-integrity-mismatch`。
 4. **catalog 姿态必红**：`latest` / range → `catalog-not-exact`；依赖不再是 `catalog:` → `dependency-not-catalog`。
 5. **空清单必红**：`packages` 清空 → `manifest-empty`（否则逐包检查会空转成绿）。
 6. **整体升级三处自洽 → 门不红**（门判的是一致性，不是"必须是旧版"）；随后**回滚 = 还原
    锁定副本 → 门绿且四份文件与仓库逐字节相同**（回到固定版，不是任意自洽态）。
-7. 锁 ↔ 实际安装树一致：`dshDistributionInfo().version`（#288 版本自报，与 boot 锚同源）
-   == `dsh.lock.json` 里 `@deepseek-ai/dsh` 的版本。
-8. **判据有牙的变异自证**（实测，四条单点削弱各自点亮对应用例）：
-   `resolution.version !== locked.version` → `false` ⇒ 用例 2 必红；
-   `resolution.integrity !== locked.integrity` → `false` ⇒ 用例 3 必红；
-   `EXACT_VERSION.test(catalog)` 校验移除 ⇒ 用例 4 必红；
-   `manifest-empty` 守卫移除 ⇒ 用例 5 必红。
+7. 锁 ↔ 实际安装树一致：**十项直接依赖**的安装版本（`require.resolve('<pkg>/package.json')`）都必须等于
+   `dsh.lock.json` 登记版本；`@deepseek-ai/dsh` 另走一遍生产自报路径（`dshDistributionInfo()`，#288，与 boot
+   锚同源，也是 Q9 设备视图判据的本机版）。在干净 CI 上这主要由「node_modules 从同一份 lockfile 冻结安装」
+   保证（近重言）；**有牙的是本机残留场景**（锁回旧版、`.pnpm` 还留新版）。
+8. **判据有牙的变异自证**（实测，七条单点削弱各自点亮对应用例）：
+   `resolution.version !== locked.version` → `false` ⇒ 漏改 pnpm-lock 用例红；
+   `resolution.integrity !== locked.integrity` → `false` ⇒ integrity 用例红；
+   `EXACT_VERSION.test(catalog)` 校验移除 ⇒ catalog 姿势用例红；
+   `manifest-empty` 守卫移除 ⇒ 空清单用例红；
+   `catalog !== locked.version` 比对 → `false` ⇒ 只改 catalog 用例红（评审 A 指出此前**零覆盖**，
+   已补用例）；
+   `catalog === undefined` 分支 → `false` ⇒ catalog 缺行用例红；`resolution === undefined` 分支 → `false`
+   ⇒ lockfile 缺条用例红（同上，两条均为此轮补的覆盖）；
+   把 `dsh.lock.json` 的 `dsh-tools` 版本改成假值、安装树不动 ⇒ 安装树用例红且报错点名该包。
 
 ## 归因（失败先看哪层）
 
@@ -79,9 +87,13 @@ pnpm exec vitest run --project dsh-contract \
 ## 边界与未覆盖（不装作已验）
 
 - **真实安装/回滚是人工门**：本演练判的是仓库四份锁定文件的一致性与回滚语义；真实
-  「装另一个 DSH 版本 → 触发一次已知不兼容 → 回滚安装树」需要 registry/网络与真
-  `pnpm install` + rebuild，**不在 CI 判据内**。步骤与预期输出写在
+  「装另一个 DSH 版本 → 触发一次已知不兼容 → 回滚安装树」需要 registry/网络与真安装
+  （registry 拉包）+ rebuild，**不在 CI 判据内**。步骤与预期输出写在
   `.agents/skills/dsh-upgrade` 的「回滚」节，按人工门执行。
+- **回滚语料的"哪一版是固定版"不在本探针内**：逐字节相同那段的判别力在「回滚实现是 no-op /
+  少还原一份文件」；「固定版」的权威是人工门里的 `git checkout <pin>`。
+- **没有十包版本联动（lockstep）语义**：本检查只判逐包三方一致，升级时各包是否必须同版本走
+  由升级流程（skill 步骤）约束，不由锁一致性判——别把"一包升、九包留旧"读成已验。
 - **跨版本会话日志兼容性**：判据 7 只判"锁 = 树"；「旧版 Runtime 能否读新版写出的会话
   日志」需要两个版本同时在手，属上面人工门的一部分（回滚后对既有 Workspace 起一次 Run
   并核对历史投影），这里不假装覆盖。
@@ -93,5 +105,5 @@ pnpm exec vitest run --project dsh-contract \
 ## 复跑
 
 ```bash
-pnpm test:dsh-contract   # Q3：16 spec / 61 用例（含 apps/runtime 两文件 5 条）
+pnpm test:dsh-contract   # Q3：16 spec / 63 用例（含 apps/runtime 两文件 5 条）
 ```
