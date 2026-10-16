@@ -7,13 +7,13 @@
 export const RUNTIME_DSH_VERSION = 1 as const
 
 export { RuntimeBridge, dispatchRuntimeCommand } from './bridge.js'
-export type { RuntimeBridgeOptions, RuntimeBridgeSlot } from './bridge.js'
+export type { RuntimeBridgeOptions, RuntimeBridgeSlot, RuntimeProbeFace } from './bridge.js'
 export { dshDistributionInfo, dshAnchorUrl, dshAnchorPath } from './dsh-distribution.js'
 export type { DshDistributionInfo } from './dsh-distribution.js'
 export { runtimeSpecFromInitialize, dshSessionIdOf } from './runtime-spec.js'
 export type { RuntimeSpec } from './runtime-spec.js'
 export { SessionOwner } from './session-owner.js'
-export type { RunScopedPorts, SessionOwnerEvents } from './session-owner.js'
+export type { AgentStatusPayload, RunScopedPorts, SessionOwnerEvents } from './session-owner.js'
 export { ApprovalPort } from './approval-port.js'
 export type { ApprovalRequestedFact } from './approval-port.js'
 export { createPublishArtifactTool, PUBLISH_ARTIFACT_TOOL } from './artifact-tool.js'

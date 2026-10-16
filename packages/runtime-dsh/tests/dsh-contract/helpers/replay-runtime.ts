@@ -15,6 +15,7 @@ import {
   RuntimeBridge,
   dispatchRuntimeCommand,
   type RuntimeBridgeOptions,
+  type RuntimeProbeFace,
   type RuntimeSpec,
 } from '../../../src/index.js'
 import type { RuntimeCommand, RuntimeOutput } from '@whalepod/protocol'
@@ -140,6 +141,12 @@ export interface ReplayRuntimeOptions {
    * Workspace——会话日志就躺在 DSH_HOME 里，删了就没得续。
    */
   keepTempDirs?: boolean
+  /**
+   * **探针专用**（#289 事件流范围）：透传给 `RuntimeBridgeOptions.probeAfterReady`
+   * ——ready 之后同步交出 `RuntimeProbeFace`（直送生产的 session/event 与
+   * agent/status 两条订阅过滤线），用于注入越界事件/状态。
+   */
+  probeAfterReady?: (probe: RuntimeProbeFace) => void
 }
 
 export async function startReplayRuntime(
@@ -183,6 +190,9 @@ export async function startReplayRuntime(
     ...(probeOptions.probeResumeSessionId === undefined
       ? {}
       : { probeResumeSessionId: probeOptions.probeResumeSessionId }),
+    ...(probeOptions.probeAfterReady === undefined
+      ? {}
+      : { probeAfterReady: probeOptions.probeAfterReady }),
   }
 
   const slot: { current: RuntimeBridge | undefined } = { current: undefined }
