@@ -123,8 +123,6 @@ async function bootstrap(): Promise<void> {
 
   await seedPluginPack(shared.aliceUserId)
   await createAgentViaUi(alice, AGENT_NAME)
-  // `basic` 夹具：Run 直接跑完（不挂审批），证据里留下干净的终态。
-  await setRuntimeFixture('basic')
 }
 
 async function invite(cookie: string, username: string, displayName: string): Promise<string> {
@@ -206,14 +204,31 @@ async function deviceIdsOf(cookie: string): Promise<string[]> {
   return (res.data as Array<{ id: string }>).map((d) => d.id)
 }
 
-/** 拦截本页发往创建任务端点的 POST（计数/取键/取体），放行到真 Hub。 */
+/**
+ * 拦截本页发往创建任务端点的 POST（计数/取键/取体/取响应状态），放行到真 Hub。
+ * 响应状态经 page.on('response') 观测——judgment 用真实 HTTP 事实，不去 DOM 里猜。
+ */
 async function watchTaskPosts(
   page: Page,
   options: { abortFirst?: boolean } = {},
-): Promise<{ count: () => number; keys: string[]; bodies: unknown[] }> {
+): Promise<{
+  count: () => number
+  keys: string[]
+  bodies: unknown[]
+  statuses: number[]
+}> {
   const keys: string[] = []
   const bodies: unknown[] = []
+  const statuses: number[] = []
   let posts = 0
+  page.on('response', (response) => {
+    if (
+      response.request().method() === 'POST' &&
+      /\/projects\/[^/]+\/tasks$/.test(response.url())
+    ) {
+      statuses.push(response.status())
+    }
+  })
   await page.route('**/api/v1/projects/*/tasks', async (route: Route) => {
     if (route.request().method() !== 'POST') return route.continue()
     posts += 1
@@ -222,7 +237,7 @@ async function watchTaskPosts(
     if (options.abortFirst === true && posts === 1) return route.abort('failed')
     return route.continue()
   })
-  return { count: () => posts, keys, bodies }
+  return { count: () => posts, keys, bodies, statuses }
 }
 
 /** 真人路径：开表单 → 填标题/描述。 */
@@ -261,6 +276,9 @@ async function pairNodeFor(cookie: string, stopExisting: boolean): Promise<strin
   expect(codeRes.status).toBe(201)
   const code = (codeRes.data as { code: string }).code
   const node = await startNode({ pairingCode: code })
+  // `basic` 夹具：Run 直接跑完（不挂审批），证据里留下干净的终态。夹具是 Node 侧给
+  // Runtime 的会话文件，必须在 Node 活着时设置（每换一台 Node 都要重设）。
+  await setRuntimeFixture('basic')
   const deadline = Date.now() + 120_000
   for (;;) {
     const ids = await deviceIdsOf(cookie)
@@ -370,11 +388,17 @@ test('路径 5b：成员状态变化不静默改投——原选择照发、Hub �
 
   const banner = alice.locator('.error-banner')
   await expect(banner).toBeVisible({ timeout: 20_000 })
-  await expect(banner).toContainText('VALIDATION_FAILED')
+  // Hub 的拒绝如实上屏（人话是 Hub 的分类消息 + requestId；错误码在响应里，见下）。
+  await expect(banner).toContainText('assignee is not an active team member')
   // 关键：请求里仍是用户选的那个人——没有悄悄换成别人。
+  // 拒绝那一刻就把事实钉下来（晚了会被后面的恢复提交盖掉——独立判定器第一次跑就是
+  // 抓住这处自报错误：hubStatus 记成了恢复那次的 201）。
   const sentBody = watch.bodies.at(-1) as { assigneeUserId?: string }
+  const rejectStatus = watch.statuses.at(-1) ?? 0
+  const tasksWhileRejected = (await projectTasks()).length
   expect(sentBody.assigneeUserId).toBe(shared.carolUserId)
-  expect((await projectTasks()).length).toBe(before)
+  expect(rejectStatus).toBe(400)
+  expect(tasksWhileRejected).toBe(before)
 
   // 重选一个可用责任人 → 正常创建（恢复路径存在）。
   await selectFromMenu(alice.locator('button[id^="task-assignee-"]'), /Alice/)
@@ -385,9 +409,9 @@ test('路径 5b：成员状态变化不静默改投——原选择照发、Hub �
   facts.paths['stateChangeNoReroute'] = {
     sentAssigneeUserId: sentBody.assigneeUserId,
     expectedAssigneeUserId: shared.carolUserId,
-    hubCode: 'VALIDATION_FAILED',
+    hubStatus: rejectStatus,
     silentlySubstituted: sentBody.assigneeUserId !== shared.carolUserId,
-    tasksCreatedWhileRejected: 0,
+    tasksCreatedWhileRejected: tasksWhileRejected - before,
     recoveredWithAssigneeUserId: after.find((t) => t.id === taskIdFromUrl(alice))!.assigneeUserId,
     recoveredAssigneeUserId: shared.aliceUserId,
   }

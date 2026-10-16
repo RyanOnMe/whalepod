@@ -117,8 +117,11 @@ export function verifyCreateRecoveryEvidence(input: unknown): Verdict {
     }
     const substituted = flag(stale, 'silentlySubstituted', 'paths.stateChangeNoReroute', failures)
     if (substituted === true) failures.push('路径 5b：静默改投被记成 true')
-    // Hub 的拒绝码必须留（str 为空即记缺失）；值本身不钉死——诚实拒绝的码可能演进。
-    str(stale, 'hubCode', 'paths.stateChangeNoReroute', failures)
+    // Hub 的拒绝必须是 4xx（客户端可纠正），不是 5xx（那说明不是「选择失效」而是系统故障）。
+    const status = num(stale, 'hubStatus', 'paths.stateChangeNoReroute', failures)
+    if (status !== null && (status < 400 || status >= 500)) {
+      failures.push(`路径 5b：状态变化后的拒绝应是 4xx，实测 ${status}`)
+    }
     const recovered = str(
       stale,
       'recoveredWithAssigneeUserId',

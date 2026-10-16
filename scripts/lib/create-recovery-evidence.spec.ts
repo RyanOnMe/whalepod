@@ -25,7 +25,7 @@ function goodEvidence(): Record<string, unknown> {
       stateChangeNoReroute: {
         sentAssigneeUserId: 'carol',
         expectedAssigneeUserId: 'carol',
-        hubCode: 'VALIDATION_FAILED',
+        hubStatus: 400,
         silentlySubstituted: false,
         recoveredWithAssigneeUserId: 'alice',
         recoveredAssigneeUserId: 'alice',
@@ -236,6 +236,18 @@ describe('#345 创建到恢复证据判定器', () => {
       }),
     )
     expect(created.verdict).toBe('FAIL')
+  })
+
+  it('负控：状态变化后的拒绝是 5xx（不是「选择失效」而是系统故障）→ FAIL', () => {
+    const verdict = verifyCreateRecoveryEvidence(
+      mutate((evidence) => {
+        ;(evidence['paths'] as Record<string, Record<string, unknown>>)['stateChangeNoReroute']![
+          'hubStatus'
+        ] = 500
+      }),
+    )
+    expect(verdict.verdict).toBe('FAIL')
+    expect(verdict.failures.join('\n')).toContain('4xx')
   })
 
   it('负控：类型不对（数字写成字符串）也 FAIL，不静默略过', () => {
