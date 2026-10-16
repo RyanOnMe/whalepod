@@ -3,7 +3,7 @@
 - 对应场景/门禁：**Q3**（`pnpm test:dsh-contract`，CI check job）+ Q1（`pnpm test:unit`）+ Q2（`pnpm test:integration`）；总纲 §工程治理「DSH 熔断」规则 3
 - 对应 Issue：#288
 - 上次验证：2026-10-16 · `aa3b777`（三轮评审收口后的行为面；此前 `3479afe` 红测试、`3afa4cd` 首版、`4338604` 一轮修复、`73c0485` 二轮修复） · **PASS**；本文件自身的后续改动不改变行为
-- 全量门（同一工作树实测，计数口径 `pnpm test:unit`）：Q0（1662 passed + 7 expected fail）/ Q1 / Q2（68 文件 491 用例）/ Q3（42 用例）/ Q5（`pnpm test:e2e` 全链 exit 0，首版头）/ Q6 / Q7 / Q9（`pnpm test:compose-smoke` PASS total=66.0s，含新装配判据）全绿
+- 全量门（同一工作树实测，计数口径 `pnpm test:unit`）：Q0（1662 passed + 7 expected fail）/ Q1 / Q2（68 文件 491 用例）/ Q3（42 用例）/ Q5（`pnpm test:e2e` 全链 exit 0，首版头）/ Q6 / Q7 / Q9（`pnpm test:compose-smoke` PASS total=66.0s 与 63.9s 两次；中间一次 web 镜像构建因 Docker Hub 拉取抖动失败，重跑即过——如实记录，含新装配判据）全绿
 - 登记处：本文是这条规则的操作面文档；覆盖状态表在 [runtime-capability-contract.md](./runtime-capability-contract.md)
 
 ## 验的是哪条用户路径
@@ -110,7 +110,7 @@ pnpm test:dsh-contract && pnpm test:unit
   重连发的都是同一份（`apps/node/src/cli.ts` 装配 → `gateway/session.ts`）；旧 marker（缺
   `dshCompatibility`）解析失败 → 该 pack 不上报，即使本地已由下次 preflight 重建，设备视图
   也要等 Node 重启才刷新。已核实 Hub 只把它落库/展示（无准入依赖），本地 pack 是即时自愈的
-  ——**设备视图的滞后单独记为观察面 Issue**，不当作已修。
+  ——设备视图的滞后单独立账 **Issue #352**，不当作已修。
 - **旧 Runtime 产物 + 新 Node**：ready 帧缺必填 `profileDigest` 会被 strict schema 拒（按 main 的
   bin 行为静态推断的形态：`runtime output failed wire schema` → 该 Run 失败），未实机复现旧产物；
   部署带新鲜构建即无此形态（上一条 dist 前提的姊妹面）。
