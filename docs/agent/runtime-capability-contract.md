@@ -2,15 +2,16 @@
 
 - 对应门禁：**Q3**（`pnpm test:dsh-contract`）、Q6、Q7；本文是「哪些能力被机器钉住、哪些只是文档话」的**单一登记处**
 - 来源：外部架构审查（总纲 §工程治理「DSH 熔断」四规则 + Capability Contract 六项）
-- 上次核对：2026-10-09 · `feat/p1-a0-runtime-capability` · 结论：**六能力 = 4 有判据 / 3 部分（重叠）**；
+- 历史核对：2026-10-09 · `feat/p1-a0-runtime-capability` · 结论：**六能力 = 4 有判据 / 3 部分（重叠）**；
   **四规则 = 2 有判据 / 1 部分 / 1 缺口已立账（#288）**；另修掉「文档写 G0 必跑、CI 无接线」
   这条治理缺陷（Q3/Q6/Q7 已进 CI）
-- 再核对（#289，2026-10-16）· `feat/p1-289-contract-negatives` · **六能力里的三项「部分」补成有判据**：
-  单 Run 隔离（命令 runId 闸 + 契约级负向）、指令回执（Q3 契约门内）、事件流范围（越界事件负向）；
-  cancel 竞态与 followup 中断边界仍无判据 → 单独立账 #353
-- 本轮核对：2026-10-16 · `fix/p1-288-dsh-compat-guard` · **四规则 = 3 有判据 / 1 部分**
+- 历史核对：2026-10-16 · `fix/p1-288-dsh-compat-guard` · **四规则 = 3 有判据 / 1 部分**
   （「敏感不兼容禁启动」缺口补齐：DSH 版本自报与自动派生、pack 逐包 `dshCompatibility`
   fail-closed 比对、`profileDigest` 传递对照点；回滚半边仍归 #290）
+- 最新核对（#289，2026-10-16）· `feat/p1-289-contract-negatives` · **六能力里的三项「部分」补成有判据**：
+  单 Run 隔离（命令 runId 闸 + 契约级负向，含 followup/shutdown 命令族与结算屏障）、指令回执
+  （Q3 契约门内）、事件流范围（异会话事件 + 异 agent 状态两条过滤的负向）；cancel 竞态与 followup
+  中断边界仍无判据 → 单独立账 #353
 
 ## 〇、这份文件为什么存在
 
@@ -28,11 +29,11 @@
 | 能力 | 判定命令 | 判据文件 | 覆盖状态 |
 |---|---|---|---|
 | sessionResume | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/resume.contract.spec.ts` | 有判据：正向（同 session id + `fromRequest` 上下文命中 + 日志线性增长不复制）+ 负向（ghost id 拒绝启动、零帧） |
-| 单 Run 隔离 | `pnpm test:dsh-contract`、`pnpm test:unit` | `packages/runtime-dsh/tests/dsh-contract/single-run-isolation.contract.spec.ts`（#289 新增）、`apps/node/tests/run-manager.spec.ts`、`packages/runtime-dsh/tests/dsh-contract/event-stream.contract.spec.ts` | 有判据：命令 runId 闸（跨 Run 的 prompt/cancel/decide 显式拒 + 零副作用 + 正控）、Node 串扰防护、事件关联 |
+| 单 Run 隔离 | `pnpm test:dsh-contract`、`pnpm test:unit` | `packages/runtime-dsh/tests/dsh-contract/single-run-isolation.contract.spec.ts`（#289 新增）、`apps/node/tests/run-manager.spec.ts`、`packages/runtime-dsh/tests/dsh-contract/event-stream.contract.spec.ts` | 有判据：命令 runId 闸（跨 Run 的 prompt/followup/cancel/decide/shutdown 显式拒 + 正控收敛后清总账的零副作用 + 正控）、Node 串扰防护、事件关联 |
 | 中断模式（cancel） | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/agent-control.contract.spec.ts` | 有判据：cancel → `run.cancelled` 且**不得再出** `run.completed`；竞态与 followup 边界未覆盖（#353） |
 | 审批桥 | `pnpm test:dsh-contract`、`pnpm test:security` | `packages/runtime-dsh/tests/dsh-contract/approval.contract.spec.ts`、`apps/hub/tests/run-authorization.security.spec.ts`、`apps/hub/tests/approval-decision.integration.spec.ts` | 有判据：allowed_once / rejected / full_access 三态 + **未知 callId 双向 no-op**（A0-6 新增，Runtime 层此前零测试）+ Hub owner-only/一次性/过期 |
 | 指令回执 | `pnpm test:dsh-contract`、`pnpm test:integration` | `packages/runtime-dsh/tests/dsh-contract/instruction-receipt.contract.spec.ts`（#289 新增）、`apps/hub/tests/instruction-queue.integration.spec.ts` | 有判据：契约门内覆盖「initialize 前显式拒且零帧 / 重复 initialize 显式拒 / 受理的 prompt 有回执且先于结算」；Hub 侧指令状态结算照旧 |
-| 事件流范围 | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/event-stream.contract.spec.ts`、`event-stream-scope.contract.spec.ts`（#289 新增） | 有判据：seq 单调/关联/顺序 + **越界（异会话）事件不转发、不结算**的负向（变异自证：注释掉会话过滤即红） |
+| 事件流范围 | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/event-stream.contract.spec.ts`、`event-stream-scope.contract.spec.ts`（#289 新增） | 有判据：seq 单调/关联/顺序 + **越界（异会话）事件不转发、不结算**与**异 agent 状态不成帧**的负向（变异自证：两条过滤各自单点削弱即红）；范围语义自订阅面起算，总线分发作用域未覆盖（见第五节） |
 
 ## 二、熔断四规则
 
@@ -67,7 +68,7 @@ G0「release 必跑、PR 必跑」，而 `.github/workflows/check.yml` 只跑 Q0
 
 | 门 | 位置 | 本机实测 |
 |---|---|---|
-| Q3（`pnpm test:dsh-contract`） | `check.yml` · `check` job 末尾 | 39 用例 ~3.5s（无 PG/Docker/网络） |
+| Q3（`pnpm test:dsh-contract`） | `check.yml` · `check` job 末尾 | 51 用例 ~2.3s（无 PG/Docker/网络；A0-6 接线时 39，#288/#289 新增 12 条） |
 | Q7（`pnpm test:security`） | `check.yml` · `integration` job 末尾 | 17.5s（含一次性 PG） |
 | Q6（`pnpm test:resilience`） | `check.yml` · `integration` job 末尾 | 32 用例 9.5s（含一次性 PG） |
 | Q5 / Q8 / Q9 | 保持 release 级 | 有明确理由：真实浏览器 / 机器规格判据 / 镜像构建；见 g0g1g2-tiers 与 compose-standard-loop-acceptance |
@@ -80,7 +81,12 @@ G0「release 必跑、PR 必跑」，而 `.github/workflows/check.yml` 只跑 Q0
 > #288 已从本清单划掉两项：`dshCompatibility`/`profileDigest` 的比对与对照点、本机 DSH 版本
 > 自动派生。#289 又划掉三项：单 Run 隔离、指令回执、事件流范围的契约级负向。剩下的条目维持原状。
 
-- cancel 竞态（取消与 turn 收尾同时发生）、followup 在中断边界的行为（#353）。
+- cancel 竞态（取消与 turn 收尾同时发生）、followup 在中断边界的行为（#353）。#289 的
+  followup 负向覆盖的是**跨 Run 串扰**，不是 followup 在 interrupt 边界的产品语义。
+- 越界事件的**总线分发作用域**本身（事件该不该被派发到本订阅面，由 DSH 拥有）：无判据。
+  #289 的范围判据自订阅面（`deliverSessionEvent` / `deliverAgentStatus`）起算，注入的是
+  合成输入（探针接缝 `RuntimeProbeFace`，生产恒不设置）；边界见
+  [runtime-contract-negatives-acceptance](./runtime-contract-negatives-acceptance.md) 的「边界与未覆盖」。
 - `session identity mismatch` 硬闸：常规路径由 DSH 的 `session not found` 先拦；A0-6 的变异自证
   （把 resume 包成「失败就退化成新建」）证明该硬闸确实接住了退化（`bridge: session identity
   mismatch — expected <ghost>, DSH reports <新会话 id>`、零帧），但没有独立的常驻判据。
@@ -91,7 +97,7 @@ G0「release 必跑、PR 必跑」，而 `.github/workflows/check.yml` 只跑 Q0
 ## 六、复跑
 
 ```bash
-pnpm test:dsh-contract     # Q3：39 用例，约 3.5s
+pnpm test:dsh-contract     # Q3：15 spec / 51 用例（含 apps/runtime 两文件 4 条），约 2.3s
 pnpm test:security         # Q7：18 用例 + secret-scan 自检/实扫 + 许可门
 pnpm test:resilience       # Q6：32 用例
 pnpm check                 # Q0（含本文件的机检：scripts/tests/runtime-capability-contract.spec.ts）

@@ -4,7 +4,7 @@
 
 | 文档 | 内容 |
 |---|---|
-| [runtime-contract-negatives-acceptance.md](./runtime-contract-negatives-acceptance.md) | #289：三项契约级负向判据——单 Run 隔离（命令 runId 闸）、指令回执（回执先于结算）、事件流范围（越界事件不转发不结算，含变异自证与注入面的踩坑记录） |
+| [runtime-contract-negatives-acceptance.md](./runtime-contract-negatives-acceptance.md) | #289：三项契约级负向判据——单 Run 隔离（命令 runId 闸，prompt/followup/cancel/decide/shutdown 全族）、指令回执（回执先于结算）、事件流范围（异会话事件与异 agent 状态都不出范围，含两条过滤的变异自证与注入面的踩坑记录） |
 | [dsh-compat-guard-acceptance.md](./dsh-compat-guard-acceptance.md) | #288：敏感不兼容禁启动——Runtime 自报 DSH 版本（与 boot 锚同源）、pack 逐包 `dshCompatibility` fail-closed 比对（本地命中也复核、版本不可知拒绝）、`runtime.ready` 的 `profileDigest` 对照点（不符即 `PROFILE_MISMATCH` 并终止） |
 | [create-form-split-acceptance.md](./create-form-split-acceptance.md) | #344：创建任务表单拆开「责任人」与「创建后执行」——默认只创建、仅责任人为自己时可开启、分给别人要接受、改选不静默改投；含评审修复（失效责任人提交前阻塞、禁用原因可见、真浏览器命中区） |
 | [create-to-recovery-acceptance.md](./create-to-recovery-acceptance.md) | #345：创建到恢复的五条路径（只创建 / 分给别人执行 / 自选 Agent 执行 / 起不来后原任务继续 / 重试与状态变化）——真 Hub/Node/Runtime 一次走完，事实落盘后由独立判定器重判（判据数按实际求值计数，完整证据 48 条） |

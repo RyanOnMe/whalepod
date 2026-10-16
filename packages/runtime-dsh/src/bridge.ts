@@ -26,11 +26,7 @@ import { ApprovalPort } from './approval-port.js'
 import { dshAnchorUrl } from './dsh-distribution.js'
 import { nullLog, type LogSink } from './log.js'
 import { dshSessionIdOf, runtimeSpecFromInitialize, type RuntimeSpec } from './runtime-spec.js'
-import {
-  SessionOwner,
-  type AgentStatusPayload,
-  type SessionOwnerEvents,
-} from './session-owner.js'
+import { SessionOwner, type AgentStatusPayload, type SessionOwnerEvents } from './session-owner.js'
 
 /**
  * 探针接缝 `probeAfterReady` 交出的**直送面**（#289）：把合成输入直接送生产订阅
