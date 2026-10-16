@@ -27,14 +27,14 @@ try {
   if (verifyPreparationReturnEvidence(JSON.parse(previous) as unknown).verdict !== 'PASS')
     throw new Error('require genuine previous successful production evidence')
   const observations = []
-  for (const stage of ['browser-navigation', 'server-startup'] as const) {
+  for (const stage of ['browser-navigation', 'server-startup', 'late-teardown'] as const) {
     // Re-seed the old success deliberately for each independent failure stage.
     await mkdir(join(root, 'artifacts/evidence/preparation-return'), { recursive: true })
     await writeFile(resultPath, previous)
     const reportPath = join(temporary, `${stage}.json`)
     const configPath = join(temporary, `${stage}.config.mts`)
     const server =
-      stage === 'browser-navigation'
+      stage !== 'server-startup'
         ? 'undefined'
         : JSON.stringify({
             command: 'node -e "process.exit(42)"',
@@ -42,12 +42,29 @@ try {
             reuseExistingServer: false,
             timeout: 5000,
           })
+    const teardownPath = join(temporary, 'late-teardown.mts')
+    const markerPath = join(temporary, 'late-output-written.json')
+    if (stage === 'late-teardown') {
+      // A genuine Playwright teardown failure after a valid output is present. The output
+      // here is deliberately the old fixture, not a claim that another business Run passed.
+      await writeFile(
+        teardownPath,
+        `import { writeFile } from 'node:fs/promises'
+export default async function () {
+  await writeFile(${JSON.stringify(resultPath)}, ${JSON.stringify(previous)})
+  await writeFile(${JSON.stringify(markerPath)}, '{"written":true}')
+  throw new Error('WHALEPOD_NEGATIVE_LATE_TEARDOWN')
+}
+`,
+      )
+    }
     await writeFile(
       configPath,
       `import base from ${JSON.stringify(pathToFileURL(join(root, 'playwright.operations.config.ts')).href)}
 export default { ...base,
   testDir: ${JSON.stringify(join(root, 'apps/web/tests/e2e'))},
   webServer: ${server}, retries: 0,
+  globalTeardown: ${stage === 'late-teardown' ? JSON.stringify(teardownPath) : 'undefined'},
   use: { ...base.use, baseURL: 'http://127.0.0.1:0', trace: 'off', screenshot: 'off', video: 'off' },
   outputDir: ${JSON.stringify(join(temporary, 'output'))},
   reporter: [['json', { outputFile: ${JSON.stringify(reportPath)} }]],
@@ -67,15 +84,27 @@ export default { ...base,
     if (drive.error) throw new Error('negative browser drive did not complete')
     const report = JSON.parse(await readFile(reportPath, 'utf8')) as ReportSuite
     const attempts = results(report)
+    const failedAtNavigation =
+      attempts.length === 1 &&
+      attempts[0]?.status === 'failed' &&
+      attempts[0].errors?.some((error) => error.message?.includes('page.goto:')) === true
+    const lateOutputWritten =
+      stage === 'late-teardown' &&
+      (JSON.parse(await readFile(markerPath, 'utf8')) as { written?: boolean }).written === true
     const reachedExpectedFailure =
       stage === 'browser-navigation'
-        ? attempts.length === 1 &&
-          attempts[0]?.status === 'failed' &&
-          attempts[0].errors?.some((error) => error.message?.includes('page.goto:')) === true
-        : attempts.length === 0 &&
-          report.errors?.some(
-            (error) => error.message?.includes('config.webServer') && error.message.includes('42'),
-          ) === true
+        ? failedAtNavigation
+        : stage === 'server-startup'
+          ? attempts.length === 0 &&
+            report.errors?.some(
+              (error) =>
+                error.message?.includes('config.webServer') && error.message.includes('42'),
+            ) === true
+          : failedAtNavigation &&
+            lateOutputWritten &&
+            report.errors?.some((error) =>
+              error.message?.includes('WHALEPOD_NEGATIVE_LATE_TEARDOWN'),
+            ) === true
     if (drive.status === 0 || !reachedExpectedFailure)
       throw new Error('fault did not reach its specified production-driver stage')
     let fileAbsent = false
@@ -97,6 +126,7 @@ export default { ...base,
     observations.push({
       stage,
       seededOldSuccess: true,
+      ...(stage === 'late-teardown' ? { lateOutputWritten } : {}),
       driverFailedAtExpectedStage: reachedExpectedFailure,
       driverExit: drive.status,
       previousResultRemoved: fileAbsent,
