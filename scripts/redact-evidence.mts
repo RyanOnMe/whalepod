@@ -50,7 +50,9 @@ for (const target of targets) {
     const size = statSync(file).size
     if (size > MAX_BYTES) {
       skipped += 1
-      console.error(`跳过（超过 ${MAX_BYTES} 字节，按约定不入证据包）：${file.split(sep).join('/')}`)
+      console.error(
+        `跳过（超过 ${MAX_BYTES} 字节，按约定不入证据包）：${file.split(sep).join('/')}`,
+      )
       continue
     }
     const before = readFileSync(file, 'utf8')

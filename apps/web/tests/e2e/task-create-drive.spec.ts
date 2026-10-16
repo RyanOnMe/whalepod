@@ -17,8 +17,6 @@
  */
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
 import {
   assertNotNativeSelect,
   env,
@@ -99,17 +97,8 @@ async function createAgentViaUi(page: Page, name: string): Promise<void> {
   await expect(page.getByText(name).first()).toBeVisible()
 }
 
-/**
- * 真人路径：项目页开表单 → 填标题/描述 → **开启「创建后立即执行」** → 选 Agent → 提交。
- *
- * #344 起执行是显式开关（责任人只选真人）：默认关 = 只创建任务；开启后按钮变
- * 「创建并开始执行」，Agent 在单独的「执行 Agent」栏里选。这里同时钉住开关默认态与
- * 按钮换名——它们就是「创建」与「创建后执行」被拆开的可见证据。
- */
-async function createAgentTaskViaUi(
-  title: string,
-  shots?: { dir: string; name: string },
-): Promise<void> {
+/** 真人路径：项目页开表单 → 填标题/描述 → 责任人选 Agent → 提交。 */
+async function createAgentTaskViaUi(title: string): Promise<void> {
   const alice = shared.alice!
   await alice.goto('/')
   await expect(alice.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
@@ -118,24 +107,9 @@ async function createAgentTaskViaUi(
   await alice.locator('input[id^="task-title-"]').fill(title)
   await alice.locator('textarea[id^="task-desc-"]').fill('以标题与描述作为指令执行')
   const assignee = form.locator('button[id^="task-assignee-"]')
-  await assertNotNativeSelect(assignee, form, '责任人')
-  const toggle = form.getByRole('switch', { name: '创建后立即执行' })
-  await expect(toggle).toHaveAttribute('aria-checked', 'false')
-  await expect(form.getByRole('button', { name: '创建任务' })).toBeVisible()
-  // 截图只给人复核版面（判定仍靠断言，不看截图判完成）：开关关/开两态各一张。
-  if (shots !== undefined) {
-    await mkdir(shots.dir, { recursive: true })
-    await form.screenshot({ path: join(shots.dir, `${shots.name}-off.png`) })
-  }
-  await toggle.click()
-  await selectFromMenu(
-    form.locator('button[id^="task-execution-agent-"]'),
-    `${AGENT_NAME}（Agent）`,
-  )
-  if (shots !== undefined) {
-    await form.screenshot({ path: join(shots.dir, `${shots.name}-on.png`) })
-  }
-  await form.getByRole('button', { name: '创建并开始执行' }).click()
+  await assertNotNativeSelect(assignee, form, '交给谁')
+  await selectFromMenu(assignee, new RegExp(`${AGENT_NAME}（Agent · 指派即执行）`))
+  await form.getByRole('button', { name: '创建任务' }).click()
 }
 
 async function projectTasks(): Promise<Array<{ id: string; title: string }>> {
@@ -184,10 +158,7 @@ test('设备未配对：任务仍创建成功，toast 如实说自动执行未�
   test.setTimeout(240_000) // 承载一次性 Setup（团队/项目/Agent 冷启动）。
   await bootstrap()
   const alice = shared.alice!
-  await createAgentTaskViaUi('离线分支：写发布说明', {
-    dir: join(process.cwd(), 'artifacts', 'evidence', 'create-form-split'),
-    name: 'create-task-form',
-  })
+  await createAgentTaskViaUi('离线分支：写发布说明')
 
   // #312 的核心判据：这条 toast 在真页面上必须出现（此前恒不出现）。
   const toast = alice.locator('.toast-item').first()
