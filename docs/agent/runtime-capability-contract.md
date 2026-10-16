@@ -84,7 +84,7 @@ G0「release 必跑、PR 必跑」，而 `.github/workflows/check.yml` 只跑 Q0
 - cancel 竞态（取消与 turn 收尾同时发生）、followup 在中断边界的行为（#289）。
 - 升级失败回滚固定版：仅流程文档，无机检（#290）。
 - Hub 侧 `profile_digest` 的产出面（从 Revision 行复算 == 存库值）无独立判据；#288 的对照点只覆盖
-  Node↔Runtime 的传递与装载一致（见 dsh-compat-guard-acceptance 的边界节）。
+  Node↔Runtime 的往返一致（见 dsh-compat-guard-acceptance 的语义边界节）。
 
 ## 六、复跑
 

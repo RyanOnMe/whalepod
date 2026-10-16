@@ -3,7 +3,7 @@
 - 对应场景/门禁：**Q3**（`pnpm test:dsh-contract`，CI check job）+ Q1（`pnpm test:unit`）+ Q2（`pnpm test:integration`）；总纲 §工程治理「DSH 熔断」规则 3
 - 对应 Issue：#288
 - 上次验证：2026-10-16 · `4338604`（评审修复后的行为面；此前 `3afa4cd` 首版、`3479afe` 红测试） · **PASS**；本文件自身的后续改动不改变行为
-- 全量门（同一工作树实测）：Q0（`pnpm check` 1657 passed）/ Q1 / Q2（68 文件 491 用例）/ Q3（42 用例）/ Q5（`pnpm test:e2e` 全链 exit 0）/ Q6 / Q7 全绿
+- 全量门（同一工作树实测，计数口径 `pnpm test:unit`）：Q0（1661 passed + 7 expected fail）/ Q1 / Q2（68 文件 491 用例）/ Q3（42 用例）/ Q5（`pnpm test:e2e` 全链 exit 0）/ Q6 / Q7 全绿
 - 登记处：本文是这条规则的操作面文档；覆盖状态表在 [runtime-capability-contract.md](./runtime-capability-contract.md)
 
 ## 验的是哪条用户路径
@@ -24,6 +24,7 @@ pnpm -r --if-present build        # 探针走 dist 入口（生产形态），�
 pnpm test:dsh-contract            # Q3：发行版身份 / --print-dsh-version 真 bin / ready 回声
 pnpm test:unit                    # Q1：node 探针、preflight 兼容闸、run-manager 对照点
 pnpm test:integration             # Q2：真 Hub+Node+Runtime 装配链上的 stub 也如实回声
+pnpm test:compose-smoke           # Q9：真 `whalepod-node start` 的探针→hello 装配面
 ```
 
 判据文件（可点开）：
@@ -54,12 +55,14 @@ pnpm test:integration             # Q2：真 Hub+Node+Runtime 装配链上的 st
 2. 真 bin 探针：stdout 恰一行、exit 0、版本等于 boot 锚树的 `@deepseek-ai/dsh` 版本；
 3. 探针的失败形态全部返回 null（不猜）：非 JSON、零输出 + exit 0（旧 dist 形态）、形状/版本
    不合法（未过精确版本 schema 的串不许进 wire）、非零退出、超时（pid 消失自证）；
-4. 逐包 `dshCompatibility` ≠ 本地版本 → `PLUGIN_PACK_MISMATCH` 且 tarball 零下载；本地版本为
-   null 同样拒绝且不触网；**本地命中**路径不信任 marker 里的旧声明——不符时当本地未命中走
-   descriptor 现读复核（仍拒绝则 tarball 零下载）；catalog 更新声明后同一设备重拉即可通过
-   （修复路径有用例）；旧 marker（不带该字段）解析失败 → 当本地未命中重建（fail-closed 迁移）；
+4. 逐包 `dshCompatibility` ≠ 本地版本 → `PLUGIN_PACK_MISMATCH` 且 tarball 零下载；本机版本为
+   null 时在**入口短路**（core-empty 之外一律拒绝、连 descriptor 都不拉——未知没有任何可核对的
+   右侧）；**本地命中**路径不信任 marker 里的旧声明——不符时当本地未命中走 descriptor 现读复核
+   （仍拒绝则 tarball 零下载）；catalog 更新声明后同一设备重拉即可通过（修复路径有用例）；
+   旧 marker（不带该字段）解析失败 → 当本地未命中重建（fail-closed 迁移）；
 5. ready 回声与固化 digest 不符 → `run.failed(PROFILE_MISMATCH)` + terminate 一次；一致时
-   不产生 run.failed、不 terminate；`runFacts` 缺失（不可达的兜底分支）也按违例收敛而不是放过。
+   不产生 run.failed、不 terminate。（`runFacts` 缺失那条兜底改按违例收敛，本进程内不可达、
+   没有专门用例——是防将来解耦时静默失效的收敛点，不是被验证过的场景。）
 
 反向自证：实现前同一批用例为红（`3479afe`）——probe 模块不存在、strict wire 拒多字段、
 ready 无回声；实现后全绿。
@@ -79,7 +82,7 @@ ready 无回声；实现后全绿。
 文件与 `git log` 同一位置可查。要落盘复核：
 
 ```bash
-git log --oneline 3afa4cd~1..3afa4cd        # 红→绿
+git log --oneline 3479afe^..4338604          # 红→绿（含评审修复）
 pnpm test:dsh-contract && pnpm test:unit
 ```
 
@@ -91,14 +94,22 @@ pnpm test:dsh-contract && pnpm test:unit
 - **探针在启动时只跑一次**：一次瞬时失败（慢盘/EAGAIN/旧 dist）会让本进程生命周期内所有非
   core-empty pack 被拒（fail-closed），启动日志有 warn、恢复手段是重启 Node；重试/缓存策略未做。
 - **Q5 主闭环不经过这条闸**：`scripts/lib/phase1/chain.ts` 与 `scripts/e2e-node.mts` 的 RunManager
-  不装配 `pluginPackPreflight`（也不经过 cli 的探针装配），所以「Q5 全链绿」不是该闸的端到端证据；
-  闸的证据在 Q1/Q2 的 node 用例面 + Q3 真 bin 探针 + Q9 compose 真实 cli 路径。
+  不装配 `pluginPackPreflight`（也不经过 cli 的探针装配），所以「Q5 全链绿」不是该闸的端到端证据。
+  闸与装配面的证据：Q1/Q2 的 node 用例面 + Q3 真 bin 探针 + **Q9 冒烟新增的装配判据**——
+  `scripts/compose-smoke.mts` 在真 `whalepod-node start` 之后断言 `GET /devices` 的
+  `dshDistributionVersion` 等于 `dsh.lock.json` 锁定版（探针接错/探针失败/拿声明值都会红）。
 - **没有装第二个 DSH 版本做端到端拒绝复现**：兼容闸的拒绝面用注入版本在 preflight 层复现
   （离线确定性）；真实「升级到不兼容版本 → 回滚」的演练归 #290。
 - **Hub 侧的 digest 产出面未加独立判据**：「Hub 从 Revision 行复算出的 digest 等于存库值」需要
   先定一份独立 canonical 口径，未做；本轮的对照点只覆盖 Node↔Runtime 往返一致。
 - DSH 版本在 Node **启动时探针一次**：升级 DSH 之后必须重启 Node 才生效（`dsh-upgrade` 流程
   本来就要求重启；本轮把这条前提写进了 CLI 注释）。
+- **升级后设备视图会短暂少报 pack**：`node.hello.pluginPackDigests` 只上报 marker 校验通过的
+  目录，而旧 marker（缺 `dshCompatibility`）解析失败 → 暂不上报，直到该 pack 下次 preflight 重建。
+  已核实 Hub 只把它落库/展示（无准入依赖），跑一次该 pack 的 Run 即自愈。
+- **旧 Runtime 产物 + 新 Node**：ready 帧缺必填 `profileDigest` 会被 strict schema 拒（按 main 的
+  bin 行为静态推断的形态：`runtime output failed wire schema` → 该 Run 失败），未实机复现旧产物；
+  部署带新鲜构建即无此形态（上一条 dist 前提的姊妹面）。
 
 ## 复跑
 

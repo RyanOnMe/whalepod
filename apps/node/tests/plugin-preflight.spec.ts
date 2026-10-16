@@ -397,7 +397,7 @@ describe('DSH 兼容闸（#288）', () => {
     expect(fetches.filter((url) => url.includes('registry.npmjs.org'))).toHaveLength(0)
   })
 
-  it('本机 DSH 版本不可知（探针失败）→ fail-closed 拒绝', async () => {
+  it('本机 DSH 版本不可知（探针失败）→ fail-closed 拒绝，且零网络', async () => {
     const tarball = rootTarball()
     const lock = makeLock(tarball)
     const manifest = {
@@ -405,7 +405,7 @@ describe('DSH 兼容闸（#288）', () => {
       dependencyLockDigest: digestLockfile(lock),
     }
     const descriptor = makeDescriptor(manifest, lock)
-    const { preflight } = makePreflight(
+    const { preflight, fetches } = makePreflight(
       descriptor,
       new Map([
         [manifest.tarballUrl, tarball],
@@ -416,6 +416,21 @@ describe('DSH 兼容闸（#288）', () => {
     await expect(preflight.ensure(descriptor.packDigest)).rejects.toMatchObject({
       code: 'PLUGIN_PACK_MISMATCH',
     })
+    // 未知 ≠ 兼容：连 descriptor 都不拉（没有任何可核对的右侧，拉回来也只能拒）。
+    expect(fetches).toHaveLength(0)
+  })
+
+  it('本机 DSH 版本不可知 + 本地已装（marker 命中）→ 同样拒绝，且零网络', async () => {
+    const { descriptor, tarballs, packsRoot, store } = await installCompatiblePack()
+    const second = makePreflight(descriptor, tarballs, {
+      packsRoot,
+      store,
+      localDshVersion: null,
+    })
+    await expect(second.preflight.ensure(descriptor.packDigest)).rejects.toMatchObject({
+      code: 'PLUGIN_PACK_MISMATCH',
+    })
+    expect(second.fetches).toHaveLength(0)
   })
 
   it('本地命中但本机版本变了 → 不信任缓存，走 descriptor 复核（仍拒绝，且不下载 tarball）', async () => {
@@ -430,6 +445,11 @@ describe('DSH 兼容闸（#288）', () => {
     await expect(second.preflight.ensure(descriptor.packDigest)).rejects.toMatchObject({
       code: 'PLUGIN_PACK_MISMATCH',
     })
+    // 拒绝来自 **descriptor 现读到的声明**（catalog 仍是旧版本），不是 marker 里的旧值：
+    // 这条消息形如 assertDshCompatibility 的「is reviewed for DSH <catalog 值>」。
+    await expect(second.preflight.ensure(descriptor.packDigest)).rejects.toThrow(
+      /reviewed for DSH 0\.1\.0-rc\.8, local DSH is 0\.1\.0-rc\.9/,
+    )
     expect(second.fetches.some((url) => url.includes('/plugin-packs/'))).toBe(true)
     // 复核不过就不安装：包 tarball 一律不下载。
     expect(second.fetches.filter((url) => url.includes('registry.npmjs.org'))).toHaveLength(0)
