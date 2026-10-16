@@ -267,7 +267,7 @@ describe('auth-navigation', () => {
     // #158：责任人已从原生 <select> 迁到 vendored Menu 的触发器按钮，所以这里断言
     // 「触发器上显示的值」而不是 `select.value`——真人看到的就是这段文字。
     const title = await screen.findByLabelText('任务标题')
-    const assigneeTrigger = await screen.findByLabelText('交给谁')
+    const assigneeTrigger = await screen.findByLabelText('责任人')
     expect(assigneeTrigger.tagName).toBe('BUTTON')
     await waitFor(() => expect(assigneeTrigger).toHaveTextContent(BOB.displayName))
     title.focus()

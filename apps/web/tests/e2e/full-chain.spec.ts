@@ -136,7 +136,7 @@ async function setupTeamAndTask(): Promise<void> {
   await alice.locator('input[id^="task-title-"]').fill('产出并复核验收报告')
   // #158：责任人下拉是 vendored Menu（不再是原生 <select>）——反面钉 + 真人路径。
   const assignee = createTaskForm.locator('button[id^="task-assignee-"]')
-  await assertNotNativeSelect(assignee, createTaskForm, '交给谁')
+  await assertNotNativeSelect(assignee, createTaskForm, '责任人')
   await selectFromMenu(assignee, /Bob/)
   await expect(assignee).toContainText('Bob')
   await createTaskForm.getByRole('button', { name: /创建任务/ }).click()

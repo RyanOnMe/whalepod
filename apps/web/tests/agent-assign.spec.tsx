@@ -69,7 +69,7 @@ beforeEach(() => {
   resetToastsForTest()
 })
 
-describe('#239 创建任务：责任人可选 Agent（指派即执行）', () => {
+describe('#344 创建任务：责任人与「创建后立即执行」拆开（承接 #239 指派即执行）', () => {
   /**
    * 创建任务的响应：驱动结果在成功信封的**兄弟位**（`{ ok, data, drive }`）。
    *
@@ -77,11 +77,14 @@ describe('#239 创建任务：责任人可选 Agent（指派即执行）', () =>
    * 假契约（页面按 `data.drive` 读时全绿，真实响应里那条 toast 从不出现）。
    * 这里一律走 `createdWithSiblings` 照真实 wire 造。
    */
-  function createTaskHandlers(drive: Record<string, unknown> | null): MockHandler[] {
+  function createTaskHandlers(
+    drive: Record<string, unknown> | null,
+    agents: AgentView[] = [AGENT],
+  ): MockHandler[] {
     return [
       projectsHandler([PROJECT_VIEW]),
       teamMembersHandler(),
-      agentsHandler([AGENT]),
+      agentsHandler(agents),
       {
         method: 'POST',
         url: /\/api\/v1\/projects\/[^/]+\/tasks$/,
@@ -100,18 +103,65 @@ describe('#239 创建任务：责任人可选 Agent（指派即执行）', () =>
     ]
   }
 
-  /** 真人路径：开表单 → 填标题 → （可选）选责任人 → 提交。 */
-  async function submitCreateTask(
+  /** 真人路径：开表单 → 填标题。 */
+  async function openCreateForm(
     user: ReturnType<typeof userEvent.setup>,
-    assignee: RegExp | null,
+    title = '把登录页改成深色',
   ): Promise<void> {
     await user.click(await screen.findByRole('button', { name: '创建任务' }))
-    await user.type(await screen.findByLabelText('任务标题'), '把登录页改成深色')
-    if (assignee !== null) await selectOption(user, '交给谁', assignee)
-    await user.click(screen.getByRole('button', { name: /创建任务/ }))
+    await user.type(await screen.findByLabelText('任务标题'), title)
   }
 
-  it('下拉含未归档 Agent（归档不进）；选中后出现提示；提交体带 assigneeAgentId 且不带 assigneeUserId', async () => {
+  /** 打开执行开关并选 Agent（#344：不再是「责任人下拉里选 Agent」）。 */
+  async function enableExecution(
+    user: ReturnType<typeof userEvent.setup>,
+    agentName = /report-writer（Agent）/,
+  ): Promise<void> {
+    await user.click(screen.getByRole('switch', { name: '创建后立即执行' }))
+    await selectOption(user, '执行 Agent', agentName)
+  }
+
+  it('默认：责任人是真人（默认自己），只创建不执行——提交体只带 assigneeUserId', async () => {
+    const captures: { bodies: unknown[] } = { bodies: [] }
+    const user = userEvent.setup()
+    renderApp(
+      '/',
+      loggedInHandlers(BOB, [
+        projectsHandler([PROJECT_VIEW]),
+        teamMembersHandler(),
+        agentsHandler([AGENT]),
+        {
+          method: 'POST',
+          url: /\/api\/v1\/projects\/[^/]+\/tasks$/,
+          respond: (init) => {
+            captures.bodies.push(JSON.parse(String(init.body ?? '{}')))
+            return created({ ...makeTask({ id: 'new-member-task' }) })
+          },
+        },
+      ]),
+    )
+    await openCreateForm(user)
+
+    // 责任人只列真人：Agent 从这一栏退出（#344 的拆分本体）。
+    const list = await openSelect(user, '责任人')
+    expect(list.queryByRole('menuitem', { name: /report-writer/ })).toBeNull()
+    expect(list.getByRole('menuitem', { name: /Bob/ })).toBeVisible()
+    await user.keyboard('{Escape}')
+
+    // 开关默认关闭，按钮仍是「创建任务」。
+    expect(screen.getByRole('switch', { name: '创建后立即执行' })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    )
+    expect(screen.queryByLabelText('执行 Agent')).toBeNull()
+    await user.click(screen.getByRole('button', { name: '创建任务' }))
+
+    await waitFor(() => expect(captures.bodies).toHaveLength(1))
+    expect(captures.bodies[0]).toMatchObject({ assigneeUserId: BOB.userId })
+    expect(captures.bodies[0]).not.toHaveProperty('assigneeAgentId')
+  })
+
+  it('开启执行：出现 Agent 选择、按钮变「创建并开始执行」、未选 Agent 不可提交；提交体只带 assigneeAgentId', async () => {
     const captures: { bodies: unknown[] } = { bodies: [] }
     const user = userEvent.setup()
     renderApp(
@@ -137,25 +187,69 @@ describe('#239 创建任务：责任人可选 Agent（指派即执行）', () =>
         },
       ]),
     )
-    await user.click(await screen.findByRole('button', { name: '创建任务' }))
-    await user.type(await screen.findByLabelText('任务标题'), '把登录页改成深色')
+    await openCreateForm(user)
+    await user.click(screen.getByRole('switch', { name: '创建后立即执行' }))
 
-    const list = await openSelect(user, '交给谁')
+    // 开关打开：说明「用自己的环境、以标题与描述为指令」，按钮改名。
+    expect(screen.getByRole('switch', { name: '创建后立即执行' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    )
+    expect(screen.getByTestId('execute-now-hint')).toHaveTextContent('用你自己的设备与工作目录')
+    expect(screen.getByRole('button', { name: '创建并开始执行' })).toBeDisabled()
+
     // 归档 Agent 不进候选。
-    expect(list.queryByRole('menuitem', { name: /old-agent/ })).toBeNull()
-    await user.click(list.getByRole('menuitem', { name: /report-writer（Agent · 指派即执行）/ }))
+    const agentList = await openSelect(user, '执行 Agent')
+    expect(agentList.queryByRole('menuitem', { name: /old-agent/ })).toBeNull()
+    await user.click(agentList.getByRole('menuitem', { name: /report-writer（Agent）/ }))
 
-    // 选中 Agent → 说清会发生什么的提示。
-    expect(screen.getByTestId('agent-assign-hint')).toHaveTextContent('指派给 Agent')
-
-    await user.click(screen.getByRole('button', { name: /创建任务/ }))
+    await user.click(screen.getByRole('button', { name: '创建并开始执行' }))
     await waitFor(() => expect(captures.bodies).toHaveLength(1))
-    expect(captures.bodies[0]).toMatchObject({
-      title: '把登录页改成深色',
-      assigneeAgentId: AGENT.id,
-    })
-    // 互斥的 UI 面：带 Agent 就不带成员。
+    expect(captures.bodies[0]).toMatchObject({ assigneeAgentId: AGENT.id })
+    // 互斥：带 Agent 就不带成员。
     expect(captures.bodies[0]).not.toHaveProperty('assigneeUserId')
+  })
+
+  it('命中区：点标签文本也能开关（label 包 Switch），且只翻一次', async () => {
+    const user = userEvent.setup()
+    renderApp('/', loggedInHandlers(BOB, createTaskHandlers(null)))
+    await openCreateForm(user)
+    const toggle = screen.getByRole('switch', { name: '创建后立即执行' })
+    await user.click(screen.getByText('创建后立即执行'))
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    await user.click(screen.getByText('创建后立即执行'))
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+  })
+
+  it('分给别人：开关禁用并说明对方要先接受任务；执行中改选别人则显式关闭并清掉已选 Agent', async () => {
+    const user = userEvent.setup()
+    renderApp('/', loggedInHandlers(BOB, createTaskHandlers(null)))
+    await openCreateForm(user)
+
+    // 先给自己开上执行并选好 Agent。
+    await enableExecution(user)
+    expect(screen.getByRole('button', { name: '创建并开始执行' })).toBeEnabled()
+
+    // 改选 Alice（不是自己）：开关被关掉、Agent 清空、按钮回到「创建任务」，
+    // 提示浮出——不允许「以为在给自己执行，实际是给别人建任务」静默改投。
+    await selectOption(user, '责任人', /Alice/)
+    expect(screen.getByRole('switch', { name: '创建后立即执行' })).toBeDisabled()
+    expect(screen.getByRole('switch', { name: '创建后立即执行' })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    )
+    expect(screen.queryByLabelText('执行 Agent')).toBeNull()
+    expect(screen.getByRole('button', { name: '创建任务' })).toBeEnabled()
+    expect(screen.getByTestId('assignee-member-hint')).toHaveTextContent('接受任务并安排执行')
+  })
+
+  it('没有可用 Agent：开关禁用并说明原因', async () => {
+    const user = userEvent.setup()
+    renderApp('/', loggedInHandlers(BOB, createTaskHandlers(null, [])))
+    await openCreateForm(user)
+    const toggle = screen.getByRole('switch', { name: '创建后立即执行' })
+    expect(toggle).toBeDisabled()
+    expect(toggle).toHaveAttribute('title', '还没有可用的 Agent——先到 Agents 页创建')
   })
 
   it('驱动失败（设备离线）→ toast 如实说「自动执行未开始」并给错误码与恢复入口，任务仍算创建成功', async () => {
@@ -170,7 +264,9 @@ describe('#239 创建任务：责任人可选 Agent（指派即执行）', () =>
         }),
       ),
     )
-    await submitCreateTask(user, /report-writer（Agent · 指派即执行）/)
+    await openCreateForm(user)
+    await enableExecution(user)
+    await user.click(screen.getByRole('button', { name: '创建并开始执行' }))
     await waitFor(() =>
       expect(
         screen.getByText(/自动执行未开始（DEVICE_OFFLINE）/, { exact: false }),
@@ -193,7 +289,9 @@ describe('#239 创建任务：责任人可选 Agent（指派即执行）', () =>
         }),
       ),
     )
-    await submitCreateTask(user, /report-writer（Agent · 指派即执行）/)
+    await openCreateForm(user)
+    await enableExecution(user)
+    await user.click(screen.getByRole('button', { name: '创建并开始执行' }))
     await waitFor(() =>
       expect(screen.getByText('任务已创建，Agent 已自动开始执行')).toBeInTheDocument(),
     )
@@ -211,7 +309,9 @@ describe('#239 创建任务：责任人可选 Agent（指派即执行）', () =>
         }),
       ),
     )
-    await submitCreateTask(user, /report-writer（Agent · 指派即执行）/)
+    await openCreateForm(user)
+    await enableExecution(user)
+    await user.click(screen.getByRole('button', { name: '创建并开始执行' }))
     await waitFor(() =>
       expect(screen.getByText(/执行已受理排队/, { exact: false })).toBeInTheDocument(),
     )
@@ -231,7 +331,9 @@ describe('#239 创建任务：责任人可选 Agent（指派即执行）', () =>
         }),
       ),
     )
-    await submitCreateTask(user, /report-writer（Agent · 指派即执行）/)
+    await openCreateForm(user)
+    await enableExecution(user)
+    await user.click(screen.getByRole('button', { name: '创建并开始执行' }))
     await waitFor(() =>
       expect(screen.getByText(/但执行未受理/, { exact: false })).toBeInTheDocument(),
     )
@@ -241,7 +343,8 @@ describe('#239 创建任务：责任人可选 Agent（指派即执行）', () =>
   it('分给真人（响应无 drive）→ 不弹执行 toast', async () => {
     const user = userEvent.setup()
     const view = renderApp('/', loggedInHandlers(BOB, createTaskHandlers(null)))
-    await submitCreateTask(user, null)
+    await openCreateForm(user)
+    await user.click(screen.getByRole('button', { name: '创建任务' }))
     await waitFor(() => expect(view.fetchMock.mock.calls.length).toBeGreaterThan(1))
     expect(screen.queryByTestId('toast-item')).toBeNull()
   })
