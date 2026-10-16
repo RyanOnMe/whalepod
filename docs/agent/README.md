@@ -4,6 +4,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [dsh-rollback-drill-acceptance.md](./dsh-rollback-drill-acceptance.md) | #290：升级失败回滚固定版——回滚演练进 Q3（部分升级三种顺序/装错 tarball/catalog 写 range/登记项被删/空清单必红，单包三处自洽升级不红，回滚到锁定副本必绿且逐字节相同，锁 == 十项依赖的安装树）；真实安装回滚如实标为人工门 |
 | [runtime-contract-negatives-acceptance.md](./runtime-contract-negatives-acceptance.md) | #289：三项契约级负向判据——单 Run 隔离（命令 runId 闸，prompt/followup/cancel/decide/shutdown 全族）、指令回执（回执先于结算）、事件流范围（异会话事件与异 agent 状态都不出范围，含两条过滤的变异自证与注入面的踩坑记录） |
 | [dsh-compat-guard-acceptance.md](./dsh-compat-guard-acceptance.md) | #288：敏感不兼容禁启动——Runtime 自报 DSH 版本（与 boot 锚同源）、pack 逐包 `dshCompatibility` fail-closed 比对（本地命中也复核、版本不可知拒绝）、`runtime.ready` 的 `profileDigest` 对照点（不符即 `PROFILE_MISMATCH` 并终止） |
 | [create-form-split-acceptance.md](./create-form-split-acceptance.md) | #344：创建任务表单拆开「责任人」与「创建后执行」——默认只创建、仅责任人为自己时可开启、分给别人要接受、改选不静默改投；含评审修复（失效责任人提交前阻塞、禁用原因可见、真浏览器命中区） |

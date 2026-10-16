@@ -49,7 +49,7 @@ jobs:
 
       # Q3 DSH 契约门（A0-6/#288）：此前它只是**文档上的** release/PR 必跑项——
       # .github 里没有任何接线，版本锁复算（dsh.lock ↔ catalog ↔ pnpm-lock）与契约探针
-      # 只在本地跑。接进 check job（复用同一份 install+build）：52 用例约 2.5s（2026-10-16
+      # 只在本地跑。接进 check job（复用同一份 install+build）：63 用例约 3s（2026-10-16
       # 计数；A0-6 接线时为 39），无网络、无 PG、无 Docker——没有理由让它继续待在
       # 「人心里的门」里。
       - name: Run DSH contract probes (Q3)

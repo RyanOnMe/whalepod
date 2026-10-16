@@ -59,7 +59,24 @@ Agent CLI + GitHub + 团队聊天的传统方式有实际优势。顺序是：**
 > 试用包补了五处观察重点与「模型等待与界面寻找分开记」，并写明合入后基线要前移（确切 commit
 > 仍待开测时填写——本轮**没有**替试用改基线数字）。
 > **仍未做（不得当成已完成）**：三队真人试用（工具包就绪、真人字段一律 not_run）、
-> 真实 Provider 执行质量与费用、#288/#289/#290/#183 等既有缺口、复杂责任接管与首页环境推断。
+> 真实 Provider 执行质量与费用、#183 等既有缺口、复杂责任接管与首页环境推断。
+> （#288/#289/#290 已于同日收口，见下一条。）
+
+> **本轮收口（2026-10-16）：DSH 熔断四规则与能力契约缺口**（三个 Issue 逐个开 PR、按序合入）：
+> 1. #288 敏感不兼容禁启动（PR #351）：Runtime 用 `--print-dsh-version` 自报发行版身份（与 boot
+>    锚同源）、pack 逐包 `dshCompatibility` 与本机版本 fail-closed 比对、`runtime.ready` 的
+>    `profileDigest` 往返对照点（不符即 `PROFILE_MISMATCH` 并终止）——四规则 3/4 有判据。
+> 2. #289 能力契约三项负向（PR #354）：单 Run 隔离 runId 闸（**修掉实测缺闸**：跨 Run 的
+>    prompt/followup/cancel/decide/shutdown 此前会被当本 Run 指令执行）、指令回执、事件流范围
+>    （异会话事件 + 异 agent 状态两条过滤）——六能力里三项「部分」补成有判据；cancel 竞态与
+>    followup 中断边界立账 #353。
+> 3. #290 升级失败回滚固定版（PR #355）：回滚演练进 Q3（与 lock-drift 共用同一判定实现；
+>    七条变异自证），真实「装另一版 → 不兼容 → 回滚安装树」如实标为**人工门**（步骤与预期
+>    输出在 dsh-upgrade skill）；`runtime_version_rolled_back` 未实现立账 #356。
+>
+> 结果：**熔断四规则 4/4、能力契约六项 6/6 都有机器判据**（规则 4 的真实安装面是人工门，
+> 已在契约表与验收文档如实标注）。三批的验收文档：dsh-compat-guard-acceptance /
+> runtime-contract-negatives-acceptance / dsh-rollback-drill-acceptance。
 
 `#183`（61 个 tests 类型错误：hub 30 / node 29 / protocol 1 / db 1）同步处理口径：
 先拆 node 对 hub 测试 helper 的跨包 import，先修安全协议关键链路错误，其余建基线禁新增，
