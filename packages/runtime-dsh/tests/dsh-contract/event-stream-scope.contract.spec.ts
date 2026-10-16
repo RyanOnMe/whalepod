@@ -70,7 +70,10 @@ describe('probe: event stream scope (#289)', () => {
         // 丢弃一切的桩，上面两条负向会空转成绿）。
         probe.deliverSessionEvent(
           { id: ownSessionId } as unknown as Session,
-          { type: 'probe/canary', data: { marker: 'same-session-canary' } } as unknown as SessionEvent,
+          {
+            type: 'probe/canary',
+            data: { marker: 'same-session-canary' },
+          } as unknown as SessionEvent,
         )
         probe.deliverAgentStatus({ agent: {} as unknown as Agent, status: 'idle' })
         injected.push('emitted')
