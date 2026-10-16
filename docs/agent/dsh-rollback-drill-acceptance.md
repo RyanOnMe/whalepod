@@ -4,8 +4,8 @@
 - 对应 Issue：#290
 - 判定文件：`packages/runtime-dsh/tests/dsh-contract/rollback-drill.contract.spec.ts`（10 用例）
   + 共享检查 `packages/runtime-dsh/tests/dsh-contract/helpers/lock-drift.ts`
-- 上次验证：2026-10-16 · `3f927f4` 内容 · **PASS**（红 `bb7d2f7` → 绿 `eaa57fa`；`3f927f4` = spec 的 oxfmt 重排 + 契约表机检修复，全量门就在这份内容上实测；评审修复 `484a797`）
-- 全量门（同一工作树实测）：Q0（1662 passed + 7 expected fail，含本文件登记的契约表漂移哨兵）/Q2（68 文件 491 用例）/Q3（16 spec 61 用例）/Q5（`pnpm test:e2e` 1 passed 30.5s exit 0）/Q6（32 用例）/Q7（18 用例 + secret-scan + 许可门）/Q9（`pnpm test:compose-smoke` PASS total=64.5s）全绿
+- 上次验证：2026-10-16 · `1ec5df8` 内容 · **PASS**（红 `bb7d2f7` → 绿 `eaa57fa`；评审修复 `484a797`；**Q0/Q3 在修复后内容上复跑**，Q2/Q5/Q6/Q7/Q9 在 `3f927f4` 内容上实测——本 PR 不改生产代码，不涉那些项目）
+- 全量门（同一工作树实测）：Q0（1662 passed + 7 expected fail，含本文件登记的契约表漂移哨兵）/Q2（68 文件 491 用例）/Q3（16 spec 63 用例）/Q5（`pnpm test:e2e` 1 passed 30.5s exit 0）/Q6（32 用例）/Q7（18 用例 + secret-scan + 许可门）/Q9（`pnpm test:compose-smoke` PASS total=64.5s）全绿
 - 登记处：覆盖状态列在 [runtime-capability-contract.md](./runtime-capability-contract.md)
 
 ## 验的是哪条用户路径
@@ -47,8 +47,10 @@ pnpm exec vitest run --project dsh-contract \
 3. **装错包必红**：三处版本一起换新但 lockfile 的 integrity 还是旧包的 → `lockfile-integrity-mismatch`。
 4. **catalog 姿态必红**：`latest` / range → `catalog-not-exact`；依赖不再是 `catalog:` → `dependency-not-catalog`。
 5. **空清单必红**：`packages` 清空 → `manifest-empty`（否则逐包检查会空转成绿）。
-6. **整体升级三处自洽 → 门不红**（门判的是一致性，不是"必须是旧版"）；随后**回滚 = 还原
-   锁定副本 → 门绿且四份文件与仓库逐字节相同**（回到固定版，不是任意自洽态）。
+6. **单包三处自洽升级 → 门不红**（门判的是一致性，不是"必须是旧版"；见边界节的
+   「没有 lockstep 语义」）；随后**回滚 = 还原锁定副本 → 门绿且四份文件与仓库逐字节相同**
+   （本段的判别力在"回滚实现是 no-op / 少还原一份文件"；"哪一版才是固定版"的权威是人工门
+   的 `git checkout <pin>`，本探针不重复判）。
 7. 锁 ↔ 实际安装树一致：**十项直接依赖**的安装版本（`require.resolve('<pkg>/package.json')`）都必须等于
    `dsh.lock.json` 登记版本；`@deepseek-ai/dsh` 另走一遍生产自报路径（`dshDistributionInfo()`，#288，与 boot
    锚同源，也是 Q9 设备视图判据的本机版）。在干净 CI 上这主要由「node_modules 从同一份 lockfile 冻结安装」
@@ -62,7 +64,9 @@ pnpm exec vitest run --project dsh-contract \
    已补用例）；
    `catalog === undefined` 分支 → `false` ⇒ catalog 缺行用例红；`resolution === undefined` 分支 → `false`
    ⇒ lockfile 缺条用例红（同上，两条均为此轮补的覆盖）；
-   把 `dsh.lock.json` 的 `dsh-tools` 版本改成假值、安装树不动 ⇒ 安装树用例红且报错点名该包。
+   **另一条是"世界变异"而非单点**：把 `dsh.lock.json` 的 `dsh-tools` 版本改成假值、安装树不动
+   ⇒ 安装树用例红并点名该包（实测连带 5 条红：drift 的全局与 dsh-tools 行、演练基线、
+   单包回滚用例、安装树用例——锁与树同时不一致，连带是预期的，别按"单点"读）。
 
 ## 归因（失败先看哪层）
 
