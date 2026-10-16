@@ -59,6 +59,21 @@ export function created(data: unknown): MockResponse {
   return { status: 201, body: { ok: true, data } }
 }
 
+/**
+ * 成功信封**带顶层兄弟字段**（#312）。真实 wire 确有这种形状：创建任务指派 Agent 时，
+ * `drive`（自动驱动结果）与 `data` **平级**——见 `apps/hub/src/modules/task/routes.ts`
+ * 的 `...(drive !== undefined ? { drive } : {})`，Hub 集成用例也按 `json.drive` 读。
+ *
+ * **不要把这类字段塞进 `data`**：那会让用例验一个前端自己造出来的假契约，而真实响应里
+ * 前端读不到它（#312 就是这么漏的——`result.drive` 恒为 undefined，toast 从不出现）。
+ */
+export function createdWithSiblings(
+  data: unknown,
+  siblings: Record<string, unknown>,
+): MockResponse {
+  return { status: 201, body: { ok: true, data, ...siblings } }
+}
+
 export function apiFailure(
   code: string,
   message: string,
