@@ -7,6 +7,8 @@
  * - 本地完整命中 → 第二次 preflight **不访问网络**；
  * - descriptor packDigest 漂移 / lock digest 漂移 / 包 SRI 漂移 / 未审核包
  *   各自拒绝：ack accepted=false 且**不 spawn Runtime**；
+ * - DSH 兼容闸（#288）：逐包 dshCompatibility 与本地版本 fail-closed 比对——
+ *   descriptor 路径与本地命中路径都复核，本地版本不可知同样拒绝；
  * - core-empty pack：不触发 preflight 网络，initialize 不带 overlay 字段。
  */
 import {
@@ -17,6 +19,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -186,16 +189,26 @@ function makeMemoryFetcher(descriptor: unknown, tarballs: Map<string, Buffer>) {
 function makePreflight(
   descriptor: unknown,
   tarballs: Map<string, Buffer>,
-): { preflight: PluginPackPreflight; fetches: string[] } {
+  options: {
+    /** 本机 DSH 版本探针结果；缺省 = 与夹具 manifest 的 dshCompatibility 一致。 */
+    localDshVersion?: string | null
+    /** 跨实例共享的落盘面（本地命中路径的复跑判据用）。 */
+    packsRoot?: string
+    store?: PackageStore
+  } = {},
+): { preflight: PluginPackPreflight; fetches: string[]; packsRoot: string; store: PackageStore } {
   const { fetchImpl, pluginFetch } = makeMemoryFetcher(descriptor, tarballs)
   const fetches: string[] = []
   const instrumented = async (url: string | URL): Promise<Response> => {
     fetches.push(String(url))
     return fetchImpl(url)
   }
-  const store = new PackageStore(join(mktemp(), 'store'))
+  const store = options.store ?? new PackageStore(join(mktemp(), 'store'))
+  const packsRoot = options.packsRoot ?? join(mktemp(), 'packs')
+  const localDshVersion =
+    options.localDshVersion === undefined ? '0.1.0-rc.8' : options.localDshVersion
   const preflight = new PluginPackPreflight({
-    packsRoot: join(mktemp(), 'packs'),
+    packsRoot,
     store,
     installer: new PluginInstaller({
       store,
@@ -207,8 +220,9 @@ function makePreflight(
       fetchPluginPackDescriptor(HUB_URL, 'device-token', packDigest, {
         fetchImpl: instrumented,
       }),
+    localDshVersion: () => Promise.resolve(localDshVersion),
   })
-  return { preflight, fetches }
+  return { preflight, fetches, packsRoot, store }
 }
 
 // ---------- 纯 preflight 层 ----------
@@ -332,6 +346,107 @@ describe('PluginPackPreflight（descriptor 全链）', () => {
     const outcome = await preflight.ensure(CORE_EMPTY_PACK_DIGEST)
     expect(outcome.overlayPath).toBeUndefined()
     expect(fetches).toHaveLength(0)
+  })
+})
+
+// ---------- 熔断规则「敏感不兼容禁启动」（#288） ----------
+
+describe('DSH 兼容闸（#288）', () => {
+  /** 装一份可用的 pack（写 marker），返回共享落盘面与夹具。 */
+  async function installCompatiblePack() {
+    const tarball = rootTarball()
+    const lock = makeLock(tarball)
+    const manifest = {
+      ...makeManifest({ integrity: sriFor(tarball) }),
+      dependencyLockDigest: digestLockfile(lock),
+    }
+    const descriptor = makeDescriptor(manifest, lock)
+    const tarballs = new Map([
+      [manifest.tarballUrl, tarball],
+      [lock.dependencies[0]!.resolved, depTarball()],
+    ])
+    const packsRoot = join(mktemp(), 'packs')
+    const store = new PackageStore(join(mktemp(), 'store'))
+    const first = makePreflight(descriptor, tarballs, { packsRoot, store })
+    await first.preflight.ensure(descriptor.packDigest)
+    return { descriptor, tarball, lock, tarballs, packsRoot, store }
+  }
+
+  it('manifest 声明的 dshCompatibility 与本地版本不符 → PLUGIN_PACK_MISMATCH，不下载包', async () => {
+    const tarball = rootTarball()
+    const lock = makeLock(tarball)
+    const manifest = {
+      ...makeManifest({ integrity: sriFor(tarball) }),
+      dependencyLockDigest: digestLockfile(lock),
+      dshCompatibility: '9.9.9',
+    }
+    const descriptor = makeDescriptor(manifest, lock)
+    const { preflight, fetches } = makePreflight(
+      descriptor,
+      new Map([
+        [manifest.tarballUrl, tarball],
+        [lock.dependencies[0]!.resolved, depTarball()],
+      ]),
+    )
+    await expect(preflight.ensure(descriptor.packDigest)).rejects.toMatchObject({
+      code: 'PLUGIN_PACK_MISMATCH',
+    })
+    // 诚实失败：消息给出两侧版本（不含本地绝对路径），运维能直接看出该装哪版。
+    await expect(preflight.ensure(descriptor.packDigest)).rejects.toThrow(/9\.9\.9/)
+    // 只拉了 descriptor；包 tarball 一律不下（拒绝发生在安装之前）。
+    expect(fetches.filter((url) => url.includes('registry.npmjs.org'))).toHaveLength(0)
+  })
+
+  it('本机 DSH 版本不可知（探针失败）→ fail-closed 拒绝', async () => {
+    const tarball = rootTarball()
+    const lock = makeLock(tarball)
+    const manifest = {
+      ...makeManifest({ integrity: sriFor(tarball) }),
+      dependencyLockDigest: digestLockfile(lock),
+    }
+    const descriptor = makeDescriptor(manifest, lock)
+    const { preflight } = makePreflight(
+      descriptor,
+      new Map([
+        [manifest.tarballUrl, tarball],
+        [lock.dependencies[0]!.resolved, depTarball()],
+      ]),
+      { localDshVersion: null },
+    )
+    await expect(preflight.ensure(descriptor.packDigest)).rejects.toMatchObject({
+      code: 'PLUGIN_PACK_MISMATCH',
+    })
+  })
+
+  it('本地命中路径也复核：装好之后本机版本变了 → 拒绝，且零网络请求', async () => {
+    const { descriptor, tarballs, packsRoot, store } = await installCompatiblePack()
+    // 同一落盘面、新实例、本机已升到别的 DSH 版本：本地命中不等于放行。
+    const second = makePreflight(descriptor, tarballs, {
+      packsRoot,
+      store,
+      localDshVersion: '0.1.0-rc.9',
+    })
+    await expect(second.preflight.ensure(descriptor.packDigest)).rejects.toMatchObject({
+      code: 'PLUGIN_PACK_MISMATCH',
+    })
+    expect(second.fetches).toHaveLength(0)
+  })
+
+  it('旧 marker（无 dshCompatibility 字段）→ 当本地未命中重装（fail-closed 迁移）', async () => {
+    const { descriptor, tarballs, packsRoot, store } = await installCompatiblePack()
+    // 模拟 #288 之前落下的 marker：删掉逐包 dshCompatibility。
+    const markerPath = join(packsRoot, descriptor.packDigest, 'pack.json')
+    const marker = JSON.parse(readFileSync(markerPath, 'utf8')) as {
+      packages: Array<Record<string, unknown>>
+    }
+    for (const pkg of marker.packages) delete pkg['dshCompatibility']
+    writeFileSync(markerPath, JSON.stringify(marker, null, 2), 'utf8')
+
+    const third = makePreflight(descriptor, tarballs, { packsRoot, store })
+    const outcome = await third.preflight.ensure(descriptor.packDigest)
+    expect(typeof outcome.overlayPath).toBe('string')
+    // 走了「本地未命中 → 拉 descriptor 重建」这一路，而不是拿旧 marker 放行。
+    expect(third.fetches.some((url) => url.includes('/plugin-packs/'))).toBe(true)
   })
 })
 

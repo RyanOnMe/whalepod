@@ -229,13 +229,18 @@ export function cancelFrame(
   } as NodeDownstream
 }
 
-export function runtimeReadyLine(runId: string, sessionId = 'session-1'): string {
+export function runtimeReadyLine(
+  runId: string,
+  sessionId = 'session-1',
+  /** #288：ready 帧的回声 digest——缺省与 run.start 里固化的 expectedProfileDigest 一致。 */
+  profileDigest = 'a'.repeat(64),
+): string {
   return JSON.stringify({
     protocolVersion: 1,
     messageId: '30000000-0000-4000-8000-000000000001',
     sentAt: new Date().toISOString(),
     type: 'runtime.ready',
-    payload: { runId, dshSessionId: sessionId },
+    payload: { runId, dshSessionId: sessionId, profileDigest },
   })
 }
 
