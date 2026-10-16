@@ -2,8 +2,8 @@
 
 - 对应场景/门禁：**Q3**（`pnpm test:dsh-contract`，CI check job）+ Q1（`pnpm test:unit`）+ Q2（`pnpm test:integration`）；总纲 §工程治理「DSH 熔断」规则 3
 - 对应 Issue：#288
-- 上次验证：2026-10-16 · `4338604`（评审修复后的行为面；此前 `3afa4cd` 首版、`3479afe` 红测试） · **PASS**；本文件自身的后续改动不改变行为
-- 全量门（同一工作树实测，计数口径 `pnpm test:unit`）：Q0（1661 passed + 7 expected fail）/ Q1 / Q2（68 文件 491 用例）/ Q3（42 用例）/ Q5（`pnpm test:e2e` 全链 exit 0）/ Q6 / Q7 全绿
+- 上次验证：2026-10-16 · `73c0485`（两轮评审修复后的行为面；此前 `3afa4cd` 首版、`3479afe` 红测试、`4338604` 首轮修复） · **PASS**；本文件自身的后续改动不改变行为
+- 全量门（同一工作树实测，计数口径 `pnpm test:unit`）：Q0（1662 passed + 7 expected fail）/ Q1 / Q2（68 文件 491 用例）/ Q3（42 用例）/ Q5（`pnpm test:e2e` 全链 exit 0，首版头）/ Q6 / Q7 / Q9（`pnpm test:compose-smoke` PASS total=66.0s，含新装配判据）全绿
 - 登记处：本文是这条规则的操作面文档；覆盖状态表在 [runtime-capability-contract.md](./runtime-capability-contract.md)
 
 ## 验的是哪条用户路径
