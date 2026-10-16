@@ -5,6 +5,9 @@
 - 上次核对：2026-10-09 · `feat/p1-a0-runtime-capability` · 结论：**六能力 = 4 有判据 / 3 部分（重叠）**；
   **四规则 = 2 有判据 / 1 部分 / 1 缺口已立账（#288）**；另修掉「文档写 G0 必跑、CI 无接线」
   这条治理缺陷（Q3/Q6/Q7 已进 CI）
+- 本轮核对：2026-10-16 · `fix/p1-288-dsh-compat-guard` · **四规则 = 3 有判据 / 1 部分**
+  （「敏感不兼容禁启动」缺口补齐：DSH 版本自报与自动派生、pack 逐包 `dshCompatibility`
+  fail-closed 比对、`profileDigest` 传递对照点；回滚半边仍归 #290）
 
 ## 〇、这份文件为什么存在
 
@@ -34,7 +37,7 @@
 |---|---|---|---|
 | 未知事件不给权 / **未知 Approval 只拒不放行** | `pnpm test:dsh-contract`、`pnpm test:unit`、`pnpm test:security` | Runtime 层：`approval.contract.spec.ts` 的未知 callId 双向夹逼（放行腿/拦截腿都不得被误认领，A0-6 新增）；Node 层：`apps/node/tests/projector.spec.ts`（未知 callId 回显零事件）；Hub 层：`run-authorization.security.spec.ts`（伪造 403 / 未知 404 且命令零新增）；协议层：`strictObject` 拒多余字段 | 三层都有判据（**A0-6 补齐了最靠近模型执行的那一层**） |
 | **建不起归属不确认成功** | `pnpm test:dsh-contract`、`pnpm test:integration` | 续跑 ghost id → 拒绝启动、零帧（A0-6 新增）；Hub 非本设备 `run.event` → FORBIDDEN；artifact 实收字节 sha256 ≠ 声明 → `ARTIFACT_HASH_MISMATCH` 不落库；pack digest 三方复算；catalog↔tarball↔加载树闭环 | 有判据 |
-| **敏感不兼容禁启动** | （缺口为主） | 有：凭据缺失 spawn 前即 `MODEL_CREDENTIAL_UNAVAILABLE`、pack digest/信任级/lockfile/dshCompatibility schema 校验、overlay 行契约 fail-closed。**无**：`dshCompatibility` 从不与本地 DSH 比对、`expectedProfileDigest` 只透传不比对、本机 DSH 版本由操作者声明（缺省 `unmanaged`） | **缺口**（#288，release notes 必须如实列出） |
+| **敏感不兼容禁启动** | `pnpm test:dsh-contract`、`pnpm test:unit`、`pnpm test:integration` | #288 起有判据：Runtime 自报发行版身份（与 boot 锚同源，`dsh-distribution.contract.spec.ts`）、`--print-dsh-version` 真 bin 探针（`apps/runtime/tests/dsh-contract/dsh-version-probe.contract.spec.ts`）、pack 逐包 `dshCompatibility` 与本机版本 fail-closed 比对（descriptor 与本地命中两条路径 + 版本不可知都拒绝，`apps/node/tests/plugin-preflight.spec.ts`）、`profileDigest` 的 Node↔Runtime 对照点（`boot.contract.spec.ts` 回声 + `apps/node/tests/run-manager.spec.ts` 不符即 `PROFILE_MISMATCH` 并终止）。原有：凭据缺失 spawn 前即 `MODEL_CREDENTIAL_UNAVAILABLE`、pack digest/信任级/lockfile 校验、overlay 行契约 fail-closed | **有判据**（#288；操作面与边界见 [dsh-compat-guard-acceptance](./dsh-compat-guard-acceptance.md)） |
 | **升级失败回滚固定版** | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/lock-drift.spec.ts`：`dsh.lock.json` ↔ catalog ↔ pnpm-lock 三方一致 + runtime-dsh 依赖必须 `catalog:`；回滚流程在 `.agents/skills/dsh-upgrade/SKILL.md` | 部分：**版本锁有判据**（A0-6 起进 CI）；回滚本身只有流程文档、无机检（#290） |
 
 ## 三、版本锁现状（2026-10-09 核对）
@@ -44,6 +47,10 @@
   全部 0.1.0-rc.8，各带 sha512 integrity；`requiredContracts` 8 项。
 - workspace 依赖无 range/latest（`pnpm-workspace.yaml` catalog 全精确版本，`packages/runtime-dsh`
   全 `catalog:`）——机检在 `lock-drift.spec.ts`。
+- **本机版本来源（#288 起）**：不再是操作者声明的字符串——Runtime 以 `--print-dsh-version`
+  自报（解析 `@deepseek-ai/dsh/package.json` realpath，与 boot 锚同源），Node 启动时探针一次并用它
+  上报 `node.hello.dshDistributionVersion`、同时供 pack 兼容闸比对。**升级 DSH 后必须重启 Node**
+  （探针只在启动时跑一次；`dsh-upgrade` 流程本就要求重启）。
 - **已知边界**：`plugins/fixtures/whalepod-fixed-time/package.json` 的
   `peerDependencies["@deepseek-ai/dsh-tools"]` 写作 `^0.1.0-rc.8`。它是 fixture 插件 tarball 的
   源码（不是 workspace 依赖），`lock-drift.spec.ts` 不覆盖它。范围锁定由该 fixture 的确定性
@@ -67,13 +74,17 @@ G0「release 必跑、PR 必跑」，而 `.github/workflows/check.yml` 只跑 Q0
 
 ## 五、未覆盖清单（别读成已验）
 
-- `dshCompatibility` / `profileDigest` 比对、本机 DSH 版本自动派生（#288）。
+> #288 已从本清单划掉两项：`dshCompatibility`/`profileDigest` 的比对与对照点、本机 DSH 版本
+> 自动派生。剩下的条目维持原状。
+
 - 单 Run 隔离、指令回执、事件流范围的**契约级**负向（#289）。
 - `session identity mismatch` 硬闸：常规路径由 DSH 的 `session not found` 先拦；A0-6 的变异自证
   （把 resume 包成「失败就退化成新建」）证明该硬闸确实接住了退化（`bridge: session identity
   mismatch — expected <ghost>, DSH reports <新会话 id>`、零帧），但没有独立的常驻判据。
 - cancel 竞态（取消与 turn 收尾同时发生）、followup 在中断边界的行为（#289）。
 - 升级失败回滚固定版：仅流程文档，无机检（#290）。
+- Hub 侧 `profile_digest` 的产出面（从 Revision 行复算 == 存库值）无独立判据；#288 的对照点只覆盖
+  Node↔Runtime 的传递与装载一致（见 dsh-compat-guard-acceptance 的边界节）。
 
 ## 六、复跑
 

@@ -37,6 +37,8 @@
 | 执行归错人 / 用错设备（创建者 vs 责任人） | 同一份 `result.json` 的路径 2/3 段：hub.run 的 ownerUserId 与 deviceId（`GET /runs/:id`）→ 双方各自的 `GET /devices`；对照任务 `assigneeUserId/assigneeAgentId` 与 `assignmentStatus` |
 | 指派 Agent 建任务时看不到执行命运（toast 不出现，或把受理/排队说成已开始执行） | `artifacts/evidence/p1-312/`：web.api 的信封读法（`data.drive` 恒 undefined 即 #312 复发——`drive` 是 `data` 的兄弟）→ web.assignment 的收窄与如实文案 → web.toast；任务与执行事实对 hub.task 的 201 与 `GET /tasks/:id` 聚合（有没有 Run）。复跑 `pnpm exec playwright test --project=p1-312`，见 create-drive-toast-acceptance |
 | Run 状态不动 | hub.outbox 是否派发 → node.gateway 是否 ack → node.supervisor 是否拉起子进程 |
+| Run 被拒且提到 DSH 不兼容（或说本地版本不可知） | `node.plugin` 的 preflight 拒绝消息（两侧版本）→ 手工跑 `node apps/runtime/dist/bin.js --print-dsh-version`（无输出 = dist 过期，探针 fail-closed）→ pack 清单的 `dshCompatibility`；复跑与边界见 [dsh-compat-guard-acceptance](./dsh-compat-guard-acceptance.md) |
+| Run 失败码是 `PROFILE_MISMATCH` | `runtime.ready` 帧的 `profileDigest` 回声 vs Hub 固化 Revision digest（`POST /agents` 与 revisions 两条产出路径）、Node 的 `node.run` 结构化日志；对照点语义见 [dsh-compat-guard-acceptance](./dsh-compat-guard-acceptance.md) |
 | 浏览器看不到进度 | hub.ws cursor 是否推进 → 浏览器是否收到 `resync.required` → hub.domain 是否产事件 |
 | Run/工具/活动/发送图形与事实不符，或 Micro 窄屏溢出 | `artifacts/evidence/run-micro/<attempt>/result.json`：hub.run-projection 的 runId/seq/audience/callId/outcome/phase → web.micro/activity；HTTP outcome → web.instruction；筛选焦点/动效 → web.console；复跑 `pnpm test:e2e:micro`，见 run-micro-acceptance |
 | 提示层位置/文案不对，或完成提醒开关「看起来开了但没授权」，或 toast 不消失/关不掉 | 同一份 `result.json` 的 `batch2` 段：hint 的等待与描述可达性 → web.hint；`data-on`/`data-ring`/偏好 → web.bell；fuse 时长与暂停 → web.toast；复跑 `pnpm test:e2e:micro`，见 run-micro-batch2-acceptance |
