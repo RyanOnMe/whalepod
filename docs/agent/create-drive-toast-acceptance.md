@@ -80,14 +80,16 @@ pnpm exec playwright test --project=p1-312   # apps/web/tests/e2e/task-create-dr
 ## 取证
 
 ```bash
-# 脱敏证据（本地包，不进 git：artifacts/evidence/ 已 ignore）
+# runner 原始日志带本机绝对路径 → 先归约（#73 的规则，单一真源 redactText）
+pnpm exec tsx scripts/redact-evidence.mts artifacts/evidence/p1-312
+scripts/secret-scan.sh artifacts/evidence/p1-312   # 期望：OK 未命中
 ls artifacts/evidence/p1-312/
-#   red-unit.txt red-web.txt e2e-red-main.txt e2e-run2.txt q0-check.txt build.txt
-scripts/secret-scan.sh artifacts/evidence/p1-312
+#   red-unit.txt red-web.txt e2e-red-main.txt e2e-run2.txt e2e-run3-final.txt
+#   e2e-p1-07.txt e2e-p1-158.txt q0-check.txt build.txt
 ```
 
 证据里不记账号口令、Cookie、配对码、设备绝对路径；原始 Playwright trace 一律不入包
-（标准配置 `trace: retain-on-failure`，失败面只有文本日志）。
+（标准配置 `trace: retain-on-failure`，失败面只有归约后的文本日志）。
 
 ## 边界与未覆盖
 
