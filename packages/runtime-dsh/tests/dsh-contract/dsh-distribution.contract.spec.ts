@@ -8,15 +8,14 @@
  */
 import { readFileSync, realpathSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { ExactVersionSchema } from '@whalepod/protocol'
-import { dshAnchorUrl, dshDistributionInfo } from '../../src/index.js'
+import { dshAnchorPath, dshDistributionInfo } from '../../src/index.js'
 
 describe('probe: DSH distribution identity（#288）', () => {
   it('自报版本 = boot 锚那棵树里的 @deepseek-ai/dsh 版本（精确版本）', () => {
     const info = dshDistributionInfo()
-    const anchorPath = fileURLToPath(dshAnchorUrl())
+    const anchorPath = dshAnchorPath()
     const packageJson = JSON.parse(readFileSync(anchorPath, 'utf8')) as {
       name: string
       version: string

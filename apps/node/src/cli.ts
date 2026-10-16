@@ -17,7 +17,7 @@ import { DEFAULT_CONFIG_DIR, loadConfig, saveConfig } from './config.js'
 import type { HelloFacts } from './gateway/hub-socket.js'
 import { startDeviceSession } from './gateway/session.js'
 import { installedPackDigests } from './plugin/runtime-config.js'
-import { probeDshDistributionVersion } from './plugin/dsh-version-probe.js'
+import { resolveDshVersionFacts } from './plugin/dsh-version-probe.js'
 import type { PluginFetch } from './plugin/installer.js'
 import { registryFileRevision, WorkspaceRegistry } from './workspace/registry.js'
 import { WorkspaceInventory } from './workspace/inventory.js'
@@ -73,17 +73,31 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   const createRequire = (await import('node:module')).createRequire
   const runtimeEntry = createRequire(import.meta.url).resolve('@whalepod/runtime/bin')
   // #288：「敏感不兼容禁启动」的左侧操作数——本机真实 DSH 版本由 Runtime 自报
-  //（唯一允许 import @deepseek-ai/* 的一侧），不再由操作者声明。探针失败 → null，
-  // 上报照旧走显式参数/环境变量/'unmanaged' 的诚实兜底，而 pack 兼容闸 fail-closed。
-  const probedDshVersion = await probeDshDistributionVersion(runtimeEntry)
+  //（唯一允许 import @deepseek-ai/* 的一侧），不再由操作者声明。探针失败 → probed
+  // 为 null：上报照旧走显式参数/环境变量/'unmanaged' 的诚实兜底，而 pack 兼容闸
+  // fail-closed 拒绝。两个消费者（hello 上报、preflight 闸）共用这一次装配。
+  const dshVersionFacts = await resolveDshVersionFacts(runtimeEntry, {
+    declared: dshVersion,
+    env: process.env.WHALEPOD_DSH_VERSION,
+  })
+  if (dshVersionFacts.probed === null) {
+    // 探针失败在 Node 日志里要看得见（否则只在某次 Run 被拒时间接暴露）。
+    process.stderr.write(
+      `${JSON.stringify({
+        level: 'warn',
+        component: 'node.plugin',
+        msg: 'dsh version probe failed; plugin pack compatibility gate will refuse non-core packs',
+        reported: dshVersionFacts.reported,
+      })}\n`,
+    )
+  }
   // pluginPackDigests：本地已就绪 pack 目录（P1-17；marker 校验通过才上报，
   // 半途/损坏目录不上报）。
   const facts: HelloFacts = {
     nodeVersion: process.version,
     platform: detectPlatform(),
     architecture: process.arch,
-    dshDistributionVersion:
-      probedDshVersion ?? dshVersion ?? process.env.WHALEPOD_DSH_VERSION ?? 'unmanaged',
+    dshDistributionVersion: dshVersionFacts.reported,
     pluginPackDigests: installedPackDigests(join(stateDir, 'plugin-packs')),
   }
 
@@ -171,7 +185,7 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
       fetchPluginPackDescriptor(config.hubUrl, config.deviceToken, packDigest),
     // #288：本机 DSH 版本是启动时探针的常量（升级 DSH 要重启 Node——升级流程
     // 本来就要求重启）。探针失败时这里恒为 null：兼容闸 fail-closed 拒绝 pack。
-    localDshVersion: () => Promise.resolve(probedDshVersion),
+    localDshVersion: () => Promise.resolve(dshVersionFacts.probed),
     log: (level, msg, context) => {
       process.stderr.write(
         `${JSON.stringify({ level, component: 'node.plugin', msg, ...context })}\n`,

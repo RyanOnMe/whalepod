@@ -369,7 +369,7 @@ describe('DSH 兼容闸（#288）', () => {
     const store = new PackageStore(join(mktemp(), 'store'))
     const first = makePreflight(descriptor, tarballs, { packsRoot, store })
     await first.preflight.ensure(descriptor.packDigest)
-    return { descriptor, tarball, lock, tarballs, packsRoot, store }
+    return { descriptor, manifest, tarball, lock, tarballs, packsRoot, store }
   }
 
   it('manifest 声明的 dshCompatibility 与本地版本不符 → PLUGIN_PACK_MISMATCH，不下载包', async () => {
@@ -418,9 +418,10 @@ describe('DSH 兼容闸（#288）', () => {
     })
   })
 
-  it('本地命中路径也复核：装好之后本机版本变了 → 拒绝，且零网络请求', async () => {
+  it('本地命中但本机版本变了 → 不信任缓存，走 descriptor 复核（仍拒绝，且不下载 tarball）', async () => {
     const { descriptor, tarballs, packsRoot, store } = await installCompatiblePack()
-    // 同一落盘面、新实例、本机已升到别的 DSH 版本：本地命中不等于放行。
+    // 同一落盘面、新实例、本机已升到别的 DSH 版本：marker 里的旧声明不是权威，
+    // preflight 必须去 descriptor 现读（catalog 现发）再判——所以这里会触网。
     const second = makePreflight(descriptor, tarballs, {
       packsRoot,
       store,
@@ -429,7 +430,32 @@ describe('DSH 兼容闸（#288）', () => {
     await expect(second.preflight.ensure(descriptor.packDigest)).rejects.toMatchObject({
       code: 'PLUGIN_PACK_MISMATCH',
     })
-    expect(second.fetches).toHaveLength(0)
+    expect(second.fetches.some((url) => url.includes('/plugin-packs/'))).toBe(true)
+    // 复核不过就不安装：包 tarball 一律不下载。
+    expect(second.fetches.filter((url) => url.includes('registry.npmjs.org'))).toHaveLength(0)
+  })
+
+  it('修复路径：catalog 更新兼容声明后，已装设备重拉 descriptor 即可通过（本地缓存不判死）', async () => {
+    const { descriptor, manifest, lock, tarballs, packsRoot, store } = await installCompatiblePack()
+    // 本机升到新版本 + pack 的兼容声明同步更新（dshCompatibility 不进 packDigest，
+    // 所以同一 packDigest 的 descriptor 可以带着新声明重新发布）。
+    const updated = {
+      ...descriptor,
+      packages: [
+        {
+          manifest: { ...manifest, dshCompatibility: '0.1.0-rc.9' },
+          lockfile: stringifyYaml(lock),
+          entry: descriptor.packages[0]!.entry,
+        },
+      ],
+    }
+    const repaired = makePreflight(updated, tarballs, {
+      packsRoot,
+      store,
+      localDshVersion: '0.1.0-rc.9',
+    })
+    const outcome = await repaired.preflight.ensure(updated.packDigest)
+    expect(typeof outcome.overlayPath).toBe('string')
   })
 
   it('旧 marker（无 dshCompatibility 字段）→ 当本地未命中重装（fail-closed 迁移）', async () => {

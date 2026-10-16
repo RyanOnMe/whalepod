@@ -214,7 +214,18 @@ export class PluginPackPreflight {
     }
     const records: PackPackageRecord[] = []
     for (const pkg of parsed.data.packages) {
-      assertDshCompatibility(pkg.name, pkg.dshCompatibility, localDshVersion)
+      // #288：marker 里的声明是**安装当时**的旧值，不是权威——本机版本与它不符时
+      // 不在这里判死，而是当本地未命中（返回 undefined）走 descriptor 现读复核：
+      // dshCompatibility 不进 packDigest，Hub 的 descriptor 是现读 catalog 的，
+      // 所以「pack 更新了兼容声明」这条修复路径只有在 descriptor 路径下才走得通。
+      // 本机版本不可知（null）例外：没有任何可核对的值，直接拒绝且不触网。
+      if (localDshVersion === null) {
+        throw new PluginPreflightError(
+          'PLUGIN_PACK_MISMATCH',
+          `local DSH distribution version is unknown; refusing plugin pack (${pkg.name} requires ${pkg.dshCompatibility})`,
+        )
+      }
+      if (pkg.dshCompatibility !== localDshVersion) return undefined
       const storePath = this.deps.store.lookup(pkg.treeDigest)
       if (storePath === undefined) return undefined
       records.push({ ...pkg, storePath })

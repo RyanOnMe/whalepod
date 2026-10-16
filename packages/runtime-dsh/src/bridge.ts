@@ -343,9 +343,10 @@ export class RuntimeBridge {
       )
     }
     dshSessionId = actualSessionId
-    // #288：ready 帧回声本 Run 装载的 profileDigest——Node 侧拿它与 run.start 固化的
-    // expectedProfileDigest 比对（对照点在收到方）。这里是**如实回报**，不是断言：
-    // Runtime 不判断自己该是哪个 Revision，只报告自己实际收到并装载的身份。
+    // #288：ready 帧回声 Node 下发的 profileDigest——Node 侧拿它与 run.start 固化的
+    // expectedProfileDigest 比对（对照点在收到方）。这里覆盖的是 Node→Runtime→Node
+    // 的**往返一致**（回报值与固化值漂移、串扰、过期进程复用会被抓），Runtime 不据此
+    // 校验自己装载了什么；也**不是断言**——Runtime 不判断自己该是哪个 Revision。
     emit(frameOf('runtime.ready', { runId, dshSessionId, profileDigest: spec.profileDigest }))
     return new RuntimeBridge(ctx, owner, approval, spec, log)
   }

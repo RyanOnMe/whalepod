@@ -839,8 +839,15 @@ export class RunManager {
       // #288：ready 回声的 profileDigest 必须等于 run.start 固化的 Revision digest。
       // 对照点在收到方（Node）——不符即身份漂移，按协议违例同路收敛（fail run +
       // 终止 runtime），绝不让身份不明的 Run 继续执行。
+      // 没有固化事实就没有可对照的右侧：这在本进程内不可达（runFacts 与 projector
+      // 同点写入、从不删除），但它是这条对照唯一的 fail-open 分支——按违例收敛，
+      // 不静默放过（将来把两者解耦时不会悄悄失效）。
       const facts = this.runFacts.get(runId)
-      if (facts !== undefined && frame.payload.profileDigest !== facts.expectedProfileDigest) {
+      if (facts === undefined) {
+        this.protocolViolation(runId, 'runtime.ready without pinned run facts')
+        return
+      }
+      if (frame.payload.profileDigest !== facts.expectedProfileDigest) {
         this.profileIdentityViolation(
           runId,
           frame.payload.profileDigest,
