@@ -2,8 +2,8 @@
 
 - 对应场景/门禁：**Q3**（`pnpm test:dsh-contract`，CI check job）；总纲 §工程治理「DSH 熔断」的能力契约面
 - 对应 Issue：#289（余项 cancel 竞态/followup 中断边界 → #353）
-- 上次验证：2026-10-16 · `9e391bc` · **PASS**（实现红绿三段 `673ce00 → 3c3dc9b → eb2b4c1`；评审修复 `5c27cb3`、文档 `9e391bc`）
-- 全量门（同一工作树实测）：Q0（`pnpm check`，含 test:unit + web，1662 passed + 7 expected fail）/Q2（68 文件 491 用例）/Q3（15 spec 52 用例）/Q5（`pnpm test:e2e` 1 passed exit 0）/Q6（6 文件 32 用例）/Q7（18 用例 + secret-scan 自检/实扫 + 许可门）/Q9（`pnpm test:compose-smoke` PASS total=64.8s）全绿
+- 上次验证：2026-10-16 · `35970a7` · **PASS**（实现红绿三段 `673ce00 → 3c3dc9b → eb2b4c1`；评审两轮修复 `5c27cb3` / `8839139` / `d40e70a`，格式 `35970a7`）
+- 全量门（同一工作树实测）：Q0（`pnpm check`，含 test:unit + web，1662 passed + 7 expected fail）/Q2（68 文件 491 用例）/Q3（15 spec 52 用例）/Q5（`pnpm test:e2e` 1 passed 30.5s exit 0）/Q6（6 文件 32 用例）/Q7（18 用例 + secret-scan 自检/实扫 + 许可门）/Q9（`pnpm test:compose-smoke` PASS total=62.1s）全绿
 - 登记处：覆盖状态列在 [runtime-capability-contract.md](./runtime-capability-contract.md)
 
 ## 验的是哪条用户路径
