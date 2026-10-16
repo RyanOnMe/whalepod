@@ -422,6 +422,11 @@ test('路径 5b：成员状态变化不静默改投——提交前显式阻塞�
   const hint = alice.getByTestId('selection-unavailable-hint')
   await expect(hint).toBeVisible({ timeout: 20_000 })
   await expect(hint).toContainText('请重新选择')
+  // 「被阻塞」也是量出来的（提示可见 + 按钮禁用），不是产出侧写 true。
+  const submitWhileStale = alice
+    .locator('form[aria-label="创建任务"]')
+    .getByRole('button', { name: '创建任务' })
+  const blockedWhileStale = (await hint.isVisible()) && (await submitWhileStale.isDisabled())
   const postsWhileStale = watch.count()
   await alice
     .locator('form[aria-label="创建任务"]')
@@ -445,7 +450,7 @@ test('路径 5b：成员状态变化不静默改投——提交前显式阻塞�
   const after = await projectTasks()
 
   facts.paths['stateChangeNoReroute'] = {
-    blockedWhileStale: true,
+    blockedWhileStale,
     requestsWhileStale,
     recoveredWithAssigneeUserId: after.find((t) => t.id === createdTaskId)!.assigneeUserId,
     recoveredAssigneeUserId: shared.aliceUserId,

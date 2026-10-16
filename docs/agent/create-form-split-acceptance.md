@@ -2,7 +2,7 @@
 
 - 对应场景/门禁：Q0（单测/typecheck/排版/边界）、Q5（真浏览器；p1-312 与邻域五项目回归）
 - 对应 Issue：#344（本验收）、#312（同一表单的驱动结果面）、#239（指派即执行）
-- 上次验证：2026-10-16 · `feat/p1-345-create-recovery` @ `5e4e82e`（含评审修复；`4298922` 是同内容的前一个提交，仅文档钉值不同）· 结果 PASS
+- 上次验证：2026-10-16 · `feat/p1-345-create-recovery` @ `5e4e82e`（含评审修复）· 结果 PASS
 - 落地位置：B 的行为随 PR #349 合入；**评审修复**（失效责任人的提交前阻塞、开关禁用原因的可见提示、
   真浏览器命中区判据）随验收批次 PR #350 落地——本页同时记录两段，判据逐条注明落在哪一边。
 
@@ -52,7 +52,7 @@ pnpm exec tsx scripts/run-preparation-return.mts      # 准备往返（隔离端
 | B6 | 没有可用 Agent：开关禁用，且原因是**可见提示**（不只挂在 `title` 上） | PASS（jsdom，评审修复） |
 | B7 | 责任人失效（表单开着时被停用 → `member.changed` 重拉名册）：提交前显式阻塞、**零请求**、零任务；重选后成功 | PASS（jsdom + 真浏览器，见 create-to-recovery 路径 5b） |
 | B8 | 真浏览器走开关路径完成离线失败/原任务恢复/在线成功三条链（含点文本开开关） | PASS（p1-312，3 passed） |
-| B9 | 邻域五项目回归（p1-07/p1-19/p1-158/p1-314/p1-315） | PASS（各 1 passed，证据 `artifacts/evidence/p1-344/`） |
+| B9 | 邻域五项目回归（p1-07/p1-19/p1-158/p1-314/p1-315） | PASS（各 1 passed；评审修复后的重跑证据 `artifacts/evidence/p1-345/full-p1-*.txt`，B 期原始运行在 `artifacts/evidence/p1-344/`） |
 | G0 | `pnpm check` 全绿 | PASS（1644 passed + 7 expected fail） |
 
 复跑的判据命令与证据目录见上；证据已 `redact` 并过 `scripts/secret-scan.sh`。

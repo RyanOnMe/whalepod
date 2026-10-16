@@ -117,6 +117,31 @@ describe('task API (G2-01/03/06 + lifecycle)', () => {
     expect(res.json().error.code).toBe('VALIDATION_FAILED')
   })
 
+  it('#345：曾是成员、后被停用的人也不能被指派（同一条 400，与「从来不是成员」区分）', async () => {
+    const alice = await driveSetup(ctx)
+    const { session: bob } = await driveInviteAndAccept(ctx, alice, {
+      username: 'bob-disabled',
+      displayName: 'Bob',
+      password: 'correct horse battery staple',
+    })
+    const projectId = await createProject(ctx, alice)
+    const disabled = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/team/members/${bob.userId}/disable`,
+    })
+    expect(disabled.statusCode).toBe(200)
+    // 客户端在提交前就拦住失效选择（#345 评审修复），这条 400 是服务端兜底——
+    // 「先启用、后被停用」这个数据变体此前没有判据（原来只测过「从来不是成员」）。
+    const res = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/projects/${projectId}/tasks`,
+      payload: { title: 'x', assigneeUserId: bob.userId },
+    })
+    expect(res.statusCode).toBe(400)
+    expect(res.json().error.code).toBe('VALIDATION_FAILED')
+    expect(res.json().error.message).toBe('assignee is not an active team member')
+  })
+
   it('G2-03: Bob accepts the assignment', async () => {
     const alice = await driveSetup(ctx)
     const { session: bob } = await driveInviteAndAccept(ctx, alice, {

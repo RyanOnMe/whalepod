@@ -497,7 +497,9 @@ function CreateTaskForm({
       </div>
       {selectionUnavailable ? (
         <p className="mutation-hint" role="status" data-testid="selection-unavailable-hint">
-          {assigneeStale ? '所选责任人已停用或不可用' : '所选执行 Agent 已不可用'}
+          {assigneeStale
+            ? '所选责任人当前不可指派（可能被停用，或名册未读到）'
+            : '所选执行 Agent 当前不可用（可能被归档，或列表未读到）'}
           ——请重新选择后再创建（不会自动换人）。
         </p>
       ) : null}

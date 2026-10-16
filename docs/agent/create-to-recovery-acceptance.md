@@ -2,7 +2,7 @@
 
 - 对应场景/门禁：Q0（静态+单测）、Q2（Hub 侧幂等回执与受理不变量的集成面，本轮复跑记录见下）、Q5（真浏览器；新增 p1-345 冷启成套）
 - 对应 Issue：#345（本验收）、#312（驱动结果如实表达）、#344（责任人与执行拆分）、#239/#337/#338（复用的既有面）
-- 上次验证：2026-10-16 · `feat/p1-345-create-recovery` @ `5e4e82e`（含评审修复；`4298922` 是同内容的前一个提交，仅文档钉值不同）· 结果 PASS（7 passed；verdict PASS，33 条判据）
+- 上次验证：2026-10-16 · `feat/p1-345-create-recovery` @ `5e4e82e`（含评审修复）· 结果 PASS（7 passed；verdict PASS）
 
 ## 验的是哪条用户路径
 
@@ -36,7 +36,8 @@ Node 生命周期走 e2e-serve 控制面（只做进程，不做产品动作）�
 幂等键与请求体由 Playwright 在网络层截取，响应状态由 `page.on('response')` 观测。
 
 判定侧在 `scripts/lib/create-recovery-evidence.ts`（CLI：`scripts/verify-create-recovery-evidence.mts`），
-**只重判那份事实**：33 条判据，缺一段、类型不对、自相矛盾都 FAIL。
+**只重判那份事实**：判据数按实际求值**数出来**（完整证据 48 条；缺段时会更少，但仍必须 FAIL），
+缺一段、类型不对、自相矛盾都 FAIL。
 
 诚实的边界：判定器是「对**自报事实**的独立重判」，不是独立观测——它不自己连 Hub 重查。
 它挡得住写错、写漏、自相矛盾（本页两次实测都是它抓的），挡不住「产出侧把该断言的地方整段删掉
@@ -63,7 +64,7 @@ Node 生命周期走 e2e-serve 控制面（只做进程，不做产品动作）�
 | C4 | 路径 4：`DEVICE_OFFLINE` 时零 Run；恢复在**原任务**上（任务数不变）、Run 归责任人、用责任人的设备 | PASS |
 | C5 | 路径 3：驱动 `started_run`、任务 `accepted`、Run 归创建者且用其设备、只建 1 个任务 | PASS |
 | C6 | 路径 2：对方接受后 `accepted`、Run 归对方、设备属于对方且不在创建者名下、不新建任务 | PASS |
-| C7 | 独立判定（经 runner，已接进 Q5 门）：`{"verdict":"PASS","checks":33}` | PASS |
+| C7 | 独立判定（经 runner，已接进 Q5 门）：`{"verdict":"PASS","checks":48}` | PASS |
 | C8 | 判定器有牙：负控 12 条随 `pnpm check` 跑（缺段/说假话/重放没验到/工作目录用错人逐类 FAIL）；另对**真实证据**做过一次变异（`executionToastCount→1`、`runsAfterFailure→1` → 各 FAIL 且指名，命令见下） | PASS |
 | Q2 | Hub 侧创建幂等回执的集成面复跑（`apps/hub/tests/agent-assign.integration.spec.ts`） | PASS（`artifacts/evidence/p1-345/q2-agent-assign.txt`） |
 | G0 | `pnpm check` 全绿（首轮红在两处 typecheck/排版） | PASS |
@@ -111,7 +112,7 @@ ls artifacts/evidence/create-recovery/ artifacts/evidence/p1-345/
 | 所选责任人/Agent 离开名册时：触发器显示成「未选择」而提交仍带旧值，页面只给英文分类消息（Hub 400） | 提交前**显式阻塞**（`selection-unavailable-hint` + 按钮禁用，零请求），开关禁用原因改为**可见提示**（不只 `title`），并修掉「加载中就说没有 Agent」 | jsdom 一条（经真实 `member.changed` 帧触发重拉，零 POST）+ 真浏览器路径 5b（零请求、重选后成功） |
 | 开关禁用原因挂在 `title` 上（键盘/读屏够不着）；点标签文本的命中区只有 jsdom 近似 | 原因进可见提示；真浏览器补一条「点文本开开关且只翻一次」 | p1-312 断言 `aria-checked` 翻转；jsdom 断言不双触发 |
 | `driveCode`/`driveOutcome` 等是产出侧写死的字面量，判定器等于自证 | 关键事实改从**观测推导**：drive 取响应体兄弟字段、`executionToastCount` 取实测条数、`recoveredInSameTask` 由两份任务列表比对 | 判定器把 `firstAttemptReachedHub`/`replayedSameTask` 设为必填；产出侧无字面量可写 |
-| 判定器没接进任何门：`pnpm test:e2e` 绿仍可能 verdict FAIL | 新增 `scripts/run-create-to-recovery.mts`（先删旧结果 → 跑 e2e → 失败作废 → 判定器定退出码），`test:e2e` 改走它 | runner 自证：绿时 verdict PASS；e2e 失败时结果文件被删（后续判定无从背书） |
+| 判定器没接进任何门：`pnpm test:e2e` 绿仍可能 verdict FAIL | 新增 `scripts/run-create-to-recovery.mts`（先删旧结果 → 跑 e2e → 失败作废 → 判定器定退出码），`test:e2e` 改走它 | 绿时 verdict PASS（实测）；「失败即作废」当前是**代码语义**（未另设负控；#342 的先例 `scripts/check-preparation-return-failed-attempt.mts` 做的是同型检查，可作为补判据的模板） |
 | `client.ts` 头部注释仍说「Hub 对重复 key 返回 IDEMPOTENCY_CONFLICT」（与重放语义相反） | 注释改为「重放首次结果；IDEMPOTENCY_CONFLICT 今天不可达」 | 与 03 文档「幂等」节一致；C 的新代码注释依赖重放语义 |
 | 文档层：PR 号写错（#346/#347 → #349/#350）、试用包基线标签写反、A 页的 UI 路径已死、`unified-execution` 的「后续可独立设计」已落地 | 逐条改正/加指针；证据重新归约 | 本页与 A 页、试用包、计划文档的改动都在本 PR 里可逐条核对 |
 
@@ -122,7 +123,8 @@ ls artifacts/evidence/create-recovery/ artifacts/evidence/p1-345/
   「用了责任人的设备」在单设备下接近于恒真（环境里只有那一台）——它挡得住「用错人的设备」，
   但挡不住「设备解析退化成只用唯一在线设备」。跨机部署下的解析判据不在本轮。
 - **Agent 归档**没有 HTTP 端点（只能靠既有 UI 过滤），因此「Agent 状态变化」只验了**成员停用**
-  这条真实可驱动的路径；Agent 侧由 `selectableAgents` 过滤 + Hub 400 兜底（未端到端验）。
+  这条真实可驱动的路径；Agent 侧由 `selectableAgents` 过滤 + Hub 400 兜底（未端到端验），
+  守卫表达式的 agent 分支也没有单独用例（没有 `agent.changed` 事件可触发重拉）。
 - 真浏览器判据都基于 **replay** 夹具（无真实模型）：执行质量、耗时与费用不在本轮。
 - Run 的**终态收尾**只覆盖路径 3 与路径 4 后半（等 `completed` 再换设备）；路径 2 的 Run 只判到
   「起来、归对方」就结束（不等到终态），路径 1 按定义零 Run。真实模型下的长跑与审批交互由 p1-19 覆盖。
@@ -131,10 +133,10 @@ ls artifacts/evidence/create-recovery/ artifacts/evidence/p1-345/
 ## 复跑
 
 ```bash
-git checkout feat/p1-345-create-recovery
+# 本 PR 合入后从 main 复跑（分支删除后这条命令仍成立）
+git checkout main && git pull
 pnpm install --frozen-lockfile && pnpm build
 pnpm check
-pnpm exec playwright test --project=p1-345
-pnpm exec tsx scripts/verify-create-recovery-evidence.mts artifacts/evidence/create-recovery/result.json
-# 期望：7 passed；verdict=PASS（checks=31）；若任一事实缺失或自相矛盾则 exit 2
+pnpm exec tsx scripts/run-create-to-recovery.mts
+# 期望：7 passed 且末行 {"verdict":"PASS","checks":48}；任一事实缺失/自相矛盾则 exit 2
 ```
