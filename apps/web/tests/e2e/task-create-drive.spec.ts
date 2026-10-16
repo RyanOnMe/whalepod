@@ -177,6 +177,9 @@ test('设备未配对：任务仍创建成功，toast 如实说自动执行未�
 test('失败后从原任务继续：配对真 Node 后在这个任务手动发起，不重开任务', async () => {
   test.setTimeout(300_000) // 承载真 Node 冷启动与设备上线。
   const alice = shared.alice!
+  // 前一支用例留下的是**失败那一次创建的任务**（serial 模式按序流转；缺失即判据断了）。
+  const offlineTaskId = shared.offlineTaskId
+  if (offlineTaskId === undefined) throw new Error('前一支用例没有留下离线分支的任务 id')
   const codeRes = await hubApi(shared.cookie!, 'POST', '/devices/pairing-codes', {})
   expect(codeRes.status).toBe(201)
   const code = (codeRes.data as { code: string }).code
@@ -184,7 +187,7 @@ test('失败后从原任务继续：配对真 Node 后在这个任务手动发�
   await waitDeviceOnline()
 
   // 回到**原任务**（不是新建一个）：URL 里还是失败那一次创建的任务。
-  await alice.goto(`/tasks/${shared.offlineTaskId}`)
+  await alice.goto(`/tasks/${offlineTaskId}`)
   const agentTrigger = alice.getByLabel('选择 Agent')
   await expect(agentTrigger).toBeVisible({ timeout: 30_000 })
   await assertNotNativeSelect(agentTrigger, alice.locator('.run-launcher'), '选择 Agent')
@@ -195,7 +198,7 @@ test('失败后从原任务继续：配对真 Node 后在这个任务手动发�
   await alice.getByRole('button', { name: '开始执行' }).click()
 
   await expect(alice.locator('.run-item').first()).toBeVisible({ timeout: 30_000 })
-  expect((await waitForTaskRuns(shared.offlineTaskId, 1)).length).toBeGreaterThan(0)
+  expect((await waitForTaskRuns(offlineTaskId, 1)).length).toBeGreaterThan(0)
   // 恢复入口落在既有任务上：项目任务数仍是 1（没有悄悄重开一个）。
   expect(await projectTasks()).toHaveLength(1)
 })
