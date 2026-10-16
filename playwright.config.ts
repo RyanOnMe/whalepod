@@ -39,6 +39,10 @@ export default defineConfig({
     // 成员页 / 项目页 / Agent 页 / Task Room 四个界面全部渲染出来，还要起真 node 才有
     // 设备与 Workspace 可选项——同样必须独占一套冷启环境，故单列一个 project。
     { name: 'p1-158', testMatch: /select-menu-audit\.spec\.ts/ },
+    // #312：指派 Agent 建任务的驱动结果（成功信封的顶层兄弟位 `drive`）在真页面上的两支
+    // ——设备离线的失败 toast（带错误码与恢复入口）与在线的成功 toast，且恢复从原任务继续
+    // （不重开任务）。单 Hub 只容一个团队，故独立成套冷启。
+    { name: 'p1-312', testMatch: /task-create-drive\.spec\.ts/ },
   ],
   use: {
     baseURL: 'http://localhost:5173',
