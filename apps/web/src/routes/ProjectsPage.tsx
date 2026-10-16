@@ -12,6 +12,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import type { CreateProjectRequest, CreateTaskRequest } from '@whalepod/protocol'
 import { useNavigate } from 'react-router'
 import { api } from '../shared/api/client.js'
+import { assignmentDriveToast, parseAssignmentDrive } from '../shared/assignment-drive.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
 import { useSession } from '../app/session.js'
 import { pushToast } from '../app/toast.js'
@@ -19,7 +20,7 @@ import { SelectMenu } from '../shared/SelectMenu.js'
 import { RelativeTime } from '../shared/RelativeTime.js'
 import { TASK_STATUS_LABEL } from '../shared/format.js'
 import { useMemberDirectory } from '../features/team/memberDirectory.js'
-import type { AssignmentDriveView, AgentView, ProjectView, TaskView } from '../shared/api/types.js'
+import type { AgentView, ProjectView, TaskView } from '../shared/api/types.js'
 import { PersonalAttention } from '../features/attention/PersonalAttention.js'
 import { queryKeys } from '../app/query-client.js'
 import { EXIT_PRESENCE_MS } from '../shared/motion.js'
@@ -309,22 +310,21 @@ function CreateTaskForm({
                 ? { description: values.description.trim() }
                 : {}),
             }
-      return api.mutate<TaskView & { drive?: AssignmentDriveView }>(
-        `/projects/${projectId}/tasks`,
-        {
-          body,
-        },
-      )
+      // #312：驱动结果在 `data` 的**兄弟位**（`{ ok, data, drive }`），必须用
+      // mutateWithSiblings 取整个信封——只取 data 时 `drive` 永远读不到，
+      // toast 从不出现（真实页面实测 16s 无 toast）。
+      return api.mutateWithSiblings<TaskView>(`/projects/${projectId}/tasks`, { body })
     },
     onSuccess: (result) => {
       setError(null)
       // #239：指派 Agent 的自动驱动结果如实告知（指派成功≠执行已开始）。
-      if (result.drive?.outcome === 'failed') {
-        pushToast(`任务已创建，但自动执行未开始（${result.drive.error.code}）——可在执行区手动发起`)
-      } else if (result.drive !== undefined) {
-        pushToast('任务已创建，Agent 已自动开始执行')
-      }
-      onCreated(result)
+      // #312：四种受理命运各说各话——只有 started_run 能说「已自动开始执行」；
+      // 认不出的形状不说话（parseAssignmentDrive 返回 null）。
+      const drive = parseAssignmentDrive(result.siblings['drive'])
+      if (drive !== null) pushToast(assignmentDriveToast(drive))
+      // 任务已创建（201 不吞）：失败分支也走这里，用户落到刚建的任务里，
+      // 在任务执行区手动发起——重试发生在**这个任务**上，不重开一个。
+      onCreated(result.data)
     },
     onError: (mutationError: unknown) => {
       setError(mutationError)
