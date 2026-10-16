@@ -12,10 +12,12 @@
  *   陈述「谁指派给了哪个 Agent、指派即驱动、责任人是谁」。
  * - 指令流：origin=auto_assignment 的消息标注「指派自动驱动」，与人发的「指令」区分。
  */
-import { screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { resetToastsForTest } from '../src/app/toast.js'
+import { persistentFrame } from './frames.js'
+import { installFrameSink } from './socket-drive.js'
 import type { AgentView, ProjectView, TaskView } from '../src/shared/api/types.js'
 import {
   ALICE,
@@ -31,6 +33,7 @@ import {
   projectsHandler,
   teamMembersHandler,
   taskRoomHandler,
+  ok,
   type MockHandler,
 } from './fixtures.js'
 import { renderApp } from './render.jsx'
@@ -102,6 +105,24 @@ describe('#344 创建任务：责任人与「创建后立即执行」拆开（�
               ),
       },
     ]
+  }
+
+  /** 名册可变的 mock（#345 评审 F2）：表单开着时成员被停用是真实发生的事。 */
+  function statefulMembers(initial: ReturnType<typeof makeMember>[]): {
+    handler: MockHandler
+    disable: (userId: string) => void
+  } {
+    let members = [...initial]
+    return {
+      handler: {
+        method: 'GET',
+        url: /\/api\/v1\/team\/members$/,
+        respond: () => ok([...members]),
+      },
+      disable: (userId) => {
+        members = members.map((m) => (m.userId === userId ? { ...m, enabled: false } : m))
+      },
+    }
   }
 
   /** 真人路径：开表单 → 填标题。 */
@@ -244,13 +265,55 @@ describe('#344 创建任务：责任人与「创建后立即执行」拆开（�
     expect(screen.getByTestId('assignee-member-hint')).toHaveTextContent('接受任务并安排执行')
   })
 
-  it('没有可用 Agent：开关禁用并说明原因', async () => {
+  it('没有可用 Agent：开关禁用，且**可见提示**说明原因（不只挂在 title 上）', async () => {
     const user = userEvent.setup()
     renderApp('/', loggedInHandlers(BOB, createTaskHandlers(null, [])))
     await openCreateForm(user)
     const toggle = screen.getByRole('switch', { name: '创建后立即执行' })
     expect(toggle).toBeDisabled()
-    expect(toggle).toHaveAttribute('title', '还没有可用的 Agent——先到 Agents 页创建')
+    await waitFor(() =>
+      expect(screen.getByTestId('execute-now-reason')).toHaveTextContent('还没有可用的 Agent'),
+    )
+  })
+
+  it('#345 所选责任人离开名册：提交前显式阻塞并要求重选（不发请求、不自动换人）', async () => {
+    const membership = statefulMembers([makeMember(BOB), makeMember(ALICE)])
+    const sink = installFrameSink() // 必须在 render 之前装
+    const user = userEvent.setup()
+    const view = renderApp(
+      '/',
+      loggedInHandlers(BOB, [
+        projectsHandler([PROJECT_VIEW]),
+        membership.handler,
+        agentsHandler([AGENT]),
+        {
+          method: 'POST',
+          url: /\/api\/v1\/projects\/[^/]+\/tasks$/,
+          respond: () => created({ ...makeTask({ id: 'never-created' }) }),
+        },
+      ]),
+    )
+    await openCreateForm(user)
+    await selectOption(user, '责任人', /Alice/)
+    expect(screen.getByRole('button', { name: '创建任务' })).toBeEnabled()
+
+    // 表单开着时名册变了：Alice 被停用 → member.changed → 名册重拉（真实事件路径）。
+    membership.disable(ALICE.userId)
+    await act(async () => {
+      await sink.onFrame(
+        persistentFrame('member.changed', { changedAt: '2026-10-16T00:00:00.000Z' }),
+      )
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('selection-unavailable-hint')).toBeInTheDocument(),
+    )
+    const submit = screen.getByRole('button', { name: '创建任务' })
+    expect(submit).toBeDisabled()
+    await user.click(submit)
+    // 一个创建请求都没发出去（也没被悄悄换成别人）。
+    const posted = view.fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')
+    expect(posted).toHaveLength(0)
   })
 
   it('#345 重试同意图复用同一把幂等键（超时重试不建第二个任务）', async () => {

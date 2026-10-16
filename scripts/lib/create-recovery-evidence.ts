@@ -78,8 +78,10 @@ export function verifyCreateRecoveryEvidence(input: unknown): Verdict {
     checks += 4
     const runs = num(createOnly, 'runs', 'paths.createOnly', failures)
     if (runs !== null && runs !== 0) failures.push('路径 1：没有执行就不该有 Run')
-    const toast = flag(createOnly, 'executionToast', 'paths.createOnly', failures)
-    if (toast === true) failures.push('路径 1：只创建任务却弹了执行 toast')
+    const toastCount = num(createOnly, 'executionToastCount', 'paths.createOnly', failures)
+    if (toastCount !== null && toastCount !== 0) {
+      failures.push(`路径 1：只创建任务却弹了执行 toast（实测 ${toastCount} 条）`)
+    }
     // 责任人是谁由产出侧记（非空即可）；身份本身由路径 2 的「接受者=责任人」对账。
     if (str(createOnly, 'assigneeUserId', 'paths.createOnly', failures) !== null) checks += 1
     const status = str(createOnly, 'assignmentStatus', 'paths.createOnly', failures)
@@ -95,32 +97,37 @@ export function verifyCreateRecoveryEvidence(input: unknown): Verdict {
   // 路径 5a：重试同义键。
   const retry = path(input, 'retryIdempotent', failures)
   if (retry !== null) {
-    checks += 3
+    checks += 5
     const attempts = num(retry, 'attempts', 'paths.retryIdempotent', failures)
     if (attempts !== null && attempts < 2) failures.push('路径 5a：重试证据不足两次尝试')
     const sameKey = flag(retry, 'sameKey', 'paths.retryIdempotent', failures)
     if (sameKey === false) failures.push('路径 5a：重试换了新键——Hub 会当成第二笔创建')
+    // 「第一次真的到过 Hub」是这条判据的牙齿：请求没落库时，「只建出一个任务」为空真。
+    const reached = flag(retry, 'firstAttemptReachedHub', 'paths.retryIdempotent', failures)
+    if (reached === false) {
+      failures.push('路径 5a：第一次尝试没到 Hub——重放回执这条路根本没被验到')
+    }
+    const replayed = flag(retry, 'replayedSameTask', 'paths.retryIdempotent', failures)
+    if (replayed === false) failures.push('路径 5a：重试拿到的不是同一个任务（Hub 没回放回执）')
     const created = num(retry, 'tasksCreated', 'paths.retryIdempotent', failures)
     if (created !== null && created !== 1) {
       failures.push(`路径 5a：两次尝试只许建出一个任务，实测 ${created}`)
     }
   }
 
-  // 路径 5b：状态变化不静默改投。
+  // 路径 5b：状态变化不静默改投（客户端在提交前显式阻塞，恢复靠重选）。
   const stale = path(input, 'stateChangeNoReroute', failures)
   if (stale !== null) {
     checks += 4
-    const sent = str(stale, 'sentAssigneeUserId', 'paths.stateChangeNoReroute', failures)
-    const expected = str(stale, 'expectedAssigneeUserId', 'paths.stateChangeNoReroute', failures)
-    if (sent !== null && expected !== null && sent !== expected) {
-      failures.push('路径 5b：请求里的责任人被换成了别人（静默改投）')
+    const blocked = flag(stale, 'blockedWhileStale', 'paths.stateChangeNoReroute', failures)
+    if (blocked === false) failures.push('路径 5b：责任人失效后没有显式阻塞（提交前无提示）')
+    const requests = num(stale, 'requestsWhileStale', 'paths.stateChangeNoReroute', failures)
+    if (requests !== null && requests !== 0) {
+      failures.push(`路径 5b：责任人失效期间仍发出了 ${requests} 个创建请求（可能静默改投）`)
     }
-    const substituted = flag(stale, 'silentlySubstituted', 'paths.stateChangeNoReroute', failures)
-    if (substituted === true) failures.push('路径 5b：静默改投被记成 true')
-    // Hub 的拒绝必须是 4xx（客户端可纠正），不是 5xx（那说明不是「选择失效」而是系统故障）。
-    const status = num(stale, 'hubStatus', 'paths.stateChangeNoReroute', failures)
-    if (status !== null && (status < 400 || status >= 500)) {
-      failures.push(`路径 5b：状态变化后的拒绝应是 4xx，实测 ${status}`)
+    const created = num(stale, 'tasksCreatedWhileStale', 'paths.stateChangeNoReroute', failures)
+    if (created !== null && created !== 0) {
+      failures.push(`路径 5b：失效期间建出了 ${created} 个任务`)
     }
     const recovered = str(
       stale,
@@ -146,6 +153,10 @@ export function verifyCreateRecoveryEvidence(input: unknown): Verdict {
     const code = str(recover, 'driveCode', 'paths.failedThenRecover', failures)
     if (code !== null && code !== 'DEVICE_OFFLINE') {
       failures.push(`路径 4：设备离线的错误码应是 DEVICE_OFFLINE，实测 ${code}`)
+    }
+    const outcome = str(recover, 'driveOutcome', 'paths.failedThenRecover', failures)
+    if (outcome !== null && outcome !== 'failed') {
+      failures.push(`路径 4：启动失败应记成 failed，实测 ${outcome}`)
     }
     const runsAfter = num(recover, 'runsAfterFailure', 'paths.failedThenRecover', failures)
     if (runsAfter !== null && runsAfter !== 0) {
@@ -233,6 +244,10 @@ export function verifyCreateRecoveryEvidence(input: unknown): Verdict {
     if (belongs === false) failures.push('路径 2：Run 的设备不属于执行者')
     const otherHas = flag(assignOther, 'otherUserHasDevice', 'paths.assignToOther', failures)
     if (otherHas === true) failures.push('路径 2：Run 用了另一个人的设备')
+    const wsOwned = flag(assignOther, 'workspaceBelongsToOwner', 'paths.assignToOther', failures)
+    if (wsOwned === false) failures.push('路径 2：Run 的工作目录不属于执行者')
+    const wsOther = flag(assignOther, 'otherUserHasWorkspace', 'paths.assignToOther', failures)
+    if (wsOther === true) failures.push('路径 2：Run 用了另一个人的工作目录')
     const created = num(assignOther, 'tasksCreated', 'paths.assignToOther', failures)
     if (created !== null && created !== 0) failures.push('路径 2：执行不该新建任务')
   }

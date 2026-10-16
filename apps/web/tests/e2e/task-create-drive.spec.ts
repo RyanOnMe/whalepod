@@ -127,7 +127,10 @@ async function createAgentTaskViaUi(
     await mkdir(shots.dir, { recursive: true })
     await form.screenshot({ path: join(shots.dir, `${shots.name}-off.png`) })
   }
-  await toggle.click()
+  // 命中区：点**可见文本**也要能开（整行是 label 包 Switch），且只翻一次——
+  // jsdom 里那条只是近似，真浏览器转发行为在这里再钉一遍。
+  await form.getByText('创建后立即执行', { exact: true }).click()
+  await expect(toggle).toHaveAttribute('aria-checked', 'true')
   await selectFromMenu(
     form.locator('button[id^="task-execution-agent-"]'),
     `${AGENT_NAME}（Agent）`,

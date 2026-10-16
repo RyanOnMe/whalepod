@@ -298,6 +298,14 @@ function CreateTaskForm({
   const isSelf = session !== null && values.assignee === session.userId
   const willExecute = executeNow && isSelf
   const selectedAgentId = willExecute && values.agentId !== '' ? values.agentId : null
+  // 名册/Agent 集合在表单打开期间会变（成员被停用、Agent 被归档）。已选值离开可选集合时
+  // **提交前**显式阻塞并要求重选（#345 评审 F2/F9）：既不带着不可用的责任人出门（Hub 会 400），
+  // 也不让触发器显示成「未选择」而实际仍会带上旧值（显示与实际不一致）。绝不自动换人。
+  const assigneeStale =
+    values.assignee !== '' && !selectableMembers.some((m) => m.userId === values.assignee)
+  const agentStale =
+    willExecute && values.agentId !== '' && !selectableAgents.some((a) => a.id === values.agentId)
+  const selectionUnavailable = assigneeStale || agentStale
   // 列表就绪后默认选中自己（多数场景是给自己建任务）；用户改选后不覆盖。
   useEffect(() => {
     const preferred =
@@ -365,12 +373,18 @@ function CreateTaskForm({
   }
   // 开启执行的落点：站在执行区手动发起的同一套服务端守卫后面（审批/权限不变），
   // 差别只是这次把标题与描述当指令、由创建者在自己的现场立即发起。
-  const switchTitle =
+  //
+  // 开关禁用时**说明原因**（#345 评审 F4）：原因写进可见提示，不只挂在 title 上
+  // （title 键盘/读屏够不着，移动端也没有 hover）；名册/Agent 还在加载时不许断言
+  // 「还没有可用的 Agent」——那是在替服务端猜。
+  const switchReason =
     !isSelf && values.assignee !== ''
-      ? `责任人是${directory.personOf(values.assignee)}——只有责任人为自己时可以创建后立即执行`
-      : selectableAgents.length === 0
-        ? '还没有可用的 Agent——先到 Agents 页创建'
-        : undefined
+      ? `责任人是${directory.personOf(values.assignee)}——只有责任人为自己时可以创建后立即执行。`
+      : directory.isPending || agentsQuery.isPending
+        ? '正在读取成员与 Agent…'
+        : selectableAgents.length === 0
+          ? '还没有可用的 Agent——先到 Agents 页创建，才能开启「创建后立即执行」。'
+          : null
   return (
     <form className="inline-form" onSubmit={submit} aria-label="创建任务">
       <div className="field">
@@ -414,16 +428,18 @@ function CreateTaskForm({
             label: `${m.displayName}（@${m.username}）${m.userId === session?.userId ? ' · 你' : ''}`,
             disabled: false,
           }))}
-          onChange={(next) =>
-            setValues((prev) => {
-              // 责任人改成别人时必须关掉执行并清掉已选 Agent——否则用户以为在执行，
-              // 实际请求会带着「别人 + Agent」出门（静默改投）；这里显式关，
-              // 提示文案随后说明为什么。
-              const stillSelf = session !== null && next === session.userId
-              if (!stillSelf) setExecuteNow(false)
-              return { ...prev, assignee: next, agentId: stillSelf ? prev.agentId : '' }
-            })
-          }
+          onChange={(next) => {
+            // 责任人改成别人时必须关掉执行并清掉已选 Agent——否则用户以为在执行，
+            // 实际请求会带着「别人 + Agent」出门（静默改投）；这里显式关，提示随后说明。
+            // （状态更新不进 updater：updater 必须是纯函数，副作用留在事件里。）
+            const stillSelf = session !== null && next === session.userId
+            if (!stillSelf) setExecuteNow(false)
+            setValues((prev) => ({
+              ...prev,
+              assignee: next,
+              agentId: stillSelf ? prev.agentId : '',
+            }))
+          }}
           disabled={directory.isPending}
         />
         {directory.isError ? <ErrorBanner error={directory.error} /> : null}
@@ -446,10 +462,15 @@ function CreateTaskForm({
             onChange={setExecuteNow}
             label="创建后立即执行"
             disabled={directory.isPending || !isSelf || selectableAgents.length === 0}
-            {...(switchTitle === undefined ? {} : { title: switchTitle })}
+            {...(switchReason === null ? {} : { title: switchReason })}
           />
           <span className="field-switch-label">创建后立即执行</span>
         </label>
+        {switchReason !== null ? (
+          <p className="mutation-hint" data-testid="execute-now-reason">
+            {switchReason}
+          </p>
+        ) : null}
         {willExecute ? (
           <SelectMenu
             id={`task-execution-agent-${projectId}`}
@@ -474,18 +495,28 @@ function CreateTaskForm({
           <p className="mutation-hint">不开启则只创建任务，执行由你在任务里安排。</p>
         ) : null}
       </div>
+      {selectionUnavailable ? (
+        <p className="mutation-hint" role="status" data-testid="selection-unavailable-hint">
+          {assigneeStale ? '所选责任人已停用或不可用' : '所选执行 Agent 已不可用'}
+          ——请重新选择后再创建（不会自动换人）。
+        </p>
+      ) : null}
       <div className="form-actions">
         {/* #158 起这条空值守卫是本表单**唯一**的拦截：责任人从原生
             `<select required>` 换成按钮触发器后，浏览器侧的「不选不放行」随 required
             一起消失（按钮不是表单可校验元素）。评审实测：成员列表未落地时默认选中
             拿不到值，缺这条守卫会发出 `assigneeUserId: ""` 的请求，被协议层
             z.uuid() 拒成 400（packages/protocol/src/http.ts）。别删。
-            #239 收窄、#344 再拆：守卫口径 = 责任人非空，且开启执行时必须已选 Agent。 */}
+            #239 收窄、#344 再拆、#345 补齐：守卫口径 = 责任人非空 + 名册里还在，
+            且开启执行时必须已选一个**仍可用**的 Agent。 */}
         <button
           type="submit"
           className="button button-primary"
           disabled={
-            mutation.isPending || values.assignee === '' || (willExecute && values.agentId === '')
+            mutation.isPending ||
+            values.assignee === '' ||
+            selectionUnavailable ||
+            (willExecute && values.agentId === '')
           }
         >
           {mutation.isPending ? '创建中…' : willExecute ? '创建并开始执行' : '创建任务'}

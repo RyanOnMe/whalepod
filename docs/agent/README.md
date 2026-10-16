@@ -4,6 +4,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [create-form-split-acceptance.md](./create-form-split-acceptance.md) | #344：创建任务表单拆开「责任人」与「创建后执行」——默认只创建、仅责任人为自己时可开启、分给别人要接受、改选不静默改投；含评审修复（失效责任人提交前阻塞、禁用原因可见、真浏览器命中区） |
 | [create-to-recovery-acceptance.md](./create-to-recovery-acceptance.md) | #345：创建到恢复的五条路径（只创建 / 分给别人执行 / 自选 Agent 执行 / 起不来后原任务继续 / 重试与状态变化）——真 Hub/Node/Runtime 一次走完，事实落盘后由独立判定器重判（31 条判据） |
 | [create-drive-toast-acceptance.md](./create-drive-toast-acceptance.md) | #312：指派 Agent 的驱动结果在信封兄弟位（`{ ok, data, drive }`）——四种受理命运各说各话、失败带错误码与恢复入口；真浏览器两支（设备离线/在线）与「恢复不重开任务」 |
 | [execution-draft-acceptance.md](./execution-draft-acceptance.md) | #337：会话内执行草稿、跨任务/身份隔离、请求连续性与清除边界 |

@@ -18,21 +18,28 @@ function goodEvidence(): Record<string, unknown> {
         assigneeUserId: 'bob',
         assignmentStatus: 'pending',
         runs: 0,
-        executionToast: false,
+        executionToastCount: 0,
         doubleClickPosts: 1,
       },
-      retryIdempotent: { attempts: 2, sameKey: true, tasksCreated: 1, taskId: 't2' },
+      retryIdempotent: {
+        attempts: 2,
+        sameKey: true,
+        firstAttemptReachedHub: true,
+        replayedSameTask: true,
+        tasksCreated: 1,
+        taskId: 't2',
+      },
       stateChangeNoReroute: {
-        sentAssigneeUserId: 'carol',
-        expectedAssigneeUserId: 'carol',
-        hubStatus: 400,
-        silentlySubstituted: false,
+        blockedWhileStale: true,
+        requestsWhileStale: 0,
+        tasksCreatedWhileStale: 0,
         recoveredWithAssigneeUserId: 'alice',
         recoveredAssigneeUserId: 'alice',
       },
       failedThenRecover: {
         taskId: 't3',
         driveCode: 'DEVICE_OFFLINE',
+        driveOutcome: 'failed',
         runsAfterFailure: 0,
         recoveredInSameTask: true,
         recoveredRunId: 'r1',
@@ -63,6 +70,8 @@ function goodEvidence(): Record<string, unknown> {
         runDeviceId: 'd2',
         deviceBelongsToOwner: true,
         otherUserHasDevice: false,
+        workspaceBelongsToOwner: true,
+        otherUserHasWorkspace: false,
         tasksCreated: 0,
       },
     },
@@ -115,8 +124,8 @@ describe('#345 创建到恢复证据判定器', () => {
     const withToast = verifyCreateRecoveryEvidence(
       mutate((evidence) => {
         ;(evidence['paths'] as Record<string, Record<string, unknown>>)['createOnly']![
-          'executionToast'
-        ] = true
+          'executionToastCount'
+        ] = 1
       }),
     )
     expect(withToast.verdict).toBe('FAIL')
@@ -150,19 +159,40 @@ describe('#345 创建到恢复证据判定器', () => {
     expect(duplicated.verdict).toBe('FAIL')
   })
 
-  it('负控：静默改投（请求里换了人 / 标记为 true）→ FAIL', () => {
-    const substituted = verifyCreateRecoveryEvidence(
+  it('负控：失效期间照发请求 / 没阻塞 / 建出任务 / 重选对不上 → FAIL', () => {
+    const sent = verifyCreateRecoveryEvidence(
       mutate((evidence) => {
-        const stale = (evidence['paths'] as Record<string, Record<string, unknown>>)[
-          'stateChangeNoReroute'
-        ]!
-        stale['sentAssigneeUserId'] = 'alice'
-        stale['silentlySubstituted'] = true
+        ;(evidence['paths'] as Record<string, Record<string, unknown>>)['stateChangeNoReroute']![
+          'requestsWhileStale'
+        ] = 1
       }),
     )
-    expect(substituted.verdict).toBe('FAIL')
-    const text = substituted.failures.join('\n')
-    expect(text).toContain('静默改投')
+    expect(sent.verdict).toBe('FAIL')
+    expect(sent.failures.join('\n')).toContain('静默改投')
+    const unblocked = verifyCreateRecoveryEvidence(
+      mutate((evidence) => {
+        ;(evidence['paths'] as Record<string, Record<string, unknown>>)['stateChangeNoReroute']![
+          'blockedWhileStale'
+        ] = false
+      }),
+    )
+    expect(unblocked.verdict).toBe('FAIL')
+    const created = verifyCreateRecoveryEvidence(
+      mutate((evidence) => {
+        ;(evidence['paths'] as Record<string, Record<string, unknown>>)['stateChangeNoReroute']![
+          'tasksCreatedWhileStale'
+        ] = 1
+      }),
+    )
+    expect(created.verdict).toBe('FAIL')
+    const wrongPerson = verifyCreateRecoveryEvidence(
+      mutate((evidence) => {
+        ;(evidence['paths'] as Record<string, Record<string, unknown>>)['stateChangeNoReroute']![
+          'recoveredWithAssigneeUserId'
+        ] = 'bob'
+      }),
+    )
+    expect(wrongPerson.verdict).toBe('FAIL')
   })
 
   it('负控：失败却留下 Run / 恢复重开任务 / 换了设备 → FAIL', () => {
@@ -219,6 +249,18 @@ describe('#345 创建到恢复证据判定器', () => {
     expect(notAccepted.verdict).toBe('FAIL')
   })
 
+  it('负控：对方的执行用了别人的工作目录 → FAIL', () => {
+    const wsOther = verifyCreateRecoveryEvidence(
+      mutate((evidence) => {
+        ;(evidence['paths'] as Record<string, Record<string, unknown>>)['assignToOther']![
+          'otherUserHasWorkspace'
+        ] = true
+      }),
+    )
+    expect(wsOther.verdict).toBe('FAIL')
+    expect(wsOther.failures.join('\n')).toContain('工作目录')
+  })
+
   it('负控：对方的执行用了别人的设备 / 执行新建了任务 → FAIL', () => {
     const otherDevice = verifyCreateRecoveryEvidence(
       mutate((evidence) => {
@@ -238,16 +280,25 @@ describe('#345 创建到恢复证据判定器', () => {
     expect(created.verdict).toBe('FAIL')
   })
 
-  it('负控：状态变化后的拒绝是 5xx（不是「选择失效」而是系统故障）→ FAIL', () => {
-    const verdict = verifyCreateRecoveryEvidence(
+  it('负控：重试没到过 Hub（重放路径没被验到）/ 回放的不是同一个任务 → FAIL', () => {
+    const notReached = verifyCreateRecoveryEvidence(
       mutate((evidence) => {
-        ;(evidence['paths'] as Record<string, Record<string, unknown>>)['stateChangeNoReroute']![
-          'hubStatus'
-        ] = 500
+        ;(evidence['paths'] as Record<string, Record<string, unknown>>)['retryIdempotent']![
+          'firstAttemptReachedHub'
+        ] = false
       }),
     )
-    expect(verdict.verdict).toBe('FAIL')
-    expect(verdict.failures.join('\n')).toContain('4xx')
+    expect(notReached.verdict).toBe('FAIL')
+    expect(notReached.failures.join('\n')).toContain('没到 Hub')
+    const notReplayed = verifyCreateRecoveryEvidence(
+      mutate((evidence) => {
+        ;(evidence['paths'] as Record<string, Record<string, unknown>>)['retryIdempotent']![
+          'replayedSameTask'
+        ] = false
+      }),
+    )
+    expect(notReplayed.verdict).toBe('FAIL')
+    expect(notReplayed.failures.join('\n')).toContain('回放')
   })
 
   it('负控：类型不对（数字写成字符串）也 FAIL，不静默略过', () => {

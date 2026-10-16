@@ -6,7 +6,9 @@
 
 ## 验的是哪条用户路径
 
-真人在项目页「创建任务」把责任人选成一个 Agent（或分给真人）：
+真人在项目页「创建任务」把责任人选成一个 Agent（或分给真人）。
+**注（#344 起）**：这一交互后来被拆成「责任人（只选真人）」+「创建后立即执行（开关）+ 执行 Agent」，
+本页记录的是 #312 当时的路径与判据；拆开后的验收见 [create-to-recovery-acceptance.md](./create-to-recovery-acceptance.md)：
 
 1. 提交后**任务必须算创建成功**（201 不吞，落到刚建的任务里）；
 2. 「这次执行到底有没有开始」必须如实告知——成功说已开始执行，设备离线/被拒/排队各说各话，
@@ -105,8 +107,9 @@ ls artifacts/evidence/p1-312/
 ## 复跑
 
 ```bash
-git checkout fix/p1-312-drive-toast-envelope
+# 本 PR 合入后从 main 复跑（分支删除后这条命令仍成立）
+git checkout main && git pull
 pnpm install --frozen-lockfile && pnpm build
 pnpm check
-pnpm exec playwright test --project=p1-312
+pnpm exec playwright test --project=p1-312     # 3 passed
 ```

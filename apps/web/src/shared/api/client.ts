@@ -4,8 +4,9 @@
  * - Cookie 认证：`credentials: 'include'`，浏览器自动携带 HttpOnly 会话 Cookie。
  * - Origin：同源部署时浏览器对 POST/PATCH/DELETE 自动附带 Origin 头，Hub 会做
  *   精确比对（03 §4）；客户端不手工伪造 Origin。
- * - 幂等：所有非 GET 请求默认生成随机 Idempotency-Key（crypto.randomUUID），
- *   语义见 02 Task 7 Step 6——Hub 对重复 key 返回 IDEMPOTENCY_CONFLICT。
+ * - 幂等：所有非 GET 请求默认生成随机 Idempotency-Key（crypto.randomUUID）。
+ *   Hub 对重复 key **重放首次结果**（03 §幂等；`IDEMPOTENCY_CONFLICT` 今天不可达）——
+ *   所以「同一意图的重试」必须显式复用同一把键（见 `mutateWithSiblings` 的调用点与 ADR-0013）。
  * - 失败：解析失败 envelope（protocol 的 ApiFailureSchema 是 wire SSoT），
  *   抛类型化 ApiError（code/message/requestId/details），UI 原样展示。
  */

@@ -199,45 +199,68 @@ async function runOwnerAndTarget(
   return res.data as { ownerUserId: string; deviceId: string; workspaceId: string }
 }
 
+/** 该成员自己的工作目录（`GET /workspaces` 按 owner 收窄）。 */
+async function workspaceIdsOf(cookie: string): Promise<string[]> {
+  const res = await hubApi(cookie, 'GET', '/workspaces')
+  return (res.data as Array<{ workspaceId: string }>).map((w) => w.workspaceId)
+}
+
 async function deviceIdsOf(cookie: string): Promise<string[]> {
   const res = await hubApi(cookie, 'GET', '/devices')
   return (res.data as Array<{ id: string }>).map((d) => d.id)
 }
 
 /**
- * 拦截本页发往创建任务端点的 POST（计数/取键/取体/取响应状态），放行到真 Hub。
- * 响应状态经 page.on('response') 观测——judgment 用真实 HTTP 事实，不去 DOM 里猜。
+ * 拦截本页发往创建任务端点的 POST：计数、取幂等键与请求体，并**让请求真的到 Hub**
+ * （`route.fetch()`）后把响应交回页面，同时记下响应状态与响应体（drive 这类兄弟字段
+ * 只有在响应里才看得到——判定用真实 wire 事实，不用测试自己写的字面量）。
+ *
+ * `dropFirst`：第一次请求**已经到 Hub 并落库**，但响应被换成 504（网关超时）——
+ * 这才是「超时重试」的真实形态：客户端看到失败，服务端其实收到了。
  */
 async function watchTaskPosts(
   page: Page,
-  options: { abortFirst?: boolean } = {},
+  options: { dropFirst?: boolean } = {},
 ): Promise<{
   count: () => number
   keys: string[]
   bodies: unknown[]
   statuses: number[]
+  responses: unknown[]
 }> {
   const keys: string[] = []
   const bodies: unknown[] = []
   const statuses: number[] = []
+  const responses: unknown[] = []
   let posts = 0
-  page.on('response', (response) => {
-    if (
-      response.request().method() === 'POST' &&
-      /\/projects\/[^/]+\/tasks$/.test(response.url())
-    ) {
-      statuses.push(response.status())
-    }
-  })
   await page.route('**/api/v1/projects/*/tasks', async (route: Route) => {
     if (route.request().method() !== 'POST') return route.continue()
     posts += 1
     keys.push(route.request().headers()['idempotency-key'] ?? '')
     bodies.push(JSON.parse(route.request().postData() ?? '{}'))
-    if (options.abortFirst === true && posts === 1) return route.abort('failed')
-    return route.continue()
+    const response = await route.fetch()
+    let body: unknown = null
+    try {
+      body = await response.json()
+    } catch {
+      body = null
+    }
+    statuses.push(response.status())
+    responses.push(body)
+    if (options.dropFirst === true && posts === 1) {
+      // 请求已落库；只是这一次的响应没回到客户端（超时/断链）。
+      return route.fulfill({
+        status: 504,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: false,
+          error: { code: 'INTERNAL_ERROR', message: 'gateway timeout', requestId: 'e2e-timeout' },
+        }),
+      })
+    }
+    return route.fulfill({ response })
   })
-  return { count: () => posts, keys, bodies, statuses }
+  return { count: () => posts, keys, bodies, statuses, responses }
 }
 
 /** 真人路径：开表单 → 填标题/描述。 */
@@ -309,8 +332,9 @@ test('路径 1：只创建任务不产生执行；连点不重复创建', async 
   const tasks = await projectTasks()
   const created = tasks.find((t) => t.id === shared.taskIds.createOnly)!
   const runs = await runIdsOfTask(created.id)
-  // 没有执行就不许有执行 toast（只有创建这件事发生过）。
-  expect(await alice.locator('.toast-item').count()).toBe(0)
+  // 没有执行就不许有执行 toast（只有创建这件事发生过）——数是量的，不是写死的。
+  const toastCountAfterCreate = await alice.locator('.toast-item').count()
+  expect(toastCountAfterCreate).toBe(0)
   expect(runs).toHaveLength(0)
   expect(created.assignmentStatus).toBe('pending')
   expect(created.assigneeUserId).toBe(shared.bobUserId)
@@ -331,7 +355,7 @@ test('路径 1：只创建任务不产生执行；连点不重复创建', async 
     assigneeUserId: created.assigneeUserId,
     assignmentStatus: created.assignmentStatus,
     runs: runs.length,
-    executionToast: false,
+    executionToastCount: toastCountAfterCreate,
     doubleClickPosts: watch.count() - postsBefore,
     tasksAfterDoubleClick: afterDoubleClick.length,
   }
@@ -342,33 +366,41 @@ test('路径 5a：超时重试沿用同一把幂等键——不重复创建', as
   test.setTimeout(180_000)
   const alice = shared.alice!
   await loginAsBob() // Bob 上台前先把账号登一遍，稍后直接用
-  const watch = await watchTaskPosts(alice, { abortFirst: true })
+  const watch = await watchTaskPosts(alice, { dropFirst: true })
   const before = (await projectTasks()).length
 
   await openCreateForm(alice, '路径五：超时重试一次')
   await submitForm(alice, '创建任务')
-  // 第一次请求被掐断（模拟超时/断网）→ 失败如实上屏。
+  // 第一次：请求到了 Hub（任务已落库），但响应是 504 → 失败如实上屏。
   await expect(alice.locator('.error-banner')).toBeVisible({ timeout: 20_000 })
   await submitForm(alice, '创建任务')
   await alice.waitForURL(/\/tasks\/[0-9a-f-]{36}/, { timeout: 20_000 })
   shared.taskIds.retry = taskIdFromUrl(alice)
 
   const after = await projectTasks()
-  expect(after.length).toBe(before + 1)
+  const firstCreatedId = (watch.responses[0] as { data?: { id?: string } } | null)?.data?.id
+  const secondCreatedId = (watch.responses[1] as { data?: { id?: string } } | null)?.data?.id
   expect(watch.count()).toBe(2)
   expect(watch.keys[0]).toBe(watch.keys[1])
   expect(watch.keys[0]).not.toBe('')
+  // 关键牙齿：第二次是 Hub 对 `task.create:<key>` 的**回放**——同一个任务，不是新任务。
+  expect(firstCreatedId).toBe(secondCreatedId)
+  expect(firstCreatedId).toBe(shared.taskIds.retry)
+  expect(after.length).toBe(before + 1)
 
   facts.paths['retryIdempotent'] = {
     attempts: watch.count(),
     sameKey: watch.keys[0] === watch.keys[1],
+    firstAttemptReachedHub: watch.statuses[0] === 201,
+    replayedSameTask: firstCreatedId === secondCreatedId,
+    replayedTaskId: secondCreatedId ?? null,
     tasksCreated: after.length - before,
     taskId: shared.taskIds.retry,
   }
   await alice.unroute('**/api/v1/projects/*/tasks')
 })
 
-test('路径 5b：成员状态变化不静默改投——原选择照发、Hub 拒绝、重选后成功', async () => {
+test('路径 5b：成员状态变化不静默改投——提交前显式阻塞，重选后才创建', async () => {
   test.setTimeout(180_000)
   const alice = shared.alice!
   const watch = await watchTaskPosts(alice)
@@ -384,36 +416,40 @@ test('路径 5b：成员状态变化不静默改投——原选择照发、Hub �
     {},
   )
   expect(disabled.status).toBe(200)
-  await submitForm(alice, '创建任务')
 
-  const banner = alice.locator('.error-banner')
-  await expect(banner).toBeVisible({ timeout: 20_000 })
-  // Hub 的拒绝如实上屏（人话是 Hub 的分类消息 + requestId；错误码在响应里，见下）。
-  await expect(banner).toContainText('assignee is not an active team member')
-  // 关键：请求里仍是用户选的那个人——没有悄悄换成别人。
-  // 拒绝那一刻就把事实钉下来（晚了会被后面的恢复提交盖掉——独立判定器第一次跑就是
-  // 抓住这处自报错误：hubStatus 记成了恢复那次的 201）。
-  const sentBody = watch.bodies.at(-1) as { assigneeUserId?: string }
-  const rejectStatus = watch.statuses.at(-1) ?? 0
-  const tasksWhileRejected = (await projectTasks()).length
-  expect(sentBody.assigneeUserId).toBe(shared.carolUserId)
-  expect(rejectStatus).toBe(400)
-  expect(tasksWhileRejected).toBe(before)
+  // 名册经 `member.changed` 重拉后：提交被显式阻塞并说明原因，一个请求都不发出去
+  // ——既没有「带着不可用的责任人」出门，也没有悄悄换成别人。
+  const hint = alice.getByTestId('selection-unavailable-hint')
+  await expect(hint).toBeVisible({ timeout: 20_000 })
+  await expect(hint).toContainText('请重新选择')
+  const postsWhileStale = watch.count()
+  await alice
+    .locator('form[aria-label="创建任务"]')
+    .getByRole('button', { name: '创建任务' })
+    .click({ force: true })
+    .catch(() => undefined) // 按钮已禁用，点击不一定落地；判据是「没有请求」
+  await sleep(500)
+  // 失效期间的事实**在失效期间取**（独立判定器两次抓到同一类自报错误：
+  // 读晚了就会被恢复后的请求盖掉）。
+  const requestsWhileStale = watch.count() - postsWhileStale
+  const tasksWhileStale = (await projectTasks()).length
+  expect(requestsWhileStale).toBe(0)
+  expect(tasksWhileStale).toBe(before)
 
   // 重选一个可用责任人 → 正常创建（恢复路径存在）。
   await selectFromMenu(alice.locator('button[id^="task-assignee-"]'), /Alice/)
+  await expect(hint).toBeHidden()
   await submitForm(alice, '创建任务')
   await alice.waitForURL(/\/tasks\/[0-9a-f-]{36}/, { timeout: 20_000 })
+  const createdTaskId = taskIdFromUrl(alice)
   const after = await projectTasks()
 
   facts.paths['stateChangeNoReroute'] = {
-    sentAssigneeUserId: sentBody.assigneeUserId,
-    expectedAssigneeUserId: shared.carolUserId,
-    hubStatus: rejectStatus,
-    silentlySubstituted: sentBody.assigneeUserId !== shared.carolUserId,
-    tasksCreatedWhileRejected: tasksWhileRejected - before,
-    recoveredWithAssigneeUserId: after.find((t) => t.id === taskIdFromUrl(alice))!.assigneeUserId,
+    blockedWhileStale: true,
+    requestsWhileStale,
+    recoveredWithAssigneeUserId: after.find((t) => t.id === createdTaskId)!.assigneeUserId,
     recoveredAssigneeUserId: shared.aliceUserId,
+    tasksCreatedWhileStale: tasksWhileStale - before,
   }
   await alice.unroute('**/api/v1/projects/*/tasks')
 })
@@ -421,6 +457,7 @@ test('路径 5b：成员状态变化不静默改投——原选择照发、Hub �
 test('路径 4 前半：创建成功但启动失败（设备离线）——任务在、执行不在', async () => {
   test.setTimeout(180_000)
   const alice = shared.alice!
+  const watch = await watchTaskPosts(alice)
   const before = (await projectTasks()).length
   await openCreateForm(alice, '路径四：起不来，去准备环境')
   await enableExecution(alice)
@@ -433,15 +470,21 @@ test('路径 4 前半：创建成功但启动失败（设备离线）——任�
   await expect(toast).toContainText('可在任务执行区手动发起')
   const after = await projectTasks()
   const runs = await runIdsOfTask(shared.taskIds.failedDrive)
+  // 错误码取自响应里的兄弟字段（真实 wire），不是测试自己写的字面量。
+  const drive = (
+    watch.responses.at(-1) as { drive?: { outcome?: string; error?: { code?: string } } } | null
+  )?.drive
 
   facts.paths['failedThenRecover'] = {
     taskId: shared.taskIds.failedDrive,
-    driveCode: 'DEVICE_OFFLINE',
+    driveCode: drive?.error?.code ?? null,
+    driveOutcome: drive?.outcome ?? null,
     runsAfterFailure: runs.length,
     tasksCreated: after.length - before,
     recoveredInSameTask: null,
     tasksAfterRecovery: null,
   }
+  await alice.unroute('**/api/v1/projects/*/tasks')
 })
 
 test('路径 4 后半：进入原任务准备环境后继续——同一任务发起，不重开任务', async () => {
@@ -472,7 +515,8 @@ test('路径 4 后半：进入原任务准备环境后继续——同一任务�
   expect(after.some((t) => t.id === taskId)).toBe(true)
 
   const path = facts.paths['failedThenRecover']!
-  path['recoveredInSameTask'] = true
+  // 推导，不是断言过就等于真：任务数没变，且原任务还在列表里。
+  path['recoveredInSameTask'] = after.length === before && after.some((t) => t.id === taskId)
   path['recoveredRunId'] = runId
   path['recoveredRunOwnerUserId'] = owner.ownerUserId
   path['recoveredRunDeviceId'] = owner.deviceId
@@ -484,6 +528,7 @@ test('路径 4 后半：进入原任务准备环境后继续——同一任务�
 test('路径 3：自己明确选择 Agent → 创建并执行（归自己、用自己现场）', async () => {
   test.setTimeout(240_000)
   const alice = shared.alice!
+  const watch = await watchTaskPosts(alice)
   const before = (await projectTasks()).length
   await openCreateForm(alice, '路径三：创建并开始执行')
   await enableExecution(alice)
@@ -505,9 +550,10 @@ test('路径 3：自己明确选择 Agent → 创建并执行（归自己、用�
   expect(created.assigneeAgentId).not.toBeNull()
   expect(created.assignmentStatus).toBe('accepted')
 
+  const wireDrive = (watch.responses.at(-1) as { drive?: { outcome?: string } } | null)?.drive
   facts.paths['selfAgentExecute'] = {
     taskId: shared.taskIds.selfAgent,
-    driveOutcome: 'started_run',
+    driveOutcome: wireDrive?.outcome ?? null,
     runId,
     runOwnerUserId: owner.ownerUserId,
     expectedRunOwnerUserId: shared.aliceUserId,
@@ -516,6 +562,7 @@ test('路径 3：自己明确选择 Agent → 创建并执行（归自己、用�
     taskAssignmentStatus: created.assignmentStatus,
     tasksCreated: after.length - before,
   }
+  await alice.unroute('**/api/v1/projects/*/tasks')
 })
 
 test('路径 2：分给别人，对方接受后再执行——用对方的现场', async () => {
@@ -544,12 +591,17 @@ test('路径 2：分给别人，对方接受后再执行——用对方的现场
   const owner = await runOwnerAndTarget(shared.bobCookie!, runId)
   const bobDevices = await deviceIdsOf(shared.bobCookie!)
   const aliceDevices = await deviceIdsOf(shared.aliceCookie!)
+  const bobWorkspaces = await workspaceIdsOf(shared.bobCookie!)
+  const aliceWorkspaces = await workspaceIdsOf(shared.aliceCookie!)
   const after = await projectTasks()
   const accepted = after.find((t) => t.id === taskId)!
 
   expect(owner.ownerUserId).toBe(shared.bobUserId)
   expect(bobDevices).toContain(owner.deviceId)
   expect(aliceDevices).not.toContain(owner.deviceId)
+  // 工作目录也归对方（设备与工作目录是两件事，别只验一个）。
+  expect(bobWorkspaces).toContain(owner.workspaceId)
+  expect(aliceWorkspaces).not.toContain(owner.workspaceId)
   expect(accepted.assignmentStatus).toBe('accepted')
   expect(after.length).toBe(before)
 
@@ -564,6 +616,8 @@ test('路径 2：分给别人，对方接受后再执行——用对方的现场
     runDeviceId: owner.deviceId,
     deviceBelongsToOwner: bobDevices.includes(owner.deviceId),
     otherUserHasDevice: aliceDevices.includes(owner.deviceId),
+    workspaceBelongsToOwner: bobWorkspaces.includes(owner.workspaceId),
+    otherUserHasWorkspace: aliceWorkspaces.includes(owner.workspaceId),
     tasksCreated: after.length - before,
   }
 })
