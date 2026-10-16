@@ -213,9 +213,7 @@ describe('#239 创建任务：责任人可选 Agent（指派即执行）', () =>
     )
     await submitCreateTask(user, /report-writer（Agent · 指派即执行）/)
     await waitFor(() =>
-      expect(
-        screen.getByText(/执行已受理排队/, { exact: false }),
-      ).toBeInTheDocument(),
+      expect(screen.getByText(/执行已受理排队/, { exact: false })).toBeInTheDocument(),
     )
     // 「受理了」与「跑起来了」是两件事——这条判据就是 #312 的第二条要求。
     expect(screen.queryByText(/已自动开始执行/, { exact: false })).toBeNull()

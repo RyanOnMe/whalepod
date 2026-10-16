@@ -7,10 +7,7 @@
  * 2. 五种命运各有各的说法：排队、未受理、失败都不得被说成「已自动开始执行」。
  */
 import { describe, expect, it } from 'vitest'
-import {
-  assignmentDriveToast,
-  parseAssignmentDrive,
-} from '../src/shared/assignment-drive.js'
+import { assignmentDriveToast, parseAssignmentDrive } from '../src/shared/assignment-drive.js'
 
 const RUN_ID = '99999999-0000-4000-8000-0000000000r1'
 
