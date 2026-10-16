@@ -55,6 +55,9 @@ class ExecutionDraftStore {
     }
     return entry
   }
+  has(taskId: string): boolean {
+    return this.entries.has(taskId)
+  }
   update(entry: Entry, change: SetStateAction<ExecutionDraft>): void {
     const next = typeof change === 'function' ? change(entry.snapshot) : change
     if (Object.is(next, entry.snapshot)) return
@@ -102,4 +105,10 @@ export function useExecutionDraft(taskId: string, userId: string, initial: () =>
     [store, entry],
   )
   return { snapshot, update, clear, intentKey: entry.intentKey }
+}
+
+/** A copied URL alone cannot manufacture a setup-return context in another shell. */
+export function useHasExecutionTask(taskId: string | null): boolean {
+  const store = useContext(DraftContext)
+  return taskId !== null && store !== null && store.has(taskId)
 }

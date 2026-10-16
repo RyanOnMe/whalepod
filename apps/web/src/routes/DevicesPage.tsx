@@ -25,6 +25,9 @@
  */
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useState, type ReactNode } from 'react'
+import { Link, useSearchParams } from 'react-router'
+import { preparationTaskId } from '../shared/preparation-navigation.js'
+import { useHasExecutionTask } from '../features/task/execution-drafts.js'
 import { NODE_BUILD_COMMANDS, NODE_CLI_COMMAND } from '../shared/node-installation.js'
 import { api } from '../shared/api/client.js'
 import { Hint } from '../shared/micro/Hint.js'
@@ -75,6 +78,9 @@ function DeviceStatus({ status }: { status: DeviceView['status'] }): ReactNode {
 }
 
 export function DevicesPage(): ReactNode {
+  const [search] = useSearchParams()
+  const returningTaskId = preparationTaskId(search.get('preparationTask'))
+  const canReturn = useHasExecutionTask(returningTaskId)
   const listQuery = useQuery({
     queryKey: queryKeys.devices,
     queryFn: () => api.get<DeviceView[]>('/devices'),
@@ -88,6 +94,16 @@ export function DevicesPage(): ReactNode {
   return (
     <div className="devices-page">
       <h1>设备</h1>
+      {canReturn ? (
+        <section className="card" aria-label="返回执行准备">
+          <p>
+            你正在为任务准备执行环境。草稿在本次登录页面中保留，配对后请返回任务重新检查；刷新或退出会清除草稿。
+          </p>
+          <Link className="button" to={`/tasks/${returningTaskId}#task-execution`}>
+            返回任务继续准备
+          </Link>
+        </section>
+      ) : null}
       {/* #152：宽屏两栏（主列 = 配对码 + 已配对设备，侧列 = CLI 说明），窄屏回落单列。 */}
       <div className="page-grid">
         <div className="page-col">

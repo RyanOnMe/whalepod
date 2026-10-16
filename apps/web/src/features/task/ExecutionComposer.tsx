@@ -50,6 +50,7 @@ export function ExecutionComposer({
   session,
   runs,
   approvalPreview,
+  confirmingTask = false,
   artifacts,
   reviewRequest = null,
   revisionRequest = null,
@@ -58,6 +59,7 @@ export function ExecutionComposer({
   session: Session
   runs: TaskRoomRun[]
   approvalPreview: ApprovalPreview
+  confirmingTask?: boolean
   artifacts: TaskRoomArtifact[]
   reviewRequest?: ArtifactReviewRequest | null
   revisionRequest?: ArtifactReviewRequest | null
@@ -172,6 +174,7 @@ export function ExecutionComposer({
     queryKey: queryKeys.instructionGrants(task.id),
     queryFn: () => api.get<InstructionDriverView[]>(`/tasks/${task.id}/instruction-grants`),
     enabled: !isAssignee,
+    refetchOnMount: 'always',
   })
   const allowed =
     isAssignee || (grants.isSuccess && grants.data.some((row) => row.userId === session.userId))
@@ -179,16 +182,19 @@ export function ExecutionComposer({
     queryKey: queryKeys.run(sourceId),
     queryFn: () => api.get<RunView>(`/runs/${sourceId}`),
     enabled: allowed && isSourceMode && sourceId !== '',
+    refetchOnMount: 'always',
   })
   const agents = useQuery({
     queryKey: queryKeys.agents,
     queryFn: () => api.get<AgentView[]>('/agents'),
     enabled: allowed,
+    refetchOnMount: 'always',
   })
   const sourceAgent = useQuery({
     queryKey: queryKeys.agentDetail(source.data?.agentId ?? ''),
     queryFn: () => api.get<AgentDetailView>(`/agents/${source.data!.agentId}`),
     enabled: allowed && mode === 'resume' && source.isSuccess,
+    refetchOnMount: 'always',
   })
   const revision = sourceAgent.data?.revisions.find(
     (row) => row.id === source.data?.profileRevisionId,
@@ -196,9 +202,11 @@ export function ExecutionComposer({
   const sourcePlacement = runs.find((run) => run.id === sourceId)
   const sourceLabel = runOrdinalLabels(runs).get(sourceId) ?? '所选执行'
   let reason: string | null = null
-  if (memory.snapshot.ownerId !== task.assigneeUserId)
+  if (confirmingTask) reason = '正在重新确认任务状态，草稿仍保留…'
+  else if (memory.snapshot.ownerId !== task.assigneeUserId)
     reason = '任务责任人已变化。草稿仍保留，请重新确认责任人与执行安排。'
-  else if (!isAssignee && grants.isPending) reason = '正在确认操作权限…'
+  else if (!isAssignee && (grants.isPending || (grants.isFetching && !grants.isFetchedAfterMount)))
+    reason = '正在确认操作权限…'
   else if (!isAssignee && grants.isError) reason = '暂时无法确认权限，请重试。'
   else if (!allowed) reason = '只有责任人和已授权成员可以发送指令；你仍可在讨论区协作。'
   else if (task.assignmentStatus !== 'accepted') reason = '责任人接受任务后才能开始执行。'
@@ -217,7 +225,11 @@ export function ExecutionComposer({
     reason = '已有执行进行中，结束后才能继续会话。'
   else if (isSourceMode && sourceId === '') reason = '请先选择来源执行。'
   else if (isSourceMode && source.isError) reason = '无法读取来源执行，请重试。'
-  else if (isSourceMode && !source.isSuccess) reason = '正在读取来源执行…'
+  else if (
+    isSourceMode &&
+    (!source.isSuccess || (source.isFetching && !source.isFetchedAfterMount))
+  )
+    reason = '正在读取来源执行…'
   else if (isSourceMode && source.isSuccess && source.data.taskId !== task.id)
     reason = '来源执行不属于当前任务，请重新选择。'
   else if (mode === 'resume' && source.isSuccess && !TERMINAL_RUN.has(source.data.status))
@@ -227,6 +239,11 @@ export function ExecutionComposer({
   else if (mode === 'resume' && source.data?.dshSessionId === null)
     reason = '这次执行没有可续接的会话，请开始新执行。'
   else if (mode === 'resume' && sourceAgent.isError) reason = '无法读取来源配置版本，请重试。'
+  else if (
+    mode === 'resume' &&
+    (sourceAgent.isPending || (sourceAgent.isFetching && !sourceAgent.isFetchedAfterMount))
+  )
+    reason = '正在确认来源配置版本…'
   else if (mode === 'resume' && typeof sourceAgent.data?.archivedAt === 'string')
     reason = '来源 Agent 已归档，请明确选择可用 Agent 开始新执行。'
   else if (mode === 'resume' && sourceAgent.isSuccess && revision === undefined)
@@ -250,7 +267,12 @@ export function ExecutionComposer({
     }
   }
   return (
-    <div className="execution-composer" data-testid="execution-composer">
+    <div
+      id="task-execution"
+      tabIndex={-1}
+      className="execution-composer"
+      data-testid="execution-composer"
+    >
       <p className="mutation-hint">
         草稿仅在当前登录页面会话内暂存；切换任务可保留，刷新或退出后清除。
       </p>

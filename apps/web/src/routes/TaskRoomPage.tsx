@@ -72,6 +72,7 @@ function TaskRoom(): ReactNode {
     queryKey: queryKeys.taskRoom(taskId ?? ''),
     queryFn: () => api.get<TaskRoomView>(`/tasks/${taskId ?? ''}`),
     enabled: taskId !== undefined,
+    refetchOnMount: 'always',
   })
 
   // ApprovalSlot owns approval anchors, which depend on its separate event query.
@@ -246,6 +247,7 @@ function TaskRoom(): ReactNode {
                   key={task.id}
                   task={task}
                   session={session}
+                  confirmingTask={query.isFetching && !query.isFetchedAfterMount}
                   runs={runs}
                   approvalPreview={approvalPreview}
                   artifacts={artifacts}
