@@ -76,12 +76,7 @@ function escapeRegExp(text: string): string {
 }
 
 /** 模拟升级的三种落点（刻意各自独立，用来构造"漏改一处"的漂移）。 */
-function setManifestEntry(
-  root: string,
-  name: string,
-  version: string,
-  integrity: string,
-): void {
+function setManifestEntry(root: string, name: string, version: string, integrity: string): void {
   const path = join(root, 'dsh.lock.json')
   const manifest = JSON.parse(readFileSync(path, 'utf8')) as DshLockManifest
   manifest.packages[name] = { version, integrity }

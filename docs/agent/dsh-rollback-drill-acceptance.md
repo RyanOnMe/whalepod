@@ -4,7 +4,8 @@
 - 对应 Issue：#290
 - 判定文件：`packages/runtime-dsh/tests/dsh-contract/rollback-drill.contract.spec.ts`（8 用例）
   + 共享检查 `packages/runtime-dsh/tests/dsh-contract/helpers/lock-drift.ts`
-- 上次验证：2026-10-16 · 全量门结果与 pin 见本文件末「复跑」节
+- 上次验证：2026-10-16 · `eaa57fa` · **PASS**（红 `bb7d2f7` → 绿 `eaa57fa`；四条变异自证见「判定」第 8 条）
+- 全量门（同一工作树实测）：Q0（1662 passed + 7 expected fail，含本文件登记的契约表漂移哨兵）/Q2（68 文件 491 用例）/Q3（16 spec 61 用例）/Q5（`pnpm test:e2e` 1 passed 30.5s exit 0）/Q6（32 用例）/Q7（18 用例 + secret-scan + 许可门）/Q9（`pnpm test:compose-smoke` PASS total=64.5s）全绿
 - 登记处：覆盖状态列在 [runtime-capability-contract.md](./runtime-capability-contract.md)
 
 ## 验的是哪条用户路径
