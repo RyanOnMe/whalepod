@@ -140,6 +140,11 @@ export interface ReplayRuntimeOptions {
    * Workspace——会话日志就躺在 DSH_HOME 里，删了就没得续。
    */
   keepTempDirs?: boolean
+  /**
+   * **探针专用**（#289 事件流范围）：透传给 `RuntimeBridgeOptions.probeAfterReady`
+   * ——ready 之后交出一个绑在桥自己 ctx 上的 session/event 发射器，用于注入越界事件。
+   */
+  probeAfterReady?: (emitSessionEvent: (sessionArg: object, event: object) => void) => void
 }
 
 export async function startReplayRuntime(
@@ -183,6 +188,9 @@ export async function startReplayRuntime(
     ...(probeOptions.probeResumeSessionId === undefined
       ? {}
       : { probeResumeSessionId: probeOptions.probeResumeSessionId }),
+    ...(probeOptions.probeAfterReady === undefined
+      ? {}
+      : { probeAfterReady: probeOptions.probeAfterReady }),
   }
 
   const slot: { current: RuntimeBridge | undefined } = { current: undefined }
