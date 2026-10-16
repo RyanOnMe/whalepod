@@ -32,6 +32,15 @@ export interface SessionOwnerEvents {
   turnSettled(reason: TurnEndReason, finalMessageId: string | undefined): void
 }
 
+/**
+ * `agent/status` 事件的载荷形状（vendor 事件表 inline 声明 `{ agent, status }`，
+ * 这里按公开字段表出：范围过滤要比对 agent 身份，不能只收 status）。
+ */
+export interface AgentStatusPayload {
+  readonly agent: Agent
+  readonly status: AgentStatus
+}
+
 export interface RunScopedPorts {
   readonly artifact: ArtifactPort
   readonly approval: ApprovalPort
@@ -169,18 +178,25 @@ export class SessionOwner {
    * 会话事件的**生产订阅处理器**（`ctx.on('session/event')` 的回调体本身）：
    * 异会话事件直接丢弃、不结算；本会话事件透传并驱动 turn 收敛。
    *
-   * #289 起它对契约探针可见（`RuntimeBridgeOptions.probeAfterReady` 送进来的合成
-   * 事件走的就是这个函数）——探针判「越界事件被拒」而不向真实总线注入合成流量：
-   * DSH 的其他订阅者（如 session-projection）对畸形会话事件会当场抛错，那是它们的
-   * 正确行为，不该由探针引入。
+   * #289 起它对契约探针可见（`RuntimeBridgeOptions.probeAfterReady` 直送合成事件，
+   * 理由见 bridge 的同名注释）——探针判「越界事件被拒」而不向真实总线注入合成流量。
+   * 参数保持生产窄类型（`Session` / `SessionEvent`）：放宽成 unknown 会让
+   * `event.type` / `event.data.reason` 失去编译期保护，而这里承担的判据恰恰是
+   * 「形状违约要能被发现」；形状适配只留在探针接缝一侧（桥里的 cast 有注记）。
    */
-  deliverSessionEvent(eventSession: unknown, event: unknown): void {
-    const sessionId = String(this.session.id)
-    const candidate = eventSession as { id?: unknown } | null | undefined
-    if (String(candidate?.id) !== sessionId) return
-    const sessionEvent = event as SessionEvent
-    this.events.sessionEvent(sessionEvent)
-    if (sessionEvent.type === 'turn/end') this.queueSettle(sessionEvent.data.reason)
+  deliverSessionEvent(eventSession: Session, event: SessionEvent): void {
+    if (String(eventSession.id) !== String(this.session.id)) return
+    this.events.sessionEvent(event)
+    if (event.type === 'turn/end') this.queueSettle(event.data.reason)
+  }
+
+  /**
+   * `agent/status` 的**生产订阅处理器**：范围过滤 = 只认本 Run 的 agent，
+   * 异 agent 的 running/idle 不得以本 Run 的 runId 成帧（#289 起对探针可见）。
+   */
+  deliverAgentStatus(payload: AgentStatusPayload): void {
+    if (payload.agent !== this.agent) return
+    this.events.agentStatus(payload.status)
   }
 
   private subscribe(): void {
@@ -188,8 +204,7 @@ export class SessionOwner {
       this.deliverSessionEvent(eventSession, event)
     })
     this.ctx.on('agent/status', (payload) => {
-      if (payload.agent !== this.agent) return
-      this.events.agentStatus(payload.status)
+      this.deliverAgentStatus(payload)
     })
   }
 

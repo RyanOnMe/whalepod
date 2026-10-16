@@ -15,6 +15,7 @@ import {
   RuntimeBridge,
   dispatchRuntimeCommand,
   type RuntimeBridgeOptions,
+  type RuntimeProbeFace,
   type RuntimeSpec,
 } from '../../../src/index.js'
 import type { RuntimeCommand, RuntimeOutput } from '@whalepod/protocol'
@@ -142,9 +143,10 @@ export interface ReplayRuntimeOptions {
   keepTempDirs?: boolean
   /**
    * **探针专用**（#289 事件流范围）：透传给 `RuntimeBridgeOptions.probeAfterReady`
-   * ——ready 之后交出一个绑在桥自己 ctx 上的 session/event 发射器，用于注入越界事件。
+   * ——ready 之后同步交出 `RuntimeProbeFace`（直送生产的 session/event 与
+   * agent/status 两条订阅过滤线），用于注入越界事件/状态。
    */
-  probeAfterReady?: (emitSessionEvent: (sessionArg: object, event: object) => void) => void
+  probeAfterReady?: (probe: RuntimeProbeFace) => void
 }
 
 export async function startReplayRuntime(

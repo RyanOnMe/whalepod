@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { boot, loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
+import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import {
   ProtocolError,
   type ErrorCode,
@@ -25,7 +26,28 @@ import { ApprovalPort } from './approval-port.js'
 import { dshAnchorUrl } from './dsh-distribution.js'
 import { nullLog, type LogSink } from './log.js'
 import { dshSessionIdOf, runtimeSpecFromInitialize, type RuntimeSpec } from './runtime-spec.js'
-import { SessionOwner, type SessionOwnerEvents } from './session-owner.js'
+import {
+  SessionOwner,
+  type AgentStatusPayload,
+  type SessionOwnerEvents,
+} from './session-owner.js'
+
+/**
+ * 探针接缝 `probeAfterReady` 交出的**直送面**（#289）：把合成输入直接送生产订阅
+ * 处理器，判据仍落在生产代码的两条范围过滤线上。
+ *
+ * 能力上限（与 `probeResumeSessionId` 同级的口径）：拿到本面的探针能**伪造本 Run
+ * 的帧流**——发本 Run 的 `session.event` / `agent.status`，包括越界形态（这正是判据
+ * 要判的）。它不能触碰别的 Run、不能写会话日志、不能起 turn、不能改 spec。
+ * 生产路径恒不设置 `probeAfterReady`（唯一装配点在 `apps/runtime/src/bin.ts`），
+ * 本面在线上不存在。
+ */
+export interface RuntimeProbeFace {
+  /** 直送 `SessionOwner.deliverSessionEvent`（异会话事件应被其过滤丢弃、不结算）。 */
+  deliverSessionEvent(eventSession: Session, event: SessionEvent): void
+  /** 直送 `SessionOwner.deliverAgentStatus`（异 agent 状态应被其过滤丢弃）。 */
+  deliverAgentStatus(payload: AgentStatusPayload): void
+}
 
 /** bridge 的 output 出口与结构化日志口（生产由 apps/runtime 接到 stdout/stderr）。 */
 export interface RuntimeBridgeOptions {
@@ -50,9 +72,10 @@ export interface RuntimeBridgeOptions {
    */
   probeResumeSessionId?: string
   /**
-   * **探针专用**（#289 事件流范围）：`runtime.ready` 发出后回调一次，交出一个
-   * **直送生产订阅处理器**（`SessionOwner.deliverSessionEvent`）的函数——契约探针
-   * 用它注入"越界事件"，判「不转发、不结算」。
+   * **探针专用**（#289 事件流范围）：`runtime.ready` 发出后同步回调一次，交出
+   * `RuntimeProbeFace`（直送两条生产订阅处理器）——契约探针用它注入"越界事件"，
+   * 判「不转发、不结算」。回调在 start 内同步执行，不得抛（抛错会打断启动，
+   * 已建的树无人 dispose）。
    *
    * 为什么不是「往总线上发合成事件」：试过两条路都走不通——① DSH 的 session/event
    * 按会话上下文限定受众（dsh-session 用自己的 ctx 当 `this` 做范围过滤），兄弟子树
@@ -62,7 +85,7 @@ export interface RuntimeBridgeOptions {
    * 本 Run 的订阅面」，判据仍落在生产代码的过滤线上。
    * 生产不用本接缝。
    */
-  probeAfterReady?: (emitSessionEvent: (sessionArg: object, event: object) => void) => void
+  probeAfterReady?: (probe: RuntimeProbeFace) => void
 }
 
 const CONFIG_DIR = fileURLToPath(new URL('../config/', import.meta.url))
@@ -362,8 +385,11 @@ export class RuntimeBridge {
     // 的**往返一致**（回报值与固化值漂移、串扰、过期进程复用会被抓），Runtime 不据此
     // 校验自己装载了什么；也**不是断言**——Runtime 不判断自己该是哪个 Revision。
     emit(frameOf('runtime.ready', { runId, dshSessionId, profileDigest: spec.profileDigest }))
-    // #289：探针自这里注入越界事件（此刻 owner 已订阅，注入点即订阅面本身）。
-    options.probeAfterReady?.((sessionArg, event) => owner.deliverSessionEvent(sessionArg, event))
+    // #289：探针自这里注入越界事件/状态（此刻 owner 已订阅，注入点即订阅面本身）。
+    options.probeAfterReady?.({
+      deliverSessionEvent: (eventSession, event) => owner.deliverSessionEvent(eventSession, event),
+      deliverAgentStatus: (payload) => owner.deliverAgentStatus(payload),
+    })
     return new RuntimeBridge(ctx, owner, approval, spec, log)
   }
 
@@ -371,6 +397,8 @@ export class RuntimeBridge {
   async handleCommand(command: RuntimeCommand): Promise<void> {
     // #289：一个 Runtime 子进程只服务一个 Run——命令的 runId 必须属于本 Run。
     // 没有这道闸时，别的 Run 的指令会被当成本 Run 的指令执行（跨 Run 串扰）。
+    // `runtime.shutdown` 同过此闸：shutdown 是进程级指令，但身份必须对得上；
+    // 拒后 bin 的 shutdown 分支会尽力处置再非零退出（见 apps/runtime/src/bin.ts）。
     if (command.payload.runId !== this.spec.runId) {
       throw new ProtocolError(
         'VALIDATION_FAILED',

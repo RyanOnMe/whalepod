@@ -52,16 +52,17 @@ describe('probe: instruction receipt (#289)', () => {
     const runtime = await startReplayRuntime('basic', spec)
     try {
       await runtime.send(initializeCommand(spec))
-      const ready = await runtime.until('runtime.ready')
+      await runtime.until('runtime.ready')
       await expect(runtime.send(initializeCommand(spec))).rejects.toThrow(
         /duplicate runtime\.initialize/,
       )
-      // 会话身份不变：没有第二个 ready、没有换 dshSessionId。
+      // 零副作用：没有第二个 ready（不重启 boot），也没有任何会话事件（不换会话、
+      // 不预起 turn）。ready 帧数与时序在下面一并清点。
       const readies = runtime.outputs.filter((frame) => frame.type === 'runtime.ready')
       expect(readies).toHaveLength(1)
-      expect((readies[0]?.payload as { dshSessionId: string }).dshSessionId).toBe(
-        (ready.payload as { dshSessionId: string }).dshSessionId,
-      )
+      expect(readies[0]?.payload.runId).toBe(spec.runId)
+      expect(sessionEventTypes(runtime.outputs)).toEqual([])
+      expect(runtime.outputs.filter((frame) => frame.type === 'run.completed')).toHaveLength(0)
     } finally {
       await runtime.dispose()
     }

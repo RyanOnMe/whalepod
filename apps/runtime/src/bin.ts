@@ -120,6 +120,10 @@ function main(): void {
             msg: 'runtime.shutdown convergence failed',
             error: error instanceof Error ? error.message : String(error),
           })
+          // 收敛失败（含 #289 起「别的 Run 的 shutdown 被 runId 闸拒」这条路径）：
+          // 先把本进程已建的树尽力处置（cancel→flush→dispose）再非零退出——新增的
+          // 闸不该让「任何 shutdown 都优雅处置」的旧行为退化。
+          await disposeQuietly()
           process.exit(1)
         }
         process.exit(0)
