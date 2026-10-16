@@ -133,7 +133,7 @@ test.describe('#158 七处下拉的两档审计', () => {
     await owner.getByRole('button', { name: '创建任务' }).click()
     await owner.locator('input[id^="task-title-"]').fill('审计用任务')
     const assignee = taskForm.locator('button[id^="task-assignee-"]')
-    await assertNotNativeSelect(assignee, taskForm, '交给谁')
+    await assertNotNativeSelect(assignee, taskForm, '责任人')
     await assertMenuTriggerTokens(assignee)
     for (const vp of VIEWPORTS) {
       await owner.setViewportSize({ width: vp.width, height: vp.height })

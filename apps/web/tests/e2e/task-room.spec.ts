@@ -326,7 +326,7 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     )
     await taskIdInput.fill('起草验收报告')
     const assignee = createTaskForm.locator('button[id^="task-assignee-"]')
-    await assertNotNativeSelect(assignee, createTaskForm, '交给谁')
+    await assertNotNativeSelect(assignee, createTaskForm, '责任人')
     await assignee.click()
     await expect(assignee).toHaveAttribute('aria-expanded', 'true')
     // 菜单项的顺序 = [placeholder(disabled), 各成员…]：placeholder 占 **index 0** 且不可选，

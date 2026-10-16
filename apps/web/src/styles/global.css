@@ -705,6 +705,19 @@ p.app-sidebar-heading {
   color: var(--color-ink-soft);
 }
 
+/* #344：「创建后立即执行」开关行——vendored `Switch` 只画轨道（36×20 胶囊），
+   标签文字留在应用层，字号/颜色与 `.field label` 一致，免得同一表单长出两套字段语言。 */
+.field-switch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.field-switch-label {
+  font-size: 14px;
+  color: var(--color-ink-soft);
+}
+
 /* #168：与上面的按钮同族——0.5px `border-l4` 描边、8px 圆角、颜色只吃 L1。
    高度同样保留 `--touch-min`（40px）而不是 vendored `Input` 的 32px：理由与 `.button`
    段那条注释同源（触屏可达；32px 是上游桌面密度），此处不重复。 */

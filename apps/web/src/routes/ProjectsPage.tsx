@@ -17,6 +17,7 @@ import { ErrorBanner } from '../app/ErrorBanner.js'
 import { useSession } from '../app/session.js'
 import { pushToast } from '../app/toast.js'
 import { SelectMenu } from '../shared/SelectMenu.js'
+import { Switch } from '../vendor/dsh-ui/index.js'
 import { RelativeTime } from '../shared/RelativeTime.js'
 import { TASK_STATUS_LABEL } from '../shared/format.js'
 import { useMemberDirectory } from '../features/team/memberDirectory.js'
@@ -265,9 +266,17 @@ function CreateTaskForm({
   onCreated: (task: TaskView) => void
   onClose: () => void
 }): ReactNode {
-  // #239：责任人选择是多态的——成员（value = userId）或 Agent（value = 'agent:<id>'）。
-  // 前缀编码而不是第二个 state：SelectMenu 是单值控件，一个受控值就够了。
-  const [values, setValues] = useState({ title: '', description: '', assignee: '' })
+  // #344：责任人与「创建后执行」是两件事，拆成两个控件——
+  // 责任人只选真人（默认自己）；「创建后立即执行」默认关闭，仅责任人为自己时可开启，
+  // 开启后才选 Agent。两条提交路径沿用既有 API：分给真人 = assigneeUserId（待接受）；
+  // 开启执行 = assigneeAgentId（责任人恒为创建者，出生 accepted，Hub 自动驱动，#239）。
+  const [values, setValues] = useState({
+    title: '',
+    description: '',
+    assignee: '',
+    agentId: '',
+  })
+  const [executeNow, setExecuteNow] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const session = useSession()
   // 责任人下拉与项目卡/任务列表共用同一份名册（#152 的共用 hook，同一 queryKey）：
@@ -282,9 +291,11 @@ function CreateTaskForm({
   // 归档 Agent 同理不进（指派给归档 Agent 会被 Hub 400 拒）。
   const selectableMembers = directory.members.filter((m) => m.enabled)
   const selectableAgents = (agentsQuery.data ?? []).filter((a) => a.archivedAt === null)
-  const selectedAgentId = values.assignee.startsWith('agent:')
-    ? values.assignee.slice('agent:'.length)
-    : null
+  // 只有责任人为自己时才能「创建后立即执行」：环境归属是责任人本人的设备与工作目录，
+  // 替别人开执行等于替别人动他的机器——那件事只能由对方接受任务后自己做。
+  const isSelf = session !== null && values.assignee === session.userId
+  const willExecute = executeNow && isSelf
+  const selectedAgentId = willExecute && values.agentId !== '' ? values.agentId : null
   // 列表就绪后默认选中自己（多数场景是给自己建任务）；用户改选后不覆盖。
   useEffect(() => {
     const preferred =
@@ -336,6 +347,14 @@ function CreateTaskForm({
     setError(null)
     mutation.mutate()
   }
+  // 开启执行的落点：站在执行区手动发起的同一套服务端守卫后面（审批/权限不变），
+  // 差别只是这次把标题与描述当指令、由创建者在自己的现场立即发起。
+  const switchTitle =
+    !isSelf && values.assignee !== ''
+      ? `责任人是${directory.personOf(values.assignee)}——只有责任人为自己时可以创建后立即执行`
+      : selectableAgents.length === 0
+        ? '还没有可用的 Agent——先到 Agents 页创建'
+        : undefined
   return (
     <form className="inline-form" onSubmit={submit} aria-label="创建任务">
       <div className="field">
@@ -361,46 +380,82 @@ function CreateTaskForm({
       <div className="field">
         {/* #158：责任人从原生 <select> 换成 vendored Menu 的包装（shared/SelectMenu）。
             id 仍是 #task-assignee-<projectId>（每项目一个，e2e 按前缀定位），
-            label 仍指向它；只是元素变成 <button aria-haspopup="menu">。 */}
+            label 仍指向它；只是元素变成 <button aria-haspopup="menu">。
+            #344：这一栏只选真人——Agent 从「责任人」里退出，移到下面的执行开关。 */}
         <SelectMenu
           id={`task-assignee-${projectId}`}
-          label="交给谁"
+          label="责任人"
           value={values.assignee}
           placeholder={
             directory.isPending
               ? '正在加载成员…'
-              : selectableMembers.length === 0 && selectableAgents.length === 0
-                ? '没有可选项'
-                : '选择成员或 Agent'
+              : selectableMembers.length === 0
+                ? '没有可选的成员'
+                : '选择成员'
           }
-          options={[
-            ...selectableMembers.map((m) => ({
-              value: m.userId,
-              label: `${m.displayName}（@${m.username}）${m.userId === session?.userId ? ' · 你' : ''}`,
-              disabled: false,
-            })),
-            ...selectableAgents.map((a) => ({
-              value: `agent:${a.id}`,
-              label: `${a.name}（Agent · 指派即执行）`,
-              disabled: false,
-            })),
-          ]}
-          onChange={(next) => setValues((prev) => ({ ...prev, assignee: next }))}
+          options={selectableMembers.map((m) => ({
+            value: m.userId,
+            label: `${m.displayName}（@${m.username}）${m.userId === session?.userId ? ' · 你' : ''}`,
+            disabled: false,
+          }))}
+          onChange={(next) =>
+            setValues((prev) => {
+              // 责任人改成别人时必须关掉执行并清掉已选 Agent——否则用户以为在执行，
+              // 实际请求会带着「别人 + Agent」出门（静默改投）；这里显式关，
+              // 提示文案随后说明为什么。
+              const stillSelf = session !== null && next === session.userId
+              if (!stillSelf) setExecuteNow(false)
+              return { ...prev, assignee: next, agentId: stillSelf ? prev.agentId : '' }
+            })
+          }
           disabled={directory.isPending}
         />
         {directory.isError ? <ErrorBanner error={directory.error} /> : null}
         {agentsQuery.isError ? <ErrorBanner error={agentsQuery.error} /> : null}
-        {/* #239：选了 Agent 就说清「指派会发生什么」——不让人在不知情下触发执行。 */}
-        {selectedAgentId === null && values.assignee !== '' ? (
-          <p className="mutation-hint">
-            真人责任人：{directory.personOf(values.assignee)}；接受任务后再安排 Agent 执行。
+        {/* 分给别人：说清对方要接受任务、执行由对方安排（不替别人动他的环境）。 */}
+        {!isSelf && values.assignee !== '' ? (
+          <p className="mutation-hint" data-testid="assignee-member-hint">
+            对方需要接受任务并安排执行（用他本人的环境）；你也可以在任务里跟进。
           </p>
         ) : null}
-        {selectedAgentId !== null ? (
-          <p className="mutation-hint" data-testid="agent-assign-hint">
-            真人责任人是你。指派给 Agent
-            会立即以任务标题与描述尝试执行，使用你的环境；你负责验收与权限决策。
+      </div>
+      <div className="field">
+        {/* #344：「创建后立即执行」是显式动作，默认关闭。开启 = 创建后立即以标题与描述
+            作为指令、在你的环境执行（等价于 #239 的显式指派 Agent 执行），责任人仍是你。
+            整行包成 label：vendored Switch 本体只有 36×20，文本也点得动才算够用的命中区
+            （与复核材料那排 label 包 checkbox 同一处理）。 */}
+        <label className="field-switch">
+          <Switch
+            checked={willExecute}
+            onChange={setExecuteNow}
+            label="创建后立即执行"
+            disabled={directory.isPending || !isSelf || selectableAgents.length === 0}
+            {...(switchTitle === undefined ? {} : { title: switchTitle })}
+          />
+          <span className="field-switch-label">创建后立即执行</span>
+        </label>
+        {willExecute ? (
+          <SelectMenu
+            id={`task-execution-agent-${projectId}`}
+            label="执行 Agent"
+            value={values.agentId}
+            placeholder={selectableAgents.length === 0 ? '没有可用的 Agent' : '选择 Agent'}
+            options={selectableAgents.map((a) => ({
+              value: a.id,
+              label: `${a.name}（Agent）`,
+              disabled: false,
+            }))}
+            onChange={(next) => setValues((prev) => ({ ...prev, agentId: next }))}
+            disabled={agentsQuery.isPending}
+          />
+        ) : null}
+        {willExecute ? (
+          <p className="mutation-hint" data-testid="execute-now-hint">
+            以任务标题与描述作为指令，用你自己的设备与工作目录立即执行；验收与审批仍在你手上。
           </p>
+        ) : null}
+        {isSelf && !willExecute ? (
+          <p className="mutation-hint">不开启则只创建任务，执行由你在任务里安排。</p>
         ) : null}
       </div>
       <div className="form-actions">
@@ -409,13 +464,15 @@ function CreateTaskForm({
             一起消失（按钮不是表单可校验元素）。评审实测：成员列表未落地时默认选中
             拿不到值，缺这条守卫会发出 `assigneeUserId: ""` 的请求，被协议层
             z.uuid() 拒成 400（packages/protocol/src/http.ts）。别删。
-            #239：守卫口径从「assigneeUserId 非空」改为「选择值非空」（成员或 Agent）。 */}
+            #239 收窄、#344 再拆：守卫口径 = 责任人非空，且开启执行时必须已选 Agent。 */}
         <button
           type="submit"
           className="button button-primary"
-          disabled={mutation.isPending || values.assignee === ''}
+          disabled={
+            mutation.isPending || values.assignee === '' || (willExecute && values.agentId === '')
+          }
         >
-          {mutation.isPending ? '创建中…' : '创建任务'}
+          {mutation.isPending ? '创建中…' : willExecute ? '创建并开始执行' : '创建任务'}
         </button>
         <button type="button" className="button button-quiet" onClick={onClose}>
           取消
