@@ -456,10 +456,30 @@ describe('P1-13 全链路（真 Hub + 真 Node + 真 Runtime/replay）', () => {
         '  process.stdout.write(',
         "    JSON.stringify({ protocolVersion: 1, messageId: crypto.randomUUID(), sentAt: new Date().toISOString(), type, payload }) + '\\n',",
         '  )',
+        // #288：ready 要回声 initialize 携带的 profileDigest（真 Runtime 的行为）；
+        // 写死常量会在 Node 的对照点上失败——stub 也必须如实回声收到的值。
+        // 序列以「收到 initialize」为起点（数据依赖，不是 100ms 时间竞猜：慢负载下
+        // 猜早了会发出 profileDigest=null 的畸形帧，被 strict schema 拒）。
+        'let inputBuffer = ""',
+        'process.stdin.setEncoding("utf8")',
+        'process.stdin.on("data", (chunk) => {',
+        '  inputBuffer += chunk',
+        '  for (;;) {',
+        '    const newline = inputBuffer.indexOf("\\n")',
+        '    if (newline < 0) break',
+        '    const line = inputBuffer.slice(0, newline)',
+        '    inputBuffer = inputBuffer.slice(newline + 1)',
+        '    if (line.trim() === "") continue',
+        '    const frame = JSON.parse(line)',
+        '    if (frame.type === "runtime.initialize") {',
+        '      const profileDigest = frame.payload.profileDigest',
+        "      send('runtime.ready', { runId, dshSessionId: 'stub-session-1', profileDigest })",
+        "      setTimeout(() => send('approval.requested', { runId, callId: 'call-p52-1', toolName: 'bash', reason: 'needs rm' }), 300)",
+        "      setTimeout(() => send('run.completed', { runId, dshSessionId: 'stub-session-1' }), 800)",
+        '    }',
+        '  }',
+        '})',
         'process.stdin.resume()',
-        "setTimeout(() => send('runtime.ready', { runId, dshSessionId: 'stub-session-1' }), 100)",
-        "setTimeout(() => send('approval.requested', { runId, callId: 'call-p52-1', toolName: 'bash', reason: 'needs rm' }), 400)",
-        "setTimeout(() => send('run.completed', { runId, dshSessionId: 'stub-session-1' }), 900)",
       ].join('\n'),
     )
     let c: ChainAssembly

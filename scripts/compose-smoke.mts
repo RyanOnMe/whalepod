@@ -24,7 +24,7 @@
  */
 import { spawn, execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -169,8 +169,12 @@ function runNodeCli(
   home: string,
 ): { child: ReturnType<typeof spawn>; tail: () => string } {
   const buf: string[] = []
+  // #288：剔除操作者的版本声明（WHALEPOD_DSH_VERSION）——否则探针失败会被 hello 的
+  // 诚实兜底掩盖，「设备事实 == dsh.lock.json」的断言会在带该 env 的机器上假绿。
+  const env = { ...process.env, HOME: home }
+  delete env['WHALEPOD_DSH_VERSION']
   const child = spawn(process.execPath, [join(REPO_ROOT, 'apps/node/dist/cli.js'), ...args], {
-    env: { ...process.env, HOME: home },
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   child.stdout.on('data', (c: Buffer) => buf.push(c.toString())) // 必须消费：管道满会卡死子进程
@@ -315,6 +319,34 @@ async function main(): Promise<void> {
       )
     })
     phase('inventory projection visible')
+
+    // #288：真 cli 的「探针 → node.hello」装配面（Q9 是唯一跑**发布产物**、且唯一对
+    // 探针结果下判定的门；Q2/Q6 也跑真 cli，但走源码 tsx）：设备事实里的
+    // dshDistributionVersion 必须等于 dsh.lock.json 锁定的版本。
+    // 版本的真实来源是 Runtime 自报（`--print-dsh-version`），锁文件是同一事实源；
+    // 接错（报声明值、恒 null/'unmanaged'、或探针失败）在这里当场红。
+    const lockedDshVersion = (
+      JSON.parse(readFileSync(join(REPO_ROOT, 'dsh.lock.json'), 'utf8')) as {
+        packages: Record<string, { version?: string } | undefined>
+      }
+    ).packages['@deepseek-ai/dsh']?.version
+    if (lockedDshVersion === undefined) throw new Error('dsh.lock.json 缺 @deepseek-ai/dsh 版本')
+    const deviceList = await api<{
+      data?: Array<{ id?: string; dshDistributionVersion?: string | null }>
+    }>('GET', '/api/v1/devices', undefined, cookie)
+    const smokeDevice = (deviceList.body.data ?? []).find((d) => d.id === ownerWs.deviceId)
+    if (smokeDevice === undefined) {
+      throw new Error(
+        `GET /devices 列表里没有设备 ${ownerWs.deviceId}：${JSON.stringify(deviceList.body).slice(0, 200)}`,
+      )
+    }
+    if (smokeDevice.dshDistributionVersion !== lockedDshVersion) {
+      throw new Error(
+        `设备事实 dshDistributionVersion=${String(smokeDevice.dshDistributionVersion)}` +
+          `（dsh.lock.json 锁定 ${lockedDshVersion}）——Runtime 探针到 node.hello 的装配漂移（#288）`,
+      )
+    }
+    phase('device dsh version from runtime probe (#288)')
 
     // ---------- A0-5：标准闭环的机检面（到凭证边界为止） ----------
     // 段落边界见文件头：Agent 真执行要真实模型密钥，本脚本不假装跑过。

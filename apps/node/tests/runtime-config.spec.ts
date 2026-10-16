@@ -285,6 +285,8 @@ describe('pack 目录布局', () => {
         entrypoint: fixture.manifest.entrypoint,
         treeDigest: fixture.treeDigest,
         storePath: fixture.storePath,
+        // #288：marker 记逐包 dshCompatibility，本地命中路径据此复核。
+        dshCompatibility: fixture.manifest.dshCompatibility,
       },
     ]
   }
@@ -326,6 +328,7 @@ describe('pack 目录布局', () => {
         version: fixture.manifest.version,
         entrypoint: fixture.manifest.entrypoint,
         treeDigest: fixture.treeDigest,
+        dshCompatibility: fixture.manifest.dshCompatibility,
       },
     ])
   })

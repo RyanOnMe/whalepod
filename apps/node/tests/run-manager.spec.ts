@@ -225,13 +225,14 @@ function stdoutSessionEvent(runId: string, event: unknown): string {
   })
 }
 
-function stdoutRuntimeReady(runId: string): string {
+/** runtime.ready 帧：profileDigest 是「收到方对照点」（#288），缺省与 runStartFrame 的固化值一致。 */
+function stdoutRuntimeReady(runId: string, profileDigest: string = 'a'.repeat(64)): string {
   return JSON.stringify({
     protocolVersion: 1,
     messageId: randomUUID(),
     sentAt: new Date().toISOString(),
     type: 'runtime.ready',
-    payload: { runId, dshSessionId: 'session-1' },
+    payload: { runId, dshSessionId: 'session-1', profileDigest },
   })
 }
 
@@ -846,6 +847,32 @@ describe('§11 协议违例', () => {
       .map((f) => f.payload as unknown as ProjectedRunEvent)
       .find((e) => e.event.type === 'run.failed')
     expect(failed).toBeDefined()
+  })
+
+  it('runtime.ready 回报的 profileDigest ≠ 固化的 Revision digest → run.failed PROFILE_MISMATCH + 终止 runtime', async () => {
+    const h = await makeHarness()
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    h.runtimes[0]!.emitStdout(stdoutRuntimeReady(RUN_ID, 'f'.repeat(64)))
+    const failed = h
+      .sentFrames()
+      .filter((f) => f.type === 'run.event')
+      .map((f) => f.payload as unknown as ProjectedRunEvent)
+      .find((e) => e.event.type === 'run.failed')
+    expect(failed).toBeDefined()
+    expect((failed!.event as { code: string }).code).toBe('PROFILE_MISMATCH')
+    expect(h.runtimes[0]!.terminateCount).toBe(1)
+  })
+
+  it('runtime.ready 回报的 profileDigest 一致 → 照常 running（不误杀）', async () => {
+    const h = await makeHarness()
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    h.runtimes[0]!.emitStdout(stdoutRuntimeReady(RUN_ID))
+    const events = h
+      .sentFrames()
+      .filter((f) => f.type === 'run.event')
+      .map((f) => f.payload as unknown as ProjectedRunEvent)
+    expect(events.find((e) => e.event.type === 'run.failed')).toBeUndefined()
+    expect(h.runtimes[0]!.terminateCount).toBe(0)
   })
 })
 

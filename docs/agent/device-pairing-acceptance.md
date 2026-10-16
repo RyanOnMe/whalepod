@@ -76,7 +76,10 @@ Review 发现 Node CLI 出站路径三处功能缺口与两处安全姿态不齐
 
 1. **F1 node.hello 首发**：CLI 此前从不发送 hello（#37 列在真实路径上永不回填）。
    现连接建立后首发 `node.hello`（dsh 版本来自 `--dsh-version` /
-   `PROJECT311_DSH_VERSION`，缺省 `unmanaged` 诚实标注；P1-12 runtime 装配后给真实版本）。
+   `WHALEPOD_DSH_VERSION`，缺省 `unmanaged` 诚实标注；P1-12 runtime 装配后给真实版本）。
+   **#288 起口径更新**：真实来源是 Runtime 自报（`--print-dsh-version` 探针，解析安装树），
+   `--dsh-version` / 环境变量降级为探针失败时的兜底；见
+   [dsh-compat-guard-acceptance](./dsh-compat-guard-acceptance.md)。
 2. **F2 真实心跳周期**：原 `setInterval` 为空壳（心跳只在 open 发一次，设备 30s 后离线、
    活跃 Run 会被 reconciler 转 lost）。现为会话级 10s 定时器，跨重连存活、仅打 OPEN 连接。
 3. **F3 永久失败停止**：停止码集合此前只认 4001/4401 而 Hub 认证失败是升级前 HTTP 401

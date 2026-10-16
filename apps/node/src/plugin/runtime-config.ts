@@ -78,6 +78,12 @@ export const PackMarkerSchema = z.strictObject({
       version: ExactVersionSchema,
       entrypoint: z.string().min(1),
       treeDigest: Sha256HexSchema,
+      /**
+       * #288：安装时的逐包 DSH 兼容声明。marker 记它是为了让**本地命中**这条
+       * 冷路径也能复核兼容性——不带该字段的旧 marker 直接解析失败（当本地未
+       * 命中，走 descriptor 重建），不拿旧缓存放行。
+       */
+      dshCompatibility: ExactVersionSchema,
     }),
   ),
 })
@@ -102,6 +108,8 @@ export interface PackPackageRecord {
   readonly treeDigest: string
   /** store 包目录绝对路径（store.lookup(treeDigest) 的回执）。 */
   readonly storePath: string
+  /** 逐包 DSH 兼容声明（本地命中路径的复核依据，#288）。 */
+  readonly dshCompatibility: string
 }
 
 /** buildPackOverlay 的逐包输入：descriptor 里的 manifest + preflight 复算的 digest。 */
@@ -175,6 +183,7 @@ export function buildPackOverlay(input: {
       entrypoint: pkg.manifest.entrypoint,
       treeDigest: pkg.treeDigest,
       storePath: pkg.storePath,
+      dshCompatibility: pkg.manifest.dshCompatibility,
     } satisfies PackPackageRecord
   })
   return ensurePackOverlay({
@@ -225,11 +234,12 @@ function desiredMarker(packDigest: string, packages: readonly PackPackageRecord[
   return {
     schemaVersion: 1,
     packDigest,
-    packages: packages.map(({ name, version, entrypoint, treeDigest }) => ({
+    packages: packages.map(({ name, version, entrypoint, treeDigest, dshCompatibility }) => ({
       name,
       version,
       entrypoint,
       treeDigest,
+      dshCompatibility,
     })),
   }
 }
@@ -245,7 +255,8 @@ function markerEquals(a: PackMarker, b: PackMarker): boolean {
         pkg.name === other.name &&
         pkg.version === other.version &&
         pkg.entrypoint === other.entrypoint &&
-        pkg.treeDigest === other.treeDigest
+        pkg.treeDigest === other.treeDigest &&
+        pkg.dshCompatibility === other.dshCompatibility
       )
     })
   )

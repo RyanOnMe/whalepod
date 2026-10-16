@@ -5,7 +5,9 @@
  * `pluginPackOverlayPath`：Node preflight 为已安装 Plugin Pack 生成的 Cordis
  * overlay yml 绝对路径（本地 wire 专用，红线同 workspacePath——不进 Hub、日志
  * 与 evidence），RuntimeBridge.start 把它作为最后一层 patch 挂进 boot 栈
- * （bridge.ts）。pack 为 core-empty 时不携带（wire optional）。
+ * （bridge.ts）。pack 为 core-empty 时不携带（wire optional）。#288 起
+ * profileDigest 不再只是记录：bridge 在 `runtime.ready` 帧**回声**它，Node 侧与
+ * run.start 固化的 Revision digest 比对（不符即 PROFILE_MISMATCH 并终止）。
  */
 import type { RuntimeArtifactInput, RuntimeCommand } from '@whalepod/protocol'
 

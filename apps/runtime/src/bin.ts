@@ -13,6 +13,10 @@
  * patch 层：契约探针用它挂 replay overlay。生产不使用该 env 挂 Plugin Pack：
  * P1-17 起经审核的 pack overlay 按 Run 随 `runtime.initialize.pluginPackOverlayPath`
  * 在 wire 上到达（runtime-spec 解析、bridge 入栈），env 仅保留为探针通道。
+ *
+ * #288：`--print-dsh-version` 是一次性探针模式——stdout 恰一行 JSON
+ * `{"dshName","dshVersion"}` 后 exit 0（不可知则 stderr 结构化日志 + exit 1），
+ * 不读 stdin、不 boot DSH。Node preflight 用它拿本机真实 DSH 版本。
  */
 import { randomUUID } from 'node:crypto'
 import { writeSync } from 'node:fs'
@@ -21,6 +25,7 @@ import { format } from 'node:util'
 import type { RuntimeCommand, RuntimeOutput } from '@whalepod/protocol'
 import {
   dispatchRuntimeCommand,
+  dshDistributionInfo,
   readRuntimeCommands,
   writeRuntimeOutput,
   type LogSink,
@@ -53,6 +58,25 @@ function emitStartFatal(runId: string, error: unknown): void {
 }
 
 function main(): void {
+  // #288：DSH 版本探针——一次性模式，不读 stdin、不 boot DSH。Node 的
+  // 「敏感不兼容禁启动」preflight 用它在启动前拿到本机真实 DSH 版本（唯一允许
+  // import @deepseek-ai/* 的一侧给出答案）。stdout 只写一行 JSON（不是协议帧），
+  // 退出码是判据：0 = 可信，其余 = 不可知（调用方 fail-closed）。
+  if (process.argv.slice(2).includes('--print-dsh-version')) {
+    try {
+      const info = dshDistributionInfo()
+      writeSync(1, `${JSON.stringify({ dshName: info.name, dshVersion: info.version })}\n`)
+      process.exit(0)
+    } catch (error) {
+      log({
+        level: 'error',
+        component: 'runtime.bin',
+        msg: 'dsh version probe failed',
+        error: error instanceof Error ? error.message : String(error),
+      })
+      process.exit(1)
+    }
+  }
   const extraPatchFiles = (process.env['WHALEPOD_RUNTIME_EXTRA_PATCH_FILES'] ?? '')
     .split(delimiter)
     .filter((entry) => entry.length > 0)
