@@ -4,7 +4,7 @@
 - 对应 Issue：#290
 - 判定文件：`packages/runtime-dsh/tests/dsh-contract/rollback-drill.contract.spec.ts`（10 用例）
   + 共享检查 `packages/runtime-dsh/tests/dsh-contract/helpers/lock-drift.ts`
-- 上次验证：2026-10-16 · `3f927f4` 内容 · **PASS**（红 `bb7d2f7` → 绿 `eaa57fa`；`3f927f4` = spec 的 oxfmt 重排 + 契约表机检修复，全量门就在这份内容上实测；评审修复见紧随其后的 round-1 提交）
+- 上次验证：2026-10-16 · `3f927f4` 内容 · **PASS**（红 `bb7d2f7` → 绿 `eaa57fa`；`3f927f4` = spec 的 oxfmt 重排 + 契约表机检修复，全量门就在这份内容上实测；评审修复 `484a797`）
 - 全量门（同一工作树实测）：Q0（1662 passed + 7 expected fail，含本文件登记的契约表漂移哨兵）/Q2（68 文件 491 用例）/Q3（16 spec 61 用例）/Q5（`pnpm test:e2e` 1 passed 30.5s exit 0）/Q6（32 用例）/Q7（18 用例 + secret-scan + 许可门）/Q9（`pnpm test:compose-smoke` PASS total=64.5s）全绿
 - 登记处：覆盖状态列在 [runtime-capability-contract.md](./runtime-capability-contract.md)
 
