@@ -17,6 +17,6 @@
 
 ## 复跑
 
-pnpm build、pnpm check；Web delivery-review/execution-composer/instruction-composer/action-conditions/approval-policy；隔离playwright.operations.config.ts下完整p1-19（14项）及其余八项目，不能与用户日常服务共端口；最终CI check/integration。协议/migration依赖#328至少两名独立review后才能合入，本批保持Draft。真实模型意见质量和真人理解成本仍需用户试用。
+pnpm build、pnpm check；Web delivery-review/execution-composer/instruction-composer/action-conditions/approval-policy；隔离playwright.operations.config.ts下完整p1-19（14项）及其余八项目，不能与用户日常服务共端口；最终CI check/integration。协议/migration部分按约定先经独立评审再合入：三项已合入 main（PR #328/#329/#330，2026-10-15，各有 2–4 条评审记录）——**「本批保持 Draft」的口径自合入起已过期**。真实模型意见质量和真人理解成本仍需用户试用。
 
 评审回归：发送期间连续选择复核/修订，只保留最后一次意图；双向顺序在真实页面与挂起的 HTTP 响应中验证，发送完成后不自动发送第二条指令。任务切换同时清空本地待处理意图。

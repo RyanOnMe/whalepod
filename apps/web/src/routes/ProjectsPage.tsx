@@ -8,7 +8,7 @@
  * （features/team/memberDirectory）解析，解析不到给人话而不是短 UUID。
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import type { CreateProjectRequest, CreateTaskRequest } from '@whalepod/protocol'
 import { useNavigate } from 'react-router'
 import { api } from '../shared/api/client.js'
@@ -278,6 +278,8 @@ function CreateTaskForm({
   })
   const [executeNow, setExecuteNow] = useState(false)
   const [error, setError] = useState<unknown>(null)
+  // 幂等键按「意图签名」持有（#345）：见 mutationFn 里的用法。
+  const intentKey = useRef<{ signature: string; key: string } | null>(null)
   const session = useSession()
   // 责任人下拉与项目卡/任务列表共用同一份名册（#152 的共用 hook，同一 queryKey）：
   // 只在 hook 里定义策略，避免「同一个 key 两套 staleTime」这种漂移。
@@ -324,10 +326,24 @@ function CreateTaskForm({
       // #312：驱动结果在 `data` 的**兄弟位**（`{ ok, data, drive }`），必须用
       // mutateWithSiblings 取整个信封——只取 data 时 `drive` 永远读不到，
       // toast 从不出现（真实页面实测 16s 无 toast）。
-      return api.mutateWithSiblings<TaskView>(`/projects/${projectId}/tasks`, { body })
+      //
+      // #345（与 RunLauncher/InstructionComposer 同式，ADR-0013 的「同义键」）：
+      // 同一意图的重试复用同一把幂等键——Hub 按 `task.create:<key>` 回放，
+      // 超时重试不会建出第二个任务、也不会二次驱动（routes.ts 的同一把 key 传给
+      // 驱动）；正文/责任人/执行选择变了才换新键（那是新意图，不是重试）。
+      const signature = JSON.stringify(body)
+      if (intentKey.current?.signature !== signature) {
+        intentKey.current = { signature, key: crypto.randomUUID() }
+      }
+      return api.mutateWithSiblings<TaskView>(`/projects/${projectId}/tasks`, {
+        body,
+        idempotencyKey: intentKey.current.key,
+      })
     },
     onSuccess: (result) => {
       setError(null)
+      // 意图已落地：下一次提交（改内容后的新任务）换新键。
+      intentKey.current = null
       // #239：指派 Agent 的自动驱动结果如实告知（指派成功≠执行已开始）。
       // #312：四种受理命运各说各话——只有 started_run 能说「已自动开始执行」；
       // 认不出的形状不说话（parseAssignmentDrive 返回 null）。

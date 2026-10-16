@@ -21,6 +21,7 @@ import {
   ALICE,
   BOB,
   agentsHandler,
+  apiFailure,
   created,
   createdWithSiblings,
   loggedInHandlers,
@@ -250,6 +251,69 @@ describe('#344 创建任务：责任人与「创建后立即执行」拆开（�
     const toggle = screen.getByRole('switch', { name: '创建后立即执行' })
     expect(toggle).toBeDisabled()
     expect(toggle).toHaveAttribute('title', '还没有可用的 Agent——先到 Agents 页创建')
+  })
+
+  it('#345 重试同意图复用同一把幂等键（超时重试不建第二个任务）', async () => {
+    const keys: string[] = []
+    let firstAttempt = true
+    const user = userEvent.setup()
+    renderApp(
+      '/',
+      loggedInHandlers(BOB, [
+        projectsHandler([PROJECT_VIEW]),
+        teamMembersHandler(),
+        agentsHandler([AGENT]),
+        {
+          method: 'POST',
+          url: /\/api\/v1\/projects\/[^/]+\/tasks$/,
+          respond: (init) => {
+            keys.push(String(new Headers(init.headers).get('idempotency-key')))
+            // 第一次当网络层失败（超时/断网），第二次放行。
+            if (firstAttempt) {
+              firstAttempt = false
+              throw new Error('network down')
+            }
+            return created({ ...makeTask({ id: 'new-member-task' }) })
+          },
+        },
+      ]),
+    )
+    await openCreateForm(user)
+    await user.click(screen.getByRole('button', { name: '创建任务' }))
+    await screen.findByRole('alert') // 失败如实上屏，表单不关
+    await user.click(screen.getByRole('button', { name: '创建任务' }))
+    await waitFor(() => expect(keys).toHaveLength(2))
+    // 同一意图的重试 = 同一把键 → Hub 按 task.create:<key> 回放，不会建出第二个任务。
+    expect(keys[0]).toBe(keys[1])
+    expect(keys[0]).not.toBe('undefined')
+  })
+
+  it('#345 改了内容就是新意图：换一把新键（否则会拿旧任务的回执冒充新任务）', async () => {
+    const keys: string[] = []
+    const user = userEvent.setup()
+    renderApp(
+      '/',
+      loggedInHandlers(BOB, [
+        projectsHandler([PROJECT_VIEW]),
+        teamMembersHandler(),
+        agentsHandler([AGENT]),
+        {
+          method: 'POST',
+          url: /\/api\/v1\/projects\/[^/]+\/tasks$/,
+          respond: (init) => {
+            keys.push(String(new Headers(init.headers).get('idempotency-key')))
+            return apiFailure('CONFLICT', 'still failing')
+          },
+        },
+      ]),
+    )
+    await openCreateForm(user)
+    await user.click(screen.getByRole('button', { name: '创建任务' }))
+    await waitFor(() => expect(keys).toHaveLength(1))
+    await user.type(screen.getByLabelText('任务标题'), '（改成别的）')
+    await user.click(screen.getByRole('button', { name: '创建任务' }))
+    await waitFor(() => expect(keys).toHaveLength(2))
+    expect(keys[1]).not.toBe(keys[0])
   })
 
   it('驱动失败（设备离线）→ toast 如实说「自动执行未开始」并给错误码与恢复入口，任务仍算创建成功', async () => {

@@ -43,6 +43,10 @@ export default defineConfig({
     // ——设备离线的失败 toast（带错误码与恢复入口）与在线的成功 toast，且恢复从原任务继续
     // （不重开任务）。单 Hub 只容一个团队，故独立成套冷启。
     { name: 'p1-312', testMatch: /task-create-drive\.spec\.ts/ },
+    // #345：创建到恢复的五条路径一次走完（只创建 / 分给别人执行 / 自选 Agent 执行 /
+    // 起不来后原任务继续 / 重试与状态变化），事实落盘后由独立判定器重判。
+    // 环境里同一时刻只有一台 Node（控制面只带一个 node 子进程），故成套冷启、按序换设备。
+    { name: 'p1-345', testMatch: /create-to-recovery\.spec\.ts/ },
   ],
   use: {
     baseURL: 'http://localhost:5173',
