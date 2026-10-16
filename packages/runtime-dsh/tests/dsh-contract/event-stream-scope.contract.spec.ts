@@ -27,6 +27,7 @@ import { describe, expect, it } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type { RuntimeOutput } from '@whalepod/protocol'
+import { dshSessionIdOf } from '../../src/index.js'
 import {
   commandFrame,
   initializeCommand,
@@ -44,6 +45,8 @@ describe('probe: event stream scope (#289)', () => {
   it('异会话事件不转发、不结算；异 agent 状态不成帧；本 Run 的事件与状态照常（正控）', async () => {
     const injected: string[] = []
     const spec = runtimeSpec()
+    // 同会话的哨兵事件 id：注入面活性证明用（见下面 `probe/canary` 的断言）。
+    const ownSessionId = dshSessionIdOf(spec)
     const runtime = await startReplayRuntime('basic', spec, {
       probeAfterReady: (probe) => {
         // 异会话 turn/end：reason kind 选正常路径不产生的 `max-tokens`——若它漏进结算，
@@ -62,6 +65,12 @@ describe('probe: event stream scope (#289)', () => {
             type: 'foreign/probe',
             data: { marker: 'foreign-session-event' },
           } as unknown as SessionEvent,
+        )
+        // 同会话哨兵：必须被转发（证明注入面是活的、过滤是有选择性的——若接缝退化成
+        // 丢弃一切的桩，上面两条负向会空转成绿）。
+        probe.deliverSessionEvent(
+          { id: ownSessionId } as unknown as Session,
+          { type: 'probe/canary', data: { marker: 'same-session-canary' } } as unknown as SessionEvent,
         )
         probe.deliverAgentStatus({ agent: {} as unknown as Agent, status: 'idle' })
         injected.push('emitted')
@@ -90,8 +99,10 @@ describe('probe: event stream scope (#289)', () => {
         .map((frame) => frame.payload.status)
       expect(statuses).toEqual(expect.arrayContaining(['running', 'idle']))
 
-      // 负向 ①：异会话的自定义事件绝不出现在帧流里。
+      // 负向 ①：异会话的自定义事件绝不出现在帧流里；同会话哨兵则必须转发过
+      // （两者成对：注入面活着，且过滤是选择性的）。
       expect(types).not.toContain('foreign/probe')
+      expect(types).toContain('probe/canary')
       // 越界的 turn/end 没有被当成本 Run 的结算：没有 fatal（泄漏的唯一指纹是
       // `unhandled reason kind: max-tokens`）、没有提前的 run.completed（本 Run 那条
       // 必须排在最早的 turn/start 之后）、turn/end 恰好一条。

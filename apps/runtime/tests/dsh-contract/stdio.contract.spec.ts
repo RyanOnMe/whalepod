@@ -207,6 +207,24 @@ describe('probe: stdio single-channel boundary', () => {
     await expect(runtime.waitExit()).resolves.toBe(0)
   })
 
+  it('a foreign-runId shutdown is refused by the runId gate: bin converges best-effort and exits 1 (#289)', async () => {
+    const runtime = launch()
+    const payload = initializePayload()
+    const runId = payload['runId'] as string
+    runtime.send(commandFrame('runtime.initialize', payload))
+    await runtime.until('runtime.ready')
+    runtime.send(commandFrame('run.prompt', { runId, text: 'hello' }))
+    await runtime.until('run.completed')
+
+    // 别的 Run 的 shutdown 过不了桥的 runId 闸：bin 的 shutdown 分支记收敛失败、
+    // 尽力处置（cancel→flush→dispose）后以非零退出——不得被当成本 Run 的 shutdown。
+    runtime.send(commandFrame('runtime.shutdown', { runId: randomUUID() }))
+    await expect(runtime.waitExit()).resolves.toBe(1)
+    expect(runtime.stderrText()).toContain('runtime.shutdown convergence failed')
+    // stdout 单通道纯度不受影响：退出前没有任何运行期致命帧（拒绝只走 stderr 日志）。
+    expect(runtime.frames.some((frame) => frame.type === 'runtime.fatal')).toBe(false)
+  })
+
   it('a command line over 1 MiB exits non-zero and leaves stdout free of protocol garbage', async () => {
     const runtime = launch()
     runtime.writeRaw(`${'x'.repeat(1024 * 1024 + 1)}\n`)

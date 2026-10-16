@@ -142,44 +142,47 @@ describe('probe: single-run isolation (#289)', () => {
       await runtime.send(commandFrame('run.cancel', { runId: spec.runId, cause: 'user' }))
       const cancelled = await runtime.until('run.cancelled')
       expect(cancelled.payload.runId).toBe(spec.runId)
-      // 屏障：取消只会结算一次，跨 Run 的那条若生效会再来一个 run.cancelled。
+      // 屏障：计数分辨不了"先执行后拒绝"（跨 Run 那条若被执行会产出的正是这一条
+      // run.cancelled，之后本 Run 的取消变成 no-op——帧数仍是 1）。判在**中止原因**上：
+      // turn/end 的 reason 必须是我们这条 cause=user 的取消（跨 Run 那条会记 parent）。
+      const turnEnd = runtime.outputs.find(
+        (frame) =>
+          frame.type === 'session.event' &&
+          (frame.payload.event as { type: string }).type === 'turn/end',
+      )
+      expect(JSON.stringify(turnEnd?.payload)).toContain('"reason":{"kind":"user"}')
       expect(countOf(runtime.outputs, 'run.cancelled')).toBe(1)
     } finally {
       await runtime.dispose()
     }
   })
 
-  it('别的 Run 的 approval.decide → 同样过闸（拒绝是唯一可观察面：未知 callId 本是 no-op）', async () => {
+  it('别的 Run 的 approval.decide → 同样过闸（用真实 pending callId 判：拒绝不得被消费）', async () => {
     const spec = runtimeSpec()
     const runtime = await startReplayRuntime('tool-approval', spec)
     try {
       await runtime.send(initializeCommand(spec))
       await runtime.until('runtime.ready')
       await runtime.send(commandFrame('run.prompt', { runId: spec.runId, text: 'use the tool' }))
-      await runtime.until('approval.requested')
+      const pending = await runtime.until('approval.requested')
+      const callId = (pending.payload as { callId: string }).callId
 
+      // 跨 Run 的决定用**真实** callId + rejected（未知 callId 本就是 no-op，判不出执行与否）：
+      // 若闸被绕过而它被执行，这次拒绝会把悬置的审批消费掉——后面的 allowed_once 无处可决。
       await expect(
         runtime.send(
-          commandFrame('approval.decide', {
-            runId: randomUUID(),
-            callId: 'call-does-not-matter',
-            decision: 'allowed_once',
-          }),
+          commandFrame('approval.decide', { runId: randomUUID(), callId, decision: 'rejected' }),
         ),
       ).rejects.toThrow(/different run/)
 
-      // 正控：本 Run 自己的决定照常被受理（悬置的审批被答复后 turn 收敛）。
-      const pending = runtime.outputs.find((frame) => frame.type === 'approval.requested')
-      const callId = (pending?.payload as { callId: string }).callId
+      // 正控 + 屏障：本 Run 自己的 allowed_once 照常放行工具、产出候选并收敛；
+      // 候选**恰好一条**——审批若被跨 Run 的拒绝消费，工具永不执行，这里必红。
       await runtime.send(
-        commandFrame('approval.decide', {
-          runId: spec.runId,
-          callId,
-          decision: 'allowed_once',
-        }),
+        commandFrame('approval.decide', { runId: spec.runId, callId, decision: 'allowed_once' }),
       )
       const completed = await runtime.until('run.completed')
       expect(completed.payload.runId).toBe(spec.runId)
+      expect(countOf(runtime.outputs, 'artifact.candidate')).toBe(1)
       expect(countOf(runtime.outputs, 'run.completed')).toBe(1)
     } finally {
       await runtime.dispose()

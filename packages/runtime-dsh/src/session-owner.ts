@@ -182,7 +182,7 @@ export class SessionOwner {
    * 理由见 bridge 的同名注释）——探针判「越界事件被拒」而不向真实总线注入合成流量。
    * 参数保持生产窄类型（`Session` / `SessionEvent`）：放宽成 unknown 会让
    * `event.type` / `event.data.reason` 失去编译期保护，而这里承担的判据恰恰是
-   * 「形状违约要能被发现」；形状适配只留在探针接缝一侧（桥里的 cast 有注记）。
+   * 「形状违约要能被发现」；形状适配只留在探针一侧（合成事件由契约 spec 自行 cast）。
    */
   deliverSessionEvent(eventSession: Session, event: SessionEvent): void {
     if (String(eventSession.id) !== String(this.session.id)) return

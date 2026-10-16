@@ -34,7 +34,8 @@ import { SessionOwner, type AgentStatusPayload, type SessionOwnerEvents } from '
  *
  * 能力上限（与 `probeResumeSessionId` 同级的口径）：拿到本面的探针能**伪造本 Run
  * 的帧流**——发本 Run 的 `session.event` / `agent.status`，包括越界形态（这正是判据
- * 要判的）。它不能触碰别的 Run、不能写会话日志、不能起 turn、不能改 spec。
+ * 要判的）。它不能触碰别的 Run、不能向会话日志追加或改写事件（本会话的 turn/end
+ * 会触发一次既有内容的 flush，不会 append 外来事件）、不能起 turn、不能改 spec。
  * 生产路径恒不设置 `probeAfterReady`（唯一装配点在 `apps/runtime/src/bin.ts`），
  * 本面在线上不存在。
  */
