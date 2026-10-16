@@ -66,7 +66,7 @@ describe('probe: single-run isolation (#289)', () => {
       await runtime.until('agent.status', (frame) => frame.payload.status === 'running')
 
       await expect(
-        runtime.send(commandFrame('run.cancel', { runId: randomUUID(), cause: 'admin' })),
+        runtime.send(commandFrame('run.cancel', { runId: randomUUID(), cause: 'parent' })),
       ).rejects.toThrow(/different run/)
       // 跨 Run 的取消没有生效：turn 还在跑，没有 run.cancelled。
       expect(runtime.outputs.some((frame) => frame.type === 'run.cancelled')).toBe(false)
@@ -94,7 +94,7 @@ describe('probe: single-run isolation (#289)', () => {
           commandFrame('approval.decide', {
             runId: randomUUID(),
             callId: 'call-does-not-matter',
-            decision: { kind: 'allowed_once' },
+            decision: 'allowed_once',
           }),
         ),
       ).rejects.toThrow(/different run/)
@@ -106,7 +106,7 @@ describe('probe: single-run isolation (#289)', () => {
         commandFrame('approval.decide', {
           runId: spec.runId,
           callId,
-          decision: { kind: 'allowed_once' },
+          decision: 'allowed_once',
         }),
       )
       const completed = await runtime.until('run.completed')
