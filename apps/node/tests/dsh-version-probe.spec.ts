@@ -54,8 +54,6 @@ describe('probeDshDistributionVersion', () => {
 
   it('无输出且不退出 → 超时 null，且子进程真的被收掉', async () => {
     const entry = stubEntry('setInterval(() => {}, 1000)\n')
-    await expect(
-      probeDshDistributionVersion(entry, { timeoutMs: 500 }),
-    ).resolves.toBeNull()
+    await expect(probeDshDistributionVersion(entry, { timeoutMs: 500 })).resolves.toBeNull()
   })
 })

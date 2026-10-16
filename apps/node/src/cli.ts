@@ -17,6 +17,7 @@ import { DEFAULT_CONFIG_DIR, loadConfig, saveConfig } from './config.js'
 import type { HelloFacts } from './gateway/hub-socket.js'
 import { startDeviceSession } from './gateway/session.js'
 import { installedPackDigests } from './plugin/runtime-config.js'
+import { probeDshDistributionVersion } from './plugin/dsh-version-probe.js'
 import type { PluginFetch } from './plugin/installer.js'
 import { registryFileRevision, WorkspaceRegistry } from './workspace/registry.js'
 import { WorkspaceInventory } from './workspace/inventory.js'
@@ -66,20 +67,28 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     process.stderr.write('no local config: run `whalepod-node pair` first\n')
     process.exit(1)
   }
-  // dsh 发行版版本：显式参数 > 环境变量 > 'unmanaged'（本机未托管 DSH 运行时的诚实标注；
-  // P1-12 由 runtime 装配给出真实版本）。pluginPackDigests：本地已就绪 pack 目录
-  // （P1-17；marker 校验通过才上报，半途/损坏目录不上报）。
+  // Runtime 入口：@whalepod/runtime 的 bin 产物（部署包内 resolve；P1-20 安装门兜底）。
+  // #97：按 runtime 包 exports 声明的公开子路径解析（原先解 './dist/bin.js'
+  // 深路径，未 exports ⟹ ERR_PACKAGE_PATH_NOT_EXPORTED，start 启动即死）。
+  const createRequire = (await import('node:module')).createRequire
+  const runtimeEntry = createRequire(import.meta.url).resolve('@whalepod/runtime/bin')
+  // #288：「敏感不兼容禁启动」的左侧操作数——本机真实 DSH 版本由 Runtime 自报
+  //（唯一允许 import @deepseek-ai/* 的一侧），不再由操作者声明。探针失败 → null，
+  // 上报照旧走显式参数/环境变量/'unmanaged' 的诚实兜底，而 pack 兼容闸 fail-closed。
+  const probedDshVersion = await probeDshDistributionVersion(runtimeEntry)
+  // pluginPackDigests：本地已就绪 pack 目录（P1-17；marker 校验通过才上报，
+  // 半途/损坏目录不上报）。
   const facts: HelloFacts = {
     nodeVersion: process.version,
     platform: detectPlatform(),
     architecture: process.arch,
-    dshDistributionVersion: dshVersion ?? process.env.WHALEPOD_DSH_VERSION ?? 'unmanaged',
+    dshDistributionVersion:
+      probedDshVersion ?? dshVersion ?? process.env.WHALEPOD_DSH_VERSION ?? 'unmanaged',
     pluginPackDigests: installedPackDigests(join(stateDir, 'plugin-packs')),
   }
 
   // ---- P1-13 运行会话层装配（02 Task 13）----
   const { mkdirSync } = await import('node:fs')
-  const { createRequire } = await import('node:module')
   const { homedir } = await import('node:os')
   const { CommandStore } = await import('./spool/command-store.js')
   const { EventStore } = await import('./spool/event-store.js')
@@ -160,6 +169,9 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     }),
     fetchDescriptor: (packDigest) =>
       fetchPluginPackDescriptor(config.hubUrl, config.deviceToken, packDigest),
+    // #288：本机 DSH 版本是启动时探针的常量（升级 DSH 要重启 Node——升级流程
+    // 本来就要求重启）。探针失败时这里恒为 null：兼容闸 fail-closed 拒绝 pack。
+    localDshVersion: () => Promise.resolve(probedDshVersion),
     log: (level, msg, context) => {
       process.stderr.write(
         `${JSON.stringify({ level, component: 'node.plugin', msg, ...context })}\n`,
@@ -167,10 +179,6 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     },
   })
 
-  // Runtime 入口：@whalepod/runtime 的 bin 产物（部署包内 resolve；P1-20 安装门兜底）。
-  // #97：按 runtime 包 exports 声明的公开子路径解析（原先解 './dist/bin.js'
-  // 深路径，未 exports ⟹ ERR_PACKAGE_PATH_NOT_EXPORTED，start 启动即死）。
-  const runtimeEntry = createRequire(import.meta.url).resolve('@whalepod/runtime/bin')
   // #118：sessionSend 的 let 必须先于 RunManager 构造与 recoverOrphans() 执行——
   // 否则「RunManager send 闭包（L190 形态）在 TDZ 内求值 sessionSend」，有孤儿
   // 时启动即崩（alpha.2 狗食实录：一孤儿一崩）。no-op 默认值正是为会话建立前

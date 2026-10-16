@@ -8,10 +8,9 @@
  * 不 fork loop）。`dispose()` 按 cancel → flush → dispose 次序收敛后拆树。
  */
 import { randomUUID } from 'node:crypto'
-import { realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { boot, loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
 import {
@@ -23,6 +22,7 @@ import {
 import type { ArtifactPort } from './artifact-tool.js'
 import { createWorkspaceArtifactValidator } from './artifact-validation.js'
 import { ApprovalPort } from './approval-port.js'
+import { dshAnchorUrl } from './dsh-distribution.js'
 import { nullLog, type LogSink } from './log.js'
 import { dshSessionIdOf, runtimeSpecFromInitialize, type RuntimeSpec } from './runtime-spec.js'
 import { SessionOwner, type SessionOwnerEvents } from './session-owner.js'
@@ -56,14 +56,9 @@ const require = createRequire(import.meta.url)
 const BIN_NAME = 'whalepod-runtime'
 
 /**
- * in-box 插件名的解析锚点：@deepseek-ai/dsh CLI 包的真实路径（realpath 后进
- * pnpm 虚拟 store，bare plugin specifier 经父目录遍历命中其依赖与 hoist 面，
- * 与 dsh-app-boot `boot()` 的 bareModuleBaseUrl 契约一致——宿主拥有完整插件集）。
+ * in-box 插件名的解析锚点：`@deepseek-ai/dsh` 包的真实路径。定义搬去
+ * `dsh-distribution.ts`（#288：版本自报要与 boot 锚同源，两处不能再各解一次）。
  */
-function dshAnchorUrl(): string {
-  return pathToFileURL(realpathSync(require.resolve('@deepseek-ai/dsh/package.json'))).href
-}
-
 function dshBasePatchPath(): string {
   return require.resolve('@deepseek-ai/dsh-base/cordis.patch.yml')
 }
@@ -348,7 +343,10 @@ export class RuntimeBridge {
       )
     }
     dshSessionId = actualSessionId
-    emit(frameOf('runtime.ready', { runId, dshSessionId }))
+    // #288：ready 帧回声本 Run 装载的 profileDigest——Node 侧拿它与 run.start 固化的
+    // expectedProfileDigest 比对（对照点在收到方）。这里是**如实回报**，不是断言：
+    // Runtime 不判断自己该是哪个 Revision，只报告自己实际收到并装载的身份。
+    emit(frameOf('runtime.ready', { runId, dshSessionId, profileDigest: spec.profileDigest }))
     return new RuntimeBridge(ctx, owner, approval, spec, log)
   }
 

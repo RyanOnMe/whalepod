@@ -27,11 +27,16 @@
             },
             "dshSessionId": {
               "$ref": "#/$defs/__schema3"
+            },
+            "profileDigest": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
             }
           },
           "required": [
             "runId",
-            "dshSessionId"
+            "dshSessionId",
+            "profileDigest"
           ],
           "additionalProperties": false
         }

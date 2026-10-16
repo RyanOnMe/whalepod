@@ -836,6 +836,18 @@ export class RunManager {
     }
     // P1-16：runtime.ready 事实入账（snapshot 的 dshSessionId/startedAt）。
     if (frame.type === 'runtime.ready') {
+      // #288：ready 回声的 profileDigest 必须等于 run.start 固化的 Revision digest。
+      // 对照点在收到方（Node）——不符即身份漂移，按协议违例同路收敛（fail run +
+      // 终止 runtime），绝不让身份不明的 Run 继续执行。
+      const facts = this.runFacts.get(runId)
+      if (facts !== undefined && frame.payload.profileDigest !== facts.expectedProfileDigest) {
+        this.profileIdentityViolation(
+          runId,
+          frame.payload.profileDigest,
+          facts.expectedProfileDigest,
+        )
+        return
+      }
       this.readyFacts.set(runId, {
         dshSessionId: frame.payload.dshSessionId,
         startedAt: this.now().toISOString(),
@@ -940,6 +952,30 @@ export class RunManager {
       })
       this.spoolAndDrain(runId, result.events)
       this.finalizeRun(runId, 'failed', 'INTERNAL_ERROR', `runtime protocol violation: ${why}`)
+      this.workspacePaths.delete(runId)
+    }
+    void this.deps.supervisor.cancel(runId)
+  }
+
+  /**
+   * #288：Runtime 回报的 profileDigest 与固化的 Revision digest 不符——身份对照
+   * 失败，与协议违例同路收敛（合成 run.failed(PROFILE_MISMATCH) + 终止 runtime）。
+   * 两个 digest 都是 sha256 十六进制，可直接进消息（不是本地路径或敏感语料）。
+   */
+  private profileIdentityViolation(runId: string, reported: string, expected: string): void {
+    const summary = `runtime reported profile digest ${reported}; pinned revision digest is ${expected}`
+    this.log('error', 'runtime profile identity mismatch; failing run', { runId })
+    const projector = this.projectors.get(runId)
+    if (projector !== undefined) {
+      const result = projector.projectRuntimeOutput({
+        protocolVersion: 1,
+        messageId: crypto.randomUUID(),
+        sentAt: this.now().toISOString(),
+        type: 'runtime.fatal',
+        payload: { runId, code: 'PROFILE_MISMATCH', summary },
+      })
+      this.spoolAndDrain(runId, result.events)
+      this.finalizeRun(runId, 'failed', 'PROFILE_MISMATCH', summary)
       this.workspacePaths.delete(runId)
     }
     void this.deps.supervisor.cancel(runId)

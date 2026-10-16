@@ -139,6 +139,11 @@ export const RuntimeReadySchema = envelope(
   z.strictObject({
     runId: z.uuid(),
     dshSessionId: DshSessionIdSchema,
+    // #288：本 Run 装载的 Profile Revision digest 的**回声**——Node 侧据此与 run.start
+    // 固化的 expectedProfileDigest 比对，不符即 PROFILE_MISMATCH 不继续执行。对照点
+    // 放在收到方（Node），不在产出方（Hub 领域模型）自证；Runtime 只如实回报自己
+    // 收到并装载的身份，不解读、不兜底。
+    profileDigest: Sha256DigestSchema,
   }),
 )
 

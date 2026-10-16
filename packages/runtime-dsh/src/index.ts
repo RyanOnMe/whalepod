@@ -8,6 +8,8 @@ export const RUNTIME_DSH_VERSION = 1 as const
 
 export { RuntimeBridge, dispatchRuntimeCommand } from './bridge.js'
 export type { RuntimeBridgeOptions, RuntimeBridgeSlot } from './bridge.js'
+export { dshDistributionInfo, dshAnchorUrl, dshAnchorPath } from './dsh-distribution.js'
+export type { DshDistributionInfo } from './dsh-distribution.js'
 export { runtimeSpecFromInitialize, dshSessionIdOf } from './runtime-spec.js'
 export type { RuntimeSpec } from './runtime-spec.js'
 export { SessionOwner } from './session-owner.js'
