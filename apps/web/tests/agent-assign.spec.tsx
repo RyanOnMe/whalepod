@@ -5,6 +5,8 @@
  * - 创建任务的责任人下拉含**未归档** Agent（归档不进），选中 Agent 后出现
  *   「指派即执行」提示；提交体带 `assigneeAgentId` 且**不带** `assigneeUserId`
  *   （协议互斥的 UI 面）；驱动失败的结果走 toast 如实告知，不吞。
+ * - #312：驱动结果在成功信封的**兄弟位**（`{ ok, data, drive }`，不在 `data` 里）；
+ *   四种受理命运各说各话——排队/未受理绝不说成「已自动开始执行」，失败带错误码与恢复入口。
  * - TaskHeader：Agent-task 的「当前责任人」仍是真人（指派人），另出「执行 Agent」格。
  * - AssignmentPanel：Agent-task 不渲染接受/拒绝（端点对 Agent-task 恒 409），
  *   陈述「谁指派给了哪个 Agent、指派即驱动、责任人是谁」。
@@ -12,17 +14,19 @@
  */
 import { screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { resetToastsForTest } from '../src/app/toast.js'
 import type { AgentView, ProjectView, TaskView } from '../src/shared/api/types.js'
 import {
   ALICE,
   BOB,
   agentsHandler,
+  created,
+  createdWithSiblings,
   loggedInHandlers,
   makeMember,
   makeRun,
   makeTask,
-  ok,
   projectsHandler,
   teamMembersHandler,
   taskRoomHandler,
@@ -59,7 +63,54 @@ const ARCHIVED_AGENT: AgentView = {
   archivedAt: '2026-08-01T00:00:00.000Z',
 }
 
+// toast 是模块级存储：上一条用例推的 toast 会漏进下一条（本轮新增的
+// 「分给真人 → 不弹执行 toast」就是靠这条隔离才测得准）。
+beforeEach(() => {
+  resetToastsForTest()
+})
+
 describe('#239 创建任务：责任人可选 Agent（指派即执行）', () => {
+  /**
+   * 创建任务的响应：驱动结果在成功信封的**兄弟位**（`{ ok, data, drive }`）。
+   *
+   * #312 的教训：把 `drive` 塞进 `data` 造 fixture，会让用例验一个前端自己编出来的
+   * 假契约（页面按 `data.drive` 读时全绿，真实响应里那条 toast 从不出现）。
+   * 这里一律走 `createdWithSiblings` 照真实 wire 造。
+   */
+  function createTaskHandlers(drive: Record<string, unknown> | null): MockHandler[] {
+    return [
+      projectsHandler([PROJECT_VIEW]),
+      teamMembersHandler(),
+      agentsHandler([AGENT]),
+      {
+        method: 'POST',
+        url: /\/api\/v1\/projects\/[^/]+\/tasks$/,
+        respond: () =>
+          drive === null
+            ? created({ ...makeTask({ id: 'new-member-task' }) })
+            : createdWithSiblings(
+                {
+                  ...makeTask({ id: 'new-agent-task' }),
+                  assigneeAgentId: AGENT.id,
+                  assignmentStatus: 'accepted',
+                },
+                { drive },
+              ),
+      },
+    ]
+  }
+
+  /** 真人路径：开表单 → 填标题 → （可选）选责任人 → 提交。 */
+  async function submitCreateTask(
+    user: ReturnType<typeof userEvent.setup>,
+    assignee: RegExp | null,
+  ): Promise<void> {
+    await user.click(await screen.findByRole('button', { name: '创建任务' }))
+    await user.type(await screen.findByLabelText('任务标题'), '把登录页改成深色')
+    if (assignee !== null) await selectOption(user, '交给谁', assignee)
+    await user.click(screen.getByRole('button', { name: /创建任务/ }))
+  }
+
   it('下拉含未归档 Agent（归档不进）；选中后出现提示；提交体带 assigneeAgentId 且不带 assigneeUserId', async () => {
     const captures: { bodies: unknown[] } = { bodies: [] }
     const user = userEvent.setup()
@@ -74,11 +125,14 @@ describe('#239 创建任务：责任人可选 Agent（指派即执行）', () =>
           url: /\/api\/v1\/projects\/[^/]+\/tasks$/,
           respond: (init) => {
             captures.bodies.push(JSON.parse(String(init.body ?? '{}')))
-            return ok({
-              ...makeTask({ id: 'new-agent-task' }),
-              assigneeAgentId: AGENT.id,
-              assignmentStatus: 'accepted',
-            })
+            return createdWithSiblings(
+              {
+                ...makeTask({ id: 'new-agent-task' }),
+                assigneeAgentId: AGENT.id,
+                assignmentStatus: 'accepted',
+              },
+              { drive: { outcome: 'started_run', runId: '99999999-0000-4000-8000-0000000000r1' } },
+            )
           },
         },
       ]),
@@ -104,36 +158,92 @@ describe('#239 创建任务：责任人可选 Agent（指派即执行）', () =>
     expect(captures.bodies[0]).not.toHaveProperty('assigneeUserId')
   })
 
-  it('驱动失败（设备离线）→ toast 如实说「自动执行未开始」，任务仍算创建成功', async () => {
+  it('驱动失败（设备离线）→ toast 如实说「自动执行未开始」并给错误码与恢复入口，任务仍算创建成功', async () => {
     const user = userEvent.setup()
     const view = renderApp(
       '/',
-      loggedInHandlers(BOB, [
-        projectsHandler([PROJECT_VIEW]),
-        teamMembersHandler(),
-        agentsHandler([AGENT]),
-        {
-          method: 'POST',
-          url: /\/api\/v1\/projects\/[^/]+\/tasks$/,
-          respond: () =>
-            ok({
-              ...makeTask({ id: 'new-agent-task-2' }),
-              assigneeAgentId: AGENT.id,
-              drive: { outcome: 'failed', error: { code: 'DEVICE_OFFLINE', message: 'no device' } },
-            }),
-        },
-      ]),
+      loggedInHandlers(
+        BOB,
+        createTaskHandlers({
+          outcome: 'failed',
+          error: { code: 'DEVICE_OFFLINE', message: 'no device' },
+        }),
+      ),
     )
-    await user.click(await screen.findByRole('button', { name: '创建任务' }))
-    await user.type(await screen.findByLabelText('任务标题'), '再一个任务')
-    await selectOption(user, '交给谁', /report-writer（Agent · 指派即执行）/)
-    await user.click(screen.getByRole('button', { name: /创建任务/ }))
+    await submitCreateTask(user, /report-writer（Agent · 指派即执行）/)
     await waitFor(() =>
       expect(
         screen.getByText(/自动执行未开始（DEVICE_OFFLINE）/, { exact: false }),
       ).toBeInTheDocument(),
     )
+    // 恢复入口说清去哪：任务已创建 → 在任务执行区手动发起（不重开一个任务）。
+    expect(screen.getByText(/可在任务执行区手动发起/, { exact: false })).toBeInTheDocument()
     expect(view.fetchMock.mock.calls.length).toBeGreaterThan(0)
+  })
+
+  it('驱动成功（started_run）→ toast 说已自动开始执行', async () => {
+    const user = userEvent.setup()
+    renderApp(
+      '/',
+      loggedInHandlers(
+        BOB,
+        createTaskHandlers({
+          outcome: 'started_run',
+          runId: '99999999-0000-4000-8000-0000000000r1',
+        }),
+      ),
+    )
+    await submitCreateTask(user, /report-writer（Agent · 指派即执行）/)
+    await waitFor(() =>
+      expect(screen.getByText('任务已创建，Agent 已自动开始执行')).toBeInTheDocument(),
+    )
+  })
+
+  it('排队（queued）→ 说受理排队，绝不谎称已开始执行', async () => {
+    const user = userEvent.setup()
+    renderApp(
+      '/',
+      loggedInHandlers(
+        BOB,
+        createTaskHandlers({
+          outcome: 'queued',
+          runId: '99999999-0000-4000-8000-0000000000r1',
+        }),
+      ),
+    )
+    await submitCreateTask(user, /report-writer（Agent · 指派即执行）/)
+    await waitFor(() =>
+      expect(screen.getByText(/执行已受理排队/, { exact: false })).toBeInTheDocument(),
+    )
+    // 「受理了」与「跑起来了」是两件事——这条判据就是 #312 的第二条要求。
+    expect(screen.queryByText(/已自动开始执行/, { exact: false })).toBeNull()
+  })
+
+  it('当场拒绝（rejected）→ 说未受理，不谎报执行', async () => {
+    const user = userEvent.setup()
+    renderApp(
+      '/',
+      loggedInHandlers(
+        BOB,
+        createTaskHandlers({
+          outcome: 'rejected',
+          runId: '99999999-0000-4000-8000-0000000000r1',
+        }),
+      ),
+    )
+    await submitCreateTask(user, /report-writer（Agent · 指派即执行）/)
+    await waitFor(() =>
+      expect(screen.getByText(/但执行未受理/, { exact: false })).toBeInTheDocument(),
+    )
+    expect(screen.queryByText(/已自动开始执行/, { exact: false })).toBeNull()
+  })
+
+  it('分给真人（响应无 drive）→ 不弹执行 toast', async () => {
+    const user = userEvent.setup()
+    const view = renderApp('/', loggedInHandlers(BOB, createTaskHandlers(null)))
+    await submitCreateTask(user, null)
+    await waitFor(() => expect(view.fetchMock.mock.calls.length).toBeGreaterThan(1))
+    expect(screen.queryByTestId('toast-item')).toBeNull()
   })
 })
 
