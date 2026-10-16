@@ -6,6 +6,7 @@
 |---|---|
 | [execution-draft-acceptance.md](./execution-draft-acceptance.md) | #337：会话内执行草稿、跨任务/身份隔离、请求连续性与清除边界 |
 | [preparation-return-acceptance.md](./preparation-return-acceptance.md) | #338：设备准备返回、首次当前条件复核与失败恢复 |
+| [preparation-return-production-acceptance.md](./preparation-return-production-acceptance.md) | #339：真实准备往返、失败重跑旧证据失效、独立判定与全量Q5 |
 | [ai-harness-principles.md](./ai-harness-principles.md) | 六原语：驱动、观测、判定、归因、取证、发现 |
 | [issue-workflow.md](./issue-workflow.md) | 问题从发现到合入的完整走法 |
 | [evidence-map.md](./evidence-map.md) | 出问题时去哪一层找哪份证据 |
@@ -13,9 +14,10 @@
 | [run-micro-acceptance.md](./run-micro-acceptance.md) | #306 完整 Micro：Run/工具事实、公开活动摘要、Console 筛选、发送反馈、断线/后台/减少动态、真实双人 Q5 与来源许可 |
 | [attention-entry-acceptance.md](./attention-entry-acceptance.md) | #332 首页个人入口、精确动作落点、后台焦点与实时更新（含#274） |
 | [attention-trial-acceptance.md](./attention-trial-acceptance.md) | #333：个人行动入口双用户生产验收、独立证据判定与真人试用边界 |
-| [operation-flow-usability-trial.md](./operation-flow-usability-trial.md) | 第四批真实团队试用脚本与空记录表；尚未执行 |
+| [operation-flow-usability-trial.md](./operation-flow-usability-trial.md) | 第四/五批真实团队试用脚本与空记录表；尚未执行 |
 | [personal-attention-acceptance.md](./personal-attention-acceptance.md) | #331 按当前身份/角色与拥有关系生成有限个人行动投影 |
 | [operation-flow-batch4-plan.md](./operation-flow-batch4-plan.md) | 第四批剩余事项、个人行动入口与真人试用验证方案 |
+| [operation-flow-batch5-plan.md](./operation-flow-batch5-plan.md) | 第五批剩余事项、会话草稿、准备返回与生产验收方案 |
 | [action-conditions-acceptance.md](./action-conditions-acceptance.md) | #319 操作处理人、服务端验收条件与讨论定位 |
 | [delivery-revision-acceptance.md](./delivery-revision-acceptance.md) | #327 显式产出来源/意见材料、修订重新发布与真人验收完成 |
 | [artifact-review-entry-acceptance.md](./artifact-review-entry-acceptance.md) | #326 产出发起复核、明确材料/Agent、草稿与权限、历史输入查看 |

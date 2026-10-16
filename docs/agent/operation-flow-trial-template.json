@@ -23,5 +23,22 @@
     "sanitizedQuote": null,
     "recentTasksStale": null
   },
-  "conclusions": null
+  "conclusions": null,
+  "fifthBatchTrial": {
+    "status": "not_run",
+    "baselineCommit": "6fcbcb10ef651b8c3aae66c2668a0ed162a516e2",
+    "candidateCommit": null,
+    "observations": [],
+    "additionalFields": {
+      "returnLocateMs": null,
+      "rewrittenCharacters": null,
+      "changedTarget": null,
+      "accidentalSend": null,
+      "duplicateSend": null,
+      "preparationExplainedCorrectly": null,
+      "helpCount": null,
+      "setupWaitMs": null,
+      "blockerComponent": null
+    }
+  }
 }

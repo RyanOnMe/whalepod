@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   env,
@@ -13,6 +13,12 @@ import {
   waitForRunStatus,
   waitForRuntimeReleased,
 } from './helpers.js'
+
+const preparationEvidence = join(process.cwd(), 'artifacts', 'evidence', 'preparation-return')
+// Before browser fixtures and any driver step: a failed attempt must have no previous success.
+test.beforeAll(async () => {
+  await rm(join(preparationEvidence, 'result.json'), { force: true })
+})
 
 test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式续跑来源会话', async ({ browser }) => {
   test.setTimeout(180_000)
@@ -85,6 +91,13 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     const execute = owner.locator('[aria-labelledby="instructions-heading"]')
     await expect(execute.locator('textarea')).toHaveCount(1)
     await selectFromMenu(owner.getByLabel('选择 Agent'), 'Builder')
+    let instructionPosts = 0
+    let preparationPosts = 0
+    owner.on('request', (request) => {
+      if (request.method() !== 'POST') return
+      if (request.url().endsWith(`/tasks/${taskId}/instructions`)) instructionPosts++
+      if (request.url().endsWith(`/tasks/${taskId}/preparation-check`)) preparationPosts++
+    })
     await owner.getByRole('button', { name: '检查本次准备条件' }).click()
     await expect(owner.getByTestId('preparation-status')).toContainText(
       '本机已配置；未验证模型调用',
@@ -93,6 +106,11 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     await expect(owner.getByTestId('preparation-status')).toContainText('已过期', {
       timeout: 35_000,
     })
+    const secondCheck = owner.waitForResponse(
+      (response) =>
+        response.url().endsWith(`/tasks/${taskId}/preparation-check`) &&
+        response.request().method() === 'POST',
+    )
     await owner.getByRole('button', { name: '检查本次准备条件' }).click()
     await expect(owner.getByTestId('preparation-status')).toContainText(
       '本机已配置；未验证模型调用',
@@ -105,8 +123,56 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
       '请用一句话确认你已收到这条试运行指令，不需要调用工具或修改文件。',
     )
 
-    // 已就绪时沿用明确标注的自动环境，不要求首次再填另一张表单。
-    await owner.getByLabel('指令', { exact: true }).fill('生成候选报告')
+    // The production check fixed the concrete target; navigation must retain those identities.
+    const selectionBefore = (await secondCheck).request().postDataJSON() as {
+      agentId: string
+      profileRevisionId: string
+      deviceId: string
+      workspaceId: string
+    }
+    for (const value of Object.values(selectionBefore)) expect(value).toMatch(/^[0-9a-f-]{36}$/i)
+    const labelsBefore = await owner
+      .locator(
+        '#run-agent-value, #run-revision-value, #target-device-value, #target-workspace-value',
+      )
+      .allTextContents()
+    const returnDraft = '生成候选报告'
+    await owner.getByLabel('指令', { exact: true }).fill(returnDraft)
+    await expect(owner.getByLabel('执行方式')).toContainText('开始新执行')
+    const instructionPostsBeforeNavigation = instructionPosts
+    const preparationPostsBeforeNavigation = preparationPosts
+    await owner.getByRole('link', { name: '安装并配对执行服务' }).click()
+    await expect(owner.getByRole('link', { name: '返回任务继续准备' })).toHaveAttribute(
+      'href',
+      `/tasks/${taskId}#task-execution`,
+    )
+    await owner.getByRole('link', { name: '返回任务继续准备' }).click()
+    await expect(owner.locator('#task-execution')).toBeFocused()
+    await expect(owner.getByLabel('指令', { exact: true })).toHaveValue(returnDraft)
+    await expect(owner.getByLabel('执行方式')).toContainText('开始新执行')
+    await expect(owner.getByTestId('preparation-status')).toContainText('本次准备条件尚未确认')
+    await expect(owner.getByRole('button', { name: '开始执行' })).toBeEnabled()
+    expect(
+      await owner
+        .locator(
+          '#run-agent-value, #run-revision-value, #target-device-value, #target-workspace-value',
+        )
+        .allTextContents(),
+    ).toEqual(labelsBefore)
+    const instructionPostsAfterNavigation = instructionPosts
+    const preparationPostsAfterNavigation = preparationPosts
+    expect(instructionPostsAfterNavigation).toBe(0)
+    expect(instructionPostsAfterNavigation).toBe(instructionPostsBeforeNavigation)
+    expect(preparationPostsAfterNavigation).toBe(preparationPostsBeforeNavigation)
+    const returnCheck = owner.waitForResponse(
+      (response) =>
+        response.url().endsWith(`/tasks/${taskId}/preparation-check`) &&
+        response.request().method() === 'POST',
+    )
+    await owner.getByRole('button', { name: '检查本次准备条件' }).click()
+    const selectionAfter = (await returnCheck).request().postDataJSON() as typeof selectionBefore
+    expect(selectionAfter).toEqual(selectionBefore)
+    await expect(owner.getByTestId('preparation-status')).toContainText('已确认可用')
     await expect(owner.getByRole('button', { name: '开始执行' })).toBeEnabled()
     const startResponse = owner.waitForResponse(
       (response) =>
@@ -116,6 +182,16 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     await owner.getByRole('button', { name: '开始执行' }).click()
     const firstReply = await startResponse
     expect(firstReply.status()).toBe(201)
+    const submitted = firstReply.request().postDataJSON() as typeof selectionBefore & {
+      text: string
+    }
+    const submittedSelection = Object.fromEntries(
+      Object.keys(selectionBefore).map((key) => [key, submitted[key as keyof typeof submitted]]),
+    )
+    expect(submittedSelection).toEqual(selectionBefore)
+    expect(submitted.text).toBe(returnDraft)
+    const explicitInstructionPosts = instructionPosts - instructionPostsAfterNavigation
+    expect(explicitInstructionPosts).toBe(1)
     const firstRunId = (await firstReply.json()).data.runId as string
     await waitForRunStatus(firstRunId, 'waiting_approval')
     await expect(owner.getByRole('button', { name: '提交验收', exact: true })).toBeDisabled()
@@ -148,17 +224,25 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     await expect(owner.getByRole('button', { name: '发送追问' })).toBeEnabled()
     await box.fill(draft)
     await owner.getByTestId('approve-button').click()
-    await waitForRunStatus(firstRunId, 'completed')
+    const completedFirst = await waitForRunStatus(firstRunId, 'completed')
     await waitForRuntimeReleased(firstRunId)
     await expect(owner.getByTestId('execution-blocker')).toContainText('草稿仍保留')
     await expect(box).toHaveValue(draft)
     await expect(owner.getByRole('button', { name: '发送追问' })).toBeDisabled()
     const before = (await hubApi(cookie, 'GET', `/runs/${firstRunId}`)).data as {
+      agentId: string
       dshSessionId: string
       profileRevisionId: string
       deviceId: string
       workspaceId: string
     }
+    const actualSelection = {
+      agentId: before.agentId,
+      profileRevisionId: before.profileRevisionId,
+      deviceId: before.deviceId,
+      workspaceId: before.workspaceId,
+    }
+    expect(actualSelection).toEqual(selectionBefore)
     await selectFromMenu(owner.getByLabel('执行方式'), /继续会话/)
     await expect(owner.getByLabel('指令', { exact: true })).toHaveValue(draft)
     await expect(owner.getByRole('button', { name: '继续会话', exact: true })).toBeEnabled()
@@ -191,6 +275,41 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     expect(after.workspaceId).toBe(before.workspaceId)
     await expect(owner.getByRole('button', { name: '提交验收', exact: true })).toBeDisabled()
     await expect(owner.getByTestId('review-condition')).toContainText('发布至少一个交付物')
+    await mkdir(preparationEvidence, { recursive: true })
+    await writeFile(
+      join(preparationEvidence, 'result.json'),
+      JSON.stringify(
+        {
+          component: 'web.preparation.return',
+          source: 'production-http-ws-node-runtime',
+          verifiedAt: new Date().toISOString(),
+          taskId,
+          acceptedRunId: firstRunId,
+          selectionBefore,
+          selectionAfter,
+          submittedSelection,
+          actualSelection,
+          targetId: 'task-execution',
+          focusedTargetId: 'task-execution',
+          draftPreserved: true,
+          modeBefore: 'new',
+          modeAfter: 'new',
+          submittedDraftMatches: submitted.text === returnDraft,
+          preparationBefore: 'confirmed',
+          preparationAfter: 'unconfirmed',
+          instructionPostsBeforeNavigation,
+          instructionPostsAfterNavigation,
+          preparationPostsBeforeNavigation,
+          preparationPostsAfterNavigation,
+          explicitInstructionPosts,
+          runtimeRunStatus: completedFirst.run.status,
+          humanUsability: 'not_measured',
+          provider: 'replay',
+        },
+        null,
+        2,
+      ),
+    )
     const evidence = join(process.cwd(), 'artifacts', 'evidence', 'unified-execution')
     await mkdir(evidence, { recursive: true })
     await writeFile(
