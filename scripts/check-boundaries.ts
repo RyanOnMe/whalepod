@@ -19,7 +19,7 @@
  * `importer:line -> specifier`, and exits non-zero when any violation is found.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
 import { extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type * as TS from 'typescript'
@@ -34,6 +34,9 @@ const DSH_OWNERS = ['packages/runtime-dsh/', 'apps/runtime/']
 const DSH_ERROR = 'DSH imports are restricted to packages/runtime-dsh and apps/runtime'
 
 const WORKSPACE_SCOPE = '@whalepod/'
+
+/** 判据要覆盖的测试源文件扩展名（tsc 默认只吃 TS 家族）。 */
+const TEST_SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts'])
 
 /**
  * importer path prefix -> allowed `@whalepod/*` specifiers.
@@ -219,6 +222,13 @@ function* walkSourceFiles(dir: string): Generator<string> {
  * 于是「新包漏配 typecheck」= 该包整体静默脱离类型门，没有任何门会红。这条把它变成硬失败：
  * 凡是有 `tests/` 的 workspace 包，`scripts.typecheck` 必须存在且引用 `tsconfig.test.json`。
  *
+ * 判据分两层，第二层才是难绕过的那层：脚本文本必须引用 tsconfig.test.json（第一层，纯文本、
+ * 好绕过），且 `tsc -p tsconfig.test.json --listFilesOnly` 的**实际文件清单**要含 tests/ 下的
+ * **每一个** TS 文件（第二层，ground truth）。第二层是评审 B 第二轮逼出来的：只要求「清单里
+ * 有任一 /tests/ 路径」时，include 写成 `tests/*.spec.ts` 这种**单层 glob**（只覆盖 tests/
+ * 顶层）就会让 apps/node 的 tests 深层目录里共 9 个 spec 静默脱离 Q0 而门全绿。
+ * tsc 列不出清单（非零退出）按**失败**处理——配置坏了就不许判「已接线」。
+ *
  * 表 `TYPECHECK_WIRING_DEFERRED` 是**尚未接线**的包（每项必须带 Issue 与实测存量错误数），
  * 只允许**缩小**：收口一片就删一行。新增未接线的包进不来——这就是这条护栏的意义；
  * 「表内条目其实已经接线了却忘了删行」由 `check-boundaries.spec.ts` 的机器判据兜住。
@@ -239,20 +249,59 @@ export interface TypecheckWiringOptions {
   readonly tscBin?: string
 }
 
-/** program 里是否真有 tests/ 下的文件（展开 extends/include/exclude/glob 后的真值）。 */
-function programCoversTests(packageDir: string, tscBin: string): boolean {
+/** 该包 tests/ 下的全部 TS 源文件（判据要求它们**每一个**都进 program）。 */
+function testSourceFiles(testsDir: string): string[] {
+  const files: string[] = []
+  for (const entry of readdirSync(testsDir, { withFileTypes: true })) {
+    const path = join(testsDir, entry.name)
+    if (entry.isDirectory()) files.push(...testSourceFiles(path))
+    else if (TEST_SOURCE_EXTENSIONS.has(extname(entry.name))) files.push(path)
+  }
+  return files
+}
+
+/**
+ * 不在 typecheck program 里的测试文件（相对包根；空数组 = 全覆盖）。
+ *
+ * 判据要的是「**每一个** tests/ 文件都进 program」，不是「至少有一个」——后者会被
+ * 「单层 glob 手滑」放过去（评审 B 的实测：`include: [..., "tests/*.spec.ts"]` 让
+ * apps/node 的 `tests/integration/**` 与 `tests/resilience/**` 共 9 个 spec 静默脱离 Q0，
+ * 门全绿）。清单已经在手里，逐个对比的代价为 0。
+ * tsc 起不来（缺依赖、配置语法错）返回 null，调用方按 fail-closed 处理。
+ */
+function uncoveredTestFiles(packageDir: string, tscBin: string): string[] | null {
+  let output: string
   try {
-    const output = execFileSync(tscBin, ['-p', 'tsconfig.test.json', '--listFilesOnly'], {
+    output = execFileSync(tscBin, ['-p', 'tsconfig.test.json', '--listFilesOnly'], {
       cwd: packageDir,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    return output
-      .split('\n')
-      .some((line) => line.includes(`${sep}tests${sep}`) || line.includes('/tests/'))
   } catch {
-    // tsc 起不来（缺依赖、配置语法错）也是「tests/ 没进 program」的一种，fail-closed。
-    return false
+    return null
+  }
+  // 两侧都过 realpath：macOS 的 os.tmpdir() 是 /var/folders/…，而 tsc 打的是
+  // /private/var/folders/…（同一目录的两种写法）——不归一就会把「在 program 里」
+  // 误判成缺失（fixture 实测踩到）。
+  const realPackageDir = realpathSync(packageDir)
+  const inProgram = new Set(
+    output
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '' && !line.includes(' '))
+      .map((line) => safeRealpath(resolve(line))),
+  )
+  return testSourceFiles(join(realPackageDir, 'tests'))
+    .filter((file) => !inProgram.has(safeRealpath(resolve(file))))
+    .map((file) => relative(realPackageDir, file))
+}
+
+/** realpath，失败时退回原路径（tsc 清单里可能有已消失的路径）。 */
+function safeRealpath(path: string): string {
+  try {
+    return realpathSync(path)
+  } catch {
+    return path
   }
 }
 
@@ -292,10 +341,17 @@ export function checkTypecheckWiring(
         continue
       }
       const tscBin = options.tscBin ?? join(repoRoot, 'node_modules', '.bin', 'tsc')
-      if (!programCoversTests(dir, tscBin)) {
+      const uncovered = uncoveredTestFiles(dir, tscBin)
+      if (uncovered === null) {
         violations.push(
-          `${where}: tsconfig.test.json 的 program 里没有 tests/ 下的文件` +
-            `（测试静默脱离 Q0；核对 include/exclude/extends 的真实效果）`,
+          `${where}: 无法列出 typecheck program（tsc -p tsconfig.test.json 退出非零；` +
+            `配置语法或依赖坏了）——测试是否进 Q0 无从判定`,
+        )
+      } else if (uncovered.length > 0) {
+        const shown = uncovered.slice(0, 5).join('、')
+        violations.push(
+          `${where}: ${uncovered.length} 个 tests/ 下的文件不在 typecheck program 里（静默脱离 Q0）：` +
+            `${shown}${uncovered.length > 5 ? '、…' : ''}`,
         )
       }
     }

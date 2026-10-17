@@ -240,6 +240,10 @@ describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
     const dir = join(root, scope, name)
     await mkdir(withTests ? join(dir, 'tests') : dir, { recursive: true })
     await writeFile(join(dir, 'package.json'), JSON.stringify(manifest))
+    // 真实包总有 src/：给 fixture 也放一个，否则收窄 include 的变异会因 TS18003
+    // 「no inputs」让 tsc 非零退出，落到 fail-closed 分支而不是精确的缺失清单。
+    await mkdir(join(dir, 'src'), { recursive: true })
+    await writeFile(join(dir, 'src', 'sample.ts'), 'export const impl = 1\n')
     if (!withTestConfig) return
     // #183：配置与目录都写成仓库真实形态——判据的 ground truth 是 program 的实际文件
     // 清单，空 tests/ 与空配置都会被判「未覆盖」（那是**特性**：接线要真的把测试编进去）。
@@ -249,6 +253,9 @@ describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
     )
     if (withTests) {
       await writeFile(join(dir, 'tests', 'sample.spec.ts'), 'export const sample = 1\n')
+      // 嵌套一层：单层 glob（tests/*.spec.ts）会漏掉它——判据要求**每一个**测试文件都进 program。
+      await mkdir(join(dir, 'tests', 'integration'), { recursive: true })
+      await writeFile(join(dir, 'tests', 'integration', 'deep.spec.ts'), 'export const deep = 1\n')
     }
   }
 
@@ -287,8 +294,9 @@ describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
       '{\n  // 注释与收窄都要能处理\n  "include": ["src/**/*.ts"]\n}\n',
     )
     expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([
-      'apps/narrowed: tsconfig.test.json 的 program 里没有 tests/ 下的文件' +
-        '（测试静默脱离 Q0；核对 include/exclude/extends 的真实效果）',
+      'apps/narrowed: 2 个 tests/ 下的文件不在 typecheck program 里（静默脱离 Q0）：' +
+        // 顺序 = 目录遍历序（readdirSync 排序：integration/ 在 sample.spec.ts 之前）
+        'tests/integration/deep.spec.ts、tests/sample.spec.ts',
     ])
   })
 
@@ -312,8 +320,29 @@ describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
       JSON.stringify({ extends: './tsconfig.json', compilerOptions: {} }),
     )
     expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([
-      'apps/inherits: tsconfig.test.json 的 program 里没有 tests/ 下的文件' +
-        '（测试静默脱离 Q0；核对 include/exclude/extends 的真实效果）',
+      'apps/inherits: 2 个 tests/ 下的文件不在 typecheck program 里（静默脱离 Q0）：' +
+        // 顺序 = 目录遍历序（readdirSync 排序：integration/ 在 sample.spec.ts 之前）
+        'tests/integration/deep.spec.ts、tests/sample.spec.ts',
+    ])
+  })
+
+  it('单层 glob 手滑（tests/*.spec.ts）→ 嵌套目录静默脱离 Q0，必红', async () => {
+    await makePackage(
+      'apps',
+      'shallow',
+      { scripts: { typecheck: 'tsc -b && tsc -p tsconfig.test.json' } },
+      true,
+    )
+    await writeFile(
+      join(root, 'apps', 'shallow', 'tsconfig.test.json'),
+      JSON.stringify({
+        compilerOptions: {},
+        include: ['src/**/*.ts', 'tests/*.spec.ts'],
+      }),
+    )
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([
+      'apps/shallow: 1 个 tests/ 下的文件不在 typecheck program 里（静默脱离 Q0）：' +
+        'tests/integration/deep.spec.ts',
     ])
   })
 
@@ -333,8 +362,9 @@ describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
       }),
     )
     expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([
-      'apps/excluded: tsconfig.test.json 的 program 里没有 tests/ 下的文件' +
-        '（测试静默脱离 Q0；核对 include/exclude/extends 的真实效果）',
+      'apps/excluded: 2 个 tests/ 下的文件不在 typecheck program 里（静默脱离 Q0）：' +
+        // 顺序 = 目录遍历序（readdirSync 排序：integration/ 在 sample.spec.ts 之前）
+        'tests/integration/deep.spec.ts、tests/sample.spec.ts',
     ])
   })
 
