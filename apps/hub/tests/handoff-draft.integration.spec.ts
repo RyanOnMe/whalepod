@@ -17,7 +17,7 @@ import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@whalepod/db'
 import { getRun, schema, unwrapPgError } from '@whalepod/db'
-import type { HandoffNarrative } from '@whalepod/protocol'
+import type { HandoffContent, HandoffNarrative } from '@whalepod/protocol'
 import {
   HANDOFF_CONTENT_MAX_BYTES,
   HandoffCapacityError,
@@ -644,8 +644,8 @@ describe('handoff draft (#379)', () => {
   })
 
   it('容量守卫口径（评审 F1）：紧贴上限时按 jsonb 文本口径拒绝，旧口径会放行', () => {
-    const withText = (len: number) => ({
-      system: { sourceRunId: randomUUID(), specRevision: null, artifacts: [] as const },
+    const withText = (len: number): HandoffContent => ({
+      system: { sourceRunId: randomUUID(), specRevision: null, artifacts: [] },
       narrative: narrative({
         completed: [{ text: 'x'.repeat(len), verified: false, refs: [] }],
       }),
