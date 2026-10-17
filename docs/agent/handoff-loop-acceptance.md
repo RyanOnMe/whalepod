@@ -19,8 +19,8 @@
 | 判据 | 入口 | 覆盖 |
 |---|---|---|
 | 闭环生产装配（真浏览器+真 Hub/Node/Runtime） | `pnpm test:e2e`（`tsx scripts/run-handoff-loop.mts`，project `p1-381`） | 上面的全链 + 四个负向面；事实写 `artifacts/evidence/handoff-loop/result.json` |
-| 独立判定器 | 同上 runner 链尾（`scripts/verify-handoff-loop-evidence.mts`） | 交叉一致性判据（材料身份与摘要三处同一；v2 前后 Run 快照 revisionId 相同；重复确认不覆盖）；退出码即 runner 退出码 |
-| 判定器自证 | `pnpm test:unit`（`scripts/lib/handoff-loop-evidence.spec.ts`） | 正控 + 20 条逐条负控（每一类「缺证据/说了谎」都判 FAIL） |
+| 独立判定器 | 同上 runner 链尾（`scripts/verify-handoff-loop-evidence.mts`） | 交叉一致性判据（材料身份与摘要三处同一；v2 前后 Run 快照 revisionId 相同；重复确认不覆盖；**隔离性检查必须跑在下游 Run 且与后端 Run 不是同一条**——评审 B10）；退出码即 runner 退出码 |
+| 判定器自证 | `pnpm test:unit`（`scripts/lib/handoff-loop-evidence.spec.ts`） | 正控 + **22** 条逐条负控（每一类「缺证据/说了谎/同一条 Run 冒充两条」都判 FAIL；新增两条即 B10 的 Run 身份判据） |
 | Runtime 收尾调用的脚本化 | `scripts/fixtures/handoff-loop/{session.jsonl,replay.override.json}` | 与契约探针同一录制协议；主回合（业务产出）+ 第二次调用（交接 JSON 叙述）。e2e 自持一份的理由：契约 fixture 的叙述内嵌契约测试自己的 runId，交叉任务引用会被发布校验拒绝 |
 | Node 副本实字节取证 | `scripts/e2e-node.mts` 的 `prepareArtifactInputs` 观测缝（`copied[].fileSha256`） | 不改产品路径：prepare 的内部校验照常 fail-closed，观测只记录 |
 
@@ -29,9 +29,10 @@
 - **驱动**：浏览器走产品 UI（建任务/启用约定/起草确认/开始执行/发布材料/发布交接包/
   交付/确认接收/接受任务/再执行）；配对码、换设备与 v2 发布走真人同款 HTTP；Node 生命
   周期走 e2e-serve 控制面（只做进程，不做产品动作）。
-- **观测**：Task Room 聚合（assignmentStatus/runs/artifacts）、`GET /runs/:id/handoff-draft`
-  （owner 200 vs 他人 404）、deliveries/receipts 列表、`GET /runs/:id/handoff-input` 快照、
-  Node 控制口 `copied[].fileSha256`、run 终态事实。
+- **观测**：Task Room 聚合（assignmentStatus/runs/artifacts；**backend.runStatus 直接取自
+  聚合行**）、`GET /runs/:id/handoff-draft`（owner 200 vs 他人 404；**draftOrigin/draftStatus
+  取读面而非字面量**——评审 B10）、deliveries/receipts 列表、`GET /runs/:id/handoff-input`
+  快照、Node 控制口 `copied[].fileSha256`、run 终态事实。
 - **判定**：`result.json` 的离散事实 + 独立判定器的交叉一致判据（见上表）。
 - **归因**：收尾整理在 runtime-dsh，草稿/发布与交付/确认在 hub.handoff，快照在
   hub.run.handoff-input，下载与摘要校验在 node.artifact-inputs，页面在 web.handoff-*。
