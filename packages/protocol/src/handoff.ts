@@ -56,6 +56,24 @@ export const HandoffItemSchema = z.strictObject({
 export type HandoffItem = z.infer<typeof HandoffItemSchema>
 
 /** 一段叙述（六段 + 两类引用清单）。 */
+/**
+ * 未配对代理项（lone surrogate）防线（评审 F-残余）：JSON 线上可以携带 `"\ud800"`
+ * 这类码位——结构与字节上限都会放行，但 PostgreSQL 的 jsonb 编码会以 22P02 拒行，
+ * 抛穿 ingest 事务就是毒帧路径回归（与 M1 容量毒帧同一类）。schema 层直接拒绝：
+ * 孤立代理项在任何真实文本（模型输出/UTF-8 往返）里都不该出现，放行它只会把
+ * 不可编码的内容放进系统。合法代理对（emoji）不受影响。
+ */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
+function containsLoneSurrogate(value: unknown): boolean {
+  if (typeof value === 'string') return LONE_SURROGATE.test(value)
+  if (Array.isArray(value)) return value.some(containsLoneSurrogate)
+  if (value !== null && typeof value === 'object') {
+    return Object.values(value).some(containsLoneSurrogate)
+  }
+  return false
+}
+
 export const HandoffNarrativeSchema = z
   .strictObject({
     completed: z.array(HandoffItemSchema).max(64),
@@ -72,6 +90,10 @@ export const HandoffNarrativeSchema = z
       new TextEncoder().encode(JSON.stringify(value)).length <= HANDOFF_NARRATIVE_MAX_BYTES,
     { message: `handoff narrative exceeds ${HANDOFF_NARRATIVE_MAX_BYTES} bytes` },
   )
+  .refine((value) => !containsLoneSurrogate(value), {
+    message: 'handoff narrative contains a lone surrogate (invalid unicode)',
+  })
+
 export type HandoffNarrative = z.infer<typeof HandoffNarrativeSchema>
 
 export function emptyHandoffNarrative(): HandoffNarrative {

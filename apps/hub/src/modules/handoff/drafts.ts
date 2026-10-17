@@ -493,7 +493,7 @@ export async function publishHandoffDraft(
     if (marked === undefined) {
       throw new ApiError(409, 'CONFLICT', '交接草稿状态已变化，请刷新后重试')
     }
-    // 评审 B4：发布是**团队可见事实**——不发事件，别人开着房间看不到新版本。
+    // 评审 B4：发布是**团队可见事实**——不发事件的话，别人开着房间看不到新版本。
     // 与交付/确认同形：task.changed 由订阅方按 taskId 失效（版本列表与房间同键）；
     // 「下游看到有新版本」还要求按 receipt 关系逐个通知下游房间（#380 面，见 receipts）。
     const sealedTask = await getTask(tx, run.taskId)
