@@ -164,7 +164,8 @@ async function makeReadySupervisor(
 
 function reopenedSupervisor(
   stateDbPath: string,
-  dshDistributionVersion?: string,
+  /** #356：本次启动的探针版本；`null` = cli 的「探不到」形态，与「未注入」是两回事。 */
+  dshDistributionVersion?: string | null,
 ): RuntimeSupervisor {
   const supervisor = new RuntimeSupervisor({
     driver: realProcessDriver(),
@@ -281,17 +282,54 @@ describe('Node 重启无孤儿恢复', () => {
     expect(lostA).toEqual([{ runId: runIdA, reason: 'orphaned_after_node_restart' }])
     secondA.close()
 
-    // 情形二：记了版本，但本次启动探针失败（未注入 = 不可知）。
+    // 情形二：记了版本，但本次启动探针失败——cli 传的是 **probed（null）**，与
+    // 情形一的「未注入（undefined）」是两种形态，都要判（评审 A-P2：只钉 undefined
+    // 时，把判定里的 null 分支删掉也全绿）。
     const stateDbB = join(root, `state-unk-b-${Math.random().toString(36).slice(2)}.sqlite`)
     const runIdB = 'r-orphan-unk-b'
     const pidB = await makeReadySupervisor(stateDbB, runIdB, '0.1.0-rc.8')
-    const secondB = reopenedSupervisor(stateDbB)
+    const secondB = reopenedSupervisor(stateDbB, null)
     const lostB: Array<{ runId: string; reason: string }> = []
     secondB.onLost((id, reason) => lostB.push({ runId: id, reason }))
     await secondB.recoverOrphans()
     await waitForValue(async () => ((await alive(pidB)) ? undefined : true), '孤儿进程未被终止')
     expect(lostB).toEqual([{ runId: runIdB, reason: 'orphaned_after_node_restart' }])
     secondB.close()
+  })
+
+  it('#356：早已 dead 的孤儿 + 版本不同 → 仍是通用归因（Run 死于那次崩溃，换版是事后的事）', async () => {
+    const stateDb = join(root, `state-dead-vc-${Math.random().toString(36).slice(2)}.sqlite`)
+    // 直接种一行指向死 pid（三重匹配必 dead：pid 存在但启动时间对不上 + cmdline 无 nonce）。
+    const { DatabaseSync } = await import('node:sqlite')
+    const seeded = new DatabaseSync(stateDb)
+    seeded.exec(`create table active_runtime (
+      run_id text primary key, pid integer not null, process_start_time text not null,
+      pgid integer not null, runtime_nonce text not null, workspace_id text not null,
+      started_at text not null, stderr_tail text, dsh_version text)`)
+    seeded
+      .prepare(
+        'insert into active_runtime (run_id, pid, process_start_time, pgid, runtime_nonce, workspace_id, started_at, stderr_tail, dsh_version) values (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        'r-dead-vc',
+        process.pid, // 活着的 pid，但启动时间伪装成 1970 → 判定 dead（与既有死 pid 用例同形）
+        '1970-01-01T00:00:00.000Z',
+        process.pid,
+        'no-such-nonce',
+        'w',
+        new Date().toISOString(),
+        null,
+        '0.1.0-rc.8',
+      )
+    seeded.close()
+
+    const second = reopenedSupervisor(stateDb, '0.1.0-rc.7')
+    const lost: Array<{ runId: string; reason: string }> = []
+    second.onLost((id, reason) => lost.push({ runId: id, reason }))
+    await second.recoverOrphans()
+
+    expect(lost).toEqual([{ runId: 'r-dead-vc', reason: 'orphaned_after_node_restart' }])
+    second.close()
   })
 
   it('#356：旧状态库（无 dsh_version 列）补列后照常恢复——不因缺列崩，也不谎报换版', async () => {

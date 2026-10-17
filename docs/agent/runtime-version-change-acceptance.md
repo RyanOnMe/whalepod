@@ -46,11 +46,12 @@ pnpm exec vitest run --project unit apps/node/tests/recovery.spec.ts
 
 1. `packages/protocol/src/errors.ts`：ErrorCode 目录新增 `RUNTIME_VERSION_CHANGED`（03 §10 同步，
    生成的 JSON Schema 重新生成——`pnpm check:protocol-generated` 把关）；
-2. `apps/node/src/supervisor/runtime-supervisor.ts`：spawn 时把探针版本写进
+2. `apps/node/src/supervisor/runtime-supervisor.ts`：spawn 时把**本进程启动探针**的版本写进
    `active_runtime.dsh_version`（**旧状态库补列**：`create table if not exists` 不改既有表，故
-   显式 `pragma table_info` + `alter table`）；`recoverOrphans` 对每个孤儿比对「记录版本 vs
-   本次启动版本」，**两侧都已知且不一致**才报 `version_changed_after_node_restart`（任一未知
-   退回通用归因——不谎报换版）；
+   显式 `pragma table_info` + `alter table`，并容忍并发首开时后到者的 duplicate column）；
+   `recoverOrphans` 对每个孤儿比对「记录版本 vs 本次启动版本」，**孤儿当时仍存活（三重匹配
+   matched）且两侧版本都已知且不一致**才报 `version_changed_after_node_restart`——早已 dead
+   的行报通用码（Run 死于那次崩溃，换版是事后的事）；任一版本未知也退回通用归因（不谎报）。
 3. `apps/node/src/run/run-manager.ts`：reason → 终态码映射（`lost` +
    `RUNTIME_VERSION_CHANGED`，摘要说明版本变了、Runtime 不恢复），lost 快照带上同一个码
    （`finalizeRun` 与快照同源，不再一处 `RUNTIME_LOST` 一处新码）。
@@ -59,7 +60,7 @@ pnpm exec vitest run --project unit apps/node/tests/recovery.spec.ts
 
 | 面 | 用例 | 断言要点 | 变异自证 |
 |---|---|---|---|
-| Q1 判定 | `apps/node/tests/recovery.spec.ts`（4 例新增） | ① 版本不同 → `version_changed_after_node_restart`（且孤儿仍按三重匹配被杀）；② 版本相同 → 通用归因（**负控**：不许把普通重启谎报成换版）；③ 任一侧未知（未记 / 本次不可知）→ 通用归因（两个负控）；④ **旧状态库**（本列引入前的 DDL）→ 打开即补列、恢复流程照常、不谎报 | 判定函数改成恒 false → ① 红（其余负控仍绿，说明只有正例依赖该判定） |
+| Q1 判定 | `apps/node/tests/recovery.spec.ts`（5 例新增） | ① 版本不同 → `version_changed_after_node_restart`（且孤儿仍按三重匹配被杀）；② 版本相同 → 通用归因（**负控**：不许把普通重启谎报成换版）；③ 任一侧未知（未注入 / **`null`——cli 传的正是 probed**）→ 通用归因（两个负控）；④ **旧状态库**（本列引入前的 DDL）→ 打开即补列、恢复流程照常、不谎报；⑤ **早已 dead 的孤儿 + 版本不同** → 仍是通用归因 | 判定函数恒 false → ① 红；去掉 `matched` 闸 → ⑤ 红；union 加第 4 个 reason → `never` 守卫使 tsc 报错（归因链的穷尽性） |
 | Q6 全链 | `apps/node/tests/resilience/node-restart-orphan.spec.ts` 新增一例 | 版本 A 起 Run → 崩溃 → 版本 B 重启 → `recoverOrphans` → 离线期快照只缓冲、重连 flush 出一帧 `run.snapshot(lost, failureCode=RUNTIME_VERSION_CHANGED)`、摘要含 `version changed`；随后重发 `run.start` 不 spawn 第二 Runtime（与 R9 同纪律） | RunManager 的映射降级成 `RUNTIME_LOST` → 该例红 |
 | Q6 Hub 侧 | `apps/hub/tests/resilience/run-lease-resilience.spec.ts` 新增一例 | 快照带专用码 → `runs.failure_code` **原样**是 `RUNTIME_VERSION_CHANGED`（Hub 不改写）；迟到事实不复活 | —（Hub 侧无判定分支可削；判的是落库保真） |
 
@@ -67,7 +68,7 @@ pnpm exec vitest run --project unit apps/node/tests/recovery.spec.ts
 
 | 现象 | 先看 |
 |---|---|
-| 换版后 Run 仍报 `RUNTIME_LOST` | `active_runtime.dsh_version` 是否有值（spawn 时注入的是**探针**结果：探针失败 → null → 按设计退回通用码）；cli 是否把 `dshVersionFacts.probed` 传给了 supervisor |
+| 换版后 Run 仍报 `RUNTIME_LOST` | 先分辨是哪条路：**Hub 租约过期**（停机 >30s 的主流形态，看不出换版——见边界节）还是 **Node 孤儿恢复**；后者看 `RECOVER_VERDICT` 那行 stderr（带 `recorded=`/`current=` 两个版本串）与 `active_runtime.dsh_version`（记录行随后即删）；cli 是否把 `dshVersionFacts.probed` 传给了 supervisor |
 | 普通重启被报成换版 | `dshVersionChangedSince` 的「两侧都已知」条件是否被放松（负控用例会红） |
 | 旧状态库打开即崩 | 补列逻辑（`pragma table_info` + `alter table`）是否被绕过——旧 DDL 建的库用例会红 |
 | 快照没上行 | 与 R9 同因：断连期只缓冲，看 Node 是否重连（`onReconnect` flush） |
@@ -88,13 +89,25 @@ pnpm exec vitest run --project unit apps/node/tests/recovery.spec.ts
   （宁可不报换版，也不谎报）；这是「版本不可知」的既有代价面（见 dsh-compat-guard 的边界节）。
 - **不区分方向**：升级与回滚共用这一条检测（两者都停下 Node 换版），码名与摘要都说「版本变了」
   而不说「回滚」——通用码不会为升级方向说谎。
-- **Hub 侧的租约过期路径仍是 `RUNTIME_LOST`**（reconciler）：那条路只有「沉默超时」一个事实，
-  它**看不出**是不是换版（版本比对只在 Node 本地成立）。因此「Node 已经不在、Hub 先判 lost」的
-  时序下用户看到的仍是通用码——如实记账，不假装覆盖。
+- **Hub 侧的租约过期路径仍是 `RUNTIME_LOST`**（reconciler，心跳 10s/租约 30s/每 10s 一拍），
+  它只有「沉默超时」一个事实，看不出是不是换版。**这不是罕见时序，而是文档化流程下的主流**：
+  skill 的人工门回滚是「停 Node → `git checkout` → `pnpm install` → `pnpm -r build` → 起
+  Node」，停机分钟级 ⟹ Hub 几乎必然先落 `lost(RUNTIME_LOST)`，Node 回来后带专用码的迟到快照
+  被终态幂等丢掉。**专用码只在停机 <30s（例如换镜像快速重启）时直接对用户可见**——如实记账；
+  「让 Hub 在重连/hello 时对已 lost 的 Run 收敛 `failure_code`（status 不动）」另立账（#368）。
 - **真实换版演练仍是人工门**：本判据用的是「同一 supervisor 状态文件 + 不同版本参数」，真实
   「装另一版 DSH → 触发 → 回滚安装树」的步骤与预期输出在 skill 的回滚节（#290 的人工门）。
-- **UI 文案**：界面沿用「失败码 + 摘要」的既有呈现（无码→中文映射表），本 PR 未加专用文案——
-  用户可见的最小区分是码本身与摘要里的 `version changed`。
+- **跨版本 resume 未看管**（相邻问题，另立账 #370）：resume 的四重守卫不含版本，回滚后对既有
+  Run 点「接着上次聊」要么前向可读、要么在装载身份处硬失败（响亮但没有「是回滚搞的」归因）。
+  skill 的人工门只覆盖「对既有 Workspace 起新 Run」，不含 session resume。
+- **UI 文案（显式决定：本轮不加）**：事实是 web 只渲染**裸码**（`RunFailureNotice` 显示
+  `Run 异常结束（RUNTIME_VERSION_CHANGED）`），既不渲染 `failureSummary`，也没有任何
+  「码 → 中文」映射表（对既有 `RUNTIME_LOST` 同样如此）。所以用户此刻能拿到的区分是**码本身**
+  （与既有码同等呈现，不是更差）；给它（以及既有失败码）加一句人话文案另立账（#369）。
+- **「Node 不重启、就地换版」不在本机制的视野里**（违反流程但物理可能）：Runtime 继续以内存中的
+  旧代码跑（无检测）；它崩溃/退出走 exit-classifier 的通用归因，换版事实不进账。且
+  supervisor 记的是**上次启动的探针值**，#352 起 `node.hello` 却按连接重探——两处口径不同是
+  有意的（前者是 Run 的 spawn 事实，后者是设备视图），但就地换版会让 spawn 写入陈旧值。
 - 未做：把版本换成「回滚到位但探针报同一个 prerelease 串」的形态（版本串相同则本机制按设计
   不报换版；那属于版本锁问题，Q3 的 lock-drift/回滚演练覆盖）。
 

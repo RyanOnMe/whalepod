@@ -137,7 +137,16 @@ export class RuntimeSupervisor {
       name: string
     }[]
     if (!columns.some((column) => column.name === 'dsh_version')) {
-      this.db.exec('alter table active_runtime add column dsh_version text')
+      try {
+        this.db.exec('alter table active_runtime add column dsh_version text')
+      } catch (error) {
+        // 两个新代码进程同时首开同一状态库（R9 接管窗口的罕见形态）时，后到者会撞
+        // duplicate column / BUSY：复读一次表结构确认列已在就放行（幂等迁移）。
+        const again = this.db.prepare('pragma table_info(active_runtime)').all() as unknown as {
+          name: string
+        }[]
+        if (!again.some((column) => column.name === 'dsh_version')) throw error
+      }
     }
   }
 
@@ -338,13 +347,19 @@ export class RuntimeSupervisor {
         runId: row.run_id,
         runtimeNonce: row.runtime_nonce,
       })
-      const versionChanged = this.dshVersionChangedSince(row.dsh_version)
+      // #356：只对**matched**（重启时该 Runtime 还活着、被本进程终止）的孤儿判「换版」——
+      // 早已 dead 的行，Run 是死于那次崩溃，版本变更是事后的事，报通用码才对。
+      const versionChanged = verdict === 'matched' && this.dshVersionChangedSince(row.dsh_version)
       console.error(
         'RECOVER_VERDICT',
         row.run_id,
         verdict,
         row.runtime_nonce,
         versionChanged ? 'version_changed' : 'version_same',
+        // 取证（评审 A-P2）：记录行随即被删，两个版本串必须在这里留痕（都过
+        // ExactVersionSchema，非敏感——Run 的版本本身上报 Hub）。
+        `recorded=${row.dsh_version ?? 'unknown'}`,
+        `current=${this.deps.dshDistributionVersion ?? 'unknown'}`,
       )
       if (verdict === 'matched') {
         await killProcessGroup(row.pid, 'SIGTERM')
