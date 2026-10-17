@@ -73,7 +73,7 @@ export function env(): E2eEnv {
 /** 以某个已登录会话的 Cookie 直调 Hub HTTP API（账号开通/配对码等非 UI 覆盖动作）。 */
 export async function hubApi(
   cookie: string,
-  method: 'GET' | 'POST' | 'DELETE',
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   path: string,
   body?: unknown,
 ): Promise<{ status: number; data: unknown }> {
@@ -592,7 +592,7 @@ export function restartHub(input: {
 }
 
 export function setRuntimeFixture(
-  name: 'approval' | 'basic' | 'secrets' | 'rejection',
+  name: 'approval' | 'basic' | 'secrets' | 'rejection' | 'handoff',
 ): Promise<unknown> {
   return nodeControl('/fixture', { name })
 }

@@ -40,5 +40,44 @@
       "setupWaitMs": null,
       "blockerComponent": null
     }
+  },
+  "handoffTrial": {
+    "status": "not_run",
+    "baselineCommit": "a27768f64eb4d2c73f82ccd0259add22f3336569",
+    "candidateCommit": null,
+    "teams": [],
+    "observations": [],
+    "observationFields": {
+      "teamCode": null,
+      "participantCode": null,
+      "version": null,
+      "order": null,
+      "role": null,
+      "handoffPrepareMs": null,
+      "communicationMs": null,
+      "communicationCount": null,
+      "modelWaitMs": null,
+      "firstCorrectTakeoverMs": null,
+      "noVerbalSupplementCorrect": null,
+      "misunderstandingReworkCount": null,
+      "reworkReason": null,
+      "upstreamUpdateUnderstood": null,
+      "willingToReuse": null,
+      "sanitizedQuote": null,
+      "blockerComponent": null
+    },
+    "decisionTargets": {
+      "closureTeamsMin": 2,
+      "noVerbalSupplementCorrectRatio": 0.8,
+      "handoffTimeMedianDropRatio": 0.3,
+      "willingReuseTeamsMin": 2,
+      "note": "数字是本轮决策目标，不作为已验证收益或统计结论"
+    },
+    "controlArm": {
+      "name": "各自 Agent + 聊天工具 + GitHub",
+      "status": "not_run",
+      "observations": [],
+      "note": "使用与 handoffTrial 相同字段记录交接准备耗时/沟通次数与耗时/模型等待/首次正确接手时间/误解返工/再用意愿"
+    }
   }
 }
