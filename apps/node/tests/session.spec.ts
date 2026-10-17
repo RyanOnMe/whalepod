@@ -25,7 +25,10 @@ const facts: HelloFacts = {
   pluginPackDigests: [],
 }
 
+/** 存：handler 形态各异（open/message/close…），用 never 参数位让任意签名都收得下。 */
 type Handler = (...args: never[]) => void
+/** 取：真正调用时才需要参数面——两态之间一次显式断言（异构 emitter 的常规写法）。 */
+type AnyHandler = (...args: unknown[]) => void
 
 class FakeSocket {
   static instances: FakeSocket[] = []
@@ -63,8 +66,8 @@ class FakeSocket {
     this.emit('close', code, Buffer.from(reason))
   }
 
-  emit(event: string, ...args: never[]): void {
-    for (const fn of this.handlers.get(event) ?? []) fn(...args)
+  emit(event: string, ...args: unknown[]): void {
+    for (const fn of this.handlers.get(event) ?? []) (fn as AnyHandler)(...args)
   }
 
   emitOpen(): void {
@@ -317,11 +320,21 @@ describe('#89 inventory 上报与坏帧拦截', () => {
     // 一次宏任务 flush：让 async 事实源 + .then 发送链走完（假 timer 不帮忙，
     // 这里是微任务链，用真 setTimeout 排空微任务队列后再判定）。
     await new Promise((resolve) => setTimeout(resolve, 0))
-    const frame = socket.sent.map(JSON.parse).find((f) => f.type === 'node.inventory')
+    const frame = socket.sent
+      .map(
+        (raw) =>
+          JSON.parse(raw) as {
+            type: string
+            payload: { deviceId?: string; workspaces?: Array<{ name: string }> }
+          },
+      )
+      .find((f) => f.type === 'node.inventory')
     expect(frame).toBeDefined()
+    if (frame === undefined) throw new Error('未收到 node.inventory 帧')
     expect(Object.keys(frame.payload).sort()).toEqual(['credentialSlots', 'deviceId', 'workspaces'])
     expect(frame.payload.deviceId).toBe(deps.config.deviceId)
-    expect(frame.payload.workspaces[0].name).toBe('proj')
+    const [firstWorkspace] = frame.payload.workspaces ?? []
+    expect(firstWorkspace?.name).toBe('proj')
   })
 
   it('带外越界事实（名字 120 字符）：一帧都不许写到 socket 上，且失败要归因', async () => {

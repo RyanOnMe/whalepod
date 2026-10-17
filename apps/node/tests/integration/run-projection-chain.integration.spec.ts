@@ -579,7 +579,7 @@ describe('P1-13 全链路（真 Hub + 真 Node + 真 Runtime/replay）', () => {
     // 所有直播帧都已进入 frames 数组。用它替代「等 500ms 猜直播帧到齐」的窗口，
     // 让"零出现"断言有确定性边界。
     await waitForValue(
-      () =>
+      async () =>
         aliceWs.frames.some(
           (f) =>
             f.kind === 'persistent' &&
@@ -592,7 +592,7 @@ describe('P1-13 全链路（真 Hub + 真 Node + 真 Runtime/replay）', () => {
     )
     // bob 的零出现断言同样要定界：他收的是 project 受众的持久帧，等同一终局帧到齐。
     await waitForValue(
-      () =>
+      async () =>
         bobWs.frames.some(
           (f) =>
             f.kind === 'persistent' &&

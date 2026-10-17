@@ -47,7 +47,7 @@ describe('workspace/secret CLI 命令', () => {
     await runWorkspaceCommand(deps, 'list', {})
     expect(out[1]).toMatch(/^[0-9a-f-]{36}  my-project  directory/)
 
-    const id = out[0].split(' ')[1] ?? ''
+    const id = out[0]?.split(' ')[1] ?? ''
     await runWorkspaceCommand(deps, 'remove', { id })
     expect(out[2]).toContain('removed')
 

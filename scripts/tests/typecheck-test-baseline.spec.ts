@@ -46,6 +46,13 @@ describe('tests/ typecheck 基线（#183 禁新增）', () => {
     ).toEqual(deferredKeys)
   })
 
+  it('#183 收口后未接线表为空：新增 deferral 必须是「重新打开缺口」的自觉决定', () => {
+    // 这条不是冗余：`TYPECHECK_WIRING_DEFERRED` 的规则是「只许缩小」，但表本身只是数据。
+    // 现在它已空（hub 25 → 0、node 31 → 0），未来若有人想把某个包再 deferral 出去，
+    // 这条会红——逼作者在那里写下理由（并把本断言一起改），而不是悄悄绕过 Q0。
+    expect([...TYPECHECK_WIRING_DEFERRED.entries()]).toEqual([])
+  })
+
   it('每个未接线包的存量错误数不高于基线（只许向下）', () => {
     const offenders: string[] = []
     for (const entry of TEST_TYPECHECK_BASELINE) {

@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { RuntimeSupervisor } from '../src/supervisor/runtime-supervisor.js'
+import { killProcessGroup } from '../src/supervisor/process.js'
 import { WorkspaceRegistry } from '../src/workspace/registry.js'
 import { SecretStore } from '../src/secret/store.js'
 import type { RuntimeDriver, RuntimeStartSpec } from '../src/runtime-driver.js'
@@ -47,6 +48,10 @@ function realProcessDriver(): RuntimeDriver {
         pid: child.pid ?? -1,
         exitPromise: new Promise<void>((resolve) => child.once('exit', () => resolve())),
       }
+    },
+    // RuntimeDriver 的必填方法：与生产同源（进程组 SIGTERM，升级策略由 supervisor 管）。
+    async terminate(handle) {
+      await killProcessGroup(handle.pid, 'SIGTERM')
     },
   }
 }

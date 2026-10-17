@@ -157,7 +157,7 @@ async function makeHarness(
   } = {},
 ): Promise<Harness> {
   let online = options.online ?? true
-  const registry = new WorkspaceRegistry(join(root, 'registry.db'), 'test-hmac-key')
+  const registry = new WorkspaceRegistry(join(root, 'registry.db'))
   const workspace = await registry.register(workspaceDir, { name: 'ws-1' })
   const secrets = new SecretStore(join(root, 'secrets.json'), {
     WHALEPOD_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
@@ -201,6 +201,8 @@ async function makeHarness(
     homeDir: '/Users/testhome',
     stateDir: root,
     packsRoot: join(root, 'plugin-packs'),
+    deviceId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    dshDistributionVersion: '0.1.0-rc.8',
     ...(options.logs !== undefined
       ? {
           log: (level, msg, fields) => {

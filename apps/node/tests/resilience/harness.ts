@@ -282,7 +282,7 @@ export async function makeResilienceHarness(
   // liveness 探针与 supervisor 日志判定。
   const runtimes = scripted.runtimes
   const signals = scripted.signals
-  const registry = new WorkspaceRegistry(join(root, 'registry.db'), 'test-hmac-key')
+  const registry = new WorkspaceRegistry(join(root, 'registry.db'))
   const workspace = await registry.register(workspaceDir, { name: 'ws-1' })
   const secrets = new SecretStore(join(root, 'secrets.json'), {
     WHALEPOD_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
@@ -292,6 +292,11 @@ export async function makeResilienceHarness(
   const sent: string[] = []
   const logs: ResilienceHarness['logs'] = []
 
+  // 两阶段构造（supervisor/manager 要在 harness 之后建）：cleanup/setOnline 用一层
+  // 委托闭包先占位、稍后回填实现——不用「缺属性的对象 + 断言」，也不会在构造期留
+  // undefined 方法。
+  let cleanupImpl: () => Promise<void> = async () => {}
+  let setOnlineImpl: (_online: boolean) => void = () => {}
   const harness: ResilienceHarness = {
     runtimes,
     signals,
@@ -301,6 +306,8 @@ export async function makeResilienceHarness(
     timers,
     workspaceId: workspace.id,
     logs,
+    cleanup: () => cleanupImpl(),
+    setOnline: (value: boolean) => setOnlineImpl(value),
     supervisor: undefined as unknown as RuntimeSupervisor,
     manager: undefined as unknown as RunManager,
     sentFrames: () =>
@@ -341,7 +348,16 @@ export async function makeResilienceHarness(
       ? { cancelTermGraceMs: options.cancelTermGraceMs }
       : {}),
     ...(options.timers !== undefined
-      ? { timers: { setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout } }
+      ? {
+          // RunManagerTimers 取自全局签名（`typeof setTimeout` 上挂着 __promisify__），
+          // ManualTimers 只提供两个方法面——运行时只用这两个方法，显式断言一次。
+          timers: {
+            setTimeout: ((fn: () => void, ms: number) =>
+              timers.setTimeout(fn, ms)) as typeof setTimeout,
+            clearTimeout: ((id: ReturnType<typeof setTimeout>) =>
+              timers.clearTimeout(id)) as typeof clearTimeout,
+          },
+        }
       : {}),
     log: (level, msg, context) => {
       logs.push({ level, component: 'node.run', msg, ...context })
@@ -349,10 +365,10 @@ export async function makeResilienceHarness(
   })
   harness.supervisor = supervisor
   harness.manager = manager
-  harness.setOnline = (value: boolean) => {
+  setOnlineImpl = (value: boolean) => {
     online = value
   }
-  harness.cleanup = async () => {
+  cleanupImpl = async () => {
     await supervisor.stopAll()
     supervisor.close()
     commandStore.close()

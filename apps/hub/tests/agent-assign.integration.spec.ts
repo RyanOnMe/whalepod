@@ -127,13 +127,19 @@ describe('agent-assignable tasks (ADR-0009 slice 7, #239)', () => {
     if (response.statusCode === 201) {
       return {
         status: response.statusCode,
-        ...(json.data === undefined ? {} : { data: json.data as NonNullable<CreateTaskResponse['data']> }),
-        ...(json.drive === undefined ? {} : { drive: json.drive as NonNullable<CreateTaskResponse['drive']> }),
+        ...(json.data === undefined
+          ? {}
+          : { data: json.data as NonNullable<CreateTaskResponse['data']> }),
+        ...(json.drive === undefined
+          ? {}
+          : { drive: json.drive as NonNullable<CreateTaskResponse['drive']> }),
       }
     }
     return {
       status: response.statusCode,
-      ...(json.error === undefined ? {} : { error: json.error as NonNullable<CreateTaskResponse['error']> }),
+      ...(json.error === undefined
+        ? {}
+        : { error: json.error as NonNullable<CreateTaskResponse['error']> }),
     }
   }
 

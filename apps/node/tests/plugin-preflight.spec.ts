@@ -199,9 +199,11 @@ function makePreflight(
 ): { preflight: PluginPackPreflight; fetches: string[]; packsRoot: string; store: PackageStore } {
   const { fetchImpl, pluginFetch } = makeMemoryFetcher(descriptor, tarballs)
   const fetches: string[] = []
-  const instrumented = async (url: string | URL): Promise<Response> => {
-    fetches.push(String(url))
-    return fetchImpl(url)
+  // 签名对齐 fetch：描述符抓取侧的 fetchImpl 形态是 (input: string|URL|Request, init?).
+  const instrumented = async (input: string | URL | Request): Promise<Response> => {
+    const target = input instanceof Request ? input.url : input
+    fetches.push(String(target))
+    return fetchImpl(target)
   }
   const store = options.store ?? new PackageStore(join(mktemp(), 'store'))
   const packsRoot = options.packsRoot ?? join(mktemp(), 'packs')
@@ -535,7 +537,7 @@ async function makeRunHarness(preflight: PluginPackPreflight): Promise<{
   const workspaceDir = join(root, 'ws')
   const { mkdirSync } = await import('node:fs')
   mkdirSync(workspaceDir, { recursive: true })
-  const registry = new WorkspaceRegistry(join(root, 'registry.db'), 'test-hmac-key')
+  const registry = new WorkspaceRegistry(join(root, 'registry.db'))
   const workspace = await registry.register(workspaceDir, { name: 'ws-1' })
   const secrets = new SecretStore(join(root, 'secrets.json'), {
     WHALEPOD_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
@@ -552,6 +554,8 @@ async function makeRunHarness(preflight: PluginPackPreflight): Promise<{
       runtimeTimeoutMs: 60_000,
     }),
     registry,
+    deviceId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    dshDistributionVersion: '0.1.0-rc.8',
     commandStore: new (await import('../src/spool/command-store.js')).CommandStore(
       join(root, 'commands.db'),
     ),
