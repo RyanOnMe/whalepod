@@ -4,6 +4,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [cancel-race-acceptance.md](./cancel-race-acceptance.md) | #353：取消的三种真实交错（流式中取消 / **取消与收尾撞车** / 中断边界上已入队的 followup）——收敛屏障后清总账「终态唯一」，撞车侧钉「completed 成立、不得补出 cancelled、取消不毒化会话」，followup 以 spliced 事件钉 `next-turn` 入队语义；四条变异自证、连跑 10 次稳定；窗口正中与进程边界如实记为未覆盖（#363） |
 | [hello-facts-refresh-acceptance.md](./hello-facts-refresh-acceptance.md) | #352：设备事实（`node.hello`）不再冻结在启动时刻——按连接重算 + preflight 装/重建 pack 后会话内刷新（序号单调：旧快照不许覆盖新快照；同连接内事实未变不发，免空转 team event）；判据四面（模块 6 / 会话 5 / Hub 集成「同连接第二条 hello 覆盖事实列」/ **真 cli 组合根**含同连接与 Run 命运断言）各自带变异自证；边界：Q5 主闭环判不了（`e2e-pack` core-empty + harness 无 preflight）、兼容闸与 Node 快照仍按启动探针、采集 await 探针的 15s 预算已记账 |
 | [create-failure-guidance-acceptance.md](./create-failure-guidance-acceptance.md) | #348：创建任务失败的候选失效翻成中文引导 + 错误码可见（纯函数 1 + jsdom 3 + 真页面 1；竞态残窗用响应替换法；变异自证三条；语义仍是重选、绝不自动换人） |
 | [stray-runtime-hygiene-acceptance.md](./stray-runtime-hygiene-acceptance.md) | #305：开发机残留自检——测试负向判据故意留活的探针进程/长驻 CLI 谁负责收尾（两处修复：按 pid 回收、tsx launcher 的进程组问题）；`scripts/check-stray-runtimes.sh` 含 `--self-test`，跑完 Q0/Q1/Q6/Q5 后复跑零残留 |

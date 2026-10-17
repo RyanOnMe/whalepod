@@ -33,7 +33,7 @@
 |---|---|---|---|
 | sessionResume | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/resume.contract.spec.ts` | 有判据：正向（同 session id + `fromRequest` 上下文命中 + 日志线性增长不复制）+ 负向（ghost id 拒绝启动、零帧） |
 | 单 Run 隔离 | `pnpm test:dsh-contract`、`pnpm test:unit` | `packages/runtime-dsh/tests/dsh-contract/single-run-isolation.contract.spec.ts`（#289 新增）、`apps/node/tests/run-manager.spec.ts`、`packages/runtime-dsh/tests/dsh-contract/event-stream.contract.spec.ts` | 有判据：命令 runId 闸（跨 Run 的 prompt/followup/cancel/decide/shutdown 显式拒 + 正控收敛后清总账的零副作用 + 正控）、Node 串扰防护、事件关联 |
-| 中断模式（cancel） | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/agent-control.contract.spec.ts` | 有判据：cancel → `run.cancelled` 且**不得再出** `run.completed`；竞态与 followup 边界未覆盖（#353） |
+| 中断模式（cancel） | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/agent-control.contract.spec.ts`、`cancel-race.contract.spec.ts`（#353 新增） | 有判据：cancel → `run.cancelled` 且**不得再出** `run.completed`；**竞态与 followup 边界**（#353）：① 流式中取消（同步点用 hang 前缀内容帧，收敛屏障后清总账：恰 1 turn/end aborted、0 completed、0 fatal）；② **取消与收尾撞车**（turn/end 已提交、settle 在途时送 cancel → completed 成立、**不得**补出 cancelled、不得 fatal，且取消不毒化会话：随后 followup 照常起第二 turn 的正控）；③ **中断边界的 followup**（运行中入队的 followup 被中断吞掉：零第二串 turn、零 fatal、恰 1 aborted；并以 spliced 事件钉住「followup = next-turn 入队，不是 steer 插话」）。窗口正中那一类交错无判据（见第五节） |
 | 审批桥 | `pnpm test:dsh-contract`、`pnpm test:security` | `packages/runtime-dsh/tests/dsh-contract/approval.contract.spec.ts`、`apps/hub/tests/run-authorization.security.spec.ts`、`apps/hub/tests/approval-decision.integration.spec.ts` | 有判据：allowed_once / rejected / full_access 三态 + **未知 callId 双向 no-op**（A0-6 新增，Runtime 层此前零测试）+ Hub owner-only/一次性/过期 |
 | 指令回执 | `pnpm test:dsh-contract`、`pnpm test:integration` | `packages/runtime-dsh/tests/dsh-contract/instruction-receipt.contract.spec.ts`（#289 新增）、`apps/hub/tests/instruction-queue.integration.spec.ts` | 有判据：契约门内覆盖「initialize 前显式拒且零帧 / 重复 initialize 显式拒 / 受理的 prompt 有回执且先于结算」；Hub 侧指令状态结算照旧 |
 | 事件流范围 | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/event-stream.contract.spec.ts`、`event-stream-scope.contract.spec.ts`（#289 新增） | 有判据：seq 单调/关联/顺序 + **越界（异会话）事件不转发、不结算**与**异 agent 状态不成帧**的负向（变异自证：两条过滤各自单点削弱即红）；范围语义自订阅面起算，总线分发作用域未覆盖（见第五节） |
@@ -83,10 +83,20 @@ G0「release 必跑、PR 必跑」，而 `.github/workflows/check.yml` 只跑 Q0
 
 > #288 已从本清单划掉两项：`dshCompatibility`/`profileDigest` 的比对与对照点、本机 DSH 版本
 > 自动派生。#289 划掉三项：单 Run 隔离、指令回执、事件流范围的契约级负向。#290 划掉一项：
-> 升级失败回滚（换进线性化的回滚演练，真实安装回滚如实降级为人工门）。剩下的条目维持原状。
+> 升级失败回滚（换进线性化的回滚演练，真实安装回滚如实降级为人工门）。#353 划掉一项：
+> cancel 竞态与 followup 中断边界（换进 `cancel-race.contract.spec.ts` 的三条判据；同一句里
+> 新增的两条更窄的边界改挂 #363 与机制层记账）。剩下的条目维持原状。
 
-- cancel 竞态（取消与 turn 收尾同时发生）、followup 在中断边界的行为（#353）。#289 的
-  followup 负向覆盖的是**跨 Run 串扰**，不是 followup 在 interrupt 边界的产品语义。
+- **「收尾窗口正中」的 cancel 撞车无判据**（#363）：replay harness 只能表达「每帧内容」，
+  没有 per-frame delay / 动态 readyFile / gate 条目 ⟹ 「cancel 恰好落在 finish chunk 与
+  turn/end 之间」这种**两侧都可控**的时序构造不出来。现有判据钉的是窗口两侧（流式中取消、
+  turn/end 已提交后的迟到取消，后者由进程内微任务序确定性保证）；进程边界（真子进程）上的
+  同一交错也未覆盖——`apps/runtime/tests/dsh-contract/stdio.contract.spec.ts` 没有 override
+  环境通道。边界与理由见 [cancel-race-acceptance](./cancel-race-acceptance.md)。
+- **中断时「在途 followup 不执行」的机制层未钉**：判据钉的是**结果**（无第二串 turn、无
+  fatal、收敛到 idle）；vendor 内部到底是 `inbox.clear()` 还是「abort 后驱动直接抛出」都满足
+  该结果（实测：把 `cancel` 改成 `keepInbox` 语义在 abort 路径下也不改变结果——所以判据对
+  这个旋钮不敏感，这是如实记账，不是遗漏）。#353 的裁决不依赖该机制。
 - 越界事件的**总线分发作用域**本身（事件该不该被派发到本订阅面，由 DSH 拥有）：无判据。
   #289 的范围判据自订阅面（`deliverSessionEvent` / `deliverAgentStatus`）起算，注入的是
   合成输入（探针接缝 `RuntimeProbeFace`，生产恒不设置）；边界见
