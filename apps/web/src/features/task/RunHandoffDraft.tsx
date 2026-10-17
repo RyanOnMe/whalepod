@@ -97,6 +97,9 @@ export function RunHandoffDraft({
   // 打「commit:a」这种尚未成形的 token 会在每个按键后被重新序列化丢掉——根本打不进字。
   // 原文单独存，解析只发生在 onChange 与「无法识别」提示。
   const [refTexts, setRefTexts] = useState<Record<string, string>>({})
+  // 评审 B2：有未保存的修改时**禁止发布**——否则「发布」发的是上一次保存的内容，
+  // 用户刚核对的改动在「已发布」提示下悄悄丢掉。所有编辑入口都要置脏。
+  const [dirty, setDirty] = useState(false)
 
   const query = useQuery({
     queryKey: queryKeys.runHandoffDraft(runId),
@@ -113,6 +116,7 @@ export function RunHandoffDraft({
   const seedEdit = (draft: HandoffDraftView): void => {
     setEdit(draft.content?.narrative ?? null)
     setRefTexts({})
+    setDirty(false)
   }
 
   const createMutation = useMutation({
@@ -147,6 +151,7 @@ export function RunHandoffDraft({
       setActionError(null)
       setEdit(null)
       setRefTexts({})
+      setDirty(false)
       invalidate()
       void queryClient.invalidateQueries({
         queryKey: ['task-handoff-revisions', task.id],
@@ -175,6 +180,7 @@ export function RunHandoffDraft({
       const list = [...(editing[sectionKey] as HandoffItem[])]
       list[index] = next
       setEdit({ ...editing, [sectionKey]: list })
+      setDirty(true)
     }
     const refKey = `${sectionKey}:${index}`
     const refText = refTexts[refKey] ?? serializeRefs(item.refs)
@@ -228,6 +234,7 @@ export function RunHandoffDraft({
               ...editing,
               [sectionKey]: (editing[sectionKey] as HandoffItem[]).filter((_, i) => i !== index),
             })
+            setDirty(true)
           }}
         >
           删除这条
@@ -286,12 +293,13 @@ export function RunHandoffDraft({
                 type="button"
                 className="button button-quiet"
                 disabled={pending}
-                onClick={() =>
+                onClick={() => {
                   setEdit({
                     ...editing,
                     [section.key]: [...(editing[section.key] as HandoffItem[]), emptyItem()],
                   })
-                }
+                  setDirty(true)
+                }}
               >
                 添加一条
               </button>
@@ -306,7 +314,7 @@ export function RunHandoffDraft({
                 rows={2}
                 aria-label="提交引用 commit"
                 value={editing.commits.join('\n')}
-                onChange={(event) =>
+                onChange={(event) => {
                   setEdit({
                     ...editing,
                     commits: event.target.value
@@ -314,7 +322,8 @@ export function RunHandoffDraft({
                       .map((s) => s.trim())
                       .filter((s) => s !== ''),
                   })
-                }
+                  setDirty(true)
+                }}
               />
             </label>
             <label className="handoff-field">
@@ -324,7 +333,7 @@ export function RunHandoffDraft({
                 rows={2}
                 aria-label="提交引用 PR"
                 value={editing.prs.join('\n')}
-                onChange={(event) =>
+                onChange={(event) => {
                   setEdit({
                     ...editing,
                     prs: event.target.value
@@ -332,7 +341,8 @@ export function RunHandoffDraft({
                       .map((s) => s.trim())
                       .filter((s) => s !== ''),
                   })
-                }
+                  setDirty(true)
+                }}
               />
             </label>
           </div>
@@ -353,12 +363,21 @@ export function RunHandoffDraft({
             <button
               type="button"
               className="button button-primary"
-              disabled={pending}
+              disabled={pending || dirty}
               onClick={() => publishMutation.mutate()}
-              title="发布后不可修改；材料引用必须已发布、验证证据必须附引用"
+              title={
+                dirty
+                  ? '有未保存的修改——先「保存草稿」再发布'
+                  : '发布后不可修改；材料引用必须已发布、验证证据必须附引用'
+              }
             >
               发布交接包
             </button>
+            {dirty ? (
+              <span className="mutation-hint" data-testid="handoff-dirty">
+                有未保存的修改：发布的是上一次保存的内容，请先保存。
+              </span>
+            ) : null}
             <button
               type="button"
               className="button"

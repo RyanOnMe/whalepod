@@ -25,7 +25,7 @@ create table handoff_draft (
   constraint handoff_draft_fields check (
     (status = 'failed' and content is null and failure_reason is not null and published_revision_id is null)
     or (status = 'ready' and content is not null and failure_reason is null and published_revision_id is null)
-    or (status = 'published' and content is not null and published_revision_id is not null)
+    or (status = 'published' and content is not null and published_revision_id is not null and failure_reason is null)
   )
 );
 

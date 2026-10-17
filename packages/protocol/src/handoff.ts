@@ -23,6 +23,12 @@ export const HANDOFF_NARRATIVE_MAX_BYTES = 24_576
 export const HANDOFF_REFS_PER_ITEM_MAX = 16
 
 /**
+ * 系统块材料条数上限（与运行时输入清单同值）：超限时 **Hub 侧必须转「未生成/明确拒绝」**，
+ * 不许把 ZodError 抛穿 ingest 事务（评审 M1：那会让 Node 以 4003 反复重连并卡死 Run）。
+ */
+export const HANDOFF_ARTIFACTS_MAX = 64
+
+/**
  * 引用（refs）：结构化、可核查的指向。
  * - artifact：本 Task 的**已发布**交付物才允许出现在发布版的引用里（发布时复验）；
  * - run：本 Task 的 Run；
@@ -100,7 +106,7 @@ export const HandoffSystemSchema = z.strictObject({
   specRevision: z
     .strictObject({ id: z.uuid(), revisionNumber: z.number().int().positive() })
     .nullable(),
-  artifacts: z.array(HandoffArtifactEntrySchema).max(64),
+  artifacts: z.array(HandoffArtifactEntrySchema).max(HANDOFF_ARTIFACTS_MAX),
 })
 export type HandoffSystem = z.infer<typeof HandoffSystemSchema>
 
@@ -150,8 +156,8 @@ export type HandoffRevisionView = z.infer<typeof HandoffRevisionViewSchema>
 
 /**
  * run.start 里固化的「本次执行是否生成交接草稿」快照（#379；ADR-0017 §3）：
- * 建 Run 时 Task 已启用约定流程才携带；`agreement` 是绑定版本的正文快照
- * （Runtime 收尾整理时作为「约定验收条件」的锚点；未绑定则为 null）。
+ * 建 Run 时 Task 已启用约定流程才携带（因此业务 Run 必然已绑定版本）；`agreement`
+ * 是绑定版本的正文快照，作为 Runtime 收尾整理「约定验收条件」的锚点。
  */
 export const HandoffRunSpecSchema = z.strictObject({
   agreement: z

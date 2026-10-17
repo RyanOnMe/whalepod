@@ -9,7 +9,9 @@
  * 3. **未启用**（spec 不携带 handoff）：不调用模型、零 handoff.draft 帧
  *    （脚本里预备的追加条目若被消费就会出现 generated 帧——用它当负向判据）；
  * 4. **取消/中断**：turn 被中断（aborted）→ 不调用模型、零 handoff.draft 帧、
- *    终态唯一（run.cancelled）。
+ *    终态唯一（run.cancelled）；
+ * 5. **取消撞收尾窗口**（评审 M2）：业务回合已完成、整理调用在途时取消 → 中断整理、
+ *    取消胜出（run.cancelled），零草稿帧、无 run.completed（不给已取消的执行造草稿）。
  */
 import { afterEach, describe, expect, it } from 'vitest'
 import type { RuntimeOutput } from '@whalepod/protocol'
@@ -124,6 +126,34 @@ describe('#379 收尾交接草稿（replay 契约探针）', () => {
       expect(types).not.toContain('handoff.draft')
       expect(types.filter((type) => type === 'run.cancelled')).toHaveLength(1)
       expect(types).not.toContain('run.completed')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('取消撞收尾窗口（评审 M2）：中断在途整理，取消胜出——零草稿帧、终态唯一', async () => {
+    // 收尾调用命中 hang 条目（业务回合本身正常完成）；取消在整理窗口内到达。
+    process.env[TIMEOUT_ENV] = '2000'
+    const spec = runtimeSpec({ handoff: { agreement: AGREEMENT } })
+    const runtime = await startReplayRuntime('handoff-hang', spec)
+    try {
+      await runtime.send(initializeCommand(spec))
+      await runtime.until('runtime.ready')
+      await runtime.send(commandFrame('run.prompt', { runId: spec.runId, text: '实现登录接口' }))
+      // turn/end 已到 = 业务回合结束、settle 链进入收尾窗口（整理调用此刻在途挂起）。
+      await runtime.until(
+        'session.event',
+        (frame) => (frame.payload.event as { type?: string }).type === 'turn/end',
+      )
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      await runtime.send(commandFrame('run.cancel', { runId: spec.runId, cause: 'user' }))
+      await runtime.until('run.cancelled')
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      const types = frameTypes(runtime.outputs)
+      // 取消胜出：不给已取消的执行造草稿，也不让 completed 撞上 cancel_requested 记 failed。
+      expect(types).not.toContain('handoff.draft')
+      expect(types).not.toContain('run.completed')
+      expect(types.filter((type) => type === 'run.cancelled')).toHaveLength(1)
     } finally {
       await runtime.dispose()
     }
