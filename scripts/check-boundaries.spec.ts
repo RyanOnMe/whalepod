@@ -471,17 +471,37 @@ describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
     ])
   })
 
-  it('脚本指向同前缀的假配置（tsconfig.test.json.orig）→ 违规（尾部边界不是 \\b）', async () => {
+  it('脚本指向同前缀的假配置（.orig / ~ 备份名）→ 违规（尾界是白名单不是词边界）', async () => {
+    const cases = [
+      ['prefixed', 'tsconfig.test.json.orig'],
+      ['vimbackup', 'tsconfig.test.json~'],
+    ] as const
+    for (const [name, config] of cases) {
+      await makePackage(
+        'packages',
+        name,
+        { scripts: { typecheck: `tsc -b && tsc -p ${config}` } },
+        true,
+      )
+    }
+    // 判据每次扫全 root：两个 fixture 都建好后再断言（顺序 = readdirSync 的字典序）
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual(
+      cases.map(
+        ([name, config]) =>
+          `packages/${name}: typecheck 里没有「tsc -p tsconfig.test.json」形态的调用` +
+          `（只出现配置名不算数）；脚本：tsc -b && tsc -p ${config}`,
+      ),
+    )
+  })
+
+  it('`;` 串联的写法不误伤（吞退出码是已声明盲区，不由文本层拦）', async () => {
     await makePackage(
       'packages',
-      'prefixed',
-      { scripts: { typecheck: 'tsc -b && tsc -p tsconfig.test.json.orig' } },
+      'chained',
+      { scripts: { typecheck: 'tsc -p tsconfig.test.json; echo done' } },
       true,
     )
-    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([
-      'packages/prefixed: typecheck 里没有「tsc -p tsconfig.test.json」形态的调用' +
-        '（只出现配置名不算数）；脚本：tsc -b && tsc -p tsconfig.test.json.orig',
-    ])
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([])
   })
 
   it('路径带引号的合法写法不误伤（-p "tsconfig.test.json"）', async () => {

@@ -31,8 +31,11 @@
    门全绿（评审 B 第二轮）。
    同层加固（2026-10-17 三轮评审逐个逼出来，各有真实变异自证）：
    - **脚本形态**：脚本里必须真有一次 `tsc …-p/--project tsconfig.test.json` 调用（只出现配置名的
-     `echo tsconfig.test.json` 能骗过子串匹配）；尾部边界用 `(?![\w.-])`（`tsconfig.test.json.orig`
-     这类同前缀假配置不放过）；路径两侧允许引号（`-p "tsconfig.test.json"` 不误伤）。
+     `echo tsconfig.test.json` 能骗过子串匹配）；配置名之后的尾界用**白名单**
+     `(?=$|[\s"';])`——`\b` 会放行 `tsconfig.test.json.orig`、黑名单 `(?![\w.-])` 又会放行
+     `tsconfig.test.json~`（Vim 备份名），凡是紧跟非分隔字符的都算「脚本点的是另一个文件」；
+     路径两侧允许引号（`-p "tsconfig.test.json"` 不误伤），`;` 串联写法不误伤（它属下面
+     「吞退出码」那条已声明盲区，不由文本层拦）。
    - **`noCheck`**：`tsc -p tsconfig.test.json --showConfig` 读**生效**配置（extends 链解析后）——
      `noCheck: true` 时文件在 program 里却一个类型都不检查，清单判据照样命中；脚本面的
      `--noCheck` 旗标同拦。
@@ -89,14 +92,15 @@ exports 的 `./testing` 带 `development → src`：integration spec 里还有 h
 - **接线判据的真实变异**（2026-10-17，逐条还原）：在 `apps/node` 上做三条 —— include 收窄成
   `tests/*.spec.ts`（单层 glob）⟹ 报 **9** 个缺失（`tests/integration/**` +
   `tests/resilience/**`，逐个列出）；删掉 `include` 键（`extends` 继承生效）⟹ 报 **41** 个；
-  `exclude` 加 `tests/**` ⟹ 报 **41** 个。在 `packages/testkit` 上做三条 —— typecheck 改成
-  `echo tsconfig.test.json` / 指向 `tsconfig.test.json.orig` / 带 `--noCheck` ⟹ 各报对应用例。
+  `exclude` 加 `tests/**` ⟹ 报 **41** 个。在 `packages/testkit` 上做四条 —— typecheck 改成
+  `echo tsconfig.test.json` / 指向 `tsconfig.test.json.orig` / 指向 `tsconfig.test.json~` /
+  带 `--noCheck` ⟹ 各报对应用例。
   在 `packages/domain` 上做一条 —— `tsconfig.test.json` 加 `noCheck: true` ⟹ 红。
   无变异 ⟹ `pnpm check:boundaries` 输出 `no violations`（9/9 包过严格形态）。
-- **fixture**（`scripts/check-boundaries.spec.ts`，**45 例**）：接线五态（收窄 / 删 include 键 /
+- **fixture**（`scripts/check-boundaries.spec.ts`，**46 例**）：接线五态（收窄 / 删 include 键 /
   exclude / 单层 glob / 正确接线）+ 路径含空格判绿 + 目录 symlink 漏覆盖判红 + 配置坏到 tsc
-  起不来落 fail-closed 条 + `noCheck: true` 判红 + `echo` 脚本判红 + `.orig` 同前缀判红 +
-  引号写法判绿 + `--noCheck` 旗标判红 + 嵌套超 8 层判红 + 无 tests 包不受约束。
+  起不来落 fail-closed 条 + `noCheck: true` 判红 + `echo` 脚本判红 + `.orig` 与 `~` 同前缀判红 +
+  引号写法判绿 + `;` 串联判绿 + `--noCheck` 旗标判红 + 嵌套超 8 层判红 + 无 tests 包不受约束。
 - **hub/testing 的解析契约**：临时删掉 `apps/hub/package.json` 的 `exports['./testing'].development`
   ⟹ `apps/node/tests/hub-testing-resolution.spec.ts` 红（打印解析到的 `dist/testing/index.js`
   路径）；还原 ⟹ 绿。
@@ -144,8 +148,9 @@ cd apps/hub && pnpm exec tsc -p tsconfig.test.json | grep -c "error TS"   # 手�
   `check-boundaries` 红（消息点名「bare entry included」）；还原绿。
 - **接线判据的残余盲区**（三轮评审穷举后如实列出；现状仓库无实例；**#376** 立账跟进）：
   1）脚本层只判**文本形态**、不执行该包的 `typecheck`——吞退出码的写法（`tsc -p
-  tsconfig.test.json || true`、管道 `| cat`）与「把整条命令原样打印」（`echo tsc -p
-  tsconfig.test.json`）都实测两层全绿（exit-code 传播不在声明面内）；
+  tsconfig.test.json || true`、`; echo done`、管道 `| cat`）与「把整条命令原样打印」
+  （`echo tsc -p tsconfig.test.json`）都实测两层全绿（exit-code 传播不在声明面内；文本层只
+  认「配置名后面紧跟分隔符」的形态，拦不住这些）；
   2）`tsc` 二进制被替换成假脚本时判据会信它（要蓄意篡改 `node_modules`，属供应链面；
   缺失/坏 bin 本身 fail-closed）；3）扩展名大小写敏感：`tests/UPPER.SPEC.TS` 两侧都忽略
   （既不进 program 也不报）；4）扫描面硬编码 `apps/*`、`packages/*` 一层，与

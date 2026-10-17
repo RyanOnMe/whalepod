@@ -42,12 +42,14 @@ const TEST_SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts'])
  * 「真的拿这份配置跑 tsc」的脚本形态：tsc 与项目参数之间不许出现 `&&`/`||`/`;`，
  * 否则是两条命令拼接（`echo tsconfig.test.json` 这类错配会被子串匹配放过去——
  * 评审 A 与 B 各自实测：脚本只打印字符串、包里什么都没检查，两层判据全绿）。
- * 尾界用 `(?![\w.-])` 而不是 `\b`：`tsconfig.test.json.orig` / `.bak` 也满足词边界，
- * 脚本指向同前缀的假配置时第二层（永远只跑 canonical 文件）会全绿（评审 A/B 各自实测）。
+ * 尾界用**白名单** `(?=$|[\s"';])`（不是 `\b`、也不是 `(?![\w.-])` 这类黑名单）：`\b` 会放行
+ * `tsconfig.test.json.orig`，黑名单又会放行 `tsconfig.test.json~`（Vim 备份名）——凡是紧跟
+ * 非分隔字符的写法都算「脚本点的是另一个文件」（第二层永远只跑 canonical 文件）。空白 / 引号 /
+ * 行尾 / `;` 之后视为正常结束（`|| true`、`| cat` 这类吞退出码的写法仍是已声明盲区，见文档）。
  * 路径两侧允许引号（`-p "tsconfig.test.json"` 是合法写法，不误伤）。
  */
 const TSC_PROJECT_INVOCATION =
-  /\btsc\b[^&|;]*?(?:-p|--project)[=\s]+["']?(?:\.\/)?tsconfig\.test\.json["']?(?![\w.-])/
+  /\btsc\b[^&|;]*?(?:-p|--project)[=\s]+["']?(?:\.\/)?tsconfig\.test\.json["']?(?=$|[\s"';])/
 
 /** 脚本里显式要求「不检查」的旗标：配置面的 `noCheck` 有探测，CLI 面同样不许出现。 */
 const TSC_NO_CHECK_FLAG = /--noCheck\b/
