@@ -494,13 +494,15 @@ describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
     )
   })
 
-  it('`;` 串联的写法不误伤（吞退出码是已声明盲区，不由文本层拦）', async () => {
-    await makePackage(
-      'packages',
-      'chained',
-      { scripts: { typecheck: 'tsc -p tsconfig.test.json; echo done' } },
-      true,
-    )
+  it('串联写法不误伤（`;` / 无空格 `&&` / 重定向）——吞退出码是已声明盲区，不由文本层拦', async () => {
+    const scripts = [
+      'tsc -p tsconfig.test.json; echo done',
+      'tsc -p tsconfig.test.json&&tsc -b',
+      'set -e; tsc -p tsconfig.test.json --pretty false 2>&1',
+    ]
+    for (const [index, script] of scripts.entries()) {
+      await makePackage('packages', `chained-${index}`, { scripts: { typecheck: script } }, true)
+    }
     expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([])
   })
 
