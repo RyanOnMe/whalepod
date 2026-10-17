@@ -7,6 +7,7 @@
 import { z } from 'zod'
 import { PROTOCOL_VERSION, envelope, parseWireFrame } from './envelope.js'
 import { ErrorCodeSchema, WireErrorSchema } from './errors.js'
+import { HandoffNarrativeSchema, HandoffRunSpecSchema } from './handoff.js'
 import { ApprovalPolicySchema } from './approval.js'
 
 const Sha256DigestSchema = z.string().regex(/^[a-f0-9]{64}$/)
@@ -131,6 +132,13 @@ export const ProjectedRunEventSchema = z.strictObject({
       type: z.literal('subagent.finished'),
       childSessionId: DshSessionIdSchema,
       outcome: z.string().min(1),
+    }),
+    // #379：收尾整理的交接草稿结果——只由 owner 受众上行（草稿私有；project 行不存在）。
+    z.strictObject({
+      type: z.literal('handoff.draft'),
+      status: z.enum(['generated', 'failed']),
+      content: HandoffNarrativeSchema.optional(),
+      reason: z.string().min(1).max(1000).optional(),
     }),
     z.strictObject({ type: z.literal('run.completed'), finalText: z.string() }),
     z.strictObject({
@@ -284,6 +292,9 @@ export const RunStartSchema = envelope(
       // Revision 默认），Node 原样透传进 runtime.initialize。缺省 =
       // approval_required（与既有行为一致）。
       approvalPolicy: ApprovalPolicySchema.optional(),
+      // #379（ADR-0017 §3）：Task 已启用约定流程时携带——Node 原样透传进
+      // runtime.initialize，Runtime 收尾阶段据此生成交接草稿。
+      handoff: HandoffRunSpecSchema.optional(),
       // ADR-0009 切片⑤（resume 续跑）：成对携带——resumeOfRunId 让 Node 把
       // initialize 的 dshHomePath 指向**来源 Run** 的 home（per-run 隔离下新
       // runId 的 home 里没有旧日志）；resumeSessionId（= 来源 Run 的

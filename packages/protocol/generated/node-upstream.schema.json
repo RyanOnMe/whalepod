@@ -933,6 +933,72 @@
                   "properties": {
                     "type": {
                       "type": "string",
+                      "const": "handoff.draft"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "generated",
+                        "failed"
+                      ]
+                    },
+                    "content": {
+                      "type": "object",
+                      "properties": {
+                        "completed": {
+                          "$ref": "#/$defs/__schema10"
+                        },
+                        "interfaces": {
+                          "$ref": "#/$defs/__schema13"
+                        },
+                        "unfinished": {
+                          "$ref": "#/$defs/__schema14"
+                        },
+                        "decisions": {
+                          "$ref": "#/$defs/__schema15"
+                        },
+                        "evidence": {
+                          "$ref": "#/$defs/__schema16"
+                        },
+                        "downstream": {
+                          "$ref": "#/$defs/__schema17"
+                        },
+                        "commits": {
+                          "$ref": "#/$defs/__schema18"
+                        },
+                        "prs": {
+                          "$ref": "#/$defs/__schema20"
+                        }
+                      },
+                      "required": [
+                        "completed",
+                        "interfaces",
+                        "unfinished",
+                        "decisions",
+                        "evidence",
+                        "downstream",
+                        "commits",
+                        "prs"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "reason": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1000
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
                       "const": "run.completed"
                     },
                     "finalText": {
@@ -1195,6 +1261,178 @@
           }
         }
       ]
+    },
+    "__schema10": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema11"
+      }
+    },
+    "__schema11": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "refs": {
+          "maxItems": 16,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema12"
+          }
+        }
+      },
+      "required": [
+        "text",
+        "verified",
+        "refs"
+      ],
+      "additionalProperties": false
+    },
+    "__schema12": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "artifact"
+            },
+            "artifactId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          "required": [
+            "kind",
+            "artifactId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "run"
+            },
+            "runId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          "required": [
+            "kind",
+            "runId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "url"
+            },
+            "url": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            }
+          },
+          "required": [
+            "kind",
+            "url"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "commit"
+            },
+            "sha": {
+              "type": "string",
+              "minLength": 4,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "sha"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "__schema13": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema11"
+      }
+    },
+    "__schema14": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema11"
+      }
+    },
+    "__schema15": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema11"
+      }
+    },
+    "__schema16": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema11"
+      }
+    },
+    "__schema17": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema11"
+      }
+    },
+    "__schema18": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema19"
+      }
+    },
+    "__schema19": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 128
+    },
+    "__schema20": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema21"
+      }
+    },
+    "__schema21": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
     }
   }
 }

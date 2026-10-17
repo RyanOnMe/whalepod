@@ -195,6 +195,8 @@ export class RunProjector {
           frame.payload.reason,
           frame.sentAt,
         )
+      case 'handoff.draft':
+        return this.projectHandoffDraft(frame.sentAt, frame.payload)
       default:
         // agent.status（phase 已由 step/start 派生）。artifact.candidate 在
         // RunManager 已被采集链路截获，不会到达这里；其他未登记帧 fail-silent。
@@ -275,6 +277,32 @@ export class RunProjector {
           audience: 'project',
           occurredAt,
           event: { type: 'artifact.candidate', artifact: shared },
+        },
+      ],
+    }
+  }
+
+  /**
+   * #379 交接草稿结果（ADR-0017 §3）：**只出 owner 受众**——草稿是私有面，
+   * 其他成员与管理员连名称/数量/内容都不可见（project 行不存在，不是"收缩镜像"）。
+   * 内容随事件上行进 run_event（owner 行）；Hub 落 handoff_draft 表。
+   */
+  projectHandoffDraft(
+    occurredAt: string,
+    payload: Extract<RuntimeOutput, { type: 'handoff.draft' }>['payload'],
+  ): ProjectionResult {
+    return {
+      liveTexts: [],
+      events: [
+        {
+          audience: 'owner',
+          occurredAt,
+          event: {
+            type: 'handoff.draft',
+            status: payload.status,
+            ...(payload.content !== undefined ? { content: payload.content } : {}),
+            ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
+          },
         },
       ],
     }

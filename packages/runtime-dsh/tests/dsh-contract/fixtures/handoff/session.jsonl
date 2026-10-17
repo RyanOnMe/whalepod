@@ -1,0 +1,5 @@
+{"type":"session","id":"session-replay-handoff","createdAt":1755500200000,"seedLength":0}
+{"type":"assistant/chunk","seq":10,"time":1755500200100,"data":{"turn":1,"step":1,"chunk":{"type":"block-start","index":0,"blockType":"text"}}}
+{"type":"assistant/chunk","seq":11,"time":1755500200200,"data":{"turn":1,"step":1,"chunk":{"type":"text-delta","index":0,"text":"Implemented the login endpoint and its tests."}}}
+{"type":"assistant/chunk","seq":12,"time":1755500200300,"data":{"turn":1,"step":1,"chunk":{"type":"block-end","index":0,"block":{"type":"text","text":"Implemented the login endpoint and its tests."}}}}
+{"type":"assistant/chunk","seq":13,"time":1755500200400,"data":{"turn":1,"step":1,"chunk":{"type":"finish","reason":{"kind":"stop"}}}}

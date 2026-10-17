@@ -354,6 +354,8 @@ export class RunManager {
           ...(payload.approvalPolicy !== undefined
             ? { approvalPolicy: payload.approvalPolicy }
             : {}),
+          // #379：收尾交接草稿的触发与约定快照原样透传（缺省 = 不生成）。
+          ...(payload.handoff !== undefined ? { handoff: payload.handoff } : {}),
         },
       }
       this.deps.supervisor.dispatchToRuntime(runId, initialize)

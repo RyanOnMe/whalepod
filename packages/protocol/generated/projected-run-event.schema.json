@@ -346,6 +346,72 @@
           "properties": {
             "type": {
               "type": "string",
+              "const": "handoff.draft"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "generated",
+                "failed"
+              ]
+            },
+            "content": {
+              "type": "object",
+              "properties": {
+                "completed": {
+                  "$ref": "#/$defs/__schema5"
+                },
+                "interfaces": {
+                  "$ref": "#/$defs/__schema8"
+                },
+                "unfinished": {
+                  "$ref": "#/$defs/__schema9"
+                },
+                "decisions": {
+                  "$ref": "#/$defs/__schema10"
+                },
+                "evidence": {
+                  "$ref": "#/$defs/__schema11"
+                },
+                "downstream": {
+                  "$ref": "#/$defs/__schema12"
+                },
+                "commits": {
+                  "$ref": "#/$defs/__schema13"
+                },
+                "prs": {
+                  "$ref": "#/$defs/__schema15"
+                }
+              },
+              "required": [
+                "completed",
+                "interfaces",
+                "unfinished",
+                "decisions",
+                "evidence",
+                "downstream",
+                "commits",
+                "prs"
+              ],
+              "additionalProperties": false
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          },
+          "required": [
+            "type",
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
               "const": "run.completed"
             },
             "finalText": {
@@ -525,6 +591,178 @@
           }
         }
       ]
+    },
+    "__schema5": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema6"
+      }
+    },
+    "__schema6": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "refs": {
+          "maxItems": 16,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema7"
+          }
+        }
+      },
+      "required": [
+        "text",
+        "verified",
+        "refs"
+      ],
+      "additionalProperties": false
+    },
+    "__schema7": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "artifact"
+            },
+            "artifactId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          "required": [
+            "kind",
+            "artifactId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "run"
+            },
+            "runId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          "required": [
+            "kind",
+            "runId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "url"
+            },
+            "url": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            }
+          },
+          "required": [
+            "kind",
+            "url"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "commit"
+            },
+            "sha": {
+              "type": "string",
+              "minLength": 4,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "sha"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "__schema8": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema6"
+      }
+    },
+    "__schema9": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema6"
+      }
+    },
+    "__schema10": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema6"
+      }
+    },
+    "__schema11": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema6"
+      }
+    },
+    "__schema12": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema6"
+      }
+    },
+    "__schema13": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema14"
+      }
+    },
+    "__schema14": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 128
+    },
+    "__schema15": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema16"
+      }
+    },
+    "__schema16": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
     }
   }
 }

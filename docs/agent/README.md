@@ -5,6 +5,7 @@
 | 文档 | 内容 |
 |---|---|
 | [task-agreement-acceptance.md](./task-agreement-acceptance.md) | #378（ADR-0017 §1-2）：任务约定版本化（草稿 CAS/责任人确认/历史）+ 全部 Run 创建入口统一绑定已确认版本（辅助 Run 按用途豁免）；边界如实列（Agent 提案工具未落地、编号并发压测未做） |
+| [handoff-draft-acceptance.md](./handoff-draft-acceptance.md) | #379（ADR-0017 §3-4）：收尾自动整理交接草稿（一次模型调用 ≤60s、失败不改变业务结果）+ owner 私有面（管理员 404）+ CAS 编辑 + 发布校验与不可变版本；边界如实列（整理质量靠真人核对、跨 Task 引用留批次③） |
 | [runtime-version-change-acceptance.md](./runtime-version-change-acceptance.md) | #356：换版归因专用码 `RUNTIME_VERSION_CHANGED`——spawn 时记探针版本（旧状态库自动补列；判据含「列真在」与「旧库上能 spawn」两条），Node 重启做孤儿恢复时**两侧都是字符串、不一致、且孤儿仍存活（matched）**才算换版（否则退回 `RUNTIME_LOST`，不谎报）；判据三层（判定 6 例含四个负控 / Q6 全链快照 / Hub 落库保真；四个关键点各带变异自证）；边界：Hub 租约过期那条路看不出换版（秒级/数十秒**大概率**可见、分钟级必不可能——文档化回滚是分钟级）、真实换版仍人工门 |
 | [e2e-hub-dist-assembly-acceptance.md](./e2e-hub-dist-assembly-acceptance.md) | #281：Q5 的 Hub 装配只走**包解析 dist 产物**（`apps/hub/dist/server.js`，与 Docker 同形）+ 装配前**强制增量 build**（构建 break 必红在起手）——`--built-hub` 开关与 tsx 源码分支删除、`HARNESS_SRC_PATH_ALLOWLIST` 的 hub 例外摘除；判据 7 例（未构建包树/解析器注入的归因/构建失败三个负控 + 对外文本归约与返回值两态）+ 边界规则变异（源码入口回潮即红）+ Q5 全链 |
 | [cancel-race-acceptance.md](./cancel-race-acceptance.md) | #353：取消的四种真实时刻（流式中取消 / **取消与收尾撞车**（Runtime 层 completed 胜出，产品层结局另立 #365）/ 中断边界上已入队的 followup / **审批悬置时取消**）——收敛屏障后清总账「终态唯一」，followup 以 spliced 记录钉 `next-turn` 入队与 `outcome: canceled` 移除（续跑不复活），迟到 `approval.decide` 静默丢弃并留归因；六条变异自证、连跑 10 次稳定；窗口正中（#363）、resume 中取消（#366）如实记为未覆盖 |

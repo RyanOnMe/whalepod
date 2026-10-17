@@ -28,8 +28,11 @@ export interface SessionOwnerEvents {
   /**
    * 一个 turn 收敛完毕（已 whenIdle + flush）：completed / aborted(reason) /
    * error(LlmFailure) / 其他边界 kind，附带最后一个 assistant message id。
+   *
+   * #379：允许异步——completed 分支的桥侧要在终态上报**之前**完成有界的交接草稿
+   * 生成（≤60s 硬超时）；settle 会 await 本回调（settleChain 串行，dispose 亦等它）。
    */
-  turnSettled(reason: TurnEndReason, finalMessageId: string | undefined): void
+  turnSettled(reason: TurnEndReason, finalMessageId: string | undefined): Promise<void> | void
 }
 
 /**
@@ -62,6 +65,11 @@ const PERSONA_SECTION = 'deployment:persona'
 export class SessionOwner {
   private settleChain: Promise<void> = Promise.resolve()
   private disposed = false
+  /**
+   * 本 Run 的对话转录尾部（#379 收尾整理用）：只留 用户指令 + 助手文本，
+   * 有界（条数 + 单条长度在读取侧再截）；不落盘、不出发本进程。
+   */
+  private readonly transcript: { role: 'user' | 'assistant'; text: string }[] = []
 
   private constructor(
     private readonly handle: AgentHandle,
@@ -159,9 +167,21 @@ export class SessionOwner {
 
   /** `run.prompt` 与 `run.followup` 在桥内同态：排队一次普通 follow-up turn。 */
   followup(text: string): void {
+    this.recordTranscript({ role: 'user', text })
     this.agent.followup(
       createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }),
     )
+  }
+
+  /** 转录尾部快照（#379）：条数有界，供收尾整理的 prompt 装配。 */
+  transcriptSnapshot(): readonly { role: 'user' | 'assistant'; text: string }[] {
+    return this.transcript
+  }
+
+  private recordTranscript(entry: { role: 'user' | 'assistant'; text: string }): void {
+    // 有界保持：只留最近 60 条（超出丢最旧；prompt 侧还会按字符预算再截）。
+    this.transcript.push(entry)
+    if (this.transcript.length > 60) this.transcript.splice(0, this.transcript.length - 60)
   }
 
   /** `run.cancel`：wire 的 user/parent → DSH 的 AgentCancelCause。 */
@@ -186,8 +206,30 @@ export class SessionOwner {
    */
   deliverSessionEvent(eventSession: Session, event: SessionEvent): void {
     if (String(eventSession.id) !== String(this.session.id)) return
+    if (event.type === 'assistant/message') this.recordAssistantMessage(event)
     this.events.sessionEvent(event)
     if (event.type === 'turn/end') this.queueSettle(event.data.reason)
+  }
+
+  /** 助手消息的文本块进转录（#379）——形状防御与 projector 同口径，取不到就跳过。 */
+  private recordAssistantMessage(event: SessionEvent): void {
+    const data = event.data as unknown
+    if (typeof data !== 'object' || data === null) return
+    const message = (data as { message?: unknown }).message
+    if (typeof message !== 'object' || message === null) return
+    const content = (message as { content?: unknown }).content
+    if (!Array.isArray(content)) return
+    const text = content
+      .filter(
+        (block): block is { type: 'text'; text: string } =>
+          typeof block === 'object' &&
+          block !== null &&
+          (block as { type?: unknown }).type === 'text' &&
+          typeof (block as { text?: unknown }).text === 'string',
+      )
+      .map((block) => block.text)
+      .join('\n')
+    if (text.trim() !== '') this.recordTranscript({ role: 'assistant', text })
   }
 
   /**
@@ -226,7 +268,7 @@ export class SessionOwner {
         error: error instanceof Error ? error.message : String(error),
       })
     }
-    this.events.turnSettled(reason, this.finalMessageId())
+    await this.events.turnSettled(reason, this.finalMessageId())
   }
 
   private finalMessageId(): string | undefined {

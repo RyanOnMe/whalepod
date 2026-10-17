@@ -1,0 +1,20 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a040",
+  "type": "handoff.draft",
+  "sentAt": "2026-01-05T09:09:00Z",
+  "payload": {
+    "runId": "01905f7c-0000-7000-8000-000000000301",
+    "status": "generated",
+    "content": {
+      "completed": [{ "text": "登录接口已实现并提交", "verified": false, "refs": [] }],
+      "interfaces": [],
+      "unfinished": [],
+      "decisions": [],
+      "evidence": [],
+      "downstream": [],
+      "commits": [],
+      "prs": []
+    }
+  }
+}
