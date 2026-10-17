@@ -50,6 +50,7 @@ import { RuntimeSupervisor } from '../../../apps/node/src/supervisor/runtime-sup
 import { DshRuntimeDriver } from '../../../apps/node/src/runtime-driver.js'
 import { RunManager } from '../../../apps/node/src/run/run-manager.js'
 import { startDeviceSession } from '../../../apps/node/src/gateway/session.js'
+import { createHelloFacts } from '../../../apps/node/src/gateway/hello-facts.js'
 import type {
   RuntimeDriver,
   RuntimeHandle,
@@ -423,13 +424,16 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
     const nodeFrameHooks = new Set<(frame: NodeDownstream, atMs: number) => void>()
     const session = startDeviceSession({
       config: { hubUrl: httpBase, deviceId, deviceToken: claimBody.deviceToken },
-      facts: {
-        nodeVersion: process.version,
-        platform: 'darwin',
-        architecture: 'arm64',
-        dshDistributionVersion: '0.1.0-rc.8',
-        pluginPackDigests: [],
-      },
+      // #352：与生产 cli.ts 共用同一份 hello 事实装配（按连接重算）。本 harness 显式
+      // 注入「探不到」的探针（返回 null → 报 startupDshVersion 的固定串）：链路录制
+      // 要字节确定，且真探针会为每条连接多起一个 node 子进程。pack digests 走真读盘
+      // ——本链路无 preflight 装配（无 pack 安装），恒为空，与改动前一致。
+      helloFacts: createHelloFacts({
+        stateDir: nodeStateDir,
+        runtimeEntry: RUNTIME_BIN,
+        startupDshVersion: '0.1.0-rc.8',
+        probeDshVersion: async () => null,
+      }),
       onRevoked: () => {},
       exit: (code, message) => {
         throw new Error(`node session exit ${code}: ${message}`)

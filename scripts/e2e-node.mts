@@ -59,7 +59,8 @@ import { uploadArtifactCandidate } from '../apps/node/src/artifact/upload-client
 
 const REPO_ROOT = join(import.meta.dirname, '..')
 // #320：Q5 与 CLI 使用同一生产包的 session/preparation 装配，不补测试专用响应。
-const { startDeviceSession, checkPreparation } = await import(
+// #320/#352：session/preparation/hello-facts 都取自**构建产物**（与 CLI 同一装配）。
+const { startDeviceSession, checkPreparation, createHelloFacts } = await import(
   createRequire(join(REPO_ROOT, 'apps/node/package.json')).resolve('@whalepod/node')
 )
 // #99-A：与 chain.ts 同一装配——经 apps/node 上下文包解析 dist 产物（见该处注释）。
@@ -369,19 +370,22 @@ function destroyLiveSockets(): void {
   }
 }
 
-const facts = {
-  nodeVersion: process.version,
-  platform: (process.platform === 'linux' ? 'linux' : 'darwin') as 'darwin' | 'linux',
-  architecture: process.arch,
-  dshDistributionVersion: '0.1.0-rc.8-e2e',
-  pluginPackDigests: [],
-}
+// #352：hello 事实与生产 cli.ts 共用同一份装配（gateway/hello-facts.ts，按连接重算）。
+// 探针注入为「探不到」：E2E 的版本串是 harness 的确定性捆定值（0.1.0-rc.8-e2e，与
+// RunManager 的固化值一致），真探针会引入构建依赖并拖慢冷启。pack digests 走真读盘
+// ——本 harness 无 preflight 装配（e2e-pack 是 core-empty，无本地落盘），恒为空。
+const helloFacts = createHelloFacts({
+  stateDir,
+  runtimeEntry: RUNTIME_BIN,
+  startupDshVersion: '0.1.0-rc.8-e2e',
+  probeDshVersion: async () => null,
+})
 
 const inventory = new WorkspaceInventory(registry, secrets)
 
 const session = startDeviceSession({
   config,
-  facts,
+  helloFacts,
   onRevoked: () => {},
   exit: (code, message) => {
     log(`session exit ${code}: ${message}`)
