@@ -182,6 +182,7 @@ export async function deliverHandoff(
       })
       // 关联既有任务时创建路径没有事件；新建路径这里再发一次也无害（同形事实）。
       await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(downstream) })
+
       // 评审 B9：上游「已交接」列表也是 team-visible 事实——只发下游，上游房间里
       // 别人要等刷新才看见新增的交接行。
       await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(upstream) })

@@ -256,6 +256,36 @@ describe('handoff draft (#379)', () => {
     expect((await getRun(database.db, run.id))?.status).toBe('completed')
   })
 
+  it('Unicode 防线（评审 F-残余）：带孤立代理项的帧在解析层拒绝，不落任何痕迹', async () => {
+    const { ids, harness, run } = await seedCompletedRun()
+    // 孤立代理项能过结构与字节上限，但 PG 的 jsonb 编码会以 22P02 拒行——必须在
+    // 解析层挡住（毒帧路径回归；与 M1 容量毒帧同一类，此处走 schema 而非容量转换）。
+    await expect(
+      harness.orchestrator.ingestNodeEvent(
+        harness.deviceFor(ids),
+        runEventFrame(run.id, 3, {
+          type: 'handoff.draft',
+          status: 'generated',
+          content: narrative({
+            completed: [{ text: 'bad \uD800 tail', verified: false, refs: [] }],
+          }),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    expect(await draftRows(run.id)).toHaveLength(0)
+    expect((await getRun(database.db, run.id))?.status).toBe('completed')
+    // 正控：同一入口的合法叙述照常落库（拒绝的是码位，不是这条路径）。
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(run.id, 3, {
+        type: 'handoff.draft',
+        status: 'generated',
+        content: narrative({ completed: [{ text: '正常内容 😀', verified: false, refs: [] }] }),
+      }),
+    )
+    expect(await draftRows(run.id)).toHaveLength(1)
+  })
+
   it('容量上限（评审 M1）：材料超 64 条 → 落「未生成」失败草稿，ingest 不抛、终态不动', async () => {
     const { ids, harness, run } = await seedCompletedRun()
     // 注记（#99 口径）：直插 65 条 artifact 行是**声明式前置**——真实路径要起 Node 从
