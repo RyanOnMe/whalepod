@@ -21,6 +21,7 @@ import { Switch } from '../vendor/dsh-ui/index.js'
 import { RelativeTime } from '../shared/RelativeTime.js'
 import { TASK_STATUS_LABEL } from '../shared/format.js'
 import { useMemberDirectory } from '../features/team/memberDirectory.js'
+import { createTaskFailureCopy } from '../features/task/createTaskFailure.js'
 import type { AgentView, ProjectView, TaskView } from '../shared/api/types.js'
 import { PersonalAttention } from '../features/attention/PersonalAttention.js'
 import { queryKeys } from '../app/query-client.js'
@@ -278,6 +279,9 @@ function CreateTaskForm({
   })
   const [executeNow, setExecuteNow] = useState(false)
   const [error, setError] = useState<unknown>(null)
+  // #348：服务端已明确拒绝过这个选择（责任人不活跃 / Agent 已归档）时为真——即便名册
+  // 缓存还没刷新（竞态残窗），后续提交也先拦住，直到用户重选。见 createTaskFailureCopy。
+  const [selectionRejected, setSelectionRejected] = useState(false)
   // 幂等键按「意图签名」持有（#345）：见 mutationFn 里的用法。
   const intentKey = useRef<{ signature: string; key: string } | null>(null)
   const session = useSession()
@@ -305,7 +309,9 @@ function CreateTaskForm({
     values.assignee !== '' && !selectableMembers.some((m) => m.userId === values.assignee)
   const agentStale =
     willExecute && values.agentId !== '' && !selectableAgents.some((a) => a.id === values.agentId)
-  const selectionUnavailable = assigneeStale || agentStale
+  const selectionUnavailable = assigneeStale || agentStale || selectionRejected
+  // 服务端拒绝的引导文案（#348）：主位是人话 + 下一步，「细节（排障用）」带错误码与原文。
+  const failureGuidance = error === null ? null : createTaskFailureCopy(error)
   // 列表就绪后默认选中自己（多数场景是给自己建任务）；用户改选后不覆盖。
   useEffect(() => {
     const preferred =
@@ -363,6 +369,8 @@ function CreateTaskForm({
     },
     onError: (mutationError: unknown) => {
       setError(mutationError)
+      // #348：服务端点名了候选失效 → 后续提交先拦（引导文案由 failureGuidance 给）。
+      if (createTaskFailureCopy(mutationError) !== null) setSelectionRejected(true)
     },
   })
   const submit = (event: FormEvent<HTMLFormElement>): void => {
@@ -434,6 +442,7 @@ function CreateTaskForm({
             // （状态更新不进 updater：updater 必须是纯函数，副作用留在事件里。）
             const stillSelf = session !== null && next === session.userId
             if (!stillSelf) setExecuteNow(false)
+            setSelectionRejected(false)
             setValues((prev) => ({
               ...prev,
               assignee: next,
@@ -482,7 +491,10 @@ function CreateTaskForm({
               label: `${a.name}（Agent）`,
               disabled: false,
             }))}
-            onChange={(next) => setValues((prev) => ({ ...prev, agentId: next }))}
+            onChange={(next) => {
+              setSelectionRejected(false)
+              setValues((prev) => ({ ...prev, agentId: next }))
+            }}
             disabled={agentsQuery.isPending}
           />
         ) : null}
@@ -499,7 +511,9 @@ function CreateTaskForm({
         <p className="mutation-hint" role="status" data-testid="selection-unavailable-hint">
           {assigneeStale
             ? '所选责任人当前不可指派（可能被停用，或名册未读到）'
-            : '所选执行 Agent 当前不可用（可能被归档，或列表未读到）'}
+            : agentStale
+              ? '所选执行 Agent 当前不可用（可能被归档，或列表未读到）'
+              : '刚才这次创建被服务端拒绝：所选责任人/Agent 已不可用'}
           ——请重新选择后再创建（不会自动换人）。
         </p>
       ) : null}
@@ -527,7 +541,12 @@ function CreateTaskForm({
           取消
         </button>
       </div>
-      {error !== null ? <ErrorBanner error={error} /> : null}
+      {error !== null ? (
+        <ErrorBanner
+          error={error}
+          {...(failureGuidance !== null ? { guidance: failureGuidance } : {})}
+        />
+      ) : null}
     </form>
   )
 }

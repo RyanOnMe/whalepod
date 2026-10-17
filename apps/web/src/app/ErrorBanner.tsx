@@ -2,6 +2,10 @@
  * 通用错误横幅（mutation/查询失败可见反馈，02 Task 7 Step 6）。
  * 会话类失败（AUTH_REQUIRED/SESSION_EXPIRED）提供回登录入口；
  * 其余失败展示 Hub 的 message + requestId（requestId 缺失时省略）。
+ *
+ * `guidance`（#348）：面自己知道失败原因时给出人话与下一步——横幅把 **guidance 放主位**，
+ * Hub 的分类消息降为「细节（排障用）」并带上错误码（此前码只在响应里，页面上看不到，
+ * 排障要翻网络面板）。不传 guidance 时行为不变。
  */
 import { isApiError, isSessionError } from '../shared/api/errors.js'
 import type { ReactNode } from 'react'
@@ -11,18 +15,35 @@ export interface ErrorBannerProps {
   error: unknown
   /** 可选：给会话失效场景一个明确入口。 */
   reloginHref?: string
+  /** 可选：本面自己知道原因时的中文引导（替代分类消息成为主文案）。 */
+  guidance?: string
 }
 
-export function ErrorBanner({ error, reloginHref = '/login' }: ErrorBannerProps): ReactNode {
+export function ErrorBanner({
+  error,
+  reloginHref = '/login',
+  guidance,
+}: ErrorBannerProps): ReactNode {
   const message = isApiError(error) ? error.message : '发生未知错误，请稍后重试'
   const requestId = isApiError(error) ? error.requestId : ''
+  const code = isApiError(error) ? error.code : ''
   const sessionExpired = isSessionError(error)
   return (
     <div className="error-banner" role="alert">
-      <p>
-        {message}
-        {requestId !== '' ? `（requestId: ${requestId}）` : ''}
-      </p>
+      {guidance !== undefined ? (
+        <>
+          <p data-testid="error-guidance">{guidance}</p>
+          <p className="error-diagnostics" data-testid="error-diagnostics">
+            细节（排障用）：{code} · {message}
+            {requestId !== '' ? `（requestId: ${requestId}）` : ''}
+          </p>
+        </>
+      ) : (
+        <p>
+          {message}
+          {requestId !== '' ? `（requestId: ${requestId}）` : ''}
+        </p>
+      )}
       {sessionExpired ? (
         <p>
           登录状态已失效，请 <Link to={reloginHref}>重新登录</Link>。
