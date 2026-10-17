@@ -24,6 +24,7 @@ import {
   makeHarness,
   resetDatabase,
   seedRunPrereqs,
+  seedSecondUserDevice,
   TEST_DSH_VERSION,
   type Session,
   type TestApp,
@@ -37,6 +38,7 @@ import {
 import { updateTask } from '../src/modules/task/commands.js'
 import { getTaskRoom } from '../src/modules/task/view.js'
 import { sendInstruction } from '../src/modules/run/instruction.js'
+import { grantInstructionRight } from '../src/modules/task/instruction-grants.js'
 
 const CONTENT = {
   goal: '交付登录接口',
@@ -522,6 +524,41 @@ describe('task agreement 绑定收口 (#378)', () => {
     const legacyView = room2?.runs.find((run) => run.id === legacy)
     expect(legacyView).toMatchObject({ specRevision: null, purpose: 'business' })
     expect(room2?.agreement).toEqual({ enabled: true, latestConfirmedNumber: 1, hasDraft: false })
+  })
+
+  it('用途门禁（评审 M4）：辅助 Run 的 purpose 仅责任人可声明——被授权成员传即 FORBIDDEN', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    const second = await seedSecondUserDevice(database.db, ids)
+    await grantInstructionRight(database, makeActor(ids.userId), ids.taskId, {
+      userId: second.userId,
+      idempotencyKey: idemKey(),
+    })
+    const { orchestrator } = makeHarness(database)
+    const grantedActor = makeActor(second.userId, 'member')
+
+    // 前提：被授权成员本来就能发**业务** Run（执行现场仍是责任人的设备/凭据）。
+    const business = await orchestrator.create(
+      grantedActor,
+      ids.taskId,
+      makeCreateInput(ids, { purpose: 'business' }),
+    )
+    expect(business.purpose).toBe('business')
+    await setRunStatus(database.db, business.id, 'completed', { finishedAt: new Date() })
+
+    // 但 purpose 是**客户端可声明**的免绑定标记：不设门槛就等于给约定流程开后门
+    //（有指令权的人传 agreement_draft 即可绕过 AGREEMENT_REQUIRED 跑业务工作）。
+    for (const purpose of ['agreement_draft', 'handoff_draft'] as const) {
+      await expect(
+        orchestrator.create(grantedActor, ids.taskId, makeCreateInput(ids, { purpose })),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    }
+    // 责任人自己仍可用辅助 Run（ADR-0017 §1 的整理约定/交接场景）。
+    const helper = await orchestrator.create(
+      makeActor(ids.userId),
+      ids.taskId,
+      makeCreateInput(ids, { purpose: 'agreement_draft' }),
+    )
+    expect(helper.purpose).toBe('agreement_draft')
   })
 
   it('执行区指令与自动指派：无绑定被拒，带绑定成功且落库', async () => {
