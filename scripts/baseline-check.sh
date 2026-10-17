@@ -38,4 +38,7 @@ compose_v="$(docker compose version --short 2>/dev/null || true)"
 [ -n "$docker_v" ] && echo "OK    docker: $docker_v" || echo "WARN  docker: 未运行（Q9 安装门需要）"
 [ -n "$compose_v" ] && echo "OK    docker compose: $compose_v" || echo "WARN  docker compose: 不可用（Q9 安装门需要）"
 
+echo "---"
+echo "提示：跑完测试面（Q0/Q1/Q6/Q5）后可跑 scripts/check-stray-runtimes.sh 自检开发机残留（#305）"
+
 exit "$fail"
