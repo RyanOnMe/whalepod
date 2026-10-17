@@ -401,7 +401,21 @@ describe('Node 重启无孤儿恢复', () => {
       started_at text not null, stderr_tail text)`)
     legacy.close()
 
-    // 打开即补列；start() 的 INSERT 点名列 dsh_version——没有补列就会
+    // 判据顺序有意：**先断言补列发生、再 spawn**。迁移被绕过时在无进程阶段就红——否则
+    // `start()` 会先 spawn 再 INSERT，INSERT 抛错时 makeReadySupervisor 还没登记 pid，
+    // 这条失败路径会漏一个孤儿探针（两轮评审都点到；#305 的同一类账）。
+    const opening = reopenedSupervisor(stateDb, '0.1.0-rc.8')
+    {
+      const inspect = new DatabaseSync(stateDb)
+      const columns = inspect.prepare('pragma table_info(active_runtime)').all() as unknown as {
+        name: string
+      }[]
+      inspect.close()
+      expect(columns.map((column) => column.name)).toContain('dsh_version')
+    }
+    opening.close()
+
+    // 补列生效后 spawn：`start()` 的 INSERT 点名列 dsh_version——没有补列就会
     // 「table active_runtime has no column named dsh_version」直接抛（真判据）。
     const runId = 'r-legacy-spawn'
     const pid = await makeReadySupervisor(stateDb, runId, '0.1.0-rc.8')
@@ -413,5 +427,7 @@ describe('Node 重启无孤儿恢复', () => {
       .get(runId) as unknown as { dsh_version: string | null } | undefined
     inspect.close()
     expect(row?.dsh_version).toBe('0.1.0-rc.8')
+
+    await reap(pid) // 本用例的探针自己收回（失败路径靠 afterAll 兜底，绿路径不留活口）
   })
 })

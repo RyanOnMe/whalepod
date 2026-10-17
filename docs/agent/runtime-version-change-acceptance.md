@@ -98,8 +98,9 @@ pnpm exec vitest run --project unit apps/node/tests/recovery.spec.ts
   → probe 判 dead → 通用码，见 ⑤）。**这不是罕见时序，而是文档化流程下的主流**：
   skill 的人工门回滚是「停 Node → `git checkout` → `pnpm install` → `pnpm -r build` → 起
   Node」，停机分钟级 ⟹ Hub 几乎必然先落 `lost(RUNTIME_LOST)`，Node 回来后带专用码的迟到快照
-  被终态幂等丢掉。**专用码只在停机 <30s（例如换镜像快速重启）时直接对用户可见**——如实记账；
-  「让 Hub 在重连/hello 时对已 lost 的 Run 收敛 `failure_code`（status 不动）」另立账（#368）。
+  被终态幂等丢掉。**结论：秒级重启时专用码大概率可见（非保证——心跳/拍点的相位就能让它输）、
+  分钟级必不可能**；本仓库不为这条边界加善后（如实记账）。「让 Hub 在重连/hello 时对已 lost
+  的 Run 收敛 `failure_code`（status 不动）」另立账（#368）。
 - **真实换版演练仍是人工门**：本判据用的是「同一 supervisor 状态文件 + 不同版本参数」，真实
   「装另一版 DSH → 触发 → 回滚安装树」的步骤与预期输出在 skill 的回滚节（#290 的人工门）。
 - **跨版本 resume 未看管**（相邻问题，另立账 #370）：resume 的四重守卫不含版本，回滚后对既有

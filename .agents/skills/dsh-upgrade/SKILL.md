@@ -54,8 +54,9 @@ DSH 是预览版，升级是高风险动作。三条红线（06 文档 §2.1）�
    对一个**既有 Workspace** 起一次 Run，历史投影可读（跨版本会话
    日志兼容性——这一条需要两个版本都用过才判得出来，是本门存在的主要理由）。
    **若第 3 步停机期间有 Run 在跑**，它的结局按停机时长分两种（见下「数据与历史语义」的归因）：
-   秒级重启（停机 <30s、且 Runtime 进程活过 Node 重启）→ 界面看到
-   `lost(RUNTIME_VERSION_CHANGED)`；本步骤的分钟级回滚 → Hub 的租约先过期，看到的是
+   秒级重启（数十秒内，且 Runtime 进程活过 Node 重启）→ 界面**大概率**看到
+   `lost(RUNTIME_VERSION_CHANGED)`（不是保证：心跳 10s 与 reconciler 10s 拍点的相位就能让
+   租约先过期）；本步骤的分钟级回滚 → 必不可能看到专用码，Hub 的租约先过期、落的是
    `lost(RUNTIME_LOST)`（专用码的迟到快照被终态幂等丢掉，属已知可见性边界）。
 5. 残留自查：`node_modules/.pnpm` 里不应再有新版包——`ls -d node_modules/.pnpm/@deepseek-ai+*@*`，
    逐项对照 `dsh.lock.json` 的十项版本（多出条目或版本不符都说明回滚没重装；grep 按包名前缀，
