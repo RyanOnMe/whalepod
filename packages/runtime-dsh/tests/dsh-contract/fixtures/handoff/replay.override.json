@@ -1,0 +1,27 @@
+{
+  "patches": [
+    {
+      "at": 1,
+      "entry": {
+        "kind": "chunks",
+        "chunks": [
+          { "type": "block-start", "index": 0, "blockType": "text" },
+          {
+            "type": "text-delta",
+            "index": 0,
+            "text": "{\"completed\":[{\"text\":\"登录接口与用例已实现\",\"verified\":false,\"refs\":[]}],\"interfaces\":[{\"text\":\"POST /auth/login 返回会话 cookie\",\"verified\":false,\"refs\":[]}],\"unfinished\":[],\"decisions\":[{\"text\":\"沿用既有会话中间件，不引入新依赖\",\"verified\":false,\"refs\":[]}],\"evidence\":[{\"text\":\"单元测试通过（材料中记录）\",\"verified\":false,\"refs\":[{\"kind\":\"run\",\"runId\":\"01905f7c-0000-7000-8000-000000000301\"}]}],\"downstream\":[{\"text\":\"前端按接口约定接入登录页\",\"verified\":false,\"refs\":[]}],\"commits\":[\"0f1e2d3\"],\"prs\":[]}"
+          },
+          {
+            "type": "block-end",
+            "index": 0,
+            "block": {
+              "type": "text",
+              "text": "{\"completed\":[{\"text\":\"登录接口与用例已实现\",\"verified\":false,\"refs\":[]}],\"interfaces\":[{\"text\":\"POST /auth/login 返回会话 cookie\",\"verified\":false,\"refs\":[]}],\"unfinished\":[],\"decisions\":[{\"text\":\"沿用既有会话中间件，不引入新依赖\",\"verified\":false,\"refs\":[]}],\"evidence\":[{\"text\":\"单元测试通过（材料中记录）\",\"verified\":false,\"refs\":[{\"kind\":\"run\",\"runId\":\"01905f7c-0000-7000-8000-000000000301\"}]}],\"downstream\":[{\"text\":\"前端按接口约定接入登录页\",\"verified\":false,\"refs\":[]}],\"commits\":[\"0f1e2d3\"],\"prs\":[]}"
+            }
+          },
+          { "type": "finish", "reason": { "kind": "stop" } }
+        ]
+      }
+    }
+  ]
+}

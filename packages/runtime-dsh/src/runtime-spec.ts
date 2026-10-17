@@ -9,7 +9,7 @@
  * profileDigest 不再只是记录：bridge 在 `runtime.ready` 帧**回声**它，Node 侧与
  * run.start 固化的 Revision digest 比对（不符即 PROFILE_MISMATCH 并终止）。
  */
-import type { RuntimeArtifactInput, RuntimeCommand } from '@whalepod/protocol'
+import type { HandoffRunSpec, RuntimeArtifactInput, RuntimeCommand } from '@whalepod/protocol'
 
 export interface RuntimeSpec {
   readonly runId: string
@@ -44,6 +44,11 @@ export interface RuntimeSpec {
    * initialize 下发，Runtime 不自行判断。
    */
   readonly approvalPolicy?: 'approval_required' | 'full_access'
+  /**
+   * #379（ADR-0017 §3）：建 Run 时 Task 已启用约定流程才携带——收尾阶段据此生成
+   * 交接草稿（agreement 为绑定版本正文快照，null = 未绑定）。
+   */
+  readonly handoff?: HandoffRunSpec
 }
 
 type InitializeCommand = Extract<RuntimeCommand, { type: 'runtime.initialize' }>
@@ -56,6 +61,7 @@ export function runtimeSpecFromInitialize(command: InitializeCommand): RuntimeSp
     artifactInputsDir,
     resumeSessionId,
     approvalPolicy,
+    handoff,
     ...rest
   } = command.payload
   // exactOptionalPropertyTypes：zod 的 optional 产出 `number | undefined`，
@@ -68,6 +74,7 @@ export function runtimeSpecFromInitialize(command: InitializeCommand): RuntimeSp
     ...(artifactInputsDir === undefined ? {} : { artifactInputsDir }),
     ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
     ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
+    ...(handoff === undefined ? {} : { handoff }),
   }
 }
 

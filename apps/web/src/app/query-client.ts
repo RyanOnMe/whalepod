@@ -35,6 +35,10 @@ export const queryKeys = {
   /** P1-13：Run 详情/事件键前缀与 event-router 的 ['run', runId] 失效约定对齐。 */
   run: (runId: string) => ['run', runId] as const,
   runInputManifest: (runId: string) => ['run', runId, 'input-manifest'] as const,
+  /** #379：源 Run 的交接草稿（owner 私有面；非 owner 返回 404 → 面板不渲染）。 */
+  runHandoffDraft: (runId: string) => ['run', runId, 'handoff-draft'] as const,
+  /** #379：某 Task 的已发布交接版本（团队可见，倒序）。 */
+  taskHandoffRevisions: (taskId: string) => ['task-handoff-revisions', taskId] as const,
   runEvents: (runId: string) => ['run', runId, 'events'] as const,
   devices: ['devices'] as const,
   workspaces: ['workspaces'] as const,

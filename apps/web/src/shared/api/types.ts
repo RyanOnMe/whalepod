@@ -328,6 +328,15 @@ export interface RunView {
 // 直接复用协议推导类型，不再手写第二份。
 export type { TaskAgreementView, TaskSpecContent, TaskSpecRevisionView } from '@whalepod/protocol'
 
+// handoff.ts（Hub）：交接草稿/版本读模型与叙述结构（#379）——同上按协议推导。
+export type {
+  HandoffDraftView,
+  HandoffItem,
+  HandoffNarrative,
+  HandoffRef,
+  HandoffRevisionView,
+} from '@whalepod/protocol'
+
 // run/routes.ts：GET /runs/:runId/events 的事件项（受众由 Hub 按请求者裁剪）。
 export interface RunEventItem {
   runId: string

@@ -1,0 +1,16 @@
+[
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "text" },
+      { "type": "text-delta", "index": 0, "text": "Implemented the login endpoint and its tests." },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": { "type": "text", "text": "Implemented the login endpoint and its tests." }
+      },
+      { "type": "finish", "reason": { "kind": "stop" } }
+    ]
+  },
+  { "kind": "hang" }
+]

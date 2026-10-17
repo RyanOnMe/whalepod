@@ -9,6 +9,7 @@ import { z } from 'zod'
 import { envelope, parseWireFrame } from './envelope.js'
 import { ApprovalPolicySchema } from './approval.js'
 import { ErrorCodeSchema } from './errors.js'
+import { HandoffNarrativeSchema, HandoffRunSpecSchema } from './handoff.js'
 
 const Sha256DigestSchema = z.string().regex(/^[a-f0-9]{64}$/)
 const DshSessionIdSchema = z.string().min(1).max(128)
@@ -64,6 +65,9 @@ const RuntimeInitializePayloadSchema = z
     // HTTP 清单 → initialize，HTTP 上限为实际约束；改上限需两处同步）。
     artifactInputs: z.array(RuntimeArtifactInputSchema).max(64).optional(),
     artifactInputsDir: z.string().min(1).optional(),
+    // #379（ADR-0017 §3）：建 Run 时 Task 已启用约定流程才携带——Runtime 收尾阶段
+    // 据此生成交接草稿（agreement 为绑定版本正文快照；未绑定 null）。
+    handoff: HandoffRunSpecSchema.optional(),
   })
   // 清单与副本目录必须成对出现：只带清单不给目录（Runtime 无处读取）或只给
   // 目录不带清单（无意义副本）都是畸形 initialize，fail-closed 拒绝。
@@ -186,6 +190,37 @@ export const RuntimeArtifactCandidateSchema = envelope(
   }),
 )
 
+/**
+ * #379：收尾阶段自动整理的交接草稿（ADR-0017 §3）。
+ * `status='generated'` 携带结构化叙述（系统块由 Hub 落库时填入）；
+ * `status='failed'` 只带原因（超时/解析失败/模型错误），业务执行结果不受影响。
+ * 帧在 `run.completed` **之前**发出（收尾等待有界、不阻塞终态上报之外的行为）。
+ */
+export const RuntimeHandoffDraftSchema = envelope(
+  'handoff.draft',
+  z
+    .strictObject({
+      runId: z.uuid(),
+      status: z.enum(['generated', 'failed']),
+      content: HandoffNarrativeSchema.optional(),
+      reason: z.string().min(1).max(1000).optional(),
+    })
+    .superRefine((value, ctx) => {
+      if ((value.status === 'generated') !== (value.content !== undefined)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'content is required exactly when status is generated',
+        })
+      }
+      if ((value.status === 'failed') !== (value.reason !== undefined)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'reason is required exactly when status is failed',
+        })
+      }
+    }),
+)
+
 export const RuntimeRunCompletedSchema = envelope(
   'run.completed',
   z.strictObject({
@@ -217,6 +252,7 @@ export const RuntimeOutputSchema = z.discriminatedUnion('type', [
   AgentStatusSchema,
   RuntimeApprovalRequestedSchema,
   RuntimeArtifactCandidateSchema,
+  RuntimeHandoffDraftSchema,
   RuntimeRunCompletedSchema,
   RuntimeRunCancelledSchema,
   RuntimeFatalSchema,
