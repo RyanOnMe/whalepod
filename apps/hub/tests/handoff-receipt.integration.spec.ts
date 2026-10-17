@@ -422,6 +422,38 @@ describe('handoff delivery & receipt (#380)', () => {
     // 与 deliver 的同形重发都算数）。
     expect(countFor(ids.taskId)).toBe(1)
     expect(countFor(delivered.downstreamTaskId)).toBeGreaterThanOrEqual(1)
+
+    // 「关联既有任务」路径没有 createTask 的事件可借：清空后下游**恰一条**来自 deliver
+    // 自己（复核点名的判据精度——≥1 在新建路径下会被 createTask 满足）。
+    const existing = await database.db
+      .insert(schema.tasks)
+      .values({
+        id: randomUUID(),
+        projectId: ids.projectId,
+        title: '前端任务（既有）',
+        assigneeUserId: receiver.userId,
+        assignmentStatus: 'accepted',
+        acceptedAt: new Date(),
+        createdBy: ids.userId,
+      })
+      .returning()
+    await database.db.delete(schema.teamEvents)
+    const linked = await deliverHandoff(
+      database,
+      makeActor(ids.userId),
+      revisionId,
+      { receiverUserId: receiver.userId, downstreamTaskId: existing[0]!.id },
+      idemKey(),
+    )
+    expect(linked.downstreamTaskId).toBe(existing[0]!.id)
+    const linkedEvents = await database.db
+      .select()
+      .from(schema.teamEvents)
+      .where(eq(schema.teamEvents.type, 'task.changed'))
+    const countLinked = (taskId: string): number =>
+      linkedEvents.filter((row) => (row.payload as { taskId?: string }).taskId === taskId).length
+    expect(countLinked(ids.taskId)).toBe(1)
+    expect(countLinked(existing[0]!.id)).toBe(1)
   })
 
   it('上游发新版本通知下游房间（评审 B4 下半）：publish v2 后下游出现新的 task.changed', async () => {

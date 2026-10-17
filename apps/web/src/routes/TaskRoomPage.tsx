@@ -298,7 +298,7 @@ function TaskRoom(): ReactNode {
                     runLabels={runOrdinalLabels(runs)}
                   />
                   <RunHandoffDraft
-                    key={selectedRunId}
+                    key={`handoff-draft-${selectedRunId}`}
                     runId={selectedRunId}
                     task={task}
                     session={session}
