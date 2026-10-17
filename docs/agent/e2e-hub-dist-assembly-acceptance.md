@@ -47,7 +47,7 @@ pnpm test:e2e                                                                # �
 
 | 面 | 用例 | 断言要点 | 变异自证 |
 |---|---|---|---|
-| Q1 解析 | `scripts/lib/phase1/hub-assembly.spec.ts`（7 例） | 入口恰为 `<repo>/apps/hub/dist/server.js`、**不含 `/src/`**、文件存在；未构建的包树 → 报错且提示 build；锚点不在本仓库 → 归因到锚点而不是猜下一跳；构建 runner 抛错 → 带输出传播；runner 成功 → cwd 是仓库根；路径/URL 两种锚点等价；**对外文本（构建失败尾巴 / 缺产物 / 坏锚点）已过 `redactText`、返回值仍是未归约真路径** | 变异见下「Q0 边界规则」行；构建失败方向由注入 runner 的负控覆盖 |
+| Q1 解析 | `scripts/lib/phase1/hub-assembly.spec.ts`（7 例） | 入口恰为 `<repo>/apps/hub/dist/server.js`、**不含 `/src/`**、文件存在；未构建的包树 → 报错且提示 build（消息已归约）；解析器注入的失败 → 归因到锚点、不猜下一跳（**环境无关**：真实解析失败与否取决于 NODE_PATH/上层 node_modules，空目录负控在 CI 上翻过车）；构建 runner 抛错 → 带输出传播且已归约；runner 成功 → cwd 是仓库根；路径/URL 两种锚点等价；对外文本过 `redactText` 而**返回值仍是未归约真路径** | 变异见下「Q0 边界规则」行；构建失败与归约两个方向各由注入式负控 + 变异（去掉 `redactText` → 第 7 例红）覆盖 |
 | Q0 边界规则 | `scripts/check-boundaries.ts`（既有规则的实跑） | 源码路径入口回潮即红 | 把 `'apps/hub/src/server.ts'` 塞回 `e2e-serve.mts` → `check-boundaries: 1 violation(s) found`（`harness references source path ...`）；摘除白名单例外后规则仍绿 |
 | Q0 构建前置 | 同上（真跑 pnpm 过滤器） | `buildWorkspaceDistArtifacts(repoRoot)` 在真实仓库上跑通（up-to-date 时 ~0.4s），随后入口可解析 | 构建失败路径由注入 runner 的负控覆盖（真构建失败即 `tsc` 非零 → 抛） |
 | Q5 全链 | `pnpm test:e2e`（11 块） | 每块的 webServer 都打印 dist 入口行；全链绿 | —（装配事实由 Q1 判定 + 边界规则双钉） |
@@ -74,6 +74,11 @@ Q5 的每轮日志在 `artifacts/q5/run-*.log`（`bash scripts/q5-loop.sh N`）�
 
 ## 边界与未覆盖
 
+- **未捕获异常的栈帧**：构建失败已改走 `fail()`（消息归约、不打栈），但本 harness 其它
+  顶层异常仍可能有未归约栈帧落进 `artifacts/q5/run-*.log`——那是既有面（任何未捕获异常
+  都这样），本 Issue 只保证**新增**的两处文本与构建失败路径不泄漏绝对路径。
+- **`.mts` 脚本不在任何 typecheck program 内**（`tsconfig.json` 的 include 是
+  `scripts/**/*.ts`）：`e2e-serve.mts` 的改动只有运行期（Q5 实跑）覆盖，属存量缺口，另立账。
 - **增量 build 的代价**：每次 webServer 冷启都跑一次 `pnpm --filter @whalepod/hub...
   --filter @whalepod/runtime... build`（up-to-date 时 ~0.4s 实测）。本轮实测 Q5 全链
   11 块全绿，过程中 `Hub 入口` 取证行共 13 次 = **11 次 webServer 冷启 + 2 次用例内的

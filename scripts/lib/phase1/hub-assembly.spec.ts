@@ -66,11 +66,31 @@ describe('#281 Hub 生产装配（dist-only）', () => {
     expect(message).not.toContain(scratch)
   })
 
-  it('负控：锚点不是本仓库的包（解析不到 @whalepod/hub）→ 归因到锚点，不猜下一跳', () => {
+  it('负控：解析失败 → 归因到锚点、不猜下一跳，且锚点路径已归约（解析器注入，环境无关）', () => {
     const empty = join(scratch, 'no-packages')
     mkdirSync(empty, { recursive: true })
-    writeFileSync(join(empty, 'package.json'), JSON.stringify({ name: 'empty', version: '1.0.0' }))
-    expect(() => resolveHubServerEntry(join(empty, 'package.json'))).toThrow(/@whalepod\/hub/)
+    const anchor = join(empty, 'package.json')
+    writeFileSync(anchor, JSON.stringify({ name: 'empty', version: '1.0.0' }))
+    // 真实解析失败与否取决于环境（NODE_PATH / 上层 node_modules / 全局目录）——
+    // CI 实测「空目录必解析不到」不成立（runner 上解析成功了，本用例曾因此红），
+    // 所以负控注入解析器：钉的是「失败时怎么归因」，不是 Node 的解析语义。
+    const calls: Array<{ anchorPath: string; packageName: string }> = []
+    let message = ''
+    try {
+      resolveHubServerEntry(anchor, {
+        resolvePackage: (input) => {
+          calls.push(input)
+          throw new Error(`Cannot find module '${input.packageName}'`)
+        },
+      })
+      expect.unreachable('解析失败必须抛出')
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error)
+    }
+    expect(calls).toEqual([{ anchorPath: anchor, packageName: '@whalepod/hub' }])
+    expect(message).toContain('@whalepod/hub')
+    expect(message).toContain('<tmp>') // 锚点路径已归约（红线）
+    expect(message).not.toContain(scratch)
   })
 
   it('装配前强制 build：runner 的失败必须带输出响亮传播（不许静默跑旧产物）', () => {

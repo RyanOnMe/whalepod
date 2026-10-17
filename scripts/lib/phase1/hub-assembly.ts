@@ -28,6 +28,18 @@ export interface WorkspaceBuildDeps {
   readonly runBuild?: WorkspaceBuildRunner
 }
 
+/** 注入点：包解析（真实实现是 createRequire 锚点解析；判据用它构造确定性失败）。 */
+export interface PackageResolveInput {
+  readonly anchorPath: string
+  readonly packageName: string
+}
+
+export interface PackageResolver {
+  (input: PackageResolveInput): string
+}
+
+const HUB_PACKAGE_NAME = '@whalepod/hub'
+
 /** E2E 需要的两个生产装配根（Hub server 与 Node 监督器拉起 Runtime 的 bin）。 */
 const BUILD_FILTERS: readonly string[] = ['@whalepod/hub...', '@whalepod/runtime...']
 
@@ -72,16 +84,29 @@ function buildOutputTail(error: unknown): string {
  * 符号链接 → 包内 dist），再取同目录的 `server.js`。锚点通常传
  * `apps/hub/package.json` 的路径/URL——与生产 Docker 入口同一个产物。
  * 返回值是**未归约的真路径**（spawn 需要它）；给它打日志前先过 `redactText`。
+ *
+ * `resolvePackage` 是给判据留的注入点：真实解析是否失败取决于环境（NODE_PATH、
+ * 上层目录里的 node_modules、全局目录），拿「空目录必解析不到」当负控会在 CI 上
+ * 翻车（实测踩过）；注入的发散点让「解析失败 → 归因到锚点、不猜下一跳」这条
+ * 契约可以被确定性判定。
  */
-export function resolveHubServerEntry(anchor: string | URL): string {
+export function resolveHubServerEntry(
+  anchor: string | URL,
+  deps: { resolvePackage?: PackageResolver } = {},
+): string {
   const anchorPath = typeof anchor === 'string' ? anchor : fileURLToPath(anchor)
-  const require = createRequire(anchorPath)
   let packageIndex: string
   try {
-    packageIndex = require.resolve('@whalepod/hub')
+    const resolvePackage =
+      deps.resolvePackage ??
+      ((input: PackageResolveInput): string => {
+        const require = createRequire(input.anchorPath)
+        return require.resolve(input.packageName)
+      })
+    packageIndex = resolvePackage({ anchorPath, packageName: HUB_PACKAGE_NAME })
   } catch (error) {
     throw new Error(
-      `无法从锚点 ${redactText(anchorPath)} 解析 @whalepod/hub（锚点必须位于本仓库内、且依赖已安装）：${redactText(
+      `无法从锚点 ${redactText(anchorPath)} 解析 ${HUB_PACKAGE_NAME}（锚点必须位于本仓库内、且依赖已安装）：${redactText(
         error instanceof Error ? error.message : String(error),
       )}`,
       { cause: error },

@@ -347,7 +347,13 @@ await assertPortsFree()
 // 跑一次**增量** build（up-to-date 时 ~0.4s）；构建 break 在这里就红，不留到浏览器。
 // 位置有意放在**起 PG 之前**：构建失败是本地最常见的起手失败，此时不该留下任何容器。
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
-buildWorkspaceDistArtifacts(repoRoot)
+try {
+  buildWorkspaceDistArtifacts(repoRoot)
+} catch (error) {
+  // 走 fail() 而不是让它冒泡：未捕获异常的**栈帧**里有仓库绝对路径，而这里会落进
+  // Q5 的 artifacts 日志（红线）；消息本身已在 helper 内归约。
+  fail(error instanceof Error ? error.message : String(error))
+}
 postgres = await startEphemeralPostgres()
 const databaseUrl = postgres.databaseUrl
 {
