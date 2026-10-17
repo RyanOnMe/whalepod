@@ -254,3 +254,49 @@ test('设备在线：toast 说已自动开始执行，且 Run 真的起来了', 
   // 在线分支不改数目：两个任务（离线分支那个 + 这个）。
   expect(await projectTasks()).toHaveLength(2)
 })
+
+/**
+ * #348：创建被服务端拒绝（候选失效的**竞态残窗**）时，页面给的是中文引导 + 错误码，
+ * 不是一句英文分类消息。做法与路径 5a 同式：拦截创建 POST 的**响应**换成 Hub 的真实拒绝体
+ * （真实时序里名册重拉未完成时就是这条响应到达页面；e2e 里没法稳定复现那几毫秒）。
+ */
+test('创建被拒（候选失效）：页面主位是中文引导与错误码，英文分类消息降为排障细节', async () => {
+  test.setTimeout(120_000)
+  const alice = shared.alice!
+  const before = (await projectTasks()).length
+  await alice.route('**/api/v1/projects/*/tasks', (route) =>
+    route.fulfill({
+      status: 400,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: false,
+        error: {
+          code: 'VALIDATION_FAILED',
+          message: 'assignee is not an active team member',
+          requestId: 'req-e2e-348',
+        },
+      }),
+    }),
+  )
+  try {
+    await alice.goto('/')
+    await expect(alice.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
+    await alice.getByRole('button', { name: '创建任务' }).click()
+    const form = alice.locator('form[aria-label="创建任务"]')
+    await alice.locator('input[id^="task-title-"]').fill('拒绝分支：候选失效的引导')
+    await form.getByRole('button', { name: '创建任务' }).click()
+
+    const guidance = alice.getByTestId('error-guidance')
+    await expect(guidance).toContainText('请重新选择责任人', { timeout: 15_000 })
+    await expect(guidance).toContainText('不会自动换人')
+    // 错误码可见；英文原文只出现在「细节（排障用）」这一行里。
+    const diagnostics = alice.getByTestId('error-diagnostics')
+    await expect(diagnostics).toContainText('VALIDATION_FAILED')
+    await expect(diagnostics).toContainText('assignee is not an active team member')
+    await expect(diagnostics).toContainText('req-e2e-348')
+    // 拒绝没有建出任务（数出来，不听页面自报）。
+    expect(await projectTasks()).toHaveLength(before)
+  } finally {
+    await alice.unroute('**/api/v1/projects/*/tasks')
+  }
+})
