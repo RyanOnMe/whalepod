@@ -287,12 +287,23 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
     (r) => r.revisionNumber === 1,
   )
   expect(revisionV1).toBeDefined()
+  // 判定输入从**读面**取，不用字面量（评审 B10）：Run 状态取房间聚合的同一行，
+  // 草稿来源/状态取 GET /runs/:id/handoff-draft（发布后是 published 审计行）。
+  const backendRunStatus = upstreamRoom.runs.find((r) => r.id === shared.upstreamRunId)?.status
+  expect(backendRunStatus).toBe('completed')
+  const draftRead = await hubApi(
+    shared.aliceCookie,
+    'GET',
+    `/runs/${shared.upstreamRunId}/handoff-draft`,
+  )
+  expect(draftRead.status).toBe(200)
+  const draftFact = draftRead.data as { origin: string; status: string }
   facts.backend = {
     taskId: shared.upstreamTaskId,
     runId: shared.upstreamRunId,
-    runStatus: 'completed',
-    draftOrigin: 'auto',
-    draftStatus: 'published',
+    runStatus: backendRunStatus,
+    draftOrigin: draftFact.origin,
+    draftStatus: draftFact.status,
     publishedRevisionNumber: 1,
     artifactId: publishedArtifact!.id,
     artifactSha256: publishedArtifact!.sha256,

@@ -171,6 +171,18 @@ describe('#381 交接闭环证据判定器', () => {
       (e) => ((e['updateIsolation'] as Record<string, unknown>)['receiptsRowsAfterV2'] = 2),
     ],
     [
+      '隔离性检查指的不是下游 Run',
+      (e) => ((e['updateIsolation'] as Record<string, unknown>)['runId'] = 'run-elsewhere'),
+    ],
+    [
+      '隔离性检查跑在上游 Run 上（同一条 Run 冒充两条）',
+      (e) => {
+        const backendRunId = (e['backend'] as Record<string, unknown>)['runId']
+        ;(e['downstream'] as Record<string, unknown>)['runId'] = backendRunId
+        ;(e['updateIsolation'] as Record<string, unknown>)['runId'] = backendRunId
+      },
+    ],
+    [
       '上下游是同一个任务（闭环没跨任务）',
       (e) =>
         ((e['delivery'] as Record<string, unknown>)['downstreamTaskId'] = (

@@ -4,7 +4,8 @@
  * 输入是 `artifacts/evidence/handoff-loop/result.json`。判据要求**交叉一致**，不只是
  * 「每格非空」：材料的 artifactId/sha256 必须在上游发布、下游 Run 快照、Node 副本文
  * 摘要三处**同一**；v2 发布前后 Run 快照的 revisionId 必须**相同**（历史不被改写）；
- * 重复确认后仍是同一条 receipt 且首次理解未被覆盖。
+ * 重复确认后仍是同一条 receipt 且首次理解未被覆盖；隔离性检查必须真的跑在**下游
+ * Run** 上，且下游 Run 与上游 Run 是两条不同的 Run（同一条冒充两条即 FAIL）。
  *
  * 判定器只认它自己算出来的事实：缺一节、多一节、任何一处不一致都 FAIL，绝不跳过。
  */
@@ -173,8 +174,9 @@ export function verifyHandoffLoopEvidence(input: unknown): HandoffLoopVerificati
   }
 
   const downstream = reader.section(input, 'downstream')
+  let downstreamRunId: string | undefined
   if (downstream !== undefined) {
-    str(downstream['runId'], 'downstream.runId')
+    downstreamRunId = str(downstream['runId'], 'downstream.runId')
     check(
       downstream['checkboxDefaultChecked'] === true,
       'the composer must default to attaching the handoff package',
@@ -256,7 +258,19 @@ export function verifyHandoffLoopEvidence(input: unknown): HandoffLoopVerificati
       ) === 1,
       'the historical run must still pin v1 after v2 was published',
     )
-    str(isolation['runId'], 'updateIsolation.runId')
+    // 评审 B10：隔离性检查必须真的跑在**下游 Run** 上，且下游 Run 与上游 Run 是两条
+    //（同一条 Run 冒充两条会让「历史不被改写」失去意义）。
+    const isolationRunId = str(isolation['runId'], 'updateIsolation.runId')
+    check(
+      isolationRunId !== undefined &&
+        downstreamRunId !== undefined &&
+        isolationRunId === downstreamRunId,
+      'updateIsolation.runId must be the downstream run',
+    )
+    check(
+      isolationRunId !== undefined && backendRunId !== undefined && isolationRunId !== backendRunId,
+      'the isolation check must exercise a different run than the backend run',
+    )
   }
 
   return { ok: failures.length === 0, failures, checks: reader.checks() }
