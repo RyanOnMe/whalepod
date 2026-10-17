@@ -27,8 +27,12 @@ pnpm test:e2e && ./scripts/check-stray-runtimes.sh --strict           # 跑完 Q
 
 ## 观测（看什么）
 
-- **测试探针**（argv 形如 `-e 'setInterval(() => {}, 1000)' -- --run-id <id> --nonce <id>`）：
-  只可能来自测试驱动，命中即 FAIL——判据不该依赖"记得杀"；
+- **分类顺序**（先自家、再探针）是判据的一部分：生产 Runtime 的 argv 就是
+  `node <entry> -- --run-id <uuid> --nonce <uuid> --prompt-stdin`（`apps/node/src/runtime-driver.ts`
+  的 `--` 之后参数），与某些探针**同形**——所以「带 `--run-id/--nonce`」只有**不在**自家入口里
+  才算探针（评审 round-2 实测：早期版本会把正在跑的真 Run 诬成测试残留，已按此规则修）；
+- **测试探针**（argv 形如 `-e 'setInterval(() => {}, 1000)' -- --run-id <id> --nonce <id>`，
+  或带 `--run-id/--nonce` 且不在自家入口里）：只可能来自测试驱动，命中即 FAIL——判据不该依赖"记得杀"；
 - **自家进程**（`whalepod-node`/`whalepod-runtime`/e2e-serve 等）：开发机上可能正被正常使用
   （手工起的 Node、正在跑的 Run），故默认只列出为 INFO；`--strict` 才当残留（发布前清单）。
 
@@ -51,9 +55,14 @@ pnpm test:e2e && ./scripts/check-stray-runtimes.sh --strict           # 跑完 Q
      `test:resilience`（32）→ 干净；`pnpm test:e2e` **全链 exit 0**（11 段，含
      create-to-recovery / preparation-return 两条 tsx 链与尾段 micro）→ 干净；
      `pnpm check`（Q0，含 unit）→ 干净（此前每跑一次 Q0 多一个探针）。
-3. `--self-test`：两种形状的假探针（`-e setInterval` 探针、只有 `--run-id/--nonce` 的探针）
-   都必须判中、回收后必须判空（防判定力退化；评审曾抓到第二支模式写坏成 `---run-id`
-   永不匹配——自检语料现在覆盖它）。
+3. `--self-test` 两段：
+   ① **分类规则的合成行断言**（不依赖进程）——真 Run 形状（`node apps/runtime/dist/bin.js --
+      --run-id … --nonce … --prompt-stdin`）必须归 `self`、不带自家入口的 `--run-id/--nonce`
+      归 `probe`、`-e setInterval` 探针归 `probe`、无关进程归 `none`；
+   ② **真进程断言**——两种形状的假探针必须判中、回收后判空。
+   评审 round-1 抓到过第二支模式写坏成 `---run-id` 永不匹配；round-2 抓到过修法把真 Run
+   也算成探针——两段自检现在分别覆盖这两类回归（并修掉了自检自身的 `grep -q` +
+   `pipefail` 假红：改用 bash 的 `[[ == *marker* ]]`）。
 
 ## 同族普查（本 Issue 要求的"顺带核一遍"）
 
@@ -81,8 +90,9 @@ pnpm test:e2e && ./scripts/check-stray-runtimes.sh --strict           # 跑完 Q
 - 不覆盖非本仓进程（红线：不按宽模式 `pkill`，只按精确 pid/进程组收尾；脚本只读不杀）；
 - 「自家进程」档有意不 FAIL：开发机上「手工起的 Node + 正在执行的 Run」完全正当，
   脚本不替使用者判断（要清场时用 `--strict` 复核）；
-- 探针模式基于当前探针 argv 形状（`-e setInterval… -- --run-id`、或带 `--run-id/--nonce` 的
-  探针）：探针形状若改，模式要同步（`--self-test` 的两种语料就是同形假探针，模式漂了会先红）。
+- 探针模式基于当前探针 argv 形状（`-e setInterval… -- --run-id`、或带 `--run-id/--nonce` 且不在
+  自家入口里）：探针形状若改，模式要同步（`--self-test` 的合成行与真进程两段语料就是同形假探针，
+  模式漂了会先红）。
 - **看不见的形态**（如实）：argv 既不带 `--run-id/--nonce` 又不匹配 `self_re` 的自家进程
   （例如不带参数的短命探针）不在扫描面内——`self_re` 覆盖的是长驻/入口类（src 与 dist 的
   cli/bin、runtime、e2e-serve），各探针用例自己的 `waitGone` 断言才是第一道收尾。
