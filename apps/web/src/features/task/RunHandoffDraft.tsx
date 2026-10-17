@@ -154,7 +154,7 @@ export function RunHandoffDraft({
       setDirty(false)
       invalidate()
       void queryClient.invalidateQueries({
-        queryKey: ['task-handoff-revisions', task.id],
+        queryKey: queryKeys.taskHandoffRevisions(task.id),
       })
     },
     onError: (error: unknown) => setActionError(error),

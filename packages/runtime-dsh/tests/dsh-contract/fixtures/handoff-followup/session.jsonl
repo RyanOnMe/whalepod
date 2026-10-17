@@ -1,0 +1,9 @@
+{"type":"session","id":"session-replay-handoff","createdAt":1755500200000,"seedLength":0}
+{"type":"assistant/chunk","seq":10,"time":1755500200100,"data":{"turn":1,"step":1,"chunk":{"type":"block-start","index":0,"blockType":"text"}}}
+{"type":"assistant/chunk","seq":11,"time":1755500200200,"data":{"turn":1,"step":1,"chunk":{"type":"text-delta","index":0,"text":"Implemented the login endpoint and its tests."}}}
+{"type":"assistant/chunk","seq":12,"time":1755500200300,"data":{"turn":1,"step":1,"chunk":{"type":"block-end","index":0,"block":{"type":"text","text":"Implemented the login endpoint and its tests."}}}}
+{"type":"assistant/chunk","seq":13,"time":1755500200400,"data":{"turn":1,"step":1,"chunk":{"type":"finish","reason":{"kind":"stop"}}}}
+{"type": "assistant/chunk", "seq": 20, "time": 1755500201000, "data": {"turn": 2, "step": 1, "chunk": {"type": "block-start", "index": 0, "blockType": "text"}}}
+{"type": "assistant/chunk", "seq": 21, "time": 1755500201100, "data": {"turn": 2, "step": 1, "chunk": {"type": "text-delta", "index": 0, "text": "Follow-up turn after the wrap-up."}}}
+{"type": "assistant/chunk", "seq": 22, "time": 1755500201200, "data": {"turn": 2, "step": 1, "chunk": {"type": "block-end", "index": 0, "block": {"type": "text", "text": "Follow-up turn after the wrap-up."}}}}
+{"type": "assistant/chunk", "seq": 23, "time": 1755500201300, "data": {"turn": 2, "step": 1, "chunk": {"type": "finish", "reason": {"kind": "stop"}}}}
