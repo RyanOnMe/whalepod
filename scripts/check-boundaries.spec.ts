@@ -471,6 +471,68 @@ describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
     ])
   })
 
+  it('脚本指向同前缀的假配置（tsconfig.test.json.orig）→ 违规（尾部边界不是 \\b）', async () => {
+    await makePackage(
+      'packages',
+      'prefixed',
+      { scripts: { typecheck: 'tsc -b && tsc -p tsconfig.test.json.orig' } },
+      true,
+    )
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([
+      'packages/prefixed: typecheck 里没有「tsc -p tsconfig.test.json」形态的调用' +
+        '（只出现配置名不算数）；脚本：tsc -b && tsc -p tsconfig.test.json.orig',
+    ])
+  })
+
+  it('路径带引号的合法写法不误伤（-p "tsconfig.test.json"）', async () => {
+    await makePackage(
+      'packages',
+      'quoted',
+      { scripts: { typecheck: 'tsc -b && tsc -p "tsconfig.test.json"' } },
+      true,
+    )
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([])
+  })
+
+  it('脚本带 --noCheck → 违规（配置面探测看不到 CLI 旗标）', async () => {
+    await makePackage(
+      'packages',
+      'nocheck-flag',
+      { scripts: { typecheck: 'tsc -b && tsc -p tsconfig.test.json --noCheck' } },
+      true,
+    )
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([
+      'packages/nocheck-flag: typecheck 带 --noCheck——编译器被显式要求不检查（配置面探测看不到 CLI 旗标）',
+    ])
+  })
+
+  it('tests/ 嵌套超过 8 层 → 违规（枚举被截断不许静默）', async () => {
+    const dir = join(root, 'apps', 'deep')
+    await mkdir(join(dir, 'src'), { recursive: true })
+    // 脚本必须已经接线，否则先报「没有 typecheck」（那条先 continue），到不了嵌套面
+    await writeFile(
+      join(dir, 'package.json'),
+      JSON.stringify({ scripts: { typecheck: 'tsc -b && tsc -p tsconfig.test.json' } }),
+    )
+    await writeFile(join(dir, 'src', 'sample.ts'), 'export const impl = 1\n')
+    await writeFile(
+      join(dir, 'tsconfig.test.json'),
+      JSON.stringify({ compilerOptions: {}, include: ['src/**/*.ts'] }),
+    )
+    let nested = join(dir, 'tests')
+    const segments: string[] = []
+    for (let level = 0; level < 10; level += 1) {
+      segments.push(`l${level}`)
+      nested = join(nested, segments[segments.length - 1] ?? '')
+    }
+    await mkdir(nested, { recursive: true })
+    await writeFile(join(nested, 'oh.spec.ts'), 'export const oh = 1\n')
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([
+      'apps/deep: tests/ 目录嵌套超过 8 层——枚举被截断，「每个测试文件都在 program 里」无从判定' +
+        '（评审 A/B 的 P3）',
+    ])
+  })
+
   it('接线正确 → 无违规；没有 tests/ 的包不受约束', async () => {
     await makePackage(
       'packages',
