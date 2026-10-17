@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@whalepod/db'
-import { schema } from '@whalepod/db'
+import { listTeamEvents, schema } from '@whalepod/db'
 import type { FastifyInstance } from 'fastify'
 import WebSocket from 'ws'
 import {
@@ -154,6 +154,71 @@ describe('node websocket (/ws/v1/node)', () => {
     expect(row?.dshDistributionVersion).toBe('0.1.0-rc.8')
     expect(row?.pluginPackDigests).toEqual(['a'.repeat(64)])
     expect(row?.lastSeenAt).not.toBeNull()
+  })
+
+  it('#352：同一连接的第二条 hello **覆盖**事实列并再发 device.changed——设备视图不等重连', async () => {
+    // 断链背景：Node 侧 hello 事实曾冻结在启动时刻，且 Hub 侧若做成「首写为准 / 并集合并」，
+    // 本地装/重建 pack 或换 DSH 版本后设备视图都会停在旧值。两端各自单点削弱即红：
+    // Node 侧按连接重算 + 会话内补发（session.spec.ts / hello-facts.spec.ts），
+    // Hub 侧这份断言判「收到即回填、覆盖而非追加」（digests 收缩成 [] 时尤其能看出差别）。
+    const { deviceId, deviceToken } = await pair(alice)
+    const changedCount = async (): Promise<number> => {
+      const events = await listTeamEvents(database.db)
+      return events.filter(
+        (event) =>
+          event.type === 'device.changed' &&
+          (event.payload as { deviceId?: string }).deviceId === deviceId,
+      ).length
+    }
+    // 配对本身也发一条（#142）——以它为基线，判每条 hello 恰好追加一条。
+    const baseline = await changedCount()
+    const socket = await connect(deviceToken)
+    socket.send(
+      nodeFrame('node.hello', {
+        deviceId,
+        nodeVersion: '24.12.0',
+        platform: 'darwin',
+        architecture: 'arm64',
+        supportedProtocolVersions: [1],
+        dshDistributionVersion: '0.1.0-rc.8',
+        pluginPackDigests: ['a'.repeat(64)],
+      }),
+    )
+    await waitForValue(async () => {
+      const [row] = await database.db
+        .select()
+        .from(schema.devices)
+        .where(eq(schema.devices.id, deviceId))
+      return row?.dshDistributionVersion === '0.1.0-rc.8' ? row : undefined
+    }, '首条 node.hello 未在超时内落库')
+
+    // 同一条连接上的第二条 hello（会话内补发的形态）：版本换新、digests 变空。
+    socket.send(
+      nodeFrame('node.hello', {
+        deviceId,
+        nodeVersion: '24.12.0',
+        platform: 'darwin',
+        architecture: 'arm64',
+        supportedProtocolVersions: [1],
+        dshDistributionVersion: '0.1.0-rc.9',
+        pluginPackDigests: [],
+      }),
+    )
+    await waitForValue(async () => {
+      const [row] = await database.db
+        .select()
+        .from(schema.devices)
+        .where(eq(schema.devices.id, deviceId))
+      return row?.dshDistributionVersion === '0.1.0-rc.9' ? row : undefined
+    }, '第二条 node.hello 未覆盖设备事实列（设备视图停在旧值——#352）')
+    const [row] = await database.db
+      .select()
+      .from(schema.devices)
+      .where(eq(schema.devices.id, deviceId))
+    expect(row?.pluginPackDigests).toEqual([]) // 覆盖：不是追加也不是保留
+
+    // 每条 hello 都进 Team Event 流（Web 靠它把设备视图失效重拉）。
+    expect(await changedCount()).toBe(baseline + 2)
   })
 
   it('同一 Device 第二条连接以 4008 替换第一条', async () => {

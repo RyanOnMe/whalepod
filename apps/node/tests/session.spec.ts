@@ -96,12 +96,14 @@ function makeDeps(overrides: {
   onRevoked?: () => void
   heartbeatFacts?: () => { activeRunIds: string[]; lastEventSeqByRun: Record<string, number> }
   onHeartbeatError?: (error: unknown) => void
+  helloFacts?: () => HelloFacts
 }) {
   const timers: FakeTimers = { intervals: [], timeouts: [] }
   const exits: Array<{ code: number; message: string }> = []
   const deps = {
     config,
-    facts,
+    // #352：hello 事实是**按连接重算**的函数；测试用同一注入点验「重连/补发时重算」。
+    helloFacts: overrides.helloFacts ?? (() => facts),
     onRevoked: overrides.onRevoked ?? (() => {}),
     ...(overrides.heartbeatFacts !== undefined ? { heartbeatFacts: overrides.heartbeatFacts } : {}),
     ...(overrides.onHeartbeatError !== undefined
@@ -133,6 +135,18 @@ function makeDeps(overrides: {
   return { deps, timers, exits }
 }
 
+/** #352：hello 采集是异步的（await helloFacts）——open 之后要先把微任务排空再断言。 */
+async function flushMicrotasks(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve))
+}
+
+/** 取一行上行帧里的 node.hello（#352 的判据面）。 */
+function parseHello(line: string | undefined) {
+  const frame = parseNodeFrame(JSON.parse(line ?? ''), 'upstream')
+  if (frame.type !== 'node.hello') throw new Error(`not a hello frame: ${frame.type}`)
+  return frame
+}
+
 function latestSocket(): FakeSocket {
   const socket = FakeSocket.instances[FakeSocket.instances.length - 1]
   if (socket === undefined) throw new Error('no socket created')
@@ -140,7 +154,7 @@ function latestSocket(): FakeSocket {
 }
 
 describe('startDeviceSession', () => {
-  it('连接建立后首发 node.hello（帧过协议 schema），随后心跳按周期发送', () => {
+  it('连接建立后首发 node.hello（帧过协议 schema），随后心跳按周期发送', async () => {
     FakeSocket.reset()
     const { deps, timers } = makeDeps({})
     const session = startDeviceSession(deps)
@@ -151,6 +165,7 @@ describe('startDeviceSession', () => {
     )
 
     socket.emitOpen()
+    await flushMicrotasks() // #352：hello 采集是异步的（await helloFacts）
     expect(socket.sent).toHaveLength(1)
     const hello = parseNodeFrame(JSON.parse(socket.sent[0] ?? ''), 'upstream')
     expect(hello.type).toBe('node.hello')
@@ -169,7 +184,7 @@ describe('startDeviceSession', () => {
     session.stop()
   })
 
-  it('#103：heartbeatFacts 抛错不穿透定时器回调——归因 onHeartbeatError、本拍跳过、下拍恢复', () => {
+  it('#103：heartbeatFacts 抛错不穿透定时器回调——归因 onHeartbeatError、本拍跳过、下拍恢复', async () => {
     FakeSocket.reset()
     const errors: unknown[] = []
     let shouldThrow = true
@@ -183,6 +198,7 @@ describe('startDeviceSession', () => {
     startDeviceSession(deps)
     const socket = latestSocket()
     socket.emitOpen()
+    await flushMicrotasks() // #352：hello 采集是异步的
     expect(socket.sent).toHaveLength(1) // hello
 
     // 红：修前这一行直接 throw 出定时器回调（真实进程=uncaughtException 掀宿主）。
@@ -240,12 +256,13 @@ describe('startDeviceSession', () => {
     expect(timers.timeouts).toHaveLength(0)
   })
 
-  it('普通断线（1006）：按退避调度重连，新连接重发 hello', () => {
+  it('普通断线（1006）：按退避调度重连，新连接重发 hello', async () => {
     FakeSocket.reset()
     const { deps, timers, exits } = makeDeps({})
     startDeviceSession(deps)
     const first = latestSocket()
     first.emitOpen()
+    await flushMicrotasks() // #352：hello 采集是异步的
     expect(first.sent).toHaveLength(1)
     first.emitClose(1006, 'abnormal')
     expect(exits).toHaveLength(0)
@@ -256,6 +273,7 @@ describe('startDeviceSession', () => {
     expect(FakeSocket.instances).toHaveLength(2)
     const second = latestSocket()
     second.emitOpen()
+    await flushMicrotasks()
     expect(second.sent).toHaveLength(1)
     const hello = parseNodeFrame(JSON.parse(second.sent[0] ?? ''), 'upstream')
     expect(hello.type).toBe('node.hello')
@@ -509,5 +527,60 @@ describe('#112 归因回调缺省不可静默（默认结构化 warn 兜底）',
     expect(warn).toBeDefined()
     expect(warn!.level).toBe('warn')
     expect(String(warn!.error)).toContain('build boom')
+  })
+})
+
+describe('#352 node.hello 事实刷新', () => {
+  // ---- #352：hello 事实按连接重算 + 会话内补发 ----
+
+  it('#352：重连时 hello 事实**重算**（pack 装好后不必重启 Node）', async () => {
+    FakeSocket.reset()
+    let digests: string[] = []
+    const { deps, timers } = makeDeps({
+      helloFacts: () => ({ ...facts, pluginPackDigests: [...digests] }),
+    })
+    startDeviceSession(deps)
+    const first = latestSocket()
+    first.emitOpen()
+    await flushMicrotasks()
+    expect(parseHello(first.sent.at(-1)).payload.pluginPackDigests).toEqual([])
+
+    // 本机装了一个 pack（不重启 Node）：断线重连 → hello 必须带上新 digest。
+    digests = ['b'.repeat(64)]
+    first.emitClose(1006, 'network blip')
+    timers.timeouts.at(-1)!.fn() // 退避后重连
+    const second = latestSocket()
+    second.emitOpen()
+    await flushMicrotasks()
+    expect(parseHello(second.sent.at(-1)).payload.pluginPackDigests).toEqual(['b'.repeat(64)])
+  })
+
+  it('#352：resendHello() 在**连接保持时**补发新事实（preflight 装包后的会话内刷新）', async () => {
+    FakeSocket.reset()
+    let digests: string[] = []
+    const { deps } = makeDeps({
+      helloFacts: () => ({ ...facts, pluginPackDigests: [...digests] }),
+    })
+    const session = startDeviceSession(deps)
+    const socket = latestSocket()
+    socket.emitOpen()
+    await flushMicrotasks()
+    const hellosBefore = socket.sent.filter((line) => parseHello(line).type === 'node.hello').length
+    expect(hellosBefore).toBe(1)
+
+    digests = ['c'.repeat(64)]
+    session.resendHello()
+    await flushMicrotasks()
+    const hellos = socket.sent.filter((line) => parseHello(line).type === 'node.hello')
+    expect(hellos.length).toBe(hellosBefore + 1)
+    expect(parseHello(hellos.at(-1)).payload.pluginPackDigests).toEqual(['c'.repeat(64)])
+
+    // 无活连接时 no-op（不抛、不发）。
+    socket.emitClose(1006, 'gone')
+    session.resendHello()
+    await flushMicrotasks()
+    expect(socket.sent.filter((line) => parseHello(line).type === 'node.hello').length).toBe(
+      hellos.length,
+    )
   })
 })

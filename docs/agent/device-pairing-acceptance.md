@@ -62,6 +62,9 @@ bash scripts/secret-scan.sh packages/db apps/hub apps/node packages/protocol
 - **web 配对 UI 不在本泳道**：P1-09 时由 P1-07 的 Devices 页空态承接；**#142 已补上页面控件**（见下节），本条只存历史。
 - **hello 上报 supportedProtocolVersions**：协议 schema 有该字段但 Hub 目前只持久化 version+digests；protocol mismatch 关闭（03 §11）待 P1-12 Node 版本协商。
 - **capabilities**：配对时空对象起算；P1-12 inventory 扩展。
+- **hello 事实的刷新语义**（#352）：facts 曾冻结在启动时刻——装/重建 pack 或换 DSH 版本后设备视图
+  要等 Node 重启；现为按连接重算 + preflight 装包后会话内补发。判据（模块/会话/Hub/组合根四面）
+  与边界见 [hello-facts-refresh-acceptance](./hello-facts-refresh-acceptance.md)。
 
 ## 复跑
 

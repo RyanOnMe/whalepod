@@ -14,8 +14,8 @@ import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { claimDevice } from './pairing/client.js'
 import { DEFAULT_CONFIG_DIR, loadConfig, saveConfig } from './config.js'
-import type { HelloFacts } from './gateway/hub-socket.js'
 import { startDeviceSession } from './gateway/session.js'
+import { createHelloFacts, refreshHelloAfterPreflight } from './gateway/hello-facts.js'
 import { installedPackDigests } from './plugin/runtime-config.js'
 import { resolveDshVersionFacts } from './plugin/dsh-version-probe.js'
 import type { PluginFetch } from './plugin/installer.js'
@@ -91,15 +91,16 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
       })}\n`,
     )
   }
-  // pluginPackDigests：本地已就绪 pack 目录（P1-17；marker 校验通过才上报，
-  // 半途/损坏目录不上报）。
-  const facts: HelloFacts = {
-    nodeVersion: process.version,
-    platform: detectPlatform(),
-    architecture: process.arch,
-    dshDistributionVersion: dshVersionFacts.reported,
-    pluginPackDigests: installedPackDigests(join(stateDir, 'plugin-packs')),
-  }
+  // #352：hello 事实不再冻结在启动时刻——进程/平台/架构是常量，但**pack 目录**会随
+  // preflight 安装/重建变化、**DSH 版本**会在本机换版后变化。组装成函数：
+  // 每条连接重算 + preflight 装包后经 session.resendHello() 会话内补发，
+  // 设备视图（Hub 的 node.hello 事实列）不必等 Node 重启。
+  // #352：hello 事实按连接重算（实现与判据在 gateway/hello-facts.ts，与 E2E harness 共用）。
+  const helloFacts = createHelloFacts({
+    stateDir,
+    runtimeEntry,
+    startupDshVersion: dshVersionFacts.reported,
+  })
 
   // ---- P1-13 运行会话层装配（02 Task 13）----
   const { mkdirSync } = await import('node:fs')
@@ -226,13 +227,20 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     // 绝对路径会经 runtime.fatal summary 进团队投影，投影前必须归约。
     stateDir,
     packsRoot,
-    pluginPackPreflight: (packDigest) => preflight.ensure(packDigest),
+    // #352：preflight 成功后（非 core-empty）补发一次 hello——设备视图在本连接内收敛。
+    pluginPackPreflight: (packDigest) =>
+      refreshHelloAfterPreflight({
+        ensure: (digest) => preflight.ensure(digest),
+        resendHello: () => deviceSession?.resendHello(),
+      })(packDigest),
     // P1-15：候选采集 + Reviewer 输入准备/清理。
     artifactCollector,
     prepareArtifactInputs: (runId, taskId) => artifactInputs.prepare(runId, taskId),
     cleanupArtifactInputs: (runId) => artifactInputs.cleanup(runId),
     deviceId: config.deviceId,
-    dshDistributionVersion: facts.dshDistributionVersion,
+    // Run 固化面用**启动时**的探针值（#288 口径：一次装配、多次消费）；#352 刷新的是
+    // hello 事实列（设备视图），不动 Runs 的固化语义。
+    dshDistributionVersion: dshVersionFacts.reported,
     // 取消升级节奏（03 §3.2：15s 未确认强杀 + 5s SIGTERM 宽限）走默认值。
     log: (level, msg, context) => {
       process.stderr.write(`${JSON.stringify({ level, component: 'node.run', msg, ...context })}\n`)
@@ -247,9 +255,12 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   // Node 重启：孤儿三重匹配处理后交人工重跑（不自动复活 Run）。
   await supervisor.recoverOrphans()
 
+  // #352：preflight 装/重建 pack 后要能补发 hello，而 session 在 runManager 之后创建——
+  // 用可变句柄在闭包间传递（不改变装配次序）。
+  let deviceSession: { resendHello: () => void } | undefined
   const session = startDeviceSession({
     config,
-    facts,
+    helloFacts,
     onRevoked: () => {
       // 删本地 Token；保留 Workspace/Artifact 数据。
       void revokeLocalConfig()
@@ -296,6 +307,8 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
       process.exit(code)
     },
   })
+  // #352：句柄落地——此后 preflight 装/重建 pack 会经它补发 hello。
+  deviceSession = session
   sessionSend = session.send
 }
 

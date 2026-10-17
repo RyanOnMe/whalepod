@@ -103,14 +103,15 @@ pnpm test:dsh-contract && pnpm test:unit
   （离线确定性）；真实「升级到不兼容版本 → 回滚」的演练归 #290。
 - **Hub 侧的 digest 产出面未加独立判据**：「Hub 从 Revision 行复算出的 digest 等于存库值」需要
   先定一份独立 canonical 口径，未做；本轮的对照点只覆盖 Node↔Runtime 往返一致。
-- DSH 版本在 Node **启动时探针一次**：升级 DSH 之后必须重启 Node 才生效（`dsh-upgrade` 流程
-  本来就要求重启；本轮把这条前提写进了 CLI 注释）。
-- **升级后设备视图会少报 pack，直到 Node 重启**：`node.hello` 的 facts（含
-  `pluginPackDigests` 与 `dshDistributionVersion`）是 Node **启动时冻结**的一份对象，每次
-  重连发的都是同一份（`apps/node/src/cli.ts` 装配 → `gateway/session.ts`）；旧 marker（缺
-  `dshCompatibility`）解析失败 → 该 pack 不上报，即使本地已由下次 preflight 重建，设备视图
-  也要等 Node 重启才刷新。已核实 Hub 只把它落库/展示（无准入依赖），本地 pack 是即时自愈的
-  ——设备视图的滞后单独立账 **Issue #352**，不当作已修。
+- 兼容闸的本机版本在 Node **启动时探针一次**：升级 DSH 之后必须重启 Node 才生效（`dsh-upgrade`
+  流程本来就要求重启；本轮把这条前提写进了 CLI 注释）。**#352 起 hello 事实侧改为按连接重探**
+  （设备视图会刷新成新版本），但闸与 Run 固化值仍是启动那一次——即「视图已新、本进程准入仍按旧
+  版本」，直到重启。口径与判据见 [hello-facts-refresh-acceptance](./hello-facts-refresh-acceptance.md)。
+- ~~**升级后设备视图会少报 pack，直到 Node 重启**~~（**#352 已修**）：`node.hello` 的 facts 不再
+  冻结在启动时刻——改为按连接重算 + preflight 装/重建 pack 成功后会话内补发 hello
+  （`apps/node/src/gateway/hello-facts.ts`；判据：模块/会话/Hub 集成/真 cli 组合根四面，见
+  [hello-facts-refresh-acceptance](./hello-facts-refresh-acceptance.md)）。仍未覆盖：Q5 主闭环
+  （`e2e-pack` 是 core-empty，preflight 不落盘 ⟹ 设备 digests 恒为空，该面判不了）。
 - **旧 Runtime 产物 + 新 Node**：ready 帧缺必填 `profileDigest` 会被 strict schema 拒（按 main 的
   bin 行为静态推断的形态：`runtime output failed wire schema` → 该 Run 失败），未实机复现旧产物；
   部署带新鲜构建即无此形态（上一条 dist 前提的姊妹面）。
