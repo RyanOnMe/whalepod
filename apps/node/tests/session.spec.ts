@@ -319,6 +319,41 @@ describe('#89 inventory 上报与坏帧拦截', () => {
     expect(frame.payload.workspaces[0].name).toBe('proj')
   })
 
+  it('#352：hello 采集慢时也不许插队——inventory 必须等 hello 出线（#320 依赖它）', async () => {
+    // 断链背景：hello 的采集会 await 探针（一次 node spawn，真机几十~几百 ms），而
+    // **设备行有事实**才是 Hub 侧「设备在线」的判据（#320 的 preparation-check 否则
+    // 409 DEVICE_OFFLINE）。实现把 sendHello 从连接流程里 fire-and-forget 出去时，
+    // 本用例红（inventory 会在采集放行前就出线）——Q2 的 preparation-node-bin 用例
+    // 曾经以 409 的形态抓到过同一回归。
+    FakeSocket.reset()
+    let release: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { deps } = makeDeps({
+      helloFacts: async () => {
+        await gate
+        return { ...facts }
+      },
+    })
+    startDeviceSession({
+      ...deps,
+      inventoryFacts: async () => ({ workspaces: [goodWorkspace], credentialSlots: [] }),
+    })
+    const socket = latestSocket()
+    socket.emitOpen()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // 采集未放行：一帧 inventory 都不许出线（hello 也还没出）。
+    expect(socket.sent.map((raw) => JSON.parse(raw).type as string)).not.toContain('node.inventory')
+
+    release!()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const types = socket.sent.map((raw) => JSON.parse(raw).type as string)
+    expect(types.indexOf('node.hello')).toBeGreaterThanOrEqual(0)
+    expect(types.indexOf('node.hello')).toBeLessThan(types.indexOf('node.inventory'))
+  })
+
   it('带外越界事实（名字 120 字符）：一帧都不许写到 socket 上，且失败要归因', async () => {
     FakeSocket.reset()
     const { deps } = makeDeps({})

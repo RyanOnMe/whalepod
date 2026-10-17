@@ -155,27 +155,29 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
       // 归因回调自身抛错也不许穿透（最后的出口断了，保持进程活着）。
     }
   }
-  const sendHello = (socket: SocketLike): void => {
+  /**
+   * 采集事实并（按三条纪律）发一条 hello。**返回 Promise**：连接建立路径要 await 它，
+   * 才能保住「hello → spool 补发 → inventory」的次序（首帧次序是契约面：#320 的
+   * preparation-check 依赖设备行已有 hello 事实，否则 409 DEVICE_OFFLINE）。
+   * 采集失败只归因并 resolve（不打断会话）；发送本身抛错则 reject（由调用方归因）。
+   */
+  const sendHello = async (socket: SocketLike): Promise<void> => {
     const seq = (helloSeq += 1)
-    void (async () => {
-      let facts: HelloFacts
-      try {
-        facts = await deps.helloFacts()
-      } catch (error) {
-        // 失败不打断会话（同 inventory 口径）：本连接跳过 hello，等下条连接自然收敛。
-        reportHelloFailure(error)
-        return
-      }
-      if (seq < lastEvaluatedHelloSeq) return // 更新的快照已结算：旧的不许覆盖
-      lastEvaluatedHelloSeq = seq
-      if (current !== socket || socket.readyState !== 1) return
-      const factsJson = JSON.stringify(facts)
-      if (lastSentHello?.socket === socket && lastSentHello.factsJson === factsJson) return
-      lastSentHello = { socket, factsJson }
-      socket.send(helloFrame(deps.config.deviceId, facts))
-    })().catch((error: unknown) => {
+    let facts: HelloFacts
+    try {
+      facts = await deps.helloFacts()
+    } catch (error) {
+      // 失败不打断会话（同 inventory 口径）：本连接跳过 hello，等下条连接自然收敛。
       reportHelloFailure(error)
-    })
+      return
+    }
+    if (seq < lastEvaluatedHelloSeq) return // 更新的快照已结算：旧的不许覆盖
+    lastEvaluatedHelloSeq = seq
+    if (current !== socket || socket.readyState !== 1) return
+    const factsJson = JSON.stringify(facts)
+    if (lastSentHello?.socket === socket && lastSentHello.factsJson === factsJson) return
+    lastSentHello = { socket, factsJson }
+    socket.send(helloFrame(deps.config.deviceId, facts))
   }
 
   // #94：指纹变化才重建+重报；与连接后首报共用同一份连接守卫纪律（构建完成时
@@ -294,7 +296,8 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
       // 的既有次序发帧。守卫（当前活连接 + OPEN + 序号单调）在 sendHello 内统一收口。
       void (async () => {
         if (me === undefined || me.readyState !== 1 || current !== me) return
-        sendHello(me)
+        // #352：先 hello（采集可能 await 探针）——次序契约是 hello → spool 补发 → inventory。
+        await sendHello(me)
         // P1-13/R1：连接（重）建立后补发 spool 里全部未 ack 事件。
         deps.onConnected?.()
         // #89：inventory 与 hello 同责——**每条**连接建立后上报一次（Hub 的
@@ -315,7 +318,7 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
           }
         }
       })().catch((error: unknown) => {
-        onHelloError(error)
+        reportHelloFailure(error)
       })
     })
   }
@@ -335,7 +338,9 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
     refreshHello: () => {
       const me = current
       if (me === undefined || me.readyState !== 1) return
-      sendHello(me)
+      void sendHello(me).catch((error: unknown) => {
+        reportHelloFailure(error)
+      })
     },
     stop: () => {
       manuallyStopped = true
