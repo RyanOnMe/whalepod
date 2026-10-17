@@ -5,14 +5,18 @@
  * 的 #352 组里用 FakeSocket 判，两个面各自可单点削弱）：
  * - `createHelloFacts`：pack digests 每次**读盘**（装/重建后立刻可见、半成品不上报）；
  *   DSH 版本重探，探针失败回落启动值（不谎报、不抛）。
- * - `refreshHelloAfterPreflight`：非 core-empty 装配成功后补发**一次**；core-empty
- *   不补发；ensure 异常原样穿透且不补发（刷新失败不改变 preflight 成败）。
+ * - `refreshHelloAfterPreflight`：非 core-empty 装配成功后刷新**一次**；core-empty
+ *   不刷新；ensure 异常原样穿透且不刷新（刷新失败不改变 preflight 成败）。
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createHelloFacts, refreshHelloAfterPreflight } from '../src/gateway/hello-facts.js'
+import {
+  createHelloFacts,
+  detectPlatformKind,
+  refreshHelloAfterPreflight,
+} from '../src/gateway/hello-facts.js'
 import { PACK_MARKER_FILENAME } from '../src/plugin/runtime-config.js'
 import { CORE_EMPTY_PACK_DIGEST } from '../src/plugin/plugin-preflight.js'
 
@@ -112,45 +116,57 @@ describe('#352 createHelloFacts', () => {
   })
 })
 
+describe('#352 detectPlatformKind', () => {
+  it('平台归类与配对上报同口径：win32 不丢、linux/darwin 各归各位、未知平台归 darwin', () => {
+    expect(detectPlatformKind('win32')).toBe('win32')
+    expect(detectPlatformKind('linux')).toBe('linux')
+    expect(detectPlatformKind('darwin')).toBe('darwin')
+    // 其余平台（aix/freebsd/…）与本仓支持的两种桌面平台之外一律按 darwin 归类，
+    // 与 cli 的配对上报（detectPlatform）同口径——两处不一致会让同一台机器的
+    // 配对事实与 hello 事实互相打架。
+    expect(detectPlatformKind('freebsd')).toBe('darwin')
+  })
+})
+
 describe('#352 refreshHelloAfterPreflight', () => {
-  it('非 core-empty：ensure 成功后补发一次；ensure 在前（补发看到的是装好的盘）', async () => {
+  it('非 core-empty：ensure 成功后刷新一次；ensure 在前（刷新看到的是装好的盘）', async () => {
     const order: string[] = []
-    const resendHello = vi.fn(() => order.push('resend'))
+    const refreshHello = vi.fn(() => order.push('refresh'))
     const wrapped = refreshHelloAfterPreflight({
       ensure: async (digest: string) => {
         order.push(`ensure:${digest}`)
         return { packages: 1 }
       },
-      resendHello,
+      refreshHello,
     })
 
     await expect(wrapped('a'.repeat(64))).resolves.toEqual({ packages: 1 })
-    expect(resendHello).toHaveBeenCalledTimes(1)
-    expect(order).toEqual([`ensure:${'a'.repeat(64)}`, 'resend'])
+    expect(refreshHello).toHaveBeenCalledTimes(1)
+    expect(order).toEqual([`ensure:${'a'.repeat(64)}`, 'refresh'])
   })
 
-  it('core-empty：装配成功也不补发（无落盘事实可刷，白跑一次探针）', async () => {
-    const resendHello = vi.fn()
+  it('core-empty：装配成功也不刷新（无落盘事实可刷，白跑一次探针）', async () => {
+    const refreshHello = vi.fn()
     const wrapped = refreshHelloAfterPreflight({
       ensure: async () => '{}',
-      resendHello,
+      refreshHello,
     })
 
     await wrapped(CORE_EMPTY_PACK_DIGEST)
-    expect(resendHello).not.toHaveBeenCalled()
+    expect(refreshHello).not.toHaveBeenCalled()
   })
 
-  it('ensure 失败：异常原样穿透、不补发（补发不改变 preflight 成败）', async () => {
+  it('ensure 失败：异常原样穿透、不刷新（刷新不改变 preflight 成败）', async () => {
     const failure = new Error('pack digest mismatch')
-    const resendHello = vi.fn()
+    const refreshHello = vi.fn()
     const wrapped = refreshHelloAfterPreflight({
       ensure: async () => {
         throw failure
       },
-      resendHello,
+      refreshHello,
     })
 
     await expect(wrapped('a'.repeat(64))).rejects.toBe(failure)
-    expect(resendHello).not.toHaveBeenCalled()
+    expect(refreshHello).not.toHaveBeenCalled()
   })
 })

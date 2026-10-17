@@ -253,11 +253,12 @@ test('设备在线：toast 说已自动开始执行，且 Run 真的起来了', 
   await expect(alice.locator('.run-item').first()).toBeVisible({ timeout: 30_000 })
   // 在线分支不改数目：两个任务（离线分支那个 + 这个）。
   expect(await projectTasks()).toHaveLength(2)
-  // #352（设备视图随 pack 安装刷新）在这里判不了：E2E 的 e2e-pack 是 core-empty
-  // （scripts/e2e-serve.mts 的种子行注释：空 entries 与 digest 复算一致），preflight
-  // 对 core-empty 直接放行、不落盘 ⟹ 设备 digests 恒为空。该判据在 Q2 的组合根用例
-  // （apps/node/tests/integration/cli-hello-refresh.integration.spec.ts，真 cli 子进程 +
-  // 真 preflight 本地命中 + 同一连接补发 hello）。
+  // #352（设备视图随 pack 安装刷新）在这里判不了，两个理由都记着：E2E 的 e2e-pack 是
+  // core-empty（scripts/e2e-serve.mts 的种子行注释：空 entries 与 digest 复算一致），
+  // preflight 对 core-empty 直接放行、不落盘；而 E2E 的 node harness（scripts/e2e-node.mts）
+  // 干脆没装 pluginPackPreflight——即使 pack 非空也不会落盘 ⟹ 设备 digests 恒为空。
+  // 该判据在 Q2 的组合根用例（apps/node/tests/integration/cli-hello-refresh.integration.spec.ts，
+  // 真 cli 子进程 + 真 preflight 本地命中 + 同一连接刷新 + Node 侧连接数恰为 1）。
 })
 
 /**

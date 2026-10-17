@@ -96,19 +96,21 @@ function makeDeps(overrides: {
   onRevoked?: () => void
   heartbeatFacts?: () => { activeRunIds: string[]; lastEventSeqByRun: Record<string, number> }
   onHeartbeatError?: (error: unknown) => void
-  helloFacts?: () => HelloFacts
+  helloFacts?: () => HelloFacts | Promise<HelloFacts>
+  onHelloError?: (error: unknown) => void
 }) {
   const timers: FakeTimers = { intervals: [], timeouts: [] }
   const exits: Array<{ code: number; message: string }> = []
   const deps = {
     config,
-    // #352：hello 事实是**按连接重算**的函数；测试用同一注入点验「重连/补发时重算」。
+    // #352：hello 事实是**按连接重算**的函数；测试用同一注入点验「重连/刷新时重算」。
     helloFacts: overrides.helloFacts ?? (() => facts),
     onRevoked: overrides.onRevoked ?? (() => {}),
     ...(overrides.heartbeatFacts !== undefined ? { heartbeatFacts: overrides.heartbeatFacts } : {}),
     ...(overrides.onHeartbeatError !== undefined
       ? { onHeartbeatError: overrides.onHeartbeatError }
       : {}),
+    ...(overrides.onHelloError !== undefined ? { onHelloError: overrides.onHelloError } : {}),
     exit: overrides.exit ?? ((code: number, message: string) => exits.push({ code, message })),
     WebSocketImpl: FakeSocket as never,
     random: () => 0,
@@ -531,7 +533,10 @@ describe('#112 归因回调缺省不可静默（默认结构化 warn 兜底）',
 })
 
 describe('#352 node.hello 事实刷新', () => {
-  // ---- #352：hello 事实按连接重算 + 会话内补发 ----
+  // ---- #352：hello 事实按连接重算 + 会话内刷新（含序号单调与同连接去重）----
+
+  const helloCount = (socket: FakeSocket): number =>
+    socket.sent.filter((line) => parseHello(line).type === 'node.hello').length
 
   it('#352：重连时 hello 事实**重算**（pack 装好后不必重启 Node）', async () => {
     FakeSocket.reset()
@@ -555,7 +560,7 @@ describe('#352 node.hello 事实刷新', () => {
     expect(parseHello(second.sent.at(-1)).payload.pluginPackDigests).toEqual(['b'.repeat(64)])
   })
 
-  it('#352：resendHello() 在**连接保持时**补发新事实（preflight 装包后的会话内刷新）', async () => {
+  it('#352：refreshHello() 在**连接保持时**发新事实（preflight 装包后的会话内刷新）', async () => {
     FakeSocket.reset()
     let digests: string[] = []
     const { deps } = makeDeps({
@@ -565,11 +570,11 @@ describe('#352 node.hello 事实刷新', () => {
     const socket = latestSocket()
     socket.emitOpen()
     await flushMicrotasks()
-    const hellosBefore = socket.sent.filter((line) => parseHello(line).type === 'node.hello').length
+    const hellosBefore = helloCount(socket)
     expect(hellosBefore).toBe(1)
 
     digests = ['c'.repeat(64)]
-    session.resendHello()
+    session.refreshHello()
     await flushMicrotasks()
     const hellos = socket.sent.filter((line) => parseHello(line).type === 'node.hello')
     expect(hellos.length).toBe(hellosBefore + 1)
@@ -577,10 +582,94 @@ describe('#352 node.hello 事实刷新', () => {
 
     // 无活连接时 no-op（不抛、不发）。
     socket.emitClose(1006, 'gone')
-    session.resendHello()
+    session.refreshHello()
     await flushMicrotasks()
-    expect(socket.sent.filter((line) => parseHello(line).type === 'node.hello').length).toBe(
-      hellos.length,
-    )
+    expect(helloCount(socket)).toBe(hellos.length)
+  })
+
+  it('#352：同一连接内事实未变 → 不重发；换连接（重连）即使未变也照发', async () => {
+    FakeSocket.reset()
+    const { deps, timers } = makeDeps({ helloFacts: () => ({ ...facts }) })
+    const session = startDeviceSession(deps)
+    const socket = latestSocket()
+    socket.emitOpen()
+    await flushMicrotasks()
+    expect(helloCount(socket)).toBe(1)
+
+    session.refreshHello()
+    session.refreshHello()
+    await flushMicrotasks()
+    expect(helloCount(socket)).toBe(1) // 同连接 + 事实未变：不发（空转的 device.changed 免了）
+
+    socket.emitClose(1006, 'blip')
+    timers.timeouts.at(-1)!.fn()
+    const second = latestSocket()
+    second.emitOpen()
+    await flushMicrotasks()
+    expect(helloCount(second)).toBe(1) // 新连接：Hub 侧「设备在线」的信号面，必须发
+    session.stop()
+  })
+
+  it('#352：旧快照后到不得覆盖新快照（两处采集同时在飞时的序号单调）', async () => {
+    FakeSocket.reset()
+    // 两个受控 deferred：先发起的（连接建立）慢，后发起的（会话内刷新）快。
+    const pending: Array<(v: HelloFacts) => void> = []
+    const { deps } = makeDeps({
+      helloFacts: () => new Promise<HelloFacts>((resolve) => pending.push(resolve)),
+    })
+    const session = startDeviceSession(deps)
+    const socket = latestSocket()
+    socket.emitOpen()
+    await flushMicrotasks()
+
+    // 场景：重连后 Hub 立刻派了排队的 run.start → preflight 本地命中 → 会话内刷新。
+    // 早先发起的采集（无 pack 的旧事实）比它晚结算。
+    session.refreshHello()
+    expect(pending).toHaveLength(2)
+    pending[1]!({ ...facts, pluginPackDigests: ['d'.repeat(64)] }) // 新快照先落地
+    await flushMicrotasks()
+    expect(helloCount(socket)).toBe(1)
+    expect(parseHello(socket.sent.at(-1)).payload.pluginPackDigests).toEqual(['d'.repeat(64)])
+
+    pending[0]!({ ...facts, pluginPackDigests: [] }) // 旧快照后到：不许覆盖
+    await flushMicrotasks()
+    expect(helloCount(socket)).toBe(1)
+    expect(parseHello(socket.sent.at(-1)).payload.pluginPackDigests).toEqual(['d'.repeat(64)])
+  })
+
+  it('#352：采集失败只归因、不打断会话，也不掀宿主（归因回调自身抛错也吞掉）', async () => {
+    FakeSocket.reset()
+    const errors: unknown[] = []
+    let shouldThrow = true
+    const { deps } = makeDeps({
+      helloFacts: () => {
+        if (shouldThrow) throw new Error('disk boom')
+        return { ...facts, pluginPackDigests: ['e'.repeat(64)] }
+      },
+      onHelloError: (error: unknown) => {
+        errors.push(error)
+        throw new Error('callback boom')
+      },
+    })
+    const session = startDeviceSession(deps)
+    const socket = latestSocket()
+    socket.emitOpen()
+    await flushMicrotasks()
+    expect(helloCount(socket)).toBe(0) // 本连接不报 hello
+    expect(errors).toHaveLength(1)
+
+    // 让回调正常一次：随机探测恢复后同样能补发（不因上次失败而卡死）。
+    shouldThrow = false
+    const { deps: depsOk } = makeDeps({
+      helloFacts: () => ({ ...facts, pluginPackDigests: ['f'.repeat(64)] }),
+      onHelloError: () => {},
+    })
+    const sessionOk = startDeviceSession(depsOk)
+    const socketOk = latestSocket()
+    socketOk.emitOpen()
+    await flushMicrotasks()
+    expect(helloCount(socketOk)).toBe(1)
+    session.stop()
+    sessionOk.stop()
   })
 })

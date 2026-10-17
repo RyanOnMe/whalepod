@@ -99,8 +99,8 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
   stop: () => void
   /** P1-13 上行帧出口：仅当前连接 OPEN 时写出，否则丢弃（持久事件仍在 spool）。 */
   send: (frame: string) => void
-  /** #352：会话内补发一次 hello（重算事实）；无活连接时是 no-op。 */
-  resendHello: () => void
+  /** #352：会话内刷新 hello（重算事实；与本次连接已发的一致时不发）；无活连接时是 no-op。 */
+  refreshHello: () => void
 } {
   const setIntervalFn = deps.setIntervalImpl ?? setInterval
   const setTimeoutFn = deps.setTimeoutImpl ?? setTimeout
@@ -137,6 +137,46 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
   // #94：最近一次成功上报时的 inventory 指纹（首报时若注入 revision 源则入账）。
   let lastInventoryRevision: string | undefined
+
+  // ---- #352：hello 事实的发送纪律（三件事，都在这一处收口）----
+  // ① 归因回调不许掀宿主（#103/#112 同纪律）：采集或发送抛错只归因；
+  // ② **序号单调**：连接建立与会话内刷新可能同时在飞（探针各要一次 spawn），
+  //    旧快照后到会把 Hub 事实列写回旧值——只让序号 ≥ 已结算序号的采集落地；
+  // ③ **同连接内事实未变不重发**（#94 的指纹口径）：Hub 每收一条 hello 会追加一条
+  //    持久化 device.changed 团队事件，本地命中（没动盘）的 Run 不该制造这笔噪声。
+  //    换连接（重连）时必须照发——那是 Hub 侧「设备在线」的信号面。
+  let helloSeq = 0
+  let lastEvaluatedHelloSeq = 0
+  let lastSentHello: { socket: SocketLike; factsJson: string } | undefined
+  const reportHelloFailure = (error: unknown): void => {
+    try {
+      onHelloError(error)
+    } catch {
+      // 归因回调自身抛错也不许穿透（最后的出口断了，保持进程活着）。
+    }
+  }
+  const sendHello = (socket: SocketLike): void => {
+    const seq = (helloSeq += 1)
+    void (async () => {
+      let facts: HelloFacts
+      try {
+        facts = await deps.helloFacts()
+      } catch (error) {
+        // 失败不打断会话（同 inventory 口径）：本连接跳过 hello，等下条连接自然收敛。
+        reportHelloFailure(error)
+        return
+      }
+      if (seq < lastEvaluatedHelloSeq) return // 更新的快照已结算：旧的不许覆盖
+      lastEvaluatedHelloSeq = seq
+      if (current !== socket || socket.readyState !== 1) return
+      const factsJson = JSON.stringify(facts)
+      if (lastSentHello?.socket === socket && lastSentHello.factsJson === factsJson) return
+      lastSentHello = { socket, factsJson }
+      socket.send(helloFrame(deps.config.deviceId, facts))
+    })().catch((error: unknown) => {
+      reportHelloFailure(error)
+    })
+  }
 
   // #94：指纹变化才重建+重报；与连接后首报共用同一份连接守卫纪律（构建完成时
   // 该连接必须仍是当前活连接且 OPEN）。任何失败只归因、不穿透定时器回调（#103）。
@@ -251,20 +291,10 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
       attempt = 0
       const me = current
       // #352：hello 事实**当场重算**（可能 await），再按 hello → spool 补发 → inventory
-      // 的既有次序发帧。守卫：采集完成时该连接必须仍是当前活连接且 OPEN，否则丢帧。
+      // 的既有次序发帧。守卫（当前活连接 + OPEN + 序号单调）在 sendHello 内统一收口。
       void (async () => {
         if (me === undefined || me.readyState !== 1 || current !== me) return
-        let helloPayload: HelloFacts | undefined
-        try {
-          helloPayload = await deps.helloFacts()
-        } catch (error) {
-          // 失败不打断会话（同 inventory 口径）：本连接不报 hello，等下条连接自然收敛。
-          onHelloError(error)
-        }
-        if (current !== me || me.readyState !== 1) return
-        if (helloPayload !== undefined) {
-          me.send(helloFrame(deps.config.deviceId, helloPayload))
-        }
+        sendHello(me)
         // P1-13/R1：连接（重）建立后补发 spool 里全部未 ack 事件。
         deps.onConnected?.()
         // #89：inventory 与 hello 同责——**每条**连接建立后上报一次（Hub 的
@@ -297,23 +327,15 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
       if (current !== undefined && current.readyState === 1) current.send(frame)
     },
     /**
-     * #352：**会话内补发一次 hello**（重算事实）——本地 preflight 装/重建 pack 之后调用，
+     * #352：**会话内刷新 hello**（重算事实）——本地 preflight 装/重建 pack 之后调用，
      * 设备视图不等重连/重启就刷新（Hub 收 hello 即回填事实列并发 device.changed）。
-     * 无活连接时什么都不做（下条连接的 hello 本就会重算）。
+     * 事实与本次连接已发的一致时**不发**（本地命中的 Run 不该制造空转的团队事件，
+     * #94 同口径）；无活连接时什么都不做（下条连接的 hello 本就会重算）。
      */
-    resendHello: () => {
+    refreshHello: () => {
       const me = current
       if (me === undefined || me.readyState !== 1) return
-      void (async () => {
-        try {
-          const facts = await deps.helloFacts()
-          if (current === me && me.readyState === 1) {
-            me.send(helloFrame(deps.config.deviceId, facts))
-          }
-        } catch (error) {
-          onHelloError(error)
-        }
-      })()
+      sendHello(me)
     },
     stop: () => {
       manuallyStopped = true

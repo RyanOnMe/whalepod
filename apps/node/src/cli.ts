@@ -15,7 +15,11 @@ import { randomUUID } from 'node:crypto'
 import { claimDevice } from './pairing/client.js'
 import { DEFAULT_CONFIG_DIR, loadConfig, saveConfig } from './config.js'
 import { startDeviceSession } from './gateway/session.js'
-import { createHelloFacts, refreshHelloAfterPreflight } from './gateway/hello-facts.js'
+import {
+  createHelloFacts,
+  detectPlatformKind,
+  refreshHelloAfterPreflight,
+} from './gateway/hello-facts.js'
 import { installedPackDigests } from './plugin/runtime-config.js'
 import { resolveDshVersionFacts } from './plugin/dsh-version-probe.js'
 import type { PluginFetch } from './plugin/installer.js'
@@ -32,10 +36,6 @@ interface PairArgs {
   architecture: string
   nodeVersion: string
   nodeAppVersion: string
-}
-
-function detectPlatform(): 'darwin' | 'linux' | 'win32' {
-  return process.platform === 'win32' ? 'win32' : process.platform === 'linux' ? 'linux' : 'darwin'
 }
 
 async function runPair(args: PairArgs): Promise<void> {
@@ -93,7 +93,7 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   }
   // #352：hello 事实不再冻结在启动时刻——进程/平台/架构是常量，但**pack 目录**会随
   // preflight 安装/重建变化、**DSH 版本**会在本机换版后变化。组装成函数：
-  // 每条连接重算 + preflight 装包后经 session.resendHello() 会话内补发，
+  // 每条连接重算 + preflight 装包后经 session.refreshHello() 会话内刷新，
   // 设备视图（Hub 的 node.hello 事实列）不必等 Node 重启。
   // #352：hello 事实按连接重算（实现与判据在 gateway/hello-facts.ts，与 E2E harness 共用）。
   const helloFacts = createHelloFacts({
@@ -231,7 +231,7 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     pluginPackPreflight: (packDigest) =>
       refreshHelloAfterPreflight({
         ensure: (digest) => preflight.ensure(digest),
-        resendHello: () => deviceSession?.resendHello(),
+        refreshHello: () => deviceSession?.refreshHello(),
       })(packDigest),
     // P1-15：候选采集 + Reviewer 输入准备/清理。
     artifactCollector,
@@ -257,7 +257,7 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
 
   // #352：preflight 装/重建 pack 后要能补发 hello，而 session 在 runManager 之后创建——
   // 用可变句柄在闭包间传递（不改变装配次序）。
-  let deviceSession: { resendHello: () => void } | undefined
+  let deviceSession: { refreshHello: () => void } | undefined
   const session = startDeviceSession({
     config,
     helloFacts,
@@ -307,7 +307,7 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
       process.exit(code)
     },
   })
-  // #352：句柄落地——此后 preflight 装/重建 pack 会经它补发 hello。
+  // #352：句柄落地——此后 preflight 装/重建 pack 会经它刷新 hello（事实变了才发）。
   deviceSession = session
   sessionSend = session.send
 }
@@ -349,7 +349,7 @@ export async function main(argv: string[]): Promise<void> {
       hub: values.hub,
       code: values.code,
       name: values.name ?? 'whalepod-node',
-      platform: (values.platform as 'darwin' | 'linux' | 'win32') ?? detectPlatform(),
+      platform: (values.platform as 'darwin' | 'linux' | 'win32') ?? detectPlatformKind(),
       architecture: values.architecture ?? process.arch,
       nodeVersion: values['node-version'] ?? process.version,
       nodeAppVersion: values['node-app-version'] ?? '0.1.0',

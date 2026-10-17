@@ -9,9 +9,10 @@
  *    每次重探（#288 的同一支探针，与 boot 锚同源），探针失败回落启动值（升级场景下
  *    宁可报旧值也不谎报）。重探成本 = 一次短命 node spawn，只在（重）连接时发生。
  * 2. `refreshHelloAfterPreflight(...)`：包一层 preflight——非 core-empty 的装配成功后
- *    调 `resendHello()`（设备视图不等重连/重启收敛；core-empty 不落盘，无需补发）。
+ *    调 `refreshHello()`（设备视图不等重连/重启收敛；core-empty 不落盘，无需刷新）。
  *
- * 语义边界：`resendHello` 是 no-op 当无活连接时——下条连接的 hello 本就会重算。
+ * 语义边界：`refreshHello` 无活连接时是 no-op（下条连接的 hello 本就会重算），且
+ * 与本次连接已发事实一致时不发帧（本地命中的 Run 不该制造空转的 device.changed）。
  */
 import { join } from 'node:path'
 import { CORE_EMPTY_PACK_DIGEST } from '../plugin/plugin-preflight.js'
@@ -29,11 +30,18 @@ export interface HelloFactsInputs {
   readonly probeDshVersion?: (runtimeEntry: string) => Promise<string | null>
 }
 
+/** 平台归类：与配对上报（cli 的 pair 路径）同一口径，不丢 win32。 */
+export function detectPlatformKind(
+  platform: NodeJS.Platform = process.platform,
+): HelloFacts['platform'] {
+  return platform === 'win32' ? 'win32' : platform === 'linux' ? 'linux' : 'darwin'
+}
+
 export function createHelloFacts(inputs: HelloFactsInputs): () => Promise<HelloFacts> {
   const probe = inputs.probeDshVersion ?? probeDshDistributionVersion
   return async () => ({
     nodeVersion: process.version,
-    platform: (process.platform === 'linux' ? 'linux' : 'darwin') as HelloFacts['platform'],
+    platform: detectPlatformKind(),
     architecture: process.arch,
     // pack 目录当场读（marker 校验通过才计入；半途/损坏目录不上报）。
     pluginPackDigests: installedPackDigests(join(inputs.stateDir, 'plugin-packs')),
@@ -45,15 +53,15 @@ export function createHelloFacts(inputs: HelloFactsInputs): () => Promise<HelloF
 export interface HelloRefreshDeps<T> {
   /** 真 preflight（`PluginPackPreflight.ensure` 的绑定形态）。 */
   readonly ensure: (packDigest: string) => Promise<T>
-  /** 会话句柄上的补发（`startDeviceSession(...).resendHello`）。 */
-  readonly resendHello: () => void
+  /** 会话句柄上的刷新（`startDeviceSession(...).refreshHello`）。 */
+  readonly refreshHello: () => void
   /** core-empty 判定（生产传 `CORE_EMPTY_PACK_DIGEST`；测试可覆盖）。 */
   readonly isCoreEmpty?: (packDigest: string) => boolean
 }
 
 /**
- * preflight 成功（非 core-empty）后补发一次 hello。返回的仍是同一个 ensure 语义
- * （透传结果与异常）——刷新失败不改变 preflight 的成败。
+ * preflight 成功（非 core-empty）后刷新一次 hello（是否真发帧由会话侧按事实变化判定）。
+ * 返回的仍是同一个 ensure 语义（透传结果与异常）——刷新失败不改变 preflight 的成败。
  */
 export function refreshHelloAfterPreflight<T>(
   deps: HelloRefreshDeps<T>,
@@ -62,7 +70,7 @@ export function refreshHelloAfterPreflight<T>(
     deps.isCoreEmpty ?? ((packDigest: string) => packDigest === CORE_EMPTY_PACK_DIGEST)
   return async (packDigest: string) => {
     const outcome = await deps.ensure(packDigest)
-    if (!isCoreEmpty(packDigest)) deps.resendHello()
+    if (!isCoreEmpty(packDigest)) deps.refreshHello()
     return outcome
   }
 }

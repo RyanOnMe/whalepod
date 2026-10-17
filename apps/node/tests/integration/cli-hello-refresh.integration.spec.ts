@@ -30,12 +30,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { Outbox, schema } from '@whalepod/db'
 import type { Database } from '@whalepod/db'
 import { OutboxWorker } from '../../../hub/src/modules/run/index.js'
 import { WsDeviceGateway } from '../../../hub/src/modules/device/index.js'
+import { nodeConnections } from '../../../hub/src/modules/device/connection-registry.js'
 import {
   apiInject,
   createTestApp,
@@ -84,6 +85,7 @@ describe('#352 生产 cli 组合根：装 pack 后设备事实列不重启 Node 
     home = mkdtempSync(join(tmpdir(), 'wp-hello-refresh-home-'))
   })
   afterEach(async () => {
+    vi.restoreAllMocks()
     const running = child
     child = undefined
     if (running !== undefined && running.exitCode === null && running.signalCode === null) {
@@ -141,6 +143,11 @@ describe('#352 生产 cli 组合根：装 pack 后设备事实列不重启 Node 
     const registered = await registry.register(workspaceDir, { name: 'refresh-ws' })
     registry.close()
 
+    // 观测缝：记 Node 连接的建立次数（同进程模块单例，只读观测，不动产品路径）。
+    // 用途见 ⑤ 的判据——「刷新」必须发生在**同一条连接**上，否则「重连时重算」这条
+    // 旁路会让本用例在旧实现下也绿（评审 A 的 ④ 判据收紧）。
+    const attachSpy = vi.spyOn(nodeConnections, 'attach')
+
     // ---- Hub 侧：pack 行 + Agent（P1-18 惯例：pack 管理流不在本用例复跑，行级种子；
     // 本用例判的是 Node 侧刷新，pack 行只需一个稳定 digest：digest 即 preflight 的对接面）----
     const packId = randomUUID()
@@ -167,10 +174,15 @@ describe('#352 生产 cli 组合根：装 pack 后设备事实列不重启 Node 
     const agentId = (agentRes.json() as { data: { id: string } }).data.id
 
     // ---- ② 起真 cli，等 hello 落库 ----
+    // SecretStore 支持环境变量兜底（`WHALEPOD_DSH_SECRET_<PROVIDER>_<SLOT>`，store.ts）：
+    // 显式抹掉本用例的槽位，否则「凭据缺失 → Run 被拒」的前提会被外部环境悄悄推翻
+    // （那样会真起 Runtime，判据窗口与收尾面都变形）。
+    const childEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home }
+    delete childEnv['WHALEPOD_DSH_SECRET_REPLAY_DEFAULT']
     child = spawn(
       process.execPath,
       ['--import', 'tsx', CLI_ENTRY, 'start', '--state-dir', stateDir],
-      { cwd: REPO_ROOT, env: { ...process.env, HOME: home }, stdio: ['ignore', 'pipe', 'pipe'] },
+      { cwd: REPO_ROOT, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] },
     )
     let stderrTail = ''
     child.stderr?.setEncoding('utf8')
@@ -191,19 +203,32 @@ describe('#352 生产 cli 组合根：装 pack 后设备事实列不重启 Node 
     const digestsOf = (row: typeof schema.devices.$inferSelect): string[] =>
       Array.isArray(row.pluginPackDigests) ? (row.pluginPackDigests as string[]) : []
     const describeStderr = (): string => `\ncli stderr 尾部：\n${stderrTail}`
+    /** 等待失败时带上**失败时刻**的 stderr 尾部（describe 串是等待开始前求值的快照，
+     *  preflight/探针的日志都发生在轮询窗口内，必须重新取一次）。 */
+    const withFreshStderr = async <T>(wait: Promise<T>): Promise<T> => {
+      try {
+        return await wait
+      } catch (error) {
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}${describeStderr()}`,
+        )
+      }
+    }
 
-    const firstHello = await waitForValue(
-      async () => {
-        if (runningChild.exitCode !== null) {
-          throw new Error(
-            `cli 子进程提前退出（code=${runningChild.exitCode}）。${describeStderr()}`,
-          )
-        }
-        const row = await readDevice()
-        return row !== undefined && row.dshDistributionVersion !== null ? row : undefined
-      },
-      'node.hello 未在超时内落到设备事实列',
-      { timeoutMs: POLL_DEADLINE_MS, intervalMs: POLL_INTERVAL_MS },
+    const firstHello = await withFreshStderr(
+      waitForValue(
+        async () => {
+          if (runningChild.exitCode !== null) {
+            throw new Error(
+              `cli 子进程提前退出（code=${runningChild.exitCode}）。${describeStderr()}`,
+            )
+          }
+          const row = await readDevice()
+          return row !== undefined && row.dshDistributionVersion !== null ? row : undefined
+        },
+        'node.hello 未在超时内落到设备事实列',
+        { timeoutMs: POLL_DEADLINE_MS, intervalMs: POLL_INTERVAL_MS },
+      ),
     )
     // 起手基线：本机什么都没装 ⟹ digests 空。后半段出现的 digest 只能来自刷新。
     expect(digestsOf(firstHello)).toEqual([])
@@ -239,15 +264,17 @@ describe('#352 生产 cli 组合根：装 pack 后设备事实列不重启 Node 
     mkdirSync(join(stateDir, 'plugin-store', 'sha256', TREE_DIGEST), { recursive: true })
 
     // ---- ④ 真人路径：等投影就绪 → 建 Task → 起 Run（Hub 派发 run.start）----
-    await waitForValue(
-      async () => {
-        const res = await apiInject(ctx, alice, { method: 'GET', url: '/api/v1/workspaces' })
-        const list = res.json().data as Array<Record<string, unknown>> | undefined
-        const mine = list?.find((w) => w.workspaceId === registered.id && w.available === true)
-        return mine
-      },
-      'Hub 未在超时内看到本机 Workspace 投影（起 Run 的前置）',
-      { timeoutMs: POLL_DEADLINE_MS, intervalMs: POLL_INTERVAL_MS },
+    await withFreshStderr(
+      waitForValue(
+        async () => {
+          const res = await apiInject(ctx, alice, { method: 'GET', url: '/api/v1/workspaces' })
+          const list = res.json().data as Array<Record<string, unknown>> | undefined
+          const mine = list?.find((w) => w.workspaceId === registered.id && w.available === true)
+          return mine
+        },
+        'Hub 未在超时内看到本机 Workspace 投影（起 Run 的前置）',
+        { timeoutMs: POLL_DEADLINE_MS, intervalMs: POLL_INTERVAL_MS },
+      ),
     )
     const projectRes = await apiInject(ctx, alice, {
       method: 'POST',
@@ -279,6 +306,7 @@ describe('#352 生产 cli 组合根：装 pack 后设备事实列不重启 Node 
       },
     })
     expect(runRes.statusCode, `起 Run 被拒：${runRes.body}`).toBe(201)
+    const runId = (runRes.json() as { data: { id: string } }).data.id
 
     // ④b：驱动 Outbox（生产是 250ms 循环；本测试手动挡——真正的 WS 连接注册表在
     // 同进程内，WsDeviceGateway 直达配对的那条真连接）。
@@ -288,22 +316,50 @@ describe('#352 生产 cli 组合根：装 pack 后设备事实列不重启 Node 
     })
 
     // ---- ⑤ 判据：设备事实列刷新，且 cli 进程从未退出（不重启 Node）----
-    const refreshed = await waitForValue(
-      async () => {
-        if (runningChild.exitCode !== null) {
-          throw new Error(
-            `cli 子进程在处理 Run 期间退出（code=${runningChild.exitCode}）——判据不成立。${describeStderr()}`,
-          )
-        }
-        await worker.dispatchOnce()
-        const row = await readDevice()
-        return row !== undefined && digestsOf(row).includes(PACK_DIGEST) ? row : undefined
-      },
-      `本地装 pack 后设备事实列未在不重启 Node 的情况下刷新（#352）${describeStderr()}`,
-      { timeoutMs: POLL_DEADLINE_MS, intervalMs: POLL_INTERVAL_MS },
+    const refreshed = await withFreshStderr(
+      waitForValue(
+        async () => {
+          if (runningChild.exitCode !== null) {
+            throw new Error(
+              `cli 子进程在处理 Run 期间退出（code=${runningChild.exitCode}）——判据不成立。`,
+            )
+          }
+          await worker.dispatchOnce()
+          const row = await readDevice()
+          return row !== undefined && digestsOf(row).includes(PACK_DIGEST) ? row : undefined
+        },
+        '本地装 pack 后设备事实列未在不重启 Node 的情况下刷新（#352）',
+        { timeoutMs: POLL_DEADLINE_MS, intervalMs: POLL_INTERVAL_MS },
+      ),
     )
     expect(digestsOf(refreshed)).toEqual([PACK_DIGEST])
     // 同一进程：起手记录的就是它，判据期间也未退出（上面每拍都在查 exitCode）。
     expect(runningChild.exitCode).toBeNull()
+    // 同一连接：全程只有一条（把「重连重算」这条旁路排掉——本用例不注入断线，
+    // 若这里 >1，说明 cli 自己重连过，刷新就不一定来自会话内刷新这条路径）。
+    expect(
+      attachSpy.mock.calls.filter(([connection]) => connection.deviceId === deviceId),
+      'Node 侧发生了重连——判据退化（重连时的按连接重算也能让 digests 出现）',
+    ).toHaveLength(1)
+
+    // ---- ⑥ 判据的另一半（评审 B）：Run 的拒绝命运落在凭据闸上 —— 这同时证明
+    // 「preflight 之后、spawn 之前」的窗口设定成立（真起 Runtime 会留孤儿，且判据窗口变形）。
+    const failedRun = await withFreshStderr(
+      waitForValue(
+        async () => {
+          await worker.dispatchOnce()
+          const res = await apiInject(ctx, alice, { method: 'GET', url: `/api/v1/runs/${runId}` })
+          const run = res.json().data as
+            | { status?: string; failureCode?: string | null }
+            | undefined
+          return run !== undefined && run.failureCode !== null && run.failureCode !== undefined
+            ? run
+            : undefined
+        },
+        'Run 未在超时内以凭据缺失被拒——本用例的前提（不真起 Runtime）不成立',
+        { timeoutMs: POLL_DEADLINE_MS, intervalMs: POLL_INTERVAL_MS },
+      ),
+    )
+    expect(failedRun.failureCode).toBe('MODEL_CREDENTIAL_UNAVAILABLE')
   }, 90_000)
 })

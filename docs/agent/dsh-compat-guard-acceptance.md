@@ -105,8 +105,11 @@ pnpm test:dsh-contract && pnpm test:unit
   先定一份独立 canonical 口径，未做；本轮的对照点只覆盖 Node↔Runtime 往返一致。
 - 兼容闸的本机版本在 Node **启动时探针一次**：升级 DSH 之后必须重启 Node 才生效（`dsh-upgrade`
   流程本来就要求重启；本轮把这条前提写进了 CLI 注释）。**#352 起 hello 事实侧改为按连接重探**
-  （设备视图会刷新成新版本），但闸与 Run 固化值仍是启动那一次——即「视图已新、本进程准入仍按旧
-  版本」，直到重启。口径与判据见 [hello-facts-refresh-acceptance](./hello-facts-refresh-acceptance.md)。
+  （设备视图会刷新成新版本），但闸与 Node 侧 `run.snapshot` 的快照值仍是启动那一次——即「视图
+  已新、本进程准入仍按旧版本」，直到重启。**注意 Hub 账本的版本另有来源**：建 Run 时写的
+  `runs.dsh_distribution_version` 读的是设备行（`getDeviceDshDistributionVersion`），随 hello
+  一起刷新——所以升级后不重启起的 Run 账本记新版本、准入与快照按旧版本。口径与判据见
+  [hello-facts-refresh-acceptance](./hello-facts-refresh-acceptance.md)。
 - ~~**升级后设备视图会少报 pack，直到 Node 重启**~~（**#352 已修**）：`node.hello` 的 facts 不再
   冻结在启动时刻——改为按连接重算 + preflight 装/重建 pack 成功后会话内补发 hello
   （`apps/node/src/gateway/hello-facts.ts`；判据：模块/会话/Hub 集成/真 cli 组合根四面，见
