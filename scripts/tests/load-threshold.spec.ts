@@ -2,8 +2,15 @@
  * Q8 短档**判定数学**的门卫（load-test 的核心判据必须能被红样证伪，
  * 与 secret-scan --self-test / license-check 红样同理）。
  * 真负载跑在 scripts/load-test.mts（环境闸内），这里钉的是"尺子本身准"。
+ *
+ * #360：本文件全是**纯逻辑**（假 cgroup reader，无 I/O），但在共享 runner 上偶发撞默认
+ * 5s（事件循环饥饿：同次 unit 全量 setup 19.7s / tests 127s）。这里给整个文件一个显式
+ * 时间预算——判据不变，只是把与判定无关的时间噪声从默认值里拿开（#296/#303 同口径）；
+ * 不用全局 testTimeout 抬高，免得掩盖真挂起。
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+vi.setConfig({ testTimeout: 20_000 })
 import {
   assessEnvironment,
   CGROUP_PATHS,
