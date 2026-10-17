@@ -32,11 +32,12 @@
    同层加固（2026-10-17 三轮评审逐个逼出来，各有真实变异自证）：
    - **脚本形态**：脚本里必须真有一次 `tsc …-p/--project tsconfig.test.json` 调用（只出现配置名的
      `echo tsconfig.test.json` 能骗过子串匹配）；配置名之后的尾界用**白名单**
-     `(?=$|[\s"';|&])`——`\b` 会放行 `tsconfig.test.json.orig`、黑名单 `(?![\w.-])` 又会放行
-     `tsconfig.test.json~`（Vim 备份名），凡是紧跟非分隔字符的都算「脚本点的是另一个文件」；
-     分隔符含 `;`/`&`/`|`：串联写法（`; echo done`、无空格 `&&`）不误伤——串联后退出码怎么传属
+     `(?=$|[\s"';|&<>()#\\])`——`\b` 会放行 `tsconfig.test.json.orig`、黑名单 `(?![\w.-])`
+     又会放行 `tsconfig.test.json~`（Vim 备份名），判断标准是「配置名后面是不是一个**终止 token
+     的 shell 字符**」（空白 / 引号 / `; & | < > ( ) #` / 反斜杠 / 行尾）；`; echo done`、无空格
+     `&&`、`>/dev/null`、`( … )`、`$( … )`、反斜杠续行等紧凑写法都不误伤——串联后退出码怎么传属
      下面「吞退出码」那条已声明盲区，不由文本层拦；路径两侧允许引号（`-p "tsconfig.test.json"`
-     不误伤）。
+     不误伤）。集合漏了某种紧凑写法时的方向是**假红**（fail-closed，消息带原脚本，可自诊断）。
    - **`noCheck`**：`tsc -p tsconfig.test.json --showConfig` 读**生效**配置（extends 链解析后）——
      `noCheck: true` 时文件在 program 里却一个类型都不检查，清单判据照样命中；脚本面的
      `--noCheck` 旗标同拦。

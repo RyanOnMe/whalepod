@@ -499,12 +499,21 @@ describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
       'tsc -p tsconfig.test.json; echo done',
       'tsc -p tsconfig.test.json&&tsc -b',
       'set -e; tsc -p tsconfig.test.json --pretty false 2>&1',
+      // 紧凑写法（评审 B 逐一实测过的假红形态）：重定向、子壳、命令替换、`<`
+      'tsc -b && tsc -p tsconfig.test.json>/dev/null',
+      '(tsc -p tsconfig.test.json)',
+      '(cd . && tsc -p tsconfig.test.json)',
+      'out=$(tsc -p tsconfig.test.json)',
+      'tsc -p tsconfig.test.json</dev/null',
+      // 反斜杠续行（评审 A 的形态③）——用拼接写，避免转义歧义
+      'tsc -b && tsc -p tsconfig.test.json\\' + '\n  --pretty false',
     ]
     for (const [index, script] of scripts.entries()) {
       await makePackage('packages', `chained-${index}`, { scripts: { typecheck: script } }, true)
     }
     expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([])
-  })
+    // 9 个 fixture 包各跑一次真 tsc：全量 Q0 并行时默认 5s 不够（#183 实测超时）
+  }, 60_000)
 
   it('路径带引号的合法写法不误伤（-p "tsconfig.test.json"）', async () => {
     await makePackage(
