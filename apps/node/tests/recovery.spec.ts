@@ -132,7 +132,12 @@ function spec(runId: string): RuntimeStartSpec {
   }
 }
 
-async function makeReadySupervisor(stateDbPath: string, runId: string): Promise<number> {
+async function makeReadySupervisor(
+  stateDbPath: string,
+  runId: string,
+  /** #356：spawn 时记入 active_runtime 的 DSH 版本（缺省 = 不记，既有用例语义）。 */
+  dshDistributionVersion?: string,
+): Promise<number> {
   const registry = new WorkspaceRegistry(
     join(root, `reg-${Math.random().toString(36).slice(2)}.sqlite`),
   )
@@ -148,6 +153,7 @@ async function makeReadySupervisor(stateDbPath: string, runId: string): Promise<
     stateDbPath,
     capacity: 2,
     runtimeTimeoutMs: 60_000,
+    ...(dshDistributionVersion === undefined ? {} : { dshDistributionVersion }),
   })
   await first.start(spec(runId), { workspaceId: ws.id })
   const record = (await first.activeRuns()).find((r) => r.runId === runId)
@@ -156,7 +162,10 @@ async function makeReadySupervisor(stateDbPath: string, runId: string): Promise<
   return record.pid
 }
 
-function reopenedSupervisor(stateDbPath: string): RuntimeSupervisor {
+function reopenedSupervisor(
+  stateDbPath: string,
+  dshDistributionVersion?: string,
+): RuntimeSupervisor {
   const supervisor = new RuntimeSupervisor({
     driver: realProcessDriver(),
     registry: new WorkspaceRegistry(
@@ -166,6 +175,7 @@ function reopenedSupervisor(stateDbPath: string): RuntimeSupervisor {
     stateDbPath,
     capacity: 2,
     runtimeTimeoutMs: 60_000,
+    ...(dshDistributionVersion === undefined ? {} : { dshDistributionVersion }),
   })
   return supervisor
 }
@@ -220,5 +230,103 @@ describe('Node 重启无孤儿恢复', () => {
 
     // #305：负向判据许下的活口由本用例负责收回（断言「没被杀」之后自己杀）。
     await reap(childPid)
+  })
+
+  // ---- #356：换版后的孤儿归因（专用失败码的左侧操作数）----
+
+  it('#356：spawn 版本 != 本次启动版本（升级/回滚形态）→ version_changed_after_node_restart', async () => {
+    const stateDb = join(root, `state-vc-${Math.random().toString(36).slice(2)}.sqlite`)
+    const runId = 'r-orphan-vc'
+    const childPid = await makeReadySupervisor(stateDb, runId, '0.1.0-rc.8')
+
+    // 重启前换版：本次启动探针报的是旧版本（回滚）——归因必须是「版本换了」。
+    const second = reopenedSupervisor(stateDb, '0.1.0-rc.7')
+    const lost: Array<{ runId: string; reason: string }> = []
+    second.onLost((id, reason) => lost.push({ runId: id, reason }))
+
+    await second.recoverOrphans()
+    await waitForValue(async () => ((await alive(childPid)) ? undefined : true), '孤儿进程未被终止')
+
+    expect(lost).toEqual([{ runId, reason: 'version_changed_after_node_restart' }])
+    expect(await second.activeRuns()).toEqual([])
+    second.close()
+  })
+
+  it('#356 负控：版本没变 → 仍是 orphaned_after_node_restart（不许把普通重启谎报成换版）', async () => {
+    const stateDb = join(root, `state-same-${Math.random().toString(36).slice(2)}.sqlite`)
+    const runId = 'r-orphan-same'
+    const childPid = await makeReadySupervisor(stateDb, runId, '0.1.0-rc.8')
+
+    const second = reopenedSupervisor(stateDb, '0.1.0-rc.8')
+    const lost: Array<{ runId: string; reason: string }> = []
+    second.onLost((id, reason) => lost.push({ runId: id, reason }))
+
+    await second.recoverOrphans()
+    await waitForValue(async () => ((await alive(childPid)) ? undefined : true), '孤儿进程未被终止')
+
+    expect(lost).toEqual([{ runId, reason: 'orphaned_after_node_restart' }])
+    second.close()
+  })
+
+  it('#356 负控：任一侧版本未知 → 退回通用归因（探针失败不谎报换版）', async () => {
+    // 情形一：spawn 时没记版本（旧库/未注入），本次启动探针成功。
+    const stateDbA = join(root, `state-unk-a-${Math.random().toString(36).slice(2)}.sqlite`)
+    const runIdA = 'r-orphan-unk-a'
+    const pidA = await makeReadySupervisor(stateDbA, runIdA)
+    const secondA = reopenedSupervisor(stateDbA, '0.1.0-rc.8')
+    const lostA: Array<{ runId: string; reason: string }> = []
+    secondA.onLost((id, reason) => lostA.push({ runId: id, reason }))
+    await secondA.recoverOrphans()
+    await waitForValue(async () => ((await alive(pidA)) ? undefined : true), '孤儿进程未被终止')
+    expect(lostA).toEqual([{ runId: runIdA, reason: 'orphaned_after_node_restart' }])
+    secondA.close()
+
+    // 情形二：记了版本，但本次启动探针失败（未注入 = 不可知）。
+    const stateDbB = join(root, `state-unk-b-${Math.random().toString(36).slice(2)}.sqlite`)
+    const runIdB = 'r-orphan-unk-b'
+    const pidB = await makeReadySupervisor(stateDbB, runIdB, '0.1.0-rc.8')
+    const secondB = reopenedSupervisor(stateDbB)
+    const lostB: Array<{ runId: string; reason: string }> = []
+    secondB.onLost((id, reason) => lostB.push({ runId: id, reason }))
+    await secondB.recoverOrphans()
+    await waitForValue(async () => ((await alive(pidB)) ? undefined : true), '孤儿进程未被终止')
+    expect(lostB).toEqual([{ runId: runIdB, reason: 'orphaned_after_node_restart' }])
+    secondB.close()
+  })
+
+  it('#356：旧状态库（无 dsh_version 列）补列后照常恢复——不因缺列崩，也不谎报换版', async () => {
+    const stateDb = join(root, `state-legacy-${Math.random().toString(36).slice(2)}.sqlite`)
+    // 用引入本列之前的 DDL 建库并塞一行（模拟升级 Node 后的既有状态库）。
+    const { DatabaseSync } = await import('node:sqlite')
+    const legacy = new DatabaseSync(stateDb)
+    legacy.exec(`create table active_runtime (
+      run_id text primary key, pid integer not null, process_start_time text not null,
+      pgid integer not null, runtime_nonce text not null, workspace_id text not null,
+      started_at text not null, stderr_tail text)`)
+    legacy
+      .prepare(
+        'insert into active_runtime (run_id, pid, process_start_time, pgid, runtime_nonce, workspace_id, started_at, stderr_tail) values (?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        'r-orphan-legacy',
+        999_999_999,
+        '1970-01-01T00:00:00.000Z',
+        999_999_999,
+        'n',
+        'w',
+        new Date().toISOString(),
+        null,
+      )
+    legacy.close()
+
+    const second = reopenedSupervisor(stateDb, '0.1.0-rc.8') // 打开即触发补列
+    const lost: Array<{ runId: string; reason: string }> = []
+    second.onLost((id, reason) => lost.push({ runId: id, reason }))
+    await second.recoverOrphans()
+
+    // 死 pid（探测必 dead）→ 不发信号、记录移除；版本列缺失值 = 未知 → 通用归因。
+    expect(lost).toEqual([{ runId: 'r-orphan-legacy', reason: 'orphaned_after_node_restart' }])
+    expect(await second.activeRuns()).toEqual([])
+    second.close()
   })
 })

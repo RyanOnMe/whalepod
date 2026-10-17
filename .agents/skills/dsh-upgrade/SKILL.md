@@ -60,9 +60,12 @@ DSH 是预览版，升级是高风险动作。三条红线（06 文档 §2.1）�
 
 - Hub 数据 migration 不依赖 DSH schema，DSH image 可独立回滚。
 - 已创建 Run 固化其 DSH version，回滚不改历史 Run。
-- 回滚后不恢复新版本上正在跑的 Runtime：用户显式 rerun。**现状**：没有专门的
-  `runtime_version_rolled_back` 码（全仓无实现，见 #356）——心跳断掉后由 Hub 的 reconciler 按
-  既有语义收敛（`failed(RUNTIME_LOST)`），「Run 终态禁止复活」保证它不会被自动拉起。
+- 回滚后不恢复新版本上正在跑的 Runtime：用户显式 rerun。**归因（#356 起）**：重启后的 Node 在
+  孤儿恢复时比对「spawn 时记录的 DSH 版本」与「本次启动探针的版本」，不一致即把该 Run 报为
+  `lost(RUNTIME_VERSION_CHANGED)`（Hub 原样落 `runs.failure_code`）——与「进程丢了/节点断线」的
+  `RUNTIME_LOST`（租约过期那条路）区分开；任一侧版本未知时退回 `RUNTIME_LOST`，不谎报换版。
+  「Run 终态禁止复活」保证它不会被自动拉起。判据见
+  `docs/agent/runtime-version-change-acceptance.md`（升级与回滚共用这条检测：两者都停下 Node 换版）。
 
 ## 其他依赖
 

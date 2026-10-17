@@ -200,6 +200,10 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   // 的这段窗口准备的，但 TDZ 会让默认值根本来不及生效。
   let sessionSend: (frame: string) => void = () => {}
   const supervisor = new RuntimeSupervisor({
+    // #356：spawn 时把本进程探针到的 DSH 版本记进 active_runtime——Node 重启后
+    // 据此区分「换过版本（升级/回滚）」与「进程丢了」。probed 未知（探针失败）时
+    // 记 null：那时宁可报通用的 RUNTIME_LOST，也不谎报换版。
+    dshDistributionVersion: dshVersionFacts.probed,
     driver: new DshRuntimeDriver({ runtimeEntry }),
     registry,
     secrets,

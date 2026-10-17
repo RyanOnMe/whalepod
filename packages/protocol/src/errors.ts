@@ -36,6 +36,11 @@ export const ErrorCodeSchema = z.enum([
   'RUNTIME_START_FAILED',
   'MODEL_CREDENTIAL_UNAVAILABLE',
   'RUNTIME_LOST',
+  // #356：本机 DSH 版本在该 Run 存活期间被换过（升级/回滚都停下 Node 再换版，
+  // 见 .agents/skills/dsh-upgrade）——Node 重启做孤儿归因时比对「spawn 时记录的
+  // 版本」与「本次启动探针的版本」，不一致即用本码，与「进程丢了/节点断线」
+  // （RUNTIME_LOST）区分开：用户据此知道是换版搞的、需要显式重跑。
+  'RUNTIME_VERSION_CHANGED',
   'APPROVAL_EXPIRED',
   'APPROVAL_ALREADY_DECIDED',
   'ARTIFACT_PATH_OUTSIDE_WORKSPACE',

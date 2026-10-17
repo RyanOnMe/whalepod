@@ -32,7 +32,16 @@ export class SupervisorError extends Error {
 
 export interface RuntimeLostEvent {
   readonly runId: string
-  readonly reason: 'runtime_timeout' | 'orphaned_after_node_restart'
+  /**
+   * #356：`version_changed_after_node_restart` = 该 Run 存活期间本机 DSH 版本被换过
+   * （升级/回滚流程都停下 Node 再换版）——Node 重启做孤儿归因时比对「spawn 时记录
+   * 的版本」与「本次启动的探针版本」，两侧都已知且不一致才是它；任一未知（探针失败、
+   * 旧库没有该列）都退回 `orphaned_after_node_restart`（不猜、不谎报换版）。
+   */
+  readonly reason:
+    | 'runtime_timeout'
+    | 'orphaned_after_node_restart'
+    | 'version_changed_after_node_restart'
 }
 
 /** P1-16：进程退出的裸事实（RunManager 经 exit-classifier 归因到 Run 终态）。 */
@@ -65,6 +74,12 @@ interface SupervisorDeps {
    * 见 environment.ts 注释）。生产 cli 不设置。
    */
   readonly runtimeEnvPassthrough?: readonly string[]
+  /**
+   * #356：本进程的 DSH 发行版版本（启动探针结果；null = 不可知）。spawn 时随
+   * active_runtime 落盘，供 Node 重启后的孤儿归因区分「版本被换过」与「进程丢了」。
+   * 缺省 undefined ⟹ 不记录（harness/单测的既有形态，永不据此宣称换版）。
+   */
+  readonly dshDistributionVersion?: string | null
 }
 
 interface ActiveRow {
@@ -76,6 +91,8 @@ interface ActiveRow {
   workspace_id: string
   started_at: string
   stderr_tail: string | null
+  /** #356：spawn 时记录的 DSH 版本（旧库升级来的行没有该列值为 null）。 */
+  dsh_version: string | null
 }
 
 export class RuntimeSupervisor {
@@ -111,9 +128,17 @@ export class RuntimeSupervisor {
         runtime_nonce text not null,
         workspace_id text not null,
         started_at text not null,
-        stderr_tail text
+        stderr_tail text,
+        dsh_version text
       )
     `)
+    // #356：老状态库（本列引入前建的）补列——`create table if not exists` 不改既有表。
+    const columns = this.db.prepare('pragma table_info(active_runtime)').all() as unknown as {
+      name: string
+    }[]
+    if (!columns.some((column) => column.name === 'dsh_version')) {
+      this.db.exec('alter table active_runtime add column dsh_version text')
+    }
   }
 
   onLost(handler: (runId: string, reason: RuntimeLostEvent['reason']) => void): void {
@@ -168,7 +193,7 @@ export class RuntimeSupervisor {
     const pgid = process.platform !== 'win32' ? handle.pid : handle.pid
     this.db
       .prepare(
-        'insert into active_runtime (run_id, pid, process_start_time, pgid, runtime_nonce, workspace_id, started_at, stderr_tail) values (?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into active_runtime (run_id, pid, process_start_time, pgid, runtime_nonce, workspace_id, started_at, stderr_tail, dsh_version) values (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         spec.runId,
@@ -179,6 +204,8 @@ export class RuntimeSupervisor {
         ctx.workspaceId,
         new Date().toISOString(),
         null,
+        // #356：版本是探针事实；未知（null/未注入）就记 null —— 重启后不据此宣称换版。
+        this.deps.dshDistributionVersion ?? null,
       )
     const timer = setTimeout(() => {
       void this.reclaimTimeout(spec.runId)
@@ -297,7 +324,9 @@ export class RuntimeSupervisor {
 
   /**
    * Node 重启恢复：逐条记录三重匹配探测——
-   * matched → 终止进程组 + 上报 orphaned_after_node_restart；
+   * matched → 终止进程组 + 上报 orphaned_after_node_restart（#356：若本次启动的
+   * DSH 版本与该 Run spawn 时记录的版本都已知且不一致，改报
+   * version_changed_after_node_restart —— 升级/回滚流程的形态）；
    * dead / mismatch → 绝不发信号；记录一律移除（交人工重跑，不自动复活 Run）。
    */
   async recoverOrphans(): Promise<void> {
@@ -309,14 +338,34 @@ export class RuntimeSupervisor {
         runId: row.run_id,
         runtimeNonce: row.runtime_nonce,
       })
-      console.error('RECOVER_VERDICT', row.run_id, verdict, row.runtime_nonce)
+      const versionChanged = this.dshVersionChangedSince(row.dsh_version)
+      console.error(
+        'RECOVER_VERDICT',
+        row.run_id,
+        verdict,
+        row.runtime_nonce,
+        versionChanged ? 'version_changed' : 'version_same',
+      )
       if (verdict === 'matched') {
         await killProcessGroup(row.pid, 'SIGTERM')
         await killProcessGroup(row.pid, 'SIGKILL')
       }
       this.db.prepare('delete from active_runtime where run_id = ?').run(row.run_id)
-      this.emitLost(row.run_id, 'orphaned_after_node_restart')
+      this.emitLost(
+        row.run_id,
+        versionChanged ? 'version_changed_after_node_restart' : 'orphaned_after_node_restart',
+      )
     }
+  }
+
+  /**
+   * #356：这个孤儿的 DSH 版本是否与本次启动不同。两侧都已知才判定——任一未知
+   * （探针失败 / 旧库补列后的 null / 未注入版本）都返回 false：宁可报通用的
+   * 进程丢失，也不谎报「换了版本」。
+   */
+  private dshVersionChangedSince(recorded: string | null): boolean {
+    const current = this.deps.dshDistributionVersion
+    return recorded !== null && current !== null && current !== undefined && recorded !== current
   }
 
   /** 优雅停机：终止本实例管理的全部 Runtime（退出事件被抑制，不归因为 Run 故障）。 */

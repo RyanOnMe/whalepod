@@ -4,6 +4,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [runtime-version-change-acceptance.md](./runtime-version-change-acceptance.md) | #356：换版归因专用码 `RUNTIME_VERSION_CHANGED`——spawn 时记探针版本（旧状态库自动补列），Node 重启做孤儿恢复时两侧已知且不一致才算换版（否则退回 `RUNTIME_LOST`，不谎报）；判据三层（判定 4 例含两个负控 + 旧库补列 / Q6 全链快照 / Hub 落库保真），变异自证；边界：Hub 租约过期那条路看不出换版、真实换版仍人工门 |
 | [cancel-race-acceptance.md](./cancel-race-acceptance.md) | #353：取消的四种真实时刻（流式中取消 / **取消与收尾撞车**（Runtime 层 completed 胜出，产品层结局另立 #365）/ 中断边界上已入队的 followup / **审批悬置时取消**）——收敛屏障后清总账「终态唯一」，followup 以 spliced 记录钉 `next-turn` 入队与 `outcome: canceled` 移除（续跑不复活），迟到 `approval.decide` 静默丢弃并留归因；六条变异自证、连跑 10 次稳定；窗口正中（#363）、resume 中取消（#366）如实记为未覆盖 |
 | [hello-facts-refresh-acceptance.md](./hello-facts-refresh-acceptance.md) | #352：设备事实（`node.hello`）不再冻结在启动时刻——按连接重算 + preflight 装/重建 pack 后会话内刷新（序号单调：旧快照不许覆盖新快照；同连接内事实未变不发，免空转 team event）；判据四面（模块 6 / 会话 5 / Hub 集成「同连接第二条 hello 覆盖事实列」/ **真 cli 组合根**含同连接与 Run 命运断言）各自带变异自证；边界：Q5 主闭环判不了（`e2e-pack` core-empty + harness 无 preflight）、兼容闸与 Node 快照仍按启动探针、采集 await 探针的 15s 预算已记账 |
 | [create-failure-guidance-acceptance.md](./create-failure-guidance-acceptance.md) | #348：创建任务失败的候选失效翻成中文引导 + 错误码可见（纯函数 1 + jsdom 3 + 真页面 1；竞态残窗用响应替换法；变异自证三条；语义仍是重选、绝不自动换人） |

@@ -51,6 +51,7 @@ import {
   newRuntimeNonce,
   RuntimeSupervisor,
   SupervisorError,
+  type RuntimeLostEvent,
 } from '../supervisor/runtime-supervisor.js'
 import type { RuntimeStartSpec } from '../runtime-driver.js'
 import type { WorkspaceRegistry } from '../workspace/registry.js'
@@ -677,10 +678,21 @@ export class RunManager {
     }
   }
 
-  private handleSupervisorLost(
-    runId: string,
-    reason: 'runtime_timeout' | 'orphaned_after_node_restart',
-  ): void {
+  private handleSupervisorLost(runId: string, reason: RuntimeLostEvent['reason']): void {
+    if (reason === 'version_changed_after_node_restart') {
+      // #356：该 Run 存活期间本机 DSH 版本被换过（升级/回滚流程：停 Node → 换版 →
+      // 起 Node）。孤儿已由三重匹配处理，但归因不是「进程丢了」而是「版本换了」——
+      // 旧版本下跑起来的 Runtime 不恢复、绝不自动复活，用户据专用码知道要显式重跑。
+      const summary =
+        'local DSH distribution version changed while this run was alive; runtime not restored'
+      this.log('error', 'runtime orphaned after dsh version change; reporting lost', {
+        component: 'node.supervisor',
+        runId,
+      })
+      this.finalizeRun(runId, 'lost', 'RUNTIME_VERSION_CHANGED', summary)
+      this.reportLostSnapshot(runId, summary, 'RUNTIME_VERSION_CHANGED')
+      return
+    }
     if (reason === 'orphaned_after_node_restart') {
       // R9：Node 重启后孤儿已按三重匹配处理。上报 lost(RUNTIME_LOST)（Hub 落
       // lost 终态），交人工显式重跑——绝不自动复活或重放。
@@ -722,9 +734,13 @@ export class RunManager {
    * 上行，并留底到 onReconnect 重发；离线时 session 层丢弃，重连后由 flush 补达。
    * Hub 侧终态幂等（重复快照被忽略）。
    */
-  private reportLostSnapshot(runId: string, summary: string): void {
+  private reportLostSnapshot(
+    runId: string,
+    summary: string,
+    code: ErrorCode = 'RUNTIME_LOST',
+  ): void {
     if (this.finalFacts.get(runId) === undefined) {
-      this.finalizeRun(runId, 'lost', 'RUNTIME_LOST', summary)
+      this.finalizeRun(runId, 'lost', code, summary)
     }
     const snapshot = this.buildSnapshot(runId)
     if (snapshot === undefined) {

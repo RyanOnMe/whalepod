@@ -193,6 +193,111 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
     expect(await supervisor2.activeRuns()).toEqual([])
   })
 
+  it('#356：重启前的 DSH 版本与 spawn 时不同（升级/回滚形态）→ lost 快照带专用码', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wp-r9-vc-'))
+    cleanups.push(async () => {
+      await rm(root, { recursive: true, force: true })
+    })
+    const workspaceDir = join(root, 'ws')
+    const { mkdirSync } = await import('node:fs')
+    mkdirSync(workspaceDir, { recursive: true })
+
+    // 第一段：spawn 时记下版本 0.1.0-rc.8（与生产 cli 同一注入点）。
+    const { driver, pids } = makeRealProcessDriver()
+    const registry1 = new WorkspaceRegistry(join(root, 'registry.db'))
+    const workspace = await registry1.register(workspaceDir, { name: 'ws-vc' })
+    const commandStore1 = new CommandStore(join(root, 'commands.db'))
+    const eventStore1 = new EventStore(join(root, 'events.db'))
+    const supervisor1 = new RuntimeSupervisor({
+      driver,
+      registry: registry1,
+      secrets: new SecretStore(join(root, 'secrets.json'), {
+        WHALEPOD_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
+      }),
+      stateDbPath: join(root, 'supervisor.db'),
+      capacity: 2,
+      runtimeTimeoutMs: 60_000,
+      dshDistributionVersion: '0.1.0-rc.8',
+    })
+    const manager1 = new RunManager({
+      supervisor: supervisor1,
+      registry: registry1,
+      commandStore: commandStore1,
+      eventStore: eventStore1,
+      send: () => {},
+      runtimeHomeFor: (runId) => join(root, 'runtime-home', runId),
+      homeDir: '/Users/testhome',
+      stateDir: root,
+      packsRoot: join(root, 'plugin-packs'),
+      deviceId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      dshDistributionVersion: '0.1.0-rc.8',
+    })
+    await manager1.handleFrame(runStartFrame(workspace.id))
+    const childPid = pids[0]!
+    supervisor1.close()
+    commandStore1.close()
+    eventStore1.close()
+
+    // 第二段：换版后重启（回滚 = 探针报更旧的版本）。
+    const { driver: driver2 } = makeRealProcessDriver()
+    const supervisor2 = new RuntimeSupervisor({
+      driver: driver2,
+      registry: new WorkspaceRegistry(join(root, 'registry.db')),
+      secrets: new SecretStore(join(root, 'secrets.json'), {
+        WHALEPOD_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
+      }),
+      stateDbPath: join(root, 'supervisor.db'),
+      capacity: 2,
+      runtimeTimeoutMs: 60_000,
+      dshDistributionVersion: '0.1.0-rc.7',
+    })
+    const commandStore2 = new CommandStore(join(root, 'commands.db'))
+    const eventStore2 = new EventStore(join(root, 'events.db'))
+    const sent2: string[] = []
+    let online2 = false // 重启后先离线：快照缓冲，重连才 flush（与 R9 同纪律）
+    const manager2 = new RunManager({
+      supervisor: supervisor2,
+      registry: new WorkspaceRegistry(join(root, 'registry.db')),
+      commandStore: commandStore2,
+      eventStore: eventStore2,
+      send: (frame) => {
+        if (online2) sent2.push(frame)
+      },
+      runtimeHomeFor: (runId) => join(root, 'runtime-home', runId),
+      homeDir: '/Users/testhome',
+      stateDir: root,
+      packsRoot: join(root, 'plugin-packs'),
+      deviceId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      dshDistributionVersion: '0.1.0-rc.7',
+    })
+    cleanups.push(async () => {
+      await supervisor2.stopAll()
+      supervisor2.close()
+      commandStore2.close()
+      eventStore2.close()
+    })
+
+    await supervisor2.recoverOrphans()
+    expect(await awaitDead(childPid, 5_000)).toBe(true)
+    expect(snapshotPayloads(sent2)).toHaveLength(0) // 离线期只缓冲
+
+    online2 = true
+    manager2.onReconnect()
+    const snapshots = snapshotPayloads(sent2)
+    expect(snapshots).toHaveLength(1)
+    // 判据：归因不是「进程丢了」而是「版本换了」——Hub 把该码原样落 runs.failure_code。
+    expect(snapshots[0]).toMatchObject({
+      runId: RUN_ID,
+      status: 'lost',
+      failureCode: 'RUNTIME_VERSION_CHANGED',
+    })
+    expect(String(snapshots[0]?.failureSummary)).toContain('version changed')
+    // 与 R9 同纪律：不自动复活、不重放。
+    const spawnCountBefore = pids.length
+    await manager2.handleFrame(runStartFrame(workspace.id))
+    expect(pids.length).toBe(spawnCountBefore)
+  })
+
   it('回归哨兵：supervisor close 后迟到的子进程 exit 不炸状态库、不再归因', async () => {
     // 复现评审抓到的偶发（确定性时序）：spawn 真进程 → close()（Runtime 仍活，
     // 即 R9 的「旧实例释放状态库」时刻）→ 杀掉子进程 → exit 回调迟到到达。
