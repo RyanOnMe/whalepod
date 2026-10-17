@@ -29,10 +29,10 @@
  * stdout 契约：首行就绪后输出一行 `E2E_NODE_READY <json>`（控制口/workspaceId/
  * deviceId）供 e2e-serve 解析；其余日志一律 stderr。
  */
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { createRequire } from 'node:module'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
@@ -68,22 +68,59 @@ const RUNTIME_BIN = createRequire(join(REPO_ROOT, 'apps/node/src/cli.ts')).resol
   '@whalepod/runtime/bin',
 )
 const REPLAY_PATCH = join(REPO_ROOT, 'packages/runtime-dsh/config/replay.yml')
-const FIXTURES: Record<string, string> = {
-  approval: join(
-    REPO_ROOT,
-    'packages/runtime-dsh/tests/dsh-contract/fixtures/tool-approval/session.jsonl',
-  ),
-  basic: join(REPO_ROOT, 'packages/runtime-dsh/tests/dsh-contract/fixtures/basic/session.jsonl'),
-  secrets: join(
-    REPO_ROOT,
-    'packages/runtime-dsh/tests/dsh-contract/fixtures/secrets/session.jsonl',
-  ),
+interface E2eFixture {
+  session: string
+  /** 覆盖旁车（#379 收尾交接调用的脚本化）：`apply` 读 DSH_SNAPSHOT_OVERRIDE。 */
+  override?: string
+}
+const FIXTURES: Record<string, E2eFixture> = {
+  approval: {
+    session: join(
+      REPO_ROOT,
+      'packages/runtime-dsh/tests/dsh-contract/fixtures/tool-approval/session.jsonl',
+    ),
+  },
+  basic: {
+    session: join(
+      REPO_ROOT,
+      'packages/runtime-dsh/tests/dsh-contract/fixtures/basic/session.jsonl',
+    ),
+  },
+  secrets: {
+    session: join(
+      REPO_ROOT,
+      'packages/runtime-dsh/tests/dsh-contract/fixtures/secrets/session.jsonl',
+    ),
+  },
   // G5-04 拒绝分支：同 tool-call 前置，收尾文本为被拒解释（replay 定序回放不随
   // 决定分支，语义诚实需要独立快照）。
-  rejection: join(
-    REPO_ROOT,
-    'packages/runtime-dsh/tests/dsh-contract/fixtures/tool-rejection/session.jsonl',
-  ),
+  rejection: {
+    session: join(
+      REPO_ROOT,
+      'packages/runtime-dsh/tests/dsh-contract/fixtures/tool-rejection/session.jsonl',
+    ),
+  },
+  // #381 两成员交接闭环：主回合（工具调用产出候选材料 + 放行后的收尾文本）+ 收尾
+  // 交接整理的模型调用（override 旁车在第三次调用上盖 JSON 叙述）。用 e2e 自己的
+  // 一份（scripts/fixtures/handoff-loop）：
+  // 契约 fixture 的叙述内嵌契约测试自己的 runId（交叉任务引用会被发布校验拒绝），
+  // e2e 需要一份可发布的叙述——两份遵循同一录制协议。
+  handoff: {
+    session: join(REPO_ROOT, 'scripts/fixtures/handoff-loop/session.jsonl'),
+    override: join(REPO_ROOT, 'scripts/fixtures/handoff-loop/replay.override.json'),
+  },
+}
+
+/** 切换快照：session + （有则设/无则清）override 旁车；fault 注入只走控制口。 */
+function setSnapshot(name: string): void {
+  const fixture = FIXTURES[name]
+  if (fixture === undefined) throw new Error(`unknown fixture ${name}`)
+  process.env['DSH_SNAPSHOT_FILE'] = fixture.session
+  if (fixture.override !== undefined) {
+    process.env['DSH_SNAPSHOT_OVERRIDE'] = fixture.override
+  } else {
+    delete process.env['DSH_SNAPSHOT_OVERRIDE']
+  }
 }
 
 const log = (msg: string, extra?: Record<string, unknown>): void => {
@@ -164,14 +201,25 @@ await secrets.set('replay', 'default', 'e2e-replay-dummy-key')
 
 // 进程环境：replay overlay 验收缝（默认 approval 快照；控制口可切换）。
 process.env['WHALEPOD_RUNTIME_EXTRA_PATCH_FILES'] = REPLAY_PATCH
-process.env['DSH_SNAPSHOT_FILE'] = FIXTURES['approval'] as string
+setSnapshot('approval')
 
 // ---- 观测记录（控制口查询用；不改变产品行为）----
 const runtimePids = new Map<string, number>() // runId → 最近一次 spawn 的 pid
 const spawnCounts = new Map<string, number>() // runId → spawn 次数（R7 判定：恒 1）
 const inputManifests = new Map<
   string,
-  { manifest: unknown; copiedFiles: string[]; manifestText: string }
+  {
+    manifest: unknown
+    copiedFiles: string[]
+    manifestText: string
+    copied: Array<{
+      artifactId: string
+      title: string
+      sha256: string
+      byteSize: number
+      fileSha256: string | null
+    }>
+  }
 >()
 let ackDropRemaining = 0
 const ackDropped: string[] = [] // 被吞掉的 ack 事实（取证）
@@ -211,7 +259,11 @@ const supervisor = new RuntimeSupervisor({
   capacity: 2,
   runtimeTimeoutMs: 6 * 60 * 60 * 1000,
   // 验收缝（P1-18 惯例）：replay overlay 变量显式透传，生产 cli 此处为空。
-  runtimeEnvPassthrough: ['DSH_SNAPSHOT_FILE', 'WHALEPOD_RUNTIME_EXTRA_PATCH_FILES'],
+  runtimeEnvPassthrough: [
+    'DSH_SNAPSHOT_FILE',
+    'DSH_SNAPSHOT_OVERRIDE',
+    'WHALEPOD_RUNTIME_EXTRA_PATCH_FILES',
+  ],
   onStdoutLine: (runId, line) => runManager.handleStdoutLine(runId, line),
 })
 
@@ -281,10 +333,30 @@ const runManager = new RunManager({
     const inputs = await artifactInputs.prepare(runId, taskId)
     // 观测缝：记录本 Run 的输入清单（G6-07 判定「Reviewer 经清单消费、不继承 Builder
     // Workspace」的证据源；不改产品路径——prepare 照常执行）。
+    // #381：逐件记「清单摘要 vs 副本实字节摘要」——交接材料固定摘要校验的取证源
+    //（观测缝，不改产品路径；prepare 的内部校验照常 fail-closed）。
+    const copied = inputs.entries.map((entry) => {
+      let fileSha256: string | null = null
+      try {
+        fileSha256 = createHash('sha256')
+          .update(readFileSync(join(inputs.dir, entry.artifactId)))
+          .digest('hex')
+      } catch {
+        fileSha256 = null
+      }
+      return {
+        artifactId: entry.artifactId,
+        title: entry.title,
+        sha256: entry.sha256,
+        byteSize: entry.byteSize,
+        fileSha256,
+      }
+    })
     inputManifests.set(runId, {
       manifest: inputs,
       copiedFiles: inputs.entries.map((entry) => entry.title),
       manifestText: JSON.stringify(inputs),
+      copied,
     })
     return inputs
   },
@@ -439,9 +511,8 @@ const server = createServer((req, res) => {
     switch (url.pathname) {
       case '/fixture': {
         const name = String(body['name'] ?? '')
-        const path = FIXTURES[name]
-        if (path === undefined) return reply(400, { error: `unknown fixture ${name}` })
-        process.env['DSH_SNAPSHOT_FILE'] = path
+        if (FIXTURES[name] === undefined) return reply(400, { error: `unknown fixture ${name}` })
+        setSnapshot(name)
         return reply(200, { ok: true, fixture: name })
       }
       case '/drop': {

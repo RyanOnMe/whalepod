@@ -1,0 +1,30 @@
+{
+  "patches": [
+    {
+      "at": 2,
+      "entry": {
+        "kind": "chunks",
+        "chunks": [
+          {
+            "type": "block-start",
+            "index": 0,
+            "blockType": "text"
+          },
+          {
+            "type": "text-delta",
+            "index": 0,
+            "text": "{\"completed\": [{\"text\": \"登录接口与用例已实现\", \"verified\": false, \"refs\": []}], \"interfaces\": [{\"text\": \"POST /auth/login 返回会话 cookie\", \"verified\": false, \"refs\": []}], \"unfinished\": [], \"decisions\": [{\"text\": \"沿用既有会话中间件，不引入新依赖\", \"verified\": false, \"refs\": []}], \"evidence\": [{\"text\": \"候选材料已产出（接口实现报告）\", \"verified\": false, \"refs\": [{\"kind\": \"url\", \"url\": \"https://e2e.local/report\"}]}], \"downstream\": [{\"text\": \"前端按接口约定接入登录页\", \"verified\": false, \"refs\": []}], \"commits\": [\"0f1e2d3\"], \"prs\": []}"
+          },
+          {
+            "type": "block-end",
+            "index": 0,
+            "block": {
+              "type": "text",
+              "text": "{\"completed\": [{\"text\": \"登录接口与用例已实现\", \"verified\": false, \"refs\": []}], \"interfaces\": [{\"text\": \"POST /auth/login 返回会话 cookie\", \"verified\": false, \"refs\": []}], \"unfinished\": [], \"decisions\": [{\"text\": \"沿用既有会话中间件，不引入新依赖\", \"verified\": false, \"refs\": []}], \"evidence\": [{\"text\": \"候选材料已产出（接口实现报告）\", \"verified\": false, \"refs\": [{\"kind\": \"url\", \"url\": \"https://e2e.local/report\"}]}], \"downstream\": [{\"text\": \"前端按接口约定接入登录页\", \"verified\": false, \"refs\": []}], \"commits\": [\"0f1e2d3\"], \"prs\": []}"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

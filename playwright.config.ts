@@ -48,6 +48,9 @@ export default defineConfig({
     // 起不来后原任务继续 / 重试与状态变化），事实落盘后由独立判定器重判。
     // 环境里同一时刻只有一台 Node（控制面只带一个 node 子进程），故成套冷启、按序换设备。
     { name: 'p1-345', testMatch: /create-to-recovery\.spec\.ts/ },
+    // #381：两成员交接闭环（后端交付 → 前端接收 → 执行 → 验收）。环境同时只支持一台
+    // Node，故按成员先后换设备（与 p1-345 同一限制、同一处理），成套冷启。
+    { name: 'p1-381', testMatch: /handoff-loop\.spec\.ts/ },
   ],
   use: {
     baseURL: 'http://localhost:5173',
