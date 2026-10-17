@@ -10,10 +10,9 @@
  * plugins/）；lock digest 在测试内按 digestLockfile 同算法现算自证。
  */
 import { randomBytes, randomUUID, createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Writable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
@@ -27,16 +26,15 @@ import type {
 } from '@whalepod/protocol'
 import { digestPluginCordisEntry } from '@whalepod/protocol/plugin-pack-digest'
 import { canonicalJson, digestPluginPack } from '@whalepod/protocol/plugin-pack-digest'
-import { buildApp } from '../src/app.js'
-import type { HubConfig } from '../src/config.js'
 import { hashToken } from '../src/modules/auth/token.js'
 import {
   apiInject,
+  createTestApp,
   createTestDatabase,
   driveInviteAndAccept,
   driveSetup,
   resetDatabase,
-  type AuditEvent,
+  type InjectResponse,
   type Session,
   type TestApp,
 } from './helpers.js'
@@ -58,65 +56,20 @@ function lockDigest(name: string, version: string): string {
     .digest('hex')
 }
 
-class AuditCollector extends Writable {
-  readonly events: AuditEvent[] = []
-
-  _write(
-    chunk: Buffer | string,
-    _encoding: string,
-    callback: (error?: Error | null) => void,
-  ): void {
-    for (const line of chunk.toString().split('\n')) {
-      const trimmed = line.trim()
-      if (trimmed === '') continue
-      try {
-        const entry = JSON.parse(trimmed) as { component?: string } & AuditEvent
-        if (entry.component === 'hub.audit') this.events.push(entry)
-      } catch {
-        // 非 JSON 行（启动横幅等）忽略
-      }
-    }
-    callback()
-  }
-}
-
+/**
+ * #183：fixture catalog 目录这层差异已提到共享脚手架的 `TestAppOptions`
+ * （`pluginCatalogDir`/`pluginDevMode`），本地那份「与 helpers 同构」的复制品
+ * （含 AuditCollector 与手写 config）就此删除——复制品会随共享脚手架漂移
+ * （它已经缺 `artifactStoreDir`/`warnEvents`，被棘轮抓到）。
+ */
 async function createPluginTestApp(
   database: Database,
   options: { readonly catalogDir: string; readonly pluginDevMode?: boolean },
 ): Promise<TestApp> {
-  const origin = 'http://localhost:4242'
-  const dir = await mkdtemp(join(tmpdir(), 'wp-hub-plugin-test-'))
-  const setupTokenPath = join(dir, 'setup-token')
-  const setupToken = randomBytes(32).toString('base64url')
-  await writeFile(setupTokenPath, setupToken, { mode: 0o600 })
-  const auditStream = new AuditCollector()
-  const config: HubConfig = {
-    publicOrigin: origin,
-    databaseUrl: '',
-    setupTokenPath,
-    host: '127.0.0.1',
-    port: 0,
+  return createTestApp(database, {
     pluginCatalogDir: options.catalogDir,
     ...(options.pluginDevMode ? { pluginDevMode: true } : {}),
-  }
-  const app: FastifyInstance = await buildApp({
-    config,
-    database,
-    logger: { level: 'info', stream: auditStream },
   })
-  return {
-    app,
-    database,
-    origin,
-    setupToken,
-    setupTokenPath,
-    auditEvents: auditStream.events,
-    config,
-    close: async () => {
-      await app.close()
-      await rm(dir, { recursive: true, force: true })
-    },
-  }
 }
 
 describe('plugin pack API (P1-17)', () => {
@@ -214,7 +167,7 @@ describe('plugin pack API (P1-17)', () => {
     app: FastifyInstance,
     token: string,
     packDigest: string,
-  ): ReturnType<FastifyInstance['inject']> {
+  ): Promise<InjectResponse> {
     // 不带 Origin、不带 Cookie：/node/** 只认 Device Token（03 §4 末段）。
     return app.inject({
       method: 'GET',

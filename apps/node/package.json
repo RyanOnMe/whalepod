@@ -21,7 +21,7 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b && tsc -p tsconfig.test.json"
   },
   "dependencies": {
     "@whalepod/domain": "workspace:*",
@@ -35,6 +35,8 @@
     "@types/node": "24.13.3",
     "@types/ws": "catalog:",
     "@whalepod/db": "workspace:*",
+    "@whalepod/hub": "workspace:*",
+    "@whalepod/testkit": "workspace:*",
     "drizzle-orm": "catalog:"
   }
 }

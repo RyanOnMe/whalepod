@@ -190,6 +190,7 @@ describe('G7-02: 真人路径强杀探针（真实 node 子进程 + 真实信号
     cleanupFns.push(harness.cleanup)
     await harness.manager.handleFrame(runStartFrame(harness.workspaceId))
     const pid = pids[0]
+    if (pid === undefined) throw new Error('driver 未记录 pid')
     expect(pid).toBeGreaterThan(0)
     expect(await alive(pid)).toBe(true)
 
@@ -225,6 +226,7 @@ describe('G7-02: 真人路径强杀探针（真实 node 子进程 + 真实信号
     cleanupFns.push(harness.cleanup)
     await harness.manager.handleFrame(runStartFrame(harness.workspaceId))
     const pid = pids[0]
+    if (pid === undefined) throw new Error('driver 未记录 pid')
     expect(pid).toBeGreaterThan(0)
     await harness.manager.handleFrame(cancelFrame())
 

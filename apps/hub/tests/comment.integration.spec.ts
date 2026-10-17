@@ -7,10 +7,11 @@ import {
   driveSetup,
   idemKey,
   resetDatabase,
+  type Session,
   type TestApp,
 } from './helpers.js'
 
-async function createProjectAndTask(ctx: TestApp, alice: { cookie: string }) {
+async function createProjectAndTask(ctx: TestApp, alice: Session) {
   const project = await apiInject(ctx, alice, {
     method: 'POST',
     url: '/api/v1/projects',

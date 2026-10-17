@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { buildRuntimeEnvironment, RuntimeEnvError } from '../src/supervisor/environment.js'
+import type { RuntimeStartSpec } from '../src/runtime-driver.js'
 import { SecretStore } from '../src/secret/store.js'
 
 let cleanups: Array<() => Promise<void>> = []
@@ -45,8 +46,23 @@ async function fixture(
   }
 }
 
-const spec = (provider: string) => ({
-  agent: { provider, credentialSlot: 'default', model: 'deepseek-chat' },
+// 被考的是 provider→env 名真值表，但入参仍是完整的 RuntimeStartSpec——补齐必填字段
+// （此前只写 agent 的三个字段，是「测试代码不进 typecheck」时代的残留）。
+const spec = (provider: string): RuntimeStartSpec => ({
+  runId: 'r-env',
+  nonce: 'nonce-r-env',
+  workspaceId: 'ws',
+  prompt: 'p',
+  agent: {
+    id: '00000000-0000-4000-8000-000000000001',
+    profileRevisionId: '00000000-0000-4000-8000-000000000002',
+    persona: 'p',
+    provider,
+    credentialSlot: 'default',
+    model: 'deepseek-chat',
+  },
+  expectedProfileDigest: 'a'.repeat(64),
+  expectedPluginPackDigest: 'b'.repeat(64),
 })
 
 describe('runtime 环境注入：provider→credential-ref 真值表（#117）', () => {

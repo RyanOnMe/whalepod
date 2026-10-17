@@ -19,7 +19,7 @@
 
 | 门（命令，见 04 §1） | G0（硬） | G1（按面） | G2（发布/风险触发） |
 |---|---|---|---|
-| Q0 静态门 `pnpm check` | 生产面 typecheck、`check:boundaries`、`check:protocol-generated`、`check:plugin-fixture`（协议/依赖不变量，便宜且快，每 PR 跑） | `format:check`、`lint`、新增/改动 tests 的 typecheck（存量 61 个错误按 #183 基线：分类、先修关键链路、禁新增） | — |
+| Q0 静态门 `pnpm check` | 生产面 typecheck、`check:boundaries`、`check:protocol-generated`、`check:plugin-fixture`（协议/依赖不变量，便宜且快，每 PR 跑） | `format:check`、`lint`、新增/改动 tests 的 typecheck（#183 已于 2026-10-17 全量收口：所有带 tests/ 的包/应用都接线，未接线表与基线表已清空） | — |
 | Q1 单元门 `pnpm test:unit`（领域 ≥95%） | release 时全绿计入发布门；其中 Run 终态/Approval/Artifact 状态机与权限矩阵子集视为 G0 不变量 | 领域/协议改动 PR 必跑 | — |
 | Q2 数据门 `pnpm test:integration` | release 时全绿计入发布门 | DB/Hub 改动 PR 跑受影响文件 | — |
 | Q3 DSH 契约门 `pnpm test:dsh-contract` | release 必跑；凡动 `packages/runtime-dsh`、`apps/runtime`、`dsh.lock.json`、catalog 的 PR 必跑（协议兼容性） | — | 不碰 Runtime 的 PR 可不跑 |

@@ -81,7 +81,7 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
 
     // ---- 第一段「进程生命周期」：正常启动 Run（真实子进程）后 Node「崩溃」。----
     const { driver, pids } = makeRealProcessDriver()
-    const registry1 = new WorkspaceRegistry(join(root, 'registry.db'), 'test-hmac-key')
+    const registry1 = new WorkspaceRegistry(join(root, 'registry.db'))
     const workspace = await registry1.register(workspaceDir, { name: 'ws-1' })
     const commandStore1 = new CommandStore(join(root, 'commands.db'))
     const eventStore1 = new EventStore(join(root, 'events.db'))
@@ -111,6 +111,7 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
     })
     await manager1.handleFrame(runStartFrame(workspace.id))
     const childPid = pids[0]
+    if (childPid === undefined) throw new Error('driver 未记录 pid')
     expect(childPid).toBeGreaterThan(0)
     // Runtime 活跃（用 liveness 探针确认，不自证）。
     const { alive } = await import('./harness.js')
@@ -124,7 +125,7 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
     // ---- 第二段：Node 重启，重开同一批状态文件，恢复流程接管。----
     const { driver: driver2, pids: pids2 } = makeRealProcessDriver()
     expect(pids2).toHaveLength(0)
-    const registry2 = new WorkspaceRegistry(join(root, 'registry.db'), 'test-hmac-key')
+    const registry2 = new WorkspaceRegistry(join(root, 'registry.db'))
     const commandStore2 = new CommandStore(join(root, 'commands.db'))
     const eventStore2 = new EventStore(join(root, 'events.db'))
     const sent2: string[] = []
@@ -322,7 +323,7 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
     mkdirSync(workspaceDir, { recursive: true })
 
     const { driver, pids } = makeRealProcessDriver()
-    const registry = new WorkspaceRegistry(join(root, 'registry.db'), 'test-hmac-key')
+    const registry = new WorkspaceRegistry(join(root, 'registry.db'))
     const workspace = await registry.register(workspaceDir, { name: 'ws-regression' })
     const supervisor = new RuntimeSupervisor({
       driver,

@@ -106,6 +106,8 @@ describe('POST /runs/:runId/followup 路由契约（P1-186）', () => {
       profileDigest: 'b'.repeat(64),
       pluginPackDigest: 'a'.repeat(64),
       dshDistributionVersion: '0.1.0-rc.6',
+      // #119：出生的墙钟必须由调用方给（NewRun.createdAt 必填，不吃 DB 默认值）。
+      createdAt: new Date(),
     })
     await setRunStatus(database.db, run.id, 'running')
     runId = run.id

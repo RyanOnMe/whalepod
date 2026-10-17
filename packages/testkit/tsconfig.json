@@ -3,13 +3,22 @@
   "compilerOptions": {
     "composite": true,
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    "types": ["node"]
   },
   "include": ["src/**/*.ts"],
   "references": [
-    { "path": "../db" },
-    { "path": "../domain" },
-    { "path": "../protocol" },
-    { "path": "../runtime-dsh" }
+    {
+      "path": "../db"
+    },
+    {
+      "path": "../domain"
+    },
+    {
+      "path": "../protocol"
+    },
+    {
+      "path": "../runtime-dsh"
+    }
   ]
 }

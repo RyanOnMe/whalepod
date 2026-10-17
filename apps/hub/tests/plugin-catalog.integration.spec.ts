@@ -5,27 +5,19 @@
  * local-development + 一份 unreviewed 的小 manifest 与空闭包 lock），不依赖仓库根
  * plugins/（另一代理并行写入中）。驱动走真人同一条 HTTP 路径（Fastify inject）。
  */
-import { randomBytes } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { Writable } from 'node:stream'
+import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { FastifyInstance } from 'fastify'
-import { createHash } from 'node:crypto'
 import type { Database } from '@whalepod/db'
 import { canonicalJson } from '@whalepod/protocol/plugin-pack-digest'
 import type { PluginCatalogEntryView } from '@whalepod/protocol'
-import { buildApp } from '../src/app.js'
-import type { HubConfig } from '../src/config.js'
 import {
   apiInject,
+  createTestApp,
   createTestDatabase,
   driveInviteAndAccept,
   driveSetup,
   resetDatabase,
-  type AuditEvent,
   type Session,
   type TestApp,
 } from './helpers.js'
@@ -40,70 +32,20 @@ function lockDigest(name: string, version: string): string {
     .digest('hex')
 }
 
-/** 捕获 hub 审计事件（component=hub.audit 的结构化日志行），与 helpers 同源约定。 */
-class AuditCollector extends Writable {
-  readonly events: AuditEvent[] = []
-
-  _write(
-    chunk: Buffer | string,
-    _encoding: string,
-    callback: (error?: Error | null) => void,
-  ): void {
-    for (const line of chunk.toString().split('\n')) {
-      const trimmed = line.trim()
-      if (trimmed === '') continue
-      try {
-        const entry = JSON.parse(trimmed) as { component?: string } & AuditEvent
-        if (entry.component === 'hub.audit') this.events.push(entry)
-      } catch {
-        // 非 JSON 行（启动横幅等）忽略
-      }
-    }
-    callback()
-  }
-}
-
 /**
- * 与 helpers.createTestApp 同构，但注入 fixture catalog 目录——不改共享 helpers.ts
- * （并行代理也在动它）；本目录的两个 spec 各持同一份本地构造器。
+ * #183：plugin-catalog / plugin-pack 两个 spec 需要 fixture catalog 目录——这层差异已
+ * 提到共享脚手架的 `TestAppOptions`（`pluginCatalogDir`/`pluginDevMode`），本地那份
+ * 「与 helpers 同构」的复制品（含 AuditCollector 与手写 config）就此删除：
+ * 复制品会随共享脚手架漂移（它已经缺 `artifactStoreDir`/`warnEvents`，被棘轮抓到）。
  */
 async function createPluginTestApp(
   database: Database,
   options: { readonly catalogDir: string; readonly pluginDevMode?: boolean },
 ): Promise<TestApp> {
-  const origin = 'http://localhost:4242'
-  const dir = await mkdtemp(join(tmpdir(), 'wp-hub-plugin-test-'))
-  const setupTokenPath = join(dir, 'setup-token')
-  const setupToken = randomBytes(32).toString('base64url')
-  await writeFile(setupTokenPath, setupToken, { mode: 0o600 })
-  const auditStream = new AuditCollector()
-  const config: HubConfig = {
-    publicOrigin: origin,
-    databaseUrl: '',
-    setupTokenPath,
-    host: '127.0.0.1',
-    port: 0,
+  return createTestApp(database, {
     pluginCatalogDir: options.catalogDir,
     ...(options.pluginDevMode ? { pluginDevMode: true } : {}),
-  }
-  const app: FastifyInstance = await buildApp({
-    config,
-    database,
-    logger: { level: 'info', stream: auditStream },
   })
-  return {
-    app,
-    database,
-    origin,
-    setupToken,
-    setupTokenPath,
-    auditEvents: auditStream.events,
-    config,
-    close: async () => {
-      await app.close()
-      await rm(dir, { recursive: true, force: true })
-    },
-  }
 }
 
 describe('plugin catalog API (P1-17)', () => {

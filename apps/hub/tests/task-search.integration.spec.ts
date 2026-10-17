@@ -84,7 +84,10 @@ describe('task search (GET /tasks/search, #254)', () => {
       url: `/api/v1/tasks/search?q=${encodeURIComponent(q)}`,
     })
     const json = res.json() as { data?: SearchItem[] }
-    return { status: res.statusCode, data: res.statusCode === 200 ? json.data : undefined }
+    return {
+      status: res.statusCode,
+      ...(res.statusCode === 200 && json.data !== undefined ? { data: json.data } : {}),
+    }
   }
 
   it('大小写不敏感匹配标题；不匹配不回；形状带 projectName', async () => {

@@ -18,7 +18,8 @@
  * under `apps/*\/src` and `packages/*\/src`, prints every violation as
  * `importer:line -> specifier`, and exits non-zero when any violation is found.
  */
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type * as TS from 'typescript'
@@ -34,14 +35,39 @@ const DSH_ERROR = 'DSH imports are restricted to packages/runtime-dsh and apps/r
 
 const WORKSPACE_SCOPE = '@whalepod/'
 
+/** 判据要覆盖的测试源文件扩展名（tsc 默认只吃 TS 家族）。 */
+const TEST_SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts'])
+
+/**
+ * 「真的拿这份配置跑 tsc」的脚本形态：tsc 与项目参数之间不许出现 `&&`/`||`/`;`，
+ * 否则是两条命令拼接（`echo tsconfig.test.json` 这类错配会被子串匹配放过去——
+ * 评审 A 与 B 各自实测：脚本只打印字符串、包里什么都没检查，两层判据全绿）。
+ * 尾界用**白名单**——不是 `\b`（它会放行 `tsconfig.test.json.orig`），也不是
+ * `(?![\w.-])` 这类黑名单（它又会放行 `tsconfig.test.json~`，Vim 的备份名）。判据只问
+ * 「配置名后面是不是一个**终止 token 的 shell 字符**」：不是就按「脚本点的是另一个文件」处理
+ * （第二层永远只跑 canonical 文件）。
+ * 集合 = 空白 + `"` `'` + `; & | < > ( ) #` + 反斜杠（串联、重定向、子壳、注释、续行都能终止
+ * token）。
+ * 串联之后退出码怎么传属「吞退出码」那条已声明盲区（见文档），文本层不判。
+ * 方向说明：集合漏了某种紧凑写法 ⟹ **假红**（fail-closed），且违规消息会打印原脚本，可自诊断。
+ */
+const TSC_PROJECT_INVOCATION =
+  /\btsc\b[^&|;]*?(?:-p|--project)[=\s]+["']?(?:\.\/)?tsconfig\.test\.json["']?(?=$|[\s"';|&<>()#\\])/
+
+/** 脚本里显式要求「不检查」的旗标：配置面的 `noCheck` 有探测，CLI 面同样不许出现。 */
+const TSC_NO_CHECK_FLAG = /--noCheck\b/
+
 /**
  * importer path prefix -> allowed `@whalepod/*` specifiers.
  *
- * `subpaths`（可选）是该 importer 的「同构子路径白名单」：一旦声明，来自该
- * importer 的子路径 specifier 一律默认违规，只有白名单里显式列出的完整子路径
- * （按包名归组）才放行——防止 node-only 子路径导出（如 `plugin-pack-digest`
- * 引 node:crypto）被包级归一规则带进 web bundle。未声明 `subpaths` 的
- * 服务端 importer（hub/node 等）保留归一放行行为。
+ * `subpaths`（可选）是「该 importer 允许的完整 specifier 名单」（按包名归组）：
+ * 一旦某包在名单里出现，来自该 importer 对它的**每一个**说明符都要逐一列出——
+ * **含裸入口**（#183 评审 A：旧实现只在有子路径时查名单，于是「白名单里写
+ * `@whalepod/hub/testing`」并不能挡住 `@whalepod/hub`）。用途两个：
+ * ① 防 node-only 子路径导出（如 `plugin-pack-digest` 引 node:crypto）被带进 web
+ * bundle；② 防测试从 hub 主入口拿东西（主入口无 `development` 条件 → vitest 下解析
+ * 到 dist，与测试驱动用的 src 深模块形成两套实例）。未声明 `subpaths` 的 importer
+ * （hub/node 的 src 等）保留包级归一放行行为。
  */
 const DEPENDENCY_RULES: ReadonlyArray<{
   importer: string
@@ -66,13 +92,40 @@ const DEPENDENCY_RULES: ReadonlyArray<{
     // 时在 subpaths 里显式添加完整 specifier。
     importer: 'apps/web/',
     allowed: ['@whalepod/protocol'],
-    subpaths: { '@whalepod/protocol': [] },
+    // 白名单列的是**允许的完整说明符**（含裸入口）：web 只许同构的裸 protocol，
+    // node-only 子路径一律拒。
+    subpaths: { '@whalepod/protocol': ['@whalepod/protocol'] },
   },
   {
     // 验收链路测试（P1-13 run-projection-chain）：跨 app 验收需要直接读 DB 判定
     // 落库结果——与 apps/hub/tests/ 同型例外；src 侧仍禁 db（部署边界不变）。
+    // #183：node 的 integration spec 还要「起真 Hub 应用跑 HTTP inject」与共享 DB
+    // 脚手架——按**包名**引入（`@whalepod/hub/testing` + `@whalepod/testkit`），
+    // 不再 relative-import hub 的 tests/ 内部文件（那会把 hub 源码拖进 node 的
+    // typecheck program 并让 hub 侧错误污染 node 的 Q0；见 #183）。
     importer: 'apps/node/tests/',
-    allowed: ['@whalepod/domain', '@whalepod/protocol', '@whalepod/db'],
+    allowed: [
+      '@whalepod/domain',
+      '@whalepod/protocol',
+      '@whalepod/db',
+      '@whalepod/testkit',
+      '@whalepod/hub',
+    ],
+    // 子路径收窄（#183 评审 A）：hub 的**主入口**在 vitest 下解析到 dist（它没有
+    // development 条件），而此处的测试还要 relative-import hub 的深模块 src
+    // （cli-hello-refresh 的 `vi.spyOn(nodeConnections, 'attach')` 观测的就是那个实例）
+    // ——一旦有人从主入口拿东西，同进程就会出现两套 hub 模块实例。只放行已声明用途的
+    // 两个子路径；确需新增时在这里显式加一行。
+    // （另注：跨 app 的**相对** import 不经过本表——validateImport 只管 @whalepod/ 前缀；
+    // 那类耦合由 #99 的 harness 规则与人工评审管。）
+    subpaths: {
+      '@whalepod/protocol': ['@whalepod/protocol', '@whalepod/protocol/plugin-pack-digest'],
+      // 裸 `@whalepod/hub` **不在**名单里：主入口没有 development 条件（vitest 下解析到
+      // dist），从它拿东西会让同进程出现两套 hub 模块实例——只许 testing 子路径。
+      '@whalepod/hub': ['@whalepod/hub/testing'],
+      // testkit 只用裸入口（db-support 由根导出）；子路径不放开，防日后从内部文件拿东西。
+      '@whalepod/testkit': ['@whalepod/testkit'],
+    },
   },
   { importer: 'apps/node/', allowed: ['@whalepod/domain', '@whalepod/protocol'] },
   { importer: 'apps/runtime/', allowed: ['@whalepod/protocol', '@whalepod/runtime-dsh'] },
@@ -103,7 +156,6 @@ export function validateImport(importer: string, specifier: string): void {
   // 只有白名单显式列出的子路径放行，防止 node-only 导出进 web bundle。
   const segments = specifier.split('/')
   const packageSpecifier = `${segments[0]}/${segments[1]}`
-  const hasSubpath = segments.length > 2
 
   const rule = DEPENDENCY_RULES.find(({ importer: prefix }) => importer.startsWith(prefix))
   if (!rule) return // importers outside apps//packages (e.g. scripts/) are not governed here
@@ -115,15 +167,16 @@ export function validateImport(importer: string, specifier: string): void {
     )
   }
 
-  if (hasSubpath && rule.subpaths !== undefined) {
-    const whitelisted = rule.subpaths[packageSpecifier] ?? []
-    if (!whitelisted.includes(specifier)) {
-      const listed = whitelisted.length > 0 ? whitelisted.join(', ') : 'none'
-      throw new Error(
-        `Subpath import "${specifier}" is not allowed from ${rule.importer} ` +
-          `(isomorphic subpaths of ${packageSpecifier}: ${listed})`,
-      )
-    }
+  // 白名单语义（#183 评审 A）：一旦某包进了 `subpaths`，允许的**每一个**说明符都要逐一
+  // 列出——含裸入口。旧实现只在 `hasSubpath` 时查白名单，于是「白名单里写
+  // @whalepod/hub/testing」并不能挡住 `@whalepod/hub`（裸 specifier 直接跳过检查）。
+  const whitelist = rule.subpaths?.[packageSpecifier]
+  if (whitelist !== undefined && !whitelist.includes(specifier)) {
+    const listed = whitelist.length > 0 ? whitelist.join(', ') : 'none'
+    throw new Error(
+      `Import "${specifier}" is not allowed from ${rule.importer} ` +
+        `(declared specifiers for ${packageSpecifier} — bare entry included: ${listed})`,
+    )
   }
 }
 
@@ -188,6 +241,13 @@ function* walkSourceFiles(dir: string): Generator<string> {
  * 于是「新包漏配 typecheck」= 该包整体静默脱离类型门，没有任何门会红。这条把它变成硬失败：
  * 凡是有 `tests/` 的 workspace 包，`scripts.typecheck` 必须存在且引用 `tsconfig.test.json`。
  *
+ * 判据分两层，第二层才是难绕过的那层：脚本文本必须引用 tsconfig.test.json（第一层，纯文本、
+ * 好绕过），且 `tsc -p tsconfig.test.json --listFilesOnly` 的**实际文件清单**要含 tests/ 下的
+ * **每一个** TS 文件（第二层，ground truth）。第二层是评审 B 第二轮逼出来的：只要求「清单里
+ * 有任一 /tests/ 路径」时，include 写成 `tests/*.spec.ts` 这种**单层 glob**（只覆盖 tests/
+ * 顶层）就会让 apps/node 的 tests 深层目录里共 9 个 spec 静默脱离 Q0 而门全绿。
+ * tsc 列不出清单（非零退出）按**失败**处理——配置坏了就不许判「已接线」。
+ *
  * 表 `TYPECHECK_WIRING_DEFERRED` 是**尚未接线**的包（每项必须带 Issue 与实测存量错误数），
  * 只允许**缩小**：收口一片就删一行。新增未接线的包进不来——这就是这条护栏的意义；
  * 「表内条目其实已经接线了却忘了删行」由 `check-boundaries.spec.ts` 的机器判据兜住。
@@ -195,11 +255,156 @@ function* walkSourceFiles(dir: string): Generator<string> {
 export const TYPECHECK_WIRING_DEFERRED = new Map<string, string>([
   // 存量错误数的**真值**在 scripts/lib/typecheck-test-baseline.ts（机检、只许向下）；
   // 本表的职责只是「声明该包尚未接线」。两处键必须一一对应（有测试盯着）。
-  ['apps/hub', '#183：25 个存量错误（A0-7 已修安全/审批链路的 14 处）'],
-  ['apps/node', '#183：31 个存量错误（另需先拆对 hub/tests/helpers.js 的跨包 import）'],
 ])
 
-export function checkTypecheckWiring(repoRoot: string): string[] {
+export interface TypecheckWiringOptions {
+  /**
+   * 抽查 program 文件清单用的 tsc（默认 `repoRoot/node_modules/.bin/tsc`）。判据的
+   * ground truth 是 `tsc -p tsconfig.test.json --listFilesOnly` 的**实际文件清单**：
+   * 上一版只看 include 文本，被两条同族旁路绕过——删掉 include 键（extends 继承的
+   * include 生效，「不写 include 就默认全覆盖」在本仓库不成立）与 `exclude: ["tests/**"]`。
+   * 实测成本：9 个包合计约 3s（各 0.2–0.5s）。
+   */
+  readonly tscBin?: string
+}
+
+/** tests/ 的目录嵌套上限——触顶即判违规（截断不许静默）。 */
+const MAX_TEST_DIR_DEPTH = 8
+
+interface TestSourceWalk {
+  /** 该包 tests/ 下的全部 TS 源文件。 */
+  readonly files: string[]
+  /** 目录嵌套超过上限：枚举被截断，「每个文件都在 program 里」无从判定。 */
+  readonly truncated: boolean
+}
+
+/**
+ * 该包 tests/ 下的全部 TS 源文件（判据要求它们**每一个**都进 program）。
+ *
+ * 目录 symlink 也跟进去：`tests/cases -> <外部目录>` 时 vitest 会跑里面的 spec，
+ * 判据若不跟就会对「跑得到、但不在 Q0」的文件沉默（评审 A 的实测）。目录按 realpath
+ * 去重——符号环（`tests/self -> tests`）自然终止，同一物理文件也不会被列成 9 条别名
+ * （评审 A/B 各自实测）。文件同样按 realpath 去重。
+ */
+function testSourceFiles(testsDir: string): TestSourceWalk {
+  const files: string[] = []
+  const seenDirs = new Set<string>()
+  let truncated = false
+  const walk = (dir: string, depth: number): void => {
+    if (truncated) return
+    if (depth > MAX_TEST_DIR_DEPTH) {
+      truncated = true
+      return
+    }
+    const realDir = safeRealpath(resolve(dir))
+    if (seenDirs.has(realDir)) return
+    seenDirs.add(realDir)
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      const isDir =
+        entry.isDirectory() ||
+        (entry.isSymbolicLink() &&
+          statSync(path, { throwIfNoEntry: false })?.isDirectory() === true)
+      if (isDir) walk(path, depth + 1)
+      else if (TEST_SOURCE_EXTENSIONS.has(extname(entry.name))) files.push(path)
+    }
+  }
+  walk(testsDir, 0)
+  const unique = new Map<string, string>()
+  for (const file of files) {
+    const real = safeRealpath(resolve(file))
+    if (!unique.has(real)) unique.set(real, file)
+  }
+  return { files: [...unique.values()], truncated }
+}
+
+/**
+ * 不在 typecheck program 里的测试文件（相对包根；空数组 = 全覆盖）+ 枚举是否被截断。
+ *
+ * 判据要的是「**每一个** tests/ 文件都进 program」，不是「至少有一个」——后者会被
+ * 「单层 glob 手滑」放过去（评审 B 的实测：`include: [..., "tests/*.spec.ts"]` 让
+ * apps/node 的 `tests/integration/**` 与 `tests/resilience/**` 共 9 个 spec 静默脱离 Q0，
+ * 门全绿）。清单已经在手里，逐个对比的代价为 0。
+ * tsc 起不来（缺依赖、配置语法错）返回 null，调用方按 fail-closed 处理。
+ */
+function uncoveredTestFiles(
+  packageDir: string,
+  tscBin: string,
+): { missing: string[]; truncated: boolean } | null {
+  let output: string
+  try {
+    output = execFileSync(tscBin, ['-p', 'tsconfig.test.json', '--listFilesOnly'], {
+      cwd: packageDir,
+      encoding: 'utf8',
+      // 清单最大实测 122KB（apps/node），默认 1MiB 的余量只有约 8 倍；超限会抛 ENOBUFS
+      // 并被当成「配置坏了」（评审 B 实测）。
+      maxBuffer: 16 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+  } catch {
+    return null
+  }
+  // 两侧都过 realpath：macOS 的 os.tmpdir() 是 /var/folders/…，而 tsc 打的是
+  // /private/var/folders/…（同一目录的两种写法）——不归一就会把「在 program 里」
+  // 误判成缺失（fixture 实测踩到）。
+  const realPackageDir = realpathSync(packageDir)
+  const inProgram = new Set(
+    output
+      .split('\n')
+      .map((line) => line.trim())
+      // 只丢空行：**不能**按「含空格就丢」过滤——仓库/包路径带空格（如 clone 到含空格的
+      // 目录）会整行被丢掉，正确接线反被报缺失（评审 B 的假红实测）。
+      .filter((line) => line !== '')
+      .map((line) => safeRealpath(resolve(line))),
+  )
+  const walk = testSourceFiles(join(realPackageDir, 'tests'))
+  return {
+    missing: walk.files
+      .filter((file) => !inProgram.has(safeRealpath(resolve(file))))
+      .map((file) => relative(realPackageDir, file)),
+    truncated: walk.truncated,
+  }
+}
+
+/** realpath，失败时退回原路径（tsc 清单里可能有已消失的路径）。 */
+function safeRealpath(path: string): string {
+  try {
+    return realpathSync(path)
+  } catch {
+    return path
+  }
+}
+
+/**
+ * 生效配置里 `noCheck: true` 会让 program 里的文件**一个类型都不检查**——而判据看的
+ * 「文件在不在清单里」照样命中（评审 A 实测：加上它以后 `tsc -p tsconfig.test.json`
+ * 对 `const bad: number = 'x'` 也 exit 0）。问 `--showConfig`（extends 链解析后的**生效**
+ * 配置，文本读不出来）；读不到返回 null，调用方按 fail-closed 处理。
+ */
+function effectiveConfigDisablesCheck(packageDir: string, tscBin: string): boolean | null {
+  let output: string
+  try {
+    output = execFileSync(tscBin, ['-p', 'tsconfig.test.json', '--showConfig'], {
+      cwd: packageDir,
+      encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+  } catch {
+    return null
+  }
+  try {
+    const parsed = JSON.parse(output) as { compilerOptions?: { noCheck?: unknown } }
+    return parsed.compilerOptions?.noCheck === true
+  } catch {
+    return null
+  }
+}
+
+export function checkTypecheckWiring(
+  repoRoot: string,
+  options: TypecheckWiringOptions = {},
+): string[] {
   const violations: string[] = []
   for (const scope of ['apps', 'packages']) {
     const scopeDir = join(repoRoot, scope)
@@ -207,7 +412,9 @@ export function checkTypecheckWiring(repoRoot: string): string[] {
     for (const entry of readdirSync(scopeDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue
       const dir = join(scopeDir, entry.name)
-      if (!existsSync(join(dir, 'tests'))) continue
+      // 必须是**目录**：名为 tests 的文件会让 readdirSync 抛 ENOTDIR 炸栈（评审 A 的
+      // 健壮性项）；没有 tests/ 目录的包不在本护栏范围内。
+      if (statSync(join(dir, 'tests'), { throwIfNoEntry: false })?.isDirectory() !== true) continue
       const manifestPath = join(dir, 'package.json')
       if (!existsSync(manifestPath)) continue
       const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
@@ -226,8 +433,57 @@ export function checkTypecheckWiring(repoRoot: string): string[] {
         )
         continue
       }
-      if (!existsSync(join(dir, 'tsconfig.test.json'))) {
+      if (!TSC_PROJECT_INVOCATION.test(typecheck)) {
+        violations.push(
+          `${where}: typecheck 里没有「tsc -p tsconfig.test.json」形态的调用` +
+            `（只出现配置名不算数）；脚本：${typecheck}`,
+        )
+        continue
+      }
+      if (TSC_NO_CHECK_FLAG.test(typecheck)) {
+        violations.push(
+          `${where}: typecheck 带 --noCheck——编译器被显式要求不检查（配置面探测看不到 CLI 旗标）`,
+        )
+        continue
+      }
+      const testConfigPath = join(dir, 'tsconfig.test.json')
+      if (!existsSync(testConfigPath)) {
         violations.push(`${where}: typecheck references tsconfig.test.json but the file is missing`)
+        continue
+      }
+      const tscBin = options.tscBin ?? join(repoRoot, 'node_modules', '.bin', 'tsc')
+      const uncovered = uncoveredTestFiles(dir, tscBin)
+      if (uncovered === null) {
+        violations.push(
+          `${where}: 无法列出 typecheck program（tsc -p tsconfig.test.json 退出非零；` +
+            `配置语法或依赖坏了）——测试是否进 Q0 无从判定`,
+        )
+      } else if (uncovered.truncated) {
+        violations.push(
+          `${where}: tests/ 目录嵌套超过 ${MAX_TEST_DIR_DEPTH} 层——枚举被截断，` +
+            `「每个测试文件都在 program 里」无从判定（评审 A/B 的 P3）`,
+        )
+      } else if (uncovered.missing.length > 0) {
+        const shown = uncovered.missing.slice(0, 5).join('、')
+        violations.push(
+          `${where}: ${uncovered.missing.length} 个 tests/ 下的文件不在 typecheck program 里（静默脱离 Q0）：` +
+            `${shown}${uncovered.missing.length > 5 ? '、…' : ''}`,
+        )
+      }
+      // 配置已经坏到列不出 program 时不再探 noCheck：一条根因只报一条（否则同一处
+      // 配置错误会变成两条违规，读的人还要自己判断是不是一回事）。
+      if (uncovered === null) continue
+      const checkDisabled = effectiveConfigDisablesCheck(dir, tscBin)
+      if (checkDisabled === null) {
+        violations.push(
+          `${where}: 读不到 tsconfig.test.json 的生效配置（tsc --showConfig 退出非零或输出非 JSON）` +
+            `——测试是否真的被检查无从判定`,
+        )
+      } else if (checkDisabled) {
+        violations.push(
+          `${where}: tsconfig.test.json 的生效配置里 noCheck=true——文件在 program 里` +
+            `但一个类型都不检查（清单判据照样命中）`,
+        )
       }
     }
   }

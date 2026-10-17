@@ -356,7 +356,11 @@ describe('instruction queue (P1-192)', () => {
       .from(schema.runs)
       .where(eq(schema.runs.id, run.id))
     if (freshRun === undefined) throw new Error('run disappeared')
-    await dispatchPendingInstructions(database.db, harness.outbox, freshRun)
+    // 补发器的参数是 **PgTransaction**（生产路径 `applyRunStatus` 在自己的事务里调它）；
+    // 测试同样开一个事务传进去，不再拿裸 Db 顶替（那会让「必须在事务里」这条契约失真）。
+    await database.db.transaction(async (tx) => {
+      await dispatchPendingInstructions(tx, harness.outbox, freshRun)
+    })
 
     const commands = await database.db
       .select()

@@ -232,6 +232,12 @@ importers:
       '@whalepod/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@whalepod/hub':
+        specifier: workspace:*
+        version: link:../hub
+      '@whalepod/testkit':
+        specifier: workspace:*
+        version: link:../../packages/testkit
       drizzle-orm:
         specifier: 'catalog:'
         version: 0.45.2(@opentelemetry/api@1.9.1)(postgres@3.4.9)
@@ -381,6 +387,10 @@ importers:
       '@whalepod/runtime-dsh':
         specifier: workspace:*
         version: link:../runtime-dsh
+    devDependencies:
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
 
 packages:
 

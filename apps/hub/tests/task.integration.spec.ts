@@ -13,10 +13,11 @@ import {
   insertRunRow,
   resetDatabase,
   seedRunChainForUser,
+  type Session,
   type TestApp,
 } from './helpers.js'
 
-async function createProject(ctx: TestApp, alice: { cookie: string }, name = 'Apollo') {
+async function createProject(ctx: TestApp, alice: Session, name = 'Apollo') {
   const res = await apiInject(ctx, alice, {
     method: 'POST',
     url: '/api/v1/projects',

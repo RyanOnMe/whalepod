@@ -24,6 +24,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { UploadPayload } from '../src/artifact/collect.js'
 import { ArtifactCollector, ArtifactCollectError } from '../src/artifact/collect.js'
 
 let root: string
@@ -48,7 +49,7 @@ const DIGEST = createHash('sha256').update(CONTENT).digest('hex')
 
 interface Harness {
   collector: ArtifactCollector
-  uploads: Array<{ runId: string; candidate: Record<string, unknown>; body: Buffer }>
+  uploads: Array<{ runId: string; candidate: UploadPayload; body: Buffer }>
   nextUploadError?: Error
 }
 
