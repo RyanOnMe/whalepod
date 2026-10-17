@@ -411,7 +411,8 @@ describe('instruction starts a run (P1-196)', () => {
         profileRevisionId: randomUUID(),
         deviceId: ids.deviceId,
         workspaceId: ids.workspaceId,
-        prompt: 'x',
+        // 这里**故意**不写 prompt：runs 没有该列（写了会被 tsc 拦下；drizzle 运行时
+        // 也只按已知列拼 SQL）。本用例判的是 trigger_message_id 的同任务约束。
         profileDigest: 'a'.repeat(64),
         pluginPackDigest: 'b'.repeat(64),
         dshDistributionVersion: '1.0.0',

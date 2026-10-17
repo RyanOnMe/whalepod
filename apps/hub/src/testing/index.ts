@@ -95,6 +95,9 @@ export interface TestAppOptions {
   readonly rateLimit?: HubConfig['rateLimit']
   /** #113：反代形态开关（透传 fastify trustProxy；默认 false = 直连形态）。 */
   readonly trustProxy?: boolean
+  /** #183：Plugin Catalog / dev 模式（plugin-catalog、plugin-pack 两个 spec 需要 fixture 目录）。 */
+  readonly pluginCatalogDir?: string
+  readonly pluginDevMode?: boolean
 }
 
 export async function createTestApp(
@@ -117,6 +120,10 @@ export async function createTestApp(
     artifactStoreDir: join(dir, 'artifact-store'),
     ...(options.rateLimit !== undefined ? { rateLimit: options.rateLimit } : {}),
     ...(options.trustProxy !== undefined ? { trustProxy: options.trustProxy } : {}),
+    ...(options.pluginCatalogDir !== undefined
+      ? { pluginCatalogDir: options.pluginCatalogDir }
+      : {}),
+    ...(options.pluginDevMode ? { pluginDevMode: true as const } : {}),
   }
   const app = await buildApp({
     config,

@@ -1,7 +1,7 @@
-// tests 的 typecheck 项目（#183）：**尚未接线**（package.json 的 typecheck 仍是 tsc -b）。
-// 它的用途是让 scripts/tests/typecheck-test-baseline.spec.ts 能测量存量错误数——
-// 数字只许向下（棘轮就在那个 spec 里）。接线（并删掉 check-boundaries 的 deferral 行）
-// 的前置条件是 apps/node 对 apps/hub/tests/helpers.js 的跨包 import 先拆掉。
+// tests 的 typecheck 项目（#183）：**已接线**（package.json 的 typecheck 跑
+// `tsc -b && tsc -p tsconfig.test.json`）。曾经的前置条件（apps/node 对
+// apps/hub/tests/helpers.js 的跨包 import）已拆：共享脚手架现在从
+// `@whalepod/testkit` 与 `@whalepod/hub/testing` 按包名引入。
 {
   "extends": "./tsconfig.json",
   "compilerOptions": { "composite": false, "noEmit": true, "rootDir": "../.." },

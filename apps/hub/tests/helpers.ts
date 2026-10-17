@@ -288,7 +288,8 @@ export async function insertRunRow(
       | 'failed'
       | 'cancelled'
       | 'lost'
-    dshSessionId?: string
+    /** 可空列：显式 null 是「无会话」的语义（run-resume 的 legacy 形态）。 */
+    dshSessionId?: string | null
     artifactInputManifest?: ArtifactInputManifest | null
   },
 ): Promise<string> {

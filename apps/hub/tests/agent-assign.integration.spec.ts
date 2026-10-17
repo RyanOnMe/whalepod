@@ -123,16 +123,17 @@ describe('agent-assignable tasks (ADR-0009 slice 7, #239)', () => {
         : {}),
     })
     const json = response.json() as Record<string, unknown>
+    // exactOptionalPropertyTypes：字段缺失时条件展开，不显式传 undefined。
     if (response.statusCode === 201) {
       return {
         status: response.statusCode,
-        data: json.data as CreateTaskResponse['data'],
-        drive: json.drive as CreateTaskResponse['drive'],
+        ...(json.data === undefined ? {} : { data: json.data as NonNullable<CreateTaskResponse['data']> }),
+        ...(json.drive === undefined ? {} : { drive: json.drive as NonNullable<CreateTaskResponse['drive']> }),
       }
     }
     return {
       status: response.statusCode,
-      error: json.error as CreateTaskResponse['error'],
+      ...(json.error === undefined ? {} : { error: json.error as NonNullable<CreateTaskResponse['error']> }),
     }
   }
 
@@ -204,7 +205,7 @@ describe('agent-assignable tasks (ADR-0009 slice 7, #239)', () => {
     })
     expect(both.status).toBe(400)
 
-    const neither = await createAgentTask({ assigneeAgentId: undefined })
+    const neither = await createAgentTask({}) // 两个都缺：exactOptionalPropertyTypes 下不写显式 undefined
     expect(neither.status).toBe(400)
 
     const unknown = await createAgentTask({ assigneeAgentId: randomUuid() })

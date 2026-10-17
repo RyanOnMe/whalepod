@@ -6,6 +6,9 @@
  * **文字**——2026-10-09（A0-7）实测发现它已经漂了：hub 记 30 实际 39、node 记 29 实际 31。
  * 没有棘轮，基线就是一句会烂掉的话。
  *
+ * 2026-10-17（#183）：apps/hub 已清零接线（25 → 0，登记行与 deferral 行同时删除）；
+ * 本表只剩 apps/node 一项。
+ *
  * 本文件把数字变成判据：每个仍未接线的包，跑一次 `tsc -p tsconfig.test.json`（口径与
  * #183 一致：extends 各自 tsconfig + rootDir 抬到仓库根 + include src+tests），
  * 统计 `error TS` 行数，与这里的数字**严格相等**才算过：
@@ -29,16 +32,11 @@ export interface TestTypecheckBaselineEntry {
 
 export const TEST_TYPECHECK_BASELINE: readonly TestTypecheckBaselineEntry[] = [
   {
-    where: 'apps/hub',
-    issue: '#183',
-    // 39（A0-7 实测）→ 25：修掉认证限流覆盖值类型（HubConfig.rateLimit 改 Partial）、
-    // 审批策略断言类型、setup 并发窄化与 A0-4 引入的两处异步探针。
-    errors: 25,
-  },
-  {
     where: 'apps/node',
     issue: '#183',
     // 29（#183 记录，抬 rootDir 后）→ 31：新增测试未及时收口；数字到此为止，只许向下。
+    // 注意：拆掉 node→hub 的跨包 import 之后此数字**未变**（31）：那些错误本来就在 node
+    // 自己的测试文件里，跨包 import 的影响是 TS6059 噪音（已由抬 rootDir 消掉）。
     errors: 31,
   },
 ] as const

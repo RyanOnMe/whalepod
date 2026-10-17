@@ -57,23 +57,25 @@ describe('#24 空库冷启动 server.js', () => {
     const dbName = `coldboot_${randomBytes(4).toString('hex')}`
     await admin.sql.unsafe(`create database ${dbName}`) // dbName 为自生成 hex，非外部输入
     const dataDir = mkdtempSync(join(tmpdir(), 'wp-coldboot-'))
-    let child: ChildProcessWithoutNullStreams | undefined
     const stderr: string[] = []
+    // spawn 放在 try 之外：类型随 stdio 形态推断（'ignore'+两个 'pipe'），且 child 是
+    // const——原先 `ChildProcessWithoutNullStreams | undefined` 既与真实形态不符
+    // （stdin 不是 Writable），又让 try 体内 4 处访问要非空断言。
+    const port = await freePort()
+    const child = spawn(process.execPath, [SERVER_ENTRY], {
+      env: {
+        ...process.env,
+        DATABASE_URL: urlWithDatabase(ADMIN_URL, dbName),
+        WHALEPOD_PUBLIC_ORIGIN: `http://127.0.0.1:${port}`,
+        HOST: '127.0.0.1',
+        PORT: String(port),
+        WHALEPOD_SETUP_TOKEN_PATH: join(dataDir, 'setup-token'),
+        WHALEPOD_ARTIFACT_STORE_DIR: join(dataDir, 'artifact-store'),
+        LOG_LEVEL: 'error',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
     try {
-      const port = await freePort()
-      child = spawn(process.execPath, [SERVER_ENTRY], {
-        env: {
-          ...process.env,
-          DATABASE_URL: urlWithDatabase(ADMIN_URL, dbName),
-          WHALEPOD_PUBLIC_ORIGIN: `http://127.0.0.1:${port}`,
-          HOST: '127.0.0.1',
-          PORT: String(port),
-          WHALEPOD_SETUP_TOKEN_PATH: join(dataDir, 'setup-token'),
-          WHALEPOD_ARTIFACT_STORE_DIR: join(dataDir, 'artifact-store'),
-          LOG_LEVEL: 'error',
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
       child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk.toString()))
       child.stdout.resume()
 
@@ -106,7 +108,7 @@ describe('#24 空库冷启动 server.js', () => {
         ((await status.json()) as { data?: { initialized?: boolean } }).data?.initialized,
       ).toBe(false)
     } finally {
-      child?.kill('SIGKILL')
+      child.kill('SIGKILL')
       rmSync(dataDir, { recursive: true, force: true })
       await admin.sql.unsafe(`drop database ${dbName}`) // 同上，hex 字面量
     }
