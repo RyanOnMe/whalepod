@@ -25,11 +25,21 @@
    `<pkg>/tests` 下全部 TS 源文件，跑 `tsc -p tsconfig.test.json --listFilesOnly`，
    **每一个**测试文件都必须出现在清单里（缺席的相对路径进违规消息）；tsc 非零退出同样判违规
    （fail-closed：配置坏了不许判「已接线」）。一次覆盖 extends/include/exclude/glob 的全部形态。
-   成本实测：9 个包合计约 3s（各 0.2–0.5s），进 Q0。**「存在任一 /tests/ 路径」不够**：换成
+   清单判据另有两条同层加固（2026-10-17 两轮评审后补）：`tests/` 下的**目录 symlink** 会跟进去
+   （vitest 会跑它；不跟就会对「跑得到但不在 Q0」的文件沉默）；两侧路径 realpath 归一是硬需求
+   （macOS `/var` 与 `/private/var`），且清单行**不能**按「含空格就丢」过滤（clone 到含空格目录
+   会假红）。
+   成本实测：9 个包合计约 3s（各 0.2–0.5s），进 Q0（加上 `--showConfig` 探测后整门 ~7s）。
+   **「存在任一 /tests/ 路径」不够**：换成
    「按存在性查」后又被 `tests/*.spec.ts` 这种单层 glob 绕过——apps/node 的
    tests/integration/** 与 tests/resilience/** 共 9 个 spec 静默脱离 Q0 而门全绿（评审 B 第二轮）。
    两侧路径都过 `realpathSync`：macOS 的 `os.tmpdir()` 是 `/var/folders/…`、tsc 打的是
    `/private/var/folders/…`，不归一就会把「在 program 里」误判成缺失（fixture 实测踩到）。
+   另两条同层加固：**脚本形态**（脚本里必须真有一次 `tsc …-p/--project tsconfig.test.json`
+   调用——只出现配置名的 `echo tsconfig.test.json` 能骗过子串匹配）与 **`noCheck` 探测**
+   （`tsc -p tsconfig.test.json --showConfig` 读**生效**配置：`noCheck: true` 时文件在 program
+   里却一个类型都不检查，清单判据照样命中）。两条都做真实变异自证：`packages/domain` 加
+   `noCheck: true` ⟹ 红；`packages/testkit` 的 typecheck 改成 `echo tsconfig.test.json` ⟹ 红。
 2. **棘轮（本批新增）**：deferral 表里原先只写「N 个存量错误」这行字——2026-10-09 实测发现
    它已经烂了：hub 记 30 实际 **39**、node 记 29 实际 **31**。现在数字由
    `scripts/lib/typecheck-test-baseline.ts` 承载、由 `scripts/tests/typecheck-test-baseline.spec.ts`
@@ -75,6 +85,11 @@ exports 的 `./testing` 带 `development → src`：integration spec 里还有 h
   `exclude` 加 `tests/**` ⟹ 红，报 **41** 个。无变异 ⟹ `pnpm check:boundaries` 输出
   `no violations`（9/9 包过严格形态）。fixture（`scripts/check-boundaries.spec.ts`，36 例）
   五态：收窄 / 删 include 键 / exclude / 单层 glob（漏嵌套 1 个）/ 正确接线——前四红、末绿。
+- **脚本形态与 noCheck**（第二轮评审逼出来的两条旁路）：`packages/testkit` 的 `typecheck`
+  改成 `echo tsconfig.test.json` ⟹ `pnpm check:boundaries` 红（点上「只出现配置名不算数」）；
+  `packages/domain/tsconfig.test.json` 加 `noCheck: true` ⟹ 红（点上「一个类型都不检查」）。
+  两条还原 ⟹ 绿。fixture 41 例另有：路径含空格判绿、目录 symlink 漏覆盖判红、配置坏到 tsc
+  起不来落 fail-closed 条。
 - **hub/testing 的解析契约**：临时删掉 `apps/hub/package.json` 的 `exports['./testing'].development`
   ⟹ `apps/node/tests/hub-testing-resolution.spec.ts` 红（打印解析到的 `dist/testing/index.js`
   路径）；还原 ⟹ 绿。
@@ -120,6 +135,12 @@ cd apps/hub && pnpm exec tsc -p tsconfig.test.json | grep -c "error TS"   # 手�
   `@whalepod/protocol` 放行裸入口 + digest 子路径，`@whalepod/testkit` 只放行裸入口。
   变异自证：在 `cli-hello-refresh` 里加一行 `import ... from '@whalepod/hub'` ⟹
   `check-boundaries` 红（消息点名「bare entry included」）；还原绿。
+- **接线判据的残余盲区**（第二轮评审穷举后如实列出；现状仓库无实例；已立账 **#376**）：1）脚本层只判**文本
+  形态**、不执行该包的 `typecheck`——`tsc -p tsconfig.test.json || true` 这类吞退出码的写法
+  仍能两层全绿（exit-code 传播不在声明面内）；2）`tsc` 二进制被替换成假脚本时判据会信它
+  （要蓄意篡改 `node_modules`，属供应链面；缺失/坏 bin 本身 fail-closed）；3）扩展名大小写
+  敏感：`tests/UPPER.SPEC.TS` 两侧都忽略；4）扫描面硬编码 `apps/*`、`packages/*` 一层，
+  与 `pnpm-workspace.yaml` 无机器对应（今天一致，将来加顶层 glob 会静默漂移）。
 - 棘轮只保证「不新增 + 数字与现实一致」，不保证错误本身无害：低风险测试里的类型错误
   （如测试替身形状不符）仍可能在运行时表现为假绿——清零后这句话成立，但**新写的**测试
   仍要自己别写假判据（#183 期间评审抓到的两处假判据就是例子）。

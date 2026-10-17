@@ -46,7 +46,7 @@
 | [discussion-separation-acceptance.md](./discussion-separation-acceptance.md) | P1-194（切片③c-2a，ADR-0010）：讨论流只含 `discussion`、执行流只含 instruction/followup（带状态与拒绝理由）——评论区纯人际，执行状态不外溢 |
 | [instruction-queue-acceptance.md](./instruction-queue-acceptance.md) | P1-192（切片③c-1）：未 running 的追问只落 `pending`、进 `running` 时按 `(created_at, id)` 补发——含幂等、终态清扫、Node not-ready 守卫的复刻 |
 | [ephemeral-volume-acceptance.md](./ephemeral-volume-acceptance.md) | #188：一次性 PostgreSQL 的卷回收与陈旧容器清扫——净增卷=0（真实 Docker 判据）、pid 感知清扫（同 worktree 并发不互杀；pid 复用有 6h 年龄兜底）、四处删除点的 `-v` |
-| [typecheck-coverage-acceptance.md](./typecheck-coverage-acceptance.md) | #178：`tests/` 纳入 typecheck 面（给**门**立档）——已接线 5 包 / 未覆盖 4 包及各自实测存量错误数、变异验证、接线护栏、`--if-present` 静默跳过风险 |
+| [typecheck-coverage-acceptance.md](./typecheck-coverage-acceptance.md) | #178：`tests/` 纳入 typecheck 面（给**门**立档）——已接线 5 包 / 未覆盖 4 包及各自实测存量错误数、变异验证、接线护栏、`--if-present` 静默跳过风险（表中「未覆盖 4 包」已于 #183 清零，现状见 test-typecheck-baseline-acceptance.md） |
 | [module-resolution-acceptance.md](./module-resolution-acceptance.md) | #35：vitest 面解析到 src——包 exports 加 development 条件，测试永远打新鲜源码；tsx scripts 仍走 dist（先 typecheck）；自证 spec 与红绿证据 |
 | [web-honest-states-acceptance.md](./web-honest-states-acceptance.md) | #225 前端交互批次①：任务房间诚实性修复——指令流运行号接线、目标条加载/错误态、取消/重跑失效缓存、错误口径统一、返回项目入口 |
 | [connection-visibility-acceptance.md](./connection-visibility-acceptance.md) | #227 前端交互批次②：断线横幅 + 重连全量补拉 + session 过期自动跳转（含 loader-fetchQuery 死循环的抓获与修法、ConnectionIndicator 取舍） |
@@ -100,7 +100,7 @@
 | [2026-10-08-q-gates-g0g1g2-tiers.md](./2026-10-08-q-gates-g0g1g2-tiers.md) | 2026-10-08 门禁分级：Q0–Q9 落到 G0/G1/G2——PR 触发规则、release 发布门、本地无 Docker 口径 |
 | [poll-until-acceptance.md](./poll-until-acceptance.md) | #256 固定 sleep 改 poll-until：17 处转换（含 lastSeenAt 严格变大）、全仓 62 处普查与五类保留理由、waitForValue 约定 |
 | [security-negative-acceptance.md](./security-negative-acceptance.md) | A0（2026-10-09）安全负向 8 项 → 11 条判据：审批归属/一次性时效/Device 撤销/失效授权/终态不复活/受众门/不谎称副作用已停/伪造身份；含两处变异自证 |
-| [test-typecheck-baseline-acceptance.md](./test-typecheck-baseline-acceptance.md) | #178/#183：测试代码 typecheck 接入面——**2026-10-17 全量收口**（hub 25→0、node 31→0，`TYPECHECK_WIRING_DEFERRED` 与基线表清空、终态由新断言钉住）；含拆分（共享脚手架进 testkit 与 `@whalepod/hub/testing`）、两轮清零清单与红/绿自证 |
+| [test-typecheck-baseline-acceptance.md](./test-typecheck-baseline-acceptance.md) | #178/#183：测试代码 typecheck 接入面——**2026-10-17 全量收口**（hub 25→0、node 31→0，`TYPECHECK_WIRING_DEFERRED` 与基线表清空、终态由新断言钉住）；含拆分（共享脚手架进 testkit 与 `@whalepod/hub/testing`）、两轮清零清单与红/绿自证；接线判据经**四轮评审**加固到 ground truth 按文件比对（单层 glob / 删 include / exclude / `echo tsconfig.test.json` / `noCheck` 五条变异各实测红），残余盲区在文档边界段如实列出 |
 | [runtime-capability-contract.md](./runtime-capability-contract.md) | A0-6：DSH 熔断的单一登记处——六项能力 + 四条规则逐条给判据或挂 Issue（#288/#289/#290）、版本锁现状、CI 接线（Q3/Q6/Q7 从「文档说必跑」改成真跑）、未覆盖清单；表本身由 scripts/tests 的漂移哨兵机检 |
 | [compose-standard-loop-acceptance.md](./compose-standard-loop-acceptance.md) | A0-5/#286 空卷安装的标准闭环：A 段机检（邀请/双设备/双 Workspace 隔离/Agent 装配/Task 指派/双 Run/凭证边界/跨成员拒绝）+ B 段边界（Agent 真执行需真密钥，归 Phase 2）+ 变异自证与 15 分钟预算账 |
 | [test-load-sensitivity-acceptance.md](./test-load-sensitivity-acceptance.md) | #296 判据的负载敏感性收口：加压口径（并发两遍全量）8/12 红 → 0 红、四类根因（RTL 发现超时/vitest 上限/秒级钉值/同帧判据）、四个变异自证、复跑命令 |

@@ -19,7 +19,7 @@
  * `importer:line -> specifier`, and exits non-zero when any violation is found.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type * as TS from 'typescript'
@@ -37,6 +37,14 @@ const WORKSPACE_SCOPE = '@whalepod/'
 
 /** 判据要覆盖的测试源文件扩展名（tsc 默认只吃 TS 家族）。 */
 const TEST_SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts'])
+
+/**
+ * 「真的拿这份配置跑 tsc」的脚本形态：tsc 与项目参数之间不许出现 `&&`/`||`/`;`，
+ * 否则是两条命令拼接（`echo tsconfig.test.json` 这类错配会被子串匹配放过去——
+ * 评审 A 与 B 各自实测：脚本只打印字符串、包里什么都没检查，两层判据全绿）。
+ */
+const TSC_PROJECT_INVOCATION =
+  /\btsc\b[^&|;]*?(?:-p|--project)[=\s]+(?:\.\/)?tsconfig\.test\.json\b/
 
 /**
  * importer path prefix -> allowed `@whalepod/*` specifiers.
@@ -251,10 +259,22 @@ export interface TypecheckWiringOptions {
 
 /** 该包 tests/ 下的全部 TS 源文件（判据要求它们**每一个**都进 program）。 */
 function testSourceFiles(testsDir: string): string[] {
+  return walkTests(testsDir, 0)
+}
+
+/**
+ * 目录 symlink 也跟进去：`tests/cases -> <外部目录>` 时 vitest 会跑里面的 spec，
+ * 判据若不跟就会对「跑得到、但不在 Q0」的文件沉默（评审 A 的实测）。带深度上限防符号环。
+ */
+function walkTests(dir: string, depth: number): string[] {
   const files: string[] = []
-  for (const entry of readdirSync(testsDir, { withFileTypes: true })) {
-    const path = join(testsDir, entry.name)
-    if (entry.isDirectory()) files.push(...testSourceFiles(path))
+  if (depth > 8) return files
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name)
+    const isDir =
+      entry.isDirectory() ||
+      (entry.isSymbolicLink() && statSync(path, { throwIfNoEntry: false })?.isDirectory() === true)
+    if (isDir) files.push(...walkTests(path, depth + 1))
     else if (TEST_SOURCE_EXTENSIONS.has(extname(entry.name))) files.push(path)
   }
   return files
@@ -275,6 +295,9 @@ function uncoveredTestFiles(packageDir: string, tscBin: string): string[] | null
     output = execFileSync(tscBin, ['-p', 'tsconfig.test.json', '--listFilesOnly'], {
       cwd: packageDir,
       encoding: 'utf8',
+      // 清单最大实测 122KB（apps/node），默认 1MiB 的余量只有约 8 倍；超限会抛 ENOBUFS
+      // 并被当成「配置坏了」（评审 B 实测）。
+      maxBuffer: 16 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
   } catch {
@@ -288,7 +311,9 @@ function uncoveredTestFiles(packageDir: string, tscBin: string): string[] | null
     output
       .split('\n')
       .map((line) => line.trim())
-      .filter((line) => line !== '' && !line.includes(' '))
+      // 只丢空行：**不能**按「含空格就丢」过滤——仓库/包路径带空格（如 clone 到含空格的
+      // 目录）会整行被丢掉，正确接线反被报缺失（评审 B 的假红实测）。
+      .filter((line) => line !== '')
       .map((line) => safeRealpath(resolve(line))),
   )
   return testSourceFiles(join(realPackageDir, 'tests'))
@@ -305,6 +330,32 @@ function safeRealpath(path: string): string {
   }
 }
 
+/**
+ * 生效配置里 `noCheck: true` 会让 program 里的文件**一个类型都不检查**——而判据看的
+ * 「文件在不在清单里」照样命中（评审 A 实测：加上它以后 `tsc -p tsconfig.test.json`
+ * 对 `const bad: number = 'x'` 也 exit 0）。问 `--showConfig`（extends 链解析后的**生效**
+ * 配置，文本读不出来）；读不到返回 null，调用方按 fail-closed 处理。
+ */
+function effectiveConfigDisablesCheck(packageDir: string, tscBin: string): boolean | null {
+  let output: string
+  try {
+    output = execFileSync(tscBin, ['-p', 'tsconfig.test.json', '--showConfig'], {
+      cwd: packageDir,
+      encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+  } catch {
+    return null
+  }
+  try {
+    const parsed = JSON.parse(output) as { compilerOptions?: { noCheck?: unknown } }
+    return parsed.compilerOptions?.noCheck === true
+  } catch {
+    return null
+  }
+}
+
 export function checkTypecheckWiring(
   repoRoot: string,
   options: TypecheckWiringOptions = {},
@@ -316,7 +367,9 @@ export function checkTypecheckWiring(
     for (const entry of readdirSync(scopeDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue
       const dir = join(scopeDir, entry.name)
-      if (!existsSync(join(dir, 'tests'))) continue
+      // 必须是**目录**：名为 tests 的文件会让 readdirSync 抛 ENOTDIR 炸栈（评审 A 的
+      // 健壮性项）；没有 tests/ 目录的包不在本护栏范围内。
+      if (statSync(join(dir, 'tests'), { throwIfNoEntry: false })?.isDirectory() !== true) continue
       const manifestPath = join(dir, 'package.json')
       if (!existsSync(manifestPath)) continue
       const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
@@ -332,6 +385,13 @@ export function checkTypecheckWiring(
       if (!typecheck.includes('tsconfig.test.json')) {
         violations.push(
           `${where}: typecheck does not run tsconfig.test.json (tests/ excluded from Q0)`,
+        )
+        continue
+      }
+      if (!TSC_PROJECT_INVOCATION.test(typecheck)) {
+        violations.push(
+          `${where}: typecheck 里没有「tsc -p tsconfig.test.json」形态的调用` +
+            `（只出现配置名不算数）；脚本：${typecheck}`,
         )
         continue
       }
@@ -352,6 +412,21 @@ export function checkTypecheckWiring(
         violations.push(
           `${where}: ${uncovered.length} 个 tests/ 下的文件不在 typecheck program 里（静默脱离 Q0）：` +
             `${shown}${uncovered.length > 5 ? '、…' : ''}`,
+        )
+      }
+      // 配置已经坏到列不出 program 时不再探 noCheck：一条根因只报一条（否则同一处
+      // 配置错误会变成两条违规，读的人还要自己判断是不是一回事）。
+      if (uncovered === null) continue
+      const checkDisabled = effectiveConfigDisablesCheck(dir, tscBin)
+      if (checkDisabled === null) {
+        violations.push(
+          `${where}: 读不到 tsconfig.test.json 的生效配置（tsc --showConfig 退出非零或输出非 JSON）` +
+            `——测试是否真的被检查无从判定`,
+        )
+      } else if (checkDisabled) {
+        violations.push(
+          `${where}: tsconfig.test.json 的生效配置里 noCheck=true——文件在 program 里` +
+            `但一个类型都不检查（清单判据照样命中）`,
         )
       }
     }

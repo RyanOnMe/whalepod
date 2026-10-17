@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -236,6 +236,7 @@ describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
     manifest: Record<string, unknown>,
     withTestConfig = false,
     withTests = true,
+    testConfigJson?: string,
   ): Promise<void> {
     const dir = join(root, scope, name)
     await mkdir(withTests ? join(dir, 'tests') : dir, { recursive: true })
@@ -249,7 +250,8 @@ describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
     // 清单，空 tests/ 与空配置都会被判「未覆盖」（那是**特性**：接线要真的把测试编进去）。
     await writeFile(
       join(dir, 'tsconfig.test.json'),
-      JSON.stringify({ compilerOptions: {}, include: ['src/**/*.ts', 'tests/**/*.ts'] }),
+      testConfigJson ??
+        JSON.stringify({ compilerOptions: {}, include: ['src/**/*.ts', 'tests/**/*.ts'] }),
     )
     if (withTests) {
       await writeFile(join(dir, 'tests', 'sample.spec.ts'), 'export const sample = 1\n')
@@ -386,6 +388,87 @@ describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
         `${where} 已经接线了——请把它从 TYPECHECK_WIRING_DEFERRED 里删掉（该表只允许缩小）`,
       ).toBe(false)
     }
+  })
+
+  it('路径含空格也判绿（评审 B 的假红：清单行按「含空格就丢」过滤会误报缺失）', async () => {
+    await makePackage(
+      'apps',
+      'with space',
+      { scripts: { typecheck: 'tsc -b && tsc -p tsconfig.test.json' } },
+      true,
+    )
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([])
+  })
+
+  it('脚本只出现配置名、从不真跑 tsc → 违规（子串匹配会被 echo 骗过，评审 A/B 实测）', async () => {
+    await makePackage(
+      'packages',
+      'echoed',
+      { scripts: { typecheck: 'echo tsconfig.test.json' } },
+      true,
+    )
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([
+      'packages/echoed: typecheck 里没有「tsc -p tsconfig.test.json」形态的调用（只出现配置名不算数）；' +
+        '脚本：echo tsconfig.test.json',
+    ])
+  })
+
+  it('配置坏到 tsc 起不来 → fail-closed 违规（不是静默放行）', async () => {
+    await makePackage(
+      'apps',
+      'broken',
+      { scripts: { typecheck: 'tsc -b && tsc -p tsconfig.test.json' } },
+      true,
+      true,
+      JSON.stringify({ compilerOptions: {}, include: [] }),
+    )
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([
+      'apps/broken: 无法列出 typecheck program（tsc -p tsconfig.test.json 退出非零；配置语法或依赖坏了）' +
+        '——测试是否进 Q0 无从判定',
+    ])
+  })
+
+  it('生效配置 noCheck=true → 违规（文件在 program 里却一个类型都不检查）', async () => {
+    await makePackage(
+      'packages',
+      'unchecked',
+      { scripts: { typecheck: 'tsc -b && tsc -p tsconfig.test.json' } },
+      true,
+      true,
+      JSON.stringify({
+        compilerOptions: { noCheck: true },
+        include: ['src/**/*.ts', 'tests/**/*.ts'],
+      }),
+    )
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([
+      'packages/unchecked: tsconfig.test.json 的生效配置里 noCheck=true——文件在 program 里' +
+        '但一个类型都不检查（清单判据照样命中）',
+    ])
+  })
+
+  it('tests/ 下的目录 symlink 也枚举（vitest 会跑里面的 spec，判据不许沉默）', async () => {
+    const dir = join(root, 'apps', 'linked')
+    const outside = join(root, 'outside-cases')
+    await mkdir(join(dir, 'tests'), { recursive: true })
+    await mkdir(join(dir, 'src'), { recursive: true })
+    await mkdir(outside, { recursive: true })
+    await writeFile(join(outside, 'linked.spec.ts'), 'export const linked = 1\n')
+    await symlink(outside, join(dir, 'tests', 'cases'), 'dir')
+    await writeFile(
+      join(dir, 'package.json'),
+      JSON.stringify({ scripts: { typecheck: 'tsc -b && tsc -p tsconfig.test.json' } }),
+    )
+    await writeFile(join(dir, 'src', 'sample.ts'), 'export const impl = 1\n')
+    await writeFile(join(dir, 'tests', 'sample.spec.ts'), 'export const sample = 1\n')
+    // 单层 glob：包自己的 spec 覆盖，symlink 进来的 cases/ 不覆盖 → 必须报出来
+    await writeFile(
+      join(dir, 'tsconfig.test.json'),
+      JSON.stringify({ compilerOptions: {}, include: ['src/**/*.ts', 'tests/*.spec.ts'] }),
+    )
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([
+      'apps/linked: 1 个 tests/ 下的文件不在 typecheck program 里（静默脱离 Q0）：' +
+        'tests/cases/linked.spec.ts',
+    ])
   })
 
   it('接线正确 → 无违规；没有 tests/ 的包不受约束', async () => {
