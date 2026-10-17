@@ -9,7 +9,7 @@
 Issue #11 验收原文：**Alice 创建 Task、Bob 在第二 BrowserContext 接受并评论；键盘可完成主链。**
 
 真实环境全链路：一次性 PostgreSQL（随机端口随机密码，专属 label 生命周期管理）→
-生产入口 `apps/hub/src/server.ts`（含 OutboxWorker/租约循环）→ vite dev server 同源
+生产入口（包解析 dist 产物 `apps/hub/dist/server.js`，源码在 `apps/hub/src/server.ts`，含 OutboxWorker/租约循环；#281 起 E2E 无源码路径分支）→ vite dev server 同源
 反代（`/api/v1`、`/ws/v1`）→ 真实 Chrome（channel: chrome）双 BrowserContext。
 浏览器只见 5173 一个 origin，与生产同源部署同形（03 §4）。
 

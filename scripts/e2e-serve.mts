@@ -9,7 +9,9 @@
  * 职责：
  * 0. 经 scripts/lib/ephemeral-postgres.mts 启动一次性 PostgreSQL（退出时删除）；
  * 1. 应用 packages/db 迁移（applyMigrations，公开导出）；
- * 2. 以生产入口拉起真实 Hub 子进程（apps/hub/src/server.ts，含 OutboxWorker/租约循环），
+ * 2. 先增量 build（#281：Q5 前强制 build，构建 break 必红），再以**包解析后的 dist
+ *    生产产物**拉起真实 Hub 子进程（apps/hub/dist/server.js，与 Docker 入口同形，
+ *    含 OutboxWorker/租约循环）——不再有源码路径入口，
  *    WHALEPOD_PUBLIC_ORIGIN 指向 Web dev origin（同源反代部署形态，03 §4）；
  * 3. 拉起 apps/web 的 vite dev server（5173，/api/v1、/ws/v1 反代到 Hub）；
  * 4. 双端就绪后把环境清单（Hub origin、Setup Token 路径、控制面端口与一次性
@@ -26,17 +28,18 @@
  * 进程退出/收到 SIGTERM/SIGINT 时清理子进程与容器。
  */
 import { spawn, type ChildProcess } from 'node:child_process'
-import { createRequire } from 'node:module'
 import type { EphemeralPostgres } from './lib/ephemeral-postgres.mts'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { eq, sql } from 'drizzle-orm'
 import { schema } from '@whalepod/db'
 import { digestPluginPack } from '@whalepod/protocol/plugin-pack-digest'
 import { redactText } from './lib/phase1/events.js'
+import { buildWorkspaceDistArtifacts, resolveHubServerEntry } from './lib/phase1/hub-assembly.js'
 
 // 操作逻辑验收与正在使用的开发现场隔离；仍走同一生产 Hub/Node/Runtime 装配。
 const isolatedOperations = process.env['WHALEPOD_E2E_OPERATIONS'] === '1'
@@ -91,21 +94,13 @@ let hub: ChildProcess | undefined
 let hubIntentional = false
 
 async function spawnHub(databaseUrl: string, setupTokenPath: string): Promise<ChildProcess> {
-  // #306：新浏览器链必须走生产包装配；旧场景的默认入口留给 #281 单独迁移。
-  // Hub CLI 目前只有 setup-token，生产服务入口是包内 dist/server.js（与 Docker 同形）。
-  const args = process.argv.includes('--built-hub')
-    ? [
-        join(
-          dirname(
-            createRequire(new URL('../apps/hub/package.json', import.meta.url)).resolve(
-              '@whalepod/hub',
-            ),
-          ),
-          'server.js',
-        ),
-      ]
-    : ['--import', 'tsx', 'apps/hub/src/server.ts']
-  const child = spawn(process.execPath, args, {
+  // #281：唯一装配——包解析后的 dist 生产产物（与 deploy/hub.Dockerfile 同形）。
+  // 此前的 `node --import tsx apps/hub/src/server.ts` 分支已删除：同一入口两套装配
+  // 会让「tsc 构建 break 而 Q5 照绿」成为可能，且源码入口本就被 #99 的 harness
+  // 纪律禁掉（白名单例外随本 Issue 一并摘除）。
+  const entry = resolveHubServerEntry(new URL('../apps/hub/package.json', import.meta.url))
+  log(`Hub 入口（包解析 dist 产物）：${entry}`)
+  const child = spawn(process.execPath, [entry], {
     env: {
       ...process.env,
       DATABASE_URL: databaseUrl,
@@ -361,6 +356,10 @@ await applyMigrations(database)
 log('迁移已应用')
 
 // ---- 2. Hub（生产入口子进程） ----
+// #281：dist 可能是上一次构建的产物（源码改了没重建 → 测的是旧代码），所以装配前
+// 跑一次**增量** build（up-to-date 时 ~0.5s）；构建 break 在这里就红，不留到浏览器。
+const repoRoot = fileURLToPath(new URL('..', import.meta.url))
+buildWorkspaceDistArtifacts(repoRoot)
 const setupDir = await mkdtemp(join(tmpdir(), 'whalepod-e2e-hub-'))
 const setupTokenPath = join(setupDir, 'setup-token')
 hub = await spawnHub(databaseUrl, setupTokenPath)
