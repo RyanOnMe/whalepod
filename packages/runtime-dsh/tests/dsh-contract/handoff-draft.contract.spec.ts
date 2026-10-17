@@ -11,7 +11,9 @@
  * 4. **取消/中断**：turn 被中断（aborted）→ 不调用模型、零 handoff.draft 帧、
  *    终态唯一（run.cancelled）；
  * 5. **取消撞收尾窗口**（评审 M2）：业务回合已完成、整理调用在途时取消 → 中断整理、
- *    取消胜出（run.cancelled），零草稿帧、无 run.completed（不给已取消的执行造草稿）。
+ *    取消胜出（run.cancelled），零草稿帧、无 run.completed（不给已取消的执行造草稿）；
+ * 6. **每 Run 至多一次**（评审 m3）：追问第二回合完成不再叫模型——脚本没有第二条整理
+ *    条目，若被再次调用会命中脚本耗尽并产生第二帧失败草稿，计数判据会抓到。
  */
 import { afterEach, describe, expect, it } from 'vitest'
 import type { RuntimeOutput } from '@whalepod/protocol'
@@ -126,6 +128,29 @@ describe('#379 收尾交接草稿（replay 契约探针）', () => {
       expect(types).not.toContain('handoff.draft')
       expect(types.filter((type) => type === 'run.cancelled')).toHaveLength(1)
       expect(types).not.toContain('run.completed')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('追问回合不再二次整理（评审 m3）：每 Run 至多一次——恰一帧草稿', async () => {
+    const spec = runtimeSpec({ handoff: { agreement: AGREEMENT } })
+    // 夹具条目：turn1（session）→ 整理（at:1）→ 追问 turn2（at:2）；没有第三条整理条目。
+    const runtime = await startReplayRuntime('handoff-followup', spec)
+    try {
+      await runtime.send(initializeCommand(spec))
+      await runtime.until('runtime.ready')
+      await runtime.send(commandFrame('run.prompt', { runId: spec.runId, text: '实现登录接口' }))
+      await runtime.until('handoff.draft', (frame) => frame.payload.status === 'generated')
+      await runtime.send(commandFrame('run.followup', { runId: spec.runId, text: '再补充一句' }))
+      // 第二回合文本是数据依赖屏障：到了才谈「回合已完成」。
+      await runtime.until('session.event', (frame) =>
+        JSON.stringify(frame.payload.event).includes('Follow-up turn after the wrap-up.'),
+      )
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      const drafts = runtime.outputs.filter((frame) => frame.type === 'handoff.draft')
+      expect(drafts).toHaveLength(1)
+      expect(drafts[0]?.payload.status).toBe('generated')
     } finally {
       await runtime.dispose()
     }

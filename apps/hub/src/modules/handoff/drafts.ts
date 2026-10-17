@@ -138,12 +138,22 @@ export class HandoffCapacityError extends Error {
   }
 }
 
-/** 系统块 + 叙述的内容上限（与 DB 的 content 列约束同值；按 JSON 字节计）。 */
+/** 系统块 + 叙述的内容上限（与 DB 的 content 列约束同值；按 DB 的 JSON 文本字节计）。 */
 export const HANDOFF_CONTENT_MAX_BYTES = 32_768
 
-/** 显式路径（手工新建/编辑/发布）在落库前先失败，给出可读冲突而不是 23514。 */
+/**
+ * 显式路径（手工新建/编辑/发布）在落库前先失败，给出可读冲突而不是 23514。
+ * 口径必须**严格覆盖 DB 的 `octet_length(content::text)`**：jsonb 文本会为每个结构
+ * 分隔符（`:`/`,`）补一个空格，只数 `JSON.stringify` 会留出 ≈ 分隔符数的窗口——窗口
+ * 内的行被 PG 以 23514 拒（同一事务内没有 catch 重写的余地：语句一错整事务报废），
+ * 毒帧路径就回来了（评审核 M1 修复时实测构出可达样例）。这里按「紧凑 JSON 字节 +
+ * 全部 `:`/`,` 计数」计上界；字符串值里的分隔符也计入 = 只会更严格，方向安全。
+ */
 export function assertHandoffContentFits(content: HandoffContent): void {
-  if (new TextEncoder().encode(JSON.stringify(content)).length > HANDOFF_CONTENT_MAX_BYTES) {
+  const compact = JSON.stringify(content)
+  const bytes = new TextEncoder().encode(compact).length
+  const separators = (compact.match(/[:,]/g) ?? []).length
+  if (bytes + separators > HANDOFF_CONTENT_MAX_BYTES) {
     throw new HandoffCapacityError('交接内容超过 32 KiB 上限，请精简叙述后重试')
   }
 }
@@ -483,15 +493,31 @@ export async function publishHandoffDraft(
     if (marked === undefined) {
       throw new ApiError(409, 'CONFLICT', '交接草稿状态已变化，请刷新后重试')
     }
-    // 评审 B4/m2：发布是**团队可见事实**——不发事件，别人开着房间看不到新版本
-    //（下游「有新版本」也就不出现）。与交付/确认同形：task.changed 双侧语义由
-    // 订阅方按 taskId 失效（版本列表与服务端房间同键）。
+    // 评审 B4：发布是**团队可见事实**——不发事件，别人开着房间看不到新版本。
+    // 与交付/确认同形：task.changed 由订阅方按 taskId 失效（版本列表与房间同键）；
+    // 「下游看到有新版本」还要求按 receipt 关系逐个通知下游房间（#380 面，见 receipts）。
     const sealedTask = await getTask(tx, run.taskId)
     if (sealedTask !== undefined) {
       await appendTeamEvent(tx, {
         type: 'task.changed',
         payload: taskChangedPayload(sealedTask),
       })
+    }
+    // 评审 B4 下半（复核点名）：下游房间的「有新版本」提示也要实时——按**已存在的
+    // receipt 关系**逐个通知下游任务（载荷用各自 taskId，订阅方按 taskId 失效房间与
+    // 收件面）。没有 receipt 的任务与本版本无关，不发。
+    const downstreamRows = await tx
+      .select({ downstreamTaskId: schema.handoffReceipts.downstreamTaskId })
+      .from(schema.handoffReceipts)
+      .where(eq(schema.handoffReceipts.upstreamTaskId, run.taskId))
+    for (const downstreamTaskId of new Set(downstreamRows.map((row) => row.downstreamTaskId))) {
+      const downstreamTask = await getTask(tx, downstreamTaskId)
+      if (downstreamTask !== undefined) {
+        await appendTeamEvent(tx, {
+          type: 'task.changed',
+          payload: taskChangedPayload(downstreamTask),
+        })
+      }
     }
     return { revision: toHandoffRevisionView(revision) }
   })

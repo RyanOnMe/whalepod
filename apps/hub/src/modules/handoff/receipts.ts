@@ -306,13 +306,17 @@ export async function adoptReceipt(
       },
       createdAt: new Date(),
     })
-    const downstream = await getTask(tx, existing.downstreamTaskId)
-    if (downstream !== undefined) {
-      await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(downstream) })
-    }
-    const upstream = await getTask(tx, existing.upstreamTaskId)
-    if (upstream !== undefined) {
-      await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(upstream) })
+    // 复核：只有真的产生新 receipt 才发事件（重复采用是幂等返回，不是状态迁移——
+    // 与 confirm 的「无迁移不发」同口径）。
+    if (inserted) {
+      const downstream = await getTask(tx, existing.downstreamTaskId)
+      if (downstream !== undefined) {
+        await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(downstream) })
+      }
+      const upstream = await getTask(tx, existing.upstreamTaskId)
+      if (upstream !== undefined) {
+        await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(upstream) })
+      }
     }
     return { row, inserted }
   })

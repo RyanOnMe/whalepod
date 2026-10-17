@@ -160,7 +160,8 @@ export function HandoffReceiptPanel({
             {`${session.userId === active.receiverUserId ? '你' : `${directory.personOf(active.receiverUserId)}`}确认的理解（${new Date(active.confirmedAt ?? active.updatedAt).toLocaleString()}）：${active.understanding ?? ''}`}
           </p>
           {active.differences !== null ? (
-            <p className="mutation-hint">你提出的差异：{active.differences}</p>
+            // 评审 B7 同款：差异也属于接收人——改派后非接收人视角别冒充「你」。
+            <p className="mutation-hint">{`${session.userId === active.receiverUserId ? '你' : `${directory.personOf(active.receiverUserId)}`}提出的差异：${active.differences}`}</p>
           ) : null}
           {hasNewer ? (
             <div data-testid="handoff-newer-version">

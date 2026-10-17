@@ -50,13 +50,20 @@ export function RunInputManifest({
       {open ? (
         <div data-testid="run-input-manifest">
           {query.isPending ? <p role="status">正在读取本次输入…</p> : null}
-          {query.isError ? (
-            <>
-              <ErrorBanner error={query.error} />
-              <button type="button" className="button" onClick={() => void query.refetch()}>
-                重新读取输入
-              </button>
-            </>
+          {query.isError ? <ErrorBanner error={query.error} /> : null}
+          {query.isError || handoffQuery.isError ? (
+            // 评审 B8 复核：两条读面任一失败都给重试入口，且**同时重取**——只重取同 Task
+            // 清单时，交接读面的错误行会一直挂着，按钮形同虚设。
+            <button
+              type="button"
+              className="button"
+              onClick={() => {
+                void query.refetch()
+                void handoffQuery.refetch()
+              }}
+            >
+              重新读取输入
+            </button>
           ) : null}
           {query.isSuccess && !belongsToTask ? (
             <p role="alert">输入记录与本任务不一致，请重新选择执行。</p>
