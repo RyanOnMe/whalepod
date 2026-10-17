@@ -134,6 +134,26 @@ async function waitForFreshRunId(
   throw new Error('UI 启动的 Run 未出现在 Task Room 聚合中')
 }
 
+/**
+ * 等读面长出已发布材料：发布是**异步写**——点击「确认发布给团队」只保证请求发出，
+ * 紧接着 GET 房间会与 POST 抢跑（复核实测在负载下读到 undefined 判据红）。轮询读面
+ * 直到事实可见，与判定器读的是同一来源。
+ */
+async function waitForPublishedArtifact(
+  cookie: string,
+  taskId: string,
+  timeoutMs = 30_000,
+): Promise<{ id: string; sha256: string }> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const room = await roomOf(cookie, taskId)
+    const published = room.artifacts.find((a) => a.status === 'published')
+    if (published !== undefined) return published
+    if (Date.now() > deadline) throw new Error(`材料发布未在读面出现（等待 ${timeoutMs}ms）`)
+    await sleep(250)
+  }
+}
+
 async function pairNodeFor(cookie: string): Promise<string> {
   const codeRes = await hubApi(cookie, 'POST', '/devices/pairing-codes', {})
   expect(codeRes.status).toBe(201)
@@ -267,10 +287,12 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   await expect(alice.getByTestId('artifact-publish-button')).toBeVisible({ timeout: 30_000 })
   await alice.getByTestId('artifact-publish-button').click()
   await alice.getByRole('button', { name: '确认发布给团队' }).click()
-  const upstreamRoom = await roomOf(shared.aliceCookie, shared.upstreamTaskId)
-  const publishedArtifact = upstreamRoom.artifacts.find((a) => a.status === 'published')
-  expect(publishedArtifact).toBeDefined()
+  const publishedArtifact = await waitForPublishedArtifact(
+    shared.aliceCookie,
+    shared.upstreamTaskId,
+  )
 
+  const upstreamRoom = await roomOf(shared.aliceCookie, shared.upstreamTaskId)
   // 收尾草稿：面板出现可编辑草稿（自动生成、单次调用），核对后发布 v1。
   const draftPanel = alice.getByTestId('handoff-draft')
   await expect(draftPanel).toBeVisible({ timeout: 30_000 })
