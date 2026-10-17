@@ -255,8 +255,14 @@ export async function getTaskRoom(
   ])
   // #380：下游交接摘要——活跃 receipt（confirmed 且版本号最大）+ 上游是否有新版本。
   // 查询量小（单任务 receipt 数量级），与约定摘要同批解析。
+  // 评审 M3：只认「接收人 = 当前责任人」的 receipt——任务改派后旧 receipt 保留原版本，
+  // 但它不再喂给新责任人（服务端 Run 解析会 409 拒绝）；摘要若照发，composer 会默认
+  // 勾选它，用户点「开始执行」只会撞冲突。
   const handoffSummaries = await listReceiptsByDownstreamTask(handle, taskId)
-  const confirmedReceipts = handoffSummaries.filter((row) => row.receipt.status === 'confirmed')
+  const confirmedReceipts = handoffSummaries.filter(
+    (row) =>
+      row.receipt.status === 'confirmed' && row.receipt.receiverUserId === task.assigneeUserId,
+  )
   const activeReceipt = confirmedReceipts.reduce<(typeof confirmedReceipts)[number] | undefined>(
     (best, row) =>
       best === undefined || row.revision.revisionNumber > best.revision.revisionNumber ? row : best,

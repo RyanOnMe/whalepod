@@ -182,6 +182,9 @@ export async function deliverHandoff(
       })
       // 关联既有任务时创建路径没有事件；新建路径这里再发一次也无害（同形事实）。
       await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(downstream) })
+      // 评审 B9：上游「已交接」列表也是 team-visible 事实——只发下游，上游房间里
+      // 别人要等刷新才看见新增的交接行。
+      await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(upstream) })
       return row
     },
   )
@@ -219,28 +222,42 @@ export async function confirmReceipt(
     throw new ApiError(403, 'FORBIDDEN', 'only the receiver can confirm this handoff')
   }
   const now = new Date()
-  await transactCommand(database, `handoff.confirm:${idempotencyKey}`, async (tx) => {
-    const [locked] = await tx
-      .select()
-      .from(schema.handoffReceipts)
-      .where(eq(schema.handoffReceipts.id, receiptId))
-      .for('update')
-    if (locked === undefined) throw new ApiError(404, 'NOT_FOUND', 'handoff receipt not found')
-    if (locked.status === 'confirmed') return { id: locked.id, confirmed: true } // 幂等：首次理解不回写
-    await confirmHandoffReceipt(tx, receiptId, input.understanding, input.differences, now)
-    // 收件方与上游两侧房间都要实时看到状态变化（同一事务、同形载荷）。
-    const downstream = await getTask(tx, locked.downstreamTaskId)
-    if (downstream !== undefined) {
-      await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(downstream) })
-    }
-    const upstream = await getTask(tx, locked.upstreamTaskId)
-    if (upstream !== undefined) {
-      await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(upstream) })
-    }
-    // 命令台账的 result 必须可序列化（NOT NULL）：回执只记到 id+状态。
-    return { id: locked.id, confirmed: true }
-  })
-  await postDifferences(database, actor, existing.upstreamTaskId, input.differences, idempotencyKey)
+  const outcome = await transactCommand(
+    database,
+    `handoff.confirm:${idempotencyKey}`,
+    async (tx) => {
+      const [locked] = await tx
+        .select()
+        .from(schema.handoffReceipts)
+        .where(eq(schema.handoffReceipts.id, receiptId))
+        .for('update')
+      if (locked === undefined) throw new ApiError(404, 'NOT_FOUND', 'handoff receipt not found')
+      // 幂等：首次理解不回写；**这不是一次状态迁移**（评审 m4）——差异消息因此不
+      // 重复发（重复发只会污染上游讨论流，旧理解已被回执确认）。
+      if (locked.status === 'confirmed') return { id: locked.id, transitioned: false }
+      await confirmHandoffReceipt(tx, receiptId, input.understanding, input.differences, now)
+      // 收件方与上游两侧房间都要实时看到状态变化（同一事务、同形载荷）。
+      const downstream = await getTask(tx, locked.downstreamTaskId)
+      if (downstream !== undefined) {
+        await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(downstream) })
+      }
+      const upstream = await getTask(tx, locked.upstreamTaskId)
+      if (upstream !== undefined) {
+        await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(upstream) })
+      }
+      // 命令台账的 result 必须可序列化（NOT NULL）：回执只记到 id+状态。
+      return { id: locked.id, transitioned: true }
+    },
+  )
+  if (outcome.transitioned) {
+    await postDifferences(
+      database,
+      actor,
+      existing.upstreamTaskId,
+      input.differences,
+      idempotencyKey,
+    )
+  }
   return loadReceiptView(database.db, receiptId)
 }
 
@@ -264,7 +281,7 @@ export async function adoptReceipt(
   }
   const current = await getHandoffRevision(database.db, existing.revisionId)
   if (current === undefined) throw new ApiError(500, 'INTERNAL_ERROR', 'handoff revision lost')
-  const latest = await transactCommand(database, `handoff.adopt:${idempotencyKey}`, async (tx) => {
+  const outcome = await transactCommand(database, `handoff.adopt:${idempotencyKey}`, async (tx) => {
     const rows = await tx
       .select()
       .from(schema.handoffRevisions)
@@ -275,7 +292,7 @@ export async function adoptReceipt(
     if (newest === undefined || newest.revisionNumber <= current.revisionNumber) {
       throw new ApiError(409, 'CONFLICT', '上游没有更新的交接版本可采纳')
     }
-    const { row } = await insertHandoffReceiptIfAbsent(tx, {
+    const { row, inserted } = await insertHandoffReceiptIfAbsent(tx, {
       id: randomUUID(),
       revisionId: newest.id,
       upstreamTaskId: existing.upstreamTaskId,
@@ -297,10 +314,19 @@ export async function adoptReceipt(
     if (upstream !== undefined) {
       await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(upstream) })
     }
-    return row
+    return { row, inserted }
   })
-  await postDifferences(database, actor, existing.upstreamTaskId, input.differences, idempotencyKey)
-  return loadReceiptView(database.db, latest.id)
+  // 评审 m4：只有真的产生新 receipt 才发差异消息（重复采用幂等返回，不重复打扰上游）。
+  if (outcome.inserted) {
+    await postDifferences(
+      database,
+      actor,
+      existing.upstreamTaskId,
+      input.differences,
+      idempotencyKey,
+    )
+  }
+  return loadReceiptView(database.db, outcome.row.id)
 }
 
 /** 下游 Task 的接收关系列表（下播「有新版本」的数据源）。 */

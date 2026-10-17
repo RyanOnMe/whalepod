@@ -11,6 +11,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { api } from '../../shared/api/client.js'
+import { useMemberDirectory } from '../team/memberDirectory.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
 import type { HandoffReceiptView, Session, TaskView } from '../../shared/api/types.js'
@@ -75,6 +76,7 @@ export function HandoffReceiptPanel({
   session: Session
 }): ReactNode {
   const queryClient = useQueryClient()
+  const directory = useMemberDirectory()
   const [actionError, setActionError] = useState<unknown>(null)
   const query = useQuery({
     queryKey: queryKeys.taskHandoffReceipts(task.id),
@@ -153,7 +155,9 @@ export function HandoffReceiptPanel({
             {` · 固定版本 v${active.revisionNumber}`}
           </p>
           <p className="mutation-hint">
-            {`你确认的理解（${new Date(active.confirmedAt ?? active.updatedAt).toLocaleString()}）：${active.understanding ?? ''}`}
+            {/* 评审 B7：改派后旧 receipt 仍是团队事实——不是「你」的确认就报出人是谁
+                （回执属于接收人，别把别人的理解冒充成当前用户自己的）。 */}
+            {`${session.userId === active.receiverUserId ? '你' : `${directory.personOf(active.receiverUserId)}`}确认的理解（${new Date(active.confirmedAt ?? active.updatedAt).toLocaleString()}）：${active.understanding ?? ''}`}
           </p>
           {active.differences !== null ? (
             <p className="mutation-hint">你提出的差异：{active.differences}</p>

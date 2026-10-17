@@ -21,6 +21,7 @@ import {
 } from './fixtures.js'
 import { renderApp } from './render.jsx'
 import { openSelect, selectOption } from './select-menu.js'
+import { queryKeys } from '../src/app/query-client.js'
 import type { HandoffReceiptView, TaskView } from '../src/shared/api/types.js'
 
 const TASK_ID = '00000000-0000-4000-8000-0000000000aa'
@@ -335,6 +336,44 @@ describe('#380 执行区交接勾选', () => {
     await user.click(screen.getByRole('button', { name: '开始执行' }))
     await waitFor(() => expect(capture.body).toBeDefined())
     expect(capture.body).not.toHaveProperty('handoffReceiptId')
+  })
+
+  it('接收方在别处确认后房间实时更新（评审 B6）：默认勾选随之生效，不覆盖主动取消', async () => {
+    const user = userEvent.setup()
+    const view = renderApp(
+      `/tasks/${TASK_ID}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(downstreamTask()),
+        receiptsHandler([]),
+        ...launcherHandlers,
+      ]),
+    )
+    await screen.findByLabelText('指令')
+    expect(screen.queryByTestId('handoff-attach')).not.toBeInTheDocument()
+
+    // 房间经 WS 失效后重取：摘要 null → 非 null（接收方在别台机器上刚确认）。
+    const room = (summary: typeof handoffSummary): Record<string, unknown> => ({
+      task: downstreamTask(),
+      comments: [],
+      instructions: [],
+      artifacts: [],
+      runs: [],
+      agreement: { enabled: false, latestConfirmedNumber: null, hasDraft: false },
+      handoff: summary,
+      nextRunApprovalPolicy: null,
+    })
+    view.queryClient.setQueryData(queryKeys.taskRoom(TASK_ID), room(handoffSummary))
+    const attach = await screen.findByTestId('handoff-attach')
+    expect(within(attach).getByLabelText('附带上游交接材料')).toBeChecked()
+
+    // 用户主动取消后来一次刷新：保持取消——默认值只负责「从未有过 → 有」这一步。
+    await user.click(within(attach).getByLabelText('附带上游交接材料'))
+    expect(within(attach).getByLabelText('附带上游交接材料')).not.toBeChecked()
+    view.queryClient.setQueryData(
+      queryKeys.taskRoom(TASK_ID),
+      room({ ...handoffSummary, revisionNumber: 2 }),
+    )
+    await waitFor(() => expect(within(attach).getByLabelText('附带上游交接材料')).not.toBeChecked())
   })
 })
 
