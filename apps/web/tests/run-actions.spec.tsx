@@ -49,6 +49,9 @@ function makeRunView(overrides: Partial<RunView> = {}): RunView {
     rerunOfRunId: null,
     resumeFromRunId: null,
     approvalPolicy: 'approval_required',
+    // #378：约定绑定与用途（新必填字段，缺了类型检查会红）。
+    specRevisionId: null,
+    purpose: 'business',
     profileDigest: 'b'.repeat(64),
     createdAt: '2026-08-25T00:00:00.000Z',
     startedAt: '2026-08-25T00:01:00.000Z',

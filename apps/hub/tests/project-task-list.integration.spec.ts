@@ -89,6 +89,8 @@ describe('#137 GET /projects/:projectId/tasks（集成 · PostgreSQL）', () => 
     expect(Object.keys(tasks[0] ?? {}).sort()).toEqual(
       [
         'acceptedAt',
+        // #378：TaskView 增加约定开关（字段清单门：与 TaskView 同形，多一列少一列皆红）。
+        'agreementEnabled',
         'approvalPolicy',
         'assigneeAgentId',
         'assignmentStatus',

@@ -17,6 +17,7 @@ export type WorkspaceId = Brand<string, 'WorkspaceId'>
 export type RunId = Brand<string, 'RunId'>
 export type ApprovalId = Brand<string, 'ApprovalId'>
 export type ArtifactId = Brand<string, 'ArtifactId'>
+export type TaskSpecRevisionId = Brand<string, 'TaskSpecRevisionId'>
 
 export const asTeamId = (raw: string): TeamId => raw as TeamId
 export const asUserId = (raw: string): UserId => raw as UserId
@@ -29,3 +30,4 @@ export const asWorkspaceId = (raw: string): WorkspaceId => raw as WorkspaceId
 export const asRunId = (raw: string): RunId => raw as RunId
 export const asApprovalId = (raw: string): ApprovalId => raw as ApprovalId
 export const asArtifactId = (raw: string): ArtifactId => raw as ArtifactId
+export const asTaskSpecRevisionId = (raw: string): TaskSpecRevisionId => raw as TaskSpecRevisionId

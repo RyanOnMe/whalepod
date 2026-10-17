@@ -52,6 +52,9 @@ function liveHandlers(runId: string, status: 'running' | 'completed'): MockHandl
     failureSummary: null,
     resumeFromRunId: null,
     approvalPolicy: 'approval_required',
+    // #378：约定绑定与用途（新必填字段）。
+    specRevisionId: null,
+    purpose: 'business',
     rerunOfRunId: null,
     profileDigest: 'b'.repeat(64),
     createdAt: '2026-08-25T00:00:00.000Z',

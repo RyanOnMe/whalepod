@@ -26,6 +26,8 @@ export const queryKeys = {
   /** #254：⌘K 任务搜索（按关键词键控缓存）。 */
   taskSearch: (q: string) => ['task-search', q] as const,
   taskRoom: (taskId: string) => ['task-room', taskId] as const,
+  /** #378：任务约定读模型（草稿/已确认/历史/开关）。 */
+  taskAgreement: (taskId: string) => ['task-agreement', taskId] as const,
   /** 切片⑥e：任务级「谁能驱动」名单（`GET /tasks/:id/instruction-grants`）。 */
   instructionGrants: (taskId: string) => ['instruction-grants', taskId] as const,
   agents: ['agents'] as const,

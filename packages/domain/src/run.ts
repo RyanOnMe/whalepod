@@ -19,6 +19,18 @@ export type RunStatus =
   | 'cancelled'
   | 'lost'
 
+/**
+ * Run 用途（#378；ADR-0017 §2）：business = 业务执行（Task 启用约定后必须绑定
+ * 已确认版本）；agreement_draft / handoff_draft = 显式标记的辅助 Run（整理约定、
+ * 交接草稿），免绑定要求——「辅助 Run 明确标记用途」的语义所在。
+ */
+export type RunPurpose = 'business' | 'agreement_draft' | 'handoff_draft'
+
+/** 辅助 Run（非业务执行）：免任务约定绑定。缺省/未识别的值按 business 处理（fail-closed）。 */
+export function isHelperRunPurpose(purpose: RunPurpose | string | null | undefined): boolean {
+  return purpose === 'agreement_draft' || purpose === 'handoff_draft'
+}
+
 export type RunEvent =
   | { type: 'dispatch_acked' }
   | { type: 'runtime_ready' }

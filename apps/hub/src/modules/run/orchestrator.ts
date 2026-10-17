@@ -14,6 +14,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { snapshotRunInputs } from './input-manifest.js'
+import { resolveSpecBinding } from './spec-binding.js'
 import { uuidv7 } from '../shared/uuid.js'
 import { and, eq, inArray } from 'drizzle-orm'
 import { asUserId, authorize, DomainError, transitionRun, transitionTask } from '@whalepod/domain'
@@ -292,6 +293,19 @@ export class RunOrchestrator {
       throw new RunCommandError('RUN_ALREADY_ACTIVE', 'task already has an active run')
     }
 
+    // 评审 M4：purpose 是**客户端可声明**的免绑定标记，不设门槛就等于给「约定流程」
+    // 开了后门（任何有指令权的人传 agreement_draft 即可绕过 AGREEMENT_REQUIRED 跑业务
+    // 工作）。辅助 Run 只允许责任人发起（ADR-0017 §1 的整理约定场景）。
+    if (
+      input.purpose !== undefined &&
+      input.purpose !== 'business' &&
+      task.assigneeUserId !== ctx.userId
+    ) {
+      throw new RunCommandError('FORBIDDEN', 'helper run purposes are assignee-only')
+    }
+    // 任务约定绑定（#378；ADR-0017 §2）：与输入清单同一事务内固化，全入口单点收口。
+    const specRevisionId = await resolveSpecBinding(tx, task, input)
+
     const artifactInputManifest = await snapshotRunInputs(
       tx,
       task.id,
@@ -347,6 +361,8 @@ export class RunOrchestrator {
       deviceId: device.id,
       workspaceId: workspace.id,
       artifactInputManifest,
+      ...(specRevisionId !== null ? { specRevisionId } : {}),
+      ...(input.purpose !== undefined ? { purpose: input.purpose } : {}),
       profileDigest: revision.profileDigest,
       pluginPackDigest: pack.packDigest,
       dshDistributionVersion: input.dshDistributionVersion,

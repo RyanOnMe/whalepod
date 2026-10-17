@@ -291,6 +291,10 @@ export async function insertRunRow(
     /** 可空列：显式 null 是「无会话」的语义（run-resume 的 legacy 形态）。 */
     dshSessionId?: string | null
     artifactInputManifest?: ArtifactInputManifest | null
+    /** #378：约定绑定（缺省 = 未绑定，历史形态）。 */
+    specRevisionId?: string | null
+    /** #378：Run 用途（缺省 business）。 */
+    purpose?: 'business' | 'agreement_draft' | 'handoff_draft'
   },
 ): Promise<string> {
   const runId = randomUUID()
@@ -310,6 +314,8 @@ export async function insertRunRow(
     ...(input.artifactInputManifest === undefined
       ? {}
       : { artifactInputManifest: input.artifactInputManifest }),
+    ...(input.specRevisionId !== undefined ? { specRevisionId: input.specRevisionId } : {}),
+    ...(input.purpose !== undefined ? { purpose: input.purpose } : {}),
   })
   return runId
 }

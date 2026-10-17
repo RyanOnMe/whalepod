@@ -23,6 +23,9 @@ function run(over: Partial<TaskRoomRun> = {}): TaskRoomRun {
     lastToolCall: null,
     // #261：与 fixtures.makeRun 同步（新必填字段，缺了类型检查会红）。
     lastPhase: null,
+    // #378：约定绑定与用途（与 fixtures.makeRun 同步）。
+    specRevision: null,
+    purpose: 'business',
     ...over,
   }
 }

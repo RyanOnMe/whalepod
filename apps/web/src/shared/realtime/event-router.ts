@@ -69,6 +69,8 @@ const EVENT_KEY_BUILDERS: Readonly<Record<string, (payload: unknown) => CacheKey
   'project.changed': () => [['projects'], ['attention'], ['recent-tasks']],
   'task.changed': (payload) => [
     ...keysWith(payload, 'taskId', 'task-room'),
+    // #378：约定草稿/确认/开关都发 task.changed——约定读模型与房间分开缓存，一起失效。
+    ...keysWith(payload, 'taskId', 'task-agreement'),
     // 切片⑥e 的权限页：服务端授权/撤销发的就是 `task.changed`（`change: instruction_granted
     // /instruction_revoked`，见 apps/hub/src/modules/task/instruction-grants.ts）。漏了这条键，
     // 责任人撤销某人授权时，对方若正开着权限页就**永远看不到那行消失**，而服务端下一次指令已经
