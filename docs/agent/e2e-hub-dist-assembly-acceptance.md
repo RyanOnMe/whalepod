@@ -78,7 +78,8 @@ Q5 的每轮日志在 `artifacts/q5/run-*.log`（`bash scripts/q5-loop.sh N`）�
   顶层异常仍可能有未归约栈帧落进 `artifacts/q5/run-*.log`——那是既有面（任何未捕获异常
   都这样），本 Issue 只保证**新增**的两处文本与构建失败路径不泄漏绝对路径。
 - **`.mts` 脚本不在任何 typecheck program 内**（`tsconfig.json` 的 include 是
-  `scripts/**/*.ts`）：`e2e-serve.mts` 的改动只有运行期（Q5 实跑）覆盖，属存量缺口，另立账。
+  `scripts/**/*.ts`）：`e2e-serve.mts` 的改动只有运行期（Q5 实跑）覆盖，属存量缺口，
+  立账 #373。
 - **增量 build 的代价**：每次 webServer 冷启都跑一次 `pnpm --filter @whalepod/hub...
   --filter @whalepod/runtime... build`（up-to-date 时 ~0.4s 实测）。本轮实测 Q5 全链
   11 块全绿，过程中 `Hub 入口` 取证行共 13 次 = **11 次 webServer 冷启 + 2 次用例内的
