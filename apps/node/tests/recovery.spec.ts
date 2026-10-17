@@ -415,8 +415,9 @@ describe('Node 重启无孤儿恢复', () => {
     }
     opening.close()
 
-    // 补列生效后 spawn：`start()` 的 INSERT 点名列 dsh_version——没有补列就会
-    // 「table active_runtime has no column named dsh_version」直接抛（真判据）。
+    // 补列生效后 spawn：本段验的是**绿态**——INSERT（点名列 dsh_version）跑得通、
+    // 且记下的版本值正确。「没有补列就会抛 no column named dsh_version」那条红点
+    // 由上面的 pragma 断言承担（它在 spawn 之前，失败路径不留孤儿探针）。
     const runId = 'r-legacy-spawn'
     const pid = await makeReadySupervisor(stateDb, runId, '0.1.0-rc.8')
     expect(await alive(pid)).toBe(true)
