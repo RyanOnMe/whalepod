@@ -11,7 +11,7 @@
  *   采用当前已确认版本；要继承来源版本由调用方显式传来源的 specRevisionId）。
  */
 import { isHelperRunPurpose } from '@whalepod/domain'
-import type { TaskRow, Tx } from '@whalepod/db'
+import type { TaskRow, TaskSpecRevisionRow, Tx } from '@whalepod/db'
 import { getLatestConfirmedSpec, getSpecRevision } from '@whalepod/db'
 import { RunCommandError } from './errors.js'
 
@@ -24,7 +24,7 @@ export async function resolveSpecBinding(
   tx: Tx,
   task: TaskRow,
   input: SpecBindingInput,
-): Promise<string | null> {
+): Promise<TaskSpecRevisionRow | null> {
   if (input.specRevisionId !== undefined) {
     // UUID 路由拼写不改变持久身份（与 artifactInputIds 同口径）。
     const revision = await getSpecRevision(tx, input.specRevisionId.toLowerCase())
@@ -37,7 +37,7 @@ export async function resolveSpecBinding(
         '约定的草稿版本不能作为执行依据；请先由责任人确认后再执行',
       )
     }
-    return revision.id
+    return revision
   }
   if (!task.agreementEnabled || isHelperRunPurpose(input.purpose)) return null
   const latest = await getLatestConfirmedSpec(tx, task.id)
@@ -47,5 +47,5 @@ export async function resolveSpecBinding(
       '任务已启用约定流程：请先确认任务约定的第一个版本，再开始执行',
     )
   }
-  return latest.id
+  return latest
 }

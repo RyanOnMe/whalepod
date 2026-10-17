@@ -30,6 +30,7 @@ import { AssignmentPanel } from '../features/task/AssignmentPanel.js'
 import { CommentComposer, CommentList } from '../features/task/CommentComposer.js'
 import { DeliveryFlow } from '../features/task/DeliveryFlow.js'
 import { RunInputManifest } from '../features/task/RunInputManifest.js'
+import { RunHandoffDraft } from '../features/task/RunHandoffDraft.js'
 import {
   ExecutionComposer,
   type ArtifactReviewRequest,
@@ -39,7 +40,7 @@ import { RunConsole } from '../features/task/RunConsole.js'
 import { InstructionList } from '../features/task/InstructionList.js'
 import { RunLivePanel } from '../features/task/RunLivePanel.js'
 import { runOrdinalLabels } from '../features/task/runLabels.js'
-import { ACTIVE_RUN, QUEUEING_RUN } from '../features/task/run-states.js'
+import { ACTIVE_RUN, QUEUEING_RUN, TERMINAL_RUN } from '../features/task/run-states.js'
 import { formatRunReference } from '../features/task/runReference.js'
 import { ApprovalSlot, RunTimeline } from '../features/task/RunTimeline.js'
 import { TaskHeader } from '../features/task/TaskHeader.js'
@@ -284,6 +285,14 @@ function TaskRoom(): ReactNode {
                     runId={selectedRunId}
                     taskId={task.id}
                     runLabels={runOrdinalLabels(runs)}
+                  />
+                  <RunHandoffDraft
+                    runId={selectedRunId}
+                    task={task}
+                    session={session}
+                    runTerminal={TERMINAL_RUN.has(
+                      runs.find((run) => run.id === selectedRunId)?.status ?? 'queued',
+                    )}
                   />
                 </>
               ) : null}

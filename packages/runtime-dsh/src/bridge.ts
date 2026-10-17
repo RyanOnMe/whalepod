@@ -26,6 +26,7 @@ import { ApprovalPort } from './approval-port.js'
 import { dshAnchorUrl } from './dsh-distribution.js'
 import { nullLog, type LogSink } from './log.js'
 import { dshSessionIdOf, runtimeSpecFromInitialize, type RuntimeSpec } from './runtime-spec.js'
+import { buildHandoffPrompt, generateHandoffDraft, handoffDraftTimeoutMs } from './handoff-draft.js'
 import { SessionOwner, type AgentStatusPayload, type SessionOwnerEvents } from './session-owner.js'
 
 /**
@@ -317,15 +318,34 @@ export class RuntimeBridge {
       (fact) => emit(frameOf('approval.requested', { runId, ...fact })),
       log,
     )
+    // #379：收尾整理的候选清单（标题；不夹本机路径）——artifact.candidate 只带相对路径，
+    // 这里登记展示名，供交接草稿的 prompt 识别本次产出。
+    const handoffCandidates: { title: string }[] = []
     const artifact: ArtifactPort = {
-      publish: (candidate) => emit(frameOf('artifact.candidate', { runId, ...candidate })),
+      publish: (candidate) => {
+        handoffCandidates.push({ title: candidate.title })
+        emit(frameOf('artifact.candidate', { runId, ...candidate }))
+      },
     }
     const events: SessionOwnerEvents = {
       sessionEvent: (event) => emit(frameOf('session.event', { runId, dshSessionId, event })),
       agentStatus: (status) => emit(frameOf('agent.status', { runId, status })),
-      turnSettled: (reason, finalMessageId) => {
+      turnSettled: async (reason, finalMessageId) => {
         switch (reason.kind) {
-          case 'completed':
+          case 'completed': {
+            // #379（ADR-0017 §3）：正常完成且启用约定流程 → 收尾一次性整理（有界、无工具）。
+            // 任何异常都不改变业务执行结果：无论整理成败，随后照发 run.completed。
+            if (spec.handoff !== undefined) {
+              const outcome = await runtimeHandoffDraft({
+                ctx,
+                spec,
+                sessionId: dshSessionId,
+                transcript: owner.transcriptSnapshot(),
+                candidates: handoffCandidates,
+                log,
+              })
+              emit(frameOf('handoff.draft', { runId, ...outcome }))
+            }
             emit(
               frameOf('run.completed', {
                 runId,
@@ -334,6 +354,7 @@ export class RuntimeBridge {
               }),
             )
             return
+          }
           case 'aborted':
             emit(frameOf('run.cancelled', { runId }))
             return
@@ -456,6 +477,68 @@ export class RuntimeBridge {
       runId: this.spec.runId,
     })
     if (firstError !== undefined) throw firstError
+  }
+}
+
+/**
+ * 收尾交接草稿的桥内驱动（#379；ADR-0017 §3）：装配 material → 一次性模型调用 →
+ * 有界返回。**任何异常都收敛成 `{status:'failed', reason}`**——调用方随后照发
+ * `run.completed`，业务执行结果不被整理成败改写。
+ */
+async function runtimeHandoffDraft(input: {
+  ctx: Context
+  spec: RuntimeSpec
+  sessionId: string
+  transcript: readonly { role: 'user' | 'assistant'; text: string }[]
+  candidates: readonly { title: string }[]
+  log: LogSink
+}): Promise<
+  | { status: 'generated'; content: import('@whalepod/protocol').HandoffNarrative }
+  | { status: 'failed'; reason: string }
+> {
+  const { ctx, spec, sessionId, transcript, candidates, log } = input
+  try {
+    // 模型出口取运行时 llm 服务（与 agent 同一 provider/model 路由；replay 探针下
+    // 由 replay 适配器应答）。缺服务 = 整理失败，不影响执行结果。
+    const llm = ctx.get('llm') as
+      | { stream(options: import('@deepseek-ai/dsh-llm').GenerateOptions): AsyncIterable<unknown> }
+      | undefined
+    if (llm === undefined) return { status: 'failed', reason: 'llm-service-unavailable' }
+    const prompt = buildHandoffPrompt({
+      runId: spec.runId,
+      agreement: spec.handoff?.agreement ?? null,
+      transcript,
+      artifacts: candidates.map((candidate) => ({ title: candidate.title })),
+    })
+    const outcome = await generateHandoffDraft(
+      {
+        provider: spec.provider,
+        model: spec.model,
+        sessionId: sessionId as import('@deepseek-ai/dsh-llm').GenerateOptions['sessionId'],
+        timeoutMs: handoffDraftTimeoutMs(),
+      },
+      prompt,
+      (options) => llm.stream(options) as AsyncIterable<import('@deepseek-ai/dsh-llm').StreamChunk>,
+    )
+    log({
+      level: 'info',
+      component: 'runtime.bridge.handoff',
+      msg: 'handoff draft wrap-up settled',
+      runId: spec.runId,
+      status: outcome.status,
+      ...(outcome.status === 'failed' ? { reason: outcome.reason } : {}),
+    })
+    return outcome
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    log({
+      level: 'error',
+      component: 'runtime.bridge.handoff',
+      msg: 'handoff draft wrap-up crashed',
+      runId: spec.runId,
+      error: message,
+    })
+    return { status: 'failed', reason: `internal-error: ${message.slice(0, 300)}` }
   }
 }
 

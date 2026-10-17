@@ -3013,3 +3013,55 @@ textarea::placeholder {
 .agreement-update-notice p {
   margin: 0.25rem 0;
 }
+
+/* #379 交接草稿面板（owner 私有）：小节 + 条目编辑，沿用 agreement 家族语言。 */
+.handoff-draft {
+  margin-top: var(--space-3, 0.75rem);
+}
+.handoff-section {
+  margin-top: var(--space-2, 0.5rem);
+}
+.handoff-section h3 {
+  font-size: 13px;
+  color: var(--color-ink-soft);
+  margin-bottom: 0.25rem;
+}
+.handoff-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+.handoff-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.25rem 0.5rem;
+  align-items: center;
+}
+.handoff-item .handoff-refs {
+  grid-column: 1 / -1;
+  font-size: 12px;
+}
+.handoff-verified {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 12px;
+  color: var(--color-ink-soft);
+  white-space: nowrap;
+}
+.handoff-invalid {
+  grid-column: 1 / -1;
+  color: var(--color-danger, #b42318);
+  font-size: 12px;
+}
+.handoff-field {
+  display: grid;
+  gap: 0.2rem;
+  margin-top: 0.35rem;
+}
+.handoff-field span {
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}

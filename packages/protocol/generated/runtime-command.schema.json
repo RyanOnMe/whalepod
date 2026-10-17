@@ -61,6 +61,9 @@
             },
             "artifactInputsDir": {
               "$ref": "#/$defs/__schema16"
+            },
+            "handoff": {
+              "$ref": "#/$defs/__schema17"
             }
           },
           "required": [
@@ -434,6 +437,56 @@
     "__schema16": {
       "type": "string",
       "minLength": 1
+    },
+    "__schema17": {
+      "type": "object",
+      "properties": {
+        "agreement": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "revisionNumber": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "goal": {
+                  "type": "string",
+                  "maxLength": 10000
+                },
+                "constraints": {
+                  "type": "string",
+                  "maxLength": 10000
+                },
+                "acceptance": {
+                  "type": "string",
+                  "maxLength": 10000
+                },
+                "openQuestions": {
+                  "type": "string",
+                  "maxLength": 10000
+                }
+              },
+              "required": [
+                "revisionNumber",
+                "goal",
+                "constraints",
+                "acceptance",
+                "openQuestions"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "agreement"
+      ],
+      "additionalProperties": false
     }
   }
 }

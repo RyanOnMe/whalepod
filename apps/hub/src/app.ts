@@ -30,6 +30,7 @@ import { registerWorkspaceRoutes } from './modules/device/workspace-routes.js'
 import { registerNodeWebsocket } from './modules/device/node-websocket.js'
 import { RunOrchestrator } from './modules/run/index.js'
 import { registerRunRoutes } from './modules/run/routes.js'
+import { registerHandoffRoutes } from './modules/handoff/routes.js'
 import { getDeviceDshDistributionVersion } from './modules/run/queries.js'
 import { unwrapPgError } from '@whalepod/db'
 import { registerRealtimeRoutes } from './modules/realtime/routes.js'
@@ -211,6 +212,8 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         dshDistributionVersionFor: (deviceId) =>
           getDeviceDshDistributionVersion(database.db, deviceId),
       })
+      // #379：交接草稿/版本面（owner 私有草稿 + 团队可见的已发布版本）。
+      registerHandoffRoutes(api, { database, requireActor })
       registerAgentRoutes(api, { database, requireActor })
       // P1-17：插件端点（03 §4）——catalog/安装/Pack 走 Session，descriptor 走 Device Token。
       registerPluginRoutes(api, {

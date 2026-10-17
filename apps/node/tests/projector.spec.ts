@@ -508,6 +508,48 @@ describe('runtime 生命周期帧', () => {
   })
 })
 
+describe('handoff.draft（#379：草稿私有——只出 owner 受众）', () => {
+  it('generated → 恰一条 owner 事件、带叙述；没有 project 镜像（不是收缩版）', () => {
+    const p = makeProjector()
+    const out = p.projectRuntimeOutput(
+      lifecycleFrame('handoff.draft', {
+        status: 'generated',
+        content: {
+          completed: [{ text: '完成登录接口', verified: false, refs: [] }],
+          interfaces: [],
+          unfinished: [],
+          decisions: [],
+          evidence: [],
+          downstream: [],
+          commits: [],
+          prs: [],
+        },
+      }),
+    )
+    expect(out.events).toHaveLength(1)
+    expect(out.events[0]!.audience).toBe('owner')
+    expect(out.events[0]!.event).toMatchObject({
+      type: 'handoff.draft',
+      status: 'generated',
+    })
+    expect(out.liveTexts).toEqual([])
+  })
+
+  it('failed → 只出 owner 事件并带原因（超时/解析失败不改业务结果）', () => {
+    const p = makeProjector()
+    const out = p.projectRuntimeOutput(
+      lifecycleFrame('handoff.draft', { status: 'failed', reason: 'timeout' }),
+    )
+    expect(out.events).toHaveLength(1)
+    expect(out.events[0]!.audience).toBe('owner')
+    expect(out.events[0]!.event).toEqual({
+      type: 'handoff.draft',
+      status: 'failed',
+      reason: 'timeout',
+    })
+  })
+})
+
 describe('未登记事件类型（fail-silent 投影纪律）', () => {
   it.each(['turn/start', 'step/end', 'user/message', 'request/header', 'todo/write', 'unknown/x'])(
     '%s → 零输出',
