@@ -21,11 +21,15 @@
    同一 spec 的接线判据在 2026-10-17 也**补了 include 面**：只查脚本文本时可被绕过——评审 B
    先报「把 tests/ 从 include 里摘掉」，改文本判据后又抓到两条同族旁路（**删掉 include 键**
    会走 `extends` 继承的 include、「不写就默认全覆盖」在本仓库不成立；`exclude: ["tests/**"]`
-   则文本只查一面）。最终改成 **ground truth**：对每个包跑
-   `tsc -p tsconfig.test.json --listFilesOnly`，要求清单里真有 `<pkg>/tests/` 下的文件——
-   一次覆盖 extends/include/exclude/glob 的全部形态；tsc 起不来同样判违规（fail-closed）。
-   成本实测：9 个包合计约 3s（各 0.2–0.5s），进 Q0。三条旁路各做一次真实变异（domain）：
-   收窄 include / 删 include 键 / exclude tests → 全部红，还原绿。
+   则文本只查一面）。最终改成 **ground truth 按文件比对**：走
+   `<pkg>/tests` 下全部 TS 源文件，跑 `tsc -p tsconfig.test.json --listFilesOnly`，
+   **每一个**测试文件都必须出现在清单里（缺席的相对路径进违规消息）；tsc 非零退出同样判违规
+   （fail-closed：配置坏了不许判「已接线」）。一次覆盖 extends/include/exclude/glob 的全部形态。
+   成本实测：9 个包合计约 3s（各 0.2–0.5s），进 Q0。**「存在任一 /tests/ 路径」不够**：换成
+   「按存在性查」后又被 `tests/*.spec.ts` 这种单层 glob 绕过——apps/node 的
+   tests/integration/** 与 tests/resilience/** 共 9 个 spec 静默脱离 Q0 而门全绿（评审 B 第二轮）。
+   两侧路径都过 `realpathSync`：macOS 的 `os.tmpdir()` 是 `/var/folders/…`、tsc 打的是
+   `/private/var/folders/…`，不归一就会把「在 program 里」误判成缺失（fixture 实测踩到）。
 2. **棘轮（本批新增）**：deferral 表里原先只写「N 个存量错误」这行字——2026-10-09 实测发现
    它已经烂了：hub 记 30 实际 **39**、node 记 29 实际 **31**。现在数字由
    `scripts/lib/typecheck-test-baseline.ts` 承载、由 `scripts/tests/typecheck-test-baseline.spec.ts`
@@ -65,9 +69,12 @@ exports 的 `./testing` 带 `development → src`：integration spec 里还有 h
   （node 同形）；接上 `tsc -p tsconfig.test.json` 后转绿。
 - **棘轮能拦住新增**：`countTestTypecheckErrors` 的 bug 复用是直接跑真 tsc 并数 `error TS` 行——
   接线后这些错误只要再冒一个，`pnpm typecheck` 就会红（不再是「跑得过就行」）。
-- **接线判据的 include 面**：把 `packages/domain/tsconfig.test.json` 的 include 收窄到只有
-  `src/**` ⟹ `pnpm check:boundaries` 红（`packages/domain: tsconfig.test.json 的 include 不含
-  tests/`）；还原 ⟹ 绿。
+- **接线判据的三条真实变异**（2026-10-17 复核，均在 `apps/node` 上做、逐条还原）：include
+  收窄成 `tests/*.spec.ts`（单层 glob）⟹ 红，报 **9** 个缺失（`tests/integration/**` +
+  `tests/resilience/**`，逐个列出）；删掉 `include` 键（`extends` 继承生效）⟹ 红，报 **41** 个；
+  `exclude` 加 `tests/**` ⟹ 红，报 **41** 个。无变异 ⟹ `pnpm check:boundaries` 输出
+  `no violations`（9/9 包过严格形态）。fixture（`scripts/check-boundaries.spec.ts`，36 例）
+  五态：收窄 / 删 include 键 / exclude / 单层 glob（漏嵌套 1 个）/ 正确接线——前四红、末绿。
 - **hub/testing 的解析契约**：临时删掉 `apps/hub/package.json` 的 `exports['./testing'].development`
   ⟹ `apps/node/tests/hub-testing-resolution.spec.ts` 红（打印解析到的 `dist/testing/index.js`
   路径）；还原 ⟹ 绿。
