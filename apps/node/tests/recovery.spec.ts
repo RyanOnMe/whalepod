@@ -60,6 +60,15 @@ async function alive(pid: number): Promise<boolean> {
   }
 }
 
+/** 取一个确定已死的 pid：真 spawn 一个立即退出的进程并等它被回收（pid 复用概率可忽略）。 */
+async function deadPid(): Promise<number> {
+  const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' })
+  const pid = child.pid
+  if (pid === undefined) throw new Error('spawn failed')
+  await new Promise<void>((resolve) => child.once('exit', () => resolve()))
+  return pid
+}
+
 /** #256：轮询到条件成立或超时（等待异步回收不得用固定 sleep 猜时长）。 */
 async function waitForValue<T>(
   probe: () => Promise<T | undefined>,
@@ -132,7 +141,12 @@ function spec(runId: string): RuntimeStartSpec {
   }
 }
 
-async function makeReadySupervisor(stateDbPath: string, runId: string): Promise<number> {
+async function makeReadySupervisor(
+  stateDbPath: string,
+  runId: string,
+  /** #356：spawn 时记入 active_runtime 的 DSH 版本（缺省 = 不记，既有用例语义）。 */
+  dshDistributionVersion?: string,
+): Promise<number> {
   const registry = new WorkspaceRegistry(
     join(root, `reg-${Math.random().toString(36).slice(2)}.sqlite`),
   )
@@ -148,6 +162,7 @@ async function makeReadySupervisor(stateDbPath: string, runId: string): Promise<
     stateDbPath,
     capacity: 2,
     runtimeTimeoutMs: 60_000,
+    ...(dshDistributionVersion === undefined ? {} : { dshDistributionVersion }),
   })
   await first.start(spec(runId), { workspaceId: ws.id })
   const record = (await first.activeRuns()).find((r) => r.runId === runId)
@@ -156,7 +171,11 @@ async function makeReadySupervisor(stateDbPath: string, runId: string): Promise<
   return record.pid
 }
 
-function reopenedSupervisor(stateDbPath: string): RuntimeSupervisor {
+function reopenedSupervisor(
+  stateDbPath: string,
+  /** #356：本次启动的探针版本；`null` = cli 的「探不到」形态，与「未注入」是两回事。 */
+  dshDistributionVersion?: string | null,
+): RuntimeSupervisor {
   const supervisor = new RuntimeSupervisor({
     driver: realProcessDriver(),
     registry: new WorkspaceRegistry(
@@ -166,6 +185,7 @@ function reopenedSupervisor(stateDbPath: string): RuntimeSupervisor {
     stateDbPath,
     capacity: 2,
     runtimeTimeoutMs: 60_000,
+    ...(dshDistributionVersion === undefined ? {} : { dshDistributionVersion }),
   })
   return supervisor
 }
@@ -220,5 +240,195 @@ describe('Node 重启无孤儿恢复', () => {
 
     // #305：负向判据许下的活口由本用例负责收回（断言「没被杀」之后自己杀）。
     await reap(childPid)
+  })
+
+  // ---- #356：换版后的孤儿归因（专用失败码的左侧操作数）----
+
+  it('#356：spawn 版本 != 本次启动版本（升级/回滚形态）→ version_changed_after_node_restart', async () => {
+    const stateDb = join(root, `state-vc-${Math.random().toString(36).slice(2)}.sqlite`)
+    const runId = 'r-orphan-vc'
+    const childPid = await makeReadySupervisor(stateDb, runId, '0.1.0-rc.8')
+
+    // 重启前换版：本次启动探针报的是旧版本（回滚）——归因必须是「版本换了」。
+    const second = reopenedSupervisor(stateDb, '0.1.0-rc.7')
+    const lost: Array<{ runId: string; reason: string }> = []
+    second.onLost((id, reason) => lost.push({ runId: id, reason }))
+
+    await second.recoverOrphans()
+    await waitForValue(async () => ((await alive(childPid)) ? undefined : true), '孤儿进程未被终止')
+
+    expect(lost).toEqual([{ runId, reason: 'version_changed_after_node_restart' }])
+    expect(await second.activeRuns()).toEqual([])
+    second.close()
+  })
+
+  it('#356 负控：版本没变 → 仍是 orphaned_after_node_restart（不许把普通重启谎报成换版）', async () => {
+    const stateDb = join(root, `state-same-${Math.random().toString(36).slice(2)}.sqlite`)
+    const runId = 'r-orphan-same'
+    const childPid = await makeReadySupervisor(stateDb, runId, '0.1.0-rc.8')
+
+    const second = reopenedSupervisor(stateDb, '0.1.0-rc.8')
+    const lost: Array<{ runId: string; reason: string }> = []
+    second.onLost((id, reason) => lost.push({ runId: id, reason }))
+
+    await second.recoverOrphans()
+    await waitForValue(async () => ((await alive(childPid)) ? undefined : true), '孤儿进程未被终止')
+
+    expect(lost).toEqual([{ runId, reason: 'orphaned_after_node_restart' }])
+    second.close()
+  })
+
+  it('#356 负控：任一侧版本未知 → 退回通用归因（探针失败不谎报换版）', async () => {
+    // 情形一：spawn 时没记版本（旧库/未注入），本次启动探针成功。
+    const stateDbA = join(root, `state-unk-a-${Math.random().toString(36).slice(2)}.sqlite`)
+    const runIdA = 'r-orphan-unk-a'
+    const pidA = await makeReadySupervisor(stateDbA, runIdA)
+    const secondA = reopenedSupervisor(stateDbA, '0.1.0-rc.8')
+    const lostA: Array<{ runId: string; reason: string }> = []
+    secondA.onLost((id, reason) => lostA.push({ runId: id, reason }))
+    await secondA.recoverOrphans()
+    await waitForValue(async () => ((await alive(pidA)) ? undefined : true), '孤儿进程未被终止')
+    expect(lostA).toEqual([{ runId: runIdA, reason: 'orphaned_after_node_restart' }])
+    secondA.close()
+
+    // 情形二：记了版本，但本次启动探针失败——cli 传的是 **probed（null）**，与
+    // 情形一的「未注入（undefined）」是两种形态，都要判（评审 A-P2：只钉 undefined
+    // 时，把判定里的 null 分支删掉也全绿）。
+    const stateDbB = join(root, `state-unk-b-${Math.random().toString(36).slice(2)}.sqlite`)
+    const runIdB = 'r-orphan-unk-b'
+    const pidB = await makeReadySupervisor(stateDbB, runIdB, '0.1.0-rc.8')
+    const secondB = reopenedSupervisor(stateDbB, null)
+    const lostB: Array<{ runId: string; reason: string }> = []
+    secondB.onLost((id, reason) => lostB.push({ runId: id, reason }))
+    await secondB.recoverOrphans()
+    await waitForValue(async () => ((await alive(pidB)) ? undefined : true), '孤儿进程未被终止')
+    expect(lostB).toEqual([{ runId: runIdB, reason: 'orphaned_after_node_restart' }])
+    secondB.close()
+  })
+
+  it('#356：早已 dead 的孤儿 + 版本不同 → 仍是通用归因（Run 死于那次崩溃，换版是事后的事）', async () => {
+    const stateDb = join(root, `state-dead-vc-${Math.random().toString(36).slice(2)}.sqlite`)
+    // 真死 pid（spawn 后等 exit 被回收）→ probeOrphan 必判 dead；别拿「活 pid + 1970 启动
+    // 时间」冒充 dead——那是 mismatch，两条分支的语义不同（评审抓到的记账错）。
+    const dead = await deadPid()
+    const { DatabaseSync } = await import('node:sqlite')
+    const seeded = new DatabaseSync(stateDb)
+    seeded.exec(`create table active_runtime (
+      run_id text primary key, pid integer not null, process_start_time text not null,
+      pgid integer not null, runtime_nonce text not null, workspace_id text not null,
+      started_at text not null, stderr_tail text, dsh_version text)`)
+    seeded
+      .prepare(
+        'insert into active_runtime (run_id, pid, process_start_time, pgid, runtime_nonce, workspace_id, started_at, stderr_tail, dsh_version) values (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        'r-dead-vc',
+        dead,
+        '1970-01-01T00:00:00.000Z',
+        dead,
+        'no-such-nonce',
+        'w',
+        new Date().toISOString(),
+        null,
+        '0.1.0-rc.8',
+      )
+    seeded.close()
+
+    const second = reopenedSupervisor(stateDb, '0.1.0-rc.7')
+    const lost: Array<{ runId: string; reason: string }> = []
+    second.onLost((id, reason) => lost.push({ runId: id, reason }))
+    await second.recoverOrphans()
+
+    expect(lost).toEqual([{ runId: 'r-dead-vc', reason: 'orphaned_after_node_restart' }])
+    second.close()
+  })
+
+  it('#356：旧状态库（无 dsh_version 列）补列后照常恢复——不因缺列崩，也不谎报换版', async () => {
+    const stateDb = join(root, `state-legacy-${Math.random().toString(36).slice(2)}.sqlite`)
+    // 用引入本列之前的 DDL 建库并塞一行（模拟升级 Node 后的既有状态库）。
+    const { DatabaseSync } = await import('node:sqlite')
+    const legacy = new DatabaseSync(stateDb)
+    legacy.exec(`create table active_runtime (
+      run_id text primary key, pid integer not null, process_start_time text not null,
+      pgid integer not null, runtime_nonce text not null, workspace_id text not null,
+      started_at text not null, stderr_tail text)`)
+    legacy
+      .prepare(
+        'insert into active_runtime (run_id, pid, process_start_time, pgid, runtime_nonce, workspace_id, started_at, stderr_tail) values (?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        'r-orphan-legacy',
+        999_999_999,
+        '1970-01-01T00:00:00.000Z',
+        999_999_999,
+        'n',
+        'w',
+        new Date().toISOString(),
+        null,
+      )
+    legacy.close()
+
+    const second = reopenedSupervisor(stateDb, '0.1.0-rc.8') // 打开即触发补列
+    // 判据落在「补列本身」：删掉迁移块这条必须红——恢复流程本身碰不到该列（select *
+    // 读得到 undefined、delete/activeRuns 都不点名列），只有 spawn 的 INSERT 才会碰到
+    // （见下一条用例），所以「打开后列在」需要显式断言（上一轮评审抓到的假判据）。
+    {
+      const { DatabaseSync } = await import('node:sqlite')
+      const inspect = new DatabaseSync(stateDb)
+      const columns = inspect.prepare('pragma table_info(active_runtime)').all() as unknown as {
+        name: string
+      }[]
+      inspect.close()
+      expect(columns.map((column) => column.name)).toContain('dsh_version')
+    }
+    const lost: Array<{ runId: string; reason: string }> = []
+    second.onLost((id, reason) => lost.push({ runId: id, reason }))
+    await second.recoverOrphans()
+
+    // 死 pid（探测必 dead）→ 不发信号、记录移除；版本列缺失值 = 未知 → 通用归因。
+    expect(lost).toEqual([{ runId: 'r-orphan-legacy', reason: 'orphaned_after_node_restart' }])
+    expect(await second.activeRuns()).toEqual([])
+    second.close()
+  })
+
+  it('#356：旧状态库（无 dsh_version 列）上直接 spawn → 补列让 INSERT 可用（绕过迁移即红）', async () => {
+    const stateDb = join(root, `state-legacy-spawn-${Math.random().toString(36).slice(2)}.sqlite`)
+    const { DatabaseSync } = await import('node:sqlite')
+    const legacy = new DatabaseSync(stateDb)
+    legacy.exec(`create table active_runtime (
+      run_id text primary key, pid integer not null, process_start_time text not null,
+      pgid integer not null, runtime_nonce text not null, workspace_id text not null,
+      started_at text not null, stderr_tail text)`)
+    legacy.close()
+
+    // 判据顺序有意：**先断言补列发生、再 spawn**。迁移被绕过时在无进程阶段就红——否则
+    // `start()` 会先 spawn 再 INSERT，INSERT 抛错时 makeReadySupervisor 还没登记 pid，
+    // 这条失败路径会漏一个孤儿探针（两轮评审都点到；#305 的同一类账）。
+    const opening = reopenedSupervisor(stateDb, '0.1.0-rc.8')
+    {
+      const inspect = new DatabaseSync(stateDb)
+      const columns = inspect.prepare('pragma table_info(active_runtime)').all() as unknown as {
+        name: string
+      }[]
+      inspect.close()
+      expect(columns.map((column) => column.name)).toContain('dsh_version')
+    }
+    opening.close()
+
+    // 补列生效后 spawn：本段验的是**绿态**——INSERT（点名列 dsh_version）跑得通、
+    // 且记下的版本值正确。「没有补列就会抛 no column named dsh_version」那条红点
+    // 由上面的 pragma 断言承担（它在 spawn 之前，失败路径不留孤儿探针）。
+    const runId = 'r-legacy-spawn'
+    const pid = await makeReadySupervisor(stateDb, runId, '0.1.0-rc.8')
+    expect(await alive(pid)).toBe(true)
+
+    const inspect = new DatabaseSync(stateDb)
+    const row = inspect
+      .prepare('select dsh_version from active_runtime where run_id = ?')
+      .get(runId) as unknown as { dsh_version: string | null } | undefined
+    inspect.close()
+    expect(row?.dsh_version).toBe('0.1.0-rc.8')
+
+    await reap(pid) // 本用例的探针自己收回（失败路径靠 afterAll 兜底，绿路径不留活口）
   })
 })

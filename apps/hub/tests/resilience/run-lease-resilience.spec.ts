@@ -51,7 +51,14 @@ async function dispatchingRun() {
   return { harness, run }
 }
 
-function snapshotLost(runId: string): unknown {
+function snapshotLost(
+  runId: string,
+  /** #356：Node 侧归因码（换版 → 专用码；进程丢失/节点断线 → RUNTIME_LOST）。 */
+  code: 'RUNTIME_LOST' | 'RUNTIME_VERSION_CHANGED' = 'RUNTIME_LOST',
+  summary = code === 'RUNTIME_LOST'
+    ? 'runtime orphaned after node restart'
+    : 'local DSH distribution version changed while this run was alive; runtime not restored',
+): unknown {
   return {
     protocolVersion: 1,
     messageId: '20000000-0000-4000-8000-000000000001',
@@ -67,8 +74,8 @@ function snapshotLost(runId: string): unknown {
       workspaceId: ids.workspaceId,
       dshSessionId: null,
       status: 'lost',
-      failureCode: 'RUNTIME_LOST',
-      failureSummary: 'runtime orphaned after node restart',
+      failureCode: code,
+      failureSummary: summary,
       rerunOfRunId: null,
       profileDigest: 'b'.repeat(64),
       pluginPackDigest: 'a'.repeat(64),
@@ -269,6 +276,29 @@ describe('R9 (hub side): node-reported lost snapshot converges the run', () => {
     await harness.orchestrator.ingestNodeEvent(
       harness.deviceFor(ids),
       runEventFrame(run.id, 1, { type: 'runtime.ready', dshSessionId: 's-orphan' }),
+    )
+    expect((await getRun(database.db, run.id))?.status).toBe('lost')
+  })
+
+  it('#356：换版归因的 lost 快照原样落库（专用码，与租约过期的 RUNTIME_LOST 区分）', async () => {
+    const { harness, run } = await dispatchingRun()
+
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      snapshotLost(run.id, 'RUNTIME_VERSION_CHANGED'),
+    )
+
+    const lost = await getRun(database.db, run.id)
+    expect(lost?.status).toBe('lost')
+    // Hub 是**原样落库**：不把 Node 的归因改写成通用码（判据的落点是「用户能从
+    // runs.failure_code 区分换版与断线」，见 docs/agent/runtime-version-change-acceptance.md）。
+    expect(lost?.failureCode).toBe('RUNTIME_VERSION_CHANGED')
+    expect(lost?.failureSummary).toContain('version changed')
+
+    // 迟到事实同样不复活。
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(run.id, 1, { type: 'runtime.ready', dshSessionId: 's-rolled-back' }),
     )
     expect((await getRun(database.db, run.id))?.status).toBe('lost')
   })

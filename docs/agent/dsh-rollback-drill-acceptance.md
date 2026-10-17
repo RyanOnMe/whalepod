@@ -106,6 +106,17 @@ pnpm exec vitest run --project dsh-contract \
 - 演练副本的编辑用窄正则（只认 `'name@version':` 键与紧跟的 integrity 行），pnpm-lock
   格式若大改（例如去掉引号）需要同步——它同时会打红本演练的注入断言，属 fail-closed 方向。
 
+## 与「换版归因」的关系（#356）
+
+回滚在**真实运行面**上的收尾（正在跑的 Runtime 不恢复、用户显式重跑）在 #356 后有了专用归因：
+重启后的 Node 在孤儿恢复时比对 spawn 时记录的版本与本次启动探针版本，**两者都是字符串、
+不一致、且孤儿经三重匹配确认仍存活**才报 `lost(RUNTIME_VERSION_CHANGED)`（早死/版本未知退回
+`RUNTIME_LOST`）。本文件判的是**锁定态**（锁/catalog/lockfile/安装树），两者互补：锁回滚对了
+（本文件）→ 版本串真的换了 → 运行面用专用码如实归因（#356）。**注意可见性边界**：真实回滚流程
+停机分钟级，超过 Hub 租约（30s）时终态先被 reconciler 的 `RUNTIME_LOST` 收敛，专用码只在
+秒级重启时可见——所以本文件（锁定态）与 #356（运行面）的判据不能互相替代。见
+[runtime-version-change-acceptance](./runtime-version-change-acceptance.md)。
+
 ## 复跑
 
 ```bash

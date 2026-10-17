@@ -400,6 +400,7 @@
                 "RUNTIME_START_FAILED",
                 "MODEL_CREDENTIAL_UNAVAILABLE",
                 "RUNTIME_LOST",
+                "RUNTIME_VERSION_CHANGED",
                 "APPROVAL_EXPIRED",
                 "APPROVAL_ALREADY_DECIDED",
                 "ARTIFACT_PATH_OUTSIDE_WORKSPACE",

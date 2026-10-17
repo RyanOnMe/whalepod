@@ -51,6 +51,7 @@ import {
   newRuntimeNonce,
   RuntimeSupervisor,
   SupervisorError,
+  type RuntimeLostEvent,
 } from '../supervisor/runtime-supervisor.js'
 import type { RuntimeStartSpec } from '../runtime-driver.js'
 import type { WorkspaceRegistry } from '../workspace/registry.js'
@@ -677,33 +678,56 @@ export class RunManager {
     }
   }
 
-  private handleSupervisorLost(
-    runId: string,
-    reason: 'runtime_timeout' | 'orphaned_after_node_restart',
-  ): void {
-    if (reason === 'orphaned_after_node_restart') {
-      // R9：Node 重启后孤儿已按三重匹配处理。上报 lost(RUNTIME_LOST)（Hub 落
-      // lost 终态），交人工显式重跑——绝不自动复活或重放。
-      this.log('error', 'orphaned runtime after node restart; reporting lost', {
-        component: 'node.supervisor',
-        runId,
-      })
-      this.finalizeRun(runId, 'lost', 'RUNTIME_LOST', 'runtime orphaned after node restart')
-      this.reportLostSnapshot(runId, 'runtime orphaned after node restart')
-      return
+  private handleSupervisorLost(runId: string, reason: RuntimeLostEvent['reason']): void {
+    // 穷尽性由 switch + never 兜住（评审 A-P1）：写成 if 链时，将来给
+    // RuntimeLostEvent 加第 4 个 reason 会**静默**落进 runtime_timeout 分支——
+    // 那正是本码要消灭的「用户分不清是什么搞的」。
+    switch (reason) {
+      case 'version_changed_after_node_restart': {
+        // #356：该 Run 存活期间本机 DSH 版本被换过（升级/回滚流程：停 Node → 换版 →
+        // 起 Node）。孤儿已由三重匹配处理，但归因不是「进程丢了」而是「版本换了」——
+        // 旧版本下跑起来的 Runtime 不恢复、绝不自动复活，用户据专用码知道要显式重跑。
+        const summary =
+          'local DSH distribution version changed since the last node startup; runtime not restored'
+        this.log('error', 'runtime orphaned after dsh version change; reporting lost', {
+          component: 'node.supervisor',
+          runId,
+        })
+        this.finalizeRun(runId, 'lost', 'RUNTIME_VERSION_CHANGED', summary)
+        this.reportLostSnapshot(runId, summary, 'RUNTIME_VERSION_CHANGED')
+        return
+      }
+      case 'orphaned_after_node_restart': {
+        // R9：Node 重启后孤儿已按三重匹配处理。上报 lost(RUNTIME_LOST)（Hub 落
+        // lost 终态），交人工显式重跑——绝不自动复活或重放。
+        this.log('error', 'orphaned runtime after node restart; reporting lost', {
+          component: 'node.supervisor',
+          runId,
+        })
+        this.finalizeRun(runId, 'lost', 'RUNTIME_LOST', 'runtime orphaned after node restart')
+        this.reportLostSnapshot(runId, 'runtime orphaned after node restart')
+        return
+      }
+      case 'runtime_timeout': {
+        // runtime_timeout：wall-clock 超限被回收（G7-03 的归因面：Run 失败，不重启）。
+        if (this.finalFacts.has(runId)) return
+        const summary = 'runtime exceeded its wall-clock limit (runtime_timeout)'
+        this.log('error', 'runtime timeout; failing run without restart', {
+          component: 'node.supervisor',
+          runId,
+        })
+        const projector = this.projectors.get(runId)
+        if (projector !== undefined) {
+          this.spoolAndDrain(runId, projector.projectRuntimeLost(summary).events)
+        }
+        this.finalizeRun(runId, 'failed', 'RUNTIME_LOST', summary)
+        return
+      }
+      default: {
+        const exhaustive: never = reason
+        throw new Error(`unhandled runtime lost reason: ${String(exhaustive)}`)
+      }
     }
-    // runtime_timeout：wall-clock 超限被回收（G7-03 的归因面：Run 失败，不重启）。
-    if (this.finalFacts.has(runId)) return
-    const summary = 'runtime exceeded its wall-clock limit (runtime_timeout)'
-    this.log('error', 'runtime timeout; failing run without restart', {
-      component: 'node.supervisor',
-      runId,
-    })
-    const projector = this.projectors.get(runId)
-    if (projector !== undefined) {
-      this.spoolAndDrain(runId, projector.projectRuntimeLost(summary).events)
-    }
-    this.finalizeRun(runId, 'failed', 'RUNTIME_LOST', summary)
   }
 
   // ---------- run.status_request 应答与 lost 快照上报 ----------
@@ -722,9 +746,13 @@ export class RunManager {
    * 上行，并留底到 onReconnect 重发；离线时 session 层丢弃，重连后由 flush 补达。
    * Hub 侧终态幂等（重复快照被忽略）。
    */
-  private reportLostSnapshot(runId: string, summary: string): void {
+  private reportLostSnapshot(
+    runId: string,
+    summary: string,
+    code: ErrorCode = 'RUNTIME_LOST',
+  ): void {
     if (this.finalFacts.get(runId) === undefined) {
-      this.finalizeRun(runId, 'lost', 'RUNTIME_LOST', summary)
+      this.finalizeRun(runId, 'lost', code, summary)
     }
     const snapshot = this.buildSnapshot(runId)
     if (snapshot === undefined) {
