@@ -5,7 +5,7 @@
 - 对应 Issue：#348（承接 #345 F2/F9 的提交前阻塞面）
 - 判定文件：`apps/web/tests/create-failure-guidance.spec.tsx`（纯函数 1 条 + jsdom 3 条）、
   `apps/web/tests/e2e/task-create-drive.spec.ts` 的「创建被拒（候选失效）」一条
-- 上次验证：2026-10-17 · `f73e6e5` 内容 + 评审修复（见「判定」的实测与「取证」）
+- 上次验证：2026-10-17 · `bd3c9b4` · **PASS**（两条评审已收口；p1-312 四条、`--project web` 585 passed）
 
 ## 验的是哪条用户路径
 
@@ -41,14 +41,16 @@ pnpm exec playwright test --project=p1-312
    ② **Agent 变体**（DOM 面）：`assignee agent not found or archived` → 「请重新选择 Agent」
    引导 + 提示走 Agent 支（按被拒字段说人话）。
    ③ **字段作用域**（评审 P1）：Agent 被拒后把「创建后立即执行」关掉 → 阻塞与旧横幅立即撤、
-   按钮恢复（该字段已退出请求）；反之重选责任人不该清掉 Agent 维度的标记。
+   按钮恢复（该字段已退出请求）。清除是**按字段**的：重选责任人只清 `assignee` 标记；
+   改选责任人若不再是「自己」，执行随之关闭、`agent` 标记也一并清（该字段退出请求，
+   与关开关同一条语义）——改选自己则不动 `agent` 标记。
 3. 真页面（p1-312）：**只拦 POST**（同路径还有 GET 列表）并把响应换成真实拒绝体 → 引导含
    「请重新选择责任人」「不会自动换人」、细节行含错误码与 requestId；判据量在被测面：
    这次创建确实发出且**恰好一次**（拦截计数）；项目任务数不变只作旁证（POST 已被替换，
    Hub 没机会建任务——单纯数不变近似空真，评审 P2 已改口径）。
 4. **判据有牙的变异自证**（实测三条）：
-   - `createTaskFailureCopy` 恒返回 null ⇒ jsdom 两条红；
-   - `selectionUnavailable` 去掉「被拒字段」项 ⇒ jsdom 那条红（持续阻塞失效）；
+   - `createTaskFailureCopy` 恒返回 null ⇒ 纯函数 + 两条表单用例共三条红；
+   - `selectionUnavailable` 去掉「被拒字段」项 ⇒ 阻塞那条红（持续阻塞失效）；
    - 开关 onChange 去掉「关掉时清 Agent 标记」⇒ P1 那条红（评审修复的牙齿）。
 
 ## 归因（失败先看哪层）
@@ -57,8 +59,8 @@ pnpm exec playwright test --project=p1-312
 |---|---|
 | 用户仍看到英文分类消息 | `ProjectsPage` 是否把 `createTaskFailureCopy(error)` 传给 `ErrorBanner.guidance`；消息原文是否与 Hub 侧一致（Hub 改文案要同步这里） |
 | 引导出现但错误码看不到 | `ErrorBanner` 的 guidance 分支（细节行拼装的 code/message/requestId） |
-| 拒绝之后还能继续提交 | `selectionRejected` 是否在 onError 置位、是否被误清（重选/关表单才清） |
-| 重选后仍被拦 | `selectionRejected` 的清除点（责任人/Agent 两个 onChange）是否都挂了 |
+| 拒绝之后还能继续提交 | `rejectedField` 是否在 onError 按字段置位、是否被误清（该字段重选或退出请求才清） |
+| 重选后仍被拦 | `clearRejectionFor` 的三个清除点（责任人 onChange、Agent onChange、执行开关关掉）是否都挂了 |
 
 ## 边界与未覆盖
 
