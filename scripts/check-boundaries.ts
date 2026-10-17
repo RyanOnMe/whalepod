@@ -18,6 +18,7 @@
  * under `apps/*\/src` and `packages/*\/src`, prints every violation as
  * `importer:line -> specifier`, and exits non-zero when any violation is found.
  */
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -37,11 +38,14 @@ const WORKSPACE_SCOPE = '@whalepod/'
 /**
  * importer path prefix -> allowed `@whalepod/*` specifiers.
  *
- * `subpaths`（可选）是该 importer 的「同构子路径白名单」：一旦声明，来自该
- * importer 的子路径 specifier 一律默认违规，只有白名单里显式列出的完整子路径
- * （按包名归组）才放行——防止 node-only 子路径导出（如 `plugin-pack-digest`
- * 引 node:crypto）被包级归一规则带进 web bundle。未声明 `subpaths` 的
- * 服务端 importer（hub/node 等）保留归一放行行为。
+ * `subpaths`（可选）是「该 importer 允许的完整 specifier 名单」（按包名归组）：
+ * 一旦某包在名单里出现，来自该 importer 对它的**每一个**说明符都要逐一列出——
+ * **含裸入口**（#183 评审 A：旧实现只在有子路径时查名单，于是「白名单里写
+ * `@whalepod/hub/testing`」并不能挡住 `@whalepod/hub`）。用途两个：
+ * ① 防 node-only 子路径导出（如 `plugin-pack-digest` 引 node:crypto）被带进 web
+ * bundle；② 防测试从 hub 主入口拿东西（主入口无 `development` 条件 → vitest 下解析
+ * 到 dist，与测试驱动用的 src 深模块形成两套实例）。未声明 `subpaths` 的 importer
+ * （hub/node 的 src 等）保留包级归一放行行为。
  */
 const DEPENDENCY_RULES: ReadonlyArray<{
   importer: string
@@ -66,7 +70,9 @@ const DEPENDENCY_RULES: ReadonlyArray<{
     // 时在 subpaths 里显式添加完整 specifier。
     importer: 'apps/web/',
     allowed: ['@whalepod/protocol'],
-    subpaths: { '@whalepod/protocol': [] },
+    // 白名单列的是**允许的完整说明符**（含裸入口）：web 只许同构的裸 protocol，
+    // node-only 子路径一律拒。
+    subpaths: { '@whalepod/protocol': ['@whalepod/protocol'] },
   },
   {
     // 验收链路测试（P1-13 run-projection-chain）：跨 app 验收需要直接读 DB 判定
@@ -91,8 +97,12 @@ const DEPENDENCY_RULES: ReadonlyArray<{
     // （另注：跨 app 的**相对** import 不经过本表——validateImport 只管 @whalepod/ 前缀；
     // 那类耦合由 #99 的 harness 规则与人工评审管。）
     subpaths: {
-      '@whalepod/protocol': ['@whalepod/protocol/plugin-pack-digest'],
+      '@whalepod/protocol': ['@whalepod/protocol', '@whalepod/protocol/plugin-pack-digest'],
+      // 裸 `@whalepod/hub` **不在**名单里：主入口没有 development 条件（vitest 下解析到
+      // dist），从它拿东西会让同进程出现两套 hub 模块实例——只许 testing 子路径。
       '@whalepod/hub': ['@whalepod/hub/testing'],
+      // testkit 只用裸入口（db-support 由根导出）；子路径不放开，防日后从内部文件拿东西。
+      '@whalepod/testkit': ['@whalepod/testkit'],
     },
   },
   { importer: 'apps/node/', allowed: ['@whalepod/domain', '@whalepod/protocol'] },
@@ -124,7 +134,6 @@ export function validateImport(importer: string, specifier: string): void {
   // 只有白名单显式列出的子路径放行，防止 node-only 导出进 web bundle。
   const segments = specifier.split('/')
   const packageSpecifier = `${segments[0]}/${segments[1]}`
-  const hasSubpath = segments.length > 2
 
   const rule = DEPENDENCY_RULES.find(({ importer: prefix }) => importer.startsWith(prefix))
   if (!rule) return // importers outside apps//packages (e.g. scripts/) are not governed here
@@ -136,15 +145,16 @@ export function validateImport(importer: string, specifier: string): void {
     )
   }
 
-  if (hasSubpath && rule.subpaths !== undefined) {
-    const whitelisted = rule.subpaths[packageSpecifier] ?? []
-    if (!whitelisted.includes(specifier)) {
-      const listed = whitelisted.length > 0 ? whitelisted.join(', ') : 'none'
-      throw new Error(
-        `Subpath import "${specifier}" is not allowed from ${rule.importer} ` +
-          `(isomorphic subpaths of ${packageSpecifier}: ${listed})`,
-      )
-    }
+  // 白名单语义（#183 评审 A）：一旦某包进了 `subpaths`，允许的**每一个**说明符都要逐一
+  // 列出——含裸入口。旧实现只在 `hasSubpath` 时查白名单，于是「白名单里写
+  // @whalepod/hub/testing」并不能挡住 `@whalepod/hub`（裸 specifier 直接跳过检查）。
+  const whitelist = rule.subpaths?.[packageSpecifier]
+  if (whitelist !== undefined && !whitelist.includes(specifier)) {
+    const listed = whitelist.length > 0 ? whitelist.join(', ') : 'none'
+    throw new Error(
+      `Import "${specifier}" is not allowed from ${rule.importer} ` +
+        `(declared specifiers for ${packageSpecifier} — bare entry included: ${listed})`,
+    )
   }
 }
 
@@ -218,31 +228,38 @@ export const TYPECHECK_WIRING_DEFERRED = new Map<string, string>([
   // 本表的职责只是「声明该包尚未接线」。两处键必须一一对应（有测试盯着）。
 ])
 
-/** 覆盖 tests/ 的 include 形态：显式的 tests 路径，或「全都要」的兜底 glob。 */
-function coversTests(pattern: string): boolean {
-  return pattern.includes('tests') || pattern === '**/*.ts' || pattern === '**/*'
+export interface TypecheckWiringOptions {
+  /**
+   * 抽查 program 文件清单用的 tsc（默认 `repoRoot/node_modules/.bin/tsc`）。判据的
+   * ground truth 是 `tsc -p tsconfig.test.json --listFilesOnly` 的**实际文件清单**：
+   * 上一版只看 include 文本，被两条同族旁路绕过——删掉 include 键（extends 继承的
+   * include 生效，「不写 include 就默认全覆盖」在本仓库不成立）与 `exclude: ["tests/**"]`。
+   * 实测成本：9 个包合计约 3s（各 0.2–0.5s）。
+   */
+  readonly tscBin?: string
 }
 
-/**
- * 读 tsconfig.test.json 的 include（宽松 JSON：本仓库的 tsconfig 带 `//` 行注释）。
- * 文件不可解析 → 返回 []（fail-closed：不许用坏配置绕过判据）；不写 include → undefined。
- */
-function readTestConfigInclude(path: string): readonly string[] | undefined {
-  const text = readFileSync(path, 'utf8')
-  const stripped = text
-    .split('\n')
-    .filter((line) => !line.trim().startsWith('//'))
-    .join('\n')
+/** program 里是否真有 tests/ 下的文件（展开 extends/include/exclude/glob 后的真值）。 */
+function programCoversTests(packageDir: string, tscBin: string): boolean {
   try {
-    const parsed = JSON.parse(stripped) as { include?: unknown }
-    if (!Array.isArray(parsed.include)) return parsed.include === undefined ? undefined : []
-    return parsed.include.filter((entry): entry is string => typeof entry === 'string')
+    const output = execFileSync(tscBin, ['-p', 'tsconfig.test.json', '--listFilesOnly'], {
+      cwd: packageDir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    return output
+      .split('\n')
+      .some((line) => line.includes(`${sep}tests${sep}`) || line.includes('/tests/'))
   } catch {
-    return []
+    // tsc 起不来（缺依赖、配置语法错）也是「tests/ 没进 program」的一种，fail-closed。
+    return false
   }
 }
 
-export function checkTypecheckWiring(repoRoot: string): string[] {
+export function checkTypecheckWiring(
+  repoRoot: string,
+  options: TypecheckWiringOptions = {},
+): string[] {
   const violations: string[] = []
   for (const scope of ['apps', 'packages']) {
     const scopeDir = join(repoRoot, scope)
@@ -274,12 +291,12 @@ export function checkTypecheckWiring(repoRoot: string): string[] {
         violations.push(`${where}: typecheck references tsconfig.test.json but the file is missing`)
         continue
       }
-      // 只查脚本文本是**可绕过**的（#183 评审 B 的变异：把 tests/ 从 include 里摘掉，
-      // 该包就静默脱离 Q0 而门全绿）。include 存在时必须真的覆盖 tests/；不写 include
-      // 时 tsc 默认包含目录下全部 TS，属覆盖，不报。
-      const include = readTestConfigInclude(testConfigPath)
-      if (include !== undefined && !include.some(coversTests)) {
-        violations.push(`${where}: tsconfig.test.json 的 include 不含 tests/（测试静默脱离 Q0）`)
+      const tscBin = options.tscBin ?? join(repoRoot, 'node_modules', '.bin', 'tsc')
+      if (!programCoversTests(dir, tscBin)) {
+        violations.push(
+          `${where}: tsconfig.test.json 的 program 里没有 tests/ 下的文件` +
+            `（测试静默脱离 Q0；核对 include/exclude/extends 的真实效果）`,
+        )
       }
     }
   }

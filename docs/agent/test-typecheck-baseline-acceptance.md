@@ -18,10 +18,14 @@
    `checkTypecheckWiring` 机检；未接线的包必须在 `TYPECHECK_WIRING_DEFERRED` 表里，
    **表只许缩小**（新增未接线包进不来）。**本表已空**，且 `typecheck-test-baseline.spec.ts`
    新增一条断言把这个终态钉住：将来若有人想再 deferral 一个包，那条会红（必须显式改它并写下理由）。
-   同一 spec 的接线判据在 2026-10-17 也**补了 include 面**：只查脚本文本时可被
-   「把 tests/ 从 `tsconfig.test.json` 的 include 里摘掉」绕过（评审 B 的变异：往
-   `packages/domain/tests` 注入真错误后摘 include → 门全绿）；现在 include 存在时必须真的
-   覆盖 tests/（显式 tests 路径或 `**/*` 兜底），文件不可解析按 fail-closed 记违规。
+   同一 spec 的接线判据在 2026-10-17 也**补了 include 面**：只查脚本文本时可被绕过——评审 B
+   先报「把 tests/ 从 include 里摘掉」，改文本判据后又抓到两条同族旁路（**删掉 include 键**
+   会走 `extends` 继承的 include、「不写就默认全覆盖」在本仓库不成立；`exclude: ["tests/**"]`
+   则文本只查一面）。最终改成 **ground truth**：对每个包跑
+   `tsc -p tsconfig.test.json --listFilesOnly`，要求清单里真有 `<pkg>/tests/` 下的文件——
+   一次覆盖 extends/include/exclude/glob 的全部形态；tsc 起不来同样判违规（fail-closed）。
+   成本实测：9 个包合计约 3s（各 0.2–0.5s），进 Q0。三条旁路各做一次真实变异（domain）：
+   收窄 include / 删 include 键 / exclude tests → 全部红，还原绿。
 2. **棘轮（本批新增）**：deferral 表里原先只写「N 个存量错误」这行字——2026-10-09 实测发现
    它已经烂了：hub 记 30 实际 **39**、node 记 29 实际 **31**。现在数字由
    `scripts/lib/typecheck-test-baseline.ts` 承载、由 `scripts/tests/typecheck-test-baseline.spec.ts`
@@ -103,10 +107,12 @@ cd apps/hub && pnpm exec tsc -p tsconfig.test.json | grep -c "error TS"   # 手�
   `cli-hello-refresh` 对 `hub/src/modules/...` 的三处深 import（观测缝用途，PR 已交代），
   `chain.ts` 的 helpers 依赖见上；这类耦合目前靠人工评审与 #99 的 harness 规则管，
   没有机检拦「再往 tests 里加一处相对 import」。
-- **`apps/node/tests/` 的子路径白名单**：只放行 `@whalepod/hub/testing` 与
-  `@whalepod/protocol/plugin-pack-digest`（`check-boundaries.ts` 的 subpaths）。新增子路径
-  要显式加一行——这是防「从 hub 主入口拿东西」（主入口没有 development 条件，vitest 下解析
-  到 dist，正是双实例的来源）。
+- **`apps/node/tests/` 的说明符白名单**（`check-boundaries.ts` 的 subpaths）：名单列的是
+  **允许的完整 specifier 含裸入口**——`@whalepod/hub` 只放行 `@whalepod/hub/testing`（裸
+  主入口不在名单里：它没有 development 条件，vitest 下解析到 dist，正是双实例的来源），
+  `@whalepod/protocol` 放行裸入口 + digest 子路径，`@whalepod/testkit` 只放行裸入口。
+  变异自证：在 `cli-hello-refresh` 里加一行 `import ... from '@whalepod/hub'` ⟹
+  `check-boundaries` 红（消息点名「bare entry included」）；还原绿。
 - 棘轮只保证「不新增 + 数字与现实一致」，不保证错误本身无害：低风险测试里的类型错误
   （如测试替身形状不符）仍可能在运行时表现为假绿——清零后这句话成立，但**新写的**测试
   仍要自己别写假判据（#183 期间评审抓到的两处假判据就是例子）。

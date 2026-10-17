@@ -12,6 +12,12 @@ import {
 
 const DSH_ERROR = 'DSH imports are restricted to packages/runtime-dsh and apps/runtime'
 
+/**
+ * 接线判据的 ground truth 走仓库自己的 tsc（fixture 目录里没有 node_modules）——
+ * 判据是 `tsc -p tsconfig.test.json --listFilesOnly` 的实际清单，不是文本解析。
+ */
+const REPO_TSC = join(fileURLToPath(new URL('..', import.meta.url)), 'node_modules', '.bin', 'tsc')
+
 describe('DSH isolation', () => {
   it('blocks DSH imports outside runtime packages', () => {
     expect(() => validateImport('apps/hub/src/app.ts', '@deepseek-ai/dsh-agent')).toThrow(DSH_ERROR)
@@ -81,7 +87,9 @@ describe('workspace dependency rules', () => {
     ).toThrow('not allowed from apps/web/')
     expect(() =>
       validateImport('apps/web/src/main.ts', '@whalepod/protocol/plugin-pack-digest'),
-    ).toThrow('isomorphic subpaths of @whalepod/protocol: none')
+    ).toThrow(
+      'declared specifiers for @whalepod/protocol — bare entry included: @whalepod/protocol',
+    )
   })
 
   it('blocks hub -> runtime-dsh', () => {
@@ -161,9 +169,44 @@ describe('isomorphic subpath whitelist: pinned edges (P1-17 regression)', () => 
     expect(() =>
       validateImport('apps/web/src/main.ts', '@whalepod/protocol/plugin-pack-digest'),
     ).toThrow(
-      'Subpath import "@whalepod/protocol/plugin-pack-digest" is not allowed from apps/web/ ' +
-        '(isomorphic subpaths of @whalepod/protocol: none)',
+      'Import "@whalepod/protocol/plugin-pack-digest" is not allowed from apps/web/ ' +
+        '(declared specifiers for @whalepod/protocol — bare entry included: @whalepod/protocol)',
     )
+  })
+
+  // #183：声明过 subpaths 的包，裸入口也要逐一列出才放行——否则「白名单挡住主入口」是空话。
+  it('#183：apps/node/tests 的 hub 白名单只放行 testing 子路径，裸主入口被拒', () => {
+    expect(() =>
+      validateImport('apps/node/tests/integration/x.integration.spec.ts', '@whalepod/hub/testing'),
+    ).not.toThrow()
+    expect(() =>
+      validateImport('apps/node/tests/integration/x.integration.spec.ts', '@whalepod/hub'),
+    ).toThrow(
+      'Import "@whalepod/hub" is not allowed from apps/node/tests/ ' +
+        '(declared specifiers for @whalepod/hub — bare entry included: @whalepod/hub/testing)',
+    )
+    expect(() =>
+      validateImport(
+        'apps/node/tests/integration/x.integration.spec.ts',
+        '@whalepod/hub/src/app.ts',
+      ),
+    ).toThrow(/not allowed from apps\/node\/tests\//)
+    expect(() =>
+      validateImport(
+        'apps/node/tests/integration/x.integration.spec.ts',
+        '@whalepod/testkit/db-support',
+      ),
+    ).toThrow(/not allowed from apps\/node\/tests\//)
+    // 同一条规则的正面：protocol 的裸入口与 digest 子路径都显式在名单里。
+    expect(() =>
+      validateImport('apps/node/tests/integration/x.integration.spec.ts', '@whalepod/protocol'),
+    ).not.toThrow()
+    expect(() =>
+      validateImport(
+        'apps/node/tests/integration/x.integration.spec.ts',
+        '@whalepod/protocol/plugin-pack-digest',
+      ),
+    ).not.toThrow()
   })
 
   it('node -> @whalepod/protocol/plugin-pack-digest is ALLOW (server-side package grant)', () => {
@@ -197,19 +240,28 @@ describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
     const dir = join(root, scope, name)
     await mkdir(withTests ? join(dir, 'tests') : dir, { recursive: true })
     await writeFile(join(dir, 'package.json'), JSON.stringify(manifest))
-    if (withTestConfig) await writeFile(join(dir, 'tsconfig.test.json'), '{}')
+    if (!withTestConfig) return
+    // #183：配置与目录都写成仓库真实形态——判据的 ground truth 是 program 的实际文件
+    // 清单，空 tests/ 与空配置都会被判「未覆盖」（那是**特性**：接线要真的把测试编进去）。
+    await writeFile(
+      join(dir, 'tsconfig.test.json'),
+      JSON.stringify({ compilerOptions: {}, include: ['src/**/*.ts', 'tests/**/*.ts'] }),
+    )
+    if (withTests) {
+      await writeFile(join(dir, 'tests', 'sample.spec.ts'), 'export const sample = 1\n')
+    }
   }
 
   it('有 tests/ 但没有 typecheck 脚本 → 违规（该包整体静默脱离 Q0）', async () => {
     await makePackage('packages', 'solo', { scripts: {} })
-    expect(checkTypecheckWiring(root)).toEqual([
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([
       'packages/solo: has tests/ but no typecheck script (its tests never reach Q0)',
     ])
   })
 
   it('typecheck 没跑 tsconfig.test.json → 违规（tests/ 仍在门外）', async () => {
     await makePackage('apps', 'portal', { scripts: { typecheck: 'tsc -b' } })
-    expect(checkTypecheckWiring(root)).toEqual([
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([
       'apps/portal: typecheck does not run tsconfig.test.json (tests/ excluded from Q0)',
     ])
   })
@@ -218,43 +270,72 @@ describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
     await makePackage('apps', 'portal', {
       scripts: { typecheck: 'tsc -b && tsc -p tsconfig.test.json' },
     })
-    expect(checkTypecheckWiring(root)).toEqual([
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([
       'apps/portal: typecheck references tsconfig.test.json but the file is missing',
     ])
   })
 
-  it('include 被收窄到 src（摘掉 tests/）→ 违规：文本级接线可被这样绕过', async () => {
-    // 评审 B 的变异：往 tests 里注入真错误、再把 include 改成只有 src/**，门会全绿。
+  it('include 被收窄到 src（摘掉 tests/）→ 违规：program 里没有 tests/ 文件', async () => {
     await makePackage(
       'apps',
-      'sneaky',
+      'narrowed',
       { scripts: { typecheck: 'tsc -b && tsc -p tsconfig.test.json' } },
       true,
     )
     await writeFile(
-      join(root, 'apps', 'sneaky', 'tsconfig.test.json'),
-      '{\n  // 注释也要能解析\n  "include": ["src/**/*.ts"]\n}\n',
+      join(root, 'apps', 'narrowed', 'tsconfig.test.json'),
+      '{\n  // 注释与收窄都要能处理\n  "include": ["src/**/*.ts"]\n}\n',
     )
-    expect(checkTypecheckWiring(root)).toEqual([
-      'apps/sneaky: tsconfig.test.json 的 include 不含 tests/（测试静默脱离 Q0）',
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([
+      'apps/narrowed: tsconfig.test.json 的 program 里没有 tests/ 下的文件' +
+        '（测试静默脱离 Q0；核对 include/exclude/extends 的真实效果）',
     ])
   })
 
-  it('include 是全量兜底（**/*.ts）或未声明 → 不算违规（默认覆盖整个目录）', async () => {
+  it('删掉 include 键（extends 继承的 include 生效）→ 违规：不是「默认全覆盖」', async () => {
+    // 本仓库的 tsconfig.test.json 都 extends ./tsconfig.json（include 只有 src/**）——
+    // 「不写 include 就默认覆盖目录下全部 TS」在这里不成立，是很自然的「去冗余」编辑。
     await makePackage(
       'apps',
-      'globber',
+      'inherits',
       { scripts: { typecheck: 'tsc -b && tsc -p tsconfig.test.json' } },
       true,
     )
-    await writeFile(join(root, 'apps', 'globber', 'tsconfig.test.json'), '{"include":["**/*.ts"]}')
+    // 复刻仓库形态：base 的 include 只有 src/**，tsconfig.test.json 靠 extends 继承它，
+    // 自己不写 include —— 「不写就默认全覆盖」在这里不成立。
+    await writeFile(
+      join(root, 'apps', 'inherits', 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: {}, include: ['src/**/*.ts'] }),
+    )
+    await writeFile(
+      join(root, 'apps', 'inherits', 'tsconfig.test.json'),
+      JSON.stringify({ extends: './tsconfig.json', compilerOptions: {} }),
+    )
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([
+      'apps/inherits: tsconfig.test.json 的 program 里没有 tests/ 下的文件' +
+        '（测试静默脱离 Q0；核对 include/exclude/extends 的真实效果）',
+    ])
+  })
+
+  it('include 保留 tests/ 但 exclude 把它排掉 → 违规（文本只看一面的旁路）', async () => {
     await makePackage(
       'apps',
-      'defaults',
+      'excluded',
       { scripts: { typecheck: 'tsc -b && tsc -p tsconfig.test.json' } },
       true,
     )
-    expect(checkTypecheckWiring(root)).toEqual([])
+    await writeFile(
+      join(root, 'apps', 'excluded', 'tsconfig.test.json'),
+      JSON.stringify({
+        compilerOptions: {},
+        include: ['src/**/*.ts', 'tests/**/*.ts'],
+        exclude: ['tests/**'],
+      }),
+    )
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([
+      'apps/excluded: tsconfig.test.json 的 program 里没有 tests/ 下的文件' +
+        '（测试静默脱离 Q0；核对 include/exclude/extends 的真实效果）',
+    ])
   })
 
   it('豁免表只允许缩小：表内每个包在**当前仓库**里必须真的仍未接线', async () => {
@@ -285,7 +366,7 @@ describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
       true,
     )
     await makePackage('packages', 'no-tests', { scripts: {} }, false, false)
-    expect(checkTypecheckWiring(root)).toEqual([])
+    expect(checkTypecheckWiring(root, { tscBin: REPO_TSC })).toEqual([])
   })
 })
 
