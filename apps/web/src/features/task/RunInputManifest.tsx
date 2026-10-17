@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
-import { ArtifactInputManifestSchema } from '@whalepod/protocol'
+import { ArtifactInputManifestSchema, HandoffInputManifestSchema } from '@whalepod/protocol'
 import { api } from '../../shared/api/client.js'
 import { queryKeys } from '../../app/query-client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
@@ -26,6 +26,14 @@ export function RunInputManifest({
       if (data !== null && data.taskId !== taskId) throw new Error('输入记录与本任务不一致，请重试')
       return data
     },
+  })
+  // #380：跨 Task 交接输入是**独立读面**（与同 Task 清单互不合并）；null = 不带，
+  // 不是错误——本任务不是任何交接的下游时也不该出现这一节。
+  const handoffQuery = useQuery({
+    queryKey: queryKeys.runHandoffInput(runId),
+    enabled: open,
+    queryFn: async () =>
+      HandoffInputManifestSchema.nullable().parse(await api.get(`/runs/${runId}/handoff-input`)),
   })
   // A cached response must satisfy the current room boundary before rendering too.
   const belongsToTask = query.data === null || query.data?.taskId === taskId
@@ -78,6 +86,26 @@ export function RunInputManifest({
                 </ul>
               )}
             </>
+          ) : null}
+          {handoffQuery.isSuccess && handoffQuery.data !== null ? (
+            <div data-testid="run-handoff-input">
+              <p className="mutation-hint">
+                交接材料：来自「{handoffQuery.data.upstreamTaskTitle}」的已发布交接包 v
+                {handoffQuery.data.revisionNumber}（逐件固定摘要；上游之后发新版本不改本清单）。
+              </p>
+              {handoffQuery.data.artifacts.length === 0 ? (
+                <p>该交接包没有材料附件。</p>
+              ) : (
+                <ul>
+                  {handoffQuery.data.artifacts.map((item) => (
+                    <li key={item.artifactId}>
+                      <strong>{item.title}</strong> · {formatBytes(item.byteSize)} · 内容摘要{' '}
+                      {item.sha256.slice(0, 12)}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           ) : null}
         </div>
       ) : null}

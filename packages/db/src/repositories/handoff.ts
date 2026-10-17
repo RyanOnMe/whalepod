@@ -10,7 +10,9 @@
 import type { HandoffContent } from '@whalepod/protocol'
 import { and, desc, eq, max, sql } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
-import { handoffDrafts, handoffRevisions } from '../schema/handoff.js'
+import { handoffDrafts, handoffReceipts, handoffRevisions } from '../schema/handoff.js'
+import { tasks } from '../schema/project.js'
+import { runs } from '../schema/run.js'
 
 export type HandoffDraftRow = typeof handoffDrafts.$inferSelect
 export type HandoffRevisionRow = typeof handoffRevisions.$inferSelect
@@ -208,4 +210,183 @@ export async function listHandoffRevisionsByTask(
     .from(handoffRevisions)
     .where(eq(handoffRevisions.taskId, taskId))
     .orderBy(desc(handoffRevisions.revisionNumber))
+}
+
+/** 该上游 Task 的最新已发布版本号（「有新版本」判据；无版本 → 0）。 */
+export async function latestHandoffRevisionNumber(
+  handle: DbHandle,
+  taskId: string,
+): Promise<number> {
+  const [row] = await handle
+    .select({ value: max(handoffRevisions.revisionNumber) })
+    .from(handoffRevisions)
+    .where(eq(handoffRevisions.taskId, taskId))
+  return row?.value ?? 0
+}
+
+export type HandoffReceiptRow = typeof handoffReceipts.$inferSelect
+
+export interface NewHandoffReceipt {
+  id: string
+  revisionId: string
+  upstreamTaskId: string
+  downstreamTaskId: string
+  receiverUserId: string
+  deliveredBy: string
+  /** 直接确认（adopt 路径）：状态与理解一次写入；缺省 = pending 待确认。 */
+  confirmed?: { understanding: string; differences?: string; confirmedAt: Date }
+  createdAt: Date
+}
+
+/**
+ * 落一条接收关系。重复确认/采用（同 downstream_task_id + revision_id）由唯一约束
+ * 兜底：`onConflictDoNothing` 后回读既有行——**重复点击不重复创建**。
+ */
+export async function insertHandoffReceiptIfAbsent(
+  handle: DbHandle,
+  receipt: NewHandoffReceipt,
+): Promise<{ row: HandoffReceiptRow; inserted: boolean }> {
+  const inserted = await handle
+    .insert(handoffReceipts)
+    .values({
+      id: receipt.id,
+      revisionId: receipt.revisionId,
+      upstreamTaskId: receipt.upstreamTaskId,
+      downstreamTaskId: receipt.downstreamTaskId,
+      receiverUserId: receipt.receiverUserId,
+      deliveredBy: receipt.deliveredBy,
+      status: receipt.confirmed === undefined ? 'pending' : 'confirmed',
+      understanding: receipt.confirmed?.understanding ?? null,
+      differences: receipt.confirmed?.differences ?? null,
+      createdAt: receipt.createdAt,
+      updatedAt: receipt.createdAt,
+      confirmedAt: receipt.confirmed?.confirmedAt ?? null,
+    })
+    .onConflictDoNothing()
+    .returning()
+  const row =
+    inserted[0] ??
+    (await getHandoffReceiptByVersion(handle, receipt.downstreamTaskId, receipt.revisionId))
+  if (row === undefined) throw new Error('handoff receipt insert lost without conflict row')
+  return { row, inserted: inserted.length > 0 }
+}
+
+export async function getHandoffReceipt(
+  handle: DbHandle,
+  id: string,
+): Promise<HandoffReceiptRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(handoffReceipts)
+    .where(eq(handoffReceipts.id, id))
+    .limit(1)
+  return row
+}
+
+export async function getHandoffReceiptByVersion(
+  handle: DbHandle,
+  downstreamTaskId: string,
+  revisionId: string,
+): Promise<HandoffReceiptRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(handoffReceipts)
+    .where(
+      and(
+        eq(handoffReceipts.downstreamTaskId, downstreamTaskId),
+        eq(handoffReceipts.revisionId, revisionId),
+      ),
+    )
+    .limit(1)
+  return row
+}
+
+/** 确认（CAS：仅 pending 行可确认；重复确认由状态早返回兜底，不覆盖首次理解）。 */
+export async function confirmHandoffReceipt(
+  handle: DbHandle,
+  id: string,
+  understanding: string,
+  differences: string | undefined,
+  now: Date,
+): Promise<HandoffReceiptRow | undefined> {
+  const [row] = await handle
+    .update(handoffReceipts)
+    .set({
+      status: 'confirmed',
+      understanding,
+      differences: differences ?? null,
+      confirmedAt: now,
+      updatedAt: now,
+    })
+    .where(and(eq(handoffReceipts.id, id), eq(handoffReceipts.status, 'pending')))
+    .returning()
+  return row
+}
+
+/** 下游 Task 的接收关系（含其上游 Task 标题；确认/版本展示的数据源）。 */
+export async function listReceiptsByDownstreamTask(
+  handle: DbHandle,
+  downstreamTaskId: string,
+): Promise<
+  Array<{ receipt: HandoffReceiptRow; revision: HandoffRevisionRow; upstreamTaskTitle: string }>
+> {
+  const rows = await handle
+    .select({ receipt: handoffReceipts, revision: handoffRevisions, upstreamTitle: tasks.title })
+    .from(handoffReceipts)
+    .innerJoin(handoffRevisions, eq(handoffReceipts.revisionId, handoffRevisions.id))
+    .innerJoin(tasks, eq(handoffReceipts.upstreamTaskId, tasks.id))
+    .where(eq(handoffReceipts.downstreamTaskId, downstreamTaskId))
+    .orderBy(desc(handoffRevisions.revisionNumber), desc(handoffReceipts.createdAt))
+  return rows.map((row) => ({
+    receipt: row.receipt,
+    revision: row.revision,
+    upstreamTaskTitle: row.upstreamTitle,
+  }))
+}
+
+/** 上游 Task 发出的全部交接（「已交接」视图；含下游 Task 标题）。 */
+export async function listReceiptsByUpstreamTask(
+  handle: DbHandle,
+  upstreamTaskId: string,
+): Promise<
+  Array<{ receipt: HandoffReceiptRow; revision: HandoffRevisionRow; downstreamTaskTitle: string }>
+> {
+  const rows = await handle
+    .select({ receipt: handoffReceipts, revision: handoffRevisions, downstreamTitle: tasks.title })
+    .from(handoffReceipts)
+    .innerJoin(handoffRevisions, eq(handoffReceipts.revisionId, handoffRevisions.id))
+    .innerJoin(tasks, eq(handoffReceipts.downstreamTaskId, tasks.id))
+    .where(eq(handoffReceipts.upstreamTaskId, upstreamTaskId))
+    .orderBy(desc(handoffReceipts.createdAt))
+  return rows.map((row) => ({
+    receipt: row.receipt,
+    revision: row.revision,
+    downstreamTaskTitle: row.downstreamTitle,
+  }))
+}
+
+/**
+ * Node 下载授权的最小扩展（#380；ADR-0017 §5）：该设备自己的 Run 的交接输入快照
+ * 引用了该 Artifact 才可下载——不开放上游其他材料、候选与私有现场。
+ */
+export async function deviceHandoffInputReferences(
+  handle: DbHandle,
+  deviceId: string,
+  artifactId: string,
+): Promise<boolean> {
+  const rows = await handle
+    .select({ id: runs.id })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.deviceId, deviceId),
+        sql`${runs.handoffInput} is not null`,
+        sql`exists (
+          select 1 from jsonb_array_elements(${runs.handoffInput} -> 'artifacts') as entry
+          where entry ->> 'artifactId' = ${artifactId}
+        )`,
+      ),
+    )
+    .limit(1)
+  return rows.length > 0
 }

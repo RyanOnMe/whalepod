@@ -1,4 +1,4 @@
-import type { ArtifactInputManifest } from '@whalepod/protocol'
+import type { ArtifactInputManifest, HandoffInputManifest } from '@whalepod/protocol'
 import { and, asc, count, eq, inArray } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { approvals, runs } from '../schema/run.js'
@@ -18,6 +18,8 @@ export interface NewRun {
   deviceId: string
   workspaceId: string
   artifactInputManifest?: ArtifactInputManifest | null
+  /** 跨 Task 交接输入快照（#380）：显式选择或重跑/续跑继承来源；缺省 null（不带）。 */
+  handoffInput?: HandoffInputManifest | null
   /** 任务约定绑定（#378）：启用约定后业务 Run 必填（orchestrator 收口）；辅助 Run 可空。 */
   specRevisionId?: string
   /** Run 用途（#378）：缺省 business。 */

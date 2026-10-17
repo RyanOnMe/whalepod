@@ -3065,3 +3065,28 @@ textarea::placeholder {
   font-size: 12px;
   color: var(--color-ink-soft);
 }
+
+/* 交接接收/交付面板（#380）：接收确认与交付都是低频但成对的表单面。 */
+.handoff-attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.35rem 0;
+  font-size: 13px;
+}
+.handoff-confirm-form,
+.handoff-deliver-form {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+.handoff-delivery-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+.handoff-delivery-list .badge {
+  margin-left: 0.35rem;
+}

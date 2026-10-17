@@ -453,6 +453,9 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
             ? {}
             : { specRevisionId: parsed.data.specRevisionId }),
           ...(parsed.data.purpose === undefined ? {} : { purpose: parsed.data.purpose }),
+          ...(parsed.data.handoffReceiptId === undefined
+            ? {}
+            : { handoffReceiptId: parsed.data.handoffReceiptId }),
           idempotencyKey: readIdempotencyKey(request),
           ...(parsed.data.deviceId !== undefined ? { deviceId: parsed.data.deviceId } : {}),
           ...(parsed.data.workspaceId !== undefined

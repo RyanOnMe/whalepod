@@ -31,6 +31,8 @@ import { CommentComposer, CommentList } from '../features/task/CommentComposer.j
 import { DeliveryFlow } from '../features/task/DeliveryFlow.js'
 import { RunInputManifest } from '../features/task/RunInputManifest.js'
 import { RunHandoffDraft } from '../features/task/RunHandoffDraft.js'
+import { HandoffReceiptPanel } from '../features/task/HandoffReceiptPanel.js'
+import { HandoffDeliveryPanel } from '../features/task/HandoffDeliveryPanel.js'
 import {
   ExecutionComposer,
   type ArtifactReviewRequest,
@@ -137,6 +139,9 @@ function TaskRoom(): ReactNode {
     latestConfirmedNumber: null,
     hasDraft: false,
   }
+  // #380：下游交接摘要与 agreement 同一向前兼容口径（真服务端恒发；旧桩缺字段按
+  // 「不是交接的下游」兜底，不让房间崩）。
+  const handoffSummary = query.data.handoff ?? null
   // `instructions` 是 ③c-2a 的字段，hub 侧**无条件**返回它（`task/view.ts`）。
   // 复核 #209 观察 5 指出：本仓没有 query 持久化，"旧缓存可能没有它"这个理由不成立——
   // 这里唯一能挡的是**服务端契约违约**，而静默兜成空列表会让用户看到"还没有人驱动过这个任务"
@@ -254,18 +259,24 @@ function TaskRoom(): ReactNode {
                 />
               )}
               {session !== null ? (
-                <ExecutionComposer
-                  key={task.id}
-                  task={task}
-                  session={session}
-                  confirmingTask={query.isFetching && !query.isFetchedAfterMount}
-                  runs={runs}
-                  approvalPreview={approvalPreview}
-                  artifacts={artifacts}
-                  agreement={agreementSummary}
-                  reviewRequest={reviewRequest}
-                  revisionRequest={revisionRequest}
-                />
+                <>
+                  {/* 下游交接包（#380）：接收确认不自动开始执行——面板在 composer 之上，
+                      「先确认再执行」的次序就是页面次序。 */}
+                  <HandoffReceiptPanel task={task} session={session} />
+                  <ExecutionComposer
+                    key={task.id}
+                    task={task}
+                    session={session}
+                    confirmingTask={query.isFetching && !query.isFetchedAfterMount}
+                    runs={runs}
+                    approvalPreview={approvalPreview}
+                    artifacts={artifacts}
+                    agreement={agreementSummary}
+                    handoff={handoffSummary}
+                    reviewRequest={reviewRequest}
+                    revisionRequest={revisionRequest}
+                  />
+                </>
               ) : null}
             </div>
 
@@ -298,6 +309,9 @@ function TaskRoom(): ReactNode {
               ) : null}
               <ApprovalSlot runs={runs} task={task} session={session} />
             </div>
+
+            {/* 上游「已交接」（#380）：交付与接收关系追踪；无可发布版本也无交付时自隐。 */}
+            {session !== null ? <HandoffDeliveryPanel task={task} session={session} /> : null}
 
             {/* 指派与启程：**常驻**，不折进详情——接受指派是责任人进入工作前的必经一步
               （没接受就不能起 Run），把它藏进折叠区等于把门藏在门后。 */}

@@ -13,11 +13,13 @@ import {
   getOpenSpecDraft,
   getProfileRevision,
   getTask,
+  latestHandoffRevisionNumber,
   latestPhasesByRun,
   latestToolStartsByRun,
   listArtifactsByTask,
   listDiscussionMessages,
   listInstructionMessages,
+  listReceiptsByDownstreamTask,
   listRunsByTask,
   listRunPlacementNames,
   mapSpecRevisionNumbers,
@@ -148,6 +150,17 @@ export interface TaskRoomView {
     /** 是否存在未确认草稿（提示「草稿不构成要求」）。 */
     hasDraft: boolean
   }
+  /**
+   * 下游交接摘要（#380）：**活跃接收关系** = 版本号最大的 confirmed receipt
+   * （执行区默认勾选交接材料的数据源）。null = 本任务不是任何交接的下游
+   * （或还没有已确认的接收关系）。`hasNewerVersion` = 上游有更新的已发布版本。
+   */
+  handoff: {
+    receiptId: string
+    revisionNumber: number
+    upstreamTaskTitle: string
+    hasNewerVersion: boolean
+  } | null
   reviewEligibility: TaskReviewEligibility
   /** 讨论流（ADR-0010 决策 1）：**只含** `kind='discussion'` 的人际评论。 */
   comments: CommentView[]
@@ -240,6 +253,26 @@ export async function getTaskRoom(
     getLatestConfirmedSpec(handle, taskId),
     getOpenSpecDraft(handle, taskId),
   ])
+  // #380：下游交接摘要——活跃 receipt（confirmed 且版本号最大）+ 上游是否有新版本。
+  // 查询量小（单任务 receipt 数量级），与约定摘要同批解析。
+  const handoffSummaries = await listReceiptsByDownstreamTask(handle, taskId)
+  const confirmedReceipts = handoffSummaries.filter((row) => row.receipt.status === 'confirmed')
+  const activeReceipt = confirmedReceipts.reduce<(typeof confirmedReceipts)[number] | undefined>(
+    (best, row) =>
+      best === undefined || row.revision.revisionNumber > best.revision.revisionNumber ? row : best,
+    undefined,
+  )
+  const handoff =
+    activeReceipt === undefined
+      ? null
+      : {
+          receiptId: activeReceipt.receipt.id,
+          revisionNumber: activeReceipt.revision.revisionNumber,
+          upstreamTaskTitle: activeReceipt.upstreamTaskTitle,
+          hasNewerVersion:
+            (await latestHandoffRevisionNumber(handle, activeReceipt.receipt.upstreamTaskId)) >
+            activeReceipt.revision.revisionNumber,
+        }
   return {
     task: toTaskView(task),
     agreement: {
@@ -247,6 +280,7 @@ export async function getTaskRoom(
       latestConfirmedNumber: latestConfirmed?.revisionNumber ?? null,
       hasDraft: openDraft !== undefined,
     },
+    handoff,
     reviewEligibility: (() => {
       const reason =
         viewerUserId !== task.assigneeUserId
