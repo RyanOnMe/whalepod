@@ -33,7 +33,7 @@
 |---|---|---|---|
 | sessionResume | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/resume.contract.spec.ts` | 有判据：正向（同 session id + `fromRequest` 上下文命中 + 日志线性增长不复制）+ 负向（ghost id 拒绝启动、零帧） |
 | 单 Run 隔离 | `pnpm test:dsh-contract`、`pnpm test:unit` | `packages/runtime-dsh/tests/dsh-contract/single-run-isolation.contract.spec.ts`（#289 新增）、`apps/node/tests/run-manager.spec.ts`、`packages/runtime-dsh/tests/dsh-contract/event-stream.contract.spec.ts` | 有判据：命令 runId 闸（跨 Run 的 prompt/followup/cancel/decide/shutdown 显式拒 + 正控收敛后清总账的零副作用 + 正控）、Node 串扰防护、事件关联 |
-| 中断模式（cancel） | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/agent-control.contract.spec.ts` | 有判据：cancel → `run.cancelled` 且**不得再出** `run.completed`；竞态与 followup 边界未覆盖（#353） |
+| 中断模式（cancel） | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/agent-control.contract.spec.ts`、`cancel-race.contract.spec.ts`（#353 新增） | 有判据：cancel → `run.cancelled` 且**不得再出** `run.completed`；**竞态与 followup 边界**（#353，4 例）：① 流式中取消（内容帧同步点 + 收敛屏障 + 数量不变量/fatal 清总账）；② **取消与收尾撞车**（送出前自检窗口存在 → **Runtime 层** completed 胜出、不得补出 cancelled、不得 fatal；正控：取消不给后续工作上闩）；③ **中断边界的 followup**（零第二串 turn、零 fatal、恰 1 aborted；spliced 记录钉「`next-turn` 入队」与「移除记录 `outcome: canceled`」——续跑不复活已取消指令的防线）；④ **审批悬置时取消**（工具不得执行、迟到 `approval.decide` 静默丢弃并留归因）。窗口正中那一类交错无判据（见第五节）；②的产品层结局（Hub 落 `failed(INVALID_RUN_TRANSITION)`）另立账 #365 |
 | 审批桥 | `pnpm test:dsh-contract`、`pnpm test:security` | `packages/runtime-dsh/tests/dsh-contract/approval.contract.spec.ts`、`apps/hub/tests/run-authorization.security.spec.ts`、`apps/hub/tests/approval-decision.integration.spec.ts` | 有判据：allowed_once / rejected / full_access 三态 + **未知 callId 双向 no-op**（A0-6 新增，Runtime 层此前零测试）+ Hub owner-only/一次性/过期 |
 | 指令回执 | `pnpm test:dsh-contract`、`pnpm test:integration` | `packages/runtime-dsh/tests/dsh-contract/instruction-receipt.contract.spec.ts`（#289 新增）、`apps/hub/tests/instruction-queue.integration.spec.ts` | 有判据：契约门内覆盖「initialize 前显式拒且零帧 / 重复 initialize 显式拒 / 受理的 prompt 有回执且先于结算」；Hub 侧指令状态结算照旧 |
 | 事件流范围 | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/event-stream.contract.spec.ts`、`event-stream-scope.contract.spec.ts`（#289 新增） | 有判据：seq 单调/关联/顺序 + **越界（异会话）事件不转发、不结算**与**异 agent 状态不成帧**的负向（变异自证：两条过滤各自单点削弱即红）；范围语义自订阅面起算，总线分发作用域未覆盖（见第五节） |
@@ -83,10 +83,30 @@ G0「release 必跑、PR 必跑」，而 `.github/workflows/check.yml` 只跑 Q0
 
 > #288 已从本清单划掉两项：`dshCompatibility`/`profileDigest` 的比对与对照点、本机 DSH 版本
 > 自动派生。#289 划掉三项：单 Run 隔离、指令回执、事件流范围的契约级负向。#290 划掉一项：
-> 升级失败回滚（换进线性化的回滚演练，真实安装回滚如实降级为人工门）。剩下的条目维持原状。
+> 升级失败回滚（换进线性化的回滚演练，真实安装回滚如实降级为人工门）。#353 划掉一项：
+> cancel 竞态与 followup 中断边界（换进 `cancel-race.contract.spec.ts` 的四条判据：流式中取消、
+> 收尾撞车、中断边界的 followup、**审批悬置时取消**；同一句里新增的更窄边界改挂 #363（harness
+> 时序接缝）、#365（撞车的产品层结局）与 #366（resume 中取消））。剩下的条目维持原状。
 
-- cancel 竞态（取消与 turn 收尾同时发生）、followup 在中断边界的行为（#353）。#289 的
-  followup 负向覆盖的是**跨 Run 串扰**，不是 followup 在 interrupt 边界的产品语义。
+- **「收尾窗口正中」的 cancel 撞车无判据**（#363）：replay harness 只能表达「每帧内容」，
+  没有 per-frame delay / 动态 readyFile / gate 条目 ⟹ 「cancel 恰好落在 finish chunk 与
+  turn/end 之间」这种**两侧都可控**的时序构造没有接缝。现有判据钉的是窗口两侧（流式中取消、
+  turn/end 已提交后的迟到取消，后者由进程内微任务序确定性保证）；进程边界（真子进程）上的
+  同一交错也未覆盖——`apps/runtime/tests/dsh-contract/stdio.contract.spec.ts` 按用例 spawn
+  并自带 fixture 环境（通道不缺），缺的是 `until()` 的**谓词同步点**与跨进程的时序噪声余量。
+  边界与理由见 [cancel-race-acceptance](./cancel-race-acceptance.md)。
+- **「取消与完成撞车」的产品层结局未收口**（#365）：Runtime 层契约是「completed 胜出、不得
+  双终态」，但完整链路上取消请求先落 `cancel_requested` 时，Hub 会把这条完成事件按 03 §3.2
+  收敛为 `failed(INVALID_RUN_TRANSITION)`（已有 Hub 判据钉该行为）——用户可见的是
+  「答完了却显示失败」。是否给域表加 `cancel_requested → completed`（或换诚实文案）是
+  ADR/域表级决定，另立账。
+- **机制层（inbox 是否 clear）只钉结果 + 会话日志**：判据钉「不执行、不 fatal、收敛到 idle、
+  日志留 `outcome: canceled` 的移除记录」。vendor 在 abort 后直接抛出，所以 `inbox.clear()`
+  与「驱动终止」在**本进程帧面**等价（实测 `keepInbox` 不改变帧面结果）；区分两者的是**持久
+  日志**（Inbox 在 persisted load 时重放 splice）——那已由移除记录判据覆盖，勿读成「旋钮
+  无所谓」。
+- **resume 续跑中取消未判**（#366）：③的移除记录是前置防线，但「取消 → 真的 resume 一次、
+  被取消的指令不复活」的端到端判据未做（resume harness 现成，成本不高）。
 - 越界事件的**总线分发作用域**本身（事件该不该被派发到本订阅面，由 DSH 拥有）：无判据。
   #289 的范围判据自订阅面（`deliverSessionEvent` / `deliverAgentStatus`）起算，注入的是
   合成输入（探针接缝 `RuntimeProbeFace`，生产恒不设置）；边界见
