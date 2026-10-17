@@ -50,6 +50,9 @@ export const ERROR_HTTP_STATUS: Readonly<Partial<Record<ErrorCode, number>>> = {
   // P1-14：一次性决定的两类领域拒绝（03 §3.3/§10）——状态冲突与过期。
   APPROVAL_ALREADY_DECIDED: 409,
   APPROVAL_EXPIRED: 409,
+  // #378：约定流程的绑定拒绝（尚无已确认版本 / 非法版本迁移）——都是状态冲突。
+  AGREEMENT_REQUIRED: 409,
+  INVALID_SPEC_REVISION_TRANSITION: 409,
   DEVICE_OFFLINE: 409,
   DEVICE_REVOKED: 409,
   WORKSPACE_UNAVAILABLE: 409,
@@ -104,6 +107,10 @@ export function registerRunRoutes(app: FastifyInstance, deps: RunRoutesDeps): vo
         ...(body.data.artifactInputIds === undefined
           ? {}
           : { artifactInputIds: body.data.artifactInputIds }),
+        ...(body.data.specRevisionId === undefined
+          ? {}
+          : { specRevisionId: body.data.specRevisionId }),
+        ...(body.data.purpose === undefined ? {} : { purpose: body.data.purpose }),
         ...(body.data.expectedApprovalPolicy !== undefined
           ? { expectedApprovalPolicy: body.data.expectedApprovalPolicy }
           : {}),

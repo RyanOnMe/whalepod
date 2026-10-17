@@ -19,6 +19,9 @@ export type AuditAction =
   | 'task.submit_review'
   | 'task.complete'
   | 'task.cancel'
+  // #378：任务约定（确认/丢弃入审计；草稿保存不入——高频编辑，归属已在行上）。
+  | 'agreement.confirm'
+  | 'agreement.discard'
   | 'comment.create'
   | 'instruction.send'
   | 'instruction.grant'

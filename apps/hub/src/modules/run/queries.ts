@@ -26,6 +26,10 @@ export interface RunView {
   resumeFromRunId: string | null
   /** 本 Run 固化的审批档（#241）：运行卡据此标记「完全权限」。 */
   approvalPolicy: 'approval_required' | 'full_access'
+  /** 任务约定绑定（#378）：null = 未绑定（历史 Run 不回填，显示「未绑定」）。 */
+  specRevisionId: string | null
+  /** Run 用途（#378）：business / agreement_draft / handoff_draft。 */
+  purpose: RunRow['purpose']
   profileDigest: string
   pluginPackDigest: string
   dshDistributionVersion: string
@@ -50,6 +54,8 @@ export function toRunView(row: RunRow): RunView {
     rerunOfRunId: row.rerunOfRunId,
     resumeFromRunId: row.resumeFromRunId,
     approvalPolicy: row.approvalPolicy,
+    specRevisionId: row.specRevisionId,
+    purpose: row.purpose,
     profileDigest: row.profileDigest,
     pluginPackDigest: row.pluginPackDigest,
     dshDistributionVersion: row.dshDistributionVersion,

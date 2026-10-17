@@ -1,12 +1,17 @@
+import type { TaskSpecContent } from '@whalepod/protocol'
 import { sql } from 'drizzle-orm'
 import {
+  boolean,
   check,
   index,
+  integer,
+  jsonb,
   pgEnum,
   pgTable,
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core'
@@ -23,6 +28,10 @@ export const taskStatus = pgEnum('task_status', [
   'cancelled',
 ])
 export const assignmentStatus = pgEnum('assignment_status', ['pending', 'accepted', 'rejected'])
+// 任务约定（#378；ADR-0017 §1）：draft 可编辑（draft_version 并发令牌）、confirmed
+// 不可变且每 Task 编号单调递增。
+export const taskSpecRevisionStatus = pgEnum('task_spec_revision_status', ['draft', 'confirmed'])
+export const taskSpecRevisionOrigin = pgEnum('task_spec_revision_origin', ['manual', 'agent'])
 
 export const projects = pgTable(
   'project',
@@ -68,6 +77,9 @@ export const tasks = pgTable(
     // 仅 Task 责任人可设置（放权放松的是他的凭据风险）。
     approvalPolicy: approvalPolicy('approval_policy'),
     assignmentStatus: assignmentStatus('assignment_status').notNull().default('pending'),
+    // 任务约定开关（#378；ADR-0017 §1）：责任人开启后本 Task 的业务 Run 必须绑定
+    // 已确认版本；默认 false = 普通任务保留现有路径（历史不回填）。
+    agreementEnabled: boolean('agreement_enabled').notNull().default(false),
     createdBy: uuid('created_by')
       .notNull()
       .references(() => userAccounts.id),
@@ -79,6 +91,58 @@ export const tasks = pgTable(
   (table) => [
     check('task_title_length', sql`length(btrim(${table.title})) between 1 and 200`),
     check('task_description_length', sql`length(${table.description}) <= 20000`),
+  ],
+)
+
+/**
+ * 任务约定版本（#378；ADR-0017 §1）：目标/约束/验收条件/待确认问题的唯一正式载体。
+ *
+ * - `status='draft'`：可编辑，`draft_version` 是并发令牌（不匹配的编辑被拒，不覆盖他人版本）；
+ *   每 Task 至多一个开放草稿（部分唯一索引）。
+ * - `status='confirmed'`：不可变，`revision_number` 每 Task 单调递增（部分唯一索引兜底）；
+ *   确认人恒为 Task 真人责任人（命令层守卫）。
+ * - 内容四段全部为空是合法草稿；确认时要求目标非空（命令层校验）。
+ */
+export const taskSpecRevisions = pgTable(
+  'task_spec_revision',
+  {
+    id: uuid('id').primaryKey(),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.id),
+    /** 确认时分配；草稿恒 null（check 约束钉住 status/字段组合）。 */
+    revisionNumber: integer('revision_number'),
+    status: taskSpecRevisionStatus('status').notNull(),
+    content: jsonb('content').$type<TaskSpecContent>().notNull(),
+    /** 草稿编辑的并发令牌：每次落盘 +1。 */
+    draftVersion: integer('draft_version').notNull().default(1),
+    origin: taskSpecRevisionOrigin('origin').notNull().default('manual'),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => userAccounts.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    confirmedBy: uuid('confirmed_by').references(() => userAccounts.id),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+  },
+  (table) => [
+    check('task_spec_revision_content_object', sql`jsonb_typeof(${table.content}) = 'object'`),
+    check('task_spec_revision_content_size', sql`octet_length(${table.content}::text) <= 131072`),
+    check('task_spec_revision_draft_version_positive', sql`${table.draftVersion} >= 1`),
+    check(
+      'task_spec_revision_number_positive',
+      sql`${table.revisionNumber} is null or ${table.revisionNumber} >= 1`,
+    ),
+    check(
+      'task_spec_revision_confirmed_fields',
+      sql`(${table.status} = 'confirmed' and ${table.revisionNumber} is not null and ${table.confirmedBy} is not null and ${table.confirmedAt} is not null) or (${table.status} = 'draft' and ${table.revisionNumber} is null and ${table.confirmedBy} is null and ${table.confirmedAt} is null)`,
+    ),
+    uniqueIndex('task_spec_revision_number_unique')
+      .on(table.taskId, table.revisionNumber)
+      .where(sql`${table.revisionNumber} is not null`),
+    uniqueIndex('task_spec_revision_one_draft')
+      .on(table.taskId)
+      .where(sql`${table.status} = 'draft'`),
   ],
 )
 

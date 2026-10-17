@@ -79,3 +79,53 @@ export const ExecutionPreparationViewSchema = z.strictObject({
 })
 export type ExecutionPreparationRequest = z.infer<typeof ExecutionPreparationRequestSchema>
 export type ExecutionPreparationView = z.infer<typeof ExecutionPreparationViewSchema>
+
+/**
+ * 任务约定内容四段（#378；ADR-0017 §1）：目标、约束、验收条件、待确认问题。
+ * 空串合法（新草稿从空开始）；确认时要求目标非空（命令层校验，属业务规则不是形状规则）。
+ * 每段 10000 字符与消息正文同口径。
+ */
+export const TaskSpecContentSchema = z.strictObject({
+  goal: z.string().max(10000),
+  constraints: z.string().max(10000),
+  acceptance: z.string().max(10000),
+  openQuestions: z.string().max(10000),
+})
+export type TaskSpecContent = z.infer<typeof TaskSpecContentSchema>
+
+export const TaskSpecRevisionStatusSchema = z.enum(['draft', 'confirmed'])
+export const TaskSpecRevisionOriginSchema = z.enum(['manual', 'agent'])
+
+/** 单条约定版本（draft 或 confirmed）的读模型：Hub 出网前 parse，多一列少一列都是红。 */
+export const TaskSpecRevisionViewSchema = z.strictObject({
+  id: z.uuid(),
+  taskId: z.uuid(),
+  revisionNumber: z.number().int().positive().nullable(),
+  status: TaskSpecRevisionStatusSchema,
+  content: TaskSpecContentSchema,
+  draftVersion: z.number().int().positive(),
+  origin: TaskSpecRevisionOriginSchema,
+  createdByUserId: z.uuid(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  confirmedByUserId: z.uuid().nullable(),
+  confirmedAt: z.string().nullable(),
+})
+export type TaskSpecRevisionView = z.infer<typeof TaskSpecRevisionViewSchema>
+
+/** 已确认历史返回上限（读模型硬 cap）：超出部分以 confirmedCount 如实计数。 */
+export const TASK_AGREEMENT_HISTORY_LIMIT = 50
+
+/**
+ * GET /tasks/:taskId/agreement 的读模型（#378）：
+ * - `draft` = 当前开放草稿（每 Task 至多一个）；`confirmed` = 最新已确认版本；
+ * - `history` = 已确认版本倒序（≤ TASK_AGREEMENT_HISTORY_LIMIT），ConfirmedCount 是真实总数。
+ */
+export const TaskAgreementViewSchema = z.strictObject({
+  enabled: z.boolean(),
+  draft: TaskSpecRevisionViewSchema.nullable(),
+  confirmed: TaskSpecRevisionViewSchema.nullable(),
+  history: z.array(TaskSpecRevisionViewSchema),
+  confirmedCount: z.number().int().min(0),
+})
+export type TaskAgreementView = z.infer<typeof TaskAgreementViewSchema>

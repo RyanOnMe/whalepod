@@ -82,6 +82,8 @@ export interface TaskView {
   assigneeAgentId: string | null
   /** 审批档覆盖（#241）：null = 继承 Revision 默认（不物化）。 */
   approvalPolicy: 'approval_required' | 'full_access' | null
+  /** 任务约定开关（#378；ADR-0017 §1）：开启后业务 Run 必须绑定已确认版本。 */
+  agreementEnabled: boolean
   assignmentStatus: AssignmentStatus
   createdBy: string
   acceptedAt: string | null
@@ -145,6 +147,13 @@ export interface TaskRoomRun {
   resumeFromRunId: string | null
   /** 本 Run 固化的审批档（#241）：full_access 时运行卡标记「完全权限」。 */
   approvalPolicy: 'approval_required' | 'full_access'
+  /**
+   * 任务约定绑定（#378）：绑定的已确认版本（id + 编号）；null = 未绑定——
+   * 历史 Run 不回填，显示「未绑定」，不编造编号。
+   */
+  specRevision: { id: string; revisionNumber: number } | null
+  /** Run 用途（#378）：business = 业务执行；其余为显式标记的辅助 Run（免绑定）。 */
+  purpose: 'business' | 'agreement_draft' | 'handoff_draft'
   deviceName: string | null
   workspaceName: string | null
   /**
@@ -209,6 +218,8 @@ export interface TaskRoomView {
   /** 缺失表示服务端条件未确认，不能据此提交。 */
   reviewEligibility?: TaskReviewEligibility
   task: TaskView
+  /** 任务约定摘要（#378）：执行区绑定提示与「有新版本」横幅的数据源。 */
+  agreement: { enabled: boolean; latestConfirmedNumber: number | null; hasDraft: boolean }
   /** 讨论流：**只有人**说的话，永不触发运行（ADR-0010）。 */
   comments: CommentView[]
   /** 执行流：驱动 Agent 的指令（③c-2a 起与 `comments` 分离）。 */
@@ -302,11 +313,20 @@ export interface RunView {
   resumeFromRunId: string | null
   /** 本 Run 固化的审批档（#241）：full_access 时运行卡标记「完全权限」。 */
   approvalPolicy: 'approval_required' | 'full_access'
+  /** 任务约定绑定（#378）：null = 未绑定（历史 Run 不回填）。 */
+  specRevisionId: string | null
+  /** Run 用途（#378）：缺省 business。 */
+  purpose: 'business' | 'agreement_draft' | 'handoff_draft'
   profileDigest: string
   createdAt: string
   startedAt: string | null
   finishedAt: string | null
 }
+
+// task/agreement.ts（Hub）：GET /tasks/:taskId/agreement 的读模型（#378）。
+// 形状真源在 @whalepod/protocol 的 TaskAgreementViewSchema——此处按 #210 的收敛口径
+// 直接复用协议推导类型，不再手写第二份。
+export type { TaskAgreementView, TaskSpecContent, TaskSpecRevisionView } from '@whalepod/protocol'
 
 // run/routes.ts：GET /runs/:runId/events 的事件项（受众由 Hub 按请求者裁剪）。
 export interface RunEventItem {

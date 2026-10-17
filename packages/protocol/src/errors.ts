@@ -43,6 +43,11 @@ export const ErrorCodeSchema = z.enum([
   'RUNTIME_VERSION_CHANGED',
   'APPROVAL_EXPIRED',
   'APPROVAL_ALREADY_DECIDED',
+  // #378（ADR-0017 §2）：Task 启用了任务约定但（a）尚无已确认版本、或（b）本次请求
+  // 未绑定/绑定了非已确认版本——业务 Run 创建被拒，UI 据此引导先确认/更换版本。
+  'AGREEMENT_REQUIRED',
+  // #378：任务约定版本的非法迁移（对非草稿确认等）。
+  'INVALID_SPEC_REVISION_TRANSITION',
   'ARTIFACT_PATH_OUTSIDE_WORKSPACE',
   'ARTIFACT_TOO_LARGE',
   'ARTIFACT_HASH_MISMATCH',

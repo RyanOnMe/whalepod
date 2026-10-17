@@ -14,6 +14,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { snapshotRunInputs } from './input-manifest.js'
+import { resolveSpecBinding } from './spec-binding.js'
 import { uuidv7 } from '../shared/uuid.js'
 import { and, eq, inArray } from 'drizzle-orm'
 import { asUserId, authorize, DomainError, transitionRun, transitionTask } from '@whalepod/domain'
@@ -292,6 +293,9 @@ export class RunOrchestrator {
       throw new RunCommandError('RUN_ALREADY_ACTIVE', 'task already has an active run')
     }
 
+    // 任务约定绑定（#378；ADR-0017 §2）：与输入清单同一事务内固化，全入口单点收口。
+    const specRevisionId = await resolveSpecBinding(tx, task, input)
+
     const artifactInputManifest = await snapshotRunInputs(
       tx,
       task.id,
@@ -347,6 +351,8 @@ export class RunOrchestrator {
       deviceId: device.id,
       workspaceId: workspace.id,
       artifactInputManifest,
+      ...(specRevisionId !== null ? { specRevisionId } : {}),
+      ...(input.purpose !== undefined ? { purpose: input.purpose } : {}),
       profileDigest: revision.profileDigest,
       pluginPackDigest: pack.packDigest,
       dshDistributionVersion: input.dshDistributionVersion,

@@ -43,6 +43,7 @@ import { ACTIVE_RUN, QUEUEING_RUN } from '../features/task/run-states.js'
 import { formatRunReference } from '../features/task/runReference.js'
 import { ApprovalSlot, RunTimeline } from '../features/task/RunTimeline.js'
 import { TaskHeader } from '../features/task/TaskHeader.js'
+import { TaskAgreementPanel } from '../features/task/TaskAgreementPanel.js'
 
 export function TaskRoomPage(): ReactNode {
   const { taskId } = useParams()
@@ -128,6 +129,13 @@ function TaskRoom(): ReactNode {
   const fromSkeleton = skeletonPresence.value !== null
 
   const { task, comments, runs, artifacts } = query.data
+  // #378：agreement 是新字段——旧桩/旧缓存 payload 可能没有它；按「未启用」兜底而不是
+  // 崩溃（真服务端恒发；这里是读模型的向前兼容，不是把缺字段当正常数据用）。
+  const agreementSummary = query.data.agreement ?? {
+    enabled: false,
+    latestConfirmedNumber: null,
+    hasDraft: false,
+  }
   // `instructions` 是 ③c-2a 的字段，hub 侧**无条件**返回它（`task/view.ts`）。
   // 复核 #209 观察 5 指出：本仓没有 query 持久化，"旧缓存可能没有它"这个理由不成立——
   // 这里唯一能挡的是**服务端契约违约**，而静默兜成空列表会让用户看到"还没有人驱动过这个任务"
@@ -173,6 +181,8 @@ function TaskRoom(): ReactNode {
           session={session}
           reviewEligibility={query.data.reviewEligibility}
         />
+        {/* #378：任务约定（执行前的共同依据）——只读/起草/确认，不触发任何执行。 */}
+        <TaskAgreementPanel task={task} session={session} />
         <div className="task-room-split">
           {/* 讨论栏：只有人说话，永不触发运行 */}
           <section className="task-room-col" aria-labelledby="comments-heading">
@@ -251,6 +261,7 @@ function TaskRoom(): ReactNode {
                   runs={runs}
                   approvalPreview={approvalPreview}
                   artifacts={artifacts}
+                  agreement={agreementSummary}
                   reviewRequest={reviewRequest}
                   revisionRequest={revisionRequest}
                 />

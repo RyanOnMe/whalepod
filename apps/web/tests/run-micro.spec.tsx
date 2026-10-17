@@ -233,6 +233,9 @@ describe('#306 工具事实', () => {
       dshSessionId: null,
       failureCode: null,
       failureSummary: null,
+      // #378：约定绑定与用途（RunView 新必填字段）。
+      specRevisionId: null,
+      purpose: 'business',
       profileDigest: 'b'.repeat(64),
     }
     let fail = false
@@ -283,6 +286,9 @@ function activityView(
     dshSessionId: null,
     failureCode: null,
     failureSummary: null,
+    // #378：约定绑定与用途（RunView 新必填字段）。
+    specRevisionId: null,
+    purpose: 'business',
     profileDigest: 'b'.repeat(64),
   }
   installFetch([

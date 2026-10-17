@@ -142,6 +142,14 @@ export const api = {
       ...(options.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}),
     })
   },
+  /** PATCH（#378 起需要：任务约定开关走 `PATCH /tasks/:taskId`）。 */
+  update<T>(route: string, options: { body?: unknown; idempotencyKey?: string } = {}): Promise<T> {
+    return apiRequest<T>(route, {
+      method: 'PATCH',
+      ...(options.body !== undefined ? { body: options.body } : {}),
+      ...(options.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}),
+    })
+  },
   /**
    * 与 `mutate` 同一条请求，但把 `data` 的**兄弟字段**一并交给调用方（见 `EnvelopeSiblings`）。
    * 指派 Agent 建任务必须用这个：`drive` 只在兄弟位，只取 `data` 会把驱动结果丢掉（#312）。

@@ -19,6 +19,8 @@ export interface TaskView {
   assigneeAgentId: string | null
   /** 审批档覆盖（#241）：null = 继承 Revision 默认（不物化）。 */
   approvalPolicy: 'approval_required' | 'full_access' | null
+  /** 任务约定开关（#378；ADR-0017 §1）：开启后业务 Run 必须绑定已确认版本。 */
+  agreementEnabled: boolean
   assignmentStatus: TaskRow['assignmentStatus']
   createdBy: string
   acceptedAt: string | null
@@ -37,6 +39,7 @@ export function toTaskView(row: TaskRow): TaskView {
     assigneeUserId: row.assigneeUserId,
     assigneeAgentId: row.assigneeAgentId,
     approvalPolicy: row.approvalPolicy,
+    agreementEnabled: row.agreementEnabled,
     assignmentStatus: row.assignmentStatus,
     createdBy: row.createdBy,
     acceptedAt: row.acceptedAt?.toISOString() ?? null,

@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   useCallback,
   useEffect,
@@ -8,6 +8,7 @@ import {
   type SetStateAction,
 } from 'react'
 import { Link } from 'react-router'
+import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { api } from '../../shared/api/client.js'
 import { SelectMenu } from '../../shared/SelectMenu.js'
 import { queryKeys } from '../../app/query-client.js'
@@ -52,6 +53,7 @@ export function ExecutionComposer({
   approvalPreview,
   confirmingTask = false,
   artifacts,
+  agreement,
   reviewRequest = null,
   revisionRequest = null,
 }: {
@@ -61,6 +63,8 @@ export function ExecutionComposer({
   approvalPreview: ApprovalPreview
   confirmingTask?: boolean
   artifacts: TaskRoomArtifact[]
+  /** 任务约定摘要（#378；TaskRoomView.agreement）：绑定提示与「有新版本」横幅的数据源。 */
+  agreement: { enabled: boolean; latestConfirmedNumber: number | null; hasDraft: boolean }
   reviewRequest?: ArtifactReviewRequest | null
   revisionRequest?: ArtifactReviewRequest | null
 }): ReactNode {
@@ -258,6 +262,22 @@ export function ExecutionComposer({
             source: task.approvalPolicy === null ? 'revision_default' : 'task_override',
           }
       : approvalPreview
+  // #378：活跃 Run 绑定的约定版本落后于任务最新已确认版本 → 提示三选一（追问/取消/保持本次）。
+  // 「保持本次」按 Run 记一次：同一次运行不再打扰，换了一次运行（新 id）重新提示。
+  const queryClient = useQueryClient()
+  const [keptStaleRunId, setKeptStaleRunId] = useState<string | null>(null)
+  const cancelRunMutation = useMutation({
+    mutationFn: (runId: string) => api.mutate<RunView>(`/runs/${runId}/cancel`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(task.id) })
+    },
+  })
+  const agreementNowStale =
+    active !== undefined &&
+    active.specRevision !== null &&
+    agreement.latestConfirmedNumber !== null &&
+    active.specRevision.revisionNumber < agreement.latestConfirmedNumber &&
+    keptStaleRunId !== active.id
   const started = (outcome: InstructionOutcome): void => {
     setLastOutcome(outcome)
     if (outcome.outcome === 'started_run' && outcome.runId !== null) {
@@ -307,6 +327,36 @@ export function ExecutionComposer({
           ? '你是当前责任人。执行使用你的环境与凭据，审批由你处理。'
           : `当前责任人：${responsible}。执行使用其环境与凭据，审批由${responsible}处理。指令权不授予审批权、凭据读取权或私有候选访问权。`}
       </p>
+      {/* #378：任务约定的绑定提示——新执行（new/resume）缺省绑定最新已确认版本。 */}
+      {agreement.enabled ? (
+        <p className="mutation-hint" data-testid="agreement-binding-hint">
+          本任务已启用任务约定：开始新执行/继续会话将绑定当前正式版本
+          {agreement.latestConfirmedNumber !== null
+            ? ` v${agreement.latestConfirmedNumber}`
+            : '（尚无已确认版本，服务端会拒绝执行）'}
+          {agreement.hasDraft ? '；存在未确认草稿，不作为执行依据' : ''}。
+        </p>
+      ) : null}
+      {/* #378：执行中约定更新——三选一（追问 / 取消 / 保持本次）都只由用户点，不自动动。 */}
+      {agreementNowStale ? (
+        <AgreementUpdateNotice
+          boundNumber={active?.specRevision?.revisionNumber ?? null}
+          latestNumber={agreement.latestConfirmedNumber}
+          onAsk={() => {
+            setDraft(
+              `任务约定已更新到 v${agreement.latestConfirmedNumber}（本次执行绑定的是 v${active?.specRevision?.revisionNumber}）。请以最新版本为准说明需要调整的地方，再继续。`,
+            )
+            if (active !== undefined) {
+              setMode('followup')
+              setSourceId(active.id)
+            }
+          }}
+          onCancelRun={() => cancelRunMutation.mutate(active!.id)}
+          cancelling={cancelRunMutation.isPending}
+          onKeep={() => setKeptStaleRunId(active?.id ?? null)}
+          error={cancelRunMutation.isError ? cancelRunMutation.error : null}
+        />
+      ) : null}
       <SelectMenu
         id={`execution-mode-${task.id}`}
         label="执行方式"
@@ -534,5 +584,60 @@ export function ExecutionComposer({
         </fieldset>
       ) : null}
     </div>
+  )
+}
+
+/**
+ * #378「执行中约定更新」横幅：只呈现事实与三个入口，**不自动**追问、取消或改写草稿。
+ * 「按新版本追问」只把建议文字放进执行草稿（用户仍要自己按发送）；「取消本次执行」直接
+ * 调既有取消端点；「保持本次」只收起提示（版本采用与否由下一次执行的选择表达）。
+ */
+function AgreementUpdateNotice({
+  boundNumber,
+  latestNumber,
+  onAsk,
+  onCancelRun,
+  cancelling,
+  onKeep,
+  error,
+}: {
+  boundNumber: number | null
+  latestNumber: number | null
+  onAsk: () => void
+  onCancelRun: () => void
+  cancelling: boolean
+  onKeep: () => void
+  error: unknown
+}): ReactNode {
+  return (
+    <section
+      className="agreement-update-notice"
+      role="status"
+      data-testid="agreement-update-notice"
+    >
+      <p>
+        {`任务约定已在执行中更新为 v${latestNumber}（本次执行绑定的是${
+          boundNumber === null ? '未绑定版本' : ` v${boundNumber}`
+        }）。你可以继续本次执行，或按新版本处理。`}
+      </p>
+      <div className="agreement-actions">
+        <button type="button" className="button" disabled={cancelling} onClick={onAsk}>
+          按新版本追问（填入草稿）
+        </button>
+        <button type="button" className="button" disabled={cancelling} onClick={onCancelRun}>
+          {cancelling ? '正在取消…' : '取消本次执行'}
+        </button>
+        <button
+          type="button"
+          className="button button-quiet"
+          disabled={cancelling}
+          onClick={onKeep}
+        >
+          保持本次（下次执行采用新版本）
+        </button>
+      </div>
+      <p className="mutation-hint">本次执行的历史与产出不会被改写；新版本只影响之后的执行。</p>
+      {error != null ? <ErrorBanner error={error} /> : null}
+    </section>
   )
 }

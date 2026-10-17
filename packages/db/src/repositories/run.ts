@@ -18,6 +18,10 @@ export interface NewRun {
   deviceId: string
   workspaceId: string
   artifactInputManifest?: ArtifactInputManifest | null
+  /** 任务约定绑定（#378）：启用约定后业务 Run 必填（orchestrator 收口）；辅助 Run 可空。 */
+  specRevisionId?: string
+  /** Run 用途（#378）：缺省 business。 */
+  purpose?: RunRow['purpose']
   profileDigest: string
   pluginPackDigest: string
   dshDistributionVersion: string

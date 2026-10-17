@@ -403,6 +403,8 @@
                 "RUNTIME_VERSION_CHANGED",
                 "APPROVAL_EXPIRED",
                 "APPROVAL_ALREADY_DECIDED",
+                "AGREEMENT_REQUIRED",
+                "INVALID_SPEC_REVISION_TRANSITION",
                 "ARTIFACT_PATH_OUTSIDE_WORKSPACE",
                 "ARTIFACT_TOO_LARGE",
                 "ARTIFACT_HASH_MISMATCH",

@@ -288,12 +288,15 @@ export async function updateTaskFields(
     title?: string
     description?: string
     approvalPolicy?: 'approval_required' | 'full_access' | null
+    /** 任务约定开关（#378）：责任人开启后业务 Run 必须绑定已确认版本。 */
+    agreementEnabled?: boolean
   },
 ): Promise<TaskRow | undefined> {
   const set: Record<string, unknown> = {}
   if (patch.title !== undefined) set.title = patch.title
   if (patch.description !== undefined) set.description = patch.description
   if (patch.approvalPolicy !== undefined) set.approvalPolicy = patch.approvalPolicy
+  if (patch.agreementEnabled !== undefined) set.agreementEnabled = patch.agreementEnabled
   if (Object.keys(set).length === 0) return getTask(handle, id)
   const [row] = await handle.update(tasks).set(set).where(eq(tasks.id, id)).returning()
   return row
