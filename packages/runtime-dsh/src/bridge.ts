@@ -275,6 +275,17 @@ function mapTurnError(error: unknown): { code: ErrorCode; summary: string } {
   return { code: mapped, summary: `${code}: ${message}`.slice(0, 1000) }
 }
 
+/**
+ * 收尾整理的 Run 级状态（评审 M2/m3）：turnSettled 闭包与命令分发（run.cancel）
+ * 共享同一份——`attempted` = 每 Run 至多一次；`cancelRequested` = 取消胜出；
+ * `abort` = 取消时中断进行中的整理调用。
+ */
+interface HandoffRunState {
+  attempted: boolean
+  cancelRequested: boolean
+  abort: AbortController | undefined
+}
+
 export class RuntimeBridge {
   private disposed = false
 
@@ -284,6 +295,7 @@ export class RuntimeBridge {
     private readonly approval: ApprovalPort,
     private readonly spec: RuntimeSpec,
     private readonly log: LogSink,
+    private readonly handoffState: HandoffRunState,
   ) {}
 
   /**
@@ -321,6 +333,13 @@ export class RuntimeBridge {
     // #379：收尾整理的候选清单（标题；不夹本机路径）——artifact.candidate 只带相对路径，
     // 这里登记展示名，供交接草稿的 prompt 识别本次产出。
     const handoffCandidates: { title: string }[] = []
+    // 评审 m3/M2：整理**每个 Run 至多尝试一次**（ADR-0017 §3 的「最多一次」；追问回合
+    // 完成不再第二次叫模型）；run.cancel 在收尾窗口内到达时中断整理调用并由取消胜出。
+    const handoffState: HandoffRunState = {
+      attempted: false,
+      cancelRequested: false,
+      abort: undefined,
+    }
     const artifact: ArtifactPort = {
       publish: (candidate) => {
         handoffCandidates.push({ title: candidate.title })
@@ -335,7 +354,9 @@ export class RuntimeBridge {
           case 'completed': {
             // #379（ADR-0017 §3）：正常完成且启用约定流程 → 收尾一次性整理（有界、无工具）。
             // 任何异常都不改变业务执行结果：无论整理成败，随后照发 run.completed。
-            if (spec.handoff !== undefined) {
+            if (spec.handoff !== undefined && !handoffState.attempted) {
+              handoffState.attempted = true
+              handoffState.abort = new AbortController()
               const outcome = await runtimeHandoffDraft({
                 ctx,
                 spec,
@@ -343,7 +364,16 @@ export class RuntimeBridge {
                 transcript: owner.transcriptSnapshot(),
                 candidates: handoffCandidates,
                 log,
+                signal: handoffState.abort.signal,
               })
+              handoffState.abort = undefined
+              // 评审 M2：取消在我们整理期间到达 → **取消胜出**：不发草稿帧、不发
+              // completed（底线：不给已取消的执行造一份交接草稿，也不让 completed
+              // 撞上 cancel_requested 把 Run 记成 failed）。
+              if (handoffState.cancelRequested) {
+                emit(frameOf('run.cancelled', { runId }))
+                return
+              }
               emit(frameOf('handoff.draft', { runId, ...outcome }))
             }
             emit(
@@ -408,7 +438,7 @@ export class RuntimeBridge {
       deliverSessionEvent: (eventSession, event) => owner.deliverSessionEvent(eventSession, event),
       deliverAgentStatus: (payload) => owner.deliverAgentStatus(payload),
     })
-    return new RuntimeBridge(ctx, owner, approval, spec, log)
+    return new RuntimeBridge(ctx, owner, approval, spec, log, handoffState)
   }
 
   /** 处理 initialize 之后的 wire 命令（03 §7.1 → DSH 公开 interface）。 */
@@ -436,6 +466,8 @@ export class RuntimeBridge {
         this.owner.followup(command.payload.text)
         return
       case 'run.cancel':
+        this.handoffState.cancelRequested = true
+        this.handoffState.abort?.abort()
         this.owner.cancel(command.payload.cause)
         return
       case 'approval.decide':
@@ -492,11 +524,12 @@ async function runtimeHandoffDraft(input: {
   transcript: readonly { role: 'user' | 'assistant'; text: string }[]
   candidates: readonly { title: string }[]
   log: LogSink
+  signal?: AbortSignal
 }): Promise<
   | { status: 'generated'; content: import('@whalepod/protocol').HandoffNarrative }
   | { status: 'failed'; reason: string }
 > {
-  const { ctx, spec, sessionId, transcript, candidates, log } = input
+  const { ctx, spec, sessionId, transcript, candidates, log, signal } = input
   try {
     // 模型出口取运行时 llm 服务（与 agent 同一 provider/model 路由；replay 探针下
     // 由 replay 适配器应答）。缺服务 = 整理失败，不影响执行结果。
@@ -516,6 +549,7 @@ async function runtimeHandoffDraft(input: {
         model: spec.model,
         sessionId: sessionId as import('@deepseek-ai/dsh-llm').GenerateOptions['sessionId'],
         timeoutMs: handoffDraftTimeoutMs(),
+        ...(signal === undefined ? {} : { signal }),
       },
       prompt,
       (options) => llm.stream(options) as AsyncIterable<import('@deepseek-ai/dsh-llm').StreamChunk>,

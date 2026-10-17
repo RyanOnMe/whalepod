@@ -295,6 +295,16 @@ export class RunOrchestrator {
       throw new RunCommandError('RUN_ALREADY_ACTIVE', 'task already has an active run')
     }
 
+    // 评审 M4：purpose 是**客户端可声明**的免绑定标记，不设门槛就等于给「约定流程」
+    // 开了后门（任何有指令权的人传 agreement_draft 即可绕过 AGREEMENT_REQUIRED 跑业务
+    // 工作）。辅助 Run 只允许责任人发起（ADR-0017 §1 的整理约定场景）。
+    if (
+      input.purpose !== undefined &&
+      input.purpose !== 'business' &&
+      task.assigneeUserId !== ctx.userId
+    ) {
+      throw new RunCommandError('FORBIDDEN', 'helper run purposes are assignee-only')
+    }
     // 任务约定绑定（#378；ADR-0017 §2）：与输入清单同一事务内固化，全入口单点收口。
     const specRevision = await resolveSpecBinding(tx, task, input)
     const specRevisionId = specRevision?.id ?? null
@@ -649,9 +659,17 @@ export class RunOrchestrator {
         },
       })
       // #379（ADR-0017 §3）：交接草稿事实先落（幂等、不碰 Run 状态）——放在终态
-      // 早返**之前**：迟到/重放的上行仍要能补上草稿，但绝不复活终态。只认 owner
-      // 受众行（草稿是私有面；project 行即便伪造也不落草稿）。
-      if (payload.event.type === 'handoff.draft' && payload.audience === 'owner') {
+      // 早返**之前**：迟到/重放的上行仍要能补上草稿，但绝不复活终态。
+      // 受众纪律（评审 m1）：handoff.draft 按协议**只允许 owner 受众**；非 owner 行
+      // 直接拒绝（fail-closed）——拒绝在同一事务内回滚，run_event 留痕与团队扇出都不
+      // 发生；否则伪造的 project 行会把私有草稿内容推给全团队。
+      if (payload.event.type === 'handoff.draft' && payload.audience !== 'owner') {
+        throw new RunCommandError(
+          'VALIDATION_FAILED',
+          'handoff.draft frames must use the owner audience',
+        )
+      }
+      if (payload.event.type === 'handoff.draft') {
         await persistHandoffDraftEvent(tx, run, payload.event, now)
       }
       // 终态禁复活（§3.2/R5）：迟到事件已持久留证，状态不动。

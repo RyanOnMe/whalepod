@@ -18,6 +18,7 @@ import type {
   HandoffRevisionView,
 } from '@whalepod/protocol'
 import {
+  HANDOFF_ARTIFACTS_MAX,
   HandoffContentSchema,
   HandoffDraftViewSchema,
   HandoffRevisionViewSchema,
@@ -35,6 +36,7 @@ import type {
   Tx,
 } from '@whalepod/db'
 import {
+  appendTeamEvent,
   getHandoffRevision,
   getLatestHandoffDraft,
   getOpenHandoffDraft,
@@ -53,6 +55,7 @@ import {
 } from '@whalepod/db'
 import type { ProjectedRunEvent } from '@whalepod/protocol'
 import { ApiError } from '../shared/http-error.js'
+import { taskChangedPayload } from '../task/commands.js'
 import { uuidv7 } from '../shared/uuid.js'
 
 export function toHandoffDraftView(row: HandoffDraftRow): HandoffDraftView {
@@ -114,17 +117,52 @@ export async function buildHandoffSystemBlock(
     .from(schema.artifacts)
     .where(eq(schema.artifacts.runId, run.id))
     .orderBy(asc(schema.artifacts.createdAt), asc(schema.artifacts.id))
-  return HandoffSystemSchema.parse({
-    sourceRunId: run.id,
-    specRevision,
-    artifacts: artifactRows.filter((row) => filter === 'all' || row.status === 'published'),
-  })
+  // 评审 M1（2026-10-18）：系统块超协议上限（64 条）时**不许抛 ZodError**——自动落库在
+  // ingest 事务里抛会让 WS 以 4003 反复重连，且重发帧永远排不到 run.completed 之前成功，
+  // Run 卡死。容量不足一律转「生成失败（自动路径）/ 显式 409（手工与发布路径）」；
+  // 同一守卫也提前挡住 DB 的 32 KiB content 约束（否则是同类毒帧的另一条路径）。
+  const included = artifactRows.filter((row) => filter === 'all' || row.status === 'published')
+  if (included.length > HANDOFF_ARTIFACTS_MAX) {
+    throw new HandoffCapacityError(
+      `这条执行登记的 Artifact 超过交接包上限（${HANDOFF_ARTIFACTS_MAX} 项）`,
+    )
+  }
+  return HandoffSystemSchema.parse({ sourceRunId: run.id, specRevision, artifacts: included })
+}
+
+/** 交接包容量不足（>64 条材料或内容超 32 KiB）：自动路径转失败草稿，显式路径转 409。 */
+export class HandoffCapacityError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'HandoffCapacityError'
+  }
+}
+
+/** 系统块 + 叙述的内容上限（与 DB 的 content 列约束同值；按 JSON 字节计）。 */
+export const HANDOFF_CONTENT_MAX_BYTES = 32_768
+
+/** 显式路径（手工新建/编辑/发布）在落库前先失败，给出可读冲突而不是 23514。 */
+export function assertHandoffContentFits(content: HandoffContent): void {
+  if (new TextEncoder().encode(JSON.stringify(content)).length > HANDOFF_CONTENT_MAX_BYTES) {
+    throw new HandoffCapacityError('交接内容超过 32 KiB 上限，请精简叙述后重试')
+  }
+}
+
+/** 显式路径统一：容量超限转 409（自动路径不走这里——它落 failed 草稿）。 */
+function assertHandoffContentFitsGuard(content: HandoffContent): void {
+  try {
+    assertHandoffContentFits(content)
+  } catch (error) {
+    capacityConflict(error)
+  }
 }
 
 /**
  * run.event 上行落库（owner 受众的 handoff.draft）。
  * - 幂等：同源 Run 的未发布草稿已存在（重放/重发）→ 跳过，不覆盖既有事实；
- * - **不动 Run 状态**：迟到/终态场景只更新草稿侧事实（不复活终态）。
+ *   **已发布过的征执行**同样跳过（迟到的再造帧不产生第二份草稿）；
+ * - **不动 Run 状态**：迟到/终态场景只更新草稿侧事实（不复活终态）；
+ * - 容量不足（材料 >64 / 内容 >32 KiB）→ 落「未生成」失败草稿，**绝不抛穿 ingest 事务**。
  */
 export async function persistHandoffDraftEvent(
   tx: Tx,
@@ -133,6 +171,20 @@ export async function persistHandoffDraftEvent(
   now: Date,
 ): Promise<{ inserted: boolean }> {
   const specRevisionId = run.specRevisionId
+  const alreadyPublished =
+    (
+      await tx
+        .select({ id: schema.handoffDrafts.id })
+        .from(schema.handoffDrafts)
+        .where(
+          and(
+            eq(schema.handoffDrafts.sourceRunId, run.id),
+            eq(schema.handoffDrafts.status, 'published'),
+          ),
+        )
+        .limit(1)
+    ).length > 0
+  if (alreadyPublished) return { inserted: false }
   if (event.status === 'failed') {
     return insertHandoffDraftIfAbsent(tx, {
       id: uuidv7(),
@@ -146,11 +198,29 @@ export async function persistHandoffDraftEvent(
       createdAt: now,
     })
   }
-  const system = await buildHandoffSystemBlock(tx, run, 'all')
-  const content = HandoffContentSchema.parse({
-    system,
-    narrative: event.content ?? emptyHandoffNarrative(),
-  })
+  let content: HandoffContent
+  try {
+    const system = await buildHandoffSystemBlock(tx, run, 'all')
+    content = HandoffContentSchema.parse({
+      system,
+      narrative: event.content ?? emptyHandoffNarrative(),
+    })
+    assertHandoffContentFits(content)
+  } catch (error) {
+    if (!(error instanceof HandoffCapacityError)) throw error
+    // 生成侧容量问题 = 「交接草稿未生成」，业务结果不受影响（评审 M1）。
+    return insertHandoffDraftIfAbsent(tx, {
+      id: uuidv7(),
+      taskId: run.taskId,
+      sourceRunId: run.id,
+      specRevisionId,
+      status: 'failed',
+      failureReason: 'capacity-exceeded',
+      origin: 'auto',
+      createdBy: run.ownerUserId,
+      createdAt: now,
+    })
+  }
   return insertHandoffDraftIfAbsent(tx, {
     id: uuidv7(),
     taskId: run.taskId,
@@ -162,6 +232,14 @@ export async function persistHandoffDraftEvent(
     createdBy: run.ownerUserId,
     createdAt: now,
   })
+}
+
+/** 显式路径的统一容量守卫：HandoffCapacityError → 409 CONFLICT（不泄露内部形态）。 */
+function capacityConflict(error: unknown): never {
+  if (error instanceof HandoffCapacityError) {
+    throw new ApiError(409, 'CONFLICT', error.message)
+  }
+  throw error
 }
 
 /** 日志里可复用的终态集合（与 db 的 TERMINAL_RUN_STATUSES 同口径，避免跨包引入循环）。 */
@@ -217,7 +295,7 @@ export async function createManualHandoffDraft(
     if (existing !== undefined && existing.status === 'ready') {
       throw new ApiError(409, 'CONFLICT', '已有待发布的交接草稿，请直接编辑它')
     }
-    const system = await buildHandoffSystemBlock(tx, run, 'all')
+    const system = await buildHandoffSystemBlock(tx, run, 'all').catch(capacityConflict)
     // 「修改产生新版本」：同一来源 Run 已发布过交接包时，新草稿以上一版叙述为起点
     // （owner 在此基础上改，而不是从零重写）。
     const publishedRows = await tx
@@ -233,6 +311,7 @@ export async function createManualHandoffDraft(
       .limit(1)
     const seededNarrative = publishedRows[0]?.content?.narrative ?? emptyHandoffNarrative()
     const content = HandoffContentSchema.parse({ system, narrative: seededNarrative })
+    assertHandoffContentFitsGuard(content)
     if (existing !== undefined) {
       const { inserted } = await replaceFailedDraft(tx, existing.id, {
         id: uuidv7(),
@@ -289,6 +368,7 @@ export async function updateManualHandoffDraft(
       system: draft.content.system,
       narrative: input.narrative,
     })
+    assertHandoffContentFitsGuard(content)
     const row = await updateHandoffDraftContentCas(
       tx,
       draft.id,
@@ -377,8 +457,9 @@ export async function publishHandoffDraft(
       }
     }
     // 发布形态的系统块：以发布时刻事实重算，候选被过滤。
-    const system = await buildHandoffSystemBlock(tx, run, 'published')
+    const system = await buildHandoffSystemBlock(tx, run, 'published').catch(capacityConflict)
     const content = HandoffContentSchema.parse({ system, narrative })
+    assertHandoffContentFitsGuard(content)
     // Task 行锁串行化编号分配（与任务约定版本同款；唯一约束兜底）。
     await tx
       .select({ id: schema.tasks.id })
@@ -401,6 +482,16 @@ export async function publishHandoffDraft(
     const marked = await markHandoffDraftPublished(tx, draft.id, revision.id, now)
     if (marked === undefined) {
       throw new ApiError(409, 'CONFLICT', '交接草稿状态已变化，请刷新后重试')
+    }
+    // 评审 B4/m2：发布是**团队可见事实**——不发事件，别人开着房间看不到新版本
+    //（下游「有新版本」也就不出现）。与交付/确认同形：task.changed 双侧语义由
+    // 订阅方按 taskId 失效（版本列表与服务端房间同键）。
+    const sealedTask = await getTask(tx, run.taskId)
+    if (sealedTask !== undefined) {
+      await appendTeamEvent(tx, {
+        type: 'task.changed',
+        payload: taskChangedPayload(sealedTask),
+      })
     }
     return { revision: toHandoffRevisionView(revision) }
   })

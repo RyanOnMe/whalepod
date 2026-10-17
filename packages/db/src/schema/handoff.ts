@@ -59,7 +59,7 @@ export const handoffDrafts = pgTable(
     ),
     check(
       'handoff_draft_fields',
-      sql`(${table.status} = 'failed' and ${table.content} is null and ${table.failureReason} is not null and ${table.publishedRevisionId} is null) or (${table.status} = 'ready' and ${table.content} is not null and ${table.failureReason} is null and ${table.publishedRevisionId} is null) or (${table.status} = 'published' and ${table.content} is not null and ${table.publishedRevisionId} is not null)`,
+      sql`(${table.status} = 'failed' and ${table.content} is null and ${table.failureReason} is not null and ${table.publishedRevisionId} is null) or (${table.status} = 'ready' and ${table.content} is not null and ${table.failureReason} is null and ${table.publishedRevisionId} is null) or (${table.status} = 'published' and ${table.content} is not null and ${table.publishedRevisionId} is not null and ${table.failureReason} is null)`,
     ),
     uniqueIndex('handoff_draft_one_open_per_run')
       .on(table.sourceRunId)

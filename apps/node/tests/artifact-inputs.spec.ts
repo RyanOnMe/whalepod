@@ -281,5 +281,40 @@ describe('ArtifactInputsManager', () => {
       })
       expect(existsSync(join(inputsRoot, RUN_ID))).toBe(false)
     })
+
+    // 63 条 clone + 1 条交接材料 = 64（边界内）；再多一条就超。
+    const manyEntries = Array.from({ length: 63 }, (_, index) => ({
+      ...ENTRY,
+      artifactId: `01905f7c-0000-7000-8000-${String(1000 + index).padStart(12, '0')}`,
+    }))
+    const oneMore = {
+      ...ENTRY,
+      artifactId: '01905f7c-0000-7000-8000-000000001063',
+    }
+
+    it('合并恰在边界（63 + 1 = 64）：正常下载，证明判据不是 off-by-one', async () => {
+      const h = makeHarness({
+        manifest: manyEntries,
+        handoff: HANDOFF_MANIFEST,
+        content: Buffer.from(CONTENT),
+        contents: { [HANDOFF_ENTRY.artifactId]: Buffer.from(HANDOFF_CONTENT) },
+      })
+      const prepared = await h.manager.prepare(RUN_ID, TASK_ID)
+      expect(prepared.entries).toHaveLength(64)
+    })
+
+    it('合并超限（评审 B3）：两张清单各自合法但合并 >64 → ARTIFACT_INPUT_MANIFEST_TOO_LARGE，不写副本', async () => {
+      // 64 条的清单（自身在 schema 上限内）+ 1 条交接材料 = 合并 65：超 runtime wire
+      // 上限的帧会被 Runtime 静默丢弃（Run 一直挂着）——现在 fail-closed 显式拒绝，
+      // ack 把专用码带回 Hub 可归因。
+      const h = makeHarness({
+        manifest: [...manyEntries, oneMore],
+        handoff: HANDOFF_MANIFEST,
+      })
+      await expect(h.manager.prepare(RUN_ID, TASK_ID)).rejects.toMatchObject({
+        code: 'ARTIFACT_INPUT_MANIFEST_TOO_LARGE',
+      })
+      expect(existsSync(join(inputsRoot, RUN_ID))).toBe(false)
+    })
   })
 })

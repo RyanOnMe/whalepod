@@ -87,6 +87,13 @@ export function ExecutionComposer({
   // #380：存在已确认接收关系时默认附带（界面在发送前展示固定版本号；取消勾选 =
   // 本次不带交接材料，Run 快照为 null——缺省不带是协议语义，勾选才是显式选择）。
   const [includeHandoff, setIncludeHandoff] = useState(handoff !== null)
+  // 评审 B6：接收方在别的机器上确认后，房间实时拿到摘要（null → 非 null）——此时
+  // 默认勾选也要生效；只在「从未有过 → 有」这一步重置，不覆盖用户主动取消的勾选。
+  const hadHandoff = useRef(handoff !== null)
+  useEffect(() => {
+    if (!hadHandoff.current && handoff !== null) setIncludeHandoff(true)
+    hadHandoff.current = handoff !== null
+  }, [handoff])
   const initialDraft = (): ExecutionDraft => ({
     ownerId: task.assigneeUserId,
     text: '',

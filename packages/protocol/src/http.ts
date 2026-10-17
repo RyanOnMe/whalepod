@@ -101,7 +101,8 @@ export const UpdateTaskRequestSchema = z.strictObject({
   approvalPolicy: ApprovalPolicySchema.nullable().optional(),
   /**
    * 任务约定开关（#378；ADR-0017 §1）：**仅 Task 责任人**能改（命令层守卫）。
-   * 开启要求已有至少一个已确认版本；关闭不动历史（已发布交接与既有 Run 保留绑定）。
+   * 可随时开启/关闭，**不要求已有已确认版本**（开启后尚无已确认版本时业务 Run 被
+   * 明确拒绝并引导先确认）；关闭不动历史（已发布交接与既有 Run 保留绑定）。
    */
   agreementEnabled: z.boolean().optional(),
 })

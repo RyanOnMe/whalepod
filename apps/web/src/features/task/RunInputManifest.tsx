@@ -87,6 +87,11 @@ export function RunInputManifest({
               )}
             </>
           ) : null}
+          {handoffQuery.isError ? (
+            <p role="alert" data-testid="run-handoff-input-error">
+              交接材料读取失败——这不等于「本次不带交接材料」，请重试。
+            </p>
+          ) : null}
           {handoffQuery.isSuccess && handoffQuery.data !== null ? (
             <div data-testid="run-handoff-input">
               <p className="mutation-hint">

@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
+  ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES,
   ArtifactInputManifestSchema,
   ErrorCodeSchema,
   HandoffInputManifestSchema,
@@ -88,6 +89,15 @@ export class ArtifactInputsManager {
         if (seen.has(entry.artifactId)) continue
         seen.add(entry.artifactId)
         allEntries.push(entry)
+      }
+      // 评审 B3：两张清单各自合法（各 ≤64）但合并后可超 runtime wire 上限（64）——
+      // 超限帧会被 Runtime 静默丢弃，Run 会一直挂着。这里 fail-closed 地显式拒绝
+      // （码复用 ARTIFACT_INPUT_MANIFEST_TOO_LARGE，Node→Hub 的 ack 会把它带出去）。
+      if (allEntries.length > ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES) {
+        throw new ArtifactInputsError(
+          'ARTIFACT_INPUT_MANIFEST_TOO_LARGE',
+          `merged artifact inputs exceed ${ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES} entries`,
+        )
       }
       await mkdir(dir, { recursive: true })
       for (const entry of allEntries) {

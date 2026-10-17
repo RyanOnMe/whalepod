@@ -168,6 +168,42 @@ describe('#379 交接草稿生成器（纯函数 + 注入流）', () => {
     expect(timedOut).toEqual({ status: 'failed', reason: 'timeout' })
   })
 
+  it('外部取消信号（评审 M2）：在途中断 = aborted；已取消的入口立刻返回，不干等超时', async () => {
+    const hang: (options: GenerateOptions) => AsyncIterable<StreamChunk> = (options) =>
+      (async function* () {
+        yield { type: 'block-start', index: 0, blockType: 'text' }
+        yield { type: 'text-delta', index: 0, text: 'partial' }
+        await new Promise((_resolve, reject) => {
+          const signal = options.signal
+          if (signal?.aborted) {
+            reject(new Error('aborted'))
+            return
+          }
+          signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+        })
+      })()
+
+    // 在途取消：模型流被中断 → 归类 aborted（不是 model-call-failed），调用方据此让取消胜出。
+    const controller = new AbortController()
+    const pending = generateHandoffDraft(
+      { ...CALL, timeoutMs: 60_000, signal: controller.signal },
+      { system: 's', user: 'u' },
+      hang,
+    )
+    controller.abort()
+    expect(await pending).toEqual({ status: 'failed', reason: 'aborted' })
+
+    // 已取消的入口：立即归类 aborted（run.cancel 早于收尾窗口到达的形态）。
+    const preCancelled = new AbortController()
+    preCancelled.abort()
+    const immediate = await generateHandoffDraft(
+      { ...CALL, timeoutMs: 60_000, signal: preCancelled.signal },
+      { system: 's', user: 'u' },
+      hang,
+    )
+    expect(immediate).toEqual({ status: 'failed', reason: 'aborted' })
+  })
+
   it('超时读数：环境变量可收窄；非法值回退默认 60s', () => {
     expect(handoffDraftTimeoutMs({})).toBe(60_000)
     expect(handoffDraftTimeoutMs({ WHALEPOD_HANDOFF_DRAFT_TIMEOUT_MS: '250' })).toBe(250)

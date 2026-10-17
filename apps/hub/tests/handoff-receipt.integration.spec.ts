@@ -8,6 +8,8 @@
  * - 下游 Run 固定输入：显式 receipt 快照（逐件摘要）、pending 拒绝、重跑/续跑继承、
  *   全新执行不带；上游发新版本不改任何历史 Run；
  * - adopt：上游新版本 → 新 confirmed receipt，旧 receipt/旧 Run 保留原版本，重复采用幂等；
+ * - 评审修复判据（2026-10-18）：交付对**上下游双侧**都发 task.changed、重复确认不重复发
+ *   差异消息、改派后摘要不再下发给新责任人（receipt 团队事实保留）；
  * - Node 下载授权：该设备自己的 Run 的交接快照引用了该 Artifact 才可下载（HTTP，
  *   真实 Device Token），快照外材料与第三台设备一律 404。
  */
@@ -32,6 +34,7 @@ import {
 } from '../src/modules/handoff/drafts.js'
 import { confirmAgreement, saveAgreementDraft } from '../src/modules/task/agreement.js'
 import { acceptAssignment, updateTask } from '../src/modules/task/commands.js'
+import { getTaskRoom } from '../src/modules/task/view.js'
 import { hashToken } from '../src/modules/auth/token.js'
 import { ArtifactStore } from '../src/modules/artifact/store.js'
 import {
@@ -134,6 +137,9 @@ describe('handoff delivery & receipt (#380)', () => {
 
     const content = Buffer.from('# 接口约定\nGET /orders\n')
     const artifactSha = createHash('sha256').update(content).digest('hex')
+    // 注记（#99 口径）：直插 artifact 行是**声明式前置**——真实路径要起 Node 经 WS 上传
+    // 材料并由责任人发布（integration 层没有 Node）；删除条件：hub 提供按 Run 登记材料
+    // 的 fixture 通道后改走通道。
     const artifactId = randomUUID()
     await database.db.insert(schema.artifacts).values({
       id: artifactId,
@@ -359,16 +365,26 @@ describe('handoff delivery & receipt (#380)', () => {
     expect(difference?.body).toContain('【交接差异】')
     expect(difference?.body).toContain('orderId')
 
-    // 重复确认（新 key，另一份理解）：不覆盖首次理解；仍是一条 receipt。
+    // 重复确认（新 key，另一份理解与差异）：不覆盖首次理解；仍是一条 receipt；
+    // 差异消息**不重复发**（评审 m4——重复发只会污染上游讨论流）。
     const again = await confirmReceipt(
       database,
       makeActor(receiver.userId),
       pending.id,
-      { understanding: '改口：先做订单详情' },
+      { understanding: '改口：先做订单详情', differences: '改口后的差异不该再发一条' },
       idemKey(),
     )
     expect(again.understanding).toBe('先实现订单列表页')
     expect(await receiptRows()).toHaveLength(1)
+    const differenceMessages = (
+      await database.db
+        .select()
+        .from(schema.taskMessages)
+        .where(eq(schema.taskMessages.taskId, ids.taskId))
+    ).filter((row) => row.kind === 'discussion' && row.body.includes('【交接差异】'))
+    expect(differenceMessages).toHaveLength(1)
+    expect(differenceMessages[0]?.body).toContain('orderId')
+    expect(differenceMessages[0]?.body).not.toContain('改口后的差异')
 
     // 确认不启动 Run、不接受 Task。
     const runs = await database.db
@@ -381,6 +397,57 @@ describe('handoff delivery & receipt (#380)', () => {
       .from(schema.tasks)
       .where(eq(schema.tasks.id, pending.downstreamTaskId))
     expect(downstream[0]?.assignmentStatus).toBe('pending')
+  })
+
+  it('交付双侧房间事件（评审 B9）：上游与下游都发 task.changed，没有半个房间', async () => {
+    const { ids, receiver, revisionId } = await seedUpstream()
+    const delivered = await deliverHandoff(
+      database,
+      makeActor(ids.userId),
+      revisionId,
+      { receiverUserId: receiver.userId, newTask: { title: '前端接入' } },
+      idemKey(),
+    )
+    const changed = await database.db
+      .select()
+      .from(schema.teamEvents)
+      .where(eq(schema.teamEvents.type, 'task.changed'))
+    const changedTaskIds = changed.map((row) => (row.payload as { taskId?: string }).taskId)
+    // 上游房间的「已交接」列表与下游房间的新任务都必须实时（漏了上游要等刷新）。
+    expect(changedTaskIds).toContain(ids.taskId)
+    expect(changedTaskIds).toContain(delivered.downstreamTaskId)
+  })
+
+  it('改派后（评审 M3）：摘要不再下发给新责任人（room.handoff = null），receipt 团队事实保留', async () => {
+    const { ids, receiver, revisionId } = await seedUpstream()
+    const pending = await deliverHandoff(
+      database,
+      makeActor(ids.userId),
+      revisionId,
+      { receiverUserId: receiver.userId, newTask: { title: '前端接入' } },
+      idemKey(),
+    )
+    await confirmReceipt(
+      database,
+      makeActor(receiver.userId),
+      pending.id,
+      { understanding: '做前端' },
+      idemKey(),
+    )
+    // 改派给第三人（非接收人）并接受指派：旧 receipt 保留原版本，但不再喂给新责任人
+    //（服务端 Run 解析会 409 拒绝）；摘要若照发，composer 会默认勾选、点了只撞冲突。
+    const third = await seedSecondUserDevice(database.db, ids)
+    await database.db
+      .update(schema.tasks)
+      .set({ assigneeUserId: third.userId, assignmentStatus: 'pending', acceptedAt: null })
+      .where(eq(schema.tasks.id, pending.downstreamTaskId))
+    await acceptAssignment(database, makeActor(third.userId), pending.downstreamTaskId)
+
+    const room = await getTaskRoom(database.db, pending.downstreamTaskId, third.userId)
+    expect(room?.handoff).toBeNull()
+    const views = await listDownstreamReceipts(database.db, pending.downstreamTaskId)
+    expect(views).toHaveLength(1)
+    expect(views[0]?.status).toBe('confirmed')
   })
 
   it('下游 Run 固定输入：显式 receipt 快照逐件固化；pending 拒绝；上游新版本不改历史 Run', async () => {

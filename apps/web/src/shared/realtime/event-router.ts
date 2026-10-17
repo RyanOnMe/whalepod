@@ -81,6 +81,9 @@ const EVENT_KEY_BUILDERS: Readonly<Record<string, (payload: unknown) => CacheKey
     // 键，接收方确认后上游「已交接」列表要等刷新才变（同一失效纪律，别只改一半）。
     ...keysWith(payload, 'taskId', 'task-handoff-deliveries'),
     ...keysWith(payload, 'taskId', 'task-handoff-receipts'),
+    // #380 评审 B4：发布交接版本也发 task.changed——漏了这条键，别人房间里的版本
+    // 下拉与下游「有新版本」要等刷新才动。
+    ...keysWith(payload, 'taskId', 'task-handoff-revisions'),
     // 项目页任务列表（#137）：payload 带 projectId 时一并失效——「别人建了任务」
     // 必须实时进我的列表，否则又回到「刷新才看见」。
     ...keysWith(payload, 'projectId', 'project-tasks'),
