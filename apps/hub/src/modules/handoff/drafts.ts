@@ -503,6 +503,22 @@ export async function publishHandoffDraft(
         payload: taskChangedPayload(sealedTask),
       })
     }
+    // 评审 B4 下半（复核点名）：下游房间的「有新版本」提示也要实时——按**已存在的
+    // receipt 关系**逐个通知下游任务（载荷用各自 taskId，订阅方按 taskId 失效房间与
+    // 收件面）。没有 receipt 的任务与本版本无关，不发。
+    const downstreamRows = await tx
+      .select({ downstreamTaskId: schema.handoffReceipts.downstreamTaskId })
+      .from(schema.handoffReceipts)
+      .where(eq(schema.handoffReceipts.upstreamTaskId, run.taskId))
+    for (const downstreamTaskId of new Set(downstreamRows.map((row) => row.downstreamTaskId))) {
+      const downstreamTask = await getTask(tx, downstreamTaskId)
+      if (downstreamTask !== undefined) {
+        await appendTeamEvent(tx, {
+          type: 'task.changed',
+          payload: taskChangedPayload(downstreamTask),
+        })
+      }
+    }
     return { revision: toHandoffRevisionView(revision) }
   })
 }

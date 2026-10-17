@@ -401,6 +401,10 @@ describe('handoff delivery & receipt (#380)', () => {
 
   it('交付双侧房间事件（评审 B9）：上游与下游都发 task.changed，没有半个房间', async () => {
     const { ids, receiver, revisionId } = await seedUpstream()
+    // 先清空既有 task.changed——seedUpstream（开关/发布）与 createTask（新建任务）都会发，
+    // 不清理的话两条断言在**没有 deliver 事件**时也成立（第一次实现就是这样空转的，
+    // 复核实测抓出）。清理后这两条只可能来自 deliver 自己。
+    await database.db.delete(schema.teamEvents)
     const delivered = await deliverHandoff(
       database,
       makeActor(ids.userId),
@@ -412,10 +416,63 @@ describe('handoff delivery & receipt (#380)', () => {
       .select()
       .from(schema.teamEvents)
       .where(eq(schema.teamEvents.type, 'task.changed'))
-    const changedTaskIds = changed.map((row) => (row.payload as { taskId?: string }).taskId)
-    // 上游房间的「已交接」列表与下游房间的新任务都必须实时（漏了上游要等刷新）。
-    expect(changedTaskIds).toContain(ids.taskId)
-    expect(changedTaskIds).toContain(delivered.downstreamTaskId)
+    const countFor = (taskId: string): number =>
+      changed.filter((row) => (row.payload as { taskId?: string }).taskId === taskId).length
+    // 上游「已交接」列表恰恰一条（deliver 自己发的）；下游新任务至少一条（createTask
+    // 与 deliver 的同形重发都算数）。
+    expect(countFor(ids.taskId)).toBe(1)
+    expect(countFor(delivered.downstreamTaskId)).toBeGreaterThanOrEqual(1)
+  })
+
+  it('上游发新版本通知下游房间（评审 B4 下半）：publish v2 后下游出现新的 task.changed', async () => {
+    const { ids, receiver, revisionId, artifactId } = await seedUpstream()
+    const pending = await deliverHandoff(
+      database,
+      makeActor(ids.userId),
+      revisionId,
+      { receiverUserId: receiver.userId, newTask: { title: '前端接入' } },
+      idemKey(),
+    )
+    const sourceRun = (
+      await database.db.select().from(schema.runs).where(eq(schema.runs.taskId, ids.taskId))
+    )[0]!
+    const draft2 = await createManualHandoffDraft(
+      database,
+      makeActor(ids.userId),
+      sourceRun.id,
+      idemKey(),
+    )
+    await updateManualHandoffDraft(
+      database,
+      makeActor(ids.userId),
+      sourceRun.id,
+      {
+        narrative: narrative({
+          evidence: [
+            { text: '接口约定已发布', verified: true, refs: [{ kind: 'artifact', artifactId }] },
+          ],
+        }),
+        expectedDraftVersion: draft2.draftVersion,
+      },
+      idemKey(),
+    )
+    const changedFor = async (taskId: string): Promise<number> => {
+      const rows = await database.db
+        .select()
+        .from(schema.teamEvents)
+        .where(eq(schema.teamEvents.type, 'task.changed'))
+      return rows.filter((row) => (row.payload as { taskId?: string }).taskId === taskId).length
+    }
+    const before = await changedFor(pending.downstreamTaskId)
+    const publishedV2 = await publishHandoffDraft(
+      database,
+      makeActor(ids.userId),
+      sourceRun.id,
+      idemKey(),
+    )
+    expect(publishedV2.revision.revisionNumber).toBe(2)
+    // 增量判据：下游房间靠这条事件把「有新版本」提示挂出来（修前只有上游收到通知）。
+    expect(await changedFor(pending.downstreamTaskId)).toBeGreaterThan(before)
   })
 
   it('改派后（评审 M3）：摘要不再下发给新责任人（room.handoff = null），receipt 团队事实保留', async () => {
@@ -729,21 +786,47 @@ describe('handoff delivery & receipt (#380)', () => {
       database,
       makeActor(receiver.userId),
       confirmed.id,
-      { understanding: 'v2 的新打算：先对齐字段' },
+      { understanding: 'v2 的新打算：先对齐字段', differences: 'v2 对齐时发现的差异' },
       idemKey(),
     )
     expect(adopted.revisionNumber).toBe(2)
     expect(adopted.status).toBe('confirmed')
-    // 重复采用（同 key 重放 + 新 key 第二次）都收敛到同一条。
+    // 重复采用（同 key 重放 + 新 key 第二次）都收敛到同一条；**且不是状态迁移**：
+    // 差异消息不重复发（评审 m4 的 adopt 半边）、task.changed 也不重复发（复核同口径）。
     const replay = await adoptReceipt(
       database,
       makeActor(receiver.userId),
       confirmed.id,
-      { understanding: 'v2 的新打算：先对齐字段' },
+      { understanding: 'v2 的新打算：先对齐字段', differences: 'v2 对齐时发现的差异' },
       idemKey(),
     )
     expect(replay.id).toBe(adopted.id)
     expect(await receiptRows()).toHaveLength(2)
+    const countChanged = async (): Promise<number> =>
+      (
+        await database.db
+          .select()
+          .from(schema.teamEvents)
+          .where(eq(schema.teamEvents.type, 'task.changed'))
+      ).length
+    const changedBeforeRepeat = await countChanged()
+    const second = await adoptReceipt(
+      database,
+      makeActor(receiver.userId),
+      confirmed.id,
+      { understanding: '改口：另一份打算', differences: '重复采用的差异不该再发' },
+      idemKey(),
+    )
+    expect(second.id).toBe(adopted.id)
+    expect(await countChanged()).toBe(changedBeforeRepeat)
+    const adoptDifferences = (
+      await database.db
+        .select()
+        .from(schema.taskMessages)
+        .where(eq(schema.taskMessages.taskId, ids.taskId))
+    ).filter((row) => row.kind === 'discussion' && row.body.includes('【交接差异】'))
+    expect(adoptDifferences).toHaveLength(1)
+    expect(adoptDifferences[0]?.body).toContain('v2 对齐时发现的差异')
     const after = await listDownstreamReceipts(database.db, pending.downstreamTaskId)
     expect(after.map((row) => row.revisionNumber).sort()).toEqual([1, 2])
     expect(after.find((row) => row.revisionNumber === 1)?.understanding).toBe('v1 的理解')
@@ -780,6 +863,8 @@ describe('handoff delivery & receipt (#380)', () => {
       },
     )
     // 快照外的上游材料（同任务、已发布，但不在交接包里）。
+    // 注记（#99 口径）：直插 artifact 行是声明式前置——真实路径要起 Node 经 WS 上传并由
+    // 责任人发布（integration 层没有 Node）；删除条件同 seedUpstream 处注记。
     const upstreamRunId = (
       await database.db.select().from(schema.runs).where(eq(schema.runs.taskId, ids.taskId))
     )[0]!.id

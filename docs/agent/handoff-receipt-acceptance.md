@@ -17,9 +17,9 @@ Node 下载只在「该设备自己的 Run 的交接快照引用了该 Artifact�
 | 判据 | 入口 | 覆盖 |
 |---|---|---|
 | 协议形状 | `pnpm test:unit`（`packages/protocol/tests/handoff-receipt.spec.ts`） | deliver 恰好一种下游目标；理解必填/限长；交接输入只在 new/resume 意图（followup/隐式拒绝）；快照 64 上限与摘要格式 |
-| HTTP 面（真 PG；命令层直驱 + 真 Device Token） | `pnpm test:integration`（`apps/hub/tests/handoff-receipt.integration.spec.ts`） | deliver 建/联任务 + pending + 幂等重放不重复建；非责任人 403 / 跨项目 404 / 改派不符 409；confirm 仅接收方、空理解 400、差异落上游讨论、重复确认不覆盖、确认不启动 Run 且不接受 Task；下游 Run 快照逐件固化（含 pending 409、跨任务 404、改派 409）、与同 Task 清单互不合并、上游 v2 不改历史 Run、重跑继承/全新执行不带；adopt 无新版本 409、新 receipt 幂等、旧 receipt 保留；**下载授权**（快照内 200 且字节一致 / 快照外 404 / 第三台设备 404）与 node handoff-input 读面（本 Run 设备 200、他人 404） |
-| Node 输入准备 | `pnpm test:unit`（`apps/node/tests/artifact-inputs.spec.ts` 交接组） | 两张清单汇入同一副本机制并逐件校摘要；交接材料摘要不符 → ARTIFACT_HASH_MISMATCH 且清目录；handoff-input=null 不是错误；形状不合 fail-closed；请求失败状态码折算 |
-| 页面（真 Router+真 Query） | `pnpm test:unit`（`apps/web/tests/handoff-receipt.spec.tsx`） | 待确认→确认（请求体含理解与差异）→显示已确认理解；非接收人只读；有新版本提示+采用表单（请求体含理解）；执行区默认勾选并显示固定版本号、勾选/取消勾选的请求体两态；Run 固定输入面板显示交接来源（无交接时不出现该节） |
+| HTTP 面（真 PG；命令层直驱 + 真 Device Token） | `pnpm test:integration`（`apps/hub/tests/handoff-receipt.integration.spec.ts`） | deliver 建/联任务 + pending + 幂等重放不重复建；非责任人 403 / 跨项目 404 / 改派不符 409；**交付双侧房间事件**（清空既有 task.changed 后：上游恰一条、下游 ≥一条，判据非空转）；**上游发 v2 通知下游房间**（增量计数——「有新版本」提示实时）；confirm 仅接收方、空理解 400、差异落上游讨论（**恰好一条**：重复确认不重复发）、重复确认不覆盖、确认不启动 Run 且不接受 Task；**改派后房间摘要为 null**（receipt 团队事实保留）；下游 Run 快照逐件固化（含 pending 409、跨任务 404、改派 409）、与同 Task 清单互不合并、上游 v2 不改历史 Run、重跑继承/全新执行不带；adopt 无新版本 409、新 receipt 幂等、旧 receipt 保留；**下载授权**（快照内 200 且字节一致 / 快照外 404 / 第三台设备 404）与 node handoff-input 读面（本 Run 设备 200、他人 404） |
+| Node 输入准备 | `pnpm test:unit`（`apps/node/tests/artifact-inputs.spec.ts` 交接组） | 两张清单汇入同一副本机制并逐件校摘要；交接材料摘要不符 → ARTIFACT_HASH_MISMATCH 且清目录；handoff-input=null 不是错误；形状不合 fail-closed；请求失败状态码折算；**合并清单容量**（63+1=64 边界正控；64+1 → ARTIFACT_INPUT_MANIFEST_TOO_LARGE fail-closed，不写副本） |
+| 页面（真 Router+真 Query） | `pnpm test:unit`（`apps/web/tests/handoff-receipt.spec.tsx`） | 待确认→确认（请求体含理解与差异）→显示已确认理解；非接收人只读；**非接收人看已确认回执不冒充「你」**（理解与差异都落接收人名）；有新版本提示+采用表单（请求体含理解）；执行区默认勾选并显示固定版本号、勾选/取消勾选的请求体两态、**房间实时拿到摘要时默认勾选随之生效且不覆盖主动取消**；Run 固定输入面板显示交接来源（无交接时不出现该节）、**交接读面失败显式报错且重试同时重取两条读面** |
 
 ## 六原语对位
 
@@ -40,8 +40,11 @@ Node 下载只在「该设备自己的 Run 的交接快照引用了该 Artifact�
 1. **会话读面（GET /runs/:runId/handoff-input）未单独做 HTTP 用例**：它复用与
    input-manifest 完全同形的 `requireActor` 守卫（那条有独立用例）；本批 HTTP 面覆盖的是
    安全关键的设备侧（快照读 + 下载授权）。
-2. **差异消息不做去重/线程关联**：同一个人用不同幂等键确认两次、两次都带差异时会有两条
-   讨论消息——这是「用户说了两遍」的如实记录，不是重复；不做语义去重（首版边界）。
+2. **重复确认/重复采用不重复广播（2026-10-18 复核口径修正，原「不去重」记载作废）**：
+   【交接差异】只在**首次状态迁移**时落一条讨论消息；重复确认（同键或新键）不覆盖首次
+   理解、也不再发差异消息；重复采用（未产生新 receipt）既不发消息也不重复发事件。需要
+   新的沟通走上游讨论区——「一次迁移一次广播，不是每次提交一次广播」。语义去重（同差异
+   合并）仍不做（首版边界）。
 3. **关联既有任务只允许「责任人=被选成员」**：改派后由新责任人重新接收（旧 receipt 保留），
    不做转移（ADR-0017 §5 口径）。
 4. **一个下游任务可以有多条 receipt（多版本/多上游）**：界面以「版本号最大的 confirmed」

@@ -17,6 +17,7 @@ import {
   makeTask,
   ok,
   taskRoomHandler,
+  teamMembersHandler,
   type MockHandler,
 } from './fixtures.js'
 import { renderApp } from './render.jsx'
@@ -230,6 +231,30 @@ describe('#380 下游接收面板', () => {
     expect(within(panel).queryByTestId('handoff-确认接收-form')).not.toBeInTheDocument()
   })
 
+  it('非接收人查看已确认回执（评审 B7）：理解与差异都不冒充「你」', async () => {
+    renderApp(
+      `/tasks/${TASK_ID}`,
+      loggedInHandlers(ALICE, [
+        taskRoomHandler(downstreamTask()),
+        receiptsHandler([
+          makeReceipt({
+            status: 'confirmed',
+            understanding: '按 v1 做',
+            differences: 'orderId 要对齐',
+            confirmedAt: '2026-10-18T02:00:00.000Z',
+          }),
+        ]),
+        teamMembersHandler(),
+      ]),
+    )
+    const panel = await screen.findByTestId('handoff-receipt-panel')
+    const active = await within(panel).findByTestId('handoff-receipt-active')
+    // 回执属于接收人（Bob）；当前会话是 Alice——两行都必须落接收人的名，不能写「你」。
+    expect(active).toHaveTextContent(/Bob（@bob）确认的理解/)
+    expect(active).toHaveTextContent(/Bob（@bob）提出的差异/)
+    expect(active).not.toHaveTextContent(/你确认的|你提出的/)
+  })
+
   it('上游有新版本：显示提示与采用表单；采用请求体带理解', async () => {
     const user = userEvent.setup()
     const confirmed = makeReceipt({
@@ -422,6 +447,78 @@ describe('#380 Run 固定输入里的交接材料', () => {
     await screen.findByTestId('run-input-manifest')
     // 无交接输入：这一节不出现（null 不是错误，也不占位）。
     expect(screen.queryByTestId('run-handoff-input')).not.toBeInTheDocument()
+  })
+
+  it('交接读面失败（评审 B8）：显式报错不冒充「没有」；重试同时重取交接读面', async () => {
+    const user = userEvent.setup()
+    const run = makeRun({ id: '00000000-0000-4000-8000-0000000000f1', status: 'completed' })
+    let handoffFails = true
+    let handoffRequests = 0
+    renderApp(
+      `/tasks/${TASK_ID}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(downstreamTask(), { runs: [run] }),
+        receiptsHandler([]),
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/runs/${run.id}$`),
+          respond: () =>
+            ok({
+              ...run,
+              taskId: TASK_ID,
+              ownerUserId: BOB.userId,
+              agentId: AGENT_ID,
+              profileRevisionId: PROFILE_REVISION_ID,
+              dshSessionId: null,
+            }),
+        },
+        { method: 'GET', url: /\/events(?:\?.*)?$/, respond: () => ok([]) },
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/runs/${run.id}/input-manifest$`),
+          respond: () => ok({ taskId: TASK_ID, artifacts: [] }),
+        },
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/runs/${run.id}/handoff-input$`),
+          respond: () => {
+            handoffRequests += 1
+            if (handoffFails) {
+              return {
+                status: 500,
+                body: {
+                  ok: false,
+                  error: {
+                    code: 'INTERNAL_ERROR',
+                    message: '读取失败',
+                    requestId: 'req-handoff-retry',
+                  },
+                },
+              }
+            }
+            return ok({
+              upstreamTaskId: UPSTREAM_TASK_ID,
+              upstreamTaskTitle: '后端交付',
+              receiptId: RECEIPT_ID,
+              revisionId: REVISION_ID,
+              revisionNumber: 1,
+              artifacts: [],
+            })
+          },
+        },
+      ]),
+    )
+    await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
+    await user.click(await screen.findByRole('button', { name: '查看本次固定输入' }))
+    const errorLine = await screen.findByTestId('run-handoff-input-error')
+    expect(errorLine).toHaveTextContent('这不等于「本次不带交接材料」')
+    expect(screen.queryByTestId('run-handoff-input')).not.toBeInTheDocument()
+
+    // 重试必须把交接读面一起重取（只重取同 Task 清单时错误行永远挂着）。
+    handoffFails = false
+    await user.click(screen.getByRole('button', { name: '重新读取输入' }))
+    expect(await screen.findByTestId('run-handoff-input')).toHaveTextContent('「后端交付」')
+    expect(handoffRequests).toBe(2)
   })
 
   it('有交接输入：显示上游任务标题、版本号与材料摘要', async () => {
