@@ -8,7 +8,7 @@
  * 本模块的存在让「唯一的 Hub 装配点」不必再吃白名单例外。
  *
  * 另有「Q5 前强制 build」这一层：dist 可能是**上一次**构建的产物，源码改了没重建时
- * E2E 测的就是旧代码。装配前跑一次**增量** build（up-to-date 时 ~0.5s），失败即带
+ * E2E 测的就是旧代码。装配前跑一次**增量** build（up-to-date 时 ~0.4s），失败即带
  * 输出退出——构建 break（tsc 报错）因此必然红在 Q5 起手上，而不是让浏览器门悄悄
  * 跑旧产物。
  */
@@ -17,6 +17,7 @@ import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { redactText } from './events.js'
 
 /** 注入点：构建执行器（测试可替换；抛错即视为构建失败）。 */
 export interface WorkspaceBuildRunner {
@@ -61,14 +62,16 @@ function buildOutputTail(error: unknown): string {
   const stderr = typeof record.stderr === 'string' ? record.stderr : ''
   const message = typeof record.message === 'string' ? record.message : String(error)
   const text = `${stdout}${stderr}`.trim()
+  // 归约后才出仓（红线：绝对路径不进日志/证据）——构建失败尾巴里常有仓库绝对路径。
   const tail = text === '' ? message : text.slice(-2_000)
-  return tail
+  return redactText(tail)
 }
 
 /**
  * 解析生产 Hub server 入口：借**锚点包**的依赖视角解析 `@whalepod/hub`（工作区
  * 符号链接 → 包内 dist），再取同目录的 `server.js`。锚点通常传
  * `apps/hub/package.json` 的路径/URL——与生产 Docker 入口同一个产物。
+ * 返回值是**未归约的真路径**（spawn 需要它）；给它打日志前先过 `redactText`。
  */
 export function resolveHubServerEntry(anchor: string | URL): string {
   const anchorPath = typeof anchor === 'string' ? anchor : fileURLToPath(anchor)
@@ -78,16 +81,16 @@ export function resolveHubServerEntry(anchor: string | URL): string {
     packageIndex = require.resolve('@whalepod/hub')
   } catch (error) {
     throw new Error(
-      `无法从锚点 ${anchorPath} 解析 @whalepod/hub（锚点必须位于本仓库内、且依赖已安装）：${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      `无法从锚点 ${redactText(anchorPath)} 解析 @whalepod/hub（锚点必须位于本仓库内、且依赖已安装）：${redactText(
+        error instanceof Error ? error.message : String(error),
+      )}`,
       { cause: error },
     )
   }
   const entry = join(dirname(packageIndex), 'server.js')
   if (!existsSync(entry)) {
     throw new Error(
-      `Hub 生产产物缺失：${entry}——先跑 pnpm -r build（或 pnpm --filter @whalepod/hub... build）`,
+      `Hub 生产产物缺失：${redactText(entry)}——先跑 pnpm -r build（或 pnpm --filter @whalepod/hub... build）`,
     )
   }
   return entry

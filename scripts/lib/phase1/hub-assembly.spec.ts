@@ -53,7 +53,17 @@ describe('#281 Hub 生产装配（dist-only）', () => {
       }),
     )
     writeFileSync(join(fakeHub, 'dist', 'index.js'), '')
-    expect(() => resolveHubServerEntry(join(fake, 'package.json'))).toThrow(/pnpm|build/)
+    let message = ''
+    try {
+      resolveHubServerEntry(join(fake, 'package.json'))
+      expect.unreachable('缺产物必须抛出')
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error)
+    }
+    expect(message).toMatch(/pnpm|build/)
+    // 红线：对外文本里的绝对路径已归约（临时目录 → <tmp>），原路径不出现。
+    expect(message).toContain('<tmp>')
+    expect(message).not.toContain(scratch)
   })
 
   it('负控：锚点不是本仓库的包（解析不到 @whalepod/hub）→ 归因到锚点，不猜下一跳', () => {
@@ -83,6 +93,23 @@ describe('#281 Hub 生产装配（dist-only）', () => {
     }
     expect(() => buildWorkspaceDistArtifacts(repoRoot, { runBuild: ok })).not.toThrow()
     expect(seen).toBe(repoRoot)
+  })
+
+  it('对外文本红线：构建失败尾巴过 redactText（无绝对路径），返回值仍是未归约真路径', () => {
+    const noisy: WorkspaceBuildRunner = ({ repoRoot: root }) => {
+      throw new Error(`pnpm 输出：${join(root, 'apps', 'hub')}: error TS2322: boom`)
+    }
+    let message = ''
+    try {
+      buildWorkspaceDistArtifacts(repoRoot, { runBuild: noisy })
+      expect.unreachable('构建失败必须抛出')
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error)
+    }
+    expect(message).toContain('<repo>')
+    expect(message).not.toContain(repoRoot)
+    // spawn 用的是真路径：归约只作用于对外文本，不许污染返回值。
+    expect(resolveHubServerEntry(hubPackageAnchor)).toContain(repoRoot)
   })
 
   it('URL 与路径两种锚点形态等价（调用点可传 file URL）', () => {

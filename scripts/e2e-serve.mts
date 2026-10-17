@@ -99,7 +99,8 @@ async function spawnHub(databaseUrl: string, setupTokenPath: string): Promise<Ch
   // 会让「tsc 构建 break 而 Q5 照绿」成为可能，且源码入口本就被 #99 的 harness
   // 纪律禁掉（白名单例外随本 Issue 一并摘除）。
   const entry = resolveHubServerEntry(new URL('../apps/hub/package.json', import.meta.url))
-  log(`Hub 入口（包解析 dist 产物）：${entry}`)
+  // 取证行按既有纪律归约（红线：绝对路径不进日志/证据）；spawn 用的是未归约的真路径。
+  log(`Hub 入口（包解析 dist 产物）：${redactText(entry)}`)
   const child = spawn(process.execPath, [entry], {
     env: {
       ...process.env,
@@ -342,6 +343,11 @@ async function assertPortsFree(): Promise<void> {
   }
 }
 await assertPortsFree()
+// #281：dist 可能是上一次构建的产物（源码改了没重建 → Q5 测的是旧代码），所以装配前
+// 跑一次**增量** build（up-to-date 时 ~0.4s）；构建 break 在这里就红，不留到浏览器。
+// 位置有意放在**起 PG 之前**：构建失败是本地最常见的起手失败，此时不该留下任何容器。
+const repoRoot = fileURLToPath(new URL('..', import.meta.url))
+buildWorkspaceDistArtifacts(repoRoot)
 postgres = await startEphemeralPostgres()
 const databaseUrl = postgres.databaseUrl
 {
@@ -355,11 +361,7 @@ const database = createDatabase({ connectionString: databaseUrl })
 await applyMigrations(database)
 log('迁移已应用')
 
-// ---- 2. Hub（生产入口子进程） ----
-// #281：dist 可能是上一次构建的产物（源码改了没重建 → 测的是旧代码），所以装配前
-// 跑一次**增量** build（up-to-date 时 ~0.5s）；构建 break 在这里就红，不留到浏览器。
-const repoRoot = fileURLToPath(new URL('..', import.meta.url))
-buildWorkspaceDistArtifacts(repoRoot)
+// ---- 2. Hub（生产入口子进程；dist 产物已在启动段构建，见 #281） ----
 const setupDir = await mkdtemp(join(tmpdir(), 'whalepod-e2e-hub-'))
 const setupTokenPath = join(setupDir, 'setup-token')
 hub = await spawnHub(databaseUrl, setupTokenPath)

@@ -25,7 +25,8 @@ pnpm test:e2e                                                                # �
 ## 观测（看什么）
 
 - e2e-serve 的启动日志：`Hub 入口（包解析 dist 产物）：<repo>/apps/hub/dist/server.js`
-  ——这是**装配事实**的取证行（不再有 `--built-hub` 开关或 tsx 源码分支）；
+  ——这是**装配事实**的取证行（不再有 `--built-hub` 开关或 tsx 源码分支；路径经
+  `redactText` 归约后出仓，红线纪律照旧）；
 - 子进程 cmdline：`node <repo>/apps/hub/dist/server.js`（`ps` 可查）；
 - 构建失败时的输出尾：`e2e 装配前的增量构建失败（@whalepod/hub... @whalepod/runtime...）：<tsc 输出尾>`。
 
@@ -46,7 +47,7 @@ pnpm test:e2e                                                                # �
 
 | 面 | 用例 | 断言要点 | 变异自证 |
 |---|---|---|---|
-| Q1 解析 | `scripts/lib/phase1/hub-assembly.spec.ts`（6 例） | 入口恰为 `<repo>/apps/hub/dist/server.js`、**不含 `/src/`**、文件存在；未构建的包树 → 报错且提示 build；锚点不在本仓库 → 归因到锚点而不是猜下一跳；构建 runner 抛错 → 带输出传播；runner 成功 → cwd 是仓库根；路径/URL 两种锚点等价 | 见下两条 |
+| Q1 解析 | `scripts/lib/phase1/hub-assembly.spec.ts`（7 例） | 入口恰为 `<repo>/apps/hub/dist/server.js`、**不含 `/src/`**、文件存在；未构建的包树 → 报错且提示 build；锚点不在本仓库 → 归因到锚点而不是猜下一跳；构建 runner 抛错 → 带输出传播；runner 成功 → cwd 是仓库根；路径/URL 两种锚点等价；**对外文本（构建失败尾巴 / 缺产物 / 坏锚点）已过 `redactText`、返回值仍是未归约真路径** | 变异见下「Q0 边界规则」行；构建失败方向由注入 runner 的负控覆盖 |
 | Q0 边界规则 | `scripts/check-boundaries.ts`（既有规则的实跑） | 源码路径入口回潮即红 | 把 `'apps/hub/src/server.ts'` 塞回 `e2e-serve.mts` → `check-boundaries: 1 violation(s) found`（`harness references source path ...`）；摘除白名单例外后规则仍绿 |
 | Q0 构建前置 | 同上（真跑 pnpm 过滤器） | `buildWorkspaceDistArtifacts(repoRoot)` 在真实仓库上跑通（up-to-date 时 ~0.4s），随后入口可解析 | 构建失败路径由注入 runner 的负控覆盖（真构建失败即 `tsc` 非零 → 抛） |
 | Q5 全链 | `pnpm test:e2e`（11 块） | 每块的 webServer 都打印 dist 入口行；全链绿 | —（装配事实由 Q1 判定 + 边界规则双钉） |
@@ -74,12 +75,21 @@ Q5 的每轮日志在 `artifacts/q5/run-*.log`（`bash scripts/q5-loop.sh N`）�
 ## 边界与未覆盖
 
 - **增量 build 的代价**：每次 webServer 冷启都跑一次 `pnpm --filter @whalepod/hub...
-  --filter @whalepod/runtime... build`（up-to-date 时 ~0.4s；本轮实测 Q5 全链 11 块 /
-  13 次冷启全绿，构建开销被冷启本身吸收）。不缓存「已构建」状态是有意的：缓存本身就是
-  「测了旧产物」的另一个入口。
+  --filter @whalepod/runtime... build`（up-to-date 时 ~0.4s 实测）。本轮实测 Q5 全链
+  11 块全绿，过程中 `Hub 入口` 取证行共 13 次 = **11 次 webServer 冷启 + 2 次用例内的
+  Hub 重启**（重启路径复用同一 spawnHub，不重跑构建）；构建开销只有冷启那 11 次付。
+  不缓存「已构建」状态是有意的：缓存本身就是「测了旧产物」的另一个入口。
+- **构建失败的位置有意在起 PG 之前**：构建 break 是本地最常见的起手失败，此时不该留下
+  任何容器（评审实测：写在起 PG 之后时，未捕获异常会让一次性 PG 留到下一轮 sweep 自愈）。
+- **`pnpm test:e2e:micro` 仍显式 build 一次**（`package.json`），与 harness 内的增量 build
+  重复——保留是因为它也是独立可跑的命令；重复的那次 up-to-date ~0.4s，未做去重。
 - **Web 侧仍是 vite dev server**（不是 `vite build` 产物）：浏览器门要看的是真实浏览器
   行为，dev server 与生产同源反代形态一致（03 §4）；这与 Hub 的 dist 纪律是两件事，
   未在本 Issue 范围内。
+- **入口路径由 exports 目标目录推导**：`resolveHubServerEntry` 取包解析结果（`dist/index.js`）
+  的同目录 `server.js`，属「同包同产物目录」的约定；若将来 `exports` 指到别处，靠
+  `existsSync` 守卫与 spec 的精确路径断言兜住（两条都会红）。`package.json` 里没有
+  `./server.js` 子路径导出，故没有更硬的解析面可用。
 - **Runtime 仍有一条源码路径字符串**（`killStaleByArgMarker('apps/runtime/src/bin.ts')`）：
   那是**残留进程清理标记**（切装配前起的历史进程仍需覆盖一轮），不是 spawn 入口，
   白名单例外保留并注明；`scripts/e2e-serve.mts` 的 spawn 侧已无任何源码路径。
