@@ -16,6 +16,14 @@ export interface CreateRunInput {
   artifactInputIds?: string[]
   /** 发送前已展示的审批档；实际解析不同则冲突，不静默扩大工具权限。 */
   expectedApprovalPolicy?: 'approval_required' | 'full_access'
+  /**
+   * 任务约定绑定（#378；ADR-0017 §2）：显式指定的必须是本 Task 已确认版本；
+   * 缺省由 orchestrator 在事务内解析（启用约定时取最新已确认版本，未启用则不绑定）。
+   * 辅助 Run（purpose 非 business）免绑定要求。
+   */
+  specRevisionId?: string
+  /** Run 用途（#378）：缺省 business。 */
+  purpose?: 'business' | 'agreement_draft' | 'handoff_draft'
   /** 缺省时取 Agent 当前 Revision（§2.3）。 */
   profileRevisionId?: string
   deviceId: string
@@ -51,6 +59,8 @@ export function assertCreateRunInput(input: CreateRunInput): void {
     ...(input.artifactInputIds === undefined ? {} : { artifactInputIds: input.artifactInputIds }),
     ...(input.resumeFromRunId === undefined ? {} : { resumeFromRunId: input.resumeFromRunId }),
     ...(input.rerunOfRunId === undefined ? {} : { rerunOfRunId: input.rerunOfRunId }),
+    ...(input.specRevisionId === undefined ? {} : { specRevisionId: input.specRevisionId }),
+    ...(input.purpose === undefined ? {} : { purpose: input.purpose }),
     ...(input.expectedApprovalPolicy !== undefined
       ? { expectedApprovalPolicy: input.expectedApprovalPolicy }
       : {}),

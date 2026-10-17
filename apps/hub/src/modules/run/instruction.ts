@@ -48,6 +48,10 @@ export interface SendInstructionInput {
   expectedApprovalPolicy?: 'approval_required' | 'full_access'
   profileRevisionId?: string
   artifactInputIds?: string[]
+  /** 任务约定版本绑定（#378）：仅新执行/续跑可带（协议 superRefine 已 fail-closed）。 */
+  specRevisionId?: string
+  /** Run 用途（#378）：仅新执行/续跑可带；缺省 business。 */
+  purpose?: 'business' | 'agreement_draft' | 'handoff_draft'
   intent?: SendInstructionRequest['intent']
   /**
    * 触发来源（#239）：human = 执行区里人发的（默认，语义不变）；auto_assignment =
@@ -113,6 +117,15 @@ export async function sendInstruction(
     throw new RunCommandError(
       'VALIDATION_FAILED',
       'input selection requires an explicit new or resume execution',
+    )
+  // #378：绑定与用途同材料选择一路——只有会建 Run 的意图可以携带。
+  if (
+    (input.specRevisionId !== undefined || input.purpose !== undefined) &&
+    (input.intent === undefined || input.intent.kind === 'followup')
+  )
+    throw new RunCommandError(
+      'VALIDATION_FAILED',
+      'spec revision binding requires an explicit new or resume execution',
     )
 
   // **先判权，再谈幂等**（评审 #204 阻断 1）：回执回放此前排在判权之前，于是「撤销授权后拿旧 key
@@ -281,6 +294,8 @@ export async function sendInstruction(
         ...(input.artifactInputIds === undefined
           ? {}
           : { artifactInputIds: input.artifactInputIds }),
+        ...(input.specRevisionId === undefined ? {} : { specRevisionId: input.specRevisionId }),
+        ...(input.purpose === undefined ? {} : { purpose: input.purpose }),
         agentId,
         ...(input.expectedApprovalPolicy !== undefined
           ? { expectedApprovalPolicy: input.expectedApprovalPolicy }

@@ -60,6 +60,9 @@ function runDetailHandlers(run: TaskRoomRun): MockHandler[] {
     rerunOfRunId: run.rerunOfRunId,
     resumeFromRunId: run.resumeFromRunId ?? null,
     approvalPolicy: 'approval_required',
+    // #378：约定绑定与用途（新必填字段；本轮测试桩按「未绑定业务执行」补齐）。
+    specRevisionId: null,
+    purpose: 'business',
     profileDigest: 'b'.repeat(64),
     createdAt: run.createdAt,
     startedAt: run.startedAt,

@@ -2896,3 +2896,120 @@ textarea::placeholder {
   margin-block: 0.5rem;
   overflow-wrap: anywhere;
 }
+
+/* #378 任务约定面板：卡片内分区（不加卡中卡——密度门 cardDepth ≤ 1），
+   视觉语言沿用 room-column-head / mutation-hint / assignment 家族。 */
+.agreement-panel {
+  margin-bottom: var(--space-4, 1rem);
+}
+.agreement-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin: var(--space-2, 0.5rem) 0;
+}
+.agreement-chip {
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}
+.agreement-chip.enabled {
+  border-color: var(--dsw-alias-brand-primary, var(--color-ink));
+  color: var(--color-ink);
+}
+.agreement-current {
+  color: var(--color-ink-soft);
+  font-size: 13px;
+}
+.agreement-note {
+  color: var(--color-ink-soft);
+  font-size: 13px;
+}
+.agreement-content {
+  margin: var(--space-2, 0.5rem) 0;
+  display: grid;
+  gap: 0.35rem;
+}
+.agreement-content-row {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+.agreement-content-row dt {
+  color: var(--color-ink-soft);
+  font-size: 13px;
+}
+.agreement-content-row dd {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agreement-empty {
+  color: var(--color-ink-soft);
+  font-size: 13px;
+}
+.agreement-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3, 0.75rem);
+  margin-top: var(--space-2, 0.5rem);
+}
+.agreement-draft-head,
+.agreement-history-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: baseline;
+}
+.agreement-meta {
+  color: var(--color-ink-soft);
+  font-size: 12px;
+}
+.agreement-editor {
+  display: grid;
+  gap: var(--space-2, 0.5rem);
+  margin-top: var(--space-2, 0.5rem);
+}
+.agreement-field {
+  display: grid;
+  gap: 0.25rem;
+}
+.agreement-field-label {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 13px;
+}
+.agreement-field-hint {
+  color: var(--color-ink-soft);
+  font-size: 12px;
+}
+.agreement-input {
+  width: 100%;
+  resize: vertical;
+}
+.agreement-history {
+  margin-top: var(--space-2, 0.5rem);
+}
+.agreement-history ol {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3, 0.75rem);
+}
+.agreement-update-notice {
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-left: 2px solid var(--dsw-alias-brand-primary, var(--color-ink));
+  border-radius: var(--radius-2, 8px);
+  padding: var(--space-2, 0.5rem) var(--space-3, 0.75rem);
+  margin: var(--space-2, 0.5rem) 0;
+}
+.agreement-update-notice p {
+  margin: 0.25rem 0;
+}

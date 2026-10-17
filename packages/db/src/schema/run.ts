@@ -17,7 +17,7 @@ import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 import { agents, agentProfileRevisions, approvalPolicy } from './agent.js'
 import { devices, workspaces } from './device.js'
 import { userAccounts } from './identity.js'
-import { taskMessages, tasks } from './project.js'
+import { taskMessages, taskSpecRevisions, tasks } from './project.js'
 
 // Run/Approval 域表结构以 03-领域模型与运行协议.md §2.6 为准。
 // 状态枚举与 03 §3.2/§3.3 状态机一一对应。
@@ -32,6 +32,9 @@ export const runStatus = pgEnum('run_status', [
   'cancelled',
   'lost',
 ])
+// Run 用途（#378；ADR-0017 §2）：business = 业务执行（启用约定后必须绑定已确认版本）；
+// agreement_draft / handoff_draft = 显式标记的辅助 Run，免绑定要求。
+export const runPurpose = pgEnum('run_purpose', ['business', 'agreement_draft', 'handoff_draft'])
 export const runEventAudience = pgEnum('run_event_audience', ['owner', 'project', 'admin'])
 export const approvalStatus = pgEnum('approval_status', [
   'pending',
@@ -83,6 +86,13 @@ export const runs = pgTable(
     resumeFromRunId: uuid('resume_from_run_id').references((): AnyPgColumn => runs.id),
     /** NULL means legacy unknown; an empty manifest is a confirmed empty input. */
     artifactInputManifest: jsonb('artifact_input_manifest').$type<ArtifactInputManifest>(),
+    /**
+     * 任务约定版本绑定（#378；ADR-0017 §2）：创建事务内固化，历史 Run 的空值显示
+     * 「未绑定」、不回填。Task 启用约定后业务 Run 必须非空（命令层收口）。
+     */
+    specRevisionId: uuid('spec_revision_id').references(() => taskSpecRevisions.id),
+    /** Run 用途（#378）：business / agreement_draft / handoff_draft（辅助 Run 免绑定）。 */
+    purpose: runPurpose('purpose').notNull().default('business'),
     profileDigest: char('profile_digest', { length: 64 }).notNull(),
     pluginPackDigest: char('plugin_pack_digest', { length: 64 }).notNull(),
     dshDistributionVersion: varchar('dsh_distribution_version', { length: 64 }).notNull(),

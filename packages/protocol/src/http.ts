@@ -7,6 +7,7 @@
 import { z } from 'zod'
 import { ApprovalPolicySchema } from './approval.js'
 import { ErrorCodeSchema } from './errors.js'
+import { TaskSpecContentSchema } from './task-views.js'
 
 export const ApiFailureSchema = z.strictObject({
   ok: z.literal(false),
@@ -98,6 +99,31 @@ export const UpdateTaskRequestSchema = z.strictObject({
   title: z.string().min(1).max(200).optional(),
   description: z.string().max(20000).optional(),
   approvalPolicy: ApprovalPolicySchema.nullable().optional(),
+  /**
+   * 任务约定开关（#378；ADR-0017 §1）：**仅 Task 责任人**能改（命令层守卫）。
+   * 开启要求已有至少一个已确认版本；关闭不动历史（已发布交接与既有 Run 保留绑定）。
+   */
+  agreementEnabled: z.boolean().optional(),
+})
+
+/**
+ * POST /tasks/:taskId/agreement/draft（#378；ADR-0017 §1）：落盘约定草稿。
+ * `expectedDraftVersion`：既有草稿的并发令牌——不匹配即 409（不覆盖他人版本）；
+ * 无开放草稿时表示「从空新建」，缺省合法（要求带版本反而说明客户端在看旧状态）。
+ * 幂等由 Idempotency-Key 回执承担（超时重试返回首次结果）。
+ */
+export const SaveTaskAgreementDraftRequestSchema = z.strictObject({
+  content: TaskSpecContentSchema,
+  expectedDraftVersion: z.number().int().positive().optional(),
+})
+
+/**
+ * POST /tasks/:taskId/agreement/confirm（#378）：确认的就是「看过的这一版」——
+ * `draftVersion` 必须等于当前开放草稿的版本；仅 Task 责任人能确认；
+ * 确认后草稿冻结为不可变版本（revision_number 单调递增）。
+ */
+export const ConfirmTaskAgreementRequestSchema = z.strictObject({
+  draftVersion: z.number().int().positive(),
 })
 
 /**
@@ -144,6 +170,14 @@ export const ArtifactInputIdsSchema = z
   .refine((ids) => new Set(ids).size === ids.length, 'artifact input identities must be unique')
 
 /**
+ * Run 用途（#378；ADR-0017 §2）：business = 业务执行（Task 启用约定后必须绑定已确认
+ * 版本）；agreement_draft / handoff_draft = 显式标记的辅助 Run（整理约定/交接草稿），
+ * 免绑定要求。缺省 business——普通任务与旧客户端语义不变。
+ */
+export const RunPurposeSchema = z.enum(['business', 'agreement_draft', 'handoff_draft'])
+export type RunPurpose = z.infer<typeof RunPurposeSchema>
+
+/**
  * POST /tasks/:taskId/instructions（#196；ADR-0010 决策 2 的执行区入口）。
  *
  * 与人际评论的区别：这条**驱动 Agent**——有活跃 Run 时降级为追问，没有时**建 Run**。
@@ -159,6 +193,10 @@ export const SendInstructionRequestSchema = z
     profileRevisionId: z.uuid().optional(),
     expectedApprovalPolicy: z.enum(['approval_required', 'full_access']).optional(),
     artifactInputIds: ArtifactInputIdsSchema.optional(),
+    /** 任务约定版本绑定（#378；ADR-0017 §2）：仅新执行/续跑可带（缺省取最新已确认版本）。 */
+    specRevisionId: z.uuid().optional(),
+    /** Run 用途（#378）：仅新执行/续跑可带；缺省 business。 */
+    purpose: RunPurposeSchema.optional(),
     /** Web 显式意图；缺省保留自动指派与旧客户端的路由语义。 */
     intent: z
       .discriminatedUnion('kind', [
@@ -176,6 +214,17 @@ export const SendInstructionRequestSchema = z
       ctx.addIssue({
         code: 'custom',
         message: 'input selection requires an explicit new or resume execution',
+      })
+    }
+    // #378：绑定与用途同材料选择一路——只有会建 Run 的意图（new/resume）可以携带，
+    // 追问不得夹带（避免把「材料/版本要求」变成追问后丢失的静默承诺）。
+    if (
+      (value.specRevisionId !== undefined || value.purpose !== undefined) &&
+      (value.intent === undefined || value.intent.kind === 'followup')
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'spec revision binding requires an explicit new or resume execution',
       })
     }
     if (value.intent?.kind === 'new' && value.agentId === undefined) {
@@ -216,6 +265,10 @@ export const CreateRunRequestSchema = z
     profileRevisionId: z.uuid().optional(),
     expectedApprovalPolicy: z.enum(['approval_required', 'full_access']).optional(),
     artifactInputIds: ArtifactInputIdsSchema.optional(),
+    /** 任务约定版本绑定（#378；ADR-0017 §2）：必须是本 Task 已确认版本；缺省取最新。 */
+    specRevisionId: z.uuid().optional(),
+    /** Run 用途（#378）：缺省 business；辅助 Run 显式标记并免绑定要求。 */
+    purpose: RunPurposeSchema.optional(),
     deviceId: z.uuid(),
     workspaceId: z.uuid(),
     prompt: z.string().min(1).max(20_000),
@@ -336,6 +389,8 @@ export type AcceptInviteRequest = z.infer<typeof AcceptInviteRequestSchema>
 export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>
 export type CreateTaskRequest = z.infer<typeof CreateTaskRequestSchema>
 export type UpdateTaskRequest = z.infer<typeof UpdateTaskRequestSchema>
+export type SaveTaskAgreementDraftRequest = z.infer<typeof SaveTaskAgreementDraftRequestSchema>
+export type ConfirmTaskAgreementRequest = z.infer<typeof ConfirmTaskAgreementRequestSchema>
 export type ReassignTaskRequest = z.infer<typeof ReassignTaskRequestSchema>
 export type CreateCommentRequest = z.infer<typeof CreateCommentRequestSchema>
 export type SendInstructionRequest = z.infer<typeof SendInstructionRequestSchema>

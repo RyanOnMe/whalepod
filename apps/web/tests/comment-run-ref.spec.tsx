@@ -31,6 +31,9 @@ function run(id: string, over: Partial<TaskRoomRun> = {}): TaskRoomRun {
     lastToolCall: null,
     // #261：同上。
     lastPhase: null,
+    // #378：约定绑定与用途（与 fixtures.makeRun 同步）。
+    specRevision: null,
+    purpose: 'business',
     ...over,
   }
 }

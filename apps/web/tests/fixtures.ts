@@ -136,6 +136,8 @@ export function makeTask(overrides: Partial<TaskView> = {}): TaskView {
     assigneeAgentId: null,
     // #241：审批档覆盖（默认 null = 继承 Revision 默认）。
     approvalPolicy: null,
+    // #378：任务约定开关（默认关闭 = 普通任务路径）。
+    agreementEnabled: false,
     assignmentStatus: 'pending',
     createdBy: ALICE.userId,
     acceptedAt: null,
@@ -205,6 +207,9 @@ export function makeRun(overrides: Partial<TaskRoomRun> = {}): TaskRoomRun {
     resumeFromRunId: null,
     // #241：本 Run 固化的审批档（默认 approval_required）。
     approvalPolicy: 'approval_required',
+    // #378：任务约定绑定（默认 null = 未绑定，历史 Run 形态）。
+    specRevision: null,
+    purpose: 'business',
     // #211：落点显示名（默认未知，由各用例按需覆盖有名字的）。
     deviceName: null,
     workspaceName: null,
@@ -389,6 +394,8 @@ export function taskRoomHandler(
     reviewEligibility?: TaskReviewEligibility
     /** #244：服务端预解析的下一 Run 审批档（无覆盖+无活跃 Run 时 composer 胶囊的数据源）。 */
     nextRunApprovalPolicy?: 'approval_required' | 'full_access' | null
+    /** #378：任务约定摘要（默认与 task.agreementEnabled 一致、无已确认版本）。 */
+    agreement?: { enabled: boolean; latestConfirmedNumber: number | null; hasDraft: boolean }
   } = {},
 ): MockHandler {
   return {
@@ -401,6 +408,11 @@ export function taskRoomHandler(
         instructions: extras.instructions ?? [],
         runs: extras.runs ?? [],
         artifacts: extras.artifacts ?? [],
+        agreement: extras.agreement ?? {
+          enabled: task.agreementEnabled,
+          latestConfirmedNumber: null,
+          hasDraft: false,
+        },
         nextRunApprovalPolicy: extras.nextRunApprovalPolicy ?? null,
         ...(extras.reviewEligibility === undefined
           ? {}
@@ -649,6 +661,14 @@ export function loggedInHandlers(session: Session, extra: MockHandler[] = []): M
     sessionHandler(session),
     ...extra,
     { method: 'GET', url: /\/tasks\/attention$/, respond: () => ok({ items: [], hasMore: false }) },
+    // #378：任务约定面板随每个 Task Room 渲染都会取一次——同 attention 的做法给默认桩，
+    // 需要真形态的用例把显式 handler 放进 extra（更早匹配、可覆盖）。
+    {
+      method: 'GET',
+      url: /\/api\/v1\/tasks\/[^/]+\/agreement$/,
+      respond: () =>
+        ok({ enabled: false, draft: null, confirmed: null, history: [], confirmedCount: 0 }),
+    },
   ]
 }
 

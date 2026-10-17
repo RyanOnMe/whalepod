@@ -4,7 +4,9 @@ import { asUserId } from '@whalepod/domain'
 import {
   CreateCommentRequestSchema,
   CreateTaskRequestSchema,
+  ConfirmTaskAgreementRequestSchema,
   ReassignTaskRequestSchema,
+  SaveTaskAgreementDraftRequestSchema,
   UpdateTaskRequestSchema,
   SendInstructionRequestSchema,
   CreateInstructionGrantRequestSchema,
@@ -24,6 +26,12 @@ import {
   submitTaskForReview,
   updateTask,
 } from './commands.js'
+import {
+  confirmAgreement,
+  discardAgreementDraft,
+  getAgreementView,
+  saveAgreementDraft,
+} from './agreement.js'
 import { ERROR_HTTP_STATUS, errorCodeOf } from '../run/routes.js'
 import { sendInstruction, agentAssignmentText } from '../run/instruction.js'
 import {
@@ -67,6 +75,22 @@ async function mapGrantErrors<T>(run: () => Promise<T>): Promise<T> {
 
 function actorFrom(session: SessionActor) {
   return { userId: asUserId(session.userId), role: session.role }
+}
+
+/**
+ * 约定路由的错误映射（#378）：`RunCommandError`/`DomainError` 用 run 模块导出的
+ * 同一张 HTTP 码表翻译（授权路由 mapGrantErrors 的同因——本模块没有运行面的
+ * setErrorHandler，不映射会直落全局 500）。ApiError 原样上抛（它已带状态与码）。
+ */
+async function mapRunErrors<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run()
+  } catch (error) {
+    if (error instanceof ApiError) throw error
+    const { code, message } = errorCodeOf(error)
+    if (code === 'INTERNAL_ERROR') throw error
+    throw new ApiError(ERROR_HTTP_STATUS[code] ?? 500, code, message)
+  }
 }
 
 /**
@@ -210,10 +234,91 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
         ...('approvalPolicy' in body && body.approvalPolicy !== undefined
           ? { approvalPolicy: body.approvalPolicy }
           : {}),
+        ...(body.agreementEnabled !== undefined ? { agreementEnabled: body.agreementEnabled } : {}),
       },
       readIdempotencyKey(request),
     )
     return { ok: true, data: task }
+  })
+
+  /**
+   * GET /tasks/:taskId/agreement（#378；ADR-0017 §1）：任务约定读模型——
+   * 开关、当前草稿（至多一个）、最新已确认版本与倒序历史（硬 cap 50 + 真实总数）。
+   * 团队成员都可读（约定是共同依据，不是私人物品）。
+   */
+  app.get('/tasks/:taskId/agreement', async (request) => {
+    await deps.requireActor(request)
+    const { taskId } = request.params as { taskId: string }
+    const view = await getAgreementView(deps.database.db, taskId)
+    if (view === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
+    return { ok: true, data: view }
+  })
+
+  /**
+   * POST /tasks/:taskId/agreement/draft（#378）：落盘约定草稿（任何成员；归属记录作者）。
+   * 并发令牌不匹配 → 409（不覆盖他人版本）；幂等由 Idempotency-Key 回执承担。
+   */
+  app.post('/tasks/:taskId/agreement/draft', async (request, reply) => {
+    const session = await deps.requireActor(request)
+    const { taskId } = request.params as { taskId: string }
+    const parsed = SaveTaskAgreementDraftRequestSchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply
+        .code(400)
+        .send({ ok: false, error: { code: 'VALIDATION_FAILED', message: parsed.error.message } })
+    }
+    const view = await mapRunErrors(() =>
+      saveAgreementDraft(
+        deps.database,
+        actorFrom(session),
+        taskId,
+        {
+          content: parsed.data.content,
+          ...(parsed.data.expectedDraftVersion !== undefined
+            ? { expectedDraftVersion: parsed.data.expectedDraftVersion }
+            : {}),
+        },
+        readIdempotencyKey(request),
+      ),
+    )
+    return reply.code(200).send({ ok: true, data: view })
+  })
+
+  /**
+   * POST /tasks/:taskId/agreement/confirm（#378）：**仅 Task 责任人**确认看过的这一版；
+   * 产生不可变版本（revision_number 单调递增）。确认≠发布交接，不启动任何 Run。
+   */
+  app.post('/tasks/:taskId/agreement/confirm', async (request, reply) => {
+    const session = await deps.requireActor(request)
+    const { taskId } = request.params as { taskId: string }
+    const parsed = ConfirmTaskAgreementRequestSchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply
+        .code(400)
+        .send({ ok: false, error: { code: 'VALIDATION_FAILED', message: parsed.error.message } })
+    }
+    const view = await mapRunErrors(() =>
+      confirmAgreement(
+        deps.database,
+        actorFrom(session),
+        taskId,
+        { draftVersion: parsed.data.draftVersion },
+        readIdempotencyKey(request),
+      ),
+    )
+    audit(request, 'agreement.confirm', 'success', session.userId)
+    return reply.code(200).send({ ok: true, data: view })
+  })
+
+  /** DELETE /tasks/:taskId/agreement/draft（#378）：丢弃开放草稿（责任人或草稿作者）。 */
+  app.delete('/tasks/:taskId/agreement/draft', async (request) => {
+    const session = await deps.requireActor(request)
+    const { taskId } = request.params as { taskId: string }
+    const result = await mapRunErrors(() =>
+      discardAgreementDraft(deps.database, actorFrom(session), taskId, readIdempotencyKey(request)),
+    )
+    audit(request, 'agreement.discard', 'success', session.userId)
+    return { ok: true, data: result }
   })
 
   // POST /tasks/:taskId/accept：assignee 接受 Assignment。
@@ -344,6 +449,10 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
           ...(parsed.data.artifactInputIds === undefined
             ? {}
             : { artifactInputIds: parsed.data.artifactInputIds }),
+          ...(parsed.data.specRevisionId === undefined
+            ? {}
+            : { specRevisionId: parsed.data.specRevisionId }),
+          ...(parsed.data.purpose === undefined ? {} : { purpose: parsed.data.purpose }),
           idempotencyKey: readIdempotencyKey(request),
           ...(parsed.data.deviceId !== undefined ? { deviceId: parsed.data.deviceId } : {}),
           ...(parsed.data.workspaceId !== undefined

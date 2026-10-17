@@ -64,6 +64,8 @@ function taskChangedPayload(task: TaskRow): unknown {
     assigneeUserId: task.assigneeUserId,
     assigneeAgentId: task.assigneeAgentId,
     approvalPolicy: task.approvalPolicy,
+    // #378：约定流程开关随 task.changed 广播（订阅方失效 task-room 与 agreement 读模型）。
+    agreementEnabled: task.agreementEnabled,
   }
 }
 
@@ -243,6 +245,9 @@ export async function reassignAssignment(
  * PATCH /tasks/:taskId：只改非状态字段（03 §4）。
  * approvalPolicy（#241）：**仅 Task 责任人**能改——档位放松的是责任人的凭据风险，
  * 比本路由其余字段（Member 可改 title/description）更严；`null` = 清除覆盖回继承。
+ * agreementEnabled（#378）：**仅 Task 责任人**能改；开启不要求先有已确认版本——开启后
+ * 尚无已确认版本时业务 Run 创建被拒（AGREEMENT_REQUIRED，引导先确认）；关闭允许
+ * （不动历史——已发布交接与既有 Run 保留绑定）。
  */
 export async function updateTask(
   database: Database,
@@ -252,6 +257,7 @@ export async function updateTask(
     title?: string
     description?: string
     approvalPolicy?: 'approval_required' | 'full_access' | null
+    agreementEnabled?: boolean
   },
   idempotencyKey: string,
 ): Promise<TaskView> {
@@ -259,6 +265,15 @@ export async function updateTask(
     const task = await lockTask(tx, taskId)
     if (patch.approvalPolicy !== undefined && task.assigneeUserId !== actor.userId) {
       throw new ApiError(403, 'FORBIDDEN', 'only the task assignee can change the approval policy')
+    }
+    if (patch.agreementEnabled !== undefined) {
+      if (task.assigneeUserId !== actor.userId) {
+        throw new ApiError(
+          403,
+          'FORBIDDEN',
+          'only the task assignee can change the agreement setting',
+        )
+      }
     }
     const updated = await updateTaskFields(tx, taskId, patch)
     if (updated === undefined) throw new Error('task vanished in its own transaction')

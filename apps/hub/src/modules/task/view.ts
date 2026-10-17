@@ -9,6 +9,8 @@ import type { ArtifactRow, RunRow, TaskRow } from '@whalepod/db'
 import {
   TERMINAL_RUN_STATUSES,
   getAgent,
+  getLatestConfirmedSpec,
+  getOpenSpecDraft,
   getProfileRevision,
   getTask,
   latestPhasesByRun,
@@ -18,6 +20,7 @@ import {
   listInstructionMessages,
   listRunsByTask,
   listRunPlacementNames,
+  mapSpecRevisionNumbers,
 } from '@whalepod/db'
 import type { DbHandle } from '@whalepod/db'
 import { toCommentView, toTaskView } from './queries.js'
@@ -46,6 +49,12 @@ export interface TaskRoomRun {
   rerunOfRunId: string | null
   resumeFromRunId: string | null
   approvalPolicy: 'approval_required' | 'full_access'
+  /**
+   * 任务约定绑定（#378）：绑定的已确认版本号；null = 未绑定（历史 Run 不回填，
+   * 前端显示「未绑定」）。`purpose` 非 business 时为辅助 Run（免绑定，见 ADR-0017 §2）。
+   */
+  specRevision: { id: string; revisionNumber: number } | null
+  purpose: RunRow['purpose']
   deviceName: string | null
   workspaceName: string | null
   /**
@@ -68,8 +77,11 @@ function toTaskRoomRun(
   names: Map<string, { deviceName: string | null; workspaceName: string | null }>,
   lastToolCall: { tool: string; at: Date } | undefined,
   lastPhase: { phase: 'thinking' | 'tool' | 'finalizing'; at: Date } | undefined,
+  specNumbers: Map<string, number>,
 ): TaskRoomRun {
   const placement = names.get(row.id)
+  const specRevisionNumber =
+    row.specRevisionId === null ? undefined : specNumbers.get(row.specRevisionId)
   return {
     id: row.id,
     status: row.status,
@@ -79,6 +91,13 @@ function toTaskRoomRun(
     rerunOfRunId: row.rerunOfRunId,
     resumeFromRunId: row.resumeFromRunId,
     approvalPolicy: row.approvalPolicy,
+    // 绑定只可能指向已确认版本（命令层拒绝草稿绑定）；编号查不到说明数据异常——
+    // 如实给 null（显示「未绑定」），不编造编号。
+    specRevision:
+      row.specRevisionId !== null && specRevisionNumber !== undefined
+        ? { id: row.specRevisionId, revisionNumber: specRevisionNumber }
+        : null,
+    purpose: row.purpose,
     deviceName: placement?.deviceName ?? null,
     workspaceName: placement?.workspaceName ?? null,
     lastToolCall:
@@ -121,6 +140,14 @@ function toTaskRoomArtifact(row: ArtifactRow): TaskRoomArtifact {
 
 export interface TaskRoomView {
   task: TaskView
+  /** 任务约定摘要（#378）：房间消费方（执行区提示/更新横幅）要的窄投影。 */
+  agreement: {
+    enabled: boolean
+    /** 最新已确认版本号；null = 还没有已确认版本（或未启用）。 */
+    latestConfirmedNumber: number | null
+    /** 是否存在未确认草稿（提示「草稿不构成要求」）。 */
+    hasDraft: boolean
+  }
   reviewEligibility: TaskReviewEligibility
   /** 讨论流（ADR-0010 决策 1）：**只含** `kind='discussion'` 的人际评论。 */
   comments: CommentView[]
@@ -194,8 +221,8 @@ export async function getTaskRoom(
   ])
   // #244：预解析依赖上面的 runs（要先知道会继承哪个 Agent），没法进同一个
   // Promise.all；顺序两查（agent → revision）+ 读模型路径，代价可接受。
-  // #246：工具摘要同样依赖 runs（按 runId 批查），与预解析并行。
-  const [nextRunApprovalPolicy, lastToolCalls, lastPhases] = await Promise.all([
+  // #246/#261/#378：工具/阶段摘要与约定版本号映射同样依赖 runs（按 runId 批查），与预解析并行。
+  const [nextRunApprovalPolicy, lastToolCalls, lastPhases, specNumbers] = await Promise.all([
     resolveNextRunApprovalPolicy(handle, task, runs),
     latestToolStartsByRun(
       handle,
@@ -206,9 +233,20 @@ export async function getTaskRoom(
       handle,
       runs.map((row) => row.id),
     ),
+    // #378：本 Task 的已确认版本号映射（id → revision_number，供绑定展示）。
+    mapSpecRevisionNumbers(handle, taskId),
+  ])
+  const [latestConfirmed, openDraft] = await Promise.all([
+    getLatestConfirmedSpec(handle, taskId),
+    getOpenSpecDraft(handle, taskId),
   ])
   return {
     task: toTaskView(task),
+    agreement: {
+      enabled: task.agreementEnabled,
+      latestConfirmedNumber: latestConfirmed?.revisionNumber ?? null,
+      hasDraft: openDraft !== undefined,
+    },
     reviewEligibility: (() => {
       const reason =
         viewerUserId !== task.assigneeUserId
@@ -226,7 +264,13 @@ export async function getTaskRoom(
     comments: comments.map(toCommentView),
     instructions: instructions.map(toCommentView),
     runs: runs.map((row) =>
-      toTaskRoomRun(row, placementNames, lastToolCalls.get(row.id), lastPhases.get(row.id)),
+      toTaskRoomRun(
+        row,
+        placementNames,
+        lastToolCalls.get(row.id),
+        lastPhases.get(row.id),
+        specNumbers,
+      ),
     ),
     nextRunApprovalPolicy,
     artifacts: artifacts
