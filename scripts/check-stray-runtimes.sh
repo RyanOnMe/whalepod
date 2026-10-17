@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # 自家进程（自家入口面）。
-self_re='whalepod-node|whalepod-runtime|apps/node/(src/cli\.ts|dist/cli\.js)|node_modules/@whalepod/node/dist/cli\.js|apps/hub/src/server\.ts|apps/runtime/(src|dist)/bin\.(ts|js)|scripts/e2e-serve\.mts'
+self_re='whalepod-node|whalepod-runtime|apps/node/(src/cli\.ts|dist/cli\.js)|node_modules/@whalepod/node/dist/cli\.js|apps/hub/src/server\.ts|apps/runtime/(src|dist)/bin\.(ts|js)|node_modules/@whalepod/runtime/dist/bin\.js|scripts/e2e-serve\.mts'
 # 测试探针候选（见头注：自家入口里同形 argv 由分类顺序挡掉）。
 probe_re='-e setInterval.*--run-id|--run-id.*--nonce|--nonce.*--run-id'
 
@@ -57,6 +57,8 @@ self|/usr/bin/node /repo/apps/runtime/dist/bin.js -- --run-id 11111111-1111-4111
 self|/usr/bin/node /repo/apps/node/src/cli.ts start
 probe|/usr/bin/node -e setInterval(() => {}, 1000) -- --run-id r-st1 --nonce nonce-r-st1
 probe|/usr/bin/node /tmp/whatever-entry.mjs -- --run-id r-st2 --nonce nonce-r-st2
+probe|/usr/bin/node -e setInterval(() => {}, 1000) -- --run-id r-st3
+self|/usr/bin/node /repo/node_modules/@whalepod/runtime/dist/bin.js -- --run-id 22222222-2222-4222-8222-222222222222 --nonce n-2 --prompt-stdin
 none|/usr/bin/postgres -D /var/lib/postgresql/data
 CASES
   # ② 真进程断言：两种形状的探针必须被判 probe，回收后判空。
