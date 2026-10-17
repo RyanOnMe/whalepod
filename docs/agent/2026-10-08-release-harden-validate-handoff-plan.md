@@ -73,6 +73,8 @@ Agent CLI + GitHub + 团队聊天的传统方式有实际优势。顺序是：**
 > 3. #290 升级失败回滚固定版（PR #355）：回滚演练进 Q3（与 lock-drift 共用同一判定实现；
 >    七条变异自证），真实「装另一版 → 不兼容 → 回滚安装树」如实标为**人工门**（步骤与预期
 >    输出在 dsh-upgrade skill）；`runtime_version_rolled_back` 未实现立账 #356。
+>    （#356 已于 2026-10-16 实现，码名改为 `RUNTIME_VERSION_CHANGED`——方向中立、升级与回滚
+>    共用，见 PR #367 与 `docs/agent/runtime-version-change-acceptance.md`。）
 >
 > 结果：**熔断四规则 4/4、能力契约六项 6/6 都有机器判据**（规则 4 的真实安装面是人工门，
 > 已在契约表与验收文档如实标注）。三批的验收文档：dsh-compat-guard-acceptance /

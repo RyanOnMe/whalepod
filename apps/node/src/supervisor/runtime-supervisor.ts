@@ -91,8 +91,8 @@ interface ActiveRow {
   workspace_id: string
   started_at: string
   stderr_tail: string | null
-  /** #356：spawn 时记录的 DSH 版本（旧库升级来的行没有该列值为 null）。 */
-  dsh_version: string | null
+  /** #356：spawn 时记录的 DSH 版本（旧库升级来的行是补列后的 null；列缺失时 undefined）。 */
+  dsh_version: string | null | undefined
 }
 
 export class RuntimeSupervisor {
@@ -140,8 +140,10 @@ export class RuntimeSupervisor {
       try {
         this.db.exec('alter table active_runtime add column dsh_version text')
       } catch (error) {
-        // 两个新代码进程同时首开同一状态库（R9 接管窗口的罕见形态）时，后到者会撞
-        // duplicate column / BUSY：复读一次表结构确认列已在就放行（幂等迁移）。
+        // 并发/重试下 alter 可能撞 duplicate column 或 BUSY：复读表结构，确认列已在才
+        // 放行——列仍缺则原样抛出（别的错误一律透传）。注意本类容忍的是**这一步**的
+        // 竞争；更早的 `pragma journal_mode`/`create table` 在双进程首开下仍会抛
+        // （busy_timeout 缺省 0），那是既有面、另立账 #371。
         const again = this.db.prepare('pragma table_info(active_runtime)').all() as unknown as {
           name: string
         }[]
@@ -374,13 +376,14 @@ export class RuntimeSupervisor {
   }
 
   /**
-   * #356：这个孤儿的 DSH 版本是否与本次启动不同。两侧都已知才判定——任一未知
-   * （探针失败 / 旧库补列后的 null / 未注入版本）都返回 false：宁可报通用的
-   * 进程丢失，也不谎报「换了版本」。
+   * #356：这个孤儿的 DSH 版本是否与本次启动不同。两侧都是**字符串**才判定——任一未知
+   * （探针失败 / 旧库补列后的 null / 列缺失读成 undefined / 未注入版本）都返回 false：
+   * 宁可报通用的进程丢失，也不谎报「换了版本」。`typeof` 而非 `!== null` 是有意的：
+   * 列缺失时 (node:sqlite) 读到 undefined，只挡 null 会把 undefined 判成「版本变了」。
    */
-  private dshVersionChangedSince(recorded: string | null): boolean {
+  private dshVersionChangedSince(recorded: string | null | undefined): boolean {
     const current = this.deps.dshDistributionVersion
-    return recorded !== null && current !== null && current !== undefined && recorded !== current
+    return typeof recorded === 'string' && typeof current === 'string' && recorded !== current
   }
 
   /** 优雅停机：终止本实例管理的全部 Runtime（退出事件被抑制，不归因为 Run 故障）。 */

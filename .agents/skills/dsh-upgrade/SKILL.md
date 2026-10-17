@@ -49,9 +49,14 @@ DSH 是预览版，升级是高风险动作。三条红线（06 文档 §2.1）�
    → `pnpm install --frozen-lockfile` → `pnpm -r build`。
    预期：install 不打 registry 的版本解析错误（frozen 锁）；build 绿。
 4. 验收回滚：`pnpm test:dsh-contract`（含回滚演练与 lock-drift）全绿；
-   `--print-dsh-version` 回到锁定版本（**必须重启 Node** 才反映到 `node.hello.dshDistributionVersion`，
-   探针只在启动时跑一次）；对一个**既有 Workspace** 起一次 Run，历史投影可读（跨版本会话
+   `--print-dsh-version` 回到锁定版本（Run 的固化版本、兼容闸与 supervisor 的 spawn 记录都用
+   **启动时探针**那一次：要重启 Node 才换；`node.hello` 自 #352 起按连接重探，设备视图不必重启）；
+   对一个**既有 Workspace** 起一次 Run，历史投影可读（跨版本会话
    日志兼容性——这一条需要两个版本都用过才判得出来，是本门存在的主要理由）。
+   **若第 3 步停机期间有 Run 在跑**，它的结局按停机时长分两种（见下「数据与历史语义」的归因）：
+   秒级重启（停机 <30s、且 Runtime 进程活过 Node 重启）→ 界面看到
+   `lost(RUNTIME_VERSION_CHANGED)`；本步骤的分钟级回滚 → Hub 的租约先过期，看到的是
+   `lost(RUNTIME_LOST)`（专用码的迟到快照被终态幂等丢掉，属已知可见性边界）。
 5. 残留自查：`node_modules/.pnpm` 里不应再有新版包——`ls -d node_modules/.pnpm/@deepseek-ai+*@*`，
    逐项对照 `dsh.lock.json` 的十项版本（多出条目或版本不符都说明回滚没重装；grep 按包名前缀，
    不是抽样单包）。
@@ -61,9 +66,14 @@ DSH 是预览版，升级是高风险动作。三条红线（06 文档 §2.1）�
 - Hub 数据 migration 不依赖 DSH schema，DSH image 可独立回滚。
 - 已创建 Run 固化其 DSH version，回滚不改历史 Run。
 - 回滚后不恢复新版本上正在跑的 Runtime：用户显式 rerun。**归因（#356 起）**：重启后的 Node 在
-  孤儿恢复时比对「spawn 时记录的 DSH 版本」与「本次启动探针的版本」，不一致即把该 Run 报为
+  孤儿恢复时比对「spawn 时记录的 DSH 版本」与「本次启动探针的版本」，**两者都是字符串、
+  不一致、且该孤儿经三重匹配确认当时仍存活（matched）**，才把该 Run 报为
   `lost(RUNTIME_VERSION_CHANGED)`（Hub 原样落 `runs.failure_code`）——与「进程丢了/节点断线」的
-  `RUNTIME_LOST`（租约过期那条路）区分开；任一侧版本未知时退回 `RUNTIME_LOST`，不谎报换版。
+  `RUNTIME_LOST`（租约过期那条路）区分开；任一侧版本未知、或进程早已 dead（整容器重建、
+  机器重启等把 Runtime 一起杀掉的形态）都退回 `RUNTIME_LOST`，不谎报换版。
+  **可见性边界**：Hub 的 reconciler 只认「沉默超时」（心跳 10s / 租约 30s），停机时长一旦
+  超过租约（本 skill 的分钟级回滚流程必然如此），终态先被 `RUNTIME_LOST` 收敛，专用码只在
+  秒级重启时直接对用户可见——如实记账，不假装覆盖。
   「Run 终态禁止复活」保证它不会被自动拉起。判据见
   `docs/agent/runtime-version-change-acceptance.md`（升级与回滚共用这条检测：两者都停下 Node 换版）。
 

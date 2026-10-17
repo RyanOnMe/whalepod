@@ -239,7 +239,9 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
     eventStore1.close()
 
     // 第二段：换版后重启（回滚 = 探针报更旧的版本）。
-    const { driver: driver2 } = makeRealProcessDriver()
+    // pids2 必须取自第二段自己的 driver：第一段的 pids 在 supervisor1.close() 后冻结，
+    // 拿它断「没有第二次 spawn」是恒真的假判据（评审抓到的）。
+    const { driver: driver2, pids: pids2 } = makeRealProcessDriver()
     const supervisor2 = new RuntimeSupervisor({
       driver: driver2,
       registry: new WorkspaceRegistry(join(root, 'registry.db')),
@@ -254,6 +256,10 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
     const commandStore2 = new CommandStore(join(root, 'commands.db'))
     const eventStore2 = new EventStore(join(root, 'events.db'))
     const sent2: string[] = []
+    // 离线期也记「上行尝试」：本 harness 的 send 在离线时无条件丢帧，故「线上没有」
+    // 是结构性事实、单独看不可失败；真正可失败的判据是**尝试过**（run-manager 的
+    // at-least-once：立即尝试上行 + onReconnect 重发）与**重连后线上恰好 1 帧**。
+    const attempts2: string[] = []
     let online2 = false // 重启后先离线：快照缓冲，重连才 flush（与 R9 同纪律）
     const manager2 = new RunManager({
       supervisor: supervisor2,
@@ -261,6 +267,7 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
       commandStore: commandStore2,
       eventStore: eventStore2,
       send: (frame) => {
+        attempts2.push(frame)
         if (online2) sent2.push(frame)
       },
       runtimeHomeFor: (runId) => join(root, 'runtime-home', runId),
@@ -279,7 +286,9 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
 
     await supervisor2.recoverOrphans()
     expect(await awaitDead(childPid, 5_000)).toBe(true)
-    expect(snapshotPayloads(sent2)).toHaveLength(0) // 离线期只缓冲
+    // 离线期：**尝试**上行 1 次（at-least-once 的「立即尝试」），但线上没出帧（session 层丢）。
+    expect(snapshotPayloads(attempts2)).toHaveLength(1)
+    expect(snapshotPayloads(sent2)).toHaveLength(0)
 
     online2 = true
     manager2.onReconnect()
@@ -292,10 +301,10 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
       failureCode: 'RUNTIME_VERSION_CHANGED',
     })
     expect(String(snapshots[0]?.failureSummary)).toContain('version changed')
-    // 与 R9 同纪律：不自动复活、不重放。
-    const spawnCountBefore = pids.length
+    // 与 R9 同纪律：不自动复活、不重放（spawn 计数取自**本段**的 driver）。
+    const spawnCountBefore = pids2.length
     await manager2.handleFrame(runStartFrame(workspace.id))
-    expect(pids.length).toBe(spawnCountBefore)
+    expect(pids2.length).toBe(spawnCountBefore)
   })
 
   it('回归哨兵：supervisor close 后迟到的子进程 exit 不炸状态库、不再归因', async () => {
