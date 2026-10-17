@@ -142,6 +142,11 @@ async function flushMicrotasks(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve))
 }
 
+/** #352：socket 上已发 hello 帧的条数（快照/去重/次序三类判据共用）。 */
+function helloCount(socket: FakeSocket): number {
+  return socket.sent.filter((line) => parseHello(line).type === 'node.hello').length
+}
+
 /** 取一行上行帧里的 node.hello（#352 的判据面）。 */
 function parseHello(line: string | undefined) {
   const frame = parseNodeFrame(JSON.parse(line ?? ''), 'upstream')
@@ -317,41 +322,6 @@ describe('#89 inventory 上报与坏帧拦截', () => {
     expect(Object.keys(frame.payload).sort()).toEqual(['credentialSlots', 'deviceId', 'workspaces'])
     expect(frame.payload.deviceId).toBe(deps.config.deviceId)
     expect(frame.payload.workspaces[0].name).toBe('proj')
-  })
-
-  it('#352：hello 采集慢时也不许插队——inventory 必须等 hello 出线（#320 依赖它）', async () => {
-    // 断链背景：hello 的采集会 await 探针（一次 node spawn，真机几十~几百 ms），而
-    // **设备行有事实**才是 Hub 侧「设备在线」的判据（#320 的 preparation-check 否则
-    // 409 DEVICE_OFFLINE）。实现把 sendHello 从连接流程里 fire-and-forget 出去时，
-    // 本用例红（inventory 会在采集放行前就出线）——Q2 的 preparation-node-bin 用例
-    // 曾经以 409 的形态抓到过同一回归。
-    FakeSocket.reset()
-    let release: (() => void) | undefined
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const { deps } = makeDeps({
-      helloFacts: async () => {
-        await gate
-        return { ...facts }
-      },
-    })
-    startDeviceSession({
-      ...deps,
-      inventoryFacts: async () => ({ workspaces: [goodWorkspace], credentialSlots: [] }),
-    })
-    const socket = latestSocket()
-    socket.emitOpen()
-    await new Promise((resolve) => setTimeout(resolve, 0))
-
-    // 采集未放行：一帧 inventory 都不许出线（hello 也还没出）。
-    expect(socket.sent.map((raw) => JSON.parse(raw).type as string)).not.toContain('node.inventory')
-
-    release!()
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    const types = socket.sent.map((raw) => JSON.parse(raw).type as string)
-    expect(types.indexOf('node.hello')).toBeGreaterThanOrEqual(0)
-    expect(types.indexOf('node.hello')).toBeLessThan(types.indexOf('node.inventory'))
   })
 
   it('带外越界事实（名字 120 字符）：一帧都不许写到 socket 上，且失败要归因', async () => {
@@ -568,10 +538,7 @@ describe('#112 归因回调缺省不可静默（默认结构化 warn 兜底）',
 })
 
 describe('#352 node.hello 事实刷新', () => {
-  // ---- #352：hello 事实按连接重算 + 会话内刷新（含序号单调与同连接去重）----
-
-  const helloCount = (socket: FakeSocket): number =>
-    socket.sent.filter((line) => parseHello(line).type === 'node.hello').length
+  // ---- #352：hello 事实按连接重算 + 会话内刷新（含序号单调、同连接去重与次序契约）----
 
   it('#352：重连时 hello 事实**重算**（pack 装好后不必重启 Node）', async () => {
     FakeSocket.reset()
@@ -683,6 +650,7 @@ describe('#352 node.hello 事实刷新', () => {
       },
       onHelloError: (error: unknown) => {
         errors.push(error)
+        // 归因回调自己抛错：sendHello 的 reportHelloFailure 必须吞掉（不许掀宿主）。
         throw new Error('callback boom')
       },
     })
@@ -693,18 +661,82 @@ describe('#352 node.hello 事实刷新', () => {
     expect(helloCount(socket)).toBe(0) // 本连接不报 hello
     expect(errors).toHaveLength(1)
 
-    // 让回调正常一次：随机探测恢复后同样能补发（不因上次失败而卡死）。
+    // **同一会话**内恢复：采集下次成功照样发（失败不推进水位、不卡死）；回调这拍不抛。
     shouldThrow = false
-    const { deps: depsOk } = makeDeps({
-      helloFacts: () => ({ ...facts, pluginPackDigests: ['f'.repeat(64)] }),
-      onHelloError: () => {},
-    })
-    const sessionOk = startDeviceSession(depsOk)
-    const socketOk = latestSocket()
-    socketOk.emitOpen()
+    session.refreshHello()
     await flushMicrotasks()
-    expect(helloCount(socketOk)).toBe(1)
+    expect(helloCount(socket)).toBe(1)
+    expect(parseHello(socket.sent.at(-1)).payload.pluginPackDigests).toEqual(['e'.repeat(64)])
     session.stop()
-    sessionOk.stop()
+  })
+
+  it('#352：hello 采集慢时也不许插队——inventory 必须等 hello 出线（#320 依赖它）', async () => {
+    // 断链背景：hello 的采集会 await 探针（一次 node spawn，真机几十~几百 ms），而
+    // **设备行有事实**才是 Hub 侧「设备在线」的判据（#320 的 preparation-check 否则
+    // 409 DEVICE_OFFLINE）。实现把 sendHello 从连接流程里 fire-and-forget 出去时，
+    // 本用例红（inventory 会在采集放行前就出线）——Q2 的 preparation-node-bin 用例
+    // 曾经以 409 的形态抓到过同一回归。
+    FakeSocket.reset()
+    let release: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { deps } = makeDeps({
+      helloFacts: async () => {
+        await gate
+        return { ...facts }
+      },
+    })
+    startDeviceSession({
+      ...deps,
+      inventoryFacts: async () => ({ workspaces: [goodWorkspace], credentialSlots: [] }),
+    })
+    const socket = latestSocket()
+    socket.emitOpen()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // 采集未放行：一帧 inventory 都不许出线（hello 也还没出）。
+    expect(socket.sent.map((raw) => JSON.parse(raw).type as string)).not.toContain('node.inventory')
+
+    release!()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const types = socket.sent.map((raw) => JSON.parse(raw).type as string)
+    expect(types.indexOf('node.hello')).toBeGreaterThanOrEqual(0)
+    expect(types.indexOf('node.hello')).toBeLessThan(types.indexOf('node.inventory'))
+  })
+
+  it('#352：采集期间连接死掉 → 不在死连接上跑 onConnected（补发交给新连接）', async () => {
+    FakeSocket.reset()
+    let release: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const connected: number[] = []
+    const { deps, timers } = makeDeps({
+      helloFacts: async () => {
+        await gate
+        return { ...facts }
+      },
+    })
+    startDeviceSession({ ...deps, onConnected: () => connected.push(1) })
+    const socket = latestSocket()
+    socket.emitOpen()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // 采集还在飞时连接断了：既不发 hello、也不回调（否则会在死连接的语义上
+    // 触发 spool 全量补发，帧要么写进虚空、要么抢在新连接的 hello 之前）。
+    socket.emitClose(1006, 'died mid-collect')
+    release!()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(helloCount(socket)).toBe(0)
+    expect(connected).toHaveLength(0)
+
+    // 正控：重连后（活连接）照常回调一次——守卫不能把正常路径也吞掉。
+    timers.timeouts.at(-1)!.fn()
+    const second = latestSocket()
+    second.emitOpen()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(helloCount(second)).toBe(1)
+    expect(connected).toHaveLength(1)
   })
 })

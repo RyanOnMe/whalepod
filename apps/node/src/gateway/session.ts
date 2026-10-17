@@ -160,6 +160,11 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
    * 才能保住「hello → spool 补发 → inventory」的次序（首帧次序是契约面：#320 的
    * preparation-check 依赖设备行已有 hello 事实，否则 409 DEVICE_OFFLINE）。
    * 采集失败只归因并 resolve（不打断会话）；发送本身抛错则 reject（由调用方归因）。
+   *
+   * 「新鲜」以**调用序**定义：pack digests 在采集入口同步读盘（先于任何 await），
+   * 所以 seq 序 = 快照时序；唯一的例外是 DSH 版本（探针子进程 exec 时刻的答案）——
+   * 两个探针同时在飞且恰在这几十 ms 内本机换版时，较高 seq 的帧可能带较旧版本串
+   * （概率可忽略、下条 hello 自愈）。
    */
   const sendHello = async (socket: SocketLike): Promise<void> => {
     const seq = (helloSeq += 1)
@@ -298,6 +303,9 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
         if (me === undefined || me.readyState !== 1 || current !== me) return
         // #352：先 hello（采集可能 await 探针）——次序契约是 hello → spool 补发 → inventory。
         await sendHello(me)
+        // 采集期间连接可能已换/已关：换就交给新连接的 open 路径去补发（它的水位更高），
+        // 不在死连接上留「session.connected」这种观测痕迹。
+        if (current !== me || me.readyState !== 1) return
         // P1-13/R1：连接（重）建立后补发 spool 里全部未 ack 事件。
         deps.onConnected?.()
         // #89：inventory 与 hello 同责——**每条**连接建立后上报一次（Hub 的

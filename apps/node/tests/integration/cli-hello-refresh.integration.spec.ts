@@ -2,9 +2,9 @@
  * #352 组合根验收：本地装/重建 pack 后**设备事实列不重启 Node 就刷新**。
  *
  * 为什么必须打在组合根（#89 的同一教训，`cli-inventory.integration.spec.ts` 已立先例）：
- * 修法拆成三片——`gateway/hello-facts.ts` 的重算语义、`session.ts` 的按连接重算/补发、
+ * 修法拆成三片——`gateway/hello-facts.ts` 的重算语义、`session.ts` 的按连接重算/刷新、
  * 以及 **cli.ts 的接线**（`refreshHelloAfterPreflight` 包住 preflight.ensure 并在会话
- * 句柄上补发 hello）。前两片各有单测，第三片（忘了包一层）只有真 cli 走一遍才暴露。
+ * 句柄上刷新 hello）。前两片各有单测，第三片（忘了包一层）只有真 cli 走一遍才暴露。
  *
  * 真要素：真 Hub（createTestApp + 真 PG + 真 OutboxWorker 派发）+ **真 cli 子进程**
  * （`node --import tsx apps/node/src/cli.ts start`，HOME 重定向，绝不碰真实
@@ -16,13 +16,13 @@
  *   ③ 本机装 pack：往 stateDir/plugin-packs/<digest>/pack.json 写有效 marker
  *      （dshCompatibility 取 hello 自报的真版本值——同一事实源，不手抄版本号）；
  *   ④ 真人 HTTP 路径建 Agent/Project/Task 并起 Run（POST /tasks/:id/runs）——Hub 派发
- *      run.start，Node 的 preflight 本地命中 → **会话内补发 hello**；
- *   ⑤ 判据：设备事实列的 pluginPackDigests 出现该 digest，且 cli 进程从未退出（同一进程，
- *      即「不重启 Node」）。本用例不注入断线，连接不会主动断开，故刷新只能来自
- *      按连接重算或会话内补发——两种修法都在 #352 的许可范围内。
- *
- * Run 本身会以 MODEL_CREDENTIAL_UNAVAILABLE 被拒（本用例不配凭据槽：拒绝发生在
- * preflight **之后**、spawn **之前**，正是我们要的——不真起 Runtime 也就不留孤儿进程）。
+ *      run.start，Node 的 preflight 本地命中 → **会话内刷新 hello**；
+ *   ⑤ 判据：设备事实列的 pluginPackDigests 出现该 digest；cli 进程从未退出（同一进程 =
+ *      「不重启 Node」）且 **Node 侧连接建立次数恰为 1**（vi.spyOn 观测缝）——后者把
+ *      「重连时重算」这条旁路排掉：不注入断线时若有重连，刷新就不一定来自会话内刷新。
+ *   ⑥ 判据的另一半：该 Run 以 MODEL_CREDENTIAL_UNAVAILABLE 收场（拒绝发生在 preflight
+ *      **之后**、spawn **之前**，正是判据窗口）——不真起 Runtime、不留孤儿进程；这条
+ *      把「前提」从声明升级成断言，前提被推翻（比如外部环境给了凭据）即红。
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -361,5 +361,5 @@ describe('#352 生产 cli 组合根：装 pack 后设备事实列不重启 Node 
       ),
     )
     expect(failedRun.failureCode).toBe('MODEL_CREDENTIAL_UNAVAILABLE')
-  }, 90_000)
+  }, 150_000) // 四段 waitForValue 各 30s：单段触顶时仍要走完其余段与断言，别先撞 vitest 超时（#360 同教训）
 })
