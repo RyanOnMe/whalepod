@@ -256,7 +256,12 @@ describe('probe: cancel race & followup at the interrupt boundary (#353)', () =>
           enqueued?.seq !== undefined &&
           record.seq > enqueued.seq &&
           record.record['outcome'] === 'canceled' &&
-          record.record['removedCount'] === 1,
+          record.record['removedCount'] === 1 &&
+          // 只认「纯移除」：`replace()` 形态（inserted 非空）也会带 outcome=canceled，
+          // 但会把别的东西放回队列——不是本例要钉的形态。
+          record.record['start'] === 0 &&
+          Array.isArray(record.record['inserted']) &&
+          record.record['inserted'].length === 0,
       )
       expect(
         removed,
@@ -306,8 +311,12 @@ describe('probe: cancel race & followup at the interrupt boundary (#353)', () =>
       expect(
         runtime.logs
           .slice(logsBefore)
-          .some((entry) => JSON.stringify(entry).includes('approval decide ignored')),
-        '迟到的 approval.decide 必须留归因（不是静默吞掉到不可归因）',
+          .some(
+            (entry) =>
+              String(entry['msg'] ?? '').startsWith('approval decide ignored') &&
+              entry['callId'] === requested.payload.callId,
+          ),
+        '迟到的 approval.decide 必须留归因（component/callId 结构化字段，非文本爬取）',
       ).toBe(true)
     } finally {
       await runtime.dispose()

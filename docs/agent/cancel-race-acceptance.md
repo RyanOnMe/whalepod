@@ -64,7 +64,7 @@ pnpm exec vitest run --project dsh-contract \
 | `session-owner.ts` 的 `followup` 改用 vendor 的 `steer`（插话进当前步） | ③ 红（spliced 的 target 变 `next-step`） |
 | `session-owner.ts` 的 `cancel` 传 `keepInbox`（vendor 的替代语义：保留排队项） | ③ 红（**移除记录缺席**——本进程帧面结果不变，但会话日志少那条 `outcome: canceled`，续跑会复活该指令） |
 | 去掉「无第二串 turn」的屏障（取消后重放排队项，模拟「取消后仍执行」） | ③ 红（第二串 turn/end → 脚本耗尽 → fatal 现形） |
-| `approval-port.ts` 去掉 `signal.abort → settle('cancelled')` 的收回（取消不处理挂起审批） | ④ 红（迟到的 decide 被受理 ⟹ 无 `approval decide ignored` 归因） |
+| `approval-port.ts` 去掉 `signal.abort → settle('cancelled')` 的收回（取消不处理挂起审批） | ④ 红（**归因那条**先红：迟到的 decide 被受理 ⟹ 无 `approval decide ignored`；`artifact.candidate` 仍为 0——vendor 的工具执行器在已 abort 的 stage 上不派发工具，所以「工具不得执行」这半边由 vendor 兜底、不敏感） |
 
 稳定性：本文件连跑 10 次全绿（约 1.4–2.0s/次）。②的窗口由**构造**保证而非 sleep：
 `until(turn/end)` 返回后测试续体是微任务，而 `SessionOwner` 的 settle 链要 `await whenIdle()`
@@ -80,6 +80,7 @@ pnpm exec vitest run --project dsh-contract \
 | 取消后多出第二串 turn | followup 的入队语义（`session-owner.ts` 的 `followup` 用 `agent.followup` 而不是 `steer`）+ vendor 的 inbox 语义 |
 | `runtime.fatal` 且 summary 含 `script exhausted` | 第二串 turn 真的开跑了（replay fixture 只有一个脚本条目）——与上一条同源 |
 | 审批悬置取消后仍出现 `artifact.candidate` | `approval-port.ts` 的 abort 收回（`req.signal` 的 `cancelled` settle）是否还在；工具是否把「已取消」当成放行 |
+| 取消后迟到的 `approval.decide` 被受理（日志里没有 `approval decide ignored` 归因） | 同上——**实测更常先看到的是这一条**：vendor 的工具执行器在 stage signal 已 abort 时不会真派发工具，所以「工具没执行」可能由 vendor 兜住，而「决定被受理/无归因」直接指向 abort 收回缺失 |
 
 ## 边界与未覆盖
 
@@ -125,4 +126,4 @@ pnpm exec vitest run --project dsh-contract \
 pnpm test:dsh-contract
 ```
 
-（Q3 全量 17 个 spec / 66 例；本文件 4 例。）
+（Q3 全量 17 个文件 / 67 例；本文件 4 例。）

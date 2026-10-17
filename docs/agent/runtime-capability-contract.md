@@ -90,10 +90,11 @@ G0「release 必跑、PR 必跑」，而 `.github/workflows/check.yml` 只跑 Q0
 
 - **「收尾窗口正中」的 cancel 撞车无判据**（#363）：replay harness 只能表达「每帧内容」，
   没有 per-frame delay / 动态 readyFile / gate 条目 ⟹ 「cancel 恰好落在 finish chunk 与
-  turn/end 之间」这种**两侧都可控**的时序构造不出来。现有判据钉的是窗口两侧（流式中取消、
+  turn/end 之间」这种**两侧都可控**的时序构造没有接缝。现有判据钉的是窗口两侧（流式中取消、
   turn/end 已提交后的迟到取消，后者由进程内微任务序确定性保证）；进程边界（真子进程）上的
-  同一交错也未覆盖——`apps/runtime/tests/dsh-contract/stdio.contract.spec.ts` 没有 override
-  环境通道。边界与理由见 [cancel-race-acceptance](./cancel-race-acceptance.md)。
+  同一交错也未覆盖——`apps/runtime/tests/dsh-contract/stdio.contract.spec.ts` 按用例 spawn
+  并自带 fixture 环境（通道不缺），缺的是 `until()` 的**谓词同步点**与跨进程的时序噪声余量。
+  边界与理由见 [cancel-race-acceptance](./cancel-race-acceptance.md)。
 - **「取消与完成撞车」的产品层结局未收口**（#365）：Runtime 层契约是「completed 胜出、不得
   双终态」，但完整链路上取消请求先落 `cancel_requested` 时，Hub 会把这条完成事件按 03 §3.2
   收敛为 `failed(INVALID_RUN_TRANSITION)`（已有 Hub 判据钉该行为）——用户可见的是
