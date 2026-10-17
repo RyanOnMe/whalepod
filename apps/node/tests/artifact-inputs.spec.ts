@@ -69,6 +69,11 @@ function makeHarness(input: {
   manifestErrorBody?: string
   contentError?: number
   manifestTaskId?: string
+  /** #380：跨 Task 交接输入快照（缺省 null = 本条 Run 不带交接输入）。 */
+  handoff?: unknown
+  handoffError?: number
+  /** 按 artifactId 分发的下载字节（缺省回退 content）。 */
+  contents?: Record<string, Buffer>
 }): Harness {
   const requests: Array<{ url: string; token: string }> = []
   const fetchImpl: typeof fetch = async (input_, init) => {
@@ -89,11 +94,19 @@ function makeHarness(input: {
         { status: 200 },
       )
     }
+    if (url.endsWith('/handoff-input')) {
+      if (input.handoffError !== undefined) {
+        return new Response('nope', { status: input.handoffError })
+      }
+      return new Response(envelope(input.handoff ?? null), { status: 200 })
+    }
     if (url.includes('/node/artifacts/')) {
       if (input.contentError !== undefined) {
         return new Response('missing', { status: input.contentError })
       }
-      return new Response(new Uint8Array(input.content ?? Buffer.alloc(0)), { status: 200 })
+      const artifactId = url.split('/node/artifacts/')[1]?.split('/')[0] ?? ''
+      const bytes = input.contents?.[artifactId] ?? input.content ?? Buffer.alloc(0)
+      return new Response(new Uint8Array(bytes), { status: 200 })
     }
     return new Response('not found', { status: 404 })
   }
@@ -185,5 +198,123 @@ describe('ArtifactInputsManager', () => {
     expect(existsSync(prepared.dir)).toBe(true)
     await h.manager.cleanup(RUN_ID)
     expect(existsSync(prepared.dir)).toBe(false)
+  })
+
+  describe('跨 Task 交接输入（#380）', () => {
+    const UPSTREAM_TASK = '01905f7c-0000-7000-8000-000000000101'
+    const HANDOFF_CONTENT = '# backend handoff\n'
+    const HANDOFF_ENTRY = {
+      artifactId: '01905f7c-0000-7000-8000-000000000902',
+      runId: '01905f7c-0000-7000-8000-000000000302',
+      title: '接口约定.md',
+      mediaType: 'text/markdown',
+      byteSize: HANDOFF_CONTENT.length,
+      sha256: createHash('sha256').update(HANDOFF_CONTENT).digest('hex'),
+      publishedAt: '2026-10-18T00:00:00Z',
+    }
+    const HANDOFF_MANIFEST = {
+      upstreamTaskId: UPSTREAM_TASK,
+      upstreamTaskTitle: '后端交付',
+      receiptId: randomUUID(),
+      revisionId: randomUUID(),
+      revisionNumber: 1,
+      artifacts: [HANDOFF_ENTRY],
+    }
+
+    it('两张独立清单汇入同一只读副本：同 Task 材料 + 交接材料都下载并逐件校摘要', async () => {
+      const h = makeHarness({
+        manifest: [ENTRY],
+        handoff: HANDOFF_MANIFEST,
+        contents: {
+          [ENTRY.artifactId]: Buffer.from(CONTENT),
+          [HANDOFF_ENTRY.artifactId]: Buffer.from(HANDOFF_CONTENT),
+        },
+      })
+      const prepared = await h.manager.prepare(RUN_ID, TASK_ID)
+      expect(prepared.entries).toHaveLength(2)
+      expect(prepared.entries.map((entry) => entry.artifactId)).toEqual([
+        ENTRY.artifactId,
+        HANDOFF_ENTRY.artifactId,
+      ])
+      const copy = await readFile(join(prepared.dir, HANDOFF_ENTRY.artifactId))
+      expect(createHash('sha256').update(copy).digest('hex')).toBe(HANDOFF_ENTRY.sha256)
+      // 两条路都走 Device Token。
+      expect(h.requests.filter((r) => r.url.endsWith('/handoff-input'))).toHaveLength(1)
+      expect(h.requests.every((r) => r.token === 'Device test-device-token')).toBe(true)
+    })
+
+    it('交接材料字节与快照摘要不符 → ARTIFACT_HASH_MISMATCH，目录整体清理', async () => {
+      const h = makeHarness({
+        manifest: [],
+        handoff: HANDOFF_MANIFEST,
+        contents: { [HANDOFF_ENTRY.artifactId]: Buffer.from('tampered upstream') },
+      })
+      await expect(h.manager.prepare(RUN_ID, TASK_ID)).rejects.toMatchObject({
+        code: 'ARTIFACT_HASH_MISMATCH',
+      })
+      expect(existsSync(join(inputsRoot, RUN_ID))).toBe(false)
+    })
+
+    it('handoff-input 返回 null：不是错误，行为与不带交接输入一致', async () => {
+      const h = makeHarness({ manifest: [ENTRY], content: Buffer.from(CONTENT) })
+      const prepared = await h.manager.prepare(RUN_ID, TASK_ID)
+      expect(prepared.entries).toEqual([INPUT_ENTRY])
+      expect(h.requests.some((r) => r.url.endsWith('/handoff-input'))).toBe(true)
+    })
+
+    it('handoff-input 形状不合 → VALIDATION_FAILED（fail-closed），不写副本', async () => {
+      const h = makeHarness({
+        manifest: [ENTRY],
+        handoff: { upstreamTaskId: 'not-a-uuid' },
+        content: Buffer.from(CONTENT),
+      })
+      await expect(h.manager.prepare(RUN_ID, TASK_ID)).rejects.toMatchObject({
+        code: 'VALIDATION_FAILED',
+      })
+      expect(existsSync(join(inputsRoot, RUN_ID))).toBe(false)
+    })
+
+    it('handoff-input 请求失败 → 状态码折算（404 → NOT_FOUND），不写副本', async () => {
+      const h = makeHarness({ manifest: [ENTRY], content: Buffer.from(CONTENT), handoffError: 404 })
+      await expect(h.manager.prepare(RUN_ID, TASK_ID)).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+      })
+      expect(existsSync(join(inputsRoot, RUN_ID))).toBe(false)
+    })
+
+    // 63 条 clone + 1 条交接材料 = 64（边界内）；再多一条就超。
+    const manyEntries = Array.from({ length: 63 }, (_, index) => ({
+      ...ENTRY,
+      artifactId: `01905f7c-0000-7000-8000-${String(1000 + index).padStart(12, '0')}`,
+    }))
+    const oneMore = {
+      ...ENTRY,
+      artifactId: '01905f7c-0000-7000-8000-000000001063',
+    }
+
+    it('合并恰在边界（63 + 1 = 64）：正常下载，证明判据不是 off-by-one', async () => {
+      const h = makeHarness({
+        manifest: manyEntries,
+        handoff: HANDOFF_MANIFEST,
+        content: Buffer.from(CONTENT),
+        contents: { [HANDOFF_ENTRY.artifactId]: Buffer.from(HANDOFF_CONTENT) },
+      })
+      const prepared = await h.manager.prepare(RUN_ID, TASK_ID)
+      expect(prepared.entries).toHaveLength(64)
+    })
+
+    it('合并超限（评审 B3）：两张清单各自合法但合并 >64 → ARTIFACT_INPUT_MANIFEST_TOO_LARGE，不写副本', async () => {
+      // 64 条的清单（自身在 schema 上限内）+ 1 条交接材料 = 合并 65：超 runtime wire
+      // 上限的帧会被 Runtime 静默丢弃（Run 一直挂着）——现在 fail-closed 显式拒绝，
+      // ack 把专用码带回 Hub 可归因。
+      const h = makeHarness({
+        manifest: [...manyEntries, oneMore],
+        handoff: HANDOFF_MANIFEST,
+      })
+      await expect(h.manager.prepare(RUN_ID, TASK_ID)).rejects.toMatchObject({
+        code: 'ARTIFACT_INPUT_MANIFEST_TOO_LARGE',
+      })
+      expect(existsSync(join(inputsRoot, RUN_ID))).toBe(false)
+    })
   })
 })

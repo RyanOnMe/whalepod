@@ -39,6 +39,12 @@ export const queryKeys = {
   runHandoffDraft: (runId: string) => ['run', runId, 'handoff-draft'] as const,
   /** #379：某 Task 的已发布交接版本（团队可见，倒序）。 */
   taskHandoffRevisions: (taskId: string) => ['task-handoff-revisions', taskId] as const,
+  /** #380：上游「已交接」列表（该 Task 发出的接收关系）。 */
+  taskHandoffDeliveries: (taskId: string) => ['task-handoff-deliveries', taskId] as const,
+  /** #380：下游接收关系列表（含「有新版本」判据）。 */
+  taskHandoffReceipts: (taskId: string) => ['task-handoff-receipts', taskId] as const,
+  /** #380：某 Run 的跨 Task 交接输入快照（与 input-manifest 独立的读面）。 */
+  runHandoffInput: (runId: string) => ['run', runId, 'handoff-input'] as const,
   runEvents: (runId: string) => ['run', runId, 'events'] as const,
   devices: ['devices'] as const,
   workspaces: ['workspaces'] as const,

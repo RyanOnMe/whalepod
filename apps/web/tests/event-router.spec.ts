@@ -74,7 +74,9 @@ describe('applyClientFrame (event-router)', () => {
       { queryKey: ['task-agreement', 't-1'] },
       // 切片⑥e 新增：task.changed 也要失效权限页（服务端授权/撤销发的就是它）。
       { queryKey: ['instruction-grants', 't-1'] },
-      // 评审 B4：发布交接版本也随 task.changed 广播——版本列表必须实时。
+      // #380：交接交付/确认/发布随 task.changed 广播（两侧房间），三条键各一。
+      { queryKey: ['task-handoff-deliveries', 't-1'] },
+      { queryKey: ['task-handoff-receipts', 't-1'] },
       { queryKey: ['task-handoff-revisions', 't-1'] },
       { queryKey: ['project-tasks'] },
       { queryKey: ['attention'] },
@@ -110,6 +112,9 @@ describe('applyClientFrame (event-router)', () => {
           // 切片⑥e：权限页的键也必须被 task.changed 失效——服务端授权/撤销发的就是
           // task.changed，漏了它，责任人撤销时对方的权限页永远不更新（而服务端已 403）。
           ['instruction-grants', 't-1'],
+          // #380：交接交付（上游已交接）、接收（下游接收关系）与版本发布都随 task.changed 广播。
+          ['task-handoff-deliveries', 't-1'],
+          ['task-handoff-receipts', 't-1'],
           ['task-handoff-revisions', 't-1'],
           ['project-tasks', 'p-1'],
           ['attention'],
@@ -159,6 +164,8 @@ describe('applyClientFrame (event-router)', () => {
       ['task-room'],
       ['task-agreement'],
       ['instruction-grants'],
+      ['task-handoff-deliveries'],
+      ['task-handoff-receipts'],
       ['task-handoff-revisions'],
       ['project-tasks'],
       ['attention'],

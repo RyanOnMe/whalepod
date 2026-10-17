@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
-import { ArtifactInputManifestSchema } from '@whalepod/protocol'
+import { ArtifactInputManifestSchema, HandoffInputManifestSchema } from '@whalepod/protocol'
 import { api } from '../../shared/api/client.js'
 import { queryKeys } from '../../app/query-client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
@@ -27,6 +27,14 @@ export function RunInputManifest({
       return data
     },
   })
+  // #380：跨 Task 交接输入是**独立读面**（与同 Task 清单互不合并）；null = 不带，
+  // 不是错误——本任务不是任何交接的下游时也不该出现这一节。
+  const handoffQuery = useQuery({
+    queryKey: queryKeys.runHandoffInput(runId),
+    enabled: open,
+    queryFn: async () =>
+      HandoffInputManifestSchema.nullable().parse(await api.get(`/runs/${runId}/handoff-input`)),
+  })
   // A cached response must satisfy the current room boundary before rendering too.
   const belongsToTask = query.data === null || query.data?.taskId === taskId
   return (
@@ -42,13 +50,20 @@ export function RunInputManifest({
       {open ? (
         <div data-testid="run-input-manifest">
           {query.isPending ? <p role="status">正在读取本次输入…</p> : null}
-          {query.isError ? (
-            <>
-              <ErrorBanner error={query.error} />
-              <button type="button" className="button" onClick={() => void query.refetch()}>
-                重新读取输入
-              </button>
-            </>
+          {query.isError ? <ErrorBanner error={query.error} /> : null}
+          {query.isError || handoffQuery.isError ? (
+            // 评审 B8 复核：两条读面任一失败都给重试入口，且**同时重取**——只重取同 Task
+            // 清单时，交接读面的错误行会一直挂着，按钮形同虚设。
+            <button
+              type="button"
+              className="button"
+              onClick={() => {
+                void query.refetch()
+                void handoffQuery.refetch()
+              }}
+            >
+              重新读取输入
+            </button>
           ) : null}
           {query.isSuccess && !belongsToTask ? (
             <p role="alert">输入记录与本任务不一致，请重新选择执行。</p>
@@ -78,6 +93,31 @@ export function RunInputManifest({
                 </ul>
               )}
             </>
+          ) : null}
+          {handoffQuery.isError ? (
+            <p role="alert" data-testid="run-handoff-input-error">
+              交接材料读取失败——这不等于「本次不带交接材料」，请重试。
+            </p>
+          ) : null}
+          {handoffQuery.isSuccess && handoffQuery.data !== null ? (
+            <div data-testid="run-handoff-input">
+              <p className="mutation-hint">
+                交接材料：来自「{handoffQuery.data.upstreamTaskTitle}」的已发布交接包 v
+                {handoffQuery.data.revisionNumber}（逐件固定摘要；上游之后发新版本不改本清单）。
+              </p>
+              {handoffQuery.data.artifacts.length === 0 ? (
+                <p>该交接包没有材料附件。</p>
+              ) : (
+                <ul>
+                  {handoffQuery.data.artifacts.map((item) => (
+                    <li key={item.artifactId}>
+                      <strong>{item.title}</strong> · {formatBytes(item.byteSize)} · 内容摘要{' '}
+                      {item.sha256.slice(0, 12)}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           ) : null}
         </div>
       ) : null}

@@ -1,15 +1,18 @@
 /**
- * Reviewer Run 输入准备（P1-15；G6-06/07 Node 半场）。
+ * Reviewer Run 输入准备（P1-15；G6-06/07 Node 半场；#380 扩交接输入）。
  *
  * run.start 后、Runtime 启动前：
  * 1. `GET /node/runs/:runId/input-manifest`（Device Token）拉取该Run创建时已固化的
- *    Artifact 清单（协议 ArtifactInputManifestSchema fail-closed 解析；
+ *    同 Task Artifact 清单（协议 ArtifactInputManifestSchema fail-closed 解析；
  *    taskId 与 Run 不一致 → VALIDATION_FAILED；Hub 显式拒绝（如 #64 超上限
  *    ARTIFACT_INPUT_MANIFEST_TOO_LARGE）→ 错误码原样透传为 run.start 拒绝）；
- * 2. 逐条 `GET /node/artifacts/:artifactId/content` 受控下载副本，sha256 与
- *    清单比对（不符 → ARTIFACT_HASH_MISMATCH 且清理目录）；
- * 3. 副本文件名 = artifactId（UUID 白名单，无用户可控文件名，无路径面）；
- *    产出 runtime.initialize 的 `artifactInputs` + `artifactInputsDir`。
+ * 2. `GET /node/runs/:runId/handoff-input`（#380）拉取跨 Task 交接输入快照
+ *    （HandoffInputManifestSchema；null = 本条 Run 不带交接输入）；
+ * 3. 逐条 `GET /node/artifacts/:artifactId/content` 受控下载副本，sha256 与
+ *    **来源清单**（两张清单统一）比对（不符 → ARTIFACT_HASH_MISMATCH 且清理目录）；
+ * 4. 副本文件名 = artifactId（UUID 白名单，无用户可控文件名，无路径面）；
+ *    产出 runtime.initialize 的 `artifactInputs` + `artifactInputsDir`
+ *    ——同一只读副本机制承载两张清单（Hub 侧快照仍是两条独立列、独立路由）。
  *
  * Builder Run（无已发布 Artifact）= 空 manifest，不下载任何副本。目录按 run
  * 隔离（runtime-inputs/<runId>），终态后由 RunManager 触发 cleanup。
@@ -18,8 +21,10 @@ import { createHash } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
+  ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES,
   ArtifactInputManifestSchema,
   ErrorCodeSchema,
+  HandoffInputManifestSchema,
   type RuntimeArtifactInput,
 } from '@whalepod/protocol'
 
@@ -74,8 +79,28 @@ export class ArtifactInputsManager {
           'input manifest task does not match the run task',
         )
       }
+      // #380：跨 Task 交接输入（第二条独立清单；null = 不带）。两张清单在这里
+      // 汇入同一只读副本机制——Hub 侧与 UUID 面去重（同一 artifact 不会同时出现在
+      // 两张清单：原先来自不同 Task），去重只为防将来语义变化时的重复下载。
+      const handoff = await this.fetchHandoffInput(runId)
+      const allEntries = [...manifest.artifacts]
+      const seen = new Set(allEntries.map((entry) => entry.artifactId))
+      for (const entry of handoff?.artifacts ?? []) {
+        if (seen.has(entry.artifactId)) continue
+        seen.add(entry.artifactId)
+        allEntries.push(entry)
+      }
+      // 评审 B3：两张清单各自合法（各 ≤64）但合并后可超 runtime wire 上限（64）——
+      // 超限帧会被 Runtime 静默丢弃，Run 会一直挂着。这里 fail-closed 地显式拒绝
+      // （码复用 ARTIFACT_INPUT_MANIFEST_TOO_LARGE，Node→Hub 的 ack 会把它带出去）。
+      if (allEntries.length > ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES) {
+        throw new ArtifactInputsError(
+          'ARTIFACT_INPUT_MANIFEST_TOO_LARGE',
+          `merged artifact inputs exceed ${ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES} entries`,
+        )
+      }
       await mkdir(dir, { recursive: true })
-      for (const entry of manifest.artifacts) {
+      for (const entry of allEntries) {
         const bytes = await this.fetchContent(runId, entry.artifactId)
         const actual = createHash('sha256').update(bytes).digest('hex')
         if (actual !== entry.sha256) {
@@ -96,10 +121,11 @@ export class ArtifactInputsManager {
       this.deps.log?.('info', 'artifact inputs prepared', {
         component: 'node.artifact',
         runId,
-        count: manifest.artifacts.length,
+        count: allEntries.length,
+        handoffCount: handoff?.artifacts.length ?? 0,
       })
       // initialize 清单条目 = manifest 条目的内容寻址子集（无 runId/publishedAt）。
-      const entries: RuntimeArtifactInput[] = manifest.artifacts.map(
+      const entries: RuntimeArtifactInput[] = allEntries.map(
         ({ artifactId, title, mediaType, byteSize, sha256 }) => ({
           artifactId,
           title,
@@ -148,6 +174,35 @@ export class ArtifactInputsManager {
     const parsed = ArtifactInputManifestSchema.safeParse(envelope.data)
     if (!parsed.success) {
       throw new ArtifactInputsError('VALIDATION_FAILED', 'input manifest rejected by schema')
+    }
+    return parsed.data
+  }
+
+  /**
+   * #380：跨 Task 交接输入快照。`data: null` = 本条 Run 不带交接输入（**不是**错误，
+   * 新列语义如此）；形状不合仍 fail-closed。
+   */
+  private async fetchHandoffInput(runId: string) {
+    const response = await this.request(
+      `${this.deps.hubUrl.replace(/\/$/, '')}/api/v1/node/runs/${runId}/handoff-input`,
+    )
+    if (!response.ok) {
+      const envelopeCode = await wireErrorCodeFrom(response)
+      throw new ArtifactInputsError(
+        envelopeCode ?? mapStatus(response.status),
+        envelopeCode !== undefined
+          ? 'handoff input request rejected by hub'
+          : `handoff input request failed with http ${response.status}`,
+      )
+    }
+    const envelope = (await response.json()) as { ok?: unknown; data?: unknown }
+    if (envelope.ok !== true) {
+      throw new ArtifactInputsError('VALIDATION_FAILED', 'handoff input response malformed')
+    }
+    if (envelope.data === null) return null
+    const parsed = HandoffInputManifestSchema.safeParse(envelope.data)
+    if (!parsed.success) {
+      throw new ArtifactInputsError('VALIDATION_FAILED', 'handoff input rejected by schema')
     }
     return parsed.data
   }

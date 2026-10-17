@@ -396,6 +396,13 @@ export function taskRoomHandler(
     nextRunApprovalPolicy?: 'approval_required' | 'full_access' | null
     /** #378：任务约定摘要（默认与 task.agreementEnabled 一致、无已确认版本）。 */
     agreement?: { enabled: boolean; latestConfirmedNumber: number | null; hasDraft: boolean }
+    /** #380：下游交接摘要（默认 null = 不是交接的下游）。 */
+    handoff?: {
+      receiptId: string
+      revisionNumber: number
+      upstreamTaskTitle: string
+      hasNewerVersion: boolean
+    } | null
   } = {},
 ): MockHandler {
   return {
@@ -413,6 +420,7 @@ export function taskRoomHandler(
           latestConfirmedNumber: null,
           hasDraft: false,
         },
+        handoff: extras.handoff ?? null,
         nextRunApprovalPolicy: extras.nextRunApprovalPolicy ?? null,
         ...(extras.reviewEligibility === undefined
           ? {}

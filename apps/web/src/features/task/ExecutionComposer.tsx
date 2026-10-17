@@ -54,6 +54,7 @@ export function ExecutionComposer({
   confirmingTask = false,
   artifacts,
   agreement,
+  handoff,
   reviewRequest = null,
   revisionRequest = null,
 }: {
@@ -65,6 +66,16 @@ export function ExecutionComposer({
   artifacts: TaskRoomArtifact[]
   /** 任务约定摘要（#378；TaskRoomView.agreement）：绑定提示与「有新版本」横幅的数据源。 */
   agreement: { enabled: boolean; latestConfirmedNumber: number | null; hasDraft: boolean }
+  /**
+   * 下游交接摘要（#380；TaskRoomView.handoff）：存在已确认 receipt 时执行区默认
+   * 勾选「附带上游交接材料」并展示固定版本号；null = 本任务不是交接的下游。
+   */
+  handoff: {
+    receiptId: string
+    revisionNumber: number
+    upstreamTaskTitle: string
+    hasNewerVersion: boolean
+  } | null
   reviewRequest?: ArtifactReviewRequest | null
   revisionRequest?: ArtifactReviewRequest | null
 }): ReactNode {
@@ -73,6 +84,16 @@ export function ExecutionComposer({
   const active = runs.find((run) => ACTIVE_RUN.has(run.status))
   const terminal = runs.filter((run) => TERMINAL_RUN.has(run.status))
   const [lastOutcome, setLastOutcome] = useState<InstructionOutcome | null>(null)
+  // #380：存在已确认接收关系时默认附带（界面在发送前展示固定版本号；取消勾选 =
+  // 本次不带交接材料，Run 快照为 null——缺省不带是协议语义，勾选才是显式选择）。
+  const [includeHandoff, setIncludeHandoff] = useState(handoff !== null)
+  // 评审 B6：接收方在别的机器上确认后，房间实时拿到摘要（null → 非 null）——此时
+  // 默认勾选也要生效；只在「从未有过 → 有」这一步重置，不覆盖用户主动取消的勾选。
+  const hadHandoff = useRef(handoff !== null)
+  useEffect(() => {
+    if (!hadHandoff.current && handoff !== null) setIncludeHandoff(true)
+    hadHandoff.current = handoff !== null
+  }, [handoff])
   const initialDraft = (): ExecutionDraft => ({
     ownerId: task.assigneeUserId,
     text: '',
@@ -528,6 +549,26 @@ export function ExecutionComposer({
           disabled={reason !== null || sending}
           style={{ border: 0, padding: 0, margin: 0 }}
         >
+          {handoff !== null && isNewExecution ? (
+            <label className="handoff-attach" data-testid="handoff-attach">
+              <input
+                type="checkbox"
+                aria-label="附带上游交接材料"
+                checked={includeHandoff}
+                disabled={sending}
+                onChange={(event) => setIncludeHandoff(event.target.checked)}
+              />
+              {`附带上游交接材料：「${handoff.upstreamTaskTitle}」v${handoff.revisionNumber}`}
+              {handoff.hasNewerVersion
+                ? `（上游已有新版本，本次仍固定 v${handoff.revisionNumber}）`
+                : null}
+            </label>
+          ) : null}
+          {handoff !== null && mode === 'resume' ? (
+            <p className="mutation-hint">
+              {`续跑沿用来源执行固化的材料清单（含交接材料，如有）：上游新版本不改本次输入。`}
+            </p>
+          ) : null}
           {isNewExecution ? (
             <RunLauncher
               key={launcherKey}
@@ -540,6 +581,7 @@ export function ExecutionComposer({
                     ? reviewArtifactIds
                     : undefined
               }
+              handoffReceiptId={includeHandoff && handoff !== null ? handoff.receiptId : undefined}
               buttonLabel={mode === 'review' ? '开始复核' : '开始执行'}
               settings={launchSettings}
               onSettingsChange={setLaunchSettings}

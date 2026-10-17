@@ -198,6 +198,12 @@ export const SendInstructionRequestSchema = z
     specRevisionId: z.uuid().optional(),
     /** Run 用途（#378）：仅新执行/续跑可带；缺省 business。 */
     purpose: RunPurposeSchema.optional(),
+    /**
+     * 交接输入（#380；ADR-0017 §5）：下游 Run 显式附带上游已发布交接包的 receipt。
+     * 仅新执行/续跑可带（与材料选择同路；追问不得夹带——缺省即**不带**交接输入，
+     * 界面在存在已确认 receipt 时默认勾选并显式发送）。
+     */
+    handoffReceiptId: z.uuid().optional(),
     /** Web 显式意图；缺省保留自动指派与旧客户端的路由语义。 */
     intent: z
       .discriminatedUnion('kind', [
@@ -219,8 +225,11 @@ export const SendInstructionRequestSchema = z
     }
     // #378：绑定与用途同材料选择一路——只有会建 Run 的意图（new/resume）可以携带，
     // 追问不得夹带（避免把「材料/版本要求」变成追问后丢失的静默承诺）。
+    // #380：交接输入同理（receipt 决定下游 Run 的固定材料集）。
     if (
-      (value.specRevisionId !== undefined || value.purpose !== undefined) &&
+      (value.specRevisionId !== undefined ||
+        value.purpose !== undefined ||
+        value.handoffReceiptId !== undefined) &&
       (value.intent === undefined || value.intent.kind === 'followup')
     ) {
       ctx.addIssue({
@@ -270,6 +279,11 @@ export const CreateRunRequestSchema = z
     specRevisionId: z.uuid().optional(),
     /** Run 用途（#378）：缺省 business；辅助 Run 显式标记并免绑定要求。 */
     purpose: RunPurposeSchema.optional(),
+    /**
+     * 交接输入（#380；ADR-0017 §5）：显式附带的已确认 receipt；缺省不带。
+     * 重跑/续跑未显式传时**继承来源 Run 的交接输入快照**（材料固定，不随上游新版本变）。
+     */
+    handoffReceiptId: z.uuid().optional(),
     deviceId: z.uuid(),
     workspaceId: z.uuid(),
     prompt: z.string().min(1).max(20_000),
@@ -341,6 +355,24 @@ export const ArtifactInputManifestSchema = z.strictObject({
   taskId: z.uuid(),
   artifacts: z.array(ArtifactManifestEntrySchema).max(ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES),
 })
+
+/**
+ * run.handoff_input（#380；ADR-0017 §5）：下游 Run 创建时点固化的**跨 Task 交接
+ * 输入**快照。与同 Task 的 `ArtifactInputManifest` **互不合并、互不继承**：独立列、
+ * 独立路由、独立语义——这里每条都是上游 Task 的已发布交付物，逐件带固定摘要
+ * （sha256/byteSize），Node 下载时按此校验（不匹配明确失败）。
+ *
+ * upstreamTaskTitle 在快照时点固化（任务改名不回填历史——与其余快照同一口径）。
+ */
+export const HandoffInputManifestSchema = z.strictObject({
+  upstreamTaskId: z.uuid(),
+  upstreamTaskTitle: z.string().min(1).max(200),
+  receiptId: z.uuid(),
+  revisionId: z.uuid(),
+  revisionNumber: z.number().int().positive(),
+  artifacts: z.array(ArtifactManifestEntrySchema).max(ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES),
+})
+export type HandoffInputManifest = z.infer<typeof HandoffInputManifestSchema>
 
 // §2.3 Profile Revision 字段规则；创建 Agent 时必须同时给出首个 Revision
 // （agent.current_revision_id 非空），新建 Revision 复用同一组字段。

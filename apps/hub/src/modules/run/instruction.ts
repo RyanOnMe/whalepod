@@ -52,6 +52,8 @@ export interface SendInstructionInput {
   specRevisionId?: string
   /** Run 用途（#378）：仅新执行/续跑可带；缺省 business。 */
   purpose?: 'business' | 'agreement_draft' | 'handoff_draft'
+  /** 交接输入（#380）：仅新执行/续跑可带（协议 superRefine 已 fail-closed）。 */
+  handoffReceiptId?: string
   intent?: SendInstructionRequest['intent']
   /**
    * 触发来源（#239）：human = 执行区里人发的（默认，语义不变）；auto_assignment =
@@ -119,8 +121,11 @@ export async function sendInstruction(
       'input selection requires an explicit new or resume execution',
     )
   // #378：绑定与用途同材料选择一路——只有会建 Run 的意图可以携带。
+  // #380：交接输入同理（receipt 决定下游 Run 的固定材料集）。
   if (
-    (input.specRevisionId !== undefined || input.purpose !== undefined) &&
+    (input.specRevisionId !== undefined ||
+      input.purpose !== undefined ||
+      input.handoffReceiptId !== undefined) &&
     (input.intent === undefined || input.intent.kind === 'followup')
   )
     throw new RunCommandError(
@@ -296,6 +301,11 @@ export async function sendInstruction(
           : { artifactInputIds: input.artifactInputIds }),
         ...(input.specRevisionId === undefined ? {} : { specRevisionId: input.specRevisionId }),
         ...(input.purpose === undefined ? {} : { purpose: input.purpose }),
+        // #380：交接输入显式转发；缺省（undefined）时 orchestrator 走
+        // 「重跑/续跑继承来源快照，全新执行不带」的规则。
+        ...(input.handoffReceiptId === undefined
+          ? {}
+          : { handoffReceiptId: input.handoffReceiptId }),
         agentId,
         ...(input.expectedApprovalPolicy !== undefined
           ? { expectedApprovalPolicy: input.expectedApprovalPolicy }

@@ -220,6 +220,16 @@ export interface TaskRoomView {
   task: TaskView
   /** 任务约定摘要（#378）：执行区绑定提示与「有新版本」横幅的数据源。 */
   agreement: { enabled: boolean; latestConfirmedNumber: number | null; hasDraft: boolean }
+  /**
+   * 下游交接摘要（#380）：活跃接收关系（confirmed 且版本号最大）；null = 本任务
+   * 不是任何交接的下游。执行区据此默认勾选「附带上游交接材料」并显示固定版本号。
+   */
+  handoff: {
+    receiptId: string
+    revisionNumber: number
+    upstreamTaskTitle: string
+    hasNewerVersion: boolean
+  } | null
   /** 讨论流：**只有人**说的话，永不触发运行（ADR-0010）。 */
   comments: CommentView[]
   /** 执行流：驱动 Agent 的指令（③c-2a 起与 `comments` 分离）。 */
@@ -334,6 +344,7 @@ export type {
   HandoffItem,
   HandoffNarrative,
   HandoffRef,
+  HandoffReceiptView,
   HandoffRevisionView,
 } from '@whalepod/protocol'
 

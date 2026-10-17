@@ -93,3 +93,52 @@ export const handoffRevisions = pgTable(
     unique('handoff_revision_number_unique').on(table.taskId, table.revisionNumber),
   ],
 )
+
+/** 接收关系状态（#380）：pending = 已交付待确认；confirmed = 接收方已填理解。 */
+export const handoffReceiptStatus = pgEnum('handoff_receipt_status', ['pending', 'confirmed'])
+
+/**
+ * 接收关系（#380；ADR-0017 §5）：已发布交接版本 × 同项目下游 Task。
+ * 确认 ≠ 接受 Task、不启动 Run；上游新版本由接收方 adopt 产生**新** receipt，
+ * 旧 receipt 永远保留原版本（(downstream_task_id, revision_id) 唯一兜底幂等）。
+ */
+export const handoffReceipts = pgTable(
+  'handoff_receipt',
+  {
+    id: uuid('id').primaryKey(),
+    revisionId: uuid('revision_id')
+      .notNull()
+      .references(() => handoffRevisions.id),
+    upstreamTaskId: uuid('upstream_task_id')
+      .notNull()
+      .references(() => tasks.id),
+    downstreamTaskId: uuid('downstream_task_id')
+      .notNull()
+      .references(() => tasks.id),
+    receiverUserId: uuid('receiver_user_id')
+      .notNull()
+      .references(() => userAccounts.id),
+    deliveredBy: uuid('delivered_by')
+      .notNull()
+      .references(() => userAccounts.id),
+    status: handoffReceiptStatus('status').notNull().default('pending'),
+    /** 「本次准备做什么」——confirmed 时非空（字段组合即状态语义）。 */
+    understanding: varchar('understanding', { length: 10000 }),
+    /** 可选差异原文（同一内容同时作为讨论消息落上游 Task）。 */
+    differences: varchar('differences', { length: 10000 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+  },
+  (table) => [
+    check(
+      'handoff_receipt_distinct_tasks',
+      sql`${table.upstreamTaskId} <> ${table.downstreamTaskId}`,
+    ),
+    check(
+      'handoff_receipt_fields',
+      sql`(${table.status} = 'pending' and ${table.understanding} is null and ${table.confirmedAt} is null) or (${table.status} = 'confirmed' and ${table.understanding} is not null and ${table.confirmedAt} is not null)`,
+    ),
+    unique('handoff_receipt_unique_per_version').on(table.downstreamTaskId, table.revisionId),
+  ],
+)

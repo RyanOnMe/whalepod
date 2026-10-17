@@ -24,6 +24,11 @@ export interface CreateRunInput {
   specRevisionId?: string
   /** Run 用途（#378）：缺省 business。 */
   purpose?: 'business' | 'agreement_draft' | 'handoff_draft'
+  /**
+   * 交接输入（#380；ADR-0017 §5）：下游 Run 显式夹带的上游已确认 receipt；
+   * 缺省时重跑/续跑继承来源 Run 的交接快照，全新执行则不带。
+   */
+  handoffReceiptId?: string
   /** 缺省时取 Agent 当前 Revision（§2.3）。 */
   profileRevisionId?: string
   deviceId: string
@@ -61,6 +66,7 @@ export function assertCreateRunInput(input: CreateRunInput): void {
     ...(input.rerunOfRunId === undefined ? {} : { rerunOfRunId: input.rerunOfRunId }),
     ...(input.specRevisionId === undefined ? {} : { specRevisionId: input.specRevisionId }),
     ...(input.purpose === undefined ? {} : { purpose: input.purpose }),
+    ...(input.handoffReceiptId === undefined ? {} : { handoffReceiptId: input.handoffReceiptId }),
     ...(input.expectedApprovalPolicy !== undefined
       ? { expectedApprovalPolicy: input.expectedApprovalPolicy }
       : {}),
