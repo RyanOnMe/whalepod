@@ -40,14 +40,12 @@ import { nodeConnections } from '../../../hub/src/modules/device/connection-regi
 import {
   apiInject,
   createTestApp,
-  createTestDatabase,
   driveSetup,
   idemKey,
-  resetDatabase,
-  waitForValue,
   type Session,
   type TestApp,
-} from '../../../hub/tests/helpers.js'
+} from '@whalepod/hub/testing'
+import { createTestDatabase, resetDatabase, waitForValue } from '@whalepod/testkit'
 import { WorkspaceRegistry } from '../../src/workspace/registry.js'
 import { PACK_MARKER_FILENAME } from '../../src/plugin/runtime-config.js'
 

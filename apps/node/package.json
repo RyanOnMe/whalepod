@@ -35,6 +35,7 @@
     "@types/node": "24.13.3",
     "@types/ws": "catalog:",
     "@whalepod/db": "workspace:*",
+    "@whalepod/hub": "workspace:*",
     "drizzle-orm": "catalog:"
   }
 }

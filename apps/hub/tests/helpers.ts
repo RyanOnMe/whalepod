@@ -1,6 +1,6 @@
 import type { ArtifactInputManifest } from '@whalepod/protocol'
 /**
- * Hub integration spec 的统一入口与驱动助手。
+ * Hub integration spec 的统一入口与驱动助手（#183 拆耦合后成了**聚合层**）。
  *
  * 两类驱动共存：
  * - HTTP 路径（P1-05 setup/auth/invite）：全部走 Fastify inject（真人同一条 HTTP 路径）；
@@ -8,22 +8,19 @@ import type { ArtifactInputManifest } from '@whalepod/protocol'
  * - Run Orchestrator 路径（P1-10）：直驱 RunOrchestrator + OutboxWorker + FakeDeviceGateway，
  *   不经过 HTTP（routes 留给组合根接线，P1-13）。
  *
- * 迁移应用 / 复位 / DATABASE_URL 检查与 packages/db/tests/helpers.ts 同源，但只依赖
- * @whalepod/db 的公开导出，不跨包引用测试内部文件（跨包 re-export 在干净 checkout 下
- * 无法被 Vite module graph 解析）。seedRunPrereqs 在此本地实现，沿用同源约定。
+ * 脚手架的三处归属（#183：不许再让别的应用 relative-import 本文件）：
+ * - 与 hub app 无关的 DB/polling 助手 → `@whalepod/testkit`（`createTestDatabase`/
+ *   `resetDatabase`/`waitForValue`），本文件 re-export；
+ * - 起真 Hub 应用与 HTTP 驱动的助手 → `apps/hub/src/testing`（`@whalepod/hub/testing`
+ *   子路径导出），本文件 re-export；
+ * - 需要 hub 深模块 + testkit 的本地 harness（`makeHarness`/`seedRunPrereqs`/帧构造）
+ *   留在本文件——它们只服务 hub 自己的 integration spec。
  */
 import { randomBytes, randomUUID } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { Writable } from 'node:stream'
-import type { FastifyInstance } from 'fastify'
 import { eq } from 'drizzle-orm'
 import type { Actor } from '@whalepod/domain'
 import { asUserId } from '@whalepod/domain'
 import {
-  applyMigrations,
-  createDatabase,
   insertMember,
   insertProject,
   insertTask,
@@ -38,273 +35,11 @@ import { FakeClock, FakeDeviceGateway } from '@whalepod/testkit'
 import type { CreateRunInput, RunOrchestrator } from '../src/modules/run/index.js'
 import { RunOrchestrator as Orchestrator } from '../src/modules/run/index.js'
 import { OutboxWorker } from '../src/modules/run/index.js'
-import { buildApp } from '../src/app.js'
-import type { HubConfig } from '../src/config.js'
 
-// 迁移应用已收敛到 @whalepod/db 公开导出（src/migrate.ts）；applyMigrations 经上方 import 提供。
-const MIGRATION_TABLE = '_schema_migrations' as const
-
-export async function resetDatabase(database: Database): Promise<void> {
-  const rows = await database.sql<{ tablename: string }[]>`
-    select tablename from pg_tables
-    where schemaname = 'public' and tablename <> ${MIGRATION_TABLE}
-  `
-  if (rows.length === 0) return
-  const list = rows.map(({ tablename }) => `"${tablename}"`).join(', ')
-  await database.sql.unsafe(`truncate table ${list} restart identity cascade`)
-}
-
-export async function createTestDatabase(): Promise<Database> {
-  const url = process.env.DATABASE_URL
-  if (url === undefined || url === '') {
-    throw new Error('DATABASE_URL 未设置：integration 测试须经 scripts/with-test-postgres.mts 运行')
-  }
-  const database = createDatabase({ connectionString: url, max: 4 })
-  await applyMigrations(database)
-  return database
-}
-
-/** 捕获 hub 审计事件（component=hub.audit 的结构化日志行）。 */
-export interface AuditEvent {
-  component: string
-  action: string
-  actor: string
-  outcome: string
-  requestId: string
-}
-
-/** 捕获 hub warn 级结构化日志（带 component 的非审计行）；供告警计数断言（#55 迁移告警）。 */
-export interface WarnEvent {
-  readonly component: string
-  readonly msg: string
-}
-
-class AuditStream extends Writable {
-  readonly events: AuditEvent[] = []
-  readonly warnings: WarnEvent[] = []
-
-  override _write(
-    chunk: Buffer | string,
-    _encoding: string,
-    callback: (error?: Error | null) => void,
-  ): void {
-    for (const line of chunk.toString().split('\n')) {
-      const trimmed = line.trim()
-      if (trimmed === '') continue
-      try {
-        const entry = JSON.parse(trimmed) as {
-          component?: string
-          level?: number
-          msg?: string
-        } & AuditEvent
-        if (entry.component === 'hub.audit') this.events.push(entry)
-        else if (
-          entry.level === 40 &&
-          typeof entry.component === 'string' &&
-          typeof entry.msg === 'string'
-        ) {
-          this.warnings.push({ component: entry.component, msg: entry.msg })
-        }
-      } catch {
-        // 非 JSON 行（启动横幅等）忽略
-      }
-    }
-    callback()
-  }
-}
-
-export interface TestApp {
-  readonly app: FastifyInstance
-  readonly database: Database
-  readonly origin: string
-  readonly setupToken: string
-  readonly setupTokenPath: string
-  readonly auditEvents: AuditEvent[]
-  readonly warnEvents: WarnEvent[]
-  readonly config: HubConfig
-  close(): Promise<void>
-}
-
-export interface TestAppOptions {
-  /** 默认 http://localhost:4242（Secure=false 分支）；换 https origin 走 Secure=true 分支。 */
-  readonly origin?: string
-  readonly rateLimit?: HubConfig['rateLimit']
-  /** #113：反代形态开关（透传 fastify trustProxy；默认 false = 直连形态）。 */
-  readonly trustProxy?: boolean
-}
-
-export async function createTestApp(
-  database: Database,
-  options: TestAppOptions = {},
-): Promise<TestApp> {
-  const origin = options.origin ?? 'http://localhost:4242'
-  const dir = await mkdtemp(join(tmpdir(), 'wp-hub-test-'))
-  const setupTokenPath = join(dir, 'setup-token')
-  const setupToken = randomBytes(32).toString('base64url')
-  await writeFile(setupTokenPath, setupToken, { mode: 0o600 })
-  const audit = new AuditStream()
-  const config: HubConfig = {
-    publicOrigin: origin,
-    databaseUrl: '',
-    setupTokenPath,
-    host: '127.0.0.1',
-    port: 0,
-    // P1-15：Artifact Store 与 setup token 同一个一次性临时目录。
-    artifactStoreDir: join(dir, 'artifact-store'),
-    ...(options.rateLimit !== undefined ? { rateLimit: options.rateLimit } : {}),
-    ...(options.trustProxy !== undefined ? { trustProxy: options.trustProxy } : {}),
-  }
-  const app = await buildApp({
-    config,
-    database,
-    logger: { level: 'info', stream: audit },
-  })
-  return {
-    app,
-    database,
-    origin,
-    setupToken,
-    setupTokenPath,
-    auditEvents: audit.events,
-    warnEvents: audit.warnings,
-    config,
-    close: async () => {
-      await app.close()
-      await rm(dir, { recursive: true, force: true })
-    },
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 驱动助手：全部走 HTTP inject，不抄近道。
-// ---------------------------------------------------------------------------
-
-export interface Session {
-  readonly cookie: string
-  readonly userId: string
-}
-
-export function idemKey(): string {
-  return randomBytes(16).toString('hex')
-}
-
-/** 已认证的 HTTP inject：带 Origin、Cookie 与 Idempotency-Key（GET 也会带上，无害）。 */
-export async function apiInject(
-  ctx: TestApp,
-  session: Session,
-  opts: { method: string; url: string; payload?: object; idempotencyKey?: string },
-) {
-  return ctx.app.inject({
-    method: opts.method as 'GET' | 'POST' | 'PATCH' | 'DELETE',
-    url: opts.url,
-    headers: {
-      origin: ctx.origin,
-      cookie: session.cookie,
-      'idempotency-key': opts.idempotencyKey ?? idemKey(),
-    },
-    ...(opts.payload !== undefined ? { payload: opts.payload } : {}),
-  })
-}
-
-/** 从 set-cookie 头提取 whalepod_session 的 Cookie 请求头值。 */
-export function extractSessionCookie(setCookie: string | string[] | undefined): string {
-  const header = Array.isArray(setCookie) ? setCookie[0] : setCookie
-  if (header === undefined) throw new Error('response 缺少 set-cookie')
-  const pair = header.split(';')[0]
-  if (pair === undefined || !pair.startsWith('whalepod_session=')) {
-    throw new Error(`set-cookie 不含 whalepod_session：${header}`)
-  }
-  return pair
-}
-
-/** G1-01 驱动：完成首次 Setup，返回 Owner 会话。 */
-export async function driveSetup(ctx: TestApp, username = 'alice'): Promise<Session> {
-  const response = await ctx.app.inject({
-    method: 'POST',
-    url: '/api/v1/setup',
-    headers: { origin: ctx.origin, 'idempotency-key': idemKey() },
-    payload: {
-      setupToken: ctx.setupToken,
-      teamName: 'Acme',
-      username,
-      displayName: 'Alice',
-      password: 'correct horse battery staple',
-    },
-  })
-  if (response.statusCode !== 201) {
-    throw new Error(`setup 失败：${response.statusCode} ${response.body}`)
-  }
-  const body = response.json() as { ok: true; data: { userId: string } }
-  return { cookie: extractSessionCookie(response.headers['set-cookie']), userId: body.data.userId }
-}
-
-/** 登录驱动。 */
-export async function driveLogin(
-  ctx: TestApp,
-  username: string,
-  password: string,
-): Promise<Session> {
-  const response = await ctx.app.inject({
-    method: 'POST',
-    url: '/api/v1/auth/login',
-    headers: { origin: ctx.origin, 'idempotency-key': idemKey() },
-    payload: { username, password },
-  })
-  if (response.statusCode !== 200) {
-    throw new Error(`login 失败：${response.statusCode} ${response.body}`)
-  }
-  const body = response.json() as { ok: true; data: { userId: string } }
-  return { cookie: extractSessionCookie(response.headers['set-cookie']), userId: body.data.userId }
-}
-
-/** G1-03 驱动：actor 创建邀请，新用户接受邀请，返回新会话与邀请 Token。 */
-export async function driveInviteAndAccept(
-  ctx: TestApp,
-  actor: Session,
-  invitee: { username: string; displayName: string; password: string },
-  role: 'admin' | 'member' = 'member',
-): Promise<{ session: Session; inviteToken: string; inviteId: string }> {
-  const createResponse = await ctx.app.inject({
-    method: 'POST',
-    url: '/api/v1/invites',
-    headers: {
-      origin: ctx.origin,
-      'idempotency-key': idemKey(),
-      cookie: actor.cookie,
-    },
-    payload: { role },
-  })
-  if (createResponse.statusCode !== 201) {
-    throw new Error(`create invite 失败：${createResponse.statusCode} ${createResponse.body}`)
-  }
-  const created = createResponse.json() as {
-    ok: true
-    data: { inviteId: string; token: string }
-  }
-  const acceptResponse = await ctx.app.inject({
-    method: 'POST',
-    url: '/api/v1/invites/accept',
-    headers: { origin: ctx.origin, 'idempotency-key': idemKey() },
-    payload: {
-      token: created.data.token,
-      username: invitee.username,
-      displayName: invitee.displayName,
-      password: invitee.password,
-    },
-  })
-  if (acceptResponse.statusCode !== 201) {
-    throw new Error(`accept invite 失败：${acceptResponse.statusCode} ${acceptResponse.body}`)
-  }
-  const accepted = acceptResponse.json() as { ok: true; data: { userId: string } }
-  return {
-    session: {
-      cookie: extractSessionCookie(acceptResponse.headers['set-cookie']),
-      userId: accepted.data.userId,
-    },
-    inviteToken: created.data.token,
-    inviteId: created.data.inviteId,
-  }
-}
+// #183：脚手架已按归属拆走（testkit / hub 的 src/testing），这里只做聚合 re-export，
+// 既有 spec 的 `from './helpers.js'` 导入面不变。
+export * from '../src/testing/index.js'
+export { createTestDatabase, resetDatabase, waitForValue } from '@whalepod/testkit'
 
 // ---------------------------------------------------------------------------
 // Run Orchestrator 驱动助手（P1-10）：直驱深模块，不经过 HTTP。
@@ -685,30 +420,5 @@ export function heartbeatFrame(deviceId: string, activeRunIds: string[] = []): u
     sentAt: new Date().toISOString(),
     type: 'node.heartbeat',
     payload: { deviceId, activeRunIds, lastEventSeqByRun: {} },
-  }
-}
-
-/**
- * 轮询到条件成立或超时（#256）：测试等待异步落库不得用固定 sleep——
- * 那是「猜系统要跑多久」，CI 负载升高即抖红，且可能掩盖真实时序缺陷。
- *
- * 判据是**可观察条件**（返回值非空/falsy 由调用方决定），超时给明确失败消息。
- * `describe` 是超时消息里的读法提示（如「workspace available 未在 3s 内恢复」）。
- */
-export async function waitForValue<T>(
-  probe: () => Promise<T | undefined>,
-  describe: string,
-  options: { timeoutMs?: number; intervalMs?: number } = {},
-): Promise<T> {
-  const timeoutMs = options.timeoutMs ?? 3_000
-  const intervalMs = options.intervalMs ?? 25
-  const deadline = Date.now() + timeoutMs
-  for (;;) {
-    const value = await probe()
-    if (value !== undefined) return value
-    if (Date.now() > deadline) {
-      throw new Error(`${describe}（等待上限 ${timeoutMs}ms，判据是条件成立而不是固定时长）`)
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs))
   }
 }

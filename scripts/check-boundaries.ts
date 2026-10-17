@@ -71,8 +71,18 @@ const DEPENDENCY_RULES: ReadonlyArray<{
   {
     // 验收链路测试（P1-13 run-projection-chain）：跨 app 验收需要直接读 DB 判定
     // 落库结果——与 apps/hub/tests/ 同型例外；src 侧仍禁 db（部署边界不变）。
+    // #183：node 的 integration spec 还要「起真 Hub 应用跑 HTTP inject」与共享 DB
+    // 脚手架——按**包名**引入（`@whalepod/hub/testing` + `@whalepod/testkit`），
+    // 不再 relative-import hub 的 tests/ 内部文件（那会把 hub 源码拖进 node 的
+    // typecheck program：实测 62 个 TS6059 假象，见 #183）。
     importer: 'apps/node/tests/',
-    allowed: ['@whalepod/domain', '@whalepod/protocol', '@whalepod/db'],
+    allowed: [
+      '@whalepod/domain',
+      '@whalepod/protocol',
+      '@whalepod/db',
+      '@whalepod/testkit',
+      '@whalepod/hub',
+    ],
   },
   { importer: 'apps/node/', allowed: ['@whalepod/domain', '@whalepod/protocol'] },
   { importer: 'apps/runtime/', allowed: ['@whalepod/protocol', '@whalepod/runtime-dsh'] },

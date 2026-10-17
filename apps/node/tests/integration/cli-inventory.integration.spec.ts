@@ -21,12 +21,11 @@ import type { Database } from '@whalepod/db'
 import {
   apiInject,
   createTestApp,
-  createTestDatabase,
   driveSetup,
-  resetDatabase,
   type Session,
   type TestApp,
-} from '../../../hub/tests/helpers.js'
+} from '@whalepod/hub/testing'
+import { createTestDatabase, resetDatabase } from '@whalepod/testkit'
 import { WorkspaceRegistry } from '../../src/workspace/registry.js'
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')

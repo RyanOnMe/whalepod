@@ -28,7 +28,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { schema } from '@whalepod/db'
 import type { ClientFrame } from '@whalepod/protocol'
-import { createTestDatabase, idemKey, waitForValue } from '../../../hub/tests/helpers.js'
+import { idemKey } from '@whalepod/hub/testing'
+import { createTestDatabase, waitForValue } from '@whalepod/testkit'
 import type { Database } from '@whalepod/db'
 import {
   assembleChain,
