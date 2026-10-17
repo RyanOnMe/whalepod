@@ -3,7 +3,8 @@
  *
  * 背景：`apps/node` 的 integration spec 借用了 `apps/hub/tests/helpers.ts` 的
  * `createTestDatabase`/`idemKey`/`waitForValue`——跨包相对路径 import（`../../../hub/tests/...`）
- * 会把 hub 的源码文件拖进 node 的 typecheck program（#178/#183 实测的 62 个 TS6059 假象）。
+ * 会把 hub 的源码文件拖进 node 的 typecheck program（代价是耦合与双份编译、以及 hub 侧
+ * 错误污染 node 的 Q0；抬 rootDir 之前的 62 个 TS6059 假象是同一根因的更早形态）。
  * 与 hub 无关的这部分挪到 testkit（两侧都能按包名 import），hub app 相关的部分留在
  * `apps/hub/src/testing`（`@whalepod/hub/testing` 子路径导出）。
  *

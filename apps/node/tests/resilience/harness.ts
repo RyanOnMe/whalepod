@@ -293,8 +293,9 @@ export async function makeResilienceHarness(
   const logs: ResilienceHarness['logs'] = []
 
   // 两阶段构造（supervisor/manager 要在 harness 之后建）：cleanup/setOnline 用一层
-  // 委托闭包先占位、稍后回填实现——不用「缺属性的对象 + 断言」，也不会在构造期留
-  // undefined 方法。
+  // 委托闭包先占位、稍后回填实现（构造期不留 undefined 方法）。下面 supervisor/manager
+  // 两个字段仍是「占位 + 稍后赋值」的老写法——它们是**被 spec 当作值读取**的字段，改成
+  // 访问器要动 ResilienceHarness 的接口面，不在 #183 范围内。
   let cleanupImpl: () => Promise<void> = async () => {}
   let setOnlineImpl: (_online: boolean) => void = () => {}
   const harness: ResilienceHarness = {

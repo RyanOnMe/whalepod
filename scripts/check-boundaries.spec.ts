@@ -223,6 +223,40 @@ describe('tests/ 的 typecheck 接线护栏（#178 评审 O2）', () => {
     ])
   })
 
+  it('include 被收窄到 src（摘掉 tests/）→ 违规：文本级接线可被这样绕过', async () => {
+    // 评审 B 的变异：往 tests 里注入真错误、再把 include 改成只有 src/**，门会全绿。
+    await makePackage(
+      'apps',
+      'sneaky',
+      { scripts: { typecheck: 'tsc -b && tsc -p tsconfig.test.json' } },
+      true,
+    )
+    await writeFile(
+      join(root, 'apps', 'sneaky', 'tsconfig.test.json'),
+      '{\n  // 注释也要能解析\n  "include": ["src/**/*.ts"]\n}\n',
+    )
+    expect(checkTypecheckWiring(root)).toEqual([
+      'apps/sneaky: tsconfig.test.json 的 include 不含 tests/（测试静默脱离 Q0）',
+    ])
+  })
+
+  it('include 是全量兜底（**/*.ts）或未声明 → 不算违规（默认覆盖整个目录）', async () => {
+    await makePackage(
+      'apps',
+      'globber',
+      { scripts: { typecheck: 'tsc -b && tsc -p tsconfig.test.json' } },
+      true,
+    )
+    await writeFile(join(root, 'apps', 'globber', 'tsconfig.test.json'), '{"include":["**/*.ts"]}')
+    await makePackage(
+      'apps',
+      'defaults',
+      { scripts: { typecheck: 'tsc -b && tsc -p tsconfig.test.json' } },
+      true,
+    )
+    expect(checkTypecheckWiring(root)).toEqual([])
+  })
+
   it('豁免表只允许缩小：表内每个包在**当前仓库**里必须真的仍未接线', async () => {
     // 为什么需要这条（#178 评审 O-a）：豁免表是 `continue` 跳过，什么都不查，所以
     // 「某个包其实已经接线了、行却没删」会变成**永久静默豁免**。这里把承诺变成机检：

@@ -18,6 +18,10 @@
    `checkTypecheckWiring` 机检；未接线的包必须在 `TYPECHECK_WIRING_DEFERRED` 表里，
    **表只许缩小**（新增未接线包进不来）。**本表已空**，且 `typecheck-test-baseline.spec.ts`
    新增一条断言把这个终态钉住：将来若有人想再 deferral 一个包，那条会红（必须显式改它并写下理由）。
+   同一 spec 的接线判据在 2026-10-17 也**补了 include 面**：只查脚本文本时可被
+   「把 tests/ 从 `tsconfig.test.json` 的 include 里摘掉」绕过（评审 B 的变异：往
+   `packages/domain/tests` 注入真错误后摘 include → 门全绿）；现在 include 存在时必须真的
+   覆盖 tests/（显式 tests 路径或 `**/*` 兜底），文件不可解析按 fail-closed 记违规。
 2. **棘轮（本批新增）**：deferral 表里原先只写「N 个存量错误」这行字——2026-10-09 实测发现
    它已经烂了：hub 记 30 实际 **39**、node 记 29 实际 **31**。现在数字由
    `scripts/lib/typecheck-test-baseline.ts` 承载、由 `scripts/tests/typecheck-test-baseline.spec.ts`
@@ -35,6 +39,18 @@
 | `apps/hub` | 39 → 25（A0-7） | **0（已接线）** | 2026-10-17（#183 第 2 步）：局部助手参数漂移（`{ cookie: string }` → `Session`）、exactOptionalPropertyTypes 的条件展开、两个 plugin spec 的本地脚手架复制品（缺 `artifactStoreDir`/`warnEvents`）改为委托 `createTestApp`（fixture catalog 差异提到 `TestAppOptions`）、`descriptorInject` 的返回类型、`insertRunRow` 的 `dshSessionId` 可空、`insertRun` 的 `createdAt`（#119）、`dispatchPendingInstructions` 的 PgTransaction 契约、故意非法插入里的 `prompt`（runs 无该列）、server-coldboot 的 spawn 形态 |
 | `apps/node` | 31 | **0（已接线）** | 2026-10-17（#183 第 1+3 步）：先拆 `apps/node/tests/integration/*` 对 `apps/hub/tests/helpers.js` 的跨包 import（DB 类助手进 `packages/testkit`；hub app 类助手进 `@whalepod/hub/testing`），再修 31 个（2 参 `WorkspaceRegistry`、`pids[0]` 收窄、`waitForValue` 的 Promise 探针、异构 emitter 的 handler 类型、fake socket 的帧类型、缺失的 `deviceId`/`dshDistributionVersion`、timers 签名、driver 缺 `terminate`） |
 
+### 拆耦合后的两处归属（第 1 步）
+
+| 脚手架 | 归属 | 为什么 |
+|---|---|---|
+| `createTestDatabase` / `resetDatabase` / `waitForValue` | `packages/testkit/src/db-support.ts` | 与 hub app 无关，两侧都能按包名 import |
+| `TestApp` / `createTestApp` / `apiInject` / `driveSetup` / `driveLogin` / `driveInviteAndAccept` / `Session` / `idemKey` / `extractSessionCookie` | `apps/hub/src/testing`（`@whalepod/hub/testing`） | 必须建真 hub app（`buildApp`）；与 `@whalepod/db` 公开导出 insert* 脚手架同型 |
+
+exports 的 `./testing` 带 `development → src`：integration spec 里还有 hub src 的深模块
+相对 import（`vi.spyOn(nodeConnections, 'attach')`），测试进程必须与它驱动的东西同一份
+模块图；退回 dist 会让 cli-hello-refresh 的组合根用例以 30s 超时红（评审实测）。
+这条契约由 `apps/node/tests/hub-testing-resolution.spec.ts`（unit 面）常驻钉住。
+
 ## 判定（怎么知道它有用）
 
 - 棘轮红/绿自证（A0-7）：把 hub 基线临时改成 24（实际 25）⟹ spec 红并打印
@@ -45,6 +61,12 @@
   （node 同形）；接上 `tsc -p tsconfig.test.json` 后转绿。
 - **棘轮能拦住新增**：`countTestTypecheckErrors` 的 bug 复用是直接跑真 tsc 并数 `error TS` 行——
   接线后这些错误只要再冒一个，`pnpm typecheck` 就会红（不再是「跑得过就行」）。
+- **接线判据的 include 面**：把 `packages/domain/tsconfig.test.json` 的 include 收窄到只有
+  `src/**` ⟹ `pnpm check:boundaries` 红（`packages/domain: tsconfig.test.json 的 include 不含
+  tests/`）；还原 ⟹ 绿。
+- **hub/testing 的解析契约**：临时删掉 `apps/hub/package.json` 的 `exports['./testing'].development`
+  ⟹ `apps/node/tests/hub-testing-resolution.spec.ts` 红（打印解析到的 `dist/testing/index.js`
+  路径）；还原 ⟹ 绿。
 
 ## 复跑
 
@@ -60,9 +82,31 @@ cd apps/hub && pnpm exec tsc -p tsconfig.test.json | grep -c "error TS"   # 手�
   `scripts/**/*.ts`）：`e2e-serve.mts`/`e2e-node.mts` 这些 Q5/Q2 装配脚本只有运行期覆盖 → #373。
 - **web 的 e2e spec**（`apps/web/tests/e2e/**`）走 playwright，不在本棘轮口径里（它与 browser
   门一起跑）。
-- 拆耦合后 node 的计数**没变**（仍 31）：跨包 import 的代价原是 TS6059 噪音（已由抬 rootDir
-  消掉），不是 31 里的错误——`测试面总量 vs 自己写错的行数` 这条区分，现在由「按包名 import
-  共享脚手架」结构性消除。
+- 拆耦合后 node 的计数**没变**（仍 31）：跨包 import 的代价是耦合与「hub 侧错误污染 node 的
+  Q0」，不是那 31 里的错误（抬 rootDir 之前的 62 个 TS6059 假象是同一根因的更早形态）。
+  **注意别把它读成「node 的 program 里再没有 hub 文件了」**：直接 import 层已切到包名
+  （hub 的 `tests/` 内部文件 0 处），但 node 经 `scripts/lib/phase1/chain.ts`（它仍
+  relative-import `apps/hub/tests/helpers.js`）仍把 hub 的 helpers 与一批 `apps/hub/src`
+  文件编进自己的 typecheck program（2026-10-17 实测 `--listFiles` 含 71 个 hub src 文件）
+  ——这条传递路径的收敛另立账 #375（chain.ts 被 tsx/dist 与 vitest/src 双跑，直接换成包名
+  import 会引入 dist/src 双实例，要先做装配注入）。
+- **类型来自 dist、运行来自 src**（`@whalepod/hub/testing` 的消费面）：包解析下 `tsc` 读
+  `dist/testing/index.d.ts`、vitest 读 `src/testing/index.ts`。仓库级 `pnpm typecheck` 的
+  拓扑序（…testkit → hub → node）保证 dist 先重建，所以门是安全的；但**单独**
+  `pnpm --filter @whalepod/node typecheck` 或 IDE 可能拿旧声明检查新实现（改 hub/testing 的
+  接口而不重建 dist 时的窗口）。删除 dist 声明会响亮报 TS2307/TS7016，不会静默。
+  另注：`InjectResponse.json<T = any>()` 与上游 light-my-request 一致（有注释），
+  `res.json().data.x` 这类行的类型检查因此退回 `any`——这部分行「被 typecheck」名不副实，
+  属脚手架刻意的口径（对齐上游、避免全量注解）。
+- **跨 app 的**相对** import 不在边界门覆盖内**：`validateImport` 只看 `@whalepod/` 前缀，
+  相对路径直接放行（`check-boundaries.spec.ts` 把这条钉死）。node 侧现余
+  `cli-hello-refresh` 对 `hub/src/modules/...` 的三处深 import（观测缝用途，PR 已交代），
+  `chain.ts` 的 helpers 依赖见上；这类耦合目前靠人工评审与 #99 的 harness 规则管，
+  没有机检拦「再往 tests 里加一处相对 import」。
+- **`apps/node/tests/` 的子路径白名单**：只放行 `@whalepod/hub/testing` 与
+  `@whalepod/protocol/plugin-pack-digest`（`check-boundaries.ts` 的 subpaths）。新增子路径
+  要显式加一行——这是防「从 hub 主入口拿东西」（主入口没有 development 条件，vitest 下解析
+  到 dist，正是双实例的来源）。
 - 棘轮只保证「不新增 + 数字与现实一致」，不保证错误本身无害：低风险测试里的类型错误
   （如测试替身形状不符）仍可能在运行时表现为假绿——清零后这句话成立，但**新写的**测试
   仍要自己别写假判据（#183 期间评审抓到的两处假判据就是例子）。

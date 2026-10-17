@@ -333,6 +333,7 @@ describe('#89 inventory 上报与坏帧拦截', () => {
     if (frame === undefined) throw new Error('未收到 node.inventory 帧')
     expect(Object.keys(frame.payload).sort()).toEqual(['credentialSlots', 'deviceId', 'workspaces'])
     expect(frame.payload.deviceId).toBe(deps.config.deviceId)
+    // 上一行已断言 payload 恰为三键（含 workspaces）；这里只是索引访问的收窄。
     const [firstWorkspace] = frame.payload.workspaces ?? []
     expect(firstWorkspace?.name).toBe('proj')
   })

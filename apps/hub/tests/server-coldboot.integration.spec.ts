@@ -11,7 +11,7 @@
  * 等活用的，这里当场用它的存在意义自证）；deadline 失败带 stderr 尾归因，
  * 绝不静默跳过。
  */
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'

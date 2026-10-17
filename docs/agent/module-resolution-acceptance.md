@@ -38,6 +38,9 @@ pnpm test:unit   # 或 pnpm check（末端即 test:unit）
 机器判据固化为 `scripts/tests/module-resolution.spec.ts`（unit project 面，Q1 每次必跑）：
 
 1. **路径断言**：对 `packages/` 下每个包（目录动态枚举，新增包自动进判据），`import.meta.resolve('@whalepod/<pkg>')` 必须以 `/packages/<pkg>/src/index.ts` 结尾；protocol 的 `./plugin-pack-digest` 子路径同理。
+   **#183 补**：`@whalepod/hub/testing` 同款契约由 `apps/node/tests/hub-testing-resolution.spec.ts`
+   钉住（hub 不在 `packages/` 下，且它的消费者是 apps/node——从 `scripts/tests` 解析不到该包）；
+   该子路径退回 dist 会让 integration spec 出现 src/dist 双实例（实测 30s 超时红）。
 2. **行为断言**：全部 5 个包 + protocol 子路径在 spec 顶部**静态 import**——静态链正是 #35 踩坑的那条链；解析退回 dist 或加载失败时 suite 直接红。
 
 ## 红绿证据（2026-09-29 实测）

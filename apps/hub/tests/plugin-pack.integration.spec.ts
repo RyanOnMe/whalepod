@@ -10,10 +10,9 @@
  * plugins/）；lock digest 在测试内按 digestLockfile 同算法现算自证。
  */
 import { randomBytes, randomUUID, createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Writable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
@@ -27,8 +26,6 @@ import type {
 } from '@whalepod/protocol'
 import { digestPluginCordisEntry } from '@whalepod/protocol/plugin-pack-digest'
 import { canonicalJson, digestPluginPack } from '@whalepod/protocol/plugin-pack-digest'
-import { buildApp } from '../src/app.js'
-import type { HubConfig } from '../src/config.js'
 import { hashToken } from '../src/modules/auth/token.js'
 import {
   apiInject,
@@ -37,7 +34,6 @@ import {
   driveInviteAndAccept,
   driveSetup,
   resetDatabase,
-  type AuditEvent,
   type InjectResponse,
   type Session,
   type TestApp,

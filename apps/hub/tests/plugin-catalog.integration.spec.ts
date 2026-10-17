@@ -5,20 +5,12 @@
  * local-development + 一份 unreviewed 的小 manifest 与空闭包 lock），不依赖仓库根
  * plugins/（另一代理并行写入中）。驱动走真人同一条 HTTP 路径（Fastify inject）。
  */
-import { randomBytes } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { Writable } from 'node:stream'
+import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { FastifyInstance } from 'fastify'
-import { createHash } from 'node:crypto'
 import type { Database } from '@whalepod/db'
 import { canonicalJson } from '@whalepod/protocol/plugin-pack-digest'
 import type { PluginCatalogEntryView } from '@whalepod/protocol'
-import { buildApp } from '../src/app.js'
-import type { HubConfig } from '../src/config.js'
 import {
   apiInject,
   createTestApp,
@@ -26,7 +18,6 @@ import {
   driveInviteAndAccept,
   driveSetup,
   resetDatabase,
-  type AuditEvent,
   type Session,
   type TestApp,
 } from './helpers.js'

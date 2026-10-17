@@ -74,7 +74,7 @@ const DEPENDENCY_RULES: ReadonlyArray<{
     // #183：node 的 integration spec 还要「起真 Hub 应用跑 HTTP inject」与共享 DB
     // 脚手架——按**包名**引入（`@whalepod/hub/testing` + `@whalepod/testkit`），
     // 不再 relative-import hub 的 tests/ 内部文件（那会把 hub 源码拖进 node 的
-    // typecheck program：实测 62 个 TS6059 假象，见 #183）。
+    // typecheck program 并让 hub 侧错误污染 node 的 Q0；见 #183）。
     importer: 'apps/node/tests/',
     allowed: [
       '@whalepod/domain',
@@ -83,6 +83,17 @@ const DEPENDENCY_RULES: ReadonlyArray<{
       '@whalepod/testkit',
       '@whalepod/hub',
     ],
+    // 子路径收窄（#183 评审 A）：hub 的**主入口**在 vitest 下解析到 dist（它没有
+    // development 条件），而此处的测试还要 relative-import hub 的深模块 src
+    // （cli-hello-refresh 的 `vi.spyOn(nodeConnections, 'attach')` 观测的就是那个实例）
+    // ——一旦有人从主入口拿东西，同进程就会出现两套 hub 模块实例。只放行已声明用途的
+    // 两个子路径；确需新增时在这里显式加一行。
+    // （另注：跨 app 的**相对** import 不经过本表——validateImport 只管 @whalepod/ 前缀；
+    // 那类耦合由 #99 的 harness 规则与人工评审管。）
+    subpaths: {
+      '@whalepod/protocol': ['@whalepod/protocol/plugin-pack-digest'],
+      '@whalepod/hub': ['@whalepod/hub/testing'],
+    },
   },
   { importer: 'apps/node/', allowed: ['@whalepod/domain', '@whalepod/protocol'] },
   { importer: 'apps/runtime/', allowed: ['@whalepod/protocol', '@whalepod/runtime-dsh'] },
@@ -207,6 +218,30 @@ export const TYPECHECK_WIRING_DEFERRED = new Map<string, string>([
   // 本表的职责只是「声明该包尚未接线」。两处键必须一一对应（有测试盯着）。
 ])
 
+/** 覆盖 tests/ 的 include 形态：显式的 tests 路径，或「全都要」的兜底 glob。 */
+function coversTests(pattern: string): boolean {
+  return pattern.includes('tests') || pattern === '**/*.ts' || pattern === '**/*'
+}
+
+/**
+ * 读 tsconfig.test.json 的 include（宽松 JSON：本仓库的 tsconfig 带 `//` 行注释）。
+ * 文件不可解析 → 返回 []（fail-closed：不许用坏配置绕过判据）；不写 include → undefined。
+ */
+function readTestConfigInclude(path: string): readonly string[] | undefined {
+  const text = readFileSync(path, 'utf8')
+  const stripped = text
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//'))
+    .join('\n')
+  try {
+    const parsed = JSON.parse(stripped) as { include?: unknown }
+    if (!Array.isArray(parsed.include)) return parsed.include === undefined ? undefined : []
+    return parsed.include.filter((entry): entry is string => typeof entry === 'string')
+  } catch {
+    return []
+  }
+}
+
 export function checkTypecheckWiring(repoRoot: string): string[] {
   const violations: string[] = []
   for (const scope of ['apps', 'packages']) {
@@ -234,8 +269,17 @@ export function checkTypecheckWiring(repoRoot: string): string[] {
         )
         continue
       }
-      if (!existsSync(join(dir, 'tsconfig.test.json'))) {
+      const testConfigPath = join(dir, 'tsconfig.test.json')
+      if (!existsSync(testConfigPath)) {
         violations.push(`${where}: typecheck references tsconfig.test.json but the file is missing`)
+        continue
+      }
+      // 只查脚本文本是**可绕过**的（#183 评审 B 的变异：把 tests/ 从 include 里摘掉，
+      // 该包就静默脱离 Q0 而门全绿）。include 存在时必须真的覆盖 tests/；不写 include
+      // 时 tsc 默认包含目录下全部 TS，属覆盖，不报。
+      const include = readTestConfigInclude(testConfigPath)
+      if (include !== undefined && !include.some(coversTests)) {
+        violations.push(`${where}: tsconfig.test.json 的 include 不含 tests/（测试静默脱离 Q0）`)
       }
     }
   }
