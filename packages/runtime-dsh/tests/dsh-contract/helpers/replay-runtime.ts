@@ -30,9 +30,11 @@ export type ReplayScenario =
   // 真有第一阶段那句话**才解析得出（pattern 匹配不到即硬失败）——这就是"接上了"的机器判据。
   | 'resume'
   | 'resume-continue'
-  // #379 收尾交接草稿：正常脚本 + 追加整理条目 / 同脚本但整理条目 hang（超时判据）。
+  // #379 收尾交接草稿：正常脚本 + 追加整理条目 / 同脚本但整理条目 hang（超时判据）/
+  // 同脚本 + 追问第二回合（「每 Run 至多整理一次」判据——第二次整理会撞脚本耗尽）。
   | 'handoff'
   | 'handoff-hang'
+  | 'handoff-followup'
 
 const CONFIG_DIR = fileURLToPath(new URL('../../../config/', import.meta.url))
 const FIXTURES_DIR = fileURLToPath(new URL('../fixtures/', import.meta.url))

@@ -6,6 +6,8 @@
  * - 私有边界：草稿只对源 Run owner 可见——其他成员与**管理员**一律 404；
  * - 受众纪律与容量（评审 m1/M1）：非 owner 受众的帧 fail-closed 拒绝（整帧回滚、
  *   不留痕迹）；材料超 64 条落「未生成」失败草稿，绝不把容量错误抛穿 ingest 事务；
+ *  内容容量按 DB 的 jsonb 文本口径守（含分隔符），显式路径超限一律 409；
+ * - 发布通知（评审 B4）与迟到再造帧短路（F3）、published 档约束（m6/F5）。
  * - owner 手工新建/编辑（CAS）/失败草稿替换；
  * - 发布校验：流程未启用、证据无引用、候选材料引用、跨任务 run 引用一律拒绝；
  *   发布形态系统块只含已发布 Artifact；不可变 + Task 级编号单调递增。
@@ -14,9 +16,12 @@ import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@whalepod/db'
-import { getRun, schema } from '@whalepod/db'
+import { getRun, schema, unwrapPgError } from '@whalepod/db'
 import type { HandoffNarrative } from '@whalepod/protocol'
 import {
+  HANDOFF_CONTENT_MAX_BYTES,
+  HandoffCapacityError,
+  assertHandoffContentFits,
   createManualHandoffDraft,
   getRunHandoffDraft,
   listTaskHandoffRevisions,
@@ -552,5 +557,140 @@ describe('handoff draft (#379)', () => {
     expect(rows[0]?.status).toBe('published')
     expect(await listTaskHandoffRevisions(database.db, ids.taskId)).toHaveLength(1)
     expect((await getRun(database.db, run.id))?.status).toBe('completed')
+
+    // 换**新 seq** 的迟到再造帧：这里的短路才是 alreadyPublished（评审 F3——同 seq 在
+    // run_event 去重处就早返，走不到 drafts.ts 的短路；开放草稿唯一索引只覆盖
+    // ready/failed，published 行挡不住新 ready 行，保修不修会让该断言失败）。
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(run.id, 4, {
+        type: 'handoff.draft',
+        status: 'generated',
+        content: narrative({ completed: [{ text: '换 seq 的迟到帧', verified: false, refs: [] }] }),
+      }),
+    )
+    const rowsAfterNewSeq = await draftRows(run.id)
+    expect(rowsAfterNewSeq).toHaveLength(1)
+    expect(rowsAfterNewSeq[0]?.status).toBe('published')
+
+    // published 档约束（评审 m6/F5）：failure_reason 非空的 published 行必须被 DB 拒绝
+    //（唯一索引不覆盖 published，这一行只会撞 check——插进去才证明约束有效）。
+    let constraintError: unknown
+    try {
+      await database.db.insert(schema.handoffDrafts).values({
+        id: randomUUID(),
+        taskId: ids.taskId,
+        sourceRunId: run.id,
+        specRevisionId: null,
+        status: 'published',
+        content: rowsAfterNewSeq[0]!.content,
+        publishedRevisionId: rowsAfterNewSeq[0]!.publishedRevisionId,
+        failureReason: 'capacity-exceeded',
+        origin: 'auto',
+        createdBy: ids.userId,
+        createdAt: new Date(),
+      })
+    } catch (error) {
+      constraintError = error
+    }
+    expect(unwrapPgError(constraintError)).toMatchObject({
+      code: '23514',
+      constraintName: 'handoff_draft_fields',
+    })
+  })
+
+  it('显式路径容量（评审 F1/F4）：内容按 DB 的 jsonb 文本口径超 32 KiB → 409，草稿不动', async () => {
+    const { ids, run } = await seedCompletedRun()
+    // 注记（#99 口径）：直插 artifact 行是声明式前置，理由/删除条件同「生成事件落库」用例。
+    // 48 条 × 约 190 字标题 ≈ 16 KiB 系统块——单独不超，配上大叙述必超 32 KiB。
+    await database.db.insert(schema.artifacts).values(
+      Array.from({ length: 48 }, (_, index) => {
+        const digest = String(index).padStart(2, '0').repeat(32)
+        return {
+          id: randomUUID(),
+          taskId: ids.taskId,
+          runId: run.id,
+          ownerUserId: ids.userId,
+          title: `out/${index}.md ${'t'.repeat(180)}`,
+          mediaType: 'text/markdown',
+          byteSize: 1,
+          sha256: digest,
+          storageKey: `sha256/${digest.slice(0, 2)}/${digest.slice(2)}`,
+          status: 'candidate' as const,
+        }
+      }),
+    )
+    const draft = await createManualHandoffDraft(database, makeActor(ids.userId), run.id, idemKey())
+    // 11 × 2000 字 ≈ 22 KiB（单条与整篇的协议 refine 都满足）；+16 KiB 系统块 → 超限。
+    const bigNarrative = narrative({
+      completed: Array.from({ length: 11 }, (_, index) => ({
+        text: `${index}`.padEnd(2000, 'x'),
+        verified: false,
+        refs: [],
+      })),
+    })
+    await expect(
+      updateManualHandoffDraft(
+        database,
+        makeActor(ids.userId),
+        run.id,
+        { narrative: bigNarrative, expectedDraftVersion: draft.draftVersion },
+        idemKey(),
+      ),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+    // 守卫在落库前：草稿内容保持原样（不是事务半提交，也不是 23514）。
+    const view = await getRunHandoffDraft(database.db, run.id, ids.userId)
+    expect(view?.content?.narrative.completed).toHaveLength(0)
+  })
+
+  it('容量守卫口径（评审 F1）：紧贴上限时按 jsonb 文本口径拒绝，旧口径会放行', () => {
+    const withText = (len: number) => ({
+      system: { sourceRunId: randomUUID(), specRevision: null, artifacts: [] as const },
+      narrative: narrative({
+        completed: [{ text: 'x'.repeat(len), verified: false, refs: [] }],
+      }),
+    })
+    const compactAt = (len: number) => JSON.stringify(withText(len))
+    const overhead = compactAt(1000).length - 1000
+    const separators = (compactAt(1000).match(/[:,]/g) ?? []).length
+    // 距上限 10 字节：只数 JSON.stringify 的旧口径放行（< 上限），但 DB 的 jsonb 文本
+    // 会因分隔符补空格而超限——守卫必须在这一条上先拒（上界 ≥ 实际，只会更严格）。
+    const candidate = withText(HANDOFF_CONTENT_MAX_BYTES - overhead - 10)
+    expect(new TextEncoder().encode(JSON.stringify(candidate)).length).toBeLessThanOrEqual(
+      HANDOFF_CONTENT_MAX_BYTES,
+    )
+    expect(JSON.stringify(candidate).length + separators).toBeGreaterThan(
+      HANDOFF_CONTENT_MAX_BYTES,
+    )
+    expect(() => assertHandoffContentFits(candidate)).toThrowError(HandoffCapacityError)
+  })
+
+  it('发布通知上游房间（评审 B4）：publish 后出现新的 task.changed，版本列表不再等刷新', async () => {
+    const { ids, run } = await seedCompletedRun()
+    const draft = await createManualHandoffDraft(database, makeActor(ids.userId), run.id, idemKey())
+    await updateTask(database, makeActor(ids.userId), ids.taskId, { agreementEnabled: true }, idemKey())
+    await updateManualHandoffDraft(
+      database,
+      makeActor(ids.userId),
+      run.id,
+      {
+        narrative: narrative({
+          evidence: [{ text: '测试通过', verified: false, refs: [{ kind: 'run', runId: run.id }] }],
+        }),
+        expectedDraftVersion: draft.draftVersion,
+      },
+      idemKey(),
+    )
+    const changedForTask = async (): Promise<number> => {
+      const rows = await database.db
+        .select()
+        .from(schema.teamEvents)
+        .where(eq(schema.teamEvents.type, 'task.changed'))
+      return rows.filter((row) => (row.payload as { taskId?: string }).taskId === ids.taskId).length
+    }
+    // 增量判据（不依赖事件顺序/清表）：这一条只可能由 publish 自己产生。
+    const before = await changedForTask()
+    await publishHandoffDraft(database, makeActor(ids.userId), run.id, idemKey())
+    expect(await changedForTask()).toBeGreaterThan(before)
   })
 })
