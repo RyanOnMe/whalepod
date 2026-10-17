@@ -55,7 +55,12 @@ async function requireActiveAssignee(tx: Tx, assigneeUserId: string): Promise<vo
   }
 }
 
-function taskChangedPayload(task: TaskRow): unknown {
+/**
+ * `task.changed` 的统一载荷（#378 起含 agreementEnabled）：任何改变任务读模型
+ * 事实的写路径都用它广播。**导出**供别的模块（交接交付/确认，#380）在同一事务里
+ * 为受影响的任务发同形事件——不发，订阅方要等刷新才看见。
+ */
+export function taskChangedPayload(task: TaskRow): unknown {
   return {
     taskId: task.id,
     projectId: task.projectId,

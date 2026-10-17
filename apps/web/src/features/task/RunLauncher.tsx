@@ -49,6 +49,8 @@ export interface RunLauncherProps {
   hasActiveRun: boolean
   embedded?: boolean
   artifactInputIds?: string[] | undefined
+  /** 交接输入（#380）：勾选「附带上游交接材料」时显式带上已确认 receipt。 */
+  handoffReceiptId?: string | undefined
   buttonLabel?: string | undefined
   blocked?: boolean
   onStarted?: (runId: string) => void
@@ -69,6 +71,7 @@ export function RunLauncher({
   hasActiveRun,
   embedded = false,
   artifactInputIds,
+  handoffReceiptId,
   buttonLabel = '开始执行',
   blocked = false,
   onStarted,
@@ -188,6 +191,7 @@ export function RunLauncher({
       const body = {
         agentId,
         ...(artifactInputIds === undefined ? {} : { artifactInputIds }),
+        ...(handoffReceiptId === undefined ? {} : { handoffReceiptId }),
         profileRevisionId: effectiveRevisionId,
         ...(isAssignee && deviceId !== ''
           ? { deviceId, ...(workspaceId !== '' ? { workspaceId } : {}) }

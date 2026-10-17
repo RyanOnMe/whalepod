@@ -77,6 +77,10 @@ const EVENT_KEY_BUILDERS: Readonly<Record<string, (payload: unknown) => CacheKey
     // 403——页面回答的正是"谁能驱动"，却给出与服务端相反的答案（评核实测：task-room +1、
     // instruction-grants +0）。event-router 的键表必须与 queryKeys 逐个对齐，这是本文件开头的契约。
     ...keysWith(payload, 'taskId', 'instruction-grants'),
+    // #380：交接交付/确认都随 `task.changed` 广播（两侧房间各发一条）——漏了这两条
+    // 键，接收方确认后上游「已交接」列表要等刷新才变（同一失效纪律，别只改一半）。
+    ...keysWith(payload, 'taskId', 'task-handoff-deliveries'),
+    ...keysWith(payload, 'taskId', 'task-handoff-receipts'),
     // 项目页任务列表（#137）：payload 带 projectId 时一并失效——「别人建了任务」
     // 必须实时进我的列表，否则又回到「刷新才看见」。
     ...keysWith(payload, 'projectId', 'project-tasks'),

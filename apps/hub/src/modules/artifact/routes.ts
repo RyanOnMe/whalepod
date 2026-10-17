@@ -23,6 +23,7 @@ import {
   getArtifact,
   getRun,
   insertArtifact,
+  deviceHandoffInputReferences,
   deviceHasRunOnTask,
   transactCommand,
 } from '@whalepod/db'
@@ -36,6 +37,7 @@ import { audit } from '../shared/audit.js'
 import { ApiError } from '../shared/http-error.js'
 import { publishArtifact, requireArtifactRow } from './commands.js'
 import { savedRunInputs } from '../run/input-manifest.js'
+import { savedHandoffInput } from '../run/handoff-input.js'
 import { toArtifactView } from './queries.js'
 import { ArtifactStore, ARTIFACT_MAX_BYTES } from './store.js'
 
@@ -176,8 +178,32 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
       return reply.header('cache-control', 'no-store').send({ ok: true, data: savedRunInputs(run) })
     })
 
-    // GET /node/artifacts/:artifactId/content：Node 受控下载已发布副本
-    // （授权判据：设备承载该 Artifact 所属 Task 的 Run——Reviewer 场景最小面）。
+    // #380：该 Run 的跨 Task 交接输入快照（与同 Task 清单互不合并的独立读面）。
+    // Node 侧拉它下载上游已发布材料；null = 本条 Run 不带交接输入（新列语义）。
+    artifact.get('/node/runs/:runId/handoff-input', async (request) => {
+      const identity = await authenticateDevice(deps.database, request)
+      const { runId } = request.params as { runId: string }
+      const run = await getRun(deps.database.db, runId)
+      if (run === undefined || run.deviceId !== identity.deviceId) {
+        throw new ApiError(404, 'NOT_FOUND', 'run not found')
+      }
+      return { ok: true, data: savedHandoffInput(run) }
+    })
+
+    artifact.get('/runs/:runId/handoff-input', async (request, reply) => {
+      await deps.requireActor(request)
+      const { runId } = request.params as { runId: string }
+      const run = await getRun(deps.database.db, runId)
+      if (run === undefined) throw new ApiError(404, 'NOT_FOUND', 'run not found')
+      return reply
+        .header('cache-control', 'no-store')
+        .send({ ok: true, data: savedHandoffInput(run) })
+    })
+
+    // GET /node/artifacts/:artifactId/content：Node 受控下载已发布副本。
+    // 授权判据（#380 最小扩展）：设备承载该 Artifact 所属 Task 的 Run（Reviewer
+    // 场景），**或**该设备自己的 Run 的交接输入快照引用了它（下游消费上游材料）。
+    // 两条都不满足 → 404（含上游其他材料、候选与私有现场）。
     artifact.get('/node/artifacts/:artifactId/content', async (request, reply) => {
       const identity = await authenticateDevice(deps.database, request)
       const { artifactId } = request.params as { artifactId: string }
@@ -185,7 +211,10 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
       if (row === undefined || row.status !== 'published') {
         throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
       }
-      if (!(await deviceHasRunOnTask(deps.database.db, identity.deviceId, row.taskId))) {
+      const authorized =
+        (await deviceHasRunOnTask(deps.database.db, identity.deviceId, row.taskId)) ||
+        (await deviceHandoffInputReferences(deps.database.db, identity.deviceId, row.id))
+      if (!authorized) {
         throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
       }
       const bytes = await deps.store.readVerified(row.storageKey, row.sha256)

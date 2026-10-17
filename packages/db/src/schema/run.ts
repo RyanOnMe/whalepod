@@ -1,4 +1,4 @@
-import type { ArtifactInputManifest } from '@whalepod/protocol'
+import type { ArtifactInputManifest, HandoffInputManifest } from '@whalepod/protocol'
 import { sql } from 'drizzle-orm'
 import {
   bigint,
@@ -86,6 +86,12 @@ export const runs = pgTable(
     resumeFromRunId: uuid('resume_from_run_id').references((): AnyPgColumn => runs.id),
     /** NULL means legacy unknown; an empty manifest is a confirmed empty input. */
     artifactInputManifest: jsonb('artifact_input_manifest').$type<ArtifactInputManifest>(),
+    /**
+     * 跨 Task 交接输入快照（#380；ADR-0017 §5）：与同 Task 的 artifact_input_manifest
+     * 互不合并、语义互不借用。NULL = 本条 Run 不带交接输入（新列，旧 Run 一律 NULL
+     * 且语义就是「无」，不回填）；上游之后发新版本不改任何历史 Run 的本列。
+     */
+    handoffInput: jsonb('handoff_input').$type<HandoffInputManifest>(),
     /**
      * 任务约定版本绑定（#378；ADR-0017 §2）：创建事务内固化，历史 Run 的空值显示
      * 「未绑定」、不回填。Task 启用约定后业务 Run 必须非空（命令层收口）。

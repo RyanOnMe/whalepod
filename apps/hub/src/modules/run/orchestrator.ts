@@ -14,6 +14,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { snapshotRunInputs } from './input-manifest.js'
+import { snapshotHandoffInput } from './handoff-input.js'
 import { resolveSpecBinding } from './spec-binding.js'
 import { persistHandoffDraftEvent } from '../handoff/drafts.js'
 import { uuidv7 } from '../shared/uuid.js'
@@ -321,6 +322,14 @@ export class RunOrchestrator {
       input.artifactInputIds,
       resumeSource ?? rerunSource,
     )
+    // 跨 Task 交接输入（#380；ADR-0017 §5）：显式 receipt 或重跑/续跑继承来源快照；
+    // 与上面的同 Task 清单**互不合并**——两条独立的固定输入面。
+    const handoffInput = await snapshotHandoffInput(
+      tx,
+      task,
+      input.handoffReceiptId,
+      resumeSource ?? rerunSource,
+    )
     const runId = randomUUID()
     const commandId = randomUUID()
     const runStartPayload = RunStartSchema.shape.payload.parse({
@@ -372,6 +381,7 @@ export class RunOrchestrator {
       deviceId: device.id,
       workspaceId: workspace.id,
       artifactInputManifest,
+      ...(handoffInput !== null ? { handoffInput } : {}),
       ...(specRevisionId !== null ? { specRevisionId } : {}),
       ...(input.purpose !== undefined ? { purpose: input.purpose } : {}),
       profileDigest: revision.profileDigest,

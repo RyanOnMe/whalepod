@@ -165,3 +165,77 @@ export const HandoffRunSpecSchema = z.strictObject({
     .nullable(),
 })
 export type HandoffRunSpec = z.infer<typeof HandoffRunSpecSchema>
+
+/**
+ * 接收确认（#380；ADR-0017 §5）：已发布交接版本 × 同项目下游 Task 的接收关系。
+ * pending = 已交付待接收方确认；confirmed = 接收方已填「本次准备做什么」。
+ * 确认**不等于**接受 Task、不自动启动 Run；旧 receipt 永远保留其版本（上游出新版本
+ * 后由接收方 adopt 产生新的 confirmed receipt）。
+ */
+export const HandoffReceiptStatusSchema = z.enum(['pending', 'confirmed'])
+export type HandoffReceiptStatus = z.infer<typeof HandoffReceiptStatusSchema>
+
+/**
+ * HandoffReceiptViewSchema（团队可见：交接是正式记录，不是私有面）。
+ * `latestRevisionNumber` = 该 receipt 上游 Task 的当前最新已发布版本号；
+ * `latestRevisionNumber > revisionNumber` 即下游显示「有新版本」的判据。
+ */
+export const HandoffReceiptViewSchema = z.strictObject({
+  id: z.uuid(),
+  revisionId: z.uuid(),
+  revisionNumber: z.number().int().positive(),
+  latestRevisionNumber: z.number().int().positive(),
+  upstreamTaskId: z.uuid(),
+  upstreamTaskTitle: z.string(),
+  downstreamTaskId: z.uuid(),
+  downstreamTaskTitle: z.string(),
+  receiverUserId: z.uuid(),
+  deliveredByUserId: z.uuid(),
+  status: HandoffReceiptStatusSchema,
+  /** 接收方确认时填写的「本次准备做什么」（pending 时为 null）。 */
+  understanding: z.string().nullable(),
+  /** 可选差异原文（确认/采用时同时作为一条讨论消息落在上游 Task）。 */
+  differences: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  confirmedAt: z.string().nullable(),
+})
+export type HandoffReceiptView = z.infer<typeof HandoffReceiptViewSchema>
+
+/** POST /handoff-revisions/:revisionId/deliver（#380）：交付给成员并建/联下游 Task。 */
+export const DeliverHandoffRequestSchema = z
+  .strictObject({
+    receiverUserId: z.uuid(),
+    /** 关联既有下游 Task（必须同项目、且责任人就是被选成员）。 */
+    downstreamTaskId: z.uuid().optional(),
+    /** 或新建下游 Task（同项目、责任人 = 被选成员、待接受）。 */
+    newTask: z
+      .strictObject({
+        title: z.string().min(1).max(200),
+        description: z.string().max(20000).optional(),
+      })
+      .optional(),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.downstreamTaskId === undefined) === (value.newTask === undefined)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'deliver requires exactly one of downstreamTaskId or newTask',
+      })
+    }
+  })
+export type DeliverHandoffRequest = z.infer<typeof DeliverHandoffRequestSchema>
+
+/**
+ * POST /handoff-receipts/:receiptId/confirm 与 /adopt 共用（#380）：
+ * `understanding`（本次准备做什么）必填；`differences` 可选——非空时作为一条讨论
+ * 消息落在**上游 Task**（差异复用讨论，不另造通道）。
+ */
+export const ConfirmHandoffReceiptRequestSchema = z.strictObject({
+  understanding: z.string().min(1).max(10000),
+  differences: z.string().min(1).max(10000).optional(),
+})
+export type ConfirmHandoffReceiptRequest = z.infer<typeof ConfirmHandoffReceiptRequestSchema>
+
+/** 差异消息的固定前缀：讨论流里一眼可辨来源（内容仍是接收方原文）。 */
+export const HANDOFF_DIFFERENCE_PREFIX = '【交接差异】'
