@@ -55,7 +55,7 @@ async function requireActiveAssignee(tx: Tx, assigneeUserId: string): Promise<vo
   }
 }
 
-function taskChangedPayload(task: TaskRow): unknown {
+export function taskChangedPayload(task: TaskRow): unknown {
   return {
     taskId: task.id,
     projectId: task.projectId,

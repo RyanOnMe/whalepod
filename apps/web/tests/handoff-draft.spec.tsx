@@ -228,6 +228,61 @@ describe('#379 交接草稿面板', () => {
     expect(within(panel).getByRole('button', { name: '基于此版本新建草稿' })).toBeInTheDocument()
   })
 
+  it('脏态闸门（评审 B2）：有未保存修改时禁止发布并提示；保存后恢复可发布', async () => {
+    const user = userEvent.setup()
+    const ready = makeDraftView()
+    let currentView: HandoffDraftView | null = ready
+    const saved = makeDraftView({
+      draftVersion: 4,
+      content: {
+        system: {
+          sourceRunId: RUN_ID,
+          specRevision: { id: REVISION_ID, revisionNumber: 1 },
+          artifacts: [],
+        },
+        narrative: makeNarrative({
+          completed: [{ text: '完成登录接口！', verified: false, refs: [] }],
+        }),
+      },
+    })
+    renderApp(
+      `/tasks/${TASK_ID}`,
+      roomHandlers([
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/runs/${RUN_ID}/handoff-draft$`),
+          respond: () => ok(currentView),
+        },
+        {
+          method: 'PATCH',
+          url: new RegExp(`/api/v1/runs/${RUN_ID}/handoff-draft$`),
+          respond: () => {
+            currentView = saved
+            return ok(saved)
+          },
+        },
+      ]),
+    )
+    await openRun(user)
+
+    const panel = await screen.findByTestId('handoff-draft')
+    const editor = within(panel).getByTestId('handoff-editor')
+    const publishButton = (): HTMLElement =>
+      within(panel).getByRole('button', { name: '发布交接包' })
+    expect(publishButton()).toBeEnabled()
+    expect(within(panel).queryByTestId('handoff-dirty')).not.toBeInTheDocument()
+
+    // 编辑即置脏：发布禁用 + 提示——否则「发布」发的是上一次保存的内容，
+    // 用户刚核对的改动倒在「已发布」提示下悄悄丢掉。
+    await user.type(within(editor).getByLabelText('完成项第 1 条'), '！')
+    expect(publishButton()).toBeDisabled()
+    expect(within(panel).getByTestId('handoff-dirty')).toHaveTextContent('先保存')
+
+    await user.click(within(editor).getByRole('button', { name: '保存草稿' }))
+    await waitFor(() => expect(publishButton()).toBeEnabled())
+    expect(within(panel).queryByTestId('handoff-dirty')).not.toBeInTheDocument()
+  })
+
   it('无草稿：说明自动生成时机；手工新建后进入编辑器', async () => {
     const user = userEvent.setup()
     const created = makeDraftView({ origin: 'manual', draftVersion: 1 })

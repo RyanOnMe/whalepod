@@ -4,6 +4,8 @@
  * 覆盖：
  * - 事件落库的幂等与「不复活终态」（迟到事件只更新草稿侧事实）；
  * - 私有边界：草稿只对源 Run owner 可见——其他成员与**管理员**一律 404；
+ * - 受众纪律与容量（评审 m1/M1）：非 owner 受众的帧 fail-closed 拒绝（整帧回滚、
+ *   不留痕迹）；材料超 64 条落「未生成」失败草稿，绝不把容量错误抛穿 ingest 事务；
  * - owner 手工新建/编辑（CAS）/失败草稿替换；
  * - 发布校验：流程未启用、证据无引用、候选材料引用、跨任务 run 引用一律拒绝；
  *   发布形态系统块只含已发布 Artifact；不可变 + Task 级编号单调递增。
@@ -91,6 +93,8 @@ describe('handoff draft (#379)', () => {
 
   it('生成事件落库：系统块来自权威事实；重放/重申不产生第二行；迟到事件不复活终态', async () => {
     const { ids, harness, run } = await seedCompletedRun()
+    // 注记（#99 口径）：直插 artifact 行是**声明式前置**——真实路径要起 Node 经 WS 上传
+    // 材料（integration 层没有 Node）；删除条件：hub 提供按 Run 登记材料的 fixture 通道后改走通道。
     // 本次 Run 的候选 Artifact（系统块应登记其身份与摘要，含候选状态）。
     const artifactId = randomUUID()
     await database.db.insert(schema.artifacts).values({
@@ -212,6 +216,93 @@ describe('handoff draft (#379)', () => {
     })
   })
 
+  it('受众纪律（评审 m1）：非 owner 受众的 handoff.draft 帧 fail-closed 拒绝，整帧回滚', async () => {
+    const { ids, harness, run } = await seedCompletedRun()
+    const content = narrative({
+      completed: [{ text: '伪造帧里的私有内容', verified: false, refs: [] }],
+    })
+    for (const audience of ['project', 'admin'] as const) {
+      await expect(
+        harness.orchestrator.ingestNodeEvent(
+          harness.deviceFor(ids),
+          runEventFrame(
+            run.id,
+            3,
+            { type: 'handoff.draft', status: 'generated', content },
+            audience,
+          ),
+        ),
+      ).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    }
+    // 拒绝发生在同一事务内：草稿行、run_event 留痕、团队扇出一个都不落
+    //（不这样，伪造的 project 行就把私有草稿内容推给了全团队）。
+    expect(await draftRows(run.id)).toHaveLength(0)
+    const runEvents = await database.db
+      .select()
+      .from(schema.runEvents)
+      .where(eq(schema.runEvents.runId, run.id))
+    expect(runEvents.some((row) => row.type === 'handoff.draft')).toBe(false)
+    // owner 受众照常落库（被拒事务回滚，不占 seq）。
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(run.id, 3, { type: 'handoff.draft', status: 'generated', content }),
+    )
+    expect(await draftRows(run.id)).toHaveLength(1)
+    expect((await getRun(database.db, run.id))?.status).toBe('completed')
+  })
+
+  it('容量上限（评审 M1）：材料超 64 条 → 落「未生成」失败草稿，ingest 不抛、终态不动', async () => {
+    const { ids, harness, run } = await seedCompletedRun()
+    // 注记（#99 口径）：直插 65 条 artifact 行是**声明式前置**——真实路径要起 Node 从
+    // WS 上传 65 个材料，超出本判据的关切；删除条件同「生成事件落库」用例的注记。
+    await database.db.insert(schema.artifacts).values(
+      Array.from({ length: 65 }, (_, index) => {
+        const digest = String(index).padStart(2, '0').repeat(32)
+        return {
+          id: randomUUID(),
+          taskId: ids.taskId,
+          runId: run.id,
+          ownerUserId: ids.userId,
+          title: `out/${index}.md`,
+          mediaType: 'text/markdown',
+          byteSize: 1,
+          sha256: digest,
+          storageKey: `sha256/${digest.slice(0, 2)}/${digest.slice(2)}`,
+          status: 'candidate' as const,
+        }
+      }),
+    )
+    // 帧照发：容量不足转失败草稿，绝不许把错误抛穿 ingest（抛穿会让 WS 以 4003
+    // 反复重连、重发帧永远排不进事务，Run 卡死——评审 M1 实测的毒帧路径）。
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(run.id, 3, {
+        type: 'handoff.draft',
+        status: 'generated',
+        content: narrative({ completed: [{ text: 'x', verified: false, refs: [] }] }),
+      }),
+    )
+    const rows = await draftRows(run.id)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      status: 'failed',
+      failureReason: 'capacity-exceeded',
+      content: null,
+      origin: 'auto',
+    })
+    // 业务终态不受影响；换 seq 重发也不抛（幂等：开放失败草稿已存在 → 跳过）。
+    expect((await getRun(database.db, run.id))?.status).toBe('completed')
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(run.id, 4, {
+        type: 'handoff.draft',
+        status: 'generated',
+        content: narrative({ completed: [{ text: 'y', verified: false, refs: [] }] }),
+      }),
+    )
+    expect(await draftRows(run.id)).toHaveLength(1)
+  })
+
   it('手工新建只在终态后；运行中 409', async () => {
     const ids = await seedRunPrereqs(database.db)
     const harness = makeHarness(database)
@@ -294,6 +385,7 @@ describe('handoff draft (#379)', () => {
     ).rejects.toMatchObject({ code: 'CONFLICT' })
 
     // ③ 引用候选 Artifact → 拒绝；发布该 Artifact 后通过。
+    // 注记同「生成事件落库」用例：直插是声明式前置，删除条件见该处。
     const candidateId = randomUUID()
     await database.db.insert(schema.artifacts).values({
       id: candidateId,

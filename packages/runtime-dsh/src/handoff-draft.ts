@@ -132,6 +132,11 @@ export interface HandoffDraftCall {
   /** 本 Run 的 DSH session id（replay 按它分离回放游标；无功能语义）。 */
   sessionId?: GenerateOptions['sessionId']
   timeoutMs: number
+  /**
+   * 外部取消信号（评审 M2）：`run.cancel` 在收尾窗口内到达时立刻中断这次整理调用，
+   * 不再让对方干等满 60s（取消胜出，由 bridge 负责随后发 run.cancelled）。
+   */
+  signal?: AbortSignal
 }
 
 /** 从模型文本里抽取 JSON（容忍 ```json 围栏与前后白噪声）。 */
@@ -158,6 +163,11 @@ export async function generateHandoffDraft(
     timedOut = true
     controller.abort()
   }, call.timeoutMs)
+  const externalAbort = (): void => controller.abort()
+  if (call.signal !== undefined) {
+    if (call.signal.aborted) controller.abort()
+    else call.signal.addEventListener('abort', externalAbort, { once: true })
+  }
   let text = ''
   let overflow = false
   /**
@@ -209,10 +219,12 @@ export async function generateHandoffDraft(
     }
   } catch (error) {
     if (timedOut) return { status: 'failed', reason: 'timeout' }
+    if (call.signal?.aborted === true) return { status: 'failed', reason: 'aborted' }
     const message = error instanceof Error ? error.message : String(error)
     return { status: 'failed', reason: `model-call-failed: ${clamp(message, 300)}` }
   } finally {
     clearTimeout(timer)
+    call.signal?.removeEventListener('abort', externalAbort)
   }
   let parsed: unknown
   try {
