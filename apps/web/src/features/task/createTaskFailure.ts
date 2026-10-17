@@ -16,13 +16,29 @@ import { isApiError } from '../../shared/api/errors.js'
 const ASSIGNEE_UNAVAILABLE = 'assignee is not an active team member'
 const AGENT_UNAVAILABLE = 'assignee agent not found or archived'
 
-export function createTaskFailureCopy(error: unknown): string | null {
+/** 被服务端点名的字段：用于**按字段**清除「已拒绝」标记（评审 P1：清错字段会让某个入口卡住）。 */
+export type RejectedSelectionField = 'assignee' | 'agent'
+
+export interface CreateTaskFailure {
+  field: RejectedSelectionField
+  /** 给用户的人话与下一步。 */
+  guidance: string
+}
+
+export function createTaskFailureCopy(error: unknown): CreateTaskFailure | null {
   if (!isApiError(error) || error.code !== 'VALIDATION_FAILED') return null
   if (error.message.includes(ASSIGNEE_UNAVAILABLE)) {
-    return '所选责任人已不可用（可能刚被停用）——请重新选择责任人后再创建；不会自动换人。'
+    return {
+      field: 'assignee',
+      guidance: '所选责任人已不可用（可能刚被停用）——请重新选择责任人后再创建；不会自动换人。',
+    }
   }
   if (error.message.includes(AGENT_UNAVAILABLE)) {
-    return '所选执行 Agent 已不可用（可能刚被归档）——请重新选择 Agent 后再创建；不会自动换人。'
+    return {
+      field: 'agent',
+      guidance:
+        '所选执行 Agent 已不可用（可能刚被归档）——请重新选择 Agent 后再创建；不会自动换人。',
+    }
   }
   return null
 }

@@ -11,7 +11,7 @@
  *   原英文分类消息退到「细节（排障用）」；之后**再提交先被拦住**（把一次性兜底变成
  *   持续的提交前阻塞，零新请求）；重选责任人后阻塞解除。
  */
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { createTaskFailureCopy } from '../src/features/task/createTaskFailure.js'
@@ -22,11 +22,22 @@ import {
   BOB,
   agentsHandler,
   loggedInHandlers,
+  makeTask,
   projectsHandler,
   teamMembersHandler,
 } from './fixtures.js'
+import type { AgentView } from '../src/shared/api/types.js'
 import { renderApp } from './render.jsx'
 import { selectOption } from './select-menu.js'
+
+const AGENT: AgentView = {
+  id: '22222222-0000-4000-8000-00000000000a',
+  name: 'report-writer',
+  description: '写报告',
+  createdBy: ALICE.userId,
+  archivedAt: null,
+  currentRevisionId: '33333333-0000-4000-8000-00000000000r',
+}
 
 const PROJECT_VIEW: ProjectView = {
   id: '11111111-0000-4000-8000-000000000001',
@@ -61,8 +72,10 @@ describe('#348 创建任务失败：候选失效翻成人话 + 引导', () => {
       'req-4m',
       400,
     )
-    expect(createTaskFailureCopy(assignee)).toContain('重新选择责任人')
-    expect(createTaskFailureCopy(assignee)).toContain('不会自动换人')
+    const assigneeFailure = createTaskFailureCopy(assignee)
+    expect(assigneeFailure?.field).toBe('assignee')
+    expect(assigneeFailure?.guidance).toContain('重新选择责任人')
+    expect(assigneeFailure?.guidance).toContain('不会自动换人')
 
     const agent = new ApiError(
       'VALIDATION_FAILED',
@@ -70,7 +83,9 @@ describe('#348 创建任务失败：候选失效翻成人话 + 引导', () => {
       'req-4n',
       400,
     )
-    expect(createTaskFailureCopy(agent)).toContain('重新选择 Agent')
+    const agentFailure = createTaskFailureCopy(agent)
+    expect(agentFailure?.field).toBe('agent')
+    expect(agentFailure?.guidance).toContain('重新选择 Agent')
 
     // 不编造：别的码/别的消息/非 ApiError 一律 null（走通用横幅原样展示）。
     expect(
@@ -131,5 +146,97 @@ describe('#348 创建任务失败：候选失效翻成人话 + 引导', () => {
       expect(screen.queryByTestId('selection-unavailable-hint')).not.toBeInTheDocument(),
     )
     expect(screen.getByRole('button', { name: '创建任务' })).toBeEnabled()
+  })
+
+  it('Agent 变体：归档拒绝 → Agent 支的引导与提示（DOM 面，不只在纯函数里）', async () => {
+    const user = userEvent.setup()
+    renderApp(
+      '/',
+      loggedInHandlers(ALICE, [
+        projectsHandler([PROJECT_VIEW]),
+        teamMembersHandler(),
+        agentsHandler([AGENT]),
+        {
+          method: 'POST',
+          url: /\/api\/v1\/projects\/[^/]+\/tasks$/,
+          respond: () => ({
+            status: 400,
+            body: {
+              ok: false,
+              error: {
+                code: 'VALIDATION_FAILED',
+                message: 'assignee agent not found or archived',
+                requestId: 'req-4g',
+              },
+            },
+          }),
+        },
+      ]),
+    )
+    await user.click(await screen.findByRole('button', { name: '创建任务' }))
+    await user.type(await screen.findByLabelText('任务标题'), '让 Agent 写发布说明')
+    // 开执行、选 Agent（自己是责任人 → 开关可用）。
+    const form = within(screen.getByRole('form', { name: '创建任务' }))
+    await user.click(form.getByRole('switch', { name: '创建后立即执行' }))
+    await selectOption(user, '执行 Agent', /report-writer/)
+    await user.click(form.getByRole('button', { name: /创建(任务|并开始执行)/ }))
+
+    expect((await screen.findByTestId('error-guidance')).textContent).toContain('请重新选择 Agent')
+    // 提示走 Agent 支（按被拒字段说人话）。
+    await waitFor(() =>
+      expect(screen.getByTestId('selection-unavailable-hint')).toHaveTextContent(
+        '所选执行 Agent 当前不可用',
+      ),
+    )
+  })
+
+  it('评审 P1：Agent 被拒后关掉「创建后立即执行」→ 阻塞立即解除（该字段已退出请求）', async () => {
+    const user = userEvent.setup()
+    let posts = 0
+    renderApp(
+      '/',
+      loggedInHandlers(ALICE, [
+        projectsHandler([PROJECT_VIEW]),
+        teamMembersHandler(),
+        agentsHandler([AGENT]),
+        {
+          method: 'POST',
+          url: /\/api\/v1\/projects\/[^/]+\/tasks$/,
+          respond: () => {
+            posts += 1
+            return {
+              status: 400,
+              body: {
+                ok: false,
+                error: {
+                  code: 'VALIDATION_FAILED',
+                  message: 'assignee agent not found or archived',
+                  requestId: 'req-4g',
+                },
+              },
+            }
+          },
+        },
+      ]),
+    )
+    await user.click(await screen.findByRole('button', { name: '创建任务' }))
+    await user.type(await screen.findByLabelText('任务标题'), '先建任务，不执行')
+    const form = within(screen.getByRole('form', { name: '创建任务' }))
+    const toggle = form.getByRole('switch', { name: '创建后立即执行' })
+    await user.click(toggle)
+    await selectOption(user, '执行 Agent', /report-writer/)
+    await user.click(form.getByRole('button', { name: /创建(任务|并开始执行)/ }))
+    await waitFor(() =>
+      expect(screen.getByTestId('selection-unavailable-hint')).toBeInTheDocument(),
+    )
+
+    // 关掉开关 → Agent 不再参与请求 → 阻塞与旧横幅都撤，按钮恢复。
+    await user.click(toggle)
+    await waitFor(() =>
+      expect(screen.queryByTestId('selection-unavailable-hint')).not.toBeInTheDocument(),
+    )
+    expect(form.getByRole('button', { name: /创建(任务|并开始执行)/ })).toBeEnabled()
+    expect(screen.queryByTestId('error-guidance')).not.toBeInTheDocument()
+    expect(posts).toBe(1)
   })
 })

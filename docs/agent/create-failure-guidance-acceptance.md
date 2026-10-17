@@ -3,9 +3,9 @@
 - 对应场景/门禁：**Q0**（web project 的 jsdom 两条）+ **Q5**（`p1-312` project 的真页面一条）；
   真页面判据随 `pnpm test:e2e` 全链跑
 - 对应 Issue：#348（承接 #345 F2/F9 的提交前阻塞面）
-- 判定文件：`apps/web/tests/create-failure-guidance.spec.tsx`（纯函数 1 条 + jsdom 1 条）、
+- 判定文件：`apps/web/tests/create-failure-guidance.spec.tsx`（纯函数 1 条 + jsdom 3 条）、
   `apps/web/tests/e2e/task-create-drive.spec.ts` 的「创建被拒（候选失效）」一条
-- 上次验证：2026-10-17（见「判定」的实测）
+- 上次验证：2026-10-17 · `f73e6e5` 内容 + 评审修复（见「判定」的实测与「取证」）
 
 ## 验的是哪条用户路径
 
@@ -36,13 +36,20 @@ pnpm exec playwright test --project=p1-312
 
 1. 纯函数：两类已知消息各给中文引导（含「不会自动换人」）；`CONFLICT`/非 `ApiError`/`null`
    一律返回 null——**不编造原因**（其余失败继续走通用横幅原样展示）。
-2. jsdom：400 到达 → 引导与错误码可见、英文原文只在细节行；`posts` 仍为 1；
+2. jsdom（三条）：① 400 到达 → 引导与错误码可见、英文原文只在细节行；`posts` 仍为 1；
    提示可见 + 按钮禁用 + 再点零新请求；重选 BOB 后提示消失、按钮恢复可用。
-3. 真页面（p1-312）：拦截响应为真实拒绝体 → 引导含「请重新选择责任人」「不会自动换人」、
-   细节行含错误码与 requestId；项目任务数不变（**拒绝没有建出任务**，数出来而不是听页面自报）。
-4. **判据有牙的变异自证**（实测）：
-   - `createTaskFailureCopy` 恒返回 null ⇒ jsdom 两条全红；
-   - `selectionUnavailable` 去掉 `selectionRejected` 项 ⇒ jsdom 那条红（持续阻塞失效）。
+   ② **Agent 变体**（DOM 面）：`assignee agent not found or archived` → 「请重新选择 Agent」
+   引导 + 提示走 Agent 支（按被拒字段说人话）。
+   ③ **字段作用域**（评审 P1）：Agent 被拒后把「创建后立即执行」关掉 → 阻塞与旧横幅立即撤、
+   按钮恢复（该字段已退出请求）；反之重选责任人不该清掉 Agent 维度的标记。
+3. 真页面（p1-312）：**只拦 POST**（同路径还有 GET 列表）并把响应换成真实拒绝体 → 引导含
+   「请重新选择责任人」「不会自动换人」、细节行含错误码与 requestId；判据量在被测面：
+   这次创建确实发出且**恰好一次**（拦截计数）；项目任务数不变只作旁证（POST 已被替换，
+   Hub 没机会建任务——单纯数不变近似空真，评审 P2 已改口径）。
+4. **判据有牙的变异自证**（实测三条）：
+   - `createTaskFailureCopy` 恒返回 null ⇒ jsdom 两条红；
+   - `selectionUnavailable` 去掉「被拒字段」项 ⇒ jsdom 那条红（持续阻塞失效）；
+   - 开关 onChange 去掉「关掉时清 Agent 标记」⇒ P1 那条红（评审修复的牙齿）。
 
 ## 归因（失败先看哪层）
 
@@ -56,11 +63,23 @@ pnpm exec playwright test --project=p1-312
 ## 边界与未覆盖
 
 - 翻译只覆盖**已知两类**（责任人不活跃 / Agent 已归档，Hub 侧原文在
-  `packages/../apps/hub/src/modules/task/commands.ts`）；Hub 改文案会让本判据红
-  （消息匹配不上 → 纯函数返回 null → jsdom 断言「引导存在」失败），这是 fail-closed 方向。
+  `apps/hub/src/modules/task/commands.ts` 的 `requireActiveAssignee` 与 Agent 校验）；
+  Hub 改文案会让本判据红（消息匹配不上 → 纯函数返回 null → jsdom 断言「引导存在」失败），
+  这是 fail-closed 方向。
+- **Agent 侧没有真页面判据**（DOM 面只有 jsdom；「表单开着时 Agent 被归档」的提交前阻塞
+  `agentStale` 分支也仍无端到端用例——与 #345 文档 125-126 行的同类声明一致），
+  Agent 变体目前靠：纯函数 + jsdom（本文件）+ 服务端兜底。
+- **重指派面（`AssignmentPanel`）未翻**（#359）：Hub 的 `reassignAssignment` 会产生同样两条
+  分类消息，那个面仍是原样 ErrorBanner（英文分类消息）——单独立账，不当作已修。
 - 真页面判据是**响应替换**（真实时序的毫秒窗口不可稳定复现）；正常时序的「提交前阻塞」
   由 #345 的 jsdom + 路径 5b 真浏览器用例覆盖，本文件不重复。
 - 语义未变：仍是「显式重选」，**绝不自动换人**（与 #344/#345 一致）。
+
+## 取证
+
+- 可复跑用例本身（Q0 的 web project + Q5 的 p1-312 project）；
+- 变异自证的三条结果、p1-312 四条的实测、Q0/Q5/Q9 全量与残留自检记录见本文件「判定」与
+  PR #358 的描述；本链路无外部服务，不需要脱敏证据包。
 
 ## 复跑
 

@@ -264,8 +264,12 @@ test('创建被拒（候选失效）：页面主位是中文引导与错误码�
   test.setTimeout(120_000)
   const alice = shared.alice!
   const before = (await projectTasks()).length
-  await alice.route('**/api/v1/projects/*/tasks', (route) =>
-    route.fulfill({
+  // 只拦 POST（同路径还有 GET 列表；拦宽了会把列表也换掉，判据就说不清了）。
+  let interceptedPosts = 0
+  await alice.route('**/api/v1/projects/*/tasks', (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    interceptedPosts += 1
+    return route.fulfill({
       status: 400,
       contentType: 'application/json',
       body: JSON.stringify({
@@ -276,8 +280,8 @@ test('创建被拒（候选失效）：页面主位是中文引导与错误码�
           requestId: 'req-e2e-348',
         },
       }),
-    }),
-  )
+    })
+  })
   try {
     await alice.goto('/')
     await expect(alice.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
@@ -294,7 +298,9 @@ test('创建被拒（候选失效）：页面主位是中文引导与错误码�
     await expect(diagnostics).toContainText('VALIDATION_FAILED')
     await expect(diagnostics).toContainText('assignee is not an active team member')
     await expect(diagnostics).toContainText('req-e2e-348')
-    // 拒绝没有建出任务（数出来，不听页面自报）。
+    // 判据量在**被测面**上：这次创建确实发出、且恰好一次（拦截计数）；项目任务数不变
+    // 只作为旁证（POST 已被替换，Hub 没机会建任务——单纯数不变近似空真，评审 P2）。
+    expect(interceptedPosts).toBe(1)
     expect(await projectTasks()).toHaveLength(before)
   } finally {
     await alice.unroute('**/api/v1/projects/*/tasks')
