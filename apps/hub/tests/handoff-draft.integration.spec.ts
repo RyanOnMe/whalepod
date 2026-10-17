@@ -659,16 +659,20 @@ describe('handoff draft (#379)', () => {
     expect(new TextEncoder().encode(JSON.stringify(candidate)).length).toBeLessThanOrEqual(
       HANDOFF_CONTENT_MAX_BYTES,
     )
-    expect(JSON.stringify(candidate).length + separators).toBeGreaterThan(
-      HANDOFF_CONTENT_MAX_BYTES,
-    )
+    expect(JSON.stringify(candidate).length + separators).toBeGreaterThan(HANDOFF_CONTENT_MAX_BYTES)
     expect(() => assertHandoffContentFits(candidate)).toThrowError(HandoffCapacityError)
   })
 
   it('发布通知上游房间（评审 B4）：publish 后出现新的 task.changed，版本列表不再等刷新', async () => {
     const { ids, run } = await seedCompletedRun()
     const draft = await createManualHandoffDraft(database, makeActor(ids.userId), run.id, idemKey())
-    await updateTask(database, makeActor(ids.userId), ids.taskId, { agreementEnabled: true }, idemKey())
+    await updateTask(
+      database,
+      makeActor(ids.userId),
+      ids.taskId,
+      { agreementEnabled: true },
+      idemKey(),
+    )
     await updateManualHandoffDraft(
       database,
       makeActor(ids.userId),
