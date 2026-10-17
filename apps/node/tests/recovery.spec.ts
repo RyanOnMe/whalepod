@@ -19,11 +19,15 @@ import type { RuntimeDriver, RuntimeStartSpec } from '../src/runtime-driver.js'
 
 let root: string
 
+/** 全 spec 的探针 pid（含失败路径）：afterAll 兜底回收，见 reapQuietly 注释。 */
+const spawnedProbePids: number[] = []
+
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), 'wp-recovery-'))
 })
 
 afterAll(async () => {
+  for (const pid of spawnedProbePids) await reapQuietly(pid)
   await rm(root, { recursive: true, force: true })
 })
 
@@ -73,6 +77,42 @@ async function waitForValue<T>(
   }
 }
 
+/**
+ * #305：**负向判据的收尾**。为证明「未发信号 / 未被误杀」而故意留活的探针进程，断言完
+ * 必须自己回收——否则每跑一次这份 spec 就在开发机上留一个 `setInterval` 空转的 node
+ * 进程（CI 一次性 runner 随 job 消失，掩盖了这类累积）。按 pid 精确 SIGKILL（不用
+ * `pkill -f` 之类宽匹配），并把「真的没了」作为收尾判据。
+ */
+async function reap(pid: number): Promise<void> {
+  killQuietly(pid)
+  await waitForValue(async () => ((await alive(pid)) ? undefined : true), '探针进程未被回收', 2_000)
+  expect(await alive(pid)).toBe(false)
+}
+
+function killQuietly(pid: number): void {
+  try {
+    process.kill(pid, 'SIGKILL')
+  } catch {
+    // 已退出：ESRCH 视为成功。
+  }
+}
+
+/**
+ * 失败路径的收尾兜底（#305 评审 P2）：断言失败或用例超时是最需要收尾的场景，
+ * 但那条路径走不到用例末尾的 `reap()`——所以探针 pid 一注册就交给 afterAll 兜底。
+ */
+async function reapQuietly(pid: number | undefined): Promise<void> {
+  if (pid === undefined) return
+  killQuietly(pid)
+  await waitForValue(
+    async () => ((await alive(pid)) ? undefined : true),
+    '探针进程未被回收',
+    2_000,
+  ).catch(() => {
+    // 兜底回收失败不再抛：失败原因仲裁交给主断言，残留由 scripts/check-stray-runtimes.sh 兜。
+  })
+}
+
 function spec(runId: string): RuntimeStartSpec {
   return {
     runId,
@@ -112,6 +152,7 @@ async function makeReadySupervisor(stateDbPath: string, runId: string): Promise<
   await first.start(spec(runId), { workspaceId: ws.id })
   const record = (await first.activeRuns()).find((r) => r.runId === runId)
   if (record === undefined) throw new Error('active run not recorded')
+  spawnedProbePids.push(record.pid)
   return record.pid
 }
 
@@ -176,5 +217,8 @@ describe('Node 重启无孤儿恢复', () => {
     expect(lost).toEqual([{ runId, reason: 'orphaned_after_node_restart' }]) // 仍上报 lost 交人工重跑
     expect(await second.activeRuns()).toEqual([])
     second.close()
+
+    // #305：负向判据许下的活口由本用例负责收回（断言「没被杀」之后自己杀）。
+    await reap(childPid)
   })
 })

@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
 import { CommandStore } from '../../src/spool/command-store.js'
+import { awaitDead } from './harness.js'
 
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url))
 const TSX_CLI = join(REPO_ROOT, 'node_modules/tsx/dist/cli.mjs')
@@ -117,6 +118,9 @@ describe('R9-CLI：真实 cli start 遇孤儿不得崩（#118 TDZ 回归）', ()
     db.close()
 
     // 真人路径：pnpm exec tsx 的等价形态（直接跑 src，不吃 dist 陈旧的亏）。
+    // #305：tsx 的 cli.mjs 是 launcher，会再 spawn 真正跑 cli.ts 的子进程——不 detached
+    // 时 `child.kill()` 只杀 launcher，真 CLI 会被 reparent 到 launchd 留在开发机上。
+    // 因此独立进程组 + 收尾按**进程组** SIGKILL（同 recovery/supervisor 探针的形态）。
     const child = spawn(
       process.execPath,
       [TSX_CLI, join(REPO_ROOT, 'apps/node/src/cli.ts'), 'start'],
@@ -124,10 +128,19 @@ describe('R9-CLI：真实 cli start 遇孤儿不得崩（#118 TDZ 回归）', ()
         cwd: REPO_ROOT,
         env: { ...process.env, HOME: home },
         stdio: ['ignore', 'pipe', 'pipe'],
+        detached: true,
       },
     )
     cleanups.push(async () => {
-      child.kill('SIGKILL')
+      if (child.pid === undefined) return
+      try {
+        process.kill(-child.pid, 'SIGKILL') // 进程组：launcher + 真 CLI 一起收
+      } catch {
+        // 已退出：ESRCH 视为成功。
+      }
+      if (!(await awaitDead(child.pid, 3_000))) {
+        throw new Error('cli 进程组未被收尾（#305：负向/长驻用例不许在开发机留活口）')
+      }
     })
     let stderr = ''
     child.stderr?.on('data', (c) => {

@@ -4,6 +4,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [stray-runtime-hygiene-acceptance.md](./stray-runtime-hygiene-acceptance.md) | #305：开发机残留自检——测试负向判据故意留活的探针进程/长驻 CLI 谁负责收尾（两处修复：按 pid 回收、tsx launcher 的进程组问题）；`scripts/check-stray-runtimes.sh` 含 `--self-test`，跑完 Q0/Q1/Q6/Q5 后复跑零残留 |
 | [dsh-rollback-drill-acceptance.md](./dsh-rollback-drill-acceptance.md) | #290：升级失败回滚固定版——回滚演练进 Q3（部分升级三种顺序/装错 tarball/catalog 写 range/登记项被删/空清单必红，单包三处自洽升级不红，回滚到锁定副本必绿且逐字节相同，锁 == 十项依赖的安装树）；真实安装回滚如实标为人工门 |
 | [runtime-contract-negatives-acceptance.md](./runtime-contract-negatives-acceptance.md) | #289：三项契约级负向判据——单 Run 隔离（命令 runId 闸，prompt/followup/cancel/decide/shutdown 全族）、指令回执（回执先于结算）、事件流范围（异会话事件与异 agent 状态都不出范围，含两条过滤的变异自证与注入面的踩坑记录） |
 | [dsh-compat-guard-acceptance.md](./dsh-compat-guard-acceptance.md) | #288：敏感不兼容禁启动——Runtime 自报 DSH 版本（与 boot 锚同源）、pack 逐包 `dshCompatibility` fail-closed 比对（本地命中也复核、版本不可知拒绝）、`runtime.ready` 的 `profileDigest` 对照点（不符即 `PROFILE_MISMATCH` 并终止） |

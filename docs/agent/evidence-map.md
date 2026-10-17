@@ -48,6 +48,7 @@
 | 审批卡住 | hub.domain `approval` 行状态 → node.gateway 决定帧 → runtime.bridge answerer |
 | 候选无法检查或发布可见范围错误 | `artifacts/evidence/candidate-inspection/result.json`：web.artifact → Hub 内容读取鉴权 → artifact.store digest；复跑见 candidate-inspection-acceptance |
 | Artifact 打不开 | artifact.store digest 与 DB metadata 比对 → hub.http 权限判定 |
+| 开发机上进程越跑越多 / `ps` 里一堆看不出归属的 node | `scripts/check-stray-runtimes.sh`（探针残留即 FAIL，`--strict` 连自家 Node/Runtime/E2E 一起清；判定力用 `--self-test` 自证）；两处修复的形态与实测见 [stray-runtime-hygiene-acceptance](./stray-runtime-hygiene-acceptance.md) |
 | 疑似泄露 | 直接跑 `scripts/secret-scan.sh` 扫相关证据与日志 |
 | 性能回归疑云 | `pnpm test:load`（Q8 短档）报告 JSON：传播/ingest p95、空闲段 RSS 斜率、droppedConnections；判据/边界见 `docs/agent/load-performance-acceptance.md` |
 
