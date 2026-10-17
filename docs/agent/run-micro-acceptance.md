@@ -18,7 +18,7 @@ pnpm test:licenses
 scripts/secret-scan.sh artifacts/evidence/run-micro
 ```
 
-Q5 独占冷启环境：一次性 PostgreSQL、包解析后已编译的 Hub 生产 server 入口、既有 Node 生产监督器、真实 Runtime bin 和 DSH approval/basic replay。Hub CLI 当前只支持 setup-token，因此服务启动走包内生产 server 产物；新配置启用 `--built-hub`，旧 Q5 默认启动方式仍归 #281 迁移。
+Q5 独占冷启环境：一次性 PostgreSQL、包解析后已编译的 Hub 生产 server 入口、既有 Node 生产监督器、真实 Runtime bin 和 DSH approval/basic replay。Hub CLI 当前只支持 setup-token，因此服务启动走包内生产 server 产物；#281 起这是**全局唯一装配**（`--built-hub` 开关与源码路径分支已删除，装配前强制增量 build）。
 
 所有 Run、审批、工具和指令状态来自真实 HTTP/WS。邀请、配对和故障前置走公开 HTTP；静态 Plugin Pack 沿用已登记的 seed。没有直接写运行、事件、审批或投影表。传输闸只控制请求到达时间，释放后 `route.continue()`，不修改正文、Header 或响应。截图供人复核，机器判定不依赖截图。
 

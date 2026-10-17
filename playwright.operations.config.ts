@@ -10,7 +10,7 @@ export default defineConfig({
   webServer: {
     ...(base.webServer as object),
     url: 'http://localhost:5313/',
-    command: 'node --import tsx scripts/e2e-serve.mts --built-hub',
+    // command 继承 base（#281：包解析 dist 产物 + 装配前增量 build，无 --built-hub 开关）。
     env: { WHALEPOD_E2E_OPERATIONS: '1' },
   },
 })

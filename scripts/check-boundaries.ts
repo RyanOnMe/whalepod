@@ -315,9 +315,7 @@ export const HARNESS_SRC_PATH_ALLOWLIST: readonly string[] = [
   'scripts/check-boundaries.spec.ts',
   // 陈旧残留清理：切装配前的历史进程仍需覆盖一轮（e2e-serve.mts 内已注记）。
   'scripts/e2e-serve.mts:apps/runtime/src/bin.ts',
-  // E2E Hub 仍走源码 spawn（tsx）：与 RUNTIME_BIN 同族的双装配，待 #281
-  // 切 dist（涉 Q5 关键路径，本批只立规则不断装配）。
-  'scripts/e2e-serve.mts:apps/hub/src/server.ts',
+  // #281 起 e2e-serve 的 Hub 装配唯一走包解析 dist 产物，源码路径例外已摘除。
 ]
 
 export function checkHarnessDbSeeds(repoRoot: string): string[] {

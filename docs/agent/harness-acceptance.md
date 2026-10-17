@@ -155,8 +155,12 @@ tmpdir 形态，`--self-test` 逐条语料断言防模式退化）。证据只�
   `RUNTIME_BIN` 经 `apps/node` 上下文按 `@whalepod/runtime/bin` 包解析到 dist
   产物（`scripts/lib/phase1/chain.ts` + `scripts/e2e-node.mts`），不再用
   `apps/runtime/src/bin.ts` 源码路径直跑；`check-boundaries` 新增两条机检
-  （禁直插业务表 + 禁源码路径替代包解析，各带白名单与红绿自证）；
-  E2E Hub 仍走源码 spawn（`e2e-serve.mts:82`，已登记待独立 Issue 切 dist）。
+  （禁直插业务表 + 禁源码路径替代包解析，各带白名单与红绿自证）。
+  Hub 侧的同一收口已由 #281 完成（2026-10-17）：E2E 的 Hub 唯一走包解析 dist 产物
+  （`apps/hub/dist/server.js`，与 Docker 入口同形），装配前强制增量 build；
+  `HARNESS_SRC_PATH_ALLOWLIST` 的 hub 例外已摘除，spawn 侧不再有任何源码路径
+  （仅剩 `apps/runtime/src/bin.ts` 一条**残留进程清理标记**，非 spawn 入口）。
+  判据见 [e2e-hub-dist-assembly-acceptance.md](./e2e-hub-dist-assembly-acceptance.md)。
 
 ## 复跑
 

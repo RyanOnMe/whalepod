@@ -8,8 +8,9 @@ import { defineConfig } from '@playwright/test'
  *
  * 环境生命周期：webServer 直接拉起 scripts/e2e-serve.mts：本进程是 playwright 的直接子进程
  *（SIGTERM 可达，容器清理可保证），内部经 scripts/lib/ephemeral-postgres.mts
- * 启动一次性 PG（随机端口随机密码）、应用迁移、以生产入口 server.ts 拉起真实
- * Hub、再拉起 vite dev（5173，/api/v1 与 /ws/v1 同源反代）。浏览器只见 5173 一个
+ * 启动一次性 PG（随机端口随机密码）、应用迁移、**装配前增量 build**（#281）后以
+ * 包解析 dist 产物（apps/hub/dist/server.js，与 Docker 入口同形）拉起真实 Hub、
+ * 再拉起 vite dev（5173，/api/v1 与 /ws/v1 同源反代）。浏览器只见 5173 一个
  * origin，与生产同源部署同形（03 §4）。
  */
 export default defineConfig({
