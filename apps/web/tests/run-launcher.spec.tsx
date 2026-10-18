@@ -286,7 +286,9 @@ describe('RunLauncher', () => {
     await selectOption(user, '选择 Agent', 'Fixer')
     await selectOption(user, '选择设备', 'm4-mini（在线）')
     await selectOption(user, '选择 Workspace', 'whalepod')
-    await user.click(screen.getByText('执行设置（配置版本与环境）'))
+    const settings = screen.getByText('执行设置')
+    await user.click(settings)
+    expect(settings.closest('details')).not.toHaveAttribute('open')
     expect(screen.getByTestId('execution-target-summary')).toHaveTextContent(
       '显式指定：m4-mini · whalepod',
     )
