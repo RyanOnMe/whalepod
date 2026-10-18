@@ -353,7 +353,8 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     await expect(alice.getByText('还没有留言')).toBeVisible()
     // #152：Task Room 一屏内不得出现 UUID 形态与裸状态枚举（责任人姓名走成员名录，
     // 分配状态走 ASSIGNMENT_STATUS_LABEL）。
-    await expect(alice.locator('dt', { hasText: '当前责任人' })).toBeVisible()
+    await alice.getByLabel('任务详情', { exact: true }).click()
+    await expect(alice.locator('dt', { hasText: '责任人' })).toBeVisible()
     await expectNoJargonVisible(alice)
 
     // ---- #162：指人的位置必须写显示名（此前是 `shortId()`，判据看不见） ----
@@ -379,7 +380,7 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     )
 
     // #159：空态也要扫（空态引导文字往往是 secondary 灰，最容易掉到 AA 以下）。
-    // 放在术语判据之后：那时 "当前责任人" 与留言区都已渲染出来，扫描不会取在渲染之前。
+    // 元数据已显式展开，确保责任人文案也纳入对比度扫描。
     await expectNoContrastOffenders(alice)
     // ---- #137：离开 Task Room 后能找回任务（项目页任务列表） ----
     // 判据：真人路径「返回项目页 → 展开任务列表 → 看到刚建的任务 → 点回 Task Room」。
@@ -424,12 +425,13 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     await alice.getByRole('button', { name: '团队讨论', exact: true }).click()
     await expect(alice.getByText('收到，本周内出初稿。')).toBeVisible()
     // Bob 接受后任务状态仍是未开始（in_progress 随 Run 启动），可见的是
-    // 「已接受」徽标 + 非责任人视角的第三方陈述措辞。
+    // 「已接受」分配信息可从任务详情检查。
     await alice.getByRole('button', { name: 'Agent 执行', exact: true }).click()
     await expect(alice.getByTestId('task-assignment-state')).toHaveText('已接受')
     await alice.getByRole('button', { name: '团队讨论', exact: true }).click()
     // #152：留言作者与分配状态这一屏同样零内部词汇（`accepted` 只能以「已接受」出现）
-    await expect(alice.locator('span.badge', { hasText: '已接受' }).first()).toBeVisible()
+    await alice.getByLabel('任务详情', { exact: true }).click()
+    await expect(alice.getByTestId('task-assignment-state')).toBeVisible()
     await expectNoJargonVisible(alice)
     await expectNoJargonVisible(bob)
 
@@ -445,6 +447,7 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
       bobMember.displayName,
     )
     // Bob 看自己：两处都是视角词「你」——它不是姓名，但判据必须放行（否则假红）。
+    await bob.getByLabel('任务详情', { exact: true }).click()
     await expectPersonSlotsUseDisplayNames(
       bob,
       roster,
