@@ -20,7 +20,7 @@ import { showAgentCreation } from './helpers.js'
  * 账号开通/配对码走 HTTP 旁路（成员管理/设备配对 UI 属后续版本——P1-07 既有
  * 登记惯例）；Node 生命周期经 e2e-serve 控制面（只做进程与故障，不做产品动作）。
  */
-import { expect, test, type BrowserContext, type Page } from '@playwright/test'
+import { expect, test, type BrowserContext, type Locator, type Page } from '@playwright/test'
 import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -47,6 +47,7 @@ import {
   fillAndEnter,
   assertNotNativeSelect,
   selectFromMenu,
+  chooseNewExecution,
   sleep,
   type RunFact,
 } from './helpers.js'
@@ -209,6 +210,9 @@ async function startRunViaUi(agentName: string, promptText: string): Promise<str
   // 真实用户动作；不加速重连本身）。
   await waitDeviceOnline()
   await bob.reload()
+  // ADR-0019：这一条任务上多半已经有运行，底部输入框默认落到「继续会话」——要新起一段
+  // 执行，用户必须明确改选「开始新执行」（真人同一条路）。
+  await chooseNewExecution(bob)
   const agentTrigger = bob.getByLabel('选择 Agent')
   await expect(agentTrigger).toBeVisible({ timeout: 30_000 })
   // #159：**就在这一刻扫对比度**——启动面板已渲染、Run prompt 还是空的（显示 placeholder）。
@@ -227,8 +231,8 @@ async function startRunViaUi(agentName: string, promptText: string): Promise<str
   await selectFromMenu(bob.getByLabel('选择 Workspace'), 'e2e-ws')
   await bob.getByLabel('指令').fill(promptText)
   await bob.getByRole('button', { name: '开始执行' }).click()
-  // Run 行进时间线（责任人真人路径）。
-  await expect(bob.locator('.run-item').first()).toBeVisible()
+  // 运行段出现在连续对话里（责任人真人路径；ADR-0019）。
+  await expect(bob.locator('[data-testid="run-segment"]').first()).toBeVisible()
   const runId = await waitForFreshRunId()
   shared.runIds.push(runId)
   return runId
@@ -265,11 +269,21 @@ async function waitForFreshRunId(): Promise<string> {
   throw new Error('UI 启动的 Run 未出现在 Task Room 聚合中')
 }
 
+/** 运行段（P1-393/ADR-0019：执行区按 Run 成段，事件记录按段展开）。 */
+function segmentOf(page: Page, runId: string): Locator {
+  return page.locator(`[data-testid="run-segment"][data-run-id="${runId}"]`)
+}
+
+/** 某段的事件记录（`run-live-events` 现在每段一个，断言必须落到那一段上）。 */
+function eventsOf(page: Page, runId: string): Locator {
+  return segmentOf(page, runId).getByTestId('run-live-events')
+}
+
 /**
- * 点选时间线中的 Run 行 → RunLivePanel（事件流走 realtime 键，真人路径）。
+ * 打开某一段的运行详情并展开它的「工具与运行记录」（事件流走 realtime 键，真人路径）。
  *
- * #162 起行标签是「第 N 次运行」（短 id 不再冒充标签），所以定位改用行上的
- * `data-run-id`——它是**定位**用锚点，可见文本仍是人话；判「行标签是人话」这件事
+ * #162 起段标签是「第 N 次运行」（短 id 不再冒充标签），所以定位改用段上的
+ * `data-run-id`——它是**定位**用锚点，可见文本仍是人话；判「段标签是人话」这件事
  * 由下面的血缘用例断言。
  */
 async function selectRun(page: Page, runId: string): Promise<void> {
@@ -277,10 +291,11 @@ async function selectRun(page: Page, runId: string): Promise<void> {
   if (await close.isVisible()) await close.click()
   await page.getByRole('button', { name: 'Agent 执行', exact: true }).click()
   await page.locator(`.run-item-button[data-run-id="${runId}"]`).click()
-  const records = page.locator('details.run-records')
+  await expect(page.getByTestId('run-detail-meta')).toBeVisible({ timeout: 30_000 })
+  const records = segmentOf(page, runId).locator('details.run-records')
   if (!(await records.evaluate((element) => (element as HTMLDetailsElement).open)))
     await records.locator('summary').click()
-  await expect(page.getByTestId('run-live-events')).toBeVisible({ timeout: 30_000 })
+  await expect(eventsOf(page, runId)).toBeVisible({ timeout: 30_000 })
 }
 
 test.describe.configure({ mode: 'serial' })
@@ -349,7 +364,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     // reload + 选中该 Run（与 G5-04 同法），这是「决定真的落到事件流」的持久证据。
     await shared.bob!.reload()
     await selectRun(shared.bob!, runId)
-    await expect(shared.bob!.getByTestId('run-live-events')).toContainText('审批决定：已批准一次')
+    await expect(eventsOf(shared.bob!, runId)).toContainText('审批决定：已批准一次')
 
     // Runtime 继续 → 完成（DB 事实判定；UI 徽标经 reload 核验）。
     const done = await waitForRunStatus(runId, 'completed', 120_000)
@@ -399,17 +414,17 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
       // 都应看到「审批决定：已拒绝」。
       await shared.bob!.reload()
       await selectRun(shared.bob!, runId)
-      await expect(shared.bob!.getByTestId('run-live-events')).toContainText('审批决定：已拒绝')
+      await expect(eventsOf(shared.bob!, runId)).toContainText('审批决定：已拒绝')
       await shared.alice!.reload()
       await selectRun(shared.alice!, runId)
-      await expect(shared.alice!.getByTestId('run-live-events')).toContainText('审批决定：已拒绝')
+      await expect(eventsOf(shared.alice!, runId)).toContainText('审批决定：已拒绝')
 
       // 语义诚实（二评残留修复）：两端事件区含被拒解释文本（owner 原文行 +
       // project completed 摘要直通），且两端任何一行都不得再说 “Artifact
       // published.”——被拒 Run 说假话正是独立快照要消灭的东西。
       const REJECT_EXPLANATION = 'Report skipped: publication was rejected by the approver.'
       for (const page of [shared.bob!, shared.alice!]) {
-        const events = page.getByTestId('run-live-events')
+        const events = eventsOf(page, runId)
         await expect(events).toContainText(REJECT_EXPLANATION)
         await expect(events).not.toContainText('Artifact published.')
       }
@@ -566,10 +581,10 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     expect(manifest.manifestText).not.toContain(builderWsPath)
     await shared.bob!.reload()
     await selectRun(shared.bob!, runId)
-    await expect(shared.bob!.getByTestId('run-live-events')).not.toContainText(builderWsPath)
+    await expect(eventsOf(shared.bob!, runId)).not.toContainText(builderWsPath)
     await shared.alice!.reload()
     await selectRun(shared.alice!, runId)
-    await expect(shared.alice!.getByTestId('run-live-events')).not.toContainText(builderWsPath)
+    await expect(eventsOf(shared.alice!, runId)).not.toContainText(builderWsPath)
     await shared.bob!.getByRole('button', { name: '运行详情', exact: true }).click()
     await shared.bob!.getByRole('button', { name: '查看本次固定输入' }).click()
     await expect(shared.bob!.getByTestId('run-input-manifest')).toContainText(shared.artifactId!)
@@ -612,7 +627,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
 
       // Bob（owner）：事件流含 owner 行（assistant.message 全文只在 owner 受众投影）。
       await selectRun(shared.bob!, runId)
-      await expect(shared.bob!.getByTestId('run-live-events')).toContainText('Hello from replay.', {
+      await expect(eventsOf(shared.bob!, runId)).toContainText('Hello from replay.', {
         timeout: 30_000,
       })
       // #159：Run 实况面板的正文是等宽字体，属"底色由 token 决定、文字色靠继承"这一类
@@ -629,8 +644,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
       // 原文正对照（评审 N3）：owner 受众行里确有该原文（Alice 侧的负断言因此
       // 不是空真——同一原文在 project 侧只允许以 run.completed 摘要形态出现）。
       expect(
-        await shared
-          .bob!.getByTestId('run-live-events')
+        await eventsOf(shared.bob!, runId)
           .locator('.run-event.audience-owner', { hasText: 'Hello from replay.' })
           .count(),
       ).toBeGreaterThanOrEqual(1)
@@ -638,7 +652,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
       // Alice（成员）：同一动作——服务端受众过滤后，owner 行零出现，只见缩水产品。
       await shared.alice!.reload()
       await selectRun(shared.alice!, runId)
-      const aliceEvents = shared.alice!.getByTestId('run-live-events')
+      const aliceEvents = eventsOf(shared.alice!, runId)
       await expect(aliceEvents).toBeVisible({ timeout: 30_000 })
       await expect(aliceEvents.locator('.run-event.audience-project').first()).toBeVisible()
       expect(await aliceEvents.locator('.run-event.audience-owner').count()).toBe(0)
@@ -908,7 +922,8 @@ test.describe('P1-19 Run 行动（G7-01 取消 / G7-04 重跑血缘）', () => {
     await shared.bob!.reload()
     await selectRun(shared.bob!, sourceRunId!)
     await shared.bob!.getByRole('button', { name: '重跑此 Run' }).click()
-    await shared.bob!.locator('#run-rerun-prompt').fill('重跑：全新指令（不复用旧 prompt）')
+    // 表单里的输入框 id 带 runId 后缀（每个 Run 一套），按标签定位。
+    await shared.bob!.getByLabel('新 Run 的指令').fill('重跑：全新指令（不复用旧 prompt）')
     await shared.bob!.getByRole('button', { name: '确认重跑' }).click()
 
     // 判定：新 Run 存在、rerunOfRunId 指向来源（HTTP 旁路核验产品事实）。
@@ -933,8 +948,9 @@ test.describe('P1-19 Run 行动（G7-01 取消 / G7-04 重跑血缘）', () => {
     // ——不再有「由 Run <前8位> 重跑」这种拿短 id 当标签的写法。reload 取新快照后再点选。
     await shared.bob!.reload()
     await selectRun(shared.bob!, newRunId)
-    const panel = shared.bob!.getByTestId('run-live-panel')
-    const lineage = panel.getByTestId('run-lineage')
+    // ADR-0019：血缘、设备、时间与版本都在运行详情里（段头只留一个简短状态）。
+    const detail = shared.bob!.getByRole('region', { name: '工作区详情' })
+    const lineage = detail.getByTestId('run-lineage')
     // 整句匹配（而不是「全文不含短 id」）：这句话就是判据要的样子，短 id 自然无处容身；
     // 对面板全文做一刀切否定会因事件文本里出现别处的哈希而假红。来源的序号 N 取决于
     // 本 Task 到此刻已有几次运行，所以用正则锚形态、不写死 N。
@@ -951,8 +967,7 @@ test.describe('P1-19 Run 行动（G7-01 取消 / G7-04 重跑血缘）', () => {
     await expect(focusedRow).toBeFocused()
     await expect(shared.bob!.getByRole('tooltip')).toHaveText(newRunId)
     await shared.bob!.keyboard.press('Escape')
-    const panelHeading = panel.getByRole('heading', { name: '本次运行' })
-    await expect(panelHeading).toHaveAttribute('title', newRunId)
+    await expect(detail.getByTestId('run-detail-meta')).toBeVisible()
     await approveAndCompleteLoose(newRunId)
     assertSeqContiguous(await getRunFact(newRunId))
     // 红线：来源 Run 终态不因重跑被改写。
@@ -1236,6 +1251,7 @@ test('个人行动入口：双用户五类事项只读定位、真人确认与�
     await waitDeviceOnline()
     const bob = shared.bob!
     await bob.goto(`/tasks/${taskId}`)
+    await chooseNewExecution(bob)
     await selectFromMenu(bob.getByLabel('选择 Agent'), 'builder')
     await selectFromMenu(bob.getByLabel('选择设备'), /e2e-node（在线）/)
     await selectFromMenu(bob.getByLabel('选择 Workspace'), 'e2e-ws')

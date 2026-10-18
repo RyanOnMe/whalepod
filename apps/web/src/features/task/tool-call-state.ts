@@ -8,7 +8,7 @@ export function eventIdentity(item: RunEventItem): string {
 }
 
 /** 同一查询的重复帧按受众/序号去重；不接受别的 Run 的结果或数组顺序作为因果关系。 */
-export function orderedRunEvents(events: RunEventItem[], runId: string): RunEventItem[] {
+export function orderedRunEvents(events: readonly RunEventItem[], runId: string): RunEventItem[] {
   const unique = new Map<string, RunEventItem>()
   for (const item of events) {
     if (item.runId !== runId || !Number.isSafeInteger(item.seq) || item.seq <= 0) continue
@@ -19,7 +19,7 @@ export function orderedRunEvents(events: RunEventItem[], runId: string): RunEven
 }
 
 /** 保留首次结束事实：一个工具的终态不会因重复/冲突结束事件复活或换结果。 */
-export function toolResults(events: RunEventItem[]): ReadonlyMap<string, unknown> {
+export function toolResults(events: readonly RunEventItem[]): ReadonlyMap<string, unknown> {
   const starts = new Map<string, string>()
   const results = new Map<string, unknown>()
   for (const item of events) {

@@ -8,6 +8,7 @@ import {
   dropRunLive,
   getRunLiveText,
   RUN_LIVE_BUFFER_MAX_CHARS,
+  RUN_LIVE_BUFFER_MAX_SLOTS,
   resetRunLiveBuffers,
   subscribeRunLive,
 } from '../src/shared/realtime/run-buffer.js'
@@ -44,6 +45,18 @@ describe('ownerRunBuffer', () => {
     appendLiveDelta('run-a', 1, 'x')
     dropRunLive('run-a')
     expect(getRunLiveText('run-a')).toBe('')
+  })
+
+  it('槽位有上限：会话里看过的第 9 个 Run 进来时，最早那个让位（不再无限占位）', () => {
+    for (let index = 1; index <= RUN_LIVE_BUFFER_MAX_SLOTS; index += 1)
+      appendLiveDelta(`run-${index}`, 1, `第 ${index} 段`)
+    // 上限内的都在（终态段的"未持久化直播"要在记录里查得到）。
+    expect(getRunLiveText(`run-${RUN_LIVE_BUFFER_MAX_SLOTS}`)).toBe(
+      `第 ${RUN_LIVE_BUFFER_MAX_SLOTS} 段`,
+    )
+    appendLiveDelta('run-9', 1, '第 9 段')
+    expect(getRunLiveText('run-1')).toBe('')
+    expect(getRunLiveText('run-9')).toBe('第 9 段')
   })
 
   it('resetRunLiveBuffers 清空全部（测试隔离）', () => {

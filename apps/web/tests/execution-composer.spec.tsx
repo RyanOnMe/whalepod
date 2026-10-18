@@ -116,6 +116,11 @@ describe('#315 统一执行入口的真人页面', () => {
           { method: 'POST', url: /\/instructions$/, respond: () => request.promise },
         ]),
       )
+      // ADR-0019 决定 3：有终态业务运行后默认续聊；这条判据要驱动「新执行」路径，
+      // 先显式切换模式（用户明确选择后默认规则不再改写）。
+      await showExecutionOptions(user)
+      await user.click(await screen.findByLabelText('执行方式'))
+      await user.click(await screen.findByRole('menuitem', { name: /开始新执行/ }))
       await user.click(await screen.findByLabelText('选择 Agent'))
       await user.click(await screen.findByRole('menuitem', { name: 'Builder' }))
       const box = await screen.findByLabelText('指令')
@@ -505,7 +510,7 @@ function draftNavigationFixture(active = false, history = false, delegated = fal
                   : state.history
                     ? [{ ...run, status: 'completed' }]
                     : [],
-              }).respond({})
+              }).respond({}, `/api/v1/tasks/${task.id}`)
         },
       },
       taskRoomHandler(other),

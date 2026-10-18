@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -16,6 +17,7 @@ import { queryKeys } from '../../app/query-client.js'
 import type {
   AgentDetailView,
   AgentView,
+  DeviceView,
   InstructionDriverView,
   RunView,
   Session,
@@ -40,10 +42,47 @@ import {
   type ExecutionSettings,
   type ExecutionMode as Mode,
 } from './execution-drafts.js'
+import { defaultComposeTarget, followsDefaultMode } from './execution-defaults.js'
 export interface ArtifactReviewRequest {
   taskId: string
   artifactId: string
   nonce: string
+}
+
+/**
+ * 历史运行的「继续此会话」（ADR-0019 决定 2）：把来源交给底部统一输入框，
+ * 保留已有文字；是否可发送仍由下面的 reason 链判定（不自动改投）。
+ */
+export interface ContinueSessionRequest {
+  taskId: string
+  runId: string
+  nonce: string
+}
+
+/**
+ * 读取面还没带回刚起的运行时的占位行（#393 实测的窗口）。
+ *
+ * 只用于**派生**：运行序号（`runOrdinalLabels`）、活跃判定（reason 链、默认目标）、
+ * 来源落点。不渲染，也不冒充审批档（审批胶囊取服务端预览，不读这一行）。
+ * 状态给 `queued`：Hub 建 Run 到 Node 首次 ack 之间真实就是 queued。
+ */
+function startedRunPlaceholder(id: string): TaskRoomRun {
+  return {
+    id,
+    status: 'queued',
+    createdAt: new Date().toISOString(),
+    startedAt: null,
+    finishedAt: null,
+    rerunOfRunId: null,
+    resumeFromRunId: null,
+    approvalPolicy: 'approval_required',
+    specRevision: null,
+    purpose: 'business',
+    deviceName: null,
+    workspaceName: null,
+    lastToolCall: null,
+    lastPhase: null,
+  }
 }
 
 /** 模式与来源属于草稿意图：后台状态变化只阻塞，不替用户改投。 */
@@ -58,6 +97,7 @@ export function ExecutionComposer({
   handoff,
   reviewRequest = null,
   revisionRequest = null,
+  continueRequest = null,
   onDiscuss,
   compact = false,
 }: {
@@ -83,11 +123,27 @@ export function ExecutionComposer({
   } | null
   reviewRequest?: ArtifactReviewRequest | null
   revisionRequest?: ArtifactReviewRequest | null
+  /** 历史运行的「继续此会话」：把该运行设为来源（mode=resume），保留已有文字。 */
+  continueRequest?: ContinueSessionRequest | null
 }): ReactNode {
   const directory = useMemberDirectory()
   const responsible = directory.personOf(task.assigneeUserId)
-  const active = runs.find((run) => ACTIVE_RUN.has(run.status))
-  const terminal = runs.filter((run) => TERMINAL_RUN.has(run.status))
+  // #393 实测：`runs` 是**读取面**，刚起的运行要等一次失效重拉才出现。那一拍若不把它当
+  // 已知，标签会退回「所选执行」、理由链会误报「所选执行已结束或发生变化」——刚发出去的
+  // 指令明明就在跑（真实链路实测）。记住刚起的运行，读取面到位前按已知运行参与派生
+  // （占位行只进派生：序号、活跃判定、来源落点；它不渲染，也不冒充审批档）。
+  const [startedRunId, setStartedRunId] = useState<string | null>(null)
+  const runsWithStarted = useMemo(
+    () =>
+      startedRunId === null || runs.some((run) => run.id === startedRunId)
+        ? runs
+        : [...runs, startedRunPlaceholder(startedRunId)],
+    [runs, startedRunId],
+  )
+  const active = runsWithStarted.find((run) => ACTIVE_RUN.has(run.status))
+  const terminal = runsWithStarted.filter((run) => TERMINAL_RUN.has(run.status))
+  const staleRunsAboutStarted =
+    startedRunId !== null && !runs.some((run) => run.id === startedRunId)
   const [lastOutcome, setLastOutcome] = useState<InstructionOutcome | null>(null)
   // #380：存在已确认接收关系时默认附带（界面在发送前展示固定版本号；取消勾选 =
   // 本次不带交接材料，Run 快照为 null——缺省不带是协议语义，勾选才是显式选择）。
@@ -99,16 +155,21 @@ export function ExecutionComposer({
     if (!hadHandoff.current && handoff !== null) setIncludeHandoff(true)
     hadHandoff.current = handoff !== null
   }, [handoff])
-  const initialDraft = (): ExecutionDraft => ({
-    ownerId: task.assigneeUserId,
-    text: '',
-    mode: active === undefined ? 'new' : 'followup',
-    sourceId: active?.id ?? terminal.at(-1)?.id ?? '',
-    reviewArtifactIds: [],
-    revisionContext: null,
-    launch: { key: 'new-', settings: { ...EMPTY_EXECUTION_SETTINGS } },
-    sending: false,
-  })
+  // ADR-0019 决定 3：默认目标是规则给的，不是每次都要重新做一次选择。
+  const initialDraft = (): ExecutionDraft => {
+    const target = defaultComposeTarget(runs)
+    return {
+      ownerId: task.assigneeUserId,
+      text: '',
+      mode: target.mode,
+      modeOrigin: 'auto',
+      sourceId: target.sourceId,
+      reviewArtifactIds: [],
+      revisionContext: null,
+      launch: { key: 'new-', settings: { ...EMPTY_EXECUTION_SETTINGS } },
+      sending: false,
+    }
+  }
   const memory = useExecutionDraft(task.id, session.userId, initialDraft)
   const {
     text: draft,
@@ -133,8 +194,27 @@ export function ExecutionComposer({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const focusMode = useRef(false)
   const settingsDisclosure = { open: settingsOpen, onChange: setSettingsOpen }
-  const setMode = (mode: Mode) => memory.update((old) => ({ ...old, mode }))
-  const setSourceId = (sourceId: string) => memory.update((old) => ({ ...old, sourceId }))
+  // 用户明确选择模式/来源 → 默认规则不再改写草稿（modeOrigin='user'）。
+  const setMode = (mode: Mode) => memory.update((old) => ({ ...old, mode, modeOrigin: 'user' }))
+  const setSourceId = (sourceId: string) =>
+    memory.update((old) => ({ ...old, sourceId, modeOrigin: 'user' }))
+  // ADR-0019 决定 4：只跟随「空白、未调整设置、未发送」的自动草稿；运行状态一变
+  // （起新运行/结束）就把默认目标落回草稿，用户动过的一律不动。
+  // 读取面还没带回刚起的运行时（`staleRunsAboutStarted`），runs 是「还没更新」而不是
+  // 「没有历史」——那一拍不改草稿，等读取面到位（真实链路实测过的窗口）。
+  useEffect(() => {
+    if (staleRunsAboutStarted) return
+    if (startedRunId !== null) setStartedRunId(null)
+    if (!followsDefaultMode(memory.snapshot)) return
+    const target = defaultComposeTarget(runs)
+    if (target.mode === memory.snapshot.mode && target.sourceId === memory.snapshot.sourceId) return
+    memory.update((old) => ({
+      ...old,
+      mode: target.mode,
+      modeOrigin: 'auto',
+      sourceId: target.sourceId,
+    }))
+  }, [runs, memory.snapshot, staleRunsAboutStarted, startedRunId])
   const setReviewArtifactIds = (change: SetStateAction<string[]>) =>
     memory.update((old) => ({
       ...old,
@@ -202,6 +282,29 @@ export function ExecutionComposer({
       current.trim() === '' ? '请复核所选已发布交付物，指出问题与可执行的修订建议。' : current,
     )
   }, [reviewRequest, task.id, sending])
+
+  // ADR-0019 决定 2：历史运行的「继续此会话」把来源交给这里——保留已有文字，
+  // 只改来源；能否发送仍交给下面的 reason 链（不自动改投、不自动跳过）。
+  const handledContinue = useRef<string | null>(null)
+  useEffect(() => {
+    if (
+      continueRequest === null ||
+      continueRequest.taskId !== task.id ||
+      handledContinue.current === continueRequest.nonce
+    )
+      return
+    handledContinue.current = continueRequest.nonce
+    memory.update((old) => ({
+      ...old,
+      mode: 'resume',
+      modeOrigin: 'user',
+      sourceId: continueRequest.runId,
+    }))
+    const frame = requestAnimationFrame(() =>
+      document.getElementById(`instruction-text-${task.id}`)?.focus(),
+    )
+    return () => cancelAnimationFrame(frame)
+  }, [continueRequest, task.id])
   const isAssignee = task.assigneeUserId === session.userId
   const grants = useQuery({
     queryKey: queryKeys.instructionGrants(task.id),
@@ -223,6 +326,20 @@ export function ExecutionComposer({
     enabled: allowed,
     refetchOnMount: 'always',
   })
+  /**
+   * 默认继续（续聊）要固定来源设备与工作区，设备离线时**只能客户端挡**（ADR-0019 决定 3）：
+   * Hub 的 `DEVICE_OFFLINE` 判据读设备事实列（`node.hello` 回填、断连不清），续跑固定来源
+   * 设备时照建 Run——p1-393 e2e 实测停掉 Node 后续跑仍 201，长出一次注定失败的运行。
+   * 判据取设备读面（与启动器同一份 `queryKeys.devices` 缓存，按 `device.changed` 实时失效）；
+   * 查不到该设备（例如被授权成员看不到责任人的设备）时**不阻断**——不知道就不猜。
+   */
+  const devices = useQuery({
+    queryKey: queryKeys.devices,
+    queryFn: () => api.get<DeviceView[]>('/devices'),
+    enabled: allowed && mode === 'resume',
+    refetchOnMount: 'always',
+  })
+  const sourceDevice = devices.data?.find((device) => device.id === source.data?.deviceId)
   const sourceAgent = useQuery({
     queryKey: queryKeys.agentDetail(source.data?.agentId ?? ''),
     queryFn: () => api.get<AgentDetailView>(`/agents/${source.data!.agentId}`),
@@ -232,8 +349,8 @@ export function ExecutionComposer({
   const revision = sourceAgent.data?.revisions.find(
     (row) => row.id === source.data?.profileRevisionId,
   )
-  const sourcePlacement = runs.find((run) => run.id === sourceId)
-  const sourceLabel = runOrdinalLabels(runs).get(sourceId) ?? '所选执行'
+  const sourcePlacement = runsWithStarted.find((run) => run.id === sourceId)
+  const sourceLabel = runOrdinalLabels(runsWithStarted).get(sourceId) ?? '所选执行'
   let reason: string | null = null
   if (confirmingTask) reason = '正在重新确认任务状态，草稿仍保留…'
   else if (memory.snapshot.ownerId !== task.assigneeUserId)
@@ -271,6 +388,12 @@ export function ExecutionComposer({
     reason = '来源执行属于此前的责任人，请基于已发布交接材料开始新执行。'
   else if (mode === 'resume' && source.data?.dshSessionId === null)
     reason = '这次执行没有可续接的会话，请开始新执行。'
+  else if (mode === 'resume' && sourceDevice?.status === 'offline')
+    // 不自动改投、不跳过来源：说清原因并保留草稿，是否开始新执行由用户明确决定。
+    // 只拦"暂时不在线"这一种：设备**已撤销**是永久失效，服务端会带 DEVICE_REVOKED 与
+    // requestId 明确回绝（页面另有就该现场续跑的说明），客户端抢答会把那条更准的话术吞掉。
+    reason =
+      '来源设备当前离线。草稿仍保留：让该设备上线继续这条会话，或明确选择开始新执行并重新确认环境。'
   else if (mode === 'resume' && sourceAgent.isError) reason = '无法读取来源配置版本，请重试。'
   else if (
     mode === 'resume' &&
@@ -310,9 +433,16 @@ export function ExecutionComposer({
   const started = (outcome: InstructionOutcome): void => {
     setLastOutcome(outcome)
     if (outcome.outcome === 'started_run' && outcome.runId !== null) {
-      setRevisionContext(null)
-      setMode('followup')
-      setSourceId(outcome.runId)
+      // 刚起来的 Run 就是新的默认目标：源头仍是默认规则（origin='auto'），
+      // 用户若之后明确改选，modeOrigin 会被改成 'user' 不再跟随。
+      setStartedRunId(outcome.runId)
+      memory.update((old) => ({
+        ...old,
+        mode: 'followup',
+        modeOrigin: 'auto',
+        revisionContext: null,
+        sourceId: outcome.runId!,
+      }))
     }
   }
   useEffect(() => {
@@ -631,9 +761,14 @@ export function ExecutionComposer({
               onDraftChange={setDraft}
               onSendingChange={setSending}
               onStarted={(runId) => {
-                setRevisionContext(null)
-                setMode('followup')
-                setSourceId(runId)
+                setStartedRunId(runId)
+                memory.update((old) => ({
+                  ...old,
+                  mode: 'followup',
+                  modeOrigin: 'auto',
+                  revisionContext: null,
+                  sourceId: runId,
+                }))
               }}
             />
           ) : (
@@ -642,8 +777,12 @@ export function ExecutionComposer({
               settingsContent={executionSettings}
               settingsDisclosure={settingsDisclosure}
               receiverLabel={
-                agents.data?.find((agent) => agent.id === source.data?.agentId)?.name ??
-                '来源未确认'
+                // ADR-0019 决定 3：默认续聊/追问要在输入框上有一个**简短目标标签**，
+                // 用户不必展开设置就知道这句话会去哪。
+                `${
+                  agents.data?.find((agent) => agent.id === source.data?.agentId)?.name ??
+                  '来源未确认'
+                }${mode === 'resume' ? ` · 续聊${sourceLabel}` : mode === 'followup' ? ` · 追问${sourceLabel}` : ''}`
               }
               key={`${task.id}-${mode}-${sourceId}-${revisionContext?.nonce ?? ''}`}
               blocked={reason !== null}

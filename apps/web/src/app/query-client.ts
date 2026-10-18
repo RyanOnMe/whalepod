@@ -46,6 +46,12 @@ export const queryKeys = {
   /** #380：某 Run 的跨 Task 交接输入快照（与 input-manifest 独立的读面）。 */
   runHandoffInput: (runId: string) => ['run', runId, 'handoff-input'] as const,
   runEvents: (runId: string) => ['run', runId, 'events'] as const,
+  /**
+   * P1-393：分页读到末尾的事件缓存（会话/审批/Console 共用）。
+   * **保留 `['run', runId]` 前缀**：event-router 的 run 族失效与
+   * `invalidateQueries({queryKey: queryKeys.run(runId)})` 继续覆盖它。
+   */
+  runEventPages: (runId: string) => ['run', runId, 'event-pages'] as const,
   devices: ['devices'] as const,
   workspaces: ['workspaces'] as const,
   /** P1-17 Admin Plugin Settings：插件目录 / 安装列表 / Pack 列表。 */

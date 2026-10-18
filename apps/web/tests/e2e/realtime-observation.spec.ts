@@ -118,7 +118,7 @@ test.describe('#140 同组成员零操作实时可见', () => {
     expect(task.status).toBe(201)
     const taskId = (task.data as { id: string }).id
 
-    // ---- Bob：真实登录并停在 Task Room（此后零操作） ----
+    // ---- Bob：真实登录并停在 Task Room 的团队讨论频道（此后零操作） ----
     const bob = await bobContext.newPage()
     await bob.goto('/login')
     await fillAndEnter(bob, '#login-username', BOB_NAME)
@@ -126,6 +126,9 @@ test.describe('#140 同组成员零操作实时可见', () => {
     await bob.press('#login-password', 'Enter')
     await expect(bob.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
     await bob.goto(`/tasks/${taskId}`)
+    // ADR-0019：任务房间默认停在「Agent 执行」；留言在独立的「团队讨论」频道里，
+    // 观察前先切过去（切频道是观察窗口之前的一次真人动作，此后 Bob 零操作）。
+    await bob.getByRole('button', { name: '团队讨论', exact: true }).click()
     // 用 heading 而不是 getByText（2026-10-09，Q5 20 连跑第 15 轮实测）：UX-10 起侧栏
     // 「最近任务」也会渲染**任务标题**（`span.sidebar-recent-title`），而它是异步拉取——
     // 同一句 `getByText('协作观察用例')` 在侧栏到货前只匹配 h1（过）、到货后匹配两个
@@ -133,8 +136,9 @@ test.describe('#140 同组成员零操作实时可见', () => {
     // 不是产品缺陷；钉到 heading 角色后与侧栏无关，判定不再看时机。
     await expect(bob.getByRole('heading', { name: '协作观察用例' })).toBeVisible()
 
-    // ---- Alice：同任务页面里经 UI 留言 ----
+    // ---- Alice：同任务页面里经 UI 在团队讨论频道留言 ----
     await alice.goto(`/tasks/${taskId}`)
+    await alice.getByRole('button', { name: '团队讨论', exact: true }).click()
     await alice.fill('textarea[name="body"]', '这是 Alice 的实时留言。')
     await alice.keyboard.press('Tab')
     await alice.keyboard.press('Enter')

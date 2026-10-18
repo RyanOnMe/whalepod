@@ -3307,6 +3307,130 @@ textarea::placeholder {
   border-radius: 18px;
   padding: 12px 18px;
 }
+
+/* ---------------------------------------------------------------------------
+ * P1-393 连续对话工作区（ADR-0019）：执行区按 Run 成段，只有一个主滚动容器。
+ * --------------------------------------------------------------------------- */
+.conversation-transcript {
+  position: relative;
+}
+.conversation-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.conversation-run,
+.conversation-orphan {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+/* 段与段之间用一条细分隔线（不给历史回复加逐条入场动画——ADR-0019「不做的事」）。 */
+.conversation-run + .conversation-run,
+.conversation-run + .conversation-orphan,
+.conversation-orphan + .conversation-run {
+  border-top: 1px solid var(--dsw-alias-border-l3);
+  padding-top: 20px;
+}
+.conversation-run-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+/* 段头是一个「运行详情」入口：标签 + 状态 + 入口提示，完整 runId 走 Hint 提示层。 */
+.conversation-run-head .run-item-button {
+  width: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--color-surface);
+}
+.conversation-run-head .run-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+.conversation-run-head .run-item-hint {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.conversation-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.conversation-artifacts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+  gap: 10px;
+}
+/* 「回到最新」：对话上翻后出现；sticky 钉在滚动容器底部，不推挤内容。 */
+.conversation-jump {
+  position: sticky;
+  bottom: 8px;
+  align-self: center;
+  padding: 2px 14px;
+  border: 1px solid var(--color-line);
+  border-radius: 99px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 16%);
+  transition: background-color var(--duration-quick) ease;
+}
+.conversation-jump:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.load-earlier {
+  align-self: center;
+  margin-bottom: 16px;
+}
+/* 未持久化的直播输出（断线/未收全的部分）只留在运行记录里，不与最终回复并排。 */
+.run-live-archived {
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--color-surface-sunken, #14161c);
+  border-radius: var(--radius-lg, 12px);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+.run-detail-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px 16px;
+  margin: 12px 0;
+}
+.run-detail-meta dt {
+  font-size: 11px;
+  color: var(--color-muted);
+}
+.run-detail-meta dd {
+  margin: 2px 0 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.console-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
 .workspace-runs {
   margin-top: 24px;
 }
@@ -3518,6 +3642,28 @@ textarea::placeholder {
 .workspace-runs .run-item {
   flex: 1;
   min-width: min(100%, 220px);
+}
+/*
+ * #393 决定 5：事件读取不完整的披露在**段体**上（不是折叠区）——终态运行读不到事件时，
+ * 段头与活动行都会说"已完成"，唯一能阻止"没读到"被读成"没有产出"的就是这一条。
+ */
+.run-events-alert {
+  /* 与 .stream-incomplete 同一档警示色（本地重绑到静态 900 档，深浅主题都成立）。 */
+  --dsw-alias-state-warn-primary: var(--dsw-static-amber-900);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: var(--space-2) var(--space-3);
+  border: 0.5px solid var(--dsw-alias-state-warn-primary);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent);
+}
+.run-events-alert p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-ink);
 }
 .run-records summary {
   cursor: pointer;

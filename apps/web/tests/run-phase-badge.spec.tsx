@@ -10,6 +10,7 @@
  *    （tool.started/assistant.message 等）不重拉——事件频率不该变成房间重拉频率。
  */
 import { act, screen, waitFor } from '@testing-library/react'
+import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import {
   BOB,
@@ -23,6 +24,7 @@ import {
 } from './fixtures.js'
 import type { MockHandler } from './fixtures.js'
 import { renderApp } from './render.jsx'
+import { showWorkspace } from './workspace.js'
 import { persistentFrame } from './frames.js'
 import { installFrameSink } from './socket-drive.js'
 
@@ -32,6 +34,7 @@ const TASK = makeTask({ assigneeUserId: BOB.userId, assignmentStatus: 'accepted'
 
 describe('运行卡阶段徽标（#261）', () => {
   it('只在 running 且投影带阶段时画；终态/等待审批/无阶段都不画', async () => {
+    const user = userEvent.setup()
     const runs = [
       makeRun({
         status: 'running',
@@ -55,10 +58,22 @@ describe('运行卡阶段徽标（#261）', () => {
       ...loggedInHandlers(BOB, [taskRoomHandler(TASK, { runs }), recentTasksEmptyHandler()]),
       teamMembersHandler([]),
     ])
-    await screen.findByRole('heading', { name: TASK.title })
+    // ADR-0019：阶段从运行卡移入「运行详情」（每段只留一个简短状态）。
+    await showWorkspace('run')
+    await screen.findByTestId('run-detail-meta')
+    const switchRun = async (label: string): Promise<void> => {
+      await user.click(screen.getByLabelText('切换运行'))
+      await user.click(await screen.findByRole('menuitem', { name: label }))
+    }
+    // 默认选中活跃运行（带阶段）：画「工具执行中」。
     const chips = await screen.findAllByTestId('run-phase')
     expect(chips).toHaveLength(1)
     expect(chips[0]).toHaveTextContent('工具执行中')
+    // 切换其余三段：running 无阶段 / 等待审批 / 终态 都不画。
+    for (const label of ['第 2 次运行', '第 3 次运行', '第 4 次运行']) {
+      await switchRun(label)
+      await waitFor(() => expect(screen.queryByTestId('run-phase')).toBeNull())
+    }
   })
 
   it('残缺形状不白屏：running 的 Run 整块没有 lastPhase 字段时照常渲染（不画徽标）', async () => {

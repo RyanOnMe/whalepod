@@ -51,6 +51,9 @@ export default defineConfig({
     // #381：两成员交接闭环（后端交付 → 前端接收 → 执行 → 验收）。环境同时只支持一台
     // Node，故按成员先后换设备（与 p1-345 同一限制、同一处理），成套冷启。
     { name: 'p1-381', testMatch: /handoff-loop\.spec\.ts/ },
+    // #393：连续对话工作区（ADR-0019）——一次真执行链上判连续呈现 / 默认继续 / 段内审批 /
+    // 被拒指令 / 分页游标 / 离线拦截，另一支用例用读面打桩供 25 段判真实布局与阅读锚点。
+    { name: 'p1-393', testMatch: /conversation-flow\.spec\.ts/ },
   ],
   use: {
     baseURL: 'http://localhost:5173',

@@ -1,9 +1,19 @@
 import { act, screen, within, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
-import { BOB, loggedInHandlers, makeArtifact, makeTask, taskRoomHandler } from './fixtures.js'
+import {
+  BOB,
+  loggedInHandlers,
+  makeArtifact,
+  makeRun,
+  makeTask,
+  ok,
+  taskRoomHandler,
+} from './fixtures.js'
 import { formatRunReference } from '../src/features/task/runReference.js'
 import { renderApp } from './render.js'
+
+const ROOM_RUN = 'abababab-0000-4000-8000-0000000000aa'
 
 function openRoom(artifacts: ReturnType<typeof makeArtifact>[] = []) {
   const task = makeTask({
@@ -11,9 +21,21 @@ function openRoom(artifacts: ReturnType<typeof makeArtifact>[] = []) {
     assignmentStatus: 'accepted',
     status: 'in_progress',
   })
+  const run = makeRun({ id: ROOM_RUN, status: 'completed' })
   return renderApp(
     `/tasks/${task.id}`,
-    loggedInHandlers(BOB, [taskRoomHandler(task, { artifacts })]),
+    loggedInHandlers(BOB, [
+      // ADR-0019：文件按 runId 落在对应回复之后——夹具也要有那个 Run。
+      taskRoomHandler(task, {
+        runs: [run],
+        artifacts: artifacts.map((artifact) => ({ ...artifact, runId: ROOM_RUN })),
+      }),
+      {
+        method: 'GET',
+        url: new RegExp(`/api/v1/runs/${ROOM_RUN}/events`),
+        respond: () => ok({ events: [] }),
+      },
+    ]),
   )
 }
 
@@ -88,7 +110,7 @@ describe('聚焦工作区', () => {
 
   it('从交付物引用运行时切换到团队讨论，引用不会发送给 Agent', async () => {
     const user = userEvent.setup()
-    const artifact = makeArtifact({ title: 'team.md' })
+    const artifact = makeArtifact({ title: 'team.md', runId: ROOM_RUN })
     const app = openRoom([artifact])
     await user.click(await screen.findByRole('button', { name: '查看交付物 team.md' }))
     await user.click(screen.getByRole('button', { name: '在讨论中引用' }))

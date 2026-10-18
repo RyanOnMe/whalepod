@@ -47,8 +47,15 @@ export interface MockResponse {
 export interface MockHandler {
   method: string
   url: RegExp
-  /** 返回 MockResponse = JSON envelope；直接返回 Response = 原样透传（二进制下载用）。 */
-  respond: (init: RequestInit) => MockResponse | Response | Promise<MockResponse | Response>
+  /**
+   * 返回 MockResponse = JSON envelope；直接返回 Response = 原样透传（二进制下载用）。
+   * `url` 是命中的完整请求地址（含查询串）——按游标/参数分支的桩（分页续读、限流重试）
+   * 需要它；只关心 body 的桩照旧写 `() => ok(...)`。
+   */
+  respond: (
+    init: RequestInit,
+    url: string,
+  ) => MockResponse | Response | Promise<MockResponse | Response>
 }
 
 export function ok(data: unknown): MockResponse {
@@ -94,7 +101,7 @@ export function installFetch(handlers: readonly MockHandler[]): ReturnType<typeo
     const requestInit = init ?? {}
     for (const handler of handlers) {
       if (handler.method === method && handler.url.test(url)) {
-        const response = await handler.respond(requestInit)
+        const response = await handler.respond(requestInit, url)
         // Response 实例：raw 透传（P1-15 Artifact 内容下载等二进制面）。
         if (response instanceof Response) return response
         return new Response(JSON.stringify(response.body), {

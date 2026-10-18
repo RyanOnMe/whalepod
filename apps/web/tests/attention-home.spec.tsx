@@ -88,7 +88,7 @@ function fixture(
                 : [],
             artifacts: kind === 'inspect_candidate' ? [artifact] : [],
           },
-        ).respond({})
+        ).respond({}, `/api/v1/tasks/${task.id}`)
       },
     },
     {
@@ -234,7 +234,12 @@ describe('首页个人行动入口 (#332)', () => {
       }
       f.queryClient.setQueryData(['task-room', f.task.id], cached, { updatedAt: 1 })
       if (kind === 'decide_approval') {
-        f.queryClient.setQueryData(['run', f.run.id, 'events'], { events: [] }, { updatedAt: 1 })
+        // P1-393：审批卡与对话共用分页事件缓存键（['run', runId] 前缀下）。
+        f.queryClient.setQueryData(
+          ['run', f.run.id, 'event-pages'],
+          { events: [], complete: true },
+          { updatedAt: 1 },
+        )
       }
       await user.click(screen.getByRole('link', { name: `${labels[kind]} · ${f.task.title}` }))
       await screen.findByTestId('task-back-link')
@@ -242,7 +247,9 @@ describe('首页个人行动入口 (#332)', () => {
       expect(document.getElementById(id)).toBeNull()
       expect(f.queryClient.getQueryState(['task-room', f.task.id])?.status).toBe('success')
       if (kind === 'decide_approval')
-        expect(f.queryClient.getQueryState(['run', f.run.id, 'events'])?.status).toBe('success')
+        expect(f.queryClient.getQueryState(['run', f.run.id, 'event-pages'])?.status).toBe(
+          'success',
+        )
       await act(async () => release())
       await waitFor(() => expect(document.getElementById(id)).toHaveFocus())
       expect(f.fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
@@ -259,7 +266,8 @@ describe('首页个人行动入口 (#332)', () => {
       expect(back).toHaveFocus()
       f.state.approvalToolName = '审批工具更新'
       await act(async () => {
-        await f.queryClient.invalidateQueries({ queryKey: ['run', f.run.id, 'events'] })
+        // 实时失效走 run 族前缀（run.changed/run.event 的口径），不是某个具体子键。
+        await f.queryClient.invalidateQueries({ queryKey: ['run', f.run.id] })
       })
       await screen.findByText('审批工具更新', { exact: true })
       expect(back).toHaveFocus()

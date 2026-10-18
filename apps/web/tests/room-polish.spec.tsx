@@ -134,7 +134,7 @@ describe('加载骨架（#231）', () => {
 })
 
 describe('「上方」方位词清理（#231 / #167 登记）', () => {
-  it('RunTimeline 空态与设备页空态不再出现「上方」', async () => {
+  it('执行区空态与设备页空态不再出现「上方」', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId })
     const view = renderApp(`/tasks/${task.id}`, [
       ...loggedInHandlers(BOB, [
@@ -148,7 +148,8 @@ describe('「上方」方位词清理（#231 / #167 登记）', () => {
     ])
     await screen.findByRole('heading', { name: task.title })
     const roomText = document.body.textContent ?? ''
-    expect(roomText).toContain('还没有 Run')
+    // ADR-0019：没有运行时的执行区是欢迎句（运行详情里的「还没有 Run」按需打开才画）。
+    expect(roomText).toContain('我们要完成什么')
     expect(roomText).not.toContain('上方')
     view.unmount()
 

@@ -186,7 +186,7 @@ async function startRunViaUi(
   if (await confirmDialog.isVisible().catch(() => false)) {
     await confirmDialog.getByRole('button', { name: /确认以完全权限启动/ }).click()
   }
-  await expect(page.locator('.run-item').first()).toBeVisible()
+  await expect(page.locator('[data-testid="run-segment"]').first()).toBeVisible()
   return waitForFreshRunId(cookie, taskId, known)
 }
 

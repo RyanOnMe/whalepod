@@ -10,6 +10,11 @@
  *   保证），这里不做二次过滤。
  */
 export const RUN_LIVE_BUFFER_MAX_CHARS = 64 * 1024
+/**
+ * 最多同时留多少个 Run 的缓冲。终态段的"未持久化直播"要在记录里可查，所以不能一进终态就丢；
+ * 但也不能随会话里的 Run 数无限占位（每个封顶 64KB）——超出上限时丢**最早**建槽的那个。
+ */
+export const RUN_LIVE_BUFFER_MAX_SLOTS = 8
 
 interface RunLiveSlot {
   text: string
@@ -23,6 +28,12 @@ const listeners = new Map<string, Set<() => void>>()
 function slotOf(runId: string): RunLiveSlot {
   let slot = slots.get(runId)
   if (slot === undefined) {
+    // Map 保持插入序：队首就是最早建槽的那个。
+    while (slots.size >= RUN_LIVE_BUFFER_MAX_SLOTS) {
+      const oldest = slots.keys().next().value
+      if (oldest === undefined) break
+      dropRunLive(oldest)
+    }
     slot = { text: '', lastSeq: 0 }
     slots.set(runId, slot)
   }
@@ -59,7 +70,7 @@ export function getRunLiveText(runId: string): string {
   return slots.get(runId)?.text ?? ''
 }
 
-/** Run 终态/离页时清理（缓冲可丢，但不为已关看的 Run 无限占位）。 */
+/** 释放某个 Run 的缓冲（超出槽位上限时的清场入口；终态段的记录仍靠它保到看不着为止）。 */
 export function dropRunLive(runId: string): void {
   slots.delete(runId)
 }

@@ -2,7 +2,7 @@ import { act, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { queryKeys } from '../src/app/query-client.js'
-import { showWorkspace } from './workspace.js'
+import { showWorkspace, typeInstruction } from './workspace.js'
 import { renderApp } from './render.jsx'
 import { selectOption } from './select-menu.js'
 import {
@@ -211,7 +211,7 @@ describe('从交付物发起复核 (#326)', () => {
   it('保留草稿、明确选Agent、只发送所选材料；新发布不扩大选择', async () => {
     const user = userEvent.setup()
     const f = fixture()
-    await user.type(await screen.findByLabelText('指令'), '我已写好的复核要求')
+    await typeInstruction('我已写好的复核要求', user)
     await review(user)
     expect(screen.getByLabelText('指令')).toHaveValue('我已写好的复核要求')
     expect(screen.getByRole('button', { name: '开始复核' })).toBeDisabled()
@@ -337,7 +337,9 @@ describe('根据意见修订与真人验收 (#327)', () => {
         release = resolve
       })
       const f = fixture({ instructionGate })
-      await user.type(await screen.findByLabelText('指令'), '当前执行要求')
+      await typeInstruction('当前执行要求', user)
+      // 这条判据驱动「发送期间连续选择」：显式切到新执行路径（默认是续聊）。
+      await selectOption(user, '执行方式', '开始新执行（不接旧会话）')
       await selectOption(user, '选择 Agent', 'Builder')
       await user.click(screen.getByRole('button', { name: '开始执行' }))
       await waitFor(() => expect(f.posts).toHaveLength(1))
@@ -367,7 +369,7 @@ describe('根据意见修订与真人验收 (#327)', () => {
   it('最近执行是Reviewer时仍不自动选来源；手动回到Builder并携带意见材料', async () => {
     const user = userEvent.setup()
     const f = fixture({ revisionHistory: true })
-    await user.type(await screen.findByLabelText('指令'), '请保留这段修订要求')
+    await typeInstruction('请保留这段修订要求', user)
     await showWorkspace('artifacts')
     await user.click(screen.getByRole('button', { name: '根据意见修订' }))
     expect(screen.getByLabelText('来源执行')).toHaveTextContent('选择要继续的会话')
