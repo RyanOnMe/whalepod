@@ -194,60 +194,68 @@ export function SelectMenu({
       <label id={labelId} htmlFor={id} className="select-menu-label">
         {label}
       </label>
-      <Menu
-        portal={portal}
-        open={open}
-        // 打开即聚焦首项：这是 Menu 里方向键导航与「Esc 后焦点回触发器」的**前提**
-        // （上游 autoFocus 为 false 时那两条都不生效）。真人从键盘进来的路径必须留着。
-        autoFocus
-        align="start"
-        className="select-menu"
-        items={items}
-        {...(value === '' ? {} : { selectedId: value })}
-        onSelect={select}
-        onClose={close}
-        data-testid={`${id}-menu`}
-        anchor={
-          <button
-            ref={triggerRef}
-            type="button"
-            id={id}
-            className="select-menu-trigger"
-            aria-haspopup="menu"
-            aria-expanded={open}
-            // 可访问名**只挂标签**，不拼当前值：原生 select 的 accname 同样只有标签
-            // （值另有自己的暴露通道，读屏会读当前项）。实测踩过：把 `-value` 也写进
-            // aria-labelledby 后，可访问名变成「责任人 Bob（@bob）· 你」，
-            // `getByLabelText('责任人')` 全站失配——既有测试与 e2e 都按标签定位控件，
-            // 名字里混进值等于把「控件身份」和「控件状态」焊死在一起。
-            // 调用方给了 ariaLabel 就用它，此时不再挂 aria-labelledby
-            // （两条同时存在时 aria-labelledby 胜出，留着只会让人以为它生效）。
-            {...(ariaLabel === undefined
-              ? { 'aria-labelledby': labelId }
-              : { 'aria-label': ariaLabel })}
-            // 说明文字挂到控件上（原生 select 没有对应通道，这是按钮形态的补强）：
-            // 只在真有 hint 时挂，免得 aria-describedby 指向一个不存在的 id。
-            {...(hint === undefined ? {} : { 'aria-describedby': hintId })}
-            // 这里**刻意不挂 aria-required**：`role=button` 不在 ARIA 1.2 的
-            // aria-required 白名单里（见文件头「已知缺口」第 1 条），挂了也不会被播报，
-            // 只是把"必填"这件事伪装成已表达。必填由宿主表单的提交守卫兜（各落页点各自
-            // 一条，别删）。
-            disabled={disabled}
-            onClick={() => {
-              setOpen(!open)
-            }}
-          >
-            <span
-              id={`${id}-value`}
-              className="select-menu-value"
-              data-placeholder={selected === undefined ? 'true' : undefined}
+      <span
+        style={{ display: 'contents' }}
+        onKeyDownCapture={(event) => {
+          // Portal menus must leave from their trigger's document position.
+          if (open && event.key === 'Tab') close()
+        }}
+      >
+        <Menu
+          portal={portal}
+          open={open}
+          // 打开即聚焦首项：这是 Menu 里方向键导航与「Esc 后焦点回触发器」的**前提**
+          // （上游 autoFocus 为 false 时那两条都不生效）。真人从键盘进来的路径必须留着。
+          autoFocus
+          align="start"
+          className="select-menu"
+          items={items}
+          {...(value === '' ? {} : { selectedId: value })}
+          onSelect={select}
+          onClose={close}
+          data-testid={`${id}-menu`}
+          anchor={
+            <button
+              ref={triggerRef}
+              type="button"
+              id={id}
+              className="select-menu-trigger"
+              aria-haspopup="menu"
+              aria-expanded={open}
+              // 可访问名**只挂标签**，不拼当前值：原生 select 的 accname 同样只有标签
+              // （值另有自己的暴露通道，读屏会读当前项）。实测踩过：把 `-value` 也写进
+              // aria-labelledby 后，可访问名变成「责任人 Bob（@bob）· 你」，
+              // `getByLabelText('责任人')` 全站失配——既有测试与 e2e 都按标签定位控件，
+              // 名字里混进值等于把「控件身份」和「控件状态」焊死在一起。
+              // 调用方给了 ariaLabel 就用它，此时不再挂 aria-labelledby
+              // （两条同时存在时 aria-labelledby 胜出，留着只会让人以为它生效）。
+              {...(ariaLabel === undefined
+                ? { 'aria-labelledby': labelId }
+                : { 'aria-label': ariaLabel })}
+              // 说明文字挂到控件上（原生 select 没有对应通道，这是按钮形态的补强）：
+              // 只在真有 hint 时挂，免得 aria-describedby 指向一个不存在的 id。
+              {...(hint === undefined ? {} : { 'aria-describedby': hintId })}
+              // 这里**刻意不挂 aria-required**：`role=button` 不在 ARIA 1.2 的
+              // aria-required 白名单里（见文件头「已知缺口」第 1 条），挂了也不会被播报，
+              // 只是把"必填"这件事伪装成已表达。必填由宿主表单的提交守卫兜（各落页点各自
+              // 一条，别删）。
+              disabled={disabled}
+              onClick={() => {
+                setOpen(!open)
+              }}
             >
-              {display}
-            </span>
-            <IconChevronDownOutline14 className="select-menu-chevron" />
-          </button>
-        }
-      />
+              <span
+                id={`${id}-value`}
+                className="select-menu-value"
+                data-placeholder={selected === undefined ? 'true' : undefined}
+              >
+                {display}
+              </span>
+              <IconChevronDownOutline14 className="select-menu-chevron" />
+            </button>
+          }
+        />
+      </span>
       {hint === undefined ? null : (
         <p id={hintId} className="field-hint">
           {hint}

@@ -159,6 +159,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
       })
     }
     await owner.emulateMedia({ reducedMotion: 'reduce' })
+    await owner.getByLabel('选择 Agent', { exact: true }).focus()
     await owner.keyboard.press('Enter')
     const menu = owner.getByRole('menu', { name: '可用选项' })
     await expect(menu).toHaveCSS('transition-duration', '0s')

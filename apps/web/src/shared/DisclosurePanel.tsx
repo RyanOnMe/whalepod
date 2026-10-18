@@ -150,7 +150,9 @@ export function DisclosurePanel({
           }
         : {})}
       onKeyDown={(event) => {
-        if (!portal) return
+        // A nested portaled menu owns its keys (DSH handles Escape on document).
+        if (!portal || !(event.target instanceof Node) || !panel.current?.contains(event.target))
+          return
         if (event.key === 'Escape') {
           event.preventDefault()
           event.stopPropagation()
@@ -187,7 +189,12 @@ export function DisclosurePanel({
         insidePointer.current = event.nativeEvent
       }}
       onKeyDown={(event) => {
-        if (event.key === 'Escape' && ref.current?.open) {
+        if (
+          event.key === 'Escape' &&
+          ref.current?.open &&
+          event.target instanceof Node &&
+          ref.current.contains(event.target)
+        ) {
           event.preventDefault()
           event.stopPropagation()
           close(true)
