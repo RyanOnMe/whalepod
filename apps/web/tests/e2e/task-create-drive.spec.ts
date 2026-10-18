@@ -232,7 +232,9 @@ test('失败后从原任务继续：配对真 Node 后在这个任务手动发�
   await alice.getByLabel('指令').fill('接着把发布说明写完')
   await alice.getByRole('button', { name: '开始执行' }).click()
 
-  await expect(alice.locator('.run-item').first()).toBeVisible({ timeout: 30_000 })
+  await expect(alice.locator('[data-testid="run-segment"]').first()).toBeVisible({
+    timeout: 30_000,
+  })
   expect((await waitForTaskRuns(offlineTaskId, 1)).length).toBeGreaterThan(0)
   // 恢复入口落在既有任务上：项目任务数仍是 1（没有悄悄重开一个）。
   expect(await projectTasks()).toHaveLength(1)
@@ -253,7 +255,9 @@ test('设备在线：toast 说已自动开始执行，且 Run 真的起来了', 
 
   // 执行真的发生（不只是说了句话）：Task Room 聚合里能看到 Run，页面也画出行。
   expect((await waitForTaskRuns(taskId, 1)).length).toBeGreaterThan(0)
-  await expect(alice.locator('.run-item').first()).toBeVisible({ timeout: 30_000 })
+  await expect(alice.locator('[data-testid="run-segment"]').first()).toBeVisible({
+    timeout: 30_000,
+  })
   // 在线分支不改数目：两个任务（离线分支那个 + 这个）。
   expect(await projectTasks()).toHaveLength(2)
   // #352（设备视图随 pack 安装刷新）在这里判不了，两个理由都记着：E2E 的 e2e-pack 是

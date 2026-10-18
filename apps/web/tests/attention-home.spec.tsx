@@ -88,7 +88,7 @@ function fixture(
                 : [],
             artifacts: kind === 'inspect_candidate' ? [artifact] : [],
           },
-        ).respond({})
+        ).respond({}, `/api/v1/tasks/${task.id}`)
       },
     },
     {

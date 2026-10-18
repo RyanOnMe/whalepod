@@ -114,6 +114,19 @@ for (const name of [
   )
   for (const row of rows) {
     assert.equal(row.headerCount, 1)
+    // 标题叠放：Console 是弹在开着的运行详情抽屉之上的模态（ADR-0019 把入口挪进详情），
+    // 所以它那一档恰好两层；其余每一档都只有一层。少于/多于都不许悄悄放过。
+    assert(
+      Number.isInteger(row.stackedHeaderCount) &&
+        row.stackedHeaderCount >= 1 &&
+        row.stackedHeaderCount <= 2,
+      `${name}/${row.width}: stackedHeaderCount 必须是 1 或 2`,
+    )
+    assert.equal(
+      row.stackedHeaderCount,
+      name === 'console' ? 2 : 1,
+      `${name}/${row.width} 叠放层数`,
+    )
     assert.equal(row.viewport, row.width)
     assert(Number.isFinite(row.scroll) && row.scroll > 0 && row.scroll <= row.viewport)
     assert((await stat(join(directory, `surface-${name}-${row.width}.png`))).size > 0)

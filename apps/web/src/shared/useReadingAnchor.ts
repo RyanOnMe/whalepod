@@ -41,8 +41,13 @@ export function useReadingAnchor(
 
   const capture = useCallback(() => {
     if (el === null) return
-    const first = el.querySelector<HTMLElement>('[data-conversation-entry]')
-    if (first === null) return
+    // 「第一个可见条目」= 下边缘仍在容器顶边之下的第一条：DOM 里的第一条常常已经滚到
+    // 视口之上很远（历史列表很长时），拿它当锚点等于锚在一段看不见的内容上。
+    const top = el.getBoundingClientRect().top
+    const first = [...el.querySelectorAll<HTMLElement>('[data-conversation-entry]')].find(
+      (element) => element.getBoundingClientRect().bottom > top,
+    )
+    if (first === undefined) return
     const key = first.dataset['conversationEntry'] ?? ''
     if (!KEY_PATTERN.test(key)) return
     anchorRef.current = { key, top: offsetTop(el, first) }

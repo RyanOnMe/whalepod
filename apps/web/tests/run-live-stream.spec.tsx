@@ -20,11 +20,15 @@ import { appendLiveDelta, resetRunLiveBuffers } from '../src/shared/realtime/run
 import { isNearBottom, NEAR_BOTTOM_PX } from '../src/shared/useStickToBottom.js'
 import type { RunEventItem, RunView } from '../src/shared/api/types.js'
 
-/** 段里的动作区：只数渲染次数，不渲染任何东西（有意的空壳）。 */
-const counters = vi.hoisted(() => ({ runActions: 0 }))
-vi.mock('../src/features/run/RunActions.js', () => ({
-  RunActions: (): null => {
-    counters.runActions += 1
+/**
+ * 段里的**非订阅**子树（活动行）：只数渲染次数，不渲染任何东西（有意的空壳）。
+ * #393 起运行行动面搬到运行详情里，段上不再有 RunActions——探针换成活动行，
+ * 要钉住的回归不变：订阅必须留在下沉的直播子组件里，段体不许每帧跟着重画。
+ */
+const counters = vi.hoisted(() => ({ activityLine: 0 }))
+vi.mock('../src/features/task/RunActivityLine.js', () => ({
+  RunActivityLine: (): null => {
+    counters.activityLine += 1
     return null
   },
 }))
@@ -214,21 +218,21 @@ describe('#275 对话的跟随滚动可被用户接管', () => {
 })
 
 describe('#275 每帧重渲染收窄', () => {
-  it('一个 delta 不引起段内动作区重渲染（订阅只在下沉的子组件里）', async () => {
+  it('一个 delta 只重画直播子树，段体（活动行）不跟着重画', async () => {
     resetRunLiveBuffers()
     const runId = 'b0b0b0b0-0000-4000-8000-000000000004'
     await openConversation('running', runId)
     act(() => {
       appendLiveDelta(runId, 1, 'a')
     })
-    const before = counters.runActions
-    // 判据不许空转：动作区**确实渲染过**（否则"没涨"是因为压根没画，而不是因为订阅下沉）。
+    const before = counters.activityLine
+    // 判据不许空转：活动行**确实渲染过**（否则"没涨"是因为压根没画，而不是因为订阅下沉）。
     expect(before).toBeGreaterThan(0)
     act(() => {
       appendLiveDelta(runId, 2, 'b')
       appendLiveDelta(runId, 3, 'c')
     })
-    // 订阅若回到段组件上，这里会涨 2（每个 delta 一次）——这正是本判据要钉住的回归。
-    expect(counters.runActions).toBe(before)
+    // 订阅若回到段组件（或页面）上，这里会涨 2（每个 delta 一次）——这正是本判据要钉住的回归。
+    expect(counters.activityLine).toBe(before)
   })
 })

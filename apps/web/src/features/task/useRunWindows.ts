@@ -19,7 +19,9 @@ import {
   RUN_EVENT_FETCH_CONCURRENCY,
   RUN_EVENT_PAGE_LIMIT,
   admitRuns,
+  mergeEvents,
   readRunEventsToEnd,
+  type RunEventWindow,
 } from '../../shared/realtime/run-event-pages.js'
 import { conversationReadOrder } from './conversation.js'
 
@@ -27,6 +29,7 @@ export type RunEventStatus = 'pending' | 'complete' | 'incomplete'
 
 export interface RunRead {
   readonly detail: RunView | undefined
+  readonly detailSettled: boolean
   readonly events: readonly RunEventItem[]
   readonly eventsStatus: RunEventStatus
   readonly retry: () => void
@@ -47,7 +50,14 @@ export function runEventsQueryOptions(runId: string, queryClient: QueryClient) {
   return {
     queryKey: key,
     queryFn: async () => {
-      return await readRunEventsToEnd(
+      // 续读游标 = 缓存里已读到的最大 seq（缓存永远是本人可见流的**前缀**，读总是从游标
+      // 顺序往后走，所以既不会跳帧也不会重复读）。活跃运行每来一条持久事件都会失效这条
+      // 读取：不续读的话，每次失效都要把整条流从头发一遍（长运行下是 O(事件数/500) 的
+      // 重复请求），而其中读到的内容我们本来就有。
+      const cached = queryClient.getQueryData<RunEventWindow>(key)
+      const known = (cached?.events ?? []).filter((item) => item.runId === runId)
+      const resumeAfter = known.reduce((max, item) => Math.max(max, item.seq), 0)
+      const window = await readRunEventsToEnd(
         async (after) => {
           const query = new URLSearchParams({ limit: String(RUN_EVENT_PAGE_LIMIT) })
           if (after !== undefined) query.set('after', String(after))
@@ -56,11 +66,19 @@ export function runEventsQueryOptions(runId: string, queryClient: QueryClient) {
           )
           return page.events
         },
-        (events) => {
-          // 已读内容立刻可见；最终结果（complete）由 queryFn 返回时覆盖。
-          queryClient.setQueryData(key, { events, complete: false })
+        {
+          resumeAfter,
+          onProgress: (events) => {
+            // 已读内容立刻可见；最终结果（complete）由 queryFn 返回时覆盖。
+            queryClient.setQueryData(key, {
+              events: mergeEvents([...known, ...events]),
+              complete: false,
+            })
+          },
         },
       )
+      // 续读只带回"游标之后"的部分，已知前缀要合并回去（身份去重 + 按 seq 排序）。
+      return { events: mergeEvents([...known, ...window.events]), complete: window.complete }
     },
   }
 }
@@ -137,6 +155,10 @@ export function useRunReads(runs: readonly TaskRoomRun[]): ReadonlyMap<string, R
     const events = eventQueries[index]
     reads.set(run.id, {
       detail: detail?.data,
+      // 详情读也改变段的形状（RunActions/失败说明出现在读到之后）——阅读锚点的「都读完了」
+      // 必须把它算进去，否则锚点会在布局还在长的时候提前谢幕：真实房间里表现为
+      // 「加载更早」之后条目继续下移（p1-393 生产验收实测并登记为判据）。
+      detailSettled: detail === undefined || !detail.isPending,
       events: events?.data?.events ?? [],
       eventsStatus: events === undefined ? 'pending' : statusOf(events),
       retry: () => {

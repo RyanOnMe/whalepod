@@ -3,7 +3,7 @@ import { showAgentCreation } from './helpers.js'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import {
   env,
   fillAndEnter,
@@ -23,6 +23,23 @@ import { contrastRatio, parseCssColor } from '../contrast.js'
 const PASSWORD = 'correct horse battery staple'
 const tag = randomUUID().slice(0, 8)
 const evidence = join(process.cwd(), 'artifacts/evidence/run-micro', tag)
+
+/**
+ * 打开某一段的 Console：入口在运行详情里（ADR-0019 决定 2），详情没开就先打开它。
+ * 详情与 Console 是同一段运行的产物——这里固定用同一个 runId，避免选错段。
+ *
+ * 判据必须看**可见性**而不是元素个数：详情面板开过一次就常驻 DOM（收起时是 `hidden`），
+ * 用 `count()` 会把收起的入口当成"已经在"，接着去点一个 hidden 元素会一直静默等到整条
+ * 用例超时（2026-10-18 实测：180s 全耗在这一步，且没有任何断言报错）。
+ */
+async function openRunConsole(page: Page, runId: string): Promise<void> {
+  const trigger = page.getByTestId('open-run-console')
+  if (!(await trigger.isVisible())) {
+    await page.locator(`button[data-run-id="${runId}"]`).click()
+    await expect(page.getByTestId('run-detail-meta')).toBeVisible({ timeout: 30_000 })
+  }
+  await trigger.click()
+}
 
 test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减少动态 × 提示层/铃铛/可关闭 toast', async ({
   browser,
@@ -218,7 +235,7 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
         working: false,
       })
     }
-    await owner.getByTestId('open-run-console').click()
+    await openRunConsole(owner, runId)
     await owner.getByTestId('console-filter-approval').focus()
     await owner.keyboard.press('Enter')
     await expect(owner.getByTestId('console-filter-approval')).toHaveAttribute(
@@ -392,7 +409,11 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     }
     await owner.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'))
     await owner.setViewportSize({ width: 1280, height: 900 })
-    await owner.getByTestId('run-live-panel').screenshot({ path: join(evidence, 'run-panel.png') })
+    // ADR-0019：这一段（段头 + 回复 + 记录）就是「运行面板」的替代物。
+    await owner
+      .locator('[data-testid="run-segment"]')
+      .first()
+      .screenshot({ path: join(evidence, 'run-panel.png') })
     await owner.emulateMedia({ reducedMotion: 'reduce' })
     expect(
       await owner.evaluate(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches),
@@ -451,7 +472,7 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
       .locator('.bell-toggle__glyph')
       .evaluate((element) => getComputedStyle(element).animationName)
     expect(bellRingUnderReduce).toBe('none')
-    await owner.getByTestId('open-run-console').click()
+    await openRunConsole(owner, runId)
     await owner.getByTestId('console-filter-tool').click()
     await expect(owner.getByTestId('tool-call-chip').last()).toHaveAttribute('data-status', 'done')
     await expect(owner.getByTestId('console-filter-tool')).toBeFocused()
@@ -571,6 +592,15 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
         runCreated: false,
       },
     }
+    /*
+     * ADR-0019 起 Console 的入口在「运行详情」里，为打开它把详情留在了画面上；而 ≤1199px
+     * 时详情占满这一栏（`.workspace-body[data-inspecting] > .workspace-conversation` 被
+     * `display:none`），输入框自然不在了。窄屏这一段的布局判据要在**关掉详情之后**量
+     * ——真人的顺序也是先关详情、再写下这一句（2026-10-18 实测：带着详情切到 320px，
+     * 输入框的截图会一直等到整条用例超时，且没有任何断言报错）。
+     */
+    await owner.getByRole('button', { name: '关闭工作区详情' }).click()
+    await expect(owner.locator('.workspace-conversation')).toBeVisible()
     await owner.setViewportSize({ width: 320, height: 900 })
     await expect(owner.locator('.app-sidebar')).toHaveCount(0)
     expect(await owner.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(

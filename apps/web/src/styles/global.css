@@ -3362,6 +3362,9 @@ textarea::placeholder {
   font-size: 12px;
 }
 .conversation-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -3639,6 +3642,28 @@ textarea::placeholder {
 .workspace-runs .run-item {
   flex: 1;
   min-width: min(100%, 220px);
+}
+/*
+ * #393 决定 5：事件读取不完整的披露在**段体**上（不是折叠区）——终态运行读不到事件时，
+ * 段头与活动行都会说"已完成"，唯一能阻止"没读到"被读成"没有产出"的就是这一条。
+ */
+.run-events-alert {
+  /* 与 .stream-incomplete 同一档警示色（本地重绑到静态 900 档，深浅主题都成立）。 */
+  --dsw-alias-state-warn-primary: var(--dsw-static-amber-900);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: var(--space-2) var(--space-3);
+  border: 0.5px solid var(--dsw-alias-state-warn-primary);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent);
+}
+.run-events-alert p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-ink);
 }
 .run-records summary {
   cursor: pointer;

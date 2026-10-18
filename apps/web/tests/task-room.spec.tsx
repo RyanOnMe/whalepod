@@ -8,7 +8,7 @@ import { showTaskMenu } from './workspace.js'
  * #162 起本文件还承载「指人的位置必须说人名」的组件层判据（与 e2e 共用
  * `person-identity.ts` 的内核）。
  */
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -216,6 +216,34 @@ describe('task-room', () => {
       // 未开始（无 startedAt）：不画时长行——没有时间事实就不假装。
       await switchRun('第 3 次运行')
       expect(screen.queryByTestId('run-duration')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('#248 活跃运行的时长每 30 秒自跳（面板常驻挂载，快照一次会把时长冻住）', async () => {
+    // 只 fake Date + setInterval：waitFor 的轮询定时器保持真实，否则 testing-library 的异步
+    // 查询会一起被冻死（既有判据的踩坑记录）。时长行所在的面板是**常驻挂载**的（只切
+    // hidden），所以"打开时快照一次 now"会让一个跑着的 Run 永远停在同一个读数上。
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    vi.setSystemTime(new Date('2026-10-01T03:00:00.000Z'))
+    try {
+      const task = makeTask({ assigneeUserId: BOB.userId })
+      const running = makeRun({ status: 'running', startedAt: '2026-10-01T00:00:05.000Z' })
+      renderApp(
+        `/tasks/${task.id}`,
+        loggedInHandlers(BOB, [
+          taskRoomHandler(task, { runs: [running] }),
+          ...runDetailHandlers(running),
+        ]),
+      )
+      await showWorkspace('run')
+      expect(await screen.findByTestId('run-duration')).toHaveTextContent('2小时59分')
+      await act(async () => {
+        vi.advanceTimersByTime(60_000)
+      })
+      // 挂钟推进一分钟：已耗时长到 3 小时整（自跳之后重算，不是冻在打开那一刻）。
+      expect(screen.getByTestId('run-duration')).toHaveTextContent('3小时0分')
     } finally {
       vi.useRealTimers()
     }

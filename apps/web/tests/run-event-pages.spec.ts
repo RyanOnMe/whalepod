@@ -116,11 +116,25 @@ describe('事件分页读到末尾（ADR-0019 决定 5）', () => {
     )
     const tails: number[] = []
     let call = 0
-    await readRunEventsToEnd(
-      async () => (call++ === 0 ? first : [pageEvent(RUN, 501)]),
-      (events) => tails.push(events.length),
-    )
+    await readRunEventsToEnd(async () => (call++ === 0 ? first : [pageEvent(RUN, 501)]), {
+      onProgress: (events) => tails.push(events.length),
+    })
     expect(tails).toEqual([RUN_EVENT_PAGE_LIMIT, RUN_EVENT_PAGE_LIMIT + 1])
+  })
+
+  it('resumeAfter：从已有游标续读，只取游标之后的事件（活跃运行每帧失效的续读路径）', async () => {
+    const afters: Array<number | undefined> = []
+    const result = await readRunEventsToEnd(
+      async (after) => {
+        afters.push(after)
+        // 服务端语义：after 之后的可见流；这一页不足 500 条 = 到末尾。
+        return after === undefined ? [] : [pageEvent(RUN, after + 1)]
+      },
+      { resumeAfter: 900 },
+    )
+    expect(afters).toEqual([900])
+    expect(result.complete).toBe(true)
+    expect(result.events.map((item) => item.seq)).toEqual([901])
   })
 })
 
@@ -153,5 +167,21 @@ describe('运行读取并发与优先级（ADR-0019 决定 5）', () => {
   it('已读到的运行不重复入队；队列走完不产生新请求', () => {
     const order = ['run-1', 'run-2']
     expect(admitRuns(order, ['run-1', 'run-2'], ['run-1', 'run-2'], 4)).toEqual([])
+  })
+
+  it('窗口滑出的段必须让出名额：名额是"还在这一屏里的在途"，不是"历史准入总数"', () => {
+    // 真实房间的形态（首屏 20 段、每来一段新运行就挤掉最老一段）：被挤出的段已经不在
+    // order 里、读取查询也撤下了。旧实现按 admitted 总量算在途，于是窗口每滑动一次就永久
+    // 漏掉一个名额——第 4 次之后 free 恒为 0，新段再也读不到（静默停在 pending）。
+    const order = ['run-8', 'run-9']
+    const admitted = ['run-1', 'run-2', 'run-3', 'run-4', 'run-5', 'run-8']
+    expect(admitRuns(order, admitted, [], RUN_EVENT_FETCH_CONCURRENCY)).toEqual(['run-9'])
+    // 窗口内的那个还没读完 → 只按它算在途，仍有 3 个名额，但不能重复准入它。
+    expect(admitRuns(order, admitted, ['run-8'], RUN_EVENT_FETCH_CONCURRENCY)).toEqual(['run-9'])
+    // 窗口外的不占名额、也不许被重新拉进来：只按 order 顺序补窗口内的段。
+    expect(admitRuns(['run-8', 'run-9'], ['run-1'], [], 1)).toEqual(['run-8'])
+    // 上限照旧生效：窗口内还有一个在读时，唯一的名额不给出（补位不等于突破并发）。
+    expect(admitRuns(['run-8', 'run-9'], ['run-1', 'run-8'], [], 1)).toEqual([])
+    expect(admitRuns(['run-8', 'run-9'], ['run-1', 'run-8'], ['run-8'], 1)).toEqual(['run-9'])
   })
 })

@@ -3,20 +3,28 @@
  *
  * 主界面不再常驻运行列表：每段的入口把这里打开。详情内可切换历史运行，看到
  * 设备、时间、时长、血缘、审批档与约定绑定，查看输入快照与交接草稿，并把这次运行
- * 「放大看」（Console 覆盖层）。
+ * 「放大看」（Console 覆盖层）；这次运行的**行动面**（取消 / 继续此会话 / 重跑此 Run）
+ * 也在这一处——段上只留一个简短状态与一个入口，低频操作收进详情（ADR-0019 决定 2）。
  *
  * 切换运行只改详情面板自己的选中，不改底部输入框的发送目标（ADR-0019 决定 2）。
  */
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { api } from '../../shared/api/client.js'
+import { queryKeys } from '../../app/query-client.js'
 import { SelectMenu } from '../../shared/SelectMenu.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { RUN_PHASE_LABEL } from '../../shared/format.js'
-import type { Session, TaskRoomRun, TaskView } from '../../shared/api/types.js'
+import type { RunView, Session, TaskRoomRun, TaskView } from '../../shared/api/types.js'
+import { RunActions } from '../run/RunActions.js'
 import { RunHandoffDraft } from './RunHandoffDraft.js'
 import { RunInputManifest } from './RunInputManifest.js'
 import { runDurationText } from './runDuration.js'
 import { rerunLineageLabel, resumeLineageLabel, runOrdinalLabels } from './runLabels.js'
-import { TERMINAL_RUN } from './run-states.js'
+import { ACTIVE_RUN, TERMINAL_RUN } from './run-states.js'
+
+/** #248：活跃运行的「已耗时」每 30 秒自跳一次（只有活跃已开始的运行才挂定时器）。 */
+const DURATION_TICK_MS = 30_000
 
 const PURPOSE_LABEL: Readonly<Record<TaskRoomRun['purpose'], string>> = {
   business: '业务运行',
@@ -31,6 +39,8 @@ export interface RunDetailPanelProps {
   selectedRunId: string | undefined
   onSelectRun: (runId: string) => void
   onOpenConsole: (runId: string) => void
+  /** 「继续此会话」：把来源交给底部统一输入框，并把详情收回（入口就在这一处）。 */
+  onContinueSession: (runId: string) => void
 }
 
 export function RunDetailPanel({
@@ -40,13 +50,29 @@ export function RunDetailPanel({
   selectedRunId,
   onSelectRun,
   onOpenConsole,
+  onContinueSession,
 }: RunDetailPanelProps): ReactNode {
-  const [now] = useState(() => Date.now())
+  const [now, setNow] = useState(() => Date.now())
   const ordinal = useMemo(() => runOrdinalLabels(runs), [runs])
   const run = runs.find((row) => row.id === selectedRunId) ?? runs.at(-1)
   if (run === undefined) {
     return <p className="empty-state">还没有 Run。开始执行后可查看输入与交接草稿。</p>
   }
+  // #248：「活跃显已耗时」是随时间走的读数，快照一次会把时长冻在打开详情的那一刻
+  //（面板常驻挂载，只切 hidden，不会自己重挂）。只有活跃且已开始的运行才挂定时器。
+  const ticking = ACTIVE_RUN.has(run.status) && run.startedAt !== null
+  useEffect(() => {
+    if (!ticking) return
+    const timer = window.setInterval(() => setNow(Date.now()), DURATION_TICK_MS)
+    return () => window.clearInterval(timer)
+  }, [ticking])
+  // 行动面要的是 RunView（重跑提交体带 agentId/deviceId/workspaceId，段与详情都从
+  // 同一个 ['run', id] 读面取——与段共享缓存，不额外打接口）。
+  const view = useQuery({
+    queryKey: queryKeys.run(run.id),
+    queryFn: () => api.get<RunView>(`/runs/${run.id}`),
+    enabled: session !== null,
+  })
   const duration = runDurationText(run, now)
   const phase = run.lastPhase?.phase
   const phaseLabel = phase === undefined ? undefined : RUN_PHASE_LABEL[phase]
@@ -140,6 +166,13 @@ export function RunDetailPanel({
         >
           打开 Console
         </button>
+      )}
+      {session === null || view.data === undefined ? null : (
+        <RunActions
+          run={view.data}
+          session={session}
+          onContinueSession={() => onContinueSession(run.id)}
+        />
       )}
       <RunInputManifest key={run.id} runId={run.id} taskId={task.id} runLabels={ordinal} />
       {session === null ? null : (

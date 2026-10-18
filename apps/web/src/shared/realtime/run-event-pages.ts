@@ -27,12 +27,13 @@ function identityOf(item: RunEventItem): string {
 }
 
 /** 身份去重（跨页重复帧）+ 按 (runId, seq) 排序，保证续读拼接后仍是确定顺序。 */
-function mergeEvents(events: readonly RunEventItem[]): RunEventItem[] {
+export function mergeEvents(events: readonly RunEventItem[]): RunEventItem[] {
   const unique = new Map<string, RunEventItem>()
   for (const item of events) {
     if (!Number.isSafeInteger(item.seq) || item.seq <= 0) continue
-    const key = identityOf(item)
-    if (!unique.has(key)) unique.set(key, item)
+    // 同一身份以**最后一份**为准：事件本应 append-only，但读面契约不保证"同一 seq 的载荷
+    // 永远一致"，而续读合并时新拿到的服务端版本才是权威（缓存里的旧副本不许盖过它）。
+    unique.set(identityOf(item), item)
   }
   return [...unique.values()].sort((a, b) =>
     a.runId === b.runId ? a.seq - b.seq : a.runId.localeCompare(b.runId),
@@ -43,13 +44,22 @@ function mergeEvents(events: readonly RunEventItem[]): RunEventItem[] {
  * 读一个运行的事件到末尾。`fetchPage(after)` 返回一页（≤ RUN_EVENT_PAGE_LIMIT 条）；
  * `onProgress` 会在每一页后拿到当前累计结果（调用方用于让已读内容立刻可见）。
  * 不抛错：失败在返回值里表达（`complete: false`），已读内容照常带回。
+ *
+ * `resumeAfter`：从已有游标继续（缓存里已读到 maxSeq 时用）。活跃运行的每一帧失效都从头
+ * 重读代价是 O(帧数 × 事件数/500) 的重复请求，续读只取新事件；已读内容（`known`）由调用方
+ * 在合并时补回——本函数只负责"从游标读到末尾"这一段。
  */
 export async function readRunEventsToEnd(
   fetchPage: (after: number | undefined) => Promise<readonly RunEventItem[]>,
-  onProgress?: (events: readonly RunEventItem[]) => void,
+  options: {
+    onProgress?: (events: readonly RunEventItem[]) => void
+    resumeAfter?: number
+  } = {},
 ): Promise<RunEventWindow> {
+  const { onProgress, resumeAfter } = options
   let collected: RunEventItem[] = []
-  let after: number | undefined = undefined
+  let after: number | undefined =
+    resumeAfter === undefined || resumeAfter <= 0 ? undefined : resumeAfter
   for (;;) {
     let page: readonly RunEventItem[]
     try {
@@ -69,8 +79,14 @@ export async function readRunEventsToEnd(
 }
 
 /**
- * 并发准入：在途 = 已准入但还没读完的运行；有空闲名额就按优先级（`order` 的顺序）
- * 补位，返回本次新准入的运行 id 列表（已准入的不重复返回）。
+ * 并发准入：在途 = **还在这一屏里**且已准入、却还没读完的运行；有空闲名额就按优先级
+ * （`order` 的顺序）补位，返回本次新准入的运行 id 列表（已准入的不重复返回）。
+ *
+ * `order` 是**滑动窗口**（首屏 20 段、顶部加载更早才变长）。段被窗口挤出去之后，它的
+ * 读取查询也随之撤下（`enabled` 只对窗口内的段成立）——那一刻就不再有任何在途读取。
+ * 若把「已被挤出的段」也当成在途，名额会随窗口每滑动一次就永久漏掉一个：第 4 次之后
+ * `free` 恒为 0，新来的段再也读不到（页面停在"正在读取活动信息…"、回复永不出现），
+ * 而且静默无报错。窗口外与已读的都不占名额。
  */
 export function admitRuns(
   order: readonly string[],
@@ -80,7 +96,8 @@ export function admitRuns(
 ): readonly string[] {
   const settledSet = new Set(settled)
   const admittedSet = new Set(admitted)
-  const inFlight = admitted.filter((id) => !settledSet.has(id)).length
+  const orderSet = new Set(order)
+  const inFlight = admitted.filter((id) => orderSet.has(id) && !settledSet.has(id)).length
   const free = Math.max(0, limit - inFlight)
   if (free === 0) return []
   const next: string[] = []

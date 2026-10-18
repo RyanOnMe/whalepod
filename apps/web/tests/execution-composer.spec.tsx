@@ -510,7 +510,7 @@ function draftNavigationFixture(active = false, history = false, delegated = fal
                   : state.history
                     ? [{ ...run, status: 'completed' }]
                     : [],
-              }).respond({})
+              }).respond({}, `/api/v1/tasks/${task.id}`)
         },
       },
       taskRoomHandler(other),

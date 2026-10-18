@@ -175,9 +175,12 @@ function TaskRoom(): ReactNode {
       window: runWindow,
     })
   }, [runs, instructions, visibleArtifacts, runWindowView.visible, reads, runWindow])
-  const readsSettled = runWindowView.visible.every(
-    (run) => (reads.get(run.id)?.eventsStatus ?? 'pending') !== 'pending',
-  )
+  // 「都读完了」= 事件与详情都落地（含失败）：段的形状在详情读到后还会变（操作入口、
+  // 失败说明），只等事件会让阅读锚点在布局继续变化时提前谢幕（生产验收实测过的 1845px 漂移）。
+  const readsSettled = runWindowView.visible.every((run) => {
+    const read = reads.get(run.id)
+    return (read?.eventsStatus ?? 'pending') !== 'pending' && read?.detailSettled === true
+  })
 
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null)
   const bottomKey = conversationBottomKey(conversation)
@@ -282,8 +285,12 @@ function TaskRoom(): ReactNode {
     setDetailRunId(runId)
     openInspector('run')
   }
+  // ADR-0019 决定 2：入口在运行详情里，点它就是「把这句话交回底部输入框」——顺手把详情
+  // 收起来，否则窄屏下详情占满这一栏（≤1199px 的 `[data-inspecting]` 规则），用户看不见
+  // 自己刚被送到哪里。
   const continueSession = (runId: string) => {
     setContinueRequest({ taskId: task.id, runId, nonce: crypto.randomUUID() })
+    closeInspector()
   }
   return (
     <div className="crossfade-stack focused-workspace">
@@ -436,9 +443,11 @@ function TaskRoom(): ReactNode {
                             task={task}
                             session={session}
                             segment={entry.segment}
+                            entryKey={entry.key}
                             read={
                               reads.get(entry.segment.run.id) ?? {
                                 detail: undefined,
+                                detailSettled: false,
                                 events: [],
                                 eventsStatus: 'pending',
                                 retry: () => undefined,
@@ -449,7 +458,6 @@ function TaskRoom(): ReactNode {
                             onOpenDetail={openRunDetail}
                             onOpenConsole={setConsoleRunId}
                             onOpenArtifact={(artifactId) => openInspector('artifacts', artifactId)}
-                            onContinueSession={continueSession}
                             onStreamGrowth={follow.followNow}
                             approvalVisible={channel === 'execution' && inspector === null}
                           />
@@ -459,7 +467,7 @@ function TaskRoom(): ReactNode {
                             className="conversation-orphan"
                             data-conversation-entry={entry.key}
                           >
-                            <div className="conversation-items" role="list">
+                            <ol className="conversation-items">
                               <InstructionBubble
                                 instruction={entry.instruction}
                                 session={session}
@@ -467,7 +475,7 @@ function TaskRoom(): ReactNode {
                                 onOpenRun={setConsoleRunId}
                                 authorName={directory.personOf}
                               />
-                            </div>
+                            </ol>
                           </li>
                         ),
                       )}
@@ -569,6 +577,7 @@ function TaskRoom(): ReactNode {
                   selectedRunId={detailRun?.id}
                   onSelectRun={setDetailRunId}
                   onOpenConsole={setConsoleRunId}
+                  onContinueSession={continueSession}
                 />
               ) : null}
             </div>

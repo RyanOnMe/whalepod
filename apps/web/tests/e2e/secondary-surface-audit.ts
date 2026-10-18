@@ -20,6 +20,7 @@ export async function auditSecondarySurfaces({
     viewport: number
     scroll: number
     headerCount: number
+    stackedHeaderCount: number
   }> = []
   const confirmations: Array<{ width: number; contained: boolean }> = []
   const capture = async (name: string, width: number) => {
@@ -33,18 +34,30 @@ export async function auditSecondarySurfaces({
       )
       .toBe(true)
     await expect(owner.locator('.crossfade-stack > .room-skeleton')).not.toBeVisible()
-    const headerCount = await owner
-      .locator(
-        '.workspace-inspector:not([hidden]) .workspace-inspector-head > h2:visible, [role="dialog"] h2:visible, .page-header h1:visible',
-      )
+    /*
+     * 「一个界面只有一个标题」要按**最上层**算：ADR-0019 起 Console 的入口在运行详情里，
+     * 于是 Console 是弹在开着的详情抽屉之上的模态——此刻详情头的 h2 仍在（正常），该数的
+     * 是模态自己的标题。原先的单选法把这一种正常叠放判成"两个标题"（2026-10-18 实测红）。
+     * 同时把所有可见标题都记下来：超过 1 个时，只允许"模态压在面板上"这一种形态。
+     */
+    const dialogHeaders = await owner.locator('[role="dialog"]:visible h2:visible').count()
+    const inspectorHeaders = await owner
+      .locator('.workspace-inspector:not([hidden]) .workspace-inspector-head > h2:visible')
       .count()
-    expect(headerCount).toBe(1)
+    const pageHeaders = await owner.locator('.page-header h1:visible').count()
+    const headerCount = dialogHeaders > 0 ? dialogHeaders : Math.max(inspectorHeaders, pageHeaders)
+    const stackedHeaderCount = dialogHeaders + inspectorHeaders + pageHeaders
+    expect(headerCount, `${name}/${width} 顶层标题`).toBe(1)
+    if (stackedHeaderCount > 1) {
+      expect(dialogHeaders, `${name}/${width} 只有模态可以压在面板上`).toBeGreaterThan(0)
+      expect(stackedHeaderCount, `${name}/${width} 叠放层数`).toBeLessThanOrEqual(2)
+    }
     const bounds = await owner.evaluate(() => ({
       viewport: innerWidth,
       scroll: document.documentElement.scrollWidth,
     }))
     expect(bounds.scroll, `${name}/${width} overflow`).toBeLessThanOrEqual(bounds.viewport)
-    rows.push({ name, width, ...bounds, headerCount })
+    rows.push({ name, width, ...bounds, headerCount, stackedHeaderCount })
     await owner.screenshot({ path: join(evidence, `surface-${name}-${width}.png`) })
   }
   await owner.setViewportSize({ width: 1440, height: 960 })
@@ -85,6 +98,9 @@ export async function auditSecondarySurfaces({
       await expect(panel).not.toBeVisible()
       await expect(trigger).toBeFocused()
     }
+    // Console 的入口在运行详情里（ADR-0019 决定 2）：先打开详情再进 Console。
+    await owner.getByRole('button', { name: '运行详情', exact: true }).click()
+    await expect(owner.getByRole('region', { name: '工作区详情' })).toBeVisible()
     const consoleTrigger = owner.getByTestId('open-run-console')
     await consoleTrigger.click()
     const consolePanel = owner.getByRole('dialog', { name: /Run Console/ })

@@ -442,6 +442,26 @@ export async function selectFromMenu(trigger: Locator, optionText: string | RegE
 }
 
 /**
+ * ADR-0019：底部统一输入框默认接着上一条业务运行（模式「继续会话」），此时页面上没有
+ * 「选择 Agent / 选择设备 / 选择 Workspace」这三个启动控件。凡是要**新起一段执行**的用例，
+ * 都得走真人同一条路——先把「执行方式」明确改选为「开始新执行（不接旧会话）」。
+ *
+ * 不对历史读没读完做假设：显式改选会把 modeOrigin 置为 'user'（ExecutionComposer 的
+ * 「默认规则只改写未经用户调整的自动草稿」），此后读取面慢一拍也不会把模式翻回去——
+ * 这比"等一会儿再看"稳，也比"读模型到了再点"少一个时序坑。
+ */
+export async function chooseNewExecution(page: Page): Promise<void> {
+  // 「执行方式」在「执行设置」折叠里，可能是收起状态——判据看它在不在、当前选的是哪个，
+  // 不看可不可见（展开由 selectFromMenu 按真人路径完成）。
+  const modeTrigger = page.getByLabel('执行方式', { exact: true })
+  await expect(modeTrigger).toBeAttached({ timeout: 30_000 })
+  if (!(await modeTrigger.textContent())?.includes('开始新执行')) {
+    await selectFromMenu(modeTrigger, /开始新执行/)
+  }
+  await expect(page.getByLabel('选择 Agent', { exact: true })).toBeVisible({ timeout: 30_000 })
+}
+
+/**
  * #158 反面钉（浏览器侧）：这个控件确实不再是原生 `<select>`。
  *
  * 两层判据缺一不可——只查「菜单能开」是假绿：原生 select 套一层自绘皮肤同样能点开列表。

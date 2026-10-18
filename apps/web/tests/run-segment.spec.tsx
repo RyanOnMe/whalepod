@@ -83,7 +83,6 @@ interface SegmentOptions {
   detail?: RunView | undefined
   session?: Session | null
   instructions?: ReturnType<typeof makeInstruction>[]
-  onContinueSession?: (runId: string) => void
   onOpenDetail?: (runId: string) => void
 }
 
@@ -95,7 +94,6 @@ function segmentView({
   detail,
   session = OWNER,
   instructions = [],
-  onContinueSession = () => {},
   onOpenDetail = () => {},
 }: SegmentOptions = {}) {
   const run = makeRun({ id: RUN_ID, status, ...runOver })
@@ -109,6 +107,7 @@ function segmentView({
   }
   const read: RunSegmentRead = {
     detail: detail === undefined && session !== null ? runView(status) : detail,
+    detailSettled: true,
     events,
     eventsStatus,
     retry: vi.fn(),
@@ -122,10 +121,10 @@ function segmentView({
             session={session}
             segment={segment}
             read={read}
+            entryKey={`run-${RUN_ID}`}
             onOpenDetail={onOpenDetail}
             onOpenConsole={() => {}}
             onOpenArtifact={() => {}}
-            onContinueSession={onContinueSession}
             onStreamGrowth={() => {}}
             approvalVisible
           />
@@ -345,21 +344,24 @@ describe('运行段：直播与未持久化输出', () => {
   })
 })
 
-describe('运行段：历史运行的动作', () => {
-  it('终态 owner 有「继续此会话」（把来源交给底部输入框）与「重跑此 Run」（带自己的表单）', async () => {
+describe('运行段：入口与行动面的分工', () => {
+  it('段上只留一个「运行详情」入口：取消/继续此会话/重跑此 Run 都不在段里', async () => {
+    // ADR-0019 决定 2：每段留一个简短状态 + 一个详情入口，低频操作收进详情。段上再放一套
+    // 行动面会在一个屏幕上长出十一个「重跑此 Run」（#393 全链用例实测的 strict mode 违规），
+    // 而且同一件事在两处重复。行动面由 RunDetailPanel 渲染（见 run-actions.spec.tsx）。
     const user = userEvent.setup()
-    const onContinueSession = vi.fn()
-    segmentView({ status: 'completed', onContinueSession })
-    await user.click(screen.getByTestId('continue-session-button'))
-    expect(onContinueSession).toHaveBeenCalledWith(RUN_ID)
-    await user.click(screen.getByTestId('rerun-button'))
-    expect(screen.getByTestId('rerun-prompt')).toBeVisible()
-    // 继续此会话不会替用户重跑：RunActions 里没有 resume 表单/提交路径。
-    expect(screen.queryByText('确认续跑')).toBeNull()
+    const onOpenDetail = vi.fn()
+    segmentView({ status: 'completed', onOpenDetail })
+    expect(screen.queryByTestId('continue-session-button')).toBeNull()
+    expect(screen.queryByTestId('rerun-button')).toBeNull()
+    expect(screen.queryByText('取消 Run')).toBeNull()
+    await user.click(screen.getByRole('button', { name: /第 1 次运行/ }))
+    expect(onOpenDetail).toHaveBeenCalledWith(RUN_ID)
   })
 
-  it('member（非 owner）看不到取消/重跑/继续会话入口', () => {
+  it('member（非 owner）的段同样只有入口：段头按钮对两种角色都在', () => {
     segmentView({ status: 'completed', session: { ...OWNER, userId: 'member-1', role: 'member' } })
+    expect(screen.getByRole('button', { name: /第 1 次运行/ })).toBeVisible()
     expect(screen.queryByTestId('continue-session-button')).toBeNull()
     expect(screen.queryByTestId('rerun-button')).toBeNull()
   })

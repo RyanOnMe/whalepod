@@ -428,6 +428,8 @@ describe('切片⑤ resume：终态 Run 的「接着聊」与血缘句（#237）
         teamMembersHandler([]),
       ]),
     )
+    // ADR-0019 决定 2：行动面的入口在运行详情里（段上只有「运行详情」）。
+    await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
     await user.click(await screen.findByTestId('continue-session-button'))
     const box = await screen.findByLabelText('指令')
     await user.type(box, '继续刚才的思路')
