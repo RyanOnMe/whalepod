@@ -3,8 +3,35 @@ import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { DisclosurePanel } from '../src/shared/DisclosurePanel.js'
 import GlideSelect from '../src/vendor/react-bits-micro/GlideSelect.js'
+import { SelectMenu } from '../src/shared/SelectMenu.js'
 
 describe('设置浮层的原生与 portal 交互', () => {
+  it('DSH portal 菜单 Escape 先关闭子菜单，再关闭设置', async () => {
+    const user = userEvent.setup()
+    render(
+      <DisclosurePanel portal label="设置" contentLabel="参数" icon={<span>⚙</span>}>
+        <SelectMenu
+          portal
+          id="revision"
+          label="配置版本"
+          value="r1"
+          options={[{ value: 'r1', label: 'r1', disabled: false }]}
+          onChange={vi.fn()}
+        />
+      </DisclosurePanel>,
+    )
+    await user.click(screen.getByLabelText('设置'))
+    const revision = screen.getByRole('button', { name: '配置版本' })
+    await user.click(revision)
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(screen.getByRole('region', { name: '参数' })).toBeVisible()
+    expect(revision).toHaveFocus()
+    await user.keyboard('{Escape}')
+    expect(screen.getByLabelText('设置')).toHaveFocus()
+    expect(revision).not.toBeVisible()
+  })
+
   it('关闭保留字段，Tab 进入设置，Escape 还焦，外点不抢焦点', async () => {
     const user = userEvent.setup()
     render(
