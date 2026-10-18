@@ -23,6 +23,8 @@ describe('设置浮层的原生与 portal 交互', () => {
     await user.click(screen.getByLabelText('设置'))
     const revision = screen.getByRole('button', { name: '配置版本' })
     await user.click(revision)
+    // A focus move to the trigger must still give the open child menu first Escape.
+    revision.focus()
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('menu')).toBeNull()
     expect(screen.getByRole('region', { name: '参数' })).toBeVisible()
