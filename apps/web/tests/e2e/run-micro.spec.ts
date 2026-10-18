@@ -225,12 +225,14 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     await expect(owner.getByTestId('console-event').first()).toBeVisible()
     await expect(owner.getByRole('group', { name: '事件筛选' })).toHaveAttribute('data-instant', '')
     const keyboardFilterDuration = await owner
+      .getByRole('group', { name: '事件筛选' })
       .locator('.rubber-segment__thumb')
       .evaluate((element) => getComputedStyle(element).transitionDuration)
     expect(keyboardFilterDuration).toBe('0s')
     await owner.getByTestId('console-filter-tool').click()
     await expect(owner.getByTestId('console-filter-tool')).toHaveAttribute('aria-pressed', 'true')
     const pointerFilterDuration = await owner
+      .getByRole('group', { name: '事件筛选' })
       .locator('.rubber-segment__thumb')
       .evaluate((element) => getComputedStyle(element).transitionDuration)
     expect(pointerFilterDuration).toBe('0.16s')
@@ -451,6 +453,7 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     await expect(owner.getByTestId('tool-call-chip').last()).toHaveAttribute('data-status', 'done')
     await expect(owner.getByTestId('console-filter-tool')).toBeFocused()
     const reducedFilterDuration = await owner
+      .getByRole('group', { name: '事件筛选' })
       .locator('.rubber-segment__thumb')
       .evaluate((element) => getComputedStyle(element).transitionDuration)
     expect(reducedFilterDuration).toBe('0s')
