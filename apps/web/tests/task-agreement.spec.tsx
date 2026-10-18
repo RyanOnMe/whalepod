@@ -19,6 +19,7 @@ import {
   apiFailure,
 } from './fixtures.js'
 import type { MockHandler } from './fixtures.js'
+import { showWorkspace } from './workspace.js'
 import { renderApp } from './render.jsx'
 import type { TaskSpecRevisionView } from '../src/shared/api/types.js'
 
@@ -128,6 +129,7 @@ describe('#378 任务约定面板', () => {
     ])
     renderApp(`/tasks/${TASK_ID}`, handlers)
 
+    await showWorkspace('agreement')
     const panel = await screen.findByTestId('agreement-panel')
     expect(within(panel).getByTestId('agreement-disabled-chip')).toBeInTheDocument()
     expect(within(panel).getByTestId('agreement-no-confirmed')).toBeInTheDocument()
@@ -168,11 +170,50 @@ describe('#378 任务约定面板', () => {
       `/tasks/${TASK_ID}`,
       loggedInHandlers(BOB, [taskRoomHandler(task), teamMembersHandler(), agreementHandler(view)]),
     )
+    await showWorkspace('agreement')
     const panel = await screen.findByTestId('agreement-panel')
     expect(within(panel).getByTestId('agreement-draft')).toBeInTheDocument()
     expect(within(panel).queryByRole('button', { name: /确认这一版/ })).not.toBeInTheDocument()
-    expect(within(panel).queryByRole('button', { name: '启用约定流程' })).not.toBeInTheDocument()
+    expect(within(panel).queryByRole('switch', { name: '启用约定流程' })).not.toBeInTheDocument()
     expect(within(panel).getByText(/等待责任人/)).toBeInTheDocument()
+  })
+
+  it('开关等待真实响应；请求失败保留原状态，重复点击不重发', async () => {
+    const user = userEvent.setup()
+    const view = { enabled: false, draft: null, confirmed: null, history: [], confirmedCount: 0 }
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let requests = 0
+    renderApp(
+      `/tasks/${TASK_ID}`,
+      roomHandlers([
+        agreementHandler(view),
+        {
+          method: 'PATCH',
+          url: new RegExp(`/api/v1/tasks/${TASK_ID}$`),
+          respond: async (init) => {
+            requests += 1
+            expect(JSON.parse(String(init.body))).toEqual({ agreementEnabled: true })
+            await pending
+            return apiFailure('CONFLICT', '约定状态更新失败，请重试')
+          },
+        },
+      ]),
+    )
+    await showWorkspace('agreement')
+    const toggle = await screen.findByRole('switch', { name: '启用约定流程' })
+    expect(toggle).not.toBeChecked()
+    await user.click(toggle)
+    await waitFor(() => expect(toggle).toBeDisabled())
+    expect(toggle).not.toBeChecked()
+    await user.click(toggle)
+    expect(requests).toBe(1)
+    release()
+    expect(await screen.findByText(/约定状态更新失败，请重试/)).toBeVisible()
+    expect(toggle).not.toBeChecked()
+    expect(toggle).toBeEnabled()
   })
 
   it('并发冲突（409）：提示并重取读模型，不静默重试', async () => {
@@ -200,6 +241,7 @@ describe('#378 任务约定面板', () => {
     ])
     renderApp(`/tasks/${TASK_ID}`, handlers)
 
+    await showWorkspace('agreement')
     const panel = await screen.findByTestId('agreement-panel')
     const draftBlock = within(panel).getByTestId('agreement-draft')
     await user.click(within(draftBlock).getByRole('button', { name: '继续编辑' }))
@@ -238,6 +280,7 @@ describe('#378 任务约定面板', () => {
         agreement: { enabled: true, latestConfirmedNumber: null, hasDraft: false },
       }),
     )
+    await showWorkspace('agreement')
     const panel = await screen.findByTestId('agreement-panel')
     expect(within(panel).getByTestId('agreement-enabled-unconfirmed')).toHaveTextContent(
       '新执行会被拒绝',

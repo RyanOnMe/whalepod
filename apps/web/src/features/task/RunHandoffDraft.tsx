@@ -8,6 +8,7 @@
  * - 发布后不可变；「修改」= 新建草稿（服务端会以最近已发布版本作种子）→ 再发布成
  *   新版本。其他成员与管理员看不到这一节（GET 404 → 本组件整体不渲染）。
  */
+import SpringCheck from '../../vendor/react-bits-micro/SpringCheck.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
@@ -194,15 +195,13 @@ export function RunHandoffDraft({
           aria-label={`${SECTIONS.find((s) => s.key === sectionKey)?.label}第 ${index + 1} 条`}
           onChange={(event) => patchItem({ ...item, text: event.target.value })}
         />
-        <label className="handoff-verified">
-          <input
-            type="checkbox"
-            checked={item.verified}
-            aria-label={`已核实第 ${index + 1} 条`}
-            onChange={(event) => patchItem({ ...item, verified: event.target.checked })}
-          />
-          已核实
-        </label>
+        <SpringCheck
+          className="handoff-verified"
+          checked={item.verified}
+          ariaLabel={`已核实第 ${index + 1} 条`}
+          onChange={(checked) => patchItem({ ...item, verified: checked })}
+          label="已核实"
+        />
         <input
           className="input handoff-refs"
           value={refText}

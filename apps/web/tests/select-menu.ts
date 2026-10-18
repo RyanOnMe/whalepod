@@ -48,12 +48,15 @@ export async function openSelect(
   name: string | RegExp,
   scope: QueryScope = screen,
 ): Promise<ReturnType<typeof within>> {
+  const composerOptions = document.querySelector<HTMLDetailsElement>('details.composer-options')
+  if (name === '执行方式' && composerOptions !== null && !composerOptions.open)
+    await user.click(composerOptions.querySelector('summary')!)
   const advanced = document.querySelector<HTMLDetailsElement>('details.execution-settings')
   if (
     advanced !== null &&
     !advanced.open &&
     typeof name === 'string' &&
-    ['选择 Revision', '选择设备', '选择 Workspace', '指定设备'].includes(name)
+    ['选择 Agent', '选择 Revision', '选择设备', '选择 Workspace', '指定设备'].includes(name)
   ) {
     await user.click(advanced.querySelector('summary')!)
   }

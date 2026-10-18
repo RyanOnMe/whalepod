@@ -18,7 +18,10 @@ export interface TestAppResult extends RenderResult {
   fetchMock: ReturnType<typeof installFetch>
 }
 
-export function renderApp(initialPath: string, handlers: readonly MockHandler[]): TestAppResult {
+export function renderApp(
+  initialPath: string,
+  handlers: readonly MockHandler[],
+): TestAppResult & { router: ReturnType<typeof createTestRouter> } {
   const fetchMock = installFetch(handlers)
   const queryClient = makeQueryClient({ retry: false })
   const router = createTestRouter(queryClient, [initialPath])
@@ -27,7 +30,7 @@ export function renderApp(initialPath: string, handlers: readonly MockHandler[])
       <RouterProvider router={router} />
     </QueryClientProvider>,
   )
-  return { ...view, queryClient, fetchMock }
+  return { ...view, router, queryClient, fetchMock }
 }
 
 /** 直接挂载一个组件（不需要 router/session 的局部用例）。 */

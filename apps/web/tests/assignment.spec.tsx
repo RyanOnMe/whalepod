@@ -46,7 +46,7 @@ describe('assignment', () => {
     expect(document.body.textContent).not.toContain('rejected')
   })
 
-  it('责任人接受任务：按钮 → 接受 → 显示已接受与 Agent 快照插槽', async () => {
+  it('责任人接受任务：按钮 → 接受 → 显示已接受，主区不再保留快照占位', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId })
     const room = statefulTaskRoom(task)
     const user = userEvent.setup()
@@ -68,7 +68,7 @@ describe('assignment', () => {
     ])
     await user.click(await screen.findByRole('button', { name: '接受任务' }))
     expect(await screen.findByText('你已接受此任务。')).toBeVisible()
-    expect(await screen.findByRole('heading', { name: 'Agent 快照' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'Agent 快照' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '接受任务' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '拒绝任务' })).not.toBeInTheDocument()
   })
@@ -190,7 +190,7 @@ describe('assignment', () => {
     expect(screen.getByText(/等待其接受/)).toBeVisible()
   })
 
-  it('已接受状态：不显示决策按钮，显示 Agent 快照插槽空态', async () => {
+  it('已接受状态：不显示决策按钮或虚构快照占位', async () => {
     const task = makeTask({
       assigneeUserId: BOB.userId,
       assignmentStatus: 'accepted',
@@ -199,8 +199,8 @@ describe('assignment', () => {
     renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [roomHandler(task)]))
     expect(await screen.findByText('你已接受此任务。')).toBeVisible()
     expect(screen.queryByRole('button', { name: '接受任务' })).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Agent 快照' })).toBeVisible()
-    expect(screen.getByText(/Run 创建后/)).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'Agent 快照' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Run 创建后/)).not.toBeInTheDocument()
   })
 })
 

@@ -156,6 +156,7 @@ describe('G7-05: failed/lost Run 的未知副作用警示', () => {
       ]),
     )
     await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
+    await userEvent.setup().click(await screen.findByText('工具与运行记录'))
     await waitFor(() => expect(screen.getByText('事件')).toBeVisible())
     expect(screen.queryByTestId('run-failure-notice')).not.toBeInTheDocument()
   })

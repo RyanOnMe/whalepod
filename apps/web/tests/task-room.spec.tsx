@@ -25,6 +25,7 @@ import {
   teamMembersHandler,
 } from './fixtures.js'
 import type { MockHandler } from './fixtures.js'
+import { showWorkspace, workspaceDetails } from './workspace.js'
 import { renderApp } from './render.jsx'
 import { FORMER_MEMBER_LABEL, UNKNOWN_MEMBER_LABEL } from '../src/features/team/memberDirectory.js'
 import { RUN_NOT_IN_TIMELINE_LABEL } from '../src/features/task/runLabels.js'
@@ -98,6 +99,7 @@ describe('task-room', () => {
   it('渲染中间讨论区：留言输入与空态', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId })
     renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [taskRoomHandler(task)]))
+    await showWorkspace('discussion')
     expect(await screen.findByRole('heading', { name: '讨论' })).toBeVisible()
     expect(screen.getByLabelText('留言')).toBeVisible()
     expect(screen.getByText('还没有留言——向责任人说明下一步吧。')).toBeVisible()
@@ -116,8 +118,11 @@ describe('task-room', () => {
         }),
       ]),
     )
-    // 两栏形态（ADR-0010）：讨论与执行是两个并列区段，各有标题。
-    expect(await screen.findByRole('heading', { name: '讨论' })).toBeVisible()
+    // ADR-0018：执行默认可见，讨论可单独切换。
+    expect(await screen.findByRole('button', { name: '团队讨论' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
     expect(screen.getByRole('heading', { name: '执行' })).toBeVisible()
     expect(await screen.findByRole('heading', { name: '运行' })).toBeVisible()
     expect(await screen.findByText('运行中')).toBeVisible()
@@ -213,14 +218,15 @@ describe('task-room', () => {
     expect(await screen.findByTestId('run-console')).toBeVisible()
   })
 
-  it('交付物与复核折在执行栏底部的任务详情里（**默认展开**：默认折叠会断 G6-04 金路径；区段标题中文）', async () => {
+  it('交付物与复核在可达的检查面板里；区段标题中文', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId })
     renderApp(
       `/tasks/${task.id}`,
       loggedInHandlers(BOB, [taskRoomHandler(task, { artifacts: [makeArtifact()] })]),
     )
+    await showWorkspace('artifacts')
     expect(await screen.findByRole('heading', { name: '交付物' })).toBeVisible()
-    expect(await screen.findByText('security-review.md')).toBeVisible()
+    expect(await workspaceDetails().findByText('security-review.md')).toBeVisible()
     expect(screen.getByText('text/markdown')).toBeVisible()
     expect(screen.getByRole('heading', { name: '复核' })).toBeVisible()
     expect(screen.getByText(/只读输入清单/)).toBeVisible()
@@ -232,7 +238,10 @@ describe('task-room', () => {
   it('空态说明下一步，而不是静默空白', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId })
     renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [taskRoomHandler(task)]))
-    expect(await screen.findByText(/还没有 Run。/)).toBeVisible()
+    expect(await screen.findByRole('heading', { name: '我们要完成什么？' })).toBeVisible()
+    await showWorkspace('run')
+    expect(screen.getByText(/还没有 Run。/)).toBeVisible()
+    await showWorkspace('artifacts')
     expect(screen.getByText(/还没有已发布的 Artifact。/)).toBeVisible()
   })
 
@@ -532,7 +541,7 @@ describe('task-room 执行栏接线（⑥a 页面级）', () => {
   it('正常响应（带 instructions: []）**不**触发告警——空指令流与"读取不完整"是两回事', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId })
     renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [taskRoomHandler(task)]))
-    expect(await screen.findByText(/还没有人驱动过这个任务/)).toBeVisible()
+    expect(await screen.findByRole('heading', { name: '我们要完成什么？' })).toBeVisible()
     expect(screen.queryByTestId('instructions-missing')).not.toBeInTheDocument()
   })
 
@@ -563,23 +572,22 @@ describe('task-room 执行栏接线（⑥a 页面级）', () => {
     expect(state?.textContent).not.toBe('已排队')
   })
 
-  it('「任务详情」默认展开且**仍可折叠**（复核 ⑥：这条此前零判据）', async () => {
+  it('交付物按需打开，关闭详情保留主对话入口', async () => {
     const user = userEvent.setup()
     const task = makeTask({ assigneeUserId: BOB.userId })
     renderApp(
       `/tasks/${task.id}`,
       loggedInHandlers(BOB, [taskRoomHandler(task, { artifacts: [makeArtifact()] })]),
     )
-    // 默认展开：交付物可见（G6-04 要点发布按钮，折叠会断链——这是当初改成 open 的理由）。
-    expect(await screen.findByText('security-review.md')).toBeVisible()
-    const summary = screen.getByText(/任务详情/)
-    await user.click(summary)
-    // 收起后交付物必须真的不可见（不是"还在 DOM 里但假装收起"）。
-    await waitFor(() => {
-      expect(screen.queryByText('security-review.md')).not.toBeVisible()
-    })
-    await user.click(summary)
-    expect(await screen.findByText('security-review.md')).toBeVisible()
+    expect(
+      await screen.findByRole('button', { name: '查看交付物 security-review.md' }),
+    ).toBeVisible()
+    expect(screen.queryByRole('region', { name: '工作区详情' })).not.toBeInTheDocument()
+    await showWorkspace('artifacts')
+    expect(workspaceDetails().getByText('security-review.md')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '关闭工作区详情' }))
+    expect(screen.queryByRole('region', { name: '工作区详情' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '查看交付物 security-review.md' })).toBeVisible()
   })
 })
 

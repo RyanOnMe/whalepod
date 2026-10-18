@@ -232,8 +232,8 @@ describe('#152 布局：项目页折叠表单与顶栏折叠入口', () => {
     // 全屏只有一份主导航，且就住在侧栏里
     const navs = container.querySelectorAll('nav[aria-label="主导航"]')
     expect(navs).toHaveLength(1)
-    expect(navs[0]?.closest('aside')).toBe(sidebar)
-    expect(within(navs[0] as HTMLElement).getAllByRole('link')).toHaveLength(5)
+    expect(navs[0]).toHaveClass('app-rail')
+    expect(within(navs[0] as HTMLElement).getAllByRole('link')).toHaveLength(6)
     // 窄屏的折叠菜单在宽屏形态下不存在（不是"藏"，是"不渲染"——DOM 里不留第二份链接）
     expect(container.querySelector('details.app-nav-menu')).toBeNull()
     // 侧栏三段：品牌 → 导航 → 用户卡（显示名 + 中文角色 + 退出）

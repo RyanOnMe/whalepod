@@ -1,0 +1,142 @@
+/* React Bits GlideSelect, adapted for WhalePod. See LICENSE.md / manifest.json. */
+.glide-select {
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
+}
+.glide-select__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  max-width: 100%;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--color-surface-sunken);
+  color: var(--color-ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    transform 140ms var(--ease-out);
+}
+.glide-select__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.glide-select__chevron {
+  flex: none;
+  color: var(--color-muted);
+  transition: transform 140ms var(--ease-out);
+}
+.glide-select__trigger[aria-expanded='true'] .glide-select__chevron {
+  transform: rotate(180deg);
+}
+.glide-select__trigger:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.glide-select__trigger:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.glide-select__menu {
+  position: fixed;
+  z-index: 120;
+  padding: 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 16px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  box-shadow: var(--dsw-elevation-soft);
+  transform-origin: bottom left;
+  overflow: hidden;
+  transition:
+    opacity 140ms var(--ease-out),
+    transform 140ms var(--ease-out);
+}
+.glide-select__menu[data-side='bottom'] {
+  transform-origin: top left;
+}
+@starting-style {
+  .glide-select__menu {
+    opacity: 0;
+    transform: scale(0.97) translateY(3px);
+  }
+}
+.glide-select__viewport {
+  position: relative;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.glide-select__row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.glide-select__row > span:first-child {
+  min-width: 0;
+  flex: 1;
+}
+.glide-select__row:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.glide-select__row:focus-visible {
+  outline: 2px solid var(--color-ink);
+  outline-offset: -2px;
+  box-shadow: none;
+}
+.glide-select__glow {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  border-radius: 10px;
+  background: var(--color-surface-sunken);
+  pointer-events: none;
+  transition:
+    transform 150ms var(--ease-out),
+    height 150ms var(--ease-out),
+    opacity 120ms ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .glide-select__trigger:hover:not(:disabled) {
+    background: var(--dsw-specific-sidebar-nav-item-hover);
+  }
+}
+.glide-select[data-instant] .glide-select__trigger,
+.glide-select[data-instant] .glide-select__chevron,
+.glide-select__menu[data-instant],
+.glide-select__menu[data-instant] .glide-select__glow {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .glide-select__trigger,
+  .glide-select__chevron,
+  .glide-select__menu,
+  .glide-select__glow {
+    transition: none;
+  }
+}

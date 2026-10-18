@@ -19,6 +19,7 @@ import type { Session, TaskView } from '../../shared/api/types.js'
 import { queryKeys } from '../../app/query-client.js'
 
 export interface TaskHeaderProps {
+  compact?: boolean
   task: TaskView
   session: Session | null
   reviewEligibility?: TaskReviewEligibility | undefined
@@ -38,7 +39,12 @@ const ACTION_CONFIRM: Readonly<Record<TaskAction, string>> = {
   cancel: '取消任务？有活跃 Run 时 Hub 会同步请求取消。',
 }
 
-export function TaskHeader({ task, session, reviewEligibility }: TaskHeaderProps): ReactNode {
+export function TaskHeader({
+  task,
+  session,
+  reviewEligibility,
+  compact = false,
+}: TaskHeaderProps): ReactNode {
   const queryClient = useQueryClient()
   // #229：确认中（待确认的行动）；null = 无对话框。
   const [confirming, setConfirming] = useState<TaskAction | null>(null)
@@ -98,7 +104,7 @@ export function TaskHeader({ task, session, reviewEligibility }: TaskHeaderProps
   const assigneeLabel = isAssignee ? '你' : directory.personOf(task.assigneeUserId)
 
   return (
-    <header className="task-header">
+    <header className={`task-header${compact ? ' task-header-compact' : ''}`}>
       {/* #225：离开任务房间不只有侧栏一条路（与权限页「回到任务房间」方向一致）。 */}
       <p className="mutation-hint">
         <Link to="/" data-testid="task-back-link">
@@ -127,38 +133,42 @@ export function TaskHeader({ task, session, reviewEligibility }: TaskHeaderProps
             <dd data-testid="task-agent">{agent?.name}</dd>
           </div>
         ) : null}
-        <div>
-          <dt>创建时间</dt>
-          <dd>
-            <RelativeTime iso={task.createdAt} />
-          </dd>
-        </div>
-        {task.acceptedAt !== null ? (
-          <div>
-            <dt>接受时间</dt>
-            <dd>
-              <RelativeTime iso={task.acceptedAt} />
-            </dd>
-          </div>
-        ) : null}
-        {task.completedAt !== null ? (
-          <div>
-            <dt>完成时间</dt>
-            <dd>
-              <RelativeTime iso={task.completedAt} />
-            </dd>
-          </div>
-        ) : null}
       </dl>
-      {task.description !== '' ? <p className="task-description">{task.description}</p> : null}
-      {/* 切片⑥e：任务级「谁能驱动 Agent」入口。放头部而不是执行栏：授权是低频操作，
+      <details className="task-header-details" open={!compact}>
+        <summary>任务信息与操作</summary>
+        <dl className="task-meta">
+          <div>
+            <dt>创建时间</dt>
+            <dd>
+              <RelativeTime iso={task.createdAt} />
+            </dd>
+          </div>
+          {task.acceptedAt !== null ? (
+            <div>
+              <dt>接受时间</dt>
+              <dd>
+                <RelativeTime iso={task.acceptedAt} />
+              </dd>
+            </div>
+          ) : null}
+          {task.completedAt !== null ? (
+            <div>
+              <dt>完成时间</dt>
+              <dd>
+                <RelativeTime iso={task.completedAt} />
+              </dd>
+            </div>
+          ) : null}
+        </dl>
+        {task.description !== '' ? <p className="task-description">{task.description}</p> : null}
+        {/* 切片⑥e：任务级「谁能驱动 Agent」入口。放头部而不是执行栏：授权是低频操作，
           独立成页后从这里进（也可从成员页进）。 */}
-      <p className="mutation-hint">
-        <Link to={`/tasks/${task.id}/permissions`} data-testid="task-permissions-link">
-          谁能驱动这个任务的 Agent →
-        </Link>
-      </p>
-
+        <p className="mutation-hint">
+          <Link to={`/tasks/${task.id}/permissions`} data-testid="task-permissions-link">
+            谁能驱动这个任务的 Agent →
+          </Link>
+        </p>
+      </details>
       {canAct ? (
         <div id="task-actions" tabIndex={-1} className="task-actions" aria-label="任务行动">
           <span className="visually-hidden">仅当前责任人可用</span>

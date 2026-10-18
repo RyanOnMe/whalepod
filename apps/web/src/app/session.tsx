@@ -29,6 +29,7 @@ import { GlobalSearch } from './GlobalSearch.js'
 import { HintGroup } from '../shared/micro/Hint.js'
 import { NotificationBell, RunNotifications } from './RunNotifications.js'
 import { ShortcutHelp } from './ShortcutHelp.js'
+import { WorkspaceIcon } from '../shared/WorkspaceIcon.js'
 import { ExecutionDraftProvider } from '../features/task/execution-drafts.js'
 
 const SessionContext = createContext<Session | null>(null)
@@ -227,6 +228,24 @@ export function AppShell(): ReactNode {
         <div className="app-shell">
           <div className="app-frame">
             {wide ? (
+              <nav className="app-rail" aria-label="主导航">
+                <Link to="/" className="app-rail-brand" aria-label="WhalePod 首页">
+                  W
+                </Link>
+                {NAV_ITEMS.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.end}
+                    aria-label={item.label}
+                    title={item.label}
+                  >
+                    <WorkspaceIcon name={item.label} />
+                  </NavLink>
+                ))}
+              </nav>
+            ) : null}
+            {wide ? (
               <aside className="app-sidebar">
                 <div className="app-brand-row">
                   <Link to="/" className="app-brand">
@@ -237,13 +256,9 @@ export function AppShell(): ReactNode {
                 <GlobalSearch />
                 {/* #259：完成提醒开关（宽屏侧栏；权限只在点击时请求）。 */}
                 <NotificationBell />
-                <nav className="app-nav" aria-label="主导航">
-                  {NAV_ITEMS.map((item) => (
-                    <NavLink key={item.to} to={item.to} end={item.end}>
-                      {item.label}
-                    </NavLink>
-                  ))}
-                </nav>
+                <Link className="sidebar-projects-link" to="/">
+                  项目与任务 <span aria-hidden="true">↗</span>
+                </Link>
                 <RecentTasksNav />
                 <div className="app-sidebar-user">
                   <span className="app-sidebar-user-name" title={userTitle}>
@@ -304,7 +319,9 @@ export function AppShell(): ReactNode {
               <ToastHost />
               {/* #227：断线重连中的可见横幅（在线与首次连接保持安静）。 */}
               <ConnectionBanner />
-              <main className="app-main">
+              <main
+                className={`app-main${/^\/tasks\/[^/]+$/.test(location.pathname) ? ' app-main-workspace' : ''}`}
+              >
                 <ExecutionDraftProvider key={session.userId} userId={session.userId}>
                   <Outlet />
                 </ExecutionDraftProvider>

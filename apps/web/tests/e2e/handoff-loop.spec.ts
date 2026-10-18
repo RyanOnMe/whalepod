@@ -260,7 +260,8 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   await expect(alice.getByText('你已接受此任务。')).toBeVisible()
 
   // ---------- 2. 启用约定 + 起草并确认 v1 ----------
-  await alice.getByRole('button', { name: '启用约定流程' }).click()
+  await alice.getByRole('button', { name: /^任务约定/ }).click()
+  await alice.getByRole('switch', { name: '启用约定流程' }).click()
   await alice.getByRole('button', { name: '起草任务约定' }).click()
   const editor = alice.getByTestId('agreement-editor')
   await editor.getByLabel('任务约定：目标').fill('交付登录接口与用例')
@@ -284,6 +285,7 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   // 材料发布（交接包的系统块只收已发布材料）。
   await alice.reload()
   await alice.locator(`.run-item-button[data-run-id="${shared.upstreamRunId}"]`).click()
+  await alice.getByRole('button', { name: '交付与复核', exact: true }).click()
   await expect(alice.getByTestId('artifact-publish-button')).toBeVisible({ timeout: 30_000 })
   await alice.getByTestId('artifact-publish-button').click()
   await alice.getByRole('button', { name: '确认发布给团队' }).click()
@@ -294,6 +296,7 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
 
   const upstreamRoom = await roomOf(shared.aliceCookie, shared.upstreamTaskId)
   // 收尾草稿：面板出现可编辑草稿（自动生成、单次调用），核对后发布 v1。
+  await alice.getByRole('button', { name: '运行详情', exact: true }).click()
   const draftPanel = alice.getByTestId('handoff-draft')
   await expect(draftPanel).toBeVisible({ timeout: 30_000 })
   await expect(draftPanel.getByTestId('handoff-editor')).toBeVisible()
@@ -356,6 +359,7 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
 
   // ---------- 5. 交付给 Bob（建下游任务）----------
   await alice.reload()
+  await alice.getByRole('button', { name: '交付与复核', exact: true }).click()
   const deliveryPanel = alice.getByTestId('handoff-delivery-panel')
   await expect(deliveryPanel).toBeVisible({ timeout: 30_000 })
   await selectFromMenu(deliveryPanel.getByLabel('交接版本'), /v1/)

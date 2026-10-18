@@ -286,7 +286,9 @@ describe('RunLauncher', () => {
     await selectOption(user, '选择 Agent', 'Fixer')
     await selectOption(user, '选择设备', 'm4-mini（在线）')
     await selectOption(user, '选择 Workspace', 'whalepod')
-    await user.click(screen.getByText('执行设置（配置版本与环境）'))
+    const settings = screen.getByText('执行设置')
+    await user.click(settings)
+    expect(settings.closest('details')).not.toHaveAttribute('open')
     expect(screen.getByTestId('execution-target-summary')).toHaveTextContent(
       '显式指定：m4-mini · whalepod',
     )
@@ -404,6 +406,7 @@ describe('RunLivePanel', () => {
 
     await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
     expect(await screen.findByText('实时输出')).toBeVisible()
+    await user.click(screen.getByText('工具与运行记录'))
     expect(await screen.findByText('阶段：思考中')).toBeVisible()
 
     // live delta 经缓冲实时上屏（不落库）。
@@ -449,6 +452,7 @@ describe('RunLivePanel', () => {
     )
 
     await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
+    await user.click(await screen.findByText('工具与运行记录'))
     expect(await screen.findByText('阶段：工具执行中')).toBeVisible()
     // project 缩水卡：reason 恒空 → 固定文案，不显示空框（03 §8）。
     expect(screen.getByText('等待责任人批准')).toBeVisible()

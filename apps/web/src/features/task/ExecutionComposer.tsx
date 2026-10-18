@@ -10,6 +10,7 @@ import {
 import { Link } from 'react-router'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { api } from '../../shared/api/client.js'
+import SpringCheck from '../../vendor/react-bits-micro/SpringCheck.js'
 import { SelectMenu } from '../../shared/SelectMenu.js'
 import { queryKeys } from '../../app/query-client.js'
 import type {
@@ -57,7 +58,11 @@ export function ExecutionComposer({
   handoff,
   reviewRequest = null,
   revisionRequest = null,
+  onDiscuss,
+  compact = false,
 }: {
+  onDiscuss?: () => void
+  compact?: boolean
   task: TaskView
   session: Session
   runs: TaskRoomRun[]
@@ -314,35 +319,74 @@ export function ExecutionComposer({
       className="execution-composer"
       data-testid="execution-composer"
     >
-      <p className="mutation-hint">
-        草稿仅在当前登录页面会话内暂存；切换任务可保留，刷新或退出后清除。
-      </p>
-      <button
-        type="button"
-        className="button button-quiet"
-        disabled={sending}
-        onClick={() => memory.clear(initialDraft())}
-      >
-        清除当前执行草稿
-      </button>
-      {memory.snapshot.ownerId !== task.assigneeUserId ? (
+      <details className="composer-options" open={!compact}>
+        <summary>执行方式与草稿</summary>
+        <p className="mutation-hint">
+          草稿仅在当前登录页面会话内暂存；切换任务可保留，刷新或退出后清除。
+        </p>
         <button
           type="button"
-          className="button"
+          className="button button-quiet"
           disabled={sending}
-          onClick={() => {
-            memory.intentKey.current = null
-            memory.update((old) => ({
-              ...initialDraft(),
-              text: old.text,
-              mode: 'new',
-              sourceId: '',
-            }))
-          }}
+          onClick={() => memory.clear(initialDraft())}
         >
-          重新确认执行安排（保留正文）
+          清除当前执行草稿
         </button>
-      ) : null}
+        {memory.snapshot.ownerId !== task.assigneeUserId ? (
+          <button
+            type="button"
+            className="button"
+            disabled={sending}
+            onClick={() => {
+              memory.intentKey.current = null
+              memory.update((old) => ({
+                ...initialDraft(),
+                text: old.text,
+                mode: 'new',
+                sourceId: '',
+              }))
+            }}
+          >
+            重新确认执行安排（保留正文）
+          </button>
+        ) : null}
+        <SelectMenu
+          appearance="glide"
+          id={`execution-mode-${task.id}`}
+          label="执行方式"
+          value={mode}
+          disabled={sending}
+          options={[
+            { value: 'new', label: '开始新执行（不接旧会话）', disabled: false },
+            {
+              value: 'review',
+              label: '复核交付物（单独执行）',
+              disabled: published.length === 0 && mode !== 'review',
+            },
+            {
+              value: 'followup',
+              label: '发送追问（指定活跃执行）',
+              disabled: revisionContext !== null || (active === undefined && mode !== 'followup'),
+            },
+            {
+              value: 'resume',
+              label: '继续会话（创建新执行记录）',
+              disabled: terminal.length === 0,
+            },
+          ]}
+          onChange={(next) => {
+            setMode(next as Mode)
+            if (next === 'review') setRevisionContext(null)
+            if (next === 'followup' && active !== undefined) setSourceId(active.id)
+            if (
+              next === 'resume' &&
+              revisionContext === null &&
+              !terminal.some((run) => run.id === sourceId)
+            )
+              setSourceId(terminal.at(-1)?.id ?? '')
+          }}
+        />
+      </details>
       <p className="mutation-hint" data-testid="execution-responsibility">
         {isAssignee
           ? '你是当前责任人。执行使用你的环境与凭据，审批由你处理。'
@@ -378,37 +422,6 @@ export function ExecutionComposer({
           error={cancelRunMutation.isError ? cancelRunMutation.error : null}
         />
       ) : null}
-      <SelectMenu
-        id={`execution-mode-${task.id}`}
-        label="执行方式"
-        value={mode}
-        disabled={sending}
-        options={[
-          { value: 'new', label: '开始新执行（不接旧会话）', disabled: false },
-          {
-            value: 'review',
-            label: '复核交付物（单独执行）',
-            disabled: published.length === 0 && mode !== 'review',
-          },
-          {
-            value: 'followup',
-            label: '发送追问（指定活跃执行）',
-            disabled: revisionContext !== null || (active === undefined && mode !== 'followup'),
-          },
-          { value: 'resume', label: '继续会话（创建新执行记录）', disabled: terminal.length === 0 },
-        ]}
-        onChange={(next) => {
-          setMode(next as Mode)
-          if (next === 'review') setRevisionContext(null)
-          if (next === 'followup' && active !== undefined) setSourceId(active.id)
-          if (
-            next === 'resume' &&
-            revisionContext === null &&
-            !terminal.some((run) => run.id === sourceId)
-          )
-            setSourceId(terminal.at(-1)?.id ?? '')
-        }}
-      />
       {revisionContext !== null ? (
         <section
           className="review-settings"
@@ -444,25 +457,26 @@ export function ExecutionComposer({
             }
           </p>
           {published.map((artifact) => (
-            <label key={artifact.id} className="review-material">
-              <input
-                type="checkbox"
-                aria-label={`复核材料：${artifact.title}`}
-                checked={reviewArtifactIds.includes(artifact.id)}
-                disabled={
-                  sending ||
-                  (!reviewArtifactIds.includes(artifact.id) && reviewArtifactIds.length >= 64)
-                }
-                onChange={(event) =>
-                  setReviewArtifactIds((ids) =>
-                    event.target.checked
-                      ? [...ids, artifact.id]
-                      : ids.filter((id) => id !== artifact.id),
-                  )
-                }
-              />
-              {artifact.title} · {artifact.sha256.slice(0, 12)}
-            </label>
+            <SpringCheck
+              key={artifact.id}
+              className="review-material"
+              ariaLabel={`复核材料：${artifact.title}`}
+              checked={reviewArtifactIds.includes(artifact.id)}
+              disabled={
+                sending ||
+                (!reviewArtifactIds.includes(artifact.id) && reviewArtifactIds.length >= 64)
+              }
+              onChange={(checked) =>
+                setReviewArtifactIds((ids) =>
+                  checked ? [...ids, artifact.id] : ids.filter((id) => id !== artifact.id),
+                )
+              }
+              label={
+                <>
+                  {artifact.title} · {artifact.sha256.slice(0, 12)}
+                </>
+              }
+            />
           ))}
           <p className="mutation-hint">
             已选择 {reviewArtifactIds.length} 项，最多64项；新发布不会自动加入。
@@ -485,6 +499,7 @@ export function ExecutionComposer({
       ) : null}
       {mode === 'resume' ? (
         <SelectMenu
+          appearance="glide"
           id={`execution-source-${task.id}`}
           label="来源执行"
           value={sourceId}
@@ -517,7 +532,10 @@ export function ExecutionComposer({
       {!allowed ? (
         <a
           href="#comments-heading"
-          onClick={() => document.getElementById('comments-heading')?.focus()}
+          onClick={() => {
+            onDiscuss?.()
+            document.getElementById('comments-heading')?.focus()
+          }}
         >
           前往讨论
         </a>
@@ -550,19 +568,22 @@ export function ExecutionComposer({
           style={{ border: 0, padding: 0, margin: 0 }}
         >
           {handoff !== null && isNewExecution ? (
-            <label className="handoff-attach" data-testid="handoff-attach">
-              <input
-                type="checkbox"
-                aria-label="附带上游交接材料"
-                checked={includeHandoff}
-                disabled={sending}
-                onChange={(event) => setIncludeHandoff(event.target.checked)}
-              />
-              {`附带上游交接材料：「${handoff.upstreamTaskTitle}」v${handoff.revisionNumber}`}
-              {handoff.hasNewerVersion
-                ? `（上游已有新版本，本次仍固定 v${handoff.revisionNumber}）`
-                : null}
-            </label>
+            <SpringCheck
+              className="handoff-attach"
+              testId="handoff-attach"
+              ariaLabel="附带上游交接材料"
+              checked={includeHandoff}
+              disabled={sending}
+              onChange={setIncludeHandoff}
+              label={
+                <>
+                  {`附带上游交接材料：「${handoff.upstreamTaskTitle}」v${handoff.revisionNumber}`}
+                  {handoff.hasNewerVersion
+                    ? `（上游已有新版本，本次仍固定 v${handoff.revisionNumber}）`
+                    : null}
+                </>
+              }
+            />
           ) : null}
           {handoff !== null && mode === 'resume' ? (
             <p className="mutation-hint">
@@ -588,6 +609,7 @@ export function ExecutionComposer({
               session={session}
               hasActiveRun={active !== undefined}
               embedded
+              compact={compact}
               onOutcome={setLastOutcome}
               draft={draft}
               intentKeyRef={memory.intentKey}

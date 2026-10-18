@@ -17,6 +17,7 @@ import {
   workspacesHandler,
 } from './fixtures.js'
 import type { MockHandler } from './fixtures.js'
+import { showExecutionOptions } from './workspace.js'
 import { renderApp } from './render.jsx'
 const AGENT = '00000000-0000-4000-8000-000000000010'
 const REVISION = '00000000-0000-4000-8000-000000000011'
@@ -81,6 +82,7 @@ function sourceHandler(
   }
 }
 async function mode(user: ReturnType<typeof userEvent.setup>, label: RegExp): Promise<void> {
+  await showExecutionOptions()
   await user.click(screen.getByLabelText('执行方式'))
   await user.click(screen.getByRole('menuitem', { name: label }))
 }
@@ -144,7 +146,7 @@ describe('#315 统一执行入口的真人页面', () => {
       await waitFor(() => expect(chooser).toBeEnabled())
       if (result === 'failure') {
         expect(box).toHaveValue('这次先提交的草稿')
-        expect(await screen.findByText(/稍后重试/)).toBeVisible()
+        expect(await screen.findByText(/稍后重试.*pending-new/)).toBeVisible()
       }
       await mode(user, /继续会话/)
       const continued = await screen.findByLabelText('指令')
@@ -619,7 +621,7 @@ describe('#337 当前会话中的执行草稿', () => {
     const user = userEvent.setup()
     const f = draftNavigationFixture()
     await selectDraftAgent(user)
-    await user.click(screen.getByText('执行设置（配置版本与环境）'))
+    await user.click(screen.getByText('执行设置'))
     await user.click(screen.getByLabelText('选择 Revision'))
     await user.click(screen.getByRole('menuitem', { name: /^r1 / }))
     await user.click(screen.getByLabelText('选择设备'))
@@ -840,7 +842,7 @@ describe('#338 首次准备往返与当前条件', () => {
     const f = draftNavigationFixture()
     await selectDraftAgent(user)
     await user.type(screen.getByLabelText('指令'), '固定本人执行现场')
-    await user.click(screen.getByText('执行设置（配置版本与环境）'))
+    await user.click(screen.getByText('执行设置'))
     await user.click(screen.getByLabelText('选择设备'))
     await user.click(screen.getByRole('menuitem', { name: new RegExp(f.device.name) }))
     await user.click(screen.getByLabelText('选择 Workspace'))

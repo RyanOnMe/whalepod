@@ -22,9 +22,15 @@ export interface AssignmentPanelProps {
   task: TaskView
   session: Session | null
   hasActiveRun: boolean
+  compact?: boolean
 }
 
-export function AssignmentPanel({ task, session, hasActiveRun }: AssignmentPanelProps): ReactNode {
+export function AssignmentPanel({
+  task,
+  session,
+  hasActiveRun,
+  compact = false,
+}: AssignmentPanelProps): ReactNode {
   const queryClient = useQueryClient()
   const [error, setError] = useState<unknown>(null)
   const isAssignee = session !== null && task.assigneeUserId === session.userId
@@ -68,13 +74,15 @@ export function AssignmentPanel({ task, session, hasActiveRun }: AssignmentPanel
           {/* 视角区分：对责任人是你；对 Owner/Admin 与其他成员是第三方陈述。 */}
           {isAssignee ? '你已接受此任务。' : '责任人已接受此任务。'}
         </p>
-        <section className="snapshot-slot" aria-label="Agent 快照">
-          <h3>Agent 快照</h3>
-          <p className="empty-state">
-            Run 创建后，这里会显示该 Run 使用的 Agent 与 Profile Revision 快照（数据随 Run
-            创建接口提供）。
-          </p>
-        </section>
+        {!compact ? (
+          <section className="snapshot-slot" aria-label="Agent 快照">
+            <h3>Agent 快照</h3>
+            <p className="empty-state">
+              Run 创建后，这里会显示该 Run 使用的 Agent 与 Profile Revision 快照（数据随 Run
+              创建接口提供）。
+            </p>
+          </section>
+        ) : null}
       </>
     )
   } else if (task.assignmentStatus === 'rejected') {
@@ -121,8 +129,10 @@ export function AssignmentPanel({ task, session, hasActiveRun }: AssignmentPanel
       className="card assignment-panel"
       aria-labelledby="assignment-heading"
     >
-      <h2 id="assignment-heading">任务分配</h2>
-      <div className="assignment-status">
+      <h2 id="assignment-heading" className={compact ? 'visually-hidden' : undefined}>
+        任务分配
+      </h2>
+      <div className="assignment-status" hidden={compact && task.assignmentStatus === 'accepted'}>
         状态：
         <span className={`badge badge-assignment`}>
           {ASSIGNMENT_STATUS_LABEL[task.assignmentStatus]}

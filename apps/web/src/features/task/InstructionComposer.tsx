@@ -24,6 +24,7 @@ import { queryKeys } from '../../app/query-client.js'
 import { ConfirmDialog } from '../../shared/ConfirmDialog.js'
 import { isApiError } from '../../shared/api/errors.js'
 import type { InstructionView } from '../../shared/api/types.js'
+import PromptBar from '../../vendor/react-bits-micro/PromptBar.js'
 import { InstructionSendIcon, type SendFeedback } from './InstructionSendIcon.js'
 
 /** POST /tasks/:taskId/instructions 的响应：指令本体 + 它的命运。 */
@@ -213,47 +214,54 @@ export function InstructionComposer({
 
   return (
     <form className="instruction-composer" onSubmit={submit}>
-      <label htmlFor={`instruction-text-${taskId}`}>指令</label>
-      <textarea
-        id={`instruction-text-${taskId}`}
-        name="text"
-        rows={2}
-        maxLength={10_000}
-        disabled={blocked || mutation.isPending}
-        value={text}
-        placeholder={intent?.kind === 'resume' ? '接着来源会话继续…' : '让 Agent 干这个…'}
-        onChange={(event) => setText(event.target.value)}
-        onKeyDown={(event) => {
-          // #229：Cmd/Ctrl+Enter 直发（与提交按钮同一条 form 路径）；纯 Enter 仍是换行。
-          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-            event.preventDefault()
-            setInstant(true)
-            event.currentTarget.form?.requestSubmit()
-          }
-        }}
-      />
-      <div className="composer-actions">
-        <button
-          type="submit"
-          className="button button-primary instruction-send"
+      <PromptBar
+        action={
+          <button
+            type="submit"
+            className="button button-primary instruction-send"
+            disabled={blocked || mutation.isPending}
+            aria-busy={mutation.isPending}
+            data-feedback={feedback}
+            data-instant={instant ? '' : undefined}
+            onPointerDown={() => setInstant(false)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') setInstant(true)
+            }}
+          >
+            <InstructionSendIcon feedback={feedback} />
+            {mutation.isPending
+              ? '发送中…'
+              : intent?.kind === 'resume'
+                ? '继续会话'
+                : intent?.kind === 'followup'
+                  ? '发送追问'
+                  : '发送指令'}
+          </button>
+        }
+      >
+        <label htmlFor={`instruction-text-${taskId}`} className="visually-hidden">
+          指令
+        </label>
+        <textarea
+          id={`instruction-text-${taskId}`}
+          name="text"
+          rows={2}
+          maxLength={10_000}
           disabled={blocked || mutation.isPending}
-          aria-busy={mutation.isPending}
-          data-feedback={feedback}
-          data-instant={instant ? '' : undefined}
-          onPointerDown={() => setInstant(false)}
+          value={text}
+          placeholder={intent?.kind === 'resume' ? '接着来源会话继续…' : '让 Agent 干这个…'}
+          onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') setInstant(true)
+            // #229：Cmd/Ctrl+Enter 直发（与提交按钮同一条 form 路径）；纯 Enter 仍是换行。
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault()
+              setInstant(true)
+              event.currentTarget.form?.requestSubmit()
+            }
           }}
-        >
-          <InstructionSendIcon feedback={feedback} />
-          {mutation.isPending
-            ? '发送中…'
-            : intent?.kind === 'resume'
-              ? '继续会话'
-              : intent?.kind === 'followup'
-                ? '发送追问'
-                : '发送指令'}
-        </button>
+        />
+      </PromptBar>
+      <div className="composer-actions">
         <span className="mutation-hint" data-testid="instruction-routing-hint">
           {intent?.kind === 'resume'
             ? '续接指定会话，并创建新执行记录'

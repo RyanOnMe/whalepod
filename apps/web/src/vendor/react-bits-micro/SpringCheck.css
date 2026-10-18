@@ -1,0 +1,84 @@
+/* React Bits SpringCheck, adapted for WhalePod. See LICENSE.md / manifest.json. */
+.spring-check {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  cursor: pointer;
+  color: var(--color-ink);
+  font-size: 13px;
+}
+.spring-check > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  opacity: 0;
+}
+.spring-check__box {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--dsw-alias-border-l4);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.spring-check__fill {
+  position: absolute;
+  inset: 0;
+  background: var(--color-ink);
+  opacity: 0;
+  transform: scale(0.8);
+  border-radius: 4px;
+  transition:
+    transform 160ms cubic-bezier(0.22, 1.15, 0.36, 1),
+    opacity 120ms ease;
+}
+.spring-check__tick {
+  position: relative;
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: var(--color-surface);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transition: stroke-dashoffset 160ms var(--ease-out);
+}
+.spring-check > input:checked + .spring-check__box .spring-check__fill {
+  transform: scale(1);
+  opacity: 1;
+}
+.spring-check > input:checked + .spring-check__box .spring-check__tick {
+  stroke-dashoffset: 0;
+}
+.spring-check > input:focus-visible + .spring-check__box {
+  outline: 2px solid var(--color-ink);
+  outline-offset: 3px;
+}
+.spring-check:has(> input:disabled) {
+  cursor: default;
+  opacity: 0.55;
+}
+.spring-check__label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.spring-check[data-instant] .spring-check__fill,
+.spring-check[data-instant] .spring-check__tick {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .spring-check__fill,
+  .spring-check__tick {
+    transition: none;
+  }
+}

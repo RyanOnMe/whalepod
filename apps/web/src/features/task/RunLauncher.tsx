@@ -23,6 +23,7 @@ import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { useMemberDirectory } from '../team/memberDirectory.js'
 import { ExecutionPreparation } from './ExecutionPreparation.js'
 import { TargetPicker } from './TargetPicker.js'
+import PromptBar from '../../vendor/react-bits-micro/PromptBar.js'
 import { InstructionSendIcon } from './InstructionSendIcon.js'
 import type { InstructionOutcome } from './InstructionComposer.js'
 import { queryKeys } from '../../app/query-client.js'
@@ -48,6 +49,7 @@ export interface RunLauncherProps {
   /** 当前已有活跃 Run（一任务一活跃，03 §3.2）时不渲染。 */
   hasActiveRun: boolean
   embedded?: boolean
+  compact?: boolean
   artifactInputIds?: string[] | undefined
   /** 交接输入（#380）：勾选「附带上游交接材料」时显式带上已确认 receipt。 */
   handoffReceiptId?: string | undefined
@@ -70,6 +72,7 @@ export function RunLauncher({
   session,
   hasActiveRun,
   embedded = false,
+  compact = false,
   artifactInputIds,
   handoffReceiptId,
   buttonLabel = '开始执行',
@@ -343,20 +346,95 @@ export function RunLauncher({
           submitRun()
         }}
       >
-        <div className="field">
-          <SelectMenu
-            id="run-agent"
-            label="Agent"
-            ariaLabel="选择 Agent"
-            value={agentId}
-            placeholder="选择 Agent…"
-            options={agentOptions}
-            onChange={(next) => {
-              setAgentId(next)
-              setProfileRevisionId('')
-            }}
-          />
-        </div>
+        <PromptBar
+          controls={
+            <>
+              <div className="field">
+                <SelectMenu
+                  appearance="glide"
+                  id="run-agent"
+                  label="Agent"
+                  ariaLabel="选择 Agent"
+                  value={agentId}
+                  placeholder="选择 Agent…"
+                  options={agentOptions}
+                  onChange={(next) => {
+                    setAgentId(next)
+                    setProfileRevisionId('')
+                  }}
+                />
+              </div>
+              <details className="execution-settings">
+                <summary title="配置版本与执行环境">执行设置</summary>
+                <div className="field">
+                  <SelectMenu
+                    id="run-revision"
+                    label="Revision（选定即快照）"
+                    ariaLabel="选择 Revision"
+                    value={effectiveRevisionId}
+                    placeholder="先选 Agent…"
+                    options={revisionOptions}
+                    onChange={setProfileRevisionId}
+                    disabled={agentId === ''}
+                  />
+                </div>
+                <TargetPicker
+                  isAssignee={isAssignee}
+                  value={deviceId === '' ? null : { deviceId, workspaceId }}
+                  onChange={(next) => {
+                    setSettings((old) => ({
+                      ...old,
+                      deviceId: next?.deviceId ?? '',
+                      workspaceId: next?.workspaceId ?? '',
+                    }))
+                  }}
+                  assigneeName={directory.personOf(task.assigneeUserId)}
+                  hasActiveRun={hasActiveRun}
+                  deviceAriaLabel="选择设备"
+                  workspaceAriaLabel="选择 Workspace"
+                  showDeviceStatus
+                />
+              </details>
+            </>
+          }
+          action={
+            <button
+              type="submit"
+              className="button button-primary instruction-send"
+              disabled={!ready || start.isPending}
+              aria-busy={start.isPending}
+              data-feedback={feedback}
+              data-instant={instant ? '' : undefined}
+              onPointerDown={() => setInstant(false)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') setInstant(true)
+              }}
+            >
+              <InstructionSendIcon feedback={feedback} />
+              {start.isPending ? '发送中…' : buttonLabel}
+            </button>
+          }
+        >
+          <label>
+            <span className="visually-hidden">指令</span>
+            <textarea
+              aria-label="指令"
+              value={prompt}
+              maxLength={10_000}
+              disabled={start.isPending}
+              onChange={(event) => setPrompt(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault()
+                  setInstant(true)
+                  event.currentTarget.form?.requestSubmit()
+                }
+              }}
+              placeholder="告诉 Agent 这次要完成什么…"
+              rows={compact ? 2 : 4}
+            />
+          </label>
+        </PromptBar>
         {selectedRevision !== undefined ? (
           <p className="mutation-hint" data-testid="execution-revision">
             配置版本：r{selectedRevision.revision} · {selectedRevision.provider}/
@@ -444,37 +522,7 @@ export function RunLauncher({
             配置版本的凭据信息读取不完整，请重新读取配置；准备条件尚未确认。
           </p>
         ) : null}
-        <details className="execution-settings">
-          <summary>执行设置（配置版本与环境）</summary>
-          <div className="field">
-            <SelectMenu
-              id="run-revision"
-              label="Revision（选定即快照）"
-              ariaLabel="选择 Revision"
-              value={effectiveRevisionId}
-              placeholder="先选 Agent…"
-              options={revisionOptions}
-              onChange={setProfileRevisionId}
-              disabled={agentId === ''}
-            />
-          </div>
-          <TargetPicker
-            isAssignee={isAssignee}
-            value={deviceId === '' ? null : { deviceId, workspaceId }}
-            onChange={(next) => {
-              setSettings((old) => ({
-                ...old,
-                deviceId: next?.deviceId ?? '',
-                workspaceId: next?.workspaceId ?? '',
-              }))
-            }}
-            assigneeName={directory.personOf(task.assigneeUserId)}
-            hasActiveRun={hasActiveRun}
-            deviceAriaLabel="选择设备"
-            workspaceAriaLabel="选择 Workspace"
-            showDeviceStatus
-          />
-        </details>
+
         {[agentsQuery, agentDetailQuery, ...(isAssignee ? [devicesQuery, workspacesQuery] : [])]
           .filter((query) => query.isError)
           .map((query, i) => (
@@ -491,25 +539,7 @@ export function RunLauncher({
             ? '审批 · 未知（请先选择 Agent）'
             : `审批 · ${resolvedApprovalPolicy === 'full_access' ? '完全权限' : '需要逐次批准'} · ${task.approvalPolicy === null ? 'Revision 默认' : '任务覆盖'}`}
         </span>
-        <label>
-          指令
-          <textarea
-            aria-label="指令"
-            value={prompt}
-            maxLength={10_000}
-            disabled={start.isPending}
-            onChange={(event) => setPrompt(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-                event.preventDefault()
-                setInstant(true)
-                event.currentTarget.form?.requestSubmit()
-              }
-            }}
-            placeholder="这次 Run 要做什么（任务上下文由 Hub 注入）…"
-            rows={4}
-          />
-        </label>
+
         {/* #225：错误走全站口径（message + requestId），不再自写第二套错误段。 */}
         {/* #241：解析结果可见——选了完全权限（覆盖或 Revision 默认）就说出来，
             不等人发现运行卡上的标记才知道自己放权了。 */}
@@ -528,21 +558,6 @@ export function RunLauncher({
             。草稿仍保留。
           </p>
         ) : null}
-        <button
-          type="submit"
-          className="button button-primary instruction-send"
-          disabled={!ready || start.isPending}
-          aria-busy={start.isPending}
-          data-feedback={feedback}
-          data-instant={instant ? '' : undefined}
-          onPointerDown={() => setInstant(false)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') setInstant(true)
-          }}
-        >
-          <InstructionSendIcon feedback={feedback} />
-          {start.isPending ? '发送中…' : buttonLabel}
-        </button>
       </form>
       {confirmingFullAccess ? (
         <ConfirmDialog

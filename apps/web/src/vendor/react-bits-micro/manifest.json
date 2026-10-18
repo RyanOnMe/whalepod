@@ -88,6 +88,54 @@
       "upstreamPath": "src/ts-default/Micro/RubberSegment/RubberSegment.css",
       "originalSha256": "8e27a0daf7c64dc09939020db11d0461b03368763bceaaa60b88accad1b06cb4",
       "changes": "Controlled Console filter group with native aria-pressed buttons; 160ms CSS indicator, immediate keyboard/reduced motion. Drag, springs, momentum and radio semantics removed."
+    },
+    {
+      "local": "PromptBar.tsx",
+      "upstreamPath": "src/ts-default/Micro/PromptBar/PromptBar.tsx",
+      "originalSha256": "6e85f30e252f07c8fd0b9aa3ff7039870e36662c7e0aceaa7c6509ea0a245338",
+      "changes": "Retains the field, bottom toolbar, controls and send composition. Host slots retain native form submission, drafts and permission checks. Removes unsupported attachment, voice, source and command controls, sparks and Motion/Hugeicons dependencies; semantic tokens only."
+    },
+    {
+      "local": "PromptBar.css",
+      "upstreamPath": "src/ts-default/Micro/PromptBar/PromptBar.css",
+      "originalSha256": "dbbc1ed1f1455f4f0bf429b8b3028c0e496debb00a047b609c4d9a02aa48f359",
+      "changes": "Retains the field, bottom toolbar, controls and send composition. Host slots retain native form submission, drafts and permission checks. Removes unsupported attachment, voice, source and command controls, sparks and Motion/Hugeicons dependencies; semantic tokens only."
+    },
+    {
+      "local": "GlideSelect.tsx",
+      "upstreamPath": "src/ts-default/Micro/GlideSelect/GlideSelect.tsx",
+      "originalSha256": "4ab4dec9aeafdbb84137d2e78ae4b49369604a1e17b24491c932b8891d8fb499",
+      "changes": "Retains compact trigger, corner-origin popover and gliding row highlight. Controlled value, native menu buttons, disabled rows, arrows/Home/End/typeahead/Escape and focus return; portal placement tracks viewport scroll/resize. Keyboard and reduced motion are immediate; no dependencies added."
+    },
+    {
+      "local": "GlideSelect.css",
+      "upstreamPath": "src/ts-default/Micro/GlideSelect/GlideSelect.css",
+      "originalSha256": "2004ce25349676b1cb056a2169a6b1fc833b4cde3effd1302a0a4b1edb3aaebc",
+      "changes": "Retains compact trigger, corner-origin popover and gliding row highlight. Controlled value, native menu buttons, disabled rows, arrows/Home/End/typeahead/Escape and focus return; portal placement tracks viewport scroll/resize. Keyboard and reduced motion are immediate; no dependencies added."
+    },
+    {
+      "local": "SpringCheck.tsx",
+      "upstreamPath": "src/ts-default/Micro/SpringCheck/SpringCheck.tsx",
+      "originalSha256": "600b13423a6f360486e2f2cc8b7c0a96524e5184efbbeb95a4bee2cdaecd0219",
+      "changes": "Retains box, fill and drawn tick with a small pointer transition. Controlled native checkbox preserves keyboard, label and inherited fieldset disabled behavior. Removes completion strike-through, opacity loss, Motion and icon dependencies; selection never implies task completion."
+    },
+    {
+      "local": "SpringCheck.css",
+      "upstreamPath": "src/ts-default/Micro/SpringCheck/SpringCheck.css",
+      "originalSha256": "dc29047d805e99f439356880dda04240c1524693380059650e8188ce456c81c6",
+      "changes": "Retains box, fill and drawn tick with a small pointer transition. Controlled native checkbox preserves keyboard, label and inherited fieldset disabled behavior. Removes completion strike-through, opacity loss, Motion and icon dependencies; selection never implies task completion."
+    },
+    {
+      "local": "SquishSwitch.tsx",
+      "upstreamPath": "src/ts-default/Micro/SquishSwitch/SquishSwitch.tsx",
+      "originalSha256": "e373bbd3e3a35d72e4253b82c4747f44ab983777c070acff467d51ea1721dfb1",
+      "changes": "Retains pill track, thumb and subtle press squash. Fully controlled confirmed state; native disabled and pending lock prevent premature state changes. Removes velocity/drag gestures and Motion dependency; keyboard and reduced motion are immediate."
+    },
+    {
+      "local": "SquishSwitch.css",
+      "upstreamPath": "src/ts-default/Micro/SquishSwitch/SquishSwitch.css",
+      "originalSha256": "c05d751d50995b2683ea005098c8459694e03a2c2a3d532f4ab545aac5d5dfcb",
+      "changes": "Retains pill track, thumb and subtle press squash. Fully controlled confirmed state; native disabled and pending lock prevent premature state changes. Removes velocity/drag gestures and Motion dependency; keyboard and reduced motion are immediate."
     }
   ]
 }

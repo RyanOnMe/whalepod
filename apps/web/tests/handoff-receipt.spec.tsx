@@ -20,6 +20,7 @@ import {
   teamMembersHandler,
   type MockHandler,
 } from './fixtures.js'
+import { showWorkspace } from './workspace.js'
 import { renderApp } from './render.jsx'
 import { openSelect, selectOption } from './select-menu.js'
 import { queryKeys } from '../src/app/query-client.js'
@@ -443,6 +444,7 @@ describe('#380 Run 固定输入里的交接材料', () => {
       ])
     renderApp(`/tasks/${TASK_ID}`, handlers(null))
     await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
+    await showWorkspace('run')
     await user.click(await screen.findByRole('button', { name: '查看本次固定输入' }))
     await screen.findByTestId('run-input-manifest')
     // 无交接输入：这一节不出现（null 不是错误，也不占位）。
@@ -509,6 +511,7 @@ describe('#380 Run 固定输入里的交接材料', () => {
       ]),
     )
     await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
+    await showWorkspace('run')
     await user.click(await screen.findByRole('button', { name: '查看本次固定输入' }))
     const errorLine = await screen.findByTestId('run-handoff-input-error')
     expect(errorLine).toHaveTextContent('这不等于「本次不带交接材料」')
@@ -580,6 +583,7 @@ describe('#380 Run 固定输入里的交接材料', () => {
       ]),
     )
     await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
+    await showWorkspace('run')
     await user.click(await screen.findByRole('button', { name: '查看本次固定输入' }))
     const handoffSection = await screen.findByTestId('run-handoff-input')
     expect(handoffSection).toHaveTextContent('「后端交付」的已发布交接包 v1')

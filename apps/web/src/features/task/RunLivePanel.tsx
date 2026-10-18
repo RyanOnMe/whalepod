@@ -33,6 +33,7 @@ import { RunActions } from '../run/RunActions.js'
 import { RunFailureNotice } from '../run/RunFailureNotice.js'
 
 export interface RunLivePanelProps {
+  compact?: boolean
   /** 点「Console」时的回调（⑥d：覆盖层放大看）。不传则不渲染入口。 */
   onOpenConsole?: () => void
   runId: string
@@ -121,6 +122,7 @@ export function RunLivePanel({
   session,
   runLabels,
   onOpenConsole,
+  compact = false,
 }: RunLivePanelProps): ReactNode {
   const runQuery = useQuery({
     queryKey: queryKeys.run(runId),
@@ -143,7 +145,14 @@ export function RunLivePanel({
 
   if (runQuery.isPending) return <p className="mutation-hint">正在加载 Run…</p>
   if (runQuery.isError || run === undefined) {
-    return <p className="empty-state">Run 加载失败或不存在。</p>
+    return (
+      <div role="status">
+        <p className="empty-state">Run 加载失败或不存在。</p>
+        <button type="button" className="button" onClick={() => void runQuery.refetch()}>
+          重新读取运行
+        </button>
+      </div>
+    )
   }
 
   const events = orderedRunEvents(eventsQuery.data?.events ?? [], runId)
@@ -210,44 +219,60 @@ export function RunLivePanel({
         </div>
       ) : null}
 
-      <div className="run-live-events" data-testid="run-live-events">
-        <h4>事件</h4>
-        {eventsQuery.isPending ? <p className="mutation-hint">正在加载事件…</p> : null}
-        {eventsQuery.isError ? (
-          <div data-testid="run-events-error">
-            <p>事件读取失败，请稍后重试。</p>
-            <ErrorBanner error={eventsQuery.error} />
-          </div>
-        ) : null}
-        {events.length === 0 && !eventsQuery.isPending && !eventsQuery.isError ? (
-          <p className="empty-state">还没有事件。</p>
-        ) : null}
-        <ol className="run-event-list">
-          {events.map((item) => {
-            const text = describeEvent(item)
-            return (
-              <li key={eventIdentity(item)} className={`run-event audience-${item.audience}`}>
-                <span className="run-event-seq">#{item.seq}</span>
-                <span
-                  className={`run-event-text${item.event['type'] === 'tool.started' ? ' tool-event' : ''}`}
-                >
-                  {item.event['type'] === 'tool.started' ? (
-                    <ToolEventChip
-                      item={item}
-                      results={results}
-                      runStatus={run.status}
-                      eventsError={eventsQuery.isError}
-                    />
-                  ) : (
-                    (text ?? item.type)
-                  )}
-                </span>
-                <RelativeTime iso={item.occurredAt} />
-              </li>
-            )
-          })}
-        </ol>
-      </div>
+      {compact ? (
+        <div className="workspace-reply">
+          {events
+            .filter((item) => item.type === 'assistant.message' || item.type === 'run.completed')
+            .map((item) => {
+              const text = describeEvent(item)
+              return text === null ? null : <p key={eventIdentity(item)}>{text}</p>
+            })}
+          {eventsQuery.isError ? (
+            <p role="status">输出读取失败，请在工具与运行记录中重试检查。</p>
+          ) : null}
+        </div>
+      ) : null}
+      <details className="run-records" open={!compact}>
+        <summary>工具与运行记录</summary>
+        <div className="run-live-events" data-testid="run-live-events">
+          <h4>事件</h4>
+          {eventsQuery.isPending ? <p className="mutation-hint">正在加载事件…</p> : null}
+          {eventsQuery.isError ? (
+            <div data-testid="run-events-error">
+              <p>事件读取失败，请稍后重试。</p>
+              <ErrorBanner error={eventsQuery.error} />
+            </div>
+          ) : null}
+          {events.length === 0 && !eventsQuery.isPending && !eventsQuery.isError ? (
+            <p className="empty-state">还没有事件。</p>
+          ) : null}
+          <ol className="run-event-list">
+            {events.map((item) => {
+              const text = describeEvent(item)
+              return (
+                <li key={eventIdentity(item)} className={`run-event audience-${item.audience}`}>
+                  <span className="run-event-seq">#{item.seq}</span>
+                  <span
+                    className={`run-event-text${item.event['type'] === 'tool.started' ? ' tool-event' : ''}`}
+                  >
+                    {item.event['type'] === 'tool.started' ? (
+                      <ToolEventChip
+                        item={item}
+                        results={results}
+                        runStatus={run.status}
+                        eventsError={eventsQuery.isError}
+                      />
+                    ) : (
+                      (text ?? item.type)
+                    )}
+                  </span>
+                  <RelativeTime iso={item.occurredAt} />
+                </li>
+              )
+            })}
+          </ol>
+        </div>
+      </details>
     </section>
   )
 }

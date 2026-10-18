@@ -220,13 +220,19 @@ function deriveApprovalCards(events: RunEventItem[]): ApprovalCardState[] {
 }
 
 export interface ApprovalSlotProps {
+  visible?: boolean
   runs: TaskRoomRun[]
   task: TaskView
   session: Session | null
 }
 
 /** 审批卡插槽：等待审批的 Run 存在时显示卡与决定入口（03 §4 决策路由）。 */
-export function ApprovalSlot({ runs, task, session }: ApprovalSlotProps): ReactNode {
+export function ApprovalSlot({
+  runs,
+  task,
+  session,
+  visible = true,
+}: ApprovalSlotProps): ReactNode {
   const queryClient = useQueryClient()
   const waitingRun = runs.find((run) => run.status === 'waiting_approval')
   const [error, setError] = useState<unknown>(null)
@@ -238,7 +244,7 @@ export function ApprovalSlot({ runs, task, session }: ApprovalSlotProps): ReactN
   })
 
   const approvalAnchor = useLocation().hash.startsWith('#approval-')
-  useHashFocus(eventsQuery.isSuccess && approvalAnchor, true, eventsQuery.data)
+  useHashFocus(eventsQuery.isSuccess && approvalAnchor && visible, true, eventsQuery.data)
 
   // 决定提交走真人同一条 HTTP 路径；成功后失效 Run 事件查询翻转卡片状态。
   const decide = useMutation({

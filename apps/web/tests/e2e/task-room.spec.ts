@@ -349,6 +349,7 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
 
     // Task Room 四区可见（header/assignment/comments/runs+artifacts 空态）
     await expect(alice.getByText('起草验收报告').first()).toBeVisible()
+    await alice.getByRole('button', { name: '团队讨论', exact: true }).click()
     await expect(alice.getByText('还没有留言')).toBeVisible()
     // #152：Task Room 一屏内不得出现 UUID 形态与裸状态枚举（责任人姓名走成员名录，
     // 分配状态走 ASSIGNMENT_STATUS_LABEL）。
@@ -393,6 +394,7 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     await expectNoJargonVisible(alice)
     await listedTask.click()
     await alice.waitForURL(new RegExp(`/tasks/${taskId}$`))
+    await alice.getByRole('button', { name: '团队讨论', exact: true }).click()
     await expect(alice.getByText('还没有留言')).toBeVisible()
 
     // ---- Bob：第二 BrowserContext 走真实登录页 ----
@@ -411,6 +413,7 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     await expect(bob.getByText('你已接受此任务。')).toBeVisible()
 
     // ---- Bob：留言（textarea 内 Enter 是换行；Tab 到提交按钮激活——键盘链成立点） ----
+    await bob.getByRole('button', { name: '团队讨论', exact: true }).click()
     await bob.fill('textarea[name="body"]', '收到，本周内出初稿。')
     await bob.keyboard.press('Tab')
     await bob.keyboard.press('Enter')
@@ -418,10 +421,13 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
 
     // ---- Alice：重载后看到 Bob 的接受与留言（同任务另一会话的真实可见性） ----
     await alice.reload()
+    await alice.getByRole('button', { name: '团队讨论', exact: true }).click()
     await expect(alice.getByText('收到，本周内出初稿。')).toBeVisible()
     // Bob 接受后任务状态仍是未开始（in_progress 随 Run 启动），可见的是
     // 「已接受」徽标 + 非责任人视角的第三方陈述措辞。
+    await alice.getByRole('button', { name: 'Agent 执行', exact: true }).click()
     await expect(alice.getByText('责任人已接受此任务。')).toBeVisible()
+    await alice.getByRole('button', { name: '团队讨论', exact: true }).click()
     // #152：留言作者与分配状态这一屏同样零内部词汇（`accepted` 只能以「已接受」出现）
     await expect(alice.locator('span.badge', { hasText: '已接受' }).first()).toBeVisible()
     await expectNoJargonVisible(alice)
