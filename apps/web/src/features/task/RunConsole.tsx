@@ -17,7 +17,7 @@ import { WorkspaceIcon } from '../../shared/WorkspaceIcon.js'
 import RubberSegment from '../../vendor/react-bits-micro/RubberSegment.js'
 import type { RunEventItem, RunStatus } from '../../shared/api/types.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
-import { describeEvent } from './RunLivePanel.js'
+import { describeEvent } from './run-event-text.js'
 import { ToolEventChip } from './ToolEventChip.js'
 import { eventIdentity, orderedRunEvents, toolResults } from './tool-call-state.js'
 
@@ -93,11 +93,13 @@ export interface RunConsoleProps {
   runId: string
   runStatus?: RunStatus | undefined
   runLabel: string
-  events: RunEventItem[]
+  events: readonly RunEventItem[]
   /** 事件还在加载时不要假装"没有事件"。 */
   eventsPending: boolean
   /** 取数失败也必须与"没有事件"分开（排障界面尤其不能说假话）——评审 S1。 */
   eventsError?: unknown
+  /** 事件读取不完整时的重试（P1-393：分页读取失败保留已读内容 + 重试入口）。 */
+  onRetry?: () => void
   /**
    * #273 正在退场：调用方（`TaskRoomPage`）用 `usePresence` 把卸载推迟到退场演完之后，
    * 期间传 `true` —— 这里据此挂 `.leaving`（淡出 + 回落）。默认 false = 在场。
@@ -113,6 +115,7 @@ export function RunConsole({
   events,
   eventsPending,
   eventsError,
+  onRetry,
   leaving = false,
   onClose,
 }: RunConsoleProps): ReactNode {
@@ -224,9 +227,19 @@ export function RunConsole({
         <div className="console-body">
           {eventsPending ? <p className="mutation-hint">正在加载事件…</p> : null}
           {eventsError === undefined ? null : (
-            <p className="console-error" role="status" data-testid="console-error">
-              事件读取失败——这不等于"没有事件"。请重试，或去 Hub 日志按 runId 查。
-            </p>
+            <div className="console-error" role="status" data-testid="console-error">
+              <p>事件读取失败——这不等于"没有事件"。请重试，或去 Hub 日志按 runId 查。</p>
+              {onRetry === undefined ? null : (
+                <button
+                  type="button"
+                  className="button"
+                  data-testid="console-retry"
+                  onClick={onRetry}
+                >
+                  重试读取
+                </button>
+              )}
+            </div>
           )}
           {!eventsPending && eventsError === undefined && visible.length === 0 ? (
             <p className="empty-state" data-testid="console-empty">

@@ -1,5 +1,23 @@
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
+import { expect } from 'vitest'
+
+/**
+ * 在执行区输入框里写一句话（P1-393）。
+ *
+ * ADR-0019 起默认模式可能是「续聊最近一次业务运行」——来源的运行详情/配置版本要
+ * 读出来之前输入框是禁用的（真人也要等这一下）。直接 type 会在禁用窗口里静默落空，
+ * 所以这里显式等可用（不掩盖真实阻塞：一直不可用会以超时报红）。
+ */
+export async function typeInstruction(
+  text: string,
+  user = userEvent.setup(),
+): Promise<HTMLTextAreaElement> {
+  const box = (await screen.findByLabelText('指令')) as HTMLTextAreaElement
+  await waitFor(() => expect(box).toBeEnabled())
+  await user.type(box, text)
+  return box
+}
 
 /** Drive the same explicit view/detail controls that users see. */
 export async function showWorkspace(view: 'discussion' | 'artifacts' | 'agreement' | 'run') {

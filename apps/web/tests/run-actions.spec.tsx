@@ -165,6 +165,7 @@ describe('G7-05: failed/lost Run 的未知副作用警示', () => {
 describe('G7-04: UI 血缘与 Run 行动', () => {
   it('#162 血缘说「重跑自第 N 次运行」，原始 id 退到 title（不再拿短 id 当标签）', async () => {
     const task = taskWith([])
+    const user = userEvent.setup()
     renderApp(
       `/tasks/${task.id}`,
       loggedInHandlers(BOB, [
@@ -177,6 +178,8 @@ describe('G7-04: UI 血缘与 Run 行动', () => {
         ...runDetailHandlers(makeRunView()),
       ]),
     )
+    // ADR-0019：血缘移入运行详情（主对话只留段头的一个简短状态）。
+    await user.click(await screen.findByRole('button', { name: /第 2 次运行/ }))
     const lineage = await screen.findByTestId('run-lineage')
     expect(lineage).toBeVisible()
     // 来源是第 1 次运行（本用例里 SOURCE_RUN_ID 在前）→ 血缘句带上这个序号。
@@ -354,9 +357,9 @@ describe('#225 批次①：取消/重跑后页面数据真的刷新；错误走�
 })
 
 describe('切片⑤ resume：终态 Run 的「接着聊」与血缘句（#237）', () => {
-  it('「接着上次聊」提交体带 resumeFromRunId 与来源 Run 的目标（不换设备/工作区）', async () => {
+  it('「继续此会话」把来源交给底部输入框：发出的是 intent resume（目标锁定来源，不换设备/工作区）', async () => {
     const task = taskWith([])
-    const captures: { resumeBodies: unknown[] } = { resumeBodies: [] }
+    const captures: { instructionBodies: unknown[] } = { instructionBodies: [] }
     const user = userEvent.setup()
     renderApp(
       `/tasks/${task.id}`,
@@ -365,7 +368,8 @@ describe('切片⑤ resume：终态 Run 的「接着聊」与血缘句（#237）
         {
           method: 'GET',
           url: new RegExp(`/api/v1/runs/${RUN_ID}$`),
-          respond: () => ok(makeRunView({ status: 'completed', taskId: task.id })),
+          respond: () =>
+            ok(makeRunView({ status: 'completed', taskId: task.id, dshSessionId: 'session-1' })),
         },
         {
           method: 'GET',
@@ -373,37 +377,75 @@ describe('切片⑤ resume：终态 Run 的「接着聊」与血缘句（#237）
           respond: () => ok({ events: [] }),
         },
         {
+          method: 'GET',
+          url: /\/api\/v1\/agents$/,
+          respond: () => ok([{ id: AGENT_ID, name: 'Builder', archivedAt: null }]),
+        },
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/agents/${AGENT_ID}$`),
+          respond: () =>
+            ok({
+              id: AGENT_ID,
+              name: 'Builder',
+              archivedAt: null,
+              currentRevisionId: REVISION_ID,
+              revisions: [
+                {
+                  id: REVISION_ID,
+                  revision: 1,
+                  approvalPolicy: 'approval_required',
+                  provider: 'replay',
+                  credentialSlot: 'default',
+                  model: 'replay-model',
+                },
+              ],
+            }),
+        },
+        {
           method: 'POST',
-          url: /\/api\/v1\/tasks\/[^/]+\/runs$/,
+          url: new RegExp(`/api/v1/tasks/${task.id}/instructions$`),
           respond: (init) => {
-            captures.resumeBodies.push(JSON.parse(String(init.body ?? '{}')))
-            return created({ id: 'new-resume-run', status: 'queued' })
+            captures.instructionBodies.push(JSON.parse(String(init.body ?? '{}')))
+            return created({
+              id: 'm-resume',
+              taskId: task.id,
+              authorUserId: BOB.userId,
+              body: '继续刚才的思路',
+              createdAt: '2026-08-25T05:00:00.000Z',
+              kind: 'instruction',
+              origin: 'human',
+              targetAgentId: AGENT_ID,
+              runId: RUN_ID,
+              instructionState: 'pending',
+              instructionErrorCode: null,
+              instructionErrorMessage: null,
+              editedAt: null,
+              outcome: 'started_run',
+            })
           },
         },
         teamMembersHandler([]),
       ]),
     )
-    await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
-    await user.click(await screen.findByRole('button', { name: '接着上次聊' }))
-    const box = await screen.findByTestId('rerun-prompt')
+    await user.click(await screen.findByTestId('continue-session-button'))
+    const box = await screen.findByLabelText('指令')
     await user.type(box, '继续刚才的思路')
-    await user.click(screen.getByRole('button', { name: '确认续跑' }))
-    await waitFor(() => expect(captures.resumeBodies).toHaveLength(1))
-    expect(captures.resumeBodies[0]).toMatchObject({
-      agentId: AGENT_ID,
-      deviceId: DEVICE_ID,
-      workspaceId: WORKSPACE_ID,
-      resumeFromRunId: RUN_ID,
-      profileRevisionId: REVISION_ID,
-      expectedApprovalPolicy: 'approval_required',
-      prompt: '继续刚才的思路',
+    await user.click(screen.getByRole('button', { name: '继续会话' }))
+    await waitFor(() => expect(captures.instructionBodies).toHaveLength(1))
+    expect(captures.instructionBodies[0]).toMatchObject({
+      text: '继续刚才的思路',
+      intent: { kind: 'resume', runId: RUN_ID },
     })
-    // resume 语义下不带 rerunOfRunId（协议互斥，superRefine fail-closed）。
-    expect(captures.resumeBodies[0]).not.toHaveProperty('rerunOfRunId')
+    // 目标由来源锁定：不显式换设备/工作区，也不带重跑血缘（协议互斥，superRefine fail-closed）。
+    expect(captures.instructionBodies[0]).not.toHaveProperty('deviceId')
+    expect(captures.instructionBodies[0]).not.toHaveProperty('workspaceId')
+    expect(captures.instructionBodies[0]).not.toHaveProperty('rerunOfRunId')
   })
 
   it('血缘句区分两个动作：「续跑自第 N 次运行」不上 rerun 的措辞', async () => {
     const task = taskWith([])
+    const user = userEvent.setup()
     renderApp(
       `/tasks/${task.id}`,
       loggedInHandlers(BOB, [
@@ -416,6 +458,7 @@ describe('切片⑤ resume：终态 Run 的「接着聊」与血缘句（#237）
         teamMembersHandler([]),
       ]),
     )
+    await user.click(await screen.findByRole('button', { name: /第 2 次运行/ }))
     const lineage = await screen.findByTestId('run-lineage')
     expect(lineage).toHaveTextContent('续跑自第 1 次运行')
     expect(lineage.textContent ?? '').not.toContain('重跑自')

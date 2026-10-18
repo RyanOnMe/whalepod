@@ -245,7 +245,7 @@ describe('讨论列表里的引用 chip（页面级）', () => {
         },
         {
           method: 'GET',
-          url: /\/events$/,
+          url: /\/events(?:\?.*)?$/,
           respond: () =>
             new Response(JSON.stringify({ ok: true, data: { events: [] } }), { status: 200 }),
         },

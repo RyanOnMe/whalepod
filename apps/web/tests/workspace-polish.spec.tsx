@@ -1,17 +1,37 @@
 import { screen, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
-import { BOB, loggedInHandlers, makeArtifact, makeTask, taskRoomHandler } from './fixtures.js'
+import {
+  BOB,
+  loggedInHandlers,
+  makeArtifact,
+  makeRun,
+  makeTask,
+  ok,
+  taskRoomHandler,
+} from './fixtures.js'
 import { renderApp } from './render.js'
+
+const RESULT_RUN = 'abababab-0000-4000-8000-00000000000e'
 
 function room(withArtifact = false) {
   const task = makeTask({ assigneeUserId: BOB.userId, assignmentStatus: 'accepted' })
+  const run = makeRun({ id: RESULT_RUN, status: 'completed' })
   return renderApp(
     `/tasks/${task.id}`,
     loggedInHandlers(BOB, [
+      // ADR-0019：文件按 runId 落在对应回复之后（没有所属 Run 的卡片留在交付抽屉里）；
+      // 无历史时输入框默认新执行（带 Agent 选择），有历史时默认续聊或追问。
       taskRoomHandler(task, {
-        artifacts: withArtifact ? [makeArtifact({ title: 'result.md' })] : [],
+        ...(withArtifact
+          ? { runs: [run], artifacts: [makeArtifact({ title: 'result.md', runId: RESULT_RUN })] }
+          : {}),
       }),
+      {
+        method: 'GET',
+        url: new RegExp(`/api/v1/runs/${RESULT_RUN}/events`),
+        respond: () => ok({ events: [] }),
+      },
     ]),
   )
 }

@@ -9,6 +9,12 @@ import {
 } from 'react'
 
 export type ExecutionMode = 'new' | 'followup' | 'resume' | 'review'
+/**
+ * 草稿的来源标记（ADR-0019 决定 4）：'auto' = 默认规则给的（还会随运行状态更新），
+ * 'user' = 用户明确选择过模式/来源（默认规则不再改写）。只有空白、未调整当前模式设置、
+ * 未发送的自动草稿才跟随默认（判据在 execution-defaults.ts 的 followsDefaultMode）。
+ */
+export type ExecutionModeOrigin = 'auto' | 'user'
 export interface ExecutionSettings {
   agentId: string
   profileRevisionId: string
@@ -32,6 +38,7 @@ export interface ExecutionDraft {
   ownerId: string
   text: string
   mode: ExecutionMode
+  modeOrigin: ExecutionModeOrigin
   sourceId: string
   reviewArtifactIds: string[]
   revisionContext: ExecutionMaterialRequest | null

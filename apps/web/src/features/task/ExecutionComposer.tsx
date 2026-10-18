@@ -40,9 +40,20 @@ import {
   type ExecutionSettings,
   type ExecutionMode as Mode,
 } from './execution-drafts.js'
+import { defaultComposeTarget, followsDefaultMode } from './execution-defaults.js'
 export interface ArtifactReviewRequest {
   taskId: string
   artifactId: string
+  nonce: string
+}
+
+/**
+ * 历史运行的「继续此会话」（ADR-0019 决定 2）：把来源交给底部统一输入框，
+ * 保留已有文字；是否可发送仍由下面的 reason 链判定（不自动改投）。
+ */
+export interface ContinueSessionRequest {
+  taskId: string
+  runId: string
   nonce: string
 }
 
@@ -58,6 +69,7 @@ export function ExecutionComposer({
   handoff,
   reviewRequest = null,
   revisionRequest = null,
+  continueRequest = null,
   onDiscuss,
   compact = false,
 }: {
@@ -83,6 +95,8 @@ export function ExecutionComposer({
   } | null
   reviewRequest?: ArtifactReviewRequest | null
   revisionRequest?: ArtifactReviewRequest | null
+  /** 历史运行的「继续此会话」：把该运行设为来源（mode=resume），保留已有文字。 */
+  continueRequest?: ContinueSessionRequest | null
 }): ReactNode {
   const directory = useMemberDirectory()
   const responsible = directory.personOf(task.assigneeUserId)
@@ -99,16 +113,21 @@ export function ExecutionComposer({
     if (!hadHandoff.current && handoff !== null) setIncludeHandoff(true)
     hadHandoff.current = handoff !== null
   }, [handoff])
-  const initialDraft = (): ExecutionDraft => ({
-    ownerId: task.assigneeUserId,
-    text: '',
-    mode: active === undefined ? 'new' : 'followup',
-    sourceId: active?.id ?? terminal.at(-1)?.id ?? '',
-    reviewArtifactIds: [],
-    revisionContext: null,
-    launch: { key: 'new-', settings: { ...EMPTY_EXECUTION_SETTINGS } },
-    sending: false,
-  })
+  // ADR-0019 决定 3：默认目标是规则给的，不是每次都要重新做一次选择。
+  const initialDraft = (): ExecutionDraft => {
+    const target = defaultComposeTarget(runs)
+    return {
+      ownerId: task.assigneeUserId,
+      text: '',
+      mode: target.mode,
+      modeOrigin: 'auto',
+      sourceId: target.sourceId,
+      reviewArtifactIds: [],
+      revisionContext: null,
+      launch: { key: 'new-', settings: { ...EMPTY_EXECUTION_SETTINGS } },
+      sending: false,
+    }
+  }
   const memory = useExecutionDraft(task.id, session.userId, initialDraft)
   const {
     text: draft,
@@ -133,8 +152,23 @@ export function ExecutionComposer({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const focusMode = useRef(false)
   const settingsDisclosure = { open: settingsOpen, onChange: setSettingsOpen }
-  const setMode = (mode: Mode) => memory.update((old) => ({ ...old, mode }))
-  const setSourceId = (sourceId: string) => memory.update((old) => ({ ...old, sourceId }))
+  // 用户明确选择模式/来源 → 默认规则不再改写草稿（modeOrigin='user'）。
+  const setMode = (mode: Mode) => memory.update((old) => ({ ...old, mode, modeOrigin: 'user' }))
+  const setSourceId = (sourceId: string) =>
+    memory.update((old) => ({ ...old, sourceId, modeOrigin: 'user' }))
+  // ADR-0019 决定 4：只跟随「空白、未调整设置、未发送」的自动草稿；运行状态一变
+  // （起新运行/结束）就把默认目标落回草稿，用户动过的一律不动。
+  useEffect(() => {
+    if (!followsDefaultMode(memory.snapshot)) return
+    const target = defaultComposeTarget(runs)
+    if (target.mode === memory.snapshot.mode && target.sourceId === memory.snapshot.sourceId) return
+    memory.update((old) => ({
+      ...old,
+      mode: target.mode,
+      modeOrigin: 'auto',
+      sourceId: target.sourceId,
+    }))
+  }, [runs, memory.snapshot])
   const setReviewArtifactIds = (change: SetStateAction<string[]>) =>
     memory.update((old) => ({
       ...old,
@@ -202,6 +236,29 @@ export function ExecutionComposer({
       current.trim() === '' ? '请复核所选已发布交付物，指出问题与可执行的修订建议。' : current,
     )
   }, [reviewRequest, task.id, sending])
+
+  // ADR-0019 决定 2：历史运行的「继续此会话」把来源交给这里——保留已有文字，
+  // 只改来源；能否发送仍交给下面的 reason 链（不自动改投、不自动跳过）。
+  const handledContinue = useRef<string | null>(null)
+  useEffect(() => {
+    if (
+      continueRequest === null ||
+      continueRequest.taskId !== task.id ||
+      handledContinue.current === continueRequest.nonce
+    )
+      return
+    handledContinue.current = continueRequest.nonce
+    memory.update((old) => ({
+      ...old,
+      mode: 'resume',
+      modeOrigin: 'user',
+      sourceId: continueRequest.runId,
+    }))
+    const frame = requestAnimationFrame(() =>
+      document.getElementById(`instruction-text-${task.id}`)?.focus(),
+    )
+    return () => cancelAnimationFrame(frame)
+  }, [continueRequest, task.id])
   const isAssignee = task.assigneeUserId === session.userId
   const grants = useQuery({
     queryKey: queryKeys.instructionGrants(task.id),
@@ -310,9 +367,15 @@ export function ExecutionComposer({
   const started = (outcome: InstructionOutcome): void => {
     setLastOutcome(outcome)
     if (outcome.outcome === 'started_run' && outcome.runId !== null) {
-      setRevisionContext(null)
-      setMode('followup')
-      setSourceId(outcome.runId)
+      // 刚起来的 Run 就是新的默认目标：源头仍是默认规则（origin='auto'），
+      // 用户若之后明确改选，modeOrigin 会被改成 'user' 不再跟随。
+      memory.update((old) => ({
+        ...old,
+        mode: 'followup',
+        modeOrigin: 'auto',
+        revisionContext: null,
+        sourceId: outcome.runId!,
+      }))
     }
   }
   useEffect(() => {
@@ -631,9 +694,13 @@ export function ExecutionComposer({
               onDraftChange={setDraft}
               onSendingChange={setSending}
               onStarted={(runId) => {
-                setRevisionContext(null)
-                setMode('followup')
-                setSourceId(runId)
+                memory.update((old) => ({
+                  ...old,
+                  mode: 'followup',
+                  modeOrigin: 'auto',
+                  revisionContext: null,
+                  sourceId: runId,
+                }))
               }}
             />
           ) : (
@@ -642,8 +709,12 @@ export function ExecutionComposer({
               settingsContent={executionSettings}
               settingsDisclosure={settingsDisclosure}
               receiverLabel={
-                agents.data?.find((agent) => agent.id === source.data?.agentId)?.name ??
-                '来源未确认'
+                // ADR-0019 决定 3：默认续聊/追问要在输入框上有一个**简短目标标签**，
+                // 用户不必展开设置就知道这句话会去哪。
+                `${
+                  agents.data?.find((agent) => agent.id === source.data?.agentId)?.name ??
+                  '来源未确认'
+                }${mode === 'resume' ? ` · 续聊${sourceLabel}` : mode === 'followup' ? ` · 追问${sourceLabel}` : ''}`
               }
               key={`${task.id}-${mode}-${sourceId}-${revisionContext?.nonce ?? ''}`}
               blocked={reason !== null}

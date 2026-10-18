@@ -364,7 +364,7 @@ describe('#379 交接草稿面板', () => {
       ]),
     )
     await openRun(userEvent.setup())
-    await screen.findByTestId('run-live-panel')
+    await screen.findByTestId('run-detail')
     expect(screen.queryByTestId('handoff-draft')).not.toBeInTheDocument()
     expect(screen.queryByText('交接草稿')).not.toBeInTheDocument()
   })
@@ -384,7 +384,7 @@ describe('#379 交接草稿面板', () => {
       ),
     ).fetchMock
     await openRun(userEvent.setup())
-    await screen.findByTestId('run-live-panel')
+    await screen.findByTestId('run-detail')
     expect(screen.queryByTestId('handoff-draft')).not.toBeInTheDocument()
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/handoff-draft'))).toBe(false)
   })

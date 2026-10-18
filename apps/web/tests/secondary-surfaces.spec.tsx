@@ -5,6 +5,7 @@ import {
   ALICE,
   agentsHandler,
   loggedInHandlers,
+  makeRun,
   makeTask,
   makeArtifact,
   ok,
@@ -14,6 +15,9 @@ import {
 import { renderApp } from './render.js'
 
 const task = makeTask({ assigneeUserId: ALICE.userId, assignmentStatus: 'accepted' })
+const SURFACE_RUN = 'cdcdcdcd-0000-4000-8000-00000000000f'
+const surfaceRun = makeRun({ id: SURFACE_RUN, status: 'completed' })
+
 const agent = {
   id: 'f0000000-0000-4000-8000-000000000001',
   name: 'Builder',
@@ -26,10 +30,21 @@ const agent = {
 describe('抽屉与二级页面的统一层级', () => {
   it('内层确认框拥有 Escape，即使焦点暂留触发器也不关闭抽屉', async () => {
     const user = userEvent.setup()
-    const artifact = makeArtifact({ status: 'candidate', ownerUserId: ALICE.userId })
+    const artifact = makeArtifact({
+      status: 'candidate',
+      ownerUserId: ALICE.userId,
+      runId: SURFACE_RUN,
+    })
     const app = renderApp(
       `/tasks/${task.id}`,
-      loggedInHandlers(ALICE, [taskRoomHandler(task, { artifacts: [artifact] })]),
+      loggedInHandlers(ALICE, [
+        taskRoomHandler(task, { runs: [surfaceRun], artifacts: [artifact] }),
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/runs/${SURFACE_RUN}/events`),
+          respond: () => ok({ events: [] }),
+        },
+      ]),
     )
     await user.click(await screen.findByRole('button', { name: `查看交付物 ${artifact.title}` }))
     const publish = screen.getByTestId('artifact-publish-button')

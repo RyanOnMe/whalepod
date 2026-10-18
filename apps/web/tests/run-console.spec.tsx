@@ -364,7 +364,7 @@ describe('Console 入口接线（页面级：整片最该有门的地方原先�
         },
         {
           method: 'GET',
-          url: /\/events$/,
+          url: /\/events(?:\?.*)?$/,
           respond: () =>
             new Response(
               JSON.stringify({

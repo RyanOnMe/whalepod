@@ -148,7 +148,7 @@ describe('#273 页面级：Console 关闭是两段式', () => {
           url: new RegExp(`/api/v1/runs/${run.id}$`),
           respond: () => ok({ ...run, projectId: task.projectId, rerunOfRunId: null }),
         },
-        { method: 'GET', url: /\/events$/, respond: () => ok({ events: [] }) },
+        { method: 'GET', url: /\/events(?:\?.*)?$/, respond: () => ok({ events: [] }) },
         teamMembersHandler([]),
       ]),
     )

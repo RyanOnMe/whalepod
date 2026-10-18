@@ -235,7 +235,8 @@ describe('RunLauncher', () => {
       status: 'in_progress',
     })
     renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [taskRoomHandler(task)]))
-    expect(await screen.findByRole('heading', { name: '运行' })).toBeVisible()
+    // ADR-0019：执行区是连续对话（没有运行列表），启动器只对责任人出现。
+    expect(await screen.findByTestId('execution-composer')).toBeVisible()
     expect(screen.queryByRole('heading', { name: '开始执行' })).not.toBeInTheDocument()
 
     // 责任人自己有活跃 Run 时同样不可见。

@@ -81,6 +81,13 @@ function runDetailHandlers(run: TaskRoomRun): MockHandler[] {
   ]
 }
 
+/** 连续对话里的第 N 段（ADR-0019：运行不再是常驻列表）。 */
+function segmentAt(index: number): HTMLElement {
+  const segment = screen.getAllByTestId('run-segment')[index]
+  if (segment === undefined) throw new Error(`segment ${index} not found`)
+  return segment
+}
+
 describe('task-room', () => {
   it('渲染顶部区域：目标、状态与当前责任人', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId, status: 'in_progress' })
@@ -127,33 +134,45 @@ describe('task-room', () => {
       'false',
     )
     expect(screen.getByRole('heading', { name: '执行' })).toBeVisible()
-    expect(await screen.findByRole('heading', { name: '运行' })).toBeVisible()
-    expect(await screen.findByText('运行中')).toBeVisible()
-    expect(screen.getByText('已完成')).toBeVisible()
+    // ADR-0019：运行以「段」出现在连续对话里，每段一个简短状态；不再有常驻运行列表。
+    await waitFor(() => expect(screen.getAllByTestId('run-segment')).toHaveLength(2))
+    expect(segmentAt(0)).toHaveTextContent('运行中')
+    expect(segmentAt(1)).toHaveTextContent('本次运行已完成')
     expect(screen.queryByRole('heading', { name: '审批' })).toBeNull()
     expect(screen.queryByText('当前没有等待审批的操作。')).toBeNull()
   })
 
-  it('#211 B1：运行卡画落点显示名；未知落点画"未知设备"、不画 id', async () => {
+  it('#211 B1：运行详情画落点显示名；未知落点画"未知设备"、不画 id', async () => {
+    const user = userEvent.setup()
     const task = makeTask({ assigneeUserId: BOB.userId })
+    const named = makeRun({
+      status: 'running',
+      deviceName: 'MacBook-Pro',
+      workspaceName: 'whalepod',
+    })
+    const unknown = makeRun({ status: 'completed', finishedAt: '2026-08-25T03:00:00.000Z' })
     renderApp(
       `/tasks/${task.id}`,
       loggedInHandlers(BOB, [
-        taskRoomHandler(task, {
-          runs: [
-            makeRun({ status: 'running', deviceName: 'MacBook-Pro', workspaceName: 'whalepod' }),
-            makeRun({ status: 'completed', finishedAt: '2026-08-25T03:00:00.000Z' }),
-          ],
-        }),
+        taskRoomHandler(task, { runs: [named, unknown] }),
+        ...runDetailHandlers(named),
+        ...runDetailHandlers(unknown),
       ]),
     )
-    const placements = await screen.findAllByTestId('run-placement')
-    expect(placements).toHaveLength(2)
-    // 有名：设备名 · 工作区名（显示名，不是 id）
-    expect(placements[0]).toHaveTextContent('MacBook-Pro · whalepod')
+    await showWorkspace('run')
+    const meta = await screen.findByTestId('run-detail-meta')
+    expect(meta).toBeVisible()
+    const switchRun = async (label: string): Promise<void> => {
+      await user.click(screen.getByLabelText('切换运行'))
+      await user.click(await screen.findByRole('menuitem', { name: label }))
+    }
+    // 段序 = 服务端运行顺序；详情里按段切换看落点。
+    await switchRun('第 1 次运行')
+    expect(await screen.findByTestId('run-placement')).toHaveTextContent('MacBook-Pro · whalepod')
+    await switchRun('第 2 次运行')
+    expect(await screen.findByTestId('run-placement')).toHaveTextContent('未知设备')
     // 无名（deviceName null）：画"未知设备"，不编造、不画 id
-    expect(placements[1]).toHaveTextContent('未知设备')
-    expect(placements[1]?.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/)
+    expect(screen.getByTestId('run-placement').textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/)
   })
 
   it('#248 运行时长：终态=固定总时长、活跃=已耗时、未开始=不画时长行', async () => {
@@ -162,6 +181,7 @@ describe('task-room', () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-10-01T03:00:00.000Z'))
     try {
+      const user = userEvent.setup()
       const task = makeTask({ assigneeUserId: BOB.userId })
       const running = makeRun({
         status: 'running',
@@ -175,15 +195,27 @@ describe('task-room', () => {
       const queued = makeRun({ status: 'queued', startedAt: null })
       renderApp(
         `/tasks/${task.id}`,
-        loggedInHandlers(BOB, [taskRoomHandler(task, { runs: [running, completed, queued] })]),
+        loggedInHandlers(BOB, [
+          taskRoomHandler(task, { runs: [running, completed, queued] }),
+          ...runDetailHandlers(running),
+          ...runDetailHandlers(completed),
+          ...runDetailHandlers(queued),
+        ]),
       )
-      await screen.findByRole('heading', { name: '运行' })
-      const durations = screen.getAllByTestId('run-duration').map((el) => el.textContent)
-      // 顺序同 runs：活跃（随 now 走的已耗时）→ 终态（固定 21分9秒，对照物口径）。
-      expect(durations[0]).toBe('2小时59分')
-      expect(durations[1]).toBe('21分9秒')
+      await showWorkspace('run')
+      await screen.findByTestId('run-detail-meta')
+      const switchRun = async (label: string): Promise<void> => {
+        await user.click(screen.getByLabelText('切换运行'))
+        await user.click(await screen.findByRole('menuitem', { name: label }))
+      }
+      // 默认选中活跃运行：已耗时随挂钟（2小时59分）。
+      expect(await screen.findByTestId('run-duration')).toHaveTextContent('2小时59分')
+      // 终态=固定总时长（对照物口径）。
+      await switchRun('第 2 次运行')
+      expect(await screen.findByTestId('run-duration')).toHaveTextContent('21分9秒')
       // 未开始（无 startedAt）：不画时长行——没有时间事实就不假装。
-      expect(screen.getAllByTestId('run-duration')).toHaveLength(2)
+      await switchRun('第 3 次运行')
+      expect(screen.queryByTestId('run-duration')).toBeNull()
     } finally {
       vi.useRealTimers()
     }
@@ -207,7 +239,7 @@ describe('task-room', () => {
         // Console 打开时会拉该 Run 的事件（这里只需要空列表：判据是覆盖层开没开）。
         {
           method: 'GET',
-          url: new RegExp(`/api/v1/runs/${run.id}/events$`),
+          url: new RegExp(`/api/v1/runs/${run.id}/events(?:\\?.*)?$`),
           respond: () => ok({ events: [] }),
         },
       ]),
@@ -400,7 +432,7 @@ describe('#162 指人的位置用显示名，短 id 不上屏', () => {
 
 /** #162：Run 用「第 N 次运行 / 本次运行 / 来源运行」，原始 id 只在 title 上。 */
 describe('#162 Run 与来源运行的可读措辞', () => {
-  it('时间线行说「第 N 次运行」、面板说「本次运行」、血缘说「重跑自第 N 次运行」', async () => {
+  it('段头说「第 N 次运行」、详情说血缘「重跑自第 N 次运行」', async () => {
     const task = makeTask({ assigneeUserId: BOB.userId, assignmentStatus: 'accepted' })
     const sourceRun = makeRun({ id: SOURCE_RUN_ID, status: 'failed' })
     const rerun = makeRun({ id: RUN_ID, status: 'queued', rerunOfRunId: SOURCE_RUN_ID })
@@ -414,29 +446,26 @@ describe('#162 Run 与来源运行的可读措辞', () => {
       ]),
     )
 
-    // 交付物「来源运行」格：与时间线行同款句柄（人可以对回去）。
+    // 交付物「来源运行」格：与段头同款句柄（人可以对回去）。
     const sourceCell = await screen.findByText('来源运行')
     const sourceValue = sourceCell.parentElement?.querySelector('dd')
     expect(sourceValue).toHaveTextContent('第 2 次运行')
     expect(sourceValue).toHaveAttribute('title', RUN_ID)
 
+    // 段头就是「第 N 次运行」；打开运行详情看血缘（设备/时间/血缘都在详情里）。
     await user.click(screen.getByRole('button', { name: /第 2 次运行/ }))
-    const heading = await screen.findByRole('heading', { name: '本次运行' })
-    expect(heading).toHaveAttribute('title', RUN_ID)
-    // 血缘句两处（时间线行 + 直播面板）同款措辞；面板那一处在 run-live-panel 内。
-    const lineage = within(screen.getByTestId('run-live-panel')).getByTestId('run-lineage')
+    expect(await workspaceDetails().findByTestId('run-detail-meta')).toBeVisible()
+    const lineage = workspaceDetails().getByTestId('run-lineage')
     // 来源是第 1 次运行 —— 血缘句说的是「哪一次」，不是含糊的「有来源」。
     expect(lineage).toHaveTextContent('重跑自第 1 次运行')
     expect(lineage).toHaveAttribute('title', SOURCE_RUN_ID)
-    const lineages = screen.getAllByTestId('run-lineage')
-    expect(lineages).toHaveLength(2)
-    for (const node of lineages) expect(node).toHaveTextContent('重跑自第 1 次运行')
+    expect(workspaceDetails().getAllByTestId('run-lineage')).toHaveLength(1)
 
     // 短 id 一个都不在正文里（只有 title 属性带着完整 id）。
     const body = document.body.textContent ?? ''
     expect(body).not.toContain(SOURCE_RUN_ID.slice(0, 8))
     expect(body).not.toContain(RUN_ID.slice(0, 8))
-    // 行标签从行首开始（血缘句里也会出现「第 1 次运行」，所以锚定行首区分两行）。
+    // 段标签从段首开始（血缘句里也会出现「第 1 次运行」，所以锚定段首区分两段）。
     expect(screen.getByRole('button', { name: /^第 1 次运行/ })).toBeVisible()
   })
 
@@ -577,10 +606,18 @@ describe('task-room 执行栏接线（⑥a 页面级）', () => {
 
   it('交付物按需打开，关闭详情保留主对话入口', async () => {
     const user = userEvent.setup()
-    const task = makeTask({ assigneeUserId: BOB.userId })
+    const task = makeTask({ assigneeUserId: BOB.userId, assignmentStatus: 'accepted' })
+    const run = makeRun({ id: RUN_ID, status: 'completed' })
     renderApp(
       `/tasks/${task.id}`,
-      loggedInHandlers(BOB, [taskRoomHandler(task, { artifacts: [makeArtifact()] })]),
+      loggedInHandlers(BOB, [
+        // ADR-0019：文件按 runId 落在对应回复之后——所以这里要有那个 Run。
+        taskRoomHandler(task, {
+          runs: [run],
+          artifacts: [makeArtifact({ runId: RUN_ID })],
+        }),
+        ...runDetailHandlers(run),
+      ]),
     )
     expect(
       await screen.findByRole('button', { name: '查看交付物 security-review.md' }),
