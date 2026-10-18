@@ -7,7 +7,7 @@
  *   时间线翻转为已决状态；冲突/过期错误显式呈现，不静默吞掉。
  */
 import { describe, expect, it } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { renderApp } from './render.js'
 import {
@@ -115,8 +115,9 @@ function waitingTask(assigneeUserId: string) {
 
 describe('task room approval card', () => {
   it('责任人见完整审批卡（工具/原因/preview/过期时间）与批准、拒绝入口', async () => {
+    const user = userEvent.setup()
     const task = waitingTask(BOB.userId)
-    renderApp(
+    const app = renderApp(
       `/tasks/${task.id}`,
       loggedInHandlers(BOB, [
         taskRoomHandler(task, { runs: [makeRun({ id: RUN_ID, status: 'waiting_approval' })] }),
@@ -138,6 +139,10 @@ describe('task room approval card', () => {
     expect(screen.getByTestId('approval-expires')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '批准一次' })).toBeEnabled()
     expect(screen.getByRole('button', { name: '拒绝' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: '任务约定' }))
+    await act(async () => { await app.router.navigate(`#approval-${APPROVAL_ID}`) })
+    await waitFor(() => expect(screen.queryByRole('region', { name: '工作区详情' })).toBeNull())
+    await waitFor(() => expect(document.getElementById(`approval-${APPROVAL_ID}`)).toHaveFocus())
   })
 
   it('成员只见「等待责任人批准」等待态：无按钮、无原因正文与参数', async () => {

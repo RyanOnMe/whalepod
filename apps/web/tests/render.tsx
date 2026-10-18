@@ -14,6 +14,7 @@ import { installFetch } from './fixtures.js'
 import type { MockHandler } from './fixtures.js'
 
 export interface TestAppResult extends RenderResult {
+  router: ReturnType<typeof createTestRouter>
   queryClient: ReturnType<typeof makeQueryClient>
   fetchMock: ReturnType<typeof installFetch>
 }
@@ -27,7 +28,7 @@ export function renderApp(initialPath: string, handlers: readonly MockHandler[])
       <RouterProvider router={router} />
     </QueryClientProvider>,
   )
-  return { ...view, queryClient, fetchMock }
+  return { ...view, router, queryClient, fetchMock }
 }
 
 /** 直接挂载一个组件（不需要 router/session 的局部用例）。 */

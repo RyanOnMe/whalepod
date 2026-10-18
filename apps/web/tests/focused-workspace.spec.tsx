@@ -1,4 +1,4 @@
-import { screen, within, waitFor } from '@testing-library/react'
+import { act, screen, within, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { BOB, loggedInHandlers, makeArtifact, makeTask, taskRoomHandler } from './fixtures.js'
@@ -18,6 +18,31 @@ function openRoom(artifacts: ReturnType<typeof makeArtifact>[] = []) {
 }
 
 describe('聚焦工作区', () => {
+  it('打开详情后点击团队讨论，会收起详情并显示留言', async () => {
+    const user = userEvent.setup()
+    openRoom()
+    await user.click(await screen.findByRole('button', { name: '任务约定' }))
+    await user.click(screen.getByRole('button', { name: '团队讨论' }))
+    expect(screen.queryByRole('region', { name: '工作区详情' })).toBeNull()
+    expect(screen.getByRole('textbox', { name: '留言' })).toBeVisible()
+  })
+
+  it.each([
+    ['#comments-heading', '团队讨论', 'comments-heading'],
+    ['#task-execution', 'Agent 执行', 'task-execution'],
+    ['#task-assignment', 'Agent 执行', 'task-assignment'],
+  ])('同任务内 %s 导航会收起详情并聚焦可见目标', async (hash, channel, target) => {
+    const user = userEvent.setup()
+    const app = openRoom()
+    await user.click(await screen.findByRole('button', { name: '团队讨论' }))
+    await user.click(screen.getByRole('button', { name: '任务约定' }))
+    expect(screen.getByRole('region', { name: '工作区详情' })).toBeVisible()
+    await act(async () => { await app.router.navigate(hash) })
+    await waitFor(() => expect(screen.queryByRole('region', { name: '工作区详情' })).toBeNull())
+    expect(screen.getByRole('button', { name: channel })).toHaveAttribute('aria-pressed', 'true')
+    await waitFor(() => expect(document.getElementById(target)).toHaveFocus())
+  })
+
   it('默认进入 Agent 执行，讨论单独切换，来回切换保留留言草稿', async () => {
     const user = userEvent.setup()
     openRoom()
