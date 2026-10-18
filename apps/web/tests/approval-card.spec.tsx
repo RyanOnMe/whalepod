@@ -140,7 +140,9 @@ describe('task room approval card', () => {
     expect(screen.getByRole('button', { name: '批准一次' })).toBeEnabled()
     expect(screen.getByRole('button', { name: '拒绝' })).toBeEnabled()
     await user.click(screen.getByRole('button', { name: '任务约定' }))
-    await act(async () => { await app.router.navigate(`#approval-${APPROVAL_ID}`) })
+    await act(async () => {
+      await app.router.navigate(`#approval-${APPROVAL_ID}`)
+    })
     await waitFor(() => expect(screen.queryByRole('region', { name: '工作区详情' })).toBeNull())
     await waitFor(() => expect(document.getElementById(`approval-${APPROVAL_ID}`)).toHaveFocus())
   })

@@ -78,10 +78,17 @@ function TaskRoom(): ReactNode {
     }
   }, [inspector])
   useEffect(() => {
-    if (location.hash === '#comments-heading') setChannel('discussion')
-    else if (location.hash.startsWith('#approval-') || location.hash === '#task-execution')
+    if (location.hash === '#comments-heading') {
+      setChannel('discussion')
+      setInspector(null)
+    } else if (
+      location.hash.startsWith('#approval-') ||
+      location.hash === '#task-execution' ||
+      location.hash === '#task-assignment'
+    ) {
       setChannel('execution')
-    else if (location.hash.startsWith('#artifact-')) {
+      setInspector(null)
+    } else if (location.hash.startsWith('#artifact-')) {
       setInspector('artifacts')
       setInspectedArtifactId(null)
     }
@@ -114,7 +121,7 @@ function TaskRoom(): ReactNode {
     ? inspector === 'artifacts'
     : location.hash === '#comments-heading'
       ? channel === 'discussion' && inspector === null
-      : location.hash === '#task-execution'
+      : location.hash === '#task-execution' || location.hash === '#task-assignment'
         ? channel === 'execution' && inspector === null
         : true
   useHashFocus(query.isSuccess && !approvalAnchor && hashViewReady, true, query.data)
@@ -248,7 +255,10 @@ function TaskRoom(): ReactNode {
             label="工作区视图"
             testIdPrefix="workspace-view-"
             value={channel}
-            onChange={setChannel}
+            onChange={(next) => {
+              setChannel(next)
+              setInspector(null)
+            }}
             items={[
               { value: 'execution', label: 'Agent 执行' },
               { value: 'discussion', label: '团队讨论' },

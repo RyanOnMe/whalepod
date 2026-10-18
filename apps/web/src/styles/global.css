@@ -3679,3 +3679,40 @@ textarea::placeholder {
     transition: none;
   }
 }
+
+/* Run references remain quiet links; tool summaries share the chip silhouette. */
+.workspace-transcript .instruction-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.workspace-transcript .instruction-foot .link-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.workspace-transcript .instruction-foot .instruction-tool-chip {
+  background: var(--color-surface-sunken);
+}
+.workspace-transcript .instruction-foot .link-button:focus-visible {
+  outline: 2px solid var(--color-ink);
+  outline-offset: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .workspace-transcript .instruction-foot .link-button:hover {
+    color: var(--color-ink);
+    background: var(--dsw-specific-sidebar-nav-item-hover);
+  }
+}

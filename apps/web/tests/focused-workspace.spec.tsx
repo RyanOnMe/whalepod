@@ -37,7 +37,9 @@ describe('聚焦工作区', () => {
     await user.click(await screen.findByRole('button', { name: '团队讨论' }))
     await user.click(screen.getByRole('button', { name: '任务约定' }))
     expect(screen.getByRole('region', { name: '工作区详情' })).toBeVisible()
-    await act(async () => { await app.router.navigate(hash) })
+    await act(async () => {
+      await app.router.navigate(hash)
+    })
     await waitFor(() => expect(screen.queryByRole('region', { name: '工作区详情' })).toBeNull())
     expect(screen.getByRole('button', { name: channel })).toHaveAttribute('aria-pressed', 'true')
     await waitFor(() => expect(document.getElementById(target)).toHaveFocus())

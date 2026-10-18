@@ -62,7 +62,7 @@ export default function GlideSelect({
       const width = Math.min(Math.max(rect.width, 220), window.innerWidth - 24)
       const below = Math.max(0, window.innerHeight - rect.bottom - 20)
       const above = Math.max(0, rect.top - 20)
-      const wanted = (viewport.current?.scrollHeight ?? options.length * 40) + 12
+      const wanted = (viewport.current?.scrollHeight ?? options.length * 40) + 14
       const side = below < wanted && above > below ? 'top' : 'bottom'
       const height = Math.min(wanted, side === 'top' ? above : below, 320)
       setPlacement({
@@ -233,7 +233,7 @@ export default function GlideSelect({
               <div
                 ref={viewport}
                 className="glide-select__viewport"
-                style={{ maxHeight: placement === null ? 308 : Math.max(0, placement.height - 12) }}
+                style={{ maxHeight: placement === null ? 306 : Math.max(0, placement.height - 14) }}
               >
                 <span
                   className="glide-select__glow"
