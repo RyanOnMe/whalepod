@@ -25,6 +25,7 @@ import { SelectMenu } from '../../shared/SelectMenu.js'
 
 export interface AgentRevisionFormProps {
   onCreated?: () => void
+  embedded?: boolean
 }
 
 const DEFAULT_VALUES = {
@@ -49,7 +50,10 @@ export const APPROVAL_POLICY_OPTIONS: ReadonlyArray<{
   { value: 'full_access', label: '完全权限（工具调用直接放行）', disabled: false },
 ]
 
-export function AgentRevisionForm({ onCreated }: AgentRevisionFormProps): ReactNode {
+export function AgentRevisionForm({
+  onCreated,
+  embedded = false,
+}: AgentRevisionFormProps): ReactNode {
   const queryClient = useQueryClient()
   const [values, setValues] = useState(DEFAULT_VALUES)
   const [error, setError] = useState<unknown>(null)
@@ -95,7 +99,7 @@ export function AgentRevisionForm({ onCreated }: AgentRevisionFormProps): ReactN
 
   return (
     <form className="card agent-form" onSubmit={submit} aria-label="新建 Agent">
-      <h3>新建 Agent</h3>
+      {embedded ? null : <h3>新建 Agent</h3>}
       <div className="field">
         <label htmlFor="agent-name">名称</label>
         <input

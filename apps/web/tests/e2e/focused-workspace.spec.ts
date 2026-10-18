@@ -1,4 +1,6 @@
+import { showAgentCreation } from './helpers.js'
 /** #306：真实 HTTP/WS、已编译 Hub、真实 Node/Runtime replay；不直写运行状态。 */
+import { auditSecondarySurfaces } from './secondary-surface-audit.js'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -69,6 +71,8 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
 
     await seedPluginPack(session.userId)
     await owner.goto('/agents')
+    await showAgentCreation(owner)
+
     await owner.fill('#agent-name', 'Builder')
     await owner.fill('#agent-persona', '你是验收代理。')
     await owner.fill('#agent-provider', 'replay')
@@ -261,6 +265,12 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
     await expect(panel.getByTestId('artifact-preview').first()).toBeVisible()
     await owner.screenshot({ path: join(evidence, 'desktop-artifact.png') })
     await panel.getByTestId('artifact-publish-button').first().click()
+    await expect(owner.getByRole('button', { name: '确认发布给团队' })).toBeFocused()
+    await owner.keyboard.press('Escape')
+    await expect(panel).toBeVisible()
+    await expect(panel.getByTestId('artifact-publish-button').first()).toBeFocused()
+    await expect(member.getByRole('button', { name: /查看交付物/ })).toHaveCount(0)
+    await panel.getByTestId('artifact-publish-button').first().click()
     await owner.getByRole('button', { name: '确认发布给团队' }).click()
     await expect(member.getByRole('button', { name: /查看交付物/ }).first()).toBeVisible()
     const room = (await hubApi(cookie, 'GET', `/tasks/${taskId}`)).data as {
@@ -309,8 +319,9 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
       closeRestoresFocus: true,
       agreementReachable: true,
     })
+    facts.push(await auditSecondarySurfaces({ owner, member, taskId, evidence }))
     expect(errors).toEqual([])
-    expect(facts).toHaveLength(5)
+    expect(facts).toHaveLength(6)
     await stopNode()
   } finally {
     await ownerContext.close()

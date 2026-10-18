@@ -405,7 +405,7 @@ describe('根据意见修订与真人验收 (#327)', () => {
     const user = userEvent.setup()
     const f = fixture({ taskStatus: 'in_review' })
     expect(await screen.findByTestId('delivery-next')).toHaveTextContent('确认完成')
-    expect(screen.getByTestId('delivery-flow')).toHaveTextContent('可选复核')
+    expect(screen.getByTestId('delivery-flow')).toHaveTextContent('确认完成')
     expect(
       f.fetchMock.mock.calls.filter(
         ([url, init]) => String(url).endsWith('/complete') && init?.method === 'POST',
@@ -457,7 +457,7 @@ describe('根据意见修订与真人验收 (#327)', () => {
   it('没有Reviewer执行也可按服务端条件提交验收', async () => {
     fixture()
     expect(await screen.findByRole('button', { name: '提交验收' })).toBeEnabled()
-    expect(screen.getByTestId('delivery-next')).toHaveTextContent('可选复核')
+    expect(screen.getByTestId('delivery-next')).toHaveTextContent('或直接提交验收')
     await showWorkspace('artifacts')
     expect(screen.getByRole('link', { name: '前往提交验收' })).toBeVisible()
   })

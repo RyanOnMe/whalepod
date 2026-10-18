@@ -1,3 +1,4 @@
+import { showHelp } from './workspace.js'
 /**
  * #142 设备页配对 UI（用户视角：role/label/text 断言，mock 只在 HTTP 层）。
  *
@@ -285,7 +286,7 @@ describe('DevicesPage 设备列表（#142 B/C）', () => {
     expect(screen.getByText('离线')).toBeVisible()
     expect(screen.getAllByText('最后在线')).toHaveLength(2)
     expect(screen.getByText('—')).toBeVisible()
-    expect(screen.queryByText(/还没有设备/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/尚无设备/)).not.toBeInTheDocument()
   })
 
   it('#152 平台名是人话：darwin→macOS、linux→Linux，页面不出现内部标识', async () => {
@@ -333,7 +334,8 @@ describe('DevicesPage 设备列表（#142 B/C）', () => {
   it('空态：给出下一步（先生成码、再按 CLI 步骤配对），CLI 三步教学仍在', async () => {
     renderApp('/devices', loggedInHandlers(ALICE, [devicesHandler([])]))
 
-    expect(await screen.findByText(/还没有设备/)).toBeVisible()
+    expect(await screen.findByText(/尚无设备/)).toBeVisible()
+    await showHelp('安装与配对指南')
     // 第二步不再写「后续版本提供」：控件就在本页。
     expect(screen.queryByText(/后续版本提供/)).not.toBeInTheDocument()
     expect(screen.getByText(/node apps\/node\/dist\/cli\.js pair/)).toBeVisible()
@@ -345,7 +347,7 @@ describe('DevicesPage 设备列表（#142 B/C）', () => {
     const list = statefulDevices([])
     const pump = installFramePump()
     renderApp('/devices', loggedInHandlers(ALICE, [list.handler]))
-    expect(await screen.findByText(/还没有设备/)).toBeVisible()
+    expect(await screen.findByText(/尚无设备/)).toBeVisible()
     const callsBefore = list.calls()
 
     // Node 侧 claim 成功 → Hub 扇出 device.changed（payload 带 deviceId）。
@@ -357,7 +359,7 @@ describe('DevicesPage 设备列表（#142 B/C）', () => {
     // 没有 reload、没有手工失效：列表自己长出新设备（refetch 有据可查）。
     expect(await screen.findByText('m4-mini')).toBeVisible()
     expect(list.calls()).toBeGreaterThan(callsBefore)
-    expect(screen.queryByText(/还没有设备/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/尚无设备/)).not.toBeInTheDocument()
   })
 
   it('列表加载失败：ErrorBanner 呈现，不静默也不伪装成空态', async () => {
@@ -370,6 +372,6 @@ describe('DevicesPage 设备列表（#142 B/C）', () => {
 
     const banner = await screen.findByRole('alert')
     expect(banner).toHaveTextContent('设备列表读取失败')
-    expect(screen.queryByText(/还没有设备/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/尚无设备/)).not.toBeInTheDocument()
   })
 })

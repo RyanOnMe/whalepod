@@ -49,6 +49,8 @@ export async function openSelect(
   scope: QueryScope = screen,
 ): Promise<ReturnType<typeof within>> {
   const candidate = scope.queryByLabelText(name)
+  if (candidate?.closest('.agent-create-panel[hidden]'))
+    await user.click(screen.getByRole('button', { name: '新建 Agent' }))
   const panel = candidate?.closest<HTMLElement>('[data-settings-panel]')
   if (panel?.hidden) await user.click(screen.getByLabelText('执行设置'))
   const trigger = await selectTrigger(name, scope)

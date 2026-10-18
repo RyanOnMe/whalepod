@@ -12,6 +12,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent, type ReactNode } from 'react'
+import { HelpDisclosure } from '../../shared/HelpDisclosure.js'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
@@ -84,10 +85,8 @@ export function InstructionDrivers({ task, sessionUserId }: InstructionDriversPr
 
   return (
     <section className="card" aria-labelledby="drivers-heading">
-      <h2 id="drivers-heading">谁能驱动这个任务的 Agent</h2>
-      <p className="mutation-hint">
-        执行区由<b>责任人</b>与<b>被授权成员</b>驱动；讨论区不受此名单影响，任何人都能评论。
-      </p>
+      <h2 id="drivers-heading">可发送指令的成员</h2>
+      <p className="mutation-hint">仅名单内成员可发送指令，团队讨论不受限制。</p>
 
       {driversQuery.isPending ? <p className="mutation-hint">正在加载名单…</p> : null}
       {driversQuery.isError ? <ErrorBanner error={driversQuery.error} /> : null}
@@ -176,10 +175,12 @@ export function InstructionDrivers({ task, sessionUserId }: InstructionDriversPr
       {isAssignee && directoryState.isError ? <ErrorBanner error={directoryState.error} /> : null}
 
       {/* 两条不可让渡的边界（写出来，避免"既然能授权，那审批是不是也能代劳"的误解）。 */}
-      <ul className="driver-redlines">
-        <li>审批决定权不可授予：审批只认这条 Run 的责任人。</li>
-        <li>执行永远用责任人的设备与凭据，被授权成员不是"换个人跑"。</li>
-      </ul>
+      <HelpDisclosure label="授权边界">
+        <ul className="driver-redlines">
+          <li>审批决定权不可授予：审批只认这条 Run 的责任人。</li>
+          <li>执行永远用责任人的设备与凭据，被授权成员不是"换个人跑"。</li>
+        </ul>
+      </HelpDisclosure>
     </section>
   )
 }

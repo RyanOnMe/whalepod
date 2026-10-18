@@ -326,6 +326,7 @@ describe('#158 反面钉：全树不许有原生 <select>（逐落页点）', ()
         ]),
       ]),
     )
+    await user.click(await screen.findByRole('button', { name: '新建 Agent' }))
     // 可访问名 = PackSelect 传给 SelectMenu 的 label；#167 起中文化为
     // 「插件组合（Plugin Pack）」（CONTEXT.md 的领域词保留在括号里）。
     const control = await screen.findByLabelText('插件组合（Plugin Pack）')

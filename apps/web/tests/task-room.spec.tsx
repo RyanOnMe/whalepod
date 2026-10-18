@@ -1,3 +1,4 @@
+import { showHelp } from './workspace.js'
 import { showTaskMenu } from './workspace.js'
 /**
  * Task Room 四区与状态呈现（02 Task 7 Step 4）：
@@ -228,8 +229,9 @@ describe('task-room', () => {
     await showWorkspace('artifacts')
     expect(await screen.findByRole('heading', { name: '交付物' })).toBeVisible()
     expect(await workspaceDetails().findByText('security-review.md')).toBeVisible()
+    await showHelp('文件信息')
     expect(screen.getByText('text/markdown')).toBeVisible()
-    expect(screen.getByRole('heading', { name: '复核' })).toBeVisible()
+    await showHelp('复核说明')
     expect(screen.getByText(/只读输入清单/)).toBeVisible()
     // 英文区段标题不再出现（Agent/Run/Task 这些领域术语照旧保留）
     expect(screen.queryByRole('heading', { name: 'Artifacts' })).not.toBeInTheDocument()

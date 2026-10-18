@@ -246,9 +246,7 @@ export function RunHandoffDraft({
     <section className="card handoff-draft" data-testid="handoff-draft" aria-label="交接草稿">
       <div className="room-column-head">
         <h2>交接草稿</h2>
-        <span className="room-column-note">
-          仅你可见 · 模型整理的内容默认「待核实」，核对后再发布
-        </span>
+        <span className="room-column-note">仅你可见 · 核实后发布</span>
       </div>
 
       {actionError !== null ? <ErrorBanner error={actionError} /> : null}
@@ -257,7 +255,7 @@ export function RunHandoffDraft({
         <p className="mutation-hint" data-testid="handoff-draft-none">
           {task.agreementEnabled
             ? '尚未生成：正常完成的执行会自动整理一份草稿（额外一次模型调用，最多等待 60 秒）；失败或取消不会自动调用。'
-            : '任务未启用约定流程：不自动生成交接草稿。'}
+            : '未启用约定流程，不自动生成交接草稿。'}
         </p>
       ) : null}
 

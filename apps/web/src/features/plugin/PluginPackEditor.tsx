@@ -20,6 +20,7 @@ import type {
   PluginPackCreateRequest,
   PluginPackView,
 } from '@whalepod/protocol'
+import { HelpDisclosure } from '../../shared/HelpDisclosure.js'
 import { api } from '../../shared/api/client.js'
 import { CopyButton } from '../../shared/CopyButton.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
@@ -103,82 +104,86 @@ export function PluginPackEditor({ session }: PluginPackEditorProps): ReactNode 
       ) : null}
 
       {canManage ? (
-        <form className="card plugin-pack-form" onSubmit={submit} aria-label="新建 Plugin Pack">
-          <h3>新建插件组合</h3>
-          {installationsQuery.isPending ? (
-            <p className="mutation-hint">正在加载已安装插件…</p>
-          ) : null}
-          {installationsQuery.isError ? <ErrorBanner error={installationsQuery.error} /> : null}
-          {installationsQuery.isSuccess && installationsQuery.data.length === 0 ? (
-            <p className="empty-state">
-              尚无已安装插件：先在「已安装插件」里安装一个精选（curated）包——只有已安装且已审核的包才能进
-              Pack。
-            </p>
-          ) : null}
-          {installationsQuery.isSuccess && installationsQuery.data.length > 0 ? (
-            <fieldset className="plugin-pick-fieldset">
-              <legend>选择已安装插件</legend>
-              <ul className="plugin-pick-list" role="list">
-                {installationsQuery.data.map((row) => {
-                  const selectable = row.status === 'installed' && row.trust === 'curated'
-                  return (
-                    <li key={row.id} className="plugin-pick">
-                      <label className="plugin-pick-label">
-                        <input
-                          type="checkbox"
-                          checked={selected.has(row.id)}
-                          disabled={!selectable || createPack.isPending}
-                          onChange={() => toggle(row.id)}
-                        />
-                        <span className="plugin-name">
-                          {row.packageName}@{row.packageVersion}
-                        </span>
-                      </label>
-                      {selectable ? null : (
-                        <span className="plugin-pick-reason">
-                          {row.status !== 'installed'
-                            ? '未完成安装，不能进入 Pack'
-                            : '未审核（unreviewed）包不能进入普通 Pack'}
-                        </span>
-                      )}
-                    </li>
-                  )
-                })}
-              </ul>
-            </fieldset>
-          ) : null}
-          <div className="field">
-            <label htmlFor="plugin-pack-name">Pack 名称</label>
-            <input
-              id="plugin-pack-name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              required
-              maxLength={80}
-            />
-          </div>
-          <div className="form-actions">
-            <button
-              type="submit"
-              className="button button-primary"
-              disabled={createPack.isPending || selected.size === 0}
-            >
-              {createPack.isPending ? '创建中…' : '创建 Pack'}
-            </button>
-            {selected.size === 0 ? (
-              <span className="field-hint">至少勾选一个已安装插件。</span>
+        <details className="creation-disclosure">
+          <summary role="button" className="button">
+            新建插件组合
+          </summary>
+          <form className="card plugin-pack-form" onSubmit={submit} aria-label="新建 Plugin Pack">
+            {installationsQuery.isPending ? (
+              <p className="mutation-hint">正在加载已安装插件…</p>
             ) : null}
-          </div>
-          {notice !== null ? (
-            <div className="success-banner" role="status">
-              <p>{notice}</p>
-              <p>
-                <Link to="/agents">去 Agent 管理新建 Revision</Link>
+            {installationsQuery.isError ? <ErrorBanner error={installationsQuery.error} /> : null}
+            {installationsQuery.isSuccess && installationsQuery.data.length === 0 ? (
+              <p className="empty-state">
+                尚无已安装插件：先在「已安装插件」里安装一个精选（curated）包——只有已安装且已审核的包才能进
+                Pack。
               </p>
+            ) : null}
+            {installationsQuery.isSuccess && installationsQuery.data.length > 0 ? (
+              <fieldset className="plugin-pick-fieldset">
+                <legend>选择已安装插件</legend>
+                <ul className="plugin-pick-list" role="list">
+                  {installationsQuery.data.map((row) => {
+                    const selectable = row.status === 'installed' && row.trust === 'curated'
+                    return (
+                      <li key={row.id} className="plugin-pick">
+                        <label className="plugin-pick-label">
+                          <input
+                            type="checkbox"
+                            checked={selected.has(row.id)}
+                            disabled={!selectable || createPack.isPending}
+                            onChange={() => toggle(row.id)}
+                          />
+                          <span className="plugin-name">
+                            {row.packageName}@{row.packageVersion}
+                          </span>
+                        </label>
+                        {selectable ? null : (
+                          <span className="plugin-pick-reason">
+                            {row.status !== 'installed'
+                              ? '未完成安装，不能进入 Pack'
+                              : '未审核（unreviewed）包不能进入普通 Pack'}
+                          </span>
+                        )}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </fieldset>
+            ) : null}
+            <div className="field">
+              <label htmlFor="plugin-pack-name">Pack 名称</label>
+              <input
+                id="plugin-pack-name"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                required
+                maxLength={80}
+              />
             </div>
-          ) : null}
-          {createPack.isError ? <ErrorBanner error={createPack.error} /> : null}
-        </form>
+            <div className="form-actions">
+              <button
+                type="submit"
+                className="button button-primary"
+                disabled={createPack.isPending || selected.size === 0}
+              >
+                {createPack.isPending ? '创建中…' : '创建 Pack'}
+              </button>
+              {selected.size === 0 ? (
+                <span className="field-hint">至少勾选一个已安装插件。</span>
+              ) : null}
+            </div>
+            {notice !== null ? (
+              <div className="success-banner" role="status">
+                <p>{notice}</p>
+                <p>
+                  <Link to="/agents">去 Agent 管理新建 Revision</Link>
+                </p>
+              </div>
+            ) : null}
+            {createPack.isError ? <ErrorBanner error={createPack.error} /> : null}
+          </form>
+        </details>
       ) : null}
     </section>
   )
@@ -201,40 +206,42 @@ function PackCard({ pack }: { pack: PluginPackView }): ReactNode {
         <span className="plugin-name">{pack.name}</span>
         <span className="badge">{pack.entries.length} 个插件</span>
       </div>
-      <dl className="revision-meta">
-        <div>
-          <dt>Pack ID</dt>
-          <dd className="plugin-digest-row">
-            <code className="plugin-digest" title={pack.id}>
-              {shortId(pack.id)}
-            </code>
-            <CopyValueButton
-              value={pack.id}
-              label={`复制 ${pack.name} Pack ID`}
-              valueLabel="Pack ID"
-            />
-          </dd>
-        </div>
-        <div>
-          <dt>插件组合摘要（Pack Digest）</dt>
-          <dd className="plugin-digest-row">
-            <code className="plugin-digest" title={pack.packDigest}>
-              {shortDigest(pack.packDigest)}
-            </code>
-            <CopyValueButton
-              value={pack.packDigest}
-              label={`复制 ${pack.name} 插件组合摘要`}
-              valueLabel="插件组合摘要"
-            />
-          </dd>
-        </div>
-        <div>
-          <dt>创建时间</dt>
-          <dd>
-            <RelativeTime iso={pack.createdAt} />
-          </dd>
-        </div>
-      </dl>
+      <HelpDisclosure label="组合信息">
+        <dl className="revision-meta">
+          <div>
+            <dt>Pack ID</dt>
+            <dd className="plugin-digest-row">
+              <code className="plugin-digest" title={pack.id}>
+                {shortId(pack.id)}
+              </code>
+              <CopyValueButton
+                value={pack.id}
+                label={`复制 ${pack.name} Pack ID`}
+                valueLabel="Pack ID"
+              />
+            </dd>
+          </div>
+          <div>
+            <dt>插件组合摘要（Pack Digest）</dt>
+            <dd className="plugin-digest-row">
+              <code className="plugin-digest" title={pack.packDigest}>
+                {shortDigest(pack.packDigest)}
+              </code>
+              <CopyValueButton
+                value={pack.packDigest}
+                label={`复制 ${pack.name} 插件组合摘要`}
+                valueLabel="插件组合摘要"
+              />
+            </dd>
+          </div>
+          <div>
+            <dt>创建时间</dt>
+            <dd>
+              <RelativeTime iso={pack.createdAt} />
+            </dd>
+          </div>
+        </dl>
+      </HelpDisclosure>
       {pack.entries.length > 0 ? (
         <div className="plugin-pack-entries">
           <span className="plugin-capabilities-label">成员插件</span>

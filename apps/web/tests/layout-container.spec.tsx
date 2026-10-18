@@ -1,3 +1,4 @@
+import { showHelp } from './workspace.js'
 /**
  * #152 布局与响应式一致（Web 面结构断言）。
  *
@@ -112,7 +113,8 @@ describe('#152 布局：内容容器与两栏栅格', () => {
     expect(within(main).getByRole('heading', { name: '配对码' })).toBeVisible()
     expect(within(main).getByRole('heading', { name: '已配对设备' })).toBeVisible()
     expect(await within(main).findByText('mac-mini')).toBeVisible()
-    // 侧列：CLI 说明与主列同级并排，不再压在设备列表下面
+    await showHelp('安装与配对指南')
+    // 说明按需展开，仍与设备主列分开。
     expect(within(aside).getByRole('heading', { name: 'CLI 安装与配对' })).toBeVisible()
     expect(within(main).queryByRole('heading', { name: 'CLI 安装与配对' })).not.toBeInTheDocument()
   })
@@ -121,6 +123,7 @@ describe('#152 布局：内容容器与两栏栅格', () => {
     // 配对命令在窄栏里必须换行（#152），因此拆成了显式字符串表达式 + nowrap token。
     // JSX 缩进一旦混进文本，真人复制到终端就是一条跑不通的命令。
     const { container } = renderApp('/devices', loggedInHandlers(ALICE, [devicesHandler([])]))
+    await showHelp('安装与配对指南')
     await screen.findByRole('heading', { name: 'CLI 安装与配对' })
     const commands = [...container.querySelectorAll('.cli-steps pre code')].map(
       (element) => element.textContent,
@@ -163,9 +166,10 @@ describe('#152 布局：内容容器与两栏栅格', () => {
     const [main, aside] = twoColumnGrid(container)
     // 左列 = 入口（列表）+ 常驻说明；右列 = 表单 + 详情
     expect(within(main).getByRole('button', { name: /Builder/ })).toBeVisible()
-    expect(within(main).getByRole('heading', { name: 'Revision 是什么' })).toBeVisible()
+    await showHelp('配置版本说明')
+    expect(within(main).getByText(/每次执行都会固定 Agent/)).toBeVisible()
     // 表单标题是 h3（h1 已被页面标题占用、说明是 h2）——层级 h1 → h2 → h3 不断档
-    expect(within(aside).getByRole('heading', { level: 3, name: '新建 Agent' })).toBeVisible()
+    expect(screen.getByLabelText('名称')).not.toBeVisible()
     expect(within(aside).getByRole('region', { name: /Agent 详情/ })).toBeVisible()
     // 归属不许含糊：详情不得留在列表列，说明也不许跑到表单列（窄屏整列上移的正是表单列）
     expect(within(main).queryByRole('region', { name: /Agent 详情/ })).not.toBeInTheDocument()
@@ -179,8 +183,8 @@ describe('#152 布局：内容容器与两栏栅格', () => {
     expect(heading).toHaveAttribute('id', 'agents-page-heading')
     // 层级 h1 → h2（侧列说明）→ h3（新建表单 / 详情里的 Agent 名）不断档，
     // 且**只有一个 h2**：被删掉的重复标题原来正是第二个 h2。
-    expect(container.querySelectorAll('h2')).toHaveLength(1)
-    expect(container.querySelectorAll('h3')).toHaveLength(2)
+    expect(screen.getAllByRole('heading', { name: 'Agents', level: 1 })).toHaveLength(1)
+    expect(within(aside).getByRole('heading', { name: 'Builder' })).toBeVisible()
 
     // 单列顺序 = DOM 顺序（列表/说明 → 表单 → 详情），窄屏不需要 order 补救：
     // 详情是「点出来的补充」，排在表单之后；曾经靠 :has() 把它提到表单之前，那条规则
@@ -188,16 +192,13 @@ describe('#152 布局：内容容器与两栏栅格', () => {
     const grid = container.querySelector('.page-grid')
     expect(aside.parentElement).toBe(grid)
     expect(aside.querySelector(':scope > .agent-detail')).not.toBeNull()
-    // 表单在详情之前（DOM 顺序即窄屏阅读顺序）
-    const asideChildren = [...(aside.children as unknown as HTMLElement[])].map(
-      (el) => el.className,
-    )
-    expect(asideChildren.indexOf('card agent-detail')).toBeGreaterThan(
-      asideChildren.findIndex((name) => name.includes('agent-form')),
-    )
+    const creationPanel = container.querySelector('.agent-create-panel') as HTMLElement
+    expect(creationPanel.parentElement).toBe(grid)
+    expect(creationPanel).not.toBeVisible()
+    expect(aside.querySelector('.agent-form')).toBeNull()
     // 常驻说明住在列表列，不在表单列
-    expect(main.querySelector(':scope > [aria-labelledby="agents-about-heading"]')).not.toBeNull()
-    expect(aside.querySelector(':scope > [aria-labelledby="agents-about-heading"]')).toBeNull()
+    expect(main.querySelector(':scope > .help-disclosure')).not.toBeNull()
+    expect(aside.querySelector(':scope > .help-disclosure')).toBeNull()
   })
 })
 

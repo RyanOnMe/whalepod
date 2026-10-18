@@ -1,3 +1,4 @@
+import { showAgentCreation } from './helpers.js'
 /**
  * P1-19 全链 E2E（Issue #23）：两浏览器 × 真 Hub × 真 Node × 真 Runtime（DSH replay）。
  *
@@ -162,6 +163,8 @@ async function createAgentViaUi(page: Page, name: string): Promise<void> {
   // #167：页面标题只说一次（原来 h1「Agent 管理」+ 紧接着的 h2「Agents」是同义重复），
   // 文案取主导航同一套的领域词。
   await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible()
+  await showAgentCreation(page)
+
   await page.fill('#agent-name', name)
   await page.fill('#agent-persona', '你是 E2E 验收代理。')
   await page.fill('#agent-provider', 'replay')
@@ -176,12 +179,12 @@ async function createAgentViaUi(page: Page, name: string): Promise<void> {
   // `e2e-pack`（scripts/e2e-serve.mts 的 /control/plugin-pack/seed）。
   // #158 首轮 Q5 实测踩到：拿 `pluginPackId.slice(0, 8)` 去匹配永远是"找不到"。
   await selectFromMenu(packTrigger, 'e2e-pack')
-  await page.getByRole('button', { name: '创建 Agent' }).click()
-  await expect(page.getByText(name).first()).toBeVisible()
   // #167：字段标签中文优先——`Credential Slot` 是内部概念，除标签外必须带一句
   // 「填什么」的解释；这里从真人路径核验它真的渲染出来了（单测另有一条）。
   await expect(page.getByText('凭据槽（Credential Slot）')).toBeVisible()
   await expect(page.getByText(/设备所有者在本机给 API 密钥起的名字/)).toBeVisible()
+  await page.getByRole('button', { name: '创建 Agent' }).click()
+  await expect(page.getByText(name).first()).toBeVisible()
 }
 
 async function pairNodeViaUiAndControl(): Promise<void> {

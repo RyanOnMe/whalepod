@@ -10,6 +10,7 @@
  * - 版本历史只增不改：修改产生新草稿、新版本；已确认版本不原地覆盖。
  */
 import SquishSwitch from '../../vendor/react-bits-micro/SquishSwitch.js'
+import { HelpDisclosure } from '../../shared/HelpDisclosure.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
@@ -83,9 +84,11 @@ export type AgreementEditorSeed =
 export function TaskAgreementPanel({
   task,
   session,
+  embedded = false,
 }: {
   task: TaskView
   session: Session | null
+  embedded?: boolean
 }): ReactNode {
   const queryClient = useQueryClient()
   const directory = useMemberDirectory()
@@ -165,7 +168,7 @@ export function TaskAgreementPanel({
   if (query.isPending) {
     return (
       <section className="card agreement-panel" aria-label="任务约定">
-        <h2>任务约定</h2>
+        {embedded ? null : <h2>任务约定</h2>}
         <p className="agreement-note">正在读取…</p>
       </section>
     )
@@ -173,7 +176,7 @@ export function TaskAgreementPanel({
   if (query.isError) {
     return (
       <section className="card agreement-panel" aria-label="任务约定">
-        <h2>任务约定</h2>
+        {embedded ? null : <h2>任务约定</h2>}
         <ErrorBanner error={query.error} />
       </section>
     )
@@ -186,19 +189,16 @@ export function TaskAgreementPanel({
 
   return (
     <section className="card agreement-panel" aria-label="任务约定" data-testid="agreement-panel">
-      <div className="room-column-head">
-        <h2>任务约定</h2>
-        <span className="room-column-note">执行前的共同依据 · 责任人确认后才是正式要求</span>
-      </div>
+      <div className="room-column-head">{embedded ? null : <h2>任务约定</h2>}</div>
 
       <div className="agreement-status" data-testid="agreement-status">
         {agreement.enabled ? (
           <span className="agreement-chip enabled" data-testid="agreement-enabled-chip">
-            已启用：本任务的新执行必须绑定已确认版本
+            已启用
           </span>
         ) : (
           <span className="agreement-chip" data-testid="agreement-disabled-chip">
-            未启用：普通任务路径（不要求绑定）
+            未启用
           </span>
         )}
         {confirmed !== null ? (
@@ -211,7 +211,7 @@ export function TaskAgreementPanel({
           </span>
         ) : (
           <span className="agreement-current" data-testid="agreement-no-confirmed">
-            还没有已确认版本——草稿不计入执行依据
+            尚无正式版本
           </span>
         )}
         {isAssignee ? (
@@ -234,10 +234,7 @@ export function TaskAgreementPanel({
         <p className="agreement-note">约定流程未启用，新执行暂不要求绑定；责任人可随时启用。</p>
       ) : null}
       {!agreement.enabled && confirmed === null ? (
-        <p className="agreement-note">
-          起草目标、约束与验收条件，由责任人确认第一个版本；启用约定流程后，新执行必须绑定
-          已确认版本（尚无版本时会被拒绝并提示）。
-        </p>
+        <p className="agreement-note">由责任人确认目标与验收条件，草稿不计入执行依据。</p>
       ) : null}
       {agreement.enabled && confirmed === null ? (
         <p className="agreement-note" data-testid="agreement-enabled-unconfirmed">
@@ -246,6 +243,9 @@ export function TaskAgreementPanel({
       ) : null}
 
       {actionError !== null ? <ErrorBanner error={actionError} /> : null}
+      <HelpDisclosure label="约定如何生效">
+        <p>责任人确认后形成正式版本。启用约定流程后，新执行必须绑定已确认版本；草稿不构成要求。</p>
+      </HelpDisclosure>
 
       {/* 编辑中的草稿 */}
       {editor !== null && session !== null ? (

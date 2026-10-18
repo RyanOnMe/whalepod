@@ -157,7 +157,7 @@ describe('「上方」方位词清理（#231 / #167 登记）', () => {
         { method: 'GET', url: /\/api\/v1\/devices$/, respond: () => ok([]) },
       ]),
     ])
-    await screen.findByText(/还没有设备/)
+    await screen.findByText(/尚无设备/)
     expect(document.body.textContent ?? '').not.toContain('上方')
     view2.unmount()
   })

@@ -114,3 +114,4 @@
 验收文档命名：`<链路或场景>-acceptance.md`，放在本目录，并在上表补一行索引。
 
 - [聚焦任务工作区验收](focused-workspace-acceptance.md)：讨论与执行独立、审批、候选检查发布、窄屏详情与还焦；Micro 输入区、菜单和受控状态。
+- [抽屉与二级页面统一验收](secondary-surfaces-acceptance.md)：十类界面三档布局、单一标题、草稿保留、嵌套确认还焦与风险正文不裁切。

@@ -1,3 +1,4 @@
+import { showAgentCreation } from './helpers.js'
 /** #306：真实 HTTP/WS、已编译 Hub、真实 Node/Runtime replay；不直写运行状态。 */
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -110,6 +111,8 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
 
     await seedPluginPack(session.userId)
     await owner.goto('/agents')
+    await showAgentCreation(owner)
+
     await owner.fill('#agent-name', 'Builder')
     await owner.fill('#agent-persona', '你是验收代理。')
     await owner.fill('#agent-provider', 'replay')

@@ -1,3 +1,4 @@
+import { showHelp } from './workspace.js'
 /**
  * Admin Plugin Settings（02 Task 17 Step 7）：
  * - catalog 渲染全要素（精确 version / integrity 短摘要 + title 全值 / license /
@@ -199,6 +200,7 @@ describe('plugin-settings', () => {
         packsHandler([]),
       ]),
     )
+    await showHelp('包信息')
     expect(await screen.findByRole('heading', { name: '插件管理' })).toBeVisible()
     // 导航入口
     expect(screen.getByRole('link', { name: '插件' })).toHaveAttribute('href', '/plugins')
@@ -362,7 +364,9 @@ describe('plugin-settings', () => {
         { method: 'POST', url: /\/api\/v1\/plugin-packs$/, respond: () => created(pack) },
       ]),
     )
+    await user.click(await screen.findByText('新建插件组合', { selector: 'summary' }))
     const createButton = await screen.findByRole('button', { name: '创建 Pack' })
+    await showHelp('新建插件组合')
     await user.type(screen.getByLabelText('Pack 名称'), 'review-pack')
     // 空选择禁止提交
     expect(createButton).toBeDisabled()
@@ -405,6 +409,7 @@ describe('plugin-settings', () => {
         ]),
       )
       const packCard = await screen.findByRole('article', { name: 'Pack review-pack' })
+      await showHelp('组合信息', user)
       const short = within(packCard).getByText(`${PACK_DIGEST.slice(0, 12)}…`)
       expect(short).toBeVisible()
       expect(short).toHaveAttribute('title', PACK_DIGEST) // 全值走 title
@@ -438,6 +443,7 @@ describe('plugin-settings', () => {
         ]),
       )
       const packCard = await screen.findByRole('article', { name: 'Pack review-pack' })
+      await showHelp('组合信息', user)
       // 短码（前 8 字符）+ title 全值
       expect(within(packCard).getByText(pack.id.slice(0, 8))).toHaveAttribute('title', pack.id)
       await user.click(within(packCard).getByRole('button', { name: '复制 review-pack Pack ID' }))
@@ -461,6 +467,7 @@ describe('plugin-settings', () => {
         ]),
       )
       const packCard = await screen.findByRole('article', { name: 'Pack review-pack' })
+      await showHelp('组合信息', user)
       await user.click(within(packCard).getByRole('button', { name: '复制 review-pack Pack ID' }))
       expect(await within(packCard).findByText('复制失败，请手动复制Pack ID')).toBeVisible()
       expect(within(packCard).queryByText('已复制')).not.toBeInTheDocument()
@@ -486,6 +493,7 @@ describe('plugin-settings', () => {
       ]),
     )
     const checkbox = await screen.findByRole('checkbox', { name: 'wp-fixed-time@0.1.0' })
+    await showHelp('新建插件组合')
     await user.type(screen.getByLabelText('Pack 名称'), 'review-pack')
     await user.click(checkbox)
     await user.click(screen.getByRole('button', { name: '创建 Pack' }))

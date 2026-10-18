@@ -27,12 +27,13 @@ Q5 用仓库统一生产装配：一次性 PostgreSQL、包解析后的 Hub serv
 | web.approval | 双会话 DOM 与真实 Run 终态 | 只有责任人可审批；讨论中有待审批入口；他人看不到候选 |
 | web.artifact | 受控内容请求、发布、Task 查询 | 预览失败可重试；发布前私有，发布后共享；Run 完成不完成 Task |
 | web.layout | 1440/1024/736/390/320 的布局读数和焦点 | 无横向溢出；详情关闭还焦；任务约定入口可达 |
+| web.surfaces | 十类抽屉/页面的三档布局、确认与挂载状态 | 单一标题、无溢出、确认正文和操作不裁切、取消不改权限、草稿保留；详见 secondary-surfaces-acceptance |
 | runtime.bridge | Run completed 与 Runtime 释放 | 等待真实结束，不靠前端计时或动画推进状态 |
 
 ## 取证、归因与限制
 
 证据在 `artifacts/evidence/focused-workspace/<随机目录>/facts.json`，只记录白名单事实、Run id
-与布局读数，截图作为人工复核材料。独立判定器要求全部五类事实、五档宽度、截图及空错误列表，
+与布局读数，截图作为人工复核材料。独立判定器要求全部六类事实、五档工作区宽度、十类界面的三档宽度、截图及空错误列表，
 缺文件、缺环节、重复事实或错误状态一律失败；失败运行不生成 facts.json。
 
 切换丢稿先看 web.workspace 的挂载边界；还焦/锚点失败先看 web.route 与可见视图；

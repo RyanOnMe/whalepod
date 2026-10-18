@@ -184,8 +184,8 @@ describe('#241 TaskPermissionsPage：审批档位块', () => {
         },
       ]),
     )
-    expect(await screen.findByTestId('approval-policy-state')).toHaveTextContent('已覆盖')
-    expect(screen.getByTestId('approval-policy-state')).toHaveTextContent('不跟随')
+    expect(await screen.findByTestId('approval-policy-state')).toHaveTextContent('本任务权限：')
+    expect(screen.getByTestId('approval-policy-state')).toHaveTextContent('完全权限')
 
     await selectOption(user, '选择审批档覆盖', '继承（跟随 Agent Revision 默认）')
     await user.click(screen.getByTestId('approval-policy-apply'))

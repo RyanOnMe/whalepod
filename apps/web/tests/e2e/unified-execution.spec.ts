@@ -1,3 +1,4 @@
+import { showAgentCreation } from './helpers.js'
 import { expect, test } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
@@ -63,6 +64,8 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     await expect(member.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
     await seedPluginPack(alice.userId)
     await owner.goto('/agents')
+    await showAgentCreation(owner)
+
     await owner.fill('#agent-name', 'Builder')
     await owner.fill('#agent-persona', '你是执行验收代理。')
     await owner.fill('#agent-provider', 'replay')

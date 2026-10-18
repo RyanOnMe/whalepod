@@ -1,3 +1,4 @@
+import { showHelp } from './workspace.js'
 import { act, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
@@ -79,6 +80,7 @@ describe('撤销后的旧页面（#321）', () => {
         },
       ]),
     )
+    await showHelp('权限与交接说明')
     expect(await screen.findByTestId('instruction-revocation-rule')).toHaveTextContent(
       '尚未开始派发的追问会被拒绝',
     )

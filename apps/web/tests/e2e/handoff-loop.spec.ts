@@ -1,3 +1,4 @@
+import { showAgentCreation } from './helpers.js'
 /**
  * #381 两成员交接闭环的生产验收（Q5，project `p1-381`）。
  *
@@ -235,6 +236,8 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   // Agent 经真人 UI 创建（provider=replay 是 e2e 的模型缝）。
   await alice.goto('/agents')
   await expect(alice.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible()
+  await showAgentCreation(alice)
+
   await alice.fill('#agent-name', AGENT_NAME)
   await alice.fill('#agent-persona', '你是验收代理。')
   await alice.fill('#agent-provider', 'replay')

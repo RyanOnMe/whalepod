@@ -21,6 +21,7 @@ import type {
   PluginReviewStatus,
   PluginStatus,
 } from '@whalepod/protocol'
+import { HelpDisclosure } from '../../shared/HelpDisclosure.js'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { ROLE_LABEL, formatTrust, shortDigest, shortSha } from '../../shared/format.js'
@@ -153,36 +154,35 @@ function CatalogCard(props: {
         <span className="plugin-version">{entry.version}</span>
         <ReviewStatusBadge status={entry.review.status} />
         <CapabilityClassBadge capabilityClass={entry.capabilityClass} />
+        <span className="plugin-license">{entry.license}</span>
       </div>
-      <dl className="revision-meta">
-        <div>
-          <dt>Integrity</dt>
-          <dd>
-            <code className="plugin-digest" title={entry.integrity}>
-              {shortDigest(entry.integrity)}
-            </code>
-          </dd>
-        </div>
-        <div>
-          <dt>License</dt>
-          <dd>{entry.license}</dd>
-        </div>
-        <div>
-          <dt>Review</dt>
-          <dd>
-            <code title={entry.review.commit}>{shortSha(entry.review.commit)}</code> ·{' '}
-            <RelativeTime iso={entry.review.at} />
-          </dd>
-        </div>
-        <div>
-          <dt>依赖闭包 Digest</dt>
-          <dd>
-            <code className="plugin-digest" title={entry.dependencyLockDigest}>
-              {shortDigest(entry.dependencyLockDigest)}
-            </code>
-          </dd>
-        </div>
-      </dl>
+      <HelpDisclosure label="包信息">
+        <dl className="revision-meta">
+          <div>
+            <dt>Integrity</dt>
+            <dd>
+              <code className="plugin-digest" title={entry.integrity}>
+                {shortDigest(entry.integrity)}
+              </code>
+            </dd>
+          </div>
+          <div>
+            <dt>Review</dt>
+            <dd>
+              <code title={entry.review.commit}>{shortSha(entry.review.commit)}</code> ·{' '}
+              <RelativeTime iso={entry.review.at} />
+            </dd>
+          </div>
+          <div>
+            <dt>依赖闭包 Digest</dt>
+            <dd>
+              <code className="plugin-digest" title={entry.dependencyLockDigest}>
+                {shortDigest(entry.dependencyLockDigest)}
+              </code>
+            </dd>
+          </div>
+        </dl>
+      </HelpDisclosure>
       <CapabilityList capabilities={entry.capabilities} />
       {isLocal ? (
         <p className="plugin-local-warning">
@@ -228,30 +228,32 @@ function InstallationCard({ installation }: { installation: PluginInstallationVi
         <span className="badge">{formatTrust(installation.trust)}</span>
         <CapabilityClassBadge capabilityClass={installation.capabilityClass} />
       </div>
-      <dl className="revision-meta">
-        <div>
-          <dt>Integrity</dt>
-          <dd>
-            <code className="plugin-digest" title={installation.integrity}>
-              {shortDigest(installation.integrity)}
-            </code>
-          </dd>
-        </div>
-        <div>
-          <dt>依赖闭包 Digest</dt>
-          <dd>
-            <code className="plugin-digest" title={installation.dependencyLockDigest}>
-              {shortDigest(installation.dependencyLockDigest)}
-            </code>
-          </dd>
-        </div>
-        <div>
-          <dt>安装时间</dt>
-          <dd>
-            <RelativeTime iso={installation.createdAt} />
-          </dd>
-        </div>
-      </dl>
+      <HelpDisclosure label="包信息">
+        <dl className="revision-meta">
+          <div>
+            <dt>Integrity</dt>
+            <dd>
+              <code className="plugin-digest" title={installation.integrity}>
+                {shortDigest(installation.integrity)}
+              </code>
+            </dd>
+          </div>
+          <div>
+            <dt>依赖闭包 Digest</dt>
+            <dd>
+              <code className="plugin-digest" title={installation.dependencyLockDigest}>
+                {shortDigest(installation.dependencyLockDigest)}
+              </code>
+            </dd>
+          </div>
+          <div>
+            <dt>安装时间</dt>
+            <dd>
+              <RelativeTime iso={installation.createdAt} />
+            </dd>
+          </div>
+        </dl>
+      </HelpDisclosure>
       <CapabilityList capabilities={installation.capabilities} />
     </article>
   )

@@ -1,3 +1,4 @@
+import { showAgentCreation } from './helpers.js'
 /**
  * #158 下拉落页的**两档截图与定位审计**（Q5，playwright project `p1-158`）。
  *
@@ -218,6 +219,7 @@ test.describe('#158 七处下拉的两档审计', () => {
     // #167：页面标题只说一次，h1 文案取主导航同一套的领域词（原 h1「Agent 管理」+
     // 紧随的 h2「Agents」是同义重复，h2 已删）。
     await expect(owner.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible()
+    await showAgentCreation(owner)
     const packTrigger = owner.locator('#agent-plugin-pack')
     // #167：PackSelect 的可见标签/可访问名已中文化（#158 之后它是唯一来源）。
     await assertNotNativeSelect(packTrigger, owner.locator('form'), '插件组合（Plugin Pack）')
@@ -321,6 +323,8 @@ async function assertComposerTrigger(trigger: ReturnType<Page['locator']>): Prom
 async function createAgentViaUi(page: Page, name: string): Promise<void> {
   await page.goto('/agents')
   await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible()
+  await showAgentCreation(page)
+
   await page.fill('#agent-name', name)
   await page.fill('#agent-persona', '你是下拉审计用的代理。')
   await page.fill('#agent-provider', 'replay')

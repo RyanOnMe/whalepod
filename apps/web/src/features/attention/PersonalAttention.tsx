@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { AttentionViewSchema, type AttentionItem } from '@whalepod/protocol'
 import { Link } from 'react-router'
 import type { ReactNode } from 'react'
+import { HelpDisclosure } from '../../shared/HelpDisclosure.js'
 import { api } from '../../shared/api/client.js'
 import { useSession } from '../../app/session.js'
 import { queryKeys } from '../../app/query-client.js'
@@ -57,9 +58,9 @@ export function PersonalAttention(): ReactNode {
           刷新待办
         </button>
       </div>
-      <p className="mutation-hint">
-        这里列出可由你接受、审批、改派、检查候选或确认完成的事项；操作仍在任务中确认。
-      </p>
+      <HelpDisclosure label="待办说明">
+        <p>接受、审批、改派、候选检查与验收事项会出现在这里。请进入任务处理。</p>
+      </HelpDisclosure>
       {query.isPending || (query.isFetching && !query.isFetchedAfterMount) ? (
         <p role="status">正在确认需处理事项…</p>
       ) : query.isError ? (
@@ -73,7 +74,7 @@ export function PersonalAttention(): ReactNode {
         <>
           {query.isFetching ? <p className="mutation-hint">正在更新待办…</p> : null}
           {query.data.items.length === 0 ? (
-            <p>目前没有待接受、审批、改派、候选检查或验收事项。</p>
+            <p>暂无待办。</p>
           ) : (
             <ul className="attention-list">
               {query.data.items.map((item) => (
