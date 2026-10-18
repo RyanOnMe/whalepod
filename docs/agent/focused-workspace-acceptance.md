@@ -40,7 +40,7 @@ Q5 用仓库统一生产装配：一次性 PostgreSQL、包解析后的 Hub serv
 hub.run → node.supervisor → runtime.bridge 归因。
 
 本轮不改服务端协议、状态机、许可或候选权限。真实团队使用感受仍需真人试用，不能用自动化通过替代。
-GitHub 认证当前失效，Issue 登记和 PR 关联待恢复认证后完成。
+GitHub 访问已恢复，关联 Issue [#387](https://github.com/RyanOnMe/whalepod/issues/387)。此前访问失败的原因是 macOS 登录钥匙串锁定，解锁后已有凭据即可使用。
 
 ## 展示取舍
 
@@ -62,7 +62,7 @@ GitHub 认证当前失效，Issue 登记和 PR 关联待恢复认证后完成。
 - 完整产出链（p1-19）：15 项全部通过，含审批拒绝、输入快照、故障恢复、修订发布、真人完成和个人行动入口。
 - Web 生产构建通过；格式、lint、Web 类型检查通过。
 - 本次成功证据：`artifacts/evidence/focused-workspace/d5bd8365/`。失败/中断尝试无 facts.json，不能作为成功证据。
-- GitHub：两项账号凭据均失效，未登记 Issue、推送或创建 PR；本地分支为 `feat/focused-workspace`。
+- GitHub：当时 gh 无法读取两个账号的凭据，暂未登记 Issue、推送或创建 PR；本地分支当时为 `feat/focused-workspace`。后续确认原因为 macOS 登录钥匙串锁定，凭据本身未失效。
 
 
 ## 工作区 Micro 精修批次
@@ -101,4 +101,8 @@ PromptBar、GlideSelect、SpringCheck、SquishSwitch 的原始哈希与本地改
 - 最新证据：`artifacts/evidence/focused-workspace/e19411a7/`，含五类 facts、独立 validation、quality-gates、脱敏质量门日志和稳定截图。菜单展开时判定 portal，等待入场结束再量边界与截屏；另检查高级设置标签可见。
 - 展开详情后点击团队讨论会收起详情；同任务讨论、执行、指派与审批锚点恢复到可见目标并聚焦。三个 hash、可见视图按钮和审批 hash 共五条回归先红后绿。
 - 最后一次并发检查出现旧文案选择器与模块加载 5 秒超时：选择器同步到精简文案，原业务断言保留；结束浏览器运行后串行重跑完整 Q0 已通过，没有放宽超时或跳过检查。
-- GitHub 登录由用户选择稍后处理；未创建 Issue/PR、未触发服务端 CI、未合入。恢复认证后须同步远端、登记 Issue/分支、走 PR 必检 CI 与 squash 合入。
+- GitHub：用户解锁 macOS 登录钥匙串后访问恢复，未修改 gh 配置、未重新登录。已核验仓库访问、同步远端并补登 Issue #387；按 PR 必检 `check` / `integration` 与 squash 流程合入。
+
+## GitHub 访问诊断更正
+
+先前根据 gh 报错将其记为“token/凭据失效”不准确。用户只解锁了 macOS 登录钥匙串，两个账号立即恢复；现已用仓库读取与账号查询验证当前访问正常。根因是本机钥匙串锁定时无法读取凭据，无需更换 token、改 gh 配置或重新登录。
