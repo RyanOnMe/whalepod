@@ -6,6 +6,7 @@ import {
   agentsHandler,
   loggedInHandlers,
   makeTask,
+  makeArtifact,
   ok,
   projectsHandler,
   taskRoomHandler,
@@ -23,6 +24,24 @@ const agent = {
 }
 
 describe('抽屉与二级页面的统一层级', () => {
+  it('内层确认框拥有 Escape，即使焦点暂留触发器也不关闭抽屉', async () => {
+    const user = userEvent.setup()
+    const artifact = makeArtifact({ status: 'candidate', ownerUserId: ALICE.userId })
+    const app = renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(ALICE, [taskRoomHandler(task, { artifacts: [artifact] })]),
+    )
+    await user.click(await screen.findByRole('button', { name: `查看交付物 ${artifact.title}` }))
+    const publish = screen.getByTestId('artifact-publish-button')
+    await user.click(publish)
+    expect(screen.getByRole('dialog')).toBeVisible()
+    publish.focus()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByRole('region', { name: '工作区详情' })).toBeVisible()
+    expect(publish).toHaveFocus()
+    expect(app.fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0)
+  })
   it.each(['/', '/members', '/agents', '/plugins', '/devices', `/tasks/${task.id}/permissions`])(
     '%s 使用同一页面标题区',
     async (path) => {
@@ -62,7 +81,7 @@ describe('抽屉与二级页面的统一层级', () => {
     await screen.findByRole('button', { name: /Builder/ })
     expect(screen.getByLabelText('名称')).not.toBeVisible()
     const user = userEvent.setup()
-    const create = screen.getByRole('button', { name: '新建 Agent', exact: true })
+    const create = screen.getByRole('button', { name: '新建 Agent' })
     await user.click(create)
     await user.type(screen.getByLabelText('名称'), 'Researcher')
     await user.click(create)
