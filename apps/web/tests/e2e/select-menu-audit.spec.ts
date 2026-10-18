@@ -219,6 +219,7 @@ test.describe('#158 七处下拉的两档审计', () => {
     // #167：页面标题只说一次，h1 文案取主导航同一套的领域词（原 h1「Agent 管理」+
     // 紧随的 h2「Agents」是同义重复，h2 已删）。
     await expect(owner.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible()
+    await showAgentCreation(owner)
     const packTrigger = owner.locator('#agent-plugin-pack')
     // #167：PackSelect 的可见标签/可访问名已中文化（#158 之后它是唯一来源）。
     await assertNotNativeSelect(packTrigger, owner.locator('form'), '插件组合（Plugin Pack）')
