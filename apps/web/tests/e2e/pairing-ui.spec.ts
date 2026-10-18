@@ -110,7 +110,7 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
   // 设备页：#142 的断头点——空态指引之外，签发控件必须就在本页。
   await page.goto('/devices')
   await expect(page.getByRole('heading', { name: '设备', exact: true })).toBeVisible()
-  await expect(page.getByText(/还没有设备/)).toBeVisible()
+  await expect(page.getByText(/尚无设备/)).toBeVisible()
 
   await page.getByRole('button', { name: '生成配对码' }).click()
   const code = (await page.getByTestId('pairing-code').innerText()).trim()
@@ -386,6 +386,7 @@ test('文案判据：Agents 与插件页无裸摘要 / 无内部词 / 无同义�
   await page.goto('/plugins')
   const packCard = page.locator('article.plugin-card', { hasText: 'e2e-pack' }).first()
   await expect(packCard).toBeVisible()
+  await packCard.locator('summary', { hasText: '组合信息' }).click()
   const digestCode = packCard.locator('dd code.plugin-digest').nth(1)
   const shortDigest = (await digestCode.innerText()).trim()
   const fullDigest = await digestCode.getAttribute('title')
