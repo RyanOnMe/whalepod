@@ -16,6 +16,7 @@ import { api } from '../../shared/api/client.js'
 import { queryKeys } from '../../app/query-client.js'
 import { pushToast } from '../../app/toast.js'
 import { ConfirmDialog } from '../../shared/ConfirmDialog.js'
+import { HelpDisclosure } from '../../shared/HelpDisclosure.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { formatBytes, shortId } from '../../shared/format.js'
 import { RUN_NOT_IN_TIMELINE_LABEL, runOrdinalLabels } from './runLabels.js'
@@ -34,7 +35,7 @@ export interface ArtifactListProps {
    */
   runs: TaskRoomRun[]
   /**
-   * #250「对这个工件继续说」：把来源运行的引用 token 注入讨论输入框（#216 同一套
+   * #250「在讨论中引用」：把来源运行的引用 token 注入讨论输入框（#216 同一套
    * 窄解析语法，渲染端零改动）。由页面注入——组件不管输入框在哪。
    */
   onReferenceRun?: (runId: string) => void
@@ -82,12 +83,6 @@ export function ArtifactList({
       {published.length === 0 && candidates.length === 0 ? (
         <p className="empty-state">
           还没有已发布的 Artifact。Run 产出经发布后，交付物会出现在这里。
-        </p>
-      ) : null}
-      {published.length > 0 ? (
-        <p className="artifact-reviewer-note">
-          已发布交付物可选为 Reviewer Run
-          的只读输入；本次身份与内容摘要在启动时固定，后续发布不改变旧输入。
         </p>
       ) : null}
     </div>
@@ -140,28 +135,33 @@ function ArtifactRows({
           className="artifact-item"
         >
           <div className="artifact-title">{artifact.title}</div>
-          <dl className="artifact-meta">
-            <div>
-              <dt>类型</dt>
-              <dd>{artifact.mediaType}</dd>
-            </div>
-            <div>
-              <dt>大小</dt>
-              <dd>{formatBytes(artifact.byteSize)}</dd>
-            </div>
-            <SourceRunCell artifact={artifact} runLabels={runLabels} />
-            <div>
-              <dt>发布时间</dt>
-              <dd>
-                <RelativeTime iso={artifact.publishedAt} />
-              </dd>
-            </div>
-            <div>
-              <dt>内容摘要</dt>
-              <dd>{artifact.sha256.slice(0, 12)}</dd>
-            </div>
-          </dl>
+          <details className="artifact-details">
+            <summary>文件信息</summary>
+            <dl className="artifact-meta">
+              <div>
+                <dt>类型</dt>
+                <dd>{artifact.mediaType}</dd>
+              </div>
+              <div>
+                <dt>大小</dt>
+                <dd>{formatBytes(artifact.byteSize)}</dd>
+              </div>
+              <SourceRunCell artifact={artifact} runLabels={runLabels} />
+              <div>
+                <dt>发布时间</dt>
+                <dd>
+                  <RelativeTime iso={artifact.publishedAt} />
+                </dd>
+              </div>
+              <div>
+                <dt>内容摘要</dt>
+                <dd>{artifact.sha256.slice(0, 12)}</dd>
+              </div>
+            </dl>
+          </details>
           <div className="artifact-actions">
+            <ArtifactPreview artifact={artifact} />
+            <ArtifactDownload artifact={artifact} />
             {onRequestReview === undefined ? null : (
               <button type="button" className="button" onClick={() => onRequestReview(artifact.id)}>
                 发起复核
@@ -176,8 +176,6 @@ function ArtifactRows({
                 根据意见修订
               </button>
             )}
-            <ArtifactPreview artifact={artifact} />
-            <ArtifactDownload artifact={artifact} />
             {/* #250：指着这个工件说话——注入来源运行的引用 token（#216 窄解析），
                 落点是讨论输入框（人对人）；驱动 Agent 仍由用户自己去执行栏说。 */}
             {onReferenceRun === undefined ? null : (
@@ -187,7 +185,7 @@ function ArtifactRows({
                 data-testid="artifact-reference-button"
                 onClick={() => onReferenceRun(artifact.runId)}
               >
-                对这个工件继续说
+                在讨论中引用
               </button>
             )}
           </div>
@@ -333,21 +331,24 @@ function CandidateRows({
         >
           <div className="artifact-title">{artifact.title}</div>
           <p className="mutation-hint">仅你可见，待发布</p>
-          <dl className="artifact-meta">
-            <div>
-              <dt>类型</dt>
-              <dd>{artifact.mediaType}</dd>
-            </div>
-            <div>
-              <dt>大小</dt>
-              <dd>{formatBytes(artifact.byteSize)}</dd>
-            </div>
-            <SourceRunCell artifact={artifact} runLabels={runLabels} />
-            <div>
-              <dt>内容摘要</dt>
-              <dd>{artifact.sha256.slice(0, 12)}</dd>
-            </div>
-          </dl>
+          <details className="artifact-details">
+            <summary>文件信息</summary>
+            <dl className="artifact-meta">
+              <div>
+                <dt>类型</dt>
+                <dd>{artifact.mediaType}</dd>
+              </div>
+              <div>
+                <dt>大小</dt>
+                <dd>{formatBytes(artifact.byteSize)}</dd>
+              </div>
+              <SourceRunCell artifact={artifact} runLabels={runLabels} />
+              <div>
+                <dt>内容摘要</dt>
+                <dd>{artifact.sha256.slice(0, 12)}</dd>
+              </div>
+            </dl>
+          </details>
           {!isTextPreviewable(artifact.mediaType, artifact.byteSize) ? (
             <p className="mutation-hint">暂不支持在线预览，请下载检查。</p>
           ) : null}
@@ -356,7 +357,7 @@ function CandidateRows({
             <ArtifactDownload artifact={artifact} />
             <button
               type="button"
-              className="button"
+              className="button button-primary"
               data-testid="artifact-publish-button"
               disabled={busyId !== undefined}
               onClick={() => setConfirming(artifact)}
@@ -389,13 +390,12 @@ function CandidateRows({
 /** 复核插槽：已发布交付物即 Reviewer Run 的输入面（Reviewer 链由 P1-15 完成）。 */
 export function ReviewerSlot(): ReactNode {
   return (
-    <section className="snapshot-slot" aria-label="复核">
-      <h3>复核</h3>
-      <p className="empty-state">
+    <HelpDisclosure label="复核说明">
+      <p>
         {
-          '从已发布产出选择“发起复核”，在执行区确认材料并选择 Agent，再由你启动。交付物以只读输入清单和受控副本提供；本次执行环境、工具与审批仍按执行设置决定。'
+          '从已发布交付物发起复核，在执行区确认材料与 Agent 后启动。交付物作为 Reviewer Run 的只读输入清单，身份与内容摘要在启动时固定，后续发布不改变旧输入。执行环境、工具与审批遵循执行设置；复核不会自动完成任务。'
         }
       </p>
-    </section>
+    </HelpDisclosure>
   )
 }

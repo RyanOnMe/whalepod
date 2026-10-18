@@ -67,7 +67,7 @@ describe('聚焦工作区', () => {
     expect(screen.queryByRole('region', { name: '工作区详情' })).not.toBeInTheDocument()
     await user.click(trigger)
     const panel = screen.getByRole('region', { name: '工作区详情' })
-    expect(within(panel).getByText('report.md')).toBeVisible()
+    expect(within(panel).getByRole('heading', { name: 'report.md' })).toBeVisible()
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('region', { name: '工作区详情' })).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
@@ -91,7 +91,7 @@ describe('聚焦工作区', () => {
     const artifact = makeArtifact({ title: 'team.md' })
     const app = openRoom([artifact])
     await user.click(await screen.findByRole('button', { name: '查看交付物 team.md' }))
-    await user.click(screen.getByRole('button', { name: '对这个工件继续说' }))
+    await user.click(screen.getByRole('button', { name: '在讨论中引用' }))
     expect(screen.getByRole('button', { name: '团队讨论' })).toHaveAttribute('aria-pressed', 'true')
     await waitFor(() =>
       expect(screen.getByLabelText('留言')).toHaveValue(formatRunReference(artifact.runId)),

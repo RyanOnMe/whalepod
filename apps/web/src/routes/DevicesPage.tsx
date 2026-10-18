@@ -29,6 +29,8 @@ import { Link, useSearchParams } from 'react-router'
 import { preparationTaskId } from '../shared/preparation-navigation.js'
 import { useHasExecutionTask } from '../features/task/execution-drafts.js'
 import { NODE_BUILD_COMMANDS, NODE_CLI_COMMAND } from '../shared/node-installation.js'
+import { PageHeader } from '../shared/PageHeader.js'
+import { HelpDisclosure } from '../shared/HelpDisclosure.js'
 import { api } from '../shared/api/client.js'
 import { Hint } from '../shared/micro/Hint.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
@@ -92,13 +94,11 @@ export function DevicesPage(): ReactNode {
   })
 
   return (
-    <div className="devices-page">
-      <h1>设备</h1>
+    <div className="devices-page secondary-page">
+      <PageHeader title="设备" />
       {canReturn ? (
         <section className="card" aria-label="返回执行准备">
-          <p>
-            你正在为任务准备执行环境。草稿在本次登录页面中保留，配对后请返回任务重新检查；刷新或退出会清除草稿。
-          </p>
+          <p>配对完成后返回任务检查环境。草稿仅保留在本次登录页面，刷新或退出后清除。</p>
           <Link className="button" to={`/tasks/${returningTaskId}#task-execution`}>
             返回任务继续准备
           </Link>
@@ -120,8 +120,7 @@ export function DevicesPage(): ReactNode {
             {listQuery.isSuccess && listQuery.data.length === 0 ? (
               <p className="empty-state">
                 {/* #152：两栏后 CLI 步骤在宽屏位于右列、窄屏位于下方——指路文案不再写方位。 */}
-                还没有设备——先点「生成配对码」，再按 CLI
-                步骤在成员本机完成配对；配对成功后设备会自动出现在这里，不用刷新。
+                尚无设备。生成配对码，在你的电脑上完成配对。
               </p>
             ) : null}
             {listQuery.isSuccess && listQuery.data.length > 0 ? (
@@ -151,7 +150,9 @@ export function DevicesPage(): ReactNode {
           </section>
         </div>
         <div className="page-col">
-          <CliSteps />
+          <HelpDisclosure label="安装与配对指南">
+            <CliSteps />
+          </HelpDisclosure>
         </div>
       </div>
     </div>
@@ -174,9 +175,7 @@ function PairingCodePanel({
       <h2 id="devices-pairing-heading">配对码</h2>
       {issued === null ? (
         <>
-          <p className="field-hint">
-            一次性配对码 10 分钟过期且只能用一次，明文只在生成时显示一次。
-          </p>
+          <p className="field-hint">10 分钟有效，仅可使用一次。生成后请立即复制。</p>
           <div className="form-actions">
             <button
               type="button"

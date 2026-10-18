@@ -1,3 +1,4 @@
+import { showAgentCreation } from './helpers.js'
 /**
  * #345 创建到恢复的生产验收：五条路径一次走完（Q5，project `p1-345`）。
  *
@@ -145,6 +146,8 @@ async function invite(cookie: string, username: string, displayName: string): Pr
 async function createAgentViaUi(page: Page, name: string): Promise<void> {
   await page.goto('/agents')
   await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible()
+  await showAgentCreation(page)
+
   await page.fill('#agent-name', name)
   await page.fill('#agent-persona', '你是 E2E 验收代理。')
   await page.fill('#agent-provider', 'replay')

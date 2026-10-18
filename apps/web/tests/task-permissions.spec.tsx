@@ -1,3 +1,4 @@
+import { showHelp } from './workspace.js'
 /**
  * 任务级权限页（切片⑥e）：谁能驱动这个任务的 Agent。
  *
@@ -354,6 +355,7 @@ describe('任务权限页（⑥e）', () => {
   it('两条不可让渡的边界写在页面上（审批不可授予 / 执行不换机器）', async () => {
     renderPermissions()
     // 用 screen 查询（在当前渲染容器内），不用 document.body——它在 cleanup 后是空的。
+    await showHelp('授权边界')
     expect(await screen.findByText(/审批决定权不可授予/)).toBeVisible()
     expect(screen.getByText(/执行永远用责任人的设备与凭据/)).toBeVisible()
   })

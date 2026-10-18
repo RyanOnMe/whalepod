@@ -1,3 +1,4 @@
+import { showAgentCreation } from './helpers.js'
 import { expect, test } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -87,6 +88,8 @@ test('拒绝 → 网页重新指派 → 新责任人接受 → 在自己的环�
     // 接手后的执行走新责任人自己的 Node，不借用旧成员现场。
     await seedPluginPack(alice.userId)
     await owner.goto('/agents')
+    await showAgentCreation(owner)
+
     await owner.fill('#agent-name', 'Builder')
     await owner.fill('#agent-persona', '你是验收代理。')
     await owner.fill('#agent-provider', 'replay')

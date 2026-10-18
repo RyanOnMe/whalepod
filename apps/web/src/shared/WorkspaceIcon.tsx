@@ -2,6 +2,8 @@
 export function WorkspaceIcon({ name }: { name: string }) {
   const paths: Record<string, string> = {
     返回: 'M15 5l-7 7 7 7',
+    关闭: 'M6 6l12 12 M6 18L18 6',
+    添加: 'M12 5v14 M5 12h14',
     更多: 'M5 12h.01 M12 12h.01 M19 12h.01',
     设置: 'M4 7h16 M4 17h16 M8 4v6 M16 14v6',
     项目: 'M3 5h6l2 2h10v13H3z M3 10h18',

@@ -7,12 +7,13 @@ import type { ReactNode } from 'react'
 import { useSession } from '../app/session.js'
 import { PluginSettings } from '../features/plugin/PluginSettings.js'
 import { PluginPackEditor } from '../features/plugin/PluginPackEditor.js'
+import { PageHeader } from '../shared/PageHeader.js'
 
 export function PluginsPage(): ReactNode {
   const session = useSession()
   return (
-    <div className="plugins-page">
-      <h1>插件管理</h1>
+    <div className="plugins-page secondary-page">
+      <PageHeader title="插件管理" />
       <PluginSettings session={session} />
       <PluginPackEditor session={session} />
     </div>

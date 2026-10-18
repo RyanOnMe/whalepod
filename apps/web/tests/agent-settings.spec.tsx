@@ -1,3 +1,4 @@
+import { showHelp } from './workspace.js'
 /**
  * Agent 管理（02 Task 7 Step 5 + P1-17 补口）：
  * - Owner/Admin 可见创建表单并成功创建（校验请求体与幂等头，成功后表单复位）；
@@ -89,6 +90,7 @@ describe('agent-settings', () => {
     // （机器判据见 e2e 的 expectNoDuplicateHeadings），现在只留 h1，文案取主导航同一套。
     expect(await screen.findByRole('heading', { name: 'Agents', level: 1 })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'Agent 管理' })).not.toBeInTheDocument()
+    await userEvent.setup().click(screen.getByRole('button', { name: '新建 Agent' }))
     expect(screen.getByRole('button', { name: '创建 Agent' })).toBeVisible()
     expect(await screen.findByRole('button', { name: /Builder/ })).toBeVisible()
   })
@@ -116,6 +118,7 @@ describe('agent-settings', () => {
       ]),
     ])
     await screen.findByRole('button', { name: /Builder/ })
+    await user.click(screen.getByRole('button', { name: '新建 Agent' }))
     await user.type(screen.getByLabelText('名称'), 'Reviewer')
     await user.type(screen.getByLabelText('人格设定（Persona）'), 'You are a careful reviewer.')
     // provider/model/credentialSlot 表单预填了默认值，先清空再输入（避免叠加）
@@ -181,6 +184,7 @@ describe('agent-settings', () => {
         packsHandler([corePack, reviewPack]),
       ]),
     )
+    await user.click(await screen.findByRole('button', { name: '新建 Agent' }))
     const trigger = await screen.findByLabelText('插件组合（Plugin Pack）')
     // #158 反面钉：这一处**不再是原生 <select>**，而是 vendored Menu 的触发器按钮。
     expect(trigger.tagName).toBe('BUTTON')
@@ -202,6 +206,7 @@ describe('agent-settings', () => {
 
   it('Plugin Pack 列表为空：无选项，提示先去插件管理创建', async () => {
     renderApp('/agents', loggedInHandlers(ALICE, [agentsHandler([]), packsHandler([])]))
+    await userEvent.setup().click(await screen.findByRole('button', { name: '新建 Agent' }))
     const trigger = await screen.findByLabelText('插件组合（Plugin Pack）')
     // 异步查询而不是同步断言：列表查询落地前控件先以「正在加载 Packs…」占位（实测踩过）
     await within(trigger).findByText('没有可选 Pack')
@@ -229,7 +234,7 @@ describe('agent-settings', () => {
     // #167：表单 <label> 与详情 <dt> 现在共用 shared/format.ts 的同一份文案常量
     // （不是两处各写一遍恰好同字），同屏两处都该是「中文（English）」形态。
     expect(screen.getAllByText('凭据槽（Credential Slot）')).toHaveLength(2)
-    expect(screen.getAllByText('人格设定（Persona）')).toHaveLength(2)
+    expect(screen.getByText(revision.persona)).toBeVisible()
     // 详情不再出现裸英文标签（回归：截图上的 `Persona` / `Credential Slot` 两列）
     expect(screen.queryByText('Credential Slot')).not.toBeInTheDocument()
     expect(screen.queryByText('Persona')).not.toBeInTheDocument()
@@ -360,16 +365,11 @@ describe('agent-settings', () => {
       '/agents',
       loggedInHandlers(ALICE, [agentsHandler([builderAgent]), packsHandler([corePack])]),
     )
-    const about = await screen.findByRole('heading', { name: 'Revision 是什么' })
-    const paragraph = (about.parentElement as HTMLElement).querySelector('p.field-hint')
-    // 逐字比对：`配置——人格` 之间不许有空格（初版 JSX 折行折叠出了一个）、
-    // `Revision。改配置` 之间也不许有（同一个坑的另一半）。#169 的门按源码行判标点，
-    // 判不到"折行发生在表达式之间"的情形，所以在这里按渲染结果钉一次。
-    expect(paragraph?.textContent).toBe(
-      '一个 Agent 是团队共用的长期 AI 角色。它每次运行（Run）用到的配置——人格、模型、' +
-        '插件组合——会被固化成一份不可变的 Profile Revision。改配置就是新建 Revision，' +
-        '已经跑过的 Run 不受影响。',
+    await showHelp('配置版本说明')
+    const paragraph = screen.getByText(
+      '每次执行都会固定 Agent 的模型、角色与插件配置。修改配置会产生新版本，已有运行保持原配置。',
     )
+    expect(paragraph).toBeVisible()
     expect(container.textContent ?? '').not.toContain('配置 ——')
     expect(container.textContent ?? '').not.toContain('Revision。 改配置')
   })
@@ -378,6 +378,6 @@ describe('agent-settings', () => {
     renderApp('/agents', loggedInHandlers(ALICE, [agentsHandler([]), packsHandler([corePack])]))
     // #167：空态文案改成指路（「用右栏的表单创建第一个」），文案随 #167 的窄屏顺序
     // 调整过一次（详情/表单列在窄屏提到列表之前，空团队时表单在下面）。
-    expect(await screen.findByText(/还没有 Agent/)).toBeVisible()
+    expect(await screen.findByText(/创建第一个 Agent/)).toBeVisible()
   })
 })

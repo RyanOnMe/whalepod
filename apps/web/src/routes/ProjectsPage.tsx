@@ -11,6 +11,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import type { CreateProjectRequest, CreateTaskRequest } from '@whalepod/protocol'
 import { useNavigate } from 'react-router'
+import { PageHeader } from '../shared/PageHeader.js'
 import { api } from '../shared/api/client.js'
 import { assignmentDriveToast, parseAssignmentDrive } from '../shared/assignment-drive.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
@@ -56,18 +57,20 @@ export function ProjectsPage(): ReactNode {
   const [creatingProject, setCreatingProject] = useState(false)
 
   return (
-    <div className="projects-page">
-      <div className="page-head">
-        <h1>项目</h1>
-        <button
-          type="button"
-          className="button"
-          aria-expanded={creatingProject}
-          onClick={() => setCreatingProject(!creatingProject)}
-        >
-          {creatingProject ? '收起' : '新建项目'}
-        </button>
-      </div>
+    <div className="projects-page secondary-page">
+      <PageHeader
+        title="项目"
+        actions={
+          <button
+            type="button"
+            className="button"
+            aria-expanded={creatingProject}
+            onClick={() => setCreatingProject(!creatingProject)}
+          >
+            {creatingProject ? '收起' : '新建项目'}
+          </button>
+        }
+      />
       <PersonalAttention />
       {creatingProject ? (
         <CreateProjectForm

@@ -13,6 +13,7 @@
  * 内联面板保留为默认视图。这一点与原型不同，是有意的取舍，写在这里免得下次被"改回原型"。
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { WorkspaceIcon } from '../../shared/WorkspaceIcon.js'
 import RubberSegment from '../../vendor/react-bits-micro/RubberSegment.js'
 import type { RunEventItem, RunStatus } from '../../shared/api/types.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
@@ -191,12 +192,14 @@ export function RunConsole({
           <span className="mono">{runId.slice(0, 8)}</span>
           <button
             type="button"
-            className="button console-close"
+            className="icon-button console-close"
+            aria-label="关闭运行详情"
+            title="关闭"
             data-testid="console-close"
             ref={closeRef}
             onClick={onClose}
           >
-            关闭
+            <WorkspaceIcon name="关闭" />
           </button>
         </div>
 
@@ -227,7 +230,7 @@ export function RunConsole({
           )}
           {!eventsPending && eventsError === undefined && visible.length === 0 ? (
             <p className="empty-state" data-testid="console-empty">
-              当前筛选下没有事件。换一个筛选，或确认这次运行是否真的产生了事件。
+              当前筛选下没有事件。
             </p>
           ) : null}
           <ol className="run-event-list">
@@ -265,7 +268,7 @@ export function RunConsole({
 
         <div className="console-foot">
           <span className="chip-gray" data-testid="console-readonly">
-            只读视图 · 执行区的指令才是入口（重跑/取消在运行卡上）
+            只读视图
           </span>
         </div>
       </section>

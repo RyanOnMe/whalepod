@@ -15,6 +15,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import type { CreateInviteRequest, TeamMemberView } from '@whalepod/protocol'
+import { PageHeader } from '../shared/PageHeader.js'
 import { api } from '../shared/api/client.js'
 import { CopyButton } from '../shared/CopyButton.js'
 import { SelectMenu } from '../shared/SelectMenu.js'
@@ -79,11 +80,8 @@ export function MembersPage(): ReactNode {
   const members = membersQuery.data ?? []
 
   return (
-    <div className="members-page">
-      <h1>成员</h1>
-      <p className="page-lead">
-        把同事加进这个团队：生成一次性邀请链接发给他，他在浏览器里打开即可加入。
-      </p>
+    <div className="members-page secondary-page">
+      <PageHeader title="成员" />
       {flash !== null ? (
         <p className="success-banner" role="status">
           {flash}
@@ -93,15 +91,17 @@ export function MembersPage(): ReactNode {
       <div className="page-grid">
         <div className="page-col">
           <section className="card" aria-labelledby="members-list-heading">
-            <h2 id="members-list-heading">团队成员</h2>
-            <button
-              type="button"
-              className="button button-ghost"
-              onClick={manualRefresh}
-              disabled={membersQuery.isFetching}
-            >
-              {membersQuery.isFetching ? '刷新中…' : '刷新名单'}
-            </button>
+            <div className="section-heading">
+              <h2 id="members-list-heading">团队成员</h2>
+              <button
+                type="button"
+                className="button button-ghost"
+                onClick={manualRefresh}
+                disabled={membersQuery.isFetching}
+              >
+                {membersQuery.isFetching ? '刷新中…' : '刷新名单'}
+              </button>
+            </div>
             {membersQuery.isPending ? (
               <p className="mutation-hint">正在加载成员名单…</p>
             ) : membersQuery.isError ? (
@@ -131,10 +131,7 @@ export function MembersPage(): ReactNode {
             <h2 id="members-invite-heading">邀请成员</h2>
             {canInvite ? (
               <>
-                <p className="page-lead">
-                  选一个角色生成邀请链接。链接只能使用一次，72
-                  小时后失效；生成后请立即复制发给他——Token 只出现这一次。
-                </p>
+                <p className="page-lead">一次性链接，72 小时有效。生成后请立即复制。</p>
                 <form className="inline-form" onSubmit={submit}>
                   <div className="field">
                     {/* #158：角色选择从原生 <select> 换成 vendored Menu 的包装
@@ -171,7 +168,7 @@ export function MembersPage(): ReactNode {
                 {createInvite.isError ? <ErrorBanner error={createInvite.error} /> : null}
                 {created !== null && inviteUrl !== null ? (
                   <div className="invite-result">
-                    <h3>把这条链接发给他</h3>
+                    <h3>邀请链接</h3>
                     <p className="invite-link-row">
                       <code className="invite-link">{inviteUrl}</code>
                       <CopyButton
@@ -195,9 +192,7 @@ export function MembersPage(): ReactNode {
                         </dd>
                       </div>
                     </dl>
-                    <p className="field-hint">
-                      链接是一次性的：他加入成功后即失效；重复打开会提示「已被使用」，请重新生成。
-                    </p>
+                    <p className="field-hint">加入成功后链接即失效；再次邀请请重新生成。</p>
                   </div>
                 ) : null}
               </>

@@ -176,9 +176,7 @@ describe('首页个人行动入口 (#332)', () => {
     f.state.fail = false
     f.state.items = []
     await userEvent.setup().click(within(region()).getByRole('button', { name: '重新读取待办' }))
-    expect(
-      await screen.findByText('目前没有待接受、审批、改派、候选检查或验收事项。'),
-    ).toBeVisible()
+    expect(await screen.findByText('暂无待办。')).toBeVisible()
   })
   it.each(['accept_assignment', 'reassign_task', 'inspect_candidate', 'complete_task'] as const)(
     '一次任务定位到实际行动并聚焦：%s',
@@ -275,9 +273,7 @@ describe('首页个人行动入口 (#332)', () => {
     await waitFor(() => expect(f.state.accepted).toBe(true))
     expect(f.queryClient.getQueryState(['attention', BOB.userId])?.isInvalidated).toBe(true)
     await user.click(screen.getByTestId('task-back-link'))
-    expect(
-      await screen.findByText('目前没有待接受、审批、改派、候选检查或验收事项。'),
-    ).toBeVisible()
+    expect(await screen.findByText('暂无待办。')).toBeVisible()
     expect(within(region()).queryByRole('link')).not.toBeInTheDocument()
   })
   it('真实事件路由使远端变更刷新已打开的首页与最近任务', async () => {
@@ -293,9 +289,7 @@ describe('首页个人行动入口 (#332)', () => {
         resync: () => {},
       }),
     )
-    expect(
-      await screen.findByText('目前没有待接受、审批、改派、候选检查或验收事项。'),
-    ).toBeVisible()
+    expect(await screen.findByText('暂无待办。')).toBeVisible()
     expect(
       f.fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/tasks/recent')).length,
     ).toBeGreaterThan(before)
@@ -347,7 +341,7 @@ describe('首页个人行动入口 (#332)', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(15050)
       })
-      expect(screen.getByText('目前没有待接受、审批、改派、候选检查或验收事项。')).toBeVisible()
+      expect(screen.getByText('暂无待办。')).toBeVisible()
     } finally {
       vi.useRealTimers()
     }

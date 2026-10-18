@@ -66,8 +66,8 @@ export function ApprovalPolicyBlock({ task, sessionUserId }: ApprovalPolicyBlock
       <h2 id="approval-policy-heading">审批档位</h2>
       <p className="assignment-note" data-testid="approval-policy-state">
         {task.approvalPolicy === null
-          ? '未覆盖：跟随所用 Agent 的 Revision 默认档（每次建运行时解析固化）。'
-          : `已覆盖为「${POLICY_LABEL[task.approvalPolicy]}」——本任务的新运行一律用这档，不跟随 Revision 默认。`}
+          ? '未覆盖 · 使用 Agent 默认权限'
+          : `本任务权限：${POLICY_LABEL[task.approvalPolicy]}`}
       </p>
       {isResponsible ? (
         <>
@@ -86,7 +86,7 @@ export function ApprovalPolicyBlock({ task, sessionUserId }: ApprovalPolicyBlock
               onChange={(next) => setSelected(next === '' ? null : (next as ApprovalPolicy))}
               disabled={apply.isPending}
             />
-            <p className="field-hint">只有责任人（你）能改这一项：档位放松的是你的凭据风险。</p>
+            <p className="field-hint">权限变更仅影响新执行，完全权限将直接放行工具调用。</p>
           </div>
           <div className="assignment-actions">
             <button
@@ -98,6 +98,11 @@ export function ApprovalPolicyBlock({ task, sessionUserId }: ApprovalPolicyBlock
             >
               {apply.isPending ? '正在保存…' : '应用'}
             </button>
+            {selected !== task.approvalPolicy ? (
+              <span className="mutation-hint" role="status">
+                尚未应用
+              </span>
+            ) : null}
           </div>
         </>
       ) : (

@@ -9,6 +9,8 @@
 import { useQuery } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
+import { PageHeader } from '../shared/PageHeader.js'
+import { HelpDisclosure } from '../shared/HelpDisclosure.js'
 import { api } from '../shared/api/client.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
 import { useSession } from '../app/session.js'
@@ -51,18 +53,22 @@ export function TaskPermissionsPage(): ReactNode {
 
   const { task } = query.data
   return (
-    <div className="page-grid">
+    <div className="secondary-page">
       <div className="task-permissions">
-        <h1>{task.title} · 权限</h1>
-        <p className="mutation-hint">
-          <Link to={`/tasks/${task.id}`}>← 回到任务房间</Link>
-        </p>
-        <p className="mutation-hint" data-testid="instruction-revocation-rule">
-          撤销后不能再发送；尚未开始派发的追问会被拒绝。已经开始派发的指令可能正在执行，保留真实回执，不代表已撤回。停止已创建的运行需使用取消操作，并按取消权限处理。
-        </p>
-        <p className="mutation-hint">
-          责任交接需先结束活跃运行，再由所有者或管理员重新指派；已有授权名单保留，历史会话与候选归属不转移。
-        </p>
+        <PageHeader
+          title="任务权限"
+          description={task.title}
+          back={{ to: `/tasks/${task.id}`, label: '回到任务房间' }}
+        />
+        <p className="page-context">授权成员可发送指令；审批仍由责任人处理。</p>
+        <HelpDisclosure label="权限与交接说明">
+          <p className="mutation-hint" data-testid="instruction-revocation-rule">
+            撤销后不能再发送；尚未开始派发的追问会被拒绝。已经开始派发的指令可能正在执行，保留真实回执，不代表已撤回。停止已创建的运行需使用取消操作，并按取消权限处理。
+          </p>
+          <p className="mutation-hint">
+            责任交接需先结束活跃运行，再由所有者或管理员重新指派；已有授权名单保留，历史会话与候选归属不转移。
+          </p>
+        </HelpDisclosure>
         <InstructionDrivers task={task} sessionUserId={session.userId} />
         <ApprovalPolicyBlock task={task} sessionUserId={session.userId} />
       </div>

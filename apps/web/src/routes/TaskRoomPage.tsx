@@ -2,6 +2,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router'
+import { WorkspaceIcon } from '../shared/WorkspaceIcon.js'
 import { api } from '../shared/api/client.js'
 import { formatBytes } from '../shared/format.js'
 import { EXIT_PRESENCE_MS } from '../shared/motion.js'
@@ -476,13 +477,21 @@ function TaskRoom(): ReactNode {
           </div>
           <aside
             className="workspace-inspector"
+            data-artifact-focused={
+              inspector === 'artifacts' && inspectedArtifactId !== null ? '' : undefined
+            }
             role="region"
             aria-label="工作区详情"
             hidden={inspector === null}
             ref={inspectorRef}
             tabIndex={-1}
             onKeyDown={(event) => {
-              if (event.key === 'Escape') {
+              if (
+                event.key === 'Escape' &&
+                document.querySelector('[aria-modal="true"]') === null &&
+                event.target instanceof Node &&
+                event.currentTarget.contains(event.target)
+              ) {
                 event.stopPropagation()
                 closeInspector()
               }
@@ -494,19 +503,23 @@ function TaskRoom(): ReactNode {
                   ? '任务约定'
                   : inspector === 'run'
                     ? '运行详情'
-                    : '交付与复核'}
+                    : inspectedArtifactId !== null
+                      ? (visibleArtifacts.find((artifact) => artifact.id === inspectedArtifactId)
+                          ?.title ?? '交付物')
+                      : '交付与复核'}
               </h2>
               <button
                 type="button"
-                className="button button-quiet"
+                className="icon-button"
+                title="关闭"
                 aria-label="关闭工作区详情"
                 onClick={closeInspector}
               >
-                关闭
+                <WorkspaceIcon name="关闭" />
               </button>
             </div>
             <div hidden={inspector !== 'agreement'}>
-              <TaskAgreementPanel task={task} session={session} />
+              <TaskAgreementPanel embedded task={task} session={session} />
             </div>
             <div hidden={inspector !== 'run'}>
               {visibleRunId !== undefined && session !== null && hasOpenedRun ? (
@@ -542,7 +555,12 @@ function TaskRoom(): ReactNode {
                 </button>
               ) : null}
               <section aria-labelledby="artifacts-heading">
-                <h3 id="artifacts-heading">交付物</h3>
+                <h3
+                  id="artifacts-heading"
+                  className={inspectedArtifactId !== null ? 'visually-hidden' : undefined}
+                >
+                  交付物
+                </h3>
                 <ArtifactList
                   artifacts={
                     inspectedArtifactId === null

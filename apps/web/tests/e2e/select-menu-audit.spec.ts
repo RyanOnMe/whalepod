@@ -1,3 +1,4 @@
+import { showAgentCreation } from './helpers.js'
 /**
  * #158 下拉落页的**两档截图与定位审计**（Q5，playwright project `p1-158`）。
  *
@@ -321,6 +322,8 @@ async function assertComposerTrigger(trigger: ReturnType<Page['locator']>): Prom
 async function createAgentViaUi(page: Page, name: string): Promise<void> {
   await page.goto('/agents')
   await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible()
+  await showAgentCreation(page)
+
   await page.fill('#agent-name', name)
   await page.fill('#agent-persona', '你是下拉审计用的代理。')
   await page.fill('#agent-provider', 'replay')

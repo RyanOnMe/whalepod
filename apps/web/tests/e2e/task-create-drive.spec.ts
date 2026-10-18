@@ -1,3 +1,4 @@
+import { showAgentCreation } from './helpers.js'
 /**
  * #312 指派 Agent 建任务的两支浏览器判据（Q5 新面）：信封顶层兄弟位的 `drive`
  * 在**真 Chrome + 真 Hub** 上真的走到 toast。
@@ -87,6 +88,8 @@ async function bootstrap(): Promise<void> {
 async function createAgentViaUi(page: Page, name: string): Promise<void> {
   await page.goto('/agents')
   await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible()
+  await showAgentCreation(page)
+
   await page.fill('#agent-name', name)
   await page.fill('#agent-persona', '你是 E2E 验收代理。')
   await page.fill('#agent-provider', 'replay')

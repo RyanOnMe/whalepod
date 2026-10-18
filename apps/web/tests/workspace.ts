@@ -19,12 +19,19 @@ export function workspaceDetails() {
   return within(screen.getByRole('region', { name: '工作区详情' }))
 }
 
-export async function showExecutionOptions() {
+export async function showExecutionOptions(user = userEvent.setup()) {
   const summary = await screen.findByLabelText('执行设置')
-  if (!summary.closest('details')?.open) await userEvent.setup().click(summary)
+  if (!summary.closest('details')?.open) await user.click(summary)
 }
 
-export async function showTaskMenu() {
+export async function showTaskMenu(user = userEvent.setup()) {
   const summary = await screen.findByLabelText('任务详情')
-  if (!summary.closest('details')?.open) await userEvent.setup().click(summary)
+  if (!summary.closest('details')?.open) await user.click(summary)
+}
+
+export async function showHelp(label: string, user = userEvent.setup()) {
+  const summaries = await screen.findAllByText(label, { selector: 'summary' })
+  for (const summary of summaries) {
+    if (!summary.closest('details')?.open) await user.click(summary)
+  }
 }

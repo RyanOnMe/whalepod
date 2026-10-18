@@ -138,9 +138,9 @@ describe('members-page', () => {
     // 换行 + 缩进折叠成**一个空格**，渲染出来是「发给他 ——Token…」。这条在**真实渲染结果**
     // 上钉住它——只做源码扫描（copy-typography.spec.ts）证明不了"渲染出来是对的"。
     renderApp('/members', loggedInHandlers(ALICE, [teamMembersHandler([makeMember()])]))
-    const lead = await screen.findByText(/选一个角色生成邀请链接/)
+    const lead = await screen.findByText(/一次性链接，72 小时有效/)
     const text = lead.textContent ?? ''
-    expect(text, '破折号前出现了空格（JSX 跨行折叠）').toContain('发给他——Token')
+    expect(text, '破折号前出现了空格（JSX 跨行折叠）').toContain('生成后请立即复制。')
     expect(text, '破折号前不该有空格').not.toMatch(/\s——/)
   })
 

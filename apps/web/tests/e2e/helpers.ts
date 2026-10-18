@@ -741,3 +741,11 @@ export async function collectEvidenceOnFailure(
   writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2))
   console.error(`[e2e-evidence] 失败证据：${scrubLocalPaths(dir)}`)
 }
+
+/** Creation is a primary action, not a permanently expanded settings form. */
+export async function showAgentCreation(page: Page): Promise<void> {
+  const create = page.getByRole('button', { name: '新建 Agent', exact: true })
+  await expect(create).toBeVisible()
+  if ((await create.getAttribute('aria-expanded')) !== 'true') await create.click()
+  await expect(page.locator('#agent-name')).toBeVisible()
+}

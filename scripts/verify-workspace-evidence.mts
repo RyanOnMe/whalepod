@@ -7,7 +7,7 @@ assert(directory, 'Usage: tsx scripts/verify-workspace-evidence.mts <evidence-di
 const result = JSON.parse(await readFile(join(directory, 'facts.json'), 'utf8'))
 assert.equal(result.ok, true)
 assert.deepEqual(result.browserErrors, [])
-assert.equal(result.facts?.length, 5)
+assert.equal(result.facts?.length, 6)
 const fact = (component: string) => {
   const rows = result.facts.filter((row: { component: string }) => row.component === component)
   assert.equal(rows.length, 1, `missing or repeated ${component}`)
@@ -84,4 +84,41 @@ for (const image of [
 ]) {
   assert((await stat(join(directory, image))).size > 0)
 }
-console.log(JSON.stringify({ component: 'web.workspace.verify', ok: true, scenarios: 5 }))
+
+const surfaces = fact('web.surfaces')
+for (const key of [
+  'agreementHeadingUnique',
+  'draftPreserved',
+  'memberReadOnly',
+  'fullAccessCancelled',
+  'closeRestoresFocus',
+])
+  assert.equal(surfaces[key], true)
+assert.equal(surfaces.rows?.length, 30)
+for (const name of [
+  'agreement',
+  'artifacts',
+  'run',
+  'console',
+  'projects',
+  'permissions',
+  'devices',
+  'agents',
+  'members',
+  'plugins',
+]) {
+  const rows = surfaces.rows.filter((row: { name: string }) => row.name === name)
+  assert.deepEqual(
+    rows.map((row: { width: number }) => row.width),
+    [1440, 390, 320],
+  )
+  for (const row of rows) {
+    assert.equal(row.headerCount, 1)
+    assert.equal(row.viewport, row.width)
+    assert(Number.isFinite(row.scroll) && row.scroll > 0 && row.scroll <= row.viewport)
+    assert((await stat(join(directory, `surface-${name}-${row.width}.png`))).size > 0)
+  }
+}
+for (const name of ['agent-create', 'device-guide', 'permission-confirm'])
+  assert((await stat(join(directory, `surface-${name}.png`))).size > 0)
+console.log(JSON.stringify({ component: 'web.workspace.verify', ok: true, scenarios: 6 }))
