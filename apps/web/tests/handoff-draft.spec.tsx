@@ -18,6 +18,7 @@ import {
   teamMembersHandler,
 } from './fixtures.js'
 import type { MockHandler } from './fixtures.js'
+import { showWorkspace } from './workspace.js'
 import { renderApp } from './render.jsx'
 import { parseRefs, serializeRefs } from '../src/features/task/RunHandoffDraft.js'
 import type {
@@ -124,6 +125,7 @@ function roomHandlers(
 
 async function openRun(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
+  await showWorkspace('run')
 }
 
 describe('#379 交接草稿面板', () => {

@@ -202,6 +202,7 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     await selectFromMenu(owner.getByLabel('授权给'), /Bob/)
     await owner.getByRole('button', { name: '授权', exact: true }).click()
     await expect(owner.getByTestId('driver-revoke')).toBeVisible()
+    await member.getByRole('button', { name: 'Agent 执行', exact: true }).click()
     await selectFromMenu(member.getByLabel('执行方式'), /发送追问/)
     const memberDraft = member.getByLabel('指令', { exact: true })
     await memberDraft.fill('撤销前排队的协作者追问')

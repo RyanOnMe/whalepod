@@ -404,6 +404,7 @@ describe('RunLivePanel', () => {
 
     await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
     expect(await screen.findByText('实时输出')).toBeVisible()
+    await user.click(screen.getByText('工具与运行记录'))
     expect(await screen.findByText('阶段：思考中')).toBeVisible()
 
     // live delta 经缓冲实时上屏（不落库）。
@@ -449,6 +450,7 @@ describe('RunLivePanel', () => {
     )
 
     await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
+    await user.click(await screen.findByText('工具与运行记录'))
     expect(await screen.findByText('阶段：工具执行中')).toBeVisible()
     // project 缩水卡：reason 恒空 → 固定文案，不显示空框（03 §8）。
     expect(screen.getByText('等待责任人批准')).toBeVisible()

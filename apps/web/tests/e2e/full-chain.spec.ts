@@ -270,7 +270,13 @@ async function waitForFreshRunId(): Promise<string> {
  * 由下面的血缘用例断言。
  */
 async function selectRun(page: Page, runId: string): Promise<void> {
+  const close = page.getByRole('button', { name: '关闭工作区详情' })
+  if (await close.isVisible()) await close.click()
+  await page.getByRole('button', { name: 'Agent 执行', exact: true }).click()
   await page.locator(`.run-item-button[data-run-id="${runId}"]`).click()
+  const records = page.locator('details.run-records')
+  if (!(await records.evaluate((element) => (element as HTMLDetailsElement).open)))
+    await records.locator('summary').click()
   await expect(page.getByTestId('run-live-events')).toBeVisible({ timeout: 30_000 })
 }
 
@@ -414,6 +420,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
   test('G6-04 Artifact：Bob 发布 candidate；Alice 下载且与 digest 一致', async () => {
     test.setTimeout(180_000)
     await shared.bob!.reload()
+    await shared.bob!.getByRole('button', { name: '交付与复核', exact: true }).click()
     const publish = shared.bob!.getByTestId('artifact-publish-button')
     await expect(publish).toBeVisible({ timeout: 30_000 })
     await expect(shared.bob!.locator('.artifact-item').first()).toContainText('仅你可见，待发布')
@@ -438,7 +445,10 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
 
     // Alice（另一浏览器上下文）立即能下载（UI 下载 + HTTP 双核验）。
     await shared.alice!.reload()
-    await expect(shared.alice!.getByText('Report').first()).toBeVisible({ timeout: 30_000 })
+    await shared.alice!.getByRole('button', { name: '交付与复核', exact: true }).click()
+    await expect(
+      shared.alice!.locator('.artifact-title', { hasText: 'Report' }).first(),
+    ).toBeVisible({ timeout: 30_000 })
     // #162：交付物的「来源运行」是人话句柄（第 N 次运行，可与时间线行对照），
     // 完整 runId 只在 title 上——这一格以前直接印 `shortId(artifact.runId)`。
     const sourceValue = shared
@@ -499,6 +509,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
   test('G6-07 Reviewer Run 经输入清单受控消费 Artifact', async () => {
     test.setTimeout(240_000)
     await shared.bob!.reload()
+    await shared.bob!.getByRole('button', { name: '交付与复核', exact: true }).click()
     // #326：从具体已发布产出进入统一入口，不靠用户自己拼通用运行路径。
     await shared.bob!.getByRole('button', { name: '发起复核', exact: true }).click()
     await expect(shared.bob!.getByTestId('review-scope')).toContainText('材料副本只读')
@@ -556,6 +567,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     await shared.alice!.reload()
     await selectRun(shared.alice!, runId)
     await expect(shared.alice!.getByTestId('run-live-events')).not.toContainText(builderWsPath)
+    await shared.bob!.getByRole('button', { name: '运行详情', exact: true }).click()
     await shared.bob!.getByRole('button', { name: '查看本次固定输入' }).click()
     await expect(shared.bob!.getByTestId('run-input-manifest')).toContainText(shared.artifactId!)
     await expect(shared.bob!.getByTestId('run-input-manifest')).toContainText(
@@ -969,6 +981,7 @@ test('交付闭环：意见发布 → 明确返回产出会话修订 → 重新�
     dshSessionId: string
   }
   await bob.reload()
+  await bob.getByRole('button', { name: '交付与复核', exact: true }).click()
   const feedbackRow = bob
     .locator('.artifact-item')
     .filter({ has: bob.locator(`dd[title="${reviewerId}"]`) })
@@ -1038,10 +1051,12 @@ test('交付闭环：意见发布 → 明确返回产出会话修订 → 重新�
   )
   expect(revisedArtifact).toBeDefined()
   await bob.reload()
+  await bob.getByRole('button', { name: '交付与复核', exact: true }).click()
   const revisedRow = bob
     .locator('.artifact-item')
     .filter({ has: bob.locator(`dd[title="${revisedId}"]`) })
   await alice.reload()
+  await alice.getByRole('button', { name: '交付与复核', exact: true }).click()
   await expect(
     alice.locator('.artifact-item').filter({ has: alice.locator(`dd[title="${revisedId}"]`) }),
   ).toHaveCount(0)

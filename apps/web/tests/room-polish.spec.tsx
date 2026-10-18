@@ -22,6 +22,7 @@ import {
   teamMembersHandler,
 } from './fixtures.js'
 import type { MockHandler } from './fixtures.js'
+import { showWorkspace } from './workspace.js'
 import { renderApp } from './render.js'
 
 // vite 转译后 import.meta.url 非文件 URL，直接按 cwd（仓库根）取源文件。
@@ -58,6 +59,7 @@ describe('执行活动提示（#231 / ADR-0010 决策 6）', () => {
     const view = renderApp(`/tasks/${task.id}`, handlers)
     // 首屏：基线，不提示。
     await screen.findByRole('heading', { name: task.title })
+    await showWorkspace('discussion')
     expect(screen.queryByTestId('execution-activity-hint')).toBeNull()
     // 执行区来了新活动（refetch 后指令 1→2）。
     instructionCount = 2
@@ -67,7 +69,7 @@ describe('执行活动提示（#231 / ADR-0010 决策 6）', () => {
     // 点击：提示消失、焦点到执行栏标题。
     await user.click(hint)
     await waitFor(() => expect(screen.queryByTestId('execution-activity-hint')).toBeNull())
-    expect(document.activeElement?.id).toBe('instructions-heading')
+    await waitFor(() => expect(document.activeElement?.id).toBe('instructions-heading'))
     view.unmount()
   })
 
@@ -94,6 +96,7 @@ describe('执行活动提示（#231 / ADR-0010 决策 6）', () => {
       ]),
     ])
     await screen.findByRole('heading', { name: task.title })
+    await showWorkspace('discussion')
     expect(screen.queryByTestId('execution-activity-hint')).toBeNull()
     runCount = 2
     void view.queryClient.invalidateQueries()

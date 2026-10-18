@@ -57,7 +57,11 @@ export function ExecutionComposer({
   handoff,
   reviewRequest = null,
   revisionRequest = null,
+  onDiscuss,
+  compact = false,
 }: {
+  onDiscuss?: () => void
+  compact?: boolean
   task: TaskView
   session: Session
   runs: TaskRoomRun[]
@@ -314,35 +318,73 @@ export function ExecutionComposer({
       className="execution-composer"
       data-testid="execution-composer"
     >
-      <p className="mutation-hint">
-        草稿仅在当前登录页面会话内暂存；切换任务可保留，刷新或退出后清除。
-      </p>
-      <button
-        type="button"
-        className="button button-quiet"
-        disabled={sending}
-        onClick={() => memory.clear(initialDraft())}
-      >
-        清除当前执行草稿
-      </button>
-      {memory.snapshot.ownerId !== task.assigneeUserId ? (
+      <details className="composer-options" open={!compact}>
+        <summary>执行方式与草稿</summary>
+        <p className="mutation-hint">
+          草稿仅在当前登录页面会话内暂存；切换任务可保留，刷新或退出后清除。
+        </p>
         <button
           type="button"
-          className="button"
+          className="button button-quiet"
           disabled={sending}
-          onClick={() => {
-            memory.intentKey.current = null
-            memory.update((old) => ({
-              ...initialDraft(),
-              text: old.text,
-              mode: 'new',
-              sourceId: '',
-            }))
-          }}
+          onClick={() => memory.clear(initialDraft())}
         >
-          重新确认执行安排（保留正文）
+          清除当前执行草稿
         </button>
-      ) : null}
+        {memory.snapshot.ownerId !== task.assigneeUserId ? (
+          <button
+            type="button"
+            className="button"
+            disabled={sending}
+            onClick={() => {
+              memory.intentKey.current = null
+              memory.update((old) => ({
+                ...initialDraft(),
+                text: old.text,
+                mode: 'new',
+                sourceId: '',
+              }))
+            }}
+          >
+            重新确认执行安排（保留正文）
+          </button>
+        ) : null}
+        <SelectMenu
+          id={`execution-mode-${task.id}`}
+          label="执行方式"
+          value={mode}
+          disabled={sending}
+          options={[
+            { value: 'new', label: '开始新执行（不接旧会话）', disabled: false },
+            {
+              value: 'review',
+              label: '复核交付物（单独执行）',
+              disabled: published.length === 0 && mode !== 'review',
+            },
+            {
+              value: 'followup',
+              label: '发送追问（指定活跃执行）',
+              disabled: revisionContext !== null || (active === undefined && mode !== 'followup'),
+            },
+            {
+              value: 'resume',
+              label: '继续会话（创建新执行记录）',
+              disabled: terminal.length === 0,
+            },
+          ]}
+          onChange={(next) => {
+            setMode(next as Mode)
+            if (next === 'review') setRevisionContext(null)
+            if (next === 'followup' && active !== undefined) setSourceId(active.id)
+            if (
+              next === 'resume' &&
+              revisionContext === null &&
+              !terminal.some((run) => run.id === sourceId)
+            )
+              setSourceId(terminal.at(-1)?.id ?? '')
+          }}
+        />
+      </details>
       <p className="mutation-hint" data-testid="execution-responsibility">
         {isAssignee
           ? '你是当前责任人。执行使用你的环境与凭据，审批由你处理。'
@@ -378,37 +420,6 @@ export function ExecutionComposer({
           error={cancelRunMutation.isError ? cancelRunMutation.error : null}
         />
       ) : null}
-      <SelectMenu
-        id={`execution-mode-${task.id}`}
-        label="执行方式"
-        value={mode}
-        disabled={sending}
-        options={[
-          { value: 'new', label: '开始新执行（不接旧会话）', disabled: false },
-          {
-            value: 'review',
-            label: '复核交付物（单独执行）',
-            disabled: published.length === 0 && mode !== 'review',
-          },
-          {
-            value: 'followup',
-            label: '发送追问（指定活跃执行）',
-            disabled: revisionContext !== null || (active === undefined && mode !== 'followup'),
-          },
-          { value: 'resume', label: '继续会话（创建新执行记录）', disabled: terminal.length === 0 },
-        ]}
-        onChange={(next) => {
-          setMode(next as Mode)
-          if (next === 'review') setRevisionContext(null)
-          if (next === 'followup' && active !== undefined) setSourceId(active.id)
-          if (
-            next === 'resume' &&
-            revisionContext === null &&
-            !terminal.some((run) => run.id === sourceId)
-          )
-            setSourceId(terminal.at(-1)?.id ?? '')
-        }}
-      />
       {revisionContext !== null ? (
         <section
           className="review-settings"
@@ -517,7 +528,10 @@ export function ExecutionComposer({
       {!allowed ? (
         <a
           href="#comments-heading"
-          onClick={() => document.getElementById('comments-heading')?.focus()}
+          onClick={() => {
+            onDiscuss?.()
+            document.getElementById('comments-heading')?.focus()
+          }}
         >
           前往讨论
         </a>
@@ -588,6 +602,7 @@ export function ExecutionComposer({
               session={session}
               hasActiveRun={active !== undefined}
               embedded
+              compact={compact}
               onOutcome={setLastOutcome}
               draft={draft}
               intentKeyRef={memory.intentKey}

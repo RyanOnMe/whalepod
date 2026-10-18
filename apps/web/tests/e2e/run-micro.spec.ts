@@ -241,6 +241,7 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     await owner.keyboard.press('Enter')
     await waitForRunStatus(runId, 'completed', 120_000)
     await waitForRuntimeReleased(runId)
+    await owner.locator('details.run-records > summary').click()
     const chip = owner.getByTestId('tool-call-chip').first()
     await expect(chip).toHaveAttribute('data-status', 'done')
     await expect(chip).toContainText('publish_artifact')
@@ -273,6 +274,7 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
      */
     await owner.route('**/api/v1/artifacts/*/content', (route) => route.fulfill({ status: 500 }))
     // 交付物此刻还是 candidate：先走真实的「发布」，下载入口才会出现（#250 的两态）。
+    await owner.getByRole('button', { name: '交付与复核', exact: true }).click()
     await owner.getByTestId('artifact-publish-button').first().click()
     await owner.getByRole('button', { name: '确认发布给团队' }).click()
     const downloadButton = owner.getByTestId('artifact-download-button').first()
@@ -302,6 +304,7 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     await owner.waitForTimeout(4_200)
     await expect(owner.locator('.toast-item')).toHaveCount(0)
     await owner.unroute('**/api/v1/artifacts/*/content')
+    await owner.getByRole('button', { name: '关闭工作区详情' }).click()
     const toastFact = {
       component: 'web.toast',
       trigger: 'artifact-download-500',

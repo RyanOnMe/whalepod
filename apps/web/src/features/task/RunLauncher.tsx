@@ -48,6 +48,7 @@ export interface RunLauncherProps {
   /** 当前已有活跃 Run（一任务一活跃，03 §3.2）时不渲染。 */
   hasActiveRun: boolean
   embedded?: boolean
+  compact?: boolean
   artifactInputIds?: string[] | undefined
   /** 交接输入（#380）：勾选「附带上游交接材料」时显式带上已确认 receipt。 */
   handoffReceiptId?: string | undefined
@@ -70,6 +71,7 @@ export function RunLauncher({
   session,
   hasActiveRun,
   embedded = false,
+  compact = false,
   artifactInputIds,
   handoffReceiptId,
   buttonLabel = '开始执行',
@@ -507,7 +509,7 @@ export function RunLauncher({
               }
             }}
             placeholder="这次 Run 要做什么（任务上下文由 Hub 注入）…"
-            rows={4}
+            rows={compact ? 2 : 4}
           />
         </label>
         {/* #225：错误走全站口径（message + requestId），不再自写第二套错误段。 */}

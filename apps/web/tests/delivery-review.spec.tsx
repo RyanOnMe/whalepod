@@ -2,6 +2,7 @@ import { act, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { queryKeys } from '../src/app/query-client.js'
+import { showWorkspace } from './workspace.js'
 import { renderApp } from './render.jsx'
 import { selectOption } from './select-menu.js'
 import {
@@ -203,6 +204,7 @@ function fixture(
   return { ...view, task, other, producer, reviewer, artifact, late, posts }
 }
 async function review(user: ReturnType<typeof userEvent.setup>) {
+  await showWorkspace('artifacts')
   await user.click(await screen.findByRole('button', { name: '发起复核' }))
 }
 describe('从交付物发起复核 (#326)', () => {
@@ -280,6 +282,7 @@ describe('从交付物发起复核 (#326)', () => {
     await user.click(screen.getByRole('link', { name: new RegExp(f.task.title) }))
     expect(await screen.findByRole('heading', { name: f.task.title })).toBeVisible()
     await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
+    await showWorkspace('run')
     await user.click(await screen.findByRole('button', { name: '查看本次固定输入' }))
     expect(await screen.findByTestId('run-input-manifest')).toHaveTextContent(f.artifact.title)
     const reads = () =>
@@ -298,6 +301,7 @@ describe('从交付物发起复核 (#326)', () => {
     const user = userEvent.setup()
     const f = fixture()
     await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
+    await showWorkspace('run')
     await user.click(await screen.findByRole('button', { name: '查看本次固定输入' }))
     expect(await screen.findByTestId('run-input-manifest')).toHaveTextContent(f.artifact.title)
     await act(async () =>
@@ -316,6 +320,7 @@ describe('从交付物发起复核 (#326)', () => {
     const user = userEvent.setup()
     fixture({ unknownHistory: true })
     await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
+    await showWorkspace('run')
     await user.click(await screen.findByRole('button', { name: '查看本次固定输入' }))
     expect(await screen.findByTestId('run-input-manifest')).toHaveTextContent('历史输入无法确认')
     expect(screen.getByTestId('run-input-manifest')).not.toHaveTextContent('未选择交付物')
@@ -340,6 +345,7 @@ describe('根据意见修订与真人验收 (#327)', () => {
       for (const name of order === 'review-then-revision'
         ? ['发起复核', '根据意见修订']
         : ['根据意见修订', '发起复核']) {
+        await showWorkspace('artifacts')
         await user.click(screen.getByRole('button', { name }))
       }
       await act(async () => {
@@ -362,6 +368,7 @@ describe('根据意见修订与真人验收 (#327)', () => {
     const user = userEvent.setup()
     const f = fixture({ revisionHistory: true })
     await user.type(await screen.findByLabelText('指令'), '请保留这段修订要求')
+    await showWorkspace('artifacts')
     await user.click(screen.getByRole('button', { name: '根据意见修订' }))
     expect(screen.getByLabelText('来源执行')).toHaveTextContent('选择要继续的会话')
     expect(screen.getByLabelText('指令')).toHaveValue('请保留这段修订要求')
@@ -381,6 +388,7 @@ describe('根据意见修订与真人验收 (#327)', () => {
   it('可选择新执行修订，但必须重新选择产出Agent，不能继承Reviewer', async () => {
     const user = userEvent.setup()
     const f = fixture({ revisionHistory: true })
+    await showWorkspace('artifacts')
     await user.click(await screen.findByRole('button', { name: '根据意见修订' }))
     await selectOption(user, '执行方式', '开始新执行（不接旧会话）')
     expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
@@ -429,6 +437,7 @@ describe('根据意见修订与真人验收 (#327)', () => {
   it('修订的完全权限确认期间任务结束，关闭旧确认并保留草稿', async () => {
     const user = userEvent.setup()
     const f = fixture({ revisionHistory: true, fullAccess: true })
+    await showWorkspace('artifacts')
     await user.click(await screen.findByRole('button', { name: '根据意见修订' }))
     await selectOption(user, '来源执行', '第 1 次运行')
     await user.click(screen.getByRole('button', { name: '继续会话' }))
@@ -449,6 +458,7 @@ describe('根据意见修订与真人验收 (#327)', () => {
     fixture()
     expect(await screen.findByRole('button', { name: '提交验收' })).toBeEnabled()
     expect(screen.getByTestId('delivery-next')).toHaveTextContent('可选复核')
+    await showWorkspace('artifacts')
     expect(screen.getByRole('link', { name: '前往提交验收' })).toBeVisible()
   })
 })

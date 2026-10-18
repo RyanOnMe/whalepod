@@ -25,6 +25,7 @@ import {
   teamMembersHandler,
   type MockHandler,
 } from './fixtures.js'
+import { showWorkspace } from './workspace.js'
 import { renderApp } from './render.jsx'
 
 function projectListHandlers() {
@@ -284,6 +285,7 @@ describe('auth-navigation', () => {
     expect(await screen.findByText('你已接受此任务。')).toBeVisible()
 
     // 留言（键盘：聚焦输入框 + 输入 + Tab 到发送 + Enter）
+    await showWorkspace('discussion')
     const textarea = await screen.findByLabelText('留言')
     textarea.focus()
     await user.keyboard('handling this run')

@@ -1,3 +1,4 @@
+import { showWorkspace, workspaceDetails } from './workspace.js'
 /**
  * Artifact 区（P1-15；G6-01/04/08 的 Web 最小面）：
  * - 已发布 Artifact：全员可见 + 下载按钮（下载走 Session Cookie 的受控接口）。
@@ -45,7 +46,8 @@ describe('artifact-list（Task Room 右侧）', () => {
     const view = renderApp(`/tasks/${task.id}`, [
       ...loggedInHandlers(BOB, [taskRoomHandler(task, { artifacts: [artifact] }), contentHandler]),
     ])
-    expect(await screen.findByText('security-review.md')).toBeVisible()
+    await showWorkspace('artifacts')
+    expect(await workspaceDetails().findByText('security-review.md')).toBeVisible()
     const download = await screen.findByRole('button', { name: '下载' })
     await user.click(download)
     await waitFor(() => {
@@ -70,7 +72,8 @@ describe('artifact-list（Task Room 右侧）', () => {
         publishHandler(candidate.id),
       ]),
     ])
-    expect(await screen.findByText('security-review.md')).toBeVisible()
+    await showWorkspace('artifacts')
+    expect(await workspaceDetails().findByText('security-review.md')).toBeVisible()
     expect(screen.getByText('仅你可见，待发布')).toBeVisible()
     expect(screen.queryByRole('button', { name: '发起复核' })).not.toBeInTheDocument()
     const publish = screen.getByRole('button', { name: '发布' })
@@ -97,6 +100,7 @@ describe('artifact-list（Task Room 右侧）', () => {
         [taskRoomHandler(task, { artifacts: [candidate] })],
       ),
     ])
+    await showWorkspace('artifacts')
     expect(
       await screen.findByText('还没有已发布的 Artifact。Run 产出经发布后，交付物会出现在这里。'),
     ).toBeVisible()
@@ -109,6 +113,7 @@ describe('artifact-list（Task Room 右侧）', () => {
     renderApp(`/tasks/${task.id}`, [
       ...loggedInHandlers(BOB, [taskRoomHandler(task, { artifacts: [artifact] })]),
     ])
+    await showWorkspace('artifacts')
     expect(await screen.findByText(/Reviewer Run 的只读输入/)).toBeVisible()
     expect(screen.getByText(artifact.sha256.slice(0, 12))).toBeVisible()
   })
@@ -142,6 +147,7 @@ describe('#250 交付物文本预览与引用入口', () => {
         contentHandler(artifact.id, '# 报告\n\n结论：没问题。'),
       ]),
     ])
+    await showWorkspace('artifacts')
     await user.click(await screen.findByRole('button', { name: '预览' }))
     const preview = await screen.findByTestId('artifact-preview')
     expect(preview.textContent).toContain('结论：没问题。')
@@ -157,6 +163,7 @@ describe('#250 交付物文本预览与引用入口', () => {
         contentHandler(artifact.id, 'x'.repeat(70_000)),
       ]),
     ])
+    await showWorkspace('artifacts')
     await user.click(await screen.findByRole('button', { name: '预览' }))
     const preview = await screen.findByTestId('artifact-preview')
     // 截断标注在 pre 的兄弟节点（mutation-hint），不在 pre 里。
@@ -174,6 +181,7 @@ describe('#250 交付物文本预览与引用入口', () => {
         contentHandler(artifact.id, 'nope', 500),
       ]),
     ])
+    await showWorkspace('artifacts')
     await user.click(await screen.findByRole('button', { name: '预览' }))
     expect(await screen.findByTestId('artifact-preview-error')).toBeVisible()
     expect(screen.getByRole('button', { name: '下载' })).toBeVisible()
@@ -190,6 +198,7 @@ describe('#250 交付物文本预览与引用入口', () => {
     renderApp(`/tasks/${task.id}`, [
       ...loggedInHandlers(BOB, [taskRoomHandler(task, { artifacts: [image, huge] })]),
     ])
+    await showWorkspace('artifacts')
     expect(await screen.findAllByRole('button', { name: '下载' })).toHaveLength(2)
     expect(screen.queryByRole('button', { name: '预览' })).not.toBeInTheDocument()
   })
@@ -202,6 +211,7 @@ describe('#250 交付物文本预览与引用入口', () => {
     renderApp(`/tasks/${task.id}`, [
       ...loggedInHandlers(BOB, [taskRoomHandler(task, { runs: [run], artifacts: [artifact] })]),
     ])
+    await showWorkspace('artifacts')
     await user.click(await screen.findByRole('button', { name: '对这个工件继续说' }))
     const box = screen.getByLabelText('留言')
     // 注入的是 #216 同一套引用 token（运行 R-<短号>），窄解析把它渲染成可点 chip。
@@ -241,6 +251,7 @@ describe('#313 候选发布前检查', () => {
         },
       ]),
     )
+    await showWorkspace('artifacts')
     await user.click(await screen.findByRole('button', { name: '预览' }))
     expect(await screen.findByTestId('artifact-preview')).toHaveTextContent(
       '<script>unsafe()</script>候选内容',
@@ -276,6 +287,7 @@ describe('#313 候选发布前检查', () => {
         },
       ]),
     )
+    await showWorkspace('artifacts')
     expect(await screen.findByText('暂不支持在线预览，请下载检查。')).toBeVisible()
     expect(screen.queryByRole('button', { name: '预览' })).toBeNull()
     await user.click(screen.getByRole('button', { name: '下载' }))
@@ -297,6 +309,7 @@ describe('#313 候选发布前检查', () => {
         publishHandler(candidate.id),
       ]),
     )
+    await showWorkspace('artifacts')
     await user.click(await screen.findByRole('button', { name: '发布' }))
     expect(await screen.findByRole('dialog')).toHaveTextContent('团队成员可以查看或下载')
     expect(screen.getByRole('dialog')).toHaveTextContent(candidate.title)
@@ -315,6 +328,7 @@ describe('#313 候选发布前检查', () => {
       `/tasks/${task.id}`,
       loggedInHandlers(ALICE, [taskRoomHandler(task, { artifacts: [candidate] })]),
     )
+    await showWorkspace('artifacts')
     await screen.findByRole('heading', { name: task.title })
     expect(screen.queryByText(candidate.title)).toBeNull()
     expect(screen.queryByRole('button', { name: '下载' })).toBeNull()

@@ -1,3 +1,4 @@
+import { showWorkspace } from './workspace.js'
 /**
  * 讨论里引用某次运行（切片⑥f）。
  *
@@ -158,6 +159,7 @@ describe('「引用运行」入口（S1：此前源码与浏览器两侧都零�
         teamMembersHandler([]),
       ]),
     )
+    await showWorkspace('discussion')
     // 变异 M4（删掉"没有运行就不渲染"判断）不会红这条，但下面的空态用例会——两条合起来才钉住。
     await selectOption(user, '引用运行', '第 1 次运行')
     // 变异 M5（选中后什么都不插入）**必须**让这条红：草稿里要真的出现可识别 token。
@@ -186,6 +188,7 @@ describe('「引用运行」入口（S1：此前源码与浏览器两侧都零�
         teamMembersHandler([]),
       ]),
     )
+    await showWorkspace('discussion')
     // 留言输入框在（证明页面确实渲染了），但引用入口不在。
     expect(await screen.findByLabelText('留言')).toBeVisible()
     expect(screen.queryByLabelText('引用运行')).toBeNull()
@@ -249,6 +252,7 @@ describe('讨论列表里的引用 chip（页面级）', () => {
         teamMembersHandler([]),
       ]),
     )
+    await showWorkspace('discussion')
     // 有两个 chip：选**第二条**（指向 RUN_B），而不是第一个/随便一个。
     // `data-testid` 在所有 chip 上重名，所以按 `data-run-id` 定位。
     const chips = await screen.findAllByTestId('comment-run-ref')

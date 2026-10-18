@@ -1,22 +1,9 @@
-/**
- * Task Room（切片⑥a-2：ADR-0010 的**两栏**形态）：
- * - 顶部：Task 目标/状态/责任人 + 责任人行动（features/task/TaskHeader）
- * - **左栏「讨论」**：团队成员之间的话（CommentList/CommentComposer）——这一栏**永不触发运行**
- *   （ADR-0010 决策 4：`@Agent` 不再是评论语法）；
- * - **右栏「执行」**：驱动 Agent 的指令流（InstructionList）+ Run 与审批（RunTimeline/
- *   ApprovalSlot/ExecutionComposer），以及**可折叠的任务详情**（指派接受/拒绝 + 交付物 + 复核）。
- *
- * 为什么把指派与交付物折进执行栏底部（用户 2026-09-15 选定）：这两件事都不是高频动作，
- * 为它们留一条常驻窄栏会让两栏（讨论｜执行）的对比被削弱；折叠后默认不占视觉重量，
- * 需要时一层展开即可，功能一个不少。
- *
- * 加载/错误状态显式呈现，不伪装成空数据；空态说明下一步。
- * 区段标题一律中文（#152）；Agent/Run/Task 这类领域术语保留英文（CONTEXT.md 的领域语言）。
- */
+/** 聚焦任务工作区（ADR-0018）：执行/讨论独立输入，详情按需查看。 */
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router'
 import { api } from '../shared/api/client.js'
+import { RUN_STATUS_LABEL, formatBytes } from '../shared/format.js'
 import { EXIT_PRESENCE_MS } from '../shared/motion.js'
 import { useHashFocus } from '../shared/useHashFocus.js'
 import { usePresence } from '../shared/usePresence.js'
@@ -57,6 +44,47 @@ export function TaskRoomPage(): ReactNode {
 // and selected Run state within one Task, including expanded input/console views.
 function TaskRoom(): ReactNode {
   const { taskId } = useParams()
+  const location = useLocation()
+  const [channel, setChannel] = useState<'execution' | 'discussion'>(() =>
+    location.hash === '#comments-heading' ? 'discussion' : 'execution',
+  )
+  const [inspector, setInspector] = useState<'agreement' | 'artifacts' | 'run' | null>(null)
+  const [hasOpenedRun, setHasOpenedRun] = useState(false)
+  const [inspectedArtifactId, setInspectedArtifactId] = useState<string | null>(null)
+  const inspectorTrigger = useRef<HTMLElement | null>(null)
+  const inspectorRef = useRef<HTMLElement>(null)
+  const restoreInspectorFocus = useRef(false)
+  const focusExecution = useRef(false)
+  const openInspector = (
+    next: 'agreement' | 'artifacts' | 'run',
+    artifactId: string | null = null,
+  ) => {
+    inspectorTrigger.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    if (next === 'run') setHasOpenedRun(true)
+    setInspectedArtifactId(artifactId)
+    setInspector(next)
+  }
+  const closeInspector = () => {
+    restoreInspectorFocus.current = true
+    setInspector(null)
+  }
+  useEffect(() => {
+    if (inspector !== null) inspectorRef.current?.focus()
+    else if (restoreInspectorFocus.current) {
+      restoreInspectorFocus.current = false
+      inspectorTrigger.current?.focus()
+    }
+  }, [inspector])
+  useEffect(() => {
+    if (location.hash === '#comments-heading') setChannel('discussion')
+    else if (location.hash.startsWith('#approval-') || location.hash === '#task-execution')
+      setChannel('execution')
+    else if (location.hash.startsWith('#artifact-')) {
+      setInspector('artifacts')
+      setInspectedArtifactId(null)
+    }
+  }, [location.hash, location.key])
   const session = useSession()
   const directory = useMemberDirectory()
   const [revisionRequest, setRevisionRequest] = useState<ArtifactReviewRequest | null>(null)
@@ -68,7 +96,7 @@ function TaskRoom(): ReactNode {
   // #273：关掉 Console 时先把退场演完再卸载（`usePresence` 保留上一次的 runId + 挂 leaving）。
   // 退场中途又打开另一个 Run 会**取消**退场（hook 的语义），不会出现"新的被旧的定时器摘掉"。
   const consolePresence = usePresence(consoleRunId ?? null, EXIT_PRESENCE_MS)
-  // #250「对这个工件继续说」：交付物区注入的引用 token，落点是左栏讨论输入框。
+  // #250「对这个工件继续说」：交付物区注入的引用 token，落点是独立的团队讨论输入框。
   // nonce 保证同一 token 连点两次也落两次账；composer 消费后回调清状态。
   const [insertToken, setInsertToken] = useState<{ text: string; nonce: number } | null>(null)
 
@@ -80,8 +108,15 @@ function TaskRoom(): ReactNode {
   })
 
   // ApprovalSlot owns approval anchors, which depend on its separate event query.
-  const approvalAnchor = useLocation().hash.startsWith('#approval-')
-  useHashFocus(query.isSuccess && !approvalAnchor, true, query.data)
+  const approvalAnchor = location.hash.startsWith('#approval-')
+  const hashViewReady = location.hash.startsWith('#artifact-')
+    ? inspector === 'artifacts'
+    : location.hash === '#comments-heading'
+      ? channel === 'discussion' && inspector === null
+      : location.hash === '#task-execution'
+        ? channel === 'execution' && inspector === null
+        : true
+  useHashFocus(query.isSuccess && !approvalAnchor && hashViewReady, true, query.data)
 
   // #277：加载骨架也有在场语义——数据到达后它先演完退场，再卸载（硬切就是从这儿来的）。
   const skeletonPresence = usePresence(
@@ -96,8 +131,15 @@ function TaskRoom(): ReactNode {
   const activityCount = (query.data?.instructions?.length ?? 0) + (query.data?.runs.length ?? 0)
   const [seenActivity, setSeenActivity] = useState<number | undefined>(undefined)
   useEffect(() => {
-    if (query.isSuccess && seenActivity === undefined) setSeenActivity(activityCount)
-  }, [query.isSuccess, activityCount, seenActivity])
+    if (query.isSuccess && (seenActivity === undefined || channel === 'execution'))
+      setSeenActivity(activityCount)
+  }, [query.isSuccess, activityCount, seenActivity, channel])
+  useEffect(() => {
+    if (channel === 'execution' && focusExecution.current) {
+      focusExecution.current = false
+      execHeadingRef.current?.focus()
+    }
+  }, [channel, inspector])
   const hasNewActivity = seenActivity !== undefined && activityCount > seenActivity
 
   if (taskId === undefined) {
@@ -178,190 +220,364 @@ function TaskRoom(): ReactNode {
         : query.data.nextRunApprovalPolicy !== null
           ? { policy: query.data.nextRunApprovalPolicy, source: 'revision_default' }
           : null
+  const visibleRunId = selectedRunId ?? activeRun?.id ?? runs.at(-1)?.id
+  const visibleArtifacts = artifacts.filter(
+    (artifact) =>
+      artifact.status === 'published' ||
+      (artifact.status === 'candidate' && artifact.ownerUserId === session?.userId),
+  )
+  const showExecution = () => {
+    focusExecution.current = true
+    setChannel('execution')
+    setSeenActivity(activityCount)
+    setInspector(null)
+  }
   return (
-    <div className="crossfade-stack">
+    <div className="crossfade-stack focused-workspace">
       {fromSkeleton ? <RoomSkeleton leaving={skeletonPresence.leaving} /> : null}
       <div className={fromSkeleton ? 'task-room crossfade-in' : 'task-room'}>
         <TaskHeader
           task={task}
           session={session}
           reviewEligibility={query.data.reviewEligibility}
+          compact
         />
-        {/* #378：任务约定（执行前的共同依据）——只读/起草/确认，不触发任何执行。 */}
-        <TaskAgreementPanel task={task} session={session} />
-        <div className="task-room-split">
-          {/* 讨论栏：只有人说话，永不触发运行 */}
-          <section className="task-room-col" aria-labelledby="comments-heading">
-            <div className="card room-column">
-              <div className="room-column-head">
+        <div className="workspace-toolbar">
+          <div className="workspace-channels" role="group" aria-label="工作区视图">
+            <button
+              type="button"
+              aria-pressed={channel === 'execution'}
+              aria-controls="execution-channel"
+              onClick={() => setChannel('execution')}
+            >
+              Agent 执行
+            </button>
+            <button
+              type="button"
+              aria-pressed={channel === 'discussion'}
+              aria-controls="discussion-channel"
+              onClick={() => setChannel('discussion')}
+            >
+              团队讨论
+            </button>
+          </div>
+          <div className="workspace-tools">
+            <button
+              type="button"
+              className="button button-quiet"
+              aria-expanded={inspector === 'agreement'}
+              onClick={() => openInspector('agreement')}
+            >
+              任务约定
+              {agreementSummary.enabled
+                ? ` · ${agreementSummary.latestConfirmedNumber === null ? '待确认' : `v${agreementSummary.latestConfirmedNumber}`}`
+                : ''}
+            </button>
+            <button
+              type="button"
+              className="button button-quiet"
+              aria-expanded={inspector === 'artifacts'}
+              onClick={() => openInspector('artifacts')}
+            >
+              交付与复核
+            </button>
+            <button
+              type="button"
+              className="button button-quiet"
+              aria-expanded={inspector === 'run'}
+              onClick={() => openInspector('run')}
+            >
+              运行详情
+            </button>
+          </div>
+        </div>
+        <div className="workspace-body" data-inspecting={inspector !== null ? '' : undefined}>
+          <div className="workspace-conversation">
+            <section
+              id="discussion-channel"
+              className="workspace-channel"
+              hidden={channel !== 'discussion'}
+              aria-labelledby="comments-heading"
+            >
+              <div className="workspace-transcript">
                 <h2 id="comments-heading" tabIndex={-1}>
                   讨论
                 </h2>
-                <span className="room-column-note">团队成员之间 · 不触发 Agent</span>
-              </div>
-              {hasNewActivity ? (
-                <button
-                  type="button"
-                  className="execution-activity-hint"
-                  data-testid="execution-activity-hint"
-                  onClick={() => {
-                    setSeenActivity(activityCount)
-                    execHeadingRef.current?.focus()
-                  }}
-                >
-                  执行区有新活动——点开看看
-                </button>
-              ) : null}
-              {/* ⑥f：讨论里可以引用某次运行——引用只能指向**本任务**的运行，所以把 runs 与
-                「点引用 → 开 Console」都从页面注入（解析逻辑在 runReference.ts，可单测）。 */}
-              <CommentList
-                comments={comments}
-                session={session}
-                runs={runs}
-                onOpenRun={setConsoleRunId}
-              />
-              <CommentComposer
-                taskId={task.id}
-                runs={runs}
-                runLabels={runOrdinalLabels(runs)}
-                insertToken={insertToken}
-                onInsertTokenConsumed={() => setInsertToken(null)}
-              />
-            </div>
-          </section>
-
-          {/* 执行栏：指令 + 运行 + 审批 */}
-          <section className="task-room-col" aria-labelledby="instructions-heading">
-            <div className="card room-column">
-              <div className="room-column-head">
-                <h2 id="instructions-heading" ref={execHeadingRef} tabIndex={-1}>
-                  执行
-                </h2>
-              </div>
-              {instructionsMissing ? (
-                // 缺字段 ≠ 没有指令：显式说出来，不静默成空列表（复核 #209 观察 5 / R1）。
-                // ① 文案里不留 Markdown 星号（复核实测页面上会原样显示 `**`），也不夹协议字段名；
-                // ② 视觉档**不能复用 `.empty-state`**——复核实测它与同栏「还没有人驱动过这个任务」
-                //    渲染完全一致，用户只会读成"又一个空态"，而这正是要区分的两件事。
-                <p className="stream-incomplete" role="status" data-testid="instructions-missing">
-                  指令流读取不完整：服务端这次的响应里没有指令流。请注意，这并不是"还没有指令"。
-                </p>
-              ) : (
-                // 缺字段时**不渲染列表**：否则空态"还没有人驱动过这个任务"会与上面的告警同时出现，
-                // 两句话自相矛盾（判据实测抓到）。要么说"读取不完整"，要么说"还没有指令"，不并列。
-                <InstructionList
-                  instructions={instructions}
+                <p className="room-column-note">团队成员之间 · 不触发 Agent</p>
+                {hasNewActivity || activeRun?.status === 'waiting_approval' ? (
+                  <button
+                    type="button"
+                    className="execution-activity-hint"
+                    data-testid="execution-activity-hint"
+                    onClick={showExecution}
+                  >
+                    {activeRun?.status === 'waiting_approval'
+                      ? '执行等待审批——前往处理'
+                      : '执行区有新活动——点开看看'}
+                  </button>
+                ) : null}
+                <CommentList
+                  comments={comments}
                   session={session}
-                  authorName={directory.personOf}
-                  queuedIds={queuedIds}
-                  lastToolCallByRun={lastToolCallByRun}
+                  runs={runs}
                   onOpenRun={setConsoleRunId}
                 />
-              )}
+              </div>
+              <div className="workspace-dock discussion-dock">
+                <p className="room-column-note">发送给团队成员</p>
+                <CommentComposer
+                  taskId={task.id}
+                  runs={runs}
+                  runLabels={runOrdinalLabels(runs)}
+                  insertToken={insertToken}
+                  onInsertTokenConsumed={() => setInsertToken(null)}
+                />
+              </div>
+            </section>
+            <section
+              id="execution-channel"
+              className="workspace-channel"
+              hidden={channel !== 'execution'}
+              aria-labelledby="instructions-heading"
+            >
+              <div className="workspace-transcript">
+                <h2
+                  id="instructions-heading"
+                  ref={execHeadingRef}
+                  tabIndex={-1}
+                  className="visually-hidden"
+                >
+                  执行
+                </h2>
+                <AssignmentPanel
+                  compact
+                  task={task}
+                  session={session}
+                  hasActiveRun={activeRun !== undefined}
+                />
+                {instructionsMissing ? (
+                  <p className="stream-incomplete" role="status" data-testid="instructions-missing">
+                    指令流读取不完整：服务端这次的响应里没有指令流。请注意，这并不是“还没有指令”。
+                  </p>
+                ) : instructions.length === 0 && runs.length === 0 ? (
+                  <div className="workspace-welcome">
+                    <span className="workspace-emblem" aria-hidden="true">
+                      W
+                    </span>
+                    <h2>我们要完成什么？</h2>
+                    <p>
+                      {task.description ||
+                        '还没有人驱动过这个任务。写下目标，选择 Agent，开始推进。'}
+                    </p>
+                  </div>
+                ) : (
+                  <InstructionList
+                    instructions={instructions}
+                    session={session}
+                    authorName={directory.personOf}
+                    queuedIds={queuedIds}
+                    lastToolCallByRun={lastToolCallByRun}
+                    onOpenRun={setConsoleRunId}
+                  />
+                )}
+                <h2 id="runs-heading" className="visually-hidden">
+                  运行
+                </h2>
+                {runs.length > 0 ? (
+                  <section className="workspace-runs" aria-labelledby="runs-heading">
+                    <RunTimeline
+                      runs={runs}
+                      selectedRunId={visibleRunId}
+                      onSelect={setSelectedRunId}
+                    />
+                    {visibleRunId !== undefined && session !== null ? (
+                      <RunLivePanel
+                        compact
+                        key={visibleRunId}
+                        runId={visibleRunId}
+                        session={session}
+                        runLabels={runOrdinalLabels(runs)}
+                        onOpenConsole={() => setConsoleRunId(visibleRunId)}
+                      />
+                    ) : null}
+                  </section>
+                ) : null}
+                {visibleArtifacts.length > 0 ? (
+                  <section className="workspace-artifacts" aria-label="本任务交付物">
+                    {visibleArtifacts.map((artifact) => (
+                      <button
+                        type="button"
+                        className="workspace-file"
+                        key={artifact.id}
+                        aria-label={`查看交付物 ${artifact.title}`}
+                        onClick={() => openInspector('artifacts', artifact.id)}
+                      >
+                        <span className="workspace-file-icon" aria-hidden="true">
+                          ▤
+                        </span>
+                        <span>
+                          <strong>{artifact.title}</strong>
+                          <small>
+                            {artifact.status === 'candidate'
+                              ? '仅你可见 · 待检查发布'
+                              : '已发布给团队'}{' '}
+                            · {formatBytes(artifact.byteSize)}
+                          </small>
+                        </span>
+                        <span aria-hidden="true">↗</span>
+                      </button>
+                    ))}
+                  </section>
+                ) : null}
+                <div className="workspace-approvals">
+                  <ApprovalSlot
+                    runs={runs}
+                    task={task}
+                    session={session}
+                    visible={channel === 'execution' && inspector === null}
+                  />
+                </div>
+                {session !== null ? <HandoffReceiptPanel task={task} session={session} /> : null}
+              </div>
               {session !== null ? (
-                <>
-                  {/* 下游交接包（#380）：接收确认不自动开始执行——面板在 composer 之上，
-                      「先确认再执行」的次序就是页面次序。 */}
-                  <HandoffReceiptPanel task={task} session={session} />
+                <div className="workspace-dock">
+                  <p className="workspace-status" role="status">
+                    {activeRun === undefined
+                      ? runs.length === 0
+                        ? '准备开始 · 执行由你确认'
+                        : '本次执行已结束 · 任务仍以真人确认为准'
+                      : `${RUN_STATUS_LABEL[activeRun.status]} · ${activeRun.status === 'waiting_approval' ? '等待责任人处理审批' : '可发送追问或查看运行详情'}`}
+                  </p>
                   <ExecutionComposer
+                    compact
                     key={task.id}
                     task={task}
                     session={session}
                     confirmingTask={query.isFetching && !query.isFetchedAfterMount}
                     runs={runs}
                     approvalPreview={approvalPreview}
-                    artifacts={artifacts}
+                    artifacts={visibleArtifacts}
                     agreement={agreementSummary}
                     handoff={handoffSummary}
                     reviewRequest={reviewRequest}
                     revisionRequest={revisionRequest}
+                    onDiscuss={() => {
+                      setChannel('discussion')
+                      requestAnimationFrame(() =>
+                        document.getElementById('comments-heading')?.focus(),
+                      )
+                    }}
                   />
-                </>
+                </div>
               ) : null}
+            </section>
+          </div>
+          <aside
+            className="workspace-inspector"
+            role="region"
+            aria-label="工作区详情"
+            hidden={inspector === null}
+            ref={inspectorRef}
+            tabIndex={-1}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.stopPropagation()
+                closeInspector()
+              }
+            }}
+          >
+            <div className="workspace-inspector-head">
+              <h2>
+                {inspector === 'agreement'
+                  ? '任务约定'
+                  : inspector === 'run'
+                    ? '运行详情'
+                    : '交付与复核'}
+              </h2>
+              <button
+                type="button"
+                className="button button-quiet"
+                aria-label="关闭工作区详情"
+                onClick={closeInspector}
+              >
+                关闭
+              </button>
             </div>
-
-            <div className="card" aria-labelledby="runs-heading">
-              <h2 id="runs-heading">运行</h2>
-              <RunTimeline runs={runs} selectedRunId={selectedRunId} onSelect={setSelectedRunId} />
-              {selectedRunId !== undefined && session !== null ? (
+            <div hidden={inspector !== 'agreement'}>
+              <TaskAgreementPanel task={task} session={session} />
+            </div>
+            <div hidden={inspector !== 'run'}>
+              {visibleRunId !== undefined && session !== null && hasOpenedRun ? (
                 <>
-                  <RunLivePanel
-                    runId={selectedRunId}
-                    session={session}
-                    runLabels={runOrdinalLabels(runs)}
-                    onOpenConsole={() => setConsoleRunId(selectedRunId)}
-                  />
                   <RunInputManifest
-                    key={selectedRunId}
-                    runId={selectedRunId}
+                    key={visibleRunId}
+                    runId={visibleRunId}
                     taskId={task.id}
                     runLabels={runOrdinalLabels(runs)}
                   />
                   <RunHandoffDraft
-                    key={`handoff-draft-${selectedRunId}`}
-                    runId={selectedRunId}
+                    key={`handoff-draft-${visibleRunId}`}
+                    runId={visibleRunId}
                     task={task}
                     session={session}
                     runTerminal={TERMINAL_RUN.has(
-                      runs.find((run) => run.id === selectedRunId)?.status ?? 'queued',
+                      runs.find((run) => run.id === visibleRunId)?.status ?? 'queued',
                     )}
                   />
                 </>
-              ) : null}
-              <ApprovalSlot runs={runs} task={task} session={session} />
+              ) : (
+                <p className="empty-state">还没有 Run。开始执行后可查看输入与交接草稿。</p>
+              )}
             </div>
-
-            {/* 上游「已交接」（#380）：交付与接收关系追踪；无可发布版本也无交付时自隐。 */}
-            {session !== null ? <HandoffDeliveryPanel task={task} session={session} /> : null}
-
-            {/* 指派与启程：**常驻**，不折进详情——接受指派是责任人进入工作前的必经一步
-              （没接受就不能起 Run），把它藏进折叠区等于把门藏在门后。 */}
-            <AssignmentPanel task={task} session={session} hasActiveRun={activeRun !== undefined} />
-
-            {/* 任务详情：交付物与复核——低频，折起来不占视觉重量（用户选定方案①） */}
-            {/* **默认展开**（仍可手动折叠）：Q5 的 G6-04 证明「发布交付物」是金路径的一部分
-              （e2e 要点发布按钮），默认折叠会让它 hidden、直接断链；折叠能力保留，
-              但默认不把必经动作藏起来。 */}
-            <details className="card task-details" open>
-              <summary>任务详情（交付物 · 复核）</summary>
-              <div className="task-details-body">
-                <section aria-labelledby="artifacts-heading">
-                  <h3 id="artifacts-heading">交付物</h3>
-                  <ArtifactList
-                    artifacts={artifacts}
-                    session={session}
-                    taskId={task.id}
-                    runs={runs}
-                    onRequestRevision={(artifactId) => {
-                      setReviewRequest(null)
-                      setRevisionRequest({
-                        taskId: task.id,
-                        artifactId,
-                        nonce: crypto.randomUUID(),
-                      })
-                      execHeadingRef.current?.focus()
-                    }}
-                    onRequestReview={(artifactId) => {
-                      setRevisionRequest(null)
-                      setReviewRequest({ taskId: task.id, artifactId, nonce: crypto.randomUUID() })
-                      execHeadingRef.current?.focus()
-                    }}
-                    onReferenceRun={(runId) =>
-                      setInsertToken({ text: formatRunReference(runId), nonce: Date.now() })
-                    }
-                  />
-                </section>
-                <ReviewerSlot />
-                <DeliveryFlow
-                  task={task}
+            <div hidden={inspector !== 'artifacts'}>
+              {inspectedArtifactId !== null ? (
+                <button
+                  type="button"
+                  className="button button-quiet"
+                  onClick={() => setInspectedArtifactId(null)}
+                >
+                  查看全部交付物
+                </button>
+              ) : null}
+              <section aria-labelledby="artifacts-heading">
+                <h3 id="artifacts-heading">交付物</h3>
+                <ArtifactList
+                  artifacts={
+                    inspectedArtifactId === null
+                      ? visibleArtifacts
+                      : visibleArtifacts.filter((artifact) => artifact.id === inspectedArtifactId)
+                  }
                   session={session}
-                  artifacts={artifacts}
+                  taskId={task.id}
                   runs={runs}
-                  reviewEligibility={query.data.reviewEligibility}
+                  onRequestRevision={(artifactId) => {
+                    setReviewRequest(null)
+                    setRevisionRequest({ taskId: task.id, artifactId, nonce: crypto.randomUUID() })
+                    showExecution()
+                  }}
+                  onRequestReview={(artifactId) => {
+                    setRevisionRequest(null)
+                    setReviewRequest({ taskId: task.id, artifactId, nonce: crypto.randomUUID() })
+                    showExecution()
+                  }}
+                  onReferenceRun={(runId) => {
+                    setChannel('discussion')
+                    setInspector(null)
+                    setInsertToken({ text: formatRunReference(runId), nonce: Date.now() })
+                  }}
                 />
-              </div>
-            </details>
-          </section>
+              </section>
+              <ReviewerSlot />
+              <DeliveryFlow
+                task={task}
+                session={session}
+                artifacts={visibleArtifacts}
+                runs={runs}
+                reviewEligibility={query.data.reviewEligibility}
+              />
+              {session !== null ? <HandoffDeliveryPanel task={task} session={session} /> : null}
+            </div>
+          </aside>
         </div>
         {consolePresence.value === null ? null : (
           <RunConsoleHost
@@ -377,8 +593,7 @@ function TaskRoom(): ReactNode {
 }
 
 /**
- * 加载骨架（#231 的形态 + #277 的退场）：两栏各 4 条，形状与真内容对齐——所以退场时
- * 可以**绝对定位叠在内容之上**淡出（见 `.crossfade-stack`），不错位、也不多占高度。
+ * 聚焦工作区加载骨架。数据到达后沿用 crossfade-stack 退场，不额外占布局高度。
  */
 function RoomSkeleton({ leaving = false }: { leaving?: boolean }): ReactNode {
   return (
@@ -387,7 +602,7 @@ function RoomSkeleton({ leaving = false }: { leaving?: boolean }): ReactNode {
       aria-busy="true"
       data-testid="room-skeleton"
     >
-      <div className="task-room-split">
+      <div className="workspace-skeleton">
         {Array.from({ length: 4 }, (_, i) => (
           <span key={`l-${i}`} className="skeleton-line" />
         ))}

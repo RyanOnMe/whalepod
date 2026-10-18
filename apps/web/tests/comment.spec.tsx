@@ -1,3 +1,4 @@
+import { showWorkspace } from './workspace.js'
 /**
  * Comment 时间线与发送（02 Task 7 Step 4/6）：
  * - 发送成功后输入清空、精确失效后展示新留言；
@@ -44,6 +45,7 @@ describe('comment', () => {
         },
       },
     ])
+    await showWorkspace('discussion')
     await screen.findByLabelText('留言')
     await user.type(screen.getByLabelText('留言'), '我来负责这次运行')
     await user.click(screen.getByRole('button', { name: '发送留言' }))
@@ -64,6 +66,7 @@ describe('comment', () => {
       `/tasks/${task.id}`,
       loggedInHandlers(BOB, [roomHandler(task, comments), teamMembersHandler()]),
     )
+    await showWorkspace('discussion')
     expect(await screen.findByText('已经跑完了第一轮')).toBeVisible()
     expect(screen.getByText('请补充验收说明')).toBeVisible()
     expect(screen.getAllByText('你')).not.toHaveLength(0)
@@ -86,6 +89,7 @@ describe('comment', () => {
         respond: () => slow.promise,
       },
     ])
+    await showWorkspace('discussion')
     await screen.findByLabelText('留言')
     await user.type(screen.getByLabelText('留言'), '慢请求留言')
     await user.click(screen.getByRole('button', { name: '发送留言' }))
@@ -127,6 +131,7 @@ describe('comment', () => {
         }),
       },
     ])
+    await showWorkspace('discussion')
     await screen.findByLabelText('留言')
     await user.type(screen.getByLabelText('留言'), '这条不能丢')
     await user.click(screen.getByRole('button', { name: '发送留言' }))
@@ -163,6 +168,7 @@ describe('comment', () => {
         teamMembersHandler(),
       ]),
     ])
+    await showWorkspace('discussion')
     const box = await screen.findByLabelText('留言')
     // 纯 Enter：换行，不提交。
     await user.type(box, '第一行{Enter}第二行')
@@ -180,6 +186,7 @@ describe('comment', () => {
     const task = makeTask({ assigneeUserId: BOB.userId })
     const user = userEvent.setup()
     const { fetchMock } = renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [roomHandler(task)]))
+    await showWorkspace('discussion')
     await screen.findByLabelText('留言')
     await user.click(screen.getByRole('button', { name: '发送留言' }))
     expect(screen.getByText('先输入留言内容')).toBeVisible()
