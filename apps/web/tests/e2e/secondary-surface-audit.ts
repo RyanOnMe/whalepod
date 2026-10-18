@@ -21,7 +21,18 @@ export async function auditSecondarySurfaces({
     scroll: number
     headerCount: number
   }> = []
+  const confirmations: Array<{ width: number; contained: boolean }> = []
   const capture = async (name: string, width: number) => {
+    await expect
+      .poll(() =>
+        owner
+          .locator('.crossfade-in:visible')
+          .evaluateAll((elements) =>
+            elements.every((element) => getComputedStyle(element).opacity === '1'),
+          ),
+      )
+      .toBe(true)
+    await expect(owner.locator('.crossfade-stack > .room-skeleton')).not.toBeVisible()
     const headerCount = await owner
       .locator(
         '.workspace-inspector:not([hidden]) .workspace-inspector-head > h2:visible, [role="dialog"] h2:visible, .page-header h1:visible',
@@ -80,6 +91,9 @@ export async function auditSecondarySurfaces({
     await expect(consolePanel).toBeVisible()
     await expect(owner.getByTestId('console-event').first()).toBeVisible()
     await expect(owner.getByTestId('console-close')).toBeFocused()
+    await expect(owner.locator('.console-backdrop')).toHaveCSS('opacity', '1')
+    await expect(consolePanel).toHaveCSS('opacity', '1')
+    await expect(consolePanel).toHaveCSS('transform', 'none')
     await capture('console', width)
     await owner.keyboard.press('Escape')
     await expect(consolePanel).not.toBeVisible()
@@ -133,11 +147,23 @@ export async function auditSecondarySurfaces({
         await owner.screenshot({ path: join(evidence, 'surface-device-guide.png') })
         await guide.click()
       }
-      if (name === 'permissions' && width === 1440) {
+      if (name === 'permissions') {
         await selectFromMenu(owner.getByLabel('选择审批档覆盖'), '完全权限（工具调用直接放行）')
         await owner.getByTestId('approval-policy-apply').click()
         await expect(owner.getByRole('dialog')).toBeVisible()
-        await owner.screenshot({ path: join(evidence, 'surface-permission-confirm.png') })
+        await expect(owner.getByRole('button', { name: '确认放行完全权限' })).toBeFocused()
+        const contained = await owner.locator('.confirm-dialog').evaluate((content) => {
+          const dialog = content.closest('[role="dialog"]')!.getBoundingClientRect()
+          return (
+            [content, ...content.querySelectorAll('h2, p, button')].every((element) => {
+              const box = element.getBoundingClientRect()
+              return box.left >= dialog.left && box.right <= dialog.right && box.width > 0
+            }) && content.scrollWidth <= content.clientWidth
+          )
+        })
+        expect(contained, `confirmation/${width} content clipped`).toBe(true)
+        confirmations.push({ width, contained })
+        await owner.screenshot({ path: join(evidence, `surface-permission-confirm-${width}.png`) })
         await owner.keyboard.press('Escape')
         await expect(owner.getByRole('dialog')).not.toBeVisible()
         await expect(owner.getByTestId('approval-policy-state')).toContainText('未覆盖')
@@ -160,6 +186,7 @@ export async function auditSecondarySurfaces({
     component: 'web.surfaces',
     scenario: 'secondary-hierarchy',
     rows,
+    confirmations,
     agreementHeadingUnique: true,
     draftPreserved: true,
     memberReadOnly: true,

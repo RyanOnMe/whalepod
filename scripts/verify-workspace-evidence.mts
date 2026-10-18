@@ -119,6 +119,14 @@ for (const name of [
     assert((await stat(join(directory, `surface-${name}-${row.width}.png`))).size > 0)
   }
 }
-for (const name of ['agent-create', 'device-guide', 'permission-confirm'])
+assert.deepEqual(
+  surfaces.confirmations?.map((row: { width: number }) => row.width),
+  [1440, 390, 320],
+)
+for (const row of surfaces.confirmations) {
+  assert.equal(row.contained, true)
+  assert((await stat(join(directory, `surface-permission-confirm-${row.width}.png`))).size > 0)
+}
+for (const name of ['agent-create', 'device-guide'])
   assert((await stat(join(directory, `surface-${name}.png`))).size > 0)
 console.log(JSON.stringify({ component: 'web.workspace.verify', ok: true, scenarios: 6 }))
