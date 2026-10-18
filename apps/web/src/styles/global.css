@@ -3570,7 +3570,7 @@ textarea::placeholder {
   max-width: 240px;
   min-width: 0;
 }
-.prompt-bar__controls .select-menu-label {
+.prompt-bar__controls > .field > .select-menu-label {
   position: absolute;
   width: 1px;
   height: 1px;
