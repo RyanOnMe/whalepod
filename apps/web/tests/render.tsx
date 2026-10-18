@@ -14,12 +14,14 @@ import { installFetch } from './fixtures.js'
 import type { MockHandler } from './fixtures.js'
 
 export interface TestAppResult extends RenderResult {
-  router: ReturnType<typeof createTestRouter>
   queryClient: ReturnType<typeof makeQueryClient>
   fetchMock: ReturnType<typeof installFetch>
 }
 
-export function renderApp(initialPath: string, handlers: readonly MockHandler[]): TestAppResult {
+export function renderApp(
+  initialPath: string,
+  handlers: readonly MockHandler[],
+): TestAppResult & { router: ReturnType<typeof createTestRouter> } {
   const fetchMock = installFetch(handlers)
   const queryClient = makeQueryClient({ retry: false })
   const router = createTestRouter(queryClient, [initialPath])
