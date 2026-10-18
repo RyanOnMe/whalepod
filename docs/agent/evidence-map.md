@@ -105,3 +105,5 @@
 准备验收重跑失败后仍显示成功：先核对web.preparation.return.failed-attempt；scripts/run-preparation-return.mts在Playwright前清理且非正常退出后再次失效；scripts/check-preparation-return-failed-attempt.mts覆盖导航/服务启动/收尾三段真实Playwright失败，确认旧result被失效、独立CLI拒绝。观测位于artifacts/evidence/preparation-return-failed-attempt/result.json；负向后必须重新生成成功证据，不能恢复旧文件。
 
 聚焦工作区切换丢稿、详情遮挡或关闭不还焦：先看 web.workspace / web.route；审批与候选异常先对 hub 的受众投影。复跑 focused-workspace-acceptance；证据位于 artifacts/evidence/focused-workspace/<本次目录>，独立判定器 verify-workspace-evidence 缺事实或截图即失败。
+
+工作区 Micro 菜单被裁切、键盘焦点或减少动态异常：先看 web.micro 定位读数；约定开关与服务端不一致先看 web.agreement PATCH 与刷新；材料勾选先看 web.execution 的输入快照。证据与复跑入口见 focused-workspace-acceptance。

@@ -9,6 +9,7 @@
  * - 开关（agreementEnabled）：责任人开启（前提已有已确认版本）/ 可关闭。
  * - 版本历史只增不改：修改产生新草稿、新版本；已确认版本不原地覆盖。
  */
+import SquishSwitch from '../../vendor/react-bits-micro/SquishSwitch.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../../shared/api/client.js'
@@ -214,19 +215,19 @@ export function TaskAgreementPanel({
           </span>
         )}
         {isAssignee ? (
-          <button
-            type="button"
-            className="button agreement-toggle"
+          <SquishSwitch
+            checked={agreement.enabled}
+            label="约定流程"
+            ariaLabel="启用约定流程"
+            busy={enableMutation.isPending}
             disabled={enableMutation.isPending}
-            onClick={() => enableMutation.mutate(!agreement.enabled)}
+            onChange={(checked) => enableMutation.mutate(checked)}
             title={
               agreement.enabled
                 ? '停用后新执行不再要求绑定（历史 Run 与已确认版本保留）'
                 : '启用后：新执行必须绑定已确认版本（无版本时会被拒绝并提示）；正常完成的执行会额外调用一次模型整理交接草稿（最多等待 60 秒，失败不影响执行结果）'
             }
-          >
-            {agreement.enabled ? '停用约定流程' : '启用约定流程'}
-          </button>
+          />
         ) : null}
       </div>
       {!agreement.enabled && confirmed !== null && !isAssignee ? (

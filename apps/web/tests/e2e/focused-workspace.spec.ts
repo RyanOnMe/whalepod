@@ -98,6 +98,49 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
 
     await expect(owner.getByRole('heading', { name: '我们要完成什么？' })).toBeVisible()
     await owner.screenshot({ path: join(evidence, 'desktop-ready.png') })
+    const microLayouts = []
+    for (const width of [1440, 390, 320]) {
+      await owner.setViewportSize({ width, height: 960 })
+      const bar = owner.getByTestId('prompt-bar')
+      const agent = bar.getByRole('button', { name: '选择 Agent' })
+      await expect(bar.getByRole('textbox', { name: '指令' })).toHaveCount(1)
+      await agent.click()
+      const menu = owner.getByRole('menu', { name: '可用选项' })
+      await expect(menu.getByRole('menuitem', { name: 'Builder' })).toBeFocused()
+      const bounds = await menu.boundingBox()
+      expect(bounds).not.toBeNull()
+      expect(bounds!.x).toBeGreaterThanOrEqual(0)
+      expect(bounds!.y).toBeGreaterThanOrEqual(0)
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width)
+      expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(960)
+      await owner.screenshot({ path: join(evidence, `micro-menu-${width}.png`) })
+      await owner.keyboard.press('Escape')
+      await expect(agent).toBeFocused()
+      await expect(menu).toHaveCount(0)
+      microLayouts.push({
+        width,
+        menu: bounds,
+        portal: (await bar.getByRole('menu').count()) === 0,
+      })
+    }
+    await owner.emulateMedia({ reducedMotion: 'reduce' })
+    await owner.keyboard.press('Enter')
+    const menu = owner.getByRole('menu', { name: '可用选项' })
+    await expect(menu).toHaveCSS('transition-duration', '0s')
+    await owner.keyboard.press('End')
+    await owner.keyboard.press('Enter')
+    await expect(owner.getByLabel('选择 Agent')).toContainText('Builder')
+    await owner.emulateMedia({ reducedMotion: 'no-preference' })
+    await owner.setViewportSize({ width: 1440, height: 960 })
+    facts.push({
+      component: 'web.micro',
+      scenario: 'workspace-controls',
+      layouts: microLayouts,
+      keyboardSelect: true,
+      reducedMotion: true,
+      oneInstruction: true,
+    })
+
     await owner.getByRole('button', { name: '团队讨论', exact: true }).click()
     await owner.getByLabel('留言').fill('先确认验收口径，再开始执行。')
     await owner.getByRole('button', { name: 'Agent 执行', exact: true }).click()
@@ -203,7 +246,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
       agreementReachable: true,
     })
     expect(errors).toEqual([])
-    expect(facts).toHaveLength(4)
+    expect(facts).toHaveLength(5)
     await stopNode()
   } finally {
     await ownerContext.close()

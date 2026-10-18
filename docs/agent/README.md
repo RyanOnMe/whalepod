@@ -113,4 +113,4 @@
 
 验收文档命名：`<链路或场景>-acceptance.md`，放在本目录，并在上表补一行索引。
 
-- [聚焦任务工作区验收](focused-workspace-acceptance.md)：讨论与执行独立、审批、候选检查发布、窄屏详情与还焦。
+- [聚焦任务工作区验收](focused-workspace-acceptance.md)：讨论与执行独立、审批、候选检查发布、窄屏详情与还焦；Micro 输入区、菜单和受控状态。

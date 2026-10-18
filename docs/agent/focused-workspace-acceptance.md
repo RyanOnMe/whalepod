@@ -22,6 +22,7 @@ Q5 用仓库统一生产装配：一次性 PostgreSQL、包解析后的 Hub serv
 
 | component | 观测 | 必须通过 |
 |---|---|---|
+| web.micro | PromptBar 原生输入、Glide 菜单几何和键盘状态 | 1440/390/320 三档菜单不溢出；Escape 还焦；键盘选择；减少动态无位移过渡 |
 | web.workspace | 视图按钮、独立输入、真实讨论投影 | 默认执行，来回切换留稿；成员讨论不被送往 Agent |
 | web.approval | 双会话 DOM 与真实 Run 终态 | 只有责任人可审批；讨论中有待审批入口；他人看不到候选 |
 | web.artifact | 受控内容请求、发布、Task 查询 | 预览失败可重试；发布前私有，发布后共享；Run 完成不完成 Task |
@@ -31,7 +32,7 @@ Q5 用仓库统一生产装配：一次性 PostgreSQL、包解析后的 Hub serv
 ## 取证、归因与限制
 
 证据在 `artifacts/evidence/focused-workspace/<随机目录>/facts.json`，只记录白名单事实、Run id
-与布局读数，截图作为人工复核材料。独立判定器要求全部四类事实、五档宽度、截图及空错误列表，
+与布局读数，截图作为人工复核材料。独立判定器要求全部五类事实、五档宽度、截图及空错误列表，
 缺文件、缺环节、重复事实或错误状态一律失败；失败运行不生成 facts.json。
 
 切换丢稿先看 web.workspace 的挂载边界；还焦/锚点失败先看 web.route 与可见视图；
@@ -62,3 +63,28 @@ GitHub 认证当前失效，Issue 登记和 PR 关联待恢复认证后完成。
 - Web 生产构建通过；格式、lint、Web 类型检查通过。
 - 本次成功证据：`artifacts/evidence/focused-workspace/d5bd8365/`。失败/中断尝试无 facts.json，不能作为成功证据。
 - GitHub：两项账号凭据均失效，未登记 Issue、推送或创建 PR；本地分支为 `feat/focused-workspace`。
+
+
+## 工作区 Micro 精修批次
+
+组件来源仍固定为 `react-bits@d86fccbd477786f94ca7eb891fbe0ec039d3cd3b`；新增四组
+PromptBar、GlideSelect、SpringCheck、SquishSwitch 的原始哈希与本地改编见 vendor manifest。
+保留上游完整许可、版权和根 NOTICE；没有新增 Motion、图标包或 catalog/lockfile 变更。
+
+| Before | After | Why |
+|---|---|---|
+| 指令、Agent、发送分散排列 | PromptBar 内输入正文在上、工具与发送在下 | 形成一个清晰输入对象，保留原提交、快捷键和放权确认 |
+| 工作区下拉沿用表单外观 | 紧凑 GlideSelect，从触发位置展开、滑动高亮 | 菜单 portal 避免被滚动区裁切，键盘即时反馈 |
+| 材料复选框和约定按钮缺少状态细节 | SpringCheck 原生复选框与受控 SquishSwitch | 选中材料不表示任务完成，约定开关只反映服务端确认值 |
+| 视图切换与文件卡片样式不统一 | RubberSegment 与轻量文件图标、标题/状态层次 | 强化当前视图与文件入口，保留候选权限和检查发布路径 |
+
+新增 `workspace-polish.spec.tsx`、`micro-workspace-controls.spec.tsx` 和约定失败用例。
+检查指令只有一个、讨论草稿保留、菜单 portal、空列表 Escape、方向键跳过禁用、首字母、
+重复选择、材料原生键盘与 fieldset 禁用，以及开关 pending 拦重复/失败不乐观切换。
+真实浏览器曾发现菜单测量前 `visibility:hidden` 导致初始焦点失败，现将聚焦放在定位提交后，
+由 Q5 原生焦点断言覆盖，不能以 jsdom 通过替代。
+
+精修证据新增 `web.micro` 与 `micro-menu-{1440,390,320}.png`，判定器升级为五类事实。
+旧四类证据保留为历史记录，不符合当前五类 schema，须按新命令复跑。
+菜单/键盘问题先看 web.micro 的定位和焦点；开关假成功先看 web.agreement 读模型与 PATCH，
+材料选择问题先看 web.execution 输入快照，不以勾选动效推断业务完成。

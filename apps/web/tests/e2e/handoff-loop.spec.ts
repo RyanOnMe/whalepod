@@ -261,7 +261,7 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
 
   // ---------- 2. 启用约定 + 起草并确认 v1 ----------
   await alice.getByRole('button', { name: /^任务约定/ }).click()
-  await alice.getByRole('button', { name: '启用约定流程' }).click()
+  await alice.getByRole('switch', { name: '启用约定流程' }).click()
   await alice.getByRole('button', { name: '起草任务约定' }).click()
   const editor = alice.getByTestId('agreement-editor')
   await editor.getByLabel('任务约定：目标').fill('交付登录接口与用例')

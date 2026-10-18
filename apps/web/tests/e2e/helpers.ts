@@ -430,7 +430,7 @@ export async function selectFromMenu(trigger: Locator, optionText: string | RegE
   await expect(trigger).toHaveAttribute('aria-expanded', 'false')
   await trigger.click()
   await expect(trigger).toHaveAttribute('aria-expanded', 'true')
-  // 列表贴着触发器渲染（portal=false），一行一个 role=menuitem 的按钮
+  // 默认 Menu 与工作区 portal 菜单都以 role=menuitem 暴露选项。
   const option = trigger.page().getByRole('menuitem', { name: optionText })
   await expect(option).toBeVisible()
   await option.click()

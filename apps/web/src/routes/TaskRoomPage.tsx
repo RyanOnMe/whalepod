@@ -32,6 +32,7 @@ import { runOrdinalLabels } from '../features/task/runLabels.js'
 import { ACTIVE_RUN, QUEUEING_RUN, TERMINAL_RUN } from '../features/task/run-states.js'
 import { formatRunReference } from '../features/task/runReference.js'
 import { ApprovalSlot, RunTimeline } from '../features/task/RunTimeline.js'
+import RubberSegment from '../vendor/react-bits-micro/RubberSegment.js'
 import { TaskHeader } from '../features/task/TaskHeader.js'
 import { TaskAgreementPanel } from '../features/task/TaskAgreementPanel.js'
 
@@ -243,24 +244,16 @@ function TaskRoom(): ReactNode {
           compact
         />
         <div className="workspace-toolbar">
-          <div className="workspace-channels" role="group" aria-label="工作区视图">
-            <button
-              type="button"
-              aria-pressed={channel === 'execution'}
-              aria-controls="execution-channel"
-              onClick={() => setChannel('execution')}
-            >
-              Agent 执行
-            </button>
-            <button
-              type="button"
-              aria-pressed={channel === 'discussion'}
-              aria-controls="discussion-channel"
-              onClick={() => setChannel('discussion')}
-            >
-              团队讨论
-            </button>
-          </div>
+          <RubberSegment
+            label="工作区视图"
+            testIdPrefix="workspace-view-"
+            value={channel}
+            onChange={setChannel}
+            items={[
+              { value: 'execution', label: 'Agent 执行' },
+              { value: 'discussion', label: '团队讨论' },
+            ]}
+          />
           <div className="workspace-tools">
             <button
               type="button"
@@ -413,7 +406,19 @@ function TaskRoom(): ReactNode {
                         onClick={() => openInspector('artifacts', artifact.id)}
                       >
                         <span className="workspace-file-icon" aria-hidden="true">
-                          ▤
+                          <svg viewBox="0 0 24 28" width="24" height="28" fill="none">
+                            <path
+                              d="M5 1h9l6 6v18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2Z"
+                              stroke="currentColor"
+                              strokeWidth="1.4"
+                            />
+                            <path
+                              d="M14 1v7h6M7 14h9M7 18h9M7 22h5"
+                              stroke="currentColor"
+                              strokeWidth="1.4"
+                              strokeLinecap="round"
+                            />
+                          </svg>
                         </span>
                         <span>
                           <strong>{artifact.title}</strong>

@@ -43,6 +43,7 @@
  * 不回；不补的话键盘用户每选一个字段就要从文档头重新 Tab，见下面的 `triggerRef`）。
  */
 import { useCallback, useId, useRef, useState, type ReactNode } from 'react'
+import GlideSelect from '../vendor/react-bits-micro/GlideSelect.js'
 import { Menu } from '../vendor/dsh-ui/Menu.js'
 import type { MenuEntry } from '../vendor/dsh-ui/Menu.js'
 // 图标不走原语桶：`icons.tsx` 是 vendored 子目录里的**支撑文件**（只含被原语用到的几个
@@ -73,6 +74,7 @@ export interface SelectMenuOption {
 }
 
 export interface SelectMenuProps {
+  appearance?: 'default' | 'glide'
   /** 触发器按钮的 id：沿用原 `<select>` 的 id，接口面与 e2e 定位不退化。 */
   id: string
   /** 可见标签文案；渲染成 `<label htmlFor={id}>`，与原来一样是触发器的可访问名来源。 */
@@ -110,6 +112,7 @@ export function SelectMenu({
   onChange,
   disabled = false,
   hint,
+  appearance = 'default',
 }: SelectMenuProps): ReactNode {
   const [open, setOpen] = useState(false)
   const labelId = useId()
@@ -154,6 +157,35 @@ export function SelectMenu({
     },
     [close, onChange],
   )
+
+  if (appearance === 'glide')
+    return (
+      <>
+        <label id={labelId} htmlFor={id} className="select-menu-label">
+          {label}
+        </label>
+        <GlideSelect
+          id={id}
+          label={ariaLabel ?? label}
+          value={value}
+          display={display}
+          options={[
+            ...(placeholder === undefined
+              ? []
+              : [{ value: '', label: placeholder, disabled: true }]),
+            ...options,
+          ]}
+          onChange={onChange}
+          disabled={disabled}
+          {...(hint === undefined ? {} : { hintId })}
+        />
+        {hint === undefined ? null : (
+          <p id={hintId} className="field-hint">
+            {hint}
+          </p>
+        )}
+      </>
+    )
 
   return (
     <>

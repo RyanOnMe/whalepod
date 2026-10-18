@@ -10,6 +10,7 @@ import {
 import { Link } from 'react-router'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { api } from '../../shared/api/client.js'
+import SpringCheck from '../../vendor/react-bits-micro/SpringCheck.js'
 import { SelectMenu } from '../../shared/SelectMenu.js'
 import { queryKeys } from '../../app/query-client.js'
 import type {
@@ -350,6 +351,7 @@ export function ExecutionComposer({
           </button>
         ) : null}
         <SelectMenu
+          appearance="glide"
           id={`execution-mode-${task.id}`}
           label="执行方式"
           value={mode}
@@ -455,25 +457,26 @@ export function ExecutionComposer({
             }
           </p>
           {published.map((artifact) => (
-            <label key={artifact.id} className="review-material">
-              <input
-                type="checkbox"
-                aria-label={`复核材料：${artifact.title}`}
-                checked={reviewArtifactIds.includes(artifact.id)}
-                disabled={
-                  sending ||
-                  (!reviewArtifactIds.includes(artifact.id) && reviewArtifactIds.length >= 64)
-                }
-                onChange={(event) =>
-                  setReviewArtifactIds((ids) =>
-                    event.target.checked
-                      ? [...ids, artifact.id]
-                      : ids.filter((id) => id !== artifact.id),
-                  )
-                }
-              />
-              {artifact.title} · {artifact.sha256.slice(0, 12)}
-            </label>
+            <SpringCheck
+              key={artifact.id}
+              className="review-material"
+              ariaLabel={`复核材料：${artifact.title}`}
+              checked={reviewArtifactIds.includes(artifact.id)}
+              disabled={
+                sending ||
+                (!reviewArtifactIds.includes(artifact.id) && reviewArtifactIds.length >= 64)
+              }
+              onChange={(checked) =>
+                setReviewArtifactIds((ids) =>
+                  checked ? [...ids, artifact.id] : ids.filter((id) => id !== artifact.id),
+                )
+              }
+              label={
+                <>
+                  {artifact.title} · {artifact.sha256.slice(0, 12)}
+                </>
+              }
+            />
           ))}
           <p className="mutation-hint">
             已选择 {reviewArtifactIds.length} 项，最多64项；新发布不会自动加入。
@@ -496,6 +499,7 @@ export function ExecutionComposer({
       ) : null}
       {mode === 'resume' ? (
         <SelectMenu
+          appearance="glide"
           id={`execution-source-${task.id}`}
           label="来源执行"
           value={sourceId}
@@ -564,19 +568,22 @@ export function ExecutionComposer({
           style={{ border: 0, padding: 0, margin: 0 }}
         >
           {handoff !== null && isNewExecution ? (
-            <label className="handoff-attach" data-testid="handoff-attach">
-              <input
-                type="checkbox"
-                aria-label="附带上游交接材料"
-                checked={includeHandoff}
-                disabled={sending}
-                onChange={(event) => setIncludeHandoff(event.target.checked)}
-              />
-              {`附带上游交接材料：「${handoff.upstreamTaskTitle}」v${handoff.revisionNumber}`}
-              {handoff.hasNewerVersion
-                ? `（上游已有新版本，本次仍固定 v${handoff.revisionNumber}）`
-                : null}
-            </label>
+            <SpringCheck
+              className="handoff-attach"
+              testId="handoff-attach"
+              ariaLabel="附带上游交接材料"
+              checked={includeHandoff}
+              disabled={sending}
+              onChange={setIncludeHandoff}
+              label={
+                <>
+                  {`附带上游交接材料：「${handoff.upstreamTaskTitle}」v${handoff.revisionNumber}`}
+                  {handoff.hasNewerVersion
+                    ? `（上游已有新版本，本次仍固定 v${handoff.revisionNumber}）`
+                    : null}
+                </>
+              }
+            />
           ) : null}
           {handoff !== null && mode === 'resume' ? (
             <p className="mutation-hint">

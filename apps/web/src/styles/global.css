@@ -3553,3 +3553,129 @@ textarea::placeholder {
 .workspace-dock .run-launcher .instruction-composer > .field label {
   display: none;
 }
+
+/* Workspace Micro: PromptBar owns the surface; surrounding facts stay visible. */
+.workspace-dock .execution-composer {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+.workspace-dock .prompt-bar__field textarea {
+  min-height: 76px;
+  padding: 6px 2px 12px;
+}
+.prompt-bar__controls .field {
+  margin: 0;
+  max-width: 240px;
+  min-width: 0;
+}
+.prompt-bar__controls .select-menu-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.prompt-bar__controls .execution-settings {
+  margin: 0;
+  min-width: 0;
+}
+.prompt-bar__controls .execution-settings > summary {
+  padding: 8px 10px;
+  min-height: 40px;
+  border-radius: 12px;
+  cursor: pointer;
+  color: var(--color-muted);
+}
+.prompt-bar__controls .execution-settings[open] {
+  flex-basis: 100%;
+  order: 2;
+}
+.prompt-bar__controls .execution-settings[open] > .field {
+  max-width: none;
+}
+.workspace-dock .instruction-composer {
+  gap: 8px;
+}
+.workspace-dock .instruction-composer > .mutation-hint {
+  margin: 0;
+}
+.workspace-dock .composer-actions {
+  margin-top: 8px;
+  gap: 8px;
+  font-size: 12px;
+}
+.workspace-dock .instruction-composer .composer-approval-pill {
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+.workspace-dock .instruction-composer .composer-approval-pill[data-policy='full_access'] {
+  color: var(--color-danger);
+}
+.workspace-toolbar > .rubber-segment {
+  border: 0;
+  border-radius: 12px;
+  padding: 3px;
+  background: var(--color-surface-sunken);
+}
+.workspace-toolbar > .rubber-segment .rubber-segment__thumb {
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc(50% - 3px) !important;
+  background: var(--color-surface);
+  border: 0;
+  border-radius: 9px;
+  box-shadow: 0 1px 4px var(--dsw-alias-border-l3);
+}
+.workspace-toolbar > .rubber-segment .rubber-segment__item {
+  font-size: 13px;
+  min-height: 36px;
+}
+.workspace-file {
+  border-radius: 16px;
+  padding: 14px 16px;
+  gap: 14px;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 120ms var(--ease-out);
+}
+.workspace-file-icon {
+  width: 44px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 10px;
+  background: var(--color-surface-sunken);
+}
+.workspace-file strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+.workspace-file small {
+  font-size: 12px;
+  margin-top: 4px;
+}
+.workspace-file:active {
+  transform: scale(0.99);
+}
+@media (hover: hover) and (pointer: fine) {
+  .workspace-file:hover {
+    border-color: var(--dsw-alias-border-l4);
+    box-shadow: 0 3px 10px var(--dsw-alias-border-l3);
+  }
+  .prompt-bar__controls .execution-settings > summary:hover {
+    background: var(--color-surface-sunken);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-file {
+    transition: none;
+  }
+}
