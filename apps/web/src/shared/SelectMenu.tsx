@@ -42,7 +42,7 @@
  * 并在**选中后自己把焦点收回触发器**（`Menu` 只在 Esc 且 `autoFocus` 时回焦，选中路径
  * 不回；不补的话键盘用户每选一个字段就要从文档头重新 Tab，见下面的 `triggerRef`）。
  */
-import { useCallback, useId, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import GlideSelect from '../vendor/react-bits-micro/GlideSelect.js'
 import { Menu } from '../vendor/dsh-ui/Menu.js'
 import type { MenuEntry } from '../vendor/dsh-ui/Menu.js'
@@ -119,6 +119,14 @@ export function SelectMenu({
   const [open, setOpen] = useState(false)
   const labelId = useId()
   const hintId = useId()
+  const firstOptionRef = useRef<HTMLSpanElement>(null)
+  const firstEnabled = options.findIndex((option) => !option.disabled)
+  useEffect(() => {
+    if (!open || !portal || appearance === 'glide') return
+    // DSH's initial focus can precede its portal placement. Focus after that commit.
+    const frame = requestAnimationFrame(() => firstOptionRef.current?.closest('button')?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [open, portal, appearance, firstEnabled])
 
   // 选中项被禁用时不认这个 value（例如 placeholder 自身）：原生 `<select>` 的 value
   // 同样不会落在 disabled option 上，保持一致，免得界面出现「选中了一个不能选的项」。
@@ -129,9 +137,14 @@ export function SelectMenu({
     ...(placeholder === undefined
       ? []
       : [{ id: '', label: placeholder, disabled: true } satisfies MenuEntry]),
-    ...options.map((option): MenuEntry => ({
+    ...options.map((option, index): MenuEntry => ({
       id: option.value,
-      label: option.label,
+      label:
+        portal && index === firstEnabled ? (
+          <span ref={firstOptionRef}>{option.label}</span>
+        ) : (
+          option.label
+        ),
       disabled: option.disabled,
     })),
   ]
@@ -197,6 +210,11 @@ export function SelectMenu({
       <span
         style={{ display: 'contents' }}
         onKeyDownCapture={(event) => {
+          if (open && event.key === 'Escape') {
+            event.preventDefault()
+            event.stopPropagation()
+            close()
+          }
           // Portal menus must leave from their trigger's document position.
           if (open && event.key === 'Tab') close()
         }}

@@ -180,7 +180,7 @@ test.describe('#158 七处下拉的两档审计', () => {
     await setRuntimeFixture('approval')
     await bob.reload()
     await bob.goto(`/tasks/${taskId}`)
-    await expect(bob.getByRole('heading', { name: '开始新执行' })).toBeVisible()
+    await expect(bob.getByLabel('指令', { exact: true })).toBeVisible()
 
     await bob.locator('.execution-settings > summary').click()
     await selectFromMenu(bob.getByLabel('选择 Agent'), `审计代理 ${RUN_TAG}`)
@@ -195,7 +195,8 @@ test.describe('#158 七处下拉的两档审计', () => {
     for (const point of launchPoints) {
       const trigger = bob.getByLabel(point.label)
       await assertNotNativeSelect(trigger, launcher, point.label)
-      await assertMenuTriggerTokens(trigger)
+      if (point.id === 'run-agent') await assertComposerTrigger(trigger)
+      else await assertMenuTriggerTokens(trigger)
     }
     // 显式设备选定后才展开所属 Workspace；配置版本默认已固定。
     await selectFromMenu(bob.getByLabel('选择 Workspace'), 'e2e-ws')
@@ -206,7 +207,7 @@ test.describe('#158 七处下拉的两档审计', () => {
       for (const point of launchPoints) {
         const trigger = bob.getByLabel(point.label)
         if (!(await trigger.isEnabled())) continue // disabled 的下拉没有可开的列表，只截控件
-        await auditMenuAt(bob, trigger, `${point.shot}-${vp.name}`, vp)
+        await auditMenuAt(bob, trigger, `${point.shot}-${vp.name}`, vp, point.id === 'run-agent')
       }
     }
     await bob.setViewportSize({ width: 1280, height: 720 })
@@ -263,21 +264,26 @@ async function auditMenuAt(
   trigger: ReturnType<Page['locator']>,
   shotName: string,
   viewport: { name: string; width: number; height: number },
+  composer = false,
 ): Promise<void> {
+  const settingsPanel = trigger.locator('xpath=ancestor::*[@data-settings-panel]')
+  if ((await settingsPanel.count()) > 0 && !(await settingsPanel.isVisible()))
+    await page.getByLabel('执行设置', { exact: true }).click()
   // **每一档都判一次 token 来源**（评审 A-1 的补充）：`assertMenuTriggerTokens` 早先只在
   // 1280 档调用过，于是"有人往 `@media (max-width: 390px)` 里把触发器改松"这件事在浏览器侧
   // 也没有判据。源码侧现在有 `@media` 感知的扫描器（`select-menu.spec.tsx`），这里补浏览器
   // 侧的同档复核——两档各判一次，覆盖面才与截图范围一致。
-  await assertMenuTriggerTokens(trigger)
+  if (composer) await assertComposerTrigger(trigger)
+  else await assertMenuTriggerTokens(trigger)
   await trigger.click()
   const menu = page.getByRole('menu')
   await expect(menu).toBeVisible()
+  await expect(menu.locator('[role="menuitem"]:not(:disabled)').first()).toBeFocused()
   const box = await menu.boundingBox()
   expect(box, `${shotName}：菜单没有可测的包围盒`).not.toBeNull()
   const b = box as { x: number; y: number; width: number; height: number }
 
-  // ① 不超出视口（左右都要留边：vendored Menu 的 portal 定位有 12px MARGIN，本仓未接线 portal，
-  //    所以这里判的是 in-place 定位的实际结果）
+  // ① 不超出视口；执行参数菜单走 portal，其余保留原落页方式。
   expect(b.x, `${shotName}：菜单左边越出视口（x=${b.x}）`).toBeGreaterThanOrEqual(0)
   expect(
     b.x + b.width,
@@ -301,6 +307,14 @@ async function auditMenuAt(
 
   await page.keyboard.press('Escape')
   await expect(menu).toBeHidden()
+}
+
+/** Composer Agent uses the intentional borderless Micro variant; fields keep the DSH contract. */
+async function assertComposerTrigger(trigger: ReturnType<Page['locator']>): Promise<void> {
+  await expect(trigger).toHaveClass(/glide-select__trigger/)
+  await expect(trigger).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  await expect(trigger).toHaveCSS('border-top-width', '0px')
+  await expect(trigger).toHaveCSS('border-top-left-radius', '12px')
 }
 
 /** 经真实 Agent 页建一个 Agent（Plugin Pack 走真人路径：点开 → 点选项）。 */
