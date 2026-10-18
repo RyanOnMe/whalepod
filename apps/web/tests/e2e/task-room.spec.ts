@@ -410,7 +410,7 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     const acceptButton = bob.getByRole('button', { name: '接受任务' })
     await acceptButton.focus()
     await bob.keyboard.press('Enter')
-    await expect(bob.getByText('你已接受此任务。')).toBeVisible()
+    await expect(bob.getByTestId('task-assignment-state')).toHaveText('已接受')
 
     // ---- Bob：留言（textarea 内 Enter 是换行；Tab 到提交按钮激活——键盘链成立点） ----
     await bob.getByRole('button', { name: '团队讨论', exact: true }).click()
@@ -426,7 +426,7 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     // Bob 接受后任务状态仍是未开始（in_progress 随 Run 启动），可见的是
     // 「已接受」徽标 + 非责任人视角的第三方陈述措辞。
     await alice.getByRole('button', { name: 'Agent 执行', exact: true }).click()
-    await expect(alice.getByText('责任人已接受此任务。')).toBeVisible()
+    await expect(alice.getByTestId('task-assignment-state')).toHaveText('已接受')
     await alice.getByRole('button', { name: '团队讨论', exact: true }).click()
     // #152：留言作者与分配状态这一屏同样零内部词汇（`accepted` 只能以「已接受」出现）
     await expect(alice.locator('span.badge', { hasText: '已接受' }).first()).toBeVisible()

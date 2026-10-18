@@ -341,7 +341,7 @@ describe('根据意见修订与真人验收 (#327)', () => {
       await selectOption(user, '选择 Agent', 'Builder')
       await user.click(screen.getByRole('button', { name: '开始执行' }))
       await waitFor(() => expect(f.posts).toHaveLength(1))
-      expect(screen.getByRole('button', { name: '执行方式' })).toBeDisabled()
+      expect(screen.getByLabelText('执行方式')).toBeDisabled()
       for (const name of order === 'review-then-revision'
         ? ['发起复核', '根据意见修订']
         : ['根据意见修订', '发起复核']) {
@@ -351,7 +351,7 @@ describe('根据意见修订与真人验收 (#327)', () => {
       await act(async () => {
         release()
       })
-      await waitFor(() => expect(screen.getByRole('button', { name: '执行方式' })).toBeEnabled())
+      await waitFor(() => expect(screen.getByLabelText('执行方式')).toBeEnabled())
       expect(f.posts).toHaveLength(1)
       if (order === 'review-then-revision') {
         expect(screen.getByTestId('revision-context')).toHaveTextContent(f.artifact.title)

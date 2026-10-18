@@ -282,7 +282,9 @@ describe('auth-navigation', () => {
     const acceptButton = await screen.findByRole('button', { name: '接受任务' })
     acceptButton.focus()
     await user.keyboard('{Enter}')
-    expect(await screen.findByText('你已接受此任务。')).toBeVisible()
+    await waitFor(() =>
+      expect(screen.getByTestId('task-assignment-state')).toHaveTextContent('已接受'),
+    )
 
     // 留言（键盘：聚焦输入框 + 输入 + Tab 到发送 + Enter）
     await showWorkspace('discussion')

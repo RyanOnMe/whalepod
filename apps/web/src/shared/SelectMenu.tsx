@@ -75,6 +75,7 @@ export interface SelectMenuOption {
 
 export interface SelectMenuProps {
   appearance?: 'default' | 'glide'
+  portal?: boolean
   /** 触发器按钮的 id：沿用原 `<select>` 的 id，接口面与 e2e 定位不退化。 */
   id: string
   /** 可见标签文案；渲染成 `<label htmlFor={id}>`，与原来一样是触发器的可访问名来源。 */
@@ -113,6 +114,7 @@ export function SelectMenu({
   disabled = false,
   hint,
   appearance = 'default',
+  portal = false,
 }: SelectMenuProps): ReactNode {
   const [open, setOpen] = useState(false)
   const labelId = useId()
@@ -193,6 +195,7 @@ export function SelectMenu({
         {label}
       </label>
       <Menu
+        portal={portal}
         open={open}
         // 打开即聚焦首项：这是 Menu 里方向键导航与「Esc 后焦点回触发器」的**前提**
         // （上游 autoFocus 为 false 时那两条都不生效）。真人从键盘进来的路径必须留着。

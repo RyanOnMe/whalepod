@@ -93,10 +93,22 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
     await owner.waitForURL(/\/tasks\//)
     const taskId = new URL(owner.url()).pathname.split('/').pop()!
     await owner.getByRole('button', { name: '接受任务' }).click()
-    await expect(owner.getByText('你已接受此任务。')).toBeVisible()
+    await expect(owner.getByTestId('task-assignment-state')).toHaveText('已接受')
     await member.goto(`/tasks/${taskId}`)
 
     await expect(owner.getByRole('heading', { name: '我们要完成什么？' })).toBeVisible()
+    await expect(owner.getByRole('button', { name: '取消任务', exact: true })).toHaveCount(0)
+    await expect(owner.getByText('当前没有等待审批的操作。')).toHaveCount(0)
+    await expect(owner.getByText('准备开始 · 执行由你确认')).toHaveCount(0)
+    await expect(owner.getByRole('button', { name: '执行方式', exact: true })).toHaveCount(0)
+    await expect(owner.getByLabel('执行设置', { exact: true })).toHaveCount(1)
+    await expect(owner.getByTestId('execution-target-summary')).not.toBeVisible()
+    const header = await owner.locator('.task-header').boundingBox()
+    expect(header!.height).toBeLessThanOrEqual(80)
+    const visibleComposerText = (
+      await owner.locator('#execution-channel > .workspace-dock').innerText()
+    ).trim()
+    expect(visibleComposerText.length).toBeLessThanOrEqual(60)
     await owner.screenshot({ path: join(evidence, 'desktop-ready.png') })
     const microLayouts = []
     for (const width of [1440, 390, 320]) {
@@ -121,10 +133,29 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
       await owner.keyboard.press('Escape')
       await expect(agent).toBeFocused()
       await expect(menu).toHaveCount(0)
+      const barBefore = await bar.boundingBox()
+      const settings = owner.getByLabel('执行设置', { exact: true })
+      await settings.click()
+      const panel = owner.getByRole('region', { name: '执行参数' })
+      await expect(panel).toBeVisible()
+      const settingsBounds = await panel.boundingBox()
+      expect(settingsBounds!.x).toBeGreaterThanOrEqual(0)
+      expect(settingsBounds!.y).toBeGreaterThanOrEqual(0)
+      expect(settingsBounds!.x + settingsBounds!.width).toBeLessThanOrEqual(width)
+      expect(settingsBounds!.y + settingsBounds!.height).toBeLessThanOrEqual(960)
+      expect((await bar.boundingBox())!.height).toBe(barBefore!.height)
+      await owner.keyboard.press('Tab')
+      await expect(owner.getByLabel('执行方式', { exact: true })).toBeFocused()
+      await owner.keyboard.press('Escape')
+      await expect(settings).toBeFocused()
+      await expect(panel).not.toBeVisible()
       microLayouts.push({
         width,
         menu: bounds,
         portal,
+        settings: settingsBounds,
+        settingsKeyboard: true,
+        composerHeightStable: true,
       })
     }
     await owner.emulateMedia({ reducedMotion: 'reduce' })
@@ -143,6 +174,12 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
       keyboardSelect: true,
       reducedMotion: true,
       oneInstruction: true,
+      conciseDefault: {
+        headerHeight: header!.height,
+        composerTextLength: visibleComposerText.length,
+        oneSettings: true,
+        noEmptyApproval: true,
+      },
     })
 
     await owner.getByRole('button', { name: '团队讨论', exact: true }).click()
@@ -162,8 +199,17 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
       draftRetained: true,
       separateChannel: true,
     })
+    const taskMenu = owner.getByLabel('任务详情', { exact: true })
+    await taskMenu.click()
+    await expect(owner.getByTestId('task-assignee')).toBeVisible()
+    await owner.getByRole('button', { name: '取消任务', exact: true }).click()
+    await expect(owner.getByRole('dialog')).toBeVisible()
+    await owner.getByRole('button', { name: '返回', exact: true }).click()
+    await expect(taskMenu).toBeFocused()
+    await expect(owner.getByRole('button', { name: '取消任务', exact: true })).toHaveCount(0)
     await selectFromMenu(owner.getByLabel('选择 Agent'), 'Builder')
     await owner.locator('.execution-settings > summary').click()
+    await expect(owner.getByRole('button', { name: '执行方式', exact: true })).toBeVisible()
     await expect(owner.locator('label[for="run-revision"]')).toHaveCSS('clip-path', 'none')
     facts[0]!.settingsLabelsVisible = true
     await owner.screenshot({ path: join(evidence, 'desktop-settings.png') })
@@ -185,6 +231,11 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
     await owner.getByTestId('approve-button').click()
     await waitForRunStatus(runId, 'completed', 120_000)
     await waitForRuntimeReleased(runId)
+    await expect(owner.locator('.run-live-stream')).not.toBeVisible()
+    await expect(
+      owner.locator('.workspace-reply p').filter({ hasText: 'Artifact published.' }),
+    ).toHaveCount(1)
+
     await expect(owner.getByRole('button', { name: /查看交付物/ }).first()).toBeVisible()
     await expect(member.getByRole('button', { name: /查看交付物/ })).toHaveCount(0)
     facts.push({

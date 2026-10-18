@@ -1,3 +1,4 @@
+import { showTaskMenu } from './workspace.js'
 /**
  * Agent 可被指派（#239；ADR-0009 决策 6）——Web 组件面。
  *
@@ -507,17 +508,12 @@ describe('#239 Task Room：Agent-task 的呈现', () => {
   it('AssignmentPanel：不渲染接受/拒绝；陈述指派关系与责任人', async () => {
     const task = agentTask()
     renderApp(`/tasks/${task.id}`, loggedInHandlers(ALICE, roomHandlers(task)))
-    await screen.findByTestId('assignment-agent-note')
-    await waitFor(() =>
-      expect(screen.getByTestId('assignment-agent-note')).toHaveTextContent(
-        '指派给 Agent「report-writer」执行',
-      ),
-    )
+    await showTaskMenu()
+    await waitFor(() => expect(screen.getByTestId('task-agent')).toHaveTextContent('report-writer'))
     expect(screen.queryByRole('button', { name: '接受任务' })).toBeNull()
     expect(screen.queryByRole('button', { name: '拒绝任务' })).toBeNull()
-    const note = screen.getByTestId('assignment-agent-note')
-    expect(note).toHaveTextContent('Bob') // 指派人（第三方视角用人名）
-    expect(note).toHaveTextContent('验收与审批都在责任人手上')
+    expect(screen.getByTestId('task-assignee')).toHaveTextContent('Bob')
+    expect(screen.getByTestId('task-assignment-state')).toHaveTextContent('已接受')
   })
 
   it('指令流：auto_assignment 消息标注「指派自动驱动」', async () => {

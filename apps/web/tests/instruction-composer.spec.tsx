@@ -1,3 +1,4 @@
+import { showExecutionOptions } from './workspace.js'
 /**
  * 执行区输入（切片⑥b）。
  *
@@ -278,15 +279,19 @@ describe('#244 审批档位胶囊（知情 + full_access 确认）', () => {
     renderComposer([], true)
     // 活跃 Run 默认 approval_required：默认态也要可见，不是只有放权才亮胶囊。
     const pill = await screen.findByTestId('instruction-approval-pill')
-    expect(pill.textContent).toContain('需要逐次批准')
-    expect(pill.textContent).toContain('当前运行')
+    expect(pill.textContent).toContain('逐次批准')
+    await showExecutionOptions()
+    expect(screen.getByTestId('instruction-approval-source')).toHaveTextContent('当前运行')
+    expect(screen.getByTestId('instruction-approval-source')).toBeVisible()
   })
 
   it('知情·追问（完全权限）：Run 固化 full_access 时胶囊照实说', async () => {
     renderComposer([], true, { approvalPreview: { policy: 'full_access', source: 'active_run' } })
     const pill = await screen.findByTestId('instruction-approval-pill')
     expect(pill.textContent).toContain('完全权限')
-    expect(pill.textContent).toContain('当前运行')
+    await showExecutionOptions()
+    expect(screen.getByTestId('instruction-approval-source')).toHaveTextContent('当前运行')
+    expect(screen.getByTestId('instruction-approval-source')).toBeVisible()
   })
 
   it('知情·任务覆盖：Task 覆盖 full_access 时胶囊显示档位与来源', async () => {
@@ -295,7 +300,9 @@ describe('#244 审批档位胶囊（知情 + full_access 确认）', () => {
     })
     const pill = await screen.findByTestId('instruction-approval-pill')
     expect(pill.textContent).toContain('完全权限')
-    expect(pill.textContent).toContain('任务覆盖')
+    await showExecutionOptions()
+    expect(screen.getByTestId('instruction-approval-source')).toHaveTextContent('任务覆盖')
+    expect(screen.getByTestId('instruction-approval-source')).toBeVisible()
   })
 
   it('知情·Revision 默认：无覆盖时显示服务端预解析的默认档', async () => {
@@ -304,13 +311,16 @@ describe('#244 审批档位胶囊（知情 + full_access 确认）', () => {
     })
     const pill = await screen.findByTestId('instruction-approval-pill')
     expect(pill.textContent).toContain('完全权限')
-    expect(pill.textContent).toContain('Revision 默认')
+    await showExecutionOptions()
+    expect(screen.getByTestId('instruction-approval-source')).toHaveTextContent('Revision 默认')
+    expect(screen.getByTestId('instruction-approval-source')).toBeVisible()
   })
 
   it('知情·不可预解析：无可继承 Run 时胶囊说未知，不编造档位', async () => {
     renderComposer([], false, { approvalPreview: null })
     const pill = await screen.findByTestId('instruction-approval-pill')
-    expect(pill.textContent).toContain('未知')
+    expect(pill.textContent).toContain('权限待确认')
+    expect(pill).toHaveAttribute('data-policy', 'unknown')
     expect(pill.textContent).not.toContain('完全权限')
     expect(pill.textContent).not.toContain('需要逐次批准')
   })

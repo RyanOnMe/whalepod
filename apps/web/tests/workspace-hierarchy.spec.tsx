@@ -22,8 +22,8 @@ function room() {
     `/tasks/${task.id}`,
     loggedInHandlers(BOB, [
       taskRoomHandler(task),
-      devicesHandler(),
-      workspacesHandler(),
+      devicesHandler([]),
+      workspacesHandler([]),
       { method: 'GET', url: /\/agents$/, respond: () => ok([]) },
     ]),
   )
@@ -35,13 +35,13 @@ describe('工作区信息层级', () => {
     room()
     await screen.findByRole('heading', { name: '整理验收报告' })
     expect(screen.getByTestId('task-back-link').querySelector('svg')).not.toBeNull()
-    expect(screen.queryByRole('button', { name: '取消任务' })).toBeNull()
+    expect(screen.getByRole('button', { name: '取消任务' })).not.toBeVisible()
     expect(screen.queryByText('当前责任人')).toBeNull()
     await user.click(screen.getByLabelText('任务详情'))
     expect(screen.getByRole('button', { name: '取消任务' })).toBeVisible()
     expect(screen.getByTestId('task-assignee')).toHaveTextContent('你')
     await user.keyboard('{Escape}')
-    expect(screen.queryByRole('button', { name: '取消任务' })).toBeNull()
+    expect(screen.getByRole('button', { name: '取消任务' })).not.toBeVisible()
     expect(screen.getByLabelText('任务详情')).toHaveFocus()
   })
 

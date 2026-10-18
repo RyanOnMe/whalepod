@@ -164,7 +164,7 @@ test.describe('#158 七处下拉的两档审计', () => {
     await expect(bob.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
     await bob.goto(`/tasks/${taskId}`)
     await bob.getByRole('button', { name: '接受任务' }).click()
-    await expect(bob.getByText('你已接受此任务。')).toBeVisible()
+    await expect(bob.getByTestId('task-assignment-state')).toHaveText('已接受')
 
     // 设备：经控制面起真 node（配一个 workspace），设备投影到 Hub 后 RunLauncher 才选得到
     await bob.goto('/devices')

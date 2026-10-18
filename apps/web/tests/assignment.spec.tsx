@@ -37,7 +37,9 @@ describe('assignment', () => {
       `/tasks/${accepted.id}`,
       loggedInHandlers(ALICE, [roomHandler(accepted)]),
     )
-    expect(await screen.findByText('责任人已接受此任务。')).toBeVisible()
+    await waitFor(() =>
+      expect(screen.getByTestId('task-assignment-state')).toHaveTextContent('已接受'),
+    )
     expect(document.body.textContent).not.toContain('accepted')
     unmount()
     const rejected = makeTask({ assigneeUserId: BOB.userId, assignmentStatus: 'rejected' })
@@ -67,7 +69,9 @@ describe('assignment', () => {
       },
     ])
     await user.click(await screen.findByRole('button', { name: '接受任务' }))
-    expect(await screen.findByText('你已接受此任务。')).toBeVisible()
+    await waitFor(() =>
+      expect(screen.getByTestId('task-assignment-state')).toHaveTextContent('已接受'),
+    )
     expect(screen.queryByRole('heading', { name: 'Agent 快照' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '接受任务' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '拒绝任务' })).not.toBeInTheDocument()
@@ -107,7 +111,9 @@ describe('assignment', () => {
     } as typeof task
     room.setTask(accepted)
     slow.resolve({ status: 200, body: { ok: true, data: accepted } })
-    expect(await screen.findByText('你已接受此任务。')).toBeVisible()
+    await waitFor(() =>
+      expect(screen.getByTestId('task-assignment-state')).toHaveTextContent('已接受'),
+    )
   })
 
   it('非责任人视角：已接受任务显示第三方陈述（责任人已接受）', async () => {
@@ -117,7 +123,9 @@ describe('assignment', () => {
       acceptedAt: '2026-08-26T00:00:00.000Z',
     })
     renderApp(`/tasks/${task.id}`, loggedInHandlers(ALICE, [roomHandler(task)]))
-    expect(await screen.findByText('责任人已接受此任务。')).toBeVisible()
+    await waitFor(() =>
+      expect(screen.getByTestId('task-assignment-state')).toHaveTextContent('已接受'),
+    )
     expect(screen.queryByText('你已接受此任务。')).not.toBeInTheDocument()
     // 非责任人看不到接受/拒绝按钮。
     expect(screen.queryByRole('button', { name: '接受任务' })).not.toBeInTheDocument()
@@ -197,7 +205,9 @@ describe('assignment', () => {
       acceptedAt: '2026-08-26T00:00:00.000Z',
     })
     renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [roomHandler(task)]))
-    expect(await screen.findByText('你已接受此任务。')).toBeVisible()
+    await waitFor(() =>
+      expect(screen.getByTestId('task-assignment-state')).toHaveTextContent('已接受'),
+    )
     expect(screen.queryByRole('button', { name: '接受任务' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Agent 快照' })).not.toBeInTheDocument()
     expect(screen.queryByText(/Run 创建后/)).not.toBeInTheDocument()

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router'
 import { api } from '../shared/api/client.js'
-import { RUN_STATUS_LABEL, formatBytes } from '../shared/format.js'
+import { formatBytes } from '../shared/format.js'
 import { EXIT_PRESENCE_MS } from '../shared/motion.js'
 import { useHashFocus } from '../shared/useHashFocus.js'
 import { usePresence } from '../shared/usePresence.js'
@@ -364,14 +364,8 @@ function TaskRoom(): ReactNode {
                   </p>
                 ) : instructions.length === 0 && runs.length === 0 ? (
                   <div className="workspace-welcome">
-                    <span className="workspace-emblem" aria-hidden="true">
-                      W
-                    </span>
                     <h2>我们要完成什么？</h2>
-                    <p>
-                      {task.description ||
-                        '还没有人驱动过这个任务。写下目标，选择 Agent，开始推进。'}
-                    </p>
+                    {task.description ? <p>{task.description}</p> : null}
                   </div>
                 ) : (
                   <InstructionList
@@ -456,13 +450,6 @@ function TaskRoom(): ReactNode {
               </div>
               {session !== null ? (
                 <div className="workspace-dock">
-                  <p className="workspace-status" role="status">
-                    {activeRun === undefined
-                      ? runs.length === 0
-                        ? '准备开始 · 执行由你确认'
-                        : '本次执行已结束 · 任务仍以真人确认为准'
-                      : `${RUN_STATUS_LABEL[activeRun.status]} · ${activeRun.status === 'waiting_approval' ? '等待责任人处理审批' : '可发送追问或查看运行详情'}`}
-                  </p>
                   <ExecutionComposer
                     compact
                     key={task.id}

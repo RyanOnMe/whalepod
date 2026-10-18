@@ -122,6 +122,8 @@ export function AssignmentPanel({
     )
   }
 
+  if (compact && task.assignmentStatus === 'accepted') return null
+
   return (
     <section
       id="task-assignment"

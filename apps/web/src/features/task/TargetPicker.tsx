@@ -45,6 +45,8 @@ export interface TargetPickerProps {
   deviceAriaLabel?: string
   workspaceAriaLabel?: string
   showDeviceStatus?: boolean
+  portalMenus?: boolean
+  disabled?: boolean
 }
 
 export function TargetPicker({
@@ -56,6 +58,8 @@ export function TargetPicker({
   deviceAriaLabel,
   workspaceAriaLabel,
   showDeviceStatus = false,
+  portalMenus = false,
+  disabled = false,
 }: TargetPickerProps): ReactNode {
   // 只对责任人发请求：被授权成员本来就不该看到（也看不到）别人的设备。
   const devicesQuery = useQuery({
@@ -126,6 +130,8 @@ export function TargetPicker({
         </span>
         <div className="target-actions">
           <SelectMenu
+            portal={portalMenus}
+            disabled={disabled}
             id="target-device"
             label="指定设备"
             {...(deviceAriaLabel !== undefined ? { ariaLabel: deviceAriaLabel } : {})}
@@ -151,6 +157,8 @@ export function TargetPicker({
         {value.workspaceId === '' ? '指定设备（工作区自动选）' : '显式指定'}
       </span>
       <SelectMenu
+        portal={portalMenus}
+        disabled={disabled}
         id="target-device"
         label="设备"
         {...(deviceAriaLabel !== undefined ? { ariaLabel: deviceAriaLabel } : {})}
@@ -165,6 +173,8 @@ export function TargetPicker({
         onChange={(deviceId) => onChange({ deviceId, workspaceId: '' })}
       />
       <SelectMenu
+        portal={portalMenus}
+        disabled={disabled}
         id="target-workspace"
         label="工作区"
         {...(workspaceAriaLabel !== undefined ? { ariaLabel: workspaceAriaLabel } : {})}
@@ -185,6 +195,7 @@ export function TargetPicker({
       <button
         type="button"
         className="button target-reset"
+        disabled={disabled}
         data-testid="target-reset"
         onClick={() => onChange(null)}
       >

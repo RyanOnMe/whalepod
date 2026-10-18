@@ -153,7 +153,7 @@ async function setupTeamAndTask(): Promise<void> {
   await expect(bob.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
   await bob.goto(`/tasks/${shared.taskId}`)
   await bob.getByRole('button', { name: '接受任务' }).click()
-  await expect(bob.getByText('你已接受此任务。')).toBeVisible()
+  await expect(bob.getByTestId('task-assignment-state')).toHaveText('已接受')
   shared.bobCookie = await sessionCookie(shared.bobContext!)
 }
 
@@ -1179,7 +1179,7 @@ test('个人行动入口：双用户五类事项只读定位、真人确认与�
     const acceptedNavigation = await navigate(bobHome, `接受任务 · ${title}`, 'task-assignment')
     const beforeAccept = (await taskFact(taskId)).assignmentStatus
     await bobHome.getByRole('button', { name: '接受任务', exact: true }).click()
-    await expect(bobHome.getByText('你已接受此任务。', { exact: true })).toBeVisible()
+    await expect(bobHome.getByTestId('task-assignment-state')).toHaveText('已接受')
     actions.push({
       kind: 'accept_assignment',
       taskId,
@@ -1223,7 +1223,7 @@ test('个人行动入口：双用户五类事项只读定位、真人确认与�
       ...reassignedNavigation,
     })
     await aliceHome.getByRole('button', { name: '接受任务', exact: true }).click()
-    await expect(aliceHome.getByText('你已接受此任务。', { exact: true })).toBeVisible()
+    await expect(aliceHome.getByTestId('task-assignment-state')).toHaveText('已接受')
     await Promise.all([bobHome.goto('/'), aliceHome.goto('/')])
     await expect(region(aliceHome)).toHaveAttribute('aria-busy', 'false')
     await expect(

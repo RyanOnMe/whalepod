@@ -23,6 +23,7 @@ import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { useMemberDirectory } from '../team/memberDirectory.js'
 import { ExecutionPreparation } from './ExecutionPreparation.js'
 import { TargetPicker } from './TargetPicker.js'
+import { ComposerSettings, type SettingsDisclosure } from './ComposerSettings.js'
 import PromptBar from '../../vendor/react-bits-micro/PromptBar.js'
 import { InstructionSendIcon } from './InstructionSendIcon.js'
 import type { InstructionOutcome } from './InstructionComposer.js'
@@ -50,6 +51,8 @@ export interface RunLauncherProps {
   hasActiveRun: boolean
   embedded?: boolean
   compact?: boolean
+  settingsContent?: ReactNode
+  settingsDisclosure?: SettingsDisclosure
   artifactInputIds?: string[] | undefined
   /** 交接输入（#380）：勾选「附带上游交接材料」时显式带上已确认 receipt。 */
   handoffReceiptId?: string | undefined
@@ -73,6 +76,8 @@ export function RunLauncher({
   hasActiveRun,
   embedded = false,
   compact = false,
+  settingsContent,
+  settingsDisclosure,
   artifactInputIds,
   handoffReceiptId,
   buttonLabel = '开始执行',
@@ -356,7 +361,7 @@ export function RunLauncher({
                   label="Agent"
                   ariaLabel="选择 Agent"
                   value={agentId}
-                  placeholder="选择 Agent…"
+                  placeholder="选择 Agent"
                   options={agentOptions}
                   onChange={(next) => {
                     setAgentId(next)
@@ -364,21 +369,27 @@ export function RunLauncher({
                   }}
                 />
               </div>
-              <details className="execution-settings">
-                <summary title="配置版本与执行环境">执行设置</summary>
-                <div className="field">
+              <ComposerSettings
+                disabled={start.isPending}
+                {...(settingsDisclosure === undefined ? {} : { disclosure: settingsDisclosure })}
+              >
+                {settingsContent}
+                <div className="field" data-testid="execution-revision">
                   <SelectMenu
+                    portal
                     id="run-revision"
-                    label="Revision（选定即快照）"
+                    label="配置版本"
                     ariaLabel="选择 Revision"
                     value={effectiveRevisionId}
                     placeholder="先选 Agent…"
                     options={revisionOptions}
                     onChange={setProfileRevisionId}
-                    disabled={agentId === ''}
+                    disabled={agentId === '' || start.isPending}
                   />
                 </div>
                 <TargetPicker
+                  portalMenus
+                  disabled={start.isPending}
                   isAssignee={isAssignee}
                   value={deviceId === '' ? null : { deviceId, workspaceId }}
                   onChange={(next) => {
@@ -394,7 +405,49 @@ export function RunLauncher({
                   workspaceAriaLabel="选择 Workspace"
                   showDeviceStatus
                 />
-              </details>
+                {isAssignee &&
+                selectedRevision !== undefined &&
+                typeof selectedRevision.credentialSlot === 'string' &&
+                typeof selectedRevision.provider === 'string' ? (
+                  <ExecutionPreparation
+                    taskId={task.id}
+                    selection={{
+                      agentId,
+                      profileRevisionId: selectedRevision.id,
+                      ...(deviceId === '' ? {} : { deviceId }),
+                      ...(workspaceId === '' ? {} : { workspaceId }),
+                    }}
+                    provider={selectedRevision.provider}
+                    credentialSlot={selectedRevision.credentialSlot}
+                    draft={prompt}
+                    onTrialDraft={setPrompt}
+                    onTarget={onPreparationTarget}
+                    onBlocked={onPreparationBlocked}
+                  />
+                ) : null}
+                <p className="mutation-hint" data-testid="instruction-approval-source">
+                  审批来源：{task.approvalPolicy === null ? 'Revision 默认' : '任务覆盖'}
+                </p>
+              </ComposerSettings>
+              {isAssignee && deviceId !== '' ? (
+                <span
+                  className="composer-target"
+                  data-testid="execution-target-summary"
+                  title="本次执行环境"
+                >
+                  {selectedDevice?.name ?? '所选设备'} ·{' '}
+                  {workspaceId === '' ? '工作区自动选' : (selectedWorkspace?.name ?? '所选工作区')}
+                </span>
+              ) : null}
+              {agentId !== '' || task.approvalPolicy !== null ? (
+                <span
+                  className="composer-approval-pill"
+                  data-testid="instruction-approval-pill"
+                  data-policy={resolvedApprovalPolicy}
+                >
+                  {resolvedApprovalPolicy === 'full_access' ? '完全权限' : '逐次批准'}
+                </span>
+              ) : null}
             </>
           }
           action={
@@ -403,6 +456,8 @@ export function RunLauncher({
               className="button button-primary instruction-send"
               disabled={!ready || start.isPending}
               aria-busy={start.isPending}
+              aria-label={start.isPending ? '发送中…' : buttonLabel}
+              title={buttonLabel}
               data-feedback={feedback}
               data-instant={instant ? '' : undefined}
               onPointerDown={() => setInstant(false)}
@@ -411,7 +466,7 @@ export function RunLauncher({
               }}
             >
               <InstructionSendIcon feedback={feedback} />
-              {start.isPending ? '发送中…' : buttonLabel}
+              {compact ? null : start.isPending ? '发送中…' : buttonLabel}
             </button>
           }
         >
@@ -421,7 +476,7 @@ export function RunLauncher({
               aria-label="指令"
               value={prompt}
               maxLength={10_000}
-              disabled={start.isPending}
+              disabled={blocked || start.isPending}
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
@@ -430,30 +485,21 @@ export function RunLauncher({
                   event.currentTarget.form?.requestSubmit()
                 }
               }}
-              placeholder="告诉 Agent 这次要完成什么…"
+              placeholder="输入任务要求…"
               rows={compact ? 2 : 4}
             />
           </label>
         </PromptBar>
-        {selectedRevision !== undefined ? (
-          <p className="mutation-hint" data-testid="execution-revision">
-            配置版本：r{selectedRevision.revision} · {selectedRevision.provider}/
-            {selectedRevision.model}
-          </p>
-        ) : null}
         {agentId !== '' && agentDetailQuery.isSuccess && selectedRevision === undefined ? (
           <p className="mutation-hint" role="status">
             所选配置版本不可用，请重新选择版本或 Agent。
           </p>
         ) : null}
-        <p className="mutation-hint" data-testid="execution-target-summary">
-          执行环境：
-          {!isAssignee
-            ? '使用责任人的环境。'
-            : deviceId === ''
-              ? '自动选择你的可用环境，可在执行设置中指定。'
-              : `显式指定：${selectedDevice?.name ?? '所选设备'} · ${workspaceId === '' ? '工作目录自动选择' : (selectedWorkspace?.name ?? '所选工作目录')}`}
-        </p>
+        {preparationBlocked ? (
+          <p className="mutation-hint" role="status">
+            执行环境未就绪，请打开执行设置。
+          </p>
+        ) : null}
         {configurationBlocker !== null ? (
           <p className="mutation-hint" role="status" data-testid="execution-configuration-blocker">
             {configurationBlocker}
@@ -495,26 +541,7 @@ export function RunLauncher({
             完成配对并登记工作目录。
           </p>
         ) : null}
-        {isAssignee &&
-        selectedRevision !== undefined &&
-        typeof selectedRevision.credentialSlot === 'string' &&
-        typeof selectedRevision.provider === 'string' ? (
-          <ExecutionPreparation
-            taskId={task.id}
-            selection={{
-              agentId,
-              profileRevisionId: selectedRevision.id,
-              ...(deviceId === '' ? {} : { deviceId }),
-              ...(workspaceId === '' ? {} : { workspaceId }),
-            }}
-            provider={selectedRevision.provider}
-            credentialSlot={selectedRevision.credentialSlot}
-            draft={prompt}
-            onTrialDraft={setPrompt}
-            onTarget={onPreparationTarget}
-            onBlocked={onPreparationBlocked}
-          />
-        ) : null}
+
         {isAssignee &&
         selectedRevision !== undefined &&
         typeof selectedRevision.credentialSlot !== 'string' ? (
@@ -528,17 +555,6 @@ export function RunLauncher({
           .map((query, i) => (
             <ErrorBanner key={i} error={query.error} />
           ))}
-        <span
-          className="composer-approval-pill"
-          data-testid="instruction-approval-pill"
-          data-policy={
-            agentId === '' && task.approvalPolicy === null ? 'unknown' : resolvedApprovalPolicy
-          }
-        >
-          {agentId === '' && task.approvalPolicy === null
-            ? '审批 · 未知（请先选择 Agent）'
-            : `审批 · ${resolvedApprovalPolicy === 'full_access' ? '完全权限' : '需要逐次批准'} · ${task.approvalPolicy === null ? 'Revision 默认' : '任务覆盖'}`}
-        </span>
 
         {/* #225：错误走全站口径（message + requestId），不再自写第二套错误段。 */}
         {/* #241：解析结果可见——选了完全权限（覆盖或 Revision 默认）就说出来，

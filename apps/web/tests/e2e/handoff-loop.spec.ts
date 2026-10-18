@@ -257,7 +257,7 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   await alice.waitForURL(/\/tasks\/[0-9a-f-]{36}/)
   shared.upstreamTaskId = new URL(alice.url()).pathname.split('/').pop()!
   await alice.getByRole('button', { name: '接受任务' }).click()
-  await expect(alice.getByText('你已接受此任务。')).toBeVisible()
+  await expect(alice.getByTestId('task-assignment-state')).toHaveText('已接受')
 
   // ---------- 2. 启用约定 + 起草并确认 v1 ----------
   await alice.getByRole('button', { name: /^任务约定/ }).click()
@@ -431,7 +431,7 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   // ---------- 7. Bob 接受任务、换配对自己的设备、默认勾选交接材料后执行 ----------
   await bob.reload()
   await bob.getByRole('button', { name: '接受任务' }).click()
-  await expect(bob.getByText('你已接受此任务。')).toBeVisible()
+  await expect(bob.getByTestId('task-assignment-state')).toHaveText('已接受')
   await stopNode('SIGKILL')
   const bobDeviceId = await pairNodeFor(shared.bobCookie)
   expect(bobDeviceId).toBeTruthy()
