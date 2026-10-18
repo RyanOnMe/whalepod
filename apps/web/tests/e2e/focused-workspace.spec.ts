@@ -115,6 +115,8 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
       expect(bounds!.y).toBeGreaterThanOrEqual(0)
       expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width)
       expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(960)
+      const portal = (await bar.getByRole('menu').count()) === 0
+      expect(portal).toBe(true)
       await owner.screenshot({ path: join(evidence, `micro-menu-${width}.png`) })
       await owner.keyboard.press('Escape')
       await expect(agent).toBeFocused()
@@ -122,7 +124,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
       microLayouts.push({
         width,
         menu: bounds,
-        portal: (await bar.getByRole('menu').count()) === 0,
+        portal,
       })
     }
     await owner.emulateMedia({ reducedMotion: 'reduce' })
@@ -162,6 +164,9 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
     })
     await selectFromMenu(owner.getByLabel('选择 Agent'), 'Builder')
     await owner.locator('.execution-settings > summary').click()
+    await expect(owner.locator('label[for="run-revision"]')).toHaveCSS('clip-path', 'none')
+    facts[0]!.settingsLabelsVisible = true
+    await owner.screenshot({ path: join(evidence, 'desktop-settings.png') })
     await selectFromMenu(owner.getByLabel('选择设备'), /e2e-node（在线）/)
     await selectFromMenu(owner.getByLabel('选择 Workspace'), 'e2e-ws')
     await owner.getByLabel('指令').fill('生成团队验收报告')

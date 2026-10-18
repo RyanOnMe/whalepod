@@ -17,6 +17,7 @@ const micro = fact('web.micro')
 assert.equal(micro.keyboardSelect, true)
 assert.equal(micro.reducedMotion, true)
 assert.equal(micro.oneInstruction, true)
+assert.equal(micro.settingsLabelsVisible, true)
 assert.deepEqual(
   micro.layouts.map((row: { width: number }) => row.width),
   [1440, 390, 320],
@@ -56,6 +57,7 @@ for (const row of layout.dimensions) {
 }
 for (const image of [
   'desktop-ready.png',
+  'desktop-settings.png',
   'desktop-approval.png',
   'desktop-artifact.png',
   'mobile-conversation.png',
