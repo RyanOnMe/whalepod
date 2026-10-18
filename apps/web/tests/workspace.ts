@@ -20,6 +20,11 @@ export function workspaceDetails() {
 }
 
 export async function showExecutionOptions() {
-  const summary = await screen.findByText('执行方式与草稿')
-  if (!(summary.parentElement as HTMLDetailsElement).open) await userEvent.setup().click(summary)
+  const summary = await screen.findByLabelText('执行设置')
+  if (!summary.closest('details')?.open) await userEvent.setup().click(summary)
+}
+
+export async function showTaskMenu() {
+  const summary = await screen.findByLabelText('任务详情')
+  if (!summary.closest('details')?.open) await userEvent.setup().click(summary)
 }

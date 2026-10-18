@@ -81,7 +81,7 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     await owner.waitForURL(/\/tasks\//)
     const taskId = new URL(owner.url()).pathname.split('/').pop()!
     await owner.getByRole('button', { name: '接受任务' }).click()
-    await expect(owner.getByText('你已接受此任务。')).toBeVisible()
+    await expect(owner.getByTestId('task-assignment-state')).toHaveText('已接受')
     await member.goto(`/tasks/${taskId}`)
     await expect(member.getByTestId('execution-responsibility')).toContainText('Alice')
     await member.getByRole('link', { name: '前往讨论' }).click()
@@ -98,6 +98,7 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
       if (request.url().endsWith(`/tasks/${taskId}/instructions`)) instructionPosts++
       if (request.url().endsWith(`/tasks/${taskId}/preparation-check`)) preparationPosts++
     })
+    await owner.getByLabel('执行设置', { exact: true }).click()
     await owner.getByRole('button', { name: '检查本次准备条件' }).click()
     await expect(owner.getByTestId('preparation-status')).toContainText(
       '本机已配置；未验证模型调用',
@@ -148,6 +149,7 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     )
     await owner.getByRole('link', { name: '返回任务继续准备' }).click()
     await expect(owner.locator('#task-execution')).toBeFocused()
+    await owner.getByLabel('执行设置', { exact: true }).click()
     await expect(owner.getByLabel('指令', { exact: true })).toHaveValue(returnDraft)
     await expect(owner.getByLabel('执行方式')).toContainText('开始新执行')
     await expect(owner.getByTestId('preparation-status')).toContainText('本次准备条件尚未确认')
@@ -194,6 +196,7 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     expect(explicitInstructionPosts).toBe(1)
     const firstRunId = (await firstReply.json()).data.runId as string
     await waitForRunStatus(firstRunId, 'waiting_approval')
+    await owner.getByLabel('任务详情', { exact: true }).click()
     await expect(owner.getByRole('button', { name: '提交验收', exact: true })).toBeDisabled()
     await expect(owner.getByTestId('review-condition')).toContainText('执行仍在进行')
 
@@ -274,6 +277,7 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     expect(after.profileRevisionId).toBe(before.profileRevisionId)
     expect(after.deviceId).toBe(before.deviceId)
     expect(after.workspaceId).toBe(before.workspaceId)
+    await owner.getByLabel('任务详情', { exact: true }).click()
     await expect(owner.getByRole('button', { name: '提交验收', exact: true })).toBeDisabled()
     await expect(owner.getByTestId('review-condition')).toContainText('发布至少一个交付物')
     await mkdir(preparationEvidence, { recursive: true })

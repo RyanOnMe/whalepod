@@ -85,6 +85,7 @@ async function mode(user: ReturnType<typeof userEvent.setup>, label: RegExp): Pr
   await showExecutionOptions()
   await user.click(screen.getByLabelText('执行方式'))
   await user.click(screen.getByRole('menuitem', { name: label }))
+  await waitFor(() => expect(screen.getByLabelText('执行方式')).toHaveFocus())
 }
 describe('#315 统一执行入口的真人页面', () => {
   it.each(['success', 'failure'] as const)(
@@ -143,7 +144,7 @@ describe('#315 统一执行入口的真人页面', () => {
               },
             },
       )
-      await waitFor(() => expect(chooser).toBeEnabled())
+      await waitFor(() => expect(screen.getByLabelText('执行方式')).toBeEnabled())
       if (result === 'failure') {
         expect(box).toHaveValue('这次先提交的草稿')
         expect(await screen.findByText(/稍后重试.*pending-new/)).toBeVisible()
@@ -224,7 +225,9 @@ describe('#315 统一执行入口的真人页面', () => {
     const box = await screen.findByLabelText('指令')
     await waitFor(() => expect(box).toBeEnabled())
     expect(screen.getByTestId('execution-context')).toHaveTextContent('Builder')
-    expect(screen.getByTestId('instruction-approval-pill')).toHaveTextContent('当前运行')
+    expect(screen.getByTestId('instruction-approval-pill')).toHaveTextContent('逐次批准')
+    await showExecutionOptions()
+    expect(screen.getByTestId('instruction-approval-source')).toHaveTextContent('当前运行')
     await user.type(box, '检查上文')
     await user.click(screen.getByRole('button', { name: '发送追问' }))
     await waitFor(() =>
@@ -300,7 +303,7 @@ describe('#315 统一执行入口的真人页面', () => {
     await mode(user, /继续会话/)
     const box = await screen.findByLabelText('指令')
     await waitFor(() => expect(box).toBeEnabled())
-    expect(screen.getByTestId('instruction-approval-pill')).toHaveTextContent('需要逐次批准')
+    expect(screen.getByTestId('instruction-approval-pill')).toHaveTextContent('逐次批准')
     expect(screen.getByTestId('execution-context')).toHaveTextContent('沿用来源配置版本')
     await user.type(box, '接着上文')
     await user.click(screen.getByRole('button', { name: '继续会话' }))
@@ -621,7 +624,7 @@ describe('#337 当前会话中的执行草稿', () => {
     const user = userEvent.setup()
     const f = draftNavigationFixture()
     await selectDraftAgent(user)
-    await user.click(screen.getByText('执行设置'))
+    await user.click(screen.getByLabelText('执行设置'))
     await user.click(screen.getByLabelText('选择 Revision'))
     await user.click(screen.getByRole('menuitem', { name: /^r1 / }))
     await user.click(screen.getByLabelText('选择设备'))
@@ -651,7 +654,8 @@ describe('#337 当前会话中的执行草稿', () => {
     await user.type(screen.getByLabelText('指令'), '乙的草稿')
     await returnToDraft(user, f.task.title)
     expect(screen.getByLabelText('指令')).toHaveValue('甲的草稿')
-    await user.click(screen.getByRole('button', { name: '清除当前执行草稿' }))
+    await showExecutionOptions()
+    await user.click(screen.getByRole('button', { name: '清空草稿' }))
     expect(screen.getByLabelText('指令')).toHaveValue('')
     await returnToDraft(user, f.other.title)
     expect(screen.getByLabelText('指令')).toHaveValue('乙的草稿')
@@ -810,6 +814,7 @@ describe('#338 首次准备往返与当前条件', () => {
     const f = draftNavigationFixture()
     await selectDraftAgent(user)
     await user.type(screen.getByLabelText('指令'), '返回原任务的正文')
+    await showExecutionOptions()
     const setup = screen.getByRole('link', { name: '安装并配对执行服务' })
     expect(setup).toHaveAttribute('href', `/devices?preparationTask=${f.task.id}`)
     await user.click(setup)
@@ -842,7 +847,7 @@ describe('#338 首次准备往返与当前条件', () => {
     const f = draftNavigationFixture()
     await selectDraftAgent(user)
     await user.type(screen.getByLabelText('指令'), '固定本人执行现场')
-    await user.click(screen.getByText('执行设置'))
+    await user.click(screen.getByLabelText('执行设置'))
     await user.click(screen.getByLabelText('选择设备'))
     await user.click(screen.getByRole('menuitem', { name: new RegExp(f.device.name) }))
     await user.click(screen.getByLabelText('选择 Workspace'))
@@ -854,9 +859,7 @@ describe('#338 首次准备往返与当前条件', () => {
       expect(screen.getByTestId('execution-target-blocker')).toHaveTextContent('离线'),
     )
     expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
-    expect(screen.getByTestId('execution-target-summary')).toHaveTextContent(
-      `显式指定：${f.device.name}`,
-    )
+    expect(screen.getByTestId('execution-target-summary')).toHaveTextContent(f.device.name)
     expect(screen.getByLabelText('指令')).toHaveValue('固定本人执行现场')
   })
   it.each(['revoked', 'error'] as const)('返回重新确认协作权限：%s', async (result) => {
@@ -895,6 +898,7 @@ describe('#338 首次准备往返与当前条件', () => {
     const user = userEvent.setup()
     const f = draftNavigationFixture()
     await selectDraftAgent(user)
+    await showExecutionOptions()
     await user.click(screen.getByRole('button', { name: '检查本次准备条件' }))
     await waitFor(() =>
       expect(screen.getByTestId('preparation-status')).toHaveTextContent('已确认可用'),

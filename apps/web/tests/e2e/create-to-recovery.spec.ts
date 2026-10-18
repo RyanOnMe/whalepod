@@ -582,7 +582,7 @@ test('路径 2：分给别人，对方接受后再执行——用对方的现场
   await bob.reload()
   await bob.goto(`/tasks/${taskId}`)
   await bob.getByRole('button', { name: '接受任务' }).click()
-  await expect(bob.getByText('你已接受此任务。')).toBeVisible()
+  await expect(bob.getByTestId('task-assignment-state')).toHaveText('已接受')
 
   const agentTrigger = bob.getByLabel('选择 Agent')
   await expect(agentTrigger).toBeVisible({ timeout: 30_000 })

@@ -423,6 +423,10 @@ export async function assertControlTokens(
  * @param optionText 选项文案（按可访问名匹配）
  */
 export async function selectFromMenu(trigger: Locator, optionText: string | RegExp): Promise<void> {
+  await expect(trigger).toBeAttached()
+  const settingsPanel = trigger.locator('xpath=ancestor::*[@data-settings-panel]')
+  if ((await settingsPanel.count()) > 0 && !(await settingsPanel.isVisible()))
+    await trigger.page().getByLabel('执行设置', { exact: true }).click()
   const advanced = trigger.locator('xpath=ancestor::details')
   if ((await advanced.count()) > 0 && (await advanced.first().getAttribute('open')) === null) {
     await advanced.first().locator('summary').click()

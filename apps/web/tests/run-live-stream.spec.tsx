@@ -37,7 +37,7 @@ const RUN_ID = 'b0b0b0b0-0000-4000-8000-000000000001'
  * TaskRoom 投影行——直播区只看 owner 的 Run，所以这里必须真的把 owner 写对
  * （写错时面板照常渲染、只是没有直播区，判据会以"找不到 run-live-text"报出来）。
  */
-function liveHandlers(runId: string, status: 'running' | 'completed'): MockHandler[] {
+function liveHandlers(runId: string, status: RunView['status']): MockHandler[] {
   const run: RunView = {
     id: runId,
     taskId: 'task-1',
@@ -71,7 +71,7 @@ function liveHandlers(runId: string, status: 'running' | 'completed'): MockHandl
   ]
 }
 
-async function openLivePanel(status: 'running' | 'completed', runId = RUN_ID): Promise<void> {
+async function openLivePanel(status: RunView['status'], runId = RUN_ID): Promise<void> {
   const user = userEvent.setup()
   const task = makeTask({ assigneeUserId: BOB.userId, assignmentStatus: 'accepted' })
   const run = makeRun({ id: runId, status })
@@ -116,6 +116,19 @@ describe('#275 跟随滚动的判定（纯函数，两条分支都可注入）',
 })
 
 describe('#275 流式光标', () => {
+  it.each(['failed', 'lost', 'cancelled', 'completed'] as const)(
+    '%s 的未持久化直播仍可从运行记录展开查看',
+    async (status) => {
+      await openLivePanel(status)
+      act(() => appendLiveDelta(RUN_ID, 1, '中断前尚未形成正式消息的输出'))
+      const partial = screen.getByTestId('run-live-text')
+      expect(partial).not.toBeVisible()
+      await userEvent.setup().click(screen.getByText('工具与运行记录'))
+      expect(partial).toBeVisible()
+      expect(partial).toHaveTextContent('中断前尚未形成正式消息的输出')
+    },
+  )
+
   it('运行中且有输出 → 画光标；终态 → 不画', async () => {
     await openLivePanel('running')
     act(() => {

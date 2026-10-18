@@ -15,7 +15,7 @@ type User = ReturnType<typeof userEvent.setup>
  * Revision 表单各有一个「Plugin Pack」），调用方传 `within(region)` 收窄——
  * 这与原来 `within(detail).getByLabelText(...)` 的写法一致。
  */
-export type QueryScope = Pick<Screen, 'findByRole' | 'findAllByRole'>
+export type QueryScope = Pick<Screen, 'findByRole' | 'findAllByRole' | 'queryByLabelText'>
 
 /**
  * 按可访问名取触发器按钮（迁移后 `id` 落在 `<button>` 上，不再是 `<select>`）。
@@ -48,19 +48,17 @@ export async function openSelect(
   name: string | RegExp,
   scope: QueryScope = screen,
 ): Promise<ReturnType<typeof within>> {
-  const composerOptions = document.querySelector<HTMLDetailsElement>('details.composer-options')
-  if (name === '执行方式' && composerOptions !== null && !composerOptions.open)
-    await user.click(composerOptions.querySelector('summary')!)
-  const advanced = document.querySelector<HTMLDetailsElement>('details.execution-settings')
-  if (
-    advanced !== null &&
-    !advanced.open &&
-    typeof name === 'string' &&
-    ['选择 Agent', '选择 Revision', '选择设备', '选择 Workspace', '指定设备'].includes(name)
-  ) {
-    await user.click(advanced.querySelector('summary')!)
+  const candidate = scope.queryByLabelText(name)
+  const panel = candidate?.closest<HTMLElement>('[data-settings-panel]')
+  if (panel?.hidden) await user.click(screen.getByLabelText('执行设置'))
+  const trigger = await selectTrigger(name, scope)
+  const ancestors: HTMLDetailsElement[] = []
+  for (let node = trigger.parentElement; node !== null; node = node.parentElement) {
+    if (node instanceof HTMLDetailsElement) ancestors.unshift(node)
   }
-  await user.click(await selectTrigger(name, scope))
+  for (const detail of ancestors)
+    if (!detail.open) await user.click(detail.querySelector('summary')!)
+  await user.click(trigger)
   const list = await screen.findByRole('menu')
   return within(list)
 }

@@ -42,7 +42,7 @@
  * 并在**选中后自己把焦点收回触发器**（`Menu` 只在 Esc 且 `autoFocus` 时回焦，选中路径
  * 不回；不补的话键盘用户每选一个字段就要从文档头重新 Tab，见下面的 `triggerRef`）。
  */
-import { useCallback, useId, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import GlideSelect from '../vendor/react-bits-micro/GlideSelect.js'
 import { Menu } from '../vendor/dsh-ui/Menu.js'
 import type { MenuEntry } from '../vendor/dsh-ui/Menu.js'
@@ -75,6 +75,7 @@ export interface SelectMenuOption {
 
 export interface SelectMenuProps {
   appearance?: 'default' | 'glide'
+  portal?: boolean
   /** 触发器按钮的 id：沿用原 `<select>` 的 id，接口面与 e2e 定位不退化。 */
   id: string
   /** 可见标签文案；渲染成 `<label htmlFor={id}>`，与原来一样是触发器的可访问名来源。 */
@@ -113,10 +114,19 @@ export function SelectMenu({
   disabled = false,
   hint,
   appearance = 'default',
+  portal = false,
 }: SelectMenuProps): ReactNode {
   const [open, setOpen] = useState(false)
   const labelId = useId()
   const hintId = useId()
+  const firstOptionRef = useRef<HTMLSpanElement>(null)
+  const firstEnabled = options.findIndex((option) => !option.disabled)
+  useEffect(() => {
+    if (!open || !portal || appearance === 'glide') return
+    // DSH's initial focus can precede its portal placement. Focus after that commit.
+    const frame = requestAnimationFrame(() => firstOptionRef.current?.closest('button')?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [open, portal, appearance, firstEnabled])
 
   // 选中项被禁用时不认这个 value（例如 placeholder 自身）：原生 `<select>` 的 value
   // 同样不会落在 disabled option 上，保持一致，免得界面出现「选中了一个不能选的项」。
@@ -127,9 +137,14 @@ export function SelectMenu({
     ...(placeholder === undefined
       ? []
       : [{ id: '', label: placeholder, disabled: true } satisfies MenuEntry]),
-    ...options.map((option): MenuEntry => ({
+    ...options.map((option, index): MenuEntry => ({
       id: option.value,
-      label: option.label,
+      label:
+        portal && index === firstEnabled ? (
+          <span ref={firstOptionRef}>{option.label}</span>
+        ) : (
+          option.label
+        ),
       disabled: option.disabled,
     })),
   ]
@@ -192,59 +207,73 @@ export function SelectMenu({
       <label id={labelId} htmlFor={id} className="select-menu-label">
         {label}
       </label>
-      <Menu
-        open={open}
-        // 打开即聚焦首项：这是 Menu 里方向键导航与「Esc 后焦点回触发器」的**前提**
-        // （上游 autoFocus 为 false 时那两条都不生效）。真人从键盘进来的路径必须留着。
-        autoFocus
-        align="start"
-        className="select-menu"
-        items={items}
-        {...(value === '' ? {} : { selectedId: value })}
-        onSelect={select}
-        onClose={close}
-        data-testid={`${id}-menu`}
-        anchor={
-          <button
-            ref={triggerRef}
-            type="button"
-            id={id}
-            className="select-menu-trigger"
-            aria-haspopup="menu"
-            aria-expanded={open}
-            // 可访问名**只挂标签**，不拼当前值：原生 select 的 accname 同样只有标签
-            // （值另有自己的暴露通道，读屏会读当前项）。实测踩过：把 `-value` 也写进
-            // aria-labelledby 后，可访问名变成「责任人 Bob（@bob）· 你」，
-            // `getByLabelText('责任人')` 全站失配——既有测试与 e2e 都按标签定位控件，
-            // 名字里混进值等于把「控件身份」和「控件状态」焊死在一起。
-            // 调用方给了 ariaLabel 就用它，此时不再挂 aria-labelledby
-            // （两条同时存在时 aria-labelledby 胜出，留着只会让人以为它生效）。
-            {...(ariaLabel === undefined
-              ? { 'aria-labelledby': labelId }
-              : { 'aria-label': ariaLabel })}
-            // 说明文字挂到控件上（原生 select 没有对应通道，这是按钮形态的补强）：
-            // 只在真有 hint 时挂，免得 aria-describedby 指向一个不存在的 id。
-            {...(hint === undefined ? {} : { 'aria-describedby': hintId })}
-            // 这里**刻意不挂 aria-required**：`role=button` 不在 ARIA 1.2 的
-            // aria-required 白名单里（见文件头「已知缺口」第 1 条），挂了也不会被播报，
-            // 只是把"必填"这件事伪装成已表达。必填由宿主表单的提交守卫兜（各落页点各自
-            // 一条，别删）。
-            disabled={disabled}
-            onClick={() => {
-              setOpen(!open)
-            }}
-          >
-            <span
-              id={`${id}-value`}
-              className="select-menu-value"
-              data-placeholder={selected === undefined ? 'true' : undefined}
+      <span
+        style={{ display: 'contents' }}
+        onKeyDownCapture={(event) => {
+          if (open && event.key === 'Escape') {
+            event.preventDefault()
+            event.stopPropagation()
+            close()
+          }
+          // Portal menus must leave from their trigger's document position.
+          if (open && event.key === 'Tab') close()
+        }}
+      >
+        <Menu
+          portal={portal}
+          open={open}
+          // 打开即聚焦首项：这是 Menu 里方向键导航与「Esc 后焦点回触发器」的**前提**
+          // （上游 autoFocus 为 false 时那两条都不生效）。真人从键盘进来的路径必须留着。
+          autoFocus
+          align="start"
+          className="select-menu"
+          items={items}
+          {...(value === '' ? {} : { selectedId: value })}
+          onSelect={select}
+          onClose={close}
+          data-testid={`${id}-menu`}
+          anchor={
+            <button
+              ref={triggerRef}
+              type="button"
+              id={id}
+              className="select-menu-trigger"
+              aria-haspopup="menu"
+              aria-expanded={open}
+              // 可访问名**只挂标签**，不拼当前值：原生 select 的 accname 同样只有标签
+              // （值另有自己的暴露通道，读屏会读当前项）。实测踩过：把 `-value` 也写进
+              // aria-labelledby 后，可访问名变成「责任人 Bob（@bob）· 你」，
+              // `getByLabelText('责任人')` 全站失配——既有测试与 e2e 都按标签定位控件，
+              // 名字里混进值等于把「控件身份」和「控件状态」焊死在一起。
+              // 调用方给了 ariaLabel 就用它，此时不再挂 aria-labelledby
+              // （两条同时存在时 aria-labelledby 胜出，留着只会让人以为它生效）。
+              {...(ariaLabel === undefined
+                ? { 'aria-labelledby': labelId }
+                : { 'aria-label': ariaLabel })}
+              // 说明文字挂到控件上（原生 select 没有对应通道，这是按钮形态的补强）：
+              // 只在真有 hint 时挂，免得 aria-describedby 指向一个不存在的 id。
+              {...(hint === undefined ? {} : { 'aria-describedby': hintId })}
+              // 这里**刻意不挂 aria-required**：`role=button` 不在 ARIA 1.2 的
+              // aria-required 白名单里（见文件头「已知缺口」第 1 条），挂了也不会被播报，
+              // 只是把"必填"这件事伪装成已表达。必填由宿主表单的提交守卫兜（各落页点各自
+              // 一条，别删）。
+              disabled={disabled}
+              onClick={() => {
+                setOpen(!open)
+              }}
             >
-              {display}
-            </span>
-            <IconChevronDownOutline14 className="select-menu-chevron" />
-          </button>
-        }
-      />
+              <span
+                id={`${id}-value`}
+                className="select-menu-value"
+                data-placeholder={selected === undefined ? 'true' : undefined}
+              >
+                {display}
+              </span>
+              <IconChevronDownOutline14 className="select-menu-chevron" />
+            </button>
+          }
+        />
+      </span>
       {hint === undefined ? null : (
         <p id={hintId} className="field-hint">
           {hint}

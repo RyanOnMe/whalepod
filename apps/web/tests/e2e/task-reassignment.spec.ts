@@ -82,7 +82,7 @@ test('拒绝 → 网页重新指派 → 新责任人接受 → 在自己的环�
     expect(pending.task.assignmentStatus).toBe('pending')
     expect(pending.task.assigneeUserId).toBe(alice.userId)
     await owner.getByRole('button', { name: '接受任务' }).click()
-    await expect(owner.getByText('你已接受此任务。')).toBeVisible()
+    await expect(owner.getByTestId('task-assignment-state')).toHaveText('已接受')
 
     // 接手后的执行走新责任人自己的 Node，不借用旧成员现场。
     await seedPluginPack(alice.userId)

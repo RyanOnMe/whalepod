@@ -130,6 +130,9 @@ export function ExecutionComposer({
     (sending: boolean) => memory.update((old) => ({ ...old, sending })),
     [memory.update],
   )
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const focusMode = useRef(false)
+  const settingsDisclosure = { open: settingsOpen, onChange: setSettingsOpen }
   const setMode = (mode: Mode) => memory.update((old) => ({ ...old, mode }))
   const setSourceId = (sourceId: string) => memory.update((old) => ({ ...old, sourceId }))
   const setReviewArtifactIds = (change: SetStateAction<string[]>) =>
@@ -312,6 +315,114 @@ export function ExecutionComposer({
       setSourceId(outcome.runId)
     }
   }
+  useEffect(() => {
+    if (focusMode.current) {
+      const frame = requestAnimationFrame(() => {
+        focusMode.current = false
+        document.getElementById(`execution-mode-${task.id}`)?.focus()
+      })
+      return () => cancelAnimationFrame(frame)
+    }
+  }, [mode, task.id])
+  const executionSettings = (
+    <>
+      <SelectMenu
+        appearance="glide"
+        id={`execution-mode-${task.id}`}
+        label="执行方式"
+        value={mode}
+        disabled={sending}
+        options={[
+          { value: 'new', label: '开始新执行（不接旧会话）', disabled: false },
+          {
+            value: 'review',
+            label: '复核交付物（单独执行）',
+            disabled: published.length === 0 && mode !== 'review',
+          },
+          {
+            value: 'followup',
+            label: '发送追问（指定活跃执行）',
+            disabled: revisionContext !== null || (active === undefined && mode !== 'followup'),
+          },
+          {
+            value: 'resume',
+            label: '继续会话（创建新执行记录）',
+            disabled: terminal.length === 0,
+          },
+        ]}
+        onChange={(next) => {
+          focusMode.current = true
+          setMode(next as Mode)
+          if (next === 'review') setRevisionContext(null)
+          if (next === 'followup' && active !== undefined) setSourceId(active.id)
+          if (
+            next === 'resume' &&
+            revisionContext === null &&
+            !terminal.some((run) => run.id === sourceId)
+          )
+            setSourceId(terminal.at(-1)?.id ?? '')
+        }}
+      />
+      {mode === 'resume' ? (
+        <SelectMenu
+          appearance="glide"
+          id={`execution-source-${task.id}`}
+          label="来源执行"
+          value={sourceId}
+          disabled={sending}
+          placeholder="选择要继续的会话…"
+          options={terminal.map((run) => ({
+            value: run.id,
+            label: runOrdinalLabels(runs).get(run.id) ?? '历史执行',
+            disabled: false,
+          }))}
+          onChange={setSourceId}
+        />
+      ) : null}
+      {isSourceMode ? (
+        <p className="mutation-hint" data-testid="execution-context">
+          接收 Agent：
+          {agents.data?.find((agent) => agent.id === source.data?.agentId)?.name ??
+            (agents.isError ? '名称暂不可用' : '读取中')}{' '}
+          · 来源：{sourceLabel}
+          {mode === 'resume'
+            ? ` · 沿用来源配置版本${revision === undefined ? '' : ` r${revision.revision}（${revision.provider}/${revision.model}）`}与执行环境，创建新记录（${sourcePlacement?.deviceName ?? '来源设备'}${sourcePlacement?.workspaceName ? ` · ${sourcePlacement.workspaceName}` : ''}）`
+            : ' · 追问只发往该执行'}
+        </p>
+      ) : null}
+      <button
+        type="button"
+        className="button button-quiet"
+        disabled={sending}
+        onClick={() => memory.clear(initialDraft())}
+      >
+        清空草稿
+      </button>
+      {memory.snapshot.ownerId !== task.assigneeUserId ? (
+        <button
+          type="button"
+          className="button"
+          disabled={sending}
+          onClick={() => {
+            memory.intentKey.current = null
+            memory.update((old) => ({
+              ...initialDraft(),
+              text: old.text,
+              mode: 'new',
+              sourceId: '',
+            }))
+          }}
+        >
+          重新确认执行安排（保留正文）
+        </button>
+      ) : null}
+      <p className="mutation-hint" data-testid="execution-responsibility">
+        {isAssignee
+          ? '使用你的执行环境；审批由你处理。'
+          : `使用${responsible}的执行环境；审批由其处理。`}
+      </p>
+    </>
+  )
   return (
     <div
       id="task-execution"
@@ -319,79 +430,6 @@ export function ExecutionComposer({
       className="execution-composer"
       data-testid="execution-composer"
     >
-      <details className="composer-options" open={!compact}>
-        <summary>执行方式与草稿</summary>
-        <p className="mutation-hint">
-          草稿仅在当前登录页面会话内暂存；切换任务可保留，刷新或退出后清除。
-        </p>
-        <button
-          type="button"
-          className="button button-quiet"
-          disabled={sending}
-          onClick={() => memory.clear(initialDraft())}
-        >
-          清除当前执行草稿
-        </button>
-        {memory.snapshot.ownerId !== task.assigneeUserId ? (
-          <button
-            type="button"
-            className="button"
-            disabled={sending}
-            onClick={() => {
-              memory.intentKey.current = null
-              memory.update((old) => ({
-                ...initialDraft(),
-                text: old.text,
-                mode: 'new',
-                sourceId: '',
-              }))
-            }}
-          >
-            重新确认执行安排（保留正文）
-          </button>
-        ) : null}
-        <SelectMenu
-          appearance="glide"
-          id={`execution-mode-${task.id}`}
-          label="执行方式"
-          value={mode}
-          disabled={sending}
-          options={[
-            { value: 'new', label: '开始新执行（不接旧会话）', disabled: false },
-            {
-              value: 'review',
-              label: '复核交付物（单独执行）',
-              disabled: published.length === 0 && mode !== 'review',
-            },
-            {
-              value: 'followup',
-              label: '发送追问（指定活跃执行）',
-              disabled: revisionContext !== null || (active === undefined && mode !== 'followup'),
-            },
-            {
-              value: 'resume',
-              label: '继续会话（创建新执行记录）',
-              disabled: terminal.length === 0,
-            },
-          ]}
-          onChange={(next) => {
-            setMode(next as Mode)
-            if (next === 'review') setRevisionContext(null)
-            if (next === 'followup' && active !== undefined) setSourceId(active.id)
-            if (
-              next === 'resume' &&
-              revisionContext === null &&
-              !terminal.some((run) => run.id === sourceId)
-            )
-              setSourceId(terminal.at(-1)?.id ?? '')
-          }}
-        />
-      </details>
-      <p className="mutation-hint" data-testid="execution-responsibility">
-        {isAssignee
-          ? '你是当前责任人。执行使用你的环境与凭据，审批由你处理。'
-          : `当前责任人：${responsible}。执行使用其环境与凭据，审批由${responsible}处理。指令权不授予审批权、凭据读取权或私有候选访问权。`}
-      </p>
       {/* #378：任务约定的绑定提示——新执行（new/resume）缺省绑定最新已确认版本。 */}
       {agreement.enabled ? (
         <p className="mutation-hint" data-testid="agreement-binding-hint">
@@ -497,36 +535,14 @@ export function ExecutionComposer({
           ) : null}
         </section>
       ) : null}
-      {mode === 'resume' ? (
-        <SelectMenu
-          appearance="glide"
-          id={`execution-source-${task.id}`}
-          label="来源执行"
-          value={sourceId}
-          disabled={sending}
-          placeholder="选择要继续的会话…"
-          options={terminal.map((run) => ({
-            value: run.id,
-            label: runOrdinalLabels(runs).get(run.id) ?? '历史执行',
-            disabled: false,
-          }))}
-          onChange={setSourceId}
-        />
-      ) : null}
-      {isSourceMode ? (
-        <p className="mutation-hint" data-testid="execution-context">
-          接收 Agent：
-          {agents.data?.find((agent) => agent.id === source.data?.agentId)?.name ??
-            (agents.isError ? '名称暂不可用' : '读取中')}{' '}
-          · 来源：{sourceLabel}
-          {mode === 'resume'
-            ? ` · 沿用来源配置版本${revision === undefined ? '' : ` r${revision.revision}（${revision.provider}/${revision.model}）`}与执行环境，创建新记录（${sourcePlacement?.deviceName ?? '来源设备'}${sourcePlacement?.workspaceName ? ` · ${sourcePlacement.workspaceName}` : ''}）`
-            : ' · 追问只发往该执行'}
-        </p>
-      ) : null}
       {reason !== null ? (
         <p className="mutation-hint" role="status" data-testid="execution-blocker">
           {reason}
+        </p>
+      ) : null}
+      {!allowed ? (
+        <p className="mutation-hint" data-testid="execution-responsibility">
+          由{responsible}执行并处理审批。
         </p>
       ) : null}
       {!allowed ? (
@@ -563,17 +579,14 @@ export function ExecutionComposer({
         task.status !== 'done' &&
         task.status !== 'cancelled') ||
       draft !== '' ? (
-        <fieldset
-          disabled={reason !== null || sending}
-          style={{ border: 0, padding: 0, margin: 0 }}
-        >
+        <fieldset disabled={sending} style={{ border: 0, padding: 0, margin: 0 }}>
           {handoff !== null && isNewExecution ? (
             <SpringCheck
               className="handoff-attach"
               testId="handoff-attach"
               ariaLabel="附带上游交接材料"
               checked={includeHandoff}
-              disabled={sending}
+              disabled={sending || reason !== null}
               onChange={setIncludeHandoff}
               label={
                 <>
@@ -610,6 +623,8 @@ export function ExecutionComposer({
               hasActiveRun={active !== undefined}
               embedded
               compact={compact}
+              settingsContent={executionSettings}
+              settingsDisclosure={settingsDisclosure}
               onOutcome={setLastOutcome}
               draft={draft}
               intentKeyRef={memory.intentKey}
@@ -623,6 +638,13 @@ export function ExecutionComposer({
             />
           ) : (
             <InstructionComposer
+              compact={compact}
+              settingsContent={executionSettings}
+              settingsDisclosure={settingsDisclosure}
+              receiverLabel={
+                agents.data?.find((agent) => agent.id === source.data?.agentId)?.name ??
+                '来源未确认'
+              }
               key={`${task.id}-${mode}-${sourceId}-${revisionContext?.nonce ?? ''}`}
               blocked={reason !== null}
               artifactInputIds={

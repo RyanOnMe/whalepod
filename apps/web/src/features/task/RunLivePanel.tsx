@@ -157,6 +157,29 @@ export function RunLivePanel({
 
   const events = orderedRunEvents(eventsQuery.data?.events ?? [], runId)
   const results = toolResults(events)
+  const replies: Array<{ key: string; text: string }> = []
+  for (const item of events) {
+    const text =
+      item.event['type'] === 'assistant.message'
+        ? item.event['text']
+        : item.event['type'] === 'run.completed'
+          ? item.event['finalText']
+          : null
+    if (
+      typeof text === 'string' &&
+      text.trim() !== '' &&
+      replies.at(-1)?.text.trim() !== text.trim()
+    )
+      replies.push({ key: eventIdentity(item), text })
+  }
+
+  const liveStream = (
+    <div className="run-live-stream">
+      <h4 className={compact && isActive ? 'visually-hidden' : undefined}>实时输出</h4>
+      {/* Only this child subscribes to delta frames; terminal buffers remain in records. */}
+      <RunLiveStream runId={runId} isActive={isActive} />
+    </div>
+  )
   return (
     <section
       className="card run-live"
@@ -210,23 +233,13 @@ export function RunLivePanel({
       <RunFailureNotice run={run} />
       <RunActions run={run} session={session} />
 
-      {isOwner ? (
-        <div className="run-live-stream">
-          <h4>实时输出</h4>
-          {/* #275：订阅下沉到这个子组件——面板头部/失败提示/动作区/事件列表不再因为
-              "多了一个 token"而跟着重渲染（原先订阅在面板上，每帧整棵子树 reconcile）。 */}
-          <RunLiveStream runId={runId} isActive={isActive} />
-        </div>
-      ) : null}
+      {isOwner && (!compact || isActive) ? liveStream : null}
 
       {compact ? (
         <div className="workspace-reply">
-          {events
-            .filter((item) => item.type === 'assistant.message' || item.type === 'run.completed')
-            .map((item) => {
-              const text = describeEvent(item)
-              return text === null ? null : <p key={eventIdentity(item)}>{text}</p>
-            })}
+          {replies.map((reply) => (
+            <p key={reply.key}>{reply.text}</p>
+          ))}
           {eventsQuery.isError ? (
             <p role="status">输出读取失败，请在工具与运行记录中重试检查。</p>
           ) : null}
@@ -234,6 +247,7 @@ export function RunLivePanel({
       ) : null}
       <details className="run-records" open={!compact}>
         <summary>工具与运行记录</summary>
+        {isOwner && compact && !isActive ? liveStream : null}
         <div className="run-live-events" data-testid="run-live-events">
           <h4>事件</h4>
           {eventsQuery.isPending ? <p className="mutation-hint">正在加载事件…</p> : null}

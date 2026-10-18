@@ -6,10 +6,12 @@
 import { TaskReviewEligibilitySchema } from '@whalepod/protocol'
 import type { TaskReviewEligibility } from '@whalepod/protocol'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
+import { DisclosurePanel } from '../../shared/DisclosurePanel.js'
+import { WorkspaceIcon } from '../../shared/WorkspaceIcon.js'
 import { ConfirmDialog } from '../../shared/ConfirmDialog.js'
 import { ASSIGNMENT_STATUS_LABEL, TASK_STATUS_LABEL } from '../../shared/format.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
@@ -45,6 +47,7 @@ export function TaskHeader({
   reviewEligibility,
   compact = false,
 }: TaskHeaderProps): ReactNode {
+  const menuRef = useRef<HTMLDetailsElement>(null)
   const queryClient = useQueryClient()
   // #229：确认中（待确认的行动）；null = 无对话框。
   const [confirming, setConfirming] = useState<TaskAction | null>(null)
@@ -96,6 +99,10 @@ export function TaskHeader({
     setError(null)
     // #229：window.confirm → ConfirmDialog（原生 confirm 阻塞主线程、键盘与
     // 焦点行为与产品形态脱节）；确认才发 mutation，语义不变。
+    if (compact && menuRef.current?.open) {
+      menuRef.current.open = false
+      menuRef.current.querySelector('summary')?.focus()
+    }
     setConfirming(kind)
   }
 
@@ -103,115 +110,157 @@ export function TaskHeader({
   // 它不是身份标识，而是「这个人就是你」的短说。查不到人时由名录给人话兜底。
   const assigneeLabel = isAssignee ? '你' : directory.personOf(task.assigneeUserId)
 
+  const primaryAction: TaskAction | null =
+    compact && canAct
+      ? task.status === 'in_review'
+        ? 'complete'
+        : task.status === 'in_progress' && canSubmit
+          ? 'submit-review'
+          : null
+      : null
+
   return (
     <header className={`task-header${compact ? ' task-header-compact' : ''}`}>
-      {/* #225：离开任务房间不只有侧栏一条路（与权限页「回到任务房间」方向一致）。 */}
-      <p className="mutation-hint">
-        <Link to="/" data-testid="task-back-link">
-          ← 回到项目列表
+      <div className="task-header-topbar">
+        <Link
+          to="/"
+          data-testid="task-back-link"
+          aria-label="返回项目列表"
+          className="task-back-control"
+        >
+          {compact ? <WorkspaceIcon name="返回" /> : '← 回到项目列表'}
         </Link>
-      </p>
-      <div className="task-header-title">
-        <h1>{task.title}</h1>
-        <span className={`badge badge-task badge-task-${task.status}`}>
-          {TASK_STATUS_LABEL[task.status]}
-        </span>
-        <span className={`badge badge-assignment`}>
-          {ASSIGNMENT_STATUS_LABEL[task.assignmentStatus]}
-        </span>
-      </div>
-      <dl className="task-meta">
-        <div>
-          <dt>当前责任人</dt>
-          {/* #162 判据锚点：这一格必须说出「是谁」（显示名或明确兜底），不得是短 id。
-              #239：Agent 指派时这格仍是**真人**（做出指派的人）——责任在人；Agent 另列一格。 */}
-          <dd data-testid="task-assignee">{assigneeLabel}</dd>
+        <div className="task-header-title">
+          <h1>{task.title}</h1>
+          <span
+            className={`task-current-state badge-task-${task.status}`}
+            data-testid="task-current-state"
+          >
+            {compact && task.assignmentStatus !== 'accepted'
+              ? ASSIGNMENT_STATUS_LABEL[task.assignmentStatus]
+              : TASK_STATUS_LABEL[task.status]}
+          </span>
         </div>
-        {task.assigneeAgentId !== null ? (
-          <div>
-            <dt>执行 Agent</dt>
-            <dd data-testid="task-agent">{agent?.name}</dd>
-          </div>
-        ) : null}
-      </dl>
-      <details className="task-header-details" open={!compact}>
-        <summary>任务信息与操作</summary>
-        <dl className="task-meta">
-          <div>
-            <dt>创建时间</dt>
-            <dd>
-              <RelativeTime iso={task.createdAt} />
-            </dd>
-          </div>
-          {task.acceptedAt !== null ? (
-            <div>
-              <dt>接受时间</dt>
-              <dd>
-                <RelativeTime iso={task.acceptedAt} />
-              </dd>
-            </div>
-          ) : null}
-          {task.completedAt !== null ? (
-            <div>
-              <dt>完成时间</dt>
-              <dd>
-                <RelativeTime iso={task.completedAt} />
-              </dd>
-            </div>
-          ) : null}
-        </dl>
-        {task.description !== '' ? <p className="task-description">{task.description}</p> : null}
-        {/* 切片⑥e：任务级「谁能驱动 Agent」入口。放头部而不是执行栏：授权是低频操作，
-          独立成页后从这里进（也可从成员页进）。 */}
-        <p className="mutation-hint">
-          <Link to={`/tasks/${task.id}/permissions`} data-testid="task-permissions-link">
-            谁能驱动这个任务的 Agent →
-          </Link>
-        </p>
-      </details>
-      {canAct ? (
-        <div id="task-actions" tabIndex={-1} className="task-actions" aria-label="任务行动">
-          <span className="visually-hidden">仅当前责任人可用</span>
-          {task.status === 'in_progress' ? (
-            <button
-              type="button"
-              className="button"
-              disabled={mutation.isPending || !canSubmit}
-              onClick={() => run('submit-review')}
-            >
-              提交验收
-            </button>
-          ) : null}
-          {task.status === 'in_review' ? (
+        {primaryAction !== null ? (
+          <div id="task-actions" tabIndex={-1} className="task-primary-action">
             <button
               type="button"
               className="button button-primary"
               disabled={mutation.isPending}
-              onClick={() => run('complete')}
+              onClick={() => run(primaryAction)}
             >
-              完成任务
+              {ACTION_LABEL[primaryAction]}
             </button>
-          ) : null}
-          {task.status !== 'done' && task.status !== 'cancelled' ? (
-            <button
-              type="button"
-              className="button button-danger"
-              disabled={mutation.isPending}
-              onClick={() => run('cancel')}
+          </div>
+        ) : null}
+        <DisclosurePanel
+          label="任务详情"
+          icon={compact ? <WorkspaceIcon name="更多" /> : '任务信息与操作'}
+          className="task-header-details"
+          defaultOpen={!compact}
+          panelRef={menuRef}
+        >
+          <dl
+            className="task-meta"
+            id={compact && task.assignmentStatus === 'accepted' ? 'task-assignment' : undefined}
+            tabIndex={-1}
+          >
+            <div>
+              <dt>责任人</dt>
+              <dd data-testid="task-assignee">{assigneeLabel}</dd>
+            </div>
+            <div>
+              <dt>分配</dt>
+              <dd data-testid="task-assignment-state">
+                {ASSIGNMENT_STATUS_LABEL[task.assignmentStatus]}
+              </dd>
+            </div>
+            <div>
+              <dt>状态</dt>
+              <dd>{TASK_STATUS_LABEL[task.status]}</dd>
+            </div>
+            {task.assigneeAgentId !== null ? (
+              <div>
+                <dt>Agent</dt>
+                <dd data-testid="task-agent">{agent?.name}</dd>
+              </div>
+            ) : null}
+            <div>
+              <dt>创建</dt>
+              <dd>
+                <RelativeTime iso={task.createdAt} />
+              </dd>
+            </div>
+            {task.acceptedAt !== null ? (
+              <div>
+                <dt>接受</dt>
+                <dd>
+                  <RelativeTime iso={task.acceptedAt} />
+                </dd>
+              </div>
+            ) : null}
+            {task.completedAt !== null ? (
+              <div>
+                <dt>完成</dt>
+                <dd>
+                  <RelativeTime iso={task.completedAt} />
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+          {task.description !== '' ? <p className="task-description">{task.description}</p> : null}
+          <Link to={`/tasks/${task.id}/permissions`} data-testid="task-permissions-link">
+            指令权限
+          </Link>
+          {canAct ? (
+            <div
+              id={primaryAction === null ? 'task-actions' : undefined}
+              tabIndex={-1}
+              className="task-actions"
+              aria-label="任务行动"
             >
-              取消任务
-            </button>
+              {task.status === 'in_progress' && primaryAction !== 'submit-review' ? (
+                <button
+                  type="button"
+                  className="button"
+                  disabled={mutation.isPending || !canSubmit}
+                  onClick={() => run('submit-review')}
+                >
+                  提交验收
+                </button>
+              ) : null}
+              {task.status === 'in_review' && primaryAction !== 'complete' ? (
+                <button
+                  type="button"
+                  className="button button-primary"
+                  disabled={mutation.isPending}
+                  onClick={() => run('complete')}
+                >
+                  完成任务
+                </button>
+              ) : null}
+              {task.status !== 'done' && task.status !== 'cancelled' ? (
+                <button
+                  type="button"
+                  className="button button-danger"
+                  disabled={mutation.isPending}
+                  onClick={() => run('cancel')}
+                >
+                  取消任务
+                </button>
+              ) : null}
+              {mutation.isPending ? <span role="status">正在提交…</span> : null}
+            </div>
+          ) : isAssignee && task.assignmentStatus !== 'accepted' ? (
+            <p className="mutation-hint">接受任务后可操作。</p>
           ) : null}
-          {mutation.isPending ? <span className="mutation-hint">正在提交…</span> : null}
-        </div>
-      ) : isAssignee ? (
-        <p className="mutation-hint">接受任务后即可提交验收、完成或取消任务。</p>
-      ) : null}
-      {canAct && task.status === 'in_progress' ? (
-        <p className="mutation-hint" role="status" data-testid="review-condition">
-          {reviewReason}
-        </p>
-      ) : null}
+          {canAct && task.status === 'in_progress' && !canSubmit ? (
+            <p className="mutation-hint" role="status" data-testid="review-condition">
+              {reviewReason}
+            </p>
+          ) : null}
+        </DisclosurePanel>
+      </div>
       {error !== null ? <ErrorBanner error={error} /> : null}
       {confirming !== null ? (
         <ConfirmDialog

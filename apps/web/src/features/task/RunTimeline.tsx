@@ -273,6 +273,8 @@ export function ApprovalSlot({
     decide.mutate({ runId: waitingRun.id, approvalId: card.approvalId, decision })
   }
 
+  if (waitingRun === undefined) return null
+
   return (
     <section className="snapshot-slot" aria-label="审批">
       <h3>审批</h3>

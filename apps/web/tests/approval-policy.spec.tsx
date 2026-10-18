@@ -1,3 +1,4 @@
+import { showExecutionOptions } from './workspace.js'
 /**
  * 审批档位（#241；ADR-0009 决策 7）——Web 组件面。
  *
@@ -331,6 +332,7 @@ describe('#241 RunLauncher：解析为 full_access 时先确认再发', () => {
     await selectOption(user, '选择设备', 'm4-mini（在线）')
     await selectOption(user, '选择 Workspace', 'whalepod')
     await user.type(screen.getByLabelText('指令'), '发布周报')
+    await showExecutionOptions()
     await user.click(screen.getByRole('button', { name: '检查本次准备条件' }))
     await user.click(screen.getByRole('button', { name: '开始执行' }))
     const dialog = await screen.findByRole('dialog')

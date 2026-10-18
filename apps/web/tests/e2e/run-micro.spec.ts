@@ -134,7 +134,7 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     await owner.waitForURL(/\/tasks\//)
     const taskId = new URL(owner.url()).pathname.split('/').pop()!
     await owner.getByRole('button', { name: '接受任务' }).click()
-    await expect(owner.getByText('你已接受此任务。')).toBeVisible()
+    await expect(owner.getByTestId('task-assignment-state')).toHaveText('已接受')
     await member.goto(`/tasks/${taskId}`)
 
     await selectFromMenu(owner.getByLabel('选择 Agent'), 'Builder')

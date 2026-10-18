@@ -24,6 +24,7 @@ import { queryKeys } from '../../app/query-client.js'
 import { ConfirmDialog } from '../../shared/ConfirmDialog.js'
 import { isApiError } from '../../shared/api/errors.js'
 import type { InstructionView } from '../../shared/api/types.js'
+import { ComposerSettings, type SettingsDisclosure } from './ComposerSettings.js'
 import PromptBar from '../../vendor/react-bits-micro/PromptBar.js'
 import { InstructionSendIcon, type SendFeedback } from './InstructionSendIcon.js'
 
@@ -69,6 +70,10 @@ const OUTCOME_TEXT: Record<InstructionOutcome['outcome'], string> = {
 
 export interface InstructionComposerProps {
   taskId: string
+  compact?: boolean
+  settingsContent?: ReactNode
+  settingsDisclosure?: SettingsDisclosure
+  receiverLabel?: string
   /** 有活跃 Run 时提示"这句话会成为追问"，让用户提前知道自己的话会去哪。 */
   hasActiveRun: boolean
   /**
@@ -101,6 +106,10 @@ export interface InstructionComposerProps {
 
 export function InstructionComposer({
   taskId,
+  compact = false,
+  settingsContent,
+  settingsDisclosure,
+  receiverLabel,
   hasActiveRun,
   target,
   approvalPreview,
@@ -215,12 +224,57 @@ export function InstructionComposer({
   return (
     <form className="instruction-composer" onSubmit={submit}>
       <PromptBar
+        controls={
+          <>
+            {receiverLabel ? <span className="composer-receiver">{receiverLabel}</span> : null}
+            <ComposerSettings
+              disabled={mutation.isPending}
+              {...(settingsDisclosure === undefined ? {} : { disclosure: settingsDisclosure })}
+            >
+              {settingsContent}
+              <span className="mutation-hint" data-testid="instruction-routing-hint">
+                {intent?.kind === 'resume'
+                  ? '续接指定会话，并创建新执行记录'
+                  : intent?.kind === 'followup'
+                    ? '只追问指定执行，状态变化时需重新选择'
+                    : hasActiveRun
+                      ? '当前有运行 · 这句话会成为追问'
+                      : '当前没有运行 · 这句话会起新运行'}
+              </span>
+              <p data-testid="instruction-approval-source">
+                {approvalPreview === null
+                  ? '审批 · 未知'
+                  : `审批 · ${APPROVAL_POLICY_TEXT[approvalPreview.policy]} · ${APPROVAL_SOURCE_TEXT[approvalPreview.source]}`}
+              </p>
+            </ComposerSettings>
+            <span
+              className="composer-approval-pill"
+              data-testid="instruction-approval-pill"
+              data-policy={approvalPreview === null ? 'unknown' : approvalPreview.policy}
+            >
+              {approvalPreview === null
+                ? '权限待确认'
+                : approvalPreview.policy === 'full_access'
+                  ? '完全权限'
+                  : '逐次批准'}
+            </span>
+          </>
+        }
         action={
           <button
             type="submit"
             className="button button-primary instruction-send"
             disabled={blocked || mutation.isPending}
             aria-busy={mutation.isPending}
+            aria-label={
+              mutation.isPending
+                ? '发送中…'
+                : intent?.kind === 'resume'
+                  ? '继续会话'
+                  : intent?.kind === 'followup'
+                    ? '发送追问'
+                    : '发送指令'
+            }
             data-feedback={feedback}
             data-instant={instant ? '' : undefined}
             onPointerDown={() => setInstant(false)}
@@ -229,13 +283,15 @@ export function InstructionComposer({
             }}
           >
             <InstructionSendIcon feedback={feedback} />
-            {mutation.isPending
-              ? '发送中…'
-              : intent?.kind === 'resume'
-                ? '继续会话'
-                : intent?.kind === 'followup'
-                  ? '发送追问'
-                  : '发送指令'}
+            {compact
+              ? null
+              : mutation.isPending
+                ? '发送中…'
+                : intent?.kind === 'resume'
+                  ? '继续会话'
+                  : intent?.kind === 'followup'
+                    ? '发送追问'
+                    : '发送指令'}
           </button>
         }
       >
@@ -249,7 +305,7 @@ export function InstructionComposer({
           maxLength={10_000}
           disabled={blocked || mutation.isPending}
           value={text}
-          placeholder={intent?.kind === 'resume' ? '接着来源会话继续…' : '让 Agent 干这个…'}
+          placeholder={intent?.kind === 'resume' ? '继续上次会话…' : '补充要求或提问…'}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
             // #229：Cmd/Ctrl+Enter 直发（与提交按钮同一条 form 路径）；纯 Enter 仍是换行。
@@ -261,28 +317,6 @@ export function InstructionComposer({
           }}
         />
       </PromptBar>
-      <div className="composer-actions">
-        <span className="mutation-hint" data-testid="instruction-routing-hint">
-          {intent?.kind === 'resume'
-            ? '续接指定会话，并创建新执行记录'
-            : intent?.kind === 'followup'
-              ? '只追问指定执行，状态变化时需重新选择'
-              : hasActiveRun
-                ? '当前有运行 · 这句话会成为追问'
-                : '当前没有运行 · 这句话会起新运行'}
-        </span>
-        {/* #244 审批档位胶囊：发送前可见「这句话将以什么权限跑」及其来源。
-            full_access 时加 warn 视觉（与运行卡的放权标记同族），approval_required/未知保持中性。 */}
-        <span
-          className="composer-approval-pill"
-          data-testid="instruction-approval-pill"
-          data-policy={approvalPreview === null ? 'unknown' : approvalPreview.policy}
-        >
-          {approvalPreview === null
-            ? '审批 · 未知（还没有可继承的运行）'
-            : `审批 · ${APPROVAL_POLICY_TEXT[approvalPreview.policy]} · ${APPROVAL_SOURCE_TEXT[approvalPreview.source]}`}
-        </span>
-      </div>
       {last !== null ? (
         <p className="instruction-outcome" role="status" data-testid="instruction-outcome">
           {OUTCOME_TEXT[last.outcome]}

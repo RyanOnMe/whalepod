@@ -234,13 +234,15 @@ describe('task room approval card', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('approval already decided')
   })
 
-  it('没有等待审批的 Run 时空态说明，而不是空白', async () => {
+  it('没有等待审批时不占据主内容', async () => {
     const task = waitingTask(BOB.userId)
     renderApp(
       `/tasks/${task.id}`,
       loggedInHandlers(BOB, [taskRoomHandler(task, { runs: [makeRun({ status: 'running' })] })]),
     )
-    expect(await screen.findByRole('heading', { name: '审批' })).toBeVisible()
-    expect(screen.getByText('当前没有等待审批的操作。')).toBeVisible()
+    await screen.findByRole('button', { name: 'Agent 执行' })
+    expect(screen.queryByRole('heading', { name: '审批' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: '审批' })).toBeNull()
+    expect(screen.queryByText('当前没有等待审批的操作。')).toBeNull()
   })
 })

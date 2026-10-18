@@ -18,12 +18,32 @@ assert.equal(micro.keyboardSelect, true)
 assert.equal(micro.reducedMotion, true)
 assert.equal(micro.oneInstruction, true)
 assert.equal(micro.settingsLabelsVisible, true)
+assert.equal(micro.conciseDefault?.oneSettings, true)
+assert.equal(micro.conciseDefault?.noEmptyApproval, true)
+assert(
+  Number.isFinite(micro.conciseDefault?.headerHeight) &&
+    micro.conciseDefault.headerHeight > 0 &&
+    micro.conciseDefault.headerHeight <= 80,
+)
+assert(
+  Number.isFinite(micro.conciseDefault?.composerTextLength) &&
+    micro.conciseDefault.composerTextLength <= 60,
+)
+
 assert.deepEqual(
   micro.layouts.map((row: { width: number }) => row.width),
   [1440, 390, 320],
 )
 for (const row of micro.layouts) {
   assert.equal(row.portal, true)
+  assert.equal(row.settingsKeyboard, true)
+  assert.equal(row.composerHeightStable, true)
+  for (const key of ['x', 'y', 'width', 'height']) assert(Number.isFinite(row.settings?.[key]))
+  assert(
+    row.settings.x >= 0 && row.settings.y >= 0 && row.settings.width > 0 && row.settings.height > 0,
+  )
+  assert(row.settings.x + row.settings.width <= row.width)
+  assert(row.settings.y + row.settings.height <= 960)
   for (const key of ['x', 'y', 'width', 'height']) assert(Number.isFinite(row.menu[key]))
   assert(row.menu.x >= 0 && row.menu.y >= 0 && row.menu.width > 0 && row.menu.height > 0)
   assert(row.menu.x + row.menu.width <= row.width && row.menu.y + row.menu.height <= 960)

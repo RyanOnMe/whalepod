@@ -71,7 +71,7 @@ describe('聚焦工作区', () => {
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('region', { name: '工作区详情' })).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
-    expect(screen.getByText('进行中')).toBeVisible()
+    expect(screen.getByTestId('task-current-state')).toHaveTextContent('进行中')
   })
 
   it('不会把响应里误带的他人候选展示为入口或数量', async () => {

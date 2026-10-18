@@ -1,3 +1,4 @@
+import { showTaskMenu } from './workspace.js'
 /**
  * Task Room 四区与状态呈现（02 Task 7 Step 4）：
  * 顶部属性/行动、左侧 Assignment、中间讨论+Run+审批插槽、右侧 Artifacts+Reviewer。
@@ -84,9 +85,10 @@ describe('task-room', () => {
     const task = makeTask({ assigneeUserId: BOB.userId, status: 'in_progress' })
     renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [taskRoomHandler(task)]))
     expect(await screen.findByRole('heading', { name: task.title })).toBeVisible()
+    await showTaskMenu()
     expect(screen.getByText('进行中')).toBeVisible()
-    expect(screen.getByText('当前责任人')).toBeVisible()
-    expect(screen.getByText('你')).toBeVisible()
+    expect(screen.getByText('责任人')).toBeVisible()
+    expect(screen.getByTestId('task-assignee')).toHaveTextContent('你')
   })
 
   it('渲染左侧 Assignment 与 Agent 快照插槽的空态', async () => {
@@ -127,9 +129,8 @@ describe('task-room', () => {
     expect(await screen.findByRole('heading', { name: '运行' })).toBeVisible()
     expect(await screen.findByText('运行中')).toBeVisible()
     expect(screen.getByText('已完成')).toBeVisible()
-    expect(screen.getByRole('heading', { name: '审批' })).toBeVisible()
-    // P1-14：无等待审批的 Run 时，审批插槽呈现空态说明。
-    expect(screen.getByText('当前没有等待审批的操作。')).toBeVisible()
+    expect(screen.queryByRole('heading', { name: '审批' })).toBeNull()
+    expect(screen.queryByText('当前没有等待审批的操作。')).toBeNull()
   })
 
   it('#211 B1：运行卡画落点显示名；未知落点画"未知设备"、不画 id', async () => {
@@ -625,7 +626,7 @@ describe('#225 交互批次①：指令流运行号是活口 + 返回项目入�
       `/tasks/${task.id}`,
       loggedInHandlers(BOB, [taskRoomHandler(task), teamMembersHandler([])]),
     )
-    const back = await screen.findByRole('link', { name: /回到项目列表/ })
+    const back = await screen.findByRole('link', { name: '返回项目列表' })
     expect(back).toHaveAttribute('href', '/')
   })
 })
