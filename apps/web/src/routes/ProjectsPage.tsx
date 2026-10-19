@@ -296,6 +296,8 @@ function CreateTaskForm({
   }
   // 幂等键按「意图签名」持有（#345）：见 mutationFn 里的用法。
   const intentKey = useRef<{ signature: string; key: string } | null>(null)
+  // #403：React pending 尚未刷新、或成功后导航尚未卸载时，都属于同一次提交。
+  const submissionLocked = useRef(false)
   const session = useSession()
   // 责任人下拉与项目卡/任务列表共用同一份名册（#152 的共用 hook，同一 queryKey）：
   // 只在 hook 里定义策略，避免「同一个 key 两套 staleTime」这种漂移。
@@ -381,6 +383,7 @@ function CreateTaskForm({
       onCreated(result.data)
     },
     onError: (mutationError: unknown) => {
+      submissionLocked.current = false
       setError(mutationError)
       // #348：服务端点名了候选失效 → 记下**哪个字段**，后续提交先拦（引导由 failureGuidance 给）。
       const failure = createTaskFailureCopy(mutationError)
@@ -389,7 +392,8 @@ function CreateTaskForm({
   })
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
-    if (mutation.isPending) return
+    if (mutation.isPending || submissionLocked.current) return
+    submissionLocked.current = true
     setError(null)
     mutation.mutate()
   }
@@ -551,6 +555,7 @@ function CreateTaskForm({
           className="button button-primary"
           disabled={
             mutation.isPending ||
+            mutation.isSuccess ||
             values.assignee === '' ||
             selectionUnavailable ||
             (willExecute && values.agentId === '')
