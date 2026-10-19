@@ -17,10 +17,21 @@ function goodEvidence(): Record<string, unknown> {
     verifiedAt: '2026-10-18T00:00:00.000Z',
     agreement: { enabled: true, confirmedRevisionNumber: 1 },
     agreementDraft: {
-      runId: 'run-agreement', purpose: 'agreement_draft', runStatus: 'completed',
-      artifactId: 'agreement-json', artifactStatus: 'candidate',
-      confirmedBeforeAdopt: null, confirmedAfterAdopt: null,
-      candidateContent: { goal: '目标', constraints: '', acceptance: '验收条件', openQuestions: '' },
+      runId: 'run-agreement',
+      purpose: 'agreement_draft',
+      runStatus: 'completed',
+      artifactId: 'agreement-json',
+      artifactStatus: 'candidate',
+      ownerReadStatus: 200,
+      otherMemberReadStatus: 404,
+      confirmedBeforeAdopt: null,
+      confirmedAfterAdopt: null,
+      candidateContent: {
+        goal: '目标',
+        constraints: '',
+        acceptance: '验收条件',
+        openQuestions: '',
+      },
       adoptedContent: { goal: '目标', constraints: '', acceptance: '验收条件', openQuestions: '' },
     },
     backend: {
@@ -93,13 +104,23 @@ describe('#381 交接闭环证据判定器', () => {
   it('#396 起草必须来自辅助 Run，候选不自动发布或确认，采用内容必须一致', () => {
     expect(verifyHandoffLoopEvidence(mutate((e) => delete e['agreementDraft'])).ok).toBe(false)
     for (const [key, value] of [
-      ['purpose', 'business'], ['artifactStatus', 'published'],
-      ['confirmedAfterAdopt', 1], ['runId', 'run-up'],
-      ['adoptedContent', { goal: '被替换', constraints: '', acceptance: '验收条件', openQuestions: '' }],
+      ['purpose', 'business'],
+      ['artifactStatus', 'published'],
+      ['otherMemberReadStatus', 200],
+      ['confirmedAfterAdopt', 1],
+      ['runId', 'run-up'],
+      [
+        'adoptedContent',
+        { goal: '被替换', constraints: '', acceptance: '验收条件', openQuestions: '' },
+      ],
     ] as const) {
-      expect(verifyHandoffLoopEvidence(mutate((e) => {
-        ;(e['agreementDraft'] as Record<string, unknown>)[key] = value
-      })).ok).toBe(false)
+      expect(
+        verifyHandoffLoopEvidence(
+          mutate((e) => {
+            ;(e['agreementDraft'] as Record<string, unknown>)[key] = value
+          }),
+        ).ok,
+      ).toBe(false)
     }
   })
   it('#396 缺正文消费、模型输入或真人完成证据必须失败', () => {

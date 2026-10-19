@@ -82,6 +82,39 @@ export function verifyHandoffLoopEvidence(input: unknown): HandoffLoopVerificati
   }
 
   const backend = reader.section(input, 'backend')
+  const agreementDraft = reader.section(input, 'agreementDraft')
+  if (agreementDraft !== undefined) {
+    const runId = str(agreementDraft['runId'], 'agreementDraft.runId')
+    str(agreementDraft['artifactId'], 'agreementDraft.artifactId')
+    check(agreementDraft['purpose'] === 'agreement_draft', 'draft must use agreement_draft purpose')
+    check(agreementDraft['runStatus'] === 'completed', 'agreement helper run must complete')
+    check(agreementDraft['ownerReadStatus'] === 200, 'owner must read agreement candidate')
+    check(
+      agreementDraft['otherMemberReadStatus'] === 404,
+      'other member must not read agreement candidate',
+    )
+    check(
+      agreementDraft['artifactStatus'] === 'candidate',
+      'agreement candidate must remain private',
+    )
+    check(agreementDraft['confirmedBeforeAdopt'] === null, 'helper must not auto-confirm agreement')
+    check(agreementDraft['confirmedAfterAdopt'] === null, 'adoption must not confirm agreement')
+    check(
+      runId !== undefined && runId !== backend?.['runId'],
+      'helper must differ from business run',
+    )
+    const candidate = reader.section(agreementDraft, 'candidateContent')
+    const adopted = reader.section(agreementDraft, 'adoptedContent')
+    for (const key of ['goal', 'constraints', 'acceptance', 'openQuestions']) {
+      check(
+        candidate !== undefined &&
+          adopted !== undefined &&
+          typeof candidate[key] === 'string' &&
+          candidate[key] === adopted[key],
+        `adopted agreement ${key} must equal inspected candidate`,
+      )
+    }
+  }
   let backendArtifactId: string | undefined
   let backendSha: string | undefined
   let upstreamTaskId: string | undefined
