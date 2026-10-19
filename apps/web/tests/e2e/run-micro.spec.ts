@@ -499,6 +499,11 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
 
     // Slow the transport without manufacturing a response: release forwards the real request to Hub.
     await setRuntimeFixture('basic')
+    const composerHost = owner.getByTestId('execution-composer')
+    const hostBeforeSend = await composerHost.elementHandle()
+    const formBeforeSend = await owner.locator('.instruction-composer').elementHandle()
+    expect(hostBeforeSend).not.toBeNull()
+    expect(formBeforeSend).not.toBeNull()
     const instructionUrl = `**/api/v1/tasks/${taskId}/instructions`
     let releaseRequest!: () => void
     const requestGate = new Promise<void>((resolve) => {
@@ -527,7 +532,7 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     await box.press('Control+Enter')
     expect(pendingRequests).toBe(1)
     await owner
-      .locator('.instruction-composer')
+      .getByTestId('execution-composer')
       .screenshot({ path: join(evidence, 'composer-pending.png') })
     releaseRequest()
     const sentResponse = await sent
@@ -541,26 +546,52 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     await expect(box).toHaveValue('')
     await waitForRunStatus(outcome.runId, 'completed', 120_000)
     await waitForRuntimeReleased(outcome.runId)
+    // #402：模式/来源键会替换内部表单，截图取稳定执行区；事实判据仍针对真人控件。
+    await expect.poll(() => formBeforeSend!.evaluate((element) => element.isConnected)).toBe(false)
+    const composerHostRetained = await hostBeforeSend!.evaluate((element) => element.isConnected)
+    expect(composerHostRetained).toBe(true)
     await owner
-      .locator('.instruction-composer')
+      .getByTestId('execution-composer')
       .screenshot({ path: join(evidence, 'composer-accepted.png') })
 
-    // Real public revoke endpoint removes the only available execution target in this disposable team.
-    expect((await hubApi(cookie, 'DELETE', `/devices/${node.deviceId}`, {})).status).toBe(200)
+    // 请求先经真人输入发出，再撤销设备并放行真实传输：不依赖 UI 缓存失效的快慢。
+    // 不制造响应；Hub 必须按真实撤销事实拒绝。若先撤销再点，UI 可能已先拦住而没有 POST。
     await selectFromMenu(owner.getByLabel('执行方式'), /继续会话/)
+    let releaseRejectedRequest!: () => void
+    const rejectedGate = new Promise<void>((resolve) => {
+      releaseRejectedRequest = resolve
+    })
+    await owner.route(instructionUrl, async (route) => {
+      await rejectedGate
+      await route.continue()
+    })
+    const requestReachedTransport = owner.waitForRequest(
+      (request) =>
+        request.url().endsWith(`/tasks/${taskId}/instructions`) && request.method() === 'POST',
+      { timeout: 15_000 },
+    )
     const failedSend = owner.waitForResponse(
       (response) =>
         response.url().endsWith(`/tasks/${taskId}/instructions`) &&
         response.request().method() === 'POST',
+      { timeout: 15_000 },
     )
-    await box.fill('这句要保留')
-    await box.press('Control+Enter')
+    try {
+      await box.fill('这句要保留')
+      await expect(owner.getByRole('button', { name: '继续会话', exact: true })).toBeEnabled()
+      await box.press('Control+Enter')
+      await requestReachedTransport
+      expect((await hubApi(cookie, 'DELETE', `/devices/${node.deviceId}`, {})).status).toBe(200)
+    } finally {
+      releaseRejectedRequest()
+    }
     const failedResponse = await failedSend
     expect(failedResponse.status()).toBe(409)
     const failedEnvelope = (await failedResponse.json()).error as {
       code: string
       requestId: string
     }
+    await owner.unroute(instructionUrl)
     expect(failedEnvelope.code).toBe('DEVICE_REVOKED')
     expect(failedEnvelope.requestId).toBeTruthy()
     await expect(owner.getByRole('button', { name: '继续会话', exact: true })).toHaveAttribute(
@@ -578,11 +609,12 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     expect(afterFailure.task.status).toBe('in_progress')
     expect(afterFailure.runs.map((run) => run.id).sort()).toEqual([runId, outcome.runId].sort())
     await owner
-      .locator('.instruction-composer')
+      .getByTestId('execution-composer')
       .screenshot({ path: join(evidence, 'composer-failed.png') })
     const sends = {
       component: 'web.instruction',
       pendingRequests,
+      composerHostRetained,
       accepted: { httpStatus: 201, outcome: outcome.outcome, runId: outcome.runId },
       failed: {
         httpStatus: 409,
@@ -607,7 +639,7 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
       321,
     )
     await owner
-      .locator('.instruction-composer')
+      .getByTestId('execution-composer')
       .screenshot({ path: join(evidence, 'composer-320.png') })
     await owner.setViewportSize({ width: 390, height: 900 })
     await expect(owner.locator('.app-sidebar')).toHaveCount(0)
@@ -615,7 +647,7 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
       391,
     )
     await owner
-      .locator('.instruction-composer')
+      .getByTestId('execution-composer')
       .screenshot({ path: join(evidence, 'composer-mobile.png') })
     /*
      * #308 布局证据（放在任务页判据之后，避免打扰这一页的选中状态）：提示层在按钮外面
@@ -714,7 +746,6 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     )
     throw error
   } finally {
-    await ownerContext.close()
-    await memberContext.close()
+    await Promise.allSettled([ownerContext.close(), memberContext.close()])
   }
 })
