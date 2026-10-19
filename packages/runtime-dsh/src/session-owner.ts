@@ -175,6 +175,7 @@ export class SessionOwner {
 
   /** `run.prompt` 与 `run.followup` 在桥内同态：排队一次普通 follow-up turn。 */
   followup(text: string): void {
+    const instructionText = text
     if (!this.initialPromptSent) {
       this.initialPromptSent = true
       const context = [
@@ -191,7 +192,8 @@ export class SessionOwner {
         .join('\n')
       if (context !== '') text = `# 本次固定执行上下文\n${context}\n\n# 本次指令\n${text}`
     }
-    this.recordTranscript({ role: 'user', text })
+    // 收尾摘要另有约定快照；转录保持真人原话，避免长上下文挤掉真正的指令。
+    this.recordTranscript({ role: 'user', text: instructionText })
     this.agent.followup(
       createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }),
     )

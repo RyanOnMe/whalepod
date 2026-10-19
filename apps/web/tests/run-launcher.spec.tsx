@@ -40,7 +40,7 @@ it('#396 责任人从约定面显式选择 Agent 和自己的现场发起辅助 
     `/tasks/${task.id}`,
     loggedInHandlers(BOB, [taskRoomHandler(task), ...launcherHandlers(capture)]),
   )
-  await user.click(await screen.findByRole('button', { name: '任务约定', exact: true }))
+  await user.click(await screen.findByRole('button', { name: '任务约定' }))
   await user.click(screen.getByRole('button', { name: '用 Agent 起草约定' }))
   const panel = await screen.findByTestId('agreement-agent-draft')
   await user.click(within(panel).getByLabelText('选择 Agent'))
