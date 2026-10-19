@@ -2,7 +2,8 @@
 
 - #402 红例（2026-10-19）：组合提交 `b2c67d5` 的完整 Q5 本机在 `composer-accepted.png` 失败：运行已 completed、Runtime 已释放，但 `.instruction-composer` 在截图等待字体/稳定期间被 keyed 子树替换，报 Element is not attached to the DOM。原状态/草稿判据已过，需修复取证宿主；失败位置保留在 `artifacts/q5/run-1.log`，不能删掉截图或重跑业务动作冒充修复。
 - #402 修复：所有执行输入截图改取稳定 `execution-composer` 宿主，并在真实续跑完成后确认原表单已被替换、宿主仍连接。发送中/受理/拒绝、键盘、窄屏、减少动态和实时双人事实断言均保留。服务端拒绝路径先发出并暂缓真实请求，再经公开 API 撤销设备后放行传输，避免 UI 先行阻塞造成无 POST；不制造错误响应。清理失败不会覆盖原测试错误。
-- #402 定向结果：两次独立冷启均 PASS（含最终提交前源码）；typecheck PASS，`artifacts/evidence/run-micro/` 证据已过敏感扫描。完整组合 Q5 待合并本次测试修复后重跑。
+- #402 定向结果：两次独立冷启均 PASS（含最终提交前源码）；typecheck PASS，`artifacts/evidence/run-micro/` 证据已过敏感扫描。
+- 2026-10-19 组合实测：实现提交 `6765ca2`（PR #397/#400/#401/#404/#405）本机完整 Q5 **1/1 PASS**，全部项目执行到结束，退出码 0；组合 Q0 1921 passed / 7 expected fail。整轮日志与关键结构化证据已过敏感扫描。Linux 连续三轮的运行及归档见 [39239719979](https://github.com/RyanOnMe/whalepod/actions/runs/39239719979)。本次单轮结果不替代发布所需 20 连。
 
 - 场景/门禁：G4 运行投影、G5-01/G5-03 审批观察与批准、执行区指令；Q0、Q5、许可与敏感扫描。
 - Issue：P1-306；CallChip、StatusMark、ThoughtLine、RubberSegment，以及现有 InstructionComposer 的发送反馈。按用户后续要求在同一 Issue / PR 统一交付。
