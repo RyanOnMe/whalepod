@@ -7,7 +7,7 @@
  *   客户端呈现层也不伪造入口）；直播 delta 经 run-buffer 实时上屏。
  */
 import { describe, expect, it } from 'vitest'
-import { act, screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { renderApp } from './render.js'
 import { openSelect, selectOption } from './select-menu.js'
@@ -31,6 +31,37 @@ const REVISION_ID = 'a2a2a2a2-0000-4000-8000-00000000000b'
 const DEVICE_ID = 'd1d1d1d1-0000-4000-8000-00000000000c'
 const WORKSPACE_ID = 'e5e5e5e5-0000-4000-8000-00000000000d'
 const RUN_ID = 'f6f6f6f6-0000-4000-8000-00000000000e'
+
+it('#396 责任人从约定面显式选择 Agent 和自己的现场发起辅助 Run', async () => {
+  const user = userEvent.setup()
+  const capture: { body?: unknown } = {}
+  const task = makeTask({ assignmentStatus: 'accepted', assigneeUserId: BOB.userId })
+  renderApp(
+    `/tasks/${task.id}`,
+    loggedInHandlers(BOB, [taskRoomHandler(task), ...launcherHandlers(capture)]),
+  )
+  await user.click(await screen.findByRole('button', { name: '任务约定' }))
+  await user.click(screen.getByRole('button', { name: '用 Agent 起草约定' }))
+  const panel = await screen.findByTestId('agreement-agent-draft')
+  await user.click(within(panel).getByLabelText('选择 Agent'))
+  await user.click(await screen.findByRole('menuitem', { name: 'Fixer' }))
+  await user.click(within(panel).getByRole('button', { name: '执行设置' }))
+  await user.click(await screen.findByRole('button', { name: '选择设备' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'm4-mini（在线）' }))
+  await user.click(await screen.findByRole('button', { name: '选择 Workspace' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'whalepod' }))
+  await user.keyboard('{Escape}')
+  await user.click(within(panel).getByRole('button', { name: '启动约定起草' }))
+  await waitFor(() =>
+    expect(capture.body).toMatchObject({
+      purpose: 'agreement_draft',
+      agentId: AGENT_ID,
+      deviceId: DEVICE_ID,
+      workspaceId: WORKSPACE_ID,
+      intent: { kind: 'new' },
+    }),
+  )
+})
 
 function launcherHandlers(
   capture?: { body?: unknown; key?: unknown },

@@ -11,6 +11,43 @@ import {
   handoffDraftTimeoutMs,
 } from '../src/handoff-draft.js'
 
+describe('#396 自动叙述的信任边界', () => {
+  it('模型自称已核实仍强制为待核实', async () => {
+    const result = await generateHandoffDraft(
+      CALL,
+      { system: 's', user: 'u' },
+      chunkStream(textChunks(validJson().replaceAll('"verified":false', '"verified":true'))),
+    )
+    expect(result.status).toBe('generated')
+    if (result.status === 'generated') {
+      expect(result.content.completed[0]?.verified).toBe(false)
+      expect(result.content.evidence[0]?.verified).toBe(false)
+    }
+  })
+
+  it('不响应取消的流不能阻塞截止返回，晚到成功不得采用', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const pending = generateHandoffDraft(
+      { ...CALL, timeoutMs: 10 },
+      { system: 's', user: 'u' },
+      async function* () {
+        await gate
+        yield* textChunks(validJson())
+      },
+    )
+    const result = await Promise.race([
+      pending,
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 200)),
+    ])
+    release()
+    expect(result).toEqual({ status: 'failed', reason: 'timeout' })
+    expect(await pending).toEqual({ status: 'failed', reason: 'timeout' })
+  })
+})
+
 const AGREEMENT = {
   revisionNumber: 3,
   goal: '交付登录接口',
@@ -209,5 +246,6 @@ describe('#379 交接草稿生成器（纯函数 + 注入流）', () => {
     expect(handoffDraftTimeoutMs({ WHALEPOD_HANDOFF_DRAFT_TIMEOUT_MS: '250' })).toBe(250)
     expect(handoffDraftTimeoutMs({ WHALEPOD_HANDOFF_DRAFT_TIMEOUT_MS: 'abc' })).toBe(60_000)
     expect(handoffDraftTimeoutMs({ WHALEPOD_HANDOFF_DRAFT_TIMEOUT_MS: '-5' })).toBe(60_000)
+    expect(handoffDraftTimeoutMs({ WHALEPOD_HANDOFF_DRAFT_TIMEOUT_MS: '120000' })).toBe(60_000)
   })
 })

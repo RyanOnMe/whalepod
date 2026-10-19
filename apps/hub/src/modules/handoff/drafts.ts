@@ -24,6 +24,7 @@ import {
   HandoffRevisionViewSchema,
   HandoffSystemSchema,
   emptyHandoffNarrative,
+  unverifiedHandoffNarrative,
 } from '@whalepod/protocol'
 import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import type { Actor } from '@whalepod/domain'
@@ -213,7 +214,7 @@ export async function persistHandoffDraftEvent(
     const system = await buildHandoffSystemBlock(tx, run, 'all')
     content = HandoffContentSchema.parse({
       system,
-      narrative: event.content ?? emptyHandoffNarrative(),
+      narrative: unverifiedHandoffNarrative(event.content ?? emptyHandoffNarrative()),
     })
     assertHandoffContentFits(content)
   } catch (error) {

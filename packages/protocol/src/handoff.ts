@@ -19,6 +19,12 @@ import { z } from 'zod'
 /** 叙述整体（JSON.stringify 后的 UTF-8 字节）上限；留足 envelope 头空间。 */
 export const HANDOFF_NARRATIVE_MAX_BYTES = 24_576
 
+/**
+ * Run 首条指令注入的固定执行上下文上限（字符，与 wire schema 同值）。
+ * Hub 在装配处先 fail-closed：超限是明确的 400，不能让 wire parse 失败落到 500。
+ */
+export const EXECUTION_CONTEXT_MAX_CHARS = 100_000
+
 /** 单条引用的身份上限。 */
 export const HANDOFF_REFS_PER_ITEM_MAX = 16
 
@@ -107,6 +113,22 @@ export function emptyHandoffNarrative(): HandoffNarrative {
     commits: [],
     prs: [],
   }
+}
+
+/** 自动叙述不具有真人核实权；人工编辑接口不调用此函数。 */
+export function unverifiedHandoffNarrative(content: HandoffNarrative): HandoffNarrative {
+  const result = { ...content }
+  for (const key of [
+    'completed',
+    'interfaces',
+    'unfinished',
+    'decisions',
+    'evidence',
+    'downstream',
+  ] as const) {
+    result[key] = content[key].map((item) => ({ ...item, verified: false }))
+  }
+  return result
 }
 
 /** 来源 Run 的 Artifact 清单条目（系统块用；身份 + 摘要，不含本机路径）。 */
@@ -262,6 +284,7 @@ export type DeliverHandoffRequest = z.infer<typeof DeliverHandoffRequestSchema>
 export const ConfirmHandoffReceiptRequestSchema = z.strictObject({
   understanding: z.string().min(1).max(10000),
   differences: z.string().min(1).max(10000).optional(),
+  expectedRevisionId: z.uuid().optional(),
 })
 export type ConfirmHandoffReceiptRequest = z.infer<typeof ConfirmHandoffReceiptRequestSchema>
 

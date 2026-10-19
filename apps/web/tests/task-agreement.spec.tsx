@@ -85,6 +85,71 @@ function roomHandlers(
 }
 
 describe('#378 任务约定面板', () => {
+  it('#396 检查辅助 Run 的私有 JSON 候选后采用；携带检查时的 CAS 令牌且不自动确认', async () => {
+    const user = userEvent.setup()
+    const helper = makeRun({ purpose: 'agreement_draft', status: 'completed' })
+    const task = makeTask({
+      id: TASK_ID,
+      assigneeUserId: BOB.userId,
+      assignmentStatus: 'accepted',
+      status: 'in_progress',
+    })
+    const draft = makeRevision({ status: 'draft', revisionNumber: null, draftVersion: 7 })
+    let adopted: unknown = null
+    const proposal = {
+      goal: 'Agent 起草的目标',
+      constraints: '保持接口',
+      acceptance: '回归通过',
+      openQuestions: '格式待定',
+    }
+    renderApp(
+      `/tasks/${TASK_ID}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task, {
+          runs: [helper],
+          artifacts: [
+            {
+              id: REVISION_ID,
+              runId: helper.id,
+              ownerUserId: BOB.userId,
+              title: 'agreement.json',
+              mediaType: 'application/json',
+              byteSize: 100,
+              sha256: 'a'.repeat(64),
+              status: 'candidate',
+              createdAt: '2026-10-19T00:00:00Z',
+              publishedAt: null,
+            },
+          ],
+        }),
+        agreementHandler({ enabled: true, draft, confirmed: null, history: [], confirmedCount: 0 }),
+        {
+          method: 'GET',
+          url: /\/artifacts\/[^/]+\/content$/,
+          respond: () => new Response(JSON.stringify(proposal)),
+        },
+        {
+          method: 'POST',
+          url: /\/agreement\/draft$/,
+          respond: (init) => {
+            adopted = JSON.parse(String(init.body))
+            return ok(draft)
+          },
+        },
+        { method: 'GET', url: /\/agents$/, respond: () => ok([]) },
+        { method: 'GET', url: /\/devices$/, respond: () => ok([]) },
+        { method: 'GET', url: /\/workspaces$/, respond: () => ok([]) },
+      ]),
+    )
+    await showWorkspace('agreement')
+    await user.click(screen.getByRole('button', { name: '用 Agent 起草约定' }))
+    await user.click(await screen.findByRole('button', { name: '检查约定候选：agreement.json' }))
+    expect(await screen.findByTestId('agreement-agent-preview')).toHaveTextContent(
+      'Agent 起草的目标',
+    )
+    await user.click(screen.getByRole('button', { name: '采用为约定草稿' }))
+    await waitFor(() => expect(adopted).toEqual({ content: proposal, expectedDraftVersion: 7 }))
+  })
   it('无已确认版本时给起草入口；责任人确认后显示当前版本与历史', async () => {
     const user = userEvent.setup()
     const empty = { enabled: false, draft: null, confirmed: null, history: [], confirmedCount: 0 }

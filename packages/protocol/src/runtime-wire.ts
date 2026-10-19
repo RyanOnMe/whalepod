@@ -9,7 +9,11 @@ import { z } from 'zod'
 import { envelope, parseWireFrame } from './envelope.js'
 import { ApprovalPolicySchema } from './approval.js'
 import { ErrorCodeSchema } from './errors.js'
-import { HandoffNarrativeSchema, HandoffRunSpecSchema } from './handoff.js'
+import {
+  EXECUTION_CONTEXT_MAX_CHARS,
+  HandoffNarrativeSchema,
+  HandoffRunSpecSchema,
+} from './handoff.js'
 
 const Sha256DigestSchema = z.string().regex(/^[a-f0-9]{64}$/)
 const DshSessionIdSchema = z.string().min(1).max(128)
@@ -68,6 +72,7 @@ const RuntimeInitializePayloadSchema = z
     // #379（ADR-0017 §3）：建 Run 时 Task 已启用约定流程才携带——Runtime 收尾阶段
     // 据此生成交接草稿（agreement 为绑定版本正文快照；未绑定 null）。
     handoff: HandoffRunSpecSchema.optional(),
+    executionContext: z.string().max(EXECUTION_CONTEXT_MAX_CHARS).optional(),
   })
   // 清单与副本目录必须成对出现：只带清单不给目录（Runtime 无处读取）或只给
   // 目录不带清单（无意义副本）都是畸形 initialize，fail-closed 拒绝。

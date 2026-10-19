@@ -3,7 +3,7 @@ import { showAgentCreation } from './helpers.js'
  * #381 两成员交接闭环的生产验收（Q5，project `p1-381`）。
  *
  * 判的是整条产品闭环，一次走完：
- *   1. 后端成员（Alice）启用任务约定并确认 v1——执行前的共同依据；
+ *   1. 后端成员（Alice）显式启动 Agent 起草，检查私有 JSON 候选并采用，独立确认 v1；
  *   2. 业务 Run 正常完成 → **收尾自动整理**交接草稿（真实 replay 夹具脚本化那次
  *      模型调用）→ 责任人核对后发布为不可变 v1；
  *   3. deliver：选成员（Bob）、建同项目下游任务 → pending receipt；
@@ -25,6 +25,7 @@ import { showAgentCreation } from './helpers.js'
  */
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
+import type { TaskAgreementView } from '@whalepod/protocol'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
@@ -52,7 +53,7 @@ const EVIDENCE_DIR = join(process.cwd(), 'artifacts', 'evidence', 'handoff-loop'
 
 interface RoomFact {
   task: { id: string; assignmentStatus: string; status: string }
-  runs: Array<{ id: string; status: string }>
+  runs: Array<{ id: string; status: string; purpose: string }>
   artifacts: Array<{ id: string; status: string; sha256: string }>
 }
 
@@ -73,12 +74,15 @@ const facts = {
   component: 'web.handoff-loop',
   source: 'production-hub-node-runtime',
   agreement: { enabled: false, confirmedRevisionNumber: 0 },
+  agreementDraft: {} as Record<string, unknown>,
   backend: {} as Record<string, unknown>,
   privacy: {} as Record<string, unknown>,
   delivery: {} as Record<string, unknown>,
   confirm: {} as Record<string, unknown>,
   downstream: {} as Record<string, unknown>,
   updateIsolation: {} as Record<string, unknown>,
+  semantic: {} as Record<string, unknown>,
+  finalization: {} as Record<string, unknown>,
 }
 
 test.describe.configure({ mode: 'serial' })
@@ -103,6 +107,16 @@ async function roomOf(cookie: string, taskId: string): Promise<RoomFact> {
   const res = await hubApi(cookie, 'GET', `/tasks/${taskId}`)
   expect(res.status).toBe(200)
   return res.data as RoomFact
+}
+
+async function completedText(cookie: string, runId: string): Promise<string> {
+  const result = await hubApi(cookie, 'GET', `/runs/${runId}/events?limit=200`)
+  expect(result.status).toBe(200)
+  const event = (
+    result.data as { events: Array<{ event: { type: string; finalText?: string } }> }
+  ).events.find((row) => row.event.type === 'run.completed')?.event
+  expect(event?.finalText).toBeTruthy()
+  return event!.finalText!
 }
 
 async function waitDeviceOnline(
@@ -265,17 +279,75 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   // ---------- 2. 启用约定 + 起草并确认 v1 ----------
   await alice.getByRole('button', { name: /^任务约定/ }).click()
   await alice.getByRole('switch', { name: '启用约定流程' }).click()
-  await alice.getByRole('button', { name: '起草任务约定' }).click()
-  const editor = alice.getByTestId('agreement-editor')
-  await editor.getByLabel('任务约定：目标').fill('交付登录接口与用例')
-  await editor.getByLabel('任务约定：验收条件').fill('单元测试通过')
-  await editor.getByRole('button', { name: '保存为新草稿' }).click()
+  await pairNodeFor(shared.aliceCookie)
+  await setRuntimeFixture('agreement-draft')
+  await alice.getByRole('button', { name: '用 Agent 起草约定' }).click()
+  const helper = alice.getByTestId('agreement-agent-draft')
+  const knownRuns = new Set(
+    (await roomOf(shared.aliceCookie, shared.upstreamTaskId)).runs.map((r) => r.id),
+  )
+  await selectFromMenu(helper.getByLabel('选择 Agent'), AGENT_NAME)
+  await helper.getByRole('button', { name: '执行设置' }).click()
+  await selectFromMenu(alice.locator('#target-agreement_draft-device'), /e2e-node（在线）/)
+  await selectFromMenu(alice.locator('#target-agreement_draft-workspace'), 'e2e-ws')
+  await alice.keyboard.press('Escape')
+  await helper.getByRole('button', { name: '启动约定起草' }).click()
+  await alice
+    .getByRole('dialog')
+    .getByRole('button', { name: /确认以完全权限启动/ })
+    .click()
+  const helperRunId = await waitForFreshRunId(shared.aliceCookie, shared.upstreamTaskId, knownRuns)
+  await waitForRunStatus(helperRunId, 'completed')
+  // 刷新读面；执行完成不代表已采用或确认，候选仍走 owner 的私有下载通道。
+  await alice.reload()
+  await alice.getByRole('button', { name: /^任务约定/ }).click()
+  await alice.getByRole('button', { name: '用 Agent 起草约定' }).click()
+  const before = await hubApi(
+    shared.aliceCookie,
+    'GET',
+    `/tasks/${shared.upstreamTaskId}/agreement`,
+  )
+  expect(before.status).toBe(200)
+  const beforeAgreement = before.data as TaskAgreementView
+  expect(beforeAgreement.confirmed).toBeNull()
+  await helper.getByRole('button', { name: '检查约定候选：约定提案' }).click()
+  await expect(helper.getByTestId('agreement-agent-preview')).toContainText('交付登录接口与用例')
+  const helperRoom = await roomOf(shared.aliceCookie, shared.upstreamTaskId)
+  const helperRun = helperRoom.runs.find((r) => r.id === helperRunId)!
+  const helperArtifact = helperRoom.artifacts.find((a) => a.status === 'candidate')!
+  expect(helperArtifact).toBeDefined()
+  const candidate = await fetch(
+    `${env().hubOrigin}/api/v1/artifacts/${helperArtifact.id}/content`,
+    {
+      headers: { cookie: shared.aliceCookie },
+    },
+  )
+  expect(candidate.status).toBe(200)
+  const candidateContent: unknown = await candidate.json()
+  await helper.getByRole('button', { name: '采用为约定草稿' }).click()
+  await expect(alice.getByRole('button', { name: /确认这一版/ })).toBeVisible()
+  const after = await hubApi(shared.aliceCookie, 'GET', `/tasks/${shared.upstreamTaskId}/agreement`)
+  expect(after.status).toBe(200)
+  const adoptedAgreement = after.data as TaskAgreementView
+  expect(adoptedAgreement.confirmed).toBeNull()
+  expect(adoptedAgreement.draft?.content).toEqual(candidateContent)
+  facts.agreementDraft = {
+    runId: helperRunId,
+    purpose: helperRun.purpose,
+    runStatus: helperRun.status,
+    artifactId: helperArtifact.id,
+    artifactStatus: helperArtifact.status,
+    ownerReadStatus: candidate.status,
+    confirmedBeforeAdopt: beforeAgreement.confirmed,
+    confirmedAfterAdopt: adoptedAgreement.confirmed,
+    candidateContent,
+    adoptedContent: adoptedAgreement.draft?.content,
+  }
   await alice.getByRole('button', { name: /确认这一版/ }).click()
   await expect(alice.getByTestId('agreement-current')).toContainText('v1')
   facts.agreement = { enabled: true, confirmedRevisionNumber: 1 }
 
-  // ---------- 3. 后端 Run：配 Node（handoff 夹具）→ 完成 → 收尾自动出草稿 ----------
-  const aliceDeviceId = await pairNodeFor(shared.aliceCookie)
+  // ---------- 3. 同一 Node 切换业务夹具 → 完成 → 收尾自动出草稿 ----------
   await setRuntimeFixture('handoff')
   shared.upstreamRunId = await startRunViaUi(
     alice,
@@ -284,13 +356,20 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
     '请实现登录接口与单元测试。',
   )
   await waitForRunStatus(shared.upstreamRunId, 'completed')
+  const agreementOutput = await completedText(shared.aliceCookie, shared.upstreamRunId)
+  expect(agreementOutput).toContain('交付登录接口与用例')
+  expect(agreementOutput).toContain('单元测试通过')
 
   // 材料发布（交接包的系统块只收已发布材料）。
   await alice.reload()
   await alice.locator(`.run-item-button[data-run-id="${shared.upstreamRunId}"]`).click()
   await alice.getByRole('button', { name: '交付与复核', exact: true }).click()
-  await expect(alice.getByTestId('artifact-publish-button')).toBeVisible({ timeout: 30_000 })
-  await alice.getByTestId('artifact-publish-button').click()
+  const reportPublish = alice
+    .getByRole('listitem')
+    .filter({ hasText: '接口实现报告' })
+    .getByTestId('artifact-publish-button')
+  await expect(reportPublish).toBeVisible({ timeout: 30_000 })
+  await reportPublish.click()
   await alice.getByRole('button', { name: '确认发布给团队' }).click()
   const publishedArtifact = await waitForPublishedArtifact(
     shared.aliceCookie,
@@ -346,6 +425,14 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   await fillAndEnter(bob, '#login-password', PASSWORD)
   await expect(bob.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
   shared.bobCookie = await sessionCookie(shared.bobContext!)
+  const helperMemberRead = await fetch(
+    `${env().hubOrigin}/api/v1/artifacts/${helperArtifact.id}/content`,
+    {
+      headers: { cookie: shared.bobCookie },
+    },
+  )
+  expect(helperMemberRead.status).toBe(404)
+  facts.agreementDraft['otherMemberReadStatus'] = helperMemberRead.status
   const ownerRead = await hubApi(
     shared.aliceCookie,
     'GET',
@@ -399,6 +486,9 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   const receiptPanel = bob.getByTestId('handoff-receipt-panel')
   await expect(receiptPanel).toBeVisible({ timeout: 30_000 })
   await expect(receiptPanel).toContainText('待确认版本 v1')
+  const publishedContent = receiptPanel.getByTestId('handoff-published-content')
+  await expect(publishedContent).toContainText('沿用既有会话中间件，不引入新依赖')
+  const receiverVisibleText = await publishedContent.innerText()
   await receiptPanel.getByLabel('确认接收：本次准备做什么').fill('先接登录页，复用会话中间件。')
   await receiptPanel.getByRole('button', { name: '确认接收（不动任务状态）' }).click()
   await expect(bob.getByTestId('handoff-receipt-active')).toBeVisible({ timeout: 30_000 })
@@ -438,7 +528,7 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   await stopNode('SIGKILL')
   const bobDeviceId = await pairNodeFor(shared.bobCookie)
   expect(bobDeviceId).toBeTruthy()
-  await setRuntimeFixture('basic')
+  await setRuntimeFixture('handoff-downstream')
   await bob.reload()
   const attach = bob.getByTestId('handoff-attach')
   await expect(attach).toBeVisible({ timeout: 30_000 })
@@ -450,6 +540,26 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
     '请按上游交接包接入登录页。',
   )
   await waitForRunStatus(downstreamRunId, 'completed')
+  const downstreamOutput = await completedText(shared.bobCookie, downstreamRunId)
+  expect(downstreamOutput).toContain('沿用既有会话中间件，不引入新依赖')
+  expect(downstreamOutput).toContain('先接登录页，复用会话中间件。')
+  const publishedVersion = await hubApi(
+    shared.bobCookie,
+    'GET',
+    `/handoff-revisions/${revisionV1!.id}`,
+  )
+  const handoffStatement = (
+    publishedVersion.data as { content: { narrative: { decisions: Array<{ text: string }> } } }
+  ).content.narrative.decisions[0]!.text
+  facts.semantic = {
+    agreementGoal: '交付登录接口与用例',
+    agreementAcceptance: '单元测试通过',
+    agreementOutput,
+    handoffStatement,
+    receiverVisibleText,
+    understanding: '先接登录页，复用会话中间件。',
+    downstreamOutput,
+  }
 
   // ---------- 8. 固定交接输入：Hub 快照 == 上游发布；Node 副本实字节 == 快照摘要 ----------
   const handoffInputRes = await hubApi(
@@ -540,4 +650,28 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   )[0]!
   expect(latestReported.latestRevisionNumber).toBe(2)
   expect(latestReported.revisionNumber).toBe(1)
+
+  // 真正走到真人验收终点，而非仅以 Run completed 冒充任务完成。
+  await bob.reload()
+  await bob.locator(`.run-item-button[data-run-id="${downstreamRunId}"]`).click()
+  await bob.getByRole('button', { name: '交付与复核', exact: true }).click()
+  await bob.getByTestId('artifact-publish-button').click()
+  await bob.getByRole('button', { name: '确认发布给团队' }).click()
+  await waitForPublishedArtifact(shared.bobCookie, receipt.downstreamTaskId)
+  await bob.reload()
+  const beforeReview = await roomOf(shared.bobCookie, receipt.downstreamTaskId)
+  await bob.getByRole('button', { name: '提交验收', exact: true }).click()
+  await bob.getByRole('button', { name: '确认提交验收', exact: true }).click()
+  await expect(bob.getByRole('button', { name: '完成任务', exact: true })).toBeVisible()
+  const inReview = await roomOf(shared.bobCookie, receipt.downstreamTaskId)
+  await bob.getByRole('button', { name: '完成任务', exact: true }).click()
+  await bob.getByRole('button', { name: '确认完成任务', exact: true }).click()
+  await expect
+    .poll(async () => (await roomOf(shared.bobCookie!, receipt.downstreamTaskId)).task.status)
+    .toBe('done')
+  facts.finalization = {
+    beforeReview: beforeReview.task.status,
+    afterSubmit: inReview.task.status,
+    afterComplete: (await roomOf(shared.bobCookie, receipt.downstreamTaskId)).task.status,
+  }
 })
