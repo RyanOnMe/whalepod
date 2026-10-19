@@ -49,6 +49,8 @@ export interface MenuTriggerProbe {
   borderColor: string
   /** `getComputedStyle(trigger).borderTopLeftRadius`：如 '8px'。 */
   radius: string
+  /** 浏览器事实（不是产品判据）：Chrome 把声明的 0.5px 计算成 1px，保留活证据防假设漂移。 */
+  borderWidth?: string
   /** `getComputedStyle(document.documentElement).getPropertyValue(<背景 token>)`。 */
   resolvedBackgroundToken: string
   /** 同上，用于描边 token。 */

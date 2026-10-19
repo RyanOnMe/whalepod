@@ -112,7 +112,13 @@ test.describe('#158 七处下拉的两档审计', () => {
     const wrongBorder = await owner.addStyleTag({
       content: '#invite-role { border-color: rgb(255, 0, 0) !important; }',
     })
-    await expect(assertMenuTriggerTokens(inviteRole)).rejects.toThrow()
+    let wrongBorderRejected = false
+    try {
+      await assertMenuTriggerTokens(inviteRole)
+    } catch {
+      wrongBorderRejected = true
+    }
+    expect(wrongBorderRejected).toBe(true)
     await wrongBorder.evaluate((element) => element.parentNode?.removeChild(element))
     await assertMenuTriggerTokens(inviteRole)
     for (const vp of VIEWPORTS) {
@@ -220,7 +226,7 @@ test.describe('#158 七处下拉的两档审计', () => {
           component: 'browser',
           scenario: 'menu-trigger-states',
           probes: stateProbes,
-          wrongBorderRejected: true,
+          wrongBorderRejected,
         },
         null,
         2,

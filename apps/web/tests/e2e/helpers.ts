@@ -530,6 +530,7 @@ export async function assertMenuTriggerTokens(trigger: Locator): Promise<MenuTri
             background: style.backgroundColor,
             borderColor: style.borderTopColor,
             radius: style.borderTopLeftRadius,
+            borderWidth: style.borderTopWidth,
             resolvedBackgroundToken: root.getPropertyValue(names.background).trim(),
             resolvedBorderToken: root.getPropertyValue(names.border).trim(),
             resolvedHoverBorderToken: root.getPropertyValue(names.hoverBorder).trim(),
@@ -549,6 +550,15 @@ export async function assertMenuTriggerTokens(trigger: Locator): Promise<MenuTri
       },
     )
     .toEqual([])
+  // 顺手在真实浏览器里回读一次描边宽度（原本就在这里，别丢）：CSS 声明 0.5px，
+  // Chrome 的 computed 值是 1px（DPR=1/2 都一样，本机实测）。这不是产品判据，而是
+  // 「别拿 computed 宽度去和 vendored 的 0.5px 比」的活证据——每跑一次 Q5 复核一次。
+  if (probe!.borderWidth === '0.5px') {
+    throw new Error(
+      '实测到 computed border-top-width = 0.5px：本机 Chrome 此前给的是 1px（0.5px 会被取整）。' +
+        '若浏览器行为变了，select-trigger-tokens.ts 里那条"浏览器侧不判宽度"的理由要一并复核。',
+    )
+  }
   return probe!
 }
 
