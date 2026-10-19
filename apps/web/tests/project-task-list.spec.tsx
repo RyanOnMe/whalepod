@@ -6,12 +6,13 @@
  * 责任人显示名走 #136 成员列表（不是短 UUID）、点击进入对应 Task Room。
  * #152 追加：项目卡的创建者同样走成员名录（不写截断 UUID），时间给相对文案。
  */
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import type { ProjectView } from '../src/shared/api/types.js'
 import {
   ALICE,
+  agentsHandler,
   BOB,
   loggedInHandlers,
   makeMember,
@@ -36,6 +37,45 @@ const PROJECT: ProjectView = {
 }
 
 describe('#137 项目任务列表', () => {
+  it('#403 成功后导航尚未离开时，连点与重复 submit 不得再次创建', async () => {
+    const user = userEvent.setup()
+    let posts = 0
+    const view = renderApp(
+      '/',
+      loggedInHandlers(ALICE, [
+        projectsHandler([PROJECT]),
+        teamMembersHandler(),
+        agentsHandler([]),
+        {
+          method: 'POST',
+          url: /\/api\/v1\/projects\/[^/]+\/tasks$/,
+          respond: () => {
+            posts += 1
+            return { status: 201, body: { ok: true, data: makeTask({ projectId: PROJECT.id }) } }
+          },
+        },
+      ]),
+    )
+    await user.click(await screen.findByRole('button', { name: '创建任务' }))
+    await user.type(await screen.findByLabelText('任务标题'), '快速成功连点')
+    const form = screen.getByRole('form', { name: '创建任务' })
+    const submit = within(form).getByRole('button', { name: '创建任务' })
+    await waitFor(() => expect(submit).toBeEnabled())
+    // 正式 router 的导航阻塞模拟导航尚未完成，不替换任务创建路径。
+    view.router.getBlocker('navigation-pending', () => true)
+    act(() => {
+      fireEvent.submit(form)
+      fireEvent.submit(form)
+    })
+    await waitFor(() =>
+      expect(view.router.getBlocker('navigation-pending', () => true).state).toBe('blocked'),
+    )
+    expect(posts).toBe(1)
+    expect(submit).toBeDisabled()
+    fireEvent.submit(form)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(posts).toBe(1)
+  })
   it('展开后列出本项目任务：状态中文、责任人显示名、点击进入 Task Room', async () => {
     const first = makeTask({
       projectId: PROJECT.id,
