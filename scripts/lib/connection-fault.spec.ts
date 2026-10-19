@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ConnectionFault } from './connection-fault.js'
-import { r8WindowFailures } from './r8-window.js'
+import { r8WindowFailures, r8EvidenceFailures } from '../../apps/web/tests/e2e/r8-window.js'
 
 describe('#399 断连窗口由显式释放控制', () => {
   it('超过旧 4 秒窗口仍拒绝连接，只有持有者明确释放才恢复', () => {
@@ -55,5 +55,24 @@ describe('#399 R8 崩溃前提必须机器判定', () => {
       { startCommands: [] },
     ])
       expect(r8WindowFailures({ ...good(), ...changes }).length).toBeGreaterThan(0)
+  })
+  it('完整证据必须有崩溃前窗口和重启后的新派发，缺环或仅重复旧结果必须失败', () => {
+    const goodEvidence = {
+      component: 'hub.outbox',
+      scenario: 'R8',
+      runId: 'run-r8',
+      before: good(),
+      after: { startAttempts: 2, startAcked: true, status: 'completed' },
+    }
+    expect(r8EvidenceFailures(goodEvidence)).toEqual([])
+    for (const bad of [
+      null,
+      {},
+      { ...goodEvidence, before: undefined },
+      { ...goodEvidence, after: undefined },
+      { ...goodEvidence, after: { ...goodEvidence.after, startAttempts: 1 } },
+      { ...goodEvidence, before: { ...good(), startCommands: [{ acked: false, attempts: NaN }] } },
+    ])
+      expect(r8EvidenceFailures(bad).length).toBeGreaterThan(0)
   })
 })

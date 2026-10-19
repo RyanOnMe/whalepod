@@ -23,7 +23,7 @@ import { showAgentCreation } from './helpers.js'
 import { expect, test, type BrowserContext, type Locator, type Page } from '@playwright/test'
 import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile, rm } from 'node:fs/promises'
 import {
   env,
   hubApi,
@@ -55,7 +55,7 @@ import {
   type RunFact,
 } from './helpers.js'
 import { expectNoContrastOffenders } from './contrast-sweep.js'
-import { r8WindowFailures, type R8WindowFacts } from '../../../../scripts/lib/r8-window.js'
+import { r8WindowFailures, type R8WindowFacts } from './r8-window.js'
 
 const ALICE_PASSWORD = 'correct horse battery staple'
 const BOB_PASSWORD = 'correct horse battery staple'
@@ -306,6 +306,7 @@ test.describe.configure({ mode: 'serial' })
 
 // 浏览器上下文是文件级生命周期（三个 describe 共享一次 Setup/Node 链）。
 test.beforeAll(async ({ browser }) => {
+  await rm(join(process.cwd(), 'artifacts/evidence/r8-window/result.json'), { force: true })
   shared.aliceContext = await browser.newContext()
   shared.bobContext = await browser.newContext()
 })
@@ -805,6 +806,8 @@ test.describe('P1-19 恢复场景（R1/R4/R5/R7/R8/R9）', () => {
     let runId = ''
     let before: R8WindowFacts | undefined
     try {
+      await expect(releaseNodeConnection(randomUUID())).rejects.toThrow()
+      await expect(dropNodeConnection(1)).rejects.toThrow()
       await expect.poll(async () => (await nodeConnectionState()).liveSockets).toBe(0)
       runId = await startRunViaUi('builder', 'R8：提交后崩溃')
       // 读真实 Outbox 与 socket 故障状态；不靠固定延时猜窗口是否仍在。

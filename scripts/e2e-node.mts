@@ -36,6 +36,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
+import { ConnectionFault } from './lib/connection-fault.js'
 import { WebSocket } from 'ws'
 import type { NodeDownstream } from '@whalepod/protocol'
 import { claimDevice } from '../apps/node/src/pairing/client.js'
@@ -379,7 +380,7 @@ await supervisor.recoverOrphans()
 
 // ---- WebSocket 故障缝：offline 窗口内连接尝试立即失败（模拟拔线——非 stop
 // 语义，产品重连退避照常运转），存活连接 terminate() 直接摧毁。----
-let offlineUntil = 0
+const connectionFault = new ConnectionFault()
 const liveSockets = new Set<FaultWebSocket>()
 
 const FORWARDED_EVENTS = ['open', 'message', 'close', 'error', 'unexpected-response'] as const
@@ -389,7 +390,7 @@ class FaultWebSocket extends (await import('node:events')).EventEmitter {
 
   constructor(url: string, options?: unknown) {
     super()
-    if (Date.now() < offlineUntil) {
+    if (connectionFault.blockConnection()) {
       // 拔线窗口：openHubSocket 同步挂好监听器后（nextTick）报 error + 1006 关闭
       // （非永久码 → session 退避重连继续；重连尝试在窗口内会继续失败）。
       process.nextTick(() => {
@@ -517,9 +518,33 @@ const server = createServer((req, res) => {
       }
       case '/drop': {
         const offlineMs = Number(body['offlineMs'] ?? 0)
-        offlineUntil = Date.now() + offlineMs
+        try {
+          connectionFault.dropFor(offlineMs)
+        } catch {
+          return reply(409, { error: 'invalid or held connection fault' })
+        }
         destroyLiveSockets()
         return reply(200, { ok: true, offlineMs })
+      }
+      case '/connection-hold': {
+        try {
+          connectionFault.hold(String(body['faultId'] ?? ''))
+        } catch {
+          return reply(409, { error: 'invalid or conflicting connection fault' })
+        }
+        destroyLiveSockets()
+        return reply(200, { ...connectionFault.snapshot(), liveSockets: liveSockets.size })
+      }
+      case '/connection-release': {
+        try {
+          connectionFault.release(String(body['faultId'] ?? ''))
+        } catch {
+          return reply(409, { error: 'connection fault id mismatch' })
+        }
+        return reply(200, { ...connectionFault.snapshot(), liveSockets: liveSockets.size })
+      }
+      case '/connection-state': {
+        return reply(200, { ...connectionFault.snapshot(), liveSockets: liveSockets.size })
       }
       case '/ack-drop': {
         ackDropRemaining += Number(body['count'] ?? 1)
