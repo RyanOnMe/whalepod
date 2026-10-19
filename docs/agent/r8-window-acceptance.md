@@ -16,7 +16,9 @@
 
 ## 取证与复跑
 
-证据：`artifacts/evidence/r8-window/result.json`，仅包含分层故障状态与派发事实，无 Token、路径或完整协议帧。每次启动 p1-19 先删除旧结果，不能借历史 PASS。本地定向 R8 已通过，独立重判 PASS；完整组合 Q5 待三项分支装配后记录。
+证据：`artifacts/evidence/r8-window/result.json`，仅包含分层故障状态与派发事实，无 Token、路径或完整协议帧。每次启动 p1-19 先删除旧结果，不能借历史 PASS。本地定向 R8 已通过，独立重判 PASS。
+
+2026-10-19 组合实测：实现提交 `6765ca2`（PR #397/#400/#401/#404/#405）本机完整 Q5 **1/1 PASS**，全部项目执行到结束，退出码 0；组合 Q0 1921 passed / 7 expected fail。整轮日志与关键结构化证据已过敏感扫描。Linux 连续三轮的运行及归档见 [39239719979](https://github.com/RyanOnMe/whalepod/actions/runs/39239719979)。本次单轮结果不替代发布所需 20 连。
 
 ```bash
 pnpm exec playwright test --config playwright.operations.config.ts --project p1-19 --grep 'R8：'
