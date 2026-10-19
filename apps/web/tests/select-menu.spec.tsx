@@ -603,6 +603,7 @@ describe('#158 视觉判据：触发器样式来自 L1 token', () => {
     const backgroundResolved = readTokenValue(tokensCss, '--dsw-static-neutral-bluish-00')
     const borderResolved = 'rgba(0, 0, 0, 0.16)'
     const probe = {
+      state: 'idle' as const,
       background: backgroundResolved,
       borderColor: borderResolved,
       radius: '8px',
@@ -640,6 +641,34 @@ describe('#158 视觉判据：触发器样式来自 L1 token', () => {
         borderToken,
       ),
     ).toHaveLength(1)
+  })
+
+  it('#398 Q5 按交互态判描边；焦点/hover/禁用都不能跳过错误颜色', () => {
+    const probe = {
+      state: 'hover' as 'idle' | 'hover' | 'focus-visible' | 'disabled',
+      background: 'rgb(255, 255, 255)',
+      borderColor: 'rgb(129, 133, 140)',
+      radius: '8px',
+      resolvedBackgroundToken: 'rgb(255, 255, 255)',
+      resolvedBorderToken: 'rgba(0, 0, 0, 0.16)',
+      resolvedHoverBorderToken: 'rgb(129, 133, 140)',
+      resolvedFocusBorderToken: 'rgb(15, 17, 21)',
+    }
+    const check = (value: typeof probe) =>
+      checkMenuTriggerTokens(value, SELECT_TRIGGER_BACKGROUND_TOKEN, SELECT_TRIGGER_BORDER_TOKEN)
+    for (const [state, color] of [
+      ['idle', probe.resolvedBorderToken],
+      ['hover', probe.resolvedHoverBorderToken],
+      ['focus-visible', probe.resolvedFocusBorderToken],
+      ['disabled', probe.resolvedBorderToken],
+    ] as const) {
+      expect(check({ ...probe, state, borderColor: color })).toEqual([])
+      expect(check({ ...probe, state, borderColor: 'rgb(255, 0, 0)' })).toHaveLength(1)
+    }
+    expect(check({ ...probe, resolvedHoverBorderToken: '' })).toHaveLength(1)
+    expect(check({ ...probe, state: 'focus-visible', resolvedFocusBorderToken: '' })).toHaveLength(
+      1,
+    )
   })
 
   /**
