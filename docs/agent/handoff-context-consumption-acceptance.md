@@ -1,7 +1,7 @@
 # 约定与交接内容实际消费验收（#396）
 
 - 关联：ADR-0020；Q0/Q2/Q3/Q5/Q6/Q7。
-- 2026-10-19：本地 Q0 PASS（1912 passed，7 expected fail）；Q3 PASS（74）；新增集成与浏览器验收等待可用 Docker 或 CI。不能把历史 #381 的 PASS 当成本次 PASS。
+- 2026-10-19：本地 Q0 PASS（1913 passed，7 expected fail）；Q3 PASS（74）；新增集成与浏览器验收等待可用 Docker 或 CI。不能把历史 #381 的 PASS 当成本次 PASS。
 
 ## 用户路径与驱动
 

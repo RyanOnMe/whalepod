@@ -29,6 +29,7 @@ export interface ExplicitTarget {
 }
 
 export interface TargetPickerProps {
+  idPrefix?: string
   /** 当前 Task 的责任人——决定"我能不能选目标"。 */
   isAssignee: boolean
   /** 显式目标；`null` 表示走自动解析。 */
@@ -50,6 +51,7 @@ export interface TargetPickerProps {
 }
 
 export function TargetPicker({
+  idPrefix = 'target',
   isAssignee,
   value,
   onChange,
@@ -132,7 +134,7 @@ export function TargetPicker({
           <SelectMenu
             portal={portalMenus}
             disabled={disabled}
-            id="target-device"
+            id={`${idPrefix}-device`}
             label="指定设备"
             {...(deviceAriaLabel !== undefined ? { ariaLabel: deviceAriaLabel } : {})}
             value=""
@@ -159,7 +161,7 @@ export function TargetPicker({
       <SelectMenu
         portal={portalMenus}
         disabled={disabled}
-        id="target-device"
+        id={`${idPrefix}-device`}
         label="设备"
         {...(deviceAriaLabel !== undefined ? { ariaLabel: deviceAriaLabel } : {})}
         value={value.deviceId}
@@ -175,7 +177,7 @@ export function TargetPicker({
       <SelectMenu
         portal={portalMenus}
         disabled={disabled}
-        id="target-workspace"
+        id={`${idPrefix}-workspace`}
         label="工作区"
         {...(workspaceAriaLabel !== undefined ? { ariaLabel: workspaceAriaLabel } : {})}
         value={value.workspaceId}

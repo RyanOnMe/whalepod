@@ -79,6 +79,14 @@ export function AgreementAgentDraft({
       <p>使用你选择的 Agent 与本机环境起草，会调用模型。产出仅你可见，采用后仍需真人确认。</p>
       {room.isError ? <ErrorBanner error={room.error} /> : null}
       <RunLauncher
+        embedded
+        blocked={
+          room.isPending ||
+          room.isError ||
+          task.assignmentStatus !== 'accepted' ||
+          task.status === 'done' ||
+          task.status === 'cancelled'
+        }
         task={task}
         session={session}
         hasActiveRun={runs.some((run) => ACTIVE.has(run.status))}
