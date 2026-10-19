@@ -22,6 +22,7 @@ import type { RuntimeCommand, RuntimeOutput } from '@whalepod/protocol'
 
 export type ReplayScenario =
   | 'basic'
+  | 'context'
   | 'tool-approval'
   | 'cancel'
   | 'unmodified-plugin'

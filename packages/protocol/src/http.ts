@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { ApprovalPolicySchema } from './approval.js'
 import { ErrorCodeSchema } from './errors.js'
 import { TaskSpecContentSchema } from './task-views.js'
+import { HandoffContentSchema } from './handoff.js'
 
 export const ApiFailureSchema = z.strictObject({
   ok: z.literal(false),
@@ -370,6 +371,14 @@ export const HandoffInputManifestSchema = z.strictObject({
   receiptId: z.uuid(),
   revisionId: z.uuid(),
   revisionNumber: z.number().int().positive(),
+  // optional 仅表示旧 Run 的正文未知，不允许回读上游当前版本补造历史。
+  context: z
+    .strictObject({
+      content: HandoffContentSchema,
+      understanding: z.string().min(1).max(10000),
+      differences: z.string().max(10000).nullable(),
+    })
+    .optional(),
   artifacts: z.array(ArtifactManifestEntrySchema).max(ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES),
 })
 export type HandoffInputManifest = z.infer<typeof HandoffInputManifestSchema>

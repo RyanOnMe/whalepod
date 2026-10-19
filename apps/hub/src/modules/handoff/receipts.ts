@@ -290,6 +290,9 @@ export async function adoptReceipt(
       .orderBy(desc(schema.handoffRevisions.revisionNumber))
       .limit(1)
     const newest = rows[0]
+    if (input.expectedRevisionId !== undefined && newest?.id !== input.expectedRevisionId) {
+      throw new ApiError(409, 'CONFLICT', '交接版本已变化，请查看新版本正文后重新确认')
+    }
     if (newest === undefined || newest.revisionNumber <= current.revisionNumber) {
       throw new ApiError(409, 'CONFLICT', '上游没有更新的交接版本可采纳')
     }

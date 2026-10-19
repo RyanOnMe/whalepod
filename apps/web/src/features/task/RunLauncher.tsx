@@ -57,6 +57,7 @@ export interface RunLauncherProps {
   /** 交接输入（#380）：勾选「附带上游交接材料」时显式带上已确认 receipt。 */
   handoffReceiptId?: string | undefined
   buttonLabel?: string | undefined
+  purpose?: 'business' | 'agreement_draft' | 'handoff_draft'
   blocked?: boolean
   onStarted?: (runId: string) => void
   onOutcome?: (outcome: InstructionOutcome) => void
@@ -81,6 +82,7 @@ export function RunLauncher({
   artifactInputIds,
   handoffReceiptId,
   buttonLabel = '开始执行',
+  purpose,
   blocked = false,
   onStarted,
   onOutcome,
@@ -92,6 +94,7 @@ export function RunLauncher({
   onSendingChange,
 }: RunLauncherProps): ReactNode {
   const queryClient = useQueryClient()
+  const controlId = purpose === undefined ? 'run' : `run-${purpose}`
   const directory = useMemberDirectory()
   const [localSettings, setLocalSettings] = useState<ExecutionSettings>({
     ...EMPTY_EXECUTION_SETTINGS,
@@ -200,6 +203,7 @@ export function RunLauncher({
         agentId,
         ...(artifactInputIds === undefined ? {} : { artifactInputIds }),
         ...(handoffReceiptId === undefined ? {} : { handoffReceiptId }),
+        ...(purpose === undefined ? {} : { purpose }),
         profileRevisionId: effectiveRevisionId,
         ...(isAssignee && deviceId !== ''
           ? { deviceId, ...(workspaceId !== '' ? { workspaceId } : {}) }
@@ -340,9 +344,9 @@ export function RunLauncher({
   return (
     <section
       className={embedded ? 'run-launcher' : 'card run-launcher'}
-      aria-labelledby="run-launcher-heading"
+      aria-labelledby={`${controlId}-launcher-heading`}
     >
-      <h3 id="run-launcher-heading">开始新执行</h3>
+      <h3 id={`${controlId}-launcher-heading`}>开始新执行</h3>
       <p className="mutation-hint">新执行不接续旧会话；配置版本与审批档将在开始时固定。</p>
       <form
         className="instruction-composer"
@@ -357,7 +361,7 @@ export function RunLauncher({
               <div className="field">
                 <SelectMenu
                   appearance="glide"
-                  id="run-agent"
+                  id={`${controlId}-agent`}
                   label="Agent"
                   ariaLabel="选择 Agent"
                   value={agentId}
@@ -377,7 +381,7 @@ export function RunLauncher({
                 <div className="field" data-testid="execution-revision">
                   <SelectMenu
                     portal
-                    id="run-revision"
+                    id={`${controlId}-revision`}
                     label="配置版本"
                     ariaLabel="选择 Revision"
                     value={effectiveRevisionId}
@@ -388,6 +392,7 @@ export function RunLauncher({
                   />
                 </div>
                 <TargetPicker
+                  idPrefix={purpose === undefined ? 'target' : `target-${purpose}`}
                   portalMenus
                   disabled={start.isPending}
                   isAssignee={isAssignee}

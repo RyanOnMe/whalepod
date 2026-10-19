@@ -221,6 +221,25 @@ describe('handoff draft (#379)', () => {
     })
   })
 
+  it('#396 自动事件不能自报已核实，owner 的显式编辑可以核实', async () => {
+    const { ids, harness, run } = await seedCompletedRun()
+    const content = narrative({ completed: [{ text: '模型自报', verified: true, refs: [] }] })
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(run.id, 3, { type: 'handoff.draft', status: 'generated', content }),
+    )
+    const draft = await getRunHandoffDraft(database.db, run.id, ids.userId)
+    expect(draft?.content?.narrative.completed[0]?.verified).toBe(false)
+    const edited = await updateManualHandoffDraft(
+      database,
+      makeActor(ids.userId),
+      run.id,
+      { narrative: content, expectedDraftVersion: draft!.draftVersion },
+      idemKey(),
+    )
+    expect(edited.content?.narrative.completed[0]?.verified).toBe(true)
+  })
+
   it('受众纪律（评审 m1）：非 owner 受众的 handoff.draft 帧 fail-closed 拒绝，整帧回滚', async () => {
     const { ids, harness, run } = await seedCompletedRun()
     const content = narrative({

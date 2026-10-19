@@ -428,8 +428,15 @@ export async function assertControlTokens(
 export async function selectFromMenu(trigger: Locator, optionText: string | RegExp): Promise<void> {
   await expect(trigger).toBeAttached()
   const settingsPanel = trigger.locator('xpath=ancestor::*[@data-settings-panel]')
-  if ((await settingsPanel.count()) > 0 && !(await settingsPanel.isVisible()))
-    await trigger.page().getByLabel('执行设置', { exact: true }).click()
+  if ((await settingsPanel.count()) > 0) {
+    // 页面可同时有业务与约定起草两套设置；按 aria-controls 找所属入口。
+    // 已展开但 portal 尚在定位时等待可见，不能误点一次把它关回去。
+    const panelId = await settingsPanel.getAttribute('id')
+    if (panelId === null) throw new Error('执行参数面板缺少关联标识')
+    const disclosure = trigger.page().locator(`summary[aria-controls=${JSON.stringify(panelId)}]`)
+    if ((await disclosure.locator('..').getAttribute('open')) === null) await disclosure.click()
+    await expect(settingsPanel).toBeVisible()
+  }
   const advanced = trigger.locator('xpath=ancestor::details')
   if ((await advanced.count()) > 0 && (await advanced.first().getAttribute('open')) === null) {
     await advanced.first().locator('summary').click()
@@ -610,7 +617,14 @@ export function restartHub(input: {
 }
 
 export function setRuntimeFixture(
-  name: 'approval' | 'basic' | 'secrets' | 'rejection' | 'handoff',
+  name:
+    | 'approval'
+    | 'basic'
+    | 'secrets'
+    | 'rejection'
+    | 'handoff'
+    | 'handoff-downstream'
+    | 'agreement-draft',
 ): Promise<unknown> {
   return nodeControl('/fixture', { name })
 }
