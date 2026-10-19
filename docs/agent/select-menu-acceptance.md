@@ -166,6 +166,8 @@ pnpm exec playwright test --project=p1-158   # 本 Issue 自己的两档截图�
 
 ## 复跑
 
+2026-10-19 组合实测：实现提交 `6765ca2`（PR #397/#400/#401/#404/#405）本机完整 Q5 **1/1 PASS**，全部项目执行到结束，退出码 0；组合 Q0 1921 passed / 7 expected fail。整轮日志与关键结构化证据已过敏感扫描。Linux 连续三轮的运行及归档见 [39239719979](https://github.com/RyanOnMe/whalepod/actions/runs/39239719979)。本次单轮结果不替代发布所需 20 连。
+
 ### #398：交互态与过渡收敛（2026-10-19）
 
 `assertMenuTriggerTokens` 现采集 idle / hover / focus-visible / disabled、实际颜色与对应 token、描边过渡是否仍在运行。按现有 CSS specificity，hover 与 focus-visible 同时命中时 hover 优先；禁用态不采用 hover 色。过渡未结束时不能通过，结束后每种状态都必须比较描边，焦点态不再跳过。2 秒内不收敛、缺状态/token 或颜色错误均失败；不改产品样式。
