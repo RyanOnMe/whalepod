@@ -76,6 +76,55 @@ describe('#137 项目任务列表', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(posts).toBe(1)
   })
+
+  it('#403 失败释放提交锁，人工重试复用原幂等键', async () => {
+    const user = userEvent.setup()
+    const keys: Array<string | null> = []
+    const view = renderApp(
+      '/',
+      loggedInHandlers(ALICE, [
+        projectsHandler([PROJECT]),
+        teamMembersHandler(),
+        agentsHandler([]),
+        {
+          method: 'POST',
+          url: /\/api\/v1\/projects\/[^/]+\/tasks$/,
+          respond: (init) => {
+            keys.push(new Headers(init.headers).get('idempotency-key'))
+            return keys.length === 1
+              ? {
+                  status: 500,
+                  body: {
+                    ok: false,
+                    error: {
+                      code: 'INTERNAL_ERROR',
+                      message: 'temporary outage',
+                      requestId: 'retry-create',
+                    },
+                  },
+                }
+              : { status: 201, body: { ok: true, data: makeTask({ projectId: PROJECT.id }) } }
+          },
+        },
+      ]),
+    )
+    await user.click(await screen.findByRole('button', { name: '创建任务' }))
+    await user.type(await screen.findByLabelText('任务标题'), '失败后重试')
+    const form = screen.getByRole('form', { name: '创建任务' })
+    const submit = within(form).getByRole('button', { name: '创建任务' })
+    await waitFor(() => expect(submit).toBeEnabled())
+    view.router.getBlocker('navigation-pending', () => true)
+    await user.click(submit)
+    await screen.findByRole('alert')
+    await waitFor(() => expect(submit).toBeEnabled())
+    await user.click(submit)
+    await waitFor(() =>
+      expect(view.router.getBlocker('navigation-pending', () => true).state).toBe('blocked'),
+    )
+    expect(keys).toHaveLength(2)
+    expect(keys[0]).toBeTruthy()
+    expect(keys[1]).toBe(keys[0])
+  })
   it('展开后列出本项目任务：状态中文、责任人显示名、点击进入 Task Room', async () => {
     const first = makeTask({
       projectId: PROJECT.id,
