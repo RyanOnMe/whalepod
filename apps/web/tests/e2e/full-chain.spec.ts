@@ -805,6 +805,7 @@ test.describe('P1-19 恢复场景（R1/R4/R5/R7/R8/R9）', () => {
     let released = false
     let runId = ''
     let before: R8WindowFacts | undefined
+    let primaryError: unknown
     try {
       await expect(releaseNodeConnection(randomUUID())).rejects.toThrow()
       await expect(dropNodeConnection(1)).rejects.toThrow()
@@ -829,8 +830,18 @@ test.describe('P1-19 恢复场景（R1/R4/R5/R7/R8/R9）', () => {
       await restartHub({ signal: 'SIGKILL', stayDownMs: 2_000 })
       await releaseNodeConnection(faultId)
       released = true
+    } catch (error) {
+      primaryError = error
+      throw error
     } finally {
-      if (!released) await releaseNodeConnection(faultId)
+      if (!released) {
+        try {
+          await releaseNodeConnection(faultId)
+        } catch (cleanupError) {
+          // 清理失败不能覆盖真正的断言失败；只有在主路径成功时才让它成为失败。
+          if (primaryError === undefined) throw cleanupError
+        }
+      }
     }
 
     // 判定：worker 重启后继续派发，Run 必然离开 queued 并走到可审批态。

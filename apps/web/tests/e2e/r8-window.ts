@@ -1,5 +1,12 @@
 export interface R8WindowFacts {
-  fault: { held: boolean; offline: boolean; faultId: string | null; liveSockets: number }
+  fault: {
+    component?: string
+    held: boolean
+    offline: boolean
+    faultId: string | null
+    liveSockets: number
+    blockedConnectionAttempts?: number
+  }
   expectedFaultId: string
   runStatus: string
   startCommands: Array<{ acked: boolean; attempts: number }>
@@ -17,6 +24,13 @@ export function r8WindowFailures(facts: R8WindowFacts): string[] {
   )
     failures.push('node.gateway: expected disconnect must still be held')
   if (facts.fault.liveSockets !== 0) failures.push('node.gateway: live connection remains')
+  if (facts.fault.component !== 'node.gateway')
+    failures.push('node.gateway: fault probe must come from the node gateway')
+  if (
+    !Number.isSafeInteger(facts.fault.blockedConnectionAttempts) ||
+    (facts.fault.blockedConnectionAttempts ?? 0) < 1
+  )
+    failures.push('node.gateway: no blocked connection attempt observed')
   if (!['queued', 'dispatching'].includes(facts.runStatus))
     failures.push('hub.outbox: run already left dispatch window')
   if (!Array.isArray(facts.startCommands) || facts.startCommands.length !== 1)

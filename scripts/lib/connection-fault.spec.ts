@@ -37,7 +37,14 @@ describe('#399 断连窗口由显式释放控制', () => {
 
 describe('#399 R8 崩溃前提必须机器判定', () => {
   const good = () => ({
-    fault: { held: true, offline: true, faultId: 'r8-fault', liveSockets: 0 },
+    fault: {
+      component: 'node.gateway',
+      held: true,
+      offline: true,
+      faultId: 'r8-fault',
+      liveSockets: 0,
+      blockedConnectionAttempts: 1,
+    },
     expectedFaultId: 'r8-fault',
     runStatus: 'dispatching',
     startCommands: [{ acked: false, attempts: 1 }],
@@ -49,6 +56,8 @@ describe('#399 R8 崩溃前提必须机器判定', () => {
       { fault: { ...good().fault, faultId: 'wrong' } },
       { fault: { ...good().fault, offline: false } },
       { fault: { ...good().fault, liveSockets: 1 } },
+      { fault: { ...good().fault, component: 'web.ui' } },
+      { fault: { ...good().fault, blockedConnectionAttempts: 0 } },
       { runStatus: 'waiting_approval' },
       { startCommands: [{ acked: true, attempts: 1 }] },
       { startCommands: [{ acked: false, attempts: 0 }] },
