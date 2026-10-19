@@ -26,6 +26,7 @@ import type {
   TaskSpecRevisionView,
   TaskView,
 } from '../../shared/api/types.js'
+import { AgreementAgentDraft } from './AgreementAgentDraft.js'
 
 const EMPTY_CONTENT: TaskSpecContent = {
   goal: '',
@@ -94,6 +95,7 @@ export function TaskAgreementPanel({
   const directory = useMemberDirectory()
   const [editor, setEditor] = useState<AgreementEditorSeed | null>(null)
   const [actionError, setActionError] = useState<unknown>(null)
+  const [agentDraftOpen, setAgentDraftOpen] = useState(false)
   const isAssignee = session !== null && session.userId === task.assigneeUserId
 
   const query = useQuery({
@@ -243,6 +245,31 @@ export function TaskAgreementPanel({
       ) : null}
 
       {actionError !== null ? <ErrorBanner error={actionError} /> : null}
+      {isAssignee && session !== null ? (
+        <>
+          <button
+            type="button"
+            className="button"
+            onClick={() => setAgentDraftOpen((open) => !open)}
+          >
+            用 Agent 起草约定
+          </button>
+          {agentDraftOpen ? (
+            <AgreementAgentDraft
+              task={task}
+              session={session}
+              draft={draft}
+              pending={pending}
+              onAdopt={(content, expectedDraftVersion) =>
+                saveMutation.mutate({
+                  content,
+                  ...(expectedDraftVersion === undefined ? {} : { expectedDraftVersion }),
+                })
+              }
+            />
+          ) : null}
+        </>
+      ) : null}
       <HelpDisclosure label="约定如何生效">
         <p>责任人确认后形成正式版本。启用约定流程后，新执行必须绑定已确认版本；草稿不构成要求。</p>
       </HelpDisclosure>

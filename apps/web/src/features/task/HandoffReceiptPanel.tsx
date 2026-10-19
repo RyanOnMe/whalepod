@@ -15,6 +15,8 @@ import { useMemberDirectory } from '../team/memberDirectory.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
 import type { HandoffReceiptView, Session, TaskView } from '../../shared/api/types.js'
+import type { HandoffRevisionView } from '@whalepod/protocol'
+import { HandoffPublishedContent } from './HandoffPublishedContent.js'
 
 function ConfirmForm({
   receipt,
@@ -31,8 +33,14 @@ function ConfirmForm({
 }): ReactNode {
   const [understanding, setUnderstanding] = useState('')
   const [differences, setDifferences] = useState('')
+  const [contentReady, setContentReady] = useState(false)
   return (
     <div className="handoff-confirm-form" data-testid={`handoff-${label}-form`}>
+      <HandoffPublishedContent
+        key={receipt.revisionId}
+        revisionId={receipt.revisionId}
+        onReady={setContentReady}
+      />
       <label className="handoff-field">
         <span>本次准备做什么（必填）</span>
         <textarea
@@ -56,7 +64,7 @@ function ConfirmForm({
       <button
         type="button"
         className="button button-primary"
-        disabled={busy || understanding.trim() === ''}
+        disabled={busy || !contentReady || understanding.trim() === ''}
         onClick={() => onSubmit(understanding, differences)}
       >
         {submitLabel}
@@ -65,6 +73,38 @@ function ConfirmForm({
         <span className="mutation-hint">填写「本次准备做什么」后才能提交。</span>
       ) : null}
     </div>
+  )
+}
+
+function AdoptForm({
+  receipt,
+  busy,
+  onSubmit,
+}: {
+  receipt: HandoffReceiptView
+  busy: boolean
+  onSubmit: (understanding: string, differences: string, revisionId: string) => void
+}): ReactNode {
+  const query = useQuery({
+    queryKey: ['handoff-adopt-version', receipt.upstreamTaskId, receipt.latestRevisionNumber],
+    queryFn: () =>
+      api.get<HandoffRevisionView[]>(`/tasks/${receipt.upstreamTaskId}/handoff-revisions`),
+  })
+  if (query.isPending) return <p role="status">正在读取待采用版本…</p>
+  if (query.isError) return <ErrorBanner error={query.error} />
+  const target = query.data.find(
+    (version) => version.revisionNumber === receipt.latestRevisionNumber,
+  )
+  if (target === undefined) return <p role="alert">待采用版本不可用，请刷新后重试。</p>
+  return (
+    <ConfirmForm
+      key={target.id}
+      receipt={{ ...receipt, revisionId: target.id }}
+      label="采用新版本"
+      submitLabel={`采用 v${receipt.latestRevisionNumber}`}
+      busy={busy}
+      onSubmit={(understanding, differences) => onSubmit(understanding, differences, target.id)}
+    />
   )
 }
 
@@ -112,10 +152,16 @@ export function HandoffReceiptPanel({
     onError: (error: unknown) => setActionError(error),
   })
   const adoptMutation = useMutation({
-    mutationFn: (input: { receiptId: string; understanding: string; differences?: string }) =>
+    mutationFn: (input: {
+      receiptId: string
+      understanding: string
+      differences?: string
+      expectedRevisionId: string
+    }) =>
       api.mutate<HandoffReceiptView>(`/handoff-receipts/${input.receiptId}/adopt`, {
         body: {
           understanding: input.understanding,
+          expectedRevisionId: input.expectedRevisionId,
           ...(input.differences !== undefined && input.differences.trim() !== ''
             ? { differences: input.differences }
             : {}),
@@ -149,6 +195,7 @@ export function HandoffReceiptPanel({
 
       {active !== undefined ? (
         <div data-testid="handoff-receipt-active">
+          <HandoffPublishedContent revisionId={active.revisionId} />
           <p>
             来源：
             <Link to={`/tasks/${active.upstreamTaskId}`}>{active.upstreamTaskTitle}</Link>
@@ -169,15 +216,14 @@ export function HandoffReceiptPanel({
                 {`上游已发布新版本 v${active.latestRevisionNumber}；采用只影响后续执行，旧执行的材料不变。`}
               </p>
               {session.userId === active.receiverUserId ? (
-                <ConfirmForm
+                <AdoptForm
                   receipt={active}
-                  label="采用新版本"
-                  submitLabel={`采用 v${active.latestRevisionNumber}`}
                   busy={busy}
-                  onSubmit={(understanding, differences) =>
+                  onSubmit={(understanding, differences, expectedRevisionId) =>
                     adoptMutation.mutate({
                       receiptId: active.id,
                       understanding,
+                      expectedRevisionId,
                       ...(differences.trim() !== '' ? { differences } : {}),
                     })
                   }

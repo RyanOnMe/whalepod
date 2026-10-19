@@ -246,5 +246,6 @@ describe('#379 交接草稿生成器（纯函数 + 注入流）', () => {
     expect(handoffDraftTimeoutMs({ WHALEPOD_HANDOFF_DRAFT_TIMEOUT_MS: '250' })).toBe(250)
     expect(handoffDraftTimeoutMs({ WHALEPOD_HANDOFF_DRAFT_TIMEOUT_MS: 'abc' })).toBe(60_000)
     expect(handoffDraftTimeoutMs({ WHALEPOD_HANDOFF_DRAFT_TIMEOUT_MS: '-5' })).toBe(60_000)
+    expect(handoffDraftTimeoutMs({ WHALEPOD_HANDOFF_DRAFT_TIMEOUT_MS: '120000' })).toBe(60_000)
   })
 })

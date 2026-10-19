@@ -83,6 +83,11 @@ export async function snapshotHandoffInput(
       receiptId: receipt.id,
       revisionId: revision.id,
       revisionNumber: revision.revisionNumber,
+      context: {
+        content: revision.content,
+        understanding: receipt.understanding!,
+        differences: receipt.differences,
+      },
       artifacts: entries.map((entry) => toManifestEntry(byId.get(entry.artifactId)!)),
     })
   }
@@ -92,6 +97,11 @@ export async function snapshotHandoffInput(
     receiptId: receipt.id,
     revisionId: revision.id,
     revisionNumber: revision.revisionNumber,
+    context: {
+      content: revision.content,
+      understanding: receipt.understanding!,
+      differences: receipt.differences,
+    },
     artifacts: [],
   })
 }

@@ -273,5 +273,30 @@ export function verifyHandoffLoopEvidence(input: unknown): HandoffLoopVerificati
     )
   }
 
+  const semantic = reader.section(input, 'semantic')
+  if (semantic !== undefined) {
+    const includes = (output: string, expected: string): void => {
+      const text = str(semantic[output], `semantic.${output}`)
+      const fragment = str(semantic[expected], `semantic.${expected}`)
+      check(
+        text !== undefined && fragment !== undefined && text.includes(fragment),
+        `${output} must include ${expected}`,
+      )
+    }
+    includes('agreementOutput', 'agreementGoal')
+    includes('agreementOutput', 'agreementAcceptance')
+    includes('receiverVisibleText', 'handoffStatement')
+    includes('downstreamOutput', 'handoffStatement')
+    includes('downstreamOutput', 'understanding')
+  }
+  const finalization = reader.section(input, 'finalization')
+  if (finalization !== undefined) {
+    check(
+      finalization['beforeReview'] === 'in_progress',
+      'Run completion must not auto-complete Task',
+    )
+    check(finalization['afterSubmit'] === 'in_review', 'human submit must reach in_review')
+    check(finalization['afterComplete'] === 'done', 'human completion must reach done')
+  }
   return { ok: failures.length === 0, failures, checks: reader.checks() }
 }

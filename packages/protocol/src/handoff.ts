@@ -109,6 +109,22 @@ export function emptyHandoffNarrative(): HandoffNarrative {
   }
 }
 
+/** 自动叙述不具有真人核实权；人工编辑接口不调用此函数。 */
+export function unverifiedHandoffNarrative(content: HandoffNarrative): HandoffNarrative {
+  const result = { ...content }
+  for (const key of [
+    'completed',
+    'interfaces',
+    'unfinished',
+    'decisions',
+    'evidence',
+    'downstream',
+  ] as const) {
+    result[key] = content[key].map((item) => ({ ...item, verified: false }))
+  }
+  return result
+}
+
 /** 来源 Run 的 Artifact 清单条目（系统块用；身份 + 摘要，不含本机路径）。 */
 export const HandoffArtifactEntrySchema = z.strictObject({
   artifactId: z.uuid(),
@@ -262,6 +278,7 @@ export type DeliverHandoffRequest = z.infer<typeof DeliverHandoffRequestSchema>
 export const ConfirmHandoffReceiptRequestSchema = z.strictObject({
   understanding: z.string().min(1).max(10000),
   differences: z.string().min(1).max(10000).optional(),
+  expectedRevisionId: z.uuid().optional(),
 })
 export type ConfirmHandoffReceiptRequest = z.infer<typeof ConfirmHandoffReceiptRequestSchema>
 

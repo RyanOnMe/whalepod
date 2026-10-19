@@ -7,7 +7,7 @@
 
 ## 决定
 
-- Hub 在 Run 创建事务内，从已确认约定和已选交接快照生成 `executionContext`，经 Node 本地 initialize 送入 Runtime。Runtime 在 create/resume 的同一装配中替换专用 system-prompt section；没有上下文时显式清空该 section，避免续跑沿用旧要求。材料清单的身份、标题与只读读取方式同时提供给模型。
+- Hub 在 Run 创建事务内，从已确认约定和已选交接快照生成 `executionContext`，经 Node 本地 initialize 送入 Runtime。Runtime 在 create/resume 的首条指令中注入本次固定正文与材料清单，专用 system-prompt section 说明以本次版本为准；追问不重复注入。续跑的旧正文保留为历史，不替代本次指定版本。
 - 新交接输入快照增加 `context`：不可变发布正文、首次确认的理解与差异。字段 optional 仅兼容旧 Run（历史正文未知），旧快照不自动读取当前上游版本。没有 Artifact 的交接也传正文。已有快照永不回填。
 - Web 的接收/采用确认前读取并展示所选发布版本；请求失败明确显示并禁止该次确认，不能用最新版本替代旧版。正文纯文本渲染，材料走已有鉴权下载，不执行主动内容。
 - 自动生成叙述在 Runtime 及 Hub 自动事件入口强制 `verified=false`；owner 人工编辑保持其显式选择。生成截止用独立竞速返回，AbortSignal 仅负责尽力取消，迟到结果不采用。

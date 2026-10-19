@@ -616,7 +616,7 @@ export function restartHub(input: {
 }
 
 export function setRuntimeFixture(
-  name: 'approval' | 'basic' | 'secrets' | 'rejection' | 'handoff',
+  name: 'approval' | 'basic' | 'secrets' | 'rejection' | 'handoff' | 'handoff-downstream',
 ): Promise<unknown> {
   return nodeControl('/fixture', { name })
 }

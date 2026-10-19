@@ -63,6 +63,16 @@ function goodEvidence(): Record<string, unknown> {
       runInputRevisionIdBeforeV2: 'rev-1',
       runInputRevisionIdAfterV2: 'rev-1',
     },
+    semantic: {
+      agreementGoal: '目标',
+      agreementAcceptance: '验收条件',
+      agreementOutput: '目标 验收条件',
+      handoffStatement: '接口约定',
+      receiverVisibleText: '接口约定',
+      understanding: '接前端',
+      downstreamOutput: '接口约定 接前端',
+    },
+    finalization: { beforeReview: 'in_progress', afterSubmit: 'in_review', afterComplete: 'done' },
   }
 }
 
@@ -73,6 +83,33 @@ function mutate(path: (evidence: Record<string, unknown>) => void): Record<strin
 }
 
 describe('#381 交接闭环证据判定器', () => {
+  it('#396 缺正文消费、模型输入或真人完成证据必须失败', () => {
+    for (const key of ['semantic', 'finalization']) {
+      expect(
+        verifyHandoffLoopEvidence(
+          mutate((e) => {
+            delete e[key]
+          }),
+        ).ok,
+      ).toBe(false)
+    }
+    for (const key of ['agreementOutput', 'receiverVisibleText', 'downstreamOutput']) {
+      expect(
+        verifyHandoffLoopEvidence(
+          mutate((e) => {
+            ;(e['semantic'] as Record<string, unknown>)[key] = '没有消费内容'
+          }),
+        ).ok,
+      ).toBe(false)
+    }
+    expect(
+      verifyHandoffLoopEvidence(
+        mutate((e) => {
+          ;(e['finalization'] as Record<string, unknown>)['afterComplete'] = 'completed'
+        }),
+      ).ok,
+    ).toBe(false)
+  })
   it('正控：完整自洽的证据判 PASS', () => {
     const verdict = verifyHandoffLoopEvidence(goodEvidence())
     expect(verdict.failures).toEqual([])

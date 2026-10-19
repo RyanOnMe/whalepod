@@ -12,7 +12,7 @@ import {
   ALICE,
   BOB,
   created,
-  loggedInHandlers,
+  loggedInHandlers as baseLoggedInHandlers,
   makeRun,
   makeTask,
   ok,
@@ -25,6 +25,46 @@ import { renderApp } from './render.jsx'
 import { openSelect, selectOption } from './select-menu.js'
 import { queryKeys } from '../src/app/query-client.js'
 import type { HandoffReceiptView, TaskView } from '../src/shared/api/types.js'
+import type { Session } from '../src/shared/api/types.js'
+import { emptyHandoffNarrative } from '@whalepod/protocol'
+
+function publishedRevision(id: string, revisionNumber = 1) {
+  return {
+    id,
+    taskId: UPSTREAM_TASK_ID,
+    revisionNumber,
+    sourceRunId: '00000000-0000-4000-8000-000000000011',
+    specRevisionId: null,
+    content: {
+      system: {
+        sourceRunId: '00000000-0000-4000-8000-000000000011',
+        specRevision: null,
+        artifacts: [],
+      },
+      narrative: {
+        ...emptyHandoffNarrative(),
+        interfaces: [{ text: `固定接口正文 v${revisionNumber}`, verified: false, refs: [] }],
+      },
+    },
+    publishedByUserId: ALICE.userId,
+    publishedAt: '2026-10-18T00:00:00Z',
+  }
+}
+function loggedInHandlers(session: Session, extra: MockHandler[] = []): MockHandler[] {
+  return baseLoggedInHandlers(session, [
+    ...extra,
+    {
+      method: 'GET',
+      url: /\/handoff-revisions\/[^/]+$/,
+      respond: (_init, url) => ok(publishedRevision(url.split('/').at(-1)!)),
+    },
+    {
+      method: 'GET',
+      url: /\/tasks\/[^/]+\/handoff-revisions$/,
+      respond: () => ok([publishedRevision(REVISION_ID, 2)]),
+    },
+  ])
+}
 
 const TASK_ID = '00000000-0000-4000-8000-0000000000aa'
 const UPSTREAM_TASK_ID = '00000000-0000-4000-8000-0000000000bb'
@@ -165,6 +205,34 @@ async function arrangeAndType(
 }
 
 describe('#380 下游接收面板', () => {
+  it('#396 确认前展示固定版本正文，读取失败明确报错且禁止确认', async () => {
+    const user = userEvent.setup()
+    let failed = true
+    renderApp(
+      `/tasks/${TASK_ID}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(downstreamTask()),
+        receiptsHandler([makeReceipt()]),
+        {
+          method: 'GET',
+          url: new RegExp(`/handoff-revisions/${REVISION_ID}$`),
+          respond: () =>
+            failed
+              ? new Response('unavailable', { status: 503 })
+              : ok(publishedRevision(REVISION_ID)),
+        },
+      ]),
+    )
+    const panel = await screen.findByTestId('handoff-receipt-panel')
+    await user.type(within(panel).getByLabelText('确认接收：本次准备做什么'), '接前端')
+    expect(within(panel).getByRole('button', { name: '确认接收（不动任务状态）' })).toBeDisabled()
+    failed = false
+    await user.click(await within(panel).findByRole('button', { name: '重试交接正文' }))
+    expect(await within(panel).findByText('固定接口正文 v1')).toBeVisible()
+    await waitFor(() =>
+      expect(within(panel).getByRole('button', { name: '确认接收（不动任务状态）' })).toBeEnabled(),
+    )
+  })
   it('待确认：接收人填理解与差异 → 确认请求体正确 → 显示已确认理解', async () => {
     const user = userEvent.setup()
     const pending = makeReceipt()
@@ -286,7 +354,12 @@ describe('#380 下游接收面板', () => {
     expect(newer).toHaveTextContent('旧执行的材料不变')
     await user.type(within(newer).getByLabelText('采用新版本：本次准备做什么'), '对齐字段后再做')
     await user.click(within(newer).getByRole('button', { name: '采用 v2' }))
-    await waitFor(() => expect(adoptBody).toEqual({ understanding: '对齐字段后再做' }))
+    await waitFor(() =>
+      expect(adoptBody).toEqual({
+        understanding: '对齐字段后再做',
+        expectedRevisionId: REVISION_ID,
+      }),
+    )
   })
 })
 

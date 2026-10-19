@@ -49,6 +49,7 @@ export interface RuntimeSpec {
    * 交接草稿（agreement 为绑定版本正文快照，null = 未绑定）。
    */
   readonly handoff?: HandoffRunSpec
+  readonly executionContext?: string
 }
 
 type InitializeCommand = Extract<RuntimeCommand, { type: 'runtime.initialize' }>
@@ -62,6 +63,7 @@ export function runtimeSpecFromInitialize(command: InitializeCommand): RuntimeSp
     resumeSessionId,
     approvalPolicy,
     handoff,
+    executionContext,
     ...rest
   } = command.payload
   // exactOptionalPropertyTypes：zod 的 optional 产出 `number | undefined`，
@@ -75,6 +77,7 @@ export function runtimeSpecFromInitialize(command: InitializeCommand): RuntimeSp
     ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
     ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
     ...(handoff === undefined ? {} : { handoff }),
+    ...(executionContext === undefined ? {} : { executionContext }),
   }
 }
 

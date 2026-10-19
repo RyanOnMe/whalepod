@@ -79,6 +79,8 @@ const facts = {
   confirm: {} as Record<string, unknown>,
   downstream: {} as Record<string, unknown>,
   updateIsolation: {} as Record<string, unknown>,
+  semantic: {} as Record<string, unknown>,
+  finalization: {} as Record<string, unknown>,
 }
 
 test.describe.configure({ mode: 'serial' })
@@ -103,6 +105,16 @@ async function roomOf(cookie: string, taskId: string): Promise<RoomFact> {
   const res = await hubApi(cookie, 'GET', `/tasks/${taskId}`)
   expect(res.status).toBe(200)
   return res.data as RoomFact
+}
+
+async function completedText(cookie: string, runId: string): Promise<string> {
+  const result = await hubApi(cookie, 'GET', `/runs/${runId}/events?limit=200`)
+  expect(result.status).toBe(200)
+  const event = (
+    result.data as { events: Array<{ event: { type: string; finalText?: string } }> }
+  ).events.find((row) => row.event.type === 'run.completed')?.event
+  expect(event?.finalText).toBeTruthy()
+  return event!.finalText!
 }
 
 async function waitDeviceOnline(
@@ -284,6 +296,9 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
     '请实现登录接口与单元测试。',
   )
   await waitForRunStatus(shared.upstreamRunId, 'completed')
+  const agreementOutput = await completedText(shared.aliceCookie, shared.upstreamRunId)
+  expect(agreementOutput).toContain('交付登录接口与用例')
+  expect(agreementOutput).toContain('单元测试通过')
 
   // 材料发布（交接包的系统块只收已发布材料）。
   await alice.reload()
@@ -399,6 +414,9 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   const receiptPanel = bob.getByTestId('handoff-receipt-panel')
   await expect(receiptPanel).toBeVisible({ timeout: 30_000 })
   await expect(receiptPanel).toContainText('待确认版本 v1')
+  const publishedContent = receiptPanel.getByTestId('handoff-published-content')
+  await expect(publishedContent).toContainText('沿用既有会话中间件，不引入新依赖')
+  const receiverVisibleText = await publishedContent.innerText()
   await receiptPanel.getByLabel('确认接收：本次准备做什么').fill('先接登录页，复用会话中间件。')
   await receiptPanel.getByRole('button', { name: '确认接收（不动任务状态）' }).click()
   await expect(bob.getByTestId('handoff-receipt-active')).toBeVisible({ timeout: 30_000 })
@@ -438,7 +456,7 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   await stopNode('SIGKILL')
   const bobDeviceId = await pairNodeFor(shared.bobCookie)
   expect(bobDeviceId).toBeTruthy()
-  await setRuntimeFixture('basic')
+  await setRuntimeFixture('handoff-downstream')
   await bob.reload()
   const attach = bob.getByTestId('handoff-attach')
   await expect(attach).toBeVisible({ timeout: 30_000 })
@@ -450,6 +468,26 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
     '请按上游交接包接入登录页。',
   )
   await waitForRunStatus(downstreamRunId, 'completed')
+  const downstreamOutput = await completedText(shared.bobCookie, downstreamRunId)
+  expect(downstreamOutput).toContain('沿用既有会话中间件，不引入新依赖')
+  expect(downstreamOutput).toContain('先接登录页，复用会话中间件。')
+  const publishedVersion = await hubApi(
+    shared.bobCookie,
+    'GET',
+    `/handoff-revisions/${revisionV1!.id}`,
+  )
+  const handoffStatement = (
+    publishedVersion.data as { content: { narrative: { decisions: Array<{ text: string }> } } }
+  ).content.narrative.decisions[0]!.text
+  facts.semantic = {
+    agreementGoal: '交付登录接口与用例',
+    agreementAcceptance: '单元测试通过',
+    agreementOutput,
+    handoffStatement,
+    receiverVisibleText,
+    understanding: '先接登录页，复用会话中间件。',
+    downstreamOutput,
+  }
 
   // ---------- 8. 固定交接输入：Hub 快照 == 上游发布；Node 副本实字节 == 快照摘要 ----------
   const handoffInputRes = await hubApi(
@@ -540,4 +578,28 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   )[0]!
   expect(latestReported.latestRevisionNumber).toBe(2)
   expect(latestReported.revisionNumber).toBe(1)
+
+  // 真正走到真人验收终点，而非仅以 Run completed 冒充任务完成。
+  await bob.reload()
+  await bob.locator(`.run-item-button[data-run-id="${downstreamRunId}"]`).click()
+  await bob.getByRole('button', { name: '交付与复核', exact: true }).click()
+  await bob.getByTestId('artifact-publish-button').click()
+  await bob.getByRole('button', { name: '确认发布给团队' }).click()
+  await waitForPublishedArtifact(shared.bobCookie, receipt.downstreamTaskId)
+  await bob.reload()
+  const beforeReview = await roomOf(shared.bobCookie, receipt.downstreamTaskId)
+  await bob.getByRole('button', { name: '提交验收', exact: true }).click()
+  await bob.getByRole('button', { name: '确认提交验收', exact: true }).click()
+  await expect(bob.getByRole('button', { name: '完成任务', exact: true })).toBeVisible()
+  const inReview = await roomOf(shared.bobCookie, receipt.downstreamTaskId)
+  await bob.getByRole('button', { name: '完成任务', exact: true }).click()
+  await bob.getByRole('button', { name: '确认完成任务', exact: true }).click()
+  await expect
+    .poll(async () => (await roomOf(shared.bobCookie!, receipt.downstreamTaskId)).task.status)
+    .toBe('done')
+  facts.finalization = {
+    beforeReview: beforeReview.task.status,
+    afterSubmit: inReview.task.status,
+    afterComplete: (await roomOf(shared.bobCookie, receipt.downstreamTaskId)).task.status,
+  }
 })

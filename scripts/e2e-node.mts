@@ -105,6 +105,9 @@ const FIXTURES: Record<string, E2eFixture> = {
   // 一份（scripts/fixtures/handoff-loop）：
   // 契约 fixture 的叙述内嵌契约测试自己的 runId（交叉任务引用会被发布校验拒绝），
   // e2e 需要一份可发布的叙述——两份遵循同一录制协议。
+  'handoff-downstream': {
+    session: join(REPO_ROOT, 'scripts/fixtures/handoff-downstream/session.jsonl'),
+  },
   handoff: {
     session: join(REPO_ROOT, 'scripts/fixtures/handoff-loop/session.jsonl'),
     override: join(REPO_ROOT, 'scripts/fixtures/handoff-loop/replay.override.json'),

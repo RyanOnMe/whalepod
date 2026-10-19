@@ -57,6 +57,7 @@ export interface RunLauncherProps {
   /** 交接输入（#380）：勾选「附带上游交接材料」时显式带上已确认 receipt。 */
   handoffReceiptId?: string | undefined
   buttonLabel?: string | undefined
+  purpose?: 'business' | 'agreement_draft' | 'handoff_draft'
   blocked?: boolean
   onStarted?: (runId: string) => void
   onOutcome?: (outcome: InstructionOutcome) => void
@@ -81,6 +82,7 @@ export function RunLauncher({
   artifactInputIds,
   handoffReceiptId,
   buttonLabel = '开始执行',
+  purpose,
   blocked = false,
   onStarted,
   onOutcome,
@@ -200,6 +202,7 @@ export function RunLauncher({
         agentId,
         ...(artifactInputIds === undefined ? {} : { artifactInputIds }),
         ...(handoffReceiptId === undefined ? {} : { handoffReceiptId }),
+        ...(purpose === undefined ? {} : { purpose }),
         profileRevisionId: effectiveRevisionId,
         ...(isAssignee && deviceId !== ''
           ? { deviceId, ...(workspaceId !== '' ? { workspaceId } : {}) }
