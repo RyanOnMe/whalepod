@@ -639,6 +639,24 @@ export function dropNodeConnection(offlineMs: number): Promise<unknown> {
   return nodeControl('/drop', { offlineMs })
 }
 
+export interface ConnectionFaultState {
+  component: string
+  held: boolean
+  offline: boolean
+  faultId: string | null
+  liveSockets: number
+  blockedConnectionAttempts: number
+}
+export function holdNodeConnection(faultId: string): Promise<ConnectionFaultState> {
+  return nodeControl('/connection-hold', { faultId })
+}
+export function releaseNodeConnection(faultId: string): Promise<ConnectionFaultState> {
+  return nodeControl('/connection-release', { faultId })
+}
+export function nodeConnectionState(): Promise<ConnectionFaultState> {
+  return nodeControl('/connection-state', {})
+}
+
 export function dropAckCount(count: number): Promise<unknown> {
   return nodeControl('/ack-drop', { count })
 }
