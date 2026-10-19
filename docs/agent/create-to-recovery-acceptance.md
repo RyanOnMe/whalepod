@@ -132,6 +132,14 @@ ls artifacts/evidence/create-recovery/ artifacts/evidence/p1-345/
 
 ## 复跑
 
+### #403：快速成功与导航间的重复提交窗口（2026-10-19）
+
+完整 Q5 的 Linux 运行 `39236864147` 捕获连点发出 2 次 POST。新增回归测试用正式 router 保持导航待决，并在同一事件轮重复 submit，稳定复现 2 次请求。CreateTaskForm 现以同步 ref 锁覆盖 React pending 尚未刷新与成功后尚未卸载两个窗口；成功保持锁与按钮禁用直至离开表单，失败释放锁，人工重试仍复用原幂等键。没有放宽「一个 POST、一个新任务」的原 Q5 判据。
+
+定向真浏览器路径 1 PASS；项目列表与创建失败引导 14 项测试 PASS，含失败后可重试且同键的正控；相关 HTTP 事实仍由本页已有独立证据判定器检查。
+
+2026-10-19 组合实测：实现提交 `6765ca2`（PR #397/#400/#401/#404/#405）本机完整 Q5 **1/1 PASS**，全部项目执行到结束，退出码 0；组合 Q0 1921 passed / 7 expected fail。整轮日志与关键结构化证据已过敏感扫描。Linux 连续三轮的运行及归档见 [39239719979](https://github.com/RyanOnMe/whalepod/actions/runs/39239719979)。本次单轮结果不替代发布所需 20 连。
+
 ```bash
 # 本 PR 合入后从 main 复跑（分支删除后这条命令仍成立）
 git checkout main && git pull
