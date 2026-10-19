@@ -40,6 +40,9 @@ import {
   restartHub,
   restartNode,
   dropNodeConnection,
+  holdNodeConnection,
+  releaseNodeConnection,
+  nodeConnectionState,
   dropAckCount,
   pidAlive,
   assertSeqContiguous,
@@ -52,6 +55,7 @@ import {
   type RunFact,
 } from './helpers.js'
 import { expectNoContrastOffenders } from './contrast-sweep.js'
+import { r8WindowFailures, type R8WindowFacts } from '../../../../scripts/lib/r8-window.js'
 
 const ALICE_PASSWORD = 'correct horse battery staple'
 const BOB_PASSWORD = 'correct horse battery staple'
@@ -792,27 +796,39 @@ test.describe('P1-19 恢复场景（R1/R4/R5/R7/R8/R9）', () => {
 
   test('R8：提交后 Hub 崩溃——Outbox worker 重启续派发，无永久 queued', async () => {
     test.setTimeout(300_000)
-    await shared.bob!.reload()
-    // 崩溃注入取「提交后、未达 Node」这一确定性形态：先拔 Node 网线（产品语义
-    // 断链，outbox 行已提交但首次派发必然失败），再 SIGKILL Hub。曾实测直接
-    // SIGKILL 会砸进「首次派发 ack 在途」的毫秒窗（Node 收到但未回执、重发撞上
-    // 处理中状态），那是另一条已登记的产品竞态（立账 #90 观察项），不是 R8 的
-    // 验收点。
-    await dropNodeConnection(4_000)
-    const runId = await startRunViaUi('builder', 'R8：提交后崩溃')
-    await sleep(800) // 让首个派发 attempt 撞墙（unacked 留底）
-
-    // 硬闸（防静默退化为 R1 变体）：崩溃前 Run 必须仍停在派发前/中——
-    // queued/dispatching 且 run.start 未 ack。若此刻已 acked/已 waiting_approval，
-    // 说明根本没测到「崩溃在提交与派发之间」这一 R8 本体窗，直接红。
-    const pre = await getRunFact(runId)
-    expect(['queued', 'dispatching']).toContain(pre.run.status)
-    const preStart = pre.outbox.filter((r) => r.type === 'run.start')
-    expect(preStart.length).toBe(1)
-    expect(preStart[0]!.acked).toBe(false)
-
-    await restartHub({ signal: 'SIGKILL', stayDownMs: 2_000 })
-    await sleep(1_500)
+    await setupTeamAndTask()
+    await pairNodeViaUiAndControl()
+    await shared.bob!.goto(`/tasks/${shared.taskId}`)
+    const faultId = randomUUID()
+    await holdNodeConnection(faultId)
+    let released = false
+    let runId = ''
+    let before: R8WindowFacts | undefined
+    try {
+      await expect.poll(async () => (await nodeConnectionState()).liveSockets).toBe(0)
+      runId = await startRunViaUi('builder', 'R8：提交后崩溃')
+      // 读真实 Outbox 与 socket 故障状态；不靠固定延时猜窗口是否仍在。
+      await expect
+        .poll(
+          async () => {
+            const pre = await getRunFact(runId)
+            before = {
+              fault: await nodeConnectionState(),
+              expectedFaultId: faultId,
+              runStatus: pre.run.status,
+              startCommands: pre.outbox.filter((row) => row.type === 'run.start'),
+            }
+            return r8WindowFailures(before)
+          },
+          { timeout: 15_000, intervals: [100, 250, 500] },
+        )
+        .toEqual([])
+      await restartHub({ signal: 'SIGKILL', stayDownMs: 2_000 })
+      await releaseNodeConnection(faultId)
+      released = true
+    } finally {
+      if (!released) await releaseNodeConnection(faultId)
+    }
 
     // 判定：worker 重启后继续派发，Run 必然离开 queued 并走到可审批态。
     await waitForRunStatus(runId, 'waiting_approval', 120_000)
@@ -826,6 +842,26 @@ test.describe('P1-19 恢复场景（R1/R4/R5/R7/R8/R9）', () => {
 
     await approveAndComplete(runId)
     assertSeqContiguous(await getRunFact(runId))
+    const evidenceDir = join(process.cwd(), 'artifacts/evidence/r8-window')
+    await mkdir(evidenceDir, { recursive: true })
+    await writeFile(
+      join(evidenceDir, 'result.json'),
+      JSON.stringify(
+        {
+          component: 'hub.outbox',
+          scenario: 'R8',
+          runId,
+          before,
+          after: {
+            startAttempts: postStart.attempts,
+            startAcked: postStart.acked,
+            status: (await getRunFact(runId)).run.status,
+          },
+        },
+        null,
+        2,
+      ),
+    )
   })
 
   test('R9：Node 崩溃重启——孤儿 Runtime 被终止，Run lost 且不自动复活', async () => {
