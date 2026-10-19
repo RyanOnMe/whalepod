@@ -19,6 +19,12 @@ import { z } from 'zod'
 /** 叙述整体（JSON.stringify 后的 UTF-8 字节）上限；留足 envelope 头空间。 */
 export const HANDOFF_NARRATIVE_MAX_BYTES = 24_576
 
+/**
+ * Run 首条指令注入的固定执行上下文上限（字符，与 wire schema 同值）。
+ * Hub 在装配处先 fail-closed：超限是明确的 400，不能让 wire parse 失败落到 500。
+ */
+export const EXECUTION_CONTEXT_MAX_CHARS = 100_000
+
 /** 单条引用的身份上限。 */
 export const HANDOFF_REFS_PER_ITEM_MAX = 16
 

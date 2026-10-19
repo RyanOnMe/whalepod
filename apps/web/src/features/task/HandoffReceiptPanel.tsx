@@ -11,6 +11,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { api } from '../../shared/api/client.js'
+import { isApiError } from '../../shared/api/errors.js'
 import { useMemberDirectory } from '../team/memberDirectory.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { queryKeys } from '../../app/query-client.js'
@@ -171,7 +172,11 @@ export function HandoffReceiptPanel({
       setActionError(null)
       invalidate()
     },
-    onError: (error: unknown) => setActionError(error),
+    onError: (error: unknown) => {
+      setActionError(error)
+      // 版本竞态是「看的内容已经旧了」：立即重读，别让用户对着旧 v 反复撞 409。
+      if (isApiError(error) && error.code === 'CONFLICT') invalidate()
+    },
   })
 
   if (query.isPending || query.isError || (active === undefined && pending === undefined)) {

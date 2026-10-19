@@ -41,6 +41,10 @@ export async function snapshotHandoffInput(
   if (receipt.status !== 'confirmed') {
     throw new RunCommandError('CONFLICT', '交接接收尚未确认；请先确认这次准备做什么再执行')
   }
+  // 确认命令要求非空理解；这里把坏数据挡成可读冲突，不让非空断言在事务里炸成 500。
+  if (receipt.understanding === null) {
+    throw new RunCommandError('CONFLICT', '交接接收缺少理解正文，请重新确认后再执行')
+  }
   // 交接包属于接收人：责任人被改派后旧 receipt 不再自动喂给新责任人。
   if (receipt.receiverUserId !== task.assigneeUserId) {
     throw new RunCommandError('CONFLICT', '交接包的接收人已不是本任务责任人')
@@ -85,7 +89,7 @@ export async function snapshotHandoffInput(
       revisionNumber: revision.revisionNumber,
       context: {
         content: revision.content,
-        understanding: receipt.understanding!,
+        understanding: receipt.understanding,
         differences: receipt.differences,
       },
       artifacts: entries.map((entry) => toManifestEntry(byId.get(entry.artifactId)!)),
@@ -99,7 +103,7 @@ export async function snapshotHandoffInput(
     revisionNumber: revision.revisionNumber,
     context: {
       content: revision.content,
-      understanding: receipt.understanding!,
+      understanding: receipt.understanding,
       differences: receipt.differences,
     },
     artifacts: [],

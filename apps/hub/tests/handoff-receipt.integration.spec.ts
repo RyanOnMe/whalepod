@@ -869,7 +869,12 @@ describe('handoff delivery & receipt (#380)', () => {
       },
       idemKey(),
     )
-    await publishHandoffDraft(database, makeActor(ids.userId), sourceRun.id, idemKey())
+    const publishedV2 = await publishHandoffDraft(
+      database,
+      makeActor(ids.userId),
+      sourceRun.id,
+      idemKey(),
+    )
     const before = await listDownstreamReceipts(database.db, pending.downstreamTaskId)
     expect(before[0]?.latestRevisionNumber).toBe(2)
 
@@ -887,9 +892,15 @@ describe('handoff delivery & receipt (#380)', () => {
       database,
       makeActor(receiver.userId),
       confirmed.id,
-      { understanding: 'v2 的新打算：先对齐字段', differences: 'v2 对齐时发现的差异' },
+      {
+        understanding: 'v2 的新打算：先对齐字段',
+        differences: 'v2 对齐时发现的差异',
+        // 正控：带着「刚刚读到的 v2」采用必须成功（与上面的旧版本 409 成对）。
+        expectedRevisionId: publishedV2.revision.id,
+      },
       idemKey(),
     )
+    expect(adopted.revisionId).toBe(publishedV2.revision.id)
     expect(adopted.revisionNumber).toBe(2)
     expect(adopted.status).toBe('confirmed')
     // 重复采用（同 key 重放 + 新 key 第二次）都收敛到同一条；**且不是状态迁移**：

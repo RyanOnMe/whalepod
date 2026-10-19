@@ -279,7 +279,7 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   // ---------- 2. 启用约定 + 起草并确认 v1 ----------
   await alice.getByRole('button', { name: /^任务约定/ }).click()
   await alice.getByRole('switch', { name: '启用约定流程' }).click()
-  const aliceDeviceId = await pairNodeFor(shared.aliceCookie)
+  await pairNodeFor(shared.aliceCookie)
   await setRuntimeFixture('agreement-draft')
   await alice.getByRole('button', { name: '用 Agent 起草约定' }).click()
   const helper = alice.getByTestId('agreement-agent-draft')

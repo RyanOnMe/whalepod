@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ALICE,
   BOB,
+  apiFailure,
   created,
   loggedInHandlers as baseLoggedInHandlers,
   makeRun,
@@ -56,12 +57,15 @@ function loggedInHandlers(session: Session, extra: MockHandler[] = []): MockHand
     {
       method: 'GET',
       url: /\/handoff-revisions\/[^/]+$/,
-      respond: (_init, url) => ok(publishedRevision(url.split('/').at(-1)!)),
+      respond: (_init, url) => {
+        const id = url.split('/').at(-1)!
+        return ok(publishedRevision(id, id === NEW_REVISION_ID ? 2 : 1))
+      },
     },
     {
       method: 'GET',
       url: /\/tasks\/[^/]+\/handoff-revisions$/,
-      respond: () => ok([publishedRevision(REVISION_ID, 2)]),
+      respond: () => ok([publishedRevision(NEW_REVISION_ID, 2)]),
     },
   ])
 }
@@ -70,6 +74,9 @@ const TASK_ID = '00000000-0000-4000-8000-0000000000aa'
 const UPSTREAM_TASK_ID = '00000000-0000-4000-8000-0000000000bb'
 const RECEIPT_ID = '00000000-0000-4000-8000-0000000000cc'
 const REVISION_ID = '00000000-0000-4000-8000-0000000000dd'
+// 待采用的新版本必须与当前 receipt 的版本不同：否则「发送 target.id」与
+// 「误发 active.revisionId」无法区分，CAS 判据会假绿。
+const NEW_REVISION_ID = '00000000-0000-4000-8000-0000000000ee'
 const AGENT_ID = 'a1a1a1a1-0000-4000-8000-00000000000a'
 const PROFILE_REVISION_ID = 'a2a2a2a2-0000-4000-8000-00000000000b'
 const DEVICE_ID = 'd1d1d1d1-0000-4000-8000-00000000000c'
@@ -357,9 +364,56 @@ describe('#380 下游接收面板', () => {
     await waitFor(() =>
       expect(adoptBody).toEqual({
         understanding: '对齐字段后再做',
-        expectedRevisionId: REVISION_ID,
+        expectedRevisionId: NEW_REVISION_ID,
       }),
     )
+  })
+
+  it('采用时版本被他人推进：409 明确报错并立即重读回执', async () => {
+    const user = userEvent.setup()
+    let receiptCalls = 0
+    let adoptCalls = 0
+    const confirmed = makeReceipt({
+      status: 'confirmed',
+      understanding: '按 v1 做',
+      confirmedAt: '2026-10-18T02:00:00.000Z',
+      latestRevisionNumber: 2,
+    })
+    renderApp(
+      `/tasks/${TASK_ID}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(downstreamTask()),
+        {
+          method: 'GET',
+          url: new RegExp(`/api/v1/tasks/${TASK_ID}/handoff-receipts$`),
+          respond: () => {
+            receiptCalls += 1
+            return ok([confirmed])
+          },
+        },
+        {
+          method: 'POST',
+          url: new RegExp(`/api/v1/handoff-receipts/${RECEIPT_ID}/adopt$`),
+          respond: () => {
+            adoptCalls += 1
+            return apiFailure('CONFLICT', '交接版本已变化，请查看新版本正文后重新确认')
+          },
+        },
+      ]),
+    )
+    const panel = await screen.findByTestId('handoff-receipt-panel')
+    const newer = await within(panel).findByTestId('handoff-newer-version')
+    await user.type(within(newer).getByLabelText('采用新版本：本次准备做什么'), '对齐字段后再做')
+    const callsBefore = receiptCalls
+    const submit = within(newer).getByRole('button', { name: '采用 v2' })
+    // 正文读取成功前按钮按设计禁用；先等到可点，避免把「没发出请求」误判成没报错。
+    await waitFor(() => expect(submit).toBeEnabled())
+    await user.click(submit)
+    await waitFor(() => expect(adoptCalls).toBe(1))
+    // 页面其他区块也可能有 alert；这里只认接收面板里的那一条。
+    expect(await within(panel).findByRole('alert')).toHaveTextContent('交接版本已变化')
+    // 不是「报错后让用户对着旧版本反复撞 409」：失效查询会立刻重读回执/最新版本。
+    await waitFor(() => expect(receiptCalls).toBeGreaterThan(callsBefore))
   })
 })
 
