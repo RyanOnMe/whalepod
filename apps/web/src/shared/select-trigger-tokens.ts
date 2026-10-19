@@ -28,6 +28,9 @@
 export const SELECT_TRIGGER_BACKGROUND_TOKEN = '--dsw-alias-bg-layer-1'
 /** 触发器描边所用的 L1 token：与 vendored `Input.module.css` 同值，同族控件同描边。 */
 export const SELECT_TRIGGER_BORDER_TOKEN = '--dsw-alias-border-l4'
+export const SELECT_TRIGGER_HOVER_BORDER_TOKEN = '--dsw-alias-label-tertiary'
+export const SELECT_TRIGGER_FOCUS_BORDER_TOKEN = '--dsw-alias-brand-primary'
+export type MenuTriggerState = 'idle' | 'hover' | 'focus-visible' | 'disabled'
 
 /** 归一化颜色文本：同一颜色在 `getComputedStyle` 与 token 原文里的空格形态不同。 */
 export function normalizeColor(value: string): string {
@@ -36,16 +39,24 @@ export function normalizeColor(value: string): string {
 
 /** 触发器上被判据覆盖的 computed style + 判据要用到的 token 解析值（**全是解析值**）。 */
 export interface MenuTriggerProbe {
+  state: MenuTriggerState
+  hovered?: boolean
+  focusVisible?: boolean
+  transitioning?: boolean
   /** `getComputedStyle(trigger).backgroundColor`。 */
   background: string
   /** `getComputedStyle(trigger).borderTopColor`。 */
   borderColor: string
   /** `getComputedStyle(trigger).borderTopLeftRadius`：如 '8px'。 */
   radius: string
+  /** 浏览器事实（不是产品判据）：Chrome 把声明的 0.5px 计算成 1px，保留活证据防假设漂移。 */
+  borderWidth?: string
   /** `getComputedStyle(document.documentElement).getPropertyValue(<背景 token>)`。 */
   resolvedBackgroundToken: string
   /** 同上，用于描边 token。 */
   resolvedBorderToken: string
+  resolvedHoverBorderToken?: string
+  resolvedFocusBorderToken?: string
 }
 
 /**
@@ -69,9 +80,18 @@ export function checkMenuTriggerTokens(
   expectBorderToken: string,
 ): string[] {
   const failures: string[] = []
+  if (probe.transitioning) failures.push('描边过渡尚未收敛')
+  const [borderColor, borderToken] =
+    probe.state === 'focus-visible'
+      ? [probe.resolvedFocusBorderToken ?? '', SELECT_TRIGGER_FOCUS_BORDER_TOKEN]
+      : probe.state === 'hover'
+        ? [probe.resolvedHoverBorderToken ?? '', SELECT_TRIGGER_HOVER_BORDER_TOKEN]
+        : [probe.resolvedBorderToken, expectBorderToken]
+  if (!['idle', 'hover', 'focus-visible', 'disabled'].includes(probe.state))
+    failures.push('交互态缺失或未知')
   for (const [label, actual, expected, tokenName] of [
     ['背景', probe.background, probe.resolvedBackgroundToken, expectBackgroundToken],
-    ['描边', probe.borderColor, probe.resolvedBorderToken, expectBorderToken],
+    ['描边', probe.borderColor, borderColor, borderToken],
   ] as const) {
     if (expected === '') {
       failures.push(`L1 token ${tokenName} 未解析（:root 取到空串）`)

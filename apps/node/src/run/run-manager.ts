@@ -356,6 +356,9 @@ export class RunManager {
             : {}),
           // #379：收尾交接草稿的触发与约定快照原样透传（缺省 = 不生成）。
           ...(payload.handoff !== undefined ? { handoff: payload.handoff } : {}),
+          ...(payload.executionContext !== undefined
+            ? { executionContext: payload.executionContext }
+            : {}),
         },
       }
       this.deps.supervisor.dispatchToRuntime(runId, initialize)

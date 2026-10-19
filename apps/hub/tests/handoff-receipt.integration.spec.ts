@@ -95,7 +95,7 @@ describe('handoff delivery & receipt (#380)', () => {
    * 上游齐备态：任务 U（启用约定 + 已确认 v1）→ 完成一个业务 Run → 已发布材料 →
    * 已发布交接版本 v1。返回全部句柄（下游测试自取）。
    */
-  async function seedUpstream(): Promise<{
+  async function seedUpstream(withArtifact = true): Promise<{
     ids: SeedIds
     receiver: { userId: string; deviceId: string; workspaceId: string }
     harness: Harness
@@ -141,22 +141,24 @@ describe('handoff delivery & receipt (#380)', () => {
     // 材料并由责任人发布（integration 层没有 Node）；删除条件：hub 提供按 Run 登记材料
     // 的 fixture 通道后改走通道。
     const artifactId = randomUUID()
-    await database.db.insert(schema.artifacts).values({
-      id: artifactId,
-      taskId: ids.taskId,
-      runId: run.id,
-      ownerUserId: ids.userId,
-      title: '接口约定.md',
-      mediaType: 'text/markdown',
-      byteSize: content.byteLength,
-      sha256: artifactSha,
-      storageKey: 'sha256/aa/' + 'a'.repeat(60),
-      status: 'candidate',
-    })
-    await database.db
-      .update(schema.artifacts)
-      .set({ status: 'published', publishedAt: new Date() })
-      .where(eq(schema.artifacts.id, artifactId))
+    if (withArtifact) {
+      await database.db.insert(schema.artifacts).values({
+        id: artifactId,
+        taskId: ids.taskId,
+        runId: run.id,
+        ownerUserId: ids.userId,
+        title: '接口约定.md',
+        mediaType: 'text/markdown',
+        byteSize: content.byteLength,
+        sha256: artifactSha,
+        storageKey: 'sha256/aa/' + 'a'.repeat(60),
+        status: 'candidate',
+      })
+      await database.db
+        .update(schema.artifacts)
+        .set({ status: 'published', publishedAt: new Date() })
+        .where(eq(schema.artifacts.id, artifactId))
+    }
 
     const manual = await createManualHandoffDraft(database, actor, run.id, idemKey())
     await updateManualHandoffDraft(
@@ -165,20 +167,25 @@ describe('handoff delivery & receipt (#380)', () => {
       run.id,
       {
         narrative: narrative({
-          evidence: [
-            {
-              text: '接口约定已发布',
-              verified: true,
-              refs: [{ kind: 'artifact', artifactId }],
-            },
-          ],
+          interfaces: [{ text: 'GET /orders contract only', verified: false, refs: [] }],
+          evidence: withArtifact
+            ? [
+                {
+                  text: '接口约定已发布',
+                  verified: true,
+                  refs: [{ kind: 'artifact', artifactId }],
+                },
+              ]
+            : [],
         }),
         expectedDraftVersion: manual.draftVersion,
       },
       idemKey(),
     )
     const published = await publishHandoffDraft(database, actor, run.id, idemKey())
-    expect(published.revision.content.system.artifacts[0]).toMatchObject({ artifactId })
+    if (withArtifact)
+      expect(published.revision.content.system.artifacts[0]).toMatchObject({ artifactId })
+    else expect(published.revision.content.system.artifacts).toEqual([])
     return {
       ids,
       receiver,
@@ -193,6 +200,49 @@ describe('handoff delivery & receipt (#380)', () => {
   async function receiptRows() {
     return database.db.select().from(schema.handoffReceipts)
   }
+
+  it('#396 没有 Artifact 也固化交接正文和接收理解并下发 Runtime', async () => {
+    const { ids, receiver, harness, revisionId } = await seedUpstream(false)
+    const pending = await deliverHandoff(
+      database,
+      makeActor(ids.userId),
+      revisionId,
+      { receiverUserId: receiver.userId, newTask: { title: '只依赖文字约定' } },
+      idemKey(),
+    )
+    await confirmReceipt(
+      database,
+      makeActor(receiver.userId),
+      pending.id,
+      { understanding: '按接口文字实现', differences: '暂不做分页' },
+      idemKey(),
+    )
+    await acceptAssignment(database, makeActor(receiver.userId), pending.downstreamTaskId)
+    const created = await harness.orchestrator.create(
+      makeActor(receiver.userId),
+      pending.downstreamTaskId,
+      {
+        idempotencyKey: idemKey(),
+        agentId: ids.agentId,
+        deviceId: receiver.deviceId,
+        workspaceId: receiver.workspaceId,
+        prompt: '开始',
+        dshDistributionVersion: TEST_DSH_VERSION,
+        handoffReceiptId: pending.id,
+      },
+    )
+    const run = await getRun(database.db, created.id)
+    expect(run?.handoffInput?.artifacts).toEqual([])
+    expect(run?.handoffInput?.context).toMatchObject({
+      understanding: '按接口文字实现',
+      differences: '暂不做分页',
+      content: { narrative: { interfaces: [{ text: 'GET /orders contract only' }] } },
+    })
+    const rows = await database.db.select().from(schema.dispatchOutbox)
+    const dispatch = rows.find((row) => JSON.stringify(row.payload).includes(created.id))
+    expect(JSON.stringify(dispatch?.payload)).toContain('GET /orders contract only')
+    expect(JSON.stringify(dispatch?.payload)).toContain('按接口文字实现')
+  })
 
   it('deliver：新建下游任务（责任人=被选成员、待接受）→ pending receipt；重放不重复建', async () => {
     const { ids, receiver, revisionId } = await seedUpstream()
@@ -598,6 +648,16 @@ describe('handoff delivery & receipt (#380)', () => {
         },
       ],
     })
+    expect(run?.handoffInput?.context).toMatchObject({
+      understanding: '先做订单列表',
+      differences: null,
+      content: { narrative: { evidence: [{ text: '接口约定已发布', verified: true }] } },
+    })
+    const dispatch = (await database.db.select().from(schema.dispatchOutbox)).find((row) =>
+      JSON.stringify(row.payload).includes(created.id),
+    )
+    expect(JSON.stringify(dispatch?.payload)).toContain('先做订单列表')
+    expect(JSON.stringify(dispatch?.payload)).toContain('接口约定已发布')
     // 与同 Task 清单互不合并：本 Run 的 artifact_input_manifest 仍是空（未选择本任务材料）。
     expect(run?.artifactInputManifest?.artifacts).toEqual([])
 
@@ -809,18 +869,38 @@ describe('handoff delivery & receipt (#380)', () => {
       },
       idemKey(),
     )
-    await publishHandoffDraft(database, makeActor(ids.userId), sourceRun.id, idemKey())
+    const publishedV2 = await publishHandoffDraft(
+      database,
+      makeActor(ids.userId),
+      sourceRun.id,
+      idemKey(),
+    )
     const before = await listDownstreamReceipts(database.db, pending.downstreamTaskId)
     expect(before[0]?.latestRevisionNumber).toBe(2)
 
     // adopt：新 receipt（confirmed、理解必填已由命令层校验）；旧 receipt 原样。
+    await expect(
+      adoptReceipt(
+        database,
+        makeActor(receiver.userId),
+        confirmed.id,
+        { understanding: '我看过旧版', expectedRevisionId: confirmed.revisionId },
+        idemKey(),
+      ),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
     const adopted = await adoptReceipt(
       database,
       makeActor(receiver.userId),
       confirmed.id,
-      { understanding: 'v2 的新打算：先对齐字段', differences: 'v2 对齐时发现的差异' },
+      {
+        understanding: 'v2 的新打算：先对齐字段',
+        differences: 'v2 对齐时发现的差异',
+        // 正控：带着「刚刚读到的 v2」采用必须成功（与上面的旧版本 409 成对）。
+        expectedRevisionId: publishedV2.revision.id,
+      },
       idemKey(),
     )
+    expect(adopted.revisionId).toBe(publishedV2.revision.id)
     expect(adopted.revisionNumber).toBe(2)
     expect(adopted.status).toBe('confirmed')
     // 重复采用（同 key 重放 + 新 key 第二次）都收敛到同一条；**且不是状态迁移**：

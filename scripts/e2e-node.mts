@@ -106,6 +106,12 @@ const FIXTURES: Record<string, E2eFixture> = {
   // 一份（scripts/fixtures/handoff-loop）：
   // 契约 fixture 的叙述内嵌契约测试自己的 runId（交叉任务引用会被发布校验拒绝），
   // e2e 需要一份可发布的叙述——两份遵循同一录制协议。
+  'handoff-downstream': {
+    session: join(REPO_ROOT, 'scripts/fixtures/handoff-downstream/session.jsonl'),
+  },
+  'agreement-draft': {
+    session: join(REPO_ROOT, 'scripts/fixtures/agreement-draft/session.jsonl'),
+  },
   handoff: {
     session: join(REPO_ROOT, 'scripts/fixtures/handoff-loop/session.jsonl'),
     override: join(REPO_ROOT, 'scripts/fixtures/handoff-loop/replay.override.json'),
@@ -183,6 +189,16 @@ mkdirSync(join(workspaceDir, 'out'), { recursive: true })
 writeFileSync(
   join(workspaceDir, 'out', 'report.md'),
   '# e2e report\n\n内容摘要：E2E 验收交付物。\n',
+)
+// 模型出口夹具使用的待发布本地 JSON；仍经真实 publish_artifact 上传，不直写业务表。
+writeFileSync(
+  join(workspaceDir, 'out', 'agreement.json'),
+  JSON.stringify({
+    goal: '交付登录接口与用例',
+    constraints: '沿用会话中间件',
+    acceptance: '单元测试通过',
+    openQuestions: '',
+  }),
 )
 
 const registry = new WorkspaceRegistry(join(stateDir, 'workspace-registry.sqlite'))

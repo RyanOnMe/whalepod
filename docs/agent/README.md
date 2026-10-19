@@ -117,3 +117,5 @@
 
 - [聚焦任务工作区验收](focused-workspace-acceptance.md)：讨论与执行独立、审批、候选检查发布、窄屏详情与还焦；Micro 输入区、菜单和受控状态。
 - [抽屉与二级页面统一验收](secondary-surfaces-acceptance.md)：十类界面三档布局、单一标题、草稿保留、嵌套确认还焦与风险正文不裁切。
+
+- [约定与交接内容实际消费验收](handoff-context-consumption-acceptance.md)：#396 固定正文进入实际模型请求、接收阅读、可信草稿与真人完成终点。

@@ -82,6 +82,39 @@ export function verifyHandoffLoopEvidence(input: unknown): HandoffLoopVerificati
   }
 
   const backend = reader.section(input, 'backend')
+  const agreementDraft = reader.section(input, 'agreementDraft')
+  if (agreementDraft !== undefined) {
+    const runId = str(agreementDraft['runId'], 'agreementDraft.runId')
+    str(agreementDraft['artifactId'], 'agreementDraft.artifactId')
+    check(agreementDraft['purpose'] === 'agreement_draft', 'draft must use agreement_draft purpose')
+    check(agreementDraft['runStatus'] === 'completed', 'agreement helper run must complete')
+    check(agreementDraft['ownerReadStatus'] === 200, 'owner must read agreement candidate')
+    check(
+      agreementDraft['otherMemberReadStatus'] === 404,
+      'other member must not read agreement candidate',
+    )
+    check(
+      agreementDraft['artifactStatus'] === 'candidate',
+      'agreement candidate must remain private',
+    )
+    check(agreementDraft['confirmedBeforeAdopt'] === null, 'helper must not auto-confirm agreement')
+    check(agreementDraft['confirmedAfterAdopt'] === null, 'adoption must not confirm agreement')
+    check(
+      runId !== undefined && runId !== backend?.['runId'],
+      'helper must differ from business run',
+    )
+    const candidate = reader.section(agreementDraft, 'candidateContent')
+    const adopted = reader.section(agreementDraft, 'adoptedContent')
+    for (const key of ['goal', 'constraints', 'acceptance', 'openQuestions']) {
+      check(
+        candidate !== undefined &&
+          adopted !== undefined &&
+          typeof candidate[key] === 'string' &&
+          candidate[key] === adopted[key],
+        `adopted agreement ${key} must equal inspected candidate`,
+      )
+    }
+  }
   let backendArtifactId: string | undefined
   let backendSha: string | undefined
   let upstreamTaskId: string | undefined
@@ -273,5 +306,30 @@ export function verifyHandoffLoopEvidence(input: unknown): HandoffLoopVerificati
     )
   }
 
+  const semantic = reader.section(input, 'semantic')
+  if (semantic !== undefined) {
+    const includes = (output: string, expected: string): void => {
+      const text = str(semantic[output], `semantic.${output}`)
+      const fragment = str(semantic[expected], `semantic.${expected}`)
+      check(
+        text !== undefined && fragment !== undefined && text.includes(fragment),
+        `${output} must include ${expected}`,
+      )
+    }
+    includes('agreementOutput', 'agreementGoal')
+    includes('agreementOutput', 'agreementAcceptance')
+    includes('receiverVisibleText', 'handoffStatement')
+    includes('downstreamOutput', 'handoffStatement')
+    includes('downstreamOutput', 'understanding')
+  }
+  const finalization = reader.section(input, 'finalization')
+  if (finalization !== undefined) {
+    check(
+      finalization['beforeReview'] === 'in_progress',
+      'Run completion must not auto-complete Task',
+    )
+    check(finalization['afterSubmit'] === 'in_review', 'human submit must reach in_review')
+    check(finalization['afterComplete'] === 'done', 'human completion must reach done')
+  }
   return { ok: failures.length === 0, failures, checks: reader.checks() }
 }

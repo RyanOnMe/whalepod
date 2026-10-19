@@ -15,6 +15,7 @@
 import { randomUUID } from 'node:crypto'
 import { snapshotRunInputs } from './input-manifest.js'
 import { snapshotHandoffInput } from './handoff-input.js'
+import { buildExecutionContext } from './execution-context.js'
 import { resolveSpecBinding } from './spec-binding.js'
 import { persistHandoffDraftEvent } from '../handoff/drafts.js'
 import { uuidv7 } from '../shared/uuid.js'
@@ -360,6 +361,7 @@ export class RunOrchestrator {
       expectedProfileDigest: revision.profileDigest,
       expectedPluginPackDigest: pack.packDigest,
       prompt: input.prompt,
+      executionContext: buildExecutionContext(specRevision, handoffInput),
       // 切片⑧：解析后的档位成对固化（run.start 与 runs 行同值，Node 只透传）。
       approvalPolicy,
       // #379：收尾交接草稿的触发与约定快照（缺省 = 不生成）。

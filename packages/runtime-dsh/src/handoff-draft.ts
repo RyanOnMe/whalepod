@@ -19,6 +19,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import {
   HANDOFF_NARRATIVE_MAX_BYTES,
   HandoffNarrativeSchema,
+  unverifiedHandoffNarrative,
   type HandoffNarrative,
   type HandoffRunSpec,
 } from '@whalepod/protocol'
@@ -39,7 +40,9 @@ export function handoffDraftTimeoutMs(env: NodeJS.ProcessEnv = process.env): num
   const raw = env['WHALEPOD_HANDOFF_DRAFT_TIMEOUT_MS']
   if (raw === undefined) return DEFAULT_HANDOFF_DRAFT_TIMEOUT_MS
   const parsed = Number(raw)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_HANDOFF_DRAFT_TIMEOUT_MS
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.min(parsed, DEFAULT_HANDOFF_DRAFT_TIMEOUT_MS)
+    : DEFAULT_HANDOFF_DRAFT_TIMEOUT_MS
 }
 
 export interface HandoffTranscriptEntry {
@@ -157,6 +160,37 @@ export async function generateHandoffDraft(
   prompt: { system: string; user: string },
   stream: (options: GenerateOptions) => AsyncIterable<StreamChunk>,
 ): Promise<HandoffDraftOutcome> {
+  if (call.signal?.aborted) return { status: 'failed', reason: 'aborted' }
+  const controller = new AbortController()
+  let finish!: (result: HandoffDraftOutcome) => void
+  const deadline = new Promise<HandoffDraftOutcome>((resolve) => {
+    finish = resolve
+  })
+  const stop = (reason: string): void => {
+    finish({ status: 'failed', reason })
+    controller.abort()
+  }
+  const cancel = (): void => stop('aborted')
+  call.signal?.addEventListener('abort', cancel, { once: true })
+  const timer = setTimeout(() => stop('timeout'), call.timeoutMs)
+  try {
+    // 不等待 iterator.return()：不合作的适配器可能连清理也永远不结束。
+    // race 持有收集任务的完成/拒绝处理器，迟到结果没有发布入口。
+    return await Promise.race([
+      collectHandoffDraft({ ...call, signal: controller.signal }, prompt, stream),
+      deadline,
+    ])
+  } finally {
+    clearTimeout(timer)
+    call.signal?.removeEventListener('abort', cancel)
+  }
+}
+
+async function collectHandoffDraft(
+  call: HandoffDraftCall,
+  prompt: { system: string; user: string },
+  stream: (options: GenerateOptions) => AsyncIterable<StreamChunk>,
+): Promise<HandoffDraftOutcome> {
   const controller = new AbortController()
   let timedOut = false
   const timer = setTimeout(() => {
@@ -247,5 +281,5 @@ export async function generateHandoffDraft(
   if (bytes > HANDOFF_NARRATIVE_MAX_BYTES) {
     return { status: 'failed', reason: `handoff-narrative-too-large: ${bytes} bytes` }
   }
-  return { status: 'generated', content: validated.data }
+  return { status: 'generated', content: unverifiedHandoffNarrative(validated.data) }
 }
