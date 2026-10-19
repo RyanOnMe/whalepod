@@ -1,5 +1,7 @@
 # Task Room Micro 交互验收
 
+- #402 红例（2026-10-19）：组合提交 `b2c67d5` 的完整 Q5 本机在 `composer-accepted.png` 失败：运行已 completed、Runtime 已释放，但 `.instruction-composer` 在截图等待字体/稳定期间被 keyed 子树替换，报 Element is not attached to the DOM。原状态/草稿判据已过，需修复取证宿主；失败位置保留在 `artifacts/q5/run-1.log`，不能删掉截图或重跑业务动作冒充修复。
+
 - 场景/门禁：G4 运行投影、G5-01/G5-03 审批观察与批准、执行区指令；Q0、Q5、许可与敏感扫描。
 - Issue：P1-306；CallChip、StatusMark、ThoughtLine、RubberSegment，以及现有 InstructionComposer 的发送反馈。按用户后续要求在同一 Issue / PR 统一交付。
 - 上次验证：2026-10-11 · `da0e5c75b687324c8775e50aec9dd917b3163579` · PASS。
