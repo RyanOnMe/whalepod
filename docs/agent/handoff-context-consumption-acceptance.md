@@ -3,7 +3,7 @@
 - 关联：ADR-0020；Q0/Q2/Q3/Q5/Q6/Q7。
 - 2026-10-19：本地 Q0 PASS（1914 passed，7 expected fail）；Q3 PASS（74）；定向 Q2 PASS（43）；真装配 Q5 交接链 PASS（独立判定 113 checks）。本次结果不借用历史 #381 的 PASS。
 - 业务实现提交 `2c7f4d0` 的 [PR CI](https://github.com/RyanOnMe/whalepod/actions/runs/39232760872) 中 Q0/Q2/Q3/Q6/Q7 全部成功；[发布预验](https://github.com/RyanOnMe/whalepod/actions/runs/39232828182) 的 Q8/Q9 成功。
-- 完整 Q5 未全绿：首轮下拉描边状态判据失败（[#398](https://github.com/RyanOnMe/whalepod/issues/398)），次轮 R8 崩溃前未命中未 ack 前置条件（[#399](https://github.com/RyanOnMe/whalepod/issues/399)）。这两段现有驱动/判据本次未修改；失败链接与修复判据均已登记。定向交接通过不能替代完整套件或发布所需的 20 连。
+- 初轮完整 Q5 在 #398/#399 失败，随后组合运行又暴露 #402/#403，均已分别修复。2026-10-19 实现提交 `6765ca2`（PR #397/#400/#401/#404/#405）本机完整 Q5 **1/1 PASS**，全部项目执行到结束，退出码 0；组合 Q0 1921 passed / 7 expected fail。整轮日志与关键结构化证据已过敏感扫描。Linux 连续三轮的运行及归档见 [39239719979](https://github.com/RyanOnMe/whalepod/actions/runs/39239719979)。本次单轮结果不替代发布所需 20 连。
 
 ## 用户路径与驱动
 
