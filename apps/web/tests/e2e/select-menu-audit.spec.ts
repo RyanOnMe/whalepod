@@ -19,6 +19,7 @@ import { showAgentCreation } from './helpers.js'
  * 4. **对比度顺带扫**（#159 的门现成）：迁移后的触发器是可见控件，扫描面比原生 select 大。
  */
 import { join } from 'node:path'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 import {
@@ -65,6 +66,7 @@ test.describe('#158 七处下拉的两档审计', () => {
 
   test('7 个落页点 × 两档：截图 + 窄屏定位判据 + 键盘回焦（单 Hub 单团队，故合为一条）', async () => {
     const owner = await ownerContext.newPage()
+    const stateProbes: unknown[] = []
 
     // ---- Owner：真实 Setup 页开通团队 ----
     await owner.goto('/setup')
@@ -89,6 +91,29 @@ test.describe('#158 七处下拉的两档审计', () => {
     await expect(owner.getByRole('heading', { name: '成员', exact: true })).toBeVisible()
     const inviteRole = owner.locator('#invite-role')
     await assertNotNativeSelect(inviteRole, owner.locator('.members-invite'), '角色')
+    await assertMenuTriggerTokens(inviteRole)
+    // #398：真人路径分别进入静止、hover、键盘焦点；不再以「聚焦」为由跳过描边。
+    await owner.getByRole('heading', { name: '成员', exact: true }).click()
+    await owner.mouse.move(1, 1)
+    const idle = await assertMenuTriggerTokens(inviteRole)
+    expect(idle.state).toBe('idle')
+    stateProbes.push(idle)
+    await inviteRole.hover()
+    const hovered = await assertMenuTriggerTokens(inviteRole)
+    expect(hovered.state).toBe('hover')
+    stateProbes.push(hovered)
+    await owner.mouse.move(1, 1)
+    await inviteRole.press('Shift+Tab')
+    await owner.keyboard.press('Tab')
+    const focused = await assertMenuTriggerTokens(inviteRole)
+    expect(focused.state).toBe('focus-visible')
+    stateProbes.push(focused)
+    // 只注入错误样式，不改变产品路径；若判据跳过描边，此负控必然失败。
+    const wrongBorder = await owner.addStyleTag({
+      content: '#invite-role { border-color: rgb(255, 0, 0) !important; }',
+    })
+    await expect(assertMenuTriggerTokens(inviteRole)).rejects.toThrow()
+    await wrongBorder.evaluate((element) => element.parentNode?.removeChild(element))
     await assertMenuTriggerTokens(inviteRole)
     for (const vp of VIEWPORTS) {
       await owner.setViewportSize({ width: vp.width, height: vp.height })
@@ -184,6 +209,23 @@ test.describe('#158 七处下拉的两档审计', () => {
     await expect(bob.getByLabel('指令', { exact: true })).toBeVisible()
 
     await bob.locator('.execution-settings > summary').click()
+    const disabled = await assertMenuTriggerTokens(bob.getByLabel('选择 Revision'))
+    expect(disabled.state).toBe('disabled')
+    stateProbes.push(disabled)
+    await mkdir(SHOT_DIR, { recursive: true })
+    await writeFile(
+      join(SHOT_DIR, 'state-probes.json'),
+      JSON.stringify(
+        {
+          component: 'browser',
+          scenario: 'menu-trigger-states',
+          probes: stateProbes,
+          wrongBorderRejected: true,
+        },
+        null,
+        2,
+      ),
+    )
     await selectFromMenu(bob.getByLabel('选择 Agent'), `审计代理 ${RUN_TAG}`)
     await selectFromMenu(bob.getByLabel('选择设备'), /e2e-node（在线）/)
     const launcher = bob.locator('.run-launcher')

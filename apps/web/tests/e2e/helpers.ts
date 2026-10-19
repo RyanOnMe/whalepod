@@ -35,6 +35,9 @@ import {
   SELECT_TRIGGER_BACKGROUND_TOKEN,
   SELECT_TRIGGER_BORDER_TOKEN,
   checkMenuTriggerTokens,
+  SELECT_TRIGGER_HOVER_BORDER_TOKEN,
+  SELECT_TRIGGER_FOCUS_BORDER_TOKEN,
+  type MenuTriggerProbe,
 } from '../../src/shared/select-trigger-tokens.js'
 import { expect } from '@playwright/test'
 import type { BrowserContext, Locator, Page, TestInfo } from '@playwright/test'
@@ -498,81 +501,62 @@ export async function assertNotNativeSelect(
   await expect(scope.locator('select')).toHaveCount(0)
 }
 
-/**
- * #158 视觉判据（浏览器实测）：触发器的背景 / 描边最终值必须等于 L1 token 在 `:root` 上的
- * 解析值，圆角必须是 8px。
- *
- * **这条判据的能力边界（评审用真实 Chrome 证伪过一次）**：它证不了"用了哪个 token"。
- * `getComputedStyle(el).getPropertyValue('--dsw-…')` 拿到的是**解析后的值**而不是声明原文
- * ——自定义属性是继承属性且在 computed-value 阶段就完成 `var()` 代换，所以元素上永远读不到
- * `var(--dsw-…)` 这种形态（实测 DPR=1/2 都是 `"rgb(255, 255, 255)"`）。"用了哪个 token"
- * 由 `tests/select-menu.spec.tsx` 的 CSS 文本断言钉；描边宽度 0.5px 同理（Chrome 的
- * computed `border-top-width` 是 **1px**），也留在源码文本判据里。
- *
- * **判的是"静止态"**：`background` / `border-color` / `border-radius` 三条都按未被聚焦、
- * 未被 hover 的形态取期望值。若取样的那一刻触发器是聚焦的，`:focus-visible` 规则会把描边
- * 改成品牌色（设计如此），此时本判据只判背景与圆角（见函数内的分支）——**不把静止态的期望
- * 硬套到焦点瞬间**，也不靠"先把焦点移开"来回避（那会让判据依赖调用顺序）。
- */
-export async function assertMenuTriggerTokens(trigger: Locator): Promise<void> {
-  // 评审 A-2：token 名**从常量传进页面函数**（`evaluate(fn, arg)` 的第二个参数在页面侧可读），
-  // 不在回调里再写一遍字面量。早先回调里硬编码 `'--dsw-alias-bg-layer-1'` / `'-l4'`，等于
-  // token 名在读路径上有**第三份副本**——把常量与 CSS 一起换成浅色同值 token（如 `-2`）时，
-  // 源码判据会绿，而这里仍去读旧 token 的解析值，**在深色档误红**（假红比假绿更费时间）。
+/** #398：按当前真实交互态判定；有界等待描边过渡收敛，所有状态都检查描边。 */
+export async function assertMenuTriggerTokens(trigger: Locator): Promise<MenuTriggerProbe> {
   const tokenNames = {
     background: SELECT_TRIGGER_BACKGROUND_TOKEN,
     border: SELECT_TRIGGER_BORDER_TOKEN,
+    hoverBorder: SELECT_TRIGGER_HOVER_BORDER_TOKEN,
+    focusBorder: SELECT_TRIGGER_FOCUS_BORDER_TOKEN,
   }
-  const probe = await trigger.evaluate((el, names) => {
-    const style = getComputedStyle(el)
-    const root = getComputedStyle(document.documentElement)
-    return {
-      background: style.backgroundColor,
-      borderColor: style.borderTopColor,
-      radius: style.borderTopLeftRadius,
-      // 两边都是**解析值**（不是声明原文，见上面注释）；读 :root 是为了让判据跟着 token 走，
-      // 而不是把 rgb 字面量抄进测试里
-      resolvedBackgroundToken: root.getPropertyValue(names.background).trim(),
-      resolvedBorderToken: root.getPropertyValue(names.border).trim(),
-      // 焦点态由 `:focus-visible` 规则单独改**描边色**（品牌色），所以"描边来自哪个 token"
-      // 这件事**必须声明判的是哪个状态**。实测踩到：本轮把本判据补进 390 档循环后，
-      // 调用点紧挨着 `click()`，那一刻触发器是聚焦的 → computed 描边是品牌色
-      // rgb(15,17,21)，判据报"描边取值与 --dsw-alias-border-l4 不符"（**是判据没写清状态，
-      // 不是样式错了**）。这里把状态读出来，交给下面按态判定。
-      focused: document.activeElement === el,
-    }
-  }, tokenNames)
-  // 顺手在真实浏览器里回读一次描边宽度：CSS 里声明的是 0.5px，Chrome 的 computed 值是
-  // **1px**（DPR=1/2 都一样，本机实测）。这不是产品判据，是"别再拿 computed 宽度去和
-  // vendored 的 0.5px 比"的活证据——写在这里，跑一次 Q5 就复核一次。
-  const borderWidth = await trigger.evaluate((el) => getComputedStyle(el).borderTopWidth)
-  if (borderWidth === '0.5px') {
-    throw new Error(
-      '实测到 computed border-top-width = 0.5px：本机 Chrome 此前给的是 1px（0.5px 会被取整）。' +
-        '若浏览器行为变了，select-trigger-tokens.ts 里那条"浏览器侧不判宽度"的理由要一并复核。',
+  let probe: MenuTriggerProbe | undefined
+  await expect
+    .poll(
+      async () => {
+        probe = await trigger.evaluate((el, names): MenuTriggerProbe => {
+          const style = getComputedStyle(el)
+          const root = getComputedStyle(document.documentElement)
+          return {
+            state: el.matches(':disabled')
+              ? 'disabled'
+              : el.matches(':hover')
+                ? 'hover'
+                : el.matches(':focus-visible')
+                  ? 'focus-visible'
+                  : 'idle',
+            hovered: el.matches(':hover'),
+            focusVisible: el.matches(':focus-visible'),
+            transitioning: el
+              .getAnimations()
+              .some(
+                (animation) =>
+                  animation instanceof CSSTransition &&
+                  animation.transitionProperty.startsWith('border') &&
+                  (animation.pending || animation.playState === 'running'),
+              ),
+            background: style.backgroundColor,
+            borderColor: style.borderTopColor,
+            radius: style.borderTopLeftRadius,
+            resolvedBackgroundToken: root.getPropertyValue(names.background).trim(),
+            resolvedBorderToken: root.getPropertyValue(names.border).trim(),
+            resolvedHoverBorderToken: root.getPropertyValue(names.hoverBorder).trim(),
+            resolvedFocusBorderToken: root.getPropertyValue(names.focusBorder).trim(),
+          }
+        }, tokenNames)
+        return checkMenuTriggerTokens(
+          probe,
+          SELECT_TRIGGER_BACKGROUND_TOKEN,
+          SELECT_TRIGGER_BORDER_TOKEN,
+        )
+      },
+      {
+        timeout: 2000,
+        intervals: [16, 32, 50, 100],
+        message: '下拉触发器按态取值必须收敛到对应 token（含描边）',
+      },
     )
-  }
-  if (probe.focused) {
-    // 焦点态：背景/圆角不变，描边按设计转品牌色（`Input.module.css` 的 `.wrap:focus-within`
-    // 同款语义）——所以这一档**只判背景与圆角**，描边的期望值在这里明确为品牌 token，
-    // 而不是把"描边=border-l4"硬套到聚焦瞬间。
-    const { focused, ...idle } = probe
-    void focused
-    const idleFailures = checkMenuTriggerTokens(
-      idle,
-      SELECT_TRIGGER_BACKGROUND_TOKEN,
-      SELECT_TRIGGER_BORDER_TOKEN,
-    ).filter((failure) => !failure.startsWith('描边'))
-    if (idleFailures.length > 0)
-      throw new Error(`触发器样式判据未过（焦点态）：\n- ${idleFailures.join('\n- ')}`)
-    return
-  }
-  const failures = checkMenuTriggerTokens(
-    probe,
-    SELECT_TRIGGER_BACKGROUND_TOKEN,
-    SELECT_TRIGGER_BORDER_TOKEN,
-  )
-  if (failures.length > 0) throw new Error(`触发器样式判据未过：\n- ${failures.join('\n- ')}`)
+    .toEqual([])
+  return probe!
 }
 
 /** run_event 全表 seq 连续性判定（R1/R6 补发无缺无重）。 */

@@ -166,6 +166,14 @@ pnpm exec playwright test --project=p1-158   # 本 Issue 自己的两档截图�
 
 ## 复跑
 
+### #398：交互态与过渡收敛（2026-10-19）
+
+`assertMenuTriggerTokens` 现采集 idle / hover / focus-visible / disabled、实际颜色与对应 token、描边过渡是否仍在运行。按现有 CSS specificity，hover 与 focus-visible 同时命中时 hover 优先；禁用态不采用 hover 色。过渡未结束时不能通过，结束后每种状态都必须比较描边，焦点态不再跳过。2 秒内不收敛、缺状态/token 或颜色错误均失败；不改产品样式。
+
+源码与纯判定负控覆盖四态错误颜色、缺 token、过渡中旧颜色恰好正确的情况。真浏览器经鼠标、键盘与未选择 Agent 时的禁用配置版本进入四态，并注入错误描边确认判据会红。原七处落页、两档几何/回焦/对比度审计全部保留。
+
+本地 Q0 PASS（1907 passed / 7 expected fail），24 项 select-menu 测试与两档浏览器审计 PASS。结构化证据：`artifacts/evidence/select-menu/state-probes.json`（component=browser）；独立纯判定在 `shared/select-trigger-tokens.ts`，复跑命令：`pnpm exec playwright test --config playwright.operations.config.ts --project p1-158`。完整 Q5 组合验收随 #399 记录，不把定向 PASS 当作完整套件 PASS。
+
 ```bash
 # 干净环境复跑（每条命令自带一次性 PG + 真 Hub + vite 冷启）
 git checkout feat/p1-158-select-menu
