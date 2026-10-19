@@ -43,6 +43,8 @@ import {
   SELECT_TRIGGER_BACKGROUND_TOKEN,
   SELECT_TRIGGER_BORDER_TOKEN,
   checkMenuTriggerTokens,
+  SELECT_TRIGGER_HOVER_BORDER_TOKEN,
+  SELECT_TRIGGER_FOCUS_BORDER_TOKEN,
 } from '../src/shared/select-trigger-tokens.js'
 import { contrastRatio, parseCssColor, readTokenValue, round2 } from './contrast.js'
 import type { ProjectView } from '../src/shared/api/types.js'
@@ -644,6 +646,14 @@ describe('#158 视觉判据：触发器样式来自 L1 token', () => {
   })
 
   it('#398 Q5 按交互态判描边；焦点/hover/禁用都不能跳过错误颜色', () => {
+    const css = readFileSync(join(webSrc, 'styles/global.css'), 'utf8')
+    const hoverRule =
+      /\.select-menu \.select-menu-trigger:hover:not\(:disabled\)\s*\{([^}]+)\}/.exec(css)?.[1] ??
+      ''
+    const focusRule =
+      /\.select-menu \.select-menu-trigger:focus-visible\s*\{([^}]+)\}/.exec(css)?.[1] ?? ''
+    expect(hoverRule).toContain(`var(${SELECT_TRIGGER_HOVER_BORDER_TOKEN})`)
+    expect(focusRule).toContain(`var(${SELECT_TRIGGER_FOCUS_BORDER_TOKEN})`)
     const probe = {
       state: 'hover' as 'idle' | 'hover' | 'focus-visible' | 'disabled',
       background: 'rgb(255, 255, 255)',
@@ -666,6 +676,13 @@ describe('#158 视觉判据：触发器样式来自 L1 token', () => {
       expect(check({ ...probe, state, borderColor: 'rgb(255, 0, 0)' })).toHaveLength(1)
     }
     expect(check({ ...probe, resolvedHoverBorderToken: '' })).toHaveLength(1)
+    expect(
+      checkMenuTriggerTokens(
+        { ...probe, transitioning: true },
+        SELECT_TRIGGER_BACKGROUND_TOKEN,
+        SELECT_TRIGGER_BORDER_TOKEN,
+      ),
+    ).toHaveLength(1)
     expect(check({ ...probe, state: 'focus-visible', resolvedFocusBorderToken: '' })).toHaveLength(
       1,
     )
