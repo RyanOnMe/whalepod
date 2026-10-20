@@ -10,13 +10,15 @@
  *   ③ 都不行 → **明确拒绝**（`DEVICE_OFFLINE`），不猜、不建 Run。
  * 指令显式带 `deviceId` / `workspaceId` 时**覆盖**以上全部，但仍校验归属与可用性。
  *
- * 「在线」的判据**复用既有那一套**（不在线 = `devices.dsh_distribution_version is null`，
- * 即 `node.hello` 还没上报；`queries.ts:getDeviceDshDistributionVersion` 用的同一个事实），
- * 不另造一套，避免「路由说在线、解析说离线」这种两套真相。
+ * 「在线」的判据**与设备读面同一事实**：`lastSeenAt` 落在 `DEVICE_ONLINE_WINDOW_MS`（30s）
+ * 内（`deriveDeviceStatus`，/devices 列表与 #393 客户端闸用的也是它）。版本列非空只说明
+ * 「曾经 hello 过」——断连后它不会清空，不能单独当在线用（#394：续跑曾据此建出注定失败的
+ * Run）。版本列仍保留为「从未 hello」的精确拒绝分支。
  */
 import { and, desc, eq, isNotNull, isNull } from 'drizzle-orm'
 import type { DbHandle } from '@whalepod/db'
 import { schema } from '@whalepod/db'
+import { deriveDeviceStatus } from '../device/pairing.js'
 import { RunCommandError } from './errors.js'
 
 export interface RunTarget {
@@ -42,22 +44,36 @@ export interface ResolveRunTargetInput {
 export async function resolveRunTarget(
   handle: DbHandle,
   input: ResolveRunTargetInput,
+  clock: () => Date = () => new Date(),
 ): Promise<RunTarget | undefined> {
+  // 一次解析共用同一个 now：候选之间的在线判定不能各自漂移。
+  // 时钟可注入：orchestrator 刷 lastSeenAt 用的是域时钟（测试里是固定值），
+  // 目标解析若各自取真实时间，两边会在测试/回放里互相判成离线。
+  const now = clock()
   if (input.deviceId !== undefined || input.workspaceId !== undefined) {
-    const explicit = await resolveExplicit(handle, input)
+    const explicit = await resolveExplicit(handle, input, now)
     return explicit
   }
 
-  const fromLastRun = await resolveFromLastRun(handle, input.taskId, input.assigneeUserId)
+  const fromLastRun = await resolveFromLastRun(handle, input.taskId, input.assigneeUserId, now)
   if (fromLastRun !== undefined) return fromLastRun
 
-  return resolveFromAssigneeDevices(handle, input.assigneeUserId)
+  return resolveFromAssigneeDevices(handle, input.assigneeUserId, now)
 }
 
-/** 显式指定：设备必须属于责任人、未撤销、已 hello；工作区必须属于该设备且 available。 */
+/** 与 /devices 读面同一事实：未撤销且 lastSeenAt 在 30s 在线窗口内。 */
+function isDeviceOnline(
+  device: { revokedAt: Date | null; lastSeenAt: Date | null },
+  now: Date,
+): boolean {
+  return deriveDeviceStatus(device, now) === 'online'
+}
+
+/** 显式指定：设备必须属于责任人、未撤销、在线；工作区必须属于该设备且 available。 */
 async function resolveExplicit(
   handle: DbHandle,
   input: ResolveRunTargetInput,
+  now: Date,
 ): Promise<RunTarget | undefined> {
   // 只给 workspaceId 也要能用（评审 B2）：设备由 `workspace.device_id` **确定性推导**，不是猜。
   // 此前直接 `return undefined` → 路由回 409「把设备弄上线」，与真实原因（缺 deviceId）无关且误导；
@@ -86,6 +102,9 @@ async function resolveExplicit(
   if (device.dshDistributionVersion === null) {
     throw new RunCommandError('DEVICE_OFFLINE', 'the target device has not reported node.hello yet')
   }
+  if (!isDeviceOnline(device, now)) {
+    throw new RunCommandError('DEVICE_OFFLINE', 'the target device is offline')
+  }
 
   const workspace =
     input.workspaceId !== undefined
@@ -106,6 +125,7 @@ async function resolveFromLastRun(
   handle: DbHandle,
   taskId: string,
   assigneeUserId: string,
+  now: Date,
 ): Promise<RunTarget | undefined> {
   const priorRuns = await handle
     .select({
@@ -129,7 +149,8 @@ async function resolveFromLastRun(
     // 少了这一条，历史 Run 若指向他人的设备，这里会照样返回它，直到建 Run 时才以一句
     // 与真实原因无关的 403 结束——fail-closed 但误导。
     if (device.ownerUserId !== assigneeUserId) continue
-    if (device.dshDistributionVersion === null) continue // 设备不在线：换下一台候选
+    if (device.dshDistributionVersion === null) continue // 从未 hello：换下一台候选
+    if (!isDeviceOnline(device, now)) continue // 已断连（版本列不清）：换下一台候选
     const workspace = await findWorkspace(handle, prior.workspaceId)
     if (workspace === undefined || !workspace.available) continue
     if (workspace.ownerUserId !== assigneeUserId) continue
@@ -142,6 +163,7 @@ async function resolveFromLastRun(
 async function resolveFromAssigneeDevices(
   handle: DbHandle,
   assigneeUserId: string,
+  now: Date,
 ): Promise<RunTarget | undefined> {
   const candidates = await handle
     .select()
@@ -158,6 +180,7 @@ async function resolveFromAssigneeDevices(
     .orderBy(desc(schema.devices.lastSeenAt))
   for (const device of candidates) {
     if (device.dshDistributionVersion === null) continue // 类型收窄：isNotNull 之后仍可能被并发清空
+    if (!isDeviceOnline(device, now)) continue // 断连（版本列不清）：换下一台候选
     const workspace = await findAvailableWorkspaceForDevice(handle, device.id)
     if (workspace === undefined) continue
     return { deviceId: device.id, workspaceId: workspace.id, source: 'assignee_device' }

@@ -45,10 +45,13 @@ HTTP 面走 `POST /api/v1/tasks/:taskId/instructions` 的 Fastify inject。
 
 ## 未覆盖与已知项
 
-- **「在线」判据有两套真相（评审观察 1）**：本片用 `devices.dsh_distribution_version is not null`
-  （一次 hello 后永不清空），而设备页状态由 `last_seen_at` + 时间窗推导。于是「三天没心跳的设备」
-  可能在三段式② 里胜出。与 `run/routes.ts` 的既有口径自洽（那里同样用它），但注释里
-  「与 queries.ts 的 DEVICE_OFFLINE 判据同一事实」只对了一半——这是**已知偏差**，不是本片新造。
+- **「在线」判据原先有两套真相（评审观察 1；#394 已收口，2026-10-20）**：本片原用
+  `devices.dsh_distribution_version is not null`（一次 hello 后永不清空），而设备页状态由
+  `last_seen_at` + 30s 窗口推导；「三天没心跳的设备」可能在三段式② 胜出，续跑更会直接信任
+  来源 Run 的设备列建出注定失败的 Run。现在写路径（显式目标、三段式①②、续跑/重跑目标、
+  `POST /runs` 的版本查询）统一复用 `deriveDeviceStatus` 的 30s 窗口；版本列非空只保留为
+  「从未 hello」的精确拒绝分支。判据：离线续跑/重跑均 409 `DEVICE_OFFLINE` 且不建 Run、
+  不落指令；上一轮设备掉线时三段式跳过它改用下一台在线设备；在线续跑仍成功。
 - **起 Run 与写指令分两个事务**：极端窗口下可能留「有 Run 无指令」（run 会被正常执行，只是线程里
   少一条记录）。窗口极窄，未做原子化。
 

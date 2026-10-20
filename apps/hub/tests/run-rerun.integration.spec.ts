@@ -77,7 +77,7 @@ describe('rerun lineage (G7-04)', () => {
     bobChain = await seedRunChainForUser(database.db, bobUserId)
     await database.db
       .update(schema.devices)
-      .set({ dshDistributionVersion: TEST_DSH_VERSION })
+      .set({ dshDistributionVersion: TEST_DSH_VERSION, lastSeenAt: new Date() })
       .where(eq(schema.devices.id, bobChain.deviceId))
   }
 

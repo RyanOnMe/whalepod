@@ -83,7 +83,7 @@ describe('resume lineage (ADR-0009 slice 5)', () => {
     bobChain = await seedRunChainForUser(database.db, bobUserId)
     await database.db
       .update(schema.devices)
-      .set({ dshDistributionVersion: TEST_DSH_VERSION })
+      .set({ dshDistributionVersion: TEST_DSH_VERSION, lastSeenAt: new Date() })
       .where(eq(schema.devices.id, bobChain.deviceId))
   }
 
@@ -153,6 +153,33 @@ describe('resume lineage (ADR-0009 slice 5)', () => {
           error: (json as { error: { code: string; message: string } }).error,
         }
   }
+
+  it('#394 来源设备已掉线（lastSeenAt 超窗）→ 续跑/重跑都 409 DEVICE_OFFLINE，且不建新 Run', async () => {
+    await seedWorld()
+    const resumeSource = await seedTerminalSourceRun()
+    const rerunSource = await seedTerminalSourceRun()
+    await database.db
+      .update(schema.devices)
+      .set({ lastSeenAt: new Date(Date.now() - 31_000) })
+      .where(eq(schema.devices.id, bobChain.deviceId))
+    const before = await database.db
+      .select({ id: schema.runs.id })
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, taskId))
+
+    const resumed = await createRun({ resumeFromRunId: resumeSource, idempotencyKey: idemKey() })
+    expect(resumed.status).toBe(409)
+    expect(resumed.error?.code).toBe('DEVICE_OFFLINE')
+    const rerun = await createRun({ rerunOfRunId: rerunSource, idempotencyKey: idemKey() })
+    expect(rerun.status).toBe(409)
+    expect(rerun.error?.code).toBe('DEVICE_OFFLINE')
+
+    const after = await database.db
+      .select({ id: schema.runs.id })
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, taskId))
+    expect(after.map((row) => row.id).sort()).toEqual(before.map((row) => row.id).sort())
+  })
 
   it('creates a resume run: 201 + lineage in response/DB/task room + paired run.start payload', async () => {
     await seedWorld()

@@ -109,12 +109,13 @@
    真实语义**在真端点上验（limit=1 逐页走到表尾）+ 组件面验 >500 条的体量。
 3. **成员看不到助手回复是既有受众语义**：`assistant.message` 属 owner 受众，成员视角只有
    段结构与状态（本批未改协议）；「历史回复不消失」判的是 owner 视角。
-4. **设备离线只能客户端挡（本批的实测发现）**：Hub 的 `DEVICE_OFFLINE` 判据读设备事实列
-   `devices.dsh_distribution_version`（`node.hello` 回填、**断连不清**），而续聊/重跑固定
-   来源的设备与工作区，于是「停掉 Node 之后续聊」在服务端**照建 Run**（本用例首轮实测
-   201，长出一次注定失败的运行）。本批据此在执行区加了客户端闸（来源设备读面显示离线即
-   阻断 + 说清原因 + 保留草稿，不自动改投），并把它判进生产验收；服务端那条「注定失败的
-   Run」是既有语义缺口，**本批不改协议/服务端**，登记为后续候选（见下）。闸门只拦
+4. **设备离线原先只能客户端挡（本批的实测发现；#394 已补服务端）**：Hub 的 `DEVICE_OFFLINE`
+   判据原读设备事实列 `devices.dsh_distribution_version`（`node.hello` 回填、**断连不清**），
+   而续聊/重跑固定来源的设备与工作区，于是「停掉 Node 之后续聊」在服务端**照建 Run**（本
+   用例首轮实测 201，长出一次注定失败的运行）。本批据此在执行区加了客户端闸（来源设备读面
+   显示离线即阻断 + 说清原因 + 保留草稿，不自动改投），并把它判进生产验收。#394 已把服务端
+   写路径统一到 `deriveDeviceStatus` 的 30s 在线窗口：离线续跑/重跑在建 Run 前 409
+   `DEVICE_OFFLINE`；客户端闸仍保留（更早、更友好），两者不互相替代。闸门只拦
    `status === 'offline'`：设备**已撤销**是永久失效，服务端会带 `DEVICE_REVOKED` 与
    requestId 明确回绝、页面另有就地说明与恢复入口（`run-micro` 判着这条），客户端抢答会把
    那条更准的话术吞掉。
@@ -136,11 +137,12 @@
 
 ## 后续候选（本批登记，不夹带）
 
-- **[#394](https://github.com/RyanOnMe/whalepod/issues/394)**：服务端的 `DEVICE_OFFLINE` 判据
-  只看版本列（断连不清），因此「来源设备已下线」这类续跑会先建出一次注定失败的 Run。
-  要么在续跑解析目标时按设备在线状态（`lastSeenAt` 窗口或 `node.hello` 连接事实）再判一次，
-  要么在 Run 分发失败时给出可读归因——需要单独的取舍记录（标 `needs-decision`），
-  故不在本批改动。
+- **[#394](https://github.com/RyanOnMe/whalepod/issues/394)（已收口，2026-10-20）**：服务端
+  `DEVICE_OFFLINE` 原先只看版本列（断连不清），「来源设备已下线」的续跑会先建出一次注定
+  失败的 Run。取舍取「复用设备读面 30s 在线窗口」：续跑目标也走同一目标校验，离线/撤销/
+  工作区不可用均在建 Run 前拒绝；版本列保留为「从未 hello」分支。判据见
+  [instruction-starts-run-acceptance](./instruction-starts-run-acceptance.md) 与
+  `run-resume.integration.spec.ts`。
 
 ## 复跑
 

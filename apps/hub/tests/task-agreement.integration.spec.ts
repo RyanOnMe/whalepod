@@ -567,7 +567,7 @@ describe('task agreement 绑定收口 (#378)', () => {
     // 目标解析要求设备已 hello（dshDistributionVersion 非空）——补上这一个事实。
     await database.db
       .update(schema.devices)
-      .set({ dshDistributionVersion: TEST_DSH_VERSION })
+      .set({ dshDistributionVersion: TEST_DSH_VERSION, lastSeenAt: new Date() })
       .where(eq(schema.devices.id, ids.deviceId))
     const { orchestrator, outbox } = makeHarness(database)
     const deps = {

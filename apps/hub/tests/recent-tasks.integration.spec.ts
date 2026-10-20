@@ -66,7 +66,7 @@ describe('recent tasks (GET /tasks/recent, #252)', () => {
     bobChain = await seedRunChainForUser(database.db, bob.userId)
     await database.db
       .update(schema.devices)
-      .set({ dshDistributionVersion: TEST_DSH_VERSION })
+      .set({ dshDistributionVersion: TEST_DSH_VERSION, lastSeenAt: new Date() })
       .where(eq(schema.devices.id, bobChain.deviceId))
   }
 

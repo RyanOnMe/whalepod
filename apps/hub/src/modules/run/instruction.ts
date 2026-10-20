@@ -255,19 +255,24 @@ export async function sendInstruction(
   ) {
     throw new RunCommandError('NOT_FOUND', '续跑来源不在本任务中')
   }
-  const target =
+  // #394：续跑必须落在来源现场（device/workspace 来自来源 Run），但**不能直接信任**那两列——
+  // 设备可能已掉线/被撤销、工作区可能已不可用。走同一条目标校验，才能在建 Run 前失败。
+  const pinnedTarget =
     resumeSource !== undefined
-      ? {
-          deviceId: resumeSource.deviceId,
-          workspaceId: resumeSource.workspaceId,
-          source: 'explicit' as const,
-        }
-      : await resolveRunTarget(deps.database.db, {
-          taskId,
-          assigneeUserId: task.assigneeUserId,
+      ? { deviceId: resumeSource.deviceId, workspaceId: resumeSource.workspaceId }
+      : {
           ...(input.deviceId !== undefined ? { deviceId: input.deviceId } : {}),
           ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
-        })
+        }
+  const target = await resolveRunTarget(
+    deps.database.db,
+    {
+      taskId,
+      assigneeUserId: task.assigneeUserId,
+      ...pinnedTarget,
+    },
+    deps.now,
+  )
   if (target === undefined) {
     throw new RunCommandError(
       'DEVICE_OFFLINE',
@@ -286,7 +291,10 @@ export async function sendInstruction(
   }
   const dshVersion = await deps.dshDistributionVersionFor(target.deviceId)
   if (dshVersion === undefined) {
-    throw new RunCommandError('DEVICE_OFFLINE', 'the target device has not reported node.hello yet')
+    throw new RunCommandError(
+      'DEVICE_OFFLINE',
+      'the target device is offline or has not reported node.hello yet',
+    )
   }
 
   let run: Awaited<ReturnType<typeof deps.orchestrator.create>>
