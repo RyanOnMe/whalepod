@@ -181,6 +181,29 @@ describe('resume lineage (ADR-0009 slice 5)', () => {
     expect(after.map((row) => row.id).sort()).toEqual(before.map((row) => row.id).sort())
   })
 
+  it('#394 来源设备已撤销 → 续跑 409 DEVICE_REVOKED（不降级成离线），且不建新 Run', async () => {
+    await seedWorld()
+    const sourceId = await seedTerminalSourceRun()
+    await database.db
+      .update(schema.devices)
+      .set({ revokedAt: new Date() })
+      .where(eq(schema.devices.id, bobChain.deviceId))
+    const before = await database.db
+      .select({ id: schema.runs.id })
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, taskId))
+
+    const created = await createRun({ resumeFromRunId: sourceId, idempotencyKey: idemKey() })
+    expect(created.status).toBe(409)
+    expect(created.error?.code).toBe('DEVICE_REVOKED')
+
+    const after = await database.db
+      .select({ id: schema.runs.id })
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, taskId))
+    expect(after.map((row) => row.id).sort()).toEqual(before.map((row) => row.id).sort())
+  })
+
   it('creates a resume run: 201 + lineage in response/DB/task room + paired run.start payload', async () => {
     await seedWorld()
     const sourceId = await seedTerminalSourceRun()

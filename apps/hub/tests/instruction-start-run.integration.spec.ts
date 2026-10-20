@@ -370,7 +370,7 @@ describe('instruction starts a run (P1-196)', () => {
         assigneeUserId: ids.userId,
         deviceId: ids.deviceId,
       }),
-    ).rejects.toThrow(/revoked/)
+    ).rejects.toMatchObject({ code: 'DEVICE_REVOKED' })
   })
 
   it('migration 0005 的库级约束：触发消息必须与 Run 同 Task（跨 Task 锚点是坏账）', async () => {
@@ -1069,6 +1069,46 @@ describe('instruction starts a run (P1-196)', () => {
         intent: { kind: 'resume', runId: source.id },
       }),
     ).rejects.toMatchObject({ code: 'DEVICE_OFFLINE' })
+    expect((await database.db.select().from(schema.runs)).length).toBe(beforeRuns)
+    expect(await listMessages(database.db, ids.taskId)).toHaveLength(beforeMessages)
+  })
+
+  it('#394 续跑沿用来源工作区但工作区不可用 → WORKSPACE_UNAVAILABLE，不建 Run', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    const source = await harness.orchestrator.create(
+      makeActor(ids.userId),
+      ids.taskId,
+      makeCreateInput(ids),
+    )
+    await harness.worker.dispatchOnce()
+    for (const frame of harness.gateway.drainUpstream())
+      await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(source.id, 1, {
+        type: 'runtime.ready',
+        dshSessionId: 'unavailable-workspace-source',
+      }),
+    )
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(source.id, 2, { type: 'run.completed', finalText: 'done' }),
+    )
+    await database.db
+      .update(schema.workspaces)
+      .set({ available: false })
+      .where(eq(schema.workspaces.id, ids.workspaceId))
+    const beforeRuns = (await database.db.select().from(schema.runs)).length
+    const beforeMessages = (await listMessages(database.db, ids.taskId)).length
+    await expect(
+      sendInstruction(makeInstructionDeps(harness), makeActor(ids.userId), ids.taskId, {
+        text: '工作区不可用后续跑',
+        idempotencyKey: 'unavailable-workspace-resume',
+        intent: { kind: 'resume', runId: source.id },
+      }),
+    ).rejects.toMatchObject({ code: 'WORKSPACE_UNAVAILABLE' })
     expect((await database.db.select().from(schema.runs)).length).toBe(beforeRuns)
     expect(await listMessages(database.db, ids.taskId)).toHaveLength(beforeMessages)
   })

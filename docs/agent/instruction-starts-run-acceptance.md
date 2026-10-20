@@ -24,7 +24,7 @@ HTTP 面走 `POST /api/v1/tasks/:taskId/instructions` 的 Fastify inject。
 | 三段式② | 没有上一轮 → 责任人**最近在线的设备** + 其可用工作区（`source='assignee_device'`） | PASS |
 | 三段式③ | 无可用目标 → `undefined` / 409，**不建 Run、不落指令**（不猜） | PASS |
 | Agent 不猜 | 无上一轮 Run 可继承且未显式给 `agentId` → 明确要求显式指定，且不留半成品 | PASS |
-| 显式覆盖校验 | 别人的设备 → FORBIDDEN；工作区不可用 → VALIDATION_FAILED；已撤销 → DEVICE_OFFLINE | PASS |
+| 显式覆盖校验 | 别人的设备 → FORBIDDEN；工作区不可用 → VALIDATION_FAILED；已撤销 → DEVICE_REVOKED（永久失效不降级成离线） | PASS |
 | 库级约束（0005+0010） | 触发消息必须与 Run **同 Task**，双侧触发器钉住：Run 侧 `run_trigger_message_same_task_check`（0005，建锚点时拒跨 Task）+ 消息侧 `task_message_same_task_check`（0010，#199：已被锚定的消息搬 Task 即 23514）。未被锚定的消息搬 Task、同 Task 内 touch 不误伤（`packages/db/tests/anchor-same-task.integration.spec.ts` 3 条，Q2）。生产代码无改 `task_id` 路径，绕过只剩 SQL 直写 | PASS |
 | HTTP 201 | 显式目标 → 201，`outcome='started_run'`，指令 pending（命运由 ack 定） | PASS |
 | HTTP 400 | body 非法 → **400**（不是 500：③b 的 `.parse()` 教训） | PASS |
@@ -39,7 +39,7 @@ HTTP 面走 `POST /api/v1/tasks/:taskId/instructions` 的 Fastify inject。
 - **404「agent has no profile revision」** → Agent 缺 Profile Revision（夹具问题，不是本片逻辑）；
 - **500 而不是 409** → 运行面错误映射没生效：`RunCommandError` 的映射表在 run 插件里，任务路由
   要显式复用（本片首版即此，已改为共用 run 模块导出的 `ERROR_HTTP_STATUS` + `errorCodeOf`）；
-- **没建 Run** → 先看三段式解析结果与设备是否「已 hello」（`dsh_distribution_version` 非空）；
+- **没建 Run** → 先看三段式解析结果与设备在线判据（`lastSeenAt` 在 30s 窗口内；版本列非空只表示曾 hello）；已撤销看 `DEVICE_REVOKED`，离线看 `DEVICE_OFFLINE`；
 - **指令停在 pending** → 看 `run.start` 的 ack 有没有回来（`settleTriggerInstruction` 挂在
   orchestrator 的 ack 分支上，锚点是 `run.trigger_message_id`）。
 

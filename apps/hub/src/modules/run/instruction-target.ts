@@ -35,6 +35,11 @@ export interface ResolveRunTargetInput {
   /** 指令显式指定的目标（覆盖自动规则）。 */
   deviceId?: string
   workspaceId?: string
+  /**
+   * 工作区不可用时抛哪个码。默认 VALIDATION_FAILED（显式新执行的历史口径）；
+   * 续跑沿用来源工作区时传 WORKSPACE_UNAVAILABLE，保留 orchestrator 的 409 语义。
+   */
+  unavailableWorkspaceCode?: 'VALIDATION_FAILED' | 'WORKSPACE_UNAVAILABLE'
 }
 
 /**
@@ -97,7 +102,9 @@ async function resolveExplicit(
     throw new RunCommandError('FORBIDDEN', 'the target device does not belong to the task assignee')
   }
   if (device.revokedAt !== null) {
-    throw new RunCommandError('DEVICE_OFFLINE', 'the target device has been revoked')
+    // 撤销是永久失效，必须保留 orchestrator/客户端都认识的 DEVICE_REVOKED；
+    // 降级成 DEVICE_OFFLINE 会让 UI 的撤销专属说明与 Q5 的 409 判据失真。
+    throw new RunCommandError('DEVICE_REVOKED', 'the target device has been revoked')
   }
   if (device.dshDistributionVersion === null) {
     throw new RunCommandError('DEVICE_OFFLINE', 'the target device has not reported node.hello yet')
@@ -115,7 +122,10 @@ async function resolveExplicit(
     throw new RunCommandError('VALIDATION_FAILED', 'the workspace does not belong to the device')
   }
   if (!workspace.available) {
-    throw new RunCommandError('VALIDATION_FAILED', 'the workspace is not available')
+    throw new RunCommandError(
+      input.unavailableWorkspaceCode ?? 'VALIDATION_FAILED',
+      'the workspace is not available',
+    )
   }
   return { deviceId: device.id, workspaceId: workspace.id, source: 'explicit' }
 }
@@ -172,8 +182,8 @@ async function resolveFromAssigneeDevices(
       and(
         eq(schema.devices.ownerUserId, assigneeUserId),
         isNull(schema.devices.revokedAt),
-        // 「在线」= 已 hello（与 queries.ts 的 DEVICE_OFFLINE 判据同一事实）：
-        // 直接在 SQL 里筛掉没上报过的设备，别把「不在线」带进候选再靠 JS 兜。
+        // SQL 先筛掉「从未 hello」的设备；断连（lastSeenAt 超窗）在下面用同一个
+        // deriveDeviceStatus 跳过。版本列只证明曾经 hello，不能单独当在线。
         isNotNull(schema.devices.dshDistributionVersion),
       ),
     )
