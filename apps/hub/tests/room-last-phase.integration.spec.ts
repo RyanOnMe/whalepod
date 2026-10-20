@@ -61,7 +61,7 @@ describe('room view last run phase (#261)', () => {
     bobChain = await seedRunChainForUser(database.db, bob.userId)
     await database.db
       .update(schema.devices)
-      .set({ dshDistributionVersion: TEST_DSH_VERSION })
+      .set({ dshDistributionVersion: TEST_DSH_VERSION, lastSeenAt: new Date() })
       .where(eq(schema.devices.id, bobChain.deviceId))
     const project = await apiInject(ctx, bob, {
       method: 'POST',

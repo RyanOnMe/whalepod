@@ -77,7 +77,7 @@ describe('agent-assignable tasks (ADR-0009 slice 7, #239)', () => {
     bobChain = await seedRunChainForUser(database.db, bobUserId)
     await database.db
       .update(schema.devices)
-      .set({ dshDistributionVersion: TEST_DSH_VERSION })
+      .set({ dshDistributionVersion: TEST_DSH_VERSION, lastSeenAt: new Date() })
       .where(eq(schema.devices.id, bobChain.deviceId))
   }
 
@@ -275,7 +275,7 @@ describe('agent-assignable tasks (ADR-0009 slice 7, #239)', () => {
     const aliceChain = await seedRunChainForUser(database.db, aliceUserId)
     await database.db
       .update(schema.devices)
-      .set({ dshDistributionVersion: TEST_DSH_VERSION })
+      .set({ dshDistributionVersion: TEST_DSH_VERSION, lastSeenAt: new Date() })
       .where(eq(schema.devices.id, aliceChain.deviceId))
     const reassigned = await apiInject(ctx, alice, {
       method: 'POST',

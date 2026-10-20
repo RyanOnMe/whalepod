@@ -20,7 +20,7 @@ describe('deviceDshDistributionVersion (#37)', () => {
     await database.close()
   })
 
-  it('returns undefined before hello reports, then the reported version', async () => {
+  it('returns undefined before hello or after the device goes offline; only a fresh hello counts', async () => {
     // seedRunChainForUser 的 pack/agent/device 全部外键到 user，先建真实用户。
     const teamId = randomUUID()
     const userId = randomUUID()
@@ -39,9 +39,29 @@ describe('deviceDshDistributionVersion (#37)', () => {
     // hello 回填后读到真实发行版版本。
     await database.db
       .update(schema.devices)
-      .set({ dshDistributionVersion: '0.1.0-rc.8' })
+      .set({ dshDistributionVersion: '0.1.0-rc.8', lastSeenAt: new Date() })
       .where(eq(schema.devices.id, deviceId))
     expect(await getDeviceDshDistributionVersion(database.db, deviceId)).toBe('0.1.0-rc.8')
+    // 版本已 hello 但 lastSeenAt 为空：仍然是离线，不能只看版本列。
+    await database.db
+      .update(schema.devices)
+      .set({ lastSeenAt: null })
+      .where(eq(schema.devices.id, deviceId))
+    expect(await getDeviceDshDistributionVersion(database.db, deviceId)).toBeUndefined()
+    // #394：版本列只写不清；心跳超过 30s 窗口后必须按离线处理（与 /devices 同一事实）。
+    await database.db
+      .update(schema.devices)
+      .set({ lastSeenAt: new Date(Date.now() - 31_000) })
+      .where(eq(schema.devices.id, deviceId))
+    expect(await getDeviceDshDistributionVersion(database.db, deviceId)).toBeUndefined()
+    // 撤销是独立的永久失效：保留 DEVICE_REVOKED，不降级成离线。
+    await database.db
+      .update(schema.devices)
+      .set({ lastSeenAt: new Date(), revokedAt: new Date() })
+      .where(eq(schema.devices.id, deviceId))
+    await expect(getDeviceDshDistributionVersion(database.db, deviceId)).rejects.toMatchObject({
+      code: 'DEVICE_REVOKED',
+    })
     // 未知设备 → undefined（不可枚举）。
     expect(
       await getDeviceDshDistributionVersion(database.db, '00000000-0000-4000-8000-000000000000'),

@@ -229,6 +229,7 @@ describe('instruction grants (P1-198)', () => {
       tokenHash: new Uint8Array([9, 9, 9]),
       capabilities: {},
       dshDistributionVersion: '9.9.9-test',
+      lastSeenAt: new Date(),
     })
     await expect(
       sendInstruction(deps(harness), makeActor(member), ids.taskId, {
@@ -598,6 +599,7 @@ describe('instruction grants：评审整改的回归判据（P1-198）', () => {
       tokenHash: new Uint8Array([5, 5, 5]),
       capabilities: {},
       dshDistributionVersion: '9.9.9-test',
+      lastSeenAt: new Date(),
     })
     await expect(
       harness.orchestrator.create(makeActor(member), ids.taskId, {

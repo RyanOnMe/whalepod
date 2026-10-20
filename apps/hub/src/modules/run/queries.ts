@@ -2,6 +2,8 @@ import { eq } from 'drizzle-orm'
 import type { ApprovalRow, RunRow } from '@whalepod/db'
 import { getRun, listRunsByTask, schema } from '@whalepod/db'
 import type { DbHandle } from '@whalepod/db'
+import { deriveDeviceStatus } from '../device/pairing.js'
+import { RunCommandError } from './errors.js'
 
 /** run_status 枚举（03 §3.2），从 db schema 推断，不另持一份字面量。 */
 export type RunStatus = RunRow['status']
@@ -111,17 +113,32 @@ export async function listRunViewsByTask(handle: DbHandle, taskId: string): Prom
 
 /**
  * `dshDistributionVersionFor` 的真实实现（#37）：读 device.dsh_distribution_version
- * （node.hello 上报，migration 0002）。缺行或尚未 hello（null）→ undefined，
- * routes 据此映射 DEVICE_OFFLINE；P1-09 落地 hello 回填后此处即取到真实值。
+ * （node.hello 上报，migration 0002）。缺行 / 尚未 hello（null）/ **已断连**（lastSeenAt
+ * 超出 30s 在线窗口）→ undefined，routes 据此映射 DEVICE_OFFLINE。
+ * **已撤销**抛 DEVICE_REVOKED（不降级成离线）：撤销是永久失效，orchestrator 与客户端
+ * 都按这个词给专属说明；此前只读版本列时由 orchestrator 抛，现在写路径提前判也要保留。
+ *
+ * #394：版本列只写不清，单独用它会把「三天没心跳」的设备当成在线；这里与 /devices
+ * 读面共用 `deriveDeviceStatus`，写路径不再有第二套「在线」真相。
  */
 export async function getDeviceDshDistributionVersion(
   handle: DbHandle,
   deviceId: string,
 ): Promise<string | undefined> {
   const [row] = await handle
-    .select({ version: schema.devices.dshDistributionVersion })
+    .select({
+      version: schema.devices.dshDistributionVersion,
+      lastSeenAt: schema.devices.lastSeenAt,
+      revokedAt: schema.devices.revokedAt,
+    })
     .from(schema.devices)
     .where(eq(schema.devices.id, deviceId))
     .limit(1)
-  return row?.version ?? undefined
+  if (row === undefined || row.version === null) return undefined
+  if (row.revokedAt !== null) {
+    throw new RunCommandError('DEVICE_REVOKED', 'the target device has been revoked')
+  }
+  if (deriveDeviceStatus({ revokedAt: null, lastSeenAt: row.lastSeenAt }, new Date()) !== 'online')
+    return undefined
+  return row.version
 }

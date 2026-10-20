@@ -58,5 +58,6 @@ ADR-0018 让"活跃或最近一次运行"的输出成为主内容，但历史指
 
 复跑入口与逐条判据见 [docs/agent/continuous-conversation-acceptance.md](../agent/continuous-conversation-acceptance.md)
 （生产验收 runner `scripts/run-conversation-acceptance.mts` + 独立判定器 123 条判据、
-16 组逐条负控 + 1 条正控）。实测发现的两条边界也记在那里：设备离线只能客户端挡（服务端缺口见
-[#394](https://github.com/RyanOnMe/whalepod/issues/394)），成员看不到助手回复是既有受众语义。
+16 组逐条负控 + 1 条正控）。实测发现的两条边界也记在那里：设备离线由客户端闸与服务端 30s 在线
+窗口双重阻断（[#394](https://github.com/RyanOnMe/whalepod/issues/394) 已收口，服务端不再建出
+注定失败的 Run），成员看不到助手回复是既有受众语义。

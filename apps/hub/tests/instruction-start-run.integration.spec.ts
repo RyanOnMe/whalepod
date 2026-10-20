@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Database } from '@whalepod/db'
@@ -370,7 +370,7 @@ describe('instruction starts a run (P1-196)', () => {
         assigneeUserId: ids.userId,
         deviceId: ids.deviceId,
       }),
-    ).rejects.toThrow(/revoked/)
+    ).rejects.toMatchObject({ code: 'DEVICE_REVOKED' })
   })
 
   it('migration 0005 的库级约束：触发消息必须与 Run 同 Task（跨 Task 锚点是坏账）', async () => {
@@ -1028,6 +1028,141 @@ describe('instruction starts a run (P1-196)', () => {
       agentId: source.agentId,
       deviceId: source.deviceId,
       workspaceId: source.workspaceId,
+    })
+  })
+
+  it('#394 续跑到已掉线的来源设备 → DEVICE_OFFLINE，不建 Run、不落指令', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    const source = await harness.orchestrator.create(
+      makeActor(ids.userId),
+      ids.taskId,
+      makeCreateInput(ids),
+    )
+    await harness.worker.dispatchOnce()
+    for (const frame of harness.gateway.drainUpstream())
+      await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(source.id, 1, {
+        type: 'runtime.ready',
+        dshSessionId: 'offline-resume-source',
+      }),
+    )
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(source.id, 2, { type: 'run.completed', finalText: 'done' }),
+    )
+    // 断连后版本列仍在，只有 lastSeenAt 超出 30s 窗口——旧实现会据此建出注定失败的 Run。
+    const harnessNow = new Date('2026-08-25T00:00:00.000Z')
+    await database.db
+      .update(schema.devices)
+      .set({ lastSeenAt: new Date(harnessNow.getTime() - 31_000) })
+      .where(eq(schema.devices.id, ids.deviceId))
+    const beforeRuns = (await database.db.select().from(schema.runs)).length
+    const beforeMessages = (await listMessages(database.db, ids.taskId)).length
+    await expect(
+      sendInstruction(makeInstructionDeps(harness), makeActor(ids.userId), ids.taskId, {
+        text: '掉线后继续',
+        idempotencyKey: 'offline-resume',
+        intent: { kind: 'resume', runId: source.id },
+      }),
+    ).rejects.toMatchObject({ code: 'DEVICE_OFFLINE' })
+    expect((await database.db.select().from(schema.runs)).length).toBe(beforeRuns)
+    expect(await listMessages(database.db, ids.taskId)).toHaveLength(beforeMessages)
+  })
+
+  it('#394 续跑沿用来源工作区但工作区不可用 → WORKSPACE_UNAVAILABLE，不建 Run', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    const source = await harness.orchestrator.create(
+      makeActor(ids.userId),
+      ids.taskId,
+      makeCreateInput(ids),
+    )
+    await harness.worker.dispatchOnce()
+    for (const frame of harness.gateway.drainUpstream())
+      await harness.orchestrator.ingestNodeEvent(harness.deviceFor(ids), frame)
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(source.id, 1, {
+        type: 'runtime.ready',
+        dshSessionId: 'unavailable-workspace-source',
+      }),
+    )
+    await harness.orchestrator.ingestNodeEvent(
+      harness.deviceFor(ids),
+      runEventFrame(source.id, 2, { type: 'run.completed', finalText: 'done' }),
+    )
+    await database.db
+      .update(schema.workspaces)
+      .set({ available: false })
+      .where(eq(schema.workspaces.id, ids.workspaceId))
+    const beforeRuns = (await database.db.select().from(schema.runs)).length
+    const beforeMessages = (await listMessages(database.db, ids.taskId)).length
+    await expect(
+      sendInstruction(makeInstructionDeps(harness), makeActor(ids.userId), ids.taskId, {
+        text: '工作区不可用后续跑',
+        idempotencyKey: 'unavailable-workspace-resume',
+        intent: { kind: 'resume', runId: source.id },
+      }),
+    ).rejects.toMatchObject({ code: 'WORKSPACE_UNAVAILABLE' })
+    expect((await database.db.select().from(schema.runs)).length).toBe(beforeRuns)
+    expect(await listMessages(database.db, ids.taskId)).toHaveLength(beforeMessages)
+  })
+
+  it('#394 三段式①跳过已掉线的上一轮设备，改用下一台在线设备', async () => {
+    const ids = await seedRunPrereqs(database.db)
+    await bringDeviceOnline(ids.deviceId)
+    const harness = makeHarness(database)
+    const prior = await harness.orchestrator.create(
+      makeActor(ids.userId),
+      ids.taskId,
+      makeCreateInput(ids),
+    )
+    await harness.outbox.claim()
+    await setRunStatus(database.db, prior.id, 'completed', { finishedAt: new Date() })
+
+    const secondDeviceId = randomUUID()
+    const secondWorkspaceId = randomUUID()
+    await database.db.insert(schema.devices).values({
+      id: secondDeviceId,
+      ownerUserId: ids.userId,
+      name: 'second-device',
+      platform: 'linux',
+      architecture: 'x64',
+      nodeVersion: '24.12.0',
+      nodeAppVersion: '0.1.0',
+      tokenHash: randomBytes(32),
+      capabilities: {},
+      dshDistributionVersion: '9.9.9-test',
+      lastSeenAt: new Date(),
+    })
+    await database.db.insert(schema.workspaces).values({
+      id: secondWorkspaceId,
+      deviceId: secondDeviceId,
+      ownerUserId: ids.userId,
+      name: 'second-workspace',
+      kind: 'directory',
+      capabilities: { read: true, write: true },
+      available: true,
+    })
+    // 上一轮用的设备已掉线（版本列仍在）；三段式①必须跳过它。
+    await database.db
+      .update(schema.devices)
+      .set({ lastSeenAt: new Date(Date.now() - 31_000) })
+      .where(eq(schema.devices.id, ids.deviceId))
+
+    const resolved = await resolveRunTarget(database.db, {
+      taskId: ids.taskId,
+      assigneeUserId: ids.userId,
+    })
+    expect(resolved).toEqual({
+      deviceId: secondDeviceId,
+      workspaceId: secondWorkspaceId,
+      source: 'assignee_device',
     })
   })
 })
