@@ -299,6 +299,21 @@ cli.ts 恒为空）。
      **最终 20 连（HEAD bdff8b1，13 场景版）：20/20 全绿**，逐轮日志留
      `artifacts/q5/`；本轮 0 次触发重建——churn 条件未复现，兜底路径由单测钉住。
 
+  8. **宿主系统代理/PAC/WPAD 让 Chrome 首次 localhost 导航等 53s（#407，已修）**：
+     2026-10-22 本机 Q5 第 1 轮在 p1-07 被 60s 测试预算打红；trace 显示
+     `Navigate to "/setup"` 持续 60.2s，给测试加临时请求计时后测得
+     `GET http://localhost:5173/setup` **53,567ms**，而 `scripts/e2e-serve.mts`
+     的 Node 探活、Hub 与 Vite 模块请求都正常。根因是 macOS 系统代理
+     （HTTP/HTTPS/SOCKS `127.0.0.1:7897`）+ PAC/WPAD：例外列表里有 localhost，
+     Chrome 仍会先做 PAC/WPAD 解析/探测，首次导航等代理超时；第二次独立探针
+     （最小本地 HTTP 服务 + Playwright Chrome）实测**无参数 45,220ms / 加
+     `--no-proxy-server` 16ms**。修复：`playwright.config.ts` 的 `use` 增加
+     `launchOptions.args: ['--no-proxy-server']`，e2e 只访问 localhost，
+     micro/operations/workspace 三个子配置都继承 `...base.use`；p1-07 复跑
+     **19.6s 通过**，`GET /setup` <1s。边界：这是浏览器级开关，将来新增需要外网的
+     project 必须自行覆盖 `launchOptions`/`proxy`；合并后在新 main 上重跑 20 连，
+     旧的本机 3 连不作为发布证据。
+
 ## 归因速查
 
 - 环境起不来 → `scripts/e2e-serve.mts` stderr（含提前退出的子进程日志尾）。
