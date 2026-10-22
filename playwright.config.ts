@@ -60,6 +60,10 @@ export default defineConfig({
     // 用系统 Chrome（channel）而非 Playwright 自带 Chromium：首次浏览器下载
     // 依赖境外 CDN，本机网络下不可靠；真 Chrome 也是真人同一条路径。
     channel: 'chrome',
+    // e2e 只访问本机 Hub/Web。主机系统代理/PAC/WPAD 可能让 Chrome 首次 localhost 导航
+    // 先等代理探测超时（#407，本机实测 53s，60s 测试预算被耗尽），这里强制直连。
+    // 这是浏览器级开关：将来新增需要外网的 project 必须自行覆盖 launchOptions/proxy。
+    launchOptions: { args: ['--no-proxy-server'] },
     trace: 'retain-on-failure',
   },
   webServer: {
