@@ -44,7 +44,7 @@
   "handoffTrial": {
     "status": "not_run",
     "baselineCommit": "a27768f64eb4d2c73f82ccd0259add22f3336569",
-    "candidateCommit": null,
+    "candidateCommit": "v0.1.0-alpha.8",
     "teams": [],
     "observations": [],
     "observationFields": {
@@ -78,6 +78,49 @@
       "status": "not_run",
       "observations": [],
       "note": "使用与 handoffTrial 相同字段记录交接准备耗时/沟通次数与耗时/模型等待/首次正确接手时间/误解返工/再用意愿"
+    }
+  },
+  "continuousConversationTrial": {
+    "status": "not_run",
+    "baselineCommit": "45994f200417abac9bf5b3069ccad4f14218adcf",
+    "candidateCommit": "v0.1.0-alpha.8",
+    "teams": [],
+    "observations": [],
+    "observationFields": {
+      "teamCode": null,
+      "participantCode": null,
+      "version": null,
+      "order": null,
+      "journey": null,
+      "actionKind": null,
+      "segmentLocateMs": null,
+      "defaultContinueCorrect": null,
+      "manualOverrideRespected": null,
+      "unavailableSourceExplained": null,
+      "autoFailoverAttempted": null,
+      "offlineDraftRetained": null,
+      "accidentalSend": null,
+      "duplicateSend": null,
+      "narrowLayoutOverflow": null,
+      "historyAnchorShiftPx": null,
+      "followDisengaged": null,
+      "approvalCardInSegment": null,
+      "artifactAttributionCorrect": null,
+      "providerWaitMs": null,
+      "setupWaitMs": null,
+      "helpCount": null,
+      "mistake": null,
+      "blockerComponent": null,
+      "sanitizedQuote": null,
+      "viewport": null,
+      "mistakeCount": null
+    },
+    "decisionTargets": {
+      "locateWithoutRunSelectionTeamsMin": 2,
+      "autoFailoverCountMax": 0,
+      "duplicateSendCountMax": 0,
+      "offlineDraftRetainedExplainedTeamsMin": 2,
+      "note": "数字是本轮决策目标，不作为已验证收益或统计结论"
     }
   }
 }
