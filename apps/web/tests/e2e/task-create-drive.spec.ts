@@ -74,6 +74,8 @@ async function bootstrap(): Promise<void> {
 
   await alice.getByRole('button', { name: '新建项目' }).click()
   await fillAndEnter(alice, '#project-name', 'P1-312 指派驱动项目')
+  // #415：等项目真正落库并刷新到列表，再读 /projects；POST 在途时读到空数组会让 [0] 崩。
+  await expect(alice.getByText('P1-312 指派驱动项目').first()).toBeVisible()
 
   shared.cookie = await sessionCookie(shared.context!)
   const me = await hubApi(shared.cookie, 'GET', '/auth/session')
