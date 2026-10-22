@@ -556,7 +556,9 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
 
     // 请求先经真人输入发出，再撤销设备并放行真实传输：不依赖 UI 缓存失效的快慢。
     // 不制造响应；Hub 必须按真实撤销事实拒绝。若先撤销再点，UI 可能已先拦住而没有 POST。
-    await selectFromMenu(owner.getByLabel('执行方式'), /继续会话/)
+    // 运行完成后默认规则应已切到「继续会话」；这里断言默认规则，不再重复点菜单——
+    // 重复点会撞上 composer 表单因 mode/source 键重挂载的窗口，选项被卸载（#409）。
+    await expect(owner.getByLabel('执行方式', { exact: true })).toContainText('继续会话')
     let releaseRejectedRequest!: () => void
     const rejectedGate = new Promise<void>((resolve) => {
       releaseRejectedRequest = resolve
