@@ -1,9 +1,9 @@
-# WhalePod 安装（v0.1.0-alpha.7）
+# WhalePod 安装（v0.1.0-alpha.8）
 
 适用对象：**没有开发背景的试用团队**。全程约 30 分钟。产品命题与边界见
 [README](../README.md)；这里只有"装到哪一步、看到什么算对"。
 
-> 装之前请先读本版的**限制声明与已知问题**：[v0.1.0-alpha.7 release notes](./release-notes/v0.1.0-alpha.7.md)。
+> 装之前请先读本版的**限制声明与已知问题**：[v0.1.0-alpha.8 release notes](./release-notes/v0.1.0-alpha.8.md)。
 > 其中两条最影响试用体验：**Agent 真执行需要真实模型密钥**（没配密钥的 Run 会如实
 > 失败为 `MODEL_CREDENTIAL_UNAVAILABLE`）；**Alpha 期锁 DSH 一版，别自行升级**。
 
@@ -29,7 +29,7 @@ Hub 的网页。3–10 人团队 = 一台 Hub + 每人一个 Node。
 ```bash
 git clone https://github.com/RyanOnMe/whalepod.git
 cd whalepod
-git checkout v0.1.0-alpha.7        # 锁版本；main 是开发分支，试用勿用
+git checkout v0.1.0-alpha.8        # 锁版本；main 是开发分支，试用勿用
 
 # 1) 生成两个只此一份的机密，写进 .env（权限 0600）
 umask 077
@@ -67,7 +67,7 @@ docker compose --env-file .env -f deploy/compose.yml exec hub node dist/cli.js s
 
 ```bash
 git clone https://github.com/RyanOnMe/whalepod.git
-cd whalepod && git checkout v0.1.0-alpha.7
+cd whalepod && git checkout v0.1.0-alpha.8
 corepack enable
 pnpm install --frozen-lockfile
 pnpm -r --if-present build                    # 约 1-2 分钟
@@ -127,16 +127,24 @@ Caddy 自动签发/续期 Let's Encrypt；`WHALEPOD_PUBLIC_ORIGIN` 填 `https://
 ## E. 升级与回滚
 
 ```bash
-# 升级：切 tag → 重建 → 启动（数据自动向前迁移，见下）
-git fetch --tags && git checkout v0.1.0-alpha.7
+# 升级前备份（迁移只向前；DB-only，hubdata 的 Artifact 存储不在其中，本版迁移也不改它）
+docker compose --env-file .env -f deploy/compose.yml exec -T db \
+  pg_dump -U postgres -Fc -d whalepod > whalepod-backup-$(date +%F-%H%M).dump
+
+# 升级：切 tag → 停 Hub → 重建 → 启动（数据自动向前迁移，见下）
+# 升级期间不要启动新的 Run；Hub 与所有 Node 一起升级。
+git fetch --tags && git checkout v0.1.0-alpha.8
+docker compose --env-file .env -f deploy/compose.yml stop hub
 docker compose --env-file .env -f deploy/compose.yml up -d --build   # Hub 侧
 pnpm install --frozen-lockfile && pnpm -r --if-present build   # 每台 Node 机器
 node apps/node/dist/cli.js start                          # 重启各 Node
 
-# 回滚：checkout 旧 tag 重复上法。注意：
-# 迁移是**只向前**的——回滚 = 停在旧版 hub + 数据不动（旧版代码不认识新 schema
-# 列时可能报错，属预期；需要真回退数据找维护者，Alpha 期人工）。版本守卫是
-# 已知缺口（旧版不会主动拒绝新 schema，别把它当保护机制）。
+# 回滚：停 Hub → 恢复 dump → checkout 旧 tag → 重建。注意：
+# 迁移是**只向前**的——旧版代码不认识新 schema 列时可能报错，属预期；
+# 版本守卫是已知缺口（旧版不会主动拒绝新 schema，别把它当保护机制）。
+docker compose --env-file .env -f deploy/compose.yml stop hub
+docker compose --env-file .env -f deploy/compose.yml exec -T db \
+  pg_restore -U postgres -d whalepod --clean --if-exists < whalepod-backup-YYYYMMDD-HHMM.dump
 ```
 
 ## F. 出问题了看哪里
@@ -145,6 +153,7 @@ node apps/node/dist/cli.js start                          # 重启各 Node
 |---|---|---|
 | 网页打不开 | `docker compose ... ps`；`curl <origin>/healthz` | healthz 连不上=Hub 没起；返回 ok 而页面白=找反代/浏览器 |
 | 登录成功又掉出 | 你用的 origin 是不是非 localhost 的 http | 见开头红字警告（#105） |
+| 打开 localhost 很慢（50s+） | 系统代理/PAC/WPAD 是否绕过 localhost | 把 `localhost`/`127.0.0.1` 加入代理例外（#407）；部署后的反向代理路径不受影响 |
 | 运行器选不到项目 | Node 窗口里 `start` 是否活着；`pair` 是否成功 | 新 add 的项目 → 重启 Node（#94） |
 | Run 一直排队 | Node 机器与 Hub 的网络是否通（同 origin） | Agent 执行发生在**你的**电脑上 |
 | 都要 | `docker compose ... logs --tail 50 hub web` | 日志已脱敏，可直接贴给维护者 |
