@@ -109,7 +109,17 @@ const EVENT_KEY_BUILDERS: Readonly<Record<string, (payload: unknown) => CacheKey
     ...(payloadEventType(payload) === 'run.phase' ? [['task-room']] : []),
   ],
   'approval.changed': (payload) => [...keysWith(payload, 'taskId', 'task-room'), ['attention']],
-  'artifact.changed': (payload) => [...keysWith(payload, 'taskId', 'task-room'), ['attention']],
+  // #429：批注/邀请/提交只失效对应 Artifact 的审阅页。payload 带 artifactId 时精确
+  // 失效；旧形态（只有 taskId）仍只动房间与待办，不把一次 artifact.changed 放大成
+  // 全部审阅页重拉。
+  'artifact.changed': (payload) => {
+    const artifactId = payloadString(payload, 'artifactId')
+    return [
+      ...keysWith(payload, 'taskId', 'task-room'),
+      ...(artifactId === undefined ? [] : [['artifact-review', artifactId]]),
+      ['attention'],
+    ]
+  },
   'device.changed': () => [['devices']],
   // #163：成员变更只带 changedAt（不点名），Web 不猜、直接重拉名册。
   // 名册与责任人下拉是同一 queryKey（memberDirectory 注释），一次失效全刷新。

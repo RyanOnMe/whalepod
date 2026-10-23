@@ -23,6 +23,7 @@ import {
   acceptAssignment,
   addComment,
   cancelTask,
+  reassignAssignment,
   updateTask,
 } from '../src/modules/task/commands.js'
 import { personalAttention } from '../src/modules/task/attention.js'
@@ -133,6 +134,7 @@ describe('handoff attention (#428)', () => {
 
   it('pending receipt 只进接收人队列；对象是 receipt、不指向 Run', async () => {
     const { ids, receiver, receipt } = await seedPendingHandoff()
+    const otherMember = await seedSecondUserDevice(database.db, ids)
     const view = await personalAttention(database.db, sessionActor(receiver.userId, 'member'))
     expect(view.items[0]).toMatchObject({
       kind: 'confirm_handoff',
@@ -143,7 +145,12 @@ describe('handoff attention (#428)', () => {
     })
     // 同一任务同时待接受：交接卡在前，接受任务事项仍在（#428）。
     expect(view.items.map((item) => item.kind)).toEqual(['confirm_handoff', 'accept_assignment'])
-    for (const actor of [sessionActor(ids.userId, 'owner'), sessionActor(randomUUID(), 'admin')]) {
+    for (const actor of [
+      sessionActor(ids.userId, 'owner'),
+      sessionActor(randomUUID(), 'admin'),
+      // 同项目普通成员（不是接收人）也不该看到别人的交接待办。
+      sessionActor(otherMember.userId, 'member'),
+    ]) {
       const other = await personalAttention(database.db, actor)
       expect(other.items.some((item) => item.kind === 'confirm_handoff')).toBe(false)
       expect(JSON.stringify(other.items)).not.toContain(receipt.id)
@@ -187,6 +194,42 @@ describe('handoff attention (#428)', () => {
     await cancelTask(database, harness.outbox, actor, receipt.downstreamTaskId)
     const view = await personalAttention(database.db, sessionActor(receiver.userId, 'member'))
     expect(view.items.some((item) => item.kind === 'confirm_handoff')).toBe(false)
+  })
+
+  it('改派：未确认回执随责任转移；旧接收人不能再确认，新责任人可确认', async () => {
+    const { ids, receiver, receipt } = await seedPendingHandoff()
+    await acceptAssignment(database, makeActor(receiver.userId, 'member'), receipt.downstreamTaskId)
+    await reassignAssignment(database, makeActor(ids.userId, 'owner'), receipt.downstreamTaskId, {
+      assigneeUserId: ids.userId,
+      idempotencyKey: idemKey(),
+    })
+    const oldView = await personalAttention(database.db, sessionActor(receiver.userId, 'member'))
+    expect(oldView.items.some((item) => item.kind === 'confirm_handoff')).toBe(false)
+    const newView = await personalAttention(database.db, sessionActor(ids.userId, 'owner'))
+    expect(newView.items).toContainEqual(
+      expect.objectContaining({
+        kind: 'confirm_handoff',
+        objectId: receipt.id,
+        taskId: receipt.downstreamTaskId,
+      }),
+    )
+    await expect(
+      confirmReceipt(
+        database,
+        makeActor(receiver.userId, 'member'),
+        receipt.id,
+        { understanding: '旧责任人确认' },
+        idemKey(),
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    const confirmed = await confirmReceipt(
+      database,
+      makeActor(ids.userId, 'owner'),
+      receipt.id,
+      { understanding: '新责任人确认' },
+      idemKey(),
+    )
+    expect(confirmed.status).toBe('confirmed')
   })
 
   it('向上游提问不要求先确认接收，也不改变 receipt 状态', async () => {

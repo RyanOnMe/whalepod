@@ -33,19 +33,26 @@ export async function personalAttention(
       select 'confirm_handoff',t.id,t.title,t.project_name,hr.id,null::uuid,hr.created_at,1
       from eligible t join handoff_receipt hr on hr.downstream_task_id=t.id
       where hr.receiver_user_id=${actor.userId} and hr.status='pending'
+        -- 改派后旧回执不再属于当前责任人：不给旧接收人发一条确认了也无效的待办。
+        and hr.receiver_user_id=t.assignee_user_id
       union all
-      select 'accept_assignment', t.id,t.title,t.project_name,t.id,null::uuid,t.updated_at,2
+      select 'submit_review',t.id,t.title,t.project_name,i.artifact_id,null::uuid,i.created_at,2
+      from eligible t join artifact a on a.task_id=t.id
+        join artifact_review_invitation i on i.artifact_id=a.id
+      where i.reviewer_user_id=${actor.userId} and i.status='pending' and a.status='published'
+      union all
+      select 'accept_assignment', t.id,t.title,t.project_name,t.id,null::uuid,t.updated_at,3
       from eligible t where t.assignee_user_id=${actor.userId} and t.assignee_agent_id is null and t.assignment_status='pending'
       union all
-      select 'reassign_task',t.id,t.title,t.project_name,t.id,null::uuid,t.updated_at,3
+      select 'reassign_task',t.id,t.title,t.project_name,t.id,null::uuid,t.updated_at,4
       from eligible t where ${canReassign} and t.assignment_status='rejected'
         and not exists (select 1 from run r where r.task_id=t.id and r.status in ('queued','dispatching','running','waiting_approval','cancel_requested'))
       union all
-      select 'inspect_candidate',t.id,t.title,t.project_name,a.id,a.run_id,a.created_at,4
+      select 'inspect_candidate',t.id,t.title,t.project_name,a.id,a.run_id,a.created_at,5
       from eligible t join artifact a on a.task_id=t.id
       where a.status='candidate' and a.owner_user_id=${actor.userId}
       union all
-      select 'complete_task',t.id,t.title,t.project_name,t.id,null::uuid,t.updated_at,5
+      select 'complete_task',t.id,t.title,t.project_name,t.id,null::uuid,t.updated_at,6
       from eligible t where t.assignee_user_id=${actor.userId} and t.assignment_status='accepted' and t.status='in_review'
         and not exists (select 1 from run r where r.task_id=t.id and r.status in ('queued','dispatching','running','waiting_approval','cancel_requested'))
     )

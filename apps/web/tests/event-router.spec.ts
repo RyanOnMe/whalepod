@@ -144,6 +144,11 @@ describe('applyClientFrame (event-router)', () => {
       ],
       ['approval.changed', { taskId: 't-1' }, [['task-room', 't-1'], ['attention']]],
       ['artifact.changed', { taskId: 't-1' }, [['task-room', 't-1'], ['attention']]],
+      [
+        'artifact.changed',
+        { taskId: 't-1', artifactId: 'a-1' },
+        [['task-room', 't-1'], ['artifact-review', 'a-1'], ['attention']],
+      ],
       ['device.changed', {}, [['devices']]],
       // #163：成员变更 → 名册键（名册与责任人下拉同一缓存，一次失效全刷新）。
       [

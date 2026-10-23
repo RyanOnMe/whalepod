@@ -222,6 +222,12 @@ export async function confirmReceipt(
   if (existing.receiverUserId !== actor.userId) {
     throw new ApiError(403, 'FORBIDDEN', 'only the receiver can confirm this handoff')
   }
+  const downstreamTask = await getTask(database.db, existing.downstreamTaskId)
+  if (downstreamTask === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
+  // 改派后旧接收人仍是回执作者，但已不是任务责任人：确认/采用必须由当前责任人做。
+  if (downstreamTask.assigneeUserId !== actor.userId) {
+    throw new ApiError(409, 'CONFLICT', '交接接收人已变化，请让当前责任人确认')
+  }
   const now = new Date()
   const outcome = await transactCommand(
     database,
@@ -279,6 +285,11 @@ export async function adoptReceipt(
   if (existing === undefined) throw new ApiError(404, 'NOT_FOUND', 'handoff receipt not found')
   if (existing.receiverUserId !== actor.userId) {
     throw new ApiError(403, 'FORBIDDEN', 'only the receiver can adopt a new version')
+  }
+  const downstreamTask = await getTask(database.db, existing.downstreamTaskId)
+  if (downstreamTask === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
+  if (downstreamTask.assigneeUserId !== actor.userId) {
+    throw new ApiError(409, 'CONFLICT', '交接接收人已变化，请让当前责任人采用新版本')
   }
   const current = await getHandoffRevision(database.db, existing.revisionId)
   if (current === undefined) throw new ApiError(500, 'INTERNAL_ERROR', 'handoff revision lost')
