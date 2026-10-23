@@ -1,4 +1,8 @@
-import type { ArtifactInputManifest, HandoffInputManifest } from '@whalepod/protocol'
+import type {
+  ArtifactInputManifest,
+  HandoffInputManifest,
+  ReviewInputManifest,
+} from '@whalepod/protocol'
 import { sql } from 'drizzle-orm'
 import {
   bigint,
@@ -92,6 +96,11 @@ export const runs = pgTable(
      * 且语义就是「无」，不回填）；上游之后发新版本不改任何历史 Run 的本列。
      */
     handoffInput: jsonb('handoff_input').$type<HandoffInputManifest>(),
+    /**
+     * 本轮审阅修订输入（#430；ADR-0021 §5）：原稿、选定批注/回复、参考材料与
+     * 责任人方向在启动时点固化；后来补充的批注不改历史 Run。
+     */
+    reviewInput: jsonb('review_input').$type<ReviewInputManifest>(),
     /**
      * 任务约定版本绑定（#378；ADR-0017 §2）：创建事务内固化，历史 Run 的空值显示
      * 「未绑定」、不回填。Task 启用约定后业务 Run 必须非空（命令层收口）。
