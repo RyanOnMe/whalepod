@@ -18,7 +18,9 @@ on:
 jobs:
   q5:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    # 20 连在 CI 实测约 13.3 分钟/轮（alpha.8 的 13 轮样本），约 266 分钟；
+    # 180 会在第 14 轮被 job timeout 切断（#418）。360 是托管 runner 上限。
+    timeout-minutes: 360
     steps:
       - name: Checkout
         uses: actions/checkout@v4
