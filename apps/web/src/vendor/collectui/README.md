@@ -1,6 +1,8 @@
-# CollectUI presentation bundle — P1-421
+# CollectUI presentation bundle — P1-421 / P1-423
 
-Three slot-only adaptations: Prompt Input 2, Agent Approval 1, AI Chat 2. See
+Nine controlled presentation adaptations: Prompt Input 2, Agent Approval 1, AI Chat 2,
+App Sidebar 4, Command Menu 1, App Dialog 6, Empty State 1, Agent Activity 3 and
+Tool Calls 2. See
 `manifest.json` for source URLs, captured excerpt digests, adapted input digests,
 compiler flags and output digests. See `LICENSE.md` for the separate license scope.
 

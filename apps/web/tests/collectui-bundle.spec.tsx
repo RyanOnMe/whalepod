@@ -43,11 +43,17 @@ describe('P1-421 restricted presentation distribution', () => {
     }
   })
 
-  it('records all three upstream items without serializing raw excerpts or demo/network behavior', () => {
+  it('records all nine upstream items without serializing raw excerpts or demo/network behavior', () => {
     expect(manifest.sources.map((source) => source.item).sort()).toEqual([
+      'agent-activity-3',
       'agent-approval-1',
       'ai-chat-2',
+      'app-dialog-6',
+      'app-sidebar-4',
+      'command-menu-1',
+      'empty-state-1',
       'prompt-input-2',
+      'tool-calls-2',
     ])
     for (const source of manifest.sources) {
       expect(source.url).toMatch(/^https:\/\/bits\.collectui\.pro\/docs\/app-ui\//)

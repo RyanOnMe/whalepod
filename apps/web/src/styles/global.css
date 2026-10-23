@@ -2701,6 +2701,7 @@ textarea::placeholder {
 .app-sidebar-search {
   display: flex;
   align-items: center;
+  gap: 8px;
   justify-content: space-between;
   min-height: 40px;
   margin: 0 0 4px;
@@ -2727,9 +2728,9 @@ textarea::placeholder {
 .global-search {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  width: min(520px, 90vw);
-  padding: 12px;
+  gap: 0;
+  width: 100%;
+  padding: 0;
 }
 
 .global-search input {
@@ -4609,4 +4610,26 @@ textarea::placeholder {
 }
 .workspace-dock .prompt-bar[data-collectui] .instruction-send {
   border-radius: 12px;
+}
+
+/* P1-423: host layout around compiled workbench components. */
+.global-search-dialog[role='dialog'] {
+  width: min(620px, 100%);
+  padding: 0;
+  gap: 0;
+  border-radius: 16px;
+}
+.app-sidebar-search > svg {
+  flex: none;
+}
+.app-sidebar-search > span:not(.kbd-hint) {
+  flex: 1;
+  text-align: left;
+}
+.workspace-welcome > .cu-wb-empty {
+  margin: 0;
+  padding: 0 10px;
+}
+.cu-wb-command-body > .global-search-hint {
+  padding: 32px 16px;
 }

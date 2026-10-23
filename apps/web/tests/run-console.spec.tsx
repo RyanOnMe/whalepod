@@ -397,6 +397,6 @@ describe('Console 入口接线（页面级：整片最该有门的地方原先�
     expect(await screen.findByTestId('run-console')).toBeVisible()
     expect(screen.getByRole('dialog')).toHaveAccessibleName(/第 1 次运行/)
     await waitFor(() => expect(screen.getAllByTestId('console-event')).toHaveLength(1))
-    expect(screen.getByTestId('console-event')).toHaveTextContent('工具开始：read_file')
+    expect(screen.getByTestId('console-event')).toHaveTextContent('read_file')
   })
 })

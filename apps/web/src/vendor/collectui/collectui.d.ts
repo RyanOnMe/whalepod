@@ -22,3 +22,10 @@ export function FileCard(props: {
   onOpen?: () => void
   label?: string
 }): ReactNode
+
+export function SidebarProfile(props: { name: string; role: string; title?: string; children: ReactNode }): ReactNode
+export function CommandFrame(props: { search: ReactNode; children: ReactNode; footer: ReactNode }): ReactNode
+export function EmptyPanel(props: { title: string; description?: ReactNode; icon: ReactNode; action?: ReactNode; compact?: boolean; heading?: 'h2' | 'h3' }): ReactNode
+export function SheetHeading(props: { title: ReactNode; icon: ReactNode; close: ReactNode }): ReactNode
+export function ActivityFrame(props: { label: string; working: boolean; status: string }): ReactNode
+export function ToolCallFrame(props: { name: string; status: string; label: string; icon: ReactNode }): ReactNode

@@ -33,7 +33,9 @@ describe('P1-423 workbench interactions', () => {
     await user.click(trigger)
     const dialog = await screen.findByRole('dialog', { name: '全局搜索' })
     expect(within(dialog).getByLabelText('搜索关键词')).toHaveFocus()
-    await user.click(within(dialog).getByRole('button', { name: '关闭搜索' }))
+    await user.tab()
+    expect(within(dialog).getByRole('button', { name: '关闭搜索' })).toHaveFocus()
+    await user.keyboard('{Enter}')
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(trigger).toHaveFocus()
   })
@@ -46,7 +48,10 @@ describe('P1-423 workbench interactions', () => {
     const input = within(dialog).getByLabelText('搜索关键词')
     await user.type(input, '不存在')
     await within(dialog).findByText(/没有匹配的任务/)
-    await user.click(within(dialog).getByRole('button', { name: '清空搜索' }))
+    await user.tab()
+    await user.tab()
+    expect(within(dialog).getByRole('button', { name: '清空搜索' })).toHaveFocus()
+    await user.keyboard('{Enter}')
     expect(input).toHaveValue('')
     expect(input).toHaveFocus()
     expect(
@@ -57,7 +62,7 @@ describe('P1-423 workbench interactions', () => {
   it('first-project empty state opens the existing form without creating anything', async () => {
     const user = userEvent.setup()
     const view = home()
-    await user.click(await screen.findByRole('button', { name: '创建项目', exact: true }))
+    await user.click(await screen.findByRole('button', { name: '创建项目' }))
     expect(await screen.findByLabelText('项目名称')).toBeVisible()
     expect(
       view.fetchMock.mock.calls.filter(([, options]) => options?.method === 'POST'),

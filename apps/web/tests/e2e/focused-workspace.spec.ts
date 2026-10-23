@@ -2,6 +2,11 @@ import { showAgentCreation } from './helpers.js'
 /** #306：真实 HTTP/WS、已编译 Hub、真实 Node/Runtime replay；不直写运行状态。 */
 import { auditSecondarySurfaces } from './secondary-surface-audit.js'
 import { auditApproval, auditFileActions, auditPrompt, auditSendFocus } from './app-ui-audit.js'
+import {
+  auditWorkbenchRoom,
+  auditWorkbenchRun,
+  auditWorkbenchStart,
+} from './workbench-bits-audit.js'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -46,6 +51,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
 
     const cookie = await sessionCookie(ownerContext)
     const session = (await hubApi(cookie, 'GET', '/auth/session')).data as { userId: string }
+    const workbenchStart = await auditWorkbenchStart(owner, evidence)
 
     // 用户/插件组合的前置条件走现有公开 HTTP / 已登记的静态 pack 种子，不创建运行事实。
     const invite = await hubApi(cookie, 'POST', '/invites', { role: 'member' })
@@ -100,6 +106,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
     await owner.getByRole('button', { name: '接受任务' }).click()
     await expect(owner.getByTestId('task-assignment-state')).toHaveText('已接受')
     await member.goto(`/tasks/${taskId}`)
+    const workbenchRoom = await auditWorkbenchRoom(owner, evidence)
 
     await expect(owner.getByRole('heading', { name: '我们要完成什么？' })).toBeVisible()
     await expect(owner.getByRole('button', { name: '取消任务', exact: true })).toHaveCount(0)
@@ -245,6 +252,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
     await expect(
       owner.locator('.workspace-reply p').filter({ hasText: 'Artifact published.' }),
     ).toHaveCount(1)
+    const workbenchRun = await auditWorkbenchRun(owner, evidence)
 
     await expect(owner.getByRole('button', { name: /查看交付物/ }).first()).toBeVisible()
     await expect(member.getByRole('button', { name: /查看交付物/ })).toHaveCount(0)
@@ -337,7 +345,13 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
       files: fileLayouts,
     })
     expect(errors).toEqual([])
-    expect(facts).toHaveLength(7)
+    facts.push({
+      component: 'web.workbench',
+      start: workbenchStart,
+      room: workbenchRoom,
+      run: workbenchRun,
+    })
+    expect(facts).toHaveLength(8)
     await stopNode()
   } finally {
     await ownerContext.close()

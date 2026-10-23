@@ -16,6 +16,8 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router'
 import { Modal } from '../vendor/dsh-ui/index.js'
+import { CommandFrame, EmptyPanel } from '../vendor/collectui/collectui.js'
+import { WorkspaceIcon } from '../shared/WorkspaceIcon.js'
 import { api } from '../shared/api/client.js'
 import { TASK_STATUS_LABEL } from '../shared/format.js'
 import { RelativeTime } from '../shared/RelativeTime.js'
@@ -45,7 +47,7 @@ function filterByName<T extends { name: string }>(
   return items.filter((item) => item.name.toLowerCase().includes(lower)).slice(0, limit)
 }
 
-export function GlobalSearch(): ReactNode {
+export function GlobalSearch({ compact = false }: { compact?: boolean }): ReactNode {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
@@ -155,6 +157,11 @@ export function GlobalSearch(): ReactNode {
   ].filter((section) => section.hits.length > 0)
   /** 扁平结果序列（段头不是可选项）：↑↓ 跨段连续，Enter 落到当前项。 */
   const hits: SearchHit[] = sections.flatMap((section) => section.hits)
+  useEffect(() => {
+    panelRef.current
+      ?.querySelector<HTMLElement>('.global-search-item.active')
+      ?.scrollIntoView?.({ block: 'nearest' })
+  }, [active, trimmed, taskQuery.data, projectsQuery.data, agentsQuery.data])
   const localPending = projectsQuery.isPending || agentsQuery.isPending
   const localError = projectsQuery.isError || agentsQuery.isError
 
@@ -162,9 +169,13 @@ export function GlobalSearch(): ReactNode {
   if (trimmed === '') {
     // #265：空态顺手教一次键位——「有 ⌘K/?」这件事得有人告诉（发现路径不只靠记住）。
     body = (
-      <p className="global-search-hint">
-        输入关键词搜索任务、项目或 Agent。⌘K 呼出搜索 · ⌘↵ 提交 · ? 查看快捷键
-      </p>
+      <EmptyPanel
+        compact
+        heading="h3"
+        title="搜索工作区"
+        description="任务、项目或 Agent"
+        icon={<WorkspaceIcon name="搜索" />}
+      />
     )
   } else if (taskQuery.isPending || localPending) {
     body = <p className="global-search-hint">搜索中…</p>
@@ -176,11 +187,27 @@ export function GlobalSearch(): ReactNode {
     )
   } else if (hits.length === 0) {
     body = (
-      <p className="global-search-hint">
-        没有匹配的任务、项目或 Agent
-        {/* 本地列表没读到就不能替它说「没有」——如实标出这一段的缺口。 */}
-        {localError ? '（项目/Agent 列表读取失败）' : ''}。
-      </p>
+      <EmptyPanel
+        compact
+        heading="h3"
+        title="没有匹配的任务、项目或 Agent"
+        description={localError ? '项目/Agent 列表读取失败' : undefined}
+        icon={<WorkspaceIcon name="搜索" />}
+        action={
+          <button
+            className="button button-quiet"
+            type="button"
+            onClick={() => {
+              setQ('')
+              setDebouncedQ('')
+              setActive(0)
+              inputRef.current?.focus()
+            }}
+          >
+            清空搜索
+          </button>
+        }
+      />
     )
   } else {
     let flatIndex = 0
@@ -203,10 +230,26 @@ export function GlobalSearch(): ReactNode {
                       onMouseEnter={() => setActive(index)}
                       onClick={() => hit.go()}
                     >
-                      <span className="global-search-title">{hit.label}</span>
-                      {hit.meta === null ? null : (
-                        <span className="global-search-meta">{hit.meta}</span>
-                      )}
+                      <span className="cu-wb-command-item-icon" aria-hidden="true">
+                        <WorkspaceIcon
+                          name={
+                            section.label === '项目'
+                              ? '项目'
+                              : section.label === 'Agent'
+                                ? 'Agents'
+                                : '复核'
+                          }
+                        />
+                      </span>
+                      <span className="cu-wb-command-item-copy">
+                        <span className="global-search-title">{hit.label}</span>
+                        {hit.meta === null ? null : (
+                          <span className="global-search-meta">{hit.meta}</span>
+                        )}
+                      </span>
+                      <span className="cu-wb-command-enter" aria-hidden="true">
+                        ↵
+                      </span>
                     </button>
                   </li>
                 )
@@ -222,7 +265,8 @@ export function GlobalSearch(): ReactNode {
     <>
       <button
         type="button"
-        className="app-sidebar-search"
+        className={compact ? 'icon-button app-search-compact' : 'app-sidebar-search'}
+        aria-label="搜索"
         onClick={(event) => {
           triggerRef.current = event.currentTarget
           setOpen(true)
@@ -231,13 +275,18 @@ export function GlobalSearch(): ReactNode {
           setActive(0)
         }}
       >
-        搜索
-        <span className="kbd-hint" aria-hidden="true">
-          ⌘K
-        </span>
+        <WorkspaceIcon name="搜索" />
+        {compact ? null : (
+          <>
+            <span>搜索</span>
+            <span className="kbd-hint" aria-hidden="true">
+              ⌘K
+            </span>
+          </>
+        )}
       </button>
       {open ? (
-        <Modal open onClose={close} title="全局搜索" headless>
+        <Modal open onClose={close} title="全局搜索" headless className="global-search-dialog">
           <div
             className="global-search"
             ref={panelRef}
@@ -268,22 +317,65 @@ export function GlobalSearch(): ReactNode {
                 })
                 return
               }
-              if (event.key === 'Enter') {
+              if (event.key === 'Enter' && event.target === inputRef.current) {
                 event.preventDefault()
                 hits[active]?.go()
               }
             }}
           >
-            <input
-              ref={inputRef}
-              type="text"
-              aria-label="搜索关键词"
-              placeholder="搜索任务、项目或 Agent…"
-              value={q}
-              autoFocus
-              onChange={(event) => setQ(event.target.value)}
-            />
-            {body}
+            <CommandFrame
+              search={
+                <>
+                  <WorkspaceIcon name="搜索" />
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    aria-label="搜索关键词"
+                    placeholder="搜索任务、项目或 Agent…"
+                    value={q}
+                    autoFocus
+                    onChange={(event) => setQ(event.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label="关闭搜索"
+                    onClick={close}
+                  >
+                    <WorkspaceIcon name="关闭" />
+                  </button>
+                </>
+              }
+              footer={
+                <>
+                  {trimmed === '' ? (
+                    <>
+                      <span>
+                        <kbd>⌘K</kbd> 搜索
+                      </span>
+                      <span>
+                        <kbd>?</kbd> 快捷键
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span>
+                        <kbd>↑↓</kbd> 选择
+                      </span>
+                      <span>
+                        <kbd>↵</kbd> 打开
+                      </span>
+                    </>
+                  )}
+                  <span>
+                    <kbd>esc</kbd> 关闭
+                  </span>
+                  {trimmed === '' ? null : <span>{hits.length} 项</span>}
+                </>
+              }
+            >
+              {body}
+            </CommandFrame>
           </div>
         </Modal>
       ) : null}

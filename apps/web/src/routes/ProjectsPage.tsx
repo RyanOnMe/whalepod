@@ -12,6 +12,8 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'rea
 import type { CreateProjectRequest, CreateTaskRequest } from '@whalepod/protocol'
 import { useNavigate } from 'react-router'
 import { PageHeader } from '../shared/PageHeader.js'
+import { EmptyPanel } from '../vendor/collectui/collectui.js'
+import { WorkspaceIcon } from '../shared/WorkspaceIcon.js'
 import { api } from '../shared/api/client.js'
 import { assignmentDriveToast, parseAssignmentDrive } from '../shared/assignment-drive.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
@@ -99,7 +101,22 @@ export function ProjectsPage(): ReactNode {
         )}
         {listQuery.isError ? <ErrorBanner error={listQuery.error} /> : null}
         {listQuery.isSuccess && listQuery.data.length === 0 ? (
-          <p className="empty-state">还没有项目——先创建第一个项目，再为它建 Task。</p>
+          <EmptyPanel
+            title="还没有项目"
+            description="创建项目，开始团队协作。"
+            icon={<WorkspaceIcon name="项目" />}
+            action={
+              creatingProject ? undefined : (
+                <button
+                  type="button"
+                  className="button button-primary"
+                  onClick={() => setCreatingProject(true)}
+                >
+                  创建项目
+                </button>
+              )
+            }
+          />
         ) : null}
         {listQuery.isSuccess && listQuery.data.length > 0 ? (
           <ul
