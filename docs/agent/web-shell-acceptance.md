@@ -314,7 +314,9 @@ cli.ts 恒为空）。
      project 必须自行覆盖 `launchOptions`/`proxy`；合并后在新 main 上重跑 20 连，
      旧的本机 3 连不作为发布证据。2026-10-23 补记：本地 **20/20 连续 PASS**
      （main `d5c7bff`）；alpha.8 tag 的 CI Q5 job 因 180 分钟上限在 13/20 被取消
-     （非测试失败），已由 #418 把上限提到 360，alpha.9 重跑。
+     （非测试失败），已由 #418 把上限提到 360；alpha.9 tag 工作流
+     [run 39889858531](https://github.com/RyanOnMe/whalepod/actions/runs/39889858531)
+     Q5 **20/20 连续 PASS**（Q5 job 3h43m），Q8/Q9 成功。
 
 ## 归因速查
 
