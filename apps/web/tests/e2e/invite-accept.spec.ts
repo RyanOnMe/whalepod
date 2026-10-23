@@ -55,6 +55,12 @@ async function createInviteViaUi(owner: Page, role: 'member' | 'admin'): Promise
   // #158：角色下拉已从原生 <select> 迁到 vendored Menu。这里同时钉三件事——
   // ①它不再是原生 select（反面钉）；②触发器样式来自 L1 token（浏览器实测）；
   // ③选角色走真人路径（点开 → 点选项），不再是 selectOption 那条原生近道。
+  if (
+    (await owner
+      .getByRole('button', { name: '邀请成员', exact: true })
+      .getAttribute('aria-expanded')) !== 'true'
+  )
+    await owner.getByRole('button', { name: '邀请成员', exact: true }).click()
   const roleTrigger = owner.locator('#invite-role')
   await assertNotNativeSelect(roleTrigger, owner.locator('.members-invite'), '角色')
   await assertMenuTriggerTokens(roleTrigger)
@@ -124,6 +130,12 @@ test.describe('#141 邀请链：Owner 生成 → Bob 新浏览器加入', () => 
     // #158：角色下拉不再是原生 <select>，选项是菜单项（`role=menuitem`），
     // 且**只在菜单打开时才在 DOM 里** —— 所以先点开再断文案（原来读 option 的写法
     // 在迁移后恒为空集）。这条断言的用意（下拉与徽标同一套措辞）原样保留。
+    if (
+      (await owner
+        .getByRole('button', { name: '邀请成员', exact: true })
+        .getAttribute('aria-expanded')) !== 'true'
+    )
+      await owner.getByRole('button', { name: '邀请成员', exact: true }).click()
     const roleTrigger = owner.locator('#invite-role')
     await assertNotNativeSelect(roleTrigger, owner.locator('.members-invite'), '角色')
     await roleTrigger.click()

@@ -77,6 +77,12 @@ const manifest = {
     'InboxRow',
     'EnterItem',
     'ExpandPanel',
+    'AdminPanel',
+    'MemberIdentity',
+    'IntegrationTile',
+    'ChoiceCard',
+    'AdminDetailHeading',
+    'DeviceIdentity',
   ],
   sources: excerpts.map(({ excerpt, ...metadata }) => ({
     ...metadata,
