@@ -312,7 +312,9 @@ cli.ts 恒为空）。
      micro/operations/workspace 三个子配置都继承 `...base.use`；p1-07 复跑
      **19.6s 通过**，`GET /setup` <1s。边界：这是浏览器级开关，将来新增需要外网的
      project 必须自行覆盖 `launchOptions`/`proxy`；合并后在新 main 上重跑 20 连，
-     旧的本机 3 连不作为发布证据。
+     旧的本机 3 连不作为发布证据。2026-10-23 补记：本地 **20/20 连续 PASS**
+     （main `d5c7bff`）；alpha.8 tag 的 CI Q5 job 因 180 分钟上限在 13/20 被取消
+     （非测试失败），已由 #418 把上限提到 360，alpha.9 重跑。
 
 ## 归因速查
 

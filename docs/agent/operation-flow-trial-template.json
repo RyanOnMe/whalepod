@@ -44,7 +44,7 @@
   "handoffTrial": {
     "status": "not_run",
     "baselineCommit": "a27768f64eb4d2c73f82ccd0259add22f3336569",
-    "candidateCommit": "v0.1.0-alpha.8",
+    "candidateCommit": "v0.1.0-alpha.9",
     "teams": [],
     "observations": [],
     "observationFields": {
@@ -83,7 +83,7 @@
   "continuousConversationTrial": {
     "status": "not_run",
     "baselineCommit": "45994f200417abac9bf5b3069ccad4f14218adcf",
-    "candidateCommit": "v0.1.0-alpha.8",
+    "candidateCommit": "v0.1.0-alpha.9",
     "teams": [],
     "observations": [],
     "observationFields": {
