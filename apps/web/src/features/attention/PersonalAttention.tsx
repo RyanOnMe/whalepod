@@ -13,6 +13,7 @@ const LABELS: Record<AttentionItem['kind'], string> = {
   accept_assignment: '接受任务',
   reassign_task: '重新指派',
   decide_approval: '处理审批',
+  confirm_handoff: '确认接收交接',
   inspect_candidate: '检查候选',
   complete_task: '确认完成',
 }
@@ -24,13 +25,15 @@ function destination(item: AttentionItem): string {
         ? `artifact-${item.objectId}`
         : item.kind === 'complete_task'
           ? 'task-actions'
-          : 'task-assignment'
+          : item.kind === 'confirm_handoff'
+            ? 'handoff-receipt'
+            : 'task-assignment'
   return `/tasks/${item.taskId}#${anchor}`
 }
 function category(kind: AttentionItem['kind']): 'approval' | 'delivery' | 'assignment' {
   return kind === 'decide_approval'
     ? 'approval'
-    : kind === 'inspect_candidate' || kind === 'complete_task'
+    : kind === 'inspect_candidate' || kind === 'complete_task' || kind === 'confirm_handoff'
       ? 'delivery'
       : 'assignment'
 }

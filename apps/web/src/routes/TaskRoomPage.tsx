@@ -98,6 +98,10 @@ function TaskRoom(): ReactNode {
     } else if (location.hash.startsWith('#artifact-')) {
       setInspector('artifacts')
       setInspectedArtifactId(null)
+    } else if (location.hash === '#handoff-receipt') {
+      // 交接待办直达（#428）：固定版本接收卡在执行区正文，直接回到执行区。
+      setChannel('execution')
+      setInspector(null)
     }
   }, [location.hash, location.key])
   const session = useSession()
@@ -135,7 +139,9 @@ function TaskRoom(): ReactNode {
     ? inspector === 'artifacts'
     : location.hash === '#comments-heading'
       ? channel === 'discussion' && inspector === null
-      : location.hash === '#task-execution' || location.hash === '#task-assignment'
+      : location.hash === '#task-execution' ||
+          location.hash === '#task-assignment' ||
+          location.hash === '#handoff-receipt'
         ? channel === 'execution' && inspector === null
         : true
   useHashFocus(query.isSuccess && !approvalAnchor && hashViewReady, true, query.data)
@@ -486,7 +492,11 @@ function TaskRoom(): ReactNode {
                     </ol>
                   </>
                 )}
-                {session !== null ? <HandoffReceiptPanel task={task} session={session} /> : null}
+                {session !== null ? (
+                  <div id="handoff-receipt" tabIndex={-1}>
+                    <HandoffReceiptPanel task={task} session={session} />
+                  </div>
+                ) : null}
                 {follow.following ? null : (
                   <button
                     type="button"
