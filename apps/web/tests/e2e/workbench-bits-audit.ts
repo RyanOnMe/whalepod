@@ -23,6 +23,7 @@ export async function auditWorkbenchStart(page: Page, evidence: string) {
       .locator('[data-collectui="empty-state-1"]')
       .filter({ has: page.getByRole('heading', { name: '还没有项目', exact: true }) })
     await expect(empty).toBeVisible()
+    await expect(page.locator('.crossfade-stack > .room-skeleton')).not.toBeVisible()
     await expect(empty.getByRole('button', { name: '创建项目', exact: true })).toBeVisible()
     await page.screenshot({ path: join(evidence, `workbench-empty-${width}.png`) })
     const trigger = page.getByRole('button', { name: '搜索', exact: true })
@@ -65,12 +66,14 @@ export async function auditWorkbenchStart(page: Page, evidence: string) {
     await expect(dialog).not.toBeVisible()
     await expect(trigger).toBeFocused()
     const profileCount = await page.locator('[data-collectui="app-sidebar-4"]').count()
+    const mobileNameVisible = await page.locator('.app-topbar-user-name').isVisible()
     rows.push({
       width,
       search,
       clip,
       empty: await empty.boundingBox(),
       profileCount,
+      mobileNameVisible,
       scroll: await page.evaluate(() => document.documentElement.scrollWidth),
       uniqueSearch: true,
       keyboardClear: true,

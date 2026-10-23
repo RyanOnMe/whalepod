@@ -4633,3 +4633,8 @@ textarea::placeholder {
 .cu-wb-command-body > .global-search-hint {
   padding: 32px 16px;
 }
+@media (max-width: 360px) {
+  .app-topbar-user-name {
+    display: none;
+  }
+}

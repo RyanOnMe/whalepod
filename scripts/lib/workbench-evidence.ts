@@ -56,6 +56,7 @@ export function verifyWorkbenchEvidence(input: unknown) {
           'search content clipped',
         )
         check(row.profileCount === (width === 1440 ? 1 : 0), 'incorrect sidebar presence')
+        check(row.mobileNameVisible === (width === 390), 'narrow identity must hide deliberately')
         check(
           row.uniqueSearch === true &&
             row.keyboardClear === true &&

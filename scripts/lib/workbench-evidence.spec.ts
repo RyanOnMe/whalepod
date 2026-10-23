@@ -13,6 +13,7 @@ function fixture() {
     tool: rect,
     activity: rect,
     profileCount: width === 1440 ? 1 : 0,
+    mobileNameVisible: width === 390,
     uniqueSearch: true,
     keyboardClear: true,
     closeRestoresFocus: true,
