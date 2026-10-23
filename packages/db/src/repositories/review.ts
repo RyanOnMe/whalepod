@@ -148,6 +148,38 @@ export async function getArtifactReviewInvitationById(
   return row
 }
 
+/** 提交/追加意见的串行化点：先锁邀请行，再计数或写批注（#429 复核 TOCTOU）。 */
+export async function lockArtifactReviewInvitation(
+  handle: DbHandle,
+  artifactId: string,
+  reviewerUserId: string,
+): Promise<ArtifactReviewInvitationRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(artifactReviewInvitations)
+    .where(
+      and(
+        eq(artifactReviewInvitations.artifactId, artifactId),
+        eq(artifactReviewInvitations.reviewerUserId, reviewerUserId),
+      ),
+    )
+    .for('update')
+  return row
+}
+
+/** 追加批注后本轮不再算「无意见」：回到待提交，让待办与进展如实反映。 */
+export async function reopenArtifactReviewInvitation(
+  handle: DbHandle,
+  id: string,
+): Promise<ArtifactReviewInvitationRow | undefined> {
+  const [row] = await handle
+    .update(artifactReviewInvitations)
+    .set({ status: 'pending', noComment: false, submittedAt: null })
+    .where(eq(artifactReviewInvitations.id, id))
+    .returning()
+  return row
+}
+
 export async function listArtifactReviewInvitations(
   handle: DbHandle,
   artifactId: string,

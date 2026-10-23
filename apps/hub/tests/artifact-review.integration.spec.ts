@@ -268,22 +268,23 @@ describe('artifact review (#429)', () => {
     await expect(
       inviteReviewers(database, makeActor(receiver.userId, 'member'), artifactId, input, idemKey()),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    const inviteKey = idemKey()
     const first = await inviteReviewers(
       database,
       makeActor(ids.userId),
       artifactId,
       input,
-      idemKey(),
+      inviteKey,
     )
+    // 同键重放必须回放台账里的首次结果（不是靠唯一约束另走一条路径）。
     const replay = await inviteReviewers(
       database,
       makeActor(ids.userId),
       artifactId,
       input,
-      idemKey(),
+      inviteKey,
     )
-    expect(replay).toHaveLength(1)
-    expect(replay[0]?.id).toBe(first[0]?.id)
+    expect(replay).toEqual(first)
     const reviewerView = await getArtifactReviewView(
       database.db,
       makeActor(receiver.userId, 'member'),
@@ -345,5 +346,75 @@ describe('artifact review (#429)', () => {
     ).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
     const after = await personalAttention(database.db, sessionActor(receiver.userId, 'member'))
     expect(after.items.some((item) => item.kind === 'submit_review')).toBe(false)
+  })
+
+  it('带 UTF-8 BOM 的文本：服务端与浏览器都去 BOM，偏移不多 1', async () => {
+    const { ids, receiver } = await seedPublishedText()
+    const runId = await insertRunRow(database.db, {
+      taskId: ids.taskId,
+      ownerUserId: ids.userId,
+      agentId: ids.agentId,
+      profileRevisionId: ids.revisionId,
+      deviceId: ids.deviceId,
+      workspaceId: ids.workspaceId,
+      status: 'completed',
+    })
+    const bytes = Buffer.from('\uFEFF' + TEXT, 'utf8')
+    const sha256 = createHash('sha256').update(bytes).digest('hex')
+    const blob = await store.saveUpload(sha256, bytes)
+    const artifact = await insertArtifact(database.db, {
+      id: randomUUID(),
+      taskId: ids.taskId,
+      runId,
+      ownerUserId: ids.userId,
+      title: '带 BOM.md',
+      mediaType: 'text/markdown',
+      byteSize: blob.byteSize,
+      sha256: blob.sha256,
+      storageKey: blob.storageKey,
+    })
+    await setArtifactStatus(database.db, artifact.id, 'published', new Date())
+    const second = TEXT.indexOf('orderId', TEXT.indexOf('orderId') + 1)
+    const comment = await createArtifactComment(
+      database,
+      store,
+      makeActor(receiver.userId, 'member'),
+      artifact.id,
+      { body: 'BOM 也要对得上。', anchor: anchorFor(second, 'orderId') },
+      idemKey(),
+    )
+    expect(comment.anchor).toMatchObject({ start: second, end: second + 7 })
+  })
+
+  it('本轮无意见后追加批注：邀请回到待提交，进展不再显示「无意见」', async () => {
+    const { ids, receiver, artifactId } = await seedPublishedText()
+    await inviteReviewers(
+      database,
+      makeActor(ids.userId),
+      artifactId,
+      { reviewerUserIds: [receiver.userId] },
+      idemKey(),
+    )
+    const receiverActor = makeActor(receiver.userId, 'member')
+    const noComment = await submitArtifactReview(
+      database,
+      receiverActor,
+      artifactId,
+      { noComment: true },
+      idemKey(),
+    )
+    expect(noComment.noComment).toBe(true)
+    await createArtifactComment(
+      database,
+      store,
+      receiverActor,
+      artifactId,
+      { body: '补充一条意见。' },
+      idemKey(),
+    )
+    const view = await getArtifactReviewView(database.db, receiverActor, artifactId)
+    expect(view.invitations[0]).toMatchObject({ status: 'pending', noComment: false })
+    const queue = await personalAttention(database.db, sessionActor(receiver.userId, 'member'))
+    expect(queue.items.some((item) => item.kind === 'submit_review')).toBe(true)
   })
 })

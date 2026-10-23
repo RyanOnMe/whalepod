@@ -42,6 +42,7 @@ export const artifactComments = pgTable(
       'artifact_comment_anchor_matches_kind',
       sql`(${table.kind} = 'whole' and ${table.anchor} is null) or (${table.kind} = 'text' and ${table.anchor} is not null and jsonb_typeof(${table.anchor}) = 'object')`,
     ),
+    // 纵深防御：服务端不会生成 id==parent 的行；真正的「不跨版本、不嵌套」在命令层。
     check(
       'artifact_comment_not_self_reply',
       sql`${table.parentCommentId} is null or ${table.parentCommentId} <> ${table.id}`,

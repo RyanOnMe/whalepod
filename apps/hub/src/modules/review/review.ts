@@ -25,7 +25,9 @@ import {
   insertArtifactReviewInvitationIfAbsent,
   listArtifactComments,
   listArtifactReviewInvitations,
+  lockArtifactReviewInvitation,
   markArtifactReviewInvitationSubmitted,
+  reopenArtifactReviewInvitation,
   transactCommand,
 } from '@whalepod/db'
 import {
@@ -227,19 +229,29 @@ export async function createArtifactComment(
   }
   // 台账存的是**已序列化的视图**：同一 Idempotency-Key 重放时返回 JSONB 反序列化
   // 结果（日期已是字符串），再调 toCommentView 的 toISOString 会 500。
-  return transactCommand(database, `artifact.comment.create:${idempotencyKey}`, async (tx) => {
-    const comment = await insertArtifactComment(tx, {
-      id: randomUUID(),
-      artifactId: artifact.id,
-      authorUserId: actor.userId,
-      ...(input.parentCommentId === undefined ? {} : { parentCommentId: input.parentCommentId }),
-      kind: anchor === null ? 'whole' : 'text',
-      anchor,
-      body: input.body.trim(),
-    })
-    await appendReviewChanged(tx, artifact, 'comment')
-    return toCommentView(comment)
-  })
+  return transactCommand(
+    database,
+    `artifact.comment.create:${actor.userId}:${artifact.id}:${idempotencyKey}`,
+    async (tx) => {
+      // 与「提交本轮意见」共用同一把邀请行锁：避免「无意见」与「追加批注」并发后
+      // 同时成立。追加批注即撤回上一轮的「无意见/已提交」，待办重新出现。
+      const invitation = await lockArtifactReviewInvitation(tx, artifact.id, actor.userId)
+      const comment = await insertArtifactComment(tx, {
+        id: randomUUID(),
+        artifactId: artifact.id,
+        authorUserId: actor.userId,
+        ...(input.parentCommentId === undefined ? {} : { parentCommentId: input.parentCommentId }),
+        kind: anchor === null ? 'whole' : 'text',
+        anchor,
+        body: input.body.trim(),
+      })
+      if (invitation !== undefined && invitation.status === 'submitted') {
+        await reopenArtifactReviewInvitation(tx, invitation.id)
+      }
+      await appendReviewChanged(tx, artifact, 'comment')
+      return toCommentView(comment)
+    },
+  )
 }
 
 export async function inviteReviewers(
@@ -268,23 +280,27 @@ export async function inviteReviewers(
       throw new ApiError(400, 'VALIDATION_FAILED', 'reviewer is not an active team member')
     }
   }
-  return transactCommand(database, `artifact.review.invite:${idempotencyKey}`, async (tx) => {
-    const rows: ArtifactReviewInvitationView[] = []
-    let inserted = false
-    for (const reviewerId of reviewerIds) {
-      const outcome = await insertArtifactReviewInvitationIfAbsent(tx, {
-        id: randomUUID(),
-        artifactId: artifact.id,
-        inviterUserId: actor.userId,
-        reviewerUserId: reviewerId,
-        ...(focus === undefined || focus === '' ? {} : { focus }),
-      })
-      inserted ||= outcome.inserted
-      rows.push(toInvitationView(outcome.row))
-    }
-    if (inserted) await appendReviewChanged(tx, artifact, 'invitation')
-    return rows
-  })
+  return transactCommand(
+    database,
+    `artifact.review.invite:${actor.userId}:${artifact.id}:${idempotencyKey}`,
+    async (tx) => {
+      const rows: ArtifactReviewInvitationView[] = []
+      let inserted = false
+      for (const reviewerId of reviewerIds) {
+        const outcome = await insertArtifactReviewInvitationIfAbsent(tx, {
+          id: randomUUID(),
+          artifactId: artifact.id,
+          inviterUserId: actor.userId,
+          reviewerUserId: reviewerId,
+          ...(focus === undefined || focus === '' ? {} : { focus }),
+        })
+        inserted ||= outcome.inserted
+        rows.push(toInvitationView(outcome.row))
+      }
+      if (inserted) await appendReviewChanged(tx, artifact, 'invitation')
+      return rows
+    },
+  )
 }
 
 export async function submitArtifactReview(
@@ -299,22 +315,30 @@ export async function submitArtifactReview(
   if (invitation === undefined) {
     throw new ApiError(404, 'NOT_FOUND', 'review invitation not found')
   }
-  const authored = await countArtifactCommentsByAuthor(database.db, artifact.id, actor.userId)
-  if (!input.noComment && authored === 0) {
-    throw new ApiError(400, 'NO_COMMENTS', '还没有发表意见；如无意见请选择「本轮无意见」')
-  }
-  if (input.noComment && authored > 0) {
-    throw new ApiError(400, 'VALIDATION_FAILED', '已经发表过意见，不能选择「本轮无意见」')
-  }
-  return transactCommand(database, `artifact.review.submit:${idempotencyKey}`, async (tx) => {
-    const updated = await markArtifactReviewInvitationSubmitted(
-      tx,
-      invitation.id,
-      new Date(),
-      input.noComment,
-    )
-    if (updated === undefined) throw new ApiError(404, 'NOT_FOUND', 'review invitation not found')
-    await appendReviewChanged(tx, artifact, 'submission')
-    return toInvitationView(updated)
-  })
+  return transactCommand(
+    database,
+    `artifact.review.submit:${actor.userId}:${artifact.id}:${idempotencyKey}`,
+    async (tx) => {
+      // 前置校验也在事务内、且在邀请行锁之后：同键重放直接回放首次结果；并发追加
+      // 批注与「无意见」由同一把行锁串行化。
+      const locked = await lockArtifactReviewInvitation(tx, artifact.id, actor.userId)
+      if (locked === undefined) throw new ApiError(404, 'NOT_FOUND', 'review invitation not found')
+      const authored = await countArtifactCommentsByAuthor(tx, artifact.id, actor.userId)
+      if (!input.noComment && authored === 0) {
+        throw new ApiError(400, 'NO_COMMENTS', '还没有发表意见；如无意见请选择「本轮无意见」')
+      }
+      if (input.noComment && authored > 0) {
+        throw new ApiError(400, 'VALIDATION_FAILED', '已经发表过意见，不能选择「本轮无意见」')
+      }
+      const updated = await markArtifactReviewInvitationSubmitted(
+        tx,
+        locked.id,
+        new Date(),
+        input.noComment,
+      )
+      if (updated === undefined) throw new ApiError(404, 'NOT_FOUND', 'review invitation not found')
+      await appendReviewChanged(tx, artifact, 'submission')
+      return toInvitationView(updated)
+    },
+  )
 }
