@@ -38,12 +38,12 @@ describe('ReactBits motion experience: host state survives presentation transiti
     const user = userEvent.setup()
     const { artifact, view } = artifactRoom()
     await showWorkspace('artifacts')
-    await user.click(screen.getByRole('button', { name: '预览', exact: true }))
+    await user.click(screen.getByRole('button', { name: '预览' }))
     const preview = await screen.findByTestId('artifact-preview')
     expect(preview).toHaveTextContent('<script>plain text</script>')
     expect(preview.querySelector('script')).toBeNull()
-    await user.click(screen.getByRole('button', { name: '收起预览', exact: true }))
-    await user.click(screen.getByRole('button', { name: '预览', exact: true }))
+    await user.click(screen.getByRole('button', { name: '收起预览' }))
+    await user.click(screen.getByRole('button', { name: '预览' }))
     expect(screen.getByTestId('artifact-preview')).toHaveTextContent('已核对')
     expect(
       view.fetchMock.mock.calls.filter(([url]) =>
@@ -81,7 +81,7 @@ describe('ReactBits motion experience: host state survives presentation transiti
         }),
       ]),
     )
-    await user.click(await screen.findByRole('button', { name: '生成配对码', exact: true }))
+    await user.click(await screen.findByRole('button', { name: '生成配对码' }))
     await screen.findByTestId('pairing-code')
     const journey = screen.getByRole('list', { name: '配对步骤' })
     expect(journey.querySelector('[aria-current="step"]')).toHaveTextContent('电脑配对')

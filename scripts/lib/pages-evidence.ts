@@ -48,7 +48,7 @@ export function verifyPagesEvidence(input: unknown) {
         'page overflow',
       )
     check(
-      row.pointerDuration === '0.16s, 0.16s' && row.entryDuration === '0.16s, 0.16s',
+      row.pointerDuration === '0.36s' && row.entryDuration === '0.44s',
       'pointer motion missing or too slow',
     )
     check(

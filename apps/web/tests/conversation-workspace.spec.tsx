@@ -824,7 +824,9 @@ describe('连续对话：默认续聊与草稿（判据 3）', () => {
     await showExecutionOptions(user)
     await user.click(screen.getByLabelText('执行方式'))
     await user.click(await screen.findByRole('menuitem', { name: /开始新执行/ }))
+    await waitFor(() => expect(screen.getByLabelText('指令')).toBeEnabled())
     await user.type(screen.getByLabelText('指令'), '我要全新跑一遍')
+    expect(screen.getByLabelText('指令')).toHaveValue('我要全新跑一遍')
 
     // 「继续此会话」把历史运行设为来源，但保留已有文字、也不自动发送。
     // 入口在运行详情里（ADR-0019 决定 2）：段上只有「运行详情」，行动面在详情内。

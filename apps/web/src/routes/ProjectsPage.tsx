@@ -37,7 +37,7 @@ import {
 import type { AgentView, ProjectView, TaskView } from '../shared/api/types.js'
 import { PersonalAttention } from '../features/attention/PersonalAttention.js'
 import { queryKeys } from '../app/query-client.js'
-import { EXIT_PRESENCE_MS } from '../shared/motion.js'
+import { EXIT_PRESENCE_MS, REVEAL_EXIT_MS } from '../shared/motion.js'
 import { useHashFocus } from '../shared/useHashFocus.js'
 import { usePresence } from '../shared/usePresence.js'
 
@@ -174,8 +174,8 @@ function ProjectResourceCard({
   onClose: () => void
   onOpen: (id: string) => void
 }): ReactNode {
-  const list = usePresence(listing ? true : null, EXIT_PRESENCE_MS)
-  const form = usePresence(creating ? true : null, EXIT_PRESENCE_MS)
+  const list = usePresence(listing ? true : null, REVEAL_EXIT_MS)
+  const form = usePresence(creating ? true : null, REVEAL_EXIT_MS)
   return (
     <EnterItem id={`project-${project.id}`} index={index} className="project-item">
       <ResourceCard

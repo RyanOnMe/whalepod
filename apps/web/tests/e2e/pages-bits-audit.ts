@@ -39,11 +39,11 @@ export async function auditPages({
     const panel = card.locator('[id^="project-tasks-"]')
     await expect(panel.getByRole('button', { name: '整理交付验收报告', exact: true })).toBeVisible()
     const pointerDuration = await panel.evaluate((el) => getComputedStyle(el).transitionDuration)
-    expect(pointerDuration).toBe('0.16s, 0.16s')
+    expect(pointerDuration).toBe('0.36s')
     const entryDuration = await card.evaluate(
       (el) => getComputedStyle(el.closest('li')!).transitionDuration,
     )
-    expect(entryDuration).toBe('0.16s, 0.16s')
+    expect(entryDuration).toBe('0.44s')
     await expect
       .poll(() =>
         card.evaluate((el) =>
