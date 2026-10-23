@@ -39,4 +39,10 @@ pnpm exec playwright test --config=playwright.operations.config.ts --project=p1-
 
 ## 本轮结果
 
-红测提交 `c9c00d4`；实测结果、审批及最终 CI 在合入前补齐。浏览器验证范围为 Chrome。
+- 红测 `c9c00d4`：三个新增入口/焦点用例在旧实现上全部失败；实现提交 `46a177b`。
+- Q0 格式、lint、类型、边界、协议产物与插件 fixture 检查通过；unit/web 完整低并发复跑 `--maxWorkers=2`，181 个文件、1949 passed、7 expected fail。初次默认并发与主工作区同时跑全量，出现 22 项超时；低并发全量复跑全部通过，未放宽判据或超时。
+- 最终生产管理页 Q5：1/1；`artifacts/evidence/management-pages/2b3e508b/` 含 facts、22 张稳定截图与脱敏日志，独立判定 450 检查 / 12 布局通过。Chrome 验证范围为 1440/390/320。
+- 既有受影响 Q5：p1-141 1/1、p1-142 3/3、p1-158 1/1，通过邀请、真 Node 配对、五页窄屏对比度/几何及七处下拉键盘审计。存量 ready 定位从旧空态类改为当前空态组件标识，仍要求成功数据/空态，禁止用无条件容器放行。
+- 独立审批 `app_ui_approval` 批准 `46a177b`；独立重判 450/12，另在真实 facts 上破坏九项数据均被拒绝。20 来源 / 24 导出 / 2 资产摘要核对一致；无原始私有源、env 或 source map 入 Git。
+- 敏感信息与依赖许可检查通过（626 包）；日志已归档至上述证据目录，不以临时日志作为唯一记录。
+- [PR #434](https://github.com/RyanOnMe/whalepod/pull/434) 的最终 HEAD 必须通过 `check` 与 `integration`，正常 squash 合入。主工作区及其 5173 预览保持原样。
