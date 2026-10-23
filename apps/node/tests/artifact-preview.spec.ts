@@ -30,6 +30,29 @@ const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 const PPTX = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 const PDF = Buffer.from('%PDF-1.7\npreview-bytes\n')
 
+/** 最小 Flat ODF 演示文稿：用来让 soffice 现造真实 PPTX 样本。 */
+const MINIMAL_FODP = `<?xml version="1.0" encoding="UTF-8"?>
+<office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" office:mimetype="application/vnd.oasis.opendocument.presentation" office:version="1.3">
+  <office:meta/><office:settings/><office:scripts/><office:font-face-decls/><office:styles/>
+  <office:automatic-styles>
+    <style:page-layout style:name="PM1">
+      <style:page-layout-properties fo:page-width="28cm" fo:page-height="15.75cm" style:print-orientation="landscape"/>
+    </style:page-layout>
+  </office:automatic-styles>
+  <office:master-styles>
+    <style:master-page style:name="Default" style:page-layout-name="PM1"/>
+  </office:master-styles>
+  <office:body>
+    <office:presentation>
+      <draw:page draw:name="page1" draw:master-page-name="Default">
+        <draw:frame svg:width="20cm" svg:height="5cm" svg:x="2cm" svg:y="2cm">
+          <draw:text-box><text:p>WhalePod preview</text:p></draw:text-box>
+        </draw:frame>
+      </draw:page>
+    </office:presentation>
+  </office:body>
+</office:document>`
+
 function hasSoffice(): boolean {
   try {
     execFileSync(process.env.WHALEPOD_SOFFICE ?? 'soffice', ['--version'], {
@@ -245,27 +268,40 @@ describe('#431 OfficePreviewGenerator', () => {
 
 describe('#431 convertOfficeToPdf', () => {
   it.skipIf(!HAS_SOFFICE)(
-    '用真实 soffice 把 DOCX 转成 PDF（无转换器时跳过）',
+    '用真实 soffice 把 DOCX/XLSX/PPTX 都转成 PDF（无转换器时跳过）',
     async () => {
       const sourceDir = join(root, 'office')
-      const outDir = join(root, 'pdf')
       await mkdir(sourceDir, { recursive: true })
-      // 先用 soffice 从最小 HTML 造一份真实 DOCX（不引入二进制 fixture）。
+      const soffice = process.env.WHALEPOD_SOFFICE ?? 'soffice'
+      const convert = (filter: string, sourcePath: string) =>
+        promisify(execFile)(
+          soffice,
+          ['--headless', '--convert-to', filter, '--outdir', sourceDir, sourcePath],
+          { timeout: 120_000 },
+        )
+
+      // 不引入二进制 fixture：用 soffice 从最小文本样本现造三种真实 Office 文件。
       const htmlPath = join(sourceDir, 'sample.html')
       await writeFile(htmlPath, '<html><body><h1>WhalePod preview</h1><p>hello</p></body></html>')
-      const soffice = process.env.WHALEPOD_SOFFICE ?? 'soffice'
-      await promisify(execFile)(
-        soffice,
-        ['--headless', '--convert-to', 'docx:MS Word 2007 XML', '--outdir', sourceDir, htmlPath],
-        { timeout: 120_000 },
-      )
-      const docxPath = join(sourceDir, 'sample.docx')
-      expect(existsSync(docxPath)).toBe(true)
-      const pdf = await convertOfficeToPdf(docxPath, outDir)
-      expect(pdf.subarray(0, 5).toString()).toBe('%PDF-')
-      expect(pdf.byteLength).toBeGreaterThan(0)
+      await convert('docx:MS Word 2007 XML', htmlPath)
+
+      const csvPath = join(sourceDir, 'sample.csv')
+      await writeFile(csvPath, 'name,value\nalpha,1\nbeta,2\n')
+      await convert('xlsx:Calc MS Excel 2007 XML', csvPath)
+
+      const fodpPath = join(sourceDir, 'sample.fodp')
+      await writeFile(fodpPath, MINIMAL_FODP)
+      await convert('pptx:Impress MS PowerPoint 2007 XML', fodpPath)
+
+      for (const extension of ['docx', 'xlsx', 'pptx'] as const) {
+        const sourcePath = join(sourceDir, `sample.${extension}`)
+        expect(existsSync(sourcePath)).toBe(true)
+        const pdf = await convertOfficeToPdf(sourcePath, join(root, `pdf-${extension}`))
+        expect(pdf.subarray(0, 5).toString()).toBe('%PDF-')
+        expect(pdf.byteLength).toBeGreaterThan(0)
+      }
     },
-    180_000,
+    300_000,
   )
 
   it('soffice 不存在 → CONVERTER_UNAVAILABLE（稳定码，不带本机路径）', async () => {

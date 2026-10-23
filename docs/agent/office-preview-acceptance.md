@@ -25,8 +25,9 @@ pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration \
   apps/hub/tests/artifact-preview.integration.spec.ts
 ```
 
-真实转换烟测在本机执行（soffice 26.8）：测试先用 soffice 把最小 HTML 转成真实
-DOCX，再调用 `convertOfficeToPdf`，断言输出以 `%PDF-` 开头。部署侧可用
+真实转换烟测在本机执行（soffice 26.8）：测试先用 soffice 现造 DOCX（HTML）、
+XLSX（CSV）与 PPTX（最小 FODP）三份真实样本，再逐一调用 `convertOfficeToPdf`，
+断言输出以 `%PDF-` 开头。部署侧可用
 `WHALEPOD_SOFFICE` 指向具体二进制；缺失时报 `CONVERTER_UNAVAILABLE`。
 
 ## 观测（看什么）
@@ -85,8 +86,8 @@ git diff --stat feat/p1-431-office-preview
 
 - **区域锚点未做**：PDF 页码/归一化矩形、图片区域与 `kind='region'` 的协议扩展仍
   待前端 Agent 合并后另开批次；当前审阅页只有整件/文本批注。
-- 真实样本只覆盖 DOCX；XLSX/PPTX 走同一 `--convert-to pdf` 路径但未用实际表格/
-  演示样本判定（无仓库 fixture）。
+- XLSX/PPTX 的真实样本由测试内现造（CSV/FODP），不落仓库二进制 fixture；
+  转换质量（字体、分页、多页）仍只做了「产出可读 PDF」判定。
 - 不做历史回填：本切片之前已发布的 Office Artifact 没有预览，读面显示 `none` 并
   回退下载；重新产出新版本才会生成。
 - 转换是 Node 后台任务：Run 结束/进程退出时未完成的预览可能丢失（预览缺失不影响
