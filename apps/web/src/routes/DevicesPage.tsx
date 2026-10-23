@@ -1,3 +1,5 @@
+import { AdminPanel, DeviceIdentity, EnterItem, EmptyPanel } from '../vendor/collectui/collectui.js'
+import { WorkspaceIcon } from '../shared/WorkspaceIcon.js'
 /**
  * 设备页（#142）：签发一次性配对码 + 本团队设备列表（02 Task 7 Step 5；03 §2.4/§4）。
  *
@@ -95,7 +97,21 @@ export function DevicesPage(): ReactNode {
 
   return (
     <div className="devices-page secondary-page">
-      <PageHeader title="设备" />
+      <PageHeader
+        title="设备"
+        actions={
+          issued === null ? (
+            <button
+              type="button"
+              className="button button-primary"
+              disabled={issue.isPending}
+              onClick={() => issue.mutate()}
+            >
+              {issue.isPending ? '生成中…' : '生成配对码'}
+            </button>
+          ) : undefined
+        }
+      />
       {canReturn ? (
         <section className="card" aria-label="返回执行准备">
           <p>配对完成后返回任务检查环境。草稿仅保留在本次登录页面，刷新或退出后清除。</p>
@@ -104,50 +120,54 @@ export function DevicesPage(): ReactNode {
           </Link>
         </section>
       ) : null}
-      {/* #152：宽屏两栏（主列 = 配对码 + 已配对设备，侧列 = CLI 说明），窄屏回落单列。 */}
+      {/* #432：设备名单优先；配对信息在签发后出现，安装指南按需展开。 */}
       <div className="page-grid">
         <div className="page-col">
-          <PairingCodePanel
-            issued={issued}
-            issuing={issue.isPending}
-            error={issue.isError ? issue.error : null}
-            onIssue={() => issue.mutate()}
-          />
-          <section className="card devices-list" aria-labelledby="devices-list-heading">
-            <h2 id="devices-list-heading">已配对设备</h2>
+          {issued !== null || issue.isPending || issue.isError ? (
+            <PairingCodePanel
+              issued={issued}
+              issuing={issue.isPending}
+              error={issue.isError ? issue.error : null}
+              onIssue={() => issue.mutate()}
+            />
+          ) : null}
+          <AdminPanel
+            className="devices-list"
+            id="devices-list-heading"
+            title="已配对设备"
+            {...(listQuery.isSuccess ? { count: listQuery.data.length } : {})}
+          >
             {listQuery.isPending ? <p className="mutation-hint">正在加载设备…</p> : null}
             {listQuery.isError ? <ErrorBanner error={listQuery.error} /> : null}
             {listQuery.isSuccess && listQuery.data.length === 0 ? (
-              <p className="empty-state">
-                {/* #152：两栏后 CLI 步骤在宽屏位于右列、窄屏位于下方——指路文案不再写方位。 */}
-                尚无设备。生成配对码，在你的电脑上完成配对。
-              </p>
+              <EmptyPanel
+                compact
+                title="尚无设备"
+                heading="h3"
+                description="生成配对码，在你的电脑上完成配对。"
+                icon={<WorkspaceIcon name="设备" />}
+              />
             ) : null}
             {listQuery.isSuccess && listQuery.data.length > 0 ? (
               <ul className="device-list" role="list">
-                {listQuery.data.map((device) => (
-                  <li key={device.id} className="device-item">
-                    <div className="device-item-head">
-                      <h3>{device.name}</h3>
-                      <DeviceStatus status={device.status} />
-                    </div>
-                    <dl className="device-meta">
-                      <div>
-                        <dt>平台</dt>
-                        <dd>{formatPlatform(device.platform)}</dd>
-                      </div>
-                      <div>
-                        <dt>最后在线</dt>
-                        <dd>
-                          <RelativeTime iso={device.lastSeenAt} />
-                        </dd>
-                      </div>
-                    </dl>
-                  </li>
+                {listQuery.data.map((device, index) => (
+                  <EnterItem
+                    key={device.id}
+                    index={index}
+                    className="device-item cu-admin-device-item"
+                  >
+                    <DeviceIdentity
+                      name={device.name}
+                      platform={formatPlatform(device.platform)}
+                      status={<DeviceStatus status={device.status} />}
+                      seen={<RelativeTime iso={device.lastSeenAt} />}
+                      icon={<WorkspaceIcon name="设备" />}
+                    />
+                  </EnterItem>
                 ))}
               </ul>
             ) : null}
-          </section>
+          </AdminPanel>
         </div>
         <div className="page-col">
           <HelpDisclosure label="安装与配对指南">
@@ -171,27 +191,16 @@ function PairingCodePanel({
   onIssue: () => void
 }): ReactNode {
   return (
-    <section className="card devices-pairing" aria-labelledby="devices-pairing-heading">
-      <h2 id="devices-pairing-heading">配对码</h2>
+    <AdminPanel className="devices-pairing" id="devices-pairing-heading" title="配对码">
       {issued === null ? (
-        <>
-          <p className="field-hint">10 分钟有效，仅可使用一次。生成后请立即复制。</p>
-          <div className="form-actions">
-            <button
-              type="button"
-              className="button button-primary"
-              disabled={issuing}
-              onClick={onIssue}
-            >
-              {issuing ? '生成中…' : '生成配对码'}
-            </button>
-          </div>
-        </>
+        <p role="status" className="field-hint">
+          {issuing ? '正在生成配对码…' : '配对码尚未生成。'}
+        </p>
       ) : (
         <IssuedPairingCode issued={issued} issuing={issuing} onRegenerate={onIssue} />
       )}
       {error !== null ? <ErrorBanner error={error} /> : null}
-    </section>
+    </AdminPanel>
   )
 }
 

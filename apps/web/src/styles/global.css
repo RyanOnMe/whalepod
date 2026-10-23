@@ -4716,3 +4716,63 @@ textarea::placeholder {
   color: var(--color-ink);
   font-weight: 500;
 }
+
+/* P1-432 administrative page layout; component presentation stays in the bundle. */
+.members-invite-panel[hidden] {
+  display: none;
+}
+.members-page:not(:has(.members-invite-panel:not([hidden]))) .page-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+.members-page .member-list {
+  gap: 0;
+}
+.members-invite .page-lead {
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0 0 16px;
+}
+.members-invite .inline-form {
+  margin: 0;
+  padding: 0;
+}
+.admin-plugin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 12px;
+}
+.admin-plugin-grid > li {
+  min-width: 0;
+}
+.admin-plugin-grid .plugin-card {
+  height: 100%;
+}
+.admin-pack-form {
+  padding: 16px 0 0;
+  margin-top: 16px;
+  border-top: 1px solid var(--color-line);
+}
+.devices-page .page-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+.devices-page .device-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 12px;
+}
+.device-list > .cu-admin-device-item.device-item {
+  padding: 0;
+  border: 0;
+}
+.devices-pairing .device-pairing-code {
+  margin-top: 0;
+}
+.agents-layout .agent-detail {
+  scroll-margin-top: 24px;
+}
+.plugins-layout .admin-plugin-grid {
+  margin: 0;
+}
+.devices-page .page-grid {
+  gap: 0;
+}

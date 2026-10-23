@@ -1,3 +1,5 @@
+import { AdminPanel, IntegrationTile, EnterItem } from '../../vendor/collectui/collectui.js'
+import { WorkspaceIcon } from '../../shared/WorkspaceIcon.js'
 /**
  * Admin Plugin Settings（02 Task 17 Step 7）：插件目录审核摘要 + 已安装列表 + 安装动作。
  *
@@ -72,64 +74,73 @@ export function PluginSettings({ session }: PluginSettingsProps): ReactNode {
 
   return (
     <section className="plugins-layout" aria-labelledby="plugin-settings-heading">
-      <h2 id="plugin-settings-heading">插件目录</h2>
-      {canManage ? null : (
-        <p className="mutation-hint plugin-readonly-hint">
-          你是{session === null ? '访客' : ROLE_LABEL[session.role]}
-          ，插件目录只读；仅所有者或管理员可安装插件或创建 Pack。
-        </p>
-      )}
-      {notice !== null ? (
-        <div className="success-banner" role="status">
-          <p>{notice}</p>
-        </div>
-      ) : null}
-      {install.isError ? <ErrorBanner error={install.error} /> : null}
+      <AdminPanel
+        id="plugin-settings-heading"
+        title="插件目录"
+        {...(catalogQuery.isSuccess ? { count: catalogQuery.data.length } : {})}
+      >
+        {canManage ? null : (
+          <p className="mutation-hint plugin-readonly-hint">
+            你是{session === null ? '访客' : ROLE_LABEL[session.role]}
+            ，插件目录只读；仅所有者或管理员可安装插件或创建 Pack。
+          </p>
+        )}
+        {notice !== null ? (
+          <div className="success-banner" role="status">
+            <p>{notice}</p>
+          </div>
+        ) : null}
+        {install.isError ? <ErrorBanner error={install.error} /> : null}
 
-      {catalogQuery.isPending ? <p className="mutation-hint">正在加载插件目录…</p> : null}
-      {catalogQuery.isError ? <ErrorBanner error={catalogQuery.error} /> : null}
-      {catalogQuery.isSuccess && catalogQuery.data.length === 0 ? (
-        <p className="empty-state">
-          精选目录暂无插件：这里只列上游精选过的插件，团队自建的本地包不经此入口。
-        </p>
-      ) : null}
-      {catalogQuery.isSuccess && catalogQuery.data.length > 0 ? (
-        <ul className="plugin-list" role="list">
-          {catalogQuery.data.map((entry) => {
-            const installed = installedKeys.has(`${entry.name}@${entry.version}`)
-            return (
-              <li key={`${entry.name}@${entry.version}`}>
-                <CatalogCard
-                  entry={entry}
-                  installed={installed}
-                  canManage={canManage}
-                  installPending={install.isPending}
-                  onInstall={() => {
-                    setNotice(null)
-                    install.mutate({ name: entry.name, version: entry.version })
-                  }}
-                />
-              </li>
-            )
-          })}
-        </ul>
-      ) : null}
-
-      <h2>已安装插件</h2>
-      {installationsQuery.isPending ? <p className="mutation-hint">正在加载安装列表…</p> : null}
-      {installationsQuery.isError ? <ErrorBanner error={installationsQuery.error} /> : null}
-      {installationsQuery.isSuccess && installationsQuery.data.length === 0 ? (
-        <p className="empty-state">尚未安装任何插件。</p>
-      ) : null}
-      {installationsQuery.isSuccess && installationsQuery.data.length > 0 ? (
-        <ul className="plugin-list" role="list">
-          {installationsQuery.data.map((row) => (
-            <li key={row.id}>
-              <InstallationCard installation={row} />
-            </li>
-          ))}
-        </ul>
-      ) : null}
+        {catalogQuery.isPending ? <p className="mutation-hint">正在加载插件目录…</p> : null}
+        {catalogQuery.isError ? <ErrorBanner error={catalogQuery.error} /> : null}
+        {catalogQuery.isSuccess && catalogQuery.data.length === 0 ? (
+          <p className="empty-state">
+            精选目录暂无插件：这里只列上游精选过的插件，团队自建的本地包不经此入口。
+          </p>
+        ) : null}
+        {catalogQuery.isSuccess && catalogQuery.data.length > 0 ? (
+          <ul className="plugin-list admin-plugin-grid" role="list">
+            {catalogQuery.data.map((entry, index) => {
+              const installed = installedKeys.has(`${entry.name}@${entry.version}`)
+              return (
+                <EnterItem key={`${entry.name}@${entry.version}`} index={index}>
+                  <CatalogCard
+                    entry={entry}
+                    installed={installed}
+                    canManage={canManage}
+                    installPending={install.isPending}
+                    onInstall={() => {
+                      setNotice(null)
+                      install.mutate({ name: entry.name, version: entry.version })
+                    }}
+                  />
+                </EnterItem>
+              )
+            })}
+          </ul>
+        ) : null}
+      </AdminPanel>
+      <AdminPanel
+        id="plugin-installed-heading"
+        title="已安装插件"
+        {...(installationsQuery.isSuccess ? { count: installationsQuery.data.length } : {})}
+      >
+        {installationsQuery.isPending ? <p className="mutation-hint">正在加载安装列表…</p> : null}
+        {installationsQuery.isError ? <ErrorBanner error={installationsQuery.error} /> : null}
+        {installationsQuery.isSuccess && installationsQuery.data.length === 0 ? (
+          <p className="empty-state">尚未安装任何插件。</p>
+        ) : null}
+        {installationsQuery.isSuccess && installationsQuery.data.length > 0 ? (
+          <ul className="plugin-list admin-plugin-grid" role="list">
+            {installationsQuery.data.map((row, index) => (
+              <EnterItem key={row.id} index={index}>
+                <InstallationCard installation={row} />
+              </EnterItem>
+            ))}
+          </ul>
+        ) : null}
+      </AdminPanel>
     </section>
   )
 }
@@ -145,17 +156,33 @@ function CatalogCard(props: {
   const { entry, installed, canManage, installPending, onInstall } = props
   const isLocal = entry.review.status === 'local-development'
   return (
-    <article
-      className={`plugin-card${isLocal ? ' plugin-card-local' : ''}`}
-      aria-label={`${entry.name} ${entry.version}`}
+    <IntegrationTile
+      label={`${entry.name} ${entry.version}`}
+      name={entry.name}
+      version={entry.version}
+      icon={<WorkspaceIcon name="插件" />}
+      local={isLocal}
+      meta={
+        <>
+          <ReviewStatusBadge status={entry.review.status} />
+          <CapabilityClassBadge capabilityClass={entry.capabilityClass} />
+          <span className="plugin-license">{entry.license}</span>
+        </>
+      }
+      actions={
+        canManage ? (
+          <button
+            type="button"
+            className={`button ${installed ? 'button-quiet' : 'button-primary'}`}
+            aria-label={`安装 ${entry.name}`}
+            disabled={installPending || installed}
+            onClick={onInstall}
+          >
+            {installed ? '已安装' : '安装'}
+          </button>
+        ) : undefined
+      }
     >
-      <div className="plugin-card-head">
-        <span className="plugin-name">{entry.name}</span>
-        <span className="plugin-version">{entry.version}</span>
-        <ReviewStatusBadge status={entry.review.status} />
-        <CapabilityClassBadge capabilityClass={entry.capabilityClass} />
-        <span className="plugin-license">{entry.license}</span>
-      </div>
       <HelpDisclosure label="包信息">
         <dl className="revision-meta">
           <div>
@@ -190,20 +217,7 @@ function CatalogCard(props: {
           时可安装；不能进入普通 Pack。
         </p>
       ) : null}
-      {canManage ? (
-        <div className="form-actions">
-          <button
-            type="button"
-            className="button button-primary"
-            aria-label={`安装 ${entry.name}`}
-            disabled={installPending || installed}
-            onClick={onInstall}
-          >
-            {installed ? '已安装' : '安装'}
-          </button>
-        </div>
-      ) : null}
-    </article>
+    </IntegrationTile>
   )
 }
 
@@ -215,19 +229,21 @@ function InstallationCard({ installation }: { installation: PluginInstallationVi
     failed: '安装失败',
   }
   return (
-    <article
-      className="plugin-card"
-      aria-label={`已安装 ${installation.packageName} ${installation.packageVersion}`}
+    <IntegrationTile
+      label={`已安装 ${installation.packageName} ${installation.packageVersion}`}
+      name={installation.packageName}
+      version={installation.packageVersion}
+      icon={<WorkspaceIcon name="插件" />}
+      meta={
+        <>
+          <span className={`badge badge-plugin-status-${installation.status}`}>
+            {statusLabel[installation.status]}
+          </span>
+          <span className="badge">{formatTrust(installation.trust)}</span>
+          <CapabilityClassBadge capabilityClass={installation.capabilityClass} />
+        </>
+      }
     >
-      <div className="plugin-card-head">
-        <span className="plugin-name">{installation.packageName}</span>
-        <span className="plugin-version">{installation.packageVersion}</span>
-        <span className={`badge badge-plugin-status-${installation.status}`}>
-          {statusLabel[installation.status]}
-        </span>
-        <span className="badge">{formatTrust(installation.trust)}</span>
-        <CapabilityClassBadge capabilityClass={installation.capabilityClass} />
-      </div>
       <HelpDisclosure label="包信息">
         <dl className="revision-meta">
           <div>
@@ -255,7 +271,7 @@ function InstallationCard({ installation }: { installation: PluginInstallationVi
         </dl>
       </HelpDisclosure>
       <CapabilityList capabilities={installation.capabilities} />
-    </article>
+    </IntegrationTile>
   )
 }
 

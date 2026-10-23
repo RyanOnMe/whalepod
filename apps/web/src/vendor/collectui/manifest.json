@@ -27,7 +27,13 @@
     "InboxFrame",
     "InboxRow",
     "EnterItem",
-    "ExpandPanel"
+    "ExpandPanel",
+    "AdminPanel",
+    "MemberIdentity",
+    "IntegrationTile",
+    "ChoiceCard",
+    "AdminDetailHeading",
+    "DeviceIdentity"
   ],
   "sources": [
     {
@@ -125,22 +131,46 @@
       "url": "https://bits.collectui.pro/docs/components/modal-cards",
       "adaptation": "Fade/slide expansion variant adapted to interruptible inline grid disclosure; fullscreen image portal and scroll lock removed; host owns visibility/presence; hidden content inert.",
       "capturedExcerptSha256": "74a9830f0f87eaa3a770fa0f9e20c958f501811c1a9d859d87c696ebe00cd599"
+    },
+    {
+      "item": "data-table-5",
+      "url": "https://bits.collectui.pro/docs/app-ui/data-table/data-table-5",
+      "adaptation": "Header/count and compact identity/cell hierarchy translated to a responsive member roster and section slots; fake order groups, density and pagination removed.",
+      "capturedExcerptSha256": "6b80f757c927a96eb0b5bc4790f73fc775bec1838c13a3922e406537b7b61855"
+    },
+    {
+      "item": "integrations-1",
+      "url": "https://bits.collectui.pro/docs/app-ui/integrations/integrations-1",
+      "adaptation": "Icon/name/meta/body/action structure retained for real plugin catalog, installation and immutable Pack records; no sample connections, filters or simulated connect toggles.",
+      "capturedExcerptSha256": "116d00e094f96dd0547407168e847dc7548176493b7a8b128c4423f567c8cce8"
+    },
+    {
+      "item": "card-2",
+      "url": "https://bits.collectui.pro/docs/app-ui/card/card-2",
+      "adaptation": "Compact icon/title/description/trailing control row becomes a host-owned Agent selector and detail heading; demo switches/premium state removed.",
+      "capturedExcerptSha256": "0345e9de3f4be4b269b17b501a9f9c4cb66749d5244b942d3e701bd601e043c1"
+    },
+    {
+      "item": "monitoring-7",
+      "url": "https://bits.collectui.pro/docs/app-ui/monitoring/monitoring-7",
+      "adaptation": "Fleet identity/platform/status hierarchy reduced to real device facts and last-seen; no CPU/memory/disk/uptime simulations, filters or metrics timers.",
+      "capturedExcerptSha256": "8df553713ab2544e5d8d5a2aa872c4c7022e1e51d8cedf80221758cf0e35308d"
     }
   ],
   "privateInputSha256": {
-    "tsx": "403b6fbe0278f084fe890c12892edd749b2d02ff816e8d08bb9516d609f16a6d",
-    "css": "ccce502a44c04e516d71d473b7fe3a19c6788315f689b0aae828661e3519670e"
+    "tsx": "b45be99313e1f5f1a294c776e6a54c27fe481ba82bf342d6e9c57ba7988eb555",
+    "css": "7496bd3f5997726583ed54fd63785bbd55efb97cdde2a9df1410e12471b4a69e"
   },
   "files": [
     {
       "name": "collectui.js",
-      "sha256": "c4c66eb20309614b8406a61ed5e4ceb967a0da972e2bc2b26cfdf45cfaa0a31b",
-      "bytes": 7537
+      "sha256": "6a2e7cc1f4664b9c978f7eb1e01a75b5a548243660899270ccb0994eec717654",
+      "bytes": 10483
     },
     {
       "name": "collectui.css",
-      "sha256": "41240d5dbfcf84a6f53658edef4d9bd70a0bf9fa004180953776a6f6b6666dc5",
-      "bytes": 16755
+      "sha256": "821f5b802b84cd3329c4ab2e9a0696c0d5919f99a556332ded8303d3fb44d33b",
+      "bytes": 22504
     }
   ]
 }

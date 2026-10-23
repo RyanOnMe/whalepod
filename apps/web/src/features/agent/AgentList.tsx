@@ -1,10 +1,15 @@
 /** Agent list, explicit creation and on-demand revision details. Fields remain mounted
  * while creation is collapsed; role and server mutation guards are unchanged. */
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { HelpDisclosure } from '../../shared/HelpDisclosure.js'
 import { PageHeader } from '../../shared/PageHeader.js'
-import { EmptyPanel } from '../../vendor/collectui/collectui.js'
+import {
+  EmptyPanel,
+  ChoiceCard,
+  AdminDetailHeading,
+  EnterItem,
+} from '../../vendor/collectui/collectui.js'
 import { WorkspaceIcon } from '../../shared/WorkspaceIcon.js'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
@@ -26,6 +31,7 @@ export function AgentList({
   session,
   headingId = 'agents-page-heading',
 }: AgentListProps): ReactNode {
+  const cards = useRef(new Map<string, HTMLButtonElement>())
   const [creating, setCreating] = useState(false)
   const queryClient = useQueryClient()
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -87,28 +93,23 @@ export function AgentList({
         ) : null}
         {listQuery.isSuccess && listQuery.data.length > 0 ? (
           <ul className="agent-list" role="list">
-            {listQuery.data.map((agent) => (
-              <li key={agent.id} id={`agent-${agent.id}`}>
-                <button
-                  type="button"
-                  className={`agent-card ${agent.id === selectedId ? 'agent-card-selected' : ''}`}
-                  onClick={() => {
+            {listQuery.data.map((agent, index) => (
+              <EnterItem key={agent.id} id={`agent-${agent.id}`} index={index}>
+                <ChoiceCard
+                  name={agent.name}
+                  description={agent.description}
+                  icon={<WorkspaceIcon name="Agents" />}
+                  selected={agent.id === selectedId}
+                  buttonRef={(node) => {
+                    if (node === null) cards.current.delete(agent.id)
+                    else cards.current.set(agent.id, node)
+                  }}
+                  onSelect={() => {
                     setCreating(false)
                     setSelectedId(agent.id === selectedId ? null : agent.id)
                   }}
-                  aria-pressed={agent.id === selectedId}
-                >
-                  <span className="agent-avatar" aria-hidden="true">
-                    {agent.name.slice(0, 1).toUpperCase()}
-                  </span>
-                  <span className="agent-card-body">
-                    <span className="agent-name">{agent.name}</span>
-                    {agent.description ? (
-                      <span className="agent-description">{agent.description}</span>
-                    ) : null}
-                  </span>
-                </button>
-              </li>
+                />
+              </EnterItem>
             ))}
           </ul>
         ) : null}
@@ -134,6 +135,23 @@ export function AgentList({
             className="card agent-detail"
             aria-label={`Agent 详情 ${listQuery.data?.find((agent) => agent.id === selectedId)?.name ?? '所选 Agent'}`}
           >
+            <AdminDetailHeading
+              title={listQuery.data?.find((agent) => agent.id === selectedId)?.name ?? 'Agent 详情'}
+              icon={<WorkspaceIcon name="Agents" />}
+              action={
+                <button
+                  type="button"
+                  aria-label="关闭 Agent 详情"
+                  onClick={() => {
+                    const card = cards.current.get(selectedId)
+                    setSelectedId(null)
+                    card?.focus()
+                  }}
+                >
+                  ×
+                </button>
+              }
+            />
             {detailQuery.isPending ? <p className="mutation-hint">正在加载详情…</p> : null}
             {detailQuery.isError ? <ErrorBanner error={detailQuery.error} /> : null}
             {detailQuery.isSuccess ? (
@@ -161,7 +179,6 @@ function AgentDetailViewer({
   const current = agent.currentRevision
   return (
     <>
-      <h3>{agent.name}</h3>
       {agent.description ? <p>{agent.description}</p> : null}
       {current !== null ? (
         <>

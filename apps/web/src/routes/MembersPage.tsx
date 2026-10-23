@@ -1,3 +1,4 @@
+import { AdminPanel, MemberIdentity, EnterItem } from '../vendor/collectui/collectui.js'
 /**
  * 成员与邀请（#141）：从主导航「成员」进入。
  *
@@ -35,6 +36,7 @@ interface CreatedInviteView {
 
 export function MembersPage(): ReactNode {
   const session = useSession()
+  const [inviting, setInviting] = useState(false)
   const [role, setRole] = useState<'member' | 'admin'>('member')
   const [created, setCreated] = useState<CreatedInviteView | null>(null)
   // 加入成功的一次性提示（跳转回来时仍在同一标签页的 sessionStorage 里）。
@@ -81,7 +83,22 @@ export function MembersPage(): ReactNode {
 
   return (
     <div className="members-page secondary-page">
-      <PageHeader title="成员" />
+      <PageHeader
+        title="成员"
+        actions={
+          canInvite ? (
+            <button
+              type="button"
+              className="button button-primary"
+              aria-expanded={inviting}
+              aria-controls="members-invite-panel"
+              onClick={() => setInviting((value) => !value)}
+            >
+              邀请成员
+            </button>
+          ) : undefined
+        }
+      />
       {flash !== null ? (
         <p className="success-banner" role="status">
           {flash}
@@ -90,18 +107,21 @@ export function MembersPage(): ReactNode {
 
       <div className="page-grid">
         <div className="page-col">
-          <section className="card" aria-labelledby="members-list-heading">
-            <div className="section-heading">
-              <h2 id="members-list-heading">团队成员</h2>
+          <AdminPanel
+            id="members-list-heading"
+            title="团队成员"
+            {...(membersQuery.isSuccess ? { count: members.length } : {})}
+            actions={
               <button
                 type="button"
-                className="button button-ghost"
+                className="button button-quiet"
                 onClick={manualRefresh}
                 disabled={membersQuery.isFetching}
               >
                 {membersQuery.isFetching ? '刷新中…' : '刷新名单'}
               </button>
-            </div>
+            }
+          >
             {membersQuery.isPending ? (
               <p className="mutation-hint">正在加载成员名单…</p>
             ) : membersQuery.isError ? (
@@ -110,25 +130,37 @@ export function MembersPage(): ReactNode {
               <p className="empty-state">还没有成员记录。</p>
             ) : (
               <ul className="member-list" role="list">
-                {members.map((member) => (
-                  <li key={member.userId} className="member-item">
-                    <span className="member-name">{member.displayName}</span>
-                    <span className="member-handle">@{member.username}</span>
-                    <span className="badge">{ROLE_LABEL[member.role]}</span>
-                    {member.enabled ? null : (
-                      <span className="badge badge-member-disabled">已停用</span>
-                    )}
-                  </li>
+                {members.map((member, index) => (
+                  <EnterItem
+                    key={member.userId}
+                    index={index}
+                    className="member-item cu-admin-member-item"
+                  >
+                    <MemberIdentity
+                      name={member.displayName}
+                      handle={`@${member.username}`}
+                      role={<span className="badge">{ROLE_LABEL[member.role]}</span>}
+                      status={
+                        member.enabled ? null : (
+                          <span className="badge badge-member-disabled">已停用</span>
+                        )
+                      }
+                    />
+                  </EnterItem>
                 ))}
               </ul>
             )}
-          </section>
+          </AdminPanel>
         </div>
 
-        {/* #152：宽屏把邀请面板放到侧列（原来挤在名单下方，右侧半屏空着）。 */}
-        <div className="page-col">
-          <section className="card members-invite" aria-labelledby="members-invite-heading">
-            <h2 id="members-invite-heading">邀请成员</h2>
+        {/* 折叠时保持挂载，保留角色选择和仅显示一次的邀请结果。 */}
+        <div
+          className="page-col members-invite-panel"
+          id="members-invite-panel"
+          hidden={canInvite && !inviting}
+          inert={canInvite && !inviting}
+        >
+          <AdminPanel className="members-invite" id="members-invite-heading" title="邀请成员">
             {canInvite ? (
               <>
                 <p className="page-lead">一次性链接，72 小时有效。生成后请立即复制。</p>
@@ -201,7 +233,7 @@ export function MembersPage(): ReactNode {
                 只有所有者或管理员能邀请成员。需要加人时，请联系团队所有者生成邀请链接。
               </p>
             )}
-          </section>
+          </AdminPanel>
         </div>
       </div>
     </div>

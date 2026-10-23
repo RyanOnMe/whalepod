@@ -298,7 +298,10 @@ test('生成配对码 → 真 node CLI 消费 → 页面不刷新出现该设备
 const COPY_CHECK_PAGES: Readonly<Record<string, { ready: string; card?: string }>> = {
   // 空团队下 Agents 页是空态 + 表单；有 Agent 时点开卡片判详情（详情里才有
   // persona/插件组合这些标签）。两种形态都要覆盖。
-  '/agents': { ready: '.agent-list > li, .agents-page .empty-state', card: '.agent-card' },
+  '/agents': {
+    ready: '.agent-list > li, .agents-page [data-collectui="empty-state-1"]',
+    card: '.agent-card',
+  },
   '/plugins': {
     ready: '.plugins-page .empty-state, .plugins-layout .plugin-readonly-hint, .plugin-list > li',
   },
@@ -426,13 +429,14 @@ test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可�
   // 路由恰好没有静态 `.mutation-hint`，所以当时是绿的；**成员会话**下 /agents、/plugins 会
   // 永久渲染只读提示 → 这个断言会超时（假红），日后谁给这 5 页再加一句提示也会踩到。
   // 所以改成直接等"该页数据已经渲染出来"的标志性节点（下面 CONTENT_READY），不再借类名。
-  // 每页的"数据已渲染"标志：有数据（列表/卡片）与空态（.empty-state）两种形态都覆盖。
+  // 每页的"数据已渲染"标志：有数据列表与成功查询后出现的空态两种形态都覆盖。
   // 二审 N2-a：锚点必须是**数据/空态**节点，不能拿无条件渲染的容器（`section.devices-list`、
   // `form.card.agent-form`、`form.card.plugin-pack-form` 在 isPending 时就已经在 DOM 里）。
   // 每页至少给一个"有数据"与一个"确实为空"的备选，两者都只在 isSuccess 之后出现。
   const CONTENT_READY: Readonly<Record<string, string>> = {
-    '/': 'ul.project-list > li, .projects-page .empty-state',
-    '/devices': 'section.devices-list li.device-item, section.devices-list .empty-state',
+    '/': 'ul.project-list > li, .projects-page [data-collectui="empty-state-1"]',
+    '/devices':
+      'section.devices-list li.device-item, section.devices-list [data-collectui="empty-state-1"]',
     // `.empty-state` 在这一页有两个：成员列表的空态，以及"只有所有者或管理员能邀请成员"那段
     // **无条件渲染**的说明（对成员/访客会话一直存在）。这里用 `section.card` 的第一个作用域
     // 限定到列表那一个，否则非 owner 会话会在 isPending 窗口就被锚点放过。
@@ -441,7 +445,8 @@ test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可�
     // #159 一审的覆盖缺口：Agents 与插件页此前没有任何扫描点（它们同样有徽标、表单
     // 与浅底提示，是最容易掉 AA 的页面类型）。成员会话下这两页没有表单与列表，只有只读提示
     // （它的文字里没有「正在加载」，与上面的加载判据不冲突）。
-    '/agents': '.agent-list > li, .agents-page .empty-state, .agents-page .agent-readonly-hint',
+    '/agents':
+      '.agent-list > li, .agents-page [data-collectui="empty-state-1"], .agents-page .agent-readonly-hint',
     '/plugins':
       '.plugins-page .empty-state, .plugins-layout .plugin-readonly-hint, .plugin-list > li',
   }
@@ -510,6 +515,7 @@ test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可�
   await expect(menu).not.toHaveAttribute('open')
   await expect(nav.getByRole('link', { name: '成员' })).toBeHidden()
 
+  await page.getByRole('button', { name: '邀请成员', exact: true }).click()
   // #168：成员页 390 档下「邀请成员」表单里的主按钮也要过控件族判据（描边/圆角与
   // vendored Input 逐值相等、颜色只吃 L1、min-height = --touch-min）。这一档是最容易
   // 被"窄屏单独覆盖样式"改松的地方，所以在 390 视口下采。
