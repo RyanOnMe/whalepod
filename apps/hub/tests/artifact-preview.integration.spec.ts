@@ -358,6 +358,25 @@ describe('artifact preview (#431)', () => {
     expect(content.body).toBe(OFFICE_BYTES.toString())
   })
 
+  it('并发上传同一原件的两份派生 PDF：只有一条记录，首个 ready 稳定', async () => {
+    const artifactId = await uploadCandidate()
+    await publish(artifactId)
+    const firstPdf = Buffer.from('%PDF-1.7\nfirst\n')
+    const secondPdf = Buffer.from('%PDF-1.7\nsecond\n')
+    const [first, second] = await Promise.all([
+      putPreview(bobToken, artifactId, { body: firstPdf }),
+      putPreview(bobToken, artifactId, { body: secondPdf }),
+    ])
+    expect(first.statusCode).toBe(200)
+    expect(second.statusCode).toBe(200)
+    const rows = await previewRows()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.status).toBe('ready')
+    const served = (await readPreview(alice.cookie, artifactId)).body
+    expect([firstPdf.toString(), secondPdf.toString()]).toContain(served)
+    expect(await previewEvents()).toHaveLength(1)
+  })
+
   it('转换失败：登记 failed 与原因，下载回退；ready 不被迟到的失败上报降级', async () => {
     const artifactId = await uploadCandidate()
     await publish(artifactId)
