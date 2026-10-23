@@ -32,6 +32,11 @@ function evidence() {
           escapeRestoresFocus: true,
           outerPanelPreserved: true,
         })),
+        sendFocus: widths.map((width) => ({
+          width,
+          focused: true,
+          shadow: 'rgb(255, 255, 255) 0px 0px 0px 2px, rgb(0, 0, 0) 0px 0px 0px 4px',
+        })),
       },
     ],
   }
@@ -63,5 +68,8 @@ describe('P1-421 independent evidence judgment', () => {
     const focus = evidence()
     focus.facts[0]!.files[0]!.outerPanelPreserved = false
     expect(() => verifyAppUiEvidence(focus)).toThrow('Escape/focus')
+    const ring = evidence()
+    ring.facts[0]!.sendFocus[0]!.shadow = 'inset 0px 1px 0px black'
+    expect(() => verifyAppUiEvidence(ring)).toThrow('focus ring')
   })
 })

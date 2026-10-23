@@ -11,7 +11,7 @@ assert.deepEqual(result.browserErrors, [])
 assert.equal(result.facts?.length, 7)
 verifyAppUiEvidence(result)
 for (const width of [1440, 390, 320]) {
-  for (const kind of ['approval', 'files']) {
+  for (const kind of ['approval', 'files', 'send-focus']) {
     assert((await stat(join(directory, `app-ui-${kind}-${width}.png`))).size > 0)
   }
 }

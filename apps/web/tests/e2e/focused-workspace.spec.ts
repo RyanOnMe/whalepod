@@ -1,7 +1,7 @@
 import { showAgentCreation } from './helpers.js'
 /** #306：真实 HTTP/WS、已编译 Hub、真实 Node/Runtime replay；不直写运行状态。 */
 import { auditSecondarySurfaces } from './secondary-surface-audit.js'
-import { auditApproval, auditFileActions, auditPrompt } from './app-ui-audit.js'
+import { auditApproval, auditFileActions, auditPrompt, auditSendFocus } from './app-ui-audit.js'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -224,6 +224,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
     await selectFromMenu(owner.getByLabel('选择设备'), /e2e-node（在线）/)
     await selectFromMenu(owner.getByLabel('选择 Workspace'), 'e2e-ws')
     await owner.getByLabel('指令').fill('生成团队验收报告')
+    const sendFocus = await auditSendFocus(owner, evidence)
     await owner.getByRole('button', { name: '开始执行' }).click()
     const runButton = owner.locator('button[data-run-id]').first()
     await expect(runButton).toBeVisible()
@@ -331,6 +332,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
       component: 'web.app-ui',
       scenario: 'restricted-presentation',
       prompts: promptLayouts,
+      sendFocus,
       approvals: approvalLayouts,
       files: fileLayouts,
     })

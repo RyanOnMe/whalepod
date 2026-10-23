@@ -47,6 +47,45 @@ export async function auditApproval(page: Page, evidence: string) {
   return rows
 }
 
+export async function auditSendFocus(page: Page, evidence: string) {
+  await page.bringToFront()
+  const rows = []
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 960 })
+    const settings = page.getByLabel('执行设置', { exact: true })
+    await settings.focus()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('region', { name: '执行参数' })).not.toBeVisible()
+    const frame = page.getByTestId('prompt-bar')
+    const send = frame.getByRole('button', { name: '开始执行', exact: true })
+    await expect(send).toBeEnabled()
+    // Start one actual tab stop before send; don't depend on the number of
+    // other controls (native details/portals have their own tab sequences).
+    await send.focus()
+    await page.keyboard.press('Shift+Tab')
+    await expect(send).not.toBeFocused()
+    const previous = await page.evaluate(() => ({
+      focused: document.hasFocus(),
+      tag: document.activeElement?.tagName,
+      label: document.activeElement?.getAttribute('aria-label'),
+    }))
+    await page.keyboard.press('Tab')
+    const next = await page.evaluate(() => ({
+      tag: document.activeElement?.tagName,
+      label: document.activeElement?.getAttribute('aria-label'),
+    }))
+    await expect(send, JSON.stringify({ width, previous, next })).toBeFocused()
+    const shadow = await send.evaluate((element) => getComputedStyle(element).boxShadow)
+    expect(shadow).not.toContain('inset')
+    expect(shadow).toMatch(/0px 0px 0px 2px/)
+    expect(shadow).toMatch(/0px 0px 0px 4px/)
+    rows.push({ width, focused: true, shadow })
+    await page.screenshot({ path: join(evidence, `app-ui-send-focus-${width}.png`) })
+  }
+  await page.setViewportSize({ width: 1440, height: 960 })
+  return rows
+}
+
 export async function auditFileActions(page: Page, width: number, evidence: string) {
   const panel = page.getByRole('region', { name: '工作区详情' })
   const trigger = panel.getByRole('button', { name: '更多文件操作' }).first()

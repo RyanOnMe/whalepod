@@ -40,7 +40,7 @@ export function verifyAppUiEvidence(input: unknown): { checks: number; layouts: 
   assert(facts.length === 1, 'Expected one App UI observation')
   const fact = facts[0]!
   assert(fact.scenario === 'restricted-presentation', 'Unexpected scenario')
-  for (const kind of ['prompts', 'approvals', 'files']) {
+  for (const kind of ['prompts', 'approvals', 'files', 'sendFocus']) {
     assert(Array.isArray(fact[kind]), `Missing ${kind}`)
     const rows = (fact[kind] as unknown[]).map(record)
     assert(
@@ -71,7 +71,7 @@ export function verifyAppUiEvidence(input: unknown): { checks: number; layouts: 
           number(row.approveHeight) >= 40 && number(row.rejectHeight) >= 40,
           'Decision target is too small',
         )
-      } else {
+      } else if (kind === 'files') {
         const menu = rect(row.menu)
         assert(
           menu.x >= 0 && menu.x + menu.width <= width && menu.y >= 0 && menu.y + menu.height <= 960,
@@ -81,6 +81,18 @@ export function verifyAppUiEvidence(input: unknown): { checks: number; layouts: 
         assert(
           row.escapeRestoresFocus === true && row.outerPanelPreserved === true,
           'Escape/focus contract lost',
+        )
+      } else {
+        assert(
+          row.focused === true && typeof row.shadow === 'string',
+          'Missing keyboard send focus',
+        )
+        const shadow = row.shadow as string
+        assert(
+          !shadow.includes('inset') &&
+            /0px 0px 0px 2px/.test(shadow) &&
+            /0px 0px 0px 4px/.test(shadow),
+          'Send button has no visible double focus ring',
         )
       }
     }
