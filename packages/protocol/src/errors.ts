@@ -54,6 +54,11 @@ export const ErrorCodeSchema = z.enum([
   // #64：Reviewer 输入清单超条目上限（协议 hard cap）时 Hub input-manifest 的
   // fail-closed 显式拒绝码；Node 透传为 run.start 拒绝（ack accepted=false）。
   'ARTIFACT_INPUT_MANIFEST_TOO_LARGE',
+  // #429：审阅批注的定位/提交前置失败——客户端据此引导改用整件批注或先发表意见，
+  // 不把「找不到位置」伪装成成功。
+  'ANCHOR_UNSUPPORTED',
+  'ANCHOR_NOT_FOUND',
+  'NO_COMMENTS',
   'PLUGIN_UNREVIEWED',
   'INTERNAL_ERROR',
 ])

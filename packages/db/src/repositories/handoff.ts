@@ -323,6 +323,31 @@ export async function confirmHandoffReceipt(
   return row
 }
 
+/**
+ * 改派时把**未确认**的交接回执转给新责任人（#428 评审修复）。
+ *
+ * 回执记录的是「交接给了谁」，改派后继续要求旧接收人确认既无意义也确认不了；
+ * 已确认的回执保留原确认人与原版本（历史事实），只转 pending。
+ */
+export async function reassignPendingHandoffReceipts(
+  handle: DbHandle,
+  downstreamTaskId: string,
+  receiverUserId: string,
+  now: Date,
+): Promise<number> {
+  const rows = await handle
+    .update(handoffReceipts)
+    .set({ receiverUserId, updatedAt: now })
+    .where(
+      and(
+        eq(handoffReceipts.downstreamTaskId, downstreamTaskId),
+        eq(handoffReceipts.status, 'pending'),
+      ),
+    )
+    .returning()
+  return rows.length
+}
+
 /** 下游 Task 的接收关系（含其上游 Task 标题；确认/版本展示的数据源）。 */
 export async function listReceiptsByDownstreamTask(
   handle: DbHandle,

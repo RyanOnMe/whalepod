@@ -44,6 +44,8 @@ export interface ArtifactListProps {
   onReferenceRun?: (runId: string) => void
   onRequestReview?: (artifactId: string) => void
   onRequestRevision?: (artifactId: string) => void
+  /** #429：进入交付物审阅页（由页面注入导航；组件本身不依赖 Router 上下文）。 */
+  onOpenReview?: (artifactId: string) => void
 }
 
 /** 下载文件名：标题里的路径分隔与控制字符折叠成「-」，回退用 artifact 短 id。 */
@@ -63,6 +65,7 @@ export function ArtifactList({
   onReferenceRun,
   onRequestReview,
   onRequestRevision,
+  onOpenReview,
 }: ArtifactListProps): ReactNode {
   const published = artifacts.filter((a) => a.status === 'published')
   // 候选行的可见性以会话为准（Hub 只给 owner 下发 candidate；此处仍按 owner 过滤，
@@ -81,6 +84,7 @@ export function ArtifactList({
         onReferenceRun={onReferenceRun}
         onRequestReview={onRequestReview}
         onRequestRevision={onRequestRevision}
+        onOpenReview={onOpenReview}
       />
       <CandidateRows artifacts={candidates} taskId={taskId} runLabels={runLabels} />
       {published.length === 0 && candidates.length === 0 ? (
@@ -114,10 +118,12 @@ function SourceRunCell({
 
 function ArtifactRows({
   artifacts,
+  taskId,
   runLabels,
   onReferenceRun,
   onRequestReview,
   onRequestRevision,
+  onOpenReview,
 }: {
   artifacts: TaskRoomArtifact[]
   session: Session | null
@@ -126,6 +132,7 @@ function ArtifactRows({
   onReferenceRun?: ((runId: string) => void) | undefined
   onRequestReview?: ((artifactId: string) => void) | undefined
   onRequestRevision?: ((artifactId: string) => void) | undefined
+  onOpenReview?: ((artifactId: string) => void) | undefined
 }): ReactNode {
   if (artifacts.length === 0) return null
   return (
@@ -171,6 +178,16 @@ function ArtifactRows({
           <div className="artifact-actions">
             <ArtifactPreview artifact={artifact} />
             <ArtifactDownload artifact={artifact} />
+            {onOpenReview === undefined ? null : (
+              <button
+                type="button"
+                className="button"
+                data-testid="artifact-review-link"
+                onClick={() => onOpenReview(artifact.id)}
+              >
+                请同事审阅
+              </button>
+            )}
             <ActionMenu
               actions={[
                 ...(onRequestReview === undefined

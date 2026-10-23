@@ -12,6 +12,7 @@ import {
   insertTask,
   listActiveRunsByTask,
   reassignTask,
+  reassignPendingHandoffReceipts,
   setAssignment,
   setTaskStatus,
   schema,
@@ -241,6 +242,8 @@ export async function reassignAssignment(
       new Date(),
     )
     if (updated === undefined) throw new Error('task vanished in its own transaction')
+    // #428 评审修复：未确认交接随责任转移，别让旧接收人留着一条确认不了的回执。
+    await reassignPendingHandoffReceipts(tx, taskId, assigneeUserId, new Date())
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
     return toTaskView(updated)
   })

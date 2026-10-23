@@ -300,10 +300,15 @@ describe('#380 下游接收面板', () => {
       loggedInHandlers(ALICE, [
         taskRoomHandler(downstreamTask()),
         receiptsHandler([makeReceipt()]),
+        teamMembersHandler(),
       ]),
     )
     const panel = await screen.findByTestId('handoff-receipt-panel')
-    expect(within(panel).getByTestId('handoff-receipt-pending')).toHaveTextContent('等待接收人确认')
+    await waitFor(() =>
+      expect(within(panel).getByTestId('handoff-receipt-pending')).toHaveTextContent(
+        '等待 Bob（@bob） 确认',
+      ),
+    )
     expect(within(panel).queryByTestId('handoff-确认接收-form')).not.toBeInTheDocument()
   })
 
@@ -428,6 +433,20 @@ describe('#380 下游接收面板', () => {
     expect(within(panel).getByTestId('handoff-task-not-accepted')).toHaveTextContent('任务尚未接受')
   })
 
+  it('任务指派被拒绝：同样不算接受，提示重新指派或重新交付', async () => {
+    renderApp(
+      `/tasks/${TASK_ID}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(downstreamTask({ assignmentStatus: 'rejected', acceptedAt: null })),
+        receiptsHandler([makeReceipt()]),
+      ]),
+    )
+    const panel = await screen.findByTestId('handoff-receipt-panel')
+    expect(within(panel).getByTestId('handoff-task-not-accepted')).toHaveTextContent(
+      '任务指派已被拒绝',
+    )
+  })
+
   it('向上游提问不要求先确认接收；失败保留文字，成功后正文不变', async () => {
     const user = userEvent.setup()
     const pending = makeReceipt()
@@ -461,7 +480,7 @@ describe('#380 下游接收面板', () => {
     fail = false
     await user.click(within(panel).getByRole('button', { name: '发送问题' }))
     expect(await within(panel).findByRole('status')).toHaveTextContent('已发到上游任务讨论区')
-    expect(commentBody).toEqual({ body: '订单号为空时怎么处理？' })
+    expect(commentBody).toEqual({ body: '【交接 v1 · 前端接入】订单号为空时怎么处理？' })
     expect(question).toHaveValue('')
   })
 })

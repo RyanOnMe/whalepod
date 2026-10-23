@@ -4,6 +4,7 @@ export const ATTENTION_LIMIT = 12
 export const AttentionKindSchema = z.enum([
   'decide_approval',
   'confirm_handoff',
+  'submit_review',
   'accept_assignment',
   'reassign_task',
   'inspect_candidate',
@@ -24,7 +25,13 @@ export const AttentionItemSchema = z
       return item.runId !== null
     }
     // 交接事项的对象是 receipt（不是 Task），但永远不指向一个 Run。
-    if (item.kind === 'confirm_handoff') return item.runId === null
+    if (item.kind === 'confirm_handoff') {
+      return item.runId === null && item.objectId !== item.taskId
+    }
+    // 审阅事项的对象是 artifact（版本身份），同样不指向 Run。
+    if (item.kind === 'submit_review') {
+      return item.runId === null && item.objectId !== item.taskId
+    }
     return item.objectId === item.taskId && item.runId === null
   }, 'action identity must match its kind')
 export const AttentionViewSchema = z.strictObject({

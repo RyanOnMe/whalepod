@@ -2,6 +2,7 @@ import { act, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { AttentionItem } from '@whalepod/protocol'
+import { emptyHandoffNarrative } from '@whalepod/protocol'
 import { renderApp } from './render.js'
 import {
   ALICE,
@@ -19,11 +20,14 @@ import {
 import { applyClientFrame, keysForPersistentEvent } from '../src/shared/realtime/event-router.js'
 import { persistentFrame } from './frames.js'
 const CARD = 'cccccccc-1234-4000-8000-000000000001'
+const UPSTREAM_TASK_ID = 'dddddddd-1234-4000-8000-000000000002'
+const REVISION_ID = 'eeeeeeee-1234-4000-8000-000000000003'
 const labels = {
   accept_assignment: '接受任务',
   reassign_task: '重新指派',
   decide_approval: '处理审批',
   confirm_handoff: '确认接收交接',
+  submit_review: '提交审阅意见',
   inspect_candidate: '检查候选',
   complete_task: '确认完成',
 } as const
@@ -48,7 +52,7 @@ function fixture(
     objectId:
       kind === 'inspect_candidate'
         ? artifact.id
-        : kind === 'decide_approval' || kind === 'confirm_handoff'
+        : kind === 'decide_approval' || kind === 'confirm_handoff' || kind === 'submit_review'
           ? CARD
           : task.id,
     runId: kind === 'inspect_candidate' || kind === 'decide_approval' ? run.id : null,
@@ -133,7 +137,53 @@ function fixture(
       respond: () => ok({ ...run, taskId: task.id }),
     },
     { method: 'GET', url: /\/agents$/, respond: () => ok([]) },
-    { method: 'GET', url: /\/handoff-receipts$/, respond: () => ok([]) },
+    {
+      method: 'GET',
+      url: /\/handoff-receipts$/,
+      respond: () =>
+        ok(
+          kind !== 'confirm_handoff'
+            ? []
+            : [
+                {
+                  id: CARD,
+                  revisionId: REVISION_ID,
+                  revisionNumber: 1,
+                  latestRevisionNumber: 1,
+                  upstreamTaskId: UPSTREAM_TASK_ID,
+                  upstreamTaskTitle: '后端交付',
+                  downstreamTaskId: task.id,
+                  downstreamTaskTitle: task.title,
+                  receiverUserId: BOB.userId,
+                  deliveredByUserId: ALICE.userId,
+                  status: 'pending',
+                  understanding: null,
+                  differences: null,
+                  createdAt: task.createdAt,
+                  updatedAt: task.createdAt,
+                  confirmedAt: null,
+                },
+              ],
+        ),
+    },
+    {
+      method: 'GET',
+      url: new RegExp(`/handoff-revisions/${REVISION_ID}$`),
+      respond: () =>
+        ok({
+          id: REVISION_ID,
+          taskId: UPSTREAM_TASK_ID,
+          revisionNumber: 1,
+          sourceRunId: run.id,
+          specRevisionId: null,
+          content: {
+            system: { sourceRunId: run.id, specRevision: null, artifacts: [] },
+            narrative: emptyHandoffNarrative(),
+          },
+          publishedByUserId: ALICE.userId,
+          publishedAt: task.createdAt,
+        }),
+    },
     { method: 'GET', url: /\/(devices|workspaces)$/, respond: () => ok([]) },
     { method: 'GET', url: /\/instruction-grants$/, respond: () => ok([]) },
     {
@@ -200,9 +250,20 @@ describe('首页个人行动入口 (#332)', () => {
         : kind === 'complete_task'
           ? 'task-actions'
           : kind === 'confirm_handoff'
-            ? 'handoff-receipt'
+            ? `handoff-receipt-${CARD}`
             : 'task-assignment'
     await waitFor(() => expect(document.getElementById(id)).toHaveFocus())
+    if (kind === 'confirm_handoff') {
+      expect(await screen.findByTestId('handoff-receipt-panel')).toHaveTextContent('后端交付')
+      expect(screen.getByTestId('handoff-receipt-panel')).toHaveTextContent('待确认版本 v1')
+    }
+    expect(f.fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
+  })
+  it('审阅待办直达准确版本的独立审阅页，不先回任务再找文件卡', async () => {
+    const f = fixture('submit_review')
+    expect(
+      await screen.findByRole('link', { name: `提交审阅意见 · ${f.task.title}` }),
+    ).toHaveAttribute('href', `/tasks/${f.task.id}/review/${CARD}`)
     expect(f.fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
   })
   it('异步审批卡准备好后定位具体审批，不自动批准', async () => {

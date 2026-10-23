@@ -33,6 +33,7 @@ import { TaskPermissionsPage } from '../routes/TaskPermissionsPage.js'
 import { ProjectsPage } from '../routes/ProjectsPage.js'
 import { SetupPage } from '../routes/SetupPage.js'
 import { TaskRoomPage } from '../routes/TaskRoomPage.js'
+import { ArtifactReviewPage } from '../routes/ArtifactReviewPage.js'
 import { AgentsPage } from '../routes/AgentsPage.js'
 import { PluginsPage } from '../routes/PluginsPage.js'
 
@@ -159,6 +160,7 @@ export function createAppRoutes(queryClient: QueryClient): RouteObject[] {
       children: [
         { index: true, element: <ProjectsPage /> },
         { path: 'tasks/:taskId', element: <TaskRoomPage /> },
+        { path: 'tasks/:taskId/review/:artifactId', element: <ArtifactReviewPage /> },
         { path: 'tasks/:taskId/permissions', element: <TaskPermissionsPage /> },
         { path: 'agents', element: <AgentsPage /> },
         { path: 'plugins', element: <PluginsPage /> },

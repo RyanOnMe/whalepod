@@ -24,4 +24,20 @@ describe('personal attention contract', () => {
     ])
       expect(AttentionViewSchema.safeParse({ items, hasMore: false }).success).toBe(false)
   })
+  it('receipt/artifact objects never point at a run or at the task itself', () => {
+    const objectId = 'bbbbbbbb-0000-4000-8000-000000000002'
+    for (const kind of ['confirm_handoff', 'submit_review'] as const) {
+      expect(
+        AttentionViewSchema.safeParse({
+          items: [{ ...item, kind, objectId }],
+          hasMore: false,
+        }).success,
+      ).toBe(true)
+      for (const bad of [
+        { ...item, kind, objectId, runId: objectId },
+        { ...item, kind, objectId: item.taskId },
+      ])
+        expect(AttentionViewSchema.safeParse({ items: [bad], hasMore: false }).success).toBe(false)
+    }
+  })
 })
