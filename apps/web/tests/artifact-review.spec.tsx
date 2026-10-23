@@ -211,6 +211,19 @@ describe('#429 交付物审阅页', () => {
     expect(await screen.findByTestId('review-comments')).toHaveTextContent('这里要统一字段名。')
   })
 
+  it('URL 的任务与交付物归属对不上：明确报错并给正确入口', async () => {
+    const handlers = baseHandlers({ view: () => reviewView() })
+    renderApp(
+      '/tasks/00000000-0000-4000-8000-0000000000ff/review/' + ARTIFACT_ID,
+      loggedInHandlers(BOB, handlers),
+    )
+    expect(await screen.findByTestId('review-task-mismatch')).toBeVisible()
+    expect(screen.getByRole('link', { name: '打开正确的审阅页' })).toHaveAttribute(
+      'href',
+      `/tasks/${TASK_ID}/review/${ARTIFACT_ID}`,
+    )
+  })
+
   it('他人批注/邀请经 artifact.changed 精确失效审阅页，同时刷新待办', () => {
     expect(
       keysForPersistentEvent(

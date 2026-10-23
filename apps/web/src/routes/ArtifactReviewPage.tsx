@@ -263,6 +263,17 @@ export function ArtifactReviewPage(): ReactNode {
     )
   }
   if (view === undefined) return null
+  // 审阅页 URL 同时带任务与 Artifact：两者对不上时不冒充「这个任务的交付物」。
+  if (view.artifact.taskId !== taskId) {
+    return (
+      <div className="card" role="alert" data-testid="review-task-mismatch">
+        <p>该交付物不属于这个任务。</p>
+        <Link to={`/tasks/${view.artifact.taskId}/review/${view.artifact.id}`}>
+          打开正确的审阅页
+        </Link>
+      </div>
+    )
+  }
   const busy = comment.isPending || invite.isPending || submit.isPending
   const canSubmit = ownInvitation !== undefined && mine.length > 0
   const reading = view.reading
