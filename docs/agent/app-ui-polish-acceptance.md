@@ -40,7 +40,7 @@ Q5 使用一次性 PostgreSQL、包解析后的真实 Hub、Node、Runtime 与 D
 只有已登记的静态 Plugin Pack 种子；不直写运行状态或团队投影。协议/HTTP 路径沿用生产装配。
 驱动在 `apps/web/tests/e2e/app-ui-audit.ts` 与 focused-workspace；独立纯判定器在
 `scripts/lib/app-ui-evidence.ts`，缺字段、缺档位、菜单溢出、额外 POST、过小按钮、错误回焦均失败。
-负控由同目录 spec 自证，旧工作区独立判定器也调用新判定并检查六张新增截图存在。
+负控由同目录 spec 自证，旧工作区独立判定器也调用新判定并检查九张新增截图存在。
 
 | component | 观测 | 判据 |
 | --- | --- | --- |
@@ -87,4 +87,13 @@ JS/CSS/manifest 必须一起重编译，不手改生成文件。编译出现警�
 
 ## 最终验证记录
 
-待本轮门检、独立 agent 评审及 CI 完成后回填。
+2026-10-23，最终实现锚点 `2ff3acac3c0ab1ad267f7521c8de4c2ec7f3ae93`：
+
+- Q0 `pnpm check`：175 files，1,933 passed，7 expected fail。
+- 生产 Q5：P1-19 全链路 15/15；连续对话 2/2，独立判定 123 项；Micro 1/1；最终工作区 1/1。
+- 最终工作区证据：`artifacts/evidence/focused-workspace/64f48419/`；独立工作区判定 7 场景，App UI 判定 147 项通过。
+- 焦点负控：`artifacts/evidence/app-ui-focus-red/result.json`。旧资产在真实 Tab 导航后缺少外环而失败；修复后 1440/390/320 三档通过。
+- 独立审批 agent 对该固定实现提交明确批准：一审 P2 已关闭，无新增阻塞；另独立运行 4 套单测 15 项、工作区 7 场景和 App UI 147 项检查，核对资产摘要与 390px 实拍。
+- 许可门：626 个依赖包通过；编译资产、最终生产证据与焦点负控证据敏感扫描通过。
+
+上述完整链路、对话和 Micro 回归完成于焦点修复前；最终提交只修改焦点样式和相应验收驱动，已再次通过 Q0 与工作区生产 Q5。PR #422 合入前必须在最终分支提交上通过 CI `check` 与 `integration`，不复用早期提交的通过状态。
