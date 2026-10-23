@@ -77,6 +77,23 @@ export function verifyMotionEvidence(input: unknown) {
         JSON.stringify(row.fanBefore) !== JSON.stringify(row.fanAfter),
       'file fan absent',
     )
+    const keyboardGroup = record(row.keyboardGroup)
+    check(
+      keyboardGroup.duration === '0s' &&
+        keyboardGroup.animations === 0 &&
+        keyboardGroup.raised === true,
+      'keyboard focus fan missing or animated',
+    )
+    const keyboardFan = record(row.keyboardFan),
+      keyboardTimeline = record(row.keyboardTimeline)
+    check(
+      JSON.stringify(keyboardFan.durations) === '["0s","0s"]' && keyboardFan.animations === 0,
+      'keyboard fan still animates',
+    )
+    check(
+      keyboardTimeline.duration === '0s' && keyboardTimeline.animations === 0,
+      'keyboard timeline still animates',
+    )
     const reduced = record(row.reduced)
     check(reduced.duration === '0s' && reduced.transform === 'none', 'reduced motion ignored')
     const geometry = record(row.geometry)

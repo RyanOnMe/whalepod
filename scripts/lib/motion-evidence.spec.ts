@@ -30,6 +30,9 @@ function fixture() {
           early: { x: 20, height: 400, opacity: 0.5 },
           late: { x: 1, height: 400, opacity: 0.9 },
         },
+        keyboardGroup: { duration: '0s', animations: 0, raised: true },
+        keyboardFan: { durations: ['0s', '0s'], animations: 0 },
+        keyboardTimeline: { duration: '0s', animations: 0 },
         fanBefore: ['matrix(1)', 'matrix(2)'],
         fanAfter: ['matrix(3)', 'matrix(4)'],
         reduced: { duration: '0s', transform: 'none' },
@@ -48,6 +51,15 @@ describe('independent visible motion verdict', () => {
   it('rejects missing facts, static frames, lost state, unauthorized writes, loops and overflow', () => {
     expect(() => verifyMotionEvidence({ ok: true })).toThrow()
     const invalid = [
+      (value: ReturnType<typeof fixture>) => {
+        value.workspace.rows[0]!.keyboardGroup.raised = false
+      },
+      (value: ReturnType<typeof fixture>) => {
+        value.workspace.rows[0]!.keyboardFan.animations = 1
+      },
+      (value: ReturnType<typeof fixture>) => {
+        value.workspace.rows[0]!.keyboardTimeline.duration = '0.44s'
+      },
       (value: ReturnType<typeof fixture>) => {
         value.project.idleWrites = 1
       },

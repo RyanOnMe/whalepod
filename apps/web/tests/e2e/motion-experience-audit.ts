@@ -108,9 +108,7 @@ export async function auditMotionWorkspace(
     await summary.click()
     await expect(records).toHaveAttribute('data-open', '')
     await expect
-      .poll(() =>
-        records.locator('.cu-page-expand').evaluate((node) => node.getAnimations().length),
-      )
+      .poll(() => records.evaluate((node) => node.getAnimations({ subtree: true }).length))
       .toBe(0)
     await page.screenshot({ path: join(evidence, `motion-timeline-${width}.png`) })
     await summary.click()
@@ -147,6 +145,17 @@ export async function auditMotionWorkspace(
     await expect(drawer.getByTestId('artifact-preview-button')).toBeFocused()
     await drawer.getByTestId('artifact-preview-button').click()
     await expect(preview).toHaveText(text!)
+    await drawer.getByTestId('artifact-preview-button').focus()
+    await page.keyboard.press('Tab')
+    await expect(drawer.getByRole('button', { name: '关闭文件预览', exact: true })).toBeFocused()
+    const keyboardFan = await mark.evaluate((node) => ({
+      durations: [...node.querySelectorAll('i')].map(
+        (sheet) => getComputedStyle(sheet).transitionDuration,
+      ),
+      animations: node.getAnimations({ subtree: true }).length,
+    }))
+    expect(keyboardFan.durations).toEqual(['0s', '0s'])
+    expect(keyboardFan.animations).toBe(0)
     await expect
       .poll(() =>
         drawer.evaluate((root) =>
@@ -181,7 +190,34 @@ export async function auditMotionWorkspace(
     expect(geometry.content).toBeLessThanOrEqual(geometry.client + 1)
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     await drawer.getByRole('button', { name: '关闭工作区详情', exact: true }).click()
+    await summary.focus()
+    await page.keyboard.press('Enter')
+    await expect(records).toHaveAttribute('data-open', '')
+    const keyboardTimeline = await records.evaluate((node) => ({
+      duration: getComputedStyle(node.querySelector('.run-event')!, '::after').transitionDuration,
+      animations: node.getAnimations({ subtree: true }).length,
+    }))
+    expect(keyboardTimeline).toEqual({ duration: '0s', animations: 0 })
+    await page.keyboard.press('Enter')
+    await trigger.focus()
+    await page.keyboard.press('Shift+Tab')
+    await page.keyboard.press('Tab')
+    await expect(trigger).toBeFocused()
+    const keyboardGroup = await trigger.evaluate((node) => {
+      const group = node.closest('.cu-file-group')!
+      const sheet = group.querySelector('.cu-file-fan>i')!
+      const css = getComputedStyle(sheet)
+      return {
+        duration: css.transitionDuration,
+        animations: group.getAnimations({ subtree: true }).length,
+        raised: new DOMMatrixReadOnly(css.transform).m42 < -2,
+      }
+    })
+    expect(keyboardGroup).toEqual({ duration: '0s', animations: 0, raised: true })
     rows.push({
+      keyboardGroup,
+      keyboardFan,
+      keyboardTimeline,
       width,
       reveal,
       inspector,

@@ -4896,7 +4896,8 @@ textarea::placeholder {
 }
 html[data-ui-input='keyboard'] .workspace-inspector,
 html[data-ui-input='keyboard'] .workspace-inspector > div,
-html[data-ui-input='keyboard'] .agents-layout .agent-detail {
+html[data-ui-input='keyboard'] .agents-layout .agent-detail,
+html[data-ui-input='keyboard'] .run-records .run-event::after {
   transition: none;
   transform: none;
 }

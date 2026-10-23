@@ -195,7 +195,7 @@
   ],
   "privateInputSha256": {
     "tsx": "27fcb2d8f3afec73a39b51f94dc3a6dd78809e8544633860264175d9233bbe97",
-    "css": "e236953153061ddb52a2fc3cb47ef8b9bab842a3e2ddb621065ff22c93e2401f"
+    "css": "60506e816c621a6f3c598bf6eff1c2fb0cc1da02c6375545327915afc0ded99b"
   },
   "files": [
     {
@@ -205,8 +205,8 @@
     },
     {
       "name": "collectui.css",
-      "sha256": "fadaa6acbbba618c265a18b69a18ab64ed4ec93505ce85e3a7d2285ffad8da0e",
-      "bytes": 28466
+      "sha256": "773a5d8ed5128d95c0cbc5d921eadcc356d2d1d6b2874192b16c6dc56abc620e",
+      "bytes": 28592
     }
   ]
 }
