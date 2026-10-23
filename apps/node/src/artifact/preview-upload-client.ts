@@ -117,8 +117,7 @@ export async function uploadArtifactPreview(
   })
   const url = `${hubUrl.replace(/\/$/, '')}/api/v1/node/artifacts/${artifactId}/preview?${query.toString()}`
   const fetchFn = options.fetchImpl ?? fetch
-  // Hub 对所有写请求要求 Idempotency-Key；重试共用同一个键。派生件 upsert 天然幂等，
-  // 不进入 command_receipt 台账。
+  // Hub 对所有写请求要求 Idempotency-Key；重试共用同一个键，同键重放返回首次视图。
   const idempotencyKey = randomUUID()
   await withRetries(artifactId, 'preview', options, async () => {
     const response = await fetchFn(url, {

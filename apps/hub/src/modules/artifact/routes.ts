@@ -212,6 +212,7 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
           { deviceId: identity.deviceId, artifactId },
           metadata,
           body,
+          readIdempotencyKey(request),
         )
         request.log.info(
           {
@@ -236,6 +237,7 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
         deps.database,
         { deviceId: identity.deviceId, artifactId },
         body,
+        readIdempotencyKey(request),
       )
       return reply.code(200).send({ ok: true, data: view })
     })

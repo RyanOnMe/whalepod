@@ -18,6 +18,7 @@ import {
   getArtifactPreview,
   getRun,
   schema,
+  transactCommand,
   upsertArtifactPreviewFailed,
   upsertArtifactPreviewReady,
   type ArtifactPreviewRow,
@@ -129,6 +130,7 @@ export async function recordArtifactPreview(
   binding: PreviewSourceBinding,
   metadata: ArtifactPreviewUploadMetadata,
   bytes: Uint8Array,
+  idempotencyKey: string,
 ): Promise<ArtifactPreviewView> {
   const artifact = await requireDeviceArtifact(database, binding.deviceId, binding.artifactId)
   if (artifact.sha256 !== metadata.sourceSha256) {
@@ -146,65 +148,75 @@ export async function recordArtifactPreview(
     throw new ApiError(413, 'ARTIFACT_TOO_LARGE', 'preview content exceeds the size limit')
   }
   const blob = await store.saveUpload(metadata.sha256, bytes)
-  return database.transaction(async (tx) => {
-    const locked = await lockDeviceArtifact(
-      tx,
-      binding.deviceId,
-      binding.artifactId,
-      metadata.sourceSha256,
-    )
-    const current = await getArtifactPreview(tx, locked.id)
-    if (current?.status === 'ready') {
-      if (current.sourceSha256 !== metadata.sourceSha256) {
-        throw new ApiError(409, 'CONFLICT', '该原件已有绑定其他版本的预览')
+  // 幂等键按设备/原件/动作收窄：同键重放返回首次视图，不让不同 body 改写结果。
+  return transactCommand(
+    database,
+    `artifact.preview.ready:${binding.deviceId}:${artifact.id}:${idempotencyKey}`,
+    async (tx) => {
+      const locked = await lockDeviceArtifact(
+        tx,
+        binding.deviceId,
+        binding.artifactId,
+        metadata.sourceSha256,
+      )
+      const current = await getArtifactPreview(tx, locked.id)
+      if (current?.status === 'ready') {
+        if (current.sourceSha256 !== metadata.sourceSha256) {
+          throw new ApiError(409, 'CONFLICT', '该原件已有绑定其他版本的预览')
+        }
+        return toPreviewView(locked.id, current)
       }
-      return toPreviewView(locked.id, current)
-    }
-    const row = await upsertArtifactPreviewReady(tx, {
-      artifactId: locked.id,
-      sourceSha256: metadata.sourceSha256,
-      converter: metadata.converter,
-      storageKey: blob.storageKey,
-      sha256: blob.sha256,
-      byteSize: blob.byteSize,
-    })
-    await appendPreviewChanged(tx, locked, 'ready')
-    return toPreviewView(locked.id, row)
-  })
+      const row = await upsertArtifactPreviewReady(tx, {
+        artifactId: locked.id,
+        sourceSha256: metadata.sourceSha256,
+        converter: metadata.converter,
+        storageKey: blob.storageKey,
+        sha256: blob.sha256,
+        byteSize: blob.byteSize,
+      })
+      await appendPreviewChanged(tx, locked, 'ready')
+      return toPreviewView(locked.id, row)
+    },
+  )
 }
 
 export async function recordArtifactPreviewFailure(
   database: Database,
   binding: PreviewSourceBinding,
   request: ArtifactPreviewFailureRequest,
+  idempotencyKey: string,
 ): Promise<ArtifactPreviewView> {
   const artifact = await requireDeviceArtifact(database, binding.deviceId, binding.artifactId)
   if (artifact.sha256 !== request.sourceSha256) {
     throw new ApiError(409, 'CONFLICT', '预览绑定的原件摘要与当前版本不一致')
   }
-  return database.transaction(async (tx) => {
-    const locked = await lockDeviceArtifact(
-      tx,
-      binding.deviceId,
-      binding.artifactId,
-      request.sourceSha256,
-    )
-    const current = await getArtifactPreview(tx, locked.id)
-    if (current?.status === 'ready') {
-      if (current.sourceSha256 !== request.sourceSha256) {
-        throw new ApiError(409, 'CONFLICT', '该原件已有绑定其他版本的预览')
+  return transactCommand(
+    database,
+    `artifact.preview.failed:${binding.deviceId}:${artifact.id}:${idempotencyKey}`,
+    async (tx) => {
+      const locked = await lockDeviceArtifact(
+        tx,
+        binding.deviceId,
+        binding.artifactId,
+        request.sourceSha256,
+      )
+      const current = await getArtifactPreview(tx, locked.id)
+      if (current?.status === 'ready') {
+        if (current.sourceSha256 !== request.sourceSha256) {
+          throw new ApiError(409, 'CONFLICT', '该原件已有绑定其他版本的预览')
+        }
+        return toPreviewView(locked.id, current)
       }
-      return toPreviewView(locked.id, current)
-    }
-    const row = await upsertArtifactPreviewFailed(tx, {
-      artifactId: locked.id,
-      sourceSha256: request.sourceSha256,
-      converter: request.converter,
-      reason: request.reason,
-    })
-    await appendPreviewChanged(tx, locked, 'failed')
-    return toPreviewView(locked.id, row)
-  })
+      const row = await upsertArtifactPreviewFailed(tx, {
+        artifactId: locked.id,
+        sourceSha256: request.sourceSha256,
+        converter: request.converter,
+        reason: request.reason,
+      })
+      await appendPreviewChanged(tx, locked, 'failed')
+      return toPreviewView(locked.id, row)
+    },
+  )
 }
 
 /** 可读原件即可读预览信息；不可见与不存在同作 404（不泄漏候选）。 */

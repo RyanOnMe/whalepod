@@ -198,6 +198,7 @@ describe('artifact preview (#431)', () => {
       sourceSha256?: string
       converter?: string
       reason?: string
+      key?: string
     } = {},
   ) {
     return ctx.app.inject({
@@ -206,7 +207,7 @@ describe('artifact preview (#431)', () => {
       headers: {
         authorization: `Device ${token}`,
         'content-type': 'application/json',
-        'idempotency-key': idemKey(),
+        'idempotency-key': overrides.key ?? idemKey(),
       },
       payload: {
         sourceSha256: overrides.sourceSha256 ?? OFFICE_SHA,
@@ -442,6 +443,20 @@ describe('artifact preview (#431)', () => {
     expect(await previewRows()).toHaveLength(0)
     const tmpEntries = await readdir(join(ctx.config.artifactStoreDir, 'tmp')).catch(() => [])
     expect(tmpEntries).toHaveLength(0)
+  })
+
+  it('同一幂等键重放失败上报：返回首次原因，不被第二次 body 改写', async () => {
+    const artifactId = await uploadCandidate()
+    const key = idemKey()
+    const first = await postFailure(bobToken, artifactId, { key, reason: 'CONVERT_FAILED' })
+    expect(first.statusCode).toBe(200)
+    expect(first.json().data.failureReason).toBe('CONVERT_FAILED')
+    const replay = await postFailure(bobToken, artifactId, { key, reason: 'CONVERT_TIMEOUT' })
+    expect(replay.statusCode).toBe(200)
+    expect(replay.json().data.failureReason).toBe('CONVERT_FAILED')
+    const rows = await previewRows()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.failureReason).toBe('CONVERT_FAILED')
   })
 
   it('失败上报 schema strict：未知字段 → 400，不落预览行', async () => {
