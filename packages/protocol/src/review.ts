@@ -92,6 +92,8 @@ export const ArtifactReviewInvitationViewSchema = z.strictObject({
   reviewerUserId: z.uuid(),
   focus: z.string().max(2000).nullable(),
   status: ArtifactReviewInvitationStatusSchema,
+  /** 提交时是否明确选择了「本轮无意见」。 */
+  noComment: z.boolean(),
   createdAt: z.iso.datetime(),
   submittedAt: z.iso.datetime().nullable(),
 })

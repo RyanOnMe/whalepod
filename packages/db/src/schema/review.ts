@@ -5,6 +5,7 @@ import {
   index,
   jsonb,
   pgEnum,
+  boolean,
   pgTable,
   timestamp,
   unique,
@@ -66,6 +67,8 @@ export const artifactReviewInvitations = pgTable(
       .references(() => userAccounts.id),
     focus: varchar('focus', { length: 2000 }),
     status: artifactReviewInvitationStatus('status').notNull().default('pending'),
+    /** 提交时是否明确选择了「本轮无意见」；pending 恒 false。 */
+    noComment: boolean('no_comment').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     submittedAt: timestamp('submitted_at', { withTimezone: true }),
   },
@@ -76,7 +79,7 @@ export const artifactReviewInvitations = pgTable(
     ),
     check(
       'artifact_review_invitation_fields',
-      sql`(${table.status} = 'pending' and ${table.submittedAt} is null) or (${table.status} = 'submitted' and ${table.submittedAt} is not null)`,
+      sql`(${table.status} = 'pending' and ${table.submittedAt} is null and ${table.noComment} = false) or (${table.status} = 'submitted' and ${table.submittedAt} is not null)`,
     ),
     unique('artifact_review_invitation_unique_per_reviewer').on(
       table.artifactId,

@@ -82,6 +82,7 @@ function toInvitationView(
     reviewerUserId: row.reviewerUserId,
     focus: row.focus,
     status: row.status,
+    noComment: row.noComment,
     createdAt: row.createdAt.toISOString(),
     submittedAt: row.submittedAt?.toISOString() ?? null,
   }
@@ -313,7 +314,12 @@ export async function submitArtifactReview(
     database,
     `artifact.review.submit:${idempotencyKey}`,
     async (tx) => {
-      const updated = await markArtifactReviewInvitationSubmitted(tx, invitation.id, new Date())
+      const updated = await markArtifactReviewInvitationSubmitted(
+        tx,
+        invitation.id,
+        new Date(),
+        input.noComment,
+      )
       if (updated === undefined) throw new ApiError(404, 'NOT_FOUND', 'review invitation not found')
       await appendReviewChanged(tx, artifact, 'submission')
       return updated

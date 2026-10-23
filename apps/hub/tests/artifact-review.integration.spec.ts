@@ -319,6 +319,15 @@ describe('artifact review (#429)', () => {
       idemKey(),
     )
     expect(submitted.status).toBe('submitted')
+    expect(submitted.noComment).toBe(false)
+    const noComment = await submitArtifactReview(
+      database,
+      receiverActor,
+      artifactId,
+      { noComment: true },
+      idemKey(),
+    )
+    expect(noComment.noComment).toBe(true)
     const after = await personalAttention(database.db, sessionActor(receiver.userId, 'member'))
     expect(after.items.some((item) => item.kind === 'submit_review')).toBe(false)
   })

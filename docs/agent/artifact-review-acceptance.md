@@ -32,7 +32,7 @@ pnpm exec vitest run --project web \
 - 创建 text 批注的服务端定位结果：偏移命中或唯一重定位；否则 400
   `ANCHOR_NOT_FOUND`，非文本/超 512 KiB 为 400 `ANCHOR_UNSUPPORTED`。
 - `artifact_review_invitation`：`(artifact_id, reviewer_user_id)` 唯一；pending→submitted
-  带提交时刻；重复邀请返回同一条。
+  带提交时刻；`no_comment` 区分「本轮无意见」与「已提交意见」，重复邀请返回同一条。
 - 待办：`submit_review` 的 `objectId` 是 artifactId、`runId=null`；提交后消失。
 - Web 请求体：原位批注带 `{quote,prefix,suffix,start,end}`；整件批注不带 anchor；
   提交意见带 `{noComment}`；邀请带 `{reviewerUserIds,focus}`。

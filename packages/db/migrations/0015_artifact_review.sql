@@ -34,13 +34,15 @@ create table artifact_review_invitation (
   reviewer_user_id uuid not null references user_account(id),
   focus varchar(2000),
   status artifact_review_invitation_status not null default 'pending',
+  -- 提交时是否明确选择了「本轮无意见」；pending 恒 false。
+  no_comment boolean not null default false,
   created_at timestamptz not null default now(),
   submitted_at timestamptz,
   constraint artifact_review_invitation_focus_length check (
     focus is null or length(btrim(focus)) between 1 and 2000
   ),
   constraint artifact_review_invitation_fields check (
-    (status = 'pending' and submitted_at is null)
+    (status = 'pending' and submitted_at is null and no_comment = false)
     or (status = 'submitted' and submitted_at is not null)
   ),
   constraint artifact_review_invitation_unique_per_reviewer unique (artifact_id, reviewer_user_id)

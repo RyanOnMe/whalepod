@@ -164,10 +164,11 @@ export async function markArtifactReviewInvitationSubmitted(
   handle: DbHandle,
   id: string,
   submittedAt: Date,
+  noComment: boolean,
 ): Promise<ArtifactReviewInvitationRow | undefined> {
   const [row] = await handle
     .update(artifactReviewInvitations)
-    .set({ status: 'submitted', submittedAt })
+    .set({ status: 'submitted', submittedAt, noComment })
     .where(eq(artifactReviewInvitations.id, id))
     .returning()
   return row

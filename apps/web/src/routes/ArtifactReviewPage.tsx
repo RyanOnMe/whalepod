@@ -568,7 +568,11 @@ export function ArtifactReviewPage(): ReactNode {
                   {view.invitations.map((invitation) => (
                     <li key={invitation.id}>
                       {directory.personOf(invitation.reviewerUserId)}：
-                      {invitation.status === 'submitted' ? '已提交意见' : '待提交意见'}
+                      {invitation.status === 'pending'
+                        ? '待提交意见'
+                        : invitation.noComment
+                          ? '本轮无意见'
+                          : '已提交意见'}
                     </li>
                   ))}
                 </ul>

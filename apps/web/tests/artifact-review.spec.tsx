@@ -33,6 +33,7 @@ function invitation(overrides: Record<string, unknown> = {}) {
     reviewerUserId: BOB.userId,
     focus: null,
     status: 'pending',
+    noComment: false,
     createdAt: '2026-10-23T01:00:00.000Z',
     submittedAt: null,
     ...overrides,
@@ -116,7 +117,13 @@ function baseHandlers(input: {
       url: new RegExp(`/api/v1/artifacts/${ARTIFACT_ID}/review-submissions$`),
       respond: (init) => {
         input.onSubmit?.(JSON.parse(String(init.body)))
-        return ok(invitation({ status: 'submitted', submittedAt: '2026-10-23T03:00:00.000Z' }))
+        return ok(
+          invitation({
+            status: 'submitted',
+            noComment: JSON.parse(String(init.body)).noComment,
+            submittedAt: '2026-10-23T03:00:00.000Z',
+          }),
+        )
       },
     },
     teamMembersHandler(),
