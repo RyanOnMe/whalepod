@@ -113,3 +113,11 @@
 - 每类格式使用实际样本检查内容、定位和回退；Office 转换另外验证原件未变化及派生件
   权限继承。
 - 相关质量门：Q0/Q1、定向 Q2/Q3、生产装配 Q5、权限负向 Q7；证据按六原语归档。
+
+## 2026-10-24 补充
+
+#430 后端已落地：`artifact_revision_round` 在创建时冻结 `ReviewInputManifest`，
+启动经 `preparing → starting → started` 认领复用既有 Run 入口，快照进入
+`run.review_input` 与 `executionContext`；候选必须由本轮 Run 产出并显式关联；
+批注作者或当前责任人可写复核记录（代收口须理由）。前端审阅页入口、待办
+`organize_feedback` / `resolve_comments` 与新旧版本对比留待前端批次接线。
