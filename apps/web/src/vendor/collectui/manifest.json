@@ -36,18 +36,18 @@
   ],
   "privateInputSha256": {
     "tsx": "2f6c14e78c85cba6e68147c47869a8a65e1591349134659a1401043b92ab7643",
-    "css": "63afd0cb17dda8028b4e242aec78abd9548874e2bb72db637c05adeb39242905"
+    "css": "e706de0f82d4ed61b2267d71569f6280efd003ea88ba7468030cdfd949926d4a"
   },
   "files": [
     {
       "name": "collectui.js",
-      "sha256": "aeec11fb05d6dfc08922546ef8da6e6df915423ae7cbd801b8ad002d90cf912b",
+      "sha256": "ea5a4b6f486aad83249ddcc4a1470292ba5aa713346f372e8b8ebb745261d668",
       "bytes": 1674
     },
     {
       "name": "collectui.css",
-      "sha256": "068c2f9cb04a1721b8b52e75be569d71a1c28990688cf8045bd86d2224101a0d",
-      "bytes": 4266
+      "sha256": "bf5ebebed02b66302d67cceead7dd7f3050ec94e7bb7939cf96e447a91e3fba4",
+      "bytes": 4344
     }
   ]
 }

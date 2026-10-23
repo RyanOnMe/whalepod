@@ -45,6 +45,7 @@ Q5 使用一次性 PostgreSQL、包解析后的真实 Hub、Node、Runtime 与 D
 | component | 观测 | 判据 |
 | --- | --- | --- |
 | web.app-ui / prompts | 1440/390/320 输入数量、输入与外框焦点阴影 | 唯一原生输入；无内外两层焦点框；草稿与原 HTTP 路径由现有组件/端到端测试覆盖 |
+| web.app-ui / sendFocus | 三档真实 Shift+Tab / Tab 返回可发送按钮后的焦点与 computed shadow | 按钮确实聚焦，2px/4px 双层外环存在，装饰 inset 阴影不得覆盖焦点环 |
 | web.app-ui / approvals | 卡片与参数几何、批准/拒绝按钮高度 | 三档无横向溢出；参数在卡内可读；两按钮至少 40px；有效期直接可见 |
 | web.app-ui / files | portaled 菜单几何、项数、POST 计数与焦点 | 三档含三项低频动作、未触发 POST；ArrowDown 可达；Esc 只收菜单，外层面板保留并回焦 |
 | web.approval / web.artifact | 真正决定、下载摘要、发布前后双受众事实 | owner 决定、他人等待、candidate 私有、已发布可共享；真实复核/修订仍走原流程 |
@@ -59,6 +60,7 @@ Q5 使用一次性 PostgreSQL、包解析后的真实 Hub、Node、Runtime 与 D
 | Before | After | Why |
 | --- | --- | --- |
 | 输入与工具行偏松，焦点可能突出内层 textarea | 单一外框、紧凑工具行、明确发送按钮 | 输入是首要动作；焦点强调整个输入面 |
+| 发送按钮装饰阴影覆盖键盘焦点环（独立评审 P2） | 显式 :focus-visible 双层环，加入三档真实 Tab 回归 | 深色发送按钮也必须让键盘用户看清焦点 |
 | 审批字段与动作缺少层次 | 状态/工具标题、参数正文、尾部决定三层 | 决定前仍能直接检查真实参数与过期时间 |
 | 文件标题和五个操作平铺 | 图标/标题/状态尺寸；预览、下载常驻，其他动作收进菜单 | 降低默认噪音，同时保留完整可达性 |
 | 历史卡片布局与抽屉文件表现各异 | 共用编译后的 FileCard 槽位 | 连续对话和详情共享同一文件语言 |
@@ -68,6 +70,7 @@ Q5 使用一次性 PostgreSQL、包解析后的真实 Hub、Node、Runtime 与 D
 生产事实及截图：`artifacts/evidence/focused-workspace/<本次目录>/`。
 该目录 `facts.json` 含 `web.app-ui` 的九组测量；新增 `app-ui-approval-{1440,390,320}.png`
 与 `app-ui-files-{1440,390,320}.png`。默认输入栏见 desktop-ready.png。
+发送按钮键盘焦点另存 `app-ui-send-focus-{1440,390,320}.png`。
 同一套证据还覆盖十类抽屉/二级页面的三档布局，必须由旧工作区判定器一并复核。
 
 提交前运行 `scripts/secret-scan.sh` 与该证据目录扫描；不把原始口令、Cookie、key、
