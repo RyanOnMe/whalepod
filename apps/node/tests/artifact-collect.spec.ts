@@ -26,6 +26,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { UploadPayload } from '../src/artifact/collect.js'
 import { ArtifactCollector, ArtifactCollectError } from '../src/artifact/collect.js'
+import type { PreviewSource } from '../src/artifact/preview.js'
 
 let root: string
 let workspace: string
@@ -46,6 +47,8 @@ afterEach(async () => {
 
 const CONTENT = '# report\n'
 const DIGEST = createHash('sha256').update(CONTENT).digest('hex')
+const OFFICE_CONTENT = 'fake docx bytes'
+const OFFICE_DIGEST = createHash('sha256').update(OFFICE_CONTENT).digest('hex')
 
 interface Harness {
   collector: ArtifactCollector
@@ -231,5 +234,73 @@ describe('ArtifactCollector.collect', () => {
     ).rejects.toMatchObject({ code: 'ARTIFACT_UPLOAD_FAILED' })
     expect(existsSync(staging)).toBe(true)
     expect(await readdir(staging)).toHaveLength(0)
+  })
+
+  it('#431 Office 候选：预览后台生成，不阻塞原件采集', async () => {
+    let release: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const seen: PreviewSource[] = []
+    const h = makeHarness({
+      preview: {
+        generate: async (previewSource) => {
+          seen.push(previewSource)
+          await gate
+        },
+      },
+    })
+    await writeFile(join(workspace, 'reports', 'spec.docx'), OFFICE_CONTENT)
+    const collected = await h.collector.collect(
+      'r1',
+      {
+        relativePath: 'reports/spec.docx',
+        title: 'Spec',
+        mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      },
+      workspace,
+    )
+    // collect 已返回而预览仍挂在 gate 上：后台执行、未阻塞候选事件。
+    expect(collected.artifactId).toBe('01905f7c-0000-7000-8000-000000000801')
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.artifactId).toBe(collected.artifactId)
+    expect(seen[0]?.sourceSha256).toBe(OFFICE_DIGEST)
+    expect(seen[0]?.bytes.toString()).toBe(OFFICE_CONTENT)
+    release?.()
+    await h.collector.drainPreviews()
+    expect(await readdir(staging)).toHaveLength(0)
+  })
+
+  it('#431 非 Office 候选不触发预览；预览异常不影响采集', async () => {
+    let calls = 0
+    const h = makeHarness({
+      preview: {
+        generate: async () => {
+          calls += 1
+          throw new Error('preview exploded')
+        },
+      },
+    })
+    await h.collector.collect(
+      'r1',
+      { relativePath: 'reports/out.md', title: 'Report', mediaType: 'text/markdown' },
+      workspace,
+    )
+    await h.collector.drainPreviews()
+    expect(calls).toBe(0)
+
+    await writeFile(join(workspace, 'reports', 'broken.docx'), OFFICE_CONTENT)
+    const collected = await h.collector.collect(
+      'r1',
+      {
+        relativePath: 'reports/broken.docx',
+        title: 'Broken',
+        mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      },
+      workspace,
+    )
+    await h.collector.drainPreviews()
+    expect(collected.artifactId).toBeTruthy()
+    expect(calls).toBe(1)
   })
 })

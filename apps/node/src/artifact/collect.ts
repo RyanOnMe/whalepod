@@ -15,6 +15,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, unlink, writeFile, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
+import type { PreviewSource } from './preview.js'
+import { supportsOfficePreview } from './preview.js'
 import { isInsideWorkspace } from '../workspace/path-policy.js'
 
 /** 第一阶段单文件上限：50 MiB（02 Global Constraints）。 */
@@ -68,6 +70,11 @@ export interface ArtifactCollectorDeps {
     body: Buffer,
   ) => Promise<{ artifactId: string }>
   readonly maxBytes?: number
+  /**
+   * Office 只读预览派生（#431）。可选：未装配时交付物仍照常采集，只是没有 PDF
+   * 预览（读面显示下载回退）。后台执行，不阻塞候选事件。
+   */
+  readonly preview?: { generate(source: PreviewSource): Promise<void> }
   readonly log?: (
     level: 'info' | 'warn' | 'error',
     msg: string,
@@ -79,12 +86,15 @@ export class ArtifactCollector {
   private readonly stagingDir: string
   private readonly upload: ArtifactCollectorDeps['upload']
   private readonly maxBytes: number
+  private readonly preview: ArtifactCollectorDeps['preview']
   private readonly log: ArtifactCollectorDeps['log']
+  private readonly pendingPreviews = new Set<Promise<void>>()
 
   constructor(deps: ArtifactCollectorDeps) {
     this.stagingDir = deps.stagingDir
     this.upload = deps.upload
     this.maxBytes = deps.maxBytes ?? ARTIFACT_MAX_BYTES
+    this.preview = deps.preview
     this.log = deps.log ?? (() => {})
   }
 
@@ -207,6 +217,16 @@ export class ArtifactCollector {
         sha256,
         byteSize: bytes.byteLength,
       })
+      // 预览是派生阅读副本：后台执行，候选事件先投影；失败只影响预览。
+      if (this.preview !== undefined && supportsOfficePreview(candidate.mediaType)) {
+        this.schedulePreview({
+          runId,
+          artifactId,
+          mediaType: candidate.mediaType,
+          sourceSha256: sha256,
+          bytes,
+        })
+      }
       return {
         artifactId,
         sha256,
@@ -222,5 +242,30 @@ export class ArtifactCollector {
     } finally {
       await unlink(tmpPath).catch(() => {})
     }
+  }
+
+  /** 等待后台预览任务收敛（测试/优雅关闭用；生产候选路径不等待）。 */
+  async drainPreviews(): Promise<void> {
+    await Promise.allSettled([...this.pendingPreviews])
+  }
+
+  private schedulePreview(source: PreviewSource): void {
+    const preview = this.preview
+    if (preview === undefined) return
+    const task = preview
+      .generate(source)
+      .catch((error: unknown) => {
+        // 生成器内部已把可归因失败登记给 Hub；这里只兜底未预期异常。
+        this.log?.('warn', 'artifact preview generation failed', {
+          component: 'node.artifact',
+          runId: source.runId,
+          artifactId: source.artifactId,
+          reason: error instanceof Error ? error.name : 'unknown',
+        })
+      })
+      .finally(() => {
+        this.pendingPreviews.delete(task)
+      })
+    this.pendingPreviews.add(task)
   }
 }

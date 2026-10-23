@@ -59,6 +59,9 @@ export const ErrorCodeSchema = z.enum([
   'ANCHOR_UNSUPPORTED',
   'ANCHOR_NOT_FOUND',
   'NO_COMMENTS',
+  // #431：原件可读但派生预览尚未就绪/转换失败——与「Artifact 不存在」区分，
+  // 客户端据此显示「下载原件」回退，而不是整页 404。
+  'PREVIEW_UNAVAILABLE',
   'PLUGIN_UNREVIEWED',
   'INTERNAL_ERROR',
 ])

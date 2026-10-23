@@ -121,3 +121,12 @@
 `run.review_input` 与 `executionContext`；候选必须由本轮 Run 产出并显式关联；
 批注作者或当前责任人可写复核记录（代收口须理由）。前端审阅页入口、待办
 `organize_feedback` / `resolve_comments` 与新旧版本对比留待前端批次接线。
+
+## 2026-10-24 补充（#431 后端）
+
+Office 只读预览已落地：Node 在候选上传后后台用 LibreOffice 把 DOCX/XLSX/PPTX
+转 PDF，Hub `artifact_preview` 以 `source_sha256 == artifact.sha256` 绑定不可变
+原件；只有产出设备可写，读面权限继承原件，`ready` 不降级、`failed` 可重转覆盖，
+转换失败不阻止原件交付。读面提供 `preview-info` 三态与内联 PDF；无可用预览明确
+`PREVIEW_UNAVAILABLE` 供下载回退。PDF 页码/图片区域锚点（`kind='region'`）与
+审阅页前端接线仍未落地，待前端批次合并后另开切片。

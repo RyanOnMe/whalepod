@@ -1189,6 +1189,7 @@
         "ANCHOR_UNSUPPORTED",
         "ANCHOR_NOT_FOUND",
         "NO_COMMENTS",
+        "PREVIEW_UNAVAILABLE",
         "PLUGIN_UNREVIEWED",
         "INTERNAL_ERROR"
       ]

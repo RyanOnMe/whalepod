@@ -119,6 +119,9 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   const { ArtifactCollector } = await import('./artifact/collect.js')
   const { uploadArtifactCandidate } = await import('./artifact/upload-client.js')
   const { ArtifactInputsManager } = await import('./artifact/inputs.js')
+  const { OfficePreviewGenerator } = await import('./artifact/preview.js')
+  const { uploadArtifactPreview, reportArtifactPreviewFailure } =
+    await import('./artifact/preview-upload-client.js')
 
   const artifactLog = (
     level: 'info' | 'warn' | 'error',
@@ -133,6 +136,23 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     inputsRoot: join(stateDir, 'runtime-inputs'),
     log: artifactLog,
   })
+  // #431：Office 只读预览。转换工具默认取 PATH 上的 soffice，部署侧可用
+  // WHALEPOD_SOFFICE 指向具体二进制；缺失时只登记预览失败，不影响原件交付。
+  const officePreview = new OfficePreviewGenerator({
+    stagingDir: join(stateDir, 'artifact-previews'),
+    ...(process.env.WHALEPOD_SOFFICE === undefined
+      ? {}
+      : { sofficePath: process.env.WHALEPOD_SOFFICE }),
+    upload: (artifactId, metadata, body) =>
+      uploadArtifactPreview(config.hubUrl, config.deviceToken, artifactId, metadata, body, {
+        log: artifactLog,
+      }),
+    reportFailure: (artifactId, report) =>
+      reportArtifactPreviewFailure(config.hubUrl, config.deviceToken, artifactId, report, {
+        log: artifactLog,
+      }),
+    log: artifactLog,
+  })
   const artifactCollector = new ArtifactCollector({
     stagingDir: join(stateDir, 'artifact-staging'),
     // 幂等键每次 collect 生成一次（客户端对瞬时失败用同一 key 重试 → Hub 回执幂等）。
@@ -141,6 +161,7 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
         idempotencyKey: randomUUID(),
         log: artifactLog,
       }),
+    preview: officePreview,
     log: artifactLog,
   })
 
