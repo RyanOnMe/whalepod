@@ -30,18 +30,22 @@ export async function personalAttention(
         and t.assignment_status='accepted' and r.status='waiting_approval'
         and a.status='pending' and a.expires_at>now()
       union all
-      select 'accept_assignment', t.id,t.title,t.project_name,t.id,null::uuid,t.updated_at,1
+      select 'confirm_handoff',t.id,t.title,t.project_name,hr.id,null::uuid,hr.created_at,1
+      from eligible t join handoff_receipt hr on hr.downstream_task_id=t.id
+      where hr.receiver_user_id=${actor.userId} and hr.status='pending'
+      union all
+      select 'accept_assignment', t.id,t.title,t.project_name,t.id,null::uuid,t.updated_at,2
       from eligible t where t.assignee_user_id=${actor.userId} and t.assignee_agent_id is null and t.assignment_status='pending'
       union all
-      select 'reassign_task',t.id,t.title,t.project_name,t.id,null::uuid,t.updated_at,2
+      select 'reassign_task',t.id,t.title,t.project_name,t.id,null::uuid,t.updated_at,3
       from eligible t where ${canReassign} and t.assignment_status='rejected'
         and not exists (select 1 from run r where r.task_id=t.id and r.status in ('queued','dispatching','running','waiting_approval','cancel_requested'))
       union all
-      select 'inspect_candidate',t.id,t.title,t.project_name,a.id,a.run_id,a.created_at,3
+      select 'inspect_candidate',t.id,t.title,t.project_name,a.id,a.run_id,a.created_at,4
       from eligible t join artifact a on a.task_id=t.id
       where a.status='candidate' and a.owner_user_id=${actor.userId}
       union all
-      select 'complete_task',t.id,t.title,t.project_name,t.id,null::uuid,t.updated_at,4
+      select 'complete_task',t.id,t.title,t.project_name,t.id,null::uuid,t.updated_at,5
       from eligible t where t.assignee_user_id=${actor.userId} and t.assignment_status='accepted' and t.status='in_review'
         and not exists (select 1 from run r where r.task_id=t.id and r.status in ('queued','dispatching','running','waiting_approval','cancel_requested'))
     )

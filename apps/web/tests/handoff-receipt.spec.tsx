@@ -415,6 +415,55 @@ describe('#380 下游接收面板', () => {
     // 不是「报错后让用户对着旧版本反复撞 409」：失效查询会立刻重读回执/最新版本。
     await waitFor(() => expect(receiptCalls).toBeGreaterThan(callsBefore))
   })
+
+  it('待接收入口：任务尚未接受时标注清楚，确认不冒充接受', async () => {
+    renderApp(
+      `/tasks/${TASK_ID}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(downstreamTask({ assignmentStatus: 'pending', acceptedAt: null })),
+        receiptsHandler([makeReceipt()]),
+      ]),
+    )
+    const panel = await screen.findByTestId('handoff-receipt-panel')
+    expect(within(panel).getByTestId('handoff-task-not-accepted')).toHaveTextContent('任务尚未接受')
+  })
+
+  it('向上游提问不要求先确认接收；失败保留文字，成功后正文不变', async () => {
+    const user = userEvent.setup()
+    const pending = makeReceipt()
+    let commentBody: unknown = null
+    let fail = true
+    renderApp(
+      `/tasks/${TASK_ID}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(downstreamTask()),
+        receiptsHandler([pending]),
+        {
+          method: 'POST',
+          url: new RegExp(`/api/v1/tasks/${UPSTREAM_TASK_ID}/comments$`),
+          respond: (init) => {
+            commentBody = JSON.parse(String(init.body))
+            return fail ? apiFailure('INTERNAL_ERROR', '发送失败') : created({ id: 'comment-1' })
+          },
+        },
+      ]),
+    )
+    const panel = await screen.findByTestId('handoff-receipt-panel')
+    const question = within(panel).getByLabelText('向上游提问')
+    await user.type(question, '订单号为空时怎么处理？')
+    await user.click(within(panel).getByRole('button', { name: '发送问题' }))
+    expect(await within(panel).findByRole('alert')).toHaveTextContent('文字已保留')
+    expect(question).toHaveValue('订单号为空时怎么处理？')
+    // 提问不改 receipt 状态：仍停在待确认。
+    expect(within(panel).getByTestId('handoff-receipt-pending')).toBeVisible()
+    expect(within(panel).queryByTestId('handoff-receipt-active')).not.toBeInTheDocument()
+
+    fail = false
+    await user.click(within(panel).getByRole('button', { name: '发送问题' }))
+    expect(await within(panel).findByRole('status')).toHaveTextContent('已发到上游任务讨论区')
+    expect(commentBody).toEqual({ body: '订单号为空时怎么处理？' })
+    expect(question).toHaveValue('')
+  })
 })
 
 describe('#380 执行区交接勾选', () => {

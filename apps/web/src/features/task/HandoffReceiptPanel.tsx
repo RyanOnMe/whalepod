@@ -109,6 +109,59 @@ function AdoptForm({
   )
 }
 
+/**
+ * 向上游提问（#428）：与「确认接收」解耦——接收方不必先确认理解，也不必接受任务；
+ * 问题走上游任务的讨论区（人际交流，不驱动 Agent），失败保留已写文字。
+ */
+function QuestionComposer({ upstreamTaskId }: { upstreamTaskId: string }): ReactNode {
+  const [question, setQuestion] = useState('')
+  const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+  async function send(): Promise<void> {
+    const text = question.trim()
+    if (text === '' || state === 'sending') return
+    setState('sending')
+    try {
+      await api.mutate(`/tasks/${upstreamTaskId}/comments`, { body: { body: text } })
+      setQuestion('')
+      setState('sent')
+    } catch {
+      setState('error')
+    }
+  }
+  return (
+    <div className="handoff-question" data-testid="handoff-question">
+      <label className="handoff-field">
+        <span>向上游提问（可选，不要求先确认接收）</span>
+        <textarea
+          className="input"
+          rows={2}
+          aria-label="向上游提问"
+          value={question}
+          onChange={(event) => setQuestion(event.target.value)}
+        />
+      </label>
+      <button
+        type="button"
+        className="button"
+        disabled={state === 'sending' || question.trim() === ''}
+        onClick={() => void send()}
+      >
+        {state === 'sending' ? '发送中…' : '发送问题'}
+      </button>
+      {state === 'sent' ? (
+        <p className="mutation-hint" role="status">
+          问题已发到上游任务讨论区。
+        </p>
+      ) : null}
+      {state === 'error' ? (
+        <p className="mutation-hint" role="alert">
+          问题发送失败，文字已保留，可重试。
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
 export function HandoffReceiptPanel({
   task,
   session,
@@ -196,6 +249,11 @@ export function HandoffReceiptPanel({
           固定版本；接收确认不等于接受任务，也不会自动开始执行
         </span>
       </div>
+      {task.assignmentStatus === 'pending' ? (
+        <p className="mutation-hint" data-testid="handoff-task-not-accepted">
+          任务尚未接受；确认理解不等于接受任务，接受任务仍走原入口。
+        </p>
+      ) : null}
       {actionError !== null ? <ErrorBanner error={actionError} /> : null}
 
       {active !== undefined ? (
@@ -247,19 +305,22 @@ export function HandoffReceiptPanel({
             {` · 待确认版本 v${pending.revisionNumber}`}
           </p>
           {session.userId === pending.receiverUserId ? (
-            <ConfirmForm
-              receipt={pending}
-              label="确认接收"
-              submitLabel="确认接收（不动任务状态）"
-              busy={busy}
-              onSubmit={(understanding, differences) =>
-                confirmMutation.mutate({
-                  receiptId: pending.id,
-                  understanding,
-                  ...(differences.trim() !== '' ? { differences } : {}),
-                })
-              }
-            />
+            <>
+              <ConfirmForm
+                receipt={pending}
+                label="确认接收"
+                submitLabel="确认接收（不动任务状态）"
+                busy={busy}
+                onSubmit={(understanding, differences) =>
+                  confirmMutation.mutate({
+                    receiptId: pending.id,
+                    understanding,
+                    ...(differences.trim() !== '' ? { differences } : {}),
+                  })
+                }
+              />
+              <QuestionComposer upstreamTaskId={pending.upstreamTaskId} />
+            </>
           ) : (
             <p className="mutation-hint">等待接收人确认「本次准备做什么」。</p>
           )}

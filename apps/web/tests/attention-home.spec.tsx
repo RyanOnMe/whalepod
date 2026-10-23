@@ -23,6 +23,7 @@ const labels = {
   accept_assignment: '接受任务',
   reassign_task: '重新指派',
   decide_approval: '处理审批',
+  confirm_handoff: '确认接收交接',
   inspect_candidate: '检查候选',
   complete_task: '确认完成',
 } as const
@@ -45,7 +46,11 @@ function fixture(
     taskTitle: task.title,
     projectName: '项目甲',
     objectId:
-      kind === 'inspect_candidate' ? artifact.id : kind === 'decide_approval' ? CARD : task.id,
+      kind === 'inspect_candidate'
+        ? artifact.id
+        : kind === 'decide_approval' || kind === 'confirm_handoff'
+          ? CARD
+          : task.id,
     runId: kind === 'inspect_candidate' || kind === 'decide_approval' ? run.id : null,
     createdAt: task.createdAt,
   }
@@ -128,6 +133,7 @@ function fixture(
       respond: () => ok({ ...run, taskId: task.id }),
     },
     { method: 'GET', url: /\/agents$/, respond: () => ok([]) },
+    { method: 'GET', url: /\/handoff-receipts$/, respond: () => ok([]) },
     { method: 'GET', url: /\/(devices|workspaces)$/, respond: () => ok([]) },
     { method: 'GET', url: /\/instruction-grants$/, respond: () => ok([]) },
     {
@@ -178,24 +184,27 @@ describe('首页个人行动入口 (#332)', () => {
     await userEvent.setup().click(within(region()).getByRole('button', { name: '重新读取待办' }))
     expect(await screen.findByText('暂无待办。')).toBeVisible()
   })
-  it.each(['accept_assignment', 'reassign_task', 'inspect_candidate', 'complete_task'] as const)(
-    '一次任务定位到实际行动并聚焦：%s',
-    async (kind) => {
-      const user = userEvent.setup()
-      const f = fixture(kind)
-      await user.click(
-        await screen.findByRole('link', { name: `${labels[kind]} · ${f.task.title}` }),
-      )
-      const id =
-        kind === 'inspect_candidate'
-          ? `artifact-${f.artifact.id}`
-          : kind === 'complete_task'
-            ? 'task-actions'
+  it.each([
+    'accept_assignment',
+    'reassign_task',
+    'inspect_candidate',
+    'complete_task',
+    'confirm_handoff',
+  ] as const)('一次任务定位到实际行动并聚焦：%s', async (kind) => {
+    const user = userEvent.setup()
+    const f = fixture(kind)
+    await user.click(await screen.findByRole('link', { name: `${labels[kind]} · ${f.task.title}` }))
+    const id =
+      kind === 'inspect_candidate'
+        ? `artifact-${f.artifact.id}`
+        : kind === 'complete_task'
+          ? 'task-actions'
+          : kind === 'confirm_handoff'
+            ? 'handoff-receipt'
             : 'task-assignment'
-      await waitFor(() => expect(document.getElementById(id)).toHaveFocus())
-      expect(f.fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
-    },
-  )
+    await waitFor(() => expect(document.getElementById(id)).toHaveFocus())
+    expect(f.fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
+  })
   it('异步审批卡准备好后定位具体审批，不自动批准', async () => {
     const user = userEvent.setup()
     let release!: () => void
