@@ -534,7 +534,8 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     await shared.bob!.reload()
     await shared.bob!.getByRole('button', { name: '交付与复核', exact: true }).click()
     // #326：从具体已发布产出进入统一入口，不靠用户自己拼通用运行路径。
-    await shared.bob!.getByRole('button', { name: '发起复核', exact: true }).click()
+    await shared.bob!.getByRole('button', { name: '更多文件操作', exact: true }).click()
+    await shared.bob!.getByRole('menuitem', { name: '发起复核', exact: true }).click()
     await expect(shared.bob!.getByTestId('review-scope')).toContainText('材料副本只读')
     await expect(shared.bob!.getByRole('checkbox', { name: '复核材料：Report' })).toBeChecked()
     await expect(shared.bob!.getByRole('button', { name: '开始复核', exact: true })).toBeDisabled()
@@ -1056,7 +1057,9 @@ test('交付闭环：意见发布 → 明确返回产出会话修订 → 重新�
   await feedbackRow.getByRole('button', { name: '预览', exact: true }).click()
   await feedbackRow.getByTestId('artifact-publish-button').click()
   await bob.getByRole('button', { name: '确认发布给团队' }).click()
-  await expect(feedbackRow.getByRole('button', { name: '根据意见修订' })).toBeVisible()
+  await feedbackRow.getByRole('button', { name: '更多文件操作' }).click()
+  await expect(bob.getByRole('menuitem', { name: '根据意见修订' })).toBeVisible()
+  await bob.keyboard.press('Escape')
   expect(
     (await hubApi(shared.bobCookie!, 'GET', `/runs/${reviewerId}/input-manifest`)).data,
   ).toEqual(oldManifest.data)
@@ -1068,7 +1071,8 @@ test('交付闭环：意见发布 → 明确返回产出会话修订 → 重新�
   await expect(alice.getByRole('button', { name: '完成任务', exact: true })).toHaveCount(0)
   const draft = '根据已发布复核意见调整初稿，并说明修订内容。'
   await bob.getByLabel('指令', { exact: true }).fill(draft)
-  await feedbackRow.getByRole('button', { name: '根据意见修订' }).click()
+  await feedbackRow.getByRole('button', { name: '更多文件操作' }).click()
+  await bob.getByRole('menuitem', { name: '根据意见修订' }).click()
   await expect(bob.getByLabel('指令', { exact: true })).toHaveValue(draft)
   await expect(bob.getByLabel('来源执行')).toContainText('选择要继续的会话')
   await expect(bob.getByRole('button', { name: '继续会话', exact: true })).toBeDisabled()

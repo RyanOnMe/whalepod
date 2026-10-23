@@ -18,6 +18,9 @@ import { pushToast } from '../../app/toast.js'
 import { ConfirmDialog } from '../../shared/ConfirmDialog.js'
 import { HelpDisclosure } from '../../shared/HelpDisclosure.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
+import { ActionMenu } from '../../shared/ActionMenu.js'
+import { WorkspaceIcon } from '../../shared/WorkspaceIcon.js'
+import { FileCard } from '../../vendor/collectui/collectui.js'
 import { formatBytes, shortId } from '../../shared/format.js'
 import { RUN_NOT_IN_TIMELINE_LABEL, runOrdinalLabels } from './runLabels.js'
 import { isTextPreviewable, truncatePreview } from './artifactPreview.js'
@@ -134,7 +137,13 @@ function ArtifactRows({
           tabIndex={-1}
           className="artifact-item"
         >
-          <div className="artifact-title">{artifact.title}</div>
+          <div className="artifact-heading">
+            <FileCard
+              title={artifact.title}
+              subtitle={`已发布 · ${formatBytes(artifact.byteSize)}`}
+              icon={<WorkspaceIcon name="文件" />}
+            />
+          </div>
           <details className="artifact-details">
             <summary>文件信息</summary>
             <dl className="artifact-meta">
@@ -162,32 +171,40 @@ function ArtifactRows({
           <div className="artifact-actions">
             <ArtifactPreview artifact={artifact} />
             <ArtifactDownload artifact={artifact} />
-            {onRequestReview === undefined ? null : (
-              <button type="button" className="button" onClick={() => onRequestReview(artifact.id)}>
-                发起复核
-              </button>
-            )}
-            {onRequestRevision === undefined ? null : (
-              <button
-                type="button"
-                className="button button-quiet"
-                onClick={() => onRequestRevision(artifact.id)}
-              >
-                根据意见修订
-              </button>
-            )}
-            {/* #250：指着这个工件说话——注入来源运行的引用 token（#216 窄解析），
-                落点是讨论输入框（人对人）；驱动 Agent 仍由用户自己去执行栏说。 */}
-            {onReferenceRun === undefined ? null : (
-              <button
-                type="button"
-                className="button button-quiet"
-                data-testid="artifact-reference-button"
-                onClick={() => onReferenceRun(artifact.runId)}
-              >
-                在讨论中引用
-              </button>
-            )}
+            <ActionMenu
+              actions={[
+                ...(onRequestReview === undefined
+                  ? []
+                  : [
+                      {
+                        id: 'review',
+                        label: '发起复核',
+                        icon: <WorkspaceIcon name="复核" />,
+                        onSelect: () => onRequestReview(artifact.id),
+                      },
+                    ]),
+                ...(onRequestRevision === undefined
+                  ? []
+                  : [
+                      {
+                        id: 'revision',
+                        label: '根据意见修订',
+                        icon: <WorkspaceIcon name="修订" />,
+                        onSelect: () => onRequestRevision(artifact.id),
+                      },
+                    ]),
+                ...(onReferenceRun === undefined
+                  ? []
+                  : [
+                      {
+                        id: 'reference',
+                        label: '在讨论中引用',
+                        icon: <WorkspaceIcon name="引用" />,
+                        onSelect: () => onReferenceRun(artifact.runId),
+                      },
+                    ]),
+              ]}
+            />
           </div>
         </li>
       ))}
@@ -329,8 +346,17 @@ function CandidateRows({
           tabIndex={-1}
           className="artifact-item"
         >
-          <div className="artifact-title">{artifact.title}</div>
-          <p className="mutation-hint">仅你可见，待发布</p>
+          <div className="artifact-heading">
+            <FileCard
+              title={artifact.title}
+              subtitle={
+                <>
+                  <span>仅你可见，待发布</span> · {formatBytes(artifact.byteSize)}
+                </>
+              }
+              icon={<WorkspaceIcon name="文件" />}
+            />
+          </div>
           <details className="artifact-details">
             <summary>文件信息</summary>
             <dl className="artifact-meta">

@@ -14,6 +14,9 @@ test-results/
 # 取证包：体积大且含运行现场，不进 git；验过的步骤要写进 docs/agent/
 artifacts/evidence/
 
+# Restricted UI originals and editable adaptations; distribute compiled assets only.
+artifacts/private-ui/
+
 # 日志
 *.log
 

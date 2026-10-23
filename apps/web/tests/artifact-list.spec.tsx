@@ -1,4 +1,4 @@
-import { showHelp } from './workspace.js'
+import { chooseFileAction, showHelp } from './workspace.js'
 import { showWorkspace, workspaceDetails } from './workspace.js'
 /**
  * Artifact 区（P1-15；G6-01/04/08 的 Web 最小面）：
@@ -215,7 +215,7 @@ describe('#250 交付物文本预览与引用入口', () => {
       ...loggedInHandlers(BOB, [taskRoomHandler(task, { runs: [run], artifacts: [artifact] })]),
     ])
     await showWorkspace('artifacts')
-    await user.click(await screen.findByRole('button', { name: '在讨论中引用' }))
+    await chooseFileAction('在讨论中引用', user)
     const box = screen.getByLabelText('留言')
     // 注入的是 #216 同一套引用 token（运行 R-<短号>），窄解析把它渲染成可点 chip。
     expect(box).toHaveValue(`运行 R-${run.id.slice(0, 8)}`)

@@ -1,6 +1,7 @@
 import { showAgentCreation } from './helpers.js'
 /** #306：真实 HTTP/WS、已编译 Hub、真实 Node/Runtime replay；不直写运行状态。 */
 import { auditSecondarySurfaces } from './secondary-surface-audit.js'
+import { auditApproval, auditFileActions, auditPrompt, auditSendFocus } from './app-ui-audit.js'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -115,6 +116,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
     expect(visibleComposerText.length).toBeLessThanOrEqual(60)
     await owner.screenshot({ path: join(evidence, 'desktop-ready.png') })
     const microLayouts = []
+    const promptLayouts = []
     for (const width of [1440, 390, 320]) {
       await owner.setViewportSize({ width, height: 960 })
       const bar = owner.getByTestId('prompt-bar')
@@ -161,6 +163,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
         settingsKeyboard: true,
         composerHeightStable: true,
       })
+      promptLayouts.push(await auditPrompt(owner, width))
     }
     await owner.emulateMedia({ reducedMotion: 'reduce' })
     await owner.getByLabel('选择 Agent', { exact: true }).focus()
@@ -221,6 +224,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
     await selectFromMenu(owner.getByLabel('选择设备'), /e2e-node（在线）/)
     await selectFromMenu(owner.getByLabel('选择 Workspace'), 'e2e-ws')
     await owner.getByLabel('指令').fill('生成团队验收报告')
+    const sendFocus = await auditSendFocus(owner, evidence)
     await owner.getByRole('button', { name: '开始执行' }).click()
     const runButton = owner.locator('button[data-run-id]').first()
     await expect(runButton).toBeVisible()
@@ -232,6 +236,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
     await member.getByTestId('execution-activity-hint').click()
     await expect(member.getByTestId('approval-waiting')).toBeVisible()
     await expect(member.getByTestId('approval-card')).toHaveCount(0)
+    const approvalLayouts = await auditApproval(owner, evidence)
     await owner.screenshot({ path: join(evidence, 'desktop-approval.png') })
     await owner.getByTestId('approve-button').click()
     await waitForRunStatus(runId, 'completed', 120_000)
@@ -287,6 +292,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
       taskStatus: room.task.status,
     })
     const dimensions = []
+    const fileLayouts = []
     for (const width of [1440, 1024, 736, 390, 320]) {
       await owner.setViewportSize({ width, height: 960 })
       const bounds = await owner.evaluate(() => ({
@@ -296,6 +302,8 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
       expect(bounds.scroll).toBeLessThanOrEqual(bounds.viewport)
       await expect(owner.getByRole('button', { name: '关闭工作区详情' })).toBeVisible()
       dimensions.push({ width, ...bounds })
+      if ([1440, 390, 320].includes(width))
+        fileLayouts.push(await auditFileActions(owner, width, evidence))
       await owner.screenshot({ path: join(evidence, `artifact-${width}.png`) })
     }
     await owner.getByRole('button', { name: '关闭工作区详情' }).click()
@@ -320,8 +328,16 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
       agreementReachable: true,
     })
     facts.push(await auditSecondarySurfaces({ owner, member, taskId, evidence }))
+    facts.push({
+      component: 'web.app-ui',
+      scenario: 'restricted-presentation',
+      prompts: promptLayouts,
+      sendFocus,
+      approvals: approvalLayouts,
+      files: fileLayouts,
+    })
     expect(errors).toEqual([])
-    expect(facts).toHaveLength(6)
+    expect(facts).toHaveLength(7)
     await stopNode()
   } finally {
     await ownerContext.close()

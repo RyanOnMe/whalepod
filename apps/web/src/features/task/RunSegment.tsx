@@ -14,6 +14,8 @@ import { Hint } from '../../shared/micro/Hint.js'
 import { RunStatusBadge } from '../../shared/micro/RunStatusBadge.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { formatBytes } from '../../shared/format.js'
+import { WorkspaceIcon } from '../../shared/WorkspaceIcon.js'
+import { FileCard } from '../../vendor/collectui/collectui.js'
 import type { RunEventItem, RunView, Session, TaskView } from '../../shared/api/types.js'
 import { getRunLiveText, subscribeRunLive } from '../../shared/realtime/run-buffer.js'
 import { RunFailureNotice } from '../run/RunFailureNotice.js'
@@ -72,37 +74,19 @@ function ArtifactCards({
   return (
     <section className="conversation-artifacts" aria-label="本次运行交付物">
       {segment.artifacts.map((artifact) => (
-        <button
-          type="button"
-          className="workspace-file"
+        <FileCard
           key={artifact.id}
-          aria-label={`查看交付物 ${artifact.title}`}
-          onClick={() => onOpenArtifact(artifact.id)}
-        >
-          <span className="workspace-file-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 28" width="24" height="28" fill="none">
-              <path
-                d="M5 1h9l6 6v18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2Z"
-                stroke="currentColor"
-                strokeWidth="1.4"
-              />
-              <path
-                d="M14 1v7h6M7 14h9M7 18h9M7 22h5"
-                stroke="currentColor"
-                strokeWidth="1.4"
-                strokeLinecap="round"
-              />
-            </svg>
-          </span>
-          <span>
-            <strong>{artifact.title}</strong>
-            <small>
+          title={artifact.title}
+          label={`查看交付物 ${artifact.title}`}
+          onOpen={() => onOpenArtifact(artifact.id)}
+          icon={<WorkspaceIcon name="文件" />}
+          subtitle={
+            <>
               {artifact.status === 'candidate' ? '仅你可见 · 待检查发布' : '已发布给团队'} ·{' '}
               {formatBytes(artifact.byteSize)}
-            </small>
-          </span>
-          <span aria-hidden="true">↗</span>
-        </button>
+            </>
+          }
+        />
       ))}
     </section>
   )
