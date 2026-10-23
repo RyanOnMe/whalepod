@@ -103,14 +103,24 @@ describe('artifact review (#429)', () => {
 
   it('整件批注：团队成员可读可写，回复只有一层', async () => {
     const { ids, receiver, artifactId } = await seedPublishedText()
+    const commentKey = idemKey()
     const comment = await createArtifactComment(
       database,
       store,
       makeActor(receiver.userId, 'member'),
       artifactId,
       { body: '整体方向可以。' },
-      idemKey(),
+      commentKey,
     )
+    const replayed = await createArtifactComment(
+      database,
+      store,
+      makeActor(receiver.userId, 'member'),
+      artifactId,
+      { body: '整体方向可以。' },
+      commentKey,
+    )
+    expect(replayed.id).toBe(comment.id)
     expect(comment.kind).toBe('whole')
     expect(comment.anchor).toBeNull()
     const reply = await createArtifactComment(
@@ -311,23 +321,28 @@ describe('artifact review (#429)', () => {
       { body: '字段名建议统一。' },
       idemKey(),
     )
+    const submitKey = idemKey()
     const submitted = await submitArtifactReview(
       database,
       receiverActor,
       artifactId,
       { noComment: false },
-      idemKey(),
+      submitKey,
     )
-    expect(submitted.status).toBe('submitted')
-    expect(submitted.noComment).toBe(false)
-    const noComment = await submitArtifactReview(
+    const replay = await submitArtifactReview(
       database,
       receiverActor,
       artifactId,
-      { noComment: true },
-      idemKey(),
+      { noComment: false },
+      submitKey,
     )
-    expect(noComment.noComment).toBe(true)
+    expect(replay).toEqual(submitted)
+    expect(submitted.status).toBe('submitted')
+    expect(submitted.noComment).toBe(false)
+    // 已有批注还说「本轮无意见」是自相矛盾：服务端明确拒绝。
+    await expect(
+      submitArtifactReview(database, receiverActor, artifactId, { noComment: true }, idemKey()),
+    ).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
     const after = await personalAttention(database.db, sessionActor(receiver.userId, 'member'))
     expect(after.items.some((item) => item.kind === 'submit_review')).toBe(false)
   })

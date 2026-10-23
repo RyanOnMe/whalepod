@@ -42,6 +42,10 @@ export const artifactComments = pgTable(
       'artifact_comment_anchor_matches_kind',
       sql`(${table.kind} = 'whole' and ${table.anchor} is null) or (${table.kind} = 'text' and ${table.anchor} is not null and jsonb_typeof(${table.anchor}) = 'object')`,
     ),
+    check(
+      'artifact_comment_not_self_reply',
+      sql`${table.parentCommentId} is null or ${table.parentCommentId} <> ${table.id}`,
+    ),
     index('artifact_comment_by_artifact').on(table.artifactId, table.createdAt, table.id),
     index('artifact_comment_by_author').on(table.artifactId, table.authorUserId),
   ],

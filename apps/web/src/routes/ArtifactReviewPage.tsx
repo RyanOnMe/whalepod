@@ -543,9 +543,12 @@ export function ArtifactReviewPage(): ReactNode {
           {view.capabilities.canSubmitReview && ownInvitation !== undefined ? (
             <section className="review-submit" aria-label="提交本轮意见">
               <h2>本轮审阅</h2>
+              {ownInvitation.focus !== null ? (
+                <p data-testid="review-focus">邀请人请你重点看：{ownInvitation.focus}</p>
+              ) : null}
               <p className="mutation-hint">
                 {ownInvitation.status === 'submitted'
-                  ? `已提交（${new Date(ownInvitation.submittedAt ?? ownInvitation.createdAt).toLocaleString()}）；补充意见后可再次提交。`
+                  ? `${ownInvitation.noComment ? '已提交：本轮无意见' : '已提交意见'}（${new Date(ownInvitation.submittedAt ?? ownInvitation.createdAt).toLocaleString()}）；补充意见后可再次提交。`
                   : '打开页面不算提交；看完后再选提交。'}
               </p>
               <button
@@ -561,11 +564,17 @@ export function ArtifactReviewPage(): ReactNode {
                 type="button"
                 className="button"
                 data-testid="review-no-comment-button"
-                disabled={busy}
+                disabled={busy || mine.length > 0}
+                title={mine.length > 0 ? '已经发表过意见，不能选择本轮无意见' : undefined}
                 onClick={() => submit.mutate(true)}
               >
                 本轮无意见
               </button>
+              {mine.length > 0 ? (
+                <span className="mutation-hint">
+                  已经发表批注；如本轮无意见请先撤回，当前不支持撤回。
+                </span>
+              ) : null}
             </section>
           ) : null}
 

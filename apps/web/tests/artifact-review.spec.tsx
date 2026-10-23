@@ -16,7 +16,7 @@ import {
   type MockHandler,
 } from './fixtures.js'
 import { renderApp } from './render.js'
-import { keysForPersistentEvent } from '../src/shared/realtime/event-router.js'
+import { applyClientFrame, keysForPersistentEvent } from '../src/shared/realtime/event-router.js'
 import { persistentFrame } from './frames.js'
 
 const TASK_ID = '00000000-0000-4000-8000-0000000000a1'
@@ -139,7 +139,7 @@ describe('#429 交付物审阅页', () => {
       view: () =>
         reviewView({
           comments,
-          invitations: [invitation()],
+          invitations: [invitation({ focus: '重点看字段命名' })],
           capabilities: { canInvite: false, canSubmitReview: true, canComment: true },
         }),
       comments,
@@ -150,6 +150,7 @@ describe('#429 交付物审阅页', () => {
     renderApp(`/tasks/${TASK_ID}/review/${ARTIFACT_ID}`, loggedInHandlers(BOB, handlers))
     expect(await screen.findByTestId('review-version')).toHaveTextContent(SHA.slice(0, 12))
     expect(await screen.findByTestId('review-text')).toHaveTextContent('orderId')
+    expect(screen.getByTestId('review-focus')).toHaveTextContent('重点看字段命名')
 
     const submitButton = screen.getByTestId('review-submit-button')
     expect(submitButton).toBeDisabled()
@@ -162,6 +163,26 @@ describe('#429 交付物审阅页', () => {
 
     await user.click(submitButton)
     await waitFor(() => expect(submitBodies).toContainEqual({ noComment: false }))
+    // 已经发表过意见时不能再说「本轮无意见」：按钮禁用，避免自相矛盾的提交。
+    expect(screen.getByTestId('review-no-comment-button')).toBeDisabled()
+  })
+
+  it('没有发表任何批注时可以提交「本轮无意见」', async () => {
+    const user = userEvent.setup()
+    const submitBodies: unknown[] = []
+    const handlers = baseHandlers({
+      view: () =>
+        reviewView({
+          invitations: [invitation()],
+          capabilities: { canInvite: false, canSubmitReview: true, canComment: true },
+        }),
+      onSubmit: (body) => {
+        submitBodies.push(body)
+      },
+    })
+    renderApp(`/tasks/${TASK_ID}/review/${ARTIFACT_ID}`, loggedInHandlers(BOB, handlers))
+    await screen.findByTestId('review-text')
+    expect(screen.getByTestId('review-submit-button')).toBeDisabled()
     await user.click(screen.getByTestId('review-no-comment-button'))
     await waitFor(() => expect(submitBodies).toContainEqual({ noComment: true }))
   })

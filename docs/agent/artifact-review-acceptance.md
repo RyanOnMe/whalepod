@@ -14,7 +14,8 @@
 ## 驱动（怎么触发）
 
 ```bash
-# Hub：真实发布→批注/邀请/提交命令 + 待办 SQL（真实 PostgreSQL）
+# Hub：已发布 Artifact 的声明式前置（真实上传/发布由既有 Q5 覆盖）+
+#      批注/邀请/提交命令 + 待办 SQL（真实 PostgreSQL）
 pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration \
   apps/hub/tests/artifact-review.integration.spec.ts
 
@@ -67,6 +68,8 @@ git diff --stat feat/p1-429-artifact-review
   「未解决」显示全部批注、「本轮待复核」为空并明确说明。
 - 原位批注只接受 ≤512 KiB 的可读文本；更大的文本与非文本一律整件批注（明确失败码）。
 - 邀请只决定待办归属，不改变文件可见性；首版不做邮件/站外提醒。
+- 集成用例的 Artifact 行按 #99 注记的**声明式前置**直插（真实 Node 上传/owner 发布由
+  既有 Q5 与 handoff 闭环覆盖）；删除条件：Hub 提供按 Run 登记材料的 fixture 通道。
 - 生产装配 Q5 本轮未重跑；新增行为由 Hub 集成 + Web 组件判据覆盖。
 
 ## 复跑

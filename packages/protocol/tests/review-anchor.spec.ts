@@ -52,6 +52,20 @@ describe('artifact comment anchor (#429)', () => {
     ).toBeNull()
   })
 
+  it('中文与代理对按 UTF-16 偏移定位（与浏览器 selection 同口径）', () => {
+    const text = '开头 🚀 订单号 orderId 结尾'
+    const start = text.indexOf('orderId')
+    expect(
+      locateArtifactCommentAnchor(text, {
+        quote: 'orderId',
+        prefix: text.slice(Math.max(0, start - 4), start),
+        suffix: text.slice(start + 7, start + 7 + 4),
+        start,
+        end: start + 7,
+      }),
+    ).toMatchObject({ start, end: start + 7 })
+  })
+
   it('偏移过期但上下文唯一时重定位；上下文也不匹配时不猜', () => {
     const second = TEXT.indexOf('orderId', TEXT.indexOf('orderId') + 1)
     expect(

@@ -112,7 +112,9 @@ async function textOf(
 ): Promise<string | null> {
   if (!isReviewText(artifact.mediaType, artifact.byteSize)) return null
   const bytes = await store.readVerified(artifact.storageKey, artifact.sha256)
-  return bytes.toString('utf8')
+  // 浏览器 Response.text() 会按规范吃掉 UTF-8 BOM，Node 的 toString 会保留；
+  // 两边都去 BOM 才能让同一段文字算出同一组偏移。
+  return bytes.toString('utf8').replace(/^\uFEFF/, '')
 }
 
 export async function getArtifactReviewView(
@@ -223,24 +225,21 @@ export async function createArtifactComment(
     }
     anchor = located
   }
-  const row = await transactCommand(
-    database,
-    `artifact.comment.create:${idempotencyKey}`,
-    async (tx) => {
-      const comment = await insertArtifactComment(tx, {
-        id: randomUUID(),
-        artifactId: artifact.id,
-        authorUserId: actor.userId,
-        ...(input.parentCommentId === undefined ? {} : { parentCommentId: input.parentCommentId }),
-        kind: anchor === null ? 'whole' : 'text',
-        anchor,
-        body: input.body.trim(),
-      })
-      await appendReviewChanged(tx, artifact, 'comment')
-      return comment
-    },
-  )
-  return toCommentView(row)
+  // 台账存的是**已序列化的视图**：同一 Idempotency-Key 重放时返回 JSONB 反序列化
+  // 结果（日期已是字符串），再调 toCommentView 的 toISOString 会 500。
+  return transactCommand(database, `artifact.comment.create:${idempotencyKey}`, async (tx) => {
+    const comment = await insertArtifactComment(tx, {
+      id: randomUUID(),
+      artifactId: artifact.id,
+      authorUserId: actor.userId,
+      ...(input.parentCommentId === undefined ? {} : { parentCommentId: input.parentCommentId }),
+      kind: anchor === null ? 'whole' : 'text',
+      anchor,
+      body: input.body.trim(),
+    })
+    await appendReviewChanged(tx, artifact, 'comment')
+    return toCommentView(comment)
+  })
 }
 
 export async function inviteReviewers(
@@ -269,27 +268,23 @@ export async function inviteReviewers(
       throw new ApiError(400, 'VALIDATION_FAILED', 'reviewer is not an active team member')
     }
   }
-  const outcome = await transactCommand(
-    database,
-    `artifact.review.invite:${idempotencyKey}`,
-    async (tx) => {
-      const rows: Awaited<ReturnType<typeof insertArtifactReviewInvitationIfAbsent>>[] = []
-      for (const reviewerId of reviewerIds) {
-        rows.push(
-          await insertArtifactReviewInvitationIfAbsent(tx, {
-            id: randomUUID(),
-            artifactId: artifact.id,
-            inviterUserId: actor.userId,
-            reviewerUserId: reviewerId,
-            ...(focus === undefined || focus === '' ? {} : { focus }),
-          }),
-        )
-      }
-      if (rows.some((row) => row.inserted)) await appendReviewChanged(tx, artifact, 'invitation')
-      return rows.map((row) => row.row)
-    },
-  )
-  return outcome.map(toInvitationView)
+  return transactCommand(database, `artifact.review.invite:${idempotencyKey}`, async (tx) => {
+    const rows: ArtifactReviewInvitationView[] = []
+    let inserted = false
+    for (const reviewerId of reviewerIds) {
+      const outcome = await insertArtifactReviewInvitationIfAbsent(tx, {
+        id: randomUUID(),
+        artifactId: artifact.id,
+        inviterUserId: actor.userId,
+        reviewerUserId: reviewerId,
+        ...(focus === undefined || focus === '' ? {} : { focus }),
+      })
+      inserted ||= outcome.inserted
+      rows.push(toInvitationView(outcome.row))
+    }
+    if (inserted) await appendReviewChanged(tx, artifact, 'invitation')
+    return rows
+  })
 }
 
 export async function submitArtifactReview(
@@ -304,26 +299,22 @@ export async function submitArtifactReview(
   if (invitation === undefined) {
     throw new ApiError(404, 'NOT_FOUND', 'review invitation not found')
   }
-  if (!input.noComment) {
-    const authored = await countArtifactCommentsByAuthor(database.db, artifact.id, actor.userId)
-    if (authored === 0) {
-      throw new ApiError(400, 'NO_COMMENTS', '还没有发表意见；如无意见请选择「本轮无意见」')
-    }
+  const authored = await countArtifactCommentsByAuthor(database.db, artifact.id, actor.userId)
+  if (!input.noComment && authored === 0) {
+    throw new ApiError(400, 'NO_COMMENTS', '还没有发表意见；如无意见请选择「本轮无意见」')
   }
-  const row = await transactCommand(
-    database,
-    `artifact.review.submit:${idempotencyKey}`,
-    async (tx) => {
-      const updated = await markArtifactReviewInvitationSubmitted(
-        tx,
-        invitation.id,
-        new Date(),
-        input.noComment,
-      )
-      if (updated === undefined) throw new ApiError(404, 'NOT_FOUND', 'review invitation not found')
-      await appendReviewChanged(tx, artifact, 'submission')
-      return updated
-    },
-  )
-  return toInvitationView(row)
+  if (input.noComment && authored > 0) {
+    throw new ApiError(400, 'VALIDATION_FAILED', '已经发表过意见，不能选择「本轮无意见」')
+  }
+  return transactCommand(database, `artifact.review.submit:${idempotencyKey}`, async (tx) => {
+    const updated = await markArtifactReviewInvitationSubmitted(
+      tx,
+      invitation.id,
+      new Date(),
+      input.noComment,
+    )
+    if (updated === undefined) throw new ApiError(404, 'NOT_FOUND', 'review invitation not found')
+    await appendReviewChanged(tx, artifact, 'submission')
+    return toInvitationView(updated)
+  })
 }

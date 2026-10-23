@@ -219,26 +219,31 @@ export async function confirmReceipt(
   assertConfirmInput(input)
   const existing = await getHandoffReceipt(database.db, receiptId)
   if (existing === undefined) throw new ApiError(404, 'NOT_FOUND', 'handoff receipt not found')
-  if (existing.receiverUserId !== actor.userId) {
-    throw new ApiError(403, 'FORBIDDEN', 'only the receiver can confirm this handoff')
-  }
-  const downstreamTask = await getTask(database.db, existing.downstreamTaskId)
-  if (downstreamTask === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
-  // 改派后旧接收人仍是回执作者，但已不是任务责任人：确认/采用必须由当前责任人做。
-  if (downstreamTask.assigneeUserId !== actor.userId) {
-    throw new ApiError(409, 'CONFLICT', '交接接收人已变化，请让当前责任人确认')
-  }
   const now = new Date()
   const outcome = await transactCommand(
     database,
     `handoff.confirm:${idempotencyKey}`,
     async (tx) => {
+      // 先锁 Task 再锁回执：与改派（锁 Task → 更新 pending 回执）同一顺序，避免死锁；
+      // 责任人与接收人都在锁内复核，改派提交后的旧接收人不能靠事务外检查混过去。
+      const [downstreamTask] = await tx
+        .select()
+        .from(schema.tasks)
+        .where(eq(schema.tasks.id, existing.downstreamTaskId))
+        .for('update')
+      if (downstreamTask === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
+      if (downstreamTask.assigneeUserId !== actor.userId) {
+        throw new ApiError(409, 'CONFLICT', '交接接收人已变化，请让当前责任人确认')
+      }
       const [locked] = await tx
         .select()
         .from(schema.handoffReceipts)
         .where(eq(schema.handoffReceipts.id, receiptId))
         .for('update')
       if (locked === undefined) throw new ApiError(404, 'NOT_FOUND', 'handoff receipt not found')
+      if (locked.receiverUserId !== actor.userId) {
+        throw new ApiError(403, 'FORBIDDEN', 'only the receiver can confirm this handoff')
+      }
       // 幂等：首次理解不回写；**这不是一次状态迁移**（评审 m4）——差异消息因此不
       // 重复发（重复发只会污染上游讨论流，旧理解已被回执确认）。
       if (locked.status === 'confirmed') return { id: locked.id, transitioned: false }
@@ -283,17 +288,30 @@ export async function adoptReceipt(
   assertConfirmInput(input)
   const existing = await getHandoffReceipt(database.db, receiptId)
   if (existing === undefined) throw new ApiError(404, 'NOT_FOUND', 'handoff receipt not found')
-  if (existing.receiverUserId !== actor.userId) {
-    throw new ApiError(403, 'FORBIDDEN', 'only the receiver can adopt a new version')
-  }
-  const downstreamTask = await getTask(database.db, existing.downstreamTaskId)
-  if (downstreamTask === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
-  if (downstreamTask.assigneeUserId !== actor.userId) {
-    throw new ApiError(409, 'CONFLICT', '交接接收人已变化，请让当前责任人采用新版本')
-  }
   const current = await getHandoffRevision(database.db, existing.revisionId)
   if (current === undefined) throw new ApiError(500, 'INTERNAL_ERROR', 'handoff revision lost')
   const outcome = await transactCommand(database, `handoff.adopt:${idempotencyKey}`, async (tx) => {
+    // 采用也按「锁 Task → 锁回执」同一顺序；责任人是当前任务责任人（改派后即新人）。
+    const [downstreamTask] = await tx
+      .select()
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, existing.downstreamTaskId))
+      .for('update')
+    if (downstreamTask === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
+    if (downstreamTask.assigneeUserId !== actor.userId) {
+      throw new ApiError(409, 'CONFLICT', '交接接收人已变化，请让当前责任人采用新版本')
+    }
+    const [lockedReceipt] = await tx
+      .select()
+      .from(schema.handoffReceipts)
+      .where(eq(schema.handoffReceipts.id, receiptId))
+      .for('update')
+    if (lockedReceipt === undefined) {
+      throw new ApiError(404, 'NOT_FOUND', 'handoff receipt not found')
+    }
+    if (lockedReceipt.status !== 'confirmed') {
+      throw new ApiError(409, 'CONFLICT', '先确认接收，再采用新版本')
+    }
     const rows = await tx
       .select()
       .from(schema.handoffRevisions)
@@ -312,7 +330,8 @@ export async function adoptReceipt(
       revisionId: newest.id,
       upstreamTaskId: existing.upstreamTaskId,
       downstreamTaskId: existing.downstreamTaskId,
-      receiverUserId: existing.receiverUserId,
+      // 采用由当前责任人发起：新回执归当前责任人（改派后旧接收人不再代办）。
+      receiverUserId: actor.userId,
       deliveredBy: actor.userId,
       confirmed: {
         understanding: input.understanding,

@@ -379,7 +379,9 @@ export function HandoffReceiptPanel({
 
       {confirmed.map((receipt) => {
         const hasNewer = receipt.latestRevisionNumber > receipt.revisionNumber
-        const canAdopt = isCurrentAssignee && receipt.receiverUserId === session.userId
+        // 已确认回执的「采用新版本」属于当前责任人：改派后新责任人可推进后续版本，
+        // 原理解记录仍显示原确认人（历史事实不冒充）。
+        const canAdopt = isCurrentAssignee
         return (
           <div
             key={receipt.id}
