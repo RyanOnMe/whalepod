@@ -7,7 +7,8 @@ Source and governing license: https://bits.collectui.pro/license
 `collectui.js` and `collectui.css` contain compiled, minified application-internal
 adaptations of Prompt Input 2, Agent Approval 1, AI Chat 2, App Sidebar 4, Command
 Menu 1, App Dialog 6, Empty State 1, Agent Activity 3, Tool Calls 2, Card 1, List 7,
-Comments 1, Settings Form 1, Notifications 4, Animated List and Modal Cards, obtained through
+Comments 1, Settings Form 1, Notifications 4, Animated List, Modal Cards, Data Table 5, Integrations 1, Card 2
+and Monitoring 7, obtained through
 the component website. They are not licensed under WhalePod's Apache-2.0 license.
 Preserve this notice and the attribution in NOTICE when distributing these assets.
 

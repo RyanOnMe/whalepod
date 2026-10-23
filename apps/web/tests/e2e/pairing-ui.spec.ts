@@ -510,6 +510,7 @@ test('390×844：无横向溢出、顶栏单行 ≤64px、折叠菜单键盘可�
   await expect(menu).not.toHaveAttribute('open')
   await expect(nav.getByRole('link', { name: '成员' })).toBeHidden()
 
+  await page.getByRole('button', { name: '邀请成员', exact: true }).click()
   // #168：成员页 390 档下「邀请成员」表单里的主按钮也要过控件族判据（描边/圆角与
   // vendored Input 逐值相等、颜色只吃 L1、min-height = --touch-min）。这一档是最容易
   // 被"窄屏单独覆盖样式"改松的地方，所以在 390 视口下采。

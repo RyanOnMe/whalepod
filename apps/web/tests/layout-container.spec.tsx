@@ -98,7 +98,7 @@ function twoColumnGrid(container: HTMLElement): [HTMLElement, HTMLElement] {
 }
 
 describe('#152 布局：内容容器与两栏栅格', () => {
-  it('设备页：主列 = 配对码 + 已配对设备，侧列 = CLI 安装与配对', async () => {
+  it('设备页：目录为主、配对入口在页头、安装指南按需展开', async () => {
     const { container } = renderApp(
       '/devices',
       loggedInHandlers(ALICE, [
@@ -109,8 +109,9 @@ describe('#152 布局：内容容器与两栏栅格', () => {
     await screen.findByRole('heading', { name: '已配对设备' })
 
     const [main, aside] = twoColumnGrid(container)
-    // 主列：配对码签发 + 设备骨架都在同一列里
-    expect(within(main).getByRole('heading', { name: '配对码' })).toBeVisible()
+    // 未生成时不呈现空码面板；真正签发操作在唯一页头按钮。
+    expect(within(main).queryByRole('heading', { name: '配对码' })).toBeNull()
+    expect(screen.getByRole('button', { name: '生成配对码' })).toBeVisible()
     expect(within(main).getByRole('heading', { name: '已配对设备' })).toBeVisible()
     expect(await within(main).findByText('mac-mini')).toBeVisible()
     await showHelp('安装与配对指南')
@@ -142,7 +143,8 @@ describe('#152 布局：内容容器与两栏栅格', () => {
     const [main, aside] = twoColumnGrid(container)
     expect(within(main).getByRole('heading', { name: '团队成员' })).toBeVisible()
     expect(await within(main).findByText('Alice')).toBeVisible()
-    // Owner 能邀请：邀请面板在侧列（Member 视角只读的文案不在本用例范围）
+    await userEvent.setup().click(screen.getByRole('button', { name: '邀请成员' }))
+    // Owner 显式展开邀请：邀请面板在侧列（Member 视角只读的文案不在本用例范围）
     expect(within(aside).getByRole('heading', { name: '邀请成员' })).toBeVisible()
     expect(within(aside).getByRole('button', { name: '生成邀请链接' })).toBeVisible()
   })

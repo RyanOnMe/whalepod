@@ -39,3 +39,10 @@ export function InboxFrame(props: { title: ReactNode; count?: string; actions: R
 export function InboxRow(props: { icon: ReactNode; children: ReactNode; meta: ReactNode }): ReactNode
 export function EnterItem(props: { id?: string; className?: string; index?: number; children: ReactNode }): ReactNode
 export function ExpandPanel(props: { id?: string; label: string; open: boolean; children: ReactNode }): ReactNode
+
+export function AdminPanel(props: { id?: string; title: string; count?: number; actions?: ReactNode; children: ReactNode; className?: string }): ReactNode
+export function MemberIdentity(props: { name: string; handle: string; role: ReactNode; status: ReactNode }): ReactNode
+export function IntegrationTile(props: { label: string; name: string; version?: ReactNode; icon: ReactNode; meta?: ReactNode; actions?: ReactNode; children: ReactNode; local?: boolean }): ReactNode
+export function ChoiceCard(props: { name: string; description?: string; icon: ReactNode; selected: boolean; onSelect: () => void; buttonRef?: (node: HTMLButtonElement | null) => void }): ReactNode
+export function AdminDetailHeading(props: { title: string; icon: ReactNode; action: ReactNode }): ReactNode
+export function DeviceIdentity(props: { name: string; platform: string; status: ReactNode; seen: ReactNode; icon: ReactNode }): ReactNode

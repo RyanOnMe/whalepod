@@ -1,3 +1,5 @@
+import { AdminPanel, IntegrationTile, EnterItem } from '../../vendor/collectui/collectui.js'
+import { WorkspaceIcon } from '../../shared/WorkspaceIcon.js'
 /**
  * Plugin Pack 组装（02 Task 17 Step 7）：从已安装列表勾选组装不可变 Pack。
  *
@@ -85,20 +87,23 @@ export function PluginPackEditor({ session }: PluginPackEditorProps): ReactNode 
   }
 
   return (
-    <section className="plugins-layout" aria-labelledby="plugin-packs-heading">
-      <h2 id="plugin-packs-heading">插件组合（Plugin Pack）</h2>
-
+    <AdminPanel
+      className="plugins-layout"
+      id="plugin-packs-heading"
+      title="插件组合（Plugin Pack）"
+      {...(packsQuery.isSuccess ? { count: packsQuery.data.length } : {})}
+    >
       {packsQuery.isPending ? <p className="mutation-hint">正在加载 Packs…</p> : null}
       {packsQuery.isError ? <ErrorBanner error={packsQuery.error} /> : null}
       {packsQuery.isSuccess && packsQuery.data.length === 0 ? (
         <p className="empty-state">还没有 Pack。创建后可在 Agent Revision 中选择。</p>
       ) : null}
       {packsQuery.isSuccess && packsQuery.data.length > 0 ? (
-        <ul className="plugin-list" role="list">
-          {packsQuery.data.map((pack) => (
-            <li key={pack.id}>
+        <ul className="plugin-list admin-plugin-grid" role="list">
+          {packsQuery.data.map((pack, index) => (
+            <EnterItem key={pack.id} index={index}>
               <PackCard pack={pack} />
-            </li>
+            </EnterItem>
           ))}
         </ul>
       ) : null}
@@ -108,7 +113,11 @@ export function PluginPackEditor({ session }: PluginPackEditorProps): ReactNode 
           <summary role="button" className="button">
             新建插件组合
           </summary>
-          <form className="card plugin-pack-form" onSubmit={submit} aria-label="新建 Plugin Pack">
+          <form
+            className="plugin-pack-form admin-pack-form"
+            onSubmit={submit}
+            aria-label="新建 Plugin Pack"
+          >
             {installationsQuery.isPending ? (
               <p className="mutation-hint">正在加载已安装插件…</p>
             ) : null}
@@ -185,7 +194,7 @@ export function PluginPackEditor({ session }: PluginPackEditorProps): ReactNode 
           </form>
         </details>
       ) : null}
-    </section>
+    </AdminPanel>
   )
 }
 
@@ -201,11 +210,12 @@ export function PluginPackEditor({ session }: PluginPackEditorProps): ReactNode 
  */
 function PackCard({ pack }: { pack: PluginPackView }): ReactNode {
   return (
-    <article className="plugin-card" aria-label={`Pack ${pack.name}`}>
-      <div className="plugin-card-head">
-        <span className="plugin-name">{pack.name}</span>
-        <span className="badge">{pack.entries.length} 个插件</span>
-      </div>
+    <IntegrationTile
+      label={`Pack ${pack.name}`}
+      name={pack.name}
+      version={`${pack.entries.length} 个插件`}
+      icon={<WorkspaceIcon name="插件" />}
+    >
       <HelpDisclosure label="组合信息">
         <dl className="revision-meta">
           <div>
@@ -256,7 +266,7 @@ function PackCard({ pack }: { pack: PluginPackView }): ReactNode {
       ) : (
         <p className="field-hint">空 Pack（无插件）。</p>
       )}
-    </article>
+    </IntegrationTile>
   )
 }
 

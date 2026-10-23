@@ -89,6 +89,12 @@ test.describe('#158 七处下拉的两档审计', () => {
       .getByRole('link', { name: '成员' })
       .click()
     await expect(owner.getByRole('heading', { name: '成员', exact: true })).toBeVisible()
+    if (
+      (await owner
+        .getByRole('button', { name: '邀请成员', exact: true })
+        .getAttribute('aria-expanded')) !== 'true'
+    )
+      await owner.getByRole('button', { name: '邀请成员', exact: true }).click()
     const inviteRole = owner.locator('#invite-role')
     await assertNotNativeSelect(inviteRole, owner.locator('.members-invite'), '角色')
     await assertMenuTriggerTokens(inviteRole)

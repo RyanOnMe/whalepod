@@ -191,6 +191,7 @@ describe('#158 反面钉：全树不许有原生 <select>（逐落页点）', ()
         createInviteHandler({ role: 'member' }).handler,
       ]),
     )
+    await showInvitation()
     const control = await screen.findByLabelText('角色')
     expect(control.tagName).toBe('BUTTON')
     expect(control).toHaveAttribute('aria-haspopup', 'menu')
@@ -378,6 +379,7 @@ describe('#158 契约面：键盘可达 + aria 语义', () => {
       ]),
     )
     // 真人路径：**全程 Tab 与键盘**走到触发器并完成选择，不用 element.focus() 抄近道。
+    await showInvitation(user, true)
     const trigger = (await screen.findByLabelText('角色')) as HTMLButtonElement
     document.body.focus()
     // 从 body 起按真实 taborder 逐格前进，直到落在触发器上（触发器的位置随页面结构变，
@@ -421,6 +423,7 @@ describe('#158 契约面：键盘可达 + aria 语义', () => {
         createInviteHandler({ role: 'member' }).handler,
       ]),
     )
+    await showInvitation()
     const trigger = (await screen.findByLabelText('角色')) as HTMLButtonElement
     trigger.focus()
     await user.keyboard(' ')
@@ -437,6 +440,7 @@ describe('#158 契约面：键盘可达 + aria 语义', () => {
         createInviteHandler({ role: 'member' }).handler,
       ]),
     )
+    await showInvitation()
     const trigger = (await screen.findByLabelText('角色')) as HTMLButtonElement
     trigger.focus()
     await user.keyboard('{Enter}')
@@ -457,6 +461,7 @@ describe('#158 契约面：键盘可达 + aria 语义', () => {
         createInviteHandler({ role: 'member' }).handler,
       ]),
     )
+    await showInvitation()
     const trigger = (await screen.findByLabelText('角色')) as HTMLButtonElement
     const list = await openSelect(user, '角色')
     await user.click(list.getByRole('menuitem', { name: '管理员（可管理插件与邀请）' }))
@@ -509,6 +514,7 @@ describe('#158 契约面：键盘可达 + aria 语义', () => {
         createInviteHandler({ role: 'member' }).handler,
       ]),
     )
+    await showInvitation()
     const trigger = await screen.findByLabelText('角色')
     expect(trigger).toHaveAttribute('type', 'button')
     await user.click(trigger)
@@ -788,3 +794,19 @@ describe('#158 视觉判据：触发器样式来自 L1 token', () => {
     }
   })
 })
+
+async function showInvitation(user = userEvent.setup(), keyboard = false) {
+  const trigger = await screen.findByRole('button', { name: '邀请成员' })
+  if (trigger.getAttribute('aria-expanded') === 'true') return
+  if (!keyboard) {
+    await user.click(trigger)
+    return
+  }
+  let hops = 0
+  while (document.activeElement !== trigger && hops < 40) {
+    await user.tab()
+    hops++
+  }
+  expect(document.activeElement).toBe(trigger)
+  await user.keyboard('{Enter}')
+}

@@ -87,6 +87,7 @@ describe('members-page', () => {
     // 下拉项用同一套角色名（徽标「成员」↔ 下拉「成员」）。
     // #158 起角色下拉是 vendored Menu：项是 `role=menuitem` 且**只在菜单打开时**在
     // DOM 里（原来读 `option` 的写法在迁移后恒为空集，等于假绿）。
+    await showMemberInvitation(user)
     const list = await openSelect(user, '角色')
     expect(list.getByRole('menuitem', { name: '成员' })).toBeVisible()
     expect(list.getByRole('menuitem', { name: /管理员/ })).toBeVisible()
@@ -112,6 +113,7 @@ describe('members-page', () => {
     const invite = createInviteHandler({ role: 'admin', expiresAt: '2026-08-28T10:00:00.000Z' })
     renderApp('/members', memberListHandlers([invite.handler]))
 
+    await showMemberInvitation(user)
     await selectOption(user, '角色', '管理员（可管理插件与邀请）')
     await user.click(screen.getByRole('button', { name: '生成邀请链接' }))
 
@@ -138,6 +140,7 @@ describe('members-page', () => {
     // 换行 + 缩进折叠成**一个空格**，渲染出来是「发给他 ——Token…」。这条在**真实渲染结果**
     // 上钉住它——只做源码扫描（copy-typography.spec.ts）证明不了"渲染出来是对的"。
     renderApp('/members', loggedInHandlers(ALICE, [teamMembersHandler([makeMember()])]))
+    await showMemberInvitation(userEvent.setup())
     const lead = await screen.findByText(/一次性链接，72 小时有效/)
     const text = lead.textContent ?? ''
     expect(text, '破折号前出现了空格（JSX 跨行折叠）').toContain('生成后请立即复制。')
@@ -150,6 +153,7 @@ describe('members-page', () => {
     const invite = createInviteHandler({ role: 'member' })
     renderApp('/members', memberListHandlers([invite.handler]))
 
+    await showMemberInvitation(user)
     await user.click(await screen.findByRole('button', { name: '生成邀请链接' }))
     await user.click(await screen.findByRole('button', { name: '复制成员邀请链接' }))
     expect(await screen.findByText('复制失败，请手动复制邀请链接')).toBeVisible()
@@ -178,6 +182,7 @@ describe('members-page', () => {
         },
       ]),
     )
+    await showMemberInvitation(user)
     await user.click(await screen.findByRole('button', { name: '生成邀请链接' }))
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'only owner or admin can create invites',
@@ -197,3 +202,8 @@ describe('members-page', () => {
     expect(screen.getByText(/只有所有者或管理员能邀请成员/)).toBeVisible()
   })
 })
+
+async function showMemberInvitation(user: ReturnType<typeof userEvent.setup>) {
+  const trigger = await screen.findByRole('button', { name: '邀请成员' })
+  if (trigger.getAttribute('aria-expanded') !== 'true') await user.click(trigger)
+}

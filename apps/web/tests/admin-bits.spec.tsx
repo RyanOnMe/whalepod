@@ -62,7 +62,7 @@ describe('P1-432 management page interactions', () => {
     const detail = await screen.findByRole('region', { name: 'Agent 详情 产品助理' })
     await user.click(within(detail).getByRole('button', { name: '关闭 Agent 详情' }))
     expect(screen.queryByRole('region', { name: 'Agent 详情 产品助理' })).toBeNull()
-    expect(trigger).toBeFocused()
+    expect(trigger).toHaveFocus()
     expect(view.fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0)
   })
 })
