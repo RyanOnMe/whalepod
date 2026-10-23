@@ -2,7 +2,7 @@ import { act, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { queryKeys } from '../src/app/query-client.js'
-import { showWorkspace, typeInstruction } from './workspace.js'
+import { chooseFileAction, showWorkspace, typeInstruction } from './workspace.js'
 import { renderApp } from './render.jsx'
 import { selectOption } from './select-menu.js'
 import {
@@ -205,7 +205,7 @@ function fixture(
 }
 async function review(user: ReturnType<typeof userEvent.setup>) {
   await showWorkspace('artifacts')
-  await user.click(await screen.findByRole('button', { name: '发起复核' }))
+  await chooseFileAction('发起复核', user)
 }
 describe('从交付物发起复核 (#326)', () => {
   it('保留草稿、明确选Agent、只发送所选材料；新发布不扩大选择', async () => {
@@ -310,7 +310,7 @@ describe('从交付物发起复核 (#326)', () => {
         artifacts: [f.artifact, f.late],
       })),
     )
-    await screen.findByText(f.late.title, { selector: '.artifact-title' })
+    await screen.findByText(f.late.title, { selector: '.artifact-heading strong' })
     expect(screen.getByTestId('run-input-manifest')).not.toHaveTextContent(f.late.title)
     expect(screen.getByTestId('run-input-manifest')).toHaveTextContent(
       f.artifact.sha256.slice(0, 12),
@@ -348,7 +348,7 @@ describe('根据意见修订与真人验收 (#327)', () => {
         ? ['发起复核', '根据意见修订']
         : ['根据意见修订', '发起复核']) {
         await showWorkspace('artifacts')
-        await user.click(screen.getByRole('button', { name }))
+        await chooseFileAction(name, user)
       }
       await act(async () => {
         release()
@@ -371,7 +371,7 @@ describe('根据意见修订与真人验收 (#327)', () => {
     const f = fixture({ revisionHistory: true })
     await typeInstruction('请保留这段修订要求', user)
     await showWorkspace('artifacts')
-    await user.click(screen.getByRole('button', { name: '根据意见修订' }))
+    await chooseFileAction('根据意见修订', user)
     expect(screen.getByLabelText('来源执行')).toHaveTextContent('选择要继续的会话')
     expect(screen.getByLabelText('指令')).toHaveValue('请保留这段修订要求')
     expect(screen.getByRole('button', { name: '继续会话' })).toBeDisabled()
@@ -391,7 +391,7 @@ describe('根据意见修订与真人验收 (#327)', () => {
     const user = userEvent.setup()
     const f = fixture({ revisionHistory: true })
     await showWorkspace('artifacts')
-    await user.click(await screen.findByRole('button', { name: '根据意见修订' }))
+    await chooseFileAction('根据意见修订', user)
     await selectOption(user, '执行方式', '开始新执行（不接旧会话）')
     expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
     await selectOption(user, '选择 Agent', 'Builder')
@@ -440,7 +440,7 @@ describe('根据意见修订与真人验收 (#327)', () => {
     const user = userEvent.setup()
     const f = fixture({ revisionHistory: true, fullAccess: true })
     await showWorkspace('artifacts')
-    await user.click(await screen.findByRole('button', { name: '根据意见修订' }))
+    await chooseFileAction('根据意见修订', user)
     await selectOption(user, '来源执行', '第 1 次运行')
     await user.click(screen.getByRole('button', { name: '继续会话' }))
     expect(await screen.findByRole('dialog')).toBeVisible()

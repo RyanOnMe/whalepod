@@ -1,0 +1,53 @@
+{
+  "format": 1,
+  "license": "LicenseRef-CollectUI-Restricted",
+  "licenseUrl": "https://bits.collectui.pro/license",
+  "distribution": "Compiled app-internal presentation; editable sources and source maps excluded",
+  "compiler": {
+    "name": "esbuild",
+    "version": "0.28.2",
+    "minify": true,
+    "sourceMap": false
+  },
+  "exports": [
+    "ApprovalFrame",
+    "FileCard",
+    "PromptFrame"
+  ],
+  "sources": [
+    {
+      "item": "prompt-input-2",
+      "url": "https://bits.collectui.pro/docs/app-ui/prompt-input/prompt-input-2",
+      "adaptation": "Presentation slots replace demo textarea/model/search/token-count state; utility CSS translated to application tokens.",
+      "capturedExcerptSha256": "4b779d774a1242080af486ddc8ef7aae244d5f9a9d50bf53da1d7b85b4d6ff7b"
+    },
+    {
+      "item": "agent-approval-1",
+      "url": "https://bits.collectui.pro/docs/app-ui/agent-approval/agent-approval-1",
+      "adaptation": "Header/body/footer structure retained; actual owner decisions, preview and expiry stay in the host and remain visible.",
+      "capturedExcerptSha256": "6c1590943d0f436159cd269abe1a129f92a1cadabd995d6d862bb09919a3f42e"
+    },
+    {
+      "item": "ai-chat-2",
+      "url": "https://bits.collectui.pro/docs/app-ui/ai-chat/ai-chat-2",
+      "adaptation": "File name, icon and trailing open action retained; real visibility and size replace demo metadata; no demo scroll/stream state.",
+      "capturedExcerptSha256": "e25fbcad75b1d785d02d5da4d85f9ec88850841f275969116b314fbefd622127"
+    }
+  ],
+  "privateInputSha256": {
+    "tsx": "2f6c14e78c85cba6e68147c47869a8a65e1591349134659a1401043b92ab7643",
+    "css": "63afd0cb17dda8028b4e242aec78abd9548874e2bb72db637c05adeb39242905"
+  },
+  "files": [
+    {
+      "name": "collectui.js",
+      "sha256": "aeec11fb05d6dfc08922546ef8da6e6df915423ae7cbd801b8ad002d90cf912b",
+      "bytes": 1674
+    },
+    {
+      "name": "collectui.css",
+      "sha256": "068c2f9cb04a1721b8b52e75be569d71a1c28990688cf8045bd86d2224101a0d",
+      "bytes": 4266
+    }
+  ]
+}

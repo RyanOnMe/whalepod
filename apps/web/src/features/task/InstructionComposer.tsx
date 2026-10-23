@@ -25,7 +25,7 @@ import { ConfirmDialog } from '../../shared/ConfirmDialog.js'
 import { isApiError } from '../../shared/api/errors.js'
 import type { InstructionView } from '../../shared/api/types.js'
 import { ComposerSettings, type SettingsDisclosure } from './ComposerSettings.js'
-import PromptBar from '../../vendor/react-bits-micro/PromptBar.js'
+import { PromptFrame as PromptBar } from '../../vendor/collectui/collectui.js'
 import { InstructionSendIcon, type SendFeedback } from './InstructionSendIcon.js'
 
 /** POST /tasks/:taskId/instructions 的响应：指令本体 + 它的命运。 */

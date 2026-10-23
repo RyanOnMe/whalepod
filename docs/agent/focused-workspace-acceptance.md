@@ -29,6 +29,7 @@ Q5 用仓库统一生产装配：一次性 PostgreSQL、包解析后的 Hub serv
 | web.layout | 1440/1024/736/390/320 的布局读数和焦点 | 无横向溢出；详情关闭还焦；任务约定入口可达 |
 | web.surfaces | 十类抽屉/页面的三档布局、确认与挂载状态 | 单一标题、无溢出、确认正文和操作不裁切、取消不改权限、草稿保留；详见 secondary-surfaces-acceptance |
 | runtime.bridge | Run completed 与 Runtime 释放 | 等待真实结束，不靠前端计时或动画推进状态 |
+| web.app-ui | #421 三类编译展示槽位、九档焦点/参数/菜单测量 | 详见 app-ui-polish-acceptance；workspace 判定器同时调用独立 App UI 判定，并检查新增截图 |
 
 ## 取证、归因与限制
 

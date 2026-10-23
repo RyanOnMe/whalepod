@@ -4,6 +4,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [app-ui-polish-acceptance.md](./app-ui-polish-acceptance.md) | #421：网页源码提取的输入栏、审批与文件展示槽位，混淆包/来源校验、文件动作菜单、九档布局与键盘独立判定 |
 | [task-agreement-acceptance.md](./task-agreement-acceptance.md) | #378（ADR-0017 §1-2）：任务约定版本化（草稿 CAS/责任人确认/历史）+ 全部 Run 创建入口统一绑定已确认版本（辅助 Run 按用途豁免）；边界如实列（Agent 提案工具未落地、编号并发压测未做） |
 | [handoff-draft-acceptance.md](./handoff-draft-acceptance.md) | #379（ADR-0017 §3-4）：收尾自动整理交接草稿（一次模型调用 ≤60s、失败不改变业务结果）+ owner 私有面（管理员 404）+ CAS 编辑 + 发布校验与不可变版本；边界如实列（整理质量靠真人核对、跨 Task 引用留批次③） |
 | [handoff-receipt-acceptance.md](./handoff-receipt-acceptance.md) | #380（ADR-0017 §5）：跨 Task 交付/接收确认（确认≠接受任务）+ 下游 Run 独立交接输入快照（逐件摘要、上游新版本不改历史 Run）+ adopt 新版本 + Node 下载授权最小扩展与摘要校验；边界如实列（会话读面复用守卫、差异不去重） |

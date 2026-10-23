@@ -1,13 +1,20 @@
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { strict as assert } from 'node:assert'
+import { verifyAppUiEvidence } from './lib/app-ui-evidence.js'
 
 const directory = process.argv[2]
 assert(directory, 'Usage: tsx scripts/verify-workspace-evidence.mts <evidence-directory>')
 const result = JSON.parse(await readFile(join(directory, 'facts.json'), 'utf8'))
 assert.equal(result.ok, true)
 assert.deepEqual(result.browserErrors, [])
-assert.equal(result.facts?.length, 6)
+assert.equal(result.facts?.length, 7)
+verifyAppUiEvidence(result)
+for (const width of [1440, 390, 320]) {
+  for (const kind of ['approval', 'files']) {
+    assert((await stat(join(directory, `app-ui-${kind}-${width}.png`))).size > 0)
+  }
+}
 const fact = (component: string) => {
   const rows = result.facts.filter((row: { component: string }) => row.component === component)
   assert.equal(rows.length, 1, `missing or repeated ${component}`)
@@ -142,4 +149,4 @@ for (const row of surfaces.confirmations) {
 }
 for (const name of ['agent-create', 'device-guide'])
   assert((await stat(join(directory, `surface-${name}.png`))).size > 0)
-console.log(JSON.stringify({ component: 'web.workspace.verify', ok: true, scenarios: 6 }))
+console.log(JSON.stringify({ component: 'web.workspace.verify', ok: true, scenarios: 7 }))

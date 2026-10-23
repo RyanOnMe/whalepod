@@ -17,6 +17,7 @@ import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { useHashFocus } from '../../shared/useHashFocus.js'
 import { queryKeys } from '../../app/query-client.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
+import { ApprovalFrame } from '../../vendor/collectui/collectui.js'
 import type { RunEventItem, Session, TaskView } from '../../shared/api/types.js'
 
 /** §3.3 已决终态的中文标签；pending 不进此表（单独呈现）。 */
@@ -122,51 +123,48 @@ export function ApprovalCards({
 
   return (
     <section className="snapshot-slot" aria-label="审批">
-      <h3>审批</h3>
+      <h3 className="visually-hidden">审批</h3>
       {error !== null ? <ErrorBanner error={error} /> : null}
       {canDecide
         ? pending.map((card) => (
-            <div
+            <ApprovalFrame
               key={card.approvalId}
               id={`approval-${card.approvalId}`}
-              tabIndex={-1}
-              className="approval-card"
-              data-testid="approval-card"
+              title={<span data-testid="approval-tool">{card.toolName}</span>}
+              meta={<RelativeTime iso={card.requestedAt} />}
+              footer={
+                <div className="approval-actions">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    data-testid="reject-button"
+                    disabled={decide.isPending}
+                    onClick={() => submitDecision(card, 'rejected')}
+                  >
+                    拒绝
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    data-testid="approve-button"
+                    disabled={decide.isPending}
+                    onClick={() => submitDecision(card, 'allowed_once')}
+                  >
+                    批准一次
+                  </button>
+                </div>
+              }
             >
-              <div className="approval-head">
-                <span data-testid="approval-tool">{card.toolName}</span>
-                <span>
-                  请求于 <RelativeTime iso={card.requestedAt} />
-                </span>
-              </div>
               {card.reason !== '' ? <p data-testid="approval-reason">{card.reason}</p> : null}
-              <pre data-testid="approval-preview">{JSON.stringify(card.preview)}</pre>
+              <pre tabIndex={0} data-testid="approval-preview">
+                {JSON.stringify(card.preview, null, 2)}
+              </pre>
               {card.expiresAt !== '' ? (
                 <p data-testid="approval-expires">
                   有效期至 <RelativeTime iso={card.expiresAt} />
                 </p>
               ) : null}
-              <div className="approval-actions">
-                <button
-                  type="button"
-                  className="button"
-                  data-testid="approve-button"
-                  disabled={decide.isPending}
-                  onClick={() => submitDecision(card, 'allowed_once')}
-                >
-                  批准一次
-                </button>
-                <button
-                  type="button"
-                  className="button secondary"
-                  data-testid="reject-button"
-                  disabled={decide.isPending}
-                  onClick={() => submitDecision(card, 'rejected')}
-                >
-                  拒绝
-                </button>
-              </div>
-            </div>
+            </ApprovalFrame>
           ))
         : pending.map((card) => (
             // project 受众（03 §8）：只有「等待责任人批准」，无参数正文。

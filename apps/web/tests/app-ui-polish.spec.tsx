@@ -1,5 +1,5 @@
 import { QueryClientProvider } from '@tanstack/react-query'
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ArtifactList } from '../src/features/task/ArtifactList.js'
@@ -82,5 +82,24 @@ describe('P1-421 文件操作层级', () => {
     expect(f.reference).not.toHaveBeenCalled()
     download.focus()
     expect(download).toHaveFocus()
+  })
+
+  it('延迟到达的初始聚焦帧不会把键盘用户从第二项拉回首项', async () => {
+    const user = userEvent.setup()
+    let pendingFrame: FrameRequestCallback | undefined
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      pendingFrame = callback
+      return 1
+    })
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    files()
+    await user.click(screen.getAllByRole('button', { name: '更多文件操作' })[0]!)
+    screen.getByRole('menuitem', { name: '发起复核' }).focus()
+    await user.keyboard('{ArrowDown}')
+    const second = screen.getByRole('menuitem', { name: '根据意见修订' })
+    expect(second).toHaveFocus()
+    expect(pendingFrame).toBeDefined()
+    act(() => pendingFrame!(0))
+    expect(second).toHaveFocus()
   })
 })

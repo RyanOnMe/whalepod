@@ -12,6 +12,7 @@ import {
 } from './fixtures.js'
 import { formatRunReference } from '../src/features/task/runReference.js'
 import { renderApp } from './render.js'
+import { chooseFileAction } from './workspace.js'
 
 const ROOM_RUN = 'abababab-0000-4000-8000-0000000000aa'
 
@@ -113,7 +114,7 @@ describe('聚焦工作区', () => {
     const artifact = makeArtifact({ title: 'team.md', runId: ROOM_RUN })
     const app = openRoom([artifact])
     await user.click(await screen.findByRole('button', { name: '查看交付物 team.md' }))
-    await user.click(screen.getByRole('button', { name: '在讨论中引用' }))
+    await chooseFileAction('在讨论中引用', user)
     expect(screen.getByRole('button', { name: '团队讨论' })).toHaveAttribute('aria-pressed', 'true')
     await waitFor(() =>
       expect(screen.getByLabelText('留言')).toHaveValue(formatRunReference(artifact.runId)),

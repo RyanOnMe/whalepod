@@ -37,6 +37,12 @@ export function workspaceDetails() {
   return within(screen.getByRole('region', { name: '工作区详情' }))
 }
 
+/** Open the file's explicit action menu before choosing a low-frequency action. */
+export async function chooseFileAction(name: string, user = userEvent.setup()) {
+  await user.click(await screen.findByRole('button', { name: '更多文件操作' }))
+  await user.click(await screen.findByRole('menuitem', { name }))
+}
+
 export async function showExecutionOptions(user = userEvent.setup()) {
   const summary = await screen.findByLabelText('执行设置')
   if (!summary.closest('details')?.open) await user.click(summary)

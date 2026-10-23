@@ -31,6 +31,7 @@
 
 | 现象 | 先看 |
 |---|---|
+| 输入栏焦点重叠、审批参数裁切、文件菜单溢出或 Esc 关掉外层面板 | `web.app-ui`：`artifacts/evidence/focused-workspace/<本次目录>/facts.json` 的 prompts/approvals/files 九组测量，独立复跑 `verify-app-ui-evidence` 与 `verify-workspace-evidence`；bundle 异常看 `vendor/collectui/manifest.json`，见 app-ui-polish-acceptance |
 | Agent 未收到约定/交接正文，或接收方无法阅读固定版本 | hub.run execution-context → node.run initialize → runtime.bridge 首条模型指令；页面看 HandoffPublishedContent，复跑 handoff-context-consumption-acceptance |
 | 下拉描边判据报错，或 hover/键盘焦点导致误判 | browser：`artifacts/evidence/select-menu/state-probes.json` 的 state/hovered/focusVisible/transitioning 与解析颜色；对应纯判定 `shared/select-trigger-tokens.ts`，复跑与负控见 [select-menu-acceptance](./select-menu-acceptance.md) #398 |
 | R8 崩溃前 run.start 已 ack，或不确定是否真正命中派发前窗口 | node.gateway + hub.outbox：`artifacts/evidence/r8-window/result.json` 的 held/faultId/liveSockets 与 before/after 派发事实；独立重判及负控见 [r8-window-acceptance](./r8-window-acceptance.md) |

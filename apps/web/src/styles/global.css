@@ -8,6 +8,7 @@
  * 与源码 import 顺序并不一致。两族变量互不引用、也无同名覆盖，所以这个差异对结果没有
  * 影响；写清实测顺序是为了避免后人把源码顺序当成依赖（真要依赖顺序就得靠 layer）。 */
 @import './dsw-tokens.css';
+@import '../vendor/collectui/collectui.css';
 
 * {
   box-sizing: border-box;
@@ -4581,4 +4582,31 @@ textarea::placeholder {
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+}
+
+/* P1-421: application-owned spacing around the compiled presentation slots. */
+.conversation-artifacts [data-collectui='ai-chat-2'] {
+  max-width: 360px;
+}
+.artifact-heading {
+  margin-bottom: 14px;
+}
+.workspace-inspector[data-artifact-focused] .artifact-heading strong {
+  display: none;
+}
+.artifact-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.artifact-more-menu {
+  margin-left: auto;
+  display: inline-flex;
+}
+.artifact-more {
+  gap: 6px;
+}
+.workspace-dock .prompt-bar[data-collectui] .instruction-send {
+  border-radius: 12px;
 }
