@@ -134,6 +134,7 @@ test('Run 状态/工具事实 × 两人实时视图 × 窄屏/主题/键盘/减�
     await owner.fill('#agent-persona', '你是验收代理。')
     await owner.fill('#agent-provider', 'replay')
     await owner.fill('#agent-model', 'replay-model')
+    await owner.locator('.agent-advanced > summary').click()
     await owner.fill('#agent-credential-slot', 'default')
     await selectFromMenu(owner.locator('#agent-plugin-pack'), 'e2e-pack')
     await owner.getByRole('button', { name: '创建 Agent' }).click()

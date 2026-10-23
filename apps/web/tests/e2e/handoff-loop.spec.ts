@@ -256,6 +256,7 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   await alice.fill('#agent-persona', '你是验收代理。')
   await alice.fill('#agent-provider', 'replay')
   await alice.fill('#agent-model', 'replay-model')
+  await alice.locator('.agent-advanced > summary').click()
   await alice.fill('#agent-credential-slot', 'default')
   await selectFromMenu(alice.locator('#agent-plugin-pack'), 'e2e-pack')
   // 完全权限（工具调用直接放行）：本用例判的是交接闭环，审批语义由 p1-19 / p1-345 覆盖；

@@ -12,7 +12,13 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'rea
 import type { CreateProjectRequest, CreateTaskRequest } from '@whalepod/protocol'
 import { useNavigate } from 'react-router'
 import { PageHeader } from '../shared/PageHeader.js'
-import { EmptyPanel } from '../vendor/collectui/collectui.js'
+import {
+  EmptyPanel,
+  ResourceCard,
+  TaskRow,
+  EnterItem,
+  ExpandPanel,
+} from '../vendor/collectui/collectui.js'
 import { WorkspaceIcon } from '../shared/WorkspaceIcon.js'
 import { api } from '../shared/api/client.js'
 import { assignmentDriveToast, parseAssignmentDrive } from '../shared/assignment-drive.js'
@@ -125,55 +131,107 @@ export function ProjectsPage(): ReactNode {
             }
             role="list"
           >
-            {listQuery.data.map((project) => (
-              <li key={project.id} id={`project-${project.id}`} className="card project-item">
-                <div className="project-title">
-                  <h2>{project.name}</h2>
-                  <span className="project-meta">
-                    创建于 <RelativeTime iso={project.createdAt} /> · 创建者{' '}
-                    {nameOf(project.createdBy)}
-                  </span>
-                </div>
-                {project.description !== '' ? (
-                  <p className="project-description">{project.description}</p>
-                ) : null}
-                <div className="project-actions">
-                  <button
-                    type="button"
-                    className="button button-quiet"
-                    aria-expanded={creatingFor === project.id}
-                    onClick={() => setCreatingFor(creatingFor === project.id ? null : project.id)}
-                  >
-                    {creatingFor === project.id ? '收起' : '创建任务'}
-                  </button>
-                  <button
-                    type="button"
-                    className="button button-quiet"
-                    aria-expanded={listOpenFor === project.id}
-                    onClick={() => setListOpenFor(listOpenFor === project.id ? null : project.id)}
-                  >
-                    {listOpenFor === project.id ? '收起任务列表' : '任务列表'}
-                  </button>
-                </div>
-                {listOpenFor === project.id ? (
-                  <ProjectTaskList
-                    projectId={project.id}
-                    onOpen={(id) => navigate(`/tasks/${id}`)}
-                  />
-                ) : null}
-                {creatingFor === project.id ? (
-                  <CreateTaskForm
-                    projectId={project.id}
-                    onCreated={(task) => navigate(`/tasks/${task.id}`)}
-                    onClose={() => setCreatingFor(null)}
-                  />
-                ) : null}
-              </li>
+            {listQuery.data.map((project, index) => (
+              <ProjectResourceCard
+                key={project.id}
+                project={project}
+                index={index}
+                creator={nameOf(project.createdBy)}
+                creating={creatingFor === project.id}
+                listing={listOpenFor === project.id}
+                onCreate={() => setCreatingFor(creatingFor === project.id ? null : project.id)}
+                onList={() => setListOpenFor(listOpenFor === project.id ? null : project.id)}
+                onClose={() => setCreatingFor(null)}
+                onOpen={(id) => navigate(`/tasks/${id}`)}
+              />
             ))}
           </ul>
         ) : null}
       </div>
     </div>
+  )
+}
+
+/** Separate presence per card keeps an interrupted collapse local to its project. */
+function ProjectResourceCard({
+  project,
+  index,
+  creator,
+  creating,
+  listing,
+  onCreate,
+  onList,
+  onClose,
+  onOpen,
+}: {
+  project: ProjectView
+  index: number
+  creator: string
+  creating: boolean
+  listing: boolean
+  onCreate: () => void
+  onList: () => void
+  onClose: () => void
+  onOpen: (id: string) => void
+}): ReactNode {
+  const list = usePresence(listing ? true : null, EXIT_PRESENCE_MS)
+  const form = usePresence(creating ? true : null, EXIT_PRESENCE_MS)
+  return (
+    <EnterItem id={`project-${project.id}`} index={index} className="project-item">
+      <ResourceCard
+        title={project.name}
+        description={project.description}
+        icon={<WorkspaceIcon name="项目" />}
+        meta={
+          <>
+            {creator} · <RelativeTime iso={project.createdAt} />
+          </>
+        }
+        actions={
+          <>
+            <button
+              type="button"
+              className="button button-quiet"
+              aria-expanded={creating}
+              aria-controls={`create-task-${project.id}`}
+              onClick={onCreate}
+            >
+              {creating ? '收起' : '创建任务'}
+            </button>
+            <button
+              type="button"
+              className="button button-quiet"
+              aria-expanded={listing}
+              aria-controls={`project-tasks-${project.id}`}
+              onClick={onList}
+            >
+              {listing ? '收起任务列表' : '任务列表'}
+            </button>
+          </>
+        }
+      >
+        <ExpandPanel
+          id={`project-tasks-${project.id}`}
+          label={`任务列表：${project.name}`}
+          open={listing}
+        >
+          {list.value === null ? null : <ProjectTaskList projectId={project.id} onOpen={onOpen} />}
+        </ExpandPanel>
+        <ExpandPanel
+          id={`create-task-${project.id}`}
+          label={`创建任务：${project.name}`}
+          open={creating}
+        >
+          {form.value === null ? null : (
+            <CreateTaskForm
+              projectId={project.id}
+              onCreated={(task) => onOpen(task.id)}
+              onClose={onClose}
+            />
+          )}
+        </ExpandPanel>
+      </ResourceCard>
+    </EnterItem>
   )
 }
 
@@ -208,16 +266,19 @@ function ProjectTaskList({
   if (tasks.length === 0) return <p className="empty-state">这个项目还没有任务。</p>
   return (
     <ul className="task-list" role="list" aria-label="项目任务列表">
-      {tasks.map((task) => (
-        <li key={task.id} className="task-list-item">
-          <button type="button" className="task-link" onClick={() => onOpen(task.id)}>
-            {task.title}
-          </button>
-          <span className="task-meta">
-            {TASK_STATUS_LABEL[task.status]} · 责任人 {nameOf(task.assigneeUserId)} · 更新于{' '}
-            <RelativeTime iso={task.updatedAt} />
-          </span>
-        </li>
+      {tasks.map((task, index) => (
+        <EnterItem key={task.id} index={index}>
+          <TaskRow
+            title={task.title}
+            status={TASK_STATUS_LABEL[task.status]}
+            meta={
+              <>
+                责任人 {nameOf(task.assigneeUserId)} · <RelativeTime iso={task.updatedAt} />
+              </>
+            }
+            onOpen={() => onOpen(task.id)}
+          />
+        </EnterItem>
       ))}
     </ul>
   )

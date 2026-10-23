@@ -159,7 +159,7 @@ describe('#137 项目任务列表', () => {
 
     const list = await screen.findByRole('list', { name: '项目任务列表' })
     expect(list).toBeVisible()
-    const items = screen.getAllByRole('listitem').filter((li) => li.className === 'task-list-item')
+    const items = within(list).getAllByRole('listitem')
     expect(items).toHaveLength(2)
     // 服务端顺序原样呈现（第二条是最近更新的那条）
     expect(items[0]?.textContent).toContain('补 API 使用示例')

@@ -1,3 +1,4 @@
+import { DiscussionMessage, DiscussionComposer } from '../../vendor/collectui/collectui.js'
 /**
  * 中间区域：Comment 时间线 + 留言输入（02 Task 7 Step 4）。
  * 提交后精确失效 task-room 查询；失败时保留输入内容并显示 requestId。
@@ -43,31 +44,30 @@ export function CommentList({
         const isMine = session !== null && comment.authorUserId === session.userId
         return (
           <li key={comment.id} className="comment-item">
-            <div className="comment-meta">
-              <strong data-testid="comment-author">
-                {isMine ? '你' : directory.personOf(comment.authorUserId)}
-              </strong>
-              <RelativeTime iso={comment.createdAt} />
-            </div>
-            <p className="comment-body">
-              {parseRunReferences(comment.body, runs).map((segment, index) =>
-                segment.runId === null ? (
-                  <span key={index}>{segment.text}</span>
-                ) : (
-                  <button
-                    key={index}
-                    type="button"
-                    className="ref-chip"
-                    data-testid="comment-run-ref"
-                    data-run-id={segment.runId}
-                    title="打开这次运行的 Console"
-                    onClick={() => onOpenRun?.(segment.runId as string)}
-                  >
-                    {segment.text}
-                  </button>
-                ),
-              )}
-            </p>
+            <DiscussionMessage
+              author={isMine ? '你' : directory.personOf(comment.authorUserId)}
+              time={<RelativeTime iso={comment.createdAt} />}
+            >
+              <p className="comment-body">
+                {parseRunReferences(comment.body, runs).map((segment, index) =>
+                  segment.runId === null ? (
+                    <span key={index}>{segment.text}</span>
+                  ) : (
+                    <button
+                      key={index}
+                      type="button"
+                      className="ref-chip"
+                      data-testid="comment-run-ref"
+                      data-run-id={segment.runId}
+                      title="打开这次运行的 Console"
+                      onClick={() => onOpenRun?.(segment.runId as string)}
+                    >
+                      {segment.text}
+                    </button>
+                  ),
+                )}
+              </p>
+            </DiscussionMessage>
           </li>
         )
       })}
@@ -135,52 +135,63 @@ export function CommentComposer({
 
   return (
     <form className="comment-composer" onSubmit={submit}>
-      <label htmlFor={`comment-body-${taskId}`}>留言</label>
-      <textarea
-        id={`comment-body-${taskId}`}
-        name="body"
-        rows={3}
-        maxLength={10_000}
-        value={body}
-        ref={textareaRef}
-        onChange={(event) => setBody(event.target.value)}
-        onKeyDown={(event) => {
-          // #229：Cmd/Ctrl+Enter 直发（与提交按钮同一条 form 路径）；纯 Enter 仍是换行。
-          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-            event.preventDefault()
-            event.currentTarget.form?.requestSubmit()
-          }
-        }}
-      />
-      <div className="composer-actions">
-        <button type="submit" className="button button-primary" disabled={mutation.isPending}>
-          {mutation.isPending ? '发送中…' : '发送留言'}
-        </button>
-        {/* ⑥f：引用某次运行。插入的是**可读 token**（「运行 R-ab12cd34」），与手打同一套语法——
+      <DiscussionComposer
+        action={
+          <button
+            type="submit"
+            className="button button-primary"
+            disabled={mutation.isPending || body.trim() === ''}
+          >
+            {mutation.isPending ? '发送中…' : '发送留言'}
+          </button>
+        }
+        controls={
+          <>
+            {/* ⑥f：引用某次运行。插入的是**可读 token**（「运行 R-ab12cd34」），与手打同一套语法——
             不做"只有点按钮才会被识别"的隐藏规则。没有运行时如实禁用，而不是给一个空菜单。 */}
-        {runs.length === 0 ? null : (
-          <SelectMenu
-            id={`comment-run-ref-${taskId}`}
-            label="引用运行"
-            value=""
-            placeholder="引用运行…"
-            options={runs.map((run) => ({
-              value: run.id,
-              label: runLabels.get(run.id) ?? '运行',
-              disabled: false,
-            }))}
-            onChange={(runId: string) => {
-              if (runId === '') return
-              setBody((current) =>
-                current === ''
-                  ? formatRunReference(runId)
-                  : `${current} ${formatRunReference(runId)}`,
-              )
-            }}
-          />
-        )}
-        {body.trim() !== '' ? null : <span className="mutation-hint">先输入留言内容</span>}
-      </div>
+            {runs.length === 0 ? null : (
+              <SelectMenu
+                id={`comment-run-ref-${taskId}`}
+                label="引用运行"
+                value=""
+                placeholder="引用运行…"
+                options={runs.map((run) => ({
+                  value: run.id,
+                  label: runLabels.get(run.id) ?? '运行',
+                  disabled: false,
+                }))}
+                onChange={(runId: string) => {
+                  if (runId === '') return
+                  setBody((current) =>
+                    current === ''
+                      ? formatRunReference(runId)
+                      : `${current} ${formatRunReference(runId)}`,
+                  )
+                }}
+              />
+            )}
+          </>
+        }
+      >
+        <label htmlFor={`comment-body-${taskId}`}>留言</label>
+        <textarea
+          id={`comment-body-${taskId}`}
+          name="body"
+          placeholder="留言…"
+          rows={3}
+          maxLength={10_000}
+          value={body}
+          ref={textareaRef}
+          onChange={(event) => setBody(event.target.value)}
+          onKeyDown={(event) => {
+            // #229：Cmd/Ctrl+Enter 直发（与提交按钮同一条 form 路径）；纯 Enter 仍是换行。
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault()
+              event.currentTarget.form?.requestSubmit()
+            }
+          }}
+        />
+      </DiscussionComposer>
       {error !== null ? <ErrorBanner error={error} /> : null}
     </form>
   )

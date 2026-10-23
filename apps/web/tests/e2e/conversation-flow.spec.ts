@@ -236,6 +236,7 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
   await alice.fill('#agent-persona', '你是验收代理。')
   await alice.fill('#agent-provider', 'replay')
   await alice.fill('#agent-model', 'replay-model')
+  await alice.locator('.agent-advanced > summary').click()
   await alice.fill('#agent-credential-slot', 'default')
   await selectFromMenu(alice.locator('#agent-plugin-pack'), 'e2e-pack')
   await alice.getByRole('button', { name: '创建 Agent' }).click()

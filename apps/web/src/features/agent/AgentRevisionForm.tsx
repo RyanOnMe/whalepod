@@ -1,3 +1,4 @@
+import { SettingsSection } from '../../vendor/collectui/collectui.js'
 /**
  * 新建 Agent 表单（02 Task 7 Step 5）：姓名字段 + 首个 Profile Revision
  * （persona/provider/model/credentialSlot/maxTokens/pluginPackId）。
@@ -98,114 +99,129 @@ export function AgentRevisionForm({
     }
 
   return (
-    <form className="card agent-form" onSubmit={submit} aria-label="新建 Agent">
+    <form
+      className="card agent-form"
+      onSubmit={submit}
+      onInvalidCapture={(event) => {
+        // Native validation must be able to focus a required advanced field.
+        const details = (event.target as HTMLElement).closest('details')
+        if (details !== null) details.open = true
+      }}
+      aria-label="新建 Agent"
+    >
       {embedded ? null : <h3>新建 Agent</h3>}
-      <div className="field">
-        <label htmlFor="agent-name">名称</label>
-        <input
-          id="agent-name"
-          value={values.name}
-          onChange={(event) => set('name')(event.target.value)}
-          required
-          maxLength={80}
-        />
-      </div>
-      <div className="field">
-        <label htmlFor="agent-description">描述（可选）</label>
-        <input
-          id="agent-description"
-          value={values.description}
-          onChange={(event) => set('description')(event.target.value)}
-          maxLength={500}
-        />
-      </div>
-      <div className="field">
-        <label htmlFor="agent-persona">{PERSONA_LABEL}</label>
-        <textarea
-          id="agent-persona"
-          rows={4}
-          value={values.persona}
-          onChange={(event) => set('persona')(event.target.value)}
-          required
-          maxLength={20_000}
-        />
-        <p className="field-hint">
-          这个 Agent 的角色设定（system prompt 形态）：它是什么角色、按什么规矩干活。
-        </p>
-      </div>
-      <div className="field-row">
+      <SettingsSection title="基本信息">
         <div className="field">
-          <label htmlFor="agent-provider">模型服务商（Provider）</label>
+          <label htmlFor="agent-name">名称</label>
           <input
-            id="agent-provider"
-            value={values.provider}
-            onChange={(event) => set('provider')(event.target.value)}
-            required
-            maxLength={100}
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="agent-model">模型（Model）</label>
-          <input
-            id="agent-model"
-            value={values.model}
-            onChange={(event) => set('model')(event.target.value)}
-            required
-            maxLength={200}
-          />
-        </div>
-      </div>
-      <div className="field-row">
-        <div className="field">
-          <label htmlFor="agent-credential-slot">{CREDENTIAL_SLOT_LABEL}</label>
-          <input
-            id="agent-credential-slot"
-            value={values.credentialSlot}
-            onChange={(event) => set('credentialSlot')(event.target.value)}
+            id="agent-name"
+            value={values.name}
+            onChange={(event) => set('name')(event.target.value)}
             required
             maxLength={80}
           />
-          <p className="field-hint">{CREDENTIAL_SLOT_HINT}</p>
         </div>
         <div className="field">
-          <label htmlFor="agent-max-tokens">单次最多生成 Token 数（Max Tokens，可选）</label>
+          <label htmlFor="agent-description">描述（可选）</label>
           <input
-            id="agent-max-tokens"
-            type="number"
-            min={1}
-            value={values.maxTokens}
-            onChange={(event) => set('maxTokens')(event.target.value)}
+            id="agent-description"
+            value={values.description}
+            onChange={(event) => set('description')(event.target.value)}
+            maxLength={500}
           />
-          <p className="field-hint">留空表示不限制（走模型默认上限）。</p>
         </div>
-      </div>
-      <div className="field">
-        {/* #167 × #158：可见标签与可访问名由 PackSelect → SelectMenu 渲染
+      </SettingsSection>
+      <SettingsSection title="角色">
+        <div className="field">
+          <label htmlFor="agent-persona">{PERSONA_LABEL}</label>
+          <textarea
+            id="agent-persona"
+            rows={4}
+            value={values.persona}
+            onChange={(event) => set('persona')(event.target.value)}
+            required
+            maxLength={20_000}
+          />
+          <p className="field-hint">定义角色、目标与工作规则。</p>
+        </div>
+      </SettingsSection>
+      <SettingsSection title="模型">
+        <div className="field-row">
+          <div className="field">
+            <label htmlFor="agent-provider">模型服务商（Provider）</label>
+            <input
+              id="agent-provider"
+              value={values.provider}
+              onChange={(event) => set('provider')(event.target.value)}
+              required
+              maxLength={100}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="agent-model">模型（Model）</label>
+            <input
+              id="agent-model"
+              value={values.model}
+              onChange={(event) => set('model')(event.target.value)}
+              required
+              maxLength={200}
+            />
+          </div>
+        </div>
+      </SettingsSection>
+      <SettingsSection title="工具与权限">
+        <div className="field">
+          {/* #167 × #158：可见标签与可访问名由 PackSelect → SelectMenu 渲染
             （`<label htmlFor={id}>` 指向触发器按钮），这里不重复一个 <label>；
             中文优先的文案「插件组合（Plugin Pack）」写在 PackSelect 的 label 上传下去。 */}
-        <PackSelect
-          id="agent-plugin-pack"
-          value={values.pluginPackId}
-          onChange={set('pluginPackId')}
-        />
-        <p className="field-hint">
-          选择 Agent 首个 Revision 使用的 Plugin Pack（列表来自插件管理）。
-        </p>
-      </div>
-      <div className="field">
-        <SelectMenu
-          id="agent-approval-policy"
-          label="审批档位（Approval Policy）"
-          ariaLabel="选择审批档位"
-          value={values.approvalPolicy}
-          options={APPROVAL_POLICY_OPTIONS}
-          onChange={(next) => set('approvalPolicy')(next as ApprovalPolicy)}
-        />
-        <p className="field-hint">
-          这是 Revision 的默认档；Task 可以覆盖。完全权限 = 用这个 Revision 的 Run
-          不再逐次请求批准，工具直接执行——放权前先确认 persona 与插件组合可信。
-        </p>
-      </div>
+          <PackSelect
+            id="agent-plugin-pack"
+            value={values.pluginPackId}
+            onChange={set('pluginPackId')}
+          />
+          <p className="field-hint">决定 Agent 可用的工具。</p>
+        </div>
+        <div className="field">
+          <SelectMenu
+            id="agent-approval-policy"
+            label="审批档位（Approval Policy）"
+            ariaLabel="选择审批档位"
+            value={values.approvalPolicy}
+            options={APPROVAL_POLICY_OPTIONS}
+            onChange={(next) => set('approvalPolicy')(next as ApprovalPolicy)}
+          />
+          <p className="field-hint">
+            完全权限会直接执行工具，不再逐次请求批准。Task 可覆盖此默认档位。
+          </p>
+        </div>
+      </SettingsSection>
+      <details className="agent-advanced">
+        <summary>高级选项</summary>
+        <div className="field-row">
+          <div className="field">
+            <label htmlFor="agent-credential-slot">{CREDENTIAL_SLOT_LABEL}</label>
+            <input
+              id="agent-credential-slot"
+              value={values.credentialSlot}
+              onChange={(event) => set('credentialSlot')(event.target.value)}
+              required
+              maxLength={80}
+            />
+            <p className="field-hint">{CREDENTIAL_SLOT_HINT}</p>
+          </div>
+          <div className="field">
+            <label htmlFor="agent-max-tokens">单次最多生成 Token 数（Max Tokens，可选）</label>
+            <input
+              id="agent-max-tokens"
+              type="number"
+              min={1}
+              value={values.maxTokens}
+              onChange={(event) => set('maxTokens')(event.target.value)}
+            />
+            <p className="field-hint">留空表示不限制（走模型默认上限）。</p>
+          </div>
+        </div>
+      </details>
       <div className="form-actions">
         <button
           type="submit"

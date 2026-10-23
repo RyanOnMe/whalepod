@@ -96,6 +96,7 @@ async function createAgentViaUi(page: Page, name: string): Promise<void> {
   await page.fill('#agent-persona', '你是 E2E 验收代理。')
   await page.fill('#agent-provider', 'replay')
   await page.fill('#agent-model', 'replay-model')
+  await page.locator('.agent-advanced > summary').click()
   await page.fill('#agent-credential-slot', 'default')
   const packTrigger = page.locator('#agent-plugin-pack')
   await assertNotNativeSelect(packTrigger, page.locator('form'), '插件组合（Plugin Pack）')

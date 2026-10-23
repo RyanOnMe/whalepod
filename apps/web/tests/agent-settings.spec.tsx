@@ -126,6 +126,7 @@ describe('agent-settings', () => {
     await user.type(screen.getByLabelText('模型服务商（Provider）'), 'deepseek')
     await user.clear(screen.getByLabelText('模型（Model）'))
     await user.type(screen.getByLabelText('模型（Model）'), 'deepseek-chat')
+    await user.click(screen.getByText('高级选项', { selector: 'summary' }))
     await user.clear(screen.getByLabelText('凭据槽（Credential Slot）'))
     await user.type(screen.getByLabelText('凭据槽（Credential Slot）'), 'default')
     // #167：Credential Slot 是内部概念，除标签外必须有一句「填什么」的解释。
@@ -292,6 +293,7 @@ describe('agent-settings', () => {
     const packTrigger = within(detail).getByLabelText('插件组合（Plugin Pack）')
     expect(packTrigger).toHaveTextContent('core-empty') // 预选当前 Revision 用的 Pack
     await selectOption(user, '插件组合（Plugin Pack）', 'review-pack', within(detail))
+    await user.click(within(detail).getByText('高级选项', { selector: 'summary' }))
     // Max Tokens 清空 → 可选字段不出现在载荷
     await user.clear(within(detail).getByLabelText('单次最多生成 Token 数（Max Tokens，可选）'))
     await user.click(within(detail).getByRole('button', { name: '创建 Revision' }))

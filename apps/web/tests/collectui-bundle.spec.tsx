@@ -43,20 +43,29 @@ describe('P1-421 restricted presentation distribution', () => {
     }
   })
 
-  it('records all nine upstream items without serializing raw excerpts or demo/network behavior', () => {
-    expect(manifest.sources.map((source) => source.item).sort()).toEqual([
-      'agent-activity-3',
-      'agent-approval-1',
-      'ai-chat-2',
-      'app-dialog-6',
-      'app-sidebar-4',
-      'command-menu-1',
-      'empty-state-1',
-      'prompt-input-2',
-      'tool-calls-2',
-    ])
+  it('records all sixteen upstream items without serializing raw excerpts or demo/network behavior', () => {
+    expect(manifest.sources.map((source) => source.item).sort()).toEqual(
+      [
+        'agent-activity-3',
+        'agent-approval-1',
+        'ai-chat-2',
+        'app-dialog-6',
+        'app-sidebar-4',
+        'command-menu-1',
+        'empty-state-1',
+        'prompt-input-2',
+        'tool-calls-2',
+        'card-1',
+        'list-7',
+        'comments-1',
+        'settings-form-1',
+        'notifications-4',
+        'animated-list',
+        'modal-cards',
+      ].sort(),
+    )
     for (const source of manifest.sources) {
-      expect(source.url).toMatch(/^https:\/\/bits\.collectui\.pro\/docs\/app-ui\//)
+      expect(source.url).toMatch(/^https:\/\/bits\.collectui\.pro\/docs\/(?:app-ui|components)\//)
       expect(source.capturedExcerptSha256).toMatch(/^[a-f0-9]{64}$/)
       expect(source).not.toHaveProperty('excerpt')
     }

@@ -18,7 +18,16 @@
     "PromptFrame",
     "SheetHeading",
     "SidebarProfile",
-    "ToolCallFrame"
+    "ToolCallFrame",
+    "ResourceCard",
+    "TaskRow",
+    "DiscussionMessage",
+    "DiscussionComposer",
+    "SettingsSection",
+    "InboxFrame",
+    "InboxRow",
+    "EnterItem",
+    "ExpandPanel"
   ],
   "sources": [
     {
@@ -74,22 +83,64 @@
       "url": "https://bits.collectui.pro/docs/app-ui/tool-calls/tool-calls-2",
       "adaptation": "Tool glyph/name/status row; no target arguments, fake duration, sample calls, timers or retry. Host preserves call/result correlation and audience filtering.",
       "capturedExcerptSha256": "0b028a20b4ac69738eefd24e60b443b6da00e357ed57d002ac0ad4f03c77e3e3"
+    },
+    {
+      "item": "card-1",
+      "url": "https://bits.collectui.pro/docs/app-ui/card/card-1",
+      "adaptation": "Avatar/title/meta/body/action hierarchy translated to project identity and real controls; demo stats/connect state removed.",
+      "capturedExcerptSha256": "efc9bff930ffb5c05302993ffd28efe342d7185f80b3f09907b69a4eb055173f"
+    },
+    {
+      "item": "list-7",
+      "url": "https://bits.collectui.pro/docs/app-ui/list/list-7",
+      "adaptation": "Compact identity/content/status row becomes a real task link; supplier filters and sample spend removed.",
+      "capturedExcerptSha256": "6537404a7730039a19b2d42eb7f0f16dc15a61f145827f312398f35368ba6563"
+    },
+    {
+      "item": "comments-1",
+      "url": "https://bits.collectui.pro/docs/app-ui/comments/comments-1",
+      "adaptation": "Avatar/author/time/body and inset composer retained; real comment state/run references stay in host; fake reactions and thread mutations removed.",
+      "capturedExcerptSha256": "f4adb662fdf31162c29d06f7c9007d06a130332d2c00f016ff19c08cd5fd33db"
+    },
+    {
+      "item": "settings-form-1",
+      "url": "https://bits.collectui.pro/docs/app-ui/settings-form/settings-form-1",
+      "adaptation": "Grouped settings surface and labeled field hierarchy; native fieldsets and advanced disclosure replace demo preferences, saved-time and sticky save simulation.",
+      "capturedExcerptSha256": "83449cb8e008baa4f4ee67a811674bca51f517e3cc3f40248006b2c902f214e7"
+    },
+    {
+      "item": "notifications-4",
+      "url": "https://bits.collectui.pro/docs/app-ui/notifications/notifications-4",
+      "adaptation": "Compact inbox header, icon/content/meta rows; only actionable server projection, real deep links and client category filters; no fake unread/archive/snooze.",
+      "capturedExcerptSha256": "1236e002a12b5f220e35c498d655689db7038f09dd369215596051150b420fc8"
+    },
+    {
+      "item": "animated-list",
+      "url": "https://bits.collectui.pro/docs/components/animated-list",
+      "adaptation": "Stable keyed semantic list item entry translated to CSS opacity/6px slide and capped stagger; demo timers, auto-add, reorder and Motion removed; keyboard/reduced motion immediate.",
+      "capturedExcerptSha256": "55d1a193799c37ee6074725ce74dbd7b9d538b86656c8a09b1b87978a245c52a"
+    },
+    {
+      "item": "modal-cards",
+      "url": "https://bits.collectui.pro/docs/components/modal-cards",
+      "adaptation": "Fade/slide expansion variant adapted to interruptible inline grid disclosure; fullscreen image portal and scroll lock removed; host owns visibility/presence; hidden content inert.",
+      "capturedExcerptSha256": "74a9830f0f87eaa3a770fa0f9e20c958f501811c1a9d859d87c696ebe00cd599"
     }
   ],
   "privateInputSha256": {
-    "tsx": "a9fe5decdeac6c5c61e603c517d73257097c38f126db9045bda43a2354089850",
-    "css": "dc7991daf62bf5de089e75f47a50791a8c81ae5ef79db791e7c8cd5047209776"
+    "tsx": "403b6fbe0278f084fe890c12892edd749b2d02ff816e8d08bb9516d609f16a6d",
+    "css": "ccce502a44c04e516d71d473b7fe3a19c6788315f689b0aae828661e3519670e"
   },
   "files": [
     {
       "name": "collectui.js",
-      "sha256": "4f857ceaae071ef15faa27541f38212102c7246578746219b9f67827d1f7ac9f",
-      "bytes": 4209
+      "sha256": "c4c66eb20309614b8406a61ed5e4ceb967a0da972e2bc2b26cfdf45cfaa0a31b",
+      "bytes": 7537
     },
     {
       "name": "collectui.css",
-      "sha256": "4aabf291139b5ac8007fbab299f24ecee8f423476e3b339b4ac8b8e1e2f1c1b9",
-      "bytes": 10761
+      "sha256": "41240d5dbfcf84a6f53658edef4d9bd70a0bf9fa004180953776a6f6b6666dc5",
+      "bytes": 16755
     }
   ]
 }

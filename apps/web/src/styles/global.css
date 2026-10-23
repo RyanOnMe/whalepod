@@ -4638,3 +4638,81 @@ textarea::placeholder {
     display: none;
   }
 }
+
+/* P1-425: page components share the workbench's quiet hierarchy. */
+.project-item {
+  min-width: 0;
+}
+.project-item .task-list {
+  gap: 0;
+  margin: 0;
+}
+.project-item .inline-form {
+  box-shadow: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.agent-form .cu-page-settings .field-row,
+.agent-revision-form .cu-page-settings .field-row {
+  margin: 0;
+}
+.agent-advanced {
+  border-top: 1px solid var(--color-line);
+  padding: 14px 0;
+  margin-bottom: 8px;
+}
+.agent-advanced > summary {
+  cursor: pointer;
+  color: var(--color-ink-soft);
+  font-size: 13px;
+  padding: 4px 0;
+}
+.agent-advanced[open] > summary {
+  margin-bottom: 14px;
+}
+.agent-form > .form-actions,
+.agent-revision-form > .form-actions {
+  border-top: 1px solid var(--color-line);
+  padding-top: 16px;
+  justify-content: flex-end;
+}
+.page-inbox {
+  border-bottom: 1px solid var(--color-line);
+  padding: 0 0 18px;
+  margin-bottom: 24px;
+}
+.page-inbox .attention-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 24rem;
+  overflow-y: auto;
+}
+.page-inbox .attention-list > li {
+  display: block;
+  margin: 0;
+}
+.page-inbox > .help-disclosure {
+  margin-top: 8px;
+}
+.attention-filters {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.attention-filters > button {
+  border: 0;
+  background: transparent;
+  color: var(--color-muted);
+  padding: 6px 10px;
+  min-height: 32px;
+  border-radius: 7px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.attention-filters > button[aria-pressed='true'] {
+  background: var(--color-surface-sunken);
+  color: var(--color-ink);
+  font-weight: 500;
+}

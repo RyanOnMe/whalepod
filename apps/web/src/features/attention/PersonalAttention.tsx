@@ -1,7 +1,8 @@
+import { InboxFrame, InboxRow, EnterItem } from '../../vendor/collectui/collectui.js'
 import { useQuery } from '@tanstack/react-query'
 import { AttentionViewSchema, type AttentionItem } from '@whalepod/protocol'
 import { Link } from 'react-router'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { HelpDisclosure } from '../../shared/HelpDisclosure.js'
 import { api } from '../../shared/api/client.js'
 import { useSession } from '../../app/session.js'
@@ -26,8 +27,16 @@ function destination(item: AttentionItem): string {
           : 'task-assignment'
   return `/tasks/${item.taskId}#${anchor}`
 }
+function category(kind: AttentionItem['kind']): 'approval' | 'delivery' | 'assignment' {
+  return kind === 'decide_approval'
+    ? 'approval'
+    : kind === 'inspect_candidate' || kind === 'complete_task'
+      ? 'delivery'
+      : 'assignment'
+}
 /** A small existing-homepage experiment; only the server's actionable identities. */
 export function PersonalAttention(): ReactNode {
+  const [filter, setFilter] = useState<'all' | 'approval' | 'delivery' | 'assignment'>('all')
   const session = useSession()
   const query = useQuery({
     queryKey: queryKeys.attention(session?.userId ?? ''),
@@ -41,57 +50,98 @@ export function PersonalAttention(): ReactNode {
     refetchOnWindowFocus: true,
   })
   if (session === null) return null
+  const ready =
+    !query.isPending && !(query.isFetching && !query.isFetchedAfterMount) && !query.isError
+  const items = ready ? query.data.items : []
+  const rows = items.filter((item) => filter === 'all' || category(item.kind) === filter)
   return (
     <section
-      className="card personal-attention"
+      className="personal-attention page-inbox"
       aria-labelledby="attention-heading"
       aria-busy={query.isFetching}
     >
-      <div className="attention-head">
-        <h2 id="attention-heading">需要我处理</h2>
-        <button
-          type="button"
-          className="button button-quiet"
-          disabled={query.isPending}
-          onClick={() => void query.refetch()}
-        >
-          刷新待办
-        </button>
-      </div>
-      <HelpDisclosure label="待办说明">
-        <p>接受、审批、改派、候选检查与验收事项会出现在这里。请进入任务处理。</p>
-      </HelpDisclosure>
-      {query.isPending || (query.isFetching && !query.isFetchedAfterMount) ? (
-        <p role="status">正在确认需处理事项…</p>
-      ) : query.isError ? (
-        <>
-          <ErrorBanner error={query.error} />
-          <button type="button" className="button" onClick={() => void query.refetch()}>
-            重新读取待办
+      <InboxFrame
+        title={<h2 id="attention-heading">需要我处理</h2>}
+        {...(ready ? { count: `${items.length}${query.data.hasMore ? '+' : ''}` } : {})}
+        actions={
+          <button
+            type="button"
+            className="button button-quiet"
+            disabled={query.isFetching}
+            onClick={() => void query.refetch()}
+          >
+            刷新待办
           </button>
-        </>
-      ) : (
-        <>
-          {query.isFetching ? <p className="mutation-hint">正在更新待办…</p> : null}
-          {query.data.items.length === 0 ? (
-            <p>暂无待办。</p>
-          ) : (
-            <ul className="attention-list">
-              {query.data.items.map((item) => (
-                <li key={`${item.kind}:${item.objectId}`}>
-                  <Link to={destination(item)}>
-                    {LABELS[item.kind]} · {item.taskTitle}
-                  </Link>
-                  <span className="mutation-hint">{item.projectName}</span>
-                </li>
+        }
+        filters={
+          items.length === 0 ? undefined : (
+            <div className="attention-filters" role="group" aria-label="待办筛选">
+              {(
+                [
+                  ['all', '全部'],
+                  ['approval', '审批'],
+                  ['delivery', '交付'],
+                  ['assignment', '指派'],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  type="button"
+                  key={value}
+                  aria-pressed={filter === value}
+                  onClick={() => setFilter(value)}
+                >
+                  {label}
+                </button>
               ))}
-            </ul>
-          )}
-          {query.data.hasMore ? (
-            <p className="mutation-hint">当前显示前12项；处理后将补上后续事项。</p>
-          ) : null}
-        </>
-      )}
+            </div>
+          )
+        }
+      >
+        {query.isPending || (query.isFetching && !query.isFetchedAfterMount) ? (
+          <p role="status">正在确认需处理事项…</p>
+        ) : query.isError ? (
+          <>
+            <ErrorBanner error={query.error} />
+            <button type="button" className="button" onClick={() => void query.refetch()}>
+              重新读取待办
+            </button>
+          </>
+        ) : (
+          <>
+            {query.isFetching ? <p className="mutation-hint">正在更新待办…</p> : null}
+            {rows.length === 0 ? (
+              <p>{items.length === 0 ? '暂无待办。' : '此分类暂无待办。'}</p>
+            ) : (
+              <ul className="attention-list">
+                {rows.map((item, index) => (
+                  <EnterItem key={`${item.kind}:${item.objectId}`} index={index}>
+                    <InboxRow
+                      icon={
+                        item.kind === 'decide_approval'
+                          ? '✓'
+                          : item.kind === 'accept_assignment' || item.kind === 'reassign_task'
+                            ? '↗'
+                            : '▤'
+                      }
+                      meta={item.projectName}
+                    >
+                      <Link to={destination(item)}>
+                        {LABELS[item.kind]} · {item.taskTitle}
+                      </Link>
+                    </InboxRow>
+                  </EnterItem>
+                ))}
+              </ul>
+            )}
+            {query.data.hasMore ? (
+              <p className="mutation-hint">当前显示前12项；处理后将补上后续事项。</p>
+            ) : null}
+          </>
+        )}
+      </InboxFrame>
+      <HelpDisclosure label="待办说明">
+        <p>请进入任务处理审批、指派与交付事项。</p>
+      </HelpDisclosure>
     </section>
   )
 }

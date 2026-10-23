@@ -1,8 +1,10 @@
-# CollectUI presentation bundle — P1-421 / P1-423
+# CollectUI presentation bundle — P1-421 / P1-423 / P1-425
 
-Nine controlled presentation adaptations: Prompt Input 2, Agent Approval 1, AI Chat 2,
+Sixteen controlled presentation adaptations: Prompt Input 2, Agent Approval 1, AI Chat 2,
 App Sidebar 4, Command Menu 1, App Dialog 6, Empty State 1, Agent Activity 3 and
-Tool Calls 2. See
+Tool Calls 2, Card 1, List 7, Comments 1, Settings Form 1, Notifications 4,
+Animated List and Modal Cards. Inline expansion adapts the fade/slide variant; it
+does not reproduce the fullscreen image demo. See
 `manifest.json` for source URLs, captured excerpt digests, adapted input digests,
 compiler flags and output digests. See `LICENSE.md` for the separate license scope.
 
