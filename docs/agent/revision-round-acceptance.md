@@ -1,6 +1,6 @@
 # 交付物修订批次与批注复核（#430 / ADR-0021 §5）验收记录
 
-- 对应场景/门禁：交付物审阅闭环后半（后端）+ Q0/Q1/Q2
+- 对应场景/门禁：交付物审阅闭环后半（后端）+ Q0/Q1/Q2/Q3
 - 对应 Issue：P1-430
 - 上次验证：2026-10-24 · feat/p1-430-revision-round · PASS
 
@@ -22,7 +22,8 @@ pnpm exec vitest run --project unit packages/protocol/tests/review-round.spec.ts
 # 执行上下文装配（含本轮意见、超限失败）
 pnpm exec vitest run --project unit apps/hub/tests/execution-context.spec.ts
 
-# Hub 全链：创建冻结 → 启动 Run → 上下文注入 → 候选关联 → 复核（真实 PostgreSQL）
+# Hub 全链：创建冻结 → 启动 Run → 上下文注入 → 候选关联 → 复核（真实 PostgreSQL；
+# 9 例含选择边界、启动边界、崩溃恢复与超限退回）
 pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration \
   apps/hub/tests/revision-round.integration.spec.ts
 ```
@@ -70,7 +71,8 @@ git diff --stat main
 - 前端未接线：审阅页的「整理本轮修订」「新版对比」「待复核」、以及待办
   `organize_feedback`/`resolve_comments` 留到前端批次；本切片没有新增待办类型。
 - 未跑生产装配 Q5/真实 Node→Runtime 执行：本页只证明 Hub 快照与下发 payload；
-  Runtime 的首条指令注入由既有 #396 契约门覆盖（`executionContext` 同一条通路）。
+  Runtime 的首条指令注入由既有 #396 契约门覆盖（Q3 本轮 74 例通过，
+  `executionContext` 同一条通路）。
 - 未做并发压测：启动认领用条件更新，锁序与改派一致；高并发下的行为按单条用例。
 - 图片/PDF/Office 的原位批注与预览仍在 #431。
 - 批次取消、逐条意见的版本历史（多次复核）暂未提供；重复复核以最后一次为准。

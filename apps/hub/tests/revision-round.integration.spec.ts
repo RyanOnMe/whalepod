@@ -424,6 +424,167 @@ describe('artifact revision round (#430)', () => {
     })
   })
 
+  it('选择边界：回复不能单独入选、跨版本批注 404、未发布参考材料 409', async () => {
+    const { ids, receiver, sourceId, sourceRunId } = await seedSource()
+    const comments = await seedComments(ids, receiver, sourceId)
+    const otherArtifactId = randomUUID()
+    const otherBytes = Buffer.from('另一份交付物\n', 'utf8')
+    const otherBlob = await store.saveUpload(hashOf(otherBytes), otherBytes)
+    await insertArtifact(database.db, {
+      id: otherArtifactId,
+      taskId: ids.taskId,
+      runId: sourceRunId,
+      ownerUserId: ids.userId,
+      title: '另一份.md',
+      mediaType: 'text/markdown',
+      byteSize: otherBlob.byteSize,
+      sha256: otherBlob.sha256,
+      storageKey: otherBlob.storageKey,
+    })
+    await database.db
+      .update(schema.artifacts)
+      .set({ status: 'published', publishedAt: new Date() })
+      .where(eq(schema.artifacts.id, otherArtifactId))
+    const foreign = await createArtifactComment(
+      database,
+      store,
+      makeActor(receiver.userId, 'member'),
+      otherArtifactId,
+      { body: '另一份交付物上的意见' },
+      idemKey(),
+    )
+    await expect(
+      createRevisionRound(
+        database,
+        makeActor(ids.userId),
+        ids.taskId,
+        { sourceArtifactId: sourceId, commentIds: [comments.reply.id] },
+        idemKey(),
+      ),
+    ).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    await expect(
+      createRevisionRound(
+        database,
+        makeActor(ids.userId),
+        ids.taskId,
+        { sourceArtifactId: sourceId, commentIds: [foreign.id] },
+        idemKey(),
+      ),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+
+    const unpublishedId = randomUUID()
+    await insertArtifact(database.db, {
+      id: unpublishedId,
+      taskId: ids.taskId,
+      runId: sourceRunId,
+      ownerUserId: ids.userId,
+      title: '未发布参考.md',
+      mediaType: 'text/markdown',
+      byteSize: 1,
+      sha256: 'c'.repeat(64),
+      storageKey: 'sha256/cc/' + 'c'.repeat(60),
+    })
+    await expect(
+      createRevisionRound(
+        database,
+        makeActor(ids.userId),
+        ids.taskId,
+        {
+          sourceArtifactId: sourceId,
+          commentIds: [comments.first.id],
+          referenceArtifactIds: [unpublishedId],
+        },
+        idemKey(),
+      ),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+  })
+
+  it('启动边界：未开始不能关联候选；续跑只能指向原产出 Run', async () => {
+    const { ids, receiver, sourceId, sourceRunId } = await seedSource()
+    const comments = await seedComments(ids, receiver, sourceId)
+    const round = await createRevisionRound(
+      database,
+      makeActor(ids.userId),
+      ids.taskId,
+      { sourceArtifactId: sourceId, commentIds: [comments.first.id] },
+      idemKey(),
+    )
+    await expect(
+      linkRevisionCandidate(
+        database,
+        makeActor(ids.userId),
+        round.id,
+        { candidateArtifactId: sourceId },
+        idemKey(),
+      ),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+    const harness = makeHarness(database)
+    const otherRun = await insertRunRow(database.db, {
+      taskId: ids.taskId,
+      ownerUserId: ids.userId,
+      agentId: ids.agentId,
+      profileRevisionId: ids.revisionId,
+      deviceId: ids.deviceId,
+      workspaceId: ids.workspaceId,
+      status: 'completed',
+      dshSessionId: 'other-session',
+    })
+    await expect(
+      startRevisionRound(
+        database,
+        harness.orchestrator,
+        makeActor(ids.userId),
+        round.id,
+        { ...startInput(ids), resumeFromRunId: otherRun },
+        idemKey(),
+        version,
+      ),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+    expect((await getRevisionRoundView(database.db, round.id)).status).toBe('preparing')
+    expect(sourceRunId).not.toBe(otherRun)
+  })
+
+  it('执行上下文超限：启动明确 400，认领退回可修正后重试', async () => {
+    const { ids, receiver, sourceId } = await seedSource()
+    const commentIds: string[] = []
+    for (let i = 0; i < 12; i++) {
+      const comment = await createArtifactComment(
+        database,
+        store,
+        makeActor(receiver.userId, 'member'),
+        sourceId,
+        { body: `${i}:${'x'.repeat(9_990)}` },
+        idemKey(),
+      )
+      commentIds.push(comment.id)
+    }
+    const round = await createRevisionRound(
+      database,
+      makeActor(ids.userId),
+      ids.taskId,
+      { sourceArtifactId: sourceId, commentIds },
+      idemKey(),
+    )
+    const harness = makeHarness(database)
+    await expect(
+      startRevisionRound(
+        database,
+        harness.orchestrator,
+        makeActor(ids.userId),
+        round.id,
+        startInput(ids),
+        idemKey(),
+        version,
+      ),
+    ).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    expect((await getRevisionRoundView(database.db, round.id)).status).toBe('preparing')
+    const runs = await database.db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, ids.taskId))
+    expect(runs).toHaveLength(1) // 只有原产出 Run
+  })
+
   it('候选不属于本轮 Run / 第二轮新版：明确拒绝', async () => {
     const { ids, receiver, sourceId, referenceId } = await seedSource()
     const comments = await seedComments(ids, receiver, sourceId)
