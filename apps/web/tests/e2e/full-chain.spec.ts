@@ -174,6 +174,7 @@ async function createAgentViaUi(page: Page, name: string): Promise<void> {
   await page.fill('#agent-persona', '你是 E2E 验收代理。')
   await page.fill('#agent-provider', 'replay')
   await page.fill('#agent-model', 'replay-model')
+  await page.locator('.agent-advanced > summary').click()
   await page.fill('#agent-credential-slot', 'default')
   // #158：Plugin Pack 下拉是 vendored Menu——反面钉（不再是原生 select）+ 真人路径
   // （点开 → 点选项）。原来这里用 selectOption，只对原生 <select> 成立。

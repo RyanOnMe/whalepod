@@ -1,3 +1,4 @@
+import { auditPages } from './pages-bits-audit.js'
 import { showAgentCreation } from './helpers.js'
 /** #306：真实 HTTP/WS、已编译 Hub、真实 Node/Runtime replay；不直写运行状态。 */
 import { auditSecondarySurfaces } from './secondary-surface-audit.js'
@@ -30,7 +31,7 @@ const tag = randomUUID().slice(0, 8)
 const evidence = join(process.cwd(), 'artifacts/evidence/focused-workspace', tag)
 
 test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌面与窄屏布局', async ({ browser }) => {
-  test.setTimeout(180_000)
+  test.setTimeout(240_000)
   const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 960 } })
   const memberContext = await browser.newContext({ viewport: { width: 1440, height: 960 } })
   const owner = await ownerContext.newPage()
@@ -84,6 +85,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
     await owner.fill('#agent-persona', '你是验收代理。')
     await owner.fill('#agent-provider', 'replay')
     await owner.fill('#agent-model', 'replay-model')
+    await owner.locator('.agent-advanced > summary').click()
     await owner.fill('#agent-credential-slot', 'default')
     await selectFromMenu(owner.locator('#agent-plugin-pack'), 'e2e-pack')
     await owner.getByRole('button', { name: '创建 Agent' }).click()
@@ -351,7 +353,8 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
       room: workbenchRoom,
       run: workbenchRun,
     })
-    expect(facts).toHaveLength(8)
+    facts.push(await auditPages({ owner, member, taskId, evidence }))
+    expect(facts).toHaveLength(9)
     await stopNode()
   } finally {
     await ownerContext.close()

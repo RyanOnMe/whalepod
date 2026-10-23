@@ -1,3 +1,4 @@
+import { useMotionInput } from '../shared/useMotionInput.js'
 /**
  * App 布局与会话上下文（02 Task 7 Step 3 之后的主布局）。
  *
@@ -129,6 +130,7 @@ function useWideLayout(): boolean {
 }
 
 export function AppShell(): ReactNode {
+  useMotionInput()
   const { session } = useLoaderData() as { session: Session }
   const queryClient = useQueryClient()
   const navigate = useNavigate()

@@ -1,3 +1,4 @@
+import { verifyPagesEvidence } from './lib/pages-evidence.js'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { strict as assert } from 'node:assert'
@@ -9,9 +10,14 @@ assert(directory, 'Usage: tsx scripts/verify-workspace-evidence.mts <evidence-di
 const result = JSON.parse(await readFile(join(directory, 'facts.json'), 'utf8'))
 assert.equal(result.ok, true)
 assert.deepEqual(result.browserErrors, [])
-assert.equal(result.facts?.length, 8)
+assert.equal(result.facts?.length, 9)
 verifyAppUiEvidence(result)
 verifyWorkbenchEvidence(result)
+verifyPagesEvidence(result)
+for (const width of [1440, 390, 320]) {
+  for (const kind of ['projects', 'inbox', 'settings', 'discussion'])
+    assert((await stat(join(directory, `pages-${kind}-${width}.png`))).size > 0)
+}
 for (const width of [1440, 390, 320]) {
   for (const kind of ['empty', 'search', 'search-empty', 'results', 'drawer', 'run'])
     assert((await stat(join(directory, `workbench-${kind}-${width}.png`))).size > 0)
@@ -155,4 +161,4 @@ for (const row of surfaces.confirmations) {
 }
 for (const name of ['agent-create', 'device-guide'])
   assert((await stat(join(directory, `surface-${name}.png`))).size > 0)
-console.log(JSON.stringify({ component: 'web.workspace.verify', ok: true, scenarios: 8 }))
+console.log(JSON.stringify({ component: 'web.workspace.verify', ok: true, scenarios: 9 }))

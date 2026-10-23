@@ -377,6 +377,7 @@ async function createAgentViaUi(page: Page, name: string): Promise<void> {
   await page.fill('#agent-persona', '你是下拉审计用的代理。')
   await page.fill('#agent-provider', 'replay')
   await page.fill('#agent-model', 'replay-model')
+  await page.locator('.agent-advanced > summary').click()
   await page.fill('#agent-credential-slot', 'default')
   const packTrigger = page.locator('#agent-plugin-pack')
   // 同 full-chain：菜单项文案是 pack.name（control 面种子包叫 `e2e-pack`），不是 UUID

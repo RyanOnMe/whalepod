@@ -189,7 +189,7 @@ describe('comment', () => {
     await showWorkspace('discussion')
     await screen.findByLabelText('留言')
     await user.click(screen.getByRole('button', { name: '发送留言' }))
-    expect(screen.getByText('先输入留言内容')).toBeVisible()
+    expect(screen.getByRole('button', { name: '发送留言' })).toBeDisabled()
     const commentCalls = fetchMock.mock.calls.filter(([input]) =>
       String(input).endsWith('/comments'),
     )
