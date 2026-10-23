@@ -6,6 +6,7 @@ export function WorkspaceIcon({ name }: { name: string }) {
     添加: 'M12 5v14 M5 12h14',
     更多: 'M5 12h.01 M12 12h.01 M19 12h.01',
     设置: 'M4 7h16 M4 17h16 M8 4v6 M16 14v6',
+    搜索: 'M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14 M15 15l6 6',
     文件: 'M6 3h8l4 4v14H6z M14 3v5h4 M9 12h6 M9 16h6',
     复核: 'M9 3H5v18h14V3h-4 M9 3h6v4H9z M8 14l3 3 5-6',
     修订: 'M4 20l5-1 11-11-4-4L5 15z M13 7l4 4',

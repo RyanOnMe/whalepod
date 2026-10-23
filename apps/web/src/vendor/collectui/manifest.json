@@ -10,9 +10,15 @@
     "sourceMap": false
   },
   "exports": [
+    "ActivityFrame",
     "ApprovalFrame",
+    "CommandFrame",
+    "EmptyPanel",
     "FileCard",
-    "PromptFrame"
+    "PromptFrame",
+    "SheetHeading",
+    "SidebarProfile",
+    "ToolCallFrame"
   ],
   "sources": [
     {
@@ -32,22 +38,58 @@
       "url": "https://bits.collectui.pro/docs/app-ui/ai-chat/ai-chat-2",
       "adaptation": "File name, icon and trailing open action retained; real visibility and size replace demo metadata; no demo scroll/stream state.",
       "capturedExcerptSha256": "e25fbcad75b1d785d02d5da4d85f9ec88850841f275969116b314fbefd622127"
+    },
+    {
+      "item": "empty-state-1",
+      "url": "https://bits.collectui.pro/docs/app-ui/empty-state/empty-state-1",
+      "adaptation": "Centered illustration/title/description/action hierarchy; decorative empty geometry replaces ghost data; actions are supplied by the host.",
+      "capturedExcerptSha256": "89778280fe1519ebb6bd7f4b5be6173993e43dd736b7fa26ab2ecbf1f3afbb30"
+    },
+    {
+      "item": "command-menu-1",
+      "url": "https://bits.collectui.pro/docs/app-ui/command-menu/command-menu-1",
+      "adaptation": "Inset search/body/footer structure and grouped results; existing production search, focus and navigation retained; demo command data and timers removed.",
+      "capturedExcerptSha256": "c677bef0306ceb91306f3406ac3e209e6934844f7cf5cfd22c90ac51d7976218"
+    },
+    {
+      "item": "app-dialog-6",
+      "url": "https://bits.collectui.pro/docs/app-ui/app-dialog/app-dialog-6",
+      "adaptation": "Detail-sheet title and close region with a compact identity icon; existing inspector visibility, Escape, focus return and content ownership retained.",
+      "capturedExcerptSha256": "b5f1541f869d9bb16b600717226b4d9060f99e02db679284722a8f73d25bda0b"
+    },
+    {
+      "item": "app-sidebar-4",
+      "url": "https://bits.collectui.pro/docs/app-ui/app-sidebar/app-sidebar-4",
+      "adaptation": "Avatar/name/role hierarchy uses the authenticated user; existing real logout is a host slot; no demo navigation or workspace settings action.",
+      "capturedExcerptSha256": "ea6cbce59ef8dbc35f7c1e789401ef88927c0b9136941fdb7775fd8307bf4407"
+    },
+    {
+      "item": "agent-activity-3",
+      "url": "https://bits.collectui.pro/docs/app-ui/agent-activity/agent-activity-3",
+      "adaptation": "Compact status arc and fact label; no synthetic timeline, elapsed clock, percent or local completion. Host controls active state from public phase, connectivity and page visibility.",
+      "capturedExcerptSha256": "c960feaff6786cdc0326ceffbf8c8b3427eb743773a78da59e840454bda6d916"
+    },
+    {
+      "item": "tool-calls-2",
+      "url": "https://bits.collectui.pro/docs/app-ui/tool-calls/tool-calls-2",
+      "adaptation": "Tool glyph/name/status row; no target arguments, fake duration, sample calls, timers or retry. Host preserves call/result correlation and audience filtering.",
+      "capturedExcerptSha256": "0b028a20b4ac69738eefd24e60b443b6da00e357ed57d002ac0ad4f03c77e3e3"
     }
   ],
   "privateInputSha256": {
-    "tsx": "2f6c14e78c85cba6e68147c47869a8a65e1591349134659a1401043b92ab7643",
-    "css": "e706de0f82d4ed61b2267d71569f6280efd003ea88ba7468030cdfd949926d4a"
+    "tsx": "a9fe5decdeac6c5c61e603c517d73257097c38f126db9045bda43a2354089850",
+    "css": "dc7991daf62bf5de089e75f47a50791a8c81ae5ef79db791e7c8cd5047209776"
   },
   "files": [
     {
       "name": "collectui.js",
-      "sha256": "ea5a4b6f486aad83249ddcc4a1470292ba5aa713346f372e8b8ebb745261d668",
-      "bytes": 1674
+      "sha256": "4f857ceaae071ef15faa27541f38212102c7246578746219b9f67827d1f7ac9f",
+      "bytes": 4209
     },
     {
       "name": "collectui.css",
-      "sha256": "bf5ebebed02b66302d67cceead7dd7f3050ec94e7bb7939cf96e447a91e3fba4",
-      "bytes": 4344
+      "sha256": "4aabf291139b5ac8007fbab299f24ecee8f423476e3b339b4ac8b8e1e2f1c1b9",
+      "bytes": 10761
     }
   ]
 }

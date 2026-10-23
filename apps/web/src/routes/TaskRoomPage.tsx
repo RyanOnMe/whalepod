@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router'
 import { WorkspaceIcon } from '../shared/WorkspaceIcon.js'
+import { EmptyPanel, SheetHeading } from '../vendor/collectui/collectui.js'
 import { api } from '../shared/api/client.js'
 import { EXIT_PRESENCE_MS } from '../shared/motion.js'
 import { useHashFocus } from '../shared/useHashFocus.js'
@@ -420,8 +421,11 @@ function TaskRoom(): ReactNode {
                   </p>
                 ) : conversation.entries.length === 0 ? (
                   <div className="workspace-welcome">
-                    <h2>我们要完成什么？</h2>
-                    {task.description ? <p>{task.description}</p> : null}
+                    <EmptyPanel
+                      title="我们要完成什么？"
+                      description={task.description || undefined}
+                      icon={<WorkspaceIcon name="Agents" />}
+                    />
                   </div>
                 ) : (
                   <>
@@ -543,27 +547,36 @@ function TaskRoom(): ReactNode {
               }
             }}
           >
-            <div className="workspace-inspector-head">
-              <h2>
-                {inspector === 'agreement'
+            <SheetHeading
+              icon={
+                <WorkspaceIcon
+                  name={
+                    inspector === 'agreement' ? '复核' : inspector === 'run' ? 'Agents' : '文件'
+                  }
+                />
+              }
+              title={
+                inspector === 'agreement'
                   ? '任务约定'
                   : inspector === 'run'
                     ? '运行详情'
                     : inspectedArtifactId !== null
                       ? (visibleArtifacts.find((artifact) => artifact.id === inspectedArtifactId)
                           ?.title ?? '交付物')
-                      : '交付与复核'}
-              </h2>
-              <button
-                type="button"
-                className="icon-button"
-                title="关闭"
-                aria-label="关闭工作区详情"
-                onClick={closeInspector}
-              >
-                <WorkspaceIcon name="关闭" />
-              </button>
-            </div>
+                      : '交付与复核'
+              }
+              close={
+                <button
+                  type="button"
+                  className="icon-button"
+                  title="关闭"
+                  aria-label="关闭工作区详情"
+                  onClick={closeInspector}
+                >
+                  <WorkspaceIcon name="关闭" />
+                </button>
+              }
+            />
             <div hidden={inspector !== 'agreement'}>
               <TaskAgreementPanel embedded task={task} session={session} />
             </div>

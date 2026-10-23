@@ -4,6 +4,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { HelpDisclosure } from '../../shared/HelpDisclosure.js'
 import { PageHeader } from '../../shared/PageHeader.js'
+import { EmptyPanel } from '../../vendor/collectui/collectui.js'
+import { WorkspaceIcon } from '../../shared/WorkspaceIcon.js'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { CREDENTIAL_SLOT_LABEL, ROLE_LABEL, shortId } from '../../shared/format.js'
@@ -75,9 +77,13 @@ export function AgentList({
         {listQuery.isPending ? <p className="mutation-hint">正在加载 Agents…</p> : null}
         {listQuery.isError ? <ErrorBanner error={listQuery.error} /> : null}
         {listQuery.isSuccess && listQuery.data.length === 0 ? (
-          <p className="empty-state agent-list-empty">
-            {canManage ? '创建第一个 Agent，开始分配任务。' : '暂无 Agent。'}
-          </p>
+          <EmptyPanel
+            title="暂无 Agent"
+            description={
+              canManage ? '创建第一个 Agent，开始分配任务。' : '请联系管理员添加 Agent。'
+            }
+            icon={<WorkspaceIcon name="Agents" />}
+          />
         ) : null}
         {listQuery.isSuccess && listQuery.data.length > 0 ? (
           <ul className="agent-list" role="list">

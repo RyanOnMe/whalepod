@@ -30,6 +30,7 @@ import { HintGroup } from '../shared/micro/Hint.js'
 import { NotificationBell, RunNotifications } from './RunNotifications.js'
 import { ShortcutHelp } from './ShortcutHelp.js'
 import { WorkspaceIcon } from '../shared/WorkspaceIcon.js'
+import { SidebarProfile } from '../vendor/collectui/collectui.js'
 import { ExecutionDraftProvider } from '../features/task/execution-drafts.js'
 
 const SessionContext = createContext<Session | null>(null)
@@ -260,11 +261,11 @@ export function AppShell(): ReactNode {
                   项目与任务 <span aria-hidden="true">↗</span>
                 </Link>
                 <RecentTasksNav />
-                <div className="app-sidebar-user">
-                  <span className="app-sidebar-user-name" title={userTitle}>
-                    {session.displayName}
-                  </span>
-                  <span className="app-sidebar-user-role">{ROLE_LABEL[session.role]}</span>
+                <SidebarProfile
+                  name={session.displayName}
+                  role={ROLE_LABEL[session.role]}
+                  title={userTitle}
+                >
                   <button
                     type="button"
                     className="button button-quiet app-sidebar-logout"
@@ -273,7 +274,7 @@ export function AppShell(): ReactNode {
                   >
                     {logoutLabel}
                   </button>
-                </div>
+                </SidebarProfile>
               </aside>
             ) : null}
             <div className="app-body">
@@ -295,6 +296,7 @@ export function AppShell(): ReactNode {
                     WhalePod
                   </Link>
                   <div className="app-topbar-user">
+                    <GlobalSearch compact />
                     <span className="app-topbar-user-name" title={userTitle}>
                       {session.displayName}
                     </span>

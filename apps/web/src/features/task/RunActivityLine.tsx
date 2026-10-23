@@ -6,7 +6,7 @@ import {
   getConnectionStatus,
   subscribeConnectionStatus,
 } from '../../shared/realtime/connection-store.js'
-import ThoughtLine from '../../vendor/react-bits-micro/ThoughtLine.js'
+import { ActivityFrame } from '../../vendor/collectui/collectui.js'
 
 const IDLE_LABEL: Readonly<Partial<Record<RunStatus, string>>> = {
   queued: '排队中，等待运行',
@@ -19,7 +19,7 @@ const IDLE_LABEL: Readonly<Partial<Record<RunStatus, string>>> = {
   lost: '运行已丢失，结果未知',
 }
 
-/** Only the Hub's public phase projection reaches ThoughtLine. Never forward event payloads. */
+/** Only the Hub's public phase projection reaches the presentation. Never forward event payloads. */
 export function RunActivityLine({
   runId,
   status,
@@ -58,5 +58,5 @@ export function RunActivityLine({
       working = visible
     }
   }
-  return <ThoughtLine label={label} working={working} />
+  return <ActivityFrame label={label} working={working} status={status} />
 }

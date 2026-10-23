@@ -58,7 +58,17 @@ const manifest = {
   licenseUrl: 'https://bits.collectui.pro/license',
   distribution: 'Compiled app-internal presentation; editable sources and source maps excluded',
   compiler: { name: 'esbuild', version: compiler.version, minify: true, sourceMap: false },
-  exports: ['ApprovalFrame', 'FileCard', 'PromptFrame'],
+  exports: [
+    'ActivityFrame',
+    'ApprovalFrame',
+    'CommandFrame',
+    'EmptyPanel',
+    'FileCard',
+    'PromptFrame',
+    'SheetHeading',
+    'SidebarProfile',
+    'ToolCallFrame',
+  ],
   sources: excerpts.map(({ excerpt, ...metadata }) => ({
     ...metadata,
     capturedExcerptSha256: sha256(excerpt),

@@ -9,7 +9,7 @@ import {
   IconCloseOutline16,
   IconWarningOutline16,
 } from '../../vendor/dsh-ui/icons.js'
-import CallChip from '../../vendor/react-bits-micro/CallChip.js'
+import { ToolCallFrame } from '../../vendor/collectui/collectui.js'
 import { toolPresentation } from './tool-call-state.js'
 
 /** 仅读取 toolName 和匹配的 outcome；preview/参数/原始日志没有传入视觉原语。 */
@@ -42,13 +42,19 @@ export function ToolEventChip({
       </svg>
     )
   return (
-    <CallChip
+    <ToolCallFrame
       name={name}
       status={presentation.status}
       label={presentation.label}
-      icon={icon}
-      doneIcon={<IconCheckOutline16 size={14} />}
-      errorIcon={<IconCloseOutline16 size={14} />}
+      icon={
+        presentation.status === 'done' ? (
+          <IconCheckOutline16 size={14} />
+        ) : presentation.status === 'error' || presentation.status === 'cancelled' ? (
+          <IconCloseOutline16 size={14} />
+        ) : (
+          icon
+        )
+      }
     />
   )
 }

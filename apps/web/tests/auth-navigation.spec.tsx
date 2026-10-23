@@ -85,7 +85,7 @@ describe('auth-navigation', () => {
     await user.type(screen.getByLabelText('密码'), 'correct horse battery staple')
     await user.click(screen.getByRole('button', { name: '登录' }))
     expect(await screen.findByRole('heading', { name: '项目' })).toBeVisible()
-    expect(await screen.findByText('还没有项目——先创建第一个项目，再为它建 Task。')).toBeVisible()
+    expect(await screen.findByText('还没有项目')).toBeVisible()
   })
 
   it('登录失败展示统一错误，不离开登录页', async () => {
