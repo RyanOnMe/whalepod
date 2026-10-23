@@ -82,8 +82,8 @@ describe('P1-425 page interactions', () => {
                   taskId: task.id,
                   taskTitle: task.title,
                   projectName: '团队项目',
-                  objectId: 'approval-one',
-                  runId: 'run-one',
+                  objectId: 'cccccccc-1234-4000-8000-000000000001',
+                  runId: 'eeeeeeee-1234-4000-8000-000000000001',
                   createdAt: task.createdAt,
                 },
                 {
@@ -107,7 +107,7 @@ describe('P1-425 page interactions', () => {
     expect(screen.queryByRole('link', { name: /待接手工作/ })).toBeNull()
     expect(screen.getByRole('link', { name: /等待批准的工作/ })).toHaveAttribute(
       'href',
-      `/tasks/${task.id}#approval-approval-one`,
+      `/tasks/${task.id}#approval-cccccccc-1234-4000-8000-000000000001`,
     )
     expect(view.fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0)
   })
