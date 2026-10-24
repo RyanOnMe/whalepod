@@ -27,7 +27,7 @@ export function SidebarProfile(props: { name: string; role: string; title?: stri
 export function CommandFrame(props: { search: ReactNode; children: ReactNode; footer: ReactNode }): ReactNode
 export function EmptyPanel(props: { title: string; description?: ReactNode; icon: ReactNode; action?: ReactNode; compact?: boolean; heading?: 'h2' | 'h3' }): ReactNode
 export function SheetHeading(props: { title: ReactNode; icon: ReactNode; close: ReactNode }): ReactNode
-export function ActivityFrame(props: { label: string; working: boolean; status: string }): ReactNode
+export function ActivityFrame(props: { label: string; working: boolean; status: string; core?: ReactNode }): ReactNode
 export function ToolCallFrame(props: { name: string; status: string; label: string; icon: ReactNode }): ReactNode
 
 export function ResourceCard(props: { title: string; meta: ReactNode; description?: string; icon: ReactNode; actions: ReactNode; children: ReactNode }): ReactNode
@@ -53,3 +53,5 @@ export function PairingSteps(props: {current:number}): ReactNode
 export function ToolOutputFrame(props: {filters:ReactNode; meta:ReactNode; children:ReactNode}): ReactNode
 export function FileCollectionMark(props: {count:number}): ReactNode
 export function DepthSurface(props: {children:ReactNode}): ReactNode
+
+export function AgentStateCore(props: { state: string; active: boolean }): ReactNode

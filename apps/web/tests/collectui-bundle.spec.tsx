@@ -43,7 +43,7 @@ describe('P1-421 restricted presentation distribution', () => {
     }
   })
 
-  it('records all twenty-five upstream items without serializing raw excerpts or demo/network behavior', () => {
+  it('records all twenty-six upstream items without serializing raw excerpts or demo/network behavior', () => {
     expect(manifest.sources.map((source) => source.item).sort()).toEqual(
       [
         'agent-activity-3',
@@ -71,6 +71,7 @@ describe('P1-421 restricted presentation distribution', () => {
         'tool-calls-5',
         'card-spread',
         'depth-card',
+        'ai-blob',
       ].sort(),
     )
     for (const source of manifest.sources) {

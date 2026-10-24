@@ -74,7 +74,14 @@ const BACKGROUNDS: ReadonlyArray<[label: string, token: string]> = [
   // #173：深色顶栏已退役，但 ink 作为「深底」代表档留在矩阵里——任何将来的深色容器
   // （或深色主题上线）都会落在这条上。
   ['深底 ink', '--color-ink'],
-  ['主按钮底 signal（元素自身底色）', '--color-signal'],
+  ['链接强调 signal', '--color-signal'],
+  ['品牌主按钮（元素自身底色）', '--brand-primary'],
+  ['品牌主按钮 hover', '--brand-primary-hover'],
+  ['品牌选中面', '--brand-selected-surface'],
+  ['品牌提示面', '--brand-note-surface'],
+  ['成功状态面', '--color-run-soft'],
+  ['警告状态面', '--color-warn-soft'],
+  ['危险状态面', '--color-danger-soft'],
 ]
 
 /**
@@ -101,14 +108,20 @@ function readTokenValueOrNull(cssText: string, name: string): string | null {
  * 要抓的形态，不许静默当成"没这回事"。
  */
 function resolveTokenValue(name: string, dark: boolean): string {
-  let value = readTokenValue(appTokens, name)
-  for (let hop = 0; hop < 4; hop += 1) {
-    const target = /^var\((--[a-z0-9-]+)\)$/i.exec(value.trim())?.[1]
-    if (target === undefined) break
-    const fromDark = dark ? readTokenValueOrNull(darkBlockText, target) : null
-    value = fromDark ?? readTokenValue(l1Tokens, target)
+  const appDark = /body\[data-ds-dark-theme\]\s*\{([\s\S]*?)\n\}/.exec(appTokens)?.[1] ?? ''
+  const seen = new Set<string>()
+  while (true) {
+    if (seen.has(name)) throw new Error(`主题 token 循环：${name}`)
+    seen.add(name)
+    const fromDark = dark
+      ? (readTokenValueOrNull(appDark, name) ?? readTokenValueOrNull(darkBlockText, name))
+      : null
+    const value =
+      fromDark ?? readTokenValueOrNull(appTokens, name) ?? readTokenValue(l1Tokens, name)
+    const target = /^var\(\s*(--[a-z0-9-]+)\s*\)$/i.exec(value.trim())?.[1]
+    if (!target) return value.trim()
+    name = target
   }
-  return value.trim()
 }
 
 /**
@@ -263,6 +276,13 @@ function failuresOf(theme: string, backgrounds: BackgroundAudit[]): string[] {
     })
 }
 
+const LEGACY_BACKGROUNDS: ReadonlyArray<[string, string]> = [
+  ['历史 paper', '--dsw-alias-bg-module-platform'],
+  ['历史 surface', '--dsw-alias-bg-layer-2'],
+  ['历史 ink', '--dsw-alias-label-primary'],
+  ['历史 signal', '--dsw-static-blue-600'],
+]
+
 describe('#164 焦点环门', () => {
   for (const dark of [false, true] as const) {
     const theme = dark ? '深色 body[data-ds-dark-theme]' : '浅色 :root'
@@ -325,7 +345,7 @@ describe('#164 焦点环门', () => {
     expect(offenders).toEqual([])
   })
 
-  it('--focus-ring 全仓只声明一次且落在 :root（局部覆盖会让门失明——一审 S1 实测过）', () => {
+  it('--focus-ring 全仓只声明一次且落在 body（与实际浅深语义同元素求值）', () => {
     // 一审的实测反例：在 global.css 末尾追加 `.app-header { --focus-ring: 0 0 0 3px
     // var(--color-paper); }`（彼时顶栏是深底），token 里仍是好值 → 门 8/8 **全绿**，
     // 而真实顶栏上的焦点环已经
@@ -354,8 +374,8 @@ describe('#164 焦点环门', () => {
     }
     expect(
       declared.map((d) => `${d.where} ${d.selector}`),
-      '--focus-ring 只允许在 styles/tokens.css 的 :root 里声明一次；任何局部覆盖都会让本门失明',
-    ).toEqual(['tokens.css :root'])
+      '--focus-ring 只允许在 styles/tokens.css 的 body 里声明一次；任何局部覆盖都会让本门失明',
+    ).toEqual(['tokens.css body'])
   })
 
   it('环的每一层里不出现裸色值（`var(--x, #ff00ff)` 这种带误导性 fallback 也算）', () => {
@@ -397,9 +417,9 @@ describe('#164 焦点环门', () => {
 
   it('反向用例：旧值（40% 单层环）会被本门判红——红→绿实测的红侧', () => {
     // 这一串是**历史值**，故意写死：它是负样本（证明门不是恒真），不该跟着 token 一起变。
-    const previous = '0 0 0 3px color-mix(in srgb, var(--color-signal) 40%, transparent)'
+    const previous = '0 0 0 3px color-mix(in srgb, var(--dsw-static-blue-600) 40%, transparent)'
     const layers = ringLayers(false, previous)
-    const backgrounds = BACKGROUNDS.map(([label, token]) =>
+    const backgrounds = LEGACY_BACKGROUNDS.map(([label, token]) =>
       readBackground(label, token, layers, false),
     )
     console.log(
@@ -415,7 +435,7 @@ describe('#164 焦点环门', () => {
       [1],
     ])
     // 关键一条：把旧值喂给门，三个底色**全部**判红（不是"数字小一点"）
-    expect(failuresOf('旧值', backgrounds)).toHaveLength(BACKGROUNDS.length)
+    expect(failuresOf('旧值', backgrounds)).toHaveLength(LEGACY_BACKGROUNDS.length)
   })
 
   it('反向用例：单色 signal 环在 signal 自身底上只有 1:1（所以"单色加深"不是修法）', () => {
@@ -428,9 +448,9 @@ describe('#164 焦点环门', () => {
     //     `--color-signal` 自身蓝底 1:1、ghost-active-border 1.89、button-primary-hover 1.86…）。
     // 双层环取 ink / surface 两极，正是为了"任何底色都必然与其中之一拉开"；这条数字就是
     // "为什么不用更显然的写法（单色加深）"的机器证据。
-    const signal = parseCssColor(resolveTokenValue('--color-signal', false))
+    const signal = parseCssColor(resolveTokenValue('--dsw-static-blue-600', false))
     const single: RingLayer[] = [{ colorText: 'var(--color-signal)', spreadPx: 3, color: signal }]
-    const backgrounds = BACKGROUNDS.map(([label, token]) =>
+    const backgrounds = LEGACY_BACKGROUNDS.map(([label, token]) =>
       readBackground(label, token, single, false),
     )
     console.log(

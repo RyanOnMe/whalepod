@@ -24,7 +24,15 @@ const excerpts = JSON.parse(readFileSync(join(input, 'upstream-excerpts.json'), 
   url: string
   excerpt: string
   adaptation: string
+  normalizedFragmentSha256?: string
 }>
+const agentCore = readFileSync(join(input, 'agent-core.tsx'), 'utf8')
+const agentFragment = agentCore.split('const fragmentShader = `')[1]?.split('`')[0]
+const originalFragment = excerpts.find(
+  (source) => source.item === 'ai-blob',
+)?.normalizedFragmentSha256
+if (!agentFragment || sha256(agentFragment.replace(/\s+/g, '')) !== originalFragment)
+  throw new Error('AI Blob fragment field differs from the captured mirror source')
 const built = compiler.buildSync({
   entryPoints: [join(input, 'presentation.tsx')],
   outfile: join(output, 'collectui.js'),
@@ -89,6 +97,7 @@ const manifest = {
     'ToolOutputFrame',
     'FileCollectionMark',
     'DepthSurface',
+    'AgentStateCore',
   ],
   sources: excerpts.map(({ excerpt, ...metadata }) => ({
     ...metadata,
@@ -97,6 +106,7 @@ const manifest = {
   privateInputSha256: {
     tsx: sha256(readFileSync(join(input, 'presentation.tsx'))),
     css: sha256(readFileSync(join(input, 'presentation.css'))),
+    agentCore: sha256(readFileSync(join(input, 'agent-core.tsx'))),
   },
   files,
 }

@@ -121,11 +121,7 @@ function RunLiveText({
   }, [liveText, onGrowth])
 
   if (liveText === '') {
-    return (
-      <p className="empty-state">
-        {isActive ? '等待输出…（直播帧不落库，断线期间的内容以最终消息为准）' : '无直播内容。'}
-      </p>
-    )
+    return <p className="empty-state">{isActive ? '等待回复…' : '无直播内容。'}</p>
   }
   return (
     <pre className="run-live-text" data-testid="run-live-text">

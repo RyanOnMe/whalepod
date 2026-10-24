@@ -67,6 +67,13 @@ const textPairs = [
   ['--color-ink', '--color-surface'],
   ['--color-ink-soft', '--color-surface'],
   ['--color-muted', '--color-paper'],
+  ['--color-run', '--color-run-soft'],
+  ['--color-run', '--color-surface'],
+  ['--color-warn', '--color-warn-soft'],
+  ['--color-warn', '--color-surface'],
+  ['--color-danger', '--color-danger-soft'],
+  ['--color-danger-strong', '--color-surface'],
+  ['--color-danger-strong', '--dsw-alias-button-floating-hover'],
 ] as const
 
 describe('P1-437 WhalePod tidal brand', () => {
@@ -100,13 +107,16 @@ describe('P1-437 WhalePod tidal brand', () => {
 
   for (const isDark of [false, true]) {
     it(`${isDark ? 'dark' : 'light'} text and brand action pairs remain AA`, () => {
+      const report: string[] = []
       for (const [fg, bg] of textPairs) {
         const ratio = contrastRatio(
           parseCssColor(resolve(fg, isDark)),
           parseCssColor(resolve(bg, isDark)),
         )
+        report.push(`${fg} / ${bg}: ${ratio.toFixed(2)}:1`)
         expect(ratio, `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5)
       }
+      console.log(`[P1-437 ${isDark ? 'dark' : 'light'}]\n${report.join('\n')}`)
     })
   }
 
