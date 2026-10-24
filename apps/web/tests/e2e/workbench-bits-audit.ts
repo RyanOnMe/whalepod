@@ -108,6 +108,17 @@ export async function auditWorkbenchRoom(page: Page, evidence: string) {
     await open.click()
     const heading = page.locator('.workspace-inspector-head[data-collectui="app-dialog-6"]')
     await expect(heading.getByRole('heading', { name: '任务约定', exact: true })).toHaveCount(1)
+    // Measure the settled surface; the entry path deliberately starts outside the viewport.
+    await expect
+      .poll(() =>
+        heading.evaluate((node) =>
+          node
+            .closest('.workspace-inspector')!
+            .getAnimations()
+            .every((animation) => animation.playState === 'finished'),
+        ),
+      )
+      .toBe(true)
     const drawer = await heading.boundingBox()
     await page.screenshot({ path: join(evidence, `workbench-drawer-${width}.png`) })
     await page.keyboard.press('Escape')

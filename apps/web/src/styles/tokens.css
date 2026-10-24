@@ -62,7 +62,7 @@
   /* 字号：只补被引用过的那一档，不趁机发明整套字号尺度 */
   --font-size-sm: 13px;
 
-  /* 动效（#271）：全站过渡只此一套取值，不给组件留「自己调一个」的口子。
+  /* 动效（#271）：全站过渡只此一套取值。控件反馈与可感知的面板/展开/入场分档，避免压成同一个时长。
      缓动与时长档**对齐 vendored dsh-ui 的既有约定**（Switch 120ms ease /
      DisclosureRow 100ms ease / ConnectionIndicator 160ms ease-out），不新造第五条平行约定。
 
@@ -77,6 +77,11 @@
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --duration-quick: 120ms; /* hover / 底色换面 */
   --duration-base: 160ms; /* 按下反馈 / 控件换面 */
+  --duration-surface: 320ms;
+  --duration-reveal: 360ms;
+  --duration-enter: 440ms;
+  --ease-surface: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: linear(0, 0.12, 0.38, 0.68, 0.91, 1.04, 1.08, 1.04, 1.01, 1);
   --duration-activity: 1100ms; /* 不定进度状态环：只表示活动，不推断完成百分比 */
   /* 按下缩放比（#271）：写成 token 是为了 reduced-motion 能**一处**关掉位移——
      在媒体查询里改一个变量，比在每条选择器上再抄一遍规则稳（把选择器复制进 @media

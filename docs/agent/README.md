@@ -6,6 +6,7 @@
 |---|---|
 | [app-ui-polish-acceptance.md](./app-ui-polish-acceptance.md) | #421：网页源码提取的输入栏、审批与文件展示槽位，混淆包/来源校验、文件动作菜单、九档布局与键盘独立判定 |
 | [reactbits-management-acceptance.md](./reactbits-management-acceptance.md) | #432：成员、插件、Agents 与设备组件精修；真实邀请/安装/组合/配对与十二档几何验收 |
+| [ReactBits 可感知动效](./reactbits-motion-acceptance.md) | 镜像站时间线/配对步骤/文件预览/卡片深度；中间帧、可打断、缓存/焦点/权限与减少动态效果 |
 | [reactbits-pages-acceptance.md](./reactbits-pages-acceptance.md) | #425：项目/任务、讨论、Agent 分区与高级参数、待办筛选、入场/展开动效和十二档生产观测 |
 | [reactbits-workbench-acceptance.md](./reactbits-workbench-acceptance.md) | #423：新增六类 ReactBits 工作台展示、手机搜索、搜索/抽屉回焦、终态反馈与九档生产观测 |
 | [task-agreement-acceptance.md](./task-agreement-acceptance.md) | #378（ADR-0017 §1-2）：任务约定版本化（草稿 CAS/责任人确认/历史）+ 全部 Run 创建入口统一绑定已确认版本（辅助 Run 按用途豁免）；边界如实列（Agent 提案工具未落地、编号并发压测未做） |

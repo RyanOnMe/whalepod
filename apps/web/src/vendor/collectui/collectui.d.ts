@@ -46,3 +46,10 @@ export function IntegrationTile(props: { label: string; name: string; version?: 
 export function ChoiceCard(props: { name: string; description?: string; icon: ReactNode; selected: boolean; onSelect: () => void; buttonRef?: (node: HTMLButtonElement | null) => void }): ReactNode
 export function AdminDetailHeading(props: { title: string; icon: ReactNode; action: ReactNode }): ReactNode
 export function DeviceIdentity(props: { name: string; platform: string; status: ReactNode; seen: ReactNode; icon: ReactNode }): ReactNode
+
+export function TimelineFold(props: {label:string; count?:number; open:boolean; present:boolean; onToggle:()=>void; children:ReactNode; id:string; className?:string; testId?:string}): ReactNode
+export function ArtifactPreviewFrame(props: {title:string; action:ReactNode; children:ReactNode}): ReactNode
+export function PairingSteps(props: {current:number}): ReactNode
+export function ToolOutputFrame(props: {filters:ReactNode; meta:ReactNode; children:ReactNode}): ReactNode
+export function FileCollectionMark(props: {count:number}): ReactNode
+export function DepthSurface(props: {children:ReactNode}): ReactNode

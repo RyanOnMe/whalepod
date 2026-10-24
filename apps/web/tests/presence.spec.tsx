@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { ReactElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { EXIT_PRESENCE_MS } from '../src/shared/motion.js'
+import { EXIT_PRESENCE_MS, SURFACE_EXIT_MS, REVEAL_EXIT_MS } from '../src/shared/motion.js'
 import { usePresence } from '../src/shared/usePresence.js'
 import { BOB, loggedInHandlers, makeRun, makeTask, ok, teamMembersHandler } from './fixtures.js'
 import { renderApp } from './render.js'
@@ -95,6 +95,10 @@ const globalCss = readFileSync(resolve(stylesDir, 'global.css'), 'utf8')
 const tokensCss = readFileSync(resolve(stylesDir, 'tokens.css'), 'utf8')
 
 describe('#273 退场时长两端一致（JS 计时器 vs CSS 过渡）', () => {
+  it('surface/reveal unmount windows equal their actual CSS duration tokens', () => {
+    expect(SURFACE_EXIT_MS).toBe(Number(/--duration-surface:\s*(\d+)ms/.exec(tokensCss)?.[1]))
+    expect(REVEAL_EXIT_MS).toBe(Number(/--duration-reveal:\s*(\d+)ms/.exec(tokensCss)?.[1]))
+  })
   it('EXIT_PRESENCE_MS 等于 tokens.css 里现场解析出的 --duration-base', () => {
     // 不硬编码 160：CSS 改了就跟着改，两边对不上这条会红——
     // 对不上的后果正是本切片要修的毛病（动画没演完就被摘掉，或演完还挂着）。

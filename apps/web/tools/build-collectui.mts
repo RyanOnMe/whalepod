@@ -83,6 +83,12 @@ const manifest = {
     'ChoiceCard',
     'AdminDetailHeading',
     'DeviceIdentity',
+    'TimelineFold',
+    'ArtifactPreviewFrame',
+    'PairingSteps',
+    'ToolOutputFrame',
+    'FileCollectionMark',
+    'DepthSurface',
   ],
   sources: excerpts.map(({ excerpt, ...metadata }) => ({
     ...metadata,
