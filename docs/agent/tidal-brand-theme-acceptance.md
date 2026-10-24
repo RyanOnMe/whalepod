@@ -28,7 +28,7 @@
 
 ## 驱动、观测与拒绝条件
 
-红测提交 `9acb776` 中主题 6/6 在旧实现失败。相关门复跑：
+红测提交 `04ca0da` 中主题 6/6 在旧实现失败。相关门复跑：
 
 ```bash
 pnpm exec vitest run apps/web/tests/brand-theme.spec.ts apps/web/tests/theme-contrast.spec.ts apps/web/tests/control-family.spec.tsx apps/web/tests/focus-ring.spec.ts apps/web/tests/vendor-dsh-ui.spec.tsx apps/web/tests/instruction-contrast.spec.tsx --maxWorkers=1

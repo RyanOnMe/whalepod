@@ -36,7 +36,7 @@
 
 ## 驱动与独立判定
 
-红测 `9acb776`：主题 6 项、核心 2 项和 13 个实际接线断言在旧实现失败；新派生模块缺失时 suite 预期无法导入。随后主题 84 项、宿主/运行 78 项通过。完整 unit/web、静态门和最终浏览器结果在收尾记录。
+红测 `04ca0da`：主题 6 项、核心 2 项和 13 个实际接线断言在旧实现失败；新派生模块缺失时 suite 预期无法导入。随后主题 84 项、宿主/运行 78 项通过。完整 unit/web、静态门和最终浏览器结果在收尾记录。
 
 ```bash
 pnpm exec playwright test --config=playwright.agent-brand.config.ts
@@ -97,3 +97,6 @@ GPU 验收在生产绘制同一帧读取真实 framebuffer，要求非空、蓝�
 真实 DOM 扫描覆盖当前可见文字而非只读根 token。浅深每档均保留“已受理”的实际字色、透明背景及祖先链，独立重新混合背景并检查 4.5。原生 closed details 的非 summary 子树按实际不可见处理；匿名空页自测通过真实点击证明展开后的低对比文字仍会被拒绝，closed summary 也不能豁免，嵌套关闭祖先会遮住内层已打开内容。没有降低文字/焦点阈值。
 
 完整证据的 `facts.json` 与 `visibility-probe.json`、`visible-text-*.json`、`completion-loss.json`、`lost-before-completion.json` 必须相互对应，独立入口会拒绝把旧样本旁证混入新事实。失败诊断只记录状态、颜色、canvas/矩形/滚动及经过筛选归约的 GPU 日志，不保存页面正文或原始网络信息。录屏仅前三次认证后的 owner 路径；不可用 GPU 和永久丢失上下文位于独立无录屏窗口。
+
+
+固定实现提交 `a70a902`；红测已重放为 `04ca0da`，验收版本与重放后整树无差异。最终定向 4 文件 / 107 项通过，其中 checker 73 项；敏感扫描及 626 包许可门通过。独立审批和服务端 `check` / `integration` 结果按本切片 PR 记录，必检未通过不得合入。
