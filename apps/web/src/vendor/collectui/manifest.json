@@ -39,7 +39,8 @@
     "PairingSteps",
     "ToolOutputFrame",
     "FileCollectionMark",
-    "DepthSurface"
+    "DepthSurface",
+    "AgentStateCore"
   ],
   "sources": [
     {
@@ -191,22 +192,30 @@
       "url": "https://bits.collectui.pro/docs/components/depth-card",
       "adaptation": "Pointer-normalized card rotation and radial spotlight retained around project surfaces. A finite velocity-carrying spring replaces the idle loop; keyboard, focus, coarse pointer, hidden document and reduced-motion reset effects.",
       "capturedExcerptSha256": "42ff60bd142ef30a067d6de7272cc10f2753aa110185a753b9c851eb106839bf"
+    },
+    {
+      "item": "ai-blob",
+      "url": "https://bits.collectui.pro/docs/components/ai-blob",
+      "adaptation": "Original fragment shader, OKLCH ramp and mood smoothing retained. Native WebGL replaces the Three scene wrapper without a new dependency. Four theme tokens replace rainbow colors; real host states drive phases. No audio simulation or microphone. Finite observed completion, pause/context-loss/reduced-motion/static equivalent and visibility lifecycle are app-owned.",
+      "normalizedFragmentSha256": "d191df9419e6e43584a2a679359144003bac5b0c19d37f3c46b70b52120e58dd",
+      "capturedExcerptSha256": "2f68303b01a0f482ead8a1ed039a3ac487f654beee1490d3ddc83895b2eca53f"
     }
   ],
   "privateInputSha256": {
-    "tsx": "27fcb2d8f3afec73a39b51f94dc3a6dd78809e8544633860264175d9233bbe97",
-    "css": "60506e816c621a6f3c598bf6eff1c2fb0cc1da02c6375545327915afc0ded99b"
+    "tsx": "0d4e967880943b6d9da09d98d7c1bfeb1021d6a451410cafa0d73405616d0c27",
+    "css": "de8f8a1c18f63bf691224897ea0d805dbfff2a91ebcae04c30142dc48ec1f4a2",
+    "agentCore": "8b83a1e60f08f9ebb72144415407b352012697caea758c7b42da0a9cc472e7e5"
   },
   "files": [
     {
       "name": "collectui.js",
-      "sha256": "cc16250234ed964109c3271877f51439c414b91b35f97b4bc320f78392b79564",
-      "bytes": 14871
+      "sha256": "9a14f36f938a828eb90557d242d91afd4b40461bb766ec9707ca598e653fb11c",
+      "bytes": 29587
     },
     {
       "name": "collectui.css",
-      "sha256": "773a5d8ed5128d95c0cbc5d921eadcc356d2d1d6b2874192b16c6dc56abc620e",
-      "bytes": 28592
+      "sha256": "a8d94927a43eb2116a01834197155ef02df163f4b91f4484b719d1b6ed438c09",
+      "bytes": 32968
     }
   ]
 }

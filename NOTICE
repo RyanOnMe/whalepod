@@ -18,7 +18,7 @@ limitations under the License.
 Third-party components included in this product
 --------------------------------------------------------------------------------
 
-Compiled App UI assets in apps/web/src/vendor/collectui
+Compiled presentation assets in apps/web/src/vendor/collectui
 Copyright (c) 2026 React Bits Pro. Restricted third-party license, NOT Apache-2.0.
 License scope: apps/web/src/vendor/collectui/LICENSE.md
 Source URLs and compiler/output digests: apps/web/src/vendor/collectui/manifest.json

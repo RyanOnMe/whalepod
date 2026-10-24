@@ -117,3 +117,5 @@
 工作区 Micro 菜单被裁切、键盘焦点或减少动态异常：先看 web.micro 定位读数；约定开关与服务端不一致先看 web.agreement PATCH 与刷新；材料勾选先看 web.execution 的输入快照。证据与复跑入口见 focused-workspace-acceptance。
 
 抽屉重复标题、二级页层级、确认框裁切或关闭不还焦：先看 web.surfaces 的30条布局和三档确认边界；持久化权限与候选异常再看 Hub 任务 GET 与受众投影。复跑与证据 schema 见 [secondary-surfaces-acceptance](./secondary-surfaces-acceptance.md)，证据在 focused-workspace 本次目录，由 verify-workspace-evidence 独立重判。
+
+P1-437：主题与状态核心的触发、证据、独立判定和归因见 [Agent 状态核心验收](./agent-state-core-acceptance.md)；主要组件为 `web.agent-state`、`web.agent-core`、`web.theme.cascade`、`web.theme.contrast`。

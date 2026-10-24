@@ -1100,7 +1100,32 @@ describe('L1 token 第二批增量（#138）', () => {
       (name) =>
         !vendorReferenced.has(name) && !internallyConsumed.has(name) && !appConsumed.has(name),
     )
-    expect(orphans, 'L1 里存在零消费者的孤儿变量；要么删掉，要么写清为什么留着').toEqual([])
+    // P1-437 moved application branding out of copied DSH colors. Keep exactly
+    // these original palette/selection anchors so the upstream copy and its source
+    // checks remain intact; they are retained contracts, never pretend consumers.
+    const retainedBrandAnchors = {
+      '--dsw-static-blue-100': 'rgb(219, 234, 254)',
+      '--dsw-static-blue-600': 'rgb(37, 99, 235)',
+      '--dsw-specific-sidebar-nav-item-active': 'var(--dsw-static-neutral-bluish-100)',
+    }
+    expect(orphans.sort(), '只有登记过的三个品牌迁移锚点可无消费者保留').toEqual(
+      Object.keys(retainedBrandAnchors).sort(),
+    )
+    for (const [token, original] of Object.entries(retainedBrandAnchors)) {
+      expect(readTokenValue(tokensCss, token), `${token} 必须保留上游原值`).toBe(original)
+    }
+    const assertRetainedSet = (names: string[]) => {
+      const unexpected = names.filter((token) => !(token in retainedBrandAnchors))
+      expect(unexpected, '其他 L1 孤儿变量仍必须拒绝').toEqual([])
+      expect([...names].sort()).toEqual(Object.keys(retainedBrandAnchors).sort())
+    }
+    assertRetainedSet(orphans)
+    expect(() => assertRetainedSet([...orphans, '--dsw-unregistered-orphan'])).toThrow()
+    const dark =
+      /body\[data-ds-dark-theme\]\s*\{([\s\S]*?)\n\}/.exec(stripComments(tokensCss))?.[1] ?? ''
+    expect(readTokenValue(dark, '--dsw-specific-sidebar-nav-item-active')).toBe(
+      'var(--dsw-static-neutral-bluish-750)',
+    )
     // 反面钉：两个被删掉的孤儿确实不再**被声明**了。必须先剥注释——文件头与两处段注释
     // 都写了这两个变量名来解释"为什么删"（实测：不剥注释这条会因自己的说明文字而变红）。
     for (const removed of ['--dsw-static-amber-500', '--dsw-static-neutral-bluish-1000']) {
