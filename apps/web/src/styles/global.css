@@ -115,7 +115,7 @@ select {
 }
 
 .app-brand {
-  color: var(--color-ink);
+  color: var(--brand-link);
   font-weight: 600;
   font-size: 18px;
   letter-spacing: 0.04em;
@@ -155,7 +155,8 @@ select {
 
 /* NavLink 真实给出的当前页（#173 之前这条从未命中——Link 不写 aria-current）。 */
 .app-nav a[aria-current='page'] {
-  background: var(--dsw-specific-sidebar-nav-item-active);
+  background: var(--brand-selected-surface);
+  color: var(--brand-selected-ink);
   font-weight: 500;
 }
 
@@ -452,7 +453,7 @@ p.app-sidebar-heading {
  * 三个变体的官方出处：
  *   · 默认（白底发丝描边胶囊）= 上游侧栏「新会话」形态（elevated-fill + 0.5px l3，
  *     hover 换 floating-hover 浅灰面）；
- *   · primary = vendored `.primary`（brand-primary 黑底白字，hover 750）；
+ *   · primary = WhalePod 品牌色（几何继承 vendored 胶囊）；
  *   · quiet = vendored `.ghost`（透明面，hover interactive-bg-hover）。
  * #173 退役的两条旧特判：#159 给深色顶栏加的 `.app-header .button-quiet` 前景/hover
  * 叠加——壳已改浅色 chrome（侧栏/顶栏都是浅底），深色容器特判没有附着点了。
@@ -505,15 +506,15 @@ p.app-sidebar-heading {
   border-color: var(--dsw-alias-brand-primary);
 }
 
-/* 主按钮：黑底白字胶囊（vendored `.primary` 同两个 token），hover 换 750 面。 */
+/* P1-437 主操作归应用品牌层；几何、触屏尺寸与中性/危险控件保持原契约。 */
 .button-primary {
-  background: var(--dsw-alias-button-primary-fill);
+  background: var(--brand-primary);
   border-color: transparent;
-  color: var(--dsw-alias-label-primary-foreground);
+  color: var(--brand-on-primary);
 }
 
 .button-primary:hover:not(:disabled) {
-  background: var(--dsw-alias-button-primary-hover);
+  background: var(--brand-primary-hover);
 }
 
 .button-quiet {
@@ -537,7 +538,7 @@ p.app-sidebar-heading {
 .button-danger {
   background: var(--dsw-alias-button-elevated-fill);
   border-color: var(--dsw-alias-border-l3);
-  color: var(--dsw-static-red-900);
+  color: var(--color-danger-strong);
 }
 .badge {
   display: inline-flex;
@@ -3126,7 +3127,9 @@ textarea::placeholder {
   color: var(--color-ink);
 }
 .app-rail .app-rail-brand {
-  color: var(--color-ink);
+  color: var(--brand-on-primary);
+  background: var(--brand-primary);
+  box-shadow: inset -3px -3px 0 var(--brand-teal);
   font-weight: 700;
   margin-bottom: 18px;
 }
@@ -3650,7 +3653,7 @@ textarea::placeholder {
  * 段头与活动行都会说"已完成"，唯一能阻止"没读到"被读成"没有产出"的就是这一条。
  */
 .run-events-alert {
-  /* 与 .stream-incomplete 同一档警示色（本地重绑到静态 900 档，深浅主题都成立）。 */
+  /* 与 .stream-incomplete 同档：浅色900；深色局部重绑见品牌主题段。 */
   --dsw-alias-state-warn-primary: var(--dsw-static-amber-900);
   display: flex;
   flex-wrap: wrap;
@@ -4609,6 +4612,8 @@ textarea::placeholder {
   gap: 6px;
 }
 .workspace-dock .prompt-bar[data-collectui] .instruction-send {
+  background: var(--brand-primary);
+  color: var(--brand-on-primary);
   border-radius: 12px;
 }
 
@@ -4863,6 +4868,242 @@ textarea::placeholder {
   outline-offset: 2px;
 }
 
+/* Visible motion surfaces keep native state and focus ownership in the host. */
+.workspace-inspector {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--duration-surface) ease,
+    transform var(--duration-surface) var(--ease-surface);
+  box-shadow: -12px 0 30px -24px var(--dsw-alias-border-l4);
+}
+@starting-style {
+  .workspace-inspector {
+    opacity: 0;
+    transform: translateX(64px) scale(0.985);
+  }
+}
+.workspace-inspector[data-closing] {
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: 3;
+  width: max(320px, 40%);
+  opacity: 0;
+  transform: translateX(64px) scale(0.985);
+  pointer-events: none;
+}
+.workspace-inspector > div:not(.workspace-inspector-head):not([hidden]) {
+  transition:
+    opacity var(--duration-reveal) ease,
+    transform var(--duration-reveal) var(--ease-surface);
+}
+@starting-style {
+  .workspace-inspector > div:not(.workspace-inspector-head):not([hidden]) {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+.focused-workspace .workspace-body {
+  overflow: hidden;
+}
+.conversation-file-group {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+.workspace-inspector .cu-artifact-preview pre {
+  font-size: 13px;
+  line-height: 1.75;
+  margin: 0;
+}
+.artifact-preview .cu-page-expand-content {
+  padding-block: 10px 2px;
+}
+.cu-tool-output .console-body {
+  flex: 1;
+  min-height: 0;
+}
+.cu-tool-output .console-layers {
+  padding: 10px 12px;
+}
+.cu-tool-output .rubber-segment {
+  border-color: transparent;
+}
+.run-records .run-event {
+  position: relative;
+  padding-left: 22px;
+}
+.run-records .run-event::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 16px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-ink);
+}
+.run-records .run-event:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 26px;
+  bottom: -8px;
+  width: 1px;
+  background: var(--color-line);
+  transform-origin: top;
+  transition: transform var(--duration-enter) var(--ease-surface);
+}
+@starting-style {
+  .run-records .run-event:not(:last-child)::after {
+    transform: scaleY(0);
+  }
+}
+.rubber-segment__thumb {
+  transition-duration: var(--duration-reveal);
+  transition-timing-function: var(--ease-spring);
+}
+.agents-layout .agent-detail {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--duration-surface) ease,
+    transform var(--duration-surface) var(--ease-surface);
+}
+@starting-style {
+  .agents-layout .agent-detail {
+    opacity: 0;
+    transform: translateX(28px) scale(0.98);
+  }
+}
+.agents-layout .agent-detail[data-closing] {
+  opacity: 0;
+  transform: translateX(28px) scale(0.98);
+  pointer-events: none;
+}
+html[data-ui-input='keyboard'] .workspace-inspector,
+html[data-ui-input='keyboard'] .workspace-inspector > div,
+html[data-ui-input='keyboard'] .agents-layout .agent-detail,
+html[data-ui-input='keyboard'] .run-records .run-event::after {
+  transition: none;
+  transform: none;
+}
+@media (max-width: 1199px) {
+  .workspace-inspector[data-closing] {
+    width: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-inspector,
+  .workspace-inspector[data-closing],
+  .workspace-inspector > div,
+  .agents-layout .agent-detail,
+  .agents-layout .agent-detail[data-closing],
+  .run-records .run-event::after,
+  .rubber-segment__thumb {
+    transition: none;
+    transform: none;
+  }
+}
+
+/* P1-437: the application brand layer colors real surfaces; copied component
+ * sources remain unchanged. Color communicates navigation and emphasis, not run success. */
+.app-sidebar,
+.app-rail,
+.app-topbar {
+  background: var(--brand-chrome);
+}
+.app-rail a[aria-current='page'] {
+  background: var(--brand-selected-surface);
+  color: var(--brand-selected-ink);
+}
+.app-sidebar-search:hover,
+.sidebar-projects-link:hover {
+  background: var(--brand-selected-surface);
+}
+.workspace-dock .prompt-bar[data-collectui] .instruction-send:hover:not(:disabled) {
+  background: var(--brand-primary-hover);
+}
+.cu-page-resource-icon,
+.cu-wb-sheet-icon,
+.cu-page-inbox-icon,
+.cu-wb-command-item-icon {
+  color: var(--brand-selected-ink);
+  background: var(--brand-selected-surface);
+  border-color: var(--brand-border);
+}
+.cu-admin-heading,
+.workspace-inspector-head {
+  background: var(--brand-header);
+  border-bottom-color: var(--brand-border);
+}
+.cu-admin-avatar,
+.cu-admin-mark {
+  color: var(--brand-selected-ink);
+  background: var(--brand-selected-surface);
+}
+.cu-421-f .workspace-file-icon,
+.cu-artifact-preview > header {
+  color: var(--brand-selected-ink);
+  background: var(--brand-selected-surface);
+}
+.page-lead,
+.workspace-welcome > p,
+.cu-wb-empty > p {
+  color: var(--color-ink-soft);
+}
+.global-search-dialog .global-search-hint,
+.devices-pairing .device-pairing-countdown {
+  color: var(--brand-note-ink);
+  background: var(--brand-note-surface);
+}
+
+/* Local remapping for copied state primitives: preserve the red/amber/green
+ * meanings while their labels and dots remain legible on dark device cards. */
+body[data-ds-dark-theme] .device-status-online {
+  --dsw-alias-state-success-primary: var(--color-run);
+}
+body[data-ds-dark-theme] .device-status-offline {
+  --dsw-alias-state-warn-primary: var(--color-warn);
+}
+body[data-ds-dark-theme] .device-status-revoked {
+  --dsw-alias-state-error-primary: var(--color-danger);
+}
+
+/* P1-437: local chip bindings must follow the active dark state palette too.
+ * Root/body tokens alone cannot override a 900-step binding on the chip itself. */
+body[data-ds-dark-theme] .instruction-state-pending {
+  --dsw-alias-state-warn-primary: var(--color-warn);
+}
+body[data-ds-dark-theme] .instruction-state-accepted {
+  --dsw-alias-state-success-primary: var(--color-run);
+}
+body[data-ds-dark-theme] .instruction-state-queued {
+  --dsw-alias-state-business-primary: var(--color-signal);
+}
+body[data-ds-dark-theme] .instruction-state-rejected {
+  --dsw-alias-state-error-primary: var(--color-danger);
+}
+body[data-ds-dark-theme] .instruction-error {
+  --dsw-alias-state-error-primary: var(--color-danger);
+}
+body[data-ds-dark-theme] .stream-incomplete {
+  --dsw-alias-state-warn-primary: var(--color-warn);
+}
+body[data-ds-dark-theme] .target-mode {
+  --dsw-alias-state-business-primary: var(--color-signal);
+}
+body[data-ds-dark-theme] .target-mode-explicit {
+  --dsw-alias-state-warn-primary: var(--color-warn);
+}
+body[data-ds-dark-theme] .run-events-alert {
+  --dsw-alias-state-warn-primary: var(--color-warn);
+
+}
 /* #430: reviews stay next to their immutable round; narrow screens keep one reading column. */
 .review-revision {
   margin: var(--space-4) 0;

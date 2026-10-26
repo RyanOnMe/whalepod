@@ -82,3 +82,16 @@ git diff --stat feat/p1-429-artifact-review
 
 从干净数据库执行上方命令；Hub 用例由 `with-test-postgres.mts` 自起临时 PostgreSQL，
 Web/协议用例不需要 Docker。
+
+## 2026-10-26 合入前回归收口
+
+- 先红后绿：候选 owner 私有批注不得写团队 `artifact.changed`（发布后正控仍须产生事件）；
+  非接收人确认返回 403；改派后的同 key 回放重判当前责任；不同回执的同 key 相互隔离。
+- 保持 Task → receipt 锁序；先判断回执接收人，再判断当前责任人。未确认回执改派后旧人
+  已不再是接收人（403），已确认历史回执的旧接收人不再负责时返回 409。
+- confirm/adopt 回执 key 含 actor 与 receipt；差异讨论使用同作用域派生 key。候选批注
+  只刷新拥有者命令读面，发布后批注才产生团队事件。
+- 定向复跑三个 integration 文件：artifact-review、handoff-receipt、handoff-attention。
+  最初 4 failed / 26 passed，修复后通过；隔离回执的追加正控随最终检查一起运行。
+- 改派与幂等回放预检查之间的极短并发窗口未用时序注入覆盖；本次验证的是改派提交后
+  的重放拒绝，不宣称已覆盖所有并发排列。候选存在性由事件持久层断言，不靠截图。

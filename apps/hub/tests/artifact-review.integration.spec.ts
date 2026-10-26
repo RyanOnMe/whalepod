@@ -11,7 +11,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@whalepod/db'
-import { insertArtifact, setArtifactStatus } from '@whalepod/db'
+import { insertArtifact, schema, setArtifactStatus } from '@whalepod/db'
+import { eq } from 'drizzle-orm'
 import { ArtifactStore } from '../src/modules/artifact/store.js'
 import {
   createArtifactComment,
@@ -61,7 +62,7 @@ describe('artifact review (#429)', () => {
   })
 
   /** 已发布文本 Artifact 的声明式前置（真实路径要 Node 经 WS 上传并由 owner 发布）。 */
-  async function seedPublishedText() {
+  async function seedPublishedText(status: 'candidate' | 'published' = 'published') {
     const ids = await seedRunPrereqs(database.db)
     const receiver = await seedSecondUserDevice(database.db, ids)
     const runId = await insertRunRow(database.db, {
@@ -87,7 +88,8 @@ describe('artifact review (#429)', () => {
       sha256: blob.sha256,
       storageKey: blob.storageKey,
     })
-    await setArtifactStatus(database.db, artifact.id, 'published', new Date())
+    if (status === 'published')
+      await setArtifactStatus(database.db, artifact.id, 'published', new Date())
     return { ids, receiver, artifactId: artifact.id, runId }
   }
 
@@ -260,6 +262,42 @@ describe('artifact review (#429)', () => {
         idemKey(),
       ),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+  })
+
+  it('私有候选的拥有者批注不广播身份，发布后批注才产生团队事件', async () => {
+    const { ids, receiver, artifactId } = await seedPublishedText('candidate')
+    await createArtifactComment(
+      database,
+      store,
+      makeActor(ids.userId),
+      artifactId,
+      { body: '仅拥有者可见的检查笔记' },
+      idemKey(),
+    )
+    const privateView = await getArtifactReviewView(database.db, makeActor(ids.userId), artifactId)
+    expect(privateView.comments).toHaveLength(1)
+    await expect(
+      getArtifactReviewView(database.db, makeActor(receiver.userId, 'member'), artifactId),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    const changedEvents = async () =>
+      (
+        await database.db
+          .select()
+          .from(schema.teamEvents)
+          .where(eq(schema.teamEvents.type, 'artifact.changed'))
+      ).filter((row) => (row.payload as { artifactId?: string }).artifactId === artifactId)
+    expect(await changedEvents()).toHaveLength(0)
+
+    await setArtifactStatus(database.db, artifactId, 'published', new Date())
+    await createArtifactComment(
+      database,
+      store,
+      makeActor(receiver.userId, 'member'),
+      artifactId,
+      { body: '发布后团队可见的意见' },
+      idemKey(),
+    )
+    expect(await changedEvents()).toHaveLength(1)
   })
 
   it('邀请：仅责任人/拥有者；重复邀请收敛；邀请不改变可见性', async () => {

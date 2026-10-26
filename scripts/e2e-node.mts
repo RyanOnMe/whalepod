@@ -68,7 +68,14 @@ const { startDeviceSession, checkPreparation, createHelloFacts } = await import(
 const RUNTIME_BIN = createRequire(join(REPO_ROOT, 'apps/node/src/cli.ts')).resolve(
   '@whalepod/runtime/bin',
 )
-const REPLAY_PATCH = join(REPO_ROOT, 'packages/runtime-dsh/config/replay.yml')
+// P1-437: upstream replay's pacing knob is isolated to this explicit browser lane.
+// Production protocol/projection and every existing fixture retain their original timing.
+const REPLAY_PATCH = join(
+  REPO_ROOT,
+  process.env['WHALEPOD_E2E_AGENT_MOTION'] === '1'
+    ? 'scripts/fixtures/agent-state/replay.yml'
+    : 'packages/runtime-dsh/config/replay.yml',
+)
 interface E2eFixture {
   session: string
   /** 覆盖旁车（#379 收尾交接调用的脚本化）：`apply` 读 DSH_SNAPSHOT_OVERRIDE。 */

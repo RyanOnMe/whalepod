@@ -230,8 +230,21 @@ export async function sweepContrast(page: Page, min = 4.5): Promise<ContrastSwee
         weight: number
       }> = []
 
+      // Native closed details use UA content-visibility: descendants can retain nonzero
+      // rectangles and stale computed colors. Only the first direct summary subtree is
+      // actually exposed. Check every closed ancestor so nested disclosures stay honest.
+      const hiddenByClosedDetails = (element: Element): boolean => {
+        for (let node: Element | null = element; node; node = node.parentElement) {
+          if (node.tagName !== 'DETAILS' || node.hasAttribute('open')) continue
+          const summary = Array.from(node.children).find((child) => child.tagName === 'SUMMARY')
+          if (!summary?.contains(element)) return true
+        }
+        return false
+      }
+
       for (const el of Array.from(document.querySelectorAll<HTMLElement>('body *'))) {
         if (exemptSelectors.some((sel: string) => el.matches(sel))) continue
+        if (hiddenByClosedDetails(el)) continue
         const cs = getComputedStyle(el)
         if (cs.display === 'none' || cs.visibility === 'hidden') continue
         const rect = el.getBoundingClientRect()

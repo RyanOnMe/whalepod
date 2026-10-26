@@ -10,12 +10,13 @@
  * 可查，不让直播与最终内容重复并排。滚动跟随交给对话的唯一主滚动容器（TaskRoomPage）。
  */
 import { useCallback, useLayoutEffect, useSyncExternalStore, type ReactNode } from 'react'
+import { MotionDisclosure } from '../../shared/MotionDisclosure.js'
 import { Hint } from '../../shared/micro/Hint.js'
 import { RunStatusBadge } from '../../shared/micro/RunStatusBadge.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { formatBytes } from '../../shared/format.js'
 import { WorkspaceIcon } from '../../shared/WorkspaceIcon.js'
-import { FileCard } from '../../vendor/collectui/collectui.js'
+import { FileCard, FileCollectionMark } from '../../vendor/collectui/collectui.js'
 import type { RunEventItem, RunView, Session, TaskView } from '../../shared/api/types.js'
 import { getRunLiveText, subscribeRunLive } from '../../shared/realtime/run-buffer.js'
 import { RunFailureNotice } from '../run/RunFailureNotice.js'
@@ -72,7 +73,11 @@ function ArtifactCards({
 }): ReactNode {
   if (segment.artifacts.length === 0) return null
   return (
-    <section className="conversation-artifacts" aria-label="本次运行交付物">
+    <section className="conversation-artifacts cu-file-group" aria-label="本次运行交付物">
+      <div className="conversation-file-group">
+        <FileCollectionMark count={segment.artifacts.length} />
+        <span>{segment.artifacts.length} 个文件</span>
+      </div>
       {segment.artifacts.map((artifact) => (
         <FileCard
           key={artifact.id}
@@ -116,11 +121,7 @@ function RunLiveText({
   }, [liveText, onGrowth])
 
   if (liveText === '') {
-    return (
-      <p className="empty-state">
-        {isActive ? '等待输出…（直播帧不落库，断线期间的内容以最终消息为准）' : '无直播内容。'}
-      </p>
-    )
+    return <p className="empty-state">{isActive ? '等待回复…' : '无直播内容。'}</p>
   }
   return (
     <pre className="run-live-text" data-testid="run-live-text">
@@ -282,8 +283,12 @@ export function RunSegment({
        * 也是同一件事在两处重复。行动面见 RunDetailPanel。
        */}
 
-      <details className="run-records" data-testid="run-records">
-        <summary>工具与运行记录</summary>
+      <MotionDisclosure
+        label="工具与运行记录"
+        count={events.length}
+        className="run-records"
+        testId="run-records"
+      >
         {showArchivedLive ? (
           <pre className="run-live-archived" data-testid="run-live-archived">
             {'未持久化的直播输出（断线或未收全的部分，以最终消息为准）：\n'}
@@ -322,7 +327,7 @@ export function RunSegment({
             })}
           </ol>
         </div>
-      </details>
+      </MotionDisclosure>
     </li>
   )
 }
