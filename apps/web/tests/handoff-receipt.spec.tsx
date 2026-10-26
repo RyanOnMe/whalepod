@@ -300,10 +300,15 @@ describe('#380 下游接收面板', () => {
       loggedInHandlers(ALICE, [
         taskRoomHandler(downstreamTask()),
         receiptsHandler([makeReceipt()]),
+        teamMembersHandler(),
       ]),
     )
     const panel = await screen.findByTestId('handoff-receipt-panel')
-    expect(within(panel).getByTestId('handoff-receipt-pending')).toHaveTextContent('等待接收人确认')
+    await waitFor(() =>
+      expect(within(panel).getByTestId('handoff-receipt-pending')).toHaveTextContent(
+        '等待 Bob（@bob） 确认',
+      ),
+    )
     expect(within(panel).queryByTestId('handoff-确认接收-form')).not.toBeInTheDocument()
   })
 
@@ -428,6 +433,151 @@ describe('#380 下游接收面板', () => {
     expect(within(panel).getByTestId('handoff-task-not-accepted')).toHaveTextContent('任务尚未接受')
   })
 
+  it('任务指派被拒绝：同样不算接受，提示重新指派或重新交付', async () => {
+    renderApp(
+      `/tasks/${TASK_ID}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(downstreamTask({ assignmentStatus: 'rejected', acceptedAt: null })),
+        receiptsHandler([makeReceipt()]),
+      ]),
+    )
+    const panel = await screen.findByTestId('handoff-receipt-panel')
+    expect(within(panel).getByTestId('handoff-task-not-accepted')).toHaveTextContent(
+      '任务指派已被拒绝',
+    )
+  })
+
+  it('上游问题已保存但响应丢失：trim等价重试同键，成功后新意图换键', async () => {
+    const user = userEvent.setup()
+    const stored = new Map<string, string>()
+    const requests: Array<{ key: string; text: string }> = []
+    let lose = true
+    renderApp(
+      `/tasks/${TASK_ID}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(downstreamTask()),
+        receiptsHandler([makeReceipt()]),
+        {
+          method: 'POST',
+          url: new RegExp(`/api/v1/tasks/${UPSTREAM_TASK_ID}/comments$`),
+          respond: (init) => {
+            const key = new Headers(init.headers).get('idempotency-key')!
+            const text = (JSON.parse(String(init.body)) as { body: string }).body
+            requests.push({ key, text })
+            if (!stored.has(key)) stored.set(key, text)
+            if (lose) {
+              lose = false
+              throw new Error('response lost after storing question')
+            }
+            return created({ id: 'comment-1', body: stored.get(key) })
+          },
+        },
+      ]),
+    )
+    const panel = await screen.findByTestId('handoff-receipt-panel')
+    const field = within(panel).getByLabelText('向上游提问')
+    const send = within(panel).getByRole('button', { name: '发送问题' })
+    await user.type(field, '问题 A')
+    await user.click(send)
+    await within(panel).findByRole('alert')
+    await user.type(field, '  ')
+    await user.click(send)
+    await waitFor(() => expect(field).toHaveValue(''))
+    expect(requests[1]!.key).toBe(requests[0]!.key)
+    expect(stored.size).toBe(1)
+    await user.type(field, '问题 A')
+    await user.click(send)
+    await waitFor(() => expect(field).toHaveValue(''))
+    expect(requests[2]!.key).not.toBe(requests[1]!.key)
+    expect(stored.size).toBe(2)
+  })
+
+  it('未知结果问题 A→B→A：B独立保存，回到A重放待定回执而不重复保存', async () => {
+    const user = userEvent.setup()
+    const stored = new Map<string, string>()
+    const requests: string[] = []
+    let lose = 2
+    renderApp(
+      `/tasks/${TASK_ID}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(downstreamTask()),
+        receiptsHandler([makeReceipt()]),
+        {
+          method: 'POST',
+          url: new RegExp(`/api/v1/tasks/${UPSTREAM_TASK_ID}/comments$`),
+          respond: (init) => {
+            const key = new Headers(init.headers).get('idempotency-key')!
+            const text = (JSON.parse(String(init.body)) as { body: string }).body
+            requests.push(key)
+            if (!stored.has(key)) stored.set(key, text)
+            if (lose-- > 0) throw new Error('response lost after storing question')
+            return created({ id: 'comment-1', body: stored.get(key) })
+          },
+        },
+      ]),
+    )
+    const panel = await screen.findByTestId('handoff-receipt-panel')
+    const field = within(panel).getByLabelText('向上游提问')
+    const send = within(panel).getByRole('button', { name: '发送问题' })
+    for (const text of ['问题 A', '问题 B']) {
+      await user.clear(field)
+      await user.type(field, text)
+      await user.click(send)
+      await within(panel).findByRole('alert')
+      await waitFor(() => expect(send).toBeEnabled())
+    }
+    await user.clear(field)
+    await user.type(field, '问题 A')
+    await user.click(send)
+    await waitFor(() => expect(field).toHaveValue(''))
+    expect(new Set(requests).size).toBe(2)
+    expect(requests[2]!).toBe(requests[0]!)
+    expect([...stored.values()]).toEqual([
+      '【交接 v1 · 前端接入】问题 A',
+      '【交接 v1 · 前端接入】问题 B',
+    ])
+  })
+
+  it('失败后交接上下文改变：相同问题仍是新的发送意图', async () => {
+    const user = userEvent.setup()
+    const receipt = makeReceipt()
+    const requests: Array<{ key: string; text: string }> = []
+    let lose = true
+    const view = renderApp(
+      `/tasks/${TASK_ID}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(downstreamTask()),
+        receiptsHandler([receipt]),
+        {
+          method: 'POST',
+          url: new RegExp(`/api/v1/tasks/${UPSTREAM_TASK_ID}/comments$`),
+          respond: (init) => {
+            requests.push({
+              key: new Headers(init.headers).get('idempotency-key')!,
+              text: (JSON.parse(String(init.body)) as { body: string }).body,
+            })
+            if (lose) {
+              lose = false
+              throw new Error('response lost after storing question')
+            }
+            return created({ id: 'comment-1' })
+          },
+        },
+      ]),
+    )
+    const panel = await screen.findByTestId('handoff-receipt-panel')
+    const field = within(panel).getByLabelText('向上游提问')
+    await user.type(field, '问题 A')
+    await user.click(within(panel).getByRole('button', { name: '发送问题' }))
+    await within(panel).findByRole('alert')
+    receipt.downstreamTaskTitle = '接入新版前端'
+    await view.queryClient.invalidateQueries({ queryKey: queryKeys.taskHandoffReceipts(TASK_ID) })
+    await user.click(within(panel).getByRole('button', { name: '发送问题' }))
+    await waitFor(() => expect(field).toHaveValue(''))
+    expect(requests[1]!.key).not.toBe(requests[0]!.key)
+    expect(requests[1]!.text).toBe('【交接 v1 · 接入新版前端】问题 A')
+  })
+
   it('向上游提问不要求先确认接收；失败保留文字，成功后正文不变', async () => {
     const user = userEvent.setup()
     const pending = makeReceipt()
@@ -461,7 +611,7 @@ describe('#380 下游接收面板', () => {
     fail = false
     await user.click(within(panel).getByRole('button', { name: '发送问题' }))
     expect(await within(panel).findByRole('status')).toHaveTextContent('已发到上游任务讨论区')
-    expect(commentBody).toEqual({ body: '订单号为空时怎么处理？' })
+    expect(commentBody).toEqual({ body: '【交接 v1 · 前端接入】订单号为空时怎么处理？' })
     expect(question).toHaveValue('')
   })
 })

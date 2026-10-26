@@ -5,11 +5,13 @@
  *   接受任务、不会自动开始执行（这里也从不触发任何 Run）。
  * - confirmed → 显示固化理解与该版本；上游有新版本时给「采用新版本」表单
  *   （理解必填；旧 receipt 与旧 Run 保留原版本，采用只产生新 receipt）。
+ * - #428：同一任务收到多份交接时逐份可见；待办用 `#handoff-receipt-<receiptId>`
+ *   指到具体一张卡。改派时未确认回执随责任转移（服务端同一事务完成）。
  * - 团队可见（交接是正式记录）；不是交接下游的任务什么也不渲染。
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState, type ReactNode } from 'react'
-import { Link } from 'react-router'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Link, useLocation } from 'react-router'
 import { api } from '../../shared/api/client.js'
 import { isApiError } from '../../shared/api/errors.js'
 import { useMemberDirectory } from '../team/memberDirectory.js'
@@ -111,18 +113,40 @@ function AdoptForm({
 
 /**
  * 向上游提问（#428）：与「确认接收」解耦——接收方不必先确认理解，也不必接受任务；
- * 问题走上游任务的讨论区（人际交流，不驱动 Agent），失败保留已写文字。
+ * 问题走上游任务的讨论区（人际交流，不驱动 Agent），带固定版本/下游任务上下文。
+ * 失败保留已写文字；重试复用同一 Idempotency-Key（响应丢失不会发两遍）。
  */
-function QuestionComposer({ upstreamTaskId }: { upstreamTaskId: string }): ReactNode {
+function QuestionComposer({
+  upstreamTaskId,
+  revisionNumber,
+  downstreamTitle,
+}: {
+  upstreamTaskId: string
+  revisionNumber: number
+  downstreamTitle: string
+}): ReactNode {
   const [question, setQuestion] = useState('')
   const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+  // Keep every unknown-outcome request until its own successful acknowledgement.
+  // Switching drafts A → B → A must still replay the unresolved A receipt.
+  const pendingIntents = useRef(new Map<string, string>())
   async function send(): Promise<void> {
     const text = question.trim()
     if (text === '' || state === 'sending') return
     setState('sending')
     try {
-      await api.mutate(`/tasks/${upstreamTaskId}/comments`, { body: { body: text } })
-      setQuestion('')
+      const signature = JSON.stringify({ upstreamTaskId, revisionNumber, downstreamTitle, text })
+      let key = pendingIntents.current.get(signature)
+      if (key === undefined) {
+        key = crypto.randomUUID()
+        pendingIntents.current.set(signature, key)
+      }
+      await api.mutate(`/tasks/${upstreamTaskId}/comments`, {
+        idempotencyKey: key,
+        body: { body: `【交接 v${revisionNumber} · ${downstreamTitle}】${text}` },
+      })
+      pendingIntents.current.delete(signature)
+      setQuestion((current) => (current.trim() === text ? '' : current))
       setState('sent')
     } catch {
       setState('error')
@@ -137,7 +161,11 @@ function QuestionComposer({ upstreamTaskId }: { upstreamTaskId: string }): React
           rows={2}
           aria-label="向上游提问"
           value={question}
-          onChange={(event) => setQuestion(event.target.value)}
+          disabled={state === 'sending'}
+          onChange={(event) => {
+            setQuestion(event.target.value)
+            if (state !== 'sending') setState('idle')
+          }}
         />
       </label>
       <button
@@ -165,25 +193,36 @@ function QuestionComposer({ upstreamTaskId }: { upstreamTaskId: string }): React
 export function HandoffReceiptPanel({
   task,
   session,
+  onReady,
 }: {
   task: TaskView
   session: Session
+  /** 回执读取完成：让页面在数据真正到位后再解析 `#handoff-receipt-*` 锚点。 */
+  onReady?: () => void
 }): ReactNode {
   const queryClient = useQueryClient()
   const directory = useMemberDirectory()
+  const location = useLocation()
   const [actionError, setActionError] = useState<unknown>(null)
   const query = useQuery({
     queryKey: queryKeys.taskHandoffReceipts(task.id),
     queryFn: () => api.get<HandoffReceiptView[]>(`/tasks/${task.id}/handoff-receipts`),
   })
+  const targetReceiptId = location.hash.startsWith('#handoff-receipt-')
+    ? location.hash.slice('#handoff-receipt-'.length)
+    : null
+  const anchorRequested = location.hash === '#handoff-receipt' || targetReceiptId !== null
   const receipts = query.data ?? []
+  const pending = receipts.filter((receipt) => receipt.status === 'pending')
   const confirmed = receipts.filter((receipt) => receipt.status === 'confirmed')
-  const active = confirmed.reduce<HandoffReceiptView | undefined>(
-    (best, receipt) =>
-      best === undefined || receipt.revisionNumber > best.revisionNumber ? receipt : best,
-    undefined,
-  )
-  const pending = receipts.find((receipt) => receipt.status === 'pending')
+
+  // 待办直达的落点在回执查询完成后才存在：通知页面重新解析 hash 并聚焦。
+  const notifiedReady = useRef(false)
+  useEffect(() => {
+    if (!query.isSuccess || notifiedReady.current) return
+    notifiedReady.current = true
+    onReady?.()
+  }, [onReady, query.isSuccess])
 
   const invalidate = (): void => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.taskHandoffReceipts(task.id) })
@@ -232,13 +271,52 @@ export function HandoffReceiptPanel({
     },
   })
 
-  if (query.isPending || query.isError || (active === undefined && pending === undefined)) {
-    return null
+  // 待办直达：加载中/失败也要给一个真实的落点，不能聚焦一个空容器。
+  if (query.isPending) {
+    if (!anchorRequested) return null
+    return (
+      <section
+        id="handoff-receipt"
+        tabIndex={-1}
+        className="card handoff-receipt"
+        data-testid="handoff-receipt-panel"
+        aria-label="上游交接包"
+      >
+        <div className="room-column-head">
+          <h2>上游交接包</h2>
+        </div>
+        <p role="status">正在读取交接回执…</p>
+      </section>
+    )
   }
+  if (query.isError) {
+    if (!anchorRequested) return null
+    return (
+      <section
+        id="handoff-receipt"
+        tabIndex={-1}
+        className="card handoff-receipt"
+        data-testid="handoff-receipt-panel"
+        aria-label="上游交接包"
+      >
+        <div className="room-column-head">
+          <h2>上游交接包</h2>
+        </div>
+        <ErrorBanner error={query.error} />
+        <button type="button" className="button" onClick={() => void query.refetch()}>
+          重新读取交接回执
+        </button>
+      </section>
+    )
+  }
+  if (!anchorRequested && receipts.length === 0) return null
+
   const busy = confirmMutation.isPending || adoptMutation.isPending
-  const hasNewer = active !== undefined && active.latestRevisionNumber > active.revisionNumber
+  const isCurrentAssignee = task.assigneeUserId === session.userId
   return (
     <section
+      id="handoff-receipt"
+      tabIndex={-1}
       className="card handoff-receipt"
       data-testid="handoff-receipt-panel"
       aria-label="上游交接包"
@@ -253,79 +331,120 @@ export function HandoffReceiptPanel({
         <p className="mutation-hint" data-testid="handoff-task-not-accepted">
           任务尚未接受；确认理解不等于接受任务，接受任务仍走原入口。
         </p>
+      ) : task.assignmentStatus === 'rejected' ? (
+        <p className="mutation-hint" data-testid="handoff-task-not-accepted">
+          任务指派已被拒绝；需要重新指派或由交付人重新交付后再确认。
+        </p>
       ) : null}
       {actionError !== null ? <ErrorBanner error={actionError} /> : null}
+      {receipts.length === 0 ? <p>这份任务没有待接收的交接。</p> : null}
 
-      {active !== undefined ? (
-        <div data-testid="handoff-receipt-active">
-          <HandoffPublishedContent revisionId={active.revisionId} />
-          <p>
-            来源：
-            <Link to={`/tasks/${active.upstreamTaskId}`}>{active.upstreamTaskTitle}</Link>
-            {` · 固定版本 v${active.revisionNumber}`}
-          </p>
-          <p className="mutation-hint">
-            {/* 评审 B7：改派后旧 receipt 仍是团队事实——不是「你」的确认就报出人是谁
-                （回执属于接收人，别把别人的理解冒充成当前用户自己的）。 */}
-            {`${session.userId === active.receiverUserId ? '你' : `${directory.personOf(active.receiverUserId)}`}确认的理解（${new Date(active.confirmedAt ?? active.updatedAt).toLocaleString()}）：${active.understanding ?? ''}`}
-          </p>
-          {active.differences !== null ? (
-            // 评审 B7 同款：差异也属于接收人——改派后非接收人视角别冒充「你」。
-            <p className="mutation-hint">{`${session.userId === active.receiverUserId ? '你' : `${directory.personOf(active.receiverUserId)}`}提出的差异：${active.differences}`}</p>
-          ) : null}
-          {hasNewer ? (
-            <div data-testid="handoff-newer-version">
-              <p role="status">
-                {`上游已发布新版本 v${active.latestRevisionNumber}；采用只影响后续执行，旧执行的材料不变。`}
-              </p>
-              {session.userId === active.receiverUserId ? (
-                <AdoptForm
-                  receipt={active}
+      {pending.map((receipt) => {
+        const canConfirm = isCurrentAssignee && receipt.receiverUserId === session.userId
+        return (
+          <div
+            key={receipt.id}
+            id={`handoff-receipt-${receipt.id}`}
+            tabIndex={-1}
+            data-testid="handoff-receipt-pending"
+            data-receipt-id={receipt.id}
+            className={targetReceiptId === receipt.id ? 'handoff-target' : undefined}
+          >
+            <p>
+              来源：
+              <Link to={`/tasks/${receipt.upstreamTaskId}`}>{receipt.upstreamTaskTitle}</Link>
+              {` · 待确认版本 v${receipt.revisionNumber}`}
+            </p>
+            {canConfirm ? (
+              <>
+                <ConfirmForm
+                  receipt={receipt}
+                  label="确认接收"
+                  submitLabel="确认接收（不动任务状态）"
                   busy={busy}
-                  onSubmit={(understanding, differences, expectedRevisionId) =>
-                    adoptMutation.mutate({
-                      receiptId: active.id,
+                  onSubmit={(understanding, differences) =>
+                    confirmMutation.mutate({
+                      receiptId: receipt.id,
                       understanding,
-                      expectedRevisionId,
                       ...(differences.trim() !== '' ? { differences } : {}),
                     })
                   }
                 />
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+                <QuestionComposer
+                  upstreamTaskId={receipt.upstreamTaskId}
+                  revisionNumber={receipt.revisionNumber}
+                  downstreamTitle={receipt.downstreamTaskTitle}
+                />
+              </>
+            ) : (
+              <p className="mutation-hint">
+                {`等待 ${directory.personOf(receipt.receiverUserId)} 确认「本次准备做什么」。`}
+              </p>
+            )}
+          </div>
+        )
+      })}
 
-      {pending !== undefined ? (
-        <div data-testid="handoff-receipt-pending">
-          <p>
-            来源：
-            <Link to={`/tasks/${pending.upstreamTaskId}`}>{pending.upstreamTaskTitle}</Link>
-            {` · 待确认版本 v${pending.revisionNumber}`}
-          </p>
-          {session.userId === pending.receiverUserId ? (
-            <>
-              <ConfirmForm
-                receipt={pending}
-                label="确认接收"
-                submitLabel="确认接收（不动任务状态）"
-                busy={busy}
-                onSubmit={(understanding, differences) =>
-                  confirmMutation.mutate({
-                    receiptId: pending.id,
-                    understanding,
-                    ...(differences.trim() !== '' ? { differences } : {}),
-                  })
-                }
+      {confirmed.map((receipt) => {
+        const hasNewer = receipt.latestRevisionNumber > receipt.revisionNumber
+        // 已确认回执的「采用新版本」属于当前责任人：改派后新责任人可推进后续版本，
+        // 原理解记录仍显示原确认人（历史事实不冒充）。
+        const canAdopt = isCurrentAssignee
+        return (
+          <div
+            key={receipt.id}
+            id={`handoff-receipt-${receipt.id}`}
+            tabIndex={-1}
+            data-testid="handoff-receipt-active"
+            data-receipt-id={receipt.id}
+            className={targetReceiptId === receipt.id ? 'handoff-target' : undefined}
+          >
+            <HandoffPublishedContent revisionId={receipt.revisionId} />
+            <p>
+              来源：
+              <Link to={`/tasks/${receipt.upstreamTaskId}`}>{receipt.upstreamTaskTitle}</Link>
+              {` · 固定版本 v${receipt.revisionNumber}`}
+            </p>
+            <p className="mutation-hint">
+              {/* 评审 B7：改派后旧 receipt 仍是团队事实——不是「你」的确认就报出人是谁
+                  （回执属于接收人，别把别人的理解冒充成当前用户自己的）。 */}
+              {`${session.userId === receipt.receiverUserId ? '你' : `${directory.personOf(receipt.receiverUserId)}`}确认的理解（${new Date(receipt.confirmedAt ?? receipt.updatedAt).toLocaleString()}）：${receipt.understanding ?? ''}`}
+            </p>
+            {receipt.differences !== null ? (
+              // 评审 B7 同款：差异也属于接收人——改派后非接收人视角别冒充「你」。
+              <p className="mutation-hint">{`${session.userId === receipt.receiverUserId ? '你' : `${directory.personOf(receipt.receiverUserId)}`}提出的差异：${receipt.differences}`}</p>
+            ) : null}
+            {hasNewer ? (
+              <div data-testid="handoff-newer-version">
+                <p role="status">
+                  {`上游已发布新版本 v${receipt.latestRevisionNumber}；采用只影响后续执行，旧执行的材料不变。`}
+                </p>
+                {canAdopt ? (
+                  <AdoptForm
+                    receipt={receipt}
+                    busy={busy}
+                    onSubmit={(understanding, differences, expectedRevisionId) =>
+                      adoptMutation.mutate({
+                        receiptId: receipt.id,
+                        understanding,
+                        expectedRevisionId,
+                        ...(differences.trim() !== '' ? { differences } : {}),
+                      })
+                    }
+                  />
+                ) : null}
+              </div>
+            ) : null}
+            {canAdopt ? (
+              <QuestionComposer
+                upstreamTaskId={receipt.upstreamTaskId}
+                revisionNumber={receipt.revisionNumber}
+                downstreamTitle={receipt.downstreamTaskTitle}
               />
-              <QuestionComposer upstreamTaskId={pending.upstreamTaskId} />
-            </>
-          ) : (
-            <p className="mutation-hint">等待接收人确认「本次准备做什么」。</p>
-          )}
-        </div>
-      ) : null}
+            ) : null}
+          </div>
+        )
+      })}
     </section>
   )
 }

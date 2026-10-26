@@ -1,7 +1,7 @@
 /** 连续对话工作区（ADR-0019）：执行区按 Run 成段连续阅读，详情按需查看。 */
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Link, useLocation, useParams } from 'react-router'
+import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { WorkspaceIcon } from '../shared/WorkspaceIcon.js'
 import { EmptyPanel, SheetHeading, FileCollectionMark } from '../vendor/collectui/collectui.js'
 import { api } from '../shared/api/client.js'
@@ -53,6 +53,7 @@ export function TaskRoomPage(): ReactNode {
 function TaskRoom(): ReactNode {
   const { taskId } = useParams()
   const location = useLocation()
+  const navigate = useNavigate()
   const [channel, setChannel] = useState<'execution' | 'discussion'>(() =>
     location.hash === '#comments-heading' ? 'discussion' : 'execution',
   )
@@ -61,6 +62,8 @@ function TaskRoom(): ReactNode {
   const presentedInspector = inspector ?? inspectorPresence.value
   const [hasOpenedRun, setHasOpenedRun] = useState(false)
   const [inspectedArtifactId, setInspectedArtifactId] = useState<string | null>(null)
+  // #428：交接回执是独立查询，读完才存在 `#handoff-receipt-*` 锚点目标。
+  const [receiptReady, setReceiptReady] = useState(0)
   const inspectorTrigger = useRef<HTMLElement | null>(null)
   const inspectorRef = useRef<HTMLElement>(null)
   const restoreInspectorFocus = useRef(false)
@@ -100,8 +103,9 @@ function TaskRoom(): ReactNode {
     } else if (location.hash.startsWith('#artifact-')) {
       setInspector('artifacts')
       setInspectedArtifactId(null)
-    } else if (location.hash === '#handoff-receipt') {
+    } else if (location.hash.startsWith('#handoff-receipt')) {
       // 交接待办直达（#428）：固定版本接收卡在执行区正文，直接回到执行区。
+      // `#handoff-receipt-<receiptId>` 指到具体一张卡（同任务可有多份交接）。
       setChannel('execution')
       setInspector(null)
     }
@@ -143,10 +147,14 @@ function TaskRoom(): ReactNode {
       ? channel === 'discussion' && inspector === null
       : location.hash === '#task-execution' ||
           location.hash === '#task-assignment' ||
-          location.hash === '#handoff-receipt'
+          location.hash.startsWith('#handoff-receipt')
         ? channel === 'execution' && inspector === null
         : true
-  useHashFocus(query.isSuccess && !approvalAnchor && hashViewReady, true, query.data)
+  const hashFocusContent = useMemo(
+    () => ({ room: query.data, receiptReady }),
+    [query.data, receiptReady],
+  )
+  useHashFocus(query.isSuccess && !approvalAnchor && hashViewReady, true, hashFocusContent)
 
   // #277：加载骨架也有在场语义——数据到达后它先演完退场，再卸载（硬切就是从这儿来的）。
   const skeletonPresence = usePresence(
@@ -495,9 +503,11 @@ function TaskRoom(): ReactNode {
                   </>
                 )}
                 {session !== null ? (
-                  <div id="handoff-receipt" tabIndex={-1}>
-                    <HandoffReceiptPanel task={task} session={session} />
-                  </div>
+                  <HandoffReceiptPanel
+                    task={task}
+                    session={session}
+                    onReady={() => setReceiptReady((ready) => ready + 1)}
+                  />
                 ) : null}
                 {follow.following ? null : (
                   <button
@@ -658,6 +668,7 @@ function TaskRoom(): ReactNode {
                     setInspector(null)
                     setInsertToken({ text: formatRunReference(runId), nonce: Date.now() })
                   }}
+                  onOpenReview={(artifactId) => navigate(`/tasks/${task.id}/review/${artifactId}`)}
                 />
               </section>
               <ReviewerSlot />

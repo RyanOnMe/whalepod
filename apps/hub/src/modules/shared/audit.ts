@@ -34,6 +34,10 @@ export type AuditAction =
   | 'plugin.install'
   | 'plugin.pack'
   | 'artifact.publish'
+  // #429：交付物审阅（批注/邀请/提交意见）——只记动作与结果，不记意见正文。
+  | 'artifact.comment.create'
+  | 'artifact.review.invite'
+  | 'artifact.review.submit'
 
 export type AuditOutcome = 'success' | 'denied' | 'rate_limited'
 

@@ -14,10 +14,15 @@ const LABELS: Record<AttentionItem['kind'], string> = {
   reassign_task: '重新指派',
   decide_approval: '处理审批',
   confirm_handoff: '确认接收交接',
+  submit_review: '提交审阅意见',
   inspect_candidate: '检查候选',
   complete_task: '确认完成',
 }
 function destination(item: AttentionItem): string {
+  // 审阅页是独立路由：待办直达准确版本，而不是先回任务页再找文件卡。
+  if (item.kind === 'submit_review') {
+    return `/tasks/${item.taskId}/review/${item.objectId}`
+  }
   const anchor =
     item.kind === 'decide_approval'
       ? `approval-${item.objectId}`
@@ -26,14 +31,17 @@ function destination(item: AttentionItem): string {
         : item.kind === 'complete_task'
           ? 'task-actions'
           : item.kind === 'confirm_handoff'
-            ? 'handoff-receipt'
+            ? `handoff-receipt-${item.objectId}`
             : 'task-assignment'
   return `/tasks/${item.taskId}#${anchor}`
 }
 function category(kind: AttentionItem['kind']): 'approval' | 'delivery' | 'assignment' {
   return kind === 'decide_approval'
     ? 'approval'
-    : kind === 'inspect_candidate' || kind === 'complete_task' || kind === 'confirm_handoff'
+    : kind === 'inspect_candidate' ||
+        kind === 'complete_task' ||
+        kind === 'confirm_handoff' ||
+        kind === 'submit_review'
       ? 'delivery'
       : 'assignment'
 }
