@@ -1,3 +1,3 @@
-/** #442: opt into the real LibreOffice lane; missing tool or proof is a failure. */
+/** #442: explicitly verify the production Office isolation fallback and review path. */
 process.env['WHALEPOD_E2E_OFFICE_PREVIEW'] = '1'
 await import('./run-handoff-loop.mts')

@@ -4,4 +4,4 @@ session.jsonl 通过真实 publish_artifact 分别发布新版 Markdown 与 samp
 
 sample.docx 是标准 ZIP OOXML 最小包：包含 [Content_Types].xml、_rels/.rels、word/document.xml，后者源码在 source-document.xml，正文只有 WhalePod Office preview sample。ZIP 时间固定为 2026-10-26。无用户资料、宏、外链或图片。
 
-默认交接 Q5 不要求可选的 LibreOffice；`pnpm test:e2e:delivery` 明确启用 Office 组合验证，缺转换工具或缺证据必须失败。三格式转换由 Node 现造样本检查；本浏览器路径只覆盖 DOCX 的真实转换和阅读入口，不判断复杂排版保真。
+`pnpm test:e2e:delivery` 明确启用 Office 安全回退验证：不启动未隔离转换进程，不提供新旧预览字节，保留原件发布、下载及批注。缺拒绝证据必须失败。正向转换已因外链越界读取风险撤回，未来需经可验证隔离后单独开放。

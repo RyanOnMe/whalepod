@@ -58,6 +58,23 @@ export function verifyOfficePreviewLoopEvidence(input: unknown): OfficePreviewLo
     object(root['original'])['byteSize'] === object(root['memberOriginal'])['byteSize'],
     'original byte count changed after publication',
   )
+  for (const key of ['ownerDownload', 'memberDownload']) {
+    const row = object(root[key])
+    check(
+      row['urlPath'] === `/api/v1/artifacts/${String(artifactId)}/content`,
+      `${key} did not use the visible original route`,
+    )
+    check(
+      typeof sourceSha === 'string' && row['sha256'] === sourceSha,
+      `${key} bytes differ from the original`,
+    )
+    check(
+      row['byteSize'] === object(root['original'])['byteSize'] &&
+        typeof row['signature'] === 'string' &&
+        row['signature'].startsWith('PK'),
+      `${key} did not produce the complete original file`,
+    )
+  }
   for (const key of ['ownerInfo', 'memberInfo']) {
     const row = object(root[key])
     check(

@@ -1,6 +1,7 @@
-/** #442: real Office reader, candidate privacy, explicit publication and member review. */
+/** #442: deny unisolated Office previews while preserving original publication and review. */
 import { createHash } from 'node:crypto'
-import { expect, type Locator, type Page } from '@playwright/test'
+import { readFile } from 'node:fs/promises'
+import { expect, type Page } from '@playwright/test'
 import type { ArtifactReviewView } from '@whalepod/protocol'
 import { env, hubApi } from './helpers.js'
 
@@ -22,11 +23,13 @@ type Artifact = {
 }
 type PreviewInfo = {
   artifactId: string
-  status: 'none' | 'ready' | 'failed'
+  status: string
   sourceSha256: string | null
+  converter: string | null
   mediaType: string | null
   byteSize: number | null
   failureReason: string | null
+  updatedAt: string | null
 }
 
 async function readBytes(cookie: string, path: string) {
@@ -43,26 +46,24 @@ async function readBytes(cookie: string, path: string) {
   }
 }
 
-/** Observe the exact Blob used by the visible reader, not a separate successful API read. */
-async function readerFact(frame: Locator) {
-  await expect(frame).toBeVisible()
-  await expect(frame).toHaveAttribute('src', /^blob:/)
-  return frame.evaluate(async (element) => {
-    if (!(element instanceof HTMLIFrameElement)) throw new Error('PDF reader is not an iframe')
-    const response = await fetch(element.src)
-    if (!response.ok) throw new Error('PDF reader Blob cannot be read')
-    const bytes = new Uint8Array(await response.arrayBuffer())
-    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
-    const rect = element.getBoundingClientRect()
-    return {
-      visible: rect.width > 0 && rect.height > 0,
-      sourceScheme: 'blob:',
-      mediaType: response.headers.get('content-type')?.split(';')[0],
-      byteSize: bytes.length,
-      signature: new TextDecoder().decode(bytes.subarray(0, 5)),
-      sha256: Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join(''),
-    }
-  })
+async function downloadOriginal(page: Page, artifactId: string) {
+  const path = `/api/v1/artifacts/${artifactId}/content`
+  const link = page.getByTestId('review-download')
+  await expect(link).toBeVisible()
+  await expect(link).toHaveAttribute('href', path)
+  const [download] = await Promise.all([page.waitForEvent('download'), link.click()])
+  expect(await download.failure()).toBeNull()
+  const file = await download.path()
+  if (file === null) throw new Error('original download did not produce a file')
+  const bytes = await readFile(file)
+  const urlPath = new URL(download.url()).pathname
+  await download.delete()
+  return {
+    urlPath,
+    byteSize: bytes.length,
+    signature: bytes.subarray(0, 5).toString('ascii'),
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+  }
 }
 
 export async function driveOfficePreviewLoop(input: Input): Promise<Record<string, unknown>> {
@@ -85,37 +86,48 @@ export async function driveOfficePreviewLoop(input: Input): Promise<Record<strin
   expect(original.signature.startsWith('PK')).toBe(true)
   expect(original.sha256).toBe(artifact!.sha256)
 
-  const previewInfo = async () => {
-    const result = await hubApi(aliceCookie, 'GET', `/artifacts/${artifactId}/preview-info`)
+  const previewInfo = async (cookie: string) => {
+    const result = await hubApi(cookie, 'GET', `/artifacts/${artifactId}/preview-info`)
     expect(result.status).toBe(200)
-    return result.data as PreviewInfo
+    const info = result.data as PreviewInfo
+    expect(info).toEqual({
+      artifactId,
+      status: 'failed',
+      sourceSha256: artifact!.sha256,
+      converter: 'unknown',
+      mediaType: null,
+      byteSize: null,
+      failureReason: 'ISOLATION_REQUIRED',
+      updatedAt: null,
+    })
+    return info
   }
-  await expect.poll(async () => (await previewInfo()).status, { timeout: 150_000 }).toBe('ready')
-  const info = await previewInfo()
-  expect(info.artifactId).toBe(artifactId)
-  expect(info.sourceSha256).toBe(artifact!.sha256)
-  expect(info.mediaType).toBe('application/pdf')
-  expect(info.failureReason).toBeNull()
+  const deniedPreview = async (cookie: string) => {
+    const response = await fetch(`${env().hubOrigin}/api/v1/artifacts/${artifactId}/preview`, {
+      headers: { cookie },
+    })
+    const envelope = (await response.json()) as { ok: boolean; error?: { code?: string } }
+    expect(response.status).toBe(404)
+    expect(envelope.ok).toBe(false)
+    expect(envelope.error?.code).toBe('PREVIEW_UNAVAILABLE')
+    return { status: response.status, code: envelope.error?.code }
+  }
+  const ownerInfo = await previewInfo(aliceCookie)
   const privateOriginal = await readBytes(bobCookie, `/artifacts/${artifactId}/content`)
   const privatePreview = await readBytes(bobCookie, `/artifacts/${artifactId}/preview`)
   const privateInfo = await hubApi(bobCookie, 'GET', `/artifacts/${artifactId}/preview-info`)
   expect(privateOriginal.status).toBe(404)
   expect(privatePreview.status).toBe(404)
   expect(privateInfo.status).toBe(404)
-
   await alice.goto(path)
   const ownerOffice = alice.getByTestId('office-preview')
-  await ownerOffice.getByRole('button', { name: '查看 Office 预览', exact: true }).click()
-  const ownerReader = await readerFact(ownerOffice.locator('iframe'))
-  expect(ownerReader.visible).toBe(true)
-  expect(ownerReader.signature).toBe('%PDF-')
-  expect(ownerReader.mediaType).toBe('application/pdf')
-  expect(ownerReader.byteSize).toBeGreaterThan(0)
-  expect(ownerReader.byteSize).toBe(info.byteSize)
-  const ownerPdf = await readBytes(aliceCookie, `/artifacts/${artifactId}/preview`)
-  expect(ownerPdf.status).toBe(200)
-  expect(ownerPdf.signature).toBe('%PDF-')
-  expect(ownerReader.sha256).toBe(ownerPdf.sha256)
+  await expect(ownerOffice).toContainText('隔离转换尚未开放')
+  const ownerIframeCount = await ownerOffice.locator('iframe').count()
+  expect(ownerIframeCount).toBe(0)
+  const ownerFallbackVisible = await ownerOffice.getByText(/隔离转换尚未开放/).isVisible()
+  const ownerPreview = await deniedPreview(aliceCookie)
+  const ownerDownload = await downloadOriginal(alice, artifactId)
+  expect(ownerDownload.sha256).toBe(artifact!.sha256)
 
   // Publication is a member action on the task file card, never an API shortcut.
   await alice.goto(`/tasks/${taskId}#artifact-${artifactId}`)
@@ -138,17 +150,17 @@ export async function driveOfficePreviewLoop(input: Input): Promise<Record<strin
 
   await bob.goto(path)
   const memberOffice = bob.getByTestId('office-preview')
-  await memberOffice.getByRole('button', { name: '查看 Office 预览', exact: true }).click()
-  const memberReader = await readerFact(memberOffice.locator('iframe'))
-  expect(memberReader.signature).toBe('%PDF-')
-  expect(memberReader.sha256).toBe(ownerReader.sha256)
+  await expect(memberOffice).toContainText('隔离转换尚未开放')
+  const memberIframeCount = await memberOffice.locator('iframe').count()
+  expect(memberIframeCount).toBe(0)
+  const memberFallbackVisible = await memberOffice.getByText(/隔离转换尚未开放/).isVisible()
+  const memberInfo = await previewInfo(bobCookie)
+  const memberPreview = await deniedPreview(bobCookie)
+  const memberDownload = await downloadOriginal(bob, artifactId)
+  expect(memberDownload.sha256).toBe(artifact!.sha256)
   const memberOriginal = await readBytes(bobCookie, `/artifacts/${artifactId}/content`)
-  const memberPdf = await readBytes(bobCookie, `/artifacts/${artifactId}/preview`)
   expect(memberOriginal.status).toBe(200)
-  expect(memberPdf.status).toBe(200)
   expect(memberOriginal.sha256).toBe(artifact!.sha256)
-  expect(memberPdf.sha256).toBe(ownerPdf.sha256)
-  await expect(bob.getByTestId('review-unsupported')).toContainText('Office 预览只供阅读')
   const comment = 'Office 阅读后复核：请补充表格边界条件。'
   await bob.getByLabel('对整件文件的评论').fill(comment)
   await bob.getByRole('button', { name: '发表整件批注', exact: true }).click()
@@ -170,29 +182,33 @@ export async function driveOfficePreviewLoop(input: Input): Promise<Record<strin
   return {
     component: 'web.office-preview-loop',
     source: 'production-hub-node-runtime',
+    policy: 'isolation-required',
     artifactId,
     taskId,
     runId: artifact!.runId,
     sourceSha: artifact!.sha256,
-    previewSourceSha: info.sourceSha256,
-    previewByteSize: info.byteSize,
     finalArtifactId: finalReview.artifact.id,
     finalArtifactSha: finalReview.artifact.sha256,
     expectedReviewerUserId: (member.data as { userId: string }).userId,
     statusBeforePublish: artifact!.status,
     statusAfterPublish: finalReview.artifact.status,
-    previewStatus: info.status,
     original,
-    ownerReader,
-    ownerPdf,
+    ownerDownload,
+    ownerInfo,
+    ownerPreview,
+    ownerIframeCount,
+    ownerFallbackVisible,
     privacy: {
       original: privateOriginal.status,
       preview: privatePreview.status,
       info: privateInfo.status,
     },
-    memberReader,
+    memberDownload,
+    memberInfo,
+    memberPreview,
+    memberIframeCount,
+    memberFallbackVisible,
     memberOriginal,
-    memberPdf,
     commentId: recorded!.id,
     comment,
     commentKind: recorded!.kind,
