@@ -127,17 +127,26 @@ function QuestionComposer({
 }): ReactNode {
   const [question, setQuestion] = useState('')
   const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
-  const idempotencyKey = useRef(crypto.randomUUID())
+  const intentKey = useRef<{ signature: string; key: string } | null>(null)
+  const normalizedQuestion = question.trim()
+  // A failed send remains retryable until its semantic text/context is edited.
+  // Track edits rather than a history of signatures, so A → B → A is a new intent.
+  useEffect(() => {
+    intentKey.current = null
+  }, [upstreamTaskId, revisionNumber, downstreamTitle, normalizedQuestion])
   async function send(): Promise<void> {
     const text = question.trim()
     if (text === '' || state === 'sending') return
     setState('sending')
     try {
+      const signature = JSON.stringify({ upstreamTaskId, revisionNumber, downstreamTitle, text })
+      if (intentKey.current?.signature !== signature)
+        intentKey.current = { signature, key: crypto.randomUUID() }
       await api.mutate(`/tasks/${upstreamTaskId}/comments`, {
-        idempotencyKey: idempotencyKey.current,
+        idempotencyKey: intentKey.current.key,
         body: { body: `【交接 v${revisionNumber} · ${downstreamTitle}】${text}` },
       })
-      idempotencyKey.current = crypto.randomUUID()
+      intentKey.current = null
       setQuestion((current) => (current.trim() === text ? '' : current))
       setState('sent')
     } catch {

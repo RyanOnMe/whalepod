@@ -292,6 +292,71 @@ describe('#429 交付物审阅页', () => {
     },
   )
 
+  it('同文原位意见换到另一处引用时，不重放原位置的回执', async () => {
+    const user = userEvent.setup()
+    const comments: Array<Record<string, unknown>> = []
+    const replay = lostCommentResponse(1, comments)
+    renderApp(
+      `/tasks/${TASK_ID}/review/${ARTIFACT_ID}`,
+      loggedInHandlers(BOB, [
+        replay.handler,
+        ...baseHandlers({ view: () => reviewView({ comments }) }),
+      ]),
+    )
+    const composer = await commentComposer('text', user)
+    await user.type(composer.field, '同一意见')
+    await user.click(composer.button)
+    await screen.findByRole('alert')
+    const pre = screen.getByTestId('review-text')
+    const range = document.createRange()
+    const start = TEXT.indexOf('orderId')
+    range.setStart(pre.firstChild!, start)
+    range.setEnd(pre.firstChild!, start + 7)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    fireEvent.mouseUp(pre)
+    await user.click(composer.button)
+    await waitFor(() => expect(composer.field).not.toBeInTheDocument())
+    expect(replay.requests[1]!.key).not.toBe(replay.requests[0]!.key)
+    expect(replay.requests.map((row) => row.body.anchor?.start)).toEqual([SECOND, start])
+    expect(comments).toHaveLength(2)
+  })
+
+  it('同文回复换到另一条线程时，不重放旧父批注的回执', async () => {
+    const user = userEvent.setup()
+    const otherId = '00000000-0000-4000-8000-0000000000c2'
+    const comments: Array<Record<string, unknown>> = [
+      retryParent(),
+      { ...retryParent(), id: otherId, body: '另一条意见' },
+    ]
+    const replay = lostCommentResponse(1, comments)
+    renderApp(
+      `/tasks/${TASK_ID}/review/${ARTIFACT_ID}`,
+      loggedInHandlers(BOB, [
+        replay.handler,
+        ...baseHandlers({ view: () => reviewView({ comments }) }),
+      ]),
+    )
+    const composer = await commentComposer('reply', user)
+    await user.type(composer.field, '同一回复')
+    await user.click(composer.button)
+    await screen.findByRole('alert')
+    await user.click(
+      within(screen.getByTestId(`review-comment-${otherId}`)).getByRole('button', { name: '回复' }),
+    )
+    const next = screen.getByLabelText('回复批注')
+    await user.type(next, '同一回复')
+    await user.click(screen.getByRole('button', { name: '发表回复' }))
+    await waitFor(() => expect(next).not.toBeInTheDocument())
+    expect(replay.requests[1]!.key).not.toBe(replay.requests[0]!.key)
+    expect(replay.requests.map((row) => row.body.parentCommentId)).toEqual([
+      RETRY_PARENT_ID,
+      otherId,
+    ])
+    expect(comments).toHaveLength(4)
+  })
+
   it('整件批注 → 提交本轮意见；没有意见时提交被禁用', async () => {
     const user = userEvent.setup()
     const comments: unknown[] = []

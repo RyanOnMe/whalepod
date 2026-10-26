@@ -23,6 +23,15 @@ import { ErrorBanner } from '../app/ErrorBanner.js'
 import { RelativeTime } from '../shared/RelativeTime.js'
 
 type Filter = 'all' | 'unresolved' | 'round'
+type CommentInput = { body: string; anchor?: ArtifactCommentAnchor; parentCommentId?: string }
+type CommentIntent = { signature: string; key: string }
+function commentKind(input: CommentInput): 'whole' | 'text' | 'reply' {
+  return input.parentCommentId !== undefined
+    ? 'reply'
+    : input.anchor !== undefined
+      ? 'text'
+      : 'whole'
+}
 
 /** 从当前选择算出「版本内偏移 + 前后文」；选择为空或不在正文里返回 null。 */
 export function selectionAnchor(
@@ -130,6 +139,26 @@ export function ArtifactReviewPage(): ReactNode {
   const [invitees, setInvitees] = useState<string[]>([])
   const [locateErrors, setLocateErrors] = useState<Record<string, true>>({})
   const [notice, setNotice] = useState<string | null>(null)
+  const commentIntents = useRef<Record<'whole' | 'text' | 'reply', CommentIntent | null>>({
+    whole: null,
+    text: null,
+    reply: null,
+  })
+  const normalizedWholeBody = wholeBody.trim()
+  const normalizedAnchorBody = anchorBody.trim()
+  const normalizedReplyBody = replyBody.trim()
+  const selectedAnchor = JSON.stringify(selection)
+  // Each composer retains only its current request intent. Whitespace equivalent
+  // retries stay identical; semantic edits, including A → B → A, start a new one.
+  useEffect(() => {
+    commentIntents.current.whole = null
+  }, [artifactId, normalizedWholeBody])
+  useEffect(() => {
+    commentIntents.current.text = null
+  }, [artifactId, normalizedAnchorBody, selectedAnchor])
+  useEffect(() => {
+    commentIntents.current.reply = null
+  }, [artifactId, normalizedReplyBody, replyTo])
 
   const query = useQuery({
     queryKey: ['artifact-review', artifactId],
@@ -166,21 +195,26 @@ export function ArtifactReviewPage(): ReactNode {
   }
 
   const comment = useMutation({
-    mutationFn: (input: {
-      body: string
-      anchor?: ArtifactCommentAnchor
-      parentCommentId?: string
-    }) =>
-      api.mutate<ArtifactCommentView>(`/artifacts/${artifactId}/comments`, {
-        body: {
-          body: input.body,
-          ...(input.anchor === undefined ? {} : { anchor: input.anchor }),
-          ...(input.parentCommentId === undefined
-            ? {}
-            : { parentCommentId: input.parentCommentId }),
-        },
-      }),
-    onSuccess: () => {
+    mutationFn: (input: CommentInput) => {
+      const body = {
+        body: input.body.trim(),
+        ...(input.anchor === undefined ? {} : { anchor: input.anchor }),
+        ...(input.parentCommentId === undefined ? {} : { parentCommentId: input.parentCommentId }),
+      }
+      const kind = commentKind(input)
+      const signature = JSON.stringify({ artifactId, ...body })
+      let intent = commentIntents.current[kind]
+      if (intent === null || intent.signature !== signature) {
+        intent = { signature, key: crypto.randomUUID() }
+        commentIntents.current[kind] = intent
+      }
+      return api.mutate<ArtifactCommentView>(`/artifacts/${artifactId}/comments`, {
+        body,
+        idempotencyKey: intent.key,
+      })
+    },
+    onSuccess: (_comment, input) => {
+      commentIntents.current[commentKind(input)] = null
       setActionError(null)
       invalidate()
     },
