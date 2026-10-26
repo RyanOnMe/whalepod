@@ -151,6 +151,22 @@ export class RunOrchestrator {
     }
   }
 
+  /**
+   * Compose a Run with another server command in its existing transaction.
+   * The caller owns the resource/idempotency lock; all Run guards, snapshots,
+   * Task transition and outbox writes still use the same creation core.
+   * Never open a second create() transaction while holding the Task lock.
+   */
+  async createWithinTransaction(
+    tx: Tx,
+    ctx: ActorContext,
+    taskId: string,
+    input: CreateRunInput,
+  ): Promise<RunView> {
+    assertCreateRunInput(input)
+    return this.createInTransaction(tx, ctx, taskId.toLowerCase(), input, this.nowFn())
+  }
+
   private async createInTransaction(
     tx: Tx,
     ctx: ActorContext,
