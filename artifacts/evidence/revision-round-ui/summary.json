@@ -2,12 +2,35 @@
   "issue": 430,
   "date": "2026-10-26",
   "component": "web.delivery.revision",
-  "red": { "commit": "843a4ec", "tests": 4, "failed": 4 },
-  "web": { "files": 3, "passed": 52, "failed": 0 },
-  "integration": { "files": 2, "passed": 19, "failed": 0, "driver": "production HTTP and Node protocol with PostgreSQL" },
+  "red": {
+    "commit": "843a4ec",
+    "tests": 4,
+    "failed": 4
+  },
+  "web": {
+    "files": 3,
+    "passed": 52,
+    "failed": 0
+  },
+  "integration": {
+    "files": 2,
+    "passed": 19,
+    "failed": 0,
+    "driver": "production HTTP and Node protocol with PostgreSQL"
+  },
   "build": "passed",
   "q0_static": "passed",
-  "full_suite": "rerun required after three fixed UI assertion/control failures",
+  "full_suite": {
+    "files": 185,
+    "passed": 1980,
+    "expected_fail": 7,
+    "unexpected_fail": 0
+  },
   "q5": "pending combined production assembly",
-  "human_efficiency": "not_measured"
+  "human_efficiency": "not_measured",
+  "unit": {
+    "files": 3,
+    "passed": 12,
+    "failed": 0
+  }
 }
