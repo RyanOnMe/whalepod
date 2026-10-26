@@ -398,6 +398,7 @@ export function taskRoomHandler(
     instructions?: InstructionView[]
     runs?: TaskRoomRun[]
     artifacts?: TaskRoomArtifact[]
+    reviewFeedback?: { unresolvedCount: number; artifactId: string | null }
     reviewEligibility?: TaskReviewEligibility
     /** #244：服务端预解析的下一 Run 审批档（无覆盖+无活跃 Run 时 composer 胶囊的数据源）。 */
     nextRunApprovalPolicy?: 'approval_required' | 'full_access' | null
@@ -428,6 +429,7 @@ export function taskRoomHandler(
           hasDraft: false,
         },
         handoff: extras.handoff ?? null,
+        reviewFeedback: extras.reviewFeedback ?? { unresolvedCount: 0, artifactId: null },
         nextRunApprovalPolicy: extras.nextRunApprovalPolicy ?? null,
         ...(extras.reviewEligibility === undefined
           ? {}

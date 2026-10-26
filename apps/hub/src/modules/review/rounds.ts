@@ -116,6 +116,7 @@ async function snapshotComments(
 async function loadRoundView(
   handle: DbHandle,
   roundId: string,
+  actor?: Actor,
 ): Promise<ArtifactRevisionRoundView> {
   const round = await getArtifactRevisionRound(handle, roundId)
   if (round === undefined) throw new ApiError(404, 'NOT_FOUND', 'revision round not found')
@@ -136,7 +137,9 @@ async function loadRoundView(
     references: input.references,
     runId: round.runId,
     candidate:
-      link === undefined
+      link === undefined ||
+      candidate === undefined ||
+      (candidate.status !== 'published' && candidate.ownerUserId !== actor?.userId)
         ? null
         : {
             artifactId: link.candidateArtifactId,
@@ -158,16 +161,18 @@ async function loadRoundView(
 export async function getRevisionRoundView(
   handle: DbHandle,
   roundId: string,
+  actor?: Actor,
 ): Promise<ArtifactRevisionRoundView> {
-  return loadRoundView(handle, roundId.toLowerCase())
+  return loadRoundView(handle, roundId.toLowerCase(), actor)
 }
 
 export async function listRevisionRoundViews(
   handle: DbHandle,
   taskId: string,
+  actor?: Actor,
 ): Promise<ArtifactRevisionRoundView[]> {
   const rounds = await listArtifactRevisionRoundsByTask(handle, taskId)
-  return Promise.all(rounds.map((round) => loadRoundView(handle, round.id)))
+  return Promise.all(rounds.map((round) => loadRoundView(handle, round.id, actor)))
 }
 
 export async function createRevisionRound(
@@ -241,7 +246,7 @@ export async function createRevisionRound(
       return { id: roundId }
     },
   )
-  return loadRoundView(database.db, outcome.id)
+  return loadRoundView(database.db, outcome.id, actor)
 }
 
 function defaultPrompt(input: ReviewInputManifest): string {
@@ -264,7 +269,7 @@ export async function startRevisionRound(
   requireAssignee(task, actor)
   if (round.status === 'cancelled') throw new ApiError(409, 'CONFLICT', '本轮修订已取消')
   // 已启动：同一次「开始」的重试直接返回既有 Run，不再建第二条。
-  if (round.runId !== null) return loadRoundView(database.db, round.id)
+  if (round.runId !== null) return loadRoundView(database.db, round.id, actor)
 
   const input = ReviewInputManifestSchema.parse(round.input)
   const manifestArtifacts = [input.sourceArtifact, ...input.references]
@@ -293,13 +298,13 @@ export async function startRevisionRound(
   if (claimed === undefined) {
     const current = await getArtifactRevisionRound(database.db, round.id)
     if (current?.runId !== null && current?.runId !== undefined) {
-      return loadRoundView(database.db, round.id)
+      return loadRoundView(database.db, round.id, actor)
     }
     // 崩溃恢复：上一次认领已建出 Run 但没来得及回写批次。
     const recovered = await findRunByReviewRoundId(database.db, round.id)
     if (recovered !== undefined) {
       await markArtifactRevisionRoundStarted(database.db, round.id, recovered.id, new Date())
-      return loadRoundView(database.db, round.id)
+      return loadRoundView(database.db, round.id, actor)
     }
     throw new ApiError(409, 'CONFLICT', '本轮修订正在启动，请稍后刷新')
   }
@@ -308,6 +313,9 @@ export async function startRevisionRound(
     const created = await orchestrator.create(actor, task.id, {
       idempotencyKey: `artifact.review.start:${round.id}:${idempotencyKey}`,
       agentId: request.agentId,
+      ...(request.profileRevisionId === undefined
+        ? {}
+        : { profileRevisionId: request.profileRevisionId }),
       deviceId: request.deviceId,
       workspaceId: request.workspaceId,
       prompt: request.prompt ?? defaultPrompt(input),
@@ -342,7 +350,7 @@ export async function startRevisionRound(
       change: 'review_round_started',
     },
   })
-  return loadRoundView(database.db, round.id)
+  return loadRoundView(database.db, round.id, actor)
 }
 
 export async function linkRevisionCandidate(
@@ -372,7 +380,7 @@ export async function linkRevisionCandidate(
     if (existing.candidateArtifactId !== candidate.id) {
       throw new ApiError(409, 'CONFLICT', '本轮已经关联了另一份新版')
     }
-    return loadRoundView(database.db, round.id)
+    return loadRoundView(database.db, round.id, actor)
   }
   await transactCommand(
     database,
@@ -401,7 +409,7 @@ export async function linkRevisionCandidate(
   if (linked === undefined || linked.candidateArtifactId !== candidate.id) {
     throw new ApiError(409, 'CONFLICT', '候选已被其他批次关联')
   }
-  return loadRoundView(database.db, round.id)
+  return loadRoundView(database.db, round.id, actor)
 }
 
 export async function resolveReviewComment(
@@ -458,7 +466,7 @@ export async function resolveReviewComment(
       },
     })
   })
-  return loadRoundView(database.db, round.id)
+  return loadRoundView(database.db, round.id, actor)
 }
 
 export type { ArtifactCommentResolutionView }

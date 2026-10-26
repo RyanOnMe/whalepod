@@ -142,15 +142,21 @@ export function registerReviewRoutes(app: FastifyInstance, deps: ReviewRouteDeps
   })
 
   app.get('/tasks/:taskId/artifact-revision-rounds', async (request) => {
-    await deps.requireActor(request)
+    const session = await deps.requireActor(request)
     const { taskId } = request.params as { taskId: string }
-    return { ok: true, data: await listRevisionRoundViews(deps.database.db, taskId) }
+    return {
+      ok: true,
+      data: await listRevisionRoundViews(deps.database.db, taskId, actorFrom(session)),
+    }
   })
 
   app.get('/artifact-revision-rounds/:roundId', async (request) => {
-    await deps.requireActor(request)
+    const session = await deps.requireActor(request)
     const { roundId } = request.params as { roundId: string }
-    return { ok: true, data: await getRevisionRoundView(deps.database.db, roundId) }
+    return {
+      ok: true,
+      data: await getRevisionRoundView(deps.database.db, roundId, actorFrom(session)),
+    }
   })
 
   app.post('/artifact-revision-rounds/:roundId/start', async (request) => {

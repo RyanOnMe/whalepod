@@ -21,6 +21,10 @@ import { useMemberDirectory } from '../features/team/memberDirectory.js'
 import { queryKeys } from '../app/query-client.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
 import { RelativeTime } from '../shared/RelativeTime.js'
+import {
+  ReviewRevisionPanel,
+  type ReviewResolutionState,
+} from '../features/task/ReviewRevisionPanel.js'
 
 type Filter = 'all' | 'unresolved' | 'round'
 
@@ -120,6 +124,11 @@ export function ArtifactReviewPage(): ReactNode {
   const queryClient = useQueryClient()
   const preRef = useRef<HTMLPreElement>(null)
   const [filter, setFilter] = useState<Filter>('all')
+  const [resolutionState, setResolutionState] = useState<ReviewResolutionState>({
+    resolved: new Set(),
+    pending: new Set(),
+    ready: false,
+  })
   const [selection, setSelection] = useState<ArtifactCommentAnchor | null>(null)
   const [wholeBody, setWholeBody] = useState('')
   const [anchorBody, setAnchorBody] = useState('')
@@ -155,6 +164,7 @@ export function ArtifactReviewPage(): ReactNode {
 
   useEffect(() => {
     setSelection(null)
+    setResolutionState({ resolved: new Set(), pending: new Set(), ready: false })
     setLocateErrors({})
     setNotice(null)
   }, [artifactId])
@@ -219,8 +229,8 @@ export function ArtifactReviewPage(): ReactNode {
   const ownInvitation = view?.invitations.find((row) => row.reviewerUserId === session?.userId)
   const threads = useMemo(() => comments.filter((row) => row.parentCommentId === null), [comments])
   const visibleThreads = threads.filter((thread) => {
-    if (filter === 'round') return false
-    // 首版没有解决记录：全部批注都属于「未解决」；解决/复核在下一批接通。
+    if (filter === 'round') return resolutionState.pending.has(thread.id)
+    if (filter === 'unresolved') return !resolutionState.resolved.has(thread.id)
     return true
   })
   const enabledMembers = directory.members.filter(
@@ -310,6 +320,14 @@ export function ArtifactReviewPage(): ReactNode {
         </p>
       ) : null}
 
+      <ReviewRevisionPanel
+        key={artifactId}
+        taskId={taskId}
+        artifactId={artifactId}
+        comments={comments}
+        session={session!}
+        onResolutionState={setResolutionState}
+      />
       <div className="review-layout">
         <main className="review-content" aria-label="文件内容">
           {reading === 'unsupported' ? (
@@ -432,8 +450,10 @@ export function ArtifactReviewPage(): ReactNode {
               </button>
             ))}
           </div>
-          {filter === 'round' ? (
-            <p className="mutation-hint">新一轮修订发布后，这里会出现待复核意见。</p>
+          {filter === 'round' && visibleThreads.length === 0 ? (
+            <p className="mutation-hint">
+              {resolutionState.ready ? '本轮没有待复核意见。' : '正在确认本轮复核记录…'}
+            </p>
           ) : null}
           {visibleThreads.length === 0 && filter !== 'round' ? (
             <p>还没有批注。</p>

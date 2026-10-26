@@ -102,6 +102,7 @@ export type CreateArtifactRevisionRoundRequest = z.infer<
 
 export const StartArtifactRevisionRoundRequestSchema = z.strictObject({
   agentId: z.uuid(),
+  profileRevisionId: z.uuid().optional(),
   deviceId: z.uuid(),
   workspaceId: z.uuid(),
   expectedApprovalPolicy: z.enum(['approval_required', 'full_access']).optional(),

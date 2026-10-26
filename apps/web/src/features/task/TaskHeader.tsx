@@ -25,6 +25,7 @@ export interface TaskHeaderProps {
   task: TaskView
   session: Session | null
   reviewEligibility?: TaskReviewEligibility | undefined
+  reviewFeedback?: { unresolvedCount: number; artifactId: string | null } | undefined
 }
 
 type TaskAction = 'submit-review' | 'complete' | 'cancel'
@@ -45,6 +46,7 @@ export function TaskHeader({
   task,
   session,
   reviewEligibility,
+  reviewFeedback,
   compact = false,
 }: TaskHeaderProps): ReactNode {
   const menuRef = useRef<HTMLDetailsElement>(null)
@@ -261,12 +263,21 @@ export function TaskHeader({
           ) : null}
         </DisclosurePanel>
       </div>
+      {(reviewFeedback?.unresolvedCount ?? 0) > 0 ? (
+        <p className="mutation-hint" data-testid="unresolved-review-warning">
+          还有 {reviewFeedback!.unresolvedCount}{' '}
+          条意见尚未确认解决。完成任务前请核对；任务仍可由责任人确认完成。
+          {reviewFeedback?.artifactId ? (
+            <Link to={`/tasks/${task.id}/review/${reviewFeedback.artifactId}`}>查看批注与复核</Link>
+          ) : null}
+        </p>
+      ) : null}
       {error !== null ? <ErrorBanner error={error} /> : null}
       {confirming !== null ? (
         <ConfirmDialog
           open
           title={`${ACTION_LABEL[confirming]}？`}
-          body={ACTION_CONFIRM[confirming]}
+          body={`${ACTION_CONFIRM[confirming]}${confirming === 'complete' && (reviewFeedback?.unresolvedCount ?? 0) > 0 ? ` 仍有 ${reviewFeedback!.unresolvedCount} 条意见尚未确认解决。` : ''}`}
           confirmLabel={`确认${ACTION_LABEL[confirming]}`}
           danger={confirming === 'cancel'}
           pending={mutation.isPending}

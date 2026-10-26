@@ -215,6 +215,7 @@ export interface InstructionDriverView {
 export type InstructionView = TaskMessageView & { kind: 'instruction' | 'followup' }
 
 export interface TaskRoomView {
+  reviewFeedback?: { unresolvedCount: number; artifactId: string | null }
   /** 缺失表示服务端条件未确认，不能据此提交。 */
   reviewEligibility?: TaskReviewEligibility
   task: TaskView

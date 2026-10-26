@@ -127,7 +127,13 @@ describe('applyClientFrame (event-router)', () => {
       [
         'run.changed',
         { runId: 'r-1', taskId: 't-1' },
-        [['run', 'r-1'], ['task-room', 't-1'], ['attention'], ['recent-tasks']],
+        [
+          ['run', 'r-1'],
+          ['task-room', 't-1'],
+          ['artifact-revision-rounds', 't-1'],
+          ['attention'],
+          ['recent-tasks'],
+        ],
       ],
       // #261：run.phase 是「正在做什么」的唯一信号（阶段徽标的取数）。载荷没有
       // taskId（orchestrator 只带 runId/seq/audience/ownerUserId/event）→ 前缀失效房间。
@@ -143,11 +149,20 @@ describe('applyClientFrame (event-router)', () => {
         [['run', 'r-2']],
       ],
       ['approval.changed', { taskId: 't-1' }, [['task-room', 't-1'], ['attention']]],
-      ['artifact.changed', { taskId: 't-1' }, [['task-room', 't-1'], ['attention']]],
+      [
+        'artifact.changed',
+        { taskId: 't-1' },
+        [['task-room', 't-1'], ['artifact-revision-rounds', 't-1'], ['attention']],
+      ],
       [
         'artifact.changed',
         { taskId: 't-1', artifactId: 'a-1' },
-        [['task-room', 't-1'], ['artifact-review', 'a-1'], ['attention']],
+        [
+          ['task-room', 't-1'],
+          ['artifact-review', 'a-1'],
+          ['artifact-revision-rounds', 't-1'],
+          ['attention'],
+        ],
       ],
       ['device.changed', {}, [['devices']]],
       // #163：成员变更 → 名册键（名册与责任人下拉同一缓存，一次失效全刷新）。
@@ -180,6 +195,7 @@ describe('applyClientFrame (event-router)', () => {
     expect(keysForPersistentEvent(persistentFrame('run.changed', {}).event)).toEqual([
       ['run'],
       ['task-room'],
+      ['artifact-revision-rounds'],
       ['attention'],
       ['recent-tasks'],
     ])
