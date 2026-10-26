@@ -9,7 +9,7 @@
  * - 复核只允许批注作者或当前责任人（代为收口必须写理由）；Agent 无权写复核表。
  */
 import type { Actor } from '@whalepod/domain'
-import type { ArtifactRow, Database, DbHandle, RunRow, TaskRow } from '@whalepod/db'
+import type { ArtifactRow, Database, DbHandle, TaskRow } from '@whalepod/db'
 import {
   appendTeamEvent,
   claimArtifactRevisionRoundStart,
@@ -22,14 +22,13 @@ import {
   insertArtifactRevisionLinkIfAbsent,
   insertArtifactRevisionRound,
   insertArtifactRevisionRoundComments,
-  releaseArtifactRevisionRoundStart,
   listArtifactCommentResolutionsByRound,
   listArtifactComments,
   listArtifactRevisionRoundCommentIds,
   listArtifactRevisionRoundsByTask,
-  getRun,
   markArtifactRevisionRoundStarted,
   transactCommand,
+  schema,
   upsertArtifactCommentResolution,
 } from '@whalepod/db'
 import {
@@ -46,6 +45,7 @@ import {
   type StartArtifactRevisionRoundRequest,
 } from '@whalepod/protocol'
 import { randomUUID } from 'node:crypto'
+import { eq } from 'drizzle-orm'
 import type { RunOrchestrator } from '../run/orchestrator.js'
 import { ApiError } from '../shared/http-error.js'
 
@@ -268,89 +268,111 @@ export async function startRevisionRound(
   if (task === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
   requireAssignee(task, actor)
   if (round.status === 'cancelled') throw new ApiError(409, 'CONFLICT', '本轮修订已取消')
-  // 已启动：同一次「开始」的重试直接返回既有 Run，不再建第二条。
-  if (round.runId !== null) return loadRoundView(database.db, round.id, actor)
+  // Device facts are read before acquiring database locks: the callback uses the
+  // normal pool, so invoking it under the Task lock could require a second connection.
+  // A previously committed Run can still be rebound even if its device is now offline.
+  let deviceFact: { ok: true; version: string | undefined } | { ok: false; error: unknown } = {
+    ok: true,
+    version: undefined,
+  }
+  if (round.runId === null) {
+    try {
+      deviceFact = { ok: true, version: await dshDistributionVersionFor(request.deviceId) }
+    } catch (error) {
+      deviceFact = { ok: false, error }
+    }
+  }
+  const outcome = await transactCommand(
+    database,
+    `artifact.review.start:${actor.userId}:${round.id}:${idempotencyKey}`,
+    async (tx) => {
+      // One transaction, one lock order: Task -> round. The Task lock is reused by
+      // createWithinTransaction; no independently committed claim or nested create().
+      const [lockedTask] = await tx
+        .select()
+        .from(schema.tasks)
+        .where(eq(schema.tasks.id, round.taskId))
+        .for('update')
+      if (lockedTask === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
+      requireAssignee(lockedTask, actor)
+      const [lockedRound] = await tx
+        .select()
+        .from(schema.artifactRevisionRounds)
+        .where(eq(schema.artifactRevisionRounds.id, round.id))
+        .for('update')
+      if (lockedRound === undefined)
+        throw new ApiError(404, 'NOT_FOUND', 'revision round not found')
+      if (lockedRound.status === 'cancelled') throw new ApiError(409, 'CONFLICT', '本轮修订已取消')
+      if (lockedRound.runId !== null) return { id: lockedRound.id }
 
-  const input = ReviewInputManifestSchema.parse(round.input)
-  const manifestArtifacts = [input.sourceArtifact, ...input.references]
-  for (const entry of manifestArtifacts) {
-    const row = await loadArtifactOr404(database.db, entry.artifactId)
-    if (
-      row.status !== 'published' ||
-      row.sha256 !== entry.sha256 ||
-      Number(row.byteSize) !== entry.byteSize
-    ) {
-      throw new ApiError(409, 'CONFLICT', '本轮冻结的材料已不可用或摘要不一致')
-    }
-  }
-  if (request.resumeFromRunId !== undefined) {
-    const expected = input.sourceArtifact.runId.toLowerCase()
-    if (request.resumeFromRunId.toLowerCase() !== expected) {
-      throw new ApiError(409, 'CONFLICT', '只能续接原产出会话；要换执行请选择新执行')
-    }
-  }
-  const dshDistributionVersion = await dshDistributionVersionFor(request.deviceId)
-  if (dshDistributionVersion === undefined) {
-    throw new ApiError(409, 'DEVICE_OFFLINE', 'device is not connected')
-  }
-  // 先认领（preparing → starting）：并发的两次「开始」只有一次能去建 Run。
-  const claimed = await claimArtifactRevisionRoundStart(database.db, round.id)
-  if (claimed === undefined) {
-    const current = await getArtifactRevisionRound(database.db, round.id)
-    if (current?.runId !== null && current?.runId !== undefined) {
-      return loadRoundView(database.db, round.id, actor)
-    }
-    // 崩溃恢复：上一次认领已建出 Run 但没来得及回写批次。
-    const recovered = await findRunByReviewRoundId(database.db, round.id)
-    if (recovered !== undefined) {
-      await markArtifactRevisionRoundStarted(database.db, round.id, recovered.id, new Date())
-      return loadRoundView(database.db, round.id, actor)
-    }
-    throw new ApiError(409, 'CONFLICT', '本轮修订正在启动，请稍后刷新')
-  }
-  let run: RunRow | undefined
-  try {
-    const created = await orchestrator.create(actor, task.id, {
-      idempotencyKey: `artifact.review.start:${round.id}:${idempotencyKey}`,
-      agentId: request.agentId,
-      ...(request.profileRevisionId === undefined
-        ? {}
-        : { profileRevisionId: request.profileRevisionId }),
-      deviceId: request.deviceId,
-      workspaceId: request.workspaceId,
-      prompt: request.prompt ?? defaultPrompt(input),
-      artifactInputIds: manifestArtifacts.map((entry) => entry.artifactId),
-      reviewInput: input,
-      dshDistributionVersion,
-      ...(request.expectedApprovalPolicy === undefined
-        ? {}
-        : { expectedApprovalPolicy: request.expectedApprovalPolicy }),
-      ...(request.resumeFromRunId === undefined
-        ? {}
-        : { resumeFromRunId: request.resumeFromRunId }),
-    })
-    run = await getRun(database.db, created.id)
-  } catch (error) {
-    // 建 Run 失败（设备离线、活跃 Run、参数冲突）→ 退回 preparing，修正后可重试。
-    await releaseArtifactRevisionRoundStart(database.db, round.id)
-    throw error
-  }
-  if (run === undefined) {
-    await releaseArtifactRevisionRoundStart(database.db, round.id)
-    throw new ApiError(500, 'INTERNAL_ERROR', 'started run not found')
-  }
-  await markArtifactRevisionRoundStarted(database.db, round.id, run.id, new Date())
-  await appendTeamEvent(database.db, {
-    type: 'artifact.changed',
-    payload: {
-      artifactId: round.sourceArtifactId,
-      taskId: round.taskId,
-      runId: run.id,
-      status: 'published',
-      change: 'review_round_started',
+      // Compatibility recovery for the old two-transaction implementation: a crash
+      // could leave starting (or preparing after a caught post-commit error). The lock
+      // excludes every new start; recover an existing Run before considering creation.
+      const recovered = await findRunByReviewRoundId(tx, lockedRound.id)
+      const input = ReviewInputManifestSchema.parse(lockedRound.input)
+      const manifestArtifacts = [input.sourceArtifact, ...input.references]
+      if (lockedRound.status === 'preparing') {
+        const claimed = await claimArtifactRevisionRoundStart(tx, lockedRound.id)
+        if (claimed === undefined) throw new ApiError(409, 'CONFLICT', '本轮修订状态已变化')
+      }
+      let runId: string
+      if (recovered !== undefined) runId = recovered.id
+      else {
+        for (const entry of manifestArtifacts) {
+          const row = await loadArtifactOr404(tx, entry.artifactId)
+          if (
+            row.status !== 'published' ||
+            row.sha256 !== entry.sha256 ||
+            Number(row.byteSize) !== entry.byteSize
+          )
+            throw new ApiError(409, 'CONFLICT', '本轮冻结的材料已不可用或摘要不一致')
+        }
+        if (
+          request.resumeFromRunId !== undefined &&
+          request.resumeFromRunId.toLowerCase() !== input.sourceArtifact.runId.toLowerCase()
+        )
+          throw new ApiError(409, 'CONFLICT', '只能续接原产出会话；要换执行请选择新执行')
+        if (!deviceFact.ok) throw deviceFact.error
+        if (deviceFact.version === undefined)
+          throw new ApiError(409, 'DEVICE_OFFLINE', 'device is not connected')
+        runId = (
+          await orchestrator.createWithinTransaction(tx, actor, lockedTask.id, {
+            idempotencyKey: `artifact.review.start:${actor.userId}:${lockedRound.id}:${idempotencyKey}`,
+            agentId: request.agentId,
+            ...(request.profileRevisionId === undefined
+              ? {}
+              : { profileRevisionId: request.profileRevisionId }),
+            deviceId: request.deviceId,
+            workspaceId: request.workspaceId,
+            prompt: request.prompt ?? defaultPrompt(input),
+            artifactInputIds: manifestArtifacts.map((entry) => entry.artifactId),
+            reviewInput: input,
+            dshDistributionVersion: deviceFact.version,
+            ...(request.expectedApprovalPolicy === undefined
+              ? {}
+              : { expectedApprovalPolicy: request.expectedApprovalPolicy }),
+            ...(request.resumeFromRunId === undefined
+              ? {}
+              : { resumeFromRunId: request.resumeFromRunId }),
+          })
+        ).id
+      }
+      const marked = await markArtifactRevisionRoundStarted(tx, lockedRound.id, runId, new Date())
+      if (marked === undefined) throw new ApiError(409, 'CONFLICT', '本轮修订状态已变化')
+      await appendTeamEvent(tx, {
+        type: 'artifact.changed',
+        payload: {
+          artifactId: lockedRound.sourceArtifactId,
+          taskId: lockedRound.taskId,
+          runId,
+          status: 'published',
+          change: 'review_round_started',
+        },
+      })
+      return { id: lockedRound.id }
     },
-  })
-  return loadRoundView(database.db, round.id, actor)
+  )
+  return loadRoundView(database.db, outcome.id, actor)
 }
 
 export async function linkRevisionCandidate(
