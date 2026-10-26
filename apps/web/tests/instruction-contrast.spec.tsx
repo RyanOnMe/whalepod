@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  compositeOver,
   contrastOnTint,
   contrastRatio,
   parseCssColor,
@@ -27,21 +28,29 @@ import {
 const STYLES = join(import.meta.dirname, '../src/styles')
 const CSS = readFileSync(join(STYLES, 'global.css'), 'utf8')
 const TOKENS = readFileSync(join(STYLES, 'dsw-tokens.css'), 'utf8')
+const APP_TOKENS = readFileSync(join(STYLES, 'tokens.css'), 'utf8')
 
 /** 从 `.cls { ... }` 里取出某个声明值（CSS 文本级，够用且稳定）。 */
-function declaration(selector: string, property: string): string {
-  // 复核 R2：天真实现（indexOf 找第一块 + 取第一条声明）有假绿——
-  // ①同一规则体里重复声明时**浏览器取最后一条**，门却读第一条（实测能让文字 1.00:1 不可见而门 PASS）；
-  // ②文件后部再来一个同名规则块同样覆盖。
-  // 所以：断言该选择器只有一个规则块、该属性只声明一次，再取值。
-  const blocks = [...CSS.matchAll(new RegExp(`\\${selector} \\{([^}]*)\\}`, 'g'))].map((m) => m[1]!)
-  expect(blocks.length, `${selector} 只应有一个规则块（多块会互相覆盖，门会看不见）`).toBe(1)
-  const body = blocks[0]!
-  const matches = [...body.matchAll(new RegExp(`(?:^|[;\\s])${property}:\\s*([^;]+);`, 'g'))]
-  expect(matches.length, `${selector} 的 ${property} 只应声明一次（重复时浏览器取最后一条）`).toBe(
-    1,
-  )
-  return matches[0]![1]!.trim()
+function optionalDeclaration(selector: string, property: string, css = CSS): string | undefined {
+  const plain = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  const blocks = [...plain.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter((match) =>
+      match[1]!
+        .trim()
+        .split(/\s*,\s*/)
+        .includes(selector),
+    )
+    .map((match) => match[2]!)
+  expect(blocks.length, `${selector} 不得有重复规则块`).toBeLessThanOrEqual(1)
+  if (blocks.length === 0) return undefined
+  const matches = [...blocks[0]!.matchAll(new RegExp(`(?:^|[;\\s])${property}:\\s*([^;]+);`, 'g'))]
+  expect(matches.length, `${selector} 的 ${property} 不得重复声明`).toBeLessThanOrEqual(1)
+  return matches[0]?.[1]?.trim()
+}
+function declaration(selector: string, property: string, css = CSS): string {
+  const value = optionalDeclaration(selector, property, css)
+  expect(value, `${selector} 必须声明 ${property}`).toBeDefined()
+  return value!
 }
 
 /** 从 `.cls` 的 `background: color-mix(in srgb, ... N%, ...)` 读混合比例（0..1）。 */
@@ -65,6 +74,133 @@ const STATES = [
   { cls: '.target-mode', label: '目标来源：自动选' },
   { cls: '.target-mode-explicit', label: '目标来源：显式指定' },
 ] as const
+
+const DARK_CASES = [
+  {
+    cls: '.instruction-state-pending',
+    label: '待受理',
+    state: '--dsw-alias-state-warn-primary',
+    tone: '--color-warn',
+  },
+  {
+    cls: '.instruction-state-accepted',
+    label: '已受理',
+    state: '--dsw-alias-state-success-primary',
+    tone: '--color-run',
+  },
+  {
+    cls: '.instruction-state-queued',
+    label: '已排队',
+    state: '--dsw-alias-state-business-primary',
+    tone: '--color-signal',
+  },
+  {
+    cls: '.instruction-state-rejected',
+    label: '已拒绝',
+    state: '--dsw-alias-state-error-primary',
+    tone: '--color-danger',
+  },
+  {
+    cls: '.stream-incomplete',
+    label: '读取不完整',
+    state: '--dsw-alias-state-warn-primary',
+    tone: '--color-warn',
+  },
+  {
+    cls: '.target-mode',
+    label: '自动目标',
+    state: '--dsw-alias-state-business-primary',
+    tone: '--color-signal',
+  },
+  {
+    cls: '.target-mode-explicit',
+    label: '显式目标',
+    state: '--dsw-alias-state-warn-primary',
+    tone: '--color-warn',
+  },
+  {
+    cls: '.instruction-error',
+    label: '拒绝理由',
+    state: '--dsw-alias-state-error-primary',
+    tone: '--color-danger',
+  },
+  {
+    cls: '.run-events-alert',
+    label: '运行事件读取告警',
+    state: '--dsw-alias-state-warn-primary',
+    tone: '--color-warn',
+  },
+] as const
+
+function declarationsFor(css: string, selector: string): Record<string, string> {
+  const plain = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  return Object.fromEntries(
+    [...plain.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter((match) => match[1]!.trim() === selector)
+      .flatMap((match) =>
+        [...match[2]!.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)].map((value) => [
+          value[1]!,
+          value[2]!.trim(),
+        ]),
+      ),
+  )
+}
+function darkTokens(app = APP_TOKENS) {
+  return {
+    ...declarationsFor(TOKENS, ':root'),
+    ...declarationsFor(app, ':root'),
+    ...declarationsFor(TOKENS, 'body[data-ds-dark-theme]'),
+    ...declarationsFor(app, 'body[data-ds-dark-theme]'),
+  }
+}
+function resolvedColor(tokens: Record<string, string>, token: string) {
+  const seen = new Set<string>()
+  while (true) {
+    if (seen.has(token)) throw new Error(`循环 token: ${token}`)
+    seen.add(token)
+    const value = tokens[token]
+    if (!value) throw new Error(`未解析 token: ${token}`)
+    const ref = /^var\(\s*(--[\w-]+)\s*\)$/.exec(value)?.[1]
+    if (!ref) return parseCssColor(value)
+    token = ref
+  }
+}
+function assertDarkChip(entry: (typeof DARK_CASES)[number], css = CSS, app = APP_TOKENS) {
+  const selector = `body[data-ds-dark-theme] ${entry.cls}`
+  const textSelector = entry.cls === '.run-events-alert' ? '.run-events-alert p' : entry.cls
+  const darkTextSelector = `body[data-ds-dark-theme] ${textSelector}`
+  const color =
+    optionalDeclaration(darkTextSelector, 'color', css) ?? declaration(textSelector, 'color', css)
+  const background =
+    optionalDeclaration(selector, 'background', css) ?? declaration(entry.cls, 'background', css)
+  expect(color, `${selector} 的真实字色`).toBe(
+    entry.cls === '.run-events-alert' ? 'var(--color-ink)' : `var(${entry.state})`,
+  )
+  const mix = /^color-mix\(in srgb,\s*var\((--[\w-]+)\)\s*([\d.]+)%,\s*transparent\)$/.exec(
+    background,
+  )
+  expect(mix?.[1], `${selector} 背景必须使用本地状态家族`).toBe(entry.state)
+  const tint = Number(mix![2]) / 100
+  const remap = declaration(selector, entry.state, css)
+  expect(remap, `${selector} 的dark局部语义`).toBe(`var(${entry.tone})`)
+  const tokens = { ...darkTokens(app), [entry.state]: remap }
+  const tintInk = resolvedColor(tokens, entry.state)
+  const ink = entry.cls === '.run-events-alert' ? resolvedColor(tokens, '--color-ink') : tintInk
+  return ['--dsw-alias-bg-layer-3', '--color-surface', '--color-paper'].map((surfaceToken) => {
+    const surface = resolvedColor(tokens, surfaceToken)
+    const ratio = round2(
+      contrastRatio(ink, compositeOver({ ...tintInk, a: tintInk.a * tint }, surface)),
+    )
+    expect(ratio, `${entry.cls} 在 ${surfaceToken} 的真实dark tint上`).toBeGreaterThanOrEqual(4.5)
+    return { cls: entry.cls, surfaceToken, tint, ratio }
+  })
+}
+function overrideDarkAccepted(declarations: string) {
+  return CSS.replace(
+    /(body\[data-ds-dark-theme\] \.instruction-state-accepted\s*\{)([^}]*)(\})/,
+    `$1$2${declarations};$3`,
+  )
+}
 
 /**
  * **中性 chip**（不是状态色）：`.ref-chip`（⑥f 的运行引用）、`.chip-gray`（⑥d 的只读提示）。
@@ -150,31 +286,40 @@ describe('指令四态的 AA 门', () => {
     }
   })
 
-  // #214 A 方案：深色面缺口（`it.fails` 形态——"已知会红"，不是"绿了"）。
-  //
-  // 同一批 chip 在深色面（bg-layer-3 深色值）上的真实比值：900 档重绑在深色下是
-  // 1.01~1.23:1（高估约 10 倍，Issue 实测）。深色段今天不可达（index.html 不设
-  // `data-ds-dark-theme`），所以这条**不是"现在坏了"**，而是"启用深色的那天要修"——
-  // `it.fails` 修好之前保持"预期失败"形态，修好的那天它会自动提醒删掉自己
-  // （`it.fails` 在断言通过时会红："居然过了，快把我删掉"）。
-  //
-  // 比值**从 CSS 真值算**（深色 token 生效值 + 同一 tint），不是硬编码 1.01——
-  // 以后有人改了深色 token 或 900 档取值，这里的报告数字会跟着变。
-  it.fails.each(STATES)('$label：深色面（已知缺口，启用深色前必须修）', ({ cls }) => {
-    const tint = tintOf(cls)
-    const colorText = declaration(cls, 'color')
-    // 先断言颜色仍是状态 token：否则下面 exec 抛 TypeError 也会被 it.fails 吞掉，
-    // "颜色写坏"和"比值不够"两种失败混在一起，报告不诚实（中性门同理已显式断言）。
-    expect(colorText).toMatch(/^var\(--dsw-alias-state-/)
-    const tokenName = /var\((--dsw-alias-state-[a-z-]+)\)/.exec(colorText)![1]!
-    // 深色生效值：包裹重绑（900 档）浅深同值所以还是 900；state 原始值深色可能提亮
-    // （error/business 深色是 400 档），但 chip 类自己重绑了 token，读的是重绑后的 900。
-    const staticName = /var\((--dsw-static-[a-z]+-900)\)/.exec(declaration(cls, tokenName))![1]!
-    const rgb = parseCssColor(readTokenValueDark(TOKENS, staticName))
-    const surface = parseCssColor(readTokenValueDark(TOKENS, '--dsw-alias-bg-layer-3'))
-    const ratio = round2(contrastOnTint(rgb, tint, surface))
-    console.log(`[#214 深色缺口] ${cls} 深色面 ${ratio}:1（浅色门算的是白底，要求 4.5:1）`)
-    expect(ratio).toBeGreaterThanOrEqual(4.5)
+  // P1-437 retires the seven expected failures: real dark remaps now have a mandatory AA gate.
+  it.each(DARK_CASES)('$label：dark局部重绑与三种真实容器底均 ≥4.5:1', (entry) => {
+    assertDarkChip(entry)
+  })
+
+  it('dark负控：旧900重绑、错误字色/浅底、错误语义、重复覆盖均须拒绝', () => {
+    const accepted = DARK_CASES.find((entry) => entry.cls === '.instruction-state-accepted')!
+    const old900 = CSS.replace(
+      /(body\[data-ds-dark-theme\] \.instruction-state-accepted\s*\{[^}]*--dsw-alias-state-success-primary:\s*)var\(--color-run\)/,
+      '$1var(--dsw-static-green-900)',
+    )
+    const wrongFamily = CSS.replace(
+      /(body\[data-ds-dark-theme\] \.instruction-state-accepted\s*\{[^}]*--dsw-alias-state-success-primary:\s*)var\(--color-run\)/,
+      '$1var(--color-danger)',
+    )
+    for (const bad of [
+      old900,
+      wrongFamily,
+      overrideDarkAccepted('color: var(--dsw-static-green-900)'),
+      overrideDarkAccepted(
+        'background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 90%, transparent)',
+      ),
+      `${CSS}\nbody[data-ds-dark-theme] .instruction-state-accepted { --dsw-alias-state-success-primary: var(--color-run); }`,
+    ]) {
+      expect(bad).not.toBe(CSS)
+      expect(() => assertDarkChip(accepted, bad)).toThrow()
+    }
+    // Correct local semantic names cannot hide a broken dark semantic value.
+    const wrongDarkTone = APP_TOKENS.replace(
+      /(body\[data-ds-dark-theme\]\s*\{[^}]*--color-run:\s*)var\(--dsw-static-green-100\)/,
+      '$1var(--dsw-static-green-900)',
+    )
+    expect(wrongDarkTone).not.toBe(APP_TOKENS)
+    expect(() => assertDarkChip(accepted, CSS, wrongDarkTone)).toThrow(/真实dark tint/)
   })
 })
 

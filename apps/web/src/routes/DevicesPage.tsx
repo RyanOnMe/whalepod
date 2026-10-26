@@ -1,4 +1,10 @@
-import { AdminPanel, DeviceIdentity, EnterItem, EmptyPanel } from '../vendor/collectui/collectui.js'
+import {
+  AdminPanel,
+  DeviceIdentity,
+  EnterItem,
+  EmptyPanel,
+  PairingSteps,
+} from '../vendor/collectui/collectui.js'
 import { WorkspaceIcon } from '../shared/WorkspaceIcon.js'
 /**
  * 设备页（#142）：签发一次性配对码 + 本团队设备列表（02 Task 7 Step 5；03 §2.4/§4）。
@@ -120,6 +126,9 @@ export function DevicesPage(): ReactNode {
           </Link>
         </section>
       ) : null}
+      {issued !== null || (listQuery.isSuccess && listQuery.data.length === 0) ? (
+        <PairingJourney issued={issued} />
+      ) : null}
       {/* #432：设备名单优先；配对信息在签发后出现，安装指南按需展开。 */}
       <div className="page-grid">
         <div className="page-col">
@@ -177,6 +186,12 @@ export function DevicesPage(): ReactNode {
       </div>
     </div>
   )
+}
+
+/** Only issuance is observable here; an online device cannot identify consumption of this code. */
+function PairingJourney({ issued }: { issued: PairingCodeView | null }): ReactNode {
+  const remaining = usePairingCountdown(issued?.expiresAt ?? '')
+  return <PairingSteps current={issued !== null && remaining > 0 ? 1 : 0} />
 }
 
 function PairingCodePanel({
@@ -303,7 +318,11 @@ function usePairingCountdown(expiresAt: string): number {
   useEffect(() => {
     const tick = (): void => setRemainingMs(remainingOf(expiresAt))
     tick() // 首帧与 effect 之间可能已过时间：挂载即对齐一次
-    const timer = setInterval(tick, 1000)
+    if (remainingOf(expiresAt) === 0) return
+    const timer = setInterval(() => {
+      tick()
+      if (remainingOf(expiresAt) === 0) clearInterval(timer)
+    }, 1000)
     return () => clearInterval(timer)
   }, [expiresAt])
   return remainingMs

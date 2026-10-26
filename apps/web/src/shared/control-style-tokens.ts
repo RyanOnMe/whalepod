@@ -4,7 +4,7 @@
  *
  * 为什么单独一个文件、而且必须是**纯运行时依赖为零**的模块：
  * 1. 这条契约有两个消费者，分居两侧——单测（`tests/control-family.spec.tsx`）在 CSS 文本上
- *    钉「描边/圆角逐值等于 vendored `Input.module.css`、颜色只吃 L1 `--dsw-*`」，Q5
+ *    钉「几何逐值等于 vendored 原语，颜色逐属性采用已登记的上游或应用品牌token」，Q5
  *    （`tests/e2e/helpers.ts` 的 `assertControlTokens`）在真实浏览器里钉「computed style
  *    等于 token 解析值」。两边各写一份字面量就会漂移成「单测管 A、浏览器管 B」。
  * 2. 浏览器侧不能从 `.tsx` 反向 import（那条链上有 CSS modules）；Playwright 的 e2e 进程
@@ -37,14 +37,14 @@ export const CONTROL_BORDER_TOKEN = '--dsw-alias-border-l4'
 /** 控件主文字所用的 L1 token。 */
 export const CONTROL_LABEL_TOKEN = '--dsw-alias-label-primary'
 
-/** 主按钮文字（深底上的前景色，vendored `Button.module.css` 的 `.primary` 同 token）。 */
-export const CONTROL_PRIMARY_LABEL_TOKEN = '--dsw-alias-label-primary-foreground'
+/** P1-437 主按钮前景归应用品牌层；几何仍继承 vendored 胶囊。 */
+export const CONTROL_PRIMARY_LABEL_TOKEN = '--brand-on-primary'
 
-/** 主按钮底色（vendored `.primary` 同 token）。 */
-export const CONTROL_PRIMARY_FILL_TOKEN = '--dsw-alias-button-primary-fill'
+/** P1-437 经产品确认的 WhalePod 潮汐蓝主操作。 */
+export const CONTROL_PRIMARY_FILL_TOKEN = '--brand-primary'
 
-/** 主按钮 hover 底色（vendored `.primary:hover` 同 token）。 */
-export const CONTROL_PRIMARY_HOVER_TOKEN = '--dsw-alias-button-primary-hover'
+/** 品牌主操作 hover；与浅深主题中的白字配对均过 AA。 */
+export const CONTROL_PRIMARY_HOVER_TOKEN = '--brand-primary-hover'
 
 /**
  * 危险按钮底色：与普通控件同面（`--dsw-alias-bg-layer-2`），**不是**错误色。
@@ -56,17 +56,18 @@ export const CONTROL_PRIMARY_HOVER_TOKEN = '--dsw-alias-button-primary-hover'
 export const CONTROL_DANGER_FILL_TOKEN = '--dsw-alias-button-elevated-fill'
 
 /**
- * 危险按钮文字所用的 L1 token。
+ * 危险按钮文字的应用语义 token（P1-437）。
  *
- * 取**静态档 red-900** 而不是别名 `--dsw-alias-state-error-primary`（= red-500）：
+ * P1-437 通过应用语义明暗重绑：浅色仍为 red-900，深色为同色族 red-100。
+ * 不用别名 `--dsw-alias-state-error-primary`（= red-500）：
  * 白底实测 red-900 = **14.35:1**、red-500 = **4.4976:1**（差 0.0023 不到 AA 的 4.5）。
  * 这与 tokens.css 头块记的「文字色取 900 阶而非 500 阶」是同一条纪律，#151 就是亮阶当
  * 文字色的回归现场。
  *
  * 与迁移前的 `--color-danger-strong` **逐值相同**（那个应用层别名本身就指向 red-900），
- * 所以这一条是"把应用层别名内联到 L1"，不是换色（评审 S5）。
+ * 本轮把该语义保留在应用层，使深色同色族适配与真实控件一致，危险意图不变。
  */
-export const CONTROL_DANGER_LABEL_TOKEN = '--dsw-static-red-900'
+export const CONTROL_DANGER_LABEL_TOKEN = '--color-danger-strong'
 
 /** 控件 hover 时的面（vendored `Button.module.css` 的 `.ghost:hover` / `.outline:hover` 同 token）。 */
 export const CONTROL_HOVER_BACKGROUND_TOKEN = '--dsw-alias-interactive-bg-hover'

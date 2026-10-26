@@ -2,6 +2,8 @@
  * while creation is collapsed; role and server mutation guards are unchanged. */
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRef, useState, type ReactNode } from 'react'
+import { usePresence } from '../../shared/usePresence.js'
+import { SURFACE_EXIT_MS } from '../../shared/motion.js'
 import { HelpDisclosure } from '../../shared/HelpDisclosure.js'
 import { PageHeader } from '../../shared/PageHeader.js'
 import {
@@ -35,6 +37,8 @@ export function AgentList({
   const [creating, setCreating] = useState(false)
   const queryClient = useQueryClient()
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const detailPresence = usePresence(selectedId, SURFACE_EXIT_MS)
+  const displayedId = selectedId ?? detailPresence.value
   const canManage = session !== null && (session.role === 'owner' || session.role === 'admin')
 
   const listQuery = useQuery({
@@ -44,8 +48,8 @@ export function AgentList({
   // #263：⌘K 搜到 Agent 后落到 `/agents#agent-<id>`——列表落地后把目标卡片标出来。
   useHashFocus(listQuery.isSuccess)
   const detailQuery = useQuery({
-    queryKey: queryKeys.agentDetail(selectedId ?? ''),
-    queryFn: () => api.get<AgentDetailView>(`/agents/${selectedId ?? ''}`),
+    queryKey: queryKeys.agentDetail(displayedId ?? ''),
+    queryFn: () => api.get<AgentDetailView>(`/agents/${displayedId ?? ''}`),
     enabled: selectedId !== null,
   })
 
@@ -130,20 +134,25 @@ export function AgentList({
           </p>
         ) : null}
 
-        {selectedId !== null ? (
+        {displayedId !== null ? (
           <section
             className="card agent-detail"
-            aria-label={`Agent 详情 ${listQuery.data?.find((agent) => agent.id === selectedId)?.name ?? '所选 Agent'}`}
+            data-closing={detailPresence.leaving ? '' : undefined}
+            inert={selectedId === null}
+            aria-hidden={selectedId === null}
+            aria-label={`Agent 详情 ${listQuery.data?.find((agent) => agent.id === displayedId)?.name ?? '所选 Agent'}`}
           >
             <AdminDetailHeading
-              title={listQuery.data?.find((agent) => agent.id === selectedId)?.name ?? 'Agent 详情'}
+              title={
+                listQuery.data?.find((agent) => agent.id === displayedId)?.name ?? 'Agent 详情'
+              }
               icon={<WorkspaceIcon name="Agents" />}
               action={
                 <button
                   type="button"
                   aria-label="关闭 Agent 详情"
                   onClick={() => {
-                    const card = cards.current.get(selectedId)
+                    const card = cards.current.get(displayedId)
                     setSelectedId(null)
                     card?.focus()
                   }}

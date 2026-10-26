@@ -33,7 +33,14 @@
     "IntegrationTile",
     "ChoiceCard",
     "AdminDetailHeading",
-    "DeviceIdentity"
+    "DeviceIdentity",
+    "TimelineFold",
+    "ArtifactPreviewFrame",
+    "PairingSteps",
+    "ToolOutputFrame",
+    "FileCollectionMark",
+    "DepthSurface",
+    "AgentStateCore"
   ],
   "sources": [
     {
@@ -51,7 +58,7 @@
     {
       "item": "ai-chat-2",
       "url": "https://bits.collectui.pro/docs/app-ui/ai-chat/ai-chat-2",
-      "adaptation": "File name, icon and trailing open action retained; real visibility and size replace demo metadata; no demo scroll/stream state.",
+      "adaptation": "File name, icon and trailing open action retained; real visibility and size replace demo metadata; no demo scroll/stream state. File preview panel/header and close action further adapted to immutable text preview, host fetch/error/cache ownership retained.",
       "capturedExcerptSha256": "e25fbcad75b1d785d02d5da4d85f9ec88850841f275969116b314fbefd622127"
     },
     {
@@ -155,22 +162,60 @@
       "url": "https://bits.collectui.pro/docs/app-ui/monitoring/monitoring-7",
       "adaptation": "Fleet identity/platform/status hierarchy reduced to real device facts and last-seen; no CPU/memory/disk/uptime simulations, filters or metrics timers.",
       "capturedExcerptSha256": "8df553713ab2544e5d8d5a2aa872c4c7022e1e51d8cedf80221758cf0e35308d"
+    },
+    {
+      "item": "agent-activity-2",
+      "url": "https://bits.collectui.pro/docs/app-ui/agent-activity/agent-activity-2",
+      "adaptation": "Collapsible timeline summary, caret and nested event rail; existing ordered and audience-filtered Run events replace sample phases/durations. Host owns reversible presence and state.",
+      "capturedExcerptSha256": "b910a82140e2959edcd7955899b33eaf87eef79662348c71ca34c39ffc14df83"
+    },
+    {
+      "item": "wizard-1",
+      "url": "https://bits.collectui.pro/docs/app-ui/wizard/wizard-1?variantSort=latest",
+      "adaptation": "Numbered indicators and completion connector from the card wizard become pairing guidance. Only successful issuance advances; no inferred pairing success from unrelated online devices.",
+      "capturedExcerptSha256": "ce18565e71f93826ea8825456b2ac0d9895a18ae2b43e1ce5ddd9b4995485c73"
+    },
+    {
+      "item": "tool-calls-5",
+      "url": "https://bits.collectui.pro/docs/app-ui/tool-calls/tool-calls-5",
+      "adaptation": "Inset output frame and filter header use existing authorized event Console, real counts and errors. No stdout/stderr, command, exit code or fake result is invented.",
+      "capturedExcerptSha256": "63fd62e638d77196d7fd55897a1e748f3538d02bcb3a6de11a95e022b3db53f1"
+    },
+    {
+      "item": "card-spread",
+      "url": "https://bits.collectui.pro/docs/components/card-spread",
+      "adaptation": "Spring fan rotations become a document-group mark proportional to the actual visible artifact count; no photos, hidden file actions or sample cards.",
+      "capturedExcerptSha256": "49e539f8b0ea3213810abcc7d5c62d9c9a14a0fbfe9d85c873f99647cfa6a806"
+    },
+    {
+      "item": "depth-card",
+      "url": "https://bits.collectui.pro/docs/components/depth-card",
+      "adaptation": "Pointer-normalized card rotation and radial spotlight retained around project surfaces. A finite velocity-carrying spring replaces the idle loop; keyboard, focus, coarse pointer, hidden document and reduced-motion reset effects.",
+      "capturedExcerptSha256": "42ff60bd142ef30a067d6de7272cc10f2753aa110185a753b9c851eb106839bf"
+    },
+    {
+      "item": "ai-blob",
+      "url": "https://bits.collectui.pro/docs/components/ai-blob",
+      "adaptation": "Original fragment shader, OKLCH ramp and mood smoothing retained. Native WebGL replaces the Three scene wrapper without a new dependency. Four theme tokens replace rainbow colors; real host states drive phases. No audio simulation or microphone. Finite observed completion, pause/context-loss/reduced-motion/static equivalent and visibility lifecycle are app-owned.",
+      "normalizedFragmentSha256": "d191df9419e6e43584a2a679359144003bac5b0c19d37f3c46b70b52120e58dd",
+      "capturedExcerptSha256": "2f68303b01a0f482ead8a1ed039a3ac487f654beee1490d3ddc83895b2eca53f"
     }
   ],
   "privateInputSha256": {
-    "tsx": "b45be99313e1f5f1a294c776e6a54c27fe481ba82bf342d6e9c57ba7988eb555",
-    "css": "7496bd3f5997726583ed54fd63785bbd55efb97cdde2a9df1410e12471b4a69e"
+    "tsx": "0d4e967880943b6d9da09d98d7c1bfeb1021d6a451410cafa0d73405616d0c27",
+    "css": "de8f8a1c18f63bf691224897ea0d805dbfff2a91ebcae04c30142dc48ec1f4a2",
+    "agentCore": "8b83a1e60f08f9ebb72144415407b352012697caea758c7b42da0a9cc472e7e5"
   },
   "files": [
     {
       "name": "collectui.js",
-      "sha256": "6a2e7cc1f4664b9c978f7eb1e01a75b5a548243660899270ccb0994eec717654",
-      "bytes": 10483
+      "sha256": "9a14f36f938a828eb90557d242d91afd4b40461bb766ec9707ca598e653fb11c",
+      "bytes": 29587
     },
     {
       "name": "collectui.css",
-      "sha256": "821f5b802b84cd3329c4ab2e9a0696c0d5919f99a556332ded8303d3fb44d33b",
-      "bytes": 22504
+      "sha256": "a8d94927a43eb2116a01834197155ef02df163f4b91f4484b719d1b6ed438c09",
+      "bytes": 32968
     }
   ]
 }

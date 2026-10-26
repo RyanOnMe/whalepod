@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { MotionDisclosure } from './MotionDisclosure.js'
 
 /** Low-frequency guidance stays reachable without competing with the current action. */
 export function HelpDisclosure({
@@ -9,9 +10,8 @@ export function HelpDisclosure({
   children: ReactNode
 }) {
   return (
-    <details className="help-disclosure">
-      <summary>{label}</summary>
+    <MotionDisclosure label={label} className="help-disclosure">
       <div className="help-disclosure-content">{children}</div>
-    </details>
+    </MotionDisclosure>
   )
 }

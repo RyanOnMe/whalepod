@@ -193,6 +193,9 @@ describe('#306 当前活动与分段筛选（段内）', () => {
       const line = screen.getByTestId('run-activity')
       expect(line).toHaveTextContent(RUN_PHASE_LABEL[phase])
       expect(line).toHaveAttribute('data-working', '')
+      const core = within(line).getByTestId('agent-state-core')
+      expect(core).toHaveAttribute('data-state', phase)
+      expect(core).toHaveAttribute('data-active', '')
       expect(line).not.toHaveTextContent('private-thought-canary')
       expect(line.querySelector('button')).toBeNull()
     },
@@ -219,6 +222,17 @@ describe('#306 当前活动与分段筛选（段内）', () => {
     const line = screen.getByTestId('run-activity')
     expect(line).not.toHaveAttribute('data-working')
     expect(line).not.toHaveTextContent('工具执行中')
+    const expectedState =
+      status === 'waiting_approval'
+        ? 'approval'
+        : status === 'cancel_requested'
+          ? 'cancelling'
+          : status === 'lost'
+            ? 'unknown'
+            : status
+    const core = within(line).getByTestId('agent-state-core')
+    expect(core).toHaveAttribute('data-state', expectedState)
+    expect(core).not.toHaveAttribute('data-active')
     expect(line).toHaveTextContent(
       status === 'waiting_approval'
         ? '等待责任人审批'
@@ -241,6 +255,48 @@ describe('#306 当前活动与分段筛选（段内）', () => {
     const line = screen.getByTestId('run-activity')
     expect(line).toHaveTextContent('等待活动更新')
     expect(line).not.toHaveAttribute('data-working')
+  })
+
+  it('real-time disconnection pauses and resynchronizes the state core without showing an old work loop', () => {
+    segmentView({ status: 'running', events: [event(1, { type: 'run.phase', phase: 'tool' })] })
+    const core = screen.getByTestId('agent-state-core')
+    expect(core).toHaveAttribute('data-state', 'tool')
+    expect(core).toHaveAttribute('data-active', '')
+    act(() => setConnectionStatus('reconnecting'))
+    expect(core).toHaveAttribute('data-state', 'syncing')
+    expect(core).not.toHaveAttribute('data-active')
+    expect(screen.getByTestId('run-activity')).toHaveTextContent('连接中断')
+    act(() => setConnectionStatus('open'))
+    expect(core).toHaveAttribute('data-state', 'tool')
+    expect(core).toHaveAttribute('data-active', '')
+  })
+
+  it('document visibility pauses the state core and restores the current known phase', () => {
+    let visibility = 'visible'
+    vi.spyOn(document, 'visibilityState', 'get').mockImplementation(
+      () => visibility as DocumentVisibilityState,
+    )
+    try {
+      segmentView({
+        status: 'running',
+        events: [event(1, { type: 'run.phase', phase: 'thinking' })],
+      })
+      const core = screen.getByTestId('agent-state-core')
+      expect(core).toHaveAttribute('data-active', '')
+      act(() => {
+        visibility = 'hidden'
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+      expect(core).toHaveAttribute('data-state', 'thinking')
+      expect(core).not.toHaveAttribute('data-active')
+      act(() => {
+        visibility = 'visible'
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+      expect(core).toHaveAttribute('data-active', '')
+    } finally {
+      vi.restoreAllMocks()
+    }
   })
 
   it('事件读取不完整时说「活动信息读取失败」，不冒充还在跑', () => {

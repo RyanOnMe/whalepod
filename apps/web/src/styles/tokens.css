@@ -1,30 +1,41 @@
 /**
- * 设计变量（#152：主题统一到 **DSH 中性色系** —— ADR-0008 分层 Fork 的应用层落地）。
- *
- * 本层**只做语义命名与映射**：每个值都 var() 引用 L1 白名单（`dsw-tokens.css`），
- * 而 L1 的取值逐字来自上游 `packages/client/ui-theme/src/styles/design-platform.css`
- * （钉版见 `apps/web/src/vendor/dsh-ui/manifest.json`）。因此全站只有一处上游取色，
- * 组件与宿主共享同一套色，不再是两种视觉语言。
- *
- * 两条刻意不用上游亮色的地方（都有实测数字，门在 `apps/web/tests/theme-contrast.spec.ts`）：
- *   · 文字色取 900 阶而非 500 阶：上游亮绿/亮琥珀在白底仅 2.1–2.3:1，低于 WCAG AA；
- *   · 交互蓝取 blue-600 而非品牌亮蓝 deepseek-450：白字在其上仅 3.37:1（同样不达标）；
- *     亮蓝留给非文字强调（#164 之后焦点环已不再用它，见文件末尾的 `--focus-ring`）。
- *   · 弱化文字取 secondary 而非 tertiary（tertiary 在白底 3.71:1）。
+ * WhalePod application theme — P1-437.
+ * The approved tidal blue / sea-glass identity belongs to this layer. Copied DSH
+ * values stay untouched in dsw-tokens.css; shared geometry and neutral controls
+ * continue to use that upstream layer. Bright teal is decorative, never a white-text action fill.
  */
 :root {
-  /* 颜色：语义名 → L1（`--dsw-*`），右列注明对应上游 token */
+  /* Application-owned palette. #195BDD / #13B8A6 were confirmed by the product owner. */
+  --brand-primary: rgb(25, 91, 221);
+  --brand-primary-hover: rgb(18, 71, 177);
+  --brand-on-primary: rgb(255, 255, 255);
+  --brand-teal: rgb(19, 184, 166);
+  --brand-link: var(--brand-primary);
+  --brand-selected-surface: rgb(232, 241, 255);
+  --brand-selected-ink: rgb(18, 63, 136);
+  --brand-note-surface: rgb(230, 247, 244);
+  --brand-note-ink: rgb(8, 94, 91);
+  --brand-paper: rgb(241, 247, 253);
+  --brand-chrome: rgb(245, 249, 255);
+  --brand-header: rgb(239, 246, 255);
+  --brand-border: rgb(174, 198, 234);
+  /* Activity art only: these four colors have deliberate light/dark variants. */
+  --brand-agent-blue: rgb(25, 91, 221);
+  --brand-agent-teal: rgb(19, 184, 166);
+  --brand-agent-sky: rgb(101, 165, 250);
+  --brand-agent-mist: rgb(156, 234, 221);
+
+  /* Application semantics bridge the brand palette and untouched upstream neutrals. */
   --color-ink: var(--dsw-alias-label-primary); /* label-primary */
   --color-ink-soft: var(--dsw-alias-label-secondary); /* label-secondary */
-  --color-paper: var(--dsw-alias-bg-module-platform); /* 页面底 */
+  --color-paper: var(--brand-paper); /* 页面底 */
   --color-surface: var(--dsw-alias-bg-layer-2); /* 卡片面 */
   --color-line: var(--dsw-alias-border-l3); /* 描边 */
   --color-muted: var(--dsw-alias-label-secondary); /* 提示文字（不用 tertiary：3.71:1 不达 AA） */
-  --color-signal: var(--dsw-static-blue-600); /* 交互强调（白字 5.17:1） */
-  --color-signal-soft: var(--dsw-static-blue-100); /* 强调浅底 */
-  /* 强调色当**文字**压在自己的浅底上时改用这一档（10.16:1）。同一色族有"上白底"
-     （signal，5.17:1）与"上自己浅底"（signal-strong）两种用法，混用即 #159 修的不达标。 */
-  --color-signal-strong: var(--dsw-static-blue-900);
+  --color-signal: var(--brand-link); /* 链接；动作底色由 brand-primary 独立承担 */
+  --color-signal-soft: var(--brand-selected-surface); /* 选中浅底 */
+  /* 选中/强调文字与链接分档，避免亮色文字压自己的浅底。 */
+  --color-signal-strong: var(--brand-selected-ink);
   --color-run: var(--dsw-static-green-900); /* 运行/成功文字（浅底上 11:1） */
   --color-run-soft: var(--dsw-static-green-100);
   --color-warn: var(--dsw-static-amber-900); /* 警告文字（14:1） */
@@ -37,8 +48,8 @@
      存在三套配色。这里补齐定义：色值仍取 L1，语义与全站一致。 */
   /* 选中态描边等非文字强调（= signal）。原先这行注释举的例子是"焦点环"，#164 把环改成
      ink/surface 双层后已过期，顺手更正——免得下一个人照它去改焦点环。 */
-  --color-accent: var(--dsw-static-blue-600);
-  --color-surface-sunken: var(--dsw-alias-bg-module-platform); /* 比卡片更"沉"的面 */
+  --color-accent: var(--brand-link);
+  --color-surface-sunken: var(--brand-header); /* 比卡片更"沉"的面 */
   --color-text-muted: var(--dsw-alias-label-secondary); /* 次级文字（5.8:1） */
 
   /* 尺寸（#173：圆角阶梯补两档——卡片/面板 12px、应用框 20px，取值与上游
@@ -62,7 +73,7 @@
   /* 字号：只补被引用过的那一档，不趁机发明整套字号尺度 */
   --font-size-sm: 13px;
 
-  /* 动效（#271）：全站过渡只此一套取值，不给组件留「自己调一个」的口子。
+  /* 动效（#271）：全站过渡只此一套取值。控件反馈与可感知的面板/展开/入场分档，避免压成同一个时长。
      缓动与时长档**对齐 vendored dsh-ui 的既有约定**（Switch 120ms ease /
      DisclosureRow 100ms ease / ConnectionIndicator 160ms ease-out），不新造第五条平行约定。
 
@@ -77,6 +88,11 @@
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --duration-quick: 120ms; /* hover / 底色换面 */
   --duration-base: 160ms; /* 按下反馈 / 控件换面 */
+  --duration-surface: 320ms;
+  --duration-reveal: 360ms;
+  --duration-enter: 440ms;
+  --ease-surface: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: linear(0, 0.12, 0.38, 0.68, 0.91, 1.04, 1.08, 1.04, 1.01, 1);
   --duration-activity: 1100ms; /* 不定进度状态环：只表示活动，不推断完成百分比 */
   /* 按下缩放比（#271）：写成 token 是为了 reduced-motion 能**一处**关掉位移——
      在媒体查询里改一个变量，比在每条选择器上再抄一遍规则稳（把选择器复制进 @media
@@ -90,28 +106,49 @@
      分开是因为 reduced-motion 下要单独把它置 0——那是一次**布局位移**，正是该被关掉的那类
      （颜色/透明度不在此列）。 */
   --expand-duration: var(--duration-base);
+}
 
-  /* 焦点环（#164）：**双层同心环**——内层 2px 贴元素、外层 2px 在其外（总外扩 4px）。
-     为什么不是"把蓝色加深成单色"：焦点指示要同时面对三类相邻色（页面底 paper、卡片面
-     surface、深底 ink），旧值（signal 40% 混合）实测
-     paper 1.77:1 / surface 1.81:1 / ink 1.53:1，四处都低于 SC 1.4.11 非文字对比度的 3:1。
-     （#173 注：当时的"顶栏底"就是 ink 本身；深色顶栏退役后 ink 档仍留在判据矩阵里，
-     作为任何将来深色容器/深色主题的代表底色。）
-     取 ink 与 surface 两个**极值**各做一层后，任何底色上都有 ≥3:1 的那一层：浅色底上外环
-     ink 17.46:1 / 18.9:1，顶栏 ink 上内环 surface 18.9:1（深色一套翻转后 11.57 / 13.34:1）。
-     为什么不用"把蓝色加深成单色"（一审要求把作用域写清，别把浅色数字当通用结论）：
-     单色 blue-600 在**浅色侧**只有 paper/surface/ink 三个底色达标（4.78 / 5.17 / 3.66:1），
-     在**深色侧** paper 2.34:1、surface 2.7:1 都不达标；更要命的是它在**浅色全调色板**
-     30 个可能当"元素自身底色"的取值里有 **16 个**不达标（含 `.button-danger` 的 red-900
-     2.78:1、`--color-signal`/`--color-accent` 蓝底 **1:1**、`--dsw-alias-button-ghost-active-border`
-     1.89:1、`--dsw-alias-button-primary-hover` 1.86:1）。双层环在浅深两套全调色板
-     （浅 30 色 / 深 30 色）上 **0 处失败**——因为任何底色都必然与 ink 或 surface 之一拉开。
-     （口径：按"声明未显式带 alpha"的颜色去重；全量口径 38 色/19 不达标。这几个数字一审
-     独立复算过，首版曾把 `--color-signal-soft`（blue-600 在其上 4.24:1，**达标**）与
-     ghost-active 的出处写错，已更正。）
-     两层都走不透明语义 token（不写裸色值）：环要随 L1 深色段一起翻。
-     数字、红→绿实测与复跑命令见 apps/web/tests/focus-ring.spec.ts 与
-     docs/agent/focus-ring-acceptance.md。 */
+/* Body is the semantic theme boundary. Rebind aliases here: inherited custom
+ * properties computed on :root do not re-evaluate when a body variable changes. */
+body[data-ds-dark-theme] {
+  --brand-link: rgb(132, 180, 255);
+  --brand-selected-surface: rgb(32, 55, 89);
+  --brand-selected-ink: rgb(179, 211, 255);
+  --brand-note-surface: rgb(18, 57, 57);
+  --brand-note-ink: rgb(130, 224, 207);
+  --brand-paper: rgb(16, 23, 35);
+  --brand-chrome: rgb(20, 31, 48);
+  --brand-header: rgb(24, 37, 56);
+  --brand-border: rgb(58, 83, 117);
+  --brand-agent-blue: rgb(110, 157, 255);
+  --brand-agent-teal: rgb(53, 214, 193);
+  --brand-agent-sky: rgb(61, 127, 230);
+  --brand-agent-mist: rgb(134, 239, 223);
+  --color-ink: var(--dsw-alias-label-primary);
+  --color-ink-soft: var(--dsw-alias-label-secondary);
+  --color-muted: var(--dsw-alias-label-secondary);
+  --color-paper: var(--brand-paper);
+  --color-surface: var(--dsw-alias-bg-layer-2);
+  --color-line: var(--dsw-alias-border-l3);
+  --color-signal: var(--brand-link);
+  --color-signal-soft: var(--brand-selected-surface);
+  --color-signal-strong: var(--brand-selected-ink);
+  --color-accent: var(--brand-link);
+  --color-surface-sunken: var(--brand-header);
+  --color-text-muted: var(--dsw-alias-label-secondary);
+  /* Same state families, readable dark labels and corresponding dark badge surfaces. */
+  --color-run: var(--dsw-static-green-100);
+  --color-run-soft: var(--dsw-static-green-900);
+  --color-warn: var(--dsw-static-amber-100);
+  --color-warn-soft: var(--dsw-static-amber-900);
+  --color-danger: var(--dsw-static-red-100);
+  --color-danger-strong: var(--dsw-static-red-100);
+  --color-danger-soft: var(--dsw-static-red-900);
+}
+
+/* The sole focus-ring definition lives on body so both layers resolve alongside
+ * the active light/dark semantics. Two opaque 2px bands cover every theme surface. */
+body {
   --focus-ring: 0 0 0 2px var(--color-surface), 0 0 0 4px var(--color-ink);
 }
 

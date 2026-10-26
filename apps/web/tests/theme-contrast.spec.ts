@@ -31,19 +31,17 @@ const l1Tokens = readFileSync(join(here, '../src/styles/dsw-tokens.css'), 'utf8'
  * 不该让语义门变红（也不该靠"别把注释写长"来维持）。
  */
 function resolve(name: string): string {
-  // 折成**无空白**形态：一审实测过三种折叠，`.replace(/\s+/g,' ')` 只救得了"冒号后换行"，
-  // 救不了"var( 内部换行"（折白后是 `var( --x )`，锚定正则 `^var\((--` 仍失配 → 门会以
-  // "颜色解析不了"的形式变红，而真实原因只是格式化）。去空白对取值语义无影响。
-  //
-  // #173：应用层没有桥接的 L1 token（侧栏一族只被 global.css 直接引用）直接查白名单
-  // （readTokenValue 找不到会抛，所以用正则探测代替 try/catch，失败语义不变）。
-  const appHit = new RegExp(`${name}\\s*:\\s*([^;]+);`).exec(appTokens)?.[1]?.trim() ?? ''
-  const raw = (appHit !== '' ? appHit : readTokenValue(l1Tokens, name)).replace(/\s+/g, '')
-  const indirect = /^var\((--[a-z0-9-]+)\)$/i.exec(raw.trim())
-  if (indirect === null) return raw
-  const target = indirect[1]
-  if (target === undefined) throw new Error(`${name} 的 var() 形态无法解析：${raw}`)
-  return readTokenValue(l1Tokens, target)
+  const seen = new Set<string>()
+  while (true) {
+    if (seen.has(name)) throw new Error(`主题 token 循环：${name}`)
+    seen.add(name)
+    const value =
+      new RegExp(`${name}\\s*:\\s*([^;]+);`).exec(appTokens)?.[1]?.trim() ??
+      readTokenValue(l1Tokens, name)
+    const target = /^var\(\s*(--[a-z0-9-]+)\s*\)$/i.exec(value)?.[1]
+    if (!target) return value.replace(/\s+/g, '')
+    name = target
+  }
 }
 
 const AA_TEXT = 4.5
@@ -57,7 +55,7 @@ const PAIRS: ReadonlyArray<[string, string, string | null, string]> = [
   ['弱化文字 / 卡片面', '--color-muted', '--color-surface', '提示与时间戳'],
   // #173：深色顶栏退役，换成浅色侧栏的真实配对（chrome 文字压侧栏底）。
   ['侧栏文字 / 侧栏底', '--color-ink', '--dsw-specific-sidebar-fill', '侧栏导航与品牌'],
-  ['主按钮文字 / 主按钮底', '--color-surface', '--color-signal', '白字按钮'],
+  ['主按钮文字 / 主按钮底', '--brand-on-primary', '--brand-primary', '白字按钮'],
   ['链接文字 / 卡片面', '--color-signal', '--color-surface', '链接与可点文字'],
   ['链接文字 / 页面底', '--color-signal', '--color-paper', '页面底上的链接'],
   ['运行态文字 / 运行态底', '--color-run', '--color-run-soft', '运行/成功徽标'],
@@ -91,12 +89,14 @@ describe('#152 主题门', () => {
     expect(unresolved).toEqual([])
   })
 
-  it('白名单取值与上游同源（抽样：不得出现本仓自创色值）', () => {
+  it('上游白名单取值仍保持出处；产品品牌映射由独立应用门验证', () => {
     // 抽样断言具体字面量：改上游颜色必须同时改这里，改不动就是有人手写了别的色
-    expect(resolve('--color-signal').trim()).toBe('rgb(37, 99, 235)') // blue-600
-    expect(resolve('--color-paper').trim()).toBe('rgb(245, 246, 247)') // bg-module-platform
-    expect(resolve('--color-run').trim()).toBe('rgb(35, 60, 44)') // green-900
-    expect(resolve('--color-signal-strong').trim()).toBe('rgb(14, 48, 116)') // blue-900
+    expect(readTokenValue(l1Tokens, '--dsw-static-blue-600').trim()).toBe('rgb(37, 99, 235)') // blue-600
+    expect(readTokenValue(l1Tokens, '--dsw-alias-bg-module-platform').trim()).toBe(
+      'rgb(245, 246, 247)',
+    ) // bg-module-platform
+    expect(readTokenValue(l1Tokens, '--dsw-static-green-900').trim()).toBe('rgb(35, 60, 44)') // green-900
+    expect(readTokenValue(l1Tokens, '--dsw-static-blue-900').trim()).toBe('rgb(14, 48, 116)') // blue-900
   })
 
   it(`清单里每对文字/背景都过 WCAG AA（≥${AA_TEXT}:1）`, () => {

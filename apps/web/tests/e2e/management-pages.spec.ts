@@ -117,8 +117,29 @@ test('四个管理页：真实邀请、插件安装组合、Agent 详情与设�
 
     await owner.goto('/devices')
     await expect(owner.getByRole('heading', { name: '配对码', exact: true })).toHaveCount(0)
-    await owner.getByRole('button', { name: '生成配对码', exact: true }).click()
+    await expect(
+      owner.getByRole('list', { name: '配对步骤' }).locator('[aria-current=step]'),
+    ).toHaveText(/生成配对码/)
+    const generatePairing = owner.getByRole('button', { name: '生成配对码', exact: true })
+    await generatePairing.focus()
+    await owner.keyboard.press('Shift+Tab')
+    await owner.keyboard.press('Tab')
+    await expect(generatePairing).toBeFocused()
+    await owner.keyboard.press('Enter')
     await expect(owner.getByTestId('pairing-code')).toBeVisible()
+    await expect(
+      owner.getByRole('list', { name: '配对步骤' }).locator('[aria-current=step]'),
+    ).toHaveText(/电脑配对/)
+    const pairingKeyboard = await owner
+      .getByRole('list', { name: '配对步骤' })
+      .evaluate((node) => ({
+        durations: [...node.querySelectorAll('.cu-step-indicator,i>b')].map(
+          (part) => getComputedStyle(part).transitionDuration,
+        ),
+        animations: node.getAnimations({ subtree: true }).length,
+      }))
+    expect(pairingKeyboard.durations).toEqual(Array(5).fill('0s'))
+    expect(pairingKeyboard.animations).toBe(0)
     await owner.getByRole('button', { name: '复制配对码', exact: true }).click()
     await expect(owner.getByText('已复制', { exact: true })).toBeVisible()
     const code = await owner.getByTestId('pairing-code').innerText()
@@ -131,6 +152,10 @@ test('四个管理页：真实邀请、插件安装组合、Agent 详情与设�
     nodeStarted = true
     await expect(owner.getByText('e2e-node', { exact: true })).toBeVisible()
     await expect(owner.getByTestId('device-status')).toHaveText('在线')
+    // No pairing-code/device correlation is exposed; even a new online row is not proof of this code's consumption.
+    await expect(
+      owner.getByRole('list', { name: '配对步骤' }).locator('[aria-current=step]'),
+    ).toHaveText(/电脑配对/)
 
     let readOnlyPosts = 0
     const observe = (request: Request) => {
@@ -243,6 +268,7 @@ test('四个管理页：真实邀请、插件安装组合、Agent 详情与设�
           agentCreated: true,
           paired: true,
           pairingCopied: true,
+          pairingKeyboard,
           memberReadOnly: true,
         },
         null,

@@ -15,7 +15,7 @@
  *  A. 描边宽度与圆角**逐值等于 vendored `Input.module.css` 的度量**——度量从那边**现场读**
  *     （`parseVendorInputMetrics`），本文件里**没有 8px / 0.5px 字面量**。抄死数字的判据在上游
  *     改度量那天不会红，等于没判。
- *  B. 这几条控件（含 `:hover` / `:focus-visible` 变体）的颜色声明**只引用 L1 `--dsw-*`**，
+ *  B. 控件颜色逐属性登记；中性/输入/危险保持 L1，P1-437 仅主操作显式采用应用品牌 token，
  *     且**登记了期望 token 的属性必须用那一个 token**——"只吃 L1"挡不住"换成另一个 L1 里的
  *     同色/近色 token"（评审 S2/S3：主按钮底色换成 `brand-primary`、危险按钮底色换成 red-500
  *     都曾全绿）。没登记期望值、却声明了颜色属性的规则**直接报红**，不许静默放过。
@@ -205,7 +205,7 @@ const RAW_COLOR_VALUE =
 const EXPECT_RAW_VALUE = 'raw:'
 
 /**
- * 期望值哨兵：允许某个属性引用**应用层 token**（`--color-*`），必须显式写出变量名与理由。
+ * 期望值哨兵：允许某个属性引用**应用层 token**（`--color-*` / `--brand-*`），必须显式写出变量名与理由。
  *
  * 为什么需要它：#159 的深色容器前景族就是应用层机制（顶栏给出 `--color-signal-soft`），
  * 把整个应用层颜色一律禁掉会逼着后人改成裸值或改 L1——两条都更糟。放行的方式同样是
@@ -439,16 +439,16 @@ const rules: ExpectedRule[] = [
     selector: '.button-primary',
     mustDeclare: 'background',
     colors: {
-      background: CONTROL_PRIMARY_FILL_TOKEN,
+      background: `${EXPECT_APP_TOKEN}${CONTROL_PRIMARY_FILL_TOKEN}`,
       'border-color': 'transparent',
-      color: CONTROL_PRIMARY_LABEL_TOKEN,
+      color: `${EXPECT_APP_TOKEN}${CONTROL_PRIMARY_LABEL_TOKEN}`,
     },
   },
   {
     selector: '.button-primary:hover:not(:disabled)',
     mustDeclare: 'background',
     colors: {
-      background: CONTROL_PRIMARY_HOVER_TOKEN,
+      background: `${EXPECT_APP_TOKEN}${CONTROL_PRIMARY_HOVER_TOKEN}`,
     },
   },
   {
@@ -486,7 +486,7 @@ const rules: ExpectedRule[] = [
     colors: {
       background: CONTROL_DANGER_FILL_TOKEN,
       'border-color': BUTTON_BORDER_TOKEN,
-      color: CONTROL_DANGER_LABEL_TOKEN,
+      color: `${EXPECT_APP_TOKEN}${CONTROL_DANGER_LABEL_TOKEN}`,
     },
   },
 ]
@@ -621,7 +621,7 @@ function assertControlFamily(cssText: string): void {
           `${expected.selector} 的 ${property} 里有裸色值 \`${raw}\`：颜色必须走 var(--dsw-*)（整条规则体都在判据内，不是只查颜色属性名）`,
         )
       }
-      const appVar = /--color-[\w-]+/.exec(value)?.[0]
+      const appVar = /--(?:color|brand)-[\w-]+/.exec(value)?.[0]
       if (appVar !== undefined && expected.colors[property] !== `${EXPECT_APP_TOKEN}${appVar}`) {
         failures.push(`${expected.selector} 的 ${property} 引用了应用层变量 ${appVar}`)
       }
@@ -677,7 +677,7 @@ function assertControlFamily(cssText: string): void {
     const declaredAppTokens = Object.values(expected.colors).filter(
       (token): token is string => typeof token === 'string' && token.startsWith(EXPECT_APP_TOKEN),
     )
-    const leftovers = [...rule.body.matchAll(/--color-[\w-]+/g)]
+    const leftovers = [...rule.body.matchAll(/--(?:color|brand)-[\w-]+/g)]
       .map((match) => match[0])
       .filter((token) => !declaredAppTokens.includes(`${EXPECT_APP_TOKEN}${token}`))
     if (leftovers.length > 0) {
@@ -857,7 +857,7 @@ describe('#168 自研控件对齐 DSH 族（源码文本判据）', () => {
     expect(TOUCH_MIN_PX).toBe(40)
   })
 
-  it('A+B+C：描边/圆角逐值等于 vendored Input，颜色只吃登记的 L1 token，高度 = --touch-min', () => {
+  it('A+B+C：共享上游几何，颜色只吃逐属性登记的L1或品牌token，高度 = --touch-min', () => {
     assertControlFamily(globalCss)
     // 顺带把两侧共用的判定函数跑一遍（Q5 的 assertControlTokens 用的就是它）。
     // 注意这里**不是**恒真（评审 B-1 实测过它曾恒真，所以每条对照的来源都写在
@@ -1102,7 +1102,8 @@ describe('#168 自研控件对齐 DSH 族（源码文本判据）', () => {
       {
         name: '主按钮文字写裸色值 #fff',
         css: setDeclaration({ selector: '.button-primary', mustDeclare: 'color' }, 'color', '#fff'),
-        expect: /\.button-primary 的 color 不是单一 L1 token 引用：`#fff`/,
+        expect:
+          /\.button-primary 的 color 是 `#fff`，登记的是应用层 token `var\(--brand-on-primary\)`/,
       },
       {
         // S2 复现：主按钮底色换成同色系的另一个 L1 token——"只吃 L1"放行，期望表拦下
@@ -1112,7 +1113,26 @@ describe('#168 自研控件对齐 DSH 族（源码文本判据）', () => {
           'background',
           'var(--dsw-alias-brand-primary)',
         ),
-        expect: /引用了 --dsw-alias-brand-primary，约定应是 --dsw-alias-button-primary-fill/,
+        expect:
+          /\.button-primary 的 background 是 `var\(--dsw-alias-brand-primary\)`，登记的是应用层 token `var\(--brand-primary\)`/,
+      },
+      {
+        name: '品牌主按钮换到同值的链接token仍须拒绝',
+        css: setDeclaration(
+          { selector: '.button-primary', mustDeclare: 'background' },
+          'background',
+          'var(--brand-link)',
+        ),
+        expect: /登记的是应用层 token `var\(--brand-primary\)`/,
+      },
+      {
+        name: '主按钮hover偷用低对比亮青绿',
+        css: setDeclaration(
+          { selector: '.button-primary:hover:not(:disabled)', mustDeclare: 'background' },
+          'background',
+          'var(--brand-teal)',
+        ),
+        expect: /登记的是应用层 token `var\(--brand-primary-hover\)`/,
       },
       {
         // S2 复现（后果最重）：危险按钮底色换成错误色 → 红底 + red-900 字实测 3.19:1
@@ -1131,7 +1151,8 @@ describe('#168 自研控件对齐 DSH 族（源码文本判据）', () => {
           'color',
           'var(--dsw-alias-state-error-primary)',
         ),
-        expect: /引用了 --dsw-alias-state-error-primary，约定应是 --dsw-static-red-900/,
+        expect:
+          /\.button-danger 的 color 是 `var\(--dsw-alias-state-error-primary\)`，登记的是应用层 token `var\(--color-danger-strong\)`/,
       },
       {
         // #173：危险按钮的描边宽度继承 `.button`（自己只声明 border-color），

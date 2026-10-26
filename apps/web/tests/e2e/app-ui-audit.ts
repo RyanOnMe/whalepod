@@ -95,7 +95,7 @@ export async function auditFileActions(page: Page, width: number, evidence: stri
   }
   page.on('request', count)
   try {
-    await expect(panel.locator('[data-collectui="ai-chat-2"]')).toHaveCount(1)
+    await expect(panel.locator('.cu-421-f[data-collectui="ai-chat-2"]')).toHaveCount(1)
     await expect(panel.getByTestId('artifact-download-button')).toBeVisible()
     await trigger.focus()
     await page.keyboard.press('Enter')

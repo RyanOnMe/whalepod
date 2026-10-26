@@ -33,6 +33,7 @@
 |---|---|
 | 输入栏焦点重叠、审批参数裁切、文件菜单溢出或 Esc 关掉外层面板 | `web.app-ui`：`artifacts/evidence/focused-workspace/<本次目录>/facts.json` 的 prompts/approvals/files 九组测量，独立复跑 `verify-app-ui-evidence` 与 `verify-workspace-evidence`；bundle 异常看 `vendor/collectui/manifest.json`，见 app-ui-polish-acceptance |
 | 管理页裁切、邀请展开/复制、插件卡审核、Agent 关闭回焦或设备配对展示异常 | `web.management`：management-pages facts.json；复跑 verify-management-evidence；见 reactbits-management-acceptance |
+| 动效静止、反向跳变、预览重开丢状态或窄屏裁切 | `web.motion` | `artifacts/evidence/focused-workspace/<本轮目录>/motion.json`、`motion-*.png`、只读短录屏；独立判定器与 CSS token/卸载窗口 |
 | 项目展开失焦、列表刷新重播、设置隐藏错误或待办分类/讨论草稿异常 | `web.pages`：focused-workspace facts.json 的三档四组页面观测；复跑 verify-pages-evidence 与总判定器；见 reactbits-pages-acceptance |
 | 工作台搜索/空态溢出、手机找不到搜索、抽屉关闭失焦或完成后仍显示活动 | `web.workbench`：同目录 facts.json 的 start/room/run 九组观测；复跑 `verify-workbench-evidence` 与工作区总判定器；见 reactbits-workbench-acceptance |
 | Agent 未收到约定/交接正文，或接收方无法阅读固定版本 | hub.run execution-context → node.run initialize → runtime.bridge 首条模型指令；页面看 HandoffPublishedContent，复跑 handoff-context-consumption-acceptance |
@@ -116,3 +117,5 @@
 工作区 Micro 菜单被裁切、键盘焦点或减少动态异常：先看 web.micro 定位读数；约定开关与服务端不一致先看 web.agreement PATCH 与刷新；材料勾选先看 web.execution 的输入快照。证据与复跑入口见 focused-workspace-acceptance。
 
 抽屉重复标题、二级页层级、确认框裁切或关闭不还焦：先看 web.surfaces 的30条布局和三档确认边界；持久化权限与候选异常再看 Hub 任务 GET 与受众投影。复跑与证据 schema 见 [secondary-surfaces-acceptance](./secondary-surfaces-acceptance.md)，证据在 focused-workspace 本次目录，由 verify-workspace-evidence 独立重判。
+
+P1-437：主题与状态核心的触发、证据、独立判定和归因见 [Agent 状态核心验收](./agent-state-core-acceptance.md)；主要组件为 `web.agent-state`、`web.agent-core`、`web.theme.cascade`、`web.theme.contrast`。
