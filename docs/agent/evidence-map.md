@@ -129,4 +129,6 @@ P1-437：主题与状态核心的触发、证据、独立判定和归因见 [Age
 
 ## 交付闭环组合验证（#442）
 
-修订上下文、版本隐私、人工复核、历史依据或 Office iframe 问题，先看 [delivery-loop-acceptance](./delivery-loop-acceptance.md) 的组件归因表；生产驱动事实在 artifacts/evidence/handoff-loop/result.json，脱敏归档在 artifacts/evidence/delivery-loop。Office 档必须经 test:e2e:delivery 和独立判定，不以组件单测或 PDF 魔数冒充排版保真。真人劳动记录见内部体验手册，回放结果不计效率。
+修订上下文、版本隐私、人工复核、历史依据或 Office 安全回退问题，先看 [delivery-loop-acceptance](./delivery-loop-acceptance.md) 的组件归因表；生产驱动事实在 artifacts/evidence/handoff-loop/result.json，脱敏归档在 artifacts/evidence/delivery-loop。Office 档必须经 test:e2e:delivery 和独立判定，原件下载/批注可用，不能用旧转换成功记录冒充当前安全回退证据。真人劳动记录见内部体验手册，回放结果不计效率。
+
+Office 派生预览当前暂停（ADR-0023）：看到 ISOLATION_REQUIRED 时查看 [Office 安全回退验收](./office-preview-acceptance.md)，不通过安装/指定 soffice 绕过；若仍能读取旧 PDF，优先排查 hub.artifact 的读取和旧回执路径。合成负控摘要在 artifacts/evidence/office-preview-isolation。

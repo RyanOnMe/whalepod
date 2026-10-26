@@ -5,15 +5,14 @@
  * - 只有 DOCX/XLSX/PPTX 触发转换；其他格式不产生派生件；
  * - 转换成功 → 上传的字节与摘要一致，失败/超时只登记稳定原因码；
  * - 上传网络故障不写成「转换失败」；同一 artifact 的并发调用只转一次；
- * - 转换命令与输出目录隔离（每次独立 profile），真实 soffice 可用时再做一次烟测。
+ * - 默认生产生成器与低层入口均拒绝转换；本文件的成功路径仅用显式测试 converter。
+ * - 外部资源与真实可执行程序负控见 artifact-preview-isolation.spec.ts。
  */
-import { execFile, execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   OfficePreviewError,
@@ -29,43 +28,6 @@ const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.doc
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 const PPTX = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 const PDF = Buffer.from('%PDF-1.7\npreview-bytes\n')
-
-/** 最小 Flat ODF 演示文稿：用来让 soffice 现造真实 PPTX 样本。 */
-const MINIMAL_FODP = `<?xml version="1.0" encoding="UTF-8"?>
-<office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" office:mimetype="application/vnd.oasis.opendocument.presentation" office:version="1.3">
-  <office:meta/><office:settings/><office:scripts/><office:font-face-decls/><office:styles/>
-  <office:automatic-styles>
-    <style:page-layout style:name="PM1">
-      <style:page-layout-properties fo:page-width="28cm" fo:page-height="15.75cm" style:print-orientation="landscape"/>
-    </style:page-layout>
-  </office:automatic-styles>
-  <office:master-styles>
-    <style:master-page style:name="Default" style:page-layout-name="PM1"/>
-  </office:master-styles>
-  <office:body>
-    <office:presentation>
-      <draw:page draw:name="page1" draw:master-page-name="Default">
-        <draw:frame svg:width="20cm" svg:height="5cm" svg:x="2cm" svg:y="2cm">
-          <draw:text-box><text:p>WhalePod preview</text:p></draw:text-box>
-        </draw:frame>
-      </draw:page>
-    </office:presentation>
-  </office:body>
-</office:document>`
-
-function hasSoffice(): boolean {
-  try {
-    execFileSync(process.env.WHALEPOD_SOFFICE ?? 'soffice', ['--version'], {
-      stdio: 'ignore',
-      timeout: 10_000,
-    })
-    return true
-  } catch {
-    return false
-  }
-}
-
-const HAS_SOFFICE = hasSoffice()
 
 let root: string
 let staging: string
@@ -266,58 +228,10 @@ describe('#431 OfficePreviewGenerator', () => {
   })
 })
 
-describe('#431 convertOfficeToPdf', () => {
-  it.skipIf(!HAS_SOFFICE)(
-    '用真实 soffice 把 DOCX/XLSX/PPTX 都转成 PDF（无转换器时跳过）',
-    async () => {
-      const sourceDir = join(root, 'office')
-      await mkdir(sourceDir, { recursive: true })
-      const soffice = process.env.WHALEPOD_SOFFICE ?? 'soffice'
-      const convert = (filter: string, sourcePath: string) =>
-        promisify(execFile)(
-          soffice,
-          ['--headless', '--convert-to', filter, '--outdir', sourceDir, sourcePath],
-          { timeout: 120_000 },
-        )
-
-      // 不引入二进制 fixture：用 soffice 从最小文本样本现造三种真实 Office 文件。
-      const htmlPath = join(sourceDir, 'sample.html')
-      await writeFile(htmlPath, '<html><body><h1>WhalePod preview</h1><p>hello</p></body></html>')
-      await convert('docx:MS Word 2007 XML', htmlPath)
-
-      const csvPath = join(sourceDir, 'sample.csv')
-      await writeFile(csvPath, 'name,value\nalpha,1\nbeta,2\n')
-      await convert('xlsx:Calc MS Excel 2007 XML', csvPath)
-
-      const fodpPath = join(sourceDir, 'sample.fodp')
-      await writeFile(fodpPath, MINIMAL_FODP)
-      await convert('pptx:Impress MS PowerPoint 2007 XML', fodpPath)
-
-      for (const extension of ['docx', 'xlsx', 'pptx'] as const) {
-        const sourcePath = join(sourceDir, `sample.${extension}`)
-        expect(existsSync(sourcePath)).toBe(true)
-        const pdf = await convertOfficeToPdf(sourcePath, join(root, `pdf-${extension}`))
-        expect(pdf.subarray(0, 5).toString()).toBe('%PDF-')
-        expect(pdf.byteLength).toBeGreaterThan(0)
-      }
-    },
-    300_000,
-  )
-
-  it('soffice 不存在 → CONVERTER_UNAVAILABLE（稳定码，不带本机路径）', async () => {
-    await expect(
-      convertOfficeToPdf('/nonexistent/source.docx', join(root, 'out'), {
-        sofficePath: join(root, 'missing-soffice'),
-      }),
-    ).rejects.toMatchObject({ code: 'CONVERTER_UNAVAILABLE' })
-  })
-
-  it('输出目录里没有 PDF → CONVERT_FAILED', async () => {
-    const bin = join(root, 'fake-soffice')
-    await writeFile(bin, '#!/bin/sh\nexit 0\n')
-    await chmod(bin, 0o755)
-    await expect(
-      convertOfficeToPdf(join(root, 'in.docx'), join(root, 'out-empty'), { sofficePath: bin }),
-    ).rejects.toMatchObject({ code: 'CONVERT_FAILED' })
+describe('#441 convertOfficeToPdf safety suspension', () => {
+  it('rejects before reading input or starting a configured binary', async () => {
+    await expect(convertOfficeToPdf('untrusted.docx', join(root, 'out'))).rejects.toMatchObject({
+      code: 'ISOLATION_REQUIRED',
+    })
   })
 })

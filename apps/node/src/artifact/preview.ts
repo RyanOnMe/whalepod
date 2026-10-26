@@ -1,23 +1,17 @@
 /**
  * Office 只读 PDF 预览派生（#431；ADR-0021 §2「预览绑定」）。
  *
- * Node 在原件采集成功后，用 LibreOffice 无头模式把 DOCX/XLSX/PPTX 转成 PDF，
- * 再作为**派生阅读副本**上传给 Hub。边界：
+ * 自动转换因缺少可验证隔离而暂停；Node 只登记 ISOLATION_REQUIRED。
+ * 原件采集、下载与整件批注继续工作。后续隔离实现的边界：
  * - 转换输入只来自本次上传的字节（staging 副本），不重新读工作区文件——原件在
  *   上传后变化不会让预览挂到错误的摘要上；
  * - 转换失败/超时/二进制缺失只登记失败原因，绝不影响原件采集与交付；
  * - 结构化日志不带绝对路径、不携带 soffice stderr（可能含本机路径）。
  */
-import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
-import { promisify } from 'node:util'
 import { ARTIFACT_PREVIEW_MAX_BYTES } from '@whalepod/protocol'
-
-const execFileAsync = promisify(execFile)
 
 /** 第一阶段只预览 OpenXML 三件套；其他格式走下载回退。 */
 const OFFICE_PREVIEW_EXTENSIONS: ReadonlyMap<string, string> = new Map([
@@ -36,6 +30,7 @@ export function officeExtensionFor(mediaType: string): string | undefined {
 }
 
 export type OfficePreviewFailureCode =
+  | 'ISOLATION_REQUIRED'
   | 'CONVERTER_UNAVAILABLE'
   | 'CONVERT_TIMEOUT'
   | 'CONVERT_FAILED'
@@ -49,84 +44,23 @@ export class OfficePreviewError extends Error {
 }
 
 export interface ConvertOfficeToPdfOptions {
-  /** 默认 `WHALEPOD_SOFFICE` 或 PATH 上的 `soffice`（权限/路径由部署方负责）。 */
+  /** Legacy option retained for compatibility; it cannot enable unisolated conversion. */
   readonly sofficePath?: string
-  /** 单次转换上限；超时由 execFile 终止子进程。 */
+  /** Reserved for a future verified isolated converter; currently ignored. */
   readonly timeoutMs?: number
 }
 
-const DEFAULT_CONVERT_TIMEOUT_MS = 120_000
-
 /**
- * 调用 LibreOffice 把已落盘的 Office 文件转成 PDF。
- *
- * 每次转换使用独立 UserInstallation profile：并发转换不会抢同一个 profile 锁，
- * 也不读写用户的真实 LibreOffice 配置。
+ * Untrusted Office formats can resolve document-linked local files and URLs. A separate
+ * LibreOffice profile is not a permission boundary. Until a verified isolated converter
+ * exists, even direct calls fail before filesystem reads or process creation (ADR-0023).
  */
 export async function convertOfficeToPdf(
-  sourcePath: string,
-  outputDir: string,
-  options: ConvertOfficeToPdfOptions = {},
+  _sourcePath: string,
+  _outputDir: string,
+  _options: ConvertOfficeToPdfOptions = {},
 ): Promise<Buffer> {
-  const sofficePath = options.sofficePath ?? process.env.WHALEPOD_SOFFICE ?? 'soffice'
-  const timeout = options.timeoutMs ?? DEFAULT_CONVERT_TIMEOUT_MS
-  await mkdir(outputDir, { recursive: true })
-  const profileDir = await mkdtemp(join(tmpdir(), 'whalepod-soffice-profile-'))
-  try {
-    const args = [
-      `-env:UserInstallation=${pathToFileURL(profileDir).href}`,
-      '--headless',
-      '--invisible',
-      '--nodefault',
-      '--nologo',
-      '--norestore',
-      '--nolockcheck',
-      '--convert-to',
-      'pdf',
-      '--outdir',
-      outputDir,
-      sourcePath,
-    ]
-    try {
-      await execFileAsync(sofficePath, args, {
-        timeout,
-        killSignal: 'SIGKILL',
-        maxBuffer: 4 * 1024 * 1024,
-        windowsHide: true,
-      })
-    } catch (error) {
-      const code = (error as { code?: unknown }).code
-      if (code === 'ENOENT') throw new OfficePreviewError('CONVERTER_UNAVAILABLE')
-      // execFile 超时后 error.killed=true；不同平台/版本的 code 不一致，用 killed
-      // 与 signal 双判，避免把超时误报成普通转换失败。
-      if (
-        (error as { killed?: unknown }).killed === true ||
-        (error as { signal?: unknown }).signal === 'SIGKILL'
-      ) {
-        throw new OfficePreviewError('CONVERT_TIMEOUT')
-      }
-      throw new OfficePreviewError('CONVERT_FAILED')
-    }
-    let pdfName: string | undefined
-    try {
-      pdfName = (await readdir(outputDir))
-        .filter((name) => name.toLowerCase().endsWith('.pdf'))
-        .sort()[0]
-    } catch {
-      throw new OfficePreviewError('CONVERT_FAILED')
-    }
-    if (pdfName === undefined) throw new OfficePreviewError('CONVERT_FAILED')
-    let bytes: Buffer
-    try {
-      bytes = await readFile(join(outputDir, pdfName))
-    } catch {
-      throw new OfficePreviewError('CONVERT_FAILED')
-    }
-    if (bytes.byteLength === 0) throw new OfficePreviewError('CONVERT_FAILED')
-    return bytes
-  } finally {
-    await rm(profileDir, { recursive: true, force: true }).catch(() => {})
-  }
+  throw new OfficePreviewError('ISOLATION_REQUIRED')
 }
 
 export interface PreviewSource {
@@ -164,7 +98,7 @@ export interface OfficePreviewGeneratorDeps {
   readonly sofficePath?: string
   readonly timeoutMs?: number
   readonly maxBytes?: number
-  /** 测试注入点；默认走 convertOfficeToPdf。 */
+  /** Unit-test seam only. Production CLI never injects a converter; automatic conversion is suspended. */
   readonly convert?: (sourcePath: string, outputDir: string) => Promise<Buffer>
   readonly log?: (
     level: 'info' | 'warn' | 'error',
@@ -202,6 +136,12 @@ export class OfficePreviewGenerator {
   private async run(source: PreviewSource): Promise<void> {
     const extension = officeExtensionFor(source.mediaType)
     if (extension === undefined) return
+    // No input-format scanner is treated as an isolation boundary. Unknown bytes,
+    // ZIP disguises, XML, ODF and valid OpenXML are all rejected by the default path.
+    if (this.deps.convert === undefined) {
+      await this.reportFailure(source, 'ISOLATION_REQUIRED')
+      return
+    }
     let workDir: string | undefined
     try {
       await mkdir(this.deps.stagingDir, { recursive: true })
@@ -209,11 +149,7 @@ export class OfficePreviewGenerator {
       const sourcePath = join(workDir, `source.${extension}`)
       const outputDir = join(workDir, 'out')
       await writeFile(sourcePath, source.bytes)
-      const bytes = await (this.deps.convert?.(sourcePath, outputDir) ??
-        convertOfficeToPdf(sourcePath, outputDir, {
-          ...(this.deps.sofficePath === undefined ? {} : { sofficePath: this.deps.sofficePath }),
-          ...(this.deps.timeoutMs === undefined ? {} : { timeoutMs: this.deps.timeoutMs }),
-        }))
+      const bytes = await this.deps.convert(sourcePath, outputDir)
       if (bytes.byteLength > this.maxBytes) {
         await this.reportFailure(source, 'PREVIEW_TOO_LARGE')
         return
@@ -257,7 +193,7 @@ export class OfficePreviewGenerator {
     await this.deps
       .reportFailure(source.artifactId, {
         sourceSha256: source.sourceSha256,
-        converter: CONVERTER_NAME,
+        converter: this.deps.convert === undefined ? 'unknown' : CONVERTER_NAME,
         reason,
       })
       .catch((error: unknown) => {

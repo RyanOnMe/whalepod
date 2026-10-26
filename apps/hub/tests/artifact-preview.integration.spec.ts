@@ -1,13 +1,10 @@
 /**
  * Office 只读 PDF 预览（#431；ADR-0021 §2）Hub 集成判据。
  *
- * 驱动走真实 HTTP：Device Token 上传候选与派生 PDF、owner 发布、Session 读面。
+ * 驱动走真实 HTTP：Device Token 上传候选、owner 发布、隔离暂停策略与 Session 下载。
  * 覆盖：
- *   - 预览与原件 sha256 绑定（sourceSha256 不符 409），hash 由 Hub 复核；
- *   - 权限继承原件：候选仅 owner，发布后团队成员可读；不可见与不存在同 404；
- *   - 只有产出原件的设备可写派生件；失败上报只登记，不改变原件状态；
- *   - ready 不降级、failed 可被重转换覆盖；published 时发 artifact.changed；
- *   - 无预览/失败读取明确返回 PREVIEW_UNAVAILABLE（下载回退）。
+ *   - 未完成可核验隔离前不接受派生PDF、不公开旧PDF；原件和批注不受影响；
+ *   - 私有原件/预览权限仍相同，失败诊断保持稳定、脱敏和幂等。
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readdir, rm } from 'node:fs/promises'
@@ -253,282 +250,187 @@ describe('artifact preview (#431)', () => {
     return rows.filter((row) => (row.payload as { change?: unknown }).change === 'preview')
   }
 
-  it('候选预览：设备上传 PDF 后 owner 可读，其他成员与不存在同 404；不产生团队事件', async () => {
+  it('候选保留拥有者下载和明确回退，其他成员的原件与预览三路均不可见', async () => {
     const artifactId = await uploadCandidate()
-    const upload = await putPreview(bobToken, artifactId)
-    expect(upload.statusCode).toBe(200)
-    expect(upload.json().data).toMatchObject({
-      artifactId,
-      status: 'ready',
-      sourceSha256: OFFICE_SHA,
-      converter: 'libreoffice',
-      mediaType: 'application/pdf',
-      byteSize: PDF_BYTES.byteLength,
-      failureReason: null,
-    })
-
-    const rows = await previewRows()
-    expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({
-      artifactId,
-      status: 'ready',
-      sourceSha256: OFFICE_SHA,
-      sha256: PDF_SHA,
-      byteSize: PDF_BYTES.byteLength,
-      mediaType: 'application/pdf',
-      failureReason: null,
-    })
-
-    const ownerInfo = await info(bob.cookie, artifactId)
-    expect(ownerInfo.statusCode).toBe(200)
-    expect(ownerInfo.json().data.status).toBe('ready')
-    const ownerPdf = await readPreview(bob.cookie, artifactId)
-    expect(ownerPdf.statusCode).toBe(200)
-    expect(ownerPdf.body).toBe(PDF_BYTES.toString())
-    expect(ownerPdf.headers['content-type']).toContain('application/pdf')
-    expect(ownerPdf.headers['content-disposition']).toContain('inline')
-    expect(ownerPdf.headers['cache-control']).toContain('no-store')
-    expect(ownerPdf.headers['x-content-type-options']).toBe('nosniff')
-    expect(ownerPdf.headers['content-security-policy']).toBe('sandbox')
-
-    // 候选对非拥有者与不存在同形：info/字节都 404，且错误码不可区分。
-    const foreignInfo = await info(alice.cookie, artifactId)
-    expect(foreignInfo.statusCode).toBe(404)
-    expect(foreignInfo.json().error.code).toBe('NOT_FOUND')
-    const foreignPdf = await readPreview(alice.cookie, artifactId)
-    expect(foreignPdf.statusCode).toBe(404)
-    expect(foreignPdf.json().error.code).toBe('NOT_FOUND')
-    expect(await previewEvents()).toHaveLength(0)
-
-    // 重试同一派生件：仍是一条记录，不重复事件。
-    const replay = await putPreview(bobToken, artifactId)
-    expect(replay.statusCode).toBe(200)
-    expect(replay.json().data.status).toBe('ready')
-    expect(await previewRows()).toHaveLength(1)
-  })
-
-  it('发布后权限继承原件：团队成员可读 PDF，原件内容不变；发 preview 变更事件', async () => {
-    const artifactId = await uploadCandidate()
-    await publish(artifactId)
-    const upload = await putPreview(bobToken, artifactId)
-    expect(upload.statusCode).toBe(200)
-
-    const events = await previewEvents()
-    expect(events).toHaveLength(1)
-    expect(events[0]?.payload).toMatchObject({
-      artifactId,
-      taskId,
-      change: 'preview',
-      previewStatus: 'ready',
-    })
-
-    const aliceInfo = await info(alice.cookie, artifactId)
-    expect(aliceInfo.statusCode).toBe(200)
-    expect(aliceInfo.json().data.status).toBe('ready')
-    const alicePdf = await readPreview(alice.cookie, artifactId)
-    expect(alicePdf.statusCode).toBe(200)
-    expect(alicePdf.body).toBe(PDF_BYTES.toString())
-
-    // 派生预览不改原件：下载仍是原始 Office 字节与摘要。
-    const content = await readContent(alice.cookie, artifactId)
-    expect(content.statusCode).toBe(200)
-    expect(content.body).toBe(OFFICE_BYTES.toString())
-    const [row] = await database.db
-      .select()
-      .from(schema.artifacts)
-      .where(eq(schema.artifacts.id, artifactId))
-    expect(row?.sha256).toBe(OFFICE_SHA)
-  })
-
-  it('未生成预览的已发布件：info 为 none，读 PDF 明确 PREVIEW_UNAVAILABLE，原件仍可下载', async () => {
-    const artifactId = await uploadCandidate()
-    await publish(artifactId)
-    const noneInfo = await info(alice.cookie, artifactId)
-    expect(noneInfo.statusCode).toBe(200)
-    expect(noneInfo.json().data).toMatchObject({
-      artifactId,
-      status: 'none',
-      sourceSha256: null,
-      failureReason: null,
-    })
-    const missing = await readPreview(alice.cookie, artifactId)
-    expect(missing.statusCode).toBe(404)
-    expect(missing.json().error.code).toBe('PREVIEW_UNAVAILABLE')
-    const content = await readContent(alice.cookie, artifactId)
-    expect(content.statusCode).toBe(200)
-    expect(content.body).toBe(OFFICE_BYTES.toString())
-  })
-
-  it('并发上传同一原件的两份派生 PDF：只有一条记录，首个 ready 稳定', async () => {
-    const artifactId = await uploadCandidate()
-    await publish(artifactId)
-    const firstPdf = Buffer.from('%PDF-1.7\nfirst\n')
-    const secondPdf = Buffer.from('%PDF-1.7\nsecond\n')
-    const [first, second] = await Promise.all([
-      putPreview(bobToken, artifactId, { body: firstPdf }),
-      putPreview(bobToken, artifactId, { body: secondPdf }),
-    ])
-    expect(first.statusCode).toBe(200)
-    expect(second.statusCode).toBe(200)
-    const rows = await previewRows()
-    expect(rows).toHaveLength(1)
-    expect(rows[0]?.status).toBe('ready')
-    const served = (await readPreview(alice.cookie, artifactId)).body
-    expect([firstPdf.toString(), secondPdf.toString()]).toContain(served)
-    expect(await previewEvents()).toHaveLength(1)
-  })
-
-  it('转换失败：登记 failed 与原因，下载回退；ready 不被迟到的失败上报降级', async () => {
-    const artifactId = await uploadCandidate()
-    await publish(artifactId)
-    const failed = await postFailure(bobToken, artifactId, { reason: 'CONVERT_FAILED' })
-    expect(failed.statusCode).toBe(200)
-    expect(failed.json().data).toMatchObject({
+    const own = await info(bob.cookie, artifactId)
+    expect(own.statusCode).toBe(200)
+    expect(own.json().data).toMatchObject({
       artifactId,
       status: 'failed',
-      failureReason: 'CONVERT_FAILED',
-      byteSize: null,
+      sourceSha256: OFFICE_SHA,
+      converter: 'unknown',
+      failureReason: 'ISOLATION_REQUIRED',
       mediaType: null,
+      byteSize: null,
+      updatedAt: null,
     })
-    const failedInfo = await info(alice.cookie, artifactId)
-    expect(failedInfo.json().data.status).toBe('failed')
+    expect((await readContent(bob.cookie, artifactId)).body).toBe(OFFICE_BYTES.toString())
+    const unavailable = await readPreview(bob.cookie, artifactId)
+    expect(unavailable.statusCode).toBe(404)
+    expect(unavailable.json().error.code).toBe('PREVIEW_UNAVAILABLE')
+    for (const denied of [
+      await info(alice.cookie, artifactId),
+      await readPreview(alice.cookie, artifactId),
+      await readContent(alice.cookie, artifactId),
+    ]) {
+      expect(denied.statusCode).toBe(404)
+      expect(denied.json().error.code).toBe('NOT_FOUND')
+    }
+    expect(await previewRows()).toHaveLength(0)
+    expect(await previewEvents()).toHaveLength(0)
+  })
+
+  it('已发布原件仍可下载，团队明确收到隔离未开放而不是历史PDF', async () => {
+    const artifactId = await uploadCandidate()
+    await publish(artifactId)
+    const shared = await info(alice.cookie, artifactId)
+    expect(shared.statusCode).toBe(200)
+    expect(shared.json().data).toMatchObject({
+      status: 'failed',
+      failureReason: 'ISOLATION_REQUIRED',
+      sourceSha256: OFFICE_SHA,
+    })
     const unavailable = await readPreview(alice.cookie, artifactId)
     expect(unavailable.statusCode).toBe(404)
     expect(unavailable.json().error.code).toBe('PREVIEW_UNAVAILABLE')
-    expect((await readContent(alice.cookie, artifactId)).statusCode).toBe(200)
-
-    // failed → ready 允许覆盖。
-    const uploaded = await putPreview(bobToken, artifactId)
-    expect(uploaded.statusCode).toBe(200)
-    expect(uploaded.json().data.status).toBe('ready')
-
-    // ready 之后的失败上报只返回现有 ready，不降级。
-    const lateFailure = await postFailure(bobToken, artifactId, { reason: 'CONVERT_TIMEOUT' })
-    expect(lateFailure.statusCode).toBe(200)
-    expect(lateFailure.json().data.status).toBe('ready')
-    const after = await info(alice.cookie, artifactId)
-    expect(after.json().data.status).toBe('ready')
-    expect(after.json().data.failureReason).toBeNull()
+    const content = await readContent(alice.cookie, artifactId)
+    expect(content.statusCode).toBe(200)
+    expect(content.body).toBe(OFFICE_BYTES.toString())
+    const [artifact] = await database.db
+      .select()
+      .from(schema.artifacts)
+      .where(eq(schema.artifacts.id, artifactId))
+    expect(artifact?.sha256).toBe(OFFICE_SHA)
   })
 
-  it('绑定与权限负向：source 摘要不符、非产出设备、未知原件、声明超限都被拒绝', async () => {
+  it('拒绝旧Node的新PDF上传，不保存blob或预览记录；重试也不能打开通道', async () => {
     const artifactId = await uploadCandidate()
-    const wrongSource = await putPreview(bobToken, artifactId, {
-      sourceSha256: 'a'.repeat(64),
-    })
-    expect(wrongSource.statusCode).toBe(409)
+    await publish(artifactId)
+    for (const upload of [
+      await putPreview(bobToken, artifactId),
+      await putPreview(bobToken, artifactId, { sha256: 'b'.repeat(64) }),
+    ]) {
+      expect(upload.statusCode).toBe(409)
+      expect(upload.json().error.code).toBe('PREVIEW_UNAVAILABLE')
+    }
     expect(await previewRows()).toHaveLength(0)
+    expect(await previewEvents()).toHaveLength(0)
+    const objects = await readdir(
+      join(ctx.config.artifactStoreDir, 'sha256', PDF_SHA.slice(0, 2), PDF_SHA.slice(2, 4)),
+    ).catch(() => [])
+    expect(objects).not.toContain(PDF_SHA)
+  })
 
-    // Alice 的设备不是原件的产出设备：与不存在同 404。
-    const foreignDevice = await putPreview(aliceToken, artifactId)
-    expect(foreignDevice.statusCode).toBe(404)
-    expect(foreignDevice.json().error.code).toBe('NOT_FOUND')
-    const foreignFailure = await postFailure(aliceToken, artifactId)
-    expect(foreignFailure.statusCode).toBe(404)
+  it('并发的不受限预览上传全部拒绝，不产生首个ready或团队事件', async () => {
+    const artifactId = await uploadCandidate()
+    await publish(artifactId)
+    const uploads = await Promise.all([
+      putPreview(bobToken, artifactId),
+      putPreview(bobToken, artifactId, { body: Buffer.from('%PDF-1.7 different') }),
+    ])
+    expect(uploads.map((row) => row.statusCode)).toEqual([409, 409])
+    expect(await previewRows()).toHaveLength(0)
+    expect(await previewEvents()).toHaveLength(0)
+  })
 
-    const unknown = await putPreview(bobToken, randomUUID())
-    expect(unknown.statusCode).toBe(404)
-
+  it('源绑定、设备和请求大小守卫仍在暂停策略之前生效', async () => {
+    const artifactId = await uploadCandidate()
+    const wrong = await putPreview(bobToken, artifactId, { sourceSha256: 'a'.repeat(64) })
+    expect(wrong.statusCode).toBe(409)
+    expect(wrong.json().error.code).toBe('CONFLICT')
+    for (const denied of [
+      await putPreview(aliceToken, artifactId),
+      await postFailure(aliceToken, artifactId),
+      await putPreview(bobToken, randomUUID()),
+    ]) {
+      expect(denied.statusCode).toBe(404)
+      expect(denied.json().error.code).toBe('NOT_FOUND')
+    }
     const oversized = await putPreview(bobToken, artifactId, { byteSize: 52_428_801 })
     expect(oversized.statusCode).toBe(400)
     expect(oversized.json().error.code).toBe('VALIDATION_FAILED')
     expect(await previewRows()).toHaveLength(0)
   })
 
-  it('派生 PDF 的 hash 由 Hub 复核：声明不符 → ARTIFACT_HASH_MISMATCH，无预览行', async () => {
+  it('默认生成器可报告隔离缺失，原件发布状态和下载不受影响', async () => {
     const artifactId = await uploadCandidate()
-    const res = await putPreview(bobToken, artifactId, { sha256: 'b'.repeat(64) })
-    expect(res.statusCode).toBe(400)
-    expect(res.json().error.code).toBe('ARTIFACT_HASH_MISMATCH')
-    expect(await previewRows()).toHaveLength(0)
-    const tmpEntries = await readdir(join(ctx.config.artifactStoreDir, 'tmp')).catch(() => [])
-    expect(tmpEntries).toHaveLength(0)
+    await publish(artifactId)
+    const blocked = await postFailure(bobToken, artifactId, {
+      converter: 'unknown',
+      reason: 'ISOLATION_REQUIRED',
+    })
+    expect(blocked.statusCode).toBe(200)
+    expect(blocked.json().data).toMatchObject({
+      status: 'failed',
+      failureReason: 'ISOLATION_REQUIRED',
+      updatedAt: null,
+    })
+    expect((await previewRows())[0]).toMatchObject({
+      artifactId,
+      status: 'failed',
+      failureReason: 'ISOLATION_REQUIRED',
+      storageKey: null,
+    })
+    expect((await previewEvents())[0]?.payload).toMatchObject({
+      artifactId,
+      taskId,
+      change: 'preview',
+      previewStatus: 'failed',
+    })
+    expect((await readContent(alice.cookie, artifactId)).body).toBe(OFFICE_BYTES.toString())
   })
 
-  it('同一幂等键重放失败上报：返回首次原因，不被第二次 body 改写', async () => {
-    const artifactId = await uploadCandidate()
-    const key = idemKey()
+  it('失败上报继续幂等存第一份安全诊断，返回读面始终是隔离回退', async () => {
+    const artifactId = await uploadCandidate(),
+      key = idemKey()
     const first = await postFailure(bobToken, artifactId, { key, reason: 'CONVERT_FAILED' })
+    const second = await postFailure(bobToken, artifactId, { key, reason: 'CONVERT_TIMEOUT' })
     expect(first.statusCode).toBe(200)
-    expect(first.json().data.failureReason).toBe('CONVERT_FAILED')
-    const replay = await postFailure(bobToken, artifactId, { key, reason: 'CONVERT_TIMEOUT' })
-    expect(replay.statusCode).toBe(200)
-    expect(replay.json().data.failureReason).toBe('CONVERT_FAILED')
+    expect(second.statusCode).toBe(200)
+    expect(first.json().data.failureReason).toBe('ISOLATION_REQUIRED')
+    expect(second.json().data).toEqual(first.json().data)
     const rows = await previewRows()
     expect(rows).toHaveLength(1)
     expect(rows[0]?.failureReason).toBe('CONVERT_FAILED')
   })
 
-  it('设备原始诊断不能进入团队读面、持久记录或幂等重放', async () => {
+  it('任意设备诊断不进入存储或团队投影，历史回执也不重放ready', async () => {
     const artifactId = await uploadCandidate()
     await publish(artifactId)
-    const privateDetail = 'workspace/private.docx credential=fixture-sensitive-value'
-    const key = idemKey()
-    const response = await postFailure(bobToken, artifactId, {
-      key,
-      converter: privateDetail,
-      reason: privateDetail,
-    })
-    expect(response.statusCode).toBe(200)
-    expect(response.json().data).toMatchObject({
-      converter: 'unknown',
-      failureReason: 'CONVERT_FAILED',
-    })
+    const raw = 'workspace/private.docx credential=fixture-sensitive-value',
+      key = idemKey()
+    const first = await postFailure(bobToken, artifactId, { key, converter: raw, reason: raw })
     const shared = await info(alice.cookie, artifactId)
-    expect(shared.statusCode).toBe(200)
-    expect(shared.json().data).toMatchObject({
-      converter: 'unknown',
-      failureReason: 'CONVERT_FAILED',
-    })
-    const replay = await postFailure(bobToken, artifactId, { key, reason: 'CONVERT_TIMEOUT' })
-    expect(replay.json().data.failureReason).toBe('CONVERT_FAILED')
+    const second = await postFailure(bobToken, artifactId, { key, reason: 'CONVERT_TIMEOUT' })
+    for (const response of [first, shared, second]) {
+      expect(response.statusCode).toBe(200)
+      expect(response.json().data).toMatchObject({
+        converter: 'unknown',
+        failureReason: 'ISOLATION_REQUIRED',
+      })
+    }
     const rows = await previewRows()
     expect(rows[0]).toMatchObject({ converter: 'unknown', failureReason: 'CONVERT_FAILED' })
     expect(
-      JSON.stringify([response.json(), shared.json(), replay.json(), rows, await previewEvents()]),
-    ).not.toContain(privateDetail)
+      JSON.stringify([first.json(), shared.json(), second.json(), rows, await previewEvents()]),
+    ).not.toContain(raw)
   })
 
-  it('ready 上报的转换器同样受白名单保护，版本标识只保留受控名称', async () => {
+  it('未知字段仍拒绝，不会将本机路径纳入失败元数据', async () => {
     const artifactId = await uploadCandidate()
-    await publish(artifactId)
-    const privateConverter = 'soffice/26.8.1 credential=fixture-sensitive-value'
-    const uploaded = await putPreview(bobToken, artifactId, { converter: privateConverter })
-    expect(uploaded.statusCode).toBe(200)
-    expect(uploaded.json().data.converter).toBe('unknown')
-    expect((await info(alice.cookie, artifactId)).json().data.converter).toBe('unknown')
-    expect((await previewRows())[0]?.converter).toBe('unknown')
-    const other = await uploadCandidate()
-    const accepted = await postFailure(bobToken, other, {
-      converter: 'soffice/26.8.1',
-      reason: 'PREVIEW_TOO_LARGE',
-    })
-    expect(accepted.statusCode).toBe(200)
-    expect(accepted.json().data).toMatchObject({
-      converter: 'libreoffice',
-      failureReason: 'PREVIEW_TOO_LARGE',
-    })
-  })
-
-  it('失败上报 schema strict：未知字段 → 400，不落预览行', async () => {
-    const artifactId = await uploadCandidate()
-    const res = await ctx.app.inject({
+    const response = await ctx.app.inject({
       method: 'POST',
       url: `/api/v1/node/artifacts/${artifactId}/preview-failure`,
-      headers: {
-        authorization: `Device ${bobToken}`,
-        'content-type': 'application/json',
-        'idempotency-key': idemKey(),
-      },
+      headers: { authorization: `Device ${bobToken}`, 'idempotency-key': idemKey() },
       payload: {
         sourceSha256: OFFICE_SHA,
-        converter: 'libreoffice',
-        reason: 'CONVERT_FAILED',
-        absolutePath: '/tmp/secret.docx',
+        converter: 'unknown',
+        reason: 'ISOLATION_REQUIRED',
+        extraPath: 'private-source',
       },
     })
-    expect(res.statusCode).toBe(400)
-    expect(res.json().error.code).toBe('VALIDATION_FAILED')
+    expect(response.statusCode).toBe(400)
+    expect(response.json().error.code).toBe('VALIDATION_FAILED')
     expect(await previewRows()).toHaveLength(0)
   })
 })

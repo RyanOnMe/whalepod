@@ -59,3 +59,13 @@ describe('artifact preview public metadata', () => {
     ).toBe(false)
   })
 })
+
+it('preserves the stable isolation-required reason without raw diagnostics', () => {
+  expect(
+    ArtifactPreviewFailureRequestSchema.parse({
+      sourceSha256: SHA,
+      converter: 'unknown',
+      reason: 'ISOLATION_REQUIRED',
+    }).reason,
+  ).toBe('ISOLATION_REQUIRED')
+})

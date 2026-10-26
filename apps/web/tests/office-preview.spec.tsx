@@ -70,6 +70,16 @@ describe('OfficePreview', () => {
     expect(screen.queryByText(/private\/workspace/)).not.toBeInTheDocument()
   })
 
+  it('isolation suspension explains the download and comment fallback without requesting PDF', async () => {
+    const { fetchMock } = mount(() =>
+      preview('failed', { failureReason: 'ISOLATION_REQUIRED', converter: 'unknown' }),
+    )
+    expect(await screen.findByText(/Office 隔离转换尚未开放/)).toBeVisible()
+    expect(screen.getByRole('link', { name: '下载原件' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: '查看 Office 预览' })).not.toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/preview'))).toBe(false)
+  })
+
   it('ready 按需从受控接口加载 PDF，并释放阅读副本', async () => {
     const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:office-preview')
     const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})

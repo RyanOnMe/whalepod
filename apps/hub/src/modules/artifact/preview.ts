@@ -1,17 +1,11 @@
 /**
- * Office 只读 PDF 预览（#431；ADR-0021 §2「预览绑定」）。
- *
- * - 派生件由产出原件的设备上传；`sourceSha256` 必须等于不可变的 Artifact
- *   sha256，防止旧预览/错文件挂到新版本。
- * - 预览权限永远继承原件：候选只有拥有者能看，发布后才是团队读面；这里不建立
- *   第二条授权路径。
- * - ready 不降级：已成功的预览不会因为一次迟到的失败上报变成 failed；failed
- *   可以在重转换后覆盖为 ready。
- * - 转换失败只登记失败原因，不改变 Artifact 状态，也不阻止原件下载。
+ * Office preview safety suspension (ADR-0023).
+ * Raw converters may include files or URLs outside the run's workspace. No existing
+ * preview has verifiable isolation provenance, so new uploads and all PDF reads are
+ * disabled. Original artifact permission checks still run; historical rows are retained.
  */
-import { asUserId, authorize } from '@whalepod/domain'
-import type { Actor } from '@whalepod/domain'
-import type { ArtifactRow, Database, DbHandle } from '@whalepod/db'
+import { asUserId, authorize, type Actor } from '@whalepod/domain'
+import type { ArtifactRow, ArtifactPreviewRow, Database, DbHandle } from '@whalepod/db'
 import {
   appendTeamEvent,
   getArtifact,
@@ -20,11 +14,8 @@ import {
   schema,
   transactCommand,
   upsertArtifactPreviewFailed,
-  upsertArtifactPreviewReady,
-  type ArtifactPreviewRow,
 } from '@whalepod/db'
 import {
-  ARTIFACT_PREVIEW_MAX_BYTES,
   normalizeArtifactPreviewConverter,
   normalizeArtifactPreviewFailureCode,
   type ArtifactPreviewFailureRequest,
@@ -40,7 +31,19 @@ export interface PreviewSourceBinding {
   readonly artifactId: string
 }
 
-/** 只有产出该原件的设备可以写它的派生预览；其他设备与不存在同作 404。 */
+function isolationView(artifact: ArtifactRow): ArtifactPreviewView {
+  return {
+    artifactId: artifact.id,
+    status: 'failed',
+    sourceSha256: artifact.sha256,
+    converter: 'unknown',
+    mediaType: null,
+    byteSize: null,
+    failureReason: 'ISOLATION_REQUIRED',
+    updatedAt: null,
+  }
+}
+
 async function requireDeviceArtifact(
   database: Database,
   deviceId: string,
@@ -49,151 +52,48 @@ async function requireDeviceArtifact(
   const artifact = await getArtifact(database.db, artifactId.toLowerCase())
   if (artifact === undefined) throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
   const run = await getRun(database.db, artifact.runId)
-  if (run === undefined || run.deviceId !== deviceId) {
+  if (run === undefined || run.deviceId !== deviceId)
     throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
-  }
   return artifact
 }
 
-/** 事务内复验：锁原件行后，设备归属与 source digest 仍必须成立。 */
-async function lockDeviceArtifact(
-  tx: DbHandle,
-  deviceId: string,
-  artifactId: string,
-  sourceSha256: string,
-): Promise<ArtifactRow> {
-  const [artifact] = await tx
-    .select()
-    .from(schema.artifacts)
-    .where(eq(schema.artifacts.id, artifactId))
-    .for('update')
-  if (artifact === undefined) throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
-  const run = await getRun(tx, artifact.runId)
-  if (run === undefined || run.deviceId !== deviceId) {
-    throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
-  }
-  if (artifact.sha256 !== sourceSha256) {
-    throw new ApiError(409, 'CONFLICT', '预览绑定的原件摘要与当前版本不一致')
-  }
-  return artifact
-}
-
-function toPreviewView(
-  artifactId: string,
-  row: ArtifactPreviewRow | undefined,
-): ArtifactPreviewView {
-  if (row === undefined) {
-    return {
-      artifactId,
-      status: 'none',
-      sourceSha256: null,
-      converter: null,
-      mediaType: null,
-      byteSize: null,
-      failureReason: null,
-      updatedAt: null,
-    }
-  }
-  return {
-    artifactId,
-    status: row.status,
-    sourceSha256: row.sourceSha256,
-    converter: normalizeArtifactPreviewConverter(row.converter),
-    mediaType: row.mediaType,
-    byteSize: row.byteSize,
-    failureReason:
-      row.failureReason === null ? null : normalizeArtifactPreviewFailureCode(row.failureReason),
-    updatedAt: row.updatedAt.toISOString(),
-  }
-}
-
-/** 旧 command_receipt 会跳过回调，重放返回之前同样必须重新裁剪诊断元数据。 */
-function safePreviewReceipt(view: ArtifactPreviewView): ArtifactPreviewView {
-  return {
-    ...view,
-    converter: view.converter === null ? null : normalizeArtifactPreviewConverter(view.converter),
-    failureReason:
-      view.failureReason === null ? null : normalizeArtifactPreviewFailureCode(view.failureReason),
-  }
-}
-
-async function appendPreviewChanged(
+async function readableArtifact(
   handle: DbHandle,
-  artifact: ArtifactRow,
-  status: 'ready' | 'failed',
-): Promise<void> {
-  // 候选只有拥有者可见：不产生团队事件（与 candidate 上传同一防泄漏口径）。
-  if (artifact.status !== 'published') return
-  await appendTeamEvent(handle, {
-    type: 'artifact.changed',
-    payload: {
-      artifactId: artifact.id,
-      taskId: artifact.taskId,
-      runId: artifact.runId,
-      status: artifact.status,
-      change: 'preview',
-      previewStatus: status,
-    },
-  })
+  actor: Actor,
+  artifactId: string,
+): Promise<ArtifactRow> {
+  const artifact = await getArtifact(handle, artifactId.toLowerCase())
+  if (
+    artifact === undefined ||
+    !authorize({ userId: asUserId(actor.userId), role: actor.role }, 'read_artifact_content', {
+      ownerUserId: asUserId(artifact.ownerUserId),
+      artifactStatus: artifact.status,
+    })
+  )
+    throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
+  return artifact
 }
 
+function assertSource(artifact: ArtifactRow, sourceSha256: string): void {
+  if (artifact.sha256 !== sourceSha256)
+    throw new ApiError(409, 'CONFLICT', '预览绑定的原件摘要与当前版本不一致')
+}
+
+/** Reject before blob writes or command receipt replay, including legacy successful receipts. */
 export async function recordArtifactPreview(
   database: Database,
-  store: ArtifactStore,
+  _store: ArtifactStore,
   binding: PreviewSourceBinding,
   metadata: ArtifactPreviewUploadMetadata,
-  bytes: Uint8Array,
-  idempotencyKey: string,
+  _bytes: Uint8Array,
+  _idempotencyKey: string,
 ): Promise<ArtifactPreviewView> {
   const artifact = await requireDeviceArtifact(database, binding.deviceId, binding.artifactId)
-  if (artifact.sha256 !== metadata.sourceSha256) {
-    throw new ApiError(409, 'CONFLICT', '预览绑定的原件摘要与当前版本不一致')
-  }
-  const existing = await getArtifactPreview(database.db, artifact.id)
-  if (existing?.status === 'ready') {
-    if (existing.sourceSha256 !== metadata.sourceSha256) {
-      throw new ApiError(409, 'CONFLICT', '该原件已有绑定其他版本的预览')
-    }
-    // 重试幂等：首次成功的预览就是稳定阅读副本，不再随重试替换。
-    return toPreviewView(artifact.id, existing)
-  }
-  if (bytes.byteLength > ARTIFACT_PREVIEW_MAX_BYTES) {
-    throw new ApiError(413, 'ARTIFACT_TOO_LARGE', 'preview content exceeds the size limit')
-  }
-  const blob = await store.saveUpload(metadata.sha256, bytes)
-  // 幂等键按设备/原件/动作收窄：同键重放返回首次视图，不让不同 body 改写结果。
-  const view = await transactCommand(
-    database,
-    `artifact.preview.ready:${binding.deviceId}:${artifact.id}:${idempotencyKey}`,
-    async (tx) => {
-      const locked = await lockDeviceArtifact(
-        tx,
-        binding.deviceId,
-        binding.artifactId,
-        metadata.sourceSha256,
-      )
-      const current = await getArtifactPreview(tx, locked.id)
-      if (current?.status === 'ready') {
-        if (current.sourceSha256 !== metadata.sourceSha256) {
-          throw new ApiError(409, 'CONFLICT', '该原件已有绑定其他版本的预览')
-        }
-        return toPreviewView(locked.id, current)
-      }
-      const row = await upsertArtifactPreviewReady(tx, {
-        artifactId: locked.id,
-        sourceSha256: metadata.sourceSha256,
-        converter: normalizeArtifactPreviewConverter(metadata.converter),
-        storageKey: blob.storageKey,
-        sha256: blob.sha256,
-        byteSize: blob.byteSize,
-      })
-      await appendPreviewChanged(tx, locked, 'ready')
-      return toPreviewView(locked.id, row)
-    },
-  )
-  return safePreviewReceipt(view)
+  assertSource(artifact, metadata.sourceSha256)
+  throw new ApiError(409, 'PREVIEW_UNAVAILABLE', 'Office 隔离转换尚未开放，请下载原件查看并批注。')
 }
 
+/** Keep stable diagnostics only, without replacing historical ready rows or exposing their bytes. */
 export async function recordArtifactPreviewFailure(
   database: Database,
   binding: PreviewSourceBinding,
@@ -201,55 +101,55 @@ export async function recordArtifactPreviewFailure(
   idempotencyKey: string,
 ): Promise<ArtifactPreviewView> {
   const artifact = await requireDeviceArtifact(database, binding.deviceId, binding.artifactId)
-  if (artifact.sha256 !== request.sourceSha256) {
-    throw new ApiError(409, 'CONFLICT', '预览绑定的原件摘要与当前版本不一致')
-  }
-  const view = await transactCommand(
+  assertSource(artifact, request.sourceSha256)
+  await transactCommand(
     database,
     `artifact.preview.failed:${binding.deviceId}:${artifact.id}:${idempotencyKey}`,
     async (tx) => {
-      const locked = await lockDeviceArtifact(
-        tx,
-        binding.deviceId,
-        binding.artifactId,
-        request.sourceSha256,
-      )
+      const [locked] = await tx
+        .select()
+        .from(schema.artifacts)
+        .where(eq(schema.artifacts.id, artifact.id))
+        .for('update')
+      if (locked === undefined) throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
+      const run = await getRun(tx, locked.runId)
+      if (run === undefined || run.deviceId !== binding.deviceId)
+        throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
+      assertSource(locked, request.sourceSha256)
       const current = await getArtifactPreview(tx, locked.id)
-      if (current?.status === 'ready') {
-        if (current.sourceSha256 !== request.sourceSha256) {
-          throw new ApiError(409, 'CONFLICT', '该原件已有绑定其他版本的预览')
-        }
-        return toPreviewView(locked.id, current)
-      }
-      const row = await upsertArtifactPreviewFailed(tx, {
+      // Preserve historical data: suspension is a read/write policy, not a destructive migration.
+      if (current?.status === 'ready') return { artifactId: locked.id }
+      await upsertArtifactPreviewFailed(tx, {
         artifactId: locked.id,
         sourceSha256: request.sourceSha256,
         converter: normalizeArtifactPreviewConverter(request.converter),
         reason: normalizeArtifactPreviewFailureCode(request.reason),
       })
-      await appendPreviewChanged(tx, locked, 'failed')
-      return toPreviewView(locked.id, row)
+      if (locked.status === 'published')
+        await appendTeamEvent(tx, {
+          type: 'artifact.changed',
+          payload: {
+            artifactId: locked.id,
+            taskId: locked.taskId,
+            runId: locked.runId,
+            status: locked.status,
+            change: 'preview',
+            previewStatus: 'failed',
+          },
+        })
+      return { artifactId: locked.id }
     },
   )
-  return safePreviewReceipt(view)
+  // Deliberately ignore cached result data: old receipts may contain unisolated ready metadata.
+  return isolationView(artifact)
 }
 
-/** 可读原件即可读预览信息；不可见与不存在同作 404（不泄漏候选）。 */
 export async function getArtifactPreviewInfo(
   handle: DbHandle,
   actor: Actor,
   artifactId: string,
 ): Promise<ArtifactPreviewView> {
-  const artifact = await getArtifact(handle, artifactId.toLowerCase())
-  if (artifact === undefined) throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
-  const allowed = authorize(
-    { userId: asUserId(actor.userId), role: actor.role },
-    'read_artifact_content',
-    { ownerUserId: asUserId(artifact.ownerUserId), artifactStatus: artifact.status },
-  )
-  if (!allowed) throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
-  const row = await getArtifactPreview(handle, artifact.id)
-  return toPreviewView(artifact.id, row)
+  return isolationView(await readableArtifact(handle, actor, artifactId))
 }
 
 export interface ReadablePreview {
@@ -257,30 +157,13 @@ export interface ReadablePreview {
   readonly row: ArtifactPreviewRow
 }
 
-/** 读 PDF 字节；权限与原件相同，没有 ready 预览时明确返回 PREVIEW_UNAVAILABLE。 */
+/** An authorized caller still cannot read historical or newly supplied unisolated PDF bytes. */
 export async function readArtifactPreview(
   handle: DbHandle,
-  store: ArtifactStore,
+  _store: ArtifactStore,
   actor: Actor,
   artifactId: string,
 ): Promise<ReadablePreview> {
-  const artifact = await getArtifact(handle, artifactId.toLowerCase())
-  if (artifact === undefined) throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
-  const allowed = authorize(
-    { userId: asUserId(actor.userId), role: actor.role },
-    'read_artifact_content',
-    { ownerUserId: asUserId(artifact.ownerUserId), artifactStatus: artifact.status },
-  )
-  if (!allowed) throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
-  const row = await getArtifactPreview(handle, artifact.id)
-  if (
-    row === undefined ||
-    row.status !== 'ready' ||
-    row.storageKey === null ||
-    row.sha256 === null
-  ) {
-    throw new ApiError(404, 'PREVIEW_UNAVAILABLE', '该交付物没有可用的只读预览，请下载原件')
-  }
-  const bytes = await store.readVerified(row.storageKey, row.sha256)
-  return { bytes, row }
+  await readableArtifact(handle, actor, artifactId)
+  throw new ApiError(404, 'PREVIEW_UNAVAILABLE', 'Office 隔离转换尚未开放，请下载原件查看并批注。')
 }
