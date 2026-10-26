@@ -18,7 +18,7 @@ function Materials({
     <>
       {!value.complete ? <p role="status">部分固定材料当前不可读取，以下清单不完整。</p> : null}
       {value.artifacts.length === 0 && value.complete ? (
-        <p>{handoff ? '已记录的上游交接没有文件材料。' : '该次执行明确未选择本任务交付物。'}</p>
+        <p>{handoff ? '已记录的上游交接没有文件材料。' : '该次执行记录的本任务文件输入为空。'}</p>
       ) : null}
       <ul>
         {value.artifacts.map((item) => (
