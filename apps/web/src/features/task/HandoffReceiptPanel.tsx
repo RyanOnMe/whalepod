@@ -127,17 +127,25 @@ function QuestionComposer({
 }): ReactNode {
   const [question, setQuestion] = useState('')
   const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
-  const idempotencyKey = useRef(crypto.randomUUID())
+  // Keep every unknown-outcome request until its own successful acknowledgement.
+  // Switching drafts A → B → A must still replay the unresolved A receipt.
+  const pendingIntents = useRef(new Map<string, string>())
   async function send(): Promise<void> {
     const text = question.trim()
     if (text === '' || state === 'sending') return
     setState('sending')
     try {
+      const signature = JSON.stringify({ upstreamTaskId, revisionNumber, downstreamTitle, text })
+      let key = pendingIntents.current.get(signature)
+      if (key === undefined) {
+        key = crypto.randomUUID()
+        pendingIntents.current.set(signature, key)
+      }
       await api.mutate(`/tasks/${upstreamTaskId}/comments`, {
-        idempotencyKey: idempotencyKey.current,
+        idempotencyKey: key,
         body: { body: `【交接 v${revisionNumber} · ${downstreamTitle}】${text}` },
       })
-      idempotencyKey.current = crypto.randomUUID()
+      pendingIntents.current.delete(signature)
       setQuestion((current) => (current.trim() === text ? '' : current))
       setState('sent')
     } catch {
