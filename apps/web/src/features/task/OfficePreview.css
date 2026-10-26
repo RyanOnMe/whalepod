@@ -1,0 +1,12 @@
+.office-preview {
+  margin-block: 1rem;
+}
+
+.office-preview-frame {
+  display: block;
+  width: 100%;
+  min-height: 32rem;
+  border: 1px solid var(--border, #ccc);
+  border-radius: 0.5rem;
+  background: var(--surface, #fff);
+}

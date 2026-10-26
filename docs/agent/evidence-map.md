@@ -61,6 +61,7 @@
 | 候选无法检查或发布可见范围错误 | `artifacts/evidence/candidate-inspection/result.json`：web.artifact → Hub 内容读取鉴权 → artifact.store digest；复跑见 candidate-inspection-acceptance |
 | 成果依据串版本、把缺失当空、交接对应错误或旧面板不刷新 | `hub.review.delivery-basis` 的来源 Run、历史约定及固定输入；`matchesDeliveryArtifact` 精确关联；`web.review.delivery-basis` 的 task-room 缓存前缀与既有事件映射。复跑 delivery-basis-acceptance，脱敏结果见 `artifacts/evidence/delivery-basis/` |
 | Artifact 打不开 | artifact.store digest 与 DB metadata 比对 → hub.http 权限判定 |
+| Office 预览没有出现、内容与原件不符或下载回退异常 | `preview-info` 三态/sourceSha256 → node.artifact 的稳定转换失败码 → hub.artifact 派生件读取权限 → web.OfficePreview 查询与受控 PDF 读取；复跑见 [office-preview-acceptance](./office-preview-acceptance.md)，真实格式样本只验证 PDF 签名，Q5 组合闭环尚未覆盖 |
 | 开发机上进程越跑越多 / `ps` 里一堆看不出归属的 node | `scripts/check-stray-runtimes.sh`（探针残留即 FAIL，`--strict` 连自家 Node/Runtime/E2E 一起清；判定力用 `--self-test` 自证）；两处修复的形态与实测见 [stray-runtime-hygiene-acceptance](./stray-runtime-hygiene-acceptance.md) |
 | 疑似泄露 | 直接跑 `scripts/secret-scan.sh` 扫相关证据与日志 |
 | 性能回归疑云 | `pnpm test:load`（Q8 短档）报告 JSON：传播/ingest p95、空闲段 RSS 斜率、droppedConnections；判据/边界见 `docs/agent/load-performance-acceptance.md` |
