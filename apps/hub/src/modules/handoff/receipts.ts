@@ -219,56 +219,56 @@ export async function confirmReceipt(
   assertConfirmInput(input)
   const existing = await getHandoffReceipt(database.db, receiptId)
   if (existing === undefined) throw new ApiError(404, 'NOT_FOUND', 'handoff receipt not found')
+  // 回执重放也必须按当前归属判权，不能把历史成功当作现时授权。
+  if (existing.receiverUserId !== actor.userId) {
+    throw new ApiError(403, 'FORBIDDEN', 'only the receiver can confirm this handoff')
+  }
+  const currentTask = await getTask(database.db, existing.downstreamTaskId)
+  if (currentTask === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
+  if (currentTask.assigneeUserId !== actor.userId) {
+    throw new ApiError(409, 'CONFLICT', '交接接收人已变化，请让当前责任人确认')
+  }
+  const commandKey = `handoff.confirm:${actor.userId}:${receiptId}:${idempotencyKey}`
   const now = new Date()
-  const outcome = await transactCommand(
-    database,
-    `handoff.confirm:${idempotencyKey}`,
-    async (tx) => {
-      // 先锁 Task 再锁回执：与改派（锁 Task → 更新 pending 回执）同一顺序，避免死锁；
-      // 责任人与接收人都在锁内复核，改派提交后的旧接收人不能靠事务外检查混过去。
-      const [downstreamTask] = await tx
-        .select()
-        .from(schema.tasks)
-        .where(eq(schema.tasks.id, existing.downstreamTaskId))
-        .for('update')
-      if (downstreamTask === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
-      if (downstreamTask.assigneeUserId !== actor.userId) {
-        throw new ApiError(409, 'CONFLICT', '交接接收人已变化，请让当前责任人确认')
-      }
-      const [locked] = await tx
-        .select()
-        .from(schema.handoffReceipts)
-        .where(eq(schema.handoffReceipts.id, receiptId))
-        .for('update')
-      if (locked === undefined) throw new ApiError(404, 'NOT_FOUND', 'handoff receipt not found')
-      if (locked.receiverUserId !== actor.userId) {
-        throw new ApiError(403, 'FORBIDDEN', 'only the receiver can confirm this handoff')
-      }
-      // 幂等：首次理解不回写；**这不是一次状态迁移**（评审 m4）——差异消息因此不
-      // 重复发（重复发只会污染上游讨论流，旧理解已被回执确认）。
-      if (locked.status === 'confirmed') return { id: locked.id, transitioned: false }
-      await confirmHandoffReceipt(tx, receiptId, input.understanding, input.differences, now)
-      // 收件方与上游两侧房间都要实时看到状态变化（同一事务、同形载荷）。
-      const downstream = await getTask(tx, locked.downstreamTaskId)
-      if (downstream !== undefined) {
-        await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(downstream) })
-      }
-      const upstream = await getTask(tx, locked.upstreamTaskId)
-      if (upstream !== undefined) {
-        await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(upstream) })
-      }
-      // 命令台账的 result 必须可序列化（NOT NULL）：回执只记到 id+状态。
-      return { id: locked.id, transitioned: true }
-    },
-  )
+  const outcome = await transactCommand(database, commandKey, async (tx) => {
+    // 先锁 Task 再锁回执：与改派（锁 Task → 更新 pending 回执）同一顺序，避免死锁；
+    // 责任人与接收人都在锁内复核，改派提交后的旧接收人不能靠事务外检查混过去。
+    const [downstreamTask] = await tx
+      .select()
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, existing.downstreamTaskId))
+      .for('update')
+    if (downstreamTask === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
+    const [locked] = await tx
+      .select()
+      .from(schema.handoffReceipts)
+      .where(eq(schema.handoffReceipts.id, receiptId))
+      .for('update')
+    if (locked === undefined) throw new ApiError(404, 'NOT_FOUND', 'handoff receipt not found')
+    if (locked.receiverUserId !== actor.userId) {
+      throw new ApiError(403, 'FORBIDDEN', 'only the receiver can confirm this handoff')
+    }
+    if (downstreamTask.assigneeUserId !== actor.userId) {
+      throw new ApiError(409, 'CONFLICT', '交接接收人已变化，请让当前责任人确认')
+    }
+    // 幂等：首次理解不回写；**这不是一次状态迁移**（评审 m4）——差异消息因此不
+    // 重复发（重复发只会污染上游讨论流，旧理解已被回执确认）。
+    if (locked.status === 'confirmed') return { id: locked.id, transitioned: false }
+    await confirmHandoffReceipt(tx, receiptId, input.understanding, input.differences, now)
+    // 收件方与上游两侧房间都要实时看到状态变化（同一事务、同形载荷）。
+    const downstream = await getTask(tx, locked.downstreamTaskId)
+    if (downstream !== undefined) {
+      await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(downstream) })
+    }
+    const upstream = await getTask(tx, locked.upstreamTaskId)
+    if (upstream !== undefined) {
+      await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(upstream) })
+    }
+    // 命令台账的 result 必须可序列化（NOT NULL）：回执只记到 id+状态。
+    return { id: locked.id, transitioned: true }
+  })
   if (outcome.transitioned) {
-    await postDifferences(
-      database,
-      actor,
-      existing.upstreamTaskId,
-      input.differences,
-      idempotencyKey,
-    )
+    await postDifferences(database, actor, existing.upstreamTaskId, input.differences, commandKey)
   }
   return loadReceiptView(database.db, receiptId)
 }
@@ -288,9 +288,15 @@ export async function adoptReceipt(
   assertConfirmInput(input)
   const existing = await getHandoffReceipt(database.db, receiptId)
   if (existing === undefined) throw new ApiError(404, 'NOT_FOUND', 'handoff receipt not found')
+  const currentTask = await getTask(database.db, existing.downstreamTaskId)
+  if (currentTask === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
+  if (currentTask.assigneeUserId !== actor.userId) {
+    throw new ApiError(409, 'CONFLICT', '交接接收人已变化，请让当前责任人采用新版本')
+  }
+  const commandKey = `handoff.adopt:${actor.userId}:${receiptId}:${idempotencyKey}`
   const current = await getHandoffRevision(database.db, existing.revisionId)
   if (current === undefined) throw new ApiError(500, 'INTERNAL_ERROR', 'handoff revision lost')
-  const outcome = await transactCommand(database, `handoff.adopt:${idempotencyKey}`, async (tx) => {
+  const outcome = await transactCommand(database, commandKey, async (tx) => {
     // 采用也按「锁 Task → 锁回执」同一顺序；责任人是当前任务责任人（改派后即新人）。
     const [downstreamTask] = await tx
       .select()
@@ -356,13 +362,7 @@ export async function adoptReceipt(
   })
   // 评审 m4：只有真的产生新 receipt 才发差异消息（重复采用幂等返回，不重复打扰上游）。
   if (outcome.inserted) {
-    await postDifferences(
-      database,
-      actor,
-      existing.upstreamTaskId,
-      input.differences,
-      idempotencyKey,
-    )
+    await postDifferences(database, actor, existing.upstreamTaskId, input.differences, commandKey)
   }
   return loadReceiptView(database.db, outcome.row.id)
 }

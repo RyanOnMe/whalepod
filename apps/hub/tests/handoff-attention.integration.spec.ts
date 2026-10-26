@@ -257,6 +257,30 @@ describe('handoff attention (#428)', () => {
     expect((await getHandoffReceipt(database.db, receipt.id))?.understanding).toBe('首次确认')
   })
 
+  it('同一客户端 key 在不同回执之间隔离，不能复用另一份交接的成功结果', async () => {
+    const { ids, receiver, receipt } = await seedPendingHandoff()
+    const second = await deliverHandoff(
+      database,
+      makeActor(ids.userId, 'owner'),
+      receipt.revisionId,
+      { receiverUserId: receiver.userId, newTask: { title: '另一项接手工作' } },
+      idemKey(),
+    )
+    const key = idemKey()
+    const actor = makeActor(receiver.userId, 'member')
+    await confirmReceipt(database, actor, receipt.id, { understanding: '第一份' }, key)
+    const confirmed = await confirmReceipt(
+      database,
+      actor,
+      second.id,
+      { understanding: '第二份' },
+      key,
+    )
+    expect(confirmed.id).toBe(second.id)
+    expect(confirmed.status).toBe('confirmed')
+    expect(confirmed.understanding).toBe('第二份')
+  })
+
   it('改派后已确认回执：新责任人可采纳上游新版本，旧接收人不能代办', async () => {
     const { ids, receiver, receipt, runId } = await seedPendingHandoff()
     await confirmReceipt(

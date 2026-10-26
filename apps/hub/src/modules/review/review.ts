@@ -167,6 +167,8 @@ async function appendReviewChanged(
   artifact: ArtifactRow,
   change: 'comment' | 'invitation' | 'submission',
 ): Promise<void> {
+  // 私有检查不得经团队实时流泄露候选的身份；owner 已由命令结果刷新自己的读面。
+  if (artifact.status !== 'published') return
   await appendTeamEvent(handle, {
     type: 'artifact.changed',
     payload: {
