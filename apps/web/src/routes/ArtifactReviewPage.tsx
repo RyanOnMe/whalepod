@@ -20,6 +20,7 @@ import { useSession } from '../app/session.js'
 import { useMemberDirectory } from '../features/team/memberDirectory.js'
 import { queryKeys } from '../app/query-client.js'
 import { ErrorBanner } from '../app/ErrorBanner.js'
+import { DeliveryBasisPanel } from '../features/task/DeliveryBasisPanel.js'
 import { RelativeTime } from '../shared/RelativeTime.js'
 import {
   ReviewRevisionPanel,
@@ -327,6 +328,8 @@ export function ArtifactReviewPage(): ReactNode {
           {notice}
         </p>
       ) : null}
+
+      <DeliveryBasisPanel artifactId={artifactId} taskId={taskId} />
 
       <ReviewRevisionPanel
         key={artifactId}
