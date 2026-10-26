@@ -35,3 +35,7 @@
 ## 合入约束
 
 按 #435 → #443 → #444 → #445 → #446 依赖顺序，经普通 PR squash 合入 main；检查准确head的check/integration和合并结果树，不使用admin绕过、force push或直接推main。后续PR只在其前置已进入main后切换base，避免把功能squash进临时特性分支。提交保留DCO sign-off，历史证据保留并标明失效。
+
+## 组合测试基线修正
+
+整合CI发现旧的审阅页测试未提供新增只读面板数据，额外ErrorBanner令8项“唯一丢响应提示”断言失败。单文件`107db2f`补齐TaskRoom、空修订批次、历史依据和隔离状态fixtures，仍要求全页唯一且准确的网络错误，成功后全页无alert；没有改业务、跳过或延长超时。Node24相关5文件54项通过，review_backend独立复审approve；补丁只取delta进入#443并顺传后续PR。完整浏览器194项的生产代码未改变，因此不以重复跑浏览器掩盖测试fixture问题；最新准确head仍必须重新经过远端check/integration。
