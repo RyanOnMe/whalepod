@@ -119,3 +119,8 @@
 抽屉重复标题、二级页层级、确认框裁切或关闭不还焦：先看 web.surfaces 的30条布局和三档确认边界；持久化权限与候选异常再看 Hub 任务 GET 与受众投影。复跑与证据 schema 见 [secondary-surfaces-acceptance](./secondary-surfaces-acceptance.md)，证据在 focused-workspace 本次目录，由 verify-workspace-evidence 独立重判。
 
 P1-437：主题与状态核心的触发、证据、独立判定和归因见 [Agent 状态核心验收](./agent-state-core-acceptance.md)；主要组件为 `web.agent-state`、`web.agent-core`、`web.theme.cascade`、`web.theme.contrast`。
+
+
+## 交付物修订闭环（#430）
+
+固定意见/重试重复执行先查 web.delivery.revision 的 ReviewRevisionPanel/RunLauncher 请求与 hub.review 的 round 状态及 review_input.roundId。待办缺项查 hub.task 的个人身份/公开候选/最新人工结果，成员变更不授予权限。未发布新版泄露先查 hub.review 的 actor 过滤；页面不更新先查 web.query 的 artifact-revision-rounds 失效。复跑见 [revision-round-acceptance](./revision-round-acceptance.md)，脱敏摘要在 artifacts/evidence/revision-round-ui/summary.json。

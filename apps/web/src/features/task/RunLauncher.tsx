@@ -44,7 +44,26 @@ import {
 } from './execution-drafts.js'
 import type { Session } from '../../shared/api/types.js'
 
+export interface RevisionLaunchInput {
+  agentId: string
+  profileRevisionId: string
+  deviceId?: string
+  workspaceId?: string
+  text: string
+  expectedApprovalPolicy: 'approval_required' | 'full_access'
+}
+
 export interface RunLauncherProps {
+  launch?: (
+    input: RevisionLaunchInput,
+    idempotencyKey: string,
+  ) => Promise<{ runId: string; outcome: 'started_run' }>
+  idPrefix?: string
+  launchIntent?: string
+  launchTitle?: string
+  launchDescription?: string
+  requireExplicitTarget?: boolean
+  lockSettings?: boolean
   task: TaskView
   session: Session
   /** 当前已有活跃 Run（一任务一活跃，03 §3.2）时不渲染。 */
@@ -84,6 +103,13 @@ export function RunLauncher({
   buttonLabel = '开始执行',
   purpose,
   blocked = false,
+  launch,
+  idPrefix,
+  launchIntent,
+  launchTitle = '开始新执行',
+  launchDescription = '新执行不接续旧会话；配置版本与审批档将在开始时固定。',
+  requireExplicitTarget = false,
+  lockSettings = false,
   onStarted,
   onOutcome,
   draft,
@@ -94,7 +120,7 @@ export function RunLauncher({
   onSendingChange,
 }: RunLauncherProps): ReactNode {
   const queryClient = useQueryClient()
-  const controlId = purpose === undefined ? 'run' : `run-${purpose}`
+  const controlId = idPrefix ?? (purpose === undefined ? 'run' : `run-${purpose}`)
   const directory = useMemberDirectory()
   const [localSettings, setLocalSettings] = useState<ExecutionSettings>({
     ...EMPTY_EXECUTION_SETTINGS,
@@ -195,7 +221,11 @@ export function RunLauncher({
     task.approvalPolicy ?? selectedRevision?.approvalPolicy ?? 'approval_required'
   const [confirmingFullAccess, setConfirmingFullAccess] = useState(false)
 
-  const start = useMutation({
+  const start = useMutation<
+    InstructionOutcome | { runId: string; outcome: 'started_run' },
+    unknown,
+    void
+  >({
     onMutate: () => onSendingChange?.(true),
     onSettled: () => onSendingChange?.(false),
     mutationFn: () => {
@@ -212,9 +242,10 @@ export function RunLauncher({
         intent: { kind: 'new' as const },
         expectedApprovalPolicy: resolvedApprovalPolicy,
       }
-      const signature = JSON.stringify(body)
+      const signature = JSON.stringify({ body, launchIntent })
       if (intentKey.current?.signature !== signature)
         intentKey.current = { signature, key: crypto.randomUUID() }
+      if (launch !== undefined) return launch(body, intentKey.current.key)
       return api.mutate<InstructionOutcome>(`/tasks/${task.id}/instructions`, {
         body,
         idempotencyKey: intentKey.current.key,
@@ -225,7 +256,7 @@ export function RunLauncher({
       if (outcome.outcome !== 'rejected') setPrompt('')
       intentKey.current = null
       setConfirmingFullAccess(false)
-      onOutcome?.(outcome)
+      if ('id' in outcome) onOutcome?.(outcome)
       if (
         outcome.outcome === 'started_run' &&
         outcome.runId !== null &&
@@ -309,6 +340,7 @@ export function RunLauncher({
 
   const ready =
     agentId !== '' &&
+    (!requireExplicitTarget || (deviceId !== '' && workspaceId !== '')) &&
     selectedAgentAvailable &&
     !configurationError &&
     !checkingConfiguration &&
@@ -346,8 +378,8 @@ export function RunLauncher({
       className={embedded ? 'run-launcher' : 'card run-launcher'}
       aria-labelledby={`${controlId}-launcher-heading`}
     >
-      <h3 id={`${controlId}-launcher-heading`}>开始新执行</h3>
-      <p className="mutation-hint">新执行不接续旧会话；配置版本与审批档将在开始时固定。</p>
+      <h3 id={`${controlId}-launcher-heading`}>{launchTitle}</h3>
+      <p className="mutation-hint">{launchDescription}</p>
       <form
         className="instruction-composer"
         onSubmit={(event) => {
@@ -365,6 +397,7 @@ export function RunLauncher({
                   label="Agent"
                   ariaLabel="选择 Agent"
                   value={agentId}
+                  disabled={lockSettings || start.isPending}
                   placeholder="选择 Agent"
                   options={agentOptions}
                   onChange={(next) => {
@@ -388,13 +421,19 @@ export function RunLauncher({
                     placeholder="先选 Agent…"
                     options={revisionOptions}
                     onChange={setProfileRevisionId}
-                    disabled={agentId === '' || start.isPending}
+                    disabled={lockSettings || agentId === '' || start.isPending}
                   />
                 </div>
                 <TargetPicker
-                  idPrefix={purpose === undefined ? 'target' : `target-${purpose}`}
+                  idPrefix={
+                    idPrefix === undefined
+                      ? purpose === undefined
+                        ? 'target'
+                        : `target-${purpose}`
+                      : `${idPrefix}-target`
+                  }
                   portalMenus
-                  disabled={start.isPending}
+                  disabled={lockSettings || start.isPending}
                   isAssignee={isAssignee}
                   value={deviceId === '' ? null : { deviceId, workspaceId }}
                   onChange={(next) => {

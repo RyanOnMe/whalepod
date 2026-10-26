@@ -97,6 +97,7 @@ const EVENT_KEY_BUILDERS: Readonly<Record<string, (payload: unknown) => CacheKey
   'run.changed': (payload) => [
     ...keysWith(payload, 'runId', 'run'),
     ...keysWith(payload, 'taskId', 'task-room'),
+    ...keysWith(payload, 'taskId', 'artifact-revision-rounds'),
     ['attention'],
     ['recent-tasks'],
   ],
@@ -117,6 +118,7 @@ const EVENT_KEY_BUILDERS: Readonly<Record<string, (payload: unknown) => CacheKey
     return [
       ...keysWith(payload, 'taskId', 'task-room'),
       ...(artifactId === undefined ? [] : [['artifact-review', artifactId]]),
+      ...keysWith(payload, 'taskId', 'artifact-revision-rounds'),
       ['attention'],
     ]
   },

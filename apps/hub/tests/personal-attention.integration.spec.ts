@@ -395,3 +395,82 @@ describe('personal attention via production commands (#331)', () => {
     expect(ordered[1]?.objectId).toBe(mine)
   })
 })
+
+// #430: drive the loop through the same HTTP/Node-event path as a real member.
+it('审阅反馈 → 固定批次 → 启动 → 私有候选 → 发布 → 作者复核；待办与完成提示随事实变化', async () => {
+  const sourceRun = await started()
+  await finish(sourceRun)
+  const source = await upload(sourceRun, 'review-source.md')
+  const commentReply = await as(bob, `/artifacts/${source}/comments`, { body: '请补充边界条件' })
+  expect(commentReply.statusCode, commentReply.body).toBe(201)
+  const commentId = commentReply.json().data.id
+  const ownerFeedback = () =>
+    items(owner).then((rows) => rows.filter((row) => row.kind === 'organize_feedback'))
+  const bobResolve = () =>
+    items(bob).then((rows) => rows.filter((row) => row.kind === 'resolve_comments'))
+  expect(await ownerFeedback()).toMatchObject([{ objectId: source, taskId, runId: null }])
+  expect(await bobResolve()).toEqual([])
+  const created = await command(`/tasks/${taskId}/artifact-revision-rounds`, {
+    sourceArtifactId: source,
+    commentIds: [commentId],
+  })
+  expect(created.statusCode, created.body).toBe(201)
+  const roundId = created.json().data.id
+  expect(await ownerFeedback()).toHaveLength(1) // freezing is not execution
+  const launch = await command(`/artifact-revision-rounds/${roundId}/start`, {
+    agentId,
+    deviceId,
+    workspaceId,
+    resumeFromRunId: sourceRun,
+  })
+  expect(launch.statusCode, launch.body).toBe(200)
+  const runId = launch.json().data.runId
+  expect(await ownerFeedback()).toEqual([])
+  await finish(runId)
+  const candidate = await upload(runId, 'review-new.md', false)
+  expect(
+    (
+      await command(`/artifact-revision-rounds/${roundId}/candidates`, {
+        candidateArtifactId: candidate,
+      })
+    ).statusCode,
+  ).toBe(200)
+  expect(await bobResolve()).toEqual([])
+  const privateView = await apiInject(ctx, bob, {
+    method: 'GET',
+    url: `/api/v1/artifact-revision-rounds/${roundId}`,
+  })
+  expect(privateView.statusCode).toBe(200)
+  expect(privateView.json().data.candidate).toBeNull()
+  expect((await command(`/artifacts/${candidate}/publish`)).statusCode).toBe(200)
+  expect(await bobResolve()).toMatchObject([{ objectId: source, taskId, runId: null }])
+  const room = () => apiInject(ctx, owner, { method: 'GET', url: `/api/v1/tasks/${taskId}` })
+  expect((await room()).json().data.reviewFeedback).toEqual({
+    unresolvedCount: 1,
+    artifactId: source,
+  })
+  const resolved = await as(bob, `/artifact-revision-rounds/${roundId}/resolutions`, {
+    commentId,
+    status: 'resolved',
+  })
+  expect(resolved.statusCode, resolved.body).toBe(200)
+  expect(await bobResolve()).toEqual([])
+  expect((await room()).json().data.reviewFeedback).toEqual({
+    unresolvedCount: 0,
+    artifactId: null,
+  })
+  expect(
+    (
+      await as(bob, `/artifact-revision-rounds/${roundId}/resolutions`, {
+        commentId,
+        status: 'needs_work',
+      })
+    ).statusCode,
+  ).toBe(200)
+  expect(await ownerFeedback()).toHaveLength(1)
+  // An unresolved opinion is an explicit warning, not a new task-completion gate.
+  expect((await command(`/tasks/${taskId}/submit-review`)).statusCode).toBe(200)
+  expect((await command(`/tasks/${taskId}/complete`)).statusCode).toBe(200)
+  expect(await ownerFeedback()).toEqual([])
+  expect(await bobResolve()).toEqual([])
+})

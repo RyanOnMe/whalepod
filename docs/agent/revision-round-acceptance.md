@@ -1,8 +1,8 @@
 # 交付物修订批次与批注复核（#430 / ADR-0021 §5）验收记录
 
-- 对应场景/门禁：交付物审阅闭环后半（后端）+ Q0/Q1/Q2/Q3
+- 对应场景/门禁：交付物审阅闭环后半（审阅页 + Hub + 待办）+ Q0/Q1/Q2/Q3
 - 对应 Issue：P1-430
-- 上次验证：2026-10-24 · feat/p1-430-revision-round · PASS
+- 上次验证：2026-10-26 · feat/p1-430-delivery-loop · 定向 UI/Q2 PASS，组合 Q5 由集成树验证
 
 ## 验的是哪条用户路径
 
@@ -11,7 +11,7 @@
 执行上下文里只出现本轮冻结的意见 → 责任人把本轮 Run 产出的候选显式关联为新版 →
 发布新版后，批注作者确认「已解决/仍需修改」，责任人可写理由代为收口。
 
-本切片只交付后端；审阅页的执行入口、待办与对比视图由前端批次接线。
+审阅页已接线：整理意见、冻结批次、明确续接原产出或开始新执行、选择自己的环境、检查并发布关联新版、文本差异与逐条人工复核。
 
 ## 驱动（怎么触发）
 
@@ -68,11 +68,43 @@ git diff --stat main
 
 ## 边界与未覆盖
 
-- 前端未接线：审阅页的「整理本轮修订」「新版对比」「待复核」、以及待办
-  `organize_feedback`/`resolve_comments` 留到前端批次；本切片没有新增待办类型。
+- 独立页的批次草稿目前留在组件中；导航离开后需重新填写未冻结的选择/方向。已经冻结的意见与批次保存在 Hub，失败重试同一轮，不重复创建。
 - 未跑生产装配 Q5/真实 Node→Runtime 执行：本页只证明 Hub 快照与下发 payload；
   Runtime 的首条指令注入由既有 #396 契约门覆盖（Q3 本轮 74 例通过，
   `executionContext` 同一条通路）。
 - 未做并发压测：启动认领用条件更新，锁序与改派一致；高并发下的行为按单条用例。
 - 图片/PDF/Office 的原位批注与预览仍在 #431。
 - 批次取消、逐条意见的版本历史（多次复核）暂未提供；重复复核以最后一次为准。
+
+
+## 2026-10-26 前端与个人待办接线
+
+- 责任人点击「整理本轮修订」，选择最多 50 条顶层意见，按需补方向和已发布参考材料，再「固定本轮意见」。创建本身不启动执行。
+- 默认尝试原产出会话：原 Agent、固定配置版本、自己的设备/工作目录必须仍匹配；不可续接就明确阻塞，成员可以选择「开始新执行」。不自动使用 Reviewer。
+- 执行复用 `RunLauncher` 的配置、准备检查和完全权限确认；批次 `/start` 复用原 `RunOrchestrator`。显式选择的 `profileRevisionId` 传入后端，不因 Agent 当前配置改变而漂移。
+- 启动失败保留指令与选择，同一意图复用幂等键。切换续接/新执行代表不同意图；批次自身防止重复 Run。
+- 候选只可从本轮 Run 产出中明确选择，复用原发布 API。未发布候选在 round 单件/列表读面也只向拥有者展示。
+- 发布后支持小型文本并排比较：标出首个差异行到最后差异行的范围，原始文本保持完整；非文本与超过 512KiB 的材料明确回退到下载。
+- 作者可以确认自己的意见；责任人代收口须写理由。失败保留输入，Agent 不自动关闭意见。
+- `organize_feedback` 面向已接受任务的当前责任人；未进入已启动批次、执行失败、候选被拒、仍需修改或固定后新增回复时出现。
+- `resolve_comments` 只在本轮新版发布后提醒意见作者；待办按原稿版本聚合，直达准确审阅页，点击只导航。Run/Artifact 事件同时失效批次缓存，保留既有个人待办轮询。
+- Task Room `reviewFeedback` 提供尚未确认解决数和对应交付物入口，完成确认框也提示；完成操作不增加硬闸。
+
+### 本轮可复跑判据
+
+```bash
+pnpm exec vitest run --project web \
+  apps/web/tests/revision-loop.spec.tsx \
+  apps/web/tests/attention-home.spec.tsx apps/web/tests/select-menu.spec.tsx
+pnpm exec vitest run --project unit apps/web/tests/event-router.spec.ts \
+  packages/protocol/tests/review-round.spec.ts packages/protocol/tests/attention.spec.ts
+pnpm exec tsx scripts/with-test-postgres.mts pnpm exec vitest run --project integration \
+  apps/hub/tests/revision-round.integration.spec.ts \
+  apps/hub/tests/personal-attention.integration.spec.ts
+pnpm build
+pnpm check
+```
+
+红色起点：提交 `843a4ec` 中 4 个新 UI 用例全部失败。定向 UI（闭环、待办、统一选择控件）52 例通过；真实 PostgreSQL 两文件 19 例通过。新增公共路径用例通过 HTTP/Node 协议驱动批注→固定→启动→私有候选→发布→作者确认/退回→完成人工确认，无直插业务表。脱敏机器摘要见 `artifacts/evidence/revision-round-ui/summary.json`。
+
+归因：页面选择/输入看 `web.delivery.revision`（`ReviewRevisionPanel` + `RunLauncher`）；待办事实看 `hub.task` 的 `/tasks/attention`；版本隐私、快照和确认看 `hub.review`；执行与准备仍沿既有 `hub.run` / `node.*` / `runtime.bridge`。组合 Q5 尚需在整合后的生产装配上驱动，组件/Hub 证据不能替代真人节时结果。

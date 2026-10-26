@@ -25,6 +25,7 @@ import {
   createRevisionRound,
   getRevisionRoundView,
   linkRevisionCandidate,
+  listRevisionRoundViews,
   resolveReviewComment,
   startRevisionRound,
 } from '../src/modules/review/rounds.js'
@@ -380,6 +381,19 @@ describe('artifact revision round (#430)', () => {
     )
     expect(linked.candidate?.artifactId).toBe(candidateId)
     expect(linked.candidate?.publishedAt).toBeNull()
+    expect(
+      (await getRevisionRoundView(database.db, round.id, makeActor(receiver.userId, 'member')))
+        .candidate,
+    ).toBeNull()
+    expect(
+      (
+        await listRevisionRoundViews(database.db, ids.taskId, makeActor(receiver.userId, 'member'))
+      )[0]?.candidate,
+    ).toBeNull()
+    expect(
+      (await getRevisionRoundView(database.db, round.id, makeActor(ids.userId))).candidate
+        ?.artifactId,
+    ).toBe(candidateId)
 
     // 未发布不能复核。
     await expect(
@@ -394,6 +408,10 @@ describe('artifact revision round (#430)', () => {
       .set({ status: 'published', publishedAt: new Date() })
       .where(eq(schema.artifacts.id, candidateId))
 
+    expect(
+      (await getRevisionRoundView(database.db, round.id, makeActor(receiver.userId, 'member')))
+        .candidate?.artifactId,
+    ).toBe(candidateId)
     // 作者可确认；责任人代收口必须写理由。
     const resolved = await resolveReviewComment(
       database,

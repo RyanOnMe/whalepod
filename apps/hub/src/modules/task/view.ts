@@ -3,6 +3,7 @@
  * 已发布 Artifact metadata，不暴露 runtime internals（Device Token、Workspace path、
  * 原始 Session event、dshSessionId、digest 等——03 §9 脱敏 + 02 Step 1 断言）。
  */
+import { sql } from 'drizzle-orm'
 import type { TaskReviewEligibility } from '@whalepod/protocol'
 import { reviewPrerequisiteReason } from './review-conditions.js'
 import type { ArtifactRow, RunRow, TaskRow } from '@whalepod/db'
@@ -161,6 +162,7 @@ export interface TaskRoomView {
     upstreamTaskTitle: string
     hasNewerVersion: boolean
   } | null
+  reviewFeedback: { unresolvedCount: number; artifactId: string | null }
   reviewEligibility: TaskReviewEligibility
   /** 讨论流（ADR-0010 决策 1）：**只含** `kind='discussion'` 的人际评论。 */
   comments: CommentView[]
@@ -279,7 +281,24 @@ export async function getTaskRoom(
             (await latestHandoffRevisionNumber(handle, activeReceipt.receipt.upstreamTaskId)) >
             activeReceipt.revision.revisionNumber,
         }
+  // 已发布版本上的顶层意见，以最新一轮的人工结果为准；只提供提示，不增加完成硬闸。
+  const feedback = await handle.execute<{ artifactId: string; count: number | string }>(sql`
+    select a.id as "artifactId",count(*)::int as count
+    from artifact a join artifact_comment c on c.artifact_id=a.id and c.parent_comment_id is null
+    left join lateral (
+      select resolution.status from artifact_revision_round_comment rc
+        join artifact_revision_round rr on rr.id=rc.round_id
+        left join artifact_comment_resolution resolution on resolution.round_id=rr.id and resolution.comment_id=c.id
+      where rc.comment_id=c.id order by rr.created_at desc,rr.id desc limit 1
+    ) latest on true
+    where a.task_id=${taskId} and a.status='published' and latest.status is distinct from 'resolved'
+    group by a.id order by a.id
+  `)
   return {
+    reviewFeedback: {
+      unresolvedCount: feedback.reduce((count, row) => count + Number(row.count), 0),
+      artifactId: feedback[0]?.artifactId ?? null,
+    },
     task: toTaskView(task),
     agreement: {
       enabled: task.agreementEnabled,

@@ -5,6 +5,8 @@ export const AttentionKindSchema = z.enum([
   'decide_approval',
   'confirm_handoff',
   'submit_review',
+  'organize_feedback',
+  'resolve_comments',
   'accept_assignment',
   'reassign_task',
   'inspect_candidate',
@@ -29,7 +31,7 @@ export const AttentionItemSchema = z
       return item.runId === null && item.objectId !== item.taskId
     }
     // 审阅事项的对象是 artifact（版本身份），同样不指向 Run。
-    if (item.kind === 'submit_review') {
+    if (['submit_review', 'organize_feedback', 'resolve_comments'].includes(item.kind)) {
       return item.runId === null && item.objectId !== item.taskId
     }
     return item.objectId === item.taskId && item.runId === null
