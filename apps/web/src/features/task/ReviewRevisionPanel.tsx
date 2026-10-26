@@ -230,7 +230,9 @@ function RevisionRound({
   const candidate = room.artifacts.find((row) => row.id === round.candidate?.artifactId)
   const choices = room.artifacts.filter(
     (row) =>
-      row.runId === round.runId && row.status === 'candidate' && row.ownerUserId === session.userId,
+      row.runId === round.runId &&
+      ['candidate', 'published'].includes(row.status) &&
+      row.ownerUserId === session.userId,
   )
   const run = room.runs.find((row) => row.id === round.runId)
   const link = useMutation({
@@ -288,7 +290,7 @@ function RevisionRound({
         <RoundLauncher round={round} room={room} session={session} invalidate={invalidate} />
       ) : null}
       {round.runId !== null ? (
-        <Link to={`/tasks/${room.task.id}#execution`}>查看执行与产出</Link>
+        <Link to={`/tasks/${room.task.id}#task-execution`}>查看执行与产出</Link>
       ) : null}
       {owner && round.runId !== null && round.candidate === null && choices.length ? (
         <div className="revision-candidate-picker">

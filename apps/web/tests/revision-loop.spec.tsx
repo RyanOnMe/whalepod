@@ -28,6 +28,7 @@ const AGENT = '00000000-0000-4000-8000-000000000107'
 const REVISION = '00000000-0000-4000-8000-000000000108'
 const DEVICE = '00000000-0000-4000-8000-000000000109'
 const WORKSPACE = '00000000-0000-4000-8000-000000000110'
+const REVISION_RUN = '00000000-0000-4000-8000-000000000111'
 const NOW = '2026-10-26T01:00:00.000Z'
 const thread = {
   id: COMMENT,
@@ -91,7 +92,7 @@ function fixture(session = ALICE, initialRounds: unknown[] = []) {
   })
   const newer = makeArtifact({
     id: NEW,
-    runId: RUN,
+    runId: REVISION_RUN,
     title: '新版.md',
     status: 'published',
     ownerUserId: ALICE.userId,
@@ -102,11 +103,15 @@ function fixture(session = ALICE, initialRounds: unknown[] = []) {
     resolutionBodies: [] as unknown[],
     failResolution: false,
     failStart: false,
+    linkBodies: [] as unknown[],
     startBodies: [] as unknown[],
     startKeys: [] as string[],
   }
   const handlers: MockHandler[] = [
-    taskRoomHandler(task, { runs: [sourceRun], artifacts: [source, newer] }),
+    taskRoomHandler(task, {
+      runs: [sourceRun, makeRun({ id: REVISION_RUN, status: 'completed' })],
+      artifacts: [source, newer],
+    }),
     teamMembersHandler(),
     {
       method: 'GET',
@@ -213,6 +218,22 @@ function fixture(session = ALICE, initialRounds: unknown[] = []) {
     },
     {
       method: 'POST',
+      url: new RegExp(`/artifact-revision-rounds/${ROUND}/candidates$`),
+      respond: (init) => {
+        state.linkBodies.push(JSON.parse(String(init.body)))
+        state.rounds = [
+          round({
+            status: 'started',
+            runId: REVISION_RUN,
+            startedAt: NOW,
+            candidate: { artifactId: NEW, linkedAt: NOW, publishedAt: NOW },
+          }),
+        ]
+        return ok(state.rounds[0])
+      },
+    },
+    {
+      method: 'POST',
       url: new RegExp(`/artifact-revision-rounds/${ROUND}/resolutions$`),
       respond: (init) => {
         const body = JSON.parse(String(init.body))
@@ -288,6 +309,29 @@ describe('review revision loop (#430)', () => {
     })
     expect(state.startKeys[0]).not.toBe('')
     expect(state.startKeys[0]).toBe(state.startKeys[1])
+  })
+
+  it('从任务页已发布的本轮产物仍可明确关联为新版', async () => {
+    const user = userEvent.setup()
+    const state = fixture(ALICE, [
+      round({ status: 'started', runId: REVISION_RUN, startedAt: NOW }),
+    ])
+    const panel = await screen.findByTestId(`revision-round-${ROUND}`)
+    expect(state.linkBodies).toEqual([])
+    await user.click(within(panel).getByRole('button', { name: '选择本轮新版候选' }))
+    await user.click(await screen.findByRole('menuitem', { name: '新版.md' }))
+    await user.click(within(panel).getByRole('button', { name: '关联为本轮新版' }))
+    await waitFor(() => expect(state.linkBodies).toEqual([{ candidateArtifactId: NEW }]))
+    expect(await within(panel).findByRole('button', { name: '查看原稿与新版' })).toBeEnabled()
+  })
+
+  it('修订执行入口定位 Task Room 的实际执行区', async () => {
+    fixture(BOB, [round({ status: 'started', runId: REVISION_RUN, startedAt: NOW })])
+    const panel = await screen.findByTestId(`revision-round-${ROUND}`)
+    expect(within(panel).getByRole('link', { name: '查看执行与产出' })).toHaveAttribute(
+      'href',
+      `/tasks/${TASK}#task-execution`,
+    )
   })
 
   it('普通审阅者不能组织执行，可核对新版并确认自己的意见', async () => {
