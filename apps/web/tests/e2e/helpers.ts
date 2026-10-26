@@ -624,7 +624,8 @@ export function setRuntimeFixture(
     | 'rejection'
     | 'handoff'
     | 'handoff-downstream'
-    | 'agreement-draft',
+    | 'agreement-draft'
+    | 'delivery-revision',
 ): Promise<unknown> {
   return nodeControl('/fixture', { name })
 }
