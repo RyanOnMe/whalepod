@@ -15,6 +15,7 @@
 | [handoff-receipt-acceptance.md](./handoff-receipt-acceptance.md) | #380（ADR-0017 §5）：跨 Task 交付/接收确认（确认≠接受任务）+ 下游 Run 独立交接输入快照（逐件摘要、上游新版本不改历史 Run）+ adopt 新版本 + Node 下载授权最小扩展与摘要校验；边界如实列（会话读面复用守卫、差异不去重） |
 | [handoff-loop-acceptance.md](./handoff-loop-acceptance.md) | #381：两成员交接闭环**生产装配**（真 Hub/Node/Runtime，收尾模型调用由录制+旁车脚本化）一次走完 + 四个负向面 + 独立判定器（20 条逐条负控自证）；边界：真人试用一律 not_run、摘要失败分支由单测/集成裁决 |
 | [handoff-entry-acceptance.md](./handoff-entry-acceptance.md) | #428（ADR-0021 §6）：待接收交接进首页待办并直达固定版本卡片（交接卡先于接受任务）、提问不要求先确认/不改状态、阅读失败禁止确认、未接受标注；边界如实列（Q5 未重跑、预览与批注在后续切片） |
+| [delivery-loop-review.md](./delivery-loop-review.md) | 合入前独立 Agent 评审、实证阻塞与修复、作者之外双人交叉复核矩阵、准确提交和合并约束 |
 | [delivery-loop-acceptance.md](./delivery-loop-acceptance.md) | #442：双成员真浏览器/Hub/Node/Runtime 的批注→冻结意见→修订→发布→人工复核与准确依据；Office 专用档强制隔离回退、直接 PDF 拒绝及两侧真实下载独立判定；真人效率尚未验证 |
 | [delivery-loop-internal-trial.md](./delivery-loop-internal-trial.md) | 先本人双账号体验三个案例，再真人双人交叉比较 IM+个人 Agent；分角色记录主动劳动、解释、误解与返工，所有试用初始 not_run |
 | [delivery-basis-acceptance.md](./delivery-basis-acceptance.md) | #440（ADR-0022）：当前成果的准确来源 Run、历史约定、固定输入与明确对应的已发布交接；未知/不完整和核实范围如实展示，读取权限逐件复核，失败重试不发命令 |

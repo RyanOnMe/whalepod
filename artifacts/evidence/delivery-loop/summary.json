@@ -1,0 +1,57 @@
+{
+  "component": "delivery.loop.acceptance",
+  "testedSourceCommit": "baa1b57",
+  "source": "production-hub-node-runtime-browser-postgres",
+  "nodeVersion": "24.12.0",
+  "modelMode": "deterministic DSH replay; synthetic file preconditions",
+  "policy": "Office conversion and untrusted historical preview access suspended until verified isolation",
+  "verification": {
+    "build": "pass",
+    "webTypes": "pass",
+    "officeVerifierNegativeControls": 20,
+    "browserCases": 1,
+    "independentChecks": 194,
+    "browserCommand": "pnpm test:e2e:delivery",
+    "browserStatus": "pass"
+  },
+  "componentChecks": [
+    {
+      "scope": "UI request retry",
+      "runner": "review_web_harness",
+      "webTests": 33,
+      "status": "pass"
+    },
+    {
+      "scope": "atomic revision start",
+      "runner": "review_backend",
+      "realPostgresTests": 25,
+      "unitTests": 5,
+      "status": "pass"
+    },
+    {
+      "scope": "Office isolation suspension",
+      "runner": "review_runtime",
+      "unitTests": 41,
+      "webTests": 37,
+      "realPostgresTests": 9,
+      "status": "pass"
+    }
+  ],
+  "review": {
+    "matrix": "docs/agent/delivery-loop-review.md",
+    "independentAgentPairs": "approved corrected production and harness deltas; authors excluded from own approvals",
+    "userAuthorization": "review agents pass then merge",
+    "gitHubHumanApproval": "not represented as a GitHub human approval"
+  },
+  "supersededEvidence": "history/pre-isolation-review",
+  "notRun": [
+    "human double-account pilot",
+    "real two-member baseline comparison",
+    "real model revision quality",
+    "full release Q5 / 20 consecutive runs",
+    "Q8 load",
+    "Q9 compose smoke",
+    "isolated Office conversion",
+    "PDF/image region annotation"
+  ]
+}

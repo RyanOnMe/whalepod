@@ -26,7 +26,7 @@ Office 判定要求两侧 preview-info 都返回 `ISOLATION_REQUIRED` 且不暴�
 
 ## 结果与证据
 
-原有 248 项浏览器核对及转换成功记录已因独立安全评审失效，保留在 `artifacts/evidence/delivery-loop/history/pre-isolation-review/`，仅用于历史追溯。当前合并候选必须重新通过安全回退与修订重试/崩溃恢复的检查后记录最新结果。
+原有 248 项浏览器核对及转换成功记录已因独立安全评审失效，保留在 `artifacts/evidence/delivery-loop/history/pre-isolation-review/`，仅用于历史追溯。2026-10-26 修复后的 Node24 整合构建、Web 类型及浏览器链通过，当前独立判定为 **194 项 PASS**，涵盖可见下载和安全回退；相关模块的修复检查及独立交叉评审见 [合并前评审](./delivery-loop-review.md)。远端准确 head 的 check/integration 必须通过才合并。
 
 当前证据仍归档为 `artifacts/evidence/delivery-loop/result.json`、`summary.json`、`verdict.json`。模型出口是合成角色和材料，不包含用户真实会话或凭据；自动驱动不代表团队效率提升。人员真实试用仍 not_run。本次用户明确授权独立 review agents 通过后合入，评审记录明确标注 AI 身份。
 
