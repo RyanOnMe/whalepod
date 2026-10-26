@@ -504,8 +504,9 @@ describe('revision start recovery via member HTTP (#430)', () => {
 
   it('legacy claim persisted before Run creation: retries recover one Run instead of staying starting', async () => {
     const { roundId } = await reviewRoundForRecovery()
-    // Controlled old-process crash seam: execute the production claim and stop before
-    // create. No Run/projection is inserted; delete when all old starting rows are retired.
+    // Legacy fault precondition: the atomic HTTP endpoint cannot produce this old
+    // half-committed state. Execute the old production claim and stop before creation;
+    // no Run/projection is inserted. Remove when pre-atomic Hub upgrade recovery is retired.
     await claimArtifactRevisionRoundStart(db.db, roundId)
     expect((await getArtifactRevisionRound(db.db, roundId))?.status).toBe('starting')
     const first = await command(`/artifact-revision-rounds/${roundId}/start`, revisionInput())
@@ -586,8 +587,10 @@ describe('revision start recovery via member HTTP (#430)', () => {
     const { roundId, source } = await reviewRoundForRecovery()
     const round = await getArtifactRevisionRound(db.db, roundId)
     expect(round).toBeDefined()
-    // Controlled legacy crash seam: claim and use the same production orchestrator that
-    // the old HTTP route used, then stop before round binding. No business-table insert.
+    // Legacy fault precondition: the atomic HTTP endpoint cannot produce this old
+    // separately committed Run. Call the old production claim/orchestrator, then stop
+    // before round binding; no business-table insert or fabricated Run is used.
+    // Remove when pre-atomic Hub upgrade recovery is retired and old rows are drained.
     await claimArtifactRevisionRoundStart(db.db, roundId)
     const committed = await harness.orchestrator.create(
       { userId: owner.userId, role: 'owner' } as Parameters<RunOrchestrator['create']>[0],

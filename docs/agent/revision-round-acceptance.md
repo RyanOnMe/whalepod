@@ -121,6 +121,6 @@ pnpm check
 
 复跑：`pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration apps/hub/tests/personal-attention.integration.spec.ts apps/hub/tests/revision-round.integration.spec.ts`。
 
-新增判据通过真实成员 HTTP、配对和 Node 协议事件准备 Run/Artifact，不插业务表制造运行状态：旧生产认领后退出、Run/outbox 写后提交前故障回滚、同键/不同键并发均只有一条 Run、旧已提交 Run 恢复、事务前改派后旧责任人被拒。旧认领和既有 Run 的构造是显式可控故障缝，直接调用当时同一生产认领/编排方法；故障缝不得代替真实 Run 的正常驱动。摘要证据在 `artifacts/evidence/revision-start-recovery/summary.json`。
+新增判据通过真实成员 HTTP、配对和 Node 协议事件准备 Run/Artifact，不插业务表制造运行状态：旧生产认领后退出、Run/outbox 写后提交前故障回滚、同键/不同键并发均只有一条 Run、旧已提交 Run 恢复、事务前改派后旧责任人被拒。旧认领和既有 Run 的构造是显式可控故障缝：当前原子 HTTP 入口已不能正常生成这两种旧半提交状态，故只在此调用当时同一生产认领/编排方法，不直插业务表制造 Run。删除条件是停止兼容旧非原子 Hub 升级恢复且旧状态已排空；故障缝不得代替真实 Run 的正常驱动。摘要证据在 `artifacts/evidence/revision-start-recovery/summary.json`。
 
 定位 `starting` 遗留时先看 `hub.review` 的 Task/round 锁与 `run.review_input.roundId`，再看 Run/outbox 与命令回执是否同事务。事务外持锁后再另开 Run 创建事务是错误装配。该修复不自动重放终态 Run 或可能有副作用的工具；真实模型质量和发布级 Q5 仍由各自验收负责。
