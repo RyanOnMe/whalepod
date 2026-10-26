@@ -492,7 +492,7 @@ describe('#380 下游接收面板', () => {
     expect(stored.size).toBe(2)
   })
 
-  it('未知结果后编辑问题 A→B→A：每个新意图都实际保存，不重放旧问题', async () => {
+  it('未知结果问题 A→B→A：B独立保存，回到A重放待定回执而不重复保存', async () => {
     const user = userEvent.setup()
     const stored = new Map<string, string>()
     const requests: string[] = []
@@ -530,11 +530,11 @@ describe('#380 下游接收面板', () => {
     await user.type(field, '问题 A')
     await user.click(send)
     await waitFor(() => expect(field).toHaveValue(''))
-    expect(new Set(requests).size).toBe(3)
+    expect(new Set(requests).size).toBe(2)
+    expect(requests[2]!).toBe(requests[0]!)
     expect([...stored.values()]).toEqual([
       '【交接 v1 · 前端接入】问题 A',
       '【交接 v1 · 前端接入】问题 B',
-      '【交接 v1 · 前端接入】问题 A',
     ])
   })
 

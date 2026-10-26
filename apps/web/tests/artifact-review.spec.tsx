@@ -255,7 +255,7 @@ describe('#429 交付物审阅页', () => {
   )
 
   it.each(['whole', 'text', 'reply'] as const)(
-    '%s 未知结果后编辑 A→B→A 不会命中旧回执',
+    '%s 未知结果 A→B→A 回到同一待定意图时重放A而不重复保存',
     async (kind) => {
       const user = userEvent.setup()
       const comments: Array<Record<string, unknown>> = kind === 'reply' ? [retryParent()] : []
@@ -283,12 +283,13 @@ describe('#429 交付物审阅页', () => {
           ? expect(composer.field).toHaveValue('')
           : expect(composer.field).not.toBeInTheDocument(),
       )
-      expect(new Set(replay.requests.map((row) => row.key)).size).toBe(3)
+      expect(new Set(replay.requests.map((row) => row.key)).size).toBe(2)
+      expect(replay.requests[2]!.key).toBe(replay.requests[0]!.key)
       expect(
         comments
           .filter((row) => ['意见 A', '意见 B'].includes(String(row.body)))
           .map((row) => row.body),
-      ).toEqual(['意见 A', '意见 B', '意见 A'])
+      ).toEqual(['意见 A', '意见 B'])
     },
   )
 
