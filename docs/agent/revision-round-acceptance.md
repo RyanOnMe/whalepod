@@ -108,3 +108,8 @@ pnpm check
 红色起点：提交 `843a4ec` 中 4 个新 UI 用例全部失败。定向 UI（闭环、待办、统一选择控件）52 例通过；真实 PostgreSQL 两文件 19 例通过；独立协议/实时路由 12 例通过。`pnpm build` 和最终 `pnpm check` 全通过（185 文件，1980 通过、7 个既有 expected fail，无意外失败）。新增公共路径用例通过 HTTP/Node 协议驱动批注→固定→启动→私有候选→发布→作者确认/退回→完成人工确认，无直插业务表。脱敏机器摘要见 `artifacts/evidence/revision-round-ui/summary.json`。
 
 归因：页面选择/输入看 `web.delivery.revision`（`ReviewRevisionPanel` + `RunLauncher`）；待办事实看 `hub.task` 的 `/tasks/attention`；版本隐私、快照和确认看 `hub.review`；执行与准备仍沿既有 `hub.run` / `node.*` / `runtime.bridge`。组合 Q5 尚需在整合后的生产装配上驱动，组件/Hub 证据不能替代真人节时结果。
+
+
+### 集成审查补充
+
+已发布产物也可从本轮 Run 的显式选择菜单关联为新版（成员可能先在任务文件卡发布，再进入审阅页）；不根据文件名或最近产物自动关联。执行入口定位 `#task-execution`。独立红色提交 `5c52268` 中两例失败，修复后 `revision-loop.spec.tsx` 11 例通过；此后未重复全仓测试。

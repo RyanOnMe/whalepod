@@ -32,5 +32,11 @@
     "files": 3,
     "passed": 12,
     "failed": 0
+  },
+  "published_output_regression": {
+    "red_commit": "5c52268",
+    "red_failed": 2,
+    "green_passed": 11,
+    "scope": "revision-loop.spec.tsx only"
   }
 }
