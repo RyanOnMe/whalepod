@@ -3,9 +3,16 @@ import { matchesDeliveryArtifact } from '../src/modules/review/delivery-basis.js
 
 const artifact = { id: 'artifact-a', taskId: 'task-a', runId: 'run-a', sha256: 'a'.repeat(64) }
 function handoff() {
-  return { taskId: 'task-a', sourceRunId: 'run-a', content: {
-    system: { sourceRunId: 'run-a', artifacts: [{ artifactId: 'artifact-a', sha256: 'a'.repeat(64), status: 'published' }] },
-  } }
+  return {
+    taskId: 'task-a',
+    sourceRunId: 'run-a',
+    content: {
+      system: {
+        sourceRunId: 'run-a',
+        artifacts: [{ artifactId: 'artifact-a', sha256: 'a'.repeat(64), status: 'published' }],
+      },
+    },
+  }
 }
 
 describe('delivery basis matching (#440)', () => {

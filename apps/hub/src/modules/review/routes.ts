@@ -35,6 +35,7 @@ import {
   resolveReviewComment,
   startRevisionRound,
 } from './rounds.js'
+import { getArtifactDeliveryBasis } from './delivery-basis.js'
 import type { RunOrchestrator } from '../run/orchestrator.js'
 
 export interface ReviewRouteDeps {
@@ -68,6 +69,13 @@ function actorFrom(session: SessionActor) {
 }
 
 export function registerReviewRoutes(app: FastifyInstance, deps: ReviewRouteDeps): void {
+  app.get('/artifacts/:artifactId/delivery-basis', async (request, reply) => {
+    const session = await deps.requireActor(request)
+    const { artifactId } = request.params as { artifactId: string }
+    const basis = await getArtifactDeliveryBasis(deps.database.db, actorFrom(session), artifactId)
+    return reply.header('cache-control', 'no-store').send({ ok: true, data: basis })
+  })
+
   app.get('/artifacts/:artifactId/review', async (request, reply) => {
     const session = await deps.requireActor(request)
     const { artifactId } = request.params as { artifactId: string }
