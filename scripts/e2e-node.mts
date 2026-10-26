@@ -29,7 +29,7 @@
  * stdout 契约：首行就绪后输出一行 `E2E_NODE_READY <json>`（控制口/workspaceId/
  * deviceId）供 e2e-serve 解析；其余日志一律 stderr。
  */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { createRequire } from 'node:module'
 import { createHash, randomUUID } from 'node:crypto'
@@ -56,6 +56,11 @@ import type {
 import { RunManager } from '../apps/node/src/run/run-manager.js'
 import { ArtifactInputsManager } from '../apps/node/src/artifact/inputs.js'
 import { ArtifactCollector } from '../apps/node/src/artifact/collect.js'
+import { OfficePreviewGenerator } from '../apps/node/src/artifact/preview.js'
+import {
+  uploadArtifactPreview,
+  reportArtifactPreviewFailure,
+} from '../apps/node/src/artifact/preview-upload-client.js'
 import { uploadArtifactCandidate } from '../apps/node/src/artifact/upload-client.js'
 
 const REPO_ROOT = join(import.meta.dirname, '..')
@@ -118,6 +123,10 @@ const FIXTURES: Record<string, E2eFixture> = {
   },
   'agreement-draft': {
     session: join(REPO_ROOT, 'scripts/fixtures/agreement-draft/session.jsonl'),
+  },
+  'delivery-revision': {
+    session: join(REPO_ROOT, 'scripts/fixtures/delivery-revision/session.jsonl'),
+    override: join(REPO_ROOT, 'scripts/fixtures/handoff-loop/replay.override.json'),
   },
   handoff: {
     session: join(REPO_ROOT, 'scripts/fixtures/handoff-loop/session.jsonl'),
@@ -197,6 +206,15 @@ writeFileSync(
   join(workspaceDir, 'out', 'report.md'),
   '# e2e report\n\n内容摘要：E2E 验收交付物。\n',
 )
+copyFileSync(
+  join(REPO_ROOT, 'scripts/fixtures/delivery-revision/sample.docx'),
+  join(workspaceDir, 'out/sample.docx'),
+)
+// #430：确定性模型出口的新版文件，仍经真实 publish_artifact/Node 上传。
+writeFileSync(
+  join(workspaceDir, 'out', 'revised-report.md'),
+  '# e2e revised report\n\n登录失败返回 401，并给出重试提示。\n',
+)
 // 模型出口夹具使用的待发布本地 JSON；仍经真实 publish_artifact 上传，不直写业务表。
 writeFileSync(
   join(workspaceDir, 'out', 'agreement.json'),
@@ -248,7 +266,8 @@ const inputManifests = new Map<
 let ackDropRemaining = 0
 const ackDropped: string[] = [] // 被吞掉的 ack 事实（取证）
 
-// ---- Runtime driver（真 DshRuntimeDriver + pid 观测缝）----
+// ---- Runtime driver（真 DshRuntimeDriver + pid / 固定上下文只读观测缝）----
+const runtimeContexts = new Map<string, string>()
 class PidRecordingDriver implements RuntimeDriver {
   constructor(private readonly inner: RuntimeDriver) {}
   async spawn(
@@ -262,7 +281,15 @@ class PidRecordingDriver implements RuntimeDriver {
     const handle = await this.inner.spawn(spec, ctx)
     runtimePids.set(spec.runId, handle.pid)
     spawnCounts.set(spec.runId, (spawnCounts.get(spec.runId) ?? 0) + 1)
-    return handle
+    return {
+      ...handle,
+      send: (command) => {
+        // 只读记录真实 initialize 的业务上下文；不存本地路径、Token 或完整帧。
+        if (command.type === 'runtime.initialize' && command.payload.executionContext !== undefined)
+          runtimeContexts.set(spec.runId, command.payload.executionContext)
+        handle.send?.(command)
+      },
+    }
   }
   async terminate(handle: RuntimeHandle): Promise<void> {
     await this.inner.terminate(handle)
@@ -306,7 +333,27 @@ const artifactInputs = new ArtifactInputsManager({
   inputsRoot: join(stateDir, 'runtime-inputs'),
   log: artifactLog,
 })
+// #442 Office lane uses the same optional production generator as the Node CLI.
+const officePreview =
+  process.env['WHALEPOD_E2E_OFFICE_PREVIEW'] === '1'
+    ? new OfficePreviewGenerator({
+        stagingDir: join(stateDir, 'artifact-previews'),
+        ...(process.env['WHALEPOD_SOFFICE'] === undefined
+          ? {}
+          : { sofficePath: process.env['WHALEPOD_SOFFICE'] }),
+        upload: (artifactId, metadata, body) =>
+          uploadArtifactPreview(config.hubUrl, config.deviceToken, artifactId, metadata, body, {
+            log: artifactLog,
+          }),
+        reportFailure: (artifactId, report) =>
+          reportArtifactPreviewFailure(config.hubUrl, config.deviceToken, artifactId, report, {
+            log: artifactLog,
+          }),
+        log: artifactLog,
+      })
+    : undefined
 const artifactCollector = new ArtifactCollector({
+  ...(officePreview === undefined ? {} : { preview: officePreview }),
   stagingDir: join(stateDir, 'artifact-staging'),
   upload: (runId, payload, body) =>
     uploadArtifactCandidate(config.hubUrl, config.deviceToken, runId, payload, body, {
@@ -578,6 +625,13 @@ const server = createServer((req, res) => {
           .activeRunIds()
           .map((runId) => ({ runId, pid: runtimePids.get(runId) ?? -1 }))
         return reply(200, { runtimes, spawnCounts: Object.fromEntries(spawnCounts) })
+      }
+      case '/execution-context': {
+        const runId = String(body['runId'] ?? '')
+        const context = runtimeContexts.get(runId)
+        return context === undefined
+          ? reply(404, { error: 'context not observed' })
+          : reply(200, { runId, context })
       }
       case '/input-manifest': {
         const runId = String(body['runId'] ?? url.searchParams.get('runId') ?? '')

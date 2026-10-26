@@ -1,0 +1,332 @@
+{
+  "verifiedAt": "2026-10-26T09:40:24.879Z",
+  "component": "web.handoff-loop",
+  "source": "production-hub-node-runtime",
+  "agreement": {
+    "enabled": true,
+    "confirmedRevisionNumber": 1
+  },
+  "agreementDraft": {
+    "runId": "3a3844f1-b251-4f9b-a718-9ee4d73bbaac",
+    "purpose": "agreement_draft",
+    "runStatus": "completed",
+    "artifactId": "f3637f17-0f70-4dd4-a79d-a5c1c675f206",
+    "artifactStatus": "candidate",
+    "ownerReadStatus": 200,
+    "confirmedBeforeAdopt": null,
+    "confirmedAfterAdopt": null,
+    "candidateContent": {
+      "goal": "交付登录接口与用例",
+      "constraints": "沿用会话中间件",
+      "acceptance": "单元测试通过",
+      "openQuestions": ""
+    },
+    "adoptedContent": {
+      "goal": "交付登录接口与用例",
+      "constraints": "沿用会话中间件",
+      "acceptance": "单元测试通过",
+      "openQuestions": ""
+    },
+    "otherMemberReadStatus": 404
+  },
+  "backend": {
+    "taskId": "01a17794-bae0-7e72-8a43-5f1fbbcc5987",
+    "runId": "27157dca-924d-467a-96ad-c7cd32ed3c58",
+    "runStatus": "completed",
+    "draftOrigin": "auto",
+    "draftStatus": "published",
+    "publishedRevisionNumber": 1,
+    "artifactId": "b8a9f618-8d3d-49bf-889e-c358eaf87f8f",
+    "artifactSha256": "0d1fdc131574d574b2852618145d3cc1b5cc17446083ce2c170240207365ff63",
+    "artifactPublished": true
+  },
+  "privacy": {
+    "ownerReadStatus": 200,
+    "otherMemberReadStatus": 404
+  },
+  "reviewLoop": {
+    "sourceArtifactId": "b8a9f618-8d3d-49bf-889e-c358eaf87f8f",
+    "sourceSha256": "0d1fdc131574d574b2852618145d3cc1b5cc17446083ce2c170240207365ff63",
+    "sourceRunId": "27157dca-924d-467a-96ad-c7cd32ed3c58",
+    "reviewerUserId": "01a17794-b15f-790c-b79c-075c6d79c69e",
+    "beforeHumanResolutions": [],
+    "commentId": "b9f2f00c-b4c2-40d8-93c2-9f6ca200ec08",
+    "comment": "补充登录失败的状态码与重试提示",
+    "direction": "明确错误处理约定",
+    "lateComment": "冻结之后补充的性能意见",
+    "round": {
+      "id": "85a60315-ac71-435c-afd1-e97b4fdc6117",
+      "taskId": "01a17794-bae0-7e72-8a43-5f1fbbcc5987",
+      "status": "started",
+      "sourceArtifact": {
+        "artifactId": "b8a9f618-8d3d-49bf-889e-c358eaf87f8f",
+        "runId": "27157dca-924d-467a-96ad-c7cd32ed3c58",
+        "title": "接口实现报告",
+        "mediaType": "text/markdown",
+        "byteSize": 52,
+        "sha256": "0d1fdc131574d574b2852618145d3cc1b5cc17446083ce2c170240207365ff63",
+        "publishedAt": "2026-10-26T09:40:06.095Z"
+      },
+      "direction": "明确错误处理约定",
+      "comments": [
+        {
+          "commentId": "b9f2f00c-b4c2-40d8-93c2-9f6ca200ec08",
+          "authorUserId": "01a17794-b15f-790c-b79c-075c6d79c69e",
+          "kind": "whole",
+          "anchor": null,
+          "body": "补充登录失败的状态码与重试提示",
+          "createdAt": "2026-10-26T09:40:08.422Z",
+          "replies": []
+        }
+      ],
+      "references": [],
+      "runId": "f749555e-4666-478f-a555-1b504bce6790",
+      "candidate": {
+        "artifactId": "2381edbd-70a5-4606-bb1b-cd868525a14b",
+        "linkedAt": "2026-10-26T09:40:11.392Z",
+        "publishedAt": "2026-10-26T09:40:11.554Z"
+      },
+      "resolutions": [
+        {
+          "commentId": "b9f2f00c-b4c2-40d8-93c2-9f6ca200ec08",
+          "status": "resolved",
+          "resolvedBy": "01a17794-b15f-790c-b79c-075c6d79c69e",
+          "note": null,
+          "updatedAt": "2026-10-26T09:40:12.336Z"
+        }
+      ],
+      "createdAt": "2026-10-26T09:40:09.041Z",
+      "startedAt": "2026-10-26T09:40:09.442Z"
+    },
+    "runtimeContext": "# 已确认任务约定 v1\n目标：交付登录接口与用例\n约束：沿用会话中间件\n验收条件：单元测试通过\n待确认问题：\n\n# 本轮交付物审阅修订\n原稿：接口实现报告（artifactId b8a9f618-8d3d-49bf-889e-c358eaf87f8f，sha256 0d1fdc131574d574b2852618145d3cc1b5cc17446083ce2c170240207365ff63）\n修订方向：明确错误处理约定\n以下批注与回复冻结于本轮开始执行时；只处理这些条目，后来补充的意见不属于本轮：\n1. [b9f2f00c-b4c2-40d8-93c2-9f6ca200ec08] 整件文件 · 作者 01a17794-b15f-790c-b79c-075c6d79c69e：补充登录失败的状态码与重试提示\n参考材料：无\n你的最终说明是待人工核对的报告，不会自动关闭批注；不要声称已获得审阅人确认。",
+    "sourceCopy": {
+      "artifactId": "b8a9f618-8d3d-49bf-889e-c358eaf87f8f",
+      "title": "接口实现报告",
+      "sha256": "0d1fdc131574d574b2852618145d3cc1b5cc17446083ce2c170240207365ff63",
+      "byteSize": 52,
+      "fileSha256": "0d1fdc131574d574b2852618145d3cc1b5cc17446083ce2c170240207365ff63"
+    },
+    "revisionRunId": "f749555e-4666-478f-a555-1b504bce6790",
+    "output": "已按冻结意见修订：补充登录失败的状态码与重试提示；方向：明确错误处理约定",
+    "candidateId": "2381edbd-70a5-4606-bb1b-cd868525a14b",
+    "candidateSha256": "c3d8768b918f1693be81799f448bc033ad9a62dcb7d05bbec0d22d942043707c",
+    "privateContentStatus": 404,
+    "hiddenCandidate": null,
+    "publishedContentStatus": 200,
+    "basis": {
+      "artifactId": "b8a9f618-8d3d-49bf-889e-c358eaf87f8f",
+      "taskId": "01a17794-bae0-7e72-8a43-5f1fbbcc5987",
+      "sourceRun": {
+        "id": "27157dca-924d-467a-96ad-c7cd32ed3c58",
+        "createdAt": "2026-10-26T09:40:04.072Z",
+        "status": "completed"
+      },
+      "agreement": {
+        "status": "bound",
+        "revision": {
+          "id": "01a17794-cc07-72ea-aafb-432fdd58ccc0",
+          "revisionNumber": 1,
+          "content": {
+            "goal": "交付登录接口与用例",
+            "constraints": "沿用会话中间件",
+            "acceptance": "单元测试通过",
+            "openQuestions": ""
+          },
+          "confirmedByUserId": "01a17794-b091-7afd-b74f-bd905bb0a1d5",
+          "confirmedAt": "2026-10-26T09:40:02.824Z"
+        }
+      },
+      "taskInputs": {
+        "status": "recorded",
+        "complete": true,
+        "artifacts": []
+      },
+      "handoffInputs": {
+        "status": "not_selected",
+        "complete": true,
+        "artifacts": []
+      },
+      "handoffs": [
+        {
+          "id": "01a17794-dc64-7db4-9d34-5a7f03c5a2d8",
+          "revisionNumber": 1,
+          "publishedByUserId": "01a17794-b091-7afd-b74f-bd905bb0a1d5",
+          "publishedAt": "2026-10-26T09:40:06.884Z",
+          "narrative": {
+            "completed": [
+              {
+                "text": "登录接口与用例已实现",
+                "verified": false,
+                "refs": []
+              }
+            ],
+            "interfaces": [
+              {
+                "text": "POST /auth/login 返回会话 cookie",
+                "verified": false,
+                "refs": []
+              }
+            ],
+            "unfinished": [],
+            "decisions": [
+              {
+                "text": "沿用既有会话中间件，不引入新依赖",
+                "verified": false,
+                "refs": []
+              }
+            ],
+            "evidence": [
+              {
+                "text": "候选材料已产出（接口实现报告）",
+                "verified": false,
+                "refs": [
+                  {
+                    "kind": "url",
+                    "url": "https://e2e.local/report"
+                  }
+                ]
+              }
+            ],
+            "downstream": [
+              {
+                "text": "前端按接口约定接入登录页",
+                "verified": false,
+                "refs": []
+              }
+            ],
+            "commits": [
+              "0f1e2d3"
+            ],
+            "prs": []
+          },
+          "referencesComplete": true
+        }
+      ]
+    }
+  },
+  "officeLoop": {
+    "component": "web.office-preview-loop",
+    "source": "production-hub-node-runtime",
+    "artifactId": "17bbed44-e838-40be-836f-3be747321448",
+    "taskId": "01a17794-bae0-7e72-8a43-5f1fbbcc5987",
+    "runId": "f749555e-4666-478f-a555-1b504bce6790",
+    "sourceSha": "03af0255f10a261b7edad253fdc599d7881b8888b1e0e986b57b106fa3375351",
+    "previewSourceSha": "03af0255f10a261b7edad253fdc599d7881b8888b1e0e986b57b106fa3375351",
+    "previewByteSize": 12929,
+    "finalArtifactId": "17bbed44-e838-40be-836f-3be747321448",
+    "finalArtifactSha": "03af0255f10a261b7edad253fdc599d7881b8888b1e0e986b57b106fa3375351",
+    "expectedReviewerUserId": "01a17794-b15f-790c-b79c-075c6d79c69e",
+    "statusBeforePublish": "candidate",
+    "statusAfterPublish": "published",
+    "previewStatus": "ready",
+    "original": {
+      "status": 200,
+      "mediaType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "byteSize": 881,
+      "signature": "PK\u0003\u0004\u0014",
+      "sha256": "03af0255f10a261b7edad253fdc599d7881b8888b1e0e986b57b106fa3375351"
+    },
+    "ownerReader": {
+      "visible": true,
+      "sourceScheme": "blob:",
+      "mediaType": "application/pdf",
+      "byteSize": 12929,
+      "signature": "%PDF-",
+      "sha256": "ce9f760de168b863ce8d67b516b330ecf8e6ef033dbf84679dff279a76240e31"
+    },
+    "ownerPdf": {
+      "status": 200,
+      "mediaType": "application/pdf",
+      "byteSize": 12929,
+      "signature": "%PDF-",
+      "sha256": "ce9f760de168b863ce8d67b516b330ecf8e6ef033dbf84679dff279a76240e31"
+    },
+    "privacy": {
+      "original": 404,
+      "preview": 404,
+      "info": 404
+    },
+    "memberReader": {
+      "visible": true,
+      "sourceScheme": "blob:",
+      "mediaType": "application/pdf",
+      "byteSize": 12929,
+      "signature": "%PDF-",
+      "sha256": "ce9f760de168b863ce8d67b516b330ecf8e6ef033dbf84679dff279a76240e31"
+    },
+    "memberOriginal": {
+      "status": 200,
+      "mediaType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "byteSize": 881,
+      "signature": "PK\u0003\u0004\u0014",
+      "sha256": "03af0255f10a261b7edad253fdc599d7881b8888b1e0e986b57b106fa3375351"
+    },
+    "memberPdf": {
+      "status": 200,
+      "mediaType": "application/pdf",
+      "byteSize": 12929,
+      "signature": "%PDF-",
+      "sha256": "ce9f760de168b863ce8d67b516b330ecf8e6ef033dbf84679dff279a76240e31"
+    },
+    "commentId": "9ce77c53-8df7-4ed4-80ec-f8c665717c10",
+    "comment": "Office 阅读后复核：请补充表格边界条件。",
+    "commentKind": "whole",
+    "commentAuthorUserId": "01a17794-b15f-790c-b79c-075c6d79c69e",
+    "commentArtifactId": "17bbed44-e838-40be-836f-3be747321448",
+    "commentAnchor": null,
+    "commentParentCommentId": null
+  },
+  "delivery": {
+    "receiptId": "7e389ebd-2c23-4087-b53b-4d7610f6fbcc",
+    "downstreamTaskId": "01a17795-0380-7d73-b975-a147d0524a52",
+    "receiverUserId": "01a17794-b15f-790c-b79c-075c6d79c69e",
+    "statusAfterDeliver": "pending",
+    "deliveriesRows": 1
+  },
+  "confirm": {
+    "statusAfterConfirm": "confirmed",
+    "understandingFirst": "先接登录页，复用会话中间件。",
+    "assignmentStatusAfterConfirm": "pending",
+    "runsAfterConfirm": 0,
+    "repeatConfirmStatus": 200,
+    "rowsAfterRepeatConfirm": 1,
+    "understandingAfterRepeatConfirm": "先接登录页，复用会话中间件。"
+  },
+  "downstream": {
+    "runId": "1f1497c7-3063-4a74-8b61-43d9d568ebb8",
+    "checkboxDefaultChecked": true,
+    "handoffInput": {
+      "upstreamTaskId": "01a17794-bae0-7e72-8a43-5f1fbbcc5987",
+      "revisionNumber": 1,
+      "artifactId": "b8a9f618-8d3d-49bf-889e-c358eaf87f8f",
+      "sha256": "0d1fdc131574d574b2852618145d3cc1b5cc17446083ce2c170240207365ff63"
+    },
+    "nodeCopy": {
+      "artifactId": "b8a9f618-8d3d-49bf-889e-c358eaf87f8f",
+      "sha256": "0d1fdc131574d574b2852618145d3cc1b5cc17446083ce2c170240207365ff63",
+      "fileSha256": "0d1fdc131574d574b2852618145d3cc1b5cc17446083ce2c170240207365ff63"
+    }
+  },
+  "updateIsolation": {
+    "runId": "1f1497c7-3063-4a74-8b61-43d9d568ebb8",
+    "latestRevisionNumber": 2,
+    "receiptsRowsAfterV2": 1,
+    "runInputRevisionNumberAfterV2": 1,
+    "runInputRevisionIdBeforeV2": "01a17794-dc64-7db4-9d34-5a7f03c5a2d8",
+    "runInputRevisionIdAfterV2": "01a17794-dc64-7db4-9d34-5a7f03c5a2d8"
+  },
+  "semantic": {
+    "agreementGoal": "交付登录接口与用例",
+    "agreementAcceptance": "单元测试通过",
+    "agreementOutput": "登录接口已实现，候选材料已产出。执行约定：交付登录接口与用例；单元测试通过",
+    "handoffStatement": "沿用既有会话中间件，不引入新依赖",
+    "receiverVisibleText": "已发布交接正文 · v1\n\n完成项\n登录接口与用例已实现 待核实\n接口约定\nPOST /auth/login 返回会话 cookie 待核实\n未完成项\n\n未提供\n\n关键决定\n沿用既有会话中间件，不引入新依赖 待核实\n验证证据\n候选材料已产出（接口实现报告） 待核实\n\nhttps://e2e.local/report\n\n下游行动\n前端按接口约定接入登录页 待核实\n\n提交：0f1e2d3\n\nPR：未提供\n\n接口实现报告 0d1fdc131574d574b2852618145d3cc1b5cc17446083ce2c170240207365ff63",
+    "understanding": "先接登录页，复用会话中间件。",
+    "downstreamOutput": "交接实际消费：沿用既有会话中间件，不引入新依赖；先接登录页，复用会话中间件。"
+  },
+  "finalization": {
+    "beforeReview": "in_progress",
+    "afterSubmit": "in_review",
+    "afterComplete": "done"
+  }
+}

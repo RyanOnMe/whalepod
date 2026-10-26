@@ -35,7 +35,13 @@ if (drive.status !== 0 || drive.signal !== null || drive.error !== undefined) {
 } else {
   const verify = spawnSync(
     'pnpm',
-    ['exec', 'tsx', 'scripts/verify-handoff-loop-evidence.mts', resultPath],
+    [
+      'exec',
+      'tsx',
+      'scripts/verify-handoff-loop-evidence.mts',
+      resultPath,
+      ...(process.env['WHALEPOD_E2E_OFFICE_PREVIEW'] === '1' ? ['--office'] : []),
+    ],
     { cwd: root, stdio: 'inherit' },
   )
   process.exitCode = verify.status ?? 2

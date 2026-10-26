@@ -1,4 +1,6 @@
 import { showAgentCreation } from './helpers.js'
+import { driveDeliveryReviewLoop } from './delivery-review-loop.js'
+import { driveOfficePreviewLoop } from './office-preview-loop.js'
 /**
  * #381 两成员交接闭环的生产验收（Q5，project `p1-381`）。
  *
@@ -54,7 +56,7 @@ const EVIDENCE_DIR = join(process.cwd(), 'artifacts', 'evidence', 'handoff-loop'
 interface RoomFact {
   task: { id: string; assignmentStatus: string; status: string }
   runs: Array<{ id: string; status: string; purpose: string }>
-  artifacts: Array<{ id: string; status: string; sha256: string }>
+  artifacts: Array<{ id: string; title: string; status: string; sha256: string }>
 }
 
 const shared: {
@@ -77,6 +79,8 @@ const facts = {
   agreementDraft: {} as Record<string, unknown>,
   backend: {} as Record<string, unknown>,
   privacy: {} as Record<string, unknown>,
+  reviewLoop: {} as Record<string, unknown>,
+  officeLoop: {} as Record<string, unknown>,
   delivery: {} as Record<string, unknown>,
   confirm: {} as Record<string, unknown>,
   downstream: {} as Record<string, unknown>,
@@ -205,7 +209,7 @@ async function startRunViaUi(
 }
 
 test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（含负向面）', async () => {
-  test.setTimeout(420_000)
+  test.setTimeout(600_000)
   const alice = await shared.aliceContext!.newPage()
   const bob = await shared.bobContext!.newPage()
   shared.alice = alice
@@ -447,6 +451,33 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   facts.privacy = { ownerReadStatus: ownerRead.status, otherMemberReadStatus: memberRead.status }
   expect(ownerRead.status).toBe(200)
   expect(memberRead.status).toBe(404)
+
+  facts.reviewLoop = await driveDeliveryReviewLoop({
+    alice,
+    bob,
+    aliceCookie: shared.aliceCookie,
+    bobCookie: shared.bobCookie,
+    taskId: shared.upstreamTaskId,
+    sourceArtifactId: publishedArtifact!.id,
+    sourceSha256: publishedArtifact!.sha256,
+    sourceRunId: shared.upstreamRunId,
+    reviewerUserId: shared.bobUserId!,
+  })
+  if (process.env['WHALEPOD_E2E_OFFICE_PREVIEW'] === '1') {
+    const officeArtifact = (await roomOf(shared.aliceCookie, shared.upstreamTaskId)).artifacts.find(
+      (row) => row.title === 'Office 预览样本',
+    )
+    expect(officeArtifact).toBeDefined()
+    facts.officeLoop = await driveOfficePreviewLoop({
+      alice,
+      bob,
+      aliceCookie: shared.aliceCookie,
+      bobCookie: shared.bobCookie,
+      taskId: shared.upstreamTaskId,
+      artifactId: officeArtifact!.id,
+    })
+  }
+  await alice.goto(`/tasks/${shared.upstreamTaskId}`)
 
   // ---------- 5. 交付给 Bob（建下游任务）----------
   await alice.reload()
