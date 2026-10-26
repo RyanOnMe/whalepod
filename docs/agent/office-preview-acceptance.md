@@ -14,8 +14,10 @@ Agent 产出 `.docx/.xlsx/.pptx` → Node 采集原件并上传候选 → Node �
 ## 驱动（怎么触发）
 
 ```bash
-# Node：格式判定、生成器、上传客户端、真实 soffice 烟测（无 soffice 时自动跳过）
+# 协议/历史投影安全 + Node 格式、生成、上传与真实 soffice 烟测（无 soffice 时跳过）
 pnpm exec vitest run --project unit \
+  packages/protocol/tests/artifact-preview.spec.ts \
+  apps/hub/tests/artifact-preview-projection.spec.ts \
   apps/node/tests/artifact-preview.spec.ts \
   apps/node/tests/artifact-preview-upload-client.spec.ts \
   apps/node/tests/artifact-collect.spec.ts
@@ -63,6 +65,10 @@ XLSX（CSV）与 PPTX（最小 FODP）三份真实样本，再逐一调用 `conv
   手动刷新；发布后复用 `artifact.changed` 的审阅缓存失效前缀。
 - Node 临时目录：`artifact-previews/preview-*` 与 soffice profile 转换结束即清理；
   失败日志只带 runId/artifactId/稳定原因码，不带绝对路径。
+- 诊断元数据由 Hub 守边界：新写入的 `failureReason` 仅四种稳定码，未知错误原文统一
+  为 `CONVERT_FAILED`；`converter` 仅 `libreoffice` / `unknown`，LibreOffice/soffice
+  名称与纯数字版本接受后只保存受控名称。历史行读取和旧 command receipt 重放同样
+  再次归一化；不依赖 Web 隐藏原文，也不依赖 Node 自行脱敏。
 
 ## 判定（成功长什么样）
 
@@ -82,6 +88,9 @@ XLSX（CSV）与 PPTX（最小 FODP）三份真实样本，再逐一调用 `conv
   回收、403/错误内容类型回退、摘要不符、超限、元数据拒绝、非 Office 零额外请求。
   入口覆盖拥有者候选、他人候选零查询、三格式审阅页仍可整件批注；文本阅读保持原路径。
 - 以上任一断言缺数据或形状不符即 FAIL（Zod strict + 集成断言）。
+- 安全负控走真实 HTTP：设备在 failed/ready 元数据里塞入路径式文本和伪凭据，断言
+  Session 团队读面、预览表、事件、同键重放均不含原文；协议拒绝非受控输出。旧行与
+  旧回执只在 repository seam 模拟，不往运行时业务表直插伪造历史。
 
 ## 归因（失败先看哪层）
 
@@ -99,7 +108,7 @@ XLSX（CSV）与 PPTX（最小 FODP）三份真实样本，再逐一调用 `conv
 
 ```bash
 git log --oneline feat/p1-441-office-preview-ui
-# 上方命令复跑；先红测试提交 ea8a157，后端 619388a..d03c56d 保留
+# 上方命令复跑；UI 先红 ea8a157，诊断安全先红 8232996；后端 619388a..d03c56d 保留
 ```
 
 ## 边界与未覆盖

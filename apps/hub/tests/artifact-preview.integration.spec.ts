@@ -465,18 +465,28 @@ describe('artifact preview (#431)', () => {
     const privateDetail = 'workspace/private.docx credential=fixture-sensitive-value'
     const key = idemKey()
     const response = await postFailure(bobToken, artifactId, {
-      key, converter: privateDetail, reason: privateDetail,
+      key,
+      converter: privateDetail,
+      reason: privateDetail,
     })
     expect(response.statusCode).toBe(200)
-    expect(response.json().data).toMatchObject({ converter: 'unknown', failureReason: 'CONVERT_FAILED' })
+    expect(response.json().data).toMatchObject({
+      converter: 'unknown',
+      failureReason: 'CONVERT_FAILED',
+    })
     const shared = await info(alice.cookie, artifactId)
     expect(shared.statusCode).toBe(200)
-    expect(shared.json().data).toMatchObject({ converter: 'unknown', failureReason: 'CONVERT_FAILED' })
+    expect(shared.json().data).toMatchObject({
+      converter: 'unknown',
+      failureReason: 'CONVERT_FAILED',
+    })
     const replay = await postFailure(bobToken, artifactId, { key, reason: 'CONVERT_TIMEOUT' })
     expect(replay.json().data.failureReason).toBe('CONVERT_FAILED')
     const rows = await previewRows()
     expect(rows[0]).toMatchObject({ converter: 'unknown', failureReason: 'CONVERT_FAILED' })
-    expect(JSON.stringify([response.json(), shared.json(), replay.json(), rows, await previewEvents()])).not.toContain(privateDetail)
+    expect(
+      JSON.stringify([response.json(), shared.json(), replay.json(), rows, await previewEvents()]),
+    ).not.toContain(privateDetail)
   })
 
   it('ready 上报的转换器同样受白名单保护，版本标识只保留受控名称', async () => {
@@ -489,9 +499,15 @@ describe('artifact preview (#431)', () => {
     expect((await info(alice.cookie, artifactId)).json().data.converter).toBe('unknown')
     expect((await previewRows())[0]?.converter).toBe('unknown')
     const other = await uploadCandidate()
-    const accepted = await postFailure(bobToken, other, { converter: 'soffice/26.8.1', reason: 'PREVIEW_TOO_LARGE' })
+    const accepted = await postFailure(bobToken, other, {
+      converter: 'soffice/26.8.1',
+      reason: 'PREVIEW_TOO_LARGE',
+    })
     expect(accepted.statusCode).toBe(200)
-    expect(accepted.json().data).toMatchObject({ converter: 'libreoffice', failureReason: 'PREVIEW_TOO_LARGE' })
+    expect(accepted.json().data).toMatchObject({
+      converter: 'libreoffice',
+      failureReason: 'PREVIEW_TOO_LARGE',
+    })
   })
 
   it('失败上报 schema strict：未知字段 → 400，不落预览行', async () => {
