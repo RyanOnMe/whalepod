@@ -156,6 +156,7 @@ export async function driveOfficePreviewLoop(input: Input): Promise<Record<strin
   const review = await hubApi(bobCookie, 'GET', `/artifacts/${artifactId}/review`)
   expect(review.status).toBe(200)
   const finalReview = review.data as ArtifactReviewView
+  expect(finalReview.artifact.id).toBe(artifactId)
   expect(finalReview.artifact.sha256).toBe(artifact!.sha256)
   expect(finalReview.artifact.status).toBe('published')
   const recorded = finalReview.comments.find((row) => row.body === comment)
@@ -174,6 +175,10 @@ export async function driveOfficePreviewLoop(input: Input): Promise<Record<strin
     runId: artifact!.runId,
     sourceSha: artifact!.sha256,
     previewSourceSha: info.sourceSha256,
+    previewByteSize: info.byteSize,
+    finalArtifactId: finalReview.artifact.id,
+    finalArtifactSha: finalReview.artifact.sha256,
+    expectedReviewerUserId: (member.data as { userId: string }).userId,
     statusBeforePublish: artifact!.status,
     statusAfterPublish: finalReview.artifact.status,
     previewStatus: info.status,
@@ -193,5 +198,7 @@ export async function driveOfficePreviewLoop(input: Input): Promise<Record<strin
     commentKind: recorded!.kind,
     commentAuthorUserId: recorded!.authorUserId,
     commentArtifactId: recorded!.artifactId,
+    commentAnchor: recorded!.anchor,
+    commentParentCommentId: recorded!.parentCommentId,
   }
 }
