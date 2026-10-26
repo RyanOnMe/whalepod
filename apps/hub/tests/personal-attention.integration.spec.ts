@@ -546,16 +546,40 @@ describe('revision start recovery via member HTTP (#430)', () => {
     expect(await reviewRuns(roundId)).toHaveLength(1)
   })
 
-  it('parallel starts with different keys all observe the same round Run', async () => {
+  it.each(['same', 'different'] as const)(
+    'parallel starts with %s keys all observe the same round Run',
+    async (mode) => {
+      const { roundId } = await reviewRoundForRecovery()
+      const sharedKey = randomUUID()
+      const responses = await Promise.all(
+        Array.from({ length: 4 }, () =>
+          command(
+            `/artifact-revision-rounds/${roundId}/start`,
+            revisionInput(),
+            mode === 'same' ? sharedKey : randomUUID(),
+          ),
+        ),
+      )
+      for (const response of responses) expect(response.statusCode, response.body).toBe(200)
+      expect(new Set(responses.map((response) => response.json().data.runId)).size).toBe(1)
+      expect(await reviewRuns(roundId)).toHaveLength(1)
+    },
+  )
+
+  it('rechecks the assignee after reassignment commits before the start transaction', async () => {
     const { roundId } = await reviewRoundForRecovery()
-    const responses = await Promise.all(
-      Array.from({ length: 4 }, () =>
-        command(`/artifact-revision-rounds/${roundId}/start`, revisionInput()),
-      ),
-    )
-    for (const response of responses) expect(response.statusCode, response.body).toBe(200)
-    expect(new Set(responses.map((response) => response.json().data.runId)).size).toBe(1)
-    expect(await reviewRuns(roundId)).toHaveLength(1)
+    const transaction = db.transaction.bind(db)
+    const interleave: Database['transaction'] = async (execute, options) => {
+      const reassigned = await command(`/tasks/${taskId}/reassign`, { assigneeUserId: bob.userId })
+      expect(reassigned.statusCode, reassigned.body).toBe(200)
+      return transaction(execute, options)
+    }
+    // Interleave after the route's initial actor read, before it obtains the Task lock.
+    vi.spyOn(db, 'transaction').mockImplementationOnce(interleave)
+    const denied = await command(`/artifact-revision-rounds/${roundId}/start`, revisionInput())
+    expect(denied.statusCode, denied.body).toBe(403)
+    expect(await reviewRuns(roundId)).toHaveLength(0)
+    expect((await getArtifactRevisionRound(db.db, roundId))?.status).toBe('preparing')
   })
 
   it('legacy committed Run is rebound instead of creating another Run', async () => {

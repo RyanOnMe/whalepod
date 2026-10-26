@@ -113,3 +113,14 @@ pnpm check
 ### 集成审查补充
 
 已发布产物也可从本轮 Run 的显式选择菜单关联为新版（成员可能先在任务文件卡发布，再进入审阅页）；不根据文件名或最近产物自动关联。执行入口定位 `#task-execution`。独立红色提交 `5c52268` 中两例失败，修复后 `revision-loop.spec.tsx` 11 例通过；此后未重复全仓测试。
+
+
+## 2026-10-26 评审修复：认领与 Run 原子启动
+
+旧实现会在认领提交后、Run 提交前退出时永久停留在 `starting`。当前启动以同一 `transactCommand` 事务完成 Task→round 加锁、责任复验、认领、原有 Run 核心、outbox、批次绑定、事件和回执；异常整体回滚。旧 `starting` 有 Run 则恢复绑定，无 Run 则在排他锁内继续创建，不做无锁重置。
+
+复跑：`pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration apps/hub/tests/personal-attention.integration.spec.ts apps/hub/tests/revision-round.integration.spec.ts`。
+
+新增判据通过真实成员 HTTP、配对和 Node 协议事件准备 Run/Artifact，不插业务表制造运行状态：旧生产认领后退出、Run/outbox 写后提交前故障回滚、同键/不同键并发均只有一条 Run、旧已提交 Run 恢复、事务前改派后旧责任人被拒。旧认领和既有 Run 的构造是显式可控故障缝，直接调用当时同一生产认领/编排方法；故障缝不得代替真实 Run 的正常驱动。摘要证据在 `artifacts/evidence/revision-start-recovery/summary.json`。
+
+定位 `starting` 遗留时先看 `hub.review` 的 Task/round 锁与 `run.review_input.roundId`，再看 Run/outbox 与命令回执是否同事务。事务外持锁后再另开 Run 创建事务是错误装配。该修复不自动重放终态 Run 或可能有副作用的工具；真实模型质量和发布级 Q5 仍由各自验收负责。

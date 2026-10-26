@@ -1,0 +1,39 @@
+{
+  "component": "hub.review.start",
+  "issue": 430,
+  "baseCommit": "005211d074d515ed577ff28ad31324d7fc09f7c7",
+  "redCommit": "8874147",
+  "driver": "real member HTTP + real PostgreSQL + production RunOrchestrator + Node protocol facts; explicit legacy crash seams",
+  "red": {
+    "filesFailed": 1,
+    "testsFailed": 3,
+    "testsPassed": 11
+  },
+  "green": {
+    "filesPassed": 2,
+    "testsPassed": 25
+  },
+  "checks": [
+    "legacy durable claim before Run commit recovers",
+    "post-Run/outbox-write failure rolls back all effects",
+    "same-key concurrent requests return one Run",
+    "different-key concurrent requests return one Run",
+    "legacy committed Run is rebound once",
+    "reassignment before transaction denies old assignee"
+  ],
+  "notRun": [
+    "OS-level SIGKILL at every instruction",
+    "mixed-version multi-Hub writers",
+    "real model revision quality"
+  ],
+  "nodeVersion": "24.12.0",
+  "checksPassed": {
+    "build": true,
+    "hubTypecheckIncludingTests": true,
+    "unitTests": 5,
+    "integrationTests": 25,
+    "format": true,
+    "lint": true,
+    "secretScan": true
+  }
+}
