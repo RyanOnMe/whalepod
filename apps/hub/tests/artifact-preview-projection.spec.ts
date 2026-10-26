@@ -4,6 +4,7 @@ import type { Database, DbHandle } from '@whalepod/db'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   getArtifactPreviewInfo,
+  readArtifactPreview,
   recordArtifactPreview,
   recordArtifactPreviewFailure,
 } from '../src/modules/artifact/preview.js'
@@ -98,5 +99,64 @@ describe('preview legacy metadata disclosure', () => {
     )
     expect(view).toMatchObject({ converter: 'unknown', failureReason: null })
     expect(JSON.stringify(view)).not.toContain(PRIVATE_DETAIL)
+  })
+})
+
+describe('preview isolation suspension includes historical data', () => {
+  it('does not expose any legacy ready PDF or its metadata', async () => {
+    reads.preview.mockResolvedValue({
+      ...row,
+      status: 'ready',
+      failureReason: null,
+      mediaType: 'application/pdf',
+      byteSize: 5,
+      storageKey: 'safe',
+      sha256: SHA,
+    })
+    const view = await getArtifactPreviewInfo(
+      {} as DbHandle,
+      { userId: asUserId(ID), role: 'member' },
+      ID,
+    )
+    expect(view).toMatchObject({
+      status: 'failed',
+      sourceSha256: SHA,
+      converter: 'unknown',
+      failureReason: 'ISOLATION_REQUIRED',
+      mediaType: null,
+      byteSize: null,
+      updatedAt: null,
+    })
+    const store = {
+      readVerified: vi.fn().mockResolvedValue(Buffer.from('%PDF-')),
+    } as unknown as ArtifactStore
+    await expect(
+      readArtifactPreview({} as DbHandle, store, { userId: asUserId(ID), role: 'member' }, ID),
+    ).rejects.toMatchObject({ code: 'PREVIEW_UNAVAILABLE' })
+    expect(store.readVerified).not.toHaveBeenCalled()
+  })
+  it('rejects old ready command receipts before storing or replaying unisolated bytes', async () => {
+    reads.transact.mockResolvedValue({
+      ...oldReceipt,
+      status: 'ready',
+      failureReason: null,
+      mediaType: 'application/pdf',
+      byteSize: 5,
+    })
+    const store = {
+      saveUpload: vi.fn().mockResolvedValue({ storageKey: 'safe', sha256: SHA, byteSize: 5 }),
+    } as unknown as ArtifactStore
+    await expect(
+      recordArtifactPreview(
+        database,
+        store,
+        { deviceId: ID, artifactId: ID },
+        { sourceSha256: SHA, sha256: SHA, byteSize: 5, converter: 'libreoffice' },
+        Buffer.from('%PDF-'),
+        'old-key',
+      ),
+    ).rejects.toMatchObject({ code: 'PREVIEW_UNAVAILABLE' })
+    expect(store.saveUpload).not.toHaveBeenCalled()
+    expect(reads.transact).not.toHaveBeenCalled()
   })
 })
