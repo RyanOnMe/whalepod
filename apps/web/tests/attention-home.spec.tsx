@@ -28,6 +28,8 @@ const labels = {
   decide_approval: '处理审批',
   confirm_handoff: '确认接收交接',
   submit_review: '提交审阅意见',
+  organize_feedback: '处理审阅反馈',
+  resolve_comments: '复核修订结果',
   inspect_candidate: '检查候选',
   complete_task: '确认完成',
 } as const
@@ -52,7 +54,11 @@ function fixture(
     objectId:
       kind === 'inspect_candidate'
         ? artifact.id
-        : kind === 'decide_approval' || kind === 'confirm_handoff' || kind === 'submit_review'
+        : kind === 'decide_approval' ||
+            kind === 'confirm_handoff' ||
+            kind === 'submit_review' ||
+            kind === 'organize_feedback' ||
+            kind === 'resolve_comments'
           ? CARD
           : task.id,
     runId: kind === 'inspect_candidate' || kind === 'decide_approval' ? run.id : null,
@@ -259,13 +265,16 @@ describe('首页个人行动入口 (#332)', () => {
     }
     expect(f.fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
   })
-  it('审阅待办直达准确版本的独立审阅页，不先回任务再找文件卡', async () => {
-    const f = fixture('submit_review')
-    expect(
-      await screen.findByRole('link', { name: `提交审阅意见 · ${f.task.title}` }),
-    ).toHaveAttribute('href', `/tasks/${f.task.id}/review/${CARD}`)
-    expect(f.fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
-  })
+  it.each(['submit_review', 'organize_feedback', 'resolve_comments'] as const)(
+    '%s 待办直达准确版本的独立审阅页',
+    async (kind) => {
+      const f = fixture(kind)
+      expect(
+        await screen.findByRole('link', { name: `${labels[kind]} · ${f.task.title}` }),
+      ).toHaveAttribute('href', `/tasks/${f.task.id}/review/${CARD}`)
+      expect(f.fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
+    },
+  )
   it('异步审批卡准备好后定位具体审批，不自动批准', async () => {
     const user = userEvent.setup()
     let release!: () => void

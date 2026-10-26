@@ -151,6 +151,22 @@ export class RunOrchestrator {
     }
   }
 
+  /**
+   * Compose a Run with another server command in its existing transaction.
+   * The caller owns the resource/idempotency lock; all Run guards, snapshots,
+   * Task transition and outbox writes still use the same creation core.
+   * Never open a second create() transaction while holding the Task lock.
+   */
+  async createWithinTransaction(
+    tx: Tx,
+    ctx: ActorContext,
+    taskId: string,
+    input: CreateRunInput,
+  ): Promise<RunView> {
+    assertCreateRunInput(input)
+    return this.createInTransaction(tx, ctx, taskId.toLowerCase(), input, this.nowFn())
+  }
+
   private async createInTransaction(
     tx: Tx,
     ctx: ActorContext,
@@ -361,7 +377,11 @@ export class RunOrchestrator {
       expectedProfileDigest: revision.profileDigest,
       expectedPluginPackDigest: pack.packDigest,
       prompt: input.prompt,
-      executionContext: buildExecutionContext(specRevision, handoffInput),
+      executionContext: buildExecutionContext(
+        specRevision,
+        handoffInput,
+        input.reviewInput ?? null,
+      ),
       // 切片⑧：解析后的档位成对固化（run.start 与 runs 行同值，Node 只透传）。
       approvalPolicy,
       // #379：收尾交接草稿的触发与约定快照（缺省 = 不生成）。
@@ -394,6 +414,7 @@ export class RunOrchestrator {
       workspaceId: workspace.id,
       artifactInputManifest,
       ...(handoffInput !== null ? { handoffInput } : {}),
+      ...(input.reviewInput !== undefined ? { reviewInput: input.reviewInput } : {}),
       ...(specRevisionId !== null ? { specRevisionId } : {}),
       ...(input.purpose !== undefined ? { purpose: input.purpose } : {}),
       profileDigest: revision.profileDigest,

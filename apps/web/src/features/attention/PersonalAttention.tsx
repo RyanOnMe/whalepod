@@ -15,12 +15,14 @@ const LABELS: Record<AttentionItem['kind'], string> = {
   decide_approval: '处理审批',
   confirm_handoff: '确认接收交接',
   submit_review: '提交审阅意见',
+  organize_feedback: '处理审阅反馈',
+  resolve_comments: '复核修订结果',
   inspect_candidate: '检查候选',
   complete_task: '确认完成',
 }
 function destination(item: AttentionItem): string {
   // 审阅页是独立路由：待办直达准确版本，而不是先回任务页再找文件卡。
-  if (item.kind === 'submit_review') {
+  if (['submit_review', 'organize_feedback', 'resolve_comments'].includes(item.kind)) {
     return `/tasks/${item.taskId}/review/${item.objectId}`
   }
   const anchor =
@@ -41,7 +43,9 @@ function category(kind: AttentionItem['kind']): 'approval' | 'delivery' | 'assig
     : kind === 'inspect_candidate' ||
         kind === 'complete_task' ||
         kind === 'confirm_handoff' ||
-        kind === 'submit_review'
+        kind === 'submit_review' ||
+        kind === 'organize_feedback' ||
+        kind === 'resolve_comments'
       ? 'delivery'
       : 'assignment'
 }

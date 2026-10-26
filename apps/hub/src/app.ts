@@ -235,7 +235,14 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         requireActor,
       })
       // #429：交付物审阅面（批注线程 + 审阅邀请 + 提交意见）复用同一 Store。
-      registerReviewRoutes(api, { database, store: artifactStore, requireActor })
+      registerReviewRoutes(api, {
+        database,
+        store: artifactStore,
+        requireActor,
+        orchestrator,
+        dshDistributionVersionFor: (deviceId) =>
+          getDeviceDshDistributionVersion(database.db, deviceId),
+      })
       // P1-13：Run HTTP 面（创建/投影/事件时间线）正式接线；dsh 版本取自
       // node.hello 回填的设备事实列（缺 = 设备不在线 → DEVICE_OFFLINE）。
       registerRunRoutes(api, {

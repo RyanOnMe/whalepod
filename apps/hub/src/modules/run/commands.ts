@@ -1,5 +1,5 @@
 import type { Actor } from '@whalepod/domain'
-import { CreateRunRequestSchema } from '@whalepod/protocol'
+import { CreateRunRequestSchema, type ReviewInputManifest } from '@whalepod/protocol'
 import { RunCommandError } from './errors.js'
 
 /** 命令层入口的调用者身份：即 domain policy 的 Actor。 */
@@ -29,6 +29,11 @@ export interface CreateRunInput {
    * 缺省时重跑/续跑继承来源 Run 的交接快照，全新执行则不带。
    */
   handoffReceiptId?: string
+  /**
+   * 本轮交付物审阅修订输入（#430；ADR-0021 §5）：由修订批次启动命令在创建事务
+   * 之外冻结并传入；普通 Run 入口不暴露该字段。
+   */
+  reviewInput?: ReviewInputManifest
   /** 缺省时取 Agent 当前 Revision（§2.3）。 */
   profileRevisionId?: string
   deviceId: string

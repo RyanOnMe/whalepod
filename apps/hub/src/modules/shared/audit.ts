@@ -38,6 +38,10 @@ export type AuditAction =
   | 'artifact.comment.create'
   | 'artifact.review.invite'
   | 'artifact.review.submit'
+  | 'artifact.review.round_create'
+  | 'artifact.review.round_start'
+  | 'artifact.review.candidate_link'
+  | 'artifact.review.comment_resolve'
 
 export type AuditOutcome = 'success' | 'denied' | 'rate_limited'
 

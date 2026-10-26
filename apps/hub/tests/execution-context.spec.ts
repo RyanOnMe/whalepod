@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest'
 import {
   HandoffInputManifestSchema,
   emptyHandoffNarrative,
+  ReviewInputManifestSchema,
   type HandoffInputManifest,
+  type ReviewInputManifest,
 } from '@whalepod/protocol'
 import { buildExecutionContext } from '../src/modules/run/execution-context.js'
 
@@ -56,6 +58,64 @@ describe('#396 固定上下文装配', () => {
     expect(buildExecutionContext(null, null)).toBe('')
     delete handoff.context
     expect(buildExecutionContext(null, handoff)).toContain('历史快照未记录')
+  })
+
+  it('#430 本轮审阅修订：原稿、方向、选定意见与回复进入固定上下文', () => {
+    const review: ReviewInputManifest = ReviewInputManifestSchema.parse({
+      roundId: randomUUID(),
+      sourceArtifact: {
+        artifactId: randomUUID(),
+        runId: randomUUID(),
+        title: '接口约定.md',
+        mediaType: 'text/markdown',
+        byteSize: 12,
+        sha256: 'a'.repeat(64),
+        publishedAt: '2026-10-23T00:00:00.000Z',
+      },
+      direction: '优先统一字段命名',
+      comments: [
+        {
+          commentId: randomUUID(),
+          authorUserId: randomUUID(),
+          kind: 'text',
+          anchor: { quote: 'orderId', prefix: '', suffix: '', start: 0, end: 7 },
+          body: '字段名要统一。',
+          createdAt: '2026-10-23T00:00:00.000Z',
+          replies: [
+            {
+              commentId: randomUUID(),
+              authorUserId: randomUUID(),
+              body: '本轮处理。',
+              createdAt: '2026-10-23T00:00:00.000Z',
+            },
+          ],
+        },
+      ],
+      references: [
+        {
+          artifactId: randomUUID(),
+          runId: randomUUID(),
+          title: '命名规范.md',
+          mediaType: 'text/markdown',
+          byteSize: 10,
+          sha256: 'b'.repeat(64),
+          publishedAt: '2026-10-23T00:00:00.000Z',
+        },
+      ],
+      frozenAt: '2026-10-23T00:00:00.000Z',
+    })
+    const text = buildExecutionContext(null, null, review)
+    for (const expected of [
+      '本轮交付物审阅修订',
+      '接口约定.md',
+      '优先统一字段命名',
+      '原文「orderId」',
+      '字段名要统一。',
+      '本轮处理。',
+      '命名规范.md',
+      '不会自动关闭批注',
+    ])
+      expect(text).toContain(expected)
   })
 
   it('装配结果超过 wire 上限时明确失败，不让合法输入变成 500', () => {

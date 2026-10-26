@@ -41,6 +41,37 @@ export async function personalAttention(
         join artifact_review_invitation i on i.artifact_id=a.id
       where i.reviewer_user_id=${actor.userId} and i.status='pending' and a.status='published'
       union all
+      select 'organize_feedback',t.id,t.title,t.project_name,a.id,null::uuid,min(c.created_at),3
+      from eligible t join artifact a on a.task_id=t.id and a.status='published'
+        join artifact_comment c on c.artifact_id=a.id and c.parent_comment_id is null
+        left join lateral (
+          select rr.id,rr.created_at,rr.run_id,r.status as run_status,candidate.status as candidate_status
+          from artifact_revision_round_comment rc
+            join artifact_revision_round rr on rr.id=rc.round_id
+            join run r on r.id=rr.run_id
+            left join artifact_revision_link link on link.round_id=rr.id
+            left join artifact candidate on candidate.id=link.candidate_artifact_id
+          where rc.comment_id=c.id and rr.status='started'
+          order by rr.created_at desc,rr.id desc limit 1
+        ) latest on true
+        left join artifact_comment_resolution resolution on resolution.round_id=latest.id and resolution.comment_id=c.id
+      where t.assignee_user_id=${actor.userId} and t.assignment_status='accepted'
+        and (latest.id is null or latest.run_status in ('failed','cancelled','lost')
+          or latest.candidate_status='rejected' or resolution.status='needs_work'
+          or exists (select 1 from artifact_comment reply where reply.parent_comment_id=c.id and reply.created_at>latest.created_at))
+      group by t.id,t.title,t.project_name,a.id
+      union all
+      select 'resolve_comments',t.id,t.title,t.project_name,a.id,null::uuid,min(rr.started_at),3
+      from eligible t join artifact a on a.task_id=t.id and a.status='published'
+        join artifact_revision_round rr on rr.source_artifact_id=a.id and rr.status='started'
+        join artifact_revision_link link on link.round_id=rr.id
+        join artifact candidate on candidate.id=link.candidate_artifact_id and candidate.status='published'
+        join artifact_revision_round_comment rc on rc.round_id=rr.id
+        join artifact_comment c on c.id=rc.comment_id
+      where c.author_user_id=${actor.userId}
+        and not exists (select 1 from artifact_comment_resolution resolution where resolution.round_id=rr.id and resolution.comment_id=c.id)
+      group by t.id,t.title,t.project_name,a.id
+      union all
       select 'accept_assignment', t.id,t.title,t.project_name,t.id,null::uuid,t.updated_at,3
       from eligible t where t.assignee_user_id=${actor.userId} and t.assignee_agent_id is null and t.assignment_status='pending'
       union all

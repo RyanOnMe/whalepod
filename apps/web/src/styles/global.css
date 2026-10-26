@@ -5103,3 +5103,57 @@ body[data-ds-dark-theme] .target-mode-explicit {
 body[data-ds-dark-theme] .run-events-alert {
   --dsw-alias-state-warn-primary: var(--color-warn);
 }
+/* #430: reviews stay next to their immutable round; narrow screens keep one reading column. */
+.review-revision {
+  margin: var(--space-4) 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+}
+.review-round-organizer,
+.revision-round {
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  min-width: 0;
+}
+.review-round-option {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+.revision-comparison {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-4);
+}
+.revision-comparison > section {
+  min-width: 0;
+}
+.revision-resolution-list {
+  padding-left: var(--space-4);
+}
+.revision-resolution {
+  padding: var(--space-3) 0;
+  overflow-wrap: anywhere;
+}
+.revision-candidate-picker select {
+  max-width: 100%;
+}
+@media (max-width: 700px) {
+  .revision-comparison {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.revision-diff-old {
+  background: color-mix(in srgb, #f27b7b 26%, transparent);
+  color: inherit;
+}
+.revision-diff-new {
+  background: color-mix(in srgb, #71c994 26%, transparent);
+  color: inherit;
+}

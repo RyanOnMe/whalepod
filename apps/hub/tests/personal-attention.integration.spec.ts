@@ -1,6 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
 import WebSocket from 'ws'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { eq } from 'drizzle-orm'
+import { claimArtifactRevisionRoundStart, getArtifactRevisionRound, schema } from '@whalepod/db'
+import { RunOrchestrator } from '../src/modules/run/orchestrator.js'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Database } from '@whalepod/db'
 import {
   apiInject,
@@ -393,5 +396,217 @@ describe('personal attention via production commands (#331)', () => {
     expect(ordered.map((i) => i.kind)).toEqual(['decide_approval', 'accept_assignment'])
     expect(ordered[0]?.objectId).toBe(card.id)
     expect(ordered[1]?.objectId).toBe(mine)
+  })
+})
+
+// #430: drive the loop through the same HTTP/Node-event path as a real member.
+it('审阅反馈 → 固定批次 → 启动 → 私有候选 → 发布 → 作者复核；待办与完成提示随事实变化', async () => {
+  const sourceRun = await started()
+  await finish(sourceRun)
+  const source = await upload(sourceRun, 'review-source.md')
+  const commentReply = await as(bob, `/artifacts/${source}/comments`, { body: '请补充边界条件' })
+  expect(commentReply.statusCode, commentReply.body).toBe(201)
+  const commentId = commentReply.json().data.id
+  const ownerFeedback = () =>
+    items(owner).then((rows) => rows.filter((row) => row.kind === 'organize_feedback'))
+  const bobResolve = () =>
+    items(bob).then((rows) => rows.filter((row) => row.kind === 'resolve_comments'))
+  expect(await ownerFeedback()).toMatchObject([{ objectId: source, taskId, runId: null }])
+  expect(await bobResolve()).toEqual([])
+  const created = await command(`/tasks/${taskId}/artifact-revision-rounds`, {
+    sourceArtifactId: source,
+    commentIds: [commentId],
+  })
+  expect(created.statusCode, created.body).toBe(201)
+  const roundId = created.json().data.id
+  expect(await ownerFeedback()).toHaveLength(1) // freezing is not execution
+  const launch = await command(`/artifact-revision-rounds/${roundId}/start`, {
+    agentId,
+    deviceId,
+    workspaceId,
+    resumeFromRunId: sourceRun,
+  })
+  expect(launch.statusCode, launch.body).toBe(200)
+  const runId = launch.json().data.runId
+  expect(await ownerFeedback()).toEqual([])
+  await finish(runId)
+  const candidate = await upload(runId, 'review-new.md', false)
+  expect(
+    (
+      await command(`/artifact-revision-rounds/${roundId}/candidates`, {
+        candidateArtifactId: candidate,
+      })
+    ).statusCode,
+  ).toBe(200)
+  expect(await bobResolve()).toEqual([])
+  const privateView = await apiInject(ctx, bob, {
+    method: 'GET',
+    url: `/api/v1/artifact-revision-rounds/${roundId}`,
+  })
+  expect(privateView.statusCode).toBe(200)
+  expect(privateView.json().data.candidate).toBeNull()
+  expect((await command(`/artifacts/${candidate}/publish`)).statusCode).toBe(200)
+  expect(await bobResolve()).toMatchObject([{ objectId: source, taskId, runId: null }])
+  const room = () => apiInject(ctx, owner, { method: 'GET', url: `/api/v1/tasks/${taskId}` })
+  expect((await room()).json().data.reviewFeedback).toEqual({
+    unresolvedCount: 1,
+    artifactId: source,
+  })
+  const resolved = await as(bob, `/artifact-revision-rounds/${roundId}/resolutions`, {
+    commentId,
+    status: 'resolved',
+  })
+  expect(resolved.statusCode, resolved.body).toBe(200)
+  expect(await bobResolve()).toEqual([])
+  expect((await room()).json().data.reviewFeedback).toEqual({
+    unresolvedCount: 0,
+    artifactId: null,
+  })
+  expect(
+    (
+      await as(bob, `/artifact-revision-rounds/${roundId}/resolutions`, {
+        commentId,
+        status: 'needs_work',
+      })
+    ).statusCode,
+  ).toBe(200)
+  expect(await ownerFeedback()).toHaveLength(1)
+  // An unresolved opinion is an explicit warning, not a new task-completion gate.
+  expect((await command(`/tasks/${taskId}/submit-review`)).statusCode).toBe(200)
+  expect((await command(`/tasks/${taskId}/complete`)).statusCode).toBe(200)
+  expect(await ownerFeedback()).toEqual([])
+  expect(await bobResolve()).toEqual([])
+})
+
+/** #430: all prerequisites use member HTTP / production Node protocol paths. */
+async function reviewRoundForRecovery() {
+  const sourceRun = await started()
+  await finish(sourceRun)
+  const source = await upload(sourceRun, 'recovery-source.md')
+  const comment = await as(bob, `/artifacts/${source}/comments`, { body: '修订恢复时保持本轮意见' })
+  expect(comment.statusCode, comment.body).toBe(201)
+  const response = await command(`/tasks/${taskId}/artifact-revision-rounds`, {
+    sourceArtifactId: source,
+    commentIds: [comment.json().data.id],
+  })
+  expect(response.statusCode, response.body).toBe(201)
+  return { sourceRun, source, roundId: response.json().data.id as string }
+}
+const revisionInput = () => ({ agentId, deviceId, workspaceId })
+async function reviewRuns(roundId: string) {
+  return (await db.db.select().from(schema.runs).where(eq(schema.runs.taskId, taskId))).filter(
+    (row) => row.reviewInput?.roundId === roundId,
+  )
+}
+
+describe('revision start recovery via member HTTP (#430)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('legacy claim persisted before Run creation: retries recover one Run instead of staying starting', async () => {
+    const { roundId } = await reviewRoundForRecovery()
+    // Legacy fault precondition: the atomic HTTP endpoint cannot produce this old
+    // half-committed state. Execute the old production claim and stop before creation;
+    // no Run/projection is inserted. Remove when pre-atomic Hub upgrade recovery is retired.
+    await claimArtifactRevisionRoundStart(db.db, roundId)
+    expect((await getArtifactRevisionRound(db.db, roundId))?.status).toBe('starting')
+    const first = await command(`/artifact-revision-rounds/${roundId}/start`, revisionInput())
+    expect(first.statusCode, first.body).toBe(200)
+    const repeated = await command(`/artifact-revision-rounds/${roundId}/start`, revisionInput())
+    expect(repeated.statusCode, repeated.body).toBe(200)
+    expect(repeated.json().data.runId).toBe(first.json().data.runId)
+    expect(await reviewRuns(roundId)).toHaveLength(1)
+  })
+
+  it('failure after Run/outbox writes rolls the whole start back and permits a clean retry', async () => {
+    const { roundId } = await reviewRoundForRecovery()
+    const beforeOutbox = new Set(
+      (await db.db.select().from(schema.dispatchOutbox)).map((row) => row.id),
+    )
+    type Operation = (...args: unknown[]) => Promise<unknown>
+    const prototype = RunOrchestrator.prototype as unknown as Record<string, Operation>
+    // The old implementation commits create() separately; the new thin entry stays in
+    // the round's Tx. Fault only after the real production creation core has returned.
+    const method = 'createWithinTransaction' in prototype ? 'createWithinTransaction' : 'create'
+    const original = prototype[method]!
+    const injected = vi.spyOn(prototype, method).mockImplementationOnce(async function (
+      this: unknown,
+      ...args: unknown[]
+    ) {
+      await original.apply(this, args)
+      throw new Error('CONTROLLED_REVIEW_START_ABORT')
+    })
+    const failed = await command(`/artifact-revision-rounds/${roundId}/start`, revisionInput())
+    expect(failed.statusCode).toBe(500)
+    injected.mockRestore()
+    expect((await getArtifactRevisionRound(db.db, roundId))?.status).toBe('preparing')
+    expect(await reviewRuns(roundId)).toHaveLength(0)
+    const outbox = await db.db.select().from(schema.dispatchOutbox)
+    expect(outbox.filter((row) => !beforeOutbox.has(row.id))).toHaveLength(0)
+    const retry = await command(`/artifact-revision-rounds/${roundId}/start`, revisionInput())
+    expect(retry.statusCode, retry.body).toBe(200)
+    expect(await reviewRuns(roundId)).toHaveLength(1)
+  })
+
+  it.each(['same', 'different'] as const)(
+    'parallel starts with %s keys all observe the same round Run',
+    async (mode) => {
+      const { roundId } = await reviewRoundForRecovery()
+      const sharedKey = randomUUID()
+      const responses = await Promise.all(
+        Array.from({ length: 4 }, () =>
+          command(
+            `/artifact-revision-rounds/${roundId}/start`,
+            revisionInput(),
+            mode === 'same' ? sharedKey : randomUUID(),
+          ),
+        ),
+      )
+      for (const response of responses) expect(response.statusCode, response.body).toBe(200)
+      expect(new Set(responses.map((response) => response.json().data.runId)).size).toBe(1)
+      expect(await reviewRuns(roundId)).toHaveLength(1)
+    },
+  )
+
+  it('rechecks the assignee after reassignment commits before the start transaction', async () => {
+    const { roundId } = await reviewRoundForRecovery()
+    const transaction = db.transaction.bind(db)
+    const interleave: Database['transaction'] = async (execute, options) => {
+      const reassigned = await command(`/tasks/${taskId}/reassign`, { assigneeUserId: bob.userId })
+      expect(reassigned.statusCode, reassigned.body).toBe(200)
+      return transaction(execute, options)
+    }
+    // Interleave after the route's initial actor read, before it obtains the Task lock.
+    vi.spyOn(db, 'transaction').mockImplementationOnce(interleave)
+    const denied = await command(`/artifact-revision-rounds/${roundId}/start`, revisionInput())
+    expect(denied.statusCode, denied.body).toBe(403)
+    expect(await reviewRuns(roundId)).toHaveLength(0)
+    expect((await getArtifactRevisionRound(db.db, roundId))?.status).toBe('preparing')
+  })
+
+  it('legacy committed Run is rebound instead of creating another Run', async () => {
+    const { roundId, source } = await reviewRoundForRecovery()
+    const round = await getArtifactRevisionRound(db.db, roundId)
+    expect(round).toBeDefined()
+    // Legacy fault precondition: the atomic HTTP endpoint cannot produce this old
+    // separately committed Run. Call the old production claim/orchestrator, then stop
+    // before round binding; no business-table insert or fabricated Run is used.
+    // Remove when pre-atomic Hub upgrade recovery is retired and old rows are drained.
+    await claimArtifactRevisionRoundStart(db.db, roundId)
+    const committed = await harness.orchestrator.create(
+      { userId: owner.userId, role: 'owner' } as Parameters<RunOrchestrator['create']>[0],
+      taskId,
+      {
+        idempotencyKey: randomUUID(),
+        ...revisionInput(),
+        prompt: '恢复已经提交的修订',
+        artifactInputIds: [source],
+        reviewInput: round!.input,
+        dshDistributionVersion: 'snapshot-fixture',
+      },
+    )
+    const recovered = await command(`/artifact-revision-rounds/${roundId}/start`, revisionInput())
+    expect(recovered.statusCode, recovered.body).toBe(200)
+    expect(recovered.json().data.runId).toBe(committed.id)
+    expect(await reviewRuns(roundId)).toHaveLength(1)
   })
 })

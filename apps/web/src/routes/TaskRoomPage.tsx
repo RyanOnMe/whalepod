@@ -317,6 +317,7 @@ function TaskRoom(): ReactNode {
           task={task}
           session={session}
           reviewEligibility={query.data.reviewEligibility}
+          reviewFeedback={query.data.reviewFeedback}
           compact
         />
         <div className="workspace-toolbar">

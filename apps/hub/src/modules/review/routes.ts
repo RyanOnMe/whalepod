@@ -8,6 +8,10 @@ import type { FastifyInstance } from 'fastify'
 import {
   CreateArtifactCommentRequestSchema,
   CreateArtifactReviewInvitationsRequestSchema,
+  CreateArtifactRevisionRoundRequestSchema,
+  LinkArtifactRevisionCandidateRequestSchema,
+  ResolveArtifactCommentRequestSchema,
+  StartArtifactRevisionRoundRequestSchema,
   SubmitArtifactReviewRequestSchema,
 } from '@whalepod/protocol'
 import type { Database } from '@whalepod/db'
@@ -15,6 +19,7 @@ import { asUserId } from '@whalepod/domain'
 import { readIdempotencyKey } from '../auth/idempotency.js'
 import type { RequireActor, SessionActor } from '../auth/session.js'
 import { audit } from '../shared/audit.js'
+import { ApiError } from '../shared/http-error.js'
 import type { ArtifactStore } from '../artifact/store.js'
 import {
   createArtifactComment,
@@ -22,11 +27,40 @@ import {
   inviteReviewers,
   submitArtifactReview,
 } from './review.js'
+import {
+  createRevisionRound,
+  getRevisionRoundView,
+  linkRevisionCandidate,
+  listRevisionRoundViews,
+  resolveReviewComment,
+  startRevisionRound,
+} from './rounds.js'
+import type { RunOrchestrator } from '../run/orchestrator.js'
 
 export interface ReviewRouteDeps {
   readonly database: Database
   readonly store: ArtifactStore
   readonly requireActor: RequireActor
+  /** 修订批次启动复用既有 Run 创建入口（不新建执行通道）。 */
+  readonly orchestrator: RunOrchestrator
+  readonly dshDistributionVersionFor: (deviceId: string) => Promise<string | undefined>
+}
+
+function parseOr400<T>(
+  schema: {
+    safeParse: (
+      value: unknown,
+    ) =>
+      | { success: true; data: T }
+      | { success: false; error: { issues: Array<{ message: string }> } }
+  },
+  body: unknown,
+): T {
+  const parsed = schema.safeParse(body)
+  if (!parsed.success) {
+    throw new ApiError(400, 'VALIDATION_FAILED', parsed.error.issues[0]?.message ?? 'bad request')
+  }
+  return parsed.data
 }
 
 function actorFrom(session: SessionActor) {
@@ -90,6 +124,80 @@ export function registerReviewRoutes(app: FastifyInstance, deps: ReviewRouteDeps
     )
     audit(request, 'artifact.review.invite', 'success', session.userId)
     return reply.code(201).send({ ok: true, data: invitations })
+  })
+
+  app.post('/tasks/:taskId/artifact-revision-rounds', async (request, reply) => {
+    const session = await deps.requireActor(request)
+    const { taskId } = request.params as { taskId: string }
+    const body = parseOr400(CreateArtifactRevisionRoundRequestSchema, request.body)
+    const round = await createRevisionRound(
+      deps.database,
+      actorFrom(session),
+      taskId,
+      body,
+      readIdempotencyKey(request),
+    )
+    audit(request, 'artifact.review.round_create', 'success', session.userId)
+    return reply.code(201).send({ ok: true, data: round })
+  })
+
+  app.get('/tasks/:taskId/artifact-revision-rounds', async (request) => {
+    const session = await deps.requireActor(request)
+    const { taskId } = request.params as { taskId: string }
+    return {
+      ok: true,
+      data: await listRevisionRoundViews(deps.database.db, taskId, actorFrom(session)),
+    }
+  })
+
+  app.get('/artifact-revision-rounds/:roundId', async (request) => {
+    const session = await deps.requireActor(request)
+    const { roundId } = request.params as { roundId: string }
+    return {
+      ok: true,
+      data: await getRevisionRoundView(deps.database.db, roundId, actorFrom(session)),
+    }
+  })
+
+  app.post('/artifact-revision-rounds/:roundId/start', async (request) => {
+    const session = await deps.requireActor(request)
+    const { roundId } = request.params as { roundId: string }
+    const body = parseOr400(StartArtifactRevisionRoundRequestSchema, request.body)
+    const round = await startRevisionRound(
+      deps.database,
+      deps.orchestrator,
+      actorFrom(session),
+      roundId,
+      body,
+      readIdempotencyKey(request),
+      deps.dshDistributionVersionFor,
+    )
+    audit(request, 'artifact.review.round_start', 'success', session.userId)
+    return { ok: true, data: round }
+  })
+
+  app.post('/artifact-revision-rounds/:roundId/candidates', async (request) => {
+    const session = await deps.requireActor(request)
+    const { roundId } = request.params as { roundId: string }
+    const body = parseOr400(LinkArtifactRevisionCandidateRequestSchema, request.body)
+    const round = await linkRevisionCandidate(
+      deps.database,
+      actorFrom(session),
+      roundId,
+      body,
+      readIdempotencyKey(request),
+    )
+    audit(request, 'artifact.review.candidate_link', 'success', session.userId)
+    return { ok: true, data: round }
+  })
+
+  app.post('/artifact-revision-rounds/:roundId/resolutions', async (request) => {
+    const session = await deps.requireActor(request)
+    const { roundId } = request.params as { roundId: string }
+    const body = parseOr400(ResolveArtifactCommentRequestSchema, request.body)
+    const round = await resolveReviewComment(deps.database, actorFrom(session), roundId, body)
+    audit(request, 'artifact.review.comment_resolve', 'success', session.userId)
+    return { ok: true, data: round }
   })
 
   app.post('/artifacts/:artifactId/review-submissions', async (request, reply) => {
