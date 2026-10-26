@@ -15,6 +15,7 @@ function fixture() {
     agentCreated: true,
     paired: true,
     pairingCopied: true,
+    pairingKeyboard: { durations: Array(5).fill('0s'), animations: 0 },
     memberReadOnly: true,
     rows: [1440, 390, 320].map((width) => ({
       width,
@@ -36,6 +37,9 @@ describe('P1-432 independent management verdict', () => {
     expect(verifyManagementEvidence(fixture()).layouts).toBe(12))
   it('rejects absent evidence, permissions, writes, missing/clipped surfaces and motion/focus failures', () => {
     expect(() => verifyManagementEvidence({ ok: true })).toThrow()
+    const keyboard = fixture()
+    keyboard.pairingKeyboard.animations = 1
+    expect(() => verifyManagementEvidence(keyboard)).toThrow('keyboard')
     const missing = fixture()
     missing.rows.pop()
     expect(() => verifyManagementEvidence(missing)).toThrow('widths')

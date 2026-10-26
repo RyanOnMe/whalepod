@@ -26,6 +26,12 @@ export function verifyManagementEvidence(input: unknown) {
     'memberReadOnly',
   ])
     check(result[key] === true, `workflow missing: ${key}`)
+  const keyboard = record(result.pairingKeyboard)
+  check(
+    JSON.stringify(keyboard.durations) === JSON.stringify(Array(5).fill('0s')) &&
+      keyboard.animations === 0,
+    'keyboard pairing still animates',
+  )
   check(Array.isArray(result.rows), 'missing layouts')
   const rows = (result.rows as unknown[]).map(record)
   check(JSON.stringify(rows.map((row) => row.width)) === '[1440,390,320]', 'incomplete widths')

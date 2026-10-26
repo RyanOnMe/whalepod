@@ -3,9 +3,9 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { WorkspaceIcon } from '../shared/WorkspaceIcon.js'
-import { EmptyPanel, SheetHeading } from '../vendor/collectui/collectui.js'
+import { EmptyPanel, SheetHeading, FileCollectionMark } from '../vendor/collectui/collectui.js'
 import { api } from '../shared/api/client.js'
-import { EXIT_PRESENCE_MS } from '../shared/motion.js'
+import { EXIT_PRESENCE_MS, SURFACE_EXIT_MS } from '../shared/motion.js'
 import { useHashFocus } from '../shared/useHashFocus.js'
 import { usePresence } from '../shared/usePresence.js'
 import { useConversationFollow } from '../shared/useConversationFollow.js'
@@ -58,6 +58,8 @@ function TaskRoom(): ReactNode {
     location.hash === '#comments-heading' ? 'discussion' : 'execution',
   )
   const [inspector, setInspector] = useState<'agreement' | 'artifacts' | 'run' | null>(null)
+  const inspectorPresence = usePresence(inspector, SURFACE_EXIT_MS)
+  const presentedInspector = inspector ?? inspectorPresence.value
   const [hasOpenedRun, setHasOpenedRun] = useState(false)
   const [inspectedArtifactId, setInspectedArtifactId] = useState<string | null>(null)
   // #428：交接回执是独立查询，读完才存在 `#handoff-receipt-*` 锚点目标。
@@ -548,11 +550,14 @@ function TaskRoom(): ReactNode {
           <aside
             className="workspace-inspector"
             data-artifact-focused={
-              inspector === 'artifacts' && inspectedArtifactId !== null ? '' : undefined
+              presentedInspector === 'artifacts' && inspectedArtifactId !== null ? '' : undefined
             }
             role="region"
             aria-label="工作区详情"
-            hidden={inspector === null}
+            hidden={inspectorPresence.value === null}
+            inert={inspector === null}
+            aria-hidden={inspector === null}
+            data-closing={inspectorPresence.leaving ? '' : undefined}
             ref={inspectorRef}
             tabIndex={-1}
             onKeyDown={(event) => {
@@ -569,16 +574,24 @@ function TaskRoom(): ReactNode {
           >
             <SheetHeading
               icon={
-                <WorkspaceIcon
-                  name={
-                    inspector === 'agreement' ? '复核' : inspector === 'run' ? 'Agents' : '文件'
-                  }
-                />
+                presentedInspector === 'artifacts' && visibleArtifacts.length > 0 ? (
+                  <FileCollectionMark count={visibleArtifacts.length} />
+                ) : (
+                  <WorkspaceIcon
+                    name={
+                      presentedInspector === 'agreement'
+                        ? '复核'
+                        : presentedInspector === 'run'
+                          ? 'Agents'
+                          : '文件'
+                    }
+                  />
+                )
               }
               title={
-                inspector === 'agreement'
+                presentedInspector === 'agreement'
                   ? '任务约定'
-                  : inspector === 'run'
+                  : presentedInspector === 'run'
                     ? '运行详情'
                     : inspectedArtifactId !== null
                       ? (visibleArtifacts.find((artifact) => artifact.id === inspectedArtifactId)
@@ -597,10 +610,10 @@ function TaskRoom(): ReactNode {
                 </button>
               }
             />
-            <div hidden={inspector !== 'agreement'}>
+            <div hidden={presentedInspector !== 'agreement'}>
               <TaskAgreementPanel embedded task={task} session={session} />
             </div>
-            <div hidden={inspector !== 'run'}>
+            <div hidden={presentedInspector !== 'run'}>
               {hasOpenedRun ? (
                 <RunDetailPanel
                   key={detailRun?.id ?? 'none'}
@@ -614,7 +627,7 @@ function TaskRoom(): ReactNode {
                 />
               ) : null}
             </div>
-            <div hidden={inspector !== 'artifacts'}>
+            <div hidden={presentedInspector !== 'artifacts'}>
               {inspectedArtifactId !== null ? (
                 <button
                   type="button"

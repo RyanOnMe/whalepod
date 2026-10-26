@@ -90,8 +90,11 @@ export async function auditSecondarySurfaces({
         await expect(panel.getByTestId('agreement-current')).toContainText('v1')
       }
       if (name === 'artifacts') {
-        await expect(panel.getByTestId('artifact-download-button')).toBeVisible()
-        await expect(panel.locator('.artifact-details')).not.toHaveAttribute('open')
+        const downloads = panel.getByTestId('artifact-download-button')
+        expect(await downloads.count()).toBeGreaterThan(0)
+        for (const button of await downloads.all()) await expect(button).toBeVisible()
+        for (const details of await panel.locator('.artifact-details').all())
+          await expect(details).not.toHaveAttribute('open')
       }
       await capture(name, width)
       await owner.keyboard.press('Escape')

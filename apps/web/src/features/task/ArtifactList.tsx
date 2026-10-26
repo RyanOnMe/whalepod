@@ -20,7 +20,7 @@ import { HelpDisclosure } from '../../shared/HelpDisclosure.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { ActionMenu } from '../../shared/ActionMenu.js'
 import { WorkspaceIcon } from '../../shared/WorkspaceIcon.js'
-import { FileCard } from '../../vendor/collectui/collectui.js'
+import { FileCard, ArtifactPreviewFrame, ExpandPanel } from '../../vendor/collectui/collectui.js'
 import { formatBytes, shortId } from '../../shared/format.js'
 import { RUN_NOT_IN_TIMELINE_LABEL, runOrdinalLabels } from './runLabels.js'
 import { isTextPreviewable, truncatePreview } from './artifactPreview.js'
@@ -280,9 +280,16 @@ function ArtifactPreview({ artifact }: { artifact: TaskRoomArtifact }): ReactNod
     | { kind: 'shown'; text: string; truncated: boolean }
   >({ kind: 'idle' })
 
+  const [expanded, setExpanded] = useState(false)
+  const id = `artifact-preview-${artifact.id}`
   if (!isTextPreviewable(artifact.mediaType, artifact.byteSize)) return null
 
   async function load(): Promise<void> {
+    if (state.kind === 'shown') {
+      setExpanded((value) => !value)
+      return
+    }
+    setExpanded(true)
     setState({ kind: 'loading' })
     try {
       const response = await fetch(`/api/v1/artifacts/${artifact.id}/content`, {
@@ -306,8 +313,14 @@ function ArtifactPreview({ artifact }: { artifact: TaskRoomArtifact }): ReactNod
         data-testid="artifact-preview-button"
         disabled={state.kind === 'loading'}
         onClick={() => void load()}
+        aria-expanded={expanded}
+        aria-controls={id}
       >
-        {state.kind === 'loading' ? '加载中…' : '预览'}
+        {state.kind === 'loading'
+          ? '加载中…'
+          : state.kind === 'shown' && expanded
+            ? '收起预览'
+            : '预览'}
       </button>
       {state.kind === 'error' ? (
         <p className="mutation-hint" data-testid="artifact-preview-error" role="alert">
@@ -316,8 +329,29 @@ function ArtifactPreview({ artifact }: { artifact: TaskRoomArtifact }): ReactNod
       ) : null}
       {state.kind === 'shown' ? (
         <div className="artifact-preview">
-          <pre data-testid="artifact-preview">{state.text}</pre>
-          {state.truncated ? <p className="mutation-hint">内容已截断，完整内容请下载。</p> : null}
+          <ExpandPanel id={id} label={`预览 ${artifact.title}`} open={expanded}>
+            <ArtifactPreviewFrame
+              title={artifact.title}
+              action={
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label="关闭文件预览"
+                  onClick={() => {
+                    setExpanded(false)
+                    document.querySelector<HTMLButtonElement>(`[aria-controls="${id}"]`)?.focus()
+                  }}
+                >
+                  ×
+                </button>
+              }
+            >
+              <pre data-testid="artifact-preview">{state.text}</pre>
+              {state.truncated ? (
+                <p className="mutation-hint">内容已截断，完整内容请下载。</p>
+              ) : null}
+            </ArtifactPreviewFrame>
+          </ExpandPanel>
         </div>
       ) : null}
     </>

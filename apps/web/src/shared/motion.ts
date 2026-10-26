@@ -10,3 +10,7 @@
  * 现场解析，不硬编码 160）。
  */
 export const EXIT_PRESENCE_MS = 160
+
+/** Visible surface/reveal motion; CSS tokens and unmount windows are checked together. */
+export const SURFACE_EXIT_MS = 320
+export const REVEAL_EXIT_MS = 360

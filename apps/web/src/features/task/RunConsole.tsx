@@ -13,6 +13,7 @@
  * 内联面板保留为默认视图。这一点与原型不同，是有意的取舍，写在这里免得下次被"改回原型"。
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { ToolOutputFrame } from '../../vendor/collectui/collectui.js'
 import { WorkspaceIcon } from '../../shared/WorkspaceIcon.js'
 import RubberSegment from '../../vendor/react-bits-micro/RubberSegment.js'
 import type { RunEventItem, RunStatus } from '../../shared/api/types.js'
@@ -206,79 +207,82 @@ export function RunConsole({
           </button>
         </div>
 
-        <div className="console-filters">
-          <RubberSegment
-            items={FILTERS.map((item) => ({ value: item.id, label: item.label }))}
-            value={filter}
-            onChange={setFilter}
-            label="事件筛选"
-            testIdPrefix="console-filter-"
-          />
-          <span className="console-count" data-testid="console-count">
-            {visible.length} / {ordered.length} 条
-          </span>
-        </div>
+        <ToolOutputFrame
+          filters={
+            <RubberSegment
+              items={FILTERS.map((item) => ({ value: item.id, label: item.label }))}
+              value={filter}
+              onChange={setFilter}
+              label="事件筛选"
+              testIdPrefix="console-filter-"
+            />
+          }
+          meta={
+            <span className="console-count" data-testid="console-count">
+              {visible.length} / {ordered.length} 条
+            </span>
+          }
+        >
+          {/* 按 component 分层显示层级清单：排障第一步是"断在哪一层"。 */}
+          <div className="console-layers" data-testid="console-layers">
+            分层：{layers.length === 0 ? '（当前筛选下没有事件）' : layers.join(' · ')}
+          </div>
 
-        {/* 按 component 分层显示层级清单：排障第一步是"断在哪一层"。 */}
-        <div className="console-layers" data-testid="console-layers">
-          分层：{layers.length === 0 ? '（当前筛选下没有事件）' : layers.join(' · ')}
-        </div>
-
-        <div className="console-body">
-          {eventsPending ? <p className="mutation-hint">正在加载事件…</p> : null}
-          {eventsError === undefined ? null : (
-            <div className="console-error" role="status" data-testid="console-error">
-              <p>事件读取失败——这不等于"没有事件"。请重试，或去 Hub 日志按 runId 查。</p>
-              {onRetry === undefined ? null : (
-                <button
-                  type="button"
-                  className="button"
-                  data-testid="console-retry"
-                  onClick={onRetry}
-                >
-                  重试读取
-                </button>
-              )}
-            </div>
-          )}
-          {!eventsPending && eventsError === undefined && visible.length === 0 ? (
-            <p className="empty-state" data-testid="console-empty">
-              当前筛选下没有事件。
-            </p>
-          ) : null}
-          <ol className="run-event-list">
-            {visible.map((item) => {
-              const text = describeEvent(item)
-              return (
-                <li
-                  key={eventIdentity(item)}
-                  className={`run-event audience-${item.audience}`}
-                  data-testid="console-event"
-                  data-layer={componentLayer(item)}
-                >
-                  <span className="run-event-seq">#{item.seq}</span>
-                  <span className="run-event-layer mono">{componentLayer(item)}</span>
-                  <span
-                    className={`run-event-text${item.event['type'] === 'tool.started' ? ' tool-event' : ''}`}
+          <div className="console-body">
+            {eventsPending ? <p className="mutation-hint">正在加载事件…</p> : null}
+            {eventsError === undefined ? null : (
+              <div className="console-error" role="status" data-testid="console-error">
+                <p>事件读取失败——这不等于"没有事件"。请重试，或去 Hub 日志按 runId 查。</p>
+                {onRetry === undefined ? null : (
+                  <button
+                    type="button"
+                    className="button"
+                    data-testid="console-retry"
+                    onClick={onRetry}
                   >
-                    {item.event['type'] === 'tool.started' ? (
-                      <ToolEventChip
-                        item={item}
-                        results={results}
-                        runStatus={runStatus}
-                        eventsError={eventsError !== undefined}
-                      />
-                    ) : (
-                      (text ?? item.type)
-                    )}
-                  </span>
-                  <RelativeTime iso={item.occurredAt} />
-                </li>
-              )
-            })}
-          </ol>
-        </div>
-
+                    重试读取
+                  </button>
+                )}
+              </div>
+            )}
+            {!eventsPending && eventsError === undefined && visible.length === 0 ? (
+              <p className="empty-state" data-testid="console-empty">
+                当前筛选下没有事件。
+              </p>
+            ) : null}
+            <ol className="run-event-list">
+              {visible.map((item) => {
+                const text = describeEvent(item)
+                return (
+                  <li
+                    key={eventIdentity(item)}
+                    className={`run-event audience-${item.audience}`}
+                    data-testid="console-event"
+                    data-layer={componentLayer(item)}
+                  >
+                    <span className="run-event-seq">#{item.seq}</span>
+                    <span className="run-event-layer mono">{componentLayer(item)}</span>
+                    <span
+                      className={`run-event-text${item.event['type'] === 'tool.started' ? ' tool-event' : ''}`}
+                    >
+                      {item.event['type'] === 'tool.started' ? (
+                        <ToolEventChip
+                          item={item}
+                          results={results}
+                          runStatus={runStatus}
+                          eventsError={eventsError !== undefined}
+                        />
+                      ) : (
+                        (text ?? item.type)
+                      )}
+                    </span>
+                    <RelativeTime iso={item.occurredAt} />
+                  </li>
+                )
+              })}
+            </ol>
+          </div>
+        </ToolOutputFrame>
         <div className="console-foot">
           <span className="chip-gray" data-testid="console-readonly">
             只读视图

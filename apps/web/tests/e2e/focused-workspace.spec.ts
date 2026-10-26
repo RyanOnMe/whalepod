@@ -1,3 +1,9 @@
+import {
+  auditMotionProject,
+  auditMotionWorkspace,
+  saveMotionEvidence,
+  recordMotionDemo,
+} from './motion-experience-audit.js'
 import { auditPages } from './pages-bits-audit.js'
 import { showAgentCreation } from './helpers.js'
 /** #306：真实 HTTP/WS、已编译 Hub、真实 Node/Runtime replay；不直写运行状态。 */
@@ -98,6 +104,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
     await owner.goto('/')
     await owner.getByRole('button', { name: '新建项目' }).click()
     await fillAndEnter(owner, '#project-name', 'WhalePod 聚焦工作区')
+    const motionProject = await auditMotionProject(owner, evidence)
     await owner.getByRole('button', { name: '创建任务' }).click()
     const taskForm = owner.locator('form[aria-label="创建任务"]')
     await taskForm.locator('input[id^="task-title-"]').fill('整理交付验收报告')
@@ -278,7 +285,10 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
     await owner.unroute('**/api/v1/artifacts/*/content')
     await panel.getByTestId('artifact-preview-button').first().click()
     await expect(panel.getByTestId('artifact-preview').first()).toBeVisible()
-    await owner.screenshot({ path: join(evidence, 'desktop-artifact.png') })
+    await owner.screenshot({
+      path: join(evidence, 'desktop-artifact.png'),
+      mask: [owner.getByTestId('artifact-preview')],
+    })
     await panel.getByTestId('artifact-publish-button').first().click()
     await expect(owner.getByRole('button', { name: '确认发布给团队' })).toBeFocused()
     await owner.keyboard.press('Escape')
@@ -301,6 +311,8 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
       publishedShared: true,
       taskStatus: room.task.status,
     })
+    const motionWorkspace = await auditMotionWorkspace(owner, member, evidence, runId)
+    await saveMotionEvidence(evidence, motionProject, motionWorkspace)
     const dimensions = []
     const fileLayouts = []
     for (const width of [1440, 1024, 736, 390, 320]) {
@@ -354,6 +366,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
       run: workbenchRun,
     })
     facts.push(await auditPages({ owner, member, taskId, evidence }))
+    await recordMotionDemo(owner, taskId, evidence)
     expect(facts).toHaveLength(9)
     await stopNode()
   } finally {
