@@ -13,8 +13,36 @@ export const ARTIFACT_PREVIEW_MAX_BYTES = 52_428_800
 
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
 
-/** 稳定转换器标识（如 `libreoffice`；不含本机路径或版本参数）。 */
-const ConverterSchema = z.string().min(1).max(100)
+export const ArtifactPreviewConverterSchema = z.enum(['libreoffice', 'unknown'])
+export const ArtifactPreviewFailureCodeSchema = z.enum([
+  'CONVERTER_UNAVAILABLE',
+  'CONVERT_TIMEOUT',
+  'CONVERT_FAILED',
+  'PREVIEW_TOO_LARGE',
+])
+
+/** 只认可已知名称和纯数字版本；版本、路径和诊断后缀均不进入团队投影。 */
+export function normalizeArtifactPreviewConverter(
+  value: string,
+): z.infer<typeof ArtifactPreviewConverterSchema> {
+  return /^(?:libreoffice|soffice)(?:[ /:@-]v?\d{1,3}(?:\.\d{1,3}){0,3})?$/i.test(value.trim())
+    ? 'libreoffice'
+    : 'unknown'
+}
+
+export function normalizeArtifactPreviewFailureCode(
+  value: string,
+): z.infer<typeof ArtifactPreviewFailureCodeSchema> {
+  const parsed = ArtifactPreviewFailureCodeSchema.safeParse(value)
+  return parsed.success ? parsed.data : 'CONVERT_FAILED'
+}
+
+// 保持旧 Node 的字符串输入兼容，在入库前归一化；输出读面另用严格枚举。
+const ConverterSchema = z
+  .string()
+  .min(1)
+  .max(100)
+  .transform((value): string => normalizeArtifactPreviewConverter(value))
 
 /**
  * PUT /node/artifacts/:artifactId/preview 的 query 元数据（body 为 PDF 原始字节）。
@@ -30,8 +58,8 @@ export type ArtifactPreviewUploadMetadata = z.infer<typeof ArtifactPreviewUpload
 
 /**
  * POST /node/artifacts/:artifactId/preview-failure：转换失败也要登记，读面才能
- * 区分「还没有预览」与「转换过但失败」并给出下载回退。reason 只接受稳定码/短句，
- * 不允许携带本机路径（Node 侧负责脱敏）。
+ * 区分「还没有预览」与「转换过但失败」并给出下载回退。兼容旧 Node 的字符串输入，
+ * Hub 只保存稳定码：任意错误原文统一归为 CONVERT_FAILED，不能依赖设备自行脱敏。
  */
 export const ArtifactPreviewFailureRequestSchema = z.strictObject({
   sourceSha256: Sha256Schema,
@@ -40,7 +68,8 @@ export const ArtifactPreviewFailureRequestSchema = z.strictObject({
     .string()
     .min(1)
     .max(2000)
-    .regex(/^[^\p{Cc}]+$/u),
+    .regex(/^[^\p{Cc}]+$/u)
+    .transform((value): string => normalizeArtifactPreviewFailureCode(value)),
 })
 export type ArtifactPreviewFailureRequest = z.infer<typeof ArtifactPreviewFailureRequestSchema>
 
@@ -52,10 +81,10 @@ export const ArtifactPreviewViewSchema = z.strictObject({
   artifactId: z.uuid(),
   status: ArtifactPreviewStatusSchema,
   sourceSha256: Sha256Schema.nullable(),
-  converter: z.string().nullable(),
+  converter: ArtifactPreviewConverterSchema.nullable(),
   mediaType: z.string().nullable(),
   byteSize: z.number().int().nullable(),
-  failureReason: z.string().nullable(),
+  failureReason: ArtifactPreviewFailureCodeSchema.nullable(),
   updatedAt: z.iso.datetime({ offset: true }).nullable(),
 })
 export type ArtifactPreviewView = z.infer<typeof ArtifactPreviewViewSchema>

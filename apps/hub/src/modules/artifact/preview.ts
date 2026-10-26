@@ -25,6 +25,8 @@ import {
 } from '@whalepod/db'
 import {
   ARTIFACT_PREVIEW_MAX_BYTES,
+  normalizeArtifactPreviewConverter,
+  normalizeArtifactPreviewFailureCode,
   type ArtifactPreviewFailureRequest,
   type ArtifactPreviewUploadMetadata,
   type ArtifactPreviewView,
@@ -96,11 +98,22 @@ function toPreviewView(
     artifactId,
     status: row.status,
     sourceSha256: row.sourceSha256,
-    converter: row.converter,
+    converter: normalizeArtifactPreviewConverter(row.converter),
     mediaType: row.mediaType,
     byteSize: row.byteSize,
-    failureReason: row.failureReason,
+    failureReason:
+      row.failureReason === null ? null : normalizeArtifactPreviewFailureCode(row.failureReason),
     updatedAt: row.updatedAt.toISOString(),
+  }
+}
+
+/** 旧 command_receipt 会跳过回调，重放返回之前同样必须重新裁剪诊断元数据。 */
+function safePreviewReceipt(view: ArtifactPreviewView): ArtifactPreviewView {
+  return {
+    ...view,
+    converter: view.converter === null ? null : normalizeArtifactPreviewConverter(view.converter),
+    failureReason:
+      view.failureReason === null ? null : normalizeArtifactPreviewFailureCode(view.failureReason),
   }
 }
 
@@ -149,7 +162,7 @@ export async function recordArtifactPreview(
   }
   const blob = await store.saveUpload(metadata.sha256, bytes)
   // 幂等键按设备/原件/动作收窄：同键重放返回首次视图，不让不同 body 改写结果。
-  return transactCommand(
+  const view = await transactCommand(
     database,
     `artifact.preview.ready:${binding.deviceId}:${artifact.id}:${idempotencyKey}`,
     async (tx) => {
@@ -169,7 +182,7 @@ export async function recordArtifactPreview(
       const row = await upsertArtifactPreviewReady(tx, {
         artifactId: locked.id,
         sourceSha256: metadata.sourceSha256,
-        converter: metadata.converter,
+        converter: normalizeArtifactPreviewConverter(metadata.converter),
         storageKey: blob.storageKey,
         sha256: blob.sha256,
         byteSize: blob.byteSize,
@@ -178,6 +191,7 @@ export async function recordArtifactPreview(
       return toPreviewView(locked.id, row)
     },
   )
+  return safePreviewReceipt(view)
 }
 
 export async function recordArtifactPreviewFailure(
@@ -190,7 +204,7 @@ export async function recordArtifactPreviewFailure(
   if (artifact.sha256 !== request.sourceSha256) {
     throw new ApiError(409, 'CONFLICT', '预览绑定的原件摘要与当前版本不一致')
   }
-  return transactCommand(
+  const view = await transactCommand(
     database,
     `artifact.preview.failed:${binding.deviceId}:${artifact.id}:${idempotencyKey}`,
     async (tx) => {
@@ -210,13 +224,14 @@ export async function recordArtifactPreviewFailure(
       const row = await upsertArtifactPreviewFailed(tx, {
         artifactId: locked.id,
         sourceSha256: request.sourceSha256,
-        converter: request.converter,
-        reason: request.reason,
+        converter: normalizeArtifactPreviewConverter(request.converter),
+        reason: normalizeArtifactPreviewFailureCode(request.reason),
       })
       await appendPreviewChanged(tx, locked, 'failed')
       return toPreviewView(locked.id, row)
     },
   )
+  return safePreviewReceipt(view)
 }
 
 /** 可读原件即可读预览信息；不可见与不存在同作 404（不泄漏候选）。 */

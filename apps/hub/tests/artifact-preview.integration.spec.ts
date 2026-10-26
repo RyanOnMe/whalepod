@@ -459,6 +459,57 @@ describe('artifact preview (#431)', () => {
     expect(rows[0]?.failureReason).toBe('CONVERT_FAILED')
   })
 
+  it('设备原始诊断不能进入团队读面、持久记录或幂等重放', async () => {
+    const artifactId = await uploadCandidate()
+    await publish(artifactId)
+    const privateDetail = 'workspace/private.docx credential=fixture-sensitive-value'
+    const key = idemKey()
+    const response = await postFailure(bobToken, artifactId, {
+      key,
+      converter: privateDetail,
+      reason: privateDetail,
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json().data).toMatchObject({
+      converter: 'unknown',
+      failureReason: 'CONVERT_FAILED',
+    })
+    const shared = await info(alice.cookie, artifactId)
+    expect(shared.statusCode).toBe(200)
+    expect(shared.json().data).toMatchObject({
+      converter: 'unknown',
+      failureReason: 'CONVERT_FAILED',
+    })
+    const replay = await postFailure(bobToken, artifactId, { key, reason: 'CONVERT_TIMEOUT' })
+    expect(replay.json().data.failureReason).toBe('CONVERT_FAILED')
+    const rows = await previewRows()
+    expect(rows[0]).toMatchObject({ converter: 'unknown', failureReason: 'CONVERT_FAILED' })
+    expect(
+      JSON.stringify([response.json(), shared.json(), replay.json(), rows, await previewEvents()]),
+    ).not.toContain(privateDetail)
+  })
+
+  it('ready 上报的转换器同样受白名单保护，版本标识只保留受控名称', async () => {
+    const artifactId = await uploadCandidate()
+    await publish(artifactId)
+    const privateConverter = 'soffice/26.8.1 credential=fixture-sensitive-value'
+    const uploaded = await putPreview(bobToken, artifactId, { converter: privateConverter })
+    expect(uploaded.statusCode).toBe(200)
+    expect(uploaded.json().data.converter).toBe('unknown')
+    expect((await info(alice.cookie, artifactId)).json().data.converter).toBe('unknown')
+    expect((await previewRows())[0]?.converter).toBe('unknown')
+    const other = await uploadCandidate()
+    const accepted = await postFailure(bobToken, other, {
+      converter: 'soffice/26.8.1',
+      reason: 'PREVIEW_TOO_LARGE',
+    })
+    expect(accepted.statusCode).toBe(200)
+    expect(accepted.json().data).toMatchObject({
+      converter: 'libreoffice',
+      failureReason: 'PREVIEW_TOO_LARGE',
+    })
+  })
+
   it('失败上报 schema strict：未知字段 → 400，不落预览行', async () => {
     const artifactId = await uploadCandidate()
     const res = await ctx.app.inject({

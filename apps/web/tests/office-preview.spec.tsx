@@ -66,7 +66,7 @@ describe('OfficePreview', () => {
     expect(await screen.findByText(/未配置 Office 转换组件/)).toBeVisible()
     info = preview('failed', { failureReason: '/private/workspace/secret.docx' })
     await act(() => queryClient.invalidateQueries({ queryKey: ['artifact-review', ID] }))
-    expect(await screen.findByText(/Office 预览转换失败/)).toBeVisible()
+    expect(await screen.findByText(/无法读取预览状态/)).toBeVisible()
     expect(screen.queryByText(/private\/workspace/)).not.toBeInTheDocument()
   })
 
