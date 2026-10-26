@@ -62,7 +62,7 @@ describe('artifact review (#429)', () => {
   })
 
   /** 已发布文本 Artifact 的声明式前置（真实路径要 Node 经 WS 上传并由 owner 发布）。 */
-  async function seedPublishedText() {
+  async function seedPublishedText(status: 'candidate' | 'published' = 'published') {
     const ids = await seedRunPrereqs(database.db)
     const receiver = await seedSecondUserDevice(database.db, ids)
     const runId = await insertRunRow(database.db, {
@@ -88,7 +88,8 @@ describe('artifact review (#429)', () => {
       sha256: blob.sha256,
       storageKey: blob.storageKey,
     })
-    await setArtifactStatus(database.db, artifact.id, 'published', new Date())
+    if (status === 'published')
+      await setArtifactStatus(database.db, artifact.id, 'published', new Date())
     return { ids, receiver, artifactId: artifact.id, runId }
   }
 
@@ -264,8 +265,7 @@ describe('artifact review (#429)', () => {
   })
 
   it('私有候选的拥有者批注不广播身份，发布后批注才产生团队事件', async () => {
-    const { ids, receiver, artifactId } = await seedPublishedText()
-    await setArtifactStatus(database.db, artifactId, 'candidate', null)
+    const { ids, receiver, artifactId } = await seedPublishedText('candidate')
     await createArtifactComment(
       database,
       store,
