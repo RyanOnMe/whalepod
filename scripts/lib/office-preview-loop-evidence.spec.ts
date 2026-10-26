@@ -27,6 +27,8 @@ function good(): Record<string, unknown> {
     statusBeforePublish: 'candidate',
     statusAfterPublish: 'published',
     original,
+    ownerDownload: { ...original, urlPath: `/api/v1/artifacts/${ID}/content` },
+    memberDownload: { ...original, urlPath: `/api/v1/artifacts/${ID}/content` },
     memberOriginal: { ...original },
     ownerInfo: info,
     memberInfo: { ...info },
@@ -83,6 +85,14 @@ describe('Office isolation fallback independent evidence', () => {
   it('rejects a changed downloaded original', () =>
     expect(
       verifyOfficePreviewLoopEvidence(changed('memberOriginal', 'sha256', 'b'.repeat(64))).ok,
+    ).toBe(false))
+  it('requires the owner visible download to return the correct file', () =>
+    expect(
+      verifyOfficePreviewLoopEvidence(changed('ownerDownload', 'sha256', 'b'.repeat(64))).ok,
+    ).toBe(false))
+  it('requires the member visible download to use this artifact route', () =>
+    expect(
+      verifyOfficePreviewLoopEvidence(changed('memberDownload', 'urlPath', '/wrong-file')).ok,
     ).toBe(false))
   it('rejects an unavailable original', () =>
     expect(verifyOfficePreviewLoopEvidence(changed('memberOriginal', 'status', 404)).ok).toBe(
