@@ -24,15 +24,6 @@ import { RelativeTime } from '../shared/RelativeTime.js'
 
 type Filter = 'all' | 'unresolved' | 'round'
 type CommentInput = { body: string; anchor?: ArtifactCommentAnchor; parentCommentId?: string }
-type CommentIntent = { signature: string; key: string }
-function commentKind(input: CommentInput): 'whole' | 'text' | 'reply' {
-  return input.parentCommentId !== undefined
-    ? 'reply'
-    : input.anchor !== undefined
-      ? 'text'
-      : 'whole'
-}
-
 /** 从当前选择算出「版本内偏移 + 前后文」；选择为空或不在正文里返回 null。 */
 export function selectionAnchor(
   container: HTMLElement,
@@ -139,26 +130,9 @@ export function ArtifactReviewPage(): ReactNode {
   const [invitees, setInvitees] = useState<string[]>([])
   const [locateErrors, setLocateErrors] = useState<Record<string, true>>({})
   const [notice, setNotice] = useState<string | null>(null)
-  const commentIntents = useRef<Record<'whole' | 'text' | 'reply', CommentIntent | null>>({
-    whole: null,
-    text: null,
-    reply: null,
-  })
-  const normalizedWholeBody = wholeBody.trim()
-  const normalizedAnchorBody = anchorBody.trim()
-  const normalizedReplyBody = replyBody.trim()
-  const selectedAnchor = JSON.stringify(selection)
-  // Each composer retains only its current request intent. Whitespace equivalent
-  // retries stay identical; semantic edits, including A → B → A, start a new one.
-  useEffect(() => {
-    commentIntents.current.whole = null
-  }, [artifactId, normalizedWholeBody])
-  useEffect(() => {
-    commentIntents.current.text = null
-  }, [artifactId, normalizedAnchorBody, selectedAnchor])
-  useEffect(() => {
-    commentIntents.current.reply = null
-  }, [artifactId, normalizedReplyBody, replyTo])
+  // Page-local pending requests are indexed by the full wire intent. Do not
+  // forget an unknown result merely because another draft was submitted.
+  const commentIntents = useRef(new Map<string, string>())
 
   const query = useQuery({
     queryKey: ['artifact-review', artifactId],
@@ -195,26 +169,26 @@ export function ArtifactReviewPage(): ReactNode {
   }
 
   const comment = useMutation({
-    mutationFn: (input: CommentInput) => {
+    mutationFn: async (input: CommentInput) => {
       const body = {
         body: input.body.trim(),
         ...(input.anchor === undefined ? {} : { anchor: input.anchor }),
         ...(input.parentCommentId === undefined ? {} : { parentCommentId: input.parentCommentId }),
       }
-      const kind = commentKind(input)
       const signature = JSON.stringify({ artifactId, ...body })
-      let intent = commentIntents.current[kind]
-      if (intent === null || intent.signature !== signature) {
-        intent = { signature, key: crypto.randomUUID() }
-        commentIntents.current[kind] = intent
+      let key = commentIntents.current.get(signature)
+      if (key === undefined) {
+        key = crypto.randomUUID()
+        commentIntents.current.set(signature, key)
       }
-      return api.mutate<ArtifactCommentView>(`/artifacts/${artifactId}/comments`, {
+      await api.mutate<ArtifactCommentView>(`/artifacts/${artifactId}/comments`, {
         body,
-        idempotencyKey: intent.key,
+        idempotencyKey: key,
       })
+      return signature
     },
-    onSuccess: (_comment, input) => {
-      commentIntents.current[commentKind(input)] = null
+    onSuccess: (signature) => {
+      commentIntents.current.delete(signature)
       setActionError(null)
       invalidate()
     },
