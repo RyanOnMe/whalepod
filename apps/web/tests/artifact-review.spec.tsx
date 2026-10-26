@@ -11,7 +11,11 @@ import {
   ALICE,
   BOB,
   loggedInHandlers,
+  makeArtifact,
+  makeRun,
+  makeTask,
   ok,
+  taskRoomHandler,
   teamMembersHandler,
   type MockHandler,
 } from './fixtures.js'
@@ -21,6 +25,7 @@ import { persistentFrame } from './frames.js'
 
 const TASK_ID = '00000000-0000-4000-8000-0000000000a1'
 const ARTIFACT_ID = '00000000-0000-4000-8000-0000000000a2'
+const SOURCE_RUN_ID = '00000000-0000-4000-8000-0000000000a4'
 const SHA = 'a'.repeat(64)
 const TEXT = 'alpha orderId beta\nbeta orderId gamma\n'
 const SECOND = TEXT.indexOf('orderId', TEXT.indexOf('orderId') + 1)
@@ -69,7 +74,69 @@ function baseHandlers(input: {
   onInvite?: (body: unknown) => void
   onSubmit?: (body: unknown) => void
 }): MockHandler[] {
+  const task = makeTask({
+    id: TASK_ID,
+    assigneeUserId: ALICE.userId,
+    assignmentStatus: 'accepted',
+    acceptedAt: '2026-10-23T00:00:00.000Z',
+    status: 'in_progress',
+  })
+  const sourceRun = makeRun({
+    id: SOURCE_RUN_ID,
+    status: 'completed',
+    finishedAt: '2026-10-23T00:01:00.000Z',
+  })
+  const artifact = (input.view() as ReturnType<typeof reviewView>).artifact
+  // The composed review page also reads its task, revision rounds and provenance.
+  // Keep every read explicit: an unhandled GET must not masquerade as the dropped POST.
+  const source = makeArtifact({
+    id: artifact.id,
+    runId: sourceRun.id,
+    ownerUserId: artifact.ownerUserId,
+    title: artifact.title,
+    mediaType: artifact.mediaType,
+    byteSize: artifact.byteSize,
+    sha256: artifact.sha256,
+    status: 'published',
+    publishedAt: artifact.publishedAt,
+  })
   return [
+    taskRoomHandler(task, { runs: [sourceRun], artifacts: [source] }),
+    {
+      method: 'GET',
+      url: new RegExp(`/api/v1/tasks/${TASK_ID}/artifact-revision-rounds$`),
+      respond: () => ok([]),
+    },
+    {
+      method: 'GET',
+      url: new RegExp(`/api/v1/artifacts/${ARTIFACT_ID}/delivery-basis$`),
+      respond: () =>
+        ok({
+          artifactId: source.id,
+          taskId: task.id,
+          sourceRun: { id: sourceRun.id, createdAt: sourceRun.createdAt, status: sourceRun.status },
+          agreement: { status: 'unbound', revision: null },
+          // This baseline represents a historical Run with unknown input manifests.
+          taskInputs: { status: 'unknown', complete: false, artifacts: [] },
+          handoffInputs: { status: 'unknown', complete: false, artifacts: [] },
+          handoffs: [],
+        }),
+    },
+    {
+      method: 'GET',
+      url: new RegExp(`/api/v1/artifacts/${ARTIFACT_ID}/preview-info$`),
+      respond: () =>
+        ok({
+          artifactId: source.id,
+          status: 'failed',
+          sourceSha256: source.sha256,
+          converter: 'unknown',
+          mediaType: null,
+          byteSize: null,
+          failureReason: 'ISOLATION_REQUIRED',
+          updatedAt: null,
+        }),
+    },
     {
       method: 'GET',
       url: new RegExp(`/api/v1/artifacts/${ARTIFACT_ID}/review$`),
@@ -230,7 +297,7 @@ describe('#429 交付物审阅页', () => {
       const composer = await commentComposer(kind, user)
       await user.type(composer.field, '请补充错误处理')
       await user.click(composer.button)
-      await screen.findByRole('alert')
+      expect(await screen.findByRole('alert')).toHaveTextContent('无法连接服务器，请检查网络后重试')
       await user.type(composer.field, '  ')
       await user.click(composer.button)
       await waitFor(() =>
@@ -251,6 +318,7 @@ describe('#429 交付物审阅页', () => {
       )
       expect(replay.requests[2]!.key).not.toBe(replay.requests[1]!.key)
       expect(comments.filter((row) => row.body === '请补充错误处理')).toHaveLength(2)
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     },
   )
 
@@ -272,7 +340,9 @@ describe('#429 交付物审阅页', () => {
         await user.clear(composer.field)
         await user.type(composer.field, text)
         await user.click(composer.button)
-        await screen.findByRole('alert')
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+          '无法连接服务器，请检查网络后重试',
+        )
         await waitFor(() => expect(composer.button).toBeEnabled())
       }
       await user.clear(composer.field)
@@ -290,6 +360,7 @@ describe('#429 交付物审阅页', () => {
           .filter((row) => ['意见 A', '意见 B'].includes(String(row.body)))
           .map((row) => row.body),
       ).toEqual(['意见 A', '意见 B'])
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     },
   )
 
@@ -307,7 +378,7 @@ describe('#429 交付物审阅页', () => {
     const composer = await commentComposer('text', user)
     await user.type(composer.field, '同一意见')
     await user.click(composer.button)
-    await screen.findByRole('alert')
+    expect(await screen.findByRole('alert')).toHaveTextContent('无法连接服务器，请检查网络后重试')
     const pre = screen.getByTestId('review-text')
     const range = document.createRange()
     const start = TEXT.indexOf('orderId')
@@ -322,6 +393,7 @@ describe('#429 交付物审阅页', () => {
     expect(replay.requests[1]!.key).not.toBe(replay.requests[0]!.key)
     expect(replay.requests.map((row) => row.body.anchor?.start)).toEqual([SECOND, start])
     expect(comments).toHaveLength(2)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('同文回复换到另一条线程时，不重放旧父批注的回执', async () => {
@@ -342,7 +414,7 @@ describe('#429 交付物审阅页', () => {
     const composer = await commentComposer('reply', user)
     await user.type(composer.field, '同一回复')
     await user.click(composer.button)
-    await screen.findByRole('alert')
+    expect(await screen.findByRole('alert')).toHaveTextContent('无法连接服务器，请检查网络后重试')
     await user.click(
       within(screen.getByTestId(`review-comment-${otherId}`)).getByRole('button', { name: '回复' }),
     )
@@ -356,6 +428,7 @@ describe('#429 交付物审阅页', () => {
       otherId,
     ])
     expect(comments).toHaveLength(4)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('整件批注 → 提交本轮意见；没有意见时提交被禁用', async () => {
