@@ -51,7 +51,8 @@ describe('OfficePreview', () => {
     const { fetchMock } = mount(() => info)
     expect(await screen.findByText(/尚无在线预览/)).toBeVisible()
     expect(screen.getByRole('link', { name: '下载原件' })).toHaveAttribute(
-      'href', `/api/v1/artifacts/${ID}/content`,
+      'href',
+      `/api/v1/artifacts/${ID}/content`,
     )
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/preview'))).toBe(false)
     info = preview('ready')
@@ -72,13 +73,26 @@ describe('OfficePreview', () => {
   it('ready 按需从受控接口加载 PDF，并释放阅读副本', async () => {
     const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:office-preview')
     const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
-    const { fetchMock, unmount } = mount(() => preview('ready'), [
-      { method: 'GET', url: /\/preview$/, respond: () =>
-        new Response('%PDF-1.7\npreview', { headers: { 'content-type': 'application/pdf' } }) },
-    ])
+    const { fetchMock, unmount } = mount(
+      () => preview('ready'),
+      [
+        {
+          method: 'GET',
+          url: /\/preview$/,
+          respond: () =>
+            new Response('%PDF-1.7\npreview', { headers: { 'content-type': 'application/pdf' } }),
+        },
+      ],
+    )
     await userEvent.click(await screen.findByRole('button', { name: '查看 Office 预览' }))
-    expect(await screen.findByTitle('方案.docx 的只读 PDF 预览')).toHaveAttribute('src', 'blob:office-preview')
-    expect(fetchMock).toHaveBeenCalledWith(`/api/v1/artifacts/${ID}/preview`, expect.objectContaining({ credentials: 'include' }))
+    expect(await screen.findByTitle('方案.docx 的只读 PDF 预览')).toHaveAttribute(
+      'src',
+      'blob:office-preview',
+    )
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/v1/artifacts/${ID}/preview`,
+      expect.objectContaining({ credentials: 'include' }),
+    )
     expect(create).toHaveBeenCalledOnce()
     expect(screen.getByText(/只读阅读副本/)).toBeVisible()
     unmount()
@@ -87,7 +101,10 @@ describe('OfficePreview', () => {
 
   it.each([
     ['没有读取权限', () => new Response('', { status: 403 })],
-    ['返回非 PDF 内容', () => new Response('<html>错误</html>', { headers: { 'content-type': 'text/html' } })],
+    [
+      '返回非 PDF 内容',
+      () => new Response('<html>错误</html>', { headers: { 'content-type': 'text/html' } }),
+    ],
   ])('%s时不嵌入内容，保留下载与重试', async (_name, response) => {
     mount(() => preview('ready'), [{ method: 'GET', url: /\/preview$/, respond: response }])
     await userEvent.click(await screen.findByRole('button', { name: '查看 Office 预览' }))
@@ -103,11 +120,33 @@ describe('OfficePreview', () => {
     expect(screen.queryByRole('button', { name: '查看 Office 预览' })).not.toBeInTheDocument()
   })
 
+  it('超出预览上限的元数据不触发内容读取', async () => {
+    const { fetchMock } = mount(() => preview('ready', { byteSize: 52_428_801 }))
+    expect(await screen.findByText(/无法读取预览状态/)).toBeVisible()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('预览信息拒绝访问时不请求 PDF', async () => {
-    const fetchMock = installFetch([{ method: 'GET', url: /\/preview-info$/, respond: () =>
-      new Response(JSON.stringify({ ok: false, error: { code: 'NOT_FOUND', message: 'not found', requestId: 'test' } }), { status: 404 }) }])
+    const fetchMock = installFetch([
+      {
+        method: 'GET',
+        url: /\/preview-info$/,
+        respond: () =>
+          new Response(
+            JSON.stringify({
+              ok: false,
+              error: { code: 'NOT_FOUND', message: 'not found', requestId: 'test' },
+            }),
+            { status: 404 },
+          ),
+      },
+    ])
     const queryClient = makeQueryClient({ retry: false })
-    render(<QueryClientProvider client={queryClient}><OfficePreview artifact={artifact} /></QueryClientProvider>)
+    render(
+      <QueryClientProvider client={queryClient}>
+        <OfficePreview artifact={artifact} />
+      </QueryClientProvider>,
+    )
     expect(await screen.findByText(/无法读取预览状态/)).toBeVisible()
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
@@ -115,9 +154,11 @@ describe('OfficePreview', () => {
   it('非 Office 不增加请求或替代文本预览', async () => {
     const fetchMock = installFetch([])
     const queryClient = makeQueryClient({ retry: false })
-    const { container } = render(<QueryClientProvider client={queryClient}>
-      <OfficePreview artifact={{ ...artifact, mediaType: 'text/markdown' }} />
-    </QueryClientProvider>)
+    const { container } = render(
+      <QueryClientProvider client={queryClient}>
+        <OfficePreview artifact={{ ...artifact, mediaType: 'text/markdown' }} />
+      </QueryClientProvider>,
+    )
     await waitFor(() => expect(container).toBeEmptyDOMElement())
     expect(fetchMock).not.toHaveBeenCalled()
   })

@@ -1,8 +1,8 @@
-# Office 只读 PDF 预览（#431 后端 / ADR-0021 §2）验收记录
+# Office 只读 PDF 预览（#441 / ADR-0021 §2）验收记录
 
-- 对应场景/门禁：交付物格式能力（DOCX/XLSX/PPTX 只读 PDF 预览）+ Q0/Q1/Q2
-- 对应 Issue：P1-431（后端切片）
-- 上次验证：2026-10-24 · feat/p1-431-office-preview · PASS
+- 对应场景/门禁：交付物格式能力（DOCX/XLSX/PPTX 只读 PDF 预览）+ 定向 Q0/Q1/Q2
+- 对应 Issue：P1-441（既有后端 + 前端阅读接线）；P1-431 保留跟踪 PDF/图片区域能力
+- 上次验证：2026-10-26 · feat/p1-441-office-preview-ui · 定向检查 PASS；Q5 组合闭环未跑
 
 ## 验的是哪条用户路径
 
@@ -23,11 +23,20 @@ pnpm exec vitest run --project unit \
 # Hub：真实 PostgreSQL + Device Token / Session HTTP
 pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration \
   apps/hub/tests/artifact-preview.integration.spec.ts
+
+# Web：真实组件与路由，只替换 HTTP；包含既有文本/交付审阅回归
+pnpm exec vitest run --project web \
+  apps/web/tests/office-preview.spec.tsx \
+  apps/web/tests/office-preview-entry.spec.tsx \
+  apps/web/tests/artifact-review.spec.tsx \
+  apps/web/tests/delivery-review.spec.tsx
+pnpm --filter @whalepod/web typecheck
+pnpm --filter @whalepod/web build
 ```
 
 真实转换烟测在本机执行（soffice 26.8）：测试先用 soffice 现造 DOCX（HTML）、
 XLSX（CSV）与 PPTX（最小 FODP）三份真实样本，再逐一调用 `convertOfficeToPdf`，
-断言输出以 `%PDF-` 开头。部署侧可用
+断言输出非空且以 `%PDF-` 开头；没有检查渲染后的版面或文字。部署侧可用
 `WHALEPOD_SOFFICE` 指向具体二进制；缺失时报 `CONVERTER_UNAVAILABLE`。
 
 ## 观测（看什么）
@@ -45,6 +54,13 @@ XLSX（CSV）与 PPTX（最小 FODP）三份真实样本，再逐一调用 `conv
   `previewStatus`），候选上传/失败不发团队事件。
 - 原件不变：下载 `/content` 仍返回原始 Office 字节与同一 sha256；转换失败不改变
   Artifact 状态。
+- Web：候选拥有者在文件卡检查预览，团队在已发布文件卡/独立审阅页读取；三种 Office
+  类型共用 `OfficePreview`。`none` 明确说明尚无预览（历史不回填），已知失败原因翻译为
+  中文，未知原因不原文显示；始终保留受控原件下载入口。
+- `ready` 点击「查看 Office 预览」后才携带 Session Cookie 读取 PDF；HTTP 失败、非 PDF
+  响应或版本摘要不匹配不嵌入内容。成功后使用仅本页持有的 blob URL，离开/版本变化时
+  撤销；浏览器不支持内嵌 PDF 时可下载原件。尚无预览的可见页最多轮询约一分钟，也能
+  手动刷新；发布后复用 `artifact.changed` 的审阅缓存失效前缀。
 - Node 临时目录：`artifact-previews/preview-*` 与 soffice profile 转换结束即清理；
   失败日志只带 runId/artifactId/稳定原因码，不带绝对路径。
 
@@ -62,6 +78,9 @@ XLSX（CSV）与 PPTX（最小 FODP）三份真实样本，再逐一调用 `conv
   并发时首个 ready 稳定、只发一条预览事件；同一 Idempotency-Key 重放返回首次视图。
 - Node 侧转换/上传失败不抛到 Run：候选采集照常成功；同一 artifact 并发 generate
   只转换一次；上传网络故障只告警，不伪装成「转换失败」。
+- 前端独立组件覆盖 none → 手动刷新 ready、缺组件/未知失败、受控按需加载与 URL
+  回收、403/错误内容类型回退、摘要不符、超限、元数据拒绝、非 Office 零额外请求。
+  入口覆盖拥有者候选、他人候选零查询、三格式审阅页仍可整件批注；文本阅读保持原路径。
 - 以上任一断言缺数据或形状不符即 FAIL（Zod strict + 集成断言）。
 
 ## 归因（失败先看哪层）
@@ -73,27 +92,27 @@ XLSX（CSV）与 PPTX（最小 FODP）三份真实样本，再逐一调用 `conv
   `apps/hub/src/modules/artifact/preview.ts`（设备归属、source sha、ready 不降级）。
 - 权限不符：`getArtifactPreviewInfo` / `readArtifactPreview` 复用
   `read_artifact_content` 判据；候选折叠为 404。
-- 页面不显示：先查 `preview-info` 三态与 `artifact.changed` 的 `change='preview'`，
-  再查前端接线（前端批次）。
+- 页面不显示：先查 `preview-info` 三态、sourceSha256 与原件版本，再查
+  `OfficePreview` 元数据查询/按需 PDF 读取与 `artifact.changed` 审阅前缀失效。
 
 ## 取证
 
 ```bash
-git diff --stat feat/p1-431-office-preview
-# 上方两条命令复跑；03 §2.6/§4 与 ADR-0021 已同步
+git log --oneline feat/p1-441-office-preview-ui
+# 上方命令复跑；先红测试提交 ea8a157，后端 619388a..d03c56d 保留
 ```
 
 ## 边界与未覆盖
 
 - **区域锚点未做**：PDF 页码/归一化矩形、图片区域与 `kind='region'` 的协议扩展仍
   待前端 Agent 合并后另开批次；当前审阅页只有整件/文本批注。
-- XLSX/PPTX 的真实样本由测试内现造（CSV/FODP），不落仓库二进制 fixture；
-  转换质量（字体、分页、多页）仍只做了「产出可读 PDF」判定。
+- 三种真实 Office 样本由测试内现造（HTML/CSV/FODP），不落仓库二进制 fixture；
+  当前仅判定 PDF 签名与非空，未验证字体、分页、多页或复杂表格/幻灯片布局。
 - 不做历史回填：本切片之前已发布的 Office Artifact 没有预览，读面显示 `none` 并
   回退下载；重新产出新版本才会生成。
 - 转换是 Node 后台任务：Run 结束/进程退出时未完成的预览可能丢失（预览缺失不影响
   交付）；没有重试队列或管理端重建入口。
-- 未跑生产装配 Q5（前端审阅页与真实 Node 闭环由前端批次接线后统一跑）；
+- 前端接线已由组件/真实路由测试覆盖；未跑真浏览器 + 真 Node 的生产装配 Q5；
   未做高并发转换/上传压测。
 - LibreOffice 不是仓库依赖：部署机未安装/未配置 `WHALEPOD_SOFFICE` 时只登记失败，
   不阻断交付；转换质量（字体、分页）由实际样本决定。

@@ -24,6 +24,7 @@ import { FileCard } from '../../vendor/collectui/collectui.js'
 import { formatBytes, shortId } from '../../shared/format.js'
 import { RUN_NOT_IN_TIMELINE_LABEL, runOrdinalLabels } from './runLabels.js'
 import { isTextPreviewable, truncatePreview } from './artifactPreview.js'
+import { OfficePreview, isOfficePreviewable } from './OfficePreview.js'
 import type { Session } from '../../shared/api/types.js'
 import type { TaskRoomArtifact, TaskRoomRun } from '../../shared/api/types.js'
 
@@ -175,6 +176,7 @@ function ArtifactRows({
               </div>
             </dl>
           </details>
+          <OfficePreview artifact={artifact} />
           <div className="artifact-actions">
             <ArtifactPreview artifact={artifact} />
             <ArtifactDownload artifact={artifact} />
@@ -392,9 +394,11 @@ function CandidateRows({
               </div>
             </dl>
           </details>
-          {!isTextPreviewable(artifact.mediaType, artifact.byteSize) ? (
+          {!isTextPreviewable(artifact.mediaType, artifact.byteSize) &&
+          !isOfficePreviewable(artifact.mediaType) ? (
             <p className="mutation-hint">暂不支持在线预览，请下载检查。</p>
           ) : null}
+          <OfficePreview artifact={artifact} />
           <div className="artifact-actions">
             <ArtifactPreview artifact={artifact} />
             <ArtifactDownload artifact={artifact} />
