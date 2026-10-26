@@ -130,7 +130,168 @@ function baseHandlers(input: {
   ]
 }
 
+/** HTTP replay seam: persist first, then lose a response; same key returns that first row. */
+function lostCommentResponse(dropCount: number, comments: Array<Record<string, unknown>>) {
+  const requests: Array<{
+    key: string
+    body: { body: string; anchor?: Record<string, unknown>; parentCommentId?: string }
+  }> = []
+  const receipts = new Map<string, Record<string, unknown>>()
+  const handler: MockHandler = {
+    method: 'POST',
+    url: new RegExp(`/api/v1/artifacts/${ARTIFACT_ID}/comments$`),
+    respond: (init) => {
+      const key = new Headers(init.headers).get('idempotency-key')!
+      const body = JSON.parse(String(init.body)) as (typeof requests)[number]['body']
+      requests.push({ key, body })
+      let row = receipts.get(key)
+      if (row === undefined) {
+        row = {
+          id: `00000000-0000-4000-8000-${String(comments.length + 1).padStart(12, '0')}`,
+          artifactId: ARTIFACT_ID,
+          authorUserId: BOB.userId,
+          parentCommentId: body.parentCommentId ?? null,
+          kind: body.anchor === undefined ? 'whole' : 'text',
+          anchor: body.anchor ?? null,
+          body: body.body.trim(),
+          createdAt: '2026-10-23T02:00:00.000Z',
+        }
+        comments.push(row)
+        receipts.set(key, row)
+      }
+      if (dropCount-- > 0) throw new Error('response lost after storing comment')
+      return { status: 201, body: { ok: true, data: row } }
+    },
+  }
+  return { requests, handler }
+}
+const RETRY_PARENT_ID = '00000000-0000-4000-8000-0000000000c1'
+function retryParent() {
+  return {
+    id: RETRY_PARENT_ID,
+    artifactId: ARTIFACT_ID,
+    authorUserId: ALICE.userId,
+    parentCommentId: null,
+    kind: 'whole',
+    anchor: null,
+    body: '请核对这项',
+    createdAt: '2026-10-23T01:00:00.000Z',
+  }
+}
+async function commentComposer(
+  kind: 'whole' | 'text' | 'reply',
+  user: ReturnType<typeof userEvent.setup>,
+) {
+  if (kind === 'text') {
+    const pre = await screen.findByTestId('review-text')
+    const range = document.createRange()
+    range.setStart(pre.firstChild!, SECOND)
+    range.setEnd(pre.firstChild!, SECOND + 'orderId'.length)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    fireEvent.mouseUp(pre)
+    return {
+      field: await screen.findByLabelText('对所选文字的批注'),
+      button: screen.getByRole('button', { name: '发表原位批注' }),
+    }
+  }
+  if (kind === 'reply') {
+    await user.click(
+      within(await screen.findByTestId(`review-comment-${RETRY_PARENT_ID}`)).getByRole('button', {
+        name: '回复',
+      }),
+    )
+    return {
+      field: await screen.findByLabelText('回复批注'),
+      button: screen.getByRole('button', { name: '发表回复' }),
+    }
+  }
+  return {
+    field: await screen.findByLabelText('对整件文件的评论'),
+    button: screen.getByRole('button', { name: '发表整件批注' }),
+  }
+}
+
 describe('#429 交付物审阅页', () => {
+  it.each(['whole', 'text', 'reply'] as const)(
+    '%s 批注已保存但响应丢失：同意图重试只保存一次，成功后允许新一次同文',
+    async (kind) => {
+      const user = userEvent.setup()
+      const comments: Array<Record<string, unknown>> = kind === 'reply' ? [retryParent()] : []
+      const replay = lostCommentResponse(1, comments)
+      renderApp(
+        `/tasks/${TASK_ID}/review/${ARTIFACT_ID}`,
+        loggedInHandlers(BOB, [
+          replay.handler,
+          ...baseHandlers({ view: () => reviewView({ comments }) }),
+        ]),
+      )
+      const composer = await commentComposer(kind, user)
+      await user.type(composer.field, '请补充错误处理')
+      await user.click(composer.button)
+      await screen.findByRole('alert')
+      await user.type(composer.field, '  ')
+      await user.click(composer.button)
+      await waitFor(() =>
+        kind === 'whole'
+          ? expect(composer.field).toHaveValue('')
+          : expect(composer.field).not.toBeInTheDocument(),
+      )
+      expect(replay.requests).toHaveLength(2)
+      expect(replay.requests[1]!.key).toBe(replay.requests[0]!.key)
+      expect(comments.filter((row) => row.body === '请补充错误处理')).toHaveLength(1)
+      const next = await commentComposer(kind, user)
+      await user.type(next.field, '请补充错误处理')
+      await user.click(next.button)
+      await waitFor(() =>
+        kind === 'whole'
+          ? expect(next.field).toHaveValue('')
+          : expect(next.field).not.toBeInTheDocument(),
+      )
+      expect(replay.requests[2]!.key).not.toBe(replay.requests[1]!.key)
+      expect(comments.filter((row) => row.body === '请补充错误处理')).toHaveLength(2)
+    },
+  )
+
+  it.each(['whole', 'text', 'reply'] as const)(
+    '%s 未知结果后编辑 A→B→A 不会命中旧回执',
+    async (kind) => {
+      const user = userEvent.setup()
+      const comments: Array<Record<string, unknown>> = kind === 'reply' ? [retryParent()] : []
+      const replay = lostCommentResponse(2, comments)
+      renderApp(
+        `/tasks/${TASK_ID}/review/${ARTIFACT_ID}`,
+        loggedInHandlers(BOB, [
+          replay.handler,
+          ...baseHandlers({ view: () => reviewView({ comments }) }),
+        ]),
+      )
+      const composer = await commentComposer(kind, user)
+      for (const text of ['意见 A', '意见 B']) {
+        await user.clear(composer.field)
+        await user.type(composer.field, text)
+        await user.click(composer.button)
+        await screen.findByRole('alert')
+        await waitFor(() => expect(composer.button).toBeEnabled())
+      }
+      await user.clear(composer.field)
+      await user.type(composer.field, '意见 A')
+      await user.click(composer.button)
+      await waitFor(() =>
+        kind === 'whole'
+          ? expect(composer.field).toHaveValue('')
+          : expect(composer.field).not.toBeInTheDocument(),
+      )
+      expect(new Set(replay.requests.map((row) => row.key)).size).toBe(3)
+      expect(
+        comments
+          .filter((row) => ['意见 A', '意见 B'].includes(String(row.body)))
+          .map((row) => row.body),
+      ).toEqual(['意见 A', '意见 B', '意见 A'])
+    },
+  )
+
   it('整件批注 → 提交本轮意见；没有意见时提交被禁用', async () => {
     const user = userEvent.setup()
     const comments: unknown[] = []
