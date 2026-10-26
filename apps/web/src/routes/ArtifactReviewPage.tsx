@@ -26,6 +26,7 @@ import {
   ReviewRevisionPanel,
   type ReviewResolutionState,
 } from '../features/task/ReviewRevisionPanel.js'
+import { OfficePreview, isOfficePreviewable } from '../features/task/OfficePreview.js'
 
 type Filter = 'all' | 'unresolved' | 'round'
 type CommentInput = { body: string; anchor?: ArtifactCommentAnchor; parentCommentId?: string }
@@ -341,9 +342,12 @@ export function ArtifactReviewPage(): ReactNode {
       />
       <div className="review-layout">
         <main className="review-content" aria-label="文件内容">
+          <OfficePreview artifact={view.artifact} />
           {reading === 'unsupported' ? (
             <p data-testid="review-unsupported">
-              该格式暂不支持在线定位批注。请下载原件查看后，对整件文件发表评论
+              {isOfficePreviewable(view.artifact.mediaType)
+                ? 'Office 预览只供阅读；请对整件文件发表评论，并写明页码或位置'
+                : '该格式暂不支持在线定位批注。请下载原件查看后，对整件文件发表评论'}
               {view.artifact.mediaType.startsWith('application/pdf') ? '，并写明页码或位置' : ''}。
             </p>
           ) : content.isPending ? (

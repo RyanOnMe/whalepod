@@ -1,0 +1,65 @@
+{
+  "component": "node.artifact.preview.isolation",
+  "status": "PASS",
+  "nodeVersion": "24.12.0",
+  "baseCommit": "b1f49a803f7c407d5ae71f4458aad8ed229895df",
+  "regressionCommit": "9a5af53",
+  "regression": {
+    "failed": 9,
+    "passed": 9,
+    "runtimeAtInitialReproduction": "26.12.1",
+    "reason": "unisolated conversion read linked synthetic resources; public legacy preview remained accessible"
+  },
+  "unsafeReproduction": {
+    "allInputsSynthetic": true,
+    "source": "real convertOfficeToPdf with valid DOCX external image relationship",
+    "presentTargetPdfImages": 1,
+    "presentTargetImageWidth": 32,
+    "presentTargetImageHeight": 32,
+    "absentTargetPdfImages": 0,
+    "rawPathsOrDocumentBytesArchived": false
+  },
+  "verifiedChecks": {
+    "defaultGeneratorPdfUploads": 0,
+    "linkedHttpRequests": 0,
+    "configuredExecutableWitness": "absent",
+    "conversionStaging": "absent",
+    "lowLevelEntry": "ISOLATION_REQUIRED before process creation",
+    "legacyPdfBlobReads": 0,
+    "legacyReadyRecords": "retained without public read access",
+    "privateCandidateReads": "404 NOT_FOUND",
+    "authorizedPreviewRead": "404 PREVIEW_UNAVAILABLE",
+    "newPreviewUpload": "409 PREVIEW_UNAVAILABLE before blob/receipt write",
+    "originalDownload": "unchanged",
+    "publicFailureReason": "ISOLATION_REQUIRED"
+  },
+  "gates": {
+    "unit": {
+      "files": 6,
+      "passed": 41
+    },
+    "web": {
+      "files": 4,
+      "passed": 37
+    },
+    "Q2": {
+      "files": 1,
+      "passed": 9
+    },
+    "build": "pass",
+    "repositoryTypecheck": "pass",
+    "format": "pass",
+    "targetedLint": "pass (existing cli unused import warning only)",
+    "boundaries": "pass",
+    "protocolGenerated": "pass",
+    "secretScan": "pass"
+  },
+  "notRun": [
+    "new production-assembly Q5 after suspension (parent P1-442 owns integration)",
+    "full Q0 unit suite",
+    "Q8/Q9",
+    "future isolated conversion sandbox",
+    "Office layout fidelity"
+  ],
+  "decision": "ADR-0023: suspend automatic conversion, uploads and historical PDF reads until verified isolation; preserve original download and whole-artifact comments"
+}

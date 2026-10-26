@@ -3,6 +3,10 @@
  *   POST /node/runs/:runId/artifacts          Device Token（该 Run 的设备）上传候选
  *   POST /artifacts/:artifactId/publish       Run owner 发布候选
  *   GET  /artifacts/:artifactId/content       owner 或 published 后的项目成员下载
+ *   PUT  /node/artifacts/:artifactId/preview  Device Token：上传 Office 派生 PDF
+ *   POST /node/artifacts/:artifactId/preview-failure  Device Token：登记转换失败
+ *   GET  /artifacts/:artifactId/preview-info  可读原件者：预览状态（不给新权限）
+ *   GET  /artifacts/:artifactId/preview       owner 或 published 后的项目成员读 PDF
  *   GET  /node/runs/:runId/input-manifest     Device Token：Reviewer 只读输入清单
  *   GET  /node/artifacts/:artifactId/content  Device Token：受控下载（已发布）
  *
@@ -17,7 +21,6 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { eq } from 'drizzle-orm'
 import { authorize, asUserId } from '@whalepod/domain'
 import {
   getArtifact,
@@ -30,12 +33,22 @@ import {
 import type { Database } from '@whalepod/db'
 import { ArtifactUploadMetadataSchema } from '@whalepod/protocol'
 import type { ArtifactUploadMetadata } from '@whalepod/protocol'
+import {
+  ArtifactPreviewFailureRequestSchema,
+  ArtifactPreviewUploadMetadataSchema,
+} from '@whalepod/protocol'
 import { authenticateDevice } from '../plugin/pack-resolver.js'
 import type { RequireActor } from '../auth/session.js'
 import { readIdempotencyKey } from '../auth/idempotency.js'
 import { audit } from '../shared/audit.js'
 import { ApiError } from '../shared/http-error.js'
 import { publishArtifact, requireArtifactRow } from './commands.js'
+import {
+  getArtifactPreviewInfo,
+  readArtifactPreview,
+  recordArtifactPreview,
+  recordArtifactPreviewFailure,
+} from './preview.js'
 import { savedRunInputs } from '../run/input-manifest.js'
 import { savedHandoffInput } from '../run/handoff-input.js'
 import { toArtifactView } from './queries.js'
@@ -71,6 +84,35 @@ function sendArtifactBytes(
     .header('content-length', String(bytes.byteLength))
     .header('content-disposition', `attachment; filename="artifact-${artifactId}"`)
     .send(bytes)
+}
+
+/** 预览是内联阅读副本：不允许被当作 HTML/脚本嗅探，也不进共享缓存。 */
+function sendPreviewBytes(
+  reply: FastifyReply,
+  bytes: Uint8Array,
+  artifactId: string,
+): FastifyReply {
+  return reply
+    .code(200)
+    .header('content-type', 'application/pdf')
+    .header('content-length', String(bytes.byteLength))
+    .header('content-disposition', `inline; filename="artifact-${artifactId}.pdf"`)
+    .header('cache-control', 'private, no-store')
+    .header('x-content-type-options', 'nosniff')
+    .header('content-security-policy', 'sandbox')
+    .send(bytes)
+}
+
+/** PUT /node/artifacts/:artifactId/preview 的 query → 协议 DTO。 */
+function previewMetadataFromQuery(
+  query: Record<string, unknown>,
+): ReturnType<typeof ArtifactPreviewUploadMetadataSchema.parse> {
+  return ArtifactPreviewUploadMetadataSchema.parse({
+    sourceSha256: query.sourceSha256,
+    sha256: query.sha256,
+    byteSize: Number(query.byteSize),
+    converter: query.converter,
+  })
 }
 
 export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoutesDeps): void {
@@ -150,6 +192,81 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
         return reply.code(201).send({ ok: true, data: view })
       },
     )
+
+    // PUT /node/artifacts/:artifactId/preview：产出原件的设备上传派生 PDF。
+    // body 与原件上传同用 octet-stream；hash/size 由 store 复核（声明不符即 400）。
+    artifact.put(
+      '/node/artifacts/:artifactId/preview',
+      { bodyLimit: ARTIFACT_MAX_BYTES },
+      async (request, reply) => {
+        const identity = await authenticateDevice(deps.database, request)
+        const { artifactId } = request.params as { artifactId: string }
+        const metadata = previewMetadataFromQuery(request.query as Record<string, unknown>)
+        const body = request.body
+        if (!Buffer.isBuffer(body)) {
+          throw new ApiError(400, 'VALIDATION_FAILED', 'preview body must be raw bytes')
+        }
+        const view = await recordArtifactPreview(
+          deps.database,
+          deps.store,
+          { deviceId: identity.deviceId, artifactId },
+          metadata,
+          body,
+          readIdempotencyKey(request),
+        )
+        request.log.info(
+          {
+            component: 'artifact.preview',
+            msg: 'artifact preview uploaded',
+            artifactId: view.artifactId,
+            status: view.status,
+          },
+          'artifact preview uploaded',
+        )
+        return reply.code(200).send({ ok: true, data: view })
+      },
+    )
+
+    // POST /node/artifacts/:artifactId/preview-failure：转换失败也登记，读面才能
+    // 区分「没有预览」与「转换失败」；不改变 Artifact 状态。
+    artifact.post('/node/artifacts/:artifactId/preview-failure', async (request, reply) => {
+      const identity = await authenticateDevice(deps.database, request)
+      const { artifactId } = request.params as { artifactId: string }
+      const body = ArtifactPreviewFailureRequestSchema.parse(request.body)
+      const view = await recordArtifactPreviewFailure(
+        deps.database,
+        { deviceId: identity.deviceId, artifactId },
+        body,
+        readIdempotencyKey(request),
+      )
+      return reply.code(200).send({ ok: true, data: view })
+    })
+
+    // GET /artifacts/:artifactId/preview-info：可读原件者即可读状态，不授予新权限；
+    // 候选对非拥有者与不存在同作 404。
+    artifact.get('/artifacts/:artifactId/preview-info', async (request, reply) => {
+      const session = await deps.requireActor(request)
+      const { artifactId } = request.params as { artifactId: string }
+      const view = await getArtifactPreviewInfo(
+        deps.database.db,
+        { userId: asUserId(session.userId), role: session.role },
+        artifactId,
+      )
+      return reply.header('cache-control', 'no-store').send({ ok: true, data: view })
+    })
+
+    // GET /artifacts/:artifactId/preview：只读 PDF 阅读副本，权限继承原件。
+    artifact.get('/artifacts/:artifactId/preview', async (request, reply) => {
+      const session = await deps.requireActor(request)
+      const { artifactId } = request.params as { artifactId: string }
+      const preview = await readArtifactPreview(
+        deps.database.db,
+        deps.store,
+        { userId: asUserId(session.userId), role: session.role },
+        artifactId,
+      )
+      return sendPreviewBytes(reply, preview.bytes, artifactId)
+    })
 
     // Run创建时固化的输入清单。旧NULL不以当前发布列表回填，避免伪造历史。
     artifact.get('/node/runs/:runId/input-manifest', async (request) => {

@@ -119,6 +119,9 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   const { ArtifactCollector } = await import('./artifact/collect.js')
   const { uploadArtifactCandidate } = await import('./artifact/upload-client.js')
   const { ArtifactInputsManager } = await import('./artifact/inputs.js')
+  const { OfficePreviewGenerator } = await import('./artifact/preview.js')
+  const { uploadArtifactPreview, reportArtifactPreviewFailure } =
+    await import('./artifact/preview-upload-client.js')
 
   const artifactLog = (
     level: 'info' | 'warn' | 'error',
@@ -133,6 +136,20 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     inputsRoot: join(stateDir, 'runtime-inputs'),
     log: artifactLog,
   })
+  // #441 / ADR-0023: automatic Office conversion is suspended until an isolated
+  // converter is verified. The generator reports ISOLATION_REQUIRED; it never spawns soffice.
+  const officePreview = new OfficePreviewGenerator({
+    stagingDir: join(stateDir, 'artifact-previews'),
+    upload: (artifactId, metadata, body) =>
+      uploadArtifactPreview(config.hubUrl, config.deviceToken, artifactId, metadata, body, {
+        log: artifactLog,
+      }),
+    reportFailure: (artifactId, report) =>
+      reportArtifactPreviewFailure(config.hubUrl, config.deviceToken, artifactId, report, {
+        log: artifactLog,
+      }),
+    log: artifactLog,
+  })
   const artifactCollector = new ArtifactCollector({
     stagingDir: join(stateDir, 'artifact-staging'),
     // 幂等键每次 collect 生成一次（客户端对瞬时失败用同一 key 重试 → Hub 回执幂等）。
@@ -141,6 +158,7 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
         idempotencyKey: randomUUID(),
         log: artifactLog,
       }),
+    preview: officePreview,
     log: artifactLog,
   })
 
