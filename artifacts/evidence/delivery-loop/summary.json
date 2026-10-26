@@ -1,0 +1,56 @@
+{
+  "component": "delivery.loop.acceptance",
+  "candidateBranch": "feat/p1-442-delivery-acceptance",
+  "verifiedSourceCommit": "ccd0b9b",
+  "source": "production-hub-node-runtime-browser-postgres-soffice",
+  "modelMode": "deterministic DSH replay; output files are synthetic preconditions",
+  "gates": {
+    "build": "pass",
+    "Q0": {
+      "status": "pass",
+      "files": 203,
+      "testsPassed": 2295
+    },
+    "Q2_Q6_Q7": {
+      "status": "pass",
+      "files": 87,
+      "testsPassed": 635,
+      "command": "tsx scripts/with-test-postgres.mts vitest run --project integration --project resilience --project security --maxWorkers=2"
+    },
+    "Q3": {
+      "status": "pass",
+      "files": 19,
+      "testsPassed": 74
+    },
+    "Q5_delivery": {
+      "status": "pass",
+      "browserCases": 1,
+      "independentChecks": 248,
+      "officeRequired": true,
+      "command": "pnpm test:e2e:delivery"
+    },
+    "secretScan": {
+      "status": "pass",
+      "selfTestCases": 11
+    },
+    "licenses": {
+      "status": "pass",
+      "packages": 626
+    }
+  },
+  "review": {
+    "independentAgentReview": "completed; findings fixed and verified",
+    "humanApproval": "not_obtained; required before merge for protocol/migration/security"
+  },
+  "notRun": [
+    "human double-account pilot",
+    "real two-member baseline comparison",
+    "real model revision quality",
+    "full release Q5 / 20 consecutive runs",
+    "Q8 load",
+    "Q9 compose smoke",
+    "Office complex layout fidelity",
+    "browser XLSX/PPTX lane",
+    "PDF/image region annotation"
+  ]
+}
