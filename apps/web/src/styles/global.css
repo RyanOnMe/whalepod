@@ -5102,7 +5102,6 @@ body[data-ds-dark-theme] .target-mode-explicit {
 }
 body[data-ds-dark-theme] .run-events-alert {
   --dsw-alias-state-warn-primary: var(--color-warn);
-
 }
 /* #430: reviews stay next to their immutable round; narrow screens keep one reading column. */
 .review-revision {
