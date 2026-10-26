@@ -2,7 +2,7 @@
 
 - 对应门禁：Q0/Q1、Q2、Web 组件；组合生产路径由交付闭环验收补充。
 - 对应 Issue：P1-440；决定见 ADR-0022。
-- 上次验证：2026-10-26 · feat/p1-440-delivery-basis；定向 Unit 8/8、Web（含旧审阅回归）12/12、真实 PostgreSQL Q2 2/2 通过，Hub/Web 测试类型检查通过。完整 Q0 静态项通过，188 文件中 187 通过；唯一失败是存量 `hub-testing-resolution.spec.ts` 在全仓并发下 5 秒加载超时，限定并发的单文件复跑通过；因此不宣称完整 Q0 PASS，整合门仍需复跑。具体机器结果见同名证据目录。
+- 上次验证：2026-10-26 · feat/p1-440-delivery-basis；定向 Unit 9/9、Web（含旧审阅回归）12/12、真实 PostgreSQL Q2 2/2 通过，Hub/Web 测试类型检查通过。完整 Q0 静态项通过，188 文件中 187 通过；唯一失败是存量 `hub-testing-resolution.spec.ts` 在全仓并发下 5 秒加载超时，限定并发的单文件复跑通过；因此不宣称完整 Q0 PASS，整合门仍需复跑。具体机器结果见同名证据目录。
 
 ## 验的是哪条用户路径
 
@@ -18,7 +18,7 @@ Web 组件走真实 api client；读面以网络响应打桩。新增面板只�
 
 - `hub.review.delivery-basis`：`GET /artifacts/:artifactId/delivery-basis` 的 `sourceRun.id`、`agreement.revision.id`、固定 `taskInputs`/`handoffInputs`、交接版本 ID 与逐条 `verified`。
 - 历史事实锚点：Run 的 `specRevisionId`、`artifactInputManifest`、`handoffInput`；不能拿 Task 当前约定补齐。
-- 可见性：候选 Artifact 对非拥有者 404；固定输入与叙述引用逐件重新判定当前已发布状态，不回传不可见身份或数量。
+- 可见性：候选 Artifact 对非拥有者 404；固定输入与叙述引用逐件重新判定当前已发布状态，不回传不可见身份或数量；repository seam 负控覆盖 candidate/跨 Task 文件与跨 Task Run 引用。
 - `web.review.delivery-basis`：加载/读错/显式空/历史未知/部分不可读/待核实/发布者核实的独立文案，读取重试没有命令 POST。
 
 ## 判定
@@ -26,7 +26,7 @@ Web 组件走真实 api client；读面以网络响应打桩。新增面板只�
 自动判据包括：
 
 1. 历史约定 ID 与正文仍是创建来源 Run 时的版本；最新约定不出现。
-2. 来源 Run 固定输入只包含当时选中的材料；迟到发布不能填入显式空清单。
+2. 来源 Run 固定输入只包含当时选中的材料；迟到发布不能填入已记录的空清单；空清单只证明记录为空，不推断用户是否手动选择。
 3. 交接必须同时匹配 Task、行级及系统块 sourceRunId、当前 Artifact ID/摘要/已发布状态；只共享 Run 或 Task 不够。
 4. 私有候选及其名称、原始路径、storageKey、credentialSlot、DSH session 字段不进入审阅人响应。
 5. 历史 NULL 是 unknown/complete=false；当前不可见材料被过滤但 complete=false；不拿当前元数据替换固定标题/摘要。

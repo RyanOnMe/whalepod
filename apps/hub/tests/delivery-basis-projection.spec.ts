@@ -1,5 +1,6 @@
 /** Legacy/missing read facts are supplied at the repository seam, never written into runtime tables. */
 import { asUserId } from '@whalepod/domain'
+import { emptyHandoffNarrative } from '@whalepod/protocol'
 import type { DbHandle } from '@whalepod/db'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getArtifactDeliveryBasis } from '../src/modules/review/delivery-basis.js'
@@ -78,6 +79,55 @@ describe('delivery basis missing-history projection (#440)', () => {
     expect(JSON.stringify(view)).not.toContain(HIDDEN)
     expect(JSON.stringify(view)).not.toContain('owner private title')
     expect(JSON.stringify(view)).not.toContain('renamed later')
+  })
+  it('removes private and cross-task published narrative references without exposing their identities', async () => {
+    const OTHER = '00000000-0000-4000-8000-000000000007'
+    const narrative = emptyHandoffNarrative()
+    narrative.evidence = [
+      {
+        text: '已公开但仍待核实的说明',
+        verified: false,
+        refs: [
+          { kind: 'artifact', artifactId: INPUT },
+          { kind: 'artifact', artifactId: HIDDEN },
+          { kind: 'artifact', artifactId: OTHER },
+          { kind: 'run', runId: HIDDEN },
+        ],
+      },
+    ]
+    reads.handoffs.mockResolvedValue([
+      {
+        id: REVISION,
+        taskId: TASK,
+        sourceRunId: RUN,
+        revisionNumber: 1,
+        publishedBy: ID,
+        publishedAt: new Date('2026-10-26T01:00:00.000Z'),
+        content: {
+          system: {
+            sourceRunId: RUN,
+            artifacts: [{ artifactId: ID, sha256: 'b'.repeat(64), status: 'published' }],
+          },
+          narrative,
+        },
+      },
+    ])
+    reads.artifact.mockImplementation(async (_db, id) => ({
+      id,
+      taskId: id === OTHER ? OTHER : TASK,
+      status: id === HIDDEN ? 'candidate' : 'published',
+      title: 'private reference title',
+    }))
+    reads.run.mockImplementation(async (_db, id) => (id === RUN ? run : { ...run, taskId: OTHER }))
+    const view = await getArtifactDeliveryBasis(handle, actor, ID)
+    expect(view.handoffs[0]?.referencesComplete).toBe(false)
+    expect(view.handoffs[0]?.narrative.evidence[0]?.refs).toEqual([
+      { kind: 'artifact', artifactId: INPUT },
+    ])
+    expect(view.handoffs[0]?.narrative.evidence[0]?.verified).toBe(false)
+    expect(JSON.stringify(view)).not.toContain(HIDDEN)
+    expect(JSON.stringify(view)).not.toContain(OTHER)
+    expect(JSON.stringify(view)).not.toContain('private reference title')
   })
   it('reports an unavailable bound revision and missing source instead of guessing from another task', async () => {
     reads.run.mockResolvedValue({ ...run, specRevisionId: REVISION })

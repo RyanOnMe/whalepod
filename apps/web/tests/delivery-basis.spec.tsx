@@ -35,7 +35,7 @@ describe('delivery basis panel (#440)', () => {
     mount()
     expect(await screen.findByText('该次执行未绑定任务约定。')).toBeVisible()
     await userEvent.click(screen.getByText('执行时固定的材料'))
-    expect(screen.getByText('该次执行明确未选择本任务交付物。')).toBeVisible()
+    expect(screen.getByText('该次执行记录的本任务文件输入为空。')).toBeVisible()
     expect(screen.getByText('尚未找到与这份成果明确对应的已发布交接说明。')).toBeVisible()
   })
   it('does not treat a read failure as no records and retries without writes', async () => {
