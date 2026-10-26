@@ -15,6 +15,7 @@ const reads = vi.hoisted(() => ({
   run: vi.fn(),
   preview: vi.fn(),
   transact: vi.fn(),
+  failed: vi.fn(),
 }))
 vi.mock('@whalepod/db', () => ({
   getArtifact: reads.artifact,
@@ -22,8 +23,8 @@ vi.mock('@whalepod/db', () => ({
   getArtifactPreview: reads.preview,
   transactCommand: reads.transact,
   appendTeamEvent: vi.fn(),
-  schema: {},
-  upsertArtifactPreviewFailed: vi.fn(),
+  schema: { artifacts: { id: 'artifact-id' } },
+  upsertArtifactPreviewFailed: reads.failed,
   upsertArtifactPreviewReady: vi.fn(),
 }))
 
@@ -62,7 +63,7 @@ describe('preview legacy metadata disclosure', () => {
       { userId: asUserId(ID), role: 'member' },
       ID,
     )
-    expect(view).toMatchObject({ converter: 'unknown', failureReason: 'CONVERT_FAILED' })
+    expect(view).toMatchObject({ converter: 'unknown', failureReason: 'ISOLATION_REQUIRED' })
     expect(JSON.stringify(view)).not.toContain(PRIVATE_DETAIL)
   })
 
@@ -74,30 +75,7 @@ describe('preview legacy metadata disclosure', () => {
       { sourceSha256: SHA, converter: 'libreoffice', reason: 'CONVERT_TIMEOUT' },
       'old-key',
     )
-    expect(view).toMatchObject({ converter: 'unknown', failureReason: 'CONVERT_FAILED' })
-    expect(JSON.stringify(view)).not.toContain(PRIVATE_DETAIL)
-  })
-
-  it('normalizes an old ready command receipt as well', async () => {
-    reads.transact.mockResolvedValue({
-      ...oldReceipt,
-      status: 'ready',
-      failureReason: null,
-      mediaType: 'application/pdf',
-      byteSize: 5,
-    })
-    const store = {
-      saveUpload: vi.fn().mockResolvedValue({ storageKey: 'safe', sha256: SHA, byteSize: 5 }),
-    } as unknown as ArtifactStore
-    const view = await recordArtifactPreview(
-      database,
-      store,
-      { deviceId: ID, artifactId: ID },
-      { sourceSha256: SHA, sha256: SHA, byteSize: 5, converter: 'libreoffice' },
-      Buffer.from('%PDF-'),
-      'old-key',
-    )
-    expect(view).toMatchObject({ converter: 'unknown', failureReason: null })
+    expect(view).toMatchObject({ converter: 'unknown', failureReason: 'ISOLATION_REQUIRED' })
     expect(JSON.stringify(view)).not.toContain(PRIVATE_DETAIL)
   })
 })
@@ -159,4 +137,33 @@ describe('preview isolation suspension includes historical data', () => {
     expect(store.saveUpload).not.toHaveBeenCalled()
     expect(reads.transact).not.toHaveBeenCalled()
   })
+})
+
+it('retains a historical ready record when a failure report arrives during suspension', async () => {
+  const artifact = { id: ID, runId: ID, ownerUserId: ID, status: 'published', sha256: SHA }
+  const oldReady = {
+    ...row,
+    status: 'ready',
+    failureReason: null,
+    mediaType: 'application/pdf',
+    byteSize: 5,
+    storageKey: 'old-pdf',
+    sha256: SHA,
+  }
+  reads.preview.mockResolvedValue(oldReady)
+  reads.transact.mockImplementation(
+    async (_database: unknown, _key: string, work: (tx: DbHandle) => Promise<unknown>) =>
+      work({
+        select: () => ({ from: () => ({ where: () => ({ for: async () => [artifact] }) }) }),
+      } as unknown as DbHandle),
+  )
+  const view = await recordArtifactPreviewFailure(
+    database,
+    { deviceId: ID, artifactId: ID },
+    { sourceSha256: SHA, converter: 'unknown', reason: 'ISOLATION_REQUIRED' },
+    'new-key',
+  )
+  expect(view).toMatchObject({ status: 'failed', failureReason: 'ISOLATION_REQUIRED' })
+  expect(reads.failed).not.toHaveBeenCalled()
+  expect(oldReady).toMatchObject({ status: 'ready', storageKey: 'old-pdf', sha256: SHA })
 })

@@ -134,3 +134,7 @@ Office 只读预览已落地：Node 在候选上传后后台用 LibreOffice 把 
 转换失败不阻止原件交付。读面提供 `preview-info` 三态与内联 PDF；无可用预览明确
 `PREVIEW_UNAVAILABLE` 供下载回退。PDF 页码/图片区域锚点（`kind='region'`）与
 审阅页前端接线仍未落地，待前端批次合并后另开切片。
+
+## 2026-10-26 安全评审收敛（ADR-0023）
+
+真实外链 DOCX 可令未隔离 LibreOffice 读取工作区外图像；独立配置 profile 不构成权限边界。自动转换、派生 PDF 新上传及历史 PDF 读取均暂停，API 明确报告 ISOLATION_REQUIRED，原件下载和整件批注保留。早期转换和阅读 PASS 不代表本版本开放能力，重新开放的条件见 ADR-0023。

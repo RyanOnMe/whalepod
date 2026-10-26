@@ -136,13 +136,10 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     inputsRoot: join(stateDir, 'runtime-inputs'),
     log: artifactLog,
   })
-  // #431：Office 只读预览。转换工具默认取 PATH 上的 soffice，部署侧可用
-  // WHALEPOD_SOFFICE 指向具体二进制；缺失时只登记预览失败，不影响原件交付。
+  // #441 / ADR-0023: automatic Office conversion is suspended until an isolated
+  // converter is verified. The generator reports ISOLATION_REQUIRED; it never spawns soffice.
   const officePreview = new OfficePreviewGenerator({
     stagingDir: join(stateDir, 'artifact-previews'),
-    ...(process.env.WHALEPOD_SOFFICE === undefined
-      ? {}
-      : { sofficePath: process.env.WHALEPOD_SOFFICE }),
     upload: (artifactId, metadata, body) =>
       uploadArtifactPreview(config.hubUrl, config.deviceToken, artifactId, metadata, body, {
         log: artifactLog,

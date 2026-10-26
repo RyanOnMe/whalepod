@@ -26,6 +26,7 @@ interface PreviewArtifact {
 }
 
 const FAILURE_LABELS: Readonly<Record<string, string>> = {
+  ISOLATION_REQUIRED: 'Office 隔离转换尚未开放，请下载原件查看并批注。',
   CONVERTER_UNAVAILABLE: '未配置 Office 转换组件，暂时无法生成预览。',
   CONVERT_TIMEOUT: 'Office 预览转换超时。',
   CONVERT_FAILED: 'Office 预览转换失败。',

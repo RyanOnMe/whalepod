@@ -4,6 +4,7 @@
  * 预览是**派生的阅读副本**，不是新的交付物版本：它与原件的 sha256 绑定，
  * 权限永远继承原件；转换失败只影响预览，不影响原件交付。
  *
+ * 当前隔离转换暂停（ADR-0023）：新上传/旧PDF读取均关闭，读面报告 ISOLATION_REQUIRED。
  * 这些 schema 只用于 Node ↔ Hub 的派生件上传与 Web 读面；不进入 DSH wire。
  */
 import { z } from 'zod'
@@ -15,6 +16,7 @@ const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
 
 export const ArtifactPreviewConverterSchema = z.enum(['libreoffice', 'unknown'])
 export const ArtifactPreviewFailureCodeSchema = z.enum([
+  'ISOLATION_REQUIRED',
   'CONVERTER_UNAVAILABLE',
   'CONVERT_TIMEOUT',
   'CONVERT_FAILED',

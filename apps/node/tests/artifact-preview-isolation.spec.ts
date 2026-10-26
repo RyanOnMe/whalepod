@@ -1,7 +1,7 @@
 /** Regression for untrusted Office links. All resources are synthetic fixtures owned by this test. */
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -108,6 +108,7 @@ async function generate(bytes: Buffer, extra: { sofficePath?: string } = {}) {
       uploaded.push(pdf)
     },
     reportFailure: async (_id, report) => {
+      expect(report.converter).toBe('unknown')
       reasons.push(report.reason)
     },
   })
@@ -118,6 +119,7 @@ async function generate(bytes: Buffer, extra: { sofficePath?: string } = {}) {
     mediaType: DOCX,
     bytes,
   })
+  await expect(stat(join(root, 'staging'))).rejects.toMatchObject({ code: 'ENOENT' })
   return { uploaded, reasons }
 }
 
