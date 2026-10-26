@@ -9,21 +9,57 @@ const USER = '00000000-0000-4000-8000-000000000442'
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
 function goodEvidence(): Record<string, unknown> {
-  const original = { status: 200, mediaType: DOCX, byteSize: 128, signature: 'PK123', sha256: SOURCE_SHA }
-  const pdf = { status: 200, mediaType: 'application/pdf', byteSize: 64, signature: '%PDF-', sha256: PDF_SHA }
-  const reader = { visible: true, sourceScheme: 'blob:', mediaType: 'application/pdf', byteSize: 64, signature: '%PDF-', sha256: PDF_SHA }
+  const original = {
+    status: 200,
+    mediaType: DOCX,
+    byteSize: 128,
+    signature: 'PK123',
+    sha256: SOURCE_SHA,
+  }
+  const pdf = {
+    status: 200,
+    mediaType: 'application/pdf',
+    byteSize: 64,
+    signature: '%PDF-',
+    sha256: PDF_SHA,
+  }
+  const reader = {
+    visible: true,
+    sourceScheme: 'blob:',
+    mediaType: 'application/pdf',
+    byteSize: 64,
+    signature: '%PDF-',
+    sha256: PDF_SHA,
+  }
   return {
-    component: 'web.office-preview-loop', source: 'production-hub-node-runtime',
-    artifactId: ID, taskId: '00000000-0000-4000-8000-000000000443', runId: '00000000-0000-4000-8000-000000000444',
-    sourceSha: SOURCE_SHA, previewSourceSha: SOURCE_SHA, previewByteSize: 64,
-    statusBeforePublish: 'candidate', statusAfterPublish: 'published', previewStatus: 'ready',
-    original, ownerReader: { ...reader }, ownerPdf: { ...pdf },
+    component: 'web.office-preview-loop',
+    source: 'production-hub-node-runtime',
+    artifactId: ID,
+    taskId: '00000000-0000-4000-8000-000000000443',
+    runId: '00000000-0000-4000-8000-000000000444',
+    sourceSha: SOURCE_SHA,
+    previewSourceSha: SOURCE_SHA,
+    previewByteSize: 64,
+    statusBeforePublish: 'candidate',
+    statusAfterPublish: 'published',
+    previewStatus: 'ready',
+    original,
+    ownerReader: { ...reader },
+    ownerPdf: { ...pdf },
     privacy: { original: 404, preview: 404, info: 404 },
-    memberReader: { ...reader }, memberOriginal: { ...original }, memberPdf: { ...pdf },
-    finalArtifactId: ID, finalArtifactSha: SOURCE_SHA,
-    commentId: '00000000-0000-4000-8000-000000000445', comment: '请补充表格边界条件。',
-    commentKind: 'whole', commentAuthorUserId: USER, expectedReviewerUserId: USER,
-    commentArtifactId: ID, commentAnchor: null, commentParentCommentId: null,
+    memberReader: { ...reader },
+    memberOriginal: { ...original },
+    memberPdf: { ...pdf },
+    finalArtifactId: ID,
+    finalArtifactSha: SOURCE_SHA,
+    commentId: '00000000-0000-4000-8000-000000000445',
+    comment: '请补充表格边界条件。',
+    commentKind: 'whole',
+    commentAuthorUserId: USER,
+    expectedReviewerUserId: USER,
+    commentArtifactId: ID,
+    commentAnchor: null,
+    commentParentCommentId: null,
   }
 }
 
@@ -45,9 +81,12 @@ describe('#442 Office preview independent evidence verdict', () => {
     expect(verdict.checks).toBeGreaterThan(50)
   })
 
-  it.each([null, undefined, [], '', 1, true, {}])('fails malformed or empty evidence %j', (value) => {
-    expect(verifyOfficePreviewLoopEvidence(value).ok).toBe(false)
-  })
+  it.each([null, undefined, [], '', 1, true, {}])(
+    'fails malformed or empty evidence %j',
+    (value) => {
+      expect(verifyOfficePreviewLoopEvidence(value).ok).toBe(false)
+    },
+  )
 
   it.each(Object.keys(goodEvidence()))('fails when required root evidence %s is absent', (key) => {
     const verdict = verifyOfficePreviewLoopEvidence(changed([key], undefined, true))
@@ -57,13 +96,19 @@ describe('#442 Office preview independent evidence verdict', () => {
 
   const missingFields = [
     ...['original', 'ownerPdf', 'memberOriginal', 'memberPdf'].flatMap((section) =>
-      ['status', 'mediaType', 'byteSize', 'signature', 'sha256'].map((key) => [section, key])),
+      ['status', 'mediaType', 'byteSize', 'signature', 'sha256'].map((key) => [section, key]),
+    ),
     ...['ownerReader', 'memberReader'].flatMap((section) =>
-      ['visible', 'sourceScheme', 'mediaType', 'byteSize', 'signature', 'sha256'].map((key) => [section, key])),
+      ['visible', 'sourceScheme', 'mediaType', 'byteSize', 'signature', 'sha256'].map((key) => [
+        section,
+        key,
+      ]),
+    ),
     ...['original', 'preview', 'info'].map((key) => ['privacy', key]),
   ]
   it.each(missingFields.map((path) => [path.join('.'), path] as const))(
-    'fails missing measured fact %s', (_label, path) => {
+    'fails missing measured fact %s',
+    (_label, path) => {
       const verdict = verifyOfficePreviewLoopEvidence(changed(path, undefined, true))
       expect(verdict.ok).toBe(false)
       expect(verdict.failures.some((failure) => failure.includes(path.join('.')))).toBe(true)
@@ -123,8 +168,17 @@ describe('#442 Office preview independent evidence verdict', () => {
   })
 
   it.each(['ownerReader', 'ownerPdf', 'memberReader', 'memberPdf'])(
-    'requires %s byte count to match preview metadata', (section) => {
+    'requires %s byte count to match preview metadata',
+    (section) => {
       expect(verifyOfficePreviewLoopEvidence(changed([section, 'byteSize'], 65)).ok).toBe(false)
     },
   )
+
+  it('rejects original Office bytes masquerading as all four matching PDF readings', () => {
+    const evidence = goodEvidence()
+    for (const key of ['ownerReader', 'ownerPdf', 'memberReader', 'memberPdf']) {
+      ;(evidence[key] as Record<string, unknown>)['sha256'] = SOURCE_SHA
+    }
+    expect(verifyOfficePreviewLoopEvidence(evidence).ok).toBe(false)
+  })
 })
