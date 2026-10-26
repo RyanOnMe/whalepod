@@ -20,7 +20,7 @@
 
 修订判定交叉比较原稿身份/摘要、批次 Run、新候选、Runtime 真正收到的上下文、只选中的意见、晚到意见排除、候选发布前成员 404 与发布后 200、人工前无复核记录及意见作者最终复核。另从 Node 已有的输入副本观测中核对原稿实际文件字节摘要、冻结摘要和原稿字节数；缺文件或副本摘要不同必须失败，不能用上下文中的原稿名称替代文件实际到达。依据核对准确来源 Run 与绑定历史约定，不把页面成功等同于事实正确。
 
-Office 判定要求两侧 preview-info 都返回 `ISOLATION_REQUIRED` 且不暴露历史预览元数据，直接 GET /preview 都必须拒绝，页面不得保留 iframe；原件发布前对成员三路隐藏、发布后下载摘要与字节不变，整件批注仍绑定原件及真实作者。旧的 PDF 成功事实不能通过当前判定。
+Office 判定要求两侧 preview-info 都返回 `ISOLATION_REQUIRED` 且不暴露历史预览元数据，直接 GET /preview 都必须拒绝，页面不得保留 iframe；原件发布前对成员三路隐藏、发布后下载摘要与字节不变，整件批注仍绑定原件及真实作者。旧的 PDF 成功事实不能通过当前判定。两侧原件下载都从可见 review-download 链接点击、等待真实浏览器下载事件、读取实文件字节和摘要后清理，独立核对下载路由及原件摘要，不能用独立 HTTP 直取替代页面可用性。历史 ready/旧回执拒绝由 repository seam 负控和真实 HTTP 整体拒绝共同证明，此条 Q5 不生成历史 PDF 前置。
 
 负控分别在 `scripts/lib/delivery-review-evidence.spec.ts`、`scripts/lib/office-preview-loop-evidence.spec.ts`，包括缺数据、错摘要、漏隐私、漏批注、晚到意见、未消费修订方向、缺人工复核等。既有交接判定负控继续保留。
 
