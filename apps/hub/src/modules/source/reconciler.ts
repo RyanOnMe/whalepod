@@ -3,12 +3,12 @@ import {
   appendTeamEvent,
   countActiveSourcesByAppKey,
   deleteSourceLease,
+  findSourceByAppKey,
   getDeviceById,
   getProjectSourceForUpdate,
-  getSourceLease,
   getSourceLeaseForUpdate,
   insertSourceAuditEvent,
-  listActiveSources,
+  listLiveSources,
   listSourceLeases,
   listSourcesUnknownSince,
   listSourcesWithExpiredPermission,
@@ -35,6 +35,8 @@ export interface SourceReconcileResult {
   readonly leasesRenewed: number
   /** 没有活跃来源而释放的租约数。 */
   readonly leasesReleased: number
+  /** 已过期、本轮未续租的租约数；其活跃来源由 collector 扫描转 unavailable。 */
+  readonly leasesExpired: number
 }
 
 export interface SourceReconcileInput {
@@ -112,12 +114,19 @@ async function auditPermissionChange(
   })
 }
 
-/** 在线采集器续租；没有活跃来源的租约释放。并发绑定/撤销通过租约行锁串行化。 */
+/**
+ * 在线采集器续租；没有活跃来源的租约释放。
+ * 已过期租约**不续租、不换发**：租约过期即采集代次断档，活跃来源必须由 collector 扫描转
+ * unavailable，避免「离线跨过租约后重连」被一次续租静默抹平（ADR-0024 §2）。
+ * 并发绑定/撤销通过租约行锁串行化；审计在事务外写，避免「来源行 → 租约行」与
+ * 「租约行 → 来源行外键锁」反向死锁。
+ */
 async function reconcileLeases(
   input: SourceReconcileInput,
-): Promise<{ renewed: number; released: number }> {
+): Promise<{ renewed: number; released: number; expired: number }> {
   let renewed = 0
   let released = 0
+  let expired = 0
   for (const lease of await listSourceLeases(input.database.db)) {
     const outcome = await input.database.transaction(async (tx) => {
       const locked = await getSourceLeaseForUpdate(tx, lease.platform, lease.appKey)
@@ -125,40 +134,71 @@ async function reconcileLeases(
       const active = await countActiveSourcesByAppKey(tx, locked.platform, locked.appKey)
       if (active === 0) {
         await deleteSourceLease(tx, locked.platform, locked.appKey)
-        return 'released' as const
+        return { kind: 'released' as const, platform: locked.platform, appKey: locked.appKey }
+      }
+      if (locked.expiresAt.getTime() <= input.now.getTime()) {
+        return { kind: 'expired' as const }
       }
       if (!input.collector.isOnline(locked.deviceId)) return undefined
       await updateSourceLease(tx, locked.platform, locked.appKey, {
         expiresAt: new Date(input.now.getTime() + SOURCE_LEASE_TTL_MS),
         renewedAt: input.now,
       })
-      return 'renewed' as const
+      return { kind: 'renewed' as const }
     })
-    if (outcome === 'renewed') renewed += 1
-    if (outcome === 'released') released += 1
-  }
-  return { renewed, released }
-}
-
-/** 采集 Node 被撤销/解绑，或超过租约期仍离线 → 来源 unavailable（ADR-0024 §2）。 */
-async function reconcileCollectors(input: SourceReconcileInput): Promise<number> {
-  let unavailable = 0
-  for (const source of await listActiveSources(input.database.db)) {
-    const device = await getDeviceById(input.database.db, source.collectorNodeId)
-    let reason: string | undefined
-    if (device === undefined || device.revokedAt !== null) {
-      reason = 'collector_revoked'
-    } else if (!input.collector.isOnline(device.id)) {
-      const lease = await getSourceLease(input.database.db, source.platform, source.appKey)
-      if (lease === undefined || lease.expiresAt.getTime() <= input.now.getTime()) {
-        reason = 'collector_offline'
+    if (outcome === undefined) continue
+    if (outcome.kind === 'renewed') renewed += 1
+    if (outcome.kind === 'expired') expired += 1
+    if (outcome.kind === 'released') {
+      released += 1
+      const source = await findSourceByAppKey(input.database.db, outcome.platform, outcome.appKey)
+      if (source !== undefined) {
+        await insertSourceAuditEvent(input.database.db, {
+          sourceId: source.id,
+          action: 'lease_changed',
+          authorizationGeneration: source.authorizationGeneration,
+          payload: { event: 'released', reason: 'no_active_source' },
+        })
       }
     }
-    if (reason === undefined) continue
+  }
+  return { renewed, released, expired }
+}
 
+/**
+ * 采集 Node 被撤销/解绑 → 来源（含暂停）unavailable；租约过期 → 活跃来源 unavailable
+ * （ADR-0024 §2）。暂停来源没有活跃租约，离线不改变暂停态。
+ * 判断与写入在同一个来源行锁事务内完成：先锁来源、再锁租约（与 pause/revoke 同序），
+ * 避免「先读后写」窗口里一次重连把离线跨租约悄悄治愈。
+ */
+async function reconcileCollectors(input: SourceReconcileInput): Promise<number> {
+  let unavailable = 0
+  for (const source of await listLiveSources(input.database.db)) {
     const changed = await input.database.transaction(async (tx) => {
       const row = await getProjectSourceForUpdate(tx, source.id)
-      if (row === undefined || row.status !== 'active') return false
+      if (row === undefined || (row.status !== 'active' && row.status !== 'paused')) return false
+      const device = await getDeviceById(tx, row.collectorNodeId)
+      let reason: string | undefined
+      if (device === undefined || device.revokedAt !== null) {
+        reason = 'collector_revoked'
+      } else if (row.status === 'paused') {
+        // 暂停已释放租约；采集器离线不改变暂停态，只有设备撤销/解绑需要墓碑化。
+        return false
+      } else {
+        const lease = await getSourceLeaseForUpdate(tx, row.platform, row.appKey)
+        if (lease === undefined || lease.deviceId !== row.collectorNodeId) {
+          reason = 'collector_lease_changed'
+        } else if (lease.expiresAt.getTime() <= input.now.getTime()) {
+          reason = input.collector.isOnline(device.id)
+            ? 'collector_lease_expired'
+            : 'collector_offline'
+        } else if (!input.collector.isOnline(device.id)) {
+          // 租约未过期：离线在宽限期内，等待下一轮；不提前判死。
+          return false
+        }
+      }
+      if (reason === undefined) return false
+
       const generation = row.authorizationGeneration + 1
       const updated = await updateProjectSource(tx, row.id, {
         status: 'unavailable',
@@ -420,5 +460,6 @@ export async function reconcileSourcePermissions(
     unavailable: collectorUnavailable + permission.unavailable + staleUnavailable,
     leasesRenewed: leases.renewed,
     leasesReleased: leases.released,
+    leasesExpired: leases.expired,
   }
 }

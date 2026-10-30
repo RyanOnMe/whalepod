@@ -2,24 +2,24 @@
 
 - 对应门禁：Q0/Q1、Q2、Q7；Web 与真实平台适配器不在本切片。
 - 对应 Issue：PC-02a #455（PC-02 伞 Issue #449）；决定见 ADR-0024。
-- 上次验证：2026-10-31 · `feat/pc-02a-source-lifecycle` · Q0 2237 例、Q2 613 例（79 文件）、Q7 18 例 + secret-scan + license 全绿；domain 分支覆盖 100%。
+- 上次验证：2026-10-31 · `feat/pc-02a-source-lifecycle` · Q0 2237 例（205 文件）、Q1 258 例（domain 分支 100%）、Q2 623 例（79 文件）、Q7 18 例 + secret-scan 自检/实扫 + license 全绿。
 
 ## 验的是哪条用户路径
 
 成员在项目里绑定一个外部办公来源：先确认「内容会共享给整个 Team」，指定一台已配对的采集 Node 与凭据槽位；Hub 通过真实 Node WebSocket 做只读权限检查，绑定后另一成员能看到同一来源的范围与同步状态。绑定者或管理员可以暂停、恢复、撤销；撤销后同一资源可以重新绑定为新行。
 
-后台按 ADR-0024 收敛来源状态：在线采集器续租；采集器被撤销或离线超过租约期 → 不可用；权限到期后真实重验，成功刷新、失败才转待重验；待重验连续 7 天（含暂停来源）→ 不可用。
+后台按 ADR-0024 收敛来源状态：在线采集器的**未过期**租约续租；租约过期即视为采集中断，活跃来源转不可用，过期租约不续期、不换发；采集器被撤销/解绑时来源（含暂停）转不可用；采集器仅离线不改变暂停态。权限到期后真实重验，成功刷新、失败才转待重验；待重验连续 7 天（含暂停来源）→ 不可用。
 
 本切片用假 Node 模拟平台侧只读检查的应答；真实飞书租户、真实文档读取、正文与派生内容仍为 `not_run`（PC-01 / PC-02b / PC-03）。
 
 ## 驱动
 
 ```bash
-# 来源生命周期（20 例；真实 HTTP + 真实 /ws/v1/node）
+# 来源生命周期（28 例；真实 HTTP + 真实 /ws/v1/node）
 pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration \
   apps/hub/tests/source.integration.spec.ts
 
-# DB 不变量（6 例：活动绑定唯一、撤销字段、权限字段、租约主键、审计上限）
+# DB 不变量（8 例：活动绑定唯一、撤销字段、权限字段、检查时刻必填、应用身份索引、租约主键、审计上限/动作）
 pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration \
   packages/db/tests/source.integration.spec.ts
 ```
@@ -38,13 +38,13 @@ Hub 集成用例通过 Fastify inject 走成员 HTTP（Session + Origin + Idempo
 1. 绑定前 Node 必须在 hello 中声明 `feishu.read.v1`；未声明返回 400 `SOURCE_UNSUPPORTED`，不发送检查帧。
 2. 采集 Node 必须属于绑定者；别人的设备返回 404，不暴露存在性。管理员也不能借别人的采集 Node 绑定。
 3. `denied` 与 `not_found` 统一返回 403 `SOURCE_NOT_READABLE`，不落库。
-4. 绑定回执先于 Node RPC：同一 `Idempotency-Key` 重放返回同一来源，即使 Node 之后离线；并发同 key 不产生 500、不产生第二条来源。命令 key 按 actor + project 收窄。
+4. 绑定/恢复回执先于 Node RPC：同一 `Idempotency-Key` 重放返回同一结果，即使 Node 之后离线；成功恢复重放返回来源视图而不是 `{view}` 包装，被拒恢复重放仍是 403 `SOURCE_NOT_READABLE` 而不是 200；并发同 key 不产生 500、不产生第二条来源。命令 key 按 actor + project 收窄。
 5. 绑定者/管理员可暂停/恢复/撤销；其他成员 403；每次状态变化代次 +1。管理员可管理其他成员的来源；成员用同一 key 字符串重放别人的管理命令仍 403。
 6. 撤销必须带 1–500 字符理由；撤销后同一资源可重新绑定为新行、代次回到 1。
-7. 同一应用事件流（appKey）只有一个采集者；另一台 Node 在租约有效时被拒；租约过期但仍有活跃来源时也不允许静默接管。
+7. 同一应用事件流（appKey）只有一个采集者；另一台 Node 在租约有效时被拒；租约过期但仍有活跃来源时也不允许静默接管。reconcile 对过期租约不续期、不换发；过期租约保留到下一轮，无活跃来源时释放并写 `lease_changed` 审计。
 8. 采集 Node 离线/未应答/连接切换返回 409 `SOURCE_COLLECTOR_OFFLINE`；恢复时若采集器返回不同 appKey，拒绝并要求重绑（409 `SOURCE_LEASE_LOST`），来源保持暂停。
-9. 权限到期后 reconcile 会向在线采集器真实重验：成功刷新 `permissionCheckedAt/ExpiresAt` 并 +1 代次；无法验证（能力缺失/离线）才转 `unknown`；明确拒绝转 `unavailable/denied`；unknown 连续 7 天（含已暂停来源）转 `unavailable`。
-10. 采集器被撤销，或离线超过租约期 → 来源 `unavailable`；在线采集器的租约在 reconcile 中续租，无活跃来源的租约释放。
+9. 权限到期后 reconcile 会向在线采集器真实重验：成功刷新 `permissionCheckedAt/ExpiresAt` 并 +1 代次；无法验证（能力缺失/离线）才转 `unknown`；明确拒绝转 `unavailable/denied`；采集器返回的 appKey 变化转 `unavailable/unknown`；unknown 连续 7 天（含已暂停来源）转 `unavailable`。
+10. 采集器被撤销/解绑 → 来源（含暂停）`unavailable`；活跃来源的租约过期（无论采集器当前是否已重连）→ `unavailable`；在线采集器的未过期租约在 reconcile 中续租；暂停来源不因采集器仅离线而改变状态。
 11. 视图、审计与 Team Event 均不含 `resourceKey`、`appKey`、凭据或平台名称；畸形 `projectId/sourceId` 在落 PostgreSQL 前返回 400；缺会话的任一来源路由返回 401。
 12. `autoExtraction=true` 在 ADR-0026 接受前被拒绝（400 `SOURCE_UNSUPPORTED`）。
 
@@ -64,7 +64,7 @@ Hub 集成用例通过 Fastify inject 走成员 HTTP（Session + Origin + Idempo
 
 ## 负控变异自证
 
-每条关键守卫做一次单点改坏，确认对应用例变红，再恢复；恢复后 20/20 重跑绿。
+每条关键守卫做一次单点改坏，确认对应用例变红，再恢复；恢复后 28/28 重跑绿（DB 8/8 另跑）。
 
 | 改坏的守卫 | 变红的用例 |
 |---|---|
@@ -75,6 +75,8 @@ Hub 集成用例通过 Fastify inject 走成员 HTTP（Session + Origin + Idempo
 | 跳过权限到期重验扫描 | `revalidates an online source` |
 | 跳过采集器撤销/离线扫描 | `collector device is revoked` |
 | 重验成功但代次不递增 | `revalidates an online source` |
+| resume 回执按裸视图返回（复核 B5） | `replays a successful resume` + `replays a denied resume`（实测 200 vs 403） |
+| 过期租约照常续租（复核 #2） | `does not renew an expired lease`（实测 `leasesExpired 0 / leasesRenewed 1 / unavailable 0`） |
 
 ## 边界与未覆盖
 
@@ -83,6 +85,8 @@ Hub 集成用例通过 Fastify inject 走成员 HTTP（Session + Origin + Idempo
 - **来源正文与派生内容**：`source_revision`、正文 24 小时清除、派生条目失效由 PC-03 按 ADR-0025 落地；本切片没有正文可清。
 - **旧代次观察拒绝**：观察帧在 PC-03 才出现；本切片验证代次在暂停/恢复/撤销/重验/采集器变化时单调递增。
 - **unknown 的自动恢复**：没有后台重试；成员可暂停后再恢复以触发重验。7 天内未恢复则转不可用。
+- **暂停来源的采集器状态**：采集器仅离线不改变暂停态；采集器被撤销/解绑才转不可用。暂停来源没有活跃租约，因此「离线超过租约期」只对活跃来源成立。
+- **过期租约的观察围栏**：本切片尚无观察帧；PC-03 接入时按租约代次拒绝旧观察。当前只保证过期租约不被静默续期/换发。
 - **活跃 Run 提示**：PC-05/PC-06；本切片不装配 Run 上下文。
 - **`node.source` 观测**：真实 Node 适配器随 PC-02b；本切片 Hub 侧只有 `hub.context` 与 `source_audit_event`。
 - **共享常驻采集 Node**：首轮要求采集 Node 属于绑定者；共享常驻 Node 另行设计（ADR-0024 §2）。

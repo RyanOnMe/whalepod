@@ -96,24 +96,25 @@ export async function updateProjectSource(
   return row
 }
 
-/** 同一 (platform, appKey) 还要服务多少条非撤销来源；撤销时决定是否释放采集租约。 */
-export async function countSourcesByAppKey(
+/** 为租约释放审计挑一条未撤销来源（同 appKey）；来源行本身不受影响。 */
+export async function findSourceByAppKey(
   handle: DbHandle,
   platform: ProjectSourceRow['platform'],
   appKey: string,
-  excludeSourceId?: string,
-): Promise<number> {
-  const conditions = [
-    eq(projectSources.platform, platform),
-    eq(projectSources.appKey, appKey),
-    ne(projectSources.status, 'revoked'),
-  ]
-  if (excludeSourceId !== undefined) conditions.push(ne(projectSources.id, excludeSourceId))
+): Promise<ProjectSourceRow | undefined> {
   const [row] = await handle
-    .select({ count: sql<number>`count(*)::int` })
+    .select()
     .from(projectSources)
-    .where(and(...conditions))
-  return row?.count ?? 0
+    .where(
+      and(
+        eq(projectSources.platform, platform),
+        eq(projectSources.appKey, appKey),
+        ne(projectSources.status, 'revoked'),
+      ),
+    )
+    .orderBy(asc(projectSources.createdAt))
+    .limit(1)
+  return row
 }
 
 /** 活跃来源数（status=active）：租约只服务真正采集中的来源。 */
@@ -141,6 +142,15 @@ export async function listActiveSources(handle: DbHandle): Promise<ProjectSource
     .select()
     .from(projectSources)
     .where(eq(projectSources.status, 'active'))
+    .orderBy(asc(projectSources.createdAt))
+}
+
+/** 未撤销来源（active + paused）：采集器被撤销/解绑时暂停来源也要墓碑化。 */
+export async function listLiveSources(handle: DbHandle): Promise<ProjectSourceRow[]> {
+  return handle
+    .select()
+    .from(projectSources)
+    .where(inArray(projectSources.status, ['active', 'paused']))
     .orderBy(asc(projectSources.createdAt))
 }
 

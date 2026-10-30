@@ -86,6 +86,18 @@ async function readReceipt<T>(database: Database, key: string): Promise<T | unde
   return row?.result as T | undefined
 }
 
+/** resume 的回执是 `{view}`/`{denied}`；兼容更早提交写入的裸视图回执。 */
+function normalizeResumeReceipt(value: unknown): ResumeOutcome | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  if ('denied' in value) return { denied: true }
+  if ('view' in value) {
+    const view = (value as { view?: ProjectSourceView }).view
+    return view === undefined ? undefined : { view }
+  }
+  if ('id' in value) return { view: value as ProjectSourceView }
+  return undefined
+}
+
 /**
  * 绑定/恢复前的只读检查（ADR-0024 §5）：
  * - 绑定者必须拥有采集 Node（404 不暴露别人的设备）；
@@ -463,9 +475,30 @@ export async function resumeProjectSource(
   if (current === undefined) throw new ApiError(404, 'NOT_FOUND', 'source not found')
   assertManage(current, input.actor)
   const commandKey = manageCommandKey('resume', input.actor, input.sourceId, input.idempotencyKey)
-  const prior = await readReceipt<ProjectSourceView>(database, commandKey)
-  if (prior !== undefined) return prior
-  if (current.status === 'active') return toSourceView(current)
+  const prior = normalizeResumeReceipt(await readReceipt<unknown>(database, commandKey))
+  if (prior !== undefined) {
+    if ('denied' in prior) {
+      throw new ApiError(403, 'SOURCE_NOT_READABLE', 'source is no longer readable')
+    }
+    return prior.view
+  }
+  if (current.status === 'active') {
+    // no-op 也落回执：同一 key 的重放返回同一视图，而不是后来的状态。
+    const noop = await transactCommand<{ view: ProjectSourceView }>(
+      database,
+      commandKey,
+      async (tx) => {
+        const row = await getProjectSourceForUpdate(tx, input.sourceId)
+        if (row === undefined) throw new ApiError(404, 'NOT_FOUND', 'source not found')
+        assertManage(row, input.actor)
+        if (row.status !== 'active') {
+          throw new DomainError('INVALID_SOURCE_TRANSITION', `cannot resume a ${row.status} source`)
+        }
+        return { view: toSourceView(row) }
+      },
+    )
+    return noop.view
+  }
   if (current.status !== 'paused') {
     throw new DomainError('INVALID_SOURCE_TRANSITION', `cannot resume a ${current.status} source`)
   }

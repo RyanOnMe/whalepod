@@ -113,6 +113,38 @@ describe('project source DB invariants', () => {
     expect(pg.constraintName).toBe('project_source_permission_fields')
   })
 
+  it('requires permission_checked_at even when the permission is denied', async () => {
+    const pg = await catchPgError(
+      insertProjectSource(
+        database.db,
+        source({
+          permissionState: 'denied',
+          // 越过类型显式写 null：NOT NULL 由 migration 0019 兜底。
+          permissionCheckedAt: null as unknown as Date,
+          permissionExpiresAt: null,
+        }),
+      ),
+    )
+    expect(pg.code).toBe('23502')
+  })
+
+  it('accepts the unavailable audit action and indexes the collector app key', async () => {
+    const row = await insertProjectSource(database.db, source())
+    const event = await insertSourceAuditEvent(database.db, {
+      sourceId: row.id,
+      action: 'unavailable',
+      authorizationGeneration: 2,
+      payload: { reason: 'collector_offline' },
+    })
+    expect(event.action).toBe('unavailable')
+
+    const indexes = await database.sql<{ indexname: string }[]>`
+      select indexname from pg_indexes
+      where tablename = 'project_source' and indexname = 'project_source_app_key'
+    `
+    expect(indexes).toHaveLength(1)
+  })
+
   it('keeps one lease per application event stream', async () => {
     const lease = {
       platform: 'feishu' as const,

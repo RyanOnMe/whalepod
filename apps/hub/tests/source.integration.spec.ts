@@ -561,10 +561,6 @@ describe('PC-02a project source lifecycle', () => {
       .update(schema.projectSources)
       .set({ permissionExpiresAt: new Date(now.getTime() - 1_000) })
       .where(eq(schema.projectSources.id, sourceId))
-    await database.db
-      .update(schema.sourceCollectionLeases)
-      .set({ expiresAt: new Date(now.getTime() - 1_000) })
-      .where(eq(schema.sourceCollectionLeases.appKey, node.appKey))
 
     const result = await reconcile(now)
     expect(result).toMatchObject({
@@ -572,6 +568,7 @@ describe('PC-02a project source lifecycle', () => {
       unknown: 0,
       unavailable: 0,
       leasesRenewed: 1,
+      leasesExpired: 0,
     })
     const row = await sourceRow(sourceId)
     expect(row).toMatchObject({
@@ -676,7 +673,7 @@ describe('PC-02a project source lifecycle', () => {
     )
 
     const result = await reconcile()
-    expect(result.unavailable).toBe(1)
+    expect(result).toMatchObject({ unavailable: 1, leasesExpired: 1, leasesRenewed: 0 })
     expect(await sourceRow(sourceId)).toMatchObject({
       status: 'unavailable',
       authorizationGeneration: 2,
@@ -690,6 +687,23 @@ describe('PC-02a project source lifecycle', () => {
         (row) =>
           row.action === 'unavailable' &&
           (row.payload as { reason?: string }).reason === 'collector_offline',
+      ),
+    ).toBe(true)
+
+    // 下一轮：没有活跃来源，过期租约释放并补审计。
+    const second = await reconcile()
+    expect(second.leasesReleased).toBe(1)
+    expect(await leaseRow(node.appKey)).toBeUndefined()
+    const released = await database.db
+      .select()
+      .from(schema.sourceAuditEvents)
+      .where(eq(schema.sourceAuditEvents.sourceId, sourceId))
+    expect(
+      released.some(
+        (row) =>
+          row.action === 'lease_changed' &&
+          (row.payload as { event?: string; reason?: string }).event === 'released' &&
+          (row.payload as { reason?: string }).reason === 'no_active_source',
       ),
     ).toBe(true)
   })
@@ -871,6 +885,303 @@ describe('PC-02a project source lifecycle', () => {
     expect(first.statusCode).toBe(201)
     expect(second.statusCode).toBe(201)
     expect(second.json().data.id).toBe(first.json().data.id)
+    expect(await sourceCount()).toBe(1)
+  })
+
+  it('marks a paused source unavailable when its collector device is revoked', async () => {
+    const device = await pair(alice, 'alice-node-27')
+    await connectNode(device, 'alice-node-27')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/sources/${sourceId}/pause`,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(200)
+
+    const revoke = await apiInject(ctx, alice, {
+      method: 'DELETE',
+      url: `/api/v1/devices/${device.deviceId}`,
+    })
+    expect(revoke.statusCode).toBe(200)
+    await waitForValue(
+      async () => (nodeConnections.isOnline(device.deviceId) ? undefined : true),
+      'collector disconnected after revoke',
+    )
+
+    const result = await reconcile()
+    expect(result.unavailable).toBe(1)
+    expect(await sourceRow(sourceId)).toMatchObject({
+      status: 'unavailable',
+      authorizationGeneration: 3,
+    })
+    const audits = await database.db
+      .select()
+      .from(schema.sourceAuditEvents)
+      .where(eq(schema.sourceAuditEvents.sourceId, sourceId))
+    expect(
+      audits.some(
+        (row) =>
+          row.action === 'unavailable' &&
+          (row.payload as { reason?: string }).reason === 'collector_revoked',
+      ),
+    ).toBe(true)
+  })
+
+  it('does not renew an expired lease; an online collector’s sources become unavailable', async () => {
+    const device = await pair(alice, 'alice-node-19')
+    const node = await connectNode(device, 'alice-node-19')
+    const created = await bind(alice, device.deviceId)
+    expect(created.statusCode).toBe(201)
+    const sourceId = created.json().data.id as string
+
+    await database.db
+      .update(schema.sourceCollectionLeases)
+      .set({ expiresAt: new Date(Date.now() - 1_000) })
+      .where(eq(schema.sourceCollectionLeases.appKey, node.appKey))
+
+    const first = await reconcile()
+    expect(first).toMatchObject({
+      unavailable: 1,
+      leasesExpired: 1,
+      leasesRenewed: 0,
+    })
+    expect(await sourceRow(sourceId)).toMatchObject({
+      status: 'unavailable',
+      authorizationGeneration: 2,
+    })
+    // 过期租约原样保留到下一轮，不静默续期、不换发代次。
+    expect((await leaseRow(node.appKey))?.expiresAt.getTime()).toBeLessThanOrEqual(Date.now())
+    const audits = await database.db
+      .select()
+      .from(schema.sourceAuditEvents)
+      .where(eq(schema.sourceAuditEvents.sourceId, sourceId))
+    expect(
+      audits.some(
+        (row) =>
+          row.action === 'unavailable' &&
+          (row.payload as { reason?: string }).reason === 'collector_lease_expired',
+      ),
+    ).toBe(true)
+  })
+
+  it('marks a source unavailable when revalidation is explicitly denied', async () => {
+    const device = await pair(alice, 'alice-node-20')
+    const node = await connectNode(device, 'alice-node-20')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+    const now = new Date()
+    await database.db
+      .update(schema.projectSources)
+      .set({ permissionExpiresAt: new Date(now.getTime() - 1_000) })
+      .where(eq(schema.projectSources.id, sourceId))
+    node.mode = 'denied'
+
+    const result = await reconcile(now)
+    expect(result).toMatchObject({ unavailable: 1, unknown: 0, revalidated: 0 })
+    expect(await sourceRow(sourceId)).toMatchObject({
+      status: 'unavailable',
+      permissionState: 'denied',
+      authorizationGeneration: 2,
+    })
+    expect(node.checks).toHaveLength(2)
+    const audits = await database.db
+      .select()
+      .from(schema.sourceAuditEvents)
+      .where(eq(schema.sourceAuditEvents.sourceId, sourceId))
+    expect(
+      audits.some(
+        (row) =>
+          row.action === 'permission_changed' &&
+          (row.payload as { reason?: string }).reason === 'revalidation_denied',
+      ),
+    ).toBe(true)
+  })
+
+  it('marks a source unavailable when the collector app identity changes during revalidation', async () => {
+    const device = await pair(alice, 'alice-node-21')
+    const node = await connectNode(device, 'alice-node-21')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+    const now = new Date()
+    await database.db
+      .update(schema.projectSources)
+      .set({ permissionExpiresAt: new Date(now.getTime() - 1_000) })
+      .where(eq(schema.projectSources.id, sourceId))
+    node.appKey = 'rotated-app-key'
+
+    const result = await reconcile(now)
+    expect(result).toMatchObject({ unavailable: 1, unknown: 0, revalidated: 0 })
+    expect(await sourceRow(sourceId)).toMatchObject({
+      status: 'unavailable',
+      permissionState: 'unknown',
+      authorizationGeneration: 2,
+    })
+    const audits = await database.db
+      .select()
+      .from(schema.sourceAuditEvents)
+      .where(eq(schema.sourceAuditEvents.sourceId, sourceId))
+    expect(
+      audits.some(
+        (row) =>
+          row.action === 'permission_changed' &&
+          (row.payload as { reason?: string }).reason === 'app_key_changed',
+      ),
+    ).toBe(true)
+  })
+
+  it('expires a paused unknown source after the grace period', async () => {
+    const device = await pair(alice, 'alice-node-22')
+    const node = await connectNode(device, 'alice-node-22')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+    await sendHello(node, device.deviceId, [], 'alice-node-22 downgraded')
+
+    const now = new Date()
+    await database.db
+      .update(schema.projectSources)
+      .set({ permissionExpiresAt: new Date(now.getTime() - 1_000) })
+      .where(eq(schema.projectSources.id, sourceId))
+    expect((await reconcile(now)).unknown).toBe(1)
+
+    const paused = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/sources/${sourceId}/pause`,
+      payload: {},
+    })
+    expect(paused.statusCode).toBe(200)
+    expect(await sourceRow(sourceId)).toMatchObject({
+      status: 'paused',
+      permissionState: 'unknown',
+    })
+
+    await database.db
+      .update(schema.projectSources)
+      .set({ permissionUnknownSince: new Date(now.getTime() - 8 * 24 * 60 * 60 * 1000) })
+      .where(eq(schema.projectSources.id, sourceId))
+    const expired = await reconcile(now)
+    expect(expired.unavailable).toBe(1)
+    expect(await sourceRow(sourceId)).toMatchObject({
+      status: 'unavailable',
+      permissionState: 'unknown',
+      authorizationGeneration: 4,
+    })
+    const audits = await database.db
+      .select()
+      .from(schema.sourceAuditEvents)
+      .where(eq(schema.sourceAuditEvents.sourceId, sourceId))
+    expect(
+      audits.some(
+        (row) =>
+          row.action === 'permission_changed' &&
+          (row.payload as { reason?: string }).reason === 'permission_unknown_too_long',
+      ),
+    ).toBe(true)
+  })
+
+  it('replays a successful resume as a view, not as a wrapper', async () => {
+    const device = await pair(alice, 'alice-node-23')
+    const node = await connectNode(device, 'alice-node-23')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/sources/${sourceId}/pause`,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(200)
+
+    const key = idemKey()
+    const checks = node.checks.length
+    const first = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/sources/${sourceId}/resume`,
+      payload: {},
+      idempotencyKey: key,
+    })
+    expect(first.statusCode).toBe(200)
+    expect(first.json().data).toMatchObject({ status: 'active', authorizationGeneration: 3 })
+    expect(first.json().data.view).toBeUndefined()
+
+    const replay = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/sources/${sourceId}/resume`,
+      payload: {},
+      idempotencyKey: key,
+    })
+    expect(replay.statusCode).toBe(200)
+    expect(replay.json().data).toEqual(first.json().data)
+    expect(replay.json().data.view).toBeUndefined()
+    // 回执先于 RPC：重放不再要求 Node 重验。
+    expect(node.checks).toHaveLength(checks + 1)
+  })
+
+  it('replays a denied resume as 403, not as a 200 denied wrapper', async () => {
+    const device = await pair(alice, 'alice-node-24')
+    const node = await connectNode(device, 'alice-node-24')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/sources/${sourceId}/pause`,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(200)
+    node.mode = 'denied'
+
+    const key = idemKey()
+    const checks = node.checks.length
+    const first = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/sources/${sourceId}/resume`,
+      payload: {},
+      idempotencyKey: key,
+    })
+    expect(first.statusCode).toBe(403)
+    expect(first.json().error.code).toBe('SOURCE_NOT_READABLE')
+    expect(await sourceRow(sourceId)).toMatchObject({
+      status: 'unavailable',
+      permissionState: 'denied',
+    })
+
+    const replay = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/sources/${sourceId}/resume`,
+      payload: {},
+      idempotencyKey: key,
+    })
+    expect(replay.statusCode).toBe(403)
+    expect(replay.json().error.code).toBe('SOURCE_NOT_READABLE')
+    expect(replay.json().data).toBeUndefined()
+    expect(node.checks).toHaveLength(checks + 1)
+  })
+
+  it('does not 500 when two devices race for a previously unleased app', async () => {
+    const device1 = await pair(alice, 'alice-node-25')
+    const node1 = await connectNode(device1, 'alice-node-25')
+    node1.appKey = 'race-app-key'
+    const device2 = await pair(alice, 'alice-node-26')
+    const node2 = await connectNode(device2, 'alice-node-26')
+    node2.appKey = 'race-app-key'
+
+    const [first, second] = await Promise.all([
+      bind(alice, device1.deviceId, { resourceKey: 'oc_race_a' }),
+      bind(alice, device2.deviceId, { resourceKey: 'oc_race_b' }),
+    ])
+    const statuses = [first.statusCode, second.statusCode].sort((a, b) => a - b)
+    expect(statuses).toEqual([201, 409])
+    const loser = first.statusCode === 409 ? first : second
+    expect(loser.json().error.code).toBe('SOURCE_LEASE_LOST')
     expect(await sourceCount()).toBe(1)
   })
 
