@@ -4,6 +4,8 @@
 
 | 文档 | 内容 |
 |---|---|
+| [2026-10-30-project-context-coordination-plan.md](./2026-10-30-project-context-coordination-plan.md) | 下一阶段开发计划草案：从正常办公与 Agent 工作自动形成项目上下文，国内办公来源验证、变化影响、执行输入、PC-01～10 工作包及机器与真人退出条件 |
+| [whalepod-product-background.md](./whalepod-product-background.md) | 供其他 Agent 独立研讨的自包含产品背景：定位、领域对象、产品与系统架构、2026-10-26 进度快照、痛点假设、审阅方向、真实团队验证与讨论要求；不需先读仓库 |
 | [app-ui-polish-acceptance.md](./app-ui-polish-acceptance.md) | #421：网页源码提取的输入栏、审批与文件展示槽位，混淆包/来源校验、文件动作菜单、九档布局与键盘独立判定 |
 | [reactbits-management-acceptance.md](./reactbits-management-acceptance.md) | #432：成员、插件、Agents 与设备组件精修；真实邀请/安装/组合/配对与十二档几何验收 |
 | [ReactBits 可感知动效](./reactbits-motion-acceptance.md) | 镜像站时间线/配对步骤/文件预览/卡片深度；中间帧、可打断、缓存/焦点/权限与减少动态效果 |
