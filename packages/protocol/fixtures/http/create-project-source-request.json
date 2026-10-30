@@ -1,0 +1,10 @@
+{
+  "platform": "feishu",
+  "kind": "group",
+  "resourceKey": "oc_fixture_group_resource",
+  "displayLabel": "活动筹备群",
+  "collectorNodeId": "813b0ff8-7499-4b1e-8d65-93e66da96364",
+  "credentialSlot": "feishu-app",
+  "shareScope": "team",
+  "autoExtraction": false
+}

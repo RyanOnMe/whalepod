@@ -13,6 +13,11 @@ import {
   HandoffRunSpecSchema,
 } from './handoff.js'
 import { ApprovalPolicySchema } from './approval.js'
+import {
+  SourceCapabilitySchema,
+  SourcePermissionCheckPayloadSchema,
+  SourcePermissionResultPayloadSchema,
+} from './source.js'
 
 const Sha256DigestSchema = z.string().regex(/^[a-f0-9]{64}$/)
 const DshSessionIdSchema = z.string().min(1).max(128)
@@ -172,6 +177,12 @@ export const NodeHelloSchema = envelope(
     supportedProtocolVersions: z.tuple([z.literal(PROTOCOL_VERSION)]),
     dshDistributionVersion: z.string().min(1).max(64),
     pluginPackDigests: z.array(Sha256DigestSchema),
+    /**
+     * ADR-0024 §9：来源读取能力。缺省 = 该 Node 不支持来源绑定；Hub 不向未声明的
+     * Node 下发来源帧（旧 Node 会以 PROTOCOL_MISMATCH 关闭连接）。新 Node + 旧 Hub
+     * 会因 strictObject 的未知字段被拒，部署顺序固定为 Hub 先升级。
+     */
+    sourceCapabilities: z.array(SourceCapabilitySchema).max(8).optional(),
   }),
 )
 
@@ -253,11 +264,18 @@ export const NodePreparationCheckSchema = envelope(
   }),
 )
 
+/** ADR-0024 §5/§9：绑定前的有界只读权限检查（Node → Hub 回 result）。 */
+export const SourcePermissionResultSchema = envelope(
+  'source.permission_result',
+  SourcePermissionResultPayloadSchema,
+)
+
 export const NodeUpstreamSchema = z.discriminatedUnion('type', [
   NodeHelloSchema,
   NodeHeartbeatSchema,
   NodeInventorySchema,
   NodePreparationResultSchema,
+  SourcePermissionResultSchema,
   CommandAckSchema,
   RunSnapshotFrameSchema,
   RunEventFrameSchema,
@@ -392,11 +410,18 @@ export const NodeTokenRevokedSchema = envelope(
   }),
 )
 
+/** ADR-0024 §5/§9：绑定前只读权限检查（Hub → Node）；不进 Outbox、不启动 Runtime。 */
+export const SourcePermissionCheckSchema = envelope(
+  'source.permission_check',
+  SourcePermissionCheckPayloadSchema,
+)
+
 export const NodeDownstreamSchema = z.discriminatedUnion('type', [
   RunStartSchema,
   RunCancelSchema,
   RunStatusRequestSchema,
   NodePreparationCheckSchema,
+  SourcePermissionCheckSchema,
   RunEventAckSchema,
   RunResendFromSchema,
   RunFollowupSchema,

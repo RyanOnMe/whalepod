@@ -6,8 +6,13 @@
 import { randomUUID } from 'node:crypto'
 import type { WebSocket } from 'ws'
 import type { AuthenticatedDevice } from '../run/device-gateway.js'
-import { NodePreparationCheckSchema } from '@whalepod/protocol'
-import type { NodePreparationResult, NodeDownstream } from '@whalepod/protocol'
+import { NodePreparationCheckSchema, SourcePermissionCheckSchema } from '@whalepod/protocol'
+import type {
+  NodePreparationResult,
+  NodeDownstream,
+  SourcePermissionCheckPayload,
+  SourcePermissionResultPayload,
+} from '@whalepod/protocol'
 
 export interface NodeConnection extends AuthenticatedDevice {
   readonly socket: WebSocket
@@ -38,6 +43,17 @@ export interface PreparationSnapshot {
   isCurrent(): boolean
 }
 
+/** ADR-0024 §5：绑定/恢复前的只读权限检查结果。 */
+export interface SourcePermissionSnapshot {
+  readonly result: SourcePermissionResultPayload['result']
+  readonly appKey?: string
+  readonly upstreamVersion?: string
+  /** 只留在进程内；写库前再次确认结果来自当前连接。 */
+  isCurrent(): boolean
+}
+
+export type SourcePermissionCheckInput = Omit<SourcePermissionCheckPayload, 'requestId'>
+
 export class NodeConnectionRegistry {
   private readonly byDevice = new Map<string, NodeConnection>()
   private readonly preparation = new Map<
@@ -50,13 +66,29 @@ export class NodeConnectionRegistry {
       reject: (error: Error) => void
     }
   >()
+  private readonly sourcePermissions = new Map<
+    string,
+    {
+      deviceId: string
+      socket: WebSocket
+      timer: ReturnType<typeof setTimeout>
+      resolve: (result: Omit<SourcePermissionSnapshot, 'isCurrent'>) => void
+      reject: (error: Error) => void
+    }
+  >()
 
-  private rejectPreparation(socket: WebSocket): void {
+  private rejectPending(socket: WebSocket): void {
     for (const [id, pending] of this.preparation) {
       if (pending.socket !== socket) continue
       clearTimeout(pending.timer)
       this.preparation.delete(id)
       pending.reject(new NodeOfflineError('preparation connection changed'))
+    }
+    for (const [id, pending] of this.sourcePermissions) {
+      if (pending.socket !== socket) continue
+      clearTimeout(pending.timer)
+      this.sourcePermissions.delete(id)
+      pending.reject(new NodeOfflineError('source permission connection changed'))
     }
   }
 
@@ -121,16 +153,88 @@ export class NodeConnectionRegistry {
     return true
   }
 
+  /**
+   * ADR-0024 §5：绑定/恢复前的有界只读权限检查；不进 Outbox、不启动 Runtime。
+   * 只发给已在 hello 里声明 sourceCapabilities 的 Node（由调用方先判定）。
+   */
+  requestSourcePermission(
+    deviceId: string,
+    input: SourcePermissionCheckInput,
+    timeoutMs = 5_000,
+  ): Promise<SourcePermissionSnapshot> {
+    const connection = this.byDevice.get(deviceId)
+    if (connection === undefined || !this.isOnline(deviceId))
+      return Promise.reject(new NodeOfflineError())
+    if (
+      this.sourcePermissions.size >= 128 ||
+      [...this.sourcePermissions.values()].filter((row) => row.deviceId === deviceId).length >= 8
+    )
+      return Promise.reject(new NodeOfflineError('source permission busy'))
+    const requestId = randomUUID()
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.sourcePermissions.delete(requestId)
+        reject(new NodeOfflineError('source permission timed out'))
+      }, timeoutMs)
+      this.sourcePermissions.set(requestId, {
+        deviceId,
+        socket: connection.socket,
+        timer,
+        resolve: (result) =>
+          resolve({
+            ...result,
+            isCurrent: () => this.byDevice.get(deviceId) === connection && this.isOnline(deviceId),
+          }),
+        reject,
+      })
+      try {
+        this.send(
+          deviceId,
+          SourcePermissionCheckSchema.parse(
+            envelope('source.permission_check', { requestId, ...input }),
+          ),
+        )
+      } catch {
+        clearTimeout(timer)
+        this.sourcePermissions.delete(requestId)
+        reject(new NodeOfflineError())
+      }
+    })
+  }
+
+  deliverSourcePermission(
+    deviceId: string,
+    socket: WebSocket,
+    result: SourcePermissionResultPayload,
+  ): boolean {
+    const pending = this.sourcePermissions.get(result.requestId)
+    if (
+      pending === undefined ||
+      pending.deviceId !== deviceId ||
+      pending.socket !== socket ||
+      this.byDevice.get(deviceId)?.socket !== socket
+    )
+      return false
+    clearTimeout(pending.timer)
+    this.sourcePermissions.delete(result.requestId)
+    pending.resolve({
+      result: result.result,
+      ...(result.appKey !== undefined ? { appKey: result.appKey } : {}),
+      ...(result.upstreamVersion !== undefined ? { upstreamVersion: result.upstreamVersion } : {}),
+    })
+    return true
+  }
+
   /** 注册新连接；同 Device 旧连接以 4008 替换。返回是否为新挂载。 */
   attach(connection: NodeConnection): void {
     const previous = this.byDevice.get(connection.deviceId)
     if (previous !== undefined && previous.socket !== connection.socket) {
-      this.rejectPreparation(previous.socket)
+      this.rejectPending(previous.socket)
       previous.socket.close(4008, 'replaced by a newer connection')
     }
     this.byDevice.set(connection.deviceId, connection)
     connection.socket.once('close', () => {
-      this.rejectPreparation(connection.socket)
+      this.rejectPending(connection.socket)
       if (this.byDevice.get(connection.deviceId)?.socket === connection.socket) {
         this.byDevice.delete(connection.deviceId)
       }
@@ -138,7 +242,7 @@ export class NodeConnectionRegistry {
   }
 
   detach(deviceId: string, socket: WebSocket): void {
-    this.rejectPreparation(socket)
+    this.rejectPending(socket)
     if (this.byDevice.get(deviceId)?.socket === socket) this.byDevice.delete(deviceId)
   }
 
@@ -165,7 +269,7 @@ export class NodeConnectionRegistry {
     } catch {
       // 发送失败不阻碍关闭。
     }
-    this.rejectPreparation(connection.socket)
+    this.rejectPending(connection.socket)
     connection.socket.close(4008, 'token revoked')
     this.byDevice.delete(deviceId)
     return true

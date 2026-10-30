@@ -42,6 +42,11 @@ export type AuditAction =
   | 'artifact.review.round_start'
   | 'artifact.review.candidate_link'
   | 'artifact.review.comment_resolve'
+  // ADR-0024：来源绑定生命周期（只记动作，不记资源身份与正文）。
+  | 'source.bind'
+  | 'source.pause'
+  | 'source.resume'
+  | 'source.revoke'
 
 export type AuditOutcome = 'success' | 'denied' | 'rate_limited'
 

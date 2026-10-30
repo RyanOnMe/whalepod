@@ -71,9 +71,30 @@ export async function revokeDevice(
 export async function setDeviceHelloFacts(
   handle: DbHandle,
   id: string,
-  facts: { dshDistributionVersion: string; pluginPackDigests: string[]; lastSeenAt: Date },
+  facts: {
+    dshDistributionVersion: string
+    pluginPackDigests: string[]
+    lastSeenAt: Date
+    /** ADR-0024：hello 是能力权威集合；缺省 = 不声明（旧 Node）。 */
+    sourceCapabilities?: string[]
+  },
 ): Promise<DeviceRow | undefined> {
-  const [row] = await handle.update(devices).set(facts).where(eq(devices.id, id)).returning()
+  const { sourceCapabilities, ...helloFacts } = facts
+  if (sourceCapabilities === undefined) {
+    const [row] = await handle.update(devices).set(helloFacts).where(eq(devices.id, id)).returning()
+    return row
+  }
+  const current = await getDeviceById(handle, id)
+  if (current === undefined) return undefined
+  const capabilities =
+    typeof current.capabilities === 'object' && current.capabilities !== null
+      ? { ...(current.capabilities as Record<string, unknown>), sourceCapabilities }
+      : { sourceCapabilities }
+  const [row] = await handle
+    .update(devices)
+    .set({ ...helloFacts, capabilities })
+    .where(eq(devices.id, id))
+    .returning()
   return row
 }
 

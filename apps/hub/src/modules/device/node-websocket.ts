@@ -94,6 +94,11 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
             nodeConnections.deliverPreparation(identity.deviceId, socket, frame.payload)
             return
           }
+          if (frame.type === 'source.permission_result') {
+            // ADR-0024 §5：有界只读检查的回报；只交给对应连接上的等待者。
+            nodeConnections.deliverSourcePermission(identity.deviceId, socket, frame.payload)
+            return
+          }
           if (frame.type === 'node.inventory' && frame.payload.deviceId === identity.deviceId) {
             // inventory：先刷 lastSeenAt（与 hello/heartbeat 同职责，不动 #37 事实列），
             // 再做投影 upsert。
@@ -109,6 +114,8 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
               await setDeviceHelloFacts(tx, identity.deviceId, {
                 dshDistributionVersion: frame.payload.dshDistributionVersion,
                 pluginPackDigests: [...frame.payload.pluginPackDigests],
+                // hello 是能力权威集合：缺省即清空旧声明，防止升级/降级后残留。
+                sourceCapabilities: frame.payload.sourceCapabilities ?? [],
                 lastSeenAt: new Date(),
               })
               await appendTeamEvent(tx, {

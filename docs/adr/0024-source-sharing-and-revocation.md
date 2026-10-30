@@ -1,6 +1,6 @@
 # ADR-0024：外部来源以整团队共享绑定，撤销按授权代次级联失效
 
-- 状态：Proposed（#450，2026-10-30；待用户与评审接受后实施）
+- 状态：已采纳（#450，2026-10-30；用户 2026-10-31 指示开始开发，按本 ADR 实施 PC-02a #455）
 - 承接：计划 §4.1、§5、§5.3、§6「来源共享与撤销」
 - 基线：`origin/main` `feb5856`。当前没有 Project 私有 ACL，也没有来源、同步水位、采集租约或后台任务设施
 
@@ -19,15 +19,15 @@
 - 共享范围固定为整个 Team。当前没有 Project 私有 ACL，绑定后的正文、规范化副本、派生条目与引用对整个 Team 可见；私有 Workspace 不因绑定自动共享（ADR-0003）。
 - 绑定请求必须显式确认 `shareScope: 'team'`，缺少即 400。Web 在提交前展示「哪些内容会进入 WhalePod、谁可以看到、撤销后哪些历史不可读」。
 - 不满足整团队可读的来源（例如仅绑定成员可见的私人文档）只能保存链接，不纳入正文；不新增成员级来源 ACL。
-- 绑定同时记录 `autoExtraction`（默认 `false`）。启用后也要等 ADR-0026 接受且采集 Node 声明相应能力，才允许后台模型提取。
+- 绑定同时记录 `autoExtraction`（默认 `false`）。ADR-0026 接受前接口拒绝 `true`；接受后也还要采集 Node 声明相应能力，才允许后台模型提取。
 - Project 归档时其来源自动暂停；不删除来源。Project 当前没有删除接口，本 ADR 不新增删除语义。
 
 ### 2 绑定、暂停与撤销的权限
 
-- 任意成员可以绑定来源；记录 `boundBy`、采集 Node 与凭据槽位。首轮以「应用可读」加绑定成员显式确认「自己有权把该内容分享给整个 Team」为准，不做每成员 OAuth 令牌；若真实平台只有用户级授权才能读取，PC-01 必须记录并调整方案，不能把应用可读冒充成员授权。
+- 任意成员可以绑定来源；记录 `boundBy`、采集 Node 与凭据槽位。首轮采集 Node 必须属于绑定者（管理员也不例外），共享常驻采集 Node 另行设计。以「应用可读」加绑定成员显式确认「自己有权把该内容分享给整个 Team」为准，不做每成员 OAuth 令牌；若真实平台只有用户级授权才能读取，PC-01 必须记录并调整方案，不能把应用可读冒充成员授权。
 - 暂停/恢复：绑定者或管理员（`owner` / `admin`）。
 - 撤销：绑定者或管理员；撤销必须提供理由并写入审计。撤销是破坏性团队操作，同一绑定不能恢复。
-- 成员被禁用或移除不自动撤销团队来源；管理员可撤销。采集 Node 被撤销、解绑或超过租约期离线时，来源进入 `unavailable`，不自动切换其他 Node。
+- 成员被禁用或移除不自动撤销团队来源；管理员可撤销。采集 Node 被撤销或解绑时，来源（含暂停来源）进入 `unavailable`，不自动切换其他 Node；采集 Node 超过租约期离线只作用于**活跃来源**，暂停来源保持暂停；活性以 30 秒心跳为准，socket 打开但心跳过期同样视为离线。
 - 外部资源无权限或不存在统一返回 403 `SOURCE_NOT_READABLE`，不区分存在性；不支持的来源类型返回 400 `SOURCE_UNSUPPORTED`；同一 `(platform, resourceKey)` 已有活动绑定时返回 409 `SOURCE_ALREADY_BOUND`；采集 Node 不在线返回 409 `SOURCE_COLLECTOR_OFFLINE`；离线且已绑定后的同步失败只更新来源状态，不删除绑定。
 
 ### 3 外部身份映射
@@ -41,7 +41,7 @@
 ### 4 采集者、凭据与租约
 
 - 绑定指定 `collectorNodeId` 与本地 `credentialSlot`。平台应用凭据只存采集 Node 的 SecretStore（0600）；Hub 只保存槽位名与不透明来源身份，不接收 secret、tenant token、文档绝对路径或平台私密名称。
-- 同一应用事件流同时只有一个有效采集租约：绑定检查时 Node 返回不透明 `appKey`（平台应用与租户身份的哈希，不是 app id 或密钥），Hub 以 `(platform, appKey)` 为 `source_collection_lease` 的单位；租约 TTL 90 秒、每 30 秒续租，过期后 Hub 不再接受该持有者的观察。换 Node 必须显式重新绑定并创建新代次，不能抢占旧租约继续提交。
+- 同一应用事件流同时只有一个有效采集租约：绑定检查时 Node 返回不透明 `appKey`（平台应用与租户身份的哈希，不是 app id 或密钥），Hub 以 `(platform, appKey)` 为 `source_collection_lease` 的单位；租约 TTL 90 秒、每 30 秒续租，过期后 Hub 不再接受该持有者的观察。后台收敛只续租未过期且心跳在 30 秒内的租约；过期租约不自动续期、不换发，其活跃来源转 `unavailable`，避免「离线跨过租约后重连」被一次续租静默抹平。换 Node 必须显式重新绑定并创建新代次，不能抢占旧租约继续提交。
 - 授权代次 `authorizationGeneration` 单调递增：首次绑定为 1；恢复、重新验证、更换采集者各 +1。观察、提取任务与模型结果都携带代次；Hub 只接受当前代次，旧代次提交返回 409 `SOURCE_STALE_GENERATION`，不落入读面。
 - 非租约持有者提交观察返回 409 `SOURCE_LEASE_LOST`。
 
@@ -49,12 +49,13 @@
 
 - 绑定前，Hub 通过有界只读 RPC（≤5 秒，形如 `node.preparation_check`，不进 Outbox、不启动 Runtime）让采集 Node 检查目标资源可读性；只返回 `readable / denied / not_found / unsupported`、可选资源版本与不透明 `appKey`，不传正文。
 - 运行期每次同步前重验权限；即使没有同步，也至少每 24 小时重验一次。明确 denied 或平台撤销 → `permissionState=denied`，立即停止新采集与正文使用，来源进入 `unavailable`。
+- PC-02a 实施边界：后台 24 小时重验只覆盖 `active` 来源；暂停来源在恢复时重验。本切片不提供正文读面，暂停期间不存在内容暴露；PC-03 提供正文读面前必须把暂停来源纳入 24 小时重验或引入等价的内容失效机制。
 - 网络或平台故障导致无法验证，且超过 `permissionExpiresAt` → `permissionState=unknown`：停止新采集、新提取与新 Run 装配，读面不再下发正文与引用摘录，显示「权限待重验」与最后成功验证时间；版本与时间等元数据可以继续显示。`unknown` 连续 7 天未恢复 → 按 `unavailable` 处理并执行正文清除（保留审计身份）。恢复必须重新验证并增加代次。
 
 ### 6 暂停、不可用与撤销
 
 - **暂停**：立即停止采集与提取，保留绑定、正文与读面；未提交结果按代次拒绝并在恢复后重试；恢复需重新验证权限并增加代次。
-- **不可用**：外部资源被删除/撤回、采集器离线或权限明确失效。停止采集与正文使用，保留绑定与墓碑；成员可撤销或重新绑定。
+- **不可用**：外部资源被删除/撤回、采集器离线或权限明确失效。停止采集与正文使用，保留绑定与墓碑；成员可撤销，撤销后可重新绑定为新行（不覆盖墓碑）。
 - **撤销**：绑定永久关闭，不能恢复；执行第 7 节级联。
 
 ### 7 撤销级联（必须同时发生）
@@ -64,7 +65,7 @@
 3. 项目读面停止下发该来源的条目、引用与正文；派生 ContextEntry/Relation 标记 `invalid`，引用摘录在 24 小时内清除。
 4. 新 Run 不装配该来源；历史 Run 保留来源版本与 `source_revoked` 标记，正文不再经 HTTP 读面下发。已有的 Artifact 固定输入、任务约定与交接快照不因来源撤销被改写（ADR-0016/0017）。活跃 Run 只显示「本次执行依据已变化（来源已撤销）」，不插入追问、不取消工具、不改写正在执行的上下文，也不声称清除了模型已经看到的内容。
 5. 正文与规范化副本在 24 小时内物理清除；摘要、位置索引与审计身份按第 8 节保留。
-6. Team Event 只广播一次 `source.changed`，载荷只含不透明 `sourceId`、状态与时间，不含正文、平台名称、成员姓名或摘要。
+6. Team Event 只广播一次 `source.changed`，载荷只含不透明 `sourceId`/`projectId`、状态、权限状态（变化时）与时间，不含正文、平台名称、成员姓名或摘要。
 7. Web 明确说明「已交付给执行者的内容无法收回」，不把撤销渲染成全面删除。
 
 ### 8 保留与删除
@@ -105,7 +106,7 @@
 
 ### 11 观测与取证
 
-- Hub：`hub.context` 记录 `source.bound`、`source.paused`、`source.resumed`、`source.revoked`、`source.permission_changed`、`source.lease_changed`，字段只含不透明 id、平台、类型、状态与时间。
+- Hub：`hub.context` 记录 `source.bound`、`source.paused`、`source.resumed`、`source.revoked`、`source.unavailable`、`source.permission_revalidated/unknown/denied/identity_changed`，字段只含不透明 id、平台、类型、状态与时间；租约获取/接管/释放写入 `source_audit_event.lease_changed`，续租不逐次刷日志。
 - Node：`node.source` 记录租约获取/续租/丢失、权限检查结果、队列积压、按代次拒绝；不含正文、平台名称、成员姓名或本机路径。
 - 证据包按计划 §9.2 的 `artifacts/evidence/project-context/<scenario>/<attempt>/` 归档；实现 PR 同时登记 `docs/agent/evidence-map.md`。
 - 脱敏负控必须覆盖群名、成员显示名、文档标题、正文片段、凭据与绝对路径。
@@ -136,4 +137,4 @@ PC-02 至少包含：
 
 ## 验证登记
 
-本 ADR 是文档，不含机器证据。PC-02 实现时创建 `docs/agent/project-source-acceptance.md`，登记绑定/暂停/撤销、权限重验、代次拒绝、租约与脱敏判据；未完成前 PC-02 保持未实现。
+本 ADR 是文档，不含机器证据。PC-02 实现时创建 `docs/agent/project-source-lifecycle-acceptance.md`，登记绑定/暂停/撤销、权限重验、代次拒绝、租约与脱敏判据；未完成前 PC-02 保持未实现。

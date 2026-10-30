@@ -20,6 +20,8 @@ import { registerTeamRoutes } from './modules/team/routes.js'
 import { registerInviteRoutes } from './modules/team/invite-routes.js'
 import { SetupTokenStore } from './modules/team/setup-token.js'
 import { registerProjectRoutes } from './modules/project/routes.js'
+// ADR-0024（PC-02a）：项目来源绑定生命周期（团队共享、暂停/恢复/撤销）。
+import { registerSourceRoutes } from './modules/source/routes.js'
 import { registerTaskRoutes } from './modules/task/routes.js'
 import { registerAgentRoutes } from './modules/agent/routes.js'
 import { loadPluginCatalog } from './modules/plugin/catalog.js'
@@ -205,6 +207,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       })
       registerInviteRoutes(api, { database, requireActor, anonymousLimiter, secureCookie })
       registerProjectRoutes(api, { database, requireActor })
+      registerSourceRoutes(api, { database, requireActor })
       registerTaskRoutes(api, {
         database,
         requireActor,
