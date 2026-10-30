@@ -98,7 +98,7 @@ export const SourcePermissionResultPayloadSchema = z
   .strictObject({
     requestId: z.uuid(),
     result: SourcePermissionCheckResultSchema,
-    appKey: z.string().trim().min(1).max(128).optional(),
+    appKey: z.string().trim().min(1).max(200).optional(),
     upstreamVersion: z.string().trim().min(1).max(500).optional(),
   })
   .superRefine((value, ctx) => {

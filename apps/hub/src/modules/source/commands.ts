@@ -206,7 +206,8 @@ async function applyLease(
   const expired = lease.expiresAt.getTime() <= input.now.getTime()
   if (!expired && lease.deviceId === input.deviceId) {
     await updateSourceLease(tx, input.platform, input.appKey, {
-      expiresAt,
+      // 续租只延长；并发 txn 已写入更晚的 expiresAt 时保留它。
+      expiresAt: new Date(Math.max(lease.expiresAt.getTime(), expiresAt.getTime())),
       renewedAt: input.now,
     })
     return lease.generation
@@ -531,7 +532,7 @@ export async function resumeProjectSource(
 
   const now = new Date()
   const permissionExpiresAt = new Date(now.getTime() + SOURCE_PERMISSION_TTL_MS)
-  const outcome = await transactCommand<ResumeOutcome>(database, commandKey, async (tx) => {
+  const rawOutcome = await transactCommand<unknown>(database, commandKey, async (tx) => {
     const row = await getProjectSourceForUpdate(tx, input.sourceId)
     if (row === undefined) throw new ApiError(404, 'NOT_FOUND', 'source not found')
     // 并发同 key：先等来源行锁，再回读胜者回执；否则败者会把已提交的 unavailable
@@ -608,6 +609,9 @@ export async function resumeProjectSource(
     await sourceChanged(tx, row, 'active', undefined, now)
     return { view: toSourceView(updated) }
   })
+  // transactCommand 的回执冲突分支可能返回更早实例写入的裸视图；这里统一归一化。
+  const outcome = normalizeResumeReceipt(rawOutcome)
+  if (outcome === undefined) throw new Error('resume receipt is invalid')
   if ('denied' in outcome) {
     throw new ApiError(403, 'SOURCE_NOT_READABLE', 'source is no longer readable')
   }

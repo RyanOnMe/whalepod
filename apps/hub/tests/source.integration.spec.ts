@@ -344,6 +344,8 @@ describe('PC-02a project source lifecycle', () => {
       status: 'active',
     })
     expect(typeof (events[0]?.payload as { changedAt?: unknown }).changedAt).toBe('string')
+    expect(JSON.stringify(events)).not.toContain('oc_visible_group')
+    expect(JSON.stringify(events)).not.toContain('fixture-app-key')
   })
 
   it('rejects a node that does not advertise the capability', async () => {
@@ -1279,6 +1281,22 @@ describe('PC-02a project source lifecycle', () => {
     ).toBe(true)
   })
 
+  it('never shortens an existing lease when renewing', async () => {
+    const device = await pair(alice, 'alice-node-33')
+    const node = await connectNode(device, 'alice-node-33')
+    const created = await bind(alice, device.deviceId)
+    expect(created.statusCode).toBe(201)
+    const long = new Date(Date.now() + 120_000)
+    await database.db
+      .update(schema.sourceCollectionLeases)
+      .set({ expiresAt: long })
+      .where(eq(schema.sourceCollectionLeases.appKey, node.appKey))
+
+    const result = await reconcile()
+    expect(result.leasesRenewed).toBe(1)
+    expect((await leaseRow(node.appKey))?.expiresAt.getTime()).toBe(long.getTime())
+  })
+
   it('keeps renewing leases while a slow permission revalidation is running', async () => {
     const device = await pair(alice, 'alice-node-30')
     const node = await connectNode(device, 'alice-node-30')
@@ -1376,6 +1394,18 @@ describe('PC-02a project source lifecycle', () => {
     })
     expect(first.statusCode).toBe(200)
     expect(first.json().data).toMatchObject({ status: 'active', authorizationGeneration: 1 })
+
+    // 先暂停：如果 no-op 没写回执，同一 key 会重新走 RPC 把来源恢复。
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/sources/${sourceId}/pause`,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(200)
+
     const replay = await apiInject(ctx, alice, {
       method: 'POST',
       url: `/api/v1/sources/${sourceId}/resume`,
@@ -1384,16 +1414,33 @@ describe('PC-02a project source lifecycle', () => {
     })
     expect(replay.statusCode).toBe(200)
     expect(replay.json().data).toEqual(first.json().data)
+    expect(await sourceRow(sourceId)).toMatchObject({ status: 'paused' })
     expect(node.checks).toHaveLength(checks)
   })
 
   it('requires a session for every source route', async () => {
-    const res = await ctx.app.inject({
-      method: 'GET',
-      url: `/api/v1/projects/${projectId}/sources`,
-      headers: { origin: ctx.origin, 'idempotency-key': idemKey() },
-    })
-    expect(res.statusCode).toBe(401)
-    expect(res.json().error.code).toBe('AUTH_REQUIRED')
+    const sourceId = randomUUID()
+    const routes: Array<{
+      method: 'GET' | 'POST'
+      url: string
+      payload?: Record<string, unknown>
+    }> = [
+      { method: 'GET', url: `/api/v1/projects/${projectId}/sources` },
+      { method: 'POST', url: `/api/v1/projects/${projectId}/sources`, payload: {} },
+      { method: 'GET', url: `/api/v1/sources/${sourceId}` },
+      { method: 'POST', url: `/api/v1/sources/${sourceId}/pause`, payload: {} },
+      { method: 'POST', url: `/api/v1/sources/${sourceId}/resume`, payload: {} },
+      { method: 'POST', url: `/api/v1/sources/${sourceId}/revoke`, payload: { reason: 'test' } },
+    ]
+    for (const route of routes) {
+      const res = await ctx.app.inject({
+        method: route.method,
+        url: route.url,
+        headers: { origin: ctx.origin, 'idempotency-key': idemKey() },
+        ...(route.payload !== undefined ? { payload: route.payload } : {}),
+      })
+      expect(res.statusCode, route.url).toBe(401)
+      expect(res.json().error.code).toBe('AUTH_REQUIRED')
+    }
   })
 })

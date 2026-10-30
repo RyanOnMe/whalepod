@@ -102,6 +102,26 @@ describe('source binding protocol (ADR-0024)', () => {
       appKey: 'app-key-hash',
     })
     expect(SourcePermissionResultSchema.parse(readable).payload.appKey).toBe('app-key-hash')
+    // appKey 上限与 DB varchar(200) 对齐；超过上限必须在 wire 层拒绝。
+    const longKey = 'a'.repeat(200)
+    expect(
+      SourcePermissionResultSchema.parse(
+        envelope('source.permission_result', {
+          requestId: REQUEST_ID,
+          result: 'readable',
+          appKey: longKey,
+        }),
+      ).payload.appKey,
+    ).toBe(longKey)
+    expect(() =>
+      SourcePermissionResultSchema.parse(
+        envelope('source.permission_result', {
+          requestId: REQUEST_ID,
+          result: 'readable',
+          appKey: 'a'.repeat(201),
+        }),
+      ),
+    ).toThrow()
     expect(() =>
       SourcePermissionResultSchema.parse(
         envelope('source.permission_result', { requestId: REQUEST_ID, result: 'readable' }),

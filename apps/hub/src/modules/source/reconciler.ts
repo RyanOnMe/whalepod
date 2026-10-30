@@ -155,7 +155,10 @@ async function reconcileLeases(
         return undefined
       }
       await updateSourceLease(tx, locked.platform, locked.appKey, {
-        expiresAt: new Date(input.now.getTime() + SOURCE_LEASE_TTL_MS),
+        // 续租只延长，不能把更晚的 expiresAt 写回更早（重叠扫描的 now 可能更旧）。
+        expiresAt: new Date(
+          Math.max(locked.expiresAt.getTime(), input.now.getTime() + SOURCE_LEASE_TTL_MS),
+        ),
         renewedAt: input.now,
       })
       return { kind: 'renewed' as const }
