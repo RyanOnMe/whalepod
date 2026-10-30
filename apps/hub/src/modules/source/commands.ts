@@ -194,6 +194,8 @@ function assertBind(actor: SourceActor): void {
 /**
  * 同一应用事件流一个采集者。换 Node 只在没有其他活跃来源、且旧租约已过期时接管；
  * 过期后同一 device 再取租约要轮换代次与 token，围栏 PC-03 的旧观察。
+ * 过期租约只要还有活跃来源就拒绝任何取租约（包括原设备）：旧来源必须由后台转
+ * unavailable 或成员显式暂停/撤销，不能靠一次绑定/恢复把采集中断抹平。
  */
 async function applyLease(
   tx: DbHandle,
@@ -201,18 +203,8 @@ async function applyLease(
   input: { platform: SourcePlatform; appKey: string; deviceId: string; now: Date },
 ): Promise<number> {
   const expiresAt = new Date(input.now.getTime() + SOURCE_LEASE_TTL_MS)
-  if (lease.deviceId === input.deviceId) {
-    if (lease.expiresAt.getTime() <= input.now.getTime()) {
-      const generation = lease.generation + 1
-      await updateSourceLease(tx, input.platform, input.appKey, {
-        generation,
-        leaseToken: uuidv7(),
-        expiresAt,
-        acquiredAt: input.now,
-        renewedAt: input.now,
-      })
-      return generation
-    }
+  const expired = lease.expiresAt.getTime() <= input.now.getTime()
+  if (!expired && lease.deviceId === input.deviceId) {
     await updateSourceLease(tx, input.platform, input.appKey, {
       expiresAt,
       renewedAt: input.now,
@@ -220,24 +212,32 @@ async function applyLease(
     return lease.generation
   }
 
-  // 另一台 Node 持有该应用事件流：只要还有活跃来源，就不允许静默换采集者。
   const active = await countActiveSourcesByAppKey(tx, input.platform, input.appKey)
+  if (expired) {
+    if (active > 0) {
+      throw new ApiError(
+        409,
+        'SOURCE_LEASE_LOST',
+        'collection lease expired while sources are active; pause or revoke them first',
+      )
+    }
+    const generation = lease.generation + 1
+    await updateSourceLease(tx, input.platform, input.appKey, {
+      deviceId: input.deviceId,
+      generation,
+      leaseToken: uuidv7(),
+      expiresAt,
+      acquiredAt: input.now,
+      renewedAt: input.now,
+    })
+    return generation
+  }
+
+  // 另一台 Node 持有未过期租约：只要还有活跃来源，就不允许静默换采集者。
   if (active > 0) {
     throw new ApiError(409, 'SOURCE_LEASE_LOST', 'another source is actively using this app')
   }
-  if (lease.expiresAt.getTime() > input.now.getTime()) {
-    throw new ApiError(409, 'SOURCE_LEASE_LOST', 'another collector holds the collection lease')
-  }
-  const generation = lease.generation + 1
-  await updateSourceLease(tx, input.platform, input.appKey, {
-    deviceId: input.deviceId,
-    generation,
-    leaseToken: uuidv7(),
-    expiresAt,
-    acquiredAt: input.now,
-    renewedAt: input.now,
-  })
-  return generation
+  throw new ApiError(409, 'SOURCE_LEASE_LOST', 'another collector holds the collection lease')
 }
 
 async function ensureLease(
@@ -353,6 +353,10 @@ export async function bindProjectSource(
       )
       if (existing !== undefined) {
         throw new ApiError(409, 'SOURCE_ALREADY_BOUND', 'source is already bound')
+      }
+      const liveDevice = await getDeviceById(tx, device.id)
+      if (liveDevice === undefined || liveDevice.revokedAt !== null) {
+        throw new ApiError(409, 'SOURCE_COLLECTOR_OFFLINE', 'collector node is no longer available')
       }
       const leaseGeneration = await ensureLease(tx, {
         platform: input.request.platform,
@@ -490,6 +494,13 @@ export async function resumeProjectSource(
       async (tx) => {
         const row = await getProjectSourceForUpdate(tx, input.sourceId)
         if (row === undefined) throw new ApiError(404, 'NOT_FOUND', 'source not found')
+        const replay = normalizeResumeReceipt((await findCommandReceipt(tx, commandKey))?.result)
+        if (replay !== undefined) {
+          if ('denied' in replay) {
+            throw new ApiError(403, 'SOURCE_NOT_READABLE', 'source is no longer readable')
+          }
+          return { view: replay.view }
+        }
         assertManage(row, input.actor)
         if (row.status !== 'active') {
           throw new DomainError('INVALID_SOURCE_TRANSITION', `cannot resume a ${row.status} source`)
@@ -523,10 +534,18 @@ export async function resumeProjectSource(
   const outcome = await transactCommand<ResumeOutcome>(database, commandKey, async (tx) => {
     const row = await getProjectSourceForUpdate(tx, input.sourceId)
     if (row === undefined) throw new ApiError(404, 'NOT_FOUND', 'source not found')
+    // 并发同 key：先等来源行锁，再回读胜者回执；否则败者会把已提交的 unavailable
+    // 误报成 409，违反「同 key 同结果」。
+    const replay = normalizeResumeReceipt((await findCommandReceipt(tx, commandKey))?.result)
+    if (replay !== undefined) return replay
     assertManage(row, input.actor)
     if (row.status === 'active') return { view: toSourceView(row) }
     if (row.status !== 'paused') {
       throw new DomainError('INVALID_SOURCE_TRANSITION', `cannot resume a ${row.status} source`)
+    }
+    const liveDevice = await getDeviceById(tx, row.collectorNodeId)
+    if (liveDevice === undefined || liveDevice.revokedAt !== null) {
+      throw new ApiError(409, 'SOURCE_COLLECTOR_OFFLINE', 'collector node is no longer available')
     }
     const generation = row.authorizationGeneration + 1
     if (!check.readable) {
@@ -548,7 +567,8 @@ export async function resumeProjectSource(
         action: 'permission_changed',
         actorMemberId: input.actor.userId,
         authorizationGeneration: generation,
-        payload: { to: 'denied', reason: check.reason },
+        // 与 HTTP 面一致：denied 与 not_found 不落可区分的理由。
+        payload: { to: 'denied', reason: 'source_not_readable' },
       })
       await sourceChanged(tx, row, 'unavailable', 'denied', now)
       return { denied: true }

@@ -53,7 +53,6 @@ const workerTimer = setInterval(() => {
     )
   })
 }, 250)
-let sourceReconcileRunning = false
 const leaseTimer = setInterval(() => {
   void reconcileLeases(
     {
@@ -77,25 +76,18 @@ const leaseTimer = setInterval(() => {
     )
   })
   // ADR-0024 §5：来源权限水位（verified 过期 → unknown；7 天 → unavailable）。
-  // 单实例内不重叠：上一轮未完成（Node RPC 慢/DB 抖动）时跳过本轮，避免同一来源被并发放大。
-  if (!sourceReconcileRunning) {
-    sourceReconcileRunning = true
-    void reconcileSourcePermissions({
-      database,
-      collector: nodeSourceCollector,
-      now: new Date(),
-      log: (event) => app.log.info(event, 'source context changed'),
-    })
-      .catch((error) => {
-        app.log.warn(
-          { component: 'hub.context', ...sanitizeError(error) },
-          'source permission reconcile error',
-        )
-      })
-      .finally(() => {
-        sourceReconcileRunning = false
-      })
-  }
+  // 租约续租/采集器扫描每 tick 都跑；慢重验在 reconciler 内部单飞，避免拖垮健康租约。
+  void reconcileSourcePermissions({
+    database,
+    collector: nodeSourceCollector,
+    now: new Date(),
+    log: (event) => app.log.info(event, 'source context changed'),
+  }).catch((error) => {
+    app.log.warn(
+      { component: 'hub.context', ...sanitizeError(error) },
+      'source permission reconcile error',
+    )
+  })
 }, 10_000)
 
 await app.listen({ host: config.host, port: config.port })

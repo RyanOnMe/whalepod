@@ -1,4 +1,4 @@
-import type { Database, DbHandle, ProjectSourceRow } from '@whalepod/db'
+import type { Database, DbHandle, DeviceRow, ProjectSourceRow } from '@whalepod/db'
 import {
   appendTeamEvent,
   countActiveSourcesByAppKey,
@@ -15,6 +15,7 @@ import {
   updateProjectSource,
   updateSourceLease,
 } from '@whalepod/db'
+import { DEVICE_ONLINE_WINDOW_MS } from '../device/pairing.js'
 import { ApiError } from '../shared/http-error.js'
 import {
   checkCollector,
@@ -80,6 +81,16 @@ function logEvent(input: SourceReconcileInput, action: string, row: SourceEventF
   })
 }
 
+/** 采集器活性 = socket OPEN + 最近 30 秒心跳；只看 socket 会让挂起/睡死的连接永久续租。 */
+function collectorReachable(collector: SourceCollector, device: DeviceRow, now: Date): boolean {
+  return (
+    device.revokedAt === null &&
+    device.lastSeenAt !== null &&
+    now.getTime() - device.lastSeenAt.getTime() <= DEVICE_ONLINE_WINDOW_MS &&
+    collector.isOnline(device.id)
+  )
+}
+
 function appendSourceChanged(
   tx: DbHandle,
   row: Pick<ProjectSourceRow, 'id' | 'projectId'>,
@@ -139,7 +150,10 @@ async function reconcileLeases(
       if (locked.expiresAt.getTime() <= input.now.getTime()) {
         return { kind: 'expired' as const }
       }
-      if (!input.collector.isOnline(locked.deviceId)) return undefined
+      const holder = await getDeviceById(tx, locked.deviceId)
+      if (holder === undefined || !collectorReachable(input.collector, holder, input.now)) {
+        return undefined
+      }
       await updateSourceLease(tx, locked.platform, locked.appKey, {
         expiresAt: new Date(input.now.getTime() + SOURCE_LEASE_TTL_MS),
         renewedAt: input.now,
@@ -185,15 +199,14 @@ async function reconcileCollectors(input: SourceReconcileInput): Promise<number>
         // 暂停已释放租约；采集器离线不改变暂停态，只有设备撤销/解绑需要墓碑化。
         return false
       } else {
+        const reachable = collectorReachable(input.collector, device, input.now)
         const lease = await getSourceLeaseForUpdate(tx, row.platform, row.appKey)
         if (lease === undefined || lease.deviceId !== row.collectorNodeId) {
           reason = 'collector_lease_changed'
         } else if (lease.expiresAt.getTime() <= input.now.getTime()) {
-          reason = input.collector.isOnline(device.id)
-            ? 'collector_lease_expired'
-            : 'collector_offline'
-        } else if (!input.collector.isOnline(device.id)) {
-          // 租约未过期：离线在宽限期内，等待下一轮；不提前判死。
+          reason = reachable ? 'collector_lease_expired' : 'collector_offline'
+        } else if (!reachable) {
+          // 租约未过期：离线/心跳过期仍在宽限期内，等待下一轮；不提前判死。
           return false
         }
       }
@@ -214,7 +227,7 @@ async function reconcileCollectors(input: SourceReconcileInput): Promise<number>
         authorizationGeneration: generation,
         payload: { reason },
       })
-      await appendSourceChanged(tx, row, 'unavailable', row.permissionState, input.now)
+      await appendSourceChanged(tx, row, 'unavailable', undefined, input.now)
       logEvent(input, 'source.unavailable', {
         sourceId: row.id,
         projectId: row.projectId,
@@ -342,55 +355,66 @@ async function markUnknown(
   return { kind: 'unknown', generation }
 }
 
+// 重验可能因 Node 无应答串行等 5s×16；只对重验单飞，租约续租/采集器扫描仍每 tick 执行，
+// 否则慢批次会把健康采集器的 90s 租约拖过期（复核第三轮 #3）。
+let revalidationRunning = false
+
 /** 到期 verified 来源的真实重验；只有验过且失败才转 unknown（ADR-0024 §5）。 */
 async function revalidatePermissions(
   input: SourceReconcileInput,
 ): Promise<{ revalidated: number; unknown: number; unavailable: number }> {
-  let revalidated = 0
-  let unknown = 0
-  let unavailable = 0
-  // 有界扫描：一次最多处理 16 条，剩余留给下一轮 10s tick，避免阻塞后台循环。
-  for (const source of (await listSourcesWithExpiredPermission(input.database.db, input.now)).slice(
-    0,
-    16,
-  )) {
-    const probe = await probeSource(input, source)
-    const outcome = await input.database.transaction(async (tx) => {
-      const row = await getProjectSourceForUpdate(tx, source.id)
-      if (
-        row === undefined ||
-        row.status !== 'active' ||
-        row.permissionState !== 'verified' ||
-        row.permissionExpiresAt === null ||
-        row.permissionExpiresAt.getTime() > input.now.getTime()
-      ) {
-        return { kind: 'skipped' as const }
-      }
-      if (probe.kind === 'readable') return markRevalidated(tx, row, input.now)
-      if (probe.kind === 'denied') return markDenied(tx, row, input.now)
-      if (probe.kind === 'identity_changed') return markIdentityChanged(tx, row, input.now)
-      return markUnknown(tx, row, input.now)
-    })
+  if (revalidationRunning) return { revalidated: 0, unknown: 0, unavailable: 0 }
+  revalidationRunning = true
+  try {
+    let revalidated = 0
+    let unknown = 0
+    let unavailable = 0
+    // 有界扫描：一次最多处理 16 条，剩余留给下一轮 10s tick，避免阻塞后台循环。
+    for (const source of (
+      await listSourcesWithExpiredPermission(input.database.db, input.now)
+    ).slice(0, 16)) {
+      const probe = await probeSource(input, source)
+      const outcome = await input.database.transaction(async (tx) => {
+        const row = await getProjectSourceForUpdate(tx, source.id)
+        if (
+          row === undefined ||
+          row.status !== 'active' ||
+          row.permissionState !== 'verified' ||
+          row.permissionExpiresAt === null ||
+          row.permissionExpiresAt.getTime() > input.now.getTime()
+        ) {
+          return { kind: 'skipped' as const }
+        }
+        if (probe.kind === 'readable') return markRevalidated(tx, row, input.now)
+        if (probe.kind === 'denied') return markDenied(tx, row, input.now)
+        if (probe.kind === 'identity_changed') return markIdentityChanged(tx, row, input.now)
+        return markUnknown(tx, row, input.now)
+      })
 
-    if (outcome.kind === 'skipped') continue
-    if (outcome.kind === 'revalidated') revalidated += 1
-    if (outcome.kind === 'unknown') unknown += 1
-    if (outcome.kind === 'denied' || outcome.kind === 'identity_changed') unavailable += 1
-    logEvent(input, `source.permission_${outcome.kind}`, {
-      sourceId: source.id,
-      projectId: source.projectId,
-      status:
-        outcome.kind === 'denied' || outcome.kind === 'identity_changed' ? 'unavailable' : 'active',
-      permissionState:
-        outcome.kind === 'revalidated'
-          ? 'verified'
-          : outcome.kind === 'denied'
-            ? 'denied'
-            : 'unknown',
-      authorizationGeneration: outcome.generation,
-    })
+      if (outcome.kind === 'skipped') continue
+      if (outcome.kind === 'revalidated') revalidated += 1
+      if (outcome.kind === 'unknown') unknown += 1
+      if (outcome.kind === 'denied' || outcome.kind === 'identity_changed') unavailable += 1
+      logEvent(input, `source.permission_${outcome.kind}`, {
+        sourceId: source.id,
+        projectId: source.projectId,
+        status:
+          outcome.kind === 'denied' || outcome.kind === 'identity_changed'
+            ? 'unavailable'
+            : 'active',
+        permissionState:
+          outcome.kind === 'revalidated'
+            ? 'verified'
+            : outcome.kind === 'denied'
+              ? 'denied'
+              : 'unknown',
+        authorizationGeneration: outcome.generation,
+      })
+    }
+    return { revalidated, unknown, unavailable }
+  } finally {
+    revalidationRunning = false
   }
-  return { revalidated, unknown, unavailable }
 }
 
 /** unknown 连续 7 天（含已暂停来源，防止暂停绕过正文清除）→ unavailable。 */
@@ -425,7 +449,7 @@ async function expireUnknownSources(input: SourceReconcileInput): Promise<number
         'unavailable',
         'permission_unknown_too_long',
       )
-      await appendSourceChanged(tx, row, 'unavailable', 'unknown', input.now)
+      await appendSourceChanged(tx, row, 'unavailable', undefined, input.now)
       logEvent(input, 'source.permission_unavailable', {
         sourceId: row.id,
         projectId: row.projectId,

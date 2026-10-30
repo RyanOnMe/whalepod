@@ -1185,6 +1185,208 @@ describe('PC-02a project source lifecycle', () => {
     expect(await sourceCount()).toBe(1)
   })
 
+  it('refuses bind and resume on an expired lease while another source is active', async () => {
+    const device = await pair(alice, 'alice-node-28')
+    const node = await connectNode(device, 'alice-node-28')
+    const first = await bind(alice, device.deviceId, { resourceKey: 'oc_expired_a' })
+    expect(first.statusCode).toBe(201)
+    const firstId = first.json().data.id as string
+    const second = await bind(alice, device.deviceId, { resourceKey: 'oc_expired_b' })
+    expect(second.statusCode).toBe(201)
+    const secondId = second.json().data.id as string
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/sources/${secondId}/pause`,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(200)
+
+    await database.db
+      .update(schema.sourceCollectionLeases)
+      .set({ expiresAt: new Date(Date.now() - 1_000) })
+      .where(eq(schema.sourceCollectionLeases.appKey, node.appKey))
+
+    // 旧租约过期 + 仍有活跃来源：同设备绑定/恢复都不能把中断续过去。
+    const third = await bind(alice, device.deviceId, { resourceKey: 'oc_expired_c' })
+    expect(third.statusCode).toBe(409)
+    expect(third.json().error.code).toBe('SOURCE_LEASE_LOST')
+    expect(await sourceCount()).toBe(2)
+
+    const resumed = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/sources/${secondId}/resume`,
+      payload: {},
+    })
+    expect(resumed.statusCode).toBe(409)
+    expect(resumed.json().error.code).toBe('SOURCE_LEASE_LOST')
+    expect(await sourceRow(secondId)).toMatchObject({ status: 'paused' })
+    expect(await sourceRow(firstId)).toMatchObject({ status: 'active', authorizationGeneration: 1 })
+
+    const swept = await reconcile()
+    expect(swept).toMatchObject({ unavailable: 1, leasesExpired: 1, leasesRenewed: 0 })
+    expect(await sourceRow(firstId)).toMatchObject({
+      status: 'unavailable',
+      authorizationGeneration: 2,
+    })
+    expect(await sourceRow(secondId)).toMatchObject({ status: 'paused' })
+
+    const released = await reconcile()
+    expect(released.leasesReleased).toBe(1)
+    expect(await leaseRow(node.appKey)).toBeUndefined()
+  })
+
+  it('does not renew a lease when the collector heartbeat is stale', async () => {
+    const device = await pair(alice, 'alice-node-29')
+    const node = await connectNode(device, 'alice-node-29')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+    const before = (await leaseRow(node.appKey))?.expiresAt.getTime() ?? 0
+
+    // Open socket + 10 分钟无心跳：模拟挂起/睡死的 Node，不得靠 socket OPEN 续租。
+    await database.db
+      .update(schema.devices)
+      .set({ lastSeenAt: new Date(Date.now() - 10 * 60 * 1000) })
+      .where(eq(schema.devices.id, device.deviceId))
+
+    const first = await reconcile()
+    expect(first).toMatchObject({ leasesRenewed: 0, leasesExpired: 0, unavailable: 0 })
+    expect((await leaseRow(node.appKey))?.expiresAt.getTime()).toBe(before)
+    expect(await sourceRow(sourceId)).toMatchObject({ status: 'active' })
+
+    await database.db
+      .update(schema.sourceCollectionLeases)
+      .set({ expiresAt: new Date(Date.now() - 1_000) })
+      .where(eq(schema.sourceCollectionLeases.appKey, node.appKey))
+    const second = await reconcile()
+    expect(second).toMatchObject({ unavailable: 1, leasesExpired: 1, leasesRenewed: 0 })
+    expect(await sourceRow(sourceId)).toMatchObject({
+      status: 'unavailable',
+      authorizationGeneration: 2,
+    })
+    const audits = await database.db
+      .select()
+      .from(schema.sourceAuditEvents)
+      .where(eq(schema.sourceAuditEvents.sourceId, sourceId))
+    expect(
+      audits.some(
+        (row) =>
+          row.action === 'unavailable' &&
+          (row.payload as { reason?: string }).reason === 'collector_offline',
+      ),
+    ).toBe(true)
+  })
+
+  it('keeps renewing leases while a slow permission revalidation is running', async () => {
+    const device = await pair(alice, 'alice-node-30')
+    const node = await connectNode(device, 'alice-node-30')
+    const due = await bind(alice, device.deviceId, { resourceKey: 'oc_slow_due' })
+    const healthy = await bind(alice, device.deviceId, { resourceKey: 'oc_slow_healthy' })
+    expect(due.statusCode).toBe(201)
+    expect(healthy.statusCode).toBe(201)
+    const dueId = due.json().data.id as string
+    const healthyId = healthy.json().data.id as string
+    const now = new Date()
+    await database.db
+      .update(schema.projectSources)
+      .set({ permissionExpiresAt: new Date(now.getTime() - 1_000) })
+      .where(eq(schema.projectSources.id, dueId))
+    node.mode = 'silent'
+    const checks = node.checks.length
+
+    const slow = reconcile(now)
+    await waitForValue(
+      async () => (node.checks.length > checks ? true : undefined),
+      'silent permission revalidation dispatched',
+    )
+    const leaseBefore = await leaseRow(node.appKey)
+    const fast = await reconcile(new Date(now.getTime() + 5_000))
+    expect(fast).toMatchObject({ leasesRenewed: 1, unknown: 0, unavailable: 0 })
+    expect((await leaseRow(node.appKey))?.expiresAt.getTime()).toBeGreaterThan(
+      leaseBefore?.expiresAt.getTime() ?? 0,
+    )
+    expect(await sourceRow(healthyId)).toMatchObject({
+      status: 'active',
+      permissionState: 'verified',
+    })
+
+    const slowResult = await slow
+    expect(slowResult.unknown).toBe(1)
+    expect(await sourceRow(dueId)).toMatchObject({
+      status: 'active',
+      permissionState: 'unknown',
+    })
+  }, 20_000)
+
+  it('returns 403 to both concurrent denied resumes with the same key', async () => {
+    const device = await pair(alice, 'alice-node-31')
+    const node = await connectNode(device, 'alice-node-31')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/sources/${sourceId}/pause`,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(200)
+    node.mode = 'denied'
+    const key = idemKey()
+    const [first, second] = await Promise.all([
+      apiInject(ctx, alice, {
+        method: 'POST',
+        url: `/api/v1/sources/${sourceId}/resume`,
+        payload: {},
+        idempotencyKey: key,
+      }),
+      apiInject(ctx, alice, {
+        method: 'POST',
+        url: `/api/v1/sources/${sourceId}/resume`,
+        payload: {},
+        idempotencyKey: key,
+      }),
+    ])
+    expect(first.statusCode).toBe(403)
+    expect(second.statusCode).toBe(403)
+    expect(first.json().error.code).toBe('SOURCE_NOT_READABLE')
+    expect(second.json().error.code).toBe('SOURCE_NOT_READABLE')
+    expect(await sourceRow(sourceId)).toMatchObject({
+      status: 'unavailable',
+      permissionState: 'denied',
+      authorizationGeneration: 3,
+    })
+  })
+
+  it('replays an already-active resume as the same view without another RPC', async () => {
+    const device = await pair(alice, 'alice-node-32')
+    const node = await connectNode(device, 'alice-node-32')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+    const key = idemKey()
+    const checks = node.checks.length
+    const first = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/sources/${sourceId}/resume`,
+      payload: {},
+      idempotencyKey: key,
+    })
+    expect(first.statusCode).toBe(200)
+    expect(first.json().data).toMatchObject({ status: 'active', authorizationGeneration: 1 })
+    const replay = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/sources/${sourceId}/resume`,
+      payload: {},
+      idempotencyKey: key,
+    })
+    expect(replay.statusCode).toBe(200)
+    expect(replay.json().data).toEqual(first.json().data)
+    expect(node.checks).toHaveLength(checks)
+  })
+
   it('requires a session for every source route', async () => {
     const res = await ctx.app.inject({
       method: 'GET',
