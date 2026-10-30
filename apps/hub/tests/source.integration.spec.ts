@@ -28,6 +28,7 @@ import {
   type TestApp,
 } from './helpers.js'
 import { reconcileSourcePermissions } from '../src/modules/source/reconciler.js'
+import { nodeSourceCollector } from '../src/modules/source/collector.js'
 import { nodeConnections } from '../src/modules/device/connection-registry.js'
 
 const FEISHU_GROUP = 'feishu.read.v1'
@@ -100,6 +101,7 @@ describe('PC-02a project source lifecycle', () => {
   let ctx: TestApp
   let alice: Session
   let bob: Session
+  let carol: Session
   let projectId: string
   let url: string
   const sockets: WebSocket[] = []
@@ -119,6 +121,18 @@ describe('PC-02a project source lifecycle', () => {
         displayName: 'Bob',
         password: 'correct horse battery staple',
       })
+    ).session
+    carol = (
+      await driveInviteAndAccept(
+        ctx,
+        alice,
+        {
+          username: 'carol',
+          displayName: 'Carol',
+          password: 'correct horse battery staple',
+        },
+        'admin',
+      )
     ).session
     const project = await apiInject(ctx, alice, {
       method: 'POST',
@@ -175,6 +189,31 @@ describe('PC-02a project source lifecycle', () => {
     })
   }
 
+  async function waitForCapabilities(
+    deviceId: string,
+    capabilities: readonly string[],
+    label: string,
+  ): Promise<void> {
+    await waitForValue(async () => {
+      const row = await getDeviceById(database.db, deviceId)
+      const raw = (row?.capabilities as { sourceCapabilities?: unknown } | undefined)
+        ?.sourceCapabilities
+      return Array.isArray(raw) && JSON.stringify(raw) === JSON.stringify(capabilities)
+        ? true
+        : undefined
+    }, `${label} hello capability persisted`)
+  }
+
+  async function sendHello(
+    node: FakeSourceNode,
+    deviceId: string,
+    capabilities: readonly string[],
+    label: string,
+  ): Promise<void> {
+    node.hello(deviceId, capabilities)
+    await waitForCapabilities(deviceId, capabilities, label)
+  }
+
   async function connectNode(
     device: { deviceId: string; deviceToken: string },
     label: string,
@@ -183,14 +222,7 @@ describe('PC-02a project source lifecycle', () => {
     const socket = await connect(device.deviceToken)
     const node = new FakeSourceNode(socket, label)
     nodes.push(node)
-    node.hello(device.deviceId, capabilities)
-    await waitForValue(async () => {
-      const row = await getDeviceById(database.db, device.deviceId)
-      const raw = (row?.capabilities as { sourceCapabilities?: unknown } | undefined)
-        ?.sourceCapabilities
-      if (!Array.isArray(raw)) return undefined
-      return capabilities.length === 0 || raw.includes(FEISHU_GROUP) ? true : undefined
-    }, `${label} hello capability persisted`)
+    await sendHello(node, device.deviceId, capabilities, label)
     return node
   }
 
@@ -227,6 +259,26 @@ describe('PC-02a project source lifecycle', () => {
   async function sourceCount(): Promise<number> {
     const rows = await database.db.select().from(schema.projectSources)
     return rows.length
+  }
+
+  async function sourceRow(sourceId: string) {
+    const [row] = await database.db
+      .select()
+      .from(schema.projectSources)
+      .where(eq(schema.projectSources.id, sourceId))
+    return row
+  }
+
+  async function leaseRow(appKey: string) {
+    const [row] = await database.db
+      .select()
+      .from(schema.sourceCollectionLeases)
+      .where(eq(schema.sourceCollectionLeases.appKey, appKey))
+    return row
+  }
+
+  function reconcile(now = new Date()) {
+    return reconcileSourcePermissions({ database, collector: nodeSourceCollector, now })
   }
 
   it('binds only after an online node advertises the capability; the view hides resource/app identity', async () => {
@@ -278,7 +330,7 @@ describe('PC-02a project source lifecycle', () => {
       .select()
       .from(schema.sourceAuditEvents)
       .where(eq(schema.sourceAuditEvents.sourceId, view.id))
-    expect(audits.map((row) => row.action)).toEqual(['bound'])
+    expect(audits.map((row) => row.action)).toEqual(['bound', 'lease_changed'])
     expect(JSON.stringify(audits)).not.toContain('oc_visible_group')
     expect(JSON.stringify(audits)).not.toContain('fixture-app-key')
 
@@ -286,11 +338,12 @@ describe('PC-02a project source lifecycle', () => {
       (row) => row.type === 'source.changed',
     )
     expect(events).toHaveLength(1)
-    expect(events[0]?.payload).toEqual({
+    expect(events[0]?.payload).toMatchObject({
       sourceId: view.id,
       projectId,
       status: 'active',
     })
+    expect(typeof (events[0]?.payload as { changedAt?: unknown }).changedAt).toBe('string')
   })
 
   it('rejects a node that does not advertise the capability', async () => {
@@ -418,6 +471,20 @@ describe('PC-02a project source lifecycle', () => {
       'active',
       'revoked',
     ])
+    const audits = await database.db
+      .select()
+      .from(schema.sourceAuditEvents)
+      .where(eq(schema.sourceAuditEvents.sourceId, sourceId))
+    expect(audits.map((row) => row.action)).toEqual([
+      'bound',
+      'lease_changed',
+      'paused',
+      'lease_changed',
+      'resumed',
+      'lease_changed',
+      'revoked',
+      'lease_changed',
+    ])
   })
 
   it('allows rebinding the same external resource as a new row after revocation', async () => {
@@ -456,6 +523,16 @@ describe('PC-02a project source lifecycle', () => {
     expect(second.statusCode).toBe(409)
     expect(second.json().error.code).toBe('SOURCE_LEASE_LOST')
     expect(await sourceCount()).toBe(1)
+
+    // 旧租约过期也不能静默换采集者：A 仍活跃，必须先撤销/暂停。
+    await database.db
+      .update(schema.sourceCollectionLeases)
+      .set({ expiresAt: new Date(Date.now() - 1_000) })
+      .where(eq(schema.sourceCollectionLeases.appKey, 'shared-app-key'))
+    const expired = await bind(alice, device2.deviceId, { resourceKey: 'oc_lease_c' })
+    expect(expired.statusCode).toBe(409)
+    expect(expired.json().error.code).toBe('SOURCE_LEASE_LOST')
+    expect(await sourceCount()).toBe(1)
   })
 
   it('rejects binding when the collector node is offline', async () => {
@@ -473,60 +550,328 @@ describe('PC-02a project source lifecycle', () => {
     expect(await sourceCount()).toBe(0)
   })
 
-  it('reconciles verified → unknown after expiry and unknown → unavailable after 7 days', async () => {
+  it('revalidates an online source and renews the collector lease', async () => {
     const device = await pair(alice, 'alice-node-9')
-    await connectNode(device, 'alice-node-9')
+    const node = await connectNode(device, 'alice-node-9')
     const created = await bind(alice, device.deviceId)
     expect(created.statusCode).toBe(201)
     const sourceId = created.json().data.id as string
-
-    // 时间模拟：直接改过期时刻，不制造业务状态。
     const now = new Date()
     await database.db
       .update(schema.projectSources)
       .set({ permissionExpiresAt: new Date(now.getTime() - 1_000) })
       .where(eq(schema.projectSources.id, sourceId))
-    const first = await reconcileSourcePermissions({ database, now })
-    expect(first.expired).toBe(1)
+    await database.db
+      .update(schema.sourceCollectionLeases)
+      .set({ expiresAt: new Date(now.getTime() - 1_000) })
+      .where(eq(schema.sourceCollectionLeases.appKey, node.appKey))
 
-    const unknown = await database.db
-      .select()
-      .from(schema.projectSources)
+    const result = await reconcile(now)
+    expect(result).toMatchObject({
+      revalidated: 1,
+      unknown: 0,
+      unavailable: 0,
+      leasesRenewed: 1,
+    })
+    const row = await sourceRow(sourceId)
+    expect(row).toMatchObject({
+      status: 'active',
+      permissionState: 'verified',
+      authorizationGeneration: 2,
+    })
+    expect(row?.permissionExpiresAt?.getTime()).toBeGreaterThan(now.getTime())
+    const lease = await leaseRow(node.appKey)
+    expect(lease?.expiresAt.getTime()).toBeGreaterThan(now.getTime())
+    // bind 一次 + 重验一次；重验没有额外写绕过 Node 的捷径。
+    expect(node.checks).toHaveLength(2)
+  })
+
+  it('turns an unverifiable source unknown and unavailable after 7 days', async () => {
+    const device = await pair(alice, 'alice-node-10')
+    const node = await connectNode(device, 'alice-node-10')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+    // 同一连接重新 hello，但不再声明来源能力：在线但无法验证。
+    await sendHello(node, device.deviceId, [], 'alice-node-10 downgraded')
+
+    const now = new Date()
+    await database.db
+      .update(schema.projectSources)
+      .set({ permissionExpiresAt: new Date(now.getTime() - 1_000) })
       .where(eq(schema.projectSources.id, sourceId))
-    expect(unknown[0]).toMatchObject({
+    const first = await reconcile(now)
+    expect(first.unknown).toBe(1)
+    const unknown = await sourceRow(sourceId)
+    expect(unknown).toMatchObject({
       status: 'active',
       permissionState: 'unknown',
       authorizationGeneration: 2,
     })
-    expect(unknown[0]?.permissionUnknownSince).not.toBeNull()
+    expect(unknown?.permissionUnknownSince).not.toBeNull()
 
-    // 时间模拟：把 unknown 起点推回 8 天前。
     await database.db
       .update(schema.projectSources)
       .set({ permissionUnknownSince: new Date(now.getTime() - 8 * 24 * 60 * 60 * 1000) })
       .where(eq(schema.projectSources.id, sourceId))
-    const second = await reconcileSourcePermissions({ database, now })
+    const second = await reconcile(now)
     expect(second.unavailable).toBe(1)
-
-    const unavailable = await database.db
-      .select()
-      .from(schema.projectSources)
-      .where(eq(schema.projectSources.id, sourceId))
-    expect(unavailable[0]).toMatchObject({
+    const unavailable = await sourceRow(sourceId)
+    expect(unavailable).toMatchObject({
       status: 'unavailable',
       permissionState: 'unknown',
       authorizationGeneration: 3,
     })
-    expect(unavailable[0]?.unavailableAt).not.toBeNull()
+    expect(unavailable?.unavailableAt).not.toBeNull()
+  })
 
-    const events = (await listTeamEvents(database.db))
-      .filter((row) => row.type === 'source.changed')
-      .map((row) => row.payload as { status: string; permissionState?: string })
-    expect(events).toEqual([
-      { sourceId, projectId, status: 'active' },
-      { sourceId, projectId, status: 'active', permissionState: 'unknown' },
-      { sourceId, projectId, status: 'unavailable', permissionState: 'unknown' },
+  it('marks the source unavailable when its collector device is revoked', async () => {
+    const device = await pair(alice, 'alice-node-11')
+    await connectNode(device, 'alice-node-11')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+
+    const revoke = await apiInject(ctx, alice, {
+      method: 'DELETE',
+      url: `/api/v1/devices/${device.deviceId}`,
+    })
+    expect(revoke.statusCode).toBe(200)
+    await waitForValue(
+      async () => (nodeConnections.isOnline(device.deviceId) ? undefined : true),
+      'collector disconnected after revoke',
+    )
+
+    const result = await reconcile()
+    expect(result.unavailable).toBe(1)
+    expect(await sourceRow(sourceId)).toMatchObject({
+      status: 'unavailable',
+      authorizationGeneration: 2,
+    })
+    const audits = await database.db
+      .select()
+      .from(schema.sourceAuditEvents)
+      .where(eq(schema.sourceAuditEvents.sourceId, sourceId))
+    expect(
+      audits.some(
+        (row) =>
+          row.action === 'unavailable' &&
+          (row.payload as { reason?: string }).reason === 'collector_revoked',
+      ),
+    ).toBe(true)
+  })
+
+  it('marks the source unavailable when the collector stays offline past the lease', async () => {
+    const device = await pair(alice, 'alice-node-12')
+    const node = await connectNode(device, 'alice-node-12')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+
+    await database.db
+      .update(schema.sourceCollectionLeases)
+      .set({ expiresAt: new Date(Date.now() - 1_000) })
+      .where(eq(schema.sourceCollectionLeases.appKey, node.appKey))
+    node.socket.terminate()
+    await waitForValue(
+      async () => (nodeConnections.isOnline(device.deviceId) ? undefined : true),
+      'collector disconnected',
+    )
+
+    const result = await reconcile()
+    expect(result.unavailable).toBe(1)
+    expect(await sourceRow(sourceId)).toMatchObject({
+      status: 'unavailable',
+      authorizationGeneration: 2,
+    })
+    const audits = await database.db
+      .select()
+      .from(schema.sourceAuditEvents)
+      .where(eq(schema.sourceAuditEvents.sourceId, sourceId))
+    expect(
+      audits.some(
+        (row) =>
+          row.action === 'unavailable' &&
+          (row.payload as { reason?: string }).reason === 'collector_offline',
+      ),
+    ).toBe(true)
+  })
+
+  it('resume denied marks unavailable; offline keeps paused; a changed appKey is rejected', async () => {
+    const device = await pair(alice, 'alice-node-13')
+    const node = await connectNode(device, 'alice-node-13')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+
+    const pass = (path: string) =>
+      apiInject(ctx, alice, {
+        method: 'POST',
+        url: `/api/v1/sources/${sourceId}/${path}`,
+        payload: {},
+      })
+
+    expect((await pass('pause')).statusCode).toBe(200)
+    node.mode = 'denied'
+    const denied = await pass('resume')
+    expect(denied.statusCode).toBe(403)
+    expect(denied.json().error.code).toBe('SOURCE_NOT_READABLE')
+    expect(await sourceRow(sourceId)).toMatchObject({
+      status: 'unavailable',
+      permissionState: 'denied',
+      authorizationGeneration: 3,
+    })
+
+    // 新来源：offline 与 appKey 变化都不改变暂停态。
+    node.mode = 'readable'
+    const second = await bind(alice, device.deviceId)
+    const secondId = second.json().data.id as string
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/sources/${secondId}/pause`,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(200)
+
+    node.socket.terminate()
+    await waitForValue(
+      async () => (nodeConnections.isOnline(device.deviceId) ? undefined : true),
+      'collector disconnected',
+    )
+    const offline = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/sources/${secondId}/resume`,
+      payload: {},
+    })
+    expect(offline.statusCode).toBe(409)
+    expect(offline.json().error.code).toBe('SOURCE_COLLECTOR_OFFLINE')
+    expect(await sourceRow(secondId)).toMatchObject({ status: 'paused' })
+  })
+
+  it('lets an admin manage another member’s source; a member replay stays forbidden', async () => {
+    const device = await pair(alice, 'alice-node-14')
+    await connectNode(device, 'alice-node-14')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+    const key = idemKey()
+
+    const paused = await apiInject(ctx, carol, {
+      method: 'POST',
+      url: `/api/v1/sources/${sourceId}/pause`,
+      payload: {},
+      idempotencyKey: key,
+    })
+    expect(paused.statusCode).toBe(200)
+
+    // 同一 key 字符串由另一成员提交：命令 key 按 actor 收窄，仍走不了别人的回执。
+    const replay = await apiInject(ctx, bob, {
+      method: 'POST',
+      url: `/api/v1/sources/${sourceId}/pause`,
+      payload: {},
+      idempotencyKey: key,
+    })
+    expect(replay.statusCode).toBe(403)
+    expect(replay.json().error.code).toBe('FORBIDDEN')
+
+    const resumed = await apiInject(ctx, carol, {
+      method: 'POST',
+      url: `/api/v1/sources/${sourceId}/resume`,
+      payload: {},
+    })
+    expect(resumed.statusCode).toBe(200)
+  })
+
+  it('replays a bind receipt after pause and collector offline without a second RPC', async () => {
+    const device = await pair(alice, 'alice-node-15')
+    const node = await connectNode(device, 'alice-node-15')
+    const key = idemKey()
+    const first = await bind(alice, device.deviceId, { resourceKey: 'oc_replay_bind' }, key)
+    expect(first.statusCode).toBe(201)
+    const sourceId = first.json().data.id as string
+
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/sources/${sourceId}/pause`,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(200)
+    node.socket.terminate()
+    await waitForValue(
+      async () => (nodeConnections.isOnline(device.deviceId) ? undefined : true),
+      'collector disconnected',
+    )
+
+    const replay = await bind(alice, device.deviceId, { resourceKey: 'oc_replay_bind' }, key)
+    expect(replay.statusCode).toBe(201)
+    expect(replay.json().data.id).toBe(sourceId)
+    // 回执先于 RPC：重放不会再要求 Node 做一次权限检查。
+    expect(node.checks).toHaveLength(1)
+  })
+
+  it('rejects autoExtraction=true until ADR-0026 and malformed ids before PostgreSQL', async () => {
+    const device = await pair(alice, 'alice-node-16')
+    await connectNode(device, 'alice-node-16')
+
+    const extraction = await bind(alice, device.deviceId, { autoExtraction: true })
+    expect(extraction.statusCode).toBe(400)
+    expect(extraction.json().error.code).toBe('SOURCE_UNSUPPORTED')
+    expect(await sourceCount()).toBe(0)
+
+    const badSource = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: '/api/v1/sources/not-a-uuid',
+    })
+    expect(badSource.statusCode).toBe(400)
+    expect(badSource.json().error.code).toBe('VALIDATION_FAILED')
+
+    const badProject = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: '/api/v1/projects/not-a-uuid/sources',
+    })
+    expect(badProject.statusCode).toBe(400)
+  })
+
+  it('refuses resume when the collector app identity changed', async () => {
+    const device = await pair(alice, 'alice-node-17')
+    const node = await connectNode(device, 'alice-node-17')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/sources/${sourceId}/pause`,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(200)
+    node.appKey = 'rotated-app-key'
+    const resumed = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/sources/${sourceId}/resume`,
+      payload: {},
+    })
+    expect(resumed.statusCode).toBe(409)
+    expect(resumed.json().error.code).toBe('SOURCE_LEASE_LOST')
+    const row = await sourceRow(sourceId)
+    expect(row).toMatchObject({ status: 'paused', appKey: 'fixture-app-key' })
+  })
+
+  it('does not fail a concurrent same-key bind with a 500', async () => {
+    const device = await pair(alice, 'alice-node-18')
+    await connectNode(device, 'alice-node-18')
+    const key = idemKey()
+    const [first, second] = await Promise.all([
+      bind(alice, device.deviceId, { resourceKey: 'oc_concurrent' }, key),
+      bind(alice, device.deviceId, { resourceKey: 'oc_concurrent' }, key),
     ])
+    expect(first.statusCode).toBe(201)
+    expect(second.statusCode).toBe(201)
+    expect(second.json().data.id).toBe(first.json().data.id)
+    expect(await sourceCount()).toBe(1)
   })
 
   it('requires a session for every source route', async () => {

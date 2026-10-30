@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import { z } from 'zod'
 import type { Database } from '@whalepod/db'
 import { getProject, getProjectSource } from '@whalepod/db'
 import {
@@ -27,6 +28,13 @@ export interface SourceRouteDeps {
 
 function toActor(actor: { userId: string; role: 'owner' | 'admin' | 'member' }) {
   return { userId: actor.userId, role: actor.role }
+}
+
+/** 畸形 id 不落 PostgreSQL：直接 400，避免驱动层 500。 */
+function parseIdParam(value: string, label: string): string {
+  const parsed = z.uuid().safeParse(value)
+  if (!parsed.success) throw new ApiError(400, 'VALIDATION_FAILED', `invalid ${label}`)
+  return parsed.data
 }
 
 /** 观测面只含不透明 id/状态/代次；不含资源身份、凭据、平台名称或正文。 */
@@ -65,7 +73,8 @@ export function registerSourceRoutes(app: FastifyInstance, deps: SourceRouteDeps
   // GET /projects/:projectId/sources：Team 可见的来源清单（ADR-0024 §10）。
   app.get('/projects/:projectId/sources', async (request) => {
     await deps.requireActor(request)
-    const { projectId } = request.params as { projectId: string }
+    const { projectId: rawProjectId } = request.params as { projectId: string }
+    const projectId = parseIdParam(rawProjectId, 'project id')
     const project = await getProject(deps.database.db, projectId)
     if (project === undefined) throw new ApiError(404, 'NOT_FOUND', 'project not found')
     return { ok: true, data: await listSourceViews(deps.database.db, projectId) }
@@ -74,7 +83,8 @@ export function registerSourceRoutes(app: FastifyInstance, deps: SourceRouteDeps
   // POST /projects/:projectId/sources：成员绑定，必须显式确认团队共享。
   app.post('/projects/:projectId/sources', async (request, reply) => {
     const actor = await deps.requireActor(request)
-    const { projectId } = request.params as { projectId: string }
+    const { projectId: rawProjectId } = request.params as { projectId: string }
+    const projectId = parseIdParam(rawProjectId, 'project id')
     const body = CreateProjectSourceRequestSchema.parse(request.body)
     const view = await bindProjectSource(deps.database, collector, {
       projectId,
@@ -90,7 +100,8 @@ export function registerSourceRoutes(app: FastifyInstance, deps: SourceRouteDeps
   // GET /sources/:sourceId：来源详情（权限水位、代次、最近成功读取）。
   app.get('/sources/:sourceId', async (request) => {
     await deps.requireActor(request)
-    const { sourceId } = request.params as { sourceId: string }
+    const { sourceId: rawSourceId } = request.params as { sourceId: string }
+    const sourceId = parseIdParam(rawSourceId, 'source id')
     const row = await getProjectSource(deps.database.db, sourceId)
     if (row === undefined) throw new ApiError(404, 'NOT_FOUND', 'source not found')
     return { ok: true, data: toSourceView(row) }
@@ -98,7 +109,8 @@ export function registerSourceRoutes(app: FastifyInstance, deps: SourceRouteDeps
 
   app.post('/sources/:sourceId/pause', async (request) => {
     const actor = await deps.requireActor(request)
-    const { sourceId } = request.params as { sourceId: string }
+    const { sourceId: rawSourceId } = request.params as { sourceId: string }
+    const sourceId = parseIdParam(rawSourceId, 'source id')
     const view = await pauseProjectSource(deps.database, {
       sourceId,
       actor: toActor(actor),
@@ -111,7 +123,8 @@ export function registerSourceRoutes(app: FastifyInstance, deps: SourceRouteDeps
 
   app.post('/sources/:sourceId/resume', async (request) => {
     const actor = await deps.requireActor(request)
-    const { sourceId } = request.params as { sourceId: string }
+    const { sourceId: rawSourceId } = request.params as { sourceId: string }
+    const sourceId = parseIdParam(rawSourceId, 'source id')
     const view = await resumeProjectSource(deps.database, collector, {
       sourceId,
       actor: toActor(actor),
@@ -124,7 +137,8 @@ export function registerSourceRoutes(app: FastifyInstance, deps: SourceRouteDeps
 
   app.post('/sources/:sourceId/revoke', async (request) => {
     const actor = await deps.requireActor(request)
-    const { sourceId } = request.params as { sourceId: string }
+    const { sourceId: rawSourceId } = request.params as { sourceId: string }
+    const sourceId = parseIdParam(rawSourceId, 'source id')
     const body = RevokeProjectSourceRequestSchema.parse(request.body)
     const view = await revokeProjectSource(deps.database, {
       sourceId,

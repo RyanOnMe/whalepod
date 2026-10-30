@@ -19,12 +19,12 @@
 - 共享范围固定为整个 Team。当前没有 Project 私有 ACL，绑定后的正文、规范化副本、派生条目与引用对整个 Team 可见；私有 Workspace 不因绑定自动共享（ADR-0003）。
 - 绑定请求必须显式确认 `shareScope: 'team'`，缺少即 400。Web 在提交前展示「哪些内容会进入 WhalePod、谁可以看到、撤销后哪些历史不可读」。
 - 不满足整团队可读的来源（例如仅绑定成员可见的私人文档）只能保存链接，不纳入正文；不新增成员级来源 ACL。
-- 绑定同时记录 `autoExtraction`（默认 `false`）。启用后也要等 ADR-0026 接受且采集 Node 声明相应能力，才允许后台模型提取。
+- 绑定同时记录 `autoExtraction`（默认 `false`）。ADR-0026 接受前接口拒绝 `true`；接受后也还要采集 Node 声明相应能力，才允许后台模型提取。
 - Project 归档时其来源自动暂停；不删除来源。Project 当前没有删除接口，本 ADR 不新增删除语义。
 
 ### 2 绑定、暂停与撤销的权限
 
-- 任意成员可以绑定来源；记录 `boundBy`、采集 Node 与凭据槽位。首轮以「应用可读」加绑定成员显式确认「自己有权把该内容分享给整个 Team」为准，不做每成员 OAuth 令牌；若真实平台只有用户级授权才能读取，PC-01 必须记录并调整方案，不能把应用可读冒充成员授权。
+- 任意成员可以绑定来源；记录 `boundBy`、采集 Node 与凭据槽位。首轮采集 Node 必须属于绑定者（管理员也不例外），共享常驻采集 Node 另行设计。以「应用可读」加绑定成员显式确认「自己有权把该内容分享给整个 Team」为准，不做每成员 OAuth 令牌；若真实平台只有用户级授权才能读取，PC-01 必须记录并调整方案，不能把应用可读冒充成员授权。
 - 暂停/恢复：绑定者或管理员（`owner` / `admin`）。
 - 撤销：绑定者或管理员；撤销必须提供理由并写入审计。撤销是破坏性团队操作，同一绑定不能恢复。
 - 成员被禁用或移除不自动撤销团队来源；管理员可撤销。采集 Node 被撤销、解绑或超过租约期离线时，来源进入 `unavailable`，不自动切换其他 Node。
@@ -64,7 +64,7 @@
 3. 项目读面停止下发该来源的条目、引用与正文；派生 ContextEntry/Relation 标记 `invalid`，引用摘录在 24 小时内清除。
 4. 新 Run 不装配该来源；历史 Run 保留来源版本与 `source_revoked` 标记，正文不再经 HTTP 读面下发。已有的 Artifact 固定输入、任务约定与交接快照不因来源撤销被改写（ADR-0016/0017）。活跃 Run 只显示「本次执行依据已变化（来源已撤销）」，不插入追问、不取消工具、不改写正在执行的上下文，也不声称清除了模型已经看到的内容。
 5. 正文与规范化副本在 24 小时内物理清除；摘要、位置索引与审计身份按第 8 节保留。
-6. Team Event 只广播一次 `source.changed`，载荷只含不透明 `sourceId`、状态与时间，不含正文、平台名称、成员姓名或摘要。
+6. Team Event 只广播一次 `source.changed`，载荷只含不透明 `sourceId`/`projectId`、状态、权限状态（变化时）与时间，不含正文、平台名称、成员姓名或摘要。
 7. Web 明确说明「已交付给执行者的内容无法收回」，不把撤销渲染成全面删除。
 
 ### 8 保留与删除
@@ -105,7 +105,7 @@
 
 ### 11 观测与取证
 
-- Hub：`hub.context` 记录 `source.bound`、`source.paused`、`source.resumed`、`source.revoked`、`source.permission_changed`、`source.lease_changed`，字段只含不透明 id、平台、类型、状态与时间。
+- Hub：`hub.context` 记录 `source.bound`、`source.paused`、`source.resumed`、`source.revoked`、`source.unavailable`、`source.permission_changed`，字段只含不透明 id、平台、类型、状态与时间；租约获取/接管/释放写入 `source_audit_event.lease_changed`，续租不逐次刷日志。
 - Node：`node.source` 记录租约获取/续租/丢失、权限检查结果、队列积压、按代次拒绝；不含正文、平台名称、成员姓名或本机路径。
 - 证据包按计划 §9.2 的 `artifacts/evidence/project-context/<scenario>/<attempt>/` 归档；实现 PR 同时登记 `docs/agent/evidence-map.md`。
 - 脱敏负控必须覆盖群名、成员显示名、文档标题、正文片段、凭据与绝对路径。
@@ -136,4 +136,4 @@ PC-02 至少包含：
 
 ## 验证登记
 
-本 ADR 是文档，不含机器证据。PC-02 实现时创建 `docs/agent/project-source-acceptance.md`，登记绑定/暂停/撤销、权限重验、代次拒绝、租约与脱敏判据；未完成前 PC-02 保持未实现。
+本 ADR 是文档，不含机器证据。PC-02 实现时创建 `docs/agent/project-source-lifecycle-acceptance.md`，登记绑定/暂停/撤销、权限重验、代次拒绝、租约与脱敏判据；未完成前 PC-02 保持未实现。

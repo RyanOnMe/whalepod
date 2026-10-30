@@ -25,7 +25,7 @@ create table project_source (
   auto_extraction boolean not null default false,
   status source_status not null default 'active',
   permission_state source_permission_state not null default 'verified',
-  permission_checked_at timestamptz,
+  permission_checked_at timestamptz not null,
   permission_expires_at timestamptz,
   -- verified 过期转 unknown 的时刻；连续 7 天 unknown 由 reconciler 转 unavailable。
   permission_unknown_since timestamptz,
@@ -95,6 +95,7 @@ create unique index project_source_active_resource
   where status <> 'revoked';
 
 create index project_source_by_project on project_source (project_id, created_at);
+create index project_source_app_key on project_source (platform, app_key);
 create index project_source_permission_due
   on project_source (permission_expires_at)
   where status = 'active' and permission_state = 'verified';
@@ -128,7 +129,7 @@ create table source_audit_event (
   payload jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   constraint source_audit_action check (
-    action in ('bound', 'paused', 'resumed', 'revoked', 'permission_changed', 'lease_changed')
+    action in ('bound', 'paused', 'resumed', 'revoked', 'unavailable', 'permission_changed', 'lease_changed')
   ),
   constraint source_audit_generation check (authorization_generation >= 1),
   constraint source_audit_reason_length check (reason is null or length(btrim(reason)) between 1 and 500),

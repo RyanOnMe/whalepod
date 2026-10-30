@@ -1,4 +1,4 @@
-import { and, asc, eq, lte, ne, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, lte, ne, sql } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import {
   projectSources,
@@ -116,6 +116,34 @@ export async function countSourcesByAppKey(
   return row?.count ?? 0
 }
 
+/** 活跃来源数（status=active）：租约只服务真正采集中的来源。 */
+export async function countActiveSourcesByAppKey(
+  handle: DbHandle,
+  platform: ProjectSourceRow['platform'],
+  appKey: string,
+  excludeSourceId?: string,
+): Promise<number> {
+  const conditions = [
+    eq(projectSources.platform, platform),
+    eq(projectSources.appKey, appKey),
+    eq(projectSources.status, 'active'),
+  ]
+  if (excludeSourceId !== undefined) conditions.push(ne(projectSources.id, excludeSourceId))
+  const [row] = await handle
+    .select({ count: sql<number>`count(*)::int` })
+    .from(projectSources)
+    .where(and(...conditions))
+  return row?.count ?? 0
+}
+
+export async function listActiveSources(handle: DbHandle): Promise<ProjectSourceRow[]> {
+  return handle
+    .select()
+    .from(projectSources)
+    .where(eq(projectSources.status, 'active'))
+    .orderBy(asc(projectSources.createdAt))
+}
+
 // ---------------- 采集租约 ----------------
 
 export async function getSourceLease(
@@ -165,6 +193,25 @@ export async function insertSourceLease(
   return row
 }
 
+export async function insertSourceLeaseIfAbsent(
+  handle: DbHandle,
+  values: NewSourceLease,
+): Promise<SourceCollectionLeaseRow | undefined> {
+  const [row] = await handle
+    .insert(sourceCollectionLeases)
+    .values(values)
+    .onConflictDoNothing()
+    .returning()
+  return row
+}
+
+export async function listSourceLeases(handle: DbHandle): Promise<SourceCollectionLeaseRow[]> {
+  return handle
+    .select()
+    .from(sourceCollectionLeases)
+    .orderBy(asc(sourceCollectionLeases.acquiredAt))
+}
+
 export async function updateSourceLease(
   handle: DbHandle,
   platform: ProjectSourceRow['platform'],
@@ -197,7 +244,14 @@ export async function deleteSourceLease(
 
 export interface NewSourceAuditEvent {
   sourceId: string
-  action: 'bound' | 'paused' | 'resumed' | 'revoked' | 'permission_changed' | 'lease_changed'
+  action:
+    | 'bound'
+    | 'paused'
+    | 'resumed'
+    | 'revoked'
+    | 'unavailable'
+    | 'permission_changed'
+    | 'lease_changed'
   actorMemberId?: string | null
   authorizationGeneration: number
   reason?: string | null
@@ -259,7 +313,7 @@ export async function listSourcesUnknownSince(
     .from(projectSources)
     .where(
       and(
-        eq(projectSources.status, 'active'),
+        inArray(projectSources.status, ['active', 'paused']),
         eq(projectSources.permissionState, 'unknown'),
         lte(projectSources.permissionUnknownSince, cutoff),
       ),

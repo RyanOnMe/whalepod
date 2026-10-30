@@ -15,7 +15,7 @@ export function toSourceView(row: ProjectSourceRow): ProjectSourceView {
     autoExtraction: row.autoExtraction,
     status: row.status,
     permissionState: row.permissionState,
-    permissionCheckedAt: row.permissionCheckedAt?.toISOString() ?? null,
+    permissionCheckedAt: row.permissionCheckedAt.toISOString(),
     permissionExpiresAt: row.permissionExpiresAt?.toISOString() ?? null,
     authorizationGeneration: row.authorizationGeneration,
     lastSuccessAt: row.lastSuccessAt?.toISOString() ?? null,

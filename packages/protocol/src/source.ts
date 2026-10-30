@@ -68,7 +68,7 @@ export const ProjectSourceViewSchema = z.strictObject({
   autoExtraction: z.boolean(),
   status: SourceStatusSchema,
   permissionState: SourcePermissionStateSchema,
-  permissionCheckedAt: z.iso.datetime({ offset: true }).nullable(),
+  permissionCheckedAt: z.iso.datetime({ offset: true }),
   permissionExpiresAt: z.iso.datetime({ offset: true }).nullable(),
   authorizationGeneration: z.number().int().positive(),
   lastSuccessAt: z.iso.datetime({ offset: true }).nullable(),

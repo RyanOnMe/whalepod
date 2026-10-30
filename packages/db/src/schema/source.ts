@@ -53,7 +53,7 @@ export const projectSources = pgTable(
     autoExtraction: boolean('auto_extraction').notNull().default(false),
     status: sourceStatus('status').notNull().default('active'),
     permissionState: sourcePermissionState('permission_state').notNull().default('verified'),
-    permissionCheckedAt: timestamp('permission_checked_at', { withTimezone: true }),
+    permissionCheckedAt: timestamp('permission_checked_at', { withTimezone: true }).notNull(),
     permissionExpiresAt: timestamp('permission_expires_at', { withTimezone: true }),
     /** verified 过期转 unknown 的时刻；连续 7 天 unknown 转 unavailable。 */
     permissionUnknownSince: timestamp('permission_unknown_since', { withTimezone: true }),
@@ -124,6 +124,7 @@ export const projectSources = pgTable(
       .on(table.platform, table.resourceKey)
       .where(sql`${table.status} <> 'revoked'`),
     index('project_source_by_project').on(table.projectId, table.createdAt),
+    index('project_source_app_key').on(table.platform, table.appKey),
     index('project_source_permission_due')
       .on(table.permissionExpiresAt)
       .where(sql`${table.status} = 'active' and ${table.permissionState} = 'verified'`),
@@ -178,7 +179,7 @@ export const sourceAuditEvents = pgTable(
   (table) => [
     check(
       'source_audit_action',
-      sql`${table.action} in ('bound', 'paused', 'resumed', 'revoked', 'permission_changed', 'lease_changed')`,
+      sql`${table.action} in ('bound', 'paused', 'resumed', 'revoked', 'unavailable', 'permission_changed', 'lease_changed')`,
     ),
     check('source_audit_generation', sql`${table.authorizationGeneration} >= 1`),
     check(
