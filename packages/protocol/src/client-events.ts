@@ -25,6 +25,8 @@ export const ClientPersistentEventSchema = z.discriminatedUnion('type', [
   clientEvent('approval.changed'),
   clientEvent('artifact.changed'),
   clientEvent('device.changed'),
+  // ADR-0024：来源绑定/暂停/恢复/撤销/权限变化；payload 只含 sourceId/status/时间。
+  clientEvent('source.changed'),
   // #163：成员名册变更（加入/停用）。合并为**一个**事件、不细分 joined/disabled——
   // ① ⑥ 的硬约束"不新造帧类型"是"能复用就复用"，但 8 个既有类型里没有一个语义贴合
   // （device.changed 是设备，task.changed 是任务——硬塞等于撒谎）；

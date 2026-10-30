@@ -15,6 +15,7 @@ import { SetupTokenStore } from './modules/team/setup-token.js'
 import { OutboxWorker } from './modules/run/index.js'
 import { reconcileLeases } from './modules/run/reconciler.js'
 import { expireApprovals } from './modules/run/approval-expiry.js'
+import { reconcileSourcePermissions } from './modules/source/reconciler.js'
 import { WsDeviceGateway } from './modules/device/index.js'
 
 const config = loadConfig()
@@ -70,6 +71,17 @@ const leaseTimer = setInterval(() => {
     app.log.warn(
       { component: 'hub.approval.expiry', errorName: String(error) },
       'approval expiry sweep error',
+    )
+  })
+  // ADR-0024 §5：来源权限水位（verified 过期 → unknown；7 天 → unavailable）。
+  void reconcileSourcePermissions({
+    database,
+    now: new Date(),
+    log: (event) => app.log.info(event, 'source context changed'),
+  }).catch((error) => {
+    app.log.warn(
+      { component: 'hub.context', errorName: String(error) },
+      'source permission reconcile error',
     )
   })
 }, 10_000)

@@ -461,6 +461,13 @@
                 "ANCHOR_NOT_FOUND",
                 "NO_COMMENTS",
                 "PREVIEW_UNAVAILABLE",
+                "SOURCE_NOT_READABLE",
+                "SOURCE_UNSUPPORTED",
+                "SOURCE_ALREADY_BOUND",
+                "SOURCE_COLLECTOR_OFFLINE",
+                "SOURCE_STALE_GENERATION",
+                "SOURCE_LEASE_LOST",
+                "INVALID_SOURCE_TRANSITION",
                 "PLUGIN_UNREVIEWED",
                 "INTERNAL_ERROR"
               ]

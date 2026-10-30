@@ -1,0 +1,12 @@
+{
+  "protocolVersion": 1,
+  "messageId": "7b8c9d0e-1f2a-4b3c-9d4e-5f60718293a4",
+  "sentAt": "2026-10-31T00:00:00.000Z",
+  "type": "source.permission_result",
+  "payload": {
+    "requestId": "9d5c3b1e-2a4f-4c6d-8e7f-1a2b3c4d5e6f",
+    "result": "readable",
+    "appKey": "fixture-app-key-hash",
+    "upstreamVersion": "v12"
+  }
+}

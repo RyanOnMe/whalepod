@@ -51,14 +51,18 @@ describe('authorize: owner/admin only actions', () => {
 })
 
 describe('authorize: any enabled member actions', () => {
-  it.each(['create_task', 'update_task', 'comment_task', 'view_run', 'pair_device'] as const)(
-    '%s by every role -> true',
-    (action) => {
-      for (const role of ['owner', 'admin', 'member'] as const) {
-        expect(authorize(actor(role), action, NO_RESOURCE)).toBe(true)
-      }
-    },
-  )
+  it.each([
+    'create_task',
+    'update_task',
+    'comment_task',
+    'view_run',
+    'pair_device',
+    'bind_project_source',
+  ] as const)('%s by every role -> true', (action) => {
+    for (const role of ['owner', 'admin', 'member'] as const) {
+      expect(authorize(actor(role), action, NO_RESOURCE)).toBe(true)
+    }
+  })
 })
 
 describe('authorize: assignment decisions belong to the assignee', () => {
@@ -166,6 +170,8 @@ describe('authorize: disabled members can do nothing', () => {
     ['member', 'decide_approval', OWN],
     ['admin', 'reassign_task', NO_RESOURCE],
     ['owner', 'disable_member', NO_RESOURCE],
+    ['member', 'bind_project_source', NO_RESOURCE],
+    ['member', 'manage_project_source', OWN],
   ] as const)('disabled %s cannot %s', (role, action, resource) => {
     expect(authorize(actor(role, U1, 1_700_000_000_000), action, resource)).toBe(false)
   })
@@ -176,5 +182,23 @@ describe('can', () => {
     expect(can).toBe(authorize)
     expect(can(member, 'cancel_run', OWN)).toBe(true)
     expect(can(foreignMember, 'cancel_run', OWN)).toBe(false)
+  })
+})
+
+describe('authorize: project source management', () => {
+  it('the binder can manage the source; another member cannot', () => {
+    expect(authorize(member, 'manage_project_source', OWN)).toBe(true)
+    expect(authorize(foreignMember, 'manage_project_source', OWN)).toBe(false)
+  })
+
+  it('Owner/Admin can manage any source', () => {
+    expect(authorize(owner, 'manage_project_source', FOREIGN)).toBe(true)
+    expect(authorize(admin, 'manage_project_source', FOREIGN)).toBe(true)
+  })
+
+  it('a disabled binder cannot manage the source', () => {
+    expect(authorize(actor('member', U1, 1_700_000_000_000), 'manage_project_source', OWN)).toBe(
+      false,
+    )
   })
 })

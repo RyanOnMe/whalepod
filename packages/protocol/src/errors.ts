@@ -62,6 +62,16 @@ export const ErrorCodeSchema = z.enum([
   // #431：原件可读但派生预览尚未就绪/转换失败——与「Artifact 不存在」区分，
   // 客户端据此显示「下载原件」回退，而不是整页 404。
   'PREVIEW_UNAVAILABLE',
+  // ADR-0024（PC-02a）：外部来源绑定的稳定拒绝码。外部资源无权限与不存在统一
+  // 用 SOURCE_NOT_READABLE（不暴露存在性）；其余分别对应能力/重复绑定/采集器
+  // 离线/旧授权代次/租约丢失与非法生命周期迁移。
+  'SOURCE_NOT_READABLE',
+  'SOURCE_UNSUPPORTED',
+  'SOURCE_ALREADY_BOUND',
+  'SOURCE_COLLECTOR_OFFLINE',
+  'SOURCE_STALE_GENERATION',
+  'SOURCE_LEASE_LOST',
+  'INVALID_SOURCE_TRANSITION',
   'PLUGIN_UNREVIEWED',
   'INTERNAL_ERROR',
 ])

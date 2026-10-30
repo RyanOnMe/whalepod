@@ -4,6 +4,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [project-source-lifecycle-acceptance.md](./project-source-lifecycle-acceptance.md) | PC-02a #455（ADR-0024）：来源绑定/暂停/恢复/撤销、采集租约、权限水位与 7 天转不可用；真实 WS 假 Node 的两账号与负控；边界如实列（真实飞书、Web、正文与派生失效未做） |
 | [2026-10-30-project-context-coordination-plan.md](./2026-10-30-project-context-coordination-plan.md) | 下一阶段开发计划草案：从正常办公与 Agent 工作自动形成项目上下文，国内办公来源验证、变化影响、执行输入、PC-01～10 工作包及机器与真人退出条件 |
 | [whalepod-product-background.md](./whalepod-product-background.md) | 供其他 Agent 独立研讨的自包含产品背景：定位、领域对象、产品与系统架构、2026-10-26 进度快照、痛点假设、审阅方向、真实团队验证与讨论要求；不需先读仓库 |
 | [app-ui-polish-acceptance.md](./app-ui-polish-acceptance.md) | #421：网页源码提取的输入栏、审批与文件展示槽位，混淆包/来源校验、文件动作菜单、九档布局与键盘独立判定 |

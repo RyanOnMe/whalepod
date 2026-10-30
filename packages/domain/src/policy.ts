@@ -37,9 +37,11 @@ export type Action =
   | 'decide_approval'
   | 'publish_artifact'
   | 'read_artifact_content'
+  | 'bind_project_source'
+  | 'manage_project_source'
 
 export interface Resource {
-  /** Run/Device/Artifact 的 owner_user_id。 */
+  /** Run/Device/Artifact 的 owner_user_id；ProjectSource 复用为 bound_by。 */
   readonly ownerUserId?: UserId
   /** Task 的 assignee_user_id。 */
   readonly assigneeUserId?: UserId
@@ -78,6 +80,7 @@ export function authorize(actor: Actor, action: Action, resource: Resource = {})
     // `resolveInstructionRight`。刻意不留一份会过期的第二真相，故该动作已从 Action 联合类型移除。
     case 'cancel_run':
     case 'revoke_device':
+    case 'manage_project_source':
       return isOwner || isOwnerOrAdmin
     case 'decide_approval':
     case 'publish_artifact':
@@ -89,6 +92,7 @@ export function authorize(actor: Actor, action: Action, resource: Resource = {})
     case 'comment_task':
     case 'view_run':
     case 'pair_device':
+    case 'bind_project_source':
       return true
   }
 }

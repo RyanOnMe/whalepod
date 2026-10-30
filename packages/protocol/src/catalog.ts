@@ -28,6 +28,7 @@ import {
   SetupRequestSchema,
   UpdateTaskRequestSchema,
 } from './http.js'
+import { CreateProjectSourceRequestSchema, RevokeProjectSourceRequestSchema } from './source.js'
 import {
   NODE_DOWNSTREAM_TYPES,
   NODE_UPSTREAM_TYPES,
@@ -58,6 +59,8 @@ export const HTTP_FIXTURE_SCHEMAS: Record<string, ZodType> = {
   'create-invite-request': CreateInviteRequestSchema,
   'create-pairing-code-request': CreatePairingCodeRequestSchema,
   'create-project-request': CreateProjectRequestSchema,
+  'create-project-source-request': CreateProjectSourceRequestSchema,
+  'revoke-project-source-request': RevokeProjectSourceRequestSchema,
   'create-run-request': CreateRunRequestSchema,
   'create-run-resume-request': CreateRunRequestSchema,
   'create-task-agent-request': CreateTaskRequestSchema,

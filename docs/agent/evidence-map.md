@@ -10,6 +10,7 @@
 | browser | Playwright trace + 自动证据包（hub/node/vite 日志尾、run 事实、manifest） | `test-results/**/trace.zip`；`artifacts/evidence/e2e/<attemptId>/`（P1-19 collectEvidenceOnFailure，redactText 源头归约，Node READY 行含 Token 已排除） | 生效（P1-19） |
 | hub.http / hub.domain / hub.db / hub.outbox / hub.ws | 结构化 JSON 日志（stdout，含 allowlist 字段） | Hub 进程 stdout；Compose 部署走 `docker compose -f deploy/compose.yml logs hub` | 待 P1-05 起 |
 | hub.db | 团队事实：Team Event、`run_event`、`outbox` | PostgreSQL 直接查；测试用 `scripts/with-test-postgres.mts` 起的临时实例 | 待 P1-04 |
+| hub.context | 来源绑定生命周期：`source.bound/paused/resumed/revoked/permission_changed`，只含不透明 sourceId/projectId/状态/代次 | Hub stdout 按 `component=hub.context`；DB：`source_audit_event`、`team_event(source.changed)`、`project_source` 水位 | 生效（PC-02a #455）；`node.source` 待 PC-02b |
 | node.gateway / node.workspace / node.supervisor | Node 结构化日志、本地 spool、SQLite registry | Node 本地状态目录（`~/.whalepod-node/`；#133 定名后按本行预留调整改名，旧 `~/.project311-node/` 不再写入）；诊断走本地 Unix socket | 待 P1-09/12 |
 | runtime.bridge / dsh.agent | Runtime stderr 尾部（≤8 KiB，脱敏）、NDJSON 协议帧 | Node 暂存；owner-only | 待 P1-11/12 |
 | artifact.store | 内容寻址 blob、candidate 元数据 | Hub `blobs/sha256/ab/<digest>` + DB | 待 P1-15 |
@@ -63,6 +64,7 @@
 | Artifact 打不开 | artifact.store digest 与 DB metadata 比对 → hub.http 权限判定 |
 | Office 预览没有出现、内容与原件不符或下载回退异常 | `preview-info` 三态/sourceSha256 → node.artifact 的稳定转换失败码 → hub.artifact 派生件读取权限 → web.OfficePreview 查询与受控 PDF 读取；复跑见 [office-preview-acceptance](./office-preview-acceptance.md)，真实格式样本只验证 PDF 签名，Q5 组合闭环尚未覆盖 |
 | 开发机上进程越跑越多 / `ps` 里一堆看不出归属的 node | `scripts/check-stray-runtimes.sh`（探针残留即 FAIL，`--strict` 连自家 Node/Runtime/E2E 一起清；判定力用 `--self-test` 自证）；两处修复的形态与实测见 [stray-runtime-hygiene-acceptance](./stray-runtime-hygiene-acceptance.md) |
+| 来源绑定被拒 / 撤销后仍能同步 / 权限水位不变 | `hub.context` 的 `source.*` → `project_source` 的 status/permissionState/authorizationGeneration → `source_collection_lease` → `source_audit_event`；复跑见 [project-source-lifecycle-acceptance](./project-source-lifecycle-acceptance.md) |
 | 疑似泄露 | 直接跑 `scripts/secret-scan.sh` 扫相关证据与日志 |
 | 性能回归疑云 | `pnpm test:load`（Q8 短档）报告 JSON：传播/ingest p95、空闲段 RSS 斜率、droppedConnections；判据/边界见 `docs/agent/load-performance-acceptance.md` |
 
