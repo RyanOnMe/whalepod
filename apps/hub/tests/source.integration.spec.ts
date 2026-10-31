@@ -742,6 +742,7 @@ describe('PC-02a project source lifecycle', () => {
       .update(schema.projectSources)
       .set({ permissionExpiresAt: new Date(now.getTime() - 1_000) })
       .where(eq(schema.projectSources.id, sourceId))
+    const originalAppKey = node.appKey
     node.appKey = 'rotated-paused-key'
 
     const result = await reconcile(now)
@@ -752,7 +753,7 @@ describe('PC-02a project source lifecycle', () => {
       pausedAt: null,
       authorizationGeneration: 3,
     })
-    expect(await leaseRow(node.appKey)).toBeUndefined()
+    expect(await leaseRow(originalAppKey)).toBeUndefined()
     const events = (await listTeamEvents(database.db)).filter(
       (event) => event.type === 'source.changed',
     )
@@ -770,7 +771,9 @@ describe('PC-02a project source lifecycle', () => {
       audits.some(
         (audit) =>
           audit.action === 'permission_changed' &&
-          (audit.payload as { reason?: string }).reason === 'app_key_changed',
+          audit.authorizationGeneration === 3 &&
+          (audit.payload as { reason?: string; to?: string }).reason === 'app_key_changed' &&
+          (audit.payload as { to?: string }).to === 'unavailable',
       ),
     ).toBe(true)
   })
