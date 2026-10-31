@@ -27,7 +27,7 @@ import {
   type Session,
   type TestApp,
 } from './helpers.js'
-import { reconcileSourcePermissions } from '../src/modules/source/reconciler.js'
+import { runSourceReconcileTick } from '../src/modules/source/tick.js'
 import { nodeSourceCollector } from '../src/modules/source/collector.js'
 import { nodeConnections } from '../src/modules/device/connection-registry.js'
 
@@ -278,7 +278,8 @@ describe('PC-02a project source lifecycle', () => {
   }
 
   function reconcile(now = new Date()) {
-    return reconcileSourcePermissions({ database, collector: nodeSourceCollector, now })
+    // 与 server 10s tick 同一个入口；重新加整轮守卫会让慢重验用例变红。
+    return runSourceReconcileTick({ database, collector: nodeSourceCollector, now })
   }
 
   it('binds only after an online node advertises the capability; the view hides resource/app identity', async () => {
@@ -583,6 +584,89 @@ describe('PC-02a project source lifecycle', () => {
     expect(lease?.expiresAt.getTime()).toBeGreaterThan(now.getTime())
     // bind 一次 + 重验一次；重验没有额外写绕过 Node 的捷径。
     expect(node.checks).toHaveLength(2)
+  })
+
+  it('revalidates a paused source without resuming it', async () => {
+    const device = await pair(alice, 'alice-node-34')
+    const node = await connectNode(device, 'alice-node-34')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/sources/${sourceId}/pause`,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(200)
+    const now = new Date()
+    await database.db
+      .update(schema.projectSources)
+      .set({ permissionExpiresAt: new Date(now.getTime() - 1_000) })
+      .where(eq(schema.projectSources.id, sourceId))
+    const checks = node.checks.length
+
+    const result = await reconcile(now)
+    expect(result).toMatchObject({ revalidated: 1, unknown: 0, unavailable: 0 })
+    const row = await sourceRow(sourceId)
+    expect(row).toMatchObject({
+      status: 'paused',
+      permissionState: 'verified',
+      authorizationGeneration: 3,
+    })
+    expect(row?.pausedAt).not.toBeNull()
+    expect(row?.permissionExpiresAt?.getTime()).toBeGreaterThan(now.getTime())
+    expect(node.checks).toHaveLength(checks + 1)
+    const audits = await database.db
+      .select()
+      .from(schema.sourceAuditEvents)
+      .where(eq(schema.sourceAuditEvents.sourceId, sourceId))
+    expect(
+      audits.some(
+        (audit) =>
+          audit.action === 'permission_changed' &&
+          (audit.payload as { reason?: string }).reason === 'revalidated',
+      ),
+    ).toBe(true)
+    const events = (await listTeamEvents(database.db)).filter(
+      (event) => event.type === 'source.changed',
+    )
+    expect(events.at(-1)?.payload).toMatchObject({
+      sourceId,
+      projectId,
+      status: 'paused',
+    })
+  })
+
+  it('marks a paused source unavailable when revalidation is denied', async () => {
+    const device = await pair(alice, 'alice-node-35')
+    const node = await connectNode(device, 'alice-node-35')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/sources/${sourceId}/pause`,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(200)
+    const now = new Date()
+    await database.db
+      .update(schema.projectSources)
+      .set({ permissionExpiresAt: new Date(now.getTime() - 1_000) })
+      .where(eq(schema.projectSources.id, sourceId))
+    node.mode = 'denied'
+
+    const result = await reconcile(now)
+    expect(result).toMatchObject({ revalidated: 0, unknown: 0, unavailable: 1 })
+    expect(await sourceRow(sourceId)).toMatchObject({
+      status: 'unavailable',
+      permissionState: 'denied',
+      authorizationGeneration: 3,
+    })
   })
 
   it('turns an unverifiable source unknown and unavailable after 7 days', async () => {
@@ -1240,6 +1324,21 @@ describe('PC-02a project source lifecycle', () => {
     expect(await leaseRow(node.appKey)).toBeUndefined()
   })
 
+  it('refreshes device liveness when the collector answers a permission check', async () => {
+    const device = await pair(alice, 'alice-node-36')
+    const node = await connectNode(device, 'alice-node-36')
+    await database.db
+      .update(schema.devices)
+      .set({ lastSeenAt: new Date(Date.now() - 10 * 60 * 1000) })
+      .where(eq(schema.devices.id, device.deviceId))
+
+    const created = await bind(alice, device.deviceId)
+    expect(created.statusCode).toBe(201)
+    // 权限检查的应答刷新 lastSeenAt，随后续租仍应发生。
+    const result = await reconcile()
+    expect(result).toMatchObject({ leasesRenewed: 1, unavailable: 0 })
+  })
+
   it('does not renew a lease when the collector heartbeat is stale', async () => {
     const device = await pair(alice, 'alice-node-29')
     const node = await connectNode(device, 'alice-node-29')
@@ -1279,6 +1378,56 @@ describe('PC-02a project source lifecycle', () => {
           (row.payload as { reason?: string }).reason === 'collector_offline',
       ),
     ).toBe(true)
+  })
+
+  it('does not shorten a live lease when binding another source on the same device', async () => {
+    const device = await pair(alice, 'alice-node-37')
+    const node = await connectNode(device, 'alice-node-37')
+    expect((await bind(alice, device.deviceId, { resourceKey: 'oc_clamp_a' })).statusCode).toBe(201)
+    const long = new Date(Date.now() + 120_000)
+    const futureRenewal = new Date(Date.now() + 60_000)
+    await database.db
+      .update(schema.sourceCollectionLeases)
+      .set({ expiresAt: long, renewedAt: futureRenewal })
+      .where(eq(schema.sourceCollectionLeases.appKey, node.appKey))
+
+    const second = await bind(alice, device.deviceId, { resourceKey: 'oc_clamp_b' })
+    expect(second.statusCode).toBe(201)
+    const lease = await leaseRow(node.appKey)
+    expect(lease?.expiresAt.getTime()).toBe(long.getTime())
+    expect(lease?.renewedAt.getTime()).toBe(futureRenewal.getTime())
+  })
+
+  it('rotates an expired idle lease to a new collector', async () => {
+    const firstDevice = await pair(alice, 'alice-node-38')
+    const firstNode = await connectNode(firstDevice, 'alice-node-38')
+    firstNode.appKey = 'idle-app-key'
+    const first = await bind(alice, firstDevice.deviceId, { resourceKey: 'oc_idle_a' })
+    expect(first.statusCode).toBe(201)
+    const firstId = first.json().data.id as string
+    const oldLease = await leaseRow('idle-app-key')
+    await database.db
+      .update(schema.sourceCollectionLeases)
+      .set({ expiresAt: new Date(Date.now() - 1_000) })
+      .where(eq(schema.sourceCollectionLeases.appKey, 'idle-app-key'))
+
+    const swept = await reconcile()
+    expect(swept).toMatchObject({ unavailable: 1, leasesExpired: 1 })
+    expect(await sourceRow(firstId)).toMatchObject({ status: 'unavailable' })
+    expect(await leaseRow('idle-app-key')).toBeDefined()
+
+    const secondDevice = await pair(alice, 'alice-node-39')
+    const secondNode = await connectNode(secondDevice, 'alice-node-39')
+    secondNode.appKey = 'idle-app-key'
+    const second = await bind(alice, secondDevice.deviceId, { resourceKey: 'oc_idle_b' })
+    expect(second.statusCode).toBe(201)
+    const rotated = await leaseRow('idle-app-key')
+    expect(rotated).toMatchObject({
+      deviceId: secondDevice.deviceId,
+      generation: (oldLease?.generation ?? 0) + 1,
+    })
+    expect(rotated?.leaseToken).not.toBe(oldLease?.leaseToken)
+    expect(rotated?.expiresAt.getTime()).toBeGreaterThan(Date.now())
   })
 
   it('never shortens an existing lease when renewing', async () => {

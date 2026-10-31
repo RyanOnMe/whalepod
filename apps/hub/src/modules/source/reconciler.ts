@@ -59,6 +59,7 @@ type RevalidateOutcome =
   | {
       readonly kind: 'revalidated' | 'unknown' | 'denied' | 'identity_changed'
       readonly generation: number
+      readonly status: ProjectSourceRow['status']
     }
 
 interface SourceEventFields {
@@ -159,7 +160,7 @@ async function reconcileLeases(
         expiresAt: new Date(
           Math.max(locked.expiresAt.getTime(), input.now.getTime() + SOURCE_LEASE_TTL_MS),
         ),
-        renewedAt: input.now,
+        renewedAt: new Date(Math.max(locked.renewedAt.getTime(), input.now.getTime())),
       })
       return { kind: 'renewed' as const }
     })
@@ -290,8 +291,8 @@ async function markRevalidated(
   })
   if (updated === undefined) return { kind: 'skipped' }
   await auditPermissionChange(tx, row.id, generation, 'verified', 'revalidated')
-  await appendSourceChanged(tx, row, 'active', undefined, now)
-  return { kind: 'revalidated', generation }
+  await appendSourceChanged(tx, row, row.status, undefined, now)
+  return { kind: 'revalidated', generation, status: row.status }
 }
 
 async function markDenied(
@@ -314,7 +315,7 @@ async function markDenied(
   if (updated === undefined) return { kind: 'skipped' }
   await auditPermissionChange(tx, row.id, generation, 'denied', 'revalidation_denied')
   await appendSourceChanged(tx, row, 'unavailable', 'denied', now)
-  return { kind: 'denied', generation }
+  return { kind: 'denied', generation, status: 'unavailable' }
 }
 
 async function markIdentityChanged(
@@ -337,7 +338,7 @@ async function markIdentityChanged(
   if (updated === undefined) return { kind: 'skipped' }
   await auditPermissionChange(tx, row.id, generation, 'unavailable', 'app_key_changed')
   await appendSourceChanged(tx, row, 'unavailable', 'unknown', now)
-  return { kind: 'identity_changed', generation }
+  return { kind: 'identity_changed', generation, status: 'unavailable' }
 }
 
 async function markUnknown(
@@ -354,8 +355,8 @@ async function markUnknown(
   })
   if (updated === undefined) return { kind: 'skipped' }
   await auditPermissionChange(tx, row.id, generation, 'unknown', 'verification_failed')
-  await appendSourceChanged(tx, row, 'active', 'unknown', now)
-  return { kind: 'unknown', generation }
+  await appendSourceChanged(tx, row, row.status, 'unknown', now)
+  return { kind: 'unknown', generation, status: row.status }
 }
 
 // 重验可能因 Node 无应答串行等 5s×16；只对重验单飞，租约续租/采集器扫描仍每 tick 执行，
@@ -381,7 +382,7 @@ async function revalidatePermissions(
         const row = await getProjectSourceForUpdate(tx, source.id)
         if (
           row === undefined ||
-          row.status !== 'active' ||
+          (row.status !== 'active' && row.status !== 'paused') ||
           row.permissionState !== 'verified' ||
           row.permissionExpiresAt === null ||
           row.permissionExpiresAt.getTime() > input.now.getTime()
@@ -401,10 +402,7 @@ async function revalidatePermissions(
       logEvent(input, `source.permission_${outcome.kind}`, {
         sourceId: source.id,
         projectId: source.projectId,
-        status:
-          outcome.kind === 'denied' || outcome.kind === 'identity_changed'
-            ? 'unavailable'
-            : 'active',
+        status: outcome.status,
         permissionState:
           outcome.kind === 'revalidated'
             ? 'verified'

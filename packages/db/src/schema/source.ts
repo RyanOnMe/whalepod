@@ -127,10 +127,12 @@ export const projectSources = pgTable(
     index('project_source_app_key').on(table.platform, table.appKey),
     index('project_source_permission_due')
       .on(table.permissionExpiresAt)
-      .where(sql`${table.status} = 'active' and ${table.permissionState} = 'verified'`),
+      .where(
+        sql`${table.status} in ('active', 'paused') and ${table.permissionState} = 'verified'`,
+      ),
     index('project_source_unknown_since')
       .on(table.permissionUnknownSince)
-      .where(sql`${table.status} = 'active' and ${table.permissionState} = 'unknown'`),
+      .where(sql`${table.status} in ('active', 'paused') and ${table.permissionState} = 'unknown'`),
   ],
 )
 

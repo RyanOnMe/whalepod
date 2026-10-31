@@ -49,7 +49,7 @@
 
 - 绑定前，Hub 通过有界只读 RPC（≤5 秒，形如 `node.preparation_check`，不进 Outbox、不启动 Runtime）让采集 Node 检查目标资源可读性；只返回 `readable / denied / not_found / unsupported`、可选资源版本与不透明 `appKey`，不传正文。
 - 运行期每次同步前重验权限；即使没有同步，也至少每 24 小时重验一次。明确 denied 或平台撤销 → `permissionState=denied`，立即停止新采集与正文使用，来源进入 `unavailable`。
-- PC-02a 实施边界：后台 24 小时重验只覆盖 `active` 来源；暂停来源在恢复时重验。本切片不提供正文读面，暂停期间不存在内容暴露；PC-03 提供正文读面前必须把暂停来源纳入 24 小时重验或引入等价的内容失效机制。
+- PC-02a 实施：后台 24 小时重验覆盖 `active` 与 `paused` 来源；重验成功保持原状态（暂停仍暂停），明确拒绝转 `unavailable/denied`，无法验证转 `unknown` 并按 7 天水位收敛。PC-03 的正文清除仍待实现。
 - 网络或平台故障导致无法验证，且超过 `permissionExpiresAt` → `permissionState=unknown`：停止新采集、新提取与新 Run 装配，读面不再下发正文与引用摘录，显示「权限待重验」与最后成功验证时间；版本与时间等元数据可以继续显示。`unknown` 连续 7 天未恢复 → 按 `unavailable` 处理并执行正文清除（保留审计身份）。恢复必须重新验证并增加代次。
 
 ### 6 暂停、不可用与撤销
