@@ -752,6 +752,27 @@ describe('PC-02a project source lifecycle', () => {
       pausedAt: null,
       authorizationGeneration: 3,
     })
+    expect(await leaseRow(node.appKey)).toBeUndefined()
+    const events = (await listTeamEvents(database.db)).filter(
+      (event) => event.type === 'source.changed',
+    )
+    expect(events.at(-1)?.payload).toMatchObject({
+      sourceId,
+      projectId,
+      status: 'unavailable',
+      permissionState: 'unknown',
+    })
+    const audits = await database.db
+      .select()
+      .from(schema.sourceAuditEvents)
+      .where(eq(schema.sourceAuditEvents.sourceId, sourceId))
+    expect(
+      audits.some(
+        (audit) =>
+          audit.action === 'permission_changed' &&
+          (audit.payload as { reason?: string }).reason === 'app_key_changed',
+      ),
+    ).toBe(true)
   })
 
   it('turns an unverifiable source unknown and unavailable after 7 days', async () => {

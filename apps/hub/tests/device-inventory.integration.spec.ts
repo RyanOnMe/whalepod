@@ -11,7 +11,7 @@ import { eq } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Database } from '@whalepod/db'
-import { schema } from '@whalepod/db'
+import { getDeviceById, schema } from '@whalepod/db'
 import type { FastifyInstance } from 'fastify'
 import WebSocket from 'ws'
 import { nodeConnections } from '../src/modules/device/connection-registry.js'
@@ -222,6 +222,14 @@ describe('device inventory → workspaces 投影', () => {
       ).statusCode,
     ).toBe(403)
     expect(probes).toBe(0)
+    // 准备检查的应答也是活性证据：先把心跳投影推到 20 秒前（仍在在线窗口内），
+    // 结果帧到达后应刷新到请求之后；不刷新则仍是 20 秒前。
+    const staleSeen = new Date(Date.now() - 20_000)
+    await database.db
+      .update(schema.devices)
+      .set({ lastSeenAt: staleSeen })
+      .where(eq(schema.devices.id, paired.deviceId))
+    const beforeCheck = Date.now()
     const checked = await apiInject(ctx, alice, {
       method: 'POST',
       url: `/api/v1/tasks/${taskId}/preparation-check`,
@@ -238,6 +246,9 @@ describe('device inventory → workspaces 投影', () => {
       modelCall: 'not_tested',
     })
     expect(probes).toBe(1)
+    expect(
+      (await getDeviceById(database.db, paired.deviceId))?.lastSeenAt?.getTime() ?? 0,
+    ).toBeGreaterThanOrEqual(beforeCheck)
     expect(JSON.stringify(checked.json())).not.toMatch(/deviceToken|canonicalPath|secretValue/)
     expect(await database.db.select().from(schema.runs)).toHaveLength(0)
     // 在真实连接已交付结果后暂停HTTP继续；用另一条真实WS替换，再让路由收尾。

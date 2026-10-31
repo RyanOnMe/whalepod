@@ -2,7 +2,7 @@
 
 - 对应门禁：Q0/Q1、Q2、Q7；Web 与真实平台适配器不在本切片。
 - 对应 Issue：PC-02a #455（PC-02 伞 Issue #449）；决定见 ADR-0024。
-- 上次验证：2026-10-31 · main `744313e` · Q0 2237 例（205 文件）、Q1 258 例（domain 分支 100%）、Q2 637 例（79 文件）、Q7 18 例（既有安全族，无来源专项）+ secret-scan 自检/实扫 + license 全绿。
+- 上次验证：2026-11-01 · `feat/pc-02a-hardening-2` · Q0 2237 例（205 文件）、Q1 258 例（domain 分支 100%）、Q2 637 例（79 文件）、Q7 18 例（既有安全族，无来源专项）+ secret-scan 自检/实扫 + license 全绿。
 
 ## 验的是哪条用户路径
 
@@ -83,6 +83,7 @@ Hub 集成用例通过 Fastify inject 走成员 HTTP（Session + Origin + Idempo
 | 重验查询只选 active（#457） | `revalidates a paused source` + `marks a paused source unavailable`（实测 `revalidated 0 / unavailable 0`） |
 | 权限检查应答不刷 `lastSeenAt`（#457） | `refreshes device liveness when the collector answers a permission check`（实测 `leasesRenewed 0`） |
 | 暂停来源 unknown 事件写回 `active`（#457） | `turns a paused verified source unknown`（事件 `status` 实测为 `active`） |
+| 准备检查应答不刷 `lastSeenAt`（#457） | `#320 责任人HTTP经本人Node连接检查固定版本`（`lastSeenAt` 停在 20 秒前，小于请求时刻） |
 | 并发恢复只在事务外读回执（第三轮非阻断 1） | `returns 403 to both concurrent denied resumes`（实测 409 vs 403，3/3） |
 
 ## 边界与未覆盖
@@ -98,7 +99,7 @@ Hub 集成用例通过 Fastify inject 走成员 HTTP（Session + Origin + Idempo
 - **采集器心跳**：活性以 30 秒心跳为准；socket 打开但心跳过期后停止续租，租约到期（最多 90 秒）才转不可用。`source.permission_result` / `node.preparation_result` 的应答也刷新 `lastSeenAt`（应答是活性证据）；心跳仍是常规活性来源，协议合规 Node 每 10 秒心跳。
 - **暂停来源的 24 小时重验**：已纳入本切片；重验成功保持暂停，明确拒绝转 `unavailable/denied`，无法验证转 `unknown` 并按 7 天水位收敛。PC-03 的正文清除仍待实现。
 - **Web 事件路由**：`source.changed` 的 Web 处理在 PC-02c；当前 Web 对未知事件会触发一次全量 resync。后端事件量很小（绑定/暂停/恢复/撤销/重验），PC-02c 接入时必须注册，避免把日重验放大成全量刷新。
-- **#457 其余非阻断项**：route `hub.context` 在幂等重放/no-op 也写日志、租约复用仍审计 `acquired`、设备撤销 TOCTOU 的 `FOR SHARE` 收口仍待后续；DB 审计与状态机不受影响。
+- **#457 其余非阻断项**：route `hub.context` 在幂等重放/no-op 也写日志、租约复用仍审计 `acquired`、`server.ts` 外层整轮守卫的装配级断言仍待后续；设备撤销已用 `FOR SHARE` 在绑定/恢复事务内复查。DB 审计与状态机不受影响。
 - **活跃 Run 提示**：PC-05/PC-06；本切片不装配 Run 上下文。
 - **`node.source` 观测**：真实 Node 适配器随 PC-02b；本切片 Hub 侧只有 `hub.context` 与 `source_audit_event`。
 - **共享常驻采集 Node**：首轮要求采集 Node 属于绑定者；共享常驻 Node 另行设计（ADR-0024 §2）。

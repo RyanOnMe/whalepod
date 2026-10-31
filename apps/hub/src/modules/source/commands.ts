@@ -13,6 +13,7 @@ import {
   findActiveProjectSource,
   findCommandReceipt,
   getDeviceById,
+  getDeviceForShare,
   getProject,
   getProjectSource,
   getProjectSourceForUpdate,
@@ -355,7 +356,7 @@ export async function bindProjectSource(
       if (existing !== undefined) {
         throw new ApiError(409, 'SOURCE_ALREADY_BOUND', 'source is already bound')
       }
-      const liveDevice = await getDeviceById(tx, device.id)
+      const liveDevice = await getDeviceForShare(tx, device.id)
       if (liveDevice === undefined || liveDevice.revokedAt !== null) {
         throw new ApiError(409, 'SOURCE_COLLECTOR_OFFLINE', 'collector node is no longer available')
       }
@@ -544,7 +545,7 @@ export async function resumeProjectSource(
     if (row.status !== 'paused') {
       throw new DomainError('INVALID_SOURCE_TRANSITION', `cannot resume a ${row.status} source`)
     }
-    const liveDevice = await getDeviceById(tx, row.collectorNodeId)
+    const liveDevice = await getDeviceForShare(tx, row.collectorNodeId)
     if (liveDevice === undefined || liveDevice.revokedAt !== null) {
       throw new ApiError(409, 'SOURCE_COLLECTOR_OFFLINE', 'collector node is no longer available')
     }

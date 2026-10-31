@@ -155,6 +155,11 @@ describe('project source DB invariants', () => {
     for (const index of indexes) {
       expect(index.indexdef).toContain("'active'")
       expect(index.indexdef).toContain("'paused'")
+      expect(index.indexdef).toContain(
+        index.indexname === 'project_source_permission_due'
+          ? "permission_state = 'verified'"
+          : "permission_state = 'unknown'",
+      )
     }
   })
 
