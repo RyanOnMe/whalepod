@@ -145,6 +145,19 @@ describe('project source DB invariants', () => {
     expect(indexes).toHaveLength(1)
   })
 
+  it('indexes both active and paused sources for permission sweeps', async () => {
+    const indexes = await database.sql<{ indexname: string; indexdef: string }[]>`
+      select indexname, indexdef from pg_indexes
+      where tablename = 'project_source'
+        and indexname in ('project_source_permission_due', 'project_source_unknown_since')
+    `
+    expect(indexes).toHaveLength(2)
+    for (const index of indexes) {
+      expect(index.indexdef).toContain("'active'")
+      expect(index.indexdef).toContain("'paused'")
+    }
+  })
+
   it('keeps one lease per application event stream', async () => {
     const lease = {
       platform: 'feishu' as const,

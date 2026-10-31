@@ -91,11 +91,14 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
         try {
           const frame = parseNodeFrame(JSON.parse(raw), 'upstream')
           if (frame.type === 'node.preparation_result') {
+            // 应答本身也是活性证据；与 heartbeat 一样刷新 lastSeenAt，避免长检查期间被判离线。
+            await touchDeviceLastSeenAt(deps.database.db, identity.deviceId)
             nodeConnections.deliverPreparation(identity.deviceId, socket, frame.payload)
             return
           }
           if (frame.type === 'source.permission_result') {
             // ADR-0024 §5：有界只读检查的回报；只交给对应连接上的等待者。
+            await touchDeviceLastSeenAt(deps.database.db, identity.deviceId)
             nodeConnections.deliverSourcePermission(identity.deviceId, socket, frame.payload)
             return
           }

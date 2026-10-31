@@ -15,7 +15,7 @@ import { SetupTokenStore } from './modules/team/setup-token.js'
 import { OutboxWorker } from './modules/run/index.js'
 import { reconcileLeases } from './modules/run/reconciler.js'
 import { expireApprovals } from './modules/run/approval-expiry.js'
-import { reconcileSourcePermissions } from './modules/source/reconciler.js'
+import { runSourceReconcileTick } from './modules/source/tick.js'
 import { nodeSourceCollector } from './modules/source/collector.js'
 import { sanitizeError } from './modules/shared/error-log.js'
 import { WsDeviceGateway } from './modules/device/index.js'
@@ -77,7 +77,7 @@ const leaseTimer = setInterval(() => {
   })
   // ADR-0024 §5：来源权限水位（verified 过期 → unknown；7 天 → unavailable）。
   // 租约续租/采集器扫描每 tick 都跑；慢重验在 reconciler 内部单飞，避免拖垮健康租约。
-  void reconcileSourcePermissions({
+  void runSourceReconcileTick({
     database,
     collector: nodeSourceCollector,
     now: new Date(),

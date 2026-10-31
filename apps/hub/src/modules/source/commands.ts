@@ -206,9 +206,9 @@ async function applyLease(
   const expired = lease.expiresAt.getTime() <= input.now.getTime()
   if (!expired && lease.deviceId === input.deviceId) {
     await updateSourceLease(tx, input.platform, input.appKey, {
-      // 续租只延长；并发 txn 已写入更晚的 expiresAt 时保留它。
+      // 续租只延长；并发 txn 已写入更晚的 expiresAt/renewedAt 时保留它。
       expiresAt: new Date(Math.max(lease.expiresAt.getTime(), expiresAt.getTime())),
-      renewedAt: input.now,
+      renewedAt: new Date(Math.max(lease.renewedAt.getTime(), input.now.getTime())),
     })
     return lease.generation
   }

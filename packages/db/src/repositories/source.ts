@@ -295,7 +295,7 @@ export async function listSourceAuditEvents(
 
 // ---------------- 权限过期 reconcile ----------------
 
-/** verified 且已过期的活动来源；reconciler 转 unknown 并增加代次。 */
+/** verified 且已过期的未撤销来源（active + paused）；reconciler 重验或转 unknown。 */
 export async function listSourcesWithExpiredPermission(
   handle: DbHandle,
   now: Date,
@@ -305,7 +305,7 @@ export async function listSourcesWithExpiredPermission(
     .from(projectSources)
     .where(
       and(
-        eq(projectSources.status, 'active'),
+        inArray(projectSources.status, ['active', 'paused']),
         eq(projectSources.permissionState, 'verified'),
         lte(projectSources.permissionExpiresAt, now),
       ),
@@ -313,7 +313,7 @@ export async function listSourcesWithExpiredPermission(
     .orderBy(asc(projectSources.permissionExpiresAt))
 }
 
-/** unknown 已超过 cutoff 的活动来源；reconciler 转 unavailable。 */
+/** unknown 已超过 cutoff 的未撤销来源（active + paused）；reconciler 转 unavailable。 */
 export async function listSourcesUnknownSince(
   handle: DbHandle,
   cutoff: Date,
