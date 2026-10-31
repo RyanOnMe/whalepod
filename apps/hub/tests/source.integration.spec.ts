@@ -14,7 +14,7 @@ import { eq } from 'drizzle-orm'
 import WebSocket from 'ws'
 import type { FastifyInstance } from 'fastify'
 import type { Database } from '@whalepod/db'
-import { getDeviceById, listTeamEvents, schema } from '@whalepod/db'
+import { getDeviceById, getSourceLeaseForUpdate, listTeamEvents, schema } from '@whalepod/db'
 import {
   apiInject,
   createTestApp,
@@ -1447,6 +1447,56 @@ describe('PC-02a project source lifecycle', () => {
     const result = await reconcile()
     expect(result).toMatchObject({ leasesRenewed: 1, unavailable: 0 })
   })
+
+  it('serializes bind against a concurrent device revoke via the device row lock', async () => {
+    const device = await pair(alice, 'alice-node-42')
+    const node = await connectNode(device, 'alice-node-42')
+    expect((await bind(alice, device.deviceId, { resourceKey: 'oc_race_lock_a' })).statusCode).toBe(
+      201,
+    )
+
+    let acquired!: () => void
+    const leaseHeld = new Promise<void>((resolve) => {
+      acquired = resolve
+    })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const blocker = database.transaction(async (tx) => {
+      await getSourceLeaseForUpdate(tx, 'feishu', node.appKey)
+      acquired()
+      await gate
+    })
+    await leaseHeld
+
+    // bind 先拿到 device FOR SHARE，再阻塞在租约行锁上；此时 revoke 必须等它。
+    const pending = bind(alice, device.deviceId, { resourceKey: 'oc_race_lock_b' })
+    await waitForValue(async () => {
+      const rows = await database.sql<{ count: number }[]>`
+        select count(*)::int as count
+        from pg_locks l join pg_stat_activity a on a.pid = l.pid
+        where not l.granted and a.query ilike '%source_collection_lease%'
+      `
+      return (rows[0]?.count ?? 0) > 0 ? true : undefined
+    }, 'bind waiting on lease lock')
+
+    const revoke = apiInject(ctx, alice, {
+      method: 'DELETE',
+      url: `/api/v1/devices/${device.deviceId}`,
+    })
+    const firstDone = await Promise.race([
+      revoke.then(() => 'revoked' as const),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 300)),
+    ])
+    release()
+    await blocker
+    const created = await pending
+    const revoked = await revoke
+    expect(firstDone).toBe('blocked')
+    expect(created.statusCode).toBe(201)
+    expect(revoked.statusCode).toBe(200)
+  }, 15_000)
 
   it('does not renew a lease when the collector heartbeat is stale', async () => {
     const device = await pair(alice, 'alice-node-29')

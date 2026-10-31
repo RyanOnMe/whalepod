@@ -2,7 +2,7 @@
 
 - 对应门禁：Q0/Q1、Q2、Q7；Web 与真实平台适配器不在本切片。
 - 对应 Issue：PC-02a #455（PC-02 伞 Issue #449）；决定见 ADR-0024。
-- 上次验证：2026-11-01 · `feat/pc-02a-hardening-2` · Q0 2237 例（205 文件）、Q1 258 例（domain 分支 100%）、Q2 638 例（79 文件）、Q7 18 例（既有安全族，无来源专项）+ secret-scan 自检/实扫 + license 全绿。
+- 上次验证：2026-11-01 · `feat/pc-02a-hardening-2` · Q0 2237 例（205 文件）、Q1 258 例（domain 分支 100%）、Q2 639 例（79 文件）、Q7 18 例（既有安全族，无来源专项）+ secret-scan 自检/实扫 + license 全绿。
 
 ## 验的是哪条用户路径
 
@@ -15,7 +15,7 @@
 ## 驱动
 
 ```bash
-# 来源生命周期（41 例；真实 HTTP + 真实 /ws/v1/node）
+# 来源生命周期（42 例；真实 HTTP + 真实 /ws/v1/node）
 pnpm exec tsx scripts/with-test-postgres.mts vitest run --project integration \
   apps/hub/tests/source.integration.spec.ts
 
@@ -64,7 +64,7 @@ Hub 集成用例通过 Fastify inject 走成员 HTTP（Session + Origin + Idempo
 
 ## 负控变异自证
 
-每条关键守卫做一次单点改坏，确认对应用例变红，再恢复；恢复后 41/41 重跑绿（DB 10/10 另跑）。
+每条关键守卫做一次单点改坏，确认对应用例变红，再恢复；恢复后 42/42 重跑绿（DB 10/10 另跑）。
 
 | 改坏的守卫 | 变红的用例 |
 |---|---|
@@ -84,7 +84,7 @@ Hub 集成用例通过 Fastify inject 走成员 HTTP（Session + Origin + Idempo
 | 权限检查应答不刷 `lastSeenAt`（#457） | `refreshes device liveness when the collector answers a permission check`（实测 `leasesRenewed 0`） |
 | 暂停来源 unknown 事件写回 `active`（#457） | `turns a paused verified source unknown`（事件 `status` 实测为 `active`） |
 | 准备检查应答不刷 `lastSeenAt`（#457） | `#320 责任人HTTP经本人Node连接检查固定版本`（`lastSeenAt` 停在 20 秒前，小于请求时刻） |
-| 设备撤销复查改普通读（#457） | `serializes a concurrent device revoke while the bind transaction holds FOR SHARE`（revoke 立即完成而非 blocked） |
+| 设备撤销复查改普通读（#457） | `serializes a concurrent device revoke while the bind transaction holds FOR SHARE`（DB）+ `serializes bind against a concurrent device revoke`（Hub，revoke 实测先完成） |
 | 并发恢复只在事务外读回执（第三轮非阻断 1） | `returns 403 to both concurrent denied resumes`（实测 409 vs 403，3/3） |
 
 ## 边界与未覆盖
