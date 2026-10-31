@@ -9,9 +9,11 @@ import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database, NewProjectSourceRow } from '../src/index.js'
 import {
+  getDeviceForShare,
   insertProjectSource,
   insertSourceAuditEvent,
   insertSourceLease,
+  revokeDevice,
   updateProjectSource,
 } from '../src/index.js'
 import {
@@ -155,7 +157,41 @@ describe('project source DB invariants', () => {
     for (const index of indexes) {
       expect(index.indexdef).toContain("'active'")
       expect(index.indexdef).toContain("'paused'")
+      expect(index.indexdef).toContain(
+        index.indexname === 'project_source_permission_due'
+          ? "permission_state = 'verified'"
+          : "permission_state = 'unknown'",
+      )
     }
+  })
+
+  it('serializes a concurrent device revoke while the bind transaction holds FOR SHARE', async () => {
+    let acquired!: () => void
+    const shared = new Promise<void>((resolve) => {
+      acquired = resolve
+    })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const holder = database.transaction(async (tx) => {
+      const row = await getDeviceForShare(tx, ids.deviceId)
+      acquired()
+      await gate
+      return row
+    })
+    await shared
+
+    const revoke = revokeDevice(database.db, ids.deviceId, new Date())
+    const first = await Promise.race([
+      revoke.then(() => 'revoked' as const),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 200)),
+    ])
+    expect(first).toBe('blocked')
+
+    release()
+    expect((await holder)?.revokedAt).toBeNull()
+    expect((await revoke)?.revokedAt).not.toBeNull()
   })
 
   it('keeps one lease per application event stream', async () => {

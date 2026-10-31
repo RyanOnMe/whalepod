@@ -30,6 +30,15 @@ export async function getDeviceById(handle: DbHandle, id: string): Promise<Devic
   return row
 }
 
+/** 事务内复查设备撤销：锁住设备行，阻塞并发 revoke 提交后再判定。 */
+export async function getDeviceForShare(
+  handle: DbHandle,
+  id: string,
+): Promise<DeviceRow | undefined> {
+  const [row] = await handle.select().from(devices).where(eq(devices.id, id)).limit(1).for('share')
+  return row
+}
+
 /** Device Token 认证：按 SHA-256 hash 找唯一行（schema 唯一约束，03 §6）。 */
 export async function findDeviceByTokenHash(
   handle: DbHandle,
