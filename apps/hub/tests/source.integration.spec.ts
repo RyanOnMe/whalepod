@@ -618,6 +618,7 @@ describe('PC-02a project source lifecycle', () => {
     expect(row?.pausedAt).not.toBeNull()
     expect(row?.permissionExpiresAt?.getTime()).toBeGreaterThan(now.getTime())
     expect(node.checks).toHaveLength(checks + 1)
+    expect(await leaseRow(node.appKey)).toBeUndefined()
     const audits = await database.db
       .select()
       .from(schema.sourceAuditEvents)
@@ -665,6 +666,90 @@ describe('PC-02a project source lifecycle', () => {
     expect(await sourceRow(sourceId)).toMatchObject({
       status: 'unavailable',
       permissionState: 'denied',
+      authorizationGeneration: 3,
+    })
+  })
+
+  it('turns a paused verified source unknown when revalidation cannot verify', async () => {
+    const device = await pair(alice, 'alice-node-40')
+    const node = await connectNode(device, 'alice-node-40')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/sources/${sourceId}/pause`,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(200)
+    await sendHello(node, device.deviceId, [], 'alice-node-40 downgraded')
+    const now = new Date()
+    await database.db
+      .update(schema.projectSources)
+      .set({ permissionExpiresAt: new Date(now.getTime() - 1_000) })
+      .where(eq(schema.projectSources.id, sourceId))
+
+    const result = await reconcile(now)
+    expect(result).toMatchObject({ revalidated: 0, unknown: 1, unavailable: 0 })
+    const row = await sourceRow(sourceId)
+    expect(row).toMatchObject({
+      status: 'paused',
+      permissionState: 'unknown',
+      authorizationGeneration: 3,
+    })
+    expect(row?.pausedAt).not.toBeNull()
+    expect(await leaseRow(node.appKey)).toBeUndefined()
+    const events = (await listTeamEvents(database.db)).filter(
+      (event) => event.type === 'source.changed',
+    )
+    expect(events.at(-1)?.payload).toMatchObject({
+      sourceId,
+      projectId,
+      status: 'paused',
+      permissionState: 'unknown',
+    })
+    const audits = await database.db
+      .select()
+      .from(schema.sourceAuditEvents)
+      .where(eq(schema.sourceAuditEvents.sourceId, sourceId))
+    expect(
+      audits.some(
+        (audit) =>
+          audit.action === 'permission_changed' &&
+          (audit.payload as { reason?: string }).reason === 'verification_failed',
+      ),
+    ).toBe(true)
+  })
+
+  it('marks a paused source unavailable when the collector app identity changes', async () => {
+    const device = await pair(alice, 'alice-node-41')
+    const node = await connectNode(device, 'alice-node-41')
+    const created = await bind(alice, device.deviceId)
+    const sourceId = created.json().data.id as string
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/sources/${sourceId}/pause`,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(200)
+    const now = new Date()
+    await database.db
+      .update(schema.projectSources)
+      .set({ permissionExpiresAt: new Date(now.getTime() - 1_000) })
+      .where(eq(schema.projectSources.id, sourceId))
+    node.appKey = 'rotated-paused-key'
+
+    const result = await reconcile(now)
+    expect(result).toMatchObject({ revalidated: 0, unknown: 0, unavailable: 1 })
+    expect(await sourceRow(sourceId)).toMatchObject({
+      status: 'unavailable',
+      permissionState: 'unknown',
+      pausedAt: null,
       authorizationGeneration: 3,
     })
   })
@@ -1326,7 +1411,7 @@ describe('PC-02a project source lifecycle', () => {
 
   it('refreshes device liveness when the collector answers a permission check', async () => {
     const device = await pair(alice, 'alice-node-36')
-    const node = await connectNode(device, 'alice-node-36')
+    await connectNode(device, 'alice-node-36')
     await database.db
       .update(schema.devices)
       .set({ lastSeenAt: new Date(Date.now() - 10 * 60 * 1000) })
@@ -1436,14 +1521,17 @@ describe('PC-02a project source lifecycle', () => {
     const created = await bind(alice, device.deviceId)
     expect(created.statusCode).toBe(201)
     const long = new Date(Date.now() + 120_000)
+    const futureRenewal = new Date(Date.now() + 60_000)
     await database.db
       .update(schema.sourceCollectionLeases)
-      .set({ expiresAt: long })
+      .set({ expiresAt: long, renewedAt: futureRenewal })
       .where(eq(schema.sourceCollectionLeases.appKey, node.appKey))
 
     const result = await reconcile()
     expect(result.leasesRenewed).toBe(1)
-    expect((await leaseRow(node.appKey))?.expiresAt.getTime()).toBe(long.getTime())
+    const lease = await leaseRow(node.appKey)
+    expect(lease?.expiresAt.getTime()).toBe(long.getTime())
+    expect(lease?.renewedAt.getTime()).toBe(futureRenewal.getTime())
   })
 
   it('keeps renewing leases while a slow permission revalidation is running', async () => {

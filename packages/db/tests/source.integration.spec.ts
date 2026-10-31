@@ -153,7 +153,8 @@ describe('project source DB invariants', () => {
     `
     expect(indexes).toHaveLength(2)
     for (const index of indexes) {
-      expect(index.indexdef).toContain('paused')
+      expect(index.indexdef).toContain("'active'")
+      expect(index.indexdef).toContain("'paused'")
     }
   })
 

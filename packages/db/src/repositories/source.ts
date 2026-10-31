@@ -313,7 +313,7 @@ export async function listSourcesWithExpiredPermission(
     .orderBy(asc(projectSources.permissionExpiresAt))
 }
 
-/** unknown 已超过 cutoff 的活动来源；reconciler 转 unavailable。 */
+/** unknown 已超过 cutoff 的未撤销来源（active + paused）；reconciler 转 unavailable。 */
 export async function listSourcesUnknownSince(
   handle: DbHandle,
   cutoff: Date,

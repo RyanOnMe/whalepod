@@ -27,7 +27,7 @@
 - 任意成员可以绑定来源；记录 `boundBy`、采集 Node 与凭据槽位。首轮采集 Node 必须属于绑定者（管理员也不例外），共享常驻采集 Node 另行设计。以「应用可读」加绑定成员显式确认「自己有权把该内容分享给整个 Team」为准，不做每成员 OAuth 令牌；若真实平台只有用户级授权才能读取，PC-01 必须记录并调整方案，不能把应用可读冒充成员授权。
 - 暂停/恢复：绑定者或管理员（`owner` / `admin`）。
 - 撤销：绑定者或管理员；撤销必须提供理由并写入审计。撤销是破坏性团队操作，同一绑定不能恢复。
-- 成员被禁用或移除不自动撤销团队来源；管理员可撤销。采集 Node 被撤销或解绑时，来源（含暂停来源）进入 `unavailable`，不自动切换其他 Node；采集 Node 超过租约期离线只作用于**活跃来源**，暂停来源保持暂停；活性以 30 秒心跳为准，socket 打开但心跳过期同样视为离线。
+- 成员被禁用或移除不自动撤销团队来源；管理员可撤销。采集 Node 被撤销或解绑时，来源（含暂停来源）进入 `unavailable`，不自动切换其他 Node；采集 Node 超过租约期离线只作用于**活跃来源**，暂停来源保持暂停；活性以 30 秒心跳为主，权限/准备检查的应答同样刷新 `lastSeenAt`；socket 打开但心跳过期同样视为离线。
 - 外部资源无权限或不存在统一返回 403 `SOURCE_NOT_READABLE`，不区分存在性；不支持的来源类型返回 400 `SOURCE_UNSUPPORTED`；同一 `(platform, resourceKey)` 已有活动绑定时返回 409 `SOURCE_ALREADY_BOUND`；采集 Node 不在线返回 409 `SOURCE_COLLECTOR_OFFLINE`；离线且已绑定后的同步失败只更新来源状态，不删除绑定。
 
 ### 3 外部身份映射
@@ -106,7 +106,7 @@
 
 ### 11 观测与取证
 
-- Hub：`hub.context` 记录 `source.bound`、`source.paused`、`source.resumed`、`source.revoked`、`source.unavailable`、`source.permission_revalidated/unknown/denied/identity_changed`，字段只含不透明 id、平台、类型、状态与时间；租约获取/接管/释放写入 `source_audit_event.lease_changed`，续租不逐次刷日志。
+- Hub：`hub.context` 记录 `source.bound`、`source.paused`、`source.resumed`、`source.revoked`、`source.unavailable`、`source.permission_revalidated/unknown/denied/identity_changed`、`source.permission_unavailable`，字段只含不透明 id、平台、类型、状态与时间；租约获取/接管/释放写入 `source_audit_event.lease_changed`，续租不逐次刷日志。
 - Node：`node.source` 记录租约获取/续租/丢失、权限检查结果、队列积压、按代次拒绝；不含正文、平台名称、成员姓名或本机路径。
 - 证据包按计划 §9.2 的 `artifacts/evidence/project-context/<scenario>/<attempt>/` 归档；实现 PR 同时登记 `docs/agent/evidence-map.md`。
 - 脱敏负控必须覆盖群名、成员显示名、文档标题、正文片段、凭据与绝对路径。
