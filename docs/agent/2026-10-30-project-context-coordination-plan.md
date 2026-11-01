@@ -1,6 +1,6 @@
 # WhalePod 项目上下文与多人 Agent 协调开发计划
 
-> 初稿：2026-10-30；本次修订：2026-11-01（Asia/Shanghai）。状态：待评审的阶段计划；已交付切片见 §2 与 §13。技术基线：主线 `e5bf4680fcb34b226ab941a1552136d021ec6060`（本地 closeout 分支 `a2c1244` 未推送，产品源码与主线无差异）。上游参考固定为 `dsh-superagent-prototype@6337fc823ce20251c8de8085948165c81aaa701e`。PC 编号是工作包编号；只有列出实际编号的才是已登记 Issue。
+> 初稿：2026-10-30；本次修订：2026-11-01（Asia/Shanghai）。状态：待评审的阶段计划；已交付切片见 §2 与 §13。技术基线：`origin/main` `682e423`（含 PC-00 `c5c997b`；初稿时为 `e5bf468`）。上游参考固定为 `dsh-superagent-prototype@6337fc823ce20251c8de8085948165c81aaa701e`。PC 编号是工作包编号；只有列出实际编号的才是已登记 Issue。
 
 ## 1 阶段目标
 
@@ -170,12 +170,12 @@ Node 负责真实来源采集及受限协调计算。来源凭据留在指定采
 | 议题 / 实际登记 | 本次方向与实施前条件 |
 |---|---|
 | ADR-0024 / #450，已采纳 | 保留整 Team 共享、owner Node、代次、租约和撤权；正文/派生链按已有决定补齐。Issue 标题状态待后续整理，不据标题否定已采纳文件 |
-| ADR-0025 / #451，Proposed | 来源修订、Thread/Subscription/WorkLink 与项目理解；确定事实/推断/决定、人工纠正、M:N、引用水位、失效及 PostgreSQL 事务边界 |
-| ADR-0026 / #452，Proposed | 从“后台提取”扩展为持续协调：身份/检查点、有界唤醒、独立计算用途、能力限制、认领/恢复、费用承担及额度。先做 rc.8 能力证据，不默认长驻 Session 或新 DSH API |
-| ADR-0027 / #453，Proposed | 项目快照选择、引用读权限、运行消费、固定历史和变化提示；明确订阅不等于指令，Task/Run 不采用上游 Ticket 自动复活规则 |
+| ADR-0025 / #451，Proposed | 来源修订、Thread/Subscription/WorkLink 与项目理解；确定事实/推断/决定、人工纠正、M:N、引用水位、失效及 PostgreSQL 事务边界。草案：[0025-source-revisions-and-project-understanding.md](../adr/0025-source-revisions-and-project-understanding.md) |
+| ADR-0026 / #452，Proposed | 从“后台提取”扩展为持续协调：身份/检查点、有界唤醒、独立计算用途、能力限制、认领/恢复、费用承担及额度。先做 rc.8 能力证据，不默认长驻 Session 或新 DSH API。草案：[0026-project-coordination-lifecycle-and-cost.md](../adr/0026-project-coordination-lifecycle-and-cost.md) |
+| ADR-0027 / #453，Proposed | 项目快照选择、引用读权限、运行消费、固定历史和变化提示；明确订阅不等于指令，Task/Run 不采用上游 Ticket 自动复活规则。草案：[0027-run-project-context-snapshot-and-consumption.md](../adr/0027-run-project-context-snapshot-and-consumption.md) |
 | 将来若启用自动执行或活跃参考注入 | 另立 ADR，明确行为范围、主体、期限、预算、撤销、幂等与工具边界；本阶段只提建议，不预先授予能力 |
 
-本次更新的是计划；未将 Proposed 议题自动视为已采纳，也未修改现有 ADR。实施前对照 ADR-0001/0003/0004/0010/0013/0016/0020/0022/0024；承重协议和权限 PR 按仓库规则评审。DSH 升级如有必要，另走升级流程。
+本次更新的是计划；未将 Proposed 议题自动视为已采纳，也未修改现有 ADR。实施前对照 ADR-0001/0003/0004/0010/0013/0016/0017/0020/0022/0024；承重协议和权限 PR 按仓库规则评审。DSH 升级如有必要，另走升级流程。
 
 ## 7 国内办公平台接入
 
@@ -241,7 +241,7 @@ PC-01 在允许的真实租户只读测试，比较机器人 CLI 与官方 SDK/A
 
 外部供应商边界允许协议服务回放，模型出口允许 DSH replay，业务权限、版本、协调事务、投影与输入装配仍走真实实现。真实平台烟测、真实模型质量与真人试用分别留证；某一层未跑保持 not_run。
 
-观测沿既有分层，新增建议为 `node.source`、`hub.context`、`node.context-analysis`、`runtime.bridge.context`、`web.project-context`。保持既有 trace/run/command 身份，并增加不透明 revision/thread/evaluation/snapshot 身份，分别记录已接收、已选取、已交付、已消费、已拒绝及水位。名称在实现时登记，不把本文候选名当作已有事件。
+观测沿既有分层，新增建议为 `node.source`、`hub.context`、`node.context-analysis`、`runtime.bridge.context`、`web.project-context`。实现时以 ADR-0025/0026/0027 登记的 `hub.context`、`node.source`、`node.coordination`、`node.context`、`runtime.bridge.context` 为准；本文候选名不当作已有事件。保持既有 trace/run/command 身份，并增加不透明 revision/thread/evaluation/snapshot 身份，分别记录已接收、已选取、已交付、已消费及已拒绝及水位。
 
 驱动与独立判定分开：交叉核对来源版本、Hub 状态、浏览器读面、Node 字节及 Runtime 请求/行为；缺数据失败。以单点变异证明漏引用、错版、来源撤权、权限提升、重复提醒和终态复活会判红。只断言某个上下文 ID 或正文字符串存在，不算消费完成。
 
@@ -280,8 +280,8 @@ M1a 与 M1b 是工程结论，M2 才判断协调收益。真实使用尚未开�
 ## 11 下一批具体工作
 
 1. ~~将 PC-00 登记为独立研究/验证切片，落实固定上游文件和四条冲突契约；兼容探针验证 rc.8 实际工具禁用、输入引用与结构化结果，不升级依赖。~~ 已完成：#463 / PR #464（只验证 `tool-bash` 一行；协调专用工具面与 PostgreSQL 接线仍未交付）。
-2. 更新 #451～#453 的 Proposed 方案并形成 ADR：先确定协调身份/事务、只读订阅、评估权限和固定执行依据，再动承重代码。本轮尚未修改远端 Issue。
-3. 继续 #448 的真实授权准备；拿到可测试租户、应用、群及文档/表格后执行只读探针。授权仍缺失时推进内部薄链研究，不虚报平台覆盖。
+2. ~~更新 #451～#453 的 Proposed 方案并形成 ADR：先确定协调身份/事务、只读订阅、评估权限和固定执行依据，再动承重代码。~~ 已形成三份 Proposed 草案（`docs/adr/0025`–`0027`），等待接受；接受前不开 PC-03/04/05 实现分支。
+3. 继续 #448 的真实授权准备；拿到可测试租户、应用、群及文档/表格后执行只读探针。准备清单见 [2026-11-01-feishu-readonly-probe-prep.md](./2026-11-01-feishu-readonly-probe-prep.md)；授权仍缺失时推进内部薄链研究，不虚报平台覆盖。
 4. 认领下一条纵向实现时，从 03a/04 薄链或 02c 来源状态入口中按 ADR 成熟度选择；每条都带可见结果及判据，不先拆满整套知识库。
 
 采集 owner Node 与协调模型 Node 可以不同；共享方式、模型费用承担、停机表现和源正文保留按现有 ADR/新增决策说明。用户无须为协调另维护信息，但首次授权和正常业务决定仍需明确完成。
@@ -290,7 +290,8 @@ M1a 与 M1b 是工程结论，M2 才判断协调收益。真实使用尚未开�
 
 - [上游与 WhalePod 逐模块复用分析](./2026-11-01-superagent-reuse-analysis.md)：固定源码链接、行为探针、版本差异、直接复用与改造矩阵、未验证边界。
 - [CONTEXT](../../CONTEXT.md)、[第一阶段边界](../../README.md)、[领域协议](../../03-领域模型与运行协议.md)、[验收矩阵](../../04-验收矩阵与测试策略.md)。
-- [DSH 与产品权威](../adr/0001-dsh-is-runtime-not-product-authority.md)、[私有 Workspace](../adr/0003-private-workspace-team-projection.md)、[运行隔离](../adr/0004-runtime-process-isolation.md)、[讨论/执行分离](../adr/0010-discussion-execution-separation.md)、[明确执行意图](../adr/0013-explicit-execution-intent.md)、[固定输入](../adr/0016-run-artifact-input-snapshot.md)、[上下文消费](../adr/0020-execution-context-consumes-handoff.md)、[来源共享与撤销](../adr/0024-source-sharing-and-revocation.md)。
+- [DSH 与产品权威](../adr/0001-dsh-is-runtime-not-product-authority.md)、[私有 Workspace](../adr/0003-private-workspace-team-projection.md)、[运行隔离](../adr/0004-runtime-process-isolation.md)、[讨论/执行分离](../adr/0010-discussion-execution-separation.md)、[明确执行意图](../adr/0013-explicit-execution-intent.md)、[固定输入](../adr/0016-run-artifact-input-snapshot.md)、[任务约定与交接](../adr/0017-task-agreement-and-handoff-boundary.md)、[上下文消费](../adr/0020-execution-context-consumes-handoff.md)、[来源共享与撤销](../adr/0024-source-sharing-and-revocation.md)。
+- 协调三份 Proposed 草案：[来源修订与项目理解](../adr/0025-source-revisions-and-project-understanding.md)、[协调生命周期与成本](../adr/0026-project-coordination-lifecycle-and-cost.md)、[Run 项目上下文与消费](../adr/0027-run-project-context-snapshot-and-consumption.md)；接受前不据其开实现分支。
 - [来源生命周期验收](./project-source-lifecycle-acceptance.md)、[交付闭环](./delivery-loop-acceptance.md)、[真人试用](./delivery-loop-internal-trial.md)、[Office 转换暂停](../adr/0023-office-preview-isolation-suspension.md)。
 - [Harness 原则](./ai-harness-principles.md)、[取证地图](./evidence-map.md)、[门禁分级](./2026-10-08-q-gates-g0g1g2-tiers.md)、[既有阶段总纲](./2026-10-08-release-harden-validate-handoff-plan.md)。
 - 初稿于 2026-10-30 核对的接口资料：[飞书消息](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1)、[接收消息](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message/events/receive)、[事件](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/event-subscription-guide/event-subscriptions)、[云文档接口线索](https://www.feishu.cn/content/383321056779)、[钉钉机器人教程](https://opensource.dingtalk.com/developerpedia/docs/explore/tutorials/stream/bot/go/test-bot/)。本次没有用接口文档或上游实现替代真实权限测试，最终以 #448 记录的精确接口、入口版本与脱敏结果为准。
@@ -312,9 +313,13 @@ M1a 与 M1b 是工程结论，M2 才判断协调收益。真实使用尚未开�
 | 2026-11-01 | PC-02a 复核遗留第二批：准备检查活性、设备撤销锁、事件/索引断言 | PR #461（squash 242d367） |
 | 2026-11-01 | PC-00 登记：协调机制与 rc.8 兼容试验 | #463 |
 | 2026-11-01 | PC-00 rc.8 工具禁用/输入引用/结构化结果探针 + `read_artifact_input` 投影修复 | PR #464（squash c5c997b） |
+| 2026-11-01 | ADR-0025/0026/0027 草案（Proposed） | #451/#452/#453；草案见 docs/adr/0025–0027 |
+| 2026-11-01 | PC-01 只读探针准备清单 | #448；docs/agent/2026-11-01-feishu-readonly-probe-prep.md |
 
 PC-01 的结论保持 `not_run`，等待可测试租户、企业自建应用、测试群与测试文档/表格。ADR-0024 已采纳；ADR-0025–0027 仍为 Proposed 议题，被接受前不开展对应承重实现。2026-11-01 只读核对 GitHub：#448/#449/#450/#451/#452/#453/#457 仍打开，#455 已关闭；Issue 状态不代替 ADR 的采纳状态。
 
 PC-02a 已交付协议、数据模型与 Hub 生命周期；暂停来源权限重验已在后续 hardening 中交付。真实飞书适配器（PC-02b）、来源页（PC-02c）及来源正文、修订与派生清除链（PC-03）尚未交付；复核遗留的非阻断项见 #457。
 
-2026-11-01 本轮新增固定上游源码分析与阶段计划修订；上游核心 144 项及隔离兼容探针 4 项通过。PC-00 已登记为 #463，并交付 rc.8 工具行禁用/输入引用/结构化结果三项兼容探针（真 boot 栈 + replay；工具面只钉 `tool-bash` 一行），探针同时发现并修复了 `read_artifact_input` 只回 id、正文进不了模型上下文的缺陷；真实平台、真实模型、真人效率保持未验证。
+2026-11-01 本轮新增固定上游源码分析与阶段计划修订；上游核心 144 项及上游隔离兼容探针 4 项通过（不是 WhalePod 探针）。PC-00 已登记为 #463，并交付 rc.8 工具行禁用/输入引用/结构化结果三项兼容探针（真 boot 栈 + replay；工具面只钉 `tool-bash` 一行），探针同时发现并修复了 `read_artifact_input` 只回 id、正文进不了模型上下文的缺陷；真实平台、真实模型、真人效率保持未验证。
+
+2026-11-01 同日形成 ADR-0025/0026/0027 三份 Proposed 草案（#451/#452/#453）与 #448 只读探针准备清单；草案接受前不开展 PC-03/04/05 的承重实现。三份草案把「事实阶梯、PG 事务边界、协调单飞与额度、Run 快照与消费回执」写成可评审决定，并明确 `not_run` 项。
