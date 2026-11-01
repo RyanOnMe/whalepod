@@ -15,6 +15,10 @@
 - 最新核对（#290，2026-10-16）· `feat/p1-290-rollback-drill` · **四规则 = 4 有判据**（规则 4 的
   机检半边补齐：回滚演练进 Q3，判定实现与 lock-drift 共用；真实「装另一版 → 不兼容 →
   回滚安装树」如实标为人工门，步骤与预期输出在 dsh-upgrade skill）
+- 最新核对（#463，2026-11-01）· `feat/pc-00-rc8-coord-compat` · **新增协调计算能力边界三项**：
+  boot 层工具禁用（含正控与行定位归因控）、artifact 输入引用的模型可见投影、结构化结果的
+  交付面（canonical value 不落库）。同时修掉 `read_artifact_input` 只回 id、正文进不了
+  模型上下文的缺陷；详见 [PC-00 验收](./2026-11-01-pc00-rc8-coordination-compat-acceptance.md)。
 
 ## 〇、这份文件为什么存在
 
@@ -37,6 +41,17 @@
 | 审批桥 | `pnpm test:dsh-contract`、`pnpm test:security` | `packages/runtime-dsh/tests/dsh-contract/approval.contract.spec.ts`、`apps/hub/tests/run-authorization.security.spec.ts`、`apps/hub/tests/approval-decision.integration.spec.ts` | 有判据：allowed_once / rejected / full_access 三态 + **未知 callId 双向 no-op**（A0-6 新增，Runtime 层此前零测试）+ Hub owner-only/一次性/过期 |
 | 指令回执 | `pnpm test:dsh-contract`、`pnpm test:integration` | `packages/runtime-dsh/tests/dsh-contract/instruction-receipt.contract.spec.ts`（#289 新增）、`apps/hub/tests/instruction-queue.integration.spec.ts` | 有判据：契约门内覆盖「initialize 前显式拒且零帧 / 重复 initialize 显式拒 / 受理的 prompt 有回执且先于结算」；Hub 侧指令状态结算照旧 |
 | 事件流范围 | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/event-stream.contract.spec.ts`、`event-stream-scope.contract.spec.ts`（#289 新增） | 有判据：seq 单调/关联/顺序 + **越界（异会话）事件不转发、不结算**与**异 agent 状态不成帧**的负向（变异自证：两条过滤各自单点削弱即红）；范围语义自订阅面起算，总线分发作用域未覆盖（见第五节） |
+
+## 一之二、协调计算能力边界（PC-00 #463）
+
+持续协调的受限计算只依赖这三项；它们不是六项主能力的一部分，但不满足就不能把
+「协调角色」建在 rc.8 上。
+
+| 能力 | 判定命令 | 判据文件 | 覆盖状态 |
+|---|---|---|---|
+| 工具禁用（权限边界） | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/tool-boundary.contract.spec.ts`、`packages/runtime-dsh/tests/dsh-contract/overlays/disable-bash.yml` | 有判据：patch 层 `disabled: true` → 调用返回 `UNKNOWN_TOOL`、结果内容无执行 marker、零审批帧、Run 正常收尾；正控（不禁用）与行定位归因控（只禁用无关行）同时绿 |
+| 输入引用（模型可见） | `pnpm test:dsh-contract`、`pnpm test:unit` | `packages/runtime-dsh/tests/dsh-contract/tool-boundary.contract.spec.ts`、`packages/runtime-dsh/tests/artifact-input-tool.spec.ts`、`packages/runtime-dsh/src/artifact-input-tool.ts` | 有判据：清单白名单读取，模型可见内容含结构化字段与正文；路径形 id 拒绝且不带本机路径；无清单时工具不注册（`UNKNOWN_TOOL`） |
+| 结构化结果交付面 | `pnpm test:dsh-contract`、`pnpm test:unit` | `packages/runtime-dsh/tests/dsh-contract/tool-boundary.contract.spec.ts`、`packages/runtime-dsh/src/artifact-input-tool.ts` | 有判据：模型实际收到的内容由 `output.render` 投影决定；canonical value 为 execution-local、不随 `tool/result` 落库，resume/replay 不得假设它能回来 |
 
 ## 二、熔断四规则
 
@@ -71,7 +86,7 @@ G0「release 必跑、PR 必跑」，而 `.github/workflows/check.yml` 只跑 Q0
 
 | 门 | 位置 | 本机实测 |
 |---|---|---|
-| Q3（`pnpm test:dsh-contract`） | `check.yml` · `check` job 末尾 | 16 spec / 63 用例 ~3s（无 PG/Docker/网络；A0-6 接线时 39，#288/#289/#290 新增 24 条） |
+| Q3（`pnpm test:dsh-contract`） | `check.yml` · `check` job 末尾 | 20 spec / 79 用例 ~6s（无 PG/Docker/网络；A0-6 接线时 16/63，#288/#289/#290/#463 新增 16 条） |
 | Q7（`pnpm test:security`） | `check.yml` · `integration` job 末尾 | 17.5s（含一次性 PG） |
 | Q6（`pnpm test:resilience`） | `check.yml` · `integration` job 末尾 | 32 用例 9.5s（含一次性 PG） |
 | Q5 / Q8 / Q9 | 保持 release 级 | 有明确理由：真实浏览器 / 机器规格判据 / 镜像构建；见 g0g1g2-tiers 与 compose-standard-loop-acceptance |
@@ -120,11 +135,15 @@ G0「release 必跑、PR 必跑」，而 `.github/workflows/check.yml` 只跑 Q0
   边界见 dsh-rollback-drill-acceptance）。
 - Hub 侧 `profile_digest` 的产出面（从 Revision 行复算 == 存库值）无独立判据；#288 的对照点只覆盖
   Node↔Runtime 的往返一致（见 dsh-compat-guard-acceptance 的语义边界节）。
+- **`ctx.tools.restrict()` 不能当权限边界**（#463）：vendor README 原文是 "live visibility
+  composition, not an authority boundary"——它隐藏 schema，但不构成执行授权。协调计算的限制必须
+  来自 boot 层插件禁用（第一之二节）、审批与沙箱。本仓库没有做「restrict 后直接调用仍执行」的
+  运行期探针，该结论只来自 vendor 文档，不登记为机器判据。
 
 ## 六、复跑
 
 ```bash
-pnpm test:dsh-contract     # Q3：16 spec / 63 用例（含 apps/runtime 两文件 5 条），约 3s
+pnpm test:dsh-contract     # Q3：20 spec / 79 用例（含 apps/runtime 两文件 5 条），约 6s
 pnpm test:security         # Q7：18 用例 + secret-scan 自检/实扫 + 许可门
 pnpm test:resilience       # Q6：32 用例
 pnpm check                 # Q0（含本文件的机检：scripts/tests/runtime-capability-contract.spec.ts）
