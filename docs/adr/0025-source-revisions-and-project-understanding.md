@@ -1,6 +1,6 @@
 # ADR-0025：来源修订、线程订阅与项目理解的事实边界
 
-- 状态：提案（Proposed，#451，2026-11-01；二稿）。接受前不开 PC-03/PC-04 实现分支；本文件不是已采纳决定。
+- 状态：提案（Proposed，#451，2026-11-01；评审稿）。接受前不开 PC-03/PC-04 实现分支；本文件不是已采纳决定。
 - 承接：计划 §4.2–§4.4、§5、§6；[ADR-0024](./0024-source-sharing-and-revocation.md) 的来源绑定、代次与撤权。
 - 依赖：PC-00 (#463) 的 rc.8 输入引用与结构化结果探针；真实平台版本语义由 PC-01 (#448) 提供，未接通前保持 `not_run`。
 
@@ -47,13 +47,15 @@ Decision 不新建独立决策存储：`context_entry` 的 Decision 行只是既
 | businessRef 类型 | businessVersion 取值 | 有效条件 |
 |---|---|---|
 | 任务约定版本 | `TaskSpecRevision.id` + `revisionNumber` | 指向该 Task 当前已确认的 TaskSpecRevision；旧版本为历史 |
-| 审批记录 | 审批请求 id + 最终决定时间/决定 id | 指向该审批请求的最终决定；同一请求多条冲突即 `conflict` |
-| 成果发布 | `Artifact.id` + `publishedAt` | 已发布且未撤回的 Artifact；撤回则不可用 |
+| 业务审批记录 | 审批实体 id + 最终决定 id/时间 | **仅成员作出的业务审批**（当前仓库没有独立业务审批表；出现后才投影）。工具调用审批（`run` 的 allowed_once/rejected）不是项目决定，不进入项目上下文；`expired/cancelled` 只作系统 Observation 或忽略 |
+| 成果发布 | `Artifact.id` + `publishedAt` | 已发布且未撤回的 Artifact；撤回时投影器在同一事务把 active 行改 `retracted` |
 | 交接接收 | `handoffReceipt.id` + `confirmedAt` | 已确认且未被 adopt 覆盖的接收版本；旧版本为历史 |
 
-投影器在**既有业务事务内**直接读取业务行并写入/更新投影（不依赖 24 小时补发日志，也不依赖事件重放）：`businessRef` 解析到业务行，`businessVersion` 取该行的版本值；同一 `(businessRef, businessVersion)` 在 `context_entry` 唯一，投影重试幂等。业务行版本前进时追加新行、旧行标 `superseded`；同一 `businessRef` 永远只有一行 `active`。投影器另有按业务表全量重算的修复任务（不依赖事件留存），用于停机后补投影。
+投影器在**既有业务事务内**直接读取业务行并写入/更新投影（不依赖 24 小时补发日志，也不依赖事件重放）：`businessRef` 解析到业务行，`businessVersion` 取该行的版本值；同一 `(businessRef, businessVersion)` 在 `context_entry` 唯一，投影重试幂等。业务行版本前进时追加新行、旧行标 `superseded`；同一 `businessRef` 永远只有一行 `active`（部分唯一索引 `(businessRef) WHERE kind='decision' AND status='active'`，投影器对旧 active 行 `FOR UPDATE` 后 CAS）。**所有业务写路径必须调用同一个投影 helper**：任务约定确认/adopt、成果发布/撤回、交接确认/adopt（以及未来业务审批的最终决定）；没有独立写入口。
 
-两条**不同** `businessRef` 同时解析为当前且内容互斥时（例如同一审批请求的两条最终决定、同一 Task 的两个当前约定），读面标 `conflict`，不得自动选一条；同一引用链的新旧版本不构成冲突，旧版一律 `superseded`。
+全量重算修复任务按 `(businessRef, businessVersion)` upsert，保留既有 `entryId`，不改变已被 Correction 否定的条目状态，也不复活被纠正结论；业务行消失时把 active 投影标 `retracted`，不删除历史行。
+
+两条**不同** `businessRef` 同时解析为当前且内容互斥时（例如两个不同交接接收都被视为当前、两份成果对同一目标给出互斥结论），读面标 `conflict`，不得自动选一条；同一引用链的新旧版本不构成冲突，旧版一律 `superseded`。
 
 ### 2 修订与事件身份
 
@@ -74,11 +76,11 @@ Decision 不新建独立决策存储：`context_entry` 的 Decision 行只是既
 - **WorkLink** 把 Thread 关联到 Task 或 Run，记录 `kind` 与 `state`：
   - `own_work`：来自 Task 归属、责任人、任务约定或既有执行入口的明确关联；
   - `read_only`：成员显式订阅的只读参考；
-  - `actual_consumption`：Run 快照真实选入且回执确认已读（ADR-0027）；
-  - `model_inferred`：模型建议的关联，初始 `state='proposed'`；成员激活时改 `state='active'` 并转成 `read_only` 或 `own_work`，记录 `activatedBy` 与时间。模型不能自行激活。
+  - `model_inferred`：模型建议的关联，初始 `state='proposed'`；成员激活时必须显式选择 `read_only`（默认）或 `own_work`，记录 `activatedBy` 与时间；选 `own_work` 的界面要说明「该线程未来条目可能自动进入新 Run」。模型不能自行激活。
+  - 条目级「实际消费」不在 WorkLink：由 ADR-0027 的 `run_context_consumption` 记录（快照、条目、Run、readAt）；WorkLink 只表达线程级工作关联。
 - **唯一键与空值**：`(threadId, taskId, runId, kind)` 使用 `NULLS NOT DISTINCT`（PostgreSQL 15+）或等效部分索引；`CHECK ((taskId IS NULL) <> (runId IS NULL))` 保证二选一。失效用单一 `state` 表示（`proposed/active/invalidated`）并记 `stateChangedAt`，不再维护第二套 `invalidatedAt`。
 - **订阅不是指令权**：任何 WorkLink（含 `own_work`）都不授予 `run.followup`、取消、审批、创建 Run 或向外部平台发消息的权限。执行仍按 ADR-0013 的明确执行意图。
-- **来源撤销/不可用**：该来源的 Thread 与 WorkLink 立即失效（`state='invalidated'`），读面不再展示正文；历史 Run 的 `actual_consumption` 关联保留为不可用标记。
+- **来源撤销/不可用**：该来源的 Thread 与 WorkLink 立即失效（`state='invalidated'`），读面不再展示正文；历史 Run 的消费记录（ADR-0027）保留为不可用标记。
 - **M:N 分发只到协调上下文与产品通知**；不向活跃 Run 注入参考（ADR-0027 §5）。
 
 ### 4 引用、水位与可重建
@@ -108,11 +110,11 @@ Decision 不新建独立决策存储：`context_entry` 的 Decision 行只是既
 
 | 表 | 关键字段 | 约束 |
 |---|---|---|
-| `source_revision` | `id`、`sourceId`、`resourceKey`、`threadKey?`、`tokenKind`、`revisionToken`、`digest`、`observedAt`、`authorizationGeneration`、`status`（current/superseded/retracted）、`locator`、`bodyRef` | `(sourceId, resourceKey, tokenKind, revisionToken, digest)` 唯一；正文保留按 ADR-0024 §8 |
+| `source_revision` | `id`、`sourceId`、`resourceKey`、`threadKey?`、`tokenKind`、`revisionToken`、`digest`、`observedAt`、`authorPlatformId?`、`authorDisplayName?`、`authorizationGeneration`、`status`（current/superseded/retracted）、`locator`、`bodyRef` | `(sourceId, resourceKey, tokenKind, revisionToken, digest)` 唯一；作者只记不透明 id 与展示元数据，不据此映射成员；正文保留按 ADR-0024 §8 |
 | `source_event` | `id`、`sourceId`、`eventId`、`firstOutcome`、`lastOutcome`、`attempts`、`conflictAt?` | `(sourceId, eventId)` 唯一；保留首次结果，冲突只更新 `lastOutcome`/`conflictAt`，不覆盖第一手证据 |
 | `source_event_attempt` | `id`、`sourceId`、`eventId`、`attempt`、`revisionId?`、`observedDigest`、`outcome`（accepted/duplicate/duplicate_conflict/stale/denied/gap）、`reason?`、`receivedAt` | `(sourceId, eventId, attempt)` 唯一；append-only，`denied` 只记最小拒绝审计 |
 | `project_thread` | `id`、`projectId`、`sourceId`、`threadKey`、`status` | `(sourceId, threadKey)` 唯一（NULLS NOT DISTINCT）；项目一致 |
-| `work_link` | `id`、`projectId`、`threadId`、`taskId?`、`runId?`、`kind`、`state`（proposed/active/invalidated）、`stateChangedAt`、`createdBy`、`activatedBy?`、`evidenceRef?` | `(threadId, taskId, runId, kind)` 唯一（NULLS NOT DISTINCT）；task/run 二选一 CHECK；`actual_consumption` 不在此表按条目展开，条目级消费见 ADR-0027 |
+| `work_link` | `id`、`projectId`、`threadId`、`taskId?`、`runId?`、`kind`、`state`（proposed/active/invalidated）、`stateChangedAt`、`createdBy`、`activatedBy?`、`evidenceRef?` | `(threadId, taskId, runId, kind)` 唯一（NULLS NOT DISTINCT）；task/run 二选一 CHECK；WorkLink 只表达线程级关联，条目级消费见 ADR-0027 |
 | `context_entry` | `id`、`projectId`、`kind`（observation/inference/decision/correction）、`status`（active/superseded/conflict/retracted）、`title`、`bodyRef?`、`payload`、`threadId?`、`sourceId?`、`revisionId?`、`businessRef?`、`businessVersion?`、`targetEntryId?`（Correction）、`evaluationId?`/`inputDigest?`（Inference）、`createdBy`、`actorKind`、`processorVersion?` | Inference 必须有 citation、`evaluationId` 与 `inputDigest`；Observation 必须有 citation（source 或 business），不要求 evaluationId；Decision 必须有成员 actor、businessRef 与 businessVersion，并 `(businessRef, businessVersion)` 唯一；Correction 必须有 `targetEntryId` 且 `actorKind='member'` |
 | `context_citation` | `entryId`、`kind`（source/business）、source 字段或 `businessRef/businessVersion/occurredAt` | 与 entry 同事务写入；按 entry.kind 校验必填组 |
 | `source_gap` | `sourceId`、`fromCursor`、`toCursor`、`reason`、`detectedAt` | 只追加；读面据此显示缺口 |

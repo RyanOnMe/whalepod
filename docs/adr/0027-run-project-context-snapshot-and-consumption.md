@@ -1,6 +1,6 @@
 # ADR-0027：新 Run 的项目上下文快照、消费与固定历史
 
-- 状态：提案（Proposed，#453，2026-11-01；二稿）。接受前不开 PC-05 实现分支；本文件不是已采纳决定。
+- 状态：提案（Proposed，#453，2026-11-01；评审稿）。接受前不开 PC-05 实现分支；本文件不是已采纳决定。
 - 承接：计划 §4.4、§5.1–§5.3、§6；[ADR-0025](./0025-source-revisions-and-project-understanding.md) 的事实阶梯与引用；[ADR-0026](./0026-project-coordination-lifecycle-and-cost.md) 的协调输出边界。
 - 既有约束：ADR-0013（明确执行意图）、ADR-0016（Run Artifact 输入快照）、ADR-0017（任务约定与交接）、ADR-0020（执行上下文消费）、ADR-0022（成果交付依据）、ADR-0024（撤权与保留）。
 
@@ -36,7 +36,7 @@ Run 创建事务内按固定规则选取，规则版本写入快照：
 
 - `run_project_context`（快照头）：`id`、`runId`、`projectId`、`selectionRuleVersion`、`snapshotDigest`、`headerText`、`headerDigest`、`entryCount`、`totalBytes`、`unselected`（JSON，只有原因与不透明 id）、`overrideReason?`、`status`（frozen/partially_unavailable/invalidated）、`deliveredAt?`、`consumedAt?`、`consumedAllAt?`、`createdAt`。
 - `run_project_context_entry`：`snapshotId`、`entryId`、`entryVersion`、`kind`（observation/decision）、`citation`（source 或 business，ADR-0025 §1）、`sourceId?`、`revisionId?`、`threadId?`、`businessRef?`、`authorizationGeneration?`、`digest`、`byteSize`、`title`、`body`（冻结副本，受容量上限）、`entryStatus`（frozen/retracted/source_tombstoned）、`statusReason?`、`permissionStateAtSelection`、`identityUnverified?`、`selectedByMemberId?`、`deliveredAt?`、`readAt?`。
-  - `entryVersion` = ADR-0025 条目的业务版本：Decision 取 `businessVersion`，source Observation 取 `revisionId + observedAt`；只用于展示与对账，不替代 `digest`。
+  - `entryVersion` = ADR-0025 条目的业务版本：Decision 取 `businessVersion`，source Observation 取 `revisionId + latestObservedAt`（A→B→A 时用最新观察时间，不用 revision 行首次 observedAt）；只用于展示与对账，不替代 `digest`。
 - **Digest 与 header**：
   - `snapshotDigest` = sha256(规范化 JSON：`selectionRuleVersion` + 按 `entryId` 排序的 `[{entryId, kind, digest}]`)，不含时间戳；
   - `headerText` 在**创建事务内**生成并持久化（≤4,000 字符），不依赖派发时再生成；标题超过 60 字符时确定性截断；截断后仍超限则创建失败 `CONTEXT_UNAVAILABLE`，不生成快照；
@@ -75,7 +75,7 @@ Run 创建事务内按固定规则选取，规则版本写入快照：
   4. `digestVerified === true` 且 `entriesRead ⊆ entriesDelivered ⊆ 快照条目`，本批 `entriesRead` 与 `readEvents` 的 entryId 集合完全一致；
   5. `receiptSeq` 单调、无重复。
 - 状态：首条合格回执把条目标 `deliveredAt`；某条出现在 `entriesRead` 时标 `readAt`；至少一条被读后快照标 `consumed`，全部读完标 `consumedAll`。`entriesRead=0` 的快照永远不算 `consumed`。
-- **首条回执 watchdog**：Run 进入 `running` 后的 60 秒内没有合格的首条回执，Hub 将 Run 取消并标 `CONTEXT_UNAVAILABLE`（快照是执行依据，不能静默当没交付）；读面显示「依据未交付」。
+- **首条回执 watchdog**：仅当 `entryCount>0` 且已下发 `projectContext` 时启用。Run 进入 `running` 后的 60 秒内（可配置，上限 120 秒）没有合格的首条回执，Hub 将 Run 置 `failed(CONTEXT_UNAVAILABLE)` 并终止执行；空快照 Run 不启用 watchdog，不得误杀。
 - **条目级消费表**：新增 `run_context_consumption(snapshotId, entryId, threadId?, runId, readAt)`，唯一 `(snapshotId, entryId)`；回执事务内写 `readAt` 与 receipt，消费行由**同一事务的 savepoint**写入，失败只记 `consumption_gap`，不回滚读取事实。PC-06 以该表作为「实际消费」证据；不把条目级消费塞进 `work_link`。
 - **信任边界**：Node 是本次 Run 的受信执行代理（owner 设备），回执是**自报证据**，用于防止「只存快照 ID」「漏读」「部分交付」，**不防恶意 Node**。Hub 校验 `entriesRead` 与本批 `readEvents` 一致、headerDigest 可复算、序号单调；不声称独立验证模型真的读了内容。若未来需要更强证据，另立 ADR 设计设备审计或抽样对账。
 
@@ -91,11 +91,13 @@ Run 创建事务内按固定规则选取，规则版本写入快照：
 - 新 Run：来源撤销/不可用/权限未知时阻止选入与派发；已冻结但未派发的快照按 §3 失败。
 - 活跃 Run：显示依据已变化；不承诺收回模型已读到的内容；不自动停止执行（除非责任人走既有取消路径）。
 - 历史 Run：保留快照头、条目身份、digest、引用与逐条不可用标记；正文读取按当前权限与 §2 的条目状态。来源撤销 24 小时内清除未冻结的来源副本（ADR-0024），快照正文按第 2 节保留策略处理。
-- **本地 DSH session 日志**：`read_project_context` 的正文会随 `tool/result` 写入 Node 本地 session JSONL（`compression: none`，PC-00 已证同类行为）。这是敏感本地存储，规则如下：
-  - **Run 终态**：把该 Run session JSONL 中所有 `read_project_context` 的 `tool/result` 正文块替换为 `[redacted: project context]`（保留 callId、entryId、耗时等结构，保证续聊可装载），并在替换后按字节扫描确认原正文不可检出；其余对话内容保留。
-  - **来源撤销/撤回**：在上述替换基础上，24 小时内对受影响快照条目做物理清除（不是只改标记）；resume 需要日志时保留脱敏后的结构副本，不保留正文。
+- **本地 DSH session 日志与副本**：`read_project_context`/`read_artifact_input` 的正文会随 `tool/result` 写入 Node 本地 session JSONL（`compression: none`，PC-00 已证同类行为），也可能被 compaction 摘要或 spill 文件复制。Hub 的 `run_project_context_entry.body` 按 ADR-0024 §8 **保留**（不在本 ADR 物理清除）；Node 本地副本按以下规则处理：
+  - **Run 终态**：删除 `runtime-context/<runId>`；对 `runtime-home/<runId>` 做一次脱敏扫描：把 `read_project_context`/`read_artifact_input` 的 tool/result 正文、含 entry digest/上下文 nonce 的 compaction 摘要与 spill 文件替换为 `[redacted: project context]`（保留 callId、entryId、耗时与对话结构，保证续聊可装载）。
+  - **来源撤销/撤回**：24 小时内对受影响 Run 执行同一脱敏；Hub 快照正文按 0024 §8 保留但 `retracted` 条目不可读。
+  - **助手转述**：模型对正文的改写/转述属于已交付内容（0024 §7.7「无法收回」），不承诺按语义删除；只对含 entry digest/原文片段/上下文 nonce 的字符串做物理替换。零命中判据只扫这些标记与原文片段，不把任意转述当失败。
+  - **离线/丢失设备**：Node 维护本地待清理队列；设备离线时读面显示「本地清理待完成」，下次启动先清扫终态 Run 与过期目录。物理限制如实说明：设备永不回来时无法保证远端清除。
   - **证据包**：禁止收录完整 DSH JSONL；只允许脱敏片段与 digest。
-  - **负控**：撤销/撤回后按原文片段扫描该 Run 的 `runtime-home/<runId>`，必须零命中；删除替换步骤的变异必须变红。协调评估没有续聊需求，其 DSH_HOME 在终态整体删除（ADR-0026 §5），不适用本条的保留例外。
+  - **负控**：终态/撤销后扫描 `runtime-home/<runId>`、`runtime-context/<runId>`（以及协调的 `coordination-home/<evaluationId>`）中的原文片段与 digest，必须零命中；删除脱敏步骤的变异必须变红。
 
 ### 7 数据与协议草图（实施时以协议与 migration 为准）
 
@@ -107,15 +109,15 @@ Run 创建事务内按固定规则选取，规则版本写入快照：
 
 ### 8 观测与归因
 
-- `hub.context`：`context.snapshot_created`、`context.entry_selected/unselected`、`context.dispatch_blocked`、`context.receipt_recorded/receipt_invalid`、`context.entry_retracted/unavailable/tombstoned`、`context.changed_notice`；字段只含不透明 id、kind、状态、计数。
+- `hub.context`：`context.snapshot_created`、`context.entry_selected/unselected`、`context.dispatch_blocked`、`context.receipt_recorded/receipt_invalid`、`context.entry_retracted/source_tombstoned`、`context.changed_notice`；字段只含不透明 id、kind、状态、计数。
 - `node.context`：下载、逐条 digest 校验、字节核对失败、Runtime 启动；不含正文。
 - `runtime.bridge.context`：初始化清单 digest、headerDigest/nonce 是否匹配、读取的 entryId、输出是否引用。
 - 归因按层：选入错误 → Hub 快照；交付错误 → Node 下载/校验；消费错误 → Runtime 回执。缺任何一层判失败。
 
 ### 9 验证
 
-- 正向：创建 Run 自动选入 `own_work` 线程下的有效 Observation/Decision；成员激活 `model_inferred` 后其线程下的确定性条目可显式选入；快照固定后来源出新版本，旧 Run 不变；同幂等键重放返回同一快照；新 Run 选新版本；回执后条目 `readAt` 与 `actual_consumption` 写入。
-- 负控：Inference 不能被选入（界面与 API 各一条）；未映射身份成员的 Decision/批准/完成表述不得成为 Decision，未映射作者的带引用 Observation 可被选入且标 `identityUnverified`；未激活的 `model_inferred` 线程条目不自动选入；权限未知/过期时不存在 override 路径；来源撤销后派发被阻止；快照 digest 与下载内容不符时不启动 Runtime；撤回版本的正文在历史页不可读；`source_tombstoned` 后快照正文仍按 0024 保留但标注来源版本已清理；非 owner Node 不能下载；活跃 Run 不因来源变化自动 followup；只记快照 ID 或无 `entriesRead` 时不得标 `consumed`；`nonceMatched=false`、`headerDigest` 不符、`entriesRead` 越界、`receiptSeq` 重复各自拒绝；首条回执 60 秒未到 → Run 取消并标 `CONTEXT_UNAVAILABLE`；旧 Node 未声明 `project-context.v1` 时带内容的快照不派发；Run 终态与撤销后，`runtime-home/<runId>` 按原文片段扫描零命中。
+- 正向：创建 Run 自动选入 `own_work` 线程下的有效 Observation/Decision；成员激活 `model_inferred` 后其线程下的确定性条目可显式选入；快照固定后来源出新版本，旧 Run 不变；同幂等键重放返回同一快照；新 Run 选新版本；回执后条目 `readAt` 与 `run_context_consumption` 写入。
+- 负控：Inference 不能被选入（界面与 API 各一条）；未映射身份成员的 Decision/批准/完成表述不得成为 Decision，未映射作者的带引用 Observation 可被选入且标 `identityUnverified`；未激活的 `model_inferred` 线程条目不自动选入；权限未知/过期时不存在 override 路径；来源撤销后派发被阻止；快照 digest 与下载内容不符时不启动 Runtime；撤回版本的正文在历史页不可读；`source_tombstoned` 后快照正文仍按 0024 保留但标注来源版本已清理；非 owner Node 不能下载；活跃 Run 不因来源变化自动 followup；只记快照 ID 或无 `entriesRead` 时不得标 `consumed`；`nonceMatched=false`、`headerDigest` 不符、`entriesRead` 越界、`receiptSeq` 重复各自拒绝；首条回执超时 → `failed(CONTEXT_UNAVAILABLE)`，空快照 Run 不被 watchdog 误杀；旧 Node 未声明 `project-context.v1` 时带内容的快照不派发；Run 终态与撤销后，`runtime-home/<runId>`、`runtime-context/<runId>`、`coordination-home/<evaluationId>` 按原文片段与 digest 扫描零命中（助手改写转述按 §6 的边界处理）。
 - 消费判据：首条请求包含 `[project-context:<nonce>]`（replay `{{fromRequest}}` 或等价探针）；`read_project_context` 返回结构化字段与正文；回执 `entriesRead` 与工具调用一致；只保存 ID 的变体必须红。
 - 每条新判据做一次单点变异（去掉派发判权、去掉 digest 校验、允许 Inference 选入、去掉回执谓词、允许旧 Node 派发），必须变红。
 
@@ -133,7 +135,7 @@ Run 创建事务内按固定规则选取，规则版本写入快照：
 - 若成员频繁显式勾选同类 `read_only` 条目，可评估把该关联升级为 `own_work`，但需成员确认，不能由模型自动升级。
 - 若 `run.context_receipt` 在真实 Runtime 上难以稳定产生，可保留「headerDigest + 逐条读取回执」两层判据，不允许退回「只存快照 ID」。
 - 若历史 Run 在撤权后仍需展示正文以满足审计，必须先做独立权限与脱敏设计，不能复用当前读面绕过。
-- 若 ADR-0024 的 24 小时清除与快照正文保留冲突，按 §2 的 `tombstoned` 处理元数据，不修改已采纳 ADR 的清除期限。
+- 若 ADR-0024 的 24 小时清除与快照正文保留冲突，按 §2 的 `source_tombstoned` 处理**源 revision 引用**，快照正文仍按 0024 §8 保留；不修改已采纳 ADR 的清除期限。
 
 ## 验证登记
 

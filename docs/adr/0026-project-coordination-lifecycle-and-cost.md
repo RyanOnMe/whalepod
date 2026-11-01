@@ -1,6 +1,6 @@
 # ADR-0026：项目持续协调的生命周期、受限计算与成本
 
-- 状态：提案（Proposed，#452，2026-11-01；二稿）。接受前不启用任何后台模型提取或协调计算；本文件不是已采纳决定。
+- 状态：提案（Proposed，#452，2026-11-01；评审稿）。接受前不启用任何后台模型提取或协调计算；本文件不是已采纳决定。
 - 承接：计划 §4.1、§4.3–§4.4、§5.1、§6；[ADR-0025](./0025-source-revisions-and-project-understanding.md) 的事实阶梯与事务边界。
 - 输入证据：PC-00 (#463) 的 rc.8 工具行禁用/输入引用/结构化结果探针；上游固定提交 `6337fc8` 的复用分析（§3、§5、§6.2）。
 - 与既有决定的关系：ADR-0004（进程隔离）、ADR-0020（不新建 Hub 直连模型通道）、ADR-0023（隔离未验证前暂停）、ADR-0024（采集 Node 归属与撤权）。
@@ -50,14 +50,19 @@
 - **输入身份**：`inputDigest = hash(项目、输入条目与版本集合、每来源 authorizationGeneration 与权限水位、规则版本、处理器版本、模型 provider/model、纠正版本)`。任一变化都会产生新的 `inputDigest`，旧结果不得复用。
 - **同输入幂等**：已有 `completed` 的同 `inputDigest` 评估直接复用其结果，不重复提醒；`failed` 可 `attempt+1` 重试，但不得复活 `cancelled/stale`。
 - **单飞只约束执行**：部分唯一索引只覆盖 `status in ('dispatched','running')`；`queued` 不占单飞名额。
-- **队列合并**：同一 Project 已有一条 `queued` 时，由 `(projectId) WHERE status='queued'` 部分唯一索引保证至多一条；新变化在**同一行**更新输入清单、重算 `inputDigest`、写 `coalescedAt` 与 `manifestVersion+1`（不新增行、不写 `supersedesId`）。`queued` 有 `queuedAt/queueExpiresAt`，超过 TTL（默认 10 分钟）或输入不可用时转 `skipped(stale_queue)`。派发事务用 `FOR UPDATE` 锁该行并复核 `manifestVersion`，避免把旧输入派发出去。
+- **队列合并**：同一 Project 已有一条 `queued` 时，由 `(projectId) WHERE status='queued'` 部分唯一索引保证至多一条。合并按以下顺序执行（同一事务）：
+  1. 若已有同 `inputDigest` 的 `completed` 行：不合并，queued 行转 `skipped(already_completed)`；
+  2. 否则 `UPDATE ... WHERE id=? AND status='queued' AND manifestVersion=?`，更新输入清单、重算 `inputDigest`、`manifestVersion+1`、`coalescedAt`；若新 `inputDigest` 已有 `failed` 历史行，取 `attempt = maxAttempt+1` 避免唯一冲突；
+  3. 0 行（已被派发/取消）→ 若仍无 queued 则新建 queued，否则放弃。
+  合并只对 `queued` 生效，派生到 `dispatched/running` 的行不可改。`queued` 有 `queuedAt/queueExpiresAt`；每次合并刷新 `queueExpiresAt = min(now+TTL, queuedAt+maxQueueLifetime)`（默认 TTL 10 分钟、总寿命 30 分钟），避免饿死。TTL sweeper 由 Hub 定时任务执行，转 `skipped(stale_queue)`。
+- **failed 重试**：`failed` 新建 `attempt+1` 行前先看是否已有 queued：有则把失败输入标 `supersededBy` 并跳过（新 queued 已含更新输入）；无才新建。重试同样先查 completed 同 digest。
 - **状态迁移**（终态不可复活）：
 
 | 从 | 到 | 触发 |
 |---|---|---|
 | — | queued | 触发器产生 |
 | queued | dispatched | 选中 Node、写入 leaseToken 与 deadline |
-| queued | skipped | 无相关变化 / TTL / 输入不可用 |
+| queued | skipped | 无相关变化 / TTL / 输入不可用 / already_completed / budget_exhausted |
 | queued | cancelled | 成员暂停/撤销、项目归档、来源撤销 |
 | dispatched | running | Node 首次心跳 |
 | dispatched/running | completed | 结果提交通过 CAS 与围栏 |
@@ -87,8 +92,8 @@
 ### 5 输入、结果提交与围栏
 
 - 输入上限：单次最多 N 个 revision、M 字节、K 个 token（默认建议 32 条 / 256KiB / 32k token，实施时以配置固定）；超出部分显式列入未纳入清单，不静默截断。
-- **输入交付**：Hub 在 `coordination.request` 中给清单与本次上限（`maxOutputTokens/maxCostMicros`）；Node 通过 `GET /api/v1/coordination/evaluations/:evaluationId/inputs/:entryId` 按条目下载正文，逐条校验 digest 与字节数，存 `coordination-inputs/<evaluationId>`；任一不符即 `failed(input_digest_mismatch)`，不启动模型。**每次下载都复核当前 `authorizationGeneration`、权限状态与评估归属**（ADR-0025 §4 的读时判权）；request 之后被撤销/过期/撤回的条目返回 `denied`，评估转 `cancelled(source_unavailable)`，不下载、不启动模型。协调 Node 与采集 Node 可以不同，下载鉴权按评估归属，不把正文暴露给无关 Node。终态清理该目录。
-- **派发前额度硬闸**：Hub 在派发事务内检查 Project 与团队的剩余 call/token/cost；不足即 `skipped(budget_exhausted)`，**不派发、不发生模型调用**。`coordination.request` 带 `maxOutputTokens/maxCostMicros`，Node 不得越过。
+- **输入交付**：Hub 在 `coordination.request` 中给清单与本次上限（`maxOutputTokens/maxCostMicros`）；Node 通过 `GET /api/v1/coordination/evaluations/:evaluationId/inputs/:entryId` 按条目下载正文（必须携带 `leaseToken` 与 `attempt` 鉴权），逐条校验 digest 与字节数，存 `coordination-home/<evaluationId>/inputs/`；任一不符即 `failed(input_digest_mismatch)`，不启动模型。**每次下载都复核当前 `authorizationGeneration`、权限状态与评估归属**（ADR-0025 §4 的读时判权）；request 之后被撤销/过期/撤回的条目返回 `denied`，评估转 `cancelled(source_unavailable)`，不下载、不启动模型。协调 Node 与采集 Node 可以不同，下载鉴权按评估归属，不把正文暴露给无关 Node。
+- **派发前额度硬闸与预留**：Hub 在派发事务内检查 Project 与团队的「已用 + 已预留」call/token/cost；不足即 `skipped(budget_exhausted)`，**不派发、不发生模型调用**。派发同一事务原子 `calls+1` 并预留 `maxOutputTokens/maxCostMicros`（`coordination_budget` 的 `reservedTokens/reservedCostMicros`），`coordination.request` 携带这两个上限，Node 不得越过。
 - 结果帧携带 `evaluationId`、`attempt`、`leaseToken`、`resultDigest`、`usage`。
 - 提交事务：
   1. 锁评估行；要求 `status in ('dispatched','running')`、`leaseToken` 一致、租约未过期；
@@ -99,8 +104,7 @@
   6. `usage` 存在且未越过派发时的上限。
   任一不满足 → CAS 到 `stale`/`failed` 并记原因；不得部分写入。
 - 写入只追加 Inference 与引用；同 `inputDigest` 不重复追加条目。
-- **额度记账**：Hub 在提交事务内按 `usage` 更新 `coordination_budget`，并在派发前硬闸；超限的结果不提交，标 `failed(budget_exhausted)`。账本数据来自 Node 上报的 `usage`——Hub 账本只对诚实 Node 的记账与硬闸有效，provider 侧对账不在本轮；不得把 Hub 账本写成独立可验证的计费事实。Node 本地计数只作辅助。
-- **本地日志清除**：协调 Runtime 的 DSH_HOME 不承担续跑，评估终态（completed/failed/cancelled/stale/skipped）后**删除整个 `coordination-home/<evaluationId>`**，包括 session JSONL 与输入副本；崩溃/孤儿由 Node 启动时清扫过期目录。协调输入正文不得在 Node 上长期留存。
+- **计费与结果接受分离**：派发事务写一条 `coordination_usage_ledger` 预留记录（`phase='reserved'`，usage 为空，按 `maxOutputTokens/maxCostMicros` 预留），无论后续结果如何都保留；终态（completed/stale/failed/cancelled/usage_missing/over_budget）在**独立已提交事务**追加 `phase='settled'` 记录并把预留转为实耗（`usage` 缺失时按预留上限记账）；崩溃/孤儿由 sweeper 以同样规则结算。结果是否被接受与账本是否记账互不影响。派发后 Node 崩溃/不上报/持续 stale 都会消耗 call 与预留，下一次派发按「已用 + 已预留」受限。`failed` 重试每次重新计费。账本数据来自 Node 上报的 `usage` 与 Hub 的预留——只对诚实 Node 的记账与硬闸有效，provider 侧对账不在本轮；不得把 Hub 账本写成独立可验证的计费事实。
 
 ### 6 成本、额度与停机
 
@@ -109,6 +113,7 @@
 - **额度**：策略上限（Project/团队）记录在 `project_coordinator_state` 与团队配置；已用量与当日余额记录在 `coordination_budget`，两处不重复：前者是策略，后者是账本/余额。支持 Project 日额度与团队日总额度（团队额度是外层上限，多 Project 不能叠加突破）；团队账本更新用行锁或原子 UPDATE。
 - **耗尽行为**：停止新模型评估，确定性同步继续；读面标记「协调理解暂停（额度）」。额度恢复不自动补跑历史评估，只处理新的相关变化。
 - **停机/暂停**：项目协调暂停、Node 离线、凭据不可用、模型限流分别有状态与文案；不把「模型没跑」显示成「项目没有变化」。
+- **本地目录与日志清除**：协调 Runtime 的 DSH_HOME 不承担续跑，评估终态（completed/failed/cancelled/stale/skipped）后删除 `coordination-home/<evaluationId>/` 整棵目录（含 `inputs/`、session JSONL、spill 文件）。Node 启动时清扫超过 24 小时的孤儿 `coordination-home/*`，运行期定时器每小时清扫一次；设备离线时清扫延迟到下次启动，读面显示「本地清理待完成」。协调输入正文不得在 Node 上长期留存。
 
 ### 7 数据草图（实施时以协议与 migration 为准）
 
@@ -117,7 +122,9 @@
 | `project_coordinator_state` | `projectId`、`enabled`、`modelNodeId`、`operatorMemberId`、`billingOwnerMemberId`、`billingAcknowledgedAt`、`credentialSlot`、`rulesVersion`、`processorVersion`、`dailyCallLimit/dailyTokenLimit/dailyCostLimit`、`lastSuccessfulEvaluationId`、`pausedAt`、`pauseReason` | 每 Project 一行；配置变更写审计 |
 | `coordination_credential` | §6 字段 | `(nodeId, credentialSlot)` 唯一；未确认的 billing owner 不能启用 |
 | `coordination_evaluation` | §3 字段 + `queuedAt`、`queueExpiresAt`、`manifestVersion`、`coalescedAt?`、`inputManifest`（不透明 id/digest/字节数） | `(projectId, inputDigest, attempt)` 唯一；`(projectId) WHERE status='queued'` 部分唯一；`(projectId) WHERE status in ('dispatched','running')` 部分唯一；`inputDigest` 至多一条 `completed`（部分唯一索引）；终态不可复活 |
-| `coordination_budget` | `scope`（team/project）、`projectId?`、`utcDate`、`calls`、`inputTokens`、`outputTokens`、`costMicros` | `(scope, projectId, utcDate)` 唯一（NULLS NOT DISTINCT）；上限在策略侧，账本只记已用量与余额 |
+| `coordination_budget` | `scope`（team/project）、`projectId?`、`utcDate`、`calls`、`inputTokens`、`outputTokens`、`costMicros`、`reservedTokens`、`reservedCostMicros` | `(scope, projectId, utcDate)` 唯一（NULLS NOT DISTINCT）；上限在策略侧（`team_coordination_policy` + `project_coordinator_state`），账本记已用与预留 |
+| `coordination_usage_ledger` | `evaluationId`、`attempt`、`phase`（reserved/settled）、`usage`（settled 前为空）、`chargedAt`、`outcome` | append-only；`(evaluationId, attempt, phase)` 唯一；每次派发必有 reserved，终态必有 settled |
+| `team_coordination_policy` | `teamId`、`dailyCallLimit/dailyTokenLimit/dailyCostLimit`、`updatedAt` | 每 Team 一行；团队外层上限 |
 | `coordination_audit_event` | `id`、`projectId`、`evaluationId?`、`event`、`actor`、`reason`、`createdAt`、`payload` | 不含正文、平台名称、成员姓名 |
 
 ### 8 协议与 Node 装配
