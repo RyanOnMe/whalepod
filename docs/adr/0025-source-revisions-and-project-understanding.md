@@ -25,7 +25,7 @@
 | SourceRevision | 来源在某一时刻的不可变版本（消息/文档/表格范围） | 采集 Node 经 Hub 校验后写入 | 自身即来源 | 不升级；新版本是新行 |
 | Observation | 确定性事实：作者平台身份、发送时间、修订摘要、Run 状态、成果发布、实际消费 | 来源观察经 Node 帧；业务事实经 Hub 业务事务/Outbox | 来源观察：source citation；业务事实：business citation | 可被新 Observation 覆盖结论，旧行保留 |
 | Inference | 模型解释：目标、潜在决定、影响、问题、建议关联 | 协调计算提交（ADR-0026），带引用与处理器版本 | 至少一条 source 或 business citation | 只能被新 Inference 或人工纠正取代；不能自我升级 |
-| Decision | 人工确认的业务决定的投影 | 由既有业务事务的 Outbox 投影器写入；actor 必须是成员会话 | 必须带 `businessRef` 与 `businessVersion` | 只能由新的明确业务动作改写；不自动生成 |
+| Decision | 人工确认的业务决定的投影 | 由既有业务事务内的投影器写入（同一事务直接读业务行）；actor 必须是成员会话 | 必须带 `businessRef` 与 `businessVersion` | 只能由新的明确业务动作改写；不自动生成 |
 | Correction | 人工纠正（否定/修正/标注无关） | 成员 | 指向被纠正条目（`targetEntryId`） | 追加行，不改写历史 |
 
 不变量：
@@ -44,14 +44,16 @@ Decision 不新建独立决策存储：`context_entry` 的 Decision 行只是既
 
 **Decision 的有效性判定**（实施时按业务类型固定，不允许「按时间取最新」）：
 
-| businessRef 类型 | 有效条件 |
-|---|---|
-| 任务约定版本 | 指向该 Task 当前已确认的 TaskSpecRevision；旧版本为历史 |
-| 审批记录 | 指向该审批请求的最终决定；同一请求多条冲突即 `conflict` |
-| 成果发布 | 已发布且未撤回的 Artifact；撤回则不可用 |
-| 交接接收 | 已确认且未被 adopt 覆盖的接收版本；旧版本为历史 |
+| businessRef 类型 | businessVersion 取值 | 有效条件 |
+|---|---|---|
+| 任务约定版本 | `TaskSpecRevision.id` + `revisionNumber` | 指向该 Task 当前已确认的 TaskSpecRevision；旧版本为历史 |
+| 审批记录 | 审批请求 id + 最终决定时间/决定 id | 指向该审批请求的最终决定；同一请求多条冲突即 `conflict` |
+| 成果发布 | `Artifact.id` + `publishedAt` | 已发布且未撤回的 Artifact；撤回则不可用 |
+| 交接接收 | `handoffReceipt.id` + `confirmedAt` | 已确认且未被 adopt 覆盖的接收版本；旧版本为历史 |
 
-投影器在业务事务的同一 Outbox 周期内更新投影（`businessVersion` 变化即追加新行、旧行标 `superseded`）。两条不同 `businessRef` 同时解析为当前且内容互斥时，读面标 `conflict`，不得自动选一条。
+投影器在**既有业务事务内**直接读取业务行并写入/更新投影（不依赖 24 小时补发日志，也不依赖事件重放）：`businessRef` 解析到业务行，`businessVersion` 取该行的版本值；同一 `(businessRef, businessVersion)` 在 `context_entry` 唯一，投影重试幂等。业务行版本前进时追加新行、旧行标 `superseded`；同一 `businessRef` 永远只有一行 `active`。投影器另有按业务表全量重算的修复任务（不依赖事件留存），用于停机后补投影。
+
+两条**不同** `businessRef` 同时解析为当前且内容互斥时（例如同一审批请求的两条最终决定、同一 Task 的两个当前约定），读面标 `conflict`，不得自动选一条；同一引用链的新旧版本不构成冲突，旧版一律 `superseded`。
 
 ### 2 修订与事件身份
 
@@ -61,7 +63,7 @@ Decision 不新建独立决策存储：`context_entry` 的 Decision 行只是既
   - `content-digest`：规范化后 sha256；内容相同即同一版本（A→B→A 的第三次与第一次同版），事件仍逐条记录；
   - `observed-sequence`：无平台顺序时按观察序号；只用于「重读比较」，不用于跨节点比较。
 - **重复事件带新内容**：同一 `eventId` 再次到达但 `revisionToken/digest` 不同，记 `duplicate_conflict`，触发重读当前内容；**不得静默当作 duplicate 丢掉新版本**。
-- **迟到与乱序**：只有当前授权代次、且版本令牌新于已存最新版本时才能推进 `project_source.latestRevisionId`；乱序旧版只作为历史行保留（有界），不覆盖读面。
+- **迟到与乱序**：只有当前授权代次、且版本令牌新于已存最新观察时才能推进 `project_source.latestRevisionId` 与新增的 `latestObservedAt`；乱序旧版只作为历史行保留（有界），不覆盖读面。`content-digest` 没有顺序：A→B→A 时第三次观察复用第一次的 revision 行（内容相同即同版），但 `latestRevisionId` 回到 A 行、`latestObservedAt` 更新为本次观察时间；读面用「最新观察」而不是 revision 行的 `observedAt` 判断新鲜度。`observed-sequence` 只在本节点内比较，跨节点不可用。
 - **撤回/删除**：形成 `retracted` 版本（或删除事件），所有读面（含已冻结 Run 快照）只显示元数据与不可用标记，不再展示正文；正文按 ADR-0024 §8 清除。不能删除审计身份。
 - **缺口**：补拉未覆盖的区间记录 `gap`（起止时间/游标、原因）；读面显示「可能缺 N 条」，不声称抓到了每次中间编辑。
 - **正文落库**：只有通过来源范围、权限代次与租约校验的正文才写入；越界内容只留最小拒绝审计，不复用上游「过滤但仍保留」的行为（ADR-0024 §5）。
@@ -82,13 +84,13 @@ Decision 不新建独立决策存储：`context_entry` 的 Decision 行只是既
 ### 4 引用、水位与可重建
 
 - 引用形状见 §1；`locator` 是平台内的范围/位置标识，不含本机路径或凭据。
-- **水位只有一个权威**：`project_source.latestRevisionId/observedAt`（ADR-0024 已有）是来源观察水位；读面从它与 `source_event` 的缺口派生。协调检查点记录自己的 `processedRevisionId`（ADR-0026），不是第二份权威。**不新建 `project_watermark` 表**。
-- **可重建的范围**：检查点与读面可从权威表重建——`source_revision` 元数据、`source_event`、`context_entry`、`work_link`、业务表。已被 ADR-0024 §8 清除的正文**不可重建**，重建只恢复元数据与不可用标记；不得声称重建了已清除内容。
+- **水位只有一个权威**：`project_source.latestRevisionId`（ADR-0024 已有）加本 ADR 新增的 `latestObservedAt` 是来源观察水位；`lastSuccessAt` 继续表示最近一次成功同步，不代替观察水位。读面从这两列与 `source_event_attempt` 的缺口派生。协调检查点记录自己的 `processedRevisionId`（ADR-0026），不是第二份权威。**不新建 `project_watermark` 表**。
+- **可重建的范围**：检查点与读面可从权威表重建——`source_revision` 元数据、`source_event`/`source_event_attempt`、`context_entry`、`work_link`、业务表。已被 ADR-0024 §8 清除的正文**不可重建**，重建只恢复元数据与不可用标记；不得声称重建了已清除内容。
 - **读时判权**：每次展开、分页、模型装配与 Run 选入都复核当前权限；引用不是权限豁免。权限未知/过期时只显示元数据与不可用标记。
 
 ### 5 冲突、纠正与自动重试
 
-- **冲突并列**：同一目标出现互斥 Observation/Inference 时，读面并列展示并标注来源、时间与类型，不自动裁决；Decision 只能由人给出。两条互斥 Decision（例如前后两次约定）也并列并标 `conflict`，**不按时间自动取最新**；只有新的明确业务动作能产生新的有效决定。
+- **冲突并列**：同一目标出现互斥 Observation/Inference 时，读面并列展示并标注来源、时间与类型，不自动裁决；Decision 只能由人给出。两条**不同 `businessRef`** 同时解析为当前且内容互斥时标 `conflict`，不按时间自动取最新；同一 `businessRef` 的旧版本一律 `superseded`，不参与冲突。
 - **纠正追加**：Correction 不修改被纠正行；「当前有效集」= 未被 Correction 否定的条目；不存在冲突时按业务版本/时间取最新，存在冲突时并列。历史请求与历史 Run 仍显示当时快照。
 - **迟到结果**：评估提交时若输入水位、任一来源代次、权限状态、模型/处理器身份、或纠正版本与评估开始时不一致，整份结果丢弃并记 `stale`；同输入重试不重复提醒，也不撤销纠正。
 - **幂等**：评估身份 `inputDigest` = hash(输入条目与版本集合、每来源 `authorizationGeneration`、模型/provider 与处理器版本、规则版本、纠正版本)。`context_entry` 的 Inference 行记录 `evaluationId` 与 `inputDigest`，并有唯一约束，确保同一次评估不重复追加条目。
@@ -99,7 +101,7 @@ Decision 不新建独立决策存储：`context_entry` 的 Decision 行只是既
 - 确定性写入在单个异步事务内完成：锁来源/线程/条目行（`FOR UPDATE` 或唯一约束）、复核 `authorizationGeneration` 与权限状态、追加 revision/observation/work_link、写 Outbox。事务不跨模型等待。
 - 模型判定发生在事务外；结果以「候选」提交，提交事务重新校验 §5 的围栏后落库或丢弃。
 - 并发裁决用唯一索引与行锁，不用可重试的读-改-写：同一来源版本的 revision 唯一；同一 WorkLink 四元组唯一；同一评估身份唯一；同一项目同一时刻至多一个进行中的评估（ADR-0026）。
-- Decision/Correction 的写入点：Decision 只由业务事务的 Outbox 投影器写（`actorKind='member'`，`businessRef` 必须可解析）；Correction 只由成员 HTTP 命令写。协调帧/内部结果处理器没有 decision/correction 写入口。
+- Decision/Correction 的写入点：Decision 只由业务事务内的投影器写（`actorKind='member'`，`businessRef` 必须可解析；同事务直接读业务行，不依赖事件补发）；Correction 只由成员 HTTP 命令写。协调帧/内部结果处理器没有 decision/correction 写入口。
 - 所有命令带幂等键；重放返回首次结果，不重复追加事件或通知。
 
 ### 7 数据草图（实施时以协议与 migration 为准）
@@ -107,10 +109,11 @@ Decision 不新建独立决策存储：`context_entry` 的 Decision 行只是既
 | 表 | 关键字段 | 约束 |
 |---|---|---|
 | `source_revision` | `id`、`sourceId`、`resourceKey`、`threadKey?`、`tokenKind`、`revisionToken`、`digest`、`observedAt`、`authorizationGeneration`、`status`（current/superseded/retracted）、`locator`、`bodyRef` | `(sourceId, resourceKey, tokenKind, revisionToken, digest)` 唯一；正文保留按 ADR-0024 §8 |
-| `source_event` | `id`、`sourceId`、`eventId`、`revisionId?`、`receivedAt`、`outcome`（accepted/duplicate/duplicate_conflict/stale/denied/gap）、`reason?` | `(sourceId, eventId)` 唯一；`denied` 只记最小拒绝审计 |
-| `project_thread` | `id`、`projectId`、`sourceId`、`threadKey`、`status` | `(sourceId, threadKey)` 唯一；项目一致 |
-| `work_link` | `id`、`projectId`、`threadId`、`taskId?`、`runId?`、`kind`、`state`（proposed/active/invalidated）、`stateChangedAt`、`createdBy`、`activatedBy?`、`evidenceRef?` | `(threadId, taskId, runId, kind)` 唯一（NULLS NOT DISTINCT）；task/run 二选一 CHECK |
-| `context_entry` | `id`、`projectId`、`kind`（observation/inference/decision/correction）、`status`（active/superseded/conflict/retracted）、`title`、`bodyRef?`、`payload`、`threadId?`、`sourceId?`、`revisionId?`、`businessRef?`、`businessVersion?`、`targetEntryId?`（Correction）、`evaluationId?`/`inputDigest?`（Inference）、`createdBy`、`actorKind`、`processorVersion?` | Observation/Inference 必须有 citation 与 evaluationId（业务 Observation 可无 evaluationId）；Decision 必须有成员 actor、businessRef 与 businessVersion；Correction 必须有 targetEntryId |
+| `source_event` | `id`、`sourceId`、`eventId`、`firstOutcome`、`lastOutcome`、`attempts`、`conflictAt?` | `(sourceId, eventId)` 唯一；保留首次结果，冲突只更新 `lastOutcome`/`conflictAt`，不覆盖第一手证据 |
+| `source_event_attempt` | `id`、`sourceId`、`eventId`、`attempt`、`revisionId?`、`observedDigest`、`outcome`（accepted/duplicate/duplicate_conflict/stale/denied/gap）、`reason?`、`receivedAt` | `(sourceId, eventId, attempt)` 唯一；append-only，`denied` 只记最小拒绝审计 |
+| `project_thread` | `id`、`projectId`、`sourceId`、`threadKey`、`status` | `(sourceId, threadKey)` 唯一（NULLS NOT DISTINCT）；项目一致 |
+| `work_link` | `id`、`projectId`、`threadId`、`taskId?`、`runId?`、`kind`、`state`（proposed/active/invalidated）、`stateChangedAt`、`createdBy`、`activatedBy?`、`evidenceRef?` | `(threadId, taskId, runId, kind)` 唯一（NULLS NOT DISTINCT）；task/run 二选一 CHECK；`actual_consumption` 不在此表按条目展开，条目级消费见 ADR-0027 |
+| `context_entry` | `id`、`projectId`、`kind`（observation/inference/decision/correction）、`status`（active/superseded/conflict/retracted）、`title`、`bodyRef?`、`payload`、`threadId?`、`sourceId?`、`revisionId?`、`businessRef?`、`businessVersion?`、`targetEntryId?`（Correction）、`evaluationId?`/`inputDigest?`（Inference）、`createdBy`、`actorKind`、`processorVersion?` | Inference 必须有 citation、`evaluationId` 与 `inputDigest`；Observation 必须有 citation（source 或 business），不要求 evaluationId；Decision 必须有成员 actor、businessRef 与 businessVersion，并 `(businessRef, businessVersion)` 唯一；Correction 必须有 `targetEntryId` 且 `actorKind='member'` |
 | `context_citation` | `entryId`、`kind`（source/business）、source 字段或 `businessRef/businessVersion/occurredAt` | 与 entry 同事务写入；按 entry.kind 校验必填组 |
 | `source_gap` | `sourceId`、`fromCursor`、`toCursor`、`reason`、`detectedAt` | 只追加；读面据此显示缺口 |
 
@@ -124,7 +127,7 @@ Decision 不新建独立决策存储：`context_entry` 的 Decision 行只是既
   - `body` 在 `retracted=true` 时可省略；单帧正文 ≤256KiB，超限显式拒绝或由 Node 先落本地副本再分片申请，不允许把分片拼成一个未经验证的版本。
   - 新增 `source.observation_result`：`{ requestId, sourceId, outcome: accepted|duplicate|duplicate_conflict|stale|denied|gap, revisionId?, reason? }`。Hub 只接受当前代次与租约持有者；`denied` 只进最小审计，不落正文。
   - 作者身份只记不透明 `authorPlatformId` 与显示名元数据，不按显示名映射成员（ADR-0024 §3）。
-- 正文与绝对路径只存在于 Node→Hub 的本地协议与 Hub 存储，不进入 Hub 日志、Team Event、Web 投影或证据包；**Node 本地 DSH session 日志是另一类敏感存储**，由 ADR-0027 §3 约束。
+- 正文与绝对路径只存在于来源摄取路径（Node→Hub 本地协议与 Hub 存储），不进入 Hub 日志、Team Event、Web 投影或证据包；Node 本地的 Run/DSH session 日志是另一类敏感存储，保留与清除规则见 ADR-0027 §6 与 ADR-0026 §5。
 
 ### 9 观测与归因
 

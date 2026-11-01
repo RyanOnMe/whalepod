@@ -50,7 +50,7 @@
 - **输入身份**：`inputDigest = hash(项目、输入条目与版本集合、每来源 authorizationGeneration 与权限水位、规则版本、处理器版本、模型 provider/model、纠正版本)`。任一变化都会产生新的 `inputDigest`，旧结果不得复用。
 - **同输入幂等**：已有 `completed` 的同 `inputDigest` 评估直接复用其结果，不重复提醒；`failed` 可 `attempt+1` 重试，但不得复活 `cancelled/stale`。
 - **单飞只约束执行**：部分唯一索引只覆盖 `status in ('dispatched','running')`；`queued` 不占单飞名额。
-- **队列合并**：同一 Project 已有一条 `queued` 时，新变化不新增第二条，而是更新该行的输入清单、重算 `inputDigest` 并记 `supersedesId`；`queued` 超过 TTL（默认 10 分钟）或输入已不可用时转 `skipped(stale_queue)`。
+- **队列合并**：同一 Project 已有一条 `queued` 时，由 `(projectId) WHERE status='queued'` 部分唯一索引保证至多一条；新变化在**同一行**更新输入清单、重算 `inputDigest`、写 `coalescedAt` 与 `manifestVersion+1`（不新增行、不写 `supersedesId`）。`queued` 有 `queuedAt/queueExpiresAt`，超过 TTL（默认 10 分钟）或输入不可用时转 `skipped(stale_queue)`。派发事务用 `FOR UPDATE` 锁该行并复核 `manifestVersion`，避免把旧输入派发出去。
 - **状态迁移**（终态不可复活）：
 
 | 从 | 到 | 触发 |
@@ -58,6 +58,7 @@
 | — | queued | 触发器产生 |
 | queued | dispatched | 选中 Node、写入 leaseToken 与 deadline |
 | queued | skipped | 无相关变化 / TTL / 输入不可用 |
+| queued | cancelled | 成员暂停/撤销、项目归档、来源撤销 |
 | dispatched | running | Node 首次心跳 |
 | dispatched/running | completed | 结果提交通过 CAS 与围栏 |
 | dispatched/running | failed | Node 崩溃、超时、额度、凭据不可用、usage 缺失 |
@@ -65,7 +66,7 @@
 | dispatched/running | stale | 提交时围栏不满足（代次/水位/纠正/模型身份） |
 | failed | （新 attempt） | 同一评估 `attempt+1` 重新入队；终态行保留 |
 
-`completed/cancelled/stale/skipped` 为终态，不可复活；`failed` 只能新建 attempt。
+`completed/cancelled/stale/skipped` 为终态，不可复活；`failed` 只能**新建一行** `attempt+1`，新行 `supersedesId` 指向失败行，失败行保留。
 
 - **租约与孤儿**：Hub 下发时写 `leaseToken` 与有界租约（默认 120 秒，心跳续租）。Hub sweeper 以 `status in ('dispatched','running') AND leaseExpiresAt < now()` 为谓词 CAS 到 `failed(node_lost)`；重排为新 attempt。
 - **取消**：成员暂停/撤销、来源撤销、项目归档时，Hub 取消 queued/dispatched/running 评估并通知 Node 终止子进程；迟到结果按 CAS 与围栏丢弃。
@@ -75,9 +76,9 @@
 
 - 协调计算运行在 Node 上的**独立受限 Runtime 进程**：独立 DSH_HOME、独立工作目录、无业务工具、无审批工具、无通用出站网络与外部发送。
 - **允许面**只有：只读输入读取（清单白名单，语义同 `read_artifact_input`）与结构化结果输出（受 schema 约束的输出通道，不是业务工具）。
-- **禁止能力逐项列举并逐项负控**（不使用通配符）：`tool-bash`、`tool-pwsh`、`tool-fs`（read/write/edit）、`tool-fs-search`、`tool-workflow`、`tool-str-replace-editor`、`tool-web`、`tool-jobs`、`tool-subagent`、`tool-subagent-fork`、`tool-subagent-control`、`tool-subagent-report`、`tool-todo`、`tool-goal`、`tool-ralph`、`tool-ask-user`、Code Mode `run_code`。
-- **每个能力项要有正控 + 禁用负控**：正控证明该装配下该行确实挂载且可执行（在探针专用 overlay 里临时启用），负控证明协调装配下调用返回 `UNKNOWN_TOOL` 且无副作用。只验证「不存在」不算证明 `disabled: true` 生效（PC-00 的教训）。`tool-workflow` 的 worker、`run_code`、subagent/fork 与沙箱升级各自是独立能力项，不能由 `tool-bash` 一行代表。
-- **审批面显式关闭**：协调 Runtime 不安装审批 answerer；pre-execute guard 对除允许面之外的一切调用直接返回拒绝，且**不产生 `approval.requested`**。探针断言审批帧为零。若实现必须走审批策略，只能使用 deny-all，不能默认 `full_access`（PC-00 已证明 `full_access` 会让禁用行的审批断言失效）。
+- **以工具名而不是 patch 行 id 做判据**：协调装配启动后枚举实际注册的工具名，只允许输入读取工具与结果通道；其余工具名必须不存在。`disabled` 行只负责让插件不挂载，验收看的是模型可调用的工具名集合。必须覆盖的已知行与模型工具名包括（实施时以 boot 清单为准，不以此表替代枚举）：`tool-bash → bash`、`tool-pwsh → pwsh`、`tool-fs → read/write/edit`、`tool-fs-search → glob/grep`、`tool-workflow → workflow`、`tool-str-replace-editor → str_replace_editor`、`tool-web → web_search/web_fetch`、`tool-jobs → job_output/job_list/job_kill`、`tool-skill → skill`、`tool-subagent → subagent`、`tool-subagent-fork → subagent_fork`、`tool-subagent-control → send_message/interrupt_agent`、`tool-subagent-list-agents → list_agents`、`tool-subagent-report → report`、`tool-todo → todo_write`、`tool-goal → goal/update_goal`、`tool-ralph → ralph`、`plan-mode → exit_plan_mode`，以及 Code Mode `run_code`。`tool-ask-user` 在当前 `dsh-base` 没有挂载行；若未来挂载，`ask_user_question` 必须进入清单。未挂载的工具不要求正控，但工具名清单判据仍要证明它不存在。
+- **每个能力项要有正控 + 禁用负控**：正控证明该装配下该工具名确实存在且可执行（在探针专用 overlay 里临时启用），负控证明协调装配下调用返回 `UNKNOWN_TOOL` 且无副作用。只验证「不存在」不算证明 `disabled: true` 生效（PC-00 的教训）。`tool-workflow` 的 worker、`run_code`、subagent/fork 与沙箱升级各自是独立能力项，不能由 `tool-bash` 一行代表。平台相关行按平台矩阵处理（例如 `pwsh` 只在 Windows 装配里要求正控；macOS 以实际注册清单为准），但**工具名清单判据在每个平台都必须跑**。
+- **审批面显式关闭**：协调 Runtime 不安装审批 answerer；在 **approval gate 之前**加路由 guard，对除允许面之外的一切调用直接拒绝，且**不产生 `approval.requested`**。探针在默认 `approval_required` 装配下断言审批帧为零。PC-00 已证明：`approval_required` 下未知工具仍会先进入审批门，`full_access` 只是让审批断言恒真；因此协调装配必须用「路由 guard + 无审批人」证明零打扰，不能默认 `full_access` 当作隔离证据。
 - **不依赖 `ctx.tools.restrict()` 作为权限边界**：vendor README 明示它只是可见性组合；可以用它减少模型可见面，但不能作为唯一控制。
 - **网络边界**：区分「工具出站网络禁用」与「模型 provider 出口白名单」。受限进程只允许访问配置的模型 provider 端点；通用 HTTP/浏览/外部发送全部不可用。网络隔离需要独立探针（例如尝试访问非白名单地址必须失败），不能只靠提示词。
 - **模型凭据**：来自操作者配置的**协调专用凭据槽**（`scope='coordination'`），存 Node SecretStore；Hub 在下发前校验槽位 purpose/owner/billing，缺省拒绝。默认不使用成员个人模型额度。凭据缺失 → `failed(credential_unavailable)`，确定性事实不受影响。
@@ -86,7 +87,8 @@
 ### 5 输入、结果提交与围栏
 
 - 输入上限：单次最多 N 个 revision、M 字节、K 个 token（默认建议 32 条 / 256KiB / 32k token，实施时以配置固定）；超出部分显式列入未纳入清单，不静默截断。
-- **输入交付**：Hub 在 `coordination.request` 中给清单；Node 通过受控接口按 revision/entry id 下载正文，逐条校验 digest 与字节数，存 `coordination-inputs/<evaluationId>`；任一不符即 `failed(input_digest_mismatch)`，不启动模型。协调 Node 与采集 Node 可以不同，下载鉴权按评估归属，不把正文暴露给无关 Node。终态清理该目录。
+- **输入交付**：Hub 在 `coordination.request` 中给清单与本次上限（`maxOutputTokens/maxCostMicros`）；Node 通过 `GET /api/v1/coordination/evaluations/:evaluationId/inputs/:entryId` 按条目下载正文，逐条校验 digest 与字节数，存 `coordination-inputs/<evaluationId>`；任一不符即 `failed(input_digest_mismatch)`，不启动模型。**每次下载都复核当前 `authorizationGeneration`、权限状态与评估归属**（ADR-0025 §4 的读时判权）；request 之后被撤销/过期/撤回的条目返回 `denied`，评估转 `cancelled(source_unavailable)`，不下载、不启动模型。协调 Node 与采集 Node 可以不同，下载鉴权按评估归属，不把正文暴露给无关 Node。终态清理该目录。
+- **派发前额度硬闸**：Hub 在派发事务内检查 Project 与团队的剩余 call/token/cost；不足即 `skipped(budget_exhausted)`，**不派发、不发生模型调用**。`coordination.request` 带 `maxOutputTokens/maxCostMicros`，Node 不得越过。
 - 结果帧携带 `evaluationId`、`attempt`、`leaseToken`、`resultDigest`、`usage`。
 - 提交事务：
   1. 锁评估行；要求 `status in ('dispatched','running')`、`leaseToken` 一致、租约未过期；
@@ -94,16 +96,17 @@
   3. 输入水位未前进到评估未覆盖的版本；
   4. 纠正版本、规则/处理器/模型身份与 `inputDigest` 一致；
   5. 项目协调未暂停/归档；
-  6. `usage` 存在且在额度内。
+  6. `usage` 存在且未越过派发时的上限。
   任一不满足 → CAS 到 `stale`/`failed` 并记原因；不得部分写入。
 - 写入只追加 Inference 与引用；同 `inputDigest` 不重复追加条目。
-- **额度记账在 Hub 提交事务内**：按 `usage` 更新 `coordination_budget`；超限的结果不提交，评估标 `failed(budget_exhausted)`，后续派发被阻断。Node 的本地计数只作辅助，重启后以 Hub 账本为准。
+- **额度记账**：Hub 在提交事务内按 `usage` 更新 `coordination_budget`，并在派发前硬闸；超限的结果不提交，标 `failed(budget_exhausted)`。账本数据来自 Node 上报的 `usage`——Hub 账本只对诚实 Node 的记账与硬闸有效，provider 侧对账不在本轮；不得把 Hub 账本写成独立可验证的计费事实。Node 本地计数只作辅助。
+- **本地日志清除**：协调 Runtime 的 DSH_HOME 不承担续跑，评估终态（completed/failed/cancelled/stale/skipped）后**删除整个 `coordination-home/<evaluationId>`**，包括 session JSONL 与输入副本；崩溃/孤儿由 Node 启动时清扫过期目录。协调输入正文不得在 Node 上长期留存。
 
 ### 6 成本、额度与停机
 
 - **费用归属**：启用时指定费用承担者；承担者必须是**已确认的成员或团队额度**（记录 `billingAcknowledgedAt`），不能由操作者单方面指定他人。个人额度不是默认值。
 - **凭据槽**：`coordination_credential { nodeId, credentialSlot, scope='coordination', ownerMemberId, billingOwnerMemberId, billingAcknowledgedAt }`；Node inventory 的槽位增加可选 `purpose`，Hub 拒绝 purpose 不匹配的槽位。
-- **额度**：`coordination_budget` 同时记录 `callLimit/tokenLimit/costLimit` 与已用量；支持 Project 日额度与团队日总额度（团队额度是外层上限，多 Project 不能叠加突破）。
+- **额度**：策略上限（Project/团队）记录在 `project_coordinator_state` 与团队配置；已用量与当日余额记录在 `coordination_budget`，两处不重复：前者是策略，后者是账本/余额。支持 Project 日额度与团队日总额度（团队额度是外层上限，多 Project 不能叠加突破）；团队账本更新用行锁或原子 UPDATE。
 - **耗尽行为**：停止新模型评估，确定性同步继续；读面标记「协调理解暂停（额度）」。额度恢复不自动补跑历史评估，只处理新的相关变化。
 - **停机/暂停**：项目协调暂停、Node 离线、凭据不可用、模型限流分别有状态与文案；不把「模型没跑」显示成「项目没有变化」。
 
@@ -113,14 +116,14 @@
 |---|---|---|
 | `project_coordinator_state` | `projectId`、`enabled`、`modelNodeId`、`operatorMemberId`、`billingOwnerMemberId`、`billingAcknowledgedAt`、`credentialSlot`、`rulesVersion`、`processorVersion`、`dailyCallLimit/dailyTokenLimit/dailyCostLimit`、`lastSuccessfulEvaluationId`、`pausedAt`、`pauseReason` | 每 Project 一行；配置变更写审计 |
 | `coordination_credential` | §6 字段 | `(nodeId, credentialSlot)` 唯一；未确认的 billing owner 不能启用 |
-| `coordination_evaluation` | §3 字段 + `inputManifest`（不透明 id/digest/字节数） | `(projectId, inputDigest, attempt)` 唯一；`inputDigest` 至多一条 `completed`（部分唯一索引）；进行中唯一（仅 dispatched/running，按 projectId）；终态不可复活 |
-| `coordination_budget` | `scope`（team/project）、`projectId?`、`utcDate`、`calls`、`inputTokens`、`outputTokens`、`costMicros`、`callLimit`、`tokenLimit`、`costLimit` | `(scope, projectId, utcDate)` 唯一（NULLS NOT DISTINCT）；团队额度外层校验 |
+| `coordination_evaluation` | §3 字段 + `queuedAt`、`queueExpiresAt`、`manifestVersion`、`coalescedAt?`、`inputManifest`（不透明 id/digest/字节数） | `(projectId, inputDigest, attempt)` 唯一；`(projectId) WHERE status='queued'` 部分唯一；`(projectId) WHERE status in ('dispatched','running')` 部分唯一；`inputDigest` 至多一条 `completed`（部分唯一索引）；终态不可复活 |
+| `coordination_budget` | `scope`（team/project）、`projectId?`、`utcDate`、`calls`、`inputTokens`、`outputTokens`、`costMicros` | `(scope, projectId, utcDate)` 唯一（NULLS NOT DISTINCT）；上限在策略侧，账本只记已用量与余额 |
 | `coordination_audit_event` | `id`、`projectId`、`evaluationId?`、`event`、`actor`、`reason`、`createdAt`、`payload` | 不含正文、平台名称、成员姓名 |
 
 ### 8 协议与 Node 装配
 
 - `node.hello` 增加可选 `coordinationCapabilities: ['coordination.v1']`；Hub 只向声明能力的 Node 下发协调帧，旧 Node 不收到未知帧。部署顺序沿用 ADR-0024 §9（先 Hub 后 Node；旧 Hub 拒绝带新字段的 hello）。
-- 新增本地帧：`coordination.request`（评估 id、attempt、leaseToken、项目、输入清单、上限、截止时间）、`coordination.result`（结果 + digest + 代次/水位 + usage + evaluationId/attempt/leaseToken）、`coordination.cancel`、`coordination.heartbeat`。载荷不含凭据与绝对路径。
+- 新增 Hub↔Node 协调帧（不是进程内本地帧）：`coordination.request`（评估 id、attempt、leaseToken、项目、输入清单、`maxOutputTokens/maxCostMicros`、截止时间）、`coordination.result`（结果 + digest + 代次/水位 + usage + evaluationId/attempt/leaseToken）、`coordination.cancel`、`coordination.heartbeat`。载荷不含凭据与绝对路径。Runtime 与 Node 之间的 `runtime.context_receipt` 是另一类本地帧（ADR-0027）。
 - Node 侧新增 `coordination` 用途的 Runtime 启动入口与 supervisor 子命令，复用 SecretStore、进程隔离与临时目录清理；不得复用业务 Run 的装配或 Session 身份。
 - Hub 不加载上游插件、不直连模型；模型调用只发生在 Node 的受限进程（ADR-0020）。
 

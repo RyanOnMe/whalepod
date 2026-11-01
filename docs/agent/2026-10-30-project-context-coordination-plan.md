@@ -241,7 +241,7 @@ PC-01 在允许的真实租户只读测试，比较机器人 CLI 与官方 SDK/A
 
 外部供应商边界允许协议服务回放，模型出口允许 DSH replay，业务权限、版本、协调事务、投影与输入装配仍走真实实现。真实平台烟测、真实模型质量与真人试用分别留证；某一层未跑保持 not_run。
 
-观测沿既有分层，新增建议为 `node.source`、`hub.context`、`node.context-analysis`、`runtime.bridge.context`、`web.project-context`。实现时以 ADR-0025/0026/0027 登记的 `hub.context`、`node.source`、`node.coordination`、`node.context`、`runtime.bridge.context` 为准；本文候选名不当作已有事件。保持既有 trace/run/command 身份，并增加不透明 revision/thread/evaluation/snapshot 身份，分别记录已接收、已选取、已交付、已消费及已拒绝及水位。名称在实现时登记，不把本文候选名当作已有事件。
+观测沿既有分层，新增建议为 `node.source`、`hub.context`、`node.context-analysis`、`runtime.bridge.context`、`web.project-context`。实现时以 ADR-0025/0026/0027 登记的 `hub.context`、`node.source`、`node.coordination`、`node.context`、`runtime.bridge.context` 为准；本文候选名不当作已有事件。保持既有 trace/run/command 身份，并增加不透明 revision/thread/evaluation/snapshot 身份，分别记录已接收、已选取、已交付、已消费及已拒绝及水位。
 
 驱动与独立判定分开：交叉核对来源版本、Hub 状态、浏览器读面、Node 字节及 Runtime 请求/行为；缺数据失败。以单点变异证明漏引用、错版、来源撤权、权限提升、重复提醒和终态复活会判红。只断言某个上下文 ID 或正文字符串存在，不算消费完成。
 
