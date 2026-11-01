@@ -35,6 +35,8 @@
 3. **Correction 优先于任何自动结果**。同一目标条目被纠正后，迟到的评估结果按 §5 丢弃，不得复活被纠正结论。Correction 本身 append-only、不改写被纠正行的正文/引用/status；唯一允许的目标行派生写入是 `correctedAt`（标记该行已退出当前有效集）。
 4. **事实与推断在同一个读面并列展示但类型可见**；界面不得把 Inference 渲染成 Decision。
 
+所有读面与 API 的「当前有效集」统一按 `status='active' AND correctedAt IS NULL` 过滤，不能只看 `status`；其它模块不得自行定义第二套有效条件。
+
 **两种引用**（同一 JSON 形状，按 `kind` 二选一）：
 
 - source citation：`{ kind: 'source', sourceId, revisionId, resourceKey, threadKey?, locator, authorizationGeneration, observedAt, digest }`；
@@ -93,7 +95,7 @@ Decision 不新建独立决策存储：`context_entry` 的 Decision 行只是既
 ### 5 冲突、纠正与自动重试
 
 - **冲突并列**：同一目标出现互斥 Observation/Inference 时，读面并列展示并标注来源、时间与类型，不自动裁决；Decision 只能由人给出。两条**不同 `businessRef`** 同时解析为当前且内容互斥时标 `conflict`，不按时间自动取最新；同一 `businessRef` 的旧版本一律 `superseded`，不参与冲突。
-- **纠正追加**：Correction 不修改被纠正行；「当前有效集」= `status='active' AND correctedAt IS NULL` 且未被冲突排除的条目；不存在冲突时按业务版本/时间取最新，存在冲突时并列。历史请求与历史 Run 仍显示当时快照。
+- **纠正追加**：Correction 不修改被纠正行；「当前有效集」= `status='active' AND correctedAt IS NULL` 且未被冲突排除的条目；不存在冲突时按业务版本/时间取最新，存在冲突时并列。历史请求与历史 Run 仍显示当时快照。**纠正不可撤销**：本 ADR 不提供清除 `correctedAt` 的入口，恢复只能由成员经业务入口产生新的 Decision/Observation；若未来要支持撤销错误纠正，另立 ADR 引入 `correctionRevision`/`clearedAt`，不得直接清标记。
 - **迟到结果**：评估提交时若输入水位、任一来源代次、权限状态、模型/处理器身份、或纠正版本与评估开始时不一致，整份结果丢弃并记 `stale`；同输入重试不重复提醒，也不撤销纠正。
 - **幂等**：评估身份 `inputDigest` = hash(输入条目与版本集合、每来源 `authorizationGeneration`、模型/provider 与处理器版本、规则版本、纠正版本)。`context_entry` 的 Inference 行记录 `evaluationId` 与 `inputDigest`，并有唯一约束，确保同一次评估不重复追加条目。
 

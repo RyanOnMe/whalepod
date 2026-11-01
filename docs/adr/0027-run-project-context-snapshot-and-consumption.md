@@ -93,17 +93,18 @@ Run 创建事务内按固定规则选取，规则版本写入快照：
 - 活跃 Run：显示依据已变化；不承诺收回模型已读到的内容；不自动停止执行（除非责任人走既有取消路径）。
 - 历史 Run：保留快照头、条目身份、digest、引用与逐条不可用标记；正文读取按当前权限与 §2 的条目状态。来源撤销 24 小时内清除未冻结的来源副本（ADR-0024），快照正文按第 2 节保留策略处理。
 - **本地 DSH session 日志与副本**：`read_project_context`/`read_artifact_input` 的正文会随 `tool/result` 写入 Node 本地 session JSONL（`compression: none`，PC-00 已证同类行为），也可能被 compaction 摘要或 spill 文件复制。Hub 的 `run_project_context_entry.body` 按 ADR-0024 §8 **保留**（不在本 ADR 物理清除）；Node 本地副本按以下规则处理：
-  - **Run 终态**：删除 `runtime-context/<runId>` 与 `runtime-home/<runId>/spill`；对 `runtime-home/<runId>` 做一次脱敏扫描：把 `read_project_context`/`read_artifact_input` 的 tool/result 正文、含 entry digest/上下文 nonce 的 compaction 摘要与 spill 文件替换为 `[redacted: project context]`（保留 callId、entryId、耗时与对话结构，保证续聊可装载）。
-  - **来源撤销/撤回**：24 小时内对受影响 Run 执行同一清理——**无论 Run 是否活跃**：删除 `runtime-context/<runId>` 中受影响条目（无法条目级删除则整目录删除）与对应 spill，脱敏 `runtime-home`；后续 `read_project_context` 对不可读条目返回不可用，不注入、不取消，已读内容不收回。Hub 快照正文按 0024 §8 保留但 `retracted` 条目不可读。
+  - **Run 终态**：删除 `runtime-context/<runId>` 与 `runtime-home/<runId>/spill`；对 `runtime-home/<runId>` 做一次脱敏扫描：把 `read_project_context`/`read_artifact_input` 的 tool/result 正文、含 entry digest/上下文 nonce 的 compaction 摘要与 spill 文件替换为 `[redacted: project context]`（保留 callId、entryId、耗时与对话结构，保证续聊可装载）。终态后（含此前处于 `cleanup_pending` 的 Run）再跑一次完整扫描并清空队列。
+  - **来源撤销/撤回**：分两档。**活跃 Run** 不删除 `runtime-context`/spill、不脱敏 `runtime-home`，只维护撤销条目集合，`read_project_context` 对集合内条目返回不可用；不取消工具、不注入、不改写已交付上下文（守 ADR-0024 §7.4 与 §5）。**Run 终态后 24 小时内**再执行 `runtime-context/<runId>`（受影响条目，无法条目级删除则整目录）与 spill 删除、`runtime-home` 脱敏；`cleanup_pending` 队列只收终态 Run（活跃 Run 标 `deferred_until_terminal`，不入队），由每小时重试继续。最终零命中只在终态后判定；已读内容不收回。Hub 快照正文按 0024 §8 保留但 `retracted` 条目不可读。
   - **助手转述**：模型对正文的改写/转述属于已交付内容（0024 §7.7「无法收回」），不承诺按语义删除；但助手消息里出现 entry digest、原文片段或上下文 nonce 时按同一规则物理替换（逐字引用会被命中并替换，纯改写不保证）。零命中判据只扫这些标记与原文片段，不把任意转述当失败。
   - **范围限制**：零命中只承诺 Node 受管目录（`runtime-home`、`runtime-context`、`coordination-home`）；模型 provider 侧的请求/响应日志与平台保留不在本轮清除范围，不得把本地零命中写成全链路无正文。
-  - **离线/丢失设备**：Node 维护本地待清理队列；设备离线时读面显示「本地清理待完成」，下次启动先清扫终态 Run 与过期目录。**在线 Node 运行期每小时重试同一队列**（与 ADR-0026 的协调目录一致），失败持续记 `cleanup_pending` 并保留在队列，不依赖重启；物理限制如实说明：设备永不回来时无法保证远端清除。
+  - **离线/丢失设备**：Node 维护本地待清理队列，**队列项只收已终态 Run**（带 `runTerminalAt`；活跃 Run 标 `deferred_until_terminal`，不入队）；设备离线时读面显示「本地清理待完成」，下次启动先清扫终态 Run 与过期目录。**在线 Node 运行期每小时重试同一队列**（与 ADR-0026 的协调目录一致），失败持续记 `cleanup_pending` 并保留在队列，不依赖重启；物理限制如实说明：设备永不回来时无法保证远端清除。
   - **证据包**：禁止收录完整 DSH JSONL；只允许脱敏片段与 digest。
   - **负控**：终态/撤销后扫描 `runtime-home/<runId>`、`runtime-context/<runId>`（以及协调的 `coordination-home/<evaluationId>`）中的原文片段与 digest，必须零命中；删除脱敏步骤的变异必须变红。
 
 ### 7 数据与协议草图（实施时以协议与 migration 为准）
 
 - Node wire：`run.start` 增加 `projectContext: { snapshotId, digest, headerText, headerDigest, manifest }`；`runtime.initialize` 增加同构字段 + `entriesDir`。
+- 撤销通知：Hub 在来源撤销/撤回时向 owner Node 下发 `run.context_revoked`（`{ runId, entryIds[], reason }`，不含正文）；Node 持久化撤销集合并以本地帧转给 Runtime，`read_project_context` 对集合内条目返回不可用；不重启、不取消、不改写已交付内容。活跃 Run 的本地副本保留到终态（§6）。
 - 上行：`runtime.context_receipt`（Runtime→Node，本地）与 `run.context_receipt`（Node→Hub，专用帧）；Hub 校验归属与 §4 谓词后落库。
 - HTTP 读面：Run 详情增加 `projectContext: { snapshotId, entries[{ entryId, kind, title, entryStatus, readAt }], unselected, deliveredAt, consumedAt, unavailable }`；正文只在条目为 `frozen` 且权限通过时返回；下载接口按 Run 与 Node 归属鉴权。
 - 表：`run_project_context`（§2 头字段，含 `headerText/headerDigest`）、`run_project_context_entry`（§2 条目字段 + `deliveredAt`/`readAt`）、`run_context_receipt`（`runId`、`snapshotId`、`receiptSeq`、`headerDigest`、`nonceMatched`、`entriesDelivered`、`entriesRead`、`readEvents`、`missing`、`digestVerified`、`at`；唯一键 `(runId, snapshotId, receiptSeq)`）、`run_context_consumption`（`snapshotId`、`entryId`、`threadId?`、`runId`、`readAt`；唯一 `(snapshotId, entryId)`）。
@@ -122,7 +123,7 @@ Run 创建事务内按固定规则选取，规则版本写入快照：
 - 负控：Inference 不能被选入（界面与 API 各一条）；未映射身份成员的 Decision/批准/完成表述不得成为 Decision，未映射作者的带引用 Observation 可被选入且标 `identityUnverified`；未激活的 `model_inferred` 线程条目不自动选入；权限未知/过期时不存在 override 路径；来源撤销后派发被阻止；快照 digest 与下载内容不符时不启动 Runtime；撤回版本的正文在历史页不可读；`source_tombstoned` 后快照正文仍按 0024 保留但标注来源版本已清理；非 owner Node 不能下载；活跃 Run 不因来源变化自动 followup；只记快照 ID 或无 `entriesRead` 时不得标 `consumed`；`nonceMatched=false`、`headerDigest` 不符、`entriesRead` 越界、`receiptSeq` 重复各自拒绝；首条回执超时 → `failed(CONTEXT_UNAVAILABLE)`，空快照 Run 不被 watchdog 误杀；旧 Node 未声明 `project-context.v1` 时带内容的快照不派发；Run 终态与撤销后，`runtime-home/<runId>`、`runtime-context/<runId>`、`coordination-home/<evaluationId>` 按原文片段与 digest 扫描零命中（助手改写转述按 §6 的边界处理）。
 - 消费判据：首条请求包含 `[project-context:<nonce>]`（replay `{{fromRequest}}` 或等价探针）；`read_project_context` 返回结构化字段与正文；回执 `entriesRead` 与工具调用一致；只保存 ID 的变体必须红。
 - 每条新判据做一次单点变异（去掉派发判权、去掉 digest 校验、允许 Inference 选入、去掉回执谓词、允许旧 Node 派发），必须变红。
-- 留存负控：正文 >50KB 强制走 spill 后，终态/撤销扫描 `runtime-home/<runId>/spill` 与 `runtime-context/<runId>` 必须零命中（spill 根落到 OS tmpdir 时该判据必须红）；终态脱敏首次失败注入后，每小时重试至零命中，失败期间读面显示清理未完成；映射成员在聊天里写「approved」仍只是 Observation，不能成为 Decision，也不能据此写业务状态。
+- 留存负控：正文 >50KB 强制走 spill 后，终态扫描 `runtime-home/<runId>/spill` 与 `runtime-context/<runId>` 必须零命中（spill 根落到 OS tmpdir 时该判据必须红）；来源撤销时活跃 Run 的 `runtime-context` 文件仍存在但撤销条目读取被拒，Run 进入终态后才删除并零命中；终态脱敏首次失败注入后，每小时重试至零命中，失败期间读面显示清理未完成；映射成员在聊天里写「approved」仍只是 Observation，不能成为 Decision，也不能据此写业务状态。
 
 ### 10 不做什么
 
