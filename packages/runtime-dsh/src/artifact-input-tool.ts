@@ -67,7 +67,22 @@ export function createReadArtifactInputTool(
         },
         additionalProperties: false,
       },
-      render: (args, _value) => [{ type: 'text', text: `artifact input: ${args.artifactId}` }],
+      // 模型只看到 render 投影：DSH 的 canonical value 是 execution-local，
+      // 不随 tool/result 落库（rc.8 dsh-tools README「value … never replayed」）。
+      // 因此内容与结构化字段必须在这里显式投影，缺了它们 Reviewer 只拿到一个 id。
+      render: (_args, value) => {
+        const lines = [
+          `artifact input: ${value.artifactId}`,
+          `title: ${value.title}`,
+          `mediaType: ${value.mediaType}`,
+          `byteSize: ${value.byteSize}`,
+          `sha256: ${value.sha256}`,
+          `truncated: ${value.truncated}`,
+        ]
+        if (value.note !== undefined) lines.push(`note: ${value.note}`)
+        if (value.content !== undefined) lines.push('', value.content)
+        return [{ type: 'text', text: lines.join('\n') }]
+      },
     },
     execute: async (args) => {
       // 白名单判定在触 fs 之前：未知 id（含任何路径形字符串）直接拒绝。

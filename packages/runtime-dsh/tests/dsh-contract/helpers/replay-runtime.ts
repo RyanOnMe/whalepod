@@ -36,6 +36,9 @@ export type ReplayScenario =
   | 'handoff'
   | 'handoff-hang'
   | 'handoff-followup'
+  // PC-00 (#463) 协调计算能力边界：模型调 bash / 按清单读 artifact 输入的脚本。
+  | 'tool-boundary'
+  | 'read-artifact-input'
 
 const CONFIG_DIR = fileURLToPath(new URL('../../../config/', import.meta.url))
 const FIXTURES_DIR = fileURLToPath(new URL('../fixtures/', import.meta.url))
@@ -153,6 +156,13 @@ export interface ReplayRuntimeOptions {
    * agent/status 两条订阅过滤线），用于注入越界事件/状态。
    */
   probeAfterReady?: (probe: RuntimeProbeFace) => void
+  /**
+   * **探针专用**（PC-00 #463）：在 replay 层之后追加的 Loader patch 文件。
+   * 用于验证「boot 层 `disabled: true` 真正移除了工具」——权限边界来自插件
+   * 不挂载，而不是 `ctx.tools.restrict()` 的可见性遮罩（vendor README 明示
+   * restrict 不是 authority boundary）。
+   */
+  extraPatchFiles?: readonly string[]
 }
 
 export async function startReplayRuntime(
@@ -192,7 +202,7 @@ export async function startReplayRuntime(
     log: (record) => {
       logs.push(record)
     },
-    extraPatchFiles: [join(CONFIG_DIR, 'replay.yml')],
+    extraPatchFiles: [join(CONFIG_DIR, 'replay.yml'), ...(probeOptions.extraPatchFiles ?? [])],
     ...(probeOptions.probeResumeSessionId === undefined
       ? {}
       : { probeResumeSessionId: probeOptions.probeResumeSessionId }),

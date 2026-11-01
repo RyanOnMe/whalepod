@@ -125,3 +125,51 @@ describe('read_artifact_input tool', () => {
     }
   })
 })
+
+describe('model-facing projection (render)', () => {
+  /**
+   * rc.8 的 canonical value 是 execution-local、不随 tool/result 落库（dsh-tools
+   * README：「value … never replayed」），模型只看到 render 投影。投影必须自带
+   * 结构化字段与正文，否则 Reviewer 只拿到一个 id、读不到材料（PC-00 #463）。
+   */
+  it('projects metadata and text content into the model-facing blocks', async () => {
+    seed(TEXT_ENTRY, '# report\n')
+    const tool = makeTool()
+    const value = (await tool.execute({ artifactId: TEXT_ENTRY.artifactId }, {} as never)) as never
+    const blocks = tool.output.render({ artifactId: TEXT_ENTRY.artifactId }, value)
+    const text = blocks.map((block) => ('text' in block ? block.text : '')).join('\n')
+    expect(text).toContain(`artifact input: ${TEXT_ENTRY.artifactId}`)
+    expect(text).toContain(`title: ${TEXT_ENTRY.title}`)
+    expect(text).toContain(`mediaType: ${TEXT_ENTRY.mediaType}`)
+    expect(text).toContain(`byteSize: ${TEXT_ENTRY.byteSize}`)
+    expect(text).toContain(`sha256: ${TEXT_ENTRY.sha256}`)
+    expect(text).toContain('truncated: false')
+    expect(text).toContain('# report\n')
+    expect(text).not.toContain(inputsDir)
+  })
+
+  it('keeps binary content out but projects the note and metadata', async () => {
+    seed(BINARY_ENTRY, Buffer.from([0, 1, 2, 3]))
+    const tool = makeTool()
+    const value = (await tool.execute(
+      { artifactId: BINARY_ENTRY.artifactId },
+      {} as never,
+    )) as never
+    const blocks = tool.output.render({ artifactId: BINARY_ENTRY.artifactId }, value)
+    const text = blocks.map((block) => ('text' in block ? block.text : '')).join('\n')
+    expect(text).toContain(`artifact input: ${BINARY_ENTRY.artifactId}`)
+    expect(text).toContain('note: binary artifact')
+    expect(text).not.toContain('\u0000')
+  })
+
+  it('projects the truncation fact for oversized text', async () => {
+    const big: ArtifactInputEntry = { ...TEXT_ENTRY, byteSize: 200_000 }
+    seed(big, 'a'.repeat(200_000))
+    const tool = makeTool([big])
+    const value = (await tool.execute({ artifactId: big.artifactId }, {} as never)) as never
+    const blocks = tool.output.render({ artifactId: big.artifactId }, value)
+    const text = blocks.map((block) => ('text' in block ? block.text : '')).join('\n')
+    expect(text).toContain('truncated: true')
+    expect(text).toContain('note: text truncated')
+  })
+})
