@@ -7,7 +7,7 @@
 | [project-source-lifecycle-acceptance.md](./project-source-lifecycle-acceptance.md) | PC-02a #455（ADR-0024）：来源绑定/暂停/恢复/撤销、采集租约续租与过期断档、权限真实重验（含暂停来源）、采集器撤销/离线级联（含暂停来源撤销）与 7 天转不可用；真实 WS 假 Node 的两账号、幂等与负控；边界如实列（真实飞书、Web、正文与派生失效未做） |
 | [2026-10-30-project-context-coordination-plan.md](./2026-10-30-project-context-coordination-plan.md) | 2026-11-01 修订：持续项目协调、线程订阅、变化关联与新 Run 消费；保留 PC-02a 已交付进展，新增 PC-00 复用/兼容试验，拆分内部薄链与真实办公闭环 |
 | [2026-11-01-superagent-reuse-analysis.md](./2026-11-01-superagent-reuse-analysis.md) | 固定上游提交与 WhalePod 逐模块复用矩阵：同步仓储/PG、Ticket/Run、权限/撤权、飞书修订、DSH 版本与隔离；上游纯核心 144 项和兼容探针 4 项通过，真实平台及整包未验 |
-| [2026-11-01-pc00-rc8-coordination-compat-acceptance.md](./2026-11-01-pc00-rc8-coordination-compat-acceptance.md) | PC-00 #463：rc.8 工具禁用（正控/归因控/变异）、artifact 输入引用的模型可见投影、结构化结果不落库的交付面；`read_artifact_input` 正文投影修复与 `tools.restrict` 非权限边界事实 |
+| [2026-11-01-pc00-rc8-coordination-compat-acceptance.md](./2026-11-01-pc00-rc8-coordination-compat-acceptance.md) | PC-00 #463：rc.8 工具行禁用（仅 `tool-bash`；正控/归因控/审批顺序/变异）、artifact 输入引用进入下一次模型请求、结构化结果只经 render 投影（tool/result 无 value）；`read_artifact_input` 正文投影修复与 `tools.restrict` 非权限边界事实 |
 | [whalepod-product-background.md](./whalepod-product-background.md) | 供其他 Agent 独立研讨的自包含产品背景：定位、领域对象、产品与系统架构、2026-10-26 进度快照、痛点假设、审阅方向、真实团队验证与讨论要求；不需先读仓库 |
 | [app-ui-polish-acceptance.md](./app-ui-polish-acceptance.md) | #421：网页源码提取的输入栏、审批与文件展示槽位，混淆包/来源校验、文件动作菜单、九档布局与键盘独立判定 |
 | [reactbits-management-acceptance.md](./reactbits-management-acceptance.md) | #432：成员、插件、Agents 与设备组件精修；真实邀请/安装/组合/配对与十二档几何验收 |

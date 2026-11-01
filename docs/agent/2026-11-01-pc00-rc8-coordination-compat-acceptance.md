@@ -47,8 +47,8 @@ pnpm test:dsh-contract
 | 正控：fixture 真能执行 | 同一 fixture 不禁用任何行时 bash 执行、结果含 `probe-ok`、`isError=false` | 「positive control」 |
 | 归因控：禁用是行定位的 | 只禁用无关行 `tool-jobs` 时 bash 照常执行 | 「attribution control」 |
 | 输入引用结构化交付 | 模型可见内容含 `artifactId/title/mediaType/byteSize/sha256/truncated` 与正文；路径形 id 返回 `unknown artifact input`；结果不含三种本机路径 | 「projects metadata and text content」 |
-| 投影进入下一次请求 | step 2 用 `{{fromRequest:# coordination input}}` 引用只存在于投影的正文；解析成功即证明正文进了模型请求 | 「the projected content reaches the next model request」 |
-| canonical value 不落库 | `tool/result` 的 data 与 message 都没有 `value` 字段（rc.8 execution-local 契约） | 同上（两条 `Object.hasOwn` 断言） |
+| 投影进入下一次请求 | step 2 用 `{{fromRequest:PC00_ECHO_463}}` 引用只存在于投影的正文（唯一 token，prompt/manifest 里没有）；解析成功即证明正文进了模型请求 | 「the projected content reaches the next model request」 |
+| canonical value 不在事件里 | `tool/result` 的 data 与 message 都没有 `value` 字段（rc.8 execution-local 契约的 event 面判据；耐久面是 vendor 文档结论） | 同上（两条 `Object.hasOwn` 断言） |
 | 无清单 fail-closed | 两次调用都是 `UNKNOWN_TOOL`（`read_artifact_input` 不注册） | 「without a manifest」 |
 
 ## 归因
@@ -75,13 +75,13 @@ Q1：packages/runtime-dsh/tests/artifact-input-tool.spec.ts（11 passed）
 | 不提供清单（既有负控） | 两次调用 `UNKNOWN_TOOL` | — |
 | 只禁用无关行 `tool-jobs`（归因控） | bash 照常执行 | — |
 
-64KiB 截断由单测边界用例钉住：恰好 `INPUT_TEXT_ECHO_LIMIT_BYTES` 不截断、`+1` 截断到上限且 `truncated=true`；改常量会直接改变断言结果。
+64KiB 截断由单测边界用例钉住：先断言常量就是 64KiB（只拿常量生成样本的话，改常量不会红），再断言恰好 `INPUT_TEXT_ECHO_LIMIT_BYTES` 不截断、`+1` 截断到上限且 `truncated=true`。
 
 ## 发现与修复（#463）
 
 1. **`read_artifact_input` 的模型可见投影缺失**：修复前 `render` 只回 `artifact input: <id>`，正文与结构化字段都没进模型上下文——Reviewer 实际读不到材料，只有接口。修复后投影含 `title/mediaType/byteSize/sha256/truncated/note` 与正文（超限截断沿用 64KiB 上限），单测与 Q3 探针同时钉住「内容进入下一次请求」。协议、清单格式与读取白名单未变。
-2. **数据流变化**：正文现在会随 `tool/result` 进入模型可见内容，也会写进 Node 本地 DSH session 日志（`whalepod.patch.yml` 设为明文 `compression: none`）。这与既有 `tool-fs` 读取的可见性同级，`runtime-inputs` 下载副本仍按终态清理；证据包必须排除完整 DSH JSONL，只留脱敏片段。
-3. **`ctx.tools.restrict()` 不是权限边界**：vendor README 原文「live visibility composition, not an authority boundary」。协调计算的工具限制只能来自 boot 层插件禁用（本切片判据）、审批策略与沙箱；这条作为 ADR-0026/0027 的设计输入。
+2. **数据流变化**：正文现在会随 `tool/result` 进入模型可见内容，也会写进 Node 本地 DSH session 日志（`whalepod.patch.yml` 设为明文 `compression: none`）。这与既有 `tool-fs` 读取的可见性同级，`runtime-inputs` 下载副本仍按终态清理；证据包必须排除完整 DSH JSONL，只留脱敏片段。前提是 artifact 输入本身是团队可见的非凭据材料；含 Token/凭据的内容应在发布前过 secret-scan，不应作为输入交付。
+3. **`ctx.tools.restrict()` 不是权限边界**：vendor README 原文「live visibility composition, not an authority boundary」。协调计算的工具限制只能来自 boot 层插件禁用（本切片判据）、审批策略与沙箱；这是机制层规则，协调专用装配尚未验证。这条作为 ADR-0026/0027 的设计输入。
 4. **结构化结果不随会话落库**：canonical value 是 execution-local，resume/replay 都拿不回来。跨 Hub 的结构化判断必须由 `output.render`（或 `finalizeContent`）投影成模型可见内容再解析，不能假设存在可回放的 JSON 值。
 5. **禁用工具仍会打扰一次审批**：vendor native 路径先经 `tools/pre-execute`，批准后执行体才解析失败。命令始终不执行，但「禁用行不产生审批打扰」不成立；若产品要求零打扰，需要在 pre-execute 之前加路由 guard（后续切片）。
 

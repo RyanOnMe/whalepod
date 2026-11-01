@@ -48,8 +48,8 @@ const DISABLE_BASH = join(OVERLAYS_DIR, 'disable-bash.yml')
 const DISABLE_JOBS = join(OVERLAYS_DIR, 'disable-jobs.yml')
 
 const ARTIFACT_ID = '01905f7c-0000-7000-8000-000000000901'
-const ARTIFACT_CONTENT = '# coordination input\n'
-const ARTIFACT_SHA256 = '9df55e30bbb748b1a0ddc8bd3d47eeacac645a6876fa14c3bf5b3b238aa1946e'
+const ARTIFACT_CONTENT = '# coordination input PC00_ECHO_463\n'
+const ARTIFACT_SHA256 = '27d7914d8616dabcda2ec2a18beb01a89fc67e0427fec6834fbe3d51fbe29410'
 const ARTIFACT_BYTES = Buffer.byteLength(ARTIFACT_CONTENT)
 
 /**
@@ -135,8 +135,14 @@ async function driveToCompletion(runtime: ProbeRuntime, prompt: string): Promise
   await runtime.send(initializeCommand(runtime.spec))
   await runtime.until('runtime.ready')
   await runtime.send(commandFrame('run.prompt', { runId: runtime.spec.runId, text: prompt }))
-  // 正常路径是 run.completed；replay 的 {{fromRequest}} 解析失败会先发
-  // runtime.fatal——两条一起等，红的时候当场说明是哪条，而不是挂 90s。
+  await waitForSettled(runtime)
+}
+
+/**
+ * 正常路径是 run.completed；replay 的 {{fromRequest}} 解析失败或其它桥内错误
+ * 会先发 runtime.fatal——两条一起等，红的时候当场说明是哪条，而不是挂 90s。
+ */
+async function waitForSettled(runtime: ProbeRuntime): Promise<void> {
   const outcome = await Promise.race([
     runtime.until('run.completed').then(() => 'completed'),
     runtime
@@ -180,7 +186,8 @@ describe('PC-00: a disabled tool row leaves the model surface and cannot execute
   it('approval_required: a disabled tool still asks once, and still cannot execute', async () => {
     // vendor native 路径：未知工具先经 tools/pre-execute（审批门），批准后执行体
     // 才解析失败。这是「禁用行不执行」的补充事实，不是零打扰的能力。
-    const spec = runtimeSpec()
+    // 显式写 approval_required：默认值变化时用例应当先红在意图上，而不是退化成别的档位。
+    const spec = { ...runtimeSpec(), approvalPolicy: 'approval_required' as const }
     const runtime = await startReplayRuntime('tool-boundary', spec, {
       extraPatchFiles: [DISABLE_BASH],
     })
@@ -199,7 +206,7 @@ describe('PC-00: a disabled tool row leaves the model surface and cannot execute
           decision: 'allowed_once',
         }),
       )
-      await runtime.until('run.completed')
+      await waitForSettled(runtime)
 
       const [toolResult] = toolResultsOf(runtime.outputs) as [ToolResultData]
       expect(isErrorOf(toolResult)).toBe(true)
@@ -295,10 +302,12 @@ describe('PC-00: artifact input references reach the model as structured content
     try {
       await driveToCompletion(runtime, 'read the listed input')
 
-      // fixture 的 step 2 用 {{fromRequest:# coordination input}} 引用只存在于
+      // fixture 的 step 2 用 {{fromRequest:PC00_ECHO_463}} 引用只存在于
       // render 投影里的正文；匹配不到会 fail loud，所以这句出现即证明投影
       // 真的进了下一次模型请求，而不只是落在 tool/result 事件里。
-      expect(outputsText(runtime.outputs)).toContain('Input echo: # coordination input')
+      // nonce 不在 manifest/prompt 里：请求级证据不是「当前文本恰好不同」。
+      expect(JSON.stringify(spec.artifactInputs)).not.toContain('PC00_ECHO_463')
+      expect(outputsText(runtime.outputs)).toContain('Input echo: PC00_ECHO_463')
     } finally {
       await runtime.dispose()
     }

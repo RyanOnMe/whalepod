@@ -16,8 +16,8 @@
   机检半边补齐：回滚演练进 Q3，判定实现与 lock-drift 共用；真实「装另一版 → 不兼容 →
   回滚安装树」如实标为人工门，步骤与预期输出在 dsh-upgrade skill）
 - 最新核对（#463，2026-11-01）· `feat/pc-00-rc8-coord-compat` · **新增协调计算能力边界三项**：
-  boot 层工具禁用（含正控与行定位归因控）、artifact 输入引用的模型可见投影、结构化结果的
-  交付面（canonical value 不落库）。同时修掉 `read_artifact_input` 只回 id、正文进不了
+  boot 层工具行禁用（含正控与行定位归因控）、artifact 输入引用进入下一次模型请求、结构化结果
+  只经 render 投影（tool/result 无 value）。同时修掉 `read_artifact_input` 只回 id、正文进不了
   模型上下文的缺陷；详见 [PC-00 验收](./2026-11-01-pc00-rc8-coordination-compat-acceptance.md)。
 
 ## 〇、这份文件为什么存在
@@ -42,10 +42,11 @@
 | 指令回执 | `pnpm test:dsh-contract`、`pnpm test:integration` | `packages/runtime-dsh/tests/dsh-contract/instruction-receipt.contract.spec.ts`（#289 新增）、`apps/hub/tests/instruction-queue.integration.spec.ts` | 有判据：契约门内覆盖「initialize 前显式拒且零帧 / 重复 initialize 显式拒 / 受理的 prompt 有回执且先于结算」；Hub 侧指令状态结算照旧 |
 | 事件流范围 | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/event-stream.contract.spec.ts`、`event-stream-scope.contract.spec.ts`（#289 新增） | 有判据：seq 单调/关联/顺序 + **越界（异会话）事件不转发、不结算**与**异 agent 状态不成帧**的负向（变异自证：两条过滤各自单点削弱即红）；范围语义自订阅面起算，总线分发作用域未覆盖（见第五节） |
 
-## 一之二、协调计算能力边界（PC-00 #463）
+## 一之二、协调机制探针三项（PC-00 #463；仅 tool-bash 行）
 
-持续协调的受限计算只依赖这三项；它们不是六项主能力的一部分，但不满足就不能把
-「协调角色」建在 rc.8 上。
+持续协调的受限计算依赖这三项机制；它们不是六项主能力的一部分，但不满足就不能把
+「协调角色」建在 rc.8 上。这里只验证机制本身：工具行只钉 `tool-bash`，协调专用装配
+（逐项禁用 fs/workflow/web 等）尚未验证。
 
 | 能力 | 判定命令 | 判据文件 | 覆盖状态 |
 |---|---|---|---|

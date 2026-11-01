@@ -1,8 +1,10 @@
 # PC-00 (#463) probe overlay: remove the model-facing `bash` tool at boot.
 #
-# A boot-level `disabled` row is the authority boundary — the plugin never
-# loads, so no schema is advertised and no call can resolve. This is
-# deliberately NOT `ctx.tools.restrict()`: the vendor README calls restriction
-# "live visibility composition, not an authority boundary".
+# A boot-level `disabled` row removes this plugin's tool from the model surface;
+# it is a row-level removal, not a containment boundary for other tools (fs,
+# workflow, web, jobs… stay mounted in the production bundle).
+#
+# This is deliberately NOT `ctx.tools.restrict()`: the vendor README calls
+# restriction "live visibility composition, not an authority boundary".
 - id: tool-bash
   disabled: true

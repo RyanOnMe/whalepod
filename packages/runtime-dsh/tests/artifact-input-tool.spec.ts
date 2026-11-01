@@ -10,8 +10,11 @@ import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createReadArtifactInputTool, type ArtifactInputEntry } from '../src/artifact-input-tool.js'
-import { INPUT_TEXT_ECHO_LIMIT_BYTES } from '../src/artifact-input-tool.js'
+import {
+  createReadArtifactInputTool,
+  INPUT_TEXT_ECHO_LIMIT_BYTES,
+  type ArtifactInputEntry,
+} from '../src/artifact-input-tool.js'
 
 let root: string
 let inputsDir: string
@@ -90,6 +93,8 @@ describe('read_artifact_input tool', () => {
   })
 
   it('pins the echo boundary exactly (limit is not truncated, limit+1 truncates to limit)', async () => {
+    // 常量本身也要钉住：只用常量生成文件大小的话，改常量不会让判据红。
+    expect(INPUT_TEXT_ECHO_LIMIT_BYTES).toBe(64 * 1024)
     const atLimit: ArtifactInputEntry = {
       ...TEXT_ENTRY,
       artifactId: '01905f7c-0000-7000-8000-000000000902',
