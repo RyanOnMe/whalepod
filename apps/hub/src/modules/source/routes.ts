@@ -86,15 +86,16 @@ export function registerSourceRoutes(app: FastifyInstance, deps: SourceRouteDeps
     const { projectId: rawProjectId } = request.params as { projectId: string }
     const projectId = parseIdParam(rawProjectId, 'project id')
     const body = CreateProjectSourceRequestSchema.parse(request.body)
-    const view = await bindProjectSource(deps.database, collector, {
+    const result = await bindProjectSource(deps.database, collector, {
       projectId,
       actor: toActor(actor),
       request: body,
       idempotencyKey: readIdempotencyKey(request),
     })
     audit(request, 'source.bind', 'success', actor.userId)
-    logContext(request, 'source.bound', view)
-    return reply.code(201).send({ ok: true, data: view })
+    // 同 key 重放不改变来源状态，也不发射观测事件（HTTP 审计仍逐请求记账）。
+    if (result.changed) logContext(request, 'source.bound', result.view)
+    return reply.code(201).send({ ok: true, data: result.view })
   })
 
   // GET /sources/:sourceId：来源详情（权限水位、代次、最近成功读取）。
@@ -111,28 +112,28 @@ export function registerSourceRoutes(app: FastifyInstance, deps: SourceRouteDeps
     const actor = await deps.requireActor(request)
     const { sourceId: rawSourceId } = request.params as { sourceId: string }
     const sourceId = parseIdParam(rawSourceId, 'source id')
-    const view = await pauseProjectSource(deps.database, {
+    const result = await pauseProjectSource(deps.database, {
       sourceId,
       actor: toActor(actor),
       idempotencyKey: readIdempotencyKey(request),
     })
     audit(request, 'source.pause', 'success', actor.userId)
-    logContext(request, 'source.paused', view)
-    return { ok: true, data: view }
+    if (result.changed) logContext(request, 'source.paused', result.view)
+    return { ok: true, data: result.view }
   })
 
   app.post('/sources/:sourceId/resume', async (request) => {
     const actor = await deps.requireActor(request)
     const { sourceId: rawSourceId } = request.params as { sourceId: string }
     const sourceId = parseIdParam(rawSourceId, 'source id')
-    const view = await resumeProjectSource(deps.database, collector, {
+    const result = await resumeProjectSource(deps.database, collector, {
       sourceId,
       actor: toActor(actor),
       idempotencyKey: readIdempotencyKey(request),
     })
     audit(request, 'source.resume', 'success', actor.userId)
-    logContext(request, 'source.resumed', view)
-    return { ok: true, data: view }
+    if (result.changed) logContext(request, 'source.resumed', result.view)
+    return { ok: true, data: result.view }
   })
 
   app.post('/sources/:sourceId/revoke', async (request) => {
@@ -140,14 +141,14 @@ export function registerSourceRoutes(app: FastifyInstance, deps: SourceRouteDeps
     const { sourceId: rawSourceId } = request.params as { sourceId: string }
     const sourceId = parseIdParam(rawSourceId, 'source id')
     const body = RevokeProjectSourceRequestSchema.parse(request.body)
-    const view = await revokeProjectSource(deps.database, {
+    const result = await revokeProjectSource(deps.database, {
       sourceId,
       actor: toActor(actor),
       idempotencyKey: readIdempotencyKey(request),
       reason: body.reason,
     })
     audit(request, 'source.revoke', 'success', actor.userId)
-    logContext(request, 'source.revoked', view)
-    return { ok: true, data: view }
+    if (result.changed) logContext(request, 'source.revoked', result.view)
+    return { ok: true, data: result.view }
   })
 }

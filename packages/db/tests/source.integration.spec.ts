@@ -21,6 +21,7 @@ import {
   createTestDatabase,
   resetDatabase,
   seedRunPrereqs,
+  waitForValue,
   type SeedIds,
 } from './helpers.js'
 
@@ -183,13 +184,26 @@ describe('project source DB invariants', () => {
     await shared
 
     const revoke = revokeDevice(database.db, ids.deviceId, new Date())
-    const first = await Promise.race([
-      revoke.then(() => 'revoked' as const),
-      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 200)),
-    ])
-    expect(first).toBe('blocked')
+    // 判据是「revoke 真的排在 device 行锁后面」，不是猜一个 200ms 窗口。
+    // 持有者在途时阻塞等待可能记在事务 ID 锁上，因此按被阻塞的 update 会话判定。
+    try {
+      await waitForValue(async () => {
+        const rows = await database.sql<{ count: number }[]>`
+          select count(*)::int as count
+          from pg_stat_activity
+          where datname = current_database()
+            and pid <> pg_backend_pid()
+            and wait_event_type = 'Lock'
+            and cardinality(pg_blocking_pids(pid)) > 0
+            and query ilike '%revoked_at%'
+        `
+        return (rows[0]?.count ?? 0) > 0 ? true : undefined
+      }, 'revoke waiting on the device row lock')
+    } finally {
+      // 断言失败也要放行 blocker，避免把后续用例的表锁一起拖住。
+      release()
+    }
 
-    release()
     expect((await holder)?.revokedAt).toBeNull()
     expect((await revoke)?.revokedAt).not.toBeNull()
   })

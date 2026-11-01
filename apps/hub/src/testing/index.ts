@@ -43,9 +43,21 @@ export interface WarnEvent {
   readonly msg: string
 }
 
+/** 捕获 hub.context 观测事件（来源状态变化/协调结果）；只含不透明 id、状态与代次。 */
+export interface ContextEvent {
+  readonly component: 'hub.context'
+  readonly action?: string
+  readonly sourceId?: string
+  readonly projectId?: string
+  readonly status?: string
+  readonly permissionState?: string
+  readonly authorizationGeneration?: number
+}
+
 class AuditStream extends Writable {
   readonly events: AuditEvent[] = []
   readonly warnings: WarnEvent[] = []
+  readonly contextEvents: ContextEvent[] = []
 
   override _write(
     chunk: Buffer | string,
@@ -60,9 +72,11 @@ class AuditStream extends Writable {
           component?: string
           level?: number
           msg?: string
-        } & AuditEvent
-        if (entry.component === 'hub.audit') this.events.push(entry)
-        else if (
+        }
+        if (entry.component === 'hub.audit') this.events.push(entry as AuditEvent)
+        if (entry.component === 'hub.context') this.contextEvents.push(entry as ContextEvent)
+        // warn 捕获与 component 分类正交：hub.context 的错误行既要可观测也要能被告警断言看到。
+        if (
           entry.level === 40 &&
           typeof entry.component === 'string' &&
           typeof entry.msg === 'string'
@@ -85,6 +99,7 @@ export interface TestApp {
   readonly setupTokenPath: string
   readonly auditEvents: AuditEvent[]
   readonly warnEvents: WarnEvent[]
+  readonly contextEvents: ContextEvent[]
   readonly config: HubConfig
   close(): Promise<void>
 }
@@ -138,6 +153,7 @@ export async function createTestApp(
     setupTokenPath,
     auditEvents: audit.events,
     warnEvents: audit.warnings,
+    contextEvents: audit.contextEvents,
     config,
     close: async () => {
       await app.close()
