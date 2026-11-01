@@ -5,19 +5,25 @@
  * 协调计算只回传结构化判断」列为持续协调的前提。本探针用**真 boot 栈**
  * （dsh-base → whalepod bundle → replay，与生产同一路径）验证三件事：
  *
- * 1. 工具禁用：patch 层 `disabled: true` 让插件**不挂载**——模型调用得到
+ * 1. 工具行禁用：patch 层 `disabled: true` 让该插件**不挂载**——模型调用得到
  *    unknown-tool 错误、命令不执行、Run 仍正常收尾；正控（同 fixture 不禁用）
  *    与旁路控（禁用无关行）都真实执行。三者同绿才把失败归因到该 patch 行，
- *    而不是 fixture 写错或「任何额外层都会弄坏工具」。vendor README 明示
- *    `ctx.tools.restrict()` 只是可见性组合、不是权限边界，故本探针只认
- *    boot 层考察。
- * 2. 输入引用：带清单时 `read_artifact_input` 按白名单读取，模型侧拿到
- *    结构化元数据与正文；路径形 id 被拒且消息不含绝对路径；无清单时工具
- *    根本不存在（输入面 fail-closed）。
+ *    而不是 fixture 写错或「任何额外层都会弄坏工具」。
+ *    只证明**被禁用的那一行**从模型面消失；协调专用装配还要逐项禁用
+ *    workflow/fs/web 等行，那是后续切片（见验收文档的边界）。
+ * 2. 输入引用：带清单时 `read_artifact_input` 按白名单读取，模型可见内容含
+ *    结构化字段与正文，并且**该内容真的进入下一次模型请求**（回放脚本用
+ *    `{{fromRequest:...}}` 引用只存在于投影里的正文；匹配不到即 fail loud）；
+ *    路径形 id 被拒且消息不含绝对路径；无清单时工具根本不存在。
  * 3. 结构化结果：rc.8 的 canonical value 是 execution-local、不随 tool/result
- *    落库（dsh-tools README：「value … never replayed」），模型可见内容由
- *    `output.render` 投影决定。因此本探针断言的是**模型实际收到的内容**，
- *    这正是 Hub 侧解析结构化判断时必须依赖的面。
+ *    落库（dsh-tools README：「value … never replayed」）。这里直接断言
+ *    tool/result 的 data 与 message 都没有 `value`；模型可见内容由
+ *    `output.render` 投影决定——Hub 侧要解析的结构化判断必须走这一面。
+ *
+ * approval_required 下的顺序是 vendor native 路径的事实：未知工具仍会先经
+ * `tools/pre-execute` 产生一次审批请求，批准后执行体才解析失败。所以本文件
+ * 另有一条用例钉住「会打扰一次审批，但命令仍不执行」；不能把「零审批帧」
+ * 写成禁用行的性质。
  *
  * #463 之前 `read_artifact_input` 的 render 只回 `artifact input: <id>`，
  * 正文与结构化字段都没进模型上下文（Reviewer 读不到材料）——本切片的探针
@@ -25,7 +31,8 @@
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { RuntimeOutput } from '@whalepod/protocol'
 import {
@@ -36,7 +43,7 @@ import {
   type ProbeRuntime,
 } from './helpers/replay-runtime.js'
 
-const OVERLAYS_DIR = new URL('./overlays/', import.meta.url).pathname
+const OVERLAYS_DIR = dirname(fileURLToPath(new URL('./overlays/disable-bash.yml', import.meta.url)))
 const DISABLE_BASH = join(OVERLAYS_DIR, 'disable-bash.yml')
 const DISABLE_JOBS = join(OVERLAYS_DIR, 'disable-jobs.yml')
 
@@ -111,20 +118,40 @@ function resultText(data: ToolResultData): string {
   return (blockOf(data)?.content ?? []).map((block) => block.text ?? '').join('\n')
 }
 
+/** 帧里所有字符串叶子——用于断言回放脚本真的引用了上一轮结果。 */
+function stringsOf(value: unknown): string[] {
+  if (typeof value === 'string') return [value]
+  if (Array.isArray(value)) return value.flatMap(stringsOf)
+  if (typeof value === 'object' && value !== null) return Object.values(value).flatMap(stringsOf)
+  return []
+}
+
+function outputsText(outputs: readonly RuntimeOutput[]): string {
+  return stringsOf(outputs.map((frame) => frame.payload)).join('\n')
+}
+
 /** initialize → ready → 指令 → 等 Run 收尾（工具结果先于收尾帧落 session 流）。 */
 async function driveToCompletion(runtime: ProbeRuntime, prompt: string): Promise<void> {
   await runtime.send(initializeCommand(runtime.spec))
   await runtime.until('runtime.ready')
   await runtime.send(commandFrame('run.prompt', { runId: runtime.spec.runId, text: prompt }))
-  await runtime.until('run.completed')
+  // 正常路径是 run.completed；replay 的 {{fromRequest}} 解析失败会先发
+  // runtime.fatal——两条一起等，红的时候当场说明是哪条，而不是挂 90s。
+  const outcome = await Promise.race([
+    runtime.until('run.completed').then(() => 'completed'),
+    runtime
+      .until('runtime.fatal')
+      .then((fatal) => `runtime.fatal ${fatal.payload.code}: ${fatal.payload.summary}`),
+  ])
+  expect(outcome).toBe('completed')
 }
 
-describe('PC-00: boot-level tool disabling is the coordination-compute authority boundary', () => {
+describe('PC-00: a disabled tool row leaves the model surface and cannot execute', () => {
   it('a disabled row removes the tool: unknown-tool result, no execution, run still completes', async () => {
     const spec = { ...runtimeSpec(), approvalPolicy: 'full_access' as const }
-    // approval_policy 不是本用例的主体；full_access 让「禁用失效」当场以命令
-    // 真实执行（marker 出现）暴露，而不是挂在审批等待上拖到超时。
-    const runtime = await startReplayRuntime('tool-boundary', spec, {
+    // full_access 让「禁用失效」当场以命令真实执行（marker 出现）暴露，而不是
+    // 挂在审批等待上拖到超时；审批顺序另有 approval_required 用例钉住。
+    const runtime = await startReplayRuntime('tool-boundary-disabled', spec, {
       extraPatchFiles: [DISABLE_BASH],
     })
     try {
@@ -140,10 +167,45 @@ describe('PC-00: boot-level tool disabling is the coordination-compute authority
       // 插件不挂载 ⇒ 命令零执行：正控里 stdout 的 marker 在此绝不能出现在
       // 结果内容里（模型自己的调用参数仍会出现在 session 日志，那不是执行证据）。
       expect(resultText(result)).not.toContain('probe-ok')
-      // 未知工具在策略层之前被拒：没有审批帧，也没有任何审批等待。
-      expect(runtime.outputs.some((frame) => frame.type === 'approval.requested')).toBe(false)
+      // 错误结果真的进入了下一次模型请求：回放脚本的 {{fromRequest}} 只在这一步
+      // 能解析（匹配不到即 fail loud），引用的正是 tool/result 里的错误文本。
+      expect(outputsText(runtime.outputs)).toContain('Tool error seen: Error: unknown tool "bash"')
       // 工具不可用不改变 Run 的生命周期：模型收到错误结果后继续收尾。
       expect(runtime.outputs.filter((frame) => frame.type === 'run.completed')).toHaveLength(1)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('approval_required: a disabled tool still asks once, and still cannot execute', async () => {
+    // vendor native 路径：未知工具先经 tools/pre-execute（审批门），批准后执行体
+    // 才解析失败。这是「禁用行不执行」的补充事实，不是零打扰的能力。
+    const spec = runtimeSpec()
+    const runtime = await startReplayRuntime('tool-boundary', spec, {
+      extraPatchFiles: [DISABLE_BASH],
+    })
+    try {
+      await runtime.send(initializeCommand(spec))
+      await runtime.until('runtime.ready')
+      await runtime.send(
+        commandFrame('run.prompt', { runId: spec.runId, text: 'run the bash probe' }),
+      )
+      const requested = await runtime.until('approval.requested')
+      expect(requested.payload.toolName).toBe('bash')
+      await runtime.send(
+        commandFrame('approval.decide', {
+          runId: spec.runId,
+          callId: requested.payload.callId,
+          decision: 'allowed_once',
+        }),
+      )
+      await runtime.until('run.completed')
+
+      const [toolResult] = toolResultsOf(runtime.outputs) as [ToolResultData]
+      expect(isErrorOf(toolResult)).toBe(true)
+      expect(toolResult.error?.code).toBe('UNKNOWN_TOOL')
+      expect(resultText(toolResult)).not.toContain('probe-ok')
+      expect(runtime.outputs.filter((frame) => frame.type === 'approval.requested')).toHaveLength(1)
     } finally {
       await runtime.dispose()
     }
@@ -186,20 +248,7 @@ describe('PC-00: artifact input references reach the model as structured content
   it('projects metadata and text content into the model-facing tool result', async () => {
     const inputsDir = makeInputsDir()
     writeFileSync(join(inputsDir, ARTIFACT_ID), ARTIFACT_CONTENT)
-    const spec = {
-      ...runtimeSpec(),
-      approvalPolicy: 'full_access' as const,
-      artifactInputs: [
-        {
-          artifactId: ARTIFACT_ID,
-          title: 'Coordination input',
-          mediaType: 'text/markdown',
-          byteSize: ARTIFACT_BYTES,
-          sha256: ARTIFACT_SHA256,
-        },
-      ],
-      artifactInputsDir: inputsDir,
-    }
+    const spec = withManifest(runtimeSpec(), inputsDir)
     const runtime = await startReplayRuntime('read-artifact-input', spec)
     try {
       await driveToCompletion(runtime, 'read the listed input')
@@ -224,10 +273,32 @@ describe('PC-00: artifact input references reach the model as structured content
       expect(callIdOf(escaped)).toBe('call-input-2')
       expect(isErrorOf(escaped)).toBe(true)
       expect(resultText(escaped)).toContain('unknown artifact input')
-      expect(JSON.stringify(escaped)).not.toContain(inputsDir)
-      expect(JSON.stringify(read)).not.toContain(inputsDir)
-      expect(JSON.stringify(read)).not.toContain(spec.workspacePath)
-      expect(JSON.stringify(escaped)).not.toContain(spec.dshHomePath)
+      for (const secretPath of [inputsDir, spec.workspacePath, spec.dshHomePath]) {
+        expect(JSON.stringify(read)).not.toContain(secretPath)
+        expect(JSON.stringify(escaped)).not.toContain(secretPath)
+      }
+
+      // canonical value 不在工具结果事件里（rc.8：execution-local、不落库）。
+      // 一旦上游改变这一点，这条兼容判据应当红，提醒重新评估 Hub 解析面。
+      expect(Object.hasOwn(read, 'value')).toBe(false)
+      expect(Object.hasOwn(read.message, 'value')).toBe(false)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('the projected content reaches the next model request (fromRequest echo)', async () => {
+    const inputsDir = makeInputsDir()
+    writeFileSync(join(inputsDir, ARTIFACT_ID), ARTIFACT_CONTENT)
+    const spec = withManifest(runtimeSpec(), inputsDir)
+    const runtime = await startReplayRuntime('read-artifact-input-manifest', spec)
+    try {
+      await driveToCompletion(runtime, 'read the listed input')
+
+      // fixture 的 step 2 用 {{fromRequest:# coordination input}} 引用只存在于
+      // render 投影里的正文；匹配不到会 fail loud，所以这句出现即证明投影
+      // 真的进了下一次模型请求，而不只是落在 tool/result 事件里。
+      expect(outputsText(runtime.outputs)).toContain('Input echo: # coordination input')
     } finally {
       await runtime.dispose()
     }
@@ -251,3 +322,23 @@ describe('PC-00: artifact input references reach the model as structured content
     }
   })
 })
+
+function withManifest(
+  spec: ReturnType<typeof runtimeSpec>,
+  inputsDir: string,
+): ReturnType<typeof runtimeSpec> {
+  return {
+    ...spec,
+    approvalPolicy: 'full_access' as const,
+    artifactInputs: [
+      {
+        artifactId: ARTIFACT_ID,
+        title: 'Coordination input',
+        mediaType: 'text/markdown',
+        byteSize: ARTIFACT_BYTES,
+        sha256: ARTIFACT_SHA256,
+      },
+    ],
+    artifactInputsDir: inputsDir,
+  }
+}

@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createReadArtifactInputTool, type ArtifactInputEntry } from '../src/artifact-input-tool.js'
+import { INPUT_TEXT_ECHO_LIMIT_BYTES } from '../src/artifact-input-tool.js'
 
 let root: string
 let inputsDir: string
@@ -86,6 +87,34 @@ describe('read_artifact_input tool', () => {
     }
     expect(result.truncated).toBe(true)
     expect((result.content ?? '').length).toBeLessThan(200_000)
+  })
+
+  it('pins the echo boundary exactly (limit is not truncated, limit+1 truncates to limit)', async () => {
+    const atLimit: ArtifactInputEntry = {
+      ...TEXT_ENTRY,
+      artifactId: '01905f7c-0000-7000-8000-000000000902',
+      byteSize: INPUT_TEXT_ECHO_LIMIT_BYTES,
+    }
+    const overLimit: ArtifactInputEntry = {
+      ...TEXT_ENTRY,
+      artifactId: '01905f7c-0000-7000-8000-000000000903',
+      byteSize: INPUT_TEXT_ECHO_LIMIT_BYTES + 1,
+    }
+    seed(atLimit, 'a'.repeat(INPUT_TEXT_ECHO_LIMIT_BYTES))
+    seed(overLimit, 'a'.repeat(INPUT_TEXT_ECHO_LIMIT_BYTES + 1))
+    const tool = makeTool([atLimit, overLimit])
+    const exact = (await tool.execute({ artifactId: atLimit.artifactId }, {} as never)) as {
+      content?: string
+      truncated: boolean
+    }
+    expect(exact.truncated).toBe(false)
+    expect(Buffer.byteLength(exact.content ?? '')).toBe(INPUT_TEXT_ECHO_LIMIT_BYTES)
+    const over = (await tool.execute({ artifactId: overLimit.artifactId }, {} as never)) as {
+      content?: string
+      truncated: boolean
+    }
+    expect(over.truncated).toBe(true)
+    expect(Buffer.byteLength(over.content ?? '')).toBe(INPUT_TEXT_ECHO_LIMIT_BYTES)
   })
 
   it('rejects unknown artifactId without touching the filesystem', async () => {

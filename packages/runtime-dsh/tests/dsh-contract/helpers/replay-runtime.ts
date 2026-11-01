@@ -38,7 +38,9 @@ export type ReplayScenario =
   | 'handoff-followup'
   // PC-00 (#463) 协调计算能力边界：模型调 bash / 按清单读 artifact 输入的脚本。
   | 'tool-boundary'
+  | 'tool-boundary-disabled'
   | 'read-artifact-input'
+  | 'read-artifact-input-manifest'
 
 const CONFIG_DIR = fileURLToPath(new URL('../../../config/', import.meta.url))
 const FIXTURES_DIR = fileURLToPath(new URL('../fixtures/', import.meta.url))

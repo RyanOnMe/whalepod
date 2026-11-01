@@ -49,9 +49,9 @@
 
 | 能力 | 判定命令 | 判据文件 | 覆盖状态 |
 |---|---|---|---|
-| 工具禁用（权限边界） | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/tool-boundary.contract.spec.ts`、`packages/runtime-dsh/tests/dsh-contract/overlays/disable-bash.yml` | 有判据：patch 层 `disabled: true` → 调用返回 `UNKNOWN_TOOL`、结果内容无执行 marker、零审批帧、Run 正常收尾；正控（不禁用）与行定位归因控（只禁用无关行）同时绿 |
-| 输入引用（模型可见） | `pnpm test:dsh-contract`、`pnpm test:unit` | `packages/runtime-dsh/tests/dsh-contract/tool-boundary.contract.spec.ts`、`packages/runtime-dsh/tests/artifact-input-tool.spec.ts`、`packages/runtime-dsh/src/artifact-input-tool.ts` | 有判据：清单白名单读取，模型可见内容含结构化字段与正文；路径形 id 拒绝且不带本机路径；无清单时工具不注册（`UNKNOWN_TOOL`） |
-| 结构化结果交付面 | `pnpm test:dsh-contract`、`pnpm test:unit` | `packages/runtime-dsh/tests/dsh-contract/tool-boundary.contract.spec.ts`、`packages/runtime-dsh/src/artifact-input-tool.ts` | 有判据：模型实际收到的内容由 `output.render` 投影决定；canonical value 为 execution-local、不随 `tool/result` 落库，resume/replay 不得假设它能回来 |
+| 工具行禁用（模型面移除） | `pnpm test:dsh-contract` | `packages/runtime-dsh/tests/dsh-contract/tool-boundary.contract.spec.ts`、`packages/runtime-dsh/tests/dsh-contract/overlays/disable-bash.yml` | 有判据（仅 `tool-bash` 一行）：调用返回 `UNKNOWN_TOOL`、结果内容无执行 marker、错误文本经 `{{fromRequest}}` 进入下一次请求、Run 正常收尾；正控（不禁用）与行定位归因控（只禁用无关行）同时绿。默认 `approval_required` 下会先产生一次 `approval.requested`（vendor native 顺序），批准后仍不执行；其余工具行仍挂载，见验收文档边界 |
+| 输入引用（模型可见） | `pnpm test:dsh-contract`、`pnpm test:unit` | `packages/runtime-dsh/tests/dsh-contract/tool-boundary.contract.spec.ts`、`packages/runtime-dsh/tests/artifact-input-tool.spec.ts`、`packages/runtime-dsh/src/artifact-input-tool.ts` | 有判据：清单白名单读取，模型可见内容含结构化字段与正文，且正文经 `{{fromRequest}}` 证明进入下一次模型请求；路径形 id 拒绝且不带本机路径；无清单时工具不注册（`UNKNOWN_TOOL`）；64KiB 截断边界有单测 |
+| 结构化结果交付面 | `pnpm test:dsh-contract`、`pnpm test:unit` | `packages/runtime-dsh/tests/dsh-contract/tool-boundary.contract.spec.ts`、`packages/runtime-dsh/src/artifact-input-tool.ts` | 有判据：`tool/result` 的 data/message 均无 `value`（rc.8 execution-local）；模型实际收到的内容由 `output.render` 投影决定。跨 resume/replay 的耐久面为 vendor 文档结论，未做运行期判据（#463） |
 
 ## 二、熔断四规则
 
@@ -86,7 +86,7 @@ G0「release 必跑、PR 必跑」，而 `.github/workflows/check.yml` 只跑 Q0
 
 | 门 | 位置 | 本机实测 |
 |---|---|---|
-| Q3（`pnpm test:dsh-contract`） | `check.yml` · `check` job 末尾 | 20 spec / 79 用例 ~6s（无 PG/Docker/网络；A0-6 接线时 16/63，#288/#289/#290/#463 新增 16 条） |
+| Q3（`pnpm test:dsh-contract`） | `check.yml` · `check` job 末尾 | 20 spec / 81 用例 ~6s（无 PG/Docker/网络；A0-6 接线时 16/63，#288/#289/#290/#463 新增 18 条） |
 | Q7（`pnpm test:security`） | `check.yml` · `integration` job 末尾 | 17.5s（含一次性 PG） |
 | Q6（`pnpm test:resilience`） | `check.yml` · `integration` job 末尾 | 32 用例 9.5s（含一次性 PG） |
 | Q5 / Q8 / Q9 | 保持 release 级 | 有明确理由：真实浏览器 / 机器规格判据 / 镜像构建；见 g0g1g2-tiers 与 compose-standard-loop-acceptance |
@@ -139,11 +139,18 @@ G0「release 必跑、PR 必跑」，而 `.github/workflows/check.yml` 只跑 Q0
   composition, not an authority boundary"——它隐藏 schema，但不构成执行授权。协调计算的限制必须
   来自 boot 层插件禁用（第一之二节）、审批与沙箱。本仓库没有做「restrict 后直接调用仍执行」的
   运行期探针，该结论只来自 vendor 文档，不登记为机器判据。
+- **只钉了一行工具禁用**（#463）：生产 bundle 仍挂载 `tool-fs`（read/write/edit）、
+  `tool-fs-search`、`tool-workflow`、`tool-str-replace-editor`、`tool-web`、`tool-jobs`、
+  `tool-subagent*`、`tool-todo`、`tool-goal` 等行；`tool-workflow` 的 worker 不是安全沙箱。
+  协调专用装配要逐项禁用并各自探针，后续切片在 #463 下推进，不能把「bash 被禁」当成执行面已关闭。
+- **artifact 正文会进入本地 session 日志**（#463）：`read_artifact_input` 的投影修复让正文
+  （≤64KiB）随 `tool/result` 落进 Node 的 DSH JSONL（`compression: none`）。这与既有
+  `tool-fs` 读取的可见性同级，`runtime-inputs` 副本仍按终态清理；证据包必须排除完整 DSH JSONL。
 
 ## 六、复跑
 
 ```bash
-pnpm test:dsh-contract     # Q3：20 spec / 79 用例（含 apps/runtime 两文件 5 条），约 6s
+pnpm test:dsh-contract     # Q3：20 spec / 81 用例（含 apps/runtime 两文件 5 条），约 6s
 pnpm test:security         # Q7：18 用例 + secret-scan 自检/实扫 + 许可门
 pnpm test:resilience       # Q6：32 用例
 pnpm check                 # Q0（含本文件的机检：scripts/tests/runtime-capability-contract.spec.ts）
