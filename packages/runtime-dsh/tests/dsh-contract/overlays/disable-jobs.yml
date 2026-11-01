@@ -1,0 +1,6 @@
+# PC-00 (#463) attribution control: disabling an unrelated row must leave
+# `bash` mounted. Proves `disabled: true` is row-targeted and the bash result
+# in the disable-bash probe is attributable to that row, not to "any extra
+# patch layer breaks tools".
+- id: tool-jobs
+  disabled: true
