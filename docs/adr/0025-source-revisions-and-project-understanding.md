@@ -32,7 +32,7 @@
 
 1. **模型不能写 Decision、Correction、Run 完成态或审批结果**。协调帧的结果处理器只接受 `kind=inference`；数据库 CHECK 与写入 API 都拒绝非成员 actor 写 decision/correction。
 2. **Observation 与 Inference 必须带至少一条引用**（source 或 business）；无引用的模型文字不得进入项目读面，只留在评估记录里供排障。
-3. **Correction 优先于任何自动结果**。同一目标条目被纠正后，迟到的评估结果按 §5 丢弃，不得复活被纠正结论。
+3. **Correction 优先于任何自动结果**。同一目标条目被纠正后，迟到的评估结果按 §5 丢弃，不得复活被纠正结论。Correction 本身 append-only、不改写被纠正行的正文/引用/status；唯一允许的目标行派生写入是 `correctedAt`（标记该行已退出当前有效集）。
 4. **事实与推断在同一个读面并列展示但类型可见**；界面不得把 Inference 渲染成 Decision。
 
 **两种引用**（同一 JSON 形状，按 `kind` 二选一）：
@@ -51,9 +51,9 @@ Decision 不新建独立决策存储：`context_entry` 的 Decision 行只是既
 | 成果发布 | `Artifact.id` + `publishedAt` | 已发布且未撤回的 Artifact；撤回时投影器在同一事务把 active 行改 `retracted` |
 | 交接接收 | `handoffReceipt.id` + `confirmedAt` | 已确认且未被 adopt 覆盖的接收版本；旧版本为历史 |
 
-投影器在**既有业务事务内**直接读取业务行并写入/更新投影（不依赖 24 小时补发日志，也不依赖事件重放）：`businessRef` 解析到业务行，`businessVersion` 取该行的版本值；同一 `(businessRef, businessVersion)` 在 `context_entry` 唯一，投影重试幂等。业务行版本前进时追加新行、旧行标 `superseded`；同一 `businessRef` 永远只有一行 `active`（部分唯一索引 `(businessRef) WHERE kind='decision' AND status='active'`，投影器对旧 active 行 `FOR UPDATE` 后 CAS）。**所有业务写路径必须调用同一个投影 helper**：任务约定确认/adopt、成果发布/撤回、交接确认/adopt（以及未来业务审批的最终决定）；没有独立写入口。
+投影器在**既有业务事务内**直接读取业务行并写入/更新投影（不依赖 24 小时补发日志，也不依赖事件重放）：`businessRef` 解析到业务行，`businessVersion` 取该行的版本值；同一 `(businessRef, businessVersion)` 在 `context_entry` 唯一，投影重试幂等。业务行版本前进时追加新行、旧行标 `superseded`；同一 `businessRef` 至多一行**未被纠正的** `active`（部分唯一索引 `(businessRef) WHERE kind='decision' AND status='active' AND correctedAt IS NULL`，投影器对旧 active 行 `FOR UPDATE` 后 CAS）。被 Correction 否定的行保持 `status='active'` 与正文不变，但 `correctedAt` 非空、不参与该唯一索引与当前有效集；因此新版本可以正常插入，不需要改写被纠正行。**所有业务写路径必须调用同一个投影 helper**：任务约定确认/adopt、成果发布/撤回、交接确认/adopt（以及未来业务审批的最终决定）；没有独立写入口。
 
-全量重算修复任务按 `(businessRef, businessVersion)` upsert，保留既有 `entryId`，不改变已被 Correction 否定的条目状态，也不复活被纠正结论；业务行消失时把 active 投影标 `retracted`，不删除历史行。
+全量重算修复任务按 `(businessRef, businessVersion)` upsert，保留既有 `entryId` 与 `correctedAt`，不清除纠正标记、不把被纠正行重新算成有效、也不复活被纠正结论；业务行消失时把**未被纠正的** active 投影标 `retracted`，被纠正行保持原状（本就不在当前有效集），不删除历史行。
 
 两条**不同** `businessRef` 同时解析为当前且内容互斥时（例如两个不同交接接收都被视为当前、两份成果对同一目标给出互斥结论），读面标 `conflict`，不得自动选一条；同一引用链的新旧版本不构成冲突，旧版一律 `superseded`。
 
@@ -66,7 +66,7 @@ Decision 不新建独立决策存储：`context_entry` 的 Decision 行只是既
   - `observed-sequence`：无平台顺序时按观察序号；只用于「重读比较」，不用于跨节点比较。
 - **重复事件带新内容**：同一 `eventId` 再次到达但 `revisionToken/digest` 不同，记 `duplicate_conflict`，触发重读当前内容；**不得静默当作 duplicate 丢掉新版本**。
 - **迟到与乱序**：只有当前授权代次、且版本令牌新于已存最新观察时才能推进 `project_source.latestRevisionId` 与新增的 `latestObservedAt`；乱序旧版只作为历史行保留（有界），不覆盖读面。`content-digest` 没有顺序：A→B→A 时第三次观察复用第一次的 revision 行（内容相同即同版），但 `latestRevisionId` 回到 A 行、`latestObservedAt` 更新为本次观察时间；读面用「最新观察」而不是 revision 行的 `observedAt` 判断新鲜度。`observed-sequence` 只在本节点内比较，跨节点不可用。
-- **撤回/删除**：形成 `retracted` 版本（或删除事件），所有读面（含已冻结 Run 快照）只显示元数据与不可用标记，不再展示正文；正文按 ADR-0024 §8 清除。不能删除审计身份。
+- **撤回/删除**：形成 `retracted` 版本（或删除事件），所有读面（含已冻结 Run 快照）**不再展示正文**，只显示元数据与不可用标记；来源 revision 的正文按 ADR-0024 §8 清除，Run 快照里已交付的冻结正文按 0024 §8 随 Run 保留但不展示（ADR-0027 §2 的 `retracted`），不得把「保留交付记录」误写成「仍可读」。不能删除审计身份。
 - **缺口**：补拉未覆盖的区间记录 `gap`（起止时间/游标、原因）；读面显示「可能缺 N 条」，不声称抓到了每次中间编辑。
 - **正文落库**：只有通过来源范围、权限代次与租约校验的正文才写入；越界内容只留最小拒绝审计，不复用上游「过滤但仍保留」的行为（ADR-0024 §5）。
 
@@ -93,7 +93,7 @@ Decision 不新建独立决策存储：`context_entry` 的 Decision 行只是既
 ### 5 冲突、纠正与自动重试
 
 - **冲突并列**：同一目标出现互斥 Observation/Inference 时，读面并列展示并标注来源、时间与类型，不自动裁决；Decision 只能由人给出。两条**不同 `businessRef`** 同时解析为当前且内容互斥时标 `conflict`，不按时间自动取最新；同一 `businessRef` 的旧版本一律 `superseded`，不参与冲突。
-- **纠正追加**：Correction 不修改被纠正行；「当前有效集」= 未被 Correction 否定的条目；不存在冲突时按业务版本/时间取最新，存在冲突时并列。历史请求与历史 Run 仍显示当时快照。
+- **纠正追加**：Correction 不修改被纠正行；「当前有效集」= `status='active' AND correctedAt IS NULL` 且未被冲突排除的条目；不存在冲突时按业务版本/时间取最新，存在冲突时并列。历史请求与历史 Run 仍显示当时快照。
 - **迟到结果**：评估提交时若输入水位、任一来源代次、权限状态、模型/处理器身份、或纠正版本与评估开始时不一致，整份结果丢弃并记 `stale`；同输入重试不重复提醒，也不撤销纠正。
 - **幂等**：评估身份 `inputDigest` = hash(输入条目与版本集合、每来源 `authorizationGeneration`、模型/provider 与处理器版本、规则版本、纠正版本)。`context_entry` 的 Inference 行记录 `evaluationId` 与 `inputDigest`，并有唯一约束，确保同一次评估不重复追加条目。
 
@@ -115,7 +115,7 @@ Decision 不新建独立决策存储：`context_entry` 的 Decision 行只是既
 | `source_event_attempt` | `id`、`sourceId`、`eventId`、`attempt`、`revisionId?`、`observedDigest`、`outcome`（accepted/duplicate/duplicate_conflict/stale/denied/gap）、`reason?`、`receivedAt` | `(sourceId, eventId, attempt)` 唯一；append-only，`denied` 只记最小拒绝审计 |
 | `project_thread` | `id`、`projectId`、`sourceId`、`threadKey`、`status` | `(sourceId, threadKey)` 唯一（NULLS NOT DISTINCT）；项目一致 |
 | `work_link` | `id`、`projectId`、`threadId`、`taskId?`、`runId?`、`kind`、`state`（proposed/active/invalidated）、`stateChangedAt`、`createdBy`、`activatedBy?`、`evidenceRef?` | `(threadId, taskId, runId, kind)` 唯一（NULLS NOT DISTINCT）；task/run 二选一 CHECK；WorkLink 只表达线程级关联，条目级消费见 ADR-0027 |
-| `context_entry` | `id`、`projectId`、`kind`（observation/inference/decision/correction）、`status`（active/superseded/conflict/retracted）、`title`、`bodyRef?`、`payload`、`threadId?`、`sourceId?`、`revisionId?`、`businessRef?`、`businessVersion?`、`targetEntryId?`（Correction）、`evaluationId?`/`inputDigest?`（Inference）、`createdBy`、`actorKind`、`processorVersion?` | Inference 必须有 citation、`evaluationId` 与 `inputDigest`；Observation 必须有 citation（source 或 business），不要求 evaluationId；Decision 必须有成员 actor、businessRef 与 businessVersion，并 `(businessRef, businessVersion)` 唯一；Correction 必须有 `targetEntryId` 且 `actorKind='member'` |
+| `context_entry` | `id`、`projectId`、`kind`（observation/inference/decision/correction）、`status`（active/superseded/conflict/retracted）、`correctedAt?`、`title`、`bodyRef?`、`payload`、`threadId?`、`sourceId?`、`revisionId?`、`businessRef?`、`businessVersion?`、`targetEntryId?`（Correction）、`evaluationId?`/`inputDigest?`（Inference）、`createdBy`、`actorKind`、`processorVersion?` | Inference 必须有 citation、`evaluationId` 与 `inputDigest`；Observation 必须有 citation（source 或 business），不要求 evaluationId；Decision 必须有成员 actor、businessRef 与 businessVersion，约束 `(businessRef, businessVersion)` 唯一 + `(businessRef) WHERE kind='decision' AND status='active' AND correctedAt IS NULL` 唯一；Correction 必须有 `targetEntryId` 且 `actorKind='member'`，同一事务写目标行 `correctedAt`（不改正文/status，重复纠正幂等） |
 | `context_citation` | `entryId`、`kind`（source/business）、source 字段或 `businessRef/businessVersion/occurredAt` | 与 entry 同事务写入；按 entry.kind 校验必填组 |
 | `source_gap` | `sourceId`、`fromCursor`、`toCursor`、`reason`、`detectedAt` | 只追加；读面据此显示缺口 |
 
