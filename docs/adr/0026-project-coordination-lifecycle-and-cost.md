@@ -92,7 +92,7 @@
 ### 5 输入、结果提交与围栏
 
 - 输入上限：单次最多 N 个 revision、M 字节、K 个 token（默认建议 32 条 / 256KiB / 32k token，实施时以配置固定）；超出部分显式列入未纳入清单，不静默截断。
-- **输入交付**：Hub 在 `coordination.request` 中给清单与本次上限（`maxOutputTokens/maxCostMicros`）；Node 通过 `GET /api/v1/coordination/evaluations/:evaluationId/inputs/:entryId` 按条目下载正文（必须携带 `leaseToken` 与 `attempt` 鉴权），逐条校验 digest 与字节数，存 `coordination-home/<evaluationId>/inputs/`；任一不符即 `failed(input_digest_mismatch)`，不启动模型。**每次下载都复核当前 `authorizationGeneration`、权限状态与评估归属**（ADR-0025 §4 的读时判权）；request 之后被撤销/过期/撤回的条目返回 `denied`，评估转 `cancelled(source_unavailable)`，不下载、不启动模型。协调 Node 与采集 Node 可以不同，下载鉴权按评估归属，不把正文暴露给无关 Node。
+- **输入交付**：Hub 在 `coordination.request` 中给清单与本次上限（`inputTokensEstimate/maxInputTokens/maxOutputTokens/maxCostMicros`）；Node 通过 `GET /api/v1/coordination/evaluations/:evaluationId/inputs/:entryId` 按条目下载正文（必须携带 `leaseToken` 与 `attempt` 鉴权），逐条校验 digest 与字节数，存 `coordination-home/<evaluationId>/inputs/`；任一不符即 `failed(input_digest_mismatch)`，不启动模型。**每次下载都复核当前 `authorizationGeneration`、权限状态与评估归属**（ADR-0025 §4 的读时判权）；request 之后被撤销/过期/撤回的条目返回 `denied`，评估转 `cancelled(source_unavailable)`，不下载、不启动模型。超过 `maxInputTokens` 时 Node 必须拒绝（`failed(input_too_large)`），不得截断后冒充同一输入；`inputTokensEstimate` 的估算器在实现中固定为保守上界，不交给调用方自由估计。协调 Node 与采集 Node 可以不同，下载鉴权按评估归属，不把正文暴露给无关 Node。
 - **派发前额度硬闸与预留**：Hub 在派发事务内检查 Project 与团队的「已用 + 已预留」call/token/cost；`calls` 明确定义为**派发次数**（每次进入 dispatched 计 1，含之后未启动模型的失败派发），不是 provider 模型调用数，读面文案写「派发次数」。token 预留 = **输入估算 + maxOutputTokens**（输入估算按输入清单与固定估算器计算，估算器必须是保守上界——按字节/最小 token 比加固定开销，或由 `coordination.request` 传 `maxInputTokens` 并要求 Node 截断；估算超过剩余额度即不派发），不足即 `skipped(budget_exhausted)`，**不派发、不发生模型调用**。派发同一事务原子 `calls+1` 并预留 `reservedTokens`（输入估算 + 输出上限）与 `reservedCostMicros`，`coordination.request` 携带 `inputTokensEstimate/maxInputTokens/maxOutputTokens/maxCostMicros`，Node 不得越过输出与输入上限；单次调用是否允许越过日 token 上限由实现固定为「不允许」，否则 token 硬闸不成立。
 - 结果帧携带 `evaluationId`、`attempt`、`leaseToken`、`resultDigest`、`usage`。
 - 提交事务：
@@ -106,7 +106,7 @@
 - 写入只追加 Inference 与引用；同 `inputDigest` 不重复追加条目。
 - **计费与结果接受分离**：只有进入 `dispatched` 的评估才写账本；`queued` 直接 `skipped/cancelled` 的从未派发，不写账本（数据表约束同步表述为「派发必有 reserved，已派发终态必有 settled」）。派发事务写 `coordination_usage_ledger` 预留记录（`phase='reserved'`，usage 为空，按输入估算 + `maxOutputTokens` 与 `maxCostMicros` 预留），无论后续结果如何都保留。评估行记录 `modelStartedAt`：Node 必须在调用模型 provider **之前**通过 `coordination.heartbeat`（或等价的 `model_started` 上报）发出第一个值，Hub 只保留首次值；该字段是结算依据，不是模型已产生 token 的证明。终态在**独立已提交事务**追加 `phase='settled'`，规则固定为：
   1. `modelStartedAt IS NULL` 且终态属于**明确可证明未启动模型**的 `input_digest_mismatch`、`credential_unavailable`、`cancelled(source_unavailable)`（且取消发生在模型启动前）→ settle 为 0，不按预留上限多记；
-  2. `modelStartedAt IS NULL` 但终态为 `failed(node_lost)`、`failed(timeout)`、`failed(usage_missing)`、崩溃/孤儿或任何无法证明未启动的失败 → **按 reserved 上限兜底**（未知即保守，不假设零消耗）；
+  2. `modelStartedAt IS NULL` 且不属于档 1 的任何其它终态（`failed(node_lost)`、`failed(timeout)`、`failed(usage_missing)`、`completed`、`stale`、成员/项目取消、崩溃/孤儿等）→ **一律保守兜底**：有可信 `usage` 按实际，否则按 reserved 上限；禁止落 0；
   3. `modelStartedAt` 非空：有 `usage` 按实际结算（即使越过派发上限也记实际并标 `over_budget`，不能少记）；`usage` 缺失按 reserved 上限兜底。
   结算事务先 `INSERT ... ON CONFLICT (evaluationId, attempt, phase) DO NOTHING`，只有插入成功才在**同一事务**把 `coordination_budget` 的对应预留转实耗；ledger 与 budget 任一失败整体回滚，由 sweeper 重试，不得拆成两个事务。跨 UTC 日按 reserved 记录的 `utcDate` 结算，不按结算时刻的日期；settled 行的 `utcDate` 必须等于同 `(evaluationId, attempt)` reserved 行的 `utcDate`，用 DB CHECK 或统一写入逻辑钉死，不靠实现纪律。sweeper 扫描 `phase='reserved'` 且无对应 `settled`、且评估已终态或租约已过期的行，按上述规则在同一事务完成 ledger、budget 与评估标记。结果是否被接受与账本是否记账互不影响。派发后 Node 崩溃/不上报/持续 stale 都会消耗 call 与预留，下一次派发按「已用 + 已预留」受限。`failed` 重试每次重新计费。账本数据来自 Node 上报的 `usage` 与 Hub 的预留——只对诚实 Node 的记账与硬闸有效，provider 侧对账不在本轮；不得把 Hub 账本写成独立可验证的计费事实。
 
@@ -134,7 +134,7 @@
 ### 8 协议与 Node 装配
 
 - `node.hello` 增加可选 `coordinationCapabilities: ['coordination.v1']`；Hub 只向声明能力的 Node 下发协调帧，旧 Node 不收到未知帧。部署顺序沿用 ADR-0024 §9（先 Hub 后 Node；旧 Hub 拒绝带新字段的 hello）。
-- 新增 Hub↔Node 协调帧（不是进程内本地帧）：`coordination.request`（评估 id、attempt、leaseToken、项目、输入清单、`inputTokensEstimate/maxOutputTokens/maxCostMicros`、截止时间）、`coordination.result`（结果 + digest + 代次/水位 + usage + evaluationId/attempt/leaseToken）、`coordination.cancel`、`coordination.heartbeat`（含首次 `modelStartedAt`；Node 在调用 provider 前必须先发一次）。载荷不含凭据与绝对路径。Runtime 与 Node 之间的 `runtime.context_receipt` 是另一类本地帧（ADR-0027）。
+- 新增 Hub↔Node 协调帧（不是进程内本地帧）：`coordination.request`（评估 id、attempt、leaseToken、项目、输入清单、`inputTokensEstimate/maxInputTokens/maxOutputTokens/maxCostMicros`、截止时间）、`coordination.result`（结果 + digest + 代次/水位 + usage + evaluationId/attempt/leaseToken）、`coordination.cancel`、`coordination.heartbeat`（含首次 `modelStartedAt`；Node 在调用 provider 前必须先发一次）。载荷不含凭据与绝对路径。Runtime 与 Node 之间的 `runtime.context_receipt` 是另一类本地帧（ADR-0027）。
 - Node 侧新增 `coordination` 用途的 Runtime 启动入口与 supervisor 子命令，复用 SecretStore、进程隔离与临时目录清理；不得复用业务 Run 的装配或 Session 身份。
 - Hub 不加载上游插件、不直连模型；模型调用只发生在 Node 的受限进程（ADR-0020）。
 
