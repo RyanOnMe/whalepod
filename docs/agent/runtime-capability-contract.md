@@ -15,7 +15,7 @@
 - 最新核对（#290，2026-10-16）· `feat/p1-290-rollback-drill` · **四规则 = 4 有判据**（规则 4 的
   机检半边补齐：回滚演练进 Q3，判定实现与 lock-drift 共用；真实「装另一版 → 不兼容 →
   回滚安装树」如实标为人工门，步骤与预期输出在 dsh-upgrade skill）
-- 最新核对（#463，2026-11-01）· `feat/pc-00-rc8-coord-compat` · **新增协调计算能力边界三项**：
+- 最新核对（#463，2026-11-01）· `feat/pc-00-rc8-coord-compat` · **新增协调机制探针三项（仅 tool-bash 行）**：
   boot 层工具行禁用（含正控与行定位归因控）、artifact 输入引用进入下一次模型请求、结构化结果
   只经 render 投影（tool/result 无 value）。同时修掉 `read_artifact_input` 只回 id、正文进不了
   模型上下文的缺陷；详见 [PC-00 验收](./2026-11-01-pc00-rc8-coordination-compat-acceptance.md)。

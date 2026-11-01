@@ -10,7 +10,7 @@
 
 1. **工具行禁用**：patch 层 `disabled: true` 让**被禁用的那一行**从模型面消失、调用不可执行；这是 rc.8 提供的机制。本切片只对 `tool-bash` 一行做判据，其他行仍挂载（见「边界」）。
 2. **输入引用**：`read_artifact_input` 按清单白名单交付结构化元数据与正文；投影内容真的进入下一次模型请求；路径形 id 被拒且不带本机路径；无清单时工具不存在。
-3. **结构化结果的交付面**：rc.8 的 canonical value 是 execution-local、不随 `tool/result` 落库；模型可见内容由 `output.render` 投影决定，Hub 侧要解析的判断必须走这一面。
+3. **结构化结果的交付面**：rc.8 的 canonical value 是 execution-local，`tool/result` 事件里没有 `value`（vendor README 的耐久面结论）；模型可见内容由 `output.render` 投影决定，Hub 侧要解析的判断必须走这一面。
 
 没有真实飞书租户、真实模型与后台常驻协调者；这些仍是 `not_run`（PC-01 #448、ADR-0025–0027 Proposed）。
 
@@ -82,7 +82,7 @@ Q1：packages/runtime-dsh/tests/artifact-input-tool.spec.ts（11 passed）
 1. **`read_artifact_input` 的模型可见投影缺失**：修复前 `render` 只回 `artifact input: <id>`，正文与结构化字段都没进模型上下文——Reviewer 实际读不到材料，只有接口。修复后投影含 `title/mediaType/byteSize/sha256/truncated/note` 与正文（超限截断沿用 64KiB 上限），单测与 Q3 探针同时钉住「内容进入下一次请求」。协议、清单格式与读取白名单未变。
 2. **数据流变化**：正文现在会随 `tool/result` 进入模型可见内容，也会写进 Node 本地 DSH session 日志（`whalepod.patch.yml` 设为明文 `compression: none`）。这与既有 `tool-fs` 读取的可见性同级，`runtime-inputs` 下载副本仍按终态清理；证据包必须排除完整 DSH JSONL，只留脱敏片段。前提是 artifact 输入本身是团队可见的非凭据材料；含 Token/凭据的内容应在发布前过 secret-scan，不应作为输入交付。
 3. **`ctx.tools.restrict()` 不是权限边界**：vendor README 原文「live visibility composition, not an authority boundary」。协调计算的工具限制只能来自 boot 层插件禁用（本切片判据）、审批策略与沙箱；这是机制层规则，协调专用装配尚未验证。这条作为 ADR-0026/0027 的设计输入。
-4. **结构化结果不随会话落库**：canonical value 是 execution-local，resume/replay 都拿不回来。跨 Hub 的结构化判断必须由 `output.render`（或 `finalizeContent`）投影成模型可见内容再解析，不能假设存在可回放的 JSON 值。
+4. **结构化结果不随会话落库（vendor 文档结论）**：canonical value 是 execution-local，resume/replay 都拿不回来。跨 Hub 的结构化判断必须由 `output.render`（或 `finalizeContent`）投影成模型可见内容再解析，不能假设存在可回放的 JSON 值。
 5. **禁用工具仍会打扰一次审批**：vendor native 路径先经 `tools/pre-execute`，批准后执行体才解析失败。命令始终不执行，但「禁用行不产生审批打扰」不成立；若产品要求零打扰，需要在 pre-execute 之前加路由 guard（后续切片）。
 
 ## 边界与未覆盖
