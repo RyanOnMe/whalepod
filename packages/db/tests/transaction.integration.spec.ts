@@ -14,9 +14,16 @@ import {
   setMemberRole,
   disableUser,
   transactCommand,
+  transactCommandWithOrigin,
 } from '../src/index.js'
-import { dispatchOutbox } from '../src/schema/index.js'
-import { createTestDatabase, makeRunInput, resetDatabase, seedRunPrereqs } from './helpers.js'
+import { commandReceipts, dispatchOutbox } from '../src/schema/index.js'
+import {
+  createTestDatabase,
+  makeRunInput,
+  resetDatabase,
+  seedRunPrereqs,
+  waitForValue,
+} from './helpers.js'
 
 // 02-第一阶段实施计划.md Task 4 Step 4：命令事务与「最后 Owner」事务策略。
 describe('transactCommand', () => {
@@ -61,6 +68,50 @@ describe('transactCommand', () => {
     const claimed = await outbox.claim()
     expect(claimed.map((command) => command.id)).toEqual([commandId])
     expect(await findCommandReceipt(database.db, key)).toMatchObject({ result })
+  })
+
+  it('reports whether a command executed or replayed', async () => {
+    const key = `cmd-${randomUUID()}`
+    const first = await transactCommandWithOrigin(database, key, async () => ({ value: 'first' }))
+    expect(first).toEqual({ value: { value: 'first' }, executed: true })
+
+    const second = await transactCommandWithOrigin(database, key, async () => {
+      throw new Error('replay must not execute the command body')
+    })
+    expect(second).toEqual({ value: { value: 'first' }, executed: false })
+  })
+
+  it('reports the loser as not executed on the 23505 conflict path', async () => {
+    const key = `cmd-${randomUUID()}`
+    let releaseWinner!: () => void
+    const winnerGate = new Promise<void>((resolve) => {
+      releaseWinner = resolve
+    })
+    let receiptWritten!: () => void
+    const winnerReceiptWritten = new Promise<void>((resolve) => {
+      receiptWritten = resolve
+    })
+    const winner = database.transaction(async (tx) => {
+      await tx.insert(commandReceipts).values({ key, result: { value: 'winner' } })
+      receiptWritten()
+      await winnerGate
+    })
+    await winnerReceiptWritten
+
+    let loserExecuted = false
+    const loser = transactCommandWithOrigin(database, key, async () => {
+      loserExecuted = true
+      return { value: 'loser' }
+    })
+    // loserExecuted 证明败者的事务内 SELECT 已完成；随后放行胜者提交，确定撞 23505。
+    try {
+      await waitForValue(() => (loserExecuted ? true : undefined), 'loser reached execute')
+    } finally {
+      // 断言失败也要放行胜者事务，避免后续 resetDatabase 挂在表锁上。
+      releaseWinner()
+    }
+    await winner
+    expect(await loser).toEqual({ value: { value: 'winner' }, executed: false })
   })
 
   it('rolls back everything when the command fails', async () => {

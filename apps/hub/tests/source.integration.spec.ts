@@ -10,11 +10,17 @@
  */
 import { randomUUID } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { eq } from 'drizzle-orm'
+import { asc, eq } from 'drizzle-orm'
 import WebSocket from 'ws'
 import type { FastifyInstance } from 'fastify'
 import type { Database } from '@whalepod/db'
-import { getDeviceById, getSourceLeaseForUpdate, listTeamEvents, schema } from '@whalepod/db'
+import {
+  getDeviceById,
+  getSourceLeaseForUpdate,
+  listTeamEvents,
+  schema,
+  transactCommand,
+} from '@whalepod/db'
 import {
   apiInject,
   createTestApp,
@@ -282,6 +288,25 @@ describe('PC-02a project source lifecycle', () => {
     return runSourceReconcileTick({ database, collector: nodeSourceCollector, now })
   }
 
+  /**
+   * 设备撤销的等待落在事务 ID 锁上（持有者在途时 PostgreSQL 不一定暴露 tuple 锁），
+   * 因此按「被阻塞的 update ... revoked_at 会话」判定，而不是猜固定时长。
+   */
+  async function waitForBlockedDeviceRevoke(): Promise<void> {
+    await waitForValue(async () => {
+      const rows = await database.sql<{ count: number }[]>`
+        select count(*)::int as count
+        from pg_stat_activity
+        where datname = current_database()
+          and pid <> pg_backend_pid()
+          and wait_event_type = 'Lock'
+          and cardinality(pg_blocking_pids(pid)) > 0
+          and query ilike '%revoked_at%'
+      `
+      return (rows[0]?.count ?? 0) > 0 ? true : undefined
+    }, 'revoke waiting on the device row lock')
+  }
+
   it('binds only after an online node advertises the capability; the view hides resource/app identity', async () => {
     const device = await pair(alice, 'alice-node-1')
     const node = await connectNode(device, 'alice-node-1')
@@ -400,6 +425,49 @@ describe('PC-02a project source lifecycle', () => {
     expect(await sourceCount()).toBe(1)
   })
 
+  it('replays a legacy bare-view receipt committed while the bind was checking permissions', async () => {
+    const device = await pair(alice, 'alice-node-46')
+    const node = await connectNode(device, 'alice-node-46')
+    const key = idemKey()
+    const legacyView = {
+      id: randomUUID(),
+      projectId,
+      platform: 'feishu',
+      kind: 'group',
+      displayLabel: '活动筹备群',
+      status: 'active',
+      permissionState: 'verified',
+      authorizationGeneration: 1,
+    }
+
+    // 模拟滚动升级：旧实例在本请求的权限检查期间用同一 key 提交了裸视图回执。
+    // 命令事务内的回执回读会原样拿到旧形状，必须归一化后才能返回给路由。
+    // 只写 command_receipt（模拟旧版本已提交的回执），不伪造来源状态；sourceCount 断言为 0。
+    // 删除条件：不再需要兼容旧格式回执（存量回执完成迁移或明确不支持混版）后删除本用例。
+    node.mode = 'silent'
+    const pending = bind(alice, device.deviceId, { resourceKey: 'oc_legacy_receipt' }, key)
+    await waitForValue(
+      async () => (node.checks.length > 0 ? true : undefined),
+      'permission check dispatched',
+    )
+    await transactCommand(database, `source.bind:${alice.userId}:${projectId}:${key}`, async () => {
+      return legacyView
+    })
+    node.socket.send(
+      nodeFrame('source.permission_result', {
+        requestId: node.checks[0]?.requestId,
+        result: 'readable',
+        appKey: node.appKey,
+        upstreamVersion: 'v1',
+      }),
+    )
+
+    const replay = await pending
+    expect(replay.statusCode).toBe(201)
+    expect(replay.json().data.id).toBe(legacyView.id)
+    expect(await sourceCount()).toBe(0)
+  }, 15_000)
+
   it('lets only the binder/admin pause, resume and revoke; each transition bumps the generation', async () => {
     const device = await pair(alice, 'alice-node-4')
     const node = await connectNode(device, 'alice-node-4')
@@ -488,6 +556,140 @@ describe('PC-02a project source lifecycle', () => {
       'revoked',
       'lease_changed',
     ])
+  })
+
+  it('emits hub.context only for real source changes, not replays or no-ops', async () => {
+    const device = await pair(alice, 'alice-node-44')
+    await connectNode(device, 'alice-node-44')
+    const key = idemKey()
+    const created = await bind(alice, device.deviceId, { resourceKey: 'oc_log_once' }, key)
+    expect(created.statusCode).toBe(201)
+    const sourceId = created.json().data.id as string
+
+    // 同 key 重放不改变状态，不发射第二条 source.bound。
+    expect(
+      (await bind(alice, device.deviceId, { resourceKey: 'oc_log_once' }, key)).statusCode,
+    ).toBe(201)
+    // 已 active 时 resume 是 no-op。
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/sources/${sourceId}/resume`,
+          payload: {},
+          idempotencyKey: idemKey(),
+        })
+      ).statusCode,
+    ).toBe(200)
+    // 已 paused 时再 pause 是 no-op；随后 resume/revoke 各只记一次。
+    for (const expected of [200, 200]) {
+      expect(
+        (
+          await apiInject(ctx, alice, {
+            method: 'POST',
+            url: `/api/v1/sources/${sourceId}/pause`,
+            payload: {},
+            idempotencyKey: idemKey(),
+          })
+        ).statusCode,
+      ).toBe(expected)
+    }
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/sources/${sourceId}/resume`,
+          payload: {},
+          idempotencyKey: idemKey(),
+        })
+      ).statusCode,
+    ).toBe(200)
+    for (const expected of [200, 200]) {
+      expect(
+        (
+          await apiInject(ctx, alice, {
+            method: 'POST',
+            url: `/api/v1/sources/${sourceId}/revoke`,
+            payload: { reason: '活动结束，停止同步' },
+            idempotencyKey: idemKey(),
+          })
+        ).statusCode,
+      ).toBe(expected)
+    }
+
+    expect(
+      ctx.contextEvents.filter((event) => event.sourceId === sourceId).map((event) => event.action),
+    ).toEqual(['source.bound', 'source.paused', 'source.resumed', 'source.revoked'])
+    // HTTP 审计与观测日志分离：8 次请求都记账，只有 4 次真实变更发 hub.context。
+    expect(
+      ctx.auditEvents.filter((event) =>
+        ['source.bind', 'source.pause', 'source.resume', 'source.revoke'].includes(event.action),
+      ),
+    ).toHaveLength(8)
+  })
+
+  it('does not audit lease_changed when a bind reuses a live same-device lease', async () => {
+    const device = await pair(alice, 'alice-node-45')
+    const node = await connectNode(device, 'alice-node-45')
+    const first = await bind(alice, device.deviceId, { resourceKey: 'oc_lease_reuse_a' })
+    expect(first.statusCode).toBe(201)
+    const second = await bind(alice, device.deviceId, { resourceKey: 'oc_lease_reuse_b' })
+    expect(second.statusCode).toBe(201)
+    const secondId = second.json().data.id as string
+
+    const audits = await database.db
+      .select()
+      .from(schema.sourceAuditEvents)
+      .where(eq(schema.sourceAuditEvents.sourceId, secondId))
+    // 第二次绑定只是复用并续租同一租约（generation 1），没有「获取/接管」可审计。
+    expect(audits.map((row) => row.action)).toEqual(['bound'])
+    const lease = await leaseRow(node.appKey)
+    if (lease === undefined) throw new Error('lease is missing')
+    const boundAudit = audits[0]
+    if (boundAudit === undefined) throw new Error('bound audit is missing')
+    expect((boundAudit.payload as { leaseGeneration?: number }).leaseGeneration).toBe(
+      lease.generation,
+    )
+  })
+
+  it('does not audit lease_changed when a resume reuses a live same-device lease', async () => {
+    const device = await pair(alice, 'alice-node-47')
+    const node = await connectNode(device, 'alice-node-47')
+    const first = await bind(alice, device.deviceId, { resourceKey: 'oc_resume_reuse_a' })
+    expect(first.statusCode).toBe(201)
+    const firstId = first.json().data.id as string
+    // 第二个活跃来源让暂停第一个时不释放租约。
+    expect(
+      (await bind(alice, device.deviceId, { resourceKey: 'oc_resume_reuse_b' })).statusCode,
+    ).toBe(201)
+    const pause = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/sources/${firstId}/pause`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(pause.statusCode).toBe(200)
+    const resume = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/sources/${firstId}/resume`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(resume.statusCode).toBe(200)
+
+    const audits = await database.db
+      .select()
+      .from(schema.sourceAuditEvents)
+      .where(eq(schema.sourceAuditEvents.sourceId, firstId))
+      .orderBy(asc(schema.sourceAuditEvents.id))
+    expect(audits.map((row) => row.action)).toEqual(['bound', 'lease_changed', 'paused', 'resumed'])
+    const lease = await leaseRow(node.appKey)
+    if (lease === undefined) throw new Error('lease is missing')
+    const resumedAudit = audits[3]
+    if (resumedAudit === undefined) throw new Error('resumed audit is missing')
+    expect((resumedAudit.payload as { leaseGeneration?: number }).leaseGeneration).toBe(
+      lease.generation,
+    )
   })
 
   it('allows rebinding the same external resource as a new row after revocation', async () => {
@@ -1472,30 +1674,108 @@ describe('PC-02a project source lifecycle', () => {
 
     // bind 先拿到 device FOR SHARE，再阻塞在租约行锁上；此时 revoke 必须等它。
     const pending = bind(alice, device.deviceId, { resourceKey: 'oc_race_lock_b' })
-    await waitForValue(async () => {
-      const rows = await database.sql<{ count: number }[]>`
-        select count(*)::int as count
-        from pg_locks l join pg_stat_activity a on a.pid = l.pid
-        where not l.granted and a.query ilike '%source_collection_lease%'
-      `
-      return (rows[0]?.count ?? 0) > 0 ? true : undefined
-    }, 'bind waiting on lease lock')
-
-    const revoke = apiInject(ctx, alice, {
-      method: 'DELETE',
-      url: `/api/v1/devices/${device.deviceId}`,
-    })
-    const firstDone = await Promise.race([
-      revoke.then(() => 'revoked' as const),
-      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 300)),
-    ])
-    release()
+    let revoke!: ReturnType<typeof apiInject>
+    try {
+      await waitForValue(async () => {
+        const rows = await database.sql<{ count: number }[]>`
+          select count(*)::int as count
+          from pg_locks l join pg_stat_activity a on a.pid = l.pid
+          where not l.granted
+            and a.datname = current_database()
+            and l.pid <> pg_backend_pid()
+            and a.query ilike '%source_collection_lease%'
+        `
+        return (rows[0]?.count ?? 0) > 0 ? true : undefined
+      }, 'bind waiting on lease lock')
+      revoke = apiInject(ctx, alice, {
+        method: 'DELETE',
+        url: `/api/v1/devices/${device.deviceId}`,
+      })
+      // 判据是「revoke 真的排在 device 行锁后面」，不是猜一个 300ms 窗口。
+      await waitForBlockedDeviceRevoke()
+    } finally {
+      // 断言失败也要放行 blocker，避免把后续用例的表锁一起拖住。
+      release()
+    }
     await blocker
     const created = await pending
     const revoked = await revoke
-    expect(firstDone).toBe('blocked')
     expect(created.statusCode).toBe(201)
     expect(revoked.statusCode).toBe(200)
+  }, 15_000)
+
+  it('serializes resume against a concurrent device revoke via the device row lock', async () => {
+    const device = await pair(alice, 'alice-node-43')
+    const node = await connectNode(device, 'alice-node-43')
+    const first = await bind(alice, device.deviceId, { resourceKey: 'oc_race_resume_a' })
+    expect(first.statusCode).toBe(201)
+    const sourceId = first.json().data.id as string
+    // 第二个活跃来源让租约在暂停第一个后仍然存在。
+    expect(
+      (await bind(alice, device.deviceId, { resourceKey: 'oc_race_resume_b' })).statusCode,
+    ).toBe(201)
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/sources/${sourceId}/pause`,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(200)
+
+    let acquired!: () => void
+    const leaseHeld = new Promise<void>((resolve) => {
+      acquired = resolve
+    })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const blocker = database.transaction(async (tx) => {
+      await getSourceLeaseForUpdate(tx, 'feishu', node.appKey)
+      acquired()
+      await gate
+    })
+    await leaseHeld
+
+    // resume 先拿到 device FOR SHARE，再阻塞在租约行锁上；此时 revoke 必须等它。
+    const pending = apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/sources/${sourceId}/resume`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    let revoke!: ReturnType<typeof apiInject>
+    try {
+      await waitForValue(async () => {
+        const rows = await database.sql<{ count: number }[]>`
+          select count(*)::int as count
+          from pg_locks l join pg_stat_activity a on a.pid = l.pid
+          where not l.granted
+            and a.datname = current_database()
+            and l.pid <> pg_backend_pid()
+            and a.query ilike '%source_collection_lease%'
+        `
+        return (rows[0]?.count ?? 0) > 0 ? true : undefined
+      }, 'resume waiting on the lease row lock')
+
+      revoke = apiInject(ctx, alice, {
+        method: 'DELETE',
+        url: `/api/v1/devices/${device.deviceId}`,
+      })
+      await waitForBlockedDeviceRevoke()
+    } finally {
+      // 断言失败也要放行 blocker，避免把后续用例的表锁一起拖住。
+      release()
+    }
+    await blocker
+    const resumed = await pending
+    const revoked = await revoke
+    expect(resumed.statusCode).toBe(200)
+    expect(revoked.statusCode).toBe(200)
+    expect(await sourceRow(sourceId)).toMatchObject({ status: 'active' })
+    expect((await getDeviceById(database.db, device.deviceId))?.revokedAt).not.toBeNull()
   }, 15_000)
 
   it('does not renew a lease when the collector heartbeat is stale', async () => {

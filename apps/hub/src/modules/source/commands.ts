@@ -21,7 +21,7 @@ import {
   insertProjectSource,
   insertSourceAuditEvent,
   insertSourceLeaseIfAbsent,
-  transactCommand,
+  transactCommandWithOrigin,
   updateProjectSource,
   updateSourceLease,
   unwrapPgError,
@@ -53,7 +53,18 @@ export type CollectorCheck =
   | { readonly readable: true; readonly appKey: string }
   | { readonly readable: false; readonly reason: 'denied' | 'not_found' | 'unsupported' }
 
-type ResumeOutcome = { readonly view: ProjectSourceView } | { readonly denied: true }
+type ResumeOutcome =
+  | { readonly view: ProjectSourceView; readonly changed: boolean }
+  | { readonly denied: true }
+
+/**
+ * 写命令结果：`changed=false` 表示同 key 重放或显式 no-op（已经是目标状态）。
+ * 观测日志只对真实变更发射；HTTP 审计仍按请求记账。
+ */
+export interface SourceMutationResult {
+  readonly view: ProjectSourceView
+  readonly changed: boolean
+}
 
 export interface BindProjectSourceInput {
   readonly projectId: string
@@ -87,16 +98,24 @@ async function readReceipt<T>(database: Database, key: string): Promise<T | unde
   return row?.result as T | undefined
 }
 
-/** resume 的回执是 `{view}`/`{denied}`；兼容更早提交写入的裸视图回执。 */
+/** 兼容更早提交写入的裸视图回执；`changed` 只可能由本次真实执行提供。 */
+function normalizeViewReceipt(value: unknown): SourceMutationResult | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  if ('denied' in value) return undefined
+  if ('view' in value) {
+    const outcome = value as { view?: ProjectSourceView; changed?: unknown }
+    if (outcome.view === undefined) return undefined
+    return { view: outcome.view, changed: outcome.changed === true }
+  }
+  if ('id' in value) return { view: value as ProjectSourceView, changed: false }
+  return undefined
+}
+
+/** resume 的回执是 `{view, changed}`/`{denied}`；兼容更早提交写入的裸视图回执。 */
 function normalizeResumeReceipt(value: unknown): ResumeOutcome | undefined {
   if (typeof value !== 'object' || value === null) return undefined
   if ('denied' in value) return { denied: true }
-  if ('view' in value) {
-    const view = (value as { view?: ProjectSourceView }).view
-    return view === undefined ? undefined : { view }
-  }
-  if ('id' in value) return { view: value as ProjectSourceView }
-  return undefined
+  return normalizeViewReceipt(value)
 }
 
 /**
@@ -192,6 +211,12 @@ function assertBind(actor: SourceActor): void {
   }
 }
 
+interface LeaseApplyOutcome {
+  readonly generation: number
+  /** true = 本次真正插入/轮换/接管了租约；同设备续租式复用为 false。 */
+  readonly changed: boolean
+}
+
 /**
  * 同一应用事件流一个采集者。换 Node 只在没有其他活跃来源、且旧租约已过期时接管；
  * 过期后同一 device 再取租约要轮换代次与 token，围栏 PC-03 的旧观察。
@@ -202,7 +227,7 @@ async function applyLease(
   tx: DbHandle,
   lease: SourceCollectionLeaseRow,
   input: { platform: SourcePlatform; appKey: string; deviceId: string; now: Date },
-): Promise<number> {
+): Promise<LeaseApplyOutcome> {
   const expiresAt = new Date(input.now.getTime() + SOURCE_LEASE_TTL_MS)
   const expired = lease.expiresAt.getTime() <= input.now.getTime()
   if (!expired && lease.deviceId === input.deviceId) {
@@ -211,7 +236,7 @@ async function applyLease(
       expiresAt: new Date(Math.max(lease.expiresAt.getTime(), expiresAt.getTime())),
       renewedAt: new Date(Math.max(lease.renewedAt.getTime(), input.now.getTime())),
     })
-    return lease.generation
+    return { generation: lease.generation, changed: false }
   }
 
   const active = await countActiveSourcesByAppKey(tx, input.platform, input.appKey)
@@ -232,7 +257,7 @@ async function applyLease(
       acquiredAt: input.now,
       renewedAt: input.now,
     })
-    return generation
+    return { generation, changed: true }
   }
 
   // 另一台 Node 持有未过期租约：只要还有活跃来源，就不允许静默换采集者。
@@ -245,7 +270,7 @@ async function applyLease(
 async function ensureLease(
   tx: DbHandle,
   input: { platform: SourcePlatform; appKey: string; deviceId: string; now: Date },
-): Promise<number> {
+): Promise<LeaseApplyOutcome> {
   const lease = await getSourceLeaseForUpdate(tx, input.platform, input.appKey)
   if (lease !== undefined) return applyLease(tx, lease, input)
 
@@ -258,7 +283,7 @@ async function ensureLease(
     leaseToken: uuidv7(),
     expiresAt,
   })
-  if (inserted !== undefined) return 1
+  if (inserted !== undefined) return { generation: 1, changed: true }
 
   // 并发首建：另一个事务先插入了同一 (platform, appKey)，等它提交后再按同一规则处理。
   const raced = await getSourceLeaseForUpdate(tx, input.platform, input.appKey)
@@ -317,7 +342,7 @@ export async function bindProjectSource(
   database: Database,
   collector: SourceCollector,
   input: BindProjectSourceInput,
-): Promise<ProjectSourceView> {
+): Promise<SourceMutationResult> {
   assertBind(input.actor)
   if (input.request.autoExtraction) {
     // ADR-0026 未接受前不广告一个不能兑现的后台提取状态。
@@ -330,8 +355,8 @@ export async function bindProjectSource(
 
   const commandKey = bindCommandKey(input.actor, input.projectId, input.idempotencyKey)
   // 回执先于任何 RPC：同 key 重放不得因采集 Node 后来离线/改权而返回不同结果。
-  const prior = await readReceipt<ProjectSourceView>(database, commandKey)
-  if (prior !== undefined) return prior
+  const prior = normalizeViewReceipt(await readReceipt<unknown>(database, commandKey))
+  if (prior !== undefined) return { view: prior.view, changed: false }
 
   const project = await getProject(database.db, input.projectId)
   if (project === undefined) throw new ApiError(404, 'NOT_FOUND', 'project not found')
@@ -347,73 +372,88 @@ export async function bindProjectSource(
   const now = new Date()
   const permissionExpiresAt = new Date(now.getTime() + SOURCE_PERMISSION_TTL_MS)
   try {
-    return await transactCommand<ProjectSourceView>(database, commandKey, async (tx) => {
-      const existing = await findActiveProjectSource(
-        tx,
-        input.request.platform,
-        input.request.resourceKey,
-      )
-      if (existing !== undefined) {
-        throw new ApiError(409, 'SOURCE_ALREADY_BOUND', 'source is already bound')
-      }
-      const liveDevice = await getDeviceForShare(tx, device.id)
-      if (liveDevice === undefined || liveDevice.revokedAt !== null) {
-        throw new ApiError(409, 'SOURCE_COLLECTOR_OFFLINE', 'collector node is no longer available')
-      }
-      const leaseGeneration = await ensureLease(tx, {
-        platform: input.request.platform,
-        appKey: check.appKey,
-        deviceId: device.id,
-        now,
-      })
-      const row = await insertProjectSource(tx, {
-        id: uuidv7(),
-        projectId: input.projectId,
-        platform: input.request.platform,
-        kind: input.request.kind,
-        resourceKey: input.request.resourceKey,
-        displayLabel: input.request.displayLabel,
-        collectorNodeId: device.id,
-        credentialSlot: input.request.credentialSlot,
-        appKey: check.appKey,
-        shareScope: 'team',
-        autoExtraction: input.request.autoExtraction,
-        status: 'active',
-        permissionState: 'verified',
-        permissionCheckedAt: now,
-        permissionExpiresAt,
-        permissionUnknownSince: null,
-        authorizationGeneration: 1,
-        boundBy: input.actor.userId,
-        boundAt: now,
-        createdAt: now,
-        updatedAt: now,
-      })
-      await insertSourceAuditEvent(tx, {
-        sourceId: row.id,
-        action: 'bound',
-        actorMemberId: input.actor.userId,
-        authorizationGeneration: row.authorizationGeneration,
-        payload: { platform: row.platform, kind: row.kind, leaseGeneration },
-      })
-      await auditLease(
-        tx,
-        row,
-        input.actor.userId,
-        row.authorizationGeneration,
-        leaseGeneration > 1 ? 'taken_over' : 'acquired',
-      )
-      await sourceChanged(tx, row, 'active', undefined, now)
-      return toSourceView(row)
-    })
+    const { value, executed } = await transactCommandWithOrigin<SourceMutationResult>(
+      database,
+      commandKey,
+      async (tx) => {
+        const existing = await findActiveProjectSource(
+          tx,
+          input.request.platform,
+          input.request.resourceKey,
+        )
+        if (existing !== undefined) {
+          throw new ApiError(409, 'SOURCE_ALREADY_BOUND', 'source is already bound')
+        }
+        const liveDevice = await getDeviceForShare(tx, device.id)
+        if (liveDevice === undefined || liveDevice.revokedAt !== null) {
+          throw new ApiError(
+            409,
+            'SOURCE_COLLECTOR_OFFLINE',
+            'collector node is no longer available',
+          )
+        }
+        const lease = await ensureLease(tx, {
+          platform: input.request.platform,
+          appKey: check.appKey,
+          deviceId: device.id,
+          now,
+        })
+        const row = await insertProjectSource(tx, {
+          id: uuidv7(),
+          projectId: input.projectId,
+          platform: input.request.platform,
+          kind: input.request.kind,
+          resourceKey: input.request.resourceKey,
+          displayLabel: input.request.displayLabel,
+          collectorNodeId: device.id,
+          credentialSlot: input.request.credentialSlot,
+          appKey: check.appKey,
+          shareScope: 'team',
+          autoExtraction: input.request.autoExtraction,
+          status: 'active',
+          permissionState: 'verified',
+          permissionCheckedAt: now,
+          permissionExpiresAt,
+          permissionUnknownSince: null,
+          authorizationGeneration: 1,
+          boundBy: input.actor.userId,
+          boundAt: now,
+          createdAt: now,
+          updatedAt: now,
+        })
+        await insertSourceAuditEvent(tx, {
+          sourceId: row.id,
+          action: 'bound',
+          actorMemberId: input.actor.userId,
+          authorizationGeneration: row.authorizationGeneration,
+          payload: { platform: row.platform, kind: row.kind, leaseGeneration: lease.generation },
+        })
+        // 复用同设备未过期租约只是续租，不写 lease_changed（ADR-0024 §11）。
+        if (lease.changed) {
+          await auditLease(
+            tx,
+            row,
+            input.actor.userId,
+            row.authorizationGeneration,
+            lease.generation > 1 ? 'taken_over' : 'acquired',
+          )
+        }
+        await sourceChanged(tx, row, 'active', undefined, now)
+        return { view: toSourceView(row), changed: true }
+      },
+    )
+    // 回执冲突分支会原样返回更早实例写入的回执：混合版本升级时可能是裸视图。
+    const outcome = normalizeViewReceipt(value)
+    if (outcome === undefined) throw new Error('bind receipt is invalid')
+    return { view: outcome.view, changed: executed && outcome.changed }
   } catch (error) {
     const pg = unwrapPgError(error)
     if (
       pg?.code === '23505' &&
       (pg.constraintName ?? '').includes('project_source_active_resource')
     ) {
-      const raced = await readReceipt<ProjectSourceView>(database, commandKey)
-      if (raced !== undefined) return raced
+      const raced = normalizeViewReceipt(await readReceipt<unknown>(database, commandKey))
+      if (raced !== undefined) return { view: raced.view, changed: false }
       throw new ApiError(409, 'SOURCE_ALREADY_BOUND', 'source is already bound')
     }
     if (
@@ -421,8 +461,8 @@ export async function bindProjectSource(
       (error.code === 'SOURCE_LEASE_LOST' || error.code === 'SOURCE_ALREADY_BOUND')
     ) {
       // 并发同 key：胜者可能已提交回执；此时重放语义优先于租约冲突。
-      const raced = await readReceipt<ProjectSourceView>(database, commandKey)
-      if (raced !== undefined) return raced
+      const raced = normalizeViewReceipt(await readReceipt<unknown>(database, commandKey))
+      if (raced !== undefined) return { view: raced.view, changed: false }
     }
     throw error
   }
@@ -431,52 +471,59 @@ export async function bindProjectSource(
 export async function pauseProjectSource(
   database: Database,
   input: ManageProjectSourceInput,
-): Promise<ProjectSourceView> {
+): Promise<SourceMutationResult> {
   const current = await getProjectSource(database.db, input.sourceId)
   if (current === undefined) throw new ApiError(404, 'NOT_FOUND', 'source not found')
   assertManage(current, input.actor)
   const commandKey = manageCommandKey('pause', input.actor, input.sourceId, input.idempotencyKey)
-  const prior = await readReceipt<ProjectSourceView>(database, commandKey)
-  if (prior !== undefined) return prior
+  const prior = normalizeViewReceipt(await readReceipt<unknown>(database, commandKey))
+  if (prior !== undefined) return { view: prior.view, changed: false }
 
-  return transactCommand<ProjectSourceView>(database, commandKey, async (tx) => {
-    const row = await getProjectSourceForUpdate(tx, input.sourceId)
-    if (row === undefined) throw new ApiError(404, 'NOT_FOUND', 'source not found')
-    assertManage(row, input.actor)
-    if (row.status === 'paused') return toSourceView(row)
-    if (row.status !== 'active') {
-      throw new DomainError('INVALID_SOURCE_TRANSITION', `cannot pause a ${row.status} source`)
-    }
-    const now = new Date()
-    const generation = row.authorizationGeneration + 1
-    const updated = await updateProjectSource(tx, row.id, {
-      status: 'paused',
-      pausedAt: now,
-      authorizationGeneration: generation,
-      updatedAt: now,
-    })
-    if (updated === undefined) throw new ApiError(404, 'NOT_FOUND', 'source not found')
-    const leaseReleased = await releaseLeaseIfUnused(tx, row)
-    await insertSourceAuditEvent(tx, {
-      sourceId: row.id,
-      action: 'paused',
-      actorMemberId: input.actor.userId,
-      authorizationGeneration: generation,
-      payload: { leaseReleased },
-    })
-    if (leaseReleased) {
-      await auditLease(tx, row, input.actor.userId, generation, 'released')
-    }
-    await sourceChanged(tx, row, 'paused', undefined, now)
-    return toSourceView(updated)
-  })
+  const { value, executed } = await transactCommandWithOrigin<SourceMutationResult>(
+    database,
+    commandKey,
+    async (tx) => {
+      const row = await getProjectSourceForUpdate(tx, input.sourceId)
+      if (row === undefined) throw new ApiError(404, 'NOT_FOUND', 'source not found')
+      assertManage(row, input.actor)
+      if (row.status === 'paused') return { view: toSourceView(row), changed: false }
+      if (row.status !== 'active') {
+        throw new DomainError('INVALID_SOURCE_TRANSITION', `cannot pause a ${row.status} source`)
+      }
+      const now = new Date()
+      const generation = row.authorizationGeneration + 1
+      const updated = await updateProjectSource(tx, row.id, {
+        status: 'paused',
+        pausedAt: now,
+        authorizationGeneration: generation,
+        updatedAt: now,
+      })
+      if (updated === undefined) throw new ApiError(404, 'NOT_FOUND', 'source not found')
+      const leaseReleased = await releaseLeaseIfUnused(tx, row)
+      await insertSourceAuditEvent(tx, {
+        sourceId: row.id,
+        action: 'paused',
+        actorMemberId: input.actor.userId,
+        authorizationGeneration: generation,
+        payload: { leaseReleased },
+      })
+      if (leaseReleased) {
+        await auditLease(tx, row, input.actor.userId, generation, 'released')
+      }
+      await sourceChanged(tx, row, 'paused', undefined, now)
+      return { view: toSourceView(updated), changed: true }
+    },
+  )
+  const outcome = normalizeViewReceipt(value)
+  if (outcome === undefined) throw new Error('pause receipt is invalid')
+  return { view: outcome.view, changed: executed && outcome.changed }
 }
 
 export async function resumeProjectSource(
   database: Database,
   collector: SourceCollector,
   input: ManageProjectSourceInput,
-): Promise<ProjectSourceView> {
+): Promise<SourceMutationResult> {
   const current = await getProjectSource(database.db, input.sourceId)
   if (current === undefined) throw new ApiError(404, 'NOT_FOUND', 'source not found')
   assertManage(current, input.actor)
@@ -486,11 +533,11 @@ export async function resumeProjectSource(
     if ('denied' in prior) {
       throw new ApiError(403, 'SOURCE_NOT_READABLE', 'source is no longer readable')
     }
-    return prior.view
+    return { view: prior.view, changed: false }
   }
   if (current.status === 'active') {
     // no-op 也落回执：同一 key 的重放返回同一视图，而不是后来的状态。
-    const noop = await transactCommand<{ view: ProjectSourceView }>(
+    const noop = await transactCommandWithOrigin<ResumeOutcome>(
       database,
       commandKey,
       async (tx) => {
@@ -501,16 +548,23 @@ export async function resumeProjectSource(
           if ('denied' in replay) {
             throw new ApiError(403, 'SOURCE_NOT_READABLE', 'source is no longer readable')
           }
-          return { view: replay.view }
+          return { view: replay.view, changed: false }
         }
         assertManage(row, input.actor)
         if (row.status !== 'active') {
           throw new DomainError('INVALID_SOURCE_TRANSITION', `cannot resume a ${row.status} source`)
         }
-        return { view: toSourceView(row) }
+        return { view: toSourceView(row), changed: false }
       },
     )
-    return noop.view
+    const outcome = normalizeResumeReceipt(noop.value)
+    if (outcome === undefined) {
+      throw new Error('resume no-op receipt is invalid')
+    }
+    if ('denied' in outcome) {
+      throw new ApiError(403, 'SOURCE_NOT_READABLE', 'source is no longer readable')
+    }
+    return { view: outcome.view, changed: false }
   }
   if (current.status !== 'paused') {
     throw new DomainError('INVALID_SOURCE_TRANSITION', `cannot resume a ${current.status} source`)
@@ -533,7 +587,7 @@ export async function resumeProjectSource(
 
   const now = new Date()
   const permissionExpiresAt = new Date(now.getTime() + SOURCE_PERMISSION_TTL_MS)
-  const rawOutcome = await transactCommand<unknown>(database, commandKey, async (tx) => {
+  const rawOutcome = await transactCommandWithOrigin<unknown>(database, commandKey, async (tx) => {
     const row = await getProjectSourceForUpdate(tx, input.sourceId)
     if (row === undefined) throw new ApiError(404, 'NOT_FOUND', 'source not found')
     // 并发同 key：先等来源行锁，再回读胜者回执；否则败者会把已提交的 unavailable
@@ -541,7 +595,7 @@ export async function resumeProjectSource(
     const replay = normalizeResumeReceipt((await findCommandReceipt(tx, commandKey))?.result)
     if (replay !== undefined) return replay
     assertManage(row, input.actor)
-    if (row.status === 'active') return { view: toSourceView(row) }
+    if (row.status === 'active') return { view: toSourceView(row), changed: false }
     if (row.status !== 'paused') {
       throw new DomainError('INVALID_SOURCE_TRANSITION', `cannot resume a ${row.status} source`)
     }
@@ -575,7 +629,7 @@ export async function resumeProjectSource(
       await sourceChanged(tx, row, 'unavailable', 'denied', now)
       return { denied: true }
     }
-    const leaseGeneration = await ensureLease(tx, {
+    const lease = await ensureLease(tx, {
       platform: row.platform,
       appKey: check.appKey,
       deviceId: row.collectorNodeId,
@@ -598,74 +652,84 @@ export async function resumeProjectSource(
       action: 'resumed',
       actorMemberId: input.actor.userId,
       authorizationGeneration: generation,
-      payload: { leaseGeneration },
+      payload: { leaseGeneration: lease.generation },
     })
-    await auditLease(
-      tx,
-      row,
-      input.actor.userId,
-      generation,
-      leaseGeneration > 1 ? 'taken_over' : 'acquired',
-    )
+    // 复用同设备未过期租约只是续租，不写 lease_changed（ADR-0024 §11）。
+    if (lease.changed) {
+      await auditLease(
+        tx,
+        row,
+        input.actor.userId,
+        generation,
+        lease.generation > 1 ? 'taken_over' : 'acquired',
+      )
+    }
     await sourceChanged(tx, row, 'active', undefined, now)
-    return { view: toSourceView(updated) }
+    return { view: toSourceView(updated), changed: true }
   })
   // transactCommand 的回执冲突分支可能返回更早实例写入的裸视图；这里统一归一化。
-  const outcome = normalizeResumeReceipt(rawOutcome)
+  const outcome = normalizeResumeReceipt(rawOutcome.value)
   if (outcome === undefined) throw new Error('resume receipt is invalid')
   if ('denied' in outcome) {
     throw new ApiError(403, 'SOURCE_NOT_READABLE', 'source is no longer readable')
   }
-  return outcome.view
+  return { view: outcome.view, changed: rawOutcome.executed && outcome.changed }
 }
 
 export async function revokeProjectSource(
   database: Database,
   input: ManageProjectSourceInput & { readonly reason: string },
-): Promise<ProjectSourceView> {
+): Promise<SourceMutationResult> {
   const current = await getProjectSource(database.db, input.sourceId)
   if (current === undefined) throw new ApiError(404, 'NOT_FOUND', 'source not found')
   assertManage(current, input.actor)
   const commandKey = manageCommandKey('revoke', input.actor, input.sourceId, input.idempotencyKey)
-  const prior = await readReceipt<ProjectSourceView>(database, commandKey)
-  if (prior !== undefined) return prior
+  const prior = normalizeViewReceipt(await readReceipt<unknown>(database, commandKey))
+  if (prior !== undefined) return { view: prior.view, changed: false }
 
-  return transactCommand<ProjectSourceView>(database, commandKey, async (tx) => {
-    const row = await getProjectSourceForUpdate(tx, input.sourceId)
-    if (row === undefined) throw new ApiError(404, 'NOT_FOUND', 'source not found')
-    assertManage(row, input.actor)
-    if (row.status === 'revoked') return toSourceView(row)
-    const now = new Date()
-    const generation = row.authorizationGeneration + 1
-    const updated = await updateProjectSource(tx, row.id, {
-      status: 'revoked',
-      revokedAt: now,
-      revokedBy: input.actor.userId,
-      revokeReason: input.reason,
-      pausedAt: null,
-      unavailableAt: null,
-      permissionState: 'denied',
-      // 撤销不是一次权限检查：保留最后一次真实检查时刻，避免伪造核验时间。
-      permissionCheckedAt: row.permissionCheckedAt,
-      permissionExpiresAt: null,
-      permissionUnknownSince: null,
-      authorizationGeneration: generation,
-      updatedAt: now,
-    })
-    if (updated === undefined) throw new ApiError(404, 'NOT_FOUND', 'source not found')
-    const leaseReleased = await releaseLeaseIfUnused(tx, row)
-    await insertSourceAuditEvent(tx, {
-      sourceId: row.id,
-      action: 'revoked',
-      actorMemberId: input.actor.userId,
-      authorizationGeneration: generation,
-      reason: input.reason,
-      payload: { leaseReleased },
-    })
-    if (leaseReleased) {
-      await auditLease(tx, row, input.actor.userId, generation, 'released')
-    }
-    await sourceChanged(tx, row, 'revoked', 'denied', now)
-    return toSourceView(updated)
-  })
+  const { value, executed } = await transactCommandWithOrigin<SourceMutationResult>(
+    database,
+    commandKey,
+    async (tx) => {
+      const row = await getProjectSourceForUpdate(tx, input.sourceId)
+      if (row === undefined) throw new ApiError(404, 'NOT_FOUND', 'source not found')
+      assertManage(row, input.actor)
+      if (row.status === 'revoked') return { view: toSourceView(row), changed: false }
+      const now = new Date()
+      const generation = row.authorizationGeneration + 1
+      const updated = await updateProjectSource(tx, row.id, {
+        status: 'revoked',
+        revokedAt: now,
+        revokedBy: input.actor.userId,
+        revokeReason: input.reason,
+        pausedAt: null,
+        unavailableAt: null,
+        permissionState: 'denied',
+        // 撤销不是一次权限检查：保留最后一次真实检查时刻，避免伪造核验时间。
+        permissionCheckedAt: row.permissionCheckedAt,
+        permissionExpiresAt: null,
+        permissionUnknownSince: null,
+        authorizationGeneration: generation,
+        updatedAt: now,
+      })
+      if (updated === undefined) throw new ApiError(404, 'NOT_FOUND', 'source not found')
+      const leaseReleased = await releaseLeaseIfUnused(tx, row)
+      await insertSourceAuditEvent(tx, {
+        sourceId: row.id,
+        action: 'revoked',
+        actorMemberId: input.actor.userId,
+        authorizationGeneration: generation,
+        reason: input.reason,
+        payload: { leaseReleased },
+      })
+      if (leaseReleased) {
+        await auditLease(tx, row, input.actor.userId, generation, 'released')
+      }
+      await sourceChanged(tx, row, 'revoked', 'denied', now)
+      return { view: toSourceView(updated), changed: true }
+    },
+  )
+  const outcome = normalizeViewReceipt(value)
+  if (outcome === undefined) throw new Error('revoke receipt is invalid')
+  return { view: outcome.view, changed: executed && outcome.changed }
 }
