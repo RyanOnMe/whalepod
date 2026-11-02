@@ -65,6 +65,7 @@ export function toContextEntryView(
     businessVersion: row.businessVersion,
     targetEntryId: row.targetEntryId,
     evaluationId: row.evaluationId,
+    inputDigest: row.inputDigest,
     actorKind: row.actorKind,
     createdBy: row.createdBy,
     processorVersion: row.processorVersion,

@@ -116,6 +116,10 @@ export const contextEntries = pgTable(
     index('context_entry_business_ref_idx')
       .on(table.businessRef)
       .where(sql`${table.businessRef} is not null`),
+    // ADR-0026：一条协调评估只产生一条 Inference（评估 id 是输出幂等键）。
+    uniqueIndex('context_entry_inference_evaluation_unique')
+      .on(table.evaluationId)
+      .where(sql`${table.kind} = 'inference'`),
   ],
 )
 

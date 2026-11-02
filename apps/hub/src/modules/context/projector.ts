@@ -16,6 +16,7 @@ import {
   type ContextEntryRow,
 } from '@whalepod/db'
 import { uuidv7 } from '../shared/uuid.js'
+import { enqueueCoordinationEvaluation } from '../coordination/enqueue.js'
 
 const CONTEXT_TITLE_MAX = 200
 /** DB 约束是 octet_length(body) <= 65536；留出余量并按 UTF-8 字节裁剪。 */
@@ -118,6 +119,8 @@ export async function projectDecision(
     businessVersion: input.businessVersion,
     occurredAt: input.occurredAt,
   })
+  // ADR-0026 §2：事实变化在**同一事务**合并出至多一条 queued 评估；无变化不唤醒。
+  await enqueueCoordinationEvaluation(tx, input.projectId)
   return { row: entry, inserted: true }
 }
 
@@ -155,5 +158,6 @@ export async function projectObservation(
     businessVersion: input.businessVersion,
     occurredAt: input.occurredAt,
   })
+  await enqueueCoordinationEvaluation(tx, input.projectId)
   return { row: entry, inserted: true }
 }

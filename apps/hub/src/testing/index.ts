@@ -58,6 +58,10 @@ export interface ContextEvent {
   readonly businessRef?: string
   readonly businessVersion?: string
   readonly occurredAt?: string
+  /** ADR-0026：协调评估观测（只含不透明 id/状态/原因）。 */
+  readonly evaluationId?: string
+  readonly reason?: string
+  readonly inferenceEntryId?: string
 }
 
 class AuditStream extends Writable {

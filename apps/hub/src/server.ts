@@ -15,6 +15,7 @@ import { SetupTokenStore } from './modules/team/setup-token.js'
 import { OutboxWorker } from './modules/run/index.js'
 import { reconcileLeases } from './modules/run/reconciler.js'
 import { expireApprovals } from './modules/run/approval-expiry.js'
+import { runCoordinationTick } from './modules/coordination/tick.js'
 import { runSourceReconcileTick } from './modules/source/tick.js'
 import { nodeSourceCollector } from './modules/source/collector.js'
 import { sanitizeError } from './modules/shared/error-log.js'
@@ -77,6 +78,18 @@ const leaseTimer = setInterval(() => {
     app.log.warn(
       { component: 'hub.approval.expiry', errorName: String(error) },
       'approval expiry sweep error',
+    )
+  })
+  // ADR-0026（PC-04a）：确定性协调 tick。只跑无模型求值；无变化时没有 queued 行，
+  // 不会为「保持记忆」定期唤醒任何计算。
+  void runCoordinationTick({
+    database,
+    now: new Date(),
+    log: (event) => app.log.info(event, 'coordination event'),
+  }).catch((error) => {
+    app.log.warn(
+      { component: 'hub.coordination', ...sanitizeError(error) },
+      'coordination tick error',
     )
   })
   // ADR-0024 §5：来源权限水位（verified 过期 → unknown；7 天 → unavailable）。

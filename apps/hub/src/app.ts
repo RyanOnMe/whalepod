@@ -25,6 +25,8 @@ import { registerSourceRoutes } from './modules/source/routes.js'
 // ADR-0025（PC-03a）：项目事实账本与人工纠正。
 import { registerContextRoutes } from './modules/context/routes.js'
 import { logRecordedEntry } from './modules/context/observer.js'
+// ADR-0026（PC-04a）：确定性内部协调的读面与显式触发。
+import { registerCoordinationRoutes } from './modules/coordination/routes.js'
 import { registerTaskRoutes } from './modules/task/routes.js'
 import { registerAgentRoutes } from './modules/agent/routes.js'
 import { loadPluginCatalog } from './modules/plugin/catalog.js'
@@ -215,6 +217,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       registerProjectRoutes(api, { database, requireActor })
       registerSourceRoutes(api, { database, requireActor })
       registerContextRoutes(api, { database, requireActor })
+      registerCoordinationRoutes(api, { database, requireActor })
       registerTaskRoutes(api, {
         database,
         requireActor,
