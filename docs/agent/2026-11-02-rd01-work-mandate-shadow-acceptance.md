@@ -1,0 +1,165 @@
+# RD-01 持续工作、Mandate 与影子准入验收
+
+- 对应场景/门禁：ADR-0028 §2/§4/§7 的基础承接链；Q0 静态门、Q2 数据门
+- 对应 Issue：#483（RD-01）
+- 上次验证：2026-11-02 · 分支 `feat/rd-01-work-mandate-shadow` 工作树 · PASS
+- 本切片边界：只落协调元数据与影子决定；**不建 Run、不发 outbox、不写 TeamEvent/Decision/Correction/Artifact、不调用模型、不实现工作收件箱/订阅快路径/自动派工**。
+
+## 验的是哪条用户路径
+
+Task 的当前责任人在既有 Task 上创建一份持续工作，确认一份带职责、来源、Agent、工具与额度上限的 Mandate；随后成员可以对一条真实 Task 讨论消息或项目上下文条目显式触发「影子准入」。系统必须给出可解释的 `ignore/wait/propose` 决定，并为 `propose` 留下一条仅处于 `proposed` 的派工意图；整个过程不得创建任何 Run 或业务事实。责任变更后，旧工作不得被新 assignee 接管或自动复活。
+
+## 驱动（怎么触发）
+
+全部走生产 HTTP 与真实 PostgreSQL（`apps/hub/tests/work-mandate.integration.spec.ts`）：
+
+```bash
+pnpm exec tsx scripts/with-test-postgres.mts \
+  pnpm exec vitest run --project integration \
+  apps/hub/tests/work-mandate.integration.spec.ts
+```
+
+覆盖的端点：
+
+- `POST/GET /api/v1/tasks/:taskId/works`、`POST /api/v1/works/:workKey/retire`
+- `POST/GET /api/v1/works/:workKey/mandates`
+- `POST /api/v1/mandates/:id/pause|resume|revoke`
+- `POST /api/v1/works/:workKey/admission-checks`
+- `GET /api/v1/works/:workKey`
+
+来源使用生产路径：Task 评论（`POST /tasks/:taskId/comments`）、约定确认（`agreement/draft` → `agreement/confirm`）产生的 Decision 条目、以及成员纠正（`POST /projects/:projectId/context/:entryId/correction`）。唯一的数据夹具是「已定向 instruction 消息」：生产路径创建它必然同时建 Run/outbox，无法隔离本切片判据；消息本身不是运行时投影，测试不写任何运行时状态（见「边界」）。
+
+## 观测（看什么）
+
+- 协调表：`work`、`work_mandate`、`router_decision`、`dispatch_intent`。
+- 业务计数：`run`、`dispatch_outbox`、`team_event` 在准入前后必须完全相同。
+- 结构化日志：`component='hub.work'`、`action='work.admission_decided'`，字段只含 `workKey/decision/reason/sourceType/sourceId/mandateVersion/duplicate`，不含正文。
+- 审计：`work.create`、`work.retire`、`work.mandate.create`、`work.mandate.pause/resume/revoke`、`work.admission.check`。
+- 读面：`GET /works/:workKey` 返回工作、当前 Mandate、最近决定、仍为 `proposed` 的意图与处理水位；`GET /works/:workKey/mandates` 按版本从新到旧返回，并标记 `current`。
+
+## 判定（成功长什么样）
+
+### 1. 身份与授权
+
+- 非 Task assignee 创建/退休工作、创建/变更 Mandate、触发准入一律 `403 FORBIDDEN`；Owner/Admin 不绕过。
+- `POST /tasks/:taskId/works` 只接受已接受、非终态 Task；未接受返回 `409 ASSIGNMENT_NOT_ACCEPTED`，终态返回 `409 TASK_TERMINAL`。
+- 同一 Task 同时最多一份未退休工作；重复创建 `409 CONFLICT`；退休后允许创建后继工作，历史仍可读。
+- `work.work_key` 是 Hub 生成的 UUIDv7，项目内可读；`human_owner_user_id` 固化为创建时 assignee。
+- Task 改派后：新 assignee 可在旧工作上退休，但不得创建/变更 Mandate（`409 CONFLICT`）；准入返回 `wait(owner_changed)`，不得用旧 Mandate 产生提案。
+
+### 2. Mandate 版本化与停止
+
+- 首次创建 `version=1,status=active,current=true,autoDispatch=off`；四个身份字段全部等于当前 assignee。
+- 新 Mandate 版本递增；`pause`、`resume`、`revoke` 各追加新版本并递增，旧版本保留（`current=false`）。
+- `active → paused → active → revoked` 合法；从 revoked/expired/superseded 继续迁移返回 `409`；重复同状态操作幂等。
+- 撤销或新版本产生时，旧 `proposed` 意图全部置 `cancelled`；因此不存在“撤销后还能确认/派发”的意图。
+- 应用校验拒绝：草稿受众非本人、`bash` 等固定草稿工具面外工具、过去时间 `expiresAt`、非允许 action class、重复数组项、已归档/无 Revision/`full_access` 的候选 Agent。
+- 到期未落库时读面按 `expired` 呈现；准入按 `mandate_expired` 忽略。
+
+### 3. 准入规则（确定性）
+
+| 输入事实 | 期望 |
+|---|---|
+| 无 active Mandate / paused / revoked / superseded / draft | `ignore(no_mandate)` |
+| active Mandate 已过 `expiresAt` | `ignore(mandate_expired)` |
+| work `waiting`/`retired` | `wait(work_state)`，带 `deadlineAt` |
+| Task 已 `done`/`cancelled`（work 尚未自动退休） | `wait(work_state)`，`refs.detail='task_terminal'` |
+| `work.human_owner != task.assignee` | `wait(owner_changed)` |
+| 同一 `(work, sourceType, sourceId, sourceVersion)` 重复检查 | 返回既有决定，`duplicate=true`，不追加决定/意图 |
+| 来源类型不在 Mandate `allowedSourceTypes` | `ignore(source_not_allowed)` |
+| Task 消息是 `instruction`/`followup` | `ignore(already_directed)` |
+| Task 消息作者已不是启用成员 | `ignore(source_inactive)` |
+| 上下文条目 `status!=active` 或已 `correctedAt` | `ignore(source_inactive)`，`refs.detail='corrected'/'inactive'` |
+| 外部来源条目（`sourceId!=null`，权限代次未复核） | `ignore(source_inactive)`，`detail='source_permission_unverified'` |
+| 系统 Inference | `ignore(system_produced)` |
+| 条目无法归属到本 Task（含无引用/异 Task） | `ignore(source_out_of_scope)` |
+| 其余讨论消息/有效上下文条目 | `propose(needs_semantic)` + 一条 `dispatch_intent(status='proposed', approvalBasis=null, runId=null)` |
+
+- 所有决定都保存 `source_digest`、`input_digest`（含工作、规则版本、Mandate 版本、逐来源授权代次）与 `rules_version='rd01.v1'`；不保存来源正文。
+- `proposed` 意图的 `expiresAt = min(now + waitDeadlineSeconds, mandate.expiresAt)`；`candidates/exclusionReasons` 为空数组（RD-01 不做候选选择）。
+- 准入前后 `run/dispatch_outbox/team_event` 计数相等；`dispatch_intent` 只会出现 `proposed`/`cancelled`；没有模型/Node/Runtime 调用。
+- 同一 `Idempotency-Key` 只在同一 actor + Task/Work/意图作用域内重放；跨成员共享同一 key 不得返回他人工作。
+
+## 归因（失败先看哪层）
+
+- HTTP/授权：`hub.audit` 的 `work.*` 动作与 `outcome`；403 先核对 `task.assigneeUserId` 与 `getEnabledMember`。
+- 准入决定：`hub.work`/`work.admission_decided` 的 `decision/reason/mandateVersion`；再查 `router_decision` 与 `dispatch_intent`。
+- 状态迁移：`work_mandate` 按 `work_id, version desc` 读最新；检查 `current=true` 是否为最高版本。
+- 无 Run/outbox：查 `run`、`dispatch_outbox`、`team_event` 的计数差；为 0 才通过。
+- DB 约束：`work_task_current_unique`、`router_decision_source_unique`、`work_mandate_identity`、`work_state_fields` 的 `23505/23514` 会被路由翻译成 `409/400`，不泄露 SQL。
+
+## 取证
+
+```bash
+# Q0
+pnpm check
+
+# Q2（全量）
+pnpm test:integration
+
+# 本切片定向
+pnpm exec tsx scripts/with-test-postgres.mts \
+  pnpm exec vitest run --project integration \
+  apps/hub/tests/work-mandate.integration.spec.ts
+
+# 提交前敏感扫描
+scripts/secret-scan.sh apps/hub/src/modules/work packages/protocol/src/work.ts \
+  packages/db/migrations/0024_work_mandate_shadow.sql
+```
+
+- 2026-11-02 工作树结果：Q0 `2268 passed`；Q2 `85 files / 707 tests passed`；定向 `15 passed`。
+- 迁移：`packages/db/migrations/0024_work_mandate_shadow.sql`；Drizzle 镜像 `packages/db/src/schema/work.ts`。
+
+### 单点变异（每条改一处、跑对应用例、必须红、随后恢复）
+
+| 编号 | 变异 | 对应判据 | 结果 |
+|---|---|---|---|
+| M1 | 去掉 assignee 相等检查 | 非 assignee 创建/退休 403 | RED |
+| M2 | 去掉 assignment accepted 检查 | 未接受 Task 409 | RED |
+| M3 | 不拒绝 `full_access` 候选 | 候选校验 400 | RED |
+| M4 | 去掉工作责任人变更检查 | 新 assignee 不能给旧工作建 Mandate | RED |
+| M5 | Mandate 状态迁移恒允许 | revoked 后 pause 409 | RED |
+| M6 | 撤销时不取消 proposed | 撤销后意图 `cancelled` | RED |
+| M7 | 退休时不取消 proposed | 退休后意图 `cancelled` | RED |
+| M8 | 幂等 key 去掉 actor/task 作用域 | 跨成员同 key 不串结果 | RED |
+| M9 | 去掉 `no_mandate` 分支 | 无 Mandate 返回 `ignore(no_mandate)` | RED（500，约束拒绝） |
+| M10 | 去掉 work 非 active 分支 | 退休工作 `wait(work_state)` | RED |
+| M11 | 去掉责任人变更分支 | 改派后 `wait(owner_changed)` | RED |
+| M12 | 去掉 Task 终态分支 | 终态 Task `wait(task_terminal)` | RED |
+| M13 | 不判断 Mandate 到期 | 到期 `ignore(mandate_expired)` | RED |
+| M14 | 不检查来源类型白名单 | `ignore(source_not_allowed)` | RED |
+| M15 | 只检查 status，不检查 correctedAt | 被纠正条目 `ignore(source_inactive)` | RED |
+| M16 | 不区分 instruction 消息 | `ignore(already_directed)` | RED |
+| M17 | 去掉决定插入的冲突忽略（唯一索引） | 同来源版本二次检查不新增决定 | RED（409） |
+| M18 | 版本列表不标当前版本 | `current` 只有最高版本为 true | RED |
+| M19 | 固定工具面加入 `bash` | 面外工具 400 | RED |
+
+- M9 的红色形态是 500：去掉分支后代码试图在无 active Mandate 时构造 proposed 意图，被 `dispatch_intent.mandate_id not null` 拒绝；这仍是「无 Mandate 不得提案」的负控，不是允许通过。
+- M17 的红色形态是 409：去掉 `onConflictDoNothing` 后第二次同来源版本插入撞唯一索引，路由翻译为冲突；恢复后回读既有决定并返回 `duplicate=true`。
+
+## 边界与未覆盖
+
+- **影子切片**：不实现 `approved/dispatched`、派工端口、Run/outbox、系统 actor；`dispatch_intent` 只落 `proposed/cancelled`。M1R-A 的自动续接、工具步级预批准、草稿/提问/暂停与额度执行均未做。
+- **工作收件箱/订阅快路径未做**：没有 `pending/delivered/consumed/unconfirmed/returned/superseded/retracted/expired`，没有投递/消费回执，也没有「已知订阅补充不调用 Router」的判据。归 RD-02a/02b。
+- **Task 改派不自动改 work 状态**：RD-01 在准入侧检测并 `wait(owner_changed)`，同时拒绝新 assignee 在旧工作上创建/变更 Mandate；完整的 `waiting(owner_confirmation)` 与新 assignee 确认承接归后续切片。新 assignee 的合法路径是显式退休旧工作后另建。
+- **到期不落库**：没有 sweeper；读面派生 `expired`，准入每次按 `expiresAt` 判断。RD-02/03 接入定期收敛。
+- **同来源版本的重复是终局**：RD-01 没有 wait deadline 调度；同一 sourceVersion 一旦裁决，改变 Mandate 后不会自动重评（需要来源产生新版本）。RD-02 的工作收件箱用 supersede/新输入解决。
+- **instruction 来源夹具**：测试用 `insertMessage` 造一条已定向消息，避免生产路径同时建 Run 污染「准入不建 Run」判据；该消息不是运行时投影，测试未写任何运行时状态。
+- **无模型调用是结构性事实**：本模块没有模型/Handler 依赖，也没有 Node/Runtime 调用；未做网络抓包级证据。真实 Router 语义与成本归 RD-01 后续/模型切片。
+- **工具面只到名称级**：`read/write/edit/glob/grep` 名称白名单之外一律拒绝；路径/资源范围、固定草稿面逐名正负控与 `approval_required` 步级预批准归 RD-03。
+- **`full_access` 检查当前 Revision**：Mandate 只存 Agent id，RD-03 在派发时固定精确 Revision 并再次校验；当前检查防止把已知 full_access Agent 写进 Mandate。
+- Q5/Q3/Q6/Q7 未跑：本切片无 Web、Node、Runtime、DSH 契约或安全策略改动。
+
+## 复跑
+
+```bash
+git switch feat/rd-01-work-mandate-shadow
+pnpm install --frozen-lockfile
+pnpm --filter @whalepod/protocol build
+pnpm --filter @whalepod/db build
+pnpm check
+pnpm test:integration
+pnpm exec tsx scripts/with-test-postgres.mts \
+  pnpm exec vitest run --project integration \
+  apps/hub/tests/work-mandate.integration.spec.ts
+```
