@@ -197,7 +197,7 @@ Node 负责真实来源采集及受限协调计算。来源凭据留在指定采
 | ADR-0025 / #451，已采纳 | 来源修订、Thread/Subscription/WorkLink 与项目理解；确定事实/推断/决定、人工纠正、M:N、引用水位、失效及 PostgreSQL 事务边界。03a 先做内部事件账本：[0025-source-revisions-and-project-understanding.md](../adr/0025-source-revisions-and-project-understanding.md) |
 | ADR-0026 / #452，已采纳 | 持续协调：身份/检查点、有界唤醒、独立计算用途、能力限制、认领/恢复、费用承担及额度。04a 先做无模型确定性评估；模型/额度/隔离按后续切片：[0026-project-coordination-lifecycle-and-cost.md](../adr/0026-project-coordination-lifecycle-and-cost.md) |
 | ADR-0027 / #453，已采纳 | 项目快照选择、引用读权限、运行消费、固定历史和变化提示；明确订阅不等于指令，Task/Run 不采用上游 Ticket 自动复活规则。05a 先做正向快照与消费：[0027-run-project-context-snapshot-and-consumption.md](../adr/0027-run-project-context-snapshot-and-consumption.md) |
-| 持续工作承接与自主执行（ADR-0028，提案 #480；自动建 Task/新工作另立 ADR） | 明确双处快慢路径、工作收件箱、Run 边界续接、Mandate 与系统 actor、Agent/现场、撤销/费用、受众和转人工；只覆盖既有 Task 与既有订阅，自动新建 Task/约定/新工作与同一活跃 Run 注入不在本 ADR；承接 ADR-0013/0015/0017/0025/0026/0027，采纳前不启用 |
+| 持续工作承接与自主执行（ADR-0028，已采纳 2026-11-02；自动建 Task/新工作另立 ADR） | 明确双处快慢路径、工作收件箱、Run 边界续接、Mandate 与系统 actor、Agent/现场、撤销/费用、受众和转人工；只覆盖既有 Task 与既有订阅，自动新建 Task/约定/新工作与同一活跃 Run 注入不在本 ADR；承接 ADR-0013/0015/0017/0025/0026/0027；RD-01～03 按后续 Issue 交付 |
 | 同 Run 增量上下文及其他自主动作 | 动态消费须另定追加输入和安全步骤协议，不阻塞先实现 Run 边界自动续接；授权不推导业务层停止、审批、正式发布、外发或业务承诺权 |
 
 2026-11-02 起 ADR-0025～0027 已采纳；实施前仍对照 ADR-0001/0003/0004/0010/0013/0016/0017/0020/0022/0024；承重协议和权限 PR 按仓库规则评审。DSH 升级如有必要，另走升级流程。

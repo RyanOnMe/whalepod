@@ -2,6 +2,8 @@
 status: proposed
 ---
 
+> **2026-11-02 ADR-0028 修订**：决策 7 的审批档语义仅对自主 Run 增加 Mandate 步级预批准层；`full_access` 不用于自主 Run，人类 Run 的审批档不变。
+>
 > **部分被取代（2026-09-11）**：本 ADR 的 **O3-a（讨论 + 指令 + Run 合并进同一条线程）** 已被
 > [ADR-0010](./0010-discussion-execution-separation.md) 取代——评论区改为纯人际交流，指令与运行
 > 独立成区（读模型隔离）。本 ADR 的其余决策（审计链、受理落账、并发语义、Agent 可指派、审批档位）
