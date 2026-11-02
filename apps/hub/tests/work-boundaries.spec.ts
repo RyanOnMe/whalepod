@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { workSourceMatchesItem } from '../src/modules/work/run-dispatch.js'
 
 // ADR-0028（RD-01/RD-02a）：工作与收件箱模块的架构边界。它不是运行时网络抓包，而是把
 // 「本切片不得调用模型/Node/Run/Outbox，也不得写业务事实」变成可机器判红的面：
@@ -163,5 +164,19 @@ describe('RD-02a-2b work input receipt lock order', () => {
     expect(handler).toContain("error instanceof RunCommandError && error.code === 'CONFLICT'")
     expect(handler).toContain("this.contextLog('work.input_receipt_invalid'")
     expect(handler).toContain('return')
+  })
+})
+
+describe('RD-02a-2b dispatch-time source identity', () => {
+  it('requires version, digest and authorization generation to all match', () => {
+    const item = {
+      sourceVersion: 'v1',
+      sourceDigest: 'a'.repeat(64),
+      authorizationGeneration: 'gen-1',
+    }
+    expect(workSourceMatchesItem({ ...item }, item)).toBe(true)
+    expect(workSourceMatchesItem({ ...item, sourceVersion: 'v2' }, item)).toBe(false)
+    expect(workSourceMatchesItem({ ...item, sourceDigest: 'b'.repeat(64) }, item)).toBe(false)
+    expect(workSourceMatchesItem({ ...item, authorizationGeneration: 'gen-2' }, item)).toBe(false)
   })
 })

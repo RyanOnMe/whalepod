@@ -36,6 +36,26 @@ export type WorkInputVerification =
   | { readonly ok: true }
   | { readonly ok: false; readonly reason: string }
 
+/** 派发前来源身份核对：版本、摘要与授权代次三者都必须与冻结条目一致。 */
+export function workSourceMatchesItem(
+  source: {
+    readonly sourceVersion: string
+    readonly sourceDigest: string
+    readonly authorizationGeneration: string
+  },
+  item: {
+    readonly sourceVersion: string
+    readonly sourceDigest: string
+    readonly authorizationGeneration: string
+  },
+): boolean {
+  return (
+    source.sourceVersion === item.sourceVersion &&
+    source.sourceDigest === item.sourceDigest &&
+    source.authorizationGeneration === item.authorizationGeneration
+  )
+}
+
 /** 创建后、run.start 前的复核：清单/交付指针/来源版本仍与冻结时一致。 */
 export async function verifyRunWorkInputs(tx: Tx, run: RunRow): Promise<WorkInputVerification> {
   if (run.workInputManifest === null) return { ok: true }
@@ -100,11 +120,7 @@ export async function verifyRunWorkInputs(tx: Tx, run: RunRow): Promise<WorkInpu
     try {
       const source = await loadWorkSource(tx, work, item.sourceType, item.sourceId)
       if (source.ignored !== undefined) return { ok: false, reason: 'source_unavailable' }
-      if (
-        source.sourceVersion !== item.sourceVersion ||
-        source.sourceDigest !== item.sourceDigest ||
-        source.authorizationGeneration !== item.authorizationGeneration
-      ) {
+      if (!workSourceMatchesItem(source, item)) {
         return { ok: false, reason: 'source_stale' }
       }
     } catch {
