@@ -1,8 +1,9 @@
 import {
   getRetractedInboxItemForSource,
-  getWorkById,
+  getWorkByIdForUpdate,
   insertWorkInboxDelivery,
   listDueUnconfirmedWorkInputIds,
+  listWorkInboxItemsByIds,
   listWorkInboxItemsForUpdate,
   markWorkInboxItemDelivered,
   markWorkInputsUnconfirmed,
@@ -42,9 +43,8 @@ function conflict(message: string): never {
 }
 
 /**
- * 校验并冻结选中的收件箱条目。调用方必须已持有 Task 行锁（orchestrator 的
- * createInTransaction）；收件箱写命令同样先拿 Task 锁，因此本函数的 item 锁
- * 与关联/撤权天然串行，不会出现“选择时还 pending、交付时已被别的命令改走”。
+ * 校验并冻结选中的收件箱条目。调用方必须已持有 Task 行锁；本函数按
+ * Task（调用方）→Work→item 加锁，与收件箱写命令/60s 对账保持同一锁序。
  */
 export async function snapshotWorkInputs(
   tx: Tx,
@@ -65,15 +65,29 @@ export async function snapshotWorkInputs(
     throw new RunCommandError('VALIDATION_FAILED', 'workInputItemIds must not contain duplicates')
   }
 
-  const items = await listWorkInboxItemsForUpdate(tx, itemIds)
-  if (items.length !== itemIds.length) conflict('one or more work input items do not exist')
-  const first = items[0]
-  if (first === undefined) conflict('work input items are empty')
-  if (items.some((item) => item.workId !== first.workId)) {
+  // Task 锁已由调用方持有；这里先无锁读 workId，再按 Work→item 加锁。
+  // 反过来（item→Work）会和 60s 对账/撤权反向持锁：建 Run 插 delivery 的 FK
+  // 会对 Work 取 KEY SHARE，settle 持 Work FOR UPDATE 等 item，形成死锁。
+  const snapshots = await listWorkInboxItemsByIds(tx, itemIds)
+  if (snapshots.length !== itemIds.length) {
+    conflict('one or more work input items do not exist')
+  }
+  const firstSnapshot = snapshots[0]
+  if (firstSnapshot === undefined) conflict('work input items are empty')
+  if (snapshots.some((item) => item.workId !== firstSnapshot.workId)) {
     conflict('work input items must belong to the same work')
   }
-  const work = await getWorkById(tx, first.workId)
+  const work = await getWorkByIdForUpdate(tx, firstSnapshot.workId)
   if (work === undefined) conflict('work input items reference a missing work')
+  const items = await listWorkInboxItemsForUpdate(tx, itemIds)
+  if (items.length !== itemIds.length) {
+    conflict('one or more work input items do not exist')
+  }
+  const first = items[0]
+  if (first === undefined) conflict('work input items are empty')
+  if (first.workId !== work.id || items.some((item) => item.workId !== work.id)) {
+    conflict('work input items must belong to the same work')
+  }
   if (work.state !== 'active') conflict('only an active work can provide run inputs')
   if (work.taskId !== task.id || first.taskId !== task.id) {
     conflict('work input items do not belong to this task')

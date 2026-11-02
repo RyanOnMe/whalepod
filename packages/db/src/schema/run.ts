@@ -2,6 +2,7 @@ import type {
   ArtifactInputManifest,
   HandoffInputManifest,
   ReviewInputManifest,
+  WorkInputManifest,
 } from '@whalepod/protocol'
 import { sql } from 'drizzle-orm'
 import {
@@ -110,7 +111,7 @@ export const runs = pgTable(
     purpose: runPurpose('purpose').notNull().default('business'),
     /** ADR-0028（RD-02a-2a）：本 Run 承接的持续工作；清单与 run 同事务冻结。 */
     workKey: varchar('work_key', { length: 64 }),
-    workInputManifest: jsonb('work_input_manifest'),
+    workInputManifest: jsonb('work_input_manifest').$type<WorkInputManifest>(),
     workInputManifestDigest: char('work_input_manifest_digest', { length: 64 }),
     profileDigest: char('profile_digest', { length: 64 }).notNull(),
     pluginPackDigest: char('plugin_pack_digest', { length: 64 }).notNull(),
@@ -131,7 +132,7 @@ export const runs = pgTable(
       ),
     check(
       'run_work_input_manifest_fields',
-      sql`(${table.workKey} is null and ${table.workInputManifest} is null and ${table.workInputManifestDigest} is null) or (${table.workKey} is not null and (((${table.workInputManifest} is null) and (${table.workInputManifestDigest} is null)) or (jsonb_typeof(${table.workInputManifest}) = 'object' and ${table.workInputManifestDigest} ~ '^[a-f0-9]{64}$')))`,
+      sql`(${table.workKey} is null and ${table.workInputManifest} is null and ${table.workInputManifestDigest} is null) or (${table.workKey} ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' and (((${table.workInputManifest} is null) and (${table.workInputManifestDigest} is null)) or (jsonb_typeof(${table.workInputManifest}) = 'object' and ${table.workInputManifestDigest} ~ '^[a-f0-9]{64}$')))`,
     ),
   ],
 )

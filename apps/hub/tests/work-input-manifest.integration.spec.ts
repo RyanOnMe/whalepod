@@ -205,7 +205,7 @@ async function startRun(
   session: Session,
   taskId: string,
   seed: Seed,
-  itemIds: string[],
+  itemIds: string[] | undefined,
   key = idemKey(),
 ): Promise<{ statusCode: number; body: string; json: () => any }> {
   return apiInject(ctx, session, {
@@ -216,7 +216,7 @@ async function startRun(
       deviceId: seed.deviceId,
       workspaceId: seed.workspaceId,
       prompt: '使用工作输入',
-      workInputItemIds: itemIds,
+      ...(itemIds === undefined ? {} : { workInputItemIds: itemIds }),
     },
     idempotencyKey: key,
   })
@@ -735,6 +735,29 @@ describe('RD-02a-2a run work input manifest', () => {
     expect(replayDenied.statusCode, replayDenied.body).toBe(403)
     expect(JSON.stringify(replayDenied.json())).not.toContain(runId)
 
+    // 省略 workInputItemIds 不能绕过复核：鉴权看回执里的 Run，不看本次请求字段。
+    const omittedDenied = await startRun(ctx, bob, taskId, seed, undefined, key)
+    expect(omittedDenied.statusCode, omittedDenied.body).toBe(403)
+    expect(JSON.stringify(omittedDenied.json())).not.toContain(runId)
+
+    // 跨 Task 复用同一全局 key（即使 bob 是另一个 Task 的责任人）也不能取回这条 Run。
+    const bobTaskRes = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/projects/${projectId}/tasks`,
+      payload: { title: 'Bob 的另一个任务', assigneeUserId: bob.userId },
+    })
+    expect(bobTaskRes.statusCode, bobTaskRes.body).toBe(201)
+    const bobTaskId = bobTaskRes.json().data.id as string
+    const accepted = await apiInject(ctx, bob, {
+      method: 'POST',
+      url: `/api/v1/tasks/${bobTaskId}/accept`,
+    })
+    expect(accepted.statusCode, accepted.body).toBe(200)
+    const crossTask = await startRun(ctx, bob, bobTaskId, seed, undefined, key)
+    expect(crossTask.statusCode, crossTask.body).toBe(404)
+    expect(crossTask.json().error.code).toBe('NOT_FOUND')
+    expect(JSON.stringify(crossTask.json())).not.toContain(runId)
+
     const revoked = await apiInject(ctx, alice, {
       method: 'DELETE',
       url: `/api/v1/tasks/${taskId}/instruction-grants/${bob.userId}`,
@@ -818,6 +841,14 @@ describe('RD-02a-2a run work input manifest', () => {
       status: 'unconfirmed',
       deliveryRunId: secondRunId,
     })
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxDeliveries)
+          .where(eq(schema.workInboxDeliveries.runId, secondRunId))
+      )[0],
+    ).toMatchObject({ status: 'unconfirmed' })
   })
 
   it('keeps delivery attempts per run and only returns one of two unconfirmed versions', async () => {
@@ -873,9 +904,79 @@ describe('RD-02a-2a run work input manifest', () => {
       .select()
       .from(schema.workInboxItems)
       .where(eq(schema.workInboxItems.sourceId, messageId))
-    expect(rows.filter((row) => row.status === 'pending')).toHaveLength(1)
-    expect(rows.filter((row) => row.status === 'superseded')).toHaveLength(1)
-    expect(rows.find((row) => row.status === 'superseded')?.statusReason).toBe('new_version')
+    const pendingRows = rows.filter((row) => row.status === 'pending')
+    expect(pendingRows).toHaveLength(1)
+    // 存活必须是较新的 v2；旧 v1 不能因处理顺序先回 pending 把新版本顶掉。
+    expect(pendingRows[0]?.id).toBe(second.id)
+    expect(rows.find((row) => row.status === 'superseded')).toMatchObject({
+      id: first.id,
+      statusReason: 'new_version',
+    })
+
+    // 最新版本回到 pending 后仍能被下一次 Run 选中（没有 stale 顶掉输入槽）。
+    const reusable = await startRun(ctx, alice, taskId, seed, [second.id as string])
+    expect(reusable.statusCode, reusable.body).toBe(201)
+  })
+
+  it('keeps a newer delivered version from being superseded by an older unconfirmed one', async () => {
+    const messageId = await comment(ctx, alice, taskId, '第一版材料。')
+    const old = await associate(ctx, alice, workKey, messageId)
+    const firstRun = await startRun(ctx, alice, taskId, seed, [old.id as string])
+    expect(firstRun.statusCode, firstRun.body).toBe(201)
+    const firstRunId = firstRun.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, firstRunId)
+    await completeRun(harness, seed, alice.userId, firstRunId)
+    const firstFinished = (
+      await database.db.select().from(schema.runs).where(eq(schema.runs.id, firstRunId))
+    )[0]?.finishedAt?.getTime() as number
+
+    await database.db
+      .update(schema.taskMessages)
+      .set({ body: '第二版材料。', editedAt: new Date(Date.now() + 1000) })
+      .where(eq(schema.taskMessages.id, messageId))
+    const newer = await associate(ctx, alice, workKey, messageId)
+    const secondRun = await startRun(ctx, alice, taskId, seed, [newer.id as string])
+    expect(secondRun.statusCode, secondRun.body).toBe(201)
+    const secondRunId = secondRun.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, secondRunId)
+
+    // 旧版本 60s 到期时，新版本仍在运行（delivered）：旧版本只能 superseded，不能回 pending。
+    expect(await reconcileWorkInputs(database, new Date(firstFinished + 61_000))).toBe(1)
+    const rows = await database.db
+      .select()
+      .from(schema.workInboxItems)
+      .where(eq(schema.workInboxItems.sourceId, messageId))
+    expect(rows.find((row) => row.id === old.id)).toMatchObject({
+      status: 'superseded',
+      statusReason: 'new_version',
+    })
+    expect(rows.find((row) => row.id === newer.id)).toMatchObject({
+      status: 'delivered',
+      deliveryRunId: secondRunId,
+    })
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxDeliveries)
+          .where(eq(schema.workInboxDeliveries.runId, firstRunId))
+      )[0],
+    ).toMatchObject({ status: 'returned', failureReason: 'superseded_by_new_version' })
+
+    // 新 Run 正常结束后未消费的新版本才回到 pending。
+    await completeRun(harness, seed, alice.userId, secondRunId)
+    const secondFinished = (
+      await database.db.select().from(schema.runs).where(eq(schema.runs.id, secondRunId))
+    )[0]?.finishedAt?.getTime() as number
+    expect(await reconcileWorkInputs(database, new Date(secondFinished + 61_000))).toBe(1)
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxItems)
+          .where(eq(schema.workInboxItems.id, newer.id as string))
+      )[0],
+    ).toMatchObject({ status: 'pending', statusReason: 'run_ended_unconsumed' })
   })
 
   it('freezes a context entry source without exposing it on the run face', async () => {

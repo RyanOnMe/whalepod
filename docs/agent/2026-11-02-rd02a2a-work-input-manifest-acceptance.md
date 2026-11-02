@@ -42,8 +42,9 @@ pnpm exec tsx scripts/with-test-postgres.mts \
 ### 1. 冻结与不可变
 
 - `workInputItemIds` 必须非空、无重复、≤32；空数组/重复/超限 `400 VALIDATION_FAILED`。
-- 只有 Task 当前责任人能带工作输入；被授权成员即使能驱动 Run，带 `workInputItemIds` 也是 `403 FORBIDDEN`。同 Idempotency-Key 回放和并发回读同样按**当前**责任人复核，不能借缓存回执绕过。
+- 只有 Task 当前责任人能带工作输入；被授权成员即使能驱动 Run，带 `workInputItemIds` 也是 `403 FORBIDDEN`。幂等回放按**回执里的 Run** 复核：回执必须属于请求路径的 Task，且 `workKey` 非空的 Run 只允许当前 Task 责任人读回；省略 `workInputItemIds` 或用另一个自己是责任人的 Task 路径都不能绕过。
 - 所有条目必须同 work、同 Task、同项目；work 必须 `active`、owner 与 Task 当前 assignee 一致；条目必须 `pending`。
+- 建 Run 持 Task 锁后按 **Work→item** 加锁（delivery 的 Work 外键会对 Work 取 KEY SHARE）；与 60s 对账/收件箱命令同向，避免反向持锁死锁。
 - 创建事务内逐条重跑 `loadWorkSource`：来源被纠正/停用/推断/越界/撤权，或 `sourceVersion/sourceDigest/authorizationGeneration` 与关联时不一致，`409 CONFLICT`，不冻结、不建 Run。
 - 条目快照正文必须与 `bodyDigest` 一致；来源正文也必须与关联时摘要一致，否则拒绝。
 - 清单条目按 `inboxItemId` 字节序稳定排序；`manifestDigest = sha256(canonicalJson(manifest))`，可从数据库清单重算一致；同 Idempotency-Key 重放返回同一 Run 与同一清单。
@@ -62,7 +63,8 @@ pnpm exec tsx scripts/with-test-postgres.mts \
 - Run 进入任意终态（completed/failed/cancelled/lost）时，同事务把该 Run 下 `delivered` 条目转 `unconfirmed`（`status_reason='run_ended_awaiting_receipt'`），delivery 转 `unconfirmed`。
 - 对账窗口从 `unconfirmed_at` 起算 60s；`reconcileWorkInputs(now)` 在窗口内不动作，到期把无消费条目标 `pending`（`status_reason='run_ended_unconsumed'`），清空交付指针，delivery 转 `returned(failure_reason='run_ended_unconsumed')`。
 - 每条到期输入在**独立事务**内收口（`Work → item` 锁序），单条失败不回滚已成功条目，也不会让整轮 tick 卡死；同一时间点重跑幂等，已收口条目返回 0。
-- 若同来源已有更新条目，旧版本不回 `pending`，而是 `superseded(new_version)`；delivery 转 `returned(superseded_by_new_version)`，避免撞来源 pending 唯一索引或让 #493 重投旧版本。两个版本同时 `unconfirmed` 时也只允许一个回到 `pending`，不依赖时间戳/id 的先后选择。
+- 同来源只有**最新条目**能回 `pending`：在 Work 锁内按 `(created_at desc, source_version desc, id desc)` 选最新；旧版本一律 `superseded(new_version)`，delivery 转 `returned(superseded_by_new_version)`。因此两个版本同时 `unconfirmed`、或旧版本 `unconfirmed` 而新版本仍 `delivered`，都不会让旧版本复活或把新版本顶掉；处理顺序不影响结果。
+- 当前条目已是最新时，先把同来源残留的旧 `pending` 一起置 `superseded`，再回 `pending`，不会撞来源 pending 唯一索引。
 - 对账只改收件箱/交付记录，不改 Run 终态；Run 不复活。
 - 服务端 10s tick 调用同一对账函数；测试以 59s/61s 两个时间点证明窗口边界。
 
@@ -109,8 +111,8 @@ scripts/secret-scan.sh .
 本切片实测（2026-11-02）：
 
 - Q0：`212` 个测试文件 / `2272` 条通过。
-- Q2：`87` 个测试文件 / `748` 条通过；定向 manifest `16` 条通过。
-- 单点变异 `M1–M23` 全部 RED（M20 的 SQL 过滤与结算复核是两层冗余保护，分别单点变异各由 `listDue` 与直接结算用例判红）。
+- Q2：`87` 个测试文件 / `749` 条通过；定向 manifest `17` 条通过。
+- 单点变异 `M1–M29` 全部 RED（M20 的 SQL 过滤与结算复核是两层冗余保护，分别单点变异各由 `listDue` 与直接结算用例判红）。
 
 ## 变异自证
 
@@ -142,6 +144,12 @@ scripts/secret-scan.sh .
 | M21 | 结算改成 item→Work 锁序 | 边界静态用例（Work 必须先于 item） |
 | M22 | 对账改成整轮一个事务 | 边界静态用例（每条到期输入独立事务） |
 | M23 | 删除活跃冲突回读的 assignee 复核 | 边界静态用例（两条回放路径都要复核） |
+| M24 | 最新版本查询只看同来源 pending | 旧 unconfirmed + 新 delivered、双 unconfirmed 两用例红 |
+| M25 | 最新版本排序改成 createdAt 升序 | 旧版本被当成最新，三个版本用例红 |
+| M26 | 回放复核重新依赖请求是否带 `workInputItemIds` | 被授权成员省略 ids 回放拿到 201 |
+| M27 | 删除回执 taskId 与请求路径一致性校验 | 跨 Task 复用 key 取回原 Run |
+| M28 | 删除回放里 `workKey` 非空的 assignee 复核 | 被授权成员省略 ids 回放 201 |
+| M29 | 建 Run 只无锁读 Work | 边界静态用例（必须 Work→item 锁序） |
 
 ## 边界与未覆盖
 
@@ -152,7 +160,7 @@ scripts/secret-scan.sh .
 - **人类 HTTP 入口**：`workInputItemIds` 只在 `POST /tasks/:taskId/runs` 透传；指令/自动/评审建 Run 入口未携带（#493/RD-03 按需接）。
 - **不要求 Mandate**：人类 Run 可显式使用工作输入；RD-03 自主派发必须按 Mandate 与实时权限复核，不能把本切片当授权。
 - **不批量迁移退休工作**：work 退休后新 Run 不能取输入；已交付条目的对账仍按本切片走。
-- **60s 是粗粒度 tick**：服务端每 10s 扫一次，实际回到 pending 可能晚于 60s 数秒；验收以函数时间点证明边界，不承诺秒级精度。
+- **60s 默认窗口当前不在服务端可配**：`reconcileWorkInputs` 接受 `windowMs`（默认 60s），但 10s tick 未接线配置项；本切片以函数时间点证明边界，不承诺部署级可调。
 - **delivery attempt 固定为 1**：本切片每次 Run 只交付一次，`attempt` 是该 `(item, run)` 的首次尝试；ack/重试/迟到的消费回执归 #493。
 - **consumed 后撤权**：本切片没有消费回执，故不存在 `consumed` 行；#493 接管后按 ADR-0028 记录 `duplicate_consumption`，不再让来源级 retract 改写已消费历史。
 - **直写夹具四处**：篡改 item body、篡改 bodyDigest、改 item.taskId、改 work.humanOwnerUserId，均只用于触发 fail-closed 分支，测试内写明 removeWhen；不写运行时投影。

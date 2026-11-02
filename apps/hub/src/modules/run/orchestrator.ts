@@ -178,10 +178,10 @@ export class RunOrchestrator {
         }
         return run
       })
-      // 工作输入是责任人收件箱的私有快照：幂等回放同样要复核当前责任人，
-      // 否则被授权成员凭已知 idempotencyKey 就能读回责任人的清单摘要。
-      if (!outcome.executed && input.workInputItemIds !== undefined) {
-        await this.assertWorkInputAssignee(taskId, ctx.userId)
+      // 回放要按回执自身的 Task/工作复核，不能只看本次请求带没带 ids：被授权成员
+      // 省略 workInputItemIds 或用另一个自己是责任人的 Task 路径都能命中同一全局 key。
+      if (!outcome.executed) {
+        await this.assertReplayAllowed(taskId, ctx.userId, outcome.value)
       }
       if (outcome.executed && createdSnapshot !== undefined) {
         this.contextLog('context.snapshot_created', {
@@ -200,9 +200,7 @@ export class RunOrchestrator {
       if (activeConflict) {
         const prior = await findCommandReceipt(this.database.db, key)
         if (prior !== undefined) {
-          if (input.workInputItemIds !== undefined) {
-            await this.assertWorkInputAssignee(taskId, ctx.userId)
-          }
+          await this.assertReplayAllowed(taskId, ctx.userId, prior.result)
           return prior.result as RunView
         }
         throw new RunCommandError('RUN_ALREADY_ACTIVE', 'task already has an active run')
@@ -211,11 +209,25 @@ export class RunOrchestrator {
     }
   }
 
-  /** 回放/并发回读也要按当前 Task 责任人复核工作输入权限（不读缓存、不信任旧回执）。 */
-  private async assertWorkInputAssignee(taskId: string, userId: string): Promise<void> {
-    const right = await resolveInstructionRight(this.database.db, taskId, userId)
-    if (right !== 'assignee') {
-      throw new RunCommandError('FORBIDDEN', 'work inputs are assignee-only')
+  /**
+   * 幂等回放/并发回读的复核：回执必须属于请求路径的 Task；带回工作输入的 Run
+   * 只允许当前 Task 责任人读回，且按回执里的 taskId 判定，不信任请求字段。
+   */
+  private async assertReplayAllowed(
+    requestedTaskId: string,
+    userId: string,
+    result: unknown,
+  ): Promise<void> {
+    const cached = result as Partial<RunView>
+    const cachedTaskId = cached.taskId
+    if (cachedTaskId === undefined || cachedTaskId !== requestedTaskId) {
+      throw new RunCommandError('NOT_FOUND', 'run not found for this task')
+    }
+    if (cached.workKey != null) {
+      const right = await resolveInstructionRight(this.database.db, cachedTaskId, userId)
+      if (right !== 'assignee') {
+        throw new RunCommandError('FORBIDDEN', 'work inputs are assignee-only')
+      }
     }
   }
 

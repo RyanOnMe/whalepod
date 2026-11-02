@@ -41,6 +41,14 @@ export async function getWorkById(handle: DbHandle, id: string): Promise<WorkRow
   return row
 }
 
+export async function getWorkByIdForUpdate(
+  handle: DbHandle,
+  id: string,
+): Promise<WorkRow | undefined> {
+  const [row] = await handle.select().from(works).where(eq(works.id, id)).limit(1).for('update')
+  return row
+}
+
 export async function getWorkByKey(
   handle: DbHandle,
   workKey: string,

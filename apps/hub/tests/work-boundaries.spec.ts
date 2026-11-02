@@ -86,6 +86,18 @@ describe('RD-02a-2a work input reconcile isolation', () => {
     )
 
     const inputs = readFileSync(join(WORK_MODULE_DIR, 'run-inputs.ts'), 'utf8')
+    const snapshotStart = inputs.indexOf('export async function snapshotWorkInputs')
+    expect(snapshotStart).toBeGreaterThan(-1)
+    const snapshotEnd = inputs.indexOf('\n}\n', snapshotStart)
+    expect(snapshotEnd).toBeGreaterThan(snapshotStart)
+    const snapshot = inputs.slice(snapshotStart, snapshotEnd)
+    // 建 Run 也必须先锁 Work 再锁 item：delivery 的 Work FK 会取 KEY SHARE，
+    // 与 settle 的 Work FOR UPDATE 反向持锁会死锁。
+    expect(snapshot.indexOf('getWorkByIdForUpdate(tx, firstSnapshot.workId)')).toBeGreaterThan(-1)
+    expect(snapshot.indexOf('getWorkByIdForUpdate(tx, firstSnapshot.workId)')).toBeLessThan(
+      snapshot.indexOf('listWorkInboxItemsForUpdate(tx, itemIds)'),
+    )
+
     const reconcileStart = inputs.indexOf('export async function reconcileWorkInputs')
     expect(reconcileStart).toBeGreaterThan(-1)
     const reconcileEnd = inputs.indexOf('\n}\n', reconcileStart)
@@ -103,8 +115,6 @@ describe('RD-02a-2a work input reconcile isolation', () => {
     )
     // 创建事务内校验一次 + 两条回放路径（普通回执、活跃冲突回读）各复核一次。
     expect(orchestrator).toMatch(/input\.workInputItemIds !== undefined && right !== 'assignee'/)
-    expect(
-      orchestrator.match(/await this\.assertWorkInputAssignee\(taskId, ctx\.userId\)/g),
-    ).toHaveLength(2)
+    expect(orchestrator.match(/await this\.assertReplayAllowed\(/g)).toHaveLength(2)
   })
 })

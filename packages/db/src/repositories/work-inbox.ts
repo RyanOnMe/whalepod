@@ -103,6 +103,19 @@ export async function getRetractedInboxItemForSource(
   return row
 }
 
+/** 无锁读一批条目（用于先确定 workId，再按 Work→item 顺序加锁）。 */
+export async function listWorkInboxItemsByIds(
+  handle: DbHandle,
+  ids: readonly string[],
+): Promise<WorkInboxItemRow[]> {
+  if (ids.length === 0) return []
+  return handle
+    .select()
+    .from(workInboxItems)
+    .where(inArray(workInboxItems.id, [...ids]))
+    .orderBy(desc(workInboxItems.id))
+}
+
 export async function getLatestPendingInboxItemForSource(
   handle: DbHandle,
   workId: string,
