@@ -20,11 +20,15 @@ import type {
   NodeDownstream,
   ProjectedRunEvent,
   RunProjectContextManifestEntry,
+  RunWorkInputReceipt,
   RuntimeCommand,
   WorkInputManifestEntry,
 } from '@whalepod/protocol'
 import { MemoryContextReceiptSeqStore } from '../src/context/receipt-seq-store.js'
-import { MemoryWorkInputReceiptStore } from '../src/work/receipt-store.js'
+import {
+  MemoryWorkInputReceiptStore,
+  type WorkInputReceiptStore,
+} from '../src/work/receipt-store.js'
 import { CommandStore } from '../src/spool/command-store.js'
 import { EventStore } from '../src/spool/event-store.js'
 import { SecretStore } from '../src/secret/store.js'
@@ -225,6 +229,38 @@ async function makeHarness(
   harness.supervisor = supervisor
   harness.manager = manager
   return harness
+}
+
+/** 记录 RunManager 是否真的把一次回执的状态/序号/outbox 放进 store 事务。 */
+class RecordingWorkInputReceiptStore implements WorkInputReceiptStore {
+  transactions = 0
+  private readonly inner = new MemoryWorkInputReceiptStore()
+
+  snapshot(runId: string, manifestDigest: string) {
+    return this.inner.snapshot(runId, manifestDigest)
+  }
+  nextSeq(runId: string, manifestDigest: string) {
+    return this.inner.nextSeq(runId, manifestDigest)
+  }
+  addDelivered(runId: string, manifestDigest: string, itemIds: readonly string[]) {
+    this.inner.addDelivered(runId, manifestDigest, itemIds)
+  }
+  addRead(runId: string, manifestDigest: string, itemId: string) {
+    this.inner.addRead(runId, manifestDigest, itemId)
+  }
+  enqueue(receipt: RunWorkInputReceipt) {
+    this.inner.enqueue(receipt)
+  }
+  pending() {
+    return this.inner.pending()
+  }
+  removePending(runId: string, manifestDigest: string, receiptSeq: number) {
+    this.inner.removePending(runId, manifestDigest, receiptSeq)
+  }
+  transaction<T>(fn: () => T): T {
+    this.transactions += 1
+    return this.inner.transaction(fn)
+  }
 }
 
 function stdoutSessionEvent(runId: string, event: unknown): string {
@@ -1580,6 +1616,39 @@ describe('ADR-0028：工作输入交付与回执', () => {
     await waitForValue(
       () => (cleaned.includes(RUN_ID) ? true : undefined),
       'run.completed 未在超时内触发 runtime-work-inputs 清理',
+    )
+  })
+
+  it('wraps receipt state, sequence and outbox in one store transaction', async () => {
+    const body = '# 输入\n'
+    const entry = manifestEntry(body)
+    const store = new RecordingWorkInputReceiptStore()
+    const h = await makeHarness({
+      managerDeps: {
+        prepareWorkInputs: async () => ({
+          dir: join(root, 'runtime-work-inputs', RUN_ID),
+          workKey,
+          manifestDigest,
+          entries: [entry],
+        }),
+        workInputReceiptStore: store,
+      },
+    })
+    await h.manager.handleFrame(runStartFrame(h.workspaceId, workInputStart(entry)))
+    h.runtimes[0]!.emitStdout(stdoutRuntimeReady(RUN_ID))
+    h.runtimes[0]!.emitStdout(
+      runtimeReceipt({
+        kind: 'delivered',
+        runId: RUN_ID,
+        workKey,
+        manifestDigest,
+        entriesDelivered: [itemId],
+        at: new Date().toISOString(),
+      }),
+    )
+    expect(store.transactions).toBe(1)
+    expect(h.sentFrames().filter((frame) => frame.type === 'run.work_input_receipt')).toHaveLength(
+      1,
     )
   })
 

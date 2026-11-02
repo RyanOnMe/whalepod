@@ -151,4 +151,17 @@ describe('RD-02a-2b work input receipt lock order', () => {
     expect(fn).not.toContain('body:')
     expect(fn).not.toContain('title:')
   })
+
+  it('logs invalid receipts locally instead of letting CONFLICT reach the socket', () => {
+    const repoRoot = fileURLToPath(new URL('../../..', import.meta.url))
+    const source = readFileSync(join(repoRoot, 'apps/hub/src/modules/run/orchestrator.ts'), 'utf8')
+    const start = source.indexOf('private async handleRunWorkInputReceipt')
+    expect(start).toBeGreaterThan(-1)
+    const end = source.indexOf('\n  }\n', start)
+    expect(end).toBeGreaterThan(start)
+    const handler = source.slice(start, end)
+    expect(handler).toContain("error instanceof RunCommandError && error.code === 'CONFLICT'")
+    expect(handler).toContain("this.contextLog('work.input_receipt_invalid'")
+    expect(handler).toContain('return')
+  })
 })

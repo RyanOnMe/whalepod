@@ -1855,6 +1855,25 @@ describe('RD-02a-2a run work input manifest', () => {
     expect(bundle.json().error.code).toBe('CONTEXT_UNAVAILABLE')
   })
 
+  it('fails the run before dispatch when the underlying message revision drifted', async () => {
+    const messageId = await comment(ctx, alice, taskId, '派发前来源修订。')
+    const item = await associate(ctx, alice, workKey, messageId)
+    const created = await startRun(ctx, alice, taskId, seed, [item.id as string])
+    const runId = created.json().data.id as string
+    // removeWhen：生产提供来源修订竞争夹具后删除该直写；item 快照本身未变，
+    // 因此只会命中 dispatch 前 loadWorkSource 的版本/摘要复核。
+    await database.db
+      .update(schema.taskMessages)
+      .set({ body: '编辑后的讨论正文。', editedAt: new Date() })
+      .where(eq(schema.taskMessages.id, messageId))
+    harness.clock.advance(Math.max(0, Date.now() - harness.clock.now().getTime()) + 1)
+    await harness.worker.dispatchOnce()
+    const run = (await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId)))[0]
+    expect(run).toMatchObject({ status: 'failed', failureCode: 'CONTEXT_UNAVAILABLE' })
+    expect(String(run?.failureSummary)).toContain('source_stale')
+    expect(harness.gateway.sent.filter((sent) => sent.frame.type === 'run.start')).toHaveLength(0)
+  })
+
   it('fails the run before dispatch when the frozen source version drifted', async () => {
     const messageId = await comment(ctx, alice, taskId, '派发前版本漂移。')
     const item = await associate(ctx, alice, workKey, messageId)

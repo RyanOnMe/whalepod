@@ -206,6 +206,9 @@ describe('ADR-0028: work inputs reach the model through read_work_input', () => 
       // 清单摘要必须进入首条 user 请求，模型才知道可读的 inboxItemId；
       // 只注册工具、不投影清单等于把不可猜的 UUID 藏起来。
       expect(outputText(runtime.outputs)).toContain('manifest: 本次工作输入清单')
+      // sourceVersion 只出现在 prompt 的清单 JSON 里（工具结果渲染成 `version: 3`，
+      // 工具调用参数只有 inboxItemId），命中即证明摘要字段真的到了模型请求。
+      expect(outputText(runtime.outputs)).toContain('id: sourceVersion')
     } finally {
       await runtime.dispose()
     }

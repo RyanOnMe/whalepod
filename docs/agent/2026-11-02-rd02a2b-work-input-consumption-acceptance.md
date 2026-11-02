@@ -70,6 +70,7 @@ pnpm test:dsh-contract -- packages/runtime-dsh/tests/dsh-contract/work-input.con
 - bundle 不重跑 `loadWorkSource`：授权在 Run 创建与派发前复核，来源显式 retract 会让 item 失效；Run 已派发但尚未下载时，若来源权限变化却没有显式 retract，冻结快照仍按固定快照模型可下载（这是本切片的明确边界，不是遗漏）。
 - Hub 失败码原样透传；网络失败映射 `DEVICE_OFFLINE`，未知 5xx 映射 `INTERNAL_ERROR`。
 - 下载成功后副本目录按 `inboxItemId` 命名；`runtime.initialize.workInputs` 与清单成对出现，缺一不发。
+- 派发前复核会在 Run 仍 `queued` 时重跑 `loadWorkSource`：Task 消息正文或 `editedAt` 在创建后变化 → `CONTEXT_UNAVAILABLE(source_stale)`，Run failed 且不发送 `run.start`。
 
 ### 3. Runtime 读取
 
@@ -84,7 +85,7 @@ pnpm test:dsh-contract -- packages/runtime-dsh/tests/dsh-contract/work-input.con
 
 - `receiptSeq` 按 `(runId, manifestDigest)` 持久单调，跨 Node 进程重开同一 SQLite 文件继续递增；不同 Run/清单各自从 1 开始。
 - `delivered/read` 累计集合持久化，重启后能重建累计回执；同一 Run 的重复读取不新增消费事实。
-- 状态累计、序号与 outbox 写入在同一个本地事务内（SQLite `BEGIN IMMEDIATE`）；进程在两步之间崩溃不会留下「读取已发生、回执从未入队」的缺口。
+- 状态累计、序号与 outbox 写入在同一个本地事务内（SQLite `BEGIN IMMEDIATE`）；进程在两步之间崩溃不会留下「读取已发生、回执从未入队」的缺口。RunManager 接线用 recording store 断言真的调用了 `transaction`，避免只测 store 原语、生产路径绕过。
 - 回执先入本地 outbox 再发送；`send` 返回 false（断线）时保留并记 `queued for reconnect`，`onReconnect` 补发成功后才删除。
 - outbox 按 `(runId, manifestDigest, receiptSeq)` 排序，不依赖 Runtime 墙钟；同毫秒/时钟回拨不会把序号倒过来。
 - Node 对不在清单内的 `delivered/entriesDelivered` 条目做过滤；对未知 `inboxItemId` 的 read 回执直接丢弃并留 warn 日志；清单身份不符的回执同样丢弃。
@@ -159,13 +160,13 @@ scripts/secret-scan.sh apps/hub/src/modules/work apps/hub/src/modules/run/orches
 
 本切片实测（2026-11-02）：
 
-- 定向：Hub `38` 条、Node `71` 条（run-manager 50 / downloader 9 / receipt store 5 / hello 7）、Runtime 工具 `4` 条、Q3 新契约 `3` 条、边界静态 `4` 条，全部通过。
-- Q0：`215` 个测试文件 / `2303` 条通过。
-- Q2：`87` 个测试文件 / `770` 条通过（含本切片 38 条）。
+- 定向：Hub `39` 条、Node `72` 条（run-manager 51 / downloader 9 / receipt store 5 / hello 7）、Runtime 工具 `4` 条、Q3 新契约 `3` 条、边界静态 `5` 条，全部通过。
+- Q0：`215` 个测试文件 / `2305` 条通过。
+- Q2：`87` 个测试文件 / `771` 条通过（含本切片 39 条）。
 - Q3：`21` 个测试文件 / `86` 条通过（含新 replay 正控、拒绝面与 prompt 清单投影）。
 - Q6：`6` 个测试文件 / `34` 条通过。
 - Q7：`4` 个测试文件 / `18` 条通过，secret-scan 自检/实扫与依赖许可 gate 通过。
-- 单点变异 `M1–M36` 全部 RED，逐条见下表。
+- 单点变异 `M1–M40` 全部 RED，逐条见下表。
 
 ## 变异自证
 
@@ -192,23 +193,28 @@ scripts/secret-scan.sh apps/hub/src/modules/work apps/hub/src/modules/run/orches
 | M17 | 终态 unconfirmed 不进入消费分支 | 窗口内终态读取后 item 仍 unconfirmed |
 | M18 | 接受非 Run 所属设备的回执 | 跨设备回执落库（期望 FORBIDDEN） |
 | M19 | bundle 跳过标题等清单元数据比较 | 等长标题漂移后 bundle 仍 200 |
-| M20 | Node 无下载器时不 fail-closed | run.start ack 错误码从 CONTEXT_UNAVAILABLE 变成 INTERNAL_ERROR |
-| M21 | Node 不丢弃清单外 read 回执 | 未知条目 read 产生上行帧 |
-| M22 | Node 不丢弃清单身份不符的回执 | 错 manifestDigest 回执被上行 |
-| M23 | Node 发送失败仍删 outbox | 离线回执未保留，重连补发判据红 |
-| M24 | 终态不清理工作输入副本 | `cleanupWorkInputs` 断言超时 |
-| M25 | Node 不过滤清单外 delivered id | 上行回执 `entriesDelivered` 出现未知 id |
-| M26 | 本地状态/序号/outbox 不在同一事务 | 事务回滚用例中读取事实/outbox 残留 |
-| M27 | outbox 按 Runtime 墙钟排序 | 序号 2 的 at 更早时 drain 顺序倒置 |
-| M28 | Node hello 漏声明 work-input.v1 | hello facts/帧默认值能力断言红 |
-| M29 | downloader 接受重复清单条目 | 重复 `inboxItemId` 的 bundle 被接受 |
-| M30 | `read_work_input` 白名单失效 | 路径形 id 报“不可用”而非 unknown item |
-| M31 | `read_work_input` 跳过摘要复核 | 等长篡改副本被成功读取 |
-| M32 | `read_work_input` 不发 read 回执 | 成功读取后回执集合为空 |
-| M33 | bridge ready 后不发 delivered 回执 | Q3 回执序列期望 `[delivered, read]` |
-| M34 | bridge 不发 read 回执 | Q3 读取后回执序列缺 read |
-| M35 | 工具 render 不投影正文 | Q3 `{{fromRequest:RD02A2_ECHO}}` 匹配失败/正文缺失 |
-| M36 | 首条 prompt 不投影工作输入清单 | Q3 `{{fromRequest:本次工作输入清单}}` 匹配失败 |
+| M20 | 派发前不重跑来源版本/摘要复核 | 修改 Task 消息正文/editedAt 后 Run 仍被派发（期望 `source_stale`） |
+| M21 | 坏回执观测日志改名/删除 | 边界静态用例断言 `work.input_receipt_invalid` |
+| M22 | Node 无下载器时不 fail-closed | run.start ack 错误码从 CONTEXT_UNAVAILABLE 变成 INTERNAL_ERROR |
+| M23 | Node 不丢弃清单外 read 回执 | 未知条目 read 产生上行帧 |
+| M24 | Node 不丢弃清单身份不符的回执 | 错 manifestDigest 回执被上行 |
+| M25 | Node 发送失败仍删 outbox | 离线回执未保留，重连补发判据红 |
+| M26 | 终态不清理工作输入副本 | `cleanupWorkInputs` 断言超时 |
+| M27 | Node 不过滤清单外 delivered id | 上行回执 `entriesDelivered` 出现未知 id |
+| M28 | 本地状态/序号/outbox 不在同一事务 | 事务回滚用例中读取事实/outbox 残留 |
+| M29 | outbox 按 Runtime 墙钟排序 | 序号 2 的 at 更早时 drain 顺序倒置 |
+| M30 | Node hello 漏声明 work-input.v1 | hello facts/帧默认值能力断言红 |
+| M31 | downloader 接受重复清单条目 | 重复 `inboxItemId` 的 bundle 被接受 |
+| M32 | RunManager 绕过 store.transaction | 回执后 store.transactions 断言为 0 |
+| M33 | `read_work_input` 白名单失效 | 路径形 id 报“不可用”而非 unknown item |
+| M34 | `read_work_input` 跳过摘要复核 | 等长篡改副本被成功读取 |
+| M35 | `read_work_input` 不发 read 回执 | 成功读取后回执集合为空 |
+| M36 | bridge ready 后不发 delivered 回执 | Q3 回执序列期望 `[delivered, read]` |
+| M37 | bridge 不发 read 回执 | Q3 读取后回执序列缺 read |
+| M38 | 工具 render 不投影正文 | Q3 `{{fromRequest:RD02A2_ECHO}}` 匹配失败/正文缺失 |
+| M39 | 首条 prompt 不投影工作输入清单 | Q3 `{{fromRequest:本次工作输入清单}}` 匹配失败 |
+| M40 | prompt 保留标题但删掉清单 JSON | Q3 `{{fromRequest:sourceVersion}}` 匹配失败 |
+
 
 ## 边界与未覆盖
 
@@ -216,11 +222,11 @@ scripts/secret-scan.sh apps/hub/src/modules/work apps/hub/src/modules/run/orches
 - **没有自主派发/自动执行**：RD-03 才接 Mandate 与自动 Run；本切片的消费回执不能当作自主执行授权。
 - **模型可以不读**：工具与清单摘要可见不等于模型必读；未读取的 Run 终态仍走 #492 的 unconfirmed→pending，不把“Run 成功”当“输入已消费”。提示模型优先读哪些条目仍归后续提示层。
 - **60 秒窗口用 Hub 时钟**：Node 的 `read.at` 只作为 `read_at` 事实，不参与窗口判断；多 Hub 实例各自的 `now` 有偏差时，边界会按处理该回执的实例时钟移动（单实例部署无此问题）。
-- **乱序/空洞**：Node 的正常路径按 `receiptSeq` 排序；Hub 仍接受低于最大 seq 的未见序号（重连补发可能晚于新回执），只把已存在的同 seq 行视为幂等。Node 在计数器递增与入队之间崩溃会留下永久空洞，但不会卡死后续回执。
+- **乱序/空洞**：Node 的正常路径按 `receiptSeq` 排序；Hub 仍接受低于最大 seq 的未见序号（重连补发可能晚于新回执），只把已存在的同 seq 行视为幂等。状态/序号/outbox 同事务后，计数器与入队之间不再产生空洞；只有外部状态丢失/手工删除才可能造成序号跳变，Hub 仍接受。
 - **delivered-only 回执幂等**：重复 delivered 回执会照常写回执行（seq 不同）并 ack，不产生消费行。
 - **不做 HTTP 重试/退避**：bundle 下载失败即 `run.start` 拒绝；没有下载器级重试；副本下载是启动前置条件，不是执行中补拉。
 - **单条目上限 64KB**：与清单 schema 一致；Runtime 工具一次读全文，`truncated` 恒 false；大文件/附件不在本切片。
-- **无实时撤权帧**：撤权发生在 Run 启动前时，派发前复核与 bundle 路由都会拒绝；但对已经下载到 Node 的本地副本，Hub 没有 Hub→Node 的撤权帧，Runtime 仍可能读取，Hub 只能把随后的 read 回执记为 `duplicate`，并在 Run 终态时清理副本。立即封禁读取归 PC-05b/后续撤权信号。
+- **无实时撤权帧**：撤权发生在 Run 启动前时，派发前复核与 bundle 路由都会拒绝；但对已经下载到 Node 的本地副本，Hub 没有 Hub→Node 的撤权帧，Runtime 仍可能读取。迟到回执撤回下一 Run 的交付后，下一 Run 的后续读取同样只会在 Hub 记为 `duplicate`（不消费）；副本本身在 Run 终态时清理。立即封禁读取归 PC-05b/后续撤权信号。
 - **撤回后的条目状态**：下一 Run 的交付被迟到回执撤回时，item 用 `superseded(late_receipt_withdrawn)` 表示不可再投（复用既有状态，不新增枚举）；它不是“有新版本”，只是终态标记。
 - **无 Node 重启后的 Run 续跑**：Node 重启仍走既有 lost 收敛，不自动重放；未发回执按 outbox 补发，但 Run 不会复活。
 - **本地回执状态不清理**：`work-input-receipts.sqlite` 的每 Run 状态行保留用于审计/重连；当前没有按终态回收策略，长跑 Node 会缓慢增长。
