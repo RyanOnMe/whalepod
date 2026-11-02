@@ -26,6 +26,8 @@ export interface OutboxCommand {
 export interface ClaimedCommand extends OutboxCommand {
   /** claim 之后的 attempt_count（从 1 起）。 */
   attemptCount: number
+  /** 首次成功写入 Node 的时间；null = 尚未发出。 */
+  sentAt: Date | null
 }
 
 /**
@@ -89,6 +91,7 @@ export async function claimInTransaction(tx: Tx, options: ClaimOptions): Promise
       type: row.type,
       payload: row.payload,
       attemptCount,
+      sentAt: row.sentAt,
     })
   }
   return claimed
@@ -135,6 +138,23 @@ export class Outbox {
     const now = this.nowFn()
     const random = this.randomFn
     return this.database.transaction((tx) => claimInTransaction(tx, { limit, now, random }))
+  }
+
+  /** 首次成功写入 Node 后落 sent_at（只写一次；重投不覆盖首次时间）。 */
+  async markSent(id: string): Promise<boolean> {
+    const rows = await this.database.db
+      .update(dispatchOutbox)
+      .set({ sentAt: this.nowFn() })
+      .where(
+        and(
+          eq(dispatchOutbox.id, id),
+          isNull(dispatchOutbox.sentAt),
+          isNull(dispatchOutbox.ackedAt),
+          isNull(dispatchOutbox.failedAt),
+        ),
+      )
+      .returning({ id: dispatchOutbox.id })
+    return rows.length > 0
   }
 
   /** 幂等：已 ack 或已 fail 的行返回 false，不报错。 */

@@ -29,12 +29,14 @@
  * 正文与结构化字段都没进模型上下文（Reviewer 读不到材料）——本切片的探针
  * 与修复同时落地，否则「输入引用」只有接口没有交付。
  */
+import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { RuntimeOutput } from '@whalepod/protocol'
+import { projectContextNonce } from '../../src/index.js'
 import {
   commandFrame,
   initializeCommand,
@@ -351,3 +353,110 @@ function withManifest(
     artifactInputsDir: inputsDir,
   }
 }
+
+// ADR-0027（PC-05a）：项目上下文快照经专用只读工具进入模型；正文不在 run.start
+// 清单或 executionContext 里，只能来自 Node 下载副本。回执在本地 wire 上可观测。
+const CONTEXT_ENTRY_ID = '01905f7c-0000-7000-8000-000000000951'
+const CONTEXT_CONTENT = '# frozen project context\nPC05A_ECHO\n'
+const CONTEXT_DIGEST = createHash('sha256').update(CONTEXT_CONTENT).digest('hex')
+const CONTEXT_SNAPSHOT_DIGEST = createHash('sha256').update('pc05a-contract').digest('hex')
+
+function withProjectContext(
+  spec: ReturnType<typeof runtimeSpec>,
+  entriesDir: string,
+  runId: string,
+): ReturnType<typeof runtimeSpec> {
+  const nonce = projectContextNonce(CONTEXT_SNAPSHOT_DIGEST, runId)
+  const headerText = `[project-context:${nonce}]\n- ${CONTEXT_ENTRY_ID} 预算结论`
+  return {
+    ...spec,
+    approvalPolicy: 'full_access' as const,
+    projectContext: {
+      snapshotId: '01905f7c-0000-7000-8000-000000000961',
+      digest: CONTEXT_SNAPSHOT_DIGEST,
+      headerText,
+      headerDigest: createHash('sha256').update(headerText).digest('hex'),
+      entries: [
+        {
+          entryId: CONTEXT_ENTRY_ID,
+          kind: 'decision',
+          title: '预算结论',
+          revisionId: null,
+          businessRef: 'taskSpec:01905f7c-0000-7000-8000-000000000201',
+          digest: CONTEXT_DIGEST,
+          byteSize: Buffer.byteLength(CONTEXT_CONTENT),
+          snapshotAuthorizationGeneration: null,
+        },
+      ],
+      entriesDir,
+    },
+  }
+}
+
+describe('ADR-0027: project context entries reach the model through read_project_context', () => {
+  it('projects the frozen body and structured fields, and emits delivered/read receipts', async () => {
+    const entriesDir = makeInputsDir()
+    writeFileSync(join(entriesDir, CONTEXT_ENTRY_ID), CONTEXT_CONTENT)
+    const base = runtimeSpec()
+    const spec = withProjectContext(base, entriesDir, base.runId)
+    const runtime = await startReplayRuntime('read-project-context', spec)
+    try {
+      await driveToCompletion(runtime, 'read the project context')
+
+      const results = toolResultsOf(runtime.outputs)
+      expect(results).toHaveLength(2)
+      const [read, escaped] = results as [ToolResultData, ToolResultData]
+      const text = resultText(read)
+      expect(isErrorOf(read)).toBe(false)
+      expect(text).toContain(`project context: ${CONTEXT_ENTRY_ID}`)
+      expect(text).toContain('kind: decision')
+      expect(text).toContain('title: 预算结论')
+      expect(text).toContain(`digest: ${CONTEXT_DIGEST}`)
+      expect(text).toContain(CONTEXT_CONTENT)
+      expect(callIdOf(escaped)).toBe('call-context-2')
+      expect(isErrorOf(escaped)).toBe(true)
+      expect(resultText(escaped)).toContain('unknown project context entry')
+      for (const secretPath of [entriesDir, spec.workspacePath, spec.dshHomePath]) {
+        expect(JSON.stringify(read)).not.toContain(secretPath)
+        expect(JSON.stringify(escaped)).not.toContain(secretPath)
+      }
+
+      const receipts = runtime.outputs.filter((frame) => frame.type === 'runtime.context_receipt')
+      expect(receipts.map((frame) => (frame.payload as { kind: string }).kind)).toEqual([
+        'delivered',
+        'read',
+      ])
+      expect(receipts[0]?.payload).toMatchObject({
+        snapshotId: '01905f7c-0000-7000-8000-000000000961',
+        nonceMatched: true,
+        entriesDelivered: [CONTEXT_ENTRY_ID],
+      })
+      expect(receipts[1]?.payload).toMatchObject({
+        entryId: CONTEXT_ENTRY_ID,
+        digestVerified: true,
+        byteSize: Buffer.byteLength(CONTEXT_CONTENT),
+      })
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('the body reaches the next model request (fromRequest echo)', async () => {
+    const entriesDir = makeInputsDir()
+    writeFileSync(join(entriesDir, CONTEXT_ENTRY_ID), CONTEXT_CONTENT)
+    const base = runtimeSpec()
+    const spec = withProjectContext(base, entriesDir, base.runId)
+    const runtime = await startReplayRuntime('read-project-context-manifest', spec)
+    try {
+      await driveToCompletion(runtime, 'read the project context')
+      // marker 只在磁盘副本里，不在快照清单/header/prompt 中：出现即证明正文经
+      // 工具投影进入了下一次模型请求。
+      expect(JSON.stringify(spec.projectContext?.entries)).not.toContain('PC05A_ECHO')
+      expect(spec.projectContext?.headerText).not.toContain('PC05A_ECHO')
+      expect(outputsText(runtime.outputs)).toContain('Context echo: PC05A_ECHO')
+      expect(outputsText(runtime.outputs)).toContain('nonce: [project-context:')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+})

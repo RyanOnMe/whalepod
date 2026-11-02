@@ -119,6 +119,8 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   const { ArtifactCollector } = await import('./artifact/collect.js')
   const { uploadArtifactCandidate } = await import('./artifact/upload-client.js')
   const { ArtifactInputsManager } = await import('./artifact/inputs.js')
+  const { ProjectContextDownloader } = await import('./context/project-context.js')
+  const { SqliteContextReceiptSeqStore } = await import('./context/receipt-seq-store.js')
   const { OfficePreviewGenerator } = await import('./artifact/preview.js')
   const { uploadArtifactPreview, reportArtifactPreviewFailure } =
     await import('./artifact/preview-upload-client.js')
@@ -134,6 +136,12 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     hubUrl: config.hubUrl,
     deviceToken: config.deviceToken,
     inputsRoot: join(stateDir, 'runtime-inputs'),
+    log: artifactLog,
+  })
+  const projectContext = new ProjectContextDownloader({
+    hubUrl: config.hubUrl,
+    deviceToken: config.deviceToken,
+    inputsRoot: join(stateDir, 'runtime-context'),
     log: artifactLog,
   })
   // #441 / ADR-0023: automatic Office conversion is suspended until an isolated
@@ -259,6 +267,9 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     artifactCollector,
     prepareArtifactInputs: (runId, taskId) => artifactInputs.prepare(runId, taskId),
     cleanupArtifactInputs: (runId) => artifactInputs.cleanup(runId),
+    prepareProjectContext: (runId, manifest) => projectContext.prepare(runId, manifest),
+    cleanupProjectContext: (runId) => projectContext.cleanup(runId),
+    contextReceiptSeq: new SqliteContextReceiptSeqStore(join(stateDir, 'context-receipts.sqlite')),
     deviceId: config.deviceId,
     // Run 固化面用**启动时**的探针值（#288 口径：一次装配、多次消费）；#352 刷新的是
     // hello 事实列（设备视图），不动 Runs 的固化语义。

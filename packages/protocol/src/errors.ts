@@ -72,6 +72,10 @@ export const ErrorCodeSchema = z.enum([
   'SOURCE_STALE_GENERATION',
   'SOURCE_LEASE_LOST',
   'INVALID_SOURCE_TRANSITION',
+  // ADR-0027（PC-05a）：项目上下文快照不可用（选择/派发判权失败）与 Node 下载
+  // 副本 digest/bytes 不符。两者都是显式拒绝，不静默换版本或丢条目。
+  'CONTEXT_UNAVAILABLE',
+  'CONTEXT_DIGEST_MISMATCH',
   'PLUGIN_UNREVIEWED',
   'INTERNAL_ERROR',
 ])

@@ -14,6 +14,12 @@ import {
   HandoffNarrativeSchema,
   HandoffRunSpecSchema,
 } from './handoff.js'
+import {
+  PROJECT_CONTEXT_HEADER_MAX_CHARS,
+  PROJECT_CONTEXT_MAX_ENTRIES,
+  RunProjectContextManifestEntrySchema,
+  RuntimeContextReceiptPayloadSchema,
+} from './run-context.js'
 
 const Sha256DigestSchema = z.string().regex(/^[a-f0-9]{64}$/)
 const DshSessionIdSchema = z.string().min(1).max(128)
@@ -69,6 +75,24 @@ const RuntimeInitializePayloadSchema = z
     // HTTP 清单 → initialize，HTTP 上限为实际约束；改上限需两处同步）。
     artifactInputs: z.array(RuntimeArtifactInputSchema).max(64).optional(),
     artifactInputsDir: z.string().min(1).optional(),
+    /**
+     * ADR-0027 §4：项目上下文快照清单 + 本地只读副本目录（成对字段；目录是本地
+     * wire 绝对路径，红线同 artifactInputsDir）。entryCount>0 时才携带；正文不进
+     * executionContext，Runtime 只按清单白名单经 read_project_context 读取。
+     */
+    projectContext: z
+      .strictObject({
+        snapshotId: z.uuid(),
+        digest: Sha256DigestSchema,
+        headerText: z.string().min(1).max(PROJECT_CONTEXT_HEADER_MAX_CHARS),
+        headerDigest: Sha256DigestSchema,
+        entries: z
+          .array(RunProjectContextManifestEntrySchema)
+          .min(1)
+          .max(PROJECT_CONTEXT_MAX_ENTRIES),
+        entriesDir: z.string().min(1),
+      })
+      .optional(),
     // #379（ADR-0017 §3）：建 Run 时 Task 已启用约定流程才携带——Runtime 收尾阶段
     // 据此生成交接草稿（agreement 为绑定版本正文快照；未绑定 null）。
     handoff: HandoffRunSpecSchema.optional(),
@@ -251,6 +275,12 @@ export const RuntimeFatalSchema = envelope(
   }),
 )
 
+/** ADR-0027 §4：Runtime → Node 的交付/读取两级回执（本地 wire）。 */
+export const RuntimeContextReceiptSchema = envelope(
+  'runtime.context_receipt',
+  RuntimeContextReceiptPayloadSchema,
+)
+
 export const RuntimeOutputSchema = z.discriminatedUnion('type', [
   RuntimeReadySchema,
   SessionEventSchema,
@@ -261,6 +291,7 @@ export const RuntimeOutputSchema = z.discriminatedUnion('type', [
   RuntimeRunCompletedSchema,
   RuntimeRunCancelledSchema,
   RuntimeFatalSchema,
+  RuntimeContextReceiptSchema,
 ])
 export type RuntimeOutput = z.infer<typeof RuntimeOutputSchema>
 

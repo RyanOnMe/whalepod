@@ -46,7 +46,12 @@ const app = await buildApp({
 
 // 组合根后台循环：测试不经本入口，故无需条件化。
 const outbox = new Outbox(database)
-const worker = new OutboxWorker({ outbox, gateway: new WsDeviceGateway() })
+const worker = new OutboxWorker({
+  outbox,
+  gateway: new WsDeviceGateway(),
+  // ADR-0027 §3：run.start 真正下发前复核快照；失败由 orchestrator 收敛 failed。
+  beforeDispatch: (command) => app.runOrchestrator.beforeDispatch(command),
+})
 const workerTimer = setInterval(() => {
   void worker.dispatchOnce().catch((error) => {
     app.log.warn(

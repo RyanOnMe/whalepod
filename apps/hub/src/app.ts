@@ -199,6 +199,8 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
     // ADR-0025 §9：Run 终态 Observation 的观测在事务提交后由 orchestrator 写，
     // 这里只接日志通道（字段由事件给出：不透明 id/类型/状态/时间）。
     log: (event) => logRecordedEntry(app.log, event),
+    // ADR-0027 §8：快照创建/派发阻断/回执接受与拒绝的 hub.context 观测。
+    contextLog: (action, fields) => app.log.info({ ...fields, action }, action),
   })
   app.decorate('runOrchestrator', orchestrator)
   registerNodeWebsocket(app, { database, orchestrator, realtime })

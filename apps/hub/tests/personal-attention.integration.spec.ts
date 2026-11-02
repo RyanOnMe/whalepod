@@ -130,6 +130,7 @@ beforeEach(async () => {
       supportedProtocolVersions: [1],
       dshDistributionVersion: 'snapshot-fixture',
       pluginPackDigests: [],
+      contextCapabilities: ['project-context.v1'],
     }),
   )
   socket.send(
@@ -501,6 +502,19 @@ async function reviewRuns(roundId: string) {
 
 describe('revision start recovery via member HTTP (#430)', () => {
   afterEach(() => vi.restoreAllMocks())
+
+  it('maps CONTEXT_UNAVAILABLE to 409 when the target Node lacks project-context.v1', async () => {
+    const { roundId } = await reviewRoundForRecovery()
+    // 已发布成果 → 快照非空；清掉能力声明等价于旧 Node。
+    await db.db
+      .update(schema.devices)
+      .set({ capabilities: {} })
+      .where(eq(schema.devices.id, deviceId))
+    const launch = await command(`/artifact-revision-rounds/${roundId}/start`, revisionInput())
+    expect(launch.statusCode, launch.body).toBe(409)
+    expect(launch.json().error.code).toBe('CONTEXT_UNAVAILABLE')
+    expect(await reviewRuns(roundId)).toHaveLength(0)
+  })
 
   it('legacy claim persisted before Run creation: retries recover one Run instead of staying starting', async () => {
     const { roundId } = await reviewRoundForRecovery()

@@ -119,6 +119,7 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
                 pluginPackDigests: [...frame.payload.pluginPackDigests],
                 // hello 是能力权威集合：缺省即清空旧声明，防止升级/降级后残留。
                 sourceCapabilities: frame.payload.sourceCapabilities ?? [],
+                contextCapabilities: frame.payload.contextCapabilities ?? [],
                 lastSeenAt: new Date(),
               })
               await appendTeamEvent(tx, {

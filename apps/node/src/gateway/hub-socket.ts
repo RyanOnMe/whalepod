@@ -4,10 +4,13 @@ import { WebSocket as WsClient } from 'ws'
 import {
   NodeInventorySchema,
   parseNodeFrame,
+  PROJECT_CONTEXT_CAPABILITY,
   ProtocolError,
+  RunContextReceiptSchema,
   RunSnapshotSchema,
   type NodeDownstream,
   type ProjectedRunEvent,
+  type RunContextReceipt,
   type RunSnapshot,
 } from '@whalepod/protocol'
 
@@ -82,6 +85,8 @@ export interface HelloFacts {
   /** 该 Node 的 DSH 发行版版本；未托管 DSH 时由 CLI 显式标注。 */
   readonly dshDistributionVersion: string
   readonly pluginPackDigests: string[]
+  /** ADR-0027：本 Node 能按快照交付项目上下文并注册 read_project_context。 */
+  readonly contextCapabilities: string[]
 }
 
 /** 构造上行 node.hello 帧（连接建立后首发；03 §6.2）。 */
@@ -99,6 +104,7 @@ export function helloFrame(deviceId: string, facts: HelloFacts): string {
       supportedProtocolVersions: [1],
       dshDistributionVersion: facts.dshDistributionVersion,
       pluginPackDigests: facts.pluginPackDigests,
+      contextCapabilities: facts.contextCapabilities ?? [PROJECT_CONTEXT_CAPABILITY],
     },
   })
 }
@@ -115,6 +121,17 @@ export function heartbeatFrame(
     sentAt: new Date().toISOString(),
     type: 'node.heartbeat',
     payload: { deviceId, activeRunIds, lastEventSeqByRun },
+  })
+}
+
+/** ADR-0027 §4：Node → Hub 的专用回执上行帧（不投影成产品 Run 事件）。 */
+export function runContextReceiptFrame(receipt: RunContextReceipt): string {
+  return JSON.stringify({
+    protocolVersion: 1,
+    messageId: randomUUID(),
+    sentAt: new Date().toISOString(),
+    type: 'run.context_receipt',
+    payload: RunContextReceiptSchema.parse(receipt),
   })
 }
 

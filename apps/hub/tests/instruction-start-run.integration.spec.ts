@@ -336,7 +336,7 @@ describe('instruction starts a run (P1-196)', () => {
       nodeVersion: '24.0.0',
       nodeAppVersion: '0.1.0',
       tokenHash: new Uint8Array([1, 2, 3]),
-      capabilities: {},
+      capabilities: { contextCapabilities: ['project-context.v1'] },
     })
 
     await expect(
@@ -1136,7 +1136,7 @@ describe('instruction starts a run (P1-196)', () => {
       nodeVersion: '24.12.0',
       nodeAppVersion: '0.1.0',
       tokenHash: randomBytes(32),
-      capabilities: {},
+      capabilities: { contextCapabilities: ['project-context.v1'] },
       dshDistributionVersion: '9.9.9-test',
       lastSeenAt: new Date(),
     })
@@ -1251,7 +1251,7 @@ describe('执行区指令的 HTTP 面（P1-196：路由 201 / 400 / 409）', () 
       nodeVersion: '24.12.0',
       nodeAppVersion: '0.1.0',
       tokenHash: new Uint8Array([7, 7, 7]),
-      capabilities: {},
+      capabilities: { contextCapabilities: ['project-context.v1'] },
     })
     // 在线 = 已 node.hello（与 queries.ts 的 DEVICE_OFFLINE 判据同一事实）。
     await database.db

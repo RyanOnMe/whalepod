@@ -1,0 +1,9 @@
+{"type":"session","id":"session-replay-read-project-context-manifest","createdAt":1755500900000,"seedLength":0}
+{"type":"assistant/chunk","seq":10,"time":1755500900100,"data":{"turn":1,"step":1,"chunk":{"type":"block-start","index":0,"blockType":"tool-call"}}}
+{"type":"assistant/chunk","seq":11,"time":1755500900200,"data":{"turn":1,"step":1,"chunk":{"type":"tool-call-delta","index":0,"id":"call-context-1","name":"read_project_context","argumentsDelta":"{\"entryId\":\"01905f7c-0000-7000-8000-000000000951\"}"}}}
+{"type":"assistant/chunk","seq":12,"time":1755500900300,"data":{"turn":1,"step":1,"chunk":{"type":"block-end","index":0,"block":{"type":"tool-call","id":"call-context-1","name":"read_project_context","arguments":"{\"entryId\":\"01905f7c-0000-7000-8000-000000000951\"}"}}}}
+{"type":"assistant/chunk","seq":13,"time":1755500900400,"data":{"turn":1,"step":1,"chunk":{"type":"finish","reason":{"kind":"tool-calls"}}}}
+{"type":"assistant/chunk","seq":20,"time":1755500900500,"data":{"turn":1,"step":2,"chunk":{"type":"block-start","index":0,"blockType":"text"}}}
+{"type":"assistant/chunk","seq":21,"time":1755500900600,"data":{"turn":1,"step":2,"chunk":{"type":"text-delta","index":0,"text":"Context echo: {{fromRequest:PC05A_ECHO}} nonce: {{fromRequest:\\[project-context:}}"}}}
+{"type":"assistant/chunk","seq":22,"time":1755500900700,"data":{"turn":1,"step":2,"chunk":{"type":"block-end","index":0,"block":{"type":"text","text":"Context echo: {{fromRequest:PC05A_ECHO}} nonce: {{fromRequest:\\[project-context:}}"}}}}
+{"type":"assistant/chunk","seq":23,"time":1755500900800,"data":{"turn":1,"step":2,"chunk":{"type":"finish","reason":{"kind":"stop"}}}}

@@ -58,6 +58,8 @@ import type {
   RuntimeStartSpec,
 } from '../../../apps/node/src/runtime-driver.js'
 import { ArtifactInputsManager } from '../../../apps/node/src/artifact/inputs.js'
+import { ProjectContextDownloader } from '../../../apps/node/src/context/project-context.js'
+import { SqliteContextReceiptSeqStore } from '../../../apps/node/src/context/receipt-seq-store.js'
 import { ArtifactCollector } from '../../../apps/node/src/artifact/collect.js'
 import { uploadArtifactCandidate } from '../../../apps/node/src/artifact/upload-client.js'
 import { Phase1Recorder, redactText } from './events.js'
@@ -387,6 +389,12 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
       inputsRoot: join(nodeStateDir, 'runtime-inputs'),
       log: artifactLog,
     })
+    const projectContext = new ProjectContextDownloader({
+      hubUrl: httpBase,
+      deviceToken: claimBody.deviceToken,
+      inputsRoot: join(nodeStateDir, 'runtime-context'),
+      log: artifactLog,
+    })
     const artifactCollector = new ArtifactCollector({
       stagingDir: join(nodeStateDir, 'artifact-staging'),
       upload: (runId, payload, body) =>
@@ -413,6 +421,11 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
       artifactCollector,
       prepareArtifactInputs: (runId, taskId) => artifactInputs.prepare(runId, taskId),
       cleanupArtifactInputs: (runId) => artifactInputs.cleanup(runId),
+      prepareProjectContext: (runId, manifest) => projectContext.prepare(runId, manifest),
+      cleanupProjectContext: (runId) => projectContext.cleanup(runId),
+      contextReceiptSeq: new SqliteContextReceiptSeqStore(
+        join(nodeStateDir, 'context-receipts.sqlite'),
+      ),
       deviceId,
       dshDistributionVersion: '0.1.0-rc.8',
       log: (level, msg, context) => {
@@ -487,6 +500,7 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
     const worker = new OutboxWorker({
       outbox: new Outbox(database),
       gateway: recordGateway(new WsDeviceGateway(), recorder),
+      beforeDispatch: (command) => ctx.app.runOrchestrator.beforeDispatch(command),
     })
     let workerTimer: ReturnType<typeof setInterval> | undefined
     const startWorker = (): void => {

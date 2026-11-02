@@ -11,12 +11,18 @@
  *   （同 (runId,seq)，Hub 幂等去重）。
  * - Runtime 协议外输出 → 当前 Run 合成 run.failed（§11 fail-closed）。
  */
-import { randomUUID } from 'node:crypto'
-import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises'
+import { randomUUID, createHash } from 'node:crypto'
+import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { NodeDownstream, ProjectedRunEvent, RuntimeCommand } from '@whalepod/protocol'
+import type {
+  NodeDownstream,
+  ProjectedRunEvent,
+  RunProjectContextManifestEntry,
+  RuntimeCommand,
+} from '@whalepod/protocol'
+import { MemoryContextReceiptSeqStore } from '../src/context/receipt-seq-store.js'
 import { CommandStore } from '../src/spool/command-store.js'
 import { EventStore } from '../src/spool/event-store.js'
 import { SecretStore } from '../src/secret/store.js'
@@ -1225,5 +1231,199 @@ describe('#88 终态回收：runtime.shutdown 主动释放 + 宽限信号升级'
     h.runtimes[0]!.emitExit(1, null) // Runtime 无终态帧即死 → runtime_lost 归因
     const shutdown = h.runtimes[0]!.stdin.find((c) => c.type === 'runtime.shutdown')
     expect(shutdown).toBeUndefined()
+  })
+})
+
+describe('ADR-0027：项目上下文交付与两级回执', () => {
+  it('passes the pinned manifest to runtime.initialize and forwards cumulative receipts', async () => {
+    const body = '# 项目上下文\n预算结论：8 万\n'
+    const entryDigest = createHash('sha256').update(body).digest('hex')
+    const snapshotDigest = createHash('sha256').update('snapshot-pc05a').digest('hex')
+    const runId = RUN_ID
+    const nonce = createHash('sha256')
+      .update(`${snapshotDigest}|${runId}`)
+      .digest('hex')
+      .slice(0, 16)
+    const entryId = '01905f7c-0000-7000-8000-000000000951'
+    const entry: RunProjectContextManifestEntry = {
+      entryId,
+      kind: 'decision',
+      title: '预算结论',
+      revisionId: null,
+      businessRef: 'taskSpec:01905f7c-0000-7000-8000-000000000201',
+      digest: entryDigest,
+      byteSize: Buffer.byteLength(body, 'utf8'),
+      snapshotAuthorizationGeneration: null,
+    }
+    const headerText = `[project-context:${nonce}]\n- ${entryId} 预算结论`
+    const headerDigest = createHash('sha256').update(headerText).digest('hex')
+    const entriesDir = join(root, 'runtime-context', runId)
+    await mkdir(entriesDir, { recursive: true })
+    await writeFile(join(entriesDir, entryId), body)
+    const receiptSeq = new MemoryContextReceiptSeqStore()
+    const cleaned: string[] = []
+    const h = await makeHarness({
+      managerDeps: {
+        prepareProjectContext: async () => ({
+          dir: entriesDir,
+          snapshotId: '01905f7c-0000-7000-8000-000000000961',
+          snapshotDigest,
+          headerText,
+          headerDigest,
+          entries: [entry],
+        }),
+        cleanupProjectContext: async (id: string) => {
+          cleaned.push(id)
+        },
+        contextReceiptSeq: receiptSeq,
+      },
+    })
+    await h.manager.handleFrame(
+      runStartFrame(h.workspaceId, {
+        projectContext: {
+          snapshotId: '01905f7c-0000-7000-8000-000000000961',
+          digest: snapshotDigest,
+          headerText,
+          headerDigest,
+          manifest: [entry],
+        },
+      }),
+    )
+
+    const initialize = h.runtimes[0]!.stdin[0] as Extract<
+      RuntimeCommand,
+      { type: 'runtime.initialize' }
+    >
+    expect(initialize.payload.projectContext).toMatchObject({
+      snapshotId: '01905f7c-0000-7000-8000-000000000961',
+      digest: snapshotDigest,
+      headerDigest,
+      entriesDir,
+      entries: [entry],
+    })
+
+    h.runtimes[0]!.emitStdout(stdoutRuntimeReady(runId))
+    const at = new Date().toISOString()
+    h.runtimes[0]!.emitStdout(
+      JSON.stringify({
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: at,
+        type: 'runtime.context_receipt',
+        payload: {
+          kind: 'delivered',
+          runId,
+          snapshotId: '01905f7c-0000-7000-8000-000000000961',
+          headerDigest,
+          nonceMatched: true,
+          entriesDelivered: [entryId],
+          at,
+        },
+      }),
+    )
+    h.runtimes[0]!.emitStdout(
+      JSON.stringify({
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: at,
+        type: 'runtime.context_receipt',
+        payload: {
+          kind: 'read',
+          runId,
+          snapshotId: '01905f7c-0000-7000-8000-000000000961',
+          entryId,
+          digestVerified: true,
+          byteSize: entry.byteSize,
+          at,
+        },
+      }),
+    )
+
+    const receipts = h
+      .sentFrames()
+      .filter((frame) => frame.type === 'run.context_receipt')
+      .map((frame) => frame.payload)
+    expect(receipts).toHaveLength(2)
+    expect(receipts[0]).toMatchObject({
+      receiptSeq: 1,
+      headerDigest,
+      nonceMatched: true,
+      entriesDelivered: [entryId],
+      entriesRead: [],
+      missing: [],
+      digestVerified: true,
+    })
+    expect(receipts[1]).toMatchObject({
+      receiptSeq: 2,
+      entriesDelivered: [entryId],
+      entriesRead: [entryId],
+      readEvents: [{ entryId, digestVerified: true, byteSize: entry.byteSize, at }],
+      missing: [],
+      digestVerified: true,
+    })
+
+    // ADR-0027 §6：Run 终态清理 runtime-context/<runId>（与 artifact 输入副本同一收敛点）。
+    h.runtimes[0]!.emitStdout(
+      JSON.stringify({
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: new Date().toISOString(),
+        type: 'run.completed',
+        payload: { runId, dshSessionId: 'session-1' },
+      }),
+    )
+    await waitForValue(
+      () => (cleaned.includes(runId) ? true : undefined),
+      'run.completed 未在超时内触发 runtime-context 清理',
+    )
+  })
+
+  it('cleans up a partially prepared runtime-context directory when run.start is rejected', async () => {
+    const runId = RUN_ID
+    const body = '# 项目上下文\n'
+    const entry: RunProjectContextManifestEntry = {
+      entryId: '01905f7c-0000-7000-8000-000000000951',
+      kind: 'decision',
+      title: '预算结论',
+      revisionId: null,
+      businessRef: 'taskSpec:01905f7c-0000-7000-8000-000000000201',
+      digest: createHash('sha256').update(body).digest('hex'),
+      byteSize: Buffer.byteLength(body, 'utf8'),
+      snapshotAuthorizationGeneration: null,
+    }
+    const cleaned: string[] = []
+    const h = await makeHarness({
+      managerDeps: {
+        prepareProjectContext: async () => {
+          throw Object.assign(new Error('bundle digest mismatch'), {
+            code: 'CONTEXT_DIGEST_MISMATCH',
+          })
+        },
+        cleanupProjectContext: async (id: string) => {
+          cleaned.push(id)
+        },
+      },
+    })
+    await h.manager.handleFrame(
+      runStartFrame(h.workspaceId, {
+        projectContext: {
+          snapshotId: '01905f7c-0000-7000-8000-000000000961',
+          digest: createHash('sha256').update('snapshot-pc05a').digest('hex'),
+          headerText: '[project-context:0123456789abcdef]',
+          headerDigest: createHash('sha256')
+            .update('[project-context:0123456789abcdef]')
+            .digest('hex'),
+          manifest: [entry],
+        },
+      }),
+    )
+    expect(h.runtimes).toHaveLength(0)
+    const ack = h.sentFrames().find((f) => f.type === 'command.ack')
+    expect(ack?.payload['accepted']).toBe(false)
+    expect((ack?.payload['error'] as { code: string }).code).toBe('CONTEXT_DIGEST_MISMATCH')
+    await waitForValue(
+      () => (cleaned.includes(runId) ? true : undefined),
+      'run.start 拒绝路径未清理 runtime-context 目录',
+    )
   })
 })

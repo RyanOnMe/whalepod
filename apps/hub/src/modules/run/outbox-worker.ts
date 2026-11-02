@@ -19,6 +19,11 @@ export interface OutboxWorkerDeps {
   outbox: Outbox
   gateway: DeviceGateway
   now?: () => Date
+  /**
+   * ADR-0027 §3：`run.start` 发送前的复核钩子。返回 false 表示命令已由钩子
+   * 作废（Run 走 failed(CONTEXT_UNAVAILABLE)），worker 不再发送。
+   */
+  beforeDispatch?: (command: ClaimedCommand) => Promise<boolean>
 }
 
 export interface DispatchResult {
@@ -41,11 +46,13 @@ export class OutboxWorker {
   private readonly outbox: Outbox
   private readonly gateway: DeviceGateway
   private readonly nowFn: () => Date
+  private readonly beforeDispatch: ((command: ClaimedCommand) => Promise<boolean>) | undefined
 
   constructor(deps: OutboxWorkerDeps) {
     this.outbox = deps.outbox
     this.gateway = deps.gateway
     this.nowFn = deps.now ?? (() => new Date())
+    this.beforeDispatch = deps.beforeDispatch
   }
 
   /** 扫描并派发一批（至多 50 条）。组合根（P1-05）负责定时驱动本方法。 */
@@ -54,6 +61,16 @@ export class OutboxWorker {
     let sent = 0
     let failed = 0
     for (const command of claimed) {
+      if (
+        command.type === 'run.start' &&
+        this.beforeDispatch !== undefined &&
+        !(await this.beforeDispatch(command))
+      ) {
+        // 钩子已在同一事务里作废 Run 与该 outbox 行；这里幂等再 fail 一次兜底。
+        await this.outbox.fail(command.id)
+        failed += 1
+        continue
+      }
       const frame = this.buildFrame(command)
       const parsed = NodeDownstreamSchema.safeParse(frame)
       if (!parsed.success) {
@@ -64,6 +81,9 @@ export class OutboxWorker {
       }
       try {
         await this.gateway.send(command.deviceId, parsed.data)
+        // ADR-0027 §3：首次发送成功后落 sent_at；预派发复核只对「从未发出」的
+        // run.start 生效，避免 ack 丢失重投时把已在执行的 Run 误判失败。
+        await this.outbox.markSent(command.id)
         sent += 1
       } catch (error) {
         if (isPermanentDispatchError(error)) {

@@ -58,6 +58,8 @@
             "SOURCE_STALE_GENERATION",
             "SOURCE_LEASE_LOST",
             "INVALID_SOURCE_TRANSITION",
+            "CONTEXT_UNAVAILABLE",
+            "CONTEXT_DIGEST_MISMATCH",
             "PLUGIN_UNREVIEWED",
             "INTERNAL_ERROR"
           ]

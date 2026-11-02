@@ -1,0 +1,15 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a022",
+  "type": "runtime.context_receipt",
+  "sentAt": "2026-01-05T09:01:05Z",
+  "payload": {
+    "kind": "read",
+    "runId": "01905f7c-0000-7000-8000-000000000401",
+    "snapshotId": "01905f7c-0000-7000-8000-000000000402",
+    "entryId": "01905f7c-0000-7000-8000-000000000403",
+    "digestVerified": true,
+    "byteSize": 128,
+    "at": "2026-01-05T09:01:05Z"
+  }
+}

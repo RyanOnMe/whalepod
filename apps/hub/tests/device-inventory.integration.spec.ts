@@ -148,6 +148,7 @@ describe('device inventory → workspaces 投影', () => {
         supportedProtocolVersions: [1],
         dshDistributionVersion: 'fixture-version',
         pluginPackDigests: [],
+        contextCapabilities: ['project-context.v1'],
       }),
     )
     sendInventory(socket, paired.deviceId, [

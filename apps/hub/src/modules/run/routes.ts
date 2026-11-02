@@ -56,6 +56,9 @@ export const ERROR_HTTP_STATUS: Readonly<Partial<Record<ErrorCode, number>>> = {
   DEVICE_OFFLINE: 409,
   DEVICE_REVOKED: 409,
   WORKSPACE_UNAVAILABLE: 409,
+  // ADR-0027：项目上下文不可用/下载副本不符都是可重试的状态冲突，不是服务端故障。
+  CONTEXT_UNAVAILABLE: 409,
+  CONTEXT_DIGEST_MISMATCH: 409,
 }
 
 function sendError(reply: FastifyReply, code: ErrorCode, message: string): FastifyReply {

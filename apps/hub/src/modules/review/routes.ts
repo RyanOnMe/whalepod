@@ -37,6 +37,7 @@ import {
 } from './rounds.js'
 import { getArtifactDeliveryBasis } from './delivery-basis.js'
 import type { RunOrchestrator } from '../run/orchestrator.js'
+import { ERROR_HTTP_STATUS, errorCodeOf } from '../run/routes.js'
 
 export interface ReviewRouteDeps {
   readonly database: Database
@@ -167,19 +168,30 @@ export function registerReviewRoutes(app: FastifyInstance, deps: ReviewRouteDeps
     }
   })
 
-  app.post('/artifact-revision-rounds/:roundId/start', async (request) => {
+  app.post('/artifact-revision-rounds/:roundId/start', async (request, reply) => {
     const session = await deps.requireActor(request)
     const { roundId } = request.params as { roundId: string }
     const body = parseOr400(StartArtifactRevisionRoundRequestSchema, request.body)
-    const round = await startRevisionRound(
-      deps.database,
-      deps.orchestrator,
-      actorFrom(session),
-      roundId,
-      body,
-      readIdempotencyKey(request),
-      deps.dshDistributionVersionFor,
-    )
+    let round: Awaited<ReturnType<typeof startRevisionRound>>
+    try {
+      round = await startRevisionRound(
+        deps.database,
+        deps.orchestrator,
+        actorFrom(session),
+        roundId,
+        body,
+        readIdempotencyKey(request),
+        deps.dshDistributionVersionFor,
+      )
+    } catch (error) {
+      // 本路由也建 Run（createWithinTransaction），必须与执行区指令/直接建 Run 同样
+      // 把 RunCommandError（如 CONTEXT_UNAVAILABLE）映射成 409，而不是全局 500。
+      const { code, message } = errorCodeOf(error)
+      if (code === 'INTERNAL_ERROR') throw error
+      return reply
+        .code(ERROR_HTTP_STATUS[code] ?? 500)
+        .send({ ok: false, error: { code, message, requestId: String(request.id) } })
+    }
     audit(request, 'artifact.review.round_start', 'success', session.userId)
     return { ok: true, data: round }
   })

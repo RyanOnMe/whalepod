@@ -1,14 +1,24 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyReply } from 'fastify'
 import { z } from 'zod'
 import type { Database } from '@whalepod/db'
-import { getProject } from '@whalepod/db'
+import {
+  getEnabledMember,
+  getProject,
+  getRun,
+  getRunProjectContextByRun,
+  getTeam,
+  listRunProjectContextEntries,
+} from '@whalepod/db'
 import { CorrectContextEntryRequestSchema } from '@whalepod/protocol'
 import { audit } from '../shared/audit.js'
 import { ApiError } from '../shared/http-error.js'
 import { readIdempotencyKey } from '../auth/idempotency.js'
 import type { RequireActor } from '../auth/session.js'
+import { authenticateDevice } from '../plugin/pack-resolver.js'
 import { correctContextEntry } from './commands.js'
 import { loadProjectContext, parseContextCursor } from './queries.js'
+import { buildRunProjectContextBundle, toRunProjectContextView } from './run-snapshot.js'
+import { ERROR_HTTP_STATUS, errorCodeOf } from '../run/routes.js'
 
 export interface ContextRouteDeps {
   readonly database: Database
@@ -96,4 +106,57 @@ export function registerContextRoutes(app: FastifyInstance, deps: ContextRouteDe
     }
     return reply.code(201).send({ ok: true, data: result.view })
   })
+
+  // ADR-0027 §3：成员读面——只返回快照内条目；正文仅在 frozen 时返回。
+  app.get('/runs/:runId/project-context', async (request, reply) => {
+    const actor = await deps.requireActor(request)
+    const { runId: rawRunId } = request.params as { runId: string }
+    const runId = parseUuid(rawRunId, 'run id')
+    const run = await getRun(deps.database.db, runId)
+    if (run === undefined) throw new ApiError(404, 'NOT_FOUND', 'run not found')
+    const team = await getTeam(deps.database.db)
+    if (
+      team === undefined ||
+      (await getEnabledMember(deps.database.db, team.id, actor.userId)) === undefined
+    ) {
+      throw new ApiError(403, 'FORBIDDEN', 'only team members can read run project context')
+    }
+    const snapshot = await getRunProjectContextByRun(deps.database.db, runId)
+    if (snapshot === undefined) {
+      throw new ApiError(404, 'NOT_FOUND', 'run has no project context snapshot')
+    }
+    const entries = await listRunProjectContextEntries(deps.database.db, snapshot.id)
+    return noStore(reply).send({ ok: true, data: toRunProjectContextView(snapshot, entries) })
+  })
+
+  // ADR-0027 §3：Node 受控下载——只对承载该 Run 的设备开放（不可枚举折叠为 404）。
+  app.get('/node/runs/:runId/project-context/bundle', async (request, reply) => {
+    const identity = await authenticateDevice(deps.database, request)
+    const { runId: rawRunId } = request.params as { runId: string }
+    const runId = parseUuid(rawRunId, 'run id')
+    const run = await getRun(deps.database.db, runId)
+    if (run === undefined || run.deviceId !== identity.deviceId) {
+      throw new ApiError(404, 'NOT_FOUND', 'run not found')
+    }
+    let bundle: Awaited<ReturnType<typeof buildRunProjectContextBundle>>
+    try {
+      bundle = await buildRunProjectContextBundle(deps.database, runId)
+    } catch (error) {
+      // 非 frozen 条目（PC-05b 撤权/墓碑）在这里抛 RunCommandError；不映射会变成
+      // 500 INTERNAL_ERROR，Node 只能把它当服务端故障。
+      const { code, message } = errorCodeOf(error)
+      if (code === 'INTERNAL_ERROR') throw error
+      return reply
+        .code(ERROR_HTTP_STATUS[code] ?? 500)
+        .send({ ok: false, error: { code, message, requestId: String(request.id) } })
+    }
+    if (bundle === undefined) {
+      throw new ApiError(404, 'NOT_FOUND', 'run has no project context snapshot')
+    }
+    return noStore(reply).send({ ok: true, data: bundle })
+  })
+}
+
+function noStore(reply: FastifyReply): FastifyReply {
+  return reply.header('cache-control', 'no-store')
 }
