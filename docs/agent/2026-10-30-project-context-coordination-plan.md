@@ -376,7 +376,7 @@ PC-00 兼容探针、ADR-0025～0027 与内部 03a/04a/05a 已交付各自受限
 | 2026-11-02 | PC-05a Run 项目上下文快照与运行时消费（正向链） | PR #478（squash a8f4b97）；#474 已关闭；`docs/agent/run-project-context-acceptance.md`；撤权状态机/watchdog/终态 session 清理留给 PC-05b |
 | 2026-11-02 | 用户确认 Router 自主派工默认范围：研究/分析/草稿自动，正式发布/外发/承诺由人决定 | 本轮讨论与计划修订；RD-01～05 未登记 Issue，未改现有已采纳 ADR，未启用自主派工 |
 | 2026-11-02 | 按少提示词、两处快慢路径与持续承接重排 RD-01～05，区分 M1R-A 工程首切和 M1R-B 完整持续协作 | 本轮计划修订；新增工作收件箱、自动续接/新工作与双人负担判据；未登记新 Issue 或启用功能 |
-| 2026-11-02 | RD-01 影子切片：工作身份、Mandate 与确定性准入 | #483；`docs/agent/2026-11-02-rd01-work-mandate-shadow-acceptance.md`；不建 Run/outbox/TeamEvent，不收件箱，不调模型 |
+| 2026-11-02 | RD-01 影子切片：工作身份、Mandate 与确定性准入 | PR #487（squash a2e414d）；#483 已关闭；`docs/agent/2026-11-02-rd01-work-mandate-shadow-acceptance.md`；不建 Run/outbox/TeamEvent，不收件箱，不调模型 |
 
 PC-01 的结论保持 `not_run`，等待可测试租户、企业自建应用、测试群与测试文档/表格。ADR-0024 与 ADR-0025–0027 均已采纳；内部最小协调链由 #472/#473/#474 实施，外部来源、模型派发与终态清理按后续切片交付。2026-11-02 较早的 GitHub 核对曾记录 #448/#449/#457/#472/#473/#474 打开、ADR 提案 Issue 随采纳关闭；该快照不覆盖上表后续合入记录，Issue 标题状态也不代替 ADR 的采纳状态。
 

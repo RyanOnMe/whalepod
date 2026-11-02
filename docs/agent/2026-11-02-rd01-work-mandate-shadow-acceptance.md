@@ -2,7 +2,7 @@
 
 - 对应场景/门禁：ADR-0028 §2/§4/§7 的基础承接链；Q0 静态门、Q2 数据门
 - 对应 Issue：#483（RD-01）
-- 上次验证：2026-11-02 · 分支 `feat/rd-01-work-mandate-shadow` 工作树 · PASS
+- 上次验证：2026-11-02 · 合入提交 `a2e414d`（PR #487，squash）· PASS
 - 本切片边界：只落协调元数据与影子决定；**不建 Run、不发 outbox、不写 TeamEvent/Decision/Correction/Artifact、不调用模型、不实现工作收件箱/订阅快路径/自动派工**。
 
 ## 验的是哪条用户路径
@@ -110,7 +110,7 @@ scripts/secret-scan.sh apps/hub/src/modules/work packages/protocol/src/work.ts \
   packages/db/migrations/0024_work_mandate_shadow.sql
 ```
 
-- 2026-11-02 工作树结果：Q0 `2269 passed`（含 1 条边界单测）；Q2 `85 files / 717 tests passed`；定向 `25 passed`。
+- 2026-11-02 合入验证（`a2e414d`）：Q0 `2269 passed`（含 1 条边界单测）；Q2 `85 files / 717 tests passed`；定向 `25 passed`。
 - 迁移：`packages/db/migrations/0024_work_mandate_shadow.sql`；Drizzle 镜像 `packages/db/src/schema/work.ts`。0024 是未合入分支上的新迁移；应用过中间提交 `a4f0a85` 的本地库必须重置（迁移台账只按文件名记录，不会校验内容）。
 
 ### 单点变异（每条改一处、跑对应用例、必须红、随后恢复）
@@ -171,7 +171,7 @@ scripts/secret-scan.sh apps/hub/src/modules/work packages/protocol/src/work.ts \
 ## 复跑
 
 ```bash
-git switch feat/rd-01-work-mandate-shadow
+git switch main && git pull
 pnpm install --frozen-lockfile
 pnpm --filter @whalepod/protocol build
 pnpm --filter @whalepod/db build
