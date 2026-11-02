@@ -1,4 +1,8 @@
-import type { ArtifactInputManifest, HandoffInputManifest } from '@whalepod/protocol'
+import type {
+  ArtifactInputManifest,
+  HandoffInputManifest,
+  WorkInputManifest,
+} from '@whalepod/protocol'
 import { and, asc, count, eq, inArray } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { approvals, runs } from '../schema/run.js'
@@ -24,6 +28,10 @@ export interface NewRun {
   specRevisionId?: string
   /** Run 用途（#378）：缺省 business。 */
   purpose?: RunRow['purpose']
+  /** ADR-0028（RD-02a-2a）：持续工作身份与不可变工作输入清单。 */
+  workKey?: string | null
+  workInputManifest?: WorkInputManifest
+  workInputManifestDigest?: string | null
   profileDigest: string
   pluginPackDigest: string
   dshDistributionVersion: string

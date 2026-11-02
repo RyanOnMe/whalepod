@@ -1,5 +1,5 @@
 import {
-  countWorkInboxItems,
+  countWorkInboxItemsByStatus,
   getLatestPendingInboxItemForSource,
   getLatestWorkInboxItem,
   getRetractedInboxItemForSource,
@@ -67,6 +67,10 @@ export function toWorkInboxItemView(row: WorkInboxItemRow): WorkInboxItemView {
     statusReason: row.statusReason ?? null,
     returnReason: row.returnReason ?? null,
     returnNote: row.returnNote ?? null,
+    deliveryRunId: row.deliveryRunId ?? null,
+    deliveredAt: row.deliveredAt?.toISOString() ?? null,
+    unconfirmedAt: row.unconfirmedAt?.toISOString() ?? null,
+    consumedAt: row.consumedAt?.toISOString() ?? null,
     statusAt: row.statusAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -317,6 +321,9 @@ export async function retractWorkInboxItem(
     ),
     async (tx) => {
       const item = await lockItem(tx, workKey, actorUserId, itemId)
+      if (item.status === 'consumed') {
+        throw new ApiError(409, 'CONFLICT', 'consumed work input cannot be retracted')
+      }
       const now = deps.now()
       const statusReason = reason ?? 'retracted'
       const updated = await retractInboxItemsForSource(tx, {
@@ -385,9 +392,9 @@ async function readInboxView(
   work: WorkRow,
   filter: { readonly status?: WorkInboxItemStatus | undefined; readonly limit: number },
 ): Promise<WorkInboxView> {
-  const [items, pendingCount, latest] = await Promise.all([
+  const [items, counts, latest] = await Promise.all([
     listWorkInboxItems(tx, work.id, filter.limit, filter.status),
-    countWorkInboxItems(tx, work.id, 'pending'),
+    countWorkInboxItemsByStatus(tx, work.id),
     getLatestWorkInboxItem(tx, work.id),
   ])
   return {
@@ -395,7 +402,10 @@ async function readInboxView(
     watermarks: {
       // 水位不随筛选变化：客户端用 lastItemAt 判断是否有新条目。
       lastItemAt: latest?.createdAt.toISOString() ?? null,
-      pendingCount,
+      pendingCount: counts.pending ?? 0,
+      deliveredCount: counts.delivered ?? 0,
+      unconfirmedCount: counts.unconfirmed ?? 0,
+      consumedCount: counts.consumed ?? 0,
     },
   }
 }

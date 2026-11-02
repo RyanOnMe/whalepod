@@ -17,6 +17,7 @@ import { reconcileLeases } from './modules/run/reconciler.js'
 import { expireApprovals } from './modules/run/approval-expiry.js'
 import { runCoordinationTick } from './modules/coordination/tick.js'
 import { runSourceReconcileTick } from './modules/source/tick.js'
+import { reconcileWorkInputs } from './modules/work/run-inputs.js'
 import { nodeSourceCollector } from './modules/source/collector.js'
 import { sanitizeError } from './modules/shared/error-log.js'
 import { logRecordedEntry } from './modules/context/observer.js'
@@ -110,6 +111,22 @@ const leaseTimer = setInterval(() => {
       'source permission reconcile error',
     )
   })
+  // ADR-0028（RD-02a-2a）：未消费工作输入的 60s 对账窗口。
+  void reconcileWorkInputs(database, new Date())
+    .then((count) => {
+      if (count > 0) {
+        app.log.info(
+          { component: 'hub.work_input', action: 'work.input_returned', count },
+          'unconsumed work inputs returned to pending',
+        )
+      }
+    })
+    .catch((error) => {
+      app.log.warn(
+        { component: 'hub.work_input', ...sanitizeError(error) },
+        'work input reconcile error',
+      )
+    })
 }, 10_000)
 
 await app.listen({ host: config.host, port: config.port })

@@ -69,3 +69,66 @@ describe('RD-02a-1 inbox read authorization boundary', () => {
     expect(route).not.toContain('loadAuthorizedWork')
   })
 })
+
+describe('RD-02a-2a work input reconcile isolation', () => {
+  const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url))
+
+  it('locks Work before the item and settles each due input in its own transaction', () => {
+    const repo = readFileSync(join(REPO_ROOT, 'packages/db/src/repositories/work-input.ts'), 'utf8')
+    const start = repo.indexOf('export async function settleUnconfirmedWorkInput')
+    expect(start).toBeGreaterThan(-1)
+    const end = repo.indexOf('\n}\n', start)
+    expect(end).toBeGreaterThan(start)
+    const settle = repo.slice(start, end)
+    // item → Work 会与撤权（Task→Work→item）形成环；Work 必须先于被锁的 item。
+    expect(settle).toMatch(
+      /\.from\(works\)[\s\S]*?\.for\('update'\)[\s\S]*?\.from\(workInboxItems\)[\s\S]*?\.for\('update'\)/,
+    )
+    // 最新版本查询必须在 Work 锁内，否则关联/撤权可以并发改同来源条目。
+    const workLockAt = settle.indexOf('.from(works)')
+    const latestAt = settle.indexOf('const [latest]')
+    expect(workLockAt).toBeGreaterThan(-1)
+    expect(latestAt).toBeGreaterThan(workLockAt)
+    expect(settle.slice(workLockAt, latestAt)).toContain(".for('update')")
+
+    const workRepo = readFileSync(join(REPO_ROOT, 'packages/db/src/repositories/work.ts'), 'utf8')
+    const workStart = workRepo.indexOf('export async function getWorkByIdForUpdate')
+    expect(workStart).toBeGreaterThan(-1)
+    const workEnd = workRepo.indexOf('\n}\n', workStart)
+    expect(workEnd).toBeGreaterThan(workStart)
+    // 不能只改名字：这个 helper 必须真的加行锁，否则建 Run 的锁序声明是假的。
+    expect(workRepo.slice(workStart, workEnd)).toContain(".for('update')")
+
+    const inputs = readFileSync(join(WORK_MODULE_DIR, 'run-inputs.ts'), 'utf8')
+    const snapshotStart = inputs.indexOf('export async function snapshotWorkInputs')
+    expect(snapshotStart).toBeGreaterThan(-1)
+    const snapshotEnd = inputs.indexOf('\n}\n', snapshotStart)
+    expect(snapshotEnd).toBeGreaterThan(snapshotStart)
+    const snapshot = inputs.slice(snapshotStart, snapshotEnd)
+    // 建 Run 也必须先锁 Work 再锁 item：delivery 的 Work FK 会取 KEY SHARE，
+    // 与 settle 的 Work FOR UPDATE 反向持锁会死锁。
+    expect(snapshot.indexOf('getWorkByIdForUpdate(tx, firstSnapshot.workId)')).toBeGreaterThan(-1)
+    expect(snapshot.indexOf('getWorkByIdForUpdate(tx, firstSnapshot.workId)')).toBeLessThan(
+      snapshot.indexOf('listWorkInboxItemsForUpdate(tx, itemIds)'),
+    )
+
+    const reconcileStart = inputs.indexOf('export async function reconcileWorkInputs')
+    expect(reconcileStart).toBeGreaterThan(-1)
+    const reconcileEnd = inputs.indexOf('\n}\n', reconcileStart)
+    expect(reconcileEnd).toBeGreaterThan(reconcileStart)
+    const reconcile = inputs.slice(reconcileStart, reconcileEnd)
+    // 每条到期输入独立事务 + allSettled：一条失败不能拖垮整轮，也不能整轮回滚。
+    expect(reconcile.match(/database\.transaction\(/g)).toHaveLength(1)
+    expect(reconcile).toMatch(/due\.map\(\(itemId\)\s*=>\s*database\.transaction\(/)
+    expect(reconcile).toContain('Promise.allSettled')
+    expect(reconcile).not.toContain('returnUnconfirmedWorkInputs')
+
+    const orchestrator = readFileSync(
+      join(REPO_ROOT, 'apps/hub/src/modules/run/orchestrator.ts'),
+      'utf8',
+    )
+    // 创建事务内校验一次 + 两条回放路径（普通回执、活跃冲突回读）各复核一次。
+    expect(orchestrator).toMatch(/input\.workInputItemIds !== undefined && right !== 'assignee'/)
+    expect(orchestrator.match(/await this\.assertReplayAllowed\(/g)).toHaveLength(2)
+  })
+})

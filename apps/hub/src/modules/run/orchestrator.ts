@@ -66,6 +66,7 @@ import type { AuthenticatedDevice } from './device-gateway.js'
 import { isRunSemanticConflict, RunCommandError } from './errors.js'
 import { settleFollowupAck, settleTriggerInstruction } from './followup.js'
 import { applyRunStatus } from './run-status.js'
+import { recordWorkInputDeliveries, snapshotWorkInputs } from '../work/run-inputs.js'
 import type { ContextEntryObserver, RecordedContextEntry } from '../context/observer.js'
 import {
   assertProjectContextCapability,
@@ -177,6 +178,11 @@ export class RunOrchestrator {
         }
         return run
       })
+      // 回放要按回执自身的 Task/工作复核，不能只看本次请求带没带 ids：被授权成员
+      // 省略 workInputItemIds 或用另一个自己是责任人的 Task 路径都能命中同一全局 key。
+      if (!outcome.executed) {
+        await this.assertReplayAllowed(taskId, ctx.userId, outcome.value)
+      }
       if (outcome.executed && createdSnapshot !== undefined) {
         this.contextLog('context.snapshot_created', {
           component: 'hub.context',
@@ -193,10 +199,35 @@ export class RunOrchestrator {
         (error instanceof RunCommandError && error.code === 'RUN_ALREADY_ACTIVE')
       if (activeConflict) {
         const prior = await findCommandReceipt(this.database.db, key)
-        if (prior !== undefined) return prior.result as RunView
+        if (prior !== undefined) {
+          await this.assertReplayAllowed(taskId, ctx.userId, prior.result)
+          return prior.result as RunView
+        }
         throw new RunCommandError('RUN_ALREADY_ACTIVE', 'task already has an active run')
       }
       throw error
+    }
+  }
+
+  /**
+   * 幂等回放/并发回读的复核：回执必须属于请求路径的 Task；带回工作输入的 Run
+   * 只允许当前 Task 责任人读回，且按回执里的 taskId 判定，不信任请求字段。
+   */
+  private async assertReplayAllowed(
+    requestedTaskId: string,
+    userId: string,
+    result: unknown,
+  ): Promise<void> {
+    const cached = result as Partial<RunView>
+    const cachedTaskId = cached.taskId
+    if (cachedTaskId === undefined || cachedTaskId !== requestedTaskId) {
+      throw new RunCommandError('NOT_FOUND', 'run not found for this task')
+    }
+    if (cached.workKey != null) {
+      const right = await resolveInstructionRight(this.database.db, cachedTaskId, userId)
+      if (right !== 'assignee') {
+        throw new RunCommandError('FORBIDDEN', 'work inputs are assignee-only')
+      }
     }
   }
 
@@ -239,6 +270,11 @@ export class RunOrchestrator {
         'FORBIDDEN',
         'only the task assignee or a granted member can start a run',
       )
+    }
+    // ADR-0028（RD-02a-2a）：工作输入来自责任人私有收件箱。被授权成员能说话、
+    // 能被派工，但不能把责任人收件箱里的材料带进 Run。
+    if (input.workInputItemIds !== undefined && right !== 'assignee') {
+      throw new RunCommandError('FORBIDDEN', 'work inputs are assignee-only')
     }
     if (task.assignmentStatus !== 'accepted') {
       throw new DomainError('ASSIGNMENT_NOT_ACCEPTED', 'assignment must be accepted first')
@@ -407,6 +443,8 @@ export class RunOrchestrator {
       input.handoffReceiptId,
       resumeSource ?? rerunSource,
     )
+    // ADR-0028（RD-02a-2a）：工作输入与 Run 同事务冻结；清单创建后不可改。
+    const workInputs = await snapshotWorkInputs(tx, task, input.workInputItemIds)
     const runId = randomUUID()
     const commandId = randomUUID()
 
@@ -430,6 +468,13 @@ export class RunOrchestrator {
       deviceId: device.id,
       workspaceId: workspace.id,
       artifactInputManifest,
+      ...(workInputs === undefined
+        ? {}
+        : {
+            workKey: workInputs.work.workKey,
+            workInputManifest: workInputs.manifest,
+            workInputManifestDigest: workInputs.manifestDigest,
+          }),
       ...(handoffInput !== null ? { handoffInput } : {}),
       ...(input.reviewInput !== undefined ? { reviewInput: input.reviewInput } : {}),
       ...(specRevisionId !== null ? { specRevisionId } : {}),
@@ -442,6 +487,9 @@ export class RunOrchestrator {
       ...(input.rerunOfRunId !== undefined ? { rerunOfRunId: input.rerunOfRunId } : {}),
       ...(input.resumeFromRunId !== undefined ? { resumeFromRunId: input.resumeFromRunId } : {}),
     })
+    if (workInputs !== undefined) {
+      await recordWorkInputDeliveries(tx, workInputs, runId, now)
+    }
     // ADR-0027（PC-05a）：项目上下文快照与 Run/Outbox 同事务冻结。选择只读当前
     // 有效 Decision/Observation；Inference 永不进入执行依据。空快照仍落行，
     // 但 `run.start` 不携带 projectContext（旧 Node 可继续执行）。

@@ -14,11 +14,15 @@ import {
 } from 'drizzle-orm/pg-core'
 import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 import { projects, tasks } from './project.js'
+import { runs } from './run.js'
 import { works, workSourceType } from './work.js'
 
 // ADR-0028（RD-02a-1，Issue #489）：工作收件箱条目。交付/消费由 RD-02a-2 追加。
 export const workInboxItemStatus = pgEnum('work_inbox_item_status', [
   'pending',
+  'delivered',
+  'unconfirmed',
+  'consumed',
   'returned',
   'superseded',
   'retracted',
@@ -60,6 +64,10 @@ export const workInboxItems = pgTable(
     statusReason: varchar('status_reason', { length: 500 }),
     returnReason: workInboxReturnReason('return_reason'),
     returnNote: varchar('return_note', { length: 1000 }),
+    deliveryRunId: uuid('delivery_run_id').references(() => runs.id),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    unconfirmedAt: timestamp('unconfirmed_at', { withTimezone: true }),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
     statusAt: timestamp('status_at', { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -81,6 +89,18 @@ export const workInboxItems = pgTable(
     check('work_inbox_item_body_size', sql`octet_length(${table.body}) <= 65536`),
     check('work_inbox_item_refs_object', sql`jsonb_typeof(${table.refs}) = 'object'`),
     check('work_inbox_item_refs_size', sql`octet_length(${table.refs}::text) <= 4096`),
+    check(
+      'work_inbox_item_delivery_fields',
+      sql`((${table.status} in ('delivered', 'unconfirmed', 'consumed')) and ${table.deliveryRunId} is not null and ${table.deliveredAt} is not null) or ((${table.status} in ('pending', 'returned', 'superseded', 'retracted', 'expired')) and ${table.deliveryRunId} is null and ${table.deliveredAt} is null and ${table.unconfirmedAt} is null and ${table.consumedAt} is null)`,
+    ),
+    check(
+      'work_inbox_item_unconfirmed_fields',
+      sql`(${table.status} = 'unconfirmed' and ${table.unconfirmedAt} is not null) or (${table.status} <> 'unconfirmed' and ${table.unconfirmedAt} is null)`,
+    ),
+    check(
+      'work_inbox_item_consumed_fields',
+      sql`(${table.status} = 'consumed' and ${table.consumedAt} is not null) or (${table.status} <> 'consumed' and ${table.consumedAt} is null)`,
+    ),
     check(
       'work_inbox_item_return_fields',
       sql`(${table.status} = 'returned' and ${table.returnReason} is not null) or (${table.status} <> 'returned' and ${table.returnReason} is null and ${table.returnNote} is null)`,
@@ -116,6 +136,12 @@ export const workInboxItems = pgTable(
       table.sourceId,
       table.createdAt.desc(),
     ),
+    index('work_inbox_item_delivery_run_idx')
+      .on(table.deliveryRunId, table.status)
+      .where(sql`${table.deliveryRunId} is not null`),
+    index('work_inbox_item_unconfirmed_due_idx')
+      .on(table.unconfirmedAt)
+      .where(sql`${table.status} = 'unconfirmed'`),
   ],
 )
 

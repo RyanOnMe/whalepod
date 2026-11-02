@@ -34,6 +34,8 @@ export interface CreateRunInput {
    * 之外冻结并传入；普通 Run 入口不暴露该字段。
    */
   reviewInput?: ReviewInputManifest
+  /** ADR-0028（RD-02a-2a）：显式选中的工作收件箱条目；创建事务内冻结。 */
+  workInputItemIds?: string[]
   /** 缺省时取 Agent 当前 Revision（§2.3）。 */
   profileRevisionId?: string
   deviceId: string
@@ -72,6 +74,7 @@ export function assertCreateRunInput(input: CreateRunInput): void {
     ...(input.specRevisionId === undefined ? {} : { specRevisionId: input.specRevisionId }),
     ...(input.purpose === undefined ? {} : { purpose: input.purpose }),
     ...(input.handoffReceiptId === undefined ? {} : { handoffReceiptId: input.handoffReceiptId }),
+    ...(input.workInputItemIds === undefined ? {} : { workInputItemIds: input.workInputItemIds }),
     ...(input.expectedApprovalPolicy !== undefined
       ? { expectedApprovalPolicy: input.expectedApprovalPolicy }
       : {}),

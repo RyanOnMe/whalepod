@@ -30,6 +30,7 @@ import { dispatchPendingInstructions } from './followup.js'
 import { projectObservation } from '../context/projector.js'
 import { toRecordedEntry } from '../context/observer.js'
 import type { RecordedContextEntry } from '../context/observer.js'
+import { markRunWorkInputsUnconfirmed } from '../work/run-inputs.js'
 
 /**
  * 迁移 Run 状态；若迁移的结果是 `running`，在同一事务里放行该 Run 上排队的追问。
@@ -65,6 +66,9 @@ export async function applyRunStatus(
     await dispatchPendingInstructions(tx, outbox, row)
   }
   if (row !== undefined && TERMINAL_RUN_STATUSES.has(status)) {
+    // ADR-0028（RD-02a-2a）：Run 终态未消费的工作输入先转 unconfirmed；
+    // 60s 窗口后由 reconcileWorkInputs 回到 pending。
+    await markRunWorkInputsUnconfirmed(tx, row.id, row.finishedAt ?? new Date())
     // ADR-0025 §1：Run 终态是确定性业务 Observation，与状态迁移同事务；
     // businessVersion=status 让同状态重复收敛保持幂等。
     const [task] = await tx
