@@ -960,6 +960,14 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
     })
     expect(bobMandate.statusCode).toBe(409)
     expect(bobMandate.json().error.code).toBe('CONFLICT')
+    await mandateStatus(ctx, bob, successorMandate.id, 'pause', 409)
+    const bobRevoke = await mandateStatus(ctx, bob, successorMandate.id, 'revoke')
+    expect(bobRevoke.data).toMatchObject({ status: 'revoked', current: false })
+    const afterRevoke = await apiInject(ctx, bob, {
+      method: 'GET',
+      url: `/api/v1/works/${successor.workKey}`,
+    })
+    expect(afterRevoke.json().data.currentMandate).toBeNull()
     const reassignedIntents = await database.db.select().from(schema.dispatchIntents)
     expect(reassignedIntents).toHaveLength(1)
     expect(reassignedIntents[0]).toMatchObject({ status: 'cancelled' })
@@ -1017,6 +1025,37 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
     )
     expect(afterBack.decision).toMatchObject({ decision: 'wait', reason: 'work_state' })
     expect(afterBack.proposedIntent).toBeNull()
+  })
+
+  it('does not revive a waiting work when reassigned back to its original owner', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey)
+    const toBob = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/reassign`,
+      payload: { assigneeUserId: bob.userId },
+      idempotencyKey: idemKey(),
+    })
+    expect(toBob.statusCode).toBe(200)
+    await acceptTask(ctx, bob, taskId)
+    const backToAlice = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/reassign`,
+      payload: { assigneeUserId: alice.userId },
+      idempotencyKey: idemKey(),
+    })
+    expect(backToAlice.statusCode).toBe(200)
+    await acceptTask(ctx, alice, taskId)
+    const detail = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${work.workKey}`,
+    })
+    expect(detail.json().data.work.state).toBe('waiting')
+    expect(detail.json().data.currentMandate).toBeNull()
+    const source = await comment(ctx, alice, taskId)
+    const result = await checkAdmission(ctx, alice, work.workKey, 'task_message', source)
+    expect(result.decision).toMatchObject({ decision: 'wait', reason: 'work_state' })
+    expect(result.proposedIntent).toBeNull()
   })
 
   it('cancels proposed intents on revoke and ignores new sources without an active mandate', async () => {

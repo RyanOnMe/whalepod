@@ -354,7 +354,7 @@ export async function changeWorkMandateStatus(
         throw new ApiError(409, 'CONFLICT', 'mandate has expired')
       }
       if (current.status === mutationTargetStatus(mutation)) {
-        return toWorkMandateView(current, now, true)
+        return toWorkMandateView(current, now, work.state === 'active')
       }
       const allowed =
         mutation === 'pause'
@@ -398,7 +398,7 @@ export async function changeWorkMandateStatus(
       await updateWork(tx, work.id, { mandateId: next.id, updatedAt: now })
       // 任何新版本（暂停/恢复/撤销）都使旧 proposed 意图失效：它们引用的是旧版本。
       await cancelProposedDispatchIntents(tx, work.id, now)
-      return toWorkMandateView(next, now, true)
+      return toWorkMandateView(next, now, work.state === 'active')
     },
   )
 }
