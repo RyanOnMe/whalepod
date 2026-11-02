@@ -95,10 +95,24 @@ async function markWorkWaitingForAssigneeChange(tx: Tx, taskId: string, now: Dat
   await cancelProposedDispatchIntents(tx, work.id, now)
 }
 
-/** Task 进入 full_access 或终态后，旧 proposed 意图不得再被确认/派发。 */
+/** Task 进入 full_access 后，旧 proposed 意图不得再被确认/派发。 */
 async function cancelWorkProposals(tx: Tx, taskId: string, now: Date): Promise<void> {
   const work = await getCurrentWorkByTask(tx, taskId)
   if (work === undefined) return
+  await cancelProposedDispatchIntents(tx, work.id, now)
+}
+
+/** ADR-0028 §2：Task 终态同时退休其未退休工作，保留历史但不再承接。 */
+async function retireWorkForTerminalTask(tx: Tx, taskId: string, now: Date): Promise<void> {
+  const work = await getCurrentWorkByTask(tx, taskId)
+  if (work === undefined || work.state === 'retired') return
+  await updateWork(tx, work.id, {
+    state: 'retired',
+    resumeMode: null,
+    resumeCondition: null,
+    retiredAt: now,
+    updatedAt: now,
+  })
   await cancelProposedDispatchIntents(tx, work.id, now)
 }
 
@@ -270,7 +284,7 @@ export async function reassignAssignment(
       now,
     )
     if (updated === undefined) throw new Error('task vanished in its own transaction')
-    if (!agentAssigned && task.assigneeUserId !== assigneeUserId) {
+    if (task.assigneeUserId !== assigneeUserId) {
       await markWorkWaitingForAssigneeChange(tx, taskId, now)
     }
     // #428 评审修复：未确认交接随责任转移，别让旧接收人留着一条确认不了的回执。
@@ -373,7 +387,7 @@ export async function completeTask(
     const now = new Date()
     const updated = await setTaskStatus(tx, taskId, next.status, now)
     if (updated === undefined) throw new Error('task vanished in its own transaction')
-    await cancelWorkProposals(tx, taskId, now)
+    await retireWorkForTerminalTask(tx, taskId, now)
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
     return toTaskView(updated)
   })
@@ -411,7 +425,7 @@ export async function cancelTask(
     }
     const updated = await setTaskStatus(tx, taskId, 'cancelled', now)
     if (updated === undefined) throw new Error('task vanished in its own transaction')
-    await cancelWorkProposals(tx, taskId, now)
+    await retireWorkForTerminalTask(tx, taskId, now)
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
     return toTaskView(updated)
   })

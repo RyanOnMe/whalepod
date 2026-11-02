@@ -341,6 +341,10 @@ export async function checkWorkAdmission(
             now.getTime() + (latest?.waitDeadlineSeconds ?? 900) * 1000,
           ).toISOString(),
         }
+      } else if (task.status === 'done' || task.status === 'cancelled') {
+        decision = 'wait'
+        reason = 'work_state'
+        refs = { ...source.refs, detail: 'task_terminal' }
       } else if (work.state !== 'active') {
         decision = 'wait'
         reason = 'work_state'
@@ -351,10 +355,6 @@ export async function checkWorkAdmission(
             now.getTime() + (latest?.waitDeadlineSeconds ?? 900) * 1000,
           ).toISOString(),
         }
-      } else if (task.status === 'done' || task.status === 'cancelled') {
-        decision = 'wait'
-        reason = 'work_state'
-        refs = { ...source.refs, detail: 'task_terminal' }
       } else if (task.approvalPolicy === 'full_access') {
         // ADR-0028 §13：full_access Task 只能 ask/wait，不能进入自主派工候选。
         decision = 'wait'

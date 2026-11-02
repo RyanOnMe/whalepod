@@ -279,8 +279,8 @@ export async function createWorkMandate(
           'work ownership changed; retire it before creating a mandate',
         )
       }
-      if (work.state === 'retired') {
-        throw new ApiError(409, 'CONFLICT', 'retired work cannot receive a mandate')
+      if (work.state !== 'active') {
+        throw new ApiError(409, 'CONFLICT', 'only an active work can receive a mandate')
       }
       await assertAllowedAgents(tx, input.allowedAgentIds)
       const latest = await getLatestWorkMandate(tx, work.id)
@@ -330,11 +330,11 @@ export async function changeWorkMandateStatus(
       if (snapshot === undefined) throw new ApiError(404, 'NOT_FOUND', 'mandate not found')
       const { work, task } = await lockWorkContext(tx, snapshot.workKey)
       await requireAssignee(tx, task, actorUserId)
-      if (work.humanOwnerUserId !== actorUserId) {
+      if (work.humanOwnerUserId !== actorUserId && mutation !== 'revoke') {
         throw new ApiError(
           409,
           'CONFLICT',
-          'work ownership changed; retire it before changing a mandate',
+          'work ownership changed; only revoke or retire is allowed',
         )
       }
       if (work.state === 'retired') {
@@ -412,6 +412,6 @@ export async function listWorkMandateViews(database: Database, workKey: string, 
   if (work === undefined) throw new ApiError(404, 'NOT_FOUND', 'work not found')
   const rows = await listWorkMandates(database.db, work.id)
   return rows.map((row, index) =>
-    toWorkMandateView(row, now, index === 0 && work.state !== 'retired'),
+    toWorkMandateView(row, now, index === 0 && work.state === 'active'),
   )
 }

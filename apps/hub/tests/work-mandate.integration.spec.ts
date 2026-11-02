@@ -384,6 +384,14 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
     })
     expect(sameTaskReplay.statusCode).toBe(403)
 
+    const differentBody = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/works`,
+      payload: { goal: '不同的工作' },
+      idempotencyKey: sharedKey,
+    })
+    expect(differentBody.statusCode).toBe(409)
+
     const bobTask = await createTask(ctx, alice, projectId, bob.userId)
     await acceptTask(ctx, bob, bobTask)
     const second = await apiInject(ctx, bob, {
@@ -490,6 +498,14 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
       },
       {
         payload: { allowedActionClasses: ['research', 'publish'] },
+        code: 'VALIDATION_FAILED',
+      },
+      {
+        payload: { allowedActionClasses: ['research', 'research'] },
+        code: 'VALIDATION_FAILED',
+      },
+      {
+        payload: { allowedAgentIds: ['00000000-0000-4000-8000-000000000000'] },
         code: 'VALIDATION_FAILED',
       },
     ]
@@ -752,6 +768,13 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
       url: `/api/v1/works/${work.workKey}`,
     })
     expect(detail.json().data.currentMandate).toBeNull()
+    const mandates = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${work.workKey}/mandates`,
+    })
+    expect((mandates.json().data as Array<{ current: boolean }>).every((row) => !row.current)).toBe(
+      true,
+    )
     const mandateRows = await database.db.select().from(schema.workMandates)
     const pauseRetired = await apiInject(ctx, alice, {
       method: 'POST',
@@ -818,6 +841,33 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
       reason: 'source_inactive',
       refs: { detail: 'corrected' },
     })
+    expect(inactive.proposedIntent).toBeNull()
+  })
+
+  it('marks a superseded context decision inactive', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey)
+    await confirmAgreement(ctx, alice, taskId)
+    const before = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/projects/${projectId}/context`,
+    })
+    const entry = (before.json().data.entries as Array<Record<string, unknown>>).find(
+      (row) => row.kind === 'decision' && row.businessRef === `taskSpec:${taskId}`,
+    )
+    expect(entry).toBeDefined()
+    const entryId = entry?.id as string
+    const proposed = await checkAdmission(ctx, alice, work.workKey, 'context_entry', entryId)
+    expect(proposed.decision).toMatchObject({ decision: 'propose' })
+
+    await confirmAgreement(ctx, alice, taskId)
+    const inactive = await checkAdmission(ctx, alice, work.workKey, 'context_entry', entryId)
+    expect(inactive.decision).toMatchObject({
+      decision: 'ignore',
+      reason: 'source_inactive',
+      refs: { detail: 'inactive' },
+    })
+    expect(inactive.proposedIntent).toBeNull()
   })
 
   it('ignores an already-directed instruction message as a work candidate', async () => {
@@ -866,6 +916,15 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
 
     const successor = await createWork(ctx, alice, taskId)
     const successorMandate = await createMandate(ctx, alice, successor.workKey)
+    const beforeReassign = await comment(ctx, alice, taskId)
+    const proposedBefore = await checkAdmission(
+      ctx,
+      alice,
+      successor.workKey,
+      'task_message',
+      beforeReassign,
+    )
+    expect(proposedBefore.proposedIntent?.status).toBe('proposed')
     const reassign = await apiInject(ctx, alice, {
       method: 'POST',
       url: `/api/v1/tasks/${taskId}/reassign`,
@@ -882,6 +941,9 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
     })
     expect(bobMandate.statusCode).toBe(409)
     expect(bobMandate.json().error.code).toBe('CONFLICT')
+    const reassignedIntents = await database.db.select().from(schema.dispatchIntents)
+    expect(reassignedIntents).toHaveLength(1)
+    expect(reassignedIntents[0]).toMatchObject({ status: 'cancelled' })
     const waiting = await apiInject(ctx, bob, {
       method: 'GET',
       url: `/api/v1/works/${successor.workKey}`,
@@ -891,6 +953,7 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
       resumeMode: 'owner_confirmation',
       resumeCondition: 'task_assignee_changed',
     })
+    expect(waiting.json().data.currentMandate).toBeNull()
     const changedSource = await comment(ctx, bob, taskId)
     const changed = await checkAdmission(ctx, bob, successor.workKey, 'task_message', changedSource)
     expect(changed.decision).toMatchObject({
@@ -900,6 +963,16 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
     })
     expect(changed.proposedIntent).toBeNull()
     expect(mandate.id).not.toBe(successorMandate.id)
+
+    // 新 assignee 可以退休旧工作；退休后不再有当前 Mandate。
+    const retiredByNewAssignee = await apiInject(ctx, bob, {
+      method: 'POST',
+      url: `/api/v1/works/${successor.workKey}/retire`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(retiredByNewAssignee.statusCode).toBe(200)
+    expect(retiredByNewAssignee.json().data.state).toBe('retired')
 
     // 改派回来也不自动复活旧工作/旧 Mandate。
     const reassignBack = await apiInject(ctx, alice, {
@@ -914,7 +987,7 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
       method: 'GET',
       url: `/api/v1/works/${successor.workKey}`,
     })
-    expect(stillWaiting.json().data.work.state).toBe('waiting')
+    expect(stillWaiting.json().data.work.state).toBe('retired')
     const afterBackSource = await comment(ctx, alice, taskId)
     const afterBack = await checkAdmission(
       ctx,
@@ -1026,15 +1099,27 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
     expect(accepted.decision).toMatchObject({ decision: 'propose', reason: 'needs_semantic' })
   })
 
-  it('waits instead of proposing when the task is already terminal', async () => {
+  it('retires work and cancels proposals when the task becomes terminal', async () => {
     const work = await createWork(ctx, alice, taskId)
     await createMandate(ctx, alice, work.workKey)
-    const source = await comment(ctx, alice, taskId)
+    const before = await comment(ctx, alice, taskId)
+    const proposed = await checkAdmission(ctx, alice, work.workKey, 'task_message', before)
+    expect(proposed.proposedIntent?.status).toBe('proposed')
     const cancelled = await apiInject(ctx, alice, {
       method: 'POST',
       url: `/api/v1/tasks/${taskId}/cancel`,
     })
     expect(cancelled.statusCode).toBe(200)
+    const intents = await database.db.select().from(schema.dispatchIntents)
+    expect(intents).toHaveLength(1)
+    expect(intents[0]).toMatchObject({ status: 'cancelled' })
+    const after = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${work.workKey}`,
+    })
+    expect(after.json().data.work.state).toBe('retired')
+    expect(after.json().data.currentMandate).toBeNull()
+    const source = await comment(ctx, alice, taskId)
     const result = await checkAdmission(ctx, alice, work.workKey, 'task_message', source)
     expect(result.decision).toMatchObject({
       decision: 'wait',

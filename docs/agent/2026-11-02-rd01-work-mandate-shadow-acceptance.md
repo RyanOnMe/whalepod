@@ -45,7 +45,7 @@ pnpm exec tsx scripts/with-test-postgres.mts \
 - `POST /tasks/:taskId/works` 只接受已接受、非终态 Task；未接受返回 `409 ASSIGNMENT_NOT_ACCEPTED`，终态返回 `409 TASK_TERMINAL`。
 - 同一 Task 同时最多一份未退休工作；重复创建 `409 CONFLICT`；退休后允许创建后继工作，历史仍可读。
 - `work.work_key` 是 Hub 生成的 UUIDv7，项目内可读；`human_owner_user_id` 固化为创建时 assignee。
-- Task 改派后：work 转 `waiting(owner_confirmation)` 并取消旧 proposed；新 assignee 可在旧工作上退休，但不得创建/变更 Mandate（`409 CONFLICT`），准入返回 `wait(work_state)`，不得用旧 Mandate 产生提案；改派回来也不自动复活。
+- Task 改派后：work 转 `waiting(owner_confirmation)` 并取消旧 proposed；新 assignee 可在旧工作上退休（已测），但不得创建/变更 Mandate（`409 CONFLICT`），首次改派后的准入返回 `wait(owner_changed)`；改派回来也不自动复活。
 
 ### 2. Mandate 版本化与停止
 
@@ -62,12 +62,12 @@ pnpm exec tsx scripts/with-test-postgres.mts \
 |---|---|
 | 无 active Mandate / paused / revoked / superseded / draft | `ignore(no_mandate)` |
 | active Mandate 已过 `expiresAt` | `ignore(mandate_expired)` |
-| work `waiting`/`retired` | `wait(work_state)`，带 `deadlineAt` |
-| Task 已 `done`/`cancelled`（work 尚未自动退休） | `wait(work_state)`，`refs.detail='task_terminal'` |
+| work `waiting`/`retired`（非终态 Task） | `wait(work_state)`，带 `deadlineAt`；读面 `currentMandate=null` |
+| Task 已 `done`/`cancelled` | work 同事务转 `retired`、旧 proposed 取消；准入 `wait(work_state)`，`refs.detail='task_terminal'` |
 | Task 的 `approvalPolicy='full_access'` | `wait(full_access_task)`，不产生 `proposed`；已有 proposed 在策略切换时取消 |
 | Task `assignmentStatus!='accepted'`（如同人改派后待接受） | `wait(assignment_pending)`，不提案 |
-| Task 改派给另一名成员 | work 转 `waiting(owner_confirmation)`，旧 proposed 取消；改派回来也不自动复活 |
-| `work.human_owner != task.assignee`（防御分支；正常改派会先转 waiting） | `wait(owner_changed)` |
+| Task 改派给另一名成员 | work 转 `waiting(owner_confirmation)`，旧 proposed 取消；首次准入 `wait(owner_changed)`，改派回来后 `wait(work_state)`，都不自动复活 |
+| `work.human_owner != task.assignee`（改派后的第一判定） | `wait(owner_changed)` |
 | 同一 `(work, sourceType, sourceId, sourceVersion, sourceDigest)` 重复检查 | 返回既有决定，`duplicate=true`，不追加决定/意图（Issue #483 原文写 `ignore(duplicate)`；本切片选择返回既有决定并显式标 `duplicate=true`，避免为去重伪造第二条决定） |
 | 来源类型不在 Mandate `allowedSourceTypes` | `ignore(source_not_allowed)` |
 | Task 消息是 `instruction`/`followup` | `ignore(already_directed)` |
@@ -110,7 +110,7 @@ scripts/secret-scan.sh apps/hub/src/modules/work packages/protocol/src/work.ts \
   packages/db/migrations/0024_work_mandate_shadow.sql
 ```
 
-- 2026-11-02 工作树结果：Q0 `2269 passed`（含 1 条边界单测）；Q2 `85 files / 714 tests passed`；定向 `22 passed`。
+- 2026-11-02 工作树结果：Q0 `2269 passed`（含 1 条边界单测）；Q2 `85 files / 715 tests passed`；定向 `23 passed`。
 - 迁移：`packages/db/migrations/0024_work_mandate_shadow.sql`；Drizzle 镜像 `packages/db/src/schema/work.ts`。
 
 ### 单点变异（每条改一处、跑对应用例、必须红、随后恢复）
@@ -120,7 +120,7 @@ scripts/secret-scan.sh apps/hub/src/modules/work packages/protocol/src/work.ts \
 | M1 | 去掉 assignee 相等检查 | 非 assignee 创建/退休 403 | RED |
 | M2 | 去掉 assignment accepted 检查 | 未接受 Task 409 | RED |
 | M3 | 不拒绝 `full_access` 候选 | 候选校验 400 | RED |
-| M4 | 去掉工作责任人变更检查 | 新 assignee 不能给旧工作建 Mandate | RED |
+| M4 | 去掉工作责任人变更检查 | 新 assignee 不能给旧工作建 Mandate | 冗余防御（改派先把 work 转 waiting，状态检查同样 409；单点去掉不改变结果） |
 | M5 | Mandate 状态迁移恒允许 | revoked 后 pause 409 | RED |
 | M6 | 新版本产生时不取消 proposed | pause/resume/revoke 后意图 `cancelled` | RED |
 | M7 | 退休时不取消 proposed | 退休后意图 `cancelled` | RED |
@@ -131,7 +131,7 @@ scripts/secret-scan.sh apps/hub/src/modules/work packages/protocol/src/work.ts \
 | M12 | 去掉 Task 终态分支 | 终态 Task `wait(task_terminal)` | RED |
 | M13 | 不判断 Mandate 到期 | 到期 `ignore(mandate_expired)` | RED |
 | M14 | 不检查来源类型白名单 | `ignore(source_not_allowed)` | RED |
-| M15 | 只检查 status，不检查 correctedAt | 被纠正条目 `ignore(source_inactive)` | RED |
+| M15 | 不检查 correctedAt（只看 status） | 被纠正条目 `ignore(source_inactive)` | RED |
 | M16 | 不区分 instruction 消息 | `ignore(already_directed)` | RED |
 | M17 | 去掉决定插入的冲突忽略（唯一索引） | 同来源版本二次检查不新增决定 | RED（409） |
 | M18 | 版本列表不标当前版本 | `current` 只有最高版本为 true | RED |
@@ -139,15 +139,19 @@ scripts/secret-scan.sh apps/hub/src/modules/work packages/protocol/src/work.ts \
 | M20 | 不判断 Task `full_access` | full_access Task 只 `wait`，不提案 | RED |
 | M21 | 不判断 Task `assignmentStatus` | 待接受 Task 只 `wait(assignment_pending)` | RED |
 | M22 | 工作模块加入 `fetch(` | 模型/网络依赖静态边界判红 | RED |
+| M23 | 不检查 context entry `status`（只看 correctedAt） | superseded 条目 `ignore(source_inactive)` | RED |
+| M24 | 改派时不取消 proposed | 改派后意图 `cancelled` | RED |
+| M25 | Task 终态时不退休 work | 取消 Task 后 work `retired`、意图 `cancelled` | RED |
 
-- M9 的红色形态是 500：去掉分支后代码试图在无 active Mandate 时构造 proposed 意图，被 `dispatch_intent.mandate_id not null` 拒绝；这仍是「无 Mandate 不得提案」的负控，不是允许通过。
+- M9 的红色形态是 500：去掉分支后代码继续走到来源白名单分支，解引用 `mandate.active.allowedSourceTypes`（undefined）抛出 TypeError；它仍是「无 Mandate 不得提案」的 fail-closed 负控，不是允许通过。
 - M17 的红色形态是 409：去掉 `onConflictDoNothing` 后第二次同来源版本插入撞唯一索引，路由翻译为冲突；恢复后回读既有决定并返回 `duplicate=true`。
+- M4 是双保险而非独立判据：正常改派先把 work 置 waiting，`work.state !== 'active'` 已能拒绝新 Mandate；owner 检查保留给不一致/旧数据，单点去掉不会改变正常路径结果，故不记为 RED。
 
 ## 边界与未覆盖
 
 - **影子切片**：不实现 `approved/dispatched`、派工端口、Run/outbox、系统 actor；`dispatch_intent` 只落 `proposed/cancelled`。M1R-A 的自动续接、工具步级预批准、草稿/提问/暂停与额度执行均未做。
 - **工作收件箱/订阅快路径未做**：没有 `pending/delivered/consumed/unconfirmed/returned/superseded/retracted/expired`，没有投递/消费回执，也没有「已知订阅补充不调用 Router」的判据。归 RD-02a/02b。
-- **Task 改派**：生产改派命令会把该 Task 的未退休工作转 `waiting(owner_confirmation)` 并取消 proposed；改派回来也不会自动复活。RD-01 没有「新 assignee 确认承接」端点，新 assignee 的合法路径是显式退休旧工作后另建；确认承接归后续切片。准入仍保留 `owner_changed` 防御分支（正常路径不会命中）。
+- **Task 改派**：生产改派命令把该 Task 的未退休工作转 `waiting(owner_confirmation)` 并取消 proposed；首次准入返回 `owner_changed`，改派回来也不会自动复活。RD-01 没有「新 assignee 确认承接」端点，新 assignee 的合法路径是显式退休旧工作后另建（已测）；确认承接归后续切片。Agent 目标也走同一 waiting 路径，但未单独做双管理员场景测试。
 - **到期不落库**：没有 sweeper；读面派生 `expired`，准入每次按 `expiresAt` 判断。RD-02/03 接入定期收敛。
 - **同来源版本的重复是终局**：去重身份是 `(work, sourceType, sourceId, sourceVersion, sourceDigest)`；同一内容一旦裁决，改变 Mandate 后不会自动重评（需要来源产生新版本/新摘要）。Issue #483 原文写 `ignore(duplicate)`，本切片实际返回既有决定 + `duplicate=true`，已在规则表和本节登记。RD-02 的工作收件箱用 supersede/新输入解决。
 - **夹具**：`insertMessage` 造一条已定向 instruction，避免生产路径同时建 Run 污染「准入不建 Run」判据；`createAgentWithPolicy` 直插 pack/agent/revision 作为候选参照。两者都不是运行时投影，测试未写 Run/outbox/TeamEvent。
@@ -155,7 +159,11 @@ scripts/secret-scan.sh apps/hub/src/modules/work packages/protocol/src/work.ts \
 - **`ask` 未实现**：RD-01 程序规则只产生 `ignore/wait/propose`；`ask` 需要 Router 语义与问题生命周期，归后续/模型切片。
 - **工具面只到名称级**：`read/write/edit/glob/grep` 名称白名单之外一律拒绝；路径/资源范围、固定草稿面逐名正负控与 `approval_required` 步级预批准归 RD-03。
 - **旧 Mandate 版本仍在库**：pause/resume/revoke 追加新版本，旧版本保留历史；派工端口必须校验 `work.mandateId === intent.mandateId`，RD-03 负责。
-- **未测/不可达分支**：外部来源条目（`sourceId!=null`）、`followup` 消息、`done` Task（与 cancelled 共用终态守卫）、archived/no-revision Agent、`waiting` 的显式入口在 RD-01 没有生产触发路径；相应代码为 fail-closed，验收以代码/边界声明而非伪造夹具。`owner_changed` 仅作防御分支。
+- **未测/不可达分支**：外部来源条目（`sourceId!=null`）、`followup` 消息、`done` Task（与 cancelled 共用终态守卫）、archived/no-revision Agent、来源创建者停用后已有决定的重评、同毫秒重复编辑、Mandate 创建/状态回执的过期视图在 RD-01 没有生产触发路径或保持外部可见性；相应代码为 fail-closed 或归后续切片。
+- **授权代次**：`authorizationGeneration` 仍是 `member/internal/source.unverified` 常量；成员在决定后被停用不会回撤已有 proposed（RD-03 派发前必须逐来源复核）。
+- **Task 终态**：complete/cancel 同事务退休工作并取消 proposed；`work` 历史保留，`currentMandate=null`。
+- **Mandate 回执**：创建/状态命令的 Idempotency-Key 可重放首次视图，可能显示旧 `status/current`；读面 `GET /works/:workKey` 为当前事实。准入回执已做当前状态回读。
+- **同来源新版本**：新版本/新摘要会追加新 proposed，不自动 supersede 旧 proposed；RD-02 收件箱处理。
 - **`full_access` 检查当前 Revision**：Mandate 只存 Agent id，RD-03 在派发时固定精确 Revision 并再次校验；当前检查防止把已知 full_access Agent 写进 Mandate。
 - Q5/Q3/Q6/Q7 未跑：本切片无 Web、Node、Runtime、DSH 契约或安全策略改动。
 
