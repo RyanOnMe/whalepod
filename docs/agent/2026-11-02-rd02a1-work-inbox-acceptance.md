@@ -85,7 +85,7 @@ pnpm exec tsx scripts/with-test-postgres.mts \
 | 动作 | 允许起点 | 结果 | 重放 |
 |---|---|---|---|
 | `return` | `pending` | `returned` + `return_reason/return_note` | 同原因同备注幂等；不同原因 `409` |
-| `retract` | `pending`、`returned` | `retracted` + `status_reason`，清空退回字段；该来源新版本不再入箱 | 重复 `retract` 幂等；其他状态 `409` |
+| `retract` | `pending`、`returned`（目标） | 同来源所有 `pending/returned` 一起置 `retracted` + `status_reason`，清空退回字段；该来源新版本不再入箱 | 重复 `retract` 幂等；目标为 `expired/superseded` 时 `409` |
 | `expire` | `pending` | `expired` + `status_reason` | 重复 `expire` 幂等；其他状态 `409` |
 
 - `returned` 不能 `expire`；`expired` 不能 `return/retract`；`retracted` 不能 `return/expire`；`superseded` 是终态。
@@ -129,8 +129,8 @@ scripts/secret-scan.sh .
 本切片实测（2026-11-02）：
 
 - Q0：`211` 个测试文件 / `2269` 条通过；work 边界静态测试 `1` 条通过。
-- Q2：`86` 个测试文件 / `729` 条通过；定向 inbox `12` 条通过。
-- 单点变异 `M1–M23` 全部 RED（见下）。
+- Q2：`86` 个测试文件 / `730` 条通过；定向 inbox `13` 条通过。
+- 单点变异 `M1–M24` 全部 RED（见下）。
 
 ## 变异自证
 
@@ -161,6 +161,7 @@ scripts/secret-scan.sh .
 | M21 | 标题只按码点截断 | 100 emoji 的合法 context 标题关联不能 400 |
 | M22 | 关联响应不写私有缓存头 | `cache-control` 断言 |
 | M23 | GET 收件箱不写私有缓存头 | `cache-control` 断言 |
+| M24 | 撤权只改目标条目、不扫同来源其它非终态 | 较早 returned 版本撤权后最新 pending 未收口 |
 
 ## 边界与未覆盖
 

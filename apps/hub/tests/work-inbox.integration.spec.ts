@@ -529,6 +529,43 @@ describe('RD-02a-1 work inbox items (ADR-0028)', () => {
     expect(listed.watermarks.pendingCount).toBe(0)
   })
 
+  it('retracts every non-terminal version of the source, not only the target', async () => {
+    const messageId = await comment(ctx, alice, taskId)
+    const first = (await associate(ctx, alice, workKey, 'task_message', messageId)).json().data
+    await act(ctx, alice, workKey, first.id, 'return', { reason: 'incomplete' })
+
+    const editedAt = new Date(Date.now() + 1000)
+    await database.db
+      .update(schema.taskMessages)
+      .set({ body: '新版本补充预算与候选。', editedAt })
+      .where(eq(schema.taskMessages.id, messageId))
+    const second = (await associate(ctx, alice, workKey, 'task_message', messageId)).json().data
+    expect(second.status).toBe('pending')
+
+    // 对较早的 returned 版本撤权，也必须收口同来源最新的 pending。
+    const retracted = await act(ctx, alice, workKey, first.id, 'retract', {
+      reason: 'source_permission_revoked',
+    })
+    expect(retracted.json().data).toMatchObject({ id: first.id, status: 'retracted' })
+    const rows = await database.db.select().from(schema.workInboxItems)
+    expect(rows.find((row) => row.id === second.id)).toMatchObject({ status: 'retracted' })
+    expect(rows.every((row) => row.status === 'retracted')).toBe(true)
+
+    await act(ctx, alice, workKey, second.id, 'return', { reason: 'irrelevant' }, 409)
+    const later = new Date(Date.now() + 2000)
+    await database.db
+      .update(schema.taskMessages)
+      .set({ body: '撤权后的第三个版本。', editedAt: later })
+      .where(eq(schema.taskMessages.id, messageId))
+    const blocked = await associate(ctx, alice, workKey, 'task_message', messageId, 409)
+    expect(blocked.json().error).toMatchObject({
+      code: 'CONFLICT',
+      details: { reason: 'source_retracted' },
+    })
+    const listed = await inbox(ctx, alice, workKey)
+    expect(listed.watermarks.pendingCount).toBe(0)
+  })
+
   it('rejects idempotent replay by the former assignee after reassignment', async () => {
     const messageId = await comment(ctx, alice, taskId)
     const associateKey = idemKey()

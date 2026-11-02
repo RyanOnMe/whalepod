@@ -7,6 +7,7 @@ import {
   getWorkInboxItemByIdentity,
   getWorkInboxItemForUpdate,
   insertWorkInboxItem,
+  retractInboxItemsForSource,
   listWorkInboxItems,
   supersedePendingInboxItems,
   transactCommandWithOrigin,
@@ -313,19 +314,23 @@ export async function retractWorkInboxItem(
     ),
     async (tx) => {
       const item = await lockItem(tx, workKey, actorUserId, itemId)
-      if (item.status === 'retracted') return toWorkInboxItemView(item)
-      requireItemStatus(item, ['pending', 'returned'])
+      if (item.status !== 'retracted') requireItemStatus(item, ['pending', 'returned'])
       const now = deps.now()
-      const updated = await updateWorkInboxItem(tx, item.id, {
-        status: 'retracted',
-        statusReason: reason ?? 'retracted',
-        returnReason: null,
-        returnNote: null,
-        statusAt: now,
-        updatedAt: now,
+      const statusReason = reason ?? 'retracted'
+      const updated = await retractInboxItemsForSource(tx, {
+        workId: item.workId,
+        sourceType: item.sourceType,
+        sourceId: item.sourceId,
+        statusReason,
+        now,
       })
-      if (updated === undefined) throw new ApiError(404, 'NOT_FOUND', 'inbox item not found')
-      return toWorkInboxItemView(updated)
+      const target = updated.find((row) => row.id === item.id)
+      if (target !== undefined) return toWorkInboxItemView(target)
+      // 已 retracted 的重复调用仍幂等；其它终态（expired/superseded）不能借撤权重写历史。
+      if (item.status === 'retracted') return toWorkInboxItemView(item)
+      throw new ApiError(409, 'CONFLICT', `cannot act on a ${item.status} inbox item`, {
+        status: item.status,
+      })
     },
   )
 }

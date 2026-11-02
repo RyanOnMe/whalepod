@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import {
   workInboxItems,
@@ -146,6 +146,38 @@ export interface WorkInboxItemPatch {
   readonly returnNote?: string | null
   readonly statusAt?: Date
   readonly updatedAt?: Date
+}
+
+/** 来源级撤权：把该来源所有 pending/returned 条目一起收口，避免旧条目撤权后新版本继续投。 */
+export async function retractInboxItemsForSource(
+  handle: DbHandle,
+  values: {
+    readonly workId: string
+    readonly sourceType: WorkInboxItemRow['sourceType']
+    readonly sourceId: string
+    readonly statusReason: string
+    readonly now: Date
+  },
+): Promise<WorkInboxItemRow[]> {
+  return handle
+    .update(workInboxItems)
+    .set({
+      status: 'retracted',
+      statusReason: values.statusReason,
+      returnReason: null,
+      returnNote: null,
+      statusAt: values.now,
+      updatedAt: values.now,
+    })
+    .where(
+      and(
+        eq(workInboxItems.workId, values.workId),
+        eq(workInboxItems.sourceType, values.sourceType),
+        eq(workInboxItems.sourceId, values.sourceId),
+        inArray(workInboxItems.status, ['pending', 'returned']),
+      ),
+    )
+    .returning()
 }
 
 export async function updateWorkInboxItem(
