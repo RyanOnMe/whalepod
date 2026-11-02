@@ -44,11 +44,28 @@ describe('RD-02a-1 inbox read authorization boundary', () => {
     const end = source.indexOf('\n}\n', start)
     expect(end).toBeGreaterThan(start)
     const fn = source.slice(start, end)
-    // 授权、条目读取与水位必须在同一个 transaction 回调内；授权放在事务外
-    // 再另开列表事务会重新打开 TOCTOU。
-    expect(fn).toContain('database.transaction(')
-    expect(fn).toContain('await requireAssignee(tx, task, actorUserId)')
-    expect(fn).toContain('readInboxView(tx, work, filter)')
+    // 授权、条目读取与水位必须在同一个 transaction 回调内；且只能有一个
+    // transaction，授权放事务外/拆成两个事务都会重新打开 TOCTOU。
+    expect(fn.match(/database\.transaction\(/g)).toHaveLength(1)
+    const transactionAt = fn.indexOf('database.transaction(')
+    expect(transactionAt).toBeGreaterThan(-1)
+    expect(fn.indexOf('await requireAssignee(tx, task, actorUserId)')).toBeGreaterThan(
+      transactionAt,
+    )
+    expect(fn.indexOf('readInboxView(tx, work, filter)')).toBeGreaterThan(transactionAt)
     expect(fn).not.toContain('database.db')
+    // 同一 transaction 还不够：READ COMMITTED 下每条语句各取快照，授权后会读到改派后的列表。
+    expect(fn).toContain("isolationLevel: 'repeatable read'")
+    expect(fn).toContain("accessMode: 'read only'")
+
+    const routes = readFileSync(join(WORK_MODULE_DIR, 'routes.ts'), 'utf8')
+    const routeStart = routes.indexOf("app.get('/works/:workKey/inbox'")
+    expect(routeStart).toBeGreaterThan(-1)
+    const routeEnd = routes.indexOf('\n  })', routeStart)
+    expect(routeEnd).toBeGreaterThan(routeStart)
+    const route = routes.slice(routeStart, routeEnd)
+    // 生产 GET 必须只走同一事务的 helper，不能再先 loadAuthorizedWork 再列。
+    expect(route).toContain('loadWorkInboxForActor(deps.database, session.userId, workKey, query)')
+    expect(route).not.toContain('loadAuthorizedWork')
   })
 })

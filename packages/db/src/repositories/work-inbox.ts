@@ -102,27 +102,6 @@ export async function getRetractedInboxItemForSource(
   return row
 }
 
-export async function getLatestInboxItemForSource(
-  handle: DbHandle,
-  workId: string,
-  sourceType: WorkInboxItemRow['sourceType'],
-  sourceId: string,
-): Promise<WorkInboxItemRow | undefined> {
-  const [row] = await handle
-    .select()
-    .from(workInboxItems)
-    .where(
-      and(
-        eq(workInboxItems.workId, workId),
-        eq(workInboxItems.sourceType, sourceType),
-        eq(workInboxItems.sourceId, sourceId),
-      ),
-    )
-    .orderBy(desc(workInboxItems.createdAt), desc(workInboxItems.id))
-    .limit(1)
-  return row
-}
-
 export async function getLatestPendingInboxItemForSource(
   handle: DbHandle,
   workId: string,

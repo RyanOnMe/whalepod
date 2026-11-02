@@ -68,7 +68,7 @@ pnpm exec tsx scripts/with-test-postgres.mts \
 | 外部来源条目（权限代次未复核） | `409 CONFLICT`，`source_inactive` + `source_permission_unverified` |
 | Inference | `409 CONFLICT`，`system_produced` |
 | 条目业务归属不是本 Task（含无引用/异 Task） | `409 CONFLICT`，`source_out_of_scope` |
-| 该来源任一条目已被 `retract` | `409 CONFLICT`，`source_retracted` |
+| 该来源任一条目已被 `retract`，且请求是新版本 | `409 CONFLICT`，`source_retracted`；同身份重放返回既有条目 |
 | 来源 id 不存在 | `404 NOT_FOUND` |
 
 显式关联**不要求**当前存在 Mandate，也不受 `allowedSourceTypes` 限制：它是人把输入放进工作收件箱的动作，本切片不派发；#490 在交付前必须另行按 Mandate 与实时权限复核。该取舍登记在「边界」。
@@ -165,7 +165,7 @@ scripts/secret-scan.sh .
 | M23 | GET 收件箱不写私有缓存头 | `cache-control` 断言 |
 | M24 | 撤权只改目标条目、不扫同来源其它非终态 | 较早 returned 版本撤权后最新 pending 未收口 |
 | M25 | GET 收件箱删除 assignee 校验 | 非 assignee 读取必须 403 |
-| M26 | GET 授权移出事务、列表另开事务 | 静态事务边界判据必须红（旧 TOCTOU 复活） |
+| M26 | GET 授权移出事务/拆成两个事务、路由回退到 `loadAuthorizedWork`，或隔离级别改回 READ COMMITTED | 静态事务边界与路由判据必须红（三种变体均验） |
 | M27 | 删除 pending 部分唯一索引的 409 映射 | 约束映射单测必须红 |
 | M28 | 删除 DB 的来源 pending 部分唯一索引 | 直接插第二行 pending 必须 23505 |
 

@@ -341,11 +341,19 @@ describe('RD-02a-1 work inbox items (ADR-0028)', () => {
 
     // 夹具：直接插第二行同来源 pending，验证 DB 部分唯一索引是最后一道兜底。
     // removeWhen：仓储层提供可注入的并发/冲突测试口后删除该直写。
+    const workRow = (
+      await database.db
+        .select()
+        .from(schema.works)
+        .where(eq(schema.works.workKey, workKey))
+        .limit(1)
+    )[0]
+    expect(workRow).toBeDefined()
     const pg = await database.db
       .insert(schema.workInboxItems)
       .values({
         id: randomUUID(),
-        workId: (await database.db.select().from(schema.works).limit(1))[0]?.id as string,
+        workId: workRow?.id as string,
         workKey,
         taskId,
         projectId,
