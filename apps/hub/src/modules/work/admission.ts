@@ -1,9 +1,11 @@
 import {
   getArtifact,
   getContextEntry,
+  getDispatchIntent,
   getDispatchIntentByDecision,
   getEnabledMember,
   getLatestWorkMandate,
+  getRouterDecisionById,
   getRouterDecisionBySource,
   getRun,
   getTaskForUpdate,
@@ -74,6 +76,9 @@ async function lockWorkContext(tx: Tx, workKey: string): Promise<LockedWork> {
   if (task === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
   const work = await getWorkByKeyForUpdate(tx, workKey)
   if (work === undefined) throw new ApiError(404, 'NOT_FOUND', 'work not found')
+  if (work.taskId !== task.id) {
+    throw new ApiError(500, 'INTERNAL_ERROR', 'work and task are inconsistent')
+  }
   return { work, task }
 }
 
@@ -213,7 +218,19 @@ async function loadContextEntrySource(
       summary: '系统推导不是新的工作输入',
       detail: 'inference',
     }
-  } else {
+  } else if (entry.createdBy !== null) {
+    const team = await getTeam(tx)
+    if (team === undefined) throw new ApiError(500, 'INTERNAL_ERROR', 'team not initialized')
+    const creator = await getEnabledMember(tx, team.id, entry.createdBy)
+    if (creator === undefined) {
+      ignored = {
+        reason: 'source_inactive',
+        summary: '来源创建者已不是启用中的成员',
+        detail: 'creator_not_member',
+      }
+    }
+  }
+  if (ignored === undefined) {
     const associationRef =
       entry.kind === 'correction' && entry.targetEntryId !== null
         ? ((await getContextEntry(tx, entry.targetEntryId))?.businessRef ?? null)
@@ -294,7 +311,7 @@ export async function checkWorkAdmission(
 ): Promise<{ readonly value: AdmissionCheckResult; readonly executed: boolean }> {
   return await transactCommandWithOrigin(
     deps.database,
-    `work.admission:${workKey}:${actorUserId}:${idempotencyKey}`,
+    `work.admission:${workKey}:${actorUserId}:${input.sourceType}:${input.sourceId}:${idempotencyKey}`,
     async (tx) => {
       const { work, task } = await lockWorkContext(tx, workKey)
       await requireAssignee(tx, task, actorUserId)
@@ -312,17 +329,9 @@ export async function checkWorkAdmission(
       let decision: RouterDecisionKind = 'propose'
       let reason = 'needs_semantic'
       let refs: Record<string, unknown> = source.refs
-      if (work.state !== 'active') {
-        decision = 'wait'
-        reason = 'work_state'
-        refs = {
-          ...source.refs,
-          workState: work.state,
-          deadlineAt: new Date(
-            now.getTime() + (latest?.waitDeadlineSeconds ?? 900) * 1000,
-          ).toISOString(),
-        }
-      } else if (work.humanOwnerUserId !== task.assigneeUserId) {
+      if (work.humanOwnerUserId !== task.assigneeUserId) {
+        // 责任变更优先于一般 waiting 原因：正常改派已把 work 转
+        // waiting(owner_confirmation)，这里给成员一个明确的 owner_changed 归因。
         decision = 'wait'
         reason = 'owner_changed'
         refs = {
@@ -332,10 +341,29 @@ export async function checkWorkAdmission(
             now.getTime() + (latest?.waitDeadlineSeconds ?? 900) * 1000,
           ).toISOString(),
         }
+      } else if (work.state !== 'active') {
+        decision = 'wait'
+        reason = 'work_state'
+        refs = {
+          ...source.refs,
+          workState: work.state,
+          deadlineAt: new Date(
+            now.getTime() + (latest?.waitDeadlineSeconds ?? 900) * 1000,
+          ).toISOString(),
+        }
       } else if (task.status === 'done' || task.status === 'cancelled') {
         decision = 'wait'
         reason = 'work_state'
         refs = { ...source.refs, detail: 'task_terminal' }
+      } else if (task.approvalPolicy === 'full_access') {
+        // ADR-0028 §13：full_access Task 只能 ask/wait，不能进入自主派工候选。
+        decision = 'wait'
+        reason = 'full_access_task'
+        refs = { ...source.refs, detail: 'task_approval_policy_full_access' }
+      } else if (task.assignmentStatus !== 'accepted') {
+        decision = 'wait'
+        reason = 'assignment_pending'
+        refs = { ...source.refs, detail: 'task_assignment_not_accepted' }
       } else if (mandate.active === undefined) {
         decision = 'ignore'
         reason = mandate.reason ?? 'no_mandate'
@@ -402,6 +430,7 @@ export async function checkWorkAdmission(
           source.sourceType,
           source.sourceId,
           source.sourceVersion,
+          source.sourceDigest,
         )
         if (raced === undefined) {
           throw new ApiError(500, 'INTERNAL_ERROR', 'router decision insert lost without row')
@@ -463,6 +492,28 @@ export async function checkWorkAdmission(
       }
     },
   )
+}
+
+/**
+ * 同一 Idempotency-Key 重放时，命令回执里缓存的是首次视图；决定/意图可能已被撤销或退休。
+ * 重放返回前按 id 回读当前状态，避免客户端把已失效的 proposed 当成仍可确认。
+ */
+export async function refreshAdmissionResult(
+  database: Database,
+  cached: AdmissionCheckResult,
+): Promise<AdmissionCheckResult> {
+  const decision = await getRouterDecisionById(database.db, cached.decision.id)
+  if (decision === undefined) return cached
+  const intent =
+    cached.proposedIntent === null
+      ? undefined
+      : await getDispatchIntent(database.db, cached.proposedIntent.id)
+  const now = new Date()
+  return {
+    decision: toWorkDecisionView(decision),
+    proposedIntent: intent === undefined ? null : toDispatchIntentView(intent, now),
+    duplicate: true,
+  }
 }
 
 async function duplicateResult(

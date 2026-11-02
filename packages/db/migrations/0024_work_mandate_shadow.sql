@@ -168,7 +168,7 @@ create table router_decision (
 
 -- 同一工作内同一来源同一版本只裁决一次；重复检查返回已有决定。
 create unique index router_decision_source_unique
-  on router_decision (work_id, source_type, source_id, source_version);
+  on router_decision (work_id, source_type, source_id, source_version, source_digest);
 create index router_decision_work_created_idx
   on router_decision (work_id, created_at desc, id);
 create index router_decision_work_decision_idx
@@ -227,6 +227,10 @@ create table dispatch_intent (
   )
 );
 
+-- RD-01 一条决定只产生一条意图；后续切片若需多条，另做迁移。
+create unique index dispatch_intent_decision_unique
+  on dispatch_intent (decision_id)
+  where decision_id is not null;
 create index dispatch_intent_work_created_idx
   on dispatch_intent (work_id, created_at desc, id);
 create index dispatch_intent_work_status_idx

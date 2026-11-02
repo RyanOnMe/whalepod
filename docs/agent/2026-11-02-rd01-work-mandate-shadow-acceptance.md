@@ -7,7 +7,7 @@
 
 ## 验的是哪条用户路径
 
-Task 的当前责任人在既有 Task 上创建一份持续工作，确认一份带职责、来源、Agent、工具与额度上限的 Mandate；随后成员可以对一条真实 Task 讨论消息或项目上下文条目显式触发「影子准入」。系统必须给出可解释的 `ignore/wait/propose` 决定，并为 `propose` 留下一条仅处于 `proposed` 的派工意图；整个过程不得创建任何 Run 或业务事实。责任变更后，旧工作不得被新 assignee 接管或自动复活。
+Task 的当前责任人在既有 Task 上创建一份持续工作，确认一份带职责、来源、Agent、工具与额度上限的 Mandate；随后成员可以对一条真实 Task 讨论消息或项目上下文条目显式触发「影子准入」。系统必须给出可解释的 `ignore/wait/propose` 决定（`ask` 属 Router 语义，本切片不产生），并为 `propose` 留下一条仅处于 `proposed` 的派工意图；整个过程不得创建任何 Run 或业务事实。责任变更后，旧工作不得被新 assignee 接管或自动复活。
 
 ## 驱动（怎么触发）
 
@@ -27,7 +27,7 @@ pnpm exec tsx scripts/with-test-postgres.mts \
 - `POST /api/v1/works/:workKey/admission-checks`
 - `GET /api/v1/works/:workKey`
 
-来源使用生产路径：Task 评论（`POST /tasks/:taskId/comments`）、约定确认（`agreement/draft` → `agreement/confirm`）产生的 Decision 条目、以及成员纠正（`POST /projects/:projectId/context/:entryId/correction`）。唯一的数据夹具是「已定向 instruction 消息」：生产路径创建它必然同时建 Run/outbox，无法隔离本切片判据；消息本身不是运行时投影，测试不写任何运行时状态（见「边界」）。
+来源使用生产路径：Task 评论（`POST /tasks/:taskId/comments`）、约定确认（`agreement/draft` → `agreement/confirm`）产生的 Decision 条目、以及成员纠正（`POST /projects/:projectId/context/:entryId/correction`）。数据夹具分两类：①「已定向 instruction 消息」——生产路径创建它必然同时建 Run/outbox，无法隔离本切片判据；消息本身不是运行时投影，测试不写任何运行时状态；② `createAgentWithPolicy` 直接插入 `plugin_pack/agent/agent_profile_revision` 以验证候选 Agent 与 `full_access` 拒绝，这些是参照数据而非运行时投影。两类都在「边界」登记。
 
 ## 观测（看什么）
 
@@ -45,7 +45,7 @@ pnpm exec tsx scripts/with-test-postgres.mts \
 - `POST /tasks/:taskId/works` 只接受已接受、非终态 Task；未接受返回 `409 ASSIGNMENT_NOT_ACCEPTED`，终态返回 `409 TASK_TERMINAL`。
 - 同一 Task 同时最多一份未退休工作；重复创建 `409 CONFLICT`；退休后允许创建后继工作，历史仍可读。
 - `work.work_key` 是 Hub 生成的 UUIDv7，项目内可读；`human_owner_user_id` 固化为创建时 assignee。
-- Task 改派后：新 assignee 可在旧工作上退休，但不得创建/变更 Mandate（`409 CONFLICT`）；准入返回 `wait(owner_changed)`，不得用旧 Mandate 产生提案。
+- Task 改派后：work 转 `waiting(owner_confirmation)` 并取消旧 proposed；新 assignee 可在旧工作上退休，但不得创建/变更 Mandate（`409 CONFLICT`），准入返回 `wait(work_state)`，不得用旧 Mandate 产生提案；改派回来也不自动复活。
 
 ### 2. Mandate 版本化与停止
 
@@ -64,8 +64,11 @@ pnpm exec tsx scripts/with-test-postgres.mts \
 | active Mandate 已过 `expiresAt` | `ignore(mandate_expired)` |
 | work `waiting`/`retired` | `wait(work_state)`，带 `deadlineAt` |
 | Task 已 `done`/`cancelled`（work 尚未自动退休） | `wait(work_state)`，`refs.detail='task_terminal'` |
-| `work.human_owner != task.assignee` | `wait(owner_changed)` |
-| 同一 `(work, sourceType, sourceId, sourceVersion)` 重复检查 | 返回既有决定，`duplicate=true`，不追加决定/意图 |
+| Task 的 `approvalPolicy='full_access'` | `wait(full_access_task)`，不产生 `proposed`；已有 proposed 在策略切换时取消 |
+| Task `assignmentStatus!='accepted'`（如同人改派后待接受） | `wait(assignment_pending)`，不提案 |
+| Task 改派给另一名成员 | work 转 `waiting(owner_confirmation)`，旧 proposed 取消；改派回来也不自动复活 |
+| `work.human_owner != task.assignee`（防御分支；正常改派会先转 waiting） | `wait(owner_changed)` |
+| 同一 `(work, sourceType, sourceId, sourceVersion, sourceDigest)` 重复检查 | 返回既有决定，`duplicate=true`，不追加决定/意图（Issue #483 原文写 `ignore(duplicate)`；本切片选择返回既有决定并显式标 `duplicate=true`，避免为去重伪造第二条决定） |
 | 来源类型不在 Mandate `allowedSourceTypes` | `ignore(source_not_allowed)` |
 | Task 消息是 `instruction`/`followup` | `ignore(already_directed)` |
 | Task 消息作者已不是启用成员 | `ignore(source_inactive)` |
@@ -75,14 +78,14 @@ pnpm exec tsx scripts/with-test-postgres.mts \
 | 条目无法归属到本 Task（含无引用/异 Task） | `ignore(source_out_of_scope)` |
 | 其余讨论消息/有效上下文条目 | `propose(needs_semantic)` + 一条 `dispatch_intent(status='proposed', approvalBasis=null, runId=null)` |
 
-- 所有决定都保存 `source_digest`、`input_digest`（含工作、规则版本、Mandate 版本、逐来源授权代次）与 `rules_version='rd01.v1'`；不保存来源正文。
+- 所有决定都保存 `source_digest`、`input_digest`（含工作、规则版本、最新/active Mandate 版本、逐来源授权代次）与 `rules_version='rd01.v1'`；不保存来源正文。同一毫秒内的来源更新也因 `source_digest` 进入去重身份而不会被旧决定吞掉。
 - `proposed` 意图的 `expiresAt = min(now + waitDeadlineSeconds, mandate.expiresAt)`；`candidates/exclusionReasons` 为空数组（RD-01 不做候选选择）。
-- 准入前后 `run/dispatch_outbox/team_event` 计数相等；`dispatch_intent` 只会出现 `proposed`/`cancelled`；没有模型/Node/Runtime 调用。
-- 同一 `Idempotency-Key` 只在同一 actor + Task/Work/意图作用域内重放；跨成员共享同一 key 不得返回他人工作。
+- 准入前后 `run/dispatch_outbox/team_event/context_entry/artifact/task_spec_revision` 计数相等；`dispatch_intent` 只会出现 `proposed`/`cancelled`；`work-boundaries.spec.ts` 对工作模块的模型/Node/Run/outbox/业务写入依赖做静态判红。
+- 同一 `Idempotency-Key` 只在同一 actor + 资源 + 请求摘要作用域内重放；跨成员/跨资源/不同请求体共享同一 key 不得返回他人或旧请求的结果；准入回执重放会回读当前决定/意图状态。
 
 ## 归因（失败先看哪层）
 
-- HTTP/授权：`hub.audit` 的 `work.*` 动作与 `outcome`；403 先核对 `task.assigneeUserId` 与 `getEnabledMember`。
+- HTTP/授权：`hub.audit` 的 `work.*` 成功动作；403 先核对 HTTP 状态、`task.assigneeUserId` 与 `getEnabledMember`（当前路由只为成功动作写审计，拒绝路径不写 `hub.audit`）。
 - 准入决定：`hub.work`/`work.admission_decided` 的 `decision/reason/mandateVersion`；再查 `router_decision` 与 `dispatch_intent`。
 - 状态迁移：`work_mandate` 按 `work_id, version desc` 读最新；检查 `current=true` 是否为最高版本。
 - 无 Run/outbox：查 `run`、`dispatch_outbox`、`team_event` 的计数差；为 0 才通过。
@@ -107,7 +110,7 @@ scripts/secret-scan.sh apps/hub/src/modules/work packages/protocol/src/work.ts \
   packages/db/migrations/0024_work_mandate_shadow.sql
 ```
 
-- 2026-11-02 工作树结果：Q0 `2268 passed`；Q2 `85 files / 707 tests passed`；定向 `15 passed`。
+- 2026-11-02 工作树结果：Q0 `2269 passed`（含 1 条边界单测）；Q2 `85 files / 714 tests passed`；定向 `22 passed`。
 - 迁移：`packages/db/migrations/0024_work_mandate_shadow.sql`；Drizzle 镜像 `packages/db/src/schema/work.ts`。
 
 ### 单点变异（每条改一处、跑对应用例、必须红、随后恢复）
@@ -119,10 +122,10 @@ scripts/secret-scan.sh apps/hub/src/modules/work packages/protocol/src/work.ts \
 | M3 | 不拒绝 `full_access` 候选 | 候选校验 400 | RED |
 | M4 | 去掉工作责任人变更检查 | 新 assignee 不能给旧工作建 Mandate | RED |
 | M5 | Mandate 状态迁移恒允许 | revoked 后 pause 409 | RED |
-| M6 | 撤销时不取消 proposed | 撤销后意图 `cancelled` | RED |
+| M6 | 新版本产生时不取消 proposed | pause/resume/revoke 后意图 `cancelled` | RED |
 | M7 | 退休时不取消 proposed | 退休后意图 `cancelled` | RED |
-| M8 | 幂等 key 去掉 actor/task 作用域 | 跨成员同 key 不串结果 | RED |
-| M9 | 去掉 `no_mandate` 分支 | 无 Mandate 返回 `ignore(no_mandate)` | RED（500，约束拒绝） |
+| M8 | 幂等 key 去掉 actor/task/请求摘要作用域 | 跨成员/跨请求同 key 不串结果 | RED |
+| M9 | 去掉 `no_mandate` 分支 | 无 Mandate 返回 `ignore(no_mandate)` | RED（500：后续来源白名单分支解引用 undefined Mandate） |
 | M10 | 去掉 work 非 active 分支 | 退休工作 `wait(work_state)` | RED |
 | M11 | 去掉责任人变更分支 | 改派后 `wait(owner_changed)` | RED |
 | M12 | 去掉 Task 终态分支 | 终态 Task `wait(task_terminal)` | RED |
@@ -133,6 +136,9 @@ scripts/secret-scan.sh apps/hub/src/modules/work packages/protocol/src/work.ts \
 | M17 | 去掉决定插入的冲突忽略（唯一索引） | 同来源版本二次检查不新增决定 | RED（409） |
 | M18 | 版本列表不标当前版本 | `current` 只有最高版本为 true | RED |
 | M19 | 固定工具面加入 `bash` | 面外工具 400 | RED |
+| M20 | 不判断 Task `full_access` | full_access Task 只 `wait`，不提案 | RED |
+| M21 | 不判断 Task `assignmentStatus` | 待接受 Task 只 `wait(assignment_pending)` | RED |
+| M22 | 工作模块加入 `fetch(` | 模型/网络依赖静态边界判红 | RED |
 
 - M9 的红色形态是 500：去掉分支后代码试图在无 active Mandate 时构造 proposed 意图，被 `dispatch_intent.mandate_id not null` 拒绝；这仍是「无 Mandate 不得提案」的负控，不是允许通过。
 - M17 的红色形态是 409：去掉 `onConflictDoNothing` 后第二次同来源版本插入撞唯一索引，路由翻译为冲突；恢复后回读既有决定并返回 `duplicate=true`。
@@ -141,12 +147,15 @@ scripts/secret-scan.sh apps/hub/src/modules/work packages/protocol/src/work.ts \
 
 - **影子切片**：不实现 `approved/dispatched`、派工端口、Run/outbox、系统 actor；`dispatch_intent` 只落 `proposed/cancelled`。M1R-A 的自动续接、工具步级预批准、草稿/提问/暂停与额度执行均未做。
 - **工作收件箱/订阅快路径未做**：没有 `pending/delivered/consumed/unconfirmed/returned/superseded/retracted/expired`，没有投递/消费回执，也没有「已知订阅补充不调用 Router」的判据。归 RD-02a/02b。
-- **Task 改派不自动改 work 状态**：RD-01 在准入侧检测并 `wait(owner_changed)`，同时拒绝新 assignee 在旧工作上创建/变更 Mandate；完整的 `waiting(owner_confirmation)` 与新 assignee 确认承接归后续切片。新 assignee 的合法路径是显式退休旧工作后另建。
+- **Task 改派**：生产改派命令会把该 Task 的未退休工作转 `waiting(owner_confirmation)` 并取消 proposed；改派回来也不会自动复活。RD-01 没有「新 assignee 确认承接」端点，新 assignee 的合法路径是显式退休旧工作后另建；确认承接归后续切片。准入仍保留 `owner_changed` 防御分支（正常路径不会命中）。
 - **到期不落库**：没有 sweeper；读面派生 `expired`，准入每次按 `expiresAt` 判断。RD-02/03 接入定期收敛。
-- **同来源版本的重复是终局**：RD-01 没有 wait deadline 调度；同一 sourceVersion 一旦裁决，改变 Mandate 后不会自动重评（需要来源产生新版本）。RD-02 的工作收件箱用 supersede/新输入解决。
-- **instruction 来源夹具**：测试用 `insertMessage` 造一条已定向消息，避免生产路径同时建 Run 污染「准入不建 Run」判据；该消息不是运行时投影，测试未写任何运行时状态。
-- **无模型调用是结构性事实**：本模块没有模型/Handler 依赖，也没有 Node/Runtime 调用；未做网络抓包级证据。真实 Router 语义与成本归 RD-01 后续/模型切片。
+- **同来源版本的重复是终局**：去重身份是 `(work, sourceType, sourceId, sourceVersion, sourceDigest)`；同一内容一旦裁决，改变 Mandate 后不会自动重评（需要来源产生新版本/新摘要）。Issue #483 原文写 `ignore(duplicate)`，本切片实际返回既有决定 + `duplicate=true`，已在规则表和本节登记。RD-02 的工作收件箱用 supersede/新输入解决。
+- **夹具**：`insertMessage` 造一条已定向 instruction，避免生产路径同时建 Run 污染「准入不建 Run」判据；`createAgentWithPolicy` 直插 pack/agent/revision 作为候选参照。两者都不是运行时投影，测试未写 Run/outbox/TeamEvent。
+- **无模型调用**：`apps/hub/tests/work-boundaries.spec.ts` 对工作模块做静态依赖判红（模型 SDK、DSH、Runtime/Testkit、Run/outbox、业务写入、`fetch(` 任一出现即失败）；不是网络抓包。真实 Router 语义与成本归后续切片。
+- **`ask` 未实现**：RD-01 程序规则只产生 `ignore/wait/propose`；`ask` 需要 Router 语义与问题生命周期，归后续/模型切片。
 - **工具面只到名称级**：`read/write/edit/glob/grep` 名称白名单之外一律拒绝；路径/资源范围、固定草稿面逐名正负控与 `approval_required` 步级预批准归 RD-03。
+- **旧 Mandate 版本仍在库**：pause/resume/revoke 追加新版本，旧版本保留历史；派工端口必须校验 `work.mandateId === intent.mandateId`，RD-03 负责。
+- **未测/不可达分支**：外部来源条目（`sourceId!=null`）、`followup` 消息、`done` Task（与 cancelled 共用终态守卫）、archived/no-revision Agent、`waiting` 的显式入口在 RD-01 没有生产触发路径；相应代码为 fail-closed，验收以代码/边界声明而非伪造夹具。`owner_changed` 仅作防御分支。
 - **`full_access` 检查当前 Revision**：Mandate 只存 Agent id，RD-03 在派发时固定精确 Revision 并再次校验；当前检查防止把已知 full_access Agent 写进 Mandate。
 - Q5/Q3/Q6/Q7 未跑：本切片无 Web、Node、Runtime、DSH 契约或安全策略改动。
 

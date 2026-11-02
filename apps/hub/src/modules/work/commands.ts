@@ -25,6 +25,7 @@ import {
 } from '@whalepod/db'
 import type { CreateWorkMandateRequest } from '@whalepod/protocol'
 import { ApiError } from '../shared/http-error.js'
+import { canonicalJson, sha256Hex } from '../coordination/digest.js'
 import { uuidv7 } from '../shared/uuid.js'
 import { toWorkMandateView, toWorkView } from './queries.js'
 
@@ -111,6 +112,10 @@ function mandateContract(
   }
 }
 
+function requestDigest(value: unknown): string {
+  return sha256Hex(canonicalJson(value))
+}
+
 function assertNoDuplicates(values: readonly string[], label: string): void {
   if (new Set(values).size !== values.length) {
     throw new ApiError(400, 'VALIDATION_FAILED', `${label} must not contain duplicates`)
@@ -182,7 +187,7 @@ export async function createWork(
 ) {
   return transactWork(
     deps.database,
-    `work.create:${taskId}:${actorUserId}:${idempotencyKey}`,
+    `work.create:${taskId}:${actorUserId}:${requestDigest(input)}:${idempotencyKey}`,
     async (tx) => {
       const task = await getTaskForUpdate(tx, taskId)
       if (task === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
@@ -252,18 +257,20 @@ export async function createWorkMandate(
     // ADR-0028 §6/§7：RD-01 内草稿受众必须与 principal 同一成员。
     throw new ApiError(400, 'VALIDATION_FAILED', 'draft recipient must be the acting assignee')
   }
-  const now = deps.now()
-  if (new Date(input.expiresAt).getTime() <= now.getTime()) {
-    throw new ApiError(400, 'VALIDATION_FAILED', 'expiresAt must be in the future')
-  }
-
   return transactWork(
     deps.database,
-    `work.mandate.create:${workKey}:${actorUserId}:${idempotencyKey}`,
+    `work.mandate.create:${workKey}:${actorUserId}:${requestDigest(input)}:${idempotencyKey}`,
     async (tx) => {
       const { work, task } = await lockWorkContext(tx, workKey)
       await requireAssignee(tx, task, actorUserId)
       requireAcceptedTask(task)
+      const now = deps.now()
+      if (new Date(input.expiresAt).getTime() <= now.getTime()) {
+        throw new ApiError(400, 'VALIDATION_FAILED', 'expiresAt must be in the future')
+      }
+      if (task.approvalPolicy === 'full_access') {
+        throw new ApiError(409, 'CONFLICT', 'full_access task cannot receive a mandate')
+      }
       if (work.humanOwnerUserId !== actorUserId) {
         // Task 改派后旧工作不随新 assignee 复活；新 assignee 只能显式退休后另建工作。
         throw new ApiError(
@@ -317,7 +324,7 @@ export async function changeWorkMandateStatus(
 ) {
   return transactWork(
     deps.database,
-    `work.mandate.${mutation}:${mandateId}:${actorUserId}:${idempotencyKey}`,
+    `work.mandate.${mutation}:${mandateId}:${actorUserId}:${requestDigest(reason ?? null)}:${idempotencyKey}`,
     async (tx) => {
       const snapshot = await getWorkMandate(tx, mandateId)
       if (snapshot === undefined) throw new ApiError(404, 'NOT_FOUND', 'mandate not found')
@@ -329,6 +336,9 @@ export async function changeWorkMandateStatus(
           'CONFLICT',
           'work ownership changed; retire it before changing a mandate',
         )
+      }
+      if (work.state === 'retired') {
+        throw new ApiError(409, 'CONFLICT', 'retired work cannot change mandate status')
       }
       const current = await getWorkMandateForUpdate(tx, mandateId)
       if (current === undefined) throw new ApiError(404, 'NOT_FOUND', 'mandate not found')
@@ -386,9 +396,8 @@ export async function changeWorkMandateStatus(
         updatedAt: now,
       })
       await updateWork(tx, work.id, { mandateId: next.id, updatedAt: now })
-      if (mutation === 'revoke') {
-        await cancelProposedDispatchIntents(tx, work.id, now)
-      }
+      // 任何新版本（暂停/恢复/撤销）都使旧 proposed 意图失效：它们引用的是旧版本。
+      await cancelProposedDispatchIntents(tx, work.id, now)
       return toWorkMandateView(next, now, true)
     },
   )
@@ -402,5 +411,7 @@ export async function listWorkMandateViews(database: Database, workKey: string, 
   const work = await getWorkByKey(database.db, workKey)
   if (work === undefined) throw new ApiError(404, 'NOT_FOUND', 'work not found')
   const rows = await listWorkMandates(database.db, work.id)
-  return rows.map((row, index) => toWorkMandateView(row, now, index === 0))
+  return rows.map((row, index) =>
+    toWorkMandateView(row, now, index === 0 && work.state !== 'retired'),
+  )
 }

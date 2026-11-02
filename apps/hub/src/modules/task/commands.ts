@@ -4,7 +4,9 @@ import type { Actor } from '@whalepod/domain'
 import type { Database, Outbox, TaskRow, Tx } from '@whalepod/db'
 import {
   appendTeamEvent,
+  cancelProposedDispatchIntents,
   findCommandReceipt,
+  getCurrentWorkByTask,
   getEnabledMember,
   getTeam,
   hasPublishedArtifactByTask,
@@ -18,6 +20,7 @@ import {
   schema,
   transactCommand,
   updateTaskFields,
+  updateWork,
 } from '@whalepod/db'
 import { cancelRunInTransaction } from '../run/cancel.js'
 import { reviewPrerequisiteReason } from './review-conditions.js'
@@ -74,6 +77,29 @@ export function taskChangedPayload(task: TaskRow): unknown {
     // #378：约定流程开关随 task.changed 广播（订阅方失效 task-room 与 agreement 读模型）。
     agreementEnabled: task.agreementEnabled,
   }
+}
+
+/**
+ * ADR-0028 §2：Task 改派给另一名成员后，旧工作转 waiting(owner_confirmation)，
+ * 旧 proposed 意图作废；新 assignee 只能显式退休后另建工作（RD-01 无确认承接端点）。
+ */
+async function markWorkWaitingForAssigneeChange(tx: Tx, taskId: string, now: Date): Promise<void> {
+  const work = await getCurrentWorkByTask(tx, taskId)
+  if (work === undefined || work.state === 'retired') return
+  await updateWork(tx, work.id, {
+    state: 'waiting',
+    resumeMode: 'owner_confirmation',
+    resumeCondition: 'task_assignee_changed',
+    updatedAt: now,
+  })
+  await cancelProposedDispatchIntents(tx, work.id, now)
+}
+
+/** Task 进入 full_access 或终态后，旧 proposed 意图不得再被确认/派发。 */
+async function cancelWorkProposals(tx: Tx, taskId: string, now: Date): Promise<void> {
+  const work = await getCurrentWorkByTask(tx, taskId)
+  if (work === undefined) return
+  await cancelProposedDispatchIntents(tx, work.id, now)
 }
 
 /** Agent 指派目标（#239）：必须存在且未归档——归档的 Agent 不再可执行。 */
@@ -236,15 +262,19 @@ export async function reassignAssignment(
     transitionAssignment({ assignmentStatus: task.assignmentStatus }, { type: 'reassign' })
     if (agentAssigned) await requireAssignableAgent(tx, input.assigneeAgentId!)
     else await requireActiveAssignee(tx, assigneeUserId)
+    const now = new Date()
     const updated = await reassignTask(
       tx,
       taskId,
       { assigneeUserId, ...(agentAssigned ? { assigneeAgentId: input.assigneeAgentId } : {}) },
-      new Date(),
+      now,
     )
     if (updated === undefined) throw new Error('task vanished in its own transaction')
+    if (!agentAssigned && task.assigneeUserId !== assigneeUserId) {
+      await markWorkWaitingForAssigneeChange(tx, taskId, now)
+    }
     // #428 评审修复：未确认交接随责任转移，别让旧接收人留着一条确认不了的回执。
-    await reassignPendingHandoffReceipts(tx, taskId, assigneeUserId, new Date())
+    await reassignPendingHandoffReceipts(tx, taskId, assigneeUserId, now)
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
     return toTaskView(updated)
   })
@@ -286,6 +316,9 @@ export async function updateTask(
     }
     const updated = await updateTaskFields(tx, taskId, patch)
     if (updated === undefined) throw new Error('task vanished in its own transaction')
+    if (patch.approvalPolicy === 'full_access') {
+      await cancelWorkProposals(tx, taskId, new Date())
+    }
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
     return toTaskView(updated)
   })
@@ -337,8 +370,10 @@ export async function completeTask(
       assignmentStatus: task.assignmentStatus,
     })
     const next = transitionTask({ status: task.status }, { type: 'complete' })
-    const updated = await setTaskStatus(tx, taskId, next.status, new Date())
+    const now = new Date()
+    const updated = await setTaskStatus(tx, taskId, next.status, now)
     if (updated === undefined) throw new Error('task vanished in its own transaction')
+    await cancelWorkProposals(tx, taskId, now)
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
     return toTaskView(updated)
   })
@@ -376,6 +411,7 @@ export async function cancelTask(
     }
     const updated = await setTaskStatus(tx, taskId, 'cancelled', now)
     if (updated === undefined) throw new Error('task vanished in its own transaction')
+    await cancelWorkProposals(tx, taskId, now)
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
     return toTaskView(updated)
   })

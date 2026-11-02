@@ -1,4 +1,5 @@
 import { sql } from 'drizzle-orm'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 import {
   bigint,
   char,
@@ -68,7 +69,7 @@ export const works = pgTable(
     state: workState('state').notNull().default('active'),
     resumeMode: workResumeMode('resume_mode'),
     resumeCondition: varchar('resume_condition', { length: 500 }),
-    mandateId: uuid('mandate_id'),
+    mandateId: uuid('mandate_id').references((): AnyPgColumn => workMandates.id),
     retiredAt: timestamp('retired_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -232,6 +233,7 @@ export const routerDecisions = pgTable(
       table.sourceType,
       table.sourceId,
       table.sourceVersion,
+      table.sourceDigest,
     ),
     index('router_decision_work_created_idx').on(table.workId, table.createdAt.desc(), table.id),
     index('router_decision_work_decision_idx').on(
@@ -299,6 +301,9 @@ export const dispatchIntents = pgTable(
       'dispatch_intent_status_fields',
       sql`(${table.status} = 'proposed' and ${table.approvalBasis} is null and ${table.approvedAt} is null and ${table.dispatchedAt} is null and ${table.runId} is null) or (${table.status} = 'approved' and ${table.approvalBasis} is not null and ${table.approvedAt} is not null and ${table.dispatchedAt} is null and ${table.runId} is null) or (${table.status} = 'dispatched' and ${table.approvalBasis} is not null and ${table.approvedAt} is not null and ${table.dispatchedAt} is not null and ${table.runId} is not null) or (${table.status} in ('rejected', 'expired', 'cancelled', 'superseded') and ${table.dispatchedAt} is null and ${table.runId} is null)`,
     ),
+    uniqueIndex('dispatch_intent_decision_unique')
+      .on(table.decisionId)
+      .where(sql`${table.decisionId} is not null`),
     index('dispatch_intent_work_created_idx').on(table.workId, table.createdAt.desc(), table.id),
     index('dispatch_intent_work_status_idx').on(table.workId, table.status, table.createdAt.desc()),
     index('dispatch_intent_status_expiry_idx').on(table.status, table.expiresAt),

@@ -171,18 +171,43 @@ async function comment(ctx: TestApp, session: Session, taskId: string): Promise<
   return res.json().data.id as string
 }
 
+async function confirmAgreement(ctx: TestApp, session: Session, task: string): Promise<void> {
+  const draft = await apiInject(ctx, session, {
+    method: 'POST',
+    url: `/api/v1/tasks/${task}/agreement/draft`,
+    payload: {
+      content: {
+        goal: '预算从 12 万改为 8 万',
+        constraints: '不新增审批步骤',
+        acceptance: '新预算出现在下一次比较',
+        openQuestions: '供应商待定',
+      },
+    },
+    idempotencyKey: idemKey(),
+  })
+  expect(draft.statusCode).toBe(200)
+  const confirmed = await apiInject(ctx, session, {
+    method: 'POST',
+    url: `/api/v1/tasks/${task}/agreement/confirm`,
+    payload: { draftVersion: draft.json().data.draftVersion },
+    idempotencyKey: idemKey(),
+  })
+  expect(confirmed.statusCode).toBe(200)
+}
+
 async function checkAdmission(
   ctx: TestApp,
   session: Session,
   workKey: string,
   sourceType: 'task_message' | 'context_entry',
   sourceId: string,
+  key = idemKey(),
 ) {
   const res = await apiInject(ctx, session, {
     method: 'POST',
     url: `/api/v1/works/${workKey}/admission-checks`,
     payload: { sourceType, sourceId },
-    idempotencyKey: idemKey(),
+    idempotencyKey: key,
   })
   expect(res.statusCode).toBe(200)
   return res.json().data as {
@@ -196,13 +221,26 @@ async function countRows(database: Database): Promise<{
   runs: number
   outbox: number
   teamEvents: number
+  contextEntries: number
+  artifacts: number
+  specRevisions: number
 }> {
-  const [runs, outbox, teamEvents] = await Promise.all([
+  const [runs, outbox, teamEvents, contextEntries, artifacts, specRevisions] = await Promise.all([
     database.db.select().from(schema.runs),
     database.db.select().from(schema.dispatchOutbox),
     database.db.select().from(schema.teamEvents),
+    database.db.select().from(schema.contextEntries),
+    database.db.select().from(schema.artifacts),
+    database.db.select().from(schema.taskSpecRevisions),
   ])
-  return { runs: runs.length, outbox: outbox.length, teamEvents: teamEvents.length }
+  return {
+    runs: runs.length,
+    outbox: outbox.length,
+    teamEvents: teamEvents.length,
+    contextEntries: contextEntries.length,
+    artifacts: artifacts.length,
+    specRevisions: specRevisions.length,
+  }
 }
 
 describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
@@ -258,6 +296,21 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
       state: 'active',
     })
     expect(work.workKey).toMatch(/^[0-9a-f-]{36}$/)
+    // UUIDv7：第三个分组首位是版本号 7。
+    expect(work.workKey[14]).toBe('7')
+
+    const bobDetail = await apiInject(ctx, bob, {
+      method: 'GET',
+      url: `/api/v1/works/${work.workKey}`,
+    })
+    expect(bobDetail.statusCode).toBe(403)
+    const bobAdmission = await apiInject(ctx, bob, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/admission-checks`,
+      payload: { sourceType: 'task_message', sourceId: randomUUID() },
+      idempotencyKey: idemKey(),
+    })
+    expect(bobAdmission.statusCode).toBe(403)
 
     const duplicate = await apiInject(ctx, alice, {
       method: 'POST',
@@ -323,6 +376,14 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
     })
     expect(first.statusCode).toBe(201)
 
+    const sameTaskReplay = await apiInject(ctx, bob, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/works`,
+      payload: { goal: GOAL },
+      idempotencyKey: sharedKey,
+    })
+    expect(sameTaskReplay.statusCode).toBe(403)
+
     const bobTask = await createTask(ctx, alice, projectId, bob.userId)
     await acceptTask(ctx, bob, bobTask)
     const second = await apiInject(ctx, bob, {
@@ -359,8 +420,15 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
     })
     expect(v1.allowedToolNames).toEqual(['read', 'glob'])
 
+    const source = await comment(ctx, alice, taskId)
+    const proposed = await checkAdmission(ctx, alice, work.workKey, 'task_message', source)
+    expect(proposed.proposedIntent?.status).toBe('proposed')
+
     const v2 = await createMandate(ctx, alice, work.workKey, { autoDispatch: 'existing_task' })
     expect(v2).toMatchObject({ version: 2, status: 'active', autoDispatch: 'existing_task' })
+    const cancelledByNewVersion = await database.db.select().from(schema.dispatchIntents)
+    expect(cancelledByNewVersion).toHaveLength(1)
+    expect(cancelledByNewVersion[0]).toMatchObject({ status: 'cancelled' })
 
     const paused = await mandateStatus(ctx, alice, v2.id, 'pause')
     expect(paused.data).toMatchObject({ version: 3, status: 'paused' })
@@ -505,6 +573,10 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
       exclusionReasons: [],
     })
     expect(first.proposedIntent?.triggerRefs).toHaveLength(1)
+    expect(Date.parse(first.proposedIntent?.expiresAt as string)).toBeGreaterThan(Date.now())
+    expect(Date.parse(first.proposedIntent?.expiresAt as string)).toBeLessThanOrEqual(
+      Date.now() + 900_000,
+    )
 
     const second = await checkAdmission(ctx, alice, work.workKey, 'task_message', messageId)
     expect(second.duplicate).toBe(true)
@@ -538,6 +610,125 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
     expect(result.proposedIntent).toBeNull()
   })
 
+  it('rejects work creation on a terminal task', async () => {
+    const cancelled = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/cancel`,
+    })
+    expect(cancelled.statusCode).toBe(200)
+    const res = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/works`,
+      payload: { goal: GOAL },
+      idempotencyKey: idemKey(),
+    })
+    expect(res.statusCode).toBe(409)
+    expect(res.json().error.code).toBe('TASK_TERMINAL')
+  })
+
+  it('ignores new sources while a mandate is paused and repeats pause idempotently', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    const v1 = await createMandate(ctx, alice, work.workKey)
+    const firstSource = await comment(ctx, alice, taskId)
+    const proposed = await checkAdmission(ctx, alice, work.workKey, 'task_message', firstSource)
+    expect(proposed.proposedIntent?.status).toBe('proposed')
+    const paused = await mandateStatus(ctx, alice, v1.id, 'pause')
+    expect(paused.data).toMatchObject({ version: 2, status: 'paused' })
+    const pausedAgain = await mandateStatus(ctx, alice, paused.data.id, 'pause')
+    expect(pausedAgain.data).toMatchObject({ version: 2, status: 'paused', current: true })
+    const pausedIntents = await database.db.select().from(schema.dispatchIntents)
+    expect(pausedIntents).toHaveLength(1)
+    expect(pausedIntents[0]).toMatchObject({ status: 'cancelled' })
+
+    const source = await comment(ctx, alice, taskId)
+    const result = await checkAdmission(ctx, alice, work.workKey, 'task_message', source)
+    expect(result.decision).toMatchObject({
+      decision: 'ignore',
+      reason: 'no_mandate',
+      mandateVersion: 2,
+      refs: { mandateStatus: 'paused' },
+    })
+    expect(result.proposedIntent).toBeNull()
+  })
+
+  it('rejects an archived author as an inactive source', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey)
+    const source = await comment(ctx, bob, taskId)
+    const disabled = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/team/members/${bob.userId}/disable`,
+    })
+    expect(disabled.statusCode).toBe(200)
+    const result = await checkAdmission(ctx, alice, work.workKey, 'task_message', source)
+    expect(result.decision).toMatchObject({
+      decision: 'ignore',
+      reason: 'source_inactive',
+      refs: { detail: 'author_not_member' },
+    })
+    expect(result.proposedIntent).toBeNull()
+  })
+
+  it('keeps inference and cross-task context entries out of the work candidate set', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey)
+    const secondTask = await createTask(ctx, alice, projectId, alice.userId)
+    await acceptTask(ctx, alice, secondTask)
+    await confirmAgreement(ctx, alice, taskId)
+    await confirmAgreement(ctx, alice, secondTask)
+    const evaluated = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/projects/${projectId}/coordination/evaluate`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(evaluated.statusCode).toBe(200)
+
+    const context = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/projects/${projectId}/context`,
+    })
+    const entries = context.json().data.entries as Array<Record<string, unknown>>
+    const inference = entries.find((entry) => entry.kind === 'inference')
+    expect(inference).toBeDefined()
+    const inferenceResult = await checkAdmission(
+      ctx,
+      alice,
+      work.workKey,
+      'context_entry',
+      inference?.id as string,
+    )
+    expect(inferenceResult.decision).toMatchObject({
+      decision: 'ignore',
+      reason: 'system_produced',
+    })
+
+    const foreign = entries.find(
+      (entry) => entry.kind === 'decision' && entry.businessRef === `taskSpec:${secondTask}`,
+    )
+    expect(foreign).toBeDefined()
+    const foreignResult = await checkAdmission(
+      ctx,
+      alice,
+      work.workKey,
+      'context_entry',
+      foreign?.id as string,
+    )
+    expect(foreignResult.decision).toMatchObject({
+      decision: 'ignore',
+      reason: 'source_out_of_scope',
+    })
+  })
+
+  it('accepts a valid approval_required agent in the mandate allowlist', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    const agentId = await createAgentWithPolicy(database, alice.userId, 'approval_required')
+    const mandate = await createMandate(ctx, alice, work.workKey, {
+      allowedAgentIds: [agentId],
+    })
+    expect(mandate.allowedAgentIds).toEqual([agentId])
+  })
+
   it('cancels proposed intents when the work is retired', async () => {
     const work = await createWork(ctx, alice, taskId)
     await createMandate(ctx, alice, work.workKey)
@@ -555,6 +746,20 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
     const intents = await database.db.select().from(schema.dispatchIntents)
     expect(intents).toHaveLength(1)
     expect(intents[0]).toMatchObject({ status: 'cancelled', cancelledAt: expect.any(Date) })
+
+    const detail = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${work.workKey}`,
+    })
+    expect(detail.json().data.currentMandate).toBeNull()
+    const mandateRows = await database.db.select().from(schema.workMandates)
+    const pauseRetired = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/mandates/${mandateRows[0]?.id}/pause`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(pauseRetired.statusCode).toBe(409)
   })
 
   it('uses real context entries and marks corrected sources inactive', async () => {
@@ -643,7 +848,7 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
     expect(await countRows(database)).toEqual(before)
   })
 
-  it('waits when the work is retired or the task assignee changed', async () => {
+  it('waits when the work is retired or reassigned, without auto-revival', async () => {
     const work = await createWork(ctx, alice, taskId)
     const mandate = await createMandate(ctx, alice, work.workKey)
 
@@ -656,6 +861,8 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
     const retiredSource = await comment(ctx, alice, taskId)
     const retired = await checkAdmission(ctx, alice, work.workKey, 'task_message', retiredSource)
     expect(retired.decision).toMatchObject({ decision: 'wait', reason: 'work_state' })
+    expect(retired.proposedIntent).toBeNull()
+    expect(retired.decision.refs).toMatchObject({ deadlineAt: expect.any(String) })
 
     const successor = await createWork(ctx, alice, taskId)
     const successorMandate = await createMandate(ctx, alice, successor.workKey)
@@ -675,17 +882,64 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
     })
     expect(bobMandate.statusCode).toBe(409)
     expect(bobMandate.json().error.code).toBe('CONFLICT')
+    const waiting = await apiInject(ctx, bob, {
+      method: 'GET',
+      url: `/api/v1/works/${successor.workKey}`,
+    })
+    expect(waiting.json().data.work).toMatchObject({
+      state: 'waiting',
+      resumeMode: 'owner_confirmation',
+      resumeCondition: 'task_assignee_changed',
+    })
     const changedSource = await comment(ctx, bob, taskId)
     const changed = await checkAdmission(ctx, bob, successor.workKey, 'task_message', changedSource)
-    expect(changed.decision).toMatchObject({ decision: 'wait', reason: 'owner_changed' })
+    expect(changed.decision).toMatchObject({
+      decision: 'wait',
+      reason: 'owner_changed',
+      refs: { detail: 'task assignee changed; new assignee must confirm work' },
+    })
+    expect(changed.proposedIntent).toBeNull()
     expect(mandate.id).not.toBe(successorMandate.id)
+
+    // 改派回来也不自动复活旧工作/旧 Mandate。
+    const reassignBack = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/reassign`,
+      payload: { assigneeUserId: alice.userId },
+      idempotencyKey: idemKey(),
+    })
+    expect(reassignBack.statusCode).toBe(200)
+    await acceptTask(ctx, alice, taskId)
+    const stillWaiting = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${successor.workKey}`,
+    })
+    expect(stillWaiting.json().data.work.state).toBe('waiting')
+    const afterBackSource = await comment(ctx, alice, taskId)
+    const afterBack = await checkAdmission(
+      ctx,
+      alice,
+      successor.workKey,
+      'task_message',
+      afterBackSource,
+    )
+    expect(afterBack.decision).toMatchObject({ decision: 'wait', reason: 'work_state' })
+    expect(afterBack.proposedIntent).toBeNull()
   })
 
   it('cancels proposed intents on revoke and ignores new sources without an active mandate', async () => {
     const work = await createWork(ctx, alice, taskId)
     const mandate = await createMandate(ctx, alice, work.workKey)
     const firstSource = await comment(ctx, alice, taskId)
-    const proposed = await checkAdmission(ctx, alice, work.workKey, 'task_message', firstSource)
+    const admissionKey = idemKey()
+    const proposed = await checkAdmission(
+      ctx,
+      alice,
+      work.workKey,
+      'task_message',
+      firstSource,
+      admissionKey,
+    )
     expect(proposed.proposedIntent?.status).toBe('proposed')
 
     const revoked = await mandateStatus(ctx, alice, mandate.id, 'revoke')
@@ -693,11 +947,83 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
     expect(intents).toHaveLength(1)
     expect(intents[0]).toMatchObject({ status: 'cancelled' })
 
+    const replayed = await checkAdmission(
+      ctx,
+      alice,
+      work.workKey,
+      'task_message',
+      firstSource,
+      admissionKey,
+    )
+    expect(replayed.duplicate).toBe(true)
+    expect(replayed.proposedIntent?.status).toBe('cancelled')
+
     const secondSource = await comment(ctx, alice, taskId)
     const ignored = await checkAdmission(ctx, alice, work.workKey, 'task_message', secondSource)
     expect(ignored.decision).toMatchObject({ decision: 'ignore', reason: 'no_mandate' })
     expect(ignored.decision.mandateVersion).toBe(revoked.data.version)
     expect(ignored.proposedIntent).toBeNull()
+  })
+
+  it('waits instead of proposing for a full_access task and cancels prior proposals', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey)
+    const before = await comment(ctx, alice, taskId)
+    const proposed = await checkAdmission(ctx, alice, work.workKey, 'task_message', before)
+    expect(proposed.proposedIntent?.status).toBe('proposed')
+
+    const updated = await apiInject(ctx, alice, {
+      method: 'PATCH',
+      url: `/api/v1/tasks/${taskId}`,
+      payload: { approvalPolicy: 'full_access' },
+      idempotencyKey: idemKey(),
+    })
+    expect(updated.statusCode).toBe(200)
+    expect(updated.json().data.approvalPolicy).toBe('full_access')
+    const intents = await database.db.select().from(schema.dispatchIntents)
+    expect(intents).toHaveLength(1)
+    expect(intents[0]).toMatchObject({ status: 'cancelled' })
+
+    const source = await comment(ctx, alice, taskId)
+    const result = await checkAdmission(ctx, alice, work.workKey, 'task_message', source)
+    expect(result.decision).toMatchObject({
+      decision: 'wait',
+      reason: 'full_access_task',
+      refs: { detail: 'task_approval_policy_full_access' },
+    })
+    expect(result.proposedIntent).toBeNull()
+
+    const newMandate = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/mandates`,
+      payload: { expiresAt: futureIso() },
+      idempotencyKey: idemKey(),
+    })
+    expect(newMandate.statusCode).toBe(409)
+  })
+
+  it('waits while the task assignment is pending after a same-assignee reassign', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey)
+    const reassigned = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/reassign`,
+      payload: { assigneeUserId: alice.userId },
+      idempotencyKey: idemKey(),
+    })
+    expect(reassigned.statusCode).toBe(200)
+    const source = await comment(ctx, alice, taskId)
+    const pending = await checkAdmission(ctx, alice, work.workKey, 'task_message', source)
+    expect(pending.decision).toMatchObject({
+      decision: 'wait',
+      reason: 'assignment_pending',
+      refs: { detail: 'task_assignment_not_accepted' },
+    })
+    expect(pending.proposedIntent).toBeNull()
+    await acceptTask(ctx, alice, taskId)
+    const acceptedSource = await comment(ctx, alice, taskId)
+    const accepted = await checkAdmission(ctx, alice, work.workKey, 'task_message', acceptedSource)
+    expect(accepted.decision).toMatchObject({ decision: 'propose', reason: 'needs_semantic' })
   })
 
   it('waits instead of proposing when the task is already terminal', async () => {
@@ -738,5 +1064,6 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
       url: `/api/v1/works/${work.workKey}`,
     })
     expect(detail.json().data.currentMandate.status).toBe('expired')
+    await mandateStatus(ctx, alice, mandate.id, 'pause', 409)
   })
 })

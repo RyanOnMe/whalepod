@@ -147,8 +147,11 @@ export async function loadWorkDetail(
   )
   return WorkDetailViewSchema.parse({
     work: toWorkView(work),
+    // 退休工作不再有“当前授权”；历史仍可从版本列表读取。
     currentMandate:
-      currentMandate === undefined ? null : toWorkMandateView(currentMandate, now, true),
+      currentMandate === undefined || work.state === 'retired'
+        ? null
+        : toWorkMandateView(currentMandate, now, true),
     recentDecisions: decisions.map(toWorkDecisionView),
     proposedIntents: proposed.map((intent) => toDispatchIntentView(intent, now)),
     watermarks: {

@@ -170,12 +170,25 @@ export async function insertRouterDecision(
   return row
 }
 
+export async function getRouterDecisionById(
+  handle: DbHandle,
+  id: string,
+): Promise<RouterDecisionRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(routerDecisions)
+    .where(eq(routerDecisions.id, id))
+    .limit(1)
+  return row
+}
+
 export async function getRouterDecisionBySource(
   handle: DbHandle,
   workId: string,
   sourceType: RouterDecisionRow['sourceType'],
   sourceId: string,
   sourceVersion: string,
+  sourceDigest: string,
 ): Promise<RouterDecisionRow | undefined> {
   const [row] = await handle
     .select()
@@ -186,6 +199,7 @@ export async function getRouterDecisionBySource(
         eq(routerDecisions.sourceType, sourceType),
         eq(routerDecisions.sourceId, sourceId),
         eq(routerDecisions.sourceVersion, sourceVersion),
+        eq(routerDecisions.sourceDigest, sourceDigest),
       ),
     )
     .limit(1)

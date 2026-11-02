@@ -30,7 +30,7 @@ import {
   mapWorkConstraint,
   retireWork,
 } from './commands.js'
-import { checkWorkAdmission } from './admission.js'
+import { checkWorkAdmission, refreshAdmissionResult } from './admission.js'
 import { loadWorkDetail, toWorkView } from './queries.js'
 
 export interface WorkRouteDeps {
@@ -213,7 +213,7 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
     const { workKey: rawWorkKey } = request.params as { workKey: string }
     const workKey = parseUuid(rawWorkKey, 'work key')
     const body = parseBody(WorkAdmissionCheckRequestSchema, request.body)
-    const outcome = await mapWorkErrors(() =>
+    const command = await mapWorkErrors(() =>
       checkWorkAdmission(
         { database: deps.database, now: () => new Date() },
         session.userId,
@@ -222,6 +222,12 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
         readIdempotencyKey(request),
       ),
     )
+    const outcome = command.executed
+      ? command
+      : {
+          executed: false,
+          value: await refreshAdmissionResult(deps.database, command.value),
+        }
     if (outcome.executed) {
       request.log.info(
         {
