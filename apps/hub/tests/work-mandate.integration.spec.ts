@@ -539,6 +539,23 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
     expect(res.json().error.code).toBe('VALIDATION_FAILED')
   })
 
+  it('rejects a mandate when stored work ownership is inconsistent', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    // 故障注入：模拟旧数据/外部改库造成 work.human_owner 与 Task assignee 不一致。
+    await database.db
+      .update(schema.works)
+      .set({ humanOwnerUserId: bob.userId })
+      .where(eq(schema.works.workKey, work.workKey))
+    const res = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/mandates`,
+      payload: { expiresAt: futureIso() },
+      idempotencyKey: idemKey(),
+    })
+    expect(res.statusCode).toBe(409)
+    expect(res.json().error.code).toBe('CONFLICT')
+  })
+
   it('records ignore(no_mandate) without creating a Run, outbox or team event', async () => {
     const work = await createWork(ctx, alice, taskId)
     const messageId = await comment(ctx, alice, taskId)

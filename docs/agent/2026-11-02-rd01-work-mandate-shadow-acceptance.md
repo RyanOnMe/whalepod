@@ -110,7 +110,7 @@ scripts/secret-scan.sh apps/hub/src/modules/work packages/protocol/src/work.ts \
   packages/db/migrations/0024_work_mandate_shadow.sql
 ```
 
-- 2026-11-02 工作树结果：Q0 `2269 passed`（含 1 条边界单测）；Q2 `85 files / 715 tests passed`；定向 `23 passed`。
+- 2026-11-02 工作树结果：Q0 `2269 passed`（含 1 条边界单测）；Q2 `85 files / 716 tests passed`；定向 `24 passed`。
 - 迁移：`packages/db/migrations/0024_work_mandate_shadow.sql`；Drizzle 镜像 `packages/db/src/schema/work.ts`。
 
 ### 单点变异（每条改一处、跑对应用例、必须红、随后恢复）
@@ -120,7 +120,7 @@ scripts/secret-scan.sh apps/hub/src/modules/work packages/protocol/src/work.ts \
 | M1 | 去掉 assignee 相等检查 | 非 assignee 创建/退休 403 | RED |
 | M2 | 去掉 assignment accepted 检查 | 未接受 Task 409 | RED |
 | M3 | 不拒绝 `full_access` 候选 | 候选校验 400 | RED |
-| M4 | 去掉工作责任人变更检查 | 新 assignee 不能给旧工作建 Mandate | 冗余防御（改派先把 work 转 waiting，状态检查同样 409；单点去掉不改变结果） |
+| M4 | 去掉工作责任人变更检查 | 存储的 work owner 与 assignee 不一致时建 Mandate 409 | RED（故障注入用例） |
 | M5 | Mandate 状态迁移恒允许 | revoked 后 pause 409 | RED |
 | M6 | 新版本产生时不取消 proposed | pause/resume/revoke 后意图 `cancelled` | RED |
 | M7 | 退休时不取消 proposed | 退休后意图 `cancelled` | RED |
@@ -145,7 +145,7 @@ scripts/secret-scan.sh apps/hub/src/modules/work packages/protocol/src/work.ts \
 
 - M9 的红色形态是 500：去掉分支后代码继续走到来源白名单分支，解引用 `mandate.active.allowedSourceTypes`（undefined）抛出 TypeError；它仍是「无 Mandate 不得提案」的 fail-closed 负控，不是允许通过。
 - M17 的红色形态是 409：去掉 `onConflictDoNothing` 后第二次同来源版本插入撞唯一索引，路由翻译为冲突；恢复后回读既有决定并返回 `duplicate=true`。
-- M4 是双保险而非独立判据：正常改派先把 work 置 waiting，`work.state !== 'active'` 已能拒绝新 Mandate；owner 检查保留给不一致/旧数据，单点去掉不会改变正常路径结果，故不记为 RED。
+- M4 通过故障注入覆盖：正常改派先把 work 置 waiting，状态检查也能拒绝；测试直接构造「stored work owner ≠ assignee」的不一致状态，让 owner 检查成为唯一拒绝判据。
 
 ## 边界与未覆盖
 
