@@ -33,7 +33,7 @@ export const WorkInboxItemViewSchema = z.strictObject({
   sourceId: z.uuid(),
   sourceVersion: z.string().min(1).max(200),
   sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
-  authorizationGeneration: z.string().min(1).max(64),
+  authorizationGeneration: z.string().min(1).max(128),
   title: z.string().min(1).max(200),
   body: z.string().max(65536),
   bodyDigest: z.string().regex(/^[a-f0-9]{64}$/),

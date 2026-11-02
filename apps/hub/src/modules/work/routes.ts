@@ -39,7 +39,7 @@ import {
   associateWorkInboxItem,
   expireWorkInboxItem,
   loadWorkInbox,
-  refreshWorkInboxItem,
+  refreshWorkInboxItemForActor,
   retractWorkInboxItem,
   returnWorkInboxItem,
 } from './inbox.js'
@@ -237,24 +237,38 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
     )
     const value = result.executed
       ? result.value
-      : await refreshWorkInboxItem(deps.database, workKey, result.value.id)
+      : await refreshWorkInboxItemForActor(deps.database, session.userId, workKey, result.value.id)
+    request.log.info(
+      {
+        component: 'hub.work_inbox',
+        action: 'work.inbox.associate',
+        workKey,
+        itemId: value.id,
+        status: value.status,
+        duplicate: !result.executed,
+      },
+      'work inbox item associated',
+    )
     audit(request, 'work.inbox.associate', 'success', session.userId)
+    reply.header('cache-control', 'private, no-store')
     return reply.code(201).send({ ok: true, data: value })
   })
 
   // GET /works/:workKey/inbox：assignee 读收件箱（可过滤状态）。
-  app.get('/works/:workKey/inbox', async (request) => {
+  app.get('/works/:workKey/inbox', async (request, reply) => {
     const session = await deps.requireActor(request)
     const { workKey: rawWorkKey } = request.params as { workKey: string }
     const workKey = parseUuid(rawWorkKey, 'work key')
     const query = parseBody(WorkInboxListQuerySchema, request.query)
     const { work } = await loadAuthorizedWork(deps, session, workKey)
     const view = await loadWorkInbox(deps.database, work, query)
+    // 正文快照是私有数据，禁止共享缓存/中间层缓存。
+    reply.header('cache-control', 'private, no-store')
     return { ok: true, data: view }
   })
 
   // POST /works/:workKey/inbox-items/:itemId/return|retract|expire：显式生命周期迁移。
-  app.post('/works/:workKey/inbox-items/:itemId/return', async (request) => {
+  app.post('/works/:workKey/inbox-items/:itemId/return', async (request, reply) => {
     const session = await deps.requireActor(request)
     const { workKey: rawWorkKey, itemId: rawItemId } = request.params as {
       workKey: string
@@ -275,13 +289,26 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
     )
     const value = result.executed
       ? result.value
-      : await refreshWorkInboxItem(deps.database, workKey, itemId)
+      : await refreshWorkInboxItemForActor(deps.database, session.userId, workKey, itemId)
+    request.log.info(
+      {
+        component: 'hub.work_inbox',
+        action: 'work.inbox.return',
+        workKey,
+        itemId: value.id,
+        status: value.status,
+        returnReason: value.returnReason,
+        duplicate: !result.executed,
+      },
+      'work inbox item returned',
+    )
     audit(request, 'work.inbox.return', 'success', session.userId)
+    reply.header('cache-control', 'private, no-store')
     return { ok: true, data: value }
   })
 
   for (const mutation of ['retract', 'expire'] as const) {
-    app.post(`/works/:workKey/inbox-items/:itemId/${mutation}`, async (request) => {
+    app.post(`/works/:workKey/inbox-items/:itemId/${mutation}`, async (request, reply) => {
       const session = await deps.requireActor(request)
       const { workKey: rawWorkKey, itemId: rawItemId } = request.params as {
         workKey: string
@@ -303,8 +330,20 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
       )
       const value = result.executed
         ? result.value
-        : await refreshWorkInboxItem(deps.database, workKey, itemId)
+        : await refreshWorkInboxItemForActor(deps.database, session.userId, workKey, itemId)
+      request.log.info(
+        {
+          component: 'hub.work_inbox',
+          action: `work.inbox.${mutation}`,
+          workKey,
+          itemId: value.id,
+          status: value.status,
+          duplicate: !result.executed,
+        },
+        `work inbox item ${mutation}`,
+      )
       audit(request, `work.inbox.${mutation}`, 'success', session.userId)
+      reply.header('cache-control', 'private, no-store')
       return { ok: true, data: value }
     })
   }

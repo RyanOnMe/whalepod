@@ -1,5 +1,6 @@
 import {
   countWorkInboxItems,
+  getLatestInboxItemForSource,
   getLatestPendingInboxItemForSource,
   getLatestWorkInboxItem,
   getWorkInboxItem,
@@ -72,8 +73,13 @@ export function toWorkInboxItemView(row: WorkInboxItemRow): WorkInboxItemView {
 function clampTitle(title: string, fallback: string): string {
   const trimmed = title.trim()
   if (trimmed.length === 0) return fallback
-  // 按码点截断，避免把代理对切成半个字符。
-  return Array.from(trimmed).slice(0, MAX_TITLE_LENGTH).join('')
+  // 按码点累积、按 UTF-16 长度封顶：既不会切半个代理对，也不会超过 view schema 的 200。
+  let result = ''
+  for (const character of Array.from(trimmed)) {
+    if (result.length + character.length > MAX_TITLE_LENGTH) break
+    result += character
+  }
+  return result
 }
 
 function assertSourceAdmissible(source: AdmissionSource): void {
@@ -150,6 +156,20 @@ export async function associateWorkInboxItem(
         sourceDigest: source.sourceDigest,
       })
       if (existing !== undefined) return toWorkInboxItemView(existing)
+
+      // 撤权是来源级的：一旦该来源的最新条目被 retract，后续版本不得重新入箱。
+      const latest = await getLatestInboxItemForSource(
+        tx,
+        work.id,
+        source.sourceType,
+        source.sourceId,
+      )
+      if (latest?.status === 'retracted') {
+        throw new ApiError(409, 'CONFLICT', 'source was retracted for this work', {
+          reason: 'source_retracted',
+          sourceId: source.sourceId,
+        })
+      }
 
       const now = deps.now()
       const previous = await getLatestPendingInboxItemForSource(
@@ -298,7 +318,7 @@ export async function retractWorkInboxItem(
       const now = deps.now()
       const updated = await updateWorkInboxItem(tx, item.id, {
         status: 'retracted',
-        statusReason: reason ?? 'source_invalid',
+        statusReason: reason ?? 'retracted',
         returnReason: null,
         returnNote: null,
         statusAt: now,
@@ -351,30 +371,45 @@ export async function loadWorkInbox(
   work: WorkRow,
   filter: { readonly status?: WorkInboxItemStatus | undefined; readonly limit: number },
 ): Promise<WorkInboxView> {
-  const [items, pendingCount, latest] = await Promise.all([
-    listWorkInboxItems(database.db, work.id, filter.limit, filter.status),
-    countWorkInboxItems(database.db, work.id, 'pending'),
-    getLatestWorkInboxItem(database.db, work.id),
-  ])
-  return {
-    items: items.map(toWorkInboxItemView),
-    watermarks: {
-      // 水位不随筛选变化：客户端用 lastItemAt 判断是否有新条目。
-      lastItemAt: latest?.createdAt.toISOString() ?? null,
-      pendingCount,
+  // 条目、pending 计数与水位必须来自同一快照；否则并发关联时会出现
+  // “items 已含新条目但 pendingCount 仍为 0”的撕裂读。
+  return database.transaction(
+    async (tx) => {
+      const [items, pendingCount, latest] = await Promise.all([
+        listWorkInboxItems(tx, work.id, filter.limit, filter.status),
+        countWorkInboxItems(tx, work.id, 'pending'),
+        getLatestWorkInboxItem(tx, work.id),
+      ])
+      return {
+        items: items.map(toWorkInboxItemView),
+        watermarks: {
+          // 水位不随筛选变化：客户端用 lastItemAt 判断是否有新条目。
+          lastItemAt: latest?.createdAt.toISOString() ?? null,
+          pendingCount,
+        },
+      }
     },
-  }
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+  )
 }
 
-/** 幂等重放时回读当前状态，避免把已退回/撤权的缓存视图当成仍 pending。 */
-export async function refreshWorkInboxItem(
+/**
+ * 幂等重放时回读当前状态。必须先重新授权：命令命中回执时不会执行命令体里的
+ * assignee 校验；若直接按 workKey 回读，改派后的旧 assignee 能借旧 key 继续读私有正文。
+ */
+export async function refreshWorkInboxItemForActor(
   database: Database,
+  actorUserId: string,
   workKey: string,
   itemId: string,
 ): Promise<WorkInboxItemView> {
-  const row = await getWorkInboxItem(database.db, itemId)
-  if (row === undefined || row.workKey !== workKey) {
-    throw new ApiError(404, 'NOT_FOUND', 'inbox item not found')
-  }
-  return toWorkInboxItemView(row)
+  return database.transaction(async (tx) => {
+    const { work, task } = await lockWorkContext(tx, workKey)
+    await requireAssignee(tx, task, actorUserId)
+    const row = await getWorkInboxItem(tx, itemId)
+    if (row === undefined || row.workId !== work.id) {
+      throw new ApiError(404, 'NOT_FOUND', 'inbox item not found')
+    }
+    return toWorkInboxItemView(row)
+  })
 }

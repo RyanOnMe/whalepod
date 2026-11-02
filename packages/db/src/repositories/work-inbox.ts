@@ -11,12 +11,12 @@ export type { NewWorkInboxItemRow, WorkInboxItemRow } from '../schema/work-inbox
 // ADR-0028（RD-02a-1）：收件箱条目的持久化原语。状态迁移与来源校验由 Hub 命令层裁决；
 // 同一身份/版本/摘要的唯一性由唯一索引兜底。
 
+/** 同一身份/版本/摘要并发插入时返回 undefined，由调用方回读既有行。 */
 export async function insertWorkInboxItem(
   handle: DbHandle,
   values: NewWorkInboxItemRow,
-): Promise<WorkInboxItemRow> {
+): Promise<WorkInboxItemRow | undefined> {
   const [row] = await handle.insert(workInboxItems).values(values).onConflictDoNothing().returning()
-  if (row === undefined) throw new Error('insert work inbox item returned no row')
   return row
 }
 
@@ -63,6 +63,27 @@ export async function getWorkInboxItemByIdentity(
         eq(workInboxItems.sourceDigest, values.sourceDigest),
       ),
     )
+    .limit(1)
+  return row
+}
+
+export async function getLatestInboxItemForSource(
+  handle: DbHandle,
+  workId: string,
+  sourceType: WorkInboxItemRow['sourceType'],
+  sourceId: string,
+): Promise<WorkInboxItemRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(workInboxItems)
+    .where(
+      and(
+        eq(workInboxItems.workId, workId),
+        eq(workInboxItems.sourceType, sourceType),
+        eq(workInboxItems.sourceId, sourceId),
+      ),
+    )
+    .orderBy(desc(workInboxItems.createdAt), desc(workInboxItems.id))
     .limit(1)
   return row
 }

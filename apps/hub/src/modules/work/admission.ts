@@ -90,7 +90,10 @@ async function loadTaskMessageSource(
   const message = await getTaskMessage(tx, sourceId)
   if (message === undefined) throw new ApiError(404, 'NOT_FOUND', 'task message not found')
   if (message.taskId !== work.taskId) {
-    throw new ApiError(409, 'CONFLICT', 'message does not belong to the work task')
+    throw new ApiError(409, 'CONFLICT', 'message does not belong to the work task', {
+      reason: 'source_out_of_scope',
+      detail: 'task_mismatch',
+    })
   }
   const sourceVersion = (message.editedAt ?? message.createdAt).toISOString()
   const sourceDigest = sha256Hex(
@@ -146,7 +149,10 @@ async function loadContextEntrySource(
   const entry = await getContextEntry(tx, sourceId)
   if (entry === undefined) throw new ApiError(404, 'NOT_FOUND', 'context entry not found')
   if (entry.projectId !== work.projectId) {
-    throw new ApiError(409, 'CONFLICT', 'context entry does not belong to the work project')
+    throw new ApiError(409, 'CONFLICT', 'context entry does not belong to the work project', {
+      reason: 'source_out_of_scope',
+      detail: 'project_mismatch',
+    })
   }
   const sourceVersion = entry.updatedAt.toISOString()
   const sourceDigest = sha256Hex(

@@ -65,6 +65,12 @@ create table work_inbox_item (
 -- 同一工作、来源、版本与摘要只收一条；新版本/新摘要另建并 supersede 旧 pending。
 create unique index work_inbox_item_identity_unique
   on work_inbox_item (work_id, source_type, source_id, source_version, source_digest);
+-- 同一来源至多一条 pending：应用层 supersede 漏掉时由 DB 直接拒绝。
+create unique index work_inbox_item_source_pending_unique
+  on work_inbox_item (work_id, source_type, source_id)
+  where status = 'pending';
+create index work_inbox_item_work_created_idx
+  on work_inbox_item (work_id, created_at desc, id);
 create index work_inbox_item_work_status_created_idx
   on work_inbox_item (work_id, status, created_at desc, id);
 create index work_inbox_item_work_source_idx

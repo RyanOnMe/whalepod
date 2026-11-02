@@ -39,11 +39,12 @@ async function createTask(
   session: Session,
   projectId: string,
   assigneeUserId: string,
+  title = '场地与预算持续工作',
 ): Promise<string> {
   const res = await apiInject(ctx, session, {
     method: 'POST',
     url: `/api/v1/projects/${projectId}/tasks`,
-    payload: { title: '场地与预算持续工作', assigneeUserId },
+    payload: { title, assigneeUserId },
   })
   expect(res.statusCode).toBe(201)
   return res.json().data.id as string
@@ -262,6 +263,7 @@ describe('RD-02a-1 work inbox items (ADR-0028)', () => {
     const before = await countRows(database)
 
     const first = await associate(ctx, alice, workKey, 'task_message', messageId)
+    expect(first.headers['cache-control']).toBe('private, no-store')
     const item = first.json().data
     expect(item).toMatchObject({
       workKey,
@@ -284,7 +286,13 @@ describe('RD-02a-1 work inbox items (ADR-0028)', () => {
     const rows = await database.db.select().from(schema.workInboxItems)
     expect(rows).toHaveLength(1)
 
-    const listed = await inbox(ctx, alice, workKey)
+    const listedResponse = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${workKey}/inbox`,
+    })
+    expect(listedResponse.statusCode).toBe(200)
+    expect(listedResponse.headers['cache-control']).toBe('private, no-store')
+    const listed = listedResponse.json().data
     expect(listed.items).toHaveLength(1)
     expect(listed.watermarks.pendingCount).toBe(1)
     expect(listed.watermarks.lastItemAt).toBe(item.createdAt)
@@ -296,11 +304,18 @@ describe('RD-02a-1 work inbox items (ADR-0028)', () => {
     expect(onlyReturned.watermarks.pendingCount).toBe(1)
     expect(onlyReturned.watermarks.lastItemAt).toBe(item.createdAt)
 
+    const limited = await inbox(ctx, alice, workKey, '?limit=1')
+    expect(limited.items).toHaveLength(1)
     const badFilter = await apiInject(ctx, alice, {
       method: 'GET',
       url: `/api/v1/works/${workKey}/inbox?status=unknown`,
     })
     expect(badFilter.statusCode).toBe(400)
+    const badLimit = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${workKey}/inbox?limit=0`,
+    })
+    expect(badLimit.statusCode).toBe(400)
 
     expect(await countRows(database)).toEqual(before)
   })
@@ -346,6 +361,9 @@ describe('RD-02a-1 work inbox items (ADR-0028)', () => {
     expect(pending.watermarks.pendingCount).toBe(1)
     const all = await inbox(ctx, alice, workKey)
     expect(all.items).toHaveLength(2)
+    await act(ctx, alice, workKey, first.id, 'return', { reason: 'irrelevant' }, 409)
+    await act(ctx, alice, workKey, first.id, 'retract', {}, 409)
+    await act(ctx, alice, workKey, first.id, 'expire', {}, 409)
   })
 
   it('returns an item with a reason and only re-enters through a new version', async () => {
@@ -369,6 +387,15 @@ describe('RD-02a-1 work inbox items (ADR-0028)', () => {
       note: '缺少预算版本与供应商候选',
     })
     expect(sameReturn.json().data.id).toBe(item.id)
+    await act(
+      ctx,
+      alice,
+      workKey,
+      item.id,
+      'return',
+      { reason: 'incomplete', note: '另一条理由' },
+      409,
+    )
     await act(ctx, alice, workKey, item.id, 'expire', {}, 409)
 
     // 同一身份重放关联不复活已退回条目。
@@ -479,6 +506,96 @@ describe('RD-02a-1 work inbox items (ADR-0028)', () => {
     expect(listed.watermarks.pendingCount).toBe(0)
   })
 
+  it('keeps a retracted source from re-entering through a new version', async () => {
+    const messageId = await comment(ctx, alice, taskId)
+    const item = (await associate(ctx, alice, workKey, 'task_message', messageId)).json().data
+    await act(ctx, alice, workKey, item.id, 'retract', { reason: 'source_permission_revoked' })
+
+    const editedAt = new Date(Date.now() + 1000)
+    await database.db
+      .update(schema.taskMessages)
+      .set({ body: '撤权后供应商仍试图提供新版本。', editedAt })
+      .where(eq(schema.taskMessages.id, messageId))
+    const blocked = await associate(ctx, alice, workKey, 'task_message', messageId, 409)
+    expect(blocked.json().error).toMatchObject({
+      code: 'CONFLICT',
+      details: { reason: 'source_retracted', sourceId: messageId },
+    })
+
+    const rows = await database.db.select().from(schema.workInboxItems)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ id: item.id, status: 'retracted' })
+    const listed = await inbox(ctx, alice, workKey)
+    expect(listed.watermarks.pendingCount).toBe(0)
+  })
+
+  it('rejects idempotent replay by the former assignee after reassignment', async () => {
+    const messageId = await comment(ctx, alice, taskId)
+    const associateKey = idemKey()
+    const item = (
+      await associate(ctx, alice, workKey, 'task_message', messageId, 201, associateKey)
+    ).json().data
+    const returnKey = idemKey()
+    const returned = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${workKey}/inbox-items/${item.id}/return`,
+      payload: { reason: 'incomplete' },
+      idempotencyKey: returnKey,
+    })
+    expect(returned.statusCode).toBe(200)
+
+    const reassign = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/reassign`,
+      payload: { assigneeUserId: bob.userId },
+      idempotencyKey: idemKey(),
+    })
+    expect(reassign.statusCode).toBe(200)
+
+    // 回执命中不会执行命令体里的 assignee 校验；重放回读必须重新授权。
+    const associateReplay = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${workKey}/inbox-items`,
+      payload: { sourceType: 'task_message', sourceId: messageId },
+      idempotencyKey: associateKey,
+    })
+    expect(associateReplay.statusCode).toBe(403)
+    expect(associateReplay.json().error.code).toBe('FORBIDDEN')
+
+    const returnReplay = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${workKey}/inbox-items/${item.id}/return`,
+      payload: { reason: 'incomplete' },
+      idempotencyKey: returnKey,
+    })
+    expect(returnReplay.statusCode).toBe(403)
+
+    const bobInbox = await inbox(ctx, bob, workKey)
+    expect(bobInbox.items).toHaveLength(1)
+    expect(bobInbox.items[0]).toMatchObject({ id: item.id, status: 'returned' })
+    const bobRetract = await act(ctx, bob, workKey, item.id, 'retract', {})
+    expect(bobRetract.json().data).toMatchObject({ id: item.id, status: 'retracted' })
+  })
+
+  it('clamps a long emoji title instead of rejecting a valid context entry', async () => {
+    const emojiTask = await createTask(ctx, alice, projectId, alice.userId, '😀'.repeat(100))
+    await acceptTask(ctx, alice, emojiTask)
+    const emojiWork = await createWork(ctx, alice, emojiTask)
+    await confirmAgreement(ctx, alice, emojiTask)
+    const context = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/projects/${projectId}/context`,
+    })
+    const entry = (context.json().data.entries as Array<Record<string, unknown>>).find(
+      (row) => row.kind === 'decision' && row.businessRef === `taskSpec:${emojiTask}`,
+    )
+    expect(entry).toBeDefined()
+    const res = await associate(ctx, alice, emojiWork, 'context_entry', entry?.id as string)
+    const view = res.json().data
+    expect(view.title.length).toBeLessThanOrEqual(200)
+    expect(view.title.endsWith('😀')).toBe(true)
+  })
+
   it('rejects already-directed, foreign and terminal sources instead of dropping them silently', async () => {
     const agent = await insertAgent(database.db, {
       id: randomUUID(),
@@ -579,10 +696,35 @@ describe('RD-02a-1 work inbox items (ADR-0028)', () => {
       idempotencyKey: idemKey(),
     })
     expect(correction.statusCode).toBe(201)
+    // 关联是快照：来源后来被纠正不会自动改写既有 pending；由人工 retract 或 #490 交付前重验收口。
+    const afterCorrection = await inbox(ctx, alice, workKey, '?status=pending')
+    expect(afterCorrection.items).toHaveLength(1)
+    expect(afterCorrection.items[0]).toMatchObject({ id: item.id, status: 'pending' })
     const corrected = await associate(ctx, alice, workKey, 'context_entry', entryId, 409)
     expect(corrected.json().error).toMatchObject({
       code: 'CONFLICT',
       details: { reason: 'source_inactive', detail: 'corrected' },
+    })
+    const closed = await act(ctx, alice, workKey, item.id, 'retract', {
+      reason: 'source_corrected',
+    })
+    expect(closed.json().data).toMatchObject({ id: item.id, status: 'retracted' })
+
+    const correctedContext = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/projects/${projectId}/context`,
+    })
+    const correctionEntry = (
+      correctedContext.json().data.entries as Array<Record<string, unknown>>
+    ).find((row) => row.kind === 'correction' && row.targetEntryId === entryId)
+    expect(correctionEntry).toBeDefined()
+    const correctionItem = (
+      await associate(ctx, alice, workKey, 'context_entry', correctionEntry?.id as string)
+    ).json().data
+    expect(correctionItem).toMatchObject({
+      sourceType: 'context_entry',
+      refs: { entryKind: 'correction' },
+      status: 'pending',
     })
 
     const secondTask = await createTask(ctx, alice, projectId, alice.userId)

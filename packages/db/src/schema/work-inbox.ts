@@ -96,6 +96,11 @@ export const workInboxItems = pgTable(
       table.sourceVersion,
       table.sourceDigest,
     ),
+    // 同一来源至多一条 pending：应用层 supersede 漏掉时由 DB 直接拒绝。
+    uniqueIndex('work_inbox_item_source_pending_unique')
+      .on(table.workId, table.sourceType, table.sourceId)
+      .where(sql`${table.status} = 'pending'`),
+    index('work_inbox_item_work_created_idx').on(table.workId, table.createdAt.desc(), table.id),
     index('work_inbox_item_work_status_created_idx').on(
       table.workId,
       table.status,
