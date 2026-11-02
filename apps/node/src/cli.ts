@@ -121,6 +121,8 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   const { ArtifactInputsManager } = await import('./artifact/inputs.js')
   const { ProjectContextDownloader } = await import('./context/project-context.js')
   const { SqliteContextReceiptSeqStore } = await import('./context/receipt-seq-store.js')
+  const { WorkInputDownloader } = await import('./work/work-input.js')
+  const { SqliteWorkInputReceiptStore } = await import('./work/receipt-store.js')
   const { OfficePreviewGenerator } = await import('./artifact/preview.js')
   const { uploadArtifactPreview, reportArtifactPreviewFailure } =
     await import('./artifact/preview-upload-client.js')
@@ -144,6 +146,15 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     inputsRoot: join(stateDir, 'runtime-context'),
     log: artifactLog,
   })
+  const workInputs = new WorkInputDownloader({
+    hubUrl: config.hubUrl,
+    deviceToken: config.deviceToken,
+    inputsRoot: join(stateDir, 'runtime-work-inputs'),
+    log: artifactLog,
+  })
+  const workInputReceipts = new SqliteWorkInputReceiptStore(
+    join(stateDir, 'work-input-receipts.sqlite'),
+  )
   // #441 / ADR-0023: automatic Office conversion is suspended until an isolated
   // converter is verified. The generator reports ISOLATION_REQUIRED; it never spawns soffice.
   const officePreview = new OfficePreviewGenerator({
@@ -224,7 +235,7 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   // 否则「RunManager send 闭包（L190 形态）在 TDZ 内求值 sessionSend」，有孤儿
   // 时启动即崩（alpha.2 狗食实录：一孤儿一崩）。no-op 默认值正是为会话建立前
   // 的这段窗口准备的，但 TDZ 会让默认值根本来不及生效。
-  let sessionSend: (frame: string) => void = () => {}
+  let sessionSend: (frame: string) => boolean = () => false
   const supervisor = new RuntimeSupervisor({
     // #356：spawn 时把本进程探针到的 DSH 版本记进 active_runtime——Node 重启后
     // 据此区分「换过版本（升级/回滚）」与「进程丢了」。probed 未知（探针失败）时
@@ -270,6 +281,9 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     prepareProjectContext: (runId, manifest) => projectContext.prepare(runId, manifest),
     cleanupProjectContext: (runId) => projectContext.cleanup(runId),
     contextReceiptSeq: new SqliteContextReceiptSeqStore(join(stateDir, 'context-receipts.sqlite')),
+    prepareWorkInputs: (runId, input) => workInputs.prepare(runId, input),
+    cleanupWorkInputs: (runId) => workInputs.cleanup(runId),
+    workInputReceiptStore: workInputReceipts,
     deviceId: config.deviceId,
     // Run 固化面用**启动时**的探针值（#288 口径：一次装配、多次消费）；#352 刷新的是
     // hello 事实列（设备视图），不动 Runs 的固化语义。

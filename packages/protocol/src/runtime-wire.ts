@@ -20,6 +20,7 @@ import {
   RunProjectContextManifestEntrySchema,
   RuntimeContextReceiptPayloadSchema,
 } from './run-context.js'
+import { RuntimeWorkInputReceiptPayloadSchema, RuntimeWorkInputsSchema } from './work-input-wire.js'
 
 const Sha256DigestSchema = z.string().regex(/^[a-f0-9]{64}$/)
 const DshSessionIdSchema = z.string().min(1).max(128)
@@ -93,6 +94,12 @@ const RuntimeInitializePayloadSchema = z
         entriesDir: z.string().min(1),
       })
       .optional(),
+    /**
+     * ADR-0028 §3：工作输入清单 + 本地只读副本目录（成对字段；目录是本地 wire
+     * 绝对路径，红线同 projectContext.entriesDir）。正文不进 executionContext，
+     * Runtime 只按清单白名单经 read_work_input 读取。
+     */
+    workInputs: RuntimeWorkInputsSchema.optional(),
     // #379（ADR-0017 §3）：建 Run 时 Task 已启用约定流程才携带——Runtime 收尾阶段
     // 据此生成交接草稿（agreement 为绑定版本正文快照；未绑定 null）。
     handoff: HandoffRunSpecSchema.optional(),
@@ -281,6 +288,12 @@ export const RuntimeContextReceiptSchema = envelope(
   RuntimeContextReceiptPayloadSchema,
 )
 
+/** ADR-0028 §3：工作输入交付/读取回执（独立于项目上下文回执）。 */
+export const RuntimeWorkInputReceiptSchema = envelope(
+  'runtime.work_input_receipt',
+  RuntimeWorkInputReceiptPayloadSchema,
+)
+
 export const RuntimeOutputSchema = z.discriminatedUnion('type', [
   RuntimeReadySchema,
   SessionEventSchema,
@@ -292,6 +305,7 @@ export const RuntimeOutputSchema = z.discriminatedUnion('type', [
   RuntimeRunCancelledSchema,
   RuntimeFatalSchema,
   RuntimeContextReceiptSchema,
+  RuntimeWorkInputReceiptSchema,
 ])
 export type RuntimeOutput = z.infer<typeof RuntimeOutputSchema>
 

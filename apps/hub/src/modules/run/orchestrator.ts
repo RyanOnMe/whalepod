@@ -52,6 +52,7 @@ import type {
   ProjectedRunEvent,
   RunContextReceipt,
   RunSnapshot,
+  RunWorkInputReceipt,
 } from '@whalepod/protocol'
 import { parseNodeFrame, RunCancelSchema, RunStartSchema } from '@whalepod/protocol'
 import { cancelPendingApprovalsInTransaction, cancelRunInTransaction } from './cancel.js'
@@ -67,6 +68,7 @@ import { isRunSemanticConflict, RunCommandError } from './errors.js'
 import { settleFollowupAck, settleTriggerInstruction } from './followup.js'
 import { applyRunStatus } from './run-status.js'
 import { recordWorkInputDeliveries, snapshotWorkInputs } from '../work/run-inputs.js'
+import { assertWorkInputCapability, verifyRunWorkInputs } from '../work/run-dispatch.js'
 import type { ContextEntryObserver, RecordedContextEntry } from '../context/observer.js'
 import {
   assertProjectContextCapability,
@@ -74,6 +76,7 @@ import {
   verifyRunProjectContext,
 } from '../context/run-snapshot.js'
 import { recordRunContextReceipt } from '../context/receipts.js'
+import { recordRunWorkInputReceipt } from '../work/receipts.js'
 import type { ApprovalView, RunView } from './queries.js'
 import { toApprovalView, toRunView } from './queries.js'
 
@@ -503,6 +506,7 @@ export class RunOrchestrator {
       device,
       projectContext.start === undefined ? 0 : projectContext.start.manifest.length,
     )
+    assertWorkInputCapability(device, workInputs?.items.length ?? 0)
     const runStartPayload = RunStartSchema.shape.payload.parse({
       commandId,
       runId,
@@ -532,6 +536,12 @@ export class RunOrchestrator {
       ...(handoffRunSpec !== undefined ? { handoff: handoffRunSpec } : {}),
       // ADR-0027 §3：本 Run 冻结的项目上下文清单（正文走 Node 受控下载）。
       ...(projectContext.start !== undefined ? { projectContext: projectContext.start } : {}),
+      // ADR-0028 §3：本 Run 冻结的工作输入清单（正文走 Node 受控下载）。
+      ...(workInputs !== undefined
+        ? {
+            workInput: { manifestDigest: workInputs.manifestDigest, manifest: workInputs.manifest },
+          }
+        : {}),
       // 切片⑤：成对下发——resumeOfRunId 让 Node 把 dshHomePath 指向来源 Run 的
       // home（per-run 隔离下新 home 没有旧日志）；resumeSessionId 直达装载身份。
       ...(resumeSource !== undefined
@@ -591,14 +601,17 @@ export class RunOrchestrator {
       if (run === undefined || run.status !== 'queued' || run.deviceId !== command.deviceId) {
         return
       }
-      const verification = await verifyRunProjectContext(tx, run)
+      const projectVerification = await verifyRunProjectContext(tx, run)
+      const verification = projectVerification.ok
+        ? await verifyRunWorkInputs(tx, run)
+        : projectVerification
       if (verification.ok) {
         dispatch.outcome = 'send'
         return
       }
       blockReason = verification.reason
       transitionRun({ status: run.status }, { type: 'failed' })
-      const failureSummary = `项目上下文快照在派发前复核失败（${verification.reason}）`
+      const failureSummary = `Run 输入在派发前复核失败（${verification.reason}）`
       // 评审 B2：创建 Run 与真正下发之间是异步窗口，指令消息此时仍是 pending。
       // 先于状态迁移结算，理由才是精确的 CONTEXT_UNAVAILABLE；`setRunStatus` 的
       // 终态兜底只接管仍 pending 的追问（RUN_TERMINAL），不该盖掉这里的根因。
@@ -737,6 +750,9 @@ export class RunOrchestrator {
         return
       case 'run.context_receipt':
         await this.handleRunContextReceipt(device, frame.payload, now)
+        return
+      case 'run.work_input_receipt':
+        await this.handleRunWorkInputReceipt(device, frame.payload, now)
         return
       case 'node.heartbeat':
         if (frame.payload.deviceId !== device.deviceId) {
@@ -901,6 +917,42 @@ export class RunOrchestrator {
       snapshotId: receipt.snapshotId,
       receiptSeq: receipt.receiptSeq,
       reason: outcome.reason,
+    })
+  }
+
+  /**
+   * ADR-0028 §3（RD-02a-2b）：工作输入回执独立于项目上下文——Run 终态后仍接受；
+   * 窗口内 consumed，窗口后只记迟到对账。这里只做事务边界与设备归属，状态机在
+   * work/receipts.ts。
+   */
+  private async handleRunWorkInputReceipt(
+    device: AuthenticatedDevice,
+    receipt: RunWorkInputReceipt,
+    now: Date,
+  ): Promise<void> {
+    let outcome: Awaited<ReturnType<typeof recordRunWorkInputReceipt>> | undefined
+    await this.database.transaction(async (tx) => {
+      const [run] = await tx
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.id, receipt.runId))
+        .for('update')
+      if (run === undefined) return
+      if (run.deviceId !== device.deviceId) {
+        throw new RunCommandError('FORBIDDEN', 'run does not belong to this device')
+      }
+      outcome = await recordRunWorkInputReceipt(tx, run, receipt, now)
+    })
+    if (outcome === undefined) return
+    this.contextLog('work.input_receipt', {
+      component: 'hub.work_input',
+      runId: receipt.runId,
+      receiptSeq: receipt.receiptSeq,
+      consumed: outcome.consumed,
+      duplicate: outcome.duplicate,
+      duplicateConsumption: outcome.duplicateConsumption,
+      late: outcome.late,
+      idempotent: outcome.idempotent,
     })
   }
 

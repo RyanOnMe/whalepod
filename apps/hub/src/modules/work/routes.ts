@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyReply } from 'fastify'
 import { z } from 'zod'
 import {
   getEnabledMember,
@@ -26,6 +26,8 @@ import { audit } from '../shared/audit.js'
 import { ApiError } from '../shared/http-error.js'
 import { readIdempotencyKey } from '../auth/idempotency.js'
 import type { RequireActor, SessionActor } from '../auth/session.js'
+import { authenticateDevice } from '../plugin/pack-resolver.js'
+import { ERROR_HTTP_STATUS, errorCodeOf } from '../run/routes.js'
 import {
   changeWorkMandateStatus,
   createWork,
@@ -44,6 +46,7 @@ import {
   returnWorkInboxItem,
 } from './inbox.js'
 import { loadWorkDetail, toWorkView } from './queries.js'
+import { buildRunWorkInputBundle } from './run-dispatch.js'
 
 export interface WorkRouteDeps {
   readonly database: Database
@@ -387,4 +390,30 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
     audit(request, 'work.admission.check', 'success', session.userId)
     return { ok: true, data: outcome.value }
   })
+
+  // ADR-0028 §3：Node 受控下载工作输入正文——Device Token + Run 归属；
+  // 不在本 Run 清单内/已撤权/已消费的条目整包拒绝（不可枚举折叠为 404）。
+  app.get('/node/runs/:runId/work-input/bundle', async (request, reply) => {
+    const identity = await authenticateDevice(deps.database, request)
+    const { runId: rawRunId } = request.params as { runId: string }
+    const runId = parseUuid(rawRunId, 'run id')
+    let bundle: Awaited<ReturnType<typeof buildRunWorkInputBundle>>
+    try {
+      bundle = await buildRunWorkInputBundle(deps.database, runId, identity.deviceId)
+    } catch (error) {
+      const { code, message } = errorCodeOf(error)
+      if (code === 'INTERNAL_ERROR') throw error
+      return reply
+        .code(ERROR_HTTP_STATUS[code] ?? 500)
+        .send({ ok: false, error: { code, message, requestId: String(request.id) } })
+    }
+    if (bundle === undefined) {
+      throw new ApiError(404, 'NOT_FOUND', 'run has no work input manifest')
+    }
+    return noStore(reply).send({ ok: true, data: bundle })
+  })
+}
+
+function noStore(reply: FastifyReply): FastifyReply {
+  return reply.header('cache-control', 'no-store')
 }

@@ -335,7 +335,9 @@ export async function makeResilienceHarness(
     commandStore,
     eventStore,
     send: (frame) => {
-      if (online) sent.push(frame)
+      if (!online) return false
+      sent.push(frame)
+      return true
     },
     runtimeHomeFor: (runId) => join(root, 'runtime-home', runId),
     homeDir: '/Users/testhome',

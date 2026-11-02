@@ -19,6 +19,7 @@ import {
   createReadProjectContextTool,
   type ProjectContextReadFact,
 } from './project-context-tool.js'
+import { createReadWorkInputTool, type WorkInputReadFact } from './work-input-tool.js'
 import type { WorkspaceArtifactValidator } from './artifact-validation.js'
 import type { ApprovalPort } from './approval-port.js'
 import type { LogSink } from './log.js'
@@ -31,6 +32,8 @@ export interface SessionOwnerEvents {
   agentStatus(status: AgentStatus): void
   /** ADR-0027 §4：read_project_context 每次成功读取的本地回执事实。 */
   contextRead?(fact: ProjectContextReadFact): void
+  /** ADR-0028 §3：read_work_input 每次成功读取的本地回执事实。 */
+  workInputRead?(fact: WorkInputReadFact): void
   /**
    * 一个 turn 收敛完毕（已 whenIdle + flush）：completed / aborted(reason) /
    * error(LlmFailure) / 其他边界 kind，附带最后一个 assistant message id。
@@ -139,6 +142,14 @@ export class SessionOwner {
             spec.projectContext.entries,
             spec.projectContext.entriesDir,
             (fact) => events.contextRead?.(fact),
+          ),
+        )
+      }
+      // ADR-0028：工作输入的专用只读通道（正文不经 executionContext）。
+      if (spec.workInputs !== undefined && spec.workInputs.entries.length > 0) {
+        agentCtx.tools.register(
+          createReadWorkInputTool(spec.workInputs.entries, spec.workInputs.entriesDir, (fact) =>
+            events.workInputRead?.(fact),
           ),
         )
       }

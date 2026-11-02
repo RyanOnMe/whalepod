@@ -382,6 +382,21 @@ export class RuntimeBridge {
           }),
         )
       },
+      workInputRead: (fact) => {
+        if (spec.workInputs === undefined) return
+        emit(
+          frameOf('runtime.work_input_receipt', {
+            kind: 'read',
+            runId,
+            workKey: spec.workInputs.workKey,
+            manifestDigest: spec.workInputs.manifestDigest,
+            inboxItemId: fact.inboxItemId,
+            digestVerified: fact.digestVerified,
+            byteSize: fact.byteSize,
+            at: fact.at,
+          }),
+        )
+      },
       turnSettled: async (reason, finalMessageId) => {
         switch (reason.kind) {
           case 'completed': {
@@ -482,6 +497,21 @@ export class RuntimeBridge {
             runId,
           ),
           entriesDelivered: projectContext.entries.map((entry) => entry.entryId),
+          at: new Date().toISOString(),
+        }),
+      )
+    }
+    // ADR-0028 §3：工作输入副本已由 Node 下载并装配；首条交付回执随 ready 发出。
+    // 这只代表副本已交付，不代表正文进入过模型；逐条读取走 read 回执。
+    if (spec.workInputs !== undefined) {
+      const workInputs = spec.workInputs
+      emit(
+        frameOf('runtime.work_input_receipt', {
+          kind: 'delivered',
+          runId,
+          workKey: workInputs.workKey,
+          manifestDigest: workInputs.manifestDigest,
+          entriesDelivered: workInputs.entries.map((entry) => entry.inboxItemId),
           at: new Date().toISOString(),
         }),
       )

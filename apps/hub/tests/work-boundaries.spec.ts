@@ -132,3 +132,23 @@ describe('RD-02a-2a work input reconcile isolation', () => {
     expect(orchestrator.match(/await this\.assertReplayAllowed\(/g)).toHaveLength(2)
   })
 })
+
+describe('RD-02a-2b work input receipt lock order', () => {
+  it('takes the Work lock before inserting the receipt and before touching items', () => {
+    const source = readFileSync(join(WORK_MODULE_DIR, 'receipts.ts'), 'utf8')
+    const start = source.indexOf('export async function recordRunWorkInputReceipt')
+    expect(start).toBeGreaterThan(-1)
+    const end = source.indexOf('\n}\n', start)
+    expect(end).toBeGreaterThan(start)
+    const fn = source.slice(start, end)
+    const lockAt = fn.indexOf('getWorkByKeyForUpdate(tx, receipt.workKey)')
+    const insertAt = fn.indexOf('insertRunWorkInputReceiptIfAbsent(tx')
+    const itemAt = fn.indexOf('getWorkInboxItemForUpdate(tx, event.inboxItemId)')
+    expect(lockAt).toBeGreaterThan(-1)
+    expect(insertAt).toBeGreaterThan(lockAt)
+    expect(itemAt).toBeGreaterThan(insertAt)
+    // 回执正文/标题不得进入观测：store 只接受 id、计数与摘要字段。
+    expect(fn).not.toContain('body:')
+    expect(fn).not.toContain('title:')
+  })
+})

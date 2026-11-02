@@ -65,11 +65,14 @@
             "projectContext": {
               "$ref": "#/$defs/__schema17"
             },
-            "handoff": {
+            "workInputs": {
               "$ref": "#/$defs/__schema27"
             },
+            "handoff": {
+              "$ref": "#/$defs/__schema29"
+            },
             "executionContext": {
-              "$ref": "#/$defs/__schema28"
+              "$ref": "#/$defs/__schema30"
             }
           },
           "required": [
@@ -591,6 +594,101 @@
     "__schema27": {
       "type": "object",
       "properties": {
+        "workKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "manifestDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "entries": {
+          "minItems": 1,
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema28"
+          }
+        },
+        "entriesDir": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "workKey",
+        "manifestDigest",
+        "entries",
+        "entriesDir"
+      ],
+      "additionalProperties": false
+    },
+    "__schema28": {
+      "type": "object",
+      "properties": {
+        "inboxItemId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "sourceType": {
+          "type": "string",
+          "enum": [
+            "task_message",
+            "context_entry"
+          ]
+        },
+        "sourceId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "sourceVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "sourceDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "bodyDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "byteSize": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65536
+        },
+        "authorizationGeneration": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "inboxItemId",
+        "sourceType",
+        "sourceId",
+        "sourceVersion",
+        "sourceDigest",
+        "bodyDigest",
+        "byteSize",
+        "authorizationGeneration",
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "__schema29": {
+      "type": "object",
+      "properties": {
         "agreement": {
           "anyOf": [
             {
@@ -638,7 +736,7 @@
       ],
       "additionalProperties": false
     },
-    "__schema28": {
+    "__schema30": {
       "type": "string",
       "maxLength": 100000
     }
