@@ -131,7 +131,7 @@ export const runs = pgTable(
       ),
     check(
       'run_work_input_manifest_fields',
-      sql`(${table.workKey} is null and ${table.workInputManifest} is null and ${table.workInputManifestDigest} is null) or (${table.workKey} is not null and jsonb_typeof(${table.workInputManifest}) = 'object' and ${table.workInputManifestDigest} ~ '^[a-f0-9]{64}$')`,
+      sql`(${table.workKey} is null and ${table.workInputManifest} is null and ${table.workInputManifestDigest} is null) or (${table.workKey} is not null and (((${table.workInputManifest} is null) and (${table.workInputManifestDigest} is null)) or (jsonb_typeof(${table.workInputManifest}) = 'object' and ${table.workInputManifestDigest} ~ '^[a-f0-9]{64}$')))`,
     ),
   ],
 )

@@ -139,6 +139,9 @@ export const workInboxItems = pgTable(
     index('work_inbox_item_delivery_run_idx')
       .on(table.deliveryRunId, table.status)
       .where(sql`${table.deliveryRunId} is not null`),
+    index('work_inbox_item_unconfirmed_due_idx')
+      .on(table.unconfirmedAt)
+      .where(sql`${table.status} = 'unconfirmed'`),
   ],
 )
 

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { workInboxDeliveries } from '../schema/work-delivery.js'
 import {
@@ -99,27 +99,6 @@ export async function getRetractedInboxItemForSource(
         eq(workInboxItems.status, 'retracted'),
       ),
     )
-    .limit(1)
-  return row
-}
-
-export async function getLatestInboxItemForSource(
-  handle: DbHandle,
-  workId: string,
-  sourceType: WorkInboxItemRow['sourceType'],
-  sourceId: string,
-): Promise<WorkInboxItemRow | undefined> {
-  const [row] = await handle
-    .select()
-    .from(workInboxItems)
-    .where(
-      and(
-        eq(workInboxItems.workId, workId),
-        eq(workInboxItems.sourceType, sourceType),
-        eq(workInboxItems.sourceId, sourceId),
-      ),
-    )
-    .orderBy(desc(workInboxItems.createdAt), desc(workInboxItems.id))
     .limit(1)
   return row
 }
@@ -282,16 +261,4 @@ export async function listWorkInboxItems(
     .where(where)
     .orderBy(desc(workInboxItems.createdAt), desc(workInboxItems.id))
     .limit(limit)
-}
-
-export async function countWorkInboxItems(
-  handle: DbHandle,
-  workId: string,
-  status: WorkInboxItemRow['status'],
-): Promise<number> {
-  const [row] = await handle
-    .select({ count: sql<number>`count(*)::int` })
-    .from(workInboxItems)
-    .where(and(eq(workInboxItems.workId, workId), eq(workInboxItems.status, status)))
-  return row?.count ?? 0
 }

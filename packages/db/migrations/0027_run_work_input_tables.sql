@@ -9,9 +9,13 @@ alter table run
     (work_key is null and work_input_manifest is null and work_input_manifest_digest is null)
     or (
       work_key ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-      and work_input_manifest is not null
-      and jsonb_typeof(work_input_manifest) = 'object'
-      and work_input_manifest_digest ~ '^[0-9a-f]{64}$'
+      and (
+        (work_input_manifest is null and work_input_manifest_digest is null)
+        or (
+          jsonb_typeof(work_input_manifest) = 'object'
+          and work_input_manifest_digest ~ '^[0-9a-f]{64}$'
+        )
+      )
     )
   );
 
@@ -46,6 +50,9 @@ alter table work_inbox_item
 create index work_inbox_item_delivery_run_idx
   on work_inbox_item (delivery_run_id, status)
   where delivery_run_id is not null;
+create index work_inbox_item_unconfirmed_due_idx
+  on work_inbox_item (unconfirmed_at)
+  where status = 'unconfirmed';
 
 create type work_inbox_delivery_status as enum (
   'sent',

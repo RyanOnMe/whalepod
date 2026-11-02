@@ -69,3 +69,42 @@ describe('RD-02a-1 inbox read authorization boundary', () => {
     expect(route).not.toContain('loadAuthorizedWork')
   })
 })
+
+describe('RD-02a-2a work input reconcile isolation', () => {
+  const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url))
+
+  it('locks Work before the item and settles each due input in its own transaction', () => {
+    const repo = readFileSync(join(REPO_ROOT, 'packages/db/src/repositories/work-input.ts'), 'utf8')
+    const start = repo.indexOf('export async function settleUnconfirmedWorkInput')
+    expect(start).toBeGreaterThan(-1)
+    const end = repo.indexOf('\n}\n', start)
+    expect(end).toBeGreaterThan(start)
+    const settle = repo.slice(start, end)
+    // item → Work 会与撤权（Task→Work→item）形成环；Work 必须先于被锁的 item。
+    expect(settle).toMatch(
+      /\.from\(works\)[\s\S]*?\.for\('update'\)[\s\S]*?\.from\(workInboxItems\)[\s\S]*?\.for\('update'\)/,
+    )
+
+    const inputs = readFileSync(join(WORK_MODULE_DIR, 'run-inputs.ts'), 'utf8')
+    const reconcileStart = inputs.indexOf('export async function reconcileWorkInputs')
+    expect(reconcileStart).toBeGreaterThan(-1)
+    const reconcileEnd = inputs.indexOf('\n}\n', reconcileStart)
+    expect(reconcileEnd).toBeGreaterThan(reconcileStart)
+    const reconcile = inputs.slice(reconcileStart, reconcileEnd)
+    // 每条到期输入独立事务 + allSettled：一条失败不能拖垮整轮，也不能整轮回滚。
+    expect(reconcile.match(/database\.transaction\(/g)).toHaveLength(1)
+    expect(reconcile).toMatch(/due\.map\(\(itemId\)\s*=>\s*database\.transaction\(/)
+    expect(reconcile).toContain('Promise.allSettled')
+    expect(reconcile).not.toContain('returnUnconfirmedWorkInputs')
+
+    const orchestrator = readFileSync(
+      join(REPO_ROOT, 'apps/hub/src/modules/run/orchestrator.ts'),
+      'utf8',
+    )
+    // 创建事务内校验一次 + 两条回放路径（普通回执、活跃冲突回读）各复核一次。
+    expect(orchestrator).toMatch(/input\.workInputItemIds !== undefined && right !== 'assignee'/)
+    expect(
+      orchestrator.match(/await this\.assertWorkInputAssignee\(taskId, ctx\.userId\)/g),
+    ).toHaveLength(2)
+  })
+})

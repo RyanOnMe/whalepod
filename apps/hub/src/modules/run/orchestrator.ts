@@ -178,6 +178,11 @@ export class RunOrchestrator {
         }
         return run
       })
+      // 工作输入是责任人收件箱的私有快照：幂等回放同样要复核当前责任人，
+      // 否则被授权成员凭已知 idempotencyKey 就能读回责任人的清单摘要。
+      if (!outcome.executed && input.workInputItemIds !== undefined) {
+        await this.assertWorkInputAssignee(taskId, ctx.userId)
+      }
       if (outcome.executed && createdSnapshot !== undefined) {
         this.contextLog('context.snapshot_created', {
           component: 'hub.context',
@@ -194,10 +199,23 @@ export class RunOrchestrator {
         (error instanceof RunCommandError && error.code === 'RUN_ALREADY_ACTIVE')
       if (activeConflict) {
         const prior = await findCommandReceipt(this.database.db, key)
-        if (prior !== undefined) return prior.result as RunView
+        if (prior !== undefined) {
+          if (input.workInputItemIds !== undefined) {
+            await this.assertWorkInputAssignee(taskId, ctx.userId)
+          }
+          return prior.result as RunView
+        }
         throw new RunCommandError('RUN_ALREADY_ACTIVE', 'task already has an active run')
       }
       throw error
+    }
+  }
+
+  /** 回放/并发回读也要按当前 Task 责任人复核工作输入权限（不读缓存、不信任旧回执）。 */
+  private async assertWorkInputAssignee(taskId: string, userId: string): Promise<void> {
+    const right = await resolveInstructionRight(this.database.db, taskId, userId)
+    if (right !== 'assignee') {
+      throw new RunCommandError('FORBIDDEN', 'work inputs are assignee-only')
     }
   }
 
@@ -240,6 +258,11 @@ export class RunOrchestrator {
         'FORBIDDEN',
         'only the task assignee or a granted member can start a run',
       )
+    }
+    // ADR-0028（RD-02a-2a）：工作输入来自责任人私有收件箱。被授权成员能说话、
+    // 能被派工，但不能把责任人收件箱里的材料带进 Run。
+    if (input.workInputItemIds !== undefined && right !== 'assignee') {
+      throw new RunCommandError('FORBIDDEN', 'work inputs are assignee-only')
     }
     if (task.assignmentStatus !== 'accepted') {
       throw new DomainError('ASSIGNMENT_NOT_ACCEPTED', 'assignment must be accepted first')

@@ -2,10 +2,11 @@ import {
   getRetractedInboxItemForSource,
   getWorkById,
   insertWorkInboxDelivery,
+  listDueUnconfirmedWorkInputIds,
   listWorkInboxItemsForUpdate,
   markWorkInboxItemDelivered,
   markWorkInputsUnconfirmed,
-  returnUnconfirmedWorkInputs,
+  settleUnconfirmedWorkInput,
   type Database,
   type TaskRow,
   type Tx,
@@ -42,7 +43,8 @@ function conflict(message: string): never {
 
 /**
  * 校验并冻结选中的收件箱条目。调用方必须已持有 Task 行锁（orchestrator 的
- * createInTransaction），与收件箱写命令的 Task→Work→item 锁序一致。
+ * createInTransaction）；收件箱写命令同样先拿 Task 锁，因此本函数的 item 锁
+ * 与关联/撤权天然串行，不会出现“选择时还 pending、交付时已被别的命令改走”。
  */
 export async function snapshotWorkInputs(
   tx: Tx,
@@ -126,7 +128,8 @@ export async function snapshotWorkInputs(
   }
 
   const entries = [...items]
-    .sort((left, right) => left.id.localeCompare(right.id))
+    // 清单顺序必须与数据库排序/语言环境无关（UUID 是小写十六进制，字节序稳定）。
+    .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
     .map((item) => ({
       inboxItemId: item.id,
       sourceType: item.sourceType,
@@ -146,7 +149,7 @@ export async function snapshotWorkInputs(
   const manifestDigest = sha256Hex(canonicalJson(manifest))
   return {
     work,
-    items: items.sort((left, right) => left.id.localeCompare(right.id)),
+    items: items.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)),
     manifest,
     manifestDigest,
   }
@@ -199,19 +202,27 @@ export async function markRunWorkInputsUnconfirmed(
   return markWorkInputsUnconfirmed(tx, runId, at)
 }
 
-/** 60s 窗口到期仍无消费回执：回到 pending，保留 delivery 尝试历史。 */
+/**
+ * 60s 窗口到期仍无消费回执：逐条独立事务收口，单条失败不拖垮整轮。
+ * 每条在 Work 行锁内重查同来源 pending；有更新版本时旧版本转 superseded。
+ */
 export async function reconcileWorkInputs(
   database: Database,
   now: Date,
   windowMs = WORK_INPUT_RECONCILE_WINDOW_MS,
 ): Promise<number> {
   const cutoff = new Date(now.getTime() - windowMs)
-  return database.transaction(async (tx) => returnUnconfirmedWorkInputs(tx, cutoff, now))
-}
-
-/** 供收件箱读面/测试使用的不可变清单校验；不进入 HTTP 写路径。 */
-export function assertWorkInputManifest(value: unknown): WorkInputManifest {
-  const parsed = WorkInputManifestSchema.safeParse(value)
-  if (!parsed.success) throw new ApiError(500, 'INTERNAL_ERROR', 'invalid work input manifest')
-  return parsed.data
+  const due = await listDueUnconfirmedWorkInputIds(database.db, cutoff)
+  if (due.length === 0) return 0
+  const results = await Promise.allSettled(
+    due.map((itemId) =>
+      database.transaction(async (tx) => settleUnconfirmedWorkInput(tx, itemId, cutoff, now)),
+    ),
+  )
+  const failure = results.find((result) => result.status === 'rejected')
+  if (failure !== undefined) throw failure.reason
+  return results.reduce(
+    (count, result) => count + (result.status === 'fulfilled' ? result.value : 0),
+    0,
+  )
 }

@@ -1,7 +1,7 @@
-import { and, asc, eq, inArray, lte, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, lte, ne, sql } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { workInboxItems, type WorkInboxItemRow } from '../schema/work-inbox.js'
-import { getLatestInboxItemForSource } from './work-inbox.js'
+import { works } from '../schema/work.js'
 import {
   workInboxDeliveries,
   type NewWorkInboxDeliveryRow,
@@ -88,59 +88,100 @@ export async function markWorkInputsUnconfirmed(
  * 60s 窗口到期仍无消费回执：回到 pending 并保留 delivery 尝试历史。
  * 返回本轮实际收口的条目数；调用方按 tick 周期反复执行，幂等。
  */
-export async function returnUnconfirmedWorkInputs(
+export async function listDueUnconfirmedWorkInputIds(
   handle: DbHandle,
   cutoff: Date,
-  now: Date,
-): Promise<number> {
-  const due = await handle
-    .select()
+): Promise<string[]> {
+  const rows = await handle
+    .select({ id: workInboxItems.id })
     .from(workInboxItems)
     .where(and(eq(workInboxItems.status, 'unconfirmed'), lte(workInboxItems.unconfirmedAt, cutoff)))
     .orderBy(asc(workInboxItems.id))
-  let settled = 0
-  for (const item of due) {
-    // 若同来源已有更新的条目，旧版本不能回到 pending（会撞来源 pending 唯一索引，
-    // 也会让 #493 再交付一个已被新版本取代的输入）；直接收口为 superseded。
-    const latest = await getLatestInboxItemForSource(
-      handle,
-      item.workId,
-      item.sourceType,
-      item.sourceId,
-    )
-    const supersededByNewer = latest !== undefined && latest.id !== item.id
-    const [updated] = await handle
-      .update(workInboxItems)
-      .set({
-        status: supersededByNewer ? 'superseded' : 'pending',
-        statusReason: supersededByNewer ? 'new_version' : 'run_ended_unconsumed',
-        deliveryRunId: null,
-        deliveredAt: null,
-        unconfirmedAt: null,
-        consumedAt: null,
-        statusAt: now,
-        updatedAt: now,
-      })
-      .where(and(eq(workInboxItems.id, item.id), eq(workInboxItems.status, 'unconfirmed')))
-      .returning({ id: workInboxItems.id })
-    if (updated === undefined) continue
-    await handle
-      .update(workInboxDeliveries)
-      .set({
-        status: 'returned',
-        settledAt: now,
-        failureReason: supersededByNewer ? 'superseded_by_new_version' : 'run_ended_unconsumed',
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(workInboxDeliveries.inboxItemId, item.id),
-          eq(workInboxDeliveries.status, 'unconfirmed'),
-        ),
-      )
-    settled += 1
+  return rows.map((row) => row.id)
+}
+
+/**
+ * 收口一条到期的 unconfirmed 输入。先锁 Work 行，与关联/撤权的 Task→Work→item
+ * 锁序串行化，避免“查无 pending、改 pending 时又撞唯一索引”。
+ * 同来源已有 pending 时旧版本改 superseded（new_version），不再依赖时间戳排序。
+ */
+export async function settleUnconfirmedWorkInput(
+  handle: DbHandle,
+  itemId: string,
+  cutoff: Date,
+  now: Date,
+): Promise<number> {
+  // 先无锁读 workId，再按 Work→item 加锁：与关联/撤权的 Task→Work→item 锁序一致。
+  // 反过来（item→Work）会和撤权持 Work 等 item 形成死锁。
+  const [snapshot] = await handle
+    .select({ workId: workInboxItems.workId })
+    .from(workInboxItems)
+    .where(eq(workInboxItems.id, itemId))
+    .limit(1)
+  if (snapshot === undefined) return 0
+  await handle
+    .select({ id: works.id })
+    .from(works)
+    .where(eq(works.id, snapshot.workId))
+    .for('update')
+  const [item] = await handle
+    .select()
+    .from(workInboxItems)
+    .where(eq(workInboxItems.id, itemId))
+    .for('update')
+  if (
+    item === undefined ||
+    item.workId !== snapshot.workId ||
+    item.status !== 'unconfirmed' ||
+    item.unconfirmedAt === null ||
+    item.unconfirmedAt.getTime() > cutoff.getTime()
+  ) {
+    return 0
   }
-  return settled
+  const [pendingSibling] = await handle
+    .select({ id: workInboxItems.id })
+    .from(workInboxItems)
+    .where(
+      and(
+        eq(workInboxItems.workId, item.workId),
+        eq(workInboxItems.sourceType, item.sourceType),
+        eq(workInboxItems.sourceId, item.sourceId),
+        eq(workInboxItems.status, 'pending'),
+        ne(workInboxItems.id, item.id),
+      ),
+    )
+    .limit(1)
+  const supersededByNewer = pendingSibling !== undefined
+  const [updated] = await handle
+    .update(workInboxItems)
+    .set({
+      status: supersededByNewer ? 'superseded' : 'pending',
+      statusReason: supersededByNewer ? 'new_version' : 'run_ended_unconsumed',
+      deliveryRunId: null,
+      deliveredAt: null,
+      unconfirmedAt: null,
+      consumedAt: null,
+      statusAt: now,
+      updatedAt: now,
+    })
+    .where(and(eq(workInboxItems.id, item.id), eq(workInboxItems.status, 'unconfirmed')))
+    .returning({ id: workInboxItems.id })
+  if (updated === undefined) return 0
+  await handle
+    .update(workInboxDeliveries)
+    .set({
+      status: 'returned',
+      settledAt: now,
+      failureReason: supersededByNewer ? 'superseded_by_new_version' : 'run_ended_unconsumed',
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(workInboxDeliveries.inboxItemId, item.id),
+        eq(workInboxDeliveries.status, 'unconfirmed'),
+      ),
+    )
+  return 1
 }
 
 export async function listWorkInboxDeliveriesByRun(

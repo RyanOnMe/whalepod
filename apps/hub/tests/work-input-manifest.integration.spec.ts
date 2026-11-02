@@ -8,8 +8,14 @@ import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@whalepod/db'
-import { getTeam, schema } from '@whalepod/db'
+import {
+  getTeam,
+  listDueUnconfirmedWorkInputIds,
+  schema,
+  settleUnconfirmedWorkInput,
+} from '@whalepod/db'
 import { hashToken } from '../src/modules/auth/token.js'
+import { canonicalJson, sha256Hex } from '../src/modules/coordination/digest.js'
 import { reconcileWorkInputs } from '../src/modules/work/run-inputs.js'
 import {
   apiInject,
@@ -157,16 +163,41 @@ async function associate(
   ctx: TestApp,
   session: Session,
   workKey: string,
-  messageId: string,
+  sourceId: string,
+  sourceType: 'task_message' | 'context_entry' = 'task_message',
 ): Promise<Record<string, unknown>> {
   const res = await apiInject(ctx, session, {
     method: 'POST',
     url: `/api/v1/works/${workKey}/inbox-items`,
-    payload: { sourceType: 'task_message', sourceId: messageId },
+    payload: { sourceType, sourceId },
     idempotencyKey: idemKey(),
   })
   expect(res.statusCode, res.body).toBe(201)
   return res.json().data as Record<string, unknown>
+}
+
+async function confirmAgreement(ctx: TestApp, session: Session, task: string): Promise<void> {
+  const draft = await apiInject(ctx, session, {
+    method: 'POST',
+    url: `/api/v1/tasks/${task}/agreement/draft`,
+    payload: {
+      content: {
+        goal: '预算从 12 万改为 8 万',
+        constraints: '不新增审批步骤',
+        acceptance: '新预算出现在下一次比较',
+        openQuestions: '供应商待定',
+      },
+    },
+    idempotencyKey: idemKey(),
+  })
+  expect(draft.statusCode, draft.body).toBe(200)
+  const confirmed = await apiInject(ctx, session, {
+    method: 'POST',
+    url: `/api/v1/tasks/${task}/agreement/confirm`,
+    payload: { draftVersion: draft.json().data.draftVersion },
+    idempotencyKey: idemKey(),
+  })
+  expect(confirmed.statusCode, confirmed.body).toBe(200)
 }
 
 async function startRun(
@@ -283,20 +314,19 @@ describe('RD-02a-2a run work input manifest', () => {
     const run = created.json().data
     expect(run).toMatchObject({
       workKey,
+      workInputItemCount: 2,
       workInputManifestDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
     })
-    expect(run.workInputManifest.version).toBe('rd02a2.v1')
-    expect(run.workInputManifest.workKey).toBe(workKey)
-    expect(run.workInputManifest.entries).toHaveLength(2)
-    expect(
-      run.workInputManifest.entries.map((entry: { inboxItemId: string }) => entry.inboxItemId),
-    ).toEqual([first.id, second.id].sort())
-    expect(run.workInputManifest.entries[0]).not.toHaveProperty('body')
-    expect(run.workInputManifest.entries[0]).toMatchObject({
-      sourceType: 'task_message',
-      byteSize: expect.any(Number),
-      bodyDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
-    })
+    // 读面只给摘要与条目数；条目标识/标题/来源不进 RunView（回放与任意成员 GET 都不广播）。
+    expect(run).not.toHaveProperty('workInputManifest')
+    expect(JSON.stringify(run)).not.toContain(first.id)
+    expect(JSON.stringify(run)).not.toContain(second.id)
+
+    const runRowManifest = (
+      await database.db.select().from(schema.runs).where(eq(schema.runs.id, run.id))
+    )[0]?.workInputManifest
+    expect(runRowManifest).not.toBeNull()
+    expect(sha256Hex(canonicalJson(runRowManifest))).toBe(run.workInputManifestDigest)
 
     const rows = await database.db.select().from(schema.workInboxItems)
     expect(rows.every((row) => row.status === 'delivered')).toBe(true)
@@ -342,6 +372,29 @@ describe('RD-02a-2a run work input manifest', () => {
     expect(replay.statusCode, replay.body).toBe(201)
     expect(replay.json().data.id).toBe(run.id)
     expect(replay.json().data.workInputManifestDigest).toBe(run.workInputManifestDigest)
+
+    // 任意已登录成员可读 Run 基础事实，但读面不携带清单条目身份/标题。
+    const memberRead = await apiInject(ctx, bob, {
+      method: 'GET',
+      url: `/api/v1/runs/${run.id as string}`,
+    })
+    expect(memberRead.statusCode, memberRead.body).toBe(200)
+    expect(memberRead.json().data).toMatchObject({
+      workKey,
+      workInputItemCount: 2,
+      workInputManifestDigest: run.workInputManifestDigest,
+    })
+    expect(memberRead.json().data).not.toHaveProperty('workInputManifest')
+    expect(memberRead.body).not.toContain(first.id)
+    expect(memberRead.body).not.toContain(second.id)
+
+    // 本切片 Node 尚不知道清单：run.start 载荷不得夹带工作输入。
+    const starts = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(eq(schema.dispatchOutbox.type, 'run.start'))
+    expect(starts).toHaveLength(1)
+    expect(JSON.stringify(starts[0]?.payload)).not.toContain('workInput')
 
     // 创建后改来源不改 Run 的固定清单。
     await database.db
@@ -396,6 +449,7 @@ describe('RD-02a-2a run work input manifest', () => {
     const rows = await database.db.select().from(schema.workInboxItems)
     expect(rows[0]).toMatchObject({ id: item.id, status: 'pending', deliveryRunId: null })
     expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+    expect(await database.db.select().from(schema.workInboxDeliveries)).toHaveLength(0)
   })
 
   it('withdraws an already-delivered input when its source is retracted', async () => {
@@ -446,6 +500,20 @@ describe('RD-02a-2a run work input manifest', () => {
     ])
     expect(duplicate.statusCode, duplicate.body).toBe(400)
     expect(duplicate.json().error.code).toBe('VALIDATION_FAILED')
+
+    const empty = await startRun(ctx, alice, taskId, seed, [])
+    expect(empty.statusCode, empty.body).toBe(400)
+    expect(empty.json().error.code).toBe('VALIDATION_FAILED')
+
+    const oversized = await startRun(
+      ctx,
+      alice,
+      taskId,
+      seed,
+      Array.from({ length: 33 }, () => randomUUID()),
+    )
+    expect(oversized.statusCode, oversized.body).toBe(400)
+    expect(oversized.json().error.code).toBe('VALIDATION_FAILED')
 
     // removeWhen：now 可注入或仓储提供快照校验口后删除该直写。
     await database.db
@@ -543,8 +611,22 @@ describe('RD-02a-2a run work input manifest', () => {
     )[0]
     expect(delivery?.status).toBe('unconfirmed')
 
+    const inbox = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${workKey}/inbox`,
+    })
+    expect(inbox.statusCode, inbox.body).toBe(200)
+    expect(inbox.json().data.watermarks).toMatchObject({
+      pendingCount: 0,
+      deliveredCount: 0,
+      unconfirmedCount: 1,
+      consumedCount: 0,
+    })
+
     expect(await reconcileWorkInputs(database, new Date(finishedAt + 59_000))).toBe(0)
     expect(await reconcileWorkInputs(database, new Date(finishedAt + 61_000))).toBe(1)
+    // 对账幂等：同一时间点重跑不应重复收口或再改状态。
+    expect(await reconcileWorkInputs(database, new Date(finishedAt + 61_000))).toBe(0)
     itemRow = (
       await database.db
         .select()
@@ -624,5 +706,251 @@ describe('RD-02a-2a run work input manifest', () => {
         .where(eq(schema.workInboxItems.id, second.id as string))
     )[0]
     expect(newRow?.status).toBe('pending')
+  })
+
+  it('rejects work inputs from granted members and re-checks the assignee on replay', async () => {
+    const messageId = await comment(ctx, alice, taskId, '责任人私有材料。')
+    const item = await associate(ctx, alice, workKey, messageId)
+    const granted = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/instruction-grants`,
+      payload: { userId: bob.userId },
+      idempotencyKey: idemKey(),
+    })
+    expect(granted.statusCode, granted.body).toBe(201)
+
+    // 被授权成员可以驱动 Run，但收件箱材料是责任人私有快照，不能带入。
+    const denied = await startRun(ctx, bob, taskId, seed, [item.id as string])
+    expect(denied.statusCode, denied.body).toBe(403)
+    expect(denied.json().error.code).toBe('FORBIDDEN')
+    expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+
+    const key = idemKey()
+    const created = await startRun(ctx, alice, taskId, seed, [item.id as string], key)
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+
+    // 已知 idempotencyKey 也不能让被授权成员从缓存回执里读回清单摘要。
+    const replayDenied = await startRun(ctx, bob, taskId, seed, [item.id as string], key)
+    expect(replayDenied.statusCode, replayDenied.body).toBe(403)
+    expect(JSON.stringify(replayDenied.json())).not.toContain(runId)
+
+    const revoked = await apiInject(ctx, alice, {
+      method: 'DELETE',
+      url: `/api/v1/tasks/${taskId}/instruction-grants/${bob.userId}`,
+      idempotencyKey: idemKey(),
+    })
+    expect(revoked.statusCode, revoked.body).toBe(200)
+    const afterRevoke = await startRun(ctx, bob, taskId, seed, [item.id as string], key)
+    expect(afterRevoke.statusCode, afterRevoke.body).toBe(403)
+
+    const ownerReplay = await startRun(ctx, alice, taskId, seed, [item.id as string], key)
+    expect(ownerReplay.statusCode, ownerReplay.body).toBe(201)
+    expect(ownerReplay.json().data.id).toBe(runId)
+  })
+
+  it('marks cancelled and failed runs unconfirmed and retracts an unconfirmed input', async () => {
+    const firstMessage = await comment(ctx, alice, taskId, '将被取消的材料。')
+    const first = await associate(ctx, alice, workKey, firstMessage)
+    const firstRun = await startRun(ctx, alice, taskId, seed, [first.id as string])
+    expect(firstRun.statusCode, firstRun.body).toBe(201)
+    const firstRunId = firstRun.json().data.id as string
+    const cancelled = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/runs/${firstRunId}/cancel`,
+    })
+    expect(cancelled.statusCode, cancelled.body).toBe(200)
+
+    const afterCancel = (
+      await database.db
+        .select()
+        .from(schema.workInboxItems)
+        .where(eq(schema.workInboxItems.id, first.id as string))
+    )[0]
+    expect(afterCancel).toMatchObject({
+      status: 'unconfirmed',
+      statusReason: 'run_ended_awaiting_receipt',
+    })
+
+    // unconfirmed 也能被来源级撤权收口；delivery 必须一起撤回。
+    const retracted = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${workKey}/inbox-items/${first.id as string}/retract`,
+      payload: { reason: 'source_permission_revoked' },
+      idempotencyKey: idemKey(),
+    })
+    expect(retracted.statusCode, retracted.body).toBe(200)
+    expect(retracted.json().data).toMatchObject({
+      id: first.id,
+      status: 'retracted',
+      statusReason: 'source_permission_revoked',
+    })
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxDeliveries)
+          .where(eq(schema.workInboxDeliveries.runId, firstRunId))
+      )[0],
+    ).toMatchObject({ status: 'withdrawn', failureReason: 'source_retracted' })
+
+    const secondMessage = await comment(ctx, alice, taskId, '将失败的材料。')
+    const second = await associate(ctx, alice, workKey, secondMessage)
+    const secondRun = await startRun(ctx, alice, taskId, seed, [second.id as string])
+    expect(secondRun.statusCode, secondRun.body).toBe(201)
+    const secondRunId = secondRun.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, secondRunId)
+    await harness.orchestrator.ingestNodeEvent(
+      { deviceId: seed.deviceId, ownerUserId: alice.userId },
+      runEventFrame(secondRunId, 2, {
+        type: 'run.failed',
+        code: 'INTERNAL_ERROR',
+        summary: 'boom',
+      }),
+    )
+    const afterFailure = (
+      await database.db
+        .select()
+        .from(schema.workInboxItems)
+        .where(eq(schema.workInboxItems.id, second.id as string))
+    )[0]
+    expect(afterFailure).toMatchObject({
+      status: 'unconfirmed',
+      deliveryRunId: secondRunId,
+    })
+  })
+
+  it('keeps delivery attempts per run and only returns one of two unconfirmed versions', async () => {
+    const messageId = await comment(ctx, alice, taskId, '第一版材料。')
+    const first = await associate(ctx, alice, workKey, messageId)
+    const firstRun = await startRun(ctx, alice, taskId, seed, [first.id as string])
+    expect(firstRun.statusCode, firstRun.body).toBe(201)
+    const firstRunId = firstRun.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, firstRunId)
+    await completeRun(harness, seed, alice.userId, firstRunId)
+    const firstFinished = (
+      await database.db.select().from(schema.runs).where(eq(schema.runs.id, firstRunId))
+    )[0]?.finishedAt?.getTime() as number
+
+    expect(await reconcileWorkInputs(database, new Date(firstFinished + 61_000))).toBe(1)
+    // 回到 pending 后可以交付给下一个 Run；历史尝试保留而不是覆盖。
+    const secondRun = await startRun(ctx, alice, taskId, seed, [first.id as string])
+    expect(secondRun.statusCode, secondRun.body).toBe(201)
+    const secondRunId = secondRun.json().data.id as string
+    const attempts = await database.db
+      .select()
+      .from(schema.workInboxDeliveries)
+      .where(eq(schema.workInboxDeliveries.inboxItemId, first.id as string))
+    expect(attempts).toHaveLength(2)
+    expect(attempts.map((row) => row.runId).sort()).toEqual([firstRunId, secondRunId].sort())
+    expect(attempts.every((row) => row.attempt === 1)).toBe(true)
+    expect(attempts.find((row) => row.runId === firstRunId)).toMatchObject({
+      status: 'returned',
+      failureReason: 'run_ended_unconsumed',
+    })
+    expect(attempts.find((row) => row.runId === secondRunId)).toMatchObject({ status: 'sent' })
+
+    await dispatchAndReady(harness, seed, alice.userId, secondRunId)
+    await completeRun(harness, seed, alice.userId, secondRunId)
+
+    // 两个版本同时停在 unconfirmed：对账只能留下一个 pending，另一个转 superseded。
+    await database.db
+      .update(schema.taskMessages)
+      .set({ body: '第二版材料。', editedAt: new Date(Date.now() + 1000) })
+      .where(eq(schema.taskMessages.id, messageId))
+    const second = await associate(ctx, alice, workKey, messageId)
+    const thirdRun = await startRun(ctx, alice, taskId, seed, [second.id as string])
+    expect(thirdRun.statusCode, thirdRun.body).toBe(201)
+    const thirdRunId = thirdRun.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, thirdRunId)
+    await completeRun(harness, seed, alice.userId, thirdRunId)
+    const thirdFinished = (
+      await database.db.select().from(schema.runs).where(eq(schema.runs.id, thirdRunId))
+    )[0]?.finishedAt?.getTime() as number
+
+    expect(await reconcileWorkInputs(database, new Date(thirdFinished + 61_000))).toBe(2)
+    const rows = await database.db
+      .select()
+      .from(schema.workInboxItems)
+      .where(eq(schema.workInboxItems.sourceId, messageId))
+    expect(rows.filter((row) => row.status === 'pending')).toHaveLength(1)
+    expect(rows.filter((row) => row.status === 'superseded')).toHaveLength(1)
+    expect(rows.find((row) => row.status === 'superseded')?.statusReason).toBe('new_version')
+  })
+
+  it('freezes a context entry source without exposing it on the run face', async () => {
+    await confirmAgreement(ctx, alice, taskId)
+    const context = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/projects/${projectId}/context`,
+    })
+    expect(context.statusCode, context.body).toBe(200)
+    const entry = (context.json().data.entries as Array<Record<string, unknown>>).find(
+      (row) => row.kind === 'decision' && row.businessRef === `taskSpec:${taskId}`,
+    )
+    expect(entry).toBeDefined()
+    const item = await associate(ctx, alice, workKey, entry?.id as string, 'context_entry')
+    const created = await startRun(ctx, alice, taskId, seed, [item.id as string])
+    expect(created.statusCode, created.body).toBe(201)
+    expect(created.json().data).toMatchObject({ workInputItemCount: 1 })
+    expect(created.json().data).not.toHaveProperty('workInputManifest')
+    const manifest = (
+      await database.db
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.id, created.json().data.id as string))
+    )[0]?.workInputManifest as { entries: Array<Record<string, unknown>> }
+    expect(manifest.entries).toHaveLength(1)
+    expect(manifest.entries[0]).toMatchObject({
+      inboxItemId: item.id,
+      sourceType: 'context_entry',
+      sourceId: entry?.id,
+    })
+  })
+
+  it('lists only due rows and rechecks the 60s window inside settlement', async () => {
+    const messageId = await comment(ctx, alice, taskId, '窗口边界材料。')
+    const item = await associate(ctx, alice, workKey, messageId)
+    const created = await startRun(ctx, alice, taskId, seed, [item.id as string])
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, runId)
+    await completeRun(harness, seed, alice.userId, runId)
+    const finishedAt = (
+      await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    )[0]?.finishedAt?.getTime() as number
+
+    // 参数是 cutoff（now - 60s），不是 now。
+    const before = new Date(finishedAt - 1_000)
+    const after = new Date(finishedAt + 1_000)
+    expect(await listDueUnconfirmedWorkInputIds(database.db, before)).toEqual([])
+    expect(await listDueUnconfirmedWorkInputIds(database.db, after)).toEqual([item.id])
+
+    // 即使绕过列表过滤直接收口，也必须复核 unconfirmed_at，避免多实例/竞态提前返回。
+    const settled = await database.transaction((tx) =>
+      settleUnconfirmedWorkInput(tx, item.id as string, before, before),
+    )
+    expect(settled).toBe(0)
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxItems)
+          .where(eq(schema.workInboxItems.id, item.id as string))
+      )[0]?.status,
+    ).toBe('unconfirmed')
+  })
+
+  it('serializes concurrent starts that select the same input', async () => {
+    const messageId = await comment(ctx, alice, taskId, '并发竞争的材料。')
+    const item = await associate(ctx, alice, workKey, messageId)
+    const [left, right] = await Promise.all([
+      startRun(ctx, alice, taskId, seed, [item.id as string]),
+      startRun(ctx, alice, taskId, seed, [item.id as string]),
+    ])
+    expect([left.statusCode, right.statusCode].sort()).toEqual([201, 409])
+    expect(await database.db.select().from(schema.runs)).toHaveLength(1)
+    const rows = await database.db.select().from(schema.workInboxDeliveries)
+    expect(rows).toHaveLength(1)
   })
 })

@@ -1,9 +1,9 @@
 /**
- * ADR-0028（RD-02a-1）：工作收件箱条目的 HTTP 视图/请求契约。
+ * ADR-0028（RD-02a-1 起）：工作收件箱条目的 HTTP 视图/请求契约。
  *
  * 条目保存来源正文的私有快照（仅 Task 当前 assignee 可读）；`sourceDigest` 与
- * `bodyDigest` 用于后续交付清单与重复判定。delivered/unconfirmed/consumed 属于
- * RD-02a-2，不在此处出现。
+ * `bodyDigest` 用于交付清单与重复判定。delivered/unconfirmed 由 RD-02a-2a 的
+ * Run 创建/终态路径写入；consumed 等 Node 消费回执归 RD-02a-2b。
  */
 import { z } from 'zod'
 import { WorkSourceTypeSchema } from './work.js'
