@@ -45,6 +45,11 @@ export async function insertTask(handle: DbHandle, task: NewTask): Promise<TaskR
   return row
 }
 
+export async function getTaskForUpdate(handle: DbHandle, id: string): Promise<TaskRow | undefined> {
+  const [row] = await handle.select().from(tasks).where(eq(tasks.id, id)).limit(1).for('update')
+  return row
+}
+
 export async function getTask(handle: DbHandle, id: string): Promise<TaskRow | undefined> {
   const [row] = await handle.select().from(tasks).where(eq(tasks.id, id)).limit(1)
   return row
@@ -216,6 +221,14 @@ export async function settleInstruction(
     )
     .where(and(eq(taskMessages.id, messageId), eq(taskMessages.instructionState, 'pending')))
     .returning()
+  return row
+}
+
+export async function getTaskMessage(
+  handle: DbHandle,
+  id: string,
+): Promise<TaskMessageRow | undefined> {
+  const [row] = await handle.select().from(taskMessages).where(eq(taskMessages.id, id)).limit(1)
   return row
 }
 

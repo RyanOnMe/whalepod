@@ -51,6 +51,14 @@ export type AuditAction =
   | 'context.correct'
   // ADR-0026（PC-04a）：成员显式触发确定性协调评估。
   | 'coordination.evaluate'
+  // ADR-0028（RD-01）：持续工作、Mandate 与影子准入（只记动作与结果，不记目标正文）。
+  | 'work.create'
+  | 'work.retire'
+  | 'work.mandate.create'
+  | 'work.mandate.pause'
+  | 'work.mandate.resume'
+  | 'work.mandate.revoke'
+  | 'work.admission.check'
 
 export type AuditOutcome = 'success' | 'denied' | 'rate_limited'
 
