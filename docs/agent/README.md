@@ -9,7 +9,7 @@
 | [2026-11-01-superagent-reuse-analysis.md](./2026-11-01-superagent-reuse-analysis.md) | 固定上游提交与 WhalePod 逐模块复用矩阵：同步仓储/PG、Ticket/Run、权限/撤权、飞书修订、DSH 版本与隔离；上游纯核心 144 项和兼容探针 4 项通过，真实平台及整包未验 |
 | [2026-11-01-pc00-rc8-coordination-compat-acceptance.md](./2026-11-01-pc00-rc8-coordination-compat-acceptance.md) | PC-00 #463：rc.8 工具行禁用（仅 `tool-bash`；正控/归因控/审批顺序/变异）、artifact 输入引用进入下一次模型请求、结构化结果只经 render 投影（tool/result 无 value）；`read_artifact_input` 正文投影修复与 `tools.restrict` 非权限边界事实 |
 | [2026-11-01-feishu-readonly-probe-prep.md](./2026-11-01-feishu-readonly-probe-prep.md) | PC-01 #448：真实租户/应用/群/文档的准备清单、CLI 与 SDK 对比表、十二步只读探针、越权/撤权/断线负控与脱敏规则；未获租户前保持 `not_run` |
-| [ADR-0025 草案](../adr/0025-source-revisions-and-project-understanding.md) · [ADR-0026 草案](../adr/0026-project-coordination-lifecycle-and-cost.md) · [ADR-0027 草案](../adr/0027-run-project-context-snapshot-and-consumption.md) | #451/#452/#453（Proposed）：修订/线程订阅/纠正与 PG 事务边界；协调生命周期/受限计算/额度；Run 快照选择/字节核对/消费回执/固定历史。接受前不开对应实现分支 |
+| [ADR-0025](../adr/0025-source-revisions-and-project-understanding.md) · [ADR-0026](../adr/0026-project-coordination-lifecycle-and-cost.md) · [ADR-0027](../adr/0027-run-project-context-snapshot-and-consumption.md) | #451/#452/#453（**已采纳 2026-11-02**）：修订/线程订阅/纠正与 PG 事务边界；协调生命周期/受限计算/额度；Run 快照选择/字节核对/消费回执/固定历史。内部最小链由 #472（03a）/#473（04a）/#474（05a）实施；外部来源、模型派发与终态清理按后续切片交付 |
 | [whalepod-product-background.md](./whalepod-product-background.md) | 供其他 Agent 独立研讨的自包含产品背景：定位、领域对象、产品与系统架构、2026-10-26 进度快照、痛点假设、审阅方向、真实团队验证与讨论要求；不需先读仓库 |
 | [app-ui-polish-acceptance.md](./app-ui-polish-acceptance.md) | #421：网页源码提取的输入栏、审批与文件展示槽位，混淆包/来源校验、文件动作菜单、九档布局与键盘独立判定 |
 | [reactbits-management-acceptance.md](./reactbits-management-acceptance.md) | #432：成员、插件、Agents 与设备组件精修；真实邀请/安装/组合/配对与十二档几何验收 |
