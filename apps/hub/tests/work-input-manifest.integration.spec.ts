@@ -740,6 +740,24 @@ describe('RD-02a-2a run work input manifest', () => {
     expect(omittedDenied.statusCode, omittedDenied.body).toBe(403)
     expect(JSON.stringify(omittedDenied.json())).not.toContain(runId)
 
+    // 更强的隔离：alice 也是第二个 Task 的责任人，若不校验回执 taskId，
+    // workKey 的 assignee 复核会通过并取回原 Run。
+    const aliceTaskRes = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/projects/${projectId}/tasks`,
+      payload: { title: 'Alice 的第二个任务', assigneeUserId: alice.userId },
+    })
+    expect(aliceTaskRes.statusCode, aliceTaskRes.body).toBe(201)
+    const aliceTaskId = aliceTaskRes.json().data.id as string
+    const aliceAccepted = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${aliceTaskId}/accept`,
+    })
+    expect(aliceAccepted.statusCode, aliceAccepted.body).toBe(200)
+    const sameOwnerCrossTask = await startRun(ctx, alice, aliceTaskId, seed, undefined, key)
+    expect(sameOwnerCrossTask.statusCode, sameOwnerCrossTask.body).toBe(404)
+    expect(JSON.stringify(sameOwnerCrossTask.json())).not.toContain(runId)
+
     // 跨 Task 复用同一全局 key（即使 bob 是另一个 Task 的责任人）也不能取回这条 Run。
     const bobTaskRes = await apiInject(ctx, alice, {
       method: 'POST',

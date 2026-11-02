@@ -218,7 +218,7 @@ export async function markRunWorkInputsUnconfirmed(
 
 /**
  * 60s 窗口到期仍无消费回执：逐条独立事务收口，单条失败不拖垮整轮。
- * 每条在 Work 行锁内重查同来源 pending；有更新版本时旧版本转 superseded。
+ * 每条在 Work 行锁内选同来源最新版本；旧版本转 superseded。
  */
 export async function reconcileWorkInputs(
   database: Database,

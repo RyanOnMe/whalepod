@@ -63,7 +63,7 @@ pnpm exec tsx scripts/with-test-postgres.mts \
 - Run 进入任意终态（completed/failed/cancelled/lost）时，同事务把该 Run 下 `delivered` 条目转 `unconfirmed`（`status_reason='run_ended_awaiting_receipt'`），delivery 转 `unconfirmed`。
 - 对账窗口从 `unconfirmed_at` 起算 60s；`reconcileWorkInputs(now)` 在窗口内不动作，到期把无消费条目标 `pending`（`status_reason='run_ended_unconsumed'`），清空交付指针，delivery 转 `returned(failure_reason='run_ended_unconsumed')`。
 - 每条到期输入在**独立事务**内收口（`Work → item` 锁序），单条失败不回滚已成功条目，也不会让整轮 tick 卡死；同一时间点重跑幂等，已收口条目返回 0。
-- 同来源只有**最新条目**能回 `pending`：在 Work 锁内按 `(created_at desc, source_version desc, id desc)` 选最新；旧版本一律 `superseded(new_version)`，delivery 转 `returned(superseded_by_new_version)`。因此两个版本同时 `unconfirmed`、或旧版本 `unconfirmed` 而新版本仍 `delivered`，都不会让旧版本复活或把新版本顶掉；处理顺序不影响结果。
+- 同来源只有**最新条目**能回 `pending`：在 Work 锁内按 `(source_version desc, created_at desc, id desc)` 选最新（来源版本优先，避免多实例时钟偏差；同版本再按关联时间/id）；旧版本一律 `superseded(new_version)`，delivery 转 `returned(superseded_by_new_version)`。因此两个版本同时 `unconfirmed`、或旧版本 `unconfirmed` 而新版本仍 `delivered`，都不会让旧版本复活或把新版本顶掉；处理顺序不影响结果。
 - 当前条目已是最新时，先把同来源残留的旧 `pending` 一起置 `superseded`，再回 `pending`，不会撞来源 pending 唯一索引。
 - 对账只改收件箱/交付记录，不改 Run 终态；Run 不复活。
 - 服务端 10s tick 调用同一对账函数；测试以 59s/61s 两个时间点证明窗口边界。
@@ -145,9 +145,9 @@ scripts/secret-scan.sh .
 | M22 | 对账改成整轮一个事务 | 边界静态用例（每条到期输入独立事务） |
 | M23 | 删除活跃冲突回读的 assignee 复核 | 边界静态用例（两条回放路径都要复核） |
 | M24 | 最新版本查询只看同来源 pending | 旧 unconfirmed + 新 delivered、双 unconfirmed 两用例红 |
-| M25 | 最新版本排序改成 createdAt 升序 | 旧版本被当成最新，三个版本用例红 |
+| M25 | 最新版本排序改成 sourceVersion 升序 | 双版本/三 Run 用例把旧版本当最新 |
 | M26 | 回放复核重新依赖请求是否带 `workInputItemIds` | 被授权成员省略 ids 回放拿到 201 |
-| M27 | 删除回执 taskId 与请求路径一致性校验 | 跨 Task 复用 key 取回原 Run |
+| M27 | 删除回执 taskId 与请求路径一致性校验 | 同责任人的跨 Task 回放取回原 Run（201） |
 | M28 | 删除回放里 `workKey` 非空的 assignee 复核 | 被授权成员省略 ids 回放 201 |
 | M29 | 建 Run 只无锁读 Work | 边界静态用例（必须 Work→item 锁序） |
 

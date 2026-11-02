@@ -84,6 +84,20 @@ describe('RD-02a-2a work input reconcile isolation', () => {
     expect(settle).toMatch(
       /\.from\(works\)[\s\S]*?\.for\('update'\)[\s\S]*?\.from\(workInboxItems\)[\s\S]*?\.for\('update'\)/,
     )
+    // 最新版本查询必须在 Work 锁内，否则关联/撤权可以并发改同来源条目。
+    const workLockAt = settle.indexOf('.from(works)')
+    const latestAt = settle.indexOf('const [latest]')
+    expect(workLockAt).toBeGreaterThan(-1)
+    expect(latestAt).toBeGreaterThan(workLockAt)
+    expect(settle.slice(workLockAt, latestAt)).toContain(".for('update')")
+
+    const workRepo = readFileSync(join(REPO_ROOT, 'packages/db/src/repositories/work.ts'), 'utf8')
+    const workStart = workRepo.indexOf('export async function getWorkByIdForUpdate')
+    expect(workStart).toBeGreaterThan(-1)
+    const workEnd = workRepo.indexOf('\n}\n', workStart)
+    expect(workEnd).toBeGreaterThan(workStart)
+    // 不能只改名字：这个 helper 必须真的加行锁，否则建 Run 的锁序声明是假的。
+    expect(workRepo.slice(workStart, workEnd)).toContain(".for('update')")
 
     const inputs = readFileSync(join(WORK_MODULE_DIR, 'run-inputs.ts'), 'utf8')
     const snapshotStart = inputs.indexOf('export async function snapshotWorkInputs')

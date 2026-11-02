@@ -36,11 +36,6 @@ export async function insertWork(handle: DbHandle, values: NewWorkRow): Promise<
   return row
 }
 
-export async function getWorkById(handle: DbHandle, id: string): Promise<WorkRow | undefined> {
-  const [row] = await handle.select().from(works).where(eq(works.id, id)).limit(1)
-  return row
-}
-
 export async function getWorkByIdForUpdate(
   handle: DbHandle,
   id: string,

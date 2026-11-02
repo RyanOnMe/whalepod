@@ -103,7 +103,7 @@ export async function listDueUnconfirmedWorkInputIds(
 /**
  * 收口一条到期的 unconfirmed 输入。先锁 Work 行，与关联/撤权的 Task→Work→item
  * 锁序串行化，避免“查无 pending、改 pending 时又撞唯一索引”。
- * 同来源以 (createdAt, sourceVersion, id) 判最新：只有最新条目能回 pending，
+ * 同来源以 (sourceVersion, createdAt, id) 判最新：只有最新条目能回 pending，
  * 旧版本一律 superseded(new_version)，不会因处理顺序让旧版本复活。
  */
 export async function settleUnconfirmedWorkInput(
@@ -149,8 +149,8 @@ export async function settleUnconfirmedWorkInput(
     .from(workInboxItems)
     .where(sourceSiblings)
     .orderBy(
-      desc(workInboxItems.createdAt),
       desc(workInboxItems.sourceVersion),
+      desc(workInboxItems.createdAt),
       desc(workInboxItems.id),
     )
     .limit(1)
