@@ -29,10 +29,12 @@ pnpm exec tsx scripts/with-test-postgres.mts \
 
 来源全部先走生产路径：Task 评论（`POST /tasks/:taskId/comments`）、约定确认（`agreement/draft` → `agreement/confirm`）产生的 Decision 条目、成员纠正（`POST /projects/:projectId/context/:entryId/correction`）、协调求值（`POST /projects/:projectId/coordination/evaluate`）产生的 Inference。关联本身复用 RD-01 的 `loadWorkSource`，与准入读同一份来源归属/活跃性/纠正/推断/越界判定。
 
-数据夹具两处，原因与删除条件如下：
+数据夹具四处，原因与删除条件如下：
 
-1. **已定向 instruction 消息**：生产路径创建该消息会同时建 Run/outbox，无法隔离「收件箱不建 Run」的判据；消息不是运行时投影，测试不写运行时状态。
-2. **直接改 `task_message.body/edited_at` 制造同一来源新版本**：本切片生产面还没有编辑消息的 HTTP 路径；该直写只改业务消息本身，不写投影。消息编辑路由落地后删除。
+1. **已定向 instruction 消息**：生产路径创建该消息会同时建 Run/outbox，无法隔离「收件箱不建 Run」的判据；消息不是运行时投影，测试不写运行时状态。removeWhen：收件箱来源夹具能不经 Run/outbox 造出已定向消息后删除。
+2. **直接改 `task_message.body/edited_at` 制造同一来源新版本**：本切片生产面还没有编辑消息的 HTTP 路径；该直写只改业务消息本身，不写投影。removeWhen：消息编辑 HTTP 路由落地后删除。
+3. **直接改 `work_inbox_item.created_at` 模拟时钟回退/同毫秒排序**：用于证明来源级撤权不依赖排序。removeWhen：`now` 可注入或水位/排序改用稳定序列后删除。
+4. **直接插入第二行同来源 pending `work_inbox_item`**：用于证明 DB 部分唯一索引是最后一道兜底。removeWhen：仓储层提供可注入的并发/冲突测试口后删除。
 
 ## 观测（看什么）
 
@@ -128,9 +130,9 @@ scripts/secret-scan.sh .
 
 本切片实测（2026-11-02）：
 
-- Q0：`211` 个测试文件 / `2269` 条通过；work 边界静态测试 `1` 条通过。
-- Q2：`86` 个测试文件 / `731` 条通过；定向 inbox `14` 条通过。
-- 单点变异 `M1–M25` 全部 RED（见下）。
+- Q0：`212` 个测试文件 / `2271` 条通过；work 边界静态测试 `2` 条 + 约束映射 `1` 条通过。
+- Q2：`86` 个测试文件 / `732` 条通过；定向 inbox `15` 条通过。
+- 单点变异 `M1–M28` 全部 RED（见下）。
 
 ## 变异自证
 
@@ -162,7 +164,10 @@ scripts/secret-scan.sh .
 | M22 | 关联响应不写私有缓存头 | `cache-control` 断言 |
 | M23 | GET 收件箱不写私有缓存头 | `cache-control` 断言 |
 | M24 | 撤权只改目标条目、不扫同来源其它非终态 | 较早 returned 版本撤权后最新 pending 未收口 |
-| M25 | GET 收件箱不在事务内重新校验 assignee | 非 assignee 读取必须 403 |
+| M25 | GET 收件箱删除 assignee 校验 | 非 assignee 读取必须 403 |
+| M26 | GET 授权移出事务、列表另开事务 | 静态事务边界判据必须红（旧 TOCTOU 复活） |
+| M27 | 删除 pending 部分唯一索引的 409 映射 | 约束映射单测必须红 |
+| M28 | 删除 DB 的来源 pending 部分唯一索引 | 直接插第二行 pending 必须 23505 |
 
 ## 边界与未覆盖
 

@@ -35,3 +35,20 @@ describe('ADR-0028 work module boundaries', () => {
     }
   })
 })
+
+describe('RD-02a-1 inbox read authorization boundary', () => {
+  it('keeps the assignee check inside the private-list transaction', () => {
+    const source = readFileSync(join(WORK_MODULE_DIR, 'inbox.ts'), 'utf8')
+    const start = source.indexOf('export async function loadWorkInboxForActor')
+    expect(start).toBeGreaterThan(-1)
+    const end = source.indexOf('\n}\n', start)
+    expect(end).toBeGreaterThan(start)
+    const fn = source.slice(start, end)
+    // 授权、条目读取与水位必须在同一个 transaction 回调内；授权放在事务外
+    // 再另开列表事务会重新打开 TOCTOU。
+    expect(fn).toContain('database.transaction(')
+    expect(fn).toContain('await requireAssignee(tx, task, actorUserId)')
+    expect(fn).toContain('readInboxView(tx, work, filter)')
+    expect(fn).not.toContain('database.db')
+  })
+})

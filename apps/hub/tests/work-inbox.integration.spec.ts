@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@whalepod/db'
-import { insertAgent, insertMessage, schema } from '@whalepod/db'
+import { insertAgent, insertMessage, schema, unwrapPgError } from '@whalepod/db'
 import {
   apiInject,
   createTestApp,
@@ -335,12 +335,50 @@ describe('RD-02a-1 work inbox items (ADR-0028)', () => {
     expect(rows[0]).toMatchObject({ status: 'pending' })
   })
 
+  it('rejects a second pending row for the same source at the DB boundary', async () => {
+    const messageId = await comment(ctx, alice, taskId)
+    const item = (await associate(ctx, alice, workKey, 'task_message', messageId)).json().data
+
+    // 夹具：直接插第二行同来源 pending，验证 DB 部分唯一索引是最后一道兜底。
+    // removeWhen：仓储层提供可注入的并发/冲突测试口后删除该直写。
+    const pg = await database.db
+      .insert(schema.workInboxItems)
+      .values({
+        id: randomUUID(),
+        workId: (await database.db.select().from(schema.works).limit(1))[0]?.id as string,
+        workKey,
+        taskId,
+        projectId,
+        sourceType: 'task_message',
+        sourceId: messageId,
+        sourceVersion: new Date(Date.now() + 5000).toISOString(),
+        sourceDigest: 'b'.repeat(64),
+        authorizationGeneration: 'member',
+        title: 'Task 讨论消息',
+        body: '第二行 pending',
+        bodyDigest: 'c'.repeat(64),
+        refs: {},
+        status: 'pending',
+        statusAt: new Date(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .then(() => undefined)
+      .catch((error: unknown) => unwrapPgError(error))
+    expect(pg).toMatchObject({
+      code: '23505',
+      constraintName: 'work_inbox_item_source_pending_unique',
+    })
+    expect(item.status).toBe('pending')
+  })
+
   it('supersedes the pending item when the same source gains a new version', async () => {
     const messageId = await comment(ctx, alice, taskId)
     const first = (await associate(ctx, alice, workKey, 'task_message', messageId)).json().data
 
     // 生产面在本切片还没有“编辑消息”的 HTTP 路径；这条 fixture 只改业务消息本身来
-    // 制造同一来源的新版本，不写任何运行时投影。消息编辑落地后删除该直写。
+    // 制造同一来源的新版本，不写任何运行时投影。
+    // removeWhen：消息编辑 HTTP 路由落地后删除该直写。
     const editedAt = new Date(Date.now() + 1000)
     await database.db
       .update(schema.taskMessages)
@@ -596,6 +634,7 @@ describe('RD-02a-1 work inbox items (ADR-0028)', () => {
 
     await act(ctx, alice, workKey, first.id, 'retract', { reason: 'source_permission_revoked' })
     // 模拟时钟回退/同毫秒排序：让 expired 条目排到 retracted 之后。
+    // removeWhen：now 可注入或水位/排序改用稳定序列后删除该直写。
     await database.db
       .update(schema.workInboxItems)
       .set({ createdAt: new Date(Date.now() + 60_000) })
@@ -689,6 +728,7 @@ describe('RD-02a-1 work inbox items (ADR-0028)', () => {
   })
 
   it('rejects already-directed, foreign and terminal sources instead of dropping them silently', async () => {
+    // removeWhen：收件箱来源夹具能不经 Run/outbox 造出已定向消息后删除该直插。
     const agent = await insertAgent(database.db, {
       id: randomUUID(),
       name: `inbox-agent-${randomUUID().slice(0, 8)}`,
