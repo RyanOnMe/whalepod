@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import {
   contextCitations,
@@ -192,6 +192,45 @@ export async function listCurrentContextEntries(
     .orderBy(desc(contextEntries.createdAt), desc(contextEntries.id))
     .limit(options.limit + 1)
   return { rows: rows.slice(0, options.limit), hasMore: rows.length > options.limit }
+}
+
+/** 协调输入：当前有效集但排除协调自己的 Inference，避免结果反过来触发下一次评估。 */
+export async function listCoordinationInputEntries(
+  handle: DbHandle,
+  projectId: string,
+  limit: number,
+): Promise<ContextEntryRow[]> {
+  return handle
+    .select()
+    .from(contextEntries)
+    .where(
+      and(
+        eq(contextEntries.projectId, projectId),
+        eq(contextEntries.status, 'active'),
+        isNull(contextEntries.correctedAt),
+        sql`${contextEntries.kind} <> 'inference'`,
+      ),
+    )
+    .orderBy(desc(contextEntries.createdAt), desc(contextEntries.id))
+    .limit(limit)
+}
+
+export async function countCoordinationInputEntries(
+  handle: DbHandle,
+  projectId: string,
+): Promise<number> {
+  const [row] = await handle
+    .select({ value: count() })
+    .from(contextEntries)
+    .where(
+      and(
+        eq(contextEntries.projectId, projectId),
+        eq(contextEntries.status, 'active'),
+        isNull(contextEntries.correctedAt),
+        sql`${contextEntries.kind} <> 'inference'`,
+      ),
+    )
+  return Number(row?.value ?? 0)
 }
 
 /** Run 快照选择用的有界查询：按 businessRef 前缀取当前有效条目。 */

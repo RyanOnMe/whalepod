@@ -17,6 +17,7 @@ import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
 import { toContextEntryView } from './queries.js'
 import { clipContextText } from './projector.js'
+import { enqueueCoordinationEvaluation } from '../coordination/enqueue.js'
 
 export interface ContextActor {
   readonly userId: string
@@ -73,6 +74,8 @@ export async function correctContextEntry(
         updatedAt: now,
       })
       await updateContextEntry(tx, target.id, { correctedAt: now })
+      // 纠正改变当前有效集 → 同事务合并一次协调评估（ADR-0026 §2）。
+      await enqueueCoordinationEvaluation(tx, projectId, now)
       inserted = true
       return toContextEntryView(correction, [])
     },

@@ -49,6 +49,8 @@ export type AuditAction =
   | 'source.revoke'
   // ADR-0025：项目事实账本的人工纠正（不记被纠正正文）。
   | 'context.correct'
+  // ADR-0026（PC-04a）：成员显式触发确定性协调评估。
+  | 'coordination.evaluate'
 
 export type AuditOutcome = 'success' | 'denied' | 'rate_limited'
 

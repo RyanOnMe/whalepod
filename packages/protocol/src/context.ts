@@ -59,6 +59,10 @@ export const ProjectContextEntryViewSchema = z
     businessVersion: z.string().min(1).max(200).nullable(),
     targetEntryId: z.uuid().nullable(),
     evaluationId: z.uuid().nullable(),
+    inputDigest: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .nullable(),
     actorKind: ContextActorKindSchema,
     createdBy: z.uuid().nullable(),
     processorVersion: z.string().max(100).nullable(),
