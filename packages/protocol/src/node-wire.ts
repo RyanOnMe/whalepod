@@ -23,6 +23,11 @@ import {
   RunContextReceiptSchema,
   RunStartProjectContextSchema,
 } from './run-context.js'
+import {
+  WORK_INPUT_CAPABILITY,
+  RunStartWorkInputSchema,
+  RunWorkInputReceiptSchema,
+} from './work-input-wire.js'
 
 const Sha256DigestSchema = z.string().regex(/^[a-f0-9]{64}$/)
 const DshSessionIdSchema = z.string().min(1).max(128)
@@ -189,10 +194,13 @@ export const NodeHelloSchema = envelope(
      */
     sourceCapabilities: z.array(SourceCapabilitySchema).max(8).optional(),
     /**
-     * ADR-0027 §3：项目上下文快照交付能力。缺省 = 旧 Node；Hub 对非空快照
-     * （entryCount>0）不向未声明的 Node 派发。空快照仍可正常执行。
+     * ADR-0027 §3 / ADR-0028 §3：Run 交付能力。缺省 = 旧 Node；Hub 对非空项目
+     * 上下文快照或非空工作输入清单不向未声明的 Node 派发。空清单仍可执行。
      */
-    contextCapabilities: z.array(ProjectContextCapabilitySchema).max(8).optional(),
+    contextCapabilities: z
+      .array(z.union([ProjectContextCapabilitySchema, z.literal(WORK_INPUT_CAPABILITY)]))
+      .max(8)
+      .optional(),
   }),
 )
 
@@ -256,6 +264,12 @@ export const RunLiveDeltaSchema = envelope(
 /** ADR-0027 §4：Node 汇总 Runtime 两级回执后的专用上行帧（不投影成产品 Run 事件）。 */
 export const RunContextReceiptFrameSchema = envelope('run.context_receipt', RunContextReceiptSchema)
 
+/** ADR-0028 §3：工作输入交付/读取的专用上行回执（独立于 run.context_receipt）。 */
+export const RunWorkInputReceiptFrameSchema = envelope(
+  'run.work_input_receipt',
+  RunWorkInputReceiptSchema,
+)
+
 /** #320：只读准备检查，结果不能夹带秘密、路径或模型调用结论。 */
 export const PreparationFactsSchema = z.strictObject({
   workspace: z.enum(['available', 'unavailable', 'unconfirmed']),
@@ -294,6 +308,7 @@ export const NodeUpstreamSchema = z.discriminatedUnion('type', [
   RunEventFrameSchema,
   RunLiveDeltaSchema,
   RunContextReceiptFrameSchema,
+  RunWorkInputReceiptFrameSchema,
 ])
 export type NodeUpstream = z.infer<typeof NodeUpstreamSchema>
 
@@ -335,6 +350,9 @@ export const RunStartSchema = envelope(
       // ADR-0027 §3：创建事务内冻结的项目上下文快照清单。entryCount=0 时不携带；
       // 正文不在本帧（Node 经受控下载接口按快照取得并逐条核对 digest/byteSize）。
       projectContext: RunStartProjectContextSchema.optional(),
+      // ADR-0028 §3：创建事务冻结的工作输入清单（正文不在本帧；Node 经受控下载
+      // 接口按 Run 归属取得并逐条核对 digest/byteSize）。
+      workInput: RunStartWorkInputSchema.optional(),
       // ADR-0009 切片⑤（resume 续跑）：成对携带——resumeOfRunId 让 Node 把
       // initialize 的 dshHomePath 指向**来源 Run** 的 home（per-run 隔离下新
       // runId 的 home 里没有旧日志）；resumeSessionId（= 来源 Run 的

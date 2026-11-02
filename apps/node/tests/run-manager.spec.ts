@@ -20,9 +20,15 @@ import type {
   NodeDownstream,
   ProjectedRunEvent,
   RunProjectContextManifestEntry,
+  RunWorkInputReceipt,
   RuntimeCommand,
+  WorkInputManifestEntry,
 } from '@whalepod/protocol'
 import { MemoryContextReceiptSeqStore } from '../src/context/receipt-seq-store.js'
+import {
+  MemoryWorkInputReceiptStore,
+  type WorkInputReceiptStore,
+} from '../src/work/receipt-store.js'
 import { CommandStore } from '../src/spool/command-store.js'
 import { EventStore } from '../src/spool/event-store.js'
 import { SecretStore } from '../src/secret/store.js'
@@ -201,7 +207,9 @@ async function makeHarness(
     commandStore,
     eventStore,
     send: (frame) => {
-      if (online) sent.push(frame) // 离线时丢弃：spool 仍持有，重连补发
+      if (!online) return false // 离线时丢弃：spool 仍持有，重连补发
+      sent.push(frame)
+      return true
     },
     runtimeHomeFor: (runId) => join(root, 'runtime-home', runId),
     homeDir: '/Users/testhome',
@@ -221,6 +229,38 @@ async function makeHarness(
   harness.supervisor = supervisor
   harness.manager = manager
   return harness
+}
+
+/** 记录 RunManager 是否真的把一次回执的状态/序号/outbox 放进 store 事务。 */
+class RecordingWorkInputReceiptStore implements WorkInputReceiptStore {
+  transactions = 0
+  private readonly inner = new MemoryWorkInputReceiptStore()
+
+  snapshot(runId: string, manifestDigest: string) {
+    return this.inner.snapshot(runId, manifestDigest)
+  }
+  nextSeq(runId: string, manifestDigest: string) {
+    return this.inner.nextSeq(runId, manifestDigest)
+  }
+  addDelivered(runId: string, manifestDigest: string, itemIds: readonly string[]) {
+    this.inner.addDelivered(runId, manifestDigest, itemIds)
+  }
+  addRead(runId: string, manifestDigest: string, itemId: string) {
+    this.inner.addRead(runId, manifestDigest, itemId)
+  }
+  enqueue(receipt: RunWorkInputReceipt) {
+    this.inner.enqueue(receipt)
+  }
+  pending() {
+    return this.inner.pending()
+  }
+  removePending(runId: string, manifestDigest: string, receiptSeq: number) {
+    this.inner.removePending(runId, manifestDigest, receiptSeq)
+  }
+  transaction<T>(fn: () => T): T {
+    this.transactions += 1
+    return this.inner.transaction(fn)
+  }
 }
 
 function stdoutSessionEvent(runId: string, event: unknown): string {
@@ -1425,5 +1465,340 @@ describe('ADR-0027：项目上下文交付与两级回执', () => {
       () => (cleaned.includes(runId) ? true : undefined),
       'run.start 拒绝路径未清理 runtime-context 目录',
     )
+  })
+})
+
+describe('ADR-0028：工作输入交付与回执', () => {
+  const workKey = '01905f7c-0000-7000-8000-000000000971'
+  const itemId = '01905f7c-0000-7000-8000-000000000981'
+  const unknownItemId = '01905f7c-0000-7000-8000-000000000982'
+  const manifestDigest = createHash('sha256').update('manifest-rd02a2b').digest('hex')
+
+  function manifestEntry(
+    body: string,
+    overrides: Partial<WorkInputManifestEntry> = {},
+  ): WorkInputManifestEntry {
+    return {
+      inboxItemId: itemId,
+      sourceType: 'task_message',
+      sourceId: '01905f7c-0000-7000-8000-000000000991',
+      sourceVersion: '1',
+      sourceDigest: createHash('sha256').update('source-1').digest('hex'),
+      bodyDigest: createHash('sha256').update(body).digest('hex'),
+      byteSize: Buffer.byteLength(body, 'utf8'),
+      authorizationGeneration: 'gen-1',
+      title: '需求澄清',
+      ...overrides,
+    }
+  }
+
+  function workInputStart(entry: WorkInputManifestEntry): Record<string, unknown> {
+    return {
+      workInput: {
+        manifestDigest,
+        manifest: { version: 'rd02a2.v1', workKey, entries: [entry] },
+      },
+    }
+  }
+
+  function runtimeReceipt(payload: Record<string, unknown>): string {
+    return JSON.stringify({
+      protocolVersion: 1,
+      messageId: randomUUID(),
+      sentAt: new Date().toISOString(),
+      type: 'runtime.work_input_receipt',
+      payload,
+    })
+  }
+
+  it('passes pinned inputs to runtime.initialize and forwards cumulative receipts', async () => {
+    const body = '预算口径：含税，单位万元。\n'
+    const entry = manifestEntry(body)
+    const entriesDir = join(root, 'runtime-work-inputs', RUN_ID)
+    await mkdir(entriesDir, { recursive: true })
+    await writeFile(join(entriesDir, itemId), body)
+    const store = new MemoryWorkInputReceiptStore()
+    const preparedCalls: Array<{ runId: string; workKey: string; digest: string }> = []
+    const cleaned: string[] = []
+    const h = await makeHarness({
+      managerDeps: {
+        prepareWorkInputs: async (
+          runId: string,
+          input: { manifestDigest: string; manifest: { workKey: string } },
+        ) => {
+          preparedCalls.push({
+            runId,
+            workKey: input.manifest.workKey,
+            digest: input.manifestDigest,
+          })
+          return { dir: entriesDir, workKey, manifestDigest, entries: [entry] }
+        },
+        cleanupWorkInputs: async (id: string) => {
+          cleaned.push(id)
+        },
+        workInputReceiptStore: store,
+      },
+    })
+    await h.manager.handleFrame(runStartFrame(h.workspaceId, workInputStart(entry)))
+
+    expect(preparedCalls).toEqual([{ runId: RUN_ID, workKey, digest: manifestDigest }])
+    const initialize = h.runtimes[0]!.stdin[0] as Extract<
+      RuntimeCommand,
+      { type: 'runtime.initialize' }
+    >
+    expect(initialize.payload.workInputs).toEqual({
+      workKey,
+      manifestDigest,
+      entries: [entry],
+      entriesDir,
+    })
+
+    h.runtimes[0]!.emitStdout(stdoutRuntimeReady(RUN_ID))
+    const at = new Date().toISOString()
+    // 清单外条目必须在 Node 侧过滤，绝不进入上行回执。
+    h.runtimes[0]!.emitStdout(
+      runtimeReceipt({
+        kind: 'delivered',
+        runId: RUN_ID,
+        workKey,
+        manifestDigest,
+        entriesDelivered: [itemId, unknownItemId],
+        at,
+      }),
+    )
+    h.runtimes[0]!.emitStdout(
+      runtimeReceipt({
+        kind: 'read',
+        runId: RUN_ID,
+        workKey,
+        manifestDigest,
+        inboxItemId: itemId,
+        digestVerified: true,
+        byteSize: entry.byteSize,
+        at,
+      }),
+    )
+
+    const receipts = h
+      .sentFrames()
+      .filter((frame) => frame.type === 'run.work_input_receipt')
+      .map((frame) => frame.payload)
+    expect(receipts).toHaveLength(2)
+    expect(receipts[0]).toMatchObject({
+      runId: RUN_ID,
+      workKey,
+      manifestDigest,
+      receiptSeq: 1,
+      entriesDelivered: [itemId],
+      entriesRead: [],
+      readEvents: [],
+      missing: [],
+      digestVerified: true,
+    })
+    expect(receipts[1]).toMatchObject({
+      receiptSeq: 2,
+      entriesDelivered: [itemId],
+      entriesRead: [itemId],
+      readEvents: [{ inboxItemId: itemId, digestVerified: true, byteSize: entry.byteSize, at }],
+      missing: [],
+      digestVerified: true,
+    })
+
+    h.runtimes[0]!.emitStdout(
+      JSON.stringify({
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: new Date().toISOString(),
+        type: 'run.completed',
+        payload: { runId: RUN_ID, dshSessionId: 'session-1' },
+      }),
+    )
+    await waitForValue(
+      () => (cleaned.includes(RUN_ID) ? true : undefined),
+      'run.completed 未在超时内触发 runtime-work-inputs 清理',
+    )
+  })
+
+  it('wraps receipt state, sequence and outbox in one store transaction', async () => {
+    const body = '# 输入\n'
+    const entry = manifestEntry(body)
+    const store = new RecordingWorkInputReceiptStore()
+    const h = await makeHarness({
+      managerDeps: {
+        prepareWorkInputs: async () => ({
+          dir: join(root, 'runtime-work-inputs', RUN_ID),
+          workKey,
+          manifestDigest,
+          entries: [entry],
+        }),
+        workInputReceiptStore: store,
+      },
+    })
+    await h.manager.handleFrame(runStartFrame(h.workspaceId, workInputStart(entry)))
+    h.runtimes[0]!.emitStdout(stdoutRuntimeReady(RUN_ID))
+    h.runtimes[0]!.emitStdout(
+      runtimeReceipt({
+        kind: 'delivered',
+        runId: RUN_ID,
+        workKey,
+        manifestDigest,
+        entriesDelivered: [itemId],
+        at: new Date().toISOString(),
+      }),
+    )
+    expect(store.transactions).toBe(1)
+    expect(h.sentFrames().filter((frame) => frame.type === 'run.work_input_receipt')).toHaveLength(
+      1,
+    )
+  })
+
+  it('drops a read receipt for an item outside the pinned manifest', async () => {
+    const body = '# 输入\n'
+    const entry = manifestEntry(body)
+    const logs: Array<{ level: string; msg: string; fields?: Record<string, unknown> }> = []
+    const h = await makeHarness({
+      logs,
+      managerDeps: {
+        prepareWorkInputs: async () => ({
+          dir: join(root, 'runtime-work-inputs', RUN_ID),
+          workKey,
+          manifestDigest,
+          entries: [entry],
+        }),
+      },
+    })
+    await h.manager.handleFrame(runStartFrame(h.workspaceId, workInputStart(entry)))
+    h.runtimes[0]!.emitStdout(stdoutRuntimeReady(RUN_ID))
+    h.runtimes[0]!.emitStdout(
+      runtimeReceipt({
+        kind: 'read',
+        runId: RUN_ID,
+        workKey,
+        manifestDigest,
+        inboxItemId: unknownItemId,
+        digestVerified: true,
+        byteSize: entry.byteSize,
+        at: new Date().toISOString(),
+      }),
+    )
+    expect(h.sentFrames().filter((frame) => frame.type === 'run.work_input_receipt')).toHaveLength(
+      0,
+    )
+    expect(
+      logs.some(
+        (log) =>
+          log.level === 'warn' &&
+          log.msg === 'work input read receipt for an unknown item dropped' &&
+          log.fields?.['component'] === 'node.work_input',
+      ),
+    ).toBe(true)
+  })
+
+  it('drops a receipt whose manifest identity does not match the prepared copy', async () => {
+    const entry = manifestEntry('# 输入\n')
+    const logs: Array<{ level: string; msg: string; fields?: Record<string, unknown> }> = []
+    const h = await makeHarness({
+      logs,
+      managerDeps: {
+        prepareWorkInputs: async () => ({
+          dir: join(root, 'runtime-work-inputs', RUN_ID),
+          workKey,
+          manifestDigest,
+          entries: [entry],
+        }),
+      },
+    })
+    await h.manager.handleFrame(runStartFrame(h.workspaceId, workInputStart(entry)))
+    h.runtimes[0]!.emitStdout(stdoutRuntimeReady(RUN_ID))
+    h.runtimes[0]!.emitStdout(
+      runtimeReceipt({
+        kind: 'delivered',
+        runId: RUN_ID,
+        workKey,
+        manifestDigest: 'c'.repeat(64),
+        entriesDelivered: [itemId],
+        at: new Date().toISOString(),
+      }),
+    )
+    expect(h.sentFrames().filter((frame) => frame.type === 'run.work_input_receipt')).toHaveLength(
+      0,
+    )
+    expect(
+      logs.some(
+        (log) =>
+          log.level === 'warn' &&
+          log.msg === 'work input receipt manifest mismatch dropped' &&
+          log.fields?.['component'] === 'node.work_input',
+      ),
+    ).toBe(true)
+  })
+
+  it('fails closed when run.start pins inputs but the node has no downloader', async () => {
+    const entry = manifestEntry('# 输入\n')
+    const h = await makeHarness()
+    await h.manager.handleFrame(runStartFrame(h.workspaceId, workInputStart(entry)))
+    expect(h.runtimes).toHaveLength(0)
+    const ack = h.sentFrames().find((frame) => frame.type === 'command.ack')
+    expect(ack?.payload['accepted']).toBe(false)
+    expect((ack?.payload['error'] as { code: string }).code).toBe('CONTEXT_UNAVAILABLE')
+  })
+
+  it('keeps receipts written while offline and replays them on reconnect', async () => {
+    const body = '# 输入\n'
+    const entry = manifestEntry(body)
+    const store = new MemoryWorkInputReceiptStore()
+    const h = await makeHarness({
+      managerDeps: {
+        prepareWorkInputs: async () => ({
+          dir: join(root, 'runtime-work-inputs', RUN_ID),
+          workKey,
+          manifestDigest,
+          entries: [entry],
+        }),
+        workInputReceiptStore: store,
+      },
+    })
+    await h.manager.handleFrame(runStartFrame(h.workspaceId, workInputStart(entry)))
+    h.runtimes[0]!.emitStdout(stdoutRuntimeReady(RUN_ID))
+    const at = new Date().toISOString()
+    h.runtimes[0]!.emitStdout(
+      runtimeReceipt({
+        kind: 'delivered',
+        runId: RUN_ID,
+        workKey,
+        manifestDigest,
+        entriesDelivered: [itemId],
+        at,
+      }),
+    )
+    expect(store.pending()).toHaveLength(0)
+
+    h.setOnline(false)
+    h.runtimes[0]!.emitStdout(
+      runtimeReceipt({
+        kind: 'read',
+        runId: RUN_ID,
+        workKey,
+        manifestDigest,
+        inboxItemId: itemId,
+        digestVerified: true,
+        byteSize: entry.byteSize,
+        at,
+      }),
+    )
+    expect(store.pending()).toHaveLength(1)
+    expect(h.sentFrames().filter((frame) => frame.type === 'run.work_input_receipt')).toHaveLength(
+      1,
+    )
+
+    h.setOnline(true)
+    h.manager.onReconnect()
+    const receipts = h
+      .sentFrames()
+      .filter((frame) => frame.type === 'run.work_input_receipt')
+      .map((frame) => frame.payload)
+    expect(receipts.map((receipt) => receipt['receiptSeq'])).toEqual([1, 2])
+    expect(receipts[1]).toMatchObject({ entriesRead: [itemId] })
+    expect(store.pending()).toHaveLength(0)
   })
 })

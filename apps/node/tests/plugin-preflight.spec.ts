@@ -562,7 +562,10 @@ async function makeRunHarness(preflight: PluginPackPreflight): Promise<{
     eventStore: new (await import('../src/spool/event-store.js')).EventStore(
       join(root, 'events.db'),
     ),
-    send: (frame) => sent.push(frame),
+    send: (frame) => {
+      sent.push(frame)
+      return true
+    },
     runtimeHomeFor: (runId) => {
       mkdirSync(join(root, 'runtime-home', runId), { recursive: true })
       return join(root, 'runtime-home', runId)

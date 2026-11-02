@@ -97,8 +97,8 @@ interface SocketLike {
 
 export function startDeviceSession(deps: DeviceSessionDeps): {
   stop: () => void
-  /** P1-13 上行帧出口：仅当前连接 OPEN 时写出，否则丢弃（持久事件仍在 spool）。 */
-  send: (frame: string) => void
+  /** P1-13 上行帧出口：仅当前连接 OPEN 时写出并返回 true，否则返回 false/丢弃。 */
+  send: (frame: string) => boolean
   /** #352：会话内刷新 hello（重算事实；与本次连接已发的一致时不发）；无活连接时是 no-op。 */
   refreshHello: () => void
 } {
@@ -335,7 +335,11 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
   return {
     /** P1-13 上行帧出口：仅当前连接 OPEN 时写出，否则丢弃（持久事件仍在 spool）。 */
     send: (frame: string) => {
-      if (current !== undefined && current.readyState === 1) current.send(frame)
+      if (current !== undefined && current.readyState === 1) {
+        current.send(frame)
+        return true
+      }
+      return false
     },
     /**
      * #352：**会话内刷新 hello**（重算事实）——本地 preflight 装/重建 pack 之后调用，

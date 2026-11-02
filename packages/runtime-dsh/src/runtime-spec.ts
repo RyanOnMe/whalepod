@@ -14,6 +14,7 @@ import type {
   RunProjectContextManifestEntry,
   RuntimeArtifactInput,
   RuntimeCommand,
+  WorkInputManifestEntry,
 } from '@whalepod/protocol'
 
 export interface RuntimeSpec {
@@ -67,6 +68,16 @@ export interface RuntimeSpec {
     readonly entries: readonly RunProjectContextManifestEntry[]
     readonly entriesDir: string
   }
+  /**
+   * ADR-0028 §3：工作输入清单 + 本地只读副本目录（本地绝对路径，红线同上）。
+   * 正文只经 read_work_input 读取，不进 executionContext。
+   */
+  readonly workInputs?: {
+    readonly workKey: string
+    readonly manifestDigest: string
+    readonly entries: readonly WorkInputManifestEntry[]
+    readonly entriesDir: string
+  }
 }
 
 type InitializeCommand = Extract<RuntimeCommand, { type: 'runtime.initialize' }>
@@ -82,6 +93,7 @@ export function runtimeSpecFromInitialize(command: InitializeCommand): RuntimeSp
     handoff,
     executionContext,
     projectContext,
+    workInputs,
     ...rest
   } = command.payload
   // exactOptionalPropertyTypes：zod 的 optional 产出 `number | undefined`，
@@ -97,6 +109,7 @@ export function runtimeSpecFromInitialize(command: InitializeCommand): RuntimeSp
     ...(handoff === undefined ? {} : { handoff }),
     ...(executionContext === undefined ? {} : { executionContext }),
     ...(projectContext === undefined ? {} : { projectContext }),
+    ...(workInputs === undefined ? {} : { workInputs }),
   }
 }
 

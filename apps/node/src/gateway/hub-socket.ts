@@ -5,12 +5,15 @@ import {
   NodeInventorySchema,
   parseNodeFrame,
   PROJECT_CONTEXT_CAPABILITY,
+  WORK_INPUT_CAPABILITY,
   ProtocolError,
   RunContextReceiptSchema,
+  RunWorkInputReceiptSchema,
   RunSnapshotSchema,
   type NodeDownstream,
   type ProjectedRunEvent,
   type RunContextReceipt,
+  type RunWorkInputReceipt,
   type RunSnapshot,
 } from '@whalepod/protocol'
 
@@ -104,7 +107,10 @@ export function helloFrame(deviceId: string, facts: HelloFacts): string {
       supportedProtocolVersions: [1],
       dshDistributionVersion: facts.dshDistributionVersion,
       pluginPackDigests: facts.pluginPackDigests,
-      contextCapabilities: facts.contextCapabilities ?? [PROJECT_CONTEXT_CAPABILITY],
+      contextCapabilities: facts.contextCapabilities ?? [
+        PROJECT_CONTEXT_CAPABILITY,
+        WORK_INPUT_CAPABILITY,
+      ],
     },
   })
 }
@@ -132,6 +138,16 @@ export function runContextReceiptFrame(receipt: RunContextReceipt): string {
     sentAt: new Date().toISOString(),
     type: 'run.context_receipt',
     payload: RunContextReceiptSchema.parse(receipt),
+  })
+}
+
+export function runWorkInputReceiptFrame(receipt: RunWorkInputReceipt): string {
+  return JSON.stringify({
+    protocolVersion: 1,
+    messageId: randomUUID(),
+    sentAt: new Date().toISOString(),
+    type: 'run.work_input_receipt',
+    payload: RunWorkInputReceiptSchema.parse(receipt),
   })
 }
 

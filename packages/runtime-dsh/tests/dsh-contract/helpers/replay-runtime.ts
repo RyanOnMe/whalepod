@@ -44,6 +44,9 @@ export type ReplayScenario =
   // ADR-0027（PC-05a）：read_project_context 正向读取与正文进入下一次模型请求。
   | 'read-project-context'
   | 'read-project-context-manifest'
+  // ADR-0028（RD-02a-2b）：read_work_input 正向/拒绝读取与正文进入下一次模型请求。
+  | 'read-work-input'
+  | 'read-work-input-manifest'
 
 const CONFIG_DIR = fileURLToPath(new URL('../../../config/', import.meta.url))
 const FIXTURES_DIR = fileURLToPath(new URL('../fixtures/', import.meta.url))
@@ -98,7 +101,7 @@ export function commandFrame<T extends RuntimeCommand['type']>(
 export function initializeCommand(spec: RuntimeSpec): RuntimeCommand {
   // RuntimeSpec 的 artifactInputs/projectContext.entries 是 readonly（spec 是只读事实），
   // wire 载荷要可变数组。先解构摘掉再放回副本，避免 readonly 与可变数组不兼容。
-  const { artifactInputs, projectContext, ...rest } = spec
+  const { artifactInputs, projectContext, workInputs, ...rest } = spec
   return commandFrame('runtime.initialize', {
     ...rest,
     ...(artifactInputs !== undefined ? { artifactInputs: [...artifactInputs] } : {}),
@@ -108,6 +111,14 @@ export function initializeCommand(spec: RuntimeSpec): RuntimeCommand {
           projectContext: {
             ...projectContext,
             entries: [...projectContext.entries],
+          },
+        }),
+    ...(workInputs === undefined
+      ? {}
+      : {
+          workInputs: {
+            ...workInputs,
+            entries: [...workInputs.entries],
           },
         }),
   })

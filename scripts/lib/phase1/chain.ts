@@ -373,7 +373,7 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
       for (const runId of supervisor.activeRunIds()) await supervisor.cancel(runId)
     })
 
-    let sessionSend: (frame: string) => void = () => {}
+    let sessionSend: (frame: string) => boolean = () => false
     // P1-15 缝（与 cli.ts 同配方）：候选采集上传 + Reviewer 输入准备/清理。
     // artifact 日志接观测缝（component=node.artifact），内容只有事实与计数。
     const artifactLog = (
@@ -411,7 +411,7 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
       eventStore,
       send: (frame) => {
         recordUplink(recorder, frame)
-        sessionSend(frame)
+        return sessionSend(frame)
       },
       runtimeHomeFor: (runId) => mktemp(`wp-chain-home-${runId.slice(0, 8)}-`),
       // 语料第 5 件（/Users/bob/...）依赖 homeDir 归约：固定注入，与本机真实 home 无关。

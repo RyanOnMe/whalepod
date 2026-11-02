@@ -1,12 +1,15 @@
 import {
+  boolean,
   char,
   check,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core'
@@ -73,6 +76,55 @@ export const workInboxDeliveries = pgTable(
   ],
 )
 
+export const runWorkInputReceipts = pgTable(
+  'run_work_input_receipt',
+  {
+    id: uuid('id').primaryKey(),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => runs.id),
+    workId: uuid('work_id')
+      .notNull()
+      .references(() => works.id),
+    workKey: varchar('work_key', { length: 64 }).notNull(),
+    manifestDigest: char('manifest_digest', { length: 64 }).notNull(),
+    receiptSeq: integer('receipt_seq').notNull(),
+    entriesDelivered: jsonb('entries_delivered')
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    entriesRead: jsonb('entries_read')
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    readEvents: jsonb('read_events')
+      .$type<Record<string, unknown>[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    missing: jsonb('missing')
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    digestVerified: boolean('digest_verified').notNull(),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check('run_work_input_receipt_seq_positive', sql`${table.receiptSeq} > 0`),
+    check('run_work_input_receipt_digest_format', sql`${table.manifestDigest} ~ '^[a-f0-9]{64}$'`),
+    check(
+      'run_work_input_receipt_arrays',
+      sql`jsonb_typeof(${table.entriesDelivered}) = 'array' and jsonb_typeof(${table.entriesRead}) = 'array' and jsonb_typeof(${table.readEvents}) = 'array' and jsonb_typeof(${table.missing}) = 'array'`,
+    ),
+    unique('run_work_input_receipt_seq_unique').on(
+      table.runId,
+      table.manifestDigest,
+      table.receiptSeq,
+    ),
+    index('run_work_input_receipt_run_seq_idx').on(table.runId, table.receiptSeq.desc()),
+  ],
+)
+
 export const workInputConsumptions = pgTable(
   'work_input_consumption',
   {
@@ -89,7 +141,7 @@ export const workInputConsumptions = pgTable(
       .references(() => runs.id),
     manifestDigest: char('manifest_digest', { length: 64 }).notNull(),
     kind: workInputConsumptionKind('kind').notNull(),
-    receiptId: uuid('receipt_id'),
+    receiptId: uuid('receipt_id').references(() => runWorkInputReceipts.id),
     readAt: timestamp('read_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -99,6 +151,7 @@ export const workInputConsumptions = pgTable(
       sql`${table.manifestDigest} ~ '^[a-f0-9]{64}$'`,
     ),
     index('work_input_consumption_run_idx').on(table.runId, table.kind),
+    uniqueIndex('work_input_consumption_run_item_unique').on(table.runId, table.inboxItemId),
   ],
 )
 
@@ -106,3 +159,5 @@ export type WorkInboxDeliveryRow = typeof workInboxDeliveries.$inferSelect
 export type NewWorkInboxDeliveryRow = typeof workInboxDeliveries.$inferInsert
 export type WorkInputConsumptionRow = typeof workInputConsumptions.$inferSelect
 export type NewWorkInputConsumptionRow = typeof workInputConsumptions.$inferInsert
+export type RunWorkInputReceiptRow = typeof runWorkInputReceipts.$inferSelect
+export type NewRunWorkInputReceiptRow = typeof runWorkInputReceipts.$inferInsert

@@ -1,0 +1,25 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a031",
+  "type": "run.work_input_receipt",
+  "sentAt": "2026-01-05T09:02:00Z",
+  "payload": {
+    "runId": "01905f7c-0000-7000-8000-000000000501",
+    "workKey": "01905f7c-0000-7000-8000-000000000502",
+    "manifestDigest": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+    "receiptSeq": 1,
+    "entriesDelivered": ["01905f7c-0000-7000-8000-000000000503"],
+    "entriesRead": ["01905f7c-0000-7000-8000-000000000503"],
+    "readEvents": [
+      {
+        "inboxItemId": "01905f7c-0000-7000-8000-000000000503",
+        "digestVerified": true,
+        "byteSize": 128,
+        "at": "2026-01-05T09:02:00Z"
+      }
+    ],
+    "missing": [],
+    "digestVerified": true,
+    "at": "2026-01-05T09:02:00Z"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a032",
+  "type": "runtime.work_input_receipt",
+  "sentAt": "2026-01-05T09:02:05Z",
+  "payload": {
+    "kind": "read",
+    "runId": "01905f7c-0000-7000-8000-000000000501",
+    "workKey": "01905f7c-0000-7000-8000-000000000502",
+    "manifestDigest": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+    "inboxItemId": "01905f7c-0000-7000-8000-000000000503",
+    "digestVerified": true,
+    "byteSize": 128,
+    "at": "2026-01-05T09:02:05Z"
+  }
+}

@@ -27,8 +27,11 @@ import type {
   ProjectedRunEvent,
   RunContextReceipt,
   RunStartProjectContext,
+  RunStartWorkInput,
+  RunWorkInputReceipt,
   RuntimeArtifactInput,
   RuntimeContextReceiptPayload,
+  RuntimeWorkInputReceiptPayload,
   RunSnapshot,
   RuntimeCommand,
   RuntimeOutput,
@@ -40,10 +43,14 @@ import {
   runEventFrame,
   runLiveDeltaFrame,
   runSnapshotFrame,
+  runWorkInputReceiptFrame,
 } from '../gateway/hub-socket.js'
 import type { ContextReceiptSeqStore } from '../context/receipt-seq-store.js'
 import { MemoryContextReceiptSeqStore } from '../context/receipt-seq-store.js'
 import type { PreparedProjectContext } from '../context/project-context.js'
+import type { PreparedWorkInputs } from '../work/work-input.js'
+import type { WorkInputReceiptStore } from '../work/receipt-store.js'
+import { MemoryWorkInputReceiptStore } from '../work/receipt-store.js'
 import { PluginPreflightError, type PreflightOutcome } from '../plugin/plugin-preflight.js'
 import { RunProjector, type ProjectionContext } from '../projection/projector.js'
 import type { CommandStore } from '../spool/command-store.js'
@@ -63,8 +70,8 @@ import {
 import type { RuntimeStartSpec } from '../runtime-driver.js'
 import type { WorkspaceRegistry } from '../workspace/registry.js'
 
-/** 上行帧出口：session 层注入；socket 非 OPEN 时由注入方丢弃（spool 仍持有）。 */
-export type UplinkSend = (frame: string) => void
+/** 上行帧出口：session 层注入；返回是否真正写出（false 时持久队列继续保留）。 */
+export type UplinkSend = (frame: string) => boolean
 
 export interface RunManagerTimers {
   readonly setTimeout: typeof setTimeout
@@ -121,6 +128,18 @@ export interface RunManagerDeps {
   ) => Promise<PreparedProjectContext>
   /** ADR-0027 §6：Run 终态/启动拒绝后的 runtime-context 副本清理（best-effort）。 */
   readonly cleanupProjectContext?: (runId: string) => Promise<void>
+  /**
+   * ADR-0028 §3：按 run.start 清单下载工作输入副本（digest/byteSize 校验）。
+   * 清单存在但本 Node 未装配时 fail-closed。
+   */
+  readonly prepareWorkInputs?: (
+    runId: string,
+    input: RunStartWorkInput,
+  ) => Promise<PreparedWorkInputs>
+  /** ADR-0028 §6：Run 终态/启动拒绝后的 runtime-work-inputs 副本清理。 */
+  readonly cleanupWorkInputs?: (runId: string) => Promise<void>
+  /** ADR-0028 §3：工作输入回执的持久累计/待发队列（生产 SQLite）。 */
+  readonly workInputReceiptStore?: WorkInputReceiptStore
   /** ADR-0027 §4：receiptSeq 持久计数（生产 SQLite；缺省内存实现）。 */
   readonly contextReceiptSeq?: ContextReceiptSeqStore
   /** P1-16：run.snapshot 的设备身份与 DSH 发行版版本（§2.6/§6.2）。 */
@@ -211,6 +230,9 @@ export class RunManager {
     }
   >()
   private readonly contextReceiptSeq: ContextReceiptSeqStore
+  /** runId → 已下载的工作输入副本与清单（本地回执的事实源）。 */
+  private readonly workInputs = new Map<string, PreparedWorkInputs>()
+  private readonly workInputReceiptStore: WorkInputReceiptStore
   /** runId → 取消升级状态。 */
   private readonly cancels = new Map<string, CancelEscalation>()
   /**
@@ -229,6 +251,7 @@ export class RunManager {
     this.termGraceMs = deps.cancelTermGraceMs ?? DEFAULT_CANCEL_TERM_GRACE_MS
     this.timers = deps.timers ?? { setTimeout, clearTimeout }
     this.contextReceiptSeq = deps.contextReceiptSeq ?? new MemoryContextReceiptSeqStore()
+    this.workInputReceiptStore = deps.workInputReceiptStore ?? new MemoryWorkInputReceiptStore()
     // P1-16：Supervisor 的裸事实在这里归因（exit-classifier），Run 终态只收敛一次。
     deps.supervisor.onRuntimeExit((event) =>
       this.handleRuntimeExit(event.runId, event.code, event.signal),
@@ -270,6 +293,8 @@ export class RunManager {
       this.deps.send(runSnapshotFrame(snapshot))
     }
     for (const runId of this.deps.eventStore.runIdsWithPending()) this.drainRun(runId)
+    // 断线期间未写出的工作输入回执：重连后补发（Hub 按 receiptSeq 幂等）。
+    this.drainWorkInputReceipts()
   }
 
   /** 心跳事实：activeRunIds + lastEventSeqByRun（03 §6.2）。 */
@@ -347,6 +372,18 @@ export class RunManager {
           nonceMatched: true,
         })
       }
+      // ADR-0028 §3：工作输入正文下载 + digest/byteSize 核对。清单存在但未装配
+      // 同样 fail-closed（绝不让 Runtime 在缺正文的情况下继续）。
+      let workInputs: PreparedWorkInputs | undefined
+      if (payload.workInput !== undefined) {
+        if (this.deps.prepareWorkInputs === undefined) {
+          const error = new Error('work input delivery is not configured on this node')
+          ;(error as Error & { code?: string }).code = 'CONTEXT_UNAVAILABLE'
+          throw error
+        }
+        workInputs = await this.deps.prepareWorkInputs(runId, payload.workInput)
+        this.workInputs.set(runId, workInputs)
+      }
       const projector = new RunProjector(this.projectionContext(runId, workspacePath))
       const spec: RuntimeStartSpec = {
         runId,
@@ -407,6 +444,16 @@ export class RunManager {
                   headerDigest: projectContext.headerDigest,
                   entries: [...projectContext.entries],
                   entriesDir: projectContext.dir,
+                },
+              }
+            : {}),
+          ...(workInputs !== undefined
+            ? {
+                workInputs: {
+                  workKey: workInputs.workKey,
+                  manifestDigest: workInputs.manifestDigest,
+                  entries: [...workInputs.entries],
+                  entriesDir: workInputs.dir,
                 },
               }
             : {}),
@@ -937,6 +984,11 @@ export class RunManager {
       this.handleContextReceipt(runId, frame.payload)
       return
     }
+    // ADR-0028 §3：工作输入回执走独立通道（不是产品事件）。
+    if (frame.type === 'runtime.work_input_receipt') {
+      this.handleWorkInputReceipt(runId, frame.payload)
+      return
+    }
     // P1-16：runtime.ready 事实入账（snapshot 的 dshSessionId/startedAt）。
     if (frame.type === 'runtime.ready') {
       // #288：ready 回声的 profileDigest 必须等于 run.start 固化的 Revision digest。
@@ -1257,12 +1309,119 @@ export class RunManager {
     })
   }
 
+  /**
+   * ADR-0028 §3：把 Runtime 的工作输入 delivered/read 回执累计成专用上行帧。
+   * 持久 store 先入队再发送；发送失败（断线）保留，重连后重放。
+   */
+  private handleWorkInputReceipt(runId: string, payload: RuntimeWorkInputReceiptPayload): void {
+    const prepared = this.workInputs.get(runId)
+    if (prepared === undefined) {
+      this.log('warn', 'work input receipt without prepared inputs dropped', {
+        component: 'node.work_input',
+        runId,
+      })
+      return
+    }
+    if (
+      payload.workKey !== prepared.workKey ||
+      payload.manifestDigest !== prepared.manifestDigest
+    ) {
+      this.log('warn', 'work input receipt manifest mismatch dropped', {
+        component: 'node.work_input',
+        runId,
+      })
+      return
+    }
+    const known = new Set(prepared.entries.map((entry) => entry.inboxItemId))
+    if (payload.kind === 'read' && !known.has(payload.inboxItemId)) {
+      this.log('warn', 'work input read receipt for an unknown item dropped', {
+        component: 'node.work_input',
+        runId,
+      })
+      return
+    }
+    // 状态累计、序号与 outbox 必须同一本地事务：进程在两步之间崩溃会留下
+    // 「读取已发生、回执从未入队」的永久缺口。
+    const receipt = this.workInputReceiptStore.transaction(() => {
+      if (payload.kind === 'delivered') {
+        this.workInputReceiptStore.addDelivered(
+          runId,
+          prepared.manifestDigest,
+          payload.entriesDelivered.filter((id) => known.has(id)),
+        )
+      } else {
+        this.workInputReceiptStore.addRead(runId, prepared.manifestDigest, payload.inboxItemId)
+      }
+      const snapshot = this.workInputReceiptStore.snapshot(runId, prepared.manifestDigest)
+      const built: RunWorkInputReceipt = {
+        runId,
+        workKey: prepared.workKey,
+        manifestDigest: prepared.manifestDigest,
+        receiptSeq: this.workInputReceiptStore.nextSeq(runId, prepared.manifestDigest),
+        entriesDelivered: [...snapshot.delivered].sort(),
+        entriesRead: [...snapshot.read].sort(),
+        readEvents:
+          payload.kind === 'read'
+            ? [
+                {
+                  inboxItemId: payload.inboxItemId,
+                  digestVerified: payload.digestVerified,
+                  byteSize: payload.byteSize,
+                  at: payload.at,
+                },
+              ]
+            : [],
+        missing: prepared.entries
+          .map((entry) => entry.inboxItemId)
+          .filter((id) => !snapshot.delivered.includes(id)),
+        digestVerified: payload.kind === 'read' ? payload.digestVerified : true,
+        at: payload.at,
+      }
+      this.workInputReceiptStore.enqueue(built)
+      return built
+    })
+    const sent = this.deps.send(runWorkInputReceiptFrame(receipt))
+    if (sent) {
+      this.workInputReceiptStore.removePending(
+        receipt.runId,
+        receipt.manifestDigest,
+        receipt.receiptSeq,
+      )
+    }
+    this.log(
+      sent ? 'info' : 'warn',
+      sent ? 'work input receipt forwarded' : 'work input receipt queued for reconnect',
+      {
+        component: 'node.work_input',
+        runId,
+        receiptSeq: receipt.receiptSeq,
+        delivered: receipt.entriesDelivered.length,
+        read: receipt.readEvents.length,
+      },
+    )
+  }
+
+  /** 重连后补发断线期间未成功写出的工作输入回执。 */
+  private drainWorkInputReceipts(): void {
+    for (const receipt of this.workInputReceiptStore.pending()) {
+      if (this.deps.send(runWorkInputReceiptFrame(receipt))) {
+        this.workInputReceiptStore.removePending(
+          receipt.runId,
+          receipt.manifestDigest,
+          receipt.receiptSeq,
+        )
+      }
+    }
+  }
+
   /** P1-15：输入副本清理（best-effort，失败只吞掉——不阻塞终态登记）。 */
   private cleanupInputs(runId: string): void {
     void this.deps.cleanupArtifactInputs?.(runId).catch(() => {})
     void this.deps.cleanupProjectContext?.(runId).catch(() => {})
+    void this.deps.cleanupWorkInputs?.(runId).catch(() => {})
     this.projectContexts.delete(runId)
     this.contextReceiptState.delete(runId)
+    this.workInputs.delete(runId)
   }
 
   // ---------- spool 与上行 ----------

@@ -15,7 +15,7 @@
  * 与本次连接已发事实一致时不发帧（本地命中的 Run 不该制造空转的 device.changed）。
  */
 import { join } from 'node:path'
-import { PROJECT_CONTEXT_CAPABILITY } from '@whalepod/protocol'
+import { PROJECT_CONTEXT_CAPABILITY, WORK_INPUT_CAPABILITY } from '@whalepod/protocol'
 import { CORE_EMPTY_PACK_DIGEST } from '../plugin/plugin-preflight.js'
 import { installedPackDigests } from '../plugin/runtime-config.js'
 import { probeDshDistributionVersion } from '../plugin/dsh-version-probe.js'
@@ -48,8 +48,8 @@ export function createHelloFacts(inputs: HelloFactsInputs): () => Promise<HelloF
     pluginPackDigests: installedPackDigests(join(inputs.stateDir, 'plugin-packs')),
     dshDistributionVersion:
       (await probe(inputs.runtimeEntry).catch(() => null)) ?? inputs.startupDshVersion,
-    // ADR-0027：本版本 Node 始终具备项目上下文交付与 read_project_context 能力。
-    contextCapabilities: [PROJECT_CONTEXT_CAPABILITY],
+    // ADR-0027/0028：本版本 Node 具备项目上下文与工作输入交付、Runtime 读取能力。
+    contextCapabilities: [PROJECT_CONTEXT_CAPABILITY, WORK_INPUT_CAPABILITY],
   })
 }
 

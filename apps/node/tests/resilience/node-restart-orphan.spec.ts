@@ -101,7 +101,10 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
       registry: registry1,
       commandStore: commandStore1,
       eventStore: eventStore1,
-      send: (frame) => sent1.push(frame),
+      send: (frame) => {
+        sent1.push(frame)
+        return true
+      },
       runtimeHomeFor: (runId) => join(root, 'runtime-home', runId),
       homeDir: '/Users/testhome',
       stateDir: root,
@@ -146,7 +149,9 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
       commandStore: commandStore2,
       eventStore: eventStore2,
       send: (frame) => {
-        if (online2) sent2.push(frame)
+        if (!online2) return false
+        sent2.push(frame)
+        return true
       },
       runtimeHomeFor: (runId) => join(root, 'runtime-home', runId),
       homeDir: '/Users/testhome',
@@ -225,7 +230,7 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
       registry: registry1,
       commandStore: commandStore1,
       eventStore: eventStore1,
-      send: () => {},
+      send: () => false,
       runtimeHomeFor: (runId) => join(root, 'runtime-home', runId),
       homeDir: '/Users/testhome',
       stateDir: root,
@@ -269,7 +274,9 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
       eventStore: eventStore2,
       send: (frame) => {
         attempts2.push(frame)
-        if (online2) sent2.push(frame)
+        if (!online2) return false
+        sent2.push(frame)
+        return true
       },
       runtimeHomeFor: (runId) => join(root, 'runtime-home', runId),
       homeDir: '/Users/testhome',

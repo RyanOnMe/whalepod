@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { workSourceMatchesItem } from '../src/modules/work/run-dispatch.js'
 
 // ADR-0028（RD-01/RD-02a）：工作与收件箱模块的架构边界。它不是运行时网络抓包，而是把
 // 「本切片不得调用模型/Node/Run/Outbox，也不得写业务事实」变成可机器判红的面：
@@ -130,5 +131,52 @@ describe('RD-02a-2a work input reconcile isolation', () => {
     // 创建事务内校验一次 + 两条回放路径（普通回执、活跃冲突回读）各复核一次。
     expect(orchestrator).toMatch(/input\.workInputItemIds !== undefined && right !== 'assignee'/)
     expect(orchestrator.match(/await this\.assertReplayAllowed\(/g)).toHaveLength(2)
+  })
+})
+
+describe('RD-02a-2b work input receipt lock order', () => {
+  it('takes the Work lock before inserting the receipt and before touching items', () => {
+    const source = readFileSync(join(WORK_MODULE_DIR, 'receipts.ts'), 'utf8')
+    const start = source.indexOf('export async function recordRunWorkInputReceipt')
+    expect(start).toBeGreaterThan(-1)
+    const end = source.indexOf('\n}\n', start)
+    expect(end).toBeGreaterThan(start)
+    const fn = source.slice(start, end)
+    const lockAt = fn.indexOf('getWorkByKeyForUpdate(tx, receipt.workKey)')
+    const insertAt = fn.indexOf('insertRunWorkInputReceiptIfAbsent(tx')
+    const itemAt = fn.indexOf('getWorkInboxItemForUpdate(tx, event.inboxItemId)')
+    expect(lockAt).toBeGreaterThan(-1)
+    expect(insertAt).toBeGreaterThan(lockAt)
+    expect(itemAt).toBeGreaterThan(insertAt)
+    // 回执正文/标题不得进入观测：store 只接受 id、计数与摘要字段。
+    expect(fn).not.toContain('body:')
+    expect(fn).not.toContain('title:')
+  })
+
+  it('logs invalid receipts locally instead of letting CONFLICT reach the socket', () => {
+    const repoRoot = fileURLToPath(new URL('../../..', import.meta.url))
+    const source = readFileSync(join(repoRoot, 'apps/hub/src/modules/run/orchestrator.ts'), 'utf8')
+    const start = source.indexOf('private async handleRunWorkInputReceipt')
+    expect(start).toBeGreaterThan(-1)
+    const end = source.indexOf('\n  }\n', start)
+    expect(end).toBeGreaterThan(start)
+    const handler = source.slice(start, end)
+    expect(handler).toContain("error instanceof RunCommandError && error.code === 'CONFLICT'")
+    expect(handler).toContain("this.contextLog('work.input_receipt_invalid'")
+    expect(handler).toContain('return')
+  })
+})
+
+describe('RD-02a-2b dispatch-time source identity', () => {
+  it('requires version, digest and authorization generation to all match', () => {
+    const item = {
+      sourceVersion: 'v1',
+      sourceDigest: 'a'.repeat(64),
+      authorizationGeneration: 'gen-1',
+    }
+    expect(workSourceMatchesItem({ ...item }, item)).toBe(true)
+    expect(workSourceMatchesItem({ ...item, sourceVersion: 'v2' }, item)).toBe(false)
+    expect(workSourceMatchesItem({ ...item, sourceDigest: 'b'.repeat(64) }, item)).toBe(false)
+    expect(workSourceMatchesItem({ ...item, authorizationGeneration: 'gen-2' }, item)).toBe(false)
   })
 })
