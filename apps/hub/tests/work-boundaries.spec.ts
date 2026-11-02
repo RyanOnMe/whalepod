@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-// ADR-0028（RD-01）：影子准入模块的架构边界。它不是运行时网络抓包，而是把
+// ADR-0028（RD-01/RD-02a）：工作与收件箱模块的架构边界。它不是运行时网络抓包，而是把
 // 「本切片不得调用模型/Node/Run/Outbox，也不得写业务事实」变成可机器判红的面：
 // 新增这类依赖会让本用例直接失败，必须在评审里显式改边界而不是悄悄带进来。
 const WORK_MODULE_DIR = fileURLToPath(new URL('../src/modules/work/', import.meta.url))
@@ -21,7 +21,7 @@ const FORBIDDEN_PATTERNS: ReadonlyArray<{ readonly name: string; readonly patter
   { name: 'network fetch', pattern: /\bfetch\s*\(/ },
 ]
 
-describe('RD-01 work module boundaries', () => {
+describe('ADR-0028 work module boundaries', () => {
   it('does not import model, runtime, Run/outbox or business writers', () => {
     const files = readdirSync(WORK_MODULE_DIR)
       .filter((name) => name.endsWith('.ts'))

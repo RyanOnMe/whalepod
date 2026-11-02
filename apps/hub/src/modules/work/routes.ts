@@ -12,9 +12,13 @@ import {
   type WorkRow,
 } from '@whalepod/db'
 import {
+  AssociateWorkInboxItemRequestSchema,
   CreateWorkMandateRequestSchema,
   CreateWorkRequestSchema,
   WorkAdmissionCheckRequestSchema,
+  WorkInboxItemActionRequestSchema,
+  WorkInboxItemReturnRequestSchema,
+  WorkInboxListQuerySchema,
   WorkMandateStatusChangeRequestSchema,
   type WorkMandateView,
 } from '@whalepod/protocol'
@@ -31,6 +35,14 @@ import {
   retireWork,
 } from './commands.js'
 import { checkWorkAdmission, refreshAdmissionResult } from './admission.js'
+import {
+  associateWorkInboxItem,
+  expireWorkInboxItem,
+  loadWorkInbox,
+  refreshWorkInboxItem,
+  retractWorkInboxItem,
+  returnWorkInboxItem,
+} from './inbox.js'
 import { loadWorkDetail, toWorkView } from './queries.js'
 
 export interface WorkRouteDeps {
@@ -204,6 +216,96 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
       )
       audit(request, `work.mandate.${mutation}`, 'success', session.userId)
       return { ok: true, data: view }
+    })
+  }
+
+  // POST /works/:workKey/inbox-items：显式关联来源；同一版本幂等，新版本替换 pending。
+  app.post('/works/:workKey/inbox-items', async (request, reply) => {
+    const session = await deps.requireActor(request)
+    const { workKey: rawWorkKey } = request.params as { workKey: string }
+    const workKey = parseUuid(rawWorkKey, 'work key')
+    const body = parseBody(AssociateWorkInboxItemRequestSchema, request.body)
+    const result = await mapWorkErrors(() =>
+      associateWorkInboxItem(
+        { database: deps.database, now: () => new Date() },
+        session.userId,
+        workKey,
+        body.sourceType,
+        body.sourceId,
+        readIdempotencyKey(request),
+      ),
+    )
+    const value = result.executed
+      ? result.value
+      : await refreshWorkInboxItem(deps.database, workKey, result.value.id)
+    audit(request, 'work.inbox.associate', 'success', session.userId)
+    return reply.code(201).send({ ok: true, data: value })
+  })
+
+  // GET /works/:workKey/inbox：assignee 读收件箱（可过滤状态）。
+  app.get('/works/:workKey/inbox', async (request) => {
+    const session = await deps.requireActor(request)
+    const { workKey: rawWorkKey } = request.params as { workKey: string }
+    const workKey = parseUuid(rawWorkKey, 'work key')
+    const query = parseBody(WorkInboxListQuerySchema, request.query)
+    const { work } = await loadAuthorizedWork(deps, session, workKey)
+    const view = await loadWorkInbox(deps.database, work, query)
+    return { ok: true, data: view }
+  })
+
+  // POST /works/:workKey/inbox-items/:itemId/return|retract|expire：显式生命周期迁移。
+  app.post('/works/:workKey/inbox-items/:itemId/return', async (request) => {
+    const session = await deps.requireActor(request)
+    const { workKey: rawWorkKey, itemId: rawItemId } = request.params as {
+      workKey: string
+      itemId: string
+    }
+    const workKey = parseUuid(rawWorkKey, 'work key')
+    const itemId = parseUuid(rawItemId, 'inbox item id')
+    const body = parseBody(WorkInboxItemReturnRequestSchema, request.body)
+    const result = await mapWorkErrors(() =>
+      returnWorkInboxItem(
+        { database: deps.database, now: () => new Date() },
+        session.userId,
+        workKey,
+        itemId,
+        body,
+        readIdempotencyKey(request),
+      ),
+    )
+    const value = result.executed
+      ? result.value
+      : await refreshWorkInboxItem(deps.database, workKey, itemId)
+    audit(request, 'work.inbox.return', 'success', session.userId)
+    return { ok: true, data: value }
+  })
+
+  for (const mutation of ['retract', 'expire'] as const) {
+    app.post(`/works/:workKey/inbox-items/:itemId/${mutation}`, async (request) => {
+      const session = await deps.requireActor(request)
+      const { workKey: rawWorkKey, itemId: rawItemId } = request.params as {
+        workKey: string
+        itemId: string
+      }
+      const workKey = parseUuid(rawWorkKey, 'work key')
+      const itemId = parseUuid(rawItemId, 'inbox item id')
+      const body = parseBody(WorkInboxItemActionRequestSchema, request.body ?? {})
+      const command = mutation === 'retract' ? retractWorkInboxItem : expireWorkInboxItem
+      const result = await mapWorkErrors(() =>
+        command(
+          { database: deps.database, now: () => new Date() },
+          session.userId,
+          workKey,
+          itemId,
+          body.reason,
+          readIdempotencyKey(request),
+        ),
+      )
+      const value = result.executed
+        ? result.value
+        : await refreshWorkInboxItem(deps.database, workKey, itemId)
+      audit(request, `work.inbox.${mutation}`, 'success', session.userId)
+      return { ok: true, data: value }
     })
   }
 

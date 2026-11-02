@@ -59,6 +59,11 @@ export type AuditAction =
   | 'work.mandate.resume'
   | 'work.mandate.revoke'
   | 'work.admission.check'
+  // ADR-0028（RD-02a-1）：工作收件箱的显式关联与生命周期（不记正文）。
+  | 'work.inbox.associate'
+  | 'work.inbox.return'
+  | 'work.inbox.retract'
+  | 'work.inbox.expire'
 
 export type AuditOutcome = 'success' | 'denied' | 'rate_limited'
 

@@ -1,0 +1,184 @@
+import { and, desc, eq, sql } from 'drizzle-orm'
+import type { DbHandle } from '../client.js'
+import {
+  workInboxItems,
+  type NewWorkInboxItemRow,
+  type WorkInboxItemRow,
+} from '../schema/work-inbox.js'
+
+export type { NewWorkInboxItemRow, WorkInboxItemRow } from '../schema/work-inbox.js'
+
+// ADR-0028（RD-02a-1）：收件箱条目的持久化原语。状态迁移与来源校验由 Hub 命令层裁决；
+// 同一身份/版本/摘要的唯一性由唯一索引兜底。
+
+export async function insertWorkInboxItem(
+  handle: DbHandle,
+  values: NewWorkInboxItemRow,
+): Promise<WorkInboxItemRow> {
+  const [row] = await handle.insert(workInboxItems).values(values).onConflictDoNothing().returning()
+  if (row === undefined) throw new Error('insert work inbox item returned no row')
+  return row
+}
+
+export async function getWorkInboxItem(
+  handle: DbHandle,
+  id: string,
+): Promise<WorkInboxItemRow | undefined> {
+  const [row] = await handle.select().from(workInboxItems).where(eq(workInboxItems.id, id)).limit(1)
+  return row
+}
+
+export async function getWorkInboxItemForUpdate(
+  handle: DbHandle,
+  id: string,
+): Promise<WorkInboxItemRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(workInboxItems)
+    .where(eq(workInboxItems.id, id))
+    .limit(1)
+    .for('update')
+  return row
+}
+
+export async function getWorkInboxItemByIdentity(
+  handle: DbHandle,
+  values: {
+    readonly workId: string
+    readonly sourceType: WorkInboxItemRow['sourceType']
+    readonly sourceId: string
+    readonly sourceVersion: string
+    readonly sourceDigest: string
+  },
+): Promise<WorkInboxItemRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(workInboxItems)
+    .where(
+      and(
+        eq(workInboxItems.workId, values.workId),
+        eq(workInboxItems.sourceType, values.sourceType),
+        eq(workInboxItems.sourceId, values.sourceId),
+        eq(workInboxItems.sourceVersion, values.sourceVersion),
+        eq(workInboxItems.sourceDigest, values.sourceDigest),
+      ),
+    )
+    .limit(1)
+  return row
+}
+
+export async function getLatestPendingInboxItemForSource(
+  handle: DbHandle,
+  workId: string,
+  sourceType: WorkInboxItemRow['sourceType'],
+  sourceId: string,
+): Promise<WorkInboxItemRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(workInboxItems)
+    .where(
+      and(
+        eq(workInboxItems.workId, workId),
+        eq(workInboxItems.sourceType, sourceType),
+        eq(workInboxItems.sourceId, sourceId),
+        eq(workInboxItems.status, 'pending'),
+      ),
+    )
+    .orderBy(desc(workInboxItems.createdAt), desc(workInboxItems.id))
+    .limit(1)
+  return row
+}
+
+/** 同一来源的新版本替换旧 pending；返回被替换的行（保留历史）。 */
+export async function supersedePendingInboxItems(
+  handle: DbHandle,
+  values: {
+    readonly workId: string
+    readonly sourceType: WorkInboxItemRow['sourceType']
+    readonly sourceId: string
+    readonly now: Date
+  },
+): Promise<WorkInboxItemRow[]> {
+  return handle
+    .update(workInboxItems)
+    .set({
+      status: 'superseded',
+      statusReason: 'new_version',
+      statusAt: values.now,
+      updatedAt: values.now,
+    })
+    .where(
+      and(
+        eq(workInboxItems.workId, values.workId),
+        eq(workInboxItems.sourceType, values.sourceType),
+        eq(workInboxItems.sourceId, values.sourceId),
+        eq(workInboxItems.status, 'pending'),
+      ),
+    )
+    .returning()
+}
+
+export interface WorkInboxItemPatch {
+  readonly status?: WorkInboxItemRow['status']
+  readonly statusReason?: string | null
+  readonly returnReason?: WorkInboxItemRow['returnReason']
+  readonly returnNote?: string | null
+  readonly statusAt?: Date
+  readonly updatedAt?: Date
+}
+
+export async function updateWorkInboxItem(
+  handle: DbHandle,
+  id: string,
+  patch: WorkInboxItemPatch,
+): Promise<WorkInboxItemRow | undefined> {
+  const [row] = await handle
+    .update(workInboxItems)
+    .set({ ...patch, updatedAt: patch.updatedAt ?? new Date() })
+    .where(eq(workInboxItems.id, id))
+    .returning()
+  return row
+}
+
+export async function getLatestWorkInboxItem(
+  handle: DbHandle,
+  workId: string,
+): Promise<WorkInboxItemRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(workInboxItems)
+    .where(eq(workInboxItems.workId, workId))
+    .orderBy(desc(workInboxItems.createdAt), desc(workInboxItems.id))
+    .limit(1)
+  return row
+}
+
+export async function listWorkInboxItems(
+  handle: DbHandle,
+  workId: string,
+  limit: number,
+  status?: WorkInboxItemRow['status'] | undefined,
+): Promise<WorkInboxItemRow[]> {
+  const where =
+    status === undefined
+      ? eq(workInboxItems.workId, workId)
+      : and(eq(workInboxItems.workId, workId), eq(workInboxItems.status, status))
+  return handle
+    .select()
+    .from(workInboxItems)
+    .where(where)
+    .orderBy(desc(workInboxItems.createdAt), desc(workInboxItems.id))
+    .limit(limit)
+}
+
+export async function countWorkInboxItems(
+  handle: DbHandle,
+  workId: string,
+  status: WorkInboxItemRow['status'],
+): Promise<number> {
+  const [row] = await handle
+    .select({ count: sql<number>`count(*)::int` })
+    .from(workInboxItems)
+    .where(and(eq(workInboxItems.workId, workId), eq(workInboxItems.status, status)))
+  return row?.count ?? 0
+}

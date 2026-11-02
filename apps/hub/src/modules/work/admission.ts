@@ -8,17 +8,13 @@ import {
   getRouterDecisionById,
   getRouterDecisionBySource,
   getRun,
-  getTaskForUpdate,
   getTaskMessage,
   getTeam,
-  getWorkByKey,
-  getWorkByKeyForUpdate,
   insertDispatchIntent,
   insertRouterDecision,
   transactCommandWithOrigin,
   type Database,
   type RouterDecisionRow,
-  type TaskRow,
   type Tx,
   type WorkMandateRow,
   type WorkRow,
@@ -27,6 +23,7 @@ import type { RouterDecisionKind, WorkSourceType } from '@whalepod/protocol'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
 import { canonicalJson, sha256Hex } from '../coordination/digest.js'
+import { lockWorkContext, requireAssignee } from './context.js'
 import { toDispatchIntentView, toWorkDecisionView } from './queries.js'
 
 // ADR-0028 §4（RD-01 影子版）：入口程序准入。只处理可验证事实；所有「是否相关」的
@@ -53,6 +50,9 @@ export interface AdmissionSource {
   readonly sourceDigest: string
   readonly authorizationGeneration: string
   readonly sourceKind: string
+  /** 私有的正文快照；只进收件箱，不进公开投影。 */
+  readonly title: string
+  readonly body: string
   /** 已能确定必须忽略时的原因；仍待语义判断时为 undefined。 */
   readonly ignored?: {
     readonly reason: WorkIgnoreReason
@@ -61,35 +61,6 @@ export interface AdmissionSource {
   }
   /** 仅用于读面定位，不复制正文。 */
   readonly refs: Record<string, unknown>
-}
-
-interface LockedWork {
-  readonly work: WorkRow
-  readonly task: TaskRow
-}
-
-async function lockWorkContext(tx: Tx, workKey: string): Promise<LockedWork> {
-  const snapshot = await getWorkByKey(tx, workKey)
-  if (snapshot === undefined) throw new ApiError(404, 'NOT_FOUND', 'work not found')
-  // 与写命令相同的锁序：先 Task 后 Work。
-  const task = await getTaskForUpdate(tx, snapshot.taskId)
-  if (task === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
-  const work = await getWorkByKeyForUpdate(tx, workKey)
-  if (work === undefined) throw new ApiError(404, 'NOT_FOUND', 'work not found')
-  if (work.taskId !== task.id) {
-    throw new ApiError(500, 'INTERNAL_ERROR', 'work and task are inconsistent')
-  }
-  return { work, task }
-}
-
-async function requireAssignee(tx: Tx, task: TaskRow, actorUserId: string): Promise<void> {
-  if (task.assigneeUserId !== actorUserId) {
-    throw new ApiError(403, 'FORBIDDEN', 'only the task assignee can trigger admission')
-  }
-  const team = await getTeam(tx)
-  if (team === undefined) throw new ApiError(500, 'INTERNAL_ERROR', 'team not initialized')
-  const member = await getEnabledMember(tx, team.id, actorUserId)
-  if (member === undefined) throw new ApiError(403, 'FORBIDDEN', 'actor is not an active member')
 }
 
 function parseBusinessId(value: string | null): string | undefined {
@@ -160,6 +131,8 @@ async function loadTaskMessageSource(
     sourceDigest,
     authorizationGeneration: 'member',
     sourceKind: message.kind,
+    title: 'Task 讨论消息',
+    body: message.body,
     ...(ignored === undefined ? {} : { ignored }),
     refs: { messageKind: message.kind },
   }
@@ -257,9 +230,23 @@ async function loadContextEntrySource(
     sourceDigest,
     authorizationGeneration: entry.sourceId === null ? 'internal' : 'source.unverified',
     sourceKind: entry.kind,
+    title: entry.title,
+    body: entry.body,
     ...(ignored === undefined ? {} : { ignored }),
     refs,
   }
+}
+
+/** 收件箱与准入共用同一份来源校验；调用方负责已锁定的 work。 */
+export async function loadWorkSource(
+  tx: Tx,
+  work: WorkRow,
+  sourceType: WorkSourceType,
+  sourceId: string,
+): Promise<AdmissionSource> {
+  return sourceType === 'task_message'
+    ? loadTaskMessageSource(tx, work, sourceId)
+    : loadContextEntrySource(tx, work, sourceId)
 }
 
 export interface AdmissionCheckInput {
@@ -315,10 +302,7 @@ export async function checkWorkAdmission(
     async (tx) => {
       const { work, task } = await lockWorkContext(tx, workKey)
       await requireAssignee(tx, task, actorUserId)
-      const source =
-        input.sourceType === 'task_message'
-          ? await loadTaskMessageSource(tx, work, input.sourceId)
-          : await loadContextEntrySource(tx, work, input.sourceId)
+      const source = await loadWorkSource(tx, work, input.sourceType, input.sourceId)
 
       // 同一来源版本只裁决一次由 router_decision 唯一索引兜底；并发/重复插入
       // 走 insertRouterDecision 的 onConflictDoNothing + 回读既有决定。
