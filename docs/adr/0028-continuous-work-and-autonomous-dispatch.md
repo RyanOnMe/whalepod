@@ -1,7 +1,8 @@
 # ADR-0028：持续工作承接、工作收件箱与受授权的自主派工
 
-- 状态：提案（Proposed，2026-11-02；提案 #480）。**采纳前不实现、不启用**；RD-01～03 是拟议切片，尚未登记为 GitHub Issue。
-- 技术基线：`93f41e9`（PC-03a/04a/05a 已合入）。
+- 状态：已采纳（Accepted，2026-11-02；原提案 #480，2026-11-02）。RD-01/02a/02b/03 按后续 Issue 交付；**自动创建 Task/约定/新工作、同一活跃 Run 动态注入、跨成员委托仍不在本 ADR**，须另立 ADR。RD-03 的真实执行仍以 PC-05b 的撤权/回执恢复/清理完成为前置。
+- 采纳说明：本 ADR 只授权既有 Task 与既有订阅之上的持续工作承接、收件箱、快慢路径、Router 决定、Mandate 与受控草稿执行；`autoDispatch` 默认关闭，`full_access` 不得用于自主 Run，固定草稿工具面外的工具不可用。M1R-A 不能代替 M1R-B；未登记/未完成的切片不据本 ADR 声称已交付。
+- 技术基线：`07db6e3`（含 ADR-0028 提案合入；PC-03a/04a/05a 已合入）。
 - 承接：[阶段计划](../agent/2026-10-30-project-context-coordination-plan.md) §1–§3、§5；[Router 与 Executor 持续协作方案](../agent/2026-11-02-router-executor-autonomous-dispatch-plan.md)（讨论稿）。
 - 既有决定：ADR-0009、ADR-0010、ADR-0013、ADR-0015、ADR-0016、ADR-0017、ADR-0024、ADR-0025、ADR-0026、ADR-0027。
 - **本 ADR 的边界**：只决定「既有 Task/既有订阅之上的持续工作承接、收件箱、快慢路径、Router 决定、Mandate 与受控草稿执行」；**不授权自动创建 Task/约定，不授权新工作自动立项，不授权同一活跃 Run 的动态注入**。这三项分别需要后续 ADR；本 ADR 的 M1R-A 不能代替 M1R-B 或完整产品目标。
