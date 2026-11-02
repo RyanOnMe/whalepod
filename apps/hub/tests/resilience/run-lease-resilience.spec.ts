@@ -24,6 +24,7 @@ import {
   seedRunPrereqs,
   type SeedIds,
 } from '../helpers.js'
+import type { ContextEntryObserver } from '../../src/modules/context/observer.js'
 
 let database: Database
 let ids: SeedIds
@@ -40,8 +41,8 @@ afterAll(async () => {
 })
 
 /** 建一条 Run 并推进到 dispatching（ack 已回），设备租约刚刷新。 */
-async function dispatchingRun() {
-  const harness = makeHarness(database)
+async function dispatchingRun(log?: ContextEntryObserver) {
+  const harness = makeHarness(database, {}, log === undefined ? {} : { log })
   const run = await harness.orchestrator.create(
     makeActor(ids.userId),
     ids.taskId,
@@ -138,8 +139,9 @@ describe('R4: 10s disconnect must not mark the run lost', () => {
 })
 
 describe('R5: >30s lease expiry marks lost; reconnect never revives terminal', () => {
-  it('marks the run lost(RUNTIME_LOST) after 31s of silence', async () => {
-    const { harness, run } = await dispatchingRun()
+  it('marks the run lost(RUNTIME_LOST) after 31s of silence and emits entry_recorded', async () => {
+    const observed: Array<{ kind: string; businessRef: string }> = []
+    const { harness, run } = await dispatchingRun((event) => observed.push(event))
 
     harness.clock.advance(31_000)
     await harness.orchestrator.reconcileLeases(harness.clock.now())
@@ -148,6 +150,10 @@ describe('R5: >30s lease expiry marks lost; reconnect never revives terminal', (
     expect(lost?.status).toBe('lost')
     expect(lost?.failureCode).toBe('RUNTIME_LOST')
     expect(lost?.finishedAt).not.toBeNull()
+    // 组合根 reconciler 路径同样要在提交后发 context.entry_recorded（评审 B2）。
+    expect(observed).toContainEqual(
+      expect.objectContaining({ kind: 'observation', businessRef: `run:${run.id}` }),
+    )
     const events = await listTeamEvents(database.db)
     expect(
       events.some(

@@ -25,6 +25,7 @@ import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
 import { toCommentView, toTaskView } from './queries.js'
 import type { CommentView, TaskView } from './queries.js'
+import type { ContextEntryObserver, RecordedContextEntry } from '../context/observer.js'
 
 function assertAuthorized(
   actor: Actor,
@@ -352,8 +353,10 @@ export async function cancelTask(
   outbox: Outbox,
   actor: Actor,
   taskId: string,
+  observe?: ContextEntryObserver,
 ): Promise<TaskView> {
-  return database.transaction(async (tx) => {
+  const recorded: RecordedContextEntry[] = []
+  const view = await database.transaction(async (tx) => {
     const task = await lockTask(tx, taskId)
     assertAuthorized(actor, 'cancel_task', {
       assigneeUserId: asUserId(task.assigneeUserId),
@@ -369,13 +372,15 @@ export async function cancelTask(
         .where(eq(schema.runs.id, run.id))
         .for('update')
       if (locked === undefined) continue
-      await cancelRunInTransaction(tx, { outbox, now }, locked, 'user')
+      await cancelRunInTransaction(tx, { outbox, now, recorded }, locked, 'user')
     }
     const updated = await setTaskStatus(tx, taskId, 'cancelled', now)
     if (updated === undefined) throw new Error('task vanished in its own transaction')
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
     return toTaskView(updated)
   })
+  for (const event of recorded) observe?.(event)
+  return view
 }
 
 export interface AddCommentInput {

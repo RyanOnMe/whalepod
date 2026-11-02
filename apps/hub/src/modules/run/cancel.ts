@@ -20,11 +20,15 @@ import {
   setApprovalStatus,
   setRunStatus,
 } from '@whalepod/db'
+import { applyRunStatus } from './run-status.js'
+import type { RecordedContextEntry } from '../context/observer.js'
 import { RunCancelSchema } from '@whalepod/protocol'
 
 export interface CancelRunDeps {
   readonly outbox: Outbox
   readonly now: Date
+  /** 终态取消投影 Observation 的收集器；调用方在事务提交后写观测日志。 */
+  readonly recorded?: RecordedContextEntry[]
 }
 
 /**
@@ -49,7 +53,14 @@ export async function cancelRunInTransaction(
     })) {
       await failInTransaction(tx, pending.id, deps.now)
     }
-    await setRunStatus(tx, run.id, 'cancelled', { finishedAt: deps.now })
+    await applyRunStatus(
+      tx,
+      deps.outbox,
+      run.id,
+      'cancelled',
+      { finishedAt: deps.now },
+      deps.recorded,
+    )
     await appendTeamEvent(tx, {
       type: 'run.changed',
       payload: { runId: run.id, taskId: run.taskId, status: 'cancelled' },

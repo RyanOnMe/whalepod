@@ -217,6 +217,24 @@ describe('handoff delivery & receipt (#380)', () => {
       { understanding: '按接口文字实现', differences: '暂不做分页' },
       idemKey(),
     )
+    // ADR-0025：交接接收确认在业务事务内投影为 Decision。
+    const decisions = await database.db
+      .select()
+      .from(schema.contextEntries)
+      .where(
+        eq(
+          schema.contextEntries.businessRef,
+          `handoffReceipt:${ids.taskId}:${pending.downstreamTaskId}`,
+        ),
+      )
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]).toMatchObject({
+      kind: 'decision',
+      status: 'active',
+      actorKind: 'member',
+      createdBy: receiver.userId,
+    })
+    expect(decisions[0]?.body).toContain('按接口文字实现')
     await acceptAssignment(database, makeActor(receiver.userId), pending.downstreamTaskId)
     const created = await harness.orchestrator.create(
       makeActor(receiver.userId),
@@ -903,6 +921,23 @@ describe('handoff delivery & receipt (#380)', () => {
     expect(adopted.revisionId).toBe(publishedV2.revision.id)
     expect(adopted.revisionNumber).toBe(2)
     expect(adopted.status).toBe('confirmed')
+    // ADR-0025：adopt 也是同一交接谱系的新理解——旧 Decision superseded，只剩一条 active。
+    const lineage = await database.db
+      .select()
+      .from(schema.contextEntries)
+      .where(
+        eq(
+          schema.contextEntries.businessRef,
+          `handoffReceipt:${ids.taskId}:${pending.downstreamTaskId}`,
+        ),
+      )
+    expect(lineage).toHaveLength(2)
+    const activeLineage = lineage.filter((row) => row.status === 'active')
+    const supersededLineage = lineage.filter((row) => row.status === 'superseded')
+    expect(activeLineage).toHaveLength(1)
+    expect(activeLineage[0]?.body).toContain('v2 的新打算：先对齐字段')
+    expect(supersededLineage).toHaveLength(1)
+    expect(supersededLineage[0]?.body).toContain('v1 的理解')
     // 重复采用（同 key 重放 + 新 key 第二次）都收敛到同一条；**且不是状态迁移**：
     // 差异消息不重复发（评审 m4 的 adopt 半边）、task.changed 也不重复发（复核同口径）。
     const replay = await adoptReceipt(

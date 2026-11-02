@@ -31,11 +31,15 @@ import {
   nextSpecRevisionNumber,
   schema,
   transactCommand,
+  transactCommandWithOrigin,
   updateSpecDraftContentCas,
 } from '@whalepod/db'
 import { TASK_AGREEMENT_HISTORY_LIMIT } from '@whalepod/protocol'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
+import { projectDecision } from '../context/projector.js'
+import { toRecordedEntry } from '../context/observer.js'
+import type { ContextEntryObserver, RecordedContextEntry } from '../context/observer.js'
 import type { TaskAgreementView, TaskSpecRevisionView } from '@whalepod/protocol'
 
 export function toSpecRevisionView(row: TaskSpecRevisionRow): TaskSpecRevisionView {
@@ -158,37 +162,70 @@ export async function confirmAgreement(
   taskId: string,
   input: ConfirmAgreementInput,
   idempotencyKey: string,
+  observe?: ContextEntryObserver,
 ): Promise<TaskSpecRevisionView> {
   taskId = taskId.toLowerCase()
-  return transactCommand(database, `agreement.confirm:${idempotencyKey}`, async (tx) => {
-    const task = await lockTask(tx, taskId)
-    if (task.assigneeUserId !== actor.userId) {
-      throw new ApiError(403, 'FORBIDDEN', 'only the task assignee can confirm the agreement')
-    }
-    const draft = await getOpenSpecDraft(tx, taskId)
-    if (draft === undefined) {
-      throw new ApiError(409, 'CONFLICT', '没有待确认的约定草稿（可能已确认或已丢弃）')
-    }
-    if (draft.draftVersion !== input.draftVersion) {
-      throw new ApiError(409, 'CONFLICT', '约定草稿已更新；请刷新后重新确认')
-    }
-    const content = TaskSpecContentSchema.parse(draft.content)
-    if (content.goal.trim() === '') {
-      throw new ApiError(400, 'VALIDATION_FAILED', '任务约定的「目标」不能为空，先补全再确认')
-    }
-    // 状态边单点校验（对 draft 应用 confirm）；表外状态在此响。
-    transitionTaskSpecRevision({ status: draft.status }, { type: 'confirm' })
-    const revisionNumber = await nextSpecRevisionNumber(tx, taskId)
-    const row = await confirmSpecDraftCas(tx, draft.id, revisionNumber, actor.userId, new Date())
-    if (row === undefined) {
-      throw new ApiError(409, 'CONFLICT', '约定草稿状态已变化；请刷新后重试')
-    }
-    await appendTeamEvent(tx, {
-      type: 'task.changed',
-      payload: await taskChangedPayloadFor(tx, taskId),
-    })
-    return toSpecRevisionView(row)
-  })
+  let recorded: RecordedContextEntry | undefined
+  const outcome = await transactCommandWithOrigin(
+    database,
+    `agreement.confirm:${idempotencyKey}`,
+    async (tx) => {
+      const task = await lockTask(tx, taskId)
+      if (task.assigneeUserId !== actor.userId) {
+        throw new ApiError(403, 'FORBIDDEN', 'only the task assignee can confirm the agreement')
+      }
+      const draft = await getOpenSpecDraft(tx, taskId)
+      if (draft === undefined) {
+        throw new ApiError(409, 'CONFLICT', '没有待确认的约定草稿（可能已确认或已丢弃）')
+      }
+      if (draft.draftVersion !== input.draftVersion) {
+        throw new ApiError(409, 'CONFLICT', '约定草稿已更新；请刷新后重新确认')
+      }
+      const content = TaskSpecContentSchema.parse(draft.content)
+      if (content.goal.trim() === '') {
+        throw new ApiError(400, 'VALIDATION_FAILED', '任务约定的「目标」不能为空，先补全再确认')
+      }
+      // 状态边单点校验（对 draft 应用 confirm）；表外状态在此响。
+      transitionTaskSpecRevision({ status: draft.status }, { type: 'confirm' })
+      const revisionNumber = await nextSpecRevisionNumber(tx, taskId)
+      const row = await confirmSpecDraftCas(tx, draft.id, revisionNumber, actor.userId, new Date())
+      if (row === undefined) {
+        throw new ApiError(409, 'CONFLICT', '约定草稿状态已变化；请刷新后重试')
+      }
+      // ADR-0025 §1：Decision 是既有业务事实的投影，与确认同事务；actor 恒为成员。
+      // businessRef 指向 Task 这个业务对象，businessVersion 才区分具体确认版本；
+      // 这样新版本确认时旧 active 行才会按业务版本前进标 superseded。
+      const occurredAt = row.confirmedAt ?? new Date()
+      const decision = await projectDecision(tx, {
+        projectId: task.projectId,
+        businessRef: `taskSpec:${taskId}`,
+        businessVersion: `${row.id}:${row.revisionNumber}`,
+        title: `任务约定 v${row.revisionNumber}：${task.title}`,
+        body: [
+          `目标：${content.goal}`,
+          `约束：${content.constraints}`,
+          `验收：${content.acceptance}`,
+          `待确认：${content.openQuestions}`,
+        ].join('\n'),
+        occurredAt,
+        actorUserId: actor.userId,
+        payload: {
+          taskId,
+          specRevisionId: row.id,
+          revisionNumber: row.revisionNumber,
+        },
+      })
+      if (decision.inserted) recorded = toRecordedEntry(decision.row, occurredAt)
+      await appendTeamEvent(tx, {
+        type: 'task.changed',
+        payload: await taskChangedPayloadFor(tx, taskId),
+      })
+      return toSpecRevisionView(row)
+    },
+  )
+  // 只在本次真的提交时写观测日志：重放/并发败者不能留下指向已回滚行的记录。
+  if (outcome.executed && recorded !== undefined) observe?.(recorded)
+  return outcome.value
 }
 
 /** 丢弃开放草稿（责任人或被记录的作者）；confirmed 不可删。幂等：无草稿返回 discarded=false。 */

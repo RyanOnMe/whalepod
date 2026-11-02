@@ -27,9 +27,15 @@ import type { Outbox, RunRow, Tx } from '@whalepod/db'
 import { schema, setRunStatus, TERMINAL_RUN_STATUSES } from '@whalepod/db'
 import type { RunStatusPatch } from '@whalepod/db'
 import { dispatchPendingInstructions } from './followup.js'
+import { projectObservation } from '../context/projector.js'
+import { toRecordedEntry } from '../context/observer.js'
+import type { RecordedContextEntry } from '../context/observer.js'
 
 /**
  * 迁移 Run 状态；若迁移的结果是 `running`，在同一事务里放行该 Run 上排队的追问。
+ *
+ * `recorded` 是调用方在事务提交后写观测日志的容器：函数只把新投影的 Observation
+ * 放进去，**不在这里写日志**——回滚的事务不能留下指向不存在 entry 的观测行。
  *
  * 返回值与 `setRunStatus` 一致（Run 不存在时 undefined）。
  */
@@ -39,6 +45,7 @@ export async function applyRunStatus(
   runId: string,
   status: RunRow['status'],
   patch: RunStatusPatch = {},
+  recorded?: RecordedContextEntry[],
 ): Promise<RunRow | undefined> {
   const current = await tx
     .select({ status: schema.runs.status })
@@ -56,6 +63,30 @@ export async function applyRunStatus(
     // 幂等（补发器以 outbox.message_id 判重），所以「多调一次」是安全的，
     // 而「漏调一次」会让指令永久停在 pending —— 这就是收口的价值。
     await dispatchPendingInstructions(tx, outbox, row)
+  }
+  if (row !== undefined && TERMINAL_RUN_STATUSES.has(status)) {
+    // ADR-0025 §1：Run 终态是确定性业务 Observation，与状态迁移同事务；
+    // businessVersion=status 让同状态重复收敛保持幂等。
+    const [task] = await tx
+      .select({ projectId: schema.tasks.projectId, title: schema.tasks.title })
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, row.taskId))
+    if (task !== undefined) {
+      const occurredAt = row.finishedAt ?? new Date()
+      const observation = await projectObservation(tx, {
+        projectId: task.projectId,
+        businessRef: `run:${row.id}`,
+        businessVersion: status,
+        title: `Run ${status}：${task.title}`,
+        body: `Run ${row.id} 进入终态 ${status}。`,
+        occurredAt,
+        payload: { runId: row.id, taskId: row.taskId, status },
+      })
+      if (observation.inserted) {
+        const event = toRecordedEntry(observation.row, occurredAt)
+        if (event !== undefined) recorded?.push(event)
+      }
+    }
   }
   return row
 }

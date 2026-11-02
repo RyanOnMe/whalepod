@@ -12,6 +12,9 @@ import { appendTeamEvent, getArtifact, schema, setArtifactStatus } from '@whalep
 import type { Database, Tx } from '@whalepod/db'
 import type { ArtifactRow } from '@whalepod/db'
 import { ApiError } from '../shared/http-error.js'
+import { projectDecision } from '../context/projector.js'
+import { toRecordedEntry } from '../context/observer.js'
+import type { ContextEntryObserver, RecordedContextEntry } from '../context/observer.js'
 
 export interface PublishArtifactInput {
   readonly artifactId: string
@@ -22,8 +25,10 @@ export interface PublishArtifactInput {
 export async function publishArtifact(
   database: Database,
   input: PublishArtifactInput,
+  observe?: ContextEntryObserver,
 ): Promise<ArtifactRow> {
-  return database.transaction(async (tx: Tx) => {
+  let recorded: RecordedContextEntry | undefined
+  const published = await database.transaction(async (tx: Tx) => {
     const [row] = await tx
       .select()
       .from(schema.artifacts)
@@ -43,6 +48,23 @@ export async function publishArtifact(
     transitionArtifact({ status: row.status }, { type: 'publish' })
     const updated = await setArtifactStatus(tx, row.id, 'published', new Date())
     if (updated === undefined) throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
+    const [task] = await tx
+      .select({ projectId: schema.tasks.projectId })
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, updated.taskId))
+    if (task === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
+    const occurredAt = updated.publishedAt ?? new Date()
+    const decision = await projectDecision(tx, {
+      projectId: task.projectId,
+      businessRef: `artifact:${updated.id}`,
+      businessVersion: occurredAt.toISOString(),
+      title: `成果发布：${updated.title}`,
+      body: `已发布 ${updated.mediaType}（${updated.byteSize} 字节）`,
+      occurredAt,
+      actorUserId: input.actorUserId,
+      payload: { taskId: updated.taskId, runId: updated.runId, artifactId: updated.id },
+    })
+    if (decision.inserted) recorded = toRecordedEntry(decision.row, occurredAt)
     await appendTeamEvent(tx, {
       type: 'artifact.changed',
       payload: {
@@ -54,6 +76,9 @@ export async function publishArtifact(
     })
     return updated
   })
+  // 事务提交后才有资格写观测：回滚的发布不能留下 entry_recorded。
+  if (recorded !== undefined) observe?.(recorded)
+  return published
 }
 
 /** 元数据守卫视图（下载/manifest 共用）：不存在的行折叠成同一 404。 */

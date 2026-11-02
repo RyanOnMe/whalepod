@@ -41,6 +41,7 @@ import { authenticateDevice } from '../plugin/pack-resolver.js'
 import type { RequireActor } from '../auth/session.js'
 import { readIdempotencyKey } from '../auth/idempotency.js'
 import { audit } from '../shared/audit.js'
+import { logRecordedEntry } from '../context/observer.js'
 import { ApiError } from '../shared/http-error.js'
 import { publishArtifact, requireArtifactRow } from './commands.js'
 import {
@@ -342,11 +343,15 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
     artifact.post('/artifacts/:artifactId/publish', async (request, reply) => {
       const session = await deps.requireActor(request)
       const { artifactId } = request.params as { artifactId: string }
-      const row = await publishArtifact(deps.database, {
-        artifactId,
-        actorUserId: session.userId,
-        actorRole: session.role,
-      })
+      const row = await publishArtifact(
+        deps.database,
+        {
+          artifactId,
+          actorUserId: session.userId,
+          actorRole: session.role,
+        },
+        (event) => logRecordedEntry(request.log, event),
+      )
       audit(request, 'artifact.publish', 'success', session.userId)
       return reply.code(200).send({ ok: true, data: toArtifactView(row) })
     })

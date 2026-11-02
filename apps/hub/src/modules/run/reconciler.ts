@@ -24,6 +24,8 @@ import {
 import { RunStatusRequestSchema } from '@whalepod/protocol'
 import { transitionRun } from '@whalepod/domain'
 import { cancelPendingApprovalsInTransaction } from './cancel.js'
+import { applyRunStatus } from './run-status.js'
+import type { ContextEntryObserver, RecordedContextEntry } from '../context/observer.js'
 
 // 活跃态集合的单一事实源在 @whalepod/db（与 run_one_active_per_task 部分唯一索引
 // 谓词一致）；此处再导出，orchestrator 与 run 模块的既有导入路径不变。
@@ -44,6 +46,8 @@ export interface ReconcileDeps {
   /** orchestrator 的内存心跳投影（进程重启后为空，退化为只看 lastSeenAt）。 */
   activity: ReadonlyMap<string, DeviceActivity>
   now: () => Date
+  /** ADR-0025 §9：终态 Observation 投影在提交后的观测回调（必填，防组合根漏接）。 */
+  log: ContextEntryObserver
 }
 
 export async function reconcileLeases(deps: ReconcileDeps, now: Date): Promise<number> {
@@ -63,7 +67,8 @@ export async function reconcileLeases(deps: ReconcileDeps, now: Date): Promise<n
 }
 
 async function reconcileOne(deps: ReconcileDeps, run: RunRow, now: Date): Promise<boolean> {
-  return deps.database.transaction(async (tx) => {
+  const recorded: RecordedContextEntry[] = []
+  const acted = await deps.database.transaction(async (tx) => {
     const [locked] = await tx
       .select()
       .from(schema.runs)
@@ -95,11 +100,18 @@ async function reconcileOne(deps: ReconcileDeps, run: RunRow, now: Date): Promis
         // 行整体丢失属数据损坏（run.start 与 Run 本应原子提交）：
         // prompt 无法重建，不得让 Run 永久挂在 queued，失败闭环。
         transitionRun({ status: locked.status }, { type: 'failed' })
-        await setRunStatus(tx, locked.id, 'failed', {
-          failureCode: 'INTERNAL_ERROR',
-          failureSummary: 'dispatch command missing for queued run',
-          finishedAt: now,
-        })
+        await applyRunStatus(
+          tx,
+          deps.outbox,
+          locked.id,
+          'failed',
+          {
+            failureCode: 'INTERNAL_ERROR',
+            failureSummary: 'dispatch command missing for queued run',
+            finishedAt: now,
+          },
+          recorded,
+        )
         await appendTeamEvent(tx, {
           type: 'run.changed',
           payload: { runId: locked.id, taskId: locked.taskId, status: 'failed' },
@@ -134,11 +146,18 @@ async function reconcileOne(deps: ReconcileDeps, run: RunRow, now: Date): Promis
       // 生效（#84：此前只靠 approval-expiry 10 分钟清扫兜底，窗口内账本违反
       // 不变式）。与终态收敛同一事务、同一 cause——折叠是系统写入，非人工决定。
       await cancelPendingApprovalsInTransaction(tx, locked, now, 'run_terminal_fold')
-      await setRunStatus(tx, locked.id, 'lost', {
-        failureCode: 'RUNTIME_LOST',
-        failureSummary: 'device lease expired or node no longer runs this run',
-        finishedAt: now,
-      })
+      await applyRunStatus(
+        tx,
+        deps.outbox,
+        locked.id,
+        'lost',
+        {
+          failureCode: 'RUNTIME_LOST',
+          failureSummary: 'device lease expired or node no longer runs this run',
+          finishedAt: now,
+        },
+        recorded,
+      )
       await appendTeamEvent(tx, {
         type: 'run.changed',
         payload: { runId: locked.id, taskId: locked.taskId, status: 'lost' },
@@ -163,4 +182,6 @@ async function reconcileOne(deps: ReconcileDeps, run: RunRow, now: Date): Promis
     })
     return true
   })
+  for (const event of recorded) deps.log(event)
+  return acted
 }

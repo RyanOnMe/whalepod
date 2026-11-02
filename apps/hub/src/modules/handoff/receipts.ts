@@ -34,6 +34,7 @@ import {
   listReceiptsByUpstreamTask,
   schema,
   transactCommand,
+  transactCommandWithOrigin,
 } from '@whalepod/db'
 import { desc, eq } from 'drizzle-orm'
 import {
@@ -46,6 +47,14 @@ import {
 import { randomUUID } from 'node:crypto'
 import { ApiError } from '../shared/http-error.js'
 import { addComment, createTask, taskChangedPayload } from '../task/commands.js'
+import { projectDecision } from '../context/projector.js'
+import { toRecordedEntry } from '../context/observer.js'
+import type { ContextEntryObserver, RecordedContextEntry } from '../context/observer.js'
+
+/** 交接接收的版本谱系：同一对上下游 Task 的新接收/adopt 会 supersede 旧 Decision。 */
+function handoffDecisionRef(upstreamTaskId: string, downstreamTaskId: string): string {
+  return `handoffReceipt:${upstreamTaskId}:${downstreamTaskId}`
+}
 
 function toReceiptView(
   receipt: HandoffReceiptRow,
@@ -215,6 +224,7 @@ export async function confirmReceipt(
   receiptId: string,
   input: ConfirmHandoffReceiptRequest,
   idempotencyKey: string,
+  observe?: ContextEntryObserver,
 ): Promise<HandoffReceiptView> {
   assertConfirmInput(input)
   const existing = await getHandoffReceipt(database.db, receiptId)
@@ -230,7 +240,8 @@ export async function confirmReceipt(
   }
   const commandKey = `handoff.confirm:${actor.userId}:${receiptId}:${idempotencyKey}`
   const now = new Date()
-  const outcome = await transactCommand(database, commandKey, async (tx) => {
+  let recorded: RecordedContextEntry | undefined
+  const outcome = await transactCommandWithOrigin(database, commandKey, async (tx) => {
     // 先锁 Task 再锁回执：与改派（锁 Task → 更新 pending 回执）同一顺序，避免死锁；
     // 责任人与接收人都在锁内复核，改派提交后的旧接收人不能靠事务外检查混过去。
     const [downstreamTask] = await tx
@@ -264,10 +275,39 @@ export async function confirmReceipt(
     if (upstream !== undefined) {
       await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(upstream) })
     }
+    if (downstream !== undefined && upstream !== undefined) {
+      // ADR-0025 §1：交接接收确认投影为 Decision，与业务事务同提交。
+      const decision = await projectDecision(tx, {
+        projectId: downstream.projectId,
+        businessRef: handoffDecisionRef(locked.upstreamTaskId, locked.downstreamTaskId),
+        // ADR-0025 §1：身份 = receipt id + confirmedAt；纯时间戳会在同一毫秒的两次
+        // 确认/采用上碰撞，让后一次静默变成 inserted=false。
+        businessVersion: `${locked.id}:${now.toISOString()}`,
+        title: `交接接收：${upstream.title} → ${downstream.title}`,
+        body: [
+          `本次准备做什么：${input.understanding}`,
+          ...(input.differences !== undefined && input.differences !== ''
+            ? [`差异：${input.differences}`]
+            : []),
+        ].join('\n'),
+        occurredAt: now,
+        actorUserId: actor.userId,
+        payload: {
+          receiptId: locked.id,
+          upstreamTaskId: locked.upstreamTaskId,
+          downstreamTaskId: locked.downstreamTaskId,
+          revisionId: locked.revisionId,
+        },
+      })
+      if (decision.inserted) recorded = toRecordedEntry(decision.row, now)
+    }
     // 命令台账的 result 必须可序列化（NOT NULL）：回执只记到 id+状态。
     return { id: locked.id, transitioned: true }
   })
-  if (outcome.transitioned) {
+  // 上报观测先于 best-effort 差异消息：Decision 已提交，评论写失败不能让
+  // entry_recorded 永久缺失（同 key 重放已不会再走 execute 分支）。
+  if (outcome.executed && recorded !== undefined) observe?.(recorded)
+  if (outcome.value.transitioned) {
     await postDifferences(database, actor, existing.upstreamTaskId, input.differences, commandKey)
   }
   return loadReceiptView(database.db, receiptId)
@@ -284,6 +324,7 @@ export async function adoptReceipt(
   receiptId: string,
   input: ConfirmHandoffReceiptRequest,
   idempotencyKey: string,
+  observe?: ContextEntryObserver,
 ): Promise<HandoffReceiptView> {
   assertConfirmInput(input)
   const existing = await getHandoffReceipt(database.db, receiptId)
@@ -296,7 +337,8 @@ export async function adoptReceipt(
   const commandKey = `handoff.adopt:${actor.userId}:${receiptId}:${idempotencyKey}`
   const current = await getHandoffRevision(database.db, existing.revisionId)
   if (current === undefined) throw new ApiError(500, 'INTERNAL_ERROR', 'handoff revision lost')
-  const outcome = await transactCommand(database, commandKey, async (tx) => {
+  let recorded: RecordedContextEntry | undefined
+  const outcome = await transactCommandWithOrigin(database, commandKey, async (tx) => {
     // 采用也按「锁 Task → 锁回执」同一顺序；责任人是当前任务责任人（改派后即新人）。
     const [downstreamTask] = await tx
       .select()
@@ -357,14 +399,42 @@ export async function adoptReceipt(
       if (upstream !== undefined) {
         await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(upstream) })
       }
+      if (downstream !== undefined && upstream !== undefined) {
+        // 采用是对同一交接谱系的重新理解：lineage businessRef 让旧的已确认 Decision
+        // 按新版本前进标 superseded，而不是两条 Decision 同时 active。
+        const confirmedAt = row.confirmedAt ?? new Date()
+        const decision = await projectDecision(tx, {
+          projectId: downstream.projectId,
+          businessRef: handoffDecisionRef(existing.upstreamTaskId, existing.downstreamTaskId),
+          businessVersion: `${row.id}:${confirmedAt.toISOString()}`,
+          title: `交接接收：${upstream.title} → ${downstream.title}`,
+          body: [
+            `本次准备做什么：${input.understanding}`,
+            ...(input.differences !== undefined && input.differences !== ''
+              ? [`差异：${input.differences}`]
+              : []),
+          ].join('\n'),
+          occurredAt: confirmedAt,
+          actorUserId: actor.userId,
+          payload: {
+            receiptId: row.id,
+            upstreamTaskId: existing.upstreamTaskId,
+            downstreamTaskId: existing.downstreamTaskId,
+            revisionId: newest.id,
+          },
+        })
+        if (decision.inserted) recorded = toRecordedEntry(decision.row, confirmedAt)
+      }
     }
     return { row, inserted }
   })
+  // 同一顺序：观测先于 best-effort 差异消息（Decision 已提交，评论失败不能吞掉事件）。
+  if (outcome.executed && recorded !== undefined) observe?.(recorded)
   // 评审 m4：只有真的产生新 receipt 才发差异消息（重复采用幂等返回，不重复打扰上游）。
-  if (outcome.inserted) {
+  if (outcome.value.inserted) {
     await postDifferences(database, actor, existing.upstreamTaskId, input.differences, commandKey)
   }
-  return loadReceiptView(database.db, outcome.row.id)
+  return loadReceiptView(database.db, outcome.value.row.id)
 }
 
 /** 下游 Task 的接收关系列表（下播「有新版本」的数据源）。 */
