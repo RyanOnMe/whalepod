@@ -319,6 +319,8 @@ M1a 与 M1b 是工程结论，M2 才判断协调收益。真实使用尚未开�
 | 2026-11-01 | PC-02a 复核遗留后端收口：观测日志、租约复用审计、并发判据 | PR #468（squash bcabbdd）；#457 仅剩 Web `source.changed` 路由（PC-02c） |
 | 2026-11-01 | PC-01 只读探针准备清单 | #448；docs/agent/2026-11-01-feishu-readonly-probe-prep.md |
 | 2026-11-02 | ADR-0025/0026/0027 采纳，内部最小协调链立项 | #451/#452/#453 已关闭；#472（PC-03a）、#473（PC-04a）、#474（PC-05a） |
+| 2026-11-02 | PC-03a 事实账本与业务投影 | PR #476（squash 1a74284）；`docs/agent/project-context-ledger-acceptance.md` |
+| 2026-11-02 | PC-04a 确定性项目协调 | PR #477；`docs/agent/project-coordination-acceptance.md` |
 
 PC-01 的结论保持 `not_run`，等待可测试租户、企业自建应用、测试群与测试文档/表格。ADR-0024 与 ADR-0025–0027 均已采纳；内部最小协调链由 #472/#473/#474 实施，外部来源、模型派发与终态清理按后续切片交付。2026-11-02 只读核对 GitHub：#448/#449/#457/#472/#473/#474 打开，#450–#453 中 ADR 提案 Issue 已随采纳关闭；Issue 标题状态不代替 ADR 的采纳状态。
 
