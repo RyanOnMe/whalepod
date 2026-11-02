@@ -1,6 +1,7 @@
 # ADR-0025：来源修订、线程订阅与项目理解的事实边界
 
-- 状态：提案（Proposed，#451，2026-11-01；评审稿）。接受前不开 PC-03/PC-04 实现分支；本文件不是已采纳决定。
+- 状态：已采纳（Accepted，2026-11-02；原提案 #451，2026-11-01）。PC-03a（#472）先以内部事件实施事实账本；SourceRevision/Thread/WorkLink 与外部来源部分按后续切片交付，未实现部分保持未交付。
+- 采纳说明：03a 只实现 `context_entry/context_citation` 的 Observation、Decision、Correction 与业务引用；`source_revision`、`source_event`、Thread/WorkLink 与外部来源正文在 03b/03c/PC-06 交付前不视为已实现。
 - 承接：计划 §4.2–§4.4、§5、§6；[ADR-0024](./0024-source-sharing-and-revocation.md) 的来源绑定、代次与撤权。
 - 依赖：PC-00 (#463) 的 rc.8 输入引用与结构化结果探针；真实平台版本语义由 PC-01 (#448) 提供，未接通前保持 `not_run`。
 

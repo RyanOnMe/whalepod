@@ -31,7 +31,7 @@ WhalePod 是面向 **3–10 人小团队**的 DeepSeek Harness（DSH）多人协
 | 多人执行与成果交付 | 已实现任务、运行、审批、固定输入、审阅修订与交接，有生产装配验收 | [交付闭环](./docs/agent/delivery-loop-acceptance.md)；继续真人试用和发布级验证 |
 | 外部来源生命周期（PC-02a） | 协议、数据库与 Hub 后端已实现绑定、暂停、恢复、撤销、采集租约及权限重验 | [来源验收](./docs/agent/project-source-lifecycle-acceptance.md)；真实 Node 适配器、来源页面及正文修订链尚未交付 |
 | 协调计算兼容性（PC-00） | 已验证 rc.8 的单个工具行禁用、输入引用进入模型请求与结构化结果交付机制 | [兼容探针](./docs/agent/2026-11-01-pc00-rc8-coordination-compat-acceptance.md)；尚未建立协调专用工具隔离与运行装配 |
-| 持续项目协调 | ADR-0025～0027 已形成 Proposed 草案，尚未采纳；线程订阅、协调状态和新 Run 项目上下文尚未实现 | [开发计划](./docs/agent/2026-10-30-project-context-coordination-plan.md)；先完成架构决定，再实现内部协调链路 |
+| 持续项目协调 | ADR-0025～0027 已采纳（2026-11-02）；内部最小协调链开始实施（#472/#473/#474），线程订阅、外部来源与终态清理仍待交付 | [开发计划](./docs/agent/2026-10-30-project-context-coordination-plan.md)；先用平台内事件跑通，再接真实来源 |
 | 真实办公来源与协作收益 | 普通群讨论、云文档/表格接入及真人效率对照仍未验证 | [飞书只读探针准备](./docs/agent/2026-11-01-feishu-readonly-probe-prep.md)；等待真实租户与应用授权，按试用记录判断收益 |
 
 ## 下一阶段：持续理解项目，协调人与 Agent
@@ -42,7 +42,7 @@ WhalePod 是面向 **3–10 人小团队**的 DeepSeek Harness（DSH）多人协
 
 实现会优先验证持续协调、线程订阅、有界上下文读取和真实消费，再扩展资料来源。飞书为首个接入候选，钉钉、企业微信保留替换可能；首轮需要真实群讨论及至少一种云文档或表格。订阅和来源绑定只提供上下文，不自动授予业务执行权限。
 
-方向与取舍见[阶段计划](./docs/agent/2026-10-30-project-context-coordination-plan.md)和 [dsh-superagent-prototype 复用分析](./docs/agent/2026-11-01-superagent-reuse-analysis.md)。拟议架构分别见 [ADR-0025 来源修订与项目理解](./docs/adr/0025-source-revisions-and-project-understanding.md)、[ADR-0026 协调生命周期与成本](./docs/adr/0026-project-coordination-lifecycle-and-cost.md)、[ADR-0027 项目上下文快照与消费](./docs/adr/0027-run-project-context-snapshot-and-consumption.md)；三份均为 Proposed。
+方向与取舍见[阶段计划](./docs/agent/2026-10-30-project-context-coordination-plan.md)和 [dsh-superagent-prototype 复用分析](./docs/agent/2026-11-01-superagent-reuse-analysis.md)。已采纳架构见 [ADR-0025 来源修订与项目理解](./docs/adr/0025-source-revisions-and-project-understanding.md)、[ADR-0026 协调生命周期与成本](./docs/adr/0026-project-coordination-lifecycle-and-cost.md)、[ADR-0027 项目上下文快照与消费](./docs/adr/0027-run-project-context-snapshot-and-consumption.md)；内部最小链按 #472/#473/#474 交付。
 
 ## 系统如何组成
 

@@ -7,9 +7,9 @@ status: proposed
 > 独立成区（读模型隔离）。本 ADR 的其余决策（审计链、受理落账、并发语义、Agent 可指派、审批档位）
 > **继续有效**；决策 5/7 里「自动触发强制降级为需审批」的提法也按 0010 决策 5 作废。
 
-> **ADR-0027 部分取代预告（Proposed）**：对含项目上下文且终态按 [ADR-0027](./0027-run-project-context-snapshot-and-consumption.md) §6 脱敏的 Run，
+> **ADR-0027 部分取代（Accepted，2026-11-02）**：对含项目上下文且终态按 [ADR-0027](./0027-run-project-context-snapshot-and-consumption.md) §6 脱敏的 Run，
 > resume 只保证同 session id/结构可装载（mechanical resume），不恢复上一轮对话上下文；本 ADR 决策 3 的
-> 「续跑上下文命中」语义对这些 Run 部分失效，其余 Run 不变。ADR-0027 接受前本条不变；接受时同步拆分 Q5 用例。
+> 「续跑上下文命中」语义对这些 Run 部分失效，其余 Run 不变。Q5 用例按 `resumeContext` 的 `full/redacted/blocked` 拆分随 PC-05b 终态清理落地；拆分完成前该清理路径不启用。
 
 # 0009 任务执行对话化：TaskSession 一等实体、Run 降级为执行区间、Agent 可指派、审批档位可配置
 
