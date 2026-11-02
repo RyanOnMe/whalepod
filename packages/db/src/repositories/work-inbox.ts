@@ -16,7 +16,21 @@ export async function insertWorkInboxItem(
   handle: DbHandle,
   values: NewWorkInboxItemRow,
 ): Promise<WorkInboxItemRow | undefined> {
-  const [row] = await handle.insert(workInboxItems).values(values).onConflictDoNothing().returning()
+  const [row] = await handle
+    .insert(workInboxItems)
+    .values(values)
+    // 只吞同一身份/版本/摘要的冲突；来源 pending 唯一索引冲突必须上抛成显式 409，
+    // 不能被当成“并发同身份”后回读成 500。
+    .onConflictDoNothing({
+      target: [
+        workInboxItems.workId,
+        workInboxItems.sourceType,
+        workInboxItems.sourceId,
+        workInboxItems.sourceVersion,
+        workInboxItems.sourceDigest,
+      ],
+    })
+    .returning()
   return row
 }
 
@@ -61,6 +75,27 @@ export async function getWorkInboxItemByIdentity(
         eq(workInboxItems.sourceId, values.sourceId),
         eq(workInboxItems.sourceVersion, values.sourceVersion),
         eq(workInboxItems.sourceDigest, values.sourceDigest),
+      ),
+    )
+    .limit(1)
+  return row
+}
+
+export async function getRetractedInboxItemForSource(
+  handle: DbHandle,
+  workId: string,
+  sourceType: WorkInboxItemRow['sourceType'],
+  sourceId: string,
+): Promise<WorkInboxItemRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(workInboxItems)
+    .where(
+      and(
+        eq(workInboxItems.workId, workId),
+        eq(workInboxItems.sourceType, sourceType),
+        eq(workInboxItems.sourceId, sourceId),
+        eq(workInboxItems.status, 'retracted'),
       ),
     )
     .limit(1)

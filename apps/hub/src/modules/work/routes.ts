@@ -38,7 +38,7 @@ import { checkWorkAdmission, refreshAdmissionResult } from './admission.js'
 import {
   associateWorkInboxItem,
   expireWorkInboxItem,
-  loadWorkInbox,
+  loadWorkInboxForActor,
   refreshWorkInboxItemForActor,
   retractWorkInboxItem,
   returnWorkInboxItem,
@@ -260,8 +260,7 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
     const { workKey: rawWorkKey } = request.params as { workKey: string }
     const workKey = parseUuid(rawWorkKey, 'work key')
     const query = parseBody(WorkInboxListQuerySchema, request.query)
-    const { work } = await loadAuthorizedWork(deps, session, workKey)
-    const view = await loadWorkInbox(deps.database, work, query)
+    const view = await loadWorkInboxForActor(deps.database, session.userId, workKey, query)
     // 正文快照是私有数据，禁止共享缓存/中间层缓存。
     reply.header('cache-control', 'private, no-store')
     return { ok: true, data: view }

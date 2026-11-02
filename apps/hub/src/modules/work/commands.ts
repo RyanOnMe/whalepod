@@ -123,6 +123,9 @@ export function mapWorkConstraint(error: unknown): ApiError | undefined {
     if (pg.constraintName === 'work_mandate_work_version_unique') {
       return new ApiError(409, 'CONFLICT', 'mandate changed concurrently; retry')
     }
+    if (pg.constraintName === 'work_inbox_item_source_pending_unique') {
+      return new ApiError(409, 'CONFLICT', 'source already has a pending inbox item; retry')
+    }
     return new ApiError(409, 'CONFLICT', 'work identity already exists')
   }
   if (pg.code === '23514' || pg.code === '23503') {

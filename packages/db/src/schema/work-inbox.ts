@@ -100,6 +100,9 @@ export const workInboxItems = pgTable(
     uniqueIndex('work_inbox_item_source_pending_unique')
       .on(table.workId, table.sourceType, table.sourceId)
       .where(sql`${table.status} = 'pending'`),
+    index('work_inbox_item_source_retracted_idx')
+      .on(table.workId, table.sourceType, table.sourceId)
+      .where(sql`${table.status} = 'retracted'`),
     index('work_inbox_item_work_created_idx').on(table.workId, table.createdAt.desc(), table.id),
     index('work_inbox_item_work_status_created_idx').on(
       table.workId,

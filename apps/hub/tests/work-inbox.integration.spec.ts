@@ -127,6 +127,9 @@ async function act(
     idempotencyKey: idemKey(),
   })
   expect(res.statusCode).toBe(expectedStatus)
+  if (expectedStatus === 200) {
+    expect(res.headers['cache-control']).toBe('private, no-store')
+  }
   return res
 }
 
@@ -362,7 +365,13 @@ describe('RD-02a-1 work inbox items (ADR-0028)', () => {
     const all = await inbox(ctx, alice, workKey)
     expect(all.items).toHaveLength(2)
     await act(ctx, alice, workKey, first.id, 'return', { reason: 'irrelevant' }, 409)
-    await act(ctx, alice, workKey, first.id, 'retract', {}, 409)
+    // 终端目标仍可 retract：必须留下来源级墓碑，并收口同来源仍在 pending 的新版本。
+    const retractedSuperseded = await act(ctx, alice, workKey, first.id, 'retract', {
+      reason: 'source_permission_revoked',
+    })
+    expect(retractedSuperseded.json().data).toMatchObject({ id: first.id, status: 'retracted' })
+    const afterRetractRows = await database.db.select().from(schema.workInboxItems)
+    expect(afterRetractRows.every((row) => row.status === 'retracted')).toBe(true)
     await act(ctx, alice, workKey, first.id, 'expire', {}, 409)
   })
 
@@ -479,7 +488,13 @@ describe('RD-02a-1 work inbox items (ADR-0028)', () => {
     const expiredAgain = await act(ctx, alice, workKey, expiringItem.id, 'expire', {})
     expect(expiredAgain.json().data).toMatchObject({ id: expiringItem.id, status: 'expired' })
     await act(ctx, alice, workKey, expiringItem.id, 'return', { reason: 'irrelevant' }, 409)
-    await act(ctx, alice, workKey, expiringItem.id, 'retract', {}, 409)
+    const retractedExpired = await act(ctx, alice, workKey, expiringItem.id, 'retract', {
+      reason: 'source_permission_revoked',
+    })
+    expect(retractedExpired.json().data).toMatchObject({
+      id: expiringItem.id,
+      status: 'retracted',
+    })
 
     // returned 也能撤权：撤权必须清掉退回原因，避免 DB 的 return 字段约束被绕过。
     const returnedMessage = await comment(ctx, alice, taskId)
@@ -499,7 +514,7 @@ describe('RD-02a-1 work inbox items (ADR-0028)', () => {
 
     const listed = await inbox(ctx, alice, workKey)
     expect(listed.items.map((row) => row.status).sort()).toEqual([
-      'expired',
+      'retracted',
       'retracted',
       'retracted',
     ])
@@ -564,6 +579,46 @@ describe('RD-02a-1 work inbox items (ADR-0028)', () => {
     })
     const listed = await inbox(ctx, alice, workKey)
     expect(listed.watermarks.pendingCount).toBe(0)
+  })
+
+  it('keeps source retraction even when a newer terminal item sorts last', async () => {
+    const messageId = await comment(ctx, alice, taskId)
+    const first = (await associate(ctx, alice, workKey, 'task_message', messageId)).json().data
+    await act(ctx, alice, workKey, first.id, 'return', { reason: 'incomplete' })
+
+    const editedAt = new Date(Date.now() + 1000)
+    await database.db
+      .update(schema.taskMessages)
+      .set({ body: '第二个版本，最终到期。', editedAt })
+      .where(eq(schema.taskMessages.id, messageId))
+    const second = (await associate(ctx, alice, workKey, 'task_message', messageId)).json().data
+    await act(ctx, alice, workKey, second.id, 'expire', { reason: 'deadline_passed' })
+
+    await act(ctx, alice, workKey, first.id, 'retract', { reason: 'source_permission_revoked' })
+    // 模拟时钟回退/同毫秒排序：让 expired 条目排到 retracted 之后。
+    await database.db
+      .update(schema.workInboxItems)
+      .set({ createdAt: new Date(Date.now() + 60_000) })
+      .where(eq(schema.workInboxItems.id, second.id))
+
+    const thirdDate = new Date(Date.now() + 120_000)
+    await database.db
+      .update(schema.taskMessages)
+      .set({ body: '撤权后的第三个版本。', editedAt: thirdDate })
+      .where(eq(schema.taskMessages.id, messageId))
+    const blocked = await associate(ctx, alice, workKey, 'task_message', messageId, 409)
+    expect(blocked.json().error).toMatchObject({
+      code: 'CONFLICT',
+      details: { reason: 'source_retracted' },
+    })
+
+    // 只剩 expired 条目时，retract 仍要留下来源级 tombstone（显式覆盖目标状态）。
+    const override = await act(ctx, alice, workKey, second.id, 'retract', {
+      reason: 'source_permission_revoked',
+    })
+    expect(override.json().data).toMatchObject({ id: second.id, status: 'retracted' })
+    const rows = await database.db.select().from(schema.workInboxItems)
+    expect(rows.filter((row) => row.status === 'retracted')).toHaveLength(2)
   })
 
   it('rejects idempotent replay by the former assignee after reassignment', async () => {
@@ -666,7 +721,10 @@ describe('RD-02a-1 work inbox items (ADR-0028)', () => {
     await acceptTask(ctx, alice, secondTask)
     const foreignMessage = await comment(ctx, alice, secondTask)
     const foreignResult = await associate(ctx, alice, workKey, 'task_message', foreignMessage, 409)
-    expect(foreignResult.json().error.code).toBe('CONFLICT')
+    expect(foreignResult.json().error).toMatchObject({
+      code: 'CONFLICT',
+      details: { reason: 'source_out_of_scope', detail: 'task_mismatch' },
+    })
 
     const unknown = await associate(ctx, alice, workKey, 'task_message', randomUUID(), 404)
     expect(unknown.json().error.code).toBe('NOT_FOUND')

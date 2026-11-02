@@ -69,6 +69,9 @@ create unique index work_inbox_item_identity_unique
 create unique index work_inbox_item_source_pending_unique
   on work_inbox_item (work_id, source_type, source_id)
   where status = 'pending';
+create index work_inbox_item_source_retracted_idx
+  on work_inbox_item (work_id, source_type, source_id)
+  where status = 'retracted';
 create index work_inbox_item_work_created_idx
   on work_inbox_item (work_id, created_at desc, id);
 create index work_inbox_item_work_status_created_idx

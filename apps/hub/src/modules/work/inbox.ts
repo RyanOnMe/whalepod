@@ -1,8 +1,10 @@
 import {
   countWorkInboxItems,
-  getLatestInboxItemForSource,
   getLatestPendingInboxItemForSource,
   getLatestWorkInboxItem,
+  getRetractedInboxItemForSource,
+  getTask,
+  getWorkByKey,
   getWorkInboxItem,
   getWorkInboxItemByIdentity,
   getWorkInboxItemForUpdate,
@@ -158,14 +160,15 @@ export async function associateWorkInboxItem(
       })
       if (existing !== undefined) return toWorkInboxItemView(existing)
 
-      // 撤权是来源级的：一旦该来源的最新条目被 retract，后续版本不得重新入箱。
-      const latest = await getLatestInboxItemForSource(
+      // 撤权是来源级的：该来源任一条目被 retract 后，后续版本不得重新入箱。
+      // 不能只看 latest：latest 可能是 expired/superseded，早先的 retracted 仍是停投依据。
+      const retracted = await getRetractedInboxItemForSource(
         tx,
         work.id,
         source.sourceType,
         source.sourceId,
       )
-      if (latest?.status === 'retracted') {
+      if (retracted !== undefined) {
         throw new ApiError(409, 'CONFLICT', 'source was retracted for this work', {
           reason: 'source_retracted',
           sourceId: source.sourceId,
@@ -314,7 +317,6 @@ export async function retractWorkInboxItem(
     ),
     async (tx) => {
       const item = await lockItem(tx, workKey, actorUserId, itemId)
-      if (item.status !== 'retracted') requireItemStatus(item, ['pending', 'returned'])
       const now = deps.now()
       const statusReason = reason ?? 'retracted'
       const updated = await retractInboxItemsForSource(tx, {
@@ -324,13 +326,20 @@ export async function retractWorkInboxItem(
         statusReason,
         now,
       })
-      const target = updated.find((row) => row.id === item.id)
-      if (target !== undefined) return toWorkInboxItemView(target)
-      // 已 retracted 的重复调用仍幂等；其它终态（expired/superseded）不能借撤权重写历史。
+      const retractedTarget = updated.find((row) => row.id === item.id)
+      if (retractedTarget !== undefined) return toWorkInboxItemView(retractedTarget)
       if (item.status === 'retracted') return toWorkInboxItemView(item)
-      throw new ApiError(409, 'CONFLICT', `cannot act on a ${item.status} inbox item`, {
-        status: item.status,
+      // 目标已是 expired/superseded 时仍要留下来源级 tombstone：显式置 retracted。
+      const overridden = await updateWorkInboxItem(tx, item.id, {
+        status: 'retracted',
+        statusReason,
+        returnReason: null,
+        returnNote: null,
+        statusAt: now,
+        updatedAt: now,
       })
+      if (overridden === undefined) throw new ApiError(404, 'NOT_FOUND', 'inbox item not found')
+      return toWorkInboxItemView(overridden)
     },
   )
 }
@@ -371,28 +380,44 @@ export async function expireWorkInboxItem(
   )
 }
 
-export async function loadWorkInbox(
-  database: Database,
+async function readInboxView(
+  tx: Tx,
   work: WorkRow,
   filter: { readonly status?: WorkInboxItemStatus | undefined; readonly limit: number },
 ): Promise<WorkInboxView> {
-  // 条目、pending 计数与水位必须来自同一快照；否则并发关联时会出现
-  // “items 已含新条目但 pendingCount 仍为 0”的撕裂读。
+  const [items, pendingCount, latest] = await Promise.all([
+    listWorkInboxItems(tx, work.id, filter.limit, filter.status),
+    countWorkInboxItems(tx, work.id, 'pending'),
+    getLatestWorkInboxItem(tx, work.id),
+  ])
+  return {
+    items: items.map(toWorkInboxItemView),
+    watermarks: {
+      // 水位不随筛选变化：客户端用 lastItemAt 判断是否有新条目。
+      lastItemAt: latest?.createdAt.toISOString() ?? null,
+      pendingCount,
+    },
+  }
+}
+
+/**
+ * 私有列表：当前 assignee 校验与条目读取必须在同一 REPEATABLE READ 快照内，
+ * 避免“授权通过后、读列表前被改派”的 TOCTOU。事务只读，不使用 FOR UPDATE。
+ */
+export async function loadWorkInboxForActor(
+  database: Database,
+  actorUserId: string,
+  workKey: string,
+  filter: { readonly status?: WorkInboxItemStatus | undefined; readonly limit: number },
+): Promise<WorkInboxView> {
   return database.transaction(
     async (tx) => {
-      const [items, pendingCount, latest] = await Promise.all([
-        listWorkInboxItems(tx, work.id, filter.limit, filter.status),
-        countWorkInboxItems(tx, work.id, 'pending'),
-        getLatestWorkInboxItem(tx, work.id),
-      ])
-      return {
-        items: items.map(toWorkInboxItemView),
-        watermarks: {
-          // 水位不随筛选变化：客户端用 lastItemAt 判断是否有新条目。
-          lastItemAt: latest?.createdAt.toISOString() ?? null,
-          pendingCount,
-        },
-      }
+      const work = await getWorkByKey(tx, workKey)
+      if (work === undefined) throw new ApiError(404, 'NOT_FOUND', 'work not found')
+      const task = await getTask(tx, work.taskId)
+      if (task === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
+      await requireAssignee(tx, task, actorUserId)
+      return readInboxView(tx, work, filter)
     },
     { isolationLevel: 'repeatable read', accessMode: 'read only' },
   )
