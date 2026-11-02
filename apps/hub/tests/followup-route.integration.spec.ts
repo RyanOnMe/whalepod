@@ -83,7 +83,7 @@ describe('POST /runs/:runId/followup 路由契约（P1-186）', () => {
       nodeVersion: '24.12.0',
       nodeAppVersion: '0.1.0',
       tokenHash: Buffer.from(randomUUID()),
-      capabilities: {},
+      capabilities: { contextCapabilities: ['project-context.v1'] },
     })
     // workspace 没有仓储函数（仓库里只有 schema 直插的先例，见 packages/db/tests/helpers.ts）。
     await database.db.insert(schema.workspaces).values({

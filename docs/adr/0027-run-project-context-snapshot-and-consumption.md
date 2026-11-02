@@ -27,7 +27,7 @@ Run 创建事务内按固定规则选取，规则版本写入快照：
 - **显式选入**：成员可在创建界面勾选 `read_only` 订阅线程下的 Observation/Decision；`model_inferred` 关联必须先由成员激活（转成 `read_only` 或 `own_work`，记录 `activatedBy`），其线程下的条目才可被选中。选择记录 `selectedByMemberId`。
 - **永不进入快照**：Inference（包括协调者的建议、影响判断、未决问题）、**未映射身份成员的 Decision/批准/完成类表述**、未通过权限检查的正文、个人 Workspace/私有 Session、未共享候选。成员也不能把 Inference 勾选为执行依据；建议只能影响成员自己的选择动作。
 - **既有依据不变**：任务约定、交接输入与 Artifact 输入继续按 ADR-0016/0017/0020 固定；项目上下文不替换它们，也不因「刷新参考」静默换掉已固定的 Artifact 版本。
-- **容量**：默认最多 32 条、合计 256KiB、单条 64KiB；超出部分进入「未纳入项」清单并写明原因（超限/无权限/冲突/推断不可选），**不静默截断**。超 64KiB 的单条直接标未纳入，不截断后冒充同一版本。
+- **容量**：默认最多 32 条、合计 256KiB、单条 64KiB；超出部分进入「未纳入项」清单并写明原因（超限/无权限/冲突/推断不可选），**不静默截断**。超 64KiB 的单条直接标未纳入，不截断后冒充同一版本。逐条明细最多保留 128 条；更多未纳入项按原因聚合为计数（`unselectedOmitted`），header 与读面仍给出总数——这是**有记录的**封顶，不是静默丢弃。
 - **冲突与缺口**：
   - **权限未知/过期/不可用**：硬阻断，不允许继续，不存在 override；
   - **与已确认约定冲突或必要材料缺失**：创建返回缺口说明，成员必须沿原业务入口作出明确选择（取消、调整任务，或记录 `overrideReason` 后继续）；`overrideReason` 只覆盖业务冲突，不能覆盖权限。
@@ -35,7 +35,7 @@ Run 创建事务内按固定规则选取，规则版本写入快照：
 
 ### 2 快照：创建时冻结，读时判权，逐条可失效
 
-- `run_project_context`（快照头）：`id`、`runId`、`projectId`、`selectionRuleVersion`、`snapshotDigest`、`headerText`、`headerDigest`、`entryCount`、`totalBytes`、`unselected`（JSON，只有原因与不透明 id）、`overrideReason?`、`status`（frozen/partially_unavailable/invalidated）、`deliveredAt?`、`consumedAt?`、`consumedAllAt?`、`createdAt`。
+- `run_project_context`（快照头）：`id`、`runId`、`projectId`、`selectionRuleVersion`、`snapshotDigest`、`headerText`、`headerDigest`、`entryCount`、`totalBytes`、`unselected`（JSON，只有原因与不透明 id）、`unselectedOmitted`（按原因聚合计数）、`overrideReason?`、`status`（frozen/partially_unavailable/invalidated）、`deliveredAt?`、`consumedAt?`、`consumedAllAt?`、`createdAt`。
 - `run_project_context_entry`：`snapshotId`、`entryId`、`entryVersion`、`kind`（observation/decision）、`citation`（source 或 business，ADR-0025 §1）、`sourceId?`、`revisionId?`、`threadId?`、`businessRef?`、`authorizationGeneration?`、`digest`、`byteSize`、`title`、`body`（冻结副本，受容量上限）、`entryStatus`（frozen/retracted/source_tombstoned）、`statusReason?`、`permissionStateAtSelection`、`identityUnverified?`、`selectedByMemberId?`、`deliveredAt?`、`readAt?`。
   - `entryVersion` = ADR-0025 条目的业务版本：Decision 取 `businessVersion`，source Observation 取 `revisionId + latestObservedAt`（A→B→A 时用最新观察时间，不用 revision 行首次 observedAt）；只用于展示与对账，不替代 `digest`。
   - `snapshotAuthorizationGeneration` 只对 source 条目非空；Decision（business citation）为 `null`，不参与 `run.context_state`/`restored` 的逐条代次比较，其有效性由 ADR-0025 的投影器维护。协议 schema 用 `snapshotAuthorizationGeneration: z.string().nullable().optional()`，`superRefine` 要求 `kind=observation` 非空、`kind=decision` 为 `null`；`run.context_state`/`context.state_sync` 的 entries 只允许 source 条目，收到 Decision 条目直接拒绝。
@@ -112,9 +112,9 @@ Run 创建事务内按固定规则选取，规则版本写入快照：
 - 撤销与权限状态通知：Hub 在来源撤销/撤回、权限 `unknown/expired/denied/unavailable`、恢复时向 owner Node 下发 `run.context_state`（`{ runId, snapshotId, stateVersion, entries: [{ entryId, currentAuthorizationGeneration }], state: revoked|retracted|permission_unknown|permission_denied|unavailable|restored, reason }`，不含正文）。每个条目携带自己的**当前**来源代次，Node 用本地持久化的 `snapshotAuthorizationGeneration` 逐条比较，不得用一个来源的代次解除另一个来源的不可读；一帧只带同一 `state`、只带本次状态变化的条目，不同 `state` 拆帧，`restored` 帧不得携带未发生恢复的条目。Hub 持久化 `run_context_state`（每 Run 单调 `stateVersion`，`(runId, snapshotId, stateVersion)` 唯一并校验 `snapshotId` 与 Run 当前快照一致）并通过带 commandId/ack 的命令通道下发，未 ack 自动重试；Node 持久化、**先应用不可读状态并完成受影响未记录读取副本删除、且收到 Runtime 本地 ack 后才向 Hub ack**（删除或本地 ack 失败则不 ack，保留 `cleanup_pending` 重试；Runtime 离线时先持久化+删除，待其重启加载后再 ack；`read_project_context` 每次查 Node 状态，状态应用后不再回退 Runtime 内存；Hub→Node 传播窗口仍按 §6 的同步时限，不承诺瞬时）。Node 还在 Node/Runtime 重启或重连时重放当前状态（Node hello 后 Hub 也补发未 ack 状态）。Runtime 启动/重启时**先加载本地持久化状态再接受 `read_project_context`**；`read_project_context` 每次调用都查 Node 持久化状态（或由 Node 代理读取），不依赖 Runtime 内存缓存；Node 状态不可达时 fail-closed 返回不可用，不回退本地文件或旧缓存。Runtime 按 `stateVersion` 单调应用并回本地 ack，Node 未收到 ack 时重放，旧版本不覆盖新状态。`stateVersion` 只解决通知顺序，权限恢复还须逐条校验代次：`restored` 的 `currentAuthorizationGeneration` 必须等于 Hub 当前来源代次且 ≥ 该条目 `snapshotAuthorizationGeneration`，旧代次即使 `stateVersion` 更大也不得解除不可读（Hub 生成时与 Node/Runtime 应用时都判 `state_stale_generation`）。`read_project_context` 对不可读条目返回不可用；撤销时活跃 Run 逐条删除受影响条目的未记录读取副本（§6），不重启、不取消、不改写已交付内容。
 - 周期状态同步：Hub 每 15–30 秒向 owner Node 发送 `context.state_sync`（`{ runId, snapshotId, stateVersion, stateDigest }`，即使无变化也发）；`stateDigest = sha256(规范化 JSON：stateVersion + 按 entryId 排序的 [{entryId, state, currentAuthorizationGeneration}])`，其中每条 `state` 取该条目当前已应用的最新状态（不是帧级单值）。该帧**只用于对账，不直接应用 entries**：Node 本地计算一致才刷新 `lastContextStateSyncAt`；不一致则拉取/重放 `run.context_state`，执行完整应用（状态持久化 + 未读副本删除/隔离 + Runtime 本地 ack）后再刷新。重连/hello 时 Hub 发送完整当前状态（含已 ack 的最新版本），不只未 ack 增量。
 - 上行：`runtime.context_receipt`（Runtime→Node，本地）与 `run.context_receipt`（Node→Hub，专用帧）；Hub 校验归属与 §4 谓词后落库。
-- HTTP 读面：Run 详情增加 `projectContext: { snapshotId, entries[{ entryId, kind, title, entryStatus, readAt }], unselected, deliveredAt, consumedAt, unavailable }` 与 `resumeContext: 'full' | 'redacted' | 'blocked'`（`redacted` 表示该 Run 的 session 已按 §6 allowlist 重建，resume 不恢复对话上下文；`blocked` 表示 session 已删除或无法安全重建，resume 返回明确错误且不产生 `run.resumed`）；`resumeContext` 是**来源 Run 的 lineage 属性**：只有成功进入 mechanical resume 的新 Run（`full`/`redacted`）复制来源值并携带 `resumeSourceRunId`、产生 `run.resumed`；`blocked` 不建新 Run、不发 `run.resumed`，只在来源 Run 详情/API 显示 blocked。正文只在条目为 `frozen` 且权限通过时返回；下载接口按 Run 与 Node 归属鉴权。
+- HTTP 读面：Run 详情增加 `projectContext: { snapshotId, entries[{ entryId, kind, title, entryStatus, readAt }], unselected, unselectedOmitted, deliveredAt, consumedAt, unavailable }` 与 `resumeContext: 'full' | 'redacted' | 'blocked'`（`redacted` 表示该 Run 的 session 已按 §6 allowlist 重建，resume 不恢复对话上下文；`blocked` 表示 session 已删除或无法安全重建，resume 返回明确错误且不产生 `run.resumed`）；`resumeContext` 是**来源 Run 的 lineage 属性**：只有成功进入 mechanical resume 的新 Run（`full`/`redacted`）复制来源值并携带 `resumeSourceRunId`、产生 `run.resumed`；`blocked` 不建新 Run、不发 `run.resumed`，只在来源 Run 详情/API 显示 blocked。正文只在条目为 `frozen` 且权限通过时返回；下载接口按 Run 与 Node 归属鉴权。
 - 表：`run_project_context`（§2 头字段，含 `headerText/headerDigest`）、`run_project_context_entry`（§2 条目字段 + `deliveredAt`/`readAt`）、`run_context_receipt`（`runId`、`snapshotId`、`receiptSeq`、`headerDigest`、`nonceMatched`、`entriesDelivered`、`entriesRead`、`readEvents`、`missing`、`digestVerified`、`at`；唯一键 `(runId, snapshotId, receiptSeq)`）、`run_context_consumption`（`snapshotId`、`entryId`、`threadId?`、`runId`、`readAt`；唯一 `(snapshotId, entryId)`）、`run_context_state`（`runId`、`snapshotId`、`stateVersion`、`entries`（仅 source 条目：`entryId` + `currentAuthorizationGeneration`）、`state`、`reason`、`ackedAt?`；唯一 `(runId, snapshotId, stateVersion)`，`stateVersion` 单调）。
-- 所有视图不含绝对路径、凭据、平台私密名称；`unselected` 只含原因与不透明 id。
+- 所有视图不含绝对路径、凭据、平台私密名称；`unselected`/`unselectedOmitted` 只含原因、不透明 id 与计数。
 
 ### 8 观测与归因
 
@@ -150,4 +150,6 @@ Run 创建事务内按固定规则选取，规则版本写入快照：
 
 ## 验证登记
 
-本 ADR 是文档，不含机器证据。接受后由 PC-05 创建 `docs/agent/run-project-context-acceptance.md`，登记选择/冻结/派发判权/能力协商/字节核对/回执谓词/撤权历史/重放与新意图判据；未完成前不标记交付。
+本 ADR 是文档，不含机器证据。接受后由 PC-05 创建 `docs/agent/run-project-context-acceptance.md`，登记选择/冻结/派发判权/能力协商/字节核对/回执谓词/重放与新意图判据；未完成前不标记交付。
+
+2026-11-02：PC-05a（#474）已交付正向链，验收见 [run-project-context-acceptance.md](../agent/run-project-context-acceptance.md)。撤权状态机、首条回执 watchdog、终态 session allowlist/`resumeContext` 与 24 小时清理仍属 PC-05b/Q5，未交付部分不据本 ADR 声称已实现。

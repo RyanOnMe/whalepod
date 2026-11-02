@@ -146,7 +146,7 @@ describe('plugin pack API (P1-17)', () => {
       nodeVersion: '24.12.0',
       nodeAppVersion: '0.1.0',
       tokenHash: hashToken(token),
-      capabilities: {},
+      capabilities: { contextCapabilities: ['project-context.v1'] },
       ...(options.revoked ? { revokedAt: new Date() } : {}),
     })
     return token

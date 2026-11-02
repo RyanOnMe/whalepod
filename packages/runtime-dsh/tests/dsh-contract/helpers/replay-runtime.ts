@@ -41,6 +41,9 @@ export type ReplayScenario =
   | 'tool-boundary-disabled'
   | 'read-artifact-input'
   | 'read-artifact-input-manifest'
+  // ADR-0027（PC-05a）：read_project_context 正向读取与正文进入下一次模型请求。
+  | 'read-project-context'
+  | 'read-project-context-manifest'
 
 const CONFIG_DIR = fileURLToPath(new URL('../../../config/', import.meta.url))
 const FIXTURES_DIR = fileURLToPath(new URL('../fixtures/', import.meta.url))
@@ -93,13 +96,20 @@ export function commandFrame<T extends RuntimeCommand['type']>(
 }
 
 export function initializeCommand(spec: RuntimeSpec): RuntimeCommand {
-  // RuntimeSpec 的 artifactInputs 是 readonly（spec 是只读事实），wire 载荷要可变数组。
-  // 先解构摘掉这个键、再按需放回副本：否则 TS 会把两处 spread 的该属性并成
-  // 「readonly 数组 或 可变数组」而仍不兼容（#178 纳入 tests typecheck 后暴露）。
-  const { artifactInputs, ...rest } = spec
+  // RuntimeSpec 的 artifactInputs/projectContext.entries 是 readonly（spec 是只读事实），
+  // wire 载荷要可变数组。先解构摘掉再放回副本，避免 readonly 与可变数组不兼容。
+  const { artifactInputs, projectContext, ...rest } = spec
   return commandFrame('runtime.initialize', {
     ...rest,
     ...(artifactInputs !== undefined ? { artifactInputs: [...artifactInputs] } : {}),
+    ...(projectContext === undefined
+      ? {}
+      : {
+          projectContext: {
+            ...projectContext,
+            entries: [...projectContext.entries],
+          },
+        }),
   })
 }
 

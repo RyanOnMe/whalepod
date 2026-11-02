@@ -150,7 +150,7 @@ async function seedRunDependencies(
     nodeVersion: '24.12.0',
     nodeAppVersion: '0.1.0',
     tokenHash: randomBytes(32),
-    capabilities: {},
+    capabilities: { contextCapabilities: ['project-context.v1'] },
   })
   await database.db.insert(schema.workspaces).values({
     id: workspaceId,

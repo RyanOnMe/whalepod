@@ -62,11 +62,14 @@
             "artifactInputsDir": {
               "$ref": "#/$defs/__schema16"
             },
-            "handoff": {
+            "projectContext": {
               "$ref": "#/$defs/__schema17"
             },
+            "handoff": {
+              "$ref": "#/$defs/__schema27"
+            },
             "executionContext": {
-              "$ref": "#/$defs/__schema18"
+              "$ref": "#/$defs/__schema28"
             }
           },
           "required": [
@@ -444,6 +447,150 @@
     "__schema17": {
       "type": "object",
       "properties": {
+        "snapshotId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "digest": {
+          "$ref": "#/$defs/__schema6"
+        },
+        "headerText": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "headerDigest": {
+          "$ref": "#/$defs/__schema6"
+        },
+        "entries": {
+          "minItems": 1,
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema18"
+          }
+        },
+        "entriesDir": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "snapshotId",
+        "digest",
+        "headerText",
+        "headerDigest",
+        "entries",
+        "entriesDir"
+      ],
+      "additionalProperties": false
+    },
+    "__schema18": {
+      "type": "object",
+      "properties": {
+        "entryId": {
+          "$ref": "#/$defs/__schema19"
+        },
+        "kind": {
+          "$ref": "#/$defs/__schema20"
+        },
+        "title": {
+          "$ref": "#/$defs/__schema21"
+        },
+        "revisionId": {
+          "$ref": "#/$defs/__schema22"
+        },
+        "businessRef": {
+          "$ref": "#/$defs/__schema23"
+        },
+        "digest": {
+          "$ref": "#/$defs/__schema24"
+        },
+        "byteSize": {
+          "$ref": "#/$defs/__schema25"
+        },
+        "snapshotAuthorizationGeneration": {
+          "$ref": "#/$defs/__schema26"
+        }
+      },
+      "required": [
+        "entryId",
+        "kind",
+        "title",
+        "revisionId",
+        "businessRef",
+        "digest",
+        "byteSize",
+        "snapshotAuthorizationGeneration"
+      ],
+      "additionalProperties": false
+    },
+    "__schema19": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    },
+    "__schema20": {
+      "type": "string",
+      "enum": [
+        "observation",
+        "decision"
+      ]
+    },
+    "__schema21": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "__schema22": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "__schema23": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "__schema24": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "__schema25": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65536
+    },
+    "__schema26": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "__schema27": {
+      "type": "object",
+      "properties": {
         "agreement": {
           "anyOf": [
             {
@@ -491,7 +638,7 @@
       ],
       "additionalProperties": false
     },
-    "__schema18": {
+    "__schema28": {
       "type": "string",
       "maxLength": 100000
     }

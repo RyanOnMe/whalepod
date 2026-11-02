@@ -25,7 +25,10 @@ import type {
   ErrorCode,
   NodeDownstream,
   ProjectedRunEvent,
+  RunContextReceipt,
+  RunStartProjectContext,
   RuntimeArtifactInput,
+  RuntimeContextReceiptPayload,
   RunSnapshot,
   RuntimeCommand,
   RuntimeOutput,
@@ -33,10 +36,14 @@ import type {
 import { parseRuntimeFrame } from '@whalepod/protocol'
 import {
   commandAckFrame,
+  runContextReceiptFrame,
   runEventFrame,
   runLiveDeltaFrame,
   runSnapshotFrame,
 } from '../gateway/hub-socket.js'
+import type { ContextReceiptSeqStore } from '../context/receipt-seq-store.js'
+import { MemoryContextReceiptSeqStore } from '../context/receipt-seq-store.js'
+import type { PreparedProjectContext } from '../context/project-context.js'
 import { PluginPreflightError, type PreflightOutcome } from '../plugin/plugin-preflight.js'
 import { RunProjector, type ProjectionContext } from '../projection/projector.js'
 import type { CommandStore } from '../spool/command-store.js'
@@ -104,6 +111,18 @@ export interface RunManagerDeps {
    * run.start 拒绝路径单独补清（Run 从未在管，不进 finalizeRun）。
    */
   readonly cleanupArtifactInputs?: (runId: string) => Promise<void>
+  /**
+   * ADR-0027 §3：按 run.start 快照清单下载项目上下文副本（digest/byteSize 校验）。
+   * 失败折算 run.start 拒绝；清单存在但本 Node 未装配时同样 fail-closed。
+   */
+  readonly prepareProjectContext?: (
+    runId: string,
+    manifest: RunStartProjectContext,
+  ) => Promise<PreparedProjectContext>
+  /** ADR-0027 §6：Run 终态/启动拒绝后的 runtime-context 副本清理（best-effort）。 */
+  readonly cleanupProjectContext?: (runId: string) => Promise<void>
+  /** ADR-0027 §4：receiptSeq 持久计数（生产 SQLite；缺省内存实现）。 */
+  readonly contextReceiptSeq?: ContextReceiptSeqStore
   /** P1-16：run.snapshot 的设备身份与 DSH 发行版版本（§2.6/§6.2）。 */
   readonly deviceId: string
   readonly dshDistributionVersion: string
@@ -178,6 +197,20 @@ export class RunManager {
   private readonly readyFacts = new Map<string, { dshSessionId: string; startedAt: string }>()
   /** runId → 本进程内已记录的终态事实。 */
   private readonly finalFacts = new Map<string, FinalFacts>()
+  /** runId → 已下载的项目上下文副本与快照清单（本地回执的事实源）。 */
+  private readonly projectContexts = new Map<string, PreparedProjectContext>()
+  /** runId → 本快照已交付/已读集合与 header 事实（Node 侧累计并集）。 */
+  private readonly contextReceiptState = new Map<
+    string,
+    {
+      snapshotId: string
+      delivered: Set<string>
+      read: Set<string>
+      headerDigest: string
+      nonceMatched: boolean
+    }
+  >()
+  private readonly contextReceiptSeq: ContextReceiptSeqStore
   /** runId → 取消升级状态。 */
   private readonly cancels = new Map<string, CancelEscalation>()
   /**
@@ -195,6 +228,7 @@ export class RunManager {
     this.confirmMs = deps.cancelConfirmMs ?? DEFAULT_CANCEL_CONFIRM_MS
     this.termGraceMs = deps.cancelTermGraceMs ?? DEFAULT_CANCEL_TERM_GRACE_MS
     this.timers = deps.timers ?? { setTimeout, clearTimeout }
+    this.contextReceiptSeq = deps.contextReceiptSeq ?? new MemoryContextReceiptSeqStore()
     // P1-16：Supervisor 的裸事实在这里归因（exit-classifier），Run 终态只收敛一次。
     deps.supervisor.onRuntimeExit((event) =>
       this.handleRuntimeExit(event.runId, event.code, event.signal),
@@ -294,6 +328,25 @@ export class RunManager {
       if (this.deps.prepareArtifactInputs !== undefined) {
         artifactInputs = await this.deps.prepareArtifactInputs(runId, payload.taskId)
       }
+      // ADR-0027 §3：项目上下文快照下载 + 逐条 digest/byteSize 核对。清单存在但
+      // 本 Node 未装配时 fail-closed（绝不「只存快照 ID」继续执行）。
+      let projectContext: PreparedProjectContext | undefined
+      if (payload.projectContext !== undefined) {
+        if (this.deps.prepareProjectContext === undefined) {
+          const error = new Error('project context delivery is not configured on this node')
+          ;(error as Error & { code?: string }).code = 'CONTEXT_UNAVAILABLE'
+          throw error
+        }
+        projectContext = await this.deps.prepareProjectContext(runId, payload.projectContext)
+        this.projectContexts.set(runId, projectContext)
+        this.contextReceiptState.set(runId, {
+          snapshotId: projectContext.snapshotId,
+          delivered: new Set(),
+          read: new Set(),
+          headerDigest: projectContext.headerDigest,
+          nonceMatched: true,
+        })
+      }
       const projector = new RunProjector(this.projectionContext(runId, workspacePath))
       const spec: RuntimeStartSpec = {
         runId,
@@ -343,6 +396,18 @@ export class RunManager {
             ? {
                 artifactInputs: [...artifactInputs.entries],
                 artifactInputsDir: artifactInputs.dir,
+              }
+            : {}),
+          ...(projectContext !== undefined
+            ? {
+                projectContext: {
+                  snapshotId: projectContext.snapshotId,
+                  digest: projectContext.snapshotDigest,
+                  headerText: projectContext.headerText,
+                  headerDigest: projectContext.headerDigest,
+                  entries: [...projectContext.entries],
+                  entriesDir: projectContext.dir,
+                },
               }
             : {}),
           provider: payload.agent.provider,
@@ -867,6 +932,11 @@ export class RunManager {
       this.protocolViolation(runId, 'runtime output runId mismatch')
       return
     }
+    // ADR-0027 §4：项目上下文两级回执不投影成产品事件；Node 累计并集后转专用上行帧。
+    if (frame.type === 'runtime.context_receipt') {
+      this.handleContextReceipt(runId, frame.payload)
+      return
+    }
     // P1-16：runtime.ready 事实入账（snapshot 的 dshSessionId/startedAt）。
     if (frame.type === 'runtime.ready') {
       // #288：ready 回声的 profileDigest 必须等于 run.start 固化的 Revision digest。
@@ -1099,9 +1169,100 @@ export class RunManager {
     this.releases.set(runId, entry)
   }
 
+  /**
+   * ADR-0027 §4：把 Runtime 的 delivered/read 回执累计成 Node→Hub 的
+   * `run.context_receipt`。`entriesDelivered` 是累计并集；`entriesRead/readEvents`
+   * 是本批新增读取（Hub 侧累计取并集）。未知 entryId 不进入回执，避免伪造清单外条目。
+   */
+  private handleContextReceipt(runId: string, payload: RuntimeContextReceiptPayload): void {
+    const prepared = this.projectContexts.get(runId)
+    const state = this.contextReceiptState.get(runId)
+    if (prepared === undefined || state === undefined) {
+      this.log('warn', 'project context receipt without a prepared snapshot dropped', {
+        component: 'node.context',
+        runId,
+      })
+      return
+    }
+    if (payload.snapshotId !== prepared.snapshotId) {
+      this.log('warn', 'project context receipt snapshot mismatch dropped', {
+        component: 'node.context',
+        runId,
+      })
+      return
+    }
+    const known = new Set(prepared.entries.map((entry) => entry.entryId))
+    let receipt: RunContextReceipt
+    if (payload.kind === 'delivered') {
+      for (const entryId of payload.entriesDelivered) {
+        if (known.has(entryId)) state.delivered.add(entryId)
+      }
+      state.headerDigest = payload.headerDigest
+      state.nonceMatched = payload.nonceMatched && payload.headerDigest === prepared.headerDigest
+      receipt = {
+        runId,
+        snapshotId: prepared.snapshotId,
+        receiptSeq: this.contextReceiptSeq.next(runId, prepared.snapshotId),
+        headerDigest: state.headerDigest,
+        nonceMatched: state.nonceMatched,
+        entriesDelivered: [...state.delivered].sort(),
+        entriesRead: [],
+        readEvents: [],
+        missing: prepared.entries
+          .map((entry) => entry.entryId)
+          .filter((entryId) => !state.delivered.has(entryId)),
+        digestVerified: true,
+        at: payload.at,
+      }
+    } else {
+      if (!known.has(payload.entryId)) {
+        this.log('warn', 'project context read receipt for an unknown entry dropped', {
+          component: 'node.context',
+          runId,
+        })
+        return
+      }
+      state.read.add(payload.entryId)
+      receipt = {
+        runId,
+        snapshotId: prepared.snapshotId,
+        receiptSeq: this.contextReceiptSeq.next(runId, prepared.snapshotId),
+        headerDigest: state.headerDigest,
+        nonceMatched: state.nonceMatched,
+        entriesDelivered: [...state.delivered].sort(),
+        entriesRead: [payload.entryId],
+        readEvents: [
+          {
+            entryId: payload.entryId,
+            digestVerified: payload.digestVerified,
+            byteSize: payload.byteSize,
+            at: payload.at,
+          },
+        ],
+        missing: prepared.entries
+          .map((entry) => entry.entryId)
+          .filter((entryId) => !state.delivered.has(entryId)),
+        digestVerified: payload.digestVerified,
+        at: payload.at,
+      }
+    }
+    this.deps.send(runContextReceiptFrame(receipt))
+    this.log('info', 'project context receipt forwarded', {
+      component: 'node.context',
+      runId,
+      snapshotId: prepared.snapshotId,
+      receiptSeq: receipt.receiptSeq,
+      delivered: receipt.entriesDelivered.length,
+      read: receipt.entriesRead.length,
+    })
+  }
+
   /** P1-15：输入副本清理（best-effort，失败只吞掉——不阻塞终态登记）。 */
   private cleanupInputs(runId: string): void {
     void this.deps.cleanupArtifactInputs?.(runId).catch(() => {})
+    void this.deps.cleanupProjectContext?.(runId).catch(() => {})
+    this.projectContexts.delete(runId)
+    this.contextReceiptState.delete(runId)
   }
 
   // ---------- spool 与上行 ----------

@@ -1,0 +1,13 @@
+{"type":"session","id":"session-replay-read-project-context","createdAt":1755500800000,"seedLength":0}
+{"type":"assistant/chunk","seq":10,"time":1755500800100,"data":{"turn":1,"step":1,"chunk":{"type":"block-start","index":0,"blockType":"tool-call"}}}
+{"type":"assistant/chunk","seq":11,"time":1755500800200,"data":{"turn":1,"step":1,"chunk":{"type":"tool-call-delta","index":0,"id":"call-context-1","name":"read_project_context","argumentsDelta":"{\"entryId\":\"01905f7c-0000-7000-8000-000000000951\"}"}}}
+{"type":"assistant/chunk","seq":12,"time":1755500800300,"data":{"turn":1,"step":1,"chunk":{"type":"block-end","index":0,"block":{"type":"tool-call","id":"call-context-1","name":"read_project_context","arguments":"{\"entryId\":\"01905f7c-0000-7000-8000-000000000951\"}"}}}}
+{"type":"assistant/chunk","seq":13,"time":1755500800400,"data":{"turn":1,"step":1,"chunk":{"type":"finish","reason":{"kind":"tool-calls"}}}}
+{"type":"assistant/chunk","seq":20,"time":1755500800500,"data":{"turn":1,"step":2,"chunk":{"type":"block-start","index":0,"blockType":"tool-call"}}}
+{"type":"assistant/chunk","seq":21,"time":1755500800600,"data":{"turn":1,"step":2,"chunk":{"type":"tool-call-delta","index":0,"id":"call-context-2","name":"read_project_context","argumentsDelta":"{\"entryId\":\"../../escape.md\"}"}}}
+{"type":"assistant/chunk","seq":22,"time":1755500800700,"data":{"turn":1,"step":2,"chunk":{"type":"block-end","index":0,"block":{"type":"tool-call","id":"call-context-2","name":"read_project_context","arguments":"{\"entryId\":\"../../escape.md\"}"}}}}
+{"type":"assistant/chunk","seq":23,"time":1755500800800,"data":{"turn":1,"step":2,"chunk":{"type":"finish","reason":{"kind":"tool-calls"}}}}
+{"type":"assistant/chunk","seq":30,"time":1755500800900,"data":{"turn":1,"step":3,"chunk":{"type":"block-start","index":0,"blockType":"text"}}}
+{"type":"assistant/chunk","seq":31,"time":1755500801000,"data":{"turn":1,"step":3,"chunk":{"type":"text-delta","index":0,"text":"Context probe finished."}}}
+{"type":"assistant/chunk","seq":32,"time":1755500801100,"data":{"turn":1,"step":3,"chunk":{"type":"block-end","index":0,"block":{"type":"text","text":"Context probe finished."}}}}
+{"type":"assistant/chunk","seq":33,"time":1755500801200,"data":{"turn":1,"step":3,"chunk":{"type":"finish","reason":{"kind":"stop"}}}}

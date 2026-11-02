@@ -21,6 +21,14 @@ export type { ArtifactCandidate, ArtifactPort } from './artifact-tool.js'
 export { createReadArtifactInputTool, READ_ARTIFACT_INPUT_TOOL } from './artifact-input-tool.js'
 export type { ArtifactInputEntry } from './artifact-input-tool.js'
 export {
+  createReadProjectContextTool,
+  projectContextHeaderNonceMatches,
+  projectContextNonce,
+  READ_PROJECT_CONTEXT_TOOL,
+  sha256Hex as projectContextSha256Hex,
+} from './project-context-tool.js'
+export type { ProjectContextReadFact } from './project-context-tool.js'
+export {
   createWorkspaceArtifactValidator,
   isInsideWorkspaceRoot,
   ArtifactCandidateError,

@@ -202,6 +202,7 @@ describe('node websocket (/ws/v1/node)', () => {
         supportedProtocolVersions: [1],
         dshDistributionVersion: '0.1.0-rc.9',
         pluginPackDigests: [],
+        contextCapabilities: ['project-context.v1'],
       }),
     )
     await waitForValue(async () => {
@@ -247,6 +248,7 @@ describe('node websocket (/ws/v1/node)', () => {
         supportedProtocolVersions: [1],
         dshDistributionVersion: '0.1.0-rc.8',
         pluginPackDigests: [],
+        contextCapabilities: ['project-context.v1'],
       }),
     )
     // 等到 hello 落库（可观察条件：版本已写），而不是猜它要 120ms。

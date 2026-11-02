@@ -419,7 +419,13 @@ async function replayByRun(
   authorUserId: string,
 ): Promise<SendInstructionOutcome | undefined> {
   const [run] = await deps.database.db
-    .select({ triggerMessageId: schema.runs.triggerMessageId, taskId: schema.runs.taskId })
+    .select({
+      triggerMessageId: schema.runs.triggerMessageId,
+      taskId: schema.runs.taskId,
+      status: schema.runs.status,
+      failureCode: schema.runs.failureCode,
+      failureSummary: schema.runs.failureSummary,
+    })
     .from(schema.runs)
     .where(eq(schema.runs.id, runId))
   if (run?.triggerMessageId == null) return undefined
@@ -431,6 +437,23 @@ async function replayByRun(
   // 纵深防御（评审 #204 阻断 1）：回执里的 Run 必须属于**本次请求的 Task**，
   // 否则就是跨 Task 回放（即使 key 撞上了也不该把别人的指令读回去）。
   if (run.taskId !== taskId || message.authorUserId !== authorUserId) return undefined
+  if (message.instructionState === 'pending' && TERMINAL_RUN_STATUSES.has(run.status as never)) {
+    // 评审 B2：创建 Run 与 ack 之间指令仍是 pending；若 Run 已终态（派发前复核失败、
+    // 设备拒绝后崩溃等），结算可能漏在半路。不再把「从未被受理」谎报成 started_run：
+    // 这里按 Run 的终态理由补结算（只从 pending 走一次，幂等）。
+    const settled = await settleInstruction(deps.database.db, message.id, {
+      state: 'rejected',
+      error: {
+        code: run.failureCode ?? 'RUN_FAILED',
+        message: run.failureSummary ?? `run ended ${run.status} before the instruction was settled`,
+      },
+    })
+    return {
+      kind: 'rejected',
+      message: toCommentView(settled ?? message),
+      runId,
+    }
+  }
   return {
     kind: message.instructionState === 'rejected' ? 'rejected' : 'started_run',
     message: toCommentView(message),

@@ -27,6 +27,11 @@ import { dshAnchorUrl } from './dsh-distribution.js'
 import { nullLog, type LogSink } from './log.js'
 import { dshSessionIdOf, runtimeSpecFromInitialize, type RuntimeSpec } from './runtime-spec.js'
 import { buildHandoffPrompt, generateHandoffDraft, handoffDraftTimeoutMs } from './handoff-draft.js'
+import {
+  projectContextHeaderNonceMatches,
+  sha256Hex,
+  type ProjectContextReadFact,
+} from './project-context-tool.js'
 import { SessionOwner, type AgentStatusPayload, type SessionOwnerEvents } from './session-owner.js'
 
 /**
@@ -317,6 +322,20 @@ export class RuntimeBridge {
     let dshSessionId = resumeSessionId ?? dshSessionIdOf(spec)
     const emit = (output: RuntimeOutput): void => options.emit(output)
 
+    // ADR-0027 §4：headerText/headerDigest 与 nonce 是回执判据的本地对照面。
+    // 不一致时不 boot DSH，直接把 CONTEXT_DIGEST_MISMATCH 报给 Node。
+    if (spec.projectContext !== undefined) {
+      const projectContext = spec.projectContext
+      if (
+        sha256Hex(projectContext.headerText) !== projectContext.headerDigest ||
+        !projectContextHeaderNonceMatches(projectContext.headerText, projectContext.digest, runId)
+      ) {
+        const error = new Error('project context header failed digest or nonce verification')
+        ;(error as Error & { code?: string }).code = 'CONTEXT_DIGEST_MISMATCH'
+        throw error
+      }
+    }
+
     // DSH_HOME 是本进程级契约（dsh-home-paths 经 $DSH_HOME 解析）；一个 Runtime
     // 子进程只服务一个 Run，initialize 到达后再 boot，home 即在 spec 里。
     process.env.DSH_HOME = spec.dshHomePath
@@ -349,6 +368,20 @@ export class RuntimeBridge {
     const events: SessionOwnerEvents = {
       sessionEvent: (event) => emit(frameOf('session.event', { runId, dshSessionId, event })),
       agentStatus: (status) => emit(frameOf('agent.status', { runId, status })),
+      contextRead: (fact: ProjectContextReadFact) => {
+        if (spec.projectContext === undefined) return
+        emit(
+          frameOf('runtime.context_receipt', {
+            kind: 'read',
+            runId,
+            snapshotId: spec.projectContext.snapshotId,
+            entryId: fact.entryId,
+            digestVerified: fact.digestVerified,
+            byteSize: fact.byteSize,
+            at: fact.at,
+          }),
+        )
+      },
       turnSettled: async (reason, finalMessageId) => {
         switch (reason.kind) {
           case 'completed': {
@@ -433,6 +466,26 @@ export class RuntimeBridge {
     // 的**往返一致**（回报值与固化值漂移、串扰、过期进程复用会被抓），Runtime 不据此
     // 校验自己装载了什么；也**不是断言**——Runtime 不判断自己该是哪个 Revision。
     emit(frameOf('runtime.ready', { runId, dshSessionId, profileDigest: spec.profileDigest }))
+    // ADR-0027 §4：清单与本地副本已在 initialize 装配完成，首条交付回执随 ready
+    // 发出。这只是「已交付」，不代表正文进入过模型；逐条读取走 read 回执。
+    if (spec.projectContext !== undefined) {
+      const projectContext = spec.projectContext
+      emit(
+        frameOf('runtime.context_receipt', {
+          kind: 'delivered',
+          runId,
+          snapshotId: projectContext.snapshotId,
+          headerDigest: projectContext.headerDigest,
+          nonceMatched: projectContextHeaderNonceMatches(
+            projectContext.headerText,
+            projectContext.digest,
+            runId,
+          ),
+          entriesDelivered: projectContext.entries.map((entry) => entry.entryId),
+          at: new Date().toISOString(),
+        }),
+      )
+    }
     // #289：探针自这里注入越界事件/状态（此刻 owner 已订阅，注入点即订阅面本身）。
     options.probeAfterReady?.({
       deliverSessionEvent: (eventSession, event) => owner.deliverSessionEvent(eventSession, event),

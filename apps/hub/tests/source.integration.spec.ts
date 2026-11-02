@@ -96,6 +96,7 @@ class FakeSourceNode {
         supportedProtocolVersions: [1],
         dshDistributionVersion: '0.1.0-rc.8',
         pluginPackDigests: [],
+        contextCapabilities: ['project-context.v1'],
         sourceCapabilities: [...capabilities],
       }),
     )

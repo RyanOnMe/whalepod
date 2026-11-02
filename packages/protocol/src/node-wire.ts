@@ -18,6 +18,11 @@ import {
   SourcePermissionCheckPayloadSchema,
   SourcePermissionResultPayloadSchema,
 } from './source.js'
+import {
+  ProjectContextCapabilitySchema,
+  RunContextReceiptSchema,
+  RunStartProjectContextSchema,
+} from './run-context.js'
 
 const Sha256DigestSchema = z.string().regex(/^[a-f0-9]{64}$/)
 const DshSessionIdSchema = z.string().min(1).max(128)
@@ -183,6 +188,11 @@ export const NodeHelloSchema = envelope(
      * 会因 strictObject 的未知字段被拒，部署顺序固定为 Hub 先升级。
      */
     sourceCapabilities: z.array(SourceCapabilitySchema).max(8).optional(),
+    /**
+     * ADR-0027 §3：项目上下文快照交付能力。缺省 = 旧 Node；Hub 对非空快照
+     * （entryCount>0）不向未声明的 Node 派发。空快照仍可正常执行。
+     */
+    contextCapabilities: z.array(ProjectContextCapabilitySchema).max(8).optional(),
   }),
 )
 
@@ -243,6 +253,9 @@ export const RunLiveDeltaSchema = envelope(
   }),
 )
 
+/** ADR-0027 §4：Node 汇总 Runtime 两级回执后的专用上行帧（不投影成产品 Run 事件）。 */
+export const RunContextReceiptFrameSchema = envelope('run.context_receipt', RunContextReceiptSchema)
+
 /** #320：只读准备检查，结果不能夹带秘密、路径或模型调用结论。 */
 export const PreparationFactsSchema = z.strictObject({
   workspace: z.enum(['available', 'unavailable', 'unconfirmed']),
@@ -280,6 +293,7 @@ export const NodeUpstreamSchema = z.discriminatedUnion('type', [
   RunSnapshotFrameSchema,
   RunEventFrameSchema,
   RunLiveDeltaSchema,
+  RunContextReceiptFrameSchema,
 ])
 export type NodeUpstream = z.infer<typeof NodeUpstreamSchema>
 
@@ -318,6 +332,9 @@ export const RunStartSchema = envelope(
       // runtime.initialize，Runtime 收尾阶段据此生成交接草稿。
       handoff: HandoffRunSpecSchema.optional(),
       executionContext: z.string().max(EXECUTION_CONTEXT_MAX_CHARS).optional(),
+      // ADR-0027 §3：创建事务内冻结的项目上下文快照清单。entryCount=0 时不携带；
+      // 正文不在本帧（Node 经受控下载接口按快照取得并逐条核对 digest/byteSize）。
+      projectContext: RunStartProjectContextSchema.optional(),
       // ADR-0009 切片⑤（resume 续跑）：成对携带——resumeOfRunId 让 Node 把
       // initialize 的 dshHomePath 指向**来源 Run** 的 home（per-run 隔离下新
       // runId 的 home 里没有旧日志）；resumeSessionId（= 来源 Run 的

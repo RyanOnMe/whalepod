@@ -1,0 +1,19 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a021",
+  "type": "run.context_receipt",
+  "sentAt": "2026-01-05T09:01:00Z",
+  "payload": {
+    "runId": "01905f7c-0000-7000-8000-000000000401",
+    "snapshotId": "01905f7c-0000-7000-8000-000000000402",
+    "receiptSeq": 1,
+    "headerDigest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+    "nonceMatched": true,
+    "entriesDelivered": ["01905f7c-0000-7000-8000-000000000403"],
+    "entriesRead": [],
+    "readEvents": [],
+    "missing": [],
+    "digestVerified": true,
+    "at": "2026-01-05T09:01:00Z"
+  }
+}

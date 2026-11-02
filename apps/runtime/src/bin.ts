@@ -23,6 +23,7 @@ import { writeSync } from 'node:fs'
 import { delimiter } from 'node:path'
 import { format } from 'node:util'
 import type { RuntimeCommand, RuntimeOutput } from '@whalepod/protocol'
+import { ErrorCodeSchema } from '@whalepod/protocol'
 import {
   dispatchRuntimeCommand,
   dshDistributionInfo,
@@ -48,12 +49,19 @@ const log: LogSink = (record) => {
 
 function emitStartFatal(runId: string, error: unknown): void {
   const summary = (error instanceof Error ? error.message : String(error)).slice(0, 1000)
+  const rawCode =
+    typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined
+  const parsedCode = ErrorCodeSchema.safeParse(rawCode)
   emit({
     protocolVersion: 1,
     messageId: randomUUID(),
     sentAt: new Date().toISOString(),
     type: 'runtime.fatal',
-    payload: { runId, code: 'RUNTIME_START_FAILED', summary: summary || 'runtime start failed' },
+    payload: {
+      runId,
+      code: parsedCode.success ? parsedCode.data : 'RUNTIME_START_FAILED',
+      summary: summary || 'runtime start failed',
+    },
   })
 }
 

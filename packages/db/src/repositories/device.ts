@@ -86,10 +86,12 @@ export async function setDeviceHelloFacts(
     lastSeenAt: Date
     /** ADR-0024：hello 是能力权威集合；缺省 = 不声明（旧 Node）。 */
     sourceCapabilities?: string[]
+    /** ADR-0027：项目上下文交付能力；缺省 = 不声明（旧 Node）。 */
+    contextCapabilities?: string[]
   },
 ): Promise<DeviceRow | undefined> {
-  const { sourceCapabilities, ...helloFacts } = facts
-  if (sourceCapabilities === undefined) {
+  const { sourceCapabilities, contextCapabilities, ...helloFacts } = facts
+  if (sourceCapabilities === undefined && contextCapabilities === undefined) {
     const [row] = await handle.update(devices).set(helloFacts).where(eq(devices.id, id)).returning()
     return row
   }
@@ -97,8 +99,11 @@ export async function setDeviceHelloFacts(
   if (current === undefined) return undefined
   const capabilities =
     typeof current.capabilities === 'object' && current.capabilities !== null
-      ? { ...(current.capabilities as Record<string, unknown>), sourceCapabilities }
-      : { sourceCapabilities }
+      ? { ...(current.capabilities as Record<string, unknown>) }
+      : {}
+  // hello 是能力权威集合：本次未声明即清空旧声明，防止升级/降级后残留。
+  if (sourceCapabilities !== undefined) capabilities.sourceCapabilities = sourceCapabilities
+  if (contextCapabilities !== undefined) capabilities.contextCapabilities = contextCapabilities
   const [row] = await handle
     .update(devices)
     .set({ ...helloFacts, capabilities })

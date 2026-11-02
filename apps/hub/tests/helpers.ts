@@ -133,7 +133,7 @@ export async function seedRunPrereqs(handle: DbHandle): Promise<SeedIds> {
     nodeVersion: '24.12.0',
     nodeAppVersion: '0.1.0',
     tokenHash: randomBytes(32),
-    capabilities: {},
+    capabilities: { contextCapabilities: ['project-context.v1'] },
   })
   await handle.insert(schema.workspaces).values({
     id: ids.workspaceId,
@@ -173,7 +173,7 @@ export async function seedSecondUserDevice(handle: DbHandle, ids: SeedIds) {
     nodeVersion: '24.12.0',
     nodeAppVersion: '0.1.0',
     tokenHash: randomBytes(32),
-    capabilities: {},
+    capabilities: { contextCapabilities: ['project-context.v1'] },
   })
   await handle.insert(schema.workspaces).values({
     id: workspaceId,
@@ -255,7 +255,7 @@ export async function seedRunChainForUser(
     nodeVersion: '24.12.0',
     nodeAppVersion: '0.1.0',
     tokenHash: randomBytes(32),
-    capabilities: {},
+    capabilities: { contextCapabilities: ['project-context.v1'] },
   })
   await handle.insert(schema.workspaces).values({
     id: workspaceId,
@@ -363,6 +363,8 @@ export interface HarnessOrchestratorOptions {
   warn?: (message: string, context: Record<string, unknown>) => void
   /** ADR-0025 §9：提交后的 context.entry_recorded 观测通道（reconciler 等路径断言用）。 */
   log?: ContextEntryObserver
+  /** ADR-0027 §8：快照/回执结构化观测（context.*）；测试收集用。 */
+  contextLog?: (action: string, fields: Record<string, unknown>) => void
 }
 
 export function makeHarness(
@@ -381,8 +383,16 @@ export function makeHarness(
     now,
     ...(orchestratorOptions.warn === undefined ? {} : { warn: orchestratorOptions.warn }),
     ...(orchestratorOptions.log === undefined ? {} : { log: orchestratorOptions.log }),
+    ...(orchestratorOptions.contextLog === undefined
+      ? {}
+      : { contextLog: orchestratorOptions.contextLog }),
   })
-  const worker = new OutboxWorker({ outbox, gateway, now })
+  const worker = new OutboxWorker({
+    outbox,
+    gateway,
+    now,
+    beforeDispatch: (command) => orchestrator.beforeDispatch(command),
+  })
   return {
     clock,
     outbox,

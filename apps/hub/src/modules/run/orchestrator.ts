@@ -28,6 +28,7 @@ import {
   appendRunEvent,
   appendTeamEvent,
   countPendingApprovals,
+  failInTransaction,
   findCommandReceipt,
   getApproval,
   getOutboxCommand,
@@ -42,10 +43,16 @@ import {
   setTaskStatus,
   resolveInstructionRight,
   TERMINAL_RUN_STATUSES,
-  transactCommand,
+  transactCommandWithOrigin,
   unwrapPgError,
 } from '@whalepod/db'
-import type { ErrorCode, ProjectedRunEvent, RunSnapshot } from '@whalepod/protocol'
+import type { ClaimedCommand } from '@whalepod/db'
+import type {
+  ErrorCode,
+  ProjectedRunEvent,
+  RunContextReceipt,
+  RunSnapshot,
+} from '@whalepod/protocol'
 import { parseNodeFrame, RunCancelSchema, RunStartSchema } from '@whalepod/protocol'
 import { cancelPendingApprovalsInTransaction, cancelRunInTransaction } from './cancel.js'
 import { decideApprovalInTransaction } from './decide.js'
@@ -60,6 +67,12 @@ import { isRunSemanticConflict, RunCommandError } from './errors.js'
 import { settleFollowupAck, settleTriggerInstruction } from './followup.js'
 import { applyRunStatus } from './run-status.js'
 import type { ContextEntryObserver, RecordedContextEntry } from '../context/observer.js'
+import {
+  assertProjectContextCapability,
+  createRunProjectContext,
+  verifyRunProjectContext,
+} from '../context/run-snapshot.js'
+import { recordRunContextReceipt } from '../context/receipts.js'
 import type { ApprovalView, RunView } from './queries.js'
 import { toApprovalView, toRunView } from './queries.js'
 
@@ -82,6 +95,11 @@ export interface RunOrchestratorDeps {
    * app.log.info）。缺省 = 静默；观测只在提交后写，回滚不留痕。
    */
   log?: ContextEntryObserver
+  /**
+   * ADR-0027 §8：快照创建/派发阻断/回执接受或拒绝的结构化观测（component=hub.context，
+   * 字段只含不透明 id、状态、计数）。事务内只收集，提交后写。
+   */
+  contextLog?: (action: string, fields: Record<string, unknown>) => void
 }
 
 export class RunOrchestrator {
@@ -90,6 +108,7 @@ export class RunOrchestrator {
   private readonly nowFn: () => Date
   private readonly warnFn: (message: string, context: Record<string, unknown>) => void
   private readonly logFn: ContextEntryObserver
+  private readonly contextLogFn: (action: string, fields: Record<string, unknown>) => void
   /** deviceId → 最近心跳；reconciler 据此判断「Node 在线但已没有该 Run」。 */
   readonly deviceActivity = new Map<string, DeviceActivity>()
 
@@ -102,6 +121,11 @@ export class RunOrchestrator {
     this.nowFn = deps.now ?? (() => new Date())
     this.warnFn = deps.warn ?? (() => {})
     this.logFn = deps.log ?? (() => {})
+    this.contextLogFn = deps.contextLog ?? (() => {})
+  }
+
+  private contextLog(action: string, fields: Record<string, unknown>): void {
+    this.contextLogFn(action, fields)
   }
 
   /** 事务提交后统一写 `context.entry_recorded`（事务内只收集，不落日志）。 */
@@ -125,9 +149,12 @@ export class RunOrchestrator {
     assertCreateRunInput(input)
     const now = this.nowFn()
     const key = `run.create:${input.idempotencyKey}`
+    let createdSnapshot: { readonly snapshotId: string; readonly entryCount: number } | undefined
     try {
-      return await transactCommand(this.database, key, async (tx) => {
-        const run = await this.createInTransaction(tx, ctx, taskId, input, now)
+      const outcome = await transactCommandWithOrigin(this.database, key, async (tx) => {
+        const run = await this.createInTransaction(tx, ctx, taskId, input, now, (snapshot) => {
+          createdSnapshot = snapshot
+        })
         if (trigger !== undefined) {
           // 初始指令、Run 锚点、run.start 与回执同事务提交。派发者看见命令时消息必已存在，
           // ack 不会漏结算，也不会把初始 prompt 当成尚未派发的追问再次执行。
@@ -150,6 +177,15 @@ export class RunOrchestrator {
         }
         return run
       })
+      if (outcome.executed && createdSnapshot !== undefined) {
+        this.contextLog('context.snapshot_created', {
+          component: 'hub.context',
+          taskId,
+          snapshotId: createdSnapshot.snapshotId,
+          entryCount: createdSnapshot.entryCount,
+        })
+      }
+      return outcome.value
     } catch (error) {
       const pg = unwrapPgError(error)
       const activeConflict =
@@ -186,6 +222,7 @@ export class RunOrchestrator {
     taskId: string,
     input: CreateRunInput,
     now: Date,
+    onSnapshot?: (snapshot: { readonly snapshotId: string; readonly entryCount: number }) => void,
   ): Promise<RunView> {
     // 锁 Task 行串行化并发创建；索引是兜底，锁让守卫读到稳定事实。
     const [task] = await tx
@@ -372,39 +409,6 @@ export class RunOrchestrator {
     )
     const runId = randomUUID()
     const commandId = randomUUID()
-    const runStartPayload = RunStartSchema.shape.payload.parse({
-      commandId,
-      runId,
-      taskId,
-      ownerUserId: task.assigneeUserId,
-      agent: {
-        id: agent.id,
-        profileRevisionId: revision.id,
-        persona: revision.persona,
-        provider: revision.provider,
-        model: revision.model,
-        credentialSlot: revision.credentialSlot,
-        ...(revision.maxTokens !== null ? { maxTokens: revision.maxTokens } : {}),
-      },
-      workspaceId: workspace.id,
-      expectedProfileDigest: revision.profileDigest,
-      expectedPluginPackDigest: pack.packDigest,
-      prompt: input.prompt,
-      executionContext: buildExecutionContext(
-        specRevision,
-        handoffInput,
-        input.reviewInput ?? null,
-      ),
-      // 切片⑧：解析后的档位成对固化（run.start 与 runs 行同值，Node 只透传）。
-      approvalPolicy,
-      // #379：收尾交接草稿的触发与约定快照（缺省 = 不生成）。
-      ...(handoffRunSpec !== undefined ? { handoff: handoffRunSpec } : {}),
-      // 切片⑤：成对下发——resumeOfRunId 让 Node 把 dshHomePath 指向来源 Run 的
-      // home（per-run 隔离下新 home 没有旧日志）；resumeSessionId 直达装载身份。
-      ...(resumeSource !== undefined
-        ? { resumeOfRunId: resumeSource.id, resumeSessionId: resumeSource.dshSessionId! }
-        : {}),
-    })
 
     // 判权**复读**（复核 #204 观察 7 → #205 复核 S2 纠正了口径）：
     //
@@ -438,6 +442,58 @@ export class RunOrchestrator {
       ...(input.rerunOfRunId !== undefined ? { rerunOfRunId: input.rerunOfRunId } : {}),
       ...(input.resumeFromRunId !== undefined ? { resumeFromRunId: input.resumeFromRunId } : {}),
     })
+    // ADR-0027（PC-05a）：项目上下文快照与 Run/Outbox 同事务冻结。选择只读当前
+    // 有效 Decision/Observation；Inference 永不进入执行依据。空快照仍落行，
+    // 但 `run.start` 不携带 projectContext（旧 Node 可继续执行）。
+    const projectContext = await createRunProjectContext(tx, {
+      runId,
+      projectId: task.projectId,
+      taskId: task.id,
+      now,
+    })
+    assertProjectContextCapability(
+      device,
+      projectContext.start === undefined ? 0 : projectContext.start.manifest.length,
+    )
+    const runStartPayload = RunStartSchema.shape.payload.parse({
+      commandId,
+      runId,
+      taskId,
+      ownerUserId: task.assigneeUserId,
+      agent: {
+        id: agent.id,
+        profileRevisionId: revision.id,
+        persona: revision.persona,
+        provider: revision.provider,
+        model: revision.model,
+        credentialSlot: revision.credentialSlot,
+        ...(revision.maxTokens !== null ? { maxTokens: revision.maxTokens } : {}),
+      },
+      workspaceId: workspace.id,
+      expectedProfileDigest: revision.profileDigest,
+      expectedPluginPackDigest: pack.packDigest,
+      prompt: input.prompt,
+      executionContext: buildExecutionContext(
+        specRevision,
+        handoffInput,
+        input.reviewInput ?? null,
+      ),
+      // 切片⑧：解析后的档位成对固化（run.start 与 runs 行同值，Node 只透传）。
+      approvalPolicy,
+      // #379：收尾交接草稿的触发与约定快照（缺省 = 不生成）。
+      ...(handoffRunSpec !== undefined ? { handoff: handoffRunSpec } : {}),
+      // ADR-0027 §3：本 Run 冻结的项目上下文清单（正文走 Node 受控下载）。
+      ...(projectContext.start !== undefined ? { projectContext: projectContext.start } : {}),
+      // 切片⑤：成对下发——resumeOfRunId 让 Node 把 dshHomePath 指向来源 Run 的
+      // home（per-run 隔离下新 home 没有旧日志）；resumeSessionId 直达装载身份。
+      ...(resumeSource !== undefined
+        ? { resumeOfRunId: resumeSource.id, resumeSessionId: resumeSource.dshSessionId! }
+        : {}),
+    })
+    onSnapshot?.({
+      snapshotId: projectContext.snapshotId,
+      entryCount: projectContext.start?.manifest.length ?? 0,
+    })
     // 首个 Run 把 Task 推进到 in_progress（§3.1）；in_progress 上重复 run_started 无边。
     if (task.status === 'open' || task.status === 'in_review') {
       const next = transitionTask({ status: task.status }, { type: 'run_started' })
@@ -457,6 +513,79 @@ export class RunOrchestrator {
     const row = await getRun(tx, runId)
     if (row === undefined) throw new Error('run insert lost in its own transaction')
     return toRunView(row)
+  }
+
+  /**
+   * ADR-0027 §3：`run.start` 真正下发前的复核。快照只在创建后、派发前这段窗口内
+   * 可能被新的约定/交接版本或条目纠正追上；任一失败走既有派发失败路径
+   * `failed(CONTEXT_UNAVAILABLE)`，不自动换最新版本，也不静默丢条目。
+   *
+   * 返回 false = 本命令不得发出（worker 会作废该 outbox 行）。没有快照的历史
+   * Run 直接放行。
+   */
+  async beforeDispatch(command: ClaimedCommand): Promise<boolean> {
+    if (command.type !== 'run.start') return true
+    const payload = command.payload as { runId?: unknown }
+    if (typeof payload.runId !== 'string') return true
+    // 已成功写入过 Node 的命令是同一冻结快照的重复投递（R7 ack 丢失/重连重发）；
+    // 期间来源变化只能影响「尚未发出的新快照」，不能把已在执行的 Run 判失败。
+    if (command.sentAt !== null) return true
+    const now = this.nowFn()
+    const recorded: RecordedContextEntry[] = []
+    const dispatch: { outcome: 'send' | 'block' | 'skip' } = { outcome: 'skip' }
+    let blockReason: string | undefined
+    await this.database.transaction(async (tx) => {
+      const [run] = await tx
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.id, payload.runId as string))
+        .for('update')
+      if (run === undefined || run.status !== 'queued' || run.deviceId !== command.deviceId) {
+        return
+      }
+      const verification = await verifyRunProjectContext(tx, run)
+      if (verification.ok) {
+        dispatch.outcome = 'send'
+        return
+      }
+      blockReason = verification.reason
+      transitionRun({ status: run.status }, { type: 'failed' })
+      const failureSummary = `项目上下文快照在派发前复核失败（${verification.reason}）`
+      // 评审 B2：创建 Run 与真正下发之间是异步窗口，指令消息此时仍是 pending。
+      // 先于状态迁移结算，理由才是精确的 CONTEXT_UNAVAILABLE；`setRunStatus` 的
+      // 终态兜底只接管仍 pending 的追问（RUN_TERMINAL），不该盖掉这里的根因。
+      await settleTriggerInstruction(tx, run, {
+        accepted: false,
+        error: { code: 'CONTEXT_UNAVAILABLE', message: failureSummary },
+      })
+      await applyRunStatus(
+        tx,
+        this.outbox,
+        run.id,
+        'failed',
+        {
+          failureCode: 'CONTEXT_UNAVAILABLE',
+          failureSummary,
+          finishedAt: now,
+        },
+        recorded,
+      )
+      await appendTeamEvent(tx, {
+        type: 'run.changed',
+        payload: { runId: run.id, taskId: run.taskId, status: 'failed' },
+      })
+      await failInTransaction(tx, command.id, now)
+      dispatch.outcome = 'block'
+    })
+    this.flushContextEvents(recorded)
+    if (dispatch.outcome === 'block') {
+      this.contextLog('context.dispatch_blocked', {
+        component: 'hub.context',
+        runId: payload.runId,
+        reason: blockReason,
+      })
+    }
+    return dispatch.outcome === 'send'
   }
 
   /**
@@ -557,6 +686,9 @@ export class RunOrchestrator {
         return
       case 'run.snapshot':
         await this.handleRunSnapshot(device, frame.payload, now)
+        return
+      case 'run.context_receipt':
+        await this.handleRunContextReceipt(device, frame.payload, now)
         return
       case 'node.heartbeat':
         if (frame.payload.deviceId !== device.deviceId) {
@@ -664,6 +796,64 @@ export class RunOrchestrator {
       }
     })
     this.flushContextEvents(recorded)
+  }
+
+  /**
+   * ADR-0027 §4：`run.context_receipt` 接受谓词全部成立才落库；终态后迟到记
+   * `receipt_late`，不复活 Run。回执是受信 Node 的自报证据，不防恶意 Node。
+   */
+  private async handleRunContextReceipt(
+    device: AuthenticatedDevice,
+    receipt: RunContextReceipt,
+    now: Date,
+  ): Promise<void> {
+    let outcome: Awaited<ReturnType<typeof recordRunContextReceipt>> | undefined
+    // 消费行写入失败只记 consumption_gap；告警在事务提交后统一写，避免回滚留下
+    // 指向不存在 receipt 的日志。
+    const gaps: { message: string; context: Record<string, unknown> }[] = []
+    await this.database.transaction(async (tx) => {
+      const [run] = await tx
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.id, receipt.runId))
+        .for('update')
+      if (run === undefined) return
+      if (run.deviceId !== device.deviceId) {
+        throw new RunCommandError('FORBIDDEN', 'run does not belong to this device')
+      }
+      outcome = await recordRunContextReceipt(tx, run, receipt, now, (message, context) => {
+        gaps.push({ message, context })
+      })
+    })
+    for (const gap of gaps) this.warnFn(gap.message, gap.context)
+    if (outcome === undefined) return
+    if (outcome.status === 'accepted') {
+      this.contextLog('context.receipt_recorded', {
+        component: 'hub.context',
+        runId: receipt.runId,
+        snapshotId: outcome.snapshotId,
+        receiptSeq: receipt.receiptSeq,
+        delivered: outcome.delivered,
+        read: outcome.read,
+      })
+      return
+    }
+    if (outcome.status === 'late') {
+      this.contextLog('context.receipt_late', {
+        component: 'hub.context',
+        runId: receipt.runId,
+        snapshotId: receipt.snapshotId,
+        receiptSeq: receipt.receiptSeq,
+      })
+      return
+    }
+    this.contextLog('context.receipt_invalid', {
+      component: 'hub.context',
+      runId: receipt.runId,
+      snapshotId: receipt.snapshotId,
+      receiptSeq: receipt.receiptSeq,
+      reason: outcome.reason,
+    })
   }
 
   /**

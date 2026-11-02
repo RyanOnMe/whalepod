@@ -44,6 +44,12 @@ export const dispatchOutbox = pgTable(
     payload: jsonb('payload').notNull(),
     attemptCount: integer('attempt_count').notNull().default(0),
     nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * ADR-0027 §3：首次成功写入 Node 的时间。预派发复核只在此列为空时执行；
+     * 已发出一次的 run.start 重投是同一冻结快照的重复投递，不得因期间来源变化
+     * 把已在执行的 Run 误判失败（ack 丢失/R7 重发）。
+     */
+    sentAt: timestamp('sent_at', { withTimezone: true }),
     ackedAt: timestamp('acked_at', { withTimezone: true }),
     failedAt: timestamp('failed_at', { withTimezone: true }),
     /**

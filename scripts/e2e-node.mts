@@ -55,6 +55,8 @@ import type {
 } from '../apps/node/src/runtime-driver.js'
 import { RunManager } from '../apps/node/src/run/run-manager.js'
 import { ArtifactInputsManager } from '../apps/node/src/artifact/inputs.js'
+import { ProjectContextDownloader } from '../apps/node/src/context/project-context.js'
+import { SqliteContextReceiptSeqStore } from '../apps/node/src/context/receipt-seq-store.js'
 import { ArtifactCollector } from '../apps/node/src/artifact/collect.js'
 import { OfficePreviewGenerator } from '../apps/node/src/artifact/preview.js'
 import {
@@ -333,6 +335,12 @@ const artifactInputs = new ArtifactInputsManager({
   inputsRoot: join(stateDir, 'runtime-inputs'),
   log: artifactLog,
 })
+const projectContext = new ProjectContextDownloader({
+  hubUrl: config.hubUrl,
+  deviceToken: config.deviceToken,
+  inputsRoot: join(stateDir, 'runtime-context'),
+  log: artifactLog,
+})
 // #442 Office lane uses the same optional production generator as the Node CLI.
 const officePreview =
   process.env['WHALEPOD_E2E_OFFICE_PREVIEW'] === '1'
@@ -432,6 +440,9 @@ const runManager = new RunManager({
     return inputs
   },
   cleanupArtifactInputs: (runId) => artifactInputs.cleanup(runId),
+  prepareProjectContext: (runId, manifest) => projectContext.prepare(runId, manifest),
+  cleanupProjectContext: (runId) => projectContext.cleanup(runId),
+  contextReceiptSeq: new SqliteContextReceiptSeqStore(join(stateDir, 'context-receipts.sqlite')),
   deviceId: config.deviceId,
   dshDistributionVersion: '0.1.0-rc.8-e2e',
   log: (level, msg, context) => {

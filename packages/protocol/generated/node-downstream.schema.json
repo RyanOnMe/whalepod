@@ -56,11 +56,14 @@
             "executionContext": {
               "$ref": "#/$defs/__schema13"
             },
-            "resumeOfRunId": {
+            "projectContext": {
               "$ref": "#/$defs/__schema14"
             },
+            "resumeOfRunId": {
+              "$ref": "#/$defs/__schema24"
+            },
             "resumeSessionId": {
-              "$ref": "#/$defs/__schema15"
+              "$ref": "#/$defs/__schema25"
             }
           },
           "required": [
@@ -723,11 +726,150 @@
       "maxLength": 100000
     },
     "__schema14": {
+      "type": "object",
+      "properties": {
+        "snapshotId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "digest": {
+          "$ref": "#/$defs/__schema15"
+        },
+        "headerText": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "headerDigest": {
+          "$ref": "#/$defs/__schema15"
+        },
+        "manifest": {
+          "minItems": 1,
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema16"
+          }
+        }
+      },
+      "required": [
+        "snapshotId",
+        "digest",
+        "headerText",
+        "headerDigest",
+        "manifest"
+      ],
+      "additionalProperties": false
+    },
+    "__schema15": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "__schema16": {
+      "type": "object",
+      "properties": {
+        "entryId": {
+          "$ref": "#/$defs/__schema17"
+        },
+        "kind": {
+          "$ref": "#/$defs/__schema18"
+        },
+        "title": {
+          "$ref": "#/$defs/__schema19"
+        },
+        "revisionId": {
+          "$ref": "#/$defs/__schema20"
+        },
+        "businessRef": {
+          "$ref": "#/$defs/__schema21"
+        },
+        "digest": {
+          "$ref": "#/$defs/__schema15"
+        },
+        "byteSize": {
+          "$ref": "#/$defs/__schema22"
+        },
+        "snapshotAuthorizationGeneration": {
+          "$ref": "#/$defs/__schema23"
+        }
+      },
+      "required": [
+        "entryId",
+        "kind",
+        "title",
+        "revisionId",
+        "businessRef",
+        "digest",
+        "byteSize",
+        "snapshotAuthorizationGeneration"
+      ],
+      "additionalProperties": false
+    },
+    "__schema17": {
       "type": "string",
       "format": "uuid",
       "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
     },
-    "__schema15": {
+    "__schema18": {
+      "type": "string",
+      "enum": [
+        "observation",
+        "decision"
+      ]
+    },
+    "__schema19": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "__schema20": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "__schema21": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "__schema22": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65536
+    },
+    "__schema23": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "__schema24": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    },
+    "__schema25": {
       "type": "string",
       "minLength": 1,
       "maxLength": 128

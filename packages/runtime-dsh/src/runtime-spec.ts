@@ -9,7 +9,12 @@
  * profileDigest 不再只是记录：bridge 在 `runtime.ready` 帧**回声**它，Node 侧与
  * run.start 固化的 Revision digest 比对（不符即 PROFILE_MISMATCH 并终止）。
  */
-import type { HandoffRunSpec, RuntimeArtifactInput, RuntimeCommand } from '@whalepod/protocol'
+import type {
+  HandoffRunSpec,
+  RunProjectContextManifestEntry,
+  RuntimeArtifactInput,
+  RuntimeCommand,
+} from '@whalepod/protocol'
 
 export interface RuntimeSpec {
   readonly runId: string
@@ -50,6 +55,18 @@ export interface RuntimeSpec {
    */
   readonly handoff?: HandoffRunSpec
   readonly executionContext?: string
+  /**
+   * ADR-0027 §4：项目上下文快照清单 + 本地只读副本目录（本地绝对路径，红线同
+   * artifactInputsDir）。entryCount=0 时不携带。
+   */
+  readonly projectContext?: {
+    readonly snapshotId: string
+    readonly digest: string
+    readonly headerText: string
+    readonly headerDigest: string
+    readonly entries: readonly RunProjectContextManifestEntry[]
+    readonly entriesDir: string
+  }
 }
 
 type InitializeCommand = Extract<RuntimeCommand, { type: 'runtime.initialize' }>
@@ -64,6 +81,7 @@ export function runtimeSpecFromInitialize(command: InitializeCommand): RuntimeSp
     approvalPolicy,
     handoff,
     executionContext,
+    projectContext,
     ...rest
   } = command.payload
   // exactOptionalPropertyTypes：zod 的 optional 产出 `number | undefined`，
@@ -78,6 +96,7 @@ export function runtimeSpecFromInitialize(command: InitializeCommand): RuntimeSp
     ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
     ...(handoff === undefined ? {} : { handoff }),
     ...(executionContext === undefined ? {} : { executionContext }),
+    ...(projectContext === undefined ? {} : { projectContext }),
   }
 }
 
