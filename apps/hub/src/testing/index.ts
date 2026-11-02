@@ -52,6 +52,12 @@ export interface ContextEvent {
   readonly status?: string
   readonly permissionState?: string
   readonly authorizationGeneration?: number
+  /** ADR-0025：事实账本的 entry 观测字段（只含不透明 id/类型/业务版本/时间）。 */
+  readonly entryId?: string
+  readonly kind?: string
+  readonly businessRef?: string
+  readonly businessVersion?: string
+  readonly occurredAt?: string
 }
 
 class AuditStream extends Writable {

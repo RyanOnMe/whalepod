@@ -59,6 +59,7 @@ import type { AuthenticatedDevice } from './device-gateway.js'
 import { isRunSemanticConflict, RunCommandError } from './errors.js'
 import { settleFollowupAck, settleTriggerInstruction } from './followup.js'
 import { applyRunStatus } from './run-status.js'
+import type { ContextEntryObserver, RecordedContextEntry } from '../context/observer.js'
 import type { ApprovalView, RunView } from './queries.js'
 import { toApprovalView, toRunView } from './queries.js'
 
@@ -76,6 +77,11 @@ export interface RunOrchestratorDeps {
    * component 分层字段由调用点给出）。缺省 = 静默（测试深模块驱动）。
    */
   warn?: (message: string, context: Record<string, unknown>) => void
+  /**
+   * ADR-0025 §9：事务提交后的 `context.entry_recorded` 观测回调（组合根接
+   * app.log.info）。缺省 = 静默；观测只在提交后写，回滚不留痕。
+   */
+  log?: ContextEntryObserver
 }
 
 export class RunOrchestrator {
@@ -83,6 +89,7 @@ export class RunOrchestrator {
   private readonly outbox: Outbox
   private readonly nowFn: () => Date
   private readonly warnFn: (message: string, context: Record<string, unknown>) => void
+  private readonly logFn: ContextEntryObserver
   /** deviceId → 最近心跳；reconciler 据此判断「Node 在线但已没有该 Run」。 */
   readonly deviceActivity = new Map<string, DeviceActivity>()
 
@@ -94,6 +101,12 @@ export class RunOrchestrator {
     this.outbox = deps.outbox
     this.nowFn = deps.now ?? (() => new Date())
     this.warnFn = deps.warn ?? (() => {})
+    this.logFn = deps.log ?? (() => {})
+  }
+
+  /** 事务提交后统一写 `context.entry_recorded`（事务内只收集，不落日志）。 */
+  private flushContextEvents(recorded: readonly RecordedContextEntry[]): void {
+    for (const event of recorded) this.logFn(event)
   }
 
   /**
@@ -454,7 +467,8 @@ export class RunOrchestrator {
    */
   async cancel(ctx: ActorContext, runId: string): Promise<RunView> {
     const now = this.nowFn()
-    return this.database.transaction(async (tx) => {
+    const recorded: RecordedContextEntry[] = []
+    const view = await this.database.transaction(async (tx) => {
       const [run] = await tx
         .select()
         .from(schema.runs)
@@ -466,7 +480,7 @@ export class RunOrchestrator {
       }
       await cancelRunInTransaction(
         tx,
-        { outbox: this.outbox, now },
+        { outbox: this.outbox, now, recorded },
         run,
         ctx.userId === run.ownerUserId ? 'user' : 'admin',
       )
@@ -474,6 +488,8 @@ export class RunOrchestrator {
       if (row === undefined) throw new Error('run vanished in its own transaction')
       return toRunView(row)
     })
+    this.flushContextEvents(recorded)
+    return view
   }
 
   /**
@@ -590,6 +606,7 @@ export class RunOrchestrator {
     },
     now: Date,
   ): Promise<void> {
+    const recorded: RecordedContextEntry[] = []
     await this.database.transaction(async (tx) => {
       const command = await getOutboxCommand(tx, ack.commandId)
       if (command === undefined) return // 重启前的残留 ack：无行可动
@@ -628,17 +645,25 @@ export class RunOrchestrator {
         })
       } else {
         this.applyRunTransition(run, { type: 'failed' })
-        await setRunStatus(tx, run.id, 'failed', {
-          failureCode: ack.error?.code ?? 'RUNTIME_START_FAILED',
-          failureSummary: ack.error?.message ?? 'node rejected run.start',
-          finishedAt: now,
-        })
+        await applyRunStatus(
+          tx,
+          this.outbox,
+          run.id,
+          'failed',
+          {
+            failureCode: ack.error?.code ?? 'RUNTIME_START_FAILED',
+            failureSummary: ack.error?.message ?? 'node rejected run.start',
+            finishedAt: now,
+          },
+          recorded,
+        )
         await appendTeamEvent(tx, {
           type: 'run.changed',
           payload: { runId: run.id, taskId: run.taskId, status: 'failed' },
         })
       }
     })
+    this.flushContextEvents(recorded)
   }
 
   /**
@@ -650,6 +675,7 @@ export class RunOrchestrator {
     payload: ProjectedRunEvent,
     now: Date,
   ): Promise<void> {
+    const recorded: RecordedContextEntry[] = []
     await this.database.transaction(async (tx) => {
       const [run] = await tx
         .select()
@@ -718,19 +744,20 @@ export class RunOrchestrator {
         })
       }
       try {
-        await this.applyProjectedEvent(tx, run, payload.event, now)
+        await this.applyProjectedEvent(tx, run, payload.event, now, recorded)
       } catch (error) {
         // #52/ADR-0007：表外边/引用缺失——语义冲突在本事务内降级：已 append 的
         // 事件行随降级提交一起留证（现状：抛错回滚，连证都留不下），Run 收敛
         // failed，帧按正常应用 ack 掉（水位推进、spool 可 GC）——毒帧循环从
         // 源头拆除，连接保留。
         if (isRunSemanticConflict(error)) {
-          await this.convergeSemanticConflict(tx, run, error, now)
+          await this.convergeSemanticConflict(tx, run, error, now, recorded)
           return
         }
         throw error
       }
     })
+    this.flushContextEvents(recorded)
   }
 
   /**
@@ -744,6 +771,7 @@ export class RunOrchestrator {
     run: RunRow,
     error: unknown,
     now: Date,
+    recorded: RecordedContextEntry[],
   ): Promise<void> {
     const reason = error instanceof Error ? error.message : String(error)
     this.warnFn('run transition violation converged to failed', {
@@ -754,11 +782,18 @@ export class RunOrchestrator {
       fromStatus: run.status,
       reason,
     })
-    await setRunStatus(tx, run.id, 'failed', {
-      failureCode: 'INVALID_RUN_TRANSITION',
-      failureSummary: `transition violation: ${reason}`.slice(0, 1000),
-      finishedAt: now,
-    })
+    await applyRunStatus(
+      tx,
+      this.outbox,
+      run.id,
+      'failed',
+      {
+        failureCode: 'INVALID_RUN_TRANSITION',
+        failureSummary: `transition violation: ${reason}`.slice(0, 1000),
+        finishedAt: now,
+      },
+      recorded,
+    )
     await cancelPendingApprovalsInTransaction(tx, run, now, 'run_terminal_fold')
     await appendTeamEvent(tx, {
       type: 'run.changed',
@@ -771,6 +806,7 @@ export class RunOrchestrator {
     run: RunRow,
     event: ProjectedRunEvent['event'],
     now: Date,
+    recorded: RecordedContextEntry[],
   ): Promise<void> {
     const runChanged = async (status: RunRow['status']) => {
       await appendTeamEvent(tx, {
@@ -791,7 +827,7 @@ export class RunOrchestrator {
       }
       case 'run.completed': {
         this.applyRunTransition(run, { type: 'completed' })
-        await setRunStatus(tx, run.id, 'completed', { finishedAt: now })
+        await applyRunStatus(tx, this.outbox, run.id, 'completed', { finishedAt: now }, recorded)
         // #52/ADR-0007：Runtime 终态裁决折叠悬置审批（waiting_approval 来的
         // 裁决在此落账；running 来的折叠是恒等空转，一并防御既有不变量）。
         await cancelPendingApprovalsInTransaction(tx, run, now, 'run_terminal_fold')
@@ -800,18 +836,25 @@ export class RunOrchestrator {
       }
       case 'run.failed': {
         this.applyRunTransition(run, { type: 'failed' })
-        await setRunStatus(tx, run.id, 'failed', {
-          failureCode: event.code,
-          failureSummary: event.summary,
-          finishedAt: now,
-        })
+        await applyRunStatus(
+          tx,
+          this.outbox,
+          run.id,
+          'failed',
+          {
+            failureCode: event.code,
+            failureSummary: event.summary,
+            finishedAt: now,
+          },
+          recorded,
+        )
         await cancelPendingApprovalsInTransaction(tx, run, now, 'run_terminal_fold')
         await runChanged('failed')
         return
       }
       case 'run.cancelled': {
         this.applyRunTransition(run, { type: 'cancel_confirmed' })
-        await setRunStatus(tx, run.id, 'cancelled', { finishedAt: now })
+        await applyRunStatus(tx, this.outbox, run.id, 'cancelled', { finishedAt: now }, recorded)
         await runChanged('cancelled')
         return
       }
@@ -868,7 +911,9 @@ export class RunOrchestrator {
             remainingPending,
           })
           if (next.status !== run.status) {
-            await applyRunStatus(tx, this.outbox, run.id, next.status)
+            // 当前 approval_closed 只到 running；仍传 collector，未来新增终态边时
+            // 不会静默丢失 entry_recorded（评审 C6）。
+            await applyRunStatus(tx, this.outbox, run.id, next.status, {}, recorded)
             await runChanged(next.status)
           }
         }
@@ -891,6 +936,7 @@ export class RunOrchestrator {
     snapshot: RunSnapshot,
     now: Date,
   ): Promise<void> {
+    const recorded: RecordedContextEntry[] = []
     await this.database.transaction(async (tx) => {
       const [run] = await tx
         .select()
@@ -906,12 +952,13 @@ export class RunOrchestrator {
       if (event === undefined) return
       try {
         const next = this.applyRunTransition(run, event)
-        await this.persistTransition(tx, run, next.status, snapshot, now)
+        await this.persistTransition(tx, run, next.status, snapshot, now, recorded)
       } catch (error) {
         if (error instanceof DomainError && error.code === 'INVALID_RUN_TRANSITION') return
         throw error
       }
     })
+    this.flushContextEvents(recorded)
   }
 
   /**
@@ -984,15 +1031,23 @@ export class RunOrchestrator {
     status: RunRow['status'],
     snapshot: RunSnapshot,
     now: Date,
+    recorded: RecordedContextEntry[],
   ): Promise<void> {
     const terminal = isTerminal(status)
-    await applyRunStatus(tx, this.outbox, run.id, status, {
-      ...(snapshot.dshSessionId !== null ? { dshSessionId: snapshot.dshSessionId } : {}),
-      ...(status === 'running' ? { startedAt: run.startedAt ?? now } : {}),
-      ...(terminal ? { finishedAt: now } : {}),
-      ...(snapshot.failureCode !== null ? { failureCode: snapshot.failureCode } : {}),
-      ...(snapshot.failureSummary !== null ? { failureSummary: snapshot.failureSummary } : {}),
-    })
+    await applyRunStatus(
+      tx,
+      this.outbox,
+      run.id,
+      status,
+      {
+        ...(snapshot.dshSessionId !== null ? { dshSessionId: snapshot.dshSessionId } : {}),
+        ...(status === 'running' ? { startedAt: run.startedAt ?? now } : {}),
+        ...(terminal ? { finishedAt: now } : {}),
+        ...(snapshot.failureCode !== null ? { failureCode: snapshot.failureCode } : {}),
+        ...(snapshot.failureSummary !== null ? { failureSummary: snapshot.failureSummary } : {}),
+      },
+      recorded,
+    )
     // ADR-0007：快照也能把 waiting_approval 收敛到终态（新边）——同一事务折叠
     // 悬置审批，守住「终态 Run 不挂 pending Approval」的账本不变式。
     if (terminal) {
@@ -1021,6 +1076,7 @@ export class RunOrchestrator {
         outbox: this.outbox,
         activity: this.deviceActivity,
         now: this.nowFn,
+        log: this.logFn,
       },
       now,
     )

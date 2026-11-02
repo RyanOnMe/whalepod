@@ -14,6 +14,7 @@ import {
 } from '@whalepod/protocol'
 import type { Database } from '@whalepod/db'
 import { ApiError } from '../shared/http-error.js'
+import { logRecordedEntry } from '../context/observer.js'
 import { readIdempotencyKey } from '../auth/idempotency.js'
 import type { RequireActor, SessionActor } from '../auth/session.js'
 import { asUserId } from '@whalepod/domain'
@@ -190,6 +191,7 @@ export function registerHandoffRoutes(app: FastifyInstance, deps: HandoffRouteDe
       receiptId,
       parsed.data,
       readIdempotencyKey(request),
+      (event) => logRecordedEntry(request.log, event),
     )
     return reply.code(200).send({ ok: true, data: receipt })
   })
@@ -216,6 +218,7 @@ export function registerHandoffRoutes(app: FastifyInstance, deps: HandoffRouteDe
       receiptId,
       parsed.data,
       readIdempotencyKey(request),
+      (event) => logRecordedEntry(request.log, event),
     )
     return reply.code(201).send({ ok: true, data: receipt })
   })

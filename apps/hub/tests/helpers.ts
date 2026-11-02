@@ -34,6 +34,7 @@ import type { FakeDeviceGatewayOptions } from '@whalepod/testkit'
 import { FakeClock, FakeDeviceGateway } from '@whalepod/testkit'
 import type { CreateRunInput, RunOrchestrator } from '../src/modules/run/index.js'
 import { RunOrchestrator as Orchestrator } from '../src/modules/run/index.js'
+import type { ContextEntryObserver } from '../src/modules/context/observer.js'
 import { OutboxWorker } from '../src/modules/run/index.js'
 
 // #183：脚手架已按归属拆走（testkit / hub 的 src/testing），这里只做聚合 re-export，
@@ -360,6 +361,8 @@ export interface HarnessOrchestratorOptions {
    * 后的补偿控制，其 warn 是补偿控制生效的唯一机器证据，测试需能注入 spy 断言。
    */
   warn?: (message: string, context: Record<string, unknown>) => void
+  /** ADR-0025 §9：提交后的 context.entry_recorded 观测通道（reconciler 等路径断言用）。 */
+  log?: ContextEntryObserver
 }
 
 export function makeHarness(
@@ -377,6 +380,7 @@ export function makeHarness(
     outbox,
     now,
     ...(orchestratorOptions.warn === undefined ? {} : { warn: orchestratorOptions.warn }),
+    ...(orchestratorOptions.log === undefined ? {} : { log: orchestratorOptions.log }),
   })
   const worker = new OutboxWorker({ outbox, gateway, now })
   return {

@@ -18,6 +18,7 @@ import { expireApprovals } from './modules/run/approval-expiry.js'
 import { runSourceReconcileTick } from './modules/source/tick.js'
 import { nodeSourceCollector } from './modules/source/collector.js'
 import { sanitizeError } from './modules/shared/error-log.js'
+import { logRecordedEntry } from './modules/context/observer.js'
 import { WsDeviceGateway } from './modules/device/index.js'
 
 const config = loadConfig()
@@ -63,6 +64,9 @@ const leaseTimer = setInterval(() => {
       // 退化为 devices.lastSeenAt（DB 事实），语义不变。
       activity: app.runOrchestrator.deviceActivity,
       now: () => new Date(),
+      // ADR-0025 §9：租约过期/丢失同样会投影 Run 终态 Observation；观测必须在
+      // 事务提交后写，且组合根不能漏接（评审 B2 的实测缺口）。
+      log: (event) => logRecordedEntry(app.log, event),
     },
     new Date(),
   ).catch((error) => {

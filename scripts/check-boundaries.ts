@@ -504,6 +504,16 @@ export function checkTypecheckWiring(
  */
 export const RUN_STATUS_CHOKE_POINT = 'apps/hub/src/modules/run/run-status.ts'
 
+/**
+ * Run 状态字面量必须走 `applyRunStatus` 收口：
+ * - `running`：进入 running 时顺带放行排队追问（P1-192）；
+ * - 终态：同一事务投影项目 Observation（ADR-0025；PC-03a）。
+ * 直接 `setRunStatus(..., 'completed'|...)` 会绕过其中至少一项。
+ */
+const RUN_STATUS_LITERAL = /['"](running|completed|failed|cancelled|lost)['"]/
+/** 调用片段（跨行）：参数里的对象字面量不含 `)`，所以到第一个 `)` 即可。 */
+const RUN_STATUS_CALL = /setRunStatus\(([\s\S]{0,400}?)\)/g
+
 export function checkRunStatusChokePoint(repoRoot: string): string[] {
   const violations: string[] = []
   const hubRoot = join(repoRoot, 'apps/hub/src')
@@ -512,15 +522,19 @@ export function checkRunStatusChokePoint(repoRoot: string): string[] {
     const relativePath = relative(repoRoot, filePath).split(sep).join('/')
     if (relativePath === RUN_STATUS_CHOKE_POINT) continue
     const source = readFileSync(filePath, 'utf8')
-    source.split('\n').forEach((line, index) => {
-      // 只认调用形态，且要求同一行里同时出现 `setRunStatus(` 与字面量 'running'。
-      if (!line.includes('setRunStatus(')) return
-      if (!/['"]running['"]/.test(line)) return
+    // 同一文件内可能有多个调用：用带 g 的正则逐个扫，参数跨行也要看到。
+    RUN_STATUS_CALL.lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = RUN_STATUS_CALL.exec(source)) !== null) {
+      const literal = RUN_STATUS_LITERAL.exec(match[1] ?? '')
+      if (literal === null) continue
+      const line = source.slice(0, match.index).split('\n').length
       violations.push(
-        `${relativePath}:${index + 1}: writes run status 'running' directly; ` +
-          `use applyRunStatus (${RUN_STATUS_CHOKE_POINT}) so queued instructions are released`,
+        `${relativePath}:${line}: writes run status '${literal[1]}' directly; ` +
+          `use applyRunStatus (${RUN_STATUS_CHOKE_POINT}) so queued instructions are released ` +
+          `and terminal project context is projected`,
       )
-    })
+    }
   }
   return violations
 }

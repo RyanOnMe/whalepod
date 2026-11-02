@@ -22,6 +22,9 @@ import { SetupTokenStore } from './modules/team/setup-token.js'
 import { registerProjectRoutes } from './modules/project/routes.js'
 // ADR-0024（PC-02a）：项目来源绑定生命周期（团队共享、暂停/恢复/撤销）。
 import { registerSourceRoutes } from './modules/source/routes.js'
+// ADR-0025（PC-03a）：项目事实账本与人工纠正。
+import { registerContextRoutes } from './modules/context/routes.js'
+import { logRecordedEntry } from './modules/context/observer.js'
 import { registerTaskRoutes } from './modules/task/routes.js'
 import { registerAgentRoutes } from './modules/agent/routes.js'
 import { loadPluginCatalog } from './modules/plugin/catalog.js'
@@ -191,6 +194,9 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
     // #52/ADR-0007：表外越边的 Run 级降级收敛走结构化 warn（component 分层，
     // 违例计数/告警的挂点；真人路径可观测，不做暗手）。
     warn: (message, context) => app.log.warn({ component: 'hub.run', ...context }, message),
+    // ADR-0025 §9：Run 终态 Observation 的观测在事务提交后由 orchestrator 写，
+    // 这里只接日志通道（字段由事件给出：不透明 id/类型/状态/时间）。
+    log: (event) => logRecordedEntry(app.log, event),
   })
   app.decorate('runOrchestrator', orchestrator)
   registerNodeWebsocket(app, { database, orchestrator, realtime })
@@ -208,6 +214,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       registerInviteRoutes(api, { database, requireActor, anonymousLimiter, secureCookie })
       registerProjectRoutes(api, { database, requireActor })
       registerSourceRoutes(api, { database, requireActor })
+      registerContextRoutes(api, { database, requireActor })
       registerTaskRoutes(api, {
         database,
         requireActor,

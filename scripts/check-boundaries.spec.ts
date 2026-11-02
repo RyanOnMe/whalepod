@@ -597,6 +597,33 @@ describe('checkRunStatusChokePoint（P1-192：Run 唯一写入口）', () => {
     expect(violations[0]).toContain('applyRunStatus')
   })
 
+  it('终态字面量同样必须走收口（否则漏项目 Observation）', () => {
+    const root = mkdtempSync(join(tmpdir(), 'choke-terminal-'))
+    const dir = join(root, 'apps/hub/src/modules/run')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, 'sneaky.ts'),
+      "export const go = (tx: Tx) => setRunStatus(tx, 'id', 'completed', { finishedAt: new Date() })\n",
+    )
+    const violations = checkRunStatusChokePoint(root)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]).toContain("'completed'")
+    expect(violations[0]).toContain('project context')
+  })
+
+  it('参数跨行也抓到（评审 C5：单行扫描会漏）', () => {
+    const root = mkdtempSync(join(tmpdir(), 'choke-multiline-'))
+    const dir = join(root, 'apps/hub/src/modules/run')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, 'sneaky.ts'),
+      "export const go = (tx: Tx) =>\n  setRunStatus(\n    tx,\n    'id',\n    'completed',\n    {},\n  )\n",
+    )
+    const violations = checkRunStatusChokePoint(root)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]).toContain('sneaky.ts:2')
+  })
+
   it('收口文件自己不受这条判据限制（它就是那个入口）', () => {
     const root = mkdtempSync(join(tmpdir(), 'choke-ok-'))
     const dir = join(root, 'apps/hub/src/modules/run')

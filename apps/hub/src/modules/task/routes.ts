@@ -12,6 +12,7 @@ import {
   CreateInstructionGrantRequestSchema,
 } from '@whalepod/protocol'
 import { audit } from '../shared/audit.js'
+import { logRecordedEntry } from '../context/observer.js'
 import { ApiError } from '../shared/http-error.js'
 import { readIdempotencyKey } from '../auth/idempotency.js'
 import type { RequireActor, SessionActor } from '../auth/session.js'
@@ -304,6 +305,7 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
         taskId,
         { draftVersion: parsed.data.draftVersion },
         readIdempotencyKey(request),
+        (event) => logRecordedEntry(request.log, event),
       ),
     )
     audit(request, 'agreement.confirm', 'success', session.userId)
@@ -398,7 +400,9 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
   app.post('/tasks/:taskId/cancel', async (request) => {
     const session = await deps.requireActor(request)
     const { taskId } = request.params as { taskId: string }
-    const task = await cancelTask(deps.database, deps.outbox, actorFrom(session), taskId)
+    const task = await cancelTask(deps.database, deps.outbox, actorFrom(session), taskId, (event) =>
+      logRecordedEntry(request.log, event),
+    )
     audit(request, 'task.cancel', 'success', session.userId)
     return { ok: true, data: task }
   })

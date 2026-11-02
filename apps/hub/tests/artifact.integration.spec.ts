@@ -326,6 +326,31 @@ describe('P1-15 artifact（Hub 侧）', () => {
     expect(allowed.json().data.status).toBe('published')
     expect((await artifactRows())[0]?.status).toBe('published')
     expect((await artifactRows())[0]?.publishedAt).not.toBeNull()
+    // ADR-0025：成果发布在业务事务内投影为 Decision（不是模型推断）。
+    const decisions = await database.db
+      .select()
+      .from(schema.contextEntries)
+      .where(eq(schema.contextEntries.businessRef, `artifact:${artifactId}`))
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]).toMatchObject({
+      kind: 'decision',
+      status: 'active',
+      actorKind: 'member',
+      createdBy: bob.userId,
+      businessVersion: (await artifactRows())[0]?.publishedAt?.toISOString(),
+    })
+    // ADR-0025 §9：投影日志在提交后由路由写 hub.context（只含不透明 id/类型/时间）。
+    expect(
+      ctx.contextEvents.find(
+        (event) =>
+          event.action === 'context.entry_recorded' &&
+          event.businessRef === `artifact:${artifactId}`,
+      ),
+    ).toMatchObject({
+      entryId: decisions[0]?.id,
+      kind: 'decision',
+      projectId: expect.any(String),
+    })
 
     const again = await ctx.app.inject({
       method: 'POST',

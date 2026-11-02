@@ -212,6 +212,20 @@ describe('task agreement HTTP 面 (#378)', () => {
       revisionNumber: 1,
       confirmedByUserId: owner.userId,
     })
+    // ADR-0025：确认在业务事务内投影为 Decision（成员 actor + business citation）。
+    const decisions = await database.db
+      .select()
+      .from(schema.contextEntries)
+      .where(eq(schema.contextEntries.businessRef, `taskSpec:${taskId}`))
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]).toMatchObject({
+      kind: 'decision',
+      status: 'active',
+      actorKind: 'member',
+      createdBy: owner.userId,
+      businessVersion: `${confirmed.json().data.id}:1`,
+    })
+    expect(decisions[0]?.body).toContain(CONTENT.goal)
 
     const after = await apiInject(ctx, owner, {
       method: 'GET',

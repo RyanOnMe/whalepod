@@ -47,6 +47,8 @@ export type AuditAction =
   | 'source.pause'
   | 'source.resume'
   | 'source.revoke'
+  // ADR-0025：项目事实账本的人工纠正（不记被纠正正文）。
+  | 'context.correct'
 
 export type AuditOutcome = 'success' | 'denied' | 'rate_limited'
 
