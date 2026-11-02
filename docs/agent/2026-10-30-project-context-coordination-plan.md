@@ -321,7 +321,7 @@ M1a 与 M1b 是工程结论，M2 才判断协调收益。真实使用尚未开�
 | 2026-11-02 | ADR-0025/0026/0027 采纳，内部最小协调链立项 | #451/#452/#453 已关闭；#472（PC-03a）、#473（PC-04a）、#474（PC-05a） |
 | 2026-11-02 | PC-03a 事实账本与业务投影 | PR #476（squash 1a74284）；`docs/agent/project-context-ledger-acceptance.md` |
 | 2026-11-02 | PC-04a 确定性项目协调 | PR #477；`docs/agent/project-coordination-acceptance.md` |
-| 2026-11-02 | PC-05a Run 项目上下文快照与运行时消费（正向链） | #474；`docs/agent/run-project-context-acceptance.md`；撤权状态机/watchdog/终态 session 清理留给 PC-05b |
+| 2026-11-02 | PC-05a Run 项目上下文快照与运行时消费（正向链） | PR #478（squash a8f4b97）；#474 已关闭；`docs/agent/run-project-context-acceptance.md`；撤权状态机/watchdog/终态 session 清理留给 PC-05b |
 
 PC-01 的结论保持 `not_run`，等待可测试租户、企业自建应用、测试群与测试文档/表格。ADR-0024 与 ADR-0025–0027 均已采纳；内部最小协调链由 #472/#473/#474 实施，外部来源、模型派发与终态清理按后续切片交付。2026-11-02 只读核对 GitHub：#448/#449/#457/#472/#473/#474 打开，#450–#453 中 ADR 提案 Issue 已随采纳关闭；Issue 标题状态不代替 ADR 的采纳状态。
 

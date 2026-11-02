@@ -1,6 +1,7 @@
 # Run 项目上下文快照与运行时消费验收（PC-05a / ADR-0027）
 
 - Issue：#474（PC-05a）
+- 合入：PR #478（squash a8f4b97，2026-11-02）
 - 状态：正向最小链已交付；撤权状态机、终态 session 清理与 `resumeContext` 未交付
 - 关联：[ADR-0027](../adr/0027-run-project-context-snapshot-and-consumption.md)（已采纳）、[事实账本验收](./project-context-ledger-acceptance.md)、[确定性协调验收](./project-coordination-acceptance.md)
 
