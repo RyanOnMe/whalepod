@@ -541,7 +541,9 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
 
   it('rejects a mandate when stored work ownership is inconsistent', async () => {
     const work = await createWork(ctx, alice, taskId)
-    // 故障注入：模拟旧数据/外部改库造成 work.human_owner 与 Task assignee 不一致。
+    // 故障注入：正常路径不会产生「stored work owner ≠ assignee」；这里直接改协调表，
+    // 让 owner 检查成为唯一拒绝判据。删除条件：RD-02 迁移归一化旧行，或生产路径
+    // 能真实产生/核对不一致工作后删除。tests/ 不在 checkHarnessDbSeeds 的 scripts/ 扫描面内。
     await database.db
       .update(schema.works)
       .set({ humanOwnerUserId: bob.userId })

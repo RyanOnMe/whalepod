@@ -329,7 +329,12 @@ export async function checkWorkAdmission(
       let decision: RouterDecisionKind = 'propose'
       let reason = 'needs_semantic'
       let refs: Record<string, unknown> = source.refs
-      if (work.humanOwnerUserId !== task.assigneeUserId) {
+      if (task.status === 'done' || task.status === 'cancelled') {
+        // 终态优先：即使之后又改派，成员看到的仍是「Task 已终态」。
+        decision = 'wait'
+        reason = 'work_state'
+        refs = { ...source.refs, detail: 'task_terminal' }
+      } else if (work.humanOwnerUserId !== task.assigneeUserId) {
         // 责任变更优先于一般 waiting 原因：正常改派已把 work 转
         // waiting(owner_confirmation)，这里给成员一个明确的 owner_changed 归因。
         decision = 'wait'
@@ -341,10 +346,6 @@ export async function checkWorkAdmission(
             now.getTime() + (latest?.waitDeadlineSeconds ?? 900) * 1000,
           ).toISOString(),
         }
-      } else if (task.status === 'done' || task.status === 'cancelled') {
-        decision = 'wait'
-        reason = 'work_state'
-        refs = { ...source.refs, detail: 'task_terminal' }
       } else if (work.state !== 'active') {
         decision = 'wait'
         reason = 'work_state'

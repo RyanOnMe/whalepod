@@ -62,8 +62,8 @@ pnpm exec tsx scripts/with-test-postgres.mts \
 |---|---|
 | 无 active Mandate / paused / revoked / superseded / draft | `ignore(no_mandate)` |
 | active Mandate 已过 `expiresAt` | `ignore(mandate_expired)` |
+| Task 已 `done`/`cancelled` | 优先判定：work 同事务转 `retired`、旧 proposed 取消；准入 `wait(work_state)`，`refs.detail='task_terminal'` |
 | work `waiting`/`retired`（非终态 Task） | `wait(work_state)`，带 `deadlineAt`；读面 `currentMandate=null` |
-| Task 已 `done`/`cancelled` | work 同事务转 `retired`、旧 proposed 取消；准入 `wait(work_state)`，`refs.detail='task_terminal'` |
 | Task 的 `approvalPolicy='full_access'` | `wait(full_access_task)`，不产生 `proposed`；已有 proposed 在策略切换时取消 |
 | Task `assignmentStatus!='accepted'`（如同人改派后待接受） | `wait(assignment_pending)`，不提案 |
 | Task 改派给另一名成员 | work 转 `waiting(owner_confirmation)`，旧 proposed 取消；首次准入 `wait(owner_changed)`，改派回来后 `wait(work_state)`，都不自动复活 |
@@ -111,7 +111,7 @@ scripts/secret-scan.sh apps/hub/src/modules/work packages/protocol/src/work.ts \
 ```
 
 - 2026-11-02 工作树结果：Q0 `2269 passed`（含 1 条边界单测）；Q2 `85 files / 716 tests passed`；定向 `24 passed`。
-- 迁移：`packages/db/migrations/0024_work_mandate_shadow.sql`；Drizzle 镜像 `packages/db/src/schema/work.ts`。
+- 迁移：`packages/db/migrations/0024_work_mandate_shadow.sql`；Drizzle 镜像 `packages/db/src/schema/work.ts`。0024 是未合入分支上的新迁移；应用过中间提交 `a4f0a85` 的本地库必须重置（迁移台账只按文件名记录，不会校验内容）。
 
 ### 单点变异（每条改一处、跑对应用例、必须红、随后恢复）
 
@@ -154,7 +154,7 @@ scripts/secret-scan.sh apps/hub/src/modules/work packages/protocol/src/work.ts \
 - **Task 改派**：生产改派命令把该 Task 的未退休工作转 `waiting(owner_confirmation)` 并取消 proposed；首次准入返回 `owner_changed`，改派回来也不会自动复活。RD-01 没有「新 assignee 确认承接」端点，新 assignee 的合法路径是显式退休旧工作后另建（已测）；确认承接归后续切片。Agent 目标也走同一 waiting 路径，但未单独做双管理员场景测试。
 - **到期不落库**：没有 sweeper；读面派生 `expired`，准入每次按 `expiresAt` 判断。RD-02/03 接入定期收敛。
 - **同来源版本的重复是终局**：去重身份是 `(work, sourceType, sourceId, sourceVersion, sourceDigest)`；同一内容一旦裁决，改变 Mandate 后不会自动重评（需要来源产生新版本/新摘要）。Issue #483 原文写 `ignore(duplicate)`，本切片实际返回既有决定 + `duplicate=true`，已在规则表和本节登记。RD-02 的工作收件箱用 supersede/新输入解决。
-- **夹具**：`insertMessage` 造一条已定向 instruction，避免生产路径同时建 Run 污染「准入不建 Run」判据；`createAgentWithPolicy` 直插 pack/agent/revision 作为候选参照。两者都不是运行时投影，测试未写 Run/outbox/TeamEvent。
+- **夹具**：`insertMessage` 造一条已定向 instruction，避免生产路径同时建 Run 污染「准入不建 Run」判据；`createAgentWithPolicy` 直插 pack/agent/revision 作为候选参照；`rejects a mandate when stored work ownership is inconsistent` 直接改 `work.human_owner_user_id` 做故障注入（正常路径不会产生该状态），删除条件为 RD-02 归一化旧行或生产路径能真实产生/核对不一致工作。三者都不是运行时投影，测试未写 Run/outbox/TeamEvent；`tests/` 不属于 `checkHarnessDbSeeds` 的 `scripts/` 扫描面，故未登记白名单。
 - **无模型调用**：`apps/hub/tests/work-boundaries.spec.ts` 对工作模块做静态依赖判红（模型 SDK、DSH、Runtime/Testkit、Run/outbox、业务写入、`fetch(` 任一出现即失败）；不是网络抓包。真实 Router 语义与成本归后续切片。
 - **`ask` 未实现**：RD-01 程序规则只产生 `ignore/wait/propose`；`ask` 需要 Router 语义与问题生命周期，归后续/模型切片。
 - **工具面只到名称级**：`read/write/edit/glob/grep` 名称白名单之外一律拒绝；路径/资源范围、固定草稿面逐名正负控与 `approval_required` 步级预批准归 RD-03。
