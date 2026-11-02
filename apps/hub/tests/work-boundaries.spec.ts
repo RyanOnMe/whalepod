@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-// ADR-0028（RD-01）：影子准入模块的架构边界。它不是运行时网络抓包，而是把
+// ADR-0028（RD-01/RD-02a）：工作与收件箱模块的架构边界。它不是运行时网络抓包，而是把
 // 「本切片不得调用模型/Node/Run/Outbox，也不得写业务事实」变成可机器判红的面：
 // 新增这类依赖会让本用例直接失败，必须在评审里显式改边界而不是悄悄带进来。
 const WORK_MODULE_DIR = fileURLToPath(new URL('../src/modules/work/', import.meta.url))
@@ -21,7 +21,7 @@ const FORBIDDEN_PATTERNS: ReadonlyArray<{ readonly name: string; readonly patter
   { name: 'network fetch', pattern: /\bfetch\s*\(/ },
 ]
 
-describe('RD-01 work module boundaries', () => {
+describe('ADR-0028 work module boundaries', () => {
   it('does not import model, runtime, Run/outbox or business writers', () => {
     const files = readdirSync(WORK_MODULE_DIR)
       .filter((name) => name.endsWith('.ts'))
@@ -33,5 +33,39 @@ describe('RD-01 work module boundaries', () => {
         expect(source, `${file} must not contain ${forbidden.name}`).not.toMatch(forbidden.pattern)
       }
     }
+  })
+})
+
+describe('RD-02a-1 inbox read authorization boundary', () => {
+  it('keeps the assignee check inside the private-list transaction', () => {
+    const source = readFileSync(join(WORK_MODULE_DIR, 'inbox.ts'), 'utf8')
+    const start = source.indexOf('export async function loadWorkInboxForActor')
+    expect(start).toBeGreaterThan(-1)
+    const end = source.indexOf('\n}\n', start)
+    expect(end).toBeGreaterThan(start)
+    const fn = source.slice(start, end)
+    // 授权、条目读取与水位必须在同一个 transaction 回调内；且只能有一个
+    // transaction，授权放事务外/拆成两个事务都会重新打开 TOCTOU。
+    expect(fn.match(/database\.transaction\(/g)).toHaveLength(1)
+    const transactionAt = fn.indexOf('database.transaction(')
+    expect(transactionAt).toBeGreaterThan(-1)
+    expect(fn.indexOf('await requireAssignee(tx, task, actorUserId)')).toBeGreaterThan(
+      transactionAt,
+    )
+    expect(fn.indexOf('readInboxView(tx, work, filter)')).toBeGreaterThan(transactionAt)
+    expect(fn).not.toContain('database.db')
+    // 同一 transaction 还不够：READ COMMITTED 下每条语句各取快照，授权后会读到改派后的列表。
+    expect(fn).toContain("isolationLevel: 'repeatable read'")
+    expect(fn).toContain("accessMode: 'read only'")
+
+    const routes = readFileSync(join(WORK_MODULE_DIR, 'routes.ts'), 'utf8')
+    const routeStart = routes.indexOf("app.get('/works/:workKey/inbox'")
+    expect(routeStart).toBeGreaterThan(-1)
+    const routeEnd = routes.indexOf('\n  })', routeStart)
+    expect(routeEnd).toBeGreaterThan(routeStart)
+    const route = routes.slice(routeStart, routeEnd)
+    // 生产 GET 必须只走同一事务的 helper，不能再先 loadAuthorizedWork 再列。
+    expect(route).toContain('loadWorkInboxForActor(deps.database, session.userId, workKey, query)')
+    expect(route).not.toContain('loadAuthorizedWork')
   })
 })

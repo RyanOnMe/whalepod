@@ -2,13 +2,10 @@ import {
   cancelProposedDispatchIntents,
   getAgent,
   getCurrentWorkByTask,
-  getEnabledMember,
   getLatestWorkMandate,
   getProfileRevision,
   getTaskForUpdate,
-  getTeam,
   getWorkByKey,
-  getWorkByKeyForUpdate,
   getWorkMandate,
   getWorkMandateForUpdate,
   insertWork,
@@ -21,12 +18,12 @@ import {
   type TaskRow,
   type Tx,
   type WorkMandateRow,
-  type WorkRow,
 } from '@whalepod/db'
 import type { CreateWorkMandateRequest } from '@whalepod/protocol'
 import { ApiError } from '../shared/http-error.js'
 import { canonicalJson, sha256Hex } from '../coordination/digest.js'
 import { uuidv7 } from '../shared/uuid.js'
+import { lockWorkContext, requireAssignee } from './context.js'
 import { toWorkMandateView, toWorkView } from './queries.js'
 
 // ADR-0028（RD-01）：工作与 Mandate 的写命令。全部操作只锁 Task/Work/Mandate 行并写协调表，
@@ -35,36 +32,6 @@ import { toWorkMandateView, toWorkView } from './queries.js'
 export interface WorkCommandDeps {
   readonly database: Database
   readonly now: () => Date
-}
-
-interface LockedWork {
-  readonly work: WorkRow
-  readonly task: TaskRow
-}
-
-async function lockWorkContext(tx: Tx, workKey: string): Promise<LockedWork> {
-  const snapshot = await getWorkByKey(tx, workKey)
-  if (snapshot === undefined) throw new ApiError(404, 'NOT_FOUND', 'work not found')
-  // 锁序固定 task → work：创建工作、退休、Mandate 与准入检查共用，避免交叉死锁。
-  const task = await getTaskForUpdate(tx, snapshot.taskId)
-  if (task === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
-  const work = await getWorkByKeyForUpdate(tx, workKey)
-  if (work === undefined) throw new ApiError(404, 'NOT_FOUND', 'work not found')
-  if (work.taskId !== task.id) {
-    throw new ApiError(500, 'INTERNAL_ERROR', 'work and task are inconsistent')
-  }
-  return { work, task }
-}
-
-/** ADR-0028 §2/§6：只有 Task 当前 assignee 能占用或释放工作槽。 */
-async function requireAssignee(tx: Tx, task: TaskRow, actorUserId: string): Promise<void> {
-  if (task.assigneeUserId !== actorUserId) {
-    throw new ApiError(403, 'FORBIDDEN', 'only the task assignee can manage this work')
-  }
-  const team = await getTeam(tx)
-  if (team === undefined) throw new ApiError(500, 'INTERNAL_ERROR', 'team not initialized')
-  const member = await getEnabledMember(tx, team.id, actorUserId)
-  if (member === undefined) throw new ApiError(403, 'FORBIDDEN', 'actor is not an active member')
 }
 
 function requireAcceptedTask(task: TaskRow): void {
@@ -155,6 +122,9 @@ export function mapWorkConstraint(error: unknown): ApiError | undefined {
     }
     if (pg.constraintName === 'work_mandate_work_version_unique') {
       return new ApiError(409, 'CONFLICT', 'mandate changed concurrently; retry')
+    }
+    if (pg.constraintName === 'work_inbox_item_source_pending_unique') {
+      return new ApiError(409, 'CONFLICT', 'source already has a pending inbox item; retry')
     }
     return new ApiError(409, 'CONFLICT', 'work identity already exists')
   }
