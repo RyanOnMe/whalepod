@@ -108,6 +108,10 @@ export const runs = pgTable(
     specRevisionId: uuid('spec_revision_id').references(() => taskSpecRevisions.id),
     /** Run 用途（#378）：business / agreement_draft / handoff_draft（辅助 Run 免绑定）。 */
     purpose: runPurpose('purpose').notNull().default('business'),
+    /** ADR-0028（RD-02a-2a）：本 Run 承接的持续工作；清单与 run 同事务冻结。 */
+    workKey: varchar('work_key', { length: 64 }),
+    workInputManifest: jsonb('work_input_manifest'),
+    workInputManifestDigest: char('work_input_manifest_digest', { length: 64 }),
     profileDigest: char('profile_digest', { length: 64 }).notNull(),
     pluginPackDigest: char('plugin_pack_digest', { length: 64 }).notNull(),
     dshDistributionVersion: varchar('dsh_distribution_version', { length: 64 }).notNull(),
@@ -125,6 +129,10 @@ export const runs = pgTable(
       .where(
         sql`${table.status} in ('queued','dispatching','running','waiting_approval','cancel_requested')`,
       ),
+    check(
+      'run_work_input_manifest_fields',
+      sql`(${table.workKey} is null and ${table.workInputManifest} is null and ${table.workInputManifestDigest} is null) or (${table.workKey} is not null and jsonb_typeof(${table.workInputManifest}) = 'object' and ${table.workInputManifestDigest} ~ '^[a-f0-9]{64}$')`,
+    ),
   ],
 )
 

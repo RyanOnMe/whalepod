@@ -107,7 +107,13 @@ async function inbox(ctx: TestApp, session: Session, workKey: string, query = ''
   expect(res.statusCode).toBe(200)
   return res.json().data as {
     items: Array<Record<string, unknown>>
-    watermarks: { lastItemAt: string | null; pendingCount: number }
+    watermarks: {
+      lastItemAt: string | null
+      pendingCount: number
+      deliveredCount: number
+      unconfirmedCount: number
+      consumedCount: number
+    }
   }
 }
 
@@ -260,7 +266,13 @@ describe('RD-02a-1 work inbox items (ADR-0028)', () => {
   it('associates an explicit source with a private snapshot and is idempotent by identity', async () => {
     const empty = await inbox(ctx, alice, workKey)
     expect(empty.items).toHaveLength(0)
-    expect(empty.watermarks).toEqual({ lastItemAt: null, pendingCount: 0 })
+    expect(empty.watermarks).toEqual({
+      lastItemAt: null,
+      pendingCount: 0,
+      deliveredCount: 0,
+      unconfirmedCount: 0,
+      consumedCount: 0,
+    })
 
     const messageId = await comment(ctx, alice, taskId)
     const before = await countRows(database)

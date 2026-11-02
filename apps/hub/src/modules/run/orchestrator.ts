@@ -66,6 +66,7 @@ import type { AuthenticatedDevice } from './device-gateway.js'
 import { isRunSemanticConflict, RunCommandError } from './errors.js'
 import { settleFollowupAck, settleTriggerInstruction } from './followup.js'
 import { applyRunStatus } from './run-status.js'
+import { recordWorkInputDeliveries, snapshotWorkInputs } from '../work/run-inputs.js'
 import type { ContextEntryObserver, RecordedContextEntry } from '../context/observer.js'
 import {
   assertProjectContextCapability,
@@ -407,6 +408,8 @@ export class RunOrchestrator {
       input.handoffReceiptId,
       resumeSource ?? rerunSource,
     )
+    // ADR-0028（RD-02a-2a）：工作输入与 Run 同事务冻结；清单创建后不可改。
+    const workInputs = await snapshotWorkInputs(tx, task, input.workInputItemIds)
     const runId = randomUUID()
     const commandId = randomUUID()
 
@@ -430,6 +433,13 @@ export class RunOrchestrator {
       deviceId: device.id,
       workspaceId: workspace.id,
       artifactInputManifest,
+      ...(workInputs === undefined
+        ? {}
+        : {
+            workKey: workInputs.work.workKey,
+            workInputManifest: workInputs.manifest,
+            workInputManifestDigest: workInputs.manifestDigest,
+          }),
       ...(handoffInput !== null ? { handoffInput } : {}),
       ...(input.reviewInput !== undefined ? { reviewInput: input.reviewInput } : {}),
       ...(specRevisionId !== null ? { specRevisionId } : {}),
@@ -442,6 +452,9 @@ export class RunOrchestrator {
       ...(input.rerunOfRunId !== undefined ? { rerunOfRunId: input.rerunOfRunId } : {}),
       ...(input.resumeFromRunId !== undefined ? { resumeFromRunId: input.resumeFromRunId } : {}),
     })
+    if (workInputs !== undefined) {
+      await recordWorkInputDeliveries(tx, workInputs, runId, now)
+    }
     // ADR-0027（PC-05a）：项目上下文快照与 Run/Outbox 同事务冻结。选择只读当前
     // 有效 Decision/Observation；Inference 永不进入执行依据。空快照仍落行，
     // 但 `run.start` 不携带 projectContext（旧 Node 可继续执行）。

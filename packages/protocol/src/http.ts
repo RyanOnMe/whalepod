@@ -290,6 +290,8 @@ export const CreateRunRequestSchema = z
     prompt: z.string().min(1).max(20_000),
     rerunOfRunId: z.uuid().optional(),
     resumeFromRunId: z.uuid().optional(),
+    /** ADR-0028（RD-02a-2a）：显式选中的工作收件箱条目，创建事务内冻结为不可变清单。 */
+    workInputItemIds: z.array(z.uuid()).min(1).max(32).optional(),
   })
   .superRefine((value, ctx) => {
     if (value.rerunOfRunId !== undefined && value.resumeFromRunId !== undefined) {

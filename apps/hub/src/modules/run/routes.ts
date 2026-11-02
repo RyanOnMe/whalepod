@@ -117,6 +117,9 @@ export function registerRunRoutes(app: FastifyInstance, deps: RunRoutesDeps): vo
         ...(body.data.handoffReceiptId === undefined
           ? {}
           : { handoffReceiptId: body.data.handoffReceiptId }),
+        ...(body.data.workInputItemIds === undefined
+          ? {}
+          : { workInputItemIds: body.data.workInputItemIds }),
         ...(body.data.expectedApprovalPolicy !== undefined
           ? { expectedApprovalPolicy: body.data.expectedApprovalPolicy }
           : {}),

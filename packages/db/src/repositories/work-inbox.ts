@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
+import { workInboxDeliveries } from '../schema/work-delivery.js'
 import {
   workInboxItems,
   type NewWorkInboxItemRow,
@@ -102,6 +103,27 @@ export async function getRetractedInboxItemForSource(
   return row
 }
 
+export async function getLatestInboxItemForSource(
+  handle: DbHandle,
+  workId: string,
+  sourceType: WorkInboxItemRow['sourceType'],
+  sourceId: string,
+): Promise<WorkInboxItemRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(workInboxItems)
+    .where(
+      and(
+        eq(workInboxItems.workId, workId),
+        eq(workInboxItems.sourceType, sourceType),
+        eq(workInboxItems.sourceId, sourceId),
+      ),
+    )
+    .orderBy(desc(workInboxItems.createdAt), desc(workInboxItems.id))
+    .limit(1)
+  return row
+}
+
 export async function getLatestPendingInboxItemForSource(
   handle: DbHandle,
   workId: string,
@@ -173,13 +195,17 @@ export async function retractInboxItemsForSource(
     readonly now: Date
   },
 ): Promise<WorkInboxItemRow[]> {
-  return handle
+  const rows = await handle
     .update(workInboxItems)
     .set({
       status: 'retracted',
       statusReason: values.statusReason,
       returnReason: null,
       returnNote: null,
+      deliveryRunId: null,
+      deliveredAt: null,
+      unconfirmedAt: null,
+      consumedAt: null,
       statusAt: values.now,
       updatedAt: values.now,
     })
@@ -188,10 +214,30 @@ export async function retractInboxItemsForSource(
         eq(workInboxItems.workId, values.workId),
         eq(workInboxItems.sourceType, values.sourceType),
         eq(workInboxItems.sourceId, values.sourceId),
-        inArray(workInboxItems.status, ['pending', 'returned']),
+        inArray(workInboxItems.status, ['pending', 'returned', 'delivered', 'unconfirmed']),
       ),
     )
     .returning()
+  if (rows.length > 0) {
+    await handle
+      .update(workInboxDeliveries)
+      .set({
+        status: 'withdrawn',
+        failureReason: 'source_retracted',
+        settledAt: values.now,
+        updatedAt: values.now,
+      })
+      .where(
+        and(
+          inArray(
+            workInboxDeliveries.inboxItemId,
+            rows.map((row) => row.id),
+          ),
+          inArray(workInboxDeliveries.status, ['sent', 'unconfirmed']),
+        ),
+      )
+  }
+  return rows
 }
 
 export async function updateWorkInboxItem(

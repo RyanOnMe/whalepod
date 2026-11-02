@@ -10,6 +10,9 @@ import { WorkSourceTypeSchema } from './work.js'
 
 export const WorkInboxItemStatusSchema = z.enum([
   'pending',
+  'delivered',
+  'unconfirmed',
+  'consumed',
   'returned',
   'superseded',
   'retracted',
@@ -43,6 +46,10 @@ export const WorkInboxItemViewSchema = z.strictObject({
   statusReason: z.string().max(500).nullable(),
   returnReason: WorkInboxReturnReasonSchema.nullable(),
   returnNote: z.string().max(1000).nullable(),
+  deliveryRunId: z.uuid().nullable(),
+  deliveredAt: z.iso.datetime({ offset: true }).nullable(),
+  unconfirmedAt: z.iso.datetime({ offset: true }).nullable(),
+  consumedAt: z.iso.datetime({ offset: true }).nullable(),
   statusAt: z.iso.datetime({ offset: true }),
   createdAt: z.iso.datetime({ offset: true }),
   updatedAt: z.iso.datetime({ offset: true }),
@@ -54,6 +61,9 @@ export const WorkInboxViewSchema = z.strictObject({
   watermarks: z.strictObject({
     lastItemAt: z.iso.datetime({ offset: true }).nullable(),
     pendingCount: z.number().int().nonnegative(),
+    deliveredCount: z.number().int().nonnegative(),
+    unconfirmedCount: z.number().int().nonnegative(),
+    consumedCount: z.number().int().nonnegative(),
   }),
 })
 export type WorkInboxView = z.infer<typeof WorkInboxViewSchema>

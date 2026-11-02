@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm'
 import type { ApprovalRow, RunRow } from '@whalepod/db'
+import { WorkInputManifestSchema, type WorkInputManifest } from '@whalepod/protocol'
 import { getRun, listRunsByTask, schema } from '@whalepod/db'
 import type { DbHandle } from '@whalepod/db'
 import { deriveDeviceStatus } from '../device/pairing.js'
@@ -32,6 +33,10 @@ export interface RunView {
   specRevisionId: string | null
   /** Run 用途（#378）：business / agreement_draft / handoff_draft。 */
   purpose: RunRow['purpose']
+  /** ADR-0028（RD-02a-2a）：本 Run 承接的工作与不可变清单摘要（不含正文）。 */
+  workKey: string | null
+  workInputManifest: WorkInputManifest | null
+  workInputManifestDigest: string | null
   profileDigest: string
   pluginPackDigest: string
   dshDistributionVersion: string
@@ -58,6 +63,10 @@ export function toRunView(row: RunRow): RunView {
     approvalPolicy: row.approvalPolicy,
     specRevisionId: row.specRevisionId,
     purpose: row.purpose,
+    workKey: row.workKey ?? null,
+    workInputManifest:
+      row.workInputManifest === null ? null : WorkInputManifestSchema.parse(row.workInputManifest),
+    workInputManifestDigest: row.workInputManifestDigest ?? null,
     profileDigest: row.profileDigest,
     pluginPackDigest: row.pluginPackDigest,
     dshDistributionVersion: row.dshDistributionVersion,
