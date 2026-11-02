@@ -223,6 +223,21 @@ export class SessionOwner {
         ...(this.spec.projectContext !== undefined
           ? ['# 本次项目上下文快照', this.spec.projectContext.headerText]
           : []),
+        ...(this.spec.workInputs !== undefined
+          ? [
+              '# 本次工作输入清单',
+              '用 read_work_input 按 inboxItemId 读取；清单是本次执行依据，后续收件箱变化不自动替换。',
+              JSON.stringify(
+                this.spec.workInputs.entries.map((entry) => ({
+                  inboxItemId: entry.inboxItemId,
+                  title: entry.title,
+                  sourceType: entry.sourceType,
+                  sourceVersion: entry.sourceVersion,
+                  byteSize: entry.byteSize,
+                })),
+              ),
+            ]
+          : []),
       ]
         .filter(Boolean)
         .join('\n')

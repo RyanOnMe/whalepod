@@ -403,7 +403,7 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
     } catch (error) {
       const { code, message } = errorCodeOf(error)
       if (code === 'INTERNAL_ERROR') throw error
-      return reply
+      return noStore(reply)
         .code(ERROR_HTTP_STATUS[code] ?? 500)
         .send({ ok: false, error: { code, message, requestId: String(request.id) } })
     }

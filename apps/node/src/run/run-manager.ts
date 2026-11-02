@@ -35,7 +35,6 @@ import type {
   RunSnapshot,
   RuntimeCommand,
   RuntimeOutput,
-  WorkInputManifest,
 } from '@whalepod/protocol'
 import { parseRuntimeFrame } from '@whalepod/protocol'
 import {
@@ -1334,59 +1333,72 @@ export class RunManager {
       return
     }
     const known = new Set(prepared.entries.map((entry) => entry.inboxItemId))
-    if (payload.kind === 'delivered') {
-      const delivered = payload.entriesDelivered.filter((id) => known.has(id))
-      this.workInputReceiptStore.addDelivered(runId, prepared.manifestDigest, delivered)
-    } else {
-      if (!known.has(payload.inboxItemId)) {
-        this.log('warn', 'work input read receipt for an unknown item dropped', {
-          component: 'node.work_input',
+    if (payload.kind === 'read' && !known.has(payload.inboxItemId)) {
+      this.log('warn', 'work input read receipt for an unknown item dropped', {
+        component: 'node.work_input',
+        runId,
+      })
+      return
+    }
+    // 状态累计、序号与 outbox 必须同一本地事务：进程在两步之间崩溃会留下
+    // 「读取已发生、回执从未入队」的永久缺口。
+    const receipt = this.workInputReceiptStore.transaction(() => {
+      if (payload.kind === 'delivered') {
+        this.workInputReceiptStore.addDelivered(
           runId,
-        })
-        return
+          prepared.manifestDigest,
+          payload.entriesDelivered.filter((id) => known.has(id)),
+        )
+      } else {
+        this.workInputReceiptStore.addRead(runId, prepared.manifestDigest, payload.inboxItemId)
       }
-      this.workInputReceiptStore.addRead(runId, prepared.manifestDigest, payload.inboxItemId)
-    }
-    const snapshot = this.workInputReceiptStore.snapshot(runId, prepared.manifestDigest)
-    const receipt: RunWorkInputReceipt = {
-      runId,
-      workKey: prepared.workKey,
-      manifestDigest: prepared.manifestDigest,
-      receiptSeq: this.workInputReceiptStore.nextSeq(runId, prepared.manifestDigest),
-      entriesDelivered: [...snapshot.delivered].sort(),
-      entriesRead: [...snapshot.read].sort(),
-      readEvents:
-        payload.kind === 'read'
-          ? [
-              {
-                inboxItemId: payload.inboxItemId,
-                digestVerified: payload.digestVerified,
-                byteSize: payload.byteSize,
-                at: payload.at,
-              },
-            ]
-          : [],
-      missing: prepared.entries
-        .map((entry) => entry.inboxItemId)
-        .filter((id) => !snapshot.delivered.includes(id)),
-      digestVerified: payload.kind === 'read' ? payload.digestVerified : true,
-      at: payload.at,
-    }
-    this.workInputReceiptStore.enqueue(receipt)
-    if (this.deps.send(runWorkInputReceiptFrame(receipt))) {
+      const snapshot = this.workInputReceiptStore.snapshot(runId, prepared.manifestDigest)
+      const built: RunWorkInputReceipt = {
+        runId,
+        workKey: prepared.workKey,
+        manifestDigest: prepared.manifestDigest,
+        receiptSeq: this.workInputReceiptStore.nextSeq(runId, prepared.manifestDigest),
+        entriesDelivered: [...snapshot.delivered].sort(),
+        entriesRead: [...snapshot.read].sort(),
+        readEvents:
+          payload.kind === 'read'
+            ? [
+                {
+                  inboxItemId: payload.inboxItemId,
+                  digestVerified: payload.digestVerified,
+                  byteSize: payload.byteSize,
+                  at: payload.at,
+                },
+              ]
+            : [],
+        missing: prepared.entries
+          .map((entry) => entry.inboxItemId)
+          .filter((id) => !snapshot.delivered.includes(id)),
+        digestVerified: payload.kind === 'read' ? payload.digestVerified : true,
+        at: payload.at,
+      }
+      this.workInputReceiptStore.enqueue(built)
+      return built
+    })
+    const sent = this.deps.send(runWorkInputReceiptFrame(receipt))
+    if (sent) {
       this.workInputReceiptStore.removePending(
         receipt.runId,
         receipt.manifestDigest,
         receipt.receiptSeq,
       )
     }
-    this.log('info', 'work input receipt forwarded', {
-      component: 'node.work_input',
-      runId,
-      receiptSeq: receipt.receiptSeq,
-      delivered: receipt.entriesDelivered.length,
-      read: receipt.readEvents.length,
-    })
+    this.log(
+      sent ? 'info' : 'warn',
+      sent ? 'work input receipt forwarded' : 'work input receipt queued for reconnect',
+      {
+        component: 'node.work_input',
+        runId,
+        receiptSeq: receipt.receiptSeq,
+        delivered: receipt.entriesDelivered.length,
+        read: receipt.readEvents.length,
+      },
+    )
   }
 
   /** 重连后补发断线期间未成功写出的工作输入回执。 */

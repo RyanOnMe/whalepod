@@ -19,6 +19,7 @@ import {
 } from '../src/gateway/hello-facts.js'
 import { PACK_MARKER_FILENAME } from '../src/plugin/runtime-config.js'
 import { CORE_EMPTY_PACK_DIGEST } from '../src/plugin/plugin-preflight.js'
+import { helloFrame, type HelloFacts } from '../src/gateway/hub-socket.js'
 
 const dirs: string[] = []
 function mktemp(): string {
@@ -125,6 +126,27 @@ describe('#352 detectPlatformKind', () => {
     // 与 cli 的配对上报（detectPlatform）同口径——两处不一致会让同一台机器的
     // 配对事实与 hello 事实互相打架。
     expect(detectPlatformKind('freebsd')).toBe('darwin')
+  })
+  it('声明项目上下文与工作输入两种交付能力（hello 事实与帧默认值同源）', async () => {
+    const stateDir = mktemp()
+    const facts = createHelloFacts({
+      stateDir,
+      runtimeEntry: '/nonexistent/runtime-bin.js',
+      startupDshVersion: '0.1.0-rc.8',
+      probeDshVersion: async () => null,
+    })
+    expect((await facts()).contextCapabilities).toEqual(['project-context.v1', 'work-input.v1'])
+    // 缺省字段的帧也必须带上两种能力：漏掉会让 Hub 对所有带输入的 Run 409。
+    const frame = JSON.parse(
+      helloFrame('dddddddd-dddd-4ddd-8ddd-dddddddddddd', {
+        nodeVersion: '24.0.0',
+        platform: 'darwin',
+        architecture: 'arm64',
+        dshDistributionVersion: '0.1.0-rc.8',
+        pluginPackDigests: [],
+      } as unknown as HelloFacts),
+    ) as { payload: { contextCapabilities: string[] } }
+    expect(frame.payload.contextCapabilities).toEqual(['project-context.v1', 'work-input.v1'])
   })
 })
 

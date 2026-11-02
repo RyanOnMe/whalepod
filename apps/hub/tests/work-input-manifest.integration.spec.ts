@@ -1,8 +1,8 @@
 /**
- * ADR-0028（RD-02a-2a）：Run 工作输入清单冻结与交付/对账状态。
+ * ADR-0028（RD-02a-2a / RD-02a-2b）：Run 工作输入清单冻结、交付/对账与消费回执。
  *
- * 驱动走生产 HTTP（建工作、关联收件箱条目、带 workInputItemIds 建 Run）与真实
- * PostgreSQL；Node/Runtime 消费回执不在本切片（#493）。
+ * 驱动走生产 HTTP（建工作、关联收件箱条目、带 workInputItemIds 建 Run）、Device Token
+ * bundle 下载与真实 PostgreSQL；Runtime/Node 的真实下载与工具面另见 Node/Q3 用例。
  */
 import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
@@ -1318,7 +1318,7 @@ describe('RD-02a-2a run work input manifest', () => {
     expect(bundle.json().error.code).toBe('CONTEXT_UNAVAILABLE')
   })
 
-  it('rejects receipts that reference items outside the frozen manifest', async () => {
+  it('drops a receipt that references items outside the frozen manifest', async () => {
     const messageId = await comment(ctx, alice, taskId, '清单外回执。')
     const item = await associate(ctx, alice, workKey, messageId)
     const created = await startRun(ctx, alice, taskId, seed, [item.id as string])
@@ -1327,25 +1327,23 @@ describe('RD-02a-2a run work input manifest', () => {
     await dispatchAndReady(harness, seed, alice.userId, runId)
     const manifest = await runWorkInputManifest(database, runId)
     const entry = manifest.entries[0]
-    await expect(
-      harness.orchestrator.ingestNodeEvent(
-        { deviceId: seed.deviceId, ownerUserId: alice.userId },
-        workInputReceipt({
-          runId,
-          workKey: manifest.workKey,
-          manifestDigest: manifest.manifestDigest,
-          receiptSeq: 1,
-          inboxItemId: item.id as string,
-          deliveredItemId: randomUUID(),
-          byteSize: entry?.byteSize as number,
-          at: harness.clock.now().toISOString(),
-        }),
-      ),
-    ).rejects.toMatchObject({ code: 'CONFLICT' })
+    await harness.orchestrator.ingestNodeEvent(
+      { deviceId: seed.deviceId, ownerUserId: alice.userId },
+      workInputReceipt({
+        runId,
+        workKey: manifest.workKey,
+        manifestDigest: manifest.manifestDigest,
+        receiptSeq: 1,
+        inboxItemId: item.id as string,
+        deliveredItemId: randomUUID(),
+        byteSize: entry?.byteSize as number,
+        at: harness.clock.now().toISOString(),
+      }),
+    )
     expect(await database.db.select().from(schema.runWorkInputReceipts)).toHaveLength(0)
   })
 
-  it('rejects receipts whose manifest identity does not match the run', async () => {
+  it('drops receipts whose manifest identity does not match the run', async () => {
     const messageId = await comment(ctx, alice, taskId, '清单身份不符。')
     const item = await associate(ctx, alice, workKey, messageId)
     const created = await startRun(ctx, alice, taskId, seed, [item.id as string])
@@ -1354,24 +1352,22 @@ describe('RD-02a-2a run work input manifest', () => {
     await dispatchAndReady(harness, seed, alice.userId, runId)
     const manifest = await runWorkInputManifest(database, runId)
     const entry = manifest.entries[0]
-    await expect(
-      harness.orchestrator.ingestNodeEvent(
-        { deviceId: seed.deviceId, ownerUserId: alice.userId },
-        workInputReceipt({
-          runId,
-          workKey: manifest.workKey,
-          manifestDigest: 'b'.repeat(64),
-          receiptSeq: 1,
-          inboxItemId: item.id as string,
-          byteSize: entry?.byteSize as number,
-          at: harness.clock.now().toISOString(),
-        }),
-      ),
-    ).rejects.toMatchObject({ code: 'CONFLICT' })
+    await harness.orchestrator.ingestNodeEvent(
+      { deviceId: seed.deviceId, ownerUserId: alice.userId },
+      workInputReceipt({
+        runId,
+        workKey: manifest.workKey,
+        manifestDigest: 'b'.repeat(64),
+        receiptSeq: 1,
+        inboxItemId: item.id as string,
+        byteSize: entry?.byteSize as number,
+        at: harness.clock.now().toISOString(),
+      }),
+    )
     expect(await database.db.select().from(schema.runWorkInputReceipts)).toHaveLength(0)
   })
 
-  it('rejects a read event that reports an unverified digest even when the envelope claims true', async () => {
+  it('drops a read event that reports an unverified digest even when the envelope claims true', async () => {
     const messageId = await comment(ctx, alice, taskId, '逐条摘要未通过。')
     const item = await associate(ctx, alice, workKey, messageId)
     const created = await startRun(ctx, alice, taskId, seed, [item.id as string])
@@ -1380,21 +1376,19 @@ describe('RD-02a-2a run work input manifest', () => {
     await dispatchAndReady(harness, seed, alice.userId, runId)
     const manifest = await runWorkInputManifest(database, runId)
     const entry = manifest.entries[0]
-    await expect(
-      harness.orchestrator.ingestNodeEvent(
-        { deviceId: seed.deviceId, ownerUserId: alice.userId },
-        workInputReceipt({
-          runId,
-          workKey: manifest.workKey,
-          manifestDigest: manifest.manifestDigest,
-          receiptSeq: 1,
-          inboxItemId: item.id as string,
-          byteSize: entry?.byteSize as number,
-          at: harness.clock.now().toISOString(),
-          readDigestVerified: false,
-        }),
-      ),
-    ).rejects.toMatchObject({ code: 'CONFLICT' })
+    await harness.orchestrator.ingestNodeEvent(
+      { deviceId: seed.deviceId, ownerUserId: alice.userId },
+      workInputReceipt({
+        runId,
+        workKey: manifest.workKey,
+        manifestDigest: manifest.manifestDigest,
+        receiptSeq: 1,
+        inboxItemId: item.id as string,
+        byteSize: entry?.byteSize as number,
+        at: harness.clock.now().toISOString(),
+        readDigestVerified: false,
+      }),
+    )
     expect(await database.db.select().from(schema.runWorkInputReceipts)).toHaveLength(0)
     expect(
       await database.db
@@ -1520,6 +1514,428 @@ describe('RD-02a-2a run work input manifest', () => {
     ).toMatchObject({ status: 'consumed' })
   })
 
+  it('consumes an unconfirmed item when the terminal read receipt arrives exactly at the 60s window', async () => {
+    const messageId = await comment(ctx, alice, taskId, '窗口边界内的终态读取。')
+    const item = await associate(ctx, alice, workKey, messageId)
+    const created = await startRun(ctx, alice, taskId, seed, [item.id as string])
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, runId)
+    await completeRun(harness, seed, alice.userId, runId)
+    const finishedAt = (
+      await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    )[0]?.finishedAt?.getTime() as number
+    harness.clock.advance(60_000)
+    const manifest = await runWorkInputManifest(database, runId)
+    const entry = manifest.entries[0]
+    await harness.orchestrator.ingestNodeEvent(
+      { deviceId: seed.deviceId, ownerUserId: alice.userId },
+      workInputReceipt({
+        runId,
+        workKey: manifest.workKey,
+        manifestDigest: manifest.manifestDigest,
+        receiptSeq: 1,
+        inboxItemId: item.id as string,
+        byteSize: entry?.byteSize as number,
+        at: harness.clock.now().toISOString(),
+      }),
+    )
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxItems)
+          .where(eq(schema.workInboxItems.id, item.id as string))
+      )[0],
+    ).toMatchObject({ status: 'consumed', unconfirmedAt: null, deliveryRunId: runId })
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxDeliveries)
+          .where(eq(schema.workInboxDeliveries.runId, runId))
+      )[0],
+    ).toMatchObject({ status: 'consumed' })
+    expect(
+      (await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId)))[0],
+    ).toMatchObject({ status: 'completed' })
+    expect(await reconcileWorkInputs(database, new Date(finishedAt + 61_000))).toBe(0)
+  })
+
+  it('accepts a lower unseen receipt sequence after a newer one was recorded', async () => {
+    const messageId = await comment(ctx, alice, taskId, '乱序回执。')
+    const item = await associate(ctx, alice, workKey, messageId)
+    const created = await startRun(ctx, alice, taskId, seed, [item.id as string])
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, runId)
+    const manifest = await runWorkInputManifest(database, runId)
+    const entry = manifest.entries[0]
+    const at = harness.clock.now().toISOString()
+    await harness.orchestrator.ingestNodeEvent(
+      { deviceId: seed.deviceId, ownerUserId: alice.userId },
+      workInputReceipt({
+        runId,
+        workKey: manifest.workKey,
+        manifestDigest: manifest.manifestDigest,
+        receiptSeq: 2,
+        inboxItemId: item.id as string,
+        byteSize: entry?.byteSize as number,
+        at,
+      }),
+    )
+    await harness.orchestrator.ingestNodeEvent(
+      { deviceId: seed.deviceId, ownerUserId: alice.userId },
+      {
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: at,
+        type: 'run.work_input_receipt',
+        payload: {
+          runId,
+          workKey: manifest.workKey,
+          manifestDigest: manifest.manifestDigest,
+          receiptSeq: 1,
+          entriesDelivered: [item.id as string],
+          entriesRead: [],
+          readEvents: [],
+          missing: [],
+          digestVerified: true,
+          at,
+        },
+      },
+    )
+    expect(
+      await database.db
+        .select()
+        .from(schema.runWorkInputReceipts)
+        .where(eq(schema.runWorkInputReceipts.runId, runId)),
+    ).toHaveLength(2)
+    expect(
+      await database.db
+        .select()
+        .from(schema.workInputConsumptions)
+        .where(eq(schema.workInputConsumptions.runId, runId)),
+    ).toHaveLength(1)
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxItems)
+          .where(eq(schema.workInboxItems.id, item.id as string))
+      )[0],
+    ).toMatchObject({ status: 'consumed' })
+  })
+
+  it('withdraws the next delivery when an old run late-reads it before consumption', async () => {
+    const messageId = await comment(ctx, alice, taskId, '迟到回执撤回下一交付。')
+    const item = await associate(ctx, alice, workKey, messageId)
+    const first = await startRun(ctx, alice, taskId, seed, [item.id as string])
+    const firstRunId = first.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, firstRunId)
+    await completeRun(harness, seed, alice.userId, firstRunId)
+    const firstFinished = (
+      await database.db.select().from(schema.runs).where(eq(schema.runs.id, firstRunId))
+    )[0]?.finishedAt?.getTime() as number
+    expect(await reconcileWorkInputs(database, new Date(firstFinished + 61_000))).toBe(1)
+
+    const second = await startRun(ctx, alice, taskId, seed, [item.id as string])
+    expect(second.statusCode, second.body).toBe(201)
+    const secondRunId = second.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, secondRunId)
+
+    const firstManifest = await runWorkInputManifest(database, firstRunId)
+    const secondManifest = await runWorkInputManifest(database, secondRunId)
+    const firstEntry = firstManifest.entries[0]
+    const secondEntry = secondManifest.entries[0]
+    await harness.orchestrator.ingestNodeEvent(
+      { deviceId: seed.deviceId, ownerUserId: alice.userId },
+      workInputReceipt({
+        runId: firstRunId,
+        workKey: firstManifest.workKey,
+        manifestDigest: firstManifest.manifestDigest,
+        receiptSeq: 1,
+        inboxItemId: item.id as string,
+        byteSize: firstEntry?.byteSize as number,
+        at: harness.clock.now().toISOString(),
+      }),
+    )
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxItems)
+          .where(eq(schema.workInboxItems.id, item.id as string))
+      )[0],
+    ).toMatchObject({
+      status: 'superseded',
+      statusReason: 'late_receipt_withdrawn',
+      deliveryRunId: null,
+    })
+    const deliveryOf = async (runId: string) =>
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxDeliveries)
+          .where(eq(schema.workInboxDeliveries.runId, runId))
+      )[0]
+    expect(await deliveryOf(firstRunId)).toMatchObject({ status: 'returned' })
+    expect(await deliveryOf(secondRunId)).toMatchObject({
+      status: 'duplicate',
+      failureReason: 'late_receipt_previous_run',
+    })
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInputConsumptions)
+          .where(eq(schema.workInputConsumptions.runId, firstRunId))
+      )[0],
+    ).toMatchObject({ kind: 'duplicate' })
+
+    // 下一 Run 的读取回执晚到：只记 duplicate，不消费、不改写已撤回的交付。
+    await harness.orchestrator.ingestNodeEvent(
+      { deviceId: seed.deviceId, ownerUserId: alice.userId },
+      workInputReceipt({
+        runId: secondRunId,
+        workKey: secondManifest.workKey,
+        manifestDigest: secondManifest.manifestDigest,
+        receiptSeq: 1,
+        inboxItemId: item.id as string,
+        byteSize: secondEntry?.byteSize as number,
+        at: harness.clock.now().toISOString(),
+      }),
+    )
+    expect(await deliveryOf(secondRunId)).toMatchObject({ status: 'duplicate' })
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInputConsumptions)
+          .where(eq(schema.workInputConsumptions.runId, secondRunId))
+      )[0],
+    ).toMatchObject({ kind: 'duplicate' })
+
+    // 撤回后条目不可再次领取：不存在第三次投递。
+    const third = await startRun(ctx, alice, taskId, seed, [item.id as string])
+    expect(third.statusCode, third.body).toBe(409)
+  })
+
+  it('withdraws an unconfirmed next delivery and keeps reconcile from returning it', async () => {
+    const messageId = await comment(ctx, alice, taskId, '迟到回执撤回未确认交付。')
+    const item = await associate(ctx, alice, workKey, messageId)
+    const first = await startRun(ctx, alice, taskId, seed, [item.id as string])
+    const firstRunId = first.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, firstRunId)
+    await completeRun(harness, seed, alice.userId, firstRunId)
+    const firstFinished = (
+      await database.db.select().from(schema.runs).where(eq(schema.runs.id, firstRunId))
+    )[0]?.finishedAt?.getTime() as number
+    expect(await reconcileWorkInputs(database, new Date(firstFinished + 61_000))).toBe(1)
+
+    const second = await startRun(ctx, alice, taskId, seed, [item.id as string])
+    const secondRunId = second.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, secondRunId)
+    await completeRun(harness, seed, alice.userId, secondRunId)
+    const secondFinished = (
+      await database.db.select().from(schema.runs).where(eq(schema.runs.id, secondRunId))
+    )[0]?.finishedAt?.getTime() as number
+    const firstManifest = await runWorkInputManifest(database, firstRunId)
+    const firstEntry = firstManifest.entries[0]
+    await harness.orchestrator.ingestNodeEvent(
+      { deviceId: seed.deviceId, ownerUserId: alice.userId },
+      workInputReceipt({
+        runId: firstRunId,
+        workKey: firstManifest.workKey,
+        manifestDigest: firstManifest.manifestDigest,
+        receiptSeq: 1,
+        inboxItemId: item.id as string,
+        byteSize: firstEntry?.byteSize as number,
+        at: harness.clock.now().toISOString(),
+      }),
+    )
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxItems)
+          .where(eq(schema.workInboxItems.id, item.id as string))
+      )[0],
+    ).toMatchObject({ status: 'superseded', statusReason: 'late_receipt_withdrawn' })
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxDeliveries)
+          .where(eq(schema.workInboxDeliveries.runId, secondRunId))
+      )[0],
+    ).toMatchObject({ status: 'duplicate', failureReason: 'late_receipt_previous_run' })
+    expect(await reconcileWorkInputs(database, new Date(secondFinished + 61_000))).toBe(0)
+    const third = await startRun(ctx, alice, taskId, seed, [item.id as string])
+    expect(third.statusCode, third.body).toBe(409)
+  })
+
+  it('drops a receipt from a device that does not own the run', async () => {
+    const messageId = await comment(ctx, alice, taskId, '跨设备回执。')
+    const item = await associate(ctx, alice, workKey, messageId)
+    const created = await startRun(ctx, alice, taskId, seed, [item.id as string])
+    const runId = created.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, runId)
+    const manifest = await runWorkInputManifest(database, runId)
+    const entry = manifest.entries[0]
+    const foreignDeviceId = randomUUID()
+    // removeWhen：生产提供多设备配对夹具后删除该直写；只用于跨设备回执判据。
+    await database.db.insert(schema.devices).values({
+      id: foreignDeviceId,
+      ownerUserId: alice.userId,
+      name: 'foreign-device',
+      platform: 'darwin',
+      architecture: 'arm64',
+      nodeVersion: '24.12.0',
+      nodeAppVersion: '0.1.0',
+      tokenHash: Buffer.from(hashToken(`foreign-${randomUUID()}`)),
+      capabilities: {},
+      dshDistributionVersion: '0.1.0-rc.8',
+      lastSeenAt: new Date(),
+    })
+    await expect(
+      harness.orchestrator.ingestNodeEvent(
+        { deviceId: foreignDeviceId, ownerUserId: alice.userId },
+        workInputReceipt({
+          runId,
+          workKey: manifest.workKey,
+          manifestDigest: manifest.manifestDigest,
+          receiptSeq: 1,
+          inboxItemId: item.id as string,
+          byteSize: entry?.byteSize as number,
+          at: harness.clock.now().toISOString(),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(await database.db.select().from(schema.runWorkInputReceipts)).toHaveLength(0)
+  })
+
+  it('refuses the bundle after the source is retracted', async () => {
+    const messageId = await comment(ctx, alice, taskId, '撤权后的正文。')
+    const item = await associate(ctx, alice, workKey, messageId)
+    const created = await startRun(ctx, alice, taskId, seed, [item.id as string])
+    const runId = created.json().data.id as string
+    const retracted = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${workKey}/inbox-items/${item.id as string}/retract`,
+      payload: { reason: 'source_permission_revoked' },
+      idempotencyKey: idemKey(),
+    })
+    expect(retracted.statusCode, retracted.body).toBe(200)
+    const bundle = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/node/runs/${runId}/work-input/bundle`,
+      headers: { authorization: `Device ${DEVICE_TOKEN}` },
+    })
+    expect(bundle.statusCode, bundle.body).toBe(409)
+    expect(bundle.json().error.code).toBe('CONTEXT_UNAVAILABLE')
+  })
+
+  it('refuses the bundle when stored entry metadata drifted from the frozen manifest', async () => {
+    const messageId = await comment(ctx, alice, taskId, '元数据漂移。')
+    const item = await associate(ctx, alice, workKey, messageId)
+    const created = await startRun(ctx, alice, taskId, seed, [item.id as string])
+    const runId = created.json().data.id as string
+    // removeWhen：生产提供元数据修复夹具后删除该直写；只用于触发 fail-closed。
+    await database.db
+      .update(schema.workInboxItems)
+      .set({ title: '被改写的标题' })
+      .where(eq(schema.workInboxItems.id, item.id as string))
+    const bundle = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/node/runs/${runId}/work-input/bundle`,
+      headers: { authorization: `Device ${DEVICE_TOKEN}` },
+    })
+    expect(bundle.statusCode, bundle.body).toBe(409)
+    expect(bundle.json().error.code).toBe('CONTEXT_UNAVAILABLE')
+  })
+
+  it('fails the run before dispatch when the frozen source version drifted', async () => {
+    const messageId = await comment(ctx, alice, taskId, '派发前版本漂移。')
+    const item = await associate(ctx, alice, workKey, messageId)
+    const created = await startRun(ctx, alice, taskId, seed, [item.id as string])
+    const runId = created.json().data.id as string
+    // removeWhen：生产提供来源版本竞争夹具后删除该直写；只用于触发 fail-closed。
+    await database.db
+      .update(schema.workInboxItems)
+      .set({ sourceVersion: 'stale-version' })
+      .where(eq(schema.workInboxItems.id, item.id as string))
+    harness.clock.advance(Math.max(0, Date.now() - harness.clock.now().getTime()) + 1)
+    await harness.worker.dispatchOnce()
+    expect(
+      (await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId)))[0],
+    ).toMatchObject({ status: 'failed', failureCode: 'CONTEXT_UNAVAILABLE' })
+    expect(harness.gateway.sent.filter((sent) => sent.frame.type === 'run.start')).toHaveLength(0)
+  })
+
+  it('consumes only the read item when a run delivers two work inputs', async () => {
+    const firstMessage = await comment(ctx, alice, taskId, '部分读取 A。')
+    const secondMessage = await comment(ctx, alice, taskId, '部分读取 B。')
+    const firstItem = await associate(ctx, alice, workKey, firstMessage)
+    const secondItem = await associate(ctx, alice, workKey, secondMessage)
+    const created = await startRun(ctx, alice, taskId, seed, [
+      firstItem.id as string,
+      secondItem.id as string,
+    ])
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, runId)
+    const manifest = await runWorkInputManifest(database, runId)
+    const firstEntry = manifest.entries.find((row) => row.inboxItemId === firstItem.id)
+    const at = harness.clock.now().toISOString()
+    await harness.orchestrator.ingestNodeEvent(
+      { deviceId: seed.deviceId, ownerUserId: alice.userId },
+      {
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: at,
+        type: 'run.work_input_receipt',
+        payload: {
+          runId,
+          workKey: manifest.workKey,
+          manifestDigest: manifest.manifestDigest,
+          receiptSeq: 1,
+          entriesDelivered: [firstItem.id as string, secondItem.id as string],
+          entriesRead: [firstItem.id as string],
+          readEvents: [
+            {
+              inboxItemId: firstItem.id as string,
+              digestVerified: true,
+              byteSize: firstEntry?.byteSize as number,
+              at,
+            },
+          ],
+          missing: [],
+          digestVerified: true,
+          at,
+        },
+      },
+    )
+    const items = await database.db.select().from(schema.workInboxItems)
+    expect(items.find((row) => row.id === firstItem.id)?.status).toBe('consumed')
+    expect(items.find((row) => row.id === secondItem.id)?.status).toBe('delivered')
+    expect(
+      await database.db
+        .select()
+        .from(schema.workInputConsumptions)
+        .where(eq(schema.workInputConsumptions.runId, runId)),
+    ).toHaveLength(1)
+
+    await completeRun(harness, seed, alice.userId, runId)
+    const finishedAt = (
+      await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    )[0]?.finishedAt?.getTime() as number
+    expect(await reconcileWorkInputs(database, new Date(finishedAt + 61_000))).toBe(1)
+    const after = await database.db.select().from(schema.workInboxItems)
+    expect(after.find((row) => row.id === firstItem.id)?.status).toBe('consumed')
+    expect(after.find((row) => row.id === secondItem.id)?.status).toBe('pending')
+  })
+
   it('records a late read after the 60s window as duplicate without consuming', async () => {
     const messageId = await comment(ctx, alice, taskId, '迟到读取的材料。')
     const item = await associate(ctx, alice, workKey, messageId)
@@ -1629,6 +2045,8 @@ describe('RD-02a-2a run work input manifest', () => {
           .where(eq(schema.workInputConsumptions.runId, firstRunId))
       )[0],
     ).toMatchObject({ kind: 'duplicate_consumption' })
+    // 迟到回执只追加对账记录：旧 Run 的 returned 与下一 Run 的 consumed
+    // 都是已发生的事实，不能被迟到回执改写。
     expect(
       (
         await database.db
@@ -1636,12 +2054,22 @@ describe('RD-02a-2a run work input manifest', () => {
           .from(schema.workInboxDeliveries)
           .where(eq(schema.workInboxDeliveries.runId, firstRunId))
       )[0]?.status,
-    ).toBe('duplicate_consumption')
+    ).toBe('returned')
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxDeliveries)
+          .where(eq(schema.workInboxDeliveries.runId, secondRunId))
+      )[0]?.status,
+    ).toBe('consumed')
   })
 
   it('rejects work inputs when the target node lacks work-input.v1', async () => {
     const messageId = await comment(ctx, alice, taskId, '能力门材料。')
     const item = await associate(ctx, alice, workKey, messageId)
+    const runsBefore = await database.db.select().from(schema.runs)
+    const outboxBefore = await database.db.select().from(schema.dispatchOutbox)
     // removeWhen：能力协商提供设备能力更新夹具后删除该直写。
     await database.db
       .update(schema.devices)
@@ -1650,6 +2078,9 @@ describe('RD-02a-2a run work input manifest', () => {
     const denied = await startRun(ctx, alice, taskId, seed, [item.id as string])
     expect(denied.statusCode, denied.body).toBe(409)
     expect(denied.json().error.code).toBe('CONTEXT_UNAVAILABLE')
+    // 能力门在 Run/outbox 写入之前拒绝：不留下半建 Run 或待投命令。
+    expect(await database.db.select().from(schema.runs)).toHaveLength(runsBefore.length)
+    expect(await database.db.select().from(schema.dispatchOutbox)).toHaveLength(outboxBefore.length)
   })
 
   it('fails the run before dispatch when the input source is retracted', async () => {

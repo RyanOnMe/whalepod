@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import {
   runWorkInputReceipts,
@@ -52,23 +52,6 @@ export async function getRunWorkInputReceipt(
   return row
 }
 
-export async function maxRunWorkInputReceiptSeq(
-  handle: DbHandle,
-  runId: string,
-  manifestDigest: string,
-): Promise<number> {
-  const [row] = await handle
-    .select({ max: sql<number | null>`max(${runWorkInputReceipts.receiptSeq})::int` })
-    .from(runWorkInputReceipts)
-    .where(
-      and(
-        eq(runWorkInputReceipts.runId, runId),
-        eq(runWorkInputReceipts.manifestDigest, manifestDigest),
-      ),
-    )
-  return row?.max ?? 0
-}
-
 export async function getWorkInputConsumption(
   handle: DbHandle,
   runId: string,
@@ -112,6 +95,8 @@ export async function markWorkInboxItemConsumed(
       status: 'consumed',
       statusReason: 'consumed_by_run',
       consumedAt: input.now,
+      // 窗口内读取的条目仍带 unconfirmed_at；consumed 状态要求它为空。
+      unconfirmedAt: null,
       statusAt: input.now,
       updatedAt: input.now,
     })
@@ -119,6 +104,40 @@ export async function markWorkInboxItemConsumed(
       and(
         eq(workInboxItems.id, input.itemId),
         eq(workInboxItems.deliveryRunId, input.runId),
+        inArray(workInboxItems.status, ['delivered', 'unconfirmed']),
+      ),
+    )
+    .returning()
+  return row
+}
+
+/**
+ * 迟到的旧 Run 回执：下一 Run 已领取但未读取 → 撤回该交付。
+ * item 回到不可再投的 `superseded`（`status_reason=late_receipt_withdrawn`），
+ * 交付指针清空；不是 pending，后续关联/派工不会产生第三次投递。
+ * 返回 undefined 表示条目已不再处于可撤回状态。
+ */
+export async function withdrawWorkInboxItemForLateReceipt(
+  handle: DbHandle,
+  input: { readonly itemId: string; readonly now: Date },
+): Promise<WorkInboxItemRow | undefined> {
+  const [row] = await handle
+    .update(workInboxItems)
+    .set({
+      status: 'superseded',
+      statusReason: 'late_receipt_withdrawn',
+      returnReason: null,
+      returnNote: null,
+      deliveryRunId: null,
+      deliveredAt: null,
+      unconfirmedAt: null,
+      consumedAt: null,
+      statusAt: input.now,
+      updatedAt: input.now,
+    })
+    .where(
+      and(
+        eq(workInboxItems.id, input.itemId),
         inArray(workInboxItems.status, ['delivered', 'unconfirmed']),
       ),
     )
@@ -165,6 +184,8 @@ export async function markWorkInboxDeliveryStatus(
       and(
         eq(workInboxDeliveries.inboxItemId, input.itemId),
         eq(workInboxDeliveries.runId, input.runId),
+        // 迟到的重复回执不得改写 already-consumed/returned/withdrawn 的尝试历史。
+        inArray(workInboxDeliveries.status, ['sent', 'unconfirmed']),
       ),
     )
 }

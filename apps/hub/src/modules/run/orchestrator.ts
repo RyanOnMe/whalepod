@@ -931,18 +931,33 @@ export class RunOrchestrator {
     now: Date,
   ): Promise<void> {
     let outcome: Awaited<ReturnType<typeof recordRunWorkInputReceipt>> | undefined
-    await this.database.transaction(async (tx) => {
-      const [run] = await tx
-        .select()
-        .from(schema.runs)
-        .where(eq(schema.runs.id, receipt.runId))
-        .for('update')
-      if (run === undefined) return
-      if (run.deviceId !== device.deviceId) {
-        throw new RunCommandError('FORBIDDEN', 'run does not belong to this device')
+    try {
+      await this.database.transaction(async (tx) => {
+        const [run] = await tx
+          .select()
+          .from(schema.runs)
+          .where(eq(schema.runs.id, receipt.runId))
+          .for('update')
+        if (run === undefined) return
+        if (run.deviceId !== device.deviceId) {
+          throw new RunCommandError('FORBIDDEN', 'run does not belong to this device')
+        }
+        outcome = await recordRunWorkInputReceipt(tx, run, receipt, now)
+      })
+    } catch (error) {
+      // 回执是独立对账通道：单条语义冲突只丢弃该回执并留观测，不得升级成
+      // 设备连接 4003（那会连带影响同设备上所有活跃 Run）。
+      if (error instanceof RunCommandError && error.code === 'CONFLICT') {
+        this.contextLog('work.input_receipt_invalid', {
+          component: 'hub.work_input',
+          runId: receipt.runId,
+          receiptSeq: receipt.receiptSeq,
+          reason: error.message,
+        })
+        return
       }
-      outcome = await recordRunWorkInputReceipt(tx, run, receipt, now)
-    })
+      throw error
+    }
     if (outcome === undefined) return
     this.contextLog('work.input_receipt', {
       component: 'hub.work_input',

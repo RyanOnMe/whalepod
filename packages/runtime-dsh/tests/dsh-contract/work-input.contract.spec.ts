@@ -203,6 +203,9 @@ describe('ADR-0028: work inputs reach the model through read_work_input', () => 
       // 了下一次模型请求；匹配不到 replay 会 fail loud。
       expect(JSON.stringify(spec.workInputs?.entries)).not.toContain('RD02A2_ECHO')
       expect(outputText(runtime.outputs)).toContain('Work input echo: RD02A2_ECHO')
+      // 清单摘要必须进入首条 user 请求，模型才知道可读的 inboxItemId；
+      // 只注册工具、不投影清单等于把不可猜的 UUID 藏起来。
+      expect(outputText(runtime.outputs)).toContain('manifest: 本次工作输入清单')
     } finally {
       await runtime.dispose()
     }

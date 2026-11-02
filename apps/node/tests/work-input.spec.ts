@@ -124,7 +124,12 @@ describe('WorkInputDownloader', () => {
   it('rejects a tampered body, cleans the directory, and never leaves a partial copy', async () => {
     const h = makeHarness({
       body: bundle({
-        entries: [bundleEntry({ bodyBase64: Buffer.from('tampered').toString('base64') })],
+        entries: [
+          bundleEntry({
+            // 与原文等长：确保判红来自摘要而不是 byteSize。
+            bodyBase64: Buffer.from('X'.repeat(Buffer.byteLength(BODY))).toString('base64'),
+          }),
+        ],
       }),
     })
     await expect(h.downloader.prepare(RUN_ID, startInput())).rejects.toMatchObject({
@@ -173,6 +178,10 @@ describe('WorkInputDownloader', () => {
       }),
     })
     await expect(extra.downloader.prepare(RUN_ID, startInput())).rejects.toMatchObject({
+      code: 'CONTEXT_DIGEST_MISMATCH',
+    })
+    const duplicated = makeHarness({ body: bundle({ entries: [bundleEntry(), bundleEntry()] }) })
+    await expect(duplicated.downloader.prepare(RUN_ID, startInput())).rejects.toMatchObject({
       code: 'CONTEXT_DIGEST_MISMATCH',
     })
     expect(existsSync(join(inputsRoot, RUN_ID))).toBe(false)

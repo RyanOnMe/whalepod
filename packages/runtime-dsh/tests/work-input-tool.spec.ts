@@ -88,7 +88,8 @@ describe('read_work_input tool', () => {
   })
 
   it('refuses a copy whose digest or size drifted and emits no receipt', async () => {
-    writeFileSync(join(entriesDir, ITEM_ID), 'tampered')
+    // 与原文等长：确保拒绝来自摘要而不是 byteSize。
+    writeFileSync(join(entriesDir, ITEM_ID), 'X'.repeat(Buffer.byteLength(BODY)))
     const reads: unknown[] = []
     const tool = createReadWorkInputTool([ENTRY], entriesDir, (fact) => reads.push(fact))
     await expect(tool.execute({ inboxItemId: ITEM_ID }, {} as never)).rejects.toThrow(

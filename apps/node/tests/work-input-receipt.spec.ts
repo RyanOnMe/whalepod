@@ -75,16 +75,35 @@ describe('SqliteWorkInputReceiptStore', () => {
     })
   })
 
-  it('keeps unacked receipts in the outbox until they are explicitly removed', () => {
+  it('keeps unacked receipts in the outbox and drains in sequence order', () => {
     const path = join(root, 'work-input-receipts.sqlite')
     const first = new SqliteWorkInputReceiptStore(path)
+    // 故意先入队 2 再入队 1，且 2 的 Runtime at 更早：drain 必须按 receiptSeq，
+    // 而不是 Runtime 墙钟（时钟回拨/同毫秒都不能把序号倒过来）。
+    first.enqueue(
+      receipt(2, { entriesRead: [ITEM_1], at: new Date(2026, 10, 2, 9, 0, 0).toISOString() }),
+    )
     first.enqueue(receipt(1))
-    first.enqueue(receipt(2, { entriesRead: [ITEM_1] }))
 
     const reopened = new SqliteWorkInputReceiptStore(path)
     expect(reopened.pending().map((item) => item.receiptSeq)).toEqual([1, 2])
     reopened.removePending(RUN_ID, DIGEST, 1)
     expect(reopened.pending().map((item) => item.receiptSeq)).toEqual([2])
+  })
+
+  it('rolls back accumulated state, sequence and outbox together', () => {
+    const store = new SqliteWorkInputReceiptStore(join(root, 'work-input-receipts.sqlite'))
+    expect(() =>
+      store.transaction(() => {
+        store.addRead(RUN_ID, DIGEST, ITEM_1)
+        store.nextSeq(RUN_ID, DIGEST)
+        store.enqueue(receipt(1))
+        throw new Error('simulated crash before commit')
+      }),
+    ).toThrow('simulated crash before commit')
+    expect(store.snapshot(RUN_ID, DIGEST)).toEqual({ delivered: [], read: [] })
+    expect(store.nextSeq(RUN_ID, DIGEST)).toBe(1)
+    expect(store.pending()).toHaveLength(0)
   })
 
   it('replaces a queued receipt with the same sequence instead of duplicating it', () => {

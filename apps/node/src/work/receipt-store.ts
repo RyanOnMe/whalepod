@@ -20,6 +20,8 @@ export interface WorkInputReceiptStore {
   enqueue(receipt: RunWorkInputReceipt): void
   pending(): readonly RunWorkInputReceipt[]
   removePending(runId: string, manifestDigest: string, receiptSeq: number): void
+  /** 把状态更新 + 序号 + outbox 写入合成一个本地事务，避免崩溃窗口丢读取事实。 */
+  transaction<T>(fn: () => T): T
 }
 
 function merge(existing: readonly string[], incoming: readonly string[]): string[] {
@@ -108,7 +110,9 @@ export class SqliteWorkInputReceiptStore implements WorkInputReceiptStore {
 
   pending(): readonly RunWorkInputReceipt[] {
     const rows = this.db
-      .prepare('select frame from work_input_receipt_outbox order by created_at asc')
+      .prepare(
+        'select frame from work_input_receipt_outbox order by run_id asc, manifest_digest asc, receipt_seq asc',
+      )
       .all() as { frame: string }[]
     return rows.map((row) => JSON.parse(row.frame) as RunWorkInputReceipt)
   }
@@ -119,6 +123,18 @@ export class SqliteWorkInputReceiptStore implements WorkInputReceiptStore {
         'delete from work_input_receipt_outbox where run_id = ? and manifest_digest = ? and receipt_seq = ?',
       )
       .run(runId, manifestDigest, receiptSeq)
+  }
+
+  transaction<T>(fn: () => T): T {
+    this.db.exec('begin immediate')
+    try {
+      const result = fn()
+      this.db.exec('commit')
+      return result
+    } catch (error) {
+      this.db.exec('rollback')
+      throw error
+    }
   }
 
   private writeSets(
@@ -182,11 +198,21 @@ export class MemoryWorkInputReceiptStore implements WorkInputReceiptStore {
   }
 
   pending(): readonly RunWorkInputReceipt[] {
-    return [...this.outbox.values()]
+    return [...this.outbox.values()].sort((left, right) => {
+      if (left.runId !== right.runId) return left.runId < right.runId ? -1 : 1
+      if (left.manifestDigest !== right.manifestDigest) {
+        return left.manifestDigest < right.manifestDigest ? -1 : 1
+      }
+      return left.receiptSeq - right.receiptSeq
+    })
   }
 
   removePending(runId: string, manifestDigest: string, receiptSeq: number): void {
     this.outbox.delete(`${runId}|${manifestDigest}|${receiptSeq}`)
+  }
+
+  transaction<T>(fn: () => T): T {
+    return fn()
   }
 }
 

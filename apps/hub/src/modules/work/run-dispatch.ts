@@ -4,7 +4,6 @@ import { getRetractedInboxItemForSource, getRun, getWorkByKey, schema } from '@w
 import {
   WORK_INPUT_CAPABILITY,
   WORK_INPUT_MANIFEST_VERSION,
-  WorkInputBundleSchema,
   WorkInputManifestSchema,
   type WorkInputBundle,
 } from '@whalepod/protocol'
@@ -146,11 +145,16 @@ export async function buildRunWorkInputBundle(
       .for('share')
     if (
       item === undefined ||
+      item.workKey !== manifest.workKey ||
       item.deliveryRunId !== runId ||
       (item.status !== 'delivered' && item.status !== 'unconfirmed') ||
+      item.sourceType !== expected.sourceType ||
+      item.sourceId !== expected.sourceId ||
       item.sourceVersion !== expected.sourceVersion ||
       item.sourceDigest !== expected.sourceDigest ||
       item.bodyDigest !== expected.bodyDigest ||
+      item.authorizationGeneration !== expected.authorizationGeneration ||
+      item.title !== expected.title ||
       sha256Hex(item.body) !== expected.bodyDigest
     ) {
       throw new RunCommandError('CONTEXT_UNAVAILABLE', '工作输入条目已不可读')

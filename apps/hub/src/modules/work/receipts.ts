@@ -9,7 +9,7 @@ import {
   markWorkInboxDeliveriesAcked,
   markWorkInboxDeliveryStatus,
   markWorkInboxItemConsumed,
-  maxRunWorkInputReceiptSeq,
+  withdrawWorkInboxItemForLateReceipt,
 } from '@whalepod/db'
 import {
   WorkInputManifestSchema,
@@ -78,17 +78,16 @@ export async function recordRunWorkInputReceipt(
   }
   assertKnownIds(receipt, manifest)
 
-  const maxSeq = await maxRunWorkInputReceiptSeq(tx, run.id, receipt.manifestDigest)
-  if (receipt.receiptSeq <= maxSeq) {
-    const existing = await getRunWorkInputReceipt(
-      tx,
-      run.id,
-      receipt.manifestDigest,
-      receipt.receiptSeq,
-    )
-    if (existing !== undefined) return emptyOutcome(true)
-    throw new RunCommandError('CONFLICT', 'stale work input receipt sequence')
-  }
+  // 同一 (run, manifest, seq) 只落一行。**低于最大 seq 的未见序号也接受**：
+  // Node 重连时可能先发出新回执、再补发旧 outbox；条目/消费唯一键已经保证
+  // 重复读取不会二次消费，拒收旧序号只会永久丢掉已发生的读取事实。
+  const existing = await getRunWorkInputReceipt(
+    tx,
+    run.id,
+    receipt.manifestDigest,
+    receipt.receiptSeq,
+  )
+  if (existing !== undefined) return emptyOutcome(true)
 
   // 读回执要改条目状态：先取 Work 行锁再插回执。反过来（插回执的 Work FK 先取
   // KEY SHARE，再升级 FOR UPDATE）会被另一条并发读回执卡成环——两条都持 KEY SHARE、
@@ -140,21 +139,8 @@ export async function recordRunWorkInputReceipt(
       throw new RunCommandError('CONFLICT', 'receipt item does not belong to this work')
     }
     const readAt = new Date(event.at)
-    // 同一 Run 再次读取：首次消费事实已存在，不新增第二行。
-    if (item.status === 'consumed' && item.deliveryRunId === run.id) {
-      counts.duplicate += 1
-      continue
-    }
-    // 旧 Run 的迟到回执：条目已被后续 Run 消费 → duplicate_consumption；
-    // 其他（已回 pending/被别的 Run 领走/撤权）→ duplicate，只记录不重投。
-    if (item.deliveryRunId !== run.id) {
-      const kind =
-        item.status === 'consumed' && item.deliveryRunId !== run.id
-          ? 'duplicate_consumption'
-          : 'duplicate'
-      if (kind === 'duplicate_consumption') counts.duplicateConsumption += 1
-      else counts.duplicate += 1
-      await insertWorkInputConsumptionIfAbsent(tx, {
+    const recordConsumption = (kind: 'consumed' | 'duplicate' | 'duplicate_consumption') =>
+      insertWorkInputConsumptionIfAbsent(tx, {
         id: uuidv7(now.getTime()),
         inboxItemId: item.id,
         workId: work.id,
@@ -166,14 +152,37 @@ export async function recordRunWorkInputReceipt(
         readAt,
         createdAt: now,
       })
-      await markWorkInboxDeliveryStatus(tx, {
-        itemId: item.id,
-        runId: run.id,
-        status: kind,
-        at: now,
-        failureReason:
-          kind === 'duplicate_consumption' ? 'consumed_by_another_run' : 'late_receipt',
-      })
+    // 同一 Run 再次读取：首次消费事实已存在，不新增第二行，也不改写交付尝试。
+    if (item.status === 'consumed' && item.deliveryRunId === run.id) {
+      counts.duplicate += 1
+      continue
+    }
+    if (item.deliveryRunId !== run.id) {
+      // 条目已被后续 Run 消费 → duplicate_consumption；两边的交付尝试都是历史事实，
+      // 迟到回执只追加对账记录，不改写 consumed 的尝试。
+      if (item.status === 'consumed') {
+        counts.duplicateConsumption += 1
+        await recordConsumption('duplicate_consumption')
+        continue
+      }
+      // 下一 Run 已领取但尚未消费：记录旧 Run 的迟到读取，并撤回下一交付。
+      // 条目转 superseded（只有 pending 能再次被关联/派发），因此不会出现第三次投递。
+      // 旧 Run 自己的 delivery 已是 returned/withdrawn，保持原状。
+      counts.duplicate += 1
+      await recordConsumption('duplicate')
+      if (
+        item.deliveryRunId !== null &&
+        (item.status === 'delivered' || item.status === 'unconfirmed')
+      ) {
+        await markWorkInboxDeliveryStatus(tx, {
+          itemId: item.id,
+          runId: item.deliveryRunId,
+          status: 'duplicate',
+          at: now,
+          failureReason: 'late_receipt_previous_run',
+        })
+        await withdrawWorkInboxItemForLateReceipt(tx, { itemId: item.id, now })
+      }
       continue
     }
     if (
@@ -189,18 +198,7 @@ export async function recordRunWorkInputReceipt(
         counts.duplicate += 1
         continue
       }
-      const inserted = await insertWorkInputConsumptionIfAbsent(tx, {
-        id: uuidv7(now.getTime()),
-        inboxItemId: item.id,
-        workId: work.id,
-        workKey: work.workKey,
-        runId: run.id,
-        manifestDigest: receipt.manifestDigest,
-        kind: 'consumed',
-        receiptId,
-        readAt,
-        createdAt: now,
-      })
+      const inserted = await recordConsumption('consumed')
       if (inserted === undefined) counts.duplicate += 1
       else counts.consumed += 1
       await markWorkInboxDeliveryStatus(tx, {
@@ -213,18 +211,7 @@ export async function recordRunWorkInputReceipt(
     }
     if (item.status === 'unconfirmed') {
       counts.late += 1
-      await insertWorkInputConsumptionIfAbsent(tx, {
-        id: uuidv7(now.getTime()),
-        inboxItemId: item.id,
-        workId: work.id,
-        workKey: work.workKey,
-        runId: run.id,
-        manifestDigest: receipt.manifestDigest,
-        kind: 'duplicate',
-        receiptId,
-        readAt,
-        createdAt: now,
-      })
+      await recordConsumption('duplicate')
       await markWorkInboxDeliveryStatus(tx, {
         itemId: item.id,
         runId: run.id,
@@ -235,25 +222,7 @@ export async function recordRunWorkInputReceipt(
       continue
     }
     counts.duplicate += 1
-    await insertWorkInputConsumptionIfAbsent(tx, {
-      id: uuidv7(now.getTime()),
-      inboxItemId: item.id,
-      workId: work.id,
-      workKey: work.workKey,
-      runId: run.id,
-      manifestDigest: receipt.manifestDigest,
-      kind: 'duplicate',
-      receiptId,
-      readAt,
-      createdAt: now,
-    })
-    await markWorkInboxDeliveryStatus(tx, {
-      itemId: item.id,
-      runId: run.id,
-      status: 'duplicate',
-      at: now,
-      failureReason: 'unavailable_input',
-    })
+    await recordConsumption('duplicate')
   }
   return { ...counts, idempotent: false }
 }
