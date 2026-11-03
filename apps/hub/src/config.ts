@@ -45,6 +45,11 @@ export interface HubConfig {
    * 内容寻址 Artifact Store 根目录（P1-15；blob 树 sha256/ab/cd/<digest> + tmp/）。
    */
   readonly artifactStoreDir: string
+  /**
+   * ADR-0027 §4：非空上下文 Run 首条回执 watchdog 等待时长（毫秒）。
+   * 缺省 60 秒；resolver 会把上限截到 120 秒。
+   */
+  readonly contextReceiptWatchdogMs?: number | undefined
 }
 
 export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
@@ -83,7 +88,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubConfig {
     // 否则直连部署反而被伪造 XFF 骗过限流。
     trustProxy: env.WHALEPOD_TRUST_PROXY === '1' || env.WHALEPOD_TRUST_PROXY === 'true',
     artifactStoreDir: env.WHALEPOD_ARTIFACT_STORE_DIR ?? 'data/artifact-store',
+    contextReceiptWatchdogMs: parsePositiveNumber(env.WHALEPOD_CONTEXT_RECEIPT_WATCHDOG_MS),
   }
+}
+
+/** 可选正整数配置：未设置/非数字/非正数返回 undefined（由消费者回落默认）。 */
+function parsePositiveNumber(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === '') return undefined
+  const value = Number(raw)
+  return Number.isFinite(value) && value > 0 ? value : undefined
 }
 
 /**

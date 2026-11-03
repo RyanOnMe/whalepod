@@ -52,7 +52,7 @@ Thread/WorkLink、`read_only` 显式选择、`model_inferred` 激活、外部来
   - Device Token 下载 bundle 逐条正文与 digest 一致；其他有效设备 token 得到 404；成员读面返回冻结正文。
   - 新约定版本后旧快照逐字节不变；新 Run 得到新 snapshot，并绑定新版本。
   - 创建后确认纠正使派发前复核失败：Run `failed(CONTEXT_UNAVAILABLE)`，outbox 行 `failedAt` 非空，Node 未收到 `run.start`。
-  - delivered 回执写 `deliveredAt`；read 回执写 `readAt`、`run_context_consumption` 与 `consumedAllAt`；重复 `receiptSeq` 被拒且不新增行；终态后回执记 `receipt_late`。
+  - delivered 回执写 `deliveredAt`；read 回执写 `readAt`、`run_context_consumption` 与 `consumedAllAt`；完全重复的 `receiptSeq` 按幂等成功 ack 且不新增行；低水位但从未落库的 seq 补写读取事实（PC-05b-2）；终态后回执记 `receipt_late`。
   - 错误 headerDigest、`nonceMatched=false`、`entriesRead` 与 `readEvents` 不一致分别被拒。
   - 增量回执：交付后逐条读取（每条回执只带本批 readEvents），`consumedAt`/`consumedAllAt` 随进度推进；全字段写满后重复读第一条不新增消费行、不推迟首次 `readAt`（空 patch 不再触发 500）。
   - 部分交付但 `missing` 未覆盖快照全集 → `missing_set_mismatch` 拒绝且不落回执行。
@@ -63,7 +63,7 @@ Thread/WorkLink、`read_only` 显式选择、`model_inferred` 激活、外部来
   - 快照头溢出：1 条约定 + 30 条长标题 Observation 时下一次 Run 创建 409 `CONTEXT_UNAVAILABLE`，Run 与快照行数均不增加。
   - 容量与聚合：33 个候选（32 选入 + 1 条 `capacity_exceeded`）与 205 个候选（选 32、逐条明细 128、`unselectedOmitted={capacity_exceeded:45}`、header 记 173）均创建成功；读面同样返回明细与聚合。
 - [project-context.spec.ts](../../apps/node/tests/project-context.spec.ts)：Node 下载副本按 entryId 命名、digest/byteSize 核对、失败清理半成品、Hub 错误码透传。
-- [context-receipt-seq.spec.ts](../../apps/node/tests/context-receipt-seq.spec.ts)：SQLite receiptSeq 跨进程重开继续单调，且按 `(runId,snapshotId)` 隔离。
+- [context-receipt-outbox.spec.ts](../../apps/node/tests/context-receipt-outbox.spec.ts)：PC-05b-2 起 receiptSeq 改由发件箱的 `enqueueNext` 在同一事务里分配；SQLite 跨进程重开继续单调、按 `(runId,snapshotId)` 隔离，并覆盖 PC-05a 旧计数文件迁移。
 - [run-manager.spec.ts](../../apps/node/tests/run-manager.spec.ts)：manifest 与 entriesDir 成对进入 `runtime.initialize`；Runtime delivered/read 帧被累计为单调 `run.context_receipt`；`run.completed` 与 `run.start` 拒绝两条路径都触发 `cleanupProjectContext(runId)`。
 - [project-context-tool.spec.ts](../../packages/runtime-dsh/tests/project-context-tool.spec.ts)：工具只接受清单 id、读取失败不发回执、拒绝消息不含本机路径。
 - [tool-boundary.contract.spec.ts](../../packages/runtime-dsh/tests/dsh-contract/tool-boundary.contract.spec.ts)：真 boot 栈中 `read_project_context` 的正文/结构化字段进入模型可见结果，并发出 delivered/read 回执；`{{fromRequest:PC05A_ECHO}}` 证明正文进入下一次模型请求，`{{fromRequest:\[project-context:}}` 证明 header 的 nonce 标记进入首条模型请求。

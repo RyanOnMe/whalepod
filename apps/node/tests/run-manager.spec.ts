@@ -27,7 +27,11 @@ import type {
   WorkInputManifestEntry,
 } from '@whalepod/protocol'
 import { contextStateDigestInput } from '@whalepod/protocol'
-import { MemoryContextReceiptSeqStore } from '../src/context/receipt-seq-store.js'
+import {
+  MemoryContextReceiptOutbox,
+  SqliteContextReceiptOutbox,
+} from '../src/context/receipt-outbox.js'
+import type { RunContextReceiptOutbox } from '../src/context/receipt-outbox.js'
 import { MemoryContextStateStore } from '../src/context/state-store.js'
 import {
   MemoryWorkInputReceiptStore,
@@ -166,6 +170,8 @@ interface Harness {
 async function makeHarness(
   options: {
     online?: boolean
+    /** 同一测试里模拟进程重启时，第二实例用不同 workspace 名避免注册冲突。 */
+    workspaceName?: string
     /** P1-15：RunManager 的 Artifact 依赖注入（collector / inputs）。 */
     managerDeps?: Record<string, unknown>
     /** 捕获结构化日志（观测面断言用）。 */
@@ -174,7 +180,9 @@ async function makeHarness(
 ): Promise<Harness> {
   let online = options.online ?? true
   const registry = new WorkspaceRegistry(join(root, 'registry.db'))
-  const workspace = await registry.register(workspaceDir, { name: 'ws-1' })
+  const workspace = await registry.register(workspaceDir, {
+    name: options.workspaceName ?? 'ws-1',
+  })
   const secrets = new SecretStore(join(root, 'secrets.json'), {
     WHALEPOD_DSH_SECRET_DSH_API_KEY: 'sk-test-123',
   })
@@ -1304,7 +1312,6 @@ describe('ADR-0027：项目上下文交付与两级回执', () => {
     const entriesDir = join(root, 'runtime-context', runId)
     await mkdir(entriesDir, { recursive: true })
     await writeFile(join(entriesDir, entryId), body)
-    const receiptSeq = new MemoryContextReceiptSeqStore()
     const cleaned: string[] = []
     const h = await makeHarness({
       managerDeps: {
@@ -1320,7 +1327,6 @@ describe('ADR-0027：项目上下文交付与两级回执', () => {
         cleanupProjectContext: async (id: string) => {
           cleaned.push(id)
         },
-        contextReceiptSeq: receiptSeq,
       },
     })
     await h.manager.handleFrame(
@@ -1421,6 +1427,304 @@ describe('ADR-0027：项目上下文交付与两级回执', () => {
       () => (cleaned.includes(runId) ? true : undefined),
       'run.completed 未在超时内触发 runtime-context 清理',
     )
+  })
+
+  it('persists receipts offline, replays on reconnect and clears only after Hub ack', async () => {
+    const body = '# 项目上下文\n预算结论：8 万\n'
+    const entryDigest = createHash('sha256').update(body).digest('hex')
+    const snapshotDigest = createHash('sha256').update('snapshot-pc05b2').digest('hex')
+    const runId = RUN_ID
+    const entryId = '01905f7c-0000-7000-8000-000000000951'
+    const snapshotId = '01905f7c-0000-7000-8000-000000000961'
+    const entry: RunProjectContextManifestEntry = {
+      entryId,
+      kind: 'decision',
+      title: '预算结论',
+      revisionId: null,
+      businessRef: 'taskSpec:01905f7c-0000-7000-8000-000000000201',
+      digest: entryDigest,
+      byteSize: Buffer.byteLength(body, 'utf8'),
+      snapshotAuthorizationGeneration: null,
+    }
+    const headerText = `[project-context:0123456789abcdef]\n- ${entryId} 预算结论`
+    const headerDigest = createHash('sha256').update(headerText).digest('hex')
+    const entriesDir = join(root, 'runtime-context', runId)
+    await mkdir(entriesDir, { recursive: true })
+    await writeFile(join(entriesDir, entryId), body)
+    const outbox = new MemoryContextReceiptOutbox()
+    const h = await makeHarness({
+      managerDeps: {
+        prepareProjectContext: async () => ({
+          runId,
+          dir: entriesDir,
+          snapshotId,
+          snapshotDigest,
+          headerText,
+          headerDigest,
+          entries: [entry],
+        }),
+        contextReceiptOutbox: outbox,
+      },
+    })
+    await h.manager.handleFrame(
+      runStartFrame(h.workspaceId, {
+        projectContext: {
+          snapshotId,
+          digest: snapshotDigest,
+          headerText,
+          headerDigest,
+          manifest: [entry],
+        },
+      }),
+    )
+    h.runtimes[0]!.emitStdout(stdoutRuntimeReady(runId))
+    h.setOnline(false)
+    h.runtimes[0]!.emitStdout(
+      JSON.stringify({
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: new Date().toISOString(),
+        type: 'runtime.context_receipt',
+        payload: {
+          kind: 'delivered',
+          runId,
+          snapshotId,
+          headerDigest,
+          nonceMatched: true,
+          entriesDelivered: [entryId],
+          at: new Date().toISOString(),
+        },
+      }),
+    )
+    expect(outbox.pending()).toHaveLength(1)
+    expect(h.sentFrames().filter((frame) => frame.type === 'run.context_receipt')).toHaveLength(0)
+
+    h.setOnline(true)
+    h.manager.onReconnect()
+    const replayed = h.sentFrames().filter((frame) => frame.type === 'run.context_receipt')
+    expect(replayed).toHaveLength(1)
+    expect(replayed[0]?.payload).toMatchObject({ receiptSeq: 1, entriesDelivered: [entryId] })
+
+    // 高 highestSeq 不能连带删除更低的未 ack 项：Hub 允许 seq 空洞。
+    const firstReceipt = outbox.pending()[0]!.receipt
+    outbox.enqueue({ ...firstReceipt, receiptSeq: 2 }, new Date().toISOString())
+    const ack = {
+      type: 'run.context_receipt_ack' as const,
+      payload: {
+        runId,
+        snapshotId,
+        receiptSeq: 1,
+        highestSeq: 2,
+        result: 'accepted' as const,
+      },
+    }
+    await h.manager.handleFrame(ack as NodeDownstream)
+    expect(outbox.pending().map((item) => item.receipt.receiptSeq)).toEqual([2])
+    // 重复 ack 幂等：既不复活已删项，也不误删 seq 2。
+    await h.manager.handleFrame(ack as NodeDownstream)
+    expect(outbox.pending().map((item) => item.receipt.receiptSeq)).toEqual([2])
+    await h.manager.handleFrame({
+      ...ack,
+      payload: { ...ack.payload, receiptSeq: 2 },
+    } as NodeDownstream)
+    expect(outbox.pending()).toHaveLength(0)
+
+    // late/rejected 的 highestSeq=0：只删被 ack 的精确 seq，其他待发项保留。
+    outbox.enqueue({ ...firstReceipt, receiptSeq: 3 }, new Date().toISOString())
+    outbox.enqueue({ ...firstReceipt, receiptSeq: 4 }, new Date().toISOString())
+    await h.manager.handleFrame({
+      type: 'run.context_receipt_ack',
+      payload: { runId, snapshotId, receiptSeq: 3, highestSeq: 0, result: 'late' },
+    } as NodeDownstream)
+    expect(outbox.pending().map((item) => item.receipt.receiptSeq)).toEqual([4])
+    await h.manager.handleFrame({
+      type: 'run.context_receipt_ack',
+      payload: {
+        runId,
+        snapshotId,
+        receiptSeq: 4,
+        highestSeq: 0,
+        result: 'rejected',
+        reason: 'digest_not_verified',
+      },
+    } as NodeDownstream)
+    expect(outbox.pending()).toHaveLength(0)
+  })
+
+  it('replays a receipt persisted by a previous manager process from SQLite', async () => {
+    const body = '# 项目上下文\n预算结论：8 万\n'
+    const entryDigest = createHash('sha256').update(body).digest('hex')
+    const snapshotDigest = createHash('sha256').update('snapshot-pc05b2-restart').digest('hex')
+    const runId = RUN_ID
+    const entryId = '01905f7c-0000-7000-8000-000000000951'
+    const snapshotId = '01905f7c-0000-7000-8000-000000000961'
+    const entry: RunProjectContextManifestEntry = {
+      entryId,
+      kind: 'decision',
+      title: '预算结论',
+      revisionId: null,
+      businessRef: 'taskSpec:01905f7c-0000-7000-8000-000000000201',
+      digest: entryDigest,
+      byteSize: Buffer.byteLength(body, 'utf8'),
+      snapshotAuthorizationGeneration: null,
+    }
+    const headerText = `[project-context:0123456789abcdef]\n- ${entryId} 预算结论`
+    const headerDigest = createHash('sha256').update(headerText).digest('hex')
+    const entriesDir = join(root, 'runtime-context', runId)
+    await mkdir(entriesDir, { recursive: true })
+    await writeFile(join(entriesDir, entryId), body)
+    const outboxPath = join(root, 'context-receipt-outbox.sqlite')
+    const firstOutbox = new SqliteContextReceiptOutbox(outboxPath)
+    const h = await makeHarness({
+      managerDeps: {
+        prepareProjectContext: async () => ({
+          runId,
+          dir: entriesDir,
+          snapshotId,
+          snapshotDigest,
+          headerText,
+          headerDigest,
+          entries: [entry],
+        }),
+        contextReceiptOutbox: firstOutbox,
+      },
+    })
+    await h.manager.handleFrame(
+      runStartFrame(h.workspaceId, {
+        projectContext: {
+          snapshotId,
+          digest: snapshotDigest,
+          headerText,
+          headerDigest,
+          manifest: [entry],
+        },
+      }),
+    )
+    h.runtimes[0]!.emitStdout(stdoutRuntimeReady(runId))
+    h.setOnline(false)
+    h.runtimes[0]!.emitStdout(
+      JSON.stringify({
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: new Date().toISOString(),
+        type: 'runtime.context_receipt',
+        payload: {
+          kind: 'delivered',
+          runId,
+          snapshotId,
+          headerDigest,
+          nonceMatched: true,
+          entriesDelivered: [entryId],
+          at: new Date().toISOString(),
+        },
+      }),
+    )
+    expect(firstOutbox.pending(runId)).toHaveLength(1)
+    firstOutbox.closeForTest()
+
+    // 模拟进程重启：同一 SQLite 文件交给新 manager，重连后按 seq 重放。
+    const secondOutbox = new SqliteContextReceiptOutbox(outboxPath)
+    const restarted = await makeHarness({
+      workspaceName: 'ws-restarted',
+      managerDeps: { contextReceiptOutbox: secondOutbox },
+    })
+    restarted.manager.onReconnect()
+    const replayed = restarted.sentFrames().filter((frame) => frame.type === 'run.context_receipt')
+    expect(replayed).toHaveLength(1)
+    expect(replayed[0]?.payload).toMatchObject({ receiptSeq: 1, entriesDelivered: [entryId] })
+    await restarted.manager.handleFrame({
+      type: 'run.context_receipt_ack',
+      payload: { runId, snapshotId, receiptSeq: 1, highestSeq: 1, result: 'accepted' },
+    } as NodeDownstream)
+    expect(secondOutbox.pending()).toHaveLength(0)
+    secondOutbox.closeForTest()
+  })
+
+  it('logs persist_failed and sends nothing when the outbox rejects the receipt', async () => {
+    const body = '# 项目上下文\n预算结论：8 万\n'
+    const entryDigest = createHash('sha256').update(body).digest('hex')
+    const snapshotDigest = createHash('sha256').update('snapshot-pc05b2-persist').digest('hex')
+    const runId = RUN_ID
+    const entryId = '01905f7c-0000-7000-8000-000000000951'
+    const snapshotId = '01905f7c-0000-7000-8000-000000000961'
+    const entry: RunProjectContextManifestEntry = {
+      entryId,
+      kind: 'decision',
+      title: '预算结论',
+      revisionId: null,
+      businessRef: 'taskSpec:01905f7c-0000-7000-8000-000000000201',
+      digest: entryDigest,
+      byteSize: Buffer.byteLength(body, 'utf8'),
+      snapshotAuthorizationGeneration: null,
+    }
+    const headerText = `[project-context:0123456789abcdef]\n- ${entryId} 预算结论`
+    const headerDigest = createHash('sha256').update(headerText).digest('hex')
+    const entriesDir = join(root, 'runtime-context', runId)
+    await mkdir(entriesDir, { recursive: true })
+    await writeFile(join(entriesDir, entryId), body)
+    const throwingOutbox: RunContextReceiptOutbox = {
+      enqueue: () => {},
+      enqueueNext: () => {
+        throw new Error('disk full')
+      },
+      pending: () => [],
+      ack: () => {},
+      size: () => 0,
+    }
+    const logs: { level: string; msg: string; fields?: Record<string, unknown> }[] = []
+    const h = await makeHarness({
+      logs,
+      managerDeps: {
+        prepareProjectContext: async () => ({
+          runId,
+          dir: entriesDir,
+          snapshotId,
+          snapshotDigest,
+          headerText,
+          headerDigest,
+          entries: [entry],
+        }),
+        contextReceiptOutbox: throwingOutbox,
+      },
+    })
+    await h.manager.handleFrame(
+      runStartFrame(h.workspaceId, {
+        projectContext: {
+          snapshotId,
+          digest: snapshotDigest,
+          headerText,
+          headerDigest,
+          manifest: [entry],
+        },
+      }),
+    )
+    h.runtimes[0]!.emitStdout(stdoutRuntimeReady(runId))
+    h.runtimes[0]!.emitStdout(
+      JSON.stringify({
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: new Date().toISOString(),
+        type: 'runtime.context_receipt',
+        payload: {
+          kind: 'delivered',
+          runId,
+          snapshotId,
+          headerDigest,
+          nonceMatched: true,
+          entriesDelivered: [entryId],
+          at: new Date().toISOString(),
+        },
+      }),
+    )
+    expect(h.sentFrames().filter((frame) => frame.type === 'run.context_receipt')).toHaveLength(0)
+    expect(
+      logs.some(
+        (entryLog) =>
+          entryLog.msg === 'project context receipt persist failed' &&
+          entryLog.fields?.['event'] === 'persist_failed' &&
+          entryLog.fields?.['component'] === 'node.context',
+      ),
+    ).toBe(true)
   })
 
   it('cleans up a partially prepared runtime-context directory when run.start is rejected', async () => {

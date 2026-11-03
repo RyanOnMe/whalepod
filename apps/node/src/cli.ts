@@ -120,7 +120,7 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   const { uploadArtifactCandidate } = await import('./artifact/upload-client.js')
   const { ArtifactInputsManager } = await import('./artifact/inputs.js')
   const { ProjectContextDownloader } = await import('./context/project-context.js')
-  const { SqliteContextReceiptSeqStore } = await import('./context/receipt-seq-store.js')
+  const { SqliteContextReceiptOutbox } = await import('./context/receipt-outbox.js')
   const { SqliteContextStateStore } = await import('./context/state-store.js')
   const { WorkInputDownloader } = await import('./work/work-input.js')
   const { SqliteWorkInputReceiptStore } = await import('./work/receipt-store.js')
@@ -156,6 +156,12 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   const workInputReceipts = new SqliteWorkInputReceiptStore(
     join(stateDir, 'work-input-receipts.sqlite'),
   )
+  // PC-05b-2：回执发件箱接管 receiptSeq 分配；从 PC-05a 的计数文件迁移高水位，
+  // 避免升级后重新从 1 发而被 Hub 判重丢掉新读事件。
+  const contextReceiptOutbox = new SqliteContextReceiptOutbox(
+    join(stateDir, 'context-receipt-outbox.sqlite'),
+  )
+  contextReceiptOutbox.seedFromLegacy(join(stateDir, 'context-receipts.sqlite'))
   // #441 / ADR-0023: automatic Office conversion is suspended until an isolated
   // converter is verified. The generator reports ISOLATION_REQUIRED; it never spawns soffice.
   const officePreview = new OfficePreviewGenerator({
@@ -281,7 +287,7 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     cleanupArtifactInputs: (runId) => artifactInputs.cleanup(runId),
     prepareProjectContext: (runId, manifest) => projectContext.prepare(runId, manifest),
     cleanupProjectContext: (runId) => projectContext.cleanup(runId),
-    contextReceiptSeq: new SqliteContextReceiptSeqStore(join(stateDir, 'context-receipts.sqlite')),
+    contextReceiptOutbox,
     contextStateStore: new SqliteContextStateStore(join(stateDir, 'context-state.sqlite')),
     prepareWorkInputs: (runId, input) => workInputs.prepare(runId, input),
     cleanupWorkInputs: (runId) => workInputs.cleanup(runId),

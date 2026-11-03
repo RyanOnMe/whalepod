@@ -19,6 +19,7 @@ import { runCoordinationTick } from './modules/coordination/tick.js'
 import { runSourceReconcileTick } from './modules/source/tick.js'
 import { reconcileWorkInputs } from './modules/work/run-inputs.js'
 import { syncActiveRunContextStates } from './modules/context/state.js'
+import { failMissingContextReceipts } from './modules/context/receipt-watchdog.js'
 import { nodeSourceCollector } from './modules/source/collector.js'
 import { sanitizeError } from './modules/shared/error-log.js'
 import { logRecordedEntry } from './modules/context/observer.js'
@@ -62,6 +63,12 @@ const workerTimer = setInterval(() => {
     )
   })
 }, 250)
+/**
+ * PC-05b-2：审批过期清扫与首条回执 watchdog 串行驱动。两者都会写 Run/Approval；
+ * 并发时会在 `Run→Approval`（终态折叠）与 `Approval→Run`（决策/过期）之间形成
+ * ABBA。串行化自动路径即可，真人审批与终态折叠的既有竞争仍由 PostgreSQL 检测。
+ */
+let receiptMaintenanceRunning = false
 const leaseTimer = setInterval(() => {
   void reconcileLeases(
     {
@@ -79,13 +86,6 @@ const leaseTimer = setInterval(() => {
     new Date(),
   ).catch((error) => {
     app.log.warn({ component: 'hub.reconciler', errorName: String(error) }, 'lease reconcile error')
-  })
-  // P1-14：Approval 过期清扫与租约 reconcile 同周期（幂等，重复触发无害）。
-  void expireApprovals({ database, outbox, now: () => new Date() }, new Date()).catch((error) => {
-    app.log.warn(
-      { component: 'hub.approval.expiry', errorName: String(error) },
-      'approval expiry sweep error',
-    )
   })
   // ADR-0026（PC-04a）：确定性协调 tick。只跑无模型求值；无变化时没有 queued 行，
   // 不会为「保持记忆」定期唤醒任何计算。
@@ -137,6 +137,40 @@ const leaseTimer = setInterval(() => {
         'work input reconcile error',
       )
     })
+  // P1-14 + ADR-0027 §4（PC-05b-2）：过期清扫与首条回执 watchdog 同周期、
+  // 串行执行（幂等；慢一轮则本 tick 跳过，下一 10 秒重试）。
+  if (!receiptMaintenanceRunning) {
+    receiptMaintenanceRunning = true
+    void (async () => {
+      try {
+        await expireApprovals({ database, outbox, now: () => new Date() }, new Date()).catch(
+          (error) => {
+            app.log.warn(
+              { component: 'hub.approval.expiry', errorName: String(error) },
+              'approval expiry sweep error',
+            )
+          },
+        )
+        await failMissingContextReceipts({
+          database,
+          outbox,
+          now: () => new Date(),
+          ...(config.contextReceiptWatchdogMs === undefined
+            ? {}
+            : { watchdogMs: config.contextReceiptWatchdogMs }),
+          log: (event) => logRecordedEntry(app.log, event),
+          contextLog: (action, fields) => app.log.info({ ...fields, action }, action),
+        }).catch((error) => {
+          app.log.warn(
+            { component: 'hub.context', ...sanitizeError(error) },
+            'context receipt watchdog error',
+          )
+        })
+      } finally {
+        receiptMaintenanceRunning = false
+      }
+    })()
+  }
 }, 10_000)
 
 await app.listen({ host: config.host, port: config.port })

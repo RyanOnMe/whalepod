@@ -59,7 +59,7 @@ import type {
 } from '../../../apps/node/src/runtime-driver.js'
 import { ArtifactInputsManager } from '../../../apps/node/src/artifact/inputs.js'
 import { ProjectContextDownloader } from '../../../apps/node/src/context/project-context.js'
-import { SqliteContextReceiptSeqStore } from '../../../apps/node/src/context/receipt-seq-store.js'
+import { SqliteContextReceiptOutbox } from '../../../apps/node/src/context/receipt-outbox.js'
 import { ArtifactCollector } from '../../../apps/node/src/artifact/collect.js'
 import { uploadArtifactCandidate } from '../../../apps/node/src/artifact/upload-client.js'
 import { Phase1Recorder, redactText } from './events.js'
@@ -404,6 +404,10 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
         }),
       log: artifactLog,
     })
+    const contextReceiptOutbox = new SqliteContextReceiptOutbox(
+      join(nodeStateDir, 'context-receipt-outbox.sqlite'),
+    )
+    contextReceiptOutbox.seedFromLegacy(join(nodeStateDir, 'context-receipts.sqlite'))
     const runManager = new RunManager({
       supervisor,
       registry,
@@ -423,9 +427,7 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
       cleanupArtifactInputs: (runId) => artifactInputs.cleanup(runId),
       prepareProjectContext: (runId, manifest) => projectContext.prepare(runId, manifest),
       cleanupProjectContext: (runId) => projectContext.cleanup(runId),
-      contextReceiptSeq: new SqliteContextReceiptSeqStore(
-        join(nodeStateDir, 'context-receipts.sqlite'),
-      ),
+      contextReceiptOutbox,
       deviceId,
       dshDistributionVersion: '0.1.0-rc.8',
       log: (level, msg, context) => {

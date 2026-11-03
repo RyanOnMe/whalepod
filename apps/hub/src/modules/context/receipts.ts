@@ -7,6 +7,7 @@
  */
 import type { RunRow, Tx } from '@whalepod/db'
 import {
+  getRunContextReceiptBySeq,
   getRunProjectContextForUpdate,
   insertRunContextConsumptionIfAbsent,
   insertRunContextReceipt,
@@ -28,6 +29,13 @@ export type RunContextReceiptOutcome =
       readonly snapshotId: string
       readonly delivered: number
       readonly read: number
+      readonly highestSeq: number
+    }
+  /** 同一 seq 已处理过：按幂等成功回报，不重复写消费事实。 */
+  | {
+      readonly status: 'duplicate'
+      readonly snapshotId: string
+      readonly highestSeq: number
     }
   | { readonly status: 'late' }
   | { readonly status: 'rejected'; readonly reason: string }
@@ -108,7 +116,12 @@ export async function recordRunContextReceipt(
   }
   const lastSeq = await lastRunContextReceiptSeq(tx, run.id, snapshot.id)
   if (receipt.receiptSeq <= lastSeq) {
-    return { status: 'rejected', reason: 'receipt_seq_not_monotonic' }
+    const existing = await getRunContextReceiptBySeq(tx, run.id, snapshot.id, receipt.receiptSeq)
+    if (existing !== undefined) {
+      return { status: 'duplicate', snapshotId: snapshot.id, highestSeq: lastSeq }
+    }
+    // 低于高水位但从未落库的序号仍接受：entriesRead/readEvents 是**本批新增**，
+    // 拒收会永久丢掉已发生的读取事实（与工作输入回执同策略）；高水位不回退。
   }
 
   await insertRunContextReceipt(tx, {
@@ -172,5 +185,6 @@ export async function recordRunContextReceipt(
     snapshotId: snapshot.id,
     delivered: delivered.length,
     read: read.length,
+    highestSeq: Math.max(lastSeq, receipt.receiptSeq),
   }
 }
