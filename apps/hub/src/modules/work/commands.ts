@@ -175,7 +175,14 @@ async function transactWorkMutation<T>(
   execute: (tx: Tx) => Promise<{ view: T; changed: boolean }>,
 ): Promise<WorkMutationOutcome<T>> {
   const outcome = await transactWorkWithOrigin(database, key, execute)
-  return { view: outcome.value.view, changed: outcome.executed && outcome.value.changed }
+  // 旧版本回执是裸 view；升级后同 key 重放仍要能读。新回执是 {view, changed}，
+  // 但任何重放都不算“本次推进了状态”，changed 一律 false。
+  const raw = outcome.value as T | { view: T; changed: boolean }
+  const value =
+    typeof raw === 'object' && raw !== null && 'view' in raw
+      ? raw
+      : { view: raw as T, changed: false }
+  return { view: value.view, changed: outcome.executed && value.changed }
 }
 
 export async function createWork(
