@@ -260,6 +260,9 @@ describe('RD-03a dispatch port boundaries', () => {
     expect(intentLockAt).toBeGreaterThan(lockWorkAt)
     expect(mandateLockAt).toBeGreaterThan(intentLockAt)
     expect(createAt).toBeGreaterThan(mandateLockAt)
+    // 事务内查设备就绪必须复用 tx；走池里的第二连接会在连接打满时行锁自锁。
+    expect(source).toContain('getDeviceDshDistributionVersion(tx, request.deviceId, now)')
+    expect(source).not.toContain('dshDistributionVersionFor')
   })
 
   it('keeps the normal create path from forging machine provenance', () => {

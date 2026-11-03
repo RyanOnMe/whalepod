@@ -1,6 +1,13 @@
 import { and, eq } from 'drizzle-orm'
 import type { Database, RunRow, Tx } from '@whalepod/db'
-import { getRetractedInboxItemForSource, getRun, getWorkByKey, schema } from '@whalepod/db'
+import {
+  getDispatchIntent,
+  getRetractedInboxItemForSource,
+  getRun,
+  getWorkByKey,
+  getWorkMandate,
+  schema,
+} from '@whalepod/db'
 import {
   WORK_INPUT_CAPABILITY,
   WORK_INPUT_MANIFEST_VERSION,
@@ -56,6 +63,75 @@ export function workSourceMatchesItem(
   )
 }
 
+/**
+ * RD-03a：机器 Run 的 Mandate/意图/Task 复核。撤权/新版本/改派后即使取消事务
+ * 尚未到达，`run.start` 也不得发出；调用方把失败按“取消 queued Run”收敛。
+ */
+export async function verifyRunMachineDispatch(
+  tx: Tx,
+  run: RunRow,
+  now: Date,
+): Promise<WorkInputVerification> {
+  if (run.origin !== 'mandate') return { ok: true }
+  if (
+    run.mandateId === null ||
+    run.dispatchIntentId === null ||
+    run.workKey === null ||
+    run.onBehalfOfUserId === null
+  ) {
+    return { ok: false, reason: 'machine_provenance_missing' }
+  }
+  const intent = await getDispatchIntent(tx, run.dispatchIntentId)
+  if (
+    intent === undefined ||
+    intent.status !== 'dispatched' ||
+    intent.runId !== run.id ||
+    intent.mandateId !== run.mandateId ||
+    intent.workKey !== run.workKey ||
+    intent.taskId !== run.taskId
+  ) {
+    return { ok: false, reason: 'dispatch_intent_unavailable' }
+  }
+  const mandate = await getWorkMandate(tx, run.mandateId)
+  if (
+    mandate === undefined ||
+    mandate.status !== 'active' ||
+    mandate.expiresAt.getTime() <= now.getTime()
+  ) {
+    return { ok: false, reason: 'mandate_invalidated' }
+  }
+  const work = await getWorkByKey(tx, run.workKey)
+  if (
+    work === undefined ||
+    work.id !== intent.workId ||
+    work.mandateId !== run.mandateId ||
+    work.taskId !== run.taskId
+  ) {
+    return { ok: false, reason: 'work_mandate_changed' }
+  }
+  const [task] = await tx
+    .select({
+      assigneeUserId: schema.tasks.assigneeUserId,
+      assignmentStatus: schema.tasks.assignmentStatus,
+      status: schema.tasks.status,
+      approvalPolicy: schema.tasks.approvalPolicy,
+    })
+    .from(schema.tasks)
+    .where(eq(schema.tasks.id, run.taskId))
+  if (
+    task === undefined ||
+    task.assigneeUserId !== run.onBehalfOfUserId ||
+    task.assignmentStatus !== 'accepted' ||
+    task.status === 'done' ||
+    task.status === 'cancelled' ||
+    task.approvalPolicy === 'full_access' ||
+    run.approvalPolicy === 'full_access'
+  ) {
+    return { ok: false, reason: 'task_unavailable' }
+  }
+  return { ok: true }
+}
+
 /** 创建后、run.start 前的复核：清单/交付指针/来源版本仍与冻结时一致。 */
 export async function verifyRunWorkInputs(tx: Tx, run: RunRow): Promise<WorkInputVerification> {
   if (run.workInputManifest === null) return { ok: true }
@@ -77,7 +153,17 @@ export async function verifyRunWorkInputs(tx: Tx, run: RunRow): Promise<WorkInpu
     return { ok: false, reason: 'node_capability_missing' }
   }
   const work = await getWorkByKey(tx, manifest.workKey)
-  if (work === undefined || work.state !== 'active' || work.taskId !== run.taskId) {
+  // RD-03a：派工事务把 work 置 waiting(auto, run:<id>) 表示“本 Run 正在执行”。
+  // 这是本 Run 自己的等待态，不是不可用；其它 Run 或 owner_confirmation 仍拒绝。
+  const waitingForThisRun =
+    work?.state === 'waiting' &&
+    work.resumeMode === 'auto' &&
+    work.resumeCondition === `run:${run.id}`
+  if (
+    work === undefined ||
+    work.taskId !== run.taskId ||
+    (work.state !== 'active' && !waitingForThisRun)
+  ) {
     return { ok: false, reason: 'work_unavailable' }
   }
   for (const entry of manifest.entries) {

@@ -346,6 +346,32 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
       resumeCondition: `run:${intent.runId}`,
     })
 
+    // 真实下发前复核：work 已 waiting(auto, run:<id>)，端口必须认出这是本 Run
+    // 自己的等待态，而不是 work_unavailable。
+    const [startCommand] = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(eq(schema.dispatchOutbox.type, 'run.start'))
+    expect(startCommand).toBeDefined()
+    expect(
+      await ctx.app.runOrchestrator.beforeDispatch({
+        id: startCommand!.id,
+        deviceId: startCommand!.deviceId,
+        type: startCommand!.type,
+        payload: startCommand!.payload,
+        attemptCount: 1,
+        sentAt: null,
+      }),
+    ).toBe(true)
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.runs)
+          .where(eq(schema.runs.id, String(intent.runId)))
+      )[0]?.status,
+    ).toBe('queued')
+
     const runView = await apiInject(ctx, alice, {
       method: 'GET',
       url: `/api/v1/runs/${String(intent.runId)}`,
@@ -536,6 +562,39 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
     expect(outbox.filter((row) => row.type === 'run.start')).toHaveLength(1)
   })
 
+  it('does not reuse the first Run when the same idempotency key carries a different dispatch body', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey)
+    const { intentId, itemId } = await prepareIntent(work.workKey)
+    await approve(ctx, alice, work.workKey, intentId)
+    const key = idemKey()
+    const body = {
+      agentId: agent.agentId,
+      deviceId: device.deviceId,
+      workspaceId: device.workspaceId,
+      actionClass: 'draft',
+      workInputItemIds: [itemId],
+    }
+    const first = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/dispatch-intents/${intentId}/dispatch`,
+      payload: body,
+      idempotencyKey: key,
+    })
+    expect(first.statusCode).toBe(200)
+
+    // 同一幂等键但不是同一个请求：必须按新命令处理并由意图状态拒绝，
+    // 不能把第一次的 Run 当成这次请求的回执（ADR-0028 §6 一意图一 Run）。
+    const changed = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/dispatch-intents/${intentId}/dispatch`,
+      payload: { ...body, profileRevisionId: agent.revisionId },
+      idempotencyKey: key,
+    })
+    expect(changed.statusCode).toBe(409)
+    expect(await database.db.select().from(schema.runs)).toHaveLength(1)
+  })
+
   it('rejects a second approved intent while the machine Run is active and work is waiting', async () => {
     const work = await createWork(ctx, alice, taskId)
     await createMandate(ctx, alice, work.workKey)
@@ -706,11 +765,16 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
         deviceId: device.deviceId,
         workspaceId: device.workspaceId,
         actionClass: 'draft',
-        workInputItemIds: [itemId],
       },
       idempotencyKey: idemKey(),
     })
     expect(dispatch.statusCode).toBe(409)
+    const [rejected] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, intentId))
+    expect(rejected?.status).toBe('rejected')
+    expect(rejected?.resolutionReason).toContain('source changed')
     expect(await database.db.select().from(schema.runs)).toHaveLength(0)
   })
 
@@ -758,6 +822,177 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
     expect(await database.db.select().from(schema.runs)).toHaveLength(0)
   })
 
+  it('rejects an intent whose inputDigest no longer matches its trigger refs', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey)
+    const { intentId } = await prepareIntent(work.workKey)
+    await approve(ctx, alice, work.workKey, intentId)
+    // removeWhen: 模拟迁移/脏数据；端口必须按 triggerRefs 重算 inputDigest。
+    await database.db
+      .update(schema.dispatchIntents)
+      .set({ inputDigest: 'f'.repeat(64) })
+      .where(eq(schema.dispatchIntents.id, intentId))
+    const dispatch = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/dispatch-intents/${intentId}/dispatch`,
+      payload: {
+        agentId: agent.agentId,
+        deviceId: device.deviceId,
+        workspaceId: device.workspaceId,
+        actionClass: 'draft',
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(dispatch.statusCode).toBe(409)
+    expect(dispatch.json().error.message).toContain('input digest changed')
+    const [rejected] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, intentId))
+    expect(rejected?.status).toBe('rejected')
+    expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+  })
+
+  it('rejects selecting an inbox item that is not part of the approved intent', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey)
+    const first = await prepareIntent(work.workKey)
+    await approve(ctx, alice, work.workKey, first.intentId)
+    // 第二个来源与条目都合法、同 work，但不在意图 A 的 triggerRefs/inputDigest 里。
+    const secondMessage = await comment(ctx, alice, taskId)
+    const secondItem = await associate(ctx, alice, work.workKey, secondMessage)
+    const dispatch = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/dispatch-intents/${first.intentId}/dispatch`,
+      payload: {
+        agentId: agent.agentId,
+        deviceId: device.deviceId,
+        workspaceId: device.workspaceId,
+        actionClass: 'draft',
+        workInputItemIds: [secondItem],
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(dispatch.statusCode).toBe(409)
+    expect(dispatch.json().error.message).toContain('not part of the approved intent')
+    expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+    const [intent] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, first.intentId))
+    expect(intent?.status).toBe('approved')
+  })
+
+  it('cancels the queued machine Run when the mandate is paused', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    const mandate = await createMandate(ctx, alice, work.workKey)
+    const { intentId, itemId } = await prepareIntent(work.workKey)
+    await approve(ctx, alice, work.workKey, intentId)
+    const dispatched = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/dispatch-intents/${intentId}/dispatch`,
+      payload: {
+        agentId: agent.agentId,
+        deviceId: device.deviceId,
+        workspaceId: device.workspaceId,
+        actionClass: 'draft',
+        workInputItemIds: [itemId],
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(dispatched.statusCode).toBe(200)
+    const runId = String(dispatched.json().data.runId)
+    const paused = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/mandates/${String(mandate.id)}/pause`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(paused.statusCode).toBe(200)
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('cancelled')
+    const [start] = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(eq(schema.dispatchOutbox.type, 'run.start'))
+    expect(start?.ackedAt ?? start?.failedAt).not.toBeNull()
+    const [workRow] = await database.db
+      .select()
+      .from(schema.works)
+      .where(eq(schema.works.workKey, work.workKey))
+    expect(workRow?.state).toBe('active')
+  })
+
+  it('beforeDispatch cancels a queued machine Run when the mandate changed out of band', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    const mandate = await createMandate(ctx, alice, work.workKey)
+    const { intentId, itemId } = await prepareIntent(work.workKey)
+    await approve(ctx, alice, work.workKey, intentId)
+    const dispatched = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/dispatch-intents/${intentId}/dispatch`,
+      payload: {
+        agentId: agent.agentId,
+        deviceId: device.deviceId,
+        workspaceId: device.workspaceId,
+        actionClass: 'draft',
+        workInputItemIds: [itemId],
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(dispatched.statusCode).toBe(200)
+    const runId = String(dispatched.json().data.runId)
+    // 绕过 API 的取消回调，模拟撤权已提交但取消事务还没到达/失败：beforeDispatch
+    // 仍必须 fail-closed，走既有 queued 取消路径。
+    await database.db
+      .update(schema.workMandates)
+      .set({ status: 'revoked', revokedAt: new Date(), pausedAt: null })
+      .where(eq(schema.workMandates.id, mandate.id))
+    const [start] = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(eq(schema.dispatchOutbox.type, 'run.start'))
+    expect(
+      await ctx.app.runOrchestrator.beforeDispatch({
+        id: start!.id,
+        deviceId: start!.deviceId,
+        type: start!.type,
+        payload: start!.payload,
+        attemptCount: 1,
+        sentAt: null,
+      }),
+    ).toBe(false)
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('cancelled')
+  })
+
+  it('rejects an intent whose workKey/taskId was tampered with', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey)
+    const { intentId } = await prepareIntent(work.workKey)
+    await approve(ctx, alice, work.workKey, intentId)
+    // removeWhen: 模拟迁移/脏数据；端口必须自己复核意图与 work 的归属。
+    const otherTask = await createTask(ctx, alice, projectId, alice.userId)
+    await acceptTask(ctx, alice, otherTask)
+    await database.db
+      .update(schema.dispatchIntents)
+      .set({ taskId: otherTask })
+      .where(eq(schema.dispatchIntents.id, intentId))
+    const dispatch = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/dispatch-intents/${intentId}/dispatch`,
+      payload: {
+        agentId: agent.agentId,
+        deviceId: device.deviceId,
+        workspaceId: device.workspaceId,
+        actionClass: 'draft',
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(dispatch.statusCode).toBe(404)
+    expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+  })
+
   it('rechecks that the referenced mandate is still active at dispatch', async () => {
     const work = await createWork(ctx, alice, taskId)
     const mandate = await createMandate(ctx, alice, work.workKey)
@@ -782,6 +1017,11 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
     })
     expect(dispatch.statusCode).toBe(409)
     expect(dispatch.json().error.message).toContain('mandate')
+    const [rejected] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, intentId))
+    expect(rejected?.status).toBe('rejected')
     expect(await database.db.select().from(schema.runs)).toHaveLength(0)
   })
 
@@ -807,6 +1047,11 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
     })
     expect(dispatch.statusCode).toBe(409)
     expect(dispatch.json().error.message).toContain('expired')
+    const [expiredRow] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, intentId))
+    expect(expiredRow?.status).toBe('expired')
     expect(await database.db.select().from(schema.runs)).toHaveLength(0)
   })
 

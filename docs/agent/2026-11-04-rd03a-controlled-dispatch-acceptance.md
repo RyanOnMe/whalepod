@@ -29,7 +29,7 @@ Task 责任人：
   - `POST /mandates/:id/{pause,resume}`、`POST /works/:workKey/retire`
   - `GET /runs/:runId`
   - Run 终态：`ingestNodeEvent(runEventFrame(...runtime.ready/run.completed...))`。
-- 判据文件：`apps/hub/tests/work-dispatch.integration.spec.ts`（16 用例）。
+- 判据文件：`apps/hub/tests/work-dispatch.integration.spec.ts`（22 用例）。
 - 静态边界：`apps/hub/tests/work-boundaries.spec.ts` 新增 dispatch 端口锁序、禁止直写 Run/TeamEvent/状态、普通 `create()` 拒绝机器来源、migration 约束检查。
 - 测试前置依赖：Agent/Profile、Device/Workspace 由行插入构成（生产注册路径是既有 WS 配对）；每一处都在测试内标注 `removeWhen`。Work/意图/Run/outbox/team_event 不直插。
 - 观测：Hub `component=hub.dispatch` 的 `work.dispatch.approve/reject/dispatch`（workKey、intentId、status、runId，无来源正文）；DB `dispatch_intent.status/approval_basis/approved_at/dispatched_at/run_id/agent_id/device_id/action_class`、`run.origin/mandate_id/dispatch_intent_id/on_behalf_of_user_id/work_key`、`work.state/resume_mode/resume_condition`。
@@ -53,8 +53,8 @@ Task 责任人：
 
 | 门 | 命令 | 结果（2026-11-04） |
 |---|---|---|
-| Q0 | `pnpm check` | 222 文件 / 2405 项通过（dispatch 静态边界 3 条新增） |
-| Q2 | `pnpm test:integration` | 90 文件 / 833 项通过（新增 `work-dispatch` 16 项） |
+| Q0 | `pnpm check` | 222 文件 / 2408 项通过（dispatch 静态边界 3 条新增） |
+| Q2 | `pnpm test:integration` | 90 文件 / 846 项通过（新增 `work-dispatch` 22 项） |
 
 ## 5 单点变异
 
@@ -79,6 +79,16 @@ Task 责任人：
 | M17 | 派工幂等键生效 | key 改随机 | 同 key 重放用例红 | 红（第二次 409） |
 | M18 | 派工前意图未过期 | 删 dispatch 的 `assertIntentLive` | 过期 dispatch 用例红 | 红（message 不再是 expired） |
 | M19 | 幂等重放读当前状态 | 重放直接返回 `outcome.value` | 取消后重放用例红 | 红（仍返回 approved） |
+| M20 | 自己的 waiting(auto) 仍可下发 | 删 `verifyRunWorkInputs` 的 waitingForThisRun | 正控派工/终端路径红 | 红（`work_unavailable`） |
+| M21 | 派工前重读来源版本/摘要/授权代次 | 只保留 `source.ignored` 检查 | 来源漂移用例红 | 红（创建了 Run） |
+| M22 | 派工前重算 inputDigest | 摘要比较改成恒假 | 摘要篡改用例红 | 红（创建了 Run） |
+| M23 | 选中条目必须属于意图 | 子集检查改成恒假 | 第二条目替换用例红 | 红（创建了 Run） |
+| M24 | approved 意图绑定失败也要落 rejected | 只对 proposed 回写 rejected | 来源漂移用例红 | 红（意图仍 approved） |
+| M25 | Mandate 变更取消 queued 机器 Run | 取消循环改成空集合 | 暂停 Mandate 用例红 | 红（Run 仍 queued） |
+| M26 | run.start 前 fail-closed 复核 | 删 `verifyRunMachineDispatch` 调用 | 带外撤权用例红 | 红（run.start 被放行） |
+| M27 | 意图 workKey/taskId 归属 | 只检查 `intent === undefined` | 篡改 taskId 用例红 | 红（返回 200） |
+| M28 | 事务内设备就绪复用 tx | 改回池连接 `deps.database.db` | 静态边界用例红 | 红（Q0 锁序判据） |
+| M29 | 幂等键绑定请求体 | 从 key 删 `sha256Hex(canonicalJson(request))` | 同 key 换请求体用例红 | 红（返回第一次 Run，200） |
 
 **分层防御说明**：M2/M3/M18 的 SQL CAS（`where status/expires_at`）与 service 预检是两层；单删 service 层后仍会被 CAS 拒绝，测试通过新增的稳定 message 判据把 service 层隔离出来。`full_access` 同时由派工端口与 `createInTransaction` 检查，单删任一层仍被另一层拒绝，故不做“必红”变异，保留为双层负控。
 
@@ -92,6 +102,10 @@ Task 责任人：
 - `dispatch_intent` 的 `decision` 字段/枚举仍没有 `dispatch` 值；03a 沿用 RD-01 的 `propose` 决定 + 人工确认。是否扩展 Router 决定词表归 RD-03b。
 - 跨成员委托、Web 工作读面未做；`apps/web` 未改。
 - 普通 HTTP 建 Run 仍可指定 `workInputItemIds`，但不会被标成机器 Run；RD-03b 需在自动路径复用同一端口。
+- 工作读面目前只列 `proposed` 意图；approved 意图以 approve/dispatch 响应为准，刷新列表看不到。补读面归 RD-03b。
+- `allowedAgentIds=[]` 沿用 RD-01 语义=不限制 Agent；这是既有 Mandate 契约，不在本切片收紧。
+- 机器 Run 活跃期间 work=`waiting(auto)`，现有收件箱关联/订阅命令要求 work active，因此新条目暂不能入箱；RD-03d 做 Run 边界续接时一并放开 `waiting(auto)` 的收件路径。
+- 同 key 重放的 approve/reject/dispatch 仍会写一条成功审计/观测日志（副作用未重复）；日志与重放执行的区分留待后续读面统一。
 - 来源漂移负控直接改了 `task_message` 行（无编辑 HTTP 面），已注 `removeWhen`；其余负控的 paused Mandate / reopened approved / expiresAt 也是受控夹具，均注删除条件。
 
 ## 7 复跑
@@ -100,3 +114,16 @@ Task 责任人：
 pnpm check
 pnpm test:integration
 ```
+
+## 8 评审修复（第二轮）
+
+两个独立评审在首轮 diff 上给出 BLOCKED 后，本切片补了以下防线（对应 M20–M29）：
+
+1. **自己的等待态不是 work_unavailable**：派工事务把 work 置 `waiting(auto, run:<id>)` 后，`verifyRunWorkInputs` 只对本 Run 放行；其它 Run/owner_confirmation 仍拒绝。
+2. **设备就绪在事务内读**：`getDeviceDshDistributionVersion` 改用派工事务的 `tx`，避免池连接看不到本事务锁序/快照。
+3. **来源绑定重放**：派工前重新 `loadWorkSource` 并比对 triggerRefs 的版本/摘要/授权代次，重算 `inputDigest`；选中条目还必须是 triggerRefs 的子集且仍 pending。
+4. **意图终态收敛**：绑定失败把 approved 意图落 `rejected` 并回 409；过期落 `expired`；请求候选错误（agent/actionClass/device）保持 approved 可重试。
+5. **撤权取消已排队 Run**：Mandate 新建/暂停/恢复/撤销提交后，组合根对 `dispatched` 且 `queued` 的机器 Run 走既有取消事务；`beforeDispatch` 再做一次 fail-closed 复核，带外改库也不会放行 run.start。
+6. **意图归属复核**：端口校验 `intent.workId/workKey/taskId` 与当前 work/task 一致，篡改行返回 404。
+7. **幂等键绑定请求体**：dispatch 的 command key 纳入 `sha256Hex(canonicalJson(request))`；同 key 换候选不再复用第一份回执。reject 日志不再携带成员填写的自由文本 reason。
+8. **复跑**：Q0 2408、Q2 846 全绿；M20–M29 逐条单点变异均红，恢复后 `git diff` 无残留。

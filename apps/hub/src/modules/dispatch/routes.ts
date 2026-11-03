@@ -78,6 +78,8 @@ export function registerDispatchRoutes(app: FastifyInstance, deps: DispatchRoute
         workKey,
         intentId,
         status: intent.status,
+        approvalBasis: intent.approvalBasis,
+        onBehalfOfUserId: intent.onBehalfOfUserId,
       },
       'dispatch intent approved',
     )
@@ -100,7 +102,6 @@ export function registerDispatchRoutes(app: FastifyInstance, deps: DispatchRoute
         workKey,
         intentId,
         status: intent.status,
-        reason,
       },
       'dispatch intent rejected',
     )
@@ -111,9 +112,13 @@ export function registerDispatchRoutes(app: FastifyInstance, deps: DispatchRoute
     const session = await deps.requireActor(request)
     const { workKey, intentId } = params(request)
     const body = parseBody(DispatchIntentDispatchRequestSchema, request.body)
-    const intent = await mapDispatchErrors(() =>
+    const outcome = await mapDispatchErrors(() =>
       dispatchIntent(deps, session, workKey, intentId, body, readIdempotencyKey(request)),
     )
+    if (!outcome.ok) {
+      throw new ApiError(outcome.status, outcome.code, outcome.message)
+    }
+    const intent = outcome.intent
     audit(request, 'work.dispatch.dispatch', 'success', session.userId)
     request.log.info(
       {
@@ -126,6 +131,8 @@ export function registerDispatchRoutes(app: FastifyInstance, deps: DispatchRoute
         deviceId: intent.deviceId,
         actionClass: intent.actionClass,
         status: intent.status,
+        approvalBasis: intent.approvalBasis,
+        onBehalfOfUserId: intent.onBehalfOfUserId,
       },
       'dispatch intent dispatched',
     )

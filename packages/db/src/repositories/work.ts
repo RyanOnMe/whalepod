@@ -1,5 +1,6 @@
-import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, lte, sql } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
+import { runs } from '../schema/run.js'
 import {
   dispatchIntents,
   routerDecisions,
@@ -304,6 +305,31 @@ export async function approveDispatchIntent(
   return row
 }
 
+/** approved/proposed 意图到期：落 expired 终态，避免永远停在可重试的 approved。 */
+export async function expireDispatchIntent(
+  handle: DbHandle,
+  id: string,
+  reason: string,
+  now: Date,
+): Promise<DispatchIntentRow | undefined> {
+  const [row] = await handle
+    .update(dispatchIntents)
+    .set({
+      status: 'expired',
+      resolutionReason: reason,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(dispatchIntents.id, id),
+        inArray(dispatchIntents.status, ['proposed', 'approved']),
+        lte(dispatchIntents.expiresAt, now),
+      ),
+    )
+    .returning()
+  return row
+}
+
 export async function rejectDispatchIntent(
   handle: DbHandle,
   id: string,
@@ -364,6 +390,26 @@ export async function markDispatchIntentDispatched(
     )
     .returning()
   return row
+}
+
+/** 某工作的已派发、仍在 queued 的机器 Run（撤权/新 Mandate 后要走既有取消路径）。 */
+export async function listQueuedMachineRunIdsForWork(
+  handle: DbHandle,
+  workId: string,
+): Promise<string[]> {
+  const rows = await handle
+    .select({ runId: dispatchIntents.runId })
+    .from(dispatchIntents)
+    .innerJoin(runs, eq(runs.id, dispatchIntents.runId))
+    .where(
+      and(
+        eq(dispatchIntents.workId, workId),
+        eq(dispatchIntents.status, 'dispatched'),
+        eq(runs.origin, 'mandate'),
+        eq(runs.status, 'queued'),
+      ),
+    )
+  return rows.flatMap((row) => (row.runId === null ? [] : [row.runId]))
 }
 
 export async function getDispatchIntentByDecision(

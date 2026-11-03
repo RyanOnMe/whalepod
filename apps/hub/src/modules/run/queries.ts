@@ -154,6 +154,7 @@ export async function listRunViewsByTask(handle: DbHandle, taskId: string): Prom
 export async function getDeviceDshDistributionVersion(
   handle: DbHandle,
   deviceId: string,
+  now: Date = new Date(),
 ): Promise<string | undefined> {
   const [row] = await handle
     .select({
@@ -168,7 +169,7 @@ export async function getDeviceDshDistributionVersion(
   if (row.revokedAt !== null) {
     throw new RunCommandError('DEVICE_REVOKED', 'the target device has been revoked')
   }
-  if (deriveDeviceStatus({ revokedAt: null, lastSeenAt: row.lastSeenAt }, new Date()) !== 'online')
+  if (deriveDeviceStatus({ revokedAt: null, lastSeenAt: row.lastSeenAt }, now) !== 'online')
     return undefined
   return row.version
 }

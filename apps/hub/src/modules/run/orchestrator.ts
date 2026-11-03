@@ -72,7 +72,11 @@ import { isRunSemanticConflict, RunCommandError } from './errors.js'
 import { settleFollowupAck, settleTriggerInstruction } from './followup.js'
 import { applyRunStatus } from './run-status.js'
 import { recordWorkInputDeliveries, snapshotWorkInputs } from '../work/run-inputs.js'
-import { assertWorkInputCapability, verifyRunWorkInputs } from '../work/run-dispatch.js'
+import {
+  assertWorkInputCapability,
+  verifyRunMachineDispatch,
+  verifyRunWorkInputs,
+} from '../work/run-dispatch.js'
 import type { ContextEntryObserver, RecordedContextEntry } from '../context/observer.js'
 import {
   assertProjectContextCapability,
@@ -705,6 +709,15 @@ export class RunOrchestrator {
         .where(eq(schema.runs.id, payload.runId as string))
         .for('update')
       if (run === undefined || run.status !== 'queued' || run.deviceId !== command.deviceId) {
+        return
+      }
+      // RD-03a：机器 Run 在真正发往 Node 前复核 Mandate/意图/Task；撤权后即使
+      // 取消事务尚未到达，也走既有 queued 取消路径，绝不把 run.start 发出去。
+      const machineVerification = await verifyRunMachineDispatch(tx, run, now)
+      if (!machineVerification.ok) {
+        blockReason = machineVerification.reason
+        await cancelRunInTransaction(tx, { outbox: this.outbox, now }, run, 'admin')
+        dispatch.outcome = 'block'
         return
       }
       const projectVerification = await verifyRunProjectContext(tx, run)
