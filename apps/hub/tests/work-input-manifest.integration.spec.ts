@@ -11,11 +11,13 @@ import type { Database } from '@whalepod/db'
 import {
   getTeam,
   listDueUnconfirmedWorkInputIds,
+  Outbox,
   schema,
   settleUnconfirmedWorkInput,
 } from '@whalepod/db'
 import { hashToken } from '../src/modules/auth/token.js'
 import { canonicalJson, sha256Hex } from '../src/modules/coordination/digest.js'
+import { applyRunStatus } from '../src/modules/run/run-status.js'
 import { reconcileWorkInputs } from '../src/modules/work/run-inputs.js'
 import {
   apiInject,
@@ -26,6 +28,7 @@ import {
   idemKey,
   makeHarness,
   resetDatabase,
+  waitForValue,
   runEventFrame,
   type Harness,
   type Session,
@@ -174,6 +177,52 @@ async function associate(
   })
   expect(res.statusCode, res.body).toBe(201)
   return res.json().data as Record<string, unknown>
+}
+
+async function createMandate(
+  ctx: TestApp,
+  session: Session,
+  workKey: string,
+): Promise<{ id: string; version: number }> {
+  const res = await apiInject(ctx, session, {
+    method: 'POST',
+    url: `/api/v1/works/${workKey}/mandates`,
+    payload: { expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() },
+    idempotencyKey: idemKey(),
+  })
+  expect(res.statusCode, res.body).toBe(201)
+  return res.json().data as { id: string; version: number }
+}
+
+async function subscribeTask(
+  ctx: TestApp,
+  session: Session,
+  workKey: string,
+  taskId: string,
+): Promise<{ id: string; status: string }> {
+  const res = await apiInject(ctx, session, {
+    method: 'POST',
+    url: `/api/v1/works/${workKey}/subscriptions`,
+    payload: { targetType: 'task', targetRef: taskId },
+    idempotencyKey: idemKey(),
+  })
+  expect(res.statusCode, res.body).toBe(201)
+  return res.json().data as { id: string; status: string }
+}
+
+async function revokeSubscription(
+  ctx: TestApp,
+  session: Session,
+  workKey: string,
+  subscriptionId: string,
+): Promise<void> {
+  const res = await apiInject(ctx, session, {
+    method: 'POST',
+    url: `/api/v1/works/${workKey}/subscriptions/${subscriptionId}/revoke`,
+    payload: { reason: '测试撤销' },
+    idempotencyKey: idemKey(),
+  })
+  expect(res.statusCode, res.body).toBe(200)
 }
 
 async function confirmAgreement(ctx: TestApp, session: Session, task: string): Promise<void> {
@@ -554,6 +603,233 @@ describe('RD-02a-2a run work input manifest', () => {
       status: 'withdrawn',
       failureReason: 'source_retracted',
     })
+  })
+
+  it('revokes a subscription and withdraws its delivered unread copy', async () => {
+    await createMandate(ctx, alice, workKey)
+    const subscription = await subscribeTask(ctx, alice, workKey, taskId)
+    const messageId = await comment(ctx, bob, taskId, '订阅交付但尚未读取的材料。')
+    const listed = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${workKey}/inbox`,
+    })
+    expect(listed.statusCode, listed.body).toBe(200)
+    const item = (listed.json().data.items as Array<Record<string, unknown>>).find(
+      (row) => row.sourceId === messageId,
+    )
+    expect(item).toMatchObject({
+      status: 'pending',
+      subscriptionId: subscription.id,
+    })
+
+    const created = await startRun(ctx, alice, taskId, seed, [item?.id as string])
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    const delivered = (
+      await database.db
+        .select()
+        .from(schema.workInboxItems)
+        .where(eq(schema.workInboxItems.id, item?.id as string))
+    )[0]
+    expect(delivered).toMatchObject({ status: 'delivered', deliveryRunId: runId })
+
+    await revokeSubscription(ctx, alice, workKey, subscription.id)
+    const afterRevoke = (
+      await database.db
+        .select()
+        .from(schema.workInboxItems)
+        .where(eq(schema.workInboxItems.id, item?.id as string))
+    )[0]
+    expect(afterRevoke).toMatchObject({
+      status: 'retracted',
+      statusReason: '测试撤销',
+      deliveryRunId: null,
+      deliveredAt: null,
+    })
+    const delivery = (
+      await database.db
+        .select()
+        .from(schema.workInboxDeliveries)
+        .where(eq(schema.workInboxDeliveries.runId, runId))
+    )[0]
+    expect(delivery).toMatchObject({
+      status: 'withdrawn',
+      failureReason: 'subscription_ended',
+    })
+  })
+
+  it('revokes a subscription and withdraws its unconfirmed copy', async () => {
+    await createMandate(ctx, alice, workKey)
+    const subscription = await subscribeTask(ctx, alice, workKey, taskId)
+    const messageId = await comment(ctx, bob, taskId, 'Run 结束后仍未读取的材料。')
+    const listed = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${workKey}/inbox`,
+    })
+    const item = (listed.json().data.items as Array<Record<string, unknown>>).find(
+      (row) => row.sourceId === messageId,
+    )
+    const created = await startRun(ctx, alice, taskId, seed, [item?.id as string])
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, runId)
+    await completeRun(harness, seed, alice.userId, runId)
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxItems)
+          .where(eq(schema.workInboxItems.id, item?.id as string))
+      )[0],
+    ).toMatchObject({ status: 'unconfirmed', deliveryRunId: runId })
+
+    await revokeSubscription(ctx, alice, workKey, subscription.id)
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxItems)
+          .where(eq(schema.workInboxItems.id, item?.id as string))
+      )[0],
+    ).toMatchObject({ status: 'retracted', deliveryRunId: null, unconfirmedAt: null })
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxDeliveries)
+          .where(eq(schema.workInboxDeliveries.runId, runId))
+      )[0],
+    ).toMatchObject({ status: 'withdrawn', failureReason: 'subscription_ended' })
+  })
+
+  it('keeps a consumed copy when its subscription is revoked afterwards', async () => {
+    await createMandate(ctx, alice, workKey)
+    const subscription = await subscribeTask(ctx, alice, workKey, taskId)
+    const messageId = await comment(ctx, bob, taskId, '订阅交付且已读取的材料。')
+    const listed = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${workKey}/inbox`,
+    })
+    const item = (listed.json().data.items as Array<Record<string, unknown>>).find(
+      (row) => row.sourceId === messageId,
+    )
+    const created = await startRun(ctx, alice, taskId, seed, [item?.id as string])
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, runId)
+    const manifest = await runWorkInputManifest(database, runId)
+    const entry = manifest.entries.find((row) => row.inboxItemId === item?.id)
+    expect(entry).toBeDefined()
+    await harness.orchestrator.ingestNodeEvent(
+      { deviceId: seed.deviceId, ownerUserId: alice.userId },
+      workInputReceipt({
+        runId,
+        workKey: manifest.workKey,
+        manifestDigest: manifest.manifestDigest,
+        receiptSeq: 1,
+        inboxItemId: item?.id as string,
+        byteSize: entry?.byteSize as number,
+        at: harness.clock.now().toISOString(),
+      }),
+    )
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxItems)
+          .where(eq(schema.workInboxItems.id, item?.id as string))
+      )[0],
+    ).toMatchObject({ status: 'consumed', deliveryRunId: runId })
+
+    await revokeSubscription(ctx, alice, workKey, subscription.id)
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxItems)
+          .where(eq(schema.workInboxItems.id, item?.id as string))
+      )[0],
+    ).toMatchObject({ status: 'consumed', deliveryRunId: runId })
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxDeliveries)
+          .where(eq(schema.workInboxDeliveries.runId, runId))
+      )[0],
+    ).toMatchObject({ status: 'consumed' })
+    expect(
+      await database.db
+        .select()
+        .from(schema.workInputConsumptions)
+        .where(eq(schema.workInputConsumptions.runId, runId)),
+    ).toHaveLength(1)
+  })
+
+  it('serializes terminal settlement with Work→item cleanup without deadlock', async () => {
+    const messageId = await comment(ctx, alice, taskId, '终态与清理并发探针。')
+    const item = await associate(ctx, alice, workKey, messageId)
+    const created = await startRun(ctx, alice, taskId, seed, [item.id as string])
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    const work = (
+      await database.db.select().from(schema.works).where(eq(schema.works.workKey, workKey))
+    )[0]
+    expect(work).toBeDefined()
+
+    let releaseCleanup!: () => void
+    const cleanupGate = new Promise<void>((resolve) => {
+      releaseCleanup = resolve
+    })
+    let cleanupLocked!: () => void
+    const cleanupReady = new Promise<void>((resolve) => {
+      cleanupLocked = resolve
+    })
+    // A：模拟撤销/清理路径 Work→item。
+    const cleanup = database.transaction(async (tx) => {
+      await tx
+        .select()
+        .from(schema.works)
+        .where(eq(schema.works.id, work?.id as string))
+        .for('update')
+      cleanupLocked()
+      await cleanupGate
+      await tx
+        .select()
+        .from(schema.workInboxItems)
+        .where(eq(schema.workInboxItems.id, item.id as string))
+        .for('update')
+    })
+    await cleanupReady
+    // B：Run 终态。修复前它会先锁 item 再等 Work，与 A 形成环。
+    const outbox = new Outbox(database)
+    const terminal = database.transaction((tx) =>
+      applyRunStatus(tx, outbox, runId, 'completed', { finishedAt: new Date() }),
+    )
+    await waitForValue(async () => {
+      const rows = await database.sql<{ pid: number }[]>`
+          select pid from pg_stat_activity
+          where datname = current_database()
+            and wait_event_type = 'Lock'
+            and state = 'active'
+            and query ilike '%"work"%'
+        `
+      return rows.length > 0 ? rows : undefined
+    }, 'Run 终态事务未在锁等待中停住（锁序探针前置条件不成立）')
+    releaseCleanup()
+    await Promise.all([cleanup, terminal])
+
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workInboxItems)
+          .where(eq(schema.workInboxItems.id, item.id as string))
+      )[0],
+    ).toMatchObject({ status: 'unconfirmed', deliveryRunId: runId })
+    expect(
+      (await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId)))[0],
+    ).toMatchObject({ status: 'completed' })
   })
 
   it('rejects duplicate ids, retired work and tampered/foreign-work inputs', async () => {

@@ -31,13 +31,12 @@ import { uuidv7 } from '../shared/uuid.js'
 import { canonicalJson, sha256Hex } from '../coordination/digest.js'
 import { loadWorkSource, type AdmissionSource } from './admission.js'
 import { lockWorkContext, requireAssignee } from './context.js'
+import { admitReturnedInboxItem, workEntryDeps } from './entry.js'
+import { clampWorkTitle, WORK_INBOX_BODY_MAX_BYTES } from './text.js'
 
 // ADR-0028（RD-02a-1）：工作收件箱的显式关联与生命周期。只写协调表；不建 Run、
 // 不写 outbox/team_event、不调模型。来源校验与准入共用 loadWorkSource，非法来源
 // 显式 409（带原因），不静默丢弃。
-
-const MAX_BODY_BYTES = 65_536
-const MAX_TITLE_LENGTH = 200
 
 export interface WorkInboxCommandDeps {
   readonly database: Database
@@ -63,6 +62,7 @@ export function toWorkInboxItemView(row: WorkInboxItemRow): WorkInboxItemView {
     bodyDigest: row.bodyDigest,
     refs: row.refs,
     supersedesId: row.supersedesId ?? null,
+    subscriptionId: row.subscriptionId ?? null,
     status: row.status,
     statusReason: row.statusReason ?? null,
     returnReason: row.returnReason ?? null,
@@ -77,18 +77,6 @@ export function toWorkInboxItemView(row: WorkInboxItemRow): WorkInboxItemView {
   })
 }
 
-function clampTitle(title: string, fallback: string): string {
-  const trimmed = title.trim()
-  if (trimmed.length === 0) return fallback
-  // 按码点累积、按 UTF-16 长度封顶：既不会切半个代理对，也不会超过 view schema 的 200。
-  let result = ''
-  for (const character of Array.from(trimmed)) {
-    if (result.length + character.length > MAX_TITLE_LENGTH) break
-    result += character
-  }
-  return result
-}
-
 function assertSourceAdmissible(source: AdmissionSource): void {
   if (source.ignored !== undefined) {
     throw new ApiError(409, 'CONFLICT', 'source is not admissible for this work', {
@@ -96,7 +84,7 @@ function assertSourceAdmissible(source: AdmissionSource): void {
       detail: source.ignored.detail ?? null,
     })
   }
-  if (Buffer.byteLength(source.body, 'utf8') > MAX_BODY_BYTES) {
+  if (Buffer.byteLength(source.body, 'utf8') > WORK_INBOX_BODY_MAX_BYTES) {
     throw new ApiError(400, 'VALIDATION_FAILED', 'source body exceeds the inbox size limit')
   }
 }
@@ -162,7 +150,18 @@ export async function associateWorkInboxItem(
         sourceVersion: source.sourceVersion,
         sourceDigest: source.sourceDigest,
       })
-      if (existing !== undefined) return toWorkInboxItemView(existing)
+      if (existing !== undefined) {
+        // wait 自动保留的同身份副本一旦被 assignee 显式关联，就转为人工依据：
+        // 后续生命周期清理不能把它当成自动副本静默撤回。
+        if (existing.autoAdmitted && existing.status === 'pending') {
+          const adopted = await updateWorkInboxItem(tx, existing.id, {
+            autoAdmitted: false,
+            updatedAt: deps.now(),
+          })
+          return toWorkInboxItemView(adopted ?? existing)
+        }
+        return toWorkInboxItemView(existing)
+      }
 
       // 撤权是来源级的：该来源任一条目被 retract 后，后续版本不得重新入箱。
       // 不能只看 latest：latest 可能是 expired/superseded，早先的 retracted 仍是停投依据。
@@ -203,11 +202,16 @@ export async function associateWorkInboxItem(
         sourceVersion: source.sourceVersion,
         sourceDigest: source.sourceDigest,
         authorizationGeneration: source.authorizationGeneration,
-        title: clampTitle(source.title, source.sourceKind),
+        title: clampWorkTitle(source.title, source.sourceKind),
         body: source.body,
         bodyDigest: sha256Hex(source.body),
         refs: source.refs,
+        businessRef: source.businessRef ?? null,
+        sourceKind: source.sourceKind,
         supersedesId: previous?.id ?? null,
+        subscriptionId: null,
+        autoAdmitted: false,
+        retractionScope: null,
         status: 'pending',
         statusReason: null,
         returnReason: null,
@@ -297,6 +301,8 @@ export async function returnWorkInboxItem(
         updatedAt: now,
       })
       if (updated === undefined) throw new ApiError(404, 'NOT_FOUND', 'inbox item not found')
+      // ADR-0028 §4：退回不是静默丢弃，保留水位并交 Router 重新判断。
+      await admitReturnedInboxItem(tx, updated, workEntryDeps(tx, now))
       return toWorkInboxItemView(updated)
     },
   )
@@ -340,6 +346,7 @@ export async function retractWorkInboxItem(
       const overridden = await updateWorkInboxItem(tx, item.id, {
         status: 'retracted',
         statusReason,
+        retractionScope: 'source',
         returnReason: null,
         returnNote: null,
         statusAt: now,

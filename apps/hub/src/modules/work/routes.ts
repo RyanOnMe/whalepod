@@ -15,7 +15,10 @@ import {
   AssociateWorkInboxItemRequestSchema,
   CreateWorkMandateRequestSchema,
   CreateWorkRequestSchema,
+  CreateWorkSubscriptionRequestSchema,
+  EndWorkSubscriptionRequestSchema,
   WorkAdmissionCheckRequestSchema,
+  WorkEntryAdmissionListQuerySchema,
   WorkInboxItemActionRequestSchema,
   WorkInboxItemReturnRequestSchema,
   WorkInboxListQuerySchema,
@@ -37,6 +40,13 @@ import {
   retireWork,
 } from './commands.js'
 import { checkWorkAdmission, refreshAdmissionResult } from './admission.js'
+import {
+  createWorkSubscription,
+  listWorkEntryAdmissionsForActor,
+  listWorkSubscriptionsForActor,
+  refreshWorkSubscriptionForActor,
+  revokeWorkSubscription,
+} from './subscriptions.js'
 import {
   associateWorkInboxItem,
   expireWorkInboxItem,
@@ -221,6 +231,116 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
       return { ok: true, data: view }
     })
   }
+
+  // POST /works/:workKey/subscriptions：显式订阅 Task/业务引用；绑定当前 Mandate 版本。
+  app.post('/works/:workKey/subscriptions', async (request, reply) => {
+    const session = await deps.requireActor(request)
+    const { workKey: rawWorkKey } = request.params as { workKey: string }
+    const workKey = parseUuid(rawWorkKey, 'work key')
+    const body = parseBody(CreateWorkSubscriptionRequestSchema, request.body)
+    const command = await mapWorkErrors(() =>
+      createWorkSubscription(
+        { database: deps.database, now: () => new Date() },
+        session.userId,
+        workKey,
+        body,
+        readIdempotencyKey(request),
+      ),
+    )
+    const value = command.executed
+      ? command.value
+      : await refreshWorkSubscriptionForActor(
+          deps.database,
+          session.userId,
+          workKey,
+          command.value.id,
+        )
+    request.log.info(
+      {
+        component: 'hub.work_subscription',
+        action: 'work.subscription.create',
+        workKey,
+        subscriptionId: value.id,
+        targetType: value.targetType,
+        status: value.status,
+        duplicate: !command.executed,
+      },
+      'work subscription created',
+    )
+    audit(request, 'work.subscription.create', 'success', session.userId)
+    reply.header('cache-control', 'private, no-store')
+    return reply.code(201).send({ ok: true, data: value })
+  })
+
+  // GET /works/:workKey/subscriptions：assignee 读全部订阅（含已结束历史）。
+  app.get('/works/:workKey/subscriptions', async (request, reply) => {
+    const session = await deps.requireActor(request)
+    const { workKey: rawWorkKey } = request.params as { workKey: string }
+    const workKey = parseUuid(rawWorkKey, 'work key')
+    const views = await listWorkSubscriptionsForActor(deps.database, session.userId, workKey)
+    reply.header('cache-control', 'private, no-store')
+    return { ok: true, data: views }
+  })
+
+  // POST /works/:workKey/subscriptions/:subscriptionId/revoke：撤权并清理未读副本。
+  app.post('/works/:workKey/subscriptions/:subscriptionId/revoke', async (request, reply) => {
+    const session = await deps.requireActor(request)
+    const { workKey: rawWorkKey, subscriptionId: rawSubscriptionId } = request.params as {
+      workKey: string
+      subscriptionId: string
+    }
+    const workKey = parseUuid(rawWorkKey, 'work key')
+    const subscriptionId = parseUuid(rawSubscriptionId, 'subscription id')
+    const body = parseBody(EndWorkSubscriptionRequestSchema, request.body ?? {})
+    const command = await mapWorkErrors(() =>
+      revokeWorkSubscription(
+        { database: deps.database, now: () => new Date() },
+        session.userId,
+        workKey,
+        subscriptionId,
+        body.reason,
+        readIdempotencyKey(request),
+      ),
+    )
+    const value = command.executed
+      ? command.value
+      : await refreshWorkSubscriptionForActor(
+          deps.database,
+          session.userId,
+          workKey,
+          subscriptionId,
+        )
+    request.log.info(
+      {
+        component: 'hub.work_subscription',
+        action: 'work.subscription.revoke',
+        workKey,
+        subscriptionId: value.id,
+        status: value.status,
+        duplicate: !command.executed,
+      },
+      'work subscription revoked',
+    )
+    audit(request, 'work.subscription.revoke', 'success', session.userId)
+    reply.header('cache-control', 'private, no-store')
+    return { ok: true, data: value }
+  })
+
+  // GET /works/:workKey/entry-admissions：快/慢路径证据（含 routerInvoked，不含正文）。
+  app.get('/works/:workKey/entry-admissions', async (request, reply) => {
+    const session = await deps.requireActor(request)
+    const { workKey: rawWorkKey } = request.params as { workKey: string }
+    const workKey = parseUuid(rawWorkKey, 'work key')
+    const query = parseBody(WorkEntryAdmissionListQuerySchema, request.query)
+    const views = await listWorkEntryAdmissionsForActor(
+      deps.database,
+      session.userId,
+      workKey,
+      query.limit,
+    )
+    reply.header('cache-control', 'private, no-store')
+    return { ok: true, data: views }
+  })
 
   // POST /works/:workKey/inbox-items：显式关联来源；同一版本幂等，新版本替换 pending。
   app.post('/works/:workKey/inbox-items', async (request, reply) => {

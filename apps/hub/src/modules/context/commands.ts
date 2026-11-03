@@ -18,6 +18,7 @@ import { uuidv7 } from '../shared/uuid.js'
 import { toContextEntryView } from './queries.js'
 import { clipContextText } from './projector.js'
 import { enqueueCoordinationEvaluation } from '../coordination/enqueue.js'
+import { admitContextCorrection, workEntryDeps } from '../work/entry.js'
 
 export interface ContextActor {
   readonly userId: string
@@ -76,6 +77,8 @@ export async function correctContextEntry(
       await updateContextEntry(tx, target.id, { correctedAt: now })
       // 纠正改变当前有效集 → 同事务合并一次协调评估（ADR-0026 §2）。
       await enqueueCoordinationEvaluation(tx, projectId, now)
+      // ADR-0028（RD-02b）：纠正也是业务引用订阅的补充。
+      await admitContextCorrection(tx, correction, target, workEntryDeps(tx, now))
       inserted = true
       return toContextEntryView(correction, [])
     },

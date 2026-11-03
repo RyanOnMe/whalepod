@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import {
+  boolean,
   char,
   check,
   index,
@@ -13,9 +14,10 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core'
 import type { AnyPgColumn } from 'drizzle-orm/pg-core'
-import { projects, tasks } from './project.js'
+import { projects } from './project.js'
 import { runs } from './run.js'
 import { works, workSourceType } from './work.js'
+import { workSubscriptions } from './work-subscription.js'
 
 // ADR-0028（RD-02a-1，Issue #489）：工作收件箱条目。交付/消费由 RD-02a-2 追加。
 export const workInboxItemStatus = pgEnum('work_inbox_item_status', [
@@ -44,9 +46,9 @@ export const workInboxItems = pgTable(
       .notNull()
       .references(() => works.id),
     workKey: varchar('work_key', { length: 64 }).notNull(),
-    taskId: uuid('task_id')
-      .notNull()
-      .references(() => tasks.id),
+    // task_id 是 work.task_id 的不可变冗余，不建 FK：入口准入在 Work 锁内插入，
+    // 若 FK 再对 task 取 KEY SHARE，会与既有 Task→Work 锁序形成反向边并 40P01。
+    taskId: uuid('task_id').notNull(),
     projectId: uuid('project_id')
       .notNull()
       .references(() => projects.id),
@@ -59,7 +61,18 @@ export const workInboxItems = pgTable(
     body: text('body').notNull().default(''),
     bodyDigest: char('body_digest', { length: 64 }).notNull(),
     refs: jsonb('refs').$type<Record<string, unknown>>().notNull().default({}),
+    // RD-02b：业务引用订阅的合并身份。同一 businessRef + sourceKind 的新版本替换旧
+    // pending；correction 保持独立项，不能被版本推进吞掉。
+    businessRef: varchar('business_ref', { length: 300 }),
+    sourceKind: varchar('source_kind', { length: 64 }),
     supersedesId: uuid('supersedes_id').references((): AnyPgColumn => workInboxItems.id),
+    // RD-02b：快路径交付的来源订阅；显式关联为空。撤销订阅只清理该订阅交付的未读副本。
+    subscriptionId: uuid('subscription_id').references(() => workSubscriptions.id),
+    // RD-02b：wait 自动保留的副本。生命周期清理只收口自动副本，RD-02a 的人工显式
+    // 关联条目仍按原语义保留给 assignee 手工处置。
+    autoAdmitted: boolean('auto_admitted').notNull().default(false),
+    // 区分来源级撤权（tombstone，阻止同来源重投）与订阅副本撤回（可重新订阅）。
+    retractionScope: varchar('retraction_scope', { length: 16 }),
     status: workInboxItemStatus('status').notNull().default('pending'),
     statusReason: varchar('status_reason', { length: 500 }),
     returnReason: workInboxReturnReason('return_reason'),
@@ -89,6 +102,18 @@ export const workInboxItems = pgTable(
     check('work_inbox_item_body_size', sql`octet_length(${table.body}) <= 65536`),
     check('work_inbox_item_refs_object', sql`jsonb_typeof(${table.refs}) = 'object'`),
     check('work_inbox_item_refs_size', sql`octet_length(${table.refs}::text) <= 4096`),
+    check(
+      'work_inbox_item_business_ref_length',
+      sql`${table.businessRef} is null or length(btrim(${table.businessRef})) between 1 and 300`,
+    ),
+    check(
+      'work_inbox_item_source_kind_length',
+      sql`${table.sourceKind} is null or length(btrim(${table.sourceKind})) between 1 and 64`,
+    ),
+    check(
+      'work_inbox_item_retraction_scope_fields',
+      sql`(${table.status} = 'retracted' and ${table.retractionScope} in ('source', 'subscription', 'lifecycle')) or (${table.status} <> 'retracted' and ${table.retractionScope} is null)`,
+    ),
     check(
       'work_inbox_item_delivery_fields',
       sql`((${table.status} in ('delivered', 'unconfirmed', 'consumed')) and ${table.deliveryRunId} is not null and ${table.deliveredAt} is not null) or ((${table.status} in ('pending', 'returned', 'superseded', 'retracted', 'expired')) and ${table.deliveryRunId} is null and ${table.deliveredAt} is null and ${table.unconfirmedAt} is null and ${table.consumedAt} is null)`,
@@ -136,6 +161,15 @@ export const workInboxItems = pgTable(
       table.sourceId,
       table.createdAt.desc(),
     ),
+    index('work_inbox_item_subscription_idx')
+      .on(table.subscriptionId, table.status)
+      .where(sql`${table.subscriptionId} is not null`),
+    index('work_inbox_item_business_ref_idx')
+      .on(table.workId, table.businessRef, table.sourceKind, table.status)
+      .where(sql`${table.businessRef} is not null`),
+    index('work_inbox_item_auto_admitted_idx')
+      .on(table.workId, table.status)
+      .where(sql`${table.autoAdmitted} = true`),
     index('work_inbox_item_delivery_run_idx')
       .on(table.deliveryRunId, table.status)
       .where(sql`${table.deliveryRunId} is not null`),

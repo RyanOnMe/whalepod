@@ -1,5 +1,6 @@
 import {
   cancelProposedDispatchIntents,
+  expireWorkSubscriptionsAndRetract,
   getAgent,
   getCurrentWorkByTask,
   getLatestWorkMandate,
@@ -11,6 +12,7 @@ import {
   insertWork,
   insertWorkMandate,
   listWorkMandates,
+  retractAutoAdmittedInboxItemsForWork,
   transactCommand,
   updateWork,
   unwrapPgError,
@@ -207,6 +209,16 @@ export async function retireWork(
       })
       if (updated === undefined) throw new ApiError(404, 'NOT_FOUND', 'work not found')
       await cancelProposedDispatchIntents(tx, work.id, now)
+      await expireWorkSubscriptionsAndRetract(tx, {
+        workId: work.id,
+        statusReason: 'work_retired',
+        now,
+      })
+      await retractAutoAdmittedInboxItemsForWork(tx, {
+        workId: work.id,
+        statusReason: 'work_retired',
+        now,
+      })
       return toWorkView(updated)
     },
   )
@@ -275,8 +287,13 @@ export async function createWorkMandate(
         updatedAt: now,
       })
       await updateWork(tx, work.id, { mandateId: mandate.id, updatedAt: now })
-      // 新 Mandate 版本取代旧版本；旧 proposed 意图不得再被确认或派发。
+      // 新 Mandate 版本取代旧版本；旧 proposed 意图与订阅都引用旧版本，必须失效。
       await cancelProposedDispatchIntents(tx, work.id, now)
+      await expireWorkSubscriptionsAndRetract(tx, {
+        workId: work.id,
+        statusReason: 'mandate_superseded',
+        now,
+      })
       return toWorkMandateView(mandate, now, true)
     },
   )
@@ -366,8 +383,13 @@ export async function changeWorkMandateStatus(
         updatedAt: now,
       })
       await updateWork(tx, work.id, { mandateId: next.id, updatedAt: now })
-      // 任何新版本（暂停/恢复/撤销）都使旧 proposed 意图失效：它们引用的是旧版本。
+      // 任何新版本（暂停/恢复/撤销）都使旧 proposed 意图与订阅失效：它们引用旧版本。
       await cancelProposedDispatchIntents(tx, work.id, now)
+      await expireWorkSubscriptionsAndRetract(tx, {
+        workId: work.id,
+        statusReason: `mandate_${mutation}`,
+        now,
+      })
       return toWorkMandateView(next, now, work.state === 'active')
     },
   )
