@@ -106,6 +106,7 @@ export function toDispatchIntentView(row: DispatchIntentRow, now: Date): Dispatc
       : row.status
   return DispatchIntentViewSchema.parse({
     id: row.id,
+    workKey: row.workKey,
     status: effectiveStatus,
     approvalBasis: row.approvalBasis ?? null,
     decisionId: row.decisionId ?? null,
@@ -118,6 +119,12 @@ export function toDispatchIntentView(row: DispatchIntentRow, now: Date): Dispatc
     candidates: row.candidates,
     exclusionReasons: row.exclusionReasons,
     reason: row.reason,
+    resolutionReason: row.resolutionReason ?? null,
+    agentId: row.agentId ?? null,
+    profileRevisionId: row.profileRevisionId ?? null,
+    deviceId: row.deviceId ?? null,
+    workspaceId: row.workspaceId ?? null,
+    actionClass: row.actionClass ?? null,
     runId: row.runId ?? null,
     expiresAt: row.expiresAt.toISOString(),
     approvedAt: row.approvedAt?.toISOString() ?? null,

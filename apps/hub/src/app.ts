@@ -25,6 +25,8 @@ import { registerSourceRoutes } from './modules/source/routes.js'
 // ADR-0025（PC-03a）：项目事实账本与人工纠正。
 import { registerContextRoutes } from './modules/context/routes.js'
 import { registerWorkRoutes } from './modules/work/routes.js'
+// ADR-0028（RD-03a）：工作派工意图的人工确认与受控派工端口。
+import { registerDispatchRoutes } from './modules/dispatch/routes.js'
 import { logRecordedEntry } from './modules/context/observer.js'
 // ADR-0026（PC-04a）：确定性内部协调的读面与显式触发。
 import { registerCoordinationRoutes } from './modules/coordination/routes.js'
@@ -226,6 +228,14 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       registerCoordinationRoutes(api, { database, requireActor })
       // ADR-0028（RD-01）：持续工作、Mandate 与影子准入；只写协调记录，不建 Run。
       registerWorkRoutes(api, { database, requireActor })
+      registerDispatchRoutes(api, {
+        database,
+        requireActor,
+        orchestrator,
+        now: () => new Date(),
+        dshDistributionVersionFor: (deviceId) =>
+          getDeviceDshDistributionVersion(database.db, deviceId),
+      })
       registerTaskRoutes(api, {
         database,
         requireActor,

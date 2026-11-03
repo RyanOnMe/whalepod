@@ -119,6 +119,7 @@ export type WorkDecisionView = z.infer<typeof WorkDecisionViewSchema>
 
 export const DispatchIntentViewSchema = z.strictObject({
   id: z.uuid(),
+  workKey: z.uuid(),
   status: DispatchIntentStatusSchema,
   approvalBasis: DispatchApprovalBasisSchema.nullable(),
   decisionId: z.uuid().nullable(),
@@ -131,6 +132,12 @@ export const DispatchIntentViewSchema = z.strictObject({
   candidates: z.array(z.unknown()),
   exclusionReasons: z.array(z.unknown()),
   reason: z.string().min(1).max(500),
+  resolutionReason: z.string().min(1).max(500).nullable(),
+  agentId: z.uuid().nullable(),
+  profileRevisionId: z.uuid().nullable(),
+  deviceId: z.uuid().nullable(),
+  workspaceId: z.uuid().nullable(),
+  actionClass: WorkActionClassSchema.nullable(),
   runId: z.uuid().nullable(),
   expiresAt: z.iso.datetime({ offset: true }),
   approvedAt: z.iso.datetime({ offset: true }).nullable(),
@@ -197,6 +204,24 @@ export const WorkMandateStatusChangeRequestSchema = z.strictObject({
   reason: z.string().trim().min(1).max(500).optional(),
 })
 export type WorkMandateStatusChangeRequest = z.infer<typeof WorkMandateStatusChangeRequestSchema>
+
+export const DispatchIntentApproveRequestSchema = z.strictObject({})
+export type DispatchIntentApproveRequest = z.infer<typeof DispatchIntentApproveRequestSchema>
+
+export const DispatchIntentRejectRequestSchema = z.strictObject({
+  reason: z.string().trim().min(1).max(500).optional(),
+})
+export type DispatchIntentRejectRequest = z.infer<typeof DispatchIntentRejectRequestSchema>
+
+export const DispatchIntentDispatchRequestSchema = z.strictObject({
+  agentId: z.uuid(),
+  profileRevisionId: z.uuid().optional(),
+  deviceId: z.uuid(),
+  workspaceId: z.uuid(),
+  actionClass: WorkActionClassSchema.default('draft'),
+  workInputItemIds: z.array(z.uuid()).max(32).optional(),
+})
+export type DispatchIntentDispatchRequest = z.infer<typeof DispatchIntentDispatchRequestSchema>
 
 export const WorkAdmissionCheckRequestSchema = z.strictObject({
   sourceType: WorkSourceTypeSchema,

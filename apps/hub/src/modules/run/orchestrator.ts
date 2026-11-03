@@ -33,6 +33,7 @@ import {
   getApproval,
   getOutboxCommand,
   getRun,
+  getWorkByKeyForUpdate,
   insertApprovalIfAbsent,
   insertRun,
   insertMessage,
@@ -189,6 +190,10 @@ export class RunOrchestrator {
     // UUID route spelling must not change the persisted input identity.
     taskId = taskId.toLowerCase()
     assertCreateRunInput(input)
+    // 机器 Run 只能经派工端口创建；普通建 Run 入口不得携带 origin='mandate'。
+    if (input.origin === 'mandate') {
+      throw new RunCommandError('FORBIDDEN', 'machine runs must be created by the dispatch port')
+    }
     const now = this.nowFn()
     const key = `run.create:${input.idempotencyKey}`
     let createdSnapshot: { readonly snapshotId: string; readonly entryCount: number } | undefined
@@ -356,6 +361,24 @@ export class RunOrchestrator {
     ) {
       throw new RunCommandError('CONFLICT', '审批档位已变化，请重新确认后发送')
     }
+    // ADR-0028 §6（RD-03a）：机器 Run 必须有完整 provenance，且不能以 full_access 执行。
+    const origin = input.origin ?? 'human'
+    if (origin === 'mandate') {
+      if (
+        input.workKey === undefined ||
+        input.mandateId === undefined ||
+        input.dispatchIntentId === undefined ||
+        input.onBehalfOfUserId === undefined
+      ) {
+        throw new RunCommandError('VALIDATION_FAILED', 'machine run provenance is incomplete')
+      }
+      if (input.onBehalfOfUserId !== task.assigneeUserId) {
+        throw new RunCommandError('FORBIDDEN', 'machine run must be on behalf of the assignee')
+      }
+      if (approvalPolicy === 'full_access') {
+        throw new RunCommandError('FORBIDDEN', 'full_access cannot be used for a machine run')
+      }
+    }
 
     const [device] = await tx
       .select()
@@ -495,6 +518,28 @@ export class RunOrchestrator {
     )
     // ADR-0028（RD-02a-2a）：工作输入与 Run 同事务冻结；清单创建后不可改。
     const workInputs = await snapshotWorkInputs(tx, task, input.workInputItemIds)
+    // ADR-0028 §6（RD-03a）：机器 Run 即使没有收件箱条目也必须绑定 workKey；
+    // 显式 workKey 必须是本 Task 的 active 工作，且与冻结清单一致。
+    let explicitWorkKey: string | undefined
+    if (input.workKey !== undefined) {
+      const work = await getWorkByKeyForUpdate(tx, input.workKey)
+      if (
+        work === undefined ||
+        work.taskId !== taskId ||
+        work.state !== 'active' ||
+        work.humanOwnerUserId !== task.assigneeUserId
+      ) {
+        throw new RunCommandError('CONFLICT', 'work is not active for this task assignee')
+      }
+      explicitWorkKey = work.workKey
+      if (workInputs !== undefined && workInputs.work.workKey !== explicitWorkKey) {
+        throw new RunCommandError('CONFLICT', 'work inputs do not belong to the intent work')
+      }
+    }
+    if (origin === 'mandate' && explicitWorkKey === undefined) {
+      throw new RunCommandError('VALIDATION_FAILED', 'machine run must carry a workKey')
+    }
+    const runWorkKey = workInputs?.work.workKey ?? explicitWorkKey
     const runId = randomUUID()
     const commandId = randomUUID()
 
@@ -518,13 +563,21 @@ export class RunOrchestrator {
       deviceId: device.id,
       workspaceId: workspace.id,
       artifactInputManifest,
+      ...(runWorkKey === undefined ? {} : { workKey: runWorkKey }),
       ...(workInputs === undefined
         ? {}
         : {
-            workKey: workInputs.work.workKey,
             workInputManifest: workInputs.manifest,
             workInputManifestDigest: workInputs.manifestDigest,
           }),
+      origin,
+      ...(origin === 'mandate'
+        ? {
+            mandateId: input.mandateId!,
+            dispatchIntentId: input.dispatchIntentId!,
+            onBehalfOfUserId: input.onBehalfOfUserId!,
+          }
+        : {}),
       ...(handoffInput !== null ? { handoffInput } : {}),
       ...(input.reviewInput !== undefined ? { reviewInput: input.reviewInput } : {}),
       ...(specRevisionId !== null ? { specRevisionId } : {}),

@@ -59,6 +59,10 @@ export type AuditAction =
   | 'work.mandate.resume'
   | 'work.mandate.revoke'
   | 'work.admission.check'
+  // ADR-0028（RD-03a）：受控派工意图的人工确认/拒绝与端口派发（不记目标正文）。
+  | 'work.dispatch.approve'
+  | 'work.dispatch.reject'
+  | 'work.dispatch.dispatch'
   // ADR-0028（RD-02a-1）：工作收件箱的显式关联与生命周期（不记正文）。
   | 'work.inbox.associate'
   | 'work.inbox.return'

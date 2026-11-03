@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import {
   dispatchIntents,
@@ -243,8 +243,11 @@ export async function getDispatchIntent(
   return row
 }
 
-/** ADR-0028 §9：新 Mandate/撤权/退休后，旧 proposed 意图不得再被批准或派发。 */
-export async function cancelProposedDispatchIntents(
+/**
+ * ADR-0028 §9：新 Mandate/撤权/改派/退休后，proposed 与已 approved 但未派发的意图
+ * 都不得再被批准或派发。已 dispatched 的意图是终态，Run 的后续失败不回写意图。
+ */
+export async function cancelOpenDispatchIntents(
   handle: DbHandle,
   workId: string,
   now: Date,
@@ -252,8 +255,115 @@ export async function cancelProposedDispatchIntents(
   return handle
     .update(dispatchIntents)
     .set({ status: 'cancelled', cancelledAt: now, updatedAt: now })
-    .where(and(eq(dispatchIntents.workId, workId), eq(dispatchIntents.status, 'proposed')))
+    .where(
+      and(
+        eq(dispatchIntents.workId, workId),
+        inArray(dispatchIntents.status, ['proposed', 'approved']),
+      ),
+    )
     .returning()
+}
+
+/** @deprecated 保留旧导出名，语义已扩展为 proposed+approved；新代码用 cancelOpenDispatchIntents。 */
+export const cancelProposedDispatchIntents = cancelOpenDispatchIntents
+
+export async function getDispatchIntentForUpdate(
+  handle: DbHandle,
+  id: string,
+): Promise<DispatchIntentRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(dispatchIntents)
+    .where(eq(dispatchIntents.id, id))
+    .limit(1)
+    .for('update')
+  return row
+}
+
+export async function approveDispatchIntent(
+  handle: DbHandle,
+  id: string,
+  now: Date,
+): Promise<DispatchIntentRow | undefined> {
+  const [row] = await handle
+    .update(dispatchIntents)
+    .set({
+      status: 'approved',
+      approvalBasis: 'human',
+      approvedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(dispatchIntents.id, id),
+        eq(dispatchIntents.status, 'proposed'),
+        gt(dispatchIntents.expiresAt, now),
+      ),
+    )
+    .returning()
+  return row
+}
+
+export async function rejectDispatchIntent(
+  handle: DbHandle,
+  id: string,
+  reason: string,
+  now: Date,
+): Promise<DispatchIntentRow | undefined> {
+  const [row] = await handle
+    .update(dispatchIntents)
+    .set({
+      status: 'rejected',
+      resolutionReason: reason,
+      rejectedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(dispatchIntents.id, id),
+        inArray(dispatchIntents.status, ['proposed', 'approved']),
+        gt(dispatchIntents.expiresAt, now),
+      ),
+    )
+    .returning()
+  return row
+}
+
+export async function markDispatchIntentDispatched(
+  handle: DbHandle,
+  id: string,
+  runId: string,
+  target: {
+    agentId: string
+    profileRevisionId: string
+    deviceId: string
+    workspaceId: string
+    actionClass: string
+  },
+  now: Date,
+): Promise<DispatchIntentRow | undefined> {
+  const [row] = await handle
+    .update(dispatchIntents)
+    .set({
+      status: 'dispatched',
+      runId,
+      agentId: target.agentId,
+      profileRevisionId: target.profileRevisionId,
+      deviceId: target.deviceId,
+      workspaceId: target.workspaceId,
+      actionClass: target.actionClass,
+      dispatchedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(dispatchIntents.id, id),
+        eq(dispatchIntents.status, 'approved'),
+        gt(dispatchIntents.expiresAt, now),
+      ),
+    )
+    .returning()
+  return row
 }
 
 export async function getDispatchIntentByDecision(

@@ -446,6 +446,7 @@ export async function checkWorkAdmission(
       const intent = await insertDispatchIntent(tx, {
         id: uuidv7(now.getTime()),
         workId: work.id,
+        workKey: work.workKey,
         taskId: work.taskId,
         projectId: work.projectId,
         decisionId: inserted.id,
