@@ -367,6 +367,9 @@ export class RunOrchestrator {
     }
     // ADR-0028 §6（RD-03a）：机器 Run 必须有完整 provenance，且不能以 full_access 执行。
     const origin = input.origin ?? 'human'
+    if (origin !== 'mandate' && input.toolPolicy !== undefined) {
+      throw new RunCommandError('VALIDATION_FAILED', 'tool policy is only for machine runs')
+    }
     if (origin === 'mandate') {
       if (
         input.workKey === undefined ||
@@ -375,6 +378,13 @@ export class RunOrchestrator {
         input.onBehalfOfUserId === undefined
       ) {
         throw new RunCommandError('VALIDATION_FAILED', 'machine run provenance is incomplete')
+      }
+      if (
+        input.toolPolicy === undefined ||
+        input.toolPolicy.workKey !== input.workKey ||
+        input.toolPolicy.mode !== 'draft'
+      ) {
+        throw new RunCommandError('VALIDATION_FAILED', 'machine run tool policy is incomplete')
       }
       if (input.onBehalfOfUserId !== task.assigneeUserId) {
         throw new RunCommandError('FORBIDDEN', 'machine run must be on behalf of the assignee')
@@ -642,6 +652,8 @@ export class RunOrchestrator {
       ),
       // 切片⑧：解析后的档位成对固化（run.start 与 runs 行同值，Node 只透传）。
       approvalPolicy,
+      // ADR-0028 §7（RD-03c1）：机器 Run 的固定草稿面（人类 Run 缺省）。
+      ...(input.toolPolicy !== undefined ? { toolPolicy: input.toolPolicy } : {}),
       // #379：收尾交接草稿的触发与约定快照（缺省 = 不生成）。
       ...(handoffRunSpec !== undefined ? { handoff: handoffRunSpec } : {}),
       // ADR-0027 §3：本 Run 冻结的项目上下文清单（正文走 Node 受控下载）。

@@ -10,7 +10,7 @@ import {
   runtimeSpec,
   startReplayRuntime,
 } from './helpers/replay-runtime.js'
-import type { RuntimeOutput } from '@whalepod/protocol'
+import type { RunToolPolicy, RuntimeOutput } from '@whalepod/protocol'
 
 function sessionEventsOf(outputs: readonly RuntimeOutput[]): { type: string; data: unknown }[] {
   return outputs
@@ -109,6 +109,72 @@ describe('probe: approval interception and tool registration', () => {
       const result = events.find((e) => e.type === 'tool/result')
       expect(result).toBeDefined()
       expect(JSON.stringify(result?.data)).not.toContain('"isError":true')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('machine toolPolicy allows publish_artifact without any approval.requested', async () => {
+    const base = runtimeSpec()
+    const spec = {
+      ...base,
+      toolPolicy: {
+        mode: 'draft',
+        allowedToolNames: [],
+        mandateVersion: 2,
+        workKey: '01905f7c-0000-7000-8000-000000000902',
+      } satisfies RunToolPolicy,
+    }
+    const runtime = await startReplayRuntime('tool-approval', spec)
+    try {
+      await runtime.send(initializeCommand(spec))
+      await runtime.until('runtime.ready')
+      await runtime.send(
+        commandFrame('run.prompt', { runId: spec.runId, text: 'publish the report' }),
+      )
+      const candidate = await runtime.until('artifact.candidate')
+      expect(candidate.payload).toMatchObject({ relativePath: 'out/report.md' })
+      await runtime.until('run.completed')
+      expect(
+        runtime.outputs.some((frame) => frame.type === 'approval.requested'),
+        '隐式结果通道不应触发逐次审批',
+      ).toBe(false)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('machine toolPolicy denies bash before approval and never executes it', async () => {
+    const base = runtimeSpec()
+    const spec = {
+      ...base,
+      toolPolicy: {
+        mode: 'draft',
+        allowedToolNames: ['read'],
+        mandateVersion: 2,
+        workKey: '01905f7c-0000-7000-8000-000000000903',
+      } satisfies RunToolPolicy,
+    }
+    const runtime = await startReplayRuntime('tool-boundary', spec)
+    try {
+      await runtime.send(initializeCommand(spec))
+      await runtime.until('runtime.ready')
+      await runtime.send(
+        commandFrame('run.prompt', { runId: spec.runId, text: 'run the bash probe' }),
+      )
+      await runtime.until('run.completed')
+      expect(
+        runtime.outputs.some((frame) => frame.type === 'approval.requested'),
+        '面外工具必须在 pre-execute 直接 deny，不产生审批',
+      ).toBe(false)
+      const events = sessionEventsOf(runtime.outputs)
+      const text = events.map((event) => JSON.stringify(event)).join('\n')
+      expect(text).toContain('outside the draft tool surface')
+      const toolResults = events
+        .filter((event) => event.type === 'tool/result')
+        .map((event) => JSON.stringify(event.data))
+        .join('\n')
+      expect(toolResults).not.toContain('probe-ok')
     } finally {
       await runtime.dispose()
     }

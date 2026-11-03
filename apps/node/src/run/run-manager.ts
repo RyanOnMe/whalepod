@@ -582,6 +582,8 @@ export class RunManager {
           ...(payload.approvalPolicy !== undefined
             ? { approvalPolicy: payload.approvalPolicy }
             : {}),
+          // ADR-0028 §7（RD-03c1）：机器 Run 的固定草稿面原样透传；人类 Run 缺省。
+          ...(payload.toolPolicy !== undefined ? { toolPolicy: payload.toolPolicy } : {}),
           // #379：收尾交接草稿的触发与约定快照原样透传（缺省 = 不生成）。
           ...(payload.handoff !== undefined ? { handoff: payload.handoff } : {}),
           ...(payload.executionContext !== undefined

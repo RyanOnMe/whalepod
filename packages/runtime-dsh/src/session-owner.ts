@@ -13,6 +13,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId, type Session, type TurnEndReason } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
+import { machineDraftToolDecision } from './tool-policy.js'
 import { createPublishArtifactTool, type ArtifactPort } from './artifact-tool.js'
 import { createReadArtifactInputTool } from './artifact-input-tool.js'
 import {
@@ -162,16 +163,20 @@ export class SessionOwner {
       //   * full_access：直接放行（责任人对**自己凭据**的显式放权，ADR-0009 决策 7；
       //     口径按 ADR-0010 决策 5：触发方式不影响档位，不做自动降级）。ApprovalPort
       //     仍装配——full_access 下 pre-execute 不再产生询问，port 只是静默闲置。
-      agentCtx.on('tools/pre-execute', (exec): Promise<PreToolDecision> =>
-        Promise.resolve(
+      agentCtx.on('tools/pre-execute', (exec): Promise<PreToolDecision> => {
+        // ADR-0028 §7（RD-03c1）：机器 Run 先过固定草稿面；面内命中 allowlist
+        // 免逐次审批，面内未命中走现有 ask，面外 deny（不产生 approval.requested）。
+        const machine = machineDraftToolDecision(spec.toolPolicy, exec.name)
+        if (machine !== undefined) return Promise.resolve(machine)
+        return Promise.resolve(
           spec.approvalPolicy === 'full_access'
             ? { kind: 'allow' }
             : {
                 kind: 'ask',
                 reason: `Run tool call requires approval: ${exec.name}`,
               },
-        ),
-      )
+        )
+      })
       const systemPrompt = agentCtx.get('systemPrompt') as SystemPromptLike | undefined
       systemPrompt?.section({ name: PERSONA_SECTION, order: 0, text: spec.persona })
       // create/resume 使用同一版本说明；固定正文由本次首条指令提供，旧正文仅作历史。

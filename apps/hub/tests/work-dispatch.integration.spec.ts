@@ -290,7 +290,9 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
 
   it('approve → dispatch creates a machine Run with provenance and reactivates work on terminal', async () => {
     const work = await createWork(ctx, alice, taskId)
-    await createMandate(ctx, alice, work.workKey, { allowedAgentIds: [agent.agentId] })
+    const mandate = await createMandate(ctx, alice, work.workKey, {
+      allowedAgentIds: [agent.agentId],
+    })
     const { intentId, itemId } = await prepareIntent(work.workKey)
 
     const approved = await approve(ctx, alice, work.workKey, intentId)
@@ -358,6 +360,14 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
       .from(schema.dispatchOutbox)
       .where(eq(schema.dispatchOutbox.type, 'run.start'))
     expect(startCommand).toBeDefined()
+    expect(startCommand?.payload).toMatchObject({
+      toolPolicy: {
+        mode: 'draft',
+        allowedToolNames: ['read', 'glob'],
+        mandateVersion: mandate.version,
+        workKey: work.workKey,
+      },
+    })
     expect(
       await ctx.app.runOrchestrator.beforeDispatch({
         id: startCommand!.id,
@@ -1270,6 +1280,34 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
       .from(schema.dispatchIntents)
       .where(eq(schema.dispatchIntents.id, intentId))
     expect(expiredRow?.status).toBe('expired')
+    expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+  })
+
+  it('refuses a machine Run whose dispatch port did not freeze a tool policy', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    const mandate = await createMandate(ctx, alice, work.workKey)
+    const { intentId } = await prepareIntent(work.workKey)
+    const attempt = database.transaction((tx) =>
+      ctx.app.runOrchestrator.createWithinTransaction(
+        tx,
+        { userId: asUserId(alice.userId), role: 'owner' },
+        taskId,
+        {
+          idempotencyKey: `no-tool-policy-${randomUUID()}`,
+          agentId: agent.agentId,
+          deviceId: device.deviceId,
+          workspaceId: device.workspaceId,
+          prompt: 'missing tool policy',
+          dshDistributionVersion: '0.1.0-rc.8',
+          origin: 'mandate',
+          workKey: work.workKey,
+          mandateId: mandate.id,
+          dispatchIntentId: intentId,
+          onBehalfOfUserId: alice.userId,
+        },
+      ),
+    )
+    await expect(attempt).rejects.toThrow('tool policy is incomplete')
     expect(await database.db.select().from(schema.runs)).toHaveLength(0)
   })
 

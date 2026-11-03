@@ -10,6 +10,7 @@
  * run.start 固化的 Revision digest 比对（不符即 PROFILE_MISMATCH 并终止）。
  */
 import type {
+  RunToolPolicy,
   HandoffRunSpec,
   RunProjectContextManifestEntry,
   RuntimeArtifactInput,
@@ -51,6 +52,11 @@ export interface RuntimeSpec {
    */
   readonly approvalPolicy?: 'approval_required' | 'full_access'
   /**
+   * ADR-0028 §7（RD-03c1）：机器 Run 的固定草稿面与 Mandate 步级预批准。
+   * 只由 Hub 固化的 run.start 携带；人类 Run 缺省。
+   */
+  readonly toolPolicy?: RunToolPolicy
+  /**
    * #379（ADR-0017 §3）：建 Run 时 Task 已启用约定流程才携带——收尾阶段据此生成
    * 交接草稿（agreement 为绑定版本正文快照，null = 未绑定）。
    */
@@ -90,6 +96,7 @@ export function runtimeSpecFromInitialize(command: InitializeCommand): RuntimeSp
     artifactInputsDir,
     resumeSessionId,
     approvalPolicy,
+    toolPolicy,
     handoff,
     executionContext,
     projectContext,
@@ -106,6 +113,7 @@ export function runtimeSpecFromInitialize(command: InitializeCommand): RuntimeSp
     ...(artifactInputsDir === undefined ? {} : { artifactInputsDir }),
     ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
     ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
+    ...(toolPolicy === undefined ? {} : { toolPolicy }),
     ...(handoff === undefined ? {} : { handoff }),
     ...(executionContext === undefined ? {} : { executionContext }),
     ...(projectContext === undefined ? {} : { projectContext }),

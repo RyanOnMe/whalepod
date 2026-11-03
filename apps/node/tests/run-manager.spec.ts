@@ -393,6 +393,30 @@ describe('run.start 处理链', () => {
     expect(init2.payload.approvalPolicy).toBe('full_access')
   })
 
+  it('RD-03c1 工具策略：machine toolPolicy 原样透传进 runtime.initialize', async () => {
+    const h = await makeHarness()
+    const toolPolicy = {
+      mode: 'draft',
+      allowedToolNames: ['read', 'glob'],
+      mandateVersion: 4,
+      workKey: '01905f7c-0000-7000-8000-000000000904',
+    }
+    await h.manager.handleFrame(runStartFrame(h.workspaceId, { toolPolicy }))
+    const init = h.runtimes[0]!.stdin[0]!
+    expect(init.type).toBe('runtime.initialize')
+    const payload = (init as Extract<RuntimeCommand, { type: 'runtime.initialize' }>).payload
+    expect(payload.toolPolicy).toEqual(toolPolicy)
+  })
+
+  it('RD-03c1 工具策略：人类 Run 缺省不携带 toolPolicy', async () => {
+    const h = await makeHarness()
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    const init = h.runtimes[0]!.stdin[0]!
+    expect(init.type).toBe('runtime.initialize')
+    const payload = (init as Extract<RuntimeCommand, { type: 'runtime.initialize' }>).payload
+    expect(payload.toolPolicy).toBeUndefined()
+  })
+
   it('容量满 → ack accepted=false NODE_CAPACITY_REACHED，第三个不 spawn', async () => {
     const h = await makeHarness()
     await h.manager.handleFrame(runStartFrame(h.workspaceId))
