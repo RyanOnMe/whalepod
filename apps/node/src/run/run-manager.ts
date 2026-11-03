@@ -269,6 +269,12 @@ export class RunManager {
     string,
     { facts: RunRuntimeFacts; terminalAt: string }
   >()
+  /**
+   * 正在处理、尚未 spawn 的 run.start：启动对账绝不能把它们当孤儿清理。
+   * 用计数而不是 Set：同一 run.start 可能被 Hub 重发并并发进入处理链，
+   * 先结束的那条不能把仍在 prepare 的另一条从保护集合里删掉。
+   */
+  private readonly startingRuns = new Map<string, number>()
   /** 本连接内已发送、尚未 ack 的回执；重连时清空以便全量重放。 */
   private readonly sentContextReceipts = new Set<string>()
   private readonly contextStateStore: ContextStateStore
@@ -420,6 +426,7 @@ export class RunManager {
       this.log('info', 'duplicate run.start without active runtime; reprocessing', { runId })
     }
 
+    this.startingRuns.set(runId, (this.startingRuns.get(runId) ?? 0) + 1)
     try {
       // ADR-0027 §6（PC-05b-3）：在任何下载/初始化之前先落 Run home 事实。
       // 进程若在 prepare 之后、spawn 之前崩溃，启动清扫仍能对账清理 runtime-context。
@@ -609,6 +616,10 @@ export class RunManager {
       // 立即清；spawn 后下发失败则由 cleanupAbortedRun 改登记持久队列等退出确认。
       this.cleanupInputs(runId)
       this.cleanupAbortedRun(runId)
+    } finally {
+      const remaining = (this.startingRuns.get(runId) ?? 1) - 1
+      if (remaining <= 0) this.startingRuns.delete(runId)
+      else this.startingRuns.set(runId, remaining)
     }
   }
 
@@ -1849,6 +1860,7 @@ export class RunManager {
     const at = this.now().toISOString()
     for (const facts of factsRows) {
       if (!includeSharedHome && !facts.ownsHome) continue
+      if (this.startingRuns.has(facts.runId)) continue
       if (this.deps.supervisor.isActive(facts.runId)) continue
       try {
         this.terminalCleanupStore.schedule({
@@ -1932,6 +1944,9 @@ export class RunManager {
           at,
         )
       } catch (storeError) {
+        // 队列也写不进去：内存保留事实，同进程下一轮 tick 先补登记再清理；
+        // 只有进程随后崩溃才留给下次启动的 factsNotScheduled 对账。
+        this.unscheduledCleanupFacts.set(runId, { facts, terminalAt: at })
         this.log('warn', 'rejected run cleanup task write failed', {
           component: 'node.context',
           action: 'node.context.terminal_cleanup',
@@ -2028,6 +2043,11 @@ export class RunManager {
     for (const task of tasks) {
       const retryAt = new Date(now.getTime() + this.terminalCleanupRetryMs).toISOString()
       try {
+        // 正在处理的 run.start（facts 已写、尚未 spawn）不是孤儿，绝不清理。
+        if (this.startingRuns.has(task.runId)) {
+          this.terminalCleanupStore.markDeferred(task.runId, retryAt, now.toISOString())
+          continue
+        }
         // 本 Run 自己的 Runtime 还活着（终态帧已到、shutdown 宽限中）时绝不删：
         // isHomeInUse 按“其它 Run”口径排除了自己，不能拿它当退出确认。
         if (this.deps.supervisor.isActive(task.runId)) {

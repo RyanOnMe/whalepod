@@ -11,7 +11,10 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { SqliteRunTerminalCleanupStore } from '../src/run/terminal-cleanup.js'
+import {
+  MemoryRunTerminalCleanupStore,
+  SqliteRunTerminalCleanupStore,
+} from '../src/run/terminal-cleanup.js'
 
 let root: string
 let dbPath: string
@@ -86,6 +89,82 @@ describe('SqliteRunTerminalCleanupStore', () => {
     store.markSessionReady('run-3', 'session-run-3', '2026-11-03T10:00:00.000Z')
     expect(store.get('run-3')?.sessionReady).toBe(true)
     expect(store.getFacts('run-3')).toBeUndefined() // facts 不存在：不凭空造事实
+  })
+
+  it('重复 putFacts 不降级已 ready 的 session 事实（崩溃后重处理未 ack 命令）', () => {
+    for (const store of [
+      new SqliteRunTerminalCleanupStore(dbPath),
+      new MemoryRunTerminalCleanupStore(),
+    ]) {
+      store.putFacts(
+        {
+          runId: 'run-ready',
+          homePath: '/state/runtime-home/source',
+          entryCount: 1,
+          ownsHome: false,
+          sessionReady: true,
+          dshSessionId: 'session-ready',
+        },
+        '2026-11-03T09:00:00.000Z',
+      )
+      store.putFacts(
+        {
+          runId: 'run-ready',
+          homePath: '/state/runtime-home/source',
+          entryCount: 1,
+          ownsHome: false,
+          sessionReady: false,
+          dshSessionId: null,
+        },
+        '2026-11-03T09:01:00.000Z',
+      )
+      expect(store.getFacts('run-ready')).toMatchObject({
+        sessionReady: true,
+        dshSessionId: 'session-ready',
+      })
+    }
+  })
+
+  it('factsNotScheduled 只返回有 facts 但没有清理任务的 Run', () => {
+    const store = new SqliteRunTerminalCleanupStore(dbPath)
+    store.putFacts(
+      {
+        runId: 'run-a',
+        homePath: '/state/runtime-home/run-a',
+        entryCount: 2,
+        ownsHome: true,
+        sessionReady: false,
+        dshSessionId: null,
+      },
+      '2026-11-03T09:00:00.000Z',
+    )
+    store.putFacts(
+      {
+        runId: 'run-b',
+        homePath: '/state/runtime-home/run-b',
+        entryCount: 0,
+        ownsHome: false,
+        sessionReady: true,
+        dshSessionId: 'session-run-b',
+      },
+      '2026-11-03T09:00:00.000Z',
+    )
+    store.putFacts(
+      {
+        runId: 'run-c',
+        homePath: '/state/runtime-home/run-c',
+        entryCount: 0,
+        ownsHome: true,
+        sessionReady: false,
+        dshSessionId: null,
+      },
+      '2026-11-03T09:00:00.000Z',
+    )
+    store.schedule(task('run-b'))
+    store.schedule(task('run-c'))
+    store.markDone('run-c', '2026-11-03T10:00:00.000Z')
+
+    expect(store.factsNotScheduled().map((facts) => facts.runId)).toEqual(['run-a'])
   })
 
   it('due 只发到期未完成任务；notDone 供启动清扫忽略 due_at', () => {

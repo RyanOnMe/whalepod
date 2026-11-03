@@ -158,8 +158,11 @@ export class SqliteRunTerminalCleanupStore implements RunTerminalCleanupStore {
            home_path = excluded.home_path,
            entry_count = excluded.entry_count,
            owns_home = excluded.owns_home,
-           session_ready = excluded.session_ready,
-           dsh_session_id = excluded.dsh_session_id,
+           -- 崩溃后重处理同一条未 ack 的 run.start 时，调用方会再次以
+           -- sessionReady=false/dshSessionId=null 落 facts；已持久化的 ready
+           -- 事实绝不能被降级，否则共享 home 会被误判为“未写过”。
+           session_ready = max(run_runtime_facts.session_ready, excluded.session_ready),
+           dsh_session_id = coalesce(excluded.dsh_session_id, run_runtime_facts.dsh_session_id),
            updated_at = excluded.updated_at`,
       )
       .run(
@@ -339,7 +342,17 @@ export class MemoryRunTerminalCleanupStore implements RunTerminalCleanupStore {
 
   putFacts(facts: RunRuntimeFacts, updatedAt?: string): void {
     void updatedAt
-    this.facts.set(facts.runId, facts)
+    const previous = this.facts.get(facts.runId)
+    this.facts.set(
+      facts.runId,
+      previous === undefined
+        ? facts
+        : {
+            ...facts,
+            sessionReady: previous.sessionReady || facts.sessionReady,
+            dshSessionId: facts.dshSessionId ?? previous.dshSessionId,
+          },
+    )
   }
 
   getFacts(runId: string): RunRuntimeFacts | undefined {

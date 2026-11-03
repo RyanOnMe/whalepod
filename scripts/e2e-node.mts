@@ -469,7 +469,10 @@ const runManager = new RunManager({
 
 // R9 语义：重启后先回收孤儿（recoverOrphans 内完成），再建立会话。
 await supervisor.recoverOrphans()
-runManager.startTerminalCleanup()
+// ADR-0027 §6（PC-05b-3）：与生产 cli 同一时序——启动只清自有 home；共享 home
+// 等首次连接补发 lost 快照后再清。
+let deviceConnectedOnce = false
+runManager.startTerminalCleanup(false)
 
 // ---- WebSocket 故障缝：offline 窗口内连接尝试立即失败（模拟拔线——非 stop
 // 语义，产品重连退避照常运转），存活连接 terminate() 直接摧毁。----
@@ -566,6 +569,10 @@ const session = startDeviceSession({
   },
   onConnected: () => {
     runManager.onReconnect()
+    if (!deviceConnectedOnce) {
+      deviceConnectedOnce = true
+      runManager.startTerminalCleanup()
+    }
   },
   heartbeatFacts: () => runManager.heartbeatFacts(),
   // #89 后本进程与生产 cli 走同一条上报路径：只提供事实源，发帧由 session 层负责。

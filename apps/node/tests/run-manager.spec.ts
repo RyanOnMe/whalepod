@@ -1841,6 +1841,74 @@ describe('ADR-0027：项目上下文交付与两级回执', () => {
     expect(existsSync(entriesDir)).toBe(false)
   })
 
+  it('拒绝路径的清理与队列写入同时失败：内存保留事实，下一轮补登记并清理', async () => {
+    const body = '# 项目上下文\n'
+    const entry: RunProjectContextManifestEntry = {
+      entryId: '01905f7c-0000-7000-8000-000000000956',
+      kind: 'decision',
+      title: '预算结论',
+      revisionId: null,
+      businessRef: 'taskSpec:01905f7c-0000-7000-8000-000000000201',
+      digest: createHash('sha256').update(body).digest('hex'),
+      byteSize: Buffer.byteLength(body, 'utf8'),
+      snapshotAuthorizationGeneration: null,
+    }
+    const entriesDir = join(root, 'runtime-context', RUN_ID)
+    await mkdir(join(entriesDir, 'sub'), { recursive: true })
+    await writeFile(join(entriesDir, 'sub', 'partial-entry'), body)
+    await chmod(entriesDir, 0o500)
+    const store = new MemoryRunTerminalCleanupStore()
+    const originalSchedule = store.schedule.bind(store)
+    let failures = 1
+    store.schedule = (input) => {
+      if (failures > 0) {
+        failures -= 1
+        throw new Error('database is busy')
+      }
+      originalSchedule(input)
+    }
+    const h = await makeHarness({
+      managerDeps: {
+        terminalCleanupStore: store,
+        terminalCleanupRetryMs: -1000,
+        runtimeContextDirFor: () => entriesDir,
+        prepareProjectContext: async () => {
+          throw Object.assign(new Error('bundle digest mismatch'), {
+            code: 'CONTEXT_DIGEST_MISMATCH',
+          })
+        },
+      },
+    })
+    try {
+      await h.manager.handleFrame(
+        runStartFrame(h.workspaceId, {
+          projectContext: {
+            snapshotId: '01905f7c-0000-7000-8000-000000000966',
+            digest: createHash('sha256').update('snapshot-pc05b3-reject-retry').digest('hex'),
+            headerText: '[project-context:0123456789abcdef]',
+            headerDigest: createHash('sha256')
+              .update('[project-context:0123456789abcdef]')
+              .digest('hex'),
+            manifest: [entry],
+          },
+        }),
+      )
+      expect(
+        h.sentFrames().findLast((frame) => frame.type === 'command.ack')?.payload,
+      ).toMatchObject({
+        accepted: false,
+      })
+      // 删除失败 + 队列写失败：本进程队列里暂时没有任务，但 facts 不能丢。
+      expect(store.get(RUN_ID)).toBeUndefined()
+    } finally {
+      await chmod(entriesDir, 0o700)
+    }
+
+    expect(h.manager.runTerminalCleanupTick()).toBe(1)
+    expect(store.get(RUN_ID)?.state).toBe('done')
+    expect(existsSync(entriesDir)).toBe(false)
+  })
+
   function contextFixture() {
     const body = '# 项目上下文\n预算结论：8 万\n'
     const entryDigest = createHash('sha256').update(body).digest('hex')
@@ -3136,6 +3204,87 @@ describe('ADR-0027 §6（PC-05b-3）：终态清理队列与 blocked 清理', ()
     expect(existsSync(ctxDir)).toBe(false)
     expect(existsSync(join(home, 'spill'))).toBe(false)
     expect(existsSync(join(home, 'sessions'))).toBe(true)
+  })
+
+  it('首次连接对账不清理仍在 prepare 的 run.start（facts 已写、尚未 spawn）', async () => {
+    const home = homeFor()
+    await seedHome(home)
+    const body = '# 项目上下文\n预算结论：8 万\n'
+    const entry: RunProjectContextManifestEntry = {
+      entryId: '01905f7c-0000-7000-8000-000000000955',
+      kind: 'decision',
+      title: '预算结论',
+      revisionId: null,
+      businessRef: 'taskSpec:01905f7c-0000-7000-8000-000000000201',
+      digest: createHash('sha256').update(body).digest('hex'),
+      byteSize: Buffer.byteLength(body, 'utf8'),
+      snapshotAuthorizationGeneration: null,
+    }
+    const snapshotId = '01905f7c-0000-7000-8000-000000000965'
+    const snapshotDigest = createHash('sha256').update('snapshot-pc05b3-inflight').digest('hex')
+    const headerText = '[project-context:0123456789abcdef]\n- 预算结论'
+    const headerDigest = createHash('sha256').update(headerText).digest('hex')
+    const ctxDir = join(root, 'runtime-context', RUN_ID)
+    await mkdir(ctxDir, { recursive: true })
+    await writeFile(join(ctxDir, entry.entryId), body)
+    let releasePrepare!: () => void
+    const prepareGate = new Promise<void>((resolve) => {
+      releasePrepare = resolve
+    })
+    let prepareStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      prepareStarted = resolve
+    })
+    const store = new MemoryRunTerminalCleanupStore()
+    const h = await makeHarness({
+      managerDeps: {
+        terminalCleanupStore: store,
+        runtimeContextDirFor: () => ctxDir,
+        prepareProjectContext: async () => {
+          prepareStarted()
+          await prepareGate
+          return {
+            runId: RUN_ID,
+            dir: ctxDir,
+            snapshotId,
+            snapshotDigest,
+            headerText,
+            headerDigest,
+            entries: [entry],
+          }
+        },
+      },
+    })
+    const starting = h.manager.handleFrame(
+      runStartFrame(h.workspaceId, {
+        projectContext: {
+          snapshotId,
+          digest: snapshotDigest,
+          headerText,
+          headerDigest,
+          manifest: [entry],
+        },
+      }),
+    )
+    await started
+    // facts 已落（启动对账可见），但 spawn 尚未发生：首次连接后的启动清扫
+    // 绝不能把它当“上次进程遗留的孤儿”。
+    expect(store.getFacts(RUN_ID)?.entryCount).toBe(1)
+    expect(h.manager.startTerminalCleanup(false)).toBe(0)
+    expect(store.get(RUN_ID)).toBeUndefined()
+    expect(existsSync(ctxDir)).toBe(true)
+    expect(existsSync(join(home, 'spill'))).toBe(true)
+    expect(existsSync(join(home, 'sessions', 'project', 'session-1', 'session.jsonl'))).toBe(true)
+
+    releasePrepare()
+    await starting
+    expect(h.runtimes).toHaveLength(1)
+    expect(h.sentFrames().findLast((frame) => frame.type === 'command.ack')?.payload).toMatchObject(
+      {
+        accepted: true,
+      },
+    )
+    expect(existsSync(ctxDir)).toBe(true)
   })
 
   it('生产 SQLite 队列接线：终态 + Runtime 退出后 done，重开队列仍保持 done', async () => {
