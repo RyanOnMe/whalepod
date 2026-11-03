@@ -388,6 +388,54 @@ describe('resume lineage (ADR-0009 slice 5)', () => {
     expect(blocked.error?.message).toContain('blocked')
   })
 
+  it('租约过期 lost：非空上下文 resume 子 Run 尚无 session id 也阻断来源血缘', async () => {
+    await seedWorld()
+    const harness = makeHarness(database)
+    harness.clock.advance(Date.now() - harness.clock.now().getTime())
+    const rootId = await insertRunRow(database.db, {
+      taskId,
+      ownerUserId: bobUserId,
+      agentId: bobChain.agentId,
+      profileRevisionId: bobChain.profileRevisionId,
+      deviceId: bobChain.deviceId,
+      workspaceId: bobChain.workspaceId,
+      status: 'completed',
+      dshSessionId: 'whalepod-run-root',
+    })
+    const childId = await insertRunRow(database.db, {
+      taskId,
+      ownerUserId: bobUserId,
+      agentId: bobChain.agentId,
+      profileRevisionId: bobChain.profileRevisionId,
+      deviceId: bobChain.deviceId,
+      workspaceId: bobChain.workspaceId,
+      status: 'running',
+      dshSessionId: null,
+    })
+    await database.db
+      .update(schema.runs)
+      .set({ resumeFromRunId: rootId })
+      .where(eq(schema.runs.id, childId))
+    await database.db.insert(schema.runProjectContexts).values({
+      id: crypto.randomUUID(),
+      runId: childId,
+      projectId,
+      selectionRuleVersion: 'test',
+      snapshotDigest: 'e'.repeat(64),
+      headerText: '[project-context:0123456789abcdef]',
+      headerDigest: 'f'.repeat(64),
+      entryCount: 1,
+      totalBytes: 0,
+    })
+
+    // 设备租约过期：Hub 先判 lost，此时 dshSessionId 仍为 null。
+    harness.clock.advance(31_000)
+    expect(await harness.orchestrator.reconcileLeases(harness.clock.now())).toBeGreaterThan(0)
+    expect((await getRun(database.db, childId))?.status).toBe('lost')
+    expect((await getRun(database.db, childId))?.resumeContext).toBe('blocked')
+    expect((await getRun(database.db, rootId))?.resumeContext).toBe('blocked')
+  })
+
   it('空项目上下文快照终态仍是 full：resumeContext 暴露且 resume 正常创建', async () => {
     await seedWorld()
     // queued 状态 + 会话：取消走 HTTP 终态收敛，同时满足 resume 的「有会话」前提。

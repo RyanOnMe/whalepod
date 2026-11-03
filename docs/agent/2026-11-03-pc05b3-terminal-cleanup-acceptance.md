@@ -62,6 +62,8 @@ Hub 终态收敛用真实 Node 上行 `run.completed` 帧（`ingestNodeEvent`）
 - `apps/hub/tests/run-resume.integration.spec.ts`
   - 空快照（`entry_count=0`）来源 Run 取消进终态 → `resume_context=full`，RunView 暴露 full，resume 201 且血缘正确；
   - 来源 full → resume 子 Run 拿到非空上下文 → 子 Run 终态 blocked 时，来源 Run 一并 blocked；再次 resume 来源 409（生产 `run.completed` 帧 + 真实 HTTP）。
+- `apps/hub/tests/run-resume.integration.spec.ts`
+  - 设备租约过期先判 lost（`dispatching/running`、`dshSessionId=null`）→ 非空上下文子 Run 仍沿血缘把根来源标 blocked（真实 `reconcileLeases`）。
 - `packages/db/tests/resume-context.integration.spec.ts`
   - 非空上下文 resume Run 终态 blocked → 根来源与同 home 的兄弟 Run 一并 blocked；
   - 无会话（spawn 前失败）的 blocked Run 不传播，来源仍 full；
@@ -75,7 +77,7 @@ Hub 终态收敛用真实 Node 上行 `run.completed` 帧（`ingestNodeEvent`）
 |---|---|---|
 | Q0 | `pnpm check` | 222 个测试文件、2397 项通过（含 typecheck / boundaries / protocol generated / web；lint 0 error） |
 | Q1 | `pnpm test:unit`（含在 Q0） | 同上 |
-| Q2 | `pnpm test:integration` | 89 个文件、823 项通过（真实一次性 PostgreSQL） |
+| Q2 | `pnpm test:integration` | 89 个文件、824 项通过（真实一次性 PostgreSQL） |
 | Q3 | `pnpm test:dsh-contract` | 22 个文件、88 项通过（真 boot 栈 + replay） |
 | Q6 | `pnpm test:resilience` | 6 个文件、34 项通过 |
 | Q7 | `pnpm test:security` | 4 个文件、18 项通过；secret-scan 自检与实扫 OK；license 626 包 OK |
