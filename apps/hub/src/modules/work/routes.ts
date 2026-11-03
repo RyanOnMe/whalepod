@@ -23,6 +23,7 @@ import {
   WorkInboxItemReturnRequestSchema,
   WorkInboxListQuerySchema,
   WorkMandateStatusChangeRequestSchema,
+  type DispatchIntentView,
   type WorkMandateView,
 } from '@whalepod/protocol'
 import { audit } from '../shared/audit.js'
@@ -70,6 +71,16 @@ export interface WorkRouteDeps {
     actor: SessionActor,
     workKey: string,
   ) => Promise<{ cancelled: number; failed: number }>
+  /**
+   * ADR-0028 §6（RD-03b）：准入刚生成 proposed 意图后，由组合根尝试
+   * autoDispatch='existing_task' 的系统派工。返回 null 表示未处理；
+   * 只替换读面视图，不改变准入事务结果。
+   */
+  readonly onIntentProposed?: (
+    actor: SessionActor,
+    workKey: string,
+    intentId: string,
+  ) => Promise<DispatchIntentView | null>
 }
 
 function parseUuid(value: string, label: string): string {
@@ -508,24 +519,87 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
           executed: false,
           value: await refreshAdmissionResult(deps.database, command.value),
         }
+    let value = outcome.value
     if (outcome.executed) {
       request.log.info(
         {
           component: 'hub.work',
           action: 'work.admission_decided',
           workKey,
-          decision: outcome.value.decision.decision,
-          reason: outcome.value.decision.reason,
+          decision: value.decision.decision,
+          reason: value.decision.reason,
           sourceType: body.sourceType,
           sourceId: body.sourceId,
-          mandateVersion: outcome.value.decision.mandateVersion,
-          duplicate: outcome.value.duplicate,
+          mandateVersion: value.decision.mandateVersion,
+          duplicate: value.duplicate,
         },
         'work admission decided',
       )
     }
+    if (outcome.executed && value.proposedIntent !== null && deps.onIntentProposed !== undefined) {
+      const proposedIntentId = value.proposedIntent.id
+      const previousStatus = value.proposedIntent.status
+      try {
+        const auto = await deps.onIntentProposed(session, workKey, proposedIntentId)
+        if (auto !== null) {
+          value = { ...value, proposedIntent: auto }
+          if (
+            auto.status === 'dispatched' &&
+            auto.approvalBasis === 'mandate' &&
+            previousStatus !== 'dispatched' &&
+            auto.runId !== null
+          ) {
+            request.log.info(
+              {
+                component: 'hub.dispatch',
+                action: 'work.dispatch.auto',
+                actor: 'system',
+                workKey,
+                intentId: auto.id,
+                runId: auto.runId,
+                approvalBasis: auto.approvalBasis,
+                actionClass: auto.actionClass,
+                onBehalfOfUserId: auto.onBehalfOfUserId,
+                candidateCount: auto.candidates.length,
+                exclusionCount: auto.exclusionReasons.length,
+              },
+              'dispatch intent auto dispatched',
+            )
+          } else if (
+            (auto.status === 'rejected' || auto.status === 'expired') &&
+            previousStatus !== auto.status
+          ) {
+            request.log.warn(
+              {
+                component: 'hub.dispatch',
+                action: 'work.dispatch.auto_rejected',
+                actor: 'system',
+                workKey,
+                intentId: auto.id,
+                status: auto.status,
+                resolutionReason: auto.resolutionReason,
+              },
+              'dispatch intent auto rejected',
+            )
+          }
+        }
+      } catch (error) {
+        // 准入已提交；自动派工的内部故障不能把一次成功的准入变成 500。
+        request.log.warn(
+          {
+            component: 'hub.dispatch',
+            action: 'work.dispatch.auto_failed',
+            actor: 'system',
+            workKey,
+            intentId: proposedIntentId,
+            reason: error instanceof ApiError ? error.code : errorCodeOf(error).code,
+          },
+          'auto dispatch failed',
+        )
+      }
+    }
     audit(request, 'work.admission.check', 'success', session.userId)
-    return { ok: true, data: outcome.value }
+    return { ok: true, data: value }
   })
 
   // ADR-0028 §3：Node 受控下载工作输入正文——Device Token + Run 归属；

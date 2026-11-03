@@ -9,15 +9,23 @@
  * 本文件只按序锁意图，再交给创建核心锁 Run 相关行。
  */
 import {
+  countFailedMachineRunsForWork,
+  countMachineRunsForWork,
   expireDispatchIntent,
   getAgent,
   getDispatchIntent,
   getDispatchIntentForUpdate,
+  getLatestPendingInboxItemForSource,
   getProfileRevision,
   getWorkByKey,
   getWorkMandateForUpdate,
+  listActiveRunsByTask,
   listCancellableMachineRunIdsForWork,
+  listDevicesByOwner,
   listWorkInboxItemsByIds,
+  listWorkspacesByOwner,
+  markDispatchIntentAutoDispatched,
+  setDispatchIntentCandidates,
   approveDispatchIntent as approveIntentRow,
   markDispatchIntentDispatched,
   rejectDispatchIntent as rejectIntentRow,
@@ -38,9 +46,12 @@ import type {
   WorkActionClass,
   WorkSourceType,
 } from '@whalepod/protocol'
+import { WORK_INPUT_CAPABILITY } from '@whalepod/protocol'
 import { ApiError } from '../shared/http-error.js'
 import { ERROR_HTTP_STATUS, errorCodeOf } from '../run/routes.js'
 import { getDeviceDshDistributionVersion } from '../run/queries.js'
+import { deriveDeviceStatus } from '../device/pairing.js'
+import { contextCapabilitiesOf } from '../context/run-snapshot.js'
 import type { RunOrchestrator } from '../run/orchestrator.js'
 import { canonicalJson, sha256Hex } from '../coordination/digest.js'
 import { lockWorkContext, requireAssignee } from '../work/context.js'
@@ -323,6 +334,18 @@ interface Candidate {
   readonly dshDistributionVersion: string
 }
 
+async function machineBudgetReason(
+  tx: Tx,
+  work: WorkRow,
+  mandate: { readonly maxRunsPerWork: number; readonly maxAttempts: number },
+): Promise<string | undefined> {
+  const totalRuns = await countMachineRunsForWork(tx, work.workKey)
+  if (totalRuns >= mandate.maxRunsPerWork) return 'max_runs_exhausted'
+  const failedRuns = await countFailedMachineRunsForWork(tx, work.workKey)
+  if (failedRuns >= mandate.maxAttempts) return 'max_attempts_exhausted'
+  return undefined
+}
+
 async function resolveCandidate(
   tx: Tx,
   work: WorkRow,
@@ -341,6 +364,9 @@ async function resolveCandidate(
   ) {
     throw new IntentBindingError('mandate is not active at the referenced version')
   }
+  // ADR-0028 §10：次数闸是派工端口的硬闸，人工确认路径也不能绕过。
+  const budgetReason = await machineBudgetReason(tx, work, mandate)
+  if (budgetReason !== undefined) throw new IntentBindingError(budgetReason)
   if (
     mandate.principalUserId !== task.assigneeUserId ||
     mandate.onBehalfOfUserId !== task.assigneeUserId ||
@@ -394,6 +420,251 @@ export type DispatchIntentOutcome =
       readonly code: ErrorCode
       readonly message: string
     }
+
+async function createMachineRunForIntent(
+  tx: Tx,
+  deps: DispatchDeps,
+  actor: { readonly userId: string; readonly role: 'owner' | 'admin' | 'member' },
+  work: WorkRow,
+  task: TaskRow,
+  intent: DispatchIntentRow,
+  candidate: Candidate,
+  workInputItemIds: readonly string[] | undefined,
+  now: Date,
+  approvalBasis: 'human' | 'mandate',
+  candidates: unknown[] = [],
+  exclusionReasons: unknown[] = [],
+): Promise<DispatchIntentView> {
+  const run = await deps.orchestrator.createWithinTransaction(
+    tx,
+    { userId: asUserId(actor.userId), role: actor.role },
+    task.id,
+    {
+      idempotencyKey: `machine-run:${intent.id}`,
+      agentId: candidate.agentId,
+      profileRevisionId: candidate.profileRevisionId,
+      deviceId: candidate.deviceId,
+      workspaceId: candidate.workspaceId,
+      prompt: work.goal,
+      dshDistributionVersion: candidate.dshDistributionVersion,
+      ...(workInputItemIds === undefined ? {} : { workInputItemIds: [...workInputItemIds] }),
+      origin: 'mandate',
+      workKey: work.workKey,
+      mandateId: intent.mandateId,
+      dispatchIntentId: intent.id,
+      onBehalfOfUserId: task.assigneeUserId,
+    },
+  )
+  const target = {
+    agentId: candidate.agentId,
+    profileRevisionId: candidate.profileRevisionId,
+    deviceId: candidate.deviceId,
+    workspaceId: candidate.workspaceId,
+    actionClass: candidate.actionClass,
+  }
+  const row =
+    approvalBasis === 'mandate'
+      ? await markDispatchIntentAutoDispatched(
+          tx,
+          intent.id,
+          run.id,
+          { ...target, candidates, exclusionReasons },
+          now,
+        )
+      : await markDispatchIntentDispatched(tx, intent.id, run.id, target, now)
+  if (row === undefined) throw conflict('dispatch intent changed concurrently')
+  // Run 活跃期间工作不可再派工；终态由 run-status 复核回 active（RD-03a 不建下一 Run）。
+  await updateWork(tx, work.id, {
+    state: 'waiting',
+    resumeMode: 'auto',
+    resumeCondition: `run:${run.id}`,
+    updatedAt: now,
+  })
+  return toDispatchIntentView(row, now)
+}
+
+function triggerRefMatchesItem(
+  ref: TriggerRef,
+  item: {
+    readonly sourceType: string
+    readonly sourceId: string
+    readonly sourceVersion: string
+    readonly sourceDigest: string
+    readonly authorizationGeneration: string
+  },
+): boolean {
+  return (
+    ref.sourceType === item.sourceType &&
+    ref.sourceId === item.sourceId &&
+    ref.sourceVersion === item.sourceVersion &&
+    ref.sourceDigest === item.sourceDigest &&
+    ref.authorizationGeneration === item.authorizationGeneration
+  )
+}
+
+interface AutoCandidateEvaluation {
+  readonly candidate?: {
+    readonly agentId: string
+    readonly profileRevisionId: string
+    readonly deviceId: string
+    readonly workspaceId: string
+    readonly actionClass: WorkActionClass
+    readonly workInputItemIds: string[]
+  }
+  readonly candidates: unknown[]
+  readonly exclusionReasons: unknown[]
+}
+
+async function evaluateAutoCandidate(
+  tx: Tx,
+  work: WorkRow,
+  task: TaskRow,
+  mandate: {
+    readonly allowedAgentIds: string[]
+    readonly allowedActionClasses: string[]
+  },
+  intent: DispatchIntentRow,
+  now: Date,
+): Promise<AutoCandidateEvaluation> {
+  const exclusionReasons: unknown[] = []
+  const actionClass = (
+    mandate.allowedActionClasses.includes('draft') ? 'draft' : mandate.allowedActionClasses[0]
+  ) as WorkActionClass | undefined
+  if (actionClass === undefined) {
+    return {
+      candidates: [],
+      exclusionReasons: [{ kind: 'action_class', reason: 'no_allowed_action_class' }],
+    }
+  }
+  if (mandate.allowedAgentIds.length === 0) {
+    return {
+      candidates: [],
+      exclusionReasons: [{ kind: 'agent', reason: 'allowlist_empty' }],
+    }
+  }
+
+  const eligibleAgents: Array<{ agentId: string; profileRevisionId: string }> = []
+  for (const agentId of mandate.allowedAgentIds) {
+    const agent = await getAgent(tx, agentId)
+    if (agent === undefined || agent.archivedAt !== null) {
+      exclusionReasons.push({ kind: 'agent', id: agentId, reason: 'unavailable' })
+      continue
+    }
+    if (agent.currentRevisionId === null) {
+      exclusionReasons.push({ kind: 'agent', id: agentId, reason: 'no_profile_revision' })
+      continue
+    }
+    const revision = await getProfileRevision(tx, agent.currentRevisionId)
+    if (revision === undefined || revision.agentId !== agent.id) {
+      exclusionReasons.push({ kind: 'agent', id: agentId, reason: 'revision_missing' })
+      continue
+    }
+    if (revision.approvalPolicy === 'full_access' || task.approvalPolicy === 'full_access') {
+      exclusionReasons.push({ kind: 'agent', id: agentId, reason: 'full_access' })
+      continue
+    }
+    eligibleAgents.push({ agentId: agent.id, profileRevisionId: revision.id })
+  }
+  const agent = eligibleAgents[0]
+  if (agent === undefined) {
+    return { candidates: [], exclusionReasons }
+  }
+  for (const extra of eligibleAgents.slice(1)) {
+    exclusionReasons.push({ kind: 'agent', id: extra.agentId, reason: 'lower_priority' })
+  }
+
+  const devices = (await listDevicesByOwner(tx, task.assigneeUserId))
+    .filter((device) => {
+      if (device.revokedAt !== null) {
+        exclusionReasons.push({ kind: 'device', id: device.id, reason: 'revoked' })
+        return false
+      }
+      if (device.dshDistributionVersion === null) {
+        exclusionReasons.push({ kind: 'device', id: device.id, reason: 'no_dsh_version' })
+        return false
+      }
+      if (!contextCapabilitiesOf(device).includes(WORK_INPUT_CAPABILITY)) {
+        exclusionReasons.push({
+          kind: 'device',
+          id: device.id,
+          reason: 'missing_work_input_capability',
+        })
+        return false
+      }
+      if (deriveDeviceStatus(device, now) !== 'online') {
+        exclusionReasons.push({ kind: 'device', id: device.id, reason: 'offline' })
+        return false
+      }
+      return true
+    })
+    .sort((left, right) => {
+      const rightSeen = right.lastSeenAt?.getTime() ?? 0
+      const leftSeen = left.lastSeenAt?.getTime() ?? 0
+      if (rightSeen !== leftSeen) return rightSeen - leftSeen
+      return left.id < right.id ? -1 : left.id > right.id ? 1 : 0
+    })
+  if (devices.length === 0) {
+    exclusionReasons.push({ kind: 'device', reason: 'no_online_device' })
+    return { candidates: [], exclusionReasons }
+  }
+
+  const workspaces = await listWorkspacesByOwner(tx, task.assigneeUserId)
+  let selected: { deviceId: string; workspaceId: string } | undefined
+  for (const device of devices) {
+    const candidates = workspaces
+      .filter((workspace) => workspace.deviceId === device.id && workspace.available)
+      .sort((left, right) => {
+        const rightChecked = right.lastCheckedAt.getTime()
+        const leftChecked = left.lastCheckedAt.getTime()
+        if (rightChecked !== leftChecked) return rightChecked - leftChecked
+        return left.id < right.id ? -1 : left.id > right.id ? 1 : 0
+      })
+    const workspace = candidates[0]
+    if (workspace === undefined) {
+      exclusionReasons.push({
+        kind: 'workspace',
+        deviceId: device.id,
+        reason: 'no_available_workspace',
+      })
+      continue
+    }
+    selected = { deviceId: device.id, workspaceId: workspace.id }
+    break
+  }
+  if (selected === undefined) {
+    return { candidates: [], exclusionReasons }
+  }
+
+  const refs = parseTriggerRefs(intent.triggerRefs)
+  const workInputItemIds: string[] = []
+  for (const ref of refs) {
+    const item = await getLatestPendingInboxItemForSource(tx, work.id, ref.sourceType, ref.sourceId)
+    if (item === undefined || !triggerRefMatchesItem(ref, item)) {
+      exclusionReasons.push({
+        kind: 'input',
+        sourceId: ref.sourceId,
+        reason: 'no_pending_trigger_item',
+      })
+      continue
+    }
+    workInputItemIds.push(item.id)
+  }
+  if (workInputItemIds.length === 0) {
+    return { candidates: [], exclusionReasons }
+  }
+
+  const candidate = {
+    ...agent,
+    ...selected,
+    actionClass,
+    workInputItemIds,
+  }
+  return {
+    candidate,
+    candidates: [{ ...candidate, selected: true }],
+    exclusionReasons,
+  }
+}
 
 interface DispatchViewResult {
   readonly view: DispatchIntentView
@@ -466,50 +737,20 @@ export async function dispatchIntent(
       }
       await assertSelectedItemsInIntent(tx, work, task, refs, request.workInputItemIds)
 
-      const run = await deps.orchestrator.createWithinTransaction(
-        tx,
-        { userId: asUserId(actor.userId), role: actor.role },
-        task.id,
-        {
-          idempotencyKey: `machine-run:${intent.id}`,
-          agentId: candidate.agentId,
-          profileRevisionId: candidate.profileRevisionId,
-          deviceId: candidate.deviceId,
-          workspaceId: candidate.workspaceId,
-          prompt: work.goal,
-          dshDistributionVersion: candidate.dshDistributionVersion,
-          ...(request.workInputItemIds === undefined
-            ? {}
-            : { workInputItemIds: request.workInputItemIds }),
-          origin: 'mandate',
-          workKey: work.workKey,
-          mandateId: intent.mandateId,
-          dispatchIntentId: intent.id,
-          onBehalfOfUserId: task.assigneeUserId,
-        },
-      )
-      const row = await markDispatchIntentDispatched(
-        tx,
-        intent.id,
-        run.id,
-        {
-          agentId: candidate.agentId,
-          profileRevisionId: candidate.profileRevisionId,
-          deviceId: candidate.deviceId,
-          workspaceId: candidate.workspaceId,
-          actionClass: candidate.actionClass,
-        },
-        now,
-      )
-      if (row === undefined) throw conflict('dispatch intent changed concurrently')
-      // Run 活跃期间工作不可再派工；终态由 run-status 复核回 active（RD-03a 不建下一 Run）。
-      await updateWork(tx, work.id, {
-        state: 'waiting',
-        resumeMode: 'auto',
-        resumeCondition: `run:${run.id}`,
-        updatedAt: now,
-      })
-      return { view: toDispatchIntentView(row, now) }
+      return {
+        view: await createMachineRunForIntent(
+          tx,
+          deps,
+          actor,
+          work,
+          task,
+          intent,
+          candidate,
+          request.workInputItemIds,
+          now,
+          'human',
+        ),
+      }
     },
   )
   if (isRejection(outcome.value)) {
@@ -521,6 +762,144 @@ export async function dispatchIntent(
       ? outcome.value.view
       : await refreshDispatchIntent(deps.database, intentId, deps.now()),
   }
+}
+
+/**
+ * ADR-0028 §6（RD-03b）：autoDispatch='existing_task' 的系统直达。
+ *
+ * 与人工路径共用同一派工端口/创建核心；区别只在入口状态（proposed）、候选由
+ * 端口按 Mandate 与现场确定性选择、approvalBasis 落 'mandate'。无候选/无输入/
+ * 有活跃 Run 时保留 proposed 并记排除理由，成员仍可人工派工；绑定失效与预算耗尽
+ * 是终态拒绝，避免无意义重试。
+ */
+export async function autoDispatchProposedIntent(
+  deps: DispatchDeps,
+  actor: { readonly userId: string; readonly role: 'owner' | 'admin' | 'member' },
+  workKey: string,
+  intentId: string,
+): Promise<DispatchIntentView | null> {
+  return deps.database.transaction(async (tx) => {
+    const now = deps.now()
+    const { work, task } = await lockWorkContext(tx, workKey)
+    await requireAssignee(tx, task, actor.userId)
+    const intent = assertIntentOwned(await getDispatchIntentForUpdate(tx, intentId), work, task)
+    if (intent.status !== 'proposed') return toDispatchIntentView(intent, now)
+    if (intent.expiresAt.getTime() <= now.getTime()) {
+      await expireDispatchIntent(tx, intent.id, 'dispatch intent has expired', now)
+      const row = await getDispatchIntent(tx, intent.id)
+      return toDispatchIntentView(row ?? intent, now)
+    }
+    if (
+      work.state !== 'active' ||
+      task.assignmentStatus !== 'accepted' ||
+      task.status === 'done' ||
+      task.status === 'cancelled'
+    ) {
+      return toDispatchIntentView(intent, now)
+    }
+
+    const mandate = await getWorkMandateForUpdate(tx, intent.mandateId)
+    if (
+      mandate === undefined ||
+      mandate.workId !== work.id ||
+      mandate.version !== intent.mandateVersion ||
+      mandate.status !== 'active' ||
+      mandate.expiresAt.getTime() <= now.getTime()
+    ) {
+      const rejected = await rejectIntentRow(
+        tx,
+        intent.id,
+        'mandate is not active at the referenced version',
+        now,
+      )
+      return toDispatchIntentView(rejected ?? intent, now)
+    }
+    if (mandate.autoDispatch !== 'existing_task') return toDispatchIntentView(intent, now)
+
+    let refs: TriggerRef[]
+    try {
+      refs = await verifyIntentBinding(tx, work, intent)
+    } catch (error) {
+      if (error instanceof IntentBindingError) {
+        const rejected = await rejectIntentRow(tx, intent.id, error.message, now)
+        return toDispatchIntentView(rejected ?? intent, now)
+      }
+      throw error
+    }
+
+    if ((await listActiveRunsByTask(tx, task.id)).length > 0) {
+      const row = await setDispatchIntentCandidates(
+        tx,
+        intent.id,
+        [],
+        [{ kind: 'run', reason: 'active_run' }],
+        now,
+      )
+      return toDispatchIntentView(row ?? intent, now)
+    }
+
+    const budgetReason = await machineBudgetReason(tx, work, mandate)
+    if (budgetReason !== undefined) {
+      await setDispatchIntentCandidates(
+        tx,
+        intent.id,
+        [],
+        [{ kind: 'budget', reason: budgetReason }],
+        now,
+      )
+      const rejected = await rejectIntentRow(tx, intent.id, budgetReason, now)
+      return toDispatchIntentView(rejected ?? intent, now)
+    }
+
+    const evaluation = await evaluateAutoCandidate(tx, work, task, mandate, intent, now)
+    if (evaluation.candidate === undefined) {
+      const row = await setDispatchIntentCandidates(
+        tx,
+        intent.id,
+        evaluation.candidates,
+        evaluation.exclusionReasons,
+        now,
+      )
+      return toDispatchIntentView(row ?? intent, now)
+    }
+
+    let candidate: Candidate
+    try {
+      candidate = await resolveCandidate(tx, work, task, intent, evaluation.candidate, now)
+      await assertSelectedItemsInIntent(tx, work, task, refs, evaluation.candidate.workInputItemIds)
+    } catch (error) {
+      if (error instanceof IntentBindingError) {
+        const rejected = await rejectIntentRow(tx, intent.id, error.message, now)
+        return toDispatchIntentView(rejected ?? intent, now)
+      }
+      if (error instanceof ApiError) {
+        const row = await setDispatchIntentCandidates(
+          tx,
+          intent.id,
+          evaluation.candidates,
+          [...evaluation.exclusionReasons, { kind: 'candidate', reason: error.code }],
+          now,
+        )
+        return toDispatchIntentView(row ?? intent, now)
+      }
+      throw error
+    }
+
+    return createMachineRunForIntent(
+      tx,
+      deps,
+      actor,
+      work,
+      task,
+      intent,
+      candidate,
+      evaluation.candidate.workInputItemIds,
+      now,
+      'mandate',
+      evaluation.candidates,
+      evaluation.exclusionReasons,
+    )
+  })
 }
 
 /**

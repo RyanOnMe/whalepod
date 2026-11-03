@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, lte, ne, sql } from 'drizzle-orm'
+import { and, count, desc, eq, gt, inArray, lte, ne, sql } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { runs } from '../schema/run.js'
 import {
@@ -390,6 +390,99 @@ export async function markDispatchIntentDispatched(
     )
     .returning()
   return row
+}
+
+/** 自动派工：候选评估失败但意图仍可重试时，只更新候选/排除理由，不推进状态。 */
+export async function setDispatchIntentCandidates(
+  handle: DbHandle,
+  id: string,
+  candidates: unknown[],
+  exclusionReasons: unknown[],
+  now: Date,
+): Promise<DispatchIntentRow | undefined> {
+  const [row] = await handle
+    .update(dispatchIntents)
+    .set({ candidates, exclusionReasons, updatedAt: now })
+    .where(
+      and(eq(dispatchIntents.id, id), inArray(dispatchIntents.status, ['proposed', 'approved'])),
+    )
+    .returning()
+  return row
+}
+
+/**
+ * ADR-0028 §6（RD-03b）：autoDispatch='existing_task' 的系统派工。
+ * 不经过人类 approve，但必须同时落 `approvalBasis='mandate'` 与 approvedAt，
+ * 满足 `dispatch_intent_status_fields`；CAS 只允许 proposed，防止与人工 approve 竞态。
+ */
+export async function markDispatchIntentAutoDispatched(
+  handle: DbHandle,
+  id: string,
+  runId: string,
+  target: {
+    agentId: string
+    profileRevisionId: string
+    deviceId: string
+    workspaceId: string
+    actionClass: string
+    candidates: unknown[]
+    exclusionReasons: unknown[]
+  },
+  now: Date,
+): Promise<DispatchIntentRow | undefined> {
+  const [row] = await handle
+    .update(dispatchIntents)
+    .set({
+      status: 'dispatched',
+      approvalBasis: 'mandate',
+      approvedAt: now,
+      dispatchedAt: now,
+      runId,
+      agentId: target.agentId,
+      profileRevisionId: target.profileRevisionId,
+      deviceId: target.deviceId,
+      workspaceId: target.workspaceId,
+      actionClass: target.actionClass,
+      candidates: target.candidates,
+      exclusionReasons: target.exclusionReasons,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(dispatchIntents.id, id),
+        eq(dispatchIntents.status, 'proposed'),
+        gt(dispatchIntents.expiresAt, now),
+      ),
+    )
+    .returning()
+  return row
+}
+
+/** 某工作已发生的机器 Run 总数（maxRunsPerWork 硬闸）。 */
+export async function countMachineRunsForWork(handle: DbHandle, workKey: string): Promise<number> {
+  const [row] = await handle
+    .select({ value: count() })
+    .from(runs)
+    .where(and(eq(runs.workKey, workKey), eq(runs.origin, 'mandate')))
+  return row?.value ?? 0
+}
+
+/** 某工作已失败/取消/丢失的机器 Run 数（maxAttempts 硬闸）。 */
+export async function countFailedMachineRunsForWork(
+  handle: DbHandle,
+  workKey: string,
+): Promise<number> {
+  const [row] = await handle
+    .select({ value: count() })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.workKey, workKey),
+        eq(runs.origin, 'mandate'),
+        inArray(runs.status, ['failed', 'cancelled', 'lost']),
+      ),
+    )
+  return row?.value ?? 0
 }
 
 /**

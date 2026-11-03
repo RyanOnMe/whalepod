@@ -160,6 +160,8 @@ export const WorkDetailViewSchema = z.strictObject({
   currentMandate: WorkMandateViewSchema.nullable(),
   recentDecisions: z.array(WorkDecisionViewSchema).max(50),
   proposedIntents: z.array(DispatchIntentViewSchema).max(50),
+  /** RD-03b：最近派工意图全量（含 approved/dispatched/终态），供工作读面显示自动派工。 */
+  dispatchIntents: z.array(DispatchIntentViewSchema).max(50).default([]),
   watermarks: WorkWatermarksSchema,
 })
 export type WorkDetailView = z.infer<typeof WorkDetailViewSchema>

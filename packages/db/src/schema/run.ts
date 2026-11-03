@@ -9,6 +9,7 @@ import {
   bigint,
   char,
   check,
+  index,
   jsonb,
   pgEnum,
   pgTable,
@@ -145,6 +146,10 @@ export const runs = pgTable(
     finishedAt: timestamp('finished_at', { withTimezone: true }),
   },
   (table) => [
+    // RD-03b：按 workKey 统计机器 Run 的次数闸查询（migration 0035）。
+    index('run_work_key_origin_status_idx')
+      .on(table.workKey, table.status)
+      .where(sql`${table.origin} = 'mandate'`),
     // 每 Task 单活跃 Run（02 Task 4 Step 3）；终态不占位，允许重跑。
     uniqueIndex('run_one_active_per_task')
       .on(table.taskId)

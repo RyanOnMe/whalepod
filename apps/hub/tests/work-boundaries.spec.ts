@@ -265,6 +265,19 @@ describe('RD-03a dispatch port boundaries', () => {
     expect(source).not.toContain('dshDistributionVersionFor')
   })
 
+  it('keeps automatic dispatch on the same source/budget/creation core', () => {
+    const source = readFileSync(join(DISPATCH_MODULE_DIR, 'service.ts'), 'utf8')
+    expect(source).toContain('autoDispatchProposedIntent')
+    expect(source).toContain('verifyIntentBinding(tx, work, intent)')
+    expect(source).toContain('createMachineRunForIntent')
+    expect(source).toContain('markDispatchIntentAutoDispatched')
+    expect(source).toContain('countMachineRunsForWork')
+    expect(source).toContain('countFailedMachineRunsForWork')
+    // 自动路径仍只经共享创建核心，不直写 Run/TeamEvent/状态。
+    expect(source).not.toMatch(/\binsertRun\b/)
+    expect(source).not.toMatch(/\bsetRunStatus\b/)
+  })
+
   it('keeps the normal create path from forging machine provenance', () => {
     const orchestrator = readFileSync(
       fileURLToPath(new URL('../src/modules/run/orchestrator.ts', import.meta.url)),
