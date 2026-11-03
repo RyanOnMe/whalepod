@@ -41,6 +41,13 @@ export interface RunTerminalCleanupStore {
   factsNotScheduled(): readonly RunRuntimeFacts[]
   /** runtime.ready 后补事实；facts 不存在时 no-op（旧库/异常路径不造新事实）。 */
   markSessionReady(runId: string, dshSessionId: string, updatedAt: string): void
+  /**
+   * 新一次 run.start 处理前清掉上一生命周期的 done 行：启动对账可能已把崩溃
+   * 残留当孤儿清完，Hub 随后按同一 commandId 重投；若保留 done，终态登记会被
+   * `on conflict do nothing` 吞掉，重跑后的 runtime-context/spill 永远不清理。
+   * 只删 done；pending/deferred/cleanup_pending 仍由既有任务继续收敛。
+   */
+  reopen(runId: string): void
   /** 终态登记；重复终态不重置既有任务状态。 */
   schedule(input: {
     runId: string
@@ -245,6 +252,12 @@ export class SqliteRunTerminalCleanupStore implements RunTerminalCleanupStore {
       .run(updatedAt, runId)
   }
 
+  reopen(runId: string): void {
+    this.db
+      .prepare("delete from run_terminal_cleanup where run_id = ? and state = 'done'")
+      .run(runId)
+  }
+
   schedule(input: {
     runId: string
     homePath: string
@@ -372,6 +385,10 @@ export class MemoryRunTerminalCleanupStore implements RunTerminalCleanupStore {
     if (task !== undefined && task.state !== 'done') {
       this.tasks.set(runId, { ...task, sessionReady: true })
     }
+  }
+
+  reopen(runId: string): void {
+    if (this.tasks.get(runId)?.state === 'done') this.tasks.delete(runId)
   }
 
   schedule(input: {

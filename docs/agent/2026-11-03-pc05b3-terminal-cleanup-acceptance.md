@@ -43,7 +43,7 @@ Hub 终态收敛用真实 Node 上行 `run.completed` 帧（`ingestNodeEvent`）
   - 共享 home：`isRuntimeHomeInUse` 为 true → `deferred` 且不删；false 后下一轮 `done`；
   - 删除失败（不可写目录）→ `cleanup_pending`/`attempts=1`，修复权限后重试成功；
   - 占用探测抛错、队列写失败 → 不拖垮定时器/终态收敛；`schedule_failed` 可见；
-  - 启动清扫忽略 `due_at`；`startTerminalCleanup(false)` 只清自有 home，共享 home 留到首次连接后的全量清扫；启动对账把“有 facts 无任务”的 Run 补登记（prepare 后崩溃窗口）；**首次连接对账不会清理仍在 prepare、尚未 spawn 的 run.start**（延迟 prepare 的并发回归）；队列写失败后同一进程下一轮 tick 补登记；拒绝路径的删除与队列写入同时失败时，内存保留 facts 并在下一轮补登记；真实 SQLite 队列跨 manager 重启保持 `done`，新 manager 用同一库清扫遗留任务；
+  - 启动清扫忽略 `due_at`；`startTerminalCleanup(false)` 只清自有 home，共享 home 留到首次连接后的全量清扫；启动对账把“有 facts 无任务”的 Run 补登记（prepare 后崩溃窗口）；**首次连接对账不会清理仍在 prepare、尚未 spawn 的 run.start**（延迟 prepare 的并发回归）；**启动对账跳过 command spool 中未 ack 的 run.start**，Hub 按同一 commandId 重投后仍能完成终态清理（防止启动清扫把任务写成 done、重投终态被 `on conflict do nothing` 吞掉）；已有 done 行在新 run.start 处理前被删除，重跑生命周期可重新登记；tick 遇到在途 run.start 只 deferred、不删已有副本；队列写失败后同一进程下一轮 tick 补登记；拒绝路径的删除与队列写入同时失败时，内存保留 facts 并在下一轮补登记；真实 SQLite 队列跨 manager 重启保持 `done`，新 manager 用同一库清扫遗留任务；
   - spawn 后下发失败：run.start accepted=false，但活跃 session 不被删；Runtime 退出后才 blocked 清理；
   - 重启后的 lost 快照带持久化 `dshSessionId`（Hub 才能沿血缘标 blocked）；
   - resume Run spawn 前失败：只删自己的 runtime-context，来源 home 的 session/spill 原样；
@@ -54,6 +54,7 @@ Hub 终态收敛用真实 Node 上行 `run.completed` 帧（`ingestNodeEvent`）
   - Run home 事实跨 SQLite 重开可取；`markSessionReady` 持久化 session id 并同步已存在的任务；重复终态帧不重置任务/dueAt/attempts；
   - 重复 `putFacts`（崩溃后重处理未 ack 的 run.start）不把已 ready 的 `session_ready`/`dsh_session_id` 降级；SQLite 与内存实现同语义；
   - `factsNotScheduled` 只返回有 facts 且没有任务行的 Run（SQLite LEFT JOIN 判据，done 任务也算已登记）；
+  - `reopen` 只删除 done 行，pending/deferred 任务保持原状（SQLite 与内存同语义）；
   - `due` 只发到期项、`notDone` 供启动清扫；
   - deferred/cleanup_pending/done 跨重启保持，`markFailure` 累计 attempts，done 不被失败迁移拉回。
 - `apps/node/tests/runtime-supervisor.spec.ts`
@@ -77,7 +78,7 @@ Hub 终态收敛用真实 Node 上行 `run.completed` 帧（`ingestNodeEvent`）
 
 | 门 | 命令 | 结果（2026-11-03） |
 |---|---|---|
-| Q0 | `pnpm check` | 222 个测试文件、2401 项通过（含 typecheck / boundaries / protocol generated / web；lint 0 error） |
+| Q0 | `pnpm check` | 222 个测试文件、2405 项通过（含 typecheck / boundaries / protocol generated / web；lint 0 error） |
 | Q1 | `pnpm test:unit`（含在 Q0） | 同上 |
 | Q2 | `pnpm test:integration` | 89 个文件、824 项通过（真实一次性 PostgreSQL） |
 | Q3 | `pnpm test:dsh-contract` | 22 个文件、88 项通过（真 boot 栈 + replay） |
@@ -125,10 +126,13 @@ Hub 终态收敛用真实 Node 上行 `run.completed` 帧（`ingestNodeEvent`）
 | M32 | 启动对无任务 facts 对账 | 删 `reconcileCleanupFacts` 调用 | 崩溃窗口用例必须红 | 红（runtime-context 未清） |
 | M33 | 队列写失败同进程重试 | 删 `retryUnscheduledCleanupTasks` 调用 | schedule 失败重试用例必须红 | 红（任务未补登记） |
 | M34 | lost 无 session 也传播血缘 | 去掉 `status === 'lost'` 条件 | DB lost 用例必须红 | 红（来源仍 full） |
-| M35 | 在途 run.start 不被对账清理 | 删 `startingRuns.add(runId)` | 延迟 prepare 并发用例必须红 | 红（runtime-context 被删、facts 被登记） |
+| M35 | 在途 run.start 不被对账清理 | 删 `startingRuns.set(runId, …)` 登记行 | 延迟 prepare 并发用例必须红 | 红（runtime-context 被删、facts 被登记） |
 | M36 | 重复 facts 不降级 ready | upsert 改回 `excluded.session_ready/dsh_session_id` | SQLite/内存 facts 用例必须红 | 红（sessionReady=false） |
 | M37 | 拒绝路径双失败内存保留 | 删 `unscheduledCleanupFacts.set` | 双失败重试用例必须红 | 红（下一轮 tick 0≠1） |
 | M38 | SQLite factsNotScheduled 判据 | `t.run_id is null` 改 `is not null` | SQLite 对账用例必须红 | 红（返回已登记 Run） |
+| M39 | 未 ack 的 run.start 不启动清理 | 删 `pendingRunStartReason` 的跳过分支 | 重投终态清理用例必须红 | 红（启动对账先生成 done，重投后副本残留） |
+| M40 | 重跑重开 done 任务 | 删 `terminalCleanupStore.reopen(runId)` | done 行重开用例必须红 | 红（终态登记 no-op，spill 未删） |
+| M41 | tick 跳过在途 run.start | 删 tick 的 `startingRuns.has` 分支 | tick 在途用例必须红 | 红（任务被 done、runtime-context 被删） |
 
 复跑命令：
 
@@ -154,7 +158,9 @@ pnpm test:security
 - **重启清扫与 lost 快照的时序**：启动只清自有 home（`startTerminalCleanup(false)`）；共享 home 延后到首次连接，`onReconnect()` 先补发带持久 `dshSessionId` 的 lost 快照，再执行全量清扫。Hub 若已因租约过期先写 lost，`setRunStatus` 对 `lost + 非空上下文` 即使尚无 session id 也按 fail-safe 传播血缘，避免来源永久停在 full；WebSocket 写入与 Hub 处理之间仍有一个很窄的“来源仍显示 full”窗口（设备刚重启、lastSeen 仍新鲜时 HTTP resume 可能被受理），但已不再先删后告知。彻底消除需要 Hub 侧等待快照 ack 再放行 resume。
 - **链式 resume 的 home 语义**：Node 的 home 取**直接父 Run**（`runtimeHomeFor(resumeOfRunId)`），而 DSH session 实际在根来源 home；grandchild 续跑可能装载不到。Hub 的血缘阻断按 `resume_from_run_id` 整棵树标 blocked，因此在链式 resume 本来失败时是过度保守；若链式 resume 被判成功，则可能 block 一个 session 仍存在的后代。修复方向是链式 resume 统一用根 home，或血缘阻断只覆盖同一 home。本切片未改既有 ADR-0009 home 推导。
 - **启动孤儿信号等待**：`recoverOrphans` 对 matched 孤儿发 SIGTERM/SIGKILL 后不等待内核回收就删 `active_runtime` 行并上报 lost；随后 tick 的 `isActive` 已为 false。严格意义的“观察到 exit”依赖进程已被信号终止的既有假设（`process.ts` 只发信号不等待）。这是 supervisor 的既有边界，本切片未改；后续可加 `waitForExit`/存活探测再触发清理。
-- **崩溃窗口**：facts 在下载/初始化前落盘；启动 `reconcileCleanupFacts` 会把“有 facts 无任务”的 Run 补登记，覆盖 prepare 后崩溃与 schedule 写失败。本进程内未完成的 `run.start` 用 `startingRuns` 标记，对账与 tick 都跳过，避免首次连接把“facts 已写、尚未 spawn”的在途 Run 当孤儿删掉；只有进程在 `putFacts` 自身写失败/崩溃于它之前才可能残留，而那时尚未下载正文；该极小窗口未做目录扫描。
+- **崩溃窗口**：facts 在下载/初始化前落盘；启动 `reconcileCleanupFacts` 会把“有 facts 无任务”的 Run 补登记，覆盖 prepare 后崩溃与 schedule 写失败。本进程内未完成的 `run.start` 用 `startingRuns` 标记，对账与 tick 都跳过，避免首次连接把“facts 已写、尚未 spawn”的在途 Run 当孤儿删掉。跨进程崩溃时，若 command spool 里的 run.start 仍未 ack，启动对账也会跳过（Hub outbox 会按同一 commandId 重投）；重投进入处理链前删除上一生命周期的 done 行，保证新的终态能重新登记。只有进程在 `putFacts` 自身写失败/崩溃于它之前才可能残留，而那时尚未下载正文；该极小窗口未做目录扫描。
+- **未 ack 命令的残留**：启动对账跳过未 ack 的 run.start 后，若 Hub 永久不重投（例如 Hub 状态也丢失），该 facts 不会被清理。这是“宁可保留、不可先删”的取舍；spool 读失败也按待重投处理，日志记 `reconcile_skipped`。
+- **并发重复 run.start（既有边界）**：Hub 极短时间内用同一 commandId 重投两次时，两条 handler 仍可能各自完整 prepare，先失败的一条在 catch 中清理副本，影响另一条；`supervisor.start` 也没有按 runId 的串行化。`startingRuns` 计数只保证清理保护不被提前摘掉，未关闭该既有竞态；需要按 runId 串行化命令处理，待后续 Issue 收口。
 - **共享 home 守卫**：只看 `active_runtime` 的活跃进程；同一 home 上已终态但尚未清理的其它 Run 不构成占用（各自任务按序执行）。
 - **full 的非 session 文件**：probe 未固定时保留除 `quarantine` 外的非 session 文件；ADR 的最终 resume 白名单清理与 `redacted` 重建未做。
 - **混合舰队能力位**：Hub 的 blocked 只基于 Hub DB 与 `project-context.v1`/`context-state.v1` 能力，没有独立的 “terminal-cleanup.v1” 派发门。只到 PC-05b-1/2 的旧 Node 仍可能接单：Hub 会显示 blocked，但旧 Node 不删 session/spill（spill 仍可能落 OS tmpdir）。升级窗口内这是已知不一致，后续应加能力位或由 Node 清理 ack 驱动读面。
@@ -171,7 +177,7 @@ pnpm test:security
 
 ## 6 证据边界
 
-- 清理日志只含 `runId`、`mode`、`attempts`、`errorName`（`node.context` / `action=node.context.terminal_cleanup` / `event=deferred|done|cleanup_pending|cleanup_pending_write_failed|schedule_failed|facts_read_failed|facts_write_failed|queue_read_failed`），不含正文、绝对路径、session id 或凭据。
+- 清理日志只含 `runId`、`mode`、`attempts`、`errorName`、`reason`（`node.context` / `action=node.context.terminal_cleanup` / `event=deferred|done|cleanup_pending|cleanup_pending_write_failed|schedule_failed|facts_read_failed|facts_write_failed|queue_read_failed|reconcile_skipped`），不含正文、绝对路径、session id 或凭据。
 - 队列 SQLite（`terminal-cleanup.sqlite`）含 `home_path` 等本机路径，落在 Node state dir，不进团队投影、不进日志、不进证据包。
 - spill 契约证据只读临时 `dshHomePath` 下的文件与字节数；测试结束删除临时 home/workspace。证据包若需展示，只放脱敏 marker/字节数，不放完整全文或绝对路径。
 - 删除判定用真实文件系统存在性、SQLite 状态迁移与 HTTP/DB 状态，不用截图或日志正则；固定 `dshSessionId` 在 Hub 集成测试中作为来源前置（与既有 run-resume 夹具同口径）。

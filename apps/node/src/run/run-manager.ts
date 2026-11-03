@@ -428,6 +428,9 @@ export class RunManager {
 
     this.startingRuns.set(runId, (this.startingRuns.get(runId) ?? 0) + 1)
     try {
+      // 启动对账可能在 Hub 按同一 commandId 重投之前已把崩溃残留清成 done；
+      // 重跑生命周期开始前清掉该行，否则新的终态会被 `do nothing` 吞掉。
+      this.terminalCleanupStore.reopen(runId)
       // ADR-0027 §6（PC-05b-3）：在任何下载/初始化之前先落 Run home 事实。
       // 进程若在 prepare 之后、spawn 之前崩溃，启动清扫仍能对账清理 runtime-context。
       const dshHomePath = this.deps.runtimeHomeFor(payload.resumeOfRunId ?? runId)
@@ -1841,6 +1844,23 @@ export class RunManager {
   }
 
   /**
+   * Hub outbox 在收到 ack 前会按同一 commandId 无限重投（packages/db/src/outbox.ts）。
+   * 崩溃进程留下的 facts 若仍对应未 ack 的 run.start，就不是孤儿：启动对账先清掉
+   * 会让重投后的终态撞上 done 行。spool 读失败也按“待重投”保守处理。
+   */
+  private pendingRunStartReason(
+    runId: string,
+  ): 'unacked_run_start' | 'spool_read_failed' | undefined {
+    try {
+      const spooled = this.deps.commandStore.latestForRun(runId, 'run.start')
+      if (spooled === undefined) return undefined
+      return this.deps.commandStore.isAcked(spooled.commandId) ? undefined : 'unacked_run_start'
+    } catch {
+      return 'spool_read_failed'
+    }
+  }
+
+  /**
    * 有 facts 但无任务（prepare 后崩溃、schedule 写失败）的启动对账：
    * 无活跃 Runtime 的 Run 补登记为立即到期，然后由正常 tick 清理。
    */
@@ -1861,6 +1881,17 @@ export class RunManager {
     for (const facts of factsRows) {
       if (!includeSharedHome && !facts.ownsHome) continue
       if (this.startingRuns.has(facts.runId)) continue
+      const pending = this.pendingRunStartReason(facts.runId)
+      if (pending !== undefined) {
+        this.log('info', 'terminal cleanup facts reconcile skipped; run.start pending', {
+          component: 'node.context',
+          action: 'node.context.terminal_cleanup',
+          event: 'reconcile_skipped',
+          reason: pending,
+          runId: facts.runId,
+        })
+        continue
+      }
       if (this.deps.supervisor.isActive(facts.runId)) continue
       try {
         this.terminalCleanupStore.schedule({
@@ -2046,6 +2077,14 @@ export class RunManager {
         // 正在处理的 run.start（facts 已写、尚未 spawn）不是孤儿，绝不清理。
         if (this.startingRuns.has(task.runId)) {
           this.terminalCleanupStore.markDeferred(task.runId, retryAt, now.toISOString())
+          this.log('info', 'run terminal cleanup deferred; run.start still starting', {
+            component: 'node.context',
+            action: 'node.context.terminal_cleanup',
+            event: 'deferred',
+            reason: 'starting_run',
+            runId: task.runId,
+            attempts: task.attempts,
+          })
           continue
         }
         // 本 Run 自己的 Runtime 还活着（终态帧已到、shutdown 宽限中）时绝不删：

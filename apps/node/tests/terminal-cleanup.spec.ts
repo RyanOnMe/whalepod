@@ -82,6 +82,21 @@ describe('SqliteRunTerminalCleanupStore', () => {
     })
   })
 
+  it('reopen 只删除 done 行，pending/deferred 任务保持原状', () => {
+    for (const store of [
+      new SqliteRunTerminalCleanupStore(dbPath),
+      new MemoryRunTerminalCleanupStore(),
+    ]) {
+      store.schedule(task('run-done'))
+      store.markDone('run-done', '2026-11-03T10:00:00.000Z')
+      store.schedule(task('run-pending'))
+      store.reopen('run-done')
+      store.reopen('run-pending')
+      expect(store.get('run-done')).toBeUndefined()
+      expect(store.get('run-pending')?.state).toBe('pending')
+    }
+  })
+
   it('markSessionReady 同步更新已存在的清理任务（ready 晚于任务登记）', () => {
     const store = new SqliteRunTerminalCleanupStore(dbPath)
     store.schedule({ ...task('run-3'), sessionReady: false })

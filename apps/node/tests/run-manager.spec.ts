@@ -3270,7 +3270,7 @@ describe('ADR-0027 §6（PC-05b-3）：终态清理队列与 blocked 清理', ()
     // facts 已落（启动对账可见），但 spawn 尚未发生：首次连接后的启动清扫
     // 绝不能把它当“上次进程遗留的孤儿”。
     expect(store.getFacts(RUN_ID)?.entryCount).toBe(1)
-    expect(h.manager.startTerminalCleanup(false)).toBe(0)
+    expect(h.manager.startTerminalCleanup()).toBe(0)
     expect(store.get(RUN_ID)).toBeUndefined()
     expect(existsSync(ctxDir)).toBe(true)
     expect(existsSync(join(home, 'spill'))).toBe(true)
@@ -3284,6 +3284,198 @@ describe('ADR-0027 §6（PC-05b-3）：终态清理队列与 blocked 清理', ()
         accepted: true,
       },
     )
+    expect(existsSync(ctxDir)).toBe(true)
+  })
+
+  it('启动对账遇到未 ack 的 run.start 不清理：Hub 按同一 commandId 重投后仍能终态清理', async () => {
+    const home = homeFor()
+    await seedHome(home)
+    const body = '# 项目上下文\n'
+    const entry: RunProjectContextManifestEntry = {
+      entryId: '01905f7c-0000-7000-8000-000000000957',
+      kind: 'decision',
+      title: '预算结论',
+      revisionId: null,
+      businessRef: 'taskSpec:01905f7c-0000-7000-8000-000000000201',
+      digest: createHash('sha256').update(body).digest('hex'),
+      byteSize: Buffer.byteLength(body, 'utf8'),
+      snapshotAuthorizationGeneration: null,
+    }
+    const snapshotId = '01905f7c-0000-7000-8000-000000000967'
+    const snapshotDigest = createHash('sha256').update('snapshot-pc05b3-unacked').digest('hex')
+    const headerText = '[project-context:0123456789abcdef]'
+    const headerDigest = createHash('sha256').update(headerText).digest('hex')
+    const ctxDir = join(root, 'runtime-context', RUN_ID)
+    await mkdir(ctxDir, { recursive: true })
+    await writeFile(join(ctxDir, entry.entryId), body)
+    const store = new MemoryRunTerminalCleanupStore()
+    store.putFacts(
+      {
+        runId: RUN_ID,
+        homePath: home,
+        entryCount: 1,
+        ownsHome: true,
+        sessionReady: false,
+        dshSessionId: null,
+      },
+      '2026-11-03T00:00:00.000Z',
+    )
+    const h = await makeHarness({
+      managerDeps: {
+        terminalCleanupStore: store,
+        runtimeContextDirFor: () => ctxDir,
+        prepareProjectContext: async () => ({
+          runId: RUN_ID,
+          dir: ctxDir,
+          snapshotId,
+          snapshotDigest,
+          headerText,
+          headerDigest,
+          entries: [entry],
+        }),
+      },
+    })
+    const frame = runStartFrame(h.workspaceId, {
+      projectContext: {
+        snapshotId,
+        digest: snapshotDigest,
+        headerText,
+        headerDigest,
+        manifest: [entry],
+      },
+    })
+    // 上一进程在 prepare 中崩溃：command 仍在 spool、未 ack；Hub outbox 会重投。
+    h.commandStore.record({
+      commandId: COMMAND_ID,
+      runId: RUN_ID,
+      type: 'run.start',
+      payload: (frame as { payload: unknown }).payload,
+    })
+
+    expect(h.manager.startTerminalCleanup()).toBe(0)
+    expect(store.get(RUN_ID)).toBeUndefined()
+    expect(existsSync(ctxDir)).toBe(true)
+    expect(existsSync(join(home, 'spill'))).toBe(true)
+
+    await h.manager.handleFrame(frame)
+    expect(h.runtimes).toHaveLength(1)
+    h.runtimes[0]!.emitStdout(terminatedFrame())
+    h.runtimes[0]!.emitExit(0, null)
+    await waitForValue(
+      () => (store.get(RUN_ID)?.state === 'done' ? true : undefined),
+      '重投后的 Run 未完成终态清理（done 行毒化）',
+    )
+    expect(existsSync(ctxDir)).toBe(false)
+  })
+
+  it('已有 done 清理行的 Run 重新收到 run.start 时重开任务', async () => {
+    const home = homeFor()
+    await seedHome(home)
+    const store = new MemoryRunTerminalCleanupStore()
+    store.schedule({
+      runId: RUN_ID,
+      homePath: home,
+      entryCount: 0,
+      ownsHome: true,
+      sessionReady: true,
+      runTerminalAt: '2026-11-02T00:00:00.000Z',
+      dueAt: '2026-11-02T00:00:00.000Z',
+    })
+    store.markDone(RUN_ID, '2026-11-02T00:00:01.000Z')
+    const h = await makeHarness({ managerDeps: { terminalCleanupStore: store } })
+
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    // 上一生命周期的 done 行必须让位给这次 run.start，否则终态登记永远 no-op。
+    expect(store.get(RUN_ID)).toBeUndefined()
+    h.runtimes[0]!.emitStdout(terminatedFrame())
+    h.runtimes[0]!.emitExit(0, null)
+    await waitForValue(
+      () => (store.get(RUN_ID)?.state === 'done' ? true : undefined),
+      '重开的清理任务未完成',
+    )
+    expect(existsSync(join(home, 'spill'))).toBe(false)
+    expect(existsSync(join(home, 'sessions'))).toBe(true)
+  })
+
+  it('tick 遇到仍在 prepare 的 run.start 只 deferred，不删已有任务副本', async () => {
+    const home = homeFor()
+    await seedHome(home)
+    const body = '# 项目上下文\n'
+    const entry: RunProjectContextManifestEntry = {
+      entryId: '01905f7c-0000-7000-8000-000000000958',
+      kind: 'decision',
+      title: '预算结论',
+      revisionId: null,
+      businessRef: 'taskSpec:01905f7c-0000-7000-8000-000000000201',
+      digest: createHash('sha256').update(body).digest('hex'),
+      byteSize: Buffer.byteLength(body, 'utf8'),
+      snapshotAuthorizationGeneration: null,
+    }
+    const snapshotId = '01905f7c-0000-7000-8000-000000000968'
+    const snapshotDigest = createHash('sha256').update('snapshot-pc05b3-tick').digest('hex')
+    const headerText = '[project-context:0123456789abcdef]'
+    const headerDigest = createHash('sha256').update(headerText).digest('hex')
+    const ctxDir = join(root, 'runtime-context', RUN_ID)
+    await mkdir(ctxDir, { recursive: true })
+    await writeFile(join(ctxDir, entry.entryId), body)
+    const store = new MemoryRunTerminalCleanupStore()
+    store.schedule({
+      runId: RUN_ID,
+      homePath: home,
+      entryCount: 1,
+      ownsHome: true,
+      sessionReady: false,
+      runTerminalAt: '2026-11-02T00:00:00.000Z',
+      dueAt: '2026-11-02T00:00:00.000Z',
+    })
+    let releasePrepare!: () => void
+    const prepareGate = new Promise<void>((resolve) => {
+      releasePrepare = resolve
+    })
+    let prepareStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      prepareStarted = resolve
+    })
+    const h = await makeHarness({
+      managerDeps: {
+        terminalCleanupStore: store,
+        terminalCleanupRetryMs: 3_600_000,
+        runtimeContextDirFor: () => ctxDir,
+        prepareProjectContext: async () => {
+          prepareStarted()
+          await prepareGate
+          return {
+            runId: RUN_ID,
+            dir: ctxDir,
+            snapshotId,
+            snapshotDigest,
+            headerText,
+            headerDigest,
+            entries: [entry],
+          }
+        },
+      },
+    })
+    const starting = h.manager.handleFrame(
+      runStartFrame(h.workspaceId, {
+        projectContext: {
+          snapshotId,
+          digest: snapshotDigest,
+          headerText,
+          headerDigest,
+          manifest: [entry],
+        },
+      }),
+    )
+    await started
+    expect(h.manager.runTerminalCleanupTick()).toBe(0)
+    expect(store.get(RUN_ID)).toMatchObject({ state: 'deferred' })
+    expect(existsSync(ctxDir)).toBe(true)
+    expect(existsSync(join(home, 'spill'))).toBe(true)
+
+    releasePrepare()
+    await starting
+    expect(h.runtimes).toHaveLength(1)
     expect(existsSync(ctxDir)).toBe(true)
   })
 
