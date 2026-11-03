@@ -1,14 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { z } from 'zod'
 import type { Database } from '@whalepod/db'
-import {
-  getEnabledMember,
-  getProject,
-  getRun,
-  getRunProjectContextByRun,
-  getTeam,
-  listRunProjectContextEntries,
-} from '@whalepod/db'
+import { getEnabledMember, getProject, getRun, getTeam } from '@whalepod/db'
 import { CorrectContextEntryRequestSchema } from '@whalepod/protocol'
 import { audit } from '../shared/audit.js'
 import { ApiError } from '../shared/http-error.js'
@@ -17,7 +10,7 @@ import type { RequireActor } from '../auth/session.js'
 import { authenticateDevice } from '../plugin/pack-resolver.js'
 import { correctContextEntry } from './commands.js'
 import { loadProjectContext, parseContextCursor } from './queries.js'
-import { buildRunProjectContextBundle, toRunProjectContextView } from './run-snapshot.js'
+import { buildRunProjectContextBundle, buildRunProjectContextView } from './run-snapshot.js'
 import { ERROR_HTTP_STATUS, errorCodeOf } from '../run/routes.js'
 
 export interface ContextRouteDeps {
@@ -121,12 +114,11 @@ export function registerContextRoutes(app: FastifyInstance, deps: ContextRouteDe
     ) {
       throw new ApiError(403, 'FORBIDDEN', 'only team members can read run project context')
     }
-    const snapshot = await getRunProjectContextByRun(deps.database.db, runId)
-    if (snapshot === undefined) {
+    const view = await buildRunProjectContextView(deps.database, runId)
+    if (view === undefined) {
       throw new ApiError(404, 'NOT_FOUND', 'run has no project context snapshot')
     }
-    const entries = await listRunProjectContextEntries(deps.database.db, snapshot.id)
-    return noStore(reply).send({ ok: true, data: toRunProjectContextView(snapshot, entries) })
+    return noStore(reply).send({ ok: true, data: view })
   })
 
   // ADR-0027 §3：Node 受控下载——只对承载该 Run 的设备开放（不可枚举折叠为 404）。

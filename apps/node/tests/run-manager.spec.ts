@@ -12,19 +12,23 @@
  * - Runtime 协议外输出 → 当前 Run 合成 run.failed（§11 fail-closed）。
  */
 import { randomUUID, createHash } from 'node:crypto'
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type {
   NodeDownstream,
   ProjectedRunEvent,
+  RunContextStateWire,
+  RunContextStateEntry,
   RunProjectContextManifestEntry,
   RunWorkInputReceipt,
   RuntimeCommand,
   WorkInputManifestEntry,
 } from '@whalepod/protocol'
+import { contextStateDigestInput } from '@whalepod/protocol'
 import { MemoryContextReceiptSeqStore } from '../src/context/receipt-seq-store.js'
+import { MemoryContextStateStore } from '../src/context/state-store.js'
 import {
   MemoryWorkInputReceiptStore,
   type WorkInputReceiptStore,
@@ -1305,6 +1309,7 @@ describe('ADR-0027：项目上下文交付与两级回执', () => {
     const h = await makeHarness({
       managerDeps: {
         prepareProjectContext: async () => ({
+          runId,
           dir: entriesDir,
           snapshotId: '01905f7c-0000-7000-8000-000000000961',
           snapshotDigest,
@@ -1465,6 +1470,309 @@ describe('ADR-0027：项目上下文交付与两级回执', () => {
       () => (cleaned.includes(runId) ? true : undefined),
       'run.start 拒绝路径未清理 runtime-context 目录',
     )
+  })
+
+  function contextFixture() {
+    const body = '# 项目上下文\n预算结论：8 万\n'
+    const entryDigest = createHash('sha256').update(body).digest('hex')
+    const snapshotDigest = createHash('sha256').update('snapshot-pc05b').digest('hex')
+    const entry: RunProjectContextManifestEntry = {
+      entryId: '01905f7c-0000-7000-8000-000000000952',
+      kind: 'decision',
+      title: '预算结论',
+      revisionId: null,
+      businessRef: 'taskSpec:01905f7c-0000-7000-8000-000000000202',
+      digest: entryDigest,
+      byteSize: Buffer.byteLength(body, 'utf8'),
+      snapshotAuthorizationGeneration: null,
+    }
+    const headerText = '[project-context:0123456789abcdef]\n- 预算结论'
+    return {
+      body,
+      entry,
+      snapshotId: '01905f7c-0000-7000-8000-000000000962',
+      snapshotDigest,
+      headerText,
+      headerDigest: createHash('sha256').update(headerText).digest('hex'),
+      entriesDir: join(root, 'runtime-context', RUN_ID),
+      start: {
+        snapshotId: '01905f7c-0000-7000-8000-000000000962',
+        digest: snapshotDigest,
+        headerText,
+        headerDigest: createHash('sha256').update(headerText).digest('hex'),
+        manifest: [entry],
+      },
+    }
+  }
+
+  function contextState(
+    fixture: ReturnType<typeof contextFixture>,
+    entries: RunContextStateEntry[],
+    stateVersion = 1,
+  ): RunContextStateWire {
+    return {
+      commandId: randomUUID(),
+      runId: RUN_ID,
+      snapshotId: fixture.snapshotId,
+      stateVersion,
+      stateDigest: createHash('sha256')
+        .update(contextStateDigestInput(stateVersion, entries))
+        .digest('hex'),
+      entries,
+      generatedAt: new Date().toISOString(),
+    }
+  }
+
+  async function preparedHarness(fixture: ReturnType<typeof contextFixture>) {
+    await mkdir(fixture.entriesDir, { recursive: true })
+    await writeFile(join(fixture.entriesDir, fixture.entry.entryId), fixture.body)
+    const store = new MemoryContextStateStore()
+    const h = await makeHarness({
+      managerDeps: {
+        prepareProjectContext: async () => ({
+          runId: RUN_ID,
+          dir: fixture.entriesDir,
+          snapshotId: fixture.snapshotId,
+          snapshotDigest: fixture.snapshotDigest,
+          headerText: fixture.headerText,
+          headerDigest: fixture.headerDigest,
+          entries: [fixture.entry],
+        }),
+        contextStateStore: store,
+      },
+    })
+    await h.manager.handleFrame(runStartFrame(h.workspaceId, { projectContext: fixture.start }))
+    return { h, store }
+  }
+
+  it('writes the initial frozen state file, then deletes unread revoked copies and acks', async () => {
+    const fixture = contextFixture()
+    const { h } = await preparedHarness(fixture)
+    const initial = JSON.parse(await readFile(join(fixture.entriesDir, 'state.json'), 'utf8')) as {
+      stateVersion: number
+      paused: boolean
+      entries: RunContextStateEntry[]
+    }
+    expect(initial.stateVersion).toBe(0)
+    expect(initial.paused).toBe(false)
+    expect(initial.entries[0]).toMatchObject({ entryId: fixture.entry.entryId, state: 'frozen' })
+
+    const revoked: RunContextStateEntry[] = [
+      {
+        entryId: fixture.entry.entryId,
+        kind: 'observation',
+        state: 'retracted',
+        currentAuthorizationGeneration: null,
+        reason: 'entry_corrected',
+      },
+    ]
+    await h.manager.handleFrame({
+      type: 'run.context_state',
+      payload: contextState(fixture, revoked),
+    } as NodeDownstream)
+
+    await expect(readFile(join(fixture.entriesDir, fixture.entry.entryId))).rejects.toThrow()
+    const applied = JSON.parse(await readFile(join(fixture.entriesDir, 'state.json'), 'utf8')) as {
+      stateVersion: number
+      entries: RunContextStateEntry[]
+    }
+    expect(applied.stateVersion).toBe(1)
+    expect(applied.entries[0]?.state).toBe('retracted')
+    const ack = h.sentFrames().findLast((frame) => frame.type === 'context.state_ack')
+    expect(ack?.payload).toMatchObject({ stateVersion: 1, failedEntryIds: [] })
+  })
+
+  it('deletes copies revoked before run.start when the bundle is later prepared', async () => {
+    const fixture = contextFixture()
+    await mkdir(fixture.entriesDir, { recursive: true })
+    await writeFile(join(fixture.entriesDir, fixture.entry.entryId), fixture.body)
+    const store = new MemoryContextStateStore()
+    const h = await makeHarness({
+      managerDeps: {
+        prepareProjectContext: async () => ({
+          runId: RUN_ID,
+          dir: fixture.entriesDir,
+          snapshotId: fixture.snapshotId,
+          snapshotDigest: fixture.snapshotDigest,
+          headerText: fixture.headerText,
+          headerDigest: fixture.headerDigest,
+          entries: [fixture.entry],
+        }),
+        contextStateStore: store,
+      },
+    })
+    // 撤权帧先于 run.start 到达：此时还没有 prepared，状态只落库。
+    await h.manager.handleFrame({
+      type: 'run.context_state',
+      payload: contextState(fixture, [
+        {
+          entryId: fixture.entry.entryId,
+          kind: 'observation',
+          state: 'retracted',
+          currentAuthorizationGeneration: null,
+          reason: 'entry_corrected',
+        },
+      ]),
+    } as NodeDownstream)
+    expect(store.get(RUN_ID)?.stateVersion).toBe(1)
+
+    await h.manager.handleFrame(runStartFrame(h.workspaceId, { projectContext: fixture.start }))
+    await expect(readFile(join(fixture.entriesDir, fixture.entry.entryId))).rejects.toThrow()
+    const stateFile = JSON.parse(
+      await readFile(join(fixture.entriesDir, 'state.json'), 'utf8'),
+    ) as { entries: RunContextStateEntry[]; paused: boolean }
+    expect(stateFile.entries[0]?.state).toBe('retracted')
+    expect(stateFile.paused).toBe(false)
+  })
+
+  it('rejects an older full state without deleting or downgrading the applied state', async () => {
+    const fixture = contextFixture()
+    const { h, store } = await preparedHarness(fixture)
+    const revoked: RunContextStateEntry[] = [
+      {
+        entryId: fixture.entry.entryId,
+        kind: 'observation',
+        state: 'retracted',
+        currentAuthorizationGeneration: null,
+        reason: 'entry_corrected',
+      },
+    ]
+    await h.manager.handleFrame({
+      type: 'run.context_state',
+      payload: contextState(fixture, revoked, 2),
+    } as NodeDownstream)
+    const stale = contextState(
+      fixture,
+      [
+        {
+          entryId: fixture.entry.entryId,
+          kind: 'observation',
+          state: 'frozen',
+          currentAuthorizationGeneration: null,
+          reason: null,
+        },
+      ],
+      1,
+    )
+    await h.manager.handleFrame({ type: 'run.context_state', payload: stale } as NodeDownstream)
+    expect(store.get(RUN_ID)?.stateVersion).toBe(2)
+    await expect(readFile(join(fixture.entriesDir, fixture.entry.entryId))).rejects.toThrow()
+    const ack = h.sentFrames().findLast((frame) => frame.type === 'context.state_ack')
+    expect(ack?.payload).toMatchObject({ stateVersion: 2 })
+  })
+
+  it('rejects a full state whose digest does not match its entries', async () => {
+    const fixture = contextFixture()
+    const { h } = await preparedHarness(fixture)
+    await h.manager.handleFrame({
+      type: 'run.context_state',
+      payload: {
+        ...contextState(fixture, [
+          {
+            entryId: fixture.entry.entryId,
+            kind: 'observation',
+            state: 'retracted',
+            currentAuthorizationGeneration: null,
+            reason: 'entry_corrected',
+          },
+        ]),
+        stateDigest: 'c'.repeat(64),
+      },
+    } as NodeDownstream)
+    await expect(readFile(join(fixture.entriesDir, fixture.entry.entryId))).resolves.toBeDefined()
+    const ack = h.sentFrames().findLast((frame) => frame.type === 'command.ack')
+    expect(ack?.payload).toMatchObject({ accepted: false })
+  })
+
+  it('keeps a read copy when the entry is revoked', async () => {
+    const fixture = contextFixture()
+    const { h, store } = await preparedHarness(fixture)
+    store.markRead(RUN_ID, fixture.snapshotId, fixture.entry.entryId)
+    const revoked: RunContextStateEntry[] = [
+      {
+        entryId: fixture.entry.entryId,
+        kind: 'observation',
+        state: 'source_tombstoned',
+        currentAuthorizationGeneration: '2',
+        reason: 'source_revoked',
+      },
+    ]
+    await h.manager.handleFrame({
+      type: 'run.context_state',
+      payload: contextState(fixture, revoked),
+    } as NodeDownstream)
+    await expect(readFile(join(fixture.entriesDir, fixture.entry.entryId))).resolves.toBeDefined()
+  })
+
+  it('quarantines deletion failures and fails closed when quarantine also fails', async () => {
+    const fixture = contextFixture()
+    const { h } = await preparedHarness(fixture)
+    // 条目变成目录：unlink 失败；quarantine 目标被普通文件占住：rename 也失败。
+    await rm(join(fixture.entriesDir, fixture.entry.entryId))
+    await mkdir(join(fixture.entriesDir, fixture.entry.entryId))
+    await mkdir(join(root, 'runtime-home', RUN_ID), { recursive: true })
+    await writeFile(join(root, 'runtime-home', RUN_ID, 'quarantine'), 'blocked')
+    const revoked: RunContextStateEntry[] = [
+      {
+        entryId: fixture.entry.entryId,
+        kind: 'observation',
+        state: 'retracted',
+        currentAuthorizationGeneration: null,
+        reason: 'entry_corrected',
+      },
+    ]
+    await h.manager.handleFrame({
+      type: 'run.context_state',
+      payload: contextState(fixture, revoked),
+    } as NodeDownstream)
+    const applied = JSON.parse(await readFile(join(fixture.entriesDir, 'state.json'), 'utf8')) as {
+      paused: boolean
+    }
+    expect(applied.paused).toBe(true)
+    const ack = h.sentFrames().findLast((frame) => frame.type === 'context.state_ack')
+    expect(ack?.payload['failedEntryIds']).toEqual([fixture.entry.entryId])
+  })
+
+  it('requests a full state pull on heartbeat mismatch and accepts a matching heartbeat', async () => {
+    const fixture = contextFixture()
+    const { h } = await preparedHarness(fixture)
+    await h.manager.handleFrame({
+      type: 'context.state_sync',
+      payload: {
+        commandId: randomUUID(),
+        runId: RUN_ID,
+        snapshotId: fixture.snapshotId,
+        stateVersion: 1,
+        stateDigest: 'b'.repeat(64),
+        at: new Date().toISOString(),
+      },
+    } as NodeDownstream)
+    const pull = h.sentFrames().findLast((frame) => frame.type === 'context.state_pull')
+    expect(pull?.payload).toMatchObject({ knownStateVersion: 0 })
+
+    const frozen: RunContextStateEntry[] = [
+      {
+        entryId: fixture.entry.entryId,
+        kind: 'observation',
+        state: 'frozen',
+        currentAuthorizationGeneration: null,
+        reason: null,
+      },
+    ]
+    const state = contextState(fixture, frozen)
+    await h.manager.handleFrame({ type: 'run.context_state', payload: state } as NodeDownstream)
+    await h.manager.handleFrame({
+      type: 'context.state_sync',
+      payload: {
+        commandId: randomUUID(),
+        runId: RUN_ID,
+        snapshotId: fixture.snapshotId,
+        stateVersion: state.stateVersion,
+        stateDigest: state.stateDigest,
+        at: new Date().toISOString(),
+      },
+    } as NodeDownstream)
+    expect(h.sentFrames().filter((frame) => frame.type === 'context.state_pull')).toHaveLength(1)
   })
 })
 

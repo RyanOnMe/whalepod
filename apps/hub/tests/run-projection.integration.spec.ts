@@ -473,7 +473,7 @@ describe('P1-13 run projection（Hub 侧）', () => {
         supportedProtocolVersions: [1],
         dshDistributionVersion: '0.1.0-rc.8',
         pluginPackDigests: [],
-        contextCapabilities: ['project-context.v1'],
+        contextCapabilities: ['project-context.v1', 'context-state.v1'],
       }),
     )
     await waitForHelloLanded(deviceId)
@@ -572,7 +572,7 @@ describe('P1-13 run projection（Hub 侧）', () => {
         supportedProtocolVersions: [1],
         dshDistributionVersion: '0.1.0-rc.8',
         pluginPackDigests: [],
-        contextCapabilities: ['project-context.v1'],
+        contextCapabilities: ['project-context.v1', 'context-state.v1'],
       }),
     )
     await waitForHelloLanded(deviceId)

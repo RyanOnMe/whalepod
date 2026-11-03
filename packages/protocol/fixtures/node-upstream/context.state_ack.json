@@ -1,0 +1,14 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a034",
+  "type": "context.state_ack",
+  "sentAt": "2026-01-05T09:02:22Z",
+  "payload": {
+    "runId": "01905f7c-0000-7000-8000-000000000301",
+    "snapshotId": "01905f7c-0000-7000-8000-000000000402",
+    "stateVersion": 2,
+    "stateDigest": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+    "appliedAt": "2026-01-05T09:02:22Z",
+    "failedEntryIds": []
+  }
+}

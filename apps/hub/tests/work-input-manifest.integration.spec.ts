@@ -88,7 +88,9 @@ async function seedRunDependencies(database: Database, ownerUserId: string): Pro
     nodeVersion: '24.12.0',
     nodeAppVersion: '0.1.0',
     tokenHash: Buffer.from(hashToken(DEVICE_TOKEN)),
-    capabilities: { contextCapabilities: ['project-context.v1', 'work-input.v1'] },
+    capabilities: {
+      contextCapabilities: ['project-context.v1', 'context-state.v1', 'work-input.v1'],
+    },
     dshDistributionVersion: '0.1.0-rc.8',
     lastSeenAt: new Date(),
   })
@@ -2368,7 +2370,7 @@ describe('RD-02a-2a run work input manifest', () => {
     // removeWhen：能力协商提供设备能力更新夹具后删除该直写。
     await database.db
       .update(schema.devices)
-      .set({ capabilities: { contextCapabilities: ['project-context.v1'] } })
+      .set({ capabilities: { contextCapabilities: ['project-context.v1', 'context-state.v1'] } })
       .where(eq(schema.devices.id, seed.deviceId))
     const denied = await startRun(ctx, alice, taskId, seed, [item.id as string])
     expect(denied.statusCode, denied.body).toBe(409)

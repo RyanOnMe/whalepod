@@ -1,0 +1,14 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a032",
+  "type": "context.state_sync",
+  "sentAt": "2026-01-05T09:02:20Z",
+  "payload": {
+    "commandId": "01905f7c-0000-7000-8000-000000000b32",
+    "runId": "01905f7c-0000-7000-8000-000000000301",
+    "snapshotId": "01905f7c-0000-7000-8000-000000000402",
+    "stateVersion": 2,
+    "stateDigest": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+    "at": "2026-01-05T09:02:20Z"
+  }
+}

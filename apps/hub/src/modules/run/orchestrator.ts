@@ -48,6 +48,8 @@ import {
 } from '@whalepod/db'
 import type { ClaimedCommand } from '@whalepod/db'
 import type {
+  ContextStateAck,
+  ContextStatePull,
   ErrorCode,
   ProjectedRunEvent,
   RunContextReceipt,
@@ -76,6 +78,14 @@ import {
   verifyRunProjectContext,
 } from '../context/run-snapshot.js'
 import { recordRunContextReceipt } from '../context/receipts.js'
+import {
+  enqueueRunContextState,
+  enqueueRunContextStatesForDevice,
+  handleRunContextStatePull,
+  recordRunContextStateAck,
+  refreshRunContextState,
+  type RunContextStateDeps,
+} from '../context/state.js'
 import { recordRunWorkInputReceipt } from '../work/receipts.js'
 import type { ApprovalView, RunView } from './queries.js'
 import { toApprovalView, toRunView } from './queries.js'
@@ -113,6 +123,7 @@ export class RunOrchestrator {
   private readonly warnFn: (message: string, context: Record<string, unknown>) => void
   private readonly logFn: ContextEntryObserver
   private readonly contextLogFn: (action: string, fields: Record<string, unknown>) => void
+  private readonly contextStateDeps: RunContextStateDeps
   /** deviceId → 最近心跳；reconciler 据此判断「Node 在线但已没有该 Run」。 */
   readonly deviceActivity = new Map<string, DeviceActivity>()
 
@@ -126,6 +137,25 @@ export class RunOrchestrator {
     this.warnFn = deps.warn ?? (() => {})
     this.logFn = deps.log ?? (() => {})
     this.contextLogFn = deps.contextLog ?? (() => {})
+    this.contextStateDeps = {
+      database: this.database,
+      outbox: this.outbox,
+      now: this.nowFn,
+      log: (message, context) => this.warnFn(message, context),
+    }
+  }
+
+  /** Node 重连/hello：下发该设备所有活跃 Run 的完整上下文状态（不只增量）。 */
+  async onDeviceHello(deviceId: string): Promise<void> {
+    try {
+      await enqueueRunContextStatesForDevice(this.contextStateDeps, deviceId)
+    } catch (error) {
+      this.warnFn('context state sync on hello failed', {
+        component: 'hub.context',
+        deviceId,
+        errorName: error instanceof Error ? error.name : 'unknown',
+      })
+    }
   }
 
   private contextLog(action: string, fields: Record<string, unknown>): void {
@@ -506,6 +536,12 @@ export class RunOrchestrator {
       device,
       projectContext.start === undefined ? 0 : projectContext.start.manifest.length,
     )
+    if (projectContext.start !== undefined) {
+      // ADR-0027 §6（PC-05b）：创建事务内派生首版状态（全 frozen）并把完整状态
+      // 入队；Node 早于 run.start 收到也只会持久化，等下载完成后再应用。
+      const derivedState = await refreshRunContextState(tx, projectContext.snapshotId, now)
+      await enqueueRunContextState(tx, this.contextStateDeps, derivedState.state)
+    }
     assertWorkInputCapability(device, workInputs?.items.length ?? 0)
     const runStartPayload = RunStartSchema.shape.payload.parse({
       commandId,
@@ -754,6 +790,12 @@ export class RunOrchestrator {
       case 'run.work_input_receipt':
         await this.handleRunWorkInputReceipt(device, frame.payload, now)
         return
+      case 'context.state_pull':
+        await this.handleContextStatePull(device, frame.payload, now)
+        return
+      case 'context.state_ack':
+        await this.handleContextStateAck(device, frame.payload, now)
+        return
       case 'node.heartbeat':
         if (frame.payload.deviceId !== device.deviceId) {
           throw new RunCommandError('FORBIDDEN', 'heartbeat device does not match the connection')
@@ -917,6 +959,40 @@ export class RunOrchestrator {
       snapshotId: receipt.snapshotId,
       receiptSeq: receipt.receiptSeq,
       reason: outcome.reason,
+    })
+  }
+
+  /** ADR-0027 §6（PC-05b）：Node 摘要不一致时拉取完整状态；归属不符即忽略。 */
+  private async handleContextStatePull(
+    device: AuthenticatedDevice,
+    pull: ContextStatePull,
+    now: Date,
+  ): Promise<void> {
+    const enqueued = await handleRunContextStatePull(this.contextStateDeps, device.deviceId, pull)
+    this.contextLog('context.state_pull', {
+      component: 'hub.context',
+      runId: pull.runId,
+      snapshotId: pull.snapshotId,
+      knownStateVersion: pull.knownStateVersion,
+      enqueued,
+      at: now.toISOString(),
+    })
+  }
+
+  /** ADR-0027 §6（PC-05b）：Node 应用完整状态后的回执；未知/越权版本只丢弃。 */
+  private async handleContextStateAck(
+    device: AuthenticatedDevice,
+    ack: ContextStateAck,
+    now: Date,
+  ): Promise<void> {
+    const accepted = await recordRunContextStateAck(this.contextStateDeps, device.deviceId, ack)
+    this.contextLog(accepted ? 'context.state_acked' : 'context.state_ack_invalid', {
+      component: 'hub.context',
+      runId: ack.runId,
+      snapshotId: ack.snapshotId,
+      stateVersion: ack.stateVersion,
+      failed: ack.failedEntryIds.length,
+      at: now.toISOString(),
     })
   }
 

@@ -30,6 +30,7 @@ export class ProjectContextError extends Error {
 }
 
 export interface PreparedProjectContext {
+  readonly runId: string
   /** 本地只读副本目录（本地 wire 绝对路径，红线同 artifactInputsDir）。 */
   readonly dir: string
   readonly snapshotId: string
@@ -162,6 +163,7 @@ export class ProjectContextDownloader {
         count: bundle.entries.length,
       })
       return {
+        runId,
         dir,
         snapshotId: manifest.snapshotId,
         snapshotDigest: manifest.digest,

@@ -257,7 +257,9 @@ describe('handoff delivery & receipt (#380)', () => {
       content: { narrative: { interfaces: [{ text: 'GET /orders contract only' }] } },
     })
     const rows = await database.db.select().from(schema.dispatchOutbox)
-    const dispatch = rows.find((row) => JSON.stringify(row.payload).includes(created.id))
+    const dispatch = rows.find(
+      (row) => row.type === 'run.start' && JSON.stringify(row.payload).includes(created.id),
+    )
     expect(JSON.stringify(dispatch?.payload)).toContain('GET /orders contract only')
     expect(JSON.stringify(dispatch?.payload)).toContain('按接口文字实现')
   })
@@ -671,8 +673,8 @@ describe('handoff delivery & receipt (#380)', () => {
       differences: null,
       content: { narrative: { evidence: [{ text: '接口约定已发布', verified: true }] } },
     })
-    const dispatch = (await database.db.select().from(schema.dispatchOutbox)).find((row) =>
-      JSON.stringify(row.payload).includes(created.id),
+    const dispatch = (await database.db.select().from(schema.dispatchOutbox)).find(
+      (row) => row.type === 'run.start' && JSON.stringify(row.payload).includes(created.id),
     )
     expect(JSON.stringify(dispatch?.payload)).toContain('先做订单列表')
     expect(JSON.stringify(dispatch?.payload)).toContain('接口约定已发布')

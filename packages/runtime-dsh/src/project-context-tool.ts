@@ -13,7 +13,12 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
-import type { RunProjectContextManifestEntry } from '@whalepod/protocol'
+import {
+  RUN_CONTEXT_STATE_FILE,
+  RUN_CONTEXT_STATE_SYNC_MAX_AGE_MS,
+  RuntimeContextLocalStateSchema,
+  type RunProjectContextManifestEntry,
+} from '@whalepod/protocol'
 
 export const READ_PROJECT_CONTEXT_TOOL = 'read_project_context'
 
@@ -45,6 +50,7 @@ export function createReadProjectContextTool(
   entries: readonly RunProjectContextManifestEntry[],
   entriesDir: string,
   onRead: (fact: ProjectContextReadFact) => void,
+  expected?: { readonly runId: string; readonly snapshotId: string },
 ): ToolDefinition {
   const byId = new Map(entries.map((entry) => [entry.entryId, entry]))
   return defineTool({
@@ -100,6 +106,38 @@ export function createReadProjectContextTool(
       const entry = byId.get(args.entryId)
       if (entry === undefined) {
         throw new Error(`unknown project context entry: ${args.entryId}`)
+      }
+      // ADR-0027 §6（PC-05b）：每次读取先校验 Node 写入的状态文件。缺失、过期、
+      // paused 或条目非 frozen 一律 fail-closed；不回退旧缓存/本地文件。
+      let localState: ReturnType<typeof RuntimeContextLocalStateSchema.parse>
+      try {
+        localState = RuntimeContextLocalStateSchema.parse(
+          JSON.parse(await readFile(join(entriesDir, RUN_CONTEXT_STATE_FILE), 'utf8')),
+        )
+      } catch {
+        throw new Error('project context state is unavailable in this run')
+      }
+      // 绑定校验：同目录里被替换成另一个 Run/快照的 state.json 不能当作本 Run 的授权。
+      if (
+        expected !== undefined &&
+        (localState.runId !== expected.runId || localState.snapshotId !== expected.snapshotId)
+      ) {
+        throw new Error('project context state does not belong to this run')
+      }
+      if (localState.paused) {
+        throw new Error('project context is unavailable in this run')
+      }
+      const syncedAt = Date.parse(localState.syncedAt)
+      if (!Number.isFinite(syncedAt) || Date.now() - syncedAt > RUN_CONTEXT_STATE_SYNC_MAX_AGE_MS) {
+        throw new Error('project context state is stale in this run')
+      }
+      const current = localState.entries.find((item) => item.entryId === entry.entryId)
+      if (current === undefined || current.state !== 'frozen') {
+        throw new Error(
+          current?.reason === null || current?.reason === undefined
+            ? 'project context entry is unavailable in this run'
+            : `project context entry is unavailable in this run: ${current.reason}`,
+        )
       }
       let raw: Buffer
       try {

@@ -7,7 +7,7 @@
  */
 import type { RunRow, Tx } from '@whalepod/db'
 import {
-  getRunProjectContextByRun,
+  getRunProjectContextForUpdate,
   insertRunContextConsumptionIfAbsent,
   insertRunContextReceipt,
   lastRunContextReceiptSeq,
@@ -54,7 +54,9 @@ export async function recordRunContextReceipt(
   if (!(ACTIVE_RUN_STATUSES as readonly string[]).includes(run.status)) {
     return { status: 'late' }
   }
-  const snapshot = await getRunProjectContextByRun(tx, run.id)
+  // 锁序：先锁快照行，再写快照条目行。状态机（tick/纠正/下载）也按
+  // snapshot → entry 加锁；若这里保持 entry → snapshot，会与其形成 ABBA 死锁。
+  const snapshot = await getRunProjectContextForUpdate(tx, run.id)
   if (snapshot === undefined || snapshot.id !== receipt.snapshotId) {
     return { status: 'rejected', reason: 'snapshot_mismatch' }
   }

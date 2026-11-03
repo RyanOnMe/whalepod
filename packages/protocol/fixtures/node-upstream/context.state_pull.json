@@ -1,0 +1,11 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a033",
+  "type": "context.state_pull",
+  "sentAt": "2026-01-05T09:02:21Z",
+  "payload": {
+    "runId": "01905f7c-0000-7000-8000-000000000301",
+    "snapshotId": "01905f7c-0000-7000-8000-000000000402",
+    "knownStateVersion": 1
+  }
+}

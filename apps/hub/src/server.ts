@@ -18,6 +18,7 @@ import { expireApprovals } from './modules/run/approval-expiry.js'
 import { runCoordinationTick } from './modules/coordination/tick.js'
 import { runSourceReconcileTick } from './modules/source/tick.js'
 import { reconcileWorkInputs } from './modules/work/run-inputs.js'
+import { syncActiveRunContextStates } from './modules/context/state.js'
 import { nodeSourceCollector } from './modules/source/collector.js'
 import { sanitizeError } from './modules/shared/error-log.js'
 import { logRecordedEntry } from './modules/context/observer.js'
@@ -110,6 +111,15 @@ const leaseTimer = setInterval(() => {
       { component: 'hub.context', ...sanitizeError(error) },
       'source permission reconcile error',
     )
+  })
+  // ADR-0027 §6（PC-05b）：活跃 Run 的上下文撤权状态重算与 20s 水位帧。
+  void syncActiveRunContextStates({
+    database,
+    outbox,
+    now: () => new Date(),
+    log: (message, context) => app.log.warn(context, message),
+  }).catch((error) => {
+    app.log.warn({ component: 'hub.context', ...sanitizeError(error) }, 'context state sync error')
   })
   // ADR-0028（RD-02a-2a）：未消费工作输入的 60s 对账窗口。
   void reconcileWorkInputs(database, new Date())

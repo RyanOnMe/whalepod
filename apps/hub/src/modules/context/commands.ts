@@ -9,6 +9,7 @@ import {
   findCorrectionForTarget,
   getContextEntryForUpdate,
   insertContextEntry,
+  Outbox,
   transactCommandWithOrigin,
   updateContextEntry,
 } from '@whalepod/db'
@@ -19,6 +20,7 @@ import { toContextEntryView } from './queries.js'
 import { clipContextText } from './projector.js'
 import { enqueueCoordinationEvaluation } from '../coordination/enqueue.js'
 import { admitContextCorrection, workEntryDeps } from '../work/entry.js'
+import { refreshRunContextStateForEntry } from './state.js'
 
 export interface ContextActor {
   readonly userId: string
@@ -77,6 +79,13 @@ export async function correctContextEntry(
       await updateContextEntry(tx, target.id, { correctedAt: now })
       // 纠正改变当前有效集 → 同事务合并一次协调评估（ADR-0026 §2）。
       await enqueueCoordinationEvaluation(tx, projectId, now)
+      // ADR-0027 §6（PC-05b）：活跃 Run 的快照入口随之撤回，并下发完整状态。
+      await refreshRunContextStateForEntry(
+        tx,
+        { database, outbox: new Outbox(database), now: () => now },
+        target.id,
+        now,
+      )
       // ADR-0028（RD-02b）：纠正也是业务引用订阅的补充。
       await admitContextCorrection(tx, correction, target, workEntryDeps(tx, now))
       inserted = true

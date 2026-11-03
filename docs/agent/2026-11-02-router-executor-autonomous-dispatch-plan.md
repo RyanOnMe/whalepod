@@ -1,6 +1,6 @@
 # WhalePod Router 与 Executor 持续协作方案
 
-> 日期：2026-11-02（Asia/Shanghai）。状态：讨论稿。用户已确认首轮默认边界：自动研究、分析和产出草稿；正式发布、外发与业务承诺由人决定。技术基线：`main@93f41e9`（RD-02b 分支在此后开发）。本文细化[阶段计划](./2026-10-30-project-context-coordination-plan.md)的新增方向；双路径承接、派工、上下文交付与权限决定由 [ADR-0028](../adr/0028-continuous-work-and-autonomous-dispatch.md)（已采纳 2026-11-02，#480）约束；RD-01、RD-02a-1、RD-02a-2a、RD-02a-2b（Node 下载与消费回执）与 RD-02b 订阅半边已交付（WorkLink 未实现，归 PC-03b）；RD-03 尚未实现，按后续切片启用。ADR-0028 只覆盖既有 Task/订阅之上的基础链；自动新建 Task/约定/新工作与同一活跃 Run 动态输入不在其范围，须另立 ADR。
+> 日期：2026-11-02（Asia/Shanghai）。状态：讨论稿。用户已确认首轮默认边界：自动研究、分析和产出草稿；正式发布、外发与业务承诺由人决定。技术基线：`main@93f41e9`（RD-02b 分支在此后开发）。本文细化[阶段计划](./2026-10-30-project-context-coordination-plan.md)的新增方向；双路径承接、派工、上下文交付与权限决定由 [ADR-0028](../adr/0028-continuous-work-and-autonomous-dispatch.md)（已采纳 2026-11-02，#480）约束；RD-01、RD-02a-1、RD-02a-2a、RD-02a-2b（Node 下载与消费回执）与 RD-02b 订阅半边已交付（WorkLink 未实现，归 PC-03b）；PC-05b-1（#498）已交付 Run 上下文撤权状态机与状态同步，PC-05b-2/-3（回执 watchdog/恢复、终态 session 清理与 `resumeContext`）仍在队列；RD-03 尚未实现，按后续切片启用。ADR-0028 只覆盖既有 Task/订阅之上的基础链；自动新建 Task/约定/新工作与同一活跃 Run 动态输入不在其范围，须另立 ADR。
 
 ## 1 产品主线：从日常工作中持续承接
 

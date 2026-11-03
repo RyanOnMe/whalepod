@@ -23,7 +23,7 @@ const facts: HelloFacts = {
   architecture: 'arm64',
   dshDistributionVersion: '0.1.0-rc.8',
   pluginPackDigests: [],
-  contextCapabilities: ['project-context.v1'],
+  contextCapabilities: ['project-context.v1', 'context-state.v1'],
 }
 
 /** 存：handler 形态各异（open/message/close…），用 never 参数位让任意签名都收得下。 */

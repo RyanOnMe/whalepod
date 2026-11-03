@@ -227,7 +227,7 @@ describe('instruction grants (P1-198)', () => {
       nodeVersion: '24.12.0',
       nodeAppVersion: '0.1.0',
       tokenHash: new Uint8Array([9, 9, 9]),
-      capabilities: { contextCapabilities: ['project-context.v1'] },
+      capabilities: { contextCapabilities: ['project-context.v1', 'context-state.v1'] },
       dshDistributionVersion: '9.9.9-test',
       lastSeenAt: new Date(),
     })
@@ -597,7 +597,7 @@ describe('instruction grants：评审整改的回归判据（P1-198）', () => {
       nodeVersion: '24.12.0',
       nodeAppVersion: '0.1.0',
       tokenHash: new Uint8Array([5, 5, 5]),
-      capabilities: { contextCapabilities: ['project-context.v1'] },
+      capabilities: { contextCapabilities: ['project-context.v1', 'context-state.v1'] },
       dshDistributionVersion: '9.9.9-test',
       lastSeenAt: new Date(),
     })

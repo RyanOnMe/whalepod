@@ -127,6 +127,8 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
                 payload: { deviceId: identity.deviceId },
               })
             })
+            // ADR-0027 §6（PC-05b）：重连/hello 必须收到完整当前状态，不只增量。
+            await deps.orchestrator.onDeviceHello(identity.deviceId)
           }
           if (frame.type === 'run.live_delta') {
             // P1-13：直播 delta 不持久——校验归属后直接投递给 owner 连接（03 §8）。

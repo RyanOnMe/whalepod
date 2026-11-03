@@ -21,6 +21,7 @@ import {
 } from '@whalepod/db'
 import type { ContextEntryRow, DeviceRow } from '@whalepod/db'
 import {
+  CONTEXT_STATE_CAPABILITY,
   PROJECT_CONTEXT_CAPABILITY,
   PROJECT_CONTEXT_HEADER_MAX_CHARS,
   PROJECT_CONTEXT_MAX_ENTRIES,
@@ -31,6 +32,7 @@ import {
   type ProjectContextUnselectedOmitted,
   type ProjectContextUnselectedReason,
   type RunProjectContextBundle,
+  type RunProjectContextEntryStatus,
   type RunProjectContextEntryView,
   type RunProjectContextView,
   type RunStartProjectContext,
@@ -39,6 +41,7 @@ import { and, eq, inArray, isNull, or } from 'drizzle-orm'
 import { canonicalJson, sha256Hex } from '../coordination/digest.js'
 import { RunCommandError } from '../run/errors.js'
 import { uuidv7 } from '../shared/uuid.js'
+import { deriveRunContextStateReadOnly, verifyRunContextStateFrozen } from './state.js'
 
 export const RUN_PROJECT_CONTEXT_SELECTION_RULE_VERSION = 'pc05a.v1' as const
 
@@ -318,10 +321,14 @@ export function assertProjectContextCapability(
   entryCount: number,
 ): void {
   if (entryCount === 0) return
-  if (!contextCapabilitiesOf(device).includes(PROJECT_CONTEXT_CAPABILITY)) {
+  const capabilities = contextCapabilitiesOf(device)
+  if (
+    !capabilities.includes(PROJECT_CONTEXT_CAPABILITY) ||
+    !capabilities.includes(CONTEXT_STATE_CAPABILITY)
+  ) {
     throw new RunCommandError(
       'CONTEXT_UNAVAILABLE',
-      '目标 Node 未声明 project-context.v1，不能执行带项目上下文的 Run',
+      '目标 Node 未同时声明 project-context.v1 与 context-state.v1，不能执行带项目上下文的 Run',
     )
   }
 }
@@ -348,7 +355,8 @@ export async function verifyRunProjectContext(
       .where(eq(schema.devices.id, run.deviceId))
     if (
       device === undefined ||
-      !contextCapabilitiesOf(device).includes(PROJECT_CONTEXT_CAPABILITY)
+      !contextCapabilitiesOf(device).includes(PROJECT_CONTEXT_CAPABILITY) ||
+      !contextCapabilitiesOf(device).includes(CONTEXT_STATE_CAPABILITY)
     ) {
       return { ok: false, reason: 'node_capability_missing' }
     }
@@ -403,6 +411,10 @@ export async function verifyRunProjectContext(
       if (active?.id !== entry.entryId) return { ok: false, reason: 'entry_changed' }
     }
   }
+  // ADR-0027 §6（PC-05b）：撤权状态机已把来源/权限变化写回入口行；派发前
+  // 不得把非 frozen 快照交给 Node。
+  const state = await verifyRunContextStateFrozen(tx, run.id)
+  if (!state.ok) return state
   return { ok: true }
 }
 
@@ -432,7 +444,7 @@ export function toRunProjectContextView(
     readonly businessRef: string | null
     readonly revisionId: string | null
     readonly threadId: string | null
-    readonly entryStatus: 'frozen' | 'retracted' | 'source_tombstoned'
+    readonly entryStatus: RunProjectContextEntryStatus
     readonly statusReason: string | null
     readonly identityUnverified: boolean
     readonly deliveredAt: Date | null
@@ -474,28 +486,71 @@ export function toRunProjectContextView(
   }
 }
 
+/**
+ * ADR-0027 §6（PC-05b）：成员读面按当前事实派生，而不是信任上次 tick 落库的
+ * entryStatus。终态 Run 不在状态同步的活跃集合里，若只读持久化行，纠正/撤权后
+ * 历史页仍会返回正文——这正是 §9 负控要求不可读的路径。
+ */
+export async function buildRunProjectContextView(
+  database: Database,
+  runId: string,
+  now: Date = new Date(),
+): Promise<RunProjectContextView | undefined> {
+  return database.transaction(async (tx) => {
+    const snapshot = await getRunProjectContextByRun(tx, runId)
+    if (snapshot === undefined) return undefined
+    const derived = await deriveRunContextStateReadOnly(tx, snapshot.id, now)
+    const entries = await listRunProjectContextEntries(tx, snapshot.id)
+    if (derived === undefined) return undefined
+    const byId = new Map(derived.entries.map((entry) => [entry.entryId, entry]))
+    return toRunProjectContextView(
+      { ...snapshot, status: derived.status },
+      entries.map((entry) => {
+        const state = byId.get(entry.entryId)
+        return {
+          ...entry,
+          entryStatus: state?.state ?? 'unavailable',
+          statusReason: state?.reason ?? 'entry_state_missing',
+        }
+      }),
+    )
+  })
+}
+
 export async function buildRunProjectContextBundle(
   database: Database,
   runId: string,
 ): Promise<RunProjectContextBundle | undefined> {
-  const snapshot = await getRunProjectContextByRun(database.db, runId)
-  if (snapshot === undefined) return undefined
-  const entries = await listRunProjectContextEntries(database.db, snapshot.id)
-  if (entries.some((entry) => entry.entryStatus !== 'frozen')) {
-    throw new RunCommandError('CONTEXT_UNAVAILABLE', '项目上下文快照含不可读条目')
-  }
-  return {
-    snapshotId: snapshot.id,
-    digest: snapshot.snapshotDigest,
-    headerText: snapshot.headerText,
-    headerDigest: snapshot.headerDigest,
-    entries: entries.map((entry) => ({
-      entryId: entry.entryId,
-      kind: entry.kind,
-      title: entry.title,
-      digest: entry.digest,
-      byteSize: entry.byteSize,
-      bodyBase64: Buffer.from(entry.body, 'utf8').toString('base64'),
-    })),
-  }
+  return database.transaction(async (tx) => {
+    const snapshot = await getRunProjectContextByRun(tx, runId)
+    if (snapshot === undefined) return undefined
+    // ADR-0027 §6（PC-05b）：下载前按当前来源/纠正状态重新派生；不依赖
+    // 周期 tick 是否已经落库，撤销后不得再交付正文。
+    const derived = await deriveRunContextStateReadOnly(tx, snapshot.id, new Date())
+    if (
+      derived === undefined ||
+      derived.status !== 'frozen' ||
+      derived.entries.some((entry) => entry.state !== 'frozen')
+    ) {
+      throw new RunCommandError('CONTEXT_UNAVAILABLE', '项目上下文快照含不可读条目')
+    }
+    const entries = await listRunProjectContextEntries(tx, snapshot.id)
+    if (entries.some((entry) => entry.entryStatus !== 'frozen')) {
+      throw new RunCommandError('CONTEXT_UNAVAILABLE', '项目上下文快照含不可读条目')
+    }
+    return {
+      snapshotId: snapshot.id,
+      digest: snapshot.snapshotDigest,
+      headerText: snapshot.headerText,
+      headerDigest: snapshot.headerDigest,
+      entries: entries.map((entry) => ({
+        entryId: entry.entryId,
+        kind: entry.kind,
+        title: entry.title,
+        digest: entry.digest,
+        byteSize: entry.byteSize,
+        bodyBase64: Buffer.from(entry.body, 'utf8').toString('base64'),
+      })),
+    }
+  })
 }
