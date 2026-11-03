@@ -50,6 +50,8 @@ export interface AdmissionSource {
   readonly sourceDigest: string
   readonly authorizationGeneration: string
   readonly sourceKind: string
+  /** 业务引用订阅的合并身份；correction 指向被纠正条目的 businessRef。 */
+  readonly businessRef?: string
   /** 私有的正文快照；只进收件箱，不进公开投影。 */
   readonly title: string
   readonly body: string
@@ -69,7 +71,7 @@ function parseBusinessId(value: string | null): string | undefined {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) ? id : undefined
 }
 
-async function taskIdOfBusinessRef(
+export async function taskIdOfBusinessRef(
   tx: Tx,
   businessRef: string | null,
 ): Promise<string | undefined> {
@@ -176,6 +178,13 @@ async function loadContextEntrySource(
     entryKind: entry.kind,
     ...(entry.businessRef === null ? {} : { businessRef: entry.businessRef }),
   }
+  // correction 没有自己的 businessRef，用被纠正条目的业务引用归属；否则业务引用
+  // 订阅收到纠正后无法按 identity 合并，也不能在后续版本推进时保持独立项。
+  const associationRef =
+    entry.kind === 'correction' && entry.targetEntryId !== null
+      ? ((await getContextEntry(tx, entry.targetEntryId))?.businessRef ?? null)
+      : entry.businessRef
+  if (associationRef !== null) refs.businessRef = associationRef
   let ignored: AdmissionSource['ignored']
   if (entry.sourceId !== null) {
     // 外部来源的权限代次由 ADR-0024 绑定链复核；RD-01 没有该链，不能把未复核条目
@@ -210,10 +219,6 @@ async function loadContextEntrySource(
     }
   }
   if (ignored === undefined) {
-    const associationRef =
-      entry.kind === 'correction' && entry.targetEntryId !== null
-        ? ((await getContextEntry(tx, entry.targetEntryId))?.businessRef ?? null)
-        : entry.businessRef
     if (associationRef === null) {
       ignored = {
         reason: 'source_out_of_scope',
@@ -236,6 +241,7 @@ async function loadContextEntrySource(
     sourceDigest,
     authorizationGeneration: entry.sourceId === null ? 'internal' : 'source.unverified',
     sourceKind: entry.kind,
+    ...(associationRef === null ? {} : { businessRef: associationRef }),
     title: entry.title,
     body: entry.body,
     ...(ignored === undefined ? {} : { ignored }),
@@ -277,7 +283,7 @@ function decisionSummary(decision: RouterDecisionKind, reason: string): string {
   return `忽略：${reason}`
 }
 
-function effectiveMandate(
+export function effectiveMandate(
   mandate: WorkMandateRow | undefined,
   now: Date,
 ): { active: WorkMandateRow | undefined; reason?: 'no_mandate' | 'mandate_expired' } {

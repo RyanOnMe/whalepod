@@ -42,6 +42,7 @@ export const WorkInboxItemViewSchema = z.strictObject({
   bodyDigest: z.string().regex(/^[a-f0-9]{64}$/),
   refs: z.record(z.string(), z.unknown()),
   supersedesId: z.uuid().nullable(),
+  subscriptionId: z.uuid().nullable(),
   status: WorkInboxItemStatusSchema,
   statusReason: z.string().max(500).nullable(),
   returnReason: WorkInboxReturnReasonSchema.nullable(),

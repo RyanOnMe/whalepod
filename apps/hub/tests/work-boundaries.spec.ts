@@ -167,6 +167,67 @@ describe('RD-02a-2b work input receipt lock order', () => {
   })
 })
 
+describe('RD-02b entry admission and subscription boundaries', () => {
+  it('keeps automatic entry routing out of RD-01 shadow decisions and Run/outbox writers', () => {
+    const entry = readFileSync(join(WORK_MODULE_DIR, 'entry.ts'), 'utf8')
+    const subscriptions = readFileSync(join(WORK_MODULE_DIR, 'subscriptions.ts'), 'utf8')
+    // 自动入口的慢路径是独立 Router 调用记录；写 router_decision 会占用 RD-01 的
+    // 「同一来源只裁决一次」唯一键，让显式准入再也无法重新评估。
+    expect(entry).not.toContain('insertRouterDecision')
+    expect(entry).not.toContain('getRouterDecisionBySource')
+    expect(entry).not.toContain('routerDecisions')
+    expect(entry).toContain('insertWorkEntryRouterCall')
+    expect(entry).toContain('routerCallId')
+
+    // 订阅写命令必须走 Task→Work 锁序与 assignee-only 校验。
+    expect(subscriptions).toContain('lockWorkContext(tx, workKey)')
+    expect(subscriptions).toContain('requireAssignee(tx, task, actorUserId)')
+    expect(subscriptions).not.toContain('insertRun')
+    expect(subscriptions).not.toContain('appendTeamEvent')
+  })
+
+  it('locks Work before terminal item updates', () => {
+    const repoRoot = fileURLToPath(new URL('../../..', import.meta.url))
+    const runStatus = readFileSync(join(repoRoot, 'apps/hub/src/modules/run/run-status.ts'), 'utf8')
+    const terminalAt = runStatus.indexOf('TERMINAL_RUN_STATUSES.has(status)')
+    const lockAt = runStatus.indexOf('getWorkByIdForUpdate(tx, work.id)', terminalAt)
+    const unconfirmedAt = runStatus.indexOf('markRunWorkInputsUnconfirmed', terminalAt)
+    expect(terminalAt).toBeGreaterThan(-1)
+    // 终态同时更新 item（unconfirmed）并投影 Observation → 入口准入会锁 Work；
+    // 必须先锁 Work，保持 Run→Work→item，不能形成 item→Work 反向边。
+    expect(lockAt).toBeGreaterThan(terminalAt)
+    expect(unconfirmedAt).toBeGreaterThan(lockAt)
+
+    const taskCommands = readFileSync(
+      join(repoRoot, 'apps/hub/src/modules/task/commands.ts'),
+      'utf8',
+    )
+    const cancelStart = taskCommands.indexOf('async function cancelWorkProposals')
+    const cancelEnd = taskCommands.indexOf('\n}\n', cancelStart)
+    const cancel = taskCommands.slice(cancelStart, cancelEnd)
+    const cancelLockAt = cancel.indexOf('getWorkByIdForUpdate(tx, work.id)')
+    const cancelExpireAt = cancel.indexOf('expireWorkSubscriptionsAndRetract')
+    expect(cancelLockAt).toBeGreaterThan(-1)
+    expect(cancelExpireAt).toBeGreaterThan(cancelLockAt)
+  })
+
+  it('does not silently deliver a source without an active subscription', () => {
+    const entry = readFileSync(join(WORK_MODULE_DIR, 'entry.ts'), 'utf8')
+    const start = entry.indexOf('async function admitWorkEntry')
+    expect(start).toBeGreaterThan(-1)
+    const end = entry.indexOf('\n}\n', start)
+    expect(end).toBeGreaterThan(start)
+    const fn = entry.slice(start, end)
+    const deliverAt = fn.indexOf("outcome: inserted === undefined ? 'drop' : 'deliver'")
+    const routeAt = fn.lastIndexOf('const routed = await deps.router.route')
+    expect(deliverAt).toBeGreaterThan(-1)
+    expect(routeAt).toBeGreaterThan(deliverAt)
+    // 交付分支必须只在 subscription 判有效之后，且慢路径是兜底而不是默认。
+    expect(fn.indexOf('if (validity.valid)')).toBeGreaterThan(-1)
+    expect(fn.indexOf('if (validity.valid)')).toBeLessThan(deliverAt)
+  })
+})
+
 describe('RD-02a-2b dispatch-time source identity', () => {
   it('requires version, digest and authorization generation to all match', () => {
     const item = {

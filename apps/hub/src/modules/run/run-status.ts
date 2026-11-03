@@ -24,7 +24,13 @@
 import { eq } from 'drizzle-orm'
 import { DomainError } from '@whalepod/domain'
 import type { Outbox, RunRow, Tx } from '@whalepod/db'
-import { schema, setRunStatus, TERMINAL_RUN_STATUSES } from '@whalepod/db'
+import {
+  getCurrentWorkByTask,
+  getWorkByIdForUpdate,
+  schema,
+  setRunStatus,
+  TERMINAL_RUN_STATUSES,
+} from '@whalepod/db'
 import type { RunStatusPatch } from '@whalepod/db'
 import { dispatchPendingInstructions } from './followup.js'
 import { projectObservation } from '../context/projector.js'
@@ -66,6 +72,11 @@ export async function applyRunStatus(
     await dispatchPendingInstructions(tx, outbox, row)
   }
   if (row !== undefined && TERMINAL_RUN_STATUSES.has(status)) {
+    // ADR-0028（RD-02b 锁序）：终态事务随后会更新 item（unconfirmed）并投影
+    // Observation → 入口准入会锁 Work。必须先取 Work，保持 Run→Work→item；
+    // 否则与回执/撤权的 Work→item 形成死锁。
+    const work = await getCurrentWorkByTask(tx, row.taskId)
+    if (work !== undefined) await getWorkByIdForUpdate(tx, work.id)
     // ADR-0028（RD-02a-2a）：Run 终态未消费的工作输入先转 unconfirmed；
     // 60s 窗口后由 reconcileWorkInputs 回到 pending。
     await markRunWorkInputsUnconfirmed(tx, row.id, row.finishedAt ?? new Date())

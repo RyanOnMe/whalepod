@@ -5,16 +5,19 @@ import type { Database, Outbox, TaskRow, Tx } from '@whalepod/db'
 import {
   appendTeamEvent,
   cancelProposedDispatchIntents,
+  expireWorkSubscriptionsAndRetract,
   findCommandReceipt,
   getCurrentWorkByTask,
   getEnabledMember,
   getTeam,
+  getWorkByIdForUpdate,
   hasPublishedArtifactByTask,
   insertMessage,
   insertTask,
   listActiveRunsByTask,
   reassignTask,
   reassignPendingHandoffReceipts,
+  retractAutoAdmittedInboxItemsForWork,
   setAssignment,
   setTaskStatus,
   schema,
@@ -23,6 +26,7 @@ import {
   updateWork,
 } from '@whalepod/db'
 import { cancelRunInTransaction } from '../run/cancel.js'
+import { admitTaskMessageEntry, workEntryDeps } from '../work/entry.js'
 import { reviewPrerequisiteReason } from './review-conditions.js'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
@@ -93,13 +97,38 @@ async function markWorkWaitingForAssigneeChange(tx: Tx, taskId: string, now: Dat
     updatedAt: now,
   })
   await cancelProposedDispatchIntents(tx, work.id, now)
+  await expireWorkSubscriptionsAndRetract(tx, {
+    workId: work.id,
+    statusReason: 'owner_changed',
+    now,
+  })
+  // 旧责任人已失去私有读面，wait 自动副本不能留在其收件箱。
+  await retractAutoAdmittedInboxItemsForWork(tx, {
+    workId: work.id,
+    statusReason: 'owner_changed',
+    now,
+  })
 }
 
 /** Task 进入 full_access 后，旧 proposed 意图不得再被确认/派发。 */
 async function cancelWorkProposals(tx: Tx, taskId: string, now: Date): Promise<void> {
   const work = await getCurrentWorkByTask(tx, taskId)
   if (work === undefined) return
-  await cancelProposedDispatchIntents(tx, work.id, now)
+  // 清理会与投影型入口准入（只锁 Work）并发；先按 Task→Work 锁序取 Work，
+  // 避免「订阅已 stale、准入又插入新 pending」的窗口。
+  const locked = await getWorkByIdForUpdate(tx, work.id)
+  if (locked === undefined) return
+  await cancelProposedDispatchIntents(tx, locked.id, now)
+  await expireWorkSubscriptionsAndRetract(tx, {
+    workId: locked.id,
+    statusReason: 'full_access_task',
+    now,
+  })
+  await retractAutoAdmittedInboxItemsForWork(tx, {
+    workId: locked.id,
+    statusReason: 'full_access_task',
+    now,
+  })
 }
 
 /** ADR-0028 §2：Task 终态同时退休其未退休工作，保留历史但不再承接。 */
@@ -114,6 +143,16 @@ async function retireWorkForTerminalTask(tx: Tx, taskId: string, now: Date): Pro
     updatedAt: now,
   })
   await cancelProposedDispatchIntents(tx, work.id, now)
+  await expireWorkSubscriptionsAndRetract(tx, {
+    workId: work.id,
+    statusReason: 'task_terminal',
+    now,
+  })
+  await retractAutoAdmittedInboxItemsForWork(tx, {
+    workId: work.id,
+    statusReason: 'task_terminal',
+    now,
+  })
 }
 
 /** Agent 指派目标（#239）：必须存在且未归档——归档的 Agent 不再可执行。 */
@@ -463,6 +502,8 @@ export async function addComment(
       type: 'comment.created',
       payload: { commentId: comment.id, taskId, authorUserId: actor.userId },
     })
+    // ADR-0028（RD-02b）：讨论消息走入口准入。有效订阅直达收件箱；无订阅才交 Router。
+    await admitTaskMessageEntry(tx, comment, workEntryDeps(tx))
     return toCommentView(comment)
   })
 }

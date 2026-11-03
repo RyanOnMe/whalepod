@@ -97,6 +97,7 @@ export async function getRetractedInboxItemForSource(
         eq(workInboxItems.sourceType, sourceType),
         eq(workInboxItems.sourceId, sourceId),
         eq(workInboxItems.status, 'retracted'),
+        eq(workInboxItems.retractionScope, 'source'),
       ),
     )
     .limit(1)
@@ -138,6 +139,61 @@ export async function getLatestPendingInboxItemForSource(
   return row
 }
 
+/** 业务引用订阅：同一 businessRef + sourceKind 的新版本替换旧 pending。 */
+export async function getLatestPendingInboxItemForBusinessRef(
+  handle: DbHandle,
+  values: {
+    readonly workId: string
+    readonly businessRef: string
+    readonly sourceKinds: readonly string[]
+  },
+): Promise<WorkInboxItemRow | undefined> {
+  if (values.sourceKinds.length === 0) return undefined
+  const [row] = await handle
+    .select()
+    .from(workInboxItems)
+    .where(
+      and(
+        eq(workInboxItems.workId, values.workId),
+        eq(workInboxItems.businessRef, values.businessRef),
+        inArray(workInboxItems.sourceKind, [...values.sourceKinds]),
+        eq(workInboxItems.status, 'pending'),
+      ),
+    )
+    .orderBy(desc(workInboxItems.createdAt), desc(workInboxItems.id))
+    .limit(1)
+  return row
+}
+
+export async function supersedePendingInboxItemsForBusinessRef(
+  handle: DbHandle,
+  values: {
+    readonly workId: string
+    readonly businessRef: string
+    readonly sourceKinds: readonly string[]
+    readonly now: Date
+  },
+): Promise<WorkInboxItemRow[]> {
+  if (values.sourceKinds.length === 0) return []
+  return handle
+    .update(workInboxItems)
+    .set({
+      status: 'superseded',
+      statusReason: 'new_version',
+      statusAt: values.now,
+      updatedAt: values.now,
+    })
+    .where(
+      and(
+        eq(workInboxItems.workId, values.workId),
+        eq(workInboxItems.businessRef, values.businessRef),
+        inArray(workInboxItems.sourceKind, [...values.sourceKinds]),
+        eq(workInboxItems.status, 'pending'),
+      ),
+    )
+    .returning()
+}
+
 /** 同一来源的新版本替换旧 pending；返回被替换的行（保留历史）。 */
 export async function supersedePendingInboxItems(
   handle: DbHandle,
@@ -170,6 +226,8 @@ export async function supersedePendingInboxItems(
 export interface WorkInboxItemPatch {
   readonly status?: WorkInboxItemRow['status']
   readonly statusReason?: string | null
+  readonly retractionScope?: string | null
+  readonly autoAdmitted?: boolean
   readonly returnReason?: WorkInboxItemRow['returnReason']
   readonly returnNote?: string | null
   readonly statusAt?: Date
@@ -192,6 +250,7 @@ export async function retractInboxItemsForSource(
     .set({
       status: 'retracted',
       statusReason: values.statusReason,
+      retractionScope: 'source',
       returnReason: null,
       returnNote: null,
       deliveryRunId: null,
@@ -216,6 +275,63 @@ export async function retractInboxItemsForSource(
       .set({
         status: 'withdrawn',
         failureReason: 'source_retracted',
+        settledAt: values.now,
+        updatedAt: values.now,
+      })
+      .where(
+        and(
+          inArray(
+            workInboxDeliveries.inboxItemId,
+            rows.map((row) => row.id),
+          ),
+          inArray(workInboxDeliveries.status, ['sent', 'unconfirmed']),
+        ),
+      )
+  }
+  return rows
+}
+
+/**
+ * wait 自动保留的副本随工作生命周期收口。RD-02a 的人工显式关联条目（auto_admitted=false）
+ * 仍按原语义保留，避免把 assignee 明确关联的依据静默撤掉。
+ */
+export async function retractAutoAdmittedInboxItemsForWork(
+  handle: DbHandle,
+  values: {
+    readonly workId: string
+    readonly statusReason: string
+    readonly now: Date
+  },
+): Promise<WorkInboxItemRow[]> {
+  const rows = await handle
+    .update(workInboxItems)
+    .set({
+      status: 'retracted',
+      statusReason: values.statusReason,
+      retractionScope: 'lifecycle',
+      returnReason: null,
+      returnNote: null,
+      deliveryRunId: null,
+      deliveredAt: null,
+      unconfirmedAt: null,
+      consumedAt: null,
+      statusAt: values.now,
+      updatedAt: values.now,
+    })
+    .where(
+      and(
+        eq(workInboxItems.workId, values.workId),
+        eq(workInboxItems.autoAdmitted, true),
+        inArray(workInboxItems.status, ['pending', 'returned', 'delivered', 'unconfirmed']),
+      ),
+    )
+    .returning()
+  if (rows.length > 0) {
+    await handle
+      .update(workInboxDeliveries)
+      .set({
+        status: 'withdrawn',
+        failureReason: 'work_lifecycle',
         settledAt: values.now,
         updatedAt: values.now,
       })

@@ -64,6 +64,9 @@ export type AuditAction =
   | 'work.inbox.return'
   | 'work.inbox.retract'
   | 'work.inbox.expire'
+  // ADR-0028（RD-02b）：显式订阅（不记来源正文）。
+  | 'work.subscription.create'
+  | 'work.subscription.revoke'
 
 export type AuditOutcome = 'success' | 'denied' | 'rate_limited'
 
