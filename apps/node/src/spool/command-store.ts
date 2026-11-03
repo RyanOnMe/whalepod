@@ -17,7 +17,7 @@
  */
 import { openStateDatabase } from '../state/db.js'
 
-export type CommandType = 'run.start' | 'run.cancel' | 'run.followup'
+export type CommandType = 'run.start' | 'run.cancel' | 'run.followup' | 'run.mandate_invalidated'
 
 export interface SpooledCommand {
   readonly commandId: string

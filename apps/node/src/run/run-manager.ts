@@ -329,6 +329,8 @@ export class RunManager {
         return this.handleRunStart(frame.payload)
       case 'run.cancel':
         return this.handleRunCancel(frame.payload)
+      case 'run.mandate_invalidated':
+        return this.handleRunMandateInvalidated(frame.payload)
       case 'run.followup':
         return this.handleRunFollowup(frame.payload)
       case 'approval.decide':
@@ -762,6 +764,80 @@ export class RunManager {
     this.log('info', 'run.followup dispatched to runtime', {
       component: 'node.run_manager',
       runId,
+    })
+  }
+
+  // ---------- run.mandate_invalidated（RD-03c2 实时失效，不取消 Run） ----------
+
+  private async handleRunMandateInvalidated(
+    payload: Extract<NodeDownstream, { type: 'run.mandate_invalidated' }>['payload'],
+  ): Promise<void> {
+    const outcome = this.deps.commandStore.record({
+      commandId: payload.commandId,
+      runId: payload.runId,
+      type: 'run.mandate_invalidated',
+      payload,
+    })
+    if (outcome === 'duplicate') {
+      this.ack(payload.commandId, true)
+      return
+    }
+    const runId = payload.runId
+    if (this.finalFacts.has(runId)) {
+      // Run 本地已终态：失效信号没有可执行的 Runtime，只回 ack，绝不复活。
+      this.deps.commandStore.markAcked(payload.commandId)
+      this.ack(payload.commandId, true)
+      this.log('info', 'mandate invalidation for locally terminal run; ack only', {
+        component: 'node.run_manager',
+        runId,
+        reason: payload.reason,
+      })
+      return
+    }
+    if (!this.deps.supervisor.isActive(runId)) {
+      // Runtime 不在：无需转发；Run 的停止/收敛仍归既有取消与退出归因路径。
+      this.deps.commandStore.markAcked(payload.commandId)
+      this.ack(payload.commandId, true)
+      this.log('warn', 'mandate invalidation for inactive runtime; ack only', {
+        component: 'node.run_manager',
+        runId,
+        reason: payload.reason,
+      })
+      return
+    }
+    const dispatched = this.deps.supervisor.dispatchToRuntime(runId, {
+      protocolVersion: 1,
+      messageId: crypto.randomUUID(),
+      sentAt: this.now().toISOString(),
+      type: 'run.mandate_invalidated',
+      payload: {
+        runId,
+        mandateId: payload.mandateId,
+        reason: payload.reason,
+      },
+    })
+    if (!dispatched) {
+      // isActive 后仍可能撞上 handle 已消失的窗口；此时 Runtime 已不可执行，
+      // Run 由退出归因/心跳收敛。回报 accepted=false 供 Hub 观测；Hub 当前按
+      // command.ack 落 acked，不承诺对该类型重投（生产 driver 始终有 send，
+      // 本分支实际不可达）。
+      this.ack(payload.commandId, false, {
+        code: 'RUNTIME_LOST',
+        message: 'runtime command channel unavailable',
+      })
+      this.log('warn', 'mandate invalidation could not reach runtime', {
+        component: 'node.run_manager',
+        runId,
+        reason: payload.reason,
+      })
+      return
+    }
+    this.deps.commandStore.markAcked(payload.commandId)
+    this.ack(payload.commandId, true)
+    this.log('info', 'mandate invalidation forwarded to runtime', {
+      component: 'node.run_manager',
+      runId,
+      reason: payload.reason,
     })
   }
 

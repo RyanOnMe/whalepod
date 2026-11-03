@@ -18,6 +18,7 @@ import { expireApprovals } from './modules/run/approval-expiry.js'
 import { runCoordinationTick } from './modules/coordination/tick.js'
 import { runSourceReconcileTick } from './modules/source/tick.js'
 import { reconcileWorkInputs } from './modules/work/run-inputs.js'
+import { reconcileMandateInvalidation } from './modules/dispatch/service.js'
 import { syncActiveRunContextStates } from './modules/context/state.js'
 import { failMissingContextReceipts } from './modules/context/receipt-watchdog.js'
 import { nodeSourceCollector } from './modules/source/collector.js'
@@ -135,6 +136,27 @@ const leaseTimer = setInterval(() => {
       app.log.warn(
         { component: 'hub.work_input', ...sanitizeError(error) },
         'work input reconcile error',
+      )
+    })
+  // ADR-0028 §9（RD-03c2）：Mandate 到期/版本漂移/Work 不可用的在途机器 Run 实时失效。
+  void reconcileMandateInvalidation({ database, outbox, now: () => new Date() }, new Date())
+    .then((result) => {
+      if (result.invalidated > 0 || result.failed > 0) {
+        app.log.info(
+          {
+            component: 'hub.dispatch',
+            action: 'work.dispatch.mandate_invalidated',
+            invalidated: result.invalidated,
+            failed: result.failed,
+          },
+          'running machine runs marked mandate-invalidated by sweep',
+        )
+      }
+    })
+    .catch((error) => {
+      app.log.warn(
+        { component: 'hub.dispatch', ...sanitizeError(error) },
+        'mandate invalidation sweep error',
       )
     })
   // P1-14 + ADR-0027 §4（PC-05b-2）：过期清扫与首条回执 watchdog 同周期、

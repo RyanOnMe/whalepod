@@ -236,14 +236,14 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         requireActor,
         onIntentProposed: async (actor, workKey, intentId) =>
           autoDispatchProposedIntent(
-            { database, orchestrator, now: () => new Date() },
+            { database, orchestrator, outbox, now: () => new Date() },
             actor,
             workKey,
             intentId,
           ),
         onMandateChanged: async (actor, workKey) => {
           const result = await cancelInvalidatedMachineRuns(
-            { database, orchestrator, now: () => new Date() },
+            { database, orchestrator, outbox, now: () => new Date() },
             actor,
             workKey,
           )
@@ -259,6 +259,18 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
               'queued machine runs cancelled after mandate change',
             )
           }
+          if (result.invalidated > 0 || result.invalidateFailed > 0) {
+            app.log.info(
+              {
+                component: 'hub.dispatch',
+                action: 'work.dispatch.mandate_invalidated',
+                workKey,
+                invalidated: result.invalidated,
+                failed: result.invalidateFailed,
+              },
+              'running machine runs marked mandate-invalidated',
+            )
+          }
           return result
         },
       })
@@ -266,6 +278,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         database,
         requireActor,
         orchestrator,
+        outbox,
         now: () => new Date(),
       })
       registerTaskRoutes(api, {

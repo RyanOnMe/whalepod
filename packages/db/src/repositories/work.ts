@@ -1,6 +1,8 @@
-import { and, count, desc, eq, gt, inArray, lte, ne, sql } from 'drizzle-orm'
+import { and, count, desc, eq, gt, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import type { DbHandle } from '../client.js'
 import { runs } from '../schema/run.js'
+import type { RunRow } from './run.js'
 import {
   dispatchIntents,
   routerDecisions,
@@ -511,6 +513,82 @@ export async function listCancellableMachineRunIdsForWork(
       ),
     )
   return rows.flatMap((row) => (row.runId === null ? [] : [row.runId]))
+}
+
+/**
+ * ADR-0028 §9（RD-03c2）：需要实时失效的在途机器 Run 事实。
+ *
+ * SQL 只做粗筛（work 缺失/非 active/mandate 指针变了/当前 Mandate 非 active 或
+ * 到期）；活跃 Run 自己的 `waiting(auto, run:<id>)` 也会被粗筛命中，由调用方的
+ * reason 映射排除健康行。200 上限是单 tick 的保护，不是正确性依赖。
+ */
+export interface MachineRunMandateFacts {
+  readonly runId: string
+  readonly deviceId: string
+  readonly mandateId: string | null
+  readonly status: RunRow['status']
+  readonly workState: WorkRow['state'] | null
+  readonly workResumeMode: WorkRow['resumeMode'] | null
+  readonly workResumeCondition: string | null
+  readonly workMandateId: string | null
+  readonly mandateStatus: WorkMandateRow['status'] | null
+  readonly mandateExpiresAt: Date | null
+  /** 当前 Work 指针指向的 Mandate（与 run.mandateId 不同时用于区分 paused/revoked/changed）。 */
+  readonly currentMandateStatus: WorkMandateRow['status'] | null
+  readonly currentMandateExpiresAt: Date | null
+}
+
+export interface ListMachineRunsForInvalidationOptions {
+  readonly now: Date
+  /** 只扫某个 Work（Mandate 变更回调）；缺省为全局周期清扫。 */
+  readonly workId?: string
+  readonly limit?: number
+}
+
+export async function listMachineRunsForMandateInvalidation(
+  handle: DbHandle,
+  options: ListMachineRunsForInvalidationOptions,
+): Promise<MachineRunMandateFacts[]> {
+  const currentMandates = alias(workMandates, 'current_work_mandates')
+  const suspicious = or(
+    isNull(works.id),
+    ne(works.state, 'active'),
+    sql`${works.mandateId} is distinct from ${runs.mandateId}`,
+    isNull(workMandates.id),
+    ne(workMandates.status, 'active'),
+    lte(workMandates.expiresAt, options.now),
+  )
+  const rows = await handle
+    .select({
+      runId: runs.id,
+      deviceId: runs.deviceId,
+      mandateId: runs.mandateId,
+      status: runs.status,
+      workState: works.state,
+      workResumeMode: works.resumeMode,
+      workResumeCondition: works.resumeCondition,
+      workMandateId: works.mandateId,
+      mandateStatus: workMandates.status,
+      mandateExpiresAt: workMandates.expiresAt,
+      currentMandateStatus: currentMandates.status,
+      currentMandateExpiresAt: currentMandates.expiresAt,
+    })
+    .from(runs)
+    .leftJoin(works, eq(works.workKey, runs.workKey))
+    .leftJoin(workMandates, eq(workMandates.id, runs.mandateId))
+    .leftJoin(currentMandates, eq(currentMandates.id, works.mandateId))
+    .where(
+      and(
+        eq(runs.origin, 'mandate'),
+        inArray(runs.status, ['running', 'waiting_approval']),
+        isNull(runs.mandateInvalidatedAt),
+        options.workId === undefined ? undefined : eq(works.id, options.workId),
+        suspicious,
+      ),
+    )
+    .orderBy(runs.createdAt, runs.id)
+    .limit(options.limit ?? 200)
+  return rows
 }
 
 export async function getDispatchIntentByDecision(

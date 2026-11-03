@@ -11,12 +11,14 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { Database } from '@whalepod/db'
-import { schema } from '@whalepod/db'
+import type { Database, MachineRunMandateFacts } from '@whalepod/db'
+import { Outbox, markRunMandateInvalidated, schema } from '@whalepod/db'
 import { asUserId } from '@whalepod/domain'
 import {
   autoDispatchProposedIntent,
   cancelInvalidatedMachineRuns,
+  mandateInvalidationReason,
+  reconcileMandateInvalidation,
 } from '../src/modules/dispatch/service.js'
 import {
   apiInject,
@@ -286,6 +288,37 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
     const itemId = await associate(ctx, alice, workKey, messageId)
     const intentId = await proposeIntent(ctx, alice, workKey, messageId)
     return { intentId, itemId }
+  }
+
+  /** RD-03c2 夹具：生产 HTTP 派工 + runtime.ready，得到一个 running 机器 Run。 */
+  async function startRunningMachineRun() {
+    const work = await createWork(ctx, alice, taskId)
+    const mandate = await createMandate(ctx, alice, work.workKey, {
+      allowedAgentIds: [agent.agentId],
+    })
+    const { intentId } = await prepareIntent(work.workKey)
+    await approve(ctx, alice, work.workKey, intentId)
+    const dispatched = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/dispatch-intents/${intentId}/dispatch`,
+      payload: {
+        agentId: agent.agentId,
+        profileRevisionId: agent.revisionId,
+        deviceId: device.deviceId,
+        workspaceId: device.workspaceId,
+        actionClass: 'draft',
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(dispatched.statusCode).toBe(200)
+    const runId = String(dispatched.json().data.runId)
+    await ctx.app.runOrchestrator.ingestNodeEvent(
+      { deviceId: device.deviceId, ownerUserId: alice.userId },
+      runEventFrame(runId, 1, { type: 'runtime.ready', dshSessionId: `rd03c2-${runId}` }),
+    )
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('running')
+    return { work, mandate, intentId, runId }
   }
 
   it('approve → dispatch creates a machine Run with provenance and reactivates work on terminal', async () => {
@@ -643,11 +676,21 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
 
     // 直接驱动生产取消端口：取消集合必须按 mandateId 过滤，不能只看 work。
     const cancellation = await cancelInvalidatedMachineRuns(
-      { database, orchestrator: ctx.app.runOrchestrator, now: () => new Date() },
+      {
+        database,
+        orchestrator: ctx.app.runOrchestrator,
+        outbox: new Outbox(database),
+        now: () => new Date(),
+      },
       { userId: alice.userId, role: 'owner' },
       work.workKey,
     )
-    expect(cancellation).toEqual({ cancelled: 0, failed: 0 })
+    expect(cancellation).toEqual({
+      cancelled: 0,
+      failed: 0,
+      invalidated: 0,
+      invalidateFailed: 0,
+    })
     const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
     expect(run?.status).toBe('queued')
     const [workRow] = await database.db
@@ -659,6 +702,302 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
       resumeMode: 'auto',
       resumeCondition: `run:${runId}`,
     })
+  })
+
+  it('pause marks a running machine Run mandate-invalidated and enqueues one signal', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    const mandate = await createMandate(ctx, alice, work.workKey, {
+      allowedAgentIds: [agent.agentId],
+    })
+    const { intentId, itemId } = await prepareIntent(work.workKey)
+    await approve(ctx, alice, work.workKey, intentId)
+    const dispatched = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/dispatch-intents/${intentId}/dispatch`,
+      payload: {
+        agentId: agent.agentId,
+        profileRevisionId: agent.revisionId,
+        deviceId: device.deviceId,
+        workspaceId: device.workspaceId,
+        actionClass: 'draft',
+        workInputItemIds: [itemId],
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(dispatched.statusCode).toBe(200)
+    const runId = String(dispatched.json().data.runId)
+    await ctx.app.runOrchestrator.ingestNodeEvent(
+      { deviceId: device.deviceId, ownerUserId: alice.userId },
+      runEventFrame(runId, 1, { type: 'runtime.ready', dshSessionId: 'rd03c2-session' }),
+    )
+    const [running] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(running?.status).toBe('running')
+
+    const paused = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/mandates/${String(mandate.id)}/pause`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(paused.statusCode).toBe(200)
+
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('running')
+    expect(run?.mandateInvalidatedAt).not.toBeNull()
+    expect(run?.mandateInvalidatedReason).toBe('mandate_paused')
+    const signals = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(eq(schema.dispatchOutbox.type, 'run.mandate_invalidated'))
+    expect(signals).toHaveLength(1)
+    expect(signals[0]?.payload).toMatchObject({
+      runId,
+      mandateId: mandate.id,
+      reason: 'mandate_paused',
+    })
+
+    const view = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/runs/${runId}`,
+    })
+    expect(view.statusCode).toBe(200)
+    expect(view.json().data).toMatchObject({
+      status: 'running',
+      mandateInvalidatedReason: 'mandate_paused',
+    })
+    expect(typeof view.json().data.mandateInvalidatedAt).toBe('string')
+
+    // 重复回调（同一旧 Mandate）不得再入队第二条失效信号。
+    const replay = await cancelInvalidatedMachineRuns(
+      {
+        database,
+        orchestrator: ctx.app.runOrchestrator,
+        outbox: new Outbox(database),
+        now: () => new Date(),
+      },
+      { userId: alice.userId, role: 'owner' },
+      work.workKey,
+    )
+    expect(replay.invalidated).toBe(0)
+    expect(
+      await database.db
+        .select()
+        .from(schema.dispatchOutbox)
+        .where(eq(schema.dispatchOutbox.type, 'run.mandate_invalidated')),
+    ).toHaveLength(1)
+  })
+
+  it('revoke marks a running machine Run mandate-invalidated', async () => {
+    const { mandate, runId } = await startRunningMachineRun()
+    const revoked = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/mandates/${String(mandate.id)}/revoke`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(revoked.statusCode).toBe(200)
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('running')
+    expect(run?.mandateInvalidatedReason).toBe('mandate_revoked')
+    expect(
+      await database.db
+        .select()
+        .from(schema.dispatchOutbox)
+        .where(eq(schema.dispatchOutbox.type, 'run.mandate_invalidated')),
+    ).toHaveLength(1)
+    const view = await apiInject(ctx, alice, { method: 'GET', url: `/api/v1/runs/${runId}` })
+    expect(view.json().data).toMatchObject({
+      status: 'running',
+      mandateInvalidatedReason: 'mandate_revoked',
+    })
+  })
+
+  it('resume creates a new mandate version without duplicating the invalidation signal', async () => {
+    const { mandate, runId } = await startRunningMachineRun()
+    const paused = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/mandates/${String(mandate.id)}/pause`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(paused.statusCode).toBe(200)
+    const [afterPause] = await database.db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId))
+    const resumed = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/mandates/${String(paused.json().data.id)}/resume`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(resumed.statusCode).toBe(200)
+    const [afterResume] = await database.db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId))
+    expect(afterResume?.status).toBe('running')
+    expect(afterResume?.mandateInvalidatedReason).toBe('mandate_paused')
+    expect(afterResume?.mandateInvalidatedAt).toEqual(afterPause?.mandateInvalidatedAt)
+    expect(
+      await database.db
+        .select()
+        .from(schema.dispatchOutbox)
+        .where(eq(schema.dispatchOutbox.type, 'run.mandate_invalidated')),
+    ).toHaveLength(1)
+  })
+
+  it('does not mark a terminal machine Run during the expiry sweep', async () => {
+    const { mandate, runId } = await startRunningMachineRun()
+    await ctx.app.runOrchestrator.ingestNodeEvent(
+      { deviceId: device.deviceId, ownerUserId: alice.userId },
+      runEventFrame(runId, 2, {
+        type: 'run.completed',
+        finalText: 'done before expiry',
+      }),
+    )
+    const expiresAt = new Date(Date.now() + 1_000)
+    await database.db
+      .update(schema.workMandates)
+      .set({ expiresAt })
+      .where(eq(schema.workMandates.id, mandate.id))
+    const now = new Date(expiresAt.getTime() + 1_000)
+    expect(
+      await reconcileMandateInvalidation(
+        { database, outbox: new Outbox(database), now: () => now },
+        now,
+      ),
+    ).toEqual({ invalidated: 0, failed: 0 })
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('completed')
+    expect(run?.mandateInvalidatedAt).toBeNull()
+    expect(
+      await database.db
+        .select()
+        .from(schema.dispatchOutbox)
+        .where(eq(schema.dispatchOutbox.type, 'run.mandate_invalidated')),
+    ).toHaveLength(0)
+  })
+
+  it('markRunMandateInvalidated is idempotent at the row level', async () => {
+    const { runId } = await startRunningMachineRun()
+    const first = await database.transaction((tx) =>
+      markRunMandateInvalidated(tx, runId, 'mandate_paused', new Date()),
+    )
+    expect(first).toBeDefined()
+    const second = await database.transaction((tx) =>
+      markRunMandateInvalidated(tx, runId, 'mandate_paused', new Date()),
+    )
+    expect(second).toBeUndefined()
+  })
+
+  it('does not scan human runs during the invalidation sweep', async () => {
+    const created = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/runs`,
+      payload: {
+        agentId: agent.agentId,
+        deviceId: device.deviceId,
+        workspaceId: device.workspaceId,
+        prompt: 'human run',
+      },
+    })
+    expect(created.statusCode).toBe(201)
+    const runId = String(created.json().data.id)
+    await ctx.app.runOrchestrator.ingestNodeEvent(
+      { deviceId: device.deviceId, ownerUserId: alice.userId },
+      runEventFrame(runId, 1, { type: 'runtime.ready', dshSessionId: `human-${runId}` }),
+    )
+    const now = new Date()
+    expect(
+      await reconcileMandateInvalidation(
+        { database, outbox: new Outbox(database), now: () => now },
+        now,
+      ),
+    ).toEqual({ invalidated: 0, failed: 0 })
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('running')
+    expect(run?.mandateInvalidatedAt).toBeNull()
+  })
+
+  it('sweep marks a running machine Run when its work is retired', async () => {
+    const { work, runId } = await startRunningMachineRun()
+    const retired = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/retire`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(retired.statusCode).toBe(200)
+    const now = new Date()
+    expect(
+      await reconcileMandateInvalidation(
+        { database, outbox: new Outbox(database), now: () => now },
+        now,
+      ),
+    ).toMatchObject({ invalidated: 1, failed: 0 })
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('running')
+    expect(run?.mandateInvalidatedReason).toBe('work_unavailable')
+  })
+
+  it('expiry sweep marks a running machine Run when its mandate has expired', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    const mandate = await createMandate(ctx, alice, work.workKey, {
+      allowedAgentIds: [agent.agentId],
+    })
+    const { intentId } = await prepareIntent(work.workKey)
+    await approve(ctx, alice, work.workKey, intentId)
+    const dispatched = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/dispatch-intents/${intentId}/dispatch`,
+      payload: {
+        agentId: agent.agentId,
+        profileRevisionId: agent.revisionId,
+        deviceId: device.deviceId,
+        workspaceId: device.workspaceId,
+        actionClass: 'draft',
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(dispatched.statusCode).toBe(200)
+    const runId = String(dispatched.json().data.runId)
+    await ctx.app.runOrchestrator.ingestNodeEvent(
+      { deviceId: device.deviceId, ownerUserId: alice.userId },
+      runEventFrame(runId, 1, { type: 'runtime.ready', dshSessionId: 'rd03c2-expiry' }),
+    )
+    // removeWhen: 没有把系统时钟拨到 Mandate 到期的 HTTP 面；只改到期时间，
+    // 仍由生产周期清扫函数判定并写标记/命令。约束要求 expires_at > created_at，
+    // 故取「一秒后到期 + 两秒后的清扫时刻」。
+    const expiresAt = new Date(Date.now() + 1_000)
+    await database.db
+      .update(schema.workMandates)
+      .set({ expiresAt })
+      .where(eq(schema.workMandates.id, mandate.id))
+
+    const now = new Date(expiresAt.getTime() + 1_000)
+    const result = await reconcileMandateInvalidation(
+      { database, outbox: new Outbox(database), now: () => now },
+      now,
+    )
+    expect(result).toMatchObject({ invalidated: 1, failed: 0 })
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('running')
+    expect(run?.mandateInvalidatedReason).toBe('mandate_expired')
+    const signals = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(eq(schema.dispatchOutbox.type, 'run.mandate_invalidated'))
+    expect(signals).toHaveLength(1)
+    expect(signals[0]?.payload).toMatchObject({ runId, reason: 'mandate_expired' })
+
+    // 第二轮清扫幂等：已标记行不再产生第二条命令。
+    expect(
+      await reconcileMandateInvalidation(
+        { database, outbox: new Outbox(database), now: () => now },
+        now,
+      ),
+    ).toEqual({ invalidated: 0, failed: 0 })
   })
 
   it('does not cancel a newer queued machine Run when an older pause command is replayed', async () => {
@@ -1904,7 +2243,12 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
     // 直接驱动生产自动端口：新来源会生成新意图，只有旧意图能证明派工前重读；
     // 该路径与准入回调调用的是同一函数。
     const auto = await autoDispatchProposedIntent(
-      { database, orchestrator: ctx.app.runOrchestrator, now: () => new Date() },
+      {
+        database,
+        orchestrator: ctx.app.runOrchestrator,
+        outbox: new Outbox(database),
+        now: () => new Date(),
+      },
       { userId: alice.userId, role: 'owner' },
       work.workKey,
       intentId,
@@ -1941,5 +2285,75 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
     expect(replay.statusCode).toBe(200)
     expect(replay.json().data.proposedIntent.status).toBe('dispatched')
     expect(await database.db.select().from(schema.runs)).toHaveLength(1)
+  })
+})
+
+describe('mandateInvalidationReason（ADR-0028 §9 纯映射）', () => {
+  const now = new Date('2026-11-04T00:00:00.000Z')
+  const healthy: MachineRunMandateFacts = {
+    runId: '01905f7c-0000-7000-8000-000000000907',
+    deviceId: '01905f7c-0000-7000-8000-000000000908',
+    mandateId: '01905f7c-0000-7000-8000-000000000909',
+    status: 'running',
+    workState: 'waiting',
+    workResumeMode: 'auto',
+    workResumeCondition: 'run:01905f7c-0000-7000-8000-000000000907',
+    workMandateId: '01905f7c-0000-7000-8000-000000000909',
+    mandateStatus: 'active',
+    mandateExpiresAt: new Date('2026-11-05T00:00:00.000Z'),
+    currentMandateStatus: 'active',
+    currentMandateExpiresAt: new Date('2026-11-05T00:00:00.000Z'),
+  }
+
+  it('returns undefined for a healthy active run', () => {
+    expect(mandateInvalidationReason(healthy, now)).toBeUndefined()
+  })
+
+  it('maps work/task unavailability before mandate state', () => {
+    expect(
+      mandateInvalidationReason(
+        { ...healthy, workState: 'waiting', workResumeCondition: 'run:other' },
+        now,
+      ),
+    ).toBe('work_unavailable')
+    expect(mandateInvalidationReason({ ...healthy, workState: 'retired' }, now)).toBe(
+      'work_unavailable',
+    )
+  })
+
+  it('maps the current mandate status when the pointer moved', () => {
+    const moved = { ...healthy, workMandateId: '01905f7c-0000-7000-8000-000000000910' }
+    expect(mandateInvalidationReason({ ...moved, currentMandateStatus: 'paused' }, now)).toBe(
+      'mandate_paused',
+    )
+    expect(mandateInvalidationReason({ ...moved, currentMandateStatus: 'revoked' }, now)).toBe(
+      'mandate_revoked',
+    )
+    expect(mandateInvalidationReason({ ...moved, currentMandateStatus: 'expired' }, now)).toBe(
+      'mandate_expired',
+    )
+    expect(mandateInvalidationReason({ ...moved, currentMandateStatus: 'active' }, now)).toBe(
+      'mandate_changed',
+    )
+  })
+
+  it('maps same-pointer expiry and older mandate status', () => {
+    expect(
+      mandateInvalidationReason(
+        { ...healthy, mandateExpiresAt: new Date('2026-11-03T23:59:59Z') },
+        now,
+      ),
+    ).toBe('mandate_expired')
+    expect(mandateInvalidationReason({ ...healthy, mandateStatus: 'paused' }, now)).toBe(
+      'mandate_paused',
+    )
+    expect(mandateInvalidationReason({ ...healthy, mandateStatus: 'revoked' }, now)).toBe(
+      'mandate_revoked',
+    )
+  })
+
+  it('ignores terminal or non-machine bindings', () => {
+    expect(mandateInvalidationReason({ ...healthy, status: 'completed' }, now)).toBeUndefined()
+    expect(mandateInvalidationReason({ ...healthy, mandateId: null }, now)).toBeUndefined()
   })
 })

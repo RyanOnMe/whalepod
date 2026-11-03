@@ -853,6 +853,94 @@ describe('run.cancel 与 approval.decide', () => {
     expect(ack?.payload['accepted']).toBe(true)
   })
 
+  it('run.mandate_invalidated → stdin 转发 + ack；重复 commandId 只回放 ack', async () => {
+    const h = await makeHarness()
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    const frame = {
+      protocolVersion: 1 as const,
+      messageId: randomUUID(),
+      sentAt: new Date().toISOString(),
+      type: 'run.mandate_invalidated' as const,
+      payload: {
+        commandId: 'e1e1e1e1-e1e1-4e11-8e11-e1e1e1e1e1e1',
+        runId: RUN_ID,
+        mandateId: '01905f7c-0000-7000-8000-000000000906',
+        reason: 'mandate_revoked' as const,
+      },
+    }
+    await h.manager.handleFrame(frame)
+    const forwarded = h.runtimes[0]!.stdin.filter((c) => c.type === 'run.mandate_invalidated')
+    expect(forwarded).toHaveLength(1)
+    expect(forwarded[0]!.payload).toMatchObject({
+      runId: RUN_ID,
+      reason: 'mandate_revoked',
+    })
+    expect(h.sentFrames().findLast((f) => f.type === 'command.ack')?.payload).toMatchObject({
+      commandId: frame.payload.commandId,
+      accepted: true,
+    })
+
+    await h.manager.handleFrame(frame)
+    expect(h.runtimes[0]!.stdin.filter((c) => c.type === 'run.mandate_invalidated')).toHaveLength(1)
+    expect(h.sentFrames().findLast((f) => f.type === 'command.ack')?.payload).toMatchObject({
+      commandId: frame.payload.commandId,
+      accepted: true,
+    })
+  })
+
+  it('本地已终态的 Run 收到 run.mandate_invalidated → 只回 ack', async () => {
+    const h = await makeHarness()
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    h.runtimes[0]!.emitStdout(
+      JSON.stringify({
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: new Date().toISOString(),
+        type: 'run.completed',
+        payload: { runId: RUN_ID, dshSessionId: 'session-1' },
+      }),
+    )
+    const stdinBefore = h.runtimes[0]!.stdin.length
+    await h.manager.handleFrame({
+      protocolVersion: 1,
+      messageId: randomUUID(),
+      sentAt: new Date().toISOString(),
+      type: 'run.mandate_invalidated',
+      payload: {
+        commandId: 'e2e2e2e2-e2e2-4e22-8e22-e2e2e2e2e2e2',
+        runId: RUN_ID,
+        mandateId: '01905f7c-0000-7000-8000-000000000906',
+        reason: 'mandate_expired',
+      },
+    } as NodeDownstream)
+    expect(h.runtimes[0]!.stdin.length).toBe(stdinBefore)
+    expect(h.sentFrames().findLast((f) => f.type === 'command.ack')?.payload).toMatchObject({
+      commandId: 'e2e2e2e2-e2e2-4e22-8e22-e2e2e2e2e2e2',
+      accepted: true,
+    })
+  })
+
+  it('Runtime 不在时 run.mandate_invalidated → 只回 ack，不 spawn', async () => {
+    const h = await makeHarness()
+    await h.manager.handleFrame({
+      protocolVersion: 1,
+      messageId: randomUUID(),
+      sentAt: new Date().toISOString(),
+      type: 'run.mandate_invalidated',
+      payload: {
+        commandId: 'e3e3e3e3-e3e3-4e33-8e33-e3e3e3e3e3e3',
+        runId: '99999999-9999-4999-8999-999999999999',
+        mandateId: '01905f7c-0000-7000-8000-000000000906',
+        reason: 'mandate_revoked',
+      },
+    } as NodeDownstream)
+    expect(h.runtimes).toHaveLength(0)
+    expect(h.sentFrames().findLast((f) => f.type === 'command.ack')?.payload).toMatchObject({
+      commandId: 'e3e3e3e3-e3e3-4e33-8e33-e3e3e3e3e3e3',
+      accepted: true,
+    })
+  })
+
   it('approval.decide → stdin 转发 + approval.decided 双受众回显落 spool', async () => {
     const h = await makeHarness()
     await h.manager.handleFrame(runStartFrame(h.workspaceId))

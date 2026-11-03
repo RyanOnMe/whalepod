@@ -553,6 +553,11 @@ export class RuntimeBridge {
         this.handoffState.abort?.abort()
         this.owner.cancel(command.payload.cause)
         return
+      case 'run.mandate_invalidated':
+        // ADR-0028 §9（RD-03c2）：只置失效标志，不取消 Run；后续工具调用由
+        // SessionOwner 的 pre-execute + 单调 guard 逐次阻断写/未授权动作。
+        this.owner.invalidateMandate(command.payload.reason)
+        return
       case 'approval.decide':
         this.approval.decide(command.payload.callId, command.payload.decision)
         return

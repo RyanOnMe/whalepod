@@ -1,9 +1,10 @@
 import type {
   ArtifactInputManifest,
   HandoffInputManifest,
+  MandateInvalidationReason,
   WorkInputManifest,
 } from '@whalepod/protocol'
-import { and, asc, count, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, count, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { approvals, runs } from '../schema/run.js'
 import { runProjectContexts } from '../schema/run-context.js'
@@ -261,6 +262,34 @@ export async function setRunStatus(
       })
       .where(and(eq(taskMessages.runId, id), eq(taskMessages.instructionState, 'pending')))
   }
+  return row
+}
+
+/**
+ * ADR-0028 §9（RD-03c2）：固化「Mandate 在 Run 执行期间失效」事实。
+ *
+ * 只对仍在执行（running/waiting_approval）且尚未标记的机器 Run 生效；
+ * 条件更新天然幂等，终态 Run 不会被复活或补标记。返回 undefined = 本次没有
+ * 需要标记的行（并发已标记/已终态/非机器 Run）。
+ */
+export async function markRunMandateInvalidated(
+  handle: DbHandle,
+  runId: string,
+  reason: MandateInvalidationReason,
+  at: Date,
+): Promise<RunRow | undefined> {
+  const [row] = await handle
+    .update(runs)
+    .set({ mandateInvalidatedAt: at, mandateInvalidatedReason: reason })
+    .where(
+      and(
+        eq(runs.id, runId),
+        eq(runs.origin, 'mandate'),
+        isNull(runs.mandateInvalidatedAt),
+        inArray(runs.status, ['running', 'waiting_approval']),
+      ),
+    )
+    .returning()
   return row
 }
 

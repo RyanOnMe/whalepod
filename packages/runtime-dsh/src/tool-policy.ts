@@ -29,6 +29,7 @@ const IMPLICIT = new Set<string>(IMPLICIT_MACHINE_DRAFT_TOOLS)
 const FILE_PATH_TOOLS = new Set(['read', 'write', 'edit'])
 const SEARCH_TOOLS = new Set(['glob', 'grep'])
 const DRAFT_WRITE_TOOLS = new Set(['write', 'edit'])
+const READ_ONLY_TOOLS = new Set(['read', 'glob', 'grep'])
 const SEARCH_PATH_ARG = 'path'
 const FILE_PATH_ARG = 'file_path'
 
@@ -148,12 +149,23 @@ export function machineDraftToolDecision(
   toolName: string,
   args: unknown,
   scope: MachineToolScope,
+  mandateInvalidatedReason?: string,
 ): PreToolDecision | undefined {
   if (policy === undefined) return undefined
   if (!SURFACE.has(toolName)) {
     return {
       kind: 'deny',
       reason: `tool "${toolName}" is outside the draft tool surface`,
+    }
+  }
+  // ADR-0028 §9（RD-03c2）：Mandate 失效后只允许读/收尾类步骤，不再 ask。
+  // 已批准的写审批也不能复活：本裁决同时挂在单调 guard 上。
+  if (mandateInvalidatedReason !== undefined) {
+    if (IMPLICIT.has(toolName)) return { kind: 'allow' }
+    if (READ_ONLY_TOOLS.has(toolName)) return pathScopeDecision(toolName, args, scope)
+    return {
+      kind: 'deny',
+      reason: `mandate invalidated (${mandateInvalidatedReason}); only read/finish steps are allowed`,
     }
   }
   if (IMPLICIT.has(toolName)) return { kind: 'allow' }
