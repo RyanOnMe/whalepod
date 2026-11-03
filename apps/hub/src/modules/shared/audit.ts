@@ -54,6 +54,7 @@ export type AuditAction =
   // ADR-0028（RD-01）：持续工作、Mandate 与影子准入（只记动作与结果，不记目标正文）。
   | 'work.create'
   | 'work.retire'
+  | 'work.accept'
   | 'work.mandate.create'
   | 'work.mandate.pause'
   | 'work.mandate.resume'
