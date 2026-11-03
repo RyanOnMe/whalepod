@@ -8,6 +8,7 @@
 import { z } from 'zod'
 import { envelope, parseWireFrame } from './envelope.js'
 import { ApprovalPolicySchema } from './approval.js'
+import { MandateInvalidationReasonSchema } from './mandate-invalidation.js'
 import { RunToolPolicySchema } from './tool-policy.js'
 import { ErrorCodeSchema } from './errors.js'
 import {
@@ -165,6 +166,21 @@ export const RuntimeShutdownSchema = envelope(
   }),
 )
 
+/**
+ * ADR-0028 §9（RD-03c2）：Mandate 在 Run 执行期间失效。
+ *
+ * 到达后 Runtime 置本 Run 的失效标志；此后每个工具调用只允许读/收尾，
+ * 写工具与面内未授权步骤不再 ask 而是直接 deny。重复帧幂等。
+ */
+export const RuntimeMandateInvalidatedSchema = envelope(
+  'run.mandate_invalidated',
+  z.strictObject({
+    runId: z.uuid(),
+    mandateId: z.uuid(),
+    reason: MandateInvalidationReasonSchema,
+  }),
+)
+
 export const RuntimeCommandSchema = z.discriminatedUnion('type', [
   RuntimeInitializeSchema,
   RunPromptSchema,
@@ -172,6 +188,7 @@ export const RuntimeCommandSchema = z.discriminatedUnion('type', [
   RuntimeRunCancelSchema,
   RuntimeApprovalDecideSchema,
   RuntimeShutdownSchema,
+  RuntimeMandateInvalidatedSchema,
 ])
 export type RuntimeCommand = z.infer<typeof RuntimeCommandSchema>
 

@@ -13,6 +13,7 @@ import {
   HandoffRunSpecSchema,
 } from './handoff.js'
 import { ApprovalPolicySchema } from './approval.js'
+import { MandateInvalidationReasonSchema } from './mandate-invalidation.js'
 import { RunToolPolicySchema } from './tool-policy.js'
 import {
   SourceCapabilitySchema,
@@ -413,6 +414,22 @@ export const RunCancelSchema = envelope(
   }),
 )
 
+/**
+ * ADR-0028 §9（RD-03c2）：Hub 通知 Node，在途机器 Run 的 Mandate 已失效。
+ *
+ * 不是取消：Run 状态不变、不杀 Runtime；Node 原样转发给 Runtime，由
+ * `tools/pre-execute` 的逐次复核阻断写/未授权动作。重复 commandId 只回放 ack。
+ */
+export const RunMandateInvalidatedSchema = envelope(
+  'run.mandate_invalidated',
+  z.strictObject({
+    commandId: z.uuid(),
+    runId: z.uuid(),
+    mandateId: z.uuid(),
+    reason: MandateInvalidationReasonSchema,
+  }),
+)
+
 export const RunStatusRequestSchema = envelope(
   'run.status_request',
   z.strictObject({
@@ -494,6 +511,7 @@ export const ContextStateSyncFrameSchema = envelope('context.state_sync', Contex
 export const NodeDownstreamSchema = z.discriminatedUnion('type', [
   RunStartSchema,
   RunCancelSchema,
+  RunMandateInvalidatedSchema,
   RunStatusRequestSchema,
   NodePreparationCheckSchema,
   SourcePermissionCheckSchema,

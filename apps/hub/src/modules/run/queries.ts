@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm'
 import type { ApprovalRow, RunRow } from '@whalepod/db'
-import { WorkInputManifestSchema } from '@whalepod/protocol'
+import type { MandateInvalidationReason } from '@whalepod/protocol'
+import { MandateInvalidationReasonSchema, WorkInputManifestSchema } from '@whalepod/protocol'
 import { getRun, listRunsByTask, schema } from '@whalepod/db'
 import type { DbHandle } from '@whalepod/db'
 import { deriveDeviceStatus } from '../device/pairing.js'
@@ -51,6 +52,9 @@ export interface RunView {
   workKey: string | null
   workInputItemCount: number | null
   workInputManifestDigest: string | null
+  /** ADR-0028 §9（RD-03c2）：执行期 Mandate 失效事实；不改变 Run 状态。 */
+  mandateInvalidatedAt: string | null
+  mandateInvalidatedReason: MandateInvalidationReason | null
   profileDigest: string
   pluginPackDigest: string
   dshDistributionVersion: string
@@ -88,6 +92,11 @@ export function toRunView(row: RunRow): RunView {
         ? null
         : WorkInputManifestSchema.parse(row.workInputManifest).entries.length,
     workInputManifestDigest: row.workInputManifestDigest ?? null,
+    mandateInvalidatedAt: row.mandateInvalidatedAt?.toISOString() ?? null,
+    mandateInvalidatedReason:
+      row.mandateInvalidatedReason === null
+        ? null
+        : (MandateInvalidationReasonSchema.safeParse(row.mandateInvalidatedReason).data ?? null),
     profileDigest: row.profileDigest,
     pluginPackDigest: row.pluginPackDigest,
     dshDistributionVersion: row.dshDistributionVersion,

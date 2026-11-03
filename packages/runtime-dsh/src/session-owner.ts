@@ -88,7 +88,20 @@ export class SessionOwner {
     private readonly events: SessionOwnerEvents,
     private readonly log: LogSink,
     private readonly spec: RuntimeSpec,
+    /** ADR-0028 §9（RD-03c2）：执行期 Mandate 失效原因；由 bridge 命令写入。 */
+    private readonly mandateState: { invalidatedReason?: string },
   ) {}
+
+  /** ADR-0028 §9（RD-03c2）：置位后本 Run 只允许读/收尾工具。重复帧幂等。 */
+  invalidateMandate(reason: string): void {
+    this.mandateState.invalidatedReason ??= reason
+    this.log({
+      level: 'info',
+      component: 'runtime.bridge',
+      msg: 'mandate invalidated for active run',
+      reason,
+    })
+  }
 
   get agent(): Agent {
     return this.handle.agent
@@ -124,6 +137,8 @@ export class SessionOwner {
     }
     // setup 体在 create / resume 两条路径**同一份**（resume 只是换装载方式，
     // 组合面必须完全一致，否则「续跑的 Run 少注册了一个工具」这类漂移没人拦）。
+    // 失效状态由 bridge 的 run.mandate_invalidated 命令写入；create/resume 同享。
+    const mandateState: { invalidatedReason?: string } = {}
     const setup = (agentCtx: Context) => {
       agentCtx.tools.register(createPublishArtifactTool(ports.artifact, ports.artifactValidator))
       // P1-15：Reviewer Run 带输入清单时注册只读读取工具（清单为空不注册）。
@@ -181,6 +196,7 @@ export class SessionOwner {
           exec.name,
           exec.arguments,
           machineScope,
+          mandateState.invalidatedReason,
         )
         if (machine !== undefined) return Promise.resolve(machine)
         return Promise.resolve(
@@ -201,6 +217,7 @@ export class SessionOwner {
             exec.name,
             exec.arguments,
             machineScope,
+            mandateState.invalidatedReason,
           )
           return decision?.kind === 'deny' ? decision.reason : undefined
         })
@@ -242,7 +259,7 @@ export class SessionOwner {
             agentOptions,
             setup,
           })
-    const owner = new SessionOwner(handle, ctx, events, log, spec)
+    const owner = new SessionOwner(handle, ctx, events, log, spec, mandateState)
     owner.subscribe()
     // setup 落定后再向 Node 报 ready（headless runner 同一契约）。
     await handle.agent.whenIdle()

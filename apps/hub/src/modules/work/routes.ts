@@ -70,7 +70,7 @@ export interface WorkRouteDeps {
   readonly onMandateChanged?: (
     actor: SessionActor,
     workKey: string,
-  ) => Promise<{ cancelled: number; failed: number }>
+  ) => Promise<{ cancelled: number; failed: number; invalidated: number; invalidateFailed: number }>
   /**
    * ADR-0028 §6（RD-03b）：准入刚生成 proposed 意图后，由组合根尝试
    * autoDispatch='existing_task' 的系统派工。返回 null 表示未处理；

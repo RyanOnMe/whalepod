@@ -169,4 +169,41 @@ describe('machineDraftToolDecision', () => {
       machineDraftToolDecision(writeOnly, 'write', { file_path: 'src/main.ts' }, scope),
     ).toMatchObject({ kind: 'deny' })
   })
+
+  it('after mandate invalidation only read/finish tools run, without asking', () => {
+    const writeOnly: RunToolPolicy = { ...policy, allowedToolNames: ['write'] }
+    expect(
+      machineDraftToolDecision(
+        writeOnly,
+        'write',
+        { file_path: '.whalepod/drafts/x' },
+        scope,
+        'mandate_revoked',
+      ),
+    ).toMatchObject({ kind: 'deny' })
+    expect(
+      machineDraftToolDecision(
+        writeOnly,
+        'read',
+        { file_path: 'src/main.ts' },
+        scope,
+        'mandate_revoked',
+      ),
+    ).toEqual({ kind: 'allow' })
+    expect(
+      machineDraftToolDecision(writeOnly, 'publish_artifact', {}, scope, 'mandate_revoked'),
+    ).toEqual({ kind: 'allow' })
+    expect(
+      machineDraftToolDecision(
+        writeOnly,
+        'read',
+        { file_path: '../secret.txt' },
+        scope,
+        'mandate_revoked',
+      ),
+    ).toMatchObject({ kind: 'deny' })
+    expect(machineDraftToolDecision(writeOnly, 'bash', {}, scope, 'mandate_revoked')).toMatchObject(
+      { kind: 'deny' },
+    )
+  })
 })

@@ -22,9 +22,11 @@ import {
   listActiveRunsByTask,
   listCancellableMachineRunIdsForWork,
   listDevicesByOwner,
+  listMachineRunsForMandateInvalidation,
   listWorkInboxItemsByIds,
   listWorkspacesByOwner,
   markDispatchIntentAutoDispatched,
+  markRunMandateInvalidated,
   setDispatchIntentCandidates,
   approveDispatchIntent as approveIntentRow,
   markDispatchIntentDispatched,
@@ -34,20 +36,26 @@ import {
   unwrapPgError,
   type Database,
   type DispatchIntentRow,
+  type MachineRunMandateFacts,
+  type Outbox,
   type TaskRow,
   type Tx,
   type WorkRow,
 } from '@whalepod/db'
+import { randomUUID } from 'node:crypto'
+import { eq } from 'drizzle-orm'
 import { asUserId, DomainError } from '@whalepod/domain'
+import { schema } from '@whalepod/db'
 import type {
   DispatchIntentDispatchRequest,
   DispatchIntentView,
   ErrorCode,
+  MandateInvalidationReason,
   WorkActionClass,
   WorkDraftToolName,
   WorkSourceType,
 } from '@whalepod/protocol'
-import { WorkDraftToolNameSchema } from '@whalepod/protocol'
+import { RunMandateInvalidatedSchema, WorkDraftToolNameSchema } from '@whalepod/protocol'
 import { WORK_INPUT_CAPABILITY } from '@whalepod/protocol'
 import { ApiError } from '../shared/http-error.js'
 import { ERROR_HTTP_STATUS, errorCodeOf } from '../run/routes.js'
@@ -63,6 +71,7 @@ import { toDispatchIntentView } from '../work/queries.js'
 export interface DispatchDeps {
   readonly database: Database
   readonly orchestrator: RunOrchestrator
+  readonly outbox: Outbox
   readonly now: () => Date
 }
 
@@ -915,17 +924,105 @@ export async function autoDispatchProposedIntent(
 }
 
 /**
- * ADR-0028 §9（RD-03a）：Mandate 新建/暂停/恢复/撤销提交后，仍属于旧 Mandate 且
- * 尚未真正执行的机器 Run（queued / dispatching）不得继续执行。work 模块只发回调，
- * 组合根在这里按 Run 逐个走既有取消事务；已 running 的 Run 不自动杀死（§9）。
+ * ADR-0028 §9：把在途机器 Run 的失效事实映射为受控原因。纯函数，便于逐分支钉住。
+ * 优先级：Work 不可用 > 当前 Mandate 状态（revoked/paused/expired） > 版本切换。
+ */
+export function mandateInvalidationReason(
+  facts: MachineRunMandateFacts,
+  now: Date,
+): MandateInvalidationReason | undefined {
+  if (facts.mandateId === null) return undefined
+  if (facts.status !== 'running' && facts.status !== 'waiting_approval') return undefined
+  // 机器 Run 活跃期间 work 是 waiting(auto, run:<id>)（RD-03a），不是 active；
+  // 只有其他 waiting/retired 才是 Work 不可用。
+  const workAllowsRun =
+    facts.workState === 'active' ||
+    (facts.workState === 'waiting' &&
+      facts.workResumeMode === 'auto' &&
+      facts.workResumeCondition === `run:${facts.runId}`)
+  if (!workAllowsRun) return 'work_unavailable'
+  const pointerChanged = facts.workMandateId !== facts.mandateId
+  if (pointerChanged) {
+    if (facts.currentMandateStatus === 'revoked') return 'mandate_revoked'
+    if (facts.currentMandateStatus === 'paused') return 'mandate_paused'
+    if (facts.currentMandateStatus === 'expired') return 'mandate_expired'
+    if (
+      facts.currentMandateExpiresAt !== null &&
+      facts.currentMandateExpiresAt.getTime() <= now.getTime()
+    ) {
+      return 'mandate_expired'
+    }
+    return 'mandate_changed'
+  }
+  if (facts.mandateStatus === 'revoked') return 'mandate_revoked'
+  if (facts.mandateStatus === 'paused') return 'mandate_paused'
+  if (facts.mandateStatus === 'expired') return 'mandate_expired'
+  if (facts.mandateExpiresAt !== null && facts.mandateExpiresAt.getTime() <= now.getTime()) {
+    return 'mandate_expired'
+  }
+  return undefined
+}
+
+/**
+ * 标记单个在途 Run 并原子入队下行命令。Run 行 FOR UPDATE 与条件更新双重去重：
+ * 并发清扫/回调重复到达时只有第一个事务能写入标记与命令。
+ */
+async function invalidateMachineRun(
+  deps: Pick<DispatchDeps, 'database' | 'outbox' | 'now'>,
+  facts: MachineRunMandateFacts,
+  reason: MandateInvalidationReason,
+): Promise<boolean> {
+  const now = deps.now()
+  return deps.database.transaction(async (tx) => {
+    const [run] = await tx
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, facts.runId))
+      .for('update')
+    if (
+      run === undefined ||
+      run.origin !== 'mandate' ||
+      run.mandateId === null ||
+      run.mandateId !== facts.mandateId ||
+      run.mandateInvalidatedAt !== null
+    ) {
+      return false
+    }
+    const updated = await markRunMandateInvalidated(tx, run.id, reason, now)
+    if (updated === undefined) return false
+    const commandId = randomUUID()
+    const payload = RunMandateInvalidatedSchema.shape.payload.parse({
+      commandId,
+      runId: run.id,
+      mandateId: run.mandateId,
+      reason,
+    })
+    await deps.outbox.enqueue(tx, {
+      id: commandId,
+      deviceId: run.deviceId,
+      type: 'run.mandate_invalidated',
+      payload,
+      notBefore: now,
+    })
+    return true
+  })
+}
+
+/**
+ * ADR-0028 §9（RD-03a/c2）：Mandate 新建/暂停/恢复/撤销提交后：
+ * - queued / dispatching 仍走既有取消；
+ * - running / waiting_approval 不自动杀死，标记失效并向 Node 下发实时信号。
  */
 export async function cancelInvalidatedMachineRuns(
-  deps: Pick<DispatchDeps, 'database' | 'orchestrator' | 'now'>,
+  deps: Pick<DispatchDeps, 'database' | 'orchestrator' | 'outbox' | 'now'>,
   actor: { readonly userId: string; readonly role: 'owner' | 'admin' | 'member' },
   workKey: string,
-): Promise<{ cancelled: number; failed: number }> {
+): Promise<{ cancelled: number; failed: number; invalidated: number; invalidateFailed: number }> {
   const work = await getWorkByKey(deps.database.db, workKey)
-  if (work === undefined) return { cancelled: 0, failed: 0 }
+  if (work === undefined) {
+    return { cancelled: 0, failed: 0, invalidated: 0, invalidateFailed: 0 }
+  }
+  const now = deps.now()
   const runIds = await listCancellableMachineRunIdsForWork(
     deps.database.db,
     work.id,
@@ -942,7 +1039,45 @@ export async function cancelInvalidatedMachineRuns(
       failed += 1
     }
   }
-  return { cancelled, failed }
+  const facts = await listMachineRunsForMandateInvalidation(deps.database.db, {
+    now,
+    workId: work.id,
+  })
+  let invalidated = 0
+  let invalidateFailed = 0
+  for (const fact of facts) {
+    const reason = mandateInvalidationReason(fact, now)
+    if (reason === undefined) continue
+    try {
+      if (await invalidateMachineRun(deps, fact, reason)) invalidated += 1
+    } catch {
+      invalidateFailed += 1
+    }
+  }
+  return { cancelled, failed, invalidated, invalidateFailed }
+}
+
+/**
+ * ADR-0028 §9（RD-03c2）：周期清扫 Mandate 到期/版本漂移/Work 不可用的在途机器 Run。
+ * 只标记并入队，不改变 Run 状态；终态与已标记行由条件更新跳过。
+ */
+export async function reconcileMandateInvalidation(
+  deps: Pick<DispatchDeps, 'database' | 'outbox' | 'now'>,
+  now: Date,
+): Promise<{ invalidated: number; failed: number }> {
+  const facts = await listMachineRunsForMandateInvalidation(deps.database.db, { now })
+  let invalidated = 0
+  let failed = 0
+  for (const fact of facts) {
+    const reason = mandateInvalidationReason(fact, now)
+    if (reason === undefined) continue
+    try {
+      if (await invalidateMachineRun(deps, fact, reason)) invalidated += 1
+    } catch {
+      failed += 1
+    }
+  }
+  return { invalidated, failed }
 }
 
 export async function refreshDispatchIntent(

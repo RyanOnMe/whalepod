@@ -133,6 +133,12 @@ export const runs = pgTable(
     onBehalfOfUserId: uuid('on_behalf_of_user_id').references(() => userAccounts.id),
     /** ADR-0028（RD-02a-2a）：本 Run 承接的持续工作；清单与 run 同事务冻结。 */
     workKey: varchar('work_key', { length: 64 }),
+    /**
+     * ADR-0028 §9（RD-03c2）：Mandate 在 Run 执行期间失效的固化事实。
+     * 只标记、不改 Run 状态；是否停止仍由 owner 走既有取消。两列同生同灭。
+     */
+    mandateInvalidatedAt: timestamp('mandate_invalidated_at', { withTimezone: true }),
+    mandateInvalidatedReason: varchar('mandate_invalidated_reason', { length: 64 }),
     workInputManifest: jsonb('work_input_manifest').$type<WorkInputManifest>(),
     workInputManifestDigest: char('work_input_manifest_digest', { length: 64 }),
     profileDigest: char('profile_digest', { length: 64 }).notNull(),
@@ -166,6 +172,10 @@ export const runs = pgTable(
     check(
       'run_work_input_manifest_fields',
       sql`(${table.workKey} is null and ${table.workInputManifest} is null and ${table.workInputManifestDigest} is null) or (${table.workKey} ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' and (((${table.workInputManifest} is null) and (${table.workInputManifestDigest} is null)) or (jsonb_typeof(${table.workInputManifest}) = 'object' and ${table.workInputManifestDigest} ~ '^[a-f0-9]{64}$')))`,
+    ),
+    check(
+      'run_mandate_invalidation_fields',
+      sql`(${table.mandateInvalidatedAt} is null and ${table.mandateInvalidatedReason} is null) or (${table.mandateInvalidatedAt} is not null and ${table.mandateInvalidatedReason} is not null)`,
     ),
   ],
 )
