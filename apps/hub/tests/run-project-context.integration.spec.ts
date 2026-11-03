@@ -15,6 +15,7 @@ import { contextStateDigestInput, type RunContextStateEntry } from '@whalepod/pr
 import { hashToken } from '../src/modules/auth/token.js'
 import { projectContextNonce } from '../src/modules/context/run-snapshot.js'
 import { syncActiveRunContextStates } from '../src/modules/context/state.js'
+import { failMissingContextReceipts } from '../src/modules/context/receipt-watchdog.js'
 import {
   apiInject,
   createTestApp,
@@ -310,6 +311,7 @@ describe('PC-05a run project context snapshot', () => {
   let seed: Seed
   let harness: Harness
   let notes: { action: string; fields: Record<string, unknown> }[]
+  let sentAcks: { type: string; payload: Record<string, unknown> }[]
 
   beforeAll(async () => {
     database = await createTestDatabase()
@@ -328,11 +330,17 @@ describe('PC-05a run project context snapshot', () => {
     projectId = await createProject(ctx, alice, `pc05a-${Date.now()}-${randomUUID().slice(0, 6)}`)
     seed = await seedRunDependencies(database, alice.userId)
     notes = []
+    sentAcks = []
     harness = makeHarness(
       database,
       {},
       {
         contextLog: (action, fields) => notes.push({ action, fields }),
+        send: (_deviceId, frame) => {
+          if (frame.type === 'run.context_receipt_ack') {
+            sentAcks.push({ type: frame.type, payload: frame.payload })
+          }
+        },
       },
     )
     // harness 的假时钟默认停在 2026-08-25；设备租约/outbox 都按真实墙钟写入，
@@ -775,6 +783,184 @@ describe('PC-05a run project context snapshot', () => {
     ).toBe(payload.stateDigest)
   })
 
+  it('fails a context Run after 60s without the first receipt and cancels its Runtime', async () => {
+    const taskId = await createTask(ctx, alice, projectId, '首条回执超时')
+    await confirmAgreement(ctx, alice, taskId)
+    const created = await startRun(ctx, alice, taskId, seed, '等待回执')
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, runId)
+    harness.clock.advance(61_000)
+    const count = await failMissingContextReceipts({
+      database,
+      outbox: harness.outbox,
+      now: () => harness.clock.now(),
+      contextLog: (action, fields) => notes.push({ action, fields }),
+    })
+    expect(count).toBe(1)
+    const [failed] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(failed?.status).toBe('failed')
+    expect(failed?.failureCode).toBe('CONTEXT_UNAVAILABLE')
+    const cancels = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(
+        and(
+          eq(schema.dispatchOutbox.type, 'run.cancel'),
+          sql`${schema.dispatchOutbox.payload}->>'runId' = ${runId}`,
+        ),
+      )
+    expect(cancels).toHaveLength(1)
+    expect(notes.some((note) => note.action === 'context.receipt_watchdog')).toBe(true)
+  })
+
+  it('fails a waiting-approval context Run when the first receipt never arrived', async () => {
+    const taskId = await createTask(ctx, alice, projectId, '审批中缺回执')
+    await confirmAgreement(ctx, alice, taskId)
+    const created = await startRun(ctx, alice, taskId, seed, '审批')
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, runId)
+    const approvalId = randomUUID()
+    await harness.orchestrator.ingestNodeEvent(
+      { deviceId: seed.deviceId, ownerUserId: alice.userId },
+      runEventFrame(runId, 2, {
+        type: 'approval.requested',
+        approval: {
+          approvalId,
+          runId,
+          callId: randomUUID(),
+          toolName: 'bash',
+          reason: 'needs rm',
+          preview: { command: 'rm -rf build' },
+          status: 'pending',
+          requestedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 600_000).toISOString(),
+        },
+      }),
+    )
+    const [waiting] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(waiting?.status).toBe('waiting_approval')
+    harness.clock.advance(61_000)
+    const count = await failMissingContextReceipts({
+      database,
+      outbox: harness.outbox,
+      now: () => harness.clock.now(),
+    })
+    expect(count).toBe(1)
+    const [failed] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(failed?.status).toBe('failed')
+    expect(failed?.failureCode).toBe('CONTEXT_UNAVAILABLE')
+    const [approval] = await database.db
+      .select()
+      .from(schema.approvals)
+      .where(eq(schema.approvals.id, approvalId))
+    expect(approval?.status).toBe('cancelled')
+  })
+
+  it('does not fail a context Run when a receipt arrived before the watchdog deadline', async () => {
+    const taskId = await createTask(ctx, alice, projectId, '回执先到')
+    await confirmAgreement(ctx, alice, taskId)
+    const created = await startRun(ctx, alice, taskId, seed, '回执')
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, runId)
+    const [snapshot] = await database.db
+      .select()
+      .from(schema.runProjectContexts)
+      .where(eq(schema.runProjectContexts.runId, runId))
+    const entries = await database.db
+      .select()
+      .from(schema.runProjectContextEntries)
+      .where(eq(schema.runProjectContextEntries.snapshotId, snapshot!.id))
+    await harness.orchestrator.ingestNodeEvent(
+      { deviceId: seed.deviceId, ownerUserId: alice.userId },
+      receiptFrame({
+        runId,
+        snapshotId: snapshot!.id,
+        receiptSeq: 1,
+        headerDigest: snapshot!.headerDigest,
+        nonceMatched: true,
+        entriesDelivered: entries.map((entry) => entry.entryId),
+        entriesRead: [],
+        readEvents: [],
+        missing: [],
+        digestVerified: true,
+        at: new Date().toISOString(),
+      }),
+    )
+    harness.clock.advance(61_000)
+    const count = await failMissingContextReceipts({
+      database,
+      outbox: harness.outbox,
+      now: () => harness.clock.now(),
+    })
+    expect(count).toBe(0)
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('running')
+  })
+
+  it('uses the configured watchdog window instead of the default 60s', async () => {
+    const taskId = await createTask(ctx, alice, projectId, '自定义 watchdog')
+    await confirmAgreement(ctx, alice, taskId)
+    const created = await startRun(ctx, alice, taskId, seed, '自定义')
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, runId)
+    harness.clock.advance(31_000)
+    const count = await failMissingContextReceipts({
+      database,
+      outbox: harness.outbox,
+      now: () => harness.clock.now(),
+      watchdogMs: 30_000,
+    })
+    // 默认 60 秒不会在 31 秒触发；能触发证明 deps.watchdogMs 真的生效。
+    expect(count).toBe(1)
+    const [failed] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(failed?.status).toBe('failed')
+    expect(failed?.failureCode).toBe('CONTEXT_UNAVAILABLE')
+  })
+
+  it('does not fail a context Run before the watchdog window elapses', async () => {
+    const taskId = await createTask(ctx, alice, projectId, '未到时限')
+    await confirmAgreement(ctx, alice, taskId)
+    const created = await startRun(ctx, alice, taskId, seed, '未到时限')
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, runId)
+    harness.clock.advance(59_000)
+    const count = await failMissingContextReceipts({
+      database,
+      outbox: harness.outbox,
+      now: () => harness.clock.now(),
+    })
+    expect(count).toBe(0)
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('running')
+  })
+
+  it('does not fail an empty-snapshot Run even after the watchdog window', async () => {
+    const taskId = await createTask(ctx, alice, projectId, '空快照不设 watchdog')
+    const created = await startRun(ctx, alice, taskId, seed, '空快照')
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    const [snapshot] = await database.db
+      .select()
+      .from(schema.runProjectContexts)
+      .where(eq(schema.runProjectContexts.runId, runId))
+    expect(snapshot?.entryCount).toBe(0)
+    await dispatchAndReady(harness, seed, alice.userId, runId)
+    harness.clock.advance(61_000)
+    const count = await failMissingContextReceipts({
+      database,
+      outbox: harness.outbox,
+      now: () => harness.clock.now(),
+    })
+    expect(count).toBe(0)
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('running')
+  })
+
   it('records Node state acks and re-sends full state on context.state_pull', async () => {
     const taskId = await createTask(ctx, alice, projectId, '状态同步')
     await confirmAgreement(ctx, alice, taskId)
@@ -1002,6 +1188,11 @@ describe('PC-05a run project context snapshot', () => {
       .from(schema.runContextReceipts)
       .where(eq(schema.runContextReceipts.runId, runId))
     expect(receiptsAfterDelivered).toHaveLength(1)
+    expect(sentAcks.at(-1)?.payload).toMatchObject({
+      receiptSeq: 1,
+      highestSeq: 1,
+      result: 'accepted',
+    })
     const [afterDelivery] = await database.db
       .select()
       .from(schema.runProjectContextEntries)
@@ -1044,7 +1235,7 @@ describe('PC-05a run project context snapshot', () => {
       new Set(entries.map((entry) => entry.entryId)),
     )
 
-    // 重复 receiptSeq：拒绝且不新增行。
+    // 重复 receiptSeq：按幂等成功 ack，不新增行、不重复写消费事实。
     await harness.orchestrator.ingestNodeEvent(device, read)
     const receipts = await database.db
       .select()
@@ -1053,11 +1244,14 @@ describe('PC-05a run project context snapshot', () => {
     expect(receipts).toHaveLength(2)
     expect(
       notes.some(
-        (note) =>
-          note.action === 'context.receipt_invalid' &&
-          note.fields['reason'] === 'receipt_seq_not_monotonic',
+        (note) => note.action === 'context.receipt_duplicate' && note.fields['receiptSeq'] === 2,
       ),
     ).toBe(true)
+    expect(sentAcks.at(-1)?.payload).toMatchObject({
+      receiptSeq: 2,
+      highestSeq: 2,
+      result: 'duplicate',
+    })
 
     // 终态后迟到：不复活 Run、不写回执。
     await completeRun(harness, seed, alice.userId, runId)
@@ -1083,6 +1277,69 @@ describe('PC-05a run project context snapshot', () => {
       .where(eq(schema.runContextReceipts.runId, runId))
     expect(receiptsAfterLate).toHaveLength(2)
     expect(notes.some((note) => note.action === 'context.receipt_late')).toBe(true)
+    expect(sentAcks.at(-1)?.payload).toMatchObject({
+      receiptSeq: 3,
+      highestSeq: 0,
+      result: 'late',
+    })
+  })
+
+  it('keeps the recorded receipt when the ack cannot be delivered', async () => {
+    const taskId = await createTask(ctx, alice, projectId, 'ack 丢失')
+    await confirmAgreement(ctx, alice, taskId)
+    const created = await startRun(ctx, alice, taskId, seed, '读取上下文')
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, runId)
+    const [snapshot] = await database.db
+      .select()
+      .from(schema.runProjectContexts)
+      .where(eq(schema.runProjectContexts.runId, runId))
+    const entries = await database.db
+      .select()
+      .from(schema.runProjectContextEntries)
+      .where(eq(schema.runProjectContextEntries.snapshotId, snapshot!.id))
+    const offlineNotes: { action: string; fields: Record<string, unknown> }[] = []
+    const offline = makeHarness(
+      database,
+      {},
+      {
+        contextLog: (action, fields) => offlineNotes.push({ action, fields }),
+        send: () => {
+          throw new Error('node offline')
+        },
+      },
+    )
+    offline.clock.advance(Date.now() - offline.clock.now().getTime())
+    const device = { deviceId: seed.deviceId, ownerUserId: alice.userId }
+
+    // Node 在发出回执后立即断线：ack 发不出去不是协议违例，回执事实必须保留。
+    await expect(
+      offline.orchestrator.ingestNodeEvent(
+        device,
+        receiptFrame({
+          runId,
+          snapshotId: snapshot!.id,
+          receiptSeq: 1,
+          headerDigest: snapshot!.headerDigest,
+          nonceMatched: true,
+          entriesDelivered: entries.map((entry) => entry.entryId),
+          entriesRead: [],
+          readEvents: [],
+          missing: [],
+          digestVerified: true,
+          at: new Date().toISOString(),
+        }),
+      ),
+    ).resolves.toBeUndefined()
+    const receipts = await database.db
+      .select()
+      .from(schema.runContextReceipts)
+      .where(eq(schema.runContextReceipts.runId, runId))
+    expect(receipts).toHaveLength(1)
+    expect(offlineNotes.some((note) => note.action === 'context.receipt_ack_send_failed')).toBe(
+      true,
+    )
   })
 
   it('rejects a receipt whose header digest or nonce does not match', async () => {
@@ -1145,6 +1402,82 @@ describe('PC-05a run project context snapshot', () => {
     expect(invalid.map((note) => note.fields['reason'])).toEqual(
       expect.arrayContaining(['header_digest_mismatch', 'nonce_mismatch', 'read_events_mismatch']),
     )
+    const rejectedAcks = sentAcks.filter((ack) => ack.payload['result'] === 'rejected')
+    expect(rejectedAcks.map((ack) => ack.payload['reason'])).toEqual(
+      expect.arrayContaining(['header_digest_mismatch', 'nonce_mismatch', 'read_events_mismatch']),
+    )
+  })
+
+  it('accepts a lower seq that was never recorded and keeps the high watermark', async () => {
+    const taskId = await createTask(ctx, alice, projectId, '乱序回执')
+    await confirmAgreement(ctx, alice, taskId)
+    const created = await startRun(ctx, alice, taskId, seed, '乱序')
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, runId)
+    const [snapshot] = await database.db
+      .select()
+      .from(schema.runProjectContexts)
+      .where(eq(schema.runProjectContexts.runId, runId))
+    const entries = await database.db
+      .select()
+      .from(schema.runProjectContextEntries)
+      .where(eq(schema.runProjectContextEntries.snapshotId, snapshot!.id))
+    const device = { deviceId: seed.deviceId, ownerUserId: alice.userId }
+    const base = {
+      runId,
+      snapshotId: snapshot!.id,
+      headerDigest: snapshot!.headerDigest,
+      nonceMatched: true,
+      entriesDelivered: entries.map((entry) => entry.entryId),
+      entriesRead: [],
+      readEvents: [],
+      missing: [],
+      digestVerified: true,
+      at: new Date().toISOString(),
+    }
+
+    // Hub 只要求单调（允许序号空洞）：seq 2 可先到并被接受。
+    await harness.orchestrator.ingestNodeEvent(device, receiptFrame({ ...base, receiptSeq: 2 }))
+    // seq 1 低于高水位但从未落库：不能拒收——entriesRead 是本批新增，拒收会
+    // 永久丢掉已发生的读取事实。接受后高水位仍为 2。
+    const readAt = new Date().toISOString()
+    await harness.orchestrator.ingestNodeEvent(
+      device,
+      receiptFrame({
+        ...base,
+        receiptSeq: 1,
+        entriesRead: [entries[0]!.entryId],
+        readEvents: [
+          {
+            entryId: entries[0]!.entryId,
+            digestVerified: true,
+            byteSize: entries[0]!.byteSize,
+            at: readAt,
+          },
+        ],
+      }),
+    )
+    const receipts = await database.db
+      .select()
+      .from(schema.runContextReceipts)
+      .where(eq(schema.runContextReceipts.runId, runId))
+    expect(receipts.map((receipt) => receipt.receiptSeq).sort((a, b) => a - b)).toEqual([1, 2])
+    const [readEntry] = await database.db
+      .select()
+      .from(schema.runProjectContextEntries)
+      .where(eq(schema.runProjectContextEntries.entryId, entries[0]!.entryId))
+    expect(readEntry?.readAt).not.toBeNull()
+    const consumption = await database.db
+      .select()
+      .from(schema.runContextConsumptions)
+      .where(eq(schema.runContextConsumptions.entryId, entries[0]!.entryId))
+    expect(consumption).toHaveLength(1)
+    expect(sentAcks.at(-1)?.payload).toMatchObject({
+      receiptSeq: 1,
+      highestSeq: 2,
+      result: 'accepted',
+    })
   })
 
   it('accepts sequential single-entry reads and keeps first-read facts stable on repeats', async () => {

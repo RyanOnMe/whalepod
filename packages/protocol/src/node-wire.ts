@@ -268,6 +268,24 @@ export const RunLiveDeltaSchema = envelope(
 /** ADR-0027 §4：Node 汇总 Runtime 两级回执后的专用上行帧（不投影成产品 Run 事件）。 */
 export const RunContextReceiptFrameSchema = envelope('run.context_receipt', RunContextReceiptSchema)
 
+/**
+ * ADR-0027 §4（PC-05b-2）：Hub 对 `run.context_receipt` 的接收回执。Node 只有
+ * 收到本帧才删除本地待发项。`highestSeq` 仅在 `accepted`/`duplicate` 时有意义
+ * （Hub 已接收的最高序号，允许空洞）；`late`/`rejected` 恒为 0，因为该回执
+ * 没有落库，Hub 不承诺任何水位。
+ */
+export const RunContextReceiptAckFrameSchema = envelope(
+  'run.context_receipt_ack',
+  z.strictObject({
+    runId: z.uuid(),
+    snapshotId: z.uuid(),
+    receiptSeq: z.number().int().positive(),
+    highestSeq: z.number().int().min(0),
+    result: z.enum(['accepted', 'duplicate', 'late', 'rejected']),
+    reason: z.string().min(1).max(200).optional(),
+  }),
+)
+
 /** ADR-0028 §3：工作输入交付/读取的专用上行回执（独立于 run.context_receipt）。 */
 export const RunWorkInputReceiptFrameSchema = envelope(
   'run.work_input_receipt',
@@ -482,6 +500,7 @@ export const NodeDownstreamSchema = z.discriminatedUnion('type', [
   NodeTokenRevokedSchema,
   RunContextStateFrameSchema,
   ContextStateSyncFrameSchema,
+  RunContextReceiptAckFrameSchema,
 ])
 export type NodeDownstream = z.infer<typeof NodeDownstreamSchema>
 

@@ -51,6 +51,7 @@ import type {
   ContextStateAck,
   ContextStatePull,
   ErrorCode,
+  NodeDownstream,
   ProjectedRunEvent,
   RunContextReceipt,
   RunSnapshot,
@@ -114,6 +115,11 @@ export interface RunOrchestratorDeps {
    * 字段只含不透明 id、状态、计数）。事务内只收集，提交后写。
    */
   contextLog?: (action: string, fields: Record<string, unknown>) => void
+  /**
+   * PC-05b-2：回执接收 ack 的直发通道（设备在线才发，丢了由 Node 重放回执）。
+   * 缺省 = 不发（深模块单测）；组合根接 nodeConnections.send。
+   */
+  send?: (deviceId: string, frame: NodeDownstream) => void
 }
 
 export class RunOrchestrator {
@@ -123,6 +129,7 @@ export class RunOrchestrator {
   private readonly warnFn: (message: string, context: Record<string, unknown>) => void
   private readonly logFn: ContextEntryObserver
   private readonly contextLogFn: (action: string, fields: Record<string, unknown>) => void
+  private readonly sendFn: (deviceId: string, frame: NodeDownstream) => void
   private readonly contextStateDeps: RunContextStateDeps
   /** deviceId → 最近心跳；reconciler 据此判断「Node 在线但已没有该 Run」。 */
   readonly deviceActivity = new Map<string, DeviceActivity>()
@@ -137,6 +144,7 @@ export class RunOrchestrator {
     this.warnFn = deps.warn ?? (() => {})
     this.logFn = deps.log ?? (() => {})
     this.contextLogFn = deps.contextLog ?? (() => {})
+    this.sendFn = deps.send ?? (() => {})
     this.contextStateDeps = {
       database: this.database,
       outbox: this.outbox,
@@ -933,6 +941,46 @@ export class RunOrchestrator {
     })
     for (const gap of gaps) this.warnFn(gap.message, gap.context)
     if (outcome === undefined) return
+    // PC-05b-2：无论 accepted/duplicate/late/rejected 都回 ack；Node 只有收到
+    // ack 才删除本地回执发件箱，否则断线重连后会继续重放。发送失败（Node 恰好
+    // 断开）不是协议违例：快照与消费事实已提交，Node 重放同一 seq 会得到幂等
+    // duplicate ack。
+    const ackResult =
+      outcome.status === 'accepted'
+        ? 'accepted'
+        : outcome.status === 'duplicate'
+          ? 'duplicate'
+          : outcome.status === 'late'
+            ? 'late'
+            : 'rejected'
+    try {
+      this.sendFn(device.deviceId, {
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: now.toISOString(),
+        type: 'run.context_receipt_ack',
+        payload: {
+          runId: receipt.runId,
+          snapshotId: receipt.snapshotId,
+          receiptSeq: receipt.receiptSeq,
+          highestSeq:
+            outcome.status === 'accepted' || outcome.status === 'duplicate'
+              ? outcome.highestSeq
+              : 0,
+          result: ackResult,
+          ...(outcome.status === 'rejected' ? { reason: outcome.reason } : {}),
+        },
+      })
+    } catch (error) {
+      this.contextLog('context.receipt_ack_send_failed', {
+        component: 'hub.context',
+        runId: receipt.runId,
+        snapshotId: receipt.snapshotId,
+        receiptSeq: receipt.receiptSeq,
+        result: ackResult,
+        errorName: error instanceof Error ? error.name : typeof error,
+      })
+    }
     if (outcome.status === 'accepted') {
       this.contextLog('context.receipt_recorded', {
         component: 'hub.context',
@@ -941,6 +989,16 @@ export class RunOrchestrator {
         receiptSeq: receipt.receiptSeq,
         delivered: outcome.delivered,
         read: outcome.read,
+      })
+      return
+    }
+    if (outcome.status === 'duplicate') {
+      this.contextLog('context.receipt_duplicate', {
+        component: 'hub.context',
+        runId: receipt.runId,
+        snapshotId: outcome.snapshotId,
+        receiptSeq: receipt.receiptSeq,
+        highestSeq: outcome.highestSeq,
       })
       return
     }

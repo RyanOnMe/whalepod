@@ -56,7 +56,7 @@ import type {
 import { RunManager } from '../apps/node/src/run/run-manager.js'
 import { ArtifactInputsManager } from '../apps/node/src/artifact/inputs.js'
 import { ProjectContextDownloader } from '../apps/node/src/context/project-context.js'
-import { SqliteContextReceiptSeqStore } from '../apps/node/src/context/receipt-seq-store.js'
+import { SqliteContextReceiptOutbox } from '../apps/node/src/context/receipt-outbox.js'
 import { ArtifactCollector } from '../apps/node/src/artifact/collect.js'
 import { OfficePreviewGenerator } from '../apps/node/src/artifact/preview.js'
 import {
@@ -393,6 +393,11 @@ function sendUplink(frame: string): void {
   sessionSend(frame)
 }
 
+const contextReceiptOutbox = new SqliteContextReceiptOutbox(
+  join(stateDir, 'context-receipt-outbox.sqlite'),
+)
+contextReceiptOutbox.seedFromLegacy(join(stateDir, 'context-receipts.sqlite'))
+
 const runManager = new RunManager({
   supervisor,
   registry,
@@ -442,7 +447,7 @@ const runManager = new RunManager({
   cleanupArtifactInputs: (runId) => artifactInputs.cleanup(runId),
   prepareProjectContext: (runId, manifest) => projectContext.prepare(runId, manifest),
   cleanupProjectContext: (runId) => projectContext.cleanup(runId),
-  contextReceiptSeq: new SqliteContextReceiptSeqStore(join(stateDir, 'context-receipts.sqlite')),
+  contextReceiptOutbox,
   deviceId: config.deviceId,
   dshDistributionVersion: '0.1.0-rc.8-e2e',
   log: (level, msg, context) => {

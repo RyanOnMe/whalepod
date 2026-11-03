@@ -1,0 +1,13 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a035",
+  "type": "run.context_receipt_ack",
+  "sentAt": "2026-01-05T09:02:23Z",
+  "payload": {
+    "runId": "01905f7c-0000-7000-8000-000000000301",
+    "snapshotId": "01905f7c-0000-7000-8000-000000000402",
+    "receiptSeq": 2,
+    "highestSeq": 2,
+    "result": "accepted"
+  }
+}

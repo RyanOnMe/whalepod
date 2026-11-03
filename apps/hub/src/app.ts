@@ -36,6 +36,7 @@ import { registerPreparationRoutes } from './modules/device/preparation-routes.j
 import { registerDeviceRoutes } from './modules/device/routes.js'
 import { registerWorkspaceRoutes } from './modules/device/workspace-routes.js'
 import { registerNodeWebsocket } from './modules/device/node-websocket.js'
+import { nodeConnections } from './modules/device/connection-registry.js'
 import { RunOrchestrator } from './modules/run/index.js'
 import { registerRunRoutes } from './modules/run/routes.js'
 import { registerHandoffRoutes } from './modules/handoff/routes.js'
@@ -202,6 +203,8 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
     log: (event) => logRecordedEntry(app.log, event),
     // ADR-0027 §8：快照创建/派发阻断/回执接受与拒绝的 hub.context 观测。
     contextLog: (action, fields) => app.log.info({ ...fields, action }, action),
+    // PC-05b-2：回执接收 ack 直发在线 Node；丢了由 Node 重放同一 seq。
+    send: (deviceId, frame) => nodeConnections.send(deviceId, frame),
   })
   app.decorate('runOrchestrator', orchestrator)
   registerNodeWebsocket(app, { database, orchestrator, realtime })

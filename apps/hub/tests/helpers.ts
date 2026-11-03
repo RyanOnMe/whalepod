@@ -1,4 +1,4 @@
-import type { ArtifactInputManifest } from '@whalepod/protocol'
+import type { ArtifactInputManifest, NodeDownstream } from '@whalepod/protocol'
 /**
  * Hub integration spec 的统一入口与驱动助手（#183 拆耦合后成了**聚合层**）。
  *
@@ -365,6 +365,8 @@ export interface HarnessOrchestratorOptions {
   log?: ContextEntryObserver
   /** ADR-0027 §8：快照/回执结构化观测（context.*）；测试收集用。 */
   contextLog?: (action: string, fields: Record<string, unknown>) => void
+  /** PC-05b-2：回执 ack 直发通道；测试收集/模拟在线 Node 用。 */
+  send?: (deviceId: string, frame: NodeDownstream) => void
 }
 
 export function makeHarness(
@@ -386,6 +388,7 @@ export function makeHarness(
     ...(orchestratorOptions.contextLog === undefined
       ? {}
       : { contextLog: orchestratorOptions.contextLog }),
+    ...(orchestratorOptions.send === undefined ? {} : { send: orchestratorOptions.send }),
   })
   const worker = new OutboxWorker({
     outbox,

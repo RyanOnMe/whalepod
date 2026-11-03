@@ -127,6 +127,26 @@ export async function lastRunContextReceiptSeq(
   return Number(row?.value ?? 0)
 }
 
+/** PC-05b-2：重复回执按 (run,snapshot,seq) 幂等，不重复写消费事实。 */
+export async function getRunContextReceiptBySeq(
+  handle: DbHandle,
+  runId: string,
+  snapshotId: string,
+  receiptSeq: number,
+): Promise<RunContextReceiptRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(runContextReceipts)
+    .where(
+      and(
+        eq(runContextReceipts.runId, runId),
+        eq(runContextReceipts.snapshotId, snapshotId),
+        eq(runContextReceipts.receiptSeq, receiptSeq),
+      ),
+    )
+  return row
+}
+
 /** 首次交付才写 deliveredAt；重复回执不推迟既有事实。 */
 export async function markRunProjectContextEntriesDelivered(
   handle: DbHandle,

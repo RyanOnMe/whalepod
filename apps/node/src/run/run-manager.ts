@@ -49,8 +49,6 @@ import {
   runSnapshotFrame,
   runWorkInputReceiptFrame,
 } from '../gateway/hub-socket.js'
-import type { ContextReceiptSeqStore } from '../context/receipt-seq-store.js'
-import { MemoryContextReceiptSeqStore } from '../context/receipt-seq-store.js'
 import {
   applyContextStateSync,
   applyRunContextState,
@@ -60,6 +58,8 @@ import {
 } from '../context/state.js'
 import type { ContextStateStore } from '../context/state-store.js'
 import { MemoryContextStateStore } from '../context/state-store.js'
+import type { RunContextReceiptDraft, RunContextReceiptOutbox } from '../context/receipt-outbox.js'
+import { MemoryContextReceiptOutbox } from '../context/receipt-outbox.js'
 import type { PreparedProjectContext } from '../context/project-context.js'
 import type { PreparedWorkInputs } from '../work/work-input.js'
 import type { WorkInputReceiptStore } from '../work/receipt-store.js'
@@ -153,10 +153,10 @@ export interface RunManagerDeps {
   readonly cleanupWorkInputs?: (runId: string) => Promise<void>
   /** ADR-0028 §3：工作输入回执的持久累计/待发队列（生产 SQLite）。 */
   readonly workInputReceiptStore?: WorkInputReceiptStore
-  /** ADR-0027 §4：receiptSeq 持久计数（生产 SQLite；缺省内存实现）。 */
-  readonly contextReceiptSeq?: ContextReceiptSeqStore
   /** ADR-0027 §6（PC-05b）：上下文状态与清理重试队列（生产 SQLite；缺省内存）。 */
   readonly contextStateStore?: ContextStateStore
+  /** ADR-0027 §4（PC-05b-2）：回执持久发件箱（生产 SQLite；缺省内存）。 */
+  readonly contextReceiptOutbox?: RunContextReceiptOutbox
   /** P1-16：run.snapshot 的设备身份与 DSH 发行版版本（§2.6/§6.2）。 */
   readonly deviceId: string
   readonly dshDistributionVersion: string
@@ -244,7 +244,9 @@ export class RunManager {
       nonceMatched: boolean
     }
   >()
-  private readonly contextReceiptSeq: ContextReceiptSeqStore
+  private readonly contextReceiptOutbox: RunContextReceiptOutbox
+  /** 本连接内已发送、尚未 ack 的回执；重连时清空以便全量重放。 */
+  private readonly sentContextReceipts = new Set<string>()
   private readonly contextStateStore: ContextStateStore
   private readonly contextStateDeps: ContextStateApplierDeps
   /**
@@ -272,7 +274,7 @@ export class RunManager {
     this.confirmMs = deps.cancelConfirmMs ?? DEFAULT_CANCEL_CONFIRM_MS
     this.termGraceMs = deps.cancelTermGraceMs ?? DEFAULT_CANCEL_TERM_GRACE_MS
     this.timers = deps.timers ?? { setTimeout, clearTimeout }
-    this.contextReceiptSeq = deps.contextReceiptSeq ?? new MemoryContextReceiptSeqStore()
+    this.contextReceiptOutbox = deps.contextReceiptOutbox ?? new MemoryContextReceiptOutbox()
     this.contextStateStore = deps.contextStateStore ?? new MemoryContextStateStore()
     this.contextStateDeps = {
       runtimeHomeFor: deps.runtimeHomeFor,
@@ -303,6 +305,9 @@ export class RunManager {
         return this.handleRunContextState(frame.payload)
       case 'context.state_sync':
         return this.handleContextStateSync(frame.payload)
+      case 'run.context_receipt_ack':
+        this.handleContextReceiptAck(frame.payload)
+        return
       case 'run.event_ack':
         this.deps.eventStore.ackUntil(frame.payload.runId, frame.payload.throughSeq)
         return
@@ -341,6 +346,10 @@ export class RunManager {
     for (const runId of this.deps.eventStore.runIdsWithPending()) this.drainRun(runId)
     // 断线期间未写出的工作输入回执：重连后补发（Hub 按 receiptSeq 幂等）。
     this.drainWorkInputReceipts()
+    // ADR-0027 §4（PC-05b-2）：未收到 Hub ack 的上下文回执按序重放。
+    // 新连接没有「本连接已发」记忆，必须全量重放，由 Hub 按 seq 幂等吸收。
+    this.sentContextReceipts.clear()
+    this.drainContextReceiptOutbox()
     // ADR-0027 §6（PC-05b）：到期未完成的撤权副本删除先重试一轮。
     // 每个 Run 走自己的串行队列，避免与状态帧并发写 state.json。
     this.scheduleContextCleanupDrain()
@@ -1446,18 +1455,16 @@ export class RunManager {
       return
     }
     const known = new Set(prepared.entries.map((entry) => entry.entryId))
-    let receipt: RunContextReceipt
+    let draft: RunContextReceiptDraft
     if (payload.kind === 'delivered') {
       for (const entryId of payload.entriesDelivered) {
         if (known.has(entryId)) state.delivered.add(entryId)
       }
-      this.contextStateStore.markDelivered(runId, prepared.snapshotId, [...state.delivered])
       state.headerDigest = payload.headerDigest
       state.nonceMatched = payload.nonceMatched && payload.headerDigest === prepared.headerDigest
-      receipt = {
+      draft = {
         runId,
         snapshotId: prepared.snapshotId,
-        receiptSeq: this.contextReceiptSeq.next(runId, prepared.snapshotId),
         headerDigest: state.headerDigest,
         nonceMatched: state.nonceMatched,
         entriesDelivered: [...state.delivered].sort(),
@@ -1478,12 +1485,9 @@ export class RunManager {
         return
       }
       state.read.add(payload.entryId)
-      // 已读集合必须跨重启保留：撤权时只删 readAt=0 的副本。
-      this.contextStateStore.markRead(runId, prepared.snapshotId, payload.entryId)
-      receipt = {
+      draft = {
         runId,
         snapshotId: prepared.snapshotId,
-        receiptSeq: this.contextReceiptSeq.next(runId, prepared.snapshotId),
         headerDigest: state.headerDigest,
         nonceMatched: state.nonceMatched,
         entriesDelivered: [...state.delivered].sort(),
@@ -1503,14 +1507,97 @@ export class RunManager {
         at: payload.at,
       }
     }
-    this.deps.send(runContextReceiptFrame(receipt))
-    this.log('info', 'project context receipt forwarded', {
+    // 先原子「分配 seq + 入队」再写本地已交付/已读标记：任何一步失败都不会
+    // 出现「seq 已消费但没有待发回执」的空洞。持久化失败只记结构化错误，绝不
+    // 让 stdout 监听器冒泡异常拖死整个 Node 进程。
+    let receipt: RunContextReceipt
+    try {
+      receipt = this.contextReceiptOutbox.enqueueNext(draft, this.now().toISOString())
+    } catch (error) {
+      this.log('error', 'project context receipt persist failed', {
+        component: 'node.context',
+        action: 'node.context.receipt_outbox',
+        event: 'persist_failed',
+        runId,
+        snapshotId: prepared.snapshotId,
+        errorName: error instanceof Error ? error.name : typeof error,
+      })
+      return
+    }
+    try {
+      if (payload.kind === 'delivered') {
+        this.contextStateStore.markDelivered(runId, prepared.snapshotId, [...state.delivered])
+      } else {
+        // 已读集合必须跨重启保留：撤权时只删 readAt=0 的副本。
+        this.contextStateStore.markRead(runId, prepared.snapshotId, payload.entryId)
+      }
+    } catch (error) {
+      // 回执已持久化；本地标记滞后只影响撤权清理的保守方向，不回滚已发生事实。
+      this.log('warn', 'project context receipt local state mark failed', {
+        component: 'node.context',
+        action: 'node.context.receipt_outbox',
+        event: 'local_state_failed',
+        runId,
+        snapshotId: prepared.snapshotId,
+        receiptSeq: receipt.receiptSeq,
+        errorName: error instanceof Error ? error.name : typeof error,
+      })
+    }
+    this.drainContextReceiptOutbox(runId)
+    this.log('info', 'project context receipt queued', {
       component: 'node.context',
+      action: 'node.context.receipt_outbox',
+      event: 'queued',
       runId,
       snapshotId: prepared.snapshotId,
       receiptSeq: receipt.receiptSeq,
       delivered: receipt.entriesDelivered.length,
       read: receipt.entriesRead.length,
+      pending: this.contextReceiptOutbox.pending(runId).length,
+    })
+  }
+
+  /** 按 seq 升序重放未 ack 的上下文回执；发送成功也保留到 Hub ack。 */
+  private drainContextReceiptOutbox(runId?: string): void {
+    for (const item of this.contextReceiptOutbox.pending(runId)) {
+      const key = this.contextReceiptKey(item.receipt)
+      if (this.sentContextReceipts.has(key)) continue
+      if (this.deps.send(runContextReceiptFrame(item.receipt))) {
+        this.sentContextReceipts.add(key)
+      }
+    }
+  }
+
+  private contextReceiptKey(
+    receipt: Pick<RunContextReceipt, 'runId' | 'snapshotId' | 'receiptSeq'>,
+  ): string {
+    return `${receipt.runId}|${receipt.snapshotId}|${receipt.receiptSeq}`
+  }
+
+  /** Hub 接收回执后删除本地待发项；未知/过期 seq 幂等忽略。 */
+  private handleContextReceiptAck(
+    payload: Extract<NodeDownstream, { type: 'run.context_receipt_ack' }>['payload'],
+  ): void {
+    // 只删被 ack 的精确 seq。Hub 允许 seq 空洞，highestSeq 不能证明更低的
+    // 未 ack 项已经落库——按区间删会丢掉 Hub 从未收到的读取事实。
+    this.contextReceiptOutbox.ack(payload.runId, payload.snapshotId, payload.receiptSeq)
+    this.sentContextReceipts.delete(
+      this.contextReceiptKey({
+        runId: payload.runId,
+        snapshotId: payload.snapshotId,
+        receiptSeq: payload.receiptSeq,
+      }),
+    )
+    this.log('info', 'project context receipt acknowledged', {
+      component: 'node.context',
+      action: 'node.context.receipt_outbox',
+      event: 'acknowledged',
+      runId: payload.runId,
+      snapshotId: payload.snapshotId,
+      receiptSeq: payload.receiptSeq,
+      highestSeq: payload.highestSeq,
+      result: payload.result,
+      pending: this.contextReceiptOutbox.pending(payload.runId).length,
     })
   }
 

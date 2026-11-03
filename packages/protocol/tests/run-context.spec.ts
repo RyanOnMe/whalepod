@@ -18,7 +18,11 @@ import {
   contextStateDigestInput,
 } from '../src/run-context.js'
 import { RuntimeInitializeSchema } from '../src/runtime-wire.js'
-import { NodeHelloSchema, RunStartSchema } from '../src/node-wire.js'
+import {
+  NodeHelloSchema,
+  RunContextReceiptAckFrameSchema,
+  RunStartSchema,
+} from '../src/node-wire.js'
 
 const ENTRY_ID = '01905f7c-0000-7000-8000-000000000951'
 const DIGEST = 'a'.repeat(64)
@@ -277,5 +281,20 @@ describe('PC-05a run project context wire', () => {
     }
     expect(RunContextReceiptSchema.parse(receipt).receiptSeq).toBe(1)
     expect(() => RunContextReceiptSchema.parse({ ...receipt, receiptSeq: 0 })).toThrow()
+    const ackPayload = {
+      runId: receipt.runId,
+      snapshotId: receipt.snapshotId,
+      receiptSeq: 1,
+      highestSeq: 1,
+      result: 'accepted',
+    }
+    const ack = envelope('run.context_receipt_ack', ackPayload)
+    expect(RunContextReceiptAckFrameSchema.parse(ack).payload.highestSeq).toBe(1)
+    expect(() =>
+      RunContextReceiptAckFrameSchema.parse({
+        ...ack,
+        payload: { ...ackPayload, result: 'done' },
+      }),
+    ).toThrow()
   })
 })
