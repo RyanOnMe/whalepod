@@ -12,7 +12,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database, MachineRunMandateFacts } from '@whalepod/db'
-import { Outbox, schema } from '@whalepod/db'
+import { Outbox, markRunMandateInvalidated, schema } from '@whalepod/db'
 import { asUserId } from '@whalepod/domain'
 import {
   autoDispatchProposedIntent,
@@ -288,6 +288,37 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
     const itemId = await associate(ctx, alice, workKey, messageId)
     const intentId = await proposeIntent(ctx, alice, workKey, messageId)
     return { intentId, itemId }
+  }
+
+  /** RD-03c2 夹具：生产 HTTP 派工 + runtime.ready，得到一个 running 机器 Run。 */
+  async function startRunningMachineRun() {
+    const work = await createWork(ctx, alice, taskId)
+    const mandate = await createMandate(ctx, alice, work.workKey, {
+      allowedAgentIds: [agent.agentId],
+    })
+    const { intentId } = await prepareIntent(work.workKey)
+    await approve(ctx, alice, work.workKey, intentId)
+    const dispatched = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/dispatch-intents/${intentId}/dispatch`,
+      payload: {
+        agentId: agent.agentId,
+        profileRevisionId: agent.revisionId,
+        deviceId: device.deviceId,
+        workspaceId: device.workspaceId,
+        actionClass: 'draft',
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(dispatched.statusCode).toBe(200)
+    const runId = String(dispatched.json().data.runId)
+    await ctx.app.runOrchestrator.ingestNodeEvent(
+      { deviceId: device.deviceId, ownerUserId: alice.userId },
+      runEventFrame(runId, 1, { type: 'runtime.ready', dshSessionId: `rd03c2-${runId}` }),
+    )
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('running')
+    return { work, mandate, intentId, runId }
   }
 
   it('approve → dispatch creates a machine Run with provenance and reactivates work on terminal', async () => {
@@ -754,6 +785,149 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
         .from(schema.dispatchOutbox)
         .where(eq(schema.dispatchOutbox.type, 'run.mandate_invalidated')),
     ).toHaveLength(1)
+  })
+
+  it('revoke marks a running machine Run mandate-invalidated', async () => {
+    const { mandate, runId } = await startRunningMachineRun()
+    const revoked = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/mandates/${String(mandate.id)}/revoke`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(revoked.statusCode).toBe(200)
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('running')
+    expect(run?.mandateInvalidatedReason).toBe('mandate_revoked')
+  })
+
+  it('resume creates a new mandate version without duplicating the invalidation signal', async () => {
+    const { mandate, runId } = await startRunningMachineRun()
+    const paused = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/mandates/${String(mandate.id)}/pause`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(paused.statusCode).toBe(200)
+    const [afterPause] = await database.db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId))
+    const resumed = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/mandates/${String(paused.json().data.id)}/resume`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(resumed.statusCode).toBe(200)
+    const [afterResume] = await database.db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId))
+    expect(afterResume?.status).toBe('running')
+    expect(afterResume?.mandateInvalidatedReason).toBe('mandate_paused')
+    expect(afterResume?.mandateInvalidatedAt).toEqual(afterPause?.mandateInvalidatedAt)
+    expect(
+      await database.db
+        .select()
+        .from(schema.dispatchOutbox)
+        .where(eq(schema.dispatchOutbox.type, 'run.mandate_invalidated')),
+    ).toHaveLength(1)
+  })
+
+  it('does not mark a terminal machine Run during the expiry sweep', async () => {
+    const { mandate, runId } = await startRunningMachineRun()
+    await ctx.app.runOrchestrator.ingestNodeEvent(
+      { deviceId: device.deviceId, ownerUserId: alice.userId },
+      runEventFrame(runId, 2, {
+        type: 'run.completed',
+        finalText: 'done before expiry',
+      }),
+    )
+    const expiresAt = new Date(Date.now() + 1_000)
+    await database.db
+      .update(schema.workMandates)
+      .set({ expiresAt })
+      .where(eq(schema.workMandates.id, mandate.id))
+    const now = new Date(expiresAt.getTime() + 1_000)
+    expect(
+      await reconcileMandateInvalidation(
+        { database, outbox: new Outbox(database), now: () => now },
+        now,
+      ),
+    ).toEqual({ invalidated: 0, failed: 0 })
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('completed')
+    expect(run?.mandateInvalidatedAt).toBeNull()
+    expect(
+      await database.db
+        .select()
+        .from(schema.dispatchOutbox)
+        .where(eq(schema.dispatchOutbox.type, 'run.mandate_invalidated')),
+    ).toHaveLength(0)
+  })
+
+  it('markRunMandateInvalidated is idempotent at the row level', async () => {
+    const { runId } = await startRunningMachineRun()
+    const first = await database.transaction((tx) =>
+      markRunMandateInvalidated(tx, runId, 'mandate_paused', new Date()),
+    )
+    expect(first).toBeDefined()
+    const second = await database.transaction((tx) =>
+      markRunMandateInvalidated(tx, runId, 'mandate_paused', new Date()),
+    )
+    expect(second).toBeUndefined()
+  })
+
+  it('does not scan human runs during the invalidation sweep', async () => {
+    const created = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/runs`,
+      payload: {
+        agentId: agent.agentId,
+        deviceId: device.deviceId,
+        workspaceId: device.workspaceId,
+        prompt: 'human run',
+      },
+    })
+    expect(created.statusCode).toBe(201)
+    const runId = String(created.json().data.id)
+    await ctx.app.runOrchestrator.ingestNodeEvent(
+      { deviceId: device.deviceId, ownerUserId: alice.userId },
+      runEventFrame(runId, 1, { type: 'runtime.ready', dshSessionId: `human-${runId}` }),
+    )
+    const now = new Date()
+    expect(
+      await reconcileMandateInvalidation(
+        { database, outbox: new Outbox(database), now: () => now },
+        now,
+      ),
+    ).toEqual({ invalidated: 0, failed: 0 })
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('running')
+    expect(run?.mandateInvalidatedAt).toBeNull()
+  })
+
+  it('sweep marks a running machine Run when its work is retired', async () => {
+    const { work, runId } = await startRunningMachineRun()
+    const retired = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/retire`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(retired.statusCode).toBe(200)
+    const now = new Date()
+    expect(
+      await reconcileMandateInvalidation(
+        { database, outbox: new Outbox(database), now: () => now },
+        now,
+      ),
+    ).toMatchObject({ invalidated: 1, failed: 0 })
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('running')
+    expect(run?.mandateInvalidatedReason).toBe('work_unavailable')
   })
 
   it('expiry sweep marks a running machine Run when its mandate has expired', async () => {

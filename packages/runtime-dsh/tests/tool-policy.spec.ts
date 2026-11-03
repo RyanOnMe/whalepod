@@ -184,6 +184,15 @@ describe('machineDraftToolDecision', () => {
     expect(
       machineDraftToolDecision(
         writeOnly,
+        'edit',
+        { file_path: '.whalepod/drafts/x' },
+        scope,
+        'mandate_revoked',
+      ),
+    ).toMatchObject({ kind: 'deny' })
+    expect(
+      machineDraftToolDecision(
+        writeOnly,
         'read',
         { file_path: 'src/main.ts' },
         scope,

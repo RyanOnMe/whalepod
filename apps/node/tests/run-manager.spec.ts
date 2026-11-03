@@ -920,6 +920,27 @@ describe('run.cancel 与 approval.decide', () => {
     })
   })
 
+  it('Runtime 不在时 run.mandate_invalidated → 只回 ack，不 spawn', async () => {
+    const h = await makeHarness()
+    await h.manager.handleFrame({
+      protocolVersion: 1,
+      messageId: randomUUID(),
+      sentAt: new Date().toISOString(),
+      type: 'run.mandate_invalidated',
+      payload: {
+        commandId: 'e3e3e3e3-e3e3-4e33-8e33-e3e3e3e3e3e3',
+        runId: '99999999-9999-4999-8999-999999999999',
+        mandateId: '01905f7c-0000-7000-8000-000000000906',
+        reason: 'mandate_revoked',
+      },
+    } as NodeDownstream)
+    expect(h.runtimes).toHaveLength(0)
+    expect(h.sentFrames().findLast((f) => f.type === 'command.ack')?.payload).toMatchObject({
+      commandId: 'e3e3e3e3-e3e3-4e33-8e33-e3e3e3e3e3e3',
+      accepted: true,
+    })
+  })
+
   it('approval.decide → stdin 转发 + approval.decided 双受众回显落 spool', async () => {
     const h = await makeHarness()
     await h.manager.handleFrame(runStartFrame(h.workspaceId))

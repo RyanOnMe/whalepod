@@ -518,9 +518,9 @@ export async function listCancellableMachineRunIdsForWork(
 /**
  * ADR-0028 §9（RD-03c2）：需要实时失效的在途机器 Run 事实。
  *
- * 只返回「已经可疑」的行（work 缺失/非 active/mandate 指针变了/当前 Mandate
- * 非 active 或到期），正常 Run 不进入周期清扫的结果集。调用方按事实判定
- * reason 并把标记 + 下行命令放在同一事务里。
+ * SQL 只做粗筛（work 缺失/非 active/mandate 指针变了/当前 Mandate 非 active 或
+ * 到期）；活跃 Run 自己的 `waiting(auto, run:<id>)` 也会被粗筛命中，由调用方的
+ * reason 映射排除健康行。200 上限是单 tick 的保护，不是正确性依赖。
  */
 export interface MachineRunMandateFacts {
   readonly runId: string

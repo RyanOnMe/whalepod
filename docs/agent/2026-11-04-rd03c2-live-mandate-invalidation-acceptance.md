@@ -32,26 +32,26 @@ Task 责任人：
   - 未 allowlist 的范围内 `read` 失效后仍 allow；
   - 先产生 `approval.requested`，失效后 `allowed_once` 仍不能执行 write。
 - 判据文件：
-  - `apps/hub/tests/work-dispatch.integration.spec.ts`（running pause、到期清扫、幂等、reason 纯映射）
-  - `apps/node/tests/run-manager.spec.ts`（转发/重复/终态）
-  - `packages/runtime-dsh/tests/tool-policy.spec.ts`（失效后读写分支）
-  - `packages/runtime-dsh/tests/dsh-contract/mandate-invalidation.contract.spec.ts`（3）
+  - `apps/hub/tests/work-dispatch.integration.spec.ts`（running pause/revoke、resume 新版本不重复、到期清扫、Work retired、人类 Run 不扫描、终态不标记、行级幂等、reason 纯映射）
+  - `apps/node/tests/run-manager.spec.ts`（转发/重复/终态/Runtime 不在）
+  - `packages/runtime-dsh/tests/tool-policy.spec.ts`（失效后 write/edit deny、read allow、publish allow、越界 deny）
+  - `packages/runtime-dsh/tests/dsh-contract/mandate-invalidation.contract.spec.ts`（4）
   - protocol fixtures：`run.mandate_invalidated`（node-downstream/runtime-command）
 - 观测：Hub `component=hub.dispatch action=work.dispatch.mandate_invalidated`（invalidated/failed 计数）；Node `component=node.run_manager`（转发/ack-only）；Runtime `component=runtime.bridge`（失效原因）；DB 标记与 outbox。均不含正文/路径/凭据。
 
 ## 3 判定
 
-- **正控**：running Run 在 pause 后仍 `running`、标记 `mandate_paused`、恰好一条 outbox 命令、RunView 可读；到期清扫标记 `mandate_expired`；失效后 `read`/`publish_artifact` 仍可用。
-- **负控**：失效后 `write`/`edit` deny 且不落盘、不产生审批；pending approval `allowed_once` 不能复活写；重复失效命令/重复清扫不产生第二条命令；终态 Run 不被标记/复活；Node 不在时不 spawn；人类 Run 不受扫描（`origin='mandate'` 过滤）。
+- **正控**：running Run 在 pause/revoke 后仍 `running`、分别标记 `mandate_paused`/`mandate_revoked`、恰好一条 outbox 命令、RunView 可读；到期清扫标记 `mandate_expired`；Work retired 清扫标记 `work_unavailable`；resume 新版本不重复发信号；失效后 `read`/`publish_artifact` 仍可用。
+- **负控**：失效后 `write`/`edit` deny 且不落盘、不产生审批；pending approval `allowed_once` 不能复活写；重复失效命令/重复清扫/行级重复标记不产生第二条命令；终态 Run 不被标记/复活；人类 Run 不进入扫描；Node Runtime 不在时不 spawn。
 - **数据判据**：`RunToolPolicy`/`MandateInvalidationReason` strict schema；`run_mandate_invalidation_fields` 约束两列同生同灭；`beforeDispatch` 既有机器 Run 复核不变。
 
 ## 4 门禁
 
 | 门 | 命令 | 结果（2026-11-04） |
 |---|---|---|
-| Q0 | `pnpm check` | 223 文件 / 2432 项通过 |
-| Q2 | `pnpm test:integration` | 90 文件 / 878 项通过（`work-dispatch` 54 项） |
-| Q3 | `pnpm test:dsh-contract` | 24 文件 / 98 项通过（mandate invalidation +3） |
+| Q0 | `pnpm check` | 223 文件 / 2433 项通过 |
+| Q2 | `pnpm test:integration` | 90 文件 / 884 项通过（`work-dispatch` 60 项） |
+| Q3 | `pnpm test:dsh-contract` | 24 文件 / 99 项通过（mandate invalidation +4） |
 
 ## 5 单点变异
 
@@ -63,7 +63,7 @@ Task 责任人：
 | M67 | 到期清扫 | 清扫直接 return 0 | 红（过期 Run 无标记） |
 | M68 | Node 转发失效命令 | handleFrame 不转发只 ack | 红（Runtime 收不到） |
 | M69 | 单调 guard 也带失效标志 | guard 调用不传 reason | 红（pending approval 后 write 落盘） |
-| M70 | 标记幂等 | 去掉 mark 的 `mandateInvalidatedAt is null` 条件 | 红（重复清扫入队第二条） |
+| M70 | 行级标记幂等 | 去掉 `markRunMandateInvalidated` 的 `mandateInvalidatedAt is null` 条件 | 红（第二次标记仍返回 row） |
 
 ## 6 边界与未交付
 
@@ -71,8 +71,10 @@ Task 责任人：
 - cost/token 账本与硬额度：当前无 usage 回传；`maxRunsPerWork`/`maxAttempts` 只在派发前拦新增，不实时扫在途 Run。
 - 已执行 Run 不自动杀死、副作用不回滚；owner 只能走既有取消。失效通知落在 RunView/结构化日志，不改 `apps/web`。
 - Node 本地来源权限实时撤权（ADR-0024 链路）不在本切片；本切片只处理机器 Run 的 Mandate 失效。
-- Mandate 到期清扫周期沿用 10s 维护循环；进程停机期间到期只能在下次启动/下一 tick 生效。
-- 失效信号只保证「下一次工具调用前」送达（至少一次 outbox）；已发出但尚未执行的工具调用按 Node/Runtime 到达顺序处理，不回滚已发生副作用。
+- Mandate 到期清扫周期沿用 10s 维护循环；进程停机期间到期只能在下次启动/下一 tick 生效。清扫查询是粗筛（含活跃 Run 自己的 `waiting(auto, run:<id>)`），由 reason 映射排除健康行；单 tick 上限 200 行，超大并发下个别失效行可能延后一拍。
+- 失效信号是至少一次 outbox 投递，但**执行约束从 Runtime 收到命令起生效**：Hub 标记到 Runtime 收到之间存在窗口（outbox 250ms tick、退避最高 30s、Device 离线可无限延长），窗口内已发出的写仍可能完成；不回收、不回滚。该窗口是 ADR-0028 §9「不自动杀已执行 Run」的固有取舍。
+- 滚动升级必须 Hub/Node/Runtime 同版本（或 Node 先具备该帧能力）：旧 Node 的 `NodeDownstreamSchema` 不认识 `run.mandate_invalidated` 会静默丢弃，Hub 只能按 outbox 退避重试，旧 Runtime 在送达前继续按旧策略执行。本切片未加 `node.hello` 能力位。
+- Node 已记录 commandId 但在转发前崩溃时，Hub 重投会被当作 duplicate 只回 ack（与既有 `run.cancel` 同模式），该信号可能丢失；Run 状态仍可由 owner 取消/心跳收敛，但实时写阻断不保证。
 
 ## 7 复跑
 

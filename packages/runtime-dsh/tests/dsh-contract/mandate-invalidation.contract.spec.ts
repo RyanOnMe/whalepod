@@ -78,6 +78,31 @@ describe('probe: live mandate invalidation', () => {
     }
   })
 
+  it('still allows publish_artifact as a finish step after invalidation', async () => {
+    const spec = runtimeSpec({ toolPolicy: policy([]) })
+    const runtime = await startReplayRuntime('tool-approval', spec)
+    try {
+      await runtime.send(initializeCommand(spec))
+      await runtime.until('runtime.ready')
+      await runtime.send(
+        commandFrame('run.mandate_invalidated', {
+          runId: spec.runId,
+          mandateId: MANDATE_ID,
+          reason: 'mandate_expired',
+        }),
+      )
+      await runtime.send(
+        commandFrame('run.prompt', { runId: spec.runId, text: 'publish the report' }),
+      )
+      const candidate = await runtime.until('artifact.candidate')
+      expect(candidate.payload).toMatchObject({ relativePath: 'out/report.md' })
+      await runtime.until('run.completed')
+      expect(runtime.outputs.some((frame) => frame.type === 'approval.requested')).toBe(false)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('a pending approval cannot execute a write after invalidation', async () => {
     // write 在面内但不在 allowlist：先产生 approval.requested；失效信号先于
     // allowed_once 到达时，guard 必须在执行前再次拒绝。

@@ -805,7 +805,7 @@ export class RunManager {
       })
       return
     }
-    this.deps.supervisor.dispatchToRuntime(runId, {
+    const dispatched = this.deps.supervisor.dispatchToRuntime(runId, {
       protocolVersion: 1,
       messageId: crypto.randomUUID(),
       sentAt: this.now().toISOString(),
@@ -816,6 +816,20 @@ export class RunManager {
         reason: payload.reason,
       },
     })
+    if (!dispatched) {
+      // 与 run.followup 同口径：isActive 后仍可能撞上 handle 已消失的窗口。
+      // 不写 ack、不回 accepted，让 Hub outbox 按同一 commandId 重试。
+      this.ack(payload.commandId, false, {
+        code: 'RUNTIME_LOST',
+        message: 'runtime command channel unavailable',
+      })
+      this.log('warn', 'mandate invalidation could not reach runtime', {
+        component: 'node.run_manager',
+        runId,
+        reason: payload.reason,
+      })
+      return
+    }
     this.deps.commandStore.markAcked(payload.commandId)
     this.ack(payload.commandId, true)
     this.log('info', 'mandate invalidation forwarded to runtime', {
