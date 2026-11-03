@@ -161,6 +161,7 @@ export async function loadWorkDetail(
         : toWorkMandateView(currentMandate, now, true),
     recentDecisions: decisions.map(toWorkDecisionView),
     proposedIntents: proposed.map((intent) => toDispatchIntentView(intent, now)),
+    dispatchIntents: intents.map((intent) => toDispatchIntentView(intent, now)),
     watermarks: {
       lastDecisionAt: decisions[0]?.createdAt.toISOString() ?? null,
       lastSourceVersion: decisions[0]?.sourceVersion ?? null,

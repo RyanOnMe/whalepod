@@ -1323,4 +1323,341 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
     expect(expired.json().error.message).toContain('expired')
     expect(await database.db.select().from(schema.runs)).toHaveLength(0)
   })
+
+  it('auto dispatches a proposed intent under existing_task with mandate approval', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, {
+      autoDispatch: 'existing_task',
+      allowedAgentIds: [agent.agentId],
+    })
+    const { intentId } = await prepareIntent(work.workKey)
+    const [intent] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, intentId))
+    expect(intent).toMatchObject({
+      status: 'dispatched',
+      approvalBasis: 'mandate',
+      agentId: agent.agentId,
+      deviceId: device.deviceId,
+      workspaceId: device.workspaceId,
+      actionClass: 'draft',
+    })
+    expect(intent?.approvedAt).not.toBeNull()
+    expect(intent?.candidates).toHaveLength(1)
+    const [run] = await database.db.select().from(schema.runs)
+    expect(run).toMatchObject({
+      origin: 'mandate',
+      dispatchIntentId: intentId,
+      onBehalfOfUserId: alice.userId,
+      workKey: work.workKey,
+    })
+    const [workRow] = await database.db
+      .select()
+      .from(schema.works)
+      .where(eq(schema.works.workKey, work.workKey))
+    expect(workRow).toMatchObject({
+      state: 'waiting',
+      resumeMode: 'auto',
+      resumeCondition: `run:${run?.id}`,
+    })
+  })
+
+  it('shows the auto-dispatched intent with candidates in the work detail', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, {
+      autoDispatch: 'existing_task',
+      allowedAgentIds: [agent.agentId],
+    })
+    const { intentId } = await prepareIntent(work.workKey)
+    const detail = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${work.workKey}`,
+    })
+    expect(detail.statusCode).toBe(200)
+    const view = detail.json().data.dispatchIntents as Array<Record<string, unknown>>
+    expect(view.find((intent) => intent.id === intentId)).toMatchObject({
+      status: 'dispatched',
+      approvalBasis: 'mandate',
+      runId: expect.any(String),
+    })
+    expect(view[0]?.candidates).toHaveLength(1)
+  })
+
+  it('keeps the intent proposed with exclusion reasons when the allowlist is empty', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, { autoDispatch: 'existing_task' })
+    const { intentId } = await prepareIntent(work.workKey)
+    const [intent] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, intentId))
+    expect(intent?.status).toBe('proposed')
+    expect(intent?.candidates).toEqual([])
+    expect(intent?.exclusionReasons).toEqual(
+      expect.arrayContaining([{ kind: 'agent', reason: 'allowlist_empty' }]),
+    )
+    expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+  })
+
+  it('uses the declared agent order and records lower-priority agents', async () => {
+    const other = await createAgent(database, alice.userId)
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, {
+      autoDispatch: 'existing_task',
+      allowedAgentIds: [other.agentId, agent.agentId],
+    })
+    const { intentId } = await prepareIntent(work.workKey)
+    const [intent] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, intentId))
+    expect(intent?.status).toBe('dispatched')
+    expect(intent?.agentId).toBe(other.agentId)
+    expect(intent?.exclusionReasons).toEqual(
+      expect.arrayContaining([{ kind: 'agent', id: agent.agentId, reason: 'lower_priority' }]),
+    )
+    const [run] = await database.db.select().from(schema.runs)
+    expect(run?.agentId).toBe(other.agentId)
+  })
+
+  it('leaves the intent proposed when the only device is offline', async () => {
+    await database.db
+      .update(schema.devices)
+      .set({ lastSeenAt: new Date(Date.now() - 5 * 60 * 1000) })
+      .where(eq(schema.devices.id, device.deviceId))
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, {
+      autoDispatch: 'existing_task',
+      allowedAgentIds: [agent.agentId],
+    })
+    const { intentId } = await prepareIntent(work.workKey)
+    const [intent] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, intentId))
+    expect(intent?.status).toBe('proposed')
+    expect(intent?.candidates).toEqual([])
+    expect(intent?.exclusionReasons).toEqual(
+      expect.arrayContaining([{ kind: 'device', reason: 'no_online_device' }]),
+    )
+    expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+  })
+
+  it('leaves the intent proposed when the online device has no available workspace', async () => {
+    await database.db
+      .update(schema.workspaces)
+      .set({ available: false })
+      .where(eq(schema.workspaces.deviceId, device.deviceId))
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, {
+      autoDispatch: 'existing_task',
+      allowedAgentIds: [agent.agentId],
+    })
+    const { intentId } = await prepareIntent(work.workKey)
+    const [intent] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, intentId))
+    expect(intent?.status).toBe('proposed')
+    expect(intent?.exclusionReasons).toEqual(
+      expect.arrayContaining([
+        { kind: 'workspace', deviceId: device.deviceId, reason: 'no_available_workspace' },
+      ]),
+    )
+    expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+  })
+
+  it('prefers the draft action class when the mandate allows it', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, {
+      autoDispatch: 'existing_task',
+      allowedAgentIds: [agent.agentId],
+      allowedActionClasses: ['research', 'draft'],
+    })
+    const { intentId } = await prepareIntent(work.workKey)
+    const [intent] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, intentId))
+    expect(intent).toMatchObject({ status: 'dispatched', actionClass: 'draft' })
+    const [run] = await database.db.select().from(schema.runs)
+    expect(run?.agentId).toBe(agent.agentId)
+  })
+
+  it('leaves the intent proposed when the trigger source has no pending inbox item', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, {
+      autoDispatch: 'existing_task',
+      allowedAgentIds: [agent.agentId],
+    })
+    const messageId = await comment(ctx, alice, taskId)
+    const admission = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/admission-checks`,
+      payload: { sourceType: 'task_message', sourceId: messageId },
+      idempotencyKey: idemKey(),
+    })
+    expect(admission.statusCode).toBe(200)
+    expect(admission.json().data.proposedIntent).toMatchObject({
+      status: 'proposed',
+      candidates: [],
+    })
+    expect(admission.json().data.proposedIntent.exclusionReasons).toEqual(
+      expect.arrayContaining([{ kind: 'input', reason: 'no_pending_trigger_item' }]),
+    )
+    expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+  })
+
+  it('rejects a proposed intent when maxRunsPerWork is exhausted', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, {
+      autoDispatch: 'existing_task',
+      allowedAgentIds: [agent.agentId],
+      maxRunsPerWork: 1,
+    })
+    // 先正常自动派工一次并让 Run 终态，再用同 work 的新来源触发第二次。
+    await prepareIntent(work.workKey)
+    const [firstRun] = await database.db.select().from(schema.runs)
+    await ctx.app.runOrchestrator.ingestNodeEvent(
+      { deviceId: device.deviceId, ownerUserId: alice.userId },
+      runEventFrame(String(firstRun?.id), 1, {
+        type: 'runtime.ready',
+        dshSessionId: 'rd03b-budget-session',
+      }),
+    )
+    await ctx.app.runOrchestrator.ingestNodeEvent(
+      { deviceId: device.deviceId, ownerUserId: alice.userId },
+      runEventFrame(String(firstRun?.id), 2, {
+        type: 'run.completed',
+        finalText: 'first draft',
+      }),
+    )
+    const messageId = await comment(ctx, alice, taskId)
+    await associate(ctx, alice, work.workKey, messageId)
+    const second = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/admission-checks`,
+      payload: { sourceType: 'task_message', sourceId: messageId },
+      idempotencyKey: idemKey(),
+    })
+    expect(second.statusCode).toBe(200)
+    expect(second.json().data.proposedIntent).toMatchObject({
+      status: 'rejected',
+      resolutionReason: 'max_runs_exhausted',
+    })
+    expect(await database.db.select().from(schema.runs)).toHaveLength(1)
+  })
+
+  it('rejects a proposed intent when maxAttempts is exhausted', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, {
+      autoDispatch: 'existing_task',
+      allowedAgentIds: [agent.agentId],
+      maxAttempts: 1,
+    })
+    await prepareIntent(work.workKey)
+    const [firstRun] = await database.db.select().from(schema.runs)
+    await ctx.app.runOrchestrator.ingestNodeEvent(
+      { deviceId: device.deviceId, ownerUserId: alice.userId },
+      runEventFrame(String(firstRun?.id), 1, {
+        type: 'runtime.ready',
+        dshSessionId: 'rd03b-attempt-session',
+      }),
+    )
+    await ctx.app.runOrchestrator.ingestNodeEvent(
+      { deviceId: device.deviceId, ownerUserId: alice.userId },
+      runEventFrame(String(firstRun?.id), 2, {
+        type: 'run.failed',
+        code: 'INTERNAL_ERROR',
+        summary: 'attempt failed',
+      }),
+    )
+    const messageId = await comment(ctx, alice, taskId)
+    await associate(ctx, alice, work.workKey, messageId)
+    const second = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/admission-checks`,
+      payload: { sourceType: 'task_message', sourceId: messageId },
+      idempotencyKey: idemKey(),
+    })
+    expect(second.statusCode).toBe(200)
+    expect(second.json().data.proposedIntent).toMatchObject({
+      status: 'rejected',
+      resolutionReason: 'max_attempts_exhausted',
+    })
+    expect(await database.db.select().from(schema.runs)).toHaveLength(1)
+  })
+
+  it('records full_access as an exclusion and leaves the intent proposed', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, {
+      autoDispatch: 'existing_task',
+      allowedAgentIds: [agent.agentId],
+    })
+    // removeWhen: Mandate 创建已拒绝 full_access 候选；这里改 Revision 模拟
+    // Mandate 创建后策略被改坏的防御面，不构造运行时状态。
+    await database.db
+      .update(schema.agentProfileRevisions)
+      .set({ approvalPolicy: 'full_access' })
+      .where(eq(schema.agentProfileRevisions.id, agent.revisionId))
+    const { intentId } = await prepareIntent(work.workKey)
+    const [intent] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, intentId))
+    expect(intent?.status).toBe('proposed')
+    expect(intent?.exclusionReasons).toEqual(
+      expect.arrayContaining([{ kind: 'agent', id: agent.agentId, reason: 'full_access' }]),
+    )
+    expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+  })
+
+  it('selects the most recently seen online device with an available workspace', async () => {
+    await database.db
+      .update(schema.devices)
+      .set({ lastSeenAt: new Date(Date.now() - 10_000) })
+      .where(eq(schema.devices.id, device.deviceId))
+    const second = await createDevice(database, alice.userId)
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, {
+      autoDispatch: 'existing_task',
+      allowedAgentIds: [agent.agentId],
+    })
+    const { intentId } = await prepareIntent(work.workKey)
+    const [intent] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, intentId))
+    expect(intent?.status).toBe('dispatched')
+    expect(intent?.deviceId).toBe(second.deviceId)
+    expect(intent?.workspaceId).toBe(second.workspaceId)
+  })
+
+  it('does not create a second Run when the same admission is replayed', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, {
+      autoDispatch: 'existing_task',
+      allowedAgentIds: [agent.agentId],
+    })
+    const messageId = await comment(ctx, alice, taskId)
+    await associate(ctx, alice, work.workKey, messageId)
+    const first = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/admission-checks`,
+      payload: { sourceType: 'task_message', sourceId: messageId },
+      idempotencyKey: idemKey(),
+    })
+    expect(first.statusCode).toBe(200)
+    expect(first.json().data.proposedIntent.status).toBe('dispatched')
+    const replay = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/admission-checks`,
+      payload: { sourceType: 'task_message', sourceId: messageId },
+      idempotencyKey: idemKey(),
+    })
+    expect(replay.statusCode).toBe(200)
+    expect(replay.json().data.proposedIntent.status).toBe('dispatched')
+    expect(await database.db.select().from(schema.runs)).toHaveLength(1)
+  })
 })

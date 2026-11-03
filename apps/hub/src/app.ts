@@ -27,7 +27,10 @@ import { registerContextRoutes } from './modules/context/routes.js'
 import { registerWorkRoutes } from './modules/work/routes.js'
 // ADR-0028（RD-03a）：工作派工意图的人工确认与受控派工端口。
 import { registerDispatchRoutes } from './modules/dispatch/routes.js'
-import { cancelInvalidatedMachineRuns } from './modules/dispatch/service.js'
+import {
+  autoDispatchProposedIntent,
+  cancelInvalidatedMachineRuns,
+} from './modules/dispatch/service.js'
 import { logRecordedEntry } from './modules/context/observer.js'
 // ADR-0026（PC-04a）：确定性内部协调的读面与显式触发。
 import { registerCoordinationRoutes } from './modules/coordination/routes.js'
@@ -231,6 +234,13 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       registerWorkRoutes(api, {
         database,
         requireActor,
+        onIntentProposed: async (actor, workKey, intentId) =>
+          autoDispatchProposedIntent(
+            { database, orchestrator, now: () => new Date() },
+            actor,
+            workKey,
+            intentId,
+          ),
         onMandateChanged: async (actor, workKey) => {
           const result = await cancelInvalidatedMachineRuns(
             { database, orchestrator, now: () => new Date() },
