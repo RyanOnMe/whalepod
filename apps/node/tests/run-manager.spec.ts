@@ -27,7 +27,7 @@ import type {
   RuntimeCommand,
   WorkInputManifestEntry,
 } from '@whalepod/protocol'
-import { contextStateDigestInput } from '@whalepod/protocol'
+import { contextStateDigestInput, RunStartSchema } from '@whalepod/protocol'
 import {
   MemoryContextReceiptOutbox,
   SqliteContextReceiptOutbox,
@@ -391,6 +391,34 @@ describe('run.start 处理链', () => {
     )
     const init2 = h.runtimes[1]!.stdin[0] as Extract<RuntimeCommand, { type: 'runtime.initialize' }>
     expect(init2.payload.approvalPolicy).toBe('full_access')
+  })
+
+  it('RD-03c1 工具策略：machine toolPolicy 原样透传进 runtime.initialize', async () => {
+    const h = await makeHarness()
+    const toolPolicy = {
+      mode: 'draft',
+      allowedToolNames: ['read', 'glob'],
+      mandateVersion: 4,
+      workKey: '01905f7c-0000-7000-8000-000000000904',
+    }
+    // wire 形状先过生产 schema：字段拼错/被 strict 拒绝必须在 Node 入口就红，
+    // 而不是靠 hand-built cast 混过去（helper 的 messageId 是 m-1，需换合法 UUID）。
+    const frame = { ...runStartFrame(h.workspaceId, { toolPolicy }), messageId: randomUUID() }
+    expect(RunStartSchema.parse(frame).payload.toolPolicy).toEqual(toolPolicy)
+    await h.manager.handleFrame(frame)
+    const init = h.runtimes[0]!.stdin[0]!
+    expect(init.type).toBe('runtime.initialize')
+    const payload = (init as Extract<RuntimeCommand, { type: 'runtime.initialize' }>).payload
+    expect(payload.toolPolicy).toEqual(toolPolicy)
+  })
+
+  it('RD-03c1 工具策略：人类 Run 缺省不携带 toolPolicy', async () => {
+    const h = await makeHarness()
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    const init = h.runtimes[0]!.stdin[0]!
+    expect(init.type).toBe('runtime.initialize')
+    const payload = (init as Extract<RuntimeCommand, { type: 'runtime.initialize' }>).payload
+    expect(payload.toolPolicy).toBeUndefined()
   })
 
   it('容量满 → ack accepted=false NODE_CAPACITY_REACHED，第三个不 spawn', async () => {

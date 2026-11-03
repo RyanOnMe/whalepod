@@ -1,5 +1,9 @@
 import type { Actor } from '@whalepod/domain'
-import { CreateRunRequestSchema, type ReviewInputManifest } from '@whalepod/protocol'
+import {
+  CreateRunRequestSchema,
+  type ReviewInputManifest,
+  type RunToolPolicy,
+} from '@whalepod/protocol'
 import { RunCommandError } from './errors.js'
 
 /** 命令层入口的调用者身份：即 domain policy 的 Actor。 */
@@ -45,6 +49,8 @@ export interface CreateRunInput {
   mandateId?: string
   dispatchIntentId?: string
   onBehalfOfUserId?: string
+  /** ADR-0028 §7（RD-03c1）：机器 Run 的固定草稿工具面；人类 Run 不携带。 */
+  toolPolicy?: RunToolPolicy
   /** 缺省时取 Agent 当前 Revision（§2.3）。 */
   profileRevisionId?: string
   deviceId: string

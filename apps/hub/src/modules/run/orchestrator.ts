@@ -58,7 +58,12 @@ import type {
   RunSnapshot,
   RunWorkInputReceipt,
 } from '@whalepod/protocol'
-import { parseNodeFrame, RunCancelSchema, RunStartSchema } from '@whalepod/protocol'
+import {
+  parseNodeFrame,
+  RunCancelSchema,
+  RunStartSchema,
+  RunToolPolicySchema,
+} from '@whalepod/protocol'
 import { cancelPendingApprovalsInTransaction, cancelRunInTransaction } from './cancel.js'
 import { decideApprovalInTransaction } from './decide.js'
 import type { ApprovalDecisionInput } from './decide.js'
@@ -367,6 +372,9 @@ export class RunOrchestrator {
     }
     // ADR-0028 §6（RD-03a）：机器 Run 必须有完整 provenance，且不能以 full_access 执行。
     const origin = input.origin ?? 'human'
+    if (origin !== 'mandate' && input.toolPolicy !== undefined) {
+      throw new RunCommandError('VALIDATION_FAILED', 'tool policy is only for machine runs')
+    }
     if (origin === 'mandate') {
       if (
         input.workKey === undefined ||
@@ -375,6 +383,13 @@ export class RunOrchestrator {
         input.onBehalfOfUserId === undefined
       ) {
         throw new RunCommandError('VALIDATION_FAILED', 'machine run provenance is incomplete')
+      }
+      if (
+        input.toolPolicy === undefined ||
+        input.toolPolicy.workKey !== input.workKey ||
+        input.toolPolicy.mode !== 'draft'
+      ) {
+        throw new RunCommandError('VALIDATION_FAILED', 'machine run tool policy is incomplete')
       }
       if (input.onBehalfOfUserId !== task.assigneeUserId) {
         throw new RunCommandError('FORBIDDEN', 'machine run must be on behalf of the assignee')
@@ -642,6 +657,8 @@ export class RunOrchestrator {
       ),
       // 切片⑧：解析后的档位成对固化（run.start 与 runs 行同值，Node 只透传）。
       approvalPolicy,
+      // ADR-0028 §7（RD-03c1）：机器 Run 的固定草稿面（人类 Run 缺省）。
+      ...(input.toolPolicy !== undefined ? { toolPolicy: input.toolPolicy } : {}),
       // #379：收尾交接草稿的触发与约定快照（缺省 = 不生成）。
       ...(handoffRunSpec !== undefined ? { handoff: handoffRunSpec } : {}),
       // ADR-0027 §3：本 Run 冻结的项目上下文清单（正文走 Node 受控下载）。
@@ -716,6 +733,20 @@ export class RunOrchestrator {
       const machineVerification = await verifyRunMachineDispatch(tx, run, now)
       if (!machineVerification.ok) {
         blockReason = machineVerification.reason
+        await cancelRunInTransaction(tx, { outbox: this.outbox, now }, run, 'admin')
+        dispatch.outcome = 'block'
+        return
+      }
+      // RD-03c1：升级前排队、未被本版本固化 toolPolicy 的机器 Run 一律不下发。
+      // 旧行没有固定草稿面，继续跑会退回 ask-all 并把自主 Run 卡在审批上；按
+      // 「机器 Run 必须有 policy」fail closed，走既有 queued 取消路径。
+      const startPayload = command.payload as { toolPolicy?: unknown }
+      const startPolicy = RunToolPolicySchema.safeParse(startPayload.toolPolicy)
+      if (
+        run.origin === 'mandate' &&
+        (!startPolicy.success || startPolicy.data.workKey !== run.workKey)
+      ) {
+        blockReason = 'machine_tool_policy_missing'
         await cancelRunInTransaction(tx, { outbox: this.outbox, now }, run, 'admin')
         dispatch.outcome = 'block'
         return

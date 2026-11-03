@@ -1,8 +1,8 @@
 /**
  * ADR-0028（RD-01）：持续工作、Mandate 与影子准入的 HTTP 视图/请求契约。
  *
- * 视图只含协调元数据与引用，不含来源正文；`dispatch_intent` 在 RD-01 只会是
- * `proposed`（或后续 cancel/reject/expire），不会出现 `approved/dispatched`。
+ * 视图只含协调元数据与引用，不含来源正文；`dispatch_intent` 由 RD-03a/b 推进
+ * `proposed/approved/dispatched` 与终态。
  */
 import { z } from 'zod'
 

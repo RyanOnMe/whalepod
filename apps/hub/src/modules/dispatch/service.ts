@@ -44,8 +44,10 @@ import type {
   DispatchIntentView,
   ErrorCode,
   WorkActionClass,
+  WorkDraftToolName,
   WorkSourceType,
 } from '@whalepod/protocol'
+import { WorkDraftToolNameSchema } from '@whalepod/protocol'
 import { WORK_INPUT_CAPABILITY } from '@whalepod/protocol'
 import { ApiError } from '../shared/http-error.js'
 import { ERROR_HTTP_STATUS, errorCodeOf } from '../run/routes.js'
@@ -332,6 +334,8 @@ interface Candidate {
   readonly workspaceId: string
   readonly actionClass: WorkActionClass
   readonly dshDistributionVersion: string
+  readonly allowedToolNames: WorkDraftToolName[]
+  readonly mandateVersion: number
 }
 
 async function machineBudgetReason(
@@ -409,6 +413,8 @@ async function resolveCandidate(
     workspaceId: request.workspaceId,
     actionClass: request.actionClass,
     dshDistributionVersion,
+    allowedToolNames: mandate.allowedToolNames.map((name) => WorkDraftToolNameSchema.parse(name)),
+    mandateVersion: mandate.version,
   }
 }
 
@@ -453,6 +459,12 @@ async function createMachineRunForIntent(
       mandateId: intent.mandateId,
       dispatchIntentId: intent.id,
       onBehalfOfUserId: task.assigneeUserId,
+      toolPolicy: {
+        mode: 'draft',
+        allowedToolNames: candidate.allowedToolNames,
+        mandateVersion: candidate.mandateVersion,
+        workKey: work.workKey,
+      },
     },
   )
   const target = {

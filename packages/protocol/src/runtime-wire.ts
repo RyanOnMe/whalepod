@@ -8,6 +8,7 @@
 import { z } from 'zod'
 import { envelope, parseWireFrame } from './envelope.js'
 import { ApprovalPolicySchema } from './approval.js'
+import { RunToolPolicySchema } from './tool-policy.js'
 import { ErrorCodeSchema } from './errors.js'
 import {
   EXECUTION_CONTEXT_MAX_CHARS,
@@ -70,6 +71,8 @@ const RuntimeInitializePayloadSchema = z
     // pre-execute 直接放行，不发 approval.requested。值由 Hub 解析固化
     //（Task 覆盖 ?? Revision 默认），Runtime 不再自行判断。
     approvalPolicy: ApprovalPolicySchema.optional(),
+    // ADR-0028 §7（RD-03c1）：固定草稿工具面与 Mandate 步级预批准；人类 Run 不携带。
+    toolPolicy: RunToolPolicySchema.optional(),
     // P1-15：Reviewer 输入清单 + 下载副本目录（本地 wire 绝对路径，红线同上）。
     // 清单条目上限 64——单任务已发布交付物的现实上界，防止单次 initialize 无界膨胀。
     // 与 http.ts 的 ARTIFACT_INPUT_MANIFEST_MAX_ENTRIES 同值互指（Node 1:1 映射

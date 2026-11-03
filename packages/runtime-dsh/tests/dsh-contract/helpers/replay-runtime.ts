@@ -39,6 +39,10 @@ export type ReplayScenario =
   // PC-00 (#463) 协调计算能力边界：模型调 bash / 按清单读 artifact 输入的脚本。
   | 'tool-boundary'
   | 'tool-boundary-disabled'
+  // ADR-0028 §7（RD-03c1）：机器 Run 路径范围——工作区内读、越界读、草稿区写。
+  | 'tool-path-inside'
+  | 'tool-path-outside'
+  | 'tool-path-draft-write'
   | 'read-artifact-input'
   | 'read-artifact-input-manifest'
   // ADR-0027（PC-05a）：read_project_context 正向读取与正文进入下一次模型请求。

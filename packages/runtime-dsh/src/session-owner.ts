@@ -13,6 +13,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId, type Session, type TurnEndReason } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
+import { machineDraftToolDecision, MACHINE_DRAFT_WRITE_SUBDIR } from './tool-policy.js'
 import { createPublishArtifactTool, type ArtifactPort } from './artifact-tool.js'
 import { createReadArtifactInputTool } from './artifact-input-tool.js'
 import {
@@ -162,18 +163,59 @@ export class SessionOwner {
       //   * full_access：直接放行（责任人对**自己凭据**的显式放权，ADR-0009 决策 7；
       //     口径按 ADR-0010 决策 5：触发方式不影响档位，不做自动降级）。ApprovalPort
       //     仍装配——full_access 下 pre-execute 不再产生询问，port 只是静默闲置。
-      agentCtx.on('tools/pre-execute', (exec): Promise<PreToolDecision> =>
-        Promise.resolve(
+      // 只读材料根只来自 Hub 固化的本次 Run 清单（本地副本目录），不是任意路径。
+      const machineScope = {
+        workspacePath: spec.workspacePath,
+        readRoots: [
+          ...(spec.artifactInputsDir === undefined ? [] : [spec.artifactInputsDir]),
+          ...(spec.projectContext === undefined ? [] : [spec.projectContext.entriesDir]),
+          ...(spec.workInputs === undefined ? [] : [spec.workInputs.entriesDir]),
+        ],
+      }
+      agentCtx.on('tools/pre-execute', (exec): Promise<PreToolDecision> => {
+        // ADR-0028 §7（RD-03c1）：机器 Run 先过固定草稿面 + allowlist + 路径/资源
+        // 范围；四项同时通过才免逐次审批，面内未命中走现有 ask，面外/越界 deny
+        //（不产生 approval.requested）。
+        const machine = machineDraftToolDecision(
+          spec.toolPolicy,
+          exec.name,
+          exec.arguments,
+          machineScope,
+        )
+        if (machine !== undefined) return Promise.resolve(machine)
+        return Promise.resolve(
           spec.approvalPolicy === 'full_access'
             ? { kind: 'allow' }
             : {
                 kind: 'ask',
                 reason: `Run tool call requires approval: ${exec.name}`,
               },
-        ),
-      )
+        )
+      })
+      // 单调 guard 在可扩展的 pre-execute waterfall 之后执行：即使后续 Plugin Pack
+      // 前置返回 allow，面外/越界调用仍被拒（guard 只能 deny，不能 force-allow）。
+      if (spec.toolPolicy !== undefined) {
+        agentCtx.tools.guard((exec) => {
+          const decision = machineDraftToolDecision(
+            spec.toolPolicy,
+            exec.name,
+            exec.arguments,
+            machineScope,
+          )
+          return decision?.kind === 'deny' ? decision.reason : undefined
+        })
+      }
       const systemPrompt = agentCtx.get('systemPrompt') as SystemPromptLike | undefined
       systemPrompt?.section({ name: PERSONA_SECTION, order: 0, text: spec.persona })
+      // 自主 Run 的写入边界必须在模型可见的规则里说清，否则模型只会撞 deny 重试。
+      // 只写工作区相对路径，不把本地绝对路径带进模型上下文。
+      if (spec.toolPolicy !== undefined) {
+        systemPrompt?.section({
+          name: 'deployment:machine-draft-scope',
+          order: 2,
+          text: `自主草稿 Run 的写入只允许 ${MACHINE_DRAFT_WRITE_SUBDIR}/ 目录；其他路径与工具面外工具会被直接拒绝，不进入审批。读取仅限工作区与随本次 Run 下发的只读材料。`,
+        })
+      }
       // create/resume 使用同一版本说明；固定正文由本次首条指令提供，旧正文仅作历史。
       // 普通任务（无约定/交接/材料）不挂这段说明，免得暗示首条指令里一定有版本。
       if (

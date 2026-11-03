@@ -13,6 +13,7 @@ import {
   HandoffRunSpecSchema,
 } from './handoff.js'
 import { ApprovalPolicySchema } from './approval.js'
+import { RunToolPolicySchema } from './tool-policy.js'
 import {
   SourceCapabilitySchema,
   SourcePermissionCheckPayloadSchema,
@@ -383,6 +384,9 @@ export const RunStartSchema = envelope(
       // ADR-0028 §3：创建事务冻结的工作输入清单（正文不在本帧；Node 经受控下载
       // 接口按 Run 归属取得并逐条核对 digest/byteSize）。
       workInput: RunStartWorkInputSchema.optional(),
+      // ADR-0028 §7（RD-03c1）：机器 Run 的固定草稿工具面与 Mandate 步级预批准。
+      // 只有 origin='mandate' 携带；Node 原样透传进 runtime.initialize。
+      toolPolicy: RunToolPolicySchema.optional(),
       // ADR-0009 切片⑤（resume 续跑）：成对携带——resumeOfRunId 让 Node 把
       // initialize 的 dshHomePath 指向**来源 Run** 的 home（per-run 隔离下新
       // runId 的 home 里没有旧日志）；resumeSessionId（= 来源 Run 的
