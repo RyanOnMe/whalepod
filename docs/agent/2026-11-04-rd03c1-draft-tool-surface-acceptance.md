@@ -59,17 +59,17 @@ Task 责任人：
 
 | # | 判据 | 变异 | 实测 |
 |---|---|---|---|
-| M52 | 面外工具 deny | 面集合检查改恒假 | 红（bash 不再 deny） |
-| M53 | 隐式结果/读取通道 | 删 implicit allow | 红（publish/read_input 被 ask） |
+| M52 | 面外工具 deny | 面集合检查改恒假 | 红（bash 不再按「面外」理由拒绝；contract 断言红） |
+| M53 | 隐式结果/读取通道 | 删 implicit allow | 红（publish/read_input 落到 deny，contract 断言红） |
 | M54 | 面内未 allowlist ask | allowlist 判断改恒真 | 红（范围内 write/edit/grep 被 allow） |
-| M55 | Hub 固化 toolPolicy | 删 createMachineRunForIntent 的 policy | 红（run.start 缺 policy） |
+| M55 | Hub 固化 toolPolicy | 删 createMachineRunForIntent 的 policy | 红（创建核心拒绝，Run 不产生） |
 | M56 | 机器 Run 必须有 policy | 删创建核心检查 | 红（缺 policy 仍建 Run） |
 | M57 | Node 透传 policy | 删 initialize 映射 | 红（Runtime 收不到 policy） |
 | M58 | 读路径越界 deny | 读根检查改恒真 | 红（`../probe-secret` 读到正文） |
 | M59 | 写只进草稿区 | 写根检查改恒真 | 红（工作区其他路径可写） |
 | M60 | 升级前缺 policy 不下发 | 删 beforeDispatch guard | 红（旧行仍返回 send） |
 | M61 | 人类 Run 禁带 policy | 删创建核心 rejection | 红（人类 Run 接受 machine policy） |
-| M62 | 路径先于 allowlist | 把路径检查移回 allowlist 之后 | 红（未进 allowlist 的越界读进入审批并读正文） |
+| M62 | 路径先于 allowlist | 把路径检查移回 allowlist 之后 | 红（未进 allowlist 的越界读进入 ask，contract 等不到 run.completed） |
 | M63 | 草稿根不跟随 symlink | 草稿根改 canonicalTarget | 红（drafts→src 的写落到 src） |
 
 ## 6 边界与未交付
@@ -77,7 +77,9 @@ Task 责任人：
 - `mandateInvalidated` 的逐次工具实时复核、跨 Run 授权状态同步未做；暂停/撤销仍只取消未执行 Run（RD-03a），已执行 Run 的工具调用本切片不因 Mandate 变化而阻断（RD-03c2）。
 - 私有草稿沿用既有 Artifact candidate：只有 owner 可见，未发布不进入团队投影；`draftRecipientUserId` 仍未扩展跨成员受众。
 - 读边界是「工作区 + 本次 Run 的只读材料根」；工作区内的敏感文件（如本地 `.env`）仍属于授权读取范围，是否进一步收窄到白名单由后续切片决定。写边界是 `.whalepod/drafts/`；项目源码的修改不进入机器 Run 自主面。
-- 路径裁决在 pre-execute 做 realpath 归一后判定；`.whalepod`/`drafts` 自身的静态 symlink 重定向已由「草稿根按字面路径」挡住，但本进程不防本机其他进程在检查与打开之间替换 symlink（威胁模型是工作输入提示注入，不是本机并发攻击者）。
+- 面内未 allowlist 的调用走既有 `ask`；`read/write/edit` 的 Node 审批预览当前仍按 `path` 取参数（DSH 用 `file_path`），批准前可能看不到具体路径——范围已由 Runtime 硬边界保证，预览字段列为后续修复。
+- 单调 `tools.guard` 是纵深防御，复用同一已测裁决函数；本切片未单独构造「Plugin Pack 前置 allow」探针，实际拦截由 DSH guard 语义保证。
+- 路径裁决在 pre-execute 做 realpath 归一后判定；`.whalepod`/`drafts` 指向存在目标的静态 symlink 会被字面草稿根拒绝；悬空 symlink 的写会在 fs 层以 ENOENT 失败、不落盘，且不产生审批，但策略函数本身不单独 lstat 悬空链接（后续可补组件级 lstat）。本进程不防本机其他进程在检查与打开之间替换 symlink（威胁模型是工作输入提示注入，不是本机并发攻击者）。
 - 升级窗口里 `sentAt !== null` 的旧机器 Run（已写入 Node、ack 丢失）不经过 `beforeDispatch` 的缺 policy 取消；它没有 policy，按既有 `approval_required` 逐次审批运行，不会自动批准，但可能停在审批上。
 - 工具名按 ADR-0026 的实施清单（`read/write/edit/glob/grep` 等）；rc.8 的 `read_image` 不在固定面内，图像输入机器 Run 会 fail-closed deny，若后续需要按 boot 清单扩展。
 - `toolPolicy` 不落 Run 表，只存在不可变 `run.start` outbox payload；`beforeDispatch` 用 `RunToolPolicySchema` 复核 payload 且核对 workKey，不重新解析 allowlist 与 Mandate 最新版本（创建事务已校验，outbox 不可改）。
