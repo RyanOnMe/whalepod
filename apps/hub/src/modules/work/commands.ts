@@ -14,6 +14,7 @@ import {
   listWorkMandates,
   retractAutoAdmittedInboxItemsForWork,
   transactCommand,
+  transactCommandWithOrigin,
   updateWork,
   unwrapPgError,
   type Database,
@@ -21,7 +22,7 @@ import {
   type Tx,
   type WorkMandateRow,
 } from '@whalepod/db'
-import type { CreateWorkMandateRequest } from '@whalepod/protocol'
+import type { CreateWorkMandateRequest, WorkMandateView } from '@whalepod/protocol'
 import { ApiError } from '../shared/http-error.js'
 import { canonicalJson, sha256Hex } from '../coordination/digest.js'
 import { uuidv7 } from '../shared/uuid.js'
@@ -141,13 +142,40 @@ async function transactWork<T>(
   key: string,
   execute: (tx: Tx) => Promise<T>,
 ): Promise<T> {
+  return (await transactWorkWithOrigin(database, key, execute)).value
+}
+
+async function transactWorkWithOrigin<T>(
+  database: Database,
+  key: string,
+  execute: (tx: Tx) => Promise<T>,
+) {
   try {
-    return await transactCommand(database, key, execute)
+    return await transactCommandWithOrigin(database, key, execute)
   } catch (error) {
     const mapped = mapWorkConstraint(error)
     if (mapped !== undefined) throw mapped
     throw error
   }
+}
+
+/**
+ * Mandate 变更命令的结果：`changed` 只有“本次请求真的推进了状态”才为 true。
+ * 调用方据此决定是否触发派工副作用——同 key 重放与 no-op（如 resume 已 active
+ * 的当前版本）都不能取消别的 Run。
+ */
+export interface WorkMutationOutcome<T> {
+  readonly view: T
+  readonly changed: boolean
+}
+
+async function transactWorkMutation<T>(
+  database: Database,
+  key: string,
+  execute: (tx: Tx) => Promise<{ view: T; changed: boolean }>,
+): Promise<WorkMutationOutcome<T>> {
+  const outcome = await transactWorkWithOrigin(database, key, execute)
+  return { view: outcome.value.view, changed: outcome.executed && outcome.value.changed }
 }
 
 export async function createWork(
@@ -230,7 +258,7 @@ export async function createWorkMandate(
   workKey: string,
   input: CreateWorkMandateRequest,
   idempotencyKey: string,
-) {
+): Promise<WorkMutationOutcome<WorkMandateView>> {
   assertNoDuplicates(input.allowedActionClasses, 'allowedActionClasses')
   assertNoDuplicates(input.allowedSourceTypes, 'allowedSourceTypes')
   assertNoDuplicates(input.allowedAgentIds, 'allowedAgentIds')
@@ -239,7 +267,7 @@ export async function createWorkMandate(
     // ADR-0028 §6/§7：RD-01 内草稿受众必须与 principal 同一成员。
     throw new ApiError(400, 'VALIDATION_FAILED', 'draft recipient must be the acting assignee')
   }
-  return transactWork(
+  return transactWorkMutation(
     deps.database,
     `work.mandate.create:${workKey}:${actorUserId}:${requestDigest(input)}:${idempotencyKey}`,
     async (tx) => {
@@ -294,7 +322,7 @@ export async function createWorkMandate(
         statusReason: 'mandate_superseded',
         now,
       })
-      return toWorkMandateView(mandate, now, true)
+      return { view: toWorkMandateView(mandate, now, true), changed: true }
     },
   )
 }
@@ -308,8 +336,8 @@ export async function changeWorkMandateStatus(
   mutation: MandateMutation,
   reason: string | undefined,
   idempotencyKey: string,
-) {
-  return transactWork(
+): Promise<WorkMutationOutcome<WorkMandateView>> {
+  return transactWorkMutation(
     deps.database,
     `work.mandate.${mutation}:${mandateId}:${actorUserId}:${requestDigest(reason ?? null)}:${idempotencyKey}`,
     async (tx) => {
@@ -341,7 +369,7 @@ export async function changeWorkMandateStatus(
         throw new ApiError(409, 'CONFLICT', 'mandate has expired')
       }
       if (current.status === mutationTargetStatus(mutation)) {
-        return toWorkMandateView(current, now, work.state === 'active')
+        return { view: toWorkMandateView(current, now, work.state === 'active'), changed: false }
       }
       const allowed =
         mutation === 'pause'
@@ -390,7 +418,7 @@ export async function changeWorkMandateStatus(
         statusReason: `mandate_${mutation}`,
         now,
       })
-      return toWorkMandateView(next, now, work.state === 'active')
+      return { view: toWorkMandateView(next, now, work.state === 'active'), changed: true }
     },
   )
 }

@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, lte, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, lte, ne, sql } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { runs } from '../schema/run.js'
 import {
@@ -392,10 +392,17 @@ export async function markDispatchIntentDispatched(
   return row
 }
 
-/** 某工作的已派发、仍在 queued 的机器 Run（撤权/新 Mandate 后要走既有取消路径）。 */
-export async function listQueuedMachineRunIdsForWork(
+/**
+ * 某工作尚未真正开始执行的机器 Run（queued / run.start 已受理但 Runtime 未 ready）。
+ *
+ * 只返回 `run.mandateId` 与当前 work mandate 不一致的行：Mandate 新建/暂停/恢复/撤销
+ * 会推进 work.mandateId，旧 Run 才是被取代的那一批。no-op（resume 已 active）与同 key
+ * 重放不会改 work.mandateId，因此不会误伤仍是当前授权的 queued Run。
+ */
+export async function listCancellableMachineRunIdsForWork(
   handle: DbHandle,
   workId: string,
+  currentMandateId: string | null,
 ): Promise<string[]> {
   const rows = await handle
     .select({ runId: dispatchIntents.runId })
@@ -406,7 +413,8 @@ export async function listQueuedMachineRunIdsForWork(
         eq(dispatchIntents.workId, workId),
         eq(dispatchIntents.status, 'dispatched'),
         eq(runs.origin, 'mandate'),
-        eq(runs.status, 'queued'),
+        inArray(runs.status, ['queued', 'dispatching']),
+        currentMandateId === null ? undefined : ne(runs.mandateId, currentMandateId),
       ),
     )
   return rows.flatMap((row) => (row.runId === null ? [] : [row.runId]))

@@ -14,6 +14,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { Database } from '@whalepod/db'
 import { schema } from '@whalepod/db'
 import { asUserId } from '@whalepod/domain'
+import { cancelInvalidatedMachineRuns } from '../src/modules/dispatch/service.js'
 import {
   apiInject,
   createTestApp,
@@ -593,6 +594,219 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
     })
     expect(changed.statusCode).toBe(409)
     expect(await database.db.select().from(schema.runs)).toHaveLength(1)
+  })
+
+  it('keeps a queued machine Run when resume is a no-op on the current active mandate', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    const mandate = await createMandate(ctx, alice, work.workKey)
+    const { intentId, itemId } = await prepareIntent(work.workKey)
+    await approve(ctx, alice, work.workKey, intentId)
+    const dispatched = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/dispatch-intents/${intentId}/dispatch`,
+      payload: {
+        agentId: agent.agentId,
+        deviceId: device.deviceId,
+        workspaceId: device.workspaceId,
+        actionClass: 'draft',
+        workInputItemIds: [itemId],
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(dispatched.statusCode).toBe(200)
+    const runId = String(dispatched.json().data.runId)
+
+    // no-op：resume 当前已 active 的 Mandate 不产生新版本，也不得取消仍由它授权的 Run。
+    const resumed = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/mandates/${String(mandate.id)}/resume`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(resumed.statusCode).toBe(200)
+    expect(resumed.json().data).toMatchObject({ id: mandate.id, status: 'active' })
+
+    // 直接驱动生产取消端口：取消集合必须按 mandateId 过滤，不能只看 work。
+    const cancellation = await cancelInvalidatedMachineRuns(
+      { database, orchestrator: ctx.app.runOrchestrator, now: () => new Date() },
+      { userId: alice.userId, role: 'owner' },
+      work.workKey,
+    )
+    expect(cancellation).toEqual({ cancelled: 0, failed: 0 })
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('queued')
+    const [workRow] = await database.db
+      .select()
+      .from(schema.works)
+      .where(eq(schema.works.workKey, work.workKey))
+    expect(workRow).toMatchObject({
+      state: 'waiting',
+      resumeMode: 'auto',
+      resumeCondition: `run:${runId}`,
+    })
+  })
+
+  it('does not cancel a newer queued machine Run when an older pause command is replayed', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    const mandate = await createMandate(ctx, alice, work.workKey)
+    const pauseKey = idemKey()
+    const paused = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/mandates/${String(mandate.id)}/pause`,
+      payload: {},
+      idempotencyKey: pauseKey,
+    })
+    expect(paused.statusCode).toBe(200)
+    const pausedId = String(paused.json().data.id)
+    const resumed = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/mandates/${pausedId}/resume`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(resumed.statusCode).toBe(200)
+
+    // 新 Mandate 版本下正常派工，Run 仍在 queued。
+    const { intentId, itemId } = await prepareIntent(work.workKey)
+    await approve(ctx, alice, work.workKey, intentId)
+    const dispatched = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/dispatch-intents/${intentId}/dispatch`,
+      payload: {
+        agentId: agent.agentId,
+        deviceId: device.deviceId,
+        workspaceId: device.workspaceId,
+        actionClass: 'draft',
+        workInputItemIds: [itemId],
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(dispatched.statusCode).toBe(200)
+    const runId = String(dispatched.json().data.runId)
+
+    // 重放旧 pause 只回执，不执行命令；不得用旧 Mandate 的副作用取消新 Run。
+    const replay = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/mandates/${String(mandate.id)}/pause`,
+      payload: {},
+      idempotencyKey: pauseKey,
+    })
+    expect(replay.statusCode).toBe(200)
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('queued')
+    const [workRow] = await database.db
+      .select()
+      .from(schema.works)
+      .where(eq(schema.works.workKey, work.workKey))
+    expect(workRow).toMatchObject({
+      state: 'waiting',
+      resumeCondition: `run:${runId}`,
+    })
+  })
+
+  it('beforeDispatch cancels a queued no-input machine Run after the work is retired', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey)
+    const { intentId } = await prepareIntent(work.workKey)
+    await approve(ctx, alice, work.workKey, intentId)
+    const dispatched = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/dispatch-intents/${intentId}/dispatch`,
+      payload: {
+        agentId: agent.agentId,
+        deviceId: device.deviceId,
+        workspaceId: device.workspaceId,
+        actionClass: 'draft',
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(dispatched.statusCode).toBe(200)
+    const runId = String(dispatched.json().data.runId)
+    const retired = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/retire`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(retired.statusCode).toBe(200)
+
+    const [start] = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(eq(schema.dispatchOutbox.type, 'run.start'))
+    expect(
+      await ctx.app.runOrchestrator.beforeDispatch({
+        id: start!.id,
+        deviceId: start!.deviceId,
+        type: start!.type,
+        payload: start!.payload,
+        attemptCount: 1,
+        sentAt: null,
+      }),
+    ).toBe(false)
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('cancelled')
+  })
+
+  it('cancels a dispatching machine Run when its mandate is paused', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    const mandate = await createMandate(ctx, alice, work.workKey)
+    const { intentId, itemId } = await prepareIntent(work.workKey)
+    await approve(ctx, alice, work.workKey, intentId)
+    const dispatched = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/dispatch-intents/${intentId}/dispatch`,
+      payload: {
+        agentId: agent.agentId,
+        deviceId: device.deviceId,
+        workspaceId: device.workspaceId,
+        actionClass: 'draft',
+        workInputItemIds: [itemId],
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(dispatched.statusCode).toBe(200)
+    const runId = String(dispatched.json().data.runId)
+    const [start] = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(eq(schema.dispatchOutbox.type, 'run.start'))
+    expect(start).toBeDefined()
+
+    // 真实 Node 受理：run.start 已写入 Node spool，Run 进入 dispatching，Runtime 尚未 ready。
+    await ctx.app.runOrchestrator.ingestNodeEvent(
+      { deviceId: device.deviceId, ownerUserId: alice.userId },
+      {
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: new Date().toISOString(),
+        type: 'command.ack',
+        payload: { commandId: start!.id, accepted: true },
+      },
+    )
+    const [dispatching] = await database.db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId))
+    expect(dispatching?.status).toBe('dispatching')
+
+    const paused = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/mandates/${String(mandate.id)}/pause`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(paused.statusCode).toBe(200)
+    const [cancelling] = await database.db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId))
+    expect(cancelling?.status).toBe('cancel_requested')
+    const [cancelCommand] = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(eq(schema.dispatchOutbox.type, 'run.cancel'))
+    expect(cancelCommand).toBeDefined()
   })
 
   it('rejects a second approved intent while the machine Run is active and work is waiting', async () => {

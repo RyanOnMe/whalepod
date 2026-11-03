@@ -29,7 +29,7 @@ Task 责任人：
   - `POST /mandates/:id/{pause,resume}`、`POST /works/:workKey/retire`
   - `GET /runs/:runId`
   - Run 终态：`ingestNodeEvent(runEventFrame(...runtime.ready/run.completed...))`。
-- 判据文件：`apps/hub/tests/work-dispatch.integration.spec.ts`（22 用例）。
+- 判据文件：`apps/hub/tests/work-dispatch.integration.spec.ts`（26 用例）。
 - 静态边界：`apps/hub/tests/work-boundaries.spec.ts` 新增 dispatch 端口锁序、禁止直写 Run/TeamEvent/状态、普通 `create()` 拒绝机器来源、migration 约束检查。
 - 测试前置依赖：Agent/Profile、Device/Workspace 由行插入构成（生产注册路径是既有 WS 配对）；每一处都在测试内标注 `removeWhen`。Work/意图/Run/outbox/team_event 不直插。
 - 观测：Hub `component=hub.dispatch` 的 `work.dispatch.approve/reject/dispatch`（workKey、intentId、status、runId，无来源正文）；DB `dispatch_intent.status/approval_basis/approved_at/dispatched_at/run_id/agent_id/device_id/action_class`、`run.origin/mandate_id/dispatch_intent_id/on_behalf_of_user_id/work_key`、`work.state/resume_mode/resume_condition`。
@@ -45,6 +45,9 @@ Task 责任人：
   - `full_access` Agent → 403；action class / Agent 超出 Mandate → 403；
   - Work waiting/retired → dispatch 409，已有活跃 Run 时不产生第二个 Run；
   - 来源在准入后漂移 → 派工端口重新读取来源并 409，Run 0；
+  - 机器 Run 仍在 queued 时，no-op `resume` 与旧 `pause` 命令重放都不取消仍属当前 Mandate 的 Run；
+  - `dispatching`（run.start 已被 Node 受理、Runtime 未 ready）的机器 Run 在 Mandate 暂停后转 `cancel_requested` 并产生 `run.cancel`；
+  - 无输入机器 Run 在 work 退休后 `beforeDispatch` 返回 false，Run 转 `cancelled`；
   - 普通 `create()` 携带 `origin='mandate'` → 403；`createWithinTransaction` 缺 dispatchIntent → 拒绝；
   - 无收件箱条目的机器 Run 仍绑定 `workKey`，manifest 为空。
 - **数据判据**：`run_dispatch_intent_unique` 与 `dispatch_intent_run_unique` 保证一意图一 Run；`run_origin_fields` 保证机器 Run 四个溯源列非空且人类 Run 全空；`dispatch_intent_target_fields` 保证 dispatched 行固定候选/现场/action class。
@@ -54,7 +57,7 @@ Task 责任人：
 | 门 | 命令 | 结果（2026-11-04） |
 |---|---|---|
 | Q0 | `pnpm check` | 222 文件 / 2408 项通过（dispatch 静态边界 3 条新增） |
-| Q2 | `pnpm test:integration` | 90 文件 / 846 项通过（新增 `work-dispatch` 22 项） |
+| Q2 | `pnpm test:integration` | 90 文件 / 850 项通过（新增 `work-dispatch` 26 项） |
 
 ## 5 单点变异
 
@@ -89,6 +92,9 @@ Task 责任人：
 | M27 | 意图 workKey/taskId 归属 | 只检查 `intent === undefined` | 篡改 taskId 用例红 | 红（返回 200） |
 | M28 | 事务内设备就绪复用 tx | 改回池连接 `deps.database.db` | 静态边界用例红 | 红（Q0 锁序判据） |
 | M29 | 幂等键绑定请求体 | 从 key 删 `sha256Hex(canonicalJson(request))` | 同 key 换请求体用例红 | 红（返回第一次 Run，200） |
+| M30 | 取消集合按当前 Mandate 过滤 | 传 `null` 而非 `work.mandateId` | no-op resume 用例红 | 红（仍 cancel 当前授权的 Run） |
+| M31 | 机器 Run 下发前复核 work 状态 | 删 `work_unavailable` 检查 | work 退休用例红 | 红（run.start 被放行） |
+| M32 | dispatching 也进入取消集合 | 只查 `queued` | 暂停 dispatching 用例红 | 红（Run 仍 dispatching） |
 
 **分层防御说明**：M2/M3/M18 的 SQL CAS（`where status/expires_at`）与 service 预检是两层；单删 service 层后仍会被 CAS 拒绝，测试通过新增的稳定 message 判据把 service 层隔离出来。`full_access` 同时由派工端口与 `createInTransaction` 检查，单删任一层仍被另一层拒绝，故不做“必红”变异，保留为双层负控。
 
@@ -106,6 +112,9 @@ Task 责任人：
 - `allowedAgentIds=[]` 沿用 RD-01 语义=不限制 Agent；这是既有 Mandate 契约，不在本切片收紧。
 - 机器 Run 活跃期间 work=`waiting(auto)`，现有收件箱关联/订阅命令要求 work active，因此新条目暂不能入箱；RD-03d 做 Run 边界续接时一并放开 `waiting(auto)` 的收件路径。
 - 同 key 重放的 approve/reject/dispatch 仍会写一条成功审计/观测日志（副作用未重复）；日志与重放执行的区分留待后续读面统一。
+- `run.start` 已发送但未 ack 的 `sentAt !== null` 命令沿用 ADR-0027 既有 carve-out；RD-03a 的 fail-closed 覆盖尚未发送的命令，已发送窗口依赖既有取消升级链与 RD-03c 的 `mandateInvalidated`。
+- 并发同 key dispatch 的败者可能返回 409 而不是胜者的回执（无重复 Run）；与 `RunOrchestrator.create` 的 receipt 恢复同类的收敛留待后续切片。
+- Mandate 到期没有独立清扫器；未发送的 Run 由 `beforeDispatch` 拦截，已 `dispatching` 的 Run 依赖取消路径/RD-03c。
 - 来源漂移负控直接改了 `task_message` 行（无编辑 HTTP 面），已注 `removeWhen`；其余负控的 paused Mandate / reopened approved / expiresAt 也是受控夹具，均注删除条件。
 
 ## 7 复跑
@@ -123,7 +132,8 @@ pnpm test:integration
 2. **设备就绪在事务内读**：`getDeviceDshDistributionVersion` 改用派工事务的 `tx`，避免池连接看不到本事务锁序/快照。
 3. **来源绑定重放**：派工前重新 `loadWorkSource` 并比对 triggerRefs 的版本/摘要/授权代次，重算 `inputDigest`；选中条目还必须是 triggerRefs 的子集且仍 pending。
 4. **意图终态收敛**：绑定失败把 approved 意图落 `rejected` 并回 409；过期落 `expired`；请求候选错误（agent/actionClass/device）保持 approved 可重试。
-5. **撤权取消已排队 Run**：Mandate 新建/暂停/恢复/撤销提交后，组合根对 `dispatched` 且 `queued` 的机器 Run 走既有取消事务；`beforeDispatch` 再做一次 fail-closed 复核，带外改库也不会放行 run.start。
+5. **撤权取消未执行 Run**：Mandate 新建/暂停/恢复/撤销提交后，组合根只取消 `run.mandateId` 与当前 `work.mandateId` 不一致的 `queued`/`dispatching` 机器 Run（no-op 与同 key 重放不触发副作用），并走既有取消事务；`beforeDispatch` 再复核 work 状态与 Mandate/意图，work 退休或无输入 Run 也不会放行 run.start。
 6. **意图归属复核**：端口校验 `intent.workId/workKey/taskId` 与当前 work/task 一致，篡改行返回 404。
 7. **幂等键绑定请求体**：dispatch 的 command key 纳入 `sha256Hex(canonicalJson(request))`；同 key 换候选不再复用第一份回执。reject 日志不再携带成员填写的自由文本 reason。
-8. **复跑**：Q0 2408、Q2 846 全绿；M20–M29 逐条单点变异均红，恢复后 `git diff` 无残留。
+8. **命令副作用只随真实变更**：work 命令返回 `changed`，route 只在 `executed && changed` 时触发取消回调；同 key 重放与 no-op 状态变更不再产生取消副作用。
+9. **复跑**：Q0 2408、Q2 850 全绿；M20–M32 逐条单点变异均红，恢复后 `git diff` 无残留。M7/M8 未设，变异表实际为 M1–M6、M9–M32。

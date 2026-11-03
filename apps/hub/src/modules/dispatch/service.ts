@@ -16,7 +16,7 @@ import {
   getProfileRevision,
   getWorkByKey,
   getWorkMandateForUpdate,
-  listQueuedMachineRunIdsForWork,
+  listCancellableMachineRunIdsForWork,
   listWorkInboxItemsByIds,
   approveDispatchIntent as approveIntentRow,
   markDispatchIntentDispatched,
@@ -159,7 +159,8 @@ async function verifyIntentBinding(
     try {
       source = await loadWorkSource(tx, work, ref.sourceType, ref.sourceId)
     } catch (error) {
-      if (error instanceof ApiError) {
+      // 404/403/409 是来源事实已失效；5xx 是服务端故障，不能把意图永久终结。
+      if (error instanceof ApiError && error.statusCode < 500) {
         throw new IntentBindingError('source changed since the intent was approved')
       }
       throw error
@@ -523,18 +524,22 @@ export async function dispatchIntent(
 }
 
 /**
- * ADR-0028 §9（RD-03a）：Mandate 新建/暂停/恢复/撤销提交后，已派发但仍 queued 的
- * 机器 Run 不得继续执行。work 模块只发回调，组合根在这里按 Run 逐个走既有取消
- * 事务（会同时作废 run.start 并让 work 从 waiting(auto) 回 active）。
+ * ADR-0028 §9（RD-03a）：Mandate 新建/暂停/恢复/撤销提交后，仍属于旧 Mandate 且
+ * 尚未真正执行的机器 Run（queued / dispatching）不得继续执行。work 模块只发回调，
+ * 组合根在这里按 Run 逐个走既有取消事务；已 running 的 Run 不自动杀死（§9）。
  */
-export async function cancelQueuedMachineRuns(
+export async function cancelInvalidatedMachineRuns(
   deps: Pick<DispatchDeps, 'database' | 'orchestrator' | 'now'>,
   actor: { readonly userId: string; readonly role: 'owner' | 'admin' | 'member' },
   workKey: string,
 ): Promise<{ cancelled: number; failed: number }> {
   const work = await getWorkByKey(deps.database.db, workKey)
   if (work === undefined) return { cancelled: 0, failed: 0 }
-  const runIds = await listQueuedMachineRunIdsForWork(deps.database.db, work.id)
+  const runIds = await listCancellableMachineRunIdsForWork(
+    deps.database.db,
+    work.id,
+    work.mandateId,
+  )
   let cancelled = 0
   let failed = 0
   for (const runId of runIds) {

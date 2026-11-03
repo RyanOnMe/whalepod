@@ -109,6 +109,16 @@ export async function verifyRunMachineDispatch(
   ) {
     return { ok: false, reason: 'work_mandate_changed' }
   }
+  // work 必须仍允许本 Run：active，或派工事务为本 Run 写入的 waiting(auto, run:<id>)。
+  // 没有 manifest 的机器 Run 不会走 verifyRunWorkInputs，这里漏掉 state 会让 retire /
+  // waiting(owner_confirmation) 的 work 仍把 run.start 发出去。
+  const waitingForThisRun =
+    work.state === 'waiting' &&
+    work.resumeMode === 'auto' &&
+    work.resumeCondition === `run:${run.id}`
+  if (work.state !== 'active' && !waitingForThisRun) {
+    return { ok: false, reason: 'work_unavailable' }
+  }
   const [task] = await tx
     .select({
       assigneeUserId: schema.tasks.assigneeUserId,

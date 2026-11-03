@@ -196,7 +196,7 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
     const { workKey: rawWorkKey } = request.params as { workKey: string }
     const workKey = parseUuid(rawWorkKey, 'work key')
     const body = parseBody(CreateWorkMandateRequestSchema, request.body)
-    const view = await mapWorkErrors(() =>
+    const outcome = await mapWorkErrors(() =>
       createWorkMandate(
         { database: deps.database, now: () => new Date() },
         session.userId,
@@ -205,7 +205,8 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
         readIdempotencyKey(request),
       ),
     )
-    if (deps.onMandateChanged !== undefined) {
+    const view = outcome.view
+    if (deps.onMandateChanged !== undefined && outcome.changed) {
       await deps.onMandateChanged(session, view.workKey)
     }
     audit(request, 'work.mandate.create', 'success', session.userId)
@@ -229,7 +230,7 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
       const { mandateId: rawMandateId } = request.params as { mandateId: string }
       const mandateId = parseUuid(rawMandateId, 'mandate id')
       const body = parseBody(WorkMandateStatusChangeRequestSchema, request.body ?? {})
-      const view = await mapWorkErrors(() =>
+      const outcome = await mapWorkErrors(() =>
         changeWorkMandateStatus(
           { database: deps.database, now: () => new Date() },
           session.userId,
@@ -239,7 +240,8 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
           readIdempotencyKey(request),
         ),
       )
-      if (deps.onMandateChanged !== undefined) {
+      const view = outcome.view
+      if (deps.onMandateChanged !== undefined && outcome.changed) {
         await deps.onMandateChanged(session, view.workKey)
       }
       audit(request, `work.mandate.${mutation}`, 'success', session.userId)
