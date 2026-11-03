@@ -58,7 +58,12 @@ import type {
   RunSnapshot,
   RunWorkInputReceipt,
 } from '@whalepod/protocol'
-import { parseNodeFrame, RunCancelSchema, RunStartSchema } from '@whalepod/protocol'
+import {
+  parseNodeFrame,
+  RunCancelSchema,
+  RunStartSchema,
+  RunToolPolicySchema,
+} from '@whalepod/protocol'
 import { cancelPendingApprovalsInTransaction, cancelRunInTransaction } from './cancel.js'
 import { decideApprovalInTransaction } from './decide.js'
 import type { ApprovalDecisionInput } from './decide.js'
@@ -736,7 +741,11 @@ export class RunOrchestrator {
       // 旧行没有固定草稿面，继续跑会退回 ask-all 并把自主 Run 卡在审批上；按
       // 「机器 Run 必须有 policy」fail closed，走既有 queued 取消路径。
       const startPayload = command.payload as { toolPolicy?: unknown }
-      if (run.origin === 'mandate' && startPayload.toolPolicy === undefined) {
+      const startPolicy = RunToolPolicySchema.safeParse(startPayload.toolPolicy)
+      if (
+        run.origin === 'mandate' &&
+        (!startPolicy.success || startPolicy.data.workKey !== run.workKey)
+      ) {
         blockReason = 'machine_tool_policy_missing'
         await cancelRunInTransaction(tx, { outbox: this.outbox, now }, run, 'admin')
         dispatch.outcome = 'block'

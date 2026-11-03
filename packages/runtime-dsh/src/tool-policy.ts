@@ -125,7 +125,10 @@ function pathScopeDecision(
   const target = canonicalTarget(resolveTarget(scope, value))
   const workspaceRoot = canonicalRoot(scope.workspacePath)
   if (DRAFT_WRITE_TOOLS.has(toolName)) {
-    const draftRoot = canonicalTarget(resolve(workspaceRoot, MACHINE_DRAFT_WRITE_SUBDIR))
+    // 草稿根必须是工作区内的**字面**目录：若 `.whalepod/drafts` 自身是指向
+    // src/.git 的 symlink，canonicalize 根会把目标当成合法草稿区。目标仍做
+    // canonical 归一（挡链接逃逸），根不跟随链接。
+    const draftRoot = resolve(workspaceRoot, MACHINE_DRAFT_WRITE_SUBDIR)
     if (isInsideRoot(draftRoot, target)) return { kind: 'allow' }
     return {
       kind: 'deny',
@@ -154,11 +157,15 @@ export function machineDraftToolDecision(
     }
   }
   if (IMPLICIT.has(toolName)) return { kind: 'allow' }
+  // 路径/资源范围是**硬边界**：先于 allowlist 判定，越界一律 deny。否则面内
+  // 未进 allowlist 的调用会先走 ask，人工批准后就没有任何路径检查了。
+  const scoped = pathScopeDecision(toolName, args, scope)
+  if (scoped.kind === 'deny') return scoped
   if (!policy.allowedToolNames.some((allowed) => allowed === toolName)) {
     return {
       kind: 'ask',
       reason: `Run tool call is outside the Mandate allowlist: ${toolName}`,
     }
   }
-  return pathScopeDecision(toolName, args, scope)
+  return scoped
 }

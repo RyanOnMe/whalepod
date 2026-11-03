@@ -4,7 +4,7 @@
  * 写限工作区内 `.whalepod/drafts/`；越界一律 deny。
  * 真正的 pre-execute 接线由 contract 用例覆盖；这里逐名、逐路径钉住 allow/ask/deny。
  */
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -130,10 +130,43 @@ describe('machineDraftToolDecision', () => {
     expect(decide('read', { file_path: 'C:\\Windows\\win.ini' })).toMatchObject({ kind: 'deny' })
   })
 
-  it('asks for surface tools outside the Mandate allowlist', () => {
+  it('denies a draft root that is itself a symlink redirect', () => {
+    // `.whalepod/drafts -> src`：若把草稿根 canonical 化，src 会被误当成合法
+    // 草稿区；根必须按字面路径判定。
+    rmSync(join(workspace, '.whalepod'), { recursive: true, force: true })
+    symlinkSync(join(workspace, 'src'), join(workspace, '.whalepod'), 'dir')
+    expect(decide('write', { file_path: '.whalepod/drafts/probe.md' })).toMatchObject({
+      kind: 'deny',
+    })
+
+    unlinkSync(join(workspace, '.whalepod'))
+    mkdirSync(join(workspace, '.whalepod'), { recursive: true })
+    symlinkSync(join(workspace, 'src'), join(workspace, '.whalepod', 'drafts'), 'dir')
+    expect(decide('write', { file_path: '.whalepod/drafts/probe.md' })).toMatchObject({
+      kind: 'deny',
+    })
+  })
+
+  it('asks for in-scope surface tools outside the Mandate allowlist', () => {
     const readOnly: RunToolPolicy = { ...policy, allowedToolNames: ['read'] }
-    expect(machineDraftToolDecision(readOnly, 'write', {}, scope)).toMatchObject({ kind: 'ask' })
-    expect(machineDraftToolDecision(readOnly, 'edit', {}, scope)).toMatchObject({ kind: 'ask' })
-    expect(machineDraftToolDecision(readOnly, 'grep', {}, scope)).toMatchObject({ kind: 'ask' })
+    expect(
+      machineDraftToolDecision(readOnly, 'write', { file_path: '.whalepod/drafts/x' }, scope),
+    ).toMatchObject({ kind: 'ask' })
+    expect(
+      machineDraftToolDecision(readOnly, 'edit', { file_path: '.whalepod/drafts/x' }, scope),
+    ).toMatchObject({ kind: 'ask' })
+    expect(machineDraftToolDecision(readOnly, 'grep', { pattern: 'ok' }, scope)).toMatchObject({
+      kind: 'ask',
+    })
+  })
+
+  it('keeps path scope ahead of the allowlist ask (out-of-scope never reaches approval)', () => {
+    const writeOnly: RunToolPolicy = { ...policy, allowedToolNames: ['write'] }
+    expect(
+      machineDraftToolDecision(writeOnly, 'read', { file_path: '../secret.txt' }, scope),
+    ).toMatchObject({ kind: 'deny' })
+    expect(
+      machineDraftToolDecision(writeOnly, 'write', { file_path: 'src/main.ts' }, scope),
+    ).toMatchObject({ kind: 'deny' })
   })
 })

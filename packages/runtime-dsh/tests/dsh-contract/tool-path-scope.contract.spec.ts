@@ -5,7 +5,15 @@
  * 工作区/只读材料根内成立；越界读被 pre-execute 直接拒绝（无 approval.requested、
  * 正文不进会话），写入只在 `.whalepod/drafts/` 内落地。
  */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -82,6 +90,65 @@ describe('probe: machine draft path scope', () => {
       expect(results).not.toContain('"isError":true')
     } finally {
       await runtime.dispose()
+    }
+  })
+
+  it('denies a non-allowlisted surface tool when its path escapes, before any approval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'whalepod-path-probe-'))
+    const workspace = join(root, 'ws')
+    mkdirSync(workspace)
+    writeFileSync(join(root, 'probe-secret.txt'), 'probe-secret-body\n')
+    // read 不在 allowlist：路径检查必须先于 ask 生效，人工批准也不能把它放出去。
+    const spec = runtimeSpec({ workspacePath: workspace, toolPolicy: machinePolicy(['write']) })
+    const runtime = await startReplayRuntime('tool-path-outside', spec)
+    try {
+      await runtime.send(initializeCommand(spec))
+      await runtime.until('runtime.ready')
+      await runtime.send(
+        commandFrame('run.prompt', { runId: spec.runId, text: 'read the sibling probe file' }),
+      )
+      await runtime.until('run.completed')
+
+      expect(
+        runtime.outputs.some((frame) => frame.type === 'approval.requested'),
+        '越界读必须硬 deny，不得进入审批',
+      ).toBe(false)
+      const text = sessionEventsOf(runtime.outputs)
+        .map((event) => JSON.stringify(event))
+        .join('\n')
+      expect(text).toContain('outside the authorized material scope')
+      expect(toolResultsOf(runtime.outputs)).not.toContain('probe-secret-body')
+    } finally {
+      await runtime.dispose()
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('denies a write whose draft root is a symlink redirect', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'whalepod-path-probe-'))
+    const workspace = join(root, 'ws')
+    mkdirSync(join(workspace, 'src'), { recursive: true })
+    mkdirSync(join(workspace, '.whalepod'), { recursive: true })
+    symlinkSync(join(workspace, 'src'), join(workspace, '.whalepod', 'drafts'), 'dir')
+    const spec = runtimeSpec({ workspacePath: workspace, toolPolicy: machinePolicy(['write']) })
+    const runtime = await startReplayRuntime('tool-path-draft-write', spec)
+    try {
+      await runtime.send(initializeCommand(spec))
+      await runtime.until('runtime.ready')
+      await runtime.send(
+        commandFrame('run.prompt', { runId: spec.runId, text: 'write the draft probe' }),
+      )
+      await runtime.until('run.completed')
+
+      expect(runtime.outputs.some((frame) => frame.type === 'approval.requested')).toBe(false)
+      const text = sessionEventsOf(runtime.outputs)
+        .map((event) => JSON.stringify(event))
+        .join('\n')
+      expect(text).toContain('can only write inside .whalepod/drafts')
+      expect(existsSync(join(workspace, 'src', 'probe.md'))).toBe(false)
+    } finally {
+      await runtime.dispose()
+      rmSync(root, { recursive: true, force: true })
     }
   })
 
