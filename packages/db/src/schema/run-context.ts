@@ -16,6 +16,7 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core'
+import { devices } from './device.js'
 import { userAccounts } from './identity.js'
 import { projects } from './project.js'
 import { runs } from './run.js'
@@ -36,6 +37,10 @@ export const runProjectContextEntryStatus = pgEnum('run_project_context_entry_st
   'frozen',
   'retracted',
   'source_tombstoned',
+  // PC-05b：来源权限未知/拒绝或来源不可用；frozen 之外一律不可经专用读工具交付正文。
+  'permission_unknown',
+  'permission_denied',
+  'unavailable',
 ])
 
 export const runProjectContexts = pgTable(
@@ -63,6 +68,13 @@ export const runProjectContexts = pgTable(
       .default({}),
     overrideReason: varchar('override_reason', { length: 1000 }),
     status: runProjectContextStatus('status').notNull().default('frozen'),
+    /**
+     * ADR-0027 §6（PC-05b）：状态机版本。0 = 尚未派生（升级前的旧快照）；
+     * 首次派生从 1 开始，之后只在状态摘要变化时递增。
+     */
+    stateVersion: integer('state_version').notNull().default(0),
+    stateDigest: char('state_digest', { length: 64 }),
+    stateUpdatedAt: timestamp('state_updated_at', { withTimezone: true }),
     deliveredAt: timestamp('delivered_at', { withTimezone: true }),
     consumedAt: timestamp('consumed_at', { withTimezone: true }),
     consumedAllAt: timestamp('consumed_all_at', { withTimezone: true }),
@@ -88,6 +100,14 @@ export const runProjectContexts = pgTable(
     check(
       'run_project_context_consumed_order',
       sql`${table.consumedAllAt} is null or ${table.consumedAt} is not null`,
+    ),
+    check(
+      'run_project_context_state_version',
+      sql`${table.stateVersion} >= 0 and ((${table.stateVersion} = 0 and ${table.stateDigest} is null) or (${table.stateVersion} > 0 and ${table.stateDigest} is not null))`,
+    ),
+    check(
+      'run_project_context_state_digest',
+      sql`${table.stateDigest} is null or ${table.stateDigest} ~ '^[a-f0-9]{64}$'`,
     ),
     index('run_project_context_project_created_idx').on(
       table.projectId,
@@ -144,7 +164,7 @@ export const runProjectContextEntries = pgTable(
     ),
     check(
       'run_project_context_entry_decision_fields',
-      sql`${table.kind} <> 'decision' or (${table.businessRef} is not null and ${table.authorizationGeneration} is null and ${table.revisionId} is null)`,
+      sql`${table.kind} <> 'decision' or (${table.businessRef} is not null and ${table.sourceId} is null and ${table.authorizationGeneration} is null and ${table.revisionId} is null)`,
     ),
     check(
       'run_project_context_entry_observation_fields',
@@ -198,6 +218,46 @@ export const runContextReceipts = pgTable(
   ],
 )
 
+/**
+ * ADR-0027 §6（PC-05b）：Node 对完整状态的应用回执。保留每个设备/状态版本一行，
+ * 用于观测「Hub 已生成但 Node 未应用」的窗口；不参与状态派生本身。
+ */
+export const runContextStateAcks = pgTable(
+  'run_context_state_ack',
+  {
+    id: uuid('id').primaryKey(),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => runs.id),
+    snapshotId: uuid('snapshot_id')
+      .notNull()
+      .references(() => runProjectContexts.id),
+    deviceId: uuid('device_id')
+      .notNull()
+      .references(() => devices.id),
+    stateVersion: integer('state_version').notNull(),
+    stateDigest: char('state_digest', { length: 64 }).notNull(),
+    appliedAt: timestamp('applied_at', { withTimezone: true }).notNull(),
+    failedEntryIds: jsonb('failed_entry_ids').$type<string[]>().notNull().default([]),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique('run_context_state_ack_version_unique').on(
+      table.runId,
+      table.snapshotId,
+      table.deviceId,
+      table.stateVersion,
+    ),
+    check('run_context_state_ack_version', sql`${table.stateVersion} >= 1`),
+    check('run_context_state_ack_digest', sql`${table.stateDigest} ~ '^[a-f0-9]{64}$'`),
+    check(
+      'run_context_state_ack_failed_array',
+      sql`jsonb_typeof(${table.failedEntryIds}) = 'array' and octet_length(${table.failedEntryIds}::text) <= 8192`,
+    ),
+    index('run_context_state_ack_run_idx').on(table.runId, table.stateVersion.desc()),
+  ],
+)
+
 export const runContextConsumptions = pgTable(
   'run_context_consumption',
   {
@@ -223,4 +283,5 @@ export const runContextConsumptions = pgTable(
 export type RunProjectContextRow = typeof runProjectContexts.$inferSelect
 export type RunProjectContextEntryRow = typeof runProjectContextEntries.$inferSelect
 export type RunContextReceiptRow = typeof runContextReceipts.$inferSelect
+export type RunContextStateAckRow = typeof runContextStateAcks.$inferSelect
 export type RunContextConsumptionRow = typeof runContextConsumptions.$inferSelect

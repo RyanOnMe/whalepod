@@ -4,11 +4,18 @@
 import { randomUUID } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
+  ContextStateAckSchema,
+  ContextStateSyncSchema,
+  RuntimeContextLocalStateSchema,
+  RunContextReceiptSchema,
+  RunContextStateEntrySchema,
+  RunContextStateSchema,
+  RunProjectContextManifestEntrySchema,
+  RunProjectContextEntryStatusSchema,
+  RunStartProjectContextSchema,
   PROJECT_CONTEXT_CAPABILITY,
   PROJECT_CONTEXT_HEADER_MAX_CHARS,
-  RunContextReceiptSchema,
-  RunProjectContextManifestEntrySchema,
-  RunStartProjectContextSchema,
+  contextStateDigestInput,
 } from '../src/run-context.js'
 import { RuntimeInitializeSchema } from '../src/runtime-wire.js'
 import { NodeHelloSchema, RunStartSchema } from '../src/node-wire.js'
@@ -36,6 +43,105 @@ function envelope<T extends string>(type: T, payload: unknown) {
     payload,
   }
 }
+
+describe('PC-05b context state wire', () => {
+  const entry = (overrides: Record<string, unknown> = {}) => ({
+    entryId: ENTRY_ID,
+    kind: 'observation' as const,
+    state: 'frozen' as const,
+    currentAuthorizationGeneration: null,
+    reason: null,
+    ...overrides,
+  })
+
+  it('covers the full revocation state enum', () => {
+    for (const state of [
+      'frozen',
+      'retracted',
+      'source_tombstoned',
+      'permission_unknown',
+      'permission_denied',
+      'unavailable',
+    ]) {
+      expect(RunProjectContextEntryStatusSchema.parse(state)).toBe(state)
+    }
+    expect(RunProjectContextEntryStatusSchema.safeParse('revoked').success).toBe(false)
+  })
+
+  it('normalizes state digest input by entryId and ignores reason text', () => {
+    const a = entry()
+    const b = entry({ reason: '另一种文案' })
+    expect(contextStateDigestInput(3, [a, b])).toBe(contextStateDigestInput(3, [b, a]))
+    expect(contextStateDigestInput(3, [a])).not.toBe(contextStateDigestInput(4, [a]))
+    expect(contextStateDigestInput(3, [a])).not.toBe(
+      contextStateDigestInput(3, [entry({ state: 'retracted' })]),
+    )
+    expect(contextStateDigestInput(3, [a])).not.toBe(
+      contextStateDigestInput(3, [entry({ currentAuthorizationGeneration: '2' })]),
+    )
+  })
+
+  it('rejects source-derived state and generations on decision entries', () => {
+    expect(
+      RunContextStateEntrySchema.parse(entry({ kind: 'decision', state: 'retracted' })).state,
+    ).toBe('retracted')
+    expect(() =>
+      RunContextStateEntrySchema.parse(
+        entry({ kind: 'decision', currentAuthorizationGeneration: '2' }),
+      ),
+    ).toThrow()
+    expect(() =>
+      RunContextStateEntrySchema.parse(entry({ kind: 'decision', state: 'source_tombstoned' })),
+    ).toThrow()
+    expect(() =>
+      RunContextStateEntrySchema.parse(entry({ kind: 'decision', state: 'permission_unknown' })),
+    ).toThrow()
+  })
+
+  it('accepts full state, heartbeat, ack and the local state file shape', () => {
+    const state = {
+      commandId: randomUUID(),
+      runId: randomUUID(),
+      snapshotId: randomUUID(),
+      stateVersion: 1,
+      stateDigest: DIGEST,
+      entries: [entry()],
+      generatedAt: new Date().toISOString(),
+    }
+    expect(RunContextStateSchema.parse(state).stateVersion).toBe(1)
+    expect(
+      ContextStateSyncSchema.parse({
+        commandId: state.commandId,
+        runId: state.runId,
+        snapshotId: state.snapshotId,
+        stateVersion: 1,
+        stateDigest: DIGEST,
+        at: state.generatedAt,
+      }).stateVersion,
+    ).toBe(1)
+    expect(
+      ContextStateAckSchema.parse({
+        runId: state.runId,
+        snapshotId: state.snapshotId,
+        stateVersion: 1,
+        stateDigest: DIGEST,
+        appliedAt: state.generatedAt,
+        failedEntryIds: [],
+      }).failedEntryIds,
+    ).toEqual([])
+    expect(
+      RuntimeContextLocalStateSchema.parse({
+        runId: state.runId,
+        snapshotId: state.snapshotId,
+        stateVersion: 0,
+        stateDigest: state.stateDigest,
+        entries: state.entries,
+        syncedAt: state.generatedAt,
+        paused: false,
+      }).paused,
+    ).toBe(false)
+  })
+})
 
 describe('PC-05a run project context wire', () => {
   it('requires decision entries to have no source generation and source observations to have one', () => {

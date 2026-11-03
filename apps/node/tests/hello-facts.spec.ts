@@ -135,7 +135,11 @@ describe('#352 detectPlatformKind', () => {
       startupDshVersion: '0.1.0-rc.8',
       probeDshVersion: async () => null,
     })
-    expect((await facts()).contextCapabilities).toEqual(['project-context.v1', 'work-input.v1'])
+    expect((await facts()).contextCapabilities).toEqual([
+      'project-context.v1',
+      'context-state.v1',
+      'work-input.v1',
+    ])
     // 缺省字段的帧也必须带上两种能力：漏掉会让 Hub 对所有带输入的 Run 409。
     const frame = JSON.parse(
       helloFrame('dddddddd-dddd-4ddd-8ddd-dddddddddddd', {
@@ -146,7 +150,11 @@ describe('#352 detectPlatformKind', () => {
         pluginPackDigests: [],
       } as unknown as HelloFacts),
     ) as { payload: { contextCapabilities: string[] } }
-    expect(frame.payload.contextCapabilities).toEqual(['project-context.v1', 'work-input.v1'])
+    expect(frame.payload.contextCapabilities).toEqual([
+      'project-context.v1',
+      'context-state.v1',
+      'work-input.v1',
+    ])
   })
 })
 

@@ -8,7 +8,19 @@ import { z } from 'zod'
 
 /** Node 在 `node.hello` 声明支持项目上下文快照；缺省 = 旧 Node，不派发非空快照。 */
 export const PROJECT_CONTEXT_CAPABILITY = 'project-context.v1' as const
-export const ProjectContextCapabilitySchema = z.enum([PROJECT_CONTEXT_CAPABILITY])
+/**
+ * ADR-0027 §6（PC-05b）：Node 能应用撤权状态帧（`run.context_state`/
+ * `context.state_sync`）。只声明 `project-context.v1` 的旧 Node 会静默丢弃新帧，
+ * 因此带上下文的 Run 必须同时要求本能力。升级顺序必须先 Hub 后 Node：旧 Hub
+ * 的 hello schema 不认识本能力，会拒绝新 Node 连接；Hub 升级后旧 Node 仍可连接，
+ * 但不会再收到新创建的带上下文 Run。升级前已存在的活跃上下文 Run 不受新状态机
+ * 保护，需在升级前排空或接受该窗口。
+ */
+export const CONTEXT_STATE_CAPABILITY = 'context-state.v1' as const
+export const ProjectContextCapabilitySchema = z.enum([
+  PROJECT_CONTEXT_CAPABILITY,
+  CONTEXT_STATE_CAPABILITY,
+])
 
 export const PROJECT_CONTEXT_MAX_ENTRIES = 32
 export const PROJECT_CONTEXT_MAX_ENTRY_BYTES = 64 * 1024
@@ -177,6 +189,21 @@ export const RunContextReceiptSchema = z.strictObject({
 })
 export type RunContextReceipt = z.infer<typeof RunContextReceiptSchema>
 
+/**
+ * ADR-0027 §6（PC-05b）：快照条目的撤权状态。`frozen` 之外一律不可经专用读工具
+ * 交付正文；`source_tombstoned` 表示来源已撤销/墓碑，`retracted` 表示条目被纠正或
+ * 撤回，权限相关三态保留原因。状态机在 Hub 派生，Node/Runtime 只应用。
+ */
+export const RunProjectContextEntryStatusSchema = z.enum([
+  'frozen',
+  'retracted',
+  'source_tombstoned',
+  'permission_unknown',
+  'permission_denied',
+  'unavailable',
+])
+export type RunProjectContextEntryStatus = z.infer<typeof RunProjectContextEntryStatusSchema>
+
 /** 成员读面：条目正文只在 frozen 且读时权限通过时返回。 */
 export const RunProjectContextEntryViewSchema = z.strictObject({
   entryId: z.uuid(),
@@ -189,7 +216,7 @@ export const RunProjectContextEntryViewSchema = z.strictObject({
   businessRef: z.string().min(1).max(300).nullable(),
   revisionId: z.uuid().nullable(),
   threadId: z.uuid().nullable(),
-  entryStatus: z.enum(['frozen', 'retracted', 'source_tombstoned']),
+  entryStatus: RunProjectContextEntryStatusSchema,
   statusReason: z.string().max(500).nullable(),
   identityUnverified: z.boolean(),
   deliveredAt: IsoDateTimeSchema.nullable(),
@@ -218,3 +245,145 @@ export const RunProjectContextViewSchema = z.strictObject({
   entries: z.array(RunProjectContextEntryViewSchema),
 })
 export type RunProjectContextView = z.infer<typeof RunProjectContextViewSchema>
+
+// ---------- ADR-0027 §6（PC-05b）：撤权状态与状态同步 ----------
+
+/**
+ * Node 本地状态文件名（与清单文件同目录）。Runtime 的 `read_project_context`
+ * 每次读取都先读它：缺失、过期或条目非 frozen 一律 fail-closed，不回退旧缓存。
+ */
+export const RUN_CONTEXT_STATE_FILE = 'state.json'
+
+/**
+ * Node 判定状态同步过期的固定时限。ADR-0027 §6 允许实施固定 60 秒（最长 5 分钟）；
+ * 超过后专用读工具不可用，直到下一次合格 state_sync。
+ */
+export const RUN_CONTEXT_STATE_SYNC_MAX_AGE_MS = 60_000
+export const RUN_CONTEXT_STATE_SYNC_INTERVAL_MS = 20_000
+
+/**
+ * 注意：`superRefine` 只由 Zod 运行时执行；生成的 JSON Schema 只表达结构字段，
+ * 不包含 Decision 的状态/代次约束。非 Zod 消费方必须以本文档与 Zod schema 为准，
+ * 不能只信 generated/*.schema.json。
+ */
+export const RunContextStateEntrySchema = z
+  .strictObject({
+    entryId: z.uuid(),
+    /**
+     * ADR-0027 §6（PC-05b 修订）：状态帧覆盖快照内全部条目，但 Decision 只允许
+     * frozen/retracted/unavailable 且代次必须为 null——来源撤销不得把 Decision
+     * 误标成来源墓碑/权限不可用。
+     */
+    kind: ProjectContextEntryKindSchema,
+    state: RunProjectContextEntryStatusSchema,
+    /** 来源条目的当前授权代次；内部业务 Decision 必须为 null。 */
+    currentAuthorizationGeneration: z.string().min(1).max(128).nullable(),
+    reason: z.string().min(1).max(500).nullable(),
+  })
+  .superRefine((entry, ctx) => {
+    if (entry.kind === 'decision' && entry.currentAuthorizationGeneration !== null) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['currentAuthorizationGeneration'],
+        message: 'decision state entries must not carry an authorization generation',
+      })
+    }
+    if (
+      entry.kind === 'decision' &&
+      (entry.state === 'source_tombstoned' ||
+        entry.state === 'permission_unknown' ||
+        entry.state === 'permission_denied')
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['state'],
+        message: 'source-derived state is not valid for a decision entry',
+      })
+    }
+  })
+export type RunContextStateEntry = z.infer<typeof RunContextStateEntrySchema>
+
+/**
+ * ADR-0027 §6：`stateDigest = sha256(规范化 JSON：stateVersion + 按 entryId 排序的
+ * [{entryId, state, currentAuthorizationGeneration}])`。reason 不参与摘要——它只
+ * 用于读面解释，避免同一撤销语义因文案变化触发无意义的状态版本推进。
+ */
+export function contextStateDigestInput(
+  stateVersion: number,
+  entries: readonly RunContextStateEntry[],
+): string {
+  const normalized = [...entries]
+    .sort((a, b) => (a.entryId < b.entryId ? -1 : a.entryId > b.entryId ? 1 : 0))
+    .map((entry) => [entry.entryId, entry.state, entry.currentAuthorizationGeneration])
+  return JSON.stringify({ stateVersion, entries: normalized })
+}
+
+/** 完整状态载荷（Hub 内部与 Node 本地状态共用；wire 版本额外携带 commandId）。 */
+export const RunContextStatePayloadSchema = z.strictObject({
+  runId: z.uuid(),
+  snapshotId: z.uuid(),
+  stateVersion: z.number().int().positive(),
+  stateDigest: Sha256DigestSchema,
+  entries: z.array(RunContextStateEntrySchema).max(PROJECT_CONTEXT_MAX_ENTRIES),
+  generatedAt: IsoDateTimeSchema,
+})
+export type RunContextState = z.infer<typeof RunContextStatePayloadSchema>
+
+/** Hub → Node：完整当前状态（变化时与重连时发送）。 */
+export const RunContextStateSchema = RunContextStatePayloadSchema.extend({
+  /** Outbox commandId；Node 处理完必须 ack，否则 Hub 会按至少一次语义重发。 */
+  commandId: z.uuid(),
+})
+export type RunContextStateWire = z.infer<typeof RunContextStateSchema>
+
+/** 水位/摘要载荷；wire 版本额外携带 commandId。 */
+export const ContextStateSyncPayloadSchema = z.strictObject({
+  runId: z.uuid(),
+  snapshotId: z.uuid(),
+  stateVersion: z.number().int().positive(),
+  stateDigest: Sha256DigestSchema,
+  at: IsoDateTimeSchema,
+})
+export type ContextStateSync = z.infer<typeof ContextStateSyncPayloadSchema>
+
+/** Hub → Node：水位/摘要帧，即使无变化也周期性发送；不直接应用 entries。 */
+export const ContextStateSyncSchema = ContextStateSyncPayloadSchema.extend({
+  commandId: z.uuid(),
+})
+export type ContextStateSyncWire = z.infer<typeof ContextStateSyncSchema>
+
+/** Node → Hub：摘要不一致或本地缺失时拉取完整状态。 */
+export const ContextStatePullSchema = z.strictObject({
+  runId: z.uuid(),
+  snapshotId: z.uuid(),
+  knownStateVersion: z.number().int().min(0),
+})
+export type ContextStatePull = z.infer<typeof ContextStatePullSchema>
+
+/** Node → Hub：状态文件写入与未读副本清理尝试完成后回报。 */
+export const ContextStateAckSchema = z.strictObject({
+  runId: z.uuid(),
+  snapshotId: z.uuid(),
+  stateVersion: z.number().int().positive(),
+  stateDigest: Sha256DigestSchema,
+  appliedAt: IsoDateTimeSchema,
+  /** 删除/隔离失败的 entryId；非空表示 Node 仍在重试或已 fail-closed。 */
+  failedEntryIds: z.array(z.uuid()).max(PROJECT_CONTEXT_MAX_ENTRIES),
+})
+export type ContextStateAck = z.infer<typeof ContextStateAckSchema>
+
+/**
+ * Node 本地状态文件的线上形状（Runtime 与 Node 共用同一 schema，防两侧漂移）。
+ * `syncedAt` 是最近一次合格 state_sync/state 应用时间；`paused` 表示副本清理失败
+ * 后的 fail-closed（所有读取不可用，但 Run 不取消）。
+ */
+export const RuntimeContextLocalStateSchema = z.strictObject({
+  runId: z.uuid(),
+  snapshotId: z.uuid(),
+  stateVersion: z.number().int().min(0),
+  stateDigest: Sha256DigestSchema,
+  entries: z.array(RunContextStateEntrySchema).max(PROJECT_CONTEXT_MAX_ENTRIES),
+  syncedAt: IsoDateTimeSchema,
+  paused: z.boolean(),
+})
+export type RuntimeContextLocalState = z.infer<typeof RuntimeContextLocalStateSchema>

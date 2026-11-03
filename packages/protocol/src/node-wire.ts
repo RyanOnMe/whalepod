@@ -19,8 +19,12 @@ import {
   SourcePermissionResultPayloadSchema,
 } from './source.js'
 import {
+  ContextStateAckSchema,
+  ContextStatePullSchema,
+  ContextStateSyncSchema,
   ProjectContextCapabilitySchema,
   RunContextReceiptSchema,
+  RunContextStateSchema,
   RunStartProjectContextSchema,
 } from './run-context.js'
 import {
@@ -270,6 +274,12 @@ export const RunWorkInputReceiptFrameSchema = envelope(
   RunWorkInputReceiptSchema,
 )
 
+/** ADR-0027 §6（PC-05b）：Node 摘要不一致/本地缺失时拉取完整状态。 */
+export const ContextStatePullFrameSchema = envelope('context.state_pull', ContextStatePullSchema)
+
+/** ADR-0027 §6（PC-05b）：状态文件写入与未读副本清理尝试后的回报。 */
+export const ContextStateAckFrameSchema = envelope('context.state_ack', ContextStateAckSchema)
+
 /** #320：只读准备检查，结果不能夹带秘密、路径或模型调用结论。 */
 export const PreparationFactsSchema = z.strictObject({
   workspace: z.enum(['available', 'unavailable', 'unconfirmed']),
@@ -309,6 +319,8 @@ export const NodeUpstreamSchema = z.discriminatedUnion('type', [
   RunLiveDeltaSchema,
   RunContextReceiptFrameSchema,
   RunWorkInputReceiptFrameSchema,
+  ContextStatePullFrameSchema,
+  ContextStateAckFrameSchema,
 ])
 export type NodeUpstream = z.infer<typeof NodeUpstreamSchema>
 
@@ -451,6 +463,12 @@ export const SourcePermissionCheckSchema = envelope(
   SourcePermissionCheckPayloadSchema,
 )
 
+/** ADR-0027 §6（PC-05b）：完整当前状态（变化时与重连时发送）。 */
+export const RunContextStateFrameSchema = envelope('run.context_state', RunContextStateSchema)
+
+/** ADR-0027 §6（PC-05b）：周期性水位/摘要帧；不直接应用 entries。 */
+export const ContextStateSyncFrameSchema = envelope('context.state_sync', ContextStateSyncSchema)
+
 export const NodeDownstreamSchema = z.discriminatedUnion('type', [
   RunStartSchema,
   RunCancelSchema,
@@ -462,6 +480,8 @@ export const NodeDownstreamSchema = z.discriminatedUnion('type', [
   RunFollowupSchema,
   ApprovalDecideSchema,
   NodeTokenRevokedSchema,
+  RunContextStateFrameSchema,
+  ContextStateSyncFrameSchema,
 ])
 export type NodeDownstream = z.infer<typeof NodeDownstreamSchema>
 

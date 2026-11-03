@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto'
 import type { WebSocket } from 'ws'
 import { WebSocket as WsClient } from 'ws'
 import {
+  ContextStateAckSchema,
+  ContextStatePullSchema,
+  CONTEXT_STATE_CAPABILITY,
   NodeInventorySchema,
   parseNodeFrame,
   PROJECT_CONTEXT_CAPABILITY,
@@ -10,6 +13,8 @@ import {
   RunContextReceiptSchema,
   RunWorkInputReceiptSchema,
   RunSnapshotSchema,
+  type ContextStateAck,
+  type ContextStatePull,
   type NodeDownstream,
   type ProjectedRunEvent,
   type RunContextReceipt,
@@ -109,6 +114,7 @@ export function helloFrame(deviceId: string, facts: HelloFacts): string {
       pluginPackDigests: facts.pluginPackDigests,
       contextCapabilities: facts.contextCapabilities ?? [
         PROJECT_CONTEXT_CAPABILITY,
+        CONTEXT_STATE_CAPABILITY,
         WORK_INPUT_CAPABILITY,
       ],
     },
@@ -148,6 +154,28 @@ export function runWorkInputReceiptFrame(receipt: RunWorkInputReceipt): string {
     sentAt: new Date().toISOString(),
     type: 'run.work_input_receipt',
     payload: RunWorkInputReceiptSchema.parse(receipt),
+  })
+}
+
+/** ADR-0027 §6（PC-05b）：摘要不一致/本地缺失时拉取完整状态。 */
+export function contextStatePullFrame(pull: ContextStatePull): string {
+  return JSON.stringify({
+    protocolVersion: 1,
+    messageId: randomUUID(),
+    sentAt: new Date().toISOString(),
+    type: 'context.state_pull',
+    payload: ContextStatePullSchema.parse(pull),
+  })
+}
+
+/** ADR-0027 §6（PC-05b）：完整状态应用与未读副本清理的回报。 */
+export function contextStateAckFrame(ack: ContextStateAck): string {
+  return JSON.stringify({
+    protocolVersion: 1,
+    messageId: randomUUID(),
+    sentAt: new Date().toISOString(),
+    type: 'context.state_ack',
+    payload: ContextStateAckSchema.parse(ack),
   })
 }
 

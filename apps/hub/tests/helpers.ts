@@ -133,7 +133,7 @@ export async function seedRunPrereqs(handle: DbHandle): Promise<SeedIds> {
     nodeVersion: '24.12.0',
     nodeAppVersion: '0.1.0',
     tokenHash: randomBytes(32),
-    capabilities: { contextCapabilities: ['project-context.v1'] },
+    capabilities: { contextCapabilities: ['project-context.v1', 'context-state.v1'] },
   })
   await handle.insert(schema.workspaces).values({
     id: ids.workspaceId,
@@ -173,7 +173,7 @@ export async function seedSecondUserDevice(handle: DbHandle, ids: SeedIds) {
     nodeVersion: '24.12.0',
     nodeAppVersion: '0.1.0',
     tokenHash: randomBytes(32),
-    capabilities: { contextCapabilities: ['project-context.v1'] },
+    capabilities: { contextCapabilities: ['project-context.v1', 'context-state.v1'] },
   })
   await handle.insert(schema.workspaces).values({
     id: workspaceId,
@@ -255,7 +255,7 @@ export async function seedRunChainForUser(
     nodeVersion: '24.12.0',
     nodeAppVersion: '0.1.0',
     tokenHash: randomBytes(32),
-    capabilities: { contextCapabilities: ['project-context.v1'] },
+    capabilities: { contextCapabilities: ['project-context.v1', 'context-state.v1'] },
   })
   await handle.insert(schema.workspaces).values({
     id: workspaceId,

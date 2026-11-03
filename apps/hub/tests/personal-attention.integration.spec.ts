@@ -130,7 +130,7 @@ beforeEach(async () => {
       supportedProtocolVersions: [1],
       dshDistributionVersion: 'snapshot-fixture',
       pluginPackDigests: [],
-      contextCapabilities: ['project-context.v1'],
+      contextCapabilities: ['project-context.v1', 'context-state.v1'],
     }),
   )
   socket.send(

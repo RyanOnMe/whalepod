@@ -22,10 +22,12 @@
  *   node.supervisor 结构化日志（真人路径可观测，不做接口背后的暗手）。
  */
 import type {
+  ContextStateSyncWire,
   ErrorCode,
   NodeDownstream,
   ProjectedRunEvent,
   RunContextReceipt,
+  RunContextStateWire,
   RunStartProjectContext,
   RunStartWorkInput,
   RunWorkInputReceipt,
@@ -39,6 +41,8 @@ import type {
 import { parseRuntimeFrame } from '@whalepod/protocol'
 import {
   commandAckFrame,
+  contextStateAckFrame,
+  contextStatePullFrame,
   runContextReceiptFrame,
   runEventFrame,
   runLiveDeltaFrame,
@@ -47,6 +51,15 @@ import {
 } from '../gateway/hub-socket.js'
 import type { ContextReceiptSeqStore } from '../context/receipt-seq-store.js'
 import { MemoryContextReceiptSeqStore } from '../context/receipt-seq-store.js'
+import {
+  applyContextStateSync,
+  applyRunContextState,
+  drainContextCleanupQueue,
+  initializePreparedContextState,
+  type ContextStateApplierDeps,
+} from '../context/state.js'
+import type { ContextStateStore } from '../context/state-store.js'
+import { MemoryContextStateStore } from '../context/state-store.js'
 import type { PreparedProjectContext } from '../context/project-context.js'
 import type { PreparedWorkInputs } from '../work/work-input.js'
 import type { WorkInputReceiptStore } from '../work/receipt-store.js'
@@ -142,6 +155,8 @@ export interface RunManagerDeps {
   readonly workInputReceiptStore?: WorkInputReceiptStore
   /** ADR-0027 §4：receiptSeq 持久计数（生产 SQLite；缺省内存实现）。 */
   readonly contextReceiptSeq?: ContextReceiptSeqStore
+  /** ADR-0027 §6（PC-05b）：上下文状态与清理重试队列（生产 SQLite；缺省内存）。 */
+  readonly contextStateStore?: ContextStateStore
   /** P1-16：run.snapshot 的设备身份与 DSH 发行版版本（§2.6/§6.2）。 */
   readonly deviceId: string
   readonly dshDistributionVersion: string
@@ -230,6 +245,13 @@ export class RunManager {
     }
   >()
   private readonly contextReceiptSeq: ContextReceiptSeqStore
+  private readonly contextStateStore: ContextStateStore
+  private readonly contextStateDeps: ContextStateApplierDeps
+  /**
+   * 单 Run 状态帧串行化：`handleFrame` 是 fire-and-forget，Hub 的完整状态、水位
+   * 帧与 run.start 初始化可能并发；并发 tmp+rename 会让旧状态覆盖新状态。
+   */
+  private readonly contextStateOps = new Map<string, Promise<unknown>>()
   /** runId → 已下载的工作输入副本与清单（本地回执的事实源）。 */
   private readonly workInputs = new Map<string, PreparedWorkInputs>()
   private readonly workInputReceiptStore: WorkInputReceiptStore
@@ -251,6 +273,13 @@ export class RunManager {
     this.termGraceMs = deps.cancelTermGraceMs ?? DEFAULT_CANCEL_TERM_GRACE_MS
     this.timers = deps.timers ?? { setTimeout, clearTimeout }
     this.contextReceiptSeq = deps.contextReceiptSeq ?? new MemoryContextReceiptSeqStore()
+    this.contextStateStore = deps.contextStateStore ?? new MemoryContextStateStore()
+    this.contextStateDeps = {
+      runtimeHomeFor: deps.runtimeHomeFor,
+      store: this.contextStateStore,
+      now: this.now,
+      log: (level, msg, context) => this.log(level, msg, context),
+    }
     this.workInputReceiptStore = deps.workInputReceiptStore ?? new MemoryWorkInputReceiptStore()
     // P1-16：Supervisor 的裸事实在这里归因（exit-classifier），Run 终态只收敛一次。
     deps.supervisor.onRuntimeExit((event) =>
@@ -270,6 +299,10 @@ export class RunManager {
         return this.handleRunFollowup(frame.payload)
       case 'approval.decide':
         return this.handleApprovalDecide(frame.payload)
+      case 'run.context_state':
+        return this.handleRunContextState(frame.payload)
+      case 'context.state_sync':
+        return this.handleContextStateSync(frame.payload)
       case 'run.event_ack':
         this.deps.eventStore.ackUntil(frame.payload.runId, frame.payload.throughSeq)
         return
@@ -286,6 +319,19 @@ export class RunManager {
     }
   }
 
+  /** 单 Run 串行队列；前序失败不阻塞后续帧（清理/新状态仍要尝试）。 */
+  private enqueueContextStateOp<T>(runId: string, op: () => Promise<T>): Promise<T> {
+    const previous = this.contextStateOps.get(runId) ?? Promise.resolve()
+    const next = previous.catch(() => undefined).then(op)
+    this.contextStateOps.set(runId, next)
+    void next
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.contextStateOps.get(runId) === next) this.contextStateOps.delete(runId)
+      })
+    return next
+  }
+
   /** 重连后全量补发（R1：Hub 重启后从各自未 ack 处续发；Hub 幂等去重）。 */
   onReconnect(): void {
     // R9：先补发攒下的 lost 快照（终态事实优先于历史事件重放）。
@@ -295,6 +341,9 @@ export class RunManager {
     for (const runId of this.deps.eventStore.runIdsWithPending()) this.drainRun(runId)
     // 断线期间未写出的工作输入回执：重连后补发（Hub 按 receiptSeq 幂等）。
     this.drainWorkInputReceipts()
+    // ADR-0027 §6（PC-05b）：到期未完成的撤权副本删除先重试一轮。
+    // 每个 Run 走自己的串行队列，避免与状态帧并发写 state.json。
+    this.scheduleContextCleanupDrain()
   }
 
   /** 心跳事实：activeRunIds + lastEventSeqByRun（03 §6.2）。 */
@@ -364,10 +413,17 @@ export class RunManager {
         }
         projectContext = await this.deps.prepareProjectContext(runId, payload.projectContext)
         this.projectContexts.set(runId, projectContext)
+        // ADR-0027 §6（PC-05b）：先落本地状态（优先复用重连前已持久化的状态），
+        // Runtime 启动后第一次读取就有可校验的 state.json。与后续状态帧共用
+        // 单 Run 串行队列，避免初始化覆盖已到达的撤权状态。
+        await this.enqueueContextStateOp(runId, () =>
+          initializePreparedContextState(this.contextStateDeps, projectContext!),
+        )
+        const storedContextState = this.contextStateStore.get(runId)
         this.contextReceiptState.set(runId, {
           snapshotId: projectContext.snapshotId,
-          delivered: new Set(),
-          read: new Set(),
+          delivered: new Set(storedContextState?.delivered ?? []),
+          read: new Set(storedContextState?.read ?? []),
           headerDigest: projectContext.headerDigest,
           nonceMatched: true,
         })
@@ -1221,6 +1277,152 @@ export class RunManager {
     this.releases.set(runId, entry)
   }
 
+  /** ADR-0027 §6（PC-05b）：应用完整状态并回报 ack（清理失败项一并上报）。 */
+  private async handleRunContextState(state: RunContextStateWire): Promise<void> {
+    return this.enqueueContextStateOp(state.runId, () => this.applyRunContextStateFrame(state))
+  }
+
+  private async applyRunContextStateFrame(state: RunContextStateWire): Promise<void> {
+    const prepared = this.projectContexts.get(state.runId)
+    let result: Awaited<ReturnType<typeof applyRunContextState>>
+    try {
+      result = await applyRunContextState(this.contextStateDeps, prepared, state)
+    } catch (error) {
+      // 帧处理是 fire-and-forget 入口：本地 IO 失败必须收口并 ack false，不能
+      // 变成未处理拒绝拖垮 Node 进程。
+      this.log('warn', 'project context state apply failed', {
+        component: 'node.context',
+        runId: state.runId,
+        errorName: error instanceof Error ? error.name : 'unknown',
+      })
+      this.ack(state.commandId, false)
+      return
+    }
+    // Outbox 命令必须 ack；状态被忽略/摘要不符时 ack false，避免无意义重发。
+    this.ack(state.commandId, result.applied)
+    if (!result.applied) {
+      this.log('warn', 'project context state ignored', {
+        component: 'node.context',
+        runId: state.runId,
+        snapshotId: state.snapshotId,
+        stateVersion: state.stateVersion,
+      })
+      return
+    }
+    if (prepared !== undefined && prepared.snapshotId === state.snapshotId) {
+      this.deps.send(
+        contextStateAckFrame({
+          runId: state.runId,
+          snapshotId: state.snapshotId,
+          stateVersion: state.stateVersion,
+          stateDigest: state.stateDigest,
+          appliedAt: this.now().toISOString(),
+          failedEntryIds: [...new Set([...result.failedEntryIds, ...result.pendingEntryIds])],
+        }),
+      )
+    }
+    this.log('info', 'project context state applied', {
+      component: 'node.context',
+      runId: state.runId,
+      snapshotId: state.snapshotId,
+      stateVersion: state.stateVersion,
+      deleted: result.deleted,
+      quarantined: result.quarantined,
+      failed: result.failedEntryIds.length,
+      pending: result.pendingEntryIds.length,
+      paused: result.paused,
+    })
+  }
+
+  /** ADR-0027 §6（PC-05b）：摘要不一致/本地缺失 → 拉完整状态；一致才刷新水位。 */
+  private async handleContextStateSync(sync: ContextStateSyncWire): Promise<void> {
+    return this.enqueueContextStateOp(sync.runId, () => this.applyContextStateSyncFrame(sync))
+  }
+
+  private async applyContextStateSyncFrame(sync: ContextStateSyncWire): Promise<void> {
+    const prepared = this.projectContexts.get(sync.runId)
+    let result: Awaited<ReturnType<typeof applyContextStateSync>>
+    try {
+      result = await applyContextStateSync(this.contextStateDeps, prepared, sync)
+    } catch (error) {
+      this.log('warn', 'project context state sync failed', {
+        component: 'node.context',
+        runId: sync.runId,
+        errorName: error instanceof Error ? error.name : 'unknown',
+      })
+      this.ack(sync.commandId, false)
+      return
+    }
+    this.ack(sync.commandId, true)
+    if (result.pull) {
+      const stored = this.contextStateStore.get(sync.runId)
+      this.deps.send(
+        contextStatePullFrame({
+          runId: sync.runId,
+          snapshotId: sync.snapshotId,
+          knownStateVersion: stored?.stateVersion ?? 0,
+        }),
+      )
+      this.log('warn', 'project context state sync mismatch; pulling full state', {
+        component: 'node.context',
+        runId: sync.runId,
+        snapshotId: sync.snapshotId,
+        stateVersion: sync.stateVersion,
+        reason: result.reason,
+      })
+      return
+    }
+    await this.drainRunContextCleanup(sync.runId)
+  }
+
+  /** 重连时给每个已准备上下文副本的 Run 排一次清理重试。 */
+  private scheduleContextCleanupDrain(): void {
+    for (const runId of this.projectContexts.keys()) {
+      void this.enqueueContextStateOp(runId, () => this.drainRunContextCleanup(runId))
+    }
+  }
+
+  /** 单 Run 到期清理重试；调用方必须已持有该 Run 的串行队列。 */
+  private async drainRunContextCleanup(runId: string): Promise<void> {
+    try {
+      const result = await drainContextCleanupQueue(
+        this.contextStateDeps,
+        (id) => this.projectContexts.get(id),
+        runId,
+      )
+      for (const resumedRunId of result.resumedRuns) {
+        const prepared = this.projectContexts.get(resumedRunId)
+        const stored = this.contextStateStore.get(resumedRunId)
+        if (prepared === undefined || stored === undefined || stored.stateVersion < 1) continue
+        this.deps.send(
+          contextStateAckFrame({
+            runId: resumedRunId,
+            snapshotId: stored.snapshotId,
+            stateVersion: stored.stateVersion,
+            stateDigest: stored.stateDigest,
+            appliedAt: this.now().toISOString(),
+            failedEntryIds: [],
+          }),
+        )
+      }
+      if (result.retried > 0 || result.failed > 0) {
+        this.log('info', 'project context cleanup retry', {
+          component: 'node.context',
+          runId,
+          retried: result.retried,
+          failed: result.failed,
+          resumed: result.resumedRuns.length,
+        })
+      }
+    } catch (error) {
+      this.log('warn', 'project context cleanup retry failed', {
+        component: 'node.context',
+        runId,
+        errorName: error instanceof Error ? error.name : 'unknown',
+      })
+    }
+  }
+
   /**
    * ADR-0027 §4：把 Runtime 的 delivered/read 回执累计成 Node→Hub 的
    * `run.context_receipt`。`entriesDelivered` 是累计并集；`entriesRead/readEvents`
@@ -1249,6 +1451,7 @@ export class RunManager {
       for (const entryId of payload.entriesDelivered) {
         if (known.has(entryId)) state.delivered.add(entryId)
       }
+      this.contextStateStore.markDelivered(runId, prepared.snapshotId, [...state.delivered])
       state.headerDigest = payload.headerDigest
       state.nonceMatched = payload.nonceMatched && payload.headerDigest === prepared.headerDigest
       receipt = {
@@ -1275,6 +1478,8 @@ export class RunManager {
         return
       }
       state.read.add(payload.entryId)
+      // 已读集合必须跨重启保留：撤权时只删 readAt=0 的副本。
+      this.contextStateStore.markRead(runId, prepared.snapshotId, payload.entryId)
       receipt = {
         runId,
         snapshotId: prepared.snapshotId,

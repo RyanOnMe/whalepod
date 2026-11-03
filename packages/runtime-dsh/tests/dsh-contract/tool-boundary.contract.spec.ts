@@ -368,6 +368,27 @@ function withProjectContext(
 ): ReturnType<typeof runtimeSpec> {
   const nonce = projectContextNonce(CONTEXT_SNAPSHOT_DIGEST, runId)
   const headerText = `[project-context:${nonce}]\n- ${CONTEXT_ENTRY_ID} 预算结论`
+  // ADR-0027 §6（PC-05b）：Runtime 读取前必须看到 Node 写入的状态文件。
+  writeFileSync(
+    join(entriesDir, 'state.json'),
+    JSON.stringify({
+      runId,
+      snapshotId: '01905f7c-0000-7000-8000-000000000961',
+      stateVersion: 1,
+      stateDigest: 'a'.repeat(64),
+      entries: [
+        {
+          entryId: CONTEXT_ENTRY_ID,
+          kind: 'decision',
+          state: 'frozen',
+          currentAuthorizationGeneration: null,
+          reason: null,
+        },
+      ],
+      syncedAt: new Date().toISOString(),
+      paused: false,
+    }),
+  )
   return {
     ...spec,
     approvalPolicy: 'full_access' as const,

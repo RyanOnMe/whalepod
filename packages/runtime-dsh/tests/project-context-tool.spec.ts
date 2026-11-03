@@ -29,8 +29,39 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
+const RUN_ID = '01905f7c-0000-7000-8000-000000000301'
+const SNAPSHOT_ID = '01905f7c-0000-7000-8000-000000000961'
 const ENTRY_ID = '01905f7c-0000-7000-8000-000000000951'
 const BODY = '# 冻结上下文\n预算结论：8 万\n'
+function writeState(
+  overrides: Partial<{
+    paused: boolean
+    syncedAt: string
+    state: 'frozen' | 'retracted' | 'source_tombstoned' | 'permission_unknown'
+  }> = {},
+): void {
+  writeFileSync(
+    join(entriesDir, 'state.json'),
+    JSON.stringify({
+      runId: RUN_ID,
+      snapshotId: SNAPSHOT_ID,
+      stateVersion: 1,
+      stateDigest: 'a'.repeat(64),
+      entries: [
+        {
+          entryId: ENTRY_ID,
+          kind: 'observation',
+          state: overrides.state ?? 'frozen',
+          currentAuthorizationGeneration: null,
+          reason: overrides.state === undefined || overrides.state === 'frozen' ? null : 'revoked',
+        },
+      ],
+      syncedAt: overrides.syncedAt ?? new Date().toISOString(),
+      paused: overrides.paused ?? false,
+    }),
+  )
+}
+
 const ENTRY: RunProjectContextManifestEntry = {
   entryId: ENTRY_ID,
   kind: 'decision',
@@ -44,6 +75,7 @@ const ENTRY: RunProjectContextManifestEntry = {
 
 describe('read_project_context tool', () => {
   it('returns the frozen body with structured fields and emits a read receipt', async () => {
+    writeState()
     writeFileSync(join(entriesDir, ENTRY_ID), BODY)
     const reads: unknown[] = []
     const tool = createReadProjectContextTool([ENTRY], entriesDir, (fact) => reads.push(fact))
@@ -87,6 +119,7 @@ describe('read_project_context tool', () => {
   })
 
   it('refuses a copy whose digest or size drifted and emits no receipt', async () => {
+    writeState()
     writeFileSync(join(entriesDir, ENTRY_ID), 'tampered')
     const reads: unknown[] = []
     const tool = createReadProjectContextTool([ENTRY], entriesDir, (fact) => reads.push(fact))
@@ -94,6 +127,45 @@ describe('read_project_context tool', () => {
       'failed digest verification',
     )
     expect(reads).toHaveLength(0)
+  })
+
+  it('fails closed when the state file is missing, paused, stale or the entry is revoked', async () => {
+    writeFileSync(join(entriesDir, ENTRY_ID), BODY)
+    const tool = createReadProjectContextTool([ENTRY], entriesDir, () => {})
+    await expect(tool.execute({ entryId: ENTRY_ID }, {} as never)).rejects.toThrow(
+      'state is unavailable',
+    )
+
+    writeState({ paused: true })
+    await expect(tool.execute({ entryId: ENTRY_ID }, {} as never)).rejects.toThrow(
+      'project context is unavailable',
+    )
+
+    writeState({ syncedAt: new Date(Date.now() - 61_000).toISOString() })
+    await expect(tool.execute({ entryId: ENTRY_ID }, {} as never)).rejects.toThrow('state is stale')
+
+    writeState({ state: 'source_tombstoned' })
+    await expect(tool.execute({ entryId: ENTRY_ID }, {} as never)).rejects.toThrow(
+      'entry is unavailable',
+    )
+
+    writeState()
+    await expect(tool.execute({ entryId: ENTRY_ID }, {} as never)).resolves.toMatchObject({
+      entryId: ENTRY_ID,
+      content: BODY,
+    })
+  })
+
+  it('rejects a state file bound to another Run or snapshot', async () => {
+    writeState()
+    writeFileSync(join(entriesDir, ENTRY_ID), BODY)
+    const tool = createReadProjectContextTool([ENTRY], entriesDir, () => {}, {
+      runId: '01905f7c-0000-7000-8000-000000000302',
+      snapshotId: SNAPSHOT_ID,
+    })
+    await expect(tool.execute({ entryId: ENTRY_ID }, {} as never)).rejects.toThrow(
+      'does not belong to this run',
+    )
   })
 
   it('derives the nonce deterministically and checks the header marker', () => {

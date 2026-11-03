@@ -11,8 +11,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { and, eq, sql } from 'drizzle-orm'
 import type { Database } from '@whalepod/db'
 import { getTeam, schema } from '@whalepod/db'
+import { contextStateDigestInput, type RunContextStateEntry } from '@whalepod/protocol'
 import { hashToken } from '../src/modules/auth/token.js'
 import { projectContextNonce } from '../src/modules/context/run-snapshot.js'
+import { syncActiveRunContextStates } from '../src/modules/context/state.js'
 import {
   apiInject,
   createTestApp,
@@ -47,7 +49,9 @@ interface Seed {
 async function seedRunDependencies(
   database: Database,
   ownerUserId: string,
-  capabilities: Record<string, unknown> = { contextCapabilities: ['project-context.v1'] },
+  capabilities: Record<string, unknown> = {
+    contextCapabilities: ['project-context.v1', 'context-state.v1'],
+  },
 ): Promise<Seed> {
   const team = await getTeam(database.db)
   if (team === undefined) throw new Error('team missing')
@@ -118,7 +122,7 @@ async function seedForeignDevice(database: Database, ownerUserId: string): Promi
     nodeVersion: '24.12.0',
     nodeAppVersion: '0.1.0',
     tokenHash: Buffer.from(hashToken(token)),
-    capabilities: { contextCapabilities: ['project-context.v1'] },
+    capabilities: { contextCapabilities: ['project-context.v1', 'context-state.v1'] },
     lastSeenAt: new Date(),
   })
   return token
@@ -536,6 +540,20 @@ describe('PC-05a run project context snapshot', () => {
     expect(runs).toHaveLength(0)
   })
 
+  it('blocks a non-empty snapshot for a Node that does not declare context-state.v1', async () => {
+    const taskId = await createTask(ctx, alice, projectId, '旧状态机 Node')
+    await confirmAgreement(ctx, alice, taskId)
+    await database.db
+      .update(schema.devices)
+      .set({ capabilities: { contextCapabilities: ['project-context.v1'] } })
+      .where(eq(schema.devices.id, seed.deviceId))
+    const response = await startRun(ctx, alice, taskId, seed, '不应派发')
+    expect(response.statusCode, response.body).toBe(409)
+    expect(response.json().error.code).toBe('CONTEXT_UNAVAILABLE')
+    const runs = await database.db.select().from(schema.runs).where(eq(schema.runs.taskId, taskId))
+    expect(runs).toHaveLength(0)
+  })
+
   it('fails the Run before dispatch when a frozen decision is corrected after creation', async () => {
     const taskId = await createTask(ctx, alice, projectId, '派发前复核')
     await confirmAgreement(ctx, alice, taskId)
@@ -550,6 +568,22 @@ describe('PC-05a run project context snapshot', () => {
       .select()
       .from(schema.runProjectContextEntries)
       .where(eq(schema.runProjectContextEntries.snapshotId, snapshot!.id))
+    expect(snapshot?.stateVersion).toBe(1)
+    expect(decision?.entryStatus).toBe('frozen')
+    const initialStates = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(
+        and(
+          eq(schema.dispatchOutbox.type, 'run.context_state'),
+          sql`${schema.dispatchOutbox.payload}->>'runId' = ${runId}`,
+        ),
+      )
+    expect(initialStates).toHaveLength(1)
+    expect(initialStates[0]?.payload).toMatchObject({
+      stateVersion: 1,
+      entries: [{ entryId: decision!.entryId, state: 'frozen' }],
+    })
     const corrected = await apiInject(ctx, bob, {
       method: 'POST',
       url: `/api/v1/projects/${projectId}/context/${decision!.entryId}/correction`,
@@ -557,6 +591,39 @@ describe('PC-05a run project context snapshot', () => {
       idempotencyKey: idemKey(),
     })
     expect(corrected.statusCode, corrected.body).toBe(201)
+
+    const [afterEntry] = await database.db
+      .select()
+      .from(schema.runProjectContextEntries)
+      .where(
+        and(
+          eq(schema.runProjectContextEntries.snapshotId, snapshot!.id),
+          eq(schema.runProjectContextEntries.entryId, decision!.entryId),
+        ),
+      )
+    expect(afterEntry?.entryStatus).toBe('retracted')
+    const [afterSnapshot] = await database.db
+      .select()
+      .from(schema.runProjectContexts)
+      .where(eq(schema.runProjectContexts.id, snapshot!.id))
+    expect(afterSnapshot?.stateVersion).toBe(2)
+    const stateCommands = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(
+        and(
+          eq(schema.dispatchOutbox.type, 'run.context_state'),
+          sql`${schema.dispatchOutbox.payload}->>'runId' = ${runId}`,
+        ),
+      )
+    expect(
+      stateCommands.some((row) => {
+        const payload = row.payload as { stateVersion: number; entries: { state: string }[] }
+        return (
+          payload.stateVersion === 2 && payload.entries.some((entry) => entry.state === 'retracted')
+        )
+      }),
+    ).toBe(true)
 
     harness.clock.advance(Math.max(0, Date.now() - harness.clock.now().getTime()) + 1)
     await harness.worker.dispatchOnce()
@@ -573,8 +640,328 @@ describe('PC-05a run project context snapshot', () => {
         ),
       )
     expect(command?.failedAt).not.toBeNull()
-    expect(harness.gateway.drainUpstream()).toEqual([])
+    expect(harness.gateway.sent.some((sent) => sent.frame.type === 'run.start')).toBe(false)
     expect(notes.some((note) => note.action === 'context.dispatch_blocked')).toBe(true)
+  })
+
+  it('withholds a corrected body on the historical read face of a terminal Run', async () => {
+    const taskId = await createTask(ctx, alice, projectId, '历史撤权')
+    await confirmAgreement(ctx, alice, taskId)
+    const created = await startRun(ctx, alice, taskId, seed, '完成后纠正')
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    await dispatchAndReady(harness, seed, alice.userId, runId)
+    await completeRun(harness, seed, alice.userId, runId)
+    const [snapshot] = await database.db
+      .select()
+      .from(schema.runProjectContexts)
+      .where(eq(schema.runProjectContexts.runId, runId))
+    const [decision] = await database.db
+      .select()
+      .from(schema.runProjectContextEntries)
+      .where(eq(schema.runProjectContextEntries.snapshotId, snapshot!.id))
+    const corrected = await apiInject(ctx, bob, {
+      method: 'POST',
+      url: `/api/v1/projects/${projectId}/context/${decision!.entryId}/correction`,
+      payload: { correctionKind: 'amend', note: '历史结论已修订' },
+      idempotencyKey: idemKey(),
+    })
+    expect(corrected.statusCode, corrected.body).toBe(201)
+
+    // 终态 Run 不在活跃状态集合里，纠正事务不会刷新持久化行；读面必须自己派生。
+    const view = await apiInject(ctx, bob, {
+      method: 'GET',
+      url: `/api/v1/runs/${runId}/project-context`,
+    })
+    expect(view.statusCode, view.body).toBe(200)
+    expect(view.json().data.unavailable).toBe(true)
+    expect(view.json().data.status).toBe('invalidated')
+    const entry = view
+      .json()
+      .data.entries.find((item: { entryId: string }) => item.entryId === decision!.entryId)
+    expect(entry).toMatchObject({
+      entryStatus: 'retracted',
+      statusReason: 'entry_corrected',
+      body: null,
+    })
+  })
+
+  it('advances the state version when only the source generation changes', async () => {
+    const taskId = await createTask(ctx, alice, projectId, '代次刷新')
+    await confirmAgreement(ctx, alice, taskId)
+    const created = await startRun(ctx, alice, taskId, seed, '代次')
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    const [snapshot] = await database.db
+      .select()
+      .from(schema.runProjectContexts)
+      .where(eq(schema.runProjectContexts.runId, runId))
+    const [decision] = await database.db
+      .select()
+      .from(schema.runProjectContextEntries)
+      .where(eq(schema.runProjectContextEntries.snapshotId, snapshot!.id))
+
+    // PC-03b 尚未提供来源 Observation 的生产写入方；这里只替换快照入口的事实来源，
+    // 用于验证「state 仍 frozen、仅 generation 变化」也必须推进 stateVersion。
+    const sourceId = randomUUID()
+    await database.db.insert(schema.projectSources).values({
+      id: sourceId,
+      projectId,
+      platform: 'feishu',
+      kind: 'group',
+      resourceKey: `fixture:${sourceId}`,
+      displayLabel: '代次测试来源',
+      collectorNodeId: seed.deviceId,
+      credentialSlot: 'default',
+      appKey: `app-${sourceId}`,
+      status: 'active',
+      permissionState: 'verified',
+      permissionCheckedAt: new Date(),
+      permissionExpiresAt: new Date(Date.now() + 86_400_000),
+      authorizationGeneration: 3,
+      boundBy: alice.userId,
+      boundAt: new Date(),
+    })
+    await database.db
+      .update(schema.runProjectContextEntries)
+      .set({
+        kind: 'observation',
+        citation: 'source',
+        sourceId,
+        revisionId: randomUUID(),
+        businessRef: null,
+        authorizationGeneration: '3',
+      })
+      .where(
+        and(
+          eq(schema.runProjectContextEntries.snapshotId, snapshot!.id),
+          eq(schema.runProjectContextEntries.entryId, decision!.entryId),
+        ),
+      )
+
+    const first = await syncActiveRunContextStates({
+      database,
+      outbox: harness.outbox,
+      now: () => harness.clock.now(),
+    })
+    expect(first).toMatchObject({ refreshed: 1, changed: 1 })
+    const [afterGeneration] = await database.db
+      .select()
+      .from(schema.runProjectContexts)
+      .where(eq(schema.runProjectContexts.id, snapshot!.id))
+    expect(afterGeneration?.stateVersion).toBe(2)
+    const [command] = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(
+        and(
+          eq(schema.dispatchOutbox.type, 'run.context_state'),
+          sql`${schema.dispatchOutbox.payload}->>'stateVersion' = '2'`,
+          sql`${schema.dispatchOutbox.payload}->>'runId' = ${runId}`,
+        ),
+      )
+    expect(command).toBeDefined()
+    const payload = command!.payload as {
+      entries: RunContextStateEntry[]
+      stateDigest: string
+    }
+    const frameEntry = payload.entries.find((entry) => entry.entryId === decision!.entryId)
+    expect(frameEntry).toMatchObject({
+      state: 'frozen',
+      currentAuthorizationGeneration: '3',
+    })
+    expect(
+      createHash('sha256').update(contextStateDigestInput(2, payload.entries)).digest('hex'),
+    ).toBe(payload.stateDigest)
+  })
+
+  it('records Node state acks and re-sends full state on context.state_pull', async () => {
+    const taskId = await createTask(ctx, alice, projectId, '状态同步')
+    await confirmAgreement(ctx, alice, taskId)
+    const created = await startRun(ctx, alice, taskId, seed, '等待状态')
+    expect(created.statusCode, created.body).toBe(201)
+    const runId = created.json().data.id as string
+    const [snapshot] = await database.db
+      .select()
+      .from(schema.runProjectContexts)
+      .where(eq(schema.runProjectContexts.runId, runId))
+    const [stateCommand] = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(
+        and(
+          eq(schema.dispatchOutbox.type, 'run.context_state'),
+          sql`${schema.dispatchOutbox.payload}->>'runId' = ${runId}`,
+        ),
+      )
+    const statePayload = stateCommand?.payload as {
+      commandId: string
+      snapshotId: string
+      stateVersion: number
+      stateDigest: string
+    }
+    expect(statePayload.snapshotId).toBe(snapshot!.id)
+    expect(statePayload.stateVersion).toBe(1)
+
+    harness.clock.advance(Math.max(0, Date.now() - harness.clock.now().getTime()) + 1)
+    await harness.worker.dispatchOnce()
+    const sentTypes = harness.gateway.sent.map((sent) => sent.frame.type)
+    expect(sentTypes).toContain('run.context_state')
+
+    await harness.orchestrator.ingestNodeEvent(
+      { deviceId: seed.deviceId, ownerUserId: alice.userId },
+      {
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: new Date().toISOString(),
+        type: 'context.state_ack',
+        payload: {
+          runId,
+          snapshotId: snapshot!.id,
+          stateVersion: statePayload.stateVersion,
+          stateDigest: statePayload.stateDigest,
+          appliedAt: new Date().toISOString(),
+          failedEntryIds: [],
+        },
+      },
+    )
+    const [ack] = await database.db
+      .select()
+      .from(schema.runContextStateAcks)
+      .where(eq(schema.runContextStateAcks.runId, runId))
+    expect(ack).toMatchObject({
+      stateVersion: 1,
+      stateDigest: statePayload.stateDigest,
+      failedEntryIds: [],
+    })
+
+    await harness.orchestrator.ingestNodeEvent(
+      { deviceId: seed.deviceId, ownerUserId: alice.userId },
+      {
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: new Date().toISOString(),
+        type: 'context.state_pull',
+        payload: { runId, snapshotId: snapshot!.id, knownStateVersion: 0 },
+      },
+    )
+    const commands = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(
+        and(
+          eq(schema.dispatchOutbox.type, 'run.context_state'),
+          sql`${schema.dispatchOutbox.payload}->>'runId' = ${runId}`,
+        ),
+      )
+    expect(commands).toHaveLength(2)
+    expect(
+      commands.every((row) => (row.payload as { stateVersion: number }).stateVersion === 1),
+    ).toBe(true)
+    expect(notes.filter((note) => note.action === 'context.state_acked')).toHaveLength(1)
+    expect(notes.filter((note) => note.action === 'context.state_pull')).toHaveLength(1)
+
+    // 伪造回执：未来版本、当前版本错摘要都不能落库；错误设备 pull 不能入队。
+    for (const payload of [
+      {
+        runId,
+        snapshotId: snapshot!.id,
+        stateVersion: 99,
+        stateDigest: statePayload.stateDigest,
+        appliedAt: new Date().toISOString(),
+        failedEntryIds: [],
+      },
+      {
+        runId,
+        snapshotId: snapshot!.id,
+        stateVersion: 1,
+        stateDigest: 'd'.repeat(64),
+        appliedAt: new Date().toISOString(),
+        failedEntryIds: [],
+      },
+    ]) {
+      await harness.orchestrator.ingestNodeEvent(
+        { deviceId: seed.deviceId, ownerUserId: alice.userId },
+        {
+          protocolVersion: 1,
+          messageId: randomUUID(),
+          sentAt: new Date().toISOString(),
+          type: 'context.state_ack',
+          payload,
+        },
+      )
+    }
+    const acks = await database.db
+      .select()
+      .from(schema.runContextStateAcks)
+      .where(eq(schema.runContextStateAcks.runId, runId))
+    expect(acks).toHaveLength(1)
+
+    await harness.orchestrator.ingestNodeEvent(
+      { deviceId: randomUUID(), ownerUserId: alice.userId },
+      {
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: new Date().toISOString(),
+        type: 'context.state_pull',
+        payload: { runId, snapshotId: snapshot!.id, knownStateVersion: 1 },
+      },
+    )
+    const afterForeignPull = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(
+        and(
+          eq(schema.dispatchOutbox.type, 'run.context_state'),
+          sql`${schema.dispatchOutbox.payload}->>'runId' = ${runId}`,
+        ),
+      )
+    expect(afterForeignPull).toHaveLength(2)
+
+    // 周期 tick 无变化时发水位帧；hello 时发完整状态（不只增量）。
+    const summary = await syncActiveRunContextStates({
+      database,
+      outbox: harness.outbox,
+      now: () => harness.clock.now(),
+    })
+    expect(summary).toMatchObject({ refreshed: 1, changed: 0, heartbeats: 1 })
+    const [syncRow] = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(
+        and(
+          eq(schema.dispatchOutbox.type, 'context.state_sync'),
+          sql`${schema.dispatchOutbox.payload}->>'runId' = ${runId}`,
+        ),
+      )
+    expect(syncRow?.payload).toMatchObject({
+      runId,
+      snapshotId: snapshot!.id,
+      stateVersion: 1,
+      stateDigest: statePayload.stateDigest,
+    })
+    expect(typeof (syncRow?.payload as { commandId?: unknown }).commandId).toBe('string')
+
+    const beforeHello = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(
+        and(
+          eq(schema.dispatchOutbox.type, 'run.context_state'),
+          sql`${schema.dispatchOutbox.payload}->>'runId' = ${runId}`,
+        ),
+      )
+    await harness.orchestrator.onDeviceHello(seed.deviceId)
+    const afterHello = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(
+        and(
+          eq(schema.dispatchOutbox.type, 'run.context_state'),
+          sql`${schema.dispatchOutbox.payload}->>'runId' = ${runId}`,
+        ),
+      )
+    expect(afterHello).toHaveLength(beforeHello.length + 1)
   })
 
   it('accepts delivered/read receipts, writes consumption, and rejects duplicate sequences', async () => {

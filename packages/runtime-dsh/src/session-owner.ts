@@ -142,6 +142,7 @@ export class SessionOwner {
             spec.projectContext.entries,
             spec.projectContext.entriesDir,
             (fact) => events.contextRead?.(fact),
+            { runId: spec.runId, snapshotId: spec.projectContext.snapshotId },
           ),
         )
       }

@@ -1,0 +1,23 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01905f7c-0000-7000-8000-00000000a031",
+  "type": "run.context_state",
+  "sentAt": "2026-01-05T09:02:00Z",
+  "payload": {
+    "commandId": "01905f7c-0000-7000-8000-000000000b31",
+    "runId": "01905f7c-0000-7000-8000-000000000301",
+    "snapshotId": "01905f7c-0000-7000-8000-000000000402",
+    "stateVersion": 2,
+    "stateDigest": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+    "entries": [
+      {
+        "entryId": "01905f7c-0000-7000-8000-000000000403",
+        "kind": "observation",
+        "state": "permission_unknown",
+        "currentAuthorizationGeneration": "2",
+        "reason": "permission_unknown"
+      }
+    ],
+    "generatedAt": "2026-01-05T09:02:00Z"
+  }
+}

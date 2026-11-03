@@ -121,6 +121,7 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   const { ArtifactInputsManager } = await import('./artifact/inputs.js')
   const { ProjectContextDownloader } = await import('./context/project-context.js')
   const { SqliteContextReceiptSeqStore } = await import('./context/receipt-seq-store.js')
+  const { SqliteContextStateStore } = await import('./context/state-store.js')
   const { WorkInputDownloader } = await import('./work/work-input.js')
   const { SqliteWorkInputReceiptStore } = await import('./work/receipt-store.js')
   const { OfficePreviewGenerator } = await import('./artifact/preview.js')
@@ -281,6 +282,7 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     prepareProjectContext: (runId, manifest) => projectContext.prepare(runId, manifest),
     cleanupProjectContext: (runId) => projectContext.cleanup(runId),
     contextReceiptSeq: new SqliteContextReceiptSeqStore(join(stateDir, 'context-receipts.sqlite')),
+    contextStateStore: new SqliteContextStateStore(join(stateDir, 'context-state.sqlite')),
     prepareWorkInputs: (runId, input) => workInputs.prepare(runId, input),
     cleanupWorkInputs: (runId) => workInputs.cleanup(runId),
     workInputReceiptStore: workInputReceipts,

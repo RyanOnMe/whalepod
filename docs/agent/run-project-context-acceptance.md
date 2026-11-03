@@ -2,8 +2,8 @@
 
 - Issue：#474（PC-05a）
 - 合入：PR #478（squash a8f4b97，2026-11-02）
-- 状态：正向最小链已交付；撤权状态机、终态 session 清理与 `resumeContext` 未交付
-- 关联：[ADR-0027](../adr/0027-run-project-context-snapshot-and-consumption.md)（已采纳）、[事实账本验收](./project-context-ledger-acceptance.md)、[确定性协调验收](./project-coordination-acceptance.md)
+- 状态：正向最小链已交付；撤权状态机已由 PC-05b-1（#498，[验收](./2026-11-03-pc05b1-context-state-acceptance.md)）接手；watchdog、回执恢复、终态 session 清理与 `resumeContext` 仍归 PC-05b-2/-3
+- 关联：[ADR-0027](../adr/0027-run-project-context-snapshot-and-consumption.md)（已采纳）、[事实账本验收](./project-context-ledger-acceptance.md)、[确定性协调验收](./project-coordination-acceptance.md)、[PC-05b-1 撤权状态验收](./2026-11-03-pc05b1-context-state-acceptance.md)
 
 ## 1 本切片交付
 
@@ -13,7 +13,7 @@
 | 快照头 | `selectionRuleVersion='pc05a.v1'`、`snapshotDigest`、`headerText/headerDigest`、nonce | 创建事务内生成并持久化；header ≤ 4000 字符，超出 `CONTEXT_UNAVAILABLE` |
 | 容量 | 32 条 / 256KiB / 单条 64KiB | 超限进入 `unselected`（`entry_too_large`/`capacity_exceeded`）；逐条明细封顶 128 条，超出按原因聚合到 `unselectedOmitted`（header 记总数），不静默截断 |
 | 派发前复核 | `verifyRunProjectContext` + `OutboxWorker.beforeDispatch` | 条目仍为当前有效版本、正文/头部 digest 未变、Node 仍声明能力；失败 `failed(CONTEXT_UNAVAILABLE)` 并把触发指令结算为 rejected（同码）；已成功写入 Node 的命令按 `dispatch_outbox.sent_at` 跳过复核（R7 ack 丢失重投不误杀） |
-| 能力协商 | `node.hello.contextCapabilities` | 非空快照只向声明 `project-context.v1` 的 Node 创建/派发；空快照不受影响 |
+| 能力协商 | `node.hello.contextCapabilities` | 非空快照只向同时声明 `project-context.v1` 与 `context-state.v1` 的 Node 创建/派发（PC-05b-1 起）；空快照不受影响 |
 | Node 交付 | `apps/node/src/context/project-context.ts` | `GET /node/runs/:runId/project-context/bundle`（Device Token + Run 归属）；逐条核对 digest/byteSize，不符 `CONTEXT_DIGEST_MISMATCH` 且不启动 Runtime |
 | Runtime 注入 | `runtime.initialize.projectContext` + `read_project_context` | 清单/目录成对；正文不进 `executionContext`；工具按 entryId 白名单读取并复算 digest |
 | 两级回执 | `runtime.context_receipt` → `run.context_receipt` | delivered/read 累计并集；Hub 校验归属、能力、headerDigest、nonce、集合与 `receiptSeq` |
@@ -107,15 +107,15 @@ pnpm exec vitest run --project dsh-contract \
 ## 4 未交付 / `not_run`
 
 - **已知残余（评审登记的边界，不当作已解决）**：
-  - Node 侧 `run.start` 重发与首次下载并发时，失败的那次命令可能清理胜者的 `runtime-context`/回执状态（与既有 artifact 输入副本同类竞态），PC-05b 收口；
+  - Node 侧 `run.start` 重发与首次下载并发时，失败的那次命令可能清理胜者的 `runtime-context`/回执状态（与既有 artifact 输入副本同类竞态），PC-05b-3 收口；
   - Hub 在 `gateway.send` 成功与 `markSent` 落库之间崩溃仍会留下 `sent_at=null` 的窄窗口，重投会重新复核并可能把 Run 判失败（B1 已把窗口从「每次重投」缩到「崩溃瞬间」）；
   - `sent_at` 只证明 socket 写入成功，不证明 Node 已收到；这是 R7 的既定取舍；
   - `cancel_requested` Run 的回执按 ADR 字面归为 `receipt_late`，其消费事实不落库；
-  - bundle 读面非 `frozen` 条目的 409 映射已接线，但 PC-05a 没有撤权/墓碑状态，机器用例留给 PC-05b。
-- **撤权状态机**：`run.context_state`、`context.state_sync`、活跃 Run 未读副本逐条删除/隔离、Runtime 本地 ack、断连 fail-closed：PC-05b。
+  - bundle 读面非 `frozen` 条目的 409 映射由 PC-05b-1 接通：下载前按当前来源/纠正状态派生，非 frozen 一律 409。
+- **撤权状态机**：`run.context_state`、`context.state_sync`、活跃 Run 未读副本逐条删除/隔离、Runtime 本地 ack、断连 fail-closed 已由 PC-05b-1（#498）交付，见[验收](./2026-11-03-pc05b1-context-state-acceptance.md)；来源条目的生产写入仍待 PC-03b/03c。
 - **终态 session 处理**：`resumeContext: full/redacted/blocked`、session allowlist 重建、24 小时清理、`coordination-home` 扫描：PC-05b / Q5。本切片只删除 `runtime-context/<runId>`，不触碰 `runtime-home`、session 与 spill。
 - **首条回执 watchdog**：Run 进入 running 后 60 秒无回执自动 `failed(CONTEXT_UNAVAILABLE)` 未实现；当前只接受合格回执，不主动判定「Node 静默不读」。
-- **回执重试**：`run.context_receipt` 只在连接 OPEN 时发送，断连窗口内不回放；该缺口由后续 watchdog/状态同步兜底（未实现）。
+- **回执重试**：`run.context_receipt` 只在连接 OPEN 时发送，断连窗口内不回放；PC-05b-2（#499）补持久 outbox 与 ack，watchdog 同切片。
 - **显式选择**：Thread/Subscription/WorkLink、`read_only` 勾选、`model_inferred` 激活、`selectedByMemberId` 均无 UI/API 入口（PC-03b/03c）。
 - **外部来源**：真实飞书/钉钉正文、来源 Observation、权限代次与撤回后的历史读面均 `not_run`。
 - **真实平台与真人**：未连接真实模型、真实办公平台；不声称模型真的理解了正文（回执是受信 Node 的自报证据）。
