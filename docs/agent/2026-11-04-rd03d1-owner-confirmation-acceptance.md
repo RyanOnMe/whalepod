@@ -17,22 +17,22 @@ Task 责任人：
    - 校验 assignee/任务状态/Work 等待态/Mandate 体/Agent 授权；
    - 插入 `version = latest + 1` 的新 Mandate，principal/onBehalf/humanOwner/draftRecipient 都是新 assignee；
    - 更新 Work `humanOwnerUserId`、`state='active'`、清空 resumeMode/resumeCondition、`mandateId=新版本`；
-   - 取消旧 proposed 意图、撤回旧订阅；
+   - 重跑取消旧 proposed 意图/失效旧订阅的收尾（改派入口已做过，承接侧是防御性幂等，不产生新副作用）；
 5. 返回新 Mandate view（201）；旧 Mandate 不被改写、不转移；后续派工使用新版本。
 
 ## 2 驱动与证据
 
-- 生产 HTTP：`POST /tasks/:taskId/reassign` → `POST /tasks/:taskId/accept` → `POST /works/:workKey/accept` → `GET /works/:workKey` / `GET /works/:workKey/mandates`。
-- DB：`work`（state/resumeMode/resumeCondition/humanOwnerUserId/mandateId）、`work_mandate`（新版本与主体）、`dispatch_intent`（旧 proposed cancelled）。
-- 判据文件：`apps/hub/tests/work-mandate.integration.spec.ts`（accept 正控 + 幂等 + 旧/未接受 assignee + 非法 body；既有 reassign 回归）。
-- 观测：HTTP 审计 `work.accept`（actor/workKey/mandateId/version）；无正文。
+- 生产 HTTP：`POST /tasks/:taskId/reassign` → `POST /tasks/:taskId/accept` → `POST /works/:workKey/accept` → `GET /works/:workKey` / `GET /works/:workKey/mandates` → 承接后 `POST /works/:workKey/admission-checks`。
+- DB：`work`（state/resumeMode/resumeCondition/humanOwnerUserId/mandateId）、`work_mandate`（新版本与主体、旧行原样）、`dispatch_intent`（旧 proposed cancelled；承接后新准入生成 proposed）。
+- 判据文件：`apps/hub/tests/work-mandate.integration.spec.ts`（accept 正控 + 幂等 + 旧/未接受 assignee + 非法 body + 承接后准入；既有 reassign 回归）。
+- 观测：HTTP 审计 `work.accept` 带 actor/workKey/mandateId/version（测试从 `ctx.auditEvents` 断言）；无正文。
 
 ## 3 判定
 
-- **正控**：改派并接受指派后，新 assignee accept 201；Work active、owner 改为新 assignee、currentMandate 为新版本（version=旧+1，principal 新 assignee）；旧 Mandate 仍在历史但 current=false；之后可继续创建下一版本。
-- **负控**：承接前 Work 非 `waiting(owner_confirmation)` → 403/409；新 assignee 未接受指派 → 409；旧 assignee → 403；非法 Mandate 体（面外工具名）→ 400 且 Work 保持 waiting/old owner；已 active 的 Work 用新幂等键再承接 → 409；旧 proposed 意图不复活。
+- **正控**：改派并接受指派后，新 assignee accept 201；Work active、owner 改为新 assignee、`work.mandateId` 指向新版本、currentMandate 为新版本（version=旧+1，principal 新 assignee）；旧 Mandate 仍在历史但 current=false、principal/status 原样；之后可继续创建下一版本；承接后新评论的准入按新 Mandate 生成 proposed 意图。
+- **负控**：非本任务 assignee（含旧 assignee）→ 403；新 assignee 未接受指派 → 409；非法 Mandate 体（面外工具名）→ 400 且 Work 保持 waiting/old owner；已 active 的 Work 用新幂等键再承接 → 409；旧 proposed 意图不复活。
 - **幂等**：同一幂等键重放返回同一 Mandate，不产生第二版本。
-- **数据判据**：新 Mandate 主体四字段一致；旧 Mandate 行不被更新；Work 指针指向新版本。
+- **数据判据**：新 Mandate 主体四字段一致；旧 Mandate 行不被更新（current=false、principal/status 原样）；Work 指针 `mandateId` 指向新版本；审计事件 `work.accept` 带 `{actor, workKey, mandateId, version}`。
 
 ## 4 门禁
 
@@ -47,7 +47,9 @@ Task 责任人：
 |---|---|---|---|
 | M71 | 只承接等待态 | 删除 state/resumeMode 守卫 | 红（已 active 的 Work 再承接不再 409） |
 | M72 | Work owner 改新 assignee | 删除 `humanOwnerUserId` 更新 | 红（读面 owner 仍是旧 assignee） |
-| M73 | 新 Mandate 主体是调用者 | principal 改回旧 work owner | 红（新 Mandate principal 不是新 assignee） |
+| M73 | 新 Mandate 主体是调用者 | 四个主体字段改回旧 work owner | 红（201 但 principal 不是新 assignee） |
+| M74 | 审计带动作标识 | 路由的 `audit(...fields)` 退回无 fields | 红（`work.accept` 事件缺 workKey/mandateId/version） |
+| M75 | Work 指针指向新 Mandate | 删除 `mandateId: mandate.id` | 红（`work.mandateId` 缺失/仍旧值） |
 
 ## 6 边界与未交付
 

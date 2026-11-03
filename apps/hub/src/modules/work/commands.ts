@@ -362,9 +362,6 @@ export async function acceptWorkAfterOwnerChange(
       const { work, task } = await lockWorkContext(tx, workKey)
       await requireAssignee(tx, task, actorUserId)
       requireAcceptedTask(task)
-      if (task.status === 'done' || task.status === 'cancelled') {
-        throw new ApiError(409, 'CONFLICT', 'task is terminal')
-      }
       if (task.approvalPolicy === 'full_access') {
         throw new ApiError(409, 'CONFLICT', 'full_access task cannot receive a mandate')
       }

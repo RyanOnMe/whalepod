@@ -35,6 +35,10 @@ export interface AuditEvent {
   actor: string
   outcome: string
   requestId: string
+  /** RD-03d1：work.accept 的不透明动作事实（只对带 fields 的动作出现）。 */
+  workKey?: string
+  mandateId?: string
+  version?: number
 }
 
 /** 捕获 hub warn 级结构化日志（带 component 的非审计行）；供告警计数断言（#55 迁移告警）。 */

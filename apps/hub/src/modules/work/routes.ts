@@ -243,7 +243,11 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
     if (deps.onMandateChanged !== undefined && outcome.changed) {
       await deps.onMandateChanged(session, outcome.view.workKey)
     }
-    audit(request, 'work.accept', 'success', session.userId)
+    audit(request, 'work.accept', 'success', session.userId, {
+      workKey: outcome.view.workKey,
+      mandateId: outcome.view.id,
+      version: outcome.view.version,
+    })
     return reply.code(201).send({ ok: true, data: outcome.view })
   })
 

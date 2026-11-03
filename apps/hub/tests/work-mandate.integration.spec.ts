@@ -1131,6 +1131,7 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
       humanOwnerUserId: bob.userId,
       resumeMode: null,
       resumeCondition: null,
+      mandateId: newMandateId,
     })
     expect(workDetail.json().data.currentMandate).toMatchObject({
       id: newMandateId,
@@ -1144,6 +1145,32 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
     expect(mandateHistory.statusCode).toBe(200)
     expect(mandateHistory.json().data).toHaveLength(2)
     expect(mandateHistory.json().data.map((m: { id: string }) => m.id)).toContain(oldMandate.id)
+    expect(
+      mandateHistory.json().data.find((m: { id: string }) => m.id === oldMandate.id),
+    ).toMatchObject({
+      current: false,
+      status: 'active',
+      principalUserId: alice.userId,
+    })
+
+    const acceptAudit = ctx.auditEvents.filter((event) => event.action === 'work.accept').at(-1)
+    expect(acceptAudit).toMatchObject({
+      actor: bob.userId,
+      workKey: work.workKey,
+      mandateId: newMandateId,
+      version: oldMandate.version + 1,
+    })
+
+    // 承接后既有准入立即按新 Mandate 工作（autoDispatch 生成 proposed 意图）。
+    const postAcceptSource = await comment(ctx, bob, taskId)
+    const postAccept = await checkAdmission(
+      ctx,
+      bob,
+      work.workKey,
+      'task_message',
+      postAcceptSource,
+    )
+    expect(postAccept.proposedIntent).not.toBeNull()
 
     // 承接后新 assignee 可按既有路径继续创建下一版本。
     const next = await apiInject(ctx, bob, {
