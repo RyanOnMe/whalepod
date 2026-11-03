@@ -121,6 +121,7 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   const { ArtifactInputsManager } = await import('./artifact/inputs.js')
   const { ProjectContextDownloader } = await import('./context/project-context.js')
   const { SqliteContextReceiptOutbox } = await import('./context/receipt-outbox.js')
+  const { SqliteRunTerminalCleanupStore } = await import('./run/terminal-cleanup.js')
   const { SqliteContextStateStore } = await import('./context/state-store.js')
   const { WorkInputDownloader } = await import('./work/work-input.js')
   const { SqliteWorkInputReceiptStore } = await import('./work/receipt-store.js')
@@ -162,6 +163,9 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     join(stateDir, 'context-receipt-outbox.sqlite'),
   )
   contextReceiptOutbox.seedFromLegacy(join(stateDir, 'context-receipts.sqlite'))
+  const terminalCleanup = new SqliteRunTerminalCleanupStore(
+    join(stateDir, 'terminal-cleanup.sqlite'),
+  )
   // #441 / ADR-0023: automatic Office conversion is suspended until an isolated
   // converter is verified. The generator reports ISOLATION_REQUIRED; it never spawns soffice.
   const officePreview = new OfficePreviewGenerator({
@@ -286,7 +290,9 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     prepareArtifactInputs: (runId, taskId) => artifactInputs.prepare(runId, taskId),
     cleanupArtifactInputs: (runId) => artifactInputs.cleanup(runId),
     prepareProjectContext: (runId, manifest) => projectContext.prepare(runId, manifest),
-    cleanupProjectContext: (runId) => projectContext.cleanup(runId),
+    runtimeContextDirFor: (runId) => join(stateDir, 'runtime-context', runId),
+    terminalCleanupStore: terminalCleanup,
+    isRuntimeHomeInUse: (homePath, exceptRunId) => supervisor.isHomeInUse(homePath, exceptRunId),
     contextReceiptOutbox,
     contextStateStore: new SqliteContextStateStore(join(stateDir, 'context-state.sqlite')),
     prepareWorkInputs: (runId, input) => workInputs.prepare(runId, input),
@@ -309,6 +315,14 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   })
   // Node 重启：孤儿三重匹配处理后交人工重跑（不自动复活 Run）。
   await supervisor.recoverOrphans()
+  // ADR-0027 §6（PC-05b-3）：启动先清自有 home；resume 共享 home 等首次连接、
+  // lost 快照（含持久 dshSessionId）补发后再清，避免 Hub 尚不知情就删来源 session。
+  runManager.startTerminalCleanup(false)
+  let deviceConnectedOnce = false
+  setInterval(
+    () => runManager.runTerminalCleanupTick(false, deviceConnectedOnce),
+    60 * 60 * 1000,
+  ).unref()
 
   // #352：preflight 装/重建 pack 后要能补发 hello，而 session 在 runManager 之后创建——
   // 用可变句柄在闭包间传递（不改变装配次序）。
@@ -327,7 +341,13 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
         )
       })
     },
-    onConnected: () => runManager.onReconnect(),
+    onConnected: () => {
+      runManager.onReconnect()
+      if (!deviceConnectedOnce) {
+        deviceConnectedOnce = true
+        runManager.startTerminalCleanup()
+      }
+    },
     // #89：连接建立后上报 inventory（Hub 的 Workspace 投影唯一来源；此前生产
     // 链路一帧不发，真实用户 RunLauncher 选不到任何 Workspace）。
     inventoryFacts: () => inventory.build(),

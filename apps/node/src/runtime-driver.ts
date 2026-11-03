@@ -14,6 +14,11 @@ export interface RuntimeStartSpec {
   /** 随机 nonce：Node 重启后用 cmdline 匹配防误杀无关进程。 */
   readonly nonce: string
   readonly workspaceId: string
+  /**
+   * 本 Run 实际使用的 DSH_HOME（resume Run 为来源 Run 的 home）。Supervisor 落
+   * `active_runtime`，供终态清理判断「同一 home 是否仍有活跃使用者」（PC-05b-3）。
+   */
+  readonly dshHomePath: string
   readonly prompt: string
   readonly agent: {
     readonly id: string

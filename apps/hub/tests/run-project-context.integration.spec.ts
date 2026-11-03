@@ -10,7 +10,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { and, eq, sql } from 'drizzle-orm'
 import type { Database } from '@whalepod/db'
-import { getTeam, schema } from '@whalepod/db'
+import { getRun, getTeam, schema } from '@whalepod/db'
 import { contextStateDigestInput, type RunContextStateEntry } from '@whalepod/protocol'
 import { hashToken } from '../src/modules/auth/token.js'
 import { projectContextNonce } from '../src/modules/context/run-snapshot.js'
@@ -1963,4 +1963,76 @@ describe('PC-05a run project context snapshot', () => {
       expect(member.json().data.unselectedOmitted).toEqual({ capacity_exceeded: 45 })
     },
   )
+
+  it('终端标记非空上下文 Run 为 blocked 并拒绝 resume，且不凭空建新 Run', async () => {
+    const taskId = await createTask(ctx, alice, projectId, '终态 blocked 与续跑拒绝')
+    await confirmAgreement(ctx, alice, taskId)
+    const created = await startRun(ctx, alice, taskId, seed, '带上下文执行')
+    expect(created.statusCode, created.body).toBe(201)
+    const sourceRunId = created.json().data.id as string
+    const [snapshot] = await database.db
+      .select({ entryCount: schema.runProjectContexts.entryCount })
+      .from(schema.runProjectContexts)
+      .where(eq(schema.runProjectContexts.runId, sourceRunId))
+    expect(snapshot?.entryCount ?? 0).toBeGreaterThan(0)
+
+    // 走真终端帧：runtime.ready 落 dshSessionId，run.completed 收敛终态（applyRunStatus）。
+    await dispatchAndReady(harness, seed, alice.userId, sourceRunId)
+    await completeRun(harness, seed, alice.userId, sourceRunId)
+
+    const source = await getRun(database.db, sourceRunId)
+    expect(source?.status).toBe('completed')
+    expect(source?.resumeContext).toBe('blocked')
+
+    // RunView 读面（GET /runs/:id）带机器可读状态，UI 不能靠文案猜。
+    const view = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/runs/${sourceRunId}`,
+    })
+    expect(view.statusCode, view.body).toBe(200)
+    expect(view.json().data.resumeContext).toBe('blocked')
+
+    const before = await database.db
+      .select({ id: schema.runs.id })
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, taskId))
+    const resumed = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/runs`,
+      payload: {
+        agentId: seed.agentId,
+        deviceId: seed.deviceId,
+        workspaceId: seed.workspaceId,
+        prompt: 'continue',
+        resumeFromRunId: sourceRunId,
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(resumed.statusCode, resumed.body).toBe(409)
+    expect(resumed.json().error.code).toBe('CONFLICT')
+    expect(resumed.json().error.message).toContain('blocked')
+    const after = await database.db
+      .select({ id: schema.runs.id })
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, taskId))
+    expect(after.map((row) => row.id).sort()).toEqual(before.map((row) => row.id).sort())
+
+    // 统一指令的 resume 入口同样先报 blocked，不能被设备离线盖成 DEVICE_OFFLINE。
+    await database.db
+      .update(schema.devices)
+      .set({ lastSeenAt: new Date(Date.now() - 31_000) })
+      .where(eq(schema.devices.id, seed.deviceId))
+    const unified = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/instructions`,
+      payload: {
+        text: 'continue',
+        intent: { kind: 'resume', runId: sourceRunId },
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(unified.statusCode, unified.body).toBe(409)
+    expect(unified.json().error.code).toBe('CONFLICT')
+    expect(unified.json().error.message).toContain('blocked')
+  })
 })

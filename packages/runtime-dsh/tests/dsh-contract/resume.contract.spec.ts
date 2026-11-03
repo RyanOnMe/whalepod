@@ -29,7 +29,7 @@
  * - **续跑耗时**：记录每轮 `runtime.initialize → runtime.ready` 的墙钟时间（含 boot +
  *   装载 + setup + whenIdle，探针如实标注口径，不假装只量了装载）。
  */
-import { readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -338,6 +338,52 @@ describe('probe: resume（#176 切片①，ADR-0009 决策 3 前置）', () => {
         await expect(
           runtimeB.send(commandFrame('run.prompt', { runId: specB.runId, text: 'after ghost' })),
         ).rejects.toThrow(/before runtime\.initialize/)
+      } finally {
+        await runtimeB.dispose()
+      }
+    } finally {
+      rmSync(specA.workspacePath, { recursive: true, force: true })
+      rmSync(specA.dshHomePath, { recursive: true, force: true })
+    }
+  }, 120_000)
+
+  it('full 终态清理删掉 spill/quarantine 后，mechanical resume 仍装载同一 session', async () => {
+    const specA = runtimeSpec()
+    let sessionId = ''
+    try {
+      const runtimeA = await startReplayRuntime('resume', specA, { keepTempDirs: true })
+      try {
+        await runtimeA.send(initializeCommand(specA))
+        const ready = await runtimeA.until('runtime.ready')
+        sessionId = ready.payload.dshSessionId
+        await runtimeA.send(commandFrame('run.prompt', { runId: specA.runId, text: FIRST_PROMPT }))
+        await runtimeA.until('run.completed')
+      } finally {
+        await runtimeA.dispose()
+      }
+      expect(sessionLogPath(specA.dshHomePath, sessionId)).toBeDefined()
+
+      // 模拟 full 清理实际删除的两类目录；session 文件必须原样保留。
+      mkdirSync(join(specA.dshHomePath, 'spill'), { recursive: true })
+      writeFileSync(join(specA.dshHomePath, 'spill', 'old.txt'), 'old spill')
+      mkdirSync(join(specA.dshHomePath, 'quarantine'), { recursive: true })
+      writeFileSync(join(specA.dshHomePath, 'quarantine', 'old'), 'old quarantine')
+      rmSync(join(specA.dshHomePath, 'spill'), { recursive: true, force: true })
+      rmSync(join(specA.dshHomePath, 'quarantine'), { recursive: true, force: true })
+      expect(sessionLogPath(specA.dshHomePath, sessionId)).toBeDefined()
+
+      const specB = { ...specA, runId: randomUUID() }
+      const runtimeB = await startReplayRuntime('resume-continue', specB, {
+        probeResumeSessionId: sessionId,
+        keepTempDirs: true,
+      })
+      try {
+        await runtimeB.send(initializeCommand(specB))
+        const ready = await runtimeB.until('runtime.ready')
+        expect(ready.payload.dshSessionId).toBe(sessionId)
+        await runtimeB.send(commandFrame('run.prompt', { runId: specB.runId, text: SECOND_PROMPT }))
+        await runtimeB.until('run.completed')
+        expect(assistantTexts(runtimeB.outputs)).toContain(SECRET)
       } finally {
         await runtimeB.dispose()
       }

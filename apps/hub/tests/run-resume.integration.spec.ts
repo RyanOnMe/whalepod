@@ -24,7 +24,9 @@ import {
   driveSetup,
   idemKey,
   insertRunRow,
+  makeHarness,
   resetDatabase,
+  runEventFrame,
   seedRunChainForUser,
   type Session,
   type TestApp,
@@ -337,5 +339,135 @@ describe('resume lineage (ADR-0009 slice 5)', () => {
         await apiInject(ctx, bob, { method: 'GET', url: `/api/v1/runs/${sourceId}/input-manifest` })
       ).json().data,
     ).toBeNull()
+  })
+
+  it('resume 子 Run 的非空上下文终态 → 同一 home 血缘（来源 + 兄弟）一并 blocked', async () => {
+    await seedWorld()
+    const harness = makeHarness(database)
+    harness.clock.advance(Date.now() - harness.clock.now().getTime())
+
+    async function driveTerminal(runId: string): Promise<void> {
+      await harness.worker.dispatchOnce()
+      const device = { deviceId: bobChain.deviceId, ownerUserId: bobUserId }
+      for (const ack of harness.gateway.drainUpstream()) {
+        await harness.orchestrator.ingestNodeEvent(device, ack)
+      }
+      await harness.orchestrator.ingestNodeEvent(
+        device,
+        runEventFrame(runId, 1, { type: 'runtime.ready', dshSessionId: `resume-${runId}` }),
+      )
+      await harness.orchestrator.ingestNodeEvent(
+        device,
+        runEventFrame(runId, 2, { type: 'run.completed', finalText: 'done' }),
+      )
+    }
+
+    const source = await createRun({ idempotencyKey: idemKey() })
+    expect(source.status, JSON.stringify(source)).toBe(201)
+    const sourceId = source.data!.id
+    await driveTerminal(sourceId)
+    expect((await getRun(database.db, sourceId))?.resumeContext).toBe('full')
+
+    // 来源终态后，新的 resume Run 会拿到非空上下文（来源 Run Observation 等）。
+    const child = await createRun({ resumeFromRunId: sourceId, idempotencyKey: idemKey() })
+    expect(child.status, JSON.stringify(child)).toBe(201)
+    const childId = child.data!.id
+    const [childContext] = await database.db
+      .select({ entryCount: schema.runProjectContexts.entryCount })
+      .from(schema.runProjectContexts)
+      .where(eq(schema.runProjectContexts.runId, childId))
+    expect(childContext?.entryCount ?? 0).toBeGreaterThan(0)
+
+    await driveTerminal(childId)
+    // 共享 home 的 session 会被 child 的 blocked 清理删除；来源不能仍宣称 full。
+    expect((await getRun(database.db, childId))?.resumeContext).toBe('blocked')
+    expect((await getRun(database.db, sourceId))?.resumeContext).toBe('blocked')
+
+    const blocked = await createRun({ resumeFromRunId: sourceId, idempotencyKey: idemKey() })
+    expect(blocked.status).toBe(409)
+    expect(blocked.error?.message).toContain('blocked')
+  })
+
+  it('租约过期 lost：非空上下文 resume 子 Run 尚无 session id 也阻断来源血缘', async () => {
+    await seedWorld()
+    const harness = makeHarness(database)
+    harness.clock.advance(Date.now() - harness.clock.now().getTime())
+    const rootId = await insertRunRow(database.db, {
+      taskId,
+      ownerUserId: bobUserId,
+      agentId: bobChain.agentId,
+      profileRevisionId: bobChain.profileRevisionId,
+      deviceId: bobChain.deviceId,
+      workspaceId: bobChain.workspaceId,
+      status: 'completed',
+      dshSessionId: 'whalepod-run-root',
+    })
+    const childId = await insertRunRow(database.db, {
+      taskId,
+      ownerUserId: bobUserId,
+      agentId: bobChain.agentId,
+      profileRevisionId: bobChain.profileRevisionId,
+      deviceId: bobChain.deviceId,
+      workspaceId: bobChain.workspaceId,
+      status: 'running',
+      dshSessionId: null,
+    })
+    await database.db
+      .update(schema.runs)
+      .set({ resumeFromRunId: rootId })
+      .where(eq(schema.runs.id, childId))
+    await database.db.insert(schema.runProjectContexts).values({
+      id: crypto.randomUUID(),
+      runId: childId,
+      projectId,
+      selectionRuleVersion: 'test',
+      snapshotDigest: 'e'.repeat(64),
+      headerText: '[project-context:0123456789abcdef]',
+      headerDigest: 'f'.repeat(64),
+      entryCount: 1,
+      totalBytes: 0,
+    })
+
+    // 设备租约过期：Hub 先判 lost，此时 dshSessionId 仍为 null。
+    harness.clock.advance(31_000)
+    expect(await harness.orchestrator.reconcileLeases(harness.clock.now())).toBeGreaterThan(0)
+    expect((await getRun(database.db, childId))?.status).toBe('lost')
+    expect((await getRun(database.db, childId))?.resumeContext).toBe('blocked')
+    expect((await getRun(database.db, rootId))?.resumeContext).toBe('blocked')
+  })
+
+  it('空项目上下文快照终态仍是 full：resumeContext 暴露且 resume 正常创建', async () => {
+    await seedWorld()
+    // queued 状态 + 会话：取消走 HTTP 终态收敛，同时满足 resume 的「有会话」前提。
+    const sourceId = await seedTerminalSourceRun({ status: 'queued' })
+    await database.db.insert(schema.runProjectContexts).values({
+      id: crypto.randomUUID(),
+      runId: sourceId,
+      projectId,
+      selectionRuleVersion: 'test',
+      snapshotDigest: 'c'.repeat(64),
+      headerText: '[project-context:0123456789abcdef]',
+      headerDigest: 'd'.repeat(64),
+      entryCount: 0,
+      totalBytes: 0,
+    })
+    const cancelled = await apiInject(ctx, bob, {
+      method: 'POST',
+      url: `/api/v1/runs/${sourceId}/cancel`,
+    })
+    expect(cancelled.statusCode, cancelled.body).toBe(200)
+
+    const source = await getRun(database.db, sourceId)
+    expect(source?.status).toBe('cancelled')
+    expect(source?.resumeContext).toBe('full')
+    const view = await apiInject(ctx, bob, {
+      method: 'GET',
+      url: `/api/v1/runs/${sourceId}`,
+    })
+    expect(view.json().data.resumeContext).toBe('full')
+
+    const resumed = await createRun({ resumeFromRunId: sourceId, idempotencyKey: idemKey() })
+    expect(resumed.status).toBe(201)
+    expect(resumed.data?.resumeFromRunId).toBe(sourceId)
   })
 })

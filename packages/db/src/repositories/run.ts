@@ -3,9 +3,10 @@ import type {
   HandoffInputManifest,
   WorkInputManifest,
 } from '@whalepod/protocol'
-import { and, asc, count, eq, inArray } from 'drizzle-orm'
+import { and, asc, count, eq, inArray, sql } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { approvals, runs } from '../schema/run.js'
+import { runProjectContexts } from '../schema/run-context.js'
 import { devices, workspaces } from '../schema/device.js'
 import { taskMessages } from '../schema/project.js'
 
@@ -166,16 +167,62 @@ export const INSTRUCTION_REFUSAL = {
   RUN_CANCELLING: 'RUN_CANCELLING',
 } as const
 
+/**
+ * ADR-0027 §6（PC-05b-3）：resume Run 与来源 Run 共用同一个 DSH home。一个非空
+ * 上下文 Run 终态清理会删掉整棵 home，因此同一条 resume 血缘里所有 Run 的 session
+ * 都不再可续。把根来源与它的全部后代一并标 blocked，避免来源仍显示 full 却被放行。
+ *
+ * 只在当前 Run **已经有过会话**（runtime.ready 过）时调用：spawn 前失败没有写过
+ * 共享 home，Node 只删自己的 runtime-context，来源仍可续。
+ */
+async function blockResumeLineage(handle: DbHandle, runId: string): Promise<void> {
+  let root = runId
+  // 血缘是有限的（每次 resume 产生一条新链）；上限只防异常脏数据成环。
+  for (let depth = 0; depth < 64; depth += 1) {
+    const [row] = await handle
+      .select({ parent: runs.resumeFromRunId })
+      .from(runs)
+      .where(eq(runs.id, root))
+      .limit(1)
+    if (row === undefined || row.parent === null) break
+    root = row.parent
+  }
+  await handle.execute(sql`
+    with recursive family (id) as (
+      select id from ${runs} where id = ${root}
+      union
+      select child.id
+      from ${runs} child
+      join family parent on child.resume_from_run_id = parent.id
+    )
+    update ${runs} set resume_context = 'blocked'
+    where id in (select id from family)
+  `)
+}
+
 export async function setRunStatus(
   handle: DbHandle,
   id: string,
   status: RunRow['status'],
   patch: RunStatusPatch = {},
 ): Promise<RunRow | undefined> {
+  // ADR-0027 §6（PC-05b-3）：resume probe 未固定前，非空项目上下文 Run 的 session
+  // 会被 Node 终态清理删除，因此终态收敛时把来源 Run 标 blocked；resume 入口据此 409。
+  // 空快照/无上下文保持默认 full。
+  const terminal = TERMINAL_RUN_STATUSES.has(status)
+  const [context] = terminal
+    ? await handle
+        .select({ entryCount: runProjectContexts.entryCount })
+        .from(runProjectContexts)
+        .where(eq(runProjectContexts.runId, id))
+        .limit(1)
+    : []
+  const blockResume = context !== undefined && context.entryCount > 0
   const [row] = await handle
     .update(runs)
     .set({
       status,
+      ...(blockResume ? { resumeContext: 'blocked' as const } : {}),
       ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt } : {}),
       ...(patch.finishedAt !== undefined ? { finishedAt: patch.finishedAt } : {}),
       ...(patch.failureCode !== undefined ? { failureCode: patch.failureCode } : {}),
@@ -184,6 +231,16 @@ export async function setRunStatus(
     })
     .where(eq(runs.id, id))
     .returning()
+  if (
+    row !== undefined &&
+    terminal &&
+    blockResume &&
+    // lost 是租约过期的 Hub 侧判定：Node 可能已在离线期间 ready 并写入共享 home，
+    // Hub 却还没收到 session id。按 fail-safe 也要传播血缘，避免来源仍显示 full。
+    (row.dshSessionId !== null || status === 'lost')
+  ) {
+    await blockResumeLineage(handle, id)
+  }
   // 派生状态维护（ADR-0009 决策 3）：Run 进终态时，该 Run 上仍 pending 的追问一律落
   // rejected(RUN_TERMINAL)——否则「等待审批时追问 → 取消 → lost」会让消息永久停在 pending
   //（Node 已死，ack 永远不会来；outbox 对瞬时错误没有重试上限）。放在这里是因为

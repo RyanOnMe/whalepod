@@ -27,6 +27,12 @@ export interface RunView {
   failureSummary: string | null
   rerunOfRunId: string | null
   resumeFromRunId: string | null
+  /**
+   * ADR-0027 §6（PC-05b-3）：本 Run 作为 resume 源的能力。
+   * `blocked` = 非空项目上下文 Run 的 session 已/将被终态清理删除，resume 409。
+   * `redacted` 为 probe 固定后的保留值，本切片不产生。
+   */
+  resumeContext: RunRow['resumeContext']
   /** 本 Run 固化的审批档（#241）：运行卡据此标记「完全权限」。 */
   approvalPolicy: 'approval_required' | 'full_access'
   /** 任务约定绑定（#378）：null = 未绑定（历史 Run 不回填，显示「未绑定」）。 */
@@ -63,6 +69,7 @@ export function toRunView(row: RunRow): RunView {
     failureSummary: row.failureSummary,
     rerunOfRunId: row.rerunOfRunId,
     resumeFromRunId: row.resumeFromRunId,
+    resumeContext: row.resumeContext,
     approvalPolicy: row.approvalPolicy,
     specRevisionId: row.specRevisionId,
     purpose: row.purpose,

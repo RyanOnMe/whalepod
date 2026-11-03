@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { eq } from 'drizzle-orm'
 import WebSocket from 'ws'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@whalepod/db'
+import { schema } from '@whalepod/db'
 import {
   apiInject,
   createTestApp,
@@ -10,6 +12,7 @@ import {
   resetDatabase,
   waitForValue,
   makeHarness,
+  insertRunRow,
   runEventFrame,
   type TestApp,
   type Session,
@@ -169,6 +172,31 @@ async function finish(runId: string) {
     device,
     runEventFrame(runId, 2, { type: 'run.completed', finalText: 'done' }),
   )
+}
+/**
+ * PC-05b-3：非空项目上下文 Run 终态默认 blocked，resume 是明确 409。
+ * 本文件的输入继承用例需要「可续跑但无上下文」的来源，故按既有 Run 的固化列
+ * 种一条历史形态来源（有会话、有输入清单、无 run_project_context）——resume
+ * 仍走生产 HTTP 路径。
+ */
+async function seedContextFreeResumeSource(reviewerRunId: string): Promise<string> {
+  const [reviewer] = await db.db
+    .select()
+    .from(schema.runs)
+    .where(eq(schema.runs.id, reviewerRunId))
+    .limit(1)
+  if (reviewer === undefined) throw new Error('reviewer run missing')
+  return insertRunRow(db.db, {
+    taskId,
+    ownerUserId: owner.userId,
+    agentId,
+    profileRevisionId: reviewer.profileRevisionId,
+    deviceId,
+    workspaceId,
+    status: 'completed',
+    dshSessionId: `snapshot-context-free-${reviewerRunId}`,
+    artifactInputManifest: reviewer.artifactInputManifest,
+  })
 }
 async function upload(runId: string, title: string, publish = true) {
   const bytes = Buffer.from(`Content of ${title}`)
@@ -333,7 +361,13 @@ describe('immutable run input manifest (#325)', () => {
     const reviewer = await started()
     await finish(reviewer)
     const feedback = await upload(reviewer, 'feedback')
-    const resumed = await started({ resumeFromRunId: reviewer })
+    // PC-05b-3：reviewer 有非空项目上下文 → 终态 blocked，resume 必须明确拒绝。
+    const blockedResume = await start({ resumeFromRunId: reviewer })
+    expect(blockedResume.statusCode).toBe(409)
+    expect(blockedResume.json().error.message).toContain('blocked')
+    // 输入继承仍由可续跑（无上下文）来源验证：resume 走生产 HTTP 路径。
+    const contextFree = await seedContextFreeResumeSource(reviewer)
+    const resumed = await started({ resumeFromRunId: contextFree })
     expect(
       (await manifest(resumed))
         .json()
@@ -370,12 +404,18 @@ describe('immutable run input manifest (#325)', () => {
       expect(memberView.statusCode, memberView.body).toBe(200)
       expect(memberView.json().data).toEqual(nodeView.json().data)
       await finish(reviewer)
-      const resumed = await started({ resumeFromRunId: reviewer })
+      // 非空上下文终态 blocked：resume 拒绝；用无上下文来源验证大写路由与继承。
+      expect((await start({ resumeFromRunId: reviewer })).statusCode).toBe(409)
+      const contextFree = await seedContextFreeResumeSource(reviewer)
+      const resumed = await started({ resumeFromRunId: contextFree })
       expect((await manifest(resumed)).json().data).toEqual(nodeView.json().data)
       await finish(resumed)
+      // resumed 自身有非空上下文，终态后 blocked 并会沿血缘把 contextFree 标 blocked；
+      // 统一指令入口再用一条新的无上下文来源验证续跑。
+      const instructionSource = await seedContextFreeResumeSource(reviewer)
       const unified = await command(`/tasks/${taskId}/instructions`, {
         text: 'continue report',
-        intent: { kind: 'resume', runId: resumed },
+        intent: { kind: 'resume', runId: instructionSource },
       })
       expect(unified.statusCode, unified.body).toBe(201)
       expect(

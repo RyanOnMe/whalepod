@@ -132,6 +132,7 @@ function spec(runId: string): RuntimeStartSpec {
     runId,
     nonce: `nonce-${runId}`,
     workspaceId: 'ws',
+    dshHomePath: '/tmp/whalepod-test-home',
     prompt: 'p',
     agent: {
       id: '00000000-0000-4000-8000-000000000001',

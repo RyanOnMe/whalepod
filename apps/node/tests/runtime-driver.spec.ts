@@ -16,6 +16,7 @@ function makeSpec(): RuntimeStartSpec {
     runId: randomUUID(),
     nonce: randomUUID(),
     workspaceId: randomUUID(),
+    dshHomePath: '/tmp/whalepod-test-home',
     prompt: 'p',
     agent: {
       id: randomUUID(),

@@ -347,6 +347,7 @@ describe('R9: Node 重启杀孤儿 + lost(RUNTIME_LOST) 上报 + 不自动复活
         runId: RUN_ID,
         nonce: 'nonce-regression',
         workspaceId: workspace.id,
+        dshHomePath: join(root, 'dsh-home'),
         prompt: 'p',
         agent: {
           id: '55555555-5555-4555-8555-555555555555',

@@ -47,6 +47,8 @@ export type ReplayScenario =
   // ADR-0028（RD-02a-2b）：read_work_input 正向/拒绝读取与正文进入下一次模型请求。
   | 'read-work-input'
   | 'read-work-input-manifest'
+  // ADR-0027 §6（PC-05b-3）：>50KB 工具输出必须落到受管 DSH home 下的 spill 根。
+  | 'spill'
 
 const CONFIG_DIR = fileURLToPath(new URL('../../../config/', import.meta.url))
 const FIXTURES_DIR = fileURLToPath(new URL('../fixtures/', import.meta.url))

@@ -60,6 +60,7 @@ import type {
 import { ArtifactInputsManager } from '../../../apps/node/src/artifact/inputs.js'
 import { ProjectContextDownloader } from '../../../apps/node/src/context/project-context.js'
 import { SqliteContextReceiptOutbox } from '../../../apps/node/src/context/receipt-outbox.js'
+import { SqliteRunTerminalCleanupStore } from '../../../apps/node/src/run/terminal-cleanup.js'
 import { ArtifactCollector } from '../../../apps/node/src/artifact/collect.js'
 import { uploadArtifactCandidate } from '../../../apps/node/src/artifact/upload-client.js'
 import { Phase1Recorder, redactText } from './events.js'
@@ -408,6 +409,9 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
       join(nodeStateDir, 'context-receipt-outbox.sqlite'),
     )
     contextReceiptOutbox.seedFromLegacy(join(nodeStateDir, 'context-receipts.sqlite'))
+    const terminalCleanupStore = new SqliteRunTerminalCleanupStore(
+      join(nodeStateDir, 'terminal-cleanup.sqlite'),
+    )
     const runManager = new RunManager({
       supervisor,
       registry,
@@ -426,7 +430,9 @@ export async function assembleChain(options: ChainAssemblyOptions): Promise<Chai
       prepareArtifactInputs: (runId, taskId) => artifactInputs.prepare(runId, taskId),
       cleanupArtifactInputs: (runId) => artifactInputs.cleanup(runId),
       prepareProjectContext: (runId, manifest) => projectContext.prepare(runId, manifest),
-      cleanupProjectContext: (runId) => projectContext.cleanup(runId),
+      runtimeContextDirFor: (runId) => join(nodeStateDir, 'runtime-context', runId),
+      terminalCleanupStore,
+      isRuntimeHomeInUse: (homePath, exceptRunId) => supervisor.isHomeInUse(homePath, exceptRunId),
       contextReceiptOutbox,
       deviceId,
       dshDistributionVersion: '0.1.0-rc.8',

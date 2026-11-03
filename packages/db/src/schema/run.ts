@@ -40,6 +40,13 @@ export const runStatus = pgEnum('run_status', [
 // Run 用途（#378；ADR-0017 §2）：business = 业务执行（启用约定后必须绑定已确认版本）；
 // agreement_draft / handoff_draft = 显式标记的辅助 Run，免绑定要求。
 export const runPurpose = pgEnum('run_purpose', ['business', 'agreement_draft', 'handoff_draft'])
+/**
+ * ADR-0027 §6（PC-05b-3）：来源 Run 的续跑能力。
+ * `full` = session 保留且可 mechanical resume；`blocked` = session 已删除或不可安全
+ * 重建，resume 必须 409 且不产生新 Run；`redacted` 为 probe 固定后的保留值，本切片
+ * 不产生。
+ */
+export const runResumeContext = pgEnum('run_resume_context', ['full', 'redacted', 'blocked'])
 export const runEventAudience = pgEnum('run_event_audience', ['owner', 'project', 'admin'])
 export const approvalStatus = pgEnum('approval_status', [
   'pending',
@@ -82,6 +89,12 @@ export const runs = pgTable(
       .notNull()
       .references(() => workspaces.id),
     dshSessionId: varchar('dsh_session_id', { length: 128 }),
+    /**
+     * ADR-0027 §6（PC-05b-3）：终态清理后本 Run 作为 resume 源的能力。
+     * 默认 `full`；非空项目上下文 Run 的 session 在 probe 未固定时会被删除，
+     * Hub 在终态收敛时写 `blocked`，resume 入口据此 409。
+     */
+    resumeContext: runResumeContext('resume_context').notNull().default('full'),
     status: runStatus('status').notNull().default('queued'),
     failureCode: varchar('failure_code', { length: 64 }),
     failureSummary: varchar('failure_summary', { length: 1000 }),
