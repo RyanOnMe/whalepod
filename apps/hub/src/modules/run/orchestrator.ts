@@ -732,6 +732,16 @@ export class RunOrchestrator {
         dispatch.outcome = 'block'
         return
       }
+      // RD-03c1：升级前排队、未被本版本固化 toolPolicy 的机器 Run 一律不下发。
+      // 旧行没有固定草稿面，继续跑会退回 ask-all 并把自主 Run 卡在审批上；按
+      // 「机器 Run 必须有 policy」fail closed，走既有 queued 取消路径。
+      const startPayload = command.payload as { toolPolicy?: unknown }
+      if (run.origin === 'mandate' && startPayload.toolPolicy === undefined) {
+        blockReason = 'machine_tool_policy_missing'
+        await cancelRunInTransaction(tx, { outbox: this.outbox, now }, run, 'admin')
+        dispatch.outcome = 'block'
+        return
+      }
       const projectVerification = await verifyRunProjectContext(tx, run)
       const verification = projectVerification.ok
         ? await verifyRunWorkInputs(tx, run)

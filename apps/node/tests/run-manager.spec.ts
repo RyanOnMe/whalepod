@@ -27,7 +27,7 @@ import type {
   RuntimeCommand,
   WorkInputManifestEntry,
 } from '@whalepod/protocol'
-import { contextStateDigestInput } from '@whalepod/protocol'
+import { contextStateDigestInput, RunStartSchema } from '@whalepod/protocol'
 import {
   MemoryContextReceiptOutbox,
   SqliteContextReceiptOutbox,
@@ -401,7 +401,11 @@ describe('run.start 处理链', () => {
       mandateVersion: 4,
       workKey: '01905f7c-0000-7000-8000-000000000904',
     }
-    await h.manager.handleFrame(runStartFrame(h.workspaceId, { toolPolicy }))
+    // wire 形状先过生产 schema：字段拼错/被 strict 拒绝必须在 Node 入口就红，
+    // 而不是靠 hand-built cast 混过去（helper 的 messageId 是 m-1，需换合法 UUID）。
+    const frame = { ...runStartFrame(h.workspaceId, { toolPolicy }), messageId: randomUUID() }
+    expect(RunStartSchema.parse(frame).payload.toolPolicy).toEqual(toolPolicy)
+    await h.manager.handleFrame(frame)
     const init = h.runtimes[0]!.stdin[0]!
     expect(init.type).toBe('runtime.initialize')
     const payload = (init as Extract<RuntimeCommand, { type: 'runtime.initialize' }>).payload

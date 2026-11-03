@@ -5,9 +5,10 @@
  * 面外工具不是“走审批”，而是 Runtime pre-execute 直接 deny。
  */
 import { z } from 'zod'
+import { WORK_DRAFT_TOOL_NAMES } from './work.js'
 
-/** Mandate 可选的草稿工具名（与 `WORK_DRAFT_TOOL_NAMES` 同集）。 */
-export const DRAFT_TOOL_ALLOWLIST_NAMES = ['read', 'write', 'edit', 'glob', 'grep'] as const
+/** Mandate 可选的草稿工具名——与 Mandate 校验共用同一份清单，避免双写漂移。 */
+export const DRAFT_TOOL_ALLOWLIST_NAMES = WORK_DRAFT_TOOL_NAMES
 export const DraftToolAllowlistNameSchema = z.enum(DRAFT_TOOL_ALLOWLIST_NAMES)
 export type DraftToolAllowlistName = z.infer<typeof DraftToolAllowlistNameSchema>
 

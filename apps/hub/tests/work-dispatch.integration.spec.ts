@@ -292,6 +292,7 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
     const work = await createWork(ctx, alice, taskId)
     const mandate = await createMandate(ctx, alice, work.workKey, {
       allowedAgentIds: [agent.agentId],
+      allowedToolNames: ['write', 'edit'],
     })
     const { intentId, itemId } = await prepareIntent(work.workKey)
 
@@ -363,7 +364,7 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
     expect(startCommand?.payload).toMatchObject({
       toolPolicy: {
         mode: 'draft',
-        allowedToolNames: ['read', 'glob'],
+        allowedToolNames: ['write', 'edit'],
         mandateVersion: mandate.version,
         workKey: work.workKey,
       },
@@ -1309,6 +1310,69 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
     )
     await expect(attempt).rejects.toThrow('tool policy is incomplete')
     expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+  })
+
+  it('refuses a human Run that carries a machine tool policy', async () => {
+    const attempt = database.transaction((tx) =>
+      ctx.app.runOrchestrator.createWithinTransaction(
+        tx,
+        { userId: asUserId(alice.userId), role: 'owner' },
+        taskId,
+        {
+          idempotencyKey: `human-tool-policy-${randomUUID()}`,
+          agentId: agent.agentId,
+          deviceId: device.deviceId,
+          workspaceId: device.workspaceId,
+          prompt: 'human run with machine policy',
+          dshDistributionVersion: '0.1.0-rc.8',
+          toolPolicy: {
+            mode: 'draft',
+            allowedToolNames: ['read'],
+            mandateVersion: 1,
+            workKey: randomUUID(),
+          },
+        },
+      ),
+    )
+    await expect(attempt).rejects.toThrow('tool policy is only for machine runs')
+    expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+  })
+
+  it('beforeDispatch cancels a legacy machine Run whose run.start has no tool policy', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey)
+    const { intentId } = await prepareIntent(work.workKey)
+    await approve(ctx, alice, work.workKey, intentId)
+    const dispatched = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/dispatch-intents/${intentId}/dispatch`,
+      payload: {
+        agentId: agent.agentId,
+        deviceId: device.deviceId,
+        workspaceId: device.workspaceId,
+        actionClass: 'draft',
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(dispatched.statusCode).toBe(200)
+    const runId = String(dispatched.json().data.runId)
+    const [startCommand] = await database.db
+      .select()
+      .from(schema.dispatchOutbox)
+      .where(eq(schema.dispatchOutbox.type, 'run.start'))
+    expect(startCommand).toBeDefined()
+    // 模拟升级前入队的旧行：payload 只有 runId，没有本版本固化的 toolPolicy。
+    const allowed = await ctx.app.runOrchestrator.beforeDispatch({
+      id: startCommand!.id,
+      deviceId: startCommand!.deviceId,
+      type: startCommand!.type,
+      payload: { runId },
+      attemptCount: 1,
+      sentAt: null,
+    })
+    expect(allowed).toBe(false)
+    const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
+    expect(run?.status).toBe('cancelled')
   })
 
   it('human create() refuses to create a machine Run even with a valid intent', async () => {
