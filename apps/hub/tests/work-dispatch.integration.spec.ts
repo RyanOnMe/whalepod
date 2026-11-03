@@ -109,6 +109,9 @@ async function createAgent(
 async function createDevice(
   database: Database,
   ownerUserId: string,
+  capabilities: Record<string, unknown> = {
+    contextCapabilities: ['project-context.v1', 'context-state.v1', 'work-input.v1'],
+  },
 ): Promise<{ deviceId: string; workspaceId: string }> {
   // removeWhen: Device 配对是既有 WS 握手路径；本夹具只造在线设备/工作区 FK，
   // 不写 active_runtime/Run 投影。
@@ -124,9 +127,7 @@ async function createDevice(
     nodeVersion: '24.12.0',
     nodeAppVersion: '0.1.0',
     tokenHash: randomBytes(32),
-    capabilities: {
-      contextCapabilities: ['project-context.v1', 'context-state.v1', 'work-input.v1'],
-    },
+    capabilities,
     dshDistributionVersion: '0.1.0-rc.8',
     lastSeenAt: new Date(),
   })
@@ -1421,6 +1422,37 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
     expect(run?.agentId).toBe(other.agentId)
   })
 
+  it('skips an online device without work-input capability and uses the next capable one', async () => {
+    await database.db
+      .update(schema.devices)
+      .set({ lastSeenAt: new Date(Date.now() - 10_000) })
+      .where(eq(schema.devices.id, device.deviceId))
+    // removeWhen: 能力声明由 node.hello 刷新；这里只造一个缺 work-input.v1 的
+    // 设备行验证候选硬筛，不写运行时状态。
+    const incapable = await createDevice(database, alice.userId, { contextCapabilities: [] })
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, {
+      autoDispatch: 'existing_task',
+      allowedAgentIds: [agent.agentId],
+    })
+    const { intentId } = await prepareIntent(work.workKey)
+    const [intent] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, intentId))
+    expect(intent?.status).toBe('dispatched')
+    expect(intent?.deviceId).toBe(device.deviceId)
+    expect(intent?.exclusionReasons).toEqual(
+      expect.arrayContaining([
+        {
+          kind: 'device',
+          id: incapable.deviceId,
+          reason: 'missing_work_input_capability',
+        },
+      ]),
+    )
+  })
+
   it('leaves the intent proposed when the only device is offline', async () => {
     // removeWhen: Device 在线态由 node.hello/心跳生产路径刷新；本用例只改 lastSeenAt
     // 验证候选硬筛，不写 Run/Runtime 投影。
@@ -1508,9 +1540,41 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
       candidates: [],
     })
     expect(admission.json().data.proposedIntent.exclusionReasons).toEqual(
-      expect.arrayContaining([{ kind: 'input', reason: 'no_pending_trigger_item' }]),
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'input', reason: 'no_pending_trigger_item' }),
+      ]),
     )
     expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+  })
+
+  it('applies maxRunsPerWork to the human-confirmed dispatch path too', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, { maxRunsPerWork: 0 })
+    const { intentId, itemId } = await prepareIntent(work.workKey)
+    await approve(ctx, alice, work.workKey, intentId)
+    const dispatch = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/dispatch-intents/${intentId}/dispatch`,
+      payload: {
+        agentId: agent.agentId,
+        deviceId: device.deviceId,
+        workspaceId: device.workspaceId,
+        actionClass: 'draft',
+        workInputItemIds: [itemId],
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(dispatch.statusCode).toBe(409)
+    expect(dispatch.json().error.message).toContain('max_runs_exhausted')
+    expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+    const [intent] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, intentId))
+    expect(intent).toMatchObject({
+      status: 'rejected',
+      resolutionReason: 'max_runs_exhausted',
+    })
   })
 
   it('rejects a proposed intent when maxRunsPerWork is exhausted', async () => {

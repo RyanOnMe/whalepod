@@ -538,11 +538,16 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
     }
     if (outcome.executed && value.proposedIntent !== null && deps.onIntentProposed !== undefined) {
       const proposedIntentId = value.proposedIntent.id
+      const previousStatus = value.proposedIntent.status
       try {
         const auto = await deps.onIntentProposed(session, workKey, proposedIntentId)
         if (auto !== null) {
           value = { ...value, proposedIntent: auto }
-          if (auto.status === 'dispatched' && auto.runId !== null) {
+          if (
+            auto.status === 'dispatched' &&
+            previousStatus !== 'dispatched' &&
+            auto.runId !== null
+          ) {
             request.log.info(
               {
                 component: 'hub.dispatch',
@@ -558,7 +563,10 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
               },
               'dispatch intent auto dispatched',
             )
-          } else if (auto.status === 'rejected' || auto.status === 'expired') {
+          } else if (
+            (auto.status === 'rejected' || auto.status === 'expired') &&
+            previousStatus !== auto.status
+          ) {
             request.log.warn(
               {
                 component: 'hub.dispatch',
@@ -582,7 +590,7 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
             actor: 'system',
             workKey,
             intentId: proposedIntentId,
-            reason: error instanceof ApiError ? error.code : 'INTERNAL_ERROR',
+            reason: error instanceof ApiError ? error.code : errorCodeOf(error).code,
           },
           'auto dispatch failed',
         )

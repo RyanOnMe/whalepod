@@ -17,7 +17,7 @@ Task 责任人：
 5. 复核 Task/Work/Mandate/来源/预算后创建机器 Run；意图落 `dispatched`、`approvalBasis='mandate'`、`approvedAt/dispatchedAt` 与候选/排除理由；
 6. WorkDetail 的 `dispatchIntents` 能看到该意图与候选。
 
-无候选/无在线设备/无可用工作区/无 pending 输入/已有活跃 Run 时保留 `proposed` 并记录排除理由，成员仍可人工派工；Mandate 失效、来源漂移、预算耗尽落终态拒绝，不建 Run。
+无候选/无在线设备/无可用工作区/无 pending 输入时保留 `proposed` 并记录排除理由，成员仍可人工派工；已有活跃 Run 的准入直接返回 `wait`（端口内 `active_run` 分支仅作防御）。Mandate 失效、来源漂移、预算耗尽落终态拒绝，不建 Run。
 
 ## 2 驱动与证据
 
@@ -26,7 +26,7 @@ Task 责任人：
   - `POST /tasks/:taskId/comments`、`POST /works/:workKey/inbox-items`、`POST /works/:workKey/admission-checks`
   - `GET /works/:workKey`、`GET /runs/:runId`
   - Run 终态/失败用真实 `runEventFrame(...runtime.ready/run.completed/run.failed...)` + `ingestNodeEvent`。
-- 判据：`apps/hub/tests/work-dispatch.integration.spec.ts` 共 39 项（RD-03a 26 + RD-03b 13）；-t 过滤可单跑。
+- 判据：`apps/hub/tests/work-dispatch.integration.spec.ts` 共 41 项（RD-03a 26 + RD-03b 15）；-t 过滤可单跑。
 - 观测：`component=hub.dispatch`、`action=work.dispatch.auto`（`actor='system'`、workKey/intentId/runId/approvalBasis/onBehalfOfUserId/candidateCount/exclusionCount，不含正文）；预算/绑定拒绝记 `work.dispatch.auto_rejected`，回调内部故障记 `work.dispatch.auto_failed`；后两者不把已提交准入变成 500。
 - DB：`dispatch_intent.status/approval_basis/approved_at/dispatched_at/candidates/exclusion_reasons/resolution_reason`、`run.origin/mandate_id/dispatch_intent_id/on_behalf_of_user_id`、`work.state/resume_mode/resume_condition`。
 
@@ -48,7 +48,7 @@ Task 责任人：
 | 门 | 命令 | 结果（2026-11-04） |
 |---|---|---|
 | Q0 | `pnpm check` | 222 文件 / 2409 项通过（protocol 新增 `dispatchIntents` 读面 + 1 条自动派工静态边界） |
-| Q2 | `pnpm test:integration` | 90 文件 / 863 项通过（`work-dispatch` 39 项） |
+| Q2 | `pnpm test:integration` | 90 文件 / 865 项通过（`work-dispatch` 41 项） |
 
 ## 5 单点变异
 
@@ -71,15 +71,20 @@ Task 责任人：
 | M45 | draft action 优先 | 优先判断改恒假 | 红（选了 research） |
 | M46 | Device 最近心跳优先 | 排序反向 | 红（选了较旧设备） |
 | M47 | Workspace available | 删 available 过滤 | 红（不可用工作区被选） |
+| M48 | 人工路径也受次数闸 | 删 `resolveCandidate` 的 `machineBudgetReason` 检查 | 红（人工派工越过 maxRunsPerWork） |
+| M49 | 设备必须声明 work-input.v1 | 删能力过滤 | 红（选中无能力设备、建 Run 失败） |
 
 ## 6 边界与未交付
 
 - 自动派工只由显式 `POST /works/:workKey/admission-checks` 触发；订阅快路径/入口程序（RD-02b entry）尚未自动调用该端口。
 - 无候选时保留 proposed 并写排除理由，但没有后台重评 sweeper；设备上线/补条目后需要再次准入（同来源重放会重试）或人工派工。
+- `maxRunsPerWork`/`maxAttempts` 已收口到共享 `resolveCandidate`，人工确认派工同样受闸；`maxCostMicros`/`maxTokens` 仍未执行。
 - `maxCostMicros`/`maxTokens` 仍只存储：Node/Hub 尚无 usage 回传，不能声称已预占/结算；本切片只执行可判定的 `maxRunsPerWork`/`maxAttempts`。
 - `maxRunsPerWork` 统计该 work 全部机器 Run（含历史 Mandate）；`maxAttempts` 统计 failed/cancelled/lost 机器 Run。人类运行与 Router/转交共享额度口径留待 usage 账本切片。
 - 自动裁决使用发起准入的 assignee 会话作为 Run 创建 actor（复用既有指令权守卫），但意图 `approvalBasis='mandate'`、`origin='mandate'` 与 on-behalf 标记为机器来源；不伪造人类 approve 记录/消息。
-- 候选选择限定“显式 allowlist + 同 assignee 单现场”；跨成员 Device/Workspace、多个候选的排名理由扩展未做。
+- 候选选择限定“显式 allowlist + 同 assignee 单现场”；跨成员 Device/Workspace、多个候选的排名理由扩展未做。人工路径把空 `allowedAgentIds` 视为不限制（RD-01 语义），自动路径视为无候选，两者差异是刻意的。
+- 自动派工的 `approvedAt` 记录系统裁决时间（Mandate 依据），不是人类 approve 时间；`approvalBasis='mandate'` 是区分字段。
+- Device 候选额外要求声明 `work-input.v1`；项目上下文/状态能力仍由共享创建核心在冻结快照时复核。
 - WorkDetail 保留原 `proposedIntents` 字段并新增 `dispatchIntents`（最近 50 条全状态）；Web 未改。
 - `autoDispatch` 变更/暂停/撤销仍按 RD-03a 的取消链路；固定工具面、步级预批准、`mandateInvalidated` 归 RD-03c；Run 边界自动续接/ask 归 RD-03d。
 

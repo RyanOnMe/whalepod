@@ -15,13 +15,13 @@ import {
   getAgent,
   getDispatchIntent,
   getDispatchIntentForUpdate,
+  getLatestPendingInboxItemForSource,
   getProfileRevision,
   getWorkByKey,
   getWorkMandateForUpdate,
   listActiveRunsByTask,
   listCancellableMachineRunIdsForWork,
   listDevicesByOwner,
-  listWorkInboxItems,
   listWorkInboxItemsByIds,
   listWorkspacesByOwner,
   markDispatchIntentAutoDispatched,
@@ -46,10 +46,12 @@ import type {
   WorkActionClass,
   WorkSourceType,
 } from '@whalepod/protocol'
+import { WORK_INPUT_CAPABILITY } from '@whalepod/protocol'
 import { ApiError } from '../shared/http-error.js'
 import { ERROR_HTTP_STATUS, errorCodeOf } from '../run/routes.js'
 import { getDeviceDshDistributionVersion } from '../run/queries.js'
 import { deriveDeviceStatus } from '../device/pairing.js'
+import { contextCapabilitiesOf } from '../context/run-snapshot.js'
 import type { RunOrchestrator } from '../run/orchestrator.js'
 import { canonicalJson, sha256Hex } from '../coordination/digest.js'
 import { lockWorkContext, requireAssignee } from '../work/context.js'
@@ -332,6 +334,18 @@ interface Candidate {
   readonly dshDistributionVersion: string
 }
 
+async function machineBudgetReason(
+  tx: Tx,
+  work: WorkRow,
+  mandate: { readonly maxRunsPerWork: number; readonly maxAttempts: number },
+): Promise<string | undefined> {
+  const totalRuns = await countMachineRunsForWork(tx, work.workKey)
+  if (totalRuns >= mandate.maxRunsPerWork) return 'max_runs_exhausted'
+  const failedRuns = await countFailedMachineRunsForWork(tx, work.workKey)
+  if (failedRuns >= mandate.maxAttempts) return 'max_attempts_exhausted'
+  return undefined
+}
+
 async function resolveCandidate(
   tx: Tx,
   work: WorkRow,
@@ -350,6 +364,9 @@ async function resolveCandidate(
   ) {
     throw new IntentBindingError('mandate is not active at the referenced version')
   }
+  // ADR-0028 §10：次数闸是派工端口的硬闸，人工确认路径也不能绕过。
+  const budgetReason = await machineBudgetReason(tx, work, mandate)
+  if (budgetReason !== undefined) throw new IntentBindingError(budgetReason)
   if (
     mandate.principalUserId !== task.assigneeUserId ||
     mandate.onBehalfOfUserId !== task.assigneeUserId ||
@@ -566,6 +583,14 @@ async function evaluateAutoCandidate(
         exclusionReasons.push({ kind: 'device', id: device.id, reason: 'no_dsh_version' })
         return false
       }
+      if (!contextCapabilitiesOf(device).includes(WORK_INPUT_CAPABILITY)) {
+        exclusionReasons.push({
+          kind: 'device',
+          id: device.id,
+          reason: 'missing_work_input_capability',
+        })
+        return false
+      }
       if (deriveDeviceStatus(device, now) !== 'online') {
         exclusionReasons.push({ kind: 'device', id: device.id, reason: 'offline' })
         return false
@@ -611,12 +636,20 @@ async function evaluateAutoCandidate(
   }
 
   const refs = parseTriggerRefs(intent.triggerRefs)
-  const pending = await listWorkInboxItems(tx, work.id, 32, 'pending')
-  const workInputItemIds = pending
-    .filter((item) => refs.some((ref) => triggerRefMatchesItem(ref, item)))
-    .map((item) => item.id)
+  const workInputItemIds: string[] = []
+  for (const ref of refs) {
+    const item = await getLatestPendingInboxItemForSource(tx, work.id, ref.sourceType, ref.sourceId)
+    if (item === undefined || !triggerRefMatchesItem(ref, item)) {
+      exclusionReasons.push({
+        kind: 'input',
+        sourceId: ref.sourceId,
+        reason: 'no_pending_trigger_item',
+      })
+      continue
+    }
+    workInputItemIds.push(item.id)
+  }
   if (workInputItemIds.length === 0) {
-    exclusionReasons.push({ kind: 'input', reason: 'no_pending_trigger_item' })
     return { candidates: [], exclusionReasons }
   }
 
@@ -748,6 +781,7 @@ export async function autoDispatchProposedIntent(
   return deps.database.transaction(async (tx) => {
     const now = deps.now()
     const { work, task } = await lockWorkContext(tx, workKey)
+    await requireAssignee(tx, task, actor.userId)
     const intent = assertIntentOwned(await getDispatchIntentForUpdate(tx, intentId), work, task)
     if (intent.status !== 'proposed') return toDispatchIntentView(intent, now)
     if (intent.expiresAt.getTime() <= now.getTime()) {
@@ -804,14 +838,7 @@ export async function autoDispatchProposedIntent(
       return toDispatchIntentView(row ?? intent, now)
     }
 
-    const totalRuns = await countMachineRunsForWork(tx, work.workKey)
-    const failedRuns = await countFailedMachineRunsForWork(tx, work.workKey)
-    const budgetReason =
-      totalRuns >= mandate.maxRunsPerWork
-        ? 'max_runs_exhausted'
-        : failedRuns >= mandate.maxAttempts
-          ? 'max_attempts_exhausted'
-          : undefined
+    const budgetReason = await machineBudgetReason(tx, work, mandate)
     if (budgetReason !== undefined) {
       await setDispatchIntentCandidates(
         tx,
