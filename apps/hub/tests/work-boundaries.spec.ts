@@ -8,6 +8,7 @@ import { workSourceMatchesItem } from '../src/modules/work/run-dispatch.js'
 // 「本切片不得调用模型/Node/Run/Outbox，也不得写业务事实」变成可机器判红的面：
 // 新增这类依赖会让本用例直接失败，必须在评审里显式改边界而不是悄悄带进来。
 const WORK_MODULE_DIR = fileURLToPath(new URL('../src/modules/work/', import.meta.url))
+const DISPATCH_MODULE_DIR = fileURLToPath(new URL('../src/modules/dispatch/', import.meta.url))
 
 const FORBIDDEN_PATTERNS: ReadonlyArray<{ readonly name: string; readonly pattern: RegExp }> = [
   { name: 'DSH vendor import', pattern: /@deepseek-ai\// },
@@ -239,5 +240,53 @@ describe('RD-02a-2b dispatch-time source identity', () => {
     expect(workSourceMatchesItem({ ...item, sourceVersion: 'v2' }, item)).toBe(false)
     expect(workSourceMatchesItem({ ...item, sourceDigest: 'b'.repeat(64) }, item)).toBe(false)
     expect(workSourceMatchesItem({ ...item, authorizationGeneration: 'gen-2' }, item)).toBe(false)
+  })
+})
+
+describe('RD-03a dispatch port boundaries', () => {
+  it('creates machine Runs only through the shared orchestrator core in lock order', () => {
+    const source = readFileSync(join(DISPATCH_MODULE_DIR, 'service.ts'), 'utf8')
+    // 端口不能自己写 Run/TeamEvent/状态：机器 Run 必须复用同一创建核心（含单活跃/约定/快照）。
+    expect(source).toContain('createWithinTransaction')
+    expect(source).not.toMatch(/\binsertRun\b/)
+    expect(source).not.toMatch(/\bappendTeamEvent\b/)
+    expect(source).not.toMatch(/\bsetRunStatus\b/)
+    // 锁序 Task → Work → intent → Run：意图锁必须在 Work 锁之后、Run 创建之前。
+    const lockWorkAt = source.indexOf('lockWorkContext(tx, workKey)')
+    const intentLockAt = source.indexOf('getDispatchIntentForUpdate(tx, intentId)')
+    const createAt = source.indexOf('createWithinTransaction(')
+    const mandateLockAt = source.indexOf('getWorkMandateForUpdate(tx, intent.mandateId)')
+    expect(lockWorkAt).toBeGreaterThan(-1)
+    expect(intentLockAt).toBeGreaterThan(lockWorkAt)
+    expect(mandateLockAt).toBeGreaterThan(intentLockAt)
+    expect(createAt).toBeGreaterThan(mandateLockAt)
+    // 事务内查设备就绪必须复用 tx；走池里的第二连接会在连接打满时行锁自锁。
+    expect(source).toContain('getDeviceDshDistributionVersion(tx, request.deviceId, now)')
+    expect(source).not.toContain('dshDistributionVersionFor')
+  })
+
+  it('keeps the normal create path from forging machine provenance', () => {
+    const orchestrator = readFileSync(
+      fileURLToPath(new URL('../src/modules/run/orchestrator.ts', import.meta.url)),
+      'utf8',
+    )
+    expect(orchestrator).toContain("input.origin === 'mandate'")
+    expect(orchestrator).toContain('machine runs must be created by the dispatch port')
+    expect(orchestrator).toContain('machine run provenance is incomplete')
+    expect(orchestrator).toContain("approvalPolicy === 'full_access'")
+    expect(orchestrator).toContain("origin === 'mandate' && explicitWorkKey === undefined")
+  })
+
+  it('enforces provenance and one-run-per-intent at the database layer', () => {
+    const repoRoot = fileURLToPath(new URL('../../..', import.meta.url))
+    const migration = readFileSync(
+      join(repoRoot, 'packages/db/migrations/0034_rd03_dispatch_provenance.sql'),
+      'utf8',
+    )
+    expect(migration).toContain('constraint run_origin_fields')
+    expect(migration).toContain("origin = 'mandate'")
+    expect(migration).toContain('create unique index run_dispatch_intent_unique')
+    expect(migration).toContain('create unique index dispatch_intent_run_unique')
+    expect(migration).toContain('constraint dispatch_intent_target_fields')
   })
 })

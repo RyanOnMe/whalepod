@@ -29,6 +29,11 @@ export interface NewRun {
   specRevisionId?: string
   /** Run 用途（#378）：缺省 business。 */
   purpose?: RunRow['purpose']
+  /** ADR-0028 §6（RD-03a）：人类/机器来源；机器 Run 必须带 mandate/intent/onBehalf。 */
+  origin?: RunRow['origin']
+  mandateId?: string
+  dispatchIntentId?: string
+  onBehalfOfUserId?: string
   /** ADR-0028（RD-02a-2a）：持续工作身份与不可变工作输入清单。 */
   workKey?: string | null
   workInputManifest?: WorkInputManifest

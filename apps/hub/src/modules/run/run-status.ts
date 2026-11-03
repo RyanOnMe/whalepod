@@ -30,6 +30,7 @@ import {
   schema,
   setRunStatus,
   TERMINAL_RUN_STATUSES,
+  updateWork,
 } from '@whalepod/db'
 import type { RunStatusPatch } from '@whalepod/db'
 import { dispatchPendingInstructions } from './followup.js'
@@ -75,11 +76,30 @@ export async function applyRunStatus(
     // ADR-0028（RD-02b 锁序）：终态事务随后会更新 item（unconfirmed）并投影
     // Observation → 入口准入会锁 Work。必须先取 Work，保持 Run→Work→item；
     // 否则与回执/撤权的 Work→item 形成死锁。
-    const work = await getCurrentWorkByTask(tx, row.taskId)
-    if (work !== undefined) await getWorkByIdForUpdate(tx, work.id)
+    let work = await getCurrentWorkByTask(tx, row.taskId)
+    if (work !== undefined) {
+      const lockedWork = await getWorkByIdForUpdate(tx, work.id)
+      if (lockedWork !== undefined) work = lockedWork
+    }
     // ADR-0028（RD-02a-2a）：Run 终态未消费的工作输入先转 unconfirmed；
     // 60s 窗口后由 reconcileWorkInputs 回到 pending。
     await markRunWorkInputsUnconfirmed(tx, row.id, row.finishedAt ?? new Date())
+    // ADR-0028 §6（RD-03a）：机器 Run 活跃期间工作为 waiting(auto, run:<id>)；
+    // 终态同事务复核回 active。RD-03a 只恢复工作，不自动建立下一意图/Run。
+    if (
+      work !== undefined &&
+      row.origin === 'mandate' &&
+      work.state === 'waiting' &&
+      work.resumeMode === 'auto' &&
+      work.resumeCondition === `run:${row.id}`
+    ) {
+      await updateWork(tx, work.id, {
+        state: 'active',
+        resumeMode: null,
+        resumeCondition: null,
+        updatedAt: row.finishedAt ?? new Date(),
+      })
+    }
     // ADR-0025 §1：Run 终态是确定性业务 Observation，与状态迁移同事务；
     // businessVersion=status 让同状态重复收敛保持幂等。
     const [task] = await tx

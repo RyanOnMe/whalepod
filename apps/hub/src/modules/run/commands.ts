@@ -36,6 +36,15 @@ export interface CreateRunInput {
   reviewInput?: ReviewInputManifest
   /** ADR-0028（RD-02a-2a）：显式选中的工作收件箱条目；创建事务内冻结。 */
   workInputItemIds?: string[]
+  /**
+   * ADR-0028 §6（RD-03a）：机器派工来源。只有 Hub 派工端口在
+   * `createWithinTransaction` 内设置；普通 HTTP 建 Run 不可携带。
+   */
+  origin?: 'human' | 'mandate'
+  workKey?: string
+  mandateId?: string
+  dispatchIntentId?: string
+  onBehalfOfUserId?: string
   /** 缺省时取 Agent 当前 Revision（§2.3）。 */
   profileRevisionId?: string
   deviceId: string

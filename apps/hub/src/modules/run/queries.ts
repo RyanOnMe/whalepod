@@ -39,6 +39,11 @@ export interface RunView {
   specRevisionId: string | null
   /** Run 用途（#378）：business / agreement_draft / handoff_draft。 */
   purpose: RunRow['purpose']
+  /** ADR-0028 §6（RD-03a）：人类/机器来源与派工溯源。 */
+  origin: RunRow['origin']
+  mandateId: string | null
+  dispatchIntentId: string | null
+  onBehalfOfUserId: string | null
   /**
    * ADR-0028（RD-02a-2a）：本 Run 承接的工作、不可变清单摘要与条目数。
    * 条目标识/标题只在 Run 内部清单与 Node 受控下载面，不随读面广播。
@@ -73,6 +78,10 @@ export function toRunView(row: RunRow): RunView {
     approvalPolicy: row.approvalPolicy,
     specRevisionId: row.specRevisionId,
     purpose: row.purpose,
+    origin: row.origin,
+    mandateId: row.mandateId ?? null,
+    dispatchIntentId: row.dispatchIntentId ?? null,
+    onBehalfOfUserId: row.onBehalfOfUserId ?? null,
     workKey: row.workKey ?? null,
     workInputItemCount:
       row.workInputManifest === null
@@ -145,6 +154,7 @@ export async function listRunViewsByTask(handle: DbHandle, taskId: string): Prom
 export async function getDeviceDshDistributionVersion(
   handle: DbHandle,
   deviceId: string,
+  now: Date = new Date(),
 ): Promise<string | undefined> {
   const [row] = await handle
     .select({
@@ -159,7 +169,7 @@ export async function getDeviceDshDistributionVersion(
   if (row.revokedAt !== null) {
     throw new RunCommandError('DEVICE_REVOKED', 'the target device has been revoked')
   }
-  if (deriveDeviceStatus({ revokedAt: null, lastSeenAt: row.lastSeenAt }, new Date()) !== 'online')
+  if (deriveDeviceStatus({ revokedAt: null, lastSeenAt: row.lastSeenAt }, now) !== 'online')
     return undefined
   return row.version
 }

@@ -40,6 +40,9 @@ export const runStatus = pgEnum('run_status', [
 // Run 用途（#378；ADR-0017 §2）：business = 业务执行（启用约定后必须绑定已确认版本）；
 // agreement_draft / handoff_draft = 显式标记的辅助 Run，免绑定要求。
 export const runPurpose = pgEnum('run_purpose', ['business', 'agreement_draft', 'handoff_draft'])
+// ADR-0028 §6（RD-03a）：Run 的人类/机器来源。机器 Run 必须带 dispatchIntentId 与
+// Mandate 溯源；人类自建 Run 保持 human，不得被普通 HTTP 入口伪装成 mandate。
+export const runOrigin = pgEnum('run_origin', ['human', 'mandate'])
 /**
  * ADR-0027 §6（PC-05b-3）：来源 Run 的续跑能力。
  * `full` = session 保留且可 mechanical resume；`blocked` = session 已删除或不可安全
@@ -122,6 +125,11 @@ export const runs = pgTable(
     specRevisionId: uuid('spec_revision_id').references(() => taskSpecRevisions.id),
     /** Run 用途（#378）：business / agreement_draft / handoff_draft（辅助 Run 免绑定）。 */
     purpose: runPurpose('purpose').notNull().default('business'),
+    /** ADR-0028 §6（RD-03a）：Run 来源；机器 Run 的 provenance 必须完整。 */
+    origin: runOrigin('origin').notNull().default('human'),
+    mandateId: uuid('mandate_id'),
+    dispatchIntentId: uuid('dispatch_intent_id'),
+    onBehalfOfUserId: uuid('on_behalf_of_user_id').references(() => userAccounts.id),
     /** ADR-0028（RD-02a-2a）：本 Run 承接的持续工作；清单与 run 同事务冻结。 */
     workKey: varchar('work_key', { length: 64 }),
     workInputManifest: jsonb('work_input_manifest').$type<WorkInputManifest>(),
@@ -143,6 +151,13 @@ export const runs = pgTable(
       .where(
         sql`${table.status} in ('queued','dispatching','running','waiting_approval','cancel_requested')`,
       ),
+    check(
+      'run_origin_fields',
+      sql`(${table.origin} = 'human' and ${table.mandateId} is null and ${table.dispatchIntentId} is null and ${table.onBehalfOfUserId} is null) or (${table.origin} = 'mandate' and ${table.mandateId} is not null and ${table.dispatchIntentId} is not null and ${table.onBehalfOfUserId} is not null and ${table.workKey} is not null)`,
+    ),
+    uniqueIndex('run_dispatch_intent_unique')
+      .on(table.dispatchIntentId)
+      .where(sql`${table.dispatchIntentId} is not null`),
     check(
       'run_work_input_manifest_fields',
       sql`(${table.workKey} is null and ${table.workInputManifest} is null and ${table.workInputManifestDigest} is null) or (${table.workKey} ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' and (((${table.workInputManifest} is null) and (${table.workInputManifestDigest} is null)) or (jsonb_typeof(${table.workInputManifest}) = 'object' and ${table.workInputManifestDigest} ~ '^[a-f0-9]{64}$')))`,

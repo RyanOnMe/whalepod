@@ -61,6 +61,15 @@ import { buildRunWorkInputBundle } from './run-dispatch.js'
 export interface WorkRouteDeps {
   readonly database: Database
   readonly requireActor: RequireActor
+  /**
+   * ADR-0028 §9（RD-03a）：新 Mandate/暂停/恢复/撤销提交后，在**独立事务**取消
+   * 已派发但仍 queued 的机器 Run。回调由组合根注入，work 模块不直接 import
+   * Run 编排器（保持既有静态边界）。
+   */
+  readonly onMandateChanged?: (
+    actor: SessionActor,
+    workKey: string,
+  ) => Promise<{ cancelled: number; failed: number }>
 }
 
 function parseUuid(value: string, label: string): string {
@@ -187,7 +196,7 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
     const { workKey: rawWorkKey } = request.params as { workKey: string }
     const workKey = parseUuid(rawWorkKey, 'work key')
     const body = parseBody(CreateWorkMandateRequestSchema, request.body)
-    const view = await mapWorkErrors(() =>
+    const outcome = await mapWorkErrors(() =>
       createWorkMandate(
         { database: deps.database, now: () => new Date() },
         session.userId,
@@ -196,6 +205,10 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
         readIdempotencyKey(request),
       ),
     )
+    const view = outcome.view
+    if (deps.onMandateChanged !== undefined && outcome.changed) {
+      await deps.onMandateChanged(session, view.workKey)
+    }
     audit(request, 'work.mandate.create', 'success', session.userId)
     return reply.code(201).send({ ok: true, data: view })
   })
@@ -217,7 +230,7 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
       const { mandateId: rawMandateId } = request.params as { mandateId: string }
       const mandateId = parseUuid(rawMandateId, 'mandate id')
       const body = parseBody(WorkMandateStatusChangeRequestSchema, request.body ?? {})
-      const view = await mapWorkErrors(() =>
+      const outcome = await mapWorkErrors(() =>
         changeWorkMandateStatus(
           { database: deps.database, now: () => new Date() },
           session.userId,
@@ -227,6 +240,10 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
           readIdempotencyKey(request),
         ),
       )
+      const view = outcome.view
+      if (deps.onMandateChanged !== undefined && outcome.changed) {
+        await deps.onMandateChanged(session, view.workKey)
+      }
       audit(request, `work.mandate.${mutation}`, 'success', session.userId)
       return { ok: true, data: view }
     })

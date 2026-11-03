@@ -15,6 +15,8 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core'
+import { agentProfileRevisions, agents } from './agent.js'
+import { devices, workspaces } from './device.js'
 import { userAccounts } from './identity.js'
 import { projects, tasks } from './project.js'
 import { runs } from './run.js'
@@ -257,6 +259,8 @@ export const dispatchIntents = pgTable(
     projectId: uuid('project_id')
       .notNull()
       .references(() => projects.id),
+    /** ADR-0028 §6：派工意图携带的稳定工作身份（与 work.workKey 一致）。 */
+    workKey: varchar('work_key', { length: 64 }).notNull(),
     decisionId: uuid('decision_id').references(() => routerDecisions.id),
     mandateId: uuid('mandate_id')
       .notNull()
@@ -275,6 +279,14 @@ export const dispatchIntents = pgTable(
     candidates: jsonb('candidates').$type<unknown[]>().notNull().default([]),
     exclusionReasons: jsonb('exclusion_reasons').$type<unknown[]>().notNull().default([]),
     reason: varchar('reason', { length: 500 }).notNull(),
+    // ADR-0028 §6（RD-03a）：派工端口在 dispatch 时固定候选与现场；proposed 阶段可空。
+    agentId: uuid('agent_id').references(() => agents.id),
+    profileRevisionId: uuid('profile_revision_id').references(() => agentProfileRevisions.id),
+    deviceId: uuid('device_id').references(() => devices.id),
+    workspaceId: uuid('workspace_id').references(() => workspaces.id),
+    actionClass: varchar('action_class', { length: 32 }),
+    /** 拒绝/取消的稳定原因；reason 保留 Router 原始摘要。 */
+    resolutionReason: varchar('resolution_reason', { length: 500 }),
     runId: uuid('run_id').references(() => runs.id),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     approvedAt: timestamp('approved_at', { withTimezone: true }),
@@ -298,12 +310,27 @@ export const dispatchIntents = pgTable(
     ),
     check('dispatch_intent_reason_length', sql`length(btrim(${table.reason})) between 1 and 500`),
     check(
+      'dispatch_intent_work_key_format',
+      sql`${table.workKey} ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`,
+    ),
+    check(
+      'dispatch_intent_resolution_reason_length',
+      sql`${table.resolutionReason} is null or length(btrim(${table.resolutionReason})) between 1 and 500`,
+    ),
+    check(
+      'dispatch_intent_target_fields',
+      sql`${table.status} <> 'dispatched' or (${table.agentId} is not null and ${table.profileRevisionId} is not null and ${table.deviceId} is not null and ${table.workspaceId} is not null and ${table.actionClass} in ('research', 'analysis', 'draft', 'revise'))`,
+    ),
+    check(
       'dispatch_intent_status_fields',
       sql`(${table.status} = 'proposed' and ${table.approvalBasis} is null and ${table.approvedAt} is null and ${table.dispatchedAt} is null and ${table.runId} is null) or (${table.status} = 'approved' and ${table.approvalBasis} is not null and ${table.approvedAt} is not null and ${table.dispatchedAt} is null and ${table.runId} is null) or (${table.status} = 'dispatched' and ${table.approvalBasis} is not null and ${table.approvedAt} is not null and ${table.dispatchedAt} is not null and ${table.runId} is not null) or (${table.status} in ('rejected', 'expired', 'cancelled', 'superseded') and ${table.dispatchedAt} is null and ${table.runId} is null)`,
     ),
     uniqueIndex('dispatch_intent_decision_unique')
       .on(table.decisionId)
       .where(sql`${table.decisionId} is not null`),
+    uniqueIndex('dispatch_intent_run_unique')
+      .on(table.runId)
+      .where(sql`${table.runId} is not null`),
     index('dispatch_intent_work_created_idx').on(table.workId, table.createdAt.desc(), table.id),
     index('dispatch_intent_work_status_idx').on(table.workId, table.status, table.createdAt.desc()),
     index('dispatch_intent_status_expiry_idx').on(table.status, table.expiresAt),
