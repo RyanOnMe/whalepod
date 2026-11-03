@@ -130,8 +130,8 @@ Hub 终态收敛用真实 Node 上行 `run.completed` 帧（`ingestNodeEvent`）
 | M36 | 重复 facts 不降级 ready | upsert 改回 `excluded.session_ready/dsh_session_id` | SQLite/内存 facts 用例必须红 | 红（sessionReady=false） |
 | M37 | 拒绝路径双失败内存保留 | 删 `unscheduledCleanupFacts.set` | 双失败重试用例必须红 | 红（下一轮 tick 0≠1） |
 | M38 | SQLite factsNotScheduled 判据 | `t.run_id is null` 改 `is not null` | SQLite 对账用例必须红 | 红（返回已登记 Run） |
-| M39 | 未 ack 的 run.start 不启动清理 | 删 `pendingRunStartReason` 的跳过分支 | 重投终态清理用例必须红 | 红（启动对账先生成 done，重投后副本残留） |
-| M40 | 重跑重开 done 任务 | 删 `terminalCleanupStore.reopen(runId)` | done 行重开用例必须红 | 红（终态登记 no-op，spill 未删） |
+| M39 | 未 ack 的 run.start 不启动清理 | 删 `pendingRunStartReason` 的跳过分支 | 未 ack 对账用例必须红 | 红（启动对账返回 1，重投前副本已删） |
+| M40 | 重跑重开 done 任务 | 删 `terminalCleanupStore.reopen(runId)` | done 行重开用例必须红 | 红（done 行仍在） |
 | M41 | tick 跳过在途 run.start | 删 tick 的 `startingRuns.has` 分支 | tick 在途用例必须红 | 红（任务被 done、runtime-context 被删） |
 
 复跑命令：
@@ -159,12 +159,12 @@ pnpm test:security
 - **链式 resume 的 home 语义**：Node 的 home 取**直接父 Run**（`runtimeHomeFor(resumeOfRunId)`），而 DSH session 实际在根来源 home；grandchild 续跑可能装载不到。Hub 的血缘阻断按 `resume_from_run_id` 整棵树标 blocked，因此在链式 resume 本来失败时是过度保守；若链式 resume 被判成功，则可能 block 一个 session 仍存在的后代。修复方向是链式 resume 统一用根 home，或血缘阻断只覆盖同一 home。本切片未改既有 ADR-0009 home 推导。
 - **启动孤儿信号等待**：`recoverOrphans` 对 matched 孤儿发 SIGTERM/SIGKILL 后不等待内核回收就删 `active_runtime` 行并上报 lost；随后 tick 的 `isActive` 已为 false。严格意义的“观察到 exit”依赖进程已被信号终止的既有假设（`process.ts` 只发信号不等待）。这是 supervisor 的既有边界，本切片未改；后续可加 `waitForExit`/存活探测再触发清理。
 - **崩溃窗口**：facts 在下载/初始化前落盘；启动 `reconcileCleanupFacts` 会把“有 facts 无任务”的 Run 补登记，覆盖 prepare 后崩溃与 schedule 写失败。本进程内未完成的 `run.start` 用 `startingRuns` 标记，对账与 tick 都跳过，避免首次连接把“facts 已写、尚未 spawn”的在途 Run 当孤儿删掉。跨进程崩溃时，若 command spool 里的 run.start 仍未 ack，启动对账也会跳过（Hub outbox 会按同一 commandId 重投）；重投进入处理链前删除上一生命周期的 done 行，保证新的终态能重新登记。只有进程在 `putFacts` 自身写失败/崩溃于它之前才可能残留，而那时尚未下载正文；该极小窗口未做目录扫描。
-- **未 ack 命令的残留**：启动对账跳过未 ack 的 run.start 后，若 Hub 永久不重投（例如 Hub 状态也丢失），该 facts 不会被清理。这是“宁可保留、不可先删”的取舍；spool 读失败也按待重投处理，日志记 `reconcile_skipped`。
-- **并发重复 run.start（既有边界）**：Hub 极短时间内用同一 commandId 重投两次时，两条 handler 仍可能各自完整 prepare，先失败的一条在 catch 中清理副本，影响另一条；`supervisor.start` 也没有按 runId 的串行化。`startingRuns` 计数只保证清理保护不被提前摘掉，未关闭该既有竞态；需要按 runId 串行化命令处理，待后续 Issue 收口。
+- **未 ack 命令的残留**：启动对账跳过未 ack 的 run.start 后，若 Hub 永久不重投，该 facts 不会被清理。可达路径不只是 Hub 状态丢失：dispatching 阶段用户取消 queued Run 时，Hub 会直接 fail 掉未 ack 的 run.start outbox 行且不发 run.cancel（`apps/hub/src/modules/run/cancel.ts`），Node 侧命令永远 unacked；若 Node 恰在 prepare 中崩溃，重启后会被永久跳过。这是“宁可保留、不可先删”的取舍（残留只是未执行 Run 的 runtime-context，无 session）；后续应给“未 ack 且超过 24h”加年龄兜底或由 Hub 显式下发清理指令。spool 读失败也按待重投处理，日志记 `reconcile_skipped`。
+- **并发重复 run.start（既有边界）**：Hub 极短时间内用同一 commandId 重投两次时，两条 handler 仍可能各自完整 prepare，先失败的一条在 catch 中清理副本，影响另一条；`supervisor.start` 也没有按 runId 的串行化。`startingRuns` 计数只保证清理保护不被提前摘掉，未关闭该既有竞态；需要按 runId 串行化命令处理，已登记为 #504（P1-501）。
 - **共享 home 守卫**：只看 `active_runtime` 的活跃进程；同一 home 上已终态但尚未清理的其它 Run 不构成占用（各自任务按序执行）。
 - **full 的非 session 文件**：probe 未固定时保留除 `quarantine` 外的非 session 文件；ADR 的最终 resume 白名单清理与 `redacted` 重建未做。
 - **混合舰队能力位**：Hub 的 blocked 只基于 Hub DB 与 `project-context.v1`/`context-state.v1` 能力，没有独立的 “terminal-cleanup.v1” 派发门。只到 PC-05b-1/2 的旧 Node 仍可能接单：Hub 会显示 blocked，但旧 Node 不删 session/spill（spill 仍可能落 OS tmpdir）。升级窗口内这是已知不一致，后续应加能力位或由 Node 清理 ack 驱动读面。
-- **队列保留期**：`run_runtime_facts`/`run_terminal_cleanup` 的 done 行不删除（与 command spool 同为只进不出），长期运行会在 state dir 累积行与 `home_path` 绝对路径。保留期与 §9 日志策略一起定。
+- **队列保留期**：`run_terminal_cleanup` 的 done 行只在同一个 runId 的新生命周期（新 run.start 进入处理链）时由 `reopen` 删除；其余情况不删除（与 command spool 同为只进不出）。长期运行会在 state dir 累积行与 `home_path` 绝对路径，保留期与 §9 日志策略一起定。
 - **同步删除**：tick 用同步 `rmSync` 递归删除 session/spill；大 spill/慢盘会阻塞 Node 事件循环（同进程其它 Runtime 的 stdout/心跳受影响）。本切片优先正确性，异步删除留给性能切片。
 - **mechanical resume 覆盖范围**：Q3 新增真 boot 用例证明 full 清理删掉 spill/quarantine 后仍能 `ctx.agents.resume` 同一 session；`runtime-context` 在 Node state dir、不属于 DSH home，其删除不参与 DSH 装载。
 - **`runtime-home` 根**：blocked 删除 home 下全部子项但保留 home 目录本身；不承诺目录不存在。

@@ -46,6 +46,8 @@ export interface RunTerminalCleanupStore {
    * 残留当孤儿清完，Hub 随后按同一 commandId 重投；若保留 done，终态登记会被
    * `on conflict do nothing` 吞掉，重跑后的 runtime-context/spill 永远不清理。
    * 只删 done；pending/deferred/cleanup_pending 仍由既有任务继续收敛。
+   * 写失败向上抛出：本次 run.start 按 fail-closed 拒绝，不得吞错继续（否则
+   * done 毒化会再次出现）。
    */
   reopen(runId: string): void
   /** 终态登记；重复终态不重置既有任务状态。 */
