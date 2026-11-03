@@ -64,7 +64,7 @@ Thread/WorkLink、`read_only` 显式选择、`model_inferred` 激活、外部来
   - 容量与聚合：33 个候选（32 选入 + 1 条 `capacity_exceeded`）与 205 个候选（选 32、逐条明细 128、`unselectedOmitted={capacity_exceeded:45}`、header 记 173）均创建成功；读面同样返回明细与聚合。
 - [project-context.spec.ts](../../apps/node/tests/project-context.spec.ts)：Node 下载副本按 entryId 命名、digest/byteSize 核对、失败清理半成品、Hub 错误码透传。
 - [context-receipt-outbox.spec.ts](../../apps/node/tests/context-receipt-outbox.spec.ts)：PC-05b-2 起 receiptSeq 改由发件箱的 `enqueueNext` 在同一事务里分配；SQLite 跨进程重开继续单调、按 `(runId,snapshotId)` 隔离，并覆盖 PC-05a 旧计数文件迁移。
-- [run-manager.spec.ts](../../apps/node/tests/run-manager.spec.ts)：manifest 与 entriesDir 成对进入 `runtime.initialize`；Runtime delivered/read 帧被累计为单调 `run.context_receipt`；`run.completed` 与 `run.start` 拒绝两条路径都触发 `cleanupProjectContext(runId)`。
+- [run-manager.spec.ts](../../apps/node/tests/run-manager.spec.ts)：manifest 与 entriesDir 成对进入 `runtime.initialize`；Runtime delivered/read 帧被累计为单调 `run.context_receipt`；PC-05b-2 起回执持久化/重放；PC-05b-3 起 `runtime-context/<runId>` 由终态清理队列在 Runtime 退出后删除（`cleanupProjectContext` 依赖已移除，见 [PC-05b-3 验收](./2026-11-03-pc05b3-terminal-cleanup-acceptance.md)）。
 - [project-context-tool.spec.ts](../../packages/runtime-dsh/tests/project-context-tool.spec.ts)：工具只接受清单 id、读取失败不发回执、拒绝消息不含本机路径。
 - [tool-boundary.contract.spec.ts](../../packages/runtime-dsh/tests/dsh-contract/tool-boundary.contract.spec.ts)：真 boot 栈中 `read_project_context` 的正文/结构化字段进入模型可见结果，并发出 delivered/read 回执；`{{fromRequest:PC05A_ECHO}}` 证明正文进入下一次模型请求，`{{fromRequest:\[project-context:}}` 证明 header 的 nonce 标记进入首条模型请求。
 - [run-context.spec.ts](../../packages/protocol/tests/run-context.spec.ts)：清单代次规则、header 上限、initialize 成对字段、能力声明与回执形状。
@@ -113,7 +113,7 @@ pnpm exec vitest run --project dsh-contract \
   - `cancel_requested` Run 的回执按 ADR 字面归为 `receipt_late`，其消费事实不落库；
   - bundle 读面非 `frozen` 条目的 409 映射由 PC-05b-1 接通：下载前按当前来源/纠正状态派生，非 frozen 一律 409。
 - **撤权状态机**：`run.context_state`、`context.state_sync`、活跃 Run 未读副本逐条删除/隔离、Runtime 本地 ack、断连 fail-closed 已由 PC-05b-1（#498）交付，见[验收](./2026-11-03-pc05b1-context-state-acceptance.md)；来源条目的生产写入仍待 PC-03b/03c。
-- **终态 session 处理**：`resumeContext: full/redacted/blocked`、session allowlist 重建、24 小时清理、`coordination-home` 扫描：PC-05b / Q5。本切片只删除 `runtime-context/<runId>`，不触碰 `runtime-home`、session 与 spill。
+- **终态 session 处理**：`resumeContext: full/redacted/blocked`、终态清理队列、`runtime-context`/spill 删除与 blocked 血缘已由 PC-05b-3（#500）交付；session allowlist 重建、`redacted` 产生路径与 `coordination-home` 扫描仍未做（见 [PC-05b-3 验收](./2026-11-03-pc05b3-terminal-cleanup-acceptance.md)）。
 - **首条回执 watchdog**：Run 进入 running 后 60 秒无回执自动 `failed(CONTEXT_UNAVAILABLE)` 未实现；当前只接受合格回执，不主动判定「Node 静默不读」。
 - **回执重试**：`run.context_receipt` 只在连接 OPEN 时发送，断连窗口内不回放；PC-05b-2（#499）补持久 outbox 与 ack，watchdog 同切片。
 - **显式选择**：Thread/Subscription/WorkLink、`read_only` 勾选、`model_inferred` 激活、`selectedByMemberId` 均无 UI/API 入口（PC-03b/03c）。

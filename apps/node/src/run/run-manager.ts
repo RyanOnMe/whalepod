@@ -21,6 +21,8 @@
  *   SIGKILL。强杀后由退出归因合成 run.cancelled(forced=true)。每个阶段写
  *   node.supervisor 结构化日志（真人路径可观测，不做接口背后的暗手）。
  */
+import { existsSync, readdirSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
 import type {
   ContextStateSyncWire,
   ErrorCode,
@@ -60,6 +62,12 @@ import type { ContextStateStore } from '../context/state-store.js'
 import { MemoryContextStateStore } from '../context/state-store.js'
 import type { RunContextReceiptDraft, RunContextReceiptOutbox } from '../context/receipt-outbox.js'
 import { MemoryContextReceiptOutbox } from '../context/receipt-outbox.js'
+import type {
+  RunRuntimeFacts,
+  RunTerminalCleanupStore,
+  TerminalCleanupTask,
+} from './terminal-cleanup.js'
+import { MemoryRunTerminalCleanupStore } from './terminal-cleanup.js'
 import type { PreparedProjectContext } from '../context/project-context.js'
 import type { PreparedWorkInputs } from '../work/work-input.js'
 import type { WorkInputReceiptStore } from '../work/receipt-store.js'
@@ -139,8 +147,6 @@ export interface RunManagerDeps {
     runId: string,
     manifest: RunStartProjectContext,
   ) => Promise<PreparedProjectContext>
-  /** ADR-0027 §6：Run 终态/启动拒绝后的 runtime-context 副本清理（best-effort）。 */
-  readonly cleanupProjectContext?: (runId: string) => Promise<void>
   /**
    * ADR-0028 §3：按 run.start 清单下载工作输入副本（digest/byteSize 校验）。
    * 清单存在但本 Node 未装配时 fail-closed。
@@ -157,6 +163,17 @@ export interface RunManagerDeps {
   readonly contextStateStore?: ContextStateStore
   /** ADR-0027 §4（PC-05b-2）：回执持久发件箱（生产 SQLite；缺省内存）。 */
   readonly contextReceiptOutbox?: RunContextReceiptOutbox
+  /**
+   * ADR-0027 §6（PC-05b-3）：终态清理持久队列与 Run home 事实
+   * （生产 SQLite；缺省内存）。
+   */
+  readonly terminalCleanupStore?: RunTerminalCleanupStore
+  /** runtime-context/<runId> 的绝对路径（生产由组合根注入；缺省只清 spill/session）。 */
+  readonly runtimeContextDirFor?: (runId: string) => string
+  /** 同一 DSH home 是否仍有其它活跃 Runtime（resume 共享 home 的清理守卫）。 */
+  readonly isRuntimeHomeInUse?: (homePath: string, exceptRunId: string) => boolean
+  /** 终态清理失败后的重试间隔（默认 1 小时；测试可缩短）。 */
+  readonly terminalCleanupRetryMs?: number
   /** P1-16：run.snapshot 的设备身份与 DSH 发行版版本（§2.6/§6.2）。 */
   readonly deviceId: string
   readonly dshDistributionVersion: string
@@ -245,6 +262,13 @@ export class RunManager {
     }
   >()
   private readonly contextReceiptOutbox: RunContextReceiptOutbox
+  private readonly terminalCleanupStore: RunTerminalCleanupStore
+  private readonly terminalCleanupRetryMs: number
+  /** 队列写失败的终态 facts：同进程下一轮 tick 先补登记（不丢到重启）。 */
+  private readonly unscheduledCleanupFacts = new Map<
+    string,
+    { facts: RunRuntimeFacts; terminalAt: string }
+  >()
   /** 本连接内已发送、尚未 ack 的回执；重连时清空以便全量重放。 */
   private readonly sentContextReceipts = new Set<string>()
   private readonly contextStateStore: ContextStateStore
@@ -275,6 +299,8 @@ export class RunManager {
     this.termGraceMs = deps.cancelTermGraceMs ?? DEFAULT_CANCEL_TERM_GRACE_MS
     this.timers = deps.timers ?? { setTimeout, clearTimeout }
     this.contextReceiptOutbox = deps.contextReceiptOutbox ?? new MemoryContextReceiptOutbox()
+    this.terminalCleanupStore = deps.terminalCleanupStore ?? new MemoryRunTerminalCleanupStore()
+    this.terminalCleanupRetryMs = deps.terminalCleanupRetryMs ?? 60 * 60 * 1000
     this.contextStateStore = deps.contextStateStore ?? new MemoryContextStateStore()
     this.contextStateDeps = {
       runtimeHomeFor: deps.runtimeHomeFor,
@@ -395,6 +421,20 @@ export class RunManager {
     }
 
     try {
+      // ADR-0027 §6（PC-05b-3）：在任何下载/初始化之前先落 Run home 事实。
+      // 进程若在 prepare 之后、spawn 之前崩溃，启动清扫仍能对账清理 runtime-context。
+      const dshHomePath = this.deps.runtimeHomeFor(payload.resumeOfRunId ?? runId)
+      this.terminalCleanupStore.putFacts(
+        {
+          runId,
+          homePath: dshHomePath,
+          entryCount: payload.projectContext?.manifest.length ?? 0,
+          ownsHome: payload.resumeOfRunId === undefined,
+          sessionReady: false,
+          dshSessionId: null,
+        },
+        this.now().toISOString(),
+      )
       // redaction 上下文要 canonical workspace 根（registry.resolve 已 realpath +
       // 身份校验）；supervisor.start 内部会再 resolve 一次（同一事实源）。
       const workspacePath = await this.deps.registry.resolve(payload.workspaceId)
@@ -454,6 +494,7 @@ export class RunManager {
         runId,
         nonce: newRuntimeNonce(),
         workspaceId: payload.workspaceId,
+        dshHomePath,
         prompt: payload.prompt,
         agent: {
           id: payload.agent.id,
@@ -487,7 +528,7 @@ export class RunManager {
           // 切片⑤（resume）：续跑 Run 的 DSH_HOME 必须指向**来源 Run** 的 home——
           // runtimeHomeFor 按 runId 隔离，新 runId 的 home 里没有旧日志，resume
           // 的 persisted load 会找不到存储。resumeSessionId 直达装载身份。
-          dshHomePath: this.deps.runtimeHomeFor(payload.resumeOfRunId ?? runId),
+          dshHomePath,
           ...(payload.resumeSessionId !== undefined
             ? { resumeSessionId: payload.resumeSessionId }
             : {}),
@@ -564,8 +605,10 @@ export class RunManager {
       this.deps.commandStore.markAcked(commandId)
       this.ack(commandId, false, { code, message })
       // run.start 拒绝路径不进 finalizeRun（Run 从未在管）：输入准备可能已下载
-      // 副本（spawn 前失败），同样要清理（#62：不留半成品目录）。
+      // 副本（spawn 前失败），同样要清理（#62：不留半成品目录）。Runtime 未启动时
+      // 立即清；spawn 后下发失败则由 cleanupAbortedRun 改登记持久队列等退出确认。
       this.cleanupInputs(runId)
+      this.cleanupAbortedRun(runId)
     }
   }
 
@@ -822,6 +865,8 @@ export class RunManager {
     const reported = this.finalFacts.has(runId)
       ? (this.finalFacts.get(runId)!.status as RuntimeTerminalReport)
       : 'none'
+    // 终态帧先到、进程后退出：退出确认后才执行 session/spill 清理（PC-05b-3）。
+    if (this.finalFacts.has(runId)) this.runTerminalCleanupTick()
     const outcome = classifyRuntimeExit({ reported, cancelInFlight: this.cancels.has(runId) })
     switch (outcome) {
       case 'ignore':
@@ -946,6 +991,15 @@ export class RunManager {
   }
 
   /** 组装 §6.2 RunSnapshot：字段只来自 run.start 载荷与本地观测到的事实。 */
+  /** 重启后 lost 快照要带上持久化的 session id，Hub 才能沿血缘标 blocked。 */
+  private persistedSessionId(runId: string): string | null {
+    try {
+      return this.terminalCleanupStore.getFacts(runId)?.dshSessionId ?? null
+    } catch {
+      return null
+    }
+  }
+
   private buildSnapshot(runId: string): RunSnapshot | undefined {
     const facts = this.runFacts.get(runId) ?? this.readRunFactsFromSpool(runId)
     if (facts === undefined) return undefined
@@ -969,7 +1023,7 @@ export class RunManager {
       profileRevisionId: facts.agent.profileRevisionId,
       deviceId: this.deps.deviceId,
       workspaceId: facts.workspaceId,
-      dshSessionId: ready?.dshSessionId ?? null,
+      dshSessionId: ready?.dshSessionId ?? this.persistedSessionId(runId),
       status,
       failureCode: final?.failureCode ?? null,
       failureSummary: final?.failureSummary ?? null,
@@ -1079,6 +1133,22 @@ export class RunManager {
         dshSessionId: frame.payload.dshSessionId,
         startedAt: this.now().toISOString(),
       })
+      // 终态清理据此判断本 Run 是否已把 session 写进（可能是共享的）home。
+      try {
+        this.terminalCleanupStore.markSessionReady(
+          runId,
+          frame.payload.dshSessionId,
+          this.now().toISOString(),
+        )
+      } catch (error) {
+        this.log('warn', 'terminal cleanup markSessionReady failed', {
+          component: 'node.context',
+          action: 'node.context.terminal_cleanup',
+          event: 'facts_write_failed',
+          runId,
+          errorName: error instanceof Error ? (error.name ?? 'Error') : typeof error,
+        })
+      }
     }
     // P1-16：Runtime 自身确认取消 → 升级链路收敛（投影 forced=false 照旧）。
     if (frame.type === 'run.cancelled') {
@@ -1230,14 +1300,17 @@ export class RunManager {
     }
     this.projectors.delete(runId)
     this.liveSeq.delete(runId)
-    // P1-15/#62：输入副本清理收敛在终态单一收敛点——所有终态路径（终态帧投影、
-    // 协议违例、退出归因 cancelled_forced/runtime_lost、supervisor lost
-    // orphan/runtime_timeout、lost 快照）都经 finalizeRun，无一漏网。
+    // P1-15/#62：artifact/work inputs 仍走既有终态收敛；项目上下文与 session/spill
+    // 改由持久清理队列承担——必须等 Runtime 子进程退出确认后再删（PC-05b-3）。
     this.cleanupInputs(runId)
+    this.scheduleTerminalCleanup(runId)
     // #88：Runtime 主动回收同样收敛在此——终态即下发 runtime.shutdown（协议帧，
     // bridge/bin 收敛后 EOF 退出），容量立即释放；宽限内不退则信号升级
     // （SIGTERM→SIGKILL），supervisor 硬超时（生产 6h）降为最后兜底。
     this.releaseRuntime(runId)
+    // 退出归因路径（cancelled_forced/runtime_lost/supervisor lost）到达时进程
+    // 已不在管；terminal frame 路径等 handleRuntimeExit 再清。
+    if (!this.deps.supervisor.isActive(runId)) this.runTerminalCleanupTick()
   }
 
   /**
@@ -1709,11 +1782,347 @@ export class RunManager {
   /** P1-15：输入副本清理（best-effort，失败只吞掉——不阻塞终态登记）。 */
   private cleanupInputs(runId: string): void {
     void this.deps.cleanupArtifactInputs?.(runId).catch(() => {})
-    void this.deps.cleanupProjectContext?.(runId).catch(() => {})
     void this.deps.cleanupWorkInputs?.(runId).catch(() => {})
     this.projectContexts.delete(runId)
     this.contextReceiptState.delete(runId)
     this.workInputs.delete(runId)
+  }
+
+  /**
+   * 清理事实的兜底来源：本进程未写过 facts（升级接管、旧 Node 遗留）时从
+   * command spool 的 run.start 重建。缺了它，升级在途的非空上下文 Run 会被
+   * 当成 full 保留 session，Hub 却已经写了 blocked。
+   */
+  private fallbackCleanupFacts(runId: string): RunRuntimeFacts {
+    const spooled = this.readRunFactsFromSpool(runId)
+    const resumeOfRunId = spooled?.resumeOfRunId
+    return {
+      runId,
+      homePath: this.deps.runtimeHomeFor(resumeOfRunId ?? runId),
+      entryCount: spooled?.projectContext?.manifest.length ?? 0,
+      ownsHome: resumeOfRunId === undefined,
+      sessionReady: this.readyFacts.has(runId),
+      dshSessionId: null,
+    }
+  }
+
+  /** 持久事实优先；runtime.ready 以本进程内存为准（store 写失败时 fail-safe 补上）。 */
+  private cleanupFactsFor(runId: string): RunRuntimeFacts {
+    let stored: RunRuntimeFacts | undefined
+    try {
+      stored = this.terminalCleanupStore.getFacts(runId)
+    } catch (error) {
+      this.log('warn', 'run terminal cleanup facts read failed', {
+        component: 'node.context',
+        action: 'node.context.terminal_cleanup',
+        event: 'facts_read_failed',
+        runId,
+        errorName: error instanceof Error ? (error.name ?? 'Error') : typeof error,
+      })
+    }
+    if (stored === undefined) return this.fallbackCleanupFacts(runId)
+    const ready = this.readyFacts.get(runId)
+    return {
+      ...stored,
+      sessionReady: stored.sessionReady || ready !== undefined,
+      dshSessionId: stored.dshSessionId ?? ready?.dshSessionId ?? null,
+    }
+  }
+
+  /**
+   * 有 facts 但无任务（prepare 后崩溃、schedule 写失败）的启动对账：
+   * 无活跃 Runtime 的 Run 补登记为立即到期，然后由正常 tick 清理。
+   */
+  private reconcileCleanupFacts(includeSharedHome: boolean): void {
+    let factsRows: readonly RunRuntimeFacts[]
+    try {
+      factsRows = this.terminalCleanupStore.factsNotScheduled()
+    } catch (error) {
+      this.log('warn', 'terminal cleanup facts reconcile failed', {
+        component: 'node.context',
+        action: 'node.context.terminal_cleanup',
+        event: 'facts_read_failed',
+        errorName: error instanceof Error ? (error.name ?? 'Error') : typeof error,
+      })
+      return
+    }
+    const at = this.now().toISOString()
+    for (const facts of factsRows) {
+      if (!includeSharedHome && !facts.ownsHome) continue
+      if (this.deps.supervisor.isActive(facts.runId)) continue
+      try {
+        this.terminalCleanupStore.schedule({
+          ...facts,
+          runTerminalAt: at,
+          dueAt: at,
+        })
+      } catch (error) {
+        this.log('warn', 'terminal cleanup facts reconcile schedule failed', {
+          component: 'node.context',
+          action: 'node.context.terminal_cleanup',
+          event: 'schedule_failed',
+          runId: facts.runId,
+          errorName: error instanceof Error ? (error.name ?? 'Error') : typeof error,
+        })
+      }
+    }
+  }
+
+  /** 同进程补登记上次 schedule 失败的终态 facts。 */
+  private retryUnscheduledCleanupTasks(includeSharedHome: boolean): void {
+    for (const [runId, entry] of this.unscheduledCleanupFacts) {
+      if (!includeSharedHome && !entry.facts.ownsHome) continue
+      try {
+        this.terminalCleanupStore.schedule({
+          ...entry.facts,
+          runTerminalAt: entry.terminalAt,
+          dueAt: entry.terminalAt,
+        })
+        this.unscheduledCleanupFacts.delete(runId)
+      } catch {
+        // 仍失败：保留到下一轮（绝不丢内存里的待重试事实）。
+      }
+    }
+  }
+
+  /** run.start 拒绝路径：Runtime 未启动时立即清受管副本；已启动则等退出确认。 */
+  private cleanupAbortedRun(runId: string): void {
+    // spawn 成功后的下发失败（stdin 已关闭等）仍会进 catch：此时 session 可能
+    // 正在写，直接删会破坏 ADR-0027 §6 的“退出后才清理”时序。
+    if (this.deps.supervisor.isActive(runId)) {
+      this.scheduleTerminalCleanup(runId)
+      return
+    }
+    let facts: RunRuntimeFacts
+    try {
+      facts = this.cleanupFactsFor(runId)
+    } catch (error) {
+      this.log('warn', 'rejected run cleanup facts unavailable', {
+        component: 'node.context',
+        action: 'node.context.terminal_cleanup',
+        event: 'facts_read_failed',
+        runId,
+        errorName: error instanceof Error ? (error.name ?? 'Error') : typeof error,
+      })
+      return
+    }
+    try {
+      // resume Run 在 spawn 前失败：来源 Run 的 session 不属于本 Run。
+      // cleanupRunCopies 对“非 owner 且未 ready”只清自己的 runtime-context。
+      this.cleanupRunCopies(facts)
+    } catch (error) {
+      const now = this.now()
+      const at = now.toISOString()
+      const errorName = error instanceof Error ? (error.name ?? 'Error') : typeof error
+      // 拒绝路径同样不能把失败副本丢在地上：登记持久任务并按正常重试节奏再试。
+      try {
+        this.terminalCleanupStore.schedule({
+          runId: facts.runId,
+          homePath: facts.homePath,
+          entryCount: facts.entryCount,
+          ownsHome: facts.ownsHome,
+          sessionReady: facts.sessionReady,
+          runTerminalAt: at,
+          dueAt: at,
+        })
+        this.terminalCleanupStore.markFailure(
+          facts.runId,
+          errorName,
+          new Date(now.getTime() + this.terminalCleanupRetryMs).toISOString(),
+          at,
+        )
+      } catch (storeError) {
+        this.log('warn', 'rejected run cleanup task write failed', {
+          component: 'node.context',
+          action: 'node.context.terminal_cleanup',
+          event: 'schedule_failed',
+          runId,
+          errorName: storeError instanceof Error ? (storeError.name ?? 'Error') : typeof storeError,
+        })
+      }
+      this.log('warn', 'rejected run cleanup failed', {
+        component: 'node.context',
+        action: 'node.context.terminal_cleanup',
+        event: 'cleanup_pending',
+        runId,
+        errorName,
+      })
+    }
+  }
+
+  /**
+   * ADR-0027 §6（PC-05b-3）：终态登记清理任务。此函数只落事实，不删文件；
+   * Runtime 退出确认后由 {@link runTerminalCleanupTick} 执行。
+   */
+  private scheduleTerminalCleanup(runId: string): void {
+    const at = this.finalFacts.get(runId)?.finishedAt ?? this.now().toISOString()
+    let facts: RunRuntimeFacts
+    try {
+      facts = this.cleanupFactsFor(runId)
+    } catch (error) {
+      this.log('warn', 'run terminal cleanup facts unavailable', {
+        component: 'node.context',
+        action: 'node.context.terminal_cleanup',
+        event: 'facts_read_failed',
+        runId,
+        errorName: error instanceof Error ? (error.name ?? 'Error') : typeof error,
+      })
+      return
+    }
+    try {
+      this.terminalCleanupStore.schedule({
+        runId,
+        homePath: facts.homePath,
+        entryCount: facts.entryCount,
+        ownsHome: facts.ownsHome,
+        sessionReady: facts.sessionReady,
+        runTerminalAt: at,
+        dueAt: at,
+      })
+      this.unscheduledCleanupFacts.delete(runId)
+    } catch (error) {
+      // 队列写失败不能阻断终态收敛/runtime.shutdown；内存保留事实，下一轮 tick
+      // 先补登记（进程崩溃则靠启动的 factsNotScheduled 对账）。
+      this.unscheduledCleanupFacts.set(runId, { facts, terminalAt: at })
+      this.log('warn', 'run terminal cleanup schedule failed', {
+        component: 'node.context',
+        action: 'node.context.terminal_cleanup',
+        event: 'schedule_failed',
+        runId,
+        errorName: error instanceof Error ? (error.name ?? 'Error') : typeof error,
+      })
+    }
+  }
+
+  /**
+   * Node 启动后的先清扫：recoverOrphans 已处理完孤儿，此时 active_runtime 只剩
+   * 本进程真正在管的 Runtime——未完成任务可安全重试（忽略 due_at）。
+   */
+  startTerminalCleanup(includeSharedHome = true): number {
+    this.reconcileCleanupFacts(includeSharedHome)
+    return this.runTerminalCleanupTick(true, includeSharedHome)
+  }
+
+  /**
+   * 执行到期的终态清理；返回本轮成功完成的数量。单个 Run 失败只记
+   * `cleanup_pending` 并保留队列，不拖垮整轮。
+   */
+  runTerminalCleanupTick(all = false, includeSharedHome = true): number {
+    const now = this.now()
+    this.retryUnscheduledCleanupTasks(includeSharedHome)
+    let tasks: readonly TerminalCleanupTask[]
+    try {
+      tasks = all ? this.terminalCleanupStore.notDone() : this.terminalCleanupStore.due(now)
+      if (!includeSharedHome) tasks = tasks.filter((task) => task.ownsHome)
+    } catch (error) {
+      // 队列读失败不能从 exit handler/小时定时器逃逸；本轮放弃，下一轮再试。
+      this.log('warn', 'run terminal cleanup queue read failed', {
+        component: 'node.context',
+        action: 'node.context.terminal_cleanup',
+        event: 'queue_read_failed',
+        errorName: error instanceof Error ? (error.name ?? 'Error') : typeof error,
+      })
+      return 0
+    }
+    let completed = 0
+    for (const task of tasks) {
+      const retryAt = new Date(now.getTime() + this.terminalCleanupRetryMs).toISOString()
+      try {
+        // 本 Run 自己的 Runtime 还活着（终态帧已到、shutdown 宽限中）时绝不删：
+        // isHomeInUse 按“其它 Run”口径排除了自己，不能拿它当退出确认。
+        if (this.deps.supervisor.isActive(task.runId)) {
+          this.terminalCleanupStore.markDeferred(task.runId, retryAt, now.toISOString())
+          this.log('info', 'run terminal cleanup deferred; own runtime still active', {
+            component: 'node.context',
+            action: 'node.context.terminal_cleanup',
+            event: 'deferred',
+            runId: task.runId,
+            attempts: task.attempts,
+          })
+          continue
+        }
+        // home 占用探测读 supervisor 状态库：数据库忙/损坏同样走 cleanup_pending，
+        // 绝不让每小时定时器因一次探查异常把 Node 进程带崩。
+        if (this.deps.isRuntimeHomeInUse?.(task.homePath, task.runId) === true) {
+          // resume Run 共享来源 Run 的 home：等最后一个使用者终态/退出，绝不早删。
+          this.terminalCleanupStore.markDeferred(task.runId, retryAt, now.toISOString())
+          this.log('info', 'run terminal cleanup deferred; home still in use', {
+            component: 'node.context',
+            action: 'node.context.terminal_cleanup',
+            event: 'deferred',
+            runId: task.runId,
+            attempts: task.attempts,
+          })
+          continue
+        }
+        this.cleanupRunCopies(task)
+        this.terminalCleanupStore.markDone(task.runId, now.toISOString())
+        completed += 1
+        this.log('info', 'run terminal cleanup completed', {
+          component: 'node.context',
+          action: 'node.context.terminal_cleanup',
+          event: 'done',
+          runId: task.runId,
+          mode: task.entryCount > 0 ? 'blocked' : 'full',
+          attempts: task.attempts,
+        })
+      } catch (error) {
+        const lastError = error instanceof Error ? (error.name ?? 'Error') : typeof error
+        try {
+          this.terminalCleanupStore.markFailure(task.runId, lastError, retryAt, now.toISOString())
+        } catch (markError) {
+          this.log('warn', 'run terminal cleanup markFailure failed', {
+            component: 'node.context',
+            action: 'node.context.terminal_cleanup',
+            event: 'cleanup_pending_write_failed',
+            runId: task.runId,
+            errorName: markError instanceof Error ? (markError.name ?? 'Error') : typeof markError,
+          })
+        }
+        this.log('warn', 'run terminal cleanup pending', {
+          component: 'node.context',
+          action: 'node.context.terminal_cleanup',
+          event: 'cleanup_pending',
+          runId: task.runId,
+          attempts: task.attempts + 1,
+          errorName: lastError,
+        })
+      }
+    }
+    return completed
+  }
+
+  /**
+   * 清理一个 Run 的受管副本：
+   * - 所有 Run：runtime-context/<runId>；
+   * - resume Run 在 spawn 前失败（未写过共享 home）：到此为止；
+   * - 其余：删 <home>/spill；
+   * - 非空项目上下文（blocked）：删除 home 下全部内容（session + 非 session），
+   *   但保留 home 目录本身（ADR-0009 resume 用的是来源 home，不整体删）；
+   * - 空快照/无上下文（full）：保留 session 与非 session 文件，只额外清掉
+   *   quarantine（正文暂存区，终态必须删除）。
+   */
+  private cleanupRunCopies(task: {
+    runId: string
+    homePath: string
+    entryCount: number
+    ownsHome: boolean
+    sessionReady: boolean
+  }): void {
+    if (this.deps.runtimeContextDirFor !== undefined) {
+      rmSync(this.deps.runtimeContextDirFor(task.runId), { recursive: true, force: true })
+    }
+    if (!task.ownsHome && !task.sessionReady) return
+    rmSync(join(task.homePath, 'spill'), { recursive: true, force: true })
+    if (task.entryCount > 0) {
+      if (existsSync(task.homePath)) {
+        for (const name of readdirSync(task.homePath)) {
+          rmSync(join(task.homePath, name), { recursive: true, force: true })
+        }
+      }
+      return
+    }
+    rmSync(join(task.homePath, 'quarantine'), { recursive: true, force: true })
   }
 
   // ---------- spool 与上行 ----------

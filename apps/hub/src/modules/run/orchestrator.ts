@@ -414,6 +414,15 @@ export class RunOrchestrator {
       if (!isTerminal(prior.status)) {
         throw new RunCommandError('CONFLICT', 'resume source run must be terminal')
       }
+      // ADR-0027 §6（PC-05b-3）：非空项目上下文 Run 的 session 在终态清理中被删除
+      //（resume probe 未固定，fail-safe blocked）；不得创建新 Run。blocked 是显式
+      // 状态，优先于“没有会话”的泛化拒绝。
+      if (prior.resumeContext === 'blocked') {
+        throw new RunCommandError(
+          'CONFLICT',
+          'resume source run session was cleaned up (resumeContext=blocked)',
+        )
+      }
       if (prior.dshSessionId === null) {
         throw new RunCommandError(
           'CONFLICT',

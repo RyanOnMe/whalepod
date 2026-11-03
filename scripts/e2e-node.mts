@@ -57,6 +57,7 @@ import { RunManager } from '../apps/node/src/run/run-manager.js'
 import { ArtifactInputsManager } from '../apps/node/src/artifact/inputs.js'
 import { ProjectContextDownloader } from '../apps/node/src/context/project-context.js'
 import { SqliteContextReceiptOutbox } from '../apps/node/src/context/receipt-outbox.js'
+import { SqliteRunTerminalCleanupStore } from '../apps/node/src/run/terminal-cleanup.js'
 import { ArtifactCollector } from '../apps/node/src/artifact/collect.js'
 import { OfficePreviewGenerator } from '../apps/node/src/artifact/preview.js'
 import {
@@ -397,6 +398,9 @@ const contextReceiptOutbox = new SqliteContextReceiptOutbox(
   join(stateDir, 'context-receipt-outbox.sqlite'),
 )
 contextReceiptOutbox.seedFromLegacy(join(stateDir, 'context-receipts.sqlite'))
+const terminalCleanupStore = new SqliteRunTerminalCleanupStore(
+  join(stateDir, 'terminal-cleanup.sqlite'),
+)
 
 const runManager = new RunManager({
   supervisor,
@@ -446,7 +450,9 @@ const runManager = new RunManager({
   },
   cleanupArtifactInputs: (runId) => artifactInputs.cleanup(runId),
   prepareProjectContext: (runId, manifest) => projectContext.prepare(runId, manifest),
-  cleanupProjectContext: (runId) => projectContext.cleanup(runId),
+  runtimeContextDirFor: (runId) => join(stateDir, 'runtime-context', runId),
+  terminalCleanupStore,
+  isRuntimeHomeInUse: (homePath, exceptRunId) => supervisor.isHomeInUse(homePath, exceptRunId),
   contextReceiptOutbox,
   deviceId: config.deviceId,
   dshDistributionVersion: '0.1.0-rc.8-e2e',
@@ -463,6 +469,7 @@ const runManager = new RunManager({
 
 // R9 语义：重启后先回收孤儿（recoverOrphans 内完成），再建立会话。
 await supervisor.recoverOrphans()
+runManager.startTerminalCleanup()
 
 // ---- WebSocket 故障缝：offline 窗口内连接尝试立即失败（模拟拔线——非 stop
 // 语义，产品重连退避照常运转），存活连接 terminate() 直接摧毁。----

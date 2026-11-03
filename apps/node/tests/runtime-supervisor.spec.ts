@@ -55,6 +55,7 @@ function makeSpec(runId: string): RuntimeStartSpec {
     runId,
     nonce: `nonce-${runId}`,
     workspaceId: 'ws',
+    dshHomePath: '/tmp/whalepod-test-home',
     prompt: 'do things',
     agent: {
       id: '00000000-0000-4000-8000-000000000001',
@@ -162,6 +163,22 @@ describe('RuntimeSupervisor', () => {
     })
     expect((await supervisor.activeRuns()).length).toBe(2)
     await supervisor.stopAll()
+  })
+
+  it('isHomeInUse：同 home 的其它活跃 Run 算占用，排除自身与退出后放行', async () => {
+    const { driver } = makeFakeDriver()
+    const { supervisor, ws } = await makeSupervisor(driver)
+    const sharedHome = '/tmp/whalepod-shared-home'
+    const ownHome = '/tmp/whalepod-own-home'
+    await supervisor.start({ ...makeSpec('r-1'), dshHomePath: sharedHome }, { workspaceId: ws.id })
+    await supervisor.start({ ...makeSpec('r-2'), dshHomePath: ownHome }, { workspaceId: ws.id })
+
+    expect(supervisor.isHomeInUse(sharedHome, 'r-1')).toBe(false)
+    expect(supervisor.isHomeInUse(sharedHome, 'r-2')).toBe(true)
+    expect(supervisor.isHomeInUse(ownHome, 'r-1')).toBe(true)
+
+    await supervisor.stopAll()
+    expect(supervisor.isHomeInUse(sharedHome, 'r-3')).toBe(false)
   })
 
   it('环境白名单 scrub：只含 PATH/locale/TMPDIR + 最小凭据，无任何敏感残留', async () => {

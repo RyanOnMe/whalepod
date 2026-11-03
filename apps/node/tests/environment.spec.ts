@@ -52,6 +52,7 @@ const spec = (provider: string): RuntimeStartSpec => ({
   runId: 'r-env',
   nonce: 'nonce-r-env',
   workspaceId: 'ws',
+  dshHomePath: '/tmp/whalepod-test-home',
   prompt: 'p',
   agent: {
     id: '00000000-0000-4000-8000-000000000001',

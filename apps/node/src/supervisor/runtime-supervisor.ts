@@ -129,7 +129,8 @@ export class RuntimeSupervisor {
         workspace_id text not null,
         started_at text not null,
         stderr_tail text,
-        dsh_version text
+        dsh_version text,
+        dsh_home_path text
       )
     `)
     // #356：老状态库（本列引入前建的）补列——`create table if not exists` 不改既有表。
@@ -150,6 +151,30 @@ export class RuntimeSupervisor {
         if (!again.some((column) => column.name === 'dsh_version')) throw error
       }
     }
+    // PC-05b-3：老状态库补 dsh_home_path，终态清理判断共享 home 的活跃使用者。
+    if (!columns.some((column) => column.name === 'dsh_home_path')) {
+      try {
+        this.db.exec('alter table active_runtime add column dsh_home_path text')
+      } catch (error) {
+        const again = this.db.prepare('pragma table_info(active_runtime)').all() as unknown as {
+          name: string
+        }[]
+        if (!again.some((column) => column.name === 'dsh_home_path')) throw error
+      }
+    }
+  }
+
+  /**
+   * ADR-0027 §6（PC-05b-3）：同一 DSH home 是否仍被其它活跃 Runtime 使用。
+   * resume Run 复用来源 Run 的 home；来源 Run 的终态清理必须等最后一个使用者退出。
+   */
+  isHomeInUse(homePath: string, exceptRunId: string): boolean {
+    const row = this.db
+      .prepare(
+        'select 1 as present from active_runtime where dsh_home_path = ? and run_id <> ? limit 1',
+      )
+      .get(homePath, exceptRunId) as { present: number } | undefined
+    return row !== undefined
   }
 
   onLost(handler: (runId: string, reason: RuntimeLostEvent['reason']) => void): void {
@@ -204,7 +229,7 @@ export class RuntimeSupervisor {
     const pgid = process.platform !== 'win32' ? handle.pid : handle.pid
     this.db
       .prepare(
-        'insert into active_runtime (run_id, pid, process_start_time, pgid, runtime_nonce, workspace_id, started_at, stderr_tail, dsh_version) values (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into active_runtime (run_id, pid, process_start_time, pgid, runtime_nonce, workspace_id, started_at, stderr_tail, dsh_version, dsh_home_path) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         spec.runId,
@@ -217,6 +242,7 @@ export class RuntimeSupervisor {
         null,
         // #356：版本是探针事实；未知（null/未注入）就记 null —— 重启后不据此宣称换版。
         this.deps.dshDistributionVersion ?? null,
+        spec.dshHomePath,
       )
     const timer = setTimeout(() => {
       void this.reclaimTimeout(spec.runId)

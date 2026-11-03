@@ -255,6 +255,14 @@ export async function sendInstruction(
   ) {
     throw new RunCommandError('NOT_FOUND', '续跑来源不在本任务中')
   }
+  // ADR-0027 §6（PC-05b-3）：blocked 是显式来源状态，先于设备可用性返回；
+  // 否则设备离线会把它盖成 DEVICE_OFFLINE，用户看不出真正原因。
+  if (resumeSource?.resumeContext === 'blocked') {
+    throw new RunCommandError(
+      'CONFLICT',
+      'resume source run session was cleaned up (resumeContext=blocked)',
+    )
+  }
   // #394：续跑必须落在来源现场（device/workspace 来自来源 Run），但**不能直接信任**那两列——
   // 设备可能已掉线/被撤销、工作区可能已不可用。走同一条目标校验，才能在建 Run 前失败。
   const pinnedTarget =

@@ -29,3 +29,10 @@
   config:
     root: !!js dshHomePath('sessions')
     compression: none
+
+# ADR-0027 §6（PC-05b-3）：>50KB 工具输出必须落在受管 Run home 下，而不是
+# OS tmpdir 的 mkdtemp 目录；否则终态清理与零命中证据扫描都看不到 spill 正文。
+# id-targeted patch 会整段替换匹配到的 config（基座行没有 config）。
+- id: spill-local
+  config:
+    root: !!js dshHomePath('spill')
