@@ -29,7 +29,7 @@ Task 责任人：
   - `POST /mandates/:id/{pause,resume}`、`POST /works/:workKey/retire`
   - `GET /runs/:runId`
   - Run 终态：`ingestNodeEvent(runEventFrame(...runtime.ready/run.completed...))`。
-- 判据文件：`apps/hub/tests/work-dispatch.integration.spec.ts`（本切片 26 用例；同文件后由 RD-03b 增到 39）。
+- 判据文件：`apps/hub/tests/work-dispatch.integration.spec.ts`（本切片 26 用例；同文件后由 RD-03b 增到 44）。
 - 静态边界：`apps/hub/tests/work-boundaries.spec.ts` 新增 dispatch 端口锁序、禁止直写 Run/TeamEvent/状态、普通 `create()` 拒绝机器来源、migration 约束检查。
 - 测试前置依赖：Agent/Profile、Device/Workspace 由行插入构成（生产注册路径是既有 WS 配对）；每一处都在测试内标注 `removeWhen`。Work/意图/Run/outbox/team_event 不直插。
 - 观测：Hub `component=hub.dispatch` 的 `work.dispatch.approve/reject/dispatch`（workKey、intentId、status、runId，无来源正文）；DB `dispatch_intent.status/approval_basis/approved_at/dispatched_at/run_id/agent_id/device_id/action_class`、`run.origin/mandate_id/dispatch_intent_id/on_behalf_of_user_id/work_key`、`work.state/resume_mode/resume_condition`。

@@ -14,7 +14,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { Database } from '@whalepod/db'
 import { schema } from '@whalepod/db'
 import { asUserId } from '@whalepod/domain'
-import { cancelInvalidatedMachineRuns } from '../src/modules/dispatch/service.js'
+import {
+  autoDispatchProposedIntent,
+  cancelInvalidatedMachineRuns,
+} from '../src/modules/dispatch/service.js'
 import {
   apiInject,
   createTestApp,
@@ -1701,6 +1704,114 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
     expect(intent?.status).toBe('dispatched')
     expect(intent?.deviceId).toBe(second.deviceId)
     expect(intent?.workspaceId).toBe(second.workspaceId)
+  })
+
+  it('leaves a proposed intent with active_run when a human Run is already active', async () => {
+    await ctx.app.runOrchestrator.create(
+      { userId: asUserId(alice.userId), role: 'owner' },
+      taskId,
+      {
+        idempotencyKey: `human-active-${randomUUID()}`,
+        agentId: agent.agentId,
+        profileRevisionId: agent.revisionId,
+        deviceId: device.deviceId,
+        workspaceId: device.workspaceId,
+        prompt: 'human run first',
+        dshDistributionVersion: '0.1.0-rc.8',
+      },
+    )
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, {
+      autoDispatch: 'existing_task',
+      allowedAgentIds: [agent.agentId],
+    })
+    const messageId = await comment(ctx, alice, taskId)
+    await associate(ctx, alice, work.workKey, messageId)
+    const admission = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/admission-checks`,
+      payload: { sourceType: 'task_message', sourceId: messageId },
+      idempotencyKey: idemKey(),
+    })
+    expect(admission.statusCode).toBe(200)
+    expect(admission.json().data.proposedIntent).toMatchObject({
+      status: 'proposed',
+      candidates: [],
+    })
+    expect(admission.json().data.proposedIntent.exclusionReasons).toEqual(
+      expect.arrayContaining([{ kind: 'run', reason: 'active_run' }]),
+    )
+    expect(await database.db.select().from(schema.runs)).toHaveLength(1)
+  })
+
+  it('never selects another member device when the assignee device is offline', async () => {
+    await database.db
+      .update(schema.devices)
+      .set({ lastSeenAt: new Date(Date.now() - 5 * 60 * 1000) })
+      .where(eq(schema.devices.id, device.deviceId))
+    const bobDevice = await createDevice(database, bob.userId)
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, {
+      autoDispatch: 'existing_task',
+      allowedAgentIds: [agent.agentId],
+    })
+    const { intentId } = await prepareIntent(work.workKey)
+    const [intent] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, intentId))
+    expect(intent?.status).toBe('proposed')
+    expect(intent?.deviceId).toBeNull()
+    expect(intent?.exclusionReasons).toEqual(
+      expect.arrayContaining([{ kind: 'device', reason: 'no_online_device' }]),
+    )
+    expect(intent?.exclusionReasons).not.toEqual(
+      expect.arrayContaining([{ kind: 'device', id: bobDevice.deviceId }]),
+    )
+    expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+  })
+
+  it('rejects a proposed intent when its trigger source drifts before auto dispatch', async () => {
+    // 先让设备离线，得到 proposed 意图；随后改来源，再用新幂等键重放准入。
+    await database.db
+      .update(schema.devices)
+      .set({ lastSeenAt: new Date(Date.now() - 5 * 60 * 1000) })
+      .where(eq(schema.devices.id, device.deviceId))
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, {
+      autoDispatch: 'existing_task',
+      allowedAgentIds: [agent.agentId],
+    })
+    const messageId = await comment(ctx, alice, taskId)
+    await associate(ctx, alice, work.workKey, messageId)
+    const first = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/admission-checks`,
+      payload: { sourceType: 'task_message', sourceId: messageId },
+      idempotencyKey: idemKey(),
+    })
+    expect(first.statusCode).toBe(200)
+    expect(first.json().data.proposedIntent.status).toBe('proposed')
+    const intentId = String(first.json().data.proposedIntent.id)
+
+    // removeWhen: 来源编辑尚无 HTTP 面；只改来源正文/编辑时间，验证自动端口重读来源。
+    await database.db
+      .update(schema.taskMessages)
+      .set({ body: '预算又改成 9 万。', editedAt: new Date() })
+      .where(eq(schema.taskMessages.id, messageId))
+    // 直接驱动生产自动端口：新来源会生成新意图，只有旧意图能证明派工前重读；
+    // 该路径与准入回调调用的是同一函数。
+    const auto = await autoDispatchProposedIntent(
+      { database, orchestrator: ctx.app.runOrchestrator, now: () => new Date() },
+      { userId: alice.userId, role: 'owner' },
+      work.workKey,
+      intentId,
+    )
+    expect(auto).toMatchObject({
+      status: 'rejected',
+      resolutionReason: 'source changed since the intent was approved',
+    })
+    expect(await database.db.select().from(schema.runs)).toHaveLength(0)
   })
 
   it('does not create a second Run when the same admission is replayed', async () => {

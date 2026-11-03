@@ -545,6 +545,7 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
           value = { ...value, proposedIntent: auto }
           if (
             auto.status === 'dispatched' &&
+            auto.approvalBasis === 'mandate' &&
             previousStatus !== 'dispatched' &&
             auto.runId !== null
           ) {
@@ -557,6 +558,7 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
                 intentId: auto.id,
                 runId: auto.runId,
                 approvalBasis: auto.approvalBasis,
+                actionClass: auto.actionClass,
                 onBehalfOfUserId: auto.onBehalfOfUserId,
                 candidateCount: auto.candidates.length,
                 exclusionCount: auto.exclusionReasons.length,
