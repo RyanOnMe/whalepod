@@ -30,6 +30,7 @@ Task 责任人：
 - Runtime：`machineDraftToolDecision` 增加失效分支（纯裁决）；`mandate-invalidation.contract.spec.ts` 真 boot/replay + 真 fs 工具：
   - allowlist 内 `write` 失效后 deny、文件不落盘、零审批；
   - 未 allowlist 的范围内 `read` 失效后仍 allow；
+  - `publish_artifact` 作为收尾步骤失效后仍 allow 并产 candidate；
   - 先产生 `approval.requested`，失效后 `allowed_once` 仍不能执行 write。
 - 判据文件：
   - `apps/hub/tests/work-dispatch.integration.spec.ts`（running pause/revoke、resume 新版本不重复、到期清扫、Work retired、人类 Run 不扫描、终态不标记、行级幂等、reason 纯映射）
@@ -42,7 +43,7 @@ Task 责任人：
 ## 3 判定
 
 - **正控**：running Run 在 pause/revoke 后仍 `running`、分别标记 `mandate_paused`/`mandate_revoked`、恰好一条 outbox 命令、RunView 可读；到期清扫标记 `mandate_expired`；Work retired 清扫标记 `work_unavailable`；resume 新版本不重复发信号；失效后 `read`/`publish_artifact` 仍可用。
-- **负控**：失效后 `write`/`edit` deny 且不落盘、不产生审批；pending approval `allowed_once` 不能复活写；重复失效命令/重复清扫/行级重复标记不产生第二条命令；终态 Run 不被标记/复活；人类 Run 不进入扫描；Node Runtime 不在时不 spawn。
+- **负控**：失效后 `write`/`edit` deny 且不落盘、不产生审批；pending approval `allowed_once` 不能复活写；重复失效命令/重复清扫/行级重复标记不产生第二条命令；终态 Run 不被标记/复活；人类 Run 不会被标记（`origin='mandate'` 粗筛 + mapper 的 `mandateId=null` 双保险）；Node Runtime 不在时不 spawn。
 - **数据判据**：`RunToolPolicy`/`MandateInvalidationReason` strict schema；`run_mandate_invalidation_fields` 约束两列同生同灭；`beforeDispatch` 既有机器 Run 复核不变。
 
 ## 4 门禁
@@ -71,8 +72,8 @@ Task 责任人：
 - cost/token 账本与硬额度：当前无 usage 回传；`maxRunsPerWork`/`maxAttempts` 只在派发前拦新增，不实时扫在途 Run。
 - 已执行 Run 不自动杀死、副作用不回滚；owner 只能走既有取消。失效通知落在 RunView/结构化日志，不改 `apps/web`。
 - Node 本地来源权限实时撤权（ADR-0024 链路）不在本切片；本切片只处理机器 Run 的 Mandate 失效。
-- Mandate 到期清扫周期沿用 10s 维护循环；进程停机期间到期只能在下次启动/下一 tick 生效。清扫查询是粗筛（含活跃 Run 自己的 `waiting(auto, run:<id>)`），由 reason 映射排除健康行；单 tick 上限 200 行，超大并发下个别失效行可能延后一拍。
-- 失效信号是至少一次 outbox 投递，但**执行约束从 Runtime 收到命令起生效**：Hub 标记到 Runtime 收到之间存在窗口（outbox 250ms tick、退避最高 30s、Device 离线可无限延长），窗口内已发出的写仍可能完成；不回收、不回滚。该窗口是 ADR-0028 §9「不自动杀已执行 Run」的固有取舍。
+- Mandate 到期清扫周期沿用 10s 维护循环；进程停机期间到期只能在下次启动/下一 tick 生效。清扫查询是粗筛（含活跃 Run 自己的 `waiting(auto, run:<id>)`），由 reason 映射排除健康行；单 tick 上限 200 行，持续超过 200 个活跃机器 Run 时失效行可能延后到后续 tick（当前团队/设备容量下不可达）。
+- 失效信号是至少一次 outbox 投递，但**执行约束从 Runtime 收到命令起生效**：Hub 标记到 Runtime 收到之间存在窗口（outbox 250ms tick、退避最高约 36s（30s + 0–20% jitter）、Device 离线可无限延长），窗口内已发出的写仍可能完成；不回收、不回滚。该窗口是 ADR-0028 §9「不自动杀已执行 Run」的固有取舍。
 - 滚动升级必须 Hub/Node/Runtime 同版本（或 Node 先具备该帧能力）：旧 Node 的 `NodeDownstreamSchema` 不认识 `run.mandate_invalidated` 会静默丢弃，Hub 只能按 outbox 退避重试，旧 Runtime 在送达前继续按旧策略执行。本切片未加 `node.hello` 能力位。
 - Node 已记录 commandId 但在转发前崩溃时，Hub 重投会被当作 duplicate 只回 ack（与既有 `run.cancel` 同模式），该信号可能丢失；Run 状态仍可由 owner 取消/心跳收敛，但实时写阻断不保证。
 

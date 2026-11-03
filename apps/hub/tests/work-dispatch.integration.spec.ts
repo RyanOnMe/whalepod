@@ -799,6 +799,17 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
     const [run] = await database.db.select().from(schema.runs).where(eq(schema.runs.id, runId))
     expect(run?.status).toBe('running')
     expect(run?.mandateInvalidatedReason).toBe('mandate_revoked')
+    expect(
+      await database.db
+        .select()
+        .from(schema.dispatchOutbox)
+        .where(eq(schema.dispatchOutbox.type, 'run.mandate_invalidated')),
+    ).toHaveLength(1)
+    const view = await apiInject(ctx, alice, { method: 'GET', url: `/api/v1/runs/${runId}` })
+    expect(view.json().data).toMatchObject({
+      status: 'running',
+      mandateInvalidatedReason: 'mandate_revoked',
+    })
   })
 
   it('resume creates a new mandate version without duplicating the invalidation signal', async () => {

@@ -817,8 +817,10 @@ export class RunManager {
       },
     })
     if (!dispatched) {
-      // 与 run.followup 同口径：isActive 后仍可能撞上 handle 已消失的窗口。
-      // 不写 ack、不回 accepted，让 Hub outbox 按同一 commandId 重试。
+      // isActive 后仍可能撞上 handle 已消失的窗口；此时 Runtime 已不可执行，
+      // Run 由退出归因/心跳收敛。回报 accepted=false 供 Hub 观测；Hub 当前按
+      // command.ack 落 acked，不承诺对该类型重投（生产 driver 始终有 send，
+      // 本分支实际不可达）。
       this.ack(payload.commandId, false, {
         code: 'RUNTIME_LOST',
         message: 'runtime command channel unavailable',
