@@ -27,7 +27,7 @@ Task 责任人：
   - `GET /works/:workKey`、`GET /runs/:runId`
   - Run 终态/失败用真实 `runEventFrame(...runtime.ready/run.completed/run.failed...)` + `ingestNodeEvent`。
 - 判据：`apps/hub/tests/work-dispatch.integration.spec.ts` 共 39 项（RD-03a 26 + RD-03b 13）；-t 过滤可单跑。
-- 观测：`component=hub.dispatch`、`action=work.dispatch.auto`（workKey/intentId/runId/approvalBasis/onBehalfOfUserId/candidateCount/exclusionCount，不含正文）；预算/绑定拒绝记 `work.dispatch.auto_rejected`，回调内部故障记 `work.dispatch.auto_failed`；后两者不把已提交准入变成 500。
+- 观测：`component=hub.dispatch`、`action=work.dispatch.auto`（`actor='system'`、workKey/intentId/runId/approvalBasis/onBehalfOfUserId/candidateCount/exclusionCount，不含正文）；预算/绑定拒绝记 `work.dispatch.auto_rejected`，回调内部故障记 `work.dispatch.auto_failed`；后两者不把已提交准入变成 500。
 - DB：`dispatch_intent.status/approval_basis/approved_at/dispatched_at/candidates/exclusion_reasons/resolution_reason`、`run.origin/mandate_id/dispatch_intent_id/on_behalf_of_user_id`、`work.state/resume_mode/resume_condition`。
 
 ## 3 判定

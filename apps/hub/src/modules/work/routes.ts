@@ -547,6 +547,7 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
               {
                 component: 'hub.dispatch',
                 action: 'work.dispatch.auto',
+                actor: 'system',
                 workKey,
                 intentId: auto.id,
                 runId: auto.runId,
@@ -562,6 +563,7 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
               {
                 component: 'hub.dispatch',
                 action: 'work.dispatch.auto_rejected',
+                actor: 'system',
                 workKey,
                 intentId: auto.id,
                 status: auto.status,
@@ -577,6 +579,7 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
           {
             component: 'hub.dispatch',
             action: 'work.dispatch.auto_failed',
+            actor: 'system',
             workKey,
             intentId: proposedIntentId,
             reason: error instanceof ApiError ? error.code : 'INTERNAL_ERROR',

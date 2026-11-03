@@ -1422,6 +1422,8 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
   })
 
   it('leaves the intent proposed when the only device is offline', async () => {
+    // removeWhen: Device 在线态由 node.hello/心跳生产路径刷新；本用例只改 lastSeenAt
+    // 验证候选硬筛，不写 Run/Runtime 投影。
     await database.db
       .update(schema.devices)
       .set({ lastSeenAt: new Date(Date.now() - 5 * 60 * 1000) })
@@ -1445,6 +1447,8 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
   })
 
   it('leaves the intent proposed when the online device has no available workspace', async () => {
+    // removeWhen: Workspace available 由 Node inventory 刷新；本用例只改该列验证
+    // 候选硬筛，不写 Run/Runtime 投影。
     await database.db
       .update(schema.workspaces)
       .set({ available: false })
@@ -1614,6 +1618,7 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
   })
 
   it('selects the most recently seen online device with an available workspace', async () => {
+    // removeWhen: 同上，仅改 Device lastSeenAt 验证排序，不写运行时状态。
     await database.db
       .update(schema.devices)
       .set({ lastSeenAt: new Date(Date.now() - 10_000) })
