@@ -2,7 +2,7 @@
 
 - 对应 Issue：#519；母 Issue：#486；契约：ADR-0026 §13、ADR-0028 §17。
 - 相关质量门：Q0/Q1、Q2、Q3、Q6、Q7。
-- 最终生产装配回放：2026-11-04 12:11:28（Asia/Shanghai），九场景 PASS；基于 `42e9a7c` 后的 #519 工作分支。提交标识：`360e007`（实现提交；验收文档随后归档）。
+- 最终生产装配回放：2026-11-04 12:34:20.232（Asia/Shanghai），九场景及独立判定 PASS；最终代码提交 `8fabd08c755789420e3c3b6654c96a9057f3ebd3`，验收文档随后归档。
 - 本文登记工程回放；真实模型语义质量保持 `not_run`。
 
 ## 验的是哪条用户路径
@@ -27,7 +27,7 @@ scripts/secret-scan.sh artifacts/evidence/router-evaluation
 
 ## 观测与判定
 
-独立判定器消费 `result.json` 与同目录的 `events.jsonl`，缺文件、缺场景、缺评估、缺账本、零次慢路径调用或缺清理事实均失败。最终生产回放记录如下，最终复跑保留同一组判据。
+独立判定器消费 `result.json` 与同目录的 `events.jsonl`，缺文件、缺场景、缺评估、缺账本、零次慢路径调用或缺清理事实均失败。最终生产回放记录如下，复跑保留同一组判据。
 
 | 场景 | 必须观察到的事实 | 最终结果 |
 |---|---|---|
@@ -43,7 +43,7 @@ scripts/secret-scan.sh artifacts/evidence/router-evaluation
 
 这次回放产生 8 个 Router 评估，每个恰有一条 reserved 和一条 settled 账本；`reservationsRemaining=0`、`privateInputsCleaned=true`。额外 Task、业务 Run、派工意图和人工问题均为 0。已知 usage 按实际结算；usage 缺失与崩溃不把未知支出当作零。
 
-Hub HTTP/WS 集成测试另覆盖同输入并发/幂等、错误 attempt/lease、没有实际读取或模型启动标记、缺/伪造引用、覆盖不全与 unknown 派工、超出 Mandate 的 wait、配置/能力/责任人/授权变化、超时、取消、迟到、终态不可覆写与历史私有读面。DB 集成测试验证共享预算竞争、预留回滚、幂等结算、跨 UTC 日沿原 reserved 日期结算及全局团队策略。最终用例数和验证结果见下表。
+Hub HTTP/WS 集成测试另覆盖同输入并发/幂等、错误 attempt/lease、没有实际读取或模型启动标记、缺/伪造引用、覆盖不全与 unknown 派工、超出 Mandate 的 wait、配置/能力/责任人/授权变化、超时、取消、迟到、终态不可覆写与历史私有读面。DB 集成测试验证共享预算竞争、预留回滚、幂等结算、跨 UTC 日沿原 reserved 日期结算及全局团队策略。Node 恢复回归覆盖 12 项：正常 finish 后也须确认 PID 与整个 PGID 退出再清理；进程身份未知或权限不足时保留 cleanup pending，目录清理要求有效 evaluation UUID 和安全正整数 attempt。Router 私有历史禁用共享及持久缓存。用例数和验证结果见下表。
 
 ## 隔离与费用边界
 
@@ -72,16 +72,20 @@ Executor token/cost 账本仍由 #520 补齐。本切片使用双向拒绝边界
 
 | 门 / 检查 | 结果 | 证据 / 数量 |
 |---|---|---|
-| Q0/Q1 `pnpm check` | PASS | 230 文件 / 2492 项 |
-| Q2 `pnpm test:integration` | PASS | 全量 92 文件 / 936 项；最终 Router 定向 37/37，含新增 6 项费用、覆盖与结果负控 |
+| Q0/Q1 `pnpm check` | PASS | 最终本地 231 文件 / 2504 项，12:33:39（Asia/Shanghai） |
+| Q2 `pnpm test:integration` | PASS | 首次 Ubuntu CI 全量 92 文件 / 942 项（run 41771845277）；最终本地 Router 定向 37/37，含新增 6 项费用、覆盖与结果负控 |
 | Q3 `pnpm test:dsh-contract` | PASS | 25 文件 / 147 项；Router 真实 bin 48 项，30 个工具名逐项负控 |
 | Q6 `pnpm test:resilience` | PASS | 6 文件 / 34 项 |
 | Q7 `pnpm test:security` | PASS | 4 文件 / 18 项；敏感扫描 11 条语料自证和实扫、626 项依赖许可均通过 |
 | 最终生产装配九场景与独立判定 | PASS | `result.json`、`events.jsonl`，8 个评估 / 9 个场景 |
-| 关键判据单点变异并恢复 | PASS | 19/19 被断言杀死；前后 Router 集成基线均 37/37 |
+| 关键判据单点变异并恢复 | PASS | 26/26 被断言杀死；前后 Hub 37/37、Node 恢复 12/12，合计均 49/49 |
 | 最终 secret scan / diff check | PASS | 所有改动文件及证据扫描通过，diff 检查通过 |
 
-变异证据 `mutations/result.json` 生成于 2026-11-04 12:09:41.919（Asia/Shanghai）；每项均以退出码 1 和目标断言失败杀死，前后基线均通过，源文件已恢复，SHA-256 为 `fecab0c5e4799aee9608be533aa6553e4d089380c866f2f7ad8d5298bf0036c1`。
+变异证据 `mutations/result.json` 生成于 2026-11-04 12:31:46.021（Asia/Shanghai）；每项均以退出码 1 和目标断言失败杀死，前后基线均通过。三份源文件均已恢复，SHA-256 分别为：
+
+- `apps/hub/src/modules/router/service.ts`：`fecab0c5e4799aee9608be533aa6553e4d089380c866f2f7ad8d5298bf0036c1`
+- `apps/node/src/coordination/manager.ts`：`d5047d6cb7ca9aebaa762c9c90f11e5b92e288a0ad275437568148127467ab5c`
+- `apps/hub/src/modules/router/routes.ts`：`eee8c183f94dfb6cd4efdca2efd1fbd67ec72422e90276623e4f3e3b822cce07`
 
 | ID | 移除的守卫与命中的失败断言 |
 |---|---|
@@ -104,9 +108,16 @@ Executor token/cost 账本仍由 #520 补齐。本切片使用双向拒绝边界
 | R17 | usage 不得超出预留 token 和费用；超额结果被拒并结算 |
 | R18 | unknown 覆盖不能 ignore；对应结果被拒并结算 |
 | R19 | 结果 digest 必须覆盖精确接受的提案；错误结果 digest 被拒并结算 |
+| R20 | 已持久化终态结果不证明孤儿进程已退出；清理输入前停止所属孤儿并保留终态记录 |
+| R21 | 存活进程身份未知时保留私有输入的清理 pending |
+| R22 | `kill(0)` 返回 EPERM 不证明 broker 已退出 |
+| R23 | 无效 journal UUID 不能授权文件清理；保持 pending |
+| R24 | 私有 Router 历史禁用共享和持久缓存；检查仅 owner 可读的空历史响应 |
+| R25 | 进程组仍存活时 leader 退出不能授权清理；须等待两者均退出 |
+| R26 | 清理 attempt 须为安全正整数；小数及超出安全整数范围均保持 pending |
 
 ## 边界与复跑
 
 真实模型的覆盖语义、材料中的权限诱导识别与跨模型质量尚未按开发集/保留集验证，保持 `modelQuality=not_run`。回放的 PASS 只证明工程链、围栏与计费，不证明语义正确。外部来源、提案应用、自动下一 Run、wait 到期调度、扩权确认和新建 Task/工作均不在 #519 范围。
 
-从干净构建复跑上述生产驱动及独立判定，再运行相关质量门。Ubuntu CI 执行真实 bin Q3、Q2/Q6/Q7、生产回放及 19 项守卫变异；回放和变异证据在扫描通过后上传。任一关键门失败不得据本机 PASS 合入。
+从干净构建复跑上述生产驱动及独立判定，再运行相关质量门。首次 Ubuntu CI run 41771845277 已成功；合入要求最终 PR 提交对应的 `check` 和 `integration` 两项必检均成功。Ubuntu CI 执行真实 bin Q3、Q2/Q6/Q7、生产回放及 26 项守卫变异；回放和变异证据在扫描通过后上传。任一关键门失败不得据本机 PASS 合入。
