@@ -16,6 +16,8 @@ import { OutboxWorker } from './modules/run/index.js'
 import { reconcileLeases } from './modules/run/reconciler.js'
 import { expireApprovals } from './modules/run/approval-expiry.js'
 import { runCoordinationTick } from './modules/coordination/tick.js'
+import { runRouterTick } from './modules/router/service.js'
+import { ArtifactStore } from './modules/artifact/store.js'
 import { runSourceReconcileTick } from './modules/source/tick.js'
 import { reconcileWorkInputs } from './modules/work/run-inputs.js'
 import { reconcileMandateInvalidation } from './modules/dispatch/service.js'
@@ -70,6 +72,26 @@ const workerTimer = setInterval(() => {
  * ABBA。串行化自动路径即可，真人审批与终态折叠的既有竞争仍由 PostgreSQL 检测。
  */
 let receiptMaintenanceRunning = false
+let routerTickRunning = false
+const routerStore = new ArtifactStore({ root: config.artifactStoreDir })
+const routerTimer = setInterval(() => {
+  if (routerTickRunning) return
+  routerTickRunning = true
+  void runRouterTick({
+    database,
+    store: routerStore,
+    log: (event) => app.log.info(event, 'router event'),
+  })
+    .catch((error) =>
+      app.log.warn({ component: 'hub.router', ...sanitizeError(error) }, 'router tick failed'),
+    )
+    .finally(() => {
+      routerTickRunning = false
+    })
+}, 1000)
+app.addHook('onClose', async () => {
+  clearInterval(routerTimer)
+})
 const leaseTimer = setInterval(() => {
   void reconcileLeases(
     {

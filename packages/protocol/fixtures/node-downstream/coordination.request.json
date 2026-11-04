@@ -1,0 +1,41 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01940000-0000-7000-8000-000000000001",
+  "sentAt": "2026-11-04T04:00:00Z",
+  "type": "coordination.request",
+  "payload": {
+    "evaluationId": "01940000-0000-7000-8000-000000000002",
+    "attempt": 1,
+    "leaseToken": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "evaluationDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "projectId": "01940000-0000-7000-8000-000000000003",
+    "workKey": "01940000-0000-7000-8000-000000000004",
+    "taskId": "01940000-0000-7000-8000-000000000005",
+    "principalUserId": "01940000-0000-7000-8000-000000000006",
+    "billingUserId": "01940000-0000-7000-8000-000000000006",
+    "provider": "test-provider",
+    "model": "test-model",
+    "credentialSlot": "coordination",
+    "credentialConfigRevision": "v1",
+    "configVersion": 1,
+    "manifest": [
+      {
+        "id": "01940000-0000-7000-8000-000000000008",
+        "kind": "source",
+        "sourceId": "01940000-0000-7000-8000-000000000009",
+        "version": "v1",
+        "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "byteSize": 32,
+        "authorizationGeneration": "internal"
+      }
+    ],
+    "inputTokensEstimate": 18000,
+    "maxInputTokens": 32000,
+    "maxOutputTokens": 1000,
+    "maxCostMicros": 5000,
+    "inputPriceMicrosPerMillionTokens": 1000,
+    "outputPriceMicrosPerMillionTokens": 1000,
+    "leaseExpiresAt": "2026-11-04T04:01:00Z",
+    "deadlineAt": "2026-11-04T04:01:00Z"
+  }
+}

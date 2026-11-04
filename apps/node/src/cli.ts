@@ -20,15 +20,20 @@ import {
   detectPlatformKind,
   refreshHelloAfterPreflight,
 } from './gateway/hello-facts.js'
-import { installedPackDigests } from './plugin/runtime-config.js'
 import { resolveDshVersionFacts } from './plugin/dsh-version-probe.js'
 import type { PluginFetch } from './plugin/installer.js'
 import { registryFileRevision, WorkspaceRegistry } from './workspace/registry.js'
 import { WorkspaceInventory } from './workspace/inventory.js'
 import { SecretStore } from './secret/store.js'
 import { runWorkspaceCommand, runSecretSet, readHiddenLine } from './workspace/cli-commands.js'
+import { COORDINATION_CAPABILITY } from '@whalepod/protocol'
+import { CoordinationManager } from './coordination/manager.js'
+import { probeCoordinationRuntime } from './coordination/driver.js'
+import { coordinationCredentialFacts } from './coordination/config.js'
+import { runCoordinationCommand } from './coordination/cli.js'
 
 interface PairArgs {
+  configDir?: string
   hub: string
   code: string
   name: string
@@ -51,18 +56,25 @@ async function runPair(args: PairArgs): Promise<void> {
     },
     { idempotencyKey: randomUUID() },
   )
-  const path = await saveConfig({
-    hubUrl: args.hub,
-    deviceId: result.deviceId,
-    deviceToken: result.deviceToken,
-  })
+  const path = await saveConfig(
+    {
+      hubUrl: args.hub,
+      deviceId: result.deviceId,
+      deviceToken: result.deviceToken,
+    },
+    args.configDir === undefined ? {} : { configDir: args.configDir },
+  )
   process.stdout.write(`paired: deviceId=${result.deviceId}\nconfig saved to ${path}\n`)
   // 明文 Token 仅在 stderr 出现一次供运维记录；pair 成功后不回显到 stdout 日志流。
   process.stderr.write(`device token (shown once): ${result.deviceToken}\n`)
 }
 
-async function runStart(dshVersion: string | undefined, stateDir: string): Promise<void> {
-  const config = await loadConfig()
+async function runStart(
+  dshVersion: string | undefined,
+  stateDir: string,
+  configDir = DEFAULT_CONFIG_DIR,
+): Promise<void> {
+  const config = await loadConfig({ configDir })
   if (config === undefined) {
     process.stderr.write('no local config: run `whalepod-node pair` first\n')
     process.exit(1)
@@ -72,6 +84,8 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   // 深路径，未 exports ⟹ ERR_PACKAGE_PATH_NOT_EXPORTED，start 启动即死）。
   const createRequire = (await import('node:module')).createRequire
   const runtimeEntry = createRequire(import.meta.url).resolve('@whalepod/runtime/bin')
+  // Capability comes from the same isolated worker launch path, never from an operator claim.
+  const coordinationCapable = await probeCoordinationRuntime(runtimeEntry)
   // #288：「敏感不兼容禁启动」的左侧操作数——本机真实 DSH 版本由 Runtime 自报
   //（唯一允许 import @deepseek-ai/* 的一侧），不再由操作者声明。探针失败 → probed
   // 为 null：上报照旧走显式参数/环境变量/'unmanaged' 的诚实兜底，而 pack 兼容闸
@@ -100,6 +114,7 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     stateDir,
     runtimeEntry,
     startupDshVersion: dshVersionFacts.reported,
+    coordinationCapabilities: coordinationCapable ? [COORDINATION_CAPABILITY] : [],
   })
 
   // ---- P1-13 运行会话层装配（02 Task 13）----
@@ -247,6 +262,17 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   // 时启动即崩（alpha.2 狗食实录：一孤儿一崩）。no-op 默认值正是为会话建立前
   // 的这段窗口准备的，但 TDZ 会让默认值根本来不及生效。
   let sessionSend: (frame: string) => boolean = () => false
+  const coordination = new CoordinationManager({
+    stateDir,
+    hubUrl: config.hubUrl,
+    deviceToken: config.deviceToken,
+    runtimeEntry,
+    capable: coordinationCapable,
+    send: (frame) => sessionSend(frame),
+    log: (event, fields) =>
+      process.stderr.write(`${JSON.stringify({ level: 'info', msg: event, ...fields })}\n`),
+  })
+  await coordination.recover()
   const supervisor = new RuntimeSupervisor({
     // #356：spawn 时把本进程探针到的 DSH 版本记进 active_runtime——Node 重启后
     // 据此区分「换过版本（升级/回滚）」与「进程丢了」。probed 未知（探针失败）时
@@ -332,9 +358,17 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     helloFacts,
     onRevoked: () => {
       // 删本地 Token；保留 Workspace/Artifact 数据。
-      void revokeLocalConfig()
+      void revokeLocalConfig(configDir)
     },
     onFrame: (frame) => {
+      if (frame.type.startsWith('coordination.')) {
+        void coordination.handleFrame(frame).catch(() => {
+          process.stderr.write(
+            `${JSON.stringify({ level: 'error', component: 'node.coordination', msg: 'frame_handler_failed' })}\n`,
+          )
+        })
+        return
+      }
       void runManager.handleFrame(frame).catch((error: unknown) => {
         process.stderr.write(
           `${JSON.stringify({ level: 'error', component: 'node.run', msg: 'downstream frame handling failed', error: error instanceof Error ? error.message : String(error) })}\n`,
@@ -342,6 +376,7 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
       })
     },
     onConnected: () => {
+      coordination.onReconnect()
       runManager.onReconnect()
       if (!deviceConnectedOnce) {
         deviceConnectedOnce = true
@@ -350,7 +385,12 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
     },
     // #89：连接建立后上报 inventory（Hub 的 Workspace 投影唯一来源；此前生产
     // 链路一帧不发，真实用户 RunLauncher 选不到任何 Workspace）。
-    inventoryFacts: () => inventory.build(),
+    inventoryFacts: async () => ({
+      ...(await inventory.build()),
+      coordinationCredentialSlots: coordinationCapable
+        ? await coordinationCredentialFacts(stateDir)
+        : [],
+    }),
     preparationCheck: (request) => checkPreparation(request, { registry, secrets }),
     // #94：变化时重报——registry 文件指纹随心跳节拍探测，`workspace add/remove`
     // （独立短进程写库）无需重启 node 即收敛到 Hub 投影。
@@ -385,20 +425,38 @@ async function runStart(dshVersion: string | undefined, stateDir: string): Promi
   // #352：句柄落地——此后 preflight 装/重建 pack 会经它刷新 hello（事实变了才发）。
   deviceSession = session
   sessionSend = session.send
+  let shuttingDown = false
+  const stopCoordination = async (): Promise<void> => {
+    if (shuttingDown) return
+    shuttingDown = true
+    // Keep the socket alive while saving/sending the terminal result; its durable outbox
+    // survives a lost ack. Business Run recovery keeps its existing independent lifecycle.
+    try {
+      await coordination.stop()
+    } finally {
+      session.stop()
+      process.exit(0)
+    }
+  }
+  process.once('SIGTERM', () => void stopCoordination())
+  process.once('SIGINT', () => void stopCoordination())
 }
 
-async function revokeLocalConfig(): Promise<void> {
+async function revokeLocalConfig(configDir = DEFAULT_CONFIG_DIR): Promise<void> {
   const fs = await import('node:fs/promises')
-  const { DEFAULT_CONFIG_DIR } = await import('./config.js')
   const { join } = await import('node:path')
   try {
-    await fs.unlink(join(DEFAULT_CONFIG_DIR, 'config.json'))
+    await fs.unlink(join(configDir, 'config.json'))
   } catch {
     // 已删则忽略。
   }
 }
 
 export async function main(argv: string[]): Promise<void> {
+  if (argv[0] === 'coordination') {
+    await runCoordinationCommand(argv.slice(1))
+    return
+  }
   const { values, positionals } = parseArgs({
     args: argv,
     options: {
@@ -411,6 +469,7 @@ export async function main(argv: string[]): Promise<void> {
       'node-app-version': { type: 'string', default: '0.1.0' },
       'dsh-version': { type: 'string' },
       'state-dir': { type: 'string' },
+      'config-dir': { type: 'string' },
     },
     allowPositionals: true,
   })
@@ -421,6 +480,7 @@ export async function main(argv: string[]): Promise<void> {
       process.exit(2)
     }
     await runPair({
+      ...(values['config-dir'] === undefined ? {} : { configDir: values['config-dir'] }),
       hub: values.hub,
       code: values.code,
       name: values.name ?? 'whalepod-node',
@@ -432,7 +492,11 @@ export async function main(argv: string[]): Promise<void> {
     return
   }
   if (command === 'start') {
-    await runStart(values['dsh-version'], values['state-dir'] ?? join(DEFAULT_CONFIG_DIR, 'state'))
+    await runStart(
+      values['dsh-version'],
+      values['state-dir'] ?? join(values['config-dir'] ?? DEFAULT_CONFIG_DIR, 'state'),
+      values['config-dir'],
+    )
     return
   }
   if (command === 'workspace' || command === 'secret') {

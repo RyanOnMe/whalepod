@@ -10,6 +10,8 @@
  */
 import {
   countFailedMachineRunsForWork,
+  countChargedRouterFailuresForWork,
+  getWorkCoordinationBudget,
   countMachineRunsForWork,
   expireDispatchIntent,
   getAgent,
@@ -356,7 +358,21 @@ async function machineBudgetReason(
   const totalRuns = await countMachineRunsForWork(tx, work.workKey)
   if (totalRuns >= mandate.maxRunsPerWork) return 'max_runs_exhausted'
   const failedRuns = await countFailedMachineRunsForWork(tx, work.workKey)
-  if (failedRuns >= mandate.maxAttempts) return 'max_attempts_exhausted'
+  const failedRouter = await countChargedRouterFailuresForWork(tx, work.workKey)
+  if (failedRuns + failedRouter >= mandate.maxAttempts) return 'max_attempts_exhausted'
+  const budget = await getWorkCoordinationBudget(tx, work.workKey)
+  // #520 supplies Executor reservations/usage. Until then mixed unknown spending
+  // fails closed, including in-flight Router reservations and prior Mandate versions.
+  if (
+    budget &&
+    budget.inputTokens +
+      budget.outputTokens +
+      budget.costMicros +
+      budget.reservedTokens +
+      budget.reservedCostMicros >
+      0
+  )
+    return 'executor_usage_unavailable'
   return undefined
 }
 

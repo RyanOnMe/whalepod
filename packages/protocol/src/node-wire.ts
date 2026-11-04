@@ -35,6 +35,16 @@ import {
   RunWorkInputReceiptSchema,
 } from './work-input-wire.js'
 
+import {
+  CoordinationCapabilitySchema,
+  CoordinationCredentialSlotSchema,
+  CoordinationRequestPayloadSchema,
+  CoordinationResultPayloadSchema,
+  CoordinationHeartbeatPayloadSchema,
+  CoordinationCancelPayloadSchema,
+  CoordinationResultAckPayloadSchema,
+} from './router.js'
+
 const Sha256DigestSchema = z.string().regex(/^[a-f0-9]{64}$/)
 const DshSessionIdSchema = z.string().min(1).max(128)
 const CallIdSchema = z.string().min(1).max(128)
@@ -199,6 +209,7 @@ export const NodeHelloSchema = envelope(
      * 会因 strictObject 的未知字段被拒，部署顺序固定为 Hub 先升级。
      */
     sourceCapabilities: z.array(SourceCapabilitySchema).max(8).optional(),
+    coordinationCapabilities: z.array(CoordinationCapabilitySchema).max(1).optional(),
     /**
      * ADR-0027 §3 / ADR-0028 §3：Run 交付能力。缺省 = 旧 Node；Hub 对非空项目
      * 上下文快照或非空工作输入清单不向未声明的 Node 派发。空清单仍可执行。
@@ -229,6 +240,7 @@ export const NodeInventorySchema = envelope(
         slot: z.string().min(1).max(80),
       }),
     ),
+    coordinationCredentialSlots: z.array(CoordinationCredentialSlotSchema).max(16).optional(),
     workspaces: z.array(
       z.strictObject({
         workspaceId: z.uuid(),
@@ -327,8 +339,31 @@ export const SourcePermissionResultSchema = envelope(
   SourcePermissionResultPayloadSchema,
 )
 
+export const CoordinationHeartbeatFrameSchema = envelope(
+  'coordination.heartbeat',
+  CoordinationHeartbeatPayloadSchema,
+)
+export const CoordinationResultFrameSchema = envelope(
+  'coordination.result',
+  CoordinationResultPayloadSchema,
+)
+export const CoordinationRequestFrameSchema = envelope(
+  'coordination.request',
+  CoordinationRequestPayloadSchema,
+)
+export const CoordinationCancelFrameSchema = envelope(
+  'coordination.cancel',
+  CoordinationCancelPayloadSchema,
+)
+export const CoordinationResultAckFrameSchema = envelope(
+  'coordination.result_ack',
+  CoordinationResultAckPayloadSchema,
+)
+
 export const NodeUpstreamSchema = z.discriminatedUnion('type', [
   NodeHelloSchema,
+  CoordinationHeartbeatFrameSchema,
+  CoordinationResultFrameSchema,
   NodeHeartbeatSchema,
   NodeInventorySchema,
   NodePreparationResultSchema,
@@ -509,6 +544,9 @@ export const RunContextStateFrameSchema = envelope('run.context_state', RunConte
 export const ContextStateSyncFrameSchema = envelope('context.state_sync', ContextStateSyncSchema)
 
 export const NodeDownstreamSchema = z.discriminatedUnion('type', [
+  CoordinationRequestFrameSchema,
+  CoordinationCancelFrameSchema,
+  CoordinationResultAckFrameSchema,
   RunStartSchema,
   RunCancelSchema,
   RunMandateInvalidatedSchema,

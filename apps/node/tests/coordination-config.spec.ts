@@ -27,6 +27,7 @@ const config = () => ({
   provider: 'deepseek-official',
   model: 'deepseek-chat',
   credentialSlot: 'coordination',
+  configRevision: 'revision-1',
   endpoint: 'https://api.deepseek.com/chat/completions',
 })
 
@@ -82,6 +83,9 @@ describe('explicit local coordination configuration', () => {
     expect(await coordinationCredentialFacts(dir)).toEqual([
       {
         provider: input.provider,
+        model: input.model,
+        scope: 'coordination',
+        configRevision: input.configRevision,
         slot: input.credentialSlot,
         ownerUserId: input.ownerUserId,
         billingUserId: input.billingUserId,

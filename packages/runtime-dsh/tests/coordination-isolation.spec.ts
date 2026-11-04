@@ -3,7 +3,10 @@ import {
   coordinationSandboxCommand,
   coordinationWorkerEnvironment,
 } from '../src/coordination-isolation.js'
-import { validateCoordinationEndpoint, parseCoordinationModelResponse } from '../src/coordination-model.js'
+import {
+  validateCoordinationEndpoint,
+  parseCoordinationModelResponse,
+} from '../src/coordination-model.js'
 
 describe('Router 的进程与 provider 边界', () => {
   it('不支持隔离的平台拒绝启动，不能降级成普通 Node 进程', () => {
@@ -58,17 +61,28 @@ describe('Router 的进程与 provider 边界', () => {
   it('provider 自行返回工具调用也拒绝，不把它作为可执行或合法文本结果', () => {
     expect(() =>
       parseCoordinationModelResponse({
-        choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ function: { name: 'bash' } }] } }],
+        choices: [
+          {
+            finish_reason: 'tool_calls',
+            message: { tool_calls: [{ function: { name: 'bash' } }] },
+          },
+        ],
         usage: { prompt_tokens: 10, completion_tokens: 2 },
       }),
     ).toThrow('unsupported_tool_call')
   })
 
   it('缺 usage 或截断结果不能当成成功', () => {
-    expect(() => parseCoordinationModelResponse({ choices: [{ finish_reason: 'stop', message: { content: '{}' } }] })).toThrow('usage_missing')
-    expect(() => parseCoordinationModelResponse({
-      choices: [{ finish_reason: 'length', message: { content: '{}' } }],
-      usage: { prompt_tokens: 10, completion_tokens: 2 },
-    })).toThrow('incomplete_model_result')
+    expect(() =>
+      parseCoordinationModelResponse({
+        choices: [{ finish_reason: 'stop', message: { content: '{}' } }],
+      }),
+    ).toThrow('usage_missing')
+    expect(() =>
+      parseCoordinationModelResponse({
+        choices: [{ finish_reason: 'length', message: { content: '{}' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 2 },
+      }),
+    ).toThrow('incomplete_model_result')
   })
 })

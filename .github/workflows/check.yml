@@ -96,3 +96,28 @@ jobs:
       # 不是把它挪回「人心里的门」。
       - name: Run resilience gate (Q6)
         run: pnpm test:resilience
+
+      # #519: Linux 真 Hub/Node/独立受限 Runtime；只回放模型 HTTP 出口。
+      # 驱动自建临时 PG，独立判定要求九场景、零业务副作用、账本配对与输入清理。
+      - name: Run Router production acceptance
+        run: pnpm exec tsx scripts/run-router-evaluation.ts
+
+      - name: Run Router guard mutations
+        run: pnpm exec tsx scripts/mutate-router-evaluation.ts
+
+      - name: Scan Router acceptance evidence
+        id: router_evidence_scan
+        if: always()
+        run: |
+          if [ -d artifacts/evidence/router-evaluation ]; then
+            scripts/secret-scan.sh artifacts/evidence/router-evaluation
+          fi
+
+      - name: Upload Router acceptance evidence
+        if: always() && steps.router_evidence_scan.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: router-evaluation-evidence
+          path: artifacts/evidence/router-evaluation/
+          if-no-files-found: warn
+          retention-days: 30

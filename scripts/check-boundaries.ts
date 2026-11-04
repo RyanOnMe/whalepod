@@ -585,6 +585,8 @@ export const HARNESS_SRC_PATH_ALLOWLIST: readonly string[] = [
   'scripts/check-boundaries.spec.ts',
   // 陈旧残留清理：切装配前的历史进程仍需覆盖一轮（e2e-serve.mts 内已注记）。
   'scripts/e2e-serve.mts:apps/runtime/src/bin.ts',
+  // #519 单点变异的编辑目标，不作为 spawn/import 入口；原因与删除条件见 runner。
+  'scripts/mutate-router-evaluation.ts:apps/hub/src/modules/router/service.ts',
   // #281 起 e2e-serve 的 Hub 装配唯一走包解析 dist 产物，源码路径例外已摘除。
 ]
 

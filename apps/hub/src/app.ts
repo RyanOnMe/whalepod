@@ -34,6 +34,7 @@ import {
 import { logRecordedEntry } from './modules/context/observer.js'
 // ADR-0026（PC-04a）：确定性内部协调的读面与显式触发。
 import { registerCoordinationRoutes } from './modules/coordination/routes.js'
+import { registerRouterRoutes } from './modules/router/routes.js'
 import { registerTaskRoutes } from './modules/task/routes.js'
 import { registerAgentRoutes } from './modules/agent/routes.js'
 import { loadPluginCatalog } from './modules/plugin/catalog.js'
@@ -213,7 +214,12 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
     send: (deviceId, frame) => nodeConnections.send(deviceId, frame),
   })
   app.decorate('runOrchestrator', orchestrator)
-  registerNodeWebsocket(app, { database, orchestrator, realtime })
+  registerNodeWebsocket(app, {
+    database,
+    orchestrator,
+    realtime,
+    routerStore: new ArtifactStore({ root: config.artifactStoreDir }),
+  })
 
   await app.register(
     async (api) => {
@@ -230,6 +236,12 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       registerSourceRoutes(api, { database, requireActor })
       registerContextRoutes(api, { database, requireActor })
       registerCoordinationRoutes(api, { database, requireActor })
+      registerRouterRoutes(api, {
+        database,
+        requireActor,
+        store: new ArtifactStore({ root: config.artifactStoreDir }),
+        log: (event) => app.log.info(event, 'router event'),
+      })
       // ADR-0028（RD-01）：持续工作、Mandate 与影子准入；只写协调记录，不建 Run。
       registerWorkRoutes(api, {
         database,

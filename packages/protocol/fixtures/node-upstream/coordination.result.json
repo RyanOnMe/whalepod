@@ -1,0 +1,35 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01940000-0000-7000-8000-000000000001",
+  "sentAt": "2026-11-04T04:00:00Z",
+  "type": "coordination.result",
+  "payload": {
+    "evaluationId": "01940000-0000-7000-8000-000000000002",
+    "attempt": 1,
+    "leaseToken": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "evaluationDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "status": "completed",
+    "resultDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "proposal": {
+      "decision": "ignore",
+      "summary": "No new requirement.",
+      "reason": "no_action",
+      "citations": ["01940000-0000-7000-8000-000000000008"],
+      "coverage": [
+        {
+          "inputId": "01940000-0000-7000-8000-000000000008",
+          "status": "unknown",
+          "evidenceIds": []
+        }
+      ]
+    },
+    "readEntryIds": ["01940000-0000-7000-8000-000000000008"],
+    "usage": {
+      "inputTokens": 100,
+      "outputTokens": 20,
+      "costMicros": 1,
+      "provider": "test-provider",
+      "model": "test-model"
+    }
+  }
+}
