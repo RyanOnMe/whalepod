@@ -30,7 +30,7 @@ Task 责任人：
 ## 3 判定
 
 - **正控**：改派并接受指派后，新 assignee accept 201；Work active、owner 改为新 assignee、`work.mandateId` 指向新版本、currentMandate 为新版本（version=旧+1，principal 新 assignee）；旧 Mandate 仍在历史但 current=false、principal/status 原样；之后可继续创建下一版本；承接后新评论的准入按新 Mandate 生成 proposed 意图。
-- **负控**：非本任务 assignee（含旧 assignee）→ 403；新 assignee 未接受指派 → 409；非法 Mandate 体（面外工具名）→ 400 且 Work 保持 waiting/old owner；已 active 的 Work 用新幂等键再承接 → 409；旧 proposed 意图不复活。
+- **负控**：非本任务 assignee（含旧 assignee）→ 403；新 assignee 未接受指派 → 409；非法 Mandate 体（面外工具名）→ 400 且 Work 保持 waiting/old owner；已 active 的 Work 用新幂等键再承接 → 409；旧 proposed 意图在改派阶段已取消，承接侧只做防御性幂等、不复活。
 - **幂等**：同一幂等键重放返回同一 Mandate，不产生第二版本。
 - **数据判据**：新 Mandate 主体四字段一致；旧 Mandate 行不被更新（current=false、principal/status 原样）；Work 指针 `mandateId` 指向新版本；审计事件 `work.accept` 带 `{actor, workKey, mandateId, version}`。
 
@@ -57,6 +57,7 @@ Task 责任人：
 - Run 终态后对收件箱 pending 条目的自动下一 Run 未做（RD-03d3）；本切片只保证承接后 work 可继续被既有准入/派工使用。
 - 承接必须带新 Mandate 体：这是本 API 的原子设计，避免「先 active、后建 Mandate」窗口里旧 Mandate 被误用；不提供只改状态的裸承接。
 - 旧 Mandate 不自动撤销/不改写，仅被新版本取代；审计与读面按版本历史解释。
+- 并发同幂等键的败者可能先撞状态守卫返回 409，而非重放 201；不产生第二版本，属瞬态语义，由客户端重试收敛。
 - `apps/web` 未改；无 UI 入口。
 
 ## 7 复跑

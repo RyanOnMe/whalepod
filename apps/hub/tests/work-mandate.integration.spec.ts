@@ -1170,7 +1170,11 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
       'task_message',
       postAcceptSource,
     )
-    expect(postAccept.proposedIntent).not.toBeNull()
+    expect(postAccept.proposedIntent).toMatchObject({
+      status: 'proposed',
+      mandateId: newMandateId,
+      mandateVersion: oldMandate.version + 1,
+    })
 
     // 承接后新 assignee 可按既有路径继续创建下一版本。
     const next = await apiInject(ctx, bob, {

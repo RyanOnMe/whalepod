@@ -168,7 +168,11 @@ export async function createWorkSubscription(
         })
       }
       if (work.humanOwnerUserId !== task.assigneeUserId) {
-        throw new ApiError(409, 'CONFLICT', 'work ownership changed; retire it before subscribing')
+        throw new ApiError(
+          409,
+          'CONFLICT',
+          'work ownership changed; accept the work or retire it before subscribing',
+        )
       }
       const now = deps.now()
       const latest = await getLatestWorkMandate(tx, work.id)

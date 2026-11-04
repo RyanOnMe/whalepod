@@ -76,28 +76,37 @@ export type AuditAction =
 export type AuditOutcome = 'success' | 'denied' | 'rate_limited'
 
 /**
- * 审计事件（02 Task 5 Step 7）：只记 actor、action、outcome、requestId，
- * 不记密码或 Token。载体是带 component 分层字段的结构化日志（六原语·观测），
- * 由 hub 日志流落盘，不进数据库、不进团队投影。
+ * 审计动作自身的**不透明标识/计数**（如 workKey/mandateId/version）。
+ * 白名单式窄类型：不接受任意键，严禁正文、路径、凭据。
+ */
+export interface AuditFields {
+  readonly workKey?: string
+  readonly mandateId?: string
+  readonly version?: number
+}
+
+/**
+ * 审计事件（02 Task 5 Step 7）：只记 actor、action、outcome、requestId（以及白名单
+ * AuditFields），不记密码或 Token。载体是带 component 分层字段的结构化日志（六原语·
+ * 观测），由 hub 日志流落盘，不进数据库、不进团队投影。
  *
- * `fields` 只用于动作自身的**不透明标识/计数**（如 workKey/mandateId/version）；
- * 严禁传入正文、路径、凭据。
+ * 保留键放在 fields 之后展开，调用方无法覆盖 component/action/actor/outcome/requestId。
  */
 export function audit(
   request: FastifyRequest,
   action: AuditAction,
   outcome: AuditOutcome,
   actor: string = 'anonymous',
-  fields: Record<string, unknown> = {},
+  fields: AuditFields = {},
 ): void {
   request.log.info(
     {
+      ...fields,
       component: 'hub.audit',
       action,
       actor,
       outcome,
       requestId: String(request.id),
-      ...fields,
     },
     'audit',
   )

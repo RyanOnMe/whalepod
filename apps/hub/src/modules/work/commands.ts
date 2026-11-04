@@ -289,11 +289,11 @@ export async function createWorkMandate(
         throw new ApiError(409, 'CONFLICT', 'full_access task cannot receive a mandate')
       }
       if (work.humanOwnerUserId !== actorUserId) {
-        // Task 改派后旧工作不随新 assignee 复活；新 assignee 只能显式退休后另建工作。
+        // Task 改派后旧工作不随新 assignee 复活；新 assignee 先 accept 承接或退休后另建工作。
         throw new ApiError(
           409,
           'CONFLICT',
-          'work ownership changed; retire it before creating a mandate',
+          'work ownership changed; accept the work or retire it before creating a mandate',
         )
       }
       if (work.state !== 'active') {
