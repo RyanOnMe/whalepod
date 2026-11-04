@@ -93,6 +93,7 @@ export interface WorkPatch {
   readonly resumeMode?: WorkRow['resumeMode']
   readonly resumeCondition?: string | null
   readonly mandateId?: string | null
+  readonly humanOwnerUserId?: string
   readonly retiredAt?: Date | null
   readonly updatedAt?: Date
 }

@@ -33,6 +33,7 @@ import type { RequireActor, SessionActor } from '../auth/session.js'
 import { authenticateDevice } from '../plugin/pack-resolver.js'
 import { ERROR_HTTP_STATUS, errorCodeOf } from '../run/routes.js'
 import {
+  acceptWorkAfterOwnerChange,
   changeWorkMandateStatus,
   createWork,
   createWorkMandate,
@@ -222,6 +223,32 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
     }
     audit(request, 'work.mandate.create', 'success', session.userId)
     return reply.code(201).send({ ok: true, data: view })
+  })
+
+  // POST /works/:workKey/accept：改派后的新 assignee 显式承接并建立自己的新 Mandate。
+  app.post('/works/:workKey/accept', async (request, reply) => {
+    const session = await deps.requireActor(request)
+    const { workKey: rawWorkKey } = request.params as { workKey: string }
+    const workKey = parseUuid(rawWorkKey, 'work key')
+    const body = parseBody(CreateWorkMandateRequestSchema, request.body)
+    const outcome = await mapWorkErrors(() =>
+      acceptWorkAfterOwnerChange(
+        { database: deps.database, now: () => new Date() },
+        session.userId,
+        workKey,
+        body,
+        readIdempotencyKey(request),
+      ),
+    )
+    if (deps.onMandateChanged !== undefined && outcome.changed) {
+      await deps.onMandateChanged(session, outcome.view.workKey)
+    }
+    audit(request, 'work.accept', 'success', session.userId, {
+      workKey: outcome.view.workKey,
+      mandateId: outcome.view.id,
+      version: outcome.view.version,
+    })
+    return reply.code(201).send({ ok: true, data: outcome.view })
   })
 
   // GET /works/:workKey/mandates：版本历史（新到旧）。

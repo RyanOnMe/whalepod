@@ -85,7 +85,8 @@ export function taskChangedPayload(task: TaskRow): unknown {
 
 /**
  * ADR-0028 §2：Task 改派给另一名成员后，旧工作转 waiting(owner_confirmation)，
- * 旧 proposed 意图作废；新 assignee 只能显式退休后另建工作（RD-01 无确认承接端点）。
+ * 旧 proposed 意图与订阅作废；新 assignee 用 POST /works/:workKey/accept 显式承接
+ * 并建立自己的新 Mandate（RD-03d1；旧 owner 的 Mandate 只留历史，不复活）。
  */
 async function markWorkWaitingForAssigneeChange(tx: Tx, taskId: string, now: Date): Promise<void> {
   const work = await getCurrentWorkByTask(tx, taskId)

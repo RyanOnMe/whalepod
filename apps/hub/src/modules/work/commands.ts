@@ -289,11 +289,11 @@ export async function createWorkMandate(
         throw new ApiError(409, 'CONFLICT', 'full_access task cannot receive a mandate')
       }
       if (work.humanOwnerUserId !== actorUserId) {
-        // Task 改派后旧工作不随新 assignee 复活；新 assignee 只能显式退休后另建工作。
+        // Task 改派后旧工作不随新 assignee 复活；新 assignee 先 accept 承接或退休后另建工作。
         throw new ApiError(
           409,
           'CONFLICT',
-          'work ownership changed; retire it before creating a mandate',
+          'work ownership changed; accept the work or retire it before creating a mandate',
         )
       }
       if (work.state !== 'active') {
@@ -327,6 +327,87 @@ export async function createWorkMandate(
       await expireWorkSubscriptionsAndRetract(tx, {
         workId: work.id,
         statusReason: 'mandate_superseded',
+        now,
+      })
+      return { view: toWorkMandateView(mandate, now, true), changed: true }
+    },
+  )
+}
+
+/**
+ * ADR-0028 §2/§6（RD-03d1）：Task 改派后，新 assignee 显式承接旧工作。
+ *
+ * 承接不是恢复旧 Mandate：同一事务内建立属于新 assignee 的新 Mandate 版本
+ * （principal/onBehalf/humanOwner/draftRecipient 都是新 assignee），再把 work
+ * 归到新 owner/新 Mandate。旧 Mandate 原样保留为历史，不转移、不改写。
+ */
+export async function acceptWorkAfterOwnerChange(
+  deps: WorkCommandDeps,
+  actorUserId: string,
+  workKey: string,
+  input: CreateWorkMandateRequest,
+  idempotencyKey: string,
+): Promise<WorkMutationOutcome<WorkMandateView>> {
+  assertNoDuplicates(input.allowedActionClasses, 'allowedActionClasses')
+  assertNoDuplicates(input.allowedSourceTypes, 'allowedSourceTypes')
+  assertNoDuplicates(input.allowedAgentIds, 'allowedAgentIds')
+  assertNoDuplicates(input.allowedToolNames, 'allowedToolNames')
+  if (input.draftRecipientUserId !== undefined && input.draftRecipientUserId !== actorUserId) {
+    throw new ApiError(400, 'VALIDATION_FAILED', 'draft recipient must be the acting assignee')
+  }
+  return transactWorkMutation(
+    deps.database,
+    `work.accept:${workKey}:${actorUserId}:${requestDigest(input)}:${idempotencyKey}`,
+    async (tx) => {
+      const { work, task } = await lockWorkContext(tx, workKey)
+      await requireAssignee(tx, task, actorUserId)
+      requireAcceptedTask(task)
+      if (task.approvalPolicy === 'full_access') {
+        throw new ApiError(409, 'CONFLICT', 'full_access task cannot receive a mandate')
+      }
+      if (work.state !== 'waiting' || work.resumeMode !== 'owner_confirmation') {
+        throw new ApiError(409, 'CONFLICT', 'work is not waiting for owner confirmation')
+      }
+      const now = deps.now()
+      if (new Date(input.expiresAt).getTime() <= now.getTime()) {
+        throw new ApiError(400, 'VALIDATION_FAILED', 'expiresAt must be in the future')
+      }
+      await assertAllowedAgents(tx, input.allowedAgentIds)
+      const latest = await getLatestWorkMandate(tx, work.id)
+      const version = (latest?.version ?? 0) + 1
+      const mandate = await insertWorkMandate(tx, {
+        id: uuidv7(now.getTime()),
+        workId: work.id,
+        workKey: work.workKey,
+        projectId: work.projectId,
+        taskId: work.taskId,
+        version,
+        status: 'active',
+        principalUserId: actorUserId,
+        onBehalfOfUserId: actorUserId,
+        humanOwnerUserId: actorUserId,
+        draftRecipientUserId: actorUserId,
+        ...mandateContract(input),
+        statusReason: null,
+        pausedAt: null,
+        revokedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      })
+      const updated = await updateWork(tx, work.id, {
+        state: 'active',
+        resumeMode: null,
+        resumeCondition: null,
+        humanOwnerUserId: actorUserId,
+        mandateId: mandate.id,
+        updatedAt: now,
+      })
+      if (updated === undefined) throw new ApiError(404, 'NOT_FOUND', 'work not found')
+      // 旧 proposed 意图/订阅引用旧 Mandate；承接后必须重新评估，不得沿用。
+      await cancelProposedDispatchIntents(tx, work.id, now)
+      await expireWorkSubscriptionsAndRetract(tx, {
+        workId: work.id,
+        statusReason: 'owner_changed_accept',
         now,
       })
       return { view: toWorkMandateView(mandate, now, true), changed: true }

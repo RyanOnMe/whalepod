@@ -1027,6 +1027,175 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
     expect(afterBack.proposedIntent).toBeNull()
   })
 
+  it('new assignee accepts a reassigned work with a new principal-owned Mandate', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    const oldMandate = await createMandate(ctx, alice, work.workKey, {
+      allowedToolNames: ['read'],
+    })
+    const body = {
+      expiresAt: futureIso(),
+      autoDispatch: 'existing_task',
+      allowedActionClasses: ['draft'],
+      allowedSourceTypes: ['task_message'],
+      allowedToolNames: ['write'],
+    }
+    // 承接前 Work 不是 waiting(owner_confirmation)：拒绝。
+    const early = await apiInject(ctx, bob, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/accept`,
+      payload: body,
+      idempotencyKey: idemKey(),
+    })
+    expect(early.statusCode).toBe(403)
+
+    const reassign = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/reassign`,
+      payload: { assigneeUserId: bob.userId },
+      idempotencyKey: idemKey(),
+    })
+    expect(reassign.statusCode).toBe(200)
+    // 新 assignee 还没接受指派：不能承接。
+    const beforeAssignmentAccept = await apiInject(ctx, bob, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/accept`,
+      payload: body,
+      idempotencyKey: idemKey(),
+    })
+    expect(beforeAssignmentAccept.statusCode).toBe(409)
+    await acceptTask(ctx, bob, taskId)
+    // 旧 assignee 已失去承接资格。
+    const oldOwner = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/accept`,
+      payload: body,
+      idempotencyKey: idemKey(),
+    })
+    expect(oldOwner.statusCode).toBe(403)
+    // 非法 Mandate 体不改变 Work 状态。
+    const invalid = await apiInject(ctx, bob, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/accept`,
+      payload: { ...body, allowedToolNames: ['bash'] },
+      idempotencyKey: idemKey(),
+    })
+    expect(invalid.statusCode).toBe(400)
+    const [stillWaiting] = await database.db
+      .select()
+      .from(schema.works)
+      .where(eq(schema.works.workKey, work.workKey))
+    expect(stillWaiting).toMatchObject({
+      state: 'waiting',
+      resumeMode: 'owner_confirmation',
+      humanOwnerUserId: alice.userId,
+    })
+
+    const key = idemKey()
+    const accepted = await apiInject(ctx, bob, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/accept`,
+      payload: body,
+      idempotencyKey: key,
+    })
+    expect(accepted.statusCode).toBe(201)
+    expect(accepted.json().data).toMatchObject({
+      workKey: work.workKey,
+      version: oldMandate.version + 1,
+      current: true,
+      status: 'active',
+      principalUserId: bob.userId,
+      onBehalfOfUserId: bob.userId,
+      humanOwnerUserId: bob.userId,
+      draftRecipientUserId: bob.userId,
+      autoDispatch: 'existing_task',
+      allowedToolNames: ['write'],
+    })
+    const newMandateId = accepted.json().data.id as string
+
+    // 幂等重放：同一 Mandate，不产生第二版本。
+    const replay = await apiInject(ctx, bob, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/accept`,
+      payload: body,
+      idempotencyKey: key,
+    })
+    expect(replay.statusCode).toBe(201)
+    expect(replay.json().data.id).toBe(newMandateId)
+    const workDetail = await apiInject(ctx, bob, {
+      method: 'GET',
+      url: `/api/v1/works/${work.workKey}`,
+    })
+    expect(workDetail.statusCode).toBe(200)
+    expect(workDetail.json().data.work).toMatchObject({
+      state: 'active',
+      humanOwnerUserId: bob.userId,
+      resumeMode: null,
+      resumeCondition: null,
+      mandateId: newMandateId,
+    })
+    expect(workDetail.json().data.currentMandate).toMatchObject({
+      id: newMandateId,
+      version: oldMandate.version + 1,
+      principalUserId: bob.userId,
+    })
+    const mandateHistory = await apiInject(ctx, bob, {
+      method: 'GET',
+      url: `/api/v1/works/${work.workKey}/mandates`,
+    })
+    expect(mandateHistory.statusCode).toBe(200)
+    expect(mandateHistory.json().data).toHaveLength(2)
+    expect(mandateHistory.json().data.map((m: { id: string }) => m.id)).toContain(oldMandate.id)
+    expect(
+      mandateHistory.json().data.find((m: { id: string }) => m.id === oldMandate.id),
+    ).toMatchObject({
+      current: false,
+      status: 'active',
+      principalUserId: alice.userId,
+    })
+
+    const acceptAudit = ctx.auditEvents.filter((event) => event.action === 'work.accept').at(-1)
+    expect(acceptAudit).toMatchObject({
+      actor: bob.userId,
+      workKey: work.workKey,
+      mandateId: newMandateId,
+      version: oldMandate.version + 1,
+    })
+
+    // 承接后既有准入立即按新 Mandate 工作（autoDispatch 生成 proposed 意图）。
+    const postAcceptSource = await comment(ctx, bob, taskId)
+    const postAccept = await checkAdmission(
+      ctx,
+      bob,
+      work.workKey,
+      'task_message',
+      postAcceptSource,
+    )
+    expect(postAccept.proposedIntent).toMatchObject({
+      status: 'proposed',
+      mandateId: newMandateId,
+      mandateVersion: oldMandate.version + 1,
+    })
+
+    // 承接后新 assignee 可按既有路径继续创建下一版本。
+    const next = await apiInject(ctx, bob, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/mandates`,
+      payload: { expiresAt: futureIso() },
+      idempotencyKey: idemKey(),
+    })
+    expect(next.statusCode).toBe(201)
+    expect(next.json().data.version).toBe(oldMandate.version + 2)
+
+    // 已 active 的 Work 再用新幂等键承接 → 409。
+    const again = await apiInject(ctx, bob, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/accept`,
+      payload: body,
+      idempotencyKey: idemKey(),
+    })
+    expect(again.statusCode).toBe(409)
+  })
+
   it('does not revive a waiting work when reassigned back to its original owner', async () => {
     const work = await createWork(ctx, alice, taskId)
     await createMandate(ctx, alice, work.workKey)
