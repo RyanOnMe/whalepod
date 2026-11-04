@@ -118,8 +118,9 @@ const mutations: readonly Mutation[] = [
     id: 'R10',
     criterion: 'cached command reads reauthorize the current assignee',
     needle:
-      'const { task } = await lockRouterContext(tx, workKey)\n    await requireAssignee(tx, task, actor.userId)',
-    replacement: 'await lockRouterContext(tx, workKey)',
+      '// Receipt hits skip the command callback. Authorize the current read while holding\n  // Task before Work so reassignment cannot expose the former principal\'s proposal.\n  return deps.database.transaction(async (tx) => {\n    const { task } = await lockRouterContext(tx, workKey)\n    await requireAssignee(tx, task, actor.userId)',
+    replacement:
+      '// Receipt hits skip the command callback. Authorize the current read while holding\n  // Task before Work so reassignment cannot expose the former principal\'s proposal.\n  return deps.database.transaction(async (tx) => {\n    await lockRouterContext(tx, workKey)',
     test: 'reauthorizes cached evaluation receipts after reassignment and hides old principal history',
   },
   {
