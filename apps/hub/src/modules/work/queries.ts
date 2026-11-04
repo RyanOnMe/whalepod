@@ -147,11 +147,12 @@ export async function loadWorkDetail(
   work: WorkRow,
   currentMandate: WorkMandateRow | undefined,
   now: Date,
+  currentAssigneeUserId: string,
 ): Promise<WorkDetailView> {
   const [decisions, intents, questions] = await Promise.all([
     listRouterDecisions(database.db, work.id, 20),
     listDispatchIntents(database.db, work.id, 50),
-    listOpenWorkQuestions(database.db, work.id, 50),
+    listOpenWorkQuestions(database.db, work.id, currentAssigneeUserId, 50),
   ])
   const proposed = intents.filter(
     (intent) => intent.status === 'proposed' && intent.expiresAt.getTime() > now.getTime(),

@@ -1820,6 +1820,8 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
       url: `/api/v1/works/${work.workKey}`,
     })
     expect(detail.statusCode).toBe(200)
+    // RD-03d2a：有候选并成功派工时不应产生 ask。
+    expect(detail.json().data.openQuestions).toEqual([])
     const view = detail.json().data.dispatchIntents as Array<Record<string, unknown>>
     expect(view.find((intent) => intent.id === intentId)).toMatchObject({
       status: 'dispatched',

@@ -7,7 +7,6 @@ import {
   insertWorkQuestionAnswer,
   markWorkQuestionAnswered,
   transactCommandWithOrigin,
-  unwrapPgError,
   type Database,
   type DispatchIntentRow,
   type TaskRow,
@@ -77,7 +76,7 @@ export async function openNoCandidateQuestion(
     readonly exclusionReasons: readonly unknown[]
     readonly now: Date
   },
-): Promise<WorkQuestionRow | undefined> {
+): Promise<WorkQuestionRow> {
   const decisionId = noCandidateDecisionId({
     workKey: input.work.workKey,
     inputDigest: input.intent.inputDigest,
@@ -92,38 +91,34 @@ export async function openNoCandidateQuestion(
     exclusionReasons: input.exclusionReasons.slice(0, 4),
     triggerRefs: input.intent.triggerRefs.slice(0, 4),
   }
-  try {
-    return await insertWorkQuestion(tx, {
-      id: uuidv7(input.now.getTime()),
-      workId: input.work.id,
-      taskId: input.work.taskId,
-      projectId: input.work.projectId,
-      decisionId,
-      questionType: NO_CANDIDATE_QUESTION_TYPE,
-      blockedDecision: NO_CANDIDATE_BLOCKED_DECISION,
-      summary: `自动派工没有合格候选（${input.exclusionReasons.length} 项排除原因），请选择重试或取消本次派工。`,
-      options: NO_CANDIDATE_OPTIONS.map((option) => ({ ...option })),
-      recommendedOptionId: 'retry',
-      refs,
-      inputDigest: input.intent.inputDigest,
-      mandateId: input.mandate.id,
-      mandateVersion: input.mandate.version,
-      principalUserId: input.task.assigneeUserId,
-      dispatchIntentId: input.intent.id,
-      status: 'open',
-      answeredAt: null,
-      closedAt: null,
-      createdAt: input.now,
-      updatedAt: input.now,
-    })
-  } catch (error) {
-    // 并发重复准入可能同时生成同一 decisionId；部分唯一索引兜底后回读既有 open 行。
-    if (unwrapPgError(error)?.code === '23505') {
-      const raced = await getWorkQuestionByDecision(tx, decisionId)
-      if (raced !== undefined) return raced
-    }
-    throw error
-  }
+  const inserted = await insertWorkQuestion(tx, {
+    id: uuidv7(input.now.getTime()),
+    workId: input.work.id,
+    taskId: input.work.taskId,
+    projectId: input.work.projectId,
+    decisionId,
+    questionType: NO_CANDIDATE_QUESTION_TYPE,
+    blockedDecision: NO_CANDIDATE_BLOCKED_DECISION,
+    summary: `自动派工没有合格候选（${input.exclusionReasons.length} 项排除原因），请选择重试或取消本次派工。`,
+    options: NO_CANDIDATE_OPTIONS.map((option) => ({ ...option })),
+    recommendedOptionId: 'retry',
+    refs,
+    inputDigest: input.intent.inputDigest,
+    mandateId: input.mandate.id,
+    mandateVersion: input.mandate.version,
+    principalUserId: input.task.assigneeUserId,
+    dispatchIntentId: input.intent.id,
+    status: 'open',
+    answeredAt: null,
+    closedAt: null,
+    createdAt: input.now,
+    updatedAt: input.now,
+  })
+  if (inserted !== undefined) return inserted
+  // 并发重复准入：ON CONFLICT DO NOTHING 后回读既有决定，事务不会因唯一冲突 abort。
+  const raced = await getWorkQuestionByDecision(tx, decisionId)
+  if (raced !== undefined) return raced
+  throw new Error('work question insert lost without row')
 }
 
 export function toWorkQuestionView(row: WorkQuestionRow, workKey: string): WorkQuestionView {
@@ -152,6 +147,7 @@ export function toWorkQuestionView(row: WorkQuestionRow, workKey: string): WorkQ
 interface StaleAnswer {
   readonly stale: true
   readonly answerId: string
+  readonly questionId: string
   readonly reason: 'mandate_changed' | 'mandate_inactive' | 'work_inactive'
 }
 
@@ -185,6 +181,7 @@ function staleReason(
   question: WorkQuestionRow,
   latest: WorkMandateRow | undefined,
   now: Date,
+  actorUserId: string,
 ): StaleAnswer['reason'] | undefined {
   if (work.state !== 'active') return 'work_inactive'
   if (
@@ -194,6 +191,7 @@ function staleReason(
   ) {
     return 'mandate_inactive'
   }
+  if (latest.principalUserId !== actorUserId) return 'mandate_changed'
   if (latest.id !== question.mandateId || latest.version !== question.mandateVersion) {
     return 'mandate_changed'
   }
@@ -221,6 +219,9 @@ export async function answerWorkQuestion(
       if (task.assigneeUserId !== actorUserId) {
         throw new ApiError(403, 'FORBIDDEN', 'only the task assignee can answer this question')
       }
+      if (task.assignmentStatus !== 'accepted') {
+        throw new ApiError(409, 'ASSIGNMENT_NOT_ACCEPTED', 'task assignment is not accepted')
+      }
       const question = await getWorkQuestionForUpdate(tx, work.id, decisionId)
       if (question === undefined) throw new ApiError(404, 'NOT_FOUND', 'question not found')
       if (question.principalUserId !== actorUserId) {
@@ -232,7 +233,7 @@ export async function answerWorkQuestion(
       validateAnswer(question, input)
       const now = deps.now()
       const latest = await getLatestWorkMandate(tx, work.id)
-      const reason = staleReason(work, question, latest, now)
+      const reason = staleReason(work, question, latest, now, actorUserId)
       if (reason !== undefined) {
         const answer = await insertWorkQuestionAnswer(tx, {
           id: uuidv7(now.getTime()),
@@ -248,7 +249,7 @@ export async function answerWorkQuestion(
           rejectionReason: reason,
           createdAt: now,
         })
-        return { stale: true, answerId: answer.id, reason }
+        return { stale: true, answerId: answer.id, questionId: question.id, reason }
       }
       const answered = await markWorkQuestionAnswered(tx, question.id, now)
       if (answered === undefined) {
@@ -306,6 +307,7 @@ export async function answerWorkQuestion(
   if (result.stale) {
     throw new ApiError(409, 'DECISION_STALE', 'decision no longer binds to the current mandate', {
       decisionId,
+      questionId: result.questionId,
       answerId: result.answerId,
       reason: result.reason,
     })

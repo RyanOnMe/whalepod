@@ -310,9 +310,8 @@ export async function cancelDispatchIntentById(
 export async function insertWorkQuestion(
   handle: DbHandle,
   values: NewWorkQuestionRow,
-): Promise<WorkQuestionRow> {
-  const [row] = await handle.insert(workQuestions).values(values).returning()
-  if (row === undefined) throw new Error('insert work question returned no row')
+): Promise<WorkQuestionRow | undefined> {
+  const [row] = await handle.insert(workQuestions).values(values).onConflictDoNothing().returning()
   return row
 }
 
@@ -361,12 +360,19 @@ export async function getWorkQuestionForUpdate(
 export async function listOpenWorkQuestions(
   handle: DbHandle,
   workId: string,
+  principalUserId: string,
   limit = 50,
 ): Promise<WorkQuestionRow[]> {
   return handle
     .select()
     .from(workQuestions)
-    .where(and(eq(workQuestions.workId, workId), eq(workQuestions.status, 'open')))
+    .where(
+      and(
+        eq(workQuestions.workId, workId),
+        eq(workQuestions.status, 'open'),
+        eq(workQuestions.principalUserId, principalUserId),
+      ),
+    )
     .orderBy(desc(workQuestions.createdAt), desc(workQuestions.id))
     .limit(limit)
 }

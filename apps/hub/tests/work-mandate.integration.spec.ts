@@ -1607,6 +1607,106 @@ describe('RD-03d2a ask decision ledger and answer binding (ADR-0028 §8)', () =>
     expect(detail.json().data.openQuestions).toEqual([])
   })
 
+  it('rejects answers while a same-assignee reassignment is not accepted', async () => {
+    const { work, admission, question } = await setupNoCandidateQuestion()
+    const reassign = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/reassign`,
+      payload: { assigneeUserId: alice.userId },
+      idempotencyKey: idemKey(),
+    })
+    expect(reassign.statusCode).toBe(200)
+    const url = `/api/v1/works/${work.workKey}/questions/${question.decisionId}/answers`
+    const blocked = await apiInject(ctx, alice, {
+      method: 'POST',
+      url,
+      payload: { answerType: 'choose_option', optionId: 'retry' },
+      idempotencyKey: idemKey(),
+    })
+    expect(blocked.statusCode).toBe(409)
+    expect(blocked.json().error.code).toBe('ASSIGNMENT_NOT_ACCEPTED')
+    const [openRow] = await database.db
+      .select()
+      .from(schema.workQuestions)
+      .where(eq(schema.workQuestions.decisionId, question.decisionId))
+    expect(openRow?.status).toBe('open')
+    const [stillProposed] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, admission.proposedIntent!.id as string))
+    expect(stillProposed?.status).toBe('proposed')
+
+    await acceptTask(ctx, alice, taskId)
+    const allowed = await apiInject(ctx, alice, {
+      method: 'POST',
+      url,
+      payload: { answerType: 'choose_option', optionId: 'retry' },
+      idempotencyKey: idemKey(),
+    })
+    expect(allowed.statusCode).toBe(200)
+    expect(allowed.json().data.answer.binding).toBe(true)
+  })
+
+  it('cancels the linked intent through the explicit cancel option', async () => {
+    const { work, admission, question } = await setupNoCandidateQuestion()
+    const cancelled = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/questions/${question.decisionId}/answers`,
+      payload: { answerType: 'choose_option', optionId: 'cancel' },
+      idempotencyKey: idemKey(),
+    })
+    expect(cancelled.statusCode).toBe(200)
+    expect(cancelled.json().data).toMatchObject({ intentCancelled: true, reevaluate: false })
+    const [intentRow] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, admission.proposedIntent!.id as string))
+    expect(intentRow).toMatchObject({
+      status: 'cancelled',
+      resolutionReason: 'decision_choose_option:cancel',
+    })
+  })
+
+  it('records work_inactive after the work is retired', async () => {
+    const { work, question } = await setupNoCandidateQuestion()
+    const retired = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/retire`,
+    })
+    expect(retired.statusCode).toBe(200)
+    const stale = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/questions/${question.decisionId}/answers`,
+      payload: { answerType: 'deny' },
+      idempotencyKey: idemKey(),
+    })
+    expect(stale.statusCode).toBe(409)
+    expect(stale.json().error.code).toBe('DECISION_STALE')
+    expect(stale.json().error.details.reason).toBe('work_inactive')
+  })
+
+  it('hides the previous assignee questions after reassignment', async () => {
+    const { work, question } = await setupNoCandidateQuestion()
+    await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/reassign`,
+      payload: { assigneeUserId: bob.userId },
+      idempotencyKey: idemKey(),
+    })
+    await acceptTask(ctx, bob, taskId)
+    const detail = await apiInject(ctx, bob, {
+      method: 'GET',
+      url: `/api/v1/works/${work.workKey}`,
+    })
+    expect(detail.statusCode).toBe(200)
+    expect(detail.json().data.openQuestions).toEqual([])
+    const [questionRow] = await database.db
+      .select()
+      .from(schema.workQuestions)
+      .where(eq(schema.workQuestions.decisionId, question.decisionId))
+    expect(questionRow?.status).toBe('open')
+  })
+
   it('records a stale answer without unblocking when the mandate version changed', async () => {
     const { work, mandate, admission, question } = await setupNoCandidateQuestion()
     await createMandate(ctx, alice, work.workKey, {
@@ -1635,6 +1735,7 @@ describe('RD-03d2a ask decision ledger and answer binding (ADR-0028 §8)', () =>
       actor: alice.userId,
       outcome: 'denied',
       decisionId: question.decisionId,
+      questionId: question.id,
       answerType: 'choose_option',
       binding: false,
     })

@@ -205,10 +205,10 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
     const session = await deps.requireActor(request)
     const { workKey: rawWorkKey } = request.params as { workKey: string }
     const workKey = parseUuid(rawWorkKey, 'work key')
-    const { work } = await loadAuthorizedWork(deps, session, workKey)
+    const { work, task } = await loadAuthorizedWork(deps, session, workKey)
     const now = new Date()
     const latest = await getLatestWorkMandate(deps.database.db, work.id)
-    const view = await loadWorkDetail(deps.database, work, latest, now)
+    const view = await loadWorkDetail(deps.database, work, latest, now, task.assigneeUserId)
     return { ok: true, data: view }
   })
 
@@ -284,9 +284,11 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
     } catch (error) {
       // non-binding 回答已落库但请求被拒（409）；审计留 denied 事实，便于和绑定成功分开归因。
       if (error instanceof ApiError && error.code === 'DECISION_STALE') {
+        const details = error.details as { questionId?: string } | undefined
         audit(request, 'work.decision.answer', 'denied', session.userId, {
           workKey,
           decisionId,
+          ...(details?.questionId === undefined ? {} : { questionId: details.questionId }),
           answerType: body.answerType,
           binding: false,
         })
