@@ -5,6 +5,7 @@
  * `proposed/approved/dispatched` 与终态。
  */
 import { z } from 'zod'
+import { WorkQuestionViewSchema } from './work-question.js'
 
 export const WorkStateSchema = z.enum(['active', 'waiting', 'retired'])
 export type WorkState = z.infer<typeof WorkStateSchema>
@@ -162,6 +163,8 @@ export const WorkDetailViewSchema = z.strictObject({
   proposedIntents: z.array(DispatchIntentViewSchema).max(50),
   /** RD-03b：最近派工意图全量（含 approved/dispatched/终态），供工作读面显示自动派工。 */
   dispatchIntents: z.array(DispatchIntentViewSchema).max(50).default([]),
+  /** RD-03d2a：等待责任人回答的 ask（只含 open；回答历史按问题/回答表审计）。 */
+  openQuestions: z.array(WorkQuestionViewSchema).max(50).default([]),
   watermarks: WorkWatermarksSchema,
 })
 export type WorkDetailView = z.infer<typeof WorkDetailViewSchema>

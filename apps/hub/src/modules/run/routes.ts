@@ -59,6 +59,9 @@ export const ERROR_HTTP_STATUS: Readonly<Partial<Record<ErrorCode, number>>> = {
   // ADR-0027：项目上下文不可用/下载副本不符都是可重试的状态冲突，不是服务端故障。
   CONTEXT_UNAVAILABLE: 409,
   CONTEXT_DIGEST_MISMATCH: 409,
+  // ADR-0028 §8（RD-03d2a）：旧 Mandate 版本的回答不解除阻塞；未启用的回答类型是请求错误。
+  DECISION_STALE: 409,
+  UNSUPPORTED_ANSWER: 400,
 }
 
 function sendError(reply: FastifyReply, code: ErrorCode, message: string): FastifyReply {

@@ -13,6 +13,7 @@ import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@whalepod/db'
 import { insertAgent, insertMessage, schema } from '@whalepod/db'
+import { canonicalJson, sha256Hex } from '../src/modules/coordination/digest.js'
 import {
   apiInject,
   createTestApp,
@@ -1377,5 +1378,372 @@ describe('RD-01 work, mandate and shadow admission (ADR-0028)', () => {
     })
     expect(detail.json().data.currentMandate.status).toBe('expired')
     await mandateStatus(ctx, alice, mandate.id, 'pause', 409)
+  })
+})
+
+describe('RD-03d2a ask decision ledger and answer binding (ADR-0028 §8)', () => {
+  let database: Database
+  let ctx: TestApp
+  let alice: Session
+  let bob: Session
+  let taskId: string
+
+  beforeAll(async () => {
+    database = await createTestDatabase()
+  })
+
+  beforeEach(async () => {
+    await resetDatabase(database)
+    ctx = await createTestApp(database)
+    alice = await driveSetup(ctx, 'alice')
+    bob = (
+      await driveInviteAndAccept(ctx, alice, {
+        username: 'bob',
+        displayName: 'Bob',
+        password: 'correct horse battery staple',
+      })
+    ).session
+    const projectId = await createProject(ctx, alice)
+    taskId = await createTask(ctx, alice, projectId, alice.userId)
+    await acceptTask(ctx, alice, taskId)
+  })
+
+  afterEach(async () => {
+    await ctx.app.close()
+  })
+
+  afterAll(async () => {
+    await database.close()
+  })
+
+  async function setupNoCandidateQuestion() {
+    const work = await createWork(ctx, alice, taskId)
+    const mandate = await createMandate(ctx, alice, work.workKey, {
+      autoDispatch: 'existing_task',
+      allowedAgentIds: [],
+    })
+    const source = await comment(ctx, alice, taskId)
+    const admission = await checkAdmission(ctx, alice, work.workKey, 'task_message', source)
+    expect(admission.proposedIntent).toMatchObject({ status: 'proposed' })
+    const detail = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${work.workKey}`,
+    })
+    expect(detail.statusCode).toBe(200)
+    expect(detail.json().data.openQuestions).toHaveLength(1)
+    const question = detail.json().data.openQuestions[0]
+    return { work, mandate, source, admission, question }
+  }
+
+  it('opens one deterministic ask for a no-candidate auto dispatch and binds a retry answer', async () => {
+    const { work, mandate, admission, question } = await setupNoCandidateQuestion()
+    const inputDigest = admission.proposedIntent!.inputDigest as string
+    const expectedDecisionId = sha256Hex(
+      canonicalJson({
+        workKey: work.workKey,
+        blockedDecision: 'dispatch',
+        inputDigest,
+        mandateVersion: mandate.version,
+        questionType: 'choose_option',
+      }),
+    )
+    expect(question).toMatchObject({
+      decisionId: expectedDecisionId,
+      questionType: 'choose_option',
+      blockedDecision: 'dispatch',
+      status: 'open',
+      principalUserId: alice.userId,
+      mandateId: mandate.id,
+      mandateVersion: mandate.version,
+      recommendedOptionId: 'retry',
+      dispatchIntentId: admission.proposedIntent!.id as string,
+    })
+    expect(question.options.map((option: { id: string }) => option.id)).toEqual(['retry', 'cancel'])
+    // 问题只含引用与候选文本，不含 Task 讨论正文。
+    expect(JSON.stringify(question)).not.toContain('场地新增了一个候选')
+
+    // 同一来源用新幂等键重复准入：不产生第二个 open 问题。
+    await checkAdmission(
+      ctx,
+      alice,
+      work.workKey,
+      'task_message',
+      admission.decision.sourceId as string,
+    )
+    const afterDuplicate = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${work.workKey}`,
+    })
+    expect(afterDuplicate.json().data.openQuestions).toHaveLength(1)
+
+    const url = `/api/v1/works/${work.workKey}/questions/${expectedDecisionId}/answers`
+    const denied = await apiInject(ctx, bob, {
+      method: 'POST',
+      url,
+      payload: { answerType: 'choose_option', optionId: 'retry' },
+      idempotencyKey: idemKey(),
+    })
+    expect(denied.statusCode).toBe(403)
+
+    const invalidOption = await apiInject(ctx, alice, {
+      method: 'POST',
+      url,
+      payload: { answerType: 'choose_option', optionId: 'missing' },
+      idempotencyKey: idemKey(),
+    })
+    expect(invalidOption.statusCode).toBe(400)
+    expect(invalidOption.json().error.code).toBe('VALIDATION_FAILED')
+
+    const unsupported = await apiInject(ctx, alice, {
+      method: 'POST',
+      url,
+      payload: { answerType: 'authorize_scope' },
+      idempotencyKey: idemKey(),
+    })
+    expect(unsupported.statusCode).toBe(400)
+    expect(unsupported.json().error.code).toBe('UNSUPPORTED_ANSWER')
+
+    const key = idemKey()
+    const answered = await apiInject(ctx, alice, {
+      method: 'POST',
+      url,
+      payload: { answerType: 'choose_option', optionId: 'retry', reason: '候选恢复后重试' },
+      idempotencyKey: key,
+    })
+    expect(answered.statusCode).toBe(200)
+    expect(answered.json().data).toMatchObject({
+      question: { decisionId: expectedDecisionId, status: 'answered' },
+      answer: { answerType: 'choose_option', optionId: 'retry', binding: true },
+      reevaluate: true,
+      deferred: false,
+      intentCancelled: true,
+    })
+    const answerId = answered.json().data.answer.id as string
+
+    const replay = await apiInject(ctx, alice, {
+      method: 'POST',
+      url,
+      payload: { answerType: 'choose_option', optionId: 'retry', reason: '候选恢复后重试' },
+      idempotencyKey: key,
+    })
+    expect(replay.statusCode).toBe(200)
+    expect(replay.json().data.answer.id).toBe(answerId)
+
+    const afterAnswer = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${work.workKey}`,
+    })
+    expect(afterAnswer.json().data.openQuestions).toEqual([])
+
+    // 已回答的同一决定不因重复准入重新开问。
+    await checkAdmission(
+      ctx,
+      alice,
+      work.workKey,
+      'task_message',
+      admission.decision.sourceId as string,
+    )
+    const afterReopenAttempt = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${work.workKey}`,
+    })
+    expect(afterReopenAttempt.json().data.openQuestions).toEqual([])
+
+    const [questionRow] = await database.db
+      .select()
+      .from(schema.workQuestions)
+      .where(eq(schema.workQuestions.decisionId, expectedDecisionId))
+    expect(questionRow).toMatchObject({ status: 'answered' })
+    const [answerRow] = await database.db
+      .select()
+      .from(schema.workQuestionAnswers)
+      .where(eq(schema.workQuestionAnswers.questionId, questionRow!.id))
+    expect(answerRow).toMatchObject({
+      binding: true,
+      answerType: 'choose_option',
+      optionId: 'retry',
+    })
+    const [intentRow] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, admission.proposedIntent!.id as string))
+    expect(intentRow).toMatchObject({
+      status: 'cancelled',
+      resolutionReason: 'decision_choose_option:retry',
+    })
+
+    const again = await apiInject(ctx, alice, {
+      method: 'POST',
+      url,
+      payload: { answerType: 'deny' },
+      idempotencyKey: idemKey(),
+    })
+    expect(again.statusCode).toBe(409)
+    expect(again.json().error.code).toBe('CONFLICT')
+
+    const auditEvent = ctx.auditEvents
+      .filter((event) => event.action === 'work.decision.answer')
+      .at(-1)
+    expect(auditEvent).toMatchObject({
+      actor: alice.userId,
+      workKey: work.workKey,
+      decisionId: expectedDecisionId,
+      questionId: question.id,
+      answerType: 'choose_option',
+      binding: true,
+    })
+  })
+
+  it('does not create an ask while autoDispatch is off', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, { autoDispatch: 'off', allowedAgentIds: [] })
+    const source = await comment(ctx, alice, taskId)
+    const admission = await checkAdmission(ctx, alice, work.workKey, 'task_message', source)
+    expect(admission.proposedIntent).toMatchObject({ status: 'proposed' })
+    const detail = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${work.workKey}`,
+    })
+    expect(detail.json().data.openQuestions).toEqual([])
+  })
+
+  it('records a stale answer without unblocking when the mandate version changed', async () => {
+    const { work, mandate, admission, question } = await setupNoCandidateQuestion()
+    await createMandate(ctx, alice, work.workKey, {
+      autoDispatch: 'existing_task',
+      allowedAgentIds: [],
+    })
+    const url = `/api/v1/works/${work.workKey}/questions/${question.decisionId}/answers`
+    const key = idemKey()
+    const stale = await apiInject(ctx, alice, {
+      method: 'POST',
+      url,
+      payload: { answerType: 'choose_option', optionId: 'retry' },
+      idempotencyKey: key,
+    })
+    expect(stale.statusCode).toBe(409)
+    expect(stale.json().error.code).toBe('DECISION_STALE')
+    expect(stale.json().error.details).toMatchObject({
+      decisionId: question.decisionId,
+      reason: 'mandate_changed',
+    })
+    const answerId = stale.json().error.details.answerId as string
+    const deniedAudit = ctx.auditEvents
+      .filter((event) => event.action === 'work.decision.answer')
+      .at(-1)
+    expect(deniedAudit).toMatchObject({
+      actor: alice.userId,
+      outcome: 'denied',
+      decisionId: question.decisionId,
+      answerType: 'choose_option',
+      binding: false,
+    })
+
+    const [answerRow] = await database.db
+      .select()
+      .from(schema.workQuestionAnswers)
+      .where(eq(schema.workQuestionAnswers.id, answerId))
+    expect(answerRow).toMatchObject({
+      binding: false,
+      rejectionReason: 'mandate_changed',
+      mandateId: mandate.id,
+      mandateVersion: mandate.version,
+    })
+    const [questionRow] = await database.db
+      .select()
+      .from(schema.workQuestions)
+      .where(eq(schema.workQuestions.decisionId, question.decisionId))
+    expect(questionRow?.status).toBe('open')
+    const [intentRow] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, admission.proposedIntent!.id as string))
+    // Mandate 变更已取消旧 proposed 意图；stale answer 只记录、不改写意图。
+    expect(intentRow).toMatchObject({ status: 'cancelled', resolutionReason: null })
+
+    // 同 key 重放不重复写 non-binding 回答。
+    const replay = await apiInject(ctx, alice, {
+      method: 'POST',
+      url,
+      payload: { answerType: 'choose_option', optionId: 'retry' },
+      idempotencyKey: key,
+    })
+    expect(replay.statusCode).toBe(409)
+    expect(replay.json().error.details.answerId).toBe(answerId)
+    const answers = await database.db
+      .select()
+      .from(schema.workQuestionAnswers)
+      .where(eq(schema.workQuestionAnswers.questionId, question.id))
+    expect(answers).toHaveLength(1)
+  })
+
+  it('records mandate_inactive when the current mandate is paused', async () => {
+    const { work, mandate, question } = await setupNoCandidateQuestion()
+    await mandateStatus(ctx, alice, mandate.id, 'pause')
+    const stale = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/questions/${question.decisionId}/answers`,
+      payload: { answerType: 'deny' },
+      idempotencyKey: idemKey(),
+    })
+    expect(stale.statusCode).toBe(409)
+    expect(stale.json().error.code).toBe('DECISION_STALE')
+    expect(stale.json().error.details.reason).toBe('mandate_inactive')
+  })
+
+  it('defers without cancelling the linked intent', async () => {
+    const { work, admission, question } = await setupNoCandidateQuestion()
+    const deferred = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/questions/${question.decisionId}/answers`,
+      payload: { answerType: 'defer' },
+      idempotencyKey: idemKey(),
+    })
+    expect(deferred.statusCode).toBe(200)
+    expect(deferred.json().data).toMatchObject({
+      answer: { answerType: 'defer', binding: true },
+      reevaluate: false,
+      deferred: true,
+      intentCancelled: false,
+    })
+    const [deferredIntent] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, admission.proposedIntent!.id as string))
+    expect(deferredIntent?.status).toBe('proposed')
+
+    // defer 后同一决定重复准入：旧问题已回答，不重新开问。
+    await checkAdmission(
+      ctx,
+      alice,
+      work.workKey,
+      'task_message',
+      admission.decision.sourceId as string,
+    )
+    const afterDuplicate = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${work.workKey}`,
+    })
+    expect(afterDuplicate.json().data.openQuestions).toEqual([])
+  })
+
+  it('denies with cancellation of the linked intent', async () => {
+    const { work, admission, question } = await setupNoCandidateQuestion()
+    const denied = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${work.workKey}/questions/${question.decisionId}/answers`,
+      payload: { answerType: 'deny' },
+      idempotencyKey: idemKey(),
+    })
+    expect(denied.statusCode).toBe(200)
+    expect(denied.json().data).toMatchObject({
+      answer: { answerType: 'deny', binding: true },
+      intentCancelled: true,
+    })
+    const [deniedIntent] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, admission.proposedIntent!.id as string))
+    expect(deniedIntent).toMatchObject({ status: 'cancelled', resolutionReason: 'decision_deny' })
   })
 })

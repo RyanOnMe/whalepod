@@ -39,6 +39,11 @@ export interface AuditEvent {
   workKey?: string
   mandateId?: string
   version?: number
+  /** RD-03d2a：work.decision.answer 的不透明事实。 */
+  decisionId?: string
+  questionId?: string
+  answerType?: string
+  binding?: boolean
 }
 
 /** 捕获 hub warn 级结构化日志（带 component 的非审计行）；供告警计数断言（#55 迁移告警）。 */

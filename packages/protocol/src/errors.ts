@@ -76,6 +76,10 @@ export const ErrorCodeSchema = z.enum([
   // 副本 digest/bytes 不符。两者都是显式拒绝，不静默换版本或丢条目。
   'CONTEXT_UNAVAILABLE',
   'CONTEXT_DIGEST_MISMATCH',
+  // ADR-0028 §8（RD-03d2a）：ask 的回答类型本切片未启用，与「旧回答已不绑定当前
+  // Mandate」分开：前者 400，后者 409 且答案已按 non-binding 记录。
+  'UNSUPPORTED_ANSWER',
+  'DECISION_STALE',
   'PLUGIN_UNREVIEWED',
   'INTERNAL_ERROR',
 ])

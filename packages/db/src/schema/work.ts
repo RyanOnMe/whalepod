@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm'
 import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 import {
   bigint,
+  boolean,
   char,
   check,
   index,
@@ -52,6 +53,21 @@ export const dispatchIntentStatus = pgEnum('dispatch_intent_status', [
   'superseded',
 ])
 export const dispatchApprovalBasis = pgEnum('dispatch_approval_basis', ['human', 'mandate'])
+// ADR-0028 §8（RD-03d2a）：ask 的问题账本与可绑定回答。
+export const workQuestionType = pgEnum('work_question_type', ['choose_option', 'authorize_scope'])
+export const workQuestionStatus = pgEnum('work_question_status', [
+  'open',
+  'answered',
+  'superseded',
+  'expired',
+  'cancelled',
+])
+export const workAnswerType = pgEnum('work_answer_type', [
+  'choose_option',
+  'deny',
+  'defer',
+  'authorize_scope',
+])
 
 export const works = pgTable(
   'work',
@@ -345,3 +361,137 @@ export type RouterDecisionRow = typeof routerDecisions.$inferSelect
 export type NewRouterDecisionRow = typeof routerDecisions.$inferInsert
 export type DispatchIntentRow = typeof dispatchIntents.$inferSelect
 export type NewDispatchIntentRow = typeof dispatchIntents.$inferInsert
+
+/**
+ * ADR-0028 §8（RD-03d2a）：`ask` 的权威问题记录。decisionId 只由确定性输入哈希得出；
+ * 同一 decisionId 至多一个 open 行（部分唯一索引），重复问题合并。refs/options 只存
+ * 不透明定位与候选文本，不存来源正文。
+ */
+export const workQuestions = pgTable(
+  'work_question',
+  {
+    id: uuid('id').primaryKey(),
+    workId: uuid('work_id')
+      .notNull()
+      .references(() => works.id),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.id),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    decisionId: char('decision_id', { length: 64 }).notNull(),
+    questionType: workQuestionType('question_type').notNull(),
+    blockedDecision: varchar('blocked_decision', { length: 64 }).notNull(),
+    summary: varchar('summary', { length: 500 }).notNull(),
+    options: jsonb('options').$type<WorkQuestionOption[]>().notNull(),
+    recommendedOptionId: varchar('recommended_option_id', { length: 64 }),
+    refs: jsonb('refs').$type<Record<string, unknown>>().notNull().default({}),
+    inputDigest: char('input_digest', { length: 64 }).notNull(),
+    mandateId: uuid('mandate_id')
+      .notNull()
+      .references(() => workMandates.id),
+    mandateVersion: integer('mandate_version').notNull(),
+    principalUserId: uuid('principal_user_id')
+      .notNull()
+      .references(() => userAccounts.id),
+    dispatchIntentId: uuid('dispatch_intent_id').references(() => dispatchIntents.id),
+    status: workQuestionStatus('status').notNull().default('open'),
+    answeredAt: timestamp('answered_at', { withTimezone: true }),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check('work_question_decision_format', sql`${table.decisionId} ~ '^[0-9a-f]{64}$'`),
+    check('work_question_input_digest_format', sql`${table.inputDigest} ~ '^[0-9a-f]{64}$'`),
+    check('work_question_mandate_version', sql`${table.mandateVersion} >= 1`),
+    check(
+      'work_question_blocked_decision_length',
+      sql`length(btrim(${table.blockedDecision})) between 1 and 64`,
+    ),
+    check('work_question_summary_length', sql`length(btrim(${table.summary})) between 1 and 500`),
+    check(
+      'work_question_options_shape',
+      sql`jsonb_typeof(${table.options}) = 'array' and jsonb_array_length(case when jsonb_typeof(${table.options}) = 'array' then ${table.options} else '[]'::jsonb end) between 1 and 8 and octet_length(${table.options}::text) <= 4096`,
+    ),
+    check('work_question_refs_object', sql`jsonb_typeof(${table.refs}) = 'object'`),
+    check('work_question_refs_size', sql`octet_length(${table.refs}::text) <= 4096`),
+    check(
+      'work_question_status_fields',
+      sql`(${table.status} = 'open' and ${table.answeredAt} is null and ${table.closedAt} is null) or (${table.status} = 'answered' and ${table.answeredAt} is not null and ${table.closedAt} is not null) or (${table.status} in ('superseded', 'expired', 'cancelled') and ${table.answeredAt} is null and ${table.closedAt} is not null)`,
+    ),
+    uniqueIndex('work_question_open_decision_unique')
+      .on(table.decisionId)
+      .where(sql`${table.status} = 'open'`),
+    index('work_question_work_created_idx').on(table.workId, table.createdAt.desc(), table.id),
+    index('work_question_work_status_idx').on(table.workId, table.status, table.createdAt.desc()),
+    index('work_question_principal_created_idx').on(
+      table.principalUserId,
+      table.createdAt.desc(),
+      table.id,
+    ),
+  ],
+)
+
+/**
+ * ADR-0028 §8：回答记录。binding=false 只记录、不解除阻塞（Mandate 版本变化/失效时）；
+ * 同一问题至多一条 binding=true 的回答。
+ */
+export const workQuestionAnswers = pgTable(
+  'work_question_answer',
+  {
+    id: uuid('id').primaryKey(),
+    questionId: uuid('question_id')
+      .notNull()
+      .references(() => workQuestions.id),
+    decisionId: char('decision_id', { length: 64 }).notNull(),
+    actorUserId: uuid('actor_user_id')
+      .notNull()
+      .references(() => userAccounts.id),
+    answerType: workAnswerType('answer_type').notNull(),
+    optionId: varchar('option_id', { length: 64 }),
+    reason: varchar('reason', { length: 500 }),
+    mandateId: uuid('mandate_id')
+      .notNull()
+      .references(() => workMandates.id),
+    mandateVersion: integer('mandate_version').notNull(),
+    binding: boolean('binding').notNull(),
+    rejectionReason: varchar('rejection_reason', { length: 64 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check('work_question_answer_decision_format', sql`${table.decisionId} ~ '^[0-9a-f]{64}$'`),
+    check('work_question_answer_mandate_version', sql`${table.mandateVersion} >= 1`),
+    check(
+      'work_question_answer_reason_length',
+      sql`${table.reason} is null or length(btrim(${table.reason})) between 1 and 500`,
+    ),
+    check(
+      'work_question_answer_option_shape',
+      sql`(${table.answerType} = 'choose_option' and ${table.optionId} is not null) or (${table.answerType} <> 'choose_option' and ${table.optionId} is null)`,
+    ),
+    check(
+      'work_question_answer_binding_fields',
+      sql`(${table.binding} and ${table.rejectionReason} is null) or (not ${table.binding} and ${table.rejectionReason} is not null)`,
+    ),
+    uniqueIndex('work_question_answer_binding_unique')
+      .on(table.questionId)
+      .where(sql`${table.binding}`),
+    index('work_question_answer_question_created_idx').on(
+      table.questionId,
+      table.createdAt.desc(),
+      table.id,
+    ),
+  ],
+)
+
+export type WorkQuestionRow = typeof workQuestions.$inferSelect
+export type NewWorkQuestionRow = typeof workQuestions.$inferInsert
+export type WorkQuestionAnswerRow = typeof workQuestionAnswers.$inferSelect
+export type NewWorkQuestionAnswerRow = typeof workQuestionAnswers.$inferInsert
+
+export interface WorkQuestionOption {
+  readonly id: string
+  readonly label: string
+}
