@@ -126,6 +126,11 @@ export const ArtifactWireSchema = z.strictObject({
 export type ArtifactWire = z.infer<typeof ArtifactWireSchema>
 
 /** §6.4 Projected Run Event：Node 上行 run.event 的载荷，已过脱敏策略。 */
+export const ProjectedRunExecutorUsageSchema = z.strictObject({
+  inputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  outputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+})
+export type ProjectedRunExecutorUsage = z.infer<typeof ProjectedRunExecutorUsageSchema>
 export const ProjectedRunEventSchema = z.strictObject({
   runId: z.uuid(),
   seq: z.number().int().positive(),
@@ -175,13 +180,22 @@ export const ProjectedRunEventSchema = z.strictObject({
       content: HandoffNarrativeSchema.optional(),
       reason: z.string().min(1).max(1000).optional(),
     }),
-    z.strictObject({ type: z.literal('run.completed'), finalText: z.string() }),
+    z.strictObject({
+      type: z.literal('run.completed'),
+      finalText: z.string(),
+      usage: ProjectedRunExecutorUsageSchema.optional(),
+    }),
     z.strictObject({
       type: z.literal('run.failed'),
       code: ErrorCodeSchema,
       summary: z.string().min(1).max(1000),
+      usage: ProjectedRunExecutorUsageSchema.optional(),
     }),
-    z.strictObject({ type: z.literal('run.cancelled'), forced: z.boolean() }),
+    z.strictObject({
+      type: z.literal('run.cancelled'),
+      forced: z.boolean(),
+      usage: ProjectedRunExecutorUsageSchema.optional(),
+    }),
   ]),
 })
 export type ProjectedRunEvent = z.infer<typeof ProjectedRunEventSchema>

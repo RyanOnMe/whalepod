@@ -363,24 +363,31 @@ describe('RD-03r1 restricted Router evaluation', () => {
     }, 'result was not acknowledged')
   }
 
-  it.each(['dispatch', 'wait', 'ask', 'ignore'] as const)(
-    'accepts %s as a proposal with zero business side effects',
-    async (decision) => {
-      const node = await onlineNode()
-      const request = await dispatch(node)
-      await readAndStart(node, request)
-      expect((await submit(node, result(request, decision))).status).toBe('accepted')
-      const row = await getEvaluation(database.db, request.evaluationId)
-      expect(row?.routerProposal?.decision).toBe(decision)
-      expect(row?.inferenceEntryId).toBeNull()
-      const counts = await database.sql`select (select count(*)::int from run) as runs,
+  it.each([
+    ['dispatch', { intents: 1, questions: 0, waits: 0 }],
+    ['wait', { intents: 0, questions: 0, waits: 1 }],
+    ['ask', { intents: 0, questions: 1, waits: 0 }],
+    ['ignore', { intents: 0, questions: 0, waits: 0 }],
+  ] as const)('accepts %s and applies it exactly once', async (decision, expected) => {
+    const node = await onlineNode()
+    const request = await dispatch(node)
+    await readAndStart(node, request)
+    expect((await submit(node, result(request, decision))).status).toBe('accepted')
+    const row = await getEvaluation(database.db, request.evaluationId)
+    expect(row?.routerProposal?.decision).toBe(decision)
+    expect(row?.inferenceEntryId).toBeNull()
+    const counts = await database.sql`select (select count(*)::int from run) as runs,
       (select count(*)::int from dispatch_intent) as intents,(select count(*)::int from work_question) as questions,
+      (select count(*)::int from work_wait) as waits,
+      (select count(*)::int from router_application) as applications,
       (select count(*)::int from coordination_usage_ledger where phase='settled') as settlements`
-      expect(counts[0]).toMatchObject({ runs: 0, intents: 0, questions: 0, settlements: 1 })
-      expect((await submit(node, result(request, decision))).status).toBe('duplicate')
-      expect(await evaluate()).toMatchObject({ id: request.evaluationId, status: 'completed' })
-    },
-  )
+    expect(counts[0]).toMatchObject({ runs: 0, ...expected, applications: 1, settlements: 1 })
+    expect((await submit(node, result(request, decision))).status).toBe('duplicate')
+    const again = await evaluate()
+    if (decision === 'dispatch' || decision === 'wait')
+      expect(again.id).not.toBe(request.evaluationId)
+    else expect(again).toMatchObject({ id: request.evaluationId, status: 'completed' })
+  })
 
   it('deduplicates concurrent requests and redelivery without another reservation', async () => {
     const node = await onlineNode()
@@ -527,47 +534,6 @@ describe('RD-03r1 restricted Router evaluation', () => {
         (row) => row.phase === 'reserved',
       ),
     ).toHaveLength(1)
-  })
-
-  it('blocks unmetered Executor spending while a Router reservation exists', async () => {
-    const node = await onlineNode()
-    await dispatch(node)
-    const associated = await apiInject(ctx, alice, {
-      method: 'POST',
-      url: `/api/v1/works/${workKey}/inbox-items`,
-      payload: { sourceType: 'task_message', sourceId },
-    })
-    expect(associated.statusCode, associated.body).toBe(201)
-    const admission = await apiInject(ctx, alice, {
-      method: 'POST',
-      url: `/api/v1/works/${workKey}/admission-checks`,
-      payload: { sourceType: 'task_message', sourceId },
-    })
-    expect(admission.statusCode, admission.body).toBe(200)
-    const intentId = admission.json().data.proposedIntent.id as string
-    expect(
-      (
-        await apiInject(ctx, alice, {
-          method: 'POST',
-          url: `/api/v1/works/${workKey}/dispatch-intents/${intentId}/approve`,
-          payload: {},
-        })
-      ).statusCode,
-    ).toBe(200)
-    const executed = await apiInject(ctx, alice, {
-      method: 'POST',
-      url: `/api/v1/works/${workKey}/dispatch-intents/${intentId}/dispatch`,
-      payload: {
-        agentId: randomUUID(),
-        deviceId: node.deviceId,
-        workspaceId: randomUUID(),
-        actionClass: 'analysis',
-        workInputItemIds: [associated.json().data.id],
-      },
-    })
-    expect(executed.statusCode, executed.body).toBe(409)
-    expect(executed.json().error.message).toBe('executor_usage_unavailable')
-    expect(await database.db.select().from(schema.runs)).toHaveLength(0)
   })
 
   it.each([

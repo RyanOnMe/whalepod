@@ -40,6 +40,7 @@ import {
   Outbox,
   schema,
   setApprovalStatus,
+  setRunExecutorUsage,
   setRunStatus,
   setTaskStatus,
   resolveInstructionRight,
@@ -1372,6 +1373,7 @@ export class RunOrchestrator {
       }
       case 'run.completed': {
         this.applyRunTransition(run, { type: 'completed' })
+        if (event.usage !== undefined) await setRunExecutorUsage(tx, run.id, event.usage)
         await applyRunStatus(tx, this.outbox, run.id, 'completed', { finishedAt: now }, recorded)
         // #52/ADR-0007：Runtime 终态裁决折叠悬置审批（waiting_approval 来的
         // 裁决在此落账；running 来的折叠是恒等空转，一并防御既有不变量）。
@@ -1381,6 +1383,7 @@ export class RunOrchestrator {
       }
       case 'run.failed': {
         this.applyRunTransition(run, { type: 'failed' })
+        if (event.usage !== undefined) await setRunExecutorUsage(tx, run.id, event.usage)
         await applyRunStatus(
           tx,
           this.outbox,
@@ -1399,6 +1402,7 @@ export class RunOrchestrator {
       }
       case 'run.cancelled': {
         this.applyRunTransition(run, { type: 'cancel_confirmed' })
+        if (event.usage !== undefined) await setRunExecutorUsage(tx, run.id, event.usage)
         await applyRunStatus(tx, this.outbox, run.id, 'cancelled', { finishedAt: now }, recorded)
         await runChanged('cancelled')
         return

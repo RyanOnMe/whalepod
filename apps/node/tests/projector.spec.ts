@@ -311,6 +311,38 @@ describe('assistant/message 与 run.completed（§8：owner 全文 / project 完
     })
   })
 
+  it('aggregates DSH token usage onto the owner terminal event only', () => {
+    const p = makeProjector()
+    for (const [id, inputTokens, outputTokens] of [
+      ['msg-1', 10, 5],
+      ['msg-2', 7, 3],
+    ] as const) {
+      p.projectRuntimeOutput(
+        sessionEvent('assistant/message', {
+          turn: 1,
+          step: 1,
+          message: {
+            id,
+            role: 'assistant',
+            content: [{ type: 'text', text: `text ${id}` }],
+            source: { kind: 'model', provider: 'replay', model: 'replay-model' },
+          },
+          usage: { inputTokens, outputTokens },
+        }),
+      )
+    }
+    const out = p.projectRuntimeOutput(
+      lifecycleFrame('run.completed', { dshSessionId: 'session-1', finalMessageId: 'msg-2' }),
+    )
+    const owner = out.events.find((e) => e.audience === 'owner')
+    const project = out.events.find((e) => e.audience === 'project')
+    expect(owner?.event).toMatchObject({
+      type: 'run.completed',
+      usage: { inputTokens: 17, outputTokens: 8 },
+    })
+    expect(project?.event).not.toHaveProperty('usage')
+  })
+
   it('run.completed：owner 拿完整 finalText，project 拿确定式摘要（≤500 字符）', () => {
     const p = makeProjector()
     const longText = `  回答正文。\n\n${'细节。'.repeat(400)}  `

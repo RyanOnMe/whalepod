@@ -2,6 +2,7 @@ import { and, asc, desc, eq } from 'drizzle-orm'
 import {
   getCoordinatorState,
   getCoordinatorStateForUpdate,
+  getRouterConfig,
   getTaskForUpdate,
   getWorkByKey,
   getWorkByKeyForUpdate,
@@ -10,6 +11,8 @@ import {
   getLatestWorkMandate,
   getTeam,
   schema,
+  type CoordinationEvaluationRow,
+  type RouterConfigRow,
   type Tx,
 } from '@whalepod/db'
 import type {
@@ -17,7 +20,10 @@ import type {
   CoordinationInputEntry,
   WorkSourceType,
 } from '@whalepod/protocol'
-import { coordinationInputTokenEstimate } from '@whalepod/protocol'
+import {
+  CoordinationCredentialSlotSchema,
+  coordinationInputTokenEstimate,
+} from '@whalepod/protocol'
 import type { ArtifactStore } from '../artifact/store.js'
 import { canonicalJson, sha256Hex } from '../coordination/digest.js'
 import { loadWorkSource, effectiveMandate } from '../work/admission.js'
@@ -343,4 +349,60 @@ export async function loadRouterInput(
     mandate: active,
     teamId: team.id,
   }
+}
+
+export function supportsRouterConfiguration(capabilities: unknown, cfg: RouterConfigRow): boolean {
+  const caps = capabilities as
+    | { coordinationCapabilities?: string[]; coordinationCredentialSlots?: unknown[] }
+    | undefined
+  return (
+    caps?.coordinationCapabilities?.includes('coordination.v1') === true &&
+    (caps.coordinationCredentialSlots ?? []).some((slot) => {
+      const parsed = CoordinationCredentialSlotSchema.safeParse(slot)
+      return (
+        parsed.success &&
+        parsed.data.provider === cfg.provider &&
+        parsed.data.model === cfg.model &&
+        parsed.data.slot === cfg.credentialSlot &&
+        parsed.data.ownerUserId === cfg.operatorUserId &&
+        parsed.data.billingUserId === cfg.billingUserId &&
+        parsed.data.configRevision === cfg.credentialConfigRevision
+      )
+    })
+  )
+}
+
+/**
+ * ADR-0028 §17（RD-03r2）：应用/派发前按当前事实重建评估输入。只有当前责任人、
+ * Task/约定、Mandate、来源/成果/消费/回答水位、配置版本与设备能力全部未变，
+ * 重建 digest 才会等于被接受的 evaluationDigest。
+ */
+export async function rebuildRouterEvaluation(
+  tx: Tx,
+  row: CoordinationEvaluationRow,
+  now: Date,
+  store?: ArtifactStore,
+) {
+  if (!row.workKey || !row.routerContext)
+    throw new ApiError(409, 'CONFLICT', 'missing evaluation context')
+  await lockRouterContext(tx, row.workKey)
+  const cfg = await getRouterConfig(tx, row.projectId)
+  if (!cfg || cfg.configVersion !== row.configVersion)
+    throw new ApiError(409, 'CONFLICT', 'configuration changed')
+  const [device] = await tx
+    .select()
+    .from(schema.devices)
+    .where(eq(schema.devices.id, cfg.deviceId))
+    .for('share')
+  if (
+    !device ||
+    device.revokedAt !== null ||
+    device.ownerUserId !== row.principalUserId ||
+    !supportsRouterConfiguration(device.capabilities, cfg)
+  )
+    throw new ApiError(409, 'CONFLICT', 'coordination device authority changed')
+  const input = await loadRouterInput(tx, row.workKey, row.routerContext, cfg, now, store)
+  if (input.evaluationDigest !== row.evaluationDigest || input.mandate.id !== row.mandateId)
+    throw new ApiError(409, 'CONFLICT', 'evaluation input changed')
+  return { cfg, input }
 }

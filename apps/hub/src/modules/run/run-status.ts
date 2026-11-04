@@ -26,9 +26,11 @@ import { DomainError } from '@whalepod/domain'
 import type { Outbox, RunRow, Tx } from '@whalepod/db'
 import {
   getCurrentWorkByTask,
+  getProfileRevision,
   getWorkByIdForUpdate,
   schema,
   setRunStatus,
+  settleExecutorUsage,
   TERMINAL_RUN_STATUSES,
   updateWork,
 } from '@whalepod/db'
@@ -73,6 +75,32 @@ export async function applyRunStatus(
     await dispatchPendingInstructions(tx, outbox, row)
   }
   if (row !== undefined && TERMINAL_RUN_STATUSES.has(status)) {
+    // ADR-0028 §17（RD-03r2）：机器 Run 的 Executor 用量与终态同事务结算。
+    // 有 Node 上报的 token 实耗按实际计价；缺失按预留兜底，不把未知支出记成零。
+    if (row.origin === 'mandate') {
+      const usage = row.executorUsage
+      let settledUsage:
+        | { inputTokens: number; outputTokens: number; costMicros: number }
+        | undefined
+      if (usage !== null) {
+        const revision = await getProfileRevision(tx, row.profileRevisionId)
+        const inputPrice = revision?.inputPriceMicrosPerMillionTokens ?? 0
+        const outputPrice = revision?.outputPriceMicrosPerMillionTokens ?? 0
+        const numerator =
+          BigInt(usage.inputTokens) * BigInt(inputPrice) +
+          BigInt(usage.outputTokens) * BigInt(outputPrice)
+        const costMicros = Number((numerator + 999_999n) / 1_000_000n)
+        settledUsage = { ...usage, costMicros }
+        await tx
+          .update(schema.runs)
+          .set({ executorCostMicros: costMicros })
+          .where(eq(schema.runs.id, row.id))
+      }
+      await settleExecutorUsage(tx, {
+        runId: row.id,
+        ...(settledUsage === undefined ? {} : { usage: settledUsage }),
+      })
+    }
     // ADR-0028（RD-02b 锁序）：终态事务随后会更新 item（unconfirmed）并投影
     // Observation → 入口准入会锁 Work。必须先取 Work，保持 Run→Work→item；
     // 否则与回执/撤权的 Work→item 形成死锁。

@@ -11,6 +11,9 @@
 import {
   countFailedMachineRunsForWork,
   countChargedRouterFailuresForWork,
+  getCoordinationTeamPolicy,
+  getRouterConfig,
+  getTeam,
   getWorkCoordinationBudget,
   countMachineRunsForWork,
   expireDispatchIntent,
@@ -29,6 +32,7 @@ import {
   listWorkspacesByOwner,
   markDispatchIntentAutoDispatched,
   markRunMandateInvalidated,
+  reserveExecutorUsage,
   setDispatchIntentCandidates,
   approveDispatchIntent as approveIntentRow,
   markDispatchIntentDispatched,
@@ -92,6 +96,13 @@ function conflict(message: string): ApiError {
  * actionClass）不在此列——成员可以改参数重试，意图仍保持 approved。
  */
 class IntentBindingError extends Error {}
+
+/** 预留失败必须回滚整个派工事务（包括已建的 Run），再由事务外拒绝意图。 */
+class ExecutorBudgetError extends Error {
+  constructor(readonly reason: string) {
+    super(reason)
+  }
+}
 
 function assertIntentOwned(
   intent: DispatchIntentRow | undefined,
@@ -348,31 +359,35 @@ interface Candidate {
   readonly dshDistributionVersion: string
   readonly allowedToolNames: WorkDraftToolName[]
   readonly mandateVersion: number
+  /** ADR-0028 §17（RD-03r2）：Executor 用量上限/费用单价；缺任一即拒绝机器派工。 */
+  readonly maxTokens: number | null
+  readonly inputPriceMicrosPerMillionTokens: number | null
+  readonly outputPriceMicrosPerMillionTokens: number | null
 }
 
 async function machineBudgetReason(
   tx: Tx,
   work: WorkRow,
-  mandate: { readonly maxRunsPerWork: number; readonly maxAttempts: number },
+  mandate: {
+    readonly maxRunsPerWork: number
+    readonly maxAttempts: number
+    readonly maxTokens: number
+    readonly maxCostMicros: number
+  },
 ): Promise<string | undefined> {
   const totalRuns = await countMachineRunsForWork(tx, work.workKey)
   if (totalRuns >= mandate.maxRunsPerWork) return 'max_runs_exhausted'
   const failedRuns = await countFailedMachineRunsForWork(tx, work.workKey)
   const failedRouter = await countChargedRouterFailuresForWork(tx, work.workKey)
   if (failedRuns + failedRouter >= mandate.maxAttempts) return 'max_attempts_exhausted'
+  // ADR-0028 §17（RD-03r2）：Router 与 Executor 共享 work lifetime 用量行。
+  // 已用 + 在途预留触及任一上限即拒绝；未知实耗不再作为永久拒绝理由。
   const budget = await getWorkCoordinationBudget(tx, work.workKey)
-  // #520 supplies Executor reservations/usage. Until then mixed unknown spending
-  // fails closed, including in-flight Router reservations and prior Mandate versions.
-  if (
-    budget &&
-    budget.inputTokens +
-      budget.outputTokens +
-      budget.costMicros +
-      budget.reservedTokens +
-      budget.reservedCostMicros >
-      0
-  )
-    return 'executor_usage_unavailable'
+  const usedTokens =
+    (budget?.inputTokens ?? 0) + (budget?.outputTokens ?? 0) + (budget?.reservedTokens ?? 0)
+  const usedCost = (budget?.costMicros ?? 0) + (budget?.reservedCostMicros ?? 0)
+  if (usedTokens >= mandate.maxTokens) return 'budget_exhausted'
+  if (usedCost >= mandate.maxCostMicros) return 'budget_exhausted'
   return undefined
 }
 
@@ -441,6 +456,9 @@ async function resolveCandidate(
     dshDistributionVersion,
     allowedToolNames: mandate.allowedToolNames.map((name) => WorkDraftToolNameSchema.parse(name)),
     mandateVersion: mandate.version,
+    maxTokens: revision.maxTokens,
+    inputPriceMicrosPerMillionTokens: revision.inputPriceMicrosPerMillionTokens,
+    outputPriceMicrosPerMillionTokens: revision.outputPriceMicrosPerMillionTokens,
   }
 }
 
@@ -452,6 +470,82 @@ export type DispatchIntentOutcome =
       readonly code: ErrorCode
       readonly message: string
     }
+
+async function reserveExecutorForMachineRun(
+  tx: Tx,
+  input: {
+    readonly work: WorkRow
+    readonly intent: DispatchIntentRow
+    readonly candidate: Candidate
+    readonly runId: string
+    readonly now: Date
+  },
+): Promise<void> {
+  const { work, intent, candidate, runId, now } = input
+  const mandate = await getWorkMandateForUpdate(tx, intent.mandateId)
+  if (
+    mandate === undefined ||
+    mandate.workId !== work.id ||
+    mandate.version !== intent.mandateVersion ||
+    mandate.status !== 'active' ||
+    mandate.expiresAt.getTime() <= now.getTime()
+  ) {
+    throw new IntentBindingError('mandate is not active at the referenced version')
+  }
+  const budget = await getWorkCoordinationBudget(tx, work.workKey)
+  const usedTokens =
+    (budget?.inputTokens ?? 0) + (budget?.outputTokens ?? 0) + (budget?.reservedTokens ?? 0)
+  const remainingTokens = mandate.maxTokens - usedTokens
+  const reservedTokens =
+    candidate.maxTokens === null ? remainingTokens : Math.min(candidate.maxTokens, remainingTokens)
+  if (reservedTokens <= 0) throw new ExecutorBudgetError('budget_exhausted')
+  // ADR-0026 §13：无法核定/预留费用上限时不得派发；不把未知费用按零处理。
+  if (
+    candidate.inputPriceMicrosPerMillionTokens === null ||
+    candidate.outputPriceMicrosPerMillionTokens === null
+  ) {
+    throw new ExecutorBudgetError('executor_usage_unavailable')
+  }
+  const unitPrice = Math.max(
+    candidate.inputPriceMicrosPerMillionTokens,
+    candidate.outputPriceMicrosPerMillionTokens,
+  )
+  const reservedCostMicros = Number(
+    (BigInt(reservedTokens) * BigInt(unitPrice) + 999_999n) / 1_000_000n,
+  )
+  const team = await getTeam(tx)
+  if (team === undefined) throw new ExecutorBudgetError('team_missing')
+  const cfg = await getRouterConfig(tx, work.projectId)
+  let teamLimits
+  let projectLimits
+  if (cfg !== undefined) {
+    const policy = await getCoordinationTeamPolicy(tx, team.id)
+    teamLimits = {
+      calls: policy?.dailyCallLimit ?? cfg.teamDailyCallLimit,
+      tokens: policy?.dailyTokenLimit ?? cfg.teamDailyTokenLimit,
+      costMicros: policy?.dailyCostMicrosLimit ?? cfg.teamDailyCostMicrosLimit,
+    }
+    projectLimits = {
+      calls: cfg.projectDailyCallLimit,
+      tokens: cfg.projectDailyTokenLimit,
+      costMicros: cfg.projectDailyCostMicrosLimit,
+    }
+  }
+  const reserved = await reserveExecutorUsage(tx, {
+    runId,
+    projectId: work.projectId,
+    teamId: team.id,
+    workKey: work.workKey,
+    mandateId: mandate.id,
+    utcDate: now.toISOString().slice(0, 10),
+    reservedTokens,
+    reservedCostMicros,
+    workLimits: { tokens: mandate.maxTokens, costMicros: mandate.maxCostMicros },
+    ...(teamLimits === undefined ? {} : { teamLimits }),
+    ...(projectLimits === undefined ? {} : { projectLimits }),
+  })
+  if (!reserved.ok) throw new ExecutorBudgetError(reserved.reason)
+}
 
 async function createMachineRunForIntent(
   tx: Tx,
@@ -493,6 +587,15 @@ async function createMachineRunForIntent(
       },
     },
   )
+  // ADR-0028 §17（RD-03r2）：Run 创建与用量预留同事务；预留失败整体回滚，
+  // 不留下未记账的机器 Run。
+  await reserveExecutorForMachineRun(tx, {
+    work,
+    intent,
+    candidate,
+    runId: run.id,
+    now,
+  })
   const target = {
     agentId: candidate.agentId,
     profileRevisionId: candidate.profileRevisionId,
@@ -730,67 +833,74 @@ export async function dispatchIntent(
   request: DispatchIntentDispatchRequest,
   idempotencyKey: string,
 ): Promise<DispatchIntentOutcome> {
-  const outcome = await transactCommandWithOrigin<DispatchTxResult>(
-    deps.database,
-    // 幂等键必须绑定请求体：同一 key 换候选不是重放，不能被第一份回执吞掉。
-    `work.dispatch.dispatch:${workKey}:${intentId}:${actor.userId}:${sha256Hex(
-      canonicalJson(request),
-    )}:${idempotencyKey}`,
-    async (tx) => {
-      const now = deps.now()
-      const { work, task } = await lockWorkContext(tx, workKey)
-      await requireAssignee(tx, task, actor.userId)
-      assertActiveWork(work, task)
-      const intent = assertIntentOwned(await getDispatchIntentForUpdate(tx, intentId), work, task)
-      if (intent.status !== 'approved') {
-        throw conflict(`dispatch intent is ${intent.status}; approve it first`)
-      }
-      if (intent.expiresAt.getTime() <= now.getTime()) {
-        await expireDispatchIntent(tx, intent.id, 'dispatch intent has expired', now)
-        return {
-          rejection: {
-            status: 409,
-            code: 'CONFLICT',
-            message: 'dispatch intent has expired',
-          },
+  let outcome: Awaited<ReturnType<typeof transactCommandWithOrigin<DispatchTxResult>>>
+  try {
+    outcome = await transactCommandWithOrigin<DispatchTxResult>(
+      deps.database,
+      // 幂等键必须绑定请求体：同一 key 换候选不是重放，不能被第一份回执吞掉。
+      `work.dispatch.dispatch:${workKey}:${intentId}:${actor.userId}:${sha256Hex(
+        canonicalJson(request),
+      )}:${idempotencyKey}`,
+      async (tx) => {
+        const now = deps.now()
+        const { work, task } = await lockWorkContext(tx, workKey)
+        await requireAssignee(tx, task, actor.userId)
+        assertActiveWork(work, task)
+        const intent = assertIntentOwned(await getDispatchIntentForUpdate(tx, intentId), work, task)
+        if (intent.status !== 'approved') {
+          throw conflict(`dispatch intent is ${intent.status}; approve it first`)
         }
-      }
-
-      let refs: TriggerRef[]
-      let candidate: Candidate
-      try {
-        refs = await verifyIntentBinding(tx, work, intent)
-        candidate = await resolveCandidate(tx, work, task, intent, request, now)
-      } catch (error) {
-        if (error instanceof IntentBindingError) {
-          const rejected = await rejectIntentRow(tx, intent.id, error.message, now)
-          if (rejected === undefined) {
-            await expireDispatchIntent(tx, intent.id, error.message, now)
-          }
+        if (intent.expiresAt.getTime() <= now.getTime()) {
+          await expireDispatchIntent(tx, intent.id, 'dispatch intent has expired', now)
           return {
-            rejection: { status: 409, code: 'CONFLICT', message: error.message },
+            rejection: {
+              status: 409,
+              code: 'CONFLICT',
+              message: 'dispatch intent has expired',
+            },
           }
         }
-        throw error
-      }
-      await assertSelectedItemsInIntent(tx, work, task, refs, request.workInputItemIds)
 
-      return {
-        view: await createMachineRunForIntent(
-          tx,
-          deps,
-          actor,
-          work,
-          task,
-          intent,
-          candidate,
-          request.workInputItemIds,
-          now,
-          'human',
-        ),
-      }
-    },
-  )
+        let refs: TriggerRef[]
+        let candidate: Candidate
+        try {
+          refs = await verifyIntentBinding(tx, work, intent)
+          candidate = await resolveCandidate(tx, work, task, intent, request, now)
+        } catch (error) {
+          if (error instanceof IntentBindingError) {
+            const rejected = await rejectIntentRow(tx, intent.id, error.message, now)
+            if (rejected === undefined) {
+              await expireDispatchIntent(tx, intent.id, error.message, now)
+            }
+            return {
+              rejection: { status: 409, code: 'CONFLICT', message: error.message },
+            }
+          }
+          throw error
+        }
+        await assertSelectedItemsInIntent(tx, work, task, refs, request.workInputItemIds)
+
+        return {
+          view: await createMachineRunForIntent(
+            tx,
+            deps,
+            actor,
+            work,
+            task,
+            intent,
+            candidate,
+            request.workInputItemIds,
+            now,
+            'human',
+          ),
+        }
+      },
+    )
+  } catch (error) {
+    if (!(error instanceof ExecutorBudgetError)) throw error
+    await deps.database.transaction((tx) => rejectIntentRow(tx, intentId, error.reason, deps.now()))
+    return { ok: false, status: 409, code: 'CONFLICT', message: error.reason }
+  }
   if (isRejection(outcome.value)) {
     return { ok: false, ...outcome.value.rejection }
   }
@@ -816,137 +926,154 @@ export async function autoDispatchProposedIntent(
   workKey: string,
   intentId: string,
 ): Promise<DispatchIntentView | null> {
-  return deps.database.transaction(async (tx) => {
-    const now = deps.now()
-    const { work, task } = await lockWorkContext(tx, workKey)
-    await requireAssignee(tx, task, actor.userId)
-    const intent = assertIntentOwned(await getDispatchIntentForUpdate(tx, intentId), work, task)
-    if (intent.status !== 'proposed') return toDispatchIntentView(intent, now)
-    if (intent.expiresAt.getTime() <= now.getTime()) {
-      await expireDispatchIntent(tx, intent.id, 'dispatch intent has expired', now)
-      const row = await getDispatchIntent(tx, intent.id)
-      return toDispatchIntentView(row ?? intent, now)
-    }
-    if (
-      work.state !== 'active' ||
-      task.assignmentStatus !== 'accepted' ||
-      task.status === 'done' ||
-      task.status === 'cancelled'
-    ) {
-      return toDispatchIntentView(intent, now)
-    }
+  try {
+    return await deps.database.transaction(async (tx) => {
+      const now = deps.now()
+      const { work, task } = await lockWorkContext(tx, workKey)
+      await requireAssignee(tx, task, actor.userId)
+      const intent = assertIntentOwned(await getDispatchIntentForUpdate(tx, intentId), work, task)
+      if (intent.status !== 'proposed') return toDispatchIntentView(intent, now)
+      if (intent.expiresAt.getTime() <= now.getTime()) {
+        await expireDispatchIntent(tx, intent.id, 'dispatch intent has expired', now)
+        const row = await getDispatchIntent(tx, intent.id)
+        return toDispatchIntentView(row ?? intent, now)
+      }
+      if (
+        work.state !== 'active' ||
+        task.assignmentStatus !== 'accepted' ||
+        task.status === 'done' ||
+        task.status === 'cancelled'
+      ) {
+        return toDispatchIntentView(intent, now)
+      }
 
-    const mandate = await getWorkMandateForUpdate(tx, intent.mandateId)
-    if (
-      mandate === undefined ||
-      mandate.workId !== work.id ||
-      mandate.version !== intent.mandateVersion ||
-      mandate.status !== 'active' ||
-      mandate.expiresAt.getTime() <= now.getTime()
-    ) {
-      const rejected = await rejectIntentRow(
-        tx,
-        intent.id,
-        'mandate is not active at the referenced version',
-        now,
-      )
-      return toDispatchIntentView(rejected ?? intent, now)
-    }
-    if (mandate.autoDispatch !== 'existing_task') return toDispatchIntentView(intent, now)
-
-    let refs: TriggerRef[]
-    try {
-      refs = await verifyIntentBinding(tx, work, intent)
-    } catch (error) {
-      if (error instanceof IntentBindingError) {
-        const rejected = await rejectIntentRow(tx, intent.id, error.message, now)
+      const mandate = await getWorkMandateForUpdate(tx, intent.mandateId)
+      if (
+        mandate === undefined ||
+        mandate.workId !== work.id ||
+        mandate.version !== intent.mandateVersion ||
+        mandate.status !== 'active' ||
+        mandate.expiresAt.getTime() <= now.getTime()
+      ) {
+        const rejected = await rejectIntentRow(
+          tx,
+          intent.id,
+          'mandate is not active at the referenced version',
+          now,
+        )
         return toDispatchIntentView(rejected ?? intent, now)
       }
-      throw error
-    }
+      if (mandate.autoDispatch !== 'existing_task') return toDispatchIntentView(intent, now)
 
-    if ((await listActiveRunsByTask(tx, task.id)).length > 0) {
-      const row = await setDispatchIntentCandidates(
-        tx,
-        intent.id,
-        [],
-        [{ kind: 'run', reason: 'active_run' }],
-        now,
-      )
-      return toDispatchIntentView(row ?? intent, now)
-    }
-
-    const budgetReason = await machineBudgetReason(tx, work, mandate)
-    if (budgetReason !== undefined) {
-      await setDispatchIntentCandidates(
-        tx,
-        intent.id,
-        [],
-        [{ kind: 'budget', reason: budgetReason }],
-        now,
-      )
-      const rejected = await rejectIntentRow(tx, intent.id, budgetReason, now)
-      return toDispatchIntentView(rejected ?? intent, now)
-    }
-
-    const evaluation = await evaluateAutoCandidate(tx, work, task, mandate, intent, now)
-    if (evaluation.candidate === undefined) {
-      const row = await setDispatchIntentCandidates(
-        tx,
-        intent.id,
-        evaluation.candidates,
-        evaluation.exclusionReasons,
-        now,
-      )
-      // ADR-0028 §8（RD-03d2a）：无合格候选是确定性 ask，生成可绑定回答的 open 问题。
-      await openNoCandidateQuestion(tx, {
-        work,
-        task,
-        mandate,
-        intent: row ?? intent,
-        exclusionReasons: evaluation.exclusionReasons,
-        now,
-      })
-      return toDispatchIntentView(row ?? intent, now)
-    }
-
-    let candidate: Candidate
-    try {
-      candidate = await resolveCandidate(tx, work, task, intent, evaluation.candidate, now)
-      await assertSelectedItemsInIntent(tx, work, task, refs, evaluation.candidate.workInputItemIds)
-    } catch (error) {
-      if (error instanceof IntentBindingError) {
-        const rejected = await rejectIntentRow(tx, intent.id, error.message, now)
-        return toDispatchIntentView(rejected ?? intent, now)
+      let refs: TriggerRef[]
+      try {
+        refs = await verifyIntentBinding(tx, work, intent)
+      } catch (error) {
+        if (error instanceof IntentBindingError) {
+          const rejected = await rejectIntentRow(tx, intent.id, error.message, now)
+          return toDispatchIntentView(rejected ?? intent, now)
+        }
+        throw error
       }
-      if (error instanceof ApiError) {
+
+      if ((await listActiveRunsByTask(tx, task.id)).length > 0) {
         const row = await setDispatchIntentCandidates(
           tx,
           intent.id,
-          evaluation.candidates,
-          [...evaluation.exclusionReasons, { kind: 'candidate', reason: error.code }],
+          [],
+          [{ kind: 'run', reason: 'active_run' }],
           now,
         )
         return toDispatchIntentView(row ?? intent, now)
       }
-      throw error
-    }
 
-    return createMachineRunForIntent(
-      tx,
-      deps,
-      actor,
-      work,
-      task,
-      intent,
-      candidate,
-      evaluation.candidate.workInputItemIds,
-      now,
-      'mandate',
-      evaluation.candidates,
-      evaluation.exclusionReasons,
-    )
-  })
+      const budgetReason = await machineBudgetReason(tx, work, mandate)
+      if (budgetReason !== undefined) {
+        await setDispatchIntentCandidates(
+          tx,
+          intent.id,
+          [],
+          [{ kind: 'budget', reason: budgetReason }],
+          now,
+        )
+        const rejected = await rejectIntentRow(tx, intent.id, budgetReason, now)
+        return toDispatchIntentView(rejected ?? intent, now)
+      }
+
+      const evaluation = await evaluateAutoCandidate(tx, work, task, mandate, intent, now)
+      if (evaluation.candidate === undefined) {
+        const row = await setDispatchIntentCandidates(
+          tx,
+          intent.id,
+          evaluation.candidates,
+          evaluation.exclusionReasons,
+          now,
+        )
+        // ADR-0028 §8（RD-03d2a）：无合格候选是确定性 ask，生成可绑定回答的 open 问题。
+        await openNoCandidateQuestion(tx, {
+          work,
+          task,
+          mandate,
+          intent: row ?? intent,
+          exclusionReasons: evaluation.exclusionReasons,
+          now,
+        })
+        return toDispatchIntentView(row ?? intent, now)
+      }
+
+      let candidate: Candidate
+      try {
+        candidate = await resolveCandidate(tx, work, task, intent, evaluation.candidate, now)
+        await assertSelectedItemsInIntent(
+          tx,
+          work,
+          task,
+          refs,
+          evaluation.candidate.workInputItemIds,
+        )
+      } catch (error) {
+        if (error instanceof IntentBindingError) {
+          const rejected = await rejectIntentRow(tx, intent.id, error.message, now)
+          return toDispatchIntentView(rejected ?? intent, now)
+        }
+        if (error instanceof ApiError) {
+          const row = await setDispatchIntentCandidates(
+            tx,
+            intent.id,
+            evaluation.candidates,
+            [...evaluation.exclusionReasons, { kind: 'candidate', reason: error.code }],
+            now,
+          )
+          return toDispatchIntentView(row ?? intent, now)
+        }
+        throw error
+      }
+
+      return createMachineRunForIntent(
+        tx,
+        deps,
+        actor,
+        work,
+        task,
+        intent,
+        candidate,
+        evaluation.candidate.workInputItemIds,
+        now,
+        'mandate',
+        evaluation.candidates,
+        evaluation.exclusionReasons,
+      )
+    })
+  } catch (error) {
+    if (!(error instanceof ExecutorBudgetError)) throw error
+    return deps.database.transaction(async (tx) => {
+      const now = deps.now()
+      const current = await getDispatchIntent(tx, intentId)
+      if (current === undefined) throw notFound()
+      const rejected = await rejectIntentRow(tx, intentId, error.reason, now)
+      return toDispatchIntentView(rejected ?? current, now)
+    })
+  }
 }
 
 /**

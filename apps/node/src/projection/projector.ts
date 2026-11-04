@@ -120,6 +120,11 @@ export class RunProjector {
   private readonly newId: () => string
   /** turn/end 收敛时 lastAssistantText → run.completed finalText（owner 全文）。 */
   private lastAssistantText: string | undefined
+  /**
+   * ADR-0028 §17（RD-03r2）：本 Run 的 DSH token 实耗。只随 owner 终态行上行；
+   * project 行仍按 §9 二层收缩不带 token 用量。
+   */
+  private readonly executorUsage = { inputTokens: 0, outputTokens: 0 }
   /** callId → approvalId（approval.decided 回显关联用；§8 关联纪律）。 */
   private readonly approvals = new Map<string, string>()
   /** callId → 登记的 tool/call 参数（approval preview 的事实源）。 */
@@ -147,13 +152,18 @@ export class RunProjector {
         })
       case 'run.completed': {
         const full = this.lastAssistantText ?? ''
+        const usage = this.usageIfMeasured()
         return {
           liveTexts: [],
           events: [
             {
               audience: 'owner',
               occurredAt: frame.sentAt,
-              event: { type: 'run.completed', finalText: full },
+              event: {
+                type: 'run.completed',
+                finalText: full,
+                ...(usage === undefined ? {} : { usage }),
+              },
             },
             {
               audience: 'project',
@@ -163,10 +173,31 @@ export class RunProjector {
           ],
         }
       }
-      case 'run.cancelled':
-        return this.both(frame.sentAt, { type: 'run.cancelled', forced: false })
+      case 'run.cancelled': {
+        const usage = this.usageIfMeasured()
+        return {
+          liveTexts: [],
+          events: [
+            {
+              audience: 'owner',
+              occurredAt: frame.sentAt,
+              event: {
+                type: 'run.cancelled',
+                forced: false,
+                ...(usage === undefined ? {} : { usage }),
+              },
+            },
+            {
+              audience: 'project',
+              occurredAt: frame.sentAt,
+              event: { type: 'run.cancelled', forced: false },
+            },
+          ],
+        }
+      }
       case 'runtime.fatal': {
         const code = frame.payload.code
+        const usage = this.usageIfMeasured()
         return {
           liveTexts: [],
           events: [
@@ -177,6 +208,7 @@ export class RunProjector {
                 type: 'run.failed',
                 code,
                 summary: capStringBytes(redactString(frame.payload.summary, this.ctx), 1000),
+                ...(usage === undefined ? {} : { usage }),
               },
             },
             {
@@ -225,7 +257,26 @@ export class RunProjector {
    * cancelled(forced)」。同样走 owner/project 双受众。
    */
   projectCancelledLocal(forced: boolean): ProjectionResult {
-    return this.both(this.now().toISOString(), { type: 'run.cancelled', forced })
+    const usage = this.usageIfMeasured()
+    return {
+      liveTexts: [],
+      events: [
+        {
+          audience: 'owner',
+          occurredAt: this.now().toISOString(),
+          event: {
+            type: 'run.cancelled',
+            forced,
+            ...(usage === undefined ? {} : { usage }),
+          },
+        },
+        {
+          audience: 'project',
+          occurredAt: this.now().toISOString(),
+          event: { type: 'run.cancelled', forced },
+        },
+      ],
+    }
   }
 
   /**
@@ -235,13 +286,19 @@ export class RunProjector {
    */
   projectRuntimeLost(summary: string): ProjectionResult {
     const safeSummary = capStringBytes(redactString(summary, this.ctx), 1000)
+    const usage = this.usageIfMeasured()
     return {
       liveTexts: [],
       events: [
         {
           audience: 'owner',
           occurredAt: this.now().toISOString(),
-          event: { type: 'run.failed', code: 'RUNTIME_LOST', summary: safeSummary },
+          event: {
+            type: 'run.failed',
+            code: 'RUNTIME_LOST',
+            summary: safeSummary,
+            ...(usage === undefined ? {} : { usage }),
+          },
         },
         {
           audience: 'project',
@@ -345,6 +402,7 @@ export class RunProjector {
 
   private projectAssistantMessage(data: unknown, occurredAt: string): ProjectionResult {
     if (!isRecord(data) || !isRecord(data['message'])) return EMPTY
+    this.recordExecutorUsage(data['usage'])
     const content = data['message']['content']
     if (!Array.isArray(content)) return EMPTY
     const text = content
@@ -536,6 +594,32 @@ export class RunProjector {
   }
 
   // ---------- 小工具 ----------
+
+  /** DSH `assistant/message.usage` 聚合；非法/缺失值不猜测，保持已知部分。 */
+  private recordExecutorUsage(value: unknown): void {
+    if (!isRecord(value)) return
+    const input = value['inputTokens']
+    const output = value['outputTokens']
+    if (
+      typeof input === 'number' &&
+      Number.isSafeInteger(input) &&
+      input >= 0 &&
+      typeof output === 'number' &&
+      Number.isSafeInteger(output) &&
+      output >= 0
+    ) {
+      this.executorUsage.inputTokens += input
+      this.executorUsage.outputTokens += output
+    }
+  }
+
+  private usageIfMeasured():
+    | { readonly inputTokens: number; readonly outputTokens: number }
+    | undefined {
+    if (this.executorUsage.inputTokens === 0 && this.executorUsage.outputTokens === 0)
+      return undefined
+    return { ...this.executorUsage }
+  }
 
   private both(occurredAt: string, event: ProjectedRunEvent['event']): ProjectionResult {
     return {

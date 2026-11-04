@@ -206,6 +206,18 @@ async function blockResumeLineage(handle: DbHandle, runId: string): Promise<void
   `)
 }
 
+/** ADR-0028 §17（RD-03r2）：Node 终态事件携带的 token 实耗，只写一次。 */
+export async function setRunExecutorUsage(
+  handle: DbHandle,
+  id: string,
+  usage: { readonly inputTokens: number; readonly outputTokens: number },
+): Promise<void> {
+  await handle
+    .update(runs)
+    .set({ executorUsage: { ...usage } })
+    .where(eq(runs.id, id))
+}
+
 export async function setRunStatus(
   handle: DbHandle,
   id: string,

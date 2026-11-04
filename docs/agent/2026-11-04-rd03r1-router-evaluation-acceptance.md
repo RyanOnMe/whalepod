@@ -53,7 +53,7 @@ Hub HTTP/WS 集成测试另覆盖同输入并发/幂等、错误 attempt/lease�
 
 预算按 team/project 日额度和 work lifetime 额度同时预留，calls 指派发次数。结果 stale/拒收仍保留实际 usage，缺 usage 保守结算；仅明确确认模型未启动的输入/凭据准备失败可零 token/cost 结算。重试、新评估 digest、新 Mandate 或跨日均不重置工作用量。Router 不计入 `maxRunsPerWork`；已派发且有费用风险的 Router 失败与机器 Run 失败共同受 `maxAttempts` 限制。
 
-Executor token/cost 账本仍由 #520 补齐。本切片使用双向拒绝边界：同一工作已有机器 Run 时，Router 不在未知 Executor 实耗基础继续派发；已有 Router 实际用量或在途预留时，业务派工拒绝 `executor_usage_unavailable`。换 Mandate 不解除此边界。它保证未知支出不按零计算，不代表 Executor 统一用量账本已经实现。
+Executor token/cost 账本与提案应用已由 #520 / RD-03r2 补齐；本切片原先的双向 `executor_usage_unavailable` 拒绝边界已被真实 `executor_usage_ledger` 与 `router_application` 取代。本文件保留 #519 当时的评估、读取、隔离与结算证据；提案未被应用的边界不再适用，见 [RD-03r2 验收](./2026-11-04-rd03r2-router-application-acceptance.md)。
 
 ## 分层归因与取证
 

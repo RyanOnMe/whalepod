@@ -141,6 +141,15 @@ export const runs = pgTable(
     mandateInvalidatedReason: varchar('mandate_invalidated_reason', { length: 64 }),
     workInputManifest: jsonb('work_input_manifest').$type<WorkInputManifest>(),
     workInputManifestDigest: char('work_input_manifest_digest', { length: 64 }),
+    /**
+     * ADR-0028 §17 / ADR-0026 §13（RD-03r2）：Node 在终态事件上报的业务执行 token
+     * 实耗。只在 Run 终态收口读一次；缺失表示无法核定，结算按预留兜底。
+     */
+    executorUsage: jsonb('executor_usage').$type<{
+      inputTokens: number
+      outputTokens: number
+    }>(),
+    executorCostMicros: bigint('executor_cost_micros', { mode: 'number' }),
     profileDigest: char('profile_digest', { length: 64 }).notNull(),
     pluginPackDigest: char('plugin_pack_digest', { length: 64 }).notNull(),
     dshDistributionVersion: varchar('dsh_distribution_version', { length: 64 }).notNull(),
@@ -176,6 +185,14 @@ export const runs = pgTable(
     check(
       'run_mandate_invalidation_fields',
       sql`(${table.mandateInvalidatedAt} is null and ${table.mandateInvalidatedReason} is null) or (${table.mandateInvalidatedAt} is not null and ${table.mandateInvalidatedReason} is not null)`,
+    ),
+    check(
+      'run_executor_usage_object',
+      sql`${table.executorUsage} is null or jsonb_typeof(${table.executorUsage}) = 'object'`,
+    ),
+    check(
+      'run_executor_cost_nonnegative',
+      sql`${table.executorCostMicros} is null or ${table.executorCostMicros} >= 0`,
     ),
   ],
 )

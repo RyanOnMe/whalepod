@@ -12,6 +12,8 @@ export interface ProfileRevisionView {
   model: string
   credentialSlot: string
   maxTokens: number | null
+  inputPriceMicrosPerMillionTokens: number | null
+  outputPriceMicrosPerMillionTokens: number | null
   /** 默认审批档（#241）：Task 未覆盖时建 Run 解析用它的值。 */
   approvalPolicy: 'approval_required' | 'full_access'
   pluginPackId: string
@@ -30,6 +32,8 @@ export function toProfileRevisionView(row: ProfileRevisionRow): ProfileRevisionV
     model: row.model,
     credentialSlot: row.credentialSlot,
     maxTokens: row.maxTokens,
+    inputPriceMicrosPerMillionTokens: row.inputPriceMicrosPerMillionTokens,
+    outputPriceMicrosPerMillionTokens: row.outputPriceMicrosPerMillionTokens,
     approvalPolicy: row.approvalPolicy,
     pluginPackId: row.pluginPackId,
     profileDigest: row.profileDigest,
