@@ -704,7 +704,7 @@ describe('harness assembly hygiene (#99)', () => {
     expect(checkHarnessEntryAssembly(repoRoot)).toEqual([])
   })
 
-  it('Router 变异只允许登记的单一编辑目标，不豁免同文件其他源码或其他 harness', async () => {
+  it('Router 变异只允许逐个登记的编辑目标，不豁免同文件其他源码或其他 harness', async () => {
     const { checkHarnessEntryAssembly } = await import('./check-boundaries.js')
     const root = mkdtempSync(join(tmpdir(), 'mutation-entry-'))
     const dir = join(root, 'scripts')
@@ -712,6 +712,8 @@ describe('harness assembly hygiene (#99)', () => {
     writeFileSync(
       join(dir, 'mutate-router-evaluation.ts'),
       "const TARGET = 'apps/hub/src/modules/router/service.ts'\n" +
+        "const ROUTES_TARGET = 'apps/hub/src/modules/router/routes.ts'\n" +
+        "const NODE_TARGET = 'apps/node/src/coordination/manager.ts'\n" +
         "const OTHER = 'apps/hub/src/server.ts'\n",
     )
     writeFileSync(
@@ -720,7 +722,7 @@ describe('harness assembly hygiene (#99)', () => {
     )
     const violations = checkHarnessEntryAssembly(root)
     expect(violations).toHaveLength(2)
-    expect(violations.some((line) => line.includes('mutate-router-evaluation.ts:2'))).toBe(true)
+    expect(violations.some((line) => line.includes('mutate-router-evaluation.ts:4'))).toBe(true)
     expect(violations.some((line) => line.includes('another-harness.ts:1'))).toBe(true)
   })
 })

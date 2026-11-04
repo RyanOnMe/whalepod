@@ -23,7 +23,8 @@ export function registerRouterRoutes(
   app: FastifyInstance,
   deps: RouterDeps & { requireActor: RequireActor },
 ): void {
-  app.post('/projects/:projectId/router/config', async (request) => {
+  app.post('/projects/:projectId/router/config', async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
     const actor = await deps.requireActor(request)
     const { projectId } = request.params as { projectId: string }
     const input = ConfigureProjectRouterRequestSchema.parse(request.body)
@@ -36,7 +37,8 @@ export function registerRouterRoutes(
     )
     return { ok: true, data }
   })
-  app.post('/works/:workKey/router/evaluate', async (request) => {
+  app.post('/works/:workKey/router/evaluate', async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
     const actor = await deps.requireActor(request)
     const { workKey } = request.params as { workKey: string }
     const input = EvaluationRequest.parse(request.body)
@@ -52,7 +54,8 @@ export function registerRouterRoutes(
     )
     return { ok: true, data }
   })
-  app.get('/works/:workKey/router/evaluations', async (request) => {
+  app.get('/works/:workKey/router/evaluations', async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
     const actor = await deps.requireActor(request)
     const { workKey } = request.params as { workKey: string }
     const key = Id.parse(workKey)
@@ -65,7 +68,8 @@ export function registerRouterRoutes(
     })
     return { ok: true, data }
   })
-  app.get('/coordination/evaluations/:evaluationId/inputs/:entryId', async (request) => {
+  app.get('/coordination/evaluations/:evaluationId/inputs/:entryId', async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
     const identity = await authenticateDevice(deps.database, request)
     const { evaluationId, entryId } = request.params as { evaluationId: string; entryId: string }
     const attempt = z.coerce

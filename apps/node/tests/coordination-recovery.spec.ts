@@ -18,7 +18,7 @@ afterEach(async () => {
 
 async function crashedAttempt(
   state: 'active' | 'result' | 'acked',
-  options: { unknownStart?: boolean; reusedPid?: boolean } = {},
+  options: { unknownStart?: boolean; reusedPid?: boolean; withWorker?: boolean } = {},
 ) {
   const dir = await mkdtemp(join(tmpdir(), 'wp-coordination-recovery-'))
   cleanup.push(() => rm(dir, { recursive: true, force: true }))
@@ -65,7 +65,9 @@ async function crashedAttempt(
     process.execPath,
     [
       '-e',
-      'setInterval(()=>{},1000);process.stdout.write("ready\\n")',
+      options.withWorker
+        ? 'const child=require("node:child_process").spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"});setInterval(()=>{},1000);process.stdout.write(JSON.stringify({workerPid:child.pid})+"\\n")'
+        : 'setInterval(()=>{},1000);process.stdout.write("ready\\n")',
       '--',
       '--coordination',
       '--evaluation-id',
@@ -84,9 +86,14 @@ async function crashedAttempt(
     if (child.pid !== undefined) await killProcessGroup(child.pid, 'SIGKILL')
     await exited
   })
+  let workerPid: number | undefined
   await new Promise<void>((resolve, reject) => {
     child.once('error', reject)
-    child.stdout?.once('data', () => resolve())
+    child.stdout?.once('data', (data: Buffer) => {
+      if (options.withWorker)
+        workerPid = (JSON.parse(data.toString('utf8')) as { workerPid: number }).workerPid
+      resolve()
+    })
     child.once('exit', () => reject(new Error('fixture child exited before ready')))
   })
   const pid = child.pid
@@ -120,6 +127,7 @@ async function crashedAttempt(
   if (state !== 'active') store.saveResult(request.evaluationId, 1, terminal)
   if (state === 'acked') store.ackResult(request.evaluationId, 1, request.leaseToken)
   let spawns = 0
+  let removeCalls = 0
   const manager = new CoordinationManager({
     stateDir: dir,
     hubUrl: 'http://hub.test',
@@ -139,6 +147,7 @@ async function crashedAttempt(
       },
     },
     removeHome: async (path) => {
+      removeCalls++
       // For confirmed PID reuse the live process is unrelated; otherwise deletion requires exit.
       if (!options.reusedPid) expect(await processAlive(pid)).toBe(false)
       await rm(path, { recursive: true, force: true })
@@ -148,7 +157,18 @@ async function crashedAttempt(
     await manager.stop()
     store.close()
   })
-  return { manager, store, home, pid, terminal, request, spawns: () => spawns }
+  return {
+    manager,
+    store,
+    home,
+    pid,
+    terminal,
+    request,
+    spawns: () => spawns,
+    removeCalls: () => removeCalls,
+    workerPid,
+    exited,
+  }
 }
 
 describe('coordination recovery after terminal result persistence', () => {
@@ -184,6 +204,7 @@ describe('coordination recovery after terminal result persistence', () => {
     expect(await processAlive(h.pid)).toBe(true)
     expect(existsSync(h.home)).toBe(true)
     expect(h.store.cleanupTasks()).toHaveLength(1)
+    expect(h.removeCalls()).toBe(0)
     expect(h.store.get(h.request.evaluationId, 1)?.state).toBe('acked')
   })
 
@@ -191,7 +212,7 @@ describe('coordination recovery after terminal result persistence', () => {
     const h = await crashedAttempt('result')
     const kill = process.kill.bind(process)
     const spy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
-      if (pid === h.pid && signal === 0)
+      if (Math.abs(pid) === h.pid && signal === 0)
         throw Object.assign(new Error('not visible'), { code: 'EPERM' })
       return kill(pid, signal)
     })
@@ -199,10 +220,75 @@ describe('coordination recovery after terminal result persistence', () => {
       await h.manager.recover()
       expect(existsSync(h.home)).toBe(true)
       expect(h.store.cleanupTasks()).toHaveLength(1)
+      expect(h.removeCalls()).toBe(0)
     } finally {
       spy.mockRestore()
     }
     expect(await processAlive(h.pid)).toBe(true)
     expect(h.store.get(h.request.evaluationId, 1)?.resultJson).toBe(h.terminal)
   })
+
+  it('keeps inputs until both the dead leader and its surviving process group have exited', async () => {
+    const h = await crashedAttempt('result', { withWorker: true })
+    expect(h.workerPid).toBeDefined()
+    process.kill(h.pid, 'SIGKILL')
+    await h.exited
+    expect(await processAlive(h.workerPid!)).toBe(true)
+    await h.manager.recover()
+    expect(existsSync(h.home)).toBe(true)
+    expect(h.removeCalls()).toBe(0)
+    expect(h.store.cleanupTasks()).toHaveLength(1)
+    expect(h.store.get(h.request.evaluationId, 1)?.resultJson).toBe(h.terminal)
+    await killProcessGroup(h.pid, 'SIGKILL')
+    await vi.waitFor(async () => expect(await processAlive(h.workerPid!)).toBe(false), {
+      timeout: 3000,
+      interval: 20,
+    })
+    await h.manager.retryCleanup()
+    expect(existsSync(h.home)).toBe(false)
+  })
+
+  it.each([
+    { evaluationId: '../outside', attempt: 1 },
+    { evaluationId: 'not-a-uuid', attempt: 1 },
+    { evaluationId: randomUUID(), attempt: 0 },
+    { evaluationId: randomUUID(), attempt: 1.5 },
+    { evaluationId: randomUUID(), attempt: Number.MAX_SAFE_INTEGER + 1 },
+  ])(
+    'keeps an invalid journal identity pending before filesystem cleanup: %s',
+    async (identity) => {
+      const dir = await mkdtemp(join(tmpdir(), 'wp-coordination-invalid-journal-'))
+      const home = join(dir, 'coordination-home', identity.evaluationId, String(identity.attempt))
+      await mkdir(home, { recursive: true })
+      await writeFile(join(home, 'private-copy'), 'preserve')
+      const store = new CoordinationStore(join(dir, 'coordination.sqlite'))
+      store.begin({
+        ...identity,
+        leaseToken: 'fixture',
+        nonce: randomUUID(),
+        requestJson: '{}',
+        homePath: home,
+      })
+      store.saveResult(identity.evaluationId, identity.attempt, '{}')
+      const manager = new CoordinationManager({
+        stateDir: dir,
+        hubUrl: 'http://hub.test',
+        deviceToken: 'fixture',
+        runtimeEntry: 'unused-on-recovery',
+        capable: false,
+        store,
+        send: () => true,
+      })
+      try {
+        await manager.retryCleanup()
+        expect(existsSync(join(home, 'private-copy'))).toBe(true)
+        expect(store.cleanupTasks()).toHaveLength(1)
+        expect(store.get(identity.evaluationId, identity.attempt)?.cleaned).toBe(false)
+      } finally {
+        await manager.stop()
+        store.close()
+        await rm(dir, { recursive: true, force: true })
+      }
+    },
+  )
 })

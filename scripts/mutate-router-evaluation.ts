@@ -11,12 +11,15 @@ import { redactText } from './lib/phase1/events.js'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const script = 'scripts/mutate-router-evaluation.ts'
-// reason: single-point mutation edits the production predicate; this path is never
-// a spawn/import entry. Vitest still drives the production HTTP/WS module assembly.
-// removeWhen: a mutation engine replaces source-file patching, remove this path and
-// its exact HARNESS_SRC_PATH_ALLOWLIST entry together.
+// reason: single-point mutation edits production predicates; these paths are never
+// spawn/import entries. Vitest drives the HTTP/WS handlers and process-recovery modules.
+// removeWhen: a mutation engine replaces source-file patching, remove these paths
+// and their exact HARNESS_SRC_PATH_ALLOWLIST entries together.
 const sourcePath = 'apps/hub/src/modules/router/service.ts'
+const routerRoutesSource = 'apps/hub/src/modules/router/routes.ts'
 const spec = 'apps/hub/tests/router-evaluation.integration.spec.ts'
+const nodeRecoverySource = 'apps/node/src/coordination/manager.ts'
+const nodeRecoverySpec = 'apps/node/tests/coordination-recovery.spec.ts'
 const output = join(root, 'artifacts/evidence/router-evaluation/mutations')
 const summaryPath = join(output, 'result.json')
 
@@ -26,7 +29,19 @@ interface Mutation {
   needle: string
   replacement: string
   test: string
+  source?: string
+  spec?: string
+  project?: 'integration' | 'unit'
+  testTemplate?: string
 }
+interface Suite {
+  spec: string
+  project: 'integration' | 'unit'
+}
+const baselineSuites: readonly Suite[] = [
+  { spec, project: 'integration' },
+  { spec: nodeRecoverySpec, project: 'unit' },
+]
 const mutations: readonly Mutation[] = [
   {
     id: 'R01',
@@ -164,6 +179,77 @@ const mutations: readonly Mutation[] = [
     replacement: 'rejection = undefined',
     test: 'rejects wrong_result_digest and settles without a proposal',
   },
+  {
+    id: 'R20',
+    criterion: 'a persisted terminal result does not prove its orphan process stopped',
+    source: nodeRecoverySource,
+    spec: nodeRecoverySpec,
+    project: 'unit',
+    needle: 'if (current === undefined || !(await this.ensureProcessStopped(current))) {',
+    replacement: 'if (current === undefined) {',
+    test: 'stops the owned result orphan before removing inputs and preserves terminal records',
+    testTemplate: 'stops the owned %s orphan before removing inputs and preserves terminal records',
+  },
+  {
+    id: 'R21',
+    criterion: 'unknown live-process identity must keep private inputs pending',
+    source: nodeRecoverySource,
+    spec: nodeRecoverySpec,
+    project: 'unit',
+    needle: "if (state === 'unknown') return false",
+    replacement: "if (state === 'unknown') return true",
+    test: 'keeps cleanup pending when the live process identity cannot be confirmed',
+  },
+  {
+    id: 'R22',
+    criterion: 'EPERM is not proof that the broker process died',
+    source: nodeRecoverySource,
+    spec: nodeRecoverySpec,
+    project: 'unit',
+    needle: "? 'dead'\n      : 'unknown'",
+    replacement: "? 'dead'\n      : 'dead'",
+    test: 'does not treat EPERM from kill(0) as proof that the broker exited',
+  },
+  {
+    id: 'R23',
+    criterion: 'invalid journal UUIDs cannot authorize filesystem cleanup',
+    source: nodeRecoverySource,
+    spec: nodeRecoverySpec,
+    project: 'unit',
+    needle:
+      '!CoordinationRequestPayloadSchema.shape.evaluationId.safeParse(row.evaluationId).success ||',
+    replacement: 'false ||',
+    test: 'keeps an invalid journal identity pending before filesystem cleanup',
+  },
+  {
+    id: 'R24',
+    criterion: 'private Router history must disable shared and stored caching',
+    source: routerRoutesSource,
+    needle:
+      "app.get('/works/:workKey/router/evaluations', async (request, reply) => {\n    reply.header('cache-control', 'private, no-store')",
+    replacement: "app.get('/works/:workKey/router/evaluations', async (request, reply) => {",
+    test: 'exposes an empty owner-only evaluation history before a model is configured',
+  },
+  {
+    id: 'R25',
+    criterion: 'a dead leader cannot authorize cleanup while its process group survives',
+    source: nodeRecoverySource,
+    spec: nodeRecoverySpec,
+    project: 'unit',
+    needle: "return process.platform === 'win32' || coordinationPidState(-row.pid) === 'dead'",
+    replacement: 'return true',
+    test: 'keeps inputs until both the dead leader and its surviving process group have exited',
+  },
+  {
+    id: 'R26',
+    criterion: 'cleanup attempt identity must remain a safe positive integer',
+    source: nodeRecoverySource,
+    spec: nodeRecoverySpec,
+    project: 'unit',
+    needle: '!Number.isSafeInteger(row.attempt)',
+    replacement: 'false',
+    test: 'keeps an invalid journal identity pending before filesystem cleanup',
+  },
 ]
 
 interface AssertionResult {
@@ -187,10 +273,29 @@ interface MutationResult {
   id: string
   criterion: string
   test: string
+  source: string
+  spec: string
+  project: string
   status: 'killed' | 'survived' | 'invalid'
   exitCode: number
   failedTests: number
   assertionFailures: string[]
+}
+interface BaselineResult {
+  spec: string
+  project: string
+  totalTests: number
+  passedTests: number
+  failedTests: number
+  exitCode: number
+  pass: boolean
+}
+function target(mutation: Mutation) {
+  return {
+    source: mutation.source ?? sourcePath,
+    spec: mutation.spec ?? spec,
+    project: mutation.project ?? 'integration',
+  }
 }
 
 function digest(source: string): string {
@@ -208,7 +313,11 @@ export function isRouterMutationAssertionFailure(message: string): boolean {
     )
   )
 }
-async function command(args: readonly string[], signal?: AbortSignal): Promise<number> {
+async function command(
+  args: readonly string[],
+  signal?: AbortSignal,
+  timeoutMs = 120_000,
+): Promise<number> {
   return new Promise<number>((resolve, reject) => {
     const child = spawn('pnpm', args, {
       cwd: root,
@@ -231,7 +340,7 @@ async function command(args: readonly string[], signal?: AbortSignal): Promise<n
       forcedStop = setTimeout(() => kill('SIGKILL'), 3000)
       forcedStop.unref()
     }
-    const timeout = setTimeout(stop, 120_000)
+    const timeout = setTimeout(stop, timeoutMs)
     timeout.unref()
     signal?.addEventListener('abort', stop, { once: true })
     if (signal?.aborted) stop()
@@ -254,6 +363,7 @@ async function runSuite(
   id: string,
   reportRoot: string,
   signal: AbortSignal,
+  suite: Pick<Suite, 'spec' | 'project'>,
   test?: string,
 ): Promise<RunResult> {
   // Raw Vitest reports can include request bodies on failure. Keep them private and
@@ -264,8 +374,8 @@ async function runSuite(
     'vitest',
     'run',
     '--project',
-    'integration',
-    spec,
+    suite.project,
+    suite.spec,
     '--reporter=json',
     `--outputFile=${reportPath}`,
   ]
@@ -286,39 +396,82 @@ async function runSuite(
   return { exitCode, report, assertionFailures }
 }
 
+async function runBaselines(
+  phase: string,
+  reportRoot: string,
+  signal: AbortSignal,
+): Promise<BaselineResult[]> {
+  const results: BaselineResult[] = []
+  for (const suite of baselineSuites) {
+    const run = await runSuite(`${phase}-${suite.project}`, reportRoot, signal, suite)
+    results.push({
+      ...suite,
+      totalTests: run.report.numTotalTests,
+      passedTests: run.report.numPassedTests,
+      failedTests: run.report.numFailedTests,
+      exitCode: run.exitCode,
+      pass:
+        run.exitCode === 0 &&
+        run.report.numFailedTests === 0 &&
+        run.report.numPassedTests > 0 &&
+        run.report.numPassedTests === run.report.numTotalTests,
+    })
+  }
+  return results
+}
+
 async function main(): Promise<void> {
   if (!process.env.DATABASE_URL) {
     assert.ok(!process.argv.includes('--database-ready'), 'PostgreSQL wrapper supplied no database')
-    process.exitCode = await command([
-      'exec',
-      'tsx',
-      'scripts/with-test-postgres.mts',
-      'pnpm',
-      'exec',
-      'tsx',
-      script,
-      '--database-ready',
-    ])
+    process.exitCode = await command(
+      [
+        'exec',
+        'tsx',
+        'scripts/with-test-postgres.mts',
+        'pnpm',
+        'exec',
+        'tsx',
+        script,
+        '--database-ready',
+      ],
+      undefined,
+      600_000,
+    )
     return
   }
   await mkdir(output, { recursive: true })
   await rm(summaryPath, { force: true })
-  const original = await readFile(join(root, sourcePath), 'utf8')
-  const sourceDigest = digest(original)
-  const specSource = await readFile(join(root, spec), 'utf8')
+  const sources = [...new Set(mutations.map((mutation) => target(mutation).source))]
+  const originals = new Map(
+    await Promise.all(
+      sources.map(async (source) => [source, await readFile(join(root, source), 'utf8')] as const),
+    ),
+  )
+  const sourceDigests = new Map(sources.map((source) => [source, digest(originals.get(source)!)]))
+  const specs = [...new Set(mutations.map((mutation) => target(mutation).spec))]
+  const specSources = new Map(
+    await Promise.all(
+      specs.map(async (path) => [path, await readFile(join(root, path), 'utf8')] as const),
+    ),
+  )
   for (const mutation of mutations) {
+    const { source, spec: testSpec } = target(mutation)
+    const original = originals.get(source)!
     assert.equal(
       original.split(mutation.needle).length - 1,
       1,
       `${mutation.id}: mutation predicate changed or is not unique`,
     )
     assert.ok(
-      specSource.includes(
-        mutation.test.replace(
-          /^rejects (missing_usage|forged_citation|wrong_digest|unknown_coverage|over_usage|wrong_model|underreported_cost|unknown_ignore|missing_coverage|wrong_result_digest) and settles without a proposal$/,
-          'rejects %s and settles without a proposal',
+      specSources
+        .get(testSpec)!
+        .includes(
+          mutation.testTemplate ??
+            mutation.test.replace(
+              /^rejects (missing_usage|forged_citation|wrong_digest|unknown_coverage|over_usage|wrong_model|underreported_cost|unknown_ignore|missing_coverage|wrong_result_digest) and settles without a proposal$/,
+              'rejects %s and settles without a proposal',
+            ),
         ),
-      ),
       `${mutation.id}: target regression test is missing`,
     )
   }
@@ -332,26 +485,35 @@ async function main(): Promise<void> {
   let baselineAfter = false
   let baselineBeforeTests = 0
   let baselineAfterTests = 0
+  let baselineBeforeRuns: BaselineResult[] = []
+  let baselineAfterRuns: BaselineResult[] = []
   let restored = false
   try {
-    const baseline = await runSuite('baseline-before', reportRoot, controller.signal)
-    assert.equal(baseline.exitCode, 0, 'baseline is red before mutation')
-    assert.equal(baseline.report.numFailedTests, 0, 'baseline contains failed tests')
-    assert.ok(baseline.report.numPassedTests > 0, 'baseline has no successful executions')
-    baselineBefore = true
-    baselineBeforeTests = baseline.report.numPassedTests
+    baselineBeforeRuns = await runBaselines('baseline-before', reportRoot, controller.signal)
+    baselineBefore = baselineBeforeRuns.every((run) => run.pass)
+    baselineBeforeTests = baselineBeforeRuns.reduce((total, run) => total + run.passedTests, 0)
+    assert.ok(baselineBefore, 'baseline is red or does not execute every required test')
     for (const mutation of mutations) {
-      assert.equal(
-        await readFile(join(root, sourcePath), 'utf8'),
-        original,
-        'source changed while mutation harness was running',
-      )
+      for (const source of sources)
+        assert.equal(
+          await readFile(join(root, source), 'utf8'),
+          originals.get(source),
+          `source changed while mutation harness was running: ${source}`,
+        )
+      const mutationTarget = target(mutation)
+      const original = originals.get(mutationTarget.source)!
       await writeFile(
-        join(root, sourcePath),
+        join(root, mutationTarget.source),
         original.replace(mutation.needle, mutation.replacement),
       )
       try {
-        const run = await runSuite(mutation.id, reportRoot, controller.signal, mutation.test)
+        const run = await runSuite(
+          mutation.id,
+          reportRoot,
+          controller.signal,
+          mutationTarget,
+          mutation.test,
+        )
         const killed =
           run.exitCode !== 0 &&
           run.report.numFailedTests > 0 &&
@@ -362,6 +524,7 @@ async function main(): Promise<void> {
           id: mutation.id,
           criterion: mutation.criterion,
           test: mutation.test,
+          ...mutationTarget,
           status,
           exitCode: run.exitCode,
           failedTests: run.report.numFailedTests,
@@ -369,22 +532,26 @@ async function main(): Promise<void> {
         })
         console.log(`${mutation.id} ${status.toUpperCase()}: ${mutation.criterion}`)
       } finally {
-        await writeFile(join(root, sourcePath), original)
+        await writeFile(join(root, mutationTarget.source), original)
       }
     }
   } finally {
     // Restore even when a test process fails, a JSON report is absent, or a signal
     // interrupts the runner. Do not retain raw reports or source copies as evidence.
-    await writeFile(join(root, sourcePath), original)
-    restored = digest(await readFile(join(root, sourcePath), 'utf8')) === sourceDigest
+    for (const source of sources) await writeFile(join(root, source), originals.get(source)!)
+    const restoredSources = await Promise.all(
+      sources.map(async (source) => ({
+        source,
+        sourceDigest: sourceDigests.get(source),
+        restored: digest(await readFile(join(root, source), 'utf8')) === sourceDigests.get(source),
+      })),
+    )
+    restored = restoredSources.every((source) => source.restored)
     try {
       if (baselineBefore && !controller.signal.aborted) {
-        const after = await runSuite('baseline-after', reportRoot, controller.signal)
-        baselineAfter =
-          after.exitCode === 0 &&
-          after.report.numFailedTests === 0 &&
-          after.report.numPassedTests > 0
-        baselineAfterTests = after.report.numPassedTests
+        baselineAfterRuns = await runBaselines('baseline-after', reportRoot, controller.signal)
+        baselineAfter = baselineAfterRuns.every((run) => run.pass)
+        baselineAfterTests = baselineAfterRuns.reduce((total, run) => total + run.passedTests, 0)
       }
     } finally {
       await rm(reportRoot, { recursive: true, force: true })
@@ -405,11 +572,14 @@ async function main(): Promise<void> {
             component: 'harness.router_mutation',
             generatedAt: new Date().toISOString(),
             source: sourcePath,
-            sourceDigest,
+            sourceDigest: sourceDigests.get(sourcePath),
+            sources: restoredSources,
             baselineBefore,
             baselineAfter,
             baselineBeforeTests,
             baselineAfterTests,
+            baselineBeforeRuns,
+            baselineAfterRuns,
             restored,
             expectedMutations: mutations.length,
             mutations: results,

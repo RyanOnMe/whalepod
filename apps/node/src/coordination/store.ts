@@ -52,6 +52,11 @@ function fromRow(row: Row): CoordinationJournal {
   }
 }
 
+// Read corrupt oversized attempts without node:sqlite throwing before cleanup can
+// reject them. REAL preserves every valid safe integer exactly.
+const JOURNAL_COLUMNS =
+  'evaluation_id, cast(attempt as real) as attempt, lease_token, nonce, request_json, home_path, state, pid, process_start_time, model_started_at, read_entry_ids, result_json, cleaned'
+
 /** Durable attempt identity, result outbox and cleanup queue. This is not a second team state authority. */
 export class CoordinationStore {
   private readonly db: DatabaseSync
@@ -93,14 +98,20 @@ export class CoordinationStore {
   }
   get(evaluationId: string, attempt: number): CoordinationJournal | undefined {
     const row = this.db
-      .prepare('select * from coordination_attempt where evaluation_id=? and attempt=?')
+      .prepare(
+        'select ' +
+          JOURNAL_COLUMNS +
+          ' from coordination_attempt where evaluation_id=? and attempt=?',
+      )
       .get(evaluationId, attempt) as Row | undefined
     return row === undefined ? undefined : fromRow(row)
   }
   private list(where: string): CoordinationJournal[] {
     return (
       this.db
-        .prepare(`select * from coordination_attempt where ${where} order by evaluation_id,attempt`)
+        .prepare(
+          `select ${JOURNAL_COLUMNS} from coordination_attempt where ${where} order by evaluation_id,attempt`,
+        )
         .all() as unknown as Row[]
     ).map(fromRow)
   }
@@ -119,6 +130,14 @@ export class CoordinationStore {
         "update coordination_attempt set pid=?,process_start_time=? where evaluation_id=? and attempt=? and state='active'",
       )
       .run(pid, start, id, attempt)
+  }
+  /** Only called after exit, ESRCH, or confirmed PID reuse; never merely after signaling. */
+  clearProcess(id: string, attempt: number): void {
+    this.db
+      .prepare(
+        'update coordination_attempt set pid=null,process_start_time=null where evaluation_id=? and attempt=?',
+      )
+      .run(id, attempt)
   }
   markHeartbeat(id: string, attempt: number, entries: readonly string[], started?: string): void {
     const row = this.get(id, attempt)

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, rm } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import {
   CoordinationHeartbeatPayloadSchema,
   CoordinationRequestPayloadSchema,
@@ -23,12 +23,7 @@ import {
   type CoordinationProcessDriver,
 } from './driver.js'
 import { CoordinationStore, type CoordinationJournal } from './store.js'
-import {
-  killProcessGroup,
-  processAlive,
-  processCommandLine,
-  processStartTime,
-} from '../supervisor/process.js'
+import { killProcessGroup, processCommandLine, processStartTime } from '../supervisor/process.js'
 
 interface Active {
   readonly request: CoordinationRequest
@@ -37,6 +32,18 @@ interface Active {
   timer?: ReturnType<typeof setInterval>
   needsStartAck: boolean
   finishing?: Promise<void>
+}
+
+/** ESRCH alone proves exit. Lack of permission is not evidence that a process died. */
+function coordinationPidState(pid: number): 'alive' | 'dead' | 'unknown' {
+  try {
+    process.kill(pid, 0)
+    return 'alive'
+  } catch (error) {
+    return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH'
+      ? 'dead'
+      : 'unknown'
+  }
 }
 export interface CoordinationManagerDeps {
   stateDir: string
@@ -351,7 +358,13 @@ export class CoordinationManager {
       )
       const row = this.store.get(r.evaluationId, r.attempt)
       if (row !== undefined) this.flushOne(row)
-      if (active.handle !== undefined) await this.driver.terminate(active.handle)
+      if (active.handle !== undefined) {
+        await this.driver.terminate(active.handle)
+        await active.handle.exitPromise
+        // exitPromise proves the leader stopped, not that every group member did.
+        if (process.platform === 'win32' || coordinationPidState(-active.handle.pid) === 'dead')
+          this.store.clearProcess(r.evaluationId, r.attempt)
+      }
       this.active.delete(this.key(r))
       if (row !== undefined) await this.cleanup(row)
       this.log('evaluation_terminal', r, {
@@ -363,8 +376,32 @@ export class CoordinationManager {
   }
   private async cleanup(row: CoordinationJournal): Promise<void> {
     // A hand-edited local journal must not turn cleanup into arbitrary directory deletion.
-    if (row.homePath !== this.homeFor(row) || this.active.has(this.key(row))) return
+    if (
+      !CoordinationRequestPayloadSchema.shape.evaluationId.safeParse(row.evaluationId).success ||
+      !Number.isSafeInteger(row.attempt) ||
+      row.attempt <= 0
+    ) {
+      this.log('cleanup_pending', row)
+      return
+    }
+    const expectedHome = this.homeFor(row)
+    const within = relative(this.root, expectedHome)
+    if (
+      within === '' ||
+      within.startsWith('..') ||
+      isAbsolute(within) ||
+      row.homePath !== expectedHome ||
+      this.active.has(this.key(row))
+    )
+      return
     try {
+      // A saved/acknowledged result can precede process termination. Journal state
+      // does not prove the broker has released its private input directory.
+      const current = this.store.get(row.evaluationId, row.attempt)
+      if (current === undefined || !(await this.ensureProcessStopped(current))) {
+        this.log('cleanup_pending', row)
+        return
+      }
       await (
         this.deps.removeHome ?? ((path: string) => rm(path, { recursive: true, force: true }))
       )(row.homePath)
@@ -377,22 +414,54 @@ export class CoordinationManager {
   async retryCleanup(): Promise<void> {
     for (const row of this.store.cleanupTasks()) await this.cleanup(row)
   }
+  private async probeRecordedProcess(
+    row: CoordinationJournal,
+  ): Promise<'gone' | 'owned' | 'unknown'> {
+    if (row.pid === null) return 'gone'
+    if (!Number.isSafeInteger(row.pid) || row.pid <= 1) return 'unknown'
+    const alive = coordinationPidState(row.pid)
+    if (alive === 'dead')
+      return process.platform === 'win32' || coordinationPidState(-row.pid) === 'dead'
+        ? 'gone'
+        : 'unknown'
+    if (alive === 'unknown' || row.processStartTime === null) return 'unknown'
+    const [start, command] = await Promise.all([
+      (this.deps.readProcessStartTime ?? processStartTime)(row.pid),
+      processCommandLine(row.pid),
+    ])
+    if (start === undefined || command === undefined)
+      return coordinationPidState(row.pid) === 'dead' &&
+        (process.platform === 'win32' || coordinationPidState(-row.pid) === 'dead')
+        ? 'gone'
+        : 'unknown'
+    // This PID now belongs to a different process; do not signal the new owner.
+    if (start !== row.processStartTime) return 'gone'
+    return command.includes('--coordination') &&
+      command.includes('--evaluation-id') &&
+      command.includes(row.evaluationId) &&
+      command.includes('--nonce') &&
+      command.includes(row.nonce)
+      ? 'owned'
+      : 'unknown'
+  }
+  private async ensureProcessStopped(row: CoordinationJournal): Promise<boolean> {
+    let state = await this.probeRecordedProcess(row)
+    if (state === 'unknown') return false
+    if (state === 'owned' && row.pid !== null) {
+      await killProcessGroup(row.pid, 'SIGKILL')
+      const deadline = Date.now() + 1000
+      do {
+        await new Promise<void>((resolve) => setTimeout(resolve, 20))
+        state = await this.probeRecordedProcess(row)
+      } while (state !== 'gone' && Date.now() < deadline)
+      if (state !== 'gone') return false
+    }
+    this.store.clearProcess(row.evaluationId, row.attempt)
+    return true
+  }
   /** Restart never automatically replays a possibly charged model call. */
   async recover(): Promise<void> {
     for (const row of this.store.active()) {
-      if (row.pid !== null && row.processStartTime !== null && (await processAlive(row.pid))) {
-        const [start, command] = await Promise.all([
-          processStartTime(row.pid),
-          processCommandLine(row.pid),
-        ])
-        if (
-          start === row.processStartTime &&
-          command?.includes('--coordination') &&
-          command.includes(row.evaluationId) &&
-          command.includes(row.nonce)
-        )
-          await killProcessGroup(row.pid, 'SIGKILL')
-      }
       const request = CoordinationRequestPayloadSchema.parse(JSON.parse(row.requestJson))
       this.store.saveResult(
         row.evaluationId,
@@ -401,6 +470,8 @@ export class CoordinationManager {
       )
       this.log('orphan_reconciled', row)
     }
+    // Includes results already acknowledged before Node crashed. Those terminal
+    // records remain untouched; only their still-owned processes and copies stop.
     await this.retryCleanup()
     this.onReconnect()
   }
