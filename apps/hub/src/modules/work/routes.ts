@@ -23,8 +23,10 @@ import {
   WorkInboxItemReturnRequestSchema,
   WorkInboxListQuerySchema,
   WorkMandateStatusChangeRequestSchema,
+  WorkQuestionAnswerRequestSchema,
   type DispatchIntentView,
   type WorkMandateView,
+  type WorkQuestionAnswerView,
 } from '@whalepod/protocol'
 import { audit } from '../shared/audit.js'
 import { ApiError } from '../shared/http-error.js'
@@ -58,6 +60,7 @@ import {
   returnWorkInboxItem,
 } from './inbox.js'
 import { loadWorkDetail, toWorkView } from './queries.js'
+import { answerWorkQuestion } from './questions.js'
 import { buildRunWorkInputBundle } from './run-dispatch.js'
 
 export interface WorkRouteDeps {
@@ -88,6 +91,13 @@ function parseUuid(value: string, label: string): string {
   const parsed = z.uuid().safeParse(value)
   if (!parsed.success) throw new ApiError(400, 'VALIDATION_FAILED', `invalid ${label}`)
   return parsed.data
+}
+
+function parseDecisionId(value: string): string {
+  if (!/^[a-f0-9]{64}$/.test(value)) {
+    throw new ApiError(400, 'VALIDATION_FAILED', 'invalid decision id')
+  }
+  return value
 }
 
 function parseBody<T>(
@@ -195,10 +205,10 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
     const session = await deps.requireActor(request)
     const { workKey: rawWorkKey } = request.params as { workKey: string }
     const workKey = parseUuid(rawWorkKey, 'work key')
-    const { work } = await loadAuthorizedWork(deps, session, workKey)
+    const { work, task } = await loadAuthorizedWork(deps, session, workKey)
     const now = new Date()
     const latest = await getLatestWorkMandate(deps.database.db, work.id)
-    const view = await loadWorkDetail(deps.database, work, latest, now)
+    const view = await loadWorkDetail(deps.database, work, latest, now, task.assigneeUserId)
     return { ok: true, data: view }
   })
 
@@ -249,6 +259,50 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
       version: outcome.view.version,
     })
     return reply.code(201).send({ ok: true, data: outcome.view })
+  })
+
+  // POST /works/:workKey/questions/:decisionId/answers：ask 的绑定回答（RD-03d2a）。
+  app.post('/works/:workKey/questions/:decisionId/answers', async (request) => {
+    const session = await deps.requireActor(request)
+    const { workKey: rawWorkKey, decisionId: rawDecisionId } = request.params as {
+      workKey: string
+      decisionId: string
+    }
+    const workKey = parseUuid(rawWorkKey, 'work key')
+    const decisionId = parseDecisionId(rawDecisionId)
+    const body = parseBody(WorkQuestionAnswerRequestSchema, request.body)
+    let outcome: WorkQuestionAnswerView
+    try {
+      outcome = await answerWorkQuestion(
+        { database: deps.database, now: () => new Date() },
+        session.userId,
+        workKey,
+        decisionId,
+        body,
+        readIdempotencyKey(request),
+      )
+    } catch (error) {
+      // non-binding 回答已落库但请求被拒（409）；审计留 denied 事实，便于和绑定成功分开归因。
+      if (error instanceof ApiError && error.code === 'DECISION_STALE') {
+        const details = error.details as { questionId?: string } | undefined
+        audit(request, 'work.decision.answer', 'denied', session.userId, {
+          workKey,
+          decisionId,
+          ...(details?.questionId === undefined ? {} : { questionId: details.questionId }),
+          answerType: body.answerType,
+          binding: false,
+        })
+      }
+      throw error
+    }
+    audit(request, 'work.decision.answer', 'success', session.userId, {
+      workKey,
+      decisionId,
+      questionId: outcome.question.id,
+      answerType: outcome.answer.answerType,
+      binding: outcome.answer.binding,
+    })
+    return { ok: true, data: outcome }
   })
 
   // GET /works/:workKey/mandates：版本历史（新到旧）。

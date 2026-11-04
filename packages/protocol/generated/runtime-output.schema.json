@@ -470,6 +470,8 @@
                 "INVALID_SOURCE_TRANSITION",
                 "CONTEXT_UNAVAILABLE",
                 "CONTEXT_DIGEST_MISMATCH",
+                "UNSUPPORTED_ANSWER",
+                "DECISION_STALE",
                 "PLUGIN_UNREVIEWED",
                 "INTERNAL_ERROR"
               ]

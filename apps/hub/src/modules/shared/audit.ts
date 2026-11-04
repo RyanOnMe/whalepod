@@ -60,6 +60,8 @@ export type AuditAction =
   | 'work.mandate.resume'
   | 'work.mandate.revoke'
   | 'work.admission.check'
+  // ADR-0028（RD-03d2a）：ask 的绑定回答（不记问题/回答正文）。
+  | 'work.decision.answer'
   // ADR-0028（RD-03a）：受控派工意图的人工确认/拒绝与端口派发（不记目标正文）。
   | 'work.dispatch.approve'
   | 'work.dispatch.reject'
@@ -83,6 +85,10 @@ export interface AuditFields {
   readonly workKey?: string
   readonly mandateId?: string
   readonly version?: number
+  readonly decisionId?: string
+  readonly questionId?: string
+  readonly answerType?: string
+  readonly binding?: boolean
 }
 
 /**

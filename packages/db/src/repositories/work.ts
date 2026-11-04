@@ -7,14 +7,20 @@ import {
   dispatchIntents,
   routerDecisions,
   workMandates,
+  workQuestionAnswers,
+  workQuestions,
   works,
   type DispatchIntentRow,
   type NewDispatchIntentRow,
   type NewRouterDecisionRow,
   type NewWorkMandateRow,
+  type NewWorkQuestionAnswerRow,
+  type NewWorkQuestionRow,
   type NewWorkRow,
   type RouterDecisionRow,
   type WorkMandateRow,
+  type WorkQuestionAnswerRow,
+  type WorkQuestionRow,
   type WorkRow,
 } from '../schema/work.js'
 
@@ -23,9 +29,13 @@ export type {
   NewDispatchIntentRow,
   NewRouterDecisionRow,
   NewWorkMandateRow,
+  NewWorkQuestionAnswerRow,
+  NewWorkQuestionRow,
   NewWorkRow,
   RouterDecisionRow,
   WorkMandateRow,
+  WorkQuestionAnswerRow,
+  WorkQuestionRow,
   WorkRow,
 } from '../schema/work.js'
 
@@ -270,6 +280,125 @@ export async function cancelOpenDispatchIntents(
 
 /** @deprecated 保留旧导出名，语义已扩展为 proposed+approved；新代码用 cancelOpenDispatchIntents。 */
 export const cancelProposedDispatchIntents = cancelOpenDispatchIntents
+
+/**
+ * ADR-0028 §8（RD-03d2a）：按意图 id 取消单条尚未派发的意图；回答 deny/cancel/retry 时用。
+ * 已 dispatched/终态的行不受影响（返回 undefined），由调用方决定是否视为无副作用。
+ */
+export async function cancelDispatchIntentById(
+  handle: DbHandle,
+  id: string,
+  reason: string,
+  now: Date,
+): Promise<DispatchIntentRow | undefined> {
+  const [row] = await handle
+    .update(dispatchIntents)
+    .set({
+      status: 'cancelled',
+      resolutionReason: reason,
+      cancelledAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(eq(dispatchIntents.id, id), inArray(dispatchIntents.status, ['proposed', 'approved'])),
+    )
+    .returning()
+  return row
+}
+
+/** RD-03d2a：写入问题账本；同一 decisionId 的 open 唯一性由部分索引兜底。 */
+export async function insertWorkQuestion(
+  handle: DbHandle,
+  values: NewWorkQuestionRow,
+): Promise<WorkQuestionRow | undefined> {
+  const [row] = await handle.insert(workQuestions).values(values).onConflictDoNothing().returning()
+  return row
+}
+
+export async function getOpenWorkQuestion(
+  handle: DbHandle,
+  decisionId: string,
+): Promise<WorkQuestionRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(workQuestions)
+    .where(and(eq(workQuestions.decisionId, decisionId), eq(workQuestions.status, 'open')))
+    .limit(1)
+  return row
+}
+
+/** 同一确定性决定的任意状态问题；已回答/已关闭的决定不因重复准入重新开问。 */
+export async function getWorkQuestionByDecision(
+  handle: DbHandle,
+  decisionId: string,
+): Promise<WorkQuestionRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(workQuestions)
+    .where(eq(workQuestions.decisionId, decisionId))
+    .orderBy(desc(workQuestions.createdAt), desc(workQuestions.id))
+    .limit(1)
+  return row
+}
+
+/** 回答路径锁 Work 之后再锁问题；锁序与宿主事务保持一致（Task → Work → question）。 */
+export async function getWorkQuestionForUpdate(
+  handle: DbHandle,
+  workId: string,
+  decisionId: string,
+): Promise<WorkQuestionRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(workQuestions)
+    .where(and(eq(workQuestions.workId, workId), eq(workQuestions.decisionId, decisionId)))
+    .orderBy(desc(workQuestions.createdAt), desc(workQuestions.id))
+    .limit(1)
+    .for('update')
+  return row
+}
+
+export async function listOpenWorkQuestions(
+  handle: DbHandle,
+  workId: string,
+  principalUserId: string,
+  limit = 50,
+): Promise<WorkQuestionRow[]> {
+  return handle
+    .select()
+    .from(workQuestions)
+    .where(
+      and(
+        eq(workQuestions.workId, workId),
+        eq(workQuestions.status, 'open'),
+        eq(workQuestions.principalUserId, principalUserId),
+      ),
+    )
+    .orderBy(desc(workQuestions.createdAt), desc(workQuestions.id))
+    .limit(limit)
+}
+
+/** 只允许 open → answered；并发回答的败者拿到 undefined。 */
+export async function markWorkQuestionAnswered(
+  handle: DbHandle,
+  id: string,
+  now: Date,
+): Promise<WorkQuestionRow | undefined> {
+  const [row] = await handle
+    .update(workQuestions)
+    .set({ status: 'answered', answeredAt: now, closedAt: now, updatedAt: now })
+    .where(and(eq(workQuestions.id, id), eq(workQuestions.status, 'open')))
+    .returning()
+  return row
+}
+
+export async function insertWorkQuestionAnswer(
+  handle: DbHandle,
+  values: NewWorkQuestionAnswerRow,
+): Promise<WorkQuestionAnswerRow> {
+  const [row] = await handle.insert(workQuestionAnswers).values(values).returning()
+  if (row === undefined) throw new Error('insert work question answer returned no row')
+  return row
+}
 
 export async function getDispatchIntentForUpdate(
   handle: DbHandle,

@@ -67,6 +67,7 @@ import { canonicalJson, sha256Hex } from '../coordination/digest.js'
 import { lockWorkContext, requireAssignee } from '../work/context.js'
 import { loadWorkSource, WORK_ADMISSION_RULES_VERSION } from '../work/admission.js'
 import { toDispatchIntentView } from '../work/queries.js'
+import { openNoCandidateQuestion } from '../work/questions.js'
 
 export interface DispatchDeps {
   readonly database: Database
@@ -881,6 +882,15 @@ export async function autoDispatchProposedIntent(
         evaluation.exclusionReasons,
         now,
       )
+      // ADR-0028 §8（RD-03d2a）：无合格候选是确定性 ask，生成可绑定回答的 open 问题。
+      await openNoCandidateQuestion(tx, {
+        work,
+        task,
+        mandate,
+        intent: row ?? intent,
+        exclusionReasons: evaluation.exclusionReasons,
+        now,
+      })
       return toDispatchIntentView(row ?? intent, now)
     }
 
