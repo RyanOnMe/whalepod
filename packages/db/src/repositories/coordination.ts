@@ -134,6 +134,7 @@ export async function findQueuedEvaluationForUpdate(
     .where(
       and(
         eq(coordinationEvaluations.projectId, projectId),
+        eq(coordinationEvaluations.purpose, 'inference'),
         eq(coordinationEvaluations.status, 'queued'),
       ),
     )
@@ -152,6 +153,7 @@ export async function findCompletedEvaluationForInput(
     .where(
       and(
         eq(coordinationEvaluations.projectId, projectId),
+        eq(coordinationEvaluations.purpose, 'inference'),
         eq(coordinationEvaluations.inputDigest, inputDigest),
         eq(coordinationEvaluations.status, 'completed'),
       ),
@@ -170,6 +172,7 @@ export async function maxAttemptForInput(
     .where(
       and(
         eq(coordinationEvaluations.projectId, projectId),
+        eq(coordinationEvaluations.purpose, 'inference'),
         eq(coordinationEvaluations.inputDigest, inputDigest),
       ),
     )
@@ -186,6 +189,7 @@ export async function latestCompletedEvaluation(
     .where(
       and(
         eq(coordinationEvaluations.projectId, projectId),
+        eq(coordinationEvaluations.purpose, 'inference'),
         eq(coordinationEvaluations.status, 'completed'),
       ),
     )
@@ -202,7 +206,12 @@ export async function listRecentEvaluations(
   return handle
     .select()
     .from(coordinationEvaluations)
-    .where(eq(coordinationEvaluations.projectId, projectId))
+    .where(
+      and(
+        eq(coordinationEvaluations.projectId, projectId),
+        eq(coordinationEvaluations.purpose, 'inference'),
+      ),
+    )
     .orderBy(desc(coordinationEvaluations.createdAt), desc(coordinationEvaluations.id))
     .limit(limit)
 }
@@ -219,6 +228,7 @@ export async function listDueQueuedEvaluations(
     .where(
       and(
         eq(coordinationEvaluations.status, 'queued'),
+        eq(coordinationEvaluations.purpose, 'inference'),
         gte(coordinationEvaluations.queueExpiresAt, now),
       ),
     )
@@ -238,6 +248,7 @@ export async function listExpiredQueuedEvaluations(
     .where(
       and(
         eq(coordinationEvaluations.status, 'queued'),
+        eq(coordinationEvaluations.purpose, 'inference'),
         lt(coordinationEvaluations.queueExpiresAt, now),
       ),
     )

@@ -22,6 +22,11 @@ import { randomUUID } from 'node:crypto'
 import { writeSync } from 'node:fs'
 import { delimiter } from 'node:path'
 import { format } from 'node:util'
+import { fileURLToPath } from 'node:url'
+import {
+  probeCoordinationIsolation,
+  runCoordinationBroker,
+} from '@whalepod/runtime-dsh/coordination'
 import type { RuntimeCommand, RuntimeOutput } from '@whalepod/protocol'
 import { ErrorCodeSchema } from '@whalepod/protocol'
 import {
@@ -66,6 +71,24 @@ function emitStartFatal(runId: string, error: unknown): void {
 }
 
 function main(): void {
+  if (process.argv.slice(2).includes('--coordination-probe')) {
+    void probeCoordinationIsolation().then((supported) => {
+      writeSync(1, `${JSON.stringify({ supported })}\n`)
+      process.exit(supported ? 0 : 1)
+    })
+    return
+  }
+  if (process.argv.slice(2).includes('--coordination')) {
+    void runCoordinationBroker({
+      stdin: process.stdin,
+      workerEntry: fileURLToPath(new URL('./coordination-worker-bin.js', import.meta.url)),
+      write: (output) => writeSync(1, `${JSON.stringify(output)}\n`),
+    }).then(
+      () => process.exit(0),
+      () => process.exit(1),
+    )
+    return
+  }
   // #288：DSH 版本探针——一次性模式，不读 stdin、不 boot DSH。Node 的
   // 「敏感不兼容禁启动」preflight 用它在启动前拿到本机真实 DSH 版本（唯一允许
   // import @deepseek-ai/* 的一侧给出答案）。stdout 只写一行 JSON（不是协议帧），

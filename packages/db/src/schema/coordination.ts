@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import {
+  bigint,
   boolean,
   char,
   check,
@@ -14,7 +15,15 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core'
 import { contextEntries } from './context.js'
-import { projects } from './project.js'
+import { projects, tasks } from './project.js'
+import { devices } from './device.js'
+import { userAccounts } from './identity.js'
+import { works, workMandates } from './work.js'
+import type {
+  RouterProposal,
+  CoordinationUsage,
+  ConfigureProjectRouterRequest,
+} from '@whalepod/protocol'
 
 // ADR-0026（PC-04a）：确定性内部协调。本切片只使用 queued/completed/skipped/failed；
 // 其余枚举值留给模型/Node 路径，先固化类型避免后续迁移。
@@ -36,6 +45,36 @@ export const coordinationEvaluations = pgTable(
     projectId: uuid('project_id')
       .notNull()
       .references(() => projects.id),
+    purpose: varchar('purpose', { length: 16 })
+      .$type<'inference' | 'router'>()
+      .notNull()
+      .default('inference'),
+    workId: uuid('work_id').references(() => works.id),
+    workKey: varchar('work_key', { length: 64 }),
+    taskId: uuid('task_id').references(() => tasks.id),
+    principalUserId: uuid('principal_user_id').references(() => userAccounts.id),
+    mandateId: uuid('mandate_id').references(() => workMandates.id),
+    mandateVersion: integer('mandate_version'),
+    evaluationDigest: char('evaluation_digest', { length: 64 }),
+    deviceId: uuid('device_id').references(() => devices.id),
+    configVersion: integer('config_version'),
+    routerContext: jsonb('router_context').$type<{
+      sourceType: 'task_message' | 'context_entry'
+      sourceId: string
+      triggerKey: string
+    }>(),
+    configSnapshot: jsonb('config_snapshot').$type<ConfigureProjectRouterRequest>(),
+    readEntryIds: jsonb('read_entry_ids').$type<string[]>().notNull().default([]),
+    modelStartedAt: timestamp('model_started_at', { withTimezone: true }),
+    preModelFailureConfirmed: boolean('pre_model_failure_confirmed').notNull().default(false),
+    leaseToken: varchar('lease_token', { length: 256 }),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    deadlineAt: timestamp('deadline_at', { withTimezone: true }),
+    inputTokensEstimate: integer('input_tokens_estimate'),
+    reservedTokens: bigint('reserved_tokens', { mode: 'number' }),
+    reservedCostMicros: bigint('reserved_cost_micros', { mode: 'number' }),
+    routerProposal: jsonb('router_proposal').$type<RouterProposal>(),
+    usage: jsonb('usage').$type<CoordinationUsage>(),
     status: coordinationEvaluationStatus('status').notNull().default('queued'),
     attempt: integer('attempt').notNull().default(1),
     inputDigest: char('input_digest', { length: 64 }).notNull(),
@@ -75,19 +114,32 @@ export const coordinationEvaluations = pgTable(
     ),
     check(
       'coordination_evaluation_completed_fields',
-      sql`${table.status} <> 'completed' or (${table.resultDigest} is not null and ${table.inferenceEntryId} is not null)`,
+      sql`${table.status} <> 'completed' or (${table.resultDigest} is not null and ((${table.purpose} = 'inference' and ${table.inferenceEntryId} is not null and ${table.routerProposal} is null) or (${table.purpose} = 'router' and ${table.inferenceEntryId} is null and ${table.routerProposal} is not null)))`,
+    ),
+    check('coordination_evaluation_purpose', sql`${table.purpose} in ('inference', 'router')`),
+    check(
+      'coordination_evaluation_router_binding',
+      sql`${table.purpose} <> 'router' or (${table.workId} is not null and ${table.workKey} is not null and ${table.taskId} is not null and ${table.principalUserId} is not null and ${table.mandateId} is not null and ${table.mandateVersion} is not null and ${table.mandateVersion} > 0 and ${table.evaluationDigest} is not null and ${table.evaluationDigest} ~ '^[a-f0-9]{64}$' and ${table.routerContext} is not null and ${table.configSnapshot} is not null)`,
     ),
     uniqueIndex('coordination_evaluation_input_attempt_unique').on(
       table.projectId,
-      table.inputDigest,
+      table.purpose,
+      sql`coalesce(${table.evaluationDigest}, ${table.inputDigest})`,
       table.attempt,
     ),
     uniqueIndex('coordination_evaluation_one_queued')
-      .on(table.projectId)
+      .on(table.projectId, table.purpose, sql`coalesce(${table.workKey}, '')`)
       .where(sql`${table.status} = 'queued'`),
     uniqueIndex('coordination_evaluation_one_completed_per_input')
-      .on(table.projectId, table.inputDigest)
+      .on(
+        table.projectId,
+        table.purpose,
+        sql`coalesce(${table.evaluationDigest}, ${table.inputDigest})`,
+      )
       .where(sql`${table.status} = 'completed'`),
+    uniqueIndex('coordination_evaluation_one_running')
+      .on(table.projectId)
+      .where(sql`${table.status} in ('dispatched', 'running')`),
     index('coordination_evaluation_project_created_idx').on(
       table.projectId,
       table.createdAt.desc(),

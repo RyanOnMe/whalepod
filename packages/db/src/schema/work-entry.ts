@@ -11,6 +11,7 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core'
 import { projects } from './project.js'
+import { coordinationEvaluations } from './coordination.js'
 import { works, workSourceType } from './work.js'
 import { workInboxItems } from './work-inbox.js'
 import {
@@ -38,6 +39,9 @@ export const workEntryRouterCalls = pgTable(
       .notNull()
       .references(() => works.id),
     workKey: varchar('work_key', { length: 64 }).notNull(),
+    evaluationId: uuid('evaluation_id').references(() => coordinationEvaluations.id),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    resolutionReason: varchar('resolution_reason', { length: 64 }),
     reason: varchar('reason', { length: 500 }).notNull(),
     rulesVersion: varchar('rules_version', { length: 64 }).notNull(),
     inputDigest: char('input_digest', { length: 64 }).notNull(),
@@ -63,6 +67,9 @@ export const workEntryRouterCalls = pgTable(
       sql`${table.inputDigest} ~ '^[0-9a-f]{64}$' and ${table.sourceDigest} ~ '^[0-9a-f]{64}$'`,
     ),
     uniqueIndex('work_entry_router_call_dedupe_unique').on(table.dedupeKey),
+    index('work_entry_router_call_unresolved_idx')
+      .on(table.createdAt, table.id)
+      .where(sql`${table.resolvedAt} is null`),
     index('work_entry_router_call_work_created_idx').on(
       table.workId,
       table.createdAt.desc(),

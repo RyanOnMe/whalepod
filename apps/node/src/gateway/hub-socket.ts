@@ -20,6 +20,8 @@ import {
   type RunContextReceipt,
   type RunWorkInputReceipt,
   type RunSnapshot,
+  type CoordinationCapability,
+  type CoordinationCredentialSlot,
 } from '@whalepod/protocol'
 
 /** Hub 出站连接包装：认证升级 + 消息/关闭/错误回调。 */
@@ -87,6 +89,7 @@ export function openHubSocket(
 
 /** node.hello 上报的运行时事实（03 §6.2；pluginPackDigests 元素级 64-hex 由协议层校验）。 */
 export interface HelloFacts {
+  readonly coordinationCapabilities?: readonly CoordinationCapability[]
   readonly nodeVersion: string
   readonly platform: 'darwin' | 'linux' | 'win32'
   readonly architecture: string
@@ -117,6 +120,9 @@ export function helloFrame(deviceId: string, facts: HelloFacts): string {
         CONTEXT_STATE_CAPABILITY,
         WORK_INPUT_CAPABILITY,
       ],
+      ...(facts.coordinationCapabilities === undefined
+        ? {}
+        : { coordinationCapabilities: facts.coordinationCapabilities }),
     },
   })
 }
@@ -188,6 +194,7 @@ export function contextStateAckFrame(ack: ContextStateAck): string {
  * credentialSlots + workspaces 三键，勿加字段。
  */
 export interface InventoryFacts {
+  readonly coordinationCredentialSlots?: readonly CoordinationCredentialSlot[]
   readonly workspaces: ReadonlyArray<{
     readonly workspaceId: string
     readonly name: string
@@ -221,7 +228,14 @@ export function inventoryFrame(deviceId: string, facts: InventoryFacts): string 
       messageId: randomUUID(),
       sentAt: new Date().toISOString(),
       type: 'node.inventory',
-      payload: { deviceId, workspaces: facts.workspaces, credentialSlots: facts.credentialSlots },
+      payload: {
+        deviceId,
+        workspaces: facts.workspaces,
+        credentialSlots: facts.credentialSlots,
+        ...(facts.coordinationCredentialSlots === undefined
+          ? {}
+          : { coordinationCredentialSlots: facts.coordinationCredentialSlots }),
+      },
     }),
   )
 }

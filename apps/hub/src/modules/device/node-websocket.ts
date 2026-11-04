@@ -11,6 +11,7 @@
  * 语义冲突 = 单 Run 业务问题 → orchestrator Run 级收敛，连接保留。
  */
 import { randomUUID } from 'node:crypto'
+import { eq, sql } from 'drizzle-orm'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { Database } from '@whalepod/db'
 import {
@@ -20,6 +21,7 @@ import {
   runEventWatermark,
   setDeviceHelloFacts,
   touchDeviceLastSeenAt,
+  schema,
 } from '@whalepod/db'
 import { parseNodeFrame, RunEventAckSchema, RunResendFromSchema } from '@whalepod/protocol'
 import type { RunOrchestrator } from '../run/orchestrator.js'
@@ -31,12 +33,15 @@ import { nodeConnections } from './connection-registry.js'
 import { WorkspaceInventoryIngest } from './inventory.js'
 import type { RealtimeHub } from '../realtime/subscriptions.js'
 import { WebSocket } from 'ws'
+import { acceptRouterHeartbeat, acceptRouterResult } from '../router/service.js'
+import { ArtifactStore } from '../artifact/store.js'
 
 export interface NodeWebsocketDeps {
   readonly database: Database
   readonly orchestrator: RunOrchestrator
   /** P1-13：owner-only live delta 的投递面（03 §8：不持久、非 owner 不可见）。 */
   readonly realtime: RealtimeHub
+  readonly routerStore?: ArtifactStore
 }
 
 /** Run 终态集合（§3.2）：迟到 live delta 不转发、心跳缺口不为终态 Run 拉取。 */
@@ -90,6 +95,41 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
       const handleUpstream = async (raw: string): Promise<void> => {
         try {
           const frame = parseNodeFrame(JSON.parse(raw), 'upstream')
+          if (frame.type === 'coordination.heartbeat' || frame.type === 'coordination.result') {
+            await touchDeviceLastSeenAt(deps.database.db, identity.deviceId)
+            const routerDeps = {
+              database: deps.database,
+              ...(deps.routerStore ? { store: deps.routerStore } : {}),
+              log: (event: Record<string, unknown>) => app.log.info(event, 'router event'),
+            }
+            if (frame.type === 'coordination.heartbeat') {
+              try {
+                await acceptRouterHeartbeat(routerDeps, identity.deviceId, frame.payload)
+              } catch (error) {
+                app.log.warn(
+                  {
+                    component: 'hub.router',
+                    evaluationId: frame.payload.evaluationId,
+                    ...sanitizeError(error),
+                  },
+                  'router heartbeat rejected',
+                )
+              }
+            } else {
+              const ack = await acceptRouterResult(routerDeps, identity.deviceId, frame.payload)
+              if (socket.readyState === socket.OPEN)
+                socket.send(
+                  JSON.stringify({
+                    protocolVersion: 1,
+                    messageId: randomUUID(),
+                    sentAt: new Date().toISOString(),
+                    type: 'coordination.result_ack',
+                    payload: ack,
+                  }),
+                )
+            }
+            return
+          }
           if (frame.type === 'node.preparation_result') {
             // 应答本身也是活性证据；与 heartbeat 一样刷新 lastSeenAt，避免长检查期间被判离线。
             await touchDeviceLastSeenAt(deps.database.db, identity.deviceId)
@@ -107,6 +147,12 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
             // 再做投影 upsert。
             await touchDeviceLastSeenAt(deps.database.db, identity.deviceId)
             await inventoryIngest.ingest(identity, frame.payload)
+            await deps.database.db
+              .update(schema.devices)
+              .set({
+                capabilities: sql`jsonb_set(${schema.devices.capabilities}, '{coordinationCredentialSlots}', ${JSON.stringify(frame.payload.coordinationCredentialSlots ?? [])}::jsonb)`,
+              })
+              .where(eq(schema.devices.id, identity.deviceId))
             return
           }
           if (frame.type === 'node.hello' && frame.payload.deviceId === identity.deviceId) {
@@ -120,6 +166,7 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
                 // hello 是能力权威集合：缺省即清空旧声明，防止升级/降级后残留。
                 sourceCapabilities: frame.payload.sourceCapabilities ?? [],
                 contextCapabilities: frame.payload.contextCapabilities ?? [],
+                coordinationCapabilities: frame.payload.coordinationCapabilities ?? [],
                 lastSeenAt: new Date(),
               })
               await appendTeamEvent(tx, {

@@ -1,0 +1,12 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01940000-0000-7000-8000-000000000001",
+  "sentAt": "2026-11-04T04:00:00Z",
+  "type": "coordination.cancel",
+  "payload": {
+    "evaluationId": "01940000-0000-7000-8000-000000000002",
+    "attempt": 1,
+    "leaseToken": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "reason": "owner_changed"
+  }
+}

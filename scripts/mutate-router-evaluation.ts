@@ -1,0 +1,609 @@
+#!/usr/bin/env tsx
+/** #519: one predicate at a time; assertion failures must kill it, then restore the source. */
+import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { redactText } from './lib/phase1/events.js'
+
+const root = fileURLToPath(new URL('../', import.meta.url))
+const script = 'scripts/mutate-router-evaluation.ts'
+// reason: single-point mutation edits production predicates; these paths are never
+// spawn/import entries. Vitest drives the HTTP/WS handlers and process-recovery modules.
+// removeWhen: a mutation engine replaces source-file patching, remove these paths
+// and their exact HARNESS_SRC_PATH_ALLOWLIST entries together.
+const sourcePath = 'apps/hub/src/modules/router/service.ts'
+const routerRoutesSource = 'apps/hub/src/modules/router/routes.ts'
+const spec = 'apps/hub/tests/router-evaluation.integration.spec.ts'
+const nodeRecoverySource = 'apps/node/src/coordination/manager.ts'
+const nodeRecoverySpec = 'apps/node/tests/coordination-recovery.spec.ts'
+const output = join(root, 'artifacts/evidence/router-evaluation/mutations')
+const summaryPath = join(output, 'result.json')
+
+interface Mutation {
+  id: string
+  criterion: string
+  needle: string
+  replacement: string
+  test: string
+  source?: string
+  spec?: string
+  project?: 'integration' | 'unit'
+  testTemplate?: string
+}
+interface Suite {
+  spec: string
+  project: 'integration' | 'unit'
+}
+const baselineSuites: readonly Suite[] = [
+  { spec, project: 'integration' },
+  { spec: nodeRecoverySpec, project: 'unit' },
+]
+const mutations: readonly Mutation[] = [
+  {
+    id: 'R01',
+    criterion: 'completed usage is mandatory',
+    needle: "if (payload.status === 'completed' && !usage) rejection = 'usage_missing'",
+    replacement: "if (false) rejection = 'usage_missing'",
+    test: 'rejects missing_usage and settles without a proposal',
+  },
+  {
+    id: 'R02',
+    criterion: 'citations must name a read manifest entry',
+    needle: "rejection = 'invalid_citation'",
+    replacement: 'rejection = undefined',
+    test: 'rejects forged_citation and settles without a proposal',
+  },
+  {
+    id: 'R03',
+    criterion: 'result evaluation identity must match',
+    needle:
+      "if (payload.evaluationDigest !== row.evaluationDigest) rejection = 'evaluation_digest_mismatch'",
+    replacement: "if (false) rejection = 'evaluation_digest_mismatch'",
+    test: 'rejects wrong_digest and settles without a proposal',
+  },
+  {
+    id: 'R04',
+    criterion: 'a lease cannot be forged',
+    needle: 'row.leaseToken === payload.leaseToken',
+    replacement: 'true',
+    test: 'rejects wrong lease and attempt without consuming the valid attempt',
+  },
+  {
+    id: 'R05',
+    criterion: 'another attempt cannot claim this result',
+    needle: 'row.attempt === payload.attempt',
+    replacement: 'true',
+    test: 'rejects wrong lease and attempt without consuming the valid attempt',
+  },
+  {
+    id: 'R06',
+    criterion: 'a deadline is rechecked after rebuilding inputs',
+    needle: 'row.deadlineAt > now',
+    replacement: 'true',
+    test: 'rechecks a lease that expires while rebuilding authorized input',
+  },
+  {
+    id: 'R07',
+    criterion: 'unknown coverage cannot dispatch',
+    needle: "rejection = 'unsupported_dispatch'",
+    replacement: 'rejection = undefined',
+    test: 'rejects unknown_coverage and settles without a proposal',
+  },
+  {
+    id: 'R08',
+    criterion: 'current authority and configuration fence acceptance',
+    needle: "rejection = 'input_or_authority_changed'",
+    replacement: 'rejection = undefined',
+    test: 'ignores a stale result after explicit model configuration changes',
+  },
+  {
+    id: 'R09',
+    criterion: 'wait cannot extend the Mandate deadline',
+    needle: "rejection = 'invalid_wait_deadline'",
+    replacement: 'rejection = undefined',
+    test: 'enforces the current Mandate wait deadline instead of allowing an arbitrary day',
+  },
+  {
+    id: 'R10',
+    criterion: 'cached command reads reauthorize the current assignee',
+    needle:
+      'const { task } = await lockRouterContext(tx, workKey)\n    await requireAssignee(tx, task, actor.userId)',
+    replacement: 'await lockRouterContext(tx, workKey)',
+    test: 'reauthorizes cached evaluation receipts after reassignment and hides old principal history',
+  },
+  {
+    id: 'R11',
+    criterion: 'same-identity concurrent commands reuse one evaluation',
+    needle: "if (previous && previous.status !== 'failed') return previous",
+    replacement: "if (false && previous && previous.status !== 'failed') return previous",
+    test: 'deduplicates concurrent requests and redelivery without another reservation',
+  },
+  {
+    id: 'R12',
+    criterion: 'model start requires every input read receipt',
+    needle:
+      'payload.modelStartedAt !== undefined &&\n        manifest.some((e) => ![...row.readEntryIds, ...payload.readEntryIds].includes(e.id))',
+    replacement: 'false',
+    test: 'does not acknowledge model start until every manifest input has a read receipt',
+  },
+  {
+    id: 'R13',
+    criterion: 'each source receives exactly one coverage judgment',
+    needle: 'proposal.coverage.length !== sources.length ||',
+    replacement: 'false ||',
+    test: 'rejects duplicate source coverage even when all unique sources are present',
+  },
+  {
+    id: 'R14',
+    criterion: 'Mandate revisions do not reset charged work failures',
+    needle: 'failedRouter + failedExecutor >= input.mandate.maxAttempts',
+    replacement: 'false',
+    test: 'keeps charged failures across new Mandate versions instead of resetting attempts',
+  },
+  {
+    id: 'R15',
+    criterion: 'Hub cancellation alone never proves zero model spend',
+    needle: 'row.preModelFailureConfirmed &&',
+    replacement: 'true &&',
+    test: 'a source cancellation without model-start acknowledgement never proves a free model call',
+  },
+  {
+    id: 'R16',
+    criterion: 'completed output needs a persisted model-start marker after reads',
+    needle: "if (payload.status === 'completed' && row.modelStartedAt === null)",
+    replacement: 'if (false)',
+    test: 'requires persisted model-start evidence even after complete read receipts',
+  },
+  {
+    id: 'R17',
+    criterion: 'usage cannot exceed the reserved token and cost limits',
+    needle: "if (!usageValid) rejection = 'over_budget'",
+    replacement: "if (false) rejection = 'over_budget'",
+    test: 'rejects over_usage and settles without a proposal',
+  },
+  {
+    id: 'R18',
+    criterion: 'unknown coverage cannot be ignored',
+    needle: "rejection = 'unsupported_ignore'",
+    replacement: 'rejection = undefined',
+    test: 'rejects unknown_ignore and settles without a proposal',
+  },
+  {
+    id: 'R19',
+    criterion: 'the result digest must cover the exact accepted proposal',
+    needle: "rejection = 'result_digest_mismatch'",
+    replacement: 'rejection = undefined',
+    test: 'rejects wrong_result_digest and settles without a proposal',
+  },
+  {
+    id: 'R20',
+    criterion: 'a persisted terminal result does not prove its orphan process stopped',
+    source: nodeRecoverySource,
+    spec: nodeRecoverySpec,
+    project: 'unit',
+    needle: 'if (current === undefined || !(await this.ensureProcessStopped(current))) {',
+    replacement: 'if (current === undefined) {',
+    test: 'stops the owned result orphan before removing inputs and preserves terminal records',
+    testTemplate: 'stops the owned %s orphan before removing inputs and preserves terminal records',
+  },
+  {
+    id: 'R21',
+    criterion: 'unknown live-process identity must keep private inputs pending',
+    source: nodeRecoverySource,
+    spec: nodeRecoverySpec,
+    project: 'unit',
+    needle: "if (state === 'unknown') return false",
+    replacement: "if (state === 'unknown') return true",
+    test: 'keeps cleanup pending when the live process identity cannot be confirmed',
+  },
+  {
+    id: 'R22',
+    criterion: 'EPERM is not proof that the broker process died',
+    source: nodeRecoverySource,
+    spec: nodeRecoverySpec,
+    project: 'unit',
+    needle: "? 'dead'\n      : 'unknown'",
+    replacement: "? 'dead'\n      : 'dead'",
+    test: 'does not treat EPERM from kill(0) as proof that the broker exited',
+  },
+  {
+    id: 'R23',
+    criterion: 'invalid journal UUIDs cannot authorize filesystem cleanup',
+    source: nodeRecoverySource,
+    spec: nodeRecoverySpec,
+    project: 'unit',
+    needle:
+      '!CoordinationRequestPayloadSchema.shape.evaluationId.safeParse(row.evaluationId).success ||',
+    replacement: 'false ||',
+    test: 'keeps an invalid journal identity pending before filesystem cleanup',
+  },
+  {
+    id: 'R24',
+    criterion: 'private Router history must disable shared and stored caching',
+    source: routerRoutesSource,
+    needle:
+      "app.get('/works/:workKey/router/evaluations', async (request, reply) => {\n    reply.header('cache-control', 'private, no-store')",
+    replacement: "app.get('/works/:workKey/router/evaluations', async (request, reply) => {",
+    test: 'exposes an empty owner-only evaluation history before a model is configured',
+  },
+  {
+    id: 'R25',
+    criterion: 'a dead leader cannot authorize cleanup while its process group survives',
+    source: nodeRecoverySource,
+    spec: nodeRecoverySpec,
+    project: 'unit',
+    needle: "return process.platform === 'win32' || coordinationPidState(-row.pid) === 'dead'",
+    replacement: 'return true',
+    test: 'keeps inputs until both the dead leader and its surviving process group have exited',
+  },
+  {
+    id: 'R26',
+    criterion: 'cleanup attempt identity must remain a safe positive integer',
+    source: nodeRecoverySource,
+    spec: nodeRecoverySpec,
+    project: 'unit',
+    needle: '!Number.isSafeInteger(row.attempt)',
+    replacement: 'false',
+    test: 'keeps an invalid journal identity pending before filesystem cleanup',
+  },
+]
+
+interface AssertionResult {
+  fullName: string
+  status: string
+  failureMessages?: string[]
+}
+interface VitestReport {
+  numTotalTests: number
+  numPassedTests: number
+  numFailedTests: number
+  numRuntimeErrorTestSuites?: number
+  testResults: Array<{ assertionResults: AssertionResult[] }>
+}
+interface RunResult {
+  exitCode: number
+  report: VitestReport
+  assertionFailures: string[]
+}
+interface MutationResult {
+  id: string
+  criterion: string
+  test: string
+  source: string
+  spec: string
+  project: string
+  status: 'killed' | 'survived' | 'invalid'
+  exitCode: number
+  failedTests: number
+  assertionFailures: string[]
+}
+interface BaselineResult {
+  spec: string
+  project: string
+  totalTests: number
+  passedTests: number
+  failedTests: number
+  exitCode: number
+  pass: boolean
+}
+function target(mutation: Mutation) {
+  return {
+    source: mutation.source ?? sourcePath,
+    spec: mutation.spec ?? spec,
+    project: mutation.project ?? 'integration',
+  }
+}
+
+function digest(source: string): string {
+  return createHash('sha256').update(source).digest('hex')
+}
+function regexLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+/** Vitest's promise matchers use Error, rather than AssertionError, for mismatches. */
+export function isRouterMutationAssertionFailure(message: string): boolean {
+  return (
+    /^AssertionError:/.test(message) ||
+    /^Error: promise (?:resolved [^\n]+ instead of rejecting|rejected [^\n]+ instead of resolving)(?:\n|$)/.test(
+      message,
+    )
+  )
+}
+async function command(
+  args: readonly string[],
+  signal?: AbortSignal,
+  timeoutMs = 120_000,
+): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    const child = spawn('pnpm', args, {
+      cwd: root,
+      env: process.env,
+      stdio: 'inherit',
+      detached: process.platform !== 'win32',
+    })
+    let forcedStop: ReturnType<typeof setTimeout> | undefined
+    const stop = (): void => {
+      const kill = (name: NodeJS.Signals): void => {
+        if (child.pid === undefined) return
+        try {
+          if (process.platform === 'win32') child.kill(name)
+          else process.kill(-child.pid, name)
+        } catch {
+          // The process group may already have exited.
+        }
+      }
+      kill('SIGTERM')
+      forcedStop = setTimeout(() => kill('SIGKILL'), 3000)
+      forcedStop.unref()
+    }
+    const timeout = setTimeout(stop, timeoutMs)
+    timeout.unref()
+    signal?.addEventListener('abort', stop, { once: true })
+    if (signal?.aborted) stop()
+    const cleanup = (): void => {
+      clearTimeout(timeout)
+      if (forcedStop !== undefined) clearTimeout(forcedStop)
+      signal?.removeEventListener('abort', stop)
+    }
+    child.once('error', () => cleanup())
+    child.once('error', reject)
+    child.once('exit', (code, exitSignal) => {
+      cleanup()
+      if (code !== null) resolve(code)
+      else reject(new Error(`test command ended by ${exitSignal ?? 'unknown signal'}`))
+    })
+  })
+}
+
+async function runSuite(
+  id: string,
+  reportRoot: string,
+  signal: AbortSignal,
+  suite: Pick<Suite, 'spec' | 'project'>,
+  test?: string,
+): Promise<RunResult> {
+  // Raw Vitest reports can include request bodies on failure. Keep them private and
+  // emit only a fixed metadata projection to the evidence directory.
+  const reportPath = join(reportRoot, `${id}.json`)
+  const args = [
+    'exec',
+    'vitest',
+    'run',
+    '--project',
+    suite.project,
+    suite.spec,
+    '--reporter=json',
+    `--outputFile=${reportPath}`,
+  ]
+  if (test !== undefined) args.push('--testNamePattern', regexLiteral(test))
+  const exitCode = await command(args, signal)
+  const report = JSON.parse(await readFile(reportPath, 'utf8')) as VitestReport
+  assert.ok(Number.isInteger(report.numTotalTests) && report.numTotalTests > 0, 'no tests executed')
+  assert.ok(Array.isArray(report.testResults), 'missing test suites')
+  const assertionFailures = report.testResults.flatMap((suite) =>
+    suite.assertionResults
+      .filter(
+        (testCase) =>
+          testCase.status === 'failed' &&
+          testCase.failureMessages?.some(isRouterMutationAssertionFailure),
+      )
+      .map((testCase) => redactText(testCase.fullName)),
+  )
+  return { exitCode, report, assertionFailures }
+}
+
+async function runBaselines(
+  phase: string,
+  reportRoot: string,
+  signal: AbortSignal,
+): Promise<BaselineResult[]> {
+  const results: BaselineResult[] = []
+  for (const suite of baselineSuites) {
+    const run = await runSuite(`${phase}-${suite.project}`, reportRoot, signal, suite)
+    results.push({
+      ...suite,
+      totalTests: run.report.numTotalTests,
+      passedTests: run.report.numPassedTests,
+      failedTests: run.report.numFailedTests,
+      exitCode: run.exitCode,
+      pass:
+        run.exitCode === 0 &&
+        run.report.numFailedTests === 0 &&
+        run.report.numPassedTests > 0 &&
+        run.report.numPassedTests === run.report.numTotalTests,
+    })
+  }
+  return results
+}
+
+async function main(): Promise<void> {
+  if (!process.env.DATABASE_URL) {
+    assert.ok(!process.argv.includes('--database-ready'), 'PostgreSQL wrapper supplied no database')
+    process.exitCode = await command(
+      [
+        'exec',
+        'tsx',
+        'scripts/with-test-postgres.mts',
+        'pnpm',
+        'exec',
+        'tsx',
+        script,
+        '--database-ready',
+      ],
+      undefined,
+      600_000,
+    )
+    return
+  }
+  await mkdir(output, { recursive: true })
+  await rm(summaryPath, { force: true })
+  const sources = [...new Set(mutations.map((mutation) => target(mutation).source))]
+  const originals = new Map(
+    await Promise.all(
+      sources.map(async (source) => [source, await readFile(join(root, source), 'utf8')] as const),
+    ),
+  )
+  const sourceDigests = new Map(sources.map((source) => [source, digest(originals.get(source)!)]))
+  const specs = [...new Set(mutations.map((mutation) => target(mutation).spec))]
+  const specSources = new Map(
+    await Promise.all(
+      specs.map(async (path) => [path, await readFile(join(root, path), 'utf8')] as const),
+    ),
+  )
+  for (const mutation of mutations) {
+    const { source, spec: testSpec } = target(mutation)
+    const original = originals.get(source)!
+    assert.equal(
+      original.split(mutation.needle).length - 1,
+      1,
+      `${mutation.id}: mutation predicate changed or is not unique`,
+    )
+    assert.ok(
+      specSources
+        .get(testSpec)!
+        .includes(
+          mutation.testTemplate ??
+            mutation.test.replace(
+              /^rejects (missing_usage|forged_citation|wrong_digest|unknown_coverage|over_usage|wrong_model|underreported_cost|unknown_ignore|missing_coverage|wrong_result_digest) and settles without a proposal$/,
+              'rejects %s and settles without a proposal',
+            ),
+        ),
+      `${mutation.id}: target regression test is missing`,
+    )
+  }
+  const reportRoot = await mkdtemp(join(tmpdir(), 'whalepod-router-mutation-'))
+  const controller = new AbortController()
+  const onSignal = (): void => controller.abort()
+  process.once('SIGINT', onSignal)
+  process.once('SIGTERM', onSignal)
+  const results: MutationResult[] = []
+  let baselineBefore = false
+  let baselineAfter = false
+  let baselineBeforeTests = 0
+  let baselineAfterTests = 0
+  let baselineBeforeRuns: BaselineResult[] = []
+  let baselineAfterRuns: BaselineResult[] = []
+  let restored = false
+  try {
+    baselineBeforeRuns = await runBaselines('baseline-before', reportRoot, controller.signal)
+    baselineBefore = baselineBeforeRuns.every((run) => run.pass)
+    baselineBeforeTests = baselineBeforeRuns.reduce((total, run) => total + run.passedTests, 0)
+    assert.ok(baselineBefore, 'baseline is red or does not execute every required test')
+    for (const mutation of mutations) {
+      for (const source of sources)
+        assert.equal(
+          await readFile(join(root, source), 'utf8'),
+          originals.get(source),
+          `source changed while mutation harness was running: ${source}`,
+        )
+      const mutationTarget = target(mutation)
+      const original = originals.get(mutationTarget.source)!
+      await writeFile(
+        join(root, mutationTarget.source),
+        original.replace(mutation.needle, mutation.replacement),
+      )
+      try {
+        const run = await runSuite(
+          mutation.id,
+          reportRoot,
+          controller.signal,
+          mutationTarget,
+          mutation.test,
+        )
+        const killed =
+          run.exitCode !== 0 &&
+          run.report.numFailedTests > 0 &&
+          run.assertionFailures.length > 0 &&
+          (run.report.numRuntimeErrorTestSuites ?? 0) === 0
+        const status = killed ? 'killed' : run.exitCode === 0 ? 'survived' : 'invalid'
+        results.push({
+          id: mutation.id,
+          criterion: mutation.criterion,
+          test: mutation.test,
+          ...mutationTarget,
+          status,
+          exitCode: run.exitCode,
+          failedTests: run.report.numFailedTests,
+          assertionFailures: run.assertionFailures,
+        })
+        console.log(`${mutation.id} ${status.toUpperCase()}: ${mutation.criterion}`)
+      } finally {
+        await writeFile(join(root, mutationTarget.source), original)
+      }
+    }
+  } finally {
+    // Restore even when a test process fails, a JSON report is absent, or a signal
+    // interrupts the runner. Do not retain raw reports or source copies as evidence.
+    for (const source of sources) await writeFile(join(root, source), originals.get(source)!)
+    const restoredSources = await Promise.all(
+      sources.map(async (source) => ({
+        source,
+        sourceDigest: sourceDigests.get(source),
+        restored: digest(await readFile(join(root, source), 'utf8')) === sourceDigests.get(source),
+      })),
+    )
+    restored = restoredSources.every((source) => source.restored)
+    try {
+      if (baselineBefore && !controller.signal.aborted) {
+        baselineAfterRuns = await runBaselines('baseline-after', reportRoot, controller.signal)
+        baselineAfter = baselineAfterRuns.every((run) => run.pass)
+        baselineAfterTests = baselineAfterRuns.reduce((total, run) => total + run.passedTests, 0)
+      }
+    } finally {
+      await rm(reportRoot, { recursive: true, force: true })
+      process.off('SIGINT', onSignal)
+      process.off('SIGTERM', onSignal)
+      const pass =
+        baselineBefore &&
+        baselineAfter &&
+        restored &&
+        results.length === mutations.length &&
+        results.every((result) => result.status === 'killed')
+      await writeFile(
+        summaryPath,
+        JSON.stringify(
+          {
+            schemaVersion: 1,
+            issue: 519,
+            component: 'harness.router_mutation',
+            generatedAt: new Date().toISOString(),
+            source: sourcePath,
+            sourceDigest: sourceDigests.get(sourcePath),
+            sources: restoredSources,
+            baselineBefore,
+            baselineAfter,
+            baselineBeforeTests,
+            baselineAfterTests,
+            baselineBeforeRuns,
+            baselineAfterRuns,
+            restored,
+            expectedMutations: mutations.length,
+            mutations: results,
+            status: pass ? 'pass' : 'fail',
+          },
+          null,
+          2,
+        ),
+      )
+      if (!pass) process.exitCode = 1
+    }
+  }
+  assert.ok(baselineAfter && restored, 'source restoration or final baseline failed')
+  assert.equal(results.length, mutations.length, 'mutation evidence is incomplete')
+  assert.ok(
+    results.every((result) => result.status === 'killed'),
+    'a mutation survived or failed without an assertion',
+  )
+  console.log(`Router mutation evidence PASS (${results.length}/${mutations.length})`)
+}
+
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error: unknown) => {
+    console.error(redactText(error instanceof Error ? error.message : String(error)))
+    process.exitCode = 1
+  })
+}

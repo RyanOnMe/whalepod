@@ -88,10 +88,15 @@ export async function setDeviceHelloFacts(
     sourceCapabilities?: string[]
     /** ADR-0027：项目上下文交付能力；缺省 = 不声明（旧 Node）。 */
     contextCapabilities?: string[]
+    coordinationCapabilities?: string[]
   },
 ): Promise<DeviceRow | undefined> {
-  const { sourceCapabilities, contextCapabilities, ...helloFacts } = facts
-  if (sourceCapabilities === undefined && contextCapabilities === undefined) {
+  const { sourceCapabilities, contextCapabilities, coordinationCapabilities, ...helloFacts } = facts
+  if (
+    sourceCapabilities === undefined &&
+    contextCapabilities === undefined &&
+    coordinationCapabilities === undefined
+  ) {
     const [row] = await handle.update(devices).set(helloFacts).where(eq(devices.id, id)).returning()
     return row
   }
@@ -104,6 +109,8 @@ export async function setDeviceHelloFacts(
   // hello 是能力权威集合：本次未声明即清空旧声明，防止升级/降级后残留。
   if (sourceCapabilities !== undefined) capabilities.sourceCapabilities = sourceCapabilities
   if (contextCapabilities !== undefined) capabilities.contextCapabilities = contextCapabilities
+  if (coordinationCapabilities !== undefined)
+    capabilities.coordinationCapabilities = coordinationCapabilities
   const [row] = await handle
     .update(devices)
     .set({ ...helloFacts, capabilities })

@@ -19,6 +19,7 @@ import {
   CONTEXT_STATE_CAPABILITY,
   PROJECT_CONTEXT_CAPABILITY,
   WORK_INPUT_CAPABILITY,
+  type CoordinationCapability,
 } from '@whalepod/protocol'
 import { CORE_EMPTY_PACK_DIGEST } from '../plugin/plugin-preflight.js'
 import { installedPackDigests } from '../plugin/runtime-config.js'
@@ -33,6 +34,8 @@ export interface HelloFactsInputs {
   readonly startupDshVersion: string
   /** 探针注入点（测试与 harness 可替换；缺省走真 spaw）。 */
   readonly probeDshVersion?: (runtimeEntry: string) => Promise<string | null>
+  /** Declared only after the independent coordination Runtime isolation probe succeeds. */
+  readonly coordinationCapabilities?: readonly CoordinationCapability[]
 }
 
 /** 平台归类：与配对上报（cli 的 pair 路径）同一口径，不丢 win32。 */
@@ -58,6 +61,9 @@ export function createHelloFacts(inputs: HelloFactsInputs): () => Promise<HelloF
       CONTEXT_STATE_CAPABILITY,
       WORK_INPUT_CAPABILITY,
     ],
+    ...(inputs.coordinationCapabilities === undefined
+      ? {}
+      : { coordinationCapabilities: [...inputs.coordinationCapabilities] }),
   })
 }
 

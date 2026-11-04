@@ -6,3 +6,11 @@ export { startDeviceSession } from './gateway/session.js'
 // 不偏离生产（本版 harness 还没接 preflight，见 docs/agent/hello-facts-refresh-acceptance.md）。
 export { createHelloFacts, refreshHelloAfterPreflight } from './gateway/hello-facts.js'
 export { checkPreparation } from './workspace/preparation.js'
+export { CoordinationManager, type CoordinationManagerDeps } from './coordination/manager.js'
+export { CoordinationRuntimeDriver, probeCoordinationRuntime } from './coordination/driver.js'
+export { CoordinationStore } from './coordination/store.js'
+export {
+  saveCoordinationConfig,
+  coordinationSecrets,
+  coordinationCredentialFacts,
+} from './coordination/config.js'
