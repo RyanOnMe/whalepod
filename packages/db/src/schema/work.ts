@@ -317,7 +317,7 @@ export const dispatchIntents = pgTable(
     check('dispatch_intent_input_digest_format', sql`${table.inputDigest} ~ '^[0-9a-f]{64}$'`),
     check(
       'dispatch_intent_trigger_refs_array',
-      sql`jsonb_typeof(${table.triggerRefs}) = 'array' and jsonb_array_length(case when jsonb_typeof(${table.triggerRefs}) = 'array' then ${table.triggerRefs} else '[]'::jsonb end) between 1 and 16`,
+      sql`jsonb_typeof(${table.triggerRefs}) = 'array' and jsonb_array_length(case when jsonb_typeof(${table.triggerRefs}) = 'array' then ${table.triggerRefs} else '[]'::jsonb end) between 1 and 32`,
     ),
     check('dispatch_intent_candidates_array', sql`jsonb_typeof(${table.candidates}) = 'array'`),
     check(
@@ -524,7 +524,7 @@ export const routerApplications = pgTable(
     decisionRowId: uuid('decision_row_id').references(() => routerDecisions.id),
     intentId: uuid('intent_id').references(() => dispatchIntents.id),
     questionId: uuid('question_id').references(() => workQuestions.id),
-    waitId: uuid('wait_id'),
+    waitId: uuid('wait_id').references((): AnyPgColumn => workWaits.id),
     runId: uuid('run_id').references(() => runs.id),
     refs: jsonb('refs').$type<Record<string, unknown>>().notNull().default({}),
     appliedAt: timestamp('applied_at', { withTimezone: true }).notNull(),

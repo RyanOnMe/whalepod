@@ -2,7 +2,9 @@ import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { coordinationEvaluations } from '../schema/coordination.js'
 import {
+  dispatchIntents,
   routerApplications,
+  workMandates,
   workWaits,
   type NewRouterApplicationRow,
   type NewWorkWaitRow,
@@ -136,5 +138,38 @@ export async function listExpiredOpenWorkWaits(handle: DbHandle, now: Date, limi
     .from(workWaits)
     .where(and(eq(workWaits.status, 'open'), sql`${workWaits.deadlineAt} <= ${now}`))
     .orderBy(asc(workWaits.deadlineAt), asc(workWaits.id))
+    .limit(limit)
+}
+
+/**
+ * 已应用、仍是 proposed 的 existing_task 派工意图：应用提交与自动派工是两个
+ * 事务，进程在两者之间崩溃时由 tick 补做；`autoDispatch='off'` 由 work 条件
+ * 排除，人工确认链不受影响。
+ */
+export async function listRouterDispatchApplicationsAwaitingRun(handle: DbHandle, limit = 20) {
+  return handle
+    .select({
+      evaluationId: routerApplications.evaluationId,
+      workKey: routerApplications.workKey,
+      intentId: routerApplications.intentId,
+      principalUserId: coordinationEvaluations.principalUserId,
+    })
+    .from(routerApplications)
+    .innerJoin(dispatchIntents, eq(dispatchIntents.id, routerApplications.intentId))
+    .innerJoin(workMandates, eq(workMandates.id, dispatchIntents.mandateId))
+    .innerJoin(
+      coordinationEvaluations,
+      eq(coordinationEvaluations.id, routerApplications.evaluationId),
+    )
+    .where(
+      and(
+        eq(routerApplications.status, 'applied'),
+        eq(routerApplications.decision, 'dispatch'),
+        isNull(routerApplications.runId),
+        eq(dispatchIntents.status, 'proposed'),
+        eq(workMandates.autoDispatch, 'existing_task'),
+      ),
+    )
+    .orderBy(asc(routerApplications.appliedAt))
     .limit(limit)
 }

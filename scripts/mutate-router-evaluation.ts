@@ -22,6 +22,7 @@ const applicationSource = 'apps/hub/src/modules/router/application.ts'
 const dispatchSource = 'apps/hub/src/modules/dispatch/service.ts'
 const executorLedgerSource = 'packages/db/src/repositories/router.ts'
 const applicationSpec = 'apps/hub/tests/router-application.integration.spec.ts'
+const dbLedgerSpec = 'packages/db/tests/executor-ledger.integration.spec.ts'
 const nodeRecoverySource = 'apps/node/src/coordination/manager.ts'
 const nodeRecoverySpec = 'apps/node/tests/coordination-recovery.spec.ts'
 const output = join(root, 'artifacts/evidence/router-evaluation/mutations')
@@ -45,6 +46,7 @@ interface Suite {
 const baselineSuites: readonly Suite[] = [
   { spec, project: 'integration' },
   { spec: applicationSpec, project: 'integration' },
+  { spec: dbLedgerSpec, project: 'integration' },
   { spec: nodeRecoverySpec, project: 'unit' },
 ]
 const mutations: readonly Mutation[] = [
@@ -280,8 +282,8 @@ const mutations: readonly Mutation[] = [
     source: sourcePath,
     spec: applicationSpec,
     needle:
-      "if (work.state === 'waiting' && work.resumeCondition === `router:${wait.evaluationId}`) {",
-    replacement: 'if (false) {',
+      "work.state === 'waiting' &&\n          work.resumeMode === 'auto' &&\n          work.resumeCondition !== null &&\n          work.resumeCondition.startsWith('router:')",
+    replacement: 'false',
     test: 'persists wait and re-evaluates explicitly without treating it as execution',
   },
   {
@@ -299,7 +301,8 @@ const mutations: readonly Mutation[] = [
     criterion: 'Executor settlement records actual usage when available',
     source: executorLedgerSource,
     spec: applicationSpec,
-    needle: "const chargeMode = usage === undefined ? 'reserved' : 'actual'",
+    needle:
+      "const chargeMode = zeroCharge\n    ? 'zero'\n    : usage === undefined || overReserved\n      ? 'reserved'\n      : 'actual'",
     replacement: "const chargeMode = 'reserved' as const",
     test: 'applies dispatch to a proposed intent and settles the machine Run usage',
   },
@@ -309,9 +312,19 @@ const mutations: readonly Mutation[] = [
     source: dispatchSource,
     spec: applicationSpec,
     needle:
-      'await reserveExecutorForMachineRun(tx, {\n    work,\n    intent,\n    candidate,\n    runId: run.id,\n    now,\n  })',
+      'await reserveExecutorForMachineRun(tx, {\n    work,\n    intent,\n    candidate,\n    runId: run.id,\n    ...(workInputItemIds === undefined ? {} : { workInputItemIds }),\n    now,\n  })',
     replacement: 'void reserveExecutorForMachineRun',
     test: 'shares work lifetime budget between Router and Executor and blocks unpriced dispatch',
+  },
+  {
+    id: 'A08',
+    criterion: 'Executor settlement only rolls back reserved budget scopes',
+    source: executorLedgerSource,
+    spec: dbLedgerSpec,
+    needle:
+      "...(reserved.teamReserved\n      ? [{ scope: 'team' as const, id: reserved.teamId, date: reserved.utcDate }]\n      : []),",
+    replacement: "...[{ scope: 'team' as const, id: reserved.teamId, date: reserved.utcDate }],",
+    test: 'does not decrement team/project rows that were not part of the reservation',
   },
   {
     id: 'R26',

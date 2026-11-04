@@ -12,6 +12,7 @@ import {
   getRouterApplication,
   getWorkWaitForUpdate,
   getRouterConfig,
+  listRouterDispatchApplicationsAwaitingRun,
   listUnappliedRouterEvaluations,
   listUnsettledExecutorUsage,
   settleExecutorUsage,
@@ -80,6 +81,9 @@ export interface RouterDeps {
 }
 type Actor = { userId: string; role: 'owner' | 'admin' | 'member' }
 const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'skipped', 'stale'])
+/** 进程内重试节流：设备/候选恢复前不每秒重写同一 Intent。 */
+const autoDispatchRetryAt = new Map<string, number>()
+const AUTO_DISPATCH_RETRY_MS = 30_000
 const nowOf = (deps: RouterDeps): Date => deps.now?.() ?? new Date()
 function event(
   deps: RouterDeps,
@@ -741,11 +745,23 @@ export async function reevaluateRouterForActor(
         const wait = await getWorkWaitForUpdate(tx, input.waitId)
         if (wait === undefined || wait.workId !== work.id)
           throw new ApiError(404, 'NOT_FOUND', 'wait not found')
-        if (wait.status !== 'open' || wait.deadlineAt.getTime() <= nowOf(deps).getTime())
-          throw new ApiError(409, 'CONFLICT', 'wait is not open')
-        const closed = await closeWorkWait(tx, wait.id, 'resumed', nowOf(deps))
+        if (wait.status !== 'open') throw new ApiError(409, 'CONFLICT', 'wait is not open')
+        // 到期不是死路：#518 接管自动扫描前，允许责任人对过期 wait 做一次
+        // 显式重评；关闭原因记为 expired，不把超期决定伪装成 resumed。
+        const expired = wait.deadlineAt.getTime() <= nowOf(deps).getTime()
+        const closed = await closeWorkWait(
+          tx,
+          wait.id,
+          expired ? 'expired' : 'resumed',
+          nowOf(deps),
+        )
         if (closed === undefined) throw new ApiError(409, 'CONFLICT', 'wait changed concurrently')
-        if (work.state === 'waiting' && work.resumeCondition === `router:${wait.evaluationId}`) {
+        if (
+          work.state === 'waiting' &&
+          work.resumeMode === 'auto' &&
+          work.resumeCondition !== null &&
+          work.resumeCondition.startsWith('router:')
+        ) {
           await updateWork(tx, work.id, {
             state: 'active',
             resumeMode: null,
@@ -773,8 +789,15 @@ export async function reevaluateRouterForActor(
         previous.routerContext === null
       )
         throw new ApiError(404, 'NOT_FOUND', 'evaluation not found')
-      if (!['failed', 'stale', 'skipped', 'cancelled'].includes(previous.status))
-        throw new ApiError(409, 'CONFLICT', 'evaluation is not retryable')
+      if (!['failed', 'stale', 'skipped', 'cancelled'].includes(previous.status)) {
+        // 已接受但应用因瞬时事实（例如活跃 Run）落 stale 的决定，允许显式重放；
+        // 应用行仍保持幂等，新的评估 digest 会重新走一次两阶段裁决。
+        if (previous.status !== 'completed')
+          throw new ApiError(409, 'CONFLICT', 'evaluation is not retryable')
+        const applicationRow = await getRouterApplication(tx, previous.id)
+        if (applicationRow?.status !== 'stale')
+          throw new ApiError(409, 'CONFLICT', 'evaluation is not retryable')
+      }
       return enqueueInTransaction(
         tx,
         deps,
@@ -931,12 +954,61 @@ export async function runRouterTick(deps: RouterDeps) {
         component: 'hub.router',
         action: 'router.application_failed',
         evaluationId: evaluation.id,
-        reason: error instanceof Error ? error.message : String(error),
+        // 只记稳定错误类别：原始 message 可能含模型输出片段或 SQL 字段值。
+        reason:
+          error instanceof ApiError ? error.code : error instanceof Error ? error.name : 'unknown',
       })
     }
   }
-  // Executor 崩溃兜底：Run 已终态但结算未落账时按预留结算。
-  for (const { ledger } of await listUnsettledExecutorUsage(deps.database.db)) {
-    await deps.database.transaction((tx) => settleExecutorUsage(tx, { runId: ledger.runId }))
+  // 应用提交与自动派工跨两个事务；崩溃/设备离线后由 tick 补做，30s 节流。
+  const onAutoDispatch = deps.onAutoDispatch
+  if (onAutoDispatch !== undefined) {
+    const nowMs = nowOf(deps).getTime()
+    for (const item of await listRouterDispatchApplicationsAwaitingRun(deps.database.db)) {
+      if (item.intentId === null || item.principalUserId === null) continue
+      if ((autoDispatchRetryAt.get(item.evaluationId) ?? 0) > nowMs) continue
+      autoDispatchRetryAt.set(item.evaluationId, nowMs + AUTO_DISPATCH_RETRY_MS)
+      try {
+        const runId = await autoDispatchAppliedIntent(
+          deps,
+          onAutoDispatch,
+          item.workKey,
+          item.intentId,
+          item.principalUserId,
+        )
+        if (runId !== null) autoDispatchRetryAt.delete(item.evaluationId)
+      } catch (error) {
+        deps.log?.({
+          component: 'hub.router',
+          action: 'router.auto_dispatch_failed',
+          evaluationId: item.evaluationId,
+          reason:
+            error instanceof ApiError
+              ? error.code
+              : error instanceof Error
+                ? error.name
+                : 'unknown',
+        })
+      }
+    }
+  }
+  // Executor 崩溃兜底：Run 已终态但结算未落账时按预留结算；单行失败不阻塞
+  // 其余补做（毒行曾让整个 tick 每秒重试并持续抢 Task/Work 锁）。
+  for (const { ledger, startedAt } of await listUnsettledExecutorUsage(deps.database.db)) {
+    try {
+      await deps.database.transaction((tx) =>
+        settleExecutorUsage(tx, {
+          runId: ledger.runId,
+          zeroCharge: startedAt === null,
+        }),
+      )
+    } catch (error) {
+      deps.log?.({
+        component: 'hub.router',
+        action: 'router.executor_settlement_failed',
+        runId: ledger.runId,
+        reason: error instanceof Error ? error.name : 'unknown',
+      })
+    }
   }
 }

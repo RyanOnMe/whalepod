@@ -9,7 +9,7 @@
  * 进程退出时清理定时器与连接。
  */
 import { applyMigrations, createDatabase, getTeam, Outbox } from '@whalepod/db'
-import { buildApp } from './app.js'
+import { buildApp, createRouterAutoDispatch } from './app.js'
 import { loadConfig } from './config.js'
 import { SetupTokenStore } from './modules/team/setup-token.js'
 import { OutboxWorker } from './modules/run/index.js'
@@ -81,6 +81,7 @@ const routerTimer = setInterval(() => {
     database,
     store: routerStore,
     log: (event) => app.log.info(event, 'router event'),
+    onAutoDispatch: createRouterAutoDispatch(database, app.runOrchestrator, outbox),
   })
     .catch((error) =>
       app.log.warn({ component: 'hub.router', ...sanitizeError(error) }, 'router tick failed'),

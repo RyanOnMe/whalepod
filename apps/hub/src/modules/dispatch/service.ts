@@ -11,6 +11,7 @@
 import {
   countFailedMachineRunsForWork,
   countChargedRouterFailuresForWork,
+  getCoordinatorState,
   getCoordinationTeamPolicy,
   getRouterConfig,
   getTeam,
@@ -62,7 +63,7 @@ import type {
   WorkSourceType,
 } from '@whalepod/protocol'
 import { RunMandateInvalidatedSchema, WorkDraftToolNameSchema } from '@whalepod/protocol'
-import { WORK_INPUT_CAPABILITY } from '@whalepod/protocol'
+import { WORK_INPUT_CAPABILITY, coordinationUsageCost } from '@whalepod/protocol'
 import { ApiError } from '../shared/http-error.js'
 import { ERROR_HTTP_STATUS, errorCodeOf } from '../run/routes.js'
 import { getDeviceDshDistributionVersion } from '../run/queries.js'
@@ -478,6 +479,7 @@ async function reserveExecutorForMachineRun(
     readonly intent: DispatchIntentRow
     readonly candidate: Candidate
     readonly runId: string
+    readonly workInputItemIds?: readonly string[] | undefined
     readonly now: Date
   },
 ): Promise<void> {
@@ -492,45 +494,70 @@ async function reserveExecutorForMachineRun(
   ) {
     throw new IntentBindingError('mandate is not active at the referenced version')
   }
-  const budget = await getWorkCoordinationBudget(tx, work.workKey)
-  const usedTokens =
-    (budget?.inputTokens ?? 0) + (budget?.outputTokens ?? 0) + (budget?.reservedTokens ?? 0)
-  const remainingTokens = mandate.maxTokens - usedTokens
-  const reservedTokens =
-    candidate.maxTokens === null ? remainingTokens : Math.min(candidate.maxTokens, remainingTokens)
-  if (reservedTokens <= 0) throw new ExecutorBudgetError('budget_exhausted')
-  // ADR-0026 §13：无法核定/预留费用上限时不得派发；不把未知费用按零处理。
+  // ADR-0026 §13：无法核定输出上限/费用时不得派发；不把未知费用按零处理。
+  if (candidate.maxTokens === null) throw new ExecutorBudgetError('executor_usage_unavailable')
   if (
     candidate.inputPriceMicrosPerMillionTokens === null ||
     candidate.outputPriceMicrosPerMillionTokens === null
   ) {
     throw new ExecutorBudgetError('executor_usage_unavailable')
   }
-  const unitPrice = Math.max(
-    candidate.inputPriceMicrosPerMillionTokens,
-    candidate.outputPriceMicrosPerMillionTokens,
-  )
-  const reservedCostMicros = Number(
-    (BigInt(reservedTokens) * BigInt(unitPrice) + 999_999n) / 1_000_000n,
-  )
+  // 预留必须覆盖一次 Run 的输入与输出上界。输入用与 Router 同族的保守估算
+  // （byteSize*8 + prompt overhead）；maxTokens 是单次请求输出上限。
+  const items =
+    input.workInputItemIds === undefined
+      ? []
+      : await listWorkInboxItemsByIds(tx, input.workInputItemIds)
+  const inputBytes =
+    Buffer.byteLength(work.goal) +
+    items.reduce((sum, item) => sum + Buffer.byteLength(item.body), 0)
+  const inputTokensEstimate = inputBytes * 8 + 16_384
+  if (!Number.isSafeInteger(inputTokensEstimate))
+    throw new ExecutorBudgetError('invalid_reservation')
+  const reservedTokens = inputTokensEstimate + candidate.maxTokens
+  const budget = await getWorkCoordinationBudget(tx, work.workKey)
+  const usedTokens =
+    (budget?.inputTokens ?? 0) + (budget?.outputTokens ?? 0) + (budget?.reservedTokens ?? 0)
+  if (reservedTokens > mandate.maxTokens - usedTokens)
+    throw new ExecutorBudgetError('budget_exhausted')
+  let reservedCostMicros: number
+  try {
+    reservedCostMicros = coordinationUsageCost({
+      inputTokens: inputTokensEstimate,
+      outputTokens: candidate.maxTokens,
+      inputPriceMicrosPerMillionTokens: candidate.inputPriceMicrosPerMillionTokens,
+      outputPriceMicrosPerMillionTokens: candidate.outputPriceMicrosPerMillionTokens,
+    })
+  } catch {
+    throw new ExecutorBudgetError('invalid_reservation')
+  }
   const team = await getTeam(tx)
   if (team === undefined) throw new ExecutorBudgetError('team_missing')
   const cfg = await getRouterConfig(tx, work.projectId)
-  let teamLimits
-  let projectLimits
-  if (cfg !== undefined) {
-    const policy = await getCoordinationTeamPolicy(tx, team.id)
-    teamLimits = {
-      calls: policy?.dailyCallLimit ?? cfg.teamDailyCallLimit,
-      tokens: policy?.dailyTokenLimit ?? cfg.teamDailyTokenLimit,
-      costMicros: policy?.dailyCostMicrosLimit ?? cfg.teamDailyCostMicrosLimit,
-    }
-    projectLimits = {
-      calls: cfg.projectDailyCallLimit,
-      tokens: cfg.projectDailyTokenLimit,
-      costMicros: cfg.projectDailyCostMicrosLimit,
-    }
-  }
+  const policy = await getCoordinationTeamPolicy(tx, team.id)
+  // 团队日额度是团队级策略：项目没有 Router 配置也不能绕过。
+  const teamLimits =
+    policy !== undefined
+      ? {
+          calls: policy.dailyCallLimit,
+          tokens: policy.dailyTokenLimit,
+          costMicros: policy.dailyCostMicrosLimit,
+        }
+      : cfg !== undefined
+        ? {
+            calls: cfg.teamDailyCallLimit,
+            tokens: cfg.teamDailyTokenLimit,
+            costMicros: cfg.teamDailyCostMicrosLimit,
+          }
+        : undefined
+  const projectLimits =
+    cfg === undefined
+      ? undefined
+      : {
+          calls: cfg.projectDailyCallLimit,
+          tokens: cfg.projectDailyTokenLimit,
+          costMicros: cfg.projectDailyCostMicrosLimit,
+        }
   const reserved = await reserveExecutorUsage(tx, {
     runId,
     projectId: work.projectId,
@@ -594,6 +621,7 @@ async function createMachineRunForIntent(
     intent,
     candidate,
     runId: run.id,
+    ...(workInputItemIds === undefined ? {} : { workInputItemIds }),
     now,
   })
   const target = {
@@ -704,6 +732,16 @@ async function evaluateAutoCandidate(
       exclusionReasons.push({ kind: 'agent', id: agentId, reason: 'full_access' })
       continue
     }
+    // 无法核定输出上限/单价时该候选不能进入 Executor 预算；跳过它继续尝试
+    // 下一个 allowlist Agent，而不是让首选 Agent 把整条自动链终态拒绝。
+    if (
+      revision.maxTokens === null ||
+      revision.inputPriceMicrosPerMillionTokens === null ||
+      revision.outputPriceMicrosPerMillionTokens === null
+    ) {
+      exclusionReasons.push({ kind: 'agent', id: agentId, reason: 'executor_usage_unavailable' })
+      continue
+    }
     eligibleAgents.push({ agentId: agent.id, profileRevisionId: revision.id })
   }
   const agent = eligibleAgents[0]
@@ -778,9 +816,11 @@ async function evaluateAutoCandidate(
 
   const refs = parseTriggerRefs(intent.triggerRefs)
   const workInputItemIds: string[] = []
+  let missingTrigger = false
   for (const ref of refs) {
     const item = await getLatestPendingInboxItemForSource(tx, work.id, ref.sourceType, ref.sourceId)
     if (item === undefined || !triggerRefMatchesItem(ref, item)) {
+      missingTrigger = true
       exclusionReasons.push({
         kind: 'input',
         sourceId: ref.sourceId,
@@ -790,7 +830,8 @@ async function evaluateAutoCandidate(
     }
     workInputItemIds.push(item.id)
   }
-  if (workInputItemIds.length === 0) {
+  // 自动派工不能少带触发本次决定的输入：缺任一条就不是同一个执行前提。
+  if (missingTrigger || workInputItemIds.length !== refs.length) {
     return { candidates: [], exclusionReasons }
   }
 
@@ -964,6 +1005,20 @@ export async function autoDispatchProposedIntent(
         return toDispatchIntentView(rejected ?? intent, now)
       }
       if (mandate.autoDispatch !== 'existing_task') return toDispatchIntentView(intent, now)
+
+      // 自动派工跨了两个事务：应用提交后协调可能被暂停/停用。急停必须生效，
+      // 意图保持 proposed，由成员人工决定。
+      const coordinator = await getCoordinatorState(tx, work.projectId)
+      if (coordinator !== undefined && (!coordinator.enabled || coordinator.pausedAt !== null)) {
+        const row = await setDispatchIntentCandidates(
+          tx,
+          intent.id,
+          [],
+          [{ kind: 'coordinator', reason: 'paused' }],
+          now,
+        )
+        return toDispatchIntentView(row ?? intent, now)
+      }
 
       let refs: TriggerRef[]
       try {

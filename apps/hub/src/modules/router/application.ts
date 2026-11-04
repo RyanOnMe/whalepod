@@ -42,6 +42,7 @@ import {
   CoordinationInputEntrySchema,
   RouterApplicationViewSchema,
   RouterProposalSchema,
+  type CoordinationInputEntry,
   type RouterApplicationView,
   type RouterProposal,
 } from '@whalepod/protocol'
@@ -115,6 +116,41 @@ function stale(reason: string): ApplicationResult {
   return { status: 'stale', reason }
 }
 
+function boundedSummary(value: string, fallback: string): string {
+  const trimmed = value.trim()
+  return (trimmed.length === 0 ? fallback : trimmed).slice(0, 500)
+}
+
+/**
+ * refs 只存可回放的有界投影：完整提案仍在 evaluation 行；应用/问题/wait 的
+ * DB check 分别只有 8192/4096 字节。citation 去重，coverage 只留计数，避免
+ * 合法但引用密集的提案在插入时永久失败。
+ */
+function proposalRefs(
+  row: CoordinationEvaluationRow,
+  proposal: RouterProposal,
+): Record<string, unknown> {
+  return {
+    resultDigest: row.resultDigest,
+    actionClass: proposal.decision === 'dispatch' ? proposal.actionClass : null,
+    summary: boundedSummary(proposal.summary, 'router proposal'),
+    citations: [...new Set(proposal.citations)].slice(0, 8),
+    coverage: proposal.coverage.slice(0, 8).map((entry) => ({
+      inputId: entry.inputId,
+      status: entry.status,
+      evidenceCount: entry.evidenceIds.length,
+    })),
+  }
+}
+
+function fitRefs(refs: Record<string, unknown>, maxBytes: number): Record<string, unknown> {
+  if (Buffer.byteLength(JSON.stringify(refs)) <= maxBytes) return refs
+  const { citations: _citations, coverage: _coverage, ...withoutRefs } = refs
+  if (Buffer.byteLength(JSON.stringify(withoutRefs)) <= maxBytes) return withoutRefs
+  const { summary: _summary, ...minimal } = withoutRefs
+  return minimal
+}
+
 /**
  * 幂等应用；重复调用返回同一行。并发调用在评估行 FOR UPDATE 上串行化。
  */
@@ -178,7 +214,8 @@ async function decide(
   try {
     rebuilt = await rebuildRouterEvaluation(tx, row, now, deps.store)
   } catch (error) {
-    if (error instanceof ApiError) return stale(error.message)
+    // reason 是稳定契约：不能把 ApiError 的自由文案直接写进应用记录。
+    if (error instanceof ApiError) return stale('input_or_authority_changed')
     throw error
   }
   if (rebuilt.input.work.id !== work.id || rebuilt.input.task.id !== task.id)
@@ -190,12 +227,7 @@ async function decide(
     return stale('mandate_inactive')
   if (proposal.decision === 'dispatch' && proposal.workKey !== work.workKey)
     return stale('work_key_mismatch')
-  const refs = {
-    resultDigest: row.resultDigest,
-    actionClass: proposal.decision === 'dispatch' ? proposal.actionClass : null,
-    citations: proposal.citations,
-    coverage: proposal.coverage,
-  }
+  const refs = proposalRefs(row, proposal)
   switch (proposal.decision) {
     case 'dispatch':
       return applyDispatch(tx, row, proposal, work, task, mandate, now, refs)
@@ -207,7 +239,7 @@ async function decide(
       return {
         status: 'applied',
         reason: proposal.reason,
-        refs: { ...refs, summary: proposal.summary },
+        refs: fitRefs(refs, 8192),
       }
   }
 }
@@ -238,9 +270,12 @@ async function prepareInboxInputs(
   )
   const selected = manifest.filter((entry) => entry.kind === 'source' && uncovered.has(entry.id))
   if (selected.length === 0) return stale('no_uncovered_source')
-  if (selected.length > 16) return stale('too_many_trigger_refs')
-  const triggerRefs: PreparedInputs['triggerRefs'] = []
-  const inboxItemIds: string[] = []
+  // 先完成全部来源校验，再写收件箱：后面的来源失效时不能留下前一条的副作用。
+  const loaded: Array<{
+    readonly entry: CoordinationInputEntry
+    readonly source: Awaited<ReturnType<typeof loadWorkSource>>
+    readonly existing: WorkInboxItemRow | undefined
+  }> = []
   for (const entry of selected) {
     const identity = sourceIdentity(entry.sourceId)
     if (identity === undefined) return stale('source_identity_invalid')
@@ -271,9 +306,14 @@ async function prepareInboxInputs(
       sourceVersion: source.sourceVersion,
       sourceDigest: source.sourceDigest,
     })
+    if (existing !== undefined && existing.status !== 'pending' && existing.status !== 'returned')
+      return stale('input_not_pending')
+    loaded.push({ entry, source, existing })
+  }
+  const triggerRefs: PreparedInputs['triggerRefs'] = []
+  const inboxItemIds: string[] = []
+  for (const { entry, source, existing } of loaded) {
     if (existing !== undefined) {
-      if (existing.status !== 'pending' && existing.status !== 'returned')
-        return stale('input_not_pending')
       inboxItemIds.push(existing.id)
     } else {
       const superseded = await supersedePendingInboxItems(tx, {
@@ -329,6 +369,26 @@ async function prepareInboxInputs(
   return { triggerRefs, inboxItemIds }
 }
 
+async function releaseOpenRouterWait(tx: Tx, work: WorkRow, now: Date): Promise<WorkRow> {
+  const open = await getOpenWorkWait(tx, work.id)
+  if (open === undefined) return work
+  if (
+    work.state !== 'waiting' ||
+    work.resumeMode !== 'auto' ||
+    work.resumeCondition === null ||
+    !work.resumeCondition.startsWith('router:')
+  )
+    return work
+  await closeWorkWait(tx, open.id, 'superseded', now)
+  await updateWork(tx, work.id, {
+    state: 'active',
+    resumeMode: null,
+    resumeCondition: null,
+    updatedAt: now,
+  })
+  return { ...work, state: 'active', resumeMode: null, resumeCondition: null }
+}
+
 async function applyDispatch(
   tx: Tx,
   row: CoordinationEvaluationRow,
@@ -340,15 +400,18 @@ async function applyDispatch(
   refs: Record<string, unknown>,
 ): Promise<ApplicationResult> {
   if ((await listActiveRunsByTask(tx, task.id)).length > 0) return stale('active_run')
-  if (work.state !== 'active') return stale('work_not_active')
+  // 新的 dispatch 决定可以取代本工作自己的 router wait；先恢复 active 再判
+  // work 状态，否则 wait 会把所有后续 dispatch 永久挡在 work_not_active。
+  const currentWork = await releaseOpenRouterWait(tx, work, now)
+  if (currentWork.state !== 'active') return stale('work_not_active')
   if (task.approvalPolicy === 'full_access') return stale('full_access_task')
   if (!mandate.allowedActionClasses.includes(proposal.actionClass))
     return stale('action_class_forbidden')
-  const prepared = await prepareInboxInputs(tx, row, proposal, work, now)
+  const prepared = await prepareInboxInputs(tx, row, proposal, currentWork, now)
   if ('status' in prepared) return prepared
   const inputDigest = sha256Hex(
     canonicalJson({
-      workKey: work.workKey,
+      workKey: currentWork.workKey,
       rulesVersion: WORK_ADMISSION_RULES_VERSION,
       workAuthorizationVersion: mandate.version,
       items: prepared.triggerRefs,
@@ -356,10 +419,10 @@ async function applyDispatch(
   )
   const intent = await insertDispatchIntent(tx, {
     id: uuidv7(now.getTime()),
-    workId: work.id,
-    workKey: work.workKey,
+    workId: currentWork.id,
+    workKey: currentWork.workKey,
     taskId: task.id,
-    projectId: work.projectId,
+    projectId: currentWork.projectId,
     decisionId: null,
     mandateId: mandate.id,
     mandateVersion: mandate.version,
@@ -371,7 +434,9 @@ async function applyDispatch(
     triggerRefs: prepared.triggerRefs,
     candidates: [],
     exclusionReasons: [],
-    reason: proposal.summary.slice(0, 500),
+    // 模型摘要留在 principal-bound 的 application/refs，不写进改派后新责任人
+    // 也能读到的 Intent reason。
+    reason: 'router_dispatch',
     runId: null,
     expiresAt: new Date(
       Math.min(now.getTime() + mandate.waitDeadlineSeconds * 1000, mandate.expiresAt.getTime()),
@@ -384,16 +449,19 @@ async function applyDispatch(
     updatedAt: now,
   })
   // 新的 dispatch 取代旧 wait；work 只在它正等待本工作自己的 router wait 时恢复。
-  await supersedeOpenRouterWait(tx, work, now)
+  await supersedeOpenRouterWait(tx, currentWork, now)
   return {
     status: 'applied',
     intentId: intent.id,
-    refs: {
-      ...refs,
-      inboxItemIds: prepared.inboxItemIds,
-      triggerRefs: prepared.triggerRefs,
-      inputDigest,
-    },
+    refs: fitRefs(
+      {
+        ...refs,
+        inboxItemIds: prepared.inboxItemIds,
+        triggerRefs: prepared.triggerRefs,
+        inputDigest,
+      },
+      8192,
+    ),
   }
 }
 
@@ -422,6 +490,7 @@ async function applyWait(
     }
     await closeWorkWait(tx, open.id, 'superseded', now)
   }
+  const waitRefs = fitRefs(refs, 4096)
   const wait = await insertWorkWait(tx, {
     id: uuidv7(now.getTime()),
     evaluationId: row.id,
@@ -431,7 +500,7 @@ async function applyWait(
     workKey: work.workKey,
     status: 'open',
     reason: proposal.reason,
-    summary: proposal.summary.slice(0, 500),
+    summary: boundedSummary(proposal.summary, 'Router wait'),
     resumeCondition: `router:${row.id}`,
     sourceType: row.routerContext!.sourceType,
     sourceId: row.routerContext!.sourceId,
@@ -441,11 +510,25 @@ async function applyWait(
     mandateId: mandate.id,
     mandateVersion: mandate.version,
     principalUserId: task.assigneeUserId,
-    refs,
+    refs: waitRefs,
     createdAt: now,
     updatedAt: now,
   })
-  if (work.state === 'active' && (await listActiveRunsByTask(tx, task.id)).length === 0) {
+  const alreadyWaitingOnRouter =
+    work.state === 'waiting' &&
+    work.resumeMode === 'auto' &&
+    work.resumeCondition !== null &&
+    work.resumeCondition.startsWith('router:')
+  if (alreadyWaitingOnRouter) {
+    // 旧 wait 被新 wait 取代时，work 的恢复条件必须跟着换代；否则唯一 open
+    // wait 已关闭而 work 永远指向旧 evaluation，后续重评无法恢复。
+    await updateWork(tx, work.id, {
+      state: 'waiting',
+      resumeMode: 'auto',
+      resumeCondition: `router:${row.id}`,
+      updatedAt: now,
+    })
+  } else if (work.state === 'active' && (await listActiveRunsByTask(tx, task.id)).length === 0) {
     await updateWork(tx, work.id, {
       state: 'waiting',
       resumeMode: 'auto',
@@ -453,10 +536,10 @@ async function applyWait(
       updatedAt: now,
     })
   }
-  if (wait !== undefined) return { status: 'applied', waitId: wait.id, refs }
+  if (wait !== undefined) return { status: 'applied', waitId: wait.id, refs: waitRefs }
   const existingWait = await getWorkWaitByEvaluation(tx, row.id)
   if (existingWait === undefined) return stale('wait_insert_lost')
-  return { status: 'applied', waitId: existingWait.id, refs }
+  return { status: 'applied', waitId: existingWait.id, refs: waitRefs }
 }
 
 function routerDecisionId(input: {
@@ -487,16 +570,28 @@ async function applyAsk(
   now: Date,
   refs: Record<string, unknown>,
 ): Promise<ApplicationResult> {
+  const blockedDecision = proposal.blockedDecision.trim()
+  if (blockedDecision.length === 0 || blockedDecision.length > 64)
+    return stale('invalid_blocked_decision')
+  const questionRefs = fitRefs(
+    {
+      ...refs,
+      evaluationId: row.id,
+      evaluationDigest: row.evaluationDigest,
+      questionType: proposal.questionType,
+    },
+    4096,
+  )
   const decisionId = routerDecisionId({
     workKey: work.workKey,
-    blockedDecision: proposal.blockedDecision,
+    blockedDecision,
     inputDigest: row.evaluationDigest ?? row.inputDigest,
     mandateVersion: mandate.version,
     questionType: proposal.questionType,
   })
   const existing = await getWorkQuestionByDecision(tx, decisionId)
   if (existing !== undefined) {
-    return { status: 'applied', questionId: existing.id, refs }
+    return { status: 'applied', questionId: existing.id, refs: questionRefs }
   }
   const question = await insertWorkQuestion(tx, {
     id: uuidv7(now.getTime()),
@@ -505,16 +600,11 @@ async function applyAsk(
     projectId: work.projectId,
     decisionId,
     questionType: proposal.questionType,
-    blockedDecision: proposal.blockedDecision,
-    summary: proposal.summary.slice(0, 500),
+    blockedDecision,
+    summary: boundedSummary(proposal.summary, 'Router question'),
     options: proposal.options.map((option) => ({ id: option.id, label: option.label })),
     recommendedOptionId: proposal.recommendedOptionId,
-    refs: {
-      ...refs,
-      evaluationId: row.id,
-      evaluationDigest: row.evaluationDigest,
-      questionType: proposal.questionType,
-    },
+    refs: questionRefs,
     inputDigest: row.evaluationDigest ?? row.inputDigest,
     mandateId: mandate.id,
     mandateVersion: mandate.version,
@@ -526,17 +616,23 @@ async function applyAsk(
     createdAt: now,
     updatedAt: now,
   })
-  if (question !== undefined) return { status: 'applied', questionId: question.id, refs }
+  if (question !== undefined)
+    return { status: 'applied', questionId: question.id, refs: questionRefs }
   const raced = await getWorkQuestionByDecision(tx, decisionId)
   if (raced === undefined) return stale('question_insert_lost')
-  return { status: 'applied', questionId: raced.id, refs }
+  return { status: 'applied', questionId: raced.id, refs: questionRefs }
 }
 
 async function supersedeOpenRouterWait(tx: Tx, work: WorkRow, now: Date): Promise<void> {
   const open = await getOpenWorkWait(tx, work.id)
   if (open === undefined) return
   await closeWorkWait(tx, open.id, 'superseded', now)
-  if (work.state === 'waiting' && work.resumeCondition === `router:${open.evaluationId}`) {
+  if (
+    work.state === 'waiting' &&
+    work.resumeMode === 'auto' &&
+    work.resumeCondition !== null &&
+    work.resumeCondition.startsWith('router:')
+  ) {
     await updateWork(tx, work.id, {
       state: 'active',
       resumeMode: null,

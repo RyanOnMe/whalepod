@@ -1232,6 +1232,15 @@ export class RunOrchestrator {
       if (run.deviceId !== device.deviceId) {
         throw new RunCommandError('FORBIDDEN', 'run does not belong to this device')
       }
+      // usage 只属于 owner 受众；不依赖 Node projector 自律，伪造的 project
+      // 终态帧在持久化/团队扇出之前拒绝。
+      if (
+        payload.audience !== 'owner' &&
+        'usage' in payload.event &&
+        payload.event.usage !== undefined
+      ) {
+        throw new RunCommandError('VALIDATION_FAILED', 'usage frames must use the owner audience')
+      }
       const { appended } = await appendRunEvent(tx, {
         id: randomUUID(),
         runId: run.id,

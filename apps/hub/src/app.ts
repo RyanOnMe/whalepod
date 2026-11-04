@@ -71,6 +71,27 @@ export interface HubDeps {
   readonly setupTokenStore?: SetupTokenStore
 }
 
+/**
+ * RD-03r2：Router 应用出 proposed 意图后，用既有端口尝试 existing_task 自动派工。
+ * 系统触发只代表当前责任人，不伪造成员会话或审批；app 与 server tick 共用同一
+ * 组合根，避免「HTTP 路径会派、重启补做不会派」。
+ */
+export function createRouterAutoDispatch(
+  database: Database,
+  orchestrator: RunOrchestrator,
+  outbox: Outbox,
+): RouterAutoDispatch {
+  return async (workKey, intentId, actorUserId) => {
+    const view = await autoDispatchProposedIntent(
+      { database, orchestrator, outbox, now: () => new Date() },
+      { userId: actorUserId, role: 'member' },
+      workKey,
+      intentId,
+    )
+    return view === null ? null : { runId: view.runId }
+  }
+}
+
 /** 统一失败 envelope（03 §4）：错误响应不含 SQL、绝对路径或堆栈（03 §10）。 */
 function failure(
   reply: FastifyReply,
@@ -217,15 +238,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
   app.decorate('runOrchestrator', orchestrator)
   // RD-03r2：Router 提案应用出 proposed 意图后，用既有端口尝试 existing_task
   // 自动派工。系统触发只代表当前责任人，不伪造成员会话或审批。
-  const onRouterAutoDispatch: RouterAutoDispatch = async (workKey, intentId, actorUserId) => {
-    const view = await autoDispatchProposedIntent(
-      { database, orchestrator, outbox, now: () => new Date() },
-      { userId: actorUserId, role: 'member' },
-      workKey,
-      intentId,
-    )
-    return view === null ? null : { runId: view.runId }
-  }
+  const onRouterAutoDispatch = createRouterAutoDispatch(database, orchestrator, outbox)
   registerNodeWebsocket(app, {
     database,
     orchestrator,

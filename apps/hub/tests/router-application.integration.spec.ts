@@ -8,7 +8,7 @@ import { eq } from 'drizzle-orm'
 import WebSocket from 'ws'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@whalepod/db'
-import { getEvaluation, schema, settleExecutorUsage } from '@whalepod/db'
+import { getEvaluation, Outbox, schema, settleExecutorUsage } from '@whalepod/db'
 import {
   coordinationUsageCost,
   parseNodeFrame,
@@ -606,6 +606,22 @@ describe('RD-03r2 Router application and Executor ledger', () => {
       ).filter((row) => row.phase === 'settled'),
     ).toHaveLength(1)
     expect(await workBudget()).toMatchObject({ input_tokens: 400, output_tokens: 60 })
+    // usage 只能走 owner 受众：伪造的 project 终态帧在落库前拒绝。
+    await expect(
+      ctx.app.runOrchestrator.ingestNodeEvent(
+        { deviceId: device.deviceId, ownerUserId: alice.userId },
+        runEventFrame(
+          runId,
+          3,
+          {
+            type: 'run.completed',
+            finalText: '伪造的 project usage',
+            usage: { inputTokens: 1, outputTokens: 1 },
+          },
+          'project',
+        ),
+      ),
+    ).rejects.toThrow('usage frames must use the owner audience')
   })
 
   it('falls back to the reservation when terminal usage is missing', async () => {
@@ -644,7 +660,11 @@ describe('RD-03r2 Router application and Executor ledger', () => {
       .where(eq(schema.executorUsageLedger.runId, runId))
     await ctx.app.runOrchestrator.ingestNodeEvent(
       { deviceId: device.deviceId, ownerUserId: alice.userId },
-      runEventFrame(runId, 1, { type: 'run.completed', finalText: '无 usage 的完成' }),
+      runEventFrame(runId, 1, { type: 'runtime.ready', dshSessionId: 'rd03r2-no-usage' }),
+    )
+    await ctx.app.runOrchestrator.ingestNodeEvent(
+      { deviceId: device.deviceId, ownerUserId: alice.userId },
+      runEventFrame(runId, 2, { type: 'run.completed', finalText: '无 usage 的完成' }),
     )
     const rows = await database.db
       .select()
@@ -677,6 +697,39 @@ describe('RD-03r2 Router application and Executor ledger', () => {
     // 同 evaluation 再应用不产生第二个 Run。
     await applyRouterEvaluation({ database }, request.evaluationId)
     expect(await database.db.select().from(schema.runs)).toHaveLength(1)
+  })
+
+  it('re-dispatches an applied existing_task intent from the tick after a crash window', async () => {
+    const agent = await createAgent()
+    // 先不创建可派工设备：应用已提交但自动派工无候选，等价于崩溃窗留下的 proposed。
+    await createMandate({ autoDispatch: 'existing_task', allowedAgentIds: [agent.agentId] })
+    const node = await onlineRouterNode()
+    const request = await acceptProposal(node, 'dispatch')
+    const applied = await application(request.evaluationId)
+    expect(applied).toMatchObject({ decision: 'dispatch', status: 'applied' })
+    expect(applied?.runId).toBeNull()
+    expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+    await createDevice()
+    const outbox = new Outbox(database)
+    await runRouterTick({
+      database,
+      onAutoDispatch: async (workKey, intentId, actorUserId) => {
+        const view = await autoDispatchProposedIntent(
+          { database, orchestrator: ctx.app.runOrchestrator, outbox, now: () => new Date() },
+          { userId: actorUserId, role: 'member' },
+          workKey,
+          intentId,
+        )
+        return view === null ? null : { runId: view.runId }
+      },
+    })
+    const runs = await database.db.select().from(schema.runs)
+    expect(runs).toHaveLength(1)
+    const [backfilled] = await database.db
+      .select()
+      .from(schema.routerApplications)
+      .where(eq(schema.routerApplications.evaluationId, request.evaluationId))
+    expect(backfilled?.runId).toBe(runs[0]!.id)
   })
 
   it('persists wait and re-evaluates explicitly without treating it as execution', async () => {
@@ -716,6 +769,34 @@ describe('RD-03r2 Router application and Executor ledger', () => {
     expect(await database.db.select().from(schema.runs)).toHaveLength(0)
   })
 
+  it('allows an explicit re-evaluation after the wait deadline', async () => {
+    await createMandate()
+    const node = await onlineRouterNode()
+    const request = await acceptProposal(node, 'wait')
+    const [wait] = await database.db.select().from(schema.workWaits)
+    expect(wait).toMatchObject({ status: 'open', evaluationId: request.evaluationId })
+    // 时间前进用夹具直接改 deadline；wait 仍由生产重评端口关闭。
+    await database.db
+      .update(schema.workWaits)
+      .set({ deadlineAt: new Date(Date.now() - 1000) })
+      .where(eq(schema.workWaits.id, wait!.id))
+    const reevaluated = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${workKey}/router/re-evaluate`,
+      payload: { waitId: wait!.id },
+      idempotencyKey: idemKey(),
+    })
+    expect(reevaluated.statusCode, reevaluated.body).toBe(200)
+    const [closed] = await database.db.select().from(schema.workWaits)
+    expect(closed?.status).toBe('expired')
+    const [work] = await database.db
+      .select()
+      .from(schema.works)
+      .where(eq(schema.works.workKey, workKey))
+    expect(work).toMatchObject({ state: 'active', resumeMode: null, resumeCondition: null })
+    expect(await database.db.select().from(schema.runs)).toHaveLength(0)
+  })
+
   it('applies ask to the question ledger and keeps authorize_scope answers rejected', async () => {
     await createMandate()
     const node = await onlineRouterNode()
@@ -739,6 +820,15 @@ describe('RD-03r2 Router application and Executor ledger', () => {
     })
     expect(answer.statusCode, answer.body).toBe(400)
     expect(answer.json().error.code).toBe('UNSUPPORTED_ANSWER')
+    // 不能把扩权问题降级成普通 choose_option 绑定。
+    const downgraded = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${workKey}/questions/${question!.decisionId}/answers`,
+      payload: { answerType: 'choose_option', optionId: 'review' },
+      idempotencyKey: idemKey(),
+    })
+    expect(downgraded.statusCode, downgraded.body).toBe(400)
+    expect(downgraded.json().error.code).toBe('UNSUPPORTED_ANSWER')
     expect(await database.db.select().from(schema.runs)).toHaveLength(0)
   })
 
@@ -793,6 +883,15 @@ describe('RD-03r2 Router application and Executor ledger', () => {
     expect(applied).toMatchObject({ decision: 'dispatch', status: 'stale', reason: 'active_run' })
     expect(applied?.intentId).toBeNull()
     expect(await database.db.select().from(schema.runs)).toHaveLength(1)
+    // 瞬时 active_run stale 不是终局：责任人可显式重放同一已接受决定。
+    const retried = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${workKey}/router/re-evaluate`,
+      payload: { evaluationId: request.evaluationId },
+      idempotencyKey: idemKey(),
+    })
+    expect(retried.statusCode, retried.body).toBe(200)
+    expect(retried.json().data.id).not.toBe(request.evaluationId)
   })
 
   it('shares work lifetime budget between Router and Executor and blocks unpriced dispatch', async () => {
@@ -809,13 +908,23 @@ describe('RD-03r2 Router application and Executor ledger', () => {
       .from(schema.dispatchIntents)
       .where(eq(schema.dispatchIntents.id, applied!.intentId!))
     expect(intent).toMatchObject({
-      status: 'rejected',
-      resolutionReason: 'executor_usage_unavailable',
+      status: 'proposed',
+      resolutionReason: null,
     })
+    expect(await database.db.select().from(schema.workQuestions)).toHaveLength(1)
     expect(await database.db.select().from(schema.runs)).toHaveLength(0)
     expect(await database.db.select().from(schema.executorUsageLedger)).toHaveLength(0)
 
-    // 人工确认路径同闸：同一定价缺失的候选不能绕过。
+    // 人工确认路径同闸：批准后仍不能绕过定价缺失，意图终态拒绝。
+    expect(
+      (
+        await apiInject(ctx, alice, {
+          method: 'POST',
+          url: `/api/v1/works/${workKey}/dispatch-intents/${intent!.id}/approve`,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(200)
     const human = await apiInject(ctx, alice, {
       method: 'POST',
       url: `/api/v1/works/${workKey}/dispatch-intents/${intent!.id}/dispatch`,
@@ -827,5 +936,14 @@ describe('RD-03r2 Router application and Executor ledger', () => {
       },
     })
     expect(human.statusCode).toBe(409)
+    const [rejected] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, intent!.id))
+    expect(rejected).toMatchObject({
+      status: 'rejected',
+      resolutionReason: 'executor_usage_unavailable',
+    })
+    expect(await database.db.select().from(schema.executorUsageLedger)).toHaveLength(0)
   })
 })

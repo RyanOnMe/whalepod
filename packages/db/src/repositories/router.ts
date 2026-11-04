@@ -563,6 +563,8 @@ export async function reserveExecutorUsage(
       workKey: input.workKey,
       mandateId: input.mandateId,
       utcDate: input.utcDate,
+      teamReserved: input.teamLimits !== undefined,
+      projectReserved: input.projectLimits !== undefined,
       reservedTokens: input.reservedTokens,
       reservedCostMicros: input.reservedCostMicros,
     })
@@ -609,12 +611,19 @@ export async function getExecutorSettlement(handle: DbHandle, runId: string) {
 /**
  * Run 终态结算：有可信 usage 按实际，缺失按 reserved 兜底；同一 run 只结算一次。
  * 调用方与 Run 终态同事务，账本与 budget 任一失败整体回滚。
+ *
+ * 只回滚 `team_reserved`/`project_reserved` 标记过的层：未配置 Router 的项目
+ * 可能只预留 work lifetime，此时同团队日行可能被别的项目创建，无条件扣减会把
+ * 它推成负数并让终态事务永久失败。实际 usage 超过预留时按预留封顶，保证账本
+ * 不会突破派工时批准的额度；原始 usage 仍留在 settled 行供审计。
  */
 export async function settleExecutorUsage(
   handle: DbHandle,
   input: {
     readonly runId: string
     readonly usage?: ExecutorUsage
+    /** 从未启动的 Run（例如 queued 即取消）不消耗模型 token。 */
+    readonly zeroCharge?: boolean
   },
 ): Promise<boolean> {
   const [reserved] = await handle
@@ -635,10 +644,27 @@ export async function settleExecutorUsage(
   const usage = input.usage
   for (const value of usage ? [usage.inputTokens, usage.outputTokens, usage.costMicros] : [0])
     if (!Number.isSafeInteger(value) || value < 0) throw new Error('invalid executor settlement')
-  const chargeMode = usage === undefined ? 'reserved' : 'actual'
-  const inputTokens = usage?.inputTokens ?? reserved.reservedTokens
-  const outputTokens = usage?.outputTokens ?? 0
-  const costMicros = usage?.costMicros ?? reserved.reservedCostMicros
+  const zeroCharge = input.zeroCharge === true && usage === undefined
+  const actualTokens = usage === undefined ? 0 : usage.inputTokens + usage.outputTokens
+  const overReserved =
+    usage !== undefined &&
+    (actualTokens > reserved.reservedTokens || usage.costMicros > reserved.reservedCostMicros)
+  const chargeMode = zeroCharge
+    ? 'zero'
+    : usage === undefined || overReserved
+      ? 'reserved'
+      : 'actual'
+  const inputTokens = zeroCharge
+    ? 0
+    : usage === undefined || overReserved
+      ? reserved.reservedTokens
+      : usage.inputTokens
+  const outputTokens = zeroCharge || usage === undefined || overReserved ? 0 : usage.outputTokens
+  const costMicros = zeroCharge
+    ? 0
+    : usage === undefined || overReserved
+      ? reserved.reservedCostMicros
+      : usage.costMicros
   const [settled] = await handle
     .insert(executorUsageLedger)
     .values({
@@ -652,12 +678,17 @@ export async function settleExecutorUsage(
     .onConflictDoNothing()
     .returning()
   if (settled === undefined) return false
-  for (const item of [
-    { scope: 'team' as const, id: reserved.teamId, date: reserved.utcDate },
-    { scope: 'project' as const, id: reserved.projectId, date: reserved.utcDate },
+  const scopes = [
+    ...(reserved.teamReserved
+      ? [{ scope: 'team' as const, id: reserved.teamId, date: reserved.utcDate }]
+      : []),
+    ...(reserved.projectReserved
+      ? [{ scope: 'project' as const, id: reserved.projectId, date: reserved.utcDate }]
+      : []),
     { scope: 'work' as const, id: reserved.workKey, date: lifetimeDate },
-  ]) {
-    const [row] = await handle
+  ]
+  for (const item of scopes) {
+    await handle
       .update(coordinationBudgets)
       .set({
         reservedTokens: sql`${coordinationBudgets.reservedTokens}-${reserved.reservedTokens}`,
@@ -667,17 +698,23 @@ export async function settleExecutorUsage(
         costMicros: sql`${coordinationBudgets.costMicros}+${costMicros}`,
       })
       .where(key(item.scope, item.id, item.date))
-      .returning()
-    // team/project 行只在 Router 配置存在时创建；缺失表示该层未参与预留。
-    if (row === undefined) continue
   }
+  // 读面成本以实际入账为准：reserved 兜底/封顶时不能留 null，也不能写成实际值。
+  await handle
+    .update(runs)
+    .set({ executorCostMicros: costMicros })
+    .where(eq(runs.id, reserved.runId))
   return true
 }
 
 /** 崩溃兜底：已有 reserved、无 settled、Run 已终态的行；按预留结算。 */
 export async function listUnsettledExecutorUsage(handle: DbHandle, limit = 100) {
   return handle
-    .select({ ledger: executorUsageLedger, runStatus: runs.status })
+    .select({
+      ledger: executorUsageLedger,
+      runStatus: runs.status,
+      startedAt: runs.startedAt,
+    })
     .from(executorUsageLedger)
     .innerJoin(runs, eq(runs.id, executorUsageLedger.runId))
     .where(

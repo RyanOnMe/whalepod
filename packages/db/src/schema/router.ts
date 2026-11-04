@@ -160,6 +160,9 @@ export const executorUsageLedger = pgTable(
       .notNull()
       .references(() => workMandates.id),
     utcDate: varchar('utc_date', { length: 10 }).notNull(),
+    /** 本行预留实际覆盖的层；结算只回滚预留过的行，缺省 false 表示未参与。 */
+    teamReserved: boolean('team_reserved').notNull().default(false),
+    projectReserved: boolean('project_reserved').notNull().default(false),
     reservedTokens: bigint('reserved_tokens', { mode: 'number' }).notNull(),
     reservedCostMicros: bigint('reserved_cost_micros', { mode: 'number' }).notNull(),
     chargeMode: varchar('charge_mode', { length: 16 }).$type<'zero' | 'reserved' | 'actual'>(),
