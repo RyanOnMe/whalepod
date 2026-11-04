@@ -113,7 +113,7 @@
 | A07 | 派工事务内执行用量预留 | 删除 `reserveExecutorForMachineRun` 调用 |
 | A08 | 结算只回滚实际预留的 scope | 强制回滚 team 行 |
 
-结果：`status=pass`，A01–A08 全部 `killed`，基线前后通过、源码还原通过，见 `artifacts/evidence/router-evaluation/mutations/result.json`（`MUTATION_IDS=A01..A08` 写入同一 summary）。
+结果：`status=pass`，全量 34 条变异（含本切片 A01–A08）全部 `killed`，基线前后通过、源码还原通过，见 `artifacts/evidence/router-evaluation/mutations/result.json`。旧 R10 的 needle 在源码中出现两次（R10 此前被更早的 CI 失败遮住），已收窄到带注释的唯一代码块；全量复跑通过。
 
 ## 3 取证位置
 
