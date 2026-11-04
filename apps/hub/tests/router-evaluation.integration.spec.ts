@@ -127,6 +127,7 @@ describe('RD-03r1 restricted Router evaluation', () => {
       url: `/api/v1/works/${workKey}/router/evaluations`,
     })
     expect(response.statusCode).toBe(200)
+    expect(response.headers['cache-control']).toBe('private, no-store')
     expect(response.json().data).toEqual([])
   })
 
@@ -252,6 +253,7 @@ describe('RD-03r1 restricted Router evaluation', () => {
       payload: { sourceType: 'task_message', sourceId },
     })
     expect(res.statusCode, res.body).toBe(200)
+    expect(res.headers['cache-control']).toBe('private, no-store')
     return res.json().data as { id: string; evaluationDigest: string; status: string }
   }
   async function dispatch(node: Awaited<ReturnType<typeof onlineNode>>) {
@@ -280,6 +282,7 @@ describe('RD-03r1 restricted Router evaluation', () => {
         },
       })
       expect(download.statusCode, download.body).toBe(200)
+      expect(download.headers['cache-control']).toBe('private, no-store')
       expect(
         sha256Hex(Buffer.from(download.json().data.bodyBase64 as string, 'base64').toString()),
       ).toBe(entry.digest)
