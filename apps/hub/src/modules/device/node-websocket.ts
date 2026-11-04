@@ -34,6 +34,7 @@ import { WorkspaceInventoryIngest } from './inventory.js'
 import type { RealtimeHub } from '../realtime/subscriptions.js'
 import { WebSocket } from 'ws'
 import { acceptRouterHeartbeat, acceptRouterResult } from '../router/service.js'
+import type { RouterAutoDispatch } from '../router/application.js'
 import { ArtifactStore } from '../artifact/store.js'
 
 export interface NodeWebsocketDeps {
@@ -42,6 +43,8 @@ export interface NodeWebsocketDeps {
   /** P1-13：owner-only live delta 的投递面（03 §8：不持久、非 owner 不可见）。 */
   readonly realtime: RealtimeHub
   readonly routerStore?: ArtifactStore
+  /** RD-03r2：结果接受后应用提案并由组合根尝试既有自动派工端口。 */
+  readonly onAutoDispatch?: RouterAutoDispatch
 }
 
 /** Run 终态集合（§3.2）：迟到 live delta 不转发、心跳缺口不为终态 Run 拉取。 */
@@ -101,6 +104,7 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
               database: deps.database,
               ...(deps.routerStore ? { store: deps.routerStore } : {}),
               log: (event: Record<string, unknown>) => app.log.info(event, 'router event'),
+              ...(deps.onAutoDispatch === undefined ? {} : { onAutoDispatch: deps.onAutoDispatch }),
             }
             if (frame.type === 'coordination.heartbeat') {
               try {

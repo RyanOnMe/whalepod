@@ -393,6 +393,10 @@ const RevisionRequestShape = {
   model: z.string().min(1).max(200),
   credentialSlot: z.string().min(1).max(80),
   maxTokens: z.number().int().positive().optional(),
+  // ADR-0028 §17（RD-03r2）：业务 Executor 的费用单价。两项必须同时提供；
+  // 缺省表示无法核定费用上限，机器派工按 fail-closed 拒绝。
+  inputPriceMicrosPerMillionTokens: z.number().int().positive().optional(),
+  outputPriceMicrosPerMillionTokens: z.number().int().positive().optional(),
   pluginPackId: z.uuid(),
   // 切片⑧（#241）：该 Revision 的默认审批档。缺省 = approval_required（与既有
   // 行为一致）；进 profileDigest 的 canonical JSON（档位是 Revision 行为的一部分）。

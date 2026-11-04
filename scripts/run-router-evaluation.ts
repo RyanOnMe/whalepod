@@ -533,21 +533,44 @@ try {
     }
   })
   // Read-only independent evidence: all state above was produced through production HTTP/WS.
-  const [runs, intents, questions, tasks, ledger, budgets, attempts] = await Promise.all([
-    database.db.select({ id: schema.runs.id }).from(schema.runs),
-    database.db.select({ id: schema.dispatchIntents.id }).from(schema.dispatchIntents),
-    database.db.select({ id: schema.workQuestions.id }).from(schema.workQuestions),
-    database.db.select({ id: schema.tasks.id }).from(schema.tasks),
-    database.db.select().from(schema.coordinationUsageLedger),
-    database.db.select().from(schema.coordinationBudgets),
-    database.db
-      .select()
-      .from(schema.coordinationEvaluations)
-      .where(eq(schema.coordinationEvaluations.purpose, 'router')),
-  ])
+  const [runs, intents, questions, waits, applications, tasks, ledger, budgets, attempts] =
+    await Promise.all([
+      database.db.select({ id: schema.runs.id }).from(schema.runs),
+      database.db.select().from(schema.dispatchIntents),
+      database.db.select({ id: schema.workQuestions.id }).from(schema.workQuestions),
+      database.db.select().from(schema.workWaits),
+      database.db.select().from(schema.routerApplications),
+      database.db.select({ id: schema.tasks.id }).from(schema.tasks),
+      database.db.select().from(schema.coordinationUsageLedger),
+      database.db.select().from(schema.coordinationBudgets),
+      database.db
+        .select()
+        .from(schema.coordinationEvaluations)
+        .where(eq(schema.coordinationEvaluations.purpose, 'router')),
+    ])
+  // #520：dispatch/ask/wait 各产生一个承接对象，ignore 只留应用记录；全部
+  // 仍是 proposed/问题/wait，没有任何业务 Run（默认 autoDispatch='off'）。
   assert.equal(runs.length, 0)
-  assert.equal(intents.length, 0)
-  assert.equal(questions.length, 0)
+  assert.equal(intents.length, 1)
+  assert.equal(questions.length, 1)
+  assert.equal(waits.length, 1)
+  assert.equal(applications.length, 4)
+  assert.deepEqual(applications.map((row) => row.decision).sort(), [
+    'ask',
+    'dispatch',
+    'ignore',
+    'wait',
+  ])
+  assert.ok(applications.every((row) => row.status === 'applied'))
+  assert.equal(intents[0]?.status, 'proposed')
+  assert.equal(intents[0]?.runId, null)
+  assert.ok(applications.find((row) => row.decision === 'dispatch')?.intentId)
+  assert.ok(applications.find((row) => row.decision === 'ask')?.questionId)
+  assert.ok(applications.find((row) => row.decision === 'wait')?.waitId)
+  const ignored = applications.find((row) => row.decision === 'ignore')
+  assert.equal(ignored?.intentId, null)
+  assert.equal(ignored?.questionId, null)
+  assert.equal(ignored?.waitId, null)
   assert.equal(tasks.length, baselineTasks.length)
   assert.equal(attempts.length, ids.length)
   assert.ok(budgets.every((b) => b.reservedTokens === 0 && b.reservedCostMicros === 0))
@@ -565,6 +588,7 @@ try {
       {
         schemaVersion: 1,
         issue: 519,
+        routerApplicationIssue: 520,
         generatedAt: new Date().toISOString(),
         assembly: {
           hub: 'package-production-server',
@@ -578,8 +602,19 @@ try {
           runs: runs.length,
           intents: intents.length,
           questions: questions.length,
+          waits: waits.length,
+          applications: applications.length,
           extraTasks: tasks.length - baselineTasks.length,
         },
+        applications: applications.map((row) => ({
+          evaluationId: row.evaluationId,
+          decision: row.decision,
+          status: row.status,
+          intentId: row.intentId,
+          questionId: row.questionId,
+          waitId: row.waitId,
+          runId: row.runId,
+        })),
         ledger: ledger.map((l) => ({
           evaluationId: l.evaluationId,
           phase: l.phase,

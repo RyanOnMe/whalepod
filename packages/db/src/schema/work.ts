@@ -317,7 +317,7 @@ export const dispatchIntents = pgTable(
     check('dispatch_intent_input_digest_format', sql`${table.inputDigest} ~ '^[0-9a-f]{64}$'`),
     check(
       'dispatch_intent_trigger_refs_array',
-      sql`jsonb_typeof(${table.triggerRefs}) = 'array' and jsonb_array_length(case when jsonb_typeof(${table.triggerRefs}) = 'array' then ${table.triggerRefs} else '[]'::jsonb end) between 1 and 16`,
+      sql`jsonb_typeof(${table.triggerRefs}) = 'array' and jsonb_array_length(case when jsonb_typeof(${table.triggerRefs}) = 'array' then ${table.triggerRefs} else '[]'::jsonb end) between 1 and 32`,
     ),
     check('dispatch_intent_candidates_array', sql`jsonb_typeof(${table.candidates}) = 'array'`),
     check(
@@ -490,6 +490,160 @@ export type WorkQuestionRow = typeof workQuestions.$inferSelect
 export type NewWorkQuestionRow = typeof workQuestions.$inferInsert
 export type WorkQuestionAnswerRow = typeof workQuestionAnswers.$inferSelect
 export type NewWorkQuestionAnswerRow = typeof workQuestionAnswers.$inferInsert
+
+/**
+ * ADR-0028 §17（RD-03r2）：已接受 Router 提案的幂等应用记录。evaluationId 唯一；
+ * 应用状态与意图/问题/wait 副作用同事务写入，重复提交/重启回读同一行。
+ * evaluation_id 的 FK 在 migration 里指向 coordination_evaluation；此处不声明
+ * references 以避免 schema 模块环。
+ */
+export const routerApplications = pgTable(
+  'router_application',
+  {
+    evaluationId: uuid('evaluation_id').primaryKey(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    workId: uuid('work_id')
+      .notNull()
+      .references(() => works.id),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.id),
+    workKey: varchar('work_key', { length: 64 }).notNull(),
+    decision: varchar('decision', { length: 16 })
+      .$type<'dispatch' | 'wait' | 'ask' | 'ignore'>()
+      .notNull(),
+    status: varchar('status', { length: 16 }).$type<'applied' | 'rejected' | 'stale'>().notNull(),
+    reason: varchar('reason', { length: 500 }),
+    evaluationDigest: char('evaluation_digest', { length: 64 }).notNull(),
+    mandateId: uuid('mandate_id')
+      .notNull()
+      .references(() => workMandates.id),
+    mandateVersion: integer('mandate_version').notNull(),
+    decisionRowId: uuid('decision_row_id').references(() => routerDecisions.id),
+    intentId: uuid('intent_id').references(() => dispatchIntents.id),
+    questionId: uuid('question_id').references(() => workQuestions.id),
+    waitId: uuid('wait_id').references((): AnyPgColumn => workWaits.id),
+    runId: uuid('run_id').references(() => runs.id),
+    refs: jsonb('refs').$type<Record<string, unknown>>().notNull().default({}),
+    appliedAt: timestamp('applied_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check(
+      'router_application_decision',
+      sql`${table.decision} in ('dispatch','wait','ask','ignore')`,
+    ),
+    check('router_application_status', sql`${table.status} in ('applied','rejected','stale')`),
+    check('router_application_digest', sql`${table.evaluationDigest} ~ '^[a-f0-9]{64}$'`),
+    check(
+      'router_application_reason_length',
+      sql`${table.reason} is null or length(btrim(${table.reason})) between 1 and 500`,
+    ),
+    check(
+      'router_application_work_key_format',
+      sql`${table.workKey} ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`,
+    ),
+    check('router_application_mandate_version', sql`${table.mandateVersion} >= 1`),
+    check(
+      'router_application_refs_object',
+      sql`jsonb_typeof(${table.refs}) = 'object' and octet_length(${table.refs}::text) <= 8192`,
+    ),
+    uniqueIndex('router_application_intent_unique')
+      .on(table.intentId)
+      .where(sql`${table.intentId} is not null`),
+    uniqueIndex('router_application_question_unique')
+      .on(table.questionId)
+      .where(sql`${table.questionId} is not null`),
+    uniqueIndex('router_application_wait_unique')
+      .on(table.waitId)
+      .where(sql`${table.waitId} is not null`),
+    index('router_application_work_created_idx').on(table.workId, table.appliedAt.desc()),
+  ],
+)
+
+/**
+ * ADR-0028 §17.3（RD-03r2）：Router `wait` 的持久记录。稳定原因、恢复条件与
+ * 受 Mandate 约束的 deadline；generation 进入下一次显式重评的 triggerKey，
+ * 同一 wait 的重复扫描保持同一代次。#518 再接到期扫描。
+ */
+export const workWaits = pgTable(
+  'work_wait',
+  {
+    id: uuid('id').primaryKey(),
+    evaluationId: uuid('evaluation_id').notNull().unique(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    workId: uuid('work_id')
+      .notNull()
+      .references(() => works.id),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.id),
+    workKey: varchar('work_key', { length: 64 }).notNull(),
+    status: varchar('status', { length: 16 })
+      .$type<'open' | 'resumed' | 'expired' | 'superseded' | 'cancelled'>()
+      .notNull(),
+    reason: varchar('reason', { length: 64 }).notNull(),
+    summary: varchar('summary', { length: 500 }).notNull(),
+    resumeCondition: varchar('resume_condition', { length: 500 }).notNull(),
+    sourceType: workSourceType('source_type').notNull(),
+    sourceId: uuid('source_id').notNull(),
+    triggerKey: varchar('trigger_key', { length: 200 }).notNull(),
+    generation: integer('generation').notNull().default(1),
+    deadlineAt: timestamp('deadline_at', { withTimezone: true }).notNull(),
+    mandateId: uuid('mandate_id')
+      .notNull()
+      .references(() => workMandates.id),
+    mandateVersion: integer('mandate_version').notNull(),
+    principalUserId: uuid('principal_user_id')
+      .notNull()
+      .references(() => userAccounts.id),
+    refs: jsonb('refs').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      'work_wait_status',
+      sql`${table.status} in ('open','resumed','expired','superseded','cancelled')`,
+    ),
+    check(
+      'work_wait_reason',
+      sql`${table.reason} ~ '^[a-z][a-z0-9_]*$' and length(${table.reason}) <= 64`,
+    ),
+    check('work_wait_summary_length', sql`length(btrim(${table.summary})) between 1 and 500`),
+    check(
+      'work_wait_resume_length',
+      sql`length(btrim(${table.resumeCondition})) between 1 and 500`,
+    ),
+    check('work_wait_source_type', sql`${table.sourceType} in ('task_message','context_entry')`),
+    check(
+      'work_wait_trigger_key_length',
+      sql`length(btrim(${table.triggerKey})) between 1 and 200`,
+    ),
+    check('work_wait_generation', sql`${table.generation} >= 1`),
+    check('work_wait_mandate_version', sql`${table.mandateVersion} >= 1`),
+    check(
+      'work_wait_work_key_format',
+      sql`${table.workKey} ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`,
+    ),
+    check(
+      'work_wait_refs_object',
+      sql`jsonb_typeof(${table.refs}) = 'object' and octet_length(${table.refs}::text) <= 4096`,
+    ),
+    uniqueIndex('work_wait_one_open')
+      .on(table.workId)
+      .where(sql`${table.status} = 'open'`),
+    index('work_wait_deadline_idx').on(table.status, table.deadlineAt),
+  ],
+)
+
+export type RouterApplicationRow = typeof routerApplications.$inferSelect
+export type NewRouterApplicationRow = typeof routerApplications.$inferInsert
+export type WorkWaitRow = typeof workWaits.$inferSelect
+export type NewWorkWaitRow = typeof workWaits.$inferInsert
 
 export interface WorkQuestionOption {
   readonly id: string

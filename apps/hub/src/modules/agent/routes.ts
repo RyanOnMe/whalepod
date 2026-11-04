@@ -38,6 +38,12 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
         model: body.model,
         credentialSlot: body.credentialSlot,
         ...(body.maxTokens !== undefined ? { maxTokens: body.maxTokens } : {}),
+        ...(body.inputPriceMicrosPerMillionTokens !== undefined
+          ? { inputPriceMicrosPerMillionTokens: body.inputPriceMicrosPerMillionTokens }
+          : {}),
+        ...(body.outputPriceMicrosPerMillionTokens !== undefined
+          ? { outputPriceMicrosPerMillionTokens: body.outputPriceMicrosPerMillionTokens }
+          : {}),
         ...(body.approvalPolicy !== undefined ? { approvalPolicy: body.approvalPolicy } : {}),
         pluginPackId: body.pluginPackId,
         createdBy: session.userId,
@@ -75,6 +81,12 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
         model: body.model,
         credentialSlot: body.credentialSlot,
         ...(body.maxTokens !== undefined ? { maxTokens: body.maxTokens } : {}),
+        ...(body.inputPriceMicrosPerMillionTokens !== undefined
+          ? { inputPriceMicrosPerMillionTokens: body.inputPriceMicrosPerMillionTokens }
+          : {}),
+        ...(body.outputPriceMicrosPerMillionTokens !== undefined
+          ? { outputPriceMicrosPerMillionTokens: body.outputPriceMicrosPerMillionTokens }
+          : {}),
         ...(body.approvalPolicy !== undefined ? { approvalPolicy: body.approvalPolicy } : {}),
         pluginPackId: body.pluginPackId,
         createdBy: session.userId,

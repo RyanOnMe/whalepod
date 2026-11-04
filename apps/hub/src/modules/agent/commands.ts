@@ -22,6 +22,8 @@ export interface ProfileFields {
   model: string
   credentialSlot: string
   maxTokens?: number | null
+  inputPriceMicrosPerMillionTokens?: number | null
+  outputPriceMicrosPerMillionTokens?: number | null
   pluginPackId: string
   /** 默认审批档（#241）：缺省 = approval_required（与既有行为一致）。 */
   approvalPolicy?: 'approval_required' | 'full_access'
@@ -38,8 +40,10 @@ export function computeProfileDigest(input: ProfileFields): string {
   const canonical = JSON.stringify({
     approvalPolicy: input.approvalPolicy ?? 'approval_required',
     credentialSlot: input.credentialSlot,
+    inputPriceMicrosPerMillionTokens: input.inputPriceMicrosPerMillionTokens ?? null,
     maxTokens: input.maxTokens ?? null,
     model: input.model,
+    outputPriceMicrosPerMillionTokens: input.outputPriceMicrosPerMillionTokens ?? null,
     persona: input.persona,
     pluginPackId: input.pluginPackId,
     provider: input.provider,
@@ -50,6 +54,23 @@ export function computeProfileDigest(input: ProfileFields): string {
 function authorizeManageAgent(actor: Actor): void {
   if (!authorize(actor, 'manage_agent', {})) {
     throw new ApiError(403, 'FORBIDDEN', 'only owner or admin can manage agents')
+  }
+}
+
+/** ADR-0028 §17：费用单价必须成对出现，否则无法核定 Executor 上限。 */
+function assertPricePair(input: ProfileFields): void {
+  const hasInput =
+    input.inputPriceMicrosPerMillionTokens !== undefined &&
+    input.inputPriceMicrosPerMillionTokens !== null
+  const hasOutput =
+    input.outputPriceMicrosPerMillionTokens !== undefined &&
+    input.outputPriceMicrosPerMillionTokens !== null
+  if (hasInput !== hasOutput) {
+    throw new ApiError(
+      400,
+      'VALIDATION_FAILED',
+      'input and output prices must be configured together',
+    )
   }
 }
 
@@ -80,6 +101,7 @@ export async function createAgent(
   input: CreateAgentInput,
 ): Promise<AgentDetailView> {
   authorizeManageAgent(actor)
+  assertPricePair(input)
   const agentId = uuidv7()
   const revisionId = uuidv7()
   const profileDigest = computeProfileDigest(input)
@@ -102,6 +124,14 @@ export async function createAgent(
         credentialSlot: input.credentialSlot,
         ...(input.maxTokens !== undefined && input.maxTokens !== null
           ? { maxTokens: input.maxTokens }
+          : {}),
+        ...(input.inputPriceMicrosPerMillionTokens !== undefined &&
+        input.inputPriceMicrosPerMillionTokens !== null
+          ? { inputPriceMicrosPerMillionTokens: input.inputPriceMicrosPerMillionTokens }
+          : {}),
+        ...(input.outputPriceMicrosPerMillionTokens !== undefined &&
+        input.outputPriceMicrosPerMillionTokens !== null
+          ? { outputPriceMicrosPerMillionTokens: input.outputPriceMicrosPerMillionTokens }
           : {}),
         ...(input.approvalPolicy !== undefined ? { approvalPolicy: input.approvalPolicy } : {}),
         pluginPackId: input.pluginPackId,
@@ -141,6 +171,7 @@ export async function createProfileRevision(
   input: CreateProfileRevisionInput,
 ): Promise<ProfileRevisionView> {
   authorizeManageAgent(actor)
+  assertPricePair(input)
   const revisionId = uuidv7()
   const profileDigest = computeProfileDigest(input)
   return transactCommand(database, `agent.revision:${input.idempotencyKey}`, async (tx) => {
@@ -171,6 +202,14 @@ export async function createProfileRevision(
       credentialSlot: input.credentialSlot,
       ...(input.maxTokens !== undefined && input.maxTokens !== null
         ? { maxTokens: input.maxTokens }
+        : {}),
+      ...(input.inputPriceMicrosPerMillionTokens !== undefined &&
+      input.inputPriceMicrosPerMillionTokens !== null
+        ? { inputPriceMicrosPerMillionTokens: input.inputPriceMicrosPerMillionTokens }
+        : {}),
+      ...(input.outputPriceMicrosPerMillionTokens !== undefined &&
+      input.outputPriceMicrosPerMillionTokens !== null
+        ? { outputPriceMicrosPerMillionTokens: input.outputPriceMicrosPerMillionTokens }
         : {}),
       ...(input.approvalPolicy !== undefined ? { approvalPolicy: input.approvalPolicy } : {}),
       pluginPackId: input.pluginPackId,

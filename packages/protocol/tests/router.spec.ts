@@ -6,6 +6,7 @@ import {
   coordinationUsageCost,
   coordinationInputTokenEstimate,
 } from '../src/router.js'
+import { RouterReevaluateRequestSchema } from '../src/router-application.js'
 
 const id = '01940000-0000-7000-8000-000000000001'
 const citation = '01940000-0000-7000-8000-000000000002'
@@ -128,5 +129,16 @@ describe('Router bounded input and cost arithmetic', () => {
         ],
       }).success,
     ).toBe(false)
+  })
+})
+
+describe('Router application contracts', () => {
+  it('requires exactly one re-evaluation identity', () => {
+    expect(RouterReevaluateRequestSchema.safeParse({ waitId: id }).success).toBe(true)
+    expect(RouterReevaluateRequestSchema.safeParse({ evaluationId: id }).success).toBe(true)
+    expect(RouterReevaluateRequestSchema.safeParse({}).success).toBe(false)
+    expect(RouterReevaluateRequestSchema.safeParse({ waitId: id, evaluationId: id }).success).toBe(
+      false,
+    )
   })
 })

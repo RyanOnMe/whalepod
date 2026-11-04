@@ -9,6 +9,7 @@ assert.ok(path, 'evidence path is required')
 const result = JSON.parse(await readFile(path, 'utf8')) as {
   schemaVersion: number
   issue: number
+  routerApplicationIssue: number
   generatedAt: string
   assembly: Record<string, string>
   scenarios: Array<{
@@ -20,7 +21,23 @@ const result = JSON.parse(await readFile(path, 'utf8')) as {
     readCount?: number
     delivered?: boolean
   }>
-  sideEffects: { runs: number; intents: number; questions: number; extraTasks: number }
+  sideEffects: {
+    runs: number
+    intents: number
+    questions: number
+    waits: number
+    applications: number
+    extraTasks: number
+  }
+  applications: Array<{
+    evaluationId: string
+    decision: string
+    status: string
+    intentId: string | null
+    questionId: string | null
+    waitId: string | null
+    runId: string | null
+  }>
   ledger: Array<{ evaluationId: string; phase: string; chargeMode: string }>
   reservationsRemaining: number
   privateInputsCleaned: boolean
@@ -38,6 +55,7 @@ const events = (await readFile(join(dirname(path), 'events.jsonl'), 'utf8'))
 }>
 assert.equal(result.schemaVersion, 1)
 assert.equal(result.issue, 519)
+assert.equal(result.routerApplicationIssue, 520)
 assert.ok(Number.isFinite(Date.parse(result.generatedAt)))
 assert.deepEqual(result.assembly, {
   hub: 'package-production-server',
@@ -111,7 +129,36 @@ for (const name of ['missing_citation', 'missing_usage', 'revoked', 'restart']) 
 const fast = result.scenarios.find((s) => s.scenario === 'fast')!
 assert.equal(fast.modelCalls, 0)
 assert.equal(fast.delivered, true)
-assert.deepEqual(result.sideEffects, { runs: 0, intents: 0, questions: 0, extraTasks: 0 })
+assert.deepEqual(result.sideEffects, {
+  runs: 0,
+  intents: 1,
+  questions: 1,
+  waits: 1,
+  applications: 4,
+  extraTasks: 0,
+})
+assert.deepEqual(result.applications.map((row) => row.decision).sort(), [
+  'ask',
+  'dispatch',
+  'ignore',
+  'wait',
+])
+for (const application of result.applications) {
+  assert.equal(application.status, 'applied')
+  assert.equal(application.runId, null)
+  const scenario = result.scenarios.find((item) => item.evaluationId === application.evaluationId)
+  assert.equal(scenario?.decision, application.decision)
+}
+const dispatchApplication = result.applications.find((row) => row.decision === 'dispatch')
+const askApplication = result.applications.find((row) => row.decision === 'ask')
+const waitApplication = result.applications.find((row) => row.decision === 'wait')
+const ignoreApplication = result.applications.find((row) => row.decision === 'ignore')
+assert.ok(dispatchApplication?.intentId)
+assert.ok(askApplication?.questionId)
+assert.ok(waitApplication?.waitId)
+assert.equal(ignoreApplication?.intentId, null)
+assert.equal(ignoreApplication?.questionId, null)
+assert.equal(ignoreApplication?.waitId, null)
 for (const scenario of result.scenarios.filter((s) => s.evaluationId)) {
   const pair = result.ledger.filter((l) => l.evaluationId === scenario.evaluationId)
   assert.deepEqual(pair.map((l) => l.phase).sort(), ['reserved', 'settled'])

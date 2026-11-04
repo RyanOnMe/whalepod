@@ -4,12 +4,18 @@ import {
   configureRouter,
   countChargedRouterFailuresForWork,
   countFailedMachineRunsForWork,
-  countMachineRunsForWork,
   findQueuedRouterEvaluationForUpdate,
   findRouterEvaluationByDigest,
   getEvaluation,
+  closeWorkWait,
   getEvaluationForUpdate,
+  getRouterApplication,
+  getWorkWaitForUpdate,
   getRouterConfig,
+  listRouterDispatchApplicationsAwaitingRun,
+  listUnappliedRouterEvaluations,
+  listUnsettledExecutorUsage,
+  settleExecutorUsage,
   getTeam,
   getProject,
   ensureCoordinatorState,
@@ -23,6 +29,7 @@ import {
   settleCoordinationUsage,
   transactCommand,
   updateEvaluation,
+  updateWork,
   type CoordinationEvaluationRow,
   type Database,
   type RouterConfigRow,
@@ -50,8 +57,15 @@ import { uuidv7 } from '../shared/uuid.js'
 import { requireAssignee } from '../work/context.js'
 import { loadWorkSource } from '../work/admission.js'
 import {
+  applyRouterEvaluation,
+  autoDispatchAppliedIntent,
+  toRouterApplicationView,
+  type RouterAutoDispatch,
+} from './application.js'
+import {
   loadRouterInput,
   lockRouterContext,
+  rebuildRouterEvaluation,
   ROUTER_PROMPT_VERSION,
   ROUTER_RULES_VERSION,
   type RouterTrigger,
@@ -62,9 +76,14 @@ export interface RouterDeps {
   store?: ArtifactStore
   now?: () => Date
   log?: (event: Record<string, unknown>) => void
+  /** RD-03r2：应用出 proposed 意图后，组合根用既有端口尝试 existing_task 派工。 */
+  onAutoDispatch?: RouterAutoDispatch
 }
 type Actor = { userId: string; role: 'owner' | 'admin' | 'member' }
 const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'skipped', 'stale'])
+/** 进程内重试节流：设备/候选恢复前不每秒重写同一 Intent。 */
+const autoDispatchRetryAt = new Map<string, number>()
+const AUTO_DISPATCH_RETRY_MS = 30_000
 const nowOf = (deps: RouterDeps): Date => deps.now?.() ?? new Date()
 function event(
   deps: RouterDeps,
@@ -82,7 +101,10 @@ function event(
     ...(reason ? { reason } : {}),
   })
 }
-export function routerEvaluationView(row: CoordinationEvaluationRow) {
+export function routerEvaluationView(
+  row: CoordinationEvaluationRow,
+  application?: typeof schema.routerApplications.$inferSelect,
+) {
   return {
     id: row.id,
     purpose: row.purpose,
@@ -95,6 +117,7 @@ export function routerEvaluationView(row: CoordinationEvaluationRow) {
     proposal: row.routerProposal,
     failureCode: row.failureCode,
     usage: row.usage,
+    application: application === undefined ? null : toRouterApplicationView(application),
     createdAt: row.createdAt.toISOString(),
     finishedAt: row.finishedAt?.toISOString() ?? null,
   }
@@ -232,7 +255,7 @@ export async function requestRouterEvaluation(
     const current = await getEvaluation(tx, row.id)
     if (!current || current.principalUserId !== actor.userId)
       throw new ApiError(403, 'FORBIDDEN', 'evaluation belongs to another principal')
-    return routerEvaluationView(current)
+    return routerEvaluationView(current, await getRouterApplication(tx, current.id))
   })
 }
 
@@ -286,59 +309,6 @@ function send(deviceId: string, type: NodeDownstream['type'], payload: unknown):
     payload,
   } as NodeDownstream)
 }
-async function rebuild(tx: Tx, deps: RouterDeps, row: CoordinationEvaluationRow) {
-  if (!row.workKey || !row.routerContext)
-    throw new ApiError(409, 'CONFLICT', 'missing evaluation context')
-  await lockRouterContext(tx, row.workKey)
-  const cfg = await getRouterConfig(tx, row.projectId)
-  if (!cfg || cfg.configVersion !== row.configVersion)
-    throw new ApiError(409, 'CONFLICT', 'configuration changed')
-  const [device] = await tx
-    .select()
-    .from(schema.devices)
-    .where(eq(schema.devices.id, cfg.deviceId))
-    .for('share')
-  if (
-    !device ||
-    device.revokedAt !== null ||
-    device.ownerUserId !== row.principalUserId ||
-    !supportsConfiguration(device.capabilities, cfg)
-  )
-    throw new ApiError(409, 'CONFLICT', 'coordination device authority changed')
-  const input = await loadRouterInput(
-    tx,
-    row.workKey,
-    row.routerContext,
-    cfg,
-    nowOf(deps),
-    deps.store,
-  )
-  if (input.evaluationDigest !== row.evaluationDigest || input.mandate.id !== row.mandateId)
-    throw new ApiError(409, 'CONFLICT', 'evaluation input changed')
-  return { cfg, input }
-}
-
-function supportsConfiguration(capabilities: unknown, cfg: RouterConfigRow): boolean {
-  const caps = capabilities as
-    | { coordinationCapabilities?: string[]; coordinationCredentialSlots?: unknown[] }
-    | undefined
-  return (
-    caps?.coordinationCapabilities?.includes('coordination.v1') === true &&
-    (caps.coordinationCredentialSlots ?? []).some((slot) => {
-      const parsed = CoordinationCredentialSlotSchema.safeParse(slot)
-      return (
-        parsed.success &&
-        parsed.data.provider === cfg.provider &&
-        parsed.data.model === cfg.model &&
-        parsed.data.slot === cfg.credentialSlot &&
-        parsed.data.ownerUserId === cfg.operatorUserId &&
-        parsed.data.billingUserId === cfg.billingUserId &&
-        parsed.data.configRevision === cfg.credentialConfigRevision
-      )
-    })
-  )
-}
-
 function bound(
   row: CoordinationEvaluationRow,
   deviceId: string,
@@ -373,7 +343,7 @@ export async function downloadRouterInput(
     const row = await getEvaluation(tx, evaluationId)
     if (!row || !bound(row, deviceId, { attempt, leaseToken }) || !live(row, nowOf(deps)))
       throw new ApiError(404, 'NOT_FOUND', 'evaluation input not available')
-    const { input } = await rebuild(tx, deps, row)
+    const { input } = await rebuildRouterEvaluation(tx, row, nowOf(deps), deps.store)
     // Rebuild may have waited behind an authorization change or an expired lease.
     const current = await getEvaluationForUpdate(tx, evaluationId)
     if (
@@ -399,7 +369,7 @@ export async function acceptRouterHeartbeat(
   await deps.database.transaction(async (tx) => {
     const snapshot = await getEvaluation(tx, payload.evaluationId)
     if (!snapshot || !bound(snapshot, deviceId, payload) || !live(snapshot, nowOf(deps))) return
-    await rebuild(tx, deps, snapshot)
+    await rebuildRouterEvaluation(tx, snapshot, nowOf(deps), deps.store)
     const row = await getEvaluationForUpdate(tx, snapshot.id)
     if (!row || !live(row, nowOf(deps))) return
     const manifest = CoordinationInputEntrySchema.array().parse(row.inputManifest.entries)
@@ -443,7 +413,7 @@ export async function acceptRouterResult(
     let rejection: string | undefined
     let waitDeadlineAt: number | undefined
     try {
-      const current = await rebuild(tx, deps, snapshot)
+      const current = await rebuildRouterEvaluation(tx, snapshot, nowOf(deps), deps.store)
       waitDeadlineAt = Math.min(
         current.input.mandate.expiresAt.getTime(),
         nowOf(deps).getTime() + current.input.mandate.waitDeadlineSeconds * 1000,
@@ -564,6 +534,19 @@ export async function acceptRouterResult(
   if (result) {
     await settleRouterEvaluation(deps, result)
     event(deps, 'router.result', result, result.failureCode ?? undefined)
+    if (result.status === 'completed') {
+      try {
+        await applyAcceptedResult(deps, result.id)
+      } catch (error) {
+        // 结果已接受并结算，应用失败不能回滚 ack；tick 会重试未应用行。
+        deps.log?.({
+          component: 'hub.router',
+          action: 'router.application_deferred',
+          evaluationId: result.id,
+          reason: error instanceof ApiError ? error.code : 'internal_error',
+        })
+      }
+    }
   }
   return ack
 }
@@ -596,6 +579,25 @@ async function settleRouterEvaluation(deps: RouterDeps, row: CoordinationEvaluat
     )
 }
 
+/**
+ * ADR-0028 §17（RD-03r2）：结果接受后应用提案。应用失败不改变已接受结果；
+ * tick 会重试未应用行，重复应用由 evaluationId 唯一性收敛。
+ */
+async function applyAcceptedResult(deps: RouterDeps, evaluationId: string): Promise<void> {
+  const applied = await applyRouterEvaluation(deps, evaluationId)
+  if (applied.status !== 'applied' || applied.intentId === null || applied.decision !== 'dispatch')
+    return
+  const evaluation = await getEvaluation(deps.database.db, evaluationId)
+  if (evaluation?.principalUserId === null || evaluation?.principalUserId === undefined) return
+  await autoDispatchAppliedIntent(
+    deps,
+    deps.onAutoDispatch,
+    applied.workKey,
+    applied.intentId,
+    evaluation.principalUserId,
+  )
+}
+
 async function dispatchQueued(
   deps: RouterDeps,
   id: string,
@@ -603,9 +605,9 @@ async function dispatchQueued(
   return deps.database.transaction(async (tx) => {
     const snapshot = await getEvaluation(tx, id)
     if (!snapshot || snapshot.status !== 'queued') return
-    let current: Awaited<ReturnType<typeof rebuild>>
+    let current: Awaited<ReturnType<typeof rebuildRouterEvaluation>>
     try {
-      current = await rebuild(tx, deps, snapshot)
+      current = await rebuildRouterEvaluation(tx, snapshot, nowOf(deps), deps.store)
     } catch (error) {
       if (!(error instanceof ApiError)) throw error
       const current = await getEvaluationForUpdate(tx, id)
@@ -635,14 +637,8 @@ async function dispatchQueued(
         failureCode: 'max_attempts_exhausted',
         finishedAt: nowOf(deps),
       })
-    // Executor usage has no ledger yet. #520 must provide one before mixed spending
-    // can be admitted; an unknown prior spend must never be treated as zero.
-    if ((await countMachineRunsForWork(tx, input.work.workKey)) > 0)
-      return updateEvaluation(tx, id, {
-        status: 'skipped',
-        failureCode: 'executor_usage_unavailable',
-        finishedAt: nowOf(deps),
-      })
+    // ADR-0028 §17（RD-03r2）：Executor 已接入同一 work lifetime 用量账本；
+    // 预留事务会同时检查 Router 与 Executor 的已用/在途预留，不再以未知支出拒绝。
     const [device] = await tx
       .select()
       .from(schema.devices)
@@ -724,6 +720,104 @@ async function dispatchQueued(
       reservedTokens,
       reservedCostMicros,
     })
+  })
+}
+
+/**
+ * ADR-0028 §17.3（RD-03r2）：显式、可去重的重评入口。wait 代次进入 triggerKey，
+ * 因此同一 wait 的重复请求复用同一评估；已结束评估的明确重试使用稳定 retry
+ * trigger。回答本身不触发执行，只作为下一次评估的版本化输入。
+ */
+export async function reevaluateRouterForActor(
+  deps: RouterDeps,
+  actor: Actor,
+  workKey: string,
+  input: { readonly waitId?: string | undefined; readonly evaluationId?: string | undefined },
+  key: string,
+) {
+  const row = await transactCommand(
+    deps.database,
+    `router.reevaluate:${workKey}:${actor.userId}:${input.waitId ?? input.evaluationId ?? ''}:${key}`,
+    async (tx) => {
+      const { work, task } = await lockRouterContext(tx, workKey)
+      await requireAssignee(tx, task, actor.userId)
+      if (input.waitId !== undefined) {
+        const wait = await getWorkWaitForUpdate(tx, input.waitId)
+        if (wait === undefined || wait.workId !== work.id)
+          throw new ApiError(404, 'NOT_FOUND', 'wait not found')
+        if (wait.status !== 'open') throw new ApiError(409, 'CONFLICT', 'wait is not open')
+        // 到期不是死路：#518 接管自动扫描前，允许责任人对过期 wait 做一次
+        // 显式重评；关闭原因记为 expired，不把超期决定伪装成 resumed。
+        const expired = wait.deadlineAt.getTime() <= nowOf(deps).getTime()
+        const closed = await closeWorkWait(
+          tx,
+          wait.id,
+          expired ? 'expired' : 'resumed',
+          nowOf(deps),
+        )
+        if (closed === undefined) throw new ApiError(409, 'CONFLICT', 'wait changed concurrently')
+        if (
+          work.state === 'waiting' &&
+          work.resumeMode === 'auto' &&
+          work.resumeCondition !== null &&
+          work.resumeCondition.startsWith('router:')
+        ) {
+          await updateWork(tx, work.id, {
+            state: 'active',
+            resumeMode: null,
+            resumeCondition: null,
+            updatedAt: nowOf(deps),
+          })
+        }
+        return enqueueInTransaction(
+          tx,
+          deps,
+          workKey,
+          {
+            sourceType: wait.sourceType,
+            sourceId: wait.sourceId,
+            triggerKey: `wait:${wait.id}:${wait.generation}`,
+          },
+          actor,
+        )
+      }
+      const previous = await getEvaluation(tx, input.evaluationId!)
+      if (
+        previous === undefined ||
+        previous.purpose !== 'router' ||
+        previous.workKey !== workKey ||
+        previous.routerContext === null
+      )
+        throw new ApiError(404, 'NOT_FOUND', 'evaluation not found')
+      if (!['failed', 'stale', 'skipped', 'cancelled'].includes(previous.status)) {
+        // 已接受但应用因瞬时事实（例如活跃 Run）落 stale 的决定，允许显式重放；
+        // 应用行仍保持幂等，新的评估 digest 会重新走一次两阶段裁决。
+        if (previous.status !== 'completed')
+          throw new ApiError(409, 'CONFLICT', 'evaluation is not retryable')
+        const applicationRow = await getRouterApplication(tx, previous.id)
+        if (applicationRow?.status !== 'stale')
+          throw new ApiError(409, 'CONFLICT', 'evaluation is not retryable')
+      }
+      return enqueueInTransaction(
+        tx,
+        deps,
+        workKey,
+        {
+          sourceType: previous.routerContext.sourceType,
+          sourceId: previous.routerContext.sourceId,
+          triggerKey: `retry:${previous.id}:${previous.attempt}`,
+        },
+        actor,
+      )
+    },
+  )
+  return deps.database.transaction(async (tx) => {
+    const { task } = await lockRouterContext(tx, workKey)
+    await requireAssignee(tx, task, actor.userId)
+    const current = await getEvaluation(tx, row.id)
+    if (!current || current.principalUserId !== actor.userId)
+      throw new ApiError(403, 'FORBIDDEN', 'evaluation belongs to another principal')
+    return routerEvaluationView(current, await getRouterApplication(tx, current.id))
   })
 }
 
@@ -811,7 +905,9 @@ export async function runRouterTick(deps: RouterDeps) {
       reason = row.deadlineAt && row.deadlineAt <= nowOf(deps) ? 'timeout' : 'node_lost'
     else
       try {
-        await deps.database.transaction((tx) => rebuild(tx, deps, row))
+        await deps.database.transaction((tx) =>
+          rebuildRouterEvaluation(tx, row, nowOf(deps), deps.store),
+        )
       } catch (error) {
         if (!(error instanceof ApiError)) throw error
         reason = 'source_unavailable'
@@ -848,5 +944,71 @@ export async function runRouterTick(deps: RouterDeps) {
   for (const ledger of await listUnsettledCoordinationUsage(deps.database.db)) {
     const row = await getEvaluation(deps.database.db, ledger.evaluationId)
     if (row) await settleRouterEvaluation(deps, row)
+  }
+  // 重启/崩溃恢复：已接受但尚未应用的结果由 tick 补做；应用本身幂等。
+  for (const { evaluation } of await listUnappliedRouterEvaluations(deps.database.db)) {
+    try {
+      await applyAcceptedResult(deps, evaluation.id)
+    } catch (error) {
+      deps.log?.({
+        component: 'hub.router',
+        action: 'router.application_failed',
+        evaluationId: evaluation.id,
+        // 只记稳定错误类别：原始 message 可能含模型输出片段或 SQL 字段值。
+        reason:
+          error instanceof ApiError ? error.code : error instanceof Error ? error.name : 'unknown',
+      })
+    }
+  }
+  // 应用提交与自动派工跨两个事务；崩溃/设备离线后由 tick 补做，30s 节流。
+  const onAutoDispatch = deps.onAutoDispatch
+  if (onAutoDispatch !== undefined) {
+    const nowMs = nowOf(deps).getTime()
+    for (const item of await listRouterDispatchApplicationsAwaitingRun(deps.database.db)) {
+      if (item.intentId === null || item.principalUserId === null) continue
+      if ((autoDispatchRetryAt.get(item.evaluationId) ?? 0) > nowMs) continue
+      autoDispatchRetryAt.set(item.evaluationId, nowMs + AUTO_DISPATCH_RETRY_MS)
+      try {
+        const runId = await autoDispatchAppliedIntent(
+          deps,
+          onAutoDispatch,
+          item.workKey,
+          item.intentId,
+          item.principalUserId,
+        )
+        if (runId !== null) autoDispatchRetryAt.delete(item.evaluationId)
+      } catch (error) {
+        deps.log?.({
+          component: 'hub.router',
+          action: 'router.auto_dispatch_failed',
+          evaluationId: item.evaluationId,
+          reason:
+            error instanceof ApiError
+              ? error.code
+              : error instanceof Error
+                ? error.name
+                : 'unknown',
+        })
+      }
+    }
+  }
+  // Executor 崩溃兜底：Run 已终态但结算未落账时按预留结算；单行失败不阻塞
+  // 其余补做（毒行曾让整个 tick 每秒重试并持续抢 Task/Work 锁）。
+  for (const { ledger, startedAt } of await listUnsettledExecutorUsage(deps.database.db)) {
+    try {
+      await deps.database.transaction((tx) =>
+        settleExecutorUsage(tx, {
+          runId: ledger.runId,
+          zeroCharge: startedAt === null,
+        }),
+      )
+    } catch (error) {
+      deps.log?.({
+        component: 'hub.router',
+        action: 'router.executor_settlement_failed',
+        runId: ledger.runId,
+        reason: error instanceof Error ? error.name : 'unknown',
+      })
+    }
   }
 }

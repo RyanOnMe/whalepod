@@ -35,6 +35,7 @@ import { logRecordedEntry } from './modules/context/observer.js'
 // ADR-0026（PC-04a）：确定性内部协调的读面与显式触发。
 import { registerCoordinationRoutes } from './modules/coordination/routes.js'
 import { registerRouterRoutes } from './modules/router/routes.js'
+import type { RouterAutoDispatch } from './modules/router/application.js'
 import { registerTaskRoutes } from './modules/task/routes.js'
 import { registerAgentRoutes } from './modules/agent/routes.js'
 import { loadPluginCatalog } from './modules/plugin/catalog.js'
@@ -68,6 +69,27 @@ export interface HubDeps {
   readonly database: Database
   readonly logger?: FastifyServerOptions['logger']
   readonly setupTokenStore?: SetupTokenStore
+}
+
+/**
+ * RD-03r2：Router 应用出 proposed 意图后，用既有端口尝试 existing_task 自动派工。
+ * 系统触发只代表当前责任人，不伪造成员会话或审批；app 与 server tick 共用同一
+ * 组合根，避免「HTTP 路径会派、重启补做不会派」。
+ */
+export function createRouterAutoDispatch(
+  database: Database,
+  orchestrator: RunOrchestrator,
+  outbox: Outbox,
+): RouterAutoDispatch {
+  return async (workKey, intentId, actorUserId) => {
+    const view = await autoDispatchProposedIntent(
+      { database, orchestrator, outbox, now: () => new Date() },
+      { userId: actorUserId, role: 'member' },
+      workKey,
+      intentId,
+    )
+    return view === null ? null : { runId: view.runId }
+  }
 }
 
 /** 统一失败 envelope（03 §4）：错误响应不含 SQL、绝对路径或堆栈（03 §10）。 */
@@ -214,11 +236,15 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
     send: (deviceId, frame) => nodeConnections.send(deviceId, frame),
   })
   app.decorate('runOrchestrator', orchestrator)
+  // RD-03r2：Router 提案应用出 proposed 意图后，用既有端口尝试 existing_task
+  // 自动派工。系统触发只代表当前责任人，不伪造成员会话或审批。
+  const onRouterAutoDispatch = createRouterAutoDispatch(database, orchestrator, outbox)
   registerNodeWebsocket(app, {
     database,
     orchestrator,
     realtime,
     routerStore: new ArtifactStore({ root: config.artifactStoreDir }),
+    onAutoDispatch: onRouterAutoDispatch,
   })
 
   await app.register(
@@ -241,6 +267,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         requireActor,
         store: new ArtifactStore({ root: config.artifactStoreDir }),
         log: (event) => app.log.info(event, 'router event'),
+        onAutoDispatch: onRouterAutoDispatch,
       })
       // ADR-0028（RD-01）：持续工作、Mandate 与影子准入；只写协调记录，不建 Run。
       registerWorkRoutes(api, {

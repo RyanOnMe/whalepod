@@ -17,6 +17,8 @@ import { projects } from './project.js'
 import { devices } from './device.js'
 import { userAccounts, teams } from './identity.js'
 import { coordinationEvaluations } from './coordination.js'
+import { runs } from './run.js'
+import { workMandates } from './work.js'
 
 /** Explicit configuration; no endpoint or secret crosses the Hub. */
 export const routerConfigurations = pgTable(
@@ -135,6 +137,53 @@ export const coordinationUsageLedger = pgTable(
 export type RouterConfigRow = typeof routerConfigurations.$inferSelect
 export type CoordinationBudgetRow = typeof coordinationBudgets.$inferSelect
 export type CoordinationLedgerRow = typeof coordinationUsageLedger.$inferSelect
+
+/**
+ * ADR-0028 §17 / ADR-0026 §13（RD-03r2）：业务 Executor 的 token/cost 账本。
+ * 与 Router 共用 `coordination_budget` 的 work lifetime 与 team/project 日行；
+ * 派工时写 reserved，Run 终态写 settled（实际 usage 缺失时按预留兜底）。
+ */
+export const executorUsageLedger = pgTable(
+  'executor_usage_ledger',
+  {
+    id: uuid('id').primaryKey(),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => runs.id),
+    phase: varchar('phase', { length: 16 }).$type<'reserved' | 'settled'>().notNull(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    teamId: uuid('team_id').notNull(),
+    workKey: uuid('work_key').notNull(),
+    mandateId: uuid('mandate_id')
+      .notNull()
+      .references(() => workMandates.id),
+    utcDate: varchar('utc_date', { length: 10 }).notNull(),
+    /** 本行预留实际覆盖的层；结算只回滚预留过的行，缺省 false 表示未参与。 */
+    teamReserved: boolean('team_reserved').notNull().default(false),
+    projectReserved: boolean('project_reserved').notNull().default(false),
+    reservedTokens: bigint('reserved_tokens', { mode: 'number' }).notNull(),
+    reservedCostMicros: bigint('reserved_cost_micros', { mode: 'number' }).notNull(),
+    chargeMode: varchar('charge_mode', { length: 16 }).$type<'zero' | 'reserved' | 'actual'>(),
+    usage: jsonb('usage').$type<ExecutorUsage>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('executor_usage_ledger_once').on(table.runId, table.phase),
+    check('executor_usage_ledger_phase', sql`${table.phase} in ('reserved','settled')`),
+    check(
+      'executor_usage_ledger_values',
+      sql`${table.reservedTokens} >= 0 and ${table.reservedCostMicros} >= 0 and (${table.phase} <> 'reserved' or (${table.usage} is null and ${table.chargeMode} is null)) and (${table.phase} <> 'settled' or ${table.chargeMode} in ('zero','reserved','actual'))`,
+    ),
+  ],
+)
+export type ExecutorUsage = {
+  readonly inputTokens: number
+  readonly outputTokens: number
+  readonly costMicros: number
+}
+export type ExecutorLedgerRow = typeof executorUsageLedger.$inferSelect
 
 export const coordinationTeamPolicies = pgTable(
   'coordination_team_policy',

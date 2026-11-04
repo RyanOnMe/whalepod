@@ -80,7 +80,7 @@ Task 责任人：
 
 - 自动派工只由显式 `POST /works/:workKey/admission-checks` 触发；订阅快路径/入口程序（RD-02b entry）尚未自动调用该端口。
 - 无候选时保留 proposed 并写排除理由，但没有后台重评 sweeper；设备上线/补条目后需要再次准入（**新幂等键**重放会重试；同 key 只回执）或人工派工。
-- `maxRunsPerWork`/`maxAttempts` 已收口到共享 `resolveCandidate`，人工确认派工同样受闸；`maxCostMicros`/`maxTokens` 仍只存储，Node/Hub 尚无 usage 回传，不能声称已预占/结算。
+- `maxRunsPerWork`/`maxAttempts` 已收口到共享 `resolveCandidate`，人工确认派工同样受闸；#520 / RD-03r2 已把 `maxCostMicros`/`maxTokens` 接成真实 `executor_usage_ledger` 预留与结算（Node 终态上报 usage，缺失按 reserved 兜底），见 [RD-03r2 验收](./2026-11-04-rd03r2-router-application-acceptance.md)。
 - `maxRunsPerWork` 统计该 work 全部机器 Run（含历史 Mandate）；`maxAttempts` 统计 failed/cancelled/lost 机器 Run，因此暂停/撤销取消也会消耗尝试次数（保守口径）。人类运行与 Router/转交共享额度口径留待 usage 账本切片。
 - 自动裁决使用发起准入的 assignee 会话作为 Run 创建 actor（复用既有指令权守卫），但意图 `approvalBasis='mandate'`、`origin='mandate'` 与 on-behalf 标记为机器来源；不伪造人类 approve 记录/消息。
 - 候选选择限定“显式 allowlist + 同 assignee 单现场”；跨成员 Device/Workspace、多个候选的排名理由扩展未做。人工路径把空 `allowedAgentIds` 视为不限制（RD-01 语义），自动路径视为无候选，两者差异是刻意的。

@@ -159,7 +159,9 @@ interface BoundAnswer {
 type AnswerOutcome = StaleAnswer | BoundAnswer
 
 function validateAnswer(question: WorkQuestionRow, input: WorkQuestionAnswerRequest): void {
-  if (input.answerType === 'authorize_scope') {
+  // #517 之前 authorize_scope 的任何回答都不绑定；否则 choose_option 可以
+  // 把扩权问题降级成普通选项确认，回答类型与问题类型必须一起拒绝。
+  if (question.questionType === 'authorize_scope' || input.answerType === 'authorize_scope') {
     throw new ApiError(400, 'UNSUPPORTED_ANSWER', 'authorize_scope is not enabled in this slice')
   }
   if (input.answerType === 'choose_option') {

@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import {
+  bigint,
   char,
   check,
   integer,
@@ -46,6 +47,14 @@ export const agentProfileRevisions = pgTable(
     model: varchar('model', { length: 200 }).notNull(),
     credentialSlot: varchar('credential_slot', { length: 80 }).notNull(),
     maxTokens: integer('max_tokens'),
+    // ADR-0028 §17 / ADR-0026 §13（RD-03r2）：业务 Executor 的费用单价。两者必须
+    // 同时配置；缺省表示该 Revision 没有可核定的费用上限，机器派工 fail-closed。
+    inputPriceMicrosPerMillionTokens: bigint('input_price_micros_per_million_tokens', {
+      mode: 'number',
+    }),
+    outputPriceMicrosPerMillionTokens: bigint('output_price_micros_per_million_tokens', {
+      mode: 'number',
+    }),
     // 默认审批档（#241）：非空，默认 approval_required。进 profileDigest 的
     // canonical JSON（档位是 Revision 行为的一部分）；Task 可覆盖（见 task 表）。
     approvalPolicy: approvalPolicy('approval_policy').notNull().default('approval_required'),
@@ -69,6 +78,14 @@ export const agentProfileRevisions = pgTable(
     check(
       'agent_profile_revision_max_tokens_positive',
       sql`${table.maxTokens} is null or ${table.maxTokens} > 0`,
+    ),
+    check(
+      'agent_profile_revision_prices_pair',
+      sql`(${table.inputPriceMicrosPerMillionTokens} is null) = (${table.outputPriceMicrosPerMillionTokens} is null)`,
+    ),
+    check(
+      'agent_profile_revision_prices_positive',
+      sql`(${table.inputPriceMicrosPerMillionTokens} is null or ${table.inputPriceMicrosPerMillionTokens} > 0) and (${table.outputPriceMicrosPerMillionTokens} is null or ${table.outputPriceMicrosPerMillionTokens} > 0)`,
     ),
   ],
 )

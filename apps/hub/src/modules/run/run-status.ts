@@ -26,9 +26,11 @@ import { DomainError } from '@whalepod/domain'
 import type { Outbox, RunRow, Tx } from '@whalepod/db'
 import {
   getCurrentWorkByTask,
+  getProfileRevision,
   getWorkByIdForUpdate,
   schema,
   setRunStatus,
+  settleExecutorUsage,
   TERMINAL_RUN_STATUSES,
   updateWork,
 } from '@whalepod/db'
@@ -80,6 +82,36 @@ export async function applyRunStatus(
     if (work !== undefined) {
       const lockedWork = await getWorkByIdForUpdate(tx, work.id)
       if (lockedWork !== undefined) work = lockedWork
+    }
+    // ADR-0028 §17（RD-03r2）：机器 Run 的 Executor 用量与终态同事务结算。
+    // 锁序 Run→Work→budget：用户派工走 Work→budget，先取 Work 才不会 ABBA。
+    // 有 Node 上报的 token 实耗按实际计价；缺失按预留兜底；从未启动的 Run 记零。
+    if (row.origin === 'mandate') {
+      const usage = row.executorUsage
+      let settledUsage:
+        | { inputTokens: number; outputTokens: number; costMicros: number }
+        | undefined
+      if (usage !== null) {
+        const revision = await getProfileRevision(tx, row.profileRevisionId)
+        // 价格缺失不能按零计价；交给预留兜底（settle 内部按 reserved 封顶）。
+        if (
+          revision?.inputPriceMicrosPerMillionTokens !== null &&
+          revision?.inputPriceMicrosPerMillionTokens !== undefined &&
+          revision.outputPriceMicrosPerMillionTokens !== null &&
+          revision.outputPriceMicrosPerMillionTokens !== undefined
+        ) {
+          const numerator =
+            BigInt(usage.inputTokens) * BigInt(revision.inputPriceMicrosPerMillionTokens) +
+            BigInt(usage.outputTokens) * BigInt(revision.outputPriceMicrosPerMillionTokens)
+          const costMicros = Number((numerator + 999_999n) / 1_000_000n)
+          settledUsage = { ...usage, costMicros }
+        }
+      }
+      await settleExecutorUsage(tx, {
+        runId: row.id,
+        ...(settledUsage === undefined ? {} : { usage: settledUsage }),
+        zeroCharge: usage === null && row.startedAt === null,
+      })
     }
     // ADR-0028（RD-02a-2a）：Run 终态未消费的工作输入先转 unconfirmed；
     // 60s 窗口后由 reconcileWorkInputs 回到 pending。

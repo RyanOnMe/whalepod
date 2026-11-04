@@ -18,6 +18,11 @@ const script = 'scripts/mutate-router-evaluation.ts'
 const sourcePath = 'apps/hub/src/modules/router/service.ts'
 const routerRoutesSource = 'apps/hub/src/modules/router/routes.ts'
 const spec = 'apps/hub/tests/router-evaluation.integration.spec.ts'
+const applicationSource = 'apps/hub/src/modules/router/application.ts'
+const dispatchSource = 'apps/hub/src/modules/dispatch/service.ts'
+const executorLedgerSource = 'packages/db/src/repositories/router.ts'
+const applicationSpec = 'apps/hub/tests/router-application.integration.spec.ts'
+const dbLedgerSpec = 'packages/db/tests/executor-ledger.integration.spec.ts'
 const nodeRecoverySource = 'apps/node/src/coordination/manager.ts'
 const nodeRecoverySpec = 'apps/node/tests/coordination-recovery.spec.ts'
 const output = join(root, 'artifacts/evidence/router-evaluation/mutations')
@@ -40,6 +45,8 @@ interface Suite {
 }
 const baselineSuites: readonly Suite[] = [
   { spec, project: 'integration' },
+  { spec: applicationSpec, project: 'integration' },
+  { spec: dbLedgerSpec, project: 'integration' },
   { spec: nodeRecoverySpec, project: 'unit' },
 ]
 const mutations: readonly Mutation[] = [
@@ -111,8 +118,9 @@ const mutations: readonly Mutation[] = [
     id: 'R10',
     criterion: 'cached command reads reauthorize the current assignee',
     needle:
-      'const { task } = await lockRouterContext(tx, workKey)\n    await requireAssignee(tx, task, actor.userId)',
-    replacement: 'await lockRouterContext(tx, workKey)',
+      "// Receipt hits skip the command callback. Authorize the current read while holding\n  // Task before Work so reassignment cannot expose the former principal's proposal.\n  return deps.database.transaction(async (tx) => {\n    const { task } = await lockRouterContext(tx, workKey)\n    await requireAssignee(tx, task, actor.userId)",
+    replacement:
+      "// Receipt hits skip the command callback. Authorize the current read while holding\n  // Task before Work so reassignment cannot expose the former principal's proposal.\n  return deps.database.transaction(async (tx) => {\n    await lockRouterContext(tx, workKey)",
     test: 'reauthorizes cached evaluation receipts after reassignment and hides old principal history',
   },
   {
@@ -239,6 +247,85 @@ const mutations: readonly Mutation[] = [
     needle: "return process.platform === 'win32' || coordinationPidState(-row.pid) === 'dead'",
     replacement: 'return true',
     test: 'keeps inputs until both the dead leader and its surviving process group have exited',
+  },
+  {
+    id: 'A01',
+    criterion: 'router application is idempotent by evaluation id',
+    source: applicationSource,
+    spec: applicationSpec,
+    needle:
+      'const existing = await getRouterApplication(tx, evaluationId)\n    if (existing !== undefined) return existing',
+    replacement: 'const existing = await getRouterApplication(tx, evaluationId)',
+    test: 'applies dispatch to a proposed intent and settles the machine Run usage',
+  },
+  {
+    id: 'A02',
+    criterion: 'an active Run prevents a second dispatch application',
+    source: applicationSource,
+    spec: applicationSpec,
+    needle: "if ((await listActiveRunsByTask(tx, task.id)).length > 0) return stale('active_run')",
+    replacement: "if (false) return stale('active_run')",
+    test: 'refuses dispatch application while a machine Run is active',
+  },
+  {
+    id: 'A03',
+    criterion: 'dispatch action class must stay inside the Mandate',
+    source: applicationSource,
+    spec: applicationSpec,
+    needle:
+      "if (!mandate.allowedActionClasses.includes(proposal.actionClass))\n    return stale('action_class_forbidden')",
+    replacement: "if (false) return stale('action_class_forbidden')",
+    test: 'refuses dispatch proposals whose action class is outside the mandate',
+  },
+  {
+    id: 'A04',
+    criterion: 'explicit re-evaluation restores the work from router wait',
+    source: sourcePath,
+    spec: applicationSpec,
+    needle:
+      "work.state === 'waiting' &&\n          work.resumeMode === 'auto' &&\n          work.resumeCondition !== null &&\n          work.resumeCondition.startsWith('router:')",
+    replacement: 'false',
+    test: 'persists wait and re-evaluates explicitly without treating it as execution',
+  },
+  {
+    id: 'A05',
+    criterion: 'unpriced Executor dispatch fails closed',
+    source: dispatchSource,
+    spec: applicationSpec,
+    needle:
+      'candidate.inputPriceMicrosPerMillionTokens === null ||\n    candidate.outputPriceMicrosPerMillionTokens === null',
+    replacement: 'false',
+    test: 'shares work lifetime budget between Router and Executor and blocks unpriced dispatch',
+  },
+  {
+    id: 'A06',
+    criterion: 'Executor settlement records actual usage when available',
+    source: executorLedgerSource,
+    spec: applicationSpec,
+    needle:
+      "const chargeMode = zeroCharge\n    ? 'zero'\n    : usage === undefined || overReserved\n      ? 'reserved'\n      : 'actual'",
+    replacement: "const chargeMode = 'reserved' as const",
+    test: 'applies dispatch to a proposed intent and settles the machine Run usage',
+  },
+  {
+    id: 'A07',
+    criterion: 'Executor dispatch reserves usage in the Run-creation transaction',
+    source: dispatchSource,
+    spec: applicationSpec,
+    needle:
+      'await reserveExecutorForMachineRun(tx, {\n    work,\n    intent,\n    candidate,\n    runId: run.id,\n    ...(workInputItemIds === undefined ? {} : { workInputItemIds }),\n    now,\n  })',
+    replacement: 'void reserveExecutorForMachineRun',
+    test: 'shares work lifetime budget between Router and Executor and blocks unpriced dispatch',
+  },
+  {
+    id: 'A08',
+    criterion: 'Executor settlement only rolls back reserved budget scopes',
+    source: executorLedgerSource,
+    spec: dbLedgerSpec,
+    needle:
+      "...(reserved.teamReserved\n      ? [{ scope: 'team' as const, id: reserved.teamId, date: reserved.utcDate }]\n      : []),",
+    replacement: "...[{ scope: 'team' as const, id: reserved.teamId, date: reserved.utcDate }],",
+    test: 'does not decrement team/project rows that were not part of the reservation',
   },
   {
     id: 'R26',
@@ -441,20 +528,29 @@ async function main(): Promise<void> {
   }
   await mkdir(output, { recursive: true })
   await rm(summaryPath, { force: true })
-  const sources = [...new Set(mutations.map((mutation) => target(mutation).source))]
+  const requested = (process.env.MUTATION_IDS ?? '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter((id) => id !== '')
+  const activeMutations =
+    requested.length === 0
+      ? mutations
+      : mutations.filter((mutation) => requested.includes(mutation.id))
+  assert.ok(activeMutations.length > 0, 'MUTATION_IDS selected no mutation')
+  const sources = [...new Set(activeMutations.map((mutation) => target(mutation).source))]
   const originals = new Map(
     await Promise.all(
       sources.map(async (source) => [source, await readFile(join(root, source), 'utf8')] as const),
     ),
   )
   const sourceDigests = new Map(sources.map((source) => [source, digest(originals.get(source)!)]))
-  const specs = [...new Set(mutations.map((mutation) => target(mutation).spec))]
+  const specs = [...new Set(activeMutations.map((mutation) => target(mutation).spec))]
   const specSources = new Map(
     await Promise.all(
       specs.map(async (path) => [path, await readFile(join(root, path), 'utf8')] as const),
     ),
   )
-  for (const mutation of mutations) {
+  for (const mutation of activeMutations) {
     const { source, spec: testSpec } = target(mutation)
     const original = originals.get(source)!
     assert.equal(
@@ -493,7 +589,7 @@ async function main(): Promise<void> {
     baselineBefore = baselineBeforeRuns.every((run) => run.pass)
     baselineBeforeTests = baselineBeforeRuns.reduce((total, run) => total + run.passedTests, 0)
     assert.ok(baselineBefore, 'baseline is red or does not execute every required test')
-    for (const mutation of mutations) {
+    for (const mutation of activeMutations) {
       for (const source of sources)
         assert.equal(
           await readFile(join(root, source), 'utf8'),
@@ -561,7 +657,7 @@ async function main(): Promise<void> {
         baselineBefore &&
         baselineAfter &&
         restored &&
-        results.length === mutations.length &&
+        results.length === activeMutations.length &&
         results.every((result) => result.status === 'killed')
       await writeFile(
         summaryPath,
@@ -581,7 +677,7 @@ async function main(): Promise<void> {
             baselineBeforeRuns,
             baselineAfterRuns,
             restored,
-            expectedMutations: mutations.length,
+            expectedMutations: activeMutations.length,
             mutations: results,
             status: pass ? 'pass' : 'fail',
           },
@@ -593,12 +689,12 @@ async function main(): Promise<void> {
     }
   }
   assert.ok(baselineAfter && restored, 'source restoration or final baseline failed')
-  assert.equal(results.length, mutations.length, 'mutation evidence is incomplete')
+  assert.equal(results.length, activeMutations.length, 'mutation evidence is incomplete')
   assert.ok(
     results.every((result) => result.status === 'killed'),
     'a mutation survived or failed without an assertion',
   )
-  console.log(`Router mutation evidence PASS (${results.length}/${mutations.length})`)
+  console.log(`Router mutation evidence PASS (${results.length}/${activeMutations.length})`)
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
