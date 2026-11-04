@@ -2,6 +2,7 @@
 
 - 状态：已采纳（Accepted，2026-11-02；原提案 #452，2026-11-01）。PC-04a（#473）先交付无模型、无 Node 派发的确定性内部协调；模型路径、额度、租约与受限 Runtime 按后续切片交付，未实现部分保持未交付。
 - 2026-11-02 ADR-0028 部分修订 §1/§11：新增受 Mandate 约束的派工端口（仅既有 Task）；Router 模型仍不写业务事实，其余约束不变。
+- 2026-11-04 契约补充：§13 明确模型评估用途、Router 评估身份、队列隔离与共享额度；与 ADR-0028 §17 配套。这里只确定契约，模型 Router 尚未实现。
 - 采纳说明：确定性内部协调不从 §1 的模型 Node/费用配置获得豁免；它不调用模型、不写账本、不派发 Node。启用任何模型协调前仍必须满足 §1、§4–§6 的显式配置与能力负控。
 - 承接：计划 §4.1、§4.3–§4.4、§5.1、§6；[ADR-0025](./0025-source-revisions-and-project-understanding.md) 的事实阶梯与事务边界。
 - 输入证据：PC-00 (#463) 的 rc.8 工具行禁用/输入引用/结构化结果探针；上游固定提交 `6337fc8` 的复用分析（§3、§5、§6.2）。
@@ -25,7 +26,7 @@
 - 每个 Project 一个**逻辑协调身份**，处理该 Project 已绑定、允许整团队共享的来源与投影；不跨项目扫描，不读取个人原始 Session、未共享候选或私有 Workspace。
 - **逻辑身份不是常驻推理**：空闲时不轮询模型；确定性变化先入账，相关变化合并后才唤醒一次有界评估。
 - **协调计算不是 Run**：不创建 Task/Run，不占 Task 单活跃名额，不写 Run 事件，不调用 `run.followup`、取消、审批或任何业务工具，不向外部平台发送消息。
-- **协调输出不是业务事实**：只能写 ADR-0025 的 Inference（带引用）；Decision、Correction、Run 完成态、成果验收只能由成员经既有业务入口产生。
+- **协调输出不是业务事实**：`inference` 用途只能写 ADR-0025 的 Inference（带引用）；`router` 用途只能提交 ADR-0028 §17 的结构化提案。Router 提案由 Hub 独立裁决后才可写协调记录及调用既有派工端口；模型没有 Decision、Correction、Run 完成态或成果验收的写入口。
 - **首次启用必须显式配置**：模型 Node、操作者成员、费用承担者、凭据槽、日额度（派发次数/token/费用三项）、并发（默认 1）、单次输入上限、超时与停机行为；缺一项即 `project_coordinator_state.enabled=false`。协调只处理同时满足「Project 协调已启用」且「该来源 `autoExtraction=true`」的来源；两个开关是 AND，不互相代替。
 
 ### 2 生命周期：确定性先行，模型后有界
@@ -171,6 +172,33 @@
 - 若真实模型在 32k 输入内无法产生可用判断，先缩小输入与目标，不放开浏览器/Shell 等能力换质量。
 - 若单飞与合并窗口导致理解延迟超出计划目标（p95 ≤60 秒），先调窗口与预算，不允许并发超 1 作为默认。
 - 若团队不愿承担后台模型费用，保持 `autoExtraction=false` 与协调关闭，读面只显示确定性事实与缺口。
+
+### 13 模型评估用途与 Router 衔接（2026-11-04 补充）
+
+本节与 ADR-0028 §17 共同约束后续模型 Router 切片；PC-04a 的确定性协调与既有验收不因此获得模型能力。
+
+#### 13.1 用途、归属与结果
+
+- 统一协调评估机制增加 `purpose='inference'|'router'`。`inference` 保留本 ADR 的项目推断输出；`router` 必须绑定一个已存在的 `workKey`、Task、当前责任人与 Mandate 版本，返回 ADR-0028 的路由提案。Router 评估不是业务 Run，不占 Task 单活跃 Run 槽。
+- 两种用途共享受限 Node 启动、清单下载、租约、终态、清理和用量结算机制，但使用各自的严格结果 schema。`router` 完成时保存被接受的提案与摘要，不要求创建 `inferenceEntryId`，不得为满足旧 `completed` 约束伪造 Inference。实现时按用途迁移完成态约束；未迁移前不得声称现有表已支持模型 Router。
+- `work_entry_router_call` 只证明入口进入慢路径；须关联实际评估记录及派发、模型启动、读取和结果证据，才能证明模型运行。RD-01 的 `propose(needs_semantic)` 不是已完成的语义判断，不可作为模型结果复用。
+
+#### 13.2 评估身份、合并与围栏
+
+- Router 模型路径使用独立 `evaluationDigest`，固定计算规则包含：用途、Project/work/Task/责任人、Mandate id/version、输入清单的身份/版本/digest/逐来源权限代次、当前约定版本、获准成果依据版本、消费与有效回答水位、规则/处理器/提示版本、provider/model 与配置版本。所有影响判断的缺失证据和省略项也进入清单身份。
+- `evaluationDigest` 不复用工作 `inputDigest` 或 Run `snapshotDigest`，也不原地改变 PC-04a 已有 `inputDigest` 的含义。相同评估身份已完成则复用结果；变更授权、成果或有效回答可以产生新评估，旧结果和终态行保留。模型调用 attempt、问答的哈希 `decisionId`、数据库 Router 决定行 id 分别记录，不混用。
+- 来源入口记录继续按事件身份去重；Router 评估/结果唯一性采用完整评估身份和 attempt，不能沿用仅含来源版本的 `router_decision_source_unique`。合法 wait 到期或明确重试的触发代次进入 `evaluationDigest`，使新判断不复用旧 wait；同一次触发重复扫描保持同一代次。当前时间或定时扫描本身不得不断制造新身份。重评不得覆写历史决定、复活旧评估或旧意图。
+- 模型队列合并域为 `(projectId, purpose, workKey)`，`inference` 的 workKey 为空；不同用途、工作或主体不得合并输入。原有 Project 唯一 queued 约束在启用 Router 时按该域迁移；同一工作责任人变化时旧评估取消，新主体重新入队。
+- **执行单飞仍按 Project 共享**：`dispatched/running` 两种用途合计最多一个；不能按 purpose 或 workKey 拆成多个执行名额。team/project 日额度也共享，不因分队列获得额外额度。
+- 结果接受必须在事务中 CAS 校验评估状态、attempt、leaseToken、租约与截止时间，并复核评估身份内的当前权限、Mandate、责任人、Task、约定、成果/消费/回答水位和配置版本。失败按原因进入 `stale/cancelled/failed`；不得留下部分已接受提案或承接副作用。接受提案与应用业务端口是两个步骤，后者仍需独立复核（ADR-0028 §17）。
+
+#### 13.3 读取、凭据、成本与失败
+
+- Router 沿用 §1/§4–§6 的显式启用、协调专用凭据槽、费用承担者、工具/网络隔离、逐项负控、输入上限、回执和清理要求。Mandate 不自动启用项目协调，也不默认允许借用成员业务模型凭据；缺配置或能力证据时不启动模型。
+- 输入限于当前可读的清单：内部 Task 讨论、上下文条目、约定、工作输入与消费元数据、已获准的成果依据。Router 不因代表工作责任人而获得私有 Session、未共享候选或 Workspace 的读取权；省略/不可读的成果只能记录证据不足。
+- 两种用途共享 Project/team 的派发次数、token/cost 预留与结算；绑定工作的 Router 费用还必须计入该工作 Router/Executor 共享的 token/cost 总上限。项目级未绑定工作推断不得事后转嫁给某成员的工作。`maxRunsPerWork` 统计业务 Run，Router 评估不伪装成 Run；Router 与 Executor 重试还共同受工作级 `maxAttempts` 约束，重试各记派发次数。Router 专用重试策略只能进一步收紧，不能增加独立重试额度。
+- Router 重评、重试、用途切换或同一 work 的新 Mandate 不重置已有用量；预留/结算事务必须同时满足所有适用额度，结果拒绝或 stale 也照实际 usage/既定兜底结算。首个真实模型切片即包含预留、缺 usage、超限、崩溃、迟到与幂等结算，不把账本留到自动执行后再补。
+- Executor 的 token/cost 总账本仍须在自动派工切片补齐；现有次数闸和 `maxTokens/maxCostMicros` 字段不能充当已实现的费用硬闸。无法预留或核定用量上限时不得自动派发业务 Run。
 
 ## 验证登记
 
