@@ -26,7 +26,7 @@
 `POST /works/:workKey/questions/:decisionId/answers` 对 `questionType='authorize_scope'`：
 
 1. `choose_option` 降级仍返回 `UNSUPPORTED_ANSWER`；`deny`/`defer` 可正常绑定并关闭问题（不生成草案、不扩大 Mandate）；
-2. 必须携带 `scope`，按与创建 Mandate 相同的 `CreateWorkMandateSchema` 解析；
+2. 必须携带 `scope`，使用与创建 Mandate 相同字段/语义的 `WorkAuthorizeScopeRequestSchema` 解析；该 schema 不带默认值，避免只提交部分字段被静默补全成更宽授权；
 3. 语义校验与创建 Mandate 共用 `assertMandateScope` / `assertAllowedAgents`：数组去重、草稿受众必须是本人、`expiresAt` 在未来、Agent 存在且非归档、非 `full_access`；
 4. 当前 Mandate 版本/责任人/工作状态不匹配时，仍只落 `binding=false` 回答并 409 `DECISION_STALE`，不生成草案；
 5. 通过后写 binding 回答 + pending 草案；**不更新 work.mandateId、不改变 inputDigest、不扩大当前 Mandate**；
@@ -48,7 +48,7 @@
 
 ### 1.4 旧草案收口
 
-新 Mandate 版本（手工创建、承接工作、暂停/恢复/撤销）与工作退休都会把该 work 下仍 pending 的草案及其 open 问题标为 `superseded`；确认路径用 `keepProposalId` 保留正在确认的一份。这样读面不会长期保留已过代的扩权提案。
+新 Mandate 版本（手工创建、承接工作、暂停/恢复/撤销）、工作退休、Task 终态/改派、Task 切到 `full_access` 都会把该 work 下仍 pending 的草案及其问题标为 `superseded`；确认路径用 `keepProposalId` 保留正在确认的一份。读面还额外只展示「work active + base 仍是当前 active 未过期版本」的草案，即使生命周期收口漏掉也不会显示成可确认。
 
 ### 1.5 审计
 
@@ -60,7 +60,7 @@
 
 ### 2.1 集成用例
 
-`apps/hub/tests/work-scope-proposal.integration.spec.ts`（9 项，生产 HTTP + 真实 PostgreSQL）：
+`apps/hub/tests/work-scope-proposal.integration.spec.ts`（18 项，生产 HTTP + 真实 PostgreSQL）：
 
 1. `records a pending proposal without expanding the current mandate, then confirms one new version`：回答后 work 指针/版本不变、无新 Mandate、草案 pending、读面可见；确认后 version=2、问题 superseded、草案 confirmed、旧版本保留；同 key 与不同 key 重复确认都返回同一版本；审计不含 scope 数值。
 2. `rejects wrong answer types, missing or invalid scope, and non-assignee actors`：`choose_option` 降级、缺 scope、重复数组、他人草稿受众、不存在的 Agent 均 400；跨成员回答/确认 403；同一问题第二次回答 409；未知 proposal 404。
@@ -71,6 +71,14 @@
 7. `returns DECISION_STALE to the reassigned owner and hides the proposal from the new assignee`：旧责任人确认得 `assignee_changed`；新 assignee 读面看不到旧草案；新责任人显式承接工作后草案 superseded。
 8. `converges concurrent confirmations to exactly one new mandate version`：两个并发确认都成功返回同一 version=2，库中仅两条 Mandate。
 9. `allows denying an authorization request without creating a proposal`：`deny` 回答正常绑定并关闭问题，但不生成草案、不改 Mandate；`choose_option` 仍被拒绝。
+10. `reports a repeated confirmation as not current after a newer mandate version`：确认后再暂停产生 v3，重复确认（同 key 与不同 key）返回 v2 但 `current=false`，不误报当前授权。
+11. `supersedes a pending proposal when the task becomes full_access`、12. `supersedes a pending proposal when the task reaches a terminal state`：Task 策略/终态生命周期收口草案，读面不再显示，确认不会创建 Mandate。
+13. `refuses confirmation while the work is waiting`：work 非 active 时确认 409 `work_inactive`。
+14. `refuses confirmation after the answered scope itself expires`：回答后草案自身过期，确认 409 `scope_invalid`。
+15. `refuses confirmation when the task policy changed to full_access`：绕过生命周期收口的旧草案仍被确认入口拒绝（`task_policy_changed`）。
+16. `converges concurrent same-key scope answers to one proposal`：同 key 并发回答都返回同一 answer/proposal，库中各一条。
+17. `does not expose another member pending proposal in the work detail`：Task 已指向新成员但旧草案尚未被生命周期收口时，新成员的工作读面仍不显示旧草案。
+18. `replays a pre-#517 answer receipt without a scopeProposal field`：旧裸视图回执重放返回 200，补 `scopeProposal: null`，不重复写回答。
 
 `apps/hub/tests/router-application.integration.spec.ts` 的 ask 用例改为：「authorize_scope 问题只接受完整 scope 的 pending 草案，不接受缺 scope 或 choose_option 降级」，并断言不建 Run。
 
@@ -79,14 +87,14 @@
 | 门 | 结果（2026-11-05 本机 macOS） |
 |---|---|
 | Q0 `pnpm check` | 通过：format / lint（0 error）/ full typecheck / boundaries / protocol generated / plugin fixture / 2506 unit+web tests |
-| Q2 `pnpm test:integration` | 964 passed（95 files；新增本切片 9 项 + #520 ask 用例更新） |
+| Q2 `pnpm test:integration` | 973 passed（95 files；新增本切片 18 项 + #520 ask 用例更新） |
 | Q7 安全 | 18 passed + secret-scan 自检/实扫 + license-check 通过 |
 | Q3/Q6 | 未触发：无 DSH/Runtime/Node 改动 |
 | Q5/Q8/Q9 | 未触发：无 Web/镜像/安装面改动 |
 
 ### 2.3 单点变异
 
-`scripts/mutate-router-evaluation.ts` 增加 S01–S14（S03 随「回答即 answered」语义并入 S07，不单独保留），可用 `MUTATION_IDS=S01,...` 只跑本切片：
+`scripts/mutate-router-evaluation.ts` 增加 S01–S17（S03 随「回答即 answered」语义并入 S07，不单独保留），可用 `MUTATION_IDS=S01,...` 只跑本切片：
 
 | ID | 判据 | 变异 |
 |---|---|---|
@@ -103,8 +111,11 @@
 | S12 | 草案创建前校验 Agent | 跳过 `assertAllowedAgents` |
 | S13 | 改派旧责任人得到 DECISION_STALE | 关闭 `assignee_changed` |
 | S14 | base 过期不得确认 | 关闭 `mandate_inactive` |
+| S15 | 确认重新校验回答的 scope | 跳过 confirm 的 `assertMandateScope` |
+| S16 | full_access Task 不得确认 | 关闭 `task_policy_changed` |
+| S17 | 确认要求 work active | 关闭 `work_inactive` |
 
-结果：全量变异为 47 条（含本切片 13 条），全部 `killed`；基线前后通过、源码还原通过。见 `artifacts/evidence/router-evaluation/mutations/result.json`。
+结果：全量变异为 50 条（含本切片 16 条），全部 `killed`；基线前后通过、源码还原通过。见 `artifacts/evidence/router-evaluation/mutations/result.json`。
 
 ## 3 取证位置
 

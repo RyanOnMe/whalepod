@@ -167,6 +167,20 @@ export async function loadWorkDetail(
   const openQuestions: WorkQuestionView[] = questions.map((question: WorkQuestionRow) =>
     toWorkQuestionView(question, work.workKey),
   )
+  // 只有仍绑定当前 active、未过期 Mandate 的 pending 草案才可确认；任务终态/
+  // 改派/新版本等路径若尚未收口，也不能在读面显示成“可确认”。
+  const proposalsVisible =
+    work.state === 'active' &&
+    currentMandate !== undefined &&
+    currentMandate.status === 'active' &&
+    currentMandate.expiresAt.getTime() > now.getTime()
+  const visibleProposals = proposalsVisible
+    ? proposals.filter(
+        (proposal) =>
+          proposal.baseMandateId === currentMandate.id &&
+          proposal.baseMandateVersion === currentMandate.version,
+      )
+    : []
   return WorkDetailViewSchema.parse({
     work: toWorkView(work),
     // 非 active 工作没有“当前可派工授权”；历史仍可从版本列表读取。
@@ -178,7 +192,7 @@ export async function loadWorkDetail(
     proposedIntents: proposed.map((intent) => toDispatchIntentView(intent, now)),
     dispatchIntents: intents.map((intent) => toDispatchIntentView(intent, now)),
     openQuestions,
-    pendingMandateProposals: proposals.map((proposal: WorkMandateProposalRow) =>
+    pendingMandateProposals: visibleProposals.map((proposal: WorkMandateProposalRow) =>
       toWorkMandateProposalView(proposal, work.workKey),
     ),
     watermarks: {

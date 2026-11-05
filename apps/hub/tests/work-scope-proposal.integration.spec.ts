@@ -11,6 +11,7 @@ import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@whalepod/db'
 import { schema } from '@whalepod/db'
+import { canonicalJson, sha256Hex } from '../src/modules/coordination/digest.js'
 import {
   apiInject,
   createTestApp,
@@ -104,6 +105,7 @@ describe('RD-03d2b authorize_scope proposal and confirmation', () => {
       allowedActionClasses: ['analysis', 'draft'],
       allowedSourceTypes: ['task_message'],
       allowedAgentIds: [],
+      allowedToolNames: [],
       autoDispatch: 'off',
       maxRunsPerWork: 9,
       maxCostMicros: 2_000_000,
@@ -320,6 +322,15 @@ describe('RD-03d2b authorize_scope proposal and confirmation', () => {
     expect(missingScope.statusCode).toBe(400)
     expect(missingScope.json().error.code).toBe('VALIDATION_FAILED')
 
+    const incompleteScope = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: answerUrl(question.decisionId),
+      payload: { answerType: 'authorize_scope', scope: { expiresAt: futureIso() } },
+      idempotencyKey: idemKey(),
+    })
+    expect(incompleteScope.statusCode).toBe(400)
+    expect(incompleteScope.json().error.code).toBe('VALIDATION_FAILED')
+
     const duplicateScope = await apiInject(ctx, alice, {
       method: 'POST',
       url: answerUrl(question.decisionId),
@@ -355,6 +366,20 @@ describe('RD-03d2b authorize_scope proposal and confirmation', () => {
     })
     expect(missingAgent.statusCode).toBe(400)
     expect(missingAgent.json().error.code).toBe('VALIDATION_FAILED')
+
+    const choiceQuestion = await seedAuthorizeQuestion({
+      questionType: 'choose_option',
+      options: [{ id: 'retry', label: '稍后重试' }],
+      recommendedOptionId: 'retry',
+    })
+    const reverseDowngrade = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: answerUrl(choiceQuestion.decisionId),
+      payload: { answerType: 'authorize_scope', scope: scopePayload() },
+      idempotencyKey: idemKey(),
+    })
+    expect(reverseDowngrade.statusCode).toBe(400)
+    expect(reverseDowngrade.json().error.code).toBe('UNSUPPORTED_ANSWER')
 
     const crossMember = await apiInject(ctx, bob, {
       method: 'POST',
@@ -448,6 +473,19 @@ describe('RD-03d2b authorize_scope proposal and confirmation', () => {
     expect(confirm.statusCode).toBe(409)
     expect(confirm.json().error.code).toBe('DECISION_STALE')
     expect(confirm.json().error.details.reason).toBe('proposal_superseded')
+    const deniedAudit = ctx.auditEvents
+      .filter(
+        (event) => event.action === 'work.decision.scope_confirm' && event.outcome === 'denied',
+      )
+      .at(-1)
+    expect(deniedAudit).toMatchObject({
+      actor: alice.userId,
+      workKey,
+      proposalId: answered.scopeProposal.id,
+      decisionId: question.decisionId,
+      questionId: question.id,
+      reason: 'proposal_superseded',
+    })
     expect(
       await database.db
         .select()
@@ -591,6 +629,252 @@ describe('RD-03d2b authorize_scope proposal and confirmation', () => {
       .from(schema.workMandateProposals)
       .where(eq(schema.workMandateProposals.id, answered.scopeProposal.id))
     expect(superseded).toMatchObject({ status: 'superseded' })
+  })
+
+  it('reports a repeated confirmation as not current after a newer mandate version', async () => {
+    const question = await seedAuthorizeQuestion()
+    const answered = await answerScope(question)
+    const key = idemKey()
+    const confirmed = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: confirmUrl(answered.scopeProposal.id),
+      idempotencyKey: key,
+    })
+    expect(confirmed.statusCode, confirmed.body).toBe(200)
+    const confirmedMandate = confirmed.json().data.mandate as { id: string; version: number }
+    expect(confirmedMandate.version).toBe(2)
+    const paused = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/mandates/${confirmedMandate.id}/pause`,
+      payload: {},
+      idempotencyKey: idemKey(),
+    })
+    expect(paused.statusCode, paused.body).toBe(200)
+    expect(paused.json().data.version).toBe(3)
+
+    for (const confirmationKey of [key, idemKey()]) {
+      const replay = await apiInject(ctx, alice, {
+        method: 'POST',
+        url: confirmUrl(answered.scopeProposal.id),
+        idempotencyKey: confirmationKey,
+      })
+      expect(replay.statusCode, replay.body).toBe(200)
+      expect(replay.json().data.mandate).toMatchObject({
+        id: confirmedMandate.id,
+        version: 2,
+        current: false,
+      })
+    }
+    const detail = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${workKey}`,
+    })
+    expect(detail.json().data.currentMandate).toMatchObject({ version: 3, status: 'paused' })
+  })
+
+  it('supersedes a pending proposal when the task becomes full_access', async () => {
+    const question = await seedAuthorizeQuestion()
+    const answered = await answerScope(question)
+    const patched = await apiInject(ctx, alice, {
+      method: 'PATCH',
+      url: `/api/v1/tasks/${taskId}`,
+      payload: { approvalPolicy: 'full_access' },
+    })
+    expect(patched.statusCode, patched.body).toBe(200)
+    const [proposal] = await database.db
+      .select()
+      .from(schema.workMandateProposals)
+      .where(eq(schema.workMandateProposals.id, answered.scopeProposal.id))
+    expect(proposal).toMatchObject({ status: 'superseded' })
+    const detail = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${workKey}`,
+    })
+    expect(detail.json().data.pendingMandateProposals).toEqual([])
+  })
+
+  it('supersedes a pending proposal when the task reaches a terminal state', async () => {
+    const question = await seedAuthorizeQuestion()
+    const answered = await answerScope(question)
+    const cancelled = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/tasks/${taskId}/cancel`,
+    })
+    expect(cancelled.statusCode, cancelled.body).toBe(200)
+    const [proposal] = await database.db
+      .select()
+      .from(schema.workMandateProposals)
+      .where(eq(schema.workMandateProposals.id, answered.scopeProposal.id))
+    expect(proposal).toMatchObject({ status: 'superseded' })
+    const detail = await apiInject(ctx, alice, {
+      method: 'GET',
+      url: `/api/v1/works/${workKey}`,
+    })
+    expect(detail.json().data.pendingMandateProposals).toEqual([])
+  })
+
+  it('refuses confirmation while the work is waiting', async () => {
+    const question = await seedAuthorizeQuestion()
+    const answered = await answerScope(question)
+    await database.db
+      .update(schema.works)
+      .set({ state: 'waiting', resumeMode: 'auto', resumeCondition: 'test_wait' })
+      .where(eq(schema.works.workKey, workKey))
+    const confirm = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: confirmUrl(answered.scopeProposal.id),
+      idempotencyKey: idemKey(),
+    })
+    expect(confirm.statusCode).toBe(409)
+    expect(confirm.json().error.code).toBe('DECISION_STALE')
+    expect(confirm.json().error.details.reason).toBe('work_inactive')
+  })
+
+  it('refuses confirmation after the answered scope itself expires', async () => {
+    const question = await seedAuthorizeQuestion()
+    const answered = await answerScope(
+      question,
+      scopePayload({ expiresAt: new Date(Date.now() + 3_000).toISOString() }),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 3_200))
+    const confirm = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: confirmUrl(answered.scopeProposal.id),
+      idempotencyKey: idemKey(),
+    })
+    expect(confirm.statusCode).toBe(409)
+    expect(confirm.json().error.code).toBe('DECISION_STALE')
+    expect(confirm.json().error.details.reason).toBe('scope_invalid')
+    expect(
+      await database.db
+        .select()
+        .from(schema.workMandates)
+        .where(eq(schema.workMandates.workKey, workKey)),
+    ).toHaveLength(1)
+  })
+
+  it('refuses confirmation when the task policy changed to full_access', async () => {
+    const question = await seedAuthorizeQuestion()
+    const answered = await answerScope(question)
+    await database.db
+      .update(schema.tasks)
+      .set({ approvalPolicy: 'full_access' })
+      .where(eq(schema.tasks.id, taskId))
+    const confirm = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: confirmUrl(answered.scopeProposal.id),
+      idempotencyKey: idemKey(),
+    })
+    expect(confirm.statusCode).toBe(409)
+    expect(confirm.json().error.code).toBe('DECISION_STALE')
+    expect(confirm.json().error.details.reason).toBe('task_policy_changed')
+    expect(
+      await database.db
+        .select()
+        .from(schema.workMandates)
+        .where(eq(schema.workMandates.workKey, workKey)),
+    ).toHaveLength(1)
+  })
+
+  it('does not expose another member pending proposal in the work detail', async () => {
+    const question = await seedAuthorizeQuestion()
+    await answerScope(question)
+    // 模拟改派进行中：Task 已指向 bob，但旧 work/草案尚未由生命周期路径收口。
+    await database.db
+      .update(schema.tasks)
+      .set({ assigneeUserId: bob.userId, assignmentStatus: 'accepted' })
+      .where(eq(schema.tasks.id, taskId))
+    const bobDetail = await apiInject(ctx, bob, {
+      method: 'GET',
+      url: `/api/v1/works/${workKey}`,
+    })
+    expect(bobDetail.statusCode, bobDetail.body).toBe(200)
+    expect(bobDetail.json().data.pendingMandateProposals).toEqual([])
+    expect(bobDetail.json().data.openQuestions).toEqual([])
+  })
+
+  it('replays a pre-#517 answer receipt without a scopeProposal field', async () => {
+    const question = await seedAuthorizeQuestion({
+      questionType: 'choose_option',
+      options: [{ id: 'retry', label: '稍后重试' }],
+      recommendedOptionId: 'retry',
+    })
+    const payload = { answerType: 'choose_option', optionId: 'retry' }
+    const key = idemKey()
+    const commandKey = `work.question.answer:${workKey}:${question.decisionId}:${alice.userId}:${sha256Hex(canonicalJson(payload))}:${key}`
+    const createdAt = new Date().toISOString()
+    const legacyAnswerId = randomUUID()
+    const legacyView = {
+      question: {
+        id: question.id,
+        workKey,
+        decisionId: question.decisionId,
+        questionType: 'choose_option',
+        blockedDecision: 'dispatch',
+        summary: '旧回执',
+        options: [{ id: 'retry', label: '稍后重试' }],
+        recommendedOptionId: 'retry',
+        refs: {},
+        inputDigest: 'a'.repeat(64),
+        mandateId: initialMandateId,
+        mandateVersion: initialMandateVersion,
+        principalUserId: alice.userId,
+        dispatchIntentId: null,
+        status: 'answered',
+        createdAt,
+        answeredAt: createdAt,
+        closedAt: createdAt,
+      },
+      answer: {
+        id: legacyAnswerId,
+        decisionId: question.decisionId,
+        answerType: 'choose_option',
+        optionId: 'retry',
+        binding: true,
+        rejectionReason: null,
+        createdAt,
+      },
+      reevaluate: true,
+      deferred: false,
+      intentCancelled: true,
+    }
+    await database.db.insert(schema.commandReceipts).values({ key: commandKey, result: legacyView })
+    const replay = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: answerUrl(question.decisionId),
+      payload,
+      idempotencyKey: key,
+    })
+    expect(replay.statusCode, replay.body).toBe(200)
+    expect(replay.json().data.answer.id).toBe(legacyAnswerId)
+    expect(replay.json().data.scopeProposal).toBeNull()
+    expect(await database.db.select().from(schema.workQuestionAnswers)).toHaveLength(0)
+  })
+
+  it('converges concurrent same-key scope answers to one proposal', async () => {
+    const question = await seedAuthorizeQuestion()
+    const key = idemKey()
+    const payload = { answerType: 'authorize_scope', scope: scopePayload() }
+    const [first, second] = await Promise.all([
+      apiInject(ctx, alice, {
+        method: 'POST',
+        url: answerUrl(question.decisionId),
+        payload,
+        idempotencyKey: key,
+      }),
+      apiInject(ctx, alice, {
+        method: 'POST',
+        url: answerUrl(question.decisionId),
+        payload,
+        idempotencyKey: key,
+      }),
+    ])
+    expect(first.statusCode, first.body).toBe(200)
+    expect(second.statusCode, second.body).toBe(200)
+    expect(first.json().data.answer.id).toBe(second.json().data.answer.id)
+    expect(first.json().data.scopeProposal.id).toBe(second.json().data.scopeProposal.id)
+    expect(await database.db.select().from(schema.workMandateProposals)).toHaveLength(1)
+    expect(await database.db.select().from(schema.workQuestionAnswers)).toHaveLength(1)
   })
 
   it('converges concurrent confirmations to exactly one new mandate version', async () => {

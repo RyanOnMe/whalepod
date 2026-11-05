@@ -1,21 +1,23 @@
 import {
   getLatestWorkMandate,
+  getWorkByKey,
   getWorkMandate,
+  getWorkMandateProposal,
   getWorkMandateProposalForUpdate,
   getWorkQuestionById,
   markWorkMandateProposalConfirmed,
   markWorkQuestionSuperseded,
   transactCommandWithOrigin,
   type Database,
-  type Tx,
+  type DbHandle,
   type WorkMandateProposalRow,
   type WorkQuestionRow,
   type WorkRow,
 } from '@whalepod/db'
 import {
-  CreateWorkMandateRequestSchema,
+  WorkAuthorizeScopeRequestSchema,
   WorkMandateProposalConfirmViewSchema,
-  type CreateWorkMandateRequest,
+  type WorkAuthorizeScopeRequest,
   type WorkMandateProposalConfirmView,
 } from '@whalepod/protocol'
 import { ApiError } from '../shared/http-error.js'
@@ -41,6 +43,7 @@ export interface ScopeProposalConfirmOutcome {
 
 type StaleReason =
   | 'proposal_superseded'
+  | 'proposal_invalid'
   | 'assignee_changed'
   | 'principal_changed'
   | 'work_inactive'
@@ -77,7 +80,7 @@ function requireConfirmableTask(task: {
   }
 }
 
-async function loadQuestion(tx: Tx, questionId: string): Promise<WorkQuestionRow> {
+async function loadQuestion(tx: DbHandle, questionId: string): Promise<WorkQuestionRow> {
   const question = await getWorkQuestionById(tx, questionId)
   if (question === undefined) {
     throw new ApiError(500, 'INTERNAL_ERROR', 'scope proposal question is missing')
@@ -86,7 +89,7 @@ async function loadQuestion(tx: Tx, questionId: string): Promise<WorkQuestionRow
 }
 
 async function confirmedView(
-  tx: Tx,
+  tx: DbHandle,
   proposal: WorkMandateProposalRow,
   work: WorkRow,
   now: Date,
@@ -98,16 +101,36 @@ async function confirmedView(
   if (mandate === undefined) {
     throw new ApiError(500, 'INTERNAL_ERROR', 'confirmed scope proposal mandate is missing')
   }
+  const latest = await getLatestWorkMandate(tx, work.id)
   const question = await loadQuestion(tx, proposal.questionId)
   return WorkMandateProposalConfirmViewSchema.parse({
     proposal: toWorkMandateProposalView(proposal, work.workKey),
-    mandate: toWorkMandateView(mandate, now, work.state === 'active'),
+    mandate: toWorkMandateView(
+      mandate,
+      now,
+      work.state === 'active' && work.mandateId === mandate.id && latest?.id === mandate.id,
+    ),
     question: toWorkQuestionView(question, work.workKey),
   })
 }
 
-function parseStoredScope(proposal: WorkMandateProposalRow): CreateWorkMandateRequest {
-  const parsed = CreateWorkMandateRequestSchema.safeParse(proposal.scope)
+/** 回执重放时重新按当前 work 指针渲染，避免把已被新版本取代的 Mandate 标成 current。 */
+async function loadConfirmView(
+  database: Database,
+  workKey: string,
+  proposalId: string,
+  now: Date,
+): Promise<WorkMandateProposalConfirmView> {
+  const work = await getWorkByKey(database.db, workKey)
+  const proposal = await getWorkMandateProposal(database.db, proposalId)
+  if (work === undefined || proposal === undefined || proposal.workId !== work.id) {
+    throw new ApiError(500, 'INTERNAL_ERROR', 'confirmed scope proposal is missing')
+  }
+  return confirmedView(database.db, proposal, work, now)
+}
+
+function parseStoredScope(proposal: WorkMandateProposalRow): WorkAuthorizeScopeRequest {
+  const parsed = WorkAuthorizeScopeRequestSchema.safeParse(proposal.scope)
   if (!parsed.success) {
     throw new ApiError(500, 'INTERNAL_ERROR', 'stored mandate scope is invalid')
   }
@@ -154,6 +177,14 @@ export async function confirmWorkMandateProposal(
       }
       if (proposal.status !== 'pending') stale(proposal, 'proposal_superseded')
       if (proposal.principalUserId !== actorUserId) stale(proposal, 'principal_changed')
+      const question = await loadQuestion(tx, proposal.questionId)
+      if (
+        question.workId !== work.id ||
+        question.decisionId !== proposal.decisionId ||
+        question.questionType !== 'authorize_scope'
+      ) {
+        stale(proposal, 'proposal_invalid')
+      }
       if (work.state !== 'active') stale(proposal, 'work_inactive')
       if (work.humanOwnerUserId !== actorUserId) stale(proposal, 'owner_changed')
       const scope = parseStoredScope(proposal)
@@ -197,8 +228,7 @@ export async function confirmWorkMandateProposal(
         stale(proposal, 'proposal_superseded')
       }
       const closedQuestion =
-        (await markWorkQuestionSuperseded(tx, proposal.questionId, now)) ??
-        (await loadQuestion(tx, proposal.questionId))
+        (await markWorkQuestionSuperseded(tx, proposal.questionId, now)) ?? question
       return {
         view: WorkMandateProposalConfirmViewSchema.parse({
           proposal: toWorkMandateProposalView(confirmed, work.workKey),
@@ -209,5 +239,7 @@ export async function confirmWorkMandateProposal(
       }
     },
   )
-  return { view: outcome.value.view, changed: outcome.executed && outcome.value.changed }
+  // 回执重放也可能发生在后续版本/暂停之后；按当前指针重新渲染 current。
+  const view = await loadConfirmView(deps.database, workKey, proposalId, deps.now())
+  return { view, changed: outcome.executed && outcome.value.changed }
 }

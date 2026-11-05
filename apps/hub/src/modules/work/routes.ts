@@ -304,15 +304,17 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
       }
       throw error
     }
-    if (outcome.scopeProposal !== null) {
+    // #517 前的回执是没有 scopeProposal 的裸视图；重放时归一化为 null，避免 500。
+    const scopeProposal = outcome.scopeProposal ?? null
+    if (scopeProposal !== null) {
       // 扩权回答只记草案 id 与 base 版本，不记 scope 正文。
       audit(request, 'work.decision.scope_answer', 'success', session.userId, {
         workKey,
         decisionId,
         questionId: outcome.question.id,
-        proposalId: outcome.scopeProposal.id,
-        mandateId: outcome.scopeProposal.baseMandateId,
-        version: outcome.scopeProposal.baseMandateVersion,
+        proposalId: scopeProposal.id,
+        mandateId: scopeProposal.baseMandateId,
+        version: scopeProposal.baseMandateVersion,
       })
     } else {
       audit(request, 'work.decision.answer', 'success', session.userId, {
@@ -323,7 +325,7 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
         binding: outcome.answer.binding,
       })
     }
-    return { ok: true, data: outcome }
+    return { ok: true, data: { ...outcome, scopeProposal } }
   })
 
   // POST /works/:workKey/mandate-proposals/:proposalId/confirm：

@@ -21,6 +21,7 @@ import {
   setAssignment,
   setTaskStatus,
   schema,
+  supersedePendingWorkMandateProposals,
   transactCommand,
   updateTaskFields,
   updateWork,
@@ -109,6 +110,8 @@ async function markWorkWaitingForAssigneeChange(tx: Tx, taskId: string, now: Dat
     statusReason: 'owner_changed',
     now,
   })
+  // 旧责任人未确认的扩权草案随改派失效；新 assignee 承接后重新评估。
+  await supersedePendingWorkMandateProposals(tx, { workId: work.id, now })
 }
 
 /** Task 进入 full_access 后，旧 proposed 意图不得再被确认/派发。 */
@@ -130,6 +133,7 @@ async function cancelWorkProposals(tx: Tx, taskId: string, now: Date): Promise<v
     statusReason: 'full_access_task',
     now,
   })
+  await supersedePendingWorkMandateProposals(tx, { workId: locked.id, now })
 }
 
 /** ADR-0028 §2：Task 终态同时退休其未退休工作，保留历史但不再承接。 */
@@ -154,6 +158,7 @@ async function retireWorkForTerminalTask(tx: Tx, taskId: string, now: Date): Pro
     statusReason: 'task_terminal',
     now,
   })
+  await supersedePendingWorkMandateProposals(tx, { workId: work.id, now })
 }
 
 /** Agent 指派目标（#239）：必须存在且未归档——归档的 Agent 不再可执行。 */

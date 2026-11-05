@@ -168,7 +168,11 @@ export async function retireWork(
     async (tx) => {
       const { work, task } = await lockWorkContext(tx, workKey)
       await requireAssignee(tx, task, actorUserId)
-      if (work.state === 'retired') return toWorkView(work)
+      if (work.state === 'retired') {
+        // Task 终态等路径可能已退休工作但留下旧草案；幂等 retire 也要收口。
+        await supersedePendingWorkMandateProposals(tx, { workId: work.id, now: deps.now() })
+        return toWorkView(work)
+      }
       const now = deps.now()
       const updated = await updateWork(tx, work.id, {
         state: 'retired',

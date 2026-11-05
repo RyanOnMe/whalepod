@@ -1,5 +1,6 @@
 import {
   cancelDispatchIntentById,
+  findCommandReceipt,
   getLatestWorkMandate,
   getWorkQuestionByDecision,
   getWorkQuestionForUpdate,
@@ -29,7 +30,7 @@ import {
 import { canonicalJson, sha256Hex } from '../coordination/digest.js'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
-import { lockWorkContext } from './context.js'
+import { lockWorkContext, requireAssignee } from './context.js'
 import { assertAllowedAgents, assertMandateScope } from './mandate-scope.js'
 
 // ADR-0028 §8（RD-03d2a/d2b）：ask 的确定性生成、问题读面映射与可绑定回答。
@@ -184,6 +185,14 @@ interface BoundAnswer {
 
 type AnswerOutcome = StaleAnswer | BoundAnswer
 
+/** #517 前的回执是裸 WorkQuestionAnswerView；重放时归一化为当前的 AnswerOutcome。 */
+function normalizeAnswerOutcome(raw: AnswerOutcome | WorkQuestionAnswerView): AnswerOutcome {
+  if (typeof raw === 'object' && raw !== null && ('stale' in raw || 'view' in raw)) {
+    return raw as AnswerOutcome
+  }
+  return { stale: false, view: raw as WorkQuestionAnswerView }
+}
+
 function validateAnswer(question: WorkQuestionRow, input: WorkQuestionAnswerRequest): void {
   if (question.questionType === 'authorize_scope') {
     if (input.answerType === 'authorize_scope') {
@@ -267,14 +276,19 @@ export async function answerWorkQuestion(
   input: WorkQuestionAnswerRequest,
   idempotencyKey: string,
 ): Promise<WorkQuestionAnswerView> {
+  const commandKey = `work.question.answer:${workKey}:${decisionId}:${actorUserId}:${sha256Hex(canonicalJson(input))}:${idempotencyKey}`
   const outcome = await transactCommandWithOrigin(
     deps.database,
-    `work.question.answer:${workKey}:${decisionId}:${actorUserId}:${sha256Hex(canonicalJson(input))}:${idempotencyKey}`,
+    commandKey,
     async (tx): Promise<AnswerOutcome> => {
       const { work, task } = await lockWorkContext(tx, workKey)
-      if (task.assigneeUserId !== actorUserId) {
-        throw new ApiError(403, 'FORBIDDEN', 'only the task assignee can answer this question')
-      }
+      // 与其它工作写命令共用“当前 assignee + 启用成员”校验。
+      await requireAssignee(
+        tx,
+        task,
+        actorUserId,
+        'only the task assignee can answer this question',
+      )
       if (task.assignmentStatus !== 'accepted') {
         throw new ApiError(409, 'ASSIGNMENT_NOT_ACCEPTED', 'task assignment is not accepted')
       }
@@ -284,6 +298,11 @@ export async function answerWorkQuestion(
         throw new ApiError(403, 'FORBIDDEN', 'question is addressed to another member')
       }
       if (question.status !== 'open') {
+        // 同 key 并发：胜者已提交回执；败者在拿到 Work 锁后回读并收敛为同一结果。
+        const prior = await findCommandReceipt(tx, commandKey)
+        if (prior !== undefined) {
+          return { stale: false, view: prior.result as WorkQuestionAnswerView }
+        }
         throw new ApiError(409, 'CONFLICT', 'question is no longer open')
       }
       validateAnswer(question, input)
@@ -308,6 +327,9 @@ export async function answerWorkQuestion(
         return { stale: true, answerId: answer.id, questionId: question.id, reason }
       }
       if (input.answerType === 'authorize_scope' && input.scope !== undefined) {
+        if (question.questionType !== 'authorize_scope') {
+          throw new ApiError(400, 'UNSUPPORTED_ANSWER', 'answer type does not match the question')
+        }
         const scope = input.scope
         // 草案与当前 Mandate 使用同一套范围语义；回答本身不改变 inputDigest 或授权。
         assertMandateScope(scope, actorUserId, now)
@@ -356,7 +378,7 @@ export async function answerWorkQuestion(
         if (proposal === undefined) {
           throw new ApiError(409, 'CONFLICT', 'scope proposal already exists')
         }
-        // 扩权确认前旧意图不得派发；问题保持 open，直到责任人明确确认草案。
+        // 扩权确认前旧意图不得派发；问题已 answered，草案待责任人确认。
         const cancelled =
           question.dispatchIntentId === null
             ? undefined
@@ -439,7 +461,8 @@ export async function answerWorkQuestion(
     },
   )
 
-  const result = outcome.value
+  // #517 前的回执是裸 WorkQuestionAnswerView；重放时归一化为当前的 AnswerOutcome。
+  const result = normalizeAnswerOutcome(outcome.value as AnswerOutcome | WorkQuestionAnswerView)
   if (result.stale) {
     throw new ApiError(409, 'DECISION_STALE', 'decision no longer binds to the current mandate', {
       decisionId,

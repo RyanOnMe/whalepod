@@ -180,6 +180,26 @@ export const CreateWorkMandateRequestSchema = z.strictObject({
 })
 export type CreateWorkMandateRequest = z.infer<typeof CreateWorkMandateRequestSchema>
 
+/**
+ * RD-03d2b：`authorize_scope` 回答必须显式给出完整范围，不能靠创建 Mandate 的默认值
+ * 静默补全成更宽的授权。字段与 `CreateWorkMandateRequest` 相同，但不带 default。
+ */
+export const WorkAuthorizeScopeRequestSchema = z.strictObject({
+  autoDispatch: WorkAutoDispatchSchema,
+  allowedActionClasses: z.array(WorkActionClassSchema).min(1).max(4),
+  allowedSourceTypes: z.array(WorkSourceTypeSchema).min(1).max(2),
+  allowedAgentIds: z.array(z.uuid()).max(32),
+  allowedToolNames: z.array(WorkDraftToolNameSchema).max(16),
+  maxRunsPerWork: z.number().int().nonnegative(),
+  maxCostMicros: z.number().int().nonnegative(),
+  maxTokens: z.number().int().nonnegative(),
+  maxAttempts: z.number().int().nonnegative(),
+  waitDeadlineSeconds: z.number().int().min(1).max(86400),
+  expiresAt: z.iso.datetime({ offset: true }),
+  draftRecipientUserId: z.uuid().optional(),
+})
+export type WorkAuthorizeScopeRequest = z.infer<typeof WorkAuthorizeScopeRequestSchema>
+
 export const WorkMandateProposalStatusSchema = z.enum([
   'pending',
   'confirmed',
@@ -227,9 +247,9 @@ export const WorkQuestionAnswerRequestSchema = z.strictObject({
   reason: z.string().trim().min(1).max(500).optional(),
   /**
    * RD-03d2b：`authorize_scope` 回答必须携带完整范围，使用与创建 Mandate 相同的
-   * schema 校验；只生成 pending 草案，不直接扩大当前 Mandate。
+   * 字段与语义校验；只生成 pending 草案，不直接扩大当前 Mandate。
    */
-  scope: CreateWorkMandateRequestSchema.optional(),
+  scope: WorkAuthorizeScopeRequestSchema.optional(),
 })
 export type WorkQuestionAnswerRequest = z.infer<typeof WorkQuestionAnswerRequestSchema>
 

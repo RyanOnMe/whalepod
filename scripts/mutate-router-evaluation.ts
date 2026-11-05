@@ -390,8 +390,8 @@ const mutations: readonly Mutation[] = [
     source: proposalSource,
     spec: scopeSpec,
     needle:
-      'const closedQuestion =\n        (await markWorkQuestionSuperseded(tx, proposal.questionId, now)) ??\n        (await loadQuestion(tx, proposal.questionId))',
-    replacement: 'const closedQuestion = await loadQuestion(tx, proposal.questionId)',
+      'const closedQuestion =\n        (await markWorkQuestionSuperseded(tx, proposal.questionId, now)) ?? question',
+    replacement: 'const closedQuestion = question',
     test: 'records a pending proposal without expanding the current mandate, then confirms one new version',
   },
   {
@@ -413,7 +413,7 @@ const mutations: readonly Mutation[] = [
       "eq(workMandateProposals.status, 'pending'),\n        eq(workMandateProposals.principalUserId, principalUserId),",
     replacement:
       "eq(workMandateProposals.status, 'pending'),\n        eq(workMandateProposals.status, 'pending'),",
-    test: 'returns DECISION_STALE to the reassigned owner and hides the proposal from the new assignee',
+    test: 'does not expose another member pending proposal in the work detail',
   },
   {
     id: 'S10',
@@ -461,6 +461,33 @@ const mutations: readonly Mutation[] = [
       "if (latest.status !== 'active' || latest.expiresAt.getTime() <= now.getTime()) {\n        stale(proposal, 'mandate_inactive')\n      }",
     replacement: "if (false) {\n        stale(proposal, 'mandate_inactive')\n      }",
     test: 'refuses confirmation when the base mandate has expired',
+  },
+  {
+    id: 'S15',
+    criterion: 'confirmation revalidates the answered scope',
+    source: proposalSource,
+    spec: scopeSpec,
+    needle: 'assertMandateScope(scope, actorUserId, now)',
+    replacement: 'void assertMandateScope',
+    test: 'refuses confirmation after the answered scope itself expires',
+  },
+  {
+    id: 'S16',
+    criterion: 'a full_access task policy blocks confirmation',
+    source: proposalSource,
+    spec: scopeSpec,
+    needle: "if (task.approvalPolicy === 'full_access') stale(proposal, 'task_policy_changed')",
+    replacement: "if (false) stale(proposal, 'task_policy_changed')",
+    test: 'refuses confirmation when the task policy changed to full_access',
+  },
+  {
+    id: 'S17',
+    criterion: 'confirmation requires an active work',
+    source: proposalSource,
+    spec: scopeSpec,
+    needle: "if (work.state !== 'active') stale(proposal, 'work_inactive')",
+    replacement: "if (false) stale(proposal, 'work_inactive')",
+    test: 'refuses confirmation while the work is waiting',
   },
   {
     id: 'R26',
