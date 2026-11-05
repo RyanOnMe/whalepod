@@ -130,4 +130,7 @@
 - 回答阶段问题先 `answered`、确认后 `superseded`；`answered_at` 保留，读面用 `pendingMandateProposals` 表示“已答待确认”。
 - 改派后旧草案对新 assignee 不可见；新 assignee 需先显式承接工作（RD-03d1），承接会收口旧草案。
 - 草稿受众仍限同一责任人；跨成员草稿受众需后续 ADR。
+- 草案自身 `scope.expiresAt` 过期后面上仍可能显示为 pending（读面只按 base Mandate 的 active/未过期过滤），确认会 fail-closed 为 `scope_invalid`；把过期草案自动转 `expired` 归后续调度切片。
+- `proposal_invalid`、`scope_agents_changed`、`principal_changed`、`ASSIGNMENT_NOT_ACCEPTED`/`TASK_TERMINAL` 等防御分支有代码守卫但无逐条专门用例；当前生产入口不会在未触发前置守卫的情况下到达这些分支。
+- 同 key 回执重放会按当前指针重渲染 `current`；若回放者已失去 assignee 身份，返回的仍是其本人历史草案/版本，不暴露新责任人数据。
 - 真实模型质量、真实租户/平台与真人效率保持 `not_run`。
