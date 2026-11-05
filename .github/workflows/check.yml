@@ -60,7 +60,9 @@ jobs:
   # 先 build 再测：integration 经包名 import 走 dist/，不 build 会测到陈旧构建（#35）。
   integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Q2/Q7/Q6 + Router 生产验收 + 单点变异同装一条真 PG 链路；#517 起变异增至
+    # 50 条（基线前后 + 逐条重跑），15 分钟会在 mutation 步骤被 job timeout 截断。
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4

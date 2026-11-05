@@ -48,30 +48,3 @@ export const WorkQuestionViewSchema = z.strictObject({
   closedAt: z.iso.datetime({ offset: true }).nullable(),
 })
 export type WorkQuestionView = z.infer<typeof WorkQuestionViewSchema>
-
-export const WorkQuestionAnswerRequestSchema = z.strictObject({
-  answerType: WorkAnswerTypeSchema,
-  optionId: z.string().min(1).max(64).optional(),
-  reason: z.string().trim().min(1).max(500).optional(),
-})
-export type WorkQuestionAnswerRequest = z.infer<typeof WorkQuestionAnswerRequestSchema>
-
-export const WorkQuestionAnswerViewSchema = z.strictObject({
-  question: WorkQuestionViewSchema,
-  answer: z.strictObject({
-    id: z.uuid(),
-    decisionId: z.string().regex(/^[a-f0-9]{64}$/),
-    answerType: WorkAnswerTypeSchema,
-    optionId: z.string().max(64).nullable(),
-    binding: z.boolean(),
-    rejectionReason: z.string().max(64).nullable(),
-    createdAt: z.iso.datetime({ offset: true }),
-  }),
-  /** 绑定回答后是否需要重新准入/派工（本切片只返回提示，不自动建意图）。 */
-  reevaluate: z.boolean(),
-  /** defer 回答：不自动派发，等待期限/重评归 RD-03d3。 */
-  deferred: z.boolean(),
-  /** deny 或 choose_option 的 cancel/retry 是否取消了关联的 proposed/approved 意图。 */
-  intentCancelled: z.boolean(),
-})
-export type WorkQuestionAnswerView = z.infer<typeof WorkQuestionAnswerViewSchema>

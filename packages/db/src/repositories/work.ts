@@ -6,6 +6,7 @@ import type { RunRow } from './run.js'
 import {
   dispatchIntents,
   routerDecisions,
+  workMandateProposals,
   workMandates,
   workQuestionAnswers,
   workQuestions,
@@ -13,11 +14,13 @@ import {
   type DispatchIntentRow,
   type NewDispatchIntentRow,
   type NewRouterDecisionRow,
+  type NewWorkMandateProposalRow,
   type NewWorkMandateRow,
   type NewWorkQuestionAnswerRow,
   type NewWorkQuestionRow,
   type NewWorkRow,
   type RouterDecisionRow,
+  type WorkMandateProposalRow,
   type WorkMandateRow,
   type WorkQuestionAnswerRow,
   type WorkQuestionRow,
@@ -28,11 +31,13 @@ export type {
   DispatchIntentRow,
   NewDispatchIntentRow,
   NewRouterDecisionRow,
+  NewWorkMandateProposalRow,
   NewWorkMandateRow,
   NewWorkQuestionAnswerRow,
   NewWorkQuestionRow,
   NewWorkRow,
   RouterDecisionRow,
+  WorkMandateProposalRow,
   WorkMandateRow,
   WorkQuestionAnswerRow,
   WorkQuestionRow,
@@ -327,6 +332,14 @@ export async function getOpenWorkQuestion(
   return row
 }
 
+export async function getWorkQuestionById(
+  handle: DbHandle,
+  id: string,
+): Promise<WorkQuestionRow | undefined> {
+  const [row] = await handle.select().from(workQuestions).where(eq(workQuestions.id, id)).limit(1)
+  return row
+}
+
 /** 同一确定性决定的任意状态问题；已回答/已关闭的决定不因重复准入重新开问。 */
 export async function getWorkQuestionByDecision(
   handle: DbHandle,
@@ -398,6 +411,127 @@ export async function insertWorkQuestionAnswer(
   const [row] = await handle.insert(workQuestionAnswers).values(values).returning()
   if (row === undefined) throw new Error('insert work question answer returned no row')
   return row
+}
+
+/** RD-03d2b：open 或已回答的问题都可被新版本收口；保留 answering 事实。 */
+export async function markWorkQuestionSuperseded(
+  handle: DbHandle,
+  id: string,
+  now: Date,
+): Promise<WorkQuestionRow | undefined> {
+  const [row] = await handle
+    .update(workQuestions)
+    .set({ status: 'superseded', closedAt: now, updatedAt: now })
+    .where(and(eq(workQuestions.id, id), inArray(workQuestions.status, ['open', 'answered'])))
+    .returning()
+  return row
+}
+
+/** RD-03d2b：authorize_scope 回答生成的草案；一个问题至多一份（唯一索引兜底）。 */
+export async function insertWorkMandateProposal(
+  handle: DbHandle,
+  values: NewWorkMandateProposalRow,
+): Promise<WorkMandateProposalRow | undefined> {
+  const [row] = await handle
+    .insert(workMandateProposals)
+    .values(values)
+    .onConflictDoNothing()
+    .returning()
+  return row
+}
+
+export async function getWorkMandateProposal(
+  handle: DbHandle,
+  id: string,
+): Promise<WorkMandateProposalRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(workMandateProposals)
+    .where(eq(workMandateProposals.id, id))
+    .limit(1)
+  return row
+}
+
+export async function getWorkMandateProposalForUpdate(
+  handle: DbHandle,
+  id: string,
+): Promise<WorkMandateProposalRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(workMandateProposals)
+    .where(eq(workMandateProposals.id, id))
+    .limit(1)
+    .for('update')
+  return row
+}
+
+export async function listPendingWorkMandateProposals(
+  handle: DbHandle,
+  workId: string,
+  principalUserId: string,
+  limit = 50,
+): Promise<WorkMandateProposalRow[]> {
+  return handle
+    .select()
+    .from(workMandateProposals)
+    .where(
+      and(
+        eq(workMandateProposals.workId, workId),
+        eq(workMandateProposals.status, 'pending'),
+        eq(workMandateProposals.principalUserId, principalUserId),
+      ),
+    )
+    .orderBy(desc(workMandateProposals.createdAt), desc(workMandateProposals.id))
+    .limit(limit)
+}
+
+/** 只允许 pending → confirmed；并发确认的败者拿到 undefined。 */
+export async function markWorkMandateProposalConfirmed(
+  handle: DbHandle,
+  id: string,
+  resultMandateId: string,
+  now: Date,
+): Promise<WorkMandateProposalRow | undefined> {
+  const [row] = await handle
+    .update(workMandateProposals)
+    .set({
+      status: 'confirmed',
+      resultMandateId,
+      confirmedAt: now,
+      closedAt: now,
+      updatedAt: now,
+    })
+    .where(and(eq(workMandateProposals.id, id), eq(workMandateProposals.status, 'pending')))
+    .returning()
+  return row
+}
+
+/**
+ * 新 Mandate 版本 / 工作退休时，旧草案与它对应的 open 问题一起收口。
+ * 调用方必须已持有 Work 行锁（Task → Work → proposal）。
+ */
+export async function supersedePendingWorkMandateProposals(
+  handle: DbHandle,
+  input: { readonly workId: string; readonly now: Date; readonly exceptId?: string },
+): Promise<number> {
+  const conditions = [
+    eq(workMandateProposals.workId, input.workId),
+    eq(workMandateProposals.status, 'pending'),
+  ]
+  if (input.exceptId !== undefined) conditions.push(ne(workMandateProposals.id, input.exceptId))
+  const rows = await handle
+    .select()
+    .from(workMandateProposals)
+    .where(and(...conditions))
+    .for('update')
+  for (const row of rows) {
+    await handle
+      .update(workMandateProposals)
+      .set({ status: 'superseded', closedAt: input.now, updatedAt: input.now })
+      .where(and(eq(workMandateProposals.id, row.id), eq(workMandateProposals.status, 'pending')))
+    await markWorkQuestionSuperseded(handle, row.questionId, input.now)
+  }
+  return rows.length
 }
 
 export async function getDispatchIntentForUpdate(

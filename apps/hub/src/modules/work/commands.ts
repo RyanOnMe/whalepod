@@ -1,10 +1,8 @@
 import {
   cancelProposedDispatchIntents,
   expireWorkSubscriptionsAndRetract,
-  getAgent,
   getCurrentWorkByTask,
   getLatestWorkMandate,
-  getProfileRevision,
   getTaskForUpdate,
   getWorkByKey,
   getWorkMandate,
@@ -13,6 +11,7 @@ import {
   insertWorkMandate,
   listWorkMandates,
   retractAutoAdmittedInboxItemsForWork,
+  supersedePendingWorkMandateProposals,
   transactCommand,
   transactCommandWithOrigin,
   updateWork,
@@ -21,12 +20,14 @@ import {
   type TaskRow,
   type Tx,
   type WorkMandateRow,
+  type WorkRow,
 } from '@whalepod/db'
 import type { CreateWorkMandateRequest, WorkMandateView } from '@whalepod/protocol'
 import { ApiError } from '../shared/http-error.js'
 import { canonicalJson, sha256Hex } from '../coordination/digest.js'
 import { uuidv7 } from '../shared/uuid.js'
 import { lockWorkContext, requireAssignee } from './context.js'
+import { assertAllowedAgents, assertMandateScope, mandateContract } from './mandate-scope.js'
 import { toWorkMandateView, toWorkView } from './queries.js'
 
 // ADR-0028（RD-01）：工作与 Mandate 的写命令。全部操作只锁 Task/Work/Mandate 行并写协调表，
@@ -46,74 +47,8 @@ function requireAcceptedTask(task: TaskRow): void {
   }
 }
 
-function mandateContract(
-  input: CreateWorkMandateRequest,
-): Omit<
-  WorkMandateRow,
-  | 'id'
-  | 'workId'
-  | 'workKey'
-  | 'projectId'
-  | 'taskId'
-  | 'version'
-  | 'status'
-  | 'principalUserId'
-  | 'onBehalfOfUserId'
-  | 'humanOwnerUserId'
-  | 'draftRecipientUserId'
-  | 'statusReason'
-  | 'pausedAt'
-  | 'revokedAt'
-  | 'createdAt'
-  | 'updatedAt'
-> {
-  return {
-    autoDispatch: input.autoDispatch,
-    allowedActionClasses: input.allowedActionClasses,
-    allowedSourceTypes: input.allowedSourceTypes,
-    allowedAgentIds: input.allowedAgentIds,
-    allowedToolNames: input.allowedToolNames,
-    maxRunsPerWork: input.maxRunsPerWork,
-    maxCostMicros: input.maxCostMicros,
-    maxTokens: input.maxTokens,
-    maxAttempts: input.maxAttempts,
-    waitDeadlineSeconds: input.waitDeadlineSeconds,
-    expiresAt: new Date(input.expiresAt),
-  }
-}
-
 function requestDigest(value: unknown): string {
   return sha256Hex(canonicalJson(value))
-}
-
-function assertNoDuplicates(values: readonly string[], label: string): void {
-  if (new Set(values).size !== values.length) {
-    throw new ApiError(400, 'VALIDATION_FAILED', `${label} must not contain duplicates`)
-  }
-}
-
-async function assertAllowedAgents(tx: Tx, agentIds: readonly string[]): Promise<void> {
-  for (const agentId of agentIds) {
-    const agent = await getAgent(tx, agentId)
-    if (agent === undefined || agent.archivedAt !== null) {
-      throw new ApiError(400, 'VALIDATION_FAILED', 'allowed agent is missing or archived')
-    }
-    if (agent.currentRevisionId === null) {
-      throw new ApiError(400, 'VALIDATION_FAILED', 'allowed agent has no profile revision')
-    }
-    const revision = await getProfileRevision(tx, agent.currentRevisionId)
-    if (revision === undefined) {
-      throw new ApiError(400, 'VALIDATION_FAILED', 'allowed agent has no profile revision')
-    }
-    // ADR-0028 §5：full_access 不能成为自主派工候选。
-    if (revision.approvalPolicy === 'full_access') {
-      throw new ApiError(
-        400,
-        'VALIDATION_FAILED',
-        'full_access agent cannot be a mandate candidate',
-      )
-    }
-  }
 }
 
 export function mapWorkConstraint(error: unknown): ApiError | undefined {
@@ -233,7 +168,11 @@ export async function retireWork(
     async (tx) => {
       const { work, task } = await lockWorkContext(tx, workKey)
       await requireAssignee(tx, task, actorUserId)
-      if (work.state === 'retired') return toWorkView(work)
+      if (work.state === 'retired') {
+        // Task 终态等路径可能已退休工作但留下旧草案；幂等 retire 也要收口。
+        await supersedePendingWorkMandateProposals(tx, { workId: work.id, now: deps.now() })
+        return toWorkView(work)
+      }
       const now = deps.now()
       const updated = await updateWork(tx, work.id, {
         state: 'retired',
@@ -254,9 +193,64 @@ export async function retireWork(
         statusReason: 'work_retired',
         now,
       })
+      await supersedePendingWorkMandateProposals(tx, { workId: work.id, now })
       return toWorkView(updated)
     },
   )
+}
+
+/**
+ * RD-03d2b：创建 `version=latest+1` 的 active Mandate 并把 work 指针指向它。
+ * 新版本使旧 proposed 意图、订阅与仍然 pending 的扩权草案一起失效；确认路径用
+ * `keepProposalId` 保留正在确认的草案，在该事务内随后标记为 confirmed。
+ */
+export async function insertActiveMandateVersion(
+  tx: Tx,
+  input: {
+    readonly work: WorkRow
+    readonly actorUserId: string
+    readonly scope: CreateWorkMandateRequest
+    readonly now: Date
+    readonly subscriptionReason: string
+    readonly keepProposalId?: string
+  },
+): Promise<WorkMandateRow> {
+  const { work, actorUserId, scope, now } = input
+  const latest = await getLatestWorkMandate(tx, work.id)
+  const version = (latest?.version ?? 0) + 1
+  const mandate = await insertWorkMandate(tx, {
+    id: uuidv7(now.getTime()),
+    workId: work.id,
+    workKey: work.workKey,
+    projectId: work.projectId,
+    taskId: work.taskId,
+    version,
+    status: 'active',
+    principalUserId: actorUserId,
+    onBehalfOfUserId: actorUserId,
+    humanOwnerUserId: actorUserId,
+    draftRecipientUserId: actorUserId,
+    ...mandateContract(scope),
+    statusReason: null,
+    pausedAt: null,
+    revokedAt: null,
+    createdAt: now,
+    updatedAt: now,
+  })
+  await updateWork(tx, work.id, { mandateId: mandate.id, updatedAt: now })
+  // 新 Mandate 版本取代旧版本；旧 proposed 意图与订阅都引用旧版本，必须失效。
+  await cancelProposedDispatchIntents(tx, work.id, now)
+  await expireWorkSubscriptionsAndRetract(tx, {
+    workId: work.id,
+    statusReason: input.subscriptionReason,
+    now,
+  })
+  await supersedePendingWorkMandateProposals(tx, {
+    workId: work.id,
+    now,
+    ...(input.keepProposalId === undefined ? {} : { exceptId: input.keepProposalId }),
+  })
+  return mandate
 }
 
 export async function createWorkMandate(
@@ -266,14 +260,6 @@ export async function createWorkMandate(
   input: CreateWorkMandateRequest,
   idempotencyKey: string,
 ): Promise<WorkMutationOutcome<WorkMandateView>> {
-  assertNoDuplicates(input.allowedActionClasses, 'allowedActionClasses')
-  assertNoDuplicates(input.allowedSourceTypes, 'allowedSourceTypes')
-  assertNoDuplicates(input.allowedAgentIds, 'allowedAgentIds')
-  assertNoDuplicates(input.allowedToolNames, 'allowedToolNames')
-  if (input.draftRecipientUserId !== undefined && input.draftRecipientUserId !== actorUserId) {
-    // ADR-0028 §6/§7：RD-01 内草稿受众必须与 principal 同一成员。
-    throw new ApiError(400, 'VALIDATION_FAILED', 'draft recipient must be the acting assignee')
-  }
   return transactWorkMutation(
     deps.database,
     `work.mandate.create:${workKey}:${actorUserId}:${requestDigest(input)}:${idempotencyKey}`,
@@ -282,9 +268,7 @@ export async function createWorkMandate(
       await requireAssignee(tx, task, actorUserId)
       requireAcceptedTask(task)
       const now = deps.now()
-      if (new Date(input.expiresAt).getTime() <= now.getTime()) {
-        throw new ApiError(400, 'VALIDATION_FAILED', 'expiresAt must be in the future')
-      }
+      assertMandateScope(input, actorUserId, now)
       if (task.approvalPolicy === 'full_access') {
         throw new ApiError(409, 'CONFLICT', 'full_access task cannot receive a mandate')
       }
@@ -300,34 +284,12 @@ export async function createWorkMandate(
         throw new ApiError(409, 'CONFLICT', 'only an active work can receive a mandate')
       }
       await assertAllowedAgents(tx, input.allowedAgentIds)
-      const latest = await getLatestWorkMandate(tx, work.id)
-      const version = (latest?.version ?? 0) + 1
-      const mandate = await insertWorkMandate(tx, {
-        id: uuidv7(now.getTime()),
-        workId: work.id,
-        workKey: work.workKey,
-        projectId: work.projectId,
-        taskId: work.taskId,
-        version,
-        status: 'active',
-        principalUserId: actorUserId,
-        onBehalfOfUserId: actorUserId,
-        humanOwnerUserId: actorUserId,
-        draftRecipientUserId: actorUserId,
-        ...mandateContract(input),
-        statusReason: null,
-        pausedAt: null,
-        revokedAt: null,
-        createdAt: now,
-        updatedAt: now,
-      })
-      await updateWork(tx, work.id, { mandateId: mandate.id, updatedAt: now })
-      // 新 Mandate 版本取代旧版本；旧 proposed 意图与订阅都引用旧版本，必须失效。
-      await cancelProposedDispatchIntents(tx, work.id, now)
-      await expireWorkSubscriptionsAndRetract(tx, {
-        workId: work.id,
-        statusReason: 'mandate_superseded',
+      const mandate = await insertActiveMandateVersion(tx, {
+        work,
+        actorUserId,
+        scope: input,
         now,
+        subscriptionReason: 'mandate_superseded',
       })
       return { view: toWorkMandateView(mandate, now, true), changed: true }
     },
@@ -348,13 +310,6 @@ export async function acceptWorkAfterOwnerChange(
   input: CreateWorkMandateRequest,
   idempotencyKey: string,
 ): Promise<WorkMutationOutcome<WorkMandateView>> {
-  assertNoDuplicates(input.allowedActionClasses, 'allowedActionClasses')
-  assertNoDuplicates(input.allowedSourceTypes, 'allowedSourceTypes')
-  assertNoDuplicates(input.allowedAgentIds, 'allowedAgentIds')
-  assertNoDuplicates(input.allowedToolNames, 'allowedToolNames')
-  if (input.draftRecipientUserId !== undefined && input.draftRecipientUserId !== actorUserId) {
-    throw new ApiError(400, 'VALIDATION_FAILED', 'draft recipient must be the acting assignee')
-  }
   return transactWorkMutation(
     deps.database,
     `work.accept:${workKey}:${actorUserId}:${requestDigest(input)}:${idempotencyKey}`,
@@ -369,9 +324,7 @@ export async function acceptWorkAfterOwnerChange(
         throw new ApiError(409, 'CONFLICT', 'work is not waiting for owner confirmation')
       }
       const now = deps.now()
-      if (new Date(input.expiresAt).getTime() <= now.getTime()) {
-        throw new ApiError(400, 'VALIDATION_FAILED', 'expiresAt must be in the future')
-      }
+      assertMandateScope(input, actorUserId, now)
       await assertAllowedAgents(tx, input.allowedAgentIds)
       const latest = await getLatestWorkMandate(tx, work.id)
       const version = (latest?.version ?? 0) + 1
@@ -410,6 +363,7 @@ export async function acceptWorkAfterOwnerChange(
         statusReason: 'owner_changed_accept',
         now,
       })
+      await supersedePendingWorkMandateProposals(tx, { workId: work.id, now })
       return { view: toWorkMandateView(mandate, now, true), changed: true }
     },
   )
@@ -506,6 +460,7 @@ export async function changeWorkMandateStatus(
         statusReason: `mandate_${mutation}`,
         now,
       })
+      await supersedePendingWorkMandateProposals(tx, { workId: work.id, now })
       return { view: toWorkMandateView(next, now, work.state === 'active'), changed: true }
     },
   )

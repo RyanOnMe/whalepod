@@ -592,6 +592,12 @@ export const HARNESS_SRC_PATH_ALLOWLIST: readonly string[] = [
   'scripts/mutate-router-evaluation.ts:apps/hub/src/modules/router/application.ts',
   'scripts/mutate-router-evaluation.ts:apps/hub/src/modules/dispatch/service.ts',
   'scripts/mutate-router-evaluation.ts:packages/db/src/repositories/router.ts',
+  // #517 authorize_scope 的单点变异编辑目标；同样只做源码替换，不作 spawn/import 入口。
+  'scripts/mutate-router-evaluation.ts:apps/hub/src/modules/work/questions.ts',
+  'scripts/mutate-router-evaluation.ts:apps/hub/src/modules/work/scope-proposals.ts',
+  'scripts/mutate-router-evaluation.ts:apps/hub/src/modules/work/commands.ts',
+  'scripts/mutate-router-evaluation.ts:apps/hub/src/modules/work/queries.ts',
+  'scripts/mutate-router-evaluation.ts:packages/db/src/repositories/work.ts',
   // #281 起 e2e-serve 的 Hub 装配唯一走包解析 dist 产物，源码路径例外已摘除。
 ]
 

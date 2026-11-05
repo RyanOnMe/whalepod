@@ -62,6 +62,9 @@ export type AuditAction =
   | 'work.admission.check'
   // ADR-0028（RD-03d2a）：ask 的绑定回答（不记问题/回答正文）。
   | 'work.decision.answer'
+  // ADR-0028（RD-03d2b）：authorize_scope 的草案回答与显式确认（只记 id/版本）。
+  | 'work.decision.scope_answer'
+  | 'work.decision.scope_confirm'
   // ADR-0028（RD-03a）：受控派工意图的人工确认/拒绝与端口派发（不记目标正文）。
   | 'work.dispatch.approve'
   | 'work.dispatch.reject'
@@ -87,8 +90,10 @@ export interface AuditFields {
   readonly version?: number
   readonly decisionId?: string
   readonly questionId?: string
+  readonly proposalId?: string
   readonly answerType?: string
   readonly binding?: boolean
+  readonly reason?: string
 }
 
 /**

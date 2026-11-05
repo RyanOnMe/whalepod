@@ -797,7 +797,7 @@ describe('RD-03r2 Router application and Executor ledger', () => {
     expect(await database.db.select().from(schema.runs)).toHaveLength(0)
   })
 
-  it('applies ask to the question ledger and keeps authorize_scope answers rejected', async () => {
+  it('applies ask to the question ledger and only accepts authorize_scope as a pending proposal', async () => {
     await createMandate()
     const node = await onlineRouterNode()
     const request = await acceptProposal(node, 'ask', 'authorize_scope')
@@ -812,14 +812,14 @@ describe('RD-03r2 Router application and Executor ledger', () => {
     const applied = await application(request.evaluationId)
     expect(applied).toMatchObject({ decision: 'ask', status: 'applied', questionId: question!.id })
 
-    const answer = await apiInject(ctx, alice, {
+    const missingScope = await apiInject(ctx, alice, {
       method: 'POST',
       url: `/api/v1/works/${workKey}/questions/${question!.decisionId}/answers`,
       payload: { answerType: 'authorize_scope' },
       idempotencyKey: idemKey(),
     })
-    expect(answer.statusCode, answer.body).toBe(400)
-    expect(answer.json().error.code).toBe('UNSUPPORTED_ANSWER')
+    expect(missingScope.statusCode, missingScope.body).toBe(400)
+    expect(missingScope.json().error.code).toBe('VALIDATION_FAILED')
     // 不能把扩权问题降级成普通 choose_option 绑定。
     const downgraded = await apiInject(ctx, alice, {
       method: 'POST',
@@ -829,6 +829,40 @@ describe('RD-03r2 Router application and Executor ledger', () => {
     })
     expect(downgraded.statusCode, downgraded.body).toBe(400)
     expect(downgraded.json().error.code).toBe('UNSUPPORTED_ANSWER')
+
+    const answered = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `/api/v1/works/${workKey}/questions/${question!.decisionId}/answers`,
+      payload: {
+        answerType: 'authorize_scope',
+        scope: {
+          expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+          allowedActionClasses: [ACTION],
+          allowedSourceTypes: ['task_message'],
+          allowedAgentIds: [],
+          allowedToolNames: ['read'],
+          autoDispatch: 'off',
+          maxRunsPerWork: 5,
+          maxTokens: 50_000,
+          maxCostMicros: 500_000,
+          maxAttempts: 2,
+          waitDeadlineSeconds: 600,
+        },
+      },
+      idempotencyKey: idemKey(),
+    })
+    expect(answered.statusCode, answered.body).toBe(200)
+    expect(answered.json().data.scopeProposal).toMatchObject({
+      status: 'pending',
+      baseMandateId: question!.mandateId,
+      baseMandateVersion: question!.mandateVersion,
+    })
+    const [stillOpen] = await database.db
+      .select()
+      .from(schema.workQuestions)
+      .where(eq(schema.workQuestions.id, question!.id))
+    expect(stillOpen).toMatchObject({ status: 'answered' })
+    expect(await database.db.select().from(schema.workMandates)).toHaveLength(1)
     expect(await database.db.select().from(schema.runs)).toHaveLength(0)
   })
 
