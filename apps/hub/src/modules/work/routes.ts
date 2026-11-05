@@ -61,6 +61,7 @@ import {
 } from './inbox.js'
 import { loadWorkDetail, toWorkView } from './queries.js'
 import { answerWorkQuestion } from './questions.js'
+import { confirmWorkMandateProposal, type ScopeProposalConfirmOutcome } from './scope-proposals.js'
 import { buildRunWorkInputBundle } from './run-dispatch.js'
 
 export interface WorkRouteDeps {
@@ -285,24 +286,93 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
       // non-binding 回答已落库但请求被拒（409）；审计留 denied 事实，便于和绑定成功分开归因。
       if (error instanceof ApiError && error.code === 'DECISION_STALE') {
         const details = error.details as { questionId?: string } | undefined
-        audit(request, 'work.decision.answer', 'denied', session.userId, {
+        audit(
+          request,
+          body.answerType === 'authorize_scope'
+            ? 'work.decision.scope_answer'
+            : 'work.decision.answer',
+          'denied',
+          session.userId,
+          {
+            workKey,
+            decisionId,
+            ...(details?.questionId === undefined ? {} : { questionId: details.questionId }),
+            answerType: body.answerType,
+            binding: false,
+          },
+        )
+      }
+      throw error
+    }
+    if (outcome.scopeProposal !== null) {
+      // 扩权回答只记草案 id 与 base 版本，不记 scope 正文。
+      audit(request, 'work.decision.scope_answer', 'success', session.userId, {
+        workKey,
+        decisionId,
+        questionId: outcome.question.id,
+        proposalId: outcome.scopeProposal.id,
+        mandateId: outcome.scopeProposal.baseMandateId,
+        version: outcome.scopeProposal.baseMandateVersion,
+      })
+    } else {
+      audit(request, 'work.decision.answer', 'success', session.userId, {
+        workKey,
+        decisionId,
+        questionId: outcome.question.id,
+        answerType: outcome.answer.answerType,
+        binding: outcome.answer.binding,
+      })
+    }
+    return { ok: true, data: outcome }
+  })
+
+  // POST /works/:workKey/mandate-proposals/:proposalId/confirm：
+  // authorize_scope 草案的显式确认；只有当前 assignee 能确认，重复确认返回同一版本。
+  app.post('/works/:workKey/mandate-proposals/:proposalId/confirm', async (request) => {
+    const session = await deps.requireActor(request)
+    const { workKey: rawWorkKey, proposalId: rawProposalId } = request.params as {
+      workKey: string
+      proposalId: string
+    }
+    const workKey = parseUuid(rawWorkKey, 'work key')
+    const proposalId = parseUuid(rawProposalId, 'proposal id')
+    let outcome: ScopeProposalConfirmOutcome
+    try {
+      outcome = await confirmWorkMandateProposal(
+        { database: deps.database, now: () => new Date() },
+        session.userId,
+        workKey,
+        proposalId,
+        readIdempotencyKey(request),
+      )
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'DECISION_STALE') {
+        const details = error.details as
+          | { proposalId?: string; questionId?: string; decisionId?: string; reason?: string }
+          | undefined
+        audit(request, 'work.decision.scope_confirm', 'denied', session.userId, {
           workKey,
-          decisionId,
+          proposalId,
           ...(details?.questionId === undefined ? {} : { questionId: details.questionId }),
-          answerType: body.answerType,
-          binding: false,
+          ...(details?.decisionId === undefined ? {} : { decisionId: details.decisionId }),
+          ...(details?.reason === undefined ? {} : { reason: details.reason }),
         })
       }
       throw error
     }
-    audit(request, 'work.decision.answer', 'success', session.userId, {
+    if (deps.onMandateChanged !== undefined && outcome.changed) {
+      await deps.onMandateChanged(session, workKey)
+    }
+    // 确认审计只带 id/版本，不带 scope 正文。
+    audit(request, 'work.decision.scope_confirm', 'success', session.userId, {
       workKey,
-      decisionId,
-      questionId: outcome.question.id,
-      answerType: outcome.answer.answerType,
-      binding: outcome.answer.binding,
+      proposalId: outcome.view.proposal.id,
+      decisionId: outcome.view.proposal.decisionId,
+      questionId: outcome.view.proposal.questionId,
+      mandateId: outcome.view.mandate.id,
+      version: outcome.view.mandate.version,
     })
-    return { ok: true, data: outcome }
+    return { ok: true, data: outcome.view }
   })
 
   // GET /works/:workKey/mandates：版本历史（新到旧）。

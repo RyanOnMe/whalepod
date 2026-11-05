@@ -419,7 +419,7 @@ export const workQuestions = pgTable(
     check('work_question_refs_size', sql`octet_length(${table.refs}::text) <= 4096`),
     check(
       'work_question_status_fields',
-      sql`(${table.status} = 'open' and ${table.answeredAt} is null and ${table.closedAt} is null) or (${table.status} = 'answered' and ${table.answeredAt} is not null and ${table.closedAt} is not null) or (${table.status} in ('superseded', 'expired', 'cancelled') and ${table.answeredAt} is null and ${table.closedAt} is not null)`,
+      sql`(${table.status} = 'open' and ${table.answeredAt} is null and ${table.closedAt} is null) or (${table.status} = 'answered' and ${table.answeredAt} is not null and ${table.closedAt} is not null) or (${table.status} = 'superseded' and ${table.closedAt} is not null) or (${table.status} in ('expired', 'cancelled') and ${table.answeredAt} is null and ${table.closedAt} is not null)`,
     ),
     uniqueIndex('work_question_open_decision_unique')
       .on(table.decisionId)
@@ -490,6 +490,88 @@ export type WorkQuestionRow = typeof workQuestions.$inferSelect
 export type NewWorkQuestionRow = typeof workQuestions.$inferInsert
 export type WorkQuestionAnswerRow = typeof workQuestionAnswers.$inferSelect
 export type NewWorkQuestionAnswerRow = typeof workQuestionAnswers.$inferInsert
+
+export type WorkMandateProposalStatus =
+  | 'pending'
+  | 'confirmed'
+  | 'superseded'
+  | 'expired'
+  | 'cancelled'
+
+/**
+ * ADR-0028 §8（RD-03d2b）：`authorize_scope` 回答生成的 Mandate 草案。
+ * 草案只扩大“提案”，确认前不改变当前 Mandate/inputDigest/派工权限。
+ */
+export const workMandateProposals = pgTable(
+  'work_mandate_proposal',
+  {
+    id: uuid('id').primaryKey(),
+    workId: uuid('work_id')
+      .notNull()
+      .references(() => works.id),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.id),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    workKey: varchar('work_key', { length: 64 }).notNull(),
+    questionId: uuid('question_id')
+      .notNull()
+      .references(() => workQuestions.id),
+    answerId: uuid('answer_id')
+      .notNull()
+      .references(() => workQuestionAnswers.id),
+    decisionId: char('decision_id', { length: 64 }).notNull(),
+    baseMandateId: uuid('base_mandate_id')
+      .notNull()
+      .references(() => workMandates.id),
+    baseMandateVersion: integer('base_mandate_version').notNull(),
+    principalUserId: uuid('principal_user_id')
+      .notNull()
+      .references(() => userAccounts.id),
+    scope: jsonb('scope').$type<Record<string, unknown>>().notNull(),
+    status: varchar('status', { length: 16 })
+      .$type<WorkMandateProposalStatus>()
+      .notNull()
+      .default('pending'),
+    resultMandateId: uuid('result_mandate_id').references(() => workMandates.id),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check('work_mandate_proposal_decision_format', sql`${table.decisionId} ~ '^[0-9a-f]{64}$'`),
+    check('work_mandate_proposal_base_version', sql`${table.baseMandateVersion} >= 1`),
+    check(
+      'work_mandate_proposal_work_key_format',
+      sql`${table.workKey} ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`,
+    ),
+    check(
+      'work_mandate_proposal_status',
+      sql`${table.status} in ('pending', 'confirmed', 'superseded', 'expired', 'cancelled')`,
+    ),
+    check(
+      'work_mandate_proposal_status_fields',
+      sql`(${table.status} = 'pending' and ${table.confirmedAt} is null and ${table.closedAt} is null and ${table.resultMandateId} is null) or (${table.status} = 'confirmed' and ${table.confirmedAt} is not null and ${table.closedAt} is not null and ${table.resultMandateId} is not null) or (${table.status} in ('superseded', 'expired', 'cancelled') and ${table.confirmedAt} is null and ${table.closedAt} is not null and ${table.resultMandateId} is null)`,
+    ),
+    check(
+      'work_mandate_proposal_scope_object',
+      sql`jsonb_typeof(${table.scope}) = 'object' and octet_length(${table.scope}::text) <= 8192`,
+    ),
+    uniqueIndex('work_mandate_proposal_question_unique').on(table.questionId),
+    uniqueIndex('work_mandate_proposal_answer_unique').on(table.answerId),
+    index('work_mandate_proposal_work_status_idx').on(
+      table.workId,
+      table.status,
+      table.createdAt.desc(),
+    ),
+  ],
+)
+
+export type WorkMandateProposalRow = typeof workMandateProposals.$inferSelect
+export type NewWorkMandateProposalRow = typeof workMandateProposals.$inferInsert
 
 /**
  * ADR-0028 §17（RD-03r2）：已接受 Router 提案的幂等应用记录。evaluationId 唯一；

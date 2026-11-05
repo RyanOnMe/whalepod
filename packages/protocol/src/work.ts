@@ -5,7 +5,7 @@
  * `proposed/approved/dispatched` 与终态。
  */
 import { z } from 'zod'
-import { WorkQuestionViewSchema } from './work-question.js'
+import { WorkAnswerTypeSchema, WorkQuestionViewSchema } from './work-question.js'
 
 export const WorkStateSchema = z.enum(['active', 'waiting', 'retired'])
 export type WorkState = z.infer<typeof WorkStateSchema>
@@ -156,31 +156,6 @@ export const WorkWatermarksSchema = z.strictObject({
 })
 export type WorkWatermarks = z.infer<typeof WorkWatermarksSchema>
 
-export const WorkDetailViewSchema = z.strictObject({
-  work: WorkViewSchema,
-  currentMandate: WorkMandateViewSchema.nullable(),
-  recentDecisions: z.array(WorkDecisionViewSchema).max(50),
-  proposedIntents: z.array(DispatchIntentViewSchema).max(50),
-  /** RD-03b：最近派工意图全量（含 approved/dispatched/终态），供工作读面显示自动派工。 */
-  dispatchIntents: z.array(DispatchIntentViewSchema).max(50).default([]),
-  /** RD-03d2a：等待责任人回答的 ask（只含 open；回答历史按问题/回答表审计）。 */
-  openQuestions: z.array(WorkQuestionViewSchema).max(50).default([]),
-  watermarks: WorkWatermarksSchema,
-})
-export type WorkDetailView = z.infer<typeof WorkDetailViewSchema>
-
-export const WorkAdmissionCheckResultSchema = z.strictObject({
-  decision: WorkDecisionViewSchema,
-  proposedIntent: DispatchIntentViewSchema.nullable(),
-  duplicate: z.boolean(),
-})
-export type WorkAdmissionCheckResult = z.infer<typeof WorkAdmissionCheckResultSchema>
-
-export const CreateWorkRequestSchema = z.strictObject({
-  goal: z.string().trim().min(1).max(1000),
-})
-export type CreateWorkRequest = z.infer<typeof CreateWorkRequestSchema>
-
 export const CreateWorkMandateRequestSchema = z.strictObject({
   autoDispatch: WorkAutoDispatchSchema.default('off'),
   allowedActionClasses: z
@@ -204,6 +179,100 @@ export const CreateWorkMandateRequestSchema = z.strictObject({
   draftRecipientUserId: z.uuid().optional(),
 })
 export type CreateWorkMandateRequest = z.infer<typeof CreateWorkMandateRequestSchema>
+
+export const WorkMandateProposalStatusSchema = z.enum([
+  'pending',
+  'confirmed',
+  'superseded',
+  'expired',
+  'cancelled',
+])
+export type WorkMandateProposalStatus = z.infer<typeof WorkMandateProposalStatusSchema>
+
+/** RD-03d2b：authorize_scope 回答生成的待确认草案；确认前不扩大当前 Mandate。 */
+export const WorkMandateProposalViewSchema = z.strictObject({
+  id: z.uuid(),
+  workKey: z.uuid(),
+  questionId: z.uuid(),
+  decisionId: z.string().regex(/^[a-f0-9]{64}$/),
+  baseMandateId: z.uuid(),
+  baseMandateVersion: z.number().int().positive(),
+  principalUserId: z.uuid(),
+  status: WorkMandateProposalStatusSchema,
+  scope: CreateWorkMandateRequestSchema,
+  resultMandateId: z.uuid().nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+  confirmedAt: z.iso.datetime({ offset: true }).nullable(),
+})
+export type WorkMandateProposalView = z.infer<typeof WorkMandateProposalViewSchema>
+
+export const WorkDetailViewSchema = z.strictObject({
+  work: WorkViewSchema,
+  currentMandate: WorkMandateViewSchema.nullable(),
+  recentDecisions: z.array(WorkDecisionViewSchema).max(50),
+  proposedIntents: z.array(DispatchIntentViewSchema).max(50),
+  /** RD-03b：最近派工意图全量（含 approved/dispatched/终态），供工作读面显示自动派工。 */
+  dispatchIntents: z.array(DispatchIntentViewSchema).max(50).default([]),
+  /** RD-03d2a：等待责任人回答的 ask（只含 open；回答历史按问题/回答表审计）。 */
+  openQuestions: z.array(WorkQuestionViewSchema).max(50).default([]),
+  /** RD-03d2b：已回答但尚未确认的新 Mandate 草案（只归当前责任人）。 */
+  pendingMandateProposals: z.array(WorkMandateProposalViewSchema).max(50).default([]),
+  watermarks: WorkWatermarksSchema,
+})
+export type WorkDetailView = z.infer<typeof WorkDetailViewSchema>
+
+export const WorkQuestionAnswerRequestSchema = z.strictObject({
+  answerType: WorkAnswerTypeSchema,
+  optionId: z.string().min(1).max(64).optional(),
+  reason: z.string().trim().min(1).max(500).optional(),
+  /**
+   * RD-03d2b：`authorize_scope` 回答必须携带完整范围，使用与创建 Mandate 相同的
+   * schema 校验；只生成 pending 草案，不直接扩大当前 Mandate。
+   */
+  scope: CreateWorkMandateRequestSchema.optional(),
+})
+export type WorkQuestionAnswerRequest = z.infer<typeof WorkQuestionAnswerRequestSchema>
+
+export const WorkQuestionAnswerViewSchema = z.strictObject({
+  question: WorkQuestionViewSchema,
+  answer: z.strictObject({
+    id: z.uuid(),
+    decisionId: z.string().regex(/^[a-f0-9]{64}$/),
+    answerType: WorkAnswerTypeSchema,
+    optionId: z.string().max(64).nullable(),
+    binding: z.boolean(),
+    rejectionReason: z.string().max(64).nullable(),
+    createdAt: z.iso.datetime({ offset: true }),
+  }),
+  /** 绑定回答后是否需要重新准入/派工（本切片只返回提示，不自动建意图）。 */
+  reevaluate: z.boolean(),
+  /** defer 回答：不自动派发，等待期限/重评归 RD-03d3。 */
+  deferred: z.boolean(),
+  /** deny 或 choose_option 的 cancel/retry 是否取消了关联的 proposed/approved 意图。 */
+  intentCancelled: z.boolean(),
+  /** RD-03d2b：authorize_scope 绑定回答生成的 pending 草案；其它回答为 null。 */
+  scopeProposal: WorkMandateProposalViewSchema.nullable(),
+})
+export type WorkQuestionAnswerView = z.infer<typeof WorkQuestionAnswerViewSchema>
+
+export const WorkMandateProposalConfirmViewSchema = z.strictObject({
+  proposal: WorkMandateProposalViewSchema,
+  mandate: WorkMandateViewSchema,
+  question: WorkQuestionViewSchema,
+})
+export type WorkMandateProposalConfirmView = z.infer<typeof WorkMandateProposalConfirmViewSchema>
+
+export const WorkAdmissionCheckResultSchema = z.strictObject({
+  decision: WorkDecisionViewSchema,
+  proposedIntent: DispatchIntentViewSchema.nullable(),
+  duplicate: z.boolean(),
+})
+export type WorkAdmissionCheckResult = z.infer<typeof WorkAdmissionCheckResultSchema>
+
+export const CreateWorkRequestSchema = z.strictObject({
+  goal: z.string().trim().min(1).max(1000),
+})
+export type CreateWorkRequest = z.infer<typeof CreateWorkRequestSchema>
 
 export const WorkMandateStatusChangeRequestSchema = z.strictObject({
   reason: z.string().trim().min(1).max(500).optional(),

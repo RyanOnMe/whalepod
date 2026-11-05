@@ -3,6 +3,7 @@ import {
   getLatestWorkMandate,
   getWorkQuestionByDecision,
   getWorkQuestionForUpdate,
+  insertWorkMandateProposal,
   insertWorkQuestion,
   insertWorkQuestionAnswer,
   markWorkQuestionAnswered,
@@ -11,13 +12,16 @@ import {
   type DispatchIntentRow,
   type TaskRow,
   type Tx,
+  type WorkMandateProposalRow,
   type WorkMandateRow,
   type WorkQuestionRow,
   type WorkRow,
 } from '@whalepod/db'
 import {
+  WorkMandateProposalViewSchema,
   WorkQuestionAnswerViewSchema,
   WorkQuestionViewSchema,
+  type WorkMandateProposalView,
   type WorkQuestionAnswerRequest,
   type WorkQuestionAnswerView,
   type WorkQuestionView,
@@ -26,9 +30,11 @@ import { canonicalJson, sha256Hex } from '../coordination/digest.js'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
 import { lockWorkContext } from './context.js'
+import { assertAllowedAgents, assertMandateScope } from './mandate-scope.js'
 
-// ADR-0028 §8（RD-03d2a）：ask 的确定性生成、问题读面映射与可绑定回答。
-// 本模块只写协调表（work_question/work_question_answer），不创建 Run、不扩大 Mandate。
+// ADR-0028 §8（RD-03d2a/d2b）：ask 的确定性生成、问题读面映射与可绑定回答。
+// 本模块只写协调表（work_question/work_question_answer/work_mandate_proposal），
+// 不创建 Run、不直接扩大 Mandate；authorize_scope 只生成待确认草案。
 
 export interface QuestionDeps {
   readonly database: Database
@@ -144,6 +150,26 @@ export function toWorkQuestionView(row: WorkQuestionRow, workKey: string): WorkQ
   })
 }
 
+export function toWorkMandateProposalView(
+  row: WorkMandateProposalRow,
+  workKey: string,
+): WorkMandateProposalView {
+  return WorkMandateProposalViewSchema.parse({
+    id: row.id,
+    workKey,
+    questionId: row.questionId,
+    decisionId: row.decisionId,
+    baseMandateId: row.baseMandateId,
+    baseMandateVersion: row.baseMandateVersion,
+    principalUserId: row.principalUserId,
+    status: row.status,
+    scope: row.scope,
+    resultMandateId: row.resultMandateId ?? null,
+    createdAt: row.createdAt.toISOString(),
+    confirmedAt: row.confirmedAt?.toISOString() ?? null,
+  })
+}
+
 interface StaleAnswer {
   readonly stale: true
   readonly answerId: string
@@ -159,10 +185,38 @@ interface BoundAnswer {
 type AnswerOutcome = StaleAnswer | BoundAnswer
 
 function validateAnswer(question: WorkQuestionRow, input: WorkQuestionAnswerRequest): void {
-  // #517 之前 authorize_scope 的任何回答都不绑定；否则 choose_option 可以
-  // 把扩权问题降级成普通选项确认，回答类型与问题类型必须一起拒绝。
-  if (question.questionType === 'authorize_scope' || input.answerType === 'authorize_scope') {
-    throw new ApiError(400, 'UNSUPPORTED_ANSWER', 'authorize_scope is not enabled in this slice')
+  if (question.questionType === 'authorize_scope') {
+    if (input.answerType === 'authorize_scope') {
+      // ADR-0028 §8：扩权问题不能降级成普通选项确认。
+      if (input.scope === undefined) {
+        throw new ApiError(400, 'VALIDATION_FAILED', 'scope is required for authorize_scope')
+      }
+      if (input.optionId !== undefined) {
+        throw new ApiError(400, 'VALIDATION_FAILED', 'optionId is not valid for authorize_scope')
+      }
+      return
+    }
+    // 拒绝/暂缓扩权是合法回答；它们不生成草案，也不会扩大当前 Mandate。
+    if (input.answerType === 'choose_option') {
+      throw new ApiError(
+        400,
+        'UNSUPPORTED_ANSWER',
+        'authorize_scope question cannot be answered with choose_option',
+      )
+    }
+    if (input.scope !== undefined) {
+      throw new ApiError(400, 'VALIDATION_FAILED', 'scope is only valid for authorize_scope')
+    }
+    if (input.optionId !== undefined) {
+      throw new ApiError(400, 'VALIDATION_FAILED', 'optionId is not valid for authorize_scope')
+    }
+    return
+  }
+  if (input.answerType === 'authorize_scope') {
+    throw new ApiError(400, 'UNSUPPORTED_ANSWER', 'answer type does not match the question')
+  }
+  if (input.scope !== undefined) {
+    throw new ApiError(400, 'VALIDATION_FAILED', 'scope is only valid for authorize_scope')
   }
   if (input.answerType === 'choose_option') {
     if (input.optionId === undefined) {
@@ -253,6 +307,85 @@ export async function answerWorkQuestion(
         })
         return { stale: true, answerId: answer.id, questionId: question.id, reason }
       }
+      if (input.answerType === 'authorize_scope' && input.scope !== undefined) {
+        const scope = input.scope
+        // 草案与当前 Mandate 使用同一套范围语义；回答本身不改变 inputDigest 或授权。
+        assertMandateScope(scope, actorUserId, now)
+        if (task.approvalPolicy === 'full_access') {
+          throw new ApiError(409, 'CONFLICT', 'full_access task cannot receive a mandate')
+        }
+        await assertAllowedAgents(tx, scope.allowedAgentIds)
+        const answered = await markWorkQuestionAnswered(tx, question.id, now)
+        if (answered === undefined) {
+          throw new ApiError(409, 'CONFLICT', 'question was answered concurrently')
+        }
+        const answer = await insertWorkQuestionAnswer(tx, {
+          id: uuidv7(now.getTime()),
+          questionId: question.id,
+          decisionId: question.decisionId,
+          actorUserId,
+          answerType: input.answerType,
+          optionId: input.optionId ?? null,
+          reason: input.reason ?? null,
+          mandateId: question.mandateId,
+          mandateVersion: question.mandateVersion,
+          binding: true,
+          rejectionReason: null,
+          createdAt: now,
+        })
+        const proposal = await insertWorkMandateProposal(tx, {
+          id: uuidv7(now.getTime()),
+          workId: work.id,
+          taskId: work.taskId,
+          projectId: work.projectId,
+          workKey: work.workKey,
+          questionId: question.id,
+          answerId: answer.id,
+          decisionId: question.decisionId,
+          baseMandateId: question.mandateId,
+          baseMandateVersion: question.mandateVersion,
+          principalUserId: actorUserId,
+          scope: scope as unknown as Record<string, unknown>,
+          status: 'pending',
+          resultMandateId: null,
+          confirmedAt: null,
+          closedAt: null,
+          createdAt: now,
+          updatedAt: now,
+        })
+        if (proposal === undefined) {
+          throw new ApiError(409, 'CONFLICT', 'scope proposal already exists')
+        }
+        // 扩权确认前旧意图不得派发；问题保持 open，直到责任人明确确认草案。
+        const cancelled =
+          question.dispatchIntentId === null
+            ? undefined
+            : await cancelDispatchIntentById(
+                tx,
+                question.dispatchIntentId,
+                'decision_authorize_scope',
+                now,
+              )
+        return {
+          stale: false,
+          view: WorkQuestionAnswerViewSchema.parse({
+            question: toWorkQuestionView(answered, work.workKey),
+            answer: {
+              id: answer.id,
+              decisionId: question.decisionId,
+              answerType: input.answerType,
+              optionId: null,
+              binding: true,
+              rejectionReason: null,
+              createdAt: now.toISOString(),
+            },
+            reevaluate: false,
+            deferred: false,
+            intentCancelled: cancelled !== undefined,
+            scopeProposal: toWorkMandateProposalView(proposal, work.workKey),
+          }),
+        }
+      }
       const answered = await markWorkQuestionAnswered(tx, question.id, now)
       if (answered === undefined) {
         throw new ApiError(409, 'CONFLICT', 'question was answered concurrently')
@@ -300,6 +433,7 @@ export async function answerWorkQuestion(
           reevaluate: input.answerType === 'choose_option' && input.optionId === 'retry',
           deferred: input.answerType === 'defer',
           intentCancelled: cancelled !== undefined,
+          scopeProposal: null,
         }),
       }
     },

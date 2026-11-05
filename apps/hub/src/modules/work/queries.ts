@@ -2,11 +2,17 @@ import type {
   Database,
   DispatchIntentRow,
   RouterDecisionRow,
+  WorkMandateProposalRow,
   WorkMandateRow,
   WorkQuestionRow,
   WorkRow,
 } from '@whalepod/db'
-import { listDispatchIntents, listOpenWorkQuestions, listRouterDecisions } from '@whalepod/db'
+import {
+  listDispatchIntents,
+  listOpenWorkQuestions,
+  listPendingWorkMandateProposals,
+  listRouterDecisions,
+} from '@whalepod/db'
 import {
   DispatchIntentViewSchema,
   WorkDecisionViewSchema,
@@ -21,7 +27,7 @@ import {
   type WorkQuestionView,
   type WorkView,
 } from '@whalepod/protocol'
-import { toWorkQuestionView } from './questions.js'
+import { toWorkMandateProposalView, toWorkQuestionView } from './questions.js'
 
 // ADR-0028（RD-01）：协调记录到 HTTP 视图的映射。所有视图都经 protocol schema
 // 校验后才出网；数据库里出现越界值时抛错而不是把不可信形状降级成「看起来正常」。
@@ -149,10 +155,11 @@ export async function loadWorkDetail(
   now: Date,
   currentAssigneeUserId: string,
 ): Promise<WorkDetailView> {
-  const [decisions, intents, questions] = await Promise.all([
+  const [decisions, intents, questions, proposals] = await Promise.all([
     listRouterDecisions(database.db, work.id, 20),
     listDispatchIntents(database.db, work.id, 50),
     listOpenWorkQuestions(database.db, work.id, currentAssigneeUserId, 50),
+    listPendingWorkMandateProposals(database.db, work.id, currentAssigneeUserId, 50),
   ])
   const proposed = intents.filter(
     (intent) => intent.status === 'proposed' && intent.expiresAt.getTime() > now.getTime(),
@@ -171,6 +178,9 @@ export async function loadWorkDetail(
     proposedIntents: proposed.map((intent) => toDispatchIntentView(intent, now)),
     dispatchIntents: intents.map((intent) => toDispatchIntentView(intent, now)),
     openQuestions,
+    pendingMandateProposals: proposals.map((proposal: WorkMandateProposalRow) =>
+      toWorkMandateProposalView(proposal, work.workKey),
+    ),
     watermarks: {
       lastDecisionAt: decisions[0]?.createdAt.toISOString() ?? null,
       lastSourceVersion: decisions[0]?.sourceVersion ?? null,

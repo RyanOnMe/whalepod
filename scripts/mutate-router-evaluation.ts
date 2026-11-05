@@ -23,6 +23,12 @@ const dispatchSource = 'apps/hub/src/modules/dispatch/service.ts'
 const executorLedgerSource = 'packages/db/src/repositories/router.ts'
 const applicationSpec = 'apps/hub/tests/router-application.integration.spec.ts'
 const dbLedgerSpec = 'packages/db/tests/executor-ledger.integration.spec.ts'
+const questionSource = 'apps/hub/src/modules/work/questions.ts'
+const proposalSource = 'apps/hub/src/modules/work/scope-proposals.ts'
+const workCommandSource = 'apps/hub/src/modules/work/commands.ts'
+const workQuerySource = 'apps/hub/src/modules/work/queries.ts'
+const workRepositorySource = 'packages/db/src/repositories/work.ts'
+const scopeSpec = 'apps/hub/tests/work-scope-proposal.integration.spec.ts'
 const nodeRecoverySource = 'apps/node/src/coordination/manager.ts'
 const nodeRecoverySpec = 'apps/node/tests/coordination-recovery.spec.ts'
 const output = join(root, 'artifacts/evidence/router-evaluation/mutations')
@@ -47,6 +53,7 @@ const baselineSuites: readonly Suite[] = [
   { spec, project: 'integration' },
   { spec: applicationSpec, project: 'integration' },
   { spec: dbLedgerSpec, project: 'integration' },
+  { spec: scopeSpec, project: 'integration' },
   { spec: nodeRecoverySpec, project: 'unit' },
 ]
 const mutations: readonly Mutation[] = [
@@ -326,6 +333,134 @@ const mutations: readonly Mutation[] = [
       "...(reserved.teamReserved\n      ? [{ scope: 'team' as const, id: reserved.teamId, date: reserved.utcDate }]\n      : []),",
     replacement: "...[{ scope: 'team' as const, id: reserved.teamId, date: reserved.utcDate }],",
     test: 'does not decrement team/project rows that were not part of the reservation',
+  },
+  {
+    id: 'S01',
+    criterion: 'authorize_scope answers must carry a scope',
+    source: questionSource,
+    spec: scopeSpec,
+    needle:
+      "      if (input.scope === undefined) {\n        throw new ApiError(400, 'VALIDATION_FAILED', 'scope is required for authorize_scope')\n      }",
+    replacement:
+      "      if (false) {\n        throw new ApiError(400, 'VALIDATION_FAILED', 'scope is required for authorize_scope')\n      }",
+    test: 'rejects wrong answer types, missing or invalid scope, and non-assignee actors',
+  },
+  {
+    id: 'S02',
+    criterion: 'authorize_scope questions cannot be downgraded to choose_option',
+    source: questionSource,
+    spec: scopeSpec,
+    needle:
+      "    if (input.answerType === 'choose_option') {\n      throw new ApiError(\n        400,\n        'UNSUPPORTED_ANSWER',\n        'authorize_scope question cannot be answered with choose_option',\n      )\n    }",
+    replacement:
+      "    if (false) {\n      throw new ApiError(\n        400,\n        'UNSUPPORTED_ANSWER',\n        'authorize_scope question cannot be answered with choose_option',\n      )\n    }",
+    test: 'rejects wrong answer types, missing or invalid scope, and non-assignee actors',
+  },
+  {
+    id: 'S04',
+    criterion: 'an authorize_scope answer creates a pending proposal, not a confirmed mandate',
+    source: questionSource,
+    spec: scopeSpec,
+    needle: "status: 'pending',",
+    replacement: "status: 'confirmed',",
+    test: 'records a pending proposal without expanding the current mandate, then confirms one new version',
+  },
+  {
+    id: 'S05',
+    criterion: 'only the task assignee can confirm a scope proposal',
+    source: proposalSource,
+    spec: scopeSpec,
+    needle: 'await requireAssignee(tx, task, actorUserId)',
+    replacement: 'void requireAssignee',
+    test: 'rejects wrong answer types, missing or invalid scope, and non-assignee actors',
+  },
+  {
+    id: 'S06',
+    criterion: 'confirmation requires the proposal base mandate to still be current',
+    source: proposalSource,
+    spec: scopeSpec,
+    needle:
+      "if (\n        latest === undefined ||\n        latest.id !== proposal.baseMandateId ||\n        latest.version !== proposal.baseMandateVersion ||\n        work.mandateId !== latest.id\n      ) {\n        stale(proposal, 'mandate_changed')\n      }",
+    replacement: "if (false) {\n        stale(proposal, 'mandate_changed')\n      }",
+    test: 'refuses confirmation when the base mandate advanced without a pending supersede',
+  },
+  {
+    id: 'S07',
+    criterion: 'confirmation closes the old decision as superseded',
+    source: proposalSource,
+    spec: scopeSpec,
+    needle:
+      'const closedQuestion =\n        (await markWorkQuestionSuperseded(tx, proposal.questionId, now)) ??\n        (await loadQuestion(tx, proposal.questionId))',
+    replacement: 'const closedQuestion = await loadQuestion(tx, proposal.questionId)',
+    test: 'records a pending proposal without expanding the current mandate, then confirms one new version',
+  },
+  {
+    id: 'S08',
+    criterion: 'a new mandate version supersedes pending scope proposals',
+    source: workCommandSource,
+    spec: scopeSpec,
+    needle:
+      'await supersedePendingWorkMandateProposals(tx, {\n    workId: work.id,\n    now,\n    ...(input.keepProposalId === undefined ? {} : { exceptId: input.keepProposalId }),\n  })',
+    replacement: 'void supersedePendingWorkMandateProposals',
+    test: 'supersedes the pending proposal when a new mandate version appears, and refuses confirmation',
+  },
+  {
+    id: 'S09',
+    criterion: 'pending scope proposals are visible only to the current assignee',
+    source: workRepositorySource,
+    spec: scopeSpec,
+    needle:
+      "eq(workMandateProposals.status, 'pending'),\n        eq(workMandateProposals.principalUserId, principalUserId),",
+    replacement:
+      "eq(workMandateProposals.status, 'pending'),\n        eq(workMandateProposals.status, 'pending'),",
+    test: 'returns DECISION_STALE to the reassigned owner and hides the proposal from the new assignee',
+  },
+  {
+    id: 'S10',
+    criterion: 'work detail exposes pending scope proposals',
+    source: workQuerySource,
+    spec: scopeSpec,
+    needle: 'listPendingWorkMandateProposals(database.db, work.id, currentAssigneeUserId, 50),',
+    replacement: 'Promise.resolve([]),',
+    test: 'records a pending proposal without expanding the current mandate, then confirms one new version',
+  },
+  {
+    id: 'S11',
+    criterion: 'repeated confirmation returns the same mandate version',
+    source: proposalSource,
+    spec: scopeSpec,
+    needle: "if (proposal.status === 'confirmed') {",
+    replacement: 'if (false) {',
+    test: 'records a pending proposal without expanding the current mandate, then confirms one new version',
+  },
+  {
+    id: 'S12',
+    criterion: 'scope agents are validated before a proposal is created',
+    source: questionSource,
+    spec: scopeSpec,
+    needle: 'await assertAllowedAgents(tx, scope.allowedAgentIds)',
+    replacement: 'void assertAllowedAgents',
+    test: 'rejects wrong answer types, missing or invalid scope, and non-assignee actors',
+  },
+  {
+    id: 'S13',
+    criterion: 'a reassigned owner gets DECISION_STALE instead of FORBIDDEN',
+    source: proposalSource,
+    spec: scopeSpec,
+    needle:
+      'if (task.assigneeUserId !== actorUserId && proposal.principalUserId === actorUserId) {',
+    replacement: 'if (false) {',
+    test: 'returns DECISION_STALE to the reassigned owner and hides the proposal from the new assignee',
+  },
+  {
+    id: 'S14',
+    criterion: 'confirmation requires the base mandate to remain unexpired',
+    source: proposalSource,
+    spec: scopeSpec,
+    needle:
+      "if (latest.status !== 'active' || latest.expiresAt.getTime() <= now.getTime()) {\n        stale(proposal, 'mandate_inactive')\n      }",
+    replacement: "if (false) {\n        stale(proposal, 'mandate_inactive')\n      }",
+    test: 'refuses confirmation when the base mandate has expired',
   },
   {
     id: 'R26',
