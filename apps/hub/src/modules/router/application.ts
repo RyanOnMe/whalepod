@@ -236,6 +236,9 @@ async function decide(
     case 'ask':
       return applyAsk(tx, row, proposal, work, task, mandate, now, refs)
     case 'ignore':
+      // 新的评估已经给出「无需行动」的结论；旧 wait 的恢复条件随之失效，
+      // 否则它会一直挂到 deadline 并再触发一次评估。重复应用由应用行幂等拦截。
+      await supersedeOpenRouterWait(tx, work, now)
       return {
         status: 'applied',
         reason: proposal.reason,
@@ -570,6 +573,8 @@ async function applyAsk(
   now: Date,
   refs: Record<string, unknown>,
 ): Promise<ApplicationResult> {
+  // 先完成提案校验与问题落库，再收口旧 wait：非法 blockedDecision 只落 stale，
+  // 不能把仍有效的 wait/恢复条件一起毁掉。同一评估的重复应用由 application 行幂等拦截。
   const blockedDecision = proposal.blockedDecision.trim()
   if (blockedDecision.length === 0 || blockedDecision.length > 64)
     return stale('invalid_blocked_decision')
@@ -591,6 +596,7 @@ async function applyAsk(
   })
   const existing = await getWorkQuestionByDecision(tx, decisionId)
   if (existing !== undefined) {
+    await supersedeOpenRouterWait(tx, work, now)
     return { status: 'applied', questionId: existing.id, refs: questionRefs }
   }
   const question = await insertWorkQuestion(tx, {
@@ -616,10 +622,13 @@ async function applyAsk(
     createdAt: now,
     updatedAt: now,
   })
-  if (question !== undefined)
+  if (question !== undefined) {
+    await supersedeOpenRouterWait(tx, work, now)
     return { status: 'applied', questionId: question.id, refs: questionRefs }
+  }
   const raced = await getWorkQuestionByDecision(tx, decisionId)
   if (raced === undefined) return stale('question_insert_lost')
+  await supersedeOpenRouterWait(tx, work, now)
   return { status: 'applied', questionId: raced.id, refs: questionRefs }
 }
 

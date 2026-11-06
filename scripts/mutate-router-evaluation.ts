@@ -31,6 +31,10 @@ const workRepositorySource = 'packages/db/src/repositories/work.ts'
 const scopeSpec = 'apps/hub/tests/work-scope-proposal.integration.spec.ts'
 const nodeRecoverySource = 'apps/node/src/coordination/manager.ts'
 const nodeRecoverySpec = 'apps/node/tests/coordination-recovery.spec.ts'
+const boundarySource = 'apps/hub/src/modules/router/schedule.ts'
+const waitRepositorySource = 'packages/db/src/repositories/router-application.ts'
+const runStatusSource = 'apps/hub/src/modules/run/run-status.ts'
+const boundarySpec = 'apps/hub/tests/run-boundary.integration.spec.ts'
 const output = join(root, 'artifacts/evidence/router-evaluation/mutations')
 const summaryPath = join(output, 'result.json')
 
@@ -54,6 +58,7 @@ const baselineSuites: readonly Suite[] = [
   { spec: applicationSpec, project: 'integration' },
   { spec: dbLedgerSpec, project: 'integration' },
   { spec: scopeSpec, project: 'integration' },
+  { spec: boundarySpec, project: 'integration' },
   { spec: nodeRecoverySpec, project: 'unit' },
 ]
 const mutations: readonly Mutation[] = [
@@ -488,6 +493,148 @@ const mutations: readonly Mutation[] = [
     needle: "if (work.state !== 'active') stale(proposal, 'work_inactive')",
     replacement: "if (false) stale(proposal, 'work_inactive')",
     test: 'refuses confirmation while the work is waiting',
+  },
+  {
+    id: 'S18',
+    criterion: 'only machine Runs schedule a terminal boundary',
+    source: runStatusSource,
+    spec: boundarySpec,
+    needle: "if (work !== undefined && row.origin === 'mandate' && row.workKey !== null) {",
+    replacement: 'if (work !== undefined) {',
+    test: 'does not schedule a boundary for a human Run terminal',
+  },
+  {
+    id: 'S19',
+    criterion: 'a terminal Run cannot schedule a review while another Run is active',
+    source: boundarySource,
+    spec: boundarySpec,
+    needle:
+      "if ((await listActiveRunsByTask(tx, task.id)).length > 0) return { skip: 'active_run' }",
+    replacement: "if (false) return { skip: 'active_run' }",
+    test: 'skips the boundary review while another Run is active',
+  },
+  {
+    id: 'S20',
+    criterion: 'a pending reassignment blocks the terminal review',
+    source: boundarySource,
+    spec: boundarySpec,
+    needle: "if (task.assignmentStatus !== 'accepted') return { skip: 'assignment_not_accepted' }",
+    replacement: "if (false) return { skip: 'assignment_not_accepted' }",
+    test: 'skips the boundary review when a reassignment has not been accepted',
+  },
+  {
+    id: 'S21',
+    criterion: 'a retired work blocks the terminal review',
+    source: boundarySource,
+    spec: boundarySpec,
+    needle: "if (work.retiredAt !== null) return { skip: 'work_retired' }",
+    replacement: "if (false) return { skip: 'work_retired' }",
+    test: 'skips the boundary review when the task reaches a terminal state',
+  },
+  {
+    id: 'S22',
+    criterion: 'the terminal review requires a current active mandate',
+    source: boundarySource,
+    spec: boundarySpec,
+    needle:
+      "if (\n    mandate === undefined ||\n    work.mandateId !== mandate.id ||\n    mandate.status !== 'active' ||\n    mandate.expiresAt.getTime() <= now.getTime()\n  ) {\n    return { skip: 'mandate_inactive' }\n  }",
+    replacement: "if (false) {\n    return { skip: 'mandate_inactive' }\n  }",
+    test: 'skips the boundary review when the mandate is no longer active',
+  },
+  {
+    id: 'S23',
+    criterion: 'an expired wait is closed exactly once',
+    source: boundarySource,
+    spec: boundarySpec,
+    needle: "const closed = await closeWorkWait(tx, wait.id, 'expired', now)",
+    replacement: 'const closed = undefined',
+    test: 'closes an expired router wait and re-evaluates it exactly once',
+  },
+  {
+    id: 'S24',
+    criterion: 'wait expiry uses a per-generation trigger',
+    source: boundarySource,
+    spec: boundarySpec,
+    needle: 'triggerKey: `wait-expiry:${wait.id}:${wait.generation}`,',
+    replacement: 'triggerKey: `wait-expiry:${wait.id}`,',
+    test: 'closes an expired router wait and re-evaluates it exactly once',
+  },
+  {
+    id: 'S25',
+    criterion: 'an expired wait restores only the work it was waiting on',
+    source: boundarySource,
+    spec: boundarySpec,
+    needle:
+      "if (\n    work.state === 'waiting' &&\n    work.resumeMode === 'auto' &&\n    work.resumeCondition === `router:${wait.evaluationId}`\n  ) {",
+    replacement: 'if (false) {',
+    test: 'closes an expired router wait and re-evaluates it exactly once',
+  },
+  {
+    id: 'S26',
+    criterion: 'a newer ask supersedes an open wait',
+    source: applicationSource,
+    spec: boundarySpec,
+    needle: 'if (question !== undefined) {\n    await supersedeOpenRouterWait(tx, work, now)',
+    replacement: 'if (question !== undefined) {\n    void supersedeOpenRouterWait',
+    test: 'supersedes an open wait when a newer evaluation applies an ask',
+  },
+  {
+    id: 'S27',
+    criterion: 'only waits whose deadline has passed are scanned for expiry',
+    source: waitRepositorySource,
+    spec: boundarySpec,
+    needle: ".where(and(eq(workWaits.status, 'open'), lte(workWaits.deadlineAt, now)))",
+    replacement:
+      ".where(and(eq(workWaits.status, 'open'), lte(workWaits.deadlineAt, new Date(0))))",
+    test: 'closes an expired router wait and re-evaluates it exactly once',
+  },
+  {
+    id: 'S28',
+    criterion: 'a Run terminal trigger is stable per Run',
+    source: boundarySource,
+    spec: boundarySpec,
+    needle:
+      'return {\n      sourceType: ref.sourceType,\n      sourceId: ref.sourceId,\n      triggerKey: `run-terminal:${run.id}`,\n    }',
+    replacement:
+      "return {\n      sourceType: ref.sourceType,\n      sourceId: ref.sourceId,\n      triggerKey: 'run-terminal',\n    }",
+    test: 'enqueues exactly one boundary review after a machine run terminal and dispatches the next Run only for a new uncovered input',
+  },
+  {
+    id: 'S29',
+    criterion: 'a terminal Task blocks the boundary review even with an active work',
+    source: boundarySource,
+    spec: boundarySpec,
+    needle:
+      "if (task.status === 'done' || task.status === 'cancelled') return { skip: 'task_terminal' }",
+    replacement: "if (false) return { skip: 'task_terminal' }",
+    test: 'skips the boundary review when a terminal Task still has an active work',
+  },
+  {
+    id: 'S30',
+    criterion: 'a disabled Router blocks the boundary review',
+    source: boundarySource,
+    spec: boundarySpec,
+    needle: "if (cfg === undefined || !cfg.enabled) return { skip: 'router_unavailable' }",
+    replacement: "if (false) return { skip: 'router_unavailable' }",
+    test: 'skips the boundary review when the Router is disabled',
+  },
+  {
+    id: 'S31',
+    criterion: 'an expired wait is not re-evaluated while a Run is active',
+    source: boundarySource,
+    spec: boundarySpec,
+    needle: 'if ((await listActiveRunsByTask(tx, work.taskId)).length > 0) return',
+    replacement: 'if (false) return',
+    test: 'keeps an expired wait until the active Run ends',
+  },
+  {
+    id: 'S32',
+    criterion: 'a newer wait fences older accepted decisions',
+    source: 'apps/hub/src/modules/router/input.ts',
+    spec: boundarySpec,
+    needle: 'waitEvaluationId: openWait?.evaluationId ?? null,',
+    replacement: 'waitEvaluationId: null,',
+    test: 'refuses to apply an older decision after a newer wait replaces the open wait',
   },
   {
     id: 'R26',

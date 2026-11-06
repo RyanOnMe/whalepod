@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, isNull, lte, sql } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { coordinationEvaluations } from '../schema/coordination.js'
 import {
@@ -136,7 +136,7 @@ export async function listExpiredOpenWorkWaits(handle: DbHandle, now: Date, limi
   return handle
     .select()
     .from(workWaits)
-    .where(and(eq(workWaits.status, 'open'), sql`${workWaits.deadlineAt} <= ${now}`))
+    .where(and(eq(workWaits.status, 'open'), lte(workWaits.deadlineAt, now)))
     .orderBy(asc(workWaits.deadlineAt), asc(workWaits.id))
     .limit(limit)
 }
