@@ -1,4 +1,18 @@
-# WhalePod
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./docs/brand/whalepod-lockup-horizontal-white.svg">
+    <img src="./docs/brand/whalepod-lockup-horizontal-color.svg" alt="WhalePod" width="320">
+  </picture>
+</h1>
+
+<p align="center"><strong>各自执行，共同推进同一个项目</strong></p>
+
+<p align="center">
+  <a href="./docs/installation.md">安装试用</a> ·
+  <a href="#现在可以做什么">现有能力</a> ·
+  <a href="#当前开发进度">开发进度</a> ·
+  <a href="./CONTRIBUTING.md">贡献</a>
+</p>
 
 WhalePod 是面向 **3–10 人小团队**的 DeepSeek Harness（DSH）多人协作发行版，让成员与各自的 Agent 围绕共同项目工作，在个人可控的环境中执行，把进展、依据和成果带回团队。
 
