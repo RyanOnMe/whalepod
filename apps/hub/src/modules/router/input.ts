@@ -2,6 +2,7 @@ import { and, asc, desc, eq } from 'drizzle-orm'
 import {
   getCoordinatorState,
   getCoordinatorStateForUpdate,
+  getOpenWorkWait,
   getRouterConfig,
   getTaskForUpdate,
   getWorkByKey,
@@ -29,7 +30,7 @@ import { canonicalJson, sha256Hex } from '../coordination/digest.js'
 import { loadWorkSource, effectiveMandate } from '../work/admission.js'
 import { ApiError } from '../shared/http-error.js'
 
-export const ROUTER_RULES_VERSION = 'rd03r1.v1'
+export const ROUTER_RULES_VERSION = 'rd03r1.v2'
 export const ROUTER_PROMPT_VERSION = 'router.v1'
 export interface RouterTrigger {
   sourceType: WorkSourceType
@@ -290,6 +291,9 @@ export async function loadRouterInput(
     )
   }
   // The bounded manifest explicitly identifies omissions; private candidates are never enumerated.
+  // waitEvaluationId 让「工作正在等哪一代 Router 决定」进入 evaluationDigest：
+  // 新 wait 出现后，更早的已接受结果在重建时不再匹配，不能在旧结论上关闭新 wait。
+  const openWait = await getOpenWorkWait(tx, work.id)
   add(
     'work',
     work.workKey,
@@ -302,6 +306,7 @@ export async function loadRouterInput(
       approvalPolicy: task.approvalPolicy,
       workState: work.state,
       resumeMode: work.resumeMode,
+      waitEvaluationId: openWait?.evaluationId ?? null,
       mandate: {
         id: active.id,
         version: active.version,

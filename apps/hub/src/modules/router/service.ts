@@ -70,6 +70,7 @@ import {
   ROUTER_RULES_VERSION,
   type RouterTrigger,
 } from './input.js'
+import { runRouterSchedule } from './schedule.js'
 
 export interface RouterDeps {
   database: Database
@@ -585,17 +586,41 @@ async function settleRouterEvaluation(deps: RouterDeps, row: CoordinationEvaluat
  */
 async function applyAcceptedResult(deps: RouterDeps, evaluationId: string): Promise<void> {
   const applied = await applyRouterEvaluation(deps, evaluationId)
+  // ADR-0028 §17.1（RD-03d3）：应用结果/跳过原因进入 hub.dispatch 观测；只记
+  // 不透明 id、决定类型与稳定 reason，不记来源正文或模型摘要。
+  deps.log?.({
+    component: 'hub.dispatch',
+    action: 'work.decision.applied',
+    evaluationId,
+    workKey: applied.workKey,
+    decision: applied.decision,
+    status: applied.status,
+    ...(applied.reason === undefined || applied.reason === null ? {} : { reason: applied.reason }),
+    ...(applied.intentId === null ? {} : { intentId: applied.intentId }),
+    ...(applied.questionId === null ? {} : { questionId: applied.questionId }),
+    ...(applied.waitId === null ? {} : { waitId: applied.waitId }),
+  })
   if (applied.status !== 'applied' || applied.intentId === null || applied.decision !== 'dispatch')
     return
   const evaluation = await getEvaluation(deps.database.db, evaluationId)
   if (evaluation?.principalUserId === null || evaluation?.principalUserId === undefined) return
-  await autoDispatchAppliedIntent(
+  const runId = await autoDispatchAppliedIntent(
     deps,
     deps.onAutoDispatch,
     applied.workKey,
     applied.intentId,
     evaluation.principalUserId,
   )
+  if (runId !== null) {
+    deps.log?.({
+      component: 'hub.dispatch',
+      action: 'work.dispatch.auto',
+      evaluationId,
+      workKey: applied.workKey,
+      intentId: applied.intentId,
+      runId,
+    })
+  }
 }
 
 async function dispatchQueued(
@@ -823,6 +848,18 @@ export async function reevaluateRouterForActor(
 
 /** Durable evaluation rows drive redelivery; the Node journal prevents a second model launch. */
 export async function runRouterTick(deps: RouterDeps) {
+  // ADR-0028 §17.1/§17.3（RD-03d3）：Run 终态与 wait 到期的自动复核。调度只产生
+  // 可去重的评估代次；是否派工仍由模型提案与 Hub 两阶段裁决决定。
+  await runRouterSchedule(
+    {
+      database: deps.database,
+      ...(deps.now === undefined ? {} : { now: deps.now }),
+      ...(deps.log === undefined ? {} : { log: deps.log }),
+    },
+    {
+      enqueue: (tx, workKey, trigger) => enqueueInTransaction(tx, deps, workKey, trigger),
+    },
+  )
   const calls = await deps.database.db
     .select({ call: schema.workEntryRouterCalls })
     .from(schema.workEntryRouterCalls)

@@ -722,10 +722,75 @@ export const workWaits = pgTable(
   ],
 )
 
+/**
+ * ADR-0028 §17.1/§17.3（RD-03d3）：机器 Run 终态的边界复核标记。
+ *
+ * 终态事务只落 `pending`，不调用模型；Router tick 在受控后续事务中复核当前
+ * work/Task/Mandate/活跃 Run 后，用 `run-terminal:<runId>` 触发一次评估。
+ * `run_id` 唯一让重复终态收敛与重启恢复天然幂等；`evaluation_id` 只记本次
+ * 触发生成的评估，不保存任何来源正文。
+ */
+export const workRunBoundaries = pgTable(
+  'work_run_boundary',
+  {
+    id: uuid('id').primaryKey(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    workId: uuid('work_id')
+      .notNull()
+      .references(() => works.id),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.id),
+    workKey: varchar('work_key', { length: 64 }).notNull(),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => runs.id),
+    principalUserId: uuid('principal_user_id')
+      .notNull()
+      .references(() => userAccounts.id),
+    status: varchar('status', { length: 16 })
+      .$type<'pending' | 'enqueued' | 'skipped'>()
+      .notNull()
+      .default('pending'),
+    triggerKey: varchar('trigger_key', { length: 200 }).notNull(),
+    // coordination_evaluation 在本 schema 里没有 FK（coordination.ts 反向引用 work），
+    // 与 router_application.evaluation_id 同型；DB 迁移仍保留外键。
+    evaluationId: uuid('evaluation_id'),
+    reason: varchar('reason', { length: 64 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check('work_run_boundary_status', sql`${table.status} in ('pending','enqueued','skipped')`),
+    check(
+      'work_run_boundary_work_key_format',
+      sql`${table.workKey} ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`,
+    ),
+    check(
+      'work_run_boundary_trigger_length',
+      sql`length(btrim(${table.triggerKey})) between 1 and 200`,
+    ),
+    check(
+      'work_run_boundary_reason',
+      sql`${table.reason} is null or (${table.reason} ~ '^[a-z][a-z0-9_]*$' and length(${table.reason}) <= 64)`,
+    ),
+    check(
+      'work_run_boundary_status_fields',
+      sql`(${table.status} = 'pending' and ${table.evaluationId} is null and ${table.reason} is null) or (${table.status} = 'enqueued' and ${table.evaluationId} is not null and ${table.reason} is null) or (${table.status} = 'skipped' and ${table.evaluationId} is null and ${table.reason} is not null)`,
+    ),
+    uniqueIndex('work_run_boundary_run_unique').on(table.runId),
+    index('work_run_boundary_status_created_idx').on(table.status, table.createdAt, table.id),
+  ],
+)
+
 export type RouterApplicationRow = typeof routerApplications.$inferSelect
 export type NewRouterApplicationRow = typeof routerApplications.$inferInsert
 export type WorkWaitRow = typeof workWaits.$inferSelect
 export type NewWorkWaitRow = typeof workWaits.$inferInsert
+export type WorkRunBoundaryRow = typeof workRunBoundaries.$inferSelect
+export type NewWorkRunBoundaryRow = typeof workRunBoundaries.$inferInsert
 
 export interface WorkQuestionOption {
   readonly id: string

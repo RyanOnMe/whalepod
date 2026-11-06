@@ -598,6 +598,11 @@ export const HARNESS_SRC_PATH_ALLOWLIST: readonly string[] = [
   'scripts/mutate-router-evaluation.ts:apps/hub/src/modules/work/commands.ts',
   'scripts/mutate-router-evaluation.ts:apps/hub/src/modules/work/queries.ts',
   'scripts/mutate-router-evaluation.ts:packages/db/src/repositories/work.ts',
+  // #518 Run 终态/wait 到期调度的单点变异编辑目标；同样只做源码替换。
+  'scripts/mutate-router-evaluation.ts:apps/hub/src/modules/router/schedule.ts',
+  'scripts/mutate-router-evaluation.ts:packages/db/src/repositories/router-application.ts',
+  'scripts/mutate-router-evaluation.ts:apps/hub/src/modules/run/run-status.ts',
+  'scripts/mutate-router-evaluation.ts:apps/hub/src/modules/router/input.ts',
   // #281 起 e2e-serve 的 Hub 装配唯一走包解析 dist 产物，源码路径例外已摘除。
 ]
 

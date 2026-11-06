@@ -28,6 +28,7 @@ import {
   getCurrentWorkByTask,
   getProfileRevision,
   getWorkByIdForUpdate,
+  insertWorkRunBoundary,
   schema,
   setRunStatus,
   settleExecutorUsage,
@@ -35,6 +36,7 @@ import {
   updateWork,
 } from '@whalepod/db'
 import type { RunStatusPatch } from '@whalepod/db'
+import { uuidv7 } from '../shared/uuid.js'
 import { dispatchPendingInstructions } from './followup.js'
 import { projectObservation } from '../context/projector.js'
 import { toRecordedEntry } from '../context/observer.js'
@@ -130,6 +132,28 @@ export async function applyRunStatus(
         resumeMode: null,
         resumeCondition: null,
         updatedAt: row.finishedAt ?? new Date(),
+      })
+    }
+    // ADR-0028 §17.1/§17.3（RD-03d3）：机器 Run 终态落一条边界复核标记，由 Router
+    // tick 在受控后续事务里复核 work/Task/Mandate/活跃 Run 后再决定是否重评。
+    // 这里只写标记，不调用模型、不建意图/Run，也不改 Run 的输入快照。同一 Run 的
+    // 重复终态收敛由 run_id 唯一索引收敛。
+    if (work !== undefined && row.origin === 'mandate' && row.workKey !== null) {
+      const at = row.finishedAt ?? new Date()
+      await insertWorkRunBoundary(tx, {
+        id: uuidv7(at.getTime()),
+        projectId: work.projectId,
+        workId: work.id,
+        taskId: work.taskId,
+        workKey: work.workKey,
+        runId: row.id,
+        principalUserId: row.ownerUserId,
+        status: 'pending',
+        triggerKey: `run-terminal:${row.id}`,
+        evaluationId: null,
+        reason: null,
+        createdAt: at,
+        updatedAt: at,
       })
     }
     // ADR-0025 §1：Run 终态是确定性业务 Observation，与状态迁移同事务；
