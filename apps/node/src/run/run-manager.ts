@@ -271,7 +271,8 @@ export class RunManager {
   >()
   /**
    * 正在处理、尚未 spawn 的 run.start：启动对账绝不能把它们当孤儿清理。
-   * 用计数而不是 Set：保护是「是否有在途 handler」的事实，不依赖 handler 结束顺序。
+   * run.start 已按 runId 串行化，实际只会是 0/1；保留计数作为防御性冗余，
+   * 保护判断不依赖 handler 结束顺序。
    */
   private readonly startingRuns = new Map<string, number>()
   /**
@@ -408,9 +409,15 @@ export class RunManager {
 
   private async handleRunStart(payload: RunStartPayload): Promise<void> {
     // 等待同 runId 的在途启动；尾指针只在仍为队尾时删除，后来者不会被漏掉。
+    // 队列不依赖 processRunStart 永不 reject：tail 同时吞掉两种落定，等待者继续。
     for (;;) {
       const inFlight = this.runStartOps.get(payload.runId)
       if (inFlight !== undefined) {
+        this.log('info', 'run.start waiting for in-flight start', {
+          component: 'node.run_manager',
+          runId: payload.runId,
+          commandId: payload.commandId,
+        })
         await inFlight
         continue
       }
@@ -429,6 +436,27 @@ export class RunManager {
     }
   }
 
+  /**
+   * 首次处理结果与 ack 同一时刻落库；落库失败只留痕，不阻断 ack（#181 N1 同口径）。
+   * 重复投递靠 {@link CommandStore.outcomeOf} 回放这一结果。
+   */
+  private persistRunStartOutcome(
+    commandId: string,
+    outcome: 'accepted' | 'rejected',
+    error?: { code: string; message: string },
+  ): void {
+    try {
+      this.deps.commandStore.recordOutcome(commandId, outcome, error)
+    } catch (cause) {
+      this.log('error', 'run.start outcome persist failed; ack still sent', {
+        component: 'node.run_manager',
+        commandId,
+        outcome,
+        error: cause instanceof Error ? cause.message : String(cause),
+      })
+    }
+  }
+
   private async processRunStart(payload: RunStartPayload): Promise<void> {
     const { commandId, runId } = payload
     const outcome = this.deps.commandStore.record({
@@ -438,6 +466,24 @@ export class RunManager {
       payload,
     })
     if (outcome === 'duplicate') {
+      const previous = this.deps.commandStore.outcomeOf(commandId)
+      if (previous?.outcome === 'rejected') {
+        // #501：首次已明确拒绝且从未 spawn，回放同一个拒绝码。绝不能把等待中的
+        // 后来者回成 accepted=true 再把从未启动的 Run 上报 RUNTIME_LOST——那会让
+        // Hub 的 dispatching 与真实失败原因（如 ARTIFACT_HASH_MISMATCH）错位。
+        this.log('info', 'run.start duplicate replayed rejection', {
+          component: 'node.run_manager',
+          runId,
+          commandId,
+          replayedCode: previous.error?.code ?? null,
+        })
+        this.ack(
+          commandId,
+          false,
+          previous.error ?? { code: 'INTERNAL_ERROR', message: 'replayed rejection' },
+        )
+        return
+      }
       if (this.deps.supervisor.isActive(runId)) {
         // R7：Hub 重发（ack 丢失）→ 按 commandId 回旧 ack，绝不起第二 Runtime。
         this.ack(commandId, true)
@@ -446,7 +492,10 @@ export class RunManager {
       if (this.deps.commandStore.isAcked(commandId)) {
         // P1-16（G7-03/R9）：命令已完整处理过一次且 Runtime 已不在——绝不自动
         // 重启、不重放工具。回放旧 ack + 上报 lost(RUNTIME_LOST)，等显式重跑。
-        this.log('warn', 'duplicate run.start for finished runtime; reporting lost', { runId })
+        this.log('warn', 'duplicate run.start for finished runtime; reporting lost', {
+          component: 'node.run_manager',
+          runId,
+        })
         this.ack(commandId, true)
         this.reportLostSnapshot(
           runId,
@@ -555,7 +604,7 @@ export class RunManager {
       this.liveSeq.set(runId, 0)
       this.workspacePaths.set(runId, workspacePath)
       this.runFacts.set(runId, payload)
-      this.deps.commandStore.markAcked(commandId)
+      this.persistRunStartOutcome(commandId, 'accepted')
       this.ack(commandId, true)
 
       // spawn 成功即下发 initialize + prompt（02 Task 13 的启动次序）。
@@ -646,7 +695,7 @@ export class RunManager {
                 ? (error as unknown as { code: string }).code // P1-15：输入准备失败码（如 ARTIFACT_HASH_MISMATCH）透传
                 : ('INTERNAL_ERROR' as const)
       const message = error instanceof Error ? error.message : String(error)
-      this.deps.commandStore.markAcked(commandId)
+      this.persistRunStartOutcome(commandId, 'rejected', { code, message })
       this.ack(commandId, false, { code, message })
       // run.start 拒绝路径不进 finalizeRun（Run 从未在管）：输入准备可能已下载
       // 副本（spawn 前失败），同样要清理（#62：不留半成品目录）。Runtime 未启动时
