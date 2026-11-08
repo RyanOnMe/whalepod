@@ -117,6 +117,7 @@ function runStartFrame(
 
 interface FakeRuntime {
   readonly runId: string
+  readonly pid: number
   readonly stdin: RuntimeCommand[]
   readonly emitStdout: (line: string) => void
   readonly emitExit: (code: number | null, signal: string | null) => void
@@ -129,8 +130,10 @@ function makeFakeDriver(): { driver: RuntimeDriver; runtimes: FakeRuntime[] } {
   const runtimes: FakeRuntime[] = []
   const driver: RuntimeDriver = {
     async spawn(spec, ctx): Promise<RuntimeHandle> {
+      const pid = 2_000_000 + runtimes.length + 1 // 超出系统 pid 范围：ps 探针必查无此进程
       const runtime: FakeRuntime = {
         runId: spec.runId,
+        pid,
         stdin: [],
         terminateCount: 0,
         forceKillCount: 0,
@@ -139,7 +142,7 @@ function makeFakeDriver(): { driver: RuntimeDriver; runtimes: FakeRuntime[] } {
       }
       runtimes.push(runtime)
       return {
-        pid: 2_000_000 + runtimes.length, // 超出系统 pid 范围：ps 探针必查无此进程
+        pid,
         exitPromise: new Promise(() => {}),
         send: (command) => {
           runtime.stdin.push(command)
@@ -471,6 +474,151 @@ describe('run.start 处理链', () => {
     const acks = h.sentFrames().filter((f) => f.type === 'command.ack')
     expect(acks).toHaveLength(2)
     expect(acks[1]!.payload).toMatchObject({ commandId: COMMAND_ID, accepted: true })
+  })
+
+  it('#501：同一 commandId 并发重投 → 等前一条完成，只 spawn 一个且不清理在途输入', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let prepareCalls = 0
+    const cleaned: string[] = []
+    const h = await makeHarness({
+      managerDeps: {
+        prepareArtifactInputs: async () => {
+          prepareCalls += 1
+          await gate
+          return { dir: join(root, 'artifact-inputs'), entries: [] }
+        },
+        cleanupArtifactInputs: async (runId: string) => {
+          cleaned.push(runId)
+        },
+      },
+    })
+    const first = h.manager.handleFrame(runStartFrame(h.workspaceId))
+    const second = h.manager.handleFrame(runStartFrame(h.workspaceId))
+    // 首条停在 prepare 里；修复前第二条会在这里并发进入崩溃恢复分支（负控红在
+    // prepareCalls=2）。
+    await waitForValue(() => (prepareCalls > 0 ? true : undefined), '首条 run.start 进入 prepare')
+    release()
+    await Promise.all([first, second])
+
+    // 真实缺陷路径里第二个进程会在主键冲突后退出；fake driver 自身不退出，这里
+    // 显式复刻这次退出——它绝不能按 runId 删掉存活 Runtime 的行/句柄。
+    for (const extra of h.runtimes.slice(1)) extra.emitExit(1, null)
+
+    // 后来者等待前一条完成后再按 isActive 早退：不重复 prepare/spawn，也不误清输入。
+    expect(prepareCalls).toBe(1)
+    expect(cleaned).toEqual([])
+    expect(h.runtimes).toHaveLength(1)
+    expect(h.supervisor.isActive(RUN_ID)).toBe(true)
+    const db = openStateDatabase(join(root, 'supervisor.db'))
+    const activeRows = db
+      .prepare('select run_id, pid from active_runtime where run_id = ?')
+      .all(RUN_ID) as Array<{ run_id: string; pid: number }>
+    db.close()
+    expect(activeRows).toEqual([{ run_id: RUN_ID, pid: h.runtimes[0]!.pid }])
+    expect(h.commandStore.isAcked(COMMAND_ID)).toBe(true)
+    expect(h.commandStore.pending()).toHaveLength(0)
+    const acks = h.sentFrames().filter((f) => f.type === 'command.ack')
+    expect(acks).toHaveLength(2)
+    expect(acks.every((ack) => ack.payload['accepted'] === true)).toBe(true)
+    expect(h.sentFrames().filter((f) => f.type === 'run.snapshot')).toHaveLength(0)
+  })
+
+  it('#501：首条启动被拒后，等待中的重投回放同一拒绝，不误标 lost', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let prepareCalls = 0
+    const cleaned: string[] = []
+    const h = await makeHarness({
+      managerDeps: {
+        prepareArtifactInputs: async () => {
+          prepareCalls += 1
+          await gate
+          const error = new Error('artifact digest mismatch')
+          ;(error as Error & { code?: string }).code = 'ARTIFACT_HASH_MISMATCH'
+          throw error
+        },
+        cleanupArtifactInputs: async (runId: string) => {
+          cleaned.push(runId)
+        },
+      },
+    })
+    const first = h.manager.handleFrame(runStartFrame(h.workspaceId))
+    const second = h.manager.handleFrame(runStartFrame(h.workspaceId))
+    await waitForValue(() => (prepareCalls > 0 ? true : undefined), '首条 run.start 进入 prepare')
+    release()
+    await Promise.all([first, second])
+
+    expect(prepareCalls).toBe(1)
+    expect(h.runtimes).toHaveLength(0)
+    const acks = h.sentFrames().filter((f) => f.type === 'command.ack')
+    expect(acks).toHaveLength(2)
+    for (const ack of acks) {
+      expect(ack.payload['accepted']).toBe(false)
+      expect((ack.payload['error'] as { code: string }).code).toBe('ARTIFACT_HASH_MISMATCH')
+    }
+    // 从未 spawn 的 Run 不得被标成 RUNTIME_LOST；重投也不得再触发一次清理。
+    expect(h.sentFrames().filter((f) => f.type === 'run.snapshot')).toHaveLength(0)
+    expect(cleaned).toEqual([RUN_ID])
+  })
+
+  it('#501：串行化按 runId 隔离，不同 Run 的启动不互相阻塞', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let firstGated = false
+    const h = await makeHarness({
+      managerDeps: {
+        prepareArtifactInputs: async (runId: string) => {
+          if (runId === RUN_ID) {
+            firstGated = true
+            await gate
+          }
+          return { dir: join(root, 'artifact-inputs'), entries: [] }
+        },
+      },
+    })
+    const first = h.manager.handleFrame(runStartFrame(h.workspaceId))
+    await waitForValue(() => (firstGated ? true : undefined), '首个 Run 进入 prepare')
+
+    const OTHER_RUN_ID = '99999999-9999-4999-8999-999999999999'
+    await h.manager.handleFrame(
+      runStartFrame(h.workspaceId, {
+        commandId: '99999999-9999-4999-8999-999999999998',
+        runId: OTHER_RUN_ID,
+      }),
+    )
+    expect(h.runtimes).toHaveLength(1)
+    expect(h.runtimes[0]!.runId).toBe(OTHER_RUN_ID)
+
+    release()
+    await first
+    expect(h.runtimes).toHaveLength(2)
+  })
+
+  it('#501：首次结果落库失败 → 仍照发 ack 并留 error 日志，启动不被阻断', async () => {
+    const logs: Array<{ level: string; msg: string; fields?: Record<string, unknown> }> = []
+    const h = await makeHarness({ logs })
+    // 本地 spool 写失败（磁盘满 / IO 错 / WAL 锁）：处理结果已发生，ack 必须照发；
+    // 代价是同一 commandId 若再重投会按「未处理」重新走一次（#181 N1 同口径）。
+    h.commandStore.recordOutcome = () => {
+      throw new Error('disk full')
+    }
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    expect(h.runtimes).toHaveLength(1)
+    const ack = h.sentFrames().findLast((f) => f.type === 'command.ack')
+    expect(ack?.payload['accepted']).toBe(true)
+    expect(
+      logs.some(
+        (entry) =>
+          entry.level === 'error' && entry.msg.includes('run.start outcome persist failed'),
+      ),
+    ).toBe(true)
   })
 })
 

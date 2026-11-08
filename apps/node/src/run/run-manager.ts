@@ -271,10 +271,18 @@ export class RunManager {
   >()
   /**
    * 正在处理、尚未 spawn 的 run.start：启动对账绝不能把它们当孤儿清理。
-   * 用计数而不是 Set：同一 run.start 可能被 Hub 重发并并发进入处理链，
-   * 先结束的那条不能把仍在 prepare 的另一条从保护集合里删掉。
+   * run.start 已按 runId 串行化，实际只会是 0/1；保留计数作为防御性冗余，
+   * 保护判断不依赖 handler 结束顺序。
    */
   private readonly startingRuns = new Map<string, number>()
+  /**
+   * #501：同一 runId 的 run.start 串行化。Hub 在首个 ack 前按同一 commandId 重投
+   * 时，两条 handler 会同时看到 duplicate + 未 active + 未 acked，各自走崩溃恢复
+   * 分支 prepare/spawn；第二个 Runtime 在 `active_runtime` 主键冲突后退出，又会按
+   * runId 删掉第一个进程的行并上报退出。后来者必须等前一条完整结束，再回放首次
+   * 结果（accepted / rejected），不并发 prepare/spawn。
+   */
+  private readonly runStartOps = new Map<string, Promise<void>>()
   /** 本连接内已发送、尚未 ack 的回执；重连时清空以便全量重放。 */
   private readonly sentContextReceipts = new Set<string>()
   private readonly contextStateStore: ContextStateStore
@@ -400,6 +408,56 @@ export class RunManager {
   // ---------- run.start ----------
 
   private async handleRunStart(payload: RunStartPayload): Promise<void> {
+    // 等待同 runId 的在途启动；尾指针只在仍为队尾时删除，后来者不会被漏掉。
+    // 队列不依赖 processRunStart 永不 reject：tail 同时吞掉两种落定，等待者继续。
+    for (;;) {
+      const inFlight = this.runStartOps.get(payload.runId)
+      if (inFlight !== undefined) {
+        this.log('info', 'run.start waiting for in-flight start', {
+          component: 'node.run_manager',
+          runId: payload.runId,
+          commandId: payload.commandId,
+        })
+        await inFlight
+        continue
+      }
+      const current = this.processRunStart(payload)
+      const tail = current.then(
+        () => undefined,
+        () => undefined,
+      )
+      this.runStartOps.set(payload.runId, tail)
+      try {
+        await current
+      } finally {
+        if (this.runStartOps.get(payload.runId) === tail) this.runStartOps.delete(payload.runId)
+      }
+      return
+    }
+  }
+
+  /**
+   * 首次处理结果与 ack 同一时刻落库；落库失败只留痕，不阻断 ack（#181 N1 同口径）。
+   * 重复投递靠 {@link CommandStore.outcomeOf} 回放这一结果。
+   */
+  private persistRunStartOutcome(
+    commandId: string,
+    outcome: 'accepted' | 'rejected',
+    error?: { code: string; message: string },
+  ): void {
+    try {
+      this.deps.commandStore.recordOutcome(commandId, outcome, error)
+    } catch (cause) {
+      this.log('error', 'run.start outcome persist failed; ack still sent', {
+        component: 'node.run_manager',
+        commandId,
+        outcome,
+        error: cause instanceof Error ? cause.message : String(cause),
+      })
+    }
+  }
+
+  private async processRunStart(payload: RunStartPayload): Promise<void> {
     const { commandId, runId } = payload
     const outcome = this.deps.commandStore.record({
       commandId,
@@ -408,6 +466,25 @@ export class RunManager {
       payload,
     })
     if (outcome === 'duplicate') {
+      const previous = this.deps.commandStore.outcomeOf(commandId)
+      if (previous?.outcome === 'rejected') {
+        // #501：首次处理结果就是拒绝时，回放同一个拒绝码（不保证首次一定未 spawn：
+        // spawn 后下发失败也归入拒绝）。绝不能把等待中的后来者回成 accepted=true 再
+        // 把从未启动的 Run 上报 RUNTIME_LOST——那会让 Hub 的 dispatching 与真实
+        // 失败原因（如 ARTIFACT_HASH_MISMATCH）错位。
+        this.log('info', 'run.start duplicate replayed rejection', {
+          component: 'node.run_manager',
+          runId,
+          commandId,
+          replayedCode: previous.error?.code ?? null,
+        })
+        this.ack(
+          commandId,
+          false,
+          previous.error ?? { code: 'INTERNAL_ERROR', message: 'replayed rejection' },
+        )
+        return
+      }
       if (this.deps.supervisor.isActive(runId)) {
         // R7：Hub 重发（ack 丢失）→ 按 commandId 回旧 ack，绝不起第二 Runtime。
         this.ack(commandId, true)
@@ -416,7 +493,12 @@ export class RunManager {
       if (this.deps.commandStore.isAcked(commandId)) {
         // P1-16（G7-03/R9）：命令已完整处理过一次且 Runtime 已不在——绝不自动
         // 重启、不重放工具。回放旧 ack + 上报 lost(RUNTIME_LOST)，等显式重跑。
-        this.log('warn', 'duplicate run.start for finished runtime; reporting lost', { runId })
+        this.log('warn', 'duplicate run.start for finished runtime; reporting lost', {
+          component: 'node.run_manager',
+          runId,
+          // null = 升级前的旧 spool 行（只 markAcked、无 outcome），只能按 lost 兜底。
+          firstOutcome: previous?.outcome ?? null,
+        })
         this.ack(commandId, true)
         this.reportLostSnapshot(
           runId,
@@ -525,7 +607,7 @@ export class RunManager {
       this.liveSeq.set(runId, 0)
       this.workspacePaths.set(runId, workspacePath)
       this.runFacts.set(runId, payload)
-      this.deps.commandStore.markAcked(commandId)
+      this.persistRunStartOutcome(commandId, 'accepted')
       this.ack(commandId, true)
 
       // spawn 成功即下发 initialize + prompt（02 Task 13 的启动次序）。
@@ -616,7 +698,7 @@ export class RunManager {
                 ? (error as unknown as { code: string }).code // P1-15：输入准备失败码（如 ARTIFACT_HASH_MISMATCH）透传
                 : ('INTERNAL_ERROR' as const)
       const message = error instanceof Error ? error.message : String(error)
-      this.deps.commandStore.markAcked(commandId)
+      this.persistRunStartOutcome(commandId, 'rejected', { code, message })
       this.ack(commandId, false, { code, message })
       // run.start 拒绝路径不进 finalizeRun（Run 从未在管）：输入准备可能已下载
       // 副本（spawn 前失败），同样要清理（#62：不留半成品目录）。Runtime 未启动时
