@@ -279,8 +279,8 @@ export class RunManager {
    * #501：同一 runId 的 run.start 串行化。Hub 在首个 ack 前按同一 commandId 重投
    * 时，两条 handler 会同时看到 duplicate + 未 active + 未 acked，各自走崩溃恢复
    * 分支 prepare/spawn；第二个 Runtime 在 `active_runtime` 主键冲突后退出，又会按
-   * runId 删掉第一个进程的行并上报退出。后来者必须等前一条完整结束，再按最新
-   * isActive/isAcked 走既有早退路径。
+   * runId 删掉第一个进程的行并上报退出。后来者必须等前一条完整结束，再回放首次
+   * 结果（accepted / rejected），不并发 prepare/spawn。
    */
   private readonly runStartOps = new Map<string, Promise<void>>()
   /** 本连接内已发送、尚未 ack 的回执；重连时清空以便全量重放。 */
@@ -468,9 +468,10 @@ export class RunManager {
     if (outcome === 'duplicate') {
       const previous = this.deps.commandStore.outcomeOf(commandId)
       if (previous?.outcome === 'rejected') {
-        // #501：首次已明确拒绝且从未 spawn，回放同一个拒绝码。绝不能把等待中的
-        // 后来者回成 accepted=true 再把从未启动的 Run 上报 RUNTIME_LOST——那会让
-        // Hub 的 dispatching 与真实失败原因（如 ARTIFACT_HASH_MISMATCH）错位。
+        // #501：首次处理结果就是拒绝时，回放同一个拒绝码（不保证首次一定未 spawn：
+        // spawn 后下发失败也归入拒绝）。绝不能把等待中的后来者回成 accepted=true 再
+        // 把从未启动的 Run 上报 RUNTIME_LOST——那会让 Hub 的 dispatching 与真实
+        // 失败原因（如 ARTIFACT_HASH_MISMATCH）错位。
         this.log('info', 'run.start duplicate replayed rejection', {
           component: 'node.run_manager',
           runId,
@@ -495,6 +496,8 @@ export class RunManager {
         this.log('warn', 'duplicate run.start for finished runtime; reporting lost', {
           component: 'node.run_manager',
           runId,
+          // null = 升级前的旧 spool 行（只 markAcked、无 outcome），只能按 lost 兜底。
+          firstOutcome: previous?.outcome ?? null,
         })
         this.ack(commandId, true)
         this.reportLostSnapshot(

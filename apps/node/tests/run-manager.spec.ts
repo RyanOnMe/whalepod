@@ -600,6 +600,26 @@ describe('run.start 处理链', () => {
     await first
     expect(h.runtimes).toHaveLength(2)
   })
+
+  it('#501：首次结果落库失败 → 仍照发 ack 并留 error 日志，启动不被阻断', async () => {
+    const logs: Array<{ level: string; msg: string; fields?: Record<string, unknown> }> = []
+    const h = await makeHarness({ logs })
+    // 本地 spool 写失败（磁盘满 / IO 错 / WAL 锁）：处理结果已发生，ack 必须照发；
+    // 代价是同一 commandId 若再重投会按「未处理」重新走一次（#181 N1 同口径）。
+    h.commandStore.recordOutcome = () => {
+      throw new Error('disk full')
+    }
+    await h.manager.handleFrame(runStartFrame(h.workspaceId))
+    expect(h.runtimes).toHaveLength(1)
+    const ack = h.sentFrames().findLast((f) => f.type === 'command.ack')
+    expect(ack?.payload['accepted']).toBe(true)
+    expect(
+      logs.some(
+        (entry) =>
+          entry.level === 'error' && entry.msg.includes('run.start outcome persist failed'),
+      ),
+    ).toBe(true)
+  })
 })
 
 describe('stdout → 投影 → spool → 上行', () => {
