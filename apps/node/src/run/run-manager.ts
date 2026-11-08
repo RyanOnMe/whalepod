@@ -271,10 +271,17 @@ export class RunManager {
   >()
   /**
    * 正在处理、尚未 spawn 的 run.start：启动对账绝不能把它们当孤儿清理。
-   * 用计数而不是 Set：同一 run.start 可能被 Hub 重发并并发进入处理链，
-   * 先结束的那条不能把仍在 prepare 的另一条从保护集合里删掉。
+   * 用计数而不是 Set：保护是「是否有在途 handler」的事实，不依赖 handler 结束顺序。
    */
   private readonly startingRuns = new Map<string, number>()
+  /**
+   * #501：同一 runId 的 run.start 串行化。Hub 在首个 ack 前按同一 commandId 重投
+   * 时，两条 handler 会同时看到 duplicate + 未 active + 未 acked，各自走崩溃恢复
+   * 分支 prepare/spawn；第二个 Runtime 在 `active_runtime` 主键冲突后退出，又会按
+   * runId 删掉第一个进程的行并上报退出。后来者必须等前一条完整结束，再按最新
+   * isActive/isAcked 走既有早退路径。
+   */
+  private readonly runStartOps = new Map<string, Promise<void>>()
   /** 本连接内已发送、尚未 ack 的回执；重连时清空以便全量重放。 */
   private readonly sentContextReceipts = new Set<string>()
   private readonly contextStateStore: ContextStateStore
@@ -400,6 +407,29 @@ export class RunManager {
   // ---------- run.start ----------
 
   private async handleRunStart(payload: RunStartPayload): Promise<void> {
+    // 等待同 runId 的在途启动；尾指针只在仍为队尾时删除，后来者不会被漏掉。
+    for (;;) {
+      const inFlight = this.runStartOps.get(payload.runId)
+      if (inFlight !== undefined) {
+        await inFlight
+        continue
+      }
+      const current = this.processRunStart(payload)
+      const tail = current.then(
+        () => undefined,
+        () => undefined,
+      )
+      this.runStartOps.set(payload.runId, tail)
+      try {
+        await current
+      } finally {
+        if (this.runStartOps.get(payload.runId) === tail) this.runStartOps.delete(payload.runId)
+      }
+      return
+    }
+  }
+
+  private async processRunStart(payload: RunStartPayload): Promise<void> {
     const { commandId, runId } = payload
     const outcome = this.deps.commandStore.record({
       commandId,

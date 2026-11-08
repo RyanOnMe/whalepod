@@ -472,6 +472,50 @@ describe('run.start 处理链', () => {
     expect(acks).toHaveLength(2)
     expect(acks[1]!.payload).toMatchObject({ commandId: COMMAND_ID, accepted: true })
   })
+
+  it('#501：同一 commandId 并发重投 → 等前一条完成，只 spawn 一个且不清理在途输入', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let prepareCalls = 0
+    const cleaned: string[] = []
+    const h = await makeHarness({
+      managerDeps: {
+        prepareArtifactInputs: async () => {
+          prepareCalls += 1
+          await gate
+          return { dir: join(root, 'artifact-inputs'), entries: [] }
+        },
+        cleanupArtifactInputs: async (runId: string) => {
+          cleaned.push(runId)
+        },
+      },
+    })
+    const first = h.manager.handleFrame(runStartFrame(h.workspaceId))
+    const second = h.manager.handleFrame(runStartFrame(h.workspaceId))
+    // 首条停在 prepare 里，此时 duplicate 分支的 isActive/isAcked 都还没翻转。
+    await waitForValue(() => (prepareCalls > 0 ? true : undefined), '首条 run.start 进入 prepare')
+    release()
+    await Promise.all([first, second])
+
+    // 后来者等待前一条完成后再按 isActive 早退：不重复 prepare/spawn，也不误清输入。
+    expect(prepareCalls).toBe(1)
+    expect(cleaned).toEqual([])
+    expect(h.runtimes).toHaveLength(1)
+    expect(h.supervisor.isActive(RUN_ID)).toBe(true)
+    const db = openStateDatabase(join(root, 'supervisor.db'))
+    const activeRows = db
+      .prepare('select count(*) as n from active_runtime where run_id = ?')
+      .get(RUN_ID) as { n: number }
+    db.close()
+    expect(activeRows.n).toBe(1)
+    const acks = h.sentFrames().filter((f) => f.type === 'command.ack')
+    expect(acks).toHaveLength(2)
+    expect(acks.every((ack) => ack.payload['accepted'] === true)).toBe(true)
+    // 存活 Runtime 不被误判退出（bug 路径会因第二进程退出上报 lost 快照）。
+    expect(h.sentFrames().filter((f) => f.type === 'run.snapshot')).toHaveLength(0)
+  })
 })
 
 describe('stdout → 投影 → spool → 上行', () => {
