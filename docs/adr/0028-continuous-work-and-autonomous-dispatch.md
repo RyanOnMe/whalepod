@@ -129,7 +129,7 @@ PC-03a/04a/05a 已经让平台内事件形成事实账本、确定性协调与�
 - **固定草稿工具面（restricted machine profile）**：自主 Run 只装配**按工具名枚举的白名单**，不是按能力描述推断；至少排除 ADR-0026 §4 已识别的全部扩展能力，以及 `tool-bash`/任意 Shell、Code Mode `run_code`、`workflow`、`subagent*`、`job*`、`skill`、浏览器/网络访问、消息发送、正式发布/覆盖正式材料、业务写入与审批代决工具。允许面仅限读取授权资料、写入指定草稿区域、本 ADR 允许的分析/计算。`toolAllowlist` 只能从这个固定面内选择，Mandate 不能把面外工具加进来；面外工具不是「走审批」，而是根本不可用。RD-03 必须逐名列出工具面并做正控/负控；面中若出现任意未枚举工具，判红。落入面内但不在 allowlist 的步骤走现有审批。
 - 授权在**决定提交、派发前与每次工具调用前**复核。撤销/到期/硬额度触发后：阻止新派工；`proposed/approved` 意图置 `cancelled`；尚未发给 Node 的机器 Run 走既有取消路径；已经产生副作用的 Run 不自动杀死（见 §9），但每次工具调用都被重新复核，`mandateInvalidated` 后只允许读/收尾类步骤。
 - 自主 Run 必须以既有 `approval_required` 档运行，并在其上加一层 **Mandate 步级预批准**：只有「固定草稿工具面 + allowlist + 允许的 action class + 路径/资源范围」同时通过的步骤才免逐次审批；其余走现有审批。该预批准层是 RD-03 的前置实现，不是后续 ADR 的占位；`full_access` 不用于自主 Run。
-- 草稿交 `draftRecipientUserId`（默认同一 human owner）的私有 Artifact 候选范围；Router/另一 Agent 不因协调职责获得私有正文；首个执行切片限同责任人授权现场。多 Agent 中间产物须明确受众、委托读取与受控交付，不借正式发布路径绕过人的决定。
+- 草稿交 `draftRecipientUserId`（默认同一 human owner）的私有 Artifact 候选范围；Router/另一 Agent 不因协调职责获得私有正文；首个执行切片限同责任人授权现场。[ADR-0029](./0029-private-draft-grants-and-agent-input.md) 单独规定已完成草稿的按件授权与受控 Agent 输入；不改变本 ADR 的 `draftRecipientUserId` 边界，不借正式发布路径绕过人的决定。按件能力尚待实施与验收。
 
 ### 8 执行边界与人的介入
 
