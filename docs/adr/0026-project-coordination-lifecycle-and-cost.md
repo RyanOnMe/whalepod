@@ -179,6 +179,8 @@
 
 #### 13.1 用途、归属与结果
 
+[ADR-0030](./0030-project-work-discovery-and-creation.md) 单独定义 RD-04 的 `discovery` 用途。它不绑定尚不存在的 Work，与本节两种用途共享 Project 单飞及 Team/Project 额度；沿用本节已有用途的各自契约。新用途尚待实施与验收。
+
 - 统一协调评估机制增加 `purpose='inference'|'router'`。`inference` 保留本 ADR 的项目推断输出；`router` 必须绑定一个已存在的 `workKey`、Task、当前责任人与 Mandate 版本，返回 ADR-0028 的路由提案。Router 评估不是业务 Run，不占 Task 单活跃 Run 槽。
 - 两种用途共享受限 Node 启动、清单下载、租约、终态、清理和用量结算机制，但使用各自的严格结果 schema。`router` 完成时保存被接受的提案与摘要，不要求创建 `inferenceEntryId`，不得为满足旧 `completed` 约束伪造 Inference。实现时按用途迁移完成态约束；未迁移前不得声称现有表已支持模型 Router。
 - `work_entry_router_call` 只证明入口进入慢路径；须关联实际评估记录及派发、模型启动、读取和结果证据，才能证明模型运行。RD-01 的 `propose(needs_semantic)` 不是已完成的语义判断，不可作为模型结果复用。
