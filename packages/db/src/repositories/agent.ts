@@ -59,6 +59,8 @@ export interface NewProfileRevision {
   model: string
   credentialSlot: string
   maxTokens?: number | null
+  inputPriceMicrosPerMillionTokens?: number | null
+  outputPriceMicrosPerMillionTokens?: number | null
   /** 默认审批档（#241）：缺省 = approval_required（DB default 同值）。 */
   approvalPolicy?: 'approval_required' | 'full_access'
   pluginPackId: string
@@ -83,6 +85,9 @@ export async function insertProfileRevision(
       ...(revision.maxTokens !== undefined && revision.maxTokens !== null
         ? { maxTokens: revision.maxTokens }
         : {}),
+      // 自动派工根据持久化单价核定预算。只把单价纳入 profileDigest 不足以启用执行。
+      inputPriceMicrosPerMillionTokens: revision.inputPriceMicrosPerMillionTokens ?? null,
+      outputPriceMicrosPerMillionTokens: revision.outputPriceMicrosPerMillionTokens ?? null,
       // #241：缺省不携带 → DB default（approval_required）兜底；显式值必须落行——
       // digest 由入参算出，行值丢字段时 digest 用例抓不到（CI 实测教训）。
       ...(revision.approvalPolicy !== undefined ? { approvalPolicy: revision.approvalPolicy } : {}),

@@ -4,6 +4,8 @@
 
 | 文档 | 内容 |
 |---|---|
+| [m1r-a-production-acceptance.md](./m1r-a-production-acceptance.md) | #486：按同一条补充的身份串证有效订阅、Run 边界自动续跑、DSH 工具读取回执与私有草稿，生产装配只回放模型出口 |
+| [router-real-model-quality-acceptance.md](./router-real-model-quality-acceptance.md) | #486：通过生产 Router 评估真实模型，开发集与保留集分开，独立评分引用、覆盖、路由与越权情况 |
 | [2026-11-08-p1-501-duplicate-run-start-acceptance.md](./2026-11-08-p1-501-duplicate-run-start-acceptance.md) | P1-501 #504（Node run.start 并发）：同一 `commandId` 在首个 ack 前重投时按 runId 串行化，后来者等前一条结束后回放首次真实结果；真实 RunManager/SQLite spool/supervisor 回归只 spawn 一个 Runtime、`active_runtime` 行身份/pid 不变、不误报 lost、不误清在途输入；首条被拒时等待者回放同一拒绝码；停用串行化/拒绝回放/结果落库的三条负控各自红在对应断言 |
 | [project-source-lifecycle-acceptance.md](./project-source-lifecycle-acceptance.md) | PC-02a #455（ADR-0024）：来源绑定/暂停/恢复/撤销、采集租约续租与过期断档、权限真实重验（含暂停来源）、采集器撤销/离线级联（含暂停来源撤销）与 7 天转不可用；真实 WS 假 Node 的两账号、幂等与负控；边界如实列（真实飞书、Web、正文与派生失效未做） |
 | [project-context-ledger-acceptance.md](./project-context-ledger-acceptance.md) | PC-03a #472（ADR-0025）：内部业务事件投影 Observation/Decision/Correction、约定版本 supersede、成果/交接/Run 终态投影、成员纠正与当前有效集读面；来源修订/Thread/WorkLink/模型推断未做 |

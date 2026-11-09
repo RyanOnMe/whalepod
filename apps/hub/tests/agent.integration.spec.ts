@@ -154,6 +154,37 @@ describe('agent API', () => {
     expect(dup.json().error.code).toBe('CONFLICT')
   })
 
+  it('persists Executor prices on both the initial and subsequent profile revisions', async () => {
+    const alice = await driveSetup(ctx)
+    const base = { ...profile, pluginPackId: await freshPackId(), maxTokens: 2048 }
+    const first = {
+      ...base,
+      inputPriceMicrosPerMillionTokens: 300_000,
+      outputPriceMicrosPerMillionTokens: 1_200_000,
+    }
+    const next = { ...first, outputPriceMicrosPerMillionTokens: 1_500_000 }
+    const created = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: '/api/v1/agents',
+      payload: { name: 'Priced draft executor', ...first },
+    })
+    expect(created.statusCode).toBe(201)
+    const url = `/api/v1/agents/${created.json().data.id}`
+    const revised = await apiInject(ctx, alice, {
+      method: 'POST',
+      url: `${url}/revisions`,
+      payload: next,
+    })
+    expect(revised.statusCode).toBe(201)
+    const detail = await apiInject(ctx, alice, { method: 'GET', url })
+    expect(detail.statusCode).toBe(200)
+    expect(detail.json().data.revisions).toMatchObject([
+      { revision: 1, ...first, profileDigest: computeProfileDigest(first) },
+      { revision: 2, ...next, profileDigest: computeProfileDigest(next) },
+    ])
+    expect(detail.json().data.currentRevision.id).toBe(revised.json().data.id)
+  })
+
   it('does not create a second agent on idempotency replay', async () => {
     const alice = await driveSetup(ctx)
     packId = await freshPackId()

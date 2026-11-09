@@ -1,6 +1,9 @@
 /** Trusted broker transport. Model-controlled text never selects a URL or credential. */
 import { attributionHeaders } from '@deepseek-ai/dsh-llm'
 
+const COMMAND_CODE_CHAT_ENDPOINT = 'https://api.commandcode.ai/provider/v1/chat/completions'
+const COMMAND_CODE_DEEPSEEK_FLASH = 'deepseek/deepseek-v4.1-flash'
+
 export function validateCoordinationEndpoint(endpoint: string): URL {
   let url: URL
   try {
@@ -93,6 +96,11 @@ export async function requestCoordinationModel(input: {
 }): Promise<CoordinationModelResponse> {
   const endpoint = validateCoordinationEndpoint(input.endpoint)
   if (!/^[\x21-\x7e]+$/.test(input.apiKey)) throw new Error('credential_unavailable')
+  // Command Code's exact V4.1 Flash route can spend the Router's output budget on
+  // reasoning. Request its lowest effort without changing the total token limit.
+  // Never send vendor-specific options to an arbitrary compatible endpoint.
+  const lowEffort =
+    endpoint.href === COMMAND_CODE_CHAT_ENDPOINT && input.model === COMMAND_CODE_DEEPSEEK_FLASH
   const response = await fetch(endpoint, {
     method: 'POST',
     redirect: 'error',
@@ -111,6 +119,7 @@ export async function requestCoordinationModel(input: {
         { role: 'user', content: input.user },
       ],
       response_format: { type: 'json_object' },
+      ...(lowEffort ? { reasoning_effort: 'low' } : {}),
     }),
   })
   if (!response.ok) throw new Error('provider_request_failed')
