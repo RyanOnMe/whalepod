@@ -2,7 +2,7 @@
 
 - 对应 Issue：#486，ADR-0028 §3、§13、§17。
 - 基线：`7a19287`。本轮生产装配结果见下文；模型语义另见 [Router 真实模型质量](./router-real-model-quality-acceptance.md)。
-- 上次验证：2026-11-09（Asia/Shanghai）。Agent 单价修复后两次独立复跑通过；Router 输出格式更新后再次通过，七条证据负控仍全部被拒绝。
+- 上次验证：2026-11-09（Asia/Shanghai）。Agent 单价修复后两次独立复跑通过；PR #529 的 Router v5 评审修复后再次通过，八条证据负控全部被拒绝。
 
 ## 验的是哪条用户路径
 
@@ -29,7 +29,7 @@
 
 当前验收经 Agent API 提交单价。普通 Web Revision 表单还不提交单价字段；以该表单新建当前 Revision 后须核对是否仍有两项单价。未配置时自动派工会排除该 Agent，不能用这次持久化修复当作网页定价编辑已交付。
 
-实际证据：`artifacts/evidence/m1r-a/result.json`、同目录 `events.jsonl` 与 `negative-controls.json`。两次 Run 都完成、拥有各自 DSH Session、同一 Task 的两条输入分别只消费一次。续跑候选正文的下载为 owner 200、团队成员 404；两轮 Router 复核分别为 `dispatch` 和 `wait`，观测窗口内没有第三次 Run。七条单点证据负控全部被判定器拒绝；受影响的 Agent API 与派工集成回归 66 项通过。
+实际证据：`artifacts/evidence/m1r-a/result.json`、同目录 `events.jsonl` 与 `negative-controls.json`。两次 Run 都完成、拥有各自 DSH Session、同一 Task 的两条输入分别只消费一次。续跑候选正文的下载为 owner 200、团队成员 404；两轮 Router 复核分别为 `dispatch` 和 `wait`，观测窗口内没有第三次 Run。新版结果绑定当前生产包和事件文件的摘要，八条单点证据负控（含事件文件替换）全部被判定器拒绝；受影响的 Agent API 与派工集成回归 66 项通过。
 
 ## 边界
 

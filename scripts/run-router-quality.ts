@@ -32,6 +32,7 @@ import {
   verifyRouterQuality,
   type QualityCaseResult,
   type QualityFreeze,
+  type QualityHoldoutWitness,
   type QualityResult,
 } from './lib/router-quality.js'
 import {
@@ -40,6 +41,12 @@ import {
   fixtureProvider,
 } from './lib/router-quality-artifact-fixture.js'
 import { verifyM1RA } from './verify-m1r-a-acceptance.js'
+import {
+  assertNoHoldoutEvidence,
+  fingerprintProductionAssembly,
+  pathExists,
+  reserveHoldoutAttempt,
+} from './lib/acceptance-provenance.js'
 
 const execute = promisify(execFile)
 const evidenceRoot = join(repoRoot, 'artifacts/evidence/router-quality')
@@ -95,20 +102,11 @@ const sourceFiles = [
   'scripts/run-router-quality.ts',
   'scripts/verify-router-quality.ts',
   'scripts/lib/production-acceptance.ts',
+  'scripts/lib/acceptance-provenance.ts',
   'scripts/lib/router-quality.ts',
   'scripts/lib/router-quality-cases.ts',
   'scripts/lib/router-quality-artifact-fixture.ts',
   'scripts/verify-m1r-a-acceptance.ts',
-  'apps/hub/dist/server.js',
-  'apps/hub/dist/modules/router/input.js',
-  'apps/hub/dist/modules/router/service.js',
-  'apps/hub/dist/modules/router/application.js',
-  'apps/node/dist/cli.js',
-  'apps/node/dist/coordination/manager.js',
-  'apps/runtime/dist/bin.js',
-  'packages/runtime-dsh/dist/coordination-runtime.js',
-  'packages/runtime-dsh/dist/coordination-worker.js',
-  'packages/runtime-dsh/dist/coordination-model.js',
 ]
 const sourceFingerprint = await Promise.all(
   sourceFiles.map(async (path) => digest(await readFile(join(repoRoot, path), 'utf8'))),
@@ -136,27 +134,45 @@ const sourceDigest = digest(
   ]),
 )
 
+const assemblyDigest = await fingerprintProductionAssembly(repoRoot)
 let engineeringEvidenceDigest = ''
 if (!prepareOnly) {
   const engineeringEvidence = join(repoRoot, 'artifacts/evidence/m1r-a/result.json')
-  await verifyM1RA(engineeringEvidence)
-  engineeringEvidenceDigest = digest(await readFile(engineeringEvidence, 'utf8'))
+  const verified = await verifyM1RA(engineeringEvidence, assemblyDigest)
+  engineeringEvidenceDigest = verified.resultDigest
 }
 let freeze: QualityFreeze | undefined
+let rawFreeze: string | undefined
+let frozenAt: string | undefined
 if (!prepareOnly && split === 'holdout') {
-  freeze = JSON.parse(await readFile(join(evidenceRoot, 'freeze.json'), 'utf8')) as QualityFreeze
+  await assertNoHoldoutEvidence(output)
+  rawFreeze = await readFile(join(evidenceRoot, 'freeze.json'), 'utf8')
+  freeze = JSON.parse(rawFreeze) as QualityFreeze
+  assert(
+    freeze.schemaVersion === 2 && freeze.frozenAt,
+    'legacy freeze cannot authorize a real holdout run',
+  )
+  frozenAt = freeze.frozenAt
+  assert(Date.parse(frozenAt) < Date.now(), 'freeze must precede holdout start')
   const development = await readFile(join(evidenceRoot, 'development/result.json'), 'utf8')
   assert.deepEqual(
     freeze,
-    freezeRouterQuality(development),
+    freezeRouterQuality(development, frozenAt),
     'freeze does not match development evidence',
   )
   assert.equal(freeze.sourceRevision, sourceRevision, 'source revision changed after freeze')
   assert.equal(freeze.sourceDigest, sourceDigest, 'source files changed after freeze')
+  assert.equal(freeze.assemblyDigest, assemblyDigest, 'assembly changed after freeze')
   assert.equal(
     freeze.engineeringEvidenceDigest,
     engineeringEvidenceDigest,
     'engineering evidence changed after freeze',
+  )
+} else if (!prepareOnly) {
+  await assertNoHoldoutEvidence(join(evidenceRoot, 'holdout'))
+  assert(
+    !(await pathExists(join(evidenceRoot, 'freeze.json'))),
+    'preserve the frozen development result before starting a new campaign',
   )
 }
 
@@ -184,12 +200,22 @@ async function readKey(): Promise<string | undefined> {
 // Auth material never becomes an inherited env var or a command argument for the broker.
 const key = await readKey()
 delete process.env.CMD_API_KEY
+const holdout =
+  rawFreeze && frozenAt
+    ? await reserveHoldoutAttempt(output, digest(rawFreeze), frozenAt)
+    : undefined
+const witness: QualityHoldoutWitness | undefined =
+  holdout && rawFreeze ? { rawFreeze, rawAttempt: holdout.raw } : undefined
 const h = new ProductionAcceptance(fixtureProvider)
 if (key) h.protect(key)
 const report: QualityResult = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   split,
-  generatedAt: new Date().toISOString(),
+  generatedAt: holdout?.attempt.startedAt ?? new Date().toISOString(),
+  assemblyDigest,
+  ...(holdout
+    ? { holdout: { freezeDigest: holdout.attempt.freezeDigest, attemptDigest: holdout.digest } }
+    : {}),
   assembly: QUALITY_ASSEMBLY,
   endpoint: QUALITY_ENDPOINT,
   provider: QUALITY_PROVIDER,
@@ -301,14 +327,13 @@ async function writeTrace(): Promise<void> {
 }
 try {
   await mkdir(output, { recursive: true, mode: 0o700 })
-  if (!prepareOnly) {
-    // Discard any stale canonical pass before a fresh authorized attempt.
+  if (!prepareOnly && split === 'development') {
+    // A development iteration may replace unfrozen development evidence only.
     await Promise.all(
       ['result.json', 'partial.json', 'failure.json', 'score.json', 'events.jsonl'].map((name) =>
         rm(join(output, name), { force: true }),
       ),
     )
-    if (split === 'development') await rm(join(evidenceRoot, 'freeze.json'), { force: true })
   }
   await h.start()
   const probe = await execute(process.execPath, [h.runtimeEntry, '--coordination-probe'])
@@ -352,6 +377,11 @@ try {
     )
   } else {
     phase = 'provider_configuration'
+    assert.equal(
+      await fingerprintProductionAssembly(repoRoot),
+      assemblyDigest,
+      'assembly changed before real provider execution',
+    )
     const local = JSON.parse(await readFile(join(h.stateDir, 'coordination.json'), 'utf8')) as {
       configRevision: string
     }
@@ -528,11 +558,18 @@ try {
         throw new Error('provider rejected or unavailable; no further requests')
     }
     phase = 'score'
-    const score = verifyRouterQuality(report, freeze)
+    assert.equal(
+      await fingerprintProductionAssembly(repoRoot),
+      assemblyDigest,
+      'assembly changed during real provider execution',
+    )
+    report.completedAt = new Date().toISOString()
+    const score = verifyRouterQuality(report, freeze, witness)
     await writeFile(join(output, 'result.json'), `${JSON.stringify(report, null, 2)}\n`, {
       mode: 0o600,
+      flag: 'wx',
     })
-    await rm(join(output, 'partial.json'), { force: true })
+    if (split === 'development') await rm(join(output, 'partial.json'), { force: true })
     process.stdout.write(
       `${split}: ${score.matches}/${score.total} matched; factuality review pending.\n`,
     )
@@ -546,6 +583,7 @@ try {
       `${JSON.stringify({ phase, detail, diagnostics })}\n`,
       {
         mode: 0o600,
+        flag: 'wx',
       },
     )
   process.stderr.write(`${phase}: ${detail}\n`)

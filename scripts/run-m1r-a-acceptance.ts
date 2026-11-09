@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { schema } from '@whalepod/db'
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import { ProductionAcceptance, repoRoot, until } from './lib/production-acceptance.js'
+import { bindM1RAProvenance, fingerprintProductionAssembly } from './lib/acceptance-provenance.js'
 
 const output = join(repoRoot, 'artifacts/evidence/m1r-a')
 const resultPath = join(output, 'result.json')
@@ -586,7 +587,7 @@ async function drive() {
   })
   const published = await candidateFor(running.id)
   const result = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     assembly: {
       hub: 'production-package-bin',
@@ -726,11 +727,22 @@ try {
   await Promise.all(
     [resultPath, eventPath, join(output, 'failure.log')].map((path) => rm(path, { force: true })),
   )
+  const assemblyDigest = await fingerprintProductionAssembly(repoRoot)
   const { result, events } = await drive()
-  await writeFile(eventPath, events.map((event) => JSON.stringify(event)).join('\n') + '\n')
-  await writeFile(resultPath, JSON.stringify(result, null, 2) + '\n')
+  assert.equal(
+    await fingerprintProductionAssembly(repoRoot),
+    assemblyDigest,
+    'assembly changed during M1R-A replay',
+  )
+  const eventBytes = events.map((event) => JSON.stringify(event)).join('\n') + '\n'
+  await writeFile(eventPath, eventBytes)
+  await writeFile(
+    resultPath,
+    JSON.stringify({ ...result, ...bindM1RAProvenance(assemblyDigest, eventBytes) }, null, 2) +
+      '\n',
+  )
   const { verifyM1RA } = await import('./verify-m1r-a-acceptance.js')
-  await verifyM1RA(resultPath)
+  await verifyM1RA(resultPath, assemblyDigest)
   console.log('M1R-A production acceptance PASS')
 } catch (error) {
   await rm(resultPath, { force: true })

@@ -4,6 +4,7 @@ import {
   CoordinationInputEntrySchema,
   CoordinationUsageSchema,
   RouterProposalSchema,
+  coordinationUsageCost,
   type CoordinationInputEntry,
   type CoordinationUsage,
   type RouterProposal,
@@ -13,6 +14,7 @@ import {
   ROUTER_QUALITY_RUBRIC_VERSION,
   type QualitySplit,
 } from './router-quality-cases.js'
+import { type HoldoutAttempt } from './acceptance-provenance.js'
 
 export const QUALITY_PROVIDER = 'command-code'
 export const QUALITY_ENDPOINT = 'https://api.commandcode.ai/provider/v1/chat/completions'
@@ -69,9 +71,12 @@ export interface QualityCaseResult {
 }
 
 export interface QualityResult {
-  schemaVersion: 1
+  schemaVersion: 1 | 2
   split: QualitySplit
   generatedAt: string
+  completedAt?: string
+  assemblyDigest?: string
+  holdout?: { freezeDigest: string; attemptDigest: string }
   assembly: typeof QUALITY_ASSEMBLY
   endpoint: typeof QUALITY_ENDPOINT
   provider: typeof QUALITY_PROVIDER
@@ -86,7 +91,10 @@ export interface QualityResult {
 }
 
 export interface QualityFreeze {
-  schemaVersion: 1
+  schemaVersion: 1 | 2
+  frozenAt?: string
+  developmentCompletedAt?: string
+  assemblyDigest?: string
   developmentDigest: string
   datasetDigest: string
   sourceRevision: string
@@ -94,6 +102,11 @@ export interface QualityFreeze {
   engineeringEvidenceDigest: string
   profileDigest: string
   minimumMatching: number
+}
+
+export interface QualityHoldoutWitness {
+  rawFreeze: string
+  rawAttempt: string
 }
 
 export function qualityProfileDigest(value: QualityResult): string {
@@ -123,9 +136,16 @@ const isVersion = (value: unknown): value is string =>
   typeof value === 'string' && /^[a-z0-9.]{3,40}$/.test(value)
 
 /** Verify from durable Hub facts and fixed labels. Narrative factuality is separately reviewed. */
-export function verifyRouterQuality(raw: unknown, freeze?: QualityFreeze) {
+export function verifyRouterQuality(
+  raw: unknown,
+  freeze?: QualityFreeze,
+  witness?: QualityHoldoutWitness,
+) {
   const report = raw as QualityResult
-  assert(report && report.schemaVersion === 1, 'unsupported quality report')
+  assert(
+    report && (report.schemaVersion === 1 || report.schemaVersion === 2),
+    'unsupported quality report',
+  )
   assert(report.split === 'development' || report.split === 'holdout', 'unknown split')
   assert.deepEqual(report.assembly, QUALITY_ASSEMBLY, 'not real provider assembly')
   assert.equal(report.endpoint, QUALITY_ENDPOINT, 'provider endpoint does not match')
@@ -140,6 +160,13 @@ export function verifyRouterQuality(raw: unknown, freeze?: QualityFreeze) {
   assert(isDigest(report.sourceDigest), 'missing exact source fingerprint')
   assert(isDigest(report.engineeringEvidenceDigest), 'missing M1R-A evidence fingerprint')
   assert(Number.isFinite(Date.parse(report.generatedAt)), 'missing evidence time')
+  if (report.schemaVersion === 2) {
+    assert(isDigest(report.assemblyDigest), 'missing production assembly fingerprint')
+    assert(
+      report.completedAt && Date.parse(report.completedAt) >= Date.parse(report.generatedAt),
+      'invalid quality completion time',
+    )
+  }
   assert(isCount(report.pricing?.input) && report.pricing.input > 0, 'missing input price')
   assert(isCount(report.pricing?.output) && report.pricing.output > 0, 'missing output price')
   const expected = ROUTER_QUALITY_CASES.filter((x) => x.split === report.split)
@@ -167,7 +194,10 @@ export function verifyRouterQuality(raw: unknown, freeze?: QualityFreeze) {
   assert.equal(new Set(report.cases.map((x) => x.promptVersion)).size, 1, 'mixed prompts')
   assert.equal(new Set(report.cases.map((x) => x.rulesVersion)).size, 1, 'mixed rules')
   if (report.split === 'holdout') {
-    assert(freeze && freeze.schemaVersion === 1, 'holdout requires frozen development result')
+    assert(
+      freeze && freeze.schemaVersion === report.schemaVersion,
+      'holdout requires frozen development result',
+    )
     assert(isDigest(freeze.developmentDigest), 'missing development fingerprint')
     assert.equal(freeze.datasetDigest, report.datasetDigest, 'holdout dataset changed')
     assert.equal(freeze.sourceRevision, report.sourceRevision, 'holdout source revision changed')
@@ -188,7 +218,41 @@ export function verifyRouterQuality(raw: unknown, freeze?: QualityFreeze) {
         freeze.minimumMatching <= expected.length,
       'invalid holdout threshold',
     )
-  } else assert(!freeze, 'development evidence must not use holdout threshold')
+    if (report.schemaVersion === 2) {
+      assert.equal(freeze.assemblyDigest, report.assemblyDigest, 'holdout assembly changed')
+      assert(
+        freeze.frozenAt &&
+          freeze.developmentCompletedAt &&
+          Date.parse(freeze.developmentCompletedAt) < Date.parse(freeze.frozenAt) &&
+          Date.parse(freeze.frozenAt) < Date.parse(report.generatedAt),
+        'invalid freeze/holdout chronology',
+      )
+      assert(witness && report.holdout, 'missing frozen holdout attempt evidence')
+      assert.deepEqual(JSON.parse(witness.rawFreeze), freeze, 'holdout freeze witness differs')
+      assert.equal(
+        report.holdout.freezeDigest,
+        digest(witness.rawFreeze),
+        'holdout raw freeze digest mismatch',
+      )
+      assert.equal(
+        report.holdout.attemptDigest,
+        digest(witness.rawAttempt),
+        'holdout attempt digest mismatch',
+      )
+      const attempt = JSON.parse(witness.rawAttempt) as HoldoutAttempt
+      assert(attempt.schemaVersion === 1 && isId(attempt.id), 'invalid holdout attempt marker')
+      assert.equal(
+        attempt.freezeDigest,
+        report.holdout.freezeDigest,
+        'holdout attempt freeze digest mismatch',
+      )
+      assert.equal(attempt.startedAt, report.generatedAt, 'holdout attempt start mismatch')
+    } else assert(!witness, 'legacy holdout must not claim an attempt witness')
+  } else
+    assert(
+      !freeze && !witness && !report.holdout,
+      'development evidence must not use holdout threshold',
+    )
 
   const scored = report.cases.map((row) => {
     const scenario = expected.find((item) => item.id === row.caseId)!
@@ -271,6 +335,30 @@ export function verifyRouterQuality(raw: unknown, freeze?: QualityFreeze) {
         usage.costMicros <= QUALITY_MAX_CASE_COST_MICROS,
         'usage cost exceeded configured ceiling',
       )
+      if (report.schemaVersion === 2)
+        assert.equal(
+          usage.costMicros,
+          coordinationUsageCost({
+            ...usage,
+            inputPriceMicrosPerMillionTokens: report.pricing.input,
+            outputPriceMicrosPerMillionTokens: report.pricing.output,
+          }),
+          'usage cost does not match billed tokens and frozen prices',
+        )
+    }
+    if (report.schemaVersion === 2) {
+      if (row.settlement.mode === 'actual')
+        assert(
+          usage && row.settlement.costMicros === usage.costMicros,
+          'actual settlement has no matching usage',
+        )
+      if (row.settlement.mode === 'zero')
+        assert(
+          row.modelStarted === false &&
+            row.settlement.costMicros === 0 &&
+            (usage === null || (usage.inputTokens === 0 && usage.outputTokens === 0)),
+          'zero settlement conflicts with model start or usage',
+        )
     }
     const protocolAccepted = row.status === 'completed' && row.failureCode === null
     const proposal = row.proposal === null ? null : RouterProposalSchema.parse(row.proposal)
@@ -406,14 +494,29 @@ export function verifyRouterQuality(raw: unknown, freeze?: QualityFreeze) {
 }
 
 /** Record observed development result before holdout; high-risk rules never soften. */
-export function freezeRouterQuality(raw: string): QualityFreeze {
+export function freezeRouterQuality(raw: string, frozenAt?: string): QualityFreeze {
   const result = JSON.parse(raw) as QualityResult
   assert.equal(result.split, 'development', 'freeze from development only')
   const score = verifyRouterQuality(result)
   assert.equal(score.status, 'scored', 'development transport or critical checks failed')
   assert(score.matches >= 4, 'development had fewer than four matching cases')
+  const chronology =
+    result.schemaVersion === 2
+      ? (() => {
+          assert(
+            result.completedAt && frozenAt && Date.parse(result.completedAt) < Date.parse(frozenAt),
+            'development must finish before freeze',
+          )
+          return {
+            frozenAt,
+            developmentCompletedAt: result.completedAt,
+            assemblyDigest: result.assemblyDigest!,
+          }
+        })()
+      : {}
   return {
-    schemaVersion: 1,
+    schemaVersion: result.schemaVersion,
+    ...chronology,
     developmentDigest: digest(raw),
     datasetDigest: result.datasetDigest,
     sourceRevision: result.sourceRevision,

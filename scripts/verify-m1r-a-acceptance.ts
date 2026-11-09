@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { sha256, verifyM1RAProvenance, type M1RAProvenance } from './lib/acceptance-provenance.js'
 
 type Run = {
   id: string
@@ -19,6 +20,7 @@ type Run = {
 }
 interface Evidence {
   schemaVersion: number
+  provenance?: M1RAProvenance
   generatedAt: string
   assembly: Record<string, string>
   modelQuality: string
@@ -131,13 +133,16 @@ function one<T>(values: readonly T[], label: string): T {
   return values[0]!
 }
 
-export async function verifyM1RA(path: string) {
-  const result = JSON.parse(await readFile(path, 'utf8')) as Evidence
-  const events = (await readFile(join(dirname(path), 'events.jsonl'), 'utf8'))
+export async function verifyM1RA(path: string, expectedAssemblyDigest?: string) {
+  const resultBytes = await readFile(path)
+  const result = JSON.parse(resultBytes.toString('utf8')) as Evidence
+  const eventBytes = await readFile(join(dirname(path), 'events.jsonl'))
+  verifyM1RAProvenance(result, eventBytes, expectedAssemblyDigest)
+  const events = eventBytes
+    .toString('utf8')
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as Event)
-  assert.equal(result.schemaVersion, 1)
   assert(Number.isFinite(Date.parse(result.generatedAt)))
   assert.deepEqual(result.assembly, {
     hub: 'production-package-bin',
@@ -397,6 +402,7 @@ export async function verifyM1RA(path: string) {
   assert.equal(result.draft.sha256, result.draft.downloadedSha256)
   assert.equal(result.draft.ownerStatus, 200)
   assert.equal(result.draft.colleagueStatus, 404)
+  return { resultDigest: sha256(resultBytes), assemblyDigest: result.provenance?.assemblyDigest }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

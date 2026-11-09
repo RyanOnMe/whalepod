@@ -4,8 +4,10 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { verifyM1RA } from './verify-m1r-a-acceptance.js'
+import { sha256, type M1RAProvenance } from './lib/acceptance-provenance.js'
 
 interface MutableEvidence {
+  provenance?: M1RAProvenance
   fast: { routerInvoked: boolean }
   finishedRuns: { id: string }[]
   consumptions: { runId: string }[]
@@ -24,12 +26,17 @@ const mutations: Record<string, (evidence: MutableEvidence, events: string) => s
     evidence.fast.routerInvoked = true
     return events
   },
-  'terminal-boundary-trace-missing': (_evidence, events) =>
-    events
-      .trimEnd()
-      .split('\n')
-      .filter((line) => JSON.parse(line).action !== 'work.run_boundary.enqueued')
-      .join('\n') + '\n',
+  'terminal-boundary-trace-missing': (evidence, events) => {
+    const changed =
+      events
+        .trimEnd()
+        .split('\n')
+        .filter((line) => JSON.parse(line).action !== 'work.run_boundary.enqueued')
+        .join('\n') + '\n'
+    // Keep the transport digest consistent here to exercise the semantic observation check.
+    if (evidence.provenance) evidence.provenance.eventsDigest = sha256(changed)
+    return changed
+  },
   'third-run-created': (evidence, events) => {
     evidence.finishedRuns.push({ ...evidence.finishedRuns[1]! })
     return events
@@ -56,6 +63,8 @@ const mutations: Record<string, (evidence: MutableEvidence, events: string) => s
     return events
   },
 }
+if ((JSON.parse(source) as MutableEvidence).provenance)
+  mutations['event-bytes-substituted'] = (_evidence, events) => events + '\n'
 
 const scratch = await mkdtemp(join(directory, '.negative-'))
 const evidencePath = join(scratch, 'result.json')

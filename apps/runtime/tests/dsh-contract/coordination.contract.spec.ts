@@ -82,7 +82,7 @@ function fixture(options: { expiresAt?: string; waitDeadlineSeconds?: number } =
   const common = {
     summary: 'Review latest requirements.',
     citations: ['S1'],
-    coverage: [{ source: 'S1', status: 'uncovered', evidence: [] }],
+    coverage: [{ source: 'S1', status: 'irrelevant', evidence: [] }],
   }
   return { dir, entryId, workId, request, body, workBody, expiresAt, common }
 }
@@ -259,7 +259,16 @@ describe('Router 真实 bin 受限评估', () => {
                   recommendedOptionId: 'retry',
                 }
               : { reason: 'no_action' }
-      const p = await provider(response({ ...f.common, decision, ...extra }))
+      const status =
+        decision === 'dispatch' ? 'uncovered' : decision === 'ignore' ? 'irrelevant' : 'unknown'
+      const p = await provider(
+        response({
+          ...f.common,
+          decision,
+          coverage: [{ source: 'S1', status, evidence: [] }],
+          ...extra,
+        }),
+      )
       const outcome = await run(f.request, f.dir, p.endpoint)
       expect(outcome.code).toBe(0)
       const result = outcome.frames.find((frame) => frame.type === 'coordination.result')
@@ -268,7 +277,11 @@ describe('Router 真实 bin 受限评估', () => {
         expect(result.payload.proposal.decision).toBe(decision)
         expect(result.payload.proposal.citations).toEqual([f.entryId])
         expect(result.payload.proposal.coverage).toEqual([
-          { inputId: f.entryId, status: 'uncovered', evidenceIds: [] },
+          {
+            inputId: f.entryId,
+            status: status === 'irrelevant' ? 'uncovered' : status,
+            evidenceIds: [],
+          },
         ])
         if (result.payload.proposal.decision === 'dispatch') {
           expect(result.payload.proposal.workKey).toBe(f.request.workKey)
@@ -299,8 +312,16 @@ describe('Router 真实 bin 受限评估', () => {
 
   it('maps per-kind aliases back to exact source and evidence identities', async () => {
     const f = fixture()
+    const oldAt = '2026-10-01T00:00:00.000Z'
+    const currentAt = '2026-10-02T00:00:00.000Z'
+    const oldEvidenceId = addEntry(f, 'evidence', 'Published outcome: stairs at venue entrance.')
     const evidenceId = addEntry(f, 'evidence', 'Published outcome: venue has step-free access.')
     const supplementId = addEntry(f, 'source', 'New requirement: provide accessible shuttles.')
+    f.request.manifest.find((entry) => entry.id === f.entryId)!.version = currentAt
+    f.request.manifest.find((entry) => entry.id === oldEvidenceId)!.authorizationGeneration =
+      `published:${oldAt}`
+    f.request.manifest.find((entry) => entry.id === evidenceId)!.authorizationGeneration =
+      `published:${currentAt}`
     const p = await provider(
       response({
         ...f.common,
@@ -308,7 +329,7 @@ describe('Router 真实 bin 受限评估', () => {
         actionClass: 'draft',
         citations: [],
         coverage: [
-          { source: 'S1', status: 'covered', evidence: ['E1'] },
+          { source: 'S1', status: 'covered', evidence: ['E2'] },
           { source: 'S2', status: 'uncovered', evidence: [] },
         ],
       }),
@@ -319,7 +340,7 @@ describe('Router 真实 bin 受限评估', () => {
       outcome.frames.find((frame) => frame.type === 'coordination.result')?.payload,
     ).toMatchObject({
       status: 'completed',
-      readEntryIds: [f.entryId, f.workId, evidenceId, supplementId],
+      readEntryIds: [f.entryId, f.workId, oldEvidenceId, evidenceId, supplementId],
       proposal: {
         decision: 'dispatch',
         workKey: f.request.workKey,
@@ -331,7 +352,49 @@ describe('Router 真实 bin 受限评估', () => {
       },
     })
     expect(p.calls()).toBe(1)
+    const messages = p.request()?.['messages'] as { role: string; content: string }[]
+    expect(JSON.parse(messages.find((entry) => entry.role === 'user')!.content).entries).toEqual([
+      { id: 'S1', kind: 'source', body: f.body, revisedAt: currentAt },
+      { id: 'W1', kind: 'work', body: f.workBody },
+      {
+        id: 'E1',
+        kind: 'evidence',
+        body: 'Published outcome: stairs at venue entrance.',
+        publishedAt: oldAt,
+      },
+      {
+        id: 'E2',
+        kind: 'evidence',
+        body: 'Published outcome: venue has step-free access.',
+        publishedAt: currentAt,
+      },
+      { id: 'S2', kind: 'source', body: 'New requirement: provide accessible shuttles.' },
+    ])
   })
+
+  it.each(['dispatch', 'ignore'] as const)(
+    'blocks %s when the same evaluation has an actionable and an irrelevant source',
+    async (decision) => {
+      const f = fixture()
+      addEntry(f, 'source', 'Small talk unrelated to the confirmed access requirement.')
+      const p = await provider(
+        response({
+          ...f.common,
+          decision,
+          ...(decision === 'dispatch' ? { actionClass: 'draft' } : { reason: 'no_action' }),
+          coverage: [
+            { source: 'S1', status: 'uncovered', evidence: [] },
+            { source: 'S2', status: 'irrelevant', evidence: [] },
+          ],
+        }),
+      )
+      const outcome = await run(f.request, f.dir, p.endpoint)
+      expect(
+        outcome.frames.find((frame) => frame.type === 'coordination.result')?.payload,
+      ).toMatchObject({ status: 'failed', failureCode: 'invalid_coverage' })
+      expect(p.calls()).toBe(1)
+    },
+  )
 
   it('缺少Node启动回执时，provider调用为零且按期限收口', async () => {
     const f = fixture()

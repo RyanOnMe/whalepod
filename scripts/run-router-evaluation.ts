@@ -68,7 +68,8 @@ const provider = createServer(async (request, response) => {
       citations: scenario === 'missing_citation' ? ['S99'] : sources.map((entry) => entry.id),
       coverage: sources.map((entry) => ({
         source: entry.id,
-        status: decision === 'dispatch' || decision === 'ignore' ? 'uncovered' : 'unknown',
+        status:
+          decision === 'dispatch' ? 'uncovered' : decision === 'ignore' ? 'irrelevant' : 'unknown',
         evidence: [],
       })),
     }

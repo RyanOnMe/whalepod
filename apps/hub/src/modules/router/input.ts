@@ -31,7 +31,7 @@ import { loadWorkSource, effectiveMandate } from '../work/admission.js'
 import { ApiError } from '../shared/http-error.js'
 
 export const ROUTER_RULES_VERSION = 'rd03r1.v2'
-export const ROUTER_PROMPT_VERSION = 'router.v4'
+export const ROUTER_PROMPT_VERSION = 'router.v5'
 export interface RouterTrigger {
   sourceType: WorkSourceType
   sourceId: string

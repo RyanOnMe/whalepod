@@ -121,7 +121,68 @@ function fixture(split: QualitySplit): QualityResult {
 
 const freeze = () => freezeRouterQuality(JSON.stringify(fixture('development')))
 
+function boundHoldout() {
+  const assemblyDigest = digest('built assembly')
+  const development: QualityResult = {
+    ...fixture('development'),
+    schemaVersion: 2,
+    completedAt: '2026-11-09T00:01:00Z',
+    assemblyDigest,
+  }
+  const frozen = freezeRouterQuality(JSON.stringify(development), '2026-11-09T00:02:00Z')
+  const rawFreeze = JSON.stringify(frozen)
+  const start = '2026-11-09T00:03:00Z'
+  const rawAttempt = JSON.stringify({
+    schemaVersion: 1,
+    id: randomUUID(),
+    startedAt: start,
+    freezeDigest: digest(rawFreeze),
+  })
+  const holdout: QualityResult = {
+    ...fixture('holdout'),
+    schemaVersion: 2,
+    generatedAt: start,
+    completedAt: '2026-11-09T00:04:00Z',
+    assemblyDigest,
+    holdout: { freezeDigest: digest(rawFreeze), attemptDigest: digest(rawAttempt) },
+  }
+  return { development, frozen, holdout, witness: { rawFreeze, rawAttempt } }
+}
+
 describe('real Router quality evidence gates', () => {
+  it('binds new holdout results to the raw freeze and a distinct persisted attempt', () => {
+    const { development, frozen, holdout, witness } = boundHoldout()
+    expect(verifyRouterQuality(holdout, frozen, witness)).toMatchObject({
+      matches: 6,
+      status: 'scored',
+    })
+    expect(() => verifyRouterQuality(holdout, frozen)).toThrow(
+      'missing frozen holdout attempt evidence',
+    )
+    expect(() =>
+      verifyRouterQuality(holdout, frozen, { ...witness, rawFreeze: witness.rawFreeze + '\n' }),
+    ).toThrow('raw freeze digest mismatch')
+    expect(() =>
+      verifyRouterQuality(holdout, frozen, { ...witness, rawAttempt: witness.rawAttempt + '\n' }),
+    ).toThrow('attempt digest mismatch')
+    expect(() =>
+      verifyRouterQuality({ ...holdout, generatedAt: frozen.frozenAt! }, frozen, witness),
+    ).toThrow('chronology')
+    expect(() => freezeRouterQuality(JSON.stringify(development), development.completedAt)).toThrow(
+      'must finish before freeze',
+    )
+  })
+
+  it('rejects impossible billed costs even if the usage and settlement records agree', () => {
+    const { development } = boundHoldout()
+    const sample = development.cases[0]!
+    sample.usage!.costMicros = 0
+    sample.settlement.costMicros = 0
+    expect(() => verifyRouterQuality(development)).toThrow(
+      'usage cost does not match billed tokens and frozen prices',
+    )
+  })
+
   it('distinguishes scoring from narrative factuality review', () => {
     const result = verifyRouterQuality(fixture('holdout'), freeze())
     expect(result).toMatchObject({

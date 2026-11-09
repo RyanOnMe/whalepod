@@ -4,13 +4,12 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { createServer, type RequestListener, type Server } from 'node:http'
-import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createDatabase, schema, type Database } from '@whalepod/db'
 import { eq } from 'drizzle-orm'
 import { startEphemeralPostgres, type EphemeralPostgres } from './ephemeral-postgres.mts'
-import { resolveHubServerEntry } from './phase1/hub-assembly.js'
+import { productionPackageEntries } from './acceptance-provenance.js'
 import { redactText } from './phase1/events.js'
 
 export const repoRoot = join(import.meta.dirname, '..', '..')
@@ -84,12 +83,9 @@ export class ProductionAcceptance {
   providerOrigin?: string
   private postgres?: EphemeralPostgres
   private readonly provider?: Server
-  private readonly nodeEntry = createRequire(
-    new URL('../../apps/node/package.json', import.meta.url),
-  ).resolve('@whalepod/node/bin')
-  readonly runtimeEntry = createRequire(
-    new URL('../../apps/node/package.json', import.meta.url),
-  ).resolve('@whalepod/runtime/bin')
+  private readonly entries = productionPackageEntries(repoRoot)
+  private readonly nodeEntry = this.entries.node
+  readonly runtimeEntry = this.entries.runtime
   readonly children: ChildProcess[] = []
   readonly events: Record<string, unknown>[] = []
   private readonly tails = new Map<ChildProcess, string>()
@@ -255,19 +251,15 @@ export class ProductionAcceptance {
     this.postgres = await startEphemeralPostgres()
     this.protect(this.postgres.databaseUrl)
     this.database = createDatabase({ connectionString: this.postgres.databaseUrl })
-    this.launch(
-      resolveHubServerEntry(new URL('../../apps/hub/package.json', import.meta.url)),
-      [],
-      {
-        DATABASE_URL: this.postgres.databaseUrl,
-        WHALEPOD_PUBLIC_ORIGIN: this.origin,
-        WHALEPOD_SETUP_TOKEN_PATH: setupPath,
-        WHALEPOD_ARTIFACT_STORE_DIR: join(this.root, 'hub-artifacts'),
-        HOST: '127.0.0.1',
-        PORT: String(port),
-        LOG_LEVEL: 'info',
-      },
-    )
+    this.launch(this.entries.hub, [], {
+      DATABASE_URL: this.postgres.databaseUrl,
+      WHALEPOD_PUBLIC_ORIGIN: this.origin,
+      WHALEPOD_SETUP_TOKEN_PATH: setupPath,
+      WHALEPOD_ARTIFACT_STORE_DIR: join(this.root, 'hub-artifacts'),
+      HOST: '127.0.0.1',
+      PORT: String(port),
+      LOG_LEVEL: 'info',
+    })
     await until('Hub ready', async () => {
       try {
         return (await this.request('/setup/status', undefined, { actor: null })).ok

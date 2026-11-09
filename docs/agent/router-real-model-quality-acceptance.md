@@ -27,10 +27,11 @@
 
 ## 复跑
 
-按上文先生成并独立判定 M1R-A 工程证据。将已授权的测试凭据保存在仓库外、权限 `0600` 的普通文件，`ROUTER_EVAL_KEY_FILE` 只保存文件路径。开发集需要达到冻结条件，才能运行保留集。
+按上文先生成并独立判定当前构建的 M1R-A 工程证据。将已授权的测试凭据保存在仓库外、权限 `0600` 的普通文件，`ROUTER_EVAL_KEY_FILE` 只保存文件路径。开发集需要达到冻结条件，才能运行保留集。以下是新批次的步骤；已有冻结或保留集记录时，脚本拒绝覆盖。新批次须保留原证据并选未开封的保留题。
 
 ```bash
 pnpm --filter @whalepod/hub... --filter @whalepod/node... build
+node --import tsx scripts/run-m1r-a-acceptance.ts
 node --import tsx scripts/run-router-quality.ts --split development --key-file "$ROUTER_EVAL_KEY_FILE"
 node --import tsx scripts/verify-router-quality.ts development
 node --import tsx scripts/verify-router-quality.ts freeze
@@ -78,6 +79,16 @@ scripts/secret-scan.sh artifacts/evidence/router-quality
 
 本轮补跑 9 个定向集成文件的 223 项测试、Q6 的 34 项与 Q7 的 18 项测试，覆盖账本、Router、派工、Mandate、私有草稿读取、迟到回执、改派、故障恢复与安全拒绝。敏感扫描及依赖许可检查通过。Q0、Q3 与生产装配证据保持同一构建基线。
 
+## PR #529 评审修复（router.v5）
+
+无关来源在模型输出中单独标识。由于 Hub 按现有协议会把所有未覆盖条目带入 Run，Runtime 在还原协议之前拒绝混有无关来源的派工，也拒绝忽略仍含明确待办的输入；整批无关时仍可忽略。这个切片不会自动把混合输入拆成多次派工。
+
+来源修订时间和成果发布时间只从经过核验的 Hub 清单提取。别名继续映射到精确条目，编号不代表新旧顺序。真实 Runtime 回放覆盖「两份成果有冲突、正文不标版本」的时间信息与引用，以及「有明确待办但混入无关来源」时拒绝派工和忽略。相关单测在修复前失败、修复后通过。评审修复后的真实 Runtime 契约 162 项、九个 Router 回放、M1R-A 生产回放和八条证据负控均通过。
+
+上述真实模型分数与人工结论只属于原 `router.v4` 冻结批次，归档于 `artifacts/evidence/router-quality/archive-router-v4/`。`router.v5` 的这两项改动以工程回放验证，未把已开封的保留题再次当作独立真实模型验收。
+
+新的真实模型驱动会在读取凭据之前核对当前生产包指纹、M1R-A 结果与事件摘要。保留集启动前独占登记一次尝试，报告绑定事先冻结的文件、尝试记录及其时间；已完成或中断的记录都不能覆盖。新版判定按冻结单价重算实际费用。旧证据仍可用 `verify-router-quality.ts holdout --evidence-root <归档目录> --engineering-evidence <归档的M1R-A结果>` 只读重判，但不能用于新真实请求。
+
 ## 边界
 
-合成小样本用于核对当前模型与提示配置的表现；保留集的人工事实复核不用于推断真实团队的任务覆盖率、收益或生产误派工率。报告中的费用来自 Hub 用量账本与验收配置，不等同供应商账单。提示由 Node 侧 Runtime 执行，当前协议不证明远端 Runtime 用的是哪一版提示；上线前需让 Hub 和参与 Router 的 Node/Runtime 同步更新，再恢复自动派工。等待截止时间由设备计算、由 Hub 按自身时间复核；设备时钟偏差较大或允许等待时间极短时，合法等待也可能被安全拒绝。多来源派工仍沿用现有协议，Hub 选择全部标为未覆盖的来源；本轮不证明可以从这种混合输入中单独剔除无关项。
+合成小样本用于核对所测模型与提示配置的表现；保留集的人工事实复核不用于推断真实团队的任务覆盖率、收益或生产误派工率。报告中的费用来自 Hub 用量账本与验收配置，不等同供应商账单。提示由 Node 侧 Runtime 执行，当前协议不证明远端 Runtime 用的是哪一版提示；上线前需让 Hub 和参与 Router 的 Node/Runtime 同步更新，再恢复自动派工。等待截止时间由设备计算、由 Hub 按自身时间复核；设备时钟偏差较大或允许等待时间极短时，合法等待也可能被安全拒绝。
