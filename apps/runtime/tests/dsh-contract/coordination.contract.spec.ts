@@ -274,6 +274,8 @@ describe('Router 真实 bin 受限评估', () => {
       const result = outcome.frames.find((frame) => frame.type === 'coordination.result')
       expect(result?.payload.status, outcome.stderr + outcome.stdout).toBe('completed')
       if (result?.payload.status === 'completed') {
+        if ('purpose' in result.payload)
+          throw new Error('legacy Router returned a discovery result')
         expect(result.payload.proposal.decision).toBe(decision)
         expect(result.payload.proposal.citations).toEqual([f.entryId])
         expect(result.payload.proposal.coverage).toEqual([

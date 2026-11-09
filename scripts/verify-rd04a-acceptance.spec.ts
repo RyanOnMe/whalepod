@@ -64,6 +64,7 @@ function receipt(): Rd04aEvidence {
           workKey: null,
           inferenceEntryId: null,
           manifestIds: ['source', 'slot', 'evidence'],
+          downloadedIds: ['source', 'slot', 'evidence'],
           readEntryIds: ['source', 'slot', 'evidence'],
         },
       ],
@@ -96,6 +97,8 @@ function receipt(): Rd04aEvidence {
       ownerCache: 'private, no-store',
       colleagueHttp: 404,
       revokedOwnerHttp: 404,
+      candidateRowsAfterRevoke: 0,
+      nodeAttemptDirGone: true,
       outputCanaryOnAuthorizedRead: true,
       surfaces: ['ws_live', 'ws_replay', 'team_event', 'log', 'http'].map((name) => ({
         name: name as Rd04aEvidence['visibility']['surfaces'][number]['name'],
@@ -133,6 +136,13 @@ describe('RD-04a production receipt judge', () => {
         e.shadow.evaluations[0]!.readEntryIds.pop()
       },
       'missing/extra read receipts',
+    ],
+    [
+      'read receipt without a server-authorized download',
+      (e) => {
+        e.shadow.evaluations[0]!.downloadedIds.pop()
+      },
+      'missing/extra authenticated HTTP downloads',
     ],
     [
       'duplicate model billing',

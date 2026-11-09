@@ -27,6 +27,7 @@ import {
   updateWork,
 } from '@whalepod/db'
 import { cancelRunInTransaction } from '../run/cancel.js'
+import { classifyComment } from '../discovery/admission.js'
 import { admitTaskMessageEntry, workEntryDeps } from '../work/entry.js'
 import { reviewPrerequisiteReason } from './review-conditions.js'
 import { ApiError } from '../shared/http-error.js'
@@ -492,7 +493,7 @@ export async function addComment(
 ): Promise<CommentView> {
   const id = uuidv7()
   return transactCommand(database, `comment.create:${input.idempotencyKey}`, async (tx) => {
-    await lockTask(tx, taskId)
+    const task = await lockTask(tx, taskId)
     // #185：实体升级为 task_message；评论路径写入的就是一条**讨论消息**
     //（kind='discussion'、origin='human'、不带 targetAgentId/runId/instructionState
     // ——DB 的 task_message_discussion_inert 约束会拒绝任何越界组合，即「讨论不驱动 Agent」）。
@@ -509,7 +510,9 @@ export async function addComment(
       payload: { commentId: comment.id, taskId, authorUserId: actor.userId },
     })
     // ADR-0028（RD-02b）：讨论消息走入口准入。有效订阅直达收件箱；无订阅才交 Router。
-    await admitTaskMessageEntry(tx, comment, workEntryDeps(tx))
+    const admission = await classifyComment(tx, task, comment)
+    if (admission.first && admission.route === 'existing_work')
+      await admitTaskMessageEntry(tx, comment, workEntryDeps(tx))
     return toCommentView(comment)
   })
 }

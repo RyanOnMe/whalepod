@@ -16,6 +16,7 @@ import { OutboxWorker } from './modules/run/index.js'
 import { reconcileLeases } from './modules/run/reconciler.js'
 import { expireApprovals } from './modules/run/approval-expiry.js'
 import { runCoordinationTick } from './modules/coordination/tick.js'
+import { runDiscoveryTick } from './modules/discovery/service.js'
 import { runRouterTick } from './modules/router/service.js'
 import { ArtifactStore } from './modules/artifact/store.js'
 import { runSourceReconcileTick } from './modules/source/tick.js'
@@ -90,8 +91,29 @@ const routerTimer = setInterval(() => {
       routerTickRunning = false
     })
 }, 1000)
+// The DB coordinator lock and running index arbitrate the shared slot across processes.
+let discoveryTickRunning = false
+const discoveryTimer = setInterval(() => {
+  if (discoveryTickRunning) return
+  discoveryTickRunning = true
+  void runDiscoveryTick({
+    database,
+    store: routerStore,
+    log: (event) => app.log.info(event, 'discovery event'),
+  })
+    .catch((error) =>
+      app.log.warn(
+        { component: 'hub.discovery', ...sanitizeError(error) },
+        'discovery tick failed',
+      ),
+    )
+    .finally(() => {
+      discoveryTickRunning = false
+    })
+}, 1000)
 app.addHook('onClose', async () => {
   clearInterval(routerTimer)
+  clearInterval(discoveryTimer)
 })
 const leaseTimer = setInterval(() => {
   void reconcileLeases(

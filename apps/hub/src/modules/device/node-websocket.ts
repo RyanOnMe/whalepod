@@ -33,6 +33,7 @@ import { nodeConnections } from './connection-registry.js'
 import { WorkspaceInventoryIngest } from './inventory.js'
 import type { RealtimeHub } from '../realtime/subscriptions.js'
 import { WebSocket } from 'ws'
+import { acceptDiscoveryHeartbeat, acceptDiscoveryResult } from '../discovery/service.js'
 import { acceptRouterHeartbeat, acceptRouterResult } from '../router/service.js'
 import type { RouterAutoDispatch } from '../router/application.js'
 import { ArtifactStore } from '../artifact/store.js'
@@ -98,6 +99,32 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
       const handleUpstream = async (raw: string): Promise<void> => {
         try {
           const frame = parseNodeFrame(JSON.parse(raw), 'upstream')
+          if (frame.type === 'discovery.heartbeat' || frame.type === 'discovery.result') {
+            await touchDeviceLastSeenAt(deps.database.db, identity.deviceId)
+            const discoveryDeps = {
+              database: deps.database,
+              ...(deps.routerStore ? { store: deps.routerStore } : {}),
+              log: (event: Record<string, unknown>) => app.log.info(event, 'discovery event'),
+            }
+            const response =
+              frame.type === 'discovery.heartbeat'
+                ? await acceptDiscoveryHeartbeat(discoveryDeps, identity.deviceId, frame.payload)
+                : await acceptDiscoveryResult(discoveryDeps, identity.deviceId, frame.payload)
+            if (response && socket.readyState === socket.OPEN)
+              socket.send(
+                JSON.stringify({
+                  protocolVersion: 1,
+                  messageId: randomUUID(),
+                  sentAt: new Date().toISOString(),
+                  type:
+                    frame.type === 'discovery.heartbeat'
+                      ? 'discovery.model_start_ack'
+                      : 'discovery.result_ack',
+                  payload: response,
+                }),
+              )
+            return
+          }
           if (frame.type === 'coordination.heartbeat' || frame.type === 'coordination.result') {
             await touchDeviceLastSeenAt(deps.database.db, identity.deviceId)
             const routerDeps = {

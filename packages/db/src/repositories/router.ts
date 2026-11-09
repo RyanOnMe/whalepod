@@ -194,14 +194,15 @@ export interface ReserveCoordinationUsageInput {
   readonly attempt: number
   readonly projectId: string
   readonly teamId: string
-  readonly workKey: string
+  readonly workKey: string | null
+  readonly discoveryLimits?: CoordinationLimits
   readonly utcDate: string
   readonly reservedTokens: number
   readonly reservedCostMicros: number
   /** Compatibility hint only; the locked global team policy is authoritative. */
   readonly teamLimits: CoordinationLimits
   readonly projectLimits: CoordinationLimits
-  readonly workLimits: {
+  readonly workLimits?: {
     readonly tokens: number
     readonly costMicros: number
     readonly maxAttempts: number
@@ -211,7 +212,7 @@ export interface ReserveCoordinationUsageInput {
   readonly executorFailedAttempts?: number
 }
 const lifetimeDate = 'lifetime'
-function key(scope: 'team' | 'project' | 'work', scopeId: string, utcDate: string) {
+function key(scope: 'team' | 'project' | 'work' | 'discovery', scopeId: string, utcDate: string) {
   return and(
     eq(coordinationBudgets.scope, scope),
     eq(coordinationBudgets.scopeId, scopeId),
@@ -224,11 +225,22 @@ export async function reserveCoordinationUsage(
   handle: DbHandle,
   input: ReserveCoordinationUsageInput,
 ): Promise<boolean> {
-  await handle
-    .select({ id: coordinationEvaluations.id })
+  const [evaluation] = await handle
+    .select({
+      purpose: coordinationEvaluations.purpose,
+      projectId: coordinationEvaluations.projectId,
+    })
     .from(coordinationEvaluations)
     .where(eq(coordinationEvaluations.id, input.evaluationId))
     .for('update')
+  if (
+    !evaluation ||
+    evaluation.projectId !== input.projectId ||
+    (evaluation.purpose === 'discovery') !== (input.workKey === null) ||
+    (input.workKey === null) !== (input.discoveryLimits !== undefined) ||
+    (input.workKey !== null) !== (input.workLimits !== undefined)
+  )
+    return false
   const [existing] = await handle
     .select()
     .from(coordinationUsageLedger)
@@ -271,16 +283,27 @@ export async function reserveCoordinationUsage(
       date: input.utcDate,
       limits: input.projectLimits,
     },
-    {
-      scope: 'work' as const,
-      id: input.workKey,
-      date: lifetimeDate,
-      limits: {
-        calls: Number.MAX_SAFE_INTEGER,
-        tokens: input.workLimits.tokens,
-        costMicros: input.workLimits.costMicros,
-      },
-    },
+    ...(input.workKey === null
+      ? [
+          {
+            scope: 'discovery' as const,
+            id: input.projectId,
+            date: lifetimeDate,
+            limits: input.discoveryLimits!,
+          },
+        ]
+      : [
+          {
+            scope: 'work' as const,
+            id: input.workKey,
+            date: lifetimeDate,
+            limits: {
+              calls: Number.MAX_SAFE_INTEGER,
+              tokens: input.workLimits!.tokens,
+              costMicros: input.workLimits!.costMicros,
+            },
+          },
+        ]),
   ]
   for (const item of scopes) {
     await handle
@@ -303,7 +326,7 @@ export async function reserveCoordinationUsage(
     if (
       item.scope === 'work' &&
       row.retryAttempts + (input.retry ? 1 : 0) + (input.executorFailedAttempts ?? 0) >
-        input.workLimits.maxAttempts
+        input.workLimits!.maxAttempts
     )
       return false
   }
@@ -399,7 +422,9 @@ export async function settleCoordinationUsage(
   for (const item of [
     { scope: 'team' as const, id: reserved.teamId, date: reserved.utcDate },
     { scope: 'project' as const, id: reserved.projectId, date: reserved.utcDate },
-    { scope: 'work' as const, id: reserved.workKey, date: lifetimeDate },
+    reserved.workKey === null
+      ? { scope: 'discovery' as const, id: reserved.projectId, date: lifetimeDate }
+      : { scope: 'work' as const, id: reserved.workKey, date: lifetimeDate },
   ]) {
     const [row] = await handle
       .update(coordinationBudgets)
@@ -416,13 +441,20 @@ export async function settleCoordinationUsage(
   }
   return true
 }
-export async function listUnsettledCoordinationUsage(handle: DbHandle, limit = 100) {
+export async function listUnsettledCoordinationUsage(
+  handle: DbHandle,
+  limit = 100,
+  purpose?: 'router' | 'discovery',
+) {
   return handle
     .select()
     .from(coordinationUsageLedger)
     .where(
       and(
         eq(coordinationUsageLedger.phase, 'reserved'),
+        purpose === undefined
+          ? undefined
+          : sql`exists(select 1 from coordination_evaluation e where e.id=${coordinationUsageLedger.evaluationId} and e.purpose=${purpose})`,
         sql`not exists(select 1 from coordination_usage_ledger s where s.evaluation_id=${coordinationUsageLedger.evaluationId} and s.attempt=${coordinationUsageLedger.attempt} and s.phase='settled')`,
       ),
     )

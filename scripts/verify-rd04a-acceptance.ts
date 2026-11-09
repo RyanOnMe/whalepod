@@ -45,6 +45,7 @@ export interface Rd04aEvidence {
       status: string
       workKey: string | null
       inferenceEntryId: string | null
+      downloadedIds: string[]
       readEntryIds: string[]
       manifestIds: string[]
     }[]
@@ -63,6 +64,8 @@ export interface Rd04aEvidence {
     ownerCache: string | null
     colleagueHttp: number
     revokedOwnerHttp: number
+    candidateRowsAfterRevoke: number
+    nodeAttemptDirGone: boolean
     outputCanaryOnAuthorizedRead: boolean
     surfaces: {
       name: 'ws_live' | 'ws_replay' | 'team_event' | 'log' | 'http'
@@ -133,6 +136,11 @@ export function verifyRd04a(evidence: Rd04aEvidence, expectedAssemblyDigest?: st
   assert(evaluation.manifestIds.length >= 3, 'incomplete manifest: source, slot, evidence')
   assert.equal(new Set(evaluation.manifestIds).size, evaluation.manifestIds.length)
   assert.deepEqual(
+    [...evaluation.downloadedIds].sort(),
+    [...evaluation.manifestIds].sort(),
+    'missing/extra authenticated HTTP downloads',
+  )
+  assert.deepEqual(
     [...evaluation.readEntryIds].sort(),
     [...evaluation.manifestIds].sort(),
     'missing/extra read receipts',
@@ -171,9 +179,15 @@ export function verifyRd04a(evidence: Rd04aEvidence, expectedAssemblyDigest?: st
     'colleague must be logged in and have public project access',
   )
   assert.equal(visibility.ownerHttp, 200)
-  assert(visibility.ownerCache?.includes('no-store'), 'authorized candidate read can be cached')
+  const cache = visibility.ownerCache?.split(',').map((value) => value.trim()) ?? []
+  assert(
+    cache.includes('private') && cache.includes('no-store'),
+    'authorized candidate read can be cached',
+  )
   assert.equal(visibility.colleagueHttp, 404, 'another member could read the candidate')
   assert.equal(visibility.revokedOwnerHttp, 404)
+  assert.equal(visibility.candidateRowsAfterRevoke, 0, 'revocation left a stored candidate body')
+  assert.equal(visibility.nodeAttemptDirGone, true, 'Node retained the discovery attempt directory')
   assert.equal(
     visibility.outputCanaryOnAuthorizedRead,
     true,

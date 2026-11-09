@@ -2,7 +2,7 @@
 /** #532: production comment → discovery → owner-only candidate, with only the provider reply replayed. */
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, rm, writeFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join } from 'node:path'
 import { schema } from '@whalepod/db'
@@ -168,6 +168,25 @@ async function drive(assemblyDigest: string): Promise<Rd04aEvidence> {
   })
   await env.api(`/projects/${project.id}/discovery/permit`, undefined, { method: 'DELETE' })
   const revoked = await env.request(candidatePath)
+  const [candidateCount] = await env.database.sql<{ count: number }[]>`
+    select count(*)::int as count from discovery_candidate
+      where evaluation_id = ${candidateRead.candidate.evaluationId}
+  `
+  const attemptDir = join(
+    env.stateDir,
+    'coordination-home',
+    candidateRead.candidate.evaluationId,
+    '1',
+  )
+  const nodeAttemptDirGone = await until('Node removed discovery attempt directory', async () => {
+    try {
+      await lstat(attemptDir)
+      return undefined
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true
+      throw error
+    }
+  })
   const off = await post(
     discussion.id,
     'Separate shuttle question after the permit has been withdrawn.',
@@ -214,13 +233,22 @@ async function drive(assemblyDigest: string): Promise<Rd04aEvidence> {
       status: row.status,
       workKey: row.workKey,
       inferenceEntryId: row.inferenceEntryId,
+      downloadedIds: row.discoveryDownloadedIds,
       readEntryIds: row.readEntryIds,
       manifestIds: (row.inputManifest.entries as { id: string }[]).map((entry) => entry.id),
     }))
-  const ledger = await db
-    .select()
-    .from(schema.coordinationUsageLedger)
-    .where(eq(schema.coordinationUsageLedger.projectId, project.id))
+  const ledger = await until('discovery usage settled', async () => {
+    const rows = await db
+      .select()
+      .from(schema.coordinationUsageLedger)
+      .where(eq(schema.coordinationUsageLedger.projectId, project.id))
+    return rows.some(
+      ({ evaluationId, phase }) =>
+        evaluationId === candidateRead.candidate.evaluationId && phase === 'settled',
+    )
+      ? rows
+      : undefined
+  })
   assert.equal(providerErrors.length, 0, providerErrors.join('; '))
   const { reason, ...candidate } = candidateRead.candidate
   return {
@@ -282,6 +310,8 @@ async function drive(assemblyDigest: string): Promise<Rd04aEvidence> {
       ownerCache: candidateRead.cache,
       colleagueHttp: readByColleague.status,
       revokedOwnerHttp: revoked.status,
+      candidateRowsAfterRevoke: candidateCount?.count ?? -1,
+      nodeAttemptDirGone,
       outputCanaryOnAuthorizedRead: reason.includes(candidateCanary),
       surfaces: [
         surface('ws_live', live),

@@ -4,10 +4,12 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 import {
   CoordinationHeartbeatPayloadSchema,
   CoordinationRequestPayloadSchema,
-  CoordinationResultPayloadSchema,
+  DiscoveryHeartbeatPayloadSchema,
+  AnyCoordinationRequestSchema,
+  AnyCoordinationResultSchema,
   coordinationInputTokenEstimate,
-  type CoordinationRequest,
-  type CoordinationResult,
+  type AnyCoordinationRequest,
+  type AnyCoordinationResult,
   type NodeDownstream,
   type RouterRuntimeOutput,
 } from '@whalepod/protocol'
@@ -26,7 +28,7 @@ import { CoordinationStore, type CoordinationJournal } from './store.js'
 import { killProcessGroup, processCommandLine, processStartTime } from '../supervisor/process.js'
 
 interface Active {
-  readonly request: CoordinationRequest
+  readonly request: AnyCoordinationRequest
   readonly controller: AbortController
   handle?: CoordinationHandle
   timer?: ReturnType<typeof setInterval>
@@ -51,6 +53,7 @@ export interface CoordinationManagerDeps {
   deviceToken: string
   runtimeEntry: string
   capable: boolean
+  discoveryCapable?: boolean
   send: (frame: string) => boolean
   driver?: CoordinationProcessDriver
   store?: CoordinationStore
@@ -69,7 +72,7 @@ function envelope(type: string, payload: unknown): string {
     payload,
   })
 }
-function binding(request: CoordinationRequest) {
+function binding(request: AnyCoordinationRequest) {
   return {
     evaluationId: request.evaluationId,
     attempt: request.attempt,
@@ -123,8 +126,9 @@ export class CoordinationManager {
   }
   async handleFrame(frame: NodeDownstream): Promise<void> {
     switch (frame.type) {
-      case 'coordination.request': {
-        const starting = this.start(CoordinationRequestPayloadSchema.parse(frame.payload))
+      case 'coordination.request':
+      case 'discovery.request': {
+        const starting = this.start(AnyCoordinationRequestSchema.parse(frame.payload))
         this.starting.add(starting)
         try {
           await starting
@@ -133,9 +137,32 @@ export class CoordinationManager {
         }
         return
       }
-      case 'coordination.cancel': {
+      case 'discovery.model_start_ack': {
+        const active = this.active.get(this.key(frame.payload))
+        if (
+          !active?.needsStartAck ||
+          !active.handle ||
+          !('purpose' in active.request) ||
+          active.request.leaseToken !== frame.payload.leaseToken ||
+          active.controller.signal.aborted
+        )
+          return
+        active.handle.send({
+          type: 'coordination.model_start_ack',
+          payload: binding(active.request),
+        })
+        active.needsStartAck = false
+        return
+      }
+      case 'coordination.cancel':
+      case 'discovery.cancel': {
         const r = this.store.get(frame.payload.evaluationId, frame.payload.attempt)
-        if (r?.leaseToken !== frame.payload.leaseToken) return
+        if (
+          r?.leaseToken !== frame.payload.leaseToken ||
+          'purpose' in AnyCoordinationRequestSchema.parse(JSON.parse(r.requestJson)) !==
+            (frame.type === 'discovery.cancel')
+        )
+          return
         const active = this.active.get(this.key(r))
         if (active !== undefined) {
           active.controller.abort()
@@ -145,19 +172,29 @@ export class CoordinationManager {
         return
       }
       case 'coordination.result_ack':
+      case 'discovery.result_ack': {
+        const row = this.store.get(frame.payload.evaluationId, frame.payload.attempt)
+        if (
+          !row ||
+          'purpose' in AnyCoordinationRequestSchema.parse(JSON.parse(row.requestJson)) !==
+            (frame.type === 'discovery.result_ack')
+        )
+          return
         this.store.ackResult(
           frame.payload.evaluationId,
           frame.payload.attempt,
           frame.payload.leaseToken,
         )
         return
+      }
       default:
         return
     }
   }
-  private failure(request: CoordinationRequest, code: string): CoordinationResult {
+  private failure(request: AnyCoordinationRequest, code: string): AnyCoordinationResult {
     return {
       ...binding(request),
+      ...('purpose' in request ? { purpose: request.purpose } : {}),
       evaluationDigest: request.evaluationDigest,
       status: 'failed',
       failureCode: code,
@@ -166,12 +203,12 @@ export class CoordinationManager {
   }
   private configMatches(
     config: CoordinationLocalConfig | undefined,
-    r: CoordinationRequest,
+    r: AnyCoordinationRequest,
   ): config is CoordinationLocalConfig {
     return (
       config !== undefined &&
       config.enabled &&
-      config.ownerUserId === r.principalUserId &&
+      config.ownerUserId === ('purpose' in r ? r.operatorUserId : r.principalUserId) &&
       config.billingUserId === r.billingUserId &&
       config.provider === r.provider &&
       config.model === r.model &&
@@ -179,7 +216,7 @@ export class CoordinationManager {
       config.configRevision === r.credentialConfigRevision
     )
   }
-  private async start(request: CoordinationRequest): Promise<void> {
+  private async start(request: AnyCoordinationRequest): Promise<void> {
     const key = this.key(request)
     const existing = this.store.get(request.evaluationId, request.attempt)
     if (existing !== undefined) {
@@ -203,7 +240,8 @@ export class CoordinationManager {
     const active: Active = { request, controller: new AbortController(), needsStartAck: false }
     this.active.set(key, active)
     try {
-      if (!this.deps.capable) throw new CoordinationInputError('isolation_unavailable')
+      if (!this.deps.capable || ('purpose' in request && !this.deps.discoveryCapable))
+        throw new CoordinationInputError('isolation_unavailable')
       if (
         Date.parse(request.deadlineAt) <= this.now().getTime() ||
         Date.parse(request.leaseExpiresAt) <= this.now().getTime()
@@ -288,6 +326,7 @@ export class CoordinationManager {
       payload.evaluationId !== request.evaluationId ||
       payload.attempt !== request.attempt ||
       payload.leaseToken !== request.leaseToken ||
+      'purpose' in payload !== 'purpose' in request ||
       payload.readEntryIds.some((id) => !request.manifest.some((entry) => entry.id === id))
     )
       throw new Error('runtime binding rejected')
@@ -312,7 +351,7 @@ export class CoordinationManager {
       if (row !== undefined) this.flushOne(row)
       return
     }
-    const result = CoordinationResultPayloadSchema.parse(frame.payload)
+    const result = AnyCoordinationResultSchema.parse(frame.payload)
     if (result.evaluationDigest !== request.evaluationDigest)
       throw new Error('runtime digest rejected')
     const row = this.store.get(request.evaluationId, request.attempt)
@@ -321,30 +360,38 @@ export class CoordinationManager {
     await this.finish(active, result)
   }
   private flushOne(row: CoordinationJournal): void {
-    const request = CoordinationRequestPayloadSchema.parse(JSON.parse(row.requestJson))
-    const heartbeat = CoordinationHeartbeatPayloadSchema.parse({
+    const request = AnyCoordinationRequestSchema.parse(JSON.parse(row.requestJson))
+    const payload = {
       ...binding(request),
       readEntryIds: row.readEntryIds,
       ...(row.modelStartedAt === null ? {} : { modelStartedAt: row.modelStartedAt }),
-    })
-    const sent = this.deps.send(envelope('coordination.heartbeat', heartbeat))
+    }
+    const discovery = 'purpose' in request
+    const sent = this.deps.send(
+      discovery
+        ? envelope(
+            'discovery.heartbeat',
+            DiscoveryHeartbeatPayloadSchema.parse({ ...payload, purpose: request.purpose }),
+          )
+        : envelope('coordination.heartbeat', CoordinationHeartbeatPayloadSchema.parse(payload)),
+    )
     const active = this.active.get(this.key(row))
-    if (sent && active?.needsStartAck && active.handle !== undefined) {
+    if (!discovery && sent && active?.needsStartAck && active.handle !== undefined) {
       active.handle.send({ type: 'coordination.model_start_ack', payload: binding(request) })
       active.needsStartAck = false
     }
     if (row.state === 'result' && row.resultJson !== null)
       this.deps.send(
         envelope(
-          'coordination.result',
-          CoordinationResultPayloadSchema.parse(JSON.parse(row.resultJson)),
+          discovery ? 'discovery.result' : 'coordination.result',
+          AnyCoordinationResultSchema.parse(JSON.parse(row.resultJson)),
         ),
       )
   }
   onReconnect(): void {
     for (const row of [...this.store.active(), ...this.store.pendingResults()]) this.flushOne(row)
   }
-  private async finish(active: Active, result: CoordinationResult): Promise<void> {
+  private async finish(active: Active, result: AnyCoordinationResult): Promise<void> {
     if (active.finishing !== undefined) return active.finishing
     // Install the promise before any await so output/exit/cancel races have one terminal owner.
     active.finishing = Promise.resolve().then(async () => {
@@ -354,7 +401,7 @@ export class CoordinationManager {
       this.store.saveResult(
         r.evaluationId,
         r.attempt,
-        JSON.stringify(CoordinationResultPayloadSchema.parse(result)),
+        JSON.stringify(AnyCoordinationResultSchema.parse(result)),
       )
       const row = this.store.get(r.evaluationId, r.attempt)
       if (row !== undefined) this.flushOne(row)
@@ -462,7 +509,7 @@ export class CoordinationManager {
   /** Restart never automatically replays a possibly charged model call. */
   async recover(): Promise<void> {
     for (const row of this.store.active()) {
-      const request = CoordinationRequestPayloadSchema.parse(JSON.parse(row.requestJson))
+      const request = AnyCoordinationRequestSchema.parse(JSON.parse(row.requestJson))
       this.store.saveResult(
         row.evaluationId,
         row.attempt,

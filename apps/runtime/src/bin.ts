@@ -73,7 +73,10 @@ function emitStartFatal(runId: string, error: unknown): void {
 function main(): void {
   if (process.argv.slice(2).includes('--coordination-probe')) {
     void probeCoordinationIsolation().then((supported) => {
-      writeSync(1, `${JSON.stringify({ supported })}\n`)
+      writeSync(
+        1,
+        `${JSON.stringify(process.argv.includes('--discovery') ? { supported, discovery: supported } : { supported })}\n`,
+      )
       process.exit(supported ? 0 : 1)
     })
     return
