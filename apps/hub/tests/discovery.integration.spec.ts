@@ -71,7 +71,7 @@ describe('RD-04a shadow discovery from ordinary comments', () => {
   })
   afterEach(async () => {
     for (const socket of sockets.splice(0)) socket.terminate()
-    await ctx.app.close()
+    await ctx.close()
   })
   afterAll(async () => database.close())
 
@@ -115,7 +115,10 @@ describe('RD-04a shadow discovery from ordinary comments', () => {
     return response.json().data.id as string
   }
 
-  async function setupPilot(supportDiscovery = true) {
+  async function setupPilot(
+    supportDiscovery = true,
+    fixture?: { workspaceId: string; agreementTaskIds: string[] },
+  ) {
     const code = await apiInject(ctx, owner, {
       method: 'POST',
       url: '/api/v1/devices/pairing-codes',
@@ -170,6 +173,7 @@ describe('RD-04a shadow discovery from ordinary comments', () => {
       supportedProtocolVersions: [1],
       dshDistributionVersion: '0.1.0-rc.8',
       pluginPackDigests: [],
+      ...(fixture ? { contextCapabilities: ['project-context.v1', 'context-state.v1'] } : {}),
       coordinationCapabilities: supportDiscovery
         ? ['coordination.v1', 'discovery.v1']
         : ['coordination.v1'],
@@ -186,7 +190,18 @@ describe('RD-04a shadow discovery from ordinary comments', () => {
     send('node.inventory', {
       deviceId,
       credentialSlots: [],
-      workspaces: [],
+      workspaces: fixture
+        ? [
+            {
+              workspaceId: fixture.workspaceId,
+              name: 'discovery-coverage',
+              kind: 'directory',
+              capabilities: { read: true, write: true, git: false },
+              available: true,
+              lastCheckedAt: new Date().toISOString(),
+            },
+          ]
+        : [],
       coordinationCredentialSlots: [credentials],
     })
     await waitForValue(async () => {
@@ -236,6 +251,7 @@ describe('RD-04a shadow discovery from ordinary comments', () => {
       maxCalls: 1,
       maxTokens: 100_000,
       maxCostMicros: 100,
+      ...(fixture ? { agreementTaskIds: fixture.agreementTaskIds } : {}),
     }
     const cfg = await apiInject(ctx, owner, {
       method: 'POST',
@@ -262,7 +278,7 @@ describe('RD-04a shadow discovery from ordinary comments', () => {
       payload: { configVersion },
     })
     expect(participation.statusCode, participation.body).toBe(200)
-    return { send, messages, deviceToken, configure, route, settings }
+    return { send, messages, deviceId, deviceToken, configure, route, settings }
   }
 
   async function getRequest(node: Awaited<ReturnType<typeof setupPilot>>) {
@@ -273,6 +289,140 @@ describe('RD-04a shadow discovery from ordinary comments', () => {
     )
     return message.payload
   }
+
+  it('marks coverage incomplete when a published outcome is outside the selected evidence', async () => {
+    const post = async (path: string, payload: object, status = 200) => {
+      const result = await apiInject(ctx, owner, { method: 'POST', url: `/api/v1${path}`, payload })
+      expect(result.statusCode, result.body).toBe(status)
+      return result.json().data
+    }
+    const venue = await post(
+      `/projects/${projectId}/tasks`,
+      { title: '场地座席', assigneeUserId: owner.userId },
+      201,
+    )
+    await post(`/tasks/${venue.id}/accept`, {})
+    const draft = await post(`/tasks/${venue.id}/agreement/draft`, {
+      content: {
+        goal: '安排无障碍座席',
+        constraints: '',
+        acceptance: '完成场地图',
+        openQuestions: '',
+      },
+    })
+    await post(`/tasks/${venue.id}/agreement/confirm`, { draftVersion: draft.draftVersion })
+    const packs = await apiInject(ctx, owner, { method: 'GET', url: '/api/v1/plugin-packs' })
+    const pack = packs.json().data.find((p: { name: string }) => p.name === 'core-empty')
+    expect(pack).toBeDefined()
+    const agent = await post(
+      '/agents',
+      {
+        name: 'coverage-agent',
+        persona: 'Arrange event access.',
+        provider: 'fixture',
+        model: 'fixture',
+        credentialSlot: 'default',
+        pluginPackId: pack.id,
+      },
+      201,
+    )
+    const workspaceId = randomUUID()
+    const node = await setupPilot(true, { workspaceId, agreementTaskIds: [venue.id] })
+    const run = await post(
+      `/tasks/${venue.id}/runs`,
+      { agentId: agent.id, deviceId: node.deviceId, workspaceId, prompt: 'Compile access plans.' },
+      201,
+    )
+    const evidence = '已安排无障碍接驳备选方案。'
+    const bytes = Buffer.from(evidence)
+    const query = new URLSearchParams({
+      title: '接驳方案',
+      mediaType: 'text/plain',
+      byteSize: String(bytes.length),
+      sha256: sha256Hex(evidence),
+      sourceRelativePath: 'shuttle.txt',
+    })
+    const uploaded = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/node/runs/${run.id}/artifacts?${query}`,
+      headers: {
+        authorization: `Device ${node.deviceToken}`,
+        'content-type': 'application/octet-stream',
+        'idempotency-key': randomUUID(),
+      },
+      payload: bytes,
+    })
+    expect(uploaded.statusCode, uploaded.body).toBe(201)
+    const artifactId = uploaded.json().data.id as string
+    await post(`/artifacts/${artifactId}/publish`, {})
+    await ordinaryComment()
+    const request = await getRequest(node)
+    expect(request.manifest.map((entry) => entry.kind)).toEqual([
+      'source',
+      'slot',
+      'agreement',
+      'work',
+    ])
+    expect(request.coverageComplete).toBe(false)
+    const evaluation = await getEvaluation(database.db, request.evaluationId)
+    expect(evaluation?.inputManifest['omissions']).toEqual(['published_evidence_unselected'])
+    expect(JSON.stringify(request)).not.toContain(artifactId)
+
+    for (const entry of request.manifest) {
+      const response = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/discovery/evaluations/${request.evaluationId}/inputs/${entry.id}`,
+        headers: {
+          authorization: `Device ${node.deviceToken}`,
+          'x-coordination-attempt': String(request.attempt),
+          'x-coordination-lease': request.leaseToken,
+        },
+      })
+      expect(response.statusCode, response.body).toBe(200)
+    }
+    const result = resultFor(request)
+    const { purpose, evaluationId, attempt, leaseToken, readEntryIds } = result
+    node.send('discovery.heartbeat', {
+      purpose,
+      evaluationId,
+      attempt,
+      leaseToken,
+      readEntryIds,
+      modelStartedAt: new Date().toISOString(),
+    })
+    await waitForValue(
+      async () => node.messages.find((message) => message.type === 'discovery.model_start_ack'),
+      'no authenticated start ack',
+    )
+    const proposal = {
+      ...result.proposal,
+      classification: 'independent_gap',
+      slot: request.manifest.find((entry) => entry.kind === 'slot')!.id,
+      citations: request.manifest
+        .filter((entry) => entry.kind === 'agreement' || entry.kind === 'work')
+        .map((entry) => entry.id),
+      reason: '现有场地座席工作未涵盖接驳方案。',
+    }
+    node.send('discovery.result', {
+      ...result,
+      proposal,
+      resultDigest: sha256Hex(canonicalJson(proposal)),
+      usage: {
+        provider: request.provider,
+        model: request.model,
+        inputTokens: 100,
+        outputTokens: 10,
+        costMicros: 1,
+      },
+    })
+    const ack = await waitForValue(
+      async () => node.messages.find((message) => message.type === 'discovery.result_ack'),
+      'no discovery result ack',
+    )
+    expect(ack.payload.status).toBe('rejected')
+    expect((await getEvaluation(database.db, evaluationId))?.failureCode).toBe('invalid_citation')
+    expect(await database.sql`select id from discovery_candidate`).toHaveLength(0)
+  })
 
   it('does not let another admin authorize the operator or billing owner for discovery', async () => {
     const node = await setupPilot()
@@ -348,6 +498,39 @@ describe('RD-04a shadow discovery from ordinary comments', () => {
       readEntryIds: request.manifest.map((entry) => entry.id),
     }
   }
+
+  it('never stores or logs a device supplied discovery failure string', async () => {
+    const node = await setupPilot()
+    await ordinaryComment()
+    const request = await getRequest(node)
+    const log = vi.spyOn(ctx.app.log, 'info')
+    const privateMarker = 'private_material_marker_04a'
+    try {
+      node.send('discovery.result', {
+        purpose: request.purpose,
+        evaluationId: request.evaluationId,
+        attempt: request.attempt,
+        leaseToken: request.leaseToken,
+        evaluationDigest: request.evaluationDigest,
+        status: 'failed',
+        failureCode: privateMarker,
+        readEntryIds: [],
+      })
+      await waitForValue(
+        async () => node.messages.find((message) => message.type === 'discovery.result_ack'),
+        'no discovery result ack',
+      )
+      const row = await getEvaluation(database.db, request.evaluationId)
+      expect(row?.failureCode).toBe('invalid_result')
+      expect(log).toHaveBeenCalledWith(
+        expect.objectContaining({ component: 'hub.discovery', reason: 'invalid_result' }),
+        'discovery event',
+      )
+      expect(JSON.stringify(log.mock.calls).includes(privateMarker)).toBe(false)
+    } finally {
+      log.mockRestore()
+    }
+  })
 
   it('does not give a discovery lease to a legacy node and does not carry permission across a model change', async () => {
     const node = await setupPilot(false)

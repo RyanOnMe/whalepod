@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, ne } from 'drizzle-orm'
+import { and, asc, eq, inArray, ne, notInArray, sql } from 'drizzle-orm'
 import {
   findContextEntryByBusinessVersion,
   getCoordinatorStateForUpdate,
@@ -242,7 +242,24 @@ export async function loadDiscoveryInput(
     noteScope(taskId, 'agreement')
   }
 
-  for (const artifactId of [...new Set(cfg.settings.evidenceArtifactIds)].sort()) {
+  const selectedEvidenceIds = [...new Set(cfg.settings.evidenceArtifactIds)].sort()
+  const artifacts = schema.artifacts
+  // A published outcome may cover the slot even if it wasn't selected for model access.
+  // The catalog is already scoped to this project; inventory presence without reading content.
+  const [unselectedPublishedEvidence] = await tx
+    .select({ found: sql<boolean>`true` })
+    .from(artifacts)
+    .where(
+      and(
+        inArray(artifacts.taskId, [task.id, ...catalogIds]),
+        eq(artifacts.status, 'published'),
+        selectedEvidenceIds.length > 0 ? notInArray(artifacts.id, selectedEvidenceIds) : undefined,
+      ),
+    )
+    .limit(1)
+  if (unselectedPublishedEvidence) omissions.push('published_evidence_unselected')
+
+  for (const artifactId of selectedEvidenceIds) {
     const [artifact] = await tx
       .select()
       .from(schema.artifacts)

@@ -51,6 +51,29 @@ const PRE_MODEL_FAILURES = new Set([
   'credential_unavailable',
   'source_unavailable',
 ])
+// Device frames are authenticated but their free text cannot enter shared logs or the ledger.
+const DEVICE_FAILURE_CODES = new Set([
+  ...PRE_MODEL_FAILURES,
+  'isolation_unavailable',
+  'invalid_provider_endpoint',
+  'input_download_failed',
+  'runtime_start_failed',
+  'runtime_protocol_failed',
+  'runtime_lost',
+  'node_lost',
+  'unsupported_tool_call',
+  'usage_missing',
+  'incomplete_model_result',
+  'output_too_large',
+  'provider_request_failed',
+  'invalid_model_result',
+  'invalid_model_request',
+  'invalid_citation',
+  'invalid_coverage',
+  'over_budget',
+  'timeout',
+  'cancelled',
+])
 const nowOf = (deps: RouterDeps) => deps.now?.() ?? new Date()
 
 function bound(row: CoordinationEvaluationRow, deviceId: string, value: Binding): boolean {
@@ -464,7 +487,13 @@ export async function acceptDiscoveryResult(
       }
     }
     const status = reject ? 'stale' : value.status === 'completed' ? 'completed' : 'failed'
-    const failureCode = reject ?? (value.status === 'failed' ? value.failureCode : null)
+    const failureCode =
+      reject ??
+      (value.status === 'failed'
+        ? DEVICE_FAILURE_CODES.has(value.failureCode)
+          ? value.failureCode
+          : 'invalid_result'
+        : null)
     ack.status = status === 'completed' ? 'accepted' : 'rejected'
     return updateEvaluation(tx, row.id, {
       status,
