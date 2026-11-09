@@ -18,7 +18,7 @@ const reads = vi.hoisted(() => ({
   failed: vi.fn(),
 }))
 vi.mock('@whalepod/db', () => ({
-  getArtifact: reads.artifact,
+  getOrdinaryArtifact: reads.artifact,
   getRun: reads.run,
   getArtifactPreview: reads.preview,
   transactCommand: reads.transact,
@@ -56,6 +56,14 @@ beforeEach(() => {
 })
 
 describe('preview legacy metadata disclosure', () => {
+  it('does not reach preview storage when the ordinary artifact read withholds the item', async () => {
+    reads.artifact.mockResolvedValueOnce(undefined)
+    await expect(
+      getArtifactPreviewInfo({} as DbHandle, { userId: asUserId(ID), role: 'member' }, ID),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    expect(reads.preview).not.toHaveBeenCalled()
+  })
+
   it('normalizes old persisted diagnostics at the Session read boundary', async () => {
     reads.preview.mockResolvedValue(row)
     const view = await getArtifactPreviewInfo(

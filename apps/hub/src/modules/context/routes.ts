@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { z } from 'zod'
 import type { Database } from '@whalepod/db'
-import { getEnabledMember, getProject, getRun, getTeam } from '@whalepod/db'
+import { getEnabledMember, getProject, getOrdinaryRun, getTeam } from '@whalepod/db'
 import { CorrectContextEntryRequestSchema } from '@whalepod/protocol'
 import { audit } from '../shared/audit.js'
 import { ApiError } from '../shared/http-error.js'
@@ -105,7 +105,7 @@ export function registerContextRoutes(app: FastifyInstance, deps: ContextRouteDe
     const actor = await deps.requireActor(request)
     const { runId: rawRunId } = request.params as { runId: string }
     const runId = parseUuid(rawRunId, 'run id')
-    const run = await getRun(deps.database.db, runId)
+    const run = await getOrdinaryRun(deps.database.db, runId)
     if (run === undefined) throw new ApiError(404, 'NOT_FOUND', 'run not found')
     const team = await getTeam(deps.database.db)
     if (
@@ -126,7 +126,7 @@ export function registerContextRoutes(app: FastifyInstance, deps: ContextRouteDe
     const identity = await authenticateDevice(deps.database, request)
     const { runId: rawRunId } = request.params as { runId: string }
     const runId = parseUuid(rawRunId, 'run id')
-    const run = await getRun(deps.database.db, runId)
+    const run = await getOrdinaryRun(deps.database.db, runId)
     if (run === undefined || run.deviceId !== identity.deviceId) {
       throw new ApiError(404, 'NOT_FOUND', 'run not found')
     }

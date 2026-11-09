@@ -14,6 +14,11 @@ import { taskMessages } from '../schema/project.js'
 export type RunRow = typeof runs.$inferSelect
 export type ApprovalRow = typeof approvals.$inferSelect
 
+/** The persisted seal is authoritative, even if a Node calls a legacy endpoint. */
+export function isManagedDraftSource(run: Pick<RunRow, 'managedDraftSourceDigest'>): boolean {
+  return run.managedDraftSourceDigest !== null
+}
+
 /** 固化列按 03 §2.6：owner/agent/revision/device/workspace/digest 创建后不可变。 */
 export interface NewRun {
   id: string
@@ -66,6 +71,11 @@ export async function insertRun(handle: DbHandle, run: NewRun): Promise<RunRow> 
 export async function getRun(handle: DbHandle, id: string): Promise<RunRow | undefined> {
   const [row] = await handle.select().from(runs).where(eq(runs.id, id)).limit(1)
   return row
+}
+
+export async function getOrdinaryRun(handle: DbHandle, id: string): Promise<RunRow | undefined> {
+  const run = await getRun(handle, id)
+  return run === undefined || isManagedDraftSource(run) ? undefined : run
 }
 
 /**

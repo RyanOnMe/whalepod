@@ -32,7 +32,9 @@ import {
   findCommandReceipt,
   getApproval,
   getOutboxCommand,
+  getOrdinaryRun,
   getRun,
+  isManagedDraftSource,
   getWorkByKeyForUpdate,
   insertApprovalIfAbsent,
   insertRun,
@@ -430,7 +432,7 @@ export class RunOrchestrator {
 
     let rerunSource: RunRow | undefined
     if (input.rerunOfRunId !== undefined) {
-      const prior = await getRun(tx, input.rerunOfRunId)
+      const prior = await getOrdinaryRun(tx, input.rerunOfRunId)
       if (prior === undefined || prior.taskId !== taskId) {
         throw new RunCommandError('NOT_FOUND', 'rerun source run not found')
       }
@@ -450,7 +452,7 @@ export class RunOrchestrator {
     //    拒绝换目标，不静默降级成摘要 fallback（那是后续独立组件）。
     let resumeSource: RunRow | undefined
     if (input.resumeFromRunId !== undefined) {
-      const prior = await getRun(tx, input.resumeFromRunId)
+      const prior = await getOrdinaryRun(tx, input.resumeFromRunId)
       if (prior === undefined || prior.taskId !== taskId) {
         throw new RunCommandError('NOT_FOUND', 'resume source run not found')
       }
@@ -715,7 +717,10 @@ export class RunOrchestrator {
     if (typeof payload.runId !== 'string') return true
     // 已成功写入过 Node 的命令是同一冻结快照的重复投递（R7 ack 丢失/重连重发）；
     // 期间来源变化只能影响「尚未发出的新快照」，不能把已在执行的 Run 判失败。
-    if (command.sentAt !== null) return true
+    if (command.sentAt !== null) {
+      const run = await getRun(this.database.db, payload.runId)
+      return run === undefined || !isManagedDraftSource(run)
+    }
     const now = this.nowFn()
     const recorded: RecordedContextEntry[] = []
     const dispatch: { outcome: 'send' | 'block' | 'skip' } = { outcome: 'skip' }
@@ -731,6 +736,13 @@ export class RunOrchestrator {
       }
       // RD-03a：机器 Run 在真正发往 Node 前复核 Mandate/意图/Task；撤权后即使
       // 取消事务尚未到达，也走既有 queued 取消路径，绝不把 run.start 发出去。
+      if (isManagedDraftSource(run)) {
+        // The ordinary wire and Node path never gets a sealed Run, even on redelivery.
+        blockReason = 'managed_draft_source_unavailable'
+        await cancelRunInTransaction(tx, { outbox: this.outbox, now }, run, 'admin')
+        dispatch.outcome = 'block'
+        return
+      }
       const machineVerification = await verifyRunMachineDispatch(tx, run, now)
       if (!machineVerification.ok) {
         blockReason = machineVerification.reason
@@ -815,7 +827,8 @@ export class RunOrchestrator {
         .from(schema.runs)
         .where(eq(schema.runs.id, runId))
         .for('update')
-      if (run === undefined) throw new RunCommandError('NOT_FOUND', 'run not found')
+      if (run === undefined || isManagedDraftSource(run))
+        throw new RunCommandError('NOT_FOUND', 'run not found')
       if (!authorize(ctx, 'cancel_run', { ownerUserId: asUserId(run.ownerUserId) })) {
         throw new RunCommandError('FORBIDDEN', 'only the run owner or a team admin can cancel')
       }
@@ -856,7 +869,8 @@ export class RunOrchestrator {
         .from(schema.runs)
         .where(eq(schema.runs.id, approval.runId))
         .for('update')
-      if (run === undefined) throw new RunCommandError('NOT_FOUND', 'run not found')
+      if (run === undefined || isManagedDraftSource(run))
+        throw new RunCommandError('NOT_FOUND', 'run not found')
       const row = await decideApprovalInTransaction(
         tx,
         { outbox: this.outbox, now },
@@ -983,7 +997,7 @@ export class RunOrchestrator {
         .from(schema.runs)
         .where(eq(schema.runs.id, runId))
         .for('update')
-      if (run === undefined) return
+      if (run === undefined || isManagedDraftSource(run)) return
       // #196：由执行区指令起的 Run，其 run.start ack 就是**那条指令**的命运（决策 3「受理即落账」）。
       // 与 followup 的区别只是锚点不同：这里是 runs.trigger_message_id，那边是 outbox.message_id。
       await settleTriggerInstruction(tx, run, ack)
@@ -1042,6 +1056,7 @@ export class RunOrchestrator {
       if (run.deviceId !== device.deviceId) {
         throw new RunCommandError('FORBIDDEN', 'run does not belong to this device')
       }
+      if (isManagedDraftSource(run)) return
       outcome = await recordRunContextReceipt(tx, run, receipt, now, (message, context) => {
         gaps.push({ message, context })
       })
@@ -1183,6 +1198,7 @@ export class RunOrchestrator {
         if (run.deviceId !== device.deviceId) {
           throw new RunCommandError('FORBIDDEN', 'run does not belong to this device')
         }
+        if (isManagedDraftSource(run)) return
         outcome = await recordRunWorkInputReceipt(tx, run, receipt, now)
       })
     } catch (error) {
@@ -1232,6 +1248,9 @@ export class RunOrchestrator {
       if (run.deviceId !== device.deviceId) {
         throw new RunCommandError('FORBIDDEN', 'run does not belong to this device')
       }
+      // The persisted seal wins over the node-supplied audience. Managed lifecycle
+      // and receipts need their own fixed, payload-free protocol.
+      if (isManagedDraftSource(run)) return
       // usage 只属于 owner 受众；不依赖 Node projector 自律，伪造的 project
       // 终态帧在持久化/团队扇出之前拒绝。
       if (
@@ -1505,7 +1524,7 @@ export class RunOrchestrator {
       if (run.deviceId !== device.deviceId) {
         throw new RunCommandError('FORBIDDEN', 'run does not belong to this device')
       }
-      if (isTerminal(run.status)) return
+      if (isManagedDraftSource(run) || isTerminal(run.status)) return
       const event = this.snapshotToEvent(run, snapshot)
       if (event === undefined) return
       try {

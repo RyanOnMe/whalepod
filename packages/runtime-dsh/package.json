@@ -16,6 +16,16 @@
       "types": "./dist/index.d.ts",
       "development": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./managed-draft": {
+      "types": "./dist/managed-draft-worker.d.ts",
+      "development": "./src/managed-draft-worker.ts",
+      "default": "./dist/managed-draft-worker.js"
+    },
+    "./managed-draft-broker": {
+      "types": "./dist/managed-draft-broker.d.ts",
+      "development": "./src/managed-draft-broker.ts",
+      "default": "./dist/managed-draft-broker.js"
     }
   },
   "scripts": {

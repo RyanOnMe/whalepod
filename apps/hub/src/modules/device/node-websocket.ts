@@ -17,7 +17,9 @@ import type { Database } from '@whalepod/db'
 import {
   appendTeamEvent,
   findDeviceByTokenHash,
+  getOrdinaryRun,
   getRun,
+  isManagedDraftSource,
   runEventWatermark,
   setDeviceHelloFacts,
   touchDeviceLastSeenAt,
@@ -187,6 +189,7 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
             if (run === undefined || run.deviceId !== identity.deviceId) {
               throw new Error('live_delta for unknown or foreign run')
             }
+            if (isManagedDraftSource(run)) return
             if (TERMINAL.has(run.status)) return // 终态后的迟到 delta：丢，不转发
             deps.realtime.publishLive({
               runId: run.id,
@@ -219,7 +222,7 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
             // R1 协议侧：心跳上报的 Node 水位高于 Hub 连续水位 → 主动拉缺口。
             // （Node 重连也会自发 drain——这里是 Hub 视角的双保险。）
             for (const [runId, nodeSeq] of Object.entries(frame.payload.lastEventSeqByRun)) {
-              const run = await getRun(deps.database.db, runId)
+              const run = await getOrdinaryRun(deps.database.db, runId)
               if (run === undefined || run.deviceId !== identity.deviceId) continue
               if (TERMINAL.has(run.status)) continue
               const hubWatermark = await runEventWatermark(deps.database.db, runId)

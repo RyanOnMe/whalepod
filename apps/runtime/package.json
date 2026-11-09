@@ -14,7 +14,8 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./bin": "./dist/bin.js"
+    "./bin": "./dist/bin.js",
+    "./managed-draft-worker": "./dist/managed-draft-worker-bin.js"
   },
   "scripts": {
     "build": "tsc -b",

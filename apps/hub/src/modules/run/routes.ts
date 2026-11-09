@@ -24,7 +24,7 @@ import { RunCommandError } from './errors.js'
 import type { RunOrchestrator } from './orchestrator.js'
 import { sendRunFollowup } from './followup.js'
 import { getRunView } from './queries.js'
-import { getRun, listRunEvents } from '@whalepod/db'
+import { getOrdinaryRun, listRunEvents } from '@whalepod/db'
 import { DecideApprovalRequestSchema } from '@whalepod/protocol'
 
 export interface RunRoutesDeps {
@@ -255,7 +255,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: RunRoutesDeps): vo
     try {
       const actor = await deps.resolveActor(request)
       const runId = (request.params as { runId?: string }).runId ?? ''
-      const run = await getRun(deps.database.db, runId)
+      const run = await getOrdinaryRun(deps.database.db, runId)
       if (run === undefined) return sendError(reply, 'NOT_FOUND', 'run not found')
       const query = request.query as { after?: unknown; limit?: unknown }
       const afterSeq = typeof query.after === 'string' ? Number(query.after) : undefined

@@ -8,11 +8,11 @@
  * 授权（切片④ #198 已落地）：责任人 ∪ 被授权成员（`resolveInstructionRight` 唯一判定入口）。
  * 被授权成员只是"能开口"——设备/凭据仍是责任人的，Run 归属也仍是责任人。
  */
-import { and, desc, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
 import type { Database, Tx } from '@whalepod/db'
 import {
   findCommandReceipt,
-  getRun,
+  getOrdinaryRun,
   resolveInstructionRight,
   schema,
   settleInstruction,
@@ -206,8 +206,9 @@ export async function sendInstruction(
   }
   if (active !== undefined) {
     if (input.expectedApprovalPolicy !== undefined) {
-      const pinned = await getRun(deps.database.db, active.id)
-      if (pinned?.approvalPolicy !== input.expectedApprovalPolicy)
+      const pinned = await getOrdinaryRun(deps.database.db, active.id)
+      if (pinned === undefined) throw new RunCommandError('NOT_FOUND', 'run not found')
+      if (pinned.approvalPolicy !== input.expectedApprovalPolicy)
         throw new RunCommandError('CONFLICT', '审批档位与所选执行不一致，请重新确认')
     }
     const message = await sendRunFollowup(deps.database, deps.outbox, actor, active.id, {
@@ -248,7 +249,9 @@ export async function sendInstruction(
 
   // 没有活跃 Run → 建 Run。目标解析失败一律**明确拒绝**（不猜，也不落一条注定失败的指令）。
   const resumeSource =
-    input.intent?.kind === 'resume' ? await getRun(deps.database.db, input.intent.runId) : undefined
+    input.intent?.kind === 'resume'
+      ? await getOrdinaryRun(deps.database.db, input.intent.runId)
+      : undefined
   if (
     input.intent?.kind === 'resume' &&
     (resumeSource === undefined || resumeSource.taskId !== taskId)
@@ -386,7 +389,7 @@ async function agentFromLastRun(
   const rows = await deps.database.db
     .select({ agentId: schema.runs.agentId })
     .from(schema.runs)
-    .where(eq(schema.runs.taskId, taskId))
+    .where(and(eq(schema.runs.taskId, taskId), isNull(schema.runs.managedDraftSourceDigest)))
     .orderBy(desc(schema.runs.createdAt))
     .limit(1)
   return rows[0]?.agentId

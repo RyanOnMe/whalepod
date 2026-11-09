@@ -1,0 +1,4 @@
+# Keep the managed source profile empty. managed-draft-model.ts mounts an
+# explicit core so the ordinary Runtime profile and future overlays cannot
+# introduce provider, credential, retry or external-tool plugins.
+[]

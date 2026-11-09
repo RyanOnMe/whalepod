@@ -8,7 +8,7 @@ import { asUserId, authorize, type Actor } from '@whalepod/domain'
 import type { ArtifactRow, ArtifactPreviewRow, Database, DbHandle } from '@whalepod/db'
 import {
   appendTeamEvent,
-  getArtifact,
+  getOrdinaryArtifact,
   getArtifactPreview,
   getRun,
   schema,
@@ -49,7 +49,7 @@ async function requireDeviceArtifact(
   deviceId: string,
   artifactId: string,
 ): Promise<ArtifactRow> {
-  const artifact = await getArtifact(database.db, artifactId.toLowerCase())
+  const artifact = await getOrdinaryArtifact(database.db, artifactId.toLowerCase())
   if (artifact === undefined) throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
   const run = await getRun(database.db, artifact.runId)
   if (run === undefined || run.deviceId !== deviceId)
@@ -62,7 +62,7 @@ async function readableArtifact(
   actor: Actor,
   artifactId: string,
 ): Promise<ArtifactRow> {
-  const artifact = await getArtifact(handle, artifactId.toLowerCase())
+  const artifact = await getOrdinaryArtifact(handle, artifactId.toLowerCase())
   if (
     artifact === undefined ||
     !authorize({ userId: asUserId(actor.userId), role: actor.role }, 'read_artifact_content', {

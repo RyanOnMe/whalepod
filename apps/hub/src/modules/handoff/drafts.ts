@@ -41,7 +41,7 @@ import {
   getHandoffRevision,
   getLatestHandoffDraft,
   getOpenHandoffDraft,
-  getRun,
+  getOrdinaryRun,
   getSpecRevision,
   getTask,
   insertHandoffDraftIfAbsent,
@@ -266,7 +266,7 @@ async function requireOwnedRun(
   runId: string,
   actorUserId: string,
 ): Promise<RunRow> {
-  const run = await getRun(handle, runId)
+  const run = await getOrdinaryRun(handle, runId)
   // 不可见与不存在同作 404（管理员也不可见——草稿私有的口径）。
   if (run === undefined || run.ownerUserId !== actorUserId) {
     throw new ApiError(404, 'NOT_FOUND', 'run not found')
@@ -462,7 +462,7 @@ export async function publishHandoffDraft(
     }
     const runRefs = collectRefs(narrative).filter((ref) => ref.kind === 'run')
     for (const ref of runRefs) {
-      const referenced = await getRun(tx, ref.runId)
+      const referenced = await getOrdinaryRun(tx, ref.runId)
       if (referenced === undefined || referenced.taskId !== run.taskId) {
         throw new ApiError(409, 'CONFLICT', 'run 引用必须是本任务的执行')
       }

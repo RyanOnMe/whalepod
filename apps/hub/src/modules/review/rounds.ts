@@ -14,7 +14,7 @@ import {
   appendTeamEvent,
   claimArtifactRevisionRoundStart,
   findRunByReviewRoundId,
-  getArtifact,
+  getOrdinaryArtifact,
   getArtifactComment,
   getArtifactRevisionLinkByRound,
   getArtifactRevisionRound,
@@ -71,7 +71,7 @@ function requireAssignee(task: TaskRow, actor: Actor): void {
 }
 
 async function loadArtifactOr404(handle: DbHandle, id: string): Promise<ArtifactRow> {
-  const row = await getArtifact(handle, id.toLowerCase())
+  const row = await getOrdinaryArtifact(handle, id.toLowerCase())
   if (row === undefined) throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
   return row
 }
@@ -126,7 +126,7 @@ async function loadRoundView(
     listArtifactCommentResolutionsByRound(handle, round.id),
   ])
   const candidate =
-    link === undefined ? undefined : await getArtifact(handle, link.candidateArtifactId)
+    link === undefined ? undefined : await getOrdinaryArtifact(handle, link.candidateArtifactId)
   return ArtifactRevisionRoundViewSchema.parse({
     id: round.id,
     taskId: round.taskId,

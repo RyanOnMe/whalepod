@@ -15,7 +15,7 @@ import type { ArtifactRow, Database, DbHandle } from '@whalepod/db'
 import {
   appendTeamEvent,
   countArtifactCommentsByAuthor,
-  getArtifact,
+  getOrdinaryArtifact,
   getArtifactComment,
   getArtifactReviewInvitation,
   getEnabledMember,
@@ -96,7 +96,7 @@ export async function requireReadableArtifact(
   actor: Actor,
   artifactId: string,
 ): Promise<ArtifactRow> {
-  const row = await getArtifact(handle, artifactId.toLowerCase())
+  const row = await getOrdinaryArtifact(handle, artifactId.toLowerCase())
   if (row === undefined) throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
   const allowed = authorize(
     { userId: asUserId(actor.userId), role: actor.role },

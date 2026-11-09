@@ -888,6 +888,11 @@ export async function dispatchIntent(
         await requireAssignee(tx, task, actor.userId)
         assertActiveWork(work, task)
         const intent = assertIntentOwned(await getDispatchIntentForUpdate(tx, intentId), work, task)
+        // ADR-0029: a managed source needs a separate verified execution path. Never
+        // hand this request to the ordinary machine Run, even on a capable-looking device.
+        if (request.executionProfile === 'managed_draft_source') {
+          throw conflict('managed draft source execution is unavailable')
+        }
         if (intent.status !== 'approved') {
           throw conflict(`dispatch intent is ${intent.status}; approve it first`)
         }

@@ -13,6 +13,7 @@ import {
   insertTeam,
   insertUser,
   insertInvite,
+  revokeManagedDraftSourcesForMember,
   revokeSessionsForUser,
   schema,
   unwrapPgError,
@@ -395,6 +396,7 @@ export async function disableMember(
     const now = new Date()
     await disableUser(tx, input.targetUserId, now)
     await revokeSessionsForUser(tx, input.targetUserId, now)
+    await revokeManagedDraftSourcesForMember(tx, input.targetUserId, now)
     // #163：停用同样是名册变更（enabled:false 那行还在，但选择器要把它过滤掉——
     // 对方开着的页面必须实时看到"已停用"徽标，而不是下次刷新才发现）。
     await publishMemberChanged(tx, now)
