@@ -69,7 +69,7 @@ function fixture() {
     summary: proposal.summary,
     reason: proposal.reason,
     citations: ['S1'],
-    coverage: [{ source: 'S1', status: 'uncovered', evidence: [] }],
+    coverage: [{ source: 'S1', status: 'irrelevant', evidence: [] }],
   }
   return { request, inputsDir, entryId, input, proposal, modelProposal }
 }
@@ -102,6 +102,56 @@ describe('Router 白名单输入与结构化判断', () => {
     writeFileSync(join(inputsDir, 'outside.bin'), 'different')
     symlinkSync(join(inputsDir, 'outside.bin'), join(inputsDir, `${entryId}.bin`))
     expect(() => readCoordinationPrompt(request, inputsDir)).toThrow('input_digest_mismatch')
+  })
+
+  it('keeps trusted source and publication times even when the artifact bodies do not name a version', () => {
+    const { request, inputsDir, input } = fixture()
+    const earlier = '2026-10-01T00:00:00.000Z'
+    const later = '2026-10-02T00:00:00.000Z'
+    const source = { ...request.manifest[0]!, version: later }
+    function evidence(body: string, publishedAt: string) {
+      const id = randomUUID()
+      writeFileSync(join(inputsDir, `${id}.bin`), body)
+      return {
+        id,
+        kind: 'evidence' as const,
+        sourceId: randomUUID(),
+        version: createHash('sha256').update(body).digest('hex'),
+        digest: createHash('sha256').update(body).digest('hex'),
+        byteSize: Buffer.byteLength(body),
+        authorizationGeneration: `published:${publishedAt}`,
+      }
+    }
+    const seven = evidence('Retention: 7 days.', earlier)
+    const thirty = evidence('Retention: 30 days.', later)
+    const first = readCoordinationPrompt(
+      { ...request, manifest: [source, seven, thirty] },
+      inputsDir,
+    )
+    expect(JSON.parse(first.user)).toEqual({
+      entries: [
+        { id: 'S1', kind: 'source', body: input, revisedAt: later },
+        { id: 'E1', kind: 'evidence', body: 'Retention: 7 days.', publishedAt: earlier },
+        { id: 'E2', kind: 'evidence', body: 'Retention: 30 days.', publishedAt: later },
+      ],
+    })
+    const reversed = readCoordinationPrompt(
+      {
+        ...request,
+        manifest: [
+          source,
+          { ...seven, authorizationGeneration: thirty.authorizationGeneration },
+          { ...thirty, authorizationGeneration: seven.authorizationGeneration },
+        ],
+      },
+      inputsDir,
+    )
+    expect(
+      JSON.parse(reversed.user)
+        .entries.slice(1)
+        .map((entry: { publishedAt: string }) => entry.publishedAt),
+    ).toEqual([later, earlier])
+    expect(first.readEntryIds).toEqual(reversed.readEntryIds)
   })
 
   it('伪造引用、缺覆盖、没有成果依据的covered和unknown派工都拒绝', () => {
@@ -166,6 +216,60 @@ describe('Router 白名单输入与结构化判断', () => {
         request,
       ),
     ).toMatchObject({ decision: 'ignore', citations: [entryId] })
+  })
+
+  it('keeps irrelevant inputs out of dispatch and still ignores wholly irrelevant sources', () => {
+    const { request, entryId } = fixture()
+    const other = randomUUID()
+    const two = {
+      ...request,
+      manifest: [...request.manifest, { ...request.manifest[0]!, id: other }],
+    }
+    const unrelated = { source: 'S2', status: 'irrelevant', evidence: [] }
+    const common = {
+      summary: 'Explicitly separate actionable inputs from small talk.',
+      citations: [],
+    }
+    expect(() =>
+      decodeCoordinationModelProposal(
+        {
+          ...common,
+          decision: 'dispatch',
+          actionClass: 'draft',
+          coverage: [{ source: 'S1', status: 'uncovered', evidence: [] }, unrelated],
+        },
+        two,
+      ),
+    ).toThrow('invalid_coverage')
+    expect(() =>
+      decodeCoordinationModelProposal(
+        {
+          ...common,
+          decision: 'ignore',
+          reason: 'unrelated',
+          coverage: [{ source: 'S1', status: 'uncovered', evidence: [] }, unrelated],
+        },
+        two,
+      ),
+    ).toThrow('invalid_coverage')
+    expect(
+      decodeCoordinationModelProposal(
+        {
+          ...common,
+          decision: 'ignore',
+          reason: 'unrelated',
+          coverage: [{ ...unrelated, source: 'S1' }, unrelated],
+        },
+        two,
+      ),
+    ).toMatchObject({
+      decision: 'ignore',
+      citations: [entryId, other],
+      coverage: [
+        { inputId: entryId, status: 'uncovered', evidenceIds: [] },
+        { inputId: other, status: 'uncovered', evidenceIds: [] },
+      ],
+    })
   })
 
   it('derives wait deadlines only from trusted policy and refuses missing or expired policy', () => {
