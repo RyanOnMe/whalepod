@@ -35,6 +35,8 @@
 - E2E 失败自动产包：`artifacts/evidence/<scenario-id>/<attempt-id>/`，含 `manifest.json`（git commit、DSH 版本、协议版本、种子、起止时间）、`assertions.json`、`api.jsonl`、`team-events.jsonl`、`node-events.jsonl`、`runtime-summary.jsonl`、`db-snapshot.json`、双浏览器截图。
 - P1-19 E2E 自动产包：`artifacts/evidence/e2e/<attemptId>/`（`hub.log.txt`/`node.log.txt`/`vite.log.txt` 三层日志尾 + `run-<id8>.json` 相关 Run 全量事实白名单 + `manifest.json` traceId/error/runIds）。控制面 `/control/tails` 与 `/control/db/run/:id` 是打包数据源；归因按 component 前缀（hub.*/node.*/runtime.*）分层。
 - Router 受限评估（#519）与提案承接（#520）：`pnpm exec tsx scripts/run-router-evaluation.ts` 走生产装配，`pnpm exec tsx scripts/verify-router-evaluation.ts artifacts/evidence/router-evaluation/result.json` 独立重判，同目录的 `events.jsonl` 也是必需输入。按 evaluationId/attempt 关联入口、模型调用、读取、接受/拒收及 ledger 的 reserved/settled；九场景缺任一即失败。#520 额外重判 `intents=1`/`questions=1`/`waits=1`/`applications=4` 且 `runs=0`，并核对 dispatch/ask/wait/ignore 的承接对象；Executor 账本 scope/零计费/封顶由 `packages/db/tests/executor-ledger.integration.spec.ts` 钉住。`authorize_scope` 的回答/确认由 `apps/hub/tests/work-scope-proposal.integration.spec.ts` 钉住（pending 草案、新版本、stale/改派/过期/并发）。变异复跑用 `pnpm exec tsx scripts/mutate-router-evaluation.ts`（含 #517 的 S01/S02/S04–S17），结果写入 `artifacts/evidence/router-evaluation/mutations/result.json`。成功事实和失败脱敏日志均位于该目录，CI `always` 上传。
+- M1R-A 生产续接（#486）：`artifacts/evidence/m1r-a/` 按来源/订阅、收件箱条目、两次 Run、边界评估及候选成果关联。复跑与判据见 [M1R-A 验收](./m1r-a-production-acceptance.md)。
+- Router 真实模型（#486）：`artifacts/evidence/router-quality/` 按开发集、冻结配置与保留集分别取证，判分独立于待测模型。复跑与范围见 [真实模型质量验收](./router-real-model-quality-acceptance.md)。
 - 任何证据离开本机或进 git 之前：`scripts/secret-scan.sh <路径>`，命中即拒（Q7）。
   绝对路径模式覆盖 macOS home、Linux home 与 tmpdir 形态（含本机 os.tmpdir()
   锚点）；模式本身的可信度用 `scripts/secret-scan.sh --self-test` 逐条语料自检（#73）。
@@ -43,6 +45,7 @@
 
 | 现象 | 先看 |
 |---|---|
+| 补充进了收件箱，续跑却没读到正文或草稿不可见 | `hub.work_entry` 的订阅/条目 → `hub.dispatch` 的边界/评估/意图/新 Run → `node.work_input` 下载与 `hub.work_input` 读取回执 → `artifact.store` 候选上传及双账号下载状态。见 [M1R-A 验收](./m1r-a-production-acceptance.md) |
 | 慢路径有 Router 调用记录却没有模型、结果被拒收、费用未释放或 Node 重启后重复请求 | `hub.work_entry` call 的 evaluation_id/resolution_reason → `hub.router` 评估状态/读取/模型启动/lease/deadline → `node.coordination` journal 与孤儿恢复 → `runtime.bridge.coordination` 分类失败；费用对照 usage ledger 的 evaluationId/attempt/phase 和三层 budget。复跑与范围见 [#519 验收](./2026-11-04-rd03r1-router-evaluation-acceptance.md) |
 | 输入栏焦点重叠、审批参数裁切、文件菜单溢出或 Esc 关掉外层面板 | `web.app-ui`：`artifacts/evidence/focused-workspace/<本次目录>/facts.json` 的 prompts/approvals/files 九组测量，独立复跑 `verify-app-ui-evidence` 与 `verify-workspace-evidence`；bundle 异常看 `vendor/collectui/manifest.json`，见 app-ui-polish-acceptance |
 | 管理页裁切、邀请展开/复制、插件卡审核、Agent 关闭回焦或设备配对展示异常 | `web.management`：management-pages facts.json；复跑 verify-management-evidence；见 reactbits-management-acceptance |

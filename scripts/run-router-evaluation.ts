@@ -29,7 +29,7 @@ const knownSecrets: string[] = []
 const children: ChildProcess[] = []
 const tails = new Map<ChildProcess, string>()
 const held = new Map<string, { response: ServerResponse; body: unknown }>()
-const providerCalls: Array<{ scenario: string; workKey: string; entryIds: string[] }> = []
+const providerCalls: Array<{ scenario: string; entryAliases: string[] }> = []
 const completed: Array<Record<string, unknown>> = []
 const events: Array<Record<string, unknown>> = []
 let postgres: EphemeralPostgres | undefined
@@ -50,36 +50,33 @@ const provider = createServer(async (request, response) => {
     }
     assert.equal(body.tools?.length ?? 0, 0)
     const prompt = JSON.parse(body.messages.find((m) => m.role === 'user')!.content) as {
-      workKey: string
       entries: Array<{ id: string; kind: string; body: string }>
     }
+    assert.deepEqual(Object.keys(prompt), ['entries'])
     const sources = prompt.entries.filter((entry) => entry.kind === 'source')
+    assert(sources.every((entry) => /^S[1-9]\d*$/.test(entry.id)))
     const match = /ROUTER_CASE:([a-z_]+)/.exec(sources.map((entry) => entry.body).join('\n'))
     assert.ok(match, 'model request must contain the triggering source body')
     const scenario = match[1]!
     providerCalls.push({
       scenario,
-      workKey: prompt.workKey,
-      entryIds: prompt.entries.map((e) => e.id),
+      entryAliases: prompt.entries.map((e) => e.id),
     })
     const decision = ['dispatch', 'wait', 'ask', 'ignore'].includes(scenario) ? scenario : 'ignore'
     const common = {
       summary: `Replay decision ${scenario}`,
-      citations:
-        scenario === 'missing_citation' ? [randomUUID()] : sources.map((entry) => entry.id),
+      citations: scenario === 'missing_citation' ? ['S99'] : sources.map((entry) => entry.id),
       coverage: sources.map((entry) => ({
-        inputId: entry.id,
+        source: entry.id,
         status: decision === 'dispatch' || decision === 'ignore' ? 'uncovered' : 'unknown',
-        evidenceIds: [],
+        evidence: [],
       })),
     }
     const proposal = {
       ...common,
       decision,
-      ...(decision === 'dispatch' ? { workKey: prompt.workKey, actionClass: 'draft' } : {}),
-      ...(decision === 'wait'
-        ? { reason: 'upstream_pending', deadlineAt: new Date(Date.now() + 120_000).toISOString() }
-        : {}),
+      ...(decision === 'dispatch' ? { actionClass: 'draft' } : {}),
+      ...(decision === 'wait' ? { reason: 'upstream_pending' } : {}),
       ...(decision === 'ask'
         ? {
             questionType: 'choose_option',

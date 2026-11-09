@@ -69,11 +69,28 @@ async function runPair(args: PairArgs): Promise<void> {
   process.stderr.write(`device token (shown once): ${result.deviceToken}\n`)
 }
 
-async function runStart(
+export async function runStart(
   dshVersion: string | undefined,
   stateDir: string,
   configDir = DEFAULT_CONFIG_DIR,
+  /** Programmatic acceptance assembly only. The production CLI never passes it. */
+  replay?: { readonly deepSeekBaseUrl: string },
 ): Promise<void> {
+  if (replay !== undefined) {
+    const endpoint = new URL(replay.deepSeekBaseUrl)
+    if (
+      endpoint.protocol !== 'http:' ||
+      endpoint.hostname !== '127.0.0.1' ||
+      !endpoint.port ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.search ||
+      endpoint.hash ||
+      endpoint.pathname !== '/'
+    ) {
+      throw new Error('acceptance provider must be an explicit HTTP loopback endpoint')
+    }
+  }
   const config = await loadConfig({ configDir })
   if (config === undefined) {
     process.stderr.write('no local config: run `whalepod-node pair` first\n')
@@ -284,6 +301,12 @@ async function runStart(
     stateDbPath: join(stateDir, 'supervisor.sqlite'),
     capacity: 2,
     runtimeTimeoutMs: 6 * 60 * 60 * 1000, // 单 Run wall-clock 上限（02 约束）
+    ...(replay === undefined
+      ? {}
+      : {
+          runtimeEnvPassthrough: ['DEEPSEEK_BASE_URL'],
+          processEnv: { ...process.env, DEEPSEEK_BASE_URL: new URL(replay.deepSeekBaseUrl).origin },
+        }),
     onStdoutLine: (runId, line) => runManager.handleStdoutLine(runId, line),
   })
   // ---- P1-16 运行会话层装配（取消升级 / 退出归因 / lost 上报）----
