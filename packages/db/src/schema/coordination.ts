@@ -23,6 +23,7 @@ import type {
   RouterProposal,
   CoordinationUsage,
   ConfigureProjectRouterRequest,
+  DiscoveryProposal,
 } from '@whalepod/protocol'
 
 // ADR-0026（PC-04a）：确定性内部协调。本切片只使用 queued/completed/skipped/failed；
@@ -63,6 +64,8 @@ export const coordinationEvaluations = pgTable(
       .notNull()
       .default([]),
     discoverySourceId: uuid('discovery_source_id').references(() => taskMessages.id),
+    // Internal acceptance metadata for all accepted classes, with no model prose.
+    discoveryObservation: jsonb('discovery_observation').$type<Omit<DiscoveryProposal, 'reason'>>(),
     routerContext: jsonb('router_context').$type<{
       sourceType: 'task_message' | 'context_entry'
       sourceId: string
@@ -124,6 +127,10 @@ export const coordinationEvaluations = pgTable(
     check(
       'coordination_evaluation_purpose',
       sql`${table.purpose} in ('inference', 'router', 'discovery')`,
+    ),
+    check(
+      'coordination_evaluation_discovery_observation',
+      sql`(${table.discoveryObservation} is not null) = (${table.purpose} = 'discovery' and ${table.status} = 'completed') and (${table.discoveryObservation} is null or jsonb_typeof(${table.discoveryObservation}) = 'object')`,
     ),
     check(
       'coordination_evaluation_router_binding',

@@ -1,5 +1,9 @@
 alter table coordination_evaluation add column discovery_downloaded_ids jsonb not null default '[]'::jsonb;
 alter table coordination_evaluation add column discovery_source_id uuid references task_message(id);
+alter table coordination_evaluation add column discovery_observation jsonb;
+alter table coordination_evaluation add constraint coordination_evaluation_discovery_observation
+  check ((discovery_observation is not null) = (purpose = 'discovery' and status = 'completed')
+    and (discovery_observation is null or jsonb_typeof(discovery_observation) = 'object'));
 alter table coordination_evaluation drop constraint coordination_evaluation_purpose;
 alter table coordination_evaluation add constraint coordination_evaluation_purpose
   check (purpose in ('inference', 'router', 'discovery'));

@@ -5,6 +5,7 @@
 | 文档 | 内容 |
 |---|---|
 | [rd04a-shadow-discovery-acceptance.md](./rd04a-shadow-discovery-acceptance.md) | #532：普通筹备评论触发受限发现，仅当前责任人可读候选；现有订阅直达、授权/费用/读取可核验、撤权即拒读且无业务写入。 |
+| [rd04a-discovery-real-model-quality.md](./rd04a-discovery-real-model-quality.md) | #532：独立发现开发集与冻结保留集，分开登记工程、真实模型及人工复核。 |
 | [m1r-a-production-acceptance.md](./m1r-a-production-acceptance.md) | #486：按同一条补充的身份串证有效订阅、Run 边界自动续跑、DSH 工具读取回执与私有草稿，生产装配只回放模型出口 |
 | [router-real-model-quality-acceptance.md](./router-real-model-quality-acceptance.md) | #486：通过生产 Router 评估真实模型，开发集与保留集分开，独立评分引用、覆盖、路由与越权情况 |
 | [2026-11-08-p1-501-duplicate-run-start-acceptance.md](./2026-11-08-p1-501-duplicate-run-start-acceptance.md) | P1-501 #504（Node run.start 并发）：同一 `commandId` 在首个 ack 前重投时按 runId 串行化，后来者等前一条结束后回放首次真实结果；真实 RunManager/SQLite spool/supervisor 回归只 spawn 一个 Runtime、`active_runtime` 行身份/pid 不变、不误报 lost、不误清在途输入；首条被拒时等待者回放同一拒绝码；停用串行化/拒绝回放/结果落库的三条负控各自红在对应断言 |

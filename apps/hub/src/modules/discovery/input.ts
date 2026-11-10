@@ -34,7 +34,7 @@ import {
 } from './admission.js'
 
 export const DISCOVERY_RULES_VERSION = 'rd04a.v1'
-export const DISCOVERY_PROMPT_VERSION = 'discovery.v1'
+export const DISCOVERY_PROMPT_VERSION = 'discovery.v2'
 const MAX_CATALOG = 16
 const MAX_BODY_BYTES = 16_384
 const MAX_TOTAL_BYTES = 64_000

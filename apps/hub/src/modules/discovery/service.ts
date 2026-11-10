@@ -501,6 +501,15 @@ export async function acceptDiscoveryResult(
       finishedAt: now,
       usage: validUsage ? (usage ?? null) : null,
       resultDigest: !reject && value.status === 'completed' ? value.resultDigest : null,
+      discoveryObservation:
+        !reject && value.status === 'completed'
+          ? {
+              classification: value.proposal.classification,
+              source: value.proposal.source,
+              slot: value.proposal.slot,
+              citations: value.proposal.citations,
+            }
+          : null,
       preModelFailureConfirmed:
         !reject &&
         value.status === 'failed' &&
