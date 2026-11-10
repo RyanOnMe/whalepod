@@ -2,18 +2,27 @@
 /** #532: production comment → discovery → owner-only candidate, with only the provider reply replayed. */
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { lstat, mkdir, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, open, rm, unlink, writeFile, type FileHandle } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { parseArgs } from 'node:util'
 import { schema } from '@whalepod/db'
 import { eq } from 'drizzle-orm'
 import { WebSocket } from 'ws'
-import { fingerprintProductionAssembly } from './lib/acceptance-provenance.js'
+import { fingerprintProductionAssembly, pathExists } from './lib/acceptance-provenance.js'
+import { discoveryCampaignPaths } from './lib/discovery-quality-campaign.js'
 import { ProductionAcceptance, repoRoot, until } from './lib/production-acceptance.js'
 import { setupRd04aFixture } from './lib/rd04a-fixture.js'
 import { verifyRd04a, type Rd04aEvidence } from './verify-rd04a-acceptance.js'
 
-const output = join(repoRoot, 'artifacts/evidence/rd04a')
+const {
+  values: { campaign },
+} = parseArgs({ options: { campaign: { type: 'string' } } })
+assert(campaign === undefined || campaign === 'pilot-fences', 'unknown engineering campaign')
+const { evidenceRoot, developmentLock, engineeringFile, freezeFile } = discoveryCampaignPaths(
+  repoRoot,
+  campaign,
+)
 const candidateCanary = `candidate-private-${randomUUID()}`
 const sourceBody =
   'The station has no step-free route to the event venue. The survey in the confirmed venue agreement backs this up. We have no work covering accessible shuttle alternatives.'
@@ -253,6 +262,7 @@ async function drive(assemblyDigest: string): Promise<Rd04aEvidence> {
   const { reason, ...candidate } = candidateRead.candidate
   return {
     schemaVersion: 1,
+    ...(campaign ? { campaign: 'pilot-fences' as const } : {}),
     generatedAt: new Date().toISOString(),
     assemblyDigest,
     modelQuality: 'not_run',
@@ -334,10 +344,18 @@ async function drive(assemblyDigest: string): Promise<Rd04aEvidence> {
   }
 }
 
+let lock: FileHandle | undefined
 try {
-  await mkdir(output, { recursive: true })
-  const resultPath = join(output, 'result.json')
-  await rm(resultPath, { force: true })
+  await mkdir(evidenceRoot, { recursive: true, mode: 0o700 })
+  lock = await open(developmentLock, 'wx', 0o600).catch(() => {
+    throw new Error('another engineering run, development run or freeze holds the campaign lock')
+  })
+  assert(
+    !(await pathExists(freezeFile)),
+    'preserve the engineering evidence bound to the frozen campaign',
+  )
+  await mkdir(dirname(engineeringFile), { recursive: true, mode: 0o700 })
+  await rm(engineeringFile, { force: true })
   const assemblyDigest = await fingerprintProductionAssembly(repoRoot)
   const evidence = await drive(assemblyDigest)
   assert.equal(
@@ -346,7 +364,11 @@ try {
     'assembly changed during verification',
   )
   verifyRd04a(evidence)
-  await writeFile(resultPath, JSON.stringify(evidence, null, 2) + '\n', { mode: 0o600 })
+  await writeFile(engineeringFile, JSON.stringify(evidence, null, 2) + '\n', {
+    flag: 'wx',
+    mode: 0o600,
+    flush: true,
+  })
   console.log('RD-04a production replay: PASS (real model quality not_run)')
 } catch (error) {
   console.error(env.redact(error instanceof Error ? error.message : String(error)))
@@ -354,5 +376,12 @@ try {
   process.exitCode = 1
 } finally {
   for (const socket of sockets) socket.terminate()
-  await env.stop()
+  try {
+    await env.stop()
+  } finally {
+    if (lock) {
+      await lock.close()
+      await unlink(developmentLock)
+    }
+  }
 }

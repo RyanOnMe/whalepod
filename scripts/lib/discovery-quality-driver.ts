@@ -17,6 +17,7 @@ import { desc, eq, gt } from 'drizzle-orm'
 import {
   getDiscoveryQualityCases,
   type DiscoveryQualityAgreement,
+  type DiscoveryQualityCampaign,
   type DiscoveryQualityCase,
   type DiscoveryQualitySplit,
 } from './discovery-quality-cases.js'
@@ -44,6 +45,7 @@ export const DISCOVERY_QUALITY_REAL_CONFIGURATION = {
 } as const
 
 export interface DiscoveryQualityDriverOptions {
+  campaign?: DiscoveryQualityCampaign
   split: DiscoveryQualitySplit
   mode: 'real_model' | 'replay' | 'prepare_only'
   key?: string
@@ -667,7 +669,7 @@ export async function runDiscoveryQualityDriver(
     Boolean(options.key) === (options.mode === 'real_model'),
     'only real model mode accepts a key',
   )
-  const cases = getDiscoveryQualityCases(options.split)
+  const cases = getDiscoveryQualityCases(options.split, options.campaign)
   const config = DISCOVERY_QUALITY_REAL_CONFIGURATION
   assert(
     cases.length > 0 &&

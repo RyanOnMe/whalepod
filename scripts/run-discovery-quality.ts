@@ -13,6 +13,7 @@ import {
   sha256,
 } from './lib/acceptance-provenance.js'
 import {
+  discoveryCampaignPaths,
   freezeDiscoveryDevelopment,
   scoreDiscoveryCampaign,
   validateDiscoveryFreeze,
@@ -20,21 +21,19 @@ import {
   type DiscoveryCampaignBinding,
   type DiscoveryCampaignReport,
 } from './lib/discovery-quality-campaign.js'
-import { getDiscoveryQualityCases } from './lib/discovery-quality-cases.js'
+import {
+  DISCOVERY_PILOT_FENCES_CAMPAIGN,
+  getDiscoveryQualityCases,
+  type DiscoveryQualityCampaign,
+} from './lib/discovery-quality-cases.js'
 import {
   DISCOVERY_QUALITY_REAL_CONFIGURATION,
   runDiscoveryQualityDriver,
 } from './lib/discovery-quality-driver.js'
+import { getDiscoveryQualityDatasetDigest } from './lib/discovery-quality-score.js'
 import { repoRoot } from './lib/production-acceptance.js'
 import { verifyRd04a, type Rd04aEvidence } from './verify-rd04a-acceptance.js'
 
-const evidenceRoot = join(repoRoot, 'artifacts/evidence/discovery-quality')
-const holdoutRoot = join(evidenceRoot, 'holdout')
-const freezeFile = join(evidenceRoot, 'freeze.json')
-const developmentFile = join(evidenceRoot, 'development/result.json')
-const developmentFailure = join(evidenceRoot, 'development/failure.json')
-const developmentLock = join(evidenceRoot, 'development.lock')
-const engineeringFile = join(repoRoot, 'artifacts/evidence/rd04a/result.json')
 const campaignFiles = [
   'scripts/run-discovery-quality.ts',
   'scripts/lib/discovery-quality-campaign.ts',
@@ -46,24 +45,40 @@ const campaignFiles = [
   'scripts/lib/ephemeral-postgres.mts',
   'scripts/verify-rd04a-acceptance.ts',
 ] as const
+const pilotCampaignFiles = [
+  'scripts/lib/discovery-quality-pilot-cases.ts',
+  'scripts/run-rd04a-acceptance.ts',
+] as const
 
-async function binding(real: boolean): Promise<DiscoveryCampaignBinding> {
+async function binding(
+  real: boolean,
+  campaign?: DiscoveryQualityCampaign,
+): Promise<DiscoveryCampaignBinding> {
+  const { engineeringFile } = discoveryCampaignPaths(repoRoot, campaign)
+  const files = campaign === undefined ? campaignFiles : [...campaignFiles, ...pilotCampaignFiles]
   const [assemblyDigest, sourceFiles] = await Promise.all([
     fingerprintProductionAssembly(repoRoot),
-    Promise.all(
-      campaignFiles.map(async (path) => [path, sha256(await readFile(join(repoRoot, path)))]),
-    ),
+    Promise.all(files.map(async (path) => [path, sha256(await readFile(join(repoRoot, path)))])),
   ])
   let engineeringDigest: string | null = null
   if (real) {
     const raw = await readFile(engineeringFile, 'utf8')
-    verifyRd04a(JSON.parse(raw) as Rd04aEvidence, assemblyDigest)
+    const evidence = JSON.parse(raw) as Rd04aEvidence
+    assert.equal(evidence.campaign, campaign, 'engineering evidence belongs to another campaign')
+    verifyRd04a(evidence, assemblyDigest)
     engineeringDigest = sha256(raw)
   }
   return {
+    ...(campaign === undefined ? {} : { campaign }),
     assemblyDigest,
     engineeringDigest,
-    campaignDigest: sha256(JSON.stringify(sourceFiles)),
+    campaignDigest: sha256(
+      JSON.stringify(
+        campaign === undefined
+          ? sourceFiles
+          : { campaign, datasetDigest: getDiscoveryQualityDatasetDigest(campaign), sourceFiles },
+      ),
+    ),
     providerConfigurationDigest: sha256(JSON.stringify(DISCOVERY_QUALITY_REAL_CONFIGURATION)),
   }
 }
@@ -105,7 +120,10 @@ async function saveJson(path: string, value: unknown, exclusive: boolean) {
   }
 }
 
-async function withDevelopmentLock(action: () => Promise<void>) {
+async function withDevelopmentLock(
+  { evidenceRoot, developmentLock }: ReturnType<typeof discoveryCampaignPaths>,
+  action: () => Promise<void>,
+) {
   await mkdir(evidenceRoot, { recursive: true, mode: 0o700 })
   const lock = await open(developmentLock, 'wx', 0o600).catch(() => {
     throw new Error('another development run or freeze holds the lock; inspect it if interrupted')
@@ -122,6 +140,7 @@ async function main() {
   const { positionals, values } = parseArgs({
     allowPositionals: true,
     options: {
+      campaign: { type: 'string' },
       split: { type: 'string' },
       replay: { type: 'boolean' },
       'key-file': { type: 'string' },
@@ -133,17 +152,26 @@ async function main() {
     positionals.length === 1 && ['run', 'verify', 'freeze'].includes(command ?? ''),
     'use run, verify or freeze',
   )
+  const campaign = values.campaign
+  assert(
+    campaign === undefined || campaign === DISCOVERY_PILOT_FENCES_CAMPAIGN,
+    'unknown discovery quality campaign',
+  )
+  const paths = discoveryCampaignPaths(repoRoot, campaign)
+  const { evidenceRoot, holdoutRoot, freezeFile, developmentFile, developmentFailure } = paths
+  const campaignOption: { campaign?: DiscoveryQualityCampaign } =
+    campaign === undefined ? {} : { campaign }
   const split = values.split
   const real = !values.replay && !values['prepare-only']
   if (command === 'freeze') {
     assert(
-      Object.keys(values).length === 0,
+      Object.keys(values).every((key) => key === 'campaign'),
       'freeze uses the canonical real-model development result',
     )
-    await withDevelopmentLock(async () => {
+    await withDevelopmentLock(paths, async () => {
       await assertNoHoldoutEvidence(holdoutRoot)
       assert(!(await pathExists(developmentFailure)), 'latest real development run failed')
-      const current = await binding(true)
+      const current = await binding(true, campaign)
       const freeze = freezeDiscoveryDevelopment(
         await readFile(developmentFile, 'utf8'),
         current,
@@ -169,7 +197,7 @@ async function main() {
 
   const output = real ? join(evidenceRoot, split) : join(evidenceRoot, 'replay', split)
   const resultFile = join(output, 'result.json')
-  const current = await binding(real)
+  const current = await binding(real, campaign)
   const verifyFreeze = async () => {
     const raw = await readFile(freezeFile, 'utf8')
     return {
@@ -201,9 +229,9 @@ async function main() {
   }
 
   if (values['prepare-only']) {
-    await runDiscoveryQualityDriver({ split, mode: 'prepare_only' })
+    await runDiscoveryQualityDriver({ ...campaignOption, split, mode: 'prepare_only' })
     console.log(
-      `Discovery production fixture setup: ${getDiscoveryQualityCases(split).length}; zero real model calls.`,
+      `Discovery production fixture setup: ${getDiscoveryQualityCases(split, campaign).length}; zero real model calls.`,
     )
     return
   }
@@ -215,6 +243,11 @@ async function main() {
     if (development) {
       assert(!(await pathExists(freezeFile)), 'preserve frozen development evidence')
       await assertNoHoldoutEvidence(holdoutRoot)
+      assert.deepEqual(
+        await binding(true, campaign),
+        current,
+        'engineering evidence changed before the development lock',
+      )
     }
     const sealed = real && split === 'holdout' ? await verifyFreeze() : undefined
     const witness = sealed
@@ -224,14 +257,23 @@ async function main() {
     const mode = real ? 'real_model' : 'replay'
     await mkdir(output, { recursive: true, mode: 0o700 })
     try {
-      const cases = await runDiscoveryQualityDriver({ split, mode, ...(key ? { key } : {}) })
-      assert.deepEqual(await binding(real), current, 'assembly or campaign changed during run')
+      const cases = await runDiscoveryQualityDriver({
+        ...campaignOption,
+        split,
+        mode,
+        ...(key ? { key } : {}),
+      })
+      assert.deepEqual(
+        await binding(real, campaign),
+        current,
+        'assembly or campaign changed during run',
+      )
       const evidence: DiscoveryCampaignReport = {
         schemaVersion: 1,
         generatedAt,
         humanReview: 'not_run',
         binding: current,
-        report: { schemaVersion: 1, split, mode, cases },
+        report: { schemaVersion: 1, ...campaignOption, split, mode, cases },
         ...(witness
           ? {
               holdout: {
@@ -259,7 +301,7 @@ async function main() {
       throw new Error(key ? message.replaceAll(key, '[REDACTED]') : message)
     }
   }
-  if (development) await withDevelopmentLock(run)
+  if (development) await withDevelopmentLock(paths, run)
   else await run()
 }
 

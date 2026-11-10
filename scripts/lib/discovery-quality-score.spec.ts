@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { sha256 } from './acceptance-provenance.js'
 import {
+  discoveryCampaignPaths,
   freezeDiscoveryDevelopment,
   scoreDiscoveryCampaign,
   validateDiscoveryFreeze,
@@ -8,9 +9,15 @@ import {
   type DiscoveryCampaignBinding,
   type DiscoveryCampaignReport,
 } from './discovery-quality-campaign.js'
-import { getDiscoveryQualityCases, type DiscoveryQualitySplit } from './discovery-quality-cases.js'
+import {
+  DISCOVERY_PILOT_FENCES_CAMPAIGN,
+  getDiscoveryQualityCases,
+  type DiscoveryQualityCampaign,
+  type DiscoveryQualitySplit,
+} from './discovery-quality-cases.js'
 import {
   DISCOVERY_QUALITY_MAX_CASE_COST_MICROS,
+  getDiscoveryQualityDatasetDigest,
   verifyDiscoveryQuality,
   type DiscoveryQualityCaseResult,
   type DiscoveryQualityEntries,
@@ -23,59 +30,62 @@ const id = (value: number) => `00000000-0000-4000-8000-${String(value).padStart(
 function fixture(
   split: DiscoveryQualitySplit,
   mode: DiscoveryQualityMode = 'real_model',
+  campaign?: DiscoveryQualityCampaign,
 ): DiscoveryQualityReport {
-  const cases = getDiscoveryQualityCases(split).map((item, index): DiscoveryQualityCaseResult => {
-    const base = (split === 'development' ? 100 : 200) + index * 10
-    const entries: DiscoveryQualityEntries = {
-      source: id(base + 1),
-      slot: id(base + 2),
-      agreement: id(base + 3),
-      work: id(base + 4),
-      ...(item.secondaryAgreement && !item.omitSecondaryAgreement
-        ? { secondaryAgreement: id(base + 5) }
-        : {}),
-    }
-    const receipts = Object.values(entries)
-    const { classification, requiredCitations, coverageComplete } = item.expected
-    return {
-      caseId: item.id,
-      projectId: id(base + 6),
-      evaluationId: id(base + 7),
-      entries,
-      coverageComplete,
-      proposal: {
-        classification,
-        source: entries.source,
-        slot: classification === 'independent_gap' ? entries.slot : null,
-        citations: requiredCitations.map((ref) => entries[ref]!),
-      },
-      evidence: {
-        admissions: 1,
-        evaluations: 1,
-        modelStarts: 1,
-        providerResponses: 1,
-        reservations: 1,
-        settlements: 1,
-        readCount: receipts.length,
-        downloadCount: receipts.length,
-        readEntryIds: [...receipts],
-        downloadedIds: [...receipts],
-        usage: { inputTokens: 100, outputTokens: 10, costMicros: 42 },
-        reservedCostMicros: 100,
-        settledCostMicros: 42,
-        businessWrites: {
-          tasks: 0,
-          agreements: 0,
-          works: 0,
-          questions: 0,
-          notifications: 0,
-          dispatchIntents: 0,
-          runs: 0,
+  const cases = getDiscoveryQualityCases(split, campaign).map(
+    (item, index): DiscoveryQualityCaseResult => {
+      const base = (split === 'development' ? 100 : 200) + index * 10
+      const entries: DiscoveryQualityEntries = {
+        source: id(base + 1),
+        slot: id(base + 2),
+        agreement: id(base + 3),
+        work: id(base + 4),
+        ...(item.secondaryAgreement && !item.omitSecondaryAgreement
+          ? { secondaryAgreement: id(base + 5) }
+          : {}),
+      }
+      const receipts = Object.values(entries)
+      const { classification, requiredCitations, coverageComplete } = item.expected
+      return {
+        caseId: item.id,
+        projectId: id(base + 6),
+        evaluationId: id(base + 7),
+        entries,
+        coverageComplete,
+        proposal: {
+          classification,
+          source: entries.source,
+          slot: classification === 'independent_gap' ? entries.slot : null,
+          citations: requiredCitations.map((ref) => entries[ref]!),
         },
-      },
-    }
-  })
-  return { schemaVersion: 1, split, mode, cases }
+        evidence: {
+          admissions: 1,
+          evaluations: 1,
+          modelStarts: 1,
+          providerResponses: 1,
+          reservations: 1,
+          settlements: 1,
+          readCount: receipts.length,
+          downloadCount: receipts.length,
+          readEntryIds: [...receipts],
+          downloadedIds: [...receipts],
+          usage: { inputTokens: 100, outputTokens: 10, costMicros: 42 },
+          reservedCostMicros: 100,
+          settledCostMicros: 42,
+          businessWrites: {
+            tasks: 0,
+            agreements: 0,
+            works: 0,
+            questions: 0,
+            notifications: 0,
+            dispatchIntents: 0,
+            runs: 0,
+          },
+        },
+      }
+    },
+  )
+  return { schemaVersion: 1, ...(campaign === undefined ? {} : { campaign }), split, mode, cases }
 }
 
 describe('RD-04a campaign provenance', () => {
@@ -88,14 +98,20 @@ describe('RD-04a campaign provenance', () => {
   const developmentTime = '2026-11-10T01:00:00.000Z'
   const frozenAt = '2026-11-10T01:30:00.000Z'
   const startedAt = '2026-11-10T02:00:00.000Z'
-  function campaign(split: DiscoveryQualitySplit, mode: DiscoveryQualityMode, generatedAt: string) {
-    const report = fixture(split, mode)
+  function campaign(
+    split: DiscoveryQualitySplit,
+    mode: DiscoveryQualityMode,
+    generatedAt: string,
+    campaignId?: DiscoveryQualityCampaign,
+  ) {
+    const report = fixture(split, mode, campaignId)
     return {
       schemaVersion: 1,
       generatedAt,
       humanReview: 'not_run',
       binding: {
         ...binding,
+        ...(campaignId === undefined ? {} : { campaign: campaignId }),
         engineeringDigest: mode === 'real_model' ? binding.engineeringDigest : null,
       },
       report: {
@@ -148,9 +164,100 @@ describe('RD-04a campaign provenance', () => {
       'frozen one-time attempt',
     )
   })
+
+  it('isolates pilot paths, including the development lock and the one-shot holdout root', () => {
+    const legacy = discoveryCampaignPaths('/repo')
+    const pilot = discoveryCampaignPaths('/repo', DISCOVERY_PILOT_FENCES_CAMPAIGN)
+    expect(legacy.developmentFile).toBe(
+      '/repo/artifacts/evidence/discovery-quality/development/result.json',
+    )
+    expect(legacy.engineeringFile).toBe('/repo/artifacts/evidence/rd04a/result.json')
+    expect(pilot.developmentFile).toBe(
+      '/repo/artifacts/evidence/discovery-quality/pilot-fences/development/result.json',
+    )
+    expect(pilot.engineeringFile).toBe('/repo/artifacts/evidence/rd04a/pilot-fences/result.json')
+    expect(Object.values(pilot).some((path) => Object.values(legacy).includes(path))).toBe(false)
+  })
+
+  it('refuses to freeze or verify development evidence from the other campaign', () => {
+    const pilot = campaign(
+      'development',
+      'real_model',
+      developmentTime,
+      DISCOVERY_PILOT_FENCES_CAMPAIGN,
+    )
+    const legacy = campaign('development', 'real_model', developmentTime)
+    const rawPilot = JSON.stringify(pilot)
+    const rawLegacy = JSON.stringify(legacy)
+    const pilotFreeze = freezeDiscoveryDevelopment(rawPilot, pilot.binding, frozenAt)
+    expect(() => freezeDiscoveryDevelopment(rawLegacy, pilot.binding, frozenAt)).toThrow(
+      'campaign or production evidence changed',
+    )
+    expect(() =>
+      scoreDiscoveryCampaign(JSON.stringify({ ...legacy, binding: pilot.binding }), pilot.binding),
+    ).toThrow('report belongs to another discovery campaign')
+    expect(() => validateDiscoveryFreeze(JSON.stringify(pilotFreeze), rawLegacy, binding)).toThrow(
+      'freeze does not match',
+    )
+    expect(validateDiscoveryFreeze(JSON.stringify(pilotFreeze), rawPilot, pilot.binding)).toEqual(
+      pilotFreeze,
+    )
+  })
+
+  it('refuses to attach a legacy holdout to the pilot freeze and attempt', () => {
+    const pilotId = DISCOVERY_PILOT_FENCES_CAMPAIGN
+    const pilot = campaign('development', 'real_model', developmentTime, pilotId)
+    const rawFreeze = JSON.stringify(
+      freezeDiscoveryDevelopment(JSON.stringify(pilot), pilot.binding, frozenAt),
+    )
+    const freezeDigest = sha256(rawFreeze)
+    const rawAttempt = JSON.stringify({ schemaVersion: 1, id: id(3), startedAt, freezeDigest })
+    const holdout = { freezeDigest, attemptDigest: sha256(rawAttempt) }
+    const correct = { ...campaign('holdout', 'real_model', startedAt, pilotId), holdout }
+    expect(() => validateDiscoveryHoldout(correct, rawFreeze, rawAttempt)).not.toThrow()
+    const legacy = { ...campaign('holdout', 'real_model', startedAt), holdout }
+    expect(() => validateDiscoveryHoldout(legacy, rawFreeze, rawAttempt)).toThrow(
+      'holdout belongs to another discovery campaign',
+    )
+    expect(() => validateDiscoveryHoldout({ ...correct, binding }, rawFreeze, rawAttempt)).toThrow(
+      'holdout belongs to another discovery campaign',
+    )
+  })
 })
 
 describe('RD-04a quality score', () => {
+  it('shares the original development fixtures but independently binds a fresh pilot holdout', () => {
+    const campaign = DISCOVERY_PILOT_FENCES_CAMPAIGN
+    const pilotHoldout = getDiscoveryQualityCases('holdout', campaign)
+    const legacy = [
+      ...getDiscoveryQualityCases('development'),
+      ...getDiscoveryQualityCases('holdout'),
+    ]
+    expect(getDiscoveryQualityCases('development', campaign)).toEqual(
+      getDiscoveryQualityCases('development'),
+    )
+    expect(pilotHoldout).toHaveLength(6)
+    expect(pilotHoldout.every((row) => row.split === 'holdout')).toBe(true)
+    expect(new Set([...legacy, ...pilotHoldout].map((row) => row.id)).size).toBe(18)
+    expect(new Set([...legacy, ...pilotHoldout].map((row) => row.comment)).size).toBe(18)
+    const original = fixture('holdout')
+    const fresh = fixture('holdout', 'real_model', campaign)
+    const oldScore = verifyDiscoveryQuality(original)
+    expect(oldScore).not.toHaveProperty('campaign')
+    expect(oldScore.datasetDigest).toBe(getDiscoveryQualityDatasetDigest())
+    expect(verifyDiscoveryQuality(fresh)).toMatchObject({
+      campaign,
+      status: 'pass',
+      datasetDigest: getDiscoveryQualityDatasetDigest(campaign),
+    })
+    expect(getDiscoveryQualityDatasetDigest(campaign)).not.toBe(oldScore.datasetDigest)
+    expect(() => verifyDiscoveryQuality({ ...original, campaign })).toThrow('wrong split')
+    expect(() => verifyDiscoveryQuality({ ...fresh, campaign: undefined })).toThrow('wrong split')
+    expect(() => verifyDiscoveryQuality({ ...fresh, campaign: 'unregistered' })).toThrow(
+      'unknown discovery quality campaign',
+    )
+  })
+
   it('scores distinct six-case splits without using replay as model or human evidence', () => {
     const development = getDiscoveryQualityCases('development')
     const holdout = getDiscoveryQualityCases('holdout')

@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { isSha256, sha256, type HoldoutAttempt } from './acceptance-provenance.js'
+import type { DiscoveryQualityCampaign } from './discovery-quality-cases.js'
 import { verifyDiscoveryQuality, type DiscoveryQualityReport } from './discovery-quality-score.js'
 
 export interface DiscoveryCampaignBinding {
+  campaign?: DiscoveryQualityCampaign
   assemblyDigest: string
   engineeringDigest: string | null
   campaignDigest: string
@@ -19,6 +22,20 @@ export interface DiscoveryCampaignReport {
   holdout?: { freezeDigest: string; attemptDigest: string }
 }
 
+export function discoveryCampaignPaths(repoRoot: string, campaign?: DiscoveryQualityCampaign) {
+  const segment = campaign === undefined ? [] : [campaign]
+  const evidenceRoot = join(repoRoot, 'artifacts/evidence/discovery-quality', ...segment)
+  return {
+    evidenceRoot,
+    holdoutRoot: join(evidenceRoot, 'holdout'),
+    freezeFile: join(evidenceRoot, 'freeze.json'),
+    developmentFile: join(evidenceRoot, 'development/result.json'),
+    developmentFailure: join(evidenceRoot, 'development/failure.json'),
+    developmentLock: join(evidenceRoot, 'development.lock'),
+    engineeringFile: join(repoRoot, 'artifacts/evidence/rd04a', ...segment, 'result.json'),
+  }
+}
+
 export function scoreDiscoveryCampaign(raw: string, current: DiscoveryCampaignBinding) {
   const evidence = JSON.parse(raw) as DiscoveryCampaignReport
   assert.equal(evidence.schemaVersion, 1, 'invalid campaign evidence schema')
@@ -27,6 +44,11 @@ export function scoreDiscoveryCampaign(raw: string, current: DiscoveryCampaignBi
   for (const key of ['assemblyDigest', 'campaignDigest', 'providerConfigurationDigest'] as const)
     assert(isSha256(current[key]), `invalid ${key}`)
   assert(isDeepStrictEqual(evidence.binding, current), 'campaign or production evidence changed')
+  assert.equal(
+    evidence.report.campaign,
+    current.campaign,
+    'report belongs to another discovery campaign',
+  )
   if (evidence.report.mode === 'real_model')
     assert(isSha256(current.engineeringDigest), 'missing same-assembly engineering evidence')
   else assert(current.engineeringDigest === null, 'replay is not a real-model campaign')
@@ -77,6 +99,11 @@ export function validateDiscoveryHoldout(
 ) {
   const freeze = JSON.parse(rawFreeze) as ReturnType<typeof freezeDiscoveryDevelopment>
   const attempt = JSON.parse(rawAttempt) as HoldoutAttempt
+  assert(
+    evidence.report.campaign === freeze.current.campaign &&
+      isDeepStrictEqual(evidence.binding, freeze.current),
+    'holdout belongs to another discovery campaign or production assembly',
+  )
   assert(
     evidence.report.split === 'holdout' &&
       evidence.report.mode === 'real_model' &&

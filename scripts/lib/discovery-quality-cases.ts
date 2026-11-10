@@ -1,5 +1,9 @@
 /** Synthetic inputs and independently authored labels. The driver must not send expected to the model. */
+import { DISCOVERY_PILOT_HOLDOUT_CASES } from './discovery-quality-pilot-cases.js'
+
 export const DISCOVERY_QUALITY_RUBRIC_VERSION = 'discovery-quality.v1'
+export const DISCOVERY_PILOT_FENCES_CAMPAIGN = 'pilot-fences'
+export type DiscoveryQualityCampaign = typeof DISCOVERY_PILOT_FENCES_CAMPAIGN
 export type DiscoveryQualitySplit = 'development' | 'holdout'
 export type DiscoveryQualityClassification =
   | 'independent_gap'
@@ -341,6 +345,9 @@ export const DISCOVERY_QUALITY_CASES: readonly DiscoveryQualityCase[] = [
 
 export function getDiscoveryQualityCases(
   split: DiscoveryQualitySplit,
+  campaign?: DiscoveryQualityCampaign,
 ): readonly DiscoveryQualityCase[] {
+  if (split === 'holdout' && campaign === DISCOVERY_PILOT_FENCES_CAMPAIGN)
+    return DISCOVERY_PILOT_HOLDOUT_CASES
   return DISCOVERY_QUALITY_CASES.filter((item) => item.split === split)
 }

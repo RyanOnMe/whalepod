@@ -16,6 +16,7 @@ type EffectCounts = {
 
 export interface Rd04aEvidence {
   schemaVersion: 1
+  campaign?: 'pilot-fences'
   generatedAt: string
   assemblyDigest: string
   modelQuality: 'not_run'
@@ -78,6 +79,10 @@ export interface Rd04aEvidence {
 
 export function verifyRd04a(evidence: Rd04aEvidence, expectedAssemblyDigest?: string): void {
   assert.equal(evidence.schemaVersion, 1, 'unknown evidence schema')
+  assert(
+    evidence.campaign === undefined || evidence.campaign === 'pilot-fences',
+    'unknown engineering campaign',
+  )
   assert(Number.isFinite(Date.parse(evidence.generatedAt)), 'missing evidence timestamp')
   assert(isSha256(evidence.assemblyDigest), 'missing production assembly fingerprint')
   if (expectedAssemblyDigest !== undefined) {

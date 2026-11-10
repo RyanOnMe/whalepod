@@ -2,9 +2,11 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { coordinationUsageCost } from '@whalepod/protocol'
 import {
+  DISCOVERY_PILOT_FENCES_CAMPAIGN,
   DISCOVERY_QUALITY_CASES,
   DISCOVERY_QUALITY_RUBRIC_VERSION,
   getDiscoveryQualityCases,
+  type DiscoveryQualityCampaign,
   type DiscoveryQualityCase,
   type DiscoveryQualityCitation,
   type DiscoveryQualityClassification,
@@ -22,6 +24,19 @@ export const DISCOVERY_QUALITY_PRICING = {
 export const discoveryQualityDatasetDigest = createHash('sha256')
   .update(JSON.stringify(DISCOVERY_QUALITY_CASES))
   .digest('hex')
+
+export function getDiscoveryQualityDatasetDigest(campaign?: DiscoveryQualityCampaign): string {
+  if (campaign === undefined) return discoveryQualityDatasetDigest
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        campaign,
+        development: getDiscoveryQualityCases('development', campaign),
+        holdout: getDiscoveryQualityCases('holdout', campaign),
+      }),
+    )
+    .digest('hex')
+}
 
 export type DiscoveryQualityMode = 'real_model' | 'replay'
 export type DiscoveryQualityEntries = Record<'source' | 'slot' | 'agreement' | 'work', string> & {
@@ -72,6 +87,7 @@ export interface DiscoveryQualityCaseResult {
 }
 export interface DiscoveryQualityReport {
   schemaVersion: 1
+  campaign?: DiscoveryQualityCampaign
   split: DiscoveryQualitySplit
   mode: DiscoveryQualityMode
   cases: DiscoveryQualityCaseResult[]
@@ -199,11 +215,15 @@ function scoreCase(fixture: DiscoveryQualityCase, row: DiscoveryQualityCaseResul
 /** Score durable observations against fixed labels. Narrative factuality needs separate human review. */
 export function verifyDiscoveryQuality(raw: unknown, expectedMode?: DiscoveryQualityMode) {
   assert(record(raw) && raw.schemaVersion === 1, 'unsupported discovery quality report')
-  const { split, mode, cases } = raw
+  const { split, mode, cases, campaign } = raw
+  assert(
+    campaign === undefined || campaign === DISCOVERY_PILOT_FENCES_CAMPAIGN,
+    'unknown discovery quality campaign',
+  )
   assert(split === 'development' || split === 'holdout', 'unknown discovery quality split')
   assert(mode === 'real_model' || mode === 'replay', 'unknown discovery quality mode')
   assert(expectedMode === undefined || mode === expectedMode, 'discovery quality mode mismatch')
-  const fixtures = getDiscoveryQualityCases(split)
+  const fixtures = getDiscoveryQualityCases(split, campaign)
   assert(
     Array.isArray(cases) && cases.length === fixtures.length,
     'missing or extra discovery cases',
@@ -239,13 +259,14 @@ export function verifyDiscoveryQuality(raw: unknown, expectedMode?: DiscoveryQua
   const matches = scored.filter((row) => row.semanticErrors.length === 0).length
   const status = engineeringStatus === 'pass' && matches === fixtures.length ? 'pass' : 'fail'
   return {
+    ...(campaign === undefined ? {} : { campaign }),
     split,
     mode,
     status,
     engineeringStatus,
     modelQuality: mode === 'replay' ? 'not_run' : status,
     humanReview: 'not_run' as const,
-    datasetDigest: discoveryQualityDatasetDigest,
+    datasetDigest: getDiscoveryQualityDatasetDigest(campaign),
     rubricVersion: DISCOVERY_QUALITY_RUBRIC_VERSION,
     totalCostMicros,
     matches,
