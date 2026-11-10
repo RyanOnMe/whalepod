@@ -24,6 +24,8 @@ import {
   schema,
 } from '@whalepod/db'
 import {
+  COORDINATION_CAPABILITY,
+  DISCOVERY_CAPABILITY,
   parseNodeFrame,
   ProtocolError,
   RunEventAckSchema,
@@ -105,6 +107,20 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
         try {
           const frame = parseNodeFrame(JSON.parse(raw), 'upstream')
           if (frame.type === 'discovery.heartbeat' || frame.type === 'discovery.result') {
+            // Spool replay follows hello and can precede the fresh inventory on reconnect.
+            if (!nodeConnections.hasDiscoveryHello(identity.deviceId, socket)) {
+              // A legacy Node can replay a well-formed result from its old spool. Drop it without
+              // taking down the connection used by ordinary Runs and Router.
+              request.log.warn(
+                {
+                  component: 'hub.node-ws',
+                  deviceId: identity.deviceId,
+                  disposition: 'connection-retained',
+                },
+                'discovery frame ignored without compatible hello',
+              )
+              return
+            }
             await touchDeviceLastSeenAt(deps.database.db, identity.deviceId)
             const discoveryDeps = {
               database: deps.database,
@@ -113,9 +129,15 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
             }
             const response =
               frame.type === 'discovery.heartbeat'
-                ? await acceptDiscoveryHeartbeat(discoveryDeps, identity.deviceId, frame.payload)
+                ? await acceptDiscoveryHeartbeat(
+                    discoveryDeps,
+                    identity.deviceId,
+                    frame.payload,
+                    (model) =>
+                      nodeConnections.canDispatchDiscovery(identity.deviceId, model, socket),
+                  )
                 : await acceptDiscoveryResult(discoveryDeps, identity.deviceId, frame.payload)
-            if (response && socket.readyState === socket.OPEN)
+            if (response && nodeConnections.hasDiscoveryHello(identity.deviceId, socket))
               socket.send(
                 JSON.stringify({
                   protocolVersion: 1,
@@ -181,37 +203,56 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
           if (frame.type === 'node.inventory' && frame.payload.deviceId === identity.deviceId) {
             // inventory：先刷 lastSeenAt（与 hello/heartbeat 同职责，不动 #37 事实列），
             // 再做投影 upsert。
-            await touchDeviceLastSeenAt(deps.database.db, identity.deviceId)
-            await inventoryIngest.ingest(identity, frame.payload)
-            await deps.database.db
-              .update(schema.devices)
-              .set({
-                capabilities: sql`jsonb_set(${schema.devices.capabilities}, '{coordinationCredentialSlots}', ${JSON.stringify(frame.payload.coordinationCredentialSlots ?? [])}::jsonb)`,
-              })
-              .where(eq(schema.devices.id, identity.deviceId))
+            const slots = frame.payload.coordinationCredentialSlots ?? []
+            nodeConnections.setDiscoveryInventory(identity.deviceId, socket, [])
+            await nodeConnections.updateDeviceFacts(identity.deviceId, socket, async () => {
+              await touchDeviceLastSeenAt(deps.database.db, identity.deviceId)
+              await inventoryIngest.ingest(identity, frame.payload)
+              await deps.database.db
+                .update(schema.devices)
+                .set({
+                  capabilities: sql`jsonb_set(${schema.devices.capabilities}, '{coordinationCredentialSlots}', ${JSON.stringify(slots)}::jsonb)`,
+                })
+                .where(eq(schema.devices.id, identity.deviceId))
+              nodeConnections.setDiscoveryInventory(identity.deviceId, socket, slots)
+            })
             return
           }
           if (frame.type === 'node.hello' && frame.payload.deviceId === identity.deviceId) {
             // #142：hello 是「设备变在线」的唯一时刻（status 由 lastSeenAt 推导），
             // 与事实列回填同事务补发 device.changed——否则配对后页面停在「离线」，
             // 要等用户自己刷新才变绿。
-            await deps.database.transaction(async (tx) => {
-              await setDeviceHelloFacts(tx, identity.deviceId, {
-                dshDistributionVersion: frame.payload.dshDistributionVersion,
-                pluginPackDigests: [...frame.payload.pluginPackDigests],
-                // hello 是能力权威集合：缺省即清空旧声明，防止升级/降级后残留。
-                sourceCapabilities: frame.payload.sourceCapabilities ?? [],
-                contextCapabilities: frame.payload.contextCapabilities ?? [],
-                coordinationCapabilities: frame.payload.coordinationCapabilities ?? [],
-                lastSeenAt: new Date(),
-              })
-              await appendTeamEvent(tx, {
-                type: 'device.changed',
-                payload: { deviceId: identity.deviceId },
-              })
-            })
+            const capabilities = frame.payload.coordinationCapabilities ?? []
+            nodeConnections.setDiscoveryHello(identity.deviceId, socket, false)
+            const isCurrent = await nodeConnections.updateDeviceFacts(
+              identity.deviceId,
+              socket,
+              async () => {
+                await deps.database.transaction(async (tx) => {
+                  await setDeviceHelloFacts(tx, identity.deviceId, {
+                    dshDistributionVersion: frame.payload.dshDistributionVersion,
+                    pluginPackDigests: [...frame.payload.pluginPackDigests],
+                    // hello 是能力权威集合：缺省即清空旧声明，防止升级/降级后残留。
+                    sourceCapabilities: frame.payload.sourceCapabilities ?? [],
+                    contextCapabilities: frame.payload.contextCapabilities ?? [],
+                    coordinationCapabilities: capabilities,
+                    lastSeenAt: new Date(),
+                  })
+                  await appendTeamEvent(tx, {
+                    type: 'device.changed',
+                    payload: { deviceId: identity.deviceId },
+                  })
+                })
+                nodeConnections.setDiscoveryHello(
+                  identity.deviceId,
+                  socket,
+                  capabilities.includes(COORDINATION_CAPABILITY) &&
+                    capabilities.includes(DISCOVERY_CAPABILITY),
+                )
+              },
+            )
             // ADR-0027 §6（PC-05b）：重连/hello 必须收到完整当前状态，不只增量。
-            await deps.orchestrator.onDeviceHello(identity.deviceId)
+            if (isCurrent) await deps.orchestrator.onDeviceHello(identity.deviceId)
           }
           if (frame.type === 'run.live_delta') {
             // P1-13：直播 delta 不持久——校验归属后直接投递给 owner 连接（03 §8）。

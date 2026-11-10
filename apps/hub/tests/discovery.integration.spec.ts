@@ -3,6 +3,7 @@ import { getEvaluation, type Database } from '@whalepod/db'
 import { DISCOVERY_CAPABILITY, parseNodeFrame, type NodeDownstream } from '@whalepod/protocol'
 import WebSocket from 'ws'
 import { canonicalJson, sha256Hex } from '../src/modules/coordination/digest.js'
+import { nodeConnections } from '../src/modules/device/connection-registry.js'
 import { runDiscoveryTick } from '../src/modules/discovery/service.js'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -17,8 +18,10 @@ import {
   type TestApp,
 } from './helpers.js'
 
-const membershipRead = vi.hoisted(() => ({
-  afterRead: undefined as ((userId: string) => Promise<void>) | undefined,
+const dbPause = vi.hoisted(() => ({
+  afterMembershipRead: undefined as ((userId: string) => Promise<void>) | undefined,
+  afterReserve: undefined as (() => Promise<void>) | undefined,
+  afterInventory: undefined as (() => Promise<void>) | undefined,
 }))
 vi.mock('@whalepod/db', async (importOriginal) => {
   const db = await importOriginal<typeof import('@whalepod/db')>()
@@ -26,8 +29,20 @@ vi.mock('@whalepod/db', async (importOriginal) => {
     ...db,
     async getEnabledMember(...args: Parameters<typeof db.getEnabledMember>) {
       const member = await db.getEnabledMember(...args)
-      if (member) await membershipRead.afterRead?.(args[2])
+      if (member) await dbPause.afterMembershipRead?.(args[2])
       return member
+    },
+    async reserveCoordinationUsage(...args: Parameters<typeof db.reserveCoordinationUsage>) {
+      const reserved = await db.reserveCoordinationUsage(...args)
+      await dbPause.afterReserve?.()
+      return reserved
+    },
+    async convergeDeviceWorkspaceRemovals(
+      ...args: Parameters<typeof db.convergeDeviceWorkspaceRemovals>
+    ) {
+      const result = await db.convergeDeviceWorkspaceRemovals(...args)
+      await dbPause.afterInventory?.()
+      return result
     },
   }
 })
@@ -115,31 +130,7 @@ describe('RD-04a shadow discovery from ordinary comments', () => {
     return response.json().data.id as string
   }
 
-  async function setupPilot(
-    supportDiscovery: boolean | 'legacy' = true,
-    fixture?: { workspaceId: string; agreementTaskIds: string[] },
-  ) {
-    const code = await apiInject(ctx, owner, {
-      method: 'POST',
-      url: '/api/v1/devices/pairing-codes',
-      payload: {},
-    })
-    expect(code.statusCode).toBe(201)
-    const claim = await ctx.app.inject({
-      method: 'POST',
-      url: '/api/v1/devices/pairing-claims',
-      headers: { 'idempotency-key': randomUUID() },
-      payload: {
-        code: code.json().data.code,
-        name: `discovery-test-${sockets.length + 1}`,
-        platform: 'darwin',
-        architecture: 'arm64',
-        nodeVersion: '24.12.0',
-        nodeAppVersion: '0.1.0',
-      },
-    })
-    expect(claim.statusCode, claim.body).toBe(201)
-    const { deviceId, deviceToken } = claim.json().data as { deviceId: string; deviceToken: string }
+  async function connectPilot(deviceId: string, deviceToken: string) {
     if (!ctx.app.server.listening) await ctx.app.listen({ host: '127.0.0.1', port: 0 })
     const addr = ctx.app.server.address()
     if (!addr || typeof addr === 'string') throw new Error('missing listen address')
@@ -165,24 +156,54 @@ describe('RD-04a shadow discovery from ordinary comments', () => {
           sentAt: new Date().toISOString(),
         }),
       )
-    send('node.hello', {
-      deviceId,
-      nodeVersion: '24.12.0',
-      platform: 'darwin',
-      architecture: 'arm64',
-      supportedProtocolVersions: [1],
-      dshDistributionVersion: '0.1.0-rc.8',
-      pluginPackDigests: [],
-      ...(fixture ? { contextCapabilities: ['project-context.v1', 'context-state.v1'] } : {}),
-      coordinationCapabilities: [
-        'coordination.v1',
-        ...(supportDiscovery === 'legacy'
-          ? ['discovery.v1']
-          : supportDiscovery
-            ? [DISCOVERY_CAPABILITY]
-            : []),
-      ],
+    const hello = (
+      discovery: false | 'discovery.v1' | typeof DISCOVERY_CAPABILITY,
+      context = false,
+    ) =>
+      send('node.hello', {
+        deviceId,
+        nodeVersion: '24.12.0',
+        platform: 'darwin',
+        architecture: 'arm64',
+        supportedProtocolVersions: [1],
+        dshDistributionVersion: '0.1.0-rc.8',
+        pluginPackDigests: [],
+        ...(context ? { contextCapabilities: ['project-context.v1', 'context-state.v1'] } : {}),
+        coordinationCapabilities: ['coordination.v1', ...(discovery ? [discovery] : [])],
+      })
+    return { client, send, hello, messages }
+  }
+
+  async function setupPilot(
+    supportDiscovery: boolean | 'legacy' = true,
+    fixture?: { workspaceId: string; agreementTaskIds: string[] },
+  ) {
+    const code = await apiInject(ctx, owner, {
+      method: 'POST',
+      url: '/api/v1/devices/pairing-codes',
+      payload: {},
     })
+    expect(code.statusCode).toBe(201)
+    const claim = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/devices/pairing-claims',
+      headers: { 'idempotency-key': randomUUID() },
+      payload: {
+        code: code.json().data.code,
+        name: `discovery-test-${sockets.length + 1}`,
+        platform: 'darwin',
+        architecture: 'arm64',
+        nodeVersion: '24.12.0',
+        nodeAppVersion: '0.1.0',
+      },
+    })
+    expect(claim.statusCode, claim.body).toBe(201)
+    const { deviceId, deviceToken } = claim.json().data as { deviceId: string; deviceToken: string }
+    const { send, hello, messages } = await connectPilot(deviceId, deviceToken)
+    hello(
+      supportDiscovery === 'legacy' ? 'discovery.v1' : supportDiscovery && DISCOVERY_CAPABILITY,
+      !!fixture,
+    )
     const credentials = {
       scope: 'coordination',
       provider: 'replay',
@@ -283,7 +304,7 @@ describe('RD-04a shadow discovery from ordinary comments', () => {
       payload: { configVersion },
     })
     expect(participation.statusCode, participation.body).toBe(200)
-    return { send, messages, deviceId, deviceToken, configure, route, settings }
+    return { send, messages, deviceId, deviceToken, configure, route, settings, credentials }
   }
 
   async function getRequest(node: Awaited<ReturnType<typeof setupPilot>>) {
@@ -611,6 +632,259 @@ describe('RD-04a shadow discovery from ordinary comments', () => {
     expect(await database.sql`select id from coordination_usage_ledger`).toHaveLength(0)
   })
 
+  it('waits for the current socket hello and matching inventory before reserving a discovery lease', async () => {
+    const node = await setupPilot()
+    const sourceId = await ordinaryComment()
+    const reconnect = await connectPilot(node.deviceId, node.deviceToken)
+    const expectUnclaimed = async () => {
+      await runDiscoveryTick({ database })
+      const [row] = await database.sql`
+        select evaluation_id, processed_at from discovery_admission where source_id = ${sourceId}
+      `
+      expect(row).toEqual({ evaluation_id: null, processed_at: null })
+      expect(await database.sql`select id from coordination_usage_ledger`).toHaveLength(0)
+    }
+    await expectUnclaimed() // the old v2 hello and inventory are still in the database
+    reconnect.hello('discovery.v1')
+    const waitForCapability = (capability: string) =>
+      waitForValue(async () => {
+        const [row] =
+          await database.sql`select capabilities from device where id = ${node.deviceId}`
+        return row?.capabilities?.coordinationCapabilities?.includes(capability) || undefined
+      }, 'current hello missing')
+    await waitForCapability('discovery.v1')
+    await expectUnclaimed()
+
+    const restored = await connectPilot(node.deviceId, node.deviceToken)
+    restored.hello(DISCOVERY_CAPABILITY)
+    await waitForCapability(DISCOVERY_CAPABILITY)
+    await expectUnclaimed() // v2 hello alone does not reuse a prior connection's credentials
+    const inventory = {
+      deviceId: node.deviceId,
+      workspaces: [],
+      credentialSlots: [],
+    }
+    restored.send('node.inventory', { ...inventory, coordinationCredentialSlots: [] })
+    await waitForValue(async () => {
+      const [row] = await database.sql`select capabilities from device where id = ${node.deviceId}`
+      return row?.capabilities?.coordinationCredentialSlots?.length === 0 || undefined
+    }, 'current inventory missing')
+    await expectUnclaimed()
+    restored.send('node.inventory', {
+      ...inventory,
+      coordinationCredentialSlots: [node.credentials],
+    })
+    await waitForValue(async () => {
+      const [row] = await database.sql`select capabilities from device where id = ${node.deviceId}`
+      return row?.capabilities?.coordinationCredentialSlots?.length === 1 || undefined
+    }, 'restored inventory missing')
+    const frame = await waitForValue(async () => {
+      const existing = restored.messages.find((message) => message.type === 'discovery.request')
+      if (existing) return existing
+      await runDiscoveryTick({ database })
+      return restored.messages.find((message) => message.type === 'discovery.request')
+    }, 'restored device did not receive a discovery lease')
+    expect(frame.payload.promptVersion).toBe(DISCOVERY_CAPABILITY)
+    expect(reconnect.messages.some((message) => message.type === 'discovery.request')).toBe(false)
+    const [row] = await database.sql`
+      select evaluation_id from discovery_admission where source_id = ${sourceId}
+    `
+    expect(row?.evaluation_id).toBe(frame.payload.evaluationId)
+  })
+
+  it('withholds a reserved request when the socket changes mid-dispatch and rejects discovery upstream before hello', async () => {
+    const node = await setupPilot()
+    const sourceId = await ordinaryComment()
+    const reserved = Promise.withResolvers<void>()
+    const proceed = Promise.withResolvers<void>()
+    dbPause.afterReserve = async () => {
+      reserved.resolve()
+      await proceed.promise
+    }
+    const tick = runDiscoveryTick({ database })
+    const reconnect = await (async () => {
+      try {
+        await Promise.race([
+          reserved.promise,
+          tick.then(() => {
+            throw new Error('tick completed without reserving a lease')
+          }),
+        ])
+        return await connectPilot(node.deviceId, node.deviceToken)
+      } finally {
+        dbPause.afterReserve = undefined
+        proceed.resolve()
+        await tick
+      }
+    })()
+    await runDiscoveryTick({ database }) // neither first delivery nor retry may use the new socket
+    const flushDownstream = () =>
+      new Promise<void>((resolve) => {
+        reconnect.client.once('pong', () => resolve())
+        reconnect.client.ping()
+      })
+    await flushDownstream()
+    expect(reconnect.messages.some((message) => message.type === 'discovery.request')).toBe(false)
+    const [row] = await database.sql`
+      select e.id, e.attempt, e.lease_token, e.status, e.evaluation_digest from coordination_evaluation e
+      join discovery_admission a on a.evaluation_id = e.id where a.source_id = ${sourceId}
+    `
+    expect(row?.status).toBe('dispatched')
+    const binding = {
+      purpose: 'discovery',
+      evaluationId: row?.id,
+      attempt: row?.attempt,
+      leaseToken: row?.lease_token,
+      readEntryIds: [],
+    }
+    const inventoryBarrier = async (withSlot: boolean) => {
+      reconnect.send('node.inventory', {
+        deviceId: node.deviceId,
+        workspaces: [],
+        credentialSlots: [],
+        coordinationCredentialSlots: withSlot ? [node.credentials] : [],
+      })
+      await waitForValue(async () => {
+        const [device] =
+          await database.sql`select capabilities from device where id = ${node.deviceId}`
+        return (
+          device?.capabilities?.coordinationCredentialSlots?.length === Number(withSlot) ||
+          undefined
+        )
+      }, 'inventory after rejected discovery frame did not arrive')
+    }
+    reconnect.send('discovery.heartbeat', binding)
+    await inventoryBarrier(false)
+    reconnect.hello('discovery.v1')
+    reconnect.send('discovery.result', {
+      ...binding,
+      evaluationDigest: row?.evaluation_digest,
+      status: 'failed',
+      failureCode: 'node_lost',
+    })
+    await inventoryBarrier(true)
+    await flushDownstream()
+    expect(reconnect.messages.some((message) => message.type === 'discovery.result_ack')).toBe(
+      false,
+    )
+    expect(reconnect.client.readyState).toBe(WebSocket.OPEN)
+    const [after] =
+      await database.sql`select status from coordination_evaluation where id = ${row?.id}`
+    expect(after?.status).toBe('dispatched')
+  })
+
+  it('finishes in-flight old inventory before persisting a replacement hello and inventory', async () => {
+    const node = await setupPilot()
+    const oldInventoryPaused = Promise.withResolvers<void>()
+    const finishOldInventory = Promise.withResolvers<void>()
+    dbPause.afterInventory = async () => {
+      dbPause.afterInventory = undefined
+      oldInventoryPaused.resolve()
+      await finishOldInventory.promise
+    }
+    const inventory = { deviceId: node.deviceId, workspaces: [], credentialSlots: [] }
+    const replacementHelloSeen = Promise.withResolvers<void>()
+    const setHello = nodeConnections.setDiscoveryHello.bind(nodeConnections)
+    const hello = vi.spyOn(nodeConnections, 'setDiscoveryHello').mockImplementation((...args) => {
+      setHello(...args)
+      if (!args[2]) replacementHelloSeen.resolve()
+    })
+    const transactions = vi.spyOn(database, 'transaction')
+    const replacement = await (async () => {
+      try {
+        node.send('node.inventory', { ...inventory, coordinationCredentialSlots: [] })
+        await oldInventoryPaused.promise
+        const next = await connectPilot(node.deviceId, node.deviceToken)
+        next.hello(DISCOVERY_CAPABILITY)
+        next.send('node.inventory', {
+          ...inventory,
+          coordinationCredentialSlots: [node.credentials],
+        })
+        await replacementHelloSeen.promise
+        expect(transactions).not.toHaveBeenCalled()
+        return next
+      } finally {
+        hello.mockRestore()
+        transactions.mockRestore()
+        dbPause.afterInventory = undefined
+        finishOldInventory.resolve()
+      }
+    })()
+    const sourceId = await ordinaryComment()
+    const frame = await waitForValue(async () => {
+      await runDiscoveryTick({ database })
+      return replacement.messages.find((message) => message.type === 'discovery.request')
+    }, 'replacement inventory did not enable a discovery lease')
+    expect(
+      frame.payload.manifest.some(
+        (entry) => entry.kind === 'source' && entry.sourceId === sourceId,
+      ),
+    ).toBe(true)
+  })
+
+  it('records replayed reads after compatible hello but waits for fresh inventory before allowing model start', async () => {
+    const node = await setupPilot()
+    await ordinaryComment()
+    const request = await getRequest(node)
+    for (const entry of request.manifest) {
+      const download = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/discovery/evaluations/${request.evaluationId}/inputs/${entry.id}`,
+        headers: {
+          authorization: `Device ${node.deviceToken}`,
+          'x-coordination-attempt': String(request.attempt),
+          'x-coordination-lease': request.leaseToken,
+        },
+      })
+      expect(download.statusCode).toBe(200)
+    }
+    const reconnect = await connectPilot(node.deviceId, node.deviceToken)
+    reconnect.hello(DISCOVERY_CAPABILITY)
+    const receipt = {
+      purpose: 'discovery',
+      evaluationId: request.evaluationId,
+      attempt: request.attempt,
+      leaseToken: request.leaseToken,
+      readEntryIds: request.manifest.map((entry) => entry.id),
+    }
+    const start = { ...receipt, modelStartedAt: new Date().toISOString() }
+    reconnect.send('discovery.heartbeat', receipt)
+    reconnect.send('discovery.heartbeat', start)
+    const workspaceId = randomUUID()
+    reconnect.send('node.inventory', {
+      deviceId: node.deviceId,
+      credentialSlots: [],
+      coordinationCredentialSlots: [node.credentials],
+      workspaces: [
+        {
+          workspaceId,
+          name: 'discovery-inventory-barrier',
+          kind: 'directory',
+          capabilities: { read: true, write: false, git: false },
+          available: true,
+          lastCheckedAt: new Date().toISOString(),
+        },
+      ],
+    })
+    await waitForValue(async () => {
+      const [workspace] = await database.sql`select id from workspace where id = ${workspaceId}`
+      return workspace?.id as string | undefined
+    }, 'fresh inventory did not arrive after replayed heartbeat')
+    const evaluation = await getEvaluation(database.db, request.evaluationId)
+    expect(evaluation?.readEntryIds).toEqual(receipt.readEntryIds)
+    expect(evaluation?.modelStartedAt).toBeNull()
+    expect(reconnect.messages.some((message) => message.type === 'discovery.model_start_ack')).toBe(
+      false,
+    )
+    reconnect.send('discovery.heartbeat', start)
+    const ack = await waitForValue(
+      async () =>
+        reconnect.messages.find((message) => message.type === 'discovery.model_start_ack'),
+      'matching fresh inventory did not unlock model start',
+    )
+    expect(ack.payload.evaluationId).toBe(request.evaluationId)
+  })
+
   it.each([false, true])(
     'rejects model start and a late result with no eligible source (download first: %s)',
     async (downloadFirst) => {
@@ -693,9 +967,9 @@ describe('RD-04a shadow discovery from ordinary comments', () => {
     // Pause after a real database read has returned the enabled author. Only timing is injected.
     let readAuthor = false
     const barrier = Promise.withResolvers<void>()
-    membershipRead.afterRead = async (userId) => {
+    dbPause.afterMembershipRead = async (userId) => {
       if (userId !== member.userId) return
-      membershipRead.afterRead = undefined
+      dbPause.afterMembershipRead = undefined
       readAuthor = true
       await barrier.promise
     }
@@ -718,7 +992,7 @@ describe('RD-04a shadow discovery from ordinary comments', () => {
       })
       expect(disable.statusCode, disable.body).toBe(200)
     } finally {
-      membershipRead.afterRead = undefined
+      dbPause.afterMembershipRead = undefined
       barrier.resolve()
     }
 

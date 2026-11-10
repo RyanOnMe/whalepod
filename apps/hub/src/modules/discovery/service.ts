@@ -11,6 +11,7 @@ import {
   settleCoordinationUsage,
   updateEvaluation,
   type CoordinationEvaluationRow,
+  type RouterConfigRow,
   type Tx,
 } from '@whalepod/db'
 import {
@@ -116,19 +117,18 @@ function emit(deps: RouterDeps, action: string, row: CoordinationEvaluationRow, 
     ...(reason === undefined ? {} : { reason }),
   })
 }
-function send(
-  deviceId: string | null,
-  type: 'discovery.request' | 'discovery.cancel',
-  payload: unknown,
-) {
+type DiscoveryMessage =
+  | Pick<Extract<NodeDownstream, { type: 'discovery.request' }>, 'type' | 'payload'>
+  | Pick<Extract<NodeDownstream, { type: 'discovery.cancel' }>, 'type' | 'payload'>
+
+function send(deviceId: string | null, message: DiscoveryMessage) {
   if (!deviceId) return
-  nodeConnections.send(deviceId, {
+  nodeConnections.sendDiscovery(deviceId, {
     protocolVersion: 1,
     messageId: uuidv7(),
     sentAt: new Date().toISOString(),
-    type,
-    payload,
-  } as NodeDownstream)
+    ...message,
+  })
 }
 
 async function rebuild(tx: Tx, row: CoordinationEvaluationRow, deps: RouterDeps) {
@@ -206,7 +206,7 @@ async function dispatch(deps: RouterDeps, sourceId: string) {
     }
     if (
       (await hasRunningCoordinationEvaluation(tx, input.admission.projectId)) ||
-      !nodeConnections.isOnline(input.device.id) ||
+      !nodeConnections.canDispatchDiscovery(input.device.id, input.model) ||
       !supportsDiscovery(input.device.capabilities, input.model)
     )
       return
@@ -337,6 +337,7 @@ export async function acceptDiscoveryHeartbeat(
   deps: RouterDeps,
   deviceId: string,
   value: DiscoveryHeartbeat,
+  canStartOnCurrentConnection: (model: RouterConfigRow) => boolean,
 ) {
   const wantsModelStart = value.modelStartedAt !== undefined
   const row = await deps.database.transaction(async (tx) => {
@@ -366,7 +367,12 @@ export async function acceptDiscoveryHeartbeat(
       return
     if (wantsModelStart && !(await fenceDiscoveryAuthority(tx, input))) return
     const now = nowOf(deps)
-    if (!live(row, now) || !available(input.cfg, now)) return
+    if (
+      !live(row, now) ||
+      !available(input.cfg, now) ||
+      (wantsModelStart && !canStartOnCurrentConnection(input.model))
+    )
+      return
     return updateEvaluation(tx, row.id, {
       status: 'running',
       startedAt: row.startedAt ?? now,
@@ -711,12 +717,12 @@ export async function runDiscoveryTick(deps: RouterDeps) {
         })
       })
       if (ended) {
-        send(ended.deviceId, 'discovery.cancel', { ...binding(ended), reason })
+        send(ended.deviceId, { type: 'discovery.cancel', payload: { ...binding(ended), reason } })
         await settle(deps, ended)
         emit(deps, 'discovery.cancel', ended, reason)
       }
     } else if (row.status === 'dispatched') {
-      send(row.deviceId, 'discovery.request', requestFor(row))
+      send(row.deviceId, { type: 'discovery.request', payload: requestFor(row) })
     }
   }
   for (const { sourceId } of await takePendingProjects(deps)) {
@@ -724,7 +730,7 @@ export async function runDiscoveryTick(deps: RouterDeps) {
     if (!dispatched) continue
     emit(deps, 'discovery.evaluation', dispatched, dispatched.failureCode ?? undefined)
     if (dispatched.status === 'dispatched')
-      send(dispatched.deviceId, 'discovery.request', requestFor(dispatched))
+      send(dispatched.deviceId, { type: 'discovery.request', payload: requestFor(dispatched) })
   }
   for (const ledger of await listUnsettledCoordinationUsage(deps.database.db, 100, 'discovery')) {
     const row = await getEvaluation(deps.database.db, ledger.evaluationId)
