@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Database } from '@whalepod/db'
 import { listTeamEvents, schema } from '@whalepod/db'
 import type { FastifyInstance } from 'fastify'
@@ -42,6 +42,7 @@ describe('node websocket (/ws/v1/node)', () => {
   let alice: Session
   let url: string
   const sockets: WebSocket[] = []
+  let socketWarnings: unknown[][][]
 
   beforeAll(async () => {
     database = await createTestDatabase()
@@ -49,12 +50,19 @@ describe('node websocket (/ws/v1/node)', () => {
   beforeEach(async () => {
     await resetDatabase(database)
     ctx = await createTestApp(database)
+    socketWarnings = []
+    ctx.app.addHook('onRequest', (request, _reply, done) => {
+      if (request.url === '/ws/v1/node')
+        socketWarnings.push(vi.spyOn(request.log, 'warn').mock.calls)
+      done()
+    })
     alice = await driveSetup(ctx)
     url = await listen(ctx.app)
   })
   afterEach(async () => {
     for (const s of sockets.splice(0)) s.terminate()
-    await ctx.app.close()
+    await ctx.close()
+    vi.restoreAllMocks()
   })
   afterAll(async () => {
     await database.close()
@@ -124,6 +132,61 @@ describe('node websocket (/ws/v1/node)', () => {
     await expect(connect(undefined)).rejects.toThrow(/Unexpected server response: 401/)
     await expect(connect('f'.repeat(43))).rejects.toThrow(/Unexpected server response: 401/)
   })
+
+  it.each([
+    {
+      kind: 'JSON',
+      errorName: 'SyntaxError',
+      errorCode: 'VALIDATION_FAILED',
+      frame: (marker: string) => marker,
+    },
+    {
+      kind: 'discovery result',
+      errorName: 'ProtocolError',
+      errorCode: 'VALIDATION_FAILED',
+      frame: (marker: string) =>
+        nodeFrame('discovery.result', {
+          purpose: 'discovery',
+          evaluationId: randomUUID(),
+          attempt: 1,
+          leaseToken: 'a'.repeat(64),
+          readEntryIds: [],
+          status: 'failed',
+          evaluationDigest: 'b'.repeat(64),
+          failureCode: 'invalid_model_result',
+          [marker]: 'private device content',
+        }),
+    },
+    {
+      kind: 'frame type',
+      errorName: 'ProtocolError',
+      errorCode: 'PROTOCOL_MISMATCH',
+      frame: (marker: string) => nodeFrame(marker, {}),
+    },
+  ])(
+    'rejects malformed $kind without echoing frame content in logs',
+    async ({ frame, errorName, errorCode }) => {
+      const marker = 'Rd04Private'
+      const { deviceId, deviceToken } = await pair(alice)
+      const socket = await connect(deviceToken)
+      const closed = nextClose(socket)
+      socket.send(frame(marker))
+
+      expect(await closed).toBe(4003)
+      const warnings = socketWarnings.flat()
+      expect(JSON.stringify(warnings)).not.toContain(marker)
+      expect(warnings).toContainEqual([
+        expect.objectContaining({
+          component: 'hub.node-ws',
+          deviceId,
+          errorName,
+          errorCode,
+          disposition: 'connection-closed',
+        }),
+        'node upstream frame rejected',
+      ])
+    },
+  )
 
   it('hello 落库：dsh 版本与 pack digests 写入 #37 列并刷新 lastSeenAt', async () => {
     const { deviceId, deviceToken } = await pair(alice)

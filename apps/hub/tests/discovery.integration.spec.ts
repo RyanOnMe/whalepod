@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { getEvaluation, type Database } from '@whalepod/db'
-import { parseNodeFrame, type NodeDownstream } from '@whalepod/protocol'
+import { DISCOVERY_CAPABILITY, parseNodeFrame, type NodeDownstream } from '@whalepod/protocol'
 import WebSocket from 'ws'
 import { canonicalJson, sha256Hex } from '../src/modules/coordination/digest.js'
 import { runDiscoveryTick } from '../src/modules/discovery/service.js'
@@ -116,7 +116,7 @@ describe('RD-04a shadow discovery from ordinary comments', () => {
   }
 
   async function setupPilot(
-    supportDiscovery = true,
+    supportDiscovery: boolean | 'legacy' = true,
     fixture?: { workspaceId: string; agreementTaskIds: string[] },
   ) {
     const code = await apiInject(ctx, owner, {
@@ -174,9 +174,14 @@ describe('RD-04a shadow discovery from ordinary comments', () => {
       dshDistributionVersion: '0.1.0-rc.8',
       pluginPackDigests: [],
       ...(fixture ? { contextCapabilities: ['project-context.v1', 'context-state.v1'] } : {}),
-      coordinationCapabilities: supportDiscovery
-        ? ['coordination.v1', 'discovery.v1']
-        : ['coordination.v1'],
+      coordinationCapabilities: [
+        'coordination.v1',
+        ...(supportDiscovery === 'legacy'
+          ? ['discovery.v1']
+          : supportDiscovery
+            ? [DISCOVERY_CAPABILITY]
+            : []),
+      ],
     })
     const credentials = {
       scope: 'coordination',
@@ -588,7 +593,7 @@ describe('RD-04a shadow discovery from ordinary comments', () => {
   })
 
   it('does not give a discovery lease to a legacy node and does not carry permission across a model change', async () => {
-    const node = await setupPilot(false)
+    const node = await setupPilot('legacy')
     const waiting = await ordinaryComment()
     await runDiscoveryTick({ database })
     const [unclaimed] = await database.sql`
