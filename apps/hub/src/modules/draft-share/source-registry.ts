@@ -21,6 +21,7 @@ export interface ManagedSourceModelRoute {
   readonly provider: string
   readonly model: string
   readonly endpointId: string
+  readonly endpointDigest?: string | undefined
   readonly accountId: string
   readonly policyGeneration: number
   readonly expiresAt: Date
@@ -69,6 +70,7 @@ export function managedDraftModelBindingDigest(
       provider: route.provider,
       model: route.model,
       endpointId: route.endpointId,
+      ...(route.endpointDigest === undefined ? {} : { endpointDigest: route.endpointDigest }),
       accountId: route.accountId,
       policyGeneration: route.policyGeneration,
       policyExpiresAt: route.expiresAt.toISOString(),

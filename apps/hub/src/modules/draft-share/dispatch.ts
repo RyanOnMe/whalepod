@@ -18,6 +18,8 @@ import {
   MANAGED_DRAFT_CONTROL_VERSION,
   MANAGED_DRAFT_PREPARATION_MAX_AGE_MS,
   ManagedDraftStartSchema,
+  ManagedDraftExecuteSchema,
+  MANAGED_DRAFT_EXECUTION_VERSION,
   type NodeDownstream,
 } from '@whalepod/protocol'
 import type { WebSocket } from 'ws'
@@ -41,7 +43,7 @@ const unavailable = () =>
   new ApiError(409, 'CONFLICT', 'managed draft source preparation is unavailable')
 type Offer = Extract<NodeDownstream, { type: 'managed_draft.start' }>
 
-async function verifyPlacement(tx: Tx, placement: ManagedDraftPlacement) {
+export async function verifyManagedDraftPlacement(tx: Tx, placement: ManagedDraftPlacement) {
   const { host, modelRoute } = placement
   const device = await getDeviceForShare(tx, host.deviceId)
   if (device?.ownerUserId !== host.ownerUserId || device.revokedAt !== null) return undefined
@@ -74,10 +76,14 @@ export async function queueManagedDraftPreparation(
     intent: DispatchIntentRow
     agentId: string
     now: Date
+    executionCheck?: boolean
   },
 ) {
   const { host, modelRoute } = input.placement
-  if (!nodeConnections.isManagedDraftOnline(host) || host.ownerUserId !== input.actorUserId)
+  if (
+    nodeConnections.managedDraftConnectionId(host, input.executionCheck) === undefined ||
+    host.ownerUserId !== input.actorUserId
+  )
     throw unavailable()
   const runId = randomUUID()
   const prepared = await prepareManagedDraftSourceManifest(
@@ -93,7 +99,7 @@ export async function queueManagedDraftPreparation(
     prepared.manifest.mandateVersion !== input.intent.mandateVersion
   )
     throw unavailable()
-  const revision = await verifyPlacement(tx, input.placement)
+  const revision = await verifyManagedDraftPlacement(tx, input.placement)
   if (revision?.agentId !== input.agentId) throw unavailable()
   const [pack] = await tx
     .select({ digest: schema.pluginPacks.packDigest })
@@ -111,7 +117,9 @@ export async function queueManagedDraftPreparation(
     workspaceId: host.workspaceId,
     profileDigest: revision.profileDigest,
     pluginPackDigest: pack.digest,
-    dshDistributionVersion: MANAGED_DRAFT_CONTROL_VERSION,
+    dshDistributionVersion: input.executionCheck
+      ? MANAGED_DRAFT_EXECUTION_VERSION
+      : MANAGED_DRAFT_CONTROL_VERSION,
     specRevisionId: manifest.source.revisionId,
     origin: 'mandate',
     mandateId: manifest.mandateId,
@@ -129,10 +137,19 @@ export async function queueManagedDraftPreparation(
   await outbox.enqueue(tx, {
     id: commandId,
     deviceId: host.deviceId,
-    type: 'managed_draft.start',
-    payload: ManagedDraftStartSchema.shape.payload.parse({ commandId, manifest, manifestDigest }),
+    type: input.executionCheck ? 'managed_draft.execute' : 'managed_draft.start',
+    payload: input.executionCheck
+      ? ManagedDraftExecuteSchema.shape.payload.parse({
+          commandId,
+          manifest,
+          manifestDigest,
+          model: modelRoute.model,
+        })
+      : ManagedDraftStartSchema.shape.payload.parse({ commandId, manifest, manifestDigest }),
     notBefore: input.now,
   })
+  if (input.executionCheck)
+    await tx.insert(schema.managedDraftExecutions).values({ runId, commandId })
   await appendTeamEvent(tx, {
     type: 'run.changed',
     payload: { runId, taskId: run.taskId, status: 'queued' },
@@ -185,7 +202,7 @@ export class ManagedDraftTransport {
       const currentPlacement =
         placement === undefined || frozen === undefined
           ? undefined
-          : await verifyPlacement(tx, placement)
+          : await verifyManagedDraftPlacement(tx, placement)
       const [run] = await tx
         .select()
         .from(schema.runs)

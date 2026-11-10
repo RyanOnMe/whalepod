@@ -386,7 +386,7 @@ export async function runStart(
       void revokeLocalConfig(configDir)
     },
     onFrame: (frame) => {
-      if (frame.type === 'managed_draft.start') {
+      if (frame.type === 'managed_draft.start' || frame.type === 'managed_draft.execute') {
         sessionSend(
           commandAckFrame(frame.payload.commandId, false, {
             code: 'FORBIDDEN',

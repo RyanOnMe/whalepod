@@ -375,6 +375,20 @@ export const CoordinationResultAckFrameSchema = envelope(
   CoordinationResultAckPayloadSchema,
 )
 
+/** Private execution check result; never carries model output, filenames, or diagnostics. */
+export const ManagedDraftOutcomeSchema = envelope(
+  'managed_draft.outcome',
+  z
+    .strictObject({
+      commandId: z.uuid(),
+      runId: z.uuid(),
+      manifestDigest: Sha256DigestSchema,
+      outcome: z.enum(['completed', 'failed']),
+      attemptId: z.uuid().optional(),
+    })
+    .refine((value) => value.outcome !== 'completed' || value.attemptId !== undefined),
+)
+
 export const NodeUpstreamSchema = z.discriminatedUnion('type', [
   NodeHelloSchema,
   CoordinationHeartbeatFrameSchema,
@@ -384,6 +398,7 @@ export const NodeUpstreamSchema = z.discriminatedUnion('type', [
   NodePreparationResultSchema,
   SourcePermissionResultSchema,
   CommandAckSchema,
+  ManagedDraftOutcomeSchema,
   RunSnapshotFrameSchema,
   RunEventFrameSchema,
   RunLiveDeltaSchema,
@@ -568,12 +583,21 @@ export const ManagedDraftStartSchema = envelope(
   }),
 )
 
+/** Loopback verification lane, distinct from transport-only preparation. */
+export const ManagedDraftExecuteSchema = envelope(
+  'managed_draft.execute',
+  ManagedDraftStartSchema.shape.payload.extend({
+    model: z.string().regex(/^[A-Za-z0-9_./-]{1,128}$/),
+  }),
+)
+
 export const NodeDownstreamSchema = z.discriminatedUnion('type', [
   CoordinationRequestFrameSchema,
   CoordinationCancelFrameSchema,
   CoordinationResultAckFrameSchema,
   RunStartSchema,
   ManagedDraftStartSchema,
+  ManagedDraftExecuteSchema,
   RunCancelSchema,
   RunMandateInvalidatedSchema,
   RunStatusRequestSchema,

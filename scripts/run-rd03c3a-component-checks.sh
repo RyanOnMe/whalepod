@@ -11,6 +11,7 @@ pnpm exec vitest run --project unit \
 pnpm test:integration \
   apps/hub/tests/work-dispatch.integration.spec.ts \
   apps/hub/tests/managed-draft-source.integration.spec.ts \
+  apps/hub/tests/managed-draft-loopback-broker.integration.spec.ts \
   apps/hub/tests/managed-draft-node-bin.integration.spec.ts \
   apps/hub/tests/node-websocket.integration.spec.ts \
   apps/node/tests/integration/managed-draft-node.integration.spec.ts \

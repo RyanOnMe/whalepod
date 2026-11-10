@@ -90,6 +90,7 @@ export interface DispatchDeps {
   readonly outbox: Outbox
   readonly now: () => Date
   readonly managedDraftPlacement?: ManagedDraftPlacement | undefined
+  readonly managedDraftExecutionCheck?: boolean
 }
 
 function notFound(): ApiError {
@@ -910,7 +911,11 @@ export async function dispatchIntent(
         if (request.executionProfile === 'managed_draft_source') {
           throw conflict('managed draft source execution is unavailable')
         }
-        const preparing = request.executionProfile === 'managed_draft_source_preparation'
+        const executionCheck = request.executionProfile === 'managed_draft_source_execution_check'
+        if (executionCheck && !deps.managedDraftExecutionCheck)
+          throw conflict('managed draft execution check is unavailable')
+        const preparing =
+          request.executionProfile === 'managed_draft_source_preparation' || executionCheck
         const placement = deps.managedDraftPlacement
         if (
           preparing &&
@@ -973,6 +978,7 @@ export async function dispatchIntent(
             agentId: candidate.agentId,
             placement,
             sourceId: request.managedDraftSourceId,
+            executionCheck,
           })
           const row = await markDispatchIntentDispatched(
             tx,

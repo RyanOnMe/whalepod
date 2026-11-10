@@ -11,6 +11,8 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core'
+import { runs } from './run.js'
+import { dispatchOutbox } from './outbox.js'
 import { userAccounts } from './identity.js'
 import { projects, tasks, taskSpecRevisions } from './project.js'
 
@@ -68,3 +70,45 @@ export const managedDraftSourcePolicies = pgTable(
 )
 
 export type ManagedDraftSourcePolicyRow = typeof managedDraftSourcePolicies.$inferSelect
+
+/** One isolated execution check, one source delivery and one model send decision. */
+export const managedDraftExecutions = pgTable(
+  'managed_draft_execution',
+  {
+    runId: uuid('run_id')
+      .primaryKey()
+      .references(() => runs.id),
+    commandId: uuid('command_id')
+      .notNull()
+      .unique()
+      .references(() => dispatchOutbox.id),
+    connectionId: uuid('connection_id'),
+    offeredAt: timestamp('offered_at', { withTimezone: true }),
+    sourceRequestId: uuid('source_request_id'),
+    sourceReadAt: timestamp('source_read_at', { withTimezone: true }),
+    modelAttemptId: uuid('model_attempt_id').unique(),
+    modelRequestDigest: char('model_request_digest', { length: 64 }),
+    modelRequestByteSize: integer('model_request_byte_size'),
+    modelDecidedAt: timestamp('model_decided_at', { withTimezone: true }),
+    modelRespondedAt: timestamp('model_responded_at', { withTimezone: true }),
+  },
+  (t) => [
+    check(
+      'managed_draft_execution_offer_fields',
+      sql`
+      (${t.connectionId} is null) = (${t.offeredAt} is null)
+      and (${t.sourceRequestId} is null) = (${t.sourceReadAt} is null)
+      and (${t.sourceReadAt} is null or (${t.offeredAt} is not null and ${t.sourceReadAt} >= ${t.offeredAt}))`,
+    ),
+    check(
+      'managed_draft_execution_model_fields',
+      sql`
+      (${t.modelAttemptId} is null and ${t.modelRequestDigest} is null and ${t.modelRequestByteSize} is null
+        and ${t.modelDecidedAt} is null and ${t.modelRespondedAt} is null)
+      or (${t.modelAttemptId} is not null and ${t.modelRequestDigest} is not null and ${t.modelRequestByteSize} is not null
+        and ${t.modelRequestDigest} ~ '^[a-f0-9]{64}$' and ${t.modelRequestByteSize} between 1 and 131072
+        and ${t.sourceReadAt} is not null and ${t.modelDecidedAt} is not null and ${t.modelDecidedAt} >= ${t.sourceReadAt}
+        and (${t.modelRespondedAt} is null or ${t.modelRespondedAt} >= ${t.modelDecidedAt}))`,
+    ),
+  ],
+)

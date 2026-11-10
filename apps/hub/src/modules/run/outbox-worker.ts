@@ -13,6 +13,7 @@
 import { randomUUID } from 'node:crypto'
 import type { ClaimedCommand, Outbox } from '@whalepod/db'
 import { NodeDownstreamSchema } from '@whalepod/protocol'
+import type { ManagedDraftExecution } from '../draft-share/execution.js'
 import type { ManagedDraftTransport } from '../draft-share/dispatch.js'
 import type { DeviceGateway } from './device-gateway.js'
 
@@ -20,6 +21,7 @@ export interface OutboxWorkerDeps {
   outbox: Outbox
   gateway: DeviceGateway
   managedDraftTransport?: ManagedDraftTransport
+  managedDraftExecution?: ManagedDraftExecution
   now?: () => Date
   /**
    * ADR-0027 §3：`run.start` 发送前的复核钩子。返回 false 表示命令已由钩子
@@ -48,6 +50,7 @@ export class OutboxWorker {
   private readonly outbox: Outbox
   private readonly gateway: DeviceGateway
   private readonly managedDraftTransport: ManagedDraftTransport | undefined
+  private readonly managedDraftExecution: ManagedDraftExecution | undefined
   private readonly nowFn: () => Date
   private readonly beforeDispatch: ((command: ClaimedCommand) => Promise<boolean>) | undefined
 
@@ -55,6 +58,7 @@ export class OutboxWorker {
     this.outbox = deps.outbox
     this.gateway = deps.gateway
     this.managedDraftTransport = deps.managedDraftTransport
+    this.managedDraftExecution = deps.managedDraftExecution
     this.nowFn = deps.now ?? (() => new Date())
     this.beforeDispatch = deps.beforeDispatch
   }
@@ -84,6 +88,14 @@ export class OutboxWorker {
         continue
       }
       try {
+        if (parsed.data.type === 'managed_draft.execute') {
+          const result = await this.managedDraftExecution?.send(command.deviceId, parsed.data)
+          if (result === undefined || result === 'rejected') {
+            await this.outbox.fail(command.id)
+            failed += 1
+          } else if (result === 'sent') sent += 1
+          continue
+        }
         if (parsed.data.type === 'managed_draft.start') {
           if (
             this.managedDraftTransport === undefined ||

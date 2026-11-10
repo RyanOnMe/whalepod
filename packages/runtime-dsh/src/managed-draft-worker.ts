@@ -58,8 +58,10 @@ export async function runManagedDraftWorker(
   input: NodeJS.ReadableStream,
   path: string,
   write: (output: unknown) => void,
+  onIsolated?: () => void,
 ): Promise<void> {
   await assertManagedDraftProcessIsolation()
+  onIsolated?.()
   const lines = createInterface({ input, crlfDelay: Infinity })
   const next = lines[Symbol.asyncIterator]()
   try {

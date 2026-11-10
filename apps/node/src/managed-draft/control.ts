@@ -1,7 +1,12 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { open } from 'node:fs/promises'
-import { MANAGED_DRAFT_CONTROL_VERSION, type NodeDownstream } from '@whalepod/protocol'
+import {
+  MANAGED_DRAFT_CONTROL_VERSION,
+  MANAGED_DRAFT_EXECUTION_VERSION,
+  ManagedDraftOutcomeSchema,
+  type NodeDownstream,
+} from '@whalepod/protocol'
 import { canonicalJson } from '@whalepod/protocol/plugin-pack-digest'
 import { z } from 'zod'
 import { detectPlatformKind } from '../gateway/hello-facts.js'
@@ -18,6 +23,7 @@ const ProvisioningSchema = z.strictObject({
   workspaceId: z.uuid(),
   profileRevisionId: z.uuid(),
   managedHostGeneration: z.int().positive(),
+  managedDraftExecution: z.boolean().optional(),
 })
 type Provisioning = z.infer<typeof ProvisioningSchema>
 
@@ -111,8 +117,44 @@ function checkManifest(
 
 export async function runManagedDraftNode(provisioningPath: string): Promise<void> {
   const provision = await readProvisioning(provisioningPath)
-  // This process has only the control lane. An ACK confirms metadata checks; it grants
-  // no authority to read a source, launch a runtime, or send bytes to a model.
+  const executionEnabled = provision.managedDraftExecution === true && process.platform === 'darwin'
+  const recent = new Map<string, number>()
+  let active: { cancellation: AbortController; finished: Promise<void> } | undefined
+  let stopping = false
+  const shutdown = (code: number) => {
+    if (stopping) return
+    stopping = true
+    session.stop()
+    active?.cancellation.abort()
+    void (active?.finished ?? Promise.resolve()).finally(() => process.exit(code))
+  }
+  const reportOutcome = (
+    {
+      commandId,
+      manifest,
+      manifestDigest,
+    }: Extract<NodeDownstream, { type: 'managed_draft.execute' }>['payload'],
+    attemptId?: string,
+  ): void => {
+    session.send(
+      JSON.stringify(
+        ManagedDraftOutcomeSchema.parse({
+          protocolVersion: 1,
+          messageId: randomUUID(),
+          sentAt: new Date().toISOString(),
+          type: 'managed_draft.outcome',
+          payload: {
+            commandId,
+            runId: manifest.runId,
+            manifestDigest,
+            ...(attemptId === undefined
+              ? { outcome: 'failed' }
+              : { outcome: 'completed', attemptId }),
+          },
+        }),
+      ),
+    )
+  }
   const session = startDeviceSession({
     config: {
       hubUrl: provision.hubUrl,
@@ -124,17 +166,57 @@ export async function runManagedDraftNode(provisioningPath: string): Promise<voi
       nodeVersion: process.version,
       platform: detectPlatformKind(),
       architecture: process.arch,
-      dshDistributionVersion: MANAGED_DRAFT_CONTROL_VERSION,
+      dshDistributionVersion: executionEnabled
+        ? MANAGED_DRAFT_EXECUTION_VERSION
+        : MANAGED_DRAFT_CONTROL_VERSION,
       pluginPackDigests: [],
       contextCapabilities: [],
     }),
     onRevoked: () => {
       // Rotation and removal of the deployment file belong to its provisioner.
+      active?.cancellation.abort()
     },
+    onDisconnected: () => active?.cancellation.abort(),
     onFrame: (frame) => {
+      if (stopping) return
       if (frame.type === 'managed_draft.start') {
+        // A preparation ACK remains metadata only, even on an execution-enabled Node.
         const error = checkManifest(frame.payload, provision)
         session.send(commandAckFrame(frame.payload.commandId, error === undefined, error))
+        return
+      }
+      if (frame.type === 'managed_draft.execute') {
+        const { commandId, manifest } = frame.payload
+        const now = Date.now()
+        for (const [key, expiry] of recent) if (expiry <= now) recent.delete(key)
+        if (recent.has(commandId) || recent.size >= 1024) return
+        const expiry = Date.parse(manifest.expiresAt)
+        if (expiry > now) recent.set(commandId, expiry)
+        if (
+          !executionEnabled ||
+          checkManifest(frame.payload, provision) !== undefined ||
+          active !== undefined
+        ) {
+          reportOutcome(frame.payload)
+          return
+        }
+        const cancellation = new AbortController()
+        const finished = import('./execution.js')
+          .then(({ executeManagedDraft }) =>
+            executeManagedDraft(provision, frame.payload, cancellation.signal),
+          )
+          .then(
+            (attemptId) => {
+              if (!cancellation.signal.aborted) reportOutcome(frame.payload, attemptId)
+            },
+            () => {
+              if (!cancellation.signal.aborted) reportOutcome(frame.payload)
+            },
+          )
+          .finally(() => {
+            active = undefined
+          })
+        active = { cancellation, finished }
         return
       }
       if ('commandId' in frame.payload && typeof frame.payload.commandId === 'string') {
@@ -154,13 +236,9 @@ export async function runManagedDraftNode(provisioningPath: string): Promise<voi
           msg: 'managed_draft_session_closed',
         })}\n`,
       )
-      process.exit(code)
+      shutdown(code)
     },
   })
-  const stop = (): void => {
-    session.stop()
-    process.exit(0)
-  }
-  process.once('SIGTERM', stop)
-  process.once('SIGINT', stop)
+  process.once('SIGTERM', () => shutdown(0))
+  process.once('SIGINT', () => shutdown(0))
 }

@@ -1,13 +1,23 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
+import { readdirSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
-import type { IncomingHttpHeaders } from 'node:http'
+import {
+  createServer,
+  type IncomingHttpHeaders,
+  type RequestListener,
+  type Server,
+} from 'node:http'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
-import { parseNodeFrame, type NodeUpstream } from '@whalepod/protocol'
+import {
+  MANAGED_DRAFT_SOURCE_INSTRUCTION,
+  parseNodeFrame,
+  type NodeUpstream,
+} from '@whalepod/protocol'
 import { canonicalJson } from '@whalepod/protocol/plugin-pack-digest'
 import { afterEach, describe, expect, it } from 'vitest'
 import { WebSocketServer, type WebSocket } from 'ws'
@@ -21,6 +31,7 @@ const manifestHash = (value: unknown): string =>
 const children: ChildProcess[] = []
 const directories: string[] = []
 const servers: WebSocketServer[] = []
+const httpServers: Server[] = []
 
 afterEach(async () => {
   await Promise.all(
@@ -38,6 +49,15 @@ afterEach(async () => {
     }),
   )
   await Promise.all(
+    httpServers.splice(0).map(
+      (server) =>
+        new Promise<void>((resolve) => {
+          server.closeAllConnections()
+          server.close(() => resolve())
+        }),
+    ),
+  )
+  await Promise.all(
     directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
   )
 })
@@ -48,10 +68,20 @@ interface Connection {
   frames: NodeUpstream[]
 }
 
-async function hubSocket() {
-  const server = new WebSocketServer({ host: '127.0.0.1', port: 0, path: '/ws/v1/node' })
+async function hubSocket(handler?: RequestListener) {
+  const http = handler === undefined ? undefined : createServer(handler)
+  const server = new WebSocketServer(
+    http === undefined
+      ? { host: '127.0.0.1', port: 0, path: '/ws/v1/node' }
+      : { server: http, path: '/ws/v1/node' },
+  )
   servers.push(server)
-  await once(server, 'listening')
+  if (http === undefined) await once(server, 'listening')
+  else {
+    httpServers.push(http)
+    http.listen(0, '127.0.0.1')
+    await once(http, 'listening')
+  }
   const connections: Connection[] = []
   server.on('connection', (socket, request) => {
     const connection: Connection = { socket, headers: request.headers, frames: [] }
@@ -77,7 +107,7 @@ async function poll<T>(read: () => T | undefined, child: ChildProcess): Promise<
 
 function launch(home: string, args: string[]) {
   const child = spawn(process.execPath, [entry, 'start', ...args], {
-    env: { ...process.env, HOME: home },
+    env: { ...process.env, HOME: home, TMPDIR: home },
     stdio: ['ignore', 'ignore', 'pipe'],
   })
   child.stderr?.resume()
@@ -123,6 +153,47 @@ function manifest(deployment: ReturnType<typeof provision>) {
     modelBindingDigest: sha256,
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
   }
+}
+
+function macSandboxAvailable(): boolean {
+  if (process.platform !== 'darwin') return false
+  try {
+    execFileSync(
+      '/usr/bin/sandbox-exec',
+      ['-p', '(version 1)(allow default)(deny network*)', '/usr/bin/true'],
+      { stdio: 'ignore' },
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+const sourceText = 'isolated registered source'
+const draftText = 'fixed private model reply'
+const executionModel = 'fixture-model'
+const hash = (input: string) => createHash('sha256').update(input).digest('hex')
+
+function executionOffer(deployment: ReturnType<typeof provision>) {
+  const frozen = manifest(deployment)
+  frozen.source.sha256 = hash(sourceText)
+  frozen.source.byteSize = Buffer.byteLength(sourceText)
+  return {
+    commandId: randomUUID(),
+    manifest: frozen,
+    manifestDigest: manifestHash(frozen),
+    model: executionModel,
+  }
+}
+
+function observeOutcome(connection: Connection, child: ChildProcess, commandId: string) {
+  return poll(
+    () =>
+      connection.frames.find(
+        (frame) => frame.type === 'managed_draft.outcome' && frame.payload.commandId === commandId,
+      ),
+    child,
+  )
 }
 
 function send(connection: Connection, type: string, payload: Record<string, unknown>) {
@@ -325,4 +396,185 @@ describe('packaged Node managed draft lane', { timeout: 12_000 }, () => {
     expect(server.connections).toHaveLength(0)
     expect(await readdir(home)).toEqual(['managed-host.json'])
   })
+
+  it('never requests source bytes when preparation is provisioned without execution', async () => {
+    const requests: string[] = []
+    const server = await hubSocket((request, response) => {
+      requests.push(request.url ?? '')
+      response.writeHead(403).end()
+    })
+    const home = await tempDirectory()
+    const config = join(home, 'managed-host.json')
+    const deployment = provision(server.hubUrl)
+    await writeFile(config, JSON.stringify(deployment), { mode: 0o600 })
+    const child = launch(home, ['--managed-draft-config', config])
+    const connection = await poll(() => server.connections[0], child)
+    await poll(() => connection.frames.find((frame) => frame.type === 'node.hello'), child)
+    const offer = executionOffer(deployment)
+    send(connection, 'managed_draft.execute', offer)
+    expect(await observeOutcome(connection, child, offer.commandId)).toMatchObject({
+      payload: {
+        commandId: offer.commandId,
+        runId: offer.manifest.runId,
+        manifestDigest: offer.manifestDigest,
+        outcome: 'failed',
+      },
+    })
+    expect(requests).toEqual([])
+  })
+
+  it.skipIf(!macSandboxAvailable()).each(['success', 'wrong-source', 'redirect', 'denied-model'])(
+    'packaged Node runs the isolated worker with %s Hub behavior',
+    async (mode) => {
+      const requests: Array<{
+        path: string | undefined
+        headers: IncomingHttpHeaders
+        body: Record<string, unknown>
+      }> = []
+      const server = await hubSocket((request, response) => {
+        void (async () => {
+          const chunks: Buffer[] = []
+          for await (const raw of request) chunks.push(Buffer.from(raw))
+          const body = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>
+          requests.push({ path: request.url, headers: request.headers, body })
+          if (request.url?.endsWith('/source')) {
+            if (mode === 'redirect') {
+              response.writeHead(302, { location: '/must-not-follow' }).end()
+              return
+            }
+            response
+              .writeHead(200, { 'content-type': 'application/octet-stream' })
+              .end(mode === 'wrong-source' ? 'z'.repeat(sourceText.length) : sourceText)
+          } else if (request.url?.endsWith('/model') && mode !== 'denied-model') {
+            response.writeHead(200, { 'content-type': 'application/json' }).end(
+              JSON.stringify({
+                ok: true,
+                data: { attemptId: body['attemptId'], text: draftText },
+              }),
+            )
+          } else response.writeHead(404).end()
+        })().catch(() => response.destroy())
+      })
+      const home = await tempDirectory()
+      const config = join(home, 'managed-host.json')
+      const deployment = provision(server.hubUrl)
+      await writeFile(config, JSON.stringify({ ...deployment, managedDraftExecution: true }), {
+        mode: 0o600,
+      })
+      const child = launch(home, ['--managed-draft-config', config])
+      const connection = await poll(() => server.connections[0], child)
+      expect(
+        await poll(() => connection.frames.find((frame) => frame.type === 'node.hello'), child),
+      ).toMatchObject({ payload: { dshDistributionVersion: 'managed-draft-isolated.v1' } })
+      const offer = executionOffer(deployment)
+      send(connection, 'managed_draft.execute', offer)
+      const outcome = await observeOutcome(connection, child, offer.commandId)
+      const modelExpected = mode === 'success' || mode === 'denied-model'
+      const runPath = `/api/v1/node/managed-drafts/${offer.manifest.runId}`
+      expect(requests.map(({ path }) => path)).toEqual(
+        modelExpected ? [`${runPath}/source`, `${runPath}/model`] : [`${runPath}/source`],
+      )
+      for (const request of requests) {
+        expect(request.headers.authorization).toBe(`Device ${deployment.deviceToken}`)
+        expect(request.headers['x-whalepod-managed-host']).toBe(deployment.managedHostToken)
+        expect(JSON.stringify(request.body)).not.toContain(sourceText)
+      }
+      expect(requests[0]?.body).toEqual({
+        commandId: offer.commandId,
+        manifestDigest: offer.manifestDigest,
+        requestId: expect.any(String),
+      })
+      expect(requests[0]?.headers['idempotency-key']).toBe(requests[0]?.body['requestId'])
+      const modelRequest = requests[1]
+      if (modelExpected) {
+        const bytes = JSON.stringify({
+          model: executionModel,
+          stream: false,
+          max_tokens: 1024,
+          messages: [
+            { role: 'system', content: MANAGED_DRAFT_SOURCE_INSTRUCTION },
+            { role: 'user', content: sourceText },
+          ],
+        })
+        expect(modelRequest?.body).toEqual({
+          commandId: offer.commandId,
+          manifestDigest: offer.manifestDigest,
+          modelBindingDigest: offer.manifest.modelBindingDigest,
+          attemptId: expect.any(String),
+          requestDigest: hash(bytes),
+          byteSize: Buffer.byteLength(bytes),
+        })
+        expect(modelRequest?.headers['idempotency-key']).toBe(modelRequest?.body['attemptId'])
+      }
+      expect(outcome.payload).toEqual({
+        commandId: offer.commandId,
+        runId: offer.manifest.runId,
+        manifestDigest: offer.manifestDigest,
+        outcome: mode === 'success' ? 'completed' : 'failed',
+        ...(mode === 'success' ? { attemptId: modelRequest?.body['attemptId'] } : {}),
+      })
+      expect(await readdir(home)).toEqual(['managed-host.json'])
+      expect(JSON.stringify(connection.frames)).not.toContain(sourceText)
+      expect(JSON.stringify(connection.frames)).not.toContain(draftText)
+
+      // A WS barrier proves a repeated offer isn't handled again by this process.
+      send(connection, 'managed_draft.execute', offer)
+      expect(await sendManaged(connection, child, offer.manifest)).toMatchObject({
+        payload: { accepted: true },
+      })
+      expect(requests).toHaveLength(modelExpected ? 2 : 1)
+      expect(connection.frames.filter((frame) => frame.type === 'managed_draft.outcome')).toEqual([
+        outcome,
+      ])
+    },
+  )
+
+  it.skipIf(!macSandboxAvailable())(
+    'aborts a stalled broker request and clears private files when the offering socket closes',
+    async () => {
+      const requests: Array<string | undefined> = []
+      let brokerClosed = false
+      const server = await hubSocket((request, response) => {
+        request.resume()
+        request.once('end', () => {
+          requests.push(request.url)
+          if (request.url?.endsWith('/source')) {
+            response.writeHead(200, { 'content-type': 'application/octet-stream' }).end(sourceText)
+          } else {
+            response.once('close', () => {
+              brokerClosed = true
+            })
+          }
+        })
+      })
+      const home = await tempDirectory()
+      const config = join(home, 'managed-host.json')
+      const deployment = provision(server.hubUrl)
+      await writeFile(config, JSON.stringify({ ...deployment, managedDraftExecution: true }), {
+        mode: 0o600,
+      })
+      const child = launch(home, ['--managed-draft-config', config])
+      const initial = await poll(() => server.connections[0], child)
+      await poll(() => initial.frames.find((frame) => frame.type === 'node.hello'), child)
+      const offer = executionOffer(deployment)
+      send(initial, 'managed_draft.execute', offer)
+      await poll(() => requests[1], child)
+      expect(readdirSync(home)).toHaveLength(2)
+      initial.socket.terminate()
+      await poll(() => (brokerClosed && readdirSync(home).length === 1 ? true : undefined), child)
+      const reconnected = await poll(() => server.connections[1], child)
+      await poll(() => reconnected.frames.find((frame) => frame.type === 'node.hello'), child)
+      send(reconnected, 'managed_draft.execute', offer)
+      expect(await sendManaged(reconnected, child, offer.manifest)).toMatchObject({
+        payload: { accepted: true },
+      })
+      const path = `/api/v1/node/managed-drafts/${offer.manifest.runId}`
+      expect(requests).toEqual([`${path}/source`, `${path}/model`])
+      expect(
+        [...initial.frames, ...reconnected.frames].some(
+          (frame) => frame.type === 'managed_draft.outcome',
+        ),
+      ).toBe(false)
+    },
+  )
 })

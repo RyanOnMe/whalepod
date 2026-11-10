@@ -314,7 +314,13 @@ export const DispatchIntentDispatchRequestSchema = z.strictObject({
   workspaceId: z.uuid(),
   actionClass: WorkActionClassSchema.default('draft'),
   workInputItemIds: z.array(z.uuid()).max(32).optional(),
-  executionProfile: z.enum(['managed_draft_source', 'managed_draft_source_preparation']).optional(),
+  executionProfile: z
+    .enum([
+      'managed_draft_source',
+      'managed_draft_source_preparation',
+      'managed_draft_source_execution_check',
+    ])
+    .optional(),
   managedDraftSourceId: z.uuid().optional(),
 })
 export type DispatchIntentDispatchRequest = z.infer<typeof DispatchIntentDispatchRequestSchema>

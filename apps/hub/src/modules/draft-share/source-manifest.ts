@@ -27,14 +27,16 @@ interface ManagedSourcePlacement {
  * dispatch or a model admission; the caller still needs the ordinary approved
  * intent and resource guards, the dedicated Node transport and output proof.
  */
-export async function prepareManagedDraftSourceManifest(
+export async function loadManagedDraftSourceManifest(
   tx: Tx,
   request: ManifestRequest,
   placement: ManagedSourcePlacement | undefined,
   modelRoute: ManagedSourceModelRoute | undefined,
   now: Date,
   checkExistingRun = false,
-): Promise<{ manifest: ManagedDraftSourceManifest; manifestDigest: string } | undefined> {
+): Promise<
+  { manifest: ManagedDraftSourceManifest; manifestDigest: string; bytes: Buffer } | undefined
+> {
   if (placement === undefined || modelRoute === undefined) return undefined
   const { task, work } = await lockWorkContext(tx, request.workKey)
   const owner = request.actorUserId
@@ -100,5 +102,18 @@ export async function prepareManagedDraftSourceManifest(
     expiresAt,
   })
   if (!parsed.success) return undefined
-  return { manifest: parsed.data, manifestDigest: sha256Hex(canonicalJson(parsed.data)) }
+  return {
+    manifest: parsed.data,
+    manifestDigest: sha256Hex(canonicalJson(parsed.data)),
+    bytes: source.bytes,
+  }
+}
+
+/** Outbox/control path deliberately strips the source before creating a frame. */
+export async function prepareManagedDraftSourceManifest(
+  ...args: Parameters<typeof loadManagedDraftSourceManifest>
+) {
+  const source = await loadManagedDraftSourceManifest(...args)
+  if (source === undefined) return undefined
+  return { manifest: source.manifest, manifestDigest: source.manifestDigest }
 }

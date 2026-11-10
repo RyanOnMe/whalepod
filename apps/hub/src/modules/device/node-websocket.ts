@@ -10,15 +10,16 @@
  * 4003 的射程（#52/ADR-0007）：结构坏与越权 = 通道不可信 → 断开；Run 账本的
  * 语义冲突 = 单 Run 业务问题 → orchestrator Run 级收敛，连接保留。
  */
-import { randomUUID, timingSafeEqual } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import type { ManagedDraftHost } from '../../config.js'
+import type { ManagedDraftExecution } from '../draft-share/execution.js'
+import { deviceForNodeRequest, matchesManagedDraftHost } from '../draft-share/host-auth.js'
 import type { ManagedDraftTransport } from '../draft-share/dispatch.js'
 import { eq, sql } from 'drizzle-orm'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { Database } from '@whalepod/db'
 import {
   appendTeamEvent,
-  findDeviceByTokenHash,
   getOrdinaryRun,
   getRun,
   isManagedDraftSource,
@@ -29,6 +30,7 @@ import {
 } from '@whalepod/db'
 import {
   MANAGED_DRAFT_CONTROL_VERSION,
+  MANAGED_DRAFT_EXECUTION_VERSION,
   parseNodeFrame,
   RunEventAckSchema,
   RunResendFromSchema,
@@ -37,7 +39,6 @@ import type { RunOrchestrator } from '../run/orchestrator.js'
 import type { AuthenticatedDevice } from '../run/device-gateway.js'
 import { isRunSemanticConflict } from '../run/errors.js'
 import { sanitizeError } from '../shared/error-log.js'
-import { hashToken } from '../auth/token.js'
 import { nodeConnections } from './connection-registry.js'
 import { WorkspaceInventoryIngest } from './inventory.js'
 import type { RealtimeHub } from '../realtime/subscriptions.js'
@@ -55,6 +56,7 @@ export interface NodeWebsocketDeps {
   readonly managedDraftHost?: ManagedDraftHost | undefined
   readonly managedDraftRequiresTls: boolean
   readonly managedDraftTransport: ManagedDraftTransport
+  readonly managedDraftExecution: ManagedDraftExecution
   /** RD-03r2：结果接受后应用提案并由组合根尝试既有自动派工端口。 */
   readonly onAutoDispatch?: RouterAutoDispatch
 }
@@ -67,13 +69,6 @@ interface DeviceUpgradeRequest extends FastifyRequest {
   managedDraftHost?: ManagedDraftHost | undefined
 }
 
-function extractBearerDeviceToken(request: FastifyRequest): string {
-  const header = request.headers.authorization
-  if (typeof header !== 'string') return ''
-  const prefix = 'Device '
-  return header.startsWith(prefix) ? header.slice(prefix.length).trim() : ''
-}
-
 export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketDeps): void {
   const inventoryIngest = new WorkspaceInventoryIngest({
     database: deps.database,
@@ -84,27 +79,16 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
     {
       websocket: true,
       async onRequest(request: FastifyRequest, reply: FastifyReply) {
-        const token = extractBearerDeviceToken(request)
-        const device =
-          token === '' ? undefined : await findDeviceByTokenHash(deps.database.db, hashToken(token))
+        const device = await deviceForNodeRequest(deps.database, request)
         const host = deps.managedDraftHost
         const dedicated = host !== undefined && device?.id === host.deviceId
         const proof = request.headers['x-whalepod-managed-host']
-        const transport = request.raw.socket
-        const remote = transport.remoteAddress?.replace(/^::ffff:/, '')
-        const secure = deps.managedDraftRequiresTls
-          ? ('encrypted' in transport && transport.encrypted === true) ||
-            (remote !== undefined &&
-              remote === host?.tlsProxyAddress &&
-              request.protocol === 'https')
-          : remote === '127.0.0.1' || remote === '::1'
-        const verified =
-          dedicated &&
-          device.ownerUserId === host.ownerUserId &&
-          secure &&
-          typeof proof === 'string' &&
-          /^[a-f0-9]{64}$/.test(proof) &&
-          timingSafeEqual(hashToken(proof), Buffer.from(host.proofSha256, 'hex'))
+        const verified = matchesManagedDraftHost(
+          request,
+          host,
+          device,
+          deps.managedDraftRequiresTls,
+        )
         if (
           device === undefined ||
           device.revokedAt !== null ||
@@ -140,14 +124,22 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
             if (
               frame.type === 'node.hello' &&
               frame.payload.deviceId === identity.deviceId &&
-              frame.payload.dshDistributionVersion === MANAGED_DRAFT_CONTROL_VERSION &&
+              (frame.payload.dshDistributionVersion === MANAGED_DRAFT_CONTROL_VERSION ||
+                frame.payload.dshDistributionVersion === MANAGED_DRAFT_EXECUTION_VERSION) &&
               frame.payload.pluginPackDigests.length === 0 &&
               !frame.payload.sourceCapabilities?.length &&
               !frame.payload.contextCapabilities?.length &&
               !frame.payload.coordinationCapabilities?.length
             ) {
-              nodeConnections.markManagedDraftReady(identity.deviceId, socket)
-              return
+              if (
+                nodeConnections.markManagedDraftReady(
+                  identity.deviceId,
+                  socket,
+                  frame.payload.dshDistributionVersion === MANAGED_DRAFT_EXECUTION_VERSION,
+                )
+              )
+                return
+              throw new Error('managed draft mode changed')
             }
             if (
               frame.type === 'node.heartbeat' &&
@@ -155,6 +147,10 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
               frame.payload.activeRunIds.length === 0 &&
               Object.keys(frame.payload.lastEventSeqByRun).length === 0
             ) {
+              return
+            }
+            if (frame.type === 'managed_draft.outcome') {
+              await deps.managedDraftExecution.receive(managedDraftHost, socket, frame.payload)
               return
             }
             if (frame.type === 'command.ack') {
@@ -178,6 +174,7 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
             throw new Error('unsupported managed draft host frame')
           }
 
+          if (frame.type === 'managed_draft.outcome') throw new Error('unsupported node frame')
           if (frame.type === 'coordination.heartbeat' || frame.type === 'coordination.result') {
             await touchDeviceLastSeenAt(deps.database.db, identity.deviceId)
             const routerDeps = {

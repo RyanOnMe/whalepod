@@ -987,7 +987,12 @@ export class RunOrchestrator {
     const recorded: RecordedContextEntry[] = []
     await this.database.transaction(async (tx) => {
       const command = await getOutboxCommand(tx, ack.commandId)
-      if (command === undefined || command.type === 'managed_draft.start') return // 受管回执不走普通通道。
+      if (
+        command === undefined ||
+        command.type === 'managed_draft.start' ||
+        command.type === 'managed_draft.execute'
+      )
+        return // 受管回执不走普通通道。
       if (command.deviceId !== device.deviceId) {
         throw new RunCommandError('FORBIDDEN', 'ack device does not match the command destination')
       }

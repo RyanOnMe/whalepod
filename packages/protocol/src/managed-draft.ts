@@ -6,6 +6,9 @@ export const MANAGED_DRAFT_SOURCE_INSTRUCTION =
 export const MANAGED_DRAFT_MAX_CONTENT_BYTES = 64 * 1024
 export const MANAGED_DRAFT_OUTPUT_NAME = 'draft.txt'
 export const MANAGED_DRAFT_CONTROL_VERSION = 'managed-draft-control.v1'
+export const MANAGED_DRAFT_EXECUTION_VERSION = 'managed-draft-isolated.v1'
+export const MANAGED_DRAFT_MODEL_MAX_TOKENS = 1024
+export const MANAGED_DRAFT_EXECUTION_CHECK_MAX_AGE_MS = 90_000
 export const MANAGED_DRAFT_PREPARATION_MAX_AGE_MS = 60_000
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/)
@@ -34,6 +37,37 @@ export const ManagedDraftSourceManifestSchema = z.strictObject({
   }),
   modelBindingDigest: sha256,
   expiresAt: z.iso.datetime(),
+})
+
+/** The same exact UTF-8 request is independently derived by the host and Hub broker. */
+export function buildManagedDraftModelBody(model: string, sourceText: string): string {
+  return JSON.stringify({
+    model,
+    stream: false,
+    max_tokens: MANAGED_DRAFT_MODEL_MAX_TOKENS,
+    messages: [
+      { role: 'system', content: MANAGED_DRAFT_SOURCE_INSTRUCTION },
+      { role: 'user', content: sourceText },
+    ],
+  })
+}
+
+export const ManagedDraftSourceReadRequestSchema = z.strictObject({
+  commandId: z.uuid(),
+  manifestDigest: sha256,
+  requestId: z.uuid(),
+})
+
+export const ManagedDraftModelForwardRequestSchema = z.strictObject({
+  commandId: z.uuid(),
+  manifestDigest: sha256,
+  modelBindingDigest: sha256,
+  attemptId: z.uuid(),
+  requestDigest: sha256,
+  byteSize: z
+    .int()
+    .min(1)
+    .max(128 * 1024),
 })
 
 /** Control plane sees an exact request digest. The broker owns model bytes and credentials. */

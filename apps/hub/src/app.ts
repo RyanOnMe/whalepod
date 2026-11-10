@@ -44,6 +44,10 @@ import { registerPreparationRoutes } from './modules/device/preparation-routes.j
 import { registerDeviceRoutes } from './modules/device/routes.js'
 import { registerWorkspaceRoutes } from './modules/device/workspace-routes.js'
 import { registerNodeWebsocket } from './modules/device/node-websocket.js'
+import { sha256Hex } from './modules/coordination/digest.js'
+import { ManagedDraftExecution } from './modules/draft-share/execution.js'
+import { registerManagedDraftExecutionRoutes } from './modules/draft-share/execution-routes.js'
+import { parseManagedDraftLoopbackEndpoint } from './modules/draft-share/loopback-broker.js'
 import { ManagedDraftTransport } from './modules/draft-share/dispatch.js'
 import { registerManagedDraftSourceRoutes } from './modules/draft-share/routes.js'
 import { nodeConnections } from './modules/device/connection-registry.js'
@@ -64,6 +68,7 @@ declare module 'fastify' {
   interface FastifyInstance {
     runOrchestrator: RunOrchestrator
     managedDraftTransport: ManagedDraftTransport
+    managedDraftExecution: ManagedDraftExecution
   }
 }
 
@@ -246,12 +251,34 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
   // RD-03r2：Router 提案应用出 proposed 意图后，用既有端口尝试 existing_task
   // 自动派工。系统触发只代表当前责任人，不伪造成员会话或审批。
   const onRouterAutoDispatch = createRouterAutoDispatch(database, orchestrator, outbox)
+  const loopbackEndpoint =
+    config.managedDraftLoopbackEndpoint === undefined
+      ? undefined
+      : parseManagedDraftLoopbackEndpoint(config.managedDraftLoopbackEndpoint)
+  const managedDraftRequiresTls = new URL(config.publicOrigin).protocol === 'https:'
   const managedDraftPlacement =
     config.managedDraftHost !== undefined && config.managedDraftModelRoute !== undefined
-      ? { host: config.managedDraftHost, modelRoute: config.managedDraftModelRoute }
+      ? {
+          host: config.managedDraftHost,
+          modelRoute: {
+            ...config.managedDraftModelRoute,
+            ...(loopbackEndpoint === undefined
+              ? {}
+              : { endpointDigest: sha256Hex(loopbackEndpoint.href) }),
+          },
+        }
       : undefined
+  if (loopbackEndpoint !== undefined && managedDraftPlacement === undefined)
+    throw new Error('managed draft loopback requires dedicated host and model route provisioning')
   const managedDraftTransport = new ManagedDraftTransport(database, outbox, managedDraftPlacement)
+  const managedDraftExecution = new ManagedDraftExecution(
+    database,
+    outbox,
+    managedDraftPlacement,
+    loopbackEndpoint,
+  )
   app.decorate('managedDraftTransport', managedDraftTransport)
+  app.decorate('managedDraftExecution', managedDraftExecution)
   registerNodeWebsocket(app, {
     database,
     orchestrator,
@@ -259,8 +286,9 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
     routerStore: new ArtifactStore({ root: config.artifactStoreDir }),
     onAutoDispatch: onRouterAutoDispatch,
     managedDraftHost: config.managedDraftHost,
-    managedDraftRequiresTls: new URL(config.publicOrigin).protocol === 'https:',
+    managedDraftRequiresTls,
     managedDraftTransport,
+    managedDraftExecution,
   })
 
   await app.register(
@@ -276,13 +304,20 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       registerInviteRoutes(api, { database, requireActor, anonymousLimiter, secureCookie })
       registerProjectRoutes(api, { database, requireActor })
       registerSourceRoutes(api, { database, requireActor })
-      if (config.managedDraftHost !== undefined && config.managedDraftModelRoute !== undefined) {
+      if (managedDraftPlacement !== undefined) {
         registerManagedDraftSourceRoutes(api, {
           database,
           requireActor,
-          ownerUserId: config.managedDraftHost.ownerUserId,
-          modelRoute: config.managedDraftModelRoute,
+          ownerUserId: managedDraftPlacement.host.ownerUserId,
+          modelRoute: managedDraftPlacement.modelRoute,
         })
+        if (loopbackEndpoint !== undefined)
+          registerManagedDraftExecutionRoutes(api, {
+            database,
+            host: managedDraftPlacement.host,
+            requiresTls: managedDraftRequiresTls,
+            execution: managedDraftExecution,
+          })
       }
       registerContextRoutes(api, { database, requireActor })
       registerCoordinationRoutes(api, { database, requireActor })
@@ -339,6 +374,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       })
       registerDispatchRoutes(api, {
         managedDraftPlacement,
+        managedDraftExecutionCheck: loopbackEndpoint !== undefined,
         database,
         requireActor,
         orchestrator,

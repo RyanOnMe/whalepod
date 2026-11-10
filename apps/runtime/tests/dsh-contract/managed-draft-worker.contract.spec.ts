@@ -116,6 +116,65 @@ async function drive(
 }
 
 describe.skipIf(!macSandboxAvailable())('RD-03c3a packaged managed source worker', () => {
+  it('reports kernel isolation before the trusted host populates the source file', async () => {
+    const f = await fixture()
+    try {
+      const launchEntry = require.resolve('@whalepod/runtime/managed-draft-host')
+      await rm(f.sourceFile)
+      await writeFile(f.sourceFile, '', { mode: 0o600 })
+      const child = spawn(process.execPath, [launchEntry, f.sourceFile, f.outputDir], {
+        env: {},
+        cwd: f.root,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+      const exited = new Promise<number | null>((resolve) => child.once('close', resolve))
+      child.stderr.resume()
+      const lines = createInterface({ input: child.stdout })
+      const iterator = lines[Symbol.asyncIterator]()
+      const receive = async () => {
+        const next = await iterator.next()
+        if (next.done) throw new Error('managed worker exited before the expected frame')
+        return JSON.parse(next.value)
+      }
+      try {
+        expect(await receive()).toEqual({ kind: 'isolation.ready' })
+        expect((await readFile(f.sourceFile)).byteLength).toBe(0)
+        await writeFile(f.sourceFile, source)
+        child.stdin.write(
+          JSON.stringify({
+            kind: 'initialize',
+            runId: f.runId,
+            model: 'fixed-model',
+            manifestDigest: f.manifestDigest,
+            sha256: f.sourceSha256,
+            byteSize: f.sourceByteSize,
+          }) + '\n',
+        )
+        const model = await receive()
+        expect(model).toMatchObject({ kind: 'model.request', runId: f.runId })
+        child.stdin.end(
+          JSON.stringify({
+            kind: 'model.response',
+            attemptId: model.request.attemptId,
+            text: output,
+          }) + '\n',
+        )
+        expect(await receive()).toMatchObject({
+          kind: 'candidate',
+          modelAttemptId: model.request.attemptId,
+        })
+        expect((await iterator.next()).done).toBe(true)
+        expect(await exited).toBe(0)
+      } finally {
+        child.kill()
+        lines.close()
+        await exited
+      }
+    } finally {
+      await rm(f.root, { recursive: true, force: true })
+    }
+  })
+
   it('reads fixed bytes and writes the candidate only after a response bound to its broker request', async () => {
     const f = await fixture()
     const posts: Buffer[] = []

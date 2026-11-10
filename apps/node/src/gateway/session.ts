@@ -53,6 +53,8 @@ export interface DeviceSessionDeps {
   readonly onFrame?: (frame: NodeDownstream) => void
   /** P1-13：连接（重）建立、hello 发出后回调——spool 全量补发的触发点（R1）。 */
   readonly onConnected?: () => void
+  /** Managed operations cannot outlive the exact socket which offered them. */
+  readonly onDisconnected?: () => void
   /** P1-13：心跳事实源（activeRunIds + lastEventSeqByRun，03 §6.2）。 */
   readonly heartbeatFacts?: () => {
     activeRunIds: string[]
@@ -280,6 +282,7 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
         onClose: (code, reason) => {
           if (current !== (socket as unknown as SocketLike)) return // 旧连接事件忽略
           current = undefined
+          deps.onDisconnected?.()
           if (revoked) {
             deps.exit(1, 'device token revoked; run `whalepod-node pair` to re-pair')
             return

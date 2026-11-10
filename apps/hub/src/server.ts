@@ -56,6 +56,7 @@ const worker = new OutboxWorker({
   outbox,
   gateway: new WsDeviceGateway(),
   managedDraftTransport: app.managedDraftTransport,
+  managedDraftExecution: app.managedDraftExecution,
   // ADR-0027 §3：run.start 真正下发前复核快照；失败由 orchestrator 收敛 failed。
   beforeDispatch: (command) => app.runOrchestrator.beforeDispatch(command),
 })

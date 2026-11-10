@@ -24,6 +24,9 @@ import {
 } from '@whalepod/db'
 import {
   MANAGED_DRAFT_PREPARATION_MAX_AGE_MS,
+  MANAGED_DRAFT_EXECUTION_CHECK_MAX_AGE_MS,
+  MANAGED_DRAFT_EXECUTION_VERSION,
+  ManagedDraftExecuteSchema,
   ManagedDraftStartSchema,
   RunStatusRequestSchema,
 } from '@whalepod/protocol'
@@ -87,6 +90,26 @@ async function reconcileOne(deps: ReconcileDeps, run: RunRow, now: Date): Promis
       return false
 
     if (isManagedDraftSource(locked)) {
+      if (
+        locked.managedDraftPreparation &&
+        locked.dshDistributionVersion === MANAGED_DRAFT_EXECUTION_VERSION
+      ) {
+        const commands = await findOutboxCommandsForRun(tx, {
+          runId: locked.id,
+          type: 'managed_draft.execute',
+        })
+        const command = ManagedDraftExecuteSchema.shape.payload.safeParse(commands[0]?.payload)
+        if (
+          commands.length === 1 &&
+          command.success &&
+          commands[0]?.failedAt === null &&
+          Date.parse(command.data.manifest.expiresAt) > now.getTime() &&
+          locked.createdAt.getTime() + MANAGED_DRAFT_EXECUTION_CHECK_MAX_AGE_MS > now.getTime()
+        )
+          return false
+        await cancelRunInTransaction(tx, { outbox: deps.outbox, now }, locked, 'admin')
+        return true
+      }
       if (!locked.managedDraftPreparation || locked.status !== 'queued') return false
       const pending = await findOutboxCommandsForRun(tx, {
         runId: locked.id,

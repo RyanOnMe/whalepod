@@ -116,6 +116,7 @@ export interface HubConfig {
   /** Independently provisioned identity for the single managed draft pilot. */
   readonly managedDraftHost?: ManagedDraftHost | undefined
   readonly managedDraftModelRoute?: ManagedSourceModelRoute | undefined
+  readonly managedDraftLoopbackEndpoint?: string | undefined
 }
 
 export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
@@ -156,6 +157,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubConfig {
     artifactStoreDir: env.WHALEPOD_ARTIFACT_STORE_DIR ?? 'data/artifact-store',
     managedDraftHost: parseManagedDraftHost(env.WHALEPOD_MANAGED_DRAFT_HOST, publicOrigin),
     managedDraftModelRoute: parseManagedDraftModelRoute(env.WHALEPOD_MANAGED_DRAFT_MODEL_ROUTE),
+    managedDraftLoopbackEndpoint: env.WHALEPOD_MANAGED_DRAFT_LOOPBACK_ENDPOINT,
     contextReceiptWatchdogMs: parsePositiveNumber(env.WHALEPOD_CONTEXT_RECEIPT_WATCHDOG_MS),
   }
 }

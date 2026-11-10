@@ -134,6 +134,7 @@ export interface TestAppOptions {
   readonly pluginDevMode?: boolean
   readonly managedDraftHost?: HubConfig['managedDraftHost']
   readonly managedDraftModelRoute?: HubConfig['managedDraftModelRoute']
+  readonly managedDraftLoopbackEndpoint?: HubConfig['managedDraftLoopbackEndpoint']
 }
 
 export async function createTestApp(
@@ -162,6 +163,7 @@ export async function createTestApp(
     ...(options.pluginDevMode ? { pluginDevMode: true as const } : {}),
     managedDraftHost: options.managedDraftHost,
     managedDraftModelRoute: options.managedDraftModelRoute,
+    managedDraftLoopbackEndpoint: options.managedDraftLoopbackEndpoint,
   }
   const app = await buildApp({
     config,
