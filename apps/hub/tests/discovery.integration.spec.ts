@@ -532,6 +532,61 @@ describe('RD-04a shadow discovery from ordinary comments', () => {
     }
   })
 
+  it('keeps an irrelevant decision distinguishable without storing its model prose', async () => {
+    const node = await setupPilot()
+    await ordinaryComment()
+    const request = await getRequest(node)
+    for (const entry of request.manifest) {
+      const downloaded = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/discovery/evaluations/${request.evaluationId}/inputs/${entry.id}`,
+        headers: {
+          authorization: `Device ${node.deviceToken}`,
+          'x-coordination-attempt': String(request.attempt),
+          'x-coordination-lease': request.leaseToken,
+        },
+      })
+      expect(downloaded.statusCode).toBe(200)
+    }
+    const { purpose, evaluationId, attempt, leaseToken, readEntryIds, evaluationDigest } =
+      resultFor(request)
+    const binding = { purpose, evaluationId, attempt, leaseToken, readEntryIds }
+    node.send('discovery.heartbeat', { ...binding, modelStartedAt: new Date().toISOString() })
+    await waitForValue(
+      async () => node.messages.find((message) => message.type === 'discovery.model_start_ack'),
+      'no authenticated start ack',
+    )
+    const source = request.manifest.find(({ kind }) => kind === 'source')!.id
+    const observation = { classification: 'irrelevant', source, slot: null, citations: [] }
+    const proposal = { ...observation, reason: 'private_observation_test_marker' }
+    node.send('discovery.result', {
+      ...binding,
+      evaluationDigest,
+      status: 'completed',
+      resultDigest: sha256Hex(canonicalJson(proposal)),
+      proposal,
+      usage: {
+        provider: request.provider,
+        model: request.model,
+        inputTokens: 100,
+        outputTokens: 10,
+        costMicros: 1,
+      },
+    })
+    const ack = await waitForValue(
+      async () => node.messages.find((message) => message.type === 'discovery.result_ack'),
+      'no discovery result ack',
+    )
+    expect(ack.payload.status).toBe('accepted')
+    const [row] = await database.sql`
+      select discovery_observation from coordination_evaluation where id = ${evaluationId}
+    `
+    expect(row?.discovery_observation).toEqual(observation)
+    expect(await database.sql`select id from discovery_candidate`).toHaveLength(0)
+    const response = await apiInject(ctx, owner, { method: 'GET', url: `${node.route}/candidates` })
+    expect(response.json().data).toEqual([])
+  })
+
   it('does not give a discovery lease to a legacy node and does not carry permission across a model change', async () => {
     const node = await setupPilot(false)
     const waiting = await ordinaryComment()
