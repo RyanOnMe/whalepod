@@ -159,6 +159,7 @@ function requestFor(row: CoordinationEvaluationRow): DiscoveryRequest {
     operatorUserId: cfg.operatorUserId,
     billingUserId: cfg.billingUserId,
     permitVersion: row.inputManifest['permitVersion'],
+    promptVersion: DISCOVERY_PROMPT_VERSION,
     provider: cfg.provider,
     model: cfg.model,
     credentialSlot: cfg.credentialSlot,

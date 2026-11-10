@@ -9,6 +9,7 @@ import {
   CoordinationCredentialSlotSchema,
   CoordinationInputEntrySchema,
   coordinationUsageCost,
+  DISCOVERY_CAPABILITY,
   type CoordinationInputEntry,
   type TaskSpecRevisionView,
 } from '@whalepod/protocol'
@@ -201,7 +202,7 @@ async function configureDevice(h: ProductionAcceptance, options: DiscoveryQualit
           coordinationCredentialSlots?: unknown[]
         }
       | undefined
-    return caps?.coordinationCapabilities?.includes('discovery.v1') &&
+    return caps?.coordinationCapabilities?.includes(DISCOVERY_CAPABILITY) &&
       caps.coordinationCapabilities.includes('coordination.v1') &&
       caps.coordinationCredentialSlots?.some((entry) => {
         const parsed = CoordinationCredentialSlotSchema.safeParse(entry)

@@ -2083,7 +2083,8 @@
       "type": "string",
       "enum": [
         "coordination.v1",
-        "discovery.v1"
+        "discovery.v1",
+        "discovery.v2"
       ]
     },
     "__schema6": {

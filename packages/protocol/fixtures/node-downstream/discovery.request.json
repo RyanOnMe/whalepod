@@ -65,6 +65,7 @@
     "operatorUserId": "01940000-0000-7000-8000-000000000006",
     "permitVersion": 1,
     "coverageComplete": true,
-    "purpose": "discovery"
+    "purpose": "discovery",
+    "promptVersion": "discovery.v2"
   }
 }

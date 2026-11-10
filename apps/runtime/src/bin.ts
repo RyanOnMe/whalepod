@@ -24,6 +24,7 @@ import { delimiter } from 'node:path'
 import { format } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import {
+  DISCOVERY_WORKER_PROMPT_VERSION,
   probeCoordinationIsolation,
   runCoordinationBroker,
 } from '@whalepod/runtime-dsh/coordination'
@@ -75,7 +76,7 @@ function main(): void {
     void probeCoordinationIsolation().then((supported) => {
       writeSync(
         1,
-        `${JSON.stringify(process.argv.includes('--discovery') ? { supported, discovery: supported } : { supported })}\n`,
+        `${JSON.stringify(process.argv.includes('--discovery') ? { supported, discovery: supported, discoveryPromptVersion: supported ? DISCOVERY_WORKER_PROMPT_VERSION : null } : { supported })}\n`,
       )
       process.exit(supported ? 0 : 1)
     })

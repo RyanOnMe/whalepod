@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
+  DISCOVERY_CAPABILITY,
   RouterRuntimeInputSchema,
   RouterRuntimeOutputSchema,
   type RouterRuntimeInput,
@@ -49,8 +50,16 @@ export async function probeCoordinationRuntime(
         maxBuffer: 64_000,
       },
     )
-    const parsed = JSON.parse(result.stdout.trim()) as { supported?: unknown; discovery?: unknown }
-    return parsed.supported === true && (purpose === undefined || parsed.discovery === true)
+    const parsed = JSON.parse(result.stdout.trim()) as {
+      supported?: unknown
+      discovery?: unknown
+      discoveryPromptVersion?: unknown
+    }
+    return (
+      parsed.supported === true &&
+      (purpose === undefined ||
+        (parsed.discovery === true && parsed.discoveryPromptVersion === DISCOVERY_CAPABILITY))
+    )
   } catch {
     return false
   }

@@ -213,6 +213,10 @@
               "type": "string",
               "const": "discovery"
             },
+            "promptVersion": {
+              "type": "string",
+              "const": "discovery.v2"
+            },
             "operatorUserId": {
               "$ref": "#/$defs/__schema3"
             },
@@ -246,6 +250,7 @@
             "leaseExpiresAt",
             "deadlineAt",
             "purpose",
+            "promptVersion",
             "operatorUserId",
             "permitVersion",
             "coverageComplete"

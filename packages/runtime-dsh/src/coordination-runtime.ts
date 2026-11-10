@@ -29,6 +29,7 @@ import {
 
 export { probeCoordinationIsolation } from './coordination-isolation.js'
 export { COORDINATION_MODEL_TOOLS } from './coordination-worker.js'
+export { DISCOVERY_WORKER_PROMPT_VERSION } from './coordination-worker.js'
 
 const MAX_LINE_BYTES = 1024 * 1024
 const FAILURE_CODES = new Set([

@@ -11,8 +11,13 @@ const Reason = z
   .regex(/^[a-z][a-z0-9_]*$/)
   .max(64)
 export const COORDINATION_CAPABILITY = 'coordination.v1' as const
-export const DISCOVERY_CAPABILITY = 'discovery.v1' as const
-export const CoordinationCapabilitySchema = z.enum([COORDINATION_CAPABILITY, DISCOVERY_CAPABILITY])
+// Capability pins the discovery worker prompt; old advertisements still parse for legacy Router.
+export const DISCOVERY_CAPABILITY = 'discovery.v2' as const
+export const CoordinationCapabilitySchema = z.enum([
+  COORDINATION_CAPABILITY,
+  'discovery.v1',
+  DISCOVERY_CAPABILITY,
+])
 export type CoordinationCapability = z.infer<typeof CoordinationCapabilitySchema>
 export const CoordinationCredentialSlotSchema = z.strictObject({
   provider: z.string().min(1).max(100),
@@ -201,6 +206,7 @@ export const DiscoveryRequestPayloadSchema = CoordinationRequestPayloadSchema.om
   taskId: true,
 }).extend({
   purpose: z.literal('discovery'),
+  promptVersion: z.literal(DISCOVERY_CAPABILITY),
   operatorUserId: Id,
   permitVersion: Positive,
   coverageComplete: z.boolean(),

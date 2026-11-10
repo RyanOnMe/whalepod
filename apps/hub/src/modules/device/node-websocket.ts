@@ -23,7 +23,12 @@ import {
   touchDeviceLastSeenAt,
   schema,
 } from '@whalepod/db'
-import { parseNodeFrame, RunEventAckSchema, RunResendFromSchema } from '@whalepod/protocol'
+import {
+  parseNodeFrame,
+  ProtocolError,
+  RunEventAckSchema,
+  RunResendFromSchema,
+} from '@whalepod/protocol'
 import type { RunOrchestrator } from '../run/orchestrator.js'
 import type { AuthenticatedDevice } from '../run/device-gateway.js'
 import { isRunSemanticConflict } from '../run/errors.js'
@@ -277,11 +282,19 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
           // #206：原来 errorMessage 取原始 message——Drizzle 外层 message 就是
           // `Failed query: …`（含 SQL 列名与参数值），与 app.ts 修掉的是同一缺陷。
           // 换成共享脱敏（与 hub.http / inventory 同一份）。
+          // JSON and wire validation errors may echo caller-controlled bytes or field names.
+          // Keep only fixed parser diagnostics before writing to the shared log.
+          const diagnostic =
+            error instanceof ProtocolError
+              ? { errorName: 'ProtocolError', errorCode: error.code }
+              : error instanceof SyntaxError
+                ? { errorName: 'SyntaxError', errorCode: 'VALIDATION_FAILED' }
+                : sanitizeError(error)
           request.log.warn(
             {
               component: 'hub.node-ws',
               deviceId: identity.deviceId,
-              ...sanitizeError(error),
+              ...diagnostic,
               disposition: semanticConflict ? 'connection-retained' : 'connection-closed',
             },
             'node upstream frame rejected',
