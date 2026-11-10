@@ -7,6 +7,7 @@ import type {
 import { sql } from 'drizzle-orm'
 import {
   bigint,
+  boolean,
   char,
   check,
   index,
@@ -130,6 +131,7 @@ export const runs = pgTable(
     origin: runOrigin('origin').notNull().default('human'),
     /** ADR-0029: immutable digest of the managed source manifest; null is an ordinary Run. */
     managedDraftSourceDigest: char('managed_draft_source_digest', { length: 64 }),
+    managedDraftPreparation: boolean('managed_draft_preparation').notNull().default(false),
     mandateId: uuid('mandate_id'),
     dispatchIntentId: uuid('dispatch_intent_id'),
     onBehalfOfUserId: uuid('on_behalf_of_user_id').references(() => userAccounts.id),
@@ -178,6 +180,10 @@ export const runs = pgTable(
       sql`(${table.origin} = 'human' and ${table.mandateId} is null and ${table.dispatchIntentId} is null and ${table.onBehalfOfUserId} is null) or (${table.origin} = 'mandate' and ${table.mandateId} is not null and ${table.dispatchIntentId} is not null and ${table.onBehalfOfUserId} is not null and ${table.workKey} is not null)`,
     ),
     check(
+      'run_managed_draft_preparation_fields',
+      sql`not ${table.managedDraftPreparation} or ${table.managedDraftSourceDigest} is not null`,
+    ),
+    check(
       'run_managed_draft_source_fields',
       sql`${table.managedDraftSourceDigest} is null or (
         ${table.managedDraftSourceDigest} ~ '^[0-9a-f]{64}$'
@@ -188,7 +194,7 @@ export const runs = pgTable(
         and ${table.rerunOfRunId} is null
         and ${table.handoffInput} is null
         and ${table.reviewInput} is null
-        and ${table.artifactInputManifest} = '[]'::jsonb
+        and ${table.artifactInputManifest} = jsonb_build_object('taskId', ${table.taskId}, 'artifacts', '[]'::jsonb)
         and ${table.artifactInputManifest} is not null
         and ${table.workInputManifest} is null
         and ${table.triggerMessageId} is null

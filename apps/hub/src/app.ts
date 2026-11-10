@@ -44,6 +44,8 @@ import { registerPreparationRoutes } from './modules/device/preparation-routes.j
 import { registerDeviceRoutes } from './modules/device/routes.js'
 import { registerWorkspaceRoutes } from './modules/device/workspace-routes.js'
 import { registerNodeWebsocket } from './modules/device/node-websocket.js'
+import { ManagedDraftTransport } from './modules/draft-share/dispatch.js'
+import { registerManagedDraftSourceRoutes } from './modules/draft-share/routes.js'
 import { nodeConnections } from './modules/device/connection-registry.js'
 import { RunOrchestrator } from './modules/run/index.js'
 import { registerRunRoutes } from './modules/run/routes.js'
@@ -61,6 +63,7 @@ import { registerReviewRoutes } from './modules/review/routes.js'
 declare module 'fastify' {
   interface FastifyInstance {
     runOrchestrator: RunOrchestrator
+    managedDraftTransport: ManagedDraftTransport
   }
 }
 
@@ -224,6 +227,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
   const orchestrator = new RunOrchestrator({
     database,
     outbox,
+    managedDraftDeviceId: config.managedDraftHost?.deviceId,
     // #52/ADR-0007：表外越边的 Run 级降级收敛走结构化 warn（component 分层，
     // 违例计数/告警的挂点；真人路径可观测，不做暗手）。
     warn: (message, context) => app.log.warn({ component: 'hub.run', ...context }, message),
@@ -236,15 +240,27 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
     send: (deviceId, frame) => nodeConnections.send(deviceId, frame),
   })
   app.decorate('runOrchestrator', orchestrator)
+  const isOrdinaryDevice = (deviceId: string) => orchestrator.isOrdinaryDevice(deviceId)
+  const dshDistributionVersionFor = async (deviceId: string) =>
+    isOrdinaryDevice(deviceId) ? getDeviceDshDistributionVersion(database.db, deviceId) : undefined
   // RD-03r2：Router 提案应用出 proposed 意图后，用既有端口尝试 existing_task
   // 自动派工。系统触发只代表当前责任人，不伪造成员会话或审批。
   const onRouterAutoDispatch = createRouterAutoDispatch(database, orchestrator, outbox)
+  const managedDraftPlacement =
+    config.managedDraftHost !== undefined && config.managedDraftModelRoute !== undefined
+      ? { host: config.managedDraftHost, modelRoute: config.managedDraftModelRoute }
+      : undefined
+  const managedDraftTransport = new ManagedDraftTransport(database, outbox, managedDraftPlacement)
+  app.decorate('managedDraftTransport', managedDraftTransport)
   registerNodeWebsocket(app, {
     database,
     orchestrator,
     realtime,
     routerStore: new ArtifactStore({ root: config.artifactStoreDir }),
     onAutoDispatch: onRouterAutoDispatch,
+    managedDraftHost: config.managedDraftHost,
+    managedDraftRequiresTls: new URL(config.publicOrigin).protocol === 'https:',
+    managedDraftTransport,
   })
 
   await app.register(
@@ -260,6 +276,14 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       registerInviteRoutes(api, { database, requireActor, anonymousLimiter, secureCookie })
       registerProjectRoutes(api, { database, requireActor })
       registerSourceRoutes(api, { database, requireActor })
+      if (config.managedDraftHost !== undefined && config.managedDraftModelRoute !== undefined) {
+        registerManagedDraftSourceRoutes(api, {
+          database,
+          requireActor,
+          ownerUserId: config.managedDraftHost.ownerUserId,
+          modelRoute: config.managedDraftModelRoute,
+        })
+      }
       registerContextRoutes(api, { database, requireActor })
       registerCoordinationRoutes(api, { database, requireActor })
       registerRouterRoutes(api, {
@@ -314,6 +338,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         },
       })
       registerDispatchRoutes(api, {
+        managedDraftPlacement,
         database,
         requireActor,
         orchestrator,
@@ -325,8 +350,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         requireActor,
         outbox,
         orchestrator,
-        dshDistributionVersionFor: (deviceId) =>
-          getDeviceDshDistributionVersion(database.db, deviceId),
+        dshDistributionVersionFor,
       })
       // #379：交接草稿/版本面（owner 私有草稿 + 团队可见的已发布版本）。
       registerHandoffRoutes(api, { database, requireActor })
@@ -338,7 +362,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         catalog: pluginCatalog,
         allowLocalDevelopment: config.pluginDevMode ?? false,
       })
-      registerPreparationRoutes(api, { database, requireActor })
+      registerPreparationRoutes(api, { database, requireActor, isOrdinaryDevice })
       registerDeviceRoutes(api, { database, requireActor, anonymousLimiter })
       registerWorkspaceRoutes(api, { database, requireActor })
       // P1-15：Artifact 面——Node 上传/manifest/受控下载 + owner 发布 + 内容下载。
@@ -355,8 +379,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         store: artifactStore,
         requireActor,
         orchestrator,
-        dshDistributionVersionFor: (deviceId) =>
-          getDeviceDshDistributionVersion(database.db, deviceId),
+        dshDistributionVersionFor,
       })
       // P1-13：Run HTTP 面（创建/投影/事件时间线）正式接线；dsh 版本取自
       // node.hello 回填的设备事实列（缺 = 设备不在线 → DEVICE_OFFLINE）。
@@ -370,8 +393,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
           const session = await requireActor(request)
           return { userId: asUserId(session.userId), role: session.role }
         },
-        dshDistributionVersionFor: (deviceId) =>
-          getDeviceDshDistributionVersion(database.db, deviceId),
+        dshDistributionVersionFor,
       })
     },
     { prefix: '/api/v1' },

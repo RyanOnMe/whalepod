@@ -69,6 +69,8 @@ export type AuditAction =
   | 'work.dispatch.approve'
   | 'work.dispatch.reject'
   | 'work.dispatch.dispatch'
+  | 'managed_draft_source.register'
+  | 'managed_draft_source.revoke'
   // ADR-0028（RD-02a-1）：工作收件箱的显式关联与生命周期（不记正文）。
   | 'work.inbox.associate'
   | 'work.inbox.return'

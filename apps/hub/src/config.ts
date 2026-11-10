@@ -2,7 +2,70 @@
  * Hub 运行配置。环境变量以 WHALEPOD_ 为前缀（定名 #133 前的旧前缀 TABTIN_ 与
  * PROJECT311_ 已全量替换，不再接受）。
  */
+import { isIP } from 'node:net'
 import { fileURLToPath } from 'node:url'
+import { z } from 'zod'
+import type { ManagedSourceModelRoute } from './modules/draft-share/source-registry.js'
+
+const ManagedDraftHostSchema = z.strictObject({
+  deviceId: z.uuid(),
+  ownerUserId: z.uuid(),
+  workspaceId: z.uuid(),
+  profileRevisionId: z.uuid(),
+  managedHostGeneration: z.int().positive(),
+  proofSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  tlsProxyAddress: z
+    .string()
+    .refine((value) => isIP(value) !== 0)
+    .optional(),
+})
+
+export type ManagedDraftHost = z.infer<typeof ManagedDraftHostSchema>
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
+}
+
+function parseManagedDraftHost(
+  raw: string | undefined,
+  origin: string,
+): ManagedDraftHost | undefined {
+  if (raw === undefined) return undefined
+  try {
+    const url = new URL(origin)
+    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLoopbackHost(url.hostname))) {
+      throw new Error()
+    }
+    return ManagedDraftHostSchema.parse(JSON.parse(raw))
+  } catch {
+    // 不在错误里回显环境变量或凭证。
+    throw new Error('invalid managed draft host provisioning or insecure public origin')
+  }
+}
+
+function parseManagedDraftModelRoute(raw: string | undefined): ManagedSourceModelRoute | undefined {
+  if (raw === undefined) return undefined
+  const identifier = z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/)
+  try {
+    const parsed = z
+      .strictObject({
+        provider: identifier,
+        model: identifier,
+        endpointId: identifier,
+        accountId: identifier,
+        policyGeneration: z.int().positive(),
+        expiresAt: z.iso.datetime(),
+      })
+      .parse(JSON.parse(raw))
+    return { ...parsed, expiresAt: new Date(parsed.expiresAt) }
+  } catch {
+    throw new Error('invalid managed draft model route provisioning')
+  }
+}
 
 export interface RateLimitConfig {
   /** 固定窗口长度，默认 15 分钟。 */
@@ -50,6 +113,9 @@ export interface HubConfig {
    * 缺省 60 秒；resolver 会把上限截到 120 秒。
    */
   readonly contextReceiptWatchdogMs?: number | undefined
+  /** Independently provisioned identity for the single managed draft pilot. */
+  readonly managedDraftHost?: ManagedDraftHost | undefined
+  readonly managedDraftModelRoute?: ManagedSourceModelRoute | undefined
 }
 
 export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
@@ -88,6 +154,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubConfig {
     // 否则直连部署反而被伪造 XFF 骗过限流。
     trustProxy: env.WHALEPOD_TRUST_PROXY === '1' || env.WHALEPOD_TRUST_PROXY === 'true',
     artifactStoreDir: env.WHALEPOD_ARTIFACT_STORE_DIR ?? 'data/artifact-store',
+    managedDraftHost: parseManagedDraftHost(env.WHALEPOD_MANAGED_DRAFT_HOST, publicOrigin),
+    managedDraftModelRoute: parseManagedDraftModelRoute(env.WHALEPOD_MANAGED_DRAFT_MODEL_ROUTE),
     contextReceiptWatchdogMs: parsePositiveNumber(env.WHALEPOD_CONTEXT_RECEIPT_WATCHDOG_MS),
   }
 }

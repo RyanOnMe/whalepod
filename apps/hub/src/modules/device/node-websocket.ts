@@ -10,7 +10,9 @@
  * 4003 的射程（#52/ADR-0007）：结构坏与越权 = 通道不可信 → 断开；Run 账本的
  * 语义冲突 = 单 Run 业务问题 → orchestrator Run 级收敛，连接保留。
  */
-import { randomUUID } from 'node:crypto'
+import { randomUUID, timingSafeEqual } from 'node:crypto'
+import type { ManagedDraftHost } from '../../config.js'
+import type { ManagedDraftTransport } from '../draft-share/dispatch.js'
 import { eq, sql } from 'drizzle-orm'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { Database } from '@whalepod/db'
@@ -25,7 +27,12 @@ import {
   touchDeviceLastSeenAt,
   schema,
 } from '@whalepod/db'
-import { parseNodeFrame, RunEventAckSchema, RunResendFromSchema } from '@whalepod/protocol'
+import {
+  MANAGED_DRAFT_CONTROL_VERSION,
+  parseNodeFrame,
+  RunEventAckSchema,
+  RunResendFromSchema,
+} from '@whalepod/protocol'
 import type { RunOrchestrator } from '../run/orchestrator.js'
 import type { AuthenticatedDevice } from '../run/device-gateway.js'
 import { isRunSemanticConflict } from '../run/errors.js'
@@ -45,6 +52,9 @@ export interface NodeWebsocketDeps {
   /** P1-13：owner-only live delta 的投递面（03 §8：不持久、非 owner 不可见）。 */
   readonly realtime: RealtimeHub
   readonly routerStore?: ArtifactStore
+  readonly managedDraftHost?: ManagedDraftHost | undefined
+  readonly managedDraftRequiresTls: boolean
+  readonly managedDraftTransport: ManagedDraftTransport
   /** RD-03r2：结果接受后应用提案并由组合根尝试既有自动派工端口。 */
   readonly onAutoDispatch?: RouterAutoDispatch
 }
@@ -54,6 +64,7 @@ const TERMINAL: ReadonlySet<string> = new Set(['completed', 'failed', 'cancelled
 
 interface DeviceUpgradeRequest extends FastifyRequest {
   device?: AuthenticatedDevice
+  managedDraftHost?: ManagedDraftHost | undefined
 }
 
 function extractBearerDeviceToken(request: FastifyRequest): string {
@@ -76,7 +87,29 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
         const token = extractBearerDeviceToken(request)
         const device =
           token === '' ? undefined : await findDeviceByTokenHash(deps.database.db, hashToken(token))
-        if (device === undefined || device.revokedAt !== null) {
+        const host = deps.managedDraftHost
+        const dedicated = host !== undefined && device?.id === host.deviceId
+        const proof = request.headers['x-whalepod-managed-host']
+        const transport = request.raw.socket
+        const remote = transport.remoteAddress?.replace(/^::ffff:/, '')
+        const secure = deps.managedDraftRequiresTls
+          ? ('encrypted' in transport && transport.encrypted === true) ||
+            (remote !== undefined &&
+              remote === host?.tlsProxyAddress &&
+              request.protocol === 'https')
+          : remote === '127.0.0.1' || remote === '::1'
+        const verified =
+          dedicated &&
+          device.ownerUserId === host.ownerUserId &&
+          secure &&
+          typeof proof === 'string' &&
+          /^[a-f0-9]{64}$/.test(proof) &&
+          timingSafeEqual(hashToken(proof), Buffer.from(host.proofSha256, 'hex'))
+        if (
+          device === undefined ||
+          device.revokedAt !== null ||
+          ((dedicated || proof !== undefined) && !verified)
+        ) {
           return reply.code(401).send({
             ok: false,
             error: {
@@ -90,16 +123,61 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
           deviceId: device.id,
           ownerUserId: device.ownerUserId,
         }
+        if (verified) (request as DeviceUpgradeRequest).managedDraftHost = host
       },
     },
     (socket: WebSocket, request: FastifyRequest) => {
       const identity = (request as DeviceUpgradeRequest).device
       if (identity === undefined) return // onRequest 已 401；防御分支。
-      nodeConnections.attach({ ...identity, socket })
+      const managedDraftHost = (request as DeviceUpgradeRequest).managedDraftHost
+      nodeConnections.attach({ ...identity, socket, managedDraftHost })
 
       const handleUpstream = async (raw: string): Promise<void> => {
         try {
+          if (!nodeConnections.isCurrent(identity.deviceId, socket)) return
           const frame = parseNodeFrame(JSON.parse(raw), 'upstream')
+          if (managedDraftHost !== undefined) {
+            if (
+              frame.type === 'node.hello' &&
+              frame.payload.deviceId === identity.deviceId &&
+              frame.payload.dshDistributionVersion === MANAGED_DRAFT_CONTROL_VERSION &&
+              frame.payload.pluginPackDigests.length === 0 &&
+              !frame.payload.sourceCapabilities?.length &&
+              !frame.payload.contextCapabilities?.length &&
+              !frame.payload.coordinationCapabilities?.length
+            ) {
+              nodeConnections.markManagedDraftReady(identity.deviceId, socket)
+              return
+            }
+            if (
+              frame.type === 'node.heartbeat' &&
+              frame.payload.deviceId === identity.deviceId &&
+              frame.payload.activeRunIds.length === 0 &&
+              Object.keys(frame.payload.lastEventSeqByRun).length === 0
+            ) {
+              return
+            }
+            if (frame.type === 'command.ack') {
+              const recorded = await deps.managedDraftTransport.receive(
+                managedDraftHost,
+                socket,
+                frame.payload,
+              )
+              if (recorded)
+                request.log.info(
+                  {
+                    component: 'hub.managed-draft',
+                    action: 'manifest.receipt',
+                    deviceId: identity.deviceId,
+                    commandId: frame.payload.commandId,
+                  },
+                  'managed manifest received',
+                )
+              return
+            }
+            throw new Error('unsupported managed draft host frame')
+          }
+
           if (frame.type === 'coordination.heartbeat' || frame.type === 'coordination.result') {
             await touchDeviceLastSeenAt(deps.database.db, identity.deviceId)
             const routerDeps = {
@@ -257,7 +335,9 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
             {
               component: 'hub.node-ws',
               deviceId: identity.deviceId,
-              ...sanitizeError(error),
+              ...(managedDraftHost === undefined
+                ? sanitizeError(error)
+                : { errorName: 'ManagedDraftProtocolError' }),
               disposition: semanticConflict ? 'connection-retained' : 'connection-closed',
             },
             'node upstream frame rejected',

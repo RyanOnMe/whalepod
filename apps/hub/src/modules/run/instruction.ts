@@ -281,6 +281,7 @@ export async function sendInstruction(
       taskId,
       assigneeUserId: task.assigneeUserId,
       ...pinnedTarget,
+      isOrdinaryDevice: (id) => deps.orchestrator.isOrdinaryDevice(id),
       ...(resumeSource !== undefined
         ? { unavailableWorkspaceCode: 'WORKSPACE_UNAVAILABLE' as const }
         : {}),

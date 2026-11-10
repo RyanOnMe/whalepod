@@ -107,7 +107,11 @@ export function toWorkDecisionView(row: RouterDecisionRow): WorkDecisionView {
   })
 }
 
-export function toDispatchIntentView(row: DispatchIntentRow, now: Date): DispatchIntentView {
+export function toDispatchIntentView(
+  row: DispatchIntentRow,
+  now: Date,
+  redactPlacement = false,
+): DispatchIntentView {
   const effectiveStatus =
     (row.status === 'proposed' || row.status === 'approved') &&
     row.expiresAt.getTime() <= now.getTime()
@@ -129,12 +133,12 @@ export function toDispatchIntentView(row: DispatchIntentRow, now: Date): Dispatc
     exclusionReasons: row.exclusionReasons,
     reason: row.reason,
     resolutionReason: row.resolutionReason ?? null,
-    agentId: row.agentId ?? null,
-    profileRevisionId: row.profileRevisionId ?? null,
-    deviceId: row.deviceId ?? null,
-    workspaceId: row.workspaceId ?? null,
+    agentId: redactPlacement ? null : (row.agentId ?? null),
+    profileRevisionId: redactPlacement ? null : (row.profileRevisionId ?? null),
+    deviceId: redactPlacement ? null : (row.deviceId ?? null),
+    workspaceId: redactPlacement ? null : (row.workspaceId ?? null),
     actionClass: row.actionClass ?? null,
-    runId: row.runId ?? null,
+    runId: redactPlacement ? null : (row.runId ?? null),
     expiresAt: row.expiresAt.toISOString(),
     approvedAt: row.approvedAt?.toISOString() ?? null,
     dispatchedAt: row.dispatchedAt?.toISOString() ?? null,
@@ -190,7 +194,7 @@ export async function loadWorkDetail(
         : toWorkMandateView(currentMandate, now, true),
     recentDecisions: decisions.map(toWorkDecisionView),
     proposedIntents: proposed.map((intent) => toDispatchIntentView(intent, now)),
-    dispatchIntents: intents.map((intent) => toDispatchIntentView(intent, now)),
+    dispatchIntents: intents.map((intent) => toDispatchIntentView(intent, now, intent.managedRun)),
     openQuestions,
     pendingMandateProposals: visibleProposals.map((proposal: WorkMandateProposalRow) =>
       toWorkMandateProposalView(proposal, work.workKey),

@@ -14,7 +14,11 @@ import { nodeConnections } from './connection-registry.js'
 
 export function registerPreparationRoutes(
   app: FastifyInstance,
-  deps: { database: Database; requireActor: RequireActor },
+  deps: {
+    database: Database
+    requireActor: RequireActor
+    isOrdinaryDevice?: (id: string) => boolean
+  },
 ): void {
   app.post('/tasks/:taskId/preparation-check', async (request, reply) => {
     const actor = await deps.requireActor(request)
@@ -38,6 +42,7 @@ export function registerPreparationRoutes(
       target = await resolveRunTarget(deps.database.db, {
         taskId,
         assigneeUserId: actor.userId,
+        isOrdinaryDevice: deps.isOrdinaryDevice,
         ...(input.deviceId === undefined ? {} : { deviceId: input.deviceId }),
         ...(input.workspaceId === undefined ? {} : { workspaceId: input.workspaceId }),
       })

@@ -24,7 +24,7 @@
 | node.gateway / node.workspace / node.supervisor | Node 结构化日志、本地 spool、SQLite registry；`run.mandate_invalidated` 的转发/重复 ack/终态 ack-only 记 `component=node.run_manager`（runId/reason，无正文）；#501 并发重复 `run.start` 按 runId 串行化并回放首次结果，判据看 `command.ack`（含拒绝回放）、`active_runtime` 行身份/pid、`supervisor.isActive` 与 `run.snapshot`（无 lost），见 [P1-501 验收](./2026-11-08-p1-501-duplicate-run-start-acceptance.md) | Node 本地状态目录（`~/.whalepod-node/`；#133 定名后按本行预留调整改名，旧 `~/.project311-node/` 不再写入）；诊断走本地 Unix socket | 待 P1-09/12；RD-03c2 命令路径生效；#501 串行化生效 |
 | runtime.bridge / dsh.agent | Runtime stderr 尾部（≤8 KiB，脱敏）、NDJSON 协议帧 | Node 暂存；owner-only | 待 P1-11/12 |
 | artifact.store | 内容寻址 blob、candidate 元数据 | Hub `blobs/sha256/ab/<digest>` + DB | 待 P1-15 |
-| hub.dispatch / managed draft source | 显式受管档在可信来源缺失时固定 409；意图仍获批，Run 和出站队列无新增。旧 Run 持久标记不可补写 | 生产派工 HTTP、DB `dispatch_intent` / `run.managed_draft_source_digest` / `dispatch_outbox`；[复跑与证据边界](./rd03c3a-source-gates-acceptance.md) | #533 检查点；未有生产来源与阅稿回执 |
+| hub.managed-draft / node.managed_draft | 专用设备凭证、清单摘要和送达回执；撤销或过期不送清单。执行档固定拒绝，旧 Run 标记不可补写 | 生产 HTTP、实际 WebSocket、DB `dispatch_intent` / `run.managed_draft_source_digest` / `dispatch_outbox`；[复跑与证据边界](./rd03c3a-source-gates-acceptance.md) | #533；清单不含正文，回执无模型或阅稿权限 |
 
 ## 一把捞齐
 

@@ -35,6 +35,7 @@ export interface ResolveRunTargetInput {
   /** 指令显式指定的目标（覆盖自动规则）。 */
   deviceId?: string
   workspaceId?: string
+  isOrdinaryDevice?: ((deviceId: string) => boolean) | undefined
   /**
    * 工作区不可用时抛哪个码。默认 VALIDATION_FAILED（显式新执行的历史口径）；
    * 续跑沿用来源工作区时传 WORKSPACE_UNAVAILABLE，保留 orchestrator 的 409 语义。
@@ -60,10 +61,16 @@ export async function resolveRunTarget(
     return explicit
   }
 
-  const fromLastRun = await resolveFromLastRun(handle, input.taskId, input.assigneeUserId, now)
+  const fromLastRun = await resolveFromLastRun(
+    handle,
+    input.taskId,
+    input.assigneeUserId,
+    now,
+    input.isOrdinaryDevice,
+  )
   if (fromLastRun !== undefined) return fromLastRun
 
-  return resolveFromAssigneeDevices(handle, input.assigneeUserId, now)
+  return resolveFromAssigneeDevices(handle, input.assigneeUserId, now, input.isOrdinaryDevice)
 }
 
 /** 与 /devices 读面同一事实：未撤销且 lastSeenAt 在 30s 在线窗口内。 */
@@ -97,7 +104,7 @@ async function resolveExplicit(
     .from(schema.devices)
     .where(eq(schema.devices.id, deviceId))
     .limit(1)
-  if (device === undefined) return undefined
+  if (device === undefined || input.isOrdinaryDevice?.(device.id) === false) return undefined
   if (device.ownerUserId !== input.assigneeUserId) {
     throw new RunCommandError('FORBIDDEN', 'the target device does not belong to the task assignee')
   }
@@ -136,6 +143,7 @@ async function resolveFromLastRun(
   taskId: string,
   assigneeUserId: string,
   now: Date,
+  isOrdinaryDevice?: (deviceId: string) => boolean,
 ): Promise<RunTarget | undefined> {
   const priorRuns = await handle
     .select({
@@ -154,7 +162,12 @@ async function resolveFromLastRun(
       .from(schema.devices)
       .where(eq(schema.devices.id, prior.deviceId))
       .limit(1)
-    if (device === undefined || device.revokedAt !== null) continue
+    if (
+      device === undefined ||
+      device.revokedAt !== null ||
+      isOrdinaryDevice?.(device.id) === false
+    )
+      continue
     // 归属校验（评审观察 6）：解析结果必须落在**责任人**的设备/工作区上。
     // 少了这一条，历史 Run 若指向他人的设备，这里会照样返回它，直到建 Run 时才以一句
     // 与真实原因无关的 403 结束——fail-closed 但误导。
@@ -174,6 +187,7 @@ async function resolveFromAssigneeDevices(
   handle: DbHandle,
   assigneeUserId: string,
   now: Date,
+  isOrdinaryDevice?: (deviceId: string) => boolean,
 ): Promise<RunTarget | undefined> {
   const candidates = await handle
     .select()
@@ -189,6 +203,7 @@ async function resolveFromAssigneeDevices(
     )
     .orderBy(desc(schema.devices.lastSeenAt))
   for (const device of candidates) {
+    if (isOrdinaryDevice?.(device.id) === false) continue
     if (device.dshDistributionVersion === null) continue // 类型收窄：isNotNull 之后仍可能被并发清空
     if (!isDeviceOnline(device, now)) continue // 断连（版本列不清）：换下一台候选
     const workspace = await findAvailableWorkspaceForDevice(handle, device.id)

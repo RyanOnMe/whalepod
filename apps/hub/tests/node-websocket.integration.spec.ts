@@ -1,10 +1,13 @@
 import { eq } from 'drizzle-orm'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@whalepod/db'
 import { listTeamEvents, schema } from '@whalepod/db'
 import type { FastifyInstance } from 'fastify'
 import WebSocket from 'ws'
+import { nodeConnections } from '../src/modules/device/connection-registry.js'
+import { WsDeviceGateway } from '../src/modules/device/gateway.js'
+import { NodeDownstreamSchema } from '@whalepod/protocol'
 import {
   createTestApp,
   createTestDatabase,
@@ -60,7 +63,10 @@ describe('node websocket (/ws/v1/node)', () => {
     await database.close()
   })
 
-  async function pair(as: Session): Promise<{ deviceId: string; deviceToken: string }> {
+  async function pair(
+    as: Session,
+    name = 'test-node',
+  ): Promise<{ deviceId: string; deviceToken: string }> {
     const code = await apiPairingCode(as)
     const claim = await ctx.app.inject({
       method: 'POST',
@@ -68,7 +74,7 @@ describe('node websocket (/ws/v1/node)', () => {
       headers: { 'idempotency-key': randomUUID() },
       payload: {
         code,
-        name: 'test-node',
+        name,
         platform: 'darwin',
         architecture: 'arm64',
         nodeVersion: '24.12.0',
@@ -90,10 +96,13 @@ describe('node websocket (/ws/v1/node)', () => {
     return res.json().data.code as string
   }
 
-  function connect(token: string | undefined): Promise<WebSocket> {
+  function connect(token: string | undefined, managedProof?: string): Promise<WebSocket> {
     return new Promise((resolve, reject) => {
       const socket = new WebSocket(url, {
-        headers: token === undefined ? {} : { authorization: `Device ${token}` },
+        headers: {
+          ...(token === undefined ? {} : { authorization: `Device ${token}` }),
+          ...(managedProof === undefined ? {} : { 'x-whalepod-managed-host': managedProof }),
+        },
       })
       sockets.push(socket)
       socket.once('open', () => resolve(socket))
@@ -123,6 +132,110 @@ describe('node websocket (/ws/v1/node)', () => {
   it('无 Token / 错 Token 都在升级前 401', async () => {
     await expect(connect(undefined)).rejects.toThrow(/Unexpected server response: 401/)
     await expect(connect('f'.repeat(43))).rejects.toThrow(/Unexpected server response: 401/)
+  })
+
+  it('受管通道要求独立凭证，并在实际 WS 发送处隔离专用清单和普通控制帧', async () => {
+    const dedicated = await pair(alice)
+    const ordinary = await pair(alice, 'ordinary-node')
+    const proof = randomBytes(32).toString('hex')
+    const host = {
+      deviceId: dedicated.deviceId,
+      ownerUserId: alice.userId,
+      workspaceId: randomUUID(),
+      profileRevisionId: randomUUID(),
+      managedHostGeneration: 2,
+      proofSha256: createHash('sha256').update(proof).digest('hex'),
+    }
+    await ctx.close()
+    ctx = await createTestApp(database, { managedDraftHost: host })
+    url = await listen(ctx.app)
+    await expect(connect(dedicated.deviceToken)).rejects.toThrow(/Unexpected server response: 401/)
+    await expect(connect(dedicated.deviceToken, randomBytes(32).toString('hex'))).rejects.toThrow(
+      /401/,
+    )
+    await expect(connect(ordinary.deviceToken, proof)).rejects.toThrow(/401/)
+    const ordinarySocket = await connect(ordinary.deviceToken)
+    const managedSocket = await connect(dedicated.deviceToken, proof)
+    const ordinaryFrames: unknown[] = []
+    ordinarySocket.on('message', (raw) => ordinaryFrames.push(JSON.parse(String(raw))))
+    const gateway = new WsDeviceGateway()
+    const control = NodeDownstreamSchema.parse(
+      JSON.parse(nodeFrame('run.status_request', { commandId: randomUUID(), runId: randomUUID() })),
+    )
+    const manifest = {
+      kind: 'managed_draft_source.v1',
+      instruction: 'draft_registered_agreement.v1',
+      runId: randomUUID(),
+      projectId: randomUUID(),
+      taskId: randomUUID(),
+      workKey: randomUUID(),
+      mandateId: randomUUID(),
+      mandateVersion: 1,
+      deviceId: host.deviceId,
+      ownerUserId: host.ownerUserId,
+      workspaceId: host.workspaceId,
+      profileRevisionId: host.profileRevisionId,
+      managedHostGeneration: host.managedHostGeneration,
+      source: {
+        policyId: randomUUID(),
+        revisionId: randomUUID(),
+        sha256: 'a'.repeat(64),
+        byteSize: 12,
+      },
+      modelBindingDigest: 'b'.repeat(64),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    }
+    const makeManifestFrame = (value: unknown) =>
+      NodeDownstreamSchema.parse(
+        JSON.parse(
+          nodeFrame('managed_draft.start', {
+            commandId: randomUUID(),
+            manifest: value,
+            manifestDigest: 'c'.repeat(64),
+          }),
+        ),
+      )
+    const specialized = makeManifestFrame(manifest)
+    await expect(gateway.send(dedicated.deviceId, specialized)).rejects.toThrow(/not online/)
+    managedSocket.send(
+      nodeFrame('node.hello', {
+        deviceId: dedicated.deviceId,
+        platform: 'darwin',
+        architecture: 'arm64',
+        nodeVersion: '24.12.0',
+        supportedProtocolVersions: [1],
+        dshDistributionVersion: 'managed-draft-control.v1',
+        pluginPackDigests: [],
+      }),
+    )
+    await waitForValue(
+      async () => (nodeConnections.isManagedDraftOnline(host) ? true : undefined),
+      'dedicated connection finished hello',
+    )
+    await expect(gateway.send(ordinary.deviceId, specialized)).rejects.toThrow(/not online/)
+    await expect(gateway.send(dedicated.deviceId, control)).rejects.toThrow(/not online/)
+    await expect(
+      gateway.send(
+        dedicated.deviceId,
+        makeManifestFrame({ ...manifest, managedHostGeneration: 1 }),
+      ),
+    ).rejects.toThrow(/not online/)
+    const delivered = nextMessage(managedSocket)
+    await gateway.send(dedicated.deviceId, specialized)
+    expect(await delivered).toEqual(specialized)
+    const ordinaryControl = nextMessage(ordinarySocket)
+    await gateway.send(ordinary.deviceId, control)
+    expect(await ordinaryControl).toEqual(control)
+    expect(ordinaryFrames).toEqual([control])
+    const closed = nextClose(managedSocket)
+    managedSocket.send(
+      nodeFrame('node.heartbeat', {
+        deviceId: dedicated.deviceId,
+        activeRunIds: [manifest.runId],
+        lastEventSeqByRun: {},
+      }),
+    )
+    expect(await closed).toBe(4003)
   })
 
   it('hello 落库：dsh 版本与 pack digests 写入 #37 列并刷新 lastSeenAt', async () => {

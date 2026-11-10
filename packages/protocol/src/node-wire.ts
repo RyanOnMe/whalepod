@@ -12,6 +12,7 @@ import {
   HandoffNarrativeSchema,
   HandoffRunSpecSchema,
 } from './handoff.js'
+import { ManagedDraftSourceManifestSchema } from './managed-draft.js'
 import { ApprovalPolicySchema } from './approval.js'
 import { MandateInvalidationReasonSchema } from './mandate-invalidation.js'
 import { RunToolPolicySchema } from './tool-policy.js'
@@ -557,11 +558,22 @@ export const RunContextStateFrameSchema = envelope('run.context_state', RunConte
 /** ADR-0027 §6（PC-05b）：周期性水位/摘要帧；不直接应用 entries。 */
 export const ContextStateSyncFrameSchema = envelope('context.state_sync', ContextStateSyncSchema)
 
+/** Metadata-only offer for a provisioned managed host; receipt does not authorize model I/O. */
+export const ManagedDraftStartSchema = envelope(
+  'managed_draft.start',
+  z.strictObject({
+    commandId: z.uuid(),
+    manifest: ManagedDraftSourceManifestSchema,
+    manifestDigest: Sha256DigestSchema,
+  }),
+)
+
 export const NodeDownstreamSchema = z.discriminatedUnion('type', [
   CoordinationRequestFrameSchema,
   CoordinationCancelFrameSchema,
   CoordinationResultAckFrameSchema,
   RunStartSchema,
+  ManagedDraftStartSchema,
   RunCancelSchema,
   RunMandateInvalidatedSchema,
   RunStatusRequestSchema,

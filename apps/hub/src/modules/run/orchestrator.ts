@@ -112,6 +112,7 @@ function isTerminal(status: RunRow['status']): boolean {
 export interface RunOrchestratorDeps {
   database: Database
   outbox: Outbox
+  managedDraftDeviceId?: string | undefined
   now?: () => Date
   /**
    * #52：越边降级与违例收敛的结构化告警通道（组合根接 app.log.warn，
@@ -139,6 +140,7 @@ export class RunOrchestrator {
   private readonly database: Database
   private readonly outbox: Outbox
   private readonly nowFn: () => Date
+  private readonly managedDraftDeviceId: string | undefined
   private readonly warnFn: (message: string, context: Record<string, unknown>) => void
   private readonly logFn: ContextEntryObserver
   private readonly contextLogFn: (action: string, fields: Record<string, unknown>) => void
@@ -153,6 +155,7 @@ export class RunOrchestrator {
   constructor(deps: RunOrchestratorDeps) {
     this.database = deps.database
     this.outbox = deps.outbox
+    this.managedDraftDeviceId = deps.managedDraftDeviceId?.toLowerCase()
     this.nowFn = deps.now ?? (() => new Date())
     this.warnFn = deps.warn ?? (() => {})
     this.logFn = deps.log ?? (() => {})
@@ -305,6 +308,11 @@ export class RunOrchestrator {
     return this.createInTransaction(tx, ctx, taskId.toLowerCase(), input, this.nowFn())
   }
 
+  /** Configuration reserves this device even if its last ordinary heartbeat is still fresh. */
+  isOrdinaryDevice(deviceId: string): boolean {
+    return deviceId.toLowerCase() !== this.managedDraftDeviceId
+  }
+
   private async createInTransaction(
     tx: Tx,
     ctx: ActorContext,
@@ -313,6 +321,9 @@ export class RunOrchestrator {
     now: Date,
     onSnapshot?: (snapshot: { readonly snapshotId: string; readonly entryCount: number }) => void,
   ): Promise<RunView> {
+    if (!this.isOrdinaryDevice(input.deviceId)) {
+      throw new RunCommandError('DEVICE_OFFLINE', 'device is unavailable for ordinary execution')
+    }
     // 锁 Task 行串行化并发创建；索引是兜底，锁让守卫读到稳定事实。
     const [task] = await tx
       .select()
@@ -976,7 +987,7 @@ export class RunOrchestrator {
     const recorded: RecordedContextEntry[] = []
     await this.database.transaction(async (tx) => {
       const command = await getOutboxCommand(tx, ack.commandId)
-      if (command === undefined) return // 重启前的残留 ack：无行可动
+      if (command === undefined || command.type === 'managed_draft.start') return // 受管回执不走普通通道。
       if (command.deviceId !== device.deviceId) {
         throw new RunCommandError('FORBIDDEN', 'ack device does not match the command destination')
       }

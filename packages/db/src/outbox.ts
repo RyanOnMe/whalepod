@@ -219,7 +219,9 @@ export async function findOutboxCommandsForRun(
     .from(dispatchOutbox)
     .where(
       and(
-        sql`${dispatchOutbox.payload}->>'runId' = ${query.runId}`,
+        sql`(${dispatchOutbox.payload}->>'runId' = ${query.runId}
+          or (${dispatchOutbox.type} = 'managed_draft.start'
+            and ${dispatchOutbox.payload}#>>'{manifest,runId}' = ${query.runId}))`,
         query.type !== undefined ? eq(dispatchOutbox.type, query.type) : undefined,
         query.pendingOnly === true
           ? and(isNull(dispatchOutbox.ackedAt), isNull(dispatchOutbox.failedAt))

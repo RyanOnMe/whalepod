@@ -33,12 +33,18 @@ export async function prepareManagedDraftSourceManifest(
   placement: ManagedSourcePlacement | undefined,
   modelRoute: ManagedSourceModelRoute | undefined,
   now: Date,
+  checkExistingRun = false,
 ): Promise<{ manifest: ManagedDraftSourceManifest; manifestDigest: string } | undefined> {
   if (placement === undefined || modelRoute === undefined) return undefined
   const { task, work } = await lockWorkContext(tx, request.workKey)
   const owner = request.actorUserId
+  const stateMatches = checkExistingRun
+    ? work.state === 'waiting' &&
+      work.resumeMode === 'auto' &&
+      work.resumeCondition === `run:${request.runId}`
+    : work.state === 'active'
   if (
-    work.state !== 'active' ||
+    !stateMatches ||
     work.humanOwnerUserId !== owner ||
     work.projectId !== task.projectId ||
     task.assigneeUserId !== owner ||

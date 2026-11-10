@@ -1,0 +1,33 @@
+{
+  "protocolVersion": 1,
+  "messageId": "00000000-0000-4000-8000-000000000012",
+  "sentAt": "2026-11-10T10:00:00Z",
+  "type": "managed_draft.start",
+  "payload": {
+    "commandId": "00000000-0000-4000-8000-000000000013",
+    "manifest": {
+      "kind": "managed_draft_source.v1",
+      "instruction": "draft_registered_agreement.v1",
+      "runId": "00000000-0000-4000-8000-000000000001",
+      "projectId": "00000000-0000-4000-8000-000000000002",
+      "taskId": "00000000-0000-4000-8000-000000000003",
+      "workKey": "00000000-0000-4000-8000-000000000004",
+      "ownerUserId": "00000000-0000-4000-8000-000000000005",
+      "mandateId": "00000000-0000-4000-8000-000000000006",
+      "mandateVersion": 1,
+      "profileRevisionId": "00000000-0000-4000-8000-000000000007",
+      "deviceId": "00000000-0000-4000-8000-000000000008",
+      "workspaceId": "00000000-0000-4000-8000-000000000009",
+      "managedHostGeneration": 1,
+      "source": {
+        "policyId": "00000000-0000-4000-8000-000000000010",
+        "revisionId": "00000000-0000-4000-8000-000000000011",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "byteSize": 16
+      },
+      "modelBindingDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expiresAt": "2026-11-10T10:01:00Z"
+    },
+    "manifestDigest": "6ec58b02d34926add5d62a4c9df02a81b0cd54bcecacccc91cb82f746a9bb22e"
+  }
+}

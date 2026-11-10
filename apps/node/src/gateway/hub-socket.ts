@@ -34,6 +34,8 @@ export interface HubSocketHandlers {
 export interface HubSocketOptions {
   /** WS 子协议/headers 注入点（测试用）。 */
   WebSocketImpl?: typeof WsClient
+  /** Independent deployment credential, set only by the managed draft process. */
+  managedHostToken?: string
 }
 
 /** Hub 对认证失败的应答是升级前 HTTP 401/403（非 WS 关闭码）：映射为 4401 交重连层判定停止。 */
@@ -48,7 +50,15 @@ export function openHubSocket(
 ): WebSocket {
   const url = `${hubUrl.replace(/^http/, 'ws').replace(/\/$/, '')}/ws/v1/node`
   const socket = new (options.WebSocketImpl ?? WsClient)(url, {
-    headers: { authorization: `Device ${deviceToken}` },
+    ...(options.managedHostToken === undefined
+      ? {}
+      : { followRedirects: false, rejectUnauthorized: true, agent: false }),
+    headers: {
+      authorization: `Device ${deviceToken}`,
+      ...(options.managedHostToken === undefined
+        ? {}
+        : { 'x-whalepod-managed-host': options.managedHostToken }),
+    },
   })
   socket.on('message', (raw: unknown) => {
     // 下行帧入口 fail-closed（§11，M2）：必须过协议 wire schema 才派发。
@@ -272,7 +282,7 @@ export function runSnapshotFrame(snapshot: RunSnapshot): string {
   return upstreamFrame('run.snapshot', RunSnapshotSchema.parse(snapshot))
 }
 
-/** command.ack：run.start/run.cancel/approval.decide 的处理确认（§6.2）。 */
+/** command.ack：处理确认（§6.2）。受管草稿仅确认已校验清单元数据。 */
 export function commandAckFrame(
   commandId: string,
   accepted: boolean,

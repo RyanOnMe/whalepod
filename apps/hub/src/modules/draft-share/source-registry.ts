@@ -33,6 +33,7 @@ export interface RegisterManagedDraftSourceInput {
   readonly recipientUserId: string
   readonly permitsPublishedAudience: boolean
   readonly confirmsOwnershipAndUses: true
+  readonly confirmedModelBindingDigest: string
   readonly expiresAt: Date
   readonly idempotencyKey: string
 }
@@ -49,7 +50,10 @@ const unavailable = () =>
   new ApiError(409, 'CONFLICT', 'managed draft source authority is unavailable')
 const notFound = () => new ApiError(404, 'NOT_FOUND', 'managed draft source not found')
 
-function bindingDigest(route: ManagedSourceModelRoute | undefined, now: Date): string | undefined {
+export function managedDraftModelBindingDigest(
+  route: ManagedSourceModelRoute | undefined,
+  now: Date,
+): string | undefined {
   if (
     route === undefined ||
     !(route.expiresAt.getTime() > now.getTime()) ||
@@ -160,11 +164,12 @@ export async function registerManagedDraftSource(
       actorUserId,
       'only the current assignee can register this source',
     )
-    const modelBindingDigest = bindingDigest(route, now)
+    const modelBindingDigest = managedDraftModelBindingDigest(route, now)
     if (
       modelBindingDigest === undefined ||
       route === undefined ||
       input.confirmsOwnershipAndUses !== true ||
+      input.confirmedModelBindingDigest !== modelBindingDigest ||
       input.idempotencyKey.length === 0 ||
       input.idempotencyKey.length > 128 ||
       !(input.expiresAt.getTime() > now.getTime()) ||
@@ -245,7 +250,7 @@ export async function lockRegisteredDraftSource(
     return undefined
   const task = alreadyLockedTask ?? (await getTaskForUpdate(tx, probe.taskId))
   if (task === undefined) return undefined
-  const digest = bindingDigest(route, now)
+  const digest = managedDraftModelBindingDigest(route, now)
   if (
     probe.projectId !== task.projectId ||
     !(probe.expiresAt.getTime() > now.getTime()) ||
@@ -288,13 +293,18 @@ export async function revokeManagedDraftSource(
   actorUserId: string,
   sourceId: string,
   now: Date,
+  expectedTaskId?: string,
 ): Promise<void> {
   await database.transaction(async (tx) => {
     const [probe] = await tx
       .select({ taskId: policy.taskId })
       .from(policy)
       .where(eq(policy.id, sourceId))
-    if (probe === undefined || (await getTaskForUpdate(tx, probe.taskId)) === undefined)
+    if (
+      probe === undefined ||
+      (expectedTaskId !== undefined && probe.taskId !== expectedTaskId) ||
+      (await getTaskForUpdate(tx, probe.taskId)) === undefined
+    )
       throw notFound()
     const [row] = await tx.select().from(policy).where(eq(policy.id, sourceId)).for('update')
     const team = await getTeam(tx)

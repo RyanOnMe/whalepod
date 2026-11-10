@@ -1,5 +1,9 @@
 -- ADR-0029: a managed source is sealed from Run birth. Legacy Runs stay ordinary.
 alter table run add column managed_draft_source_digest char(64);
+alter table run add column managed_draft_preparation boolean not null default false;
+alter table run add constraint run_managed_draft_preparation_fields check (
+  not managed_draft_preparation or managed_draft_source_digest is not null
+);
 
 alter table run add constraint run_managed_draft_source_fields check (
   managed_draft_source_digest is null or (
@@ -11,7 +15,7 @@ alter table run add constraint run_managed_draft_source_fields check (
     and rerun_of_run_id is null
     and handoff_input is null
     and review_input is null
-    and artifact_input_manifest = '[]'::jsonb
+    and artifact_input_manifest = jsonb_build_object('taskId', task_id, 'artifacts', '[]'::jsonb)
     and artifact_input_manifest is not null
     and work_input_manifest is null
     and trigger_message_id is null
@@ -21,7 +25,8 @@ alter table run add constraint run_managed_draft_source_fields check (
 create function reject_run_managed_draft_source_change() returns trigger
 language plpgsql as $$
 begin
-  if new.managed_draft_source_digest is distinct from old.managed_draft_source_digest then
+  if new.managed_draft_source_digest is distinct from old.managed_draft_source_digest
+      or new.managed_draft_preparation is distinct from old.managed_draft_preparation then
     raise exception 'managed draft source digest is immutable'
       using errcode = 'check_violation', constraint = 'run_managed_draft_source_immutable';
   end if;
@@ -30,7 +35,7 @@ end;
 $$;
 
 create trigger run_managed_draft_source_immutable
-  before update of managed_draft_source_digest on run
+  before update of managed_draft_source_digest, managed_draft_preparation on run
   for each row execute function reject_run_managed_draft_source_change();
 
 -- First source class: a manually authored and confirmed WhalePod agreement.
