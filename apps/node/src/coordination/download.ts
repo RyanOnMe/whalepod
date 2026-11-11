@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { CoordinationInputDownloadSchema, type CoordinationRequest } from '@whalepod/protocol'
+import { CoordinationInputDownloadSchema, type AnyCoordinationRequest } from '@whalepod/protocol'
 import { readCappedBody } from '../plugin/installer.js'
 
 export class CoordinationInputError extends Error {
@@ -15,7 +15,7 @@ export class CoordinationInputDownloader {
     private readonly deps: { hubUrl: string; deviceToken: string; fetchImpl?: typeof fetch },
   ) {}
   async prepare(
-    request: CoordinationRequest,
+    request: AnyCoordinationRequest,
     homePath: string,
     signal?: AbortSignal,
   ): Promise<string> {
@@ -37,7 +37,7 @@ export class CoordinationInputDownloader {
         let response: Response
         try {
           response = await (this.deps.fetchImpl ?? fetch)(
-            `${this.deps.hubUrl.replace(/\/$/, '')}/api/v1/coordination/evaluations/${request.evaluationId}/inputs/${entry.id}`,
+            `${this.deps.hubUrl.replace(/\/$/, '')}/api/v1/${'purpose' in request ? 'discovery' : 'coordination'}/evaluations/${request.evaluationId}/inputs/${entry.id}`,
             {
               headers: {
                 authorization: `Device ${this.deps.deviceToken}`,

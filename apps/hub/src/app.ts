@@ -34,6 +34,7 @@ import {
 import { logRecordedEntry } from './modules/context/observer.js'
 // ADR-0026（PC-04a）：确定性内部协调的读面与显式触发。
 import { registerCoordinationRoutes } from './modules/coordination/routes.js'
+import { registerDiscoveryRoutes } from './modules/discovery/routes.js'
 import { registerRouterRoutes } from './modules/router/routes.js'
 import type { RouterAutoDispatch } from './modules/router/application.js'
 import { registerTaskRoutes } from './modules/task/routes.js'
@@ -333,6 +334,12 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       }
       registerContextRoutes(api, { database, requireActor })
       registerCoordinationRoutes(api, { database, requireActor })
+      registerDiscoveryRoutes(api, {
+        database,
+        requireActor,
+        store: new ArtifactStore({ root: config.artifactStoreDir }),
+        log: (event) => app.log.info(event, 'discovery event'),
+      })
       registerRouterRoutes(api, {
         database,
         requireActor,

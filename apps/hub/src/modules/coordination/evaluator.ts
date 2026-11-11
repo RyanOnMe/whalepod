@@ -4,6 +4,7 @@ import {
   getCoordinatorStateForUpdate,
   getEvaluation,
   getEvaluationForUpdate,
+  hasRunningCoordinationEvaluation,
   insertContextCitation,
   insertContextEntry,
   maxAttemptForInput,
@@ -185,6 +186,7 @@ export async function evaluateQueuedEvaluation(
         }
   }
 
+  if (await hasRunningCoordinationEvaluation(tx, evaluation.projectId)) return undefined
   const input = await loadCoordinationInput(tx, evaluation.projectId)
   const completed = await findCompletedEvaluationForInput(
     tx,

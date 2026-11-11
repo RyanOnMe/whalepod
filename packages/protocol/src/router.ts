@@ -11,7 +11,13 @@ const Reason = z
   .regex(/^[a-z][a-z0-9_]*$/)
   .max(64)
 export const COORDINATION_CAPABILITY = 'coordination.v1' as const
-export const CoordinationCapabilitySchema = z.literal(COORDINATION_CAPABILITY)
+// Capability pins the discovery worker prompt; old advertisements still parse for legacy Router.
+export const DISCOVERY_CAPABILITY = 'discovery.v2' as const
+export const CoordinationCapabilitySchema = z.enum([
+  COORDINATION_CAPABILITY,
+  'discovery.v1',
+  DISCOVERY_CAPABILITY,
+])
 export type CoordinationCapability = z.infer<typeof CoordinationCapabilitySchema>
 export const CoordinationCredentialSlotSchema = z.strictObject({
   provider: z.string().min(1).max(100),
@@ -49,7 +55,7 @@ export const ConfigureProjectRouterRequestSchema = z.strictObject({
 export type ConfigureProjectRouterRequest = z.infer<typeof ConfigureProjectRouterRequestSchema>
 export const CoordinationInputEntrySchema = z.strictObject({
   id: Id,
-  kind: z.enum(['source', 'agreement', 'work', 'consumption', 'evidence', 'answer']),
+  kind: z.enum(['source', 'agreement', 'work', 'consumption', 'evidence', 'answer', 'slot']),
   sourceId: z.string().min(1).max(200),
   version: z.string().min(1).max(200),
   digest: Digest,
@@ -194,10 +200,79 @@ export const CoordinationCancelPayloadSchema = z.strictObject({
 })
 export type CoordinationCancel = z.infer<typeof CoordinationCancelPayloadSchema>
 
+/** ADR-0030: independent output and purpose binding. Legacy Router wire remains strict. */
+export const DiscoveryRequestPayloadSchema = CoordinationRequestPayloadSchema.omit({
+  workKey: true,
+  taskId: true,
+}).extend({
+  purpose: z.literal('discovery'),
+  promptVersion: z.literal(DISCOVERY_CAPABILITY),
+  operatorUserId: Id,
+  permitVersion: Positive,
+  coverageComplete: z.boolean(),
+})
+export type DiscoveryRequest = z.infer<typeof DiscoveryRequestPayloadSchema>
+
+export const DiscoveryProposalSchema = z.strictObject({
+  classification: z.enum(['covered', 'independent_gap', 'insufficient', 'irrelevant']),
+  source: Id,
+  slot: Id.nullable(),
+  citations: z.array(Id).max(30),
+  reason: z.string().min(1).max(1000),
+})
+export type DiscoveryProposal = z.infer<typeof DiscoveryProposalSchema>
+const DiscoveryPurpose = { purpose: z.literal('discovery') }
+export const DiscoveryHeartbeatPayloadSchema =
+  CoordinationHeartbeatPayloadSchema.extend(DiscoveryPurpose)
+export const DiscoveryCancelPayloadSchema = CoordinationCancelPayloadSchema.extend(DiscoveryPurpose)
+export const DiscoveryResultAckPayloadSchema =
+  CoordinationResultAckPayloadSchema.extend(DiscoveryPurpose)
+export const DiscoveryModelStartAckPayloadSchema = z.strictObject({
+  ...EvaluationBinding,
+  ...DiscoveryPurpose,
+})
+export const DiscoveryResultPayloadSchema = z.discriminatedUnion('status', [
+  CoordinationResultPayloadSchema.options[0].extend({
+    ...DiscoveryPurpose,
+    proposal: DiscoveryProposalSchema,
+  }),
+  CoordinationResultPayloadSchema.options[1].extend(DiscoveryPurpose),
+])
+export type DiscoveryResult = z.infer<typeof DiscoveryResultPayloadSchema>
+export type DiscoveryHeartbeat = z.infer<typeof DiscoveryHeartbeatPayloadSchema>
+export type DiscoveryResultAck = z.infer<typeof DiscoveryResultAckPayloadSchema>
+export const AnyCoordinationRequestSchema = z.union([
+  CoordinationRequestPayloadSchema,
+  DiscoveryRequestPayloadSchema,
+])
+export const AnyCoordinationResultSchema = z.union([
+  CoordinationResultPayloadSchema,
+  DiscoveryResultPayloadSchema,
+])
+export type AnyCoordinationRequest = z.infer<typeof AnyCoordinationRequestSchema>
+export type AnyCoordinationResult = z.infer<typeof AnyCoordinationResultSchema>
+
+export const ConfigureDiscoveryRequestSchema = z.strictObject({
+  enabled: z.boolean(),
+  entryTaskId: Id,
+  principalUserId: Id,
+  activity: z.string().trim().min(1).max(120),
+  slot: z.string().trim().min(1).max(240),
+  templateVersion: z.string().trim().min(1).max(128),
+  expiresAt: Time,
+  maxCalls: Positive,
+  maxTokens: Positive,
+  maxCostMicros: Positive,
+  evidenceArtifactIds: z.array(Id).max(16).default([]),
+  agreementTaskIds: z.array(Id).max(16).default([]),
+})
+export type ConfigureDiscoveryRequest = z.infer<typeof ConfigureDiscoveryRequestSchema>
+export const DiscoveryConsentRequestSchema = z.strictObject({ configVersion: Positive })
+
 /** Local Node/broker wire; local paths never cross Hub wire or enter projections. */
 export const RouterRuntimeInitializeSchema = z.strictObject({
   type: z.literal('coordination.initialize'),
-  request: CoordinationRequestPayloadSchema,
+  request: AnyCoordinationRequestSchema,
   inputsDir: z.string().min(1),
   homePath: z.string().min(1),
   endpoint: z.string().url(),
@@ -218,11 +293,11 @@ export type RouterRuntimeInput = z.infer<typeof RouterRuntimeInputSchema>
 export const RouterRuntimeOutputSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('coordination.heartbeat'),
-    payload: CoordinationHeartbeatPayloadSchema,
+    payload: z.union([CoordinationHeartbeatPayloadSchema, DiscoveryHeartbeatPayloadSchema]),
   }),
   z.strictObject({
     type: z.literal('coordination.result'),
-    payload: CoordinationResultPayloadSchema,
+    payload: AnyCoordinationResultSchema,
   }),
 ])
 export type RouterRuntimeOutput = z.infer<typeof RouterRuntimeOutputSchema>
