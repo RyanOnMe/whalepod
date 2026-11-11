@@ -1,4 +1,4 @@
-import { and, desc, eq, notExists } from 'drizzle-orm'
+import { and, desc, eq, isNull, notExists } from 'drizzle-orm'
 import {
   findDiscoverySlot,
   getActiveDiscoveryPermit,
@@ -51,6 +51,12 @@ export function templateDigestOf(template: TaskSpecContent): string {
 
 export function templateFor(settings: ConfigureDiscoveryRequest): TaskSpecContent {
   return TaskSpecContentSchema.parse(settings.template)
+}
+
+/** Permit/template JSON is stored in one jsonb column with a 64 KiB DB guard. */
+export function assertTemplateWithinStorage(template: TaskSpecContent): void {
+  if (Buffer.byteLength(canonicalJson(template), 'utf8') > 65_536)
+    throw new ApiError(400, 'VALIDATION_FAILED', 'discovery template exceeds storage bounds')
 }
 
 export async function sourceIdentity(tx: Tx, message: TaskMessageRow) {
@@ -253,6 +259,7 @@ export async function configureDiscovery(
         )
       if (settings.enabled && settings.tier !== 'discover') {
         const template = templateFor(settings)
+        assertTemplateWithinStorage(template)
         if (template.goal.trim() === '' || template.acceptance.trim() === '')
           throw new ApiError(
             400,
@@ -498,10 +505,13 @@ export async function changeDiscoveryConsent(
       }
 
       const settingsTier = cfg.settings.tier
-      const tier = permitInput?.tier ?? settingsTier
+      // A permit never silently inherits the project's maximum tier; the principal must ask
+      // for create/execute explicitly (RD-04c will gate execute behind its own controls).
+      const tier = permitInput?.tier ?? 'discover'
       if (TIER_RANK[tier] > TIER_RANK[settingsTier])
         throw new ApiError(409, 'CONFLICT', 'permit tier exceeds the project discovery tier')
       const template = templateFor(cfg.settings)
+      assertTemplateWithinStorage(template)
       const digest = templateDigestOf(template)
       if (tier !== 'discover' && permitInput?.templateDigest !== digest)
         throw new ApiError(
@@ -690,6 +700,14 @@ export async function correctDiscoverySource(
         .where(eq(schema.tasks.id, admission.entryTaskId))
         .for('update')
       await getCoordinatorStateForUpdate(tx, projectId)
+      // Withdraw may have committed while we waited for the locks; re-read before versioning.
+      const currentAdmission = await discoveryAdmission(tx, sourceId)
+      if (
+        !currentAdmission ||
+        currentAdmission.projectId !== projectId ||
+        currentAdmission.withdrawnAt !== null
+      )
+        throw new ApiError(409, 'CONFLICT', 'a withdrawn discovery source cannot be corrected')
       const latest = await getLatestSourceCorrection(tx, sourceId)
       if (latest?.body === body) {
         const current = await sourceIdentity(tx, message)
@@ -802,6 +820,83 @@ export async function verifyDiscoverySource(
       return toVerificationView(row)
     },
   )
+}
+
+/**
+ * 核实人/责任人读取确切来源版本与摘要；评论正文仍走普通 Task 读面。
+ * 这是回执入口的生产驱动面，避免客户端自行重算内部 canonical 摘要。
+ */
+export async function discoverySourceIdentity(
+  database: Database,
+  actor: Actor,
+  projectId: string,
+  sourceId: string,
+) {
+  return database.transaction(async (tx) => {
+    await getCoordinatorStateForUpdate(tx, projectId)
+    const now = new Date()
+    const cfg = await discoveryConfig(tx, projectId)
+    if (!cfg || !available(cfg, now))
+      throw new ApiError(404, 'NOT_FOUND', 'discovery is not active')
+    const permit = await getActiveDiscoveryPermit(
+      tx,
+      projectId,
+      cfg.settings.principalUserId,
+      cfg.version,
+    )
+    if (!permit || permit.revokedAt !== null || permit.expiresAt.getTime() <= now.getTime())
+      throw new ApiError(404, 'NOT_FOUND', 'discovery permit is not active')
+    if (actor.userId !== permit.principalUserId && !permit.verifierUserIds.includes(actor.userId))
+      throw new ApiError(
+        403,
+        'FORBIDDEN',
+        'only the principal or a registered verifier can read it',
+      )
+    const [message] = await tx
+      .select()
+      .from(schema.taskMessages)
+      .where(eq(schema.taskMessages.id, sourceId))
+    const admission = await discoveryAdmission(tx, sourceId)
+    if (
+      !message ||
+      admission?.projectId !== projectId ||
+      admission.route !== 'discovery' ||
+      admission.withdrawnAt !== null
+    )
+      throw new ApiError(404, 'NOT_FOUND', 'discovery source not found')
+    const identity = await sourceIdentity(tx, message)
+    return {
+      sourceId,
+      authorUserId: message.authorUserId,
+      sourceVersion: identity.sourceVersion,
+      sourceDigest: identity.sourceDigest,
+      createdAt: message.createdAt.toISOString(),
+      corrected: identity.sourceVersion !== (message.editedAt ?? message.createdAt).toISOString(),
+    }
+  })
+}
+
+/** ADR §4：目录水位变化使旧评估失效时，把来源放回待评估队列而不是静默丢失。 */
+export async function requeueDiscoveryAdmission(
+  tx: Tx,
+  sourceId: string,
+  now: Date,
+): Promise<void> {
+  await tx
+    .update(schema.discoveryAdmissions)
+    .set({
+      processedAt: null,
+      evaluationId: null,
+      processingReason: 'stale_replan',
+      requeuedAt: now,
+    })
+    .where(
+      and(
+        eq(schema.discoveryAdmissions.sourceId, sourceId),
+        eq(schema.discoveryAdmissions.route, 'discovery'),
+        isNull(schema.discoveryAdmissions.withdrawnAt),
+      ),
+    )
 }
 
 function toVerificationView(row: {

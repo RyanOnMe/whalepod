@@ -203,6 +203,16 @@ export async function retireWork(
   )
 }
 
+async function assertDiscoveryWorkCanNotDispatch(tx: Tx, workId: string): Promise<void> {
+  if (await getDiscoveryApplicationByWork(tx, workId)) {
+    throw new ApiError(
+      409,
+      'CONFLICT',
+      'discovery-created work has no execution authorization in this slice',
+    )
+  }
+}
+
 /**
  * RD-03d2b：创建 `version=latest+1` 的 active Mandate 并把 work 指针指向它。
  * 新版本使旧 proposed 意图、订阅与仍然 pending 的扩权草案一起失效；确认路径用
@@ -222,13 +232,7 @@ export async function insertActiveMandateVersion(
   const { work, actorUserId, scope, now } = input
   // ADR-0030 §4：RD-04b 只立项。发现物化的 Work 没有执行授权，任何派工入口都拒绝；
   // RD-04c 引入 execute 档并具备调用级费用守卫后，才允许在这里放行子 Mandate。
-  if (await getDiscoveryApplicationByWork(tx, work.id)) {
-    throw new ApiError(
-      409,
-      'CONFLICT',
-      'discovery-created work has no execution authorization in this slice',
-    )
-  }
+  await assertDiscoveryWorkCanNotDispatch(tx, work.id)
   const latest = await getLatestWorkMandate(tx, work.id)
   const version = (latest?.version ?? 0) + 1
   const mandate = await insertWorkMandate(tx, {
@@ -336,6 +340,7 @@ export async function acceptWorkAfterOwnerChange(
       if (work.state !== 'waiting' || work.resumeMode !== 'owner_confirmation') {
         throw new ApiError(409, 'CONFLICT', 'work is not waiting for owner confirmation')
       }
+      await assertDiscoveryWorkCanNotDispatch(tx, work.id)
       const now = deps.now()
       assertMandateScope(input, actorUserId, now)
       await assertAllowedAgents(tx, input.allowedAgentIds)

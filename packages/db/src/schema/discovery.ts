@@ -94,6 +94,7 @@ export const discoveryAdmissions = pgTable(
     evaluationId: uuid('evaluation_id').references(() => coordinationEvaluations.id),
     processedAt: timestamp('processed_at', { withTimezone: true }),
     processingReason: varchar('processing_reason', { length: 64 }),
+    requeuedAt: timestamp('requeued_at', { withTimezone: true }),
     withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
   },

@@ -353,18 +353,16 @@ export async function getDiscoveryApplicationByWork(
   return row
 }
 
-export async function countDiscoveryApplicationsForPermit(
+/** Quota is cumulative for the slot: re-confirming a permit does not reset the count. */
+export async function countDiscoveryApplicationsForSlot(
   handle: DbHandle,
-  permitId: string,
+  slotId: string,
 ): Promise<number> {
   const [row] = await handle
     .select({ value: count() })
     .from(discoveryApplications)
     .where(
-      and(
-        eq(discoveryApplications.permitId, permitId),
-        eq(discoveryApplications.status, 'applied'),
-      ),
+      and(eq(discoveryApplications.slotId, slotId), eq(discoveryApplications.status, 'applied')),
     )
   return row?.value ?? 0
 }

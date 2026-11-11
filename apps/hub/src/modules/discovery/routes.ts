@@ -18,6 +18,7 @@ import {
   configureDiscovery,
   correctDiscoverySource,
   discoveryConsentBasis,
+  discoverySourceIdentity,
   verifyDiscoverySource,
   withdrawDiscoverySource,
 } from './admission.js'
@@ -142,6 +143,15 @@ export function registerDiscoveryRoutes(
       readIdempotencyKey(request),
     )
     return { ok: true, data }
+  })
+  app.get(`${base}/sources/:sourceId`, async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
+    const actor = await deps.requireActor(request)
+    const { projectId, sourceId } = Project.extend({ sourceId: z.uuid() }).parse(request.params)
+    return {
+      ok: true,
+      data: await discoverySourceIdentity(deps.database, actor, projectId, sourceId),
+    }
   })
   app.post(`${base}/sources/:sourceId/verify`, async (request, reply) => {
     reply.header('cache-control', 'private, no-store')

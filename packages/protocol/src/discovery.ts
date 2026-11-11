@@ -50,7 +50,7 @@ export type DiscoverySlotVerificationRequest = z.infer<
 
 /** 原作者提交版本化更正；原文不改，发现链改用新版本。 */
 export const DiscoverySourceCorrectionRequestSchema = z.strictObject({
-  body: z.string().min(1).max(20000),
+  body: z.string().trim().min(1).max(20000),
 })
 export type DiscoverySourceCorrectionRequest = z.infer<
   typeof DiscoverySourceCorrectionRequestSchema

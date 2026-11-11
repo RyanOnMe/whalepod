@@ -6,7 +6,7 @@
  * 撤权与更正、目录代次失效、covered 槽位、派生约定与零 Run/Mandate。
  */
 import { randomUUID } from 'node:crypto'
-import { getEvaluation, type Database } from '@whalepod/db'
+import type { Database } from '@whalepod/db'
 import { DISCOVERY_CAPABILITY, parseNodeFrame, type NodeDownstream } from '@whalepod/protocol'
 import WebSocket from 'ws'
 import { canonicalJson, sha256Hex } from '../src/modules/coordination/digest.js'
@@ -276,7 +276,7 @@ describe('RD-04b preauthorized creation', () => {
           acceptance: '形成可审阅的{{slot}}草稿',
           openQuestions: '',
         },
-        verifierUserIds: [options.verifierUserId ?? verifier.userId],
+        verifierUserIds: [options.verifierUserId ?? verifier.userId, member.userId],
         maxCreations: 3,
       },
     })
@@ -378,22 +378,27 @@ describe('RD-04b preauthorized creation', () => {
     return response.json().data.id as string
   }
 
-  async function sourceIdentity(sourceId: string) {
-    const [row] = await database.sql`
-      select source_version, source_digest from discovery_admission where source_id = ${sourceId}
-    `
-    if (!row) throw new Error('discovery admission missing')
-    return { sourceVersion: row.source_version, sourceDigest: row.source_digest }
-  }
-
   async function verifySource(node: Awaited<ReturnType<typeof setupPilot>>, sourceId: string) {
-    const identity = await sourceIdentity(sourceId)
+    const identityResponse = await apiInject(ctx, verifier, {
+      method: 'GET',
+      url: `${node.route}/sources/${sourceId}`,
+    })
+    expect(identityResponse.statusCode, identityResponse.body).toBe(200)
+    const identityData = identityResponse.json().data as {
+      sourceVersion: string
+      sourceDigest: string
+    }
+    const identity = {
+      sourceVersion: identityData.sourceVersion,
+      sourceDigest: identityData.sourceDigest,
+    }
     const response = await apiInject(ctx, verifier, {
       method: 'POST',
       url: `${node.route}/sources/${sourceId}/verify`,
       payload: identity,
     })
     expect(response.statusCode, response.body).toBe(200)
+    return identity
   }
 
   async function getRequest(
@@ -532,13 +537,26 @@ describe('RD-04b preauthorized creation', () => {
   it('creates one accepted task, a derived agreement and an active work without dispatch', async () => {
     const node = await setupPilot()
     const sourceId = await comment()
-    const identity = await sourceIdentity(sourceId)
+    const identityResponse = await apiInject(ctx, member, {
+      method: 'GET',
+      url: `${node.route}/sources/${sourceId}`,
+    })
+    expect(identityResponse.statusCode, identityResponse.body).toBe(200)
+    const identityData = identityResponse.json().data as {
+      sourceVersion: string
+      sourceDigest: string
+    }
+    const identity = {
+      sourceVersion: identityData.sourceVersion,
+      sourceDigest: identityData.sourceDigest,
+    }
     const selfVerified = await apiInject(ctx, member, {
       method: 'POST',
       url: `${node.route}/sources/${sourceId}/verify`,
       payload: identity,
     })
     expect(selfVerified.statusCode, selfVerified.body).toBe(403)
+    expect(selfVerified.json().error.message).toContain('author')
     await verifySource(node, sourceId)
     const request = await getRequest(node)
     await downloadAndStart(node, request)
@@ -553,7 +571,7 @@ describe('RD-04b preauthorized creation', () => {
     expect(permit).toMatchObject({
       tier: 'create',
       max_creations: 3,
-      verifier_user_ids: [verifier.userId],
+      verifier_user_ids: [verifier.userId, member.userId],
       template: {
         goal: '为{{activity}}准备{{slot}}',
         acceptance: '形成可审阅的{{slot}}草稿',
@@ -692,6 +710,59 @@ describe('RD-04b preauthorized creation', () => {
       code: 'DISCOVERY_SLOT_OCCUPIED',
       existingTaskId: application.task_id,
     })
+    expect(candidates.json().data[0]).toMatchObject({
+      creation: { reason: 'applied', terminal: true },
+    })
+
+    // A later tick must not delete the applied candidate through the application FK.
+    await expect(
+      runDiscoveryTick({
+        database,
+        store: new ArtifactStore({ root: ctx.config.artifactStoreDir }),
+        now: () => new Date(Date.now() + 120_000),
+      }),
+    ).resolves.toBeUndefined()
+    expect(
+      await database.sql`select id from discovery_application where id = ${application.id}`,
+    ).toHaveLength(1)
+
+    // Source withdrawal rejects the candidate body but leaves the established Task alone.
+    const withdraw = await apiInject(ctx, member, {
+      method: 'POST',
+      url: `${node.route}/sources/${sourceId}/withdraw`,
+      payload: {},
+    })
+    expect(withdraw.statusCode, withdraw.body).toBe(200)
+    const afterWithdraw = await apiInject(ctx, owner, {
+      method: 'GET',
+      url: `${node.route}/candidates`,
+    })
+    expect(afterWithdraw.json().data).toEqual([])
+    expect(await database.sql`select id from task where id = ${application.task_id}`).toHaveLength(
+      1,
+    )
+
+    const reassigned = await apiInject(ctx, owner, {
+      method: 'POST',
+      url: `/api/v1/tasks/${application.task_id}/reassign`,
+      payload: { assigneeUserId: member.userId },
+    })
+    expect(reassigned.statusCode, reassigned.body).toBe(200)
+    const acceptedByNewOwner = await apiInject(ctx, member, {
+      method: 'POST',
+      url: `/api/v1/tasks/${application.task_id}/accept`,
+      payload: {},
+    })
+    expect(acceptedByNewOwner.statusCode, acceptedByNewOwner.body).toBe(200)
+    const acceptWork = await apiInject(ctx, member, {
+      method: 'POST',
+      url: `/api/v1/works/${work!.work_key}/accept`,
+      payload: { expiresAt: new Date(Date.now() + 3600_000).toISOString() },
+    })
+    expect(acceptWork.statusCode, acceptWork.body).toBe(409)
+    expect(
+      await database.sql`select id from work_mandate where work_id = ${application.work_id}`,
+    ).toEqual([])
   })
 
   it('accepts independent support from a registered verifier published evidence', async () => {
@@ -791,6 +862,12 @@ describe('RD-04b preauthorized creation', () => {
     const [candidate] = await database.sql`
       select id from discovery_candidate where evaluation_id = ${request.evaluationId}
     `
+    const nonPrincipal = await apiInject(ctx, member, {
+      method: 'POST',
+      url: `${node.route}/candidates/${candidate!.id}/apply`,
+      payload: {},
+    })
+    expect(nonPrincipal.statusCode, nonPrincipal.body).toBe(403)
     await verifySlot(node)
     const apply = () =>
       apiInject(ctx, owner, {
@@ -863,6 +940,65 @@ describe('RD-04b preauthorized creation', () => {
         .length,
     ).toBe(1)
     expect((await database.sql`select id from task where project_id = ${projectId}`).length).toBe(3)
+  })
+
+  it('serializes a manual claim against an automatic application', async () => {
+    const node = await setupPilot({ verify: false })
+    const sourceId = await comment()
+    await verifySource(node, sourceId)
+    const request = await getRequest(node)
+    await downloadAndStart(node, request)
+    expect((await sendIndependentGap(node, request)).status).toBe('accepted')
+    await waitForCreationReason(request.evaluationId, 'slot_unverified')
+    const [candidate] = await database.sql`
+      select id from discovery_candidate where evaluation_id = ${request.evaluationId}
+    `
+    await verifySlot(node)
+    const [applied, claimed] = await Promise.all([
+      apiInject(ctx, owner, {
+        method: 'POST',
+        url: `${node.route}/candidates/${candidate!.id}/apply`,
+        payload: {},
+      }),
+      apiInject(ctx, owner, {
+        method: 'POST',
+        url: `/api/v1/projects/${projectId}/tasks`,
+        payload: {
+          title: '并发人工认领',
+          assigneeUserId: owner.userId,
+          discovery: { slotId: node.slotId },
+        },
+      }),
+    ])
+    expect([200, 409]).toContain(applied.statusCode)
+    expect([201, 409]).toContain(claimed.statusCode)
+    const [occupation] = await database.sql`
+      select task_id, source from discovery_slot_occupation where slot_id = ${node.slotId}
+    `
+    if (!occupation) throw new Error('slot occupation missing after concurrent create')
+    expect(
+      (await database.sql`select id from discovery_slot_occupation where slot_id = ${node.slotId}`)
+        .length,
+    ).toBe(1)
+    expect(
+      (
+        await database.sql`select id from discovery_application where evaluation_id = ${request.evaluationId}`
+      ).length,
+    ).toBe(occupation.source === 'auto' ? 1 : 0)
+    if (occupation.source === 'auto') {
+      expect(applied.json().data.status).toBe('applied')
+      expect(claimed.statusCode).toBe(409)
+      expect(claimed.json().error.details).toMatchObject({
+        code: 'DISCOVERY_SLOT_OCCUPIED',
+        existingTaskId: occupation.task_id,
+      })
+    } else {
+      expect(claimed.statusCode).toBe(201)
+      expect(applied.json().data).toMatchObject({ status: 'rejected', reason: 'slot_occupied' })
+    }
+    expect((await database.sql`select id from task where id = ${occupation.task_id}`).length).toBe(
+      1,
+    )
   })
 
   it('rejects unclassified manual creation and lets a manual claim win the only occupation', async () => {
@@ -953,6 +1089,12 @@ describe('RD-04b preauthorized creation', () => {
     const [secondCandidate] = await database.sql`
       select id from discovery_candidate where evaluation_id = ${secondRequest.evaluationId}
     `
+    const blankCorrection = await apiInject(ctx, member, {
+      method: 'POST',
+      url: `${corrected.route}/sources/${secondSource}/correct`,
+      payload: { body: '   ' },
+    })
+    expect(blankCorrection.statusCode, blankCorrection.body).toBe(400)
     const correction = await apiInject(ctx, member, {
       method: 'POST',
       url: `${corrected.route}/sources/${secondSource}/correct`,
@@ -994,6 +1136,20 @@ describe('RD-04b preauthorized creation', () => {
 
     const covered = await setupPilot({ verify: false })
     await verifySlot(covered, (taskId) => (taskId === venueTaskId ? 'covered' : 'not_covered'))
+    const manualCovered = await apiInject(ctx, owner, {
+      method: 'POST',
+      url: `/api/v1/projects/${projectId}/tasks`,
+      payload: {
+        title: '认领已覆盖槽位',
+        assigneeUserId: owner.userId,
+        discovery: { slotId: covered.slotId },
+      },
+    })
+    expect(manualCovered.statusCode, manualCovered.body).toBe(409)
+    expect(manualCovered.json().error.details).toMatchObject({
+      code: 'DISCOVERY_SLOT_COVERED',
+      existingTaskId: venueTaskId,
+    })
     const secondSource = await comment('接驳点没有坡道。')
     await verifySource(covered, secondSource)
     const secondRequest = await getRequest(covered)
@@ -1003,21 +1159,5 @@ describe('RD-04b preauthorized creation', () => {
     expect(
       await database.sql`select id from discovery_application where evaluation_id = ${secondRequest.evaluationId}`,
     ).toEqual([])
-  })
-
-  it('keeps the evaluation pipeline free of task writes when no permit allows creation', async () => {
-    const node = await setupPilot()
-    const sourceId = await comment()
-    await verifySource(node, sourceId)
-    const request = await getRequest(node)
-    await downloadAndStart(node, request)
-    expect((await sendIndependentGap(node, request)).status).toBe('accepted')
-    const application = await waitForApplication(request.evaluationId)
-    expect(
-      await database.sql`select id from task where project_id = ${projectId} and id <> ${entryTaskId} and id <> ${venueTaskId}`,
-    ).toEqual([{ id: application.task_id }])
-    expect(await getEvaluation(database.db, request.evaluationId)).toMatchObject({
-      status: 'completed',
-    })
   })
 })

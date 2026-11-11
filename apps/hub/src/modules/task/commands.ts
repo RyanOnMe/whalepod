@@ -9,6 +9,8 @@ import {
   expireWorkSubscriptionsAndRetract,
   findCommandReceipt,
   findDiscoverySlot,
+  getActiveDiscoveryPermit,
+  getCurrentSlotVerification,
   getCurrentWorkByTask,
   getDiscoverySlotForUpdate,
   getDiscoverySlotOccupation,
@@ -33,6 +35,7 @@ import {
   updateWork,
 } from '@whalepod/db'
 import type { DiscoveryTaskClassification } from '@whalepod/protocol'
+import { loadDiscoveryCatalog } from '../discovery/catalog.js'
 import { cancelRunInTransaction } from '../run/cancel.js'
 import { available, discoveryConfig, classifyComment } from '../discovery/admission.js'
 import { admitTaskMessageEntry, workEntryDeps } from '../work/entry.js'
@@ -253,6 +256,33 @@ export async function createTask(
           code: 'DISCOVERY_SLOT_OCCUPIED',
           existingTaskId: occupation.taskId,
         })
+      }
+      if (cfg !== undefined && available(cfg, now)) {
+        const permit = await getActiveDiscoveryPermit(
+          tx,
+          projectId,
+          cfg.settings.principalUserId,
+          cfg.version,
+        )
+        if (permit) {
+          const verification = await getCurrentSlotVerification(tx, slot.id)
+          const catalog = await loadDiscoveryCatalog(tx, projectId)
+          if (
+            verification &&
+            verification.permitId === permit.id &&
+            verification.generation === slot.generation &&
+            verification.catalogDigest === catalog.digest
+          ) {
+            const covered = verification.entries.find((entry) => entry.coverage === 'covered')
+            if (covered) {
+              // ADR §4：认领已有承担/已被成果覆盖的槽位 → 返回现有任务或冲突，不再创建。
+              throw new ApiError(409, 'CONFLICT', 'discovery slot is already covered', {
+                code: 'DISCOVERY_SLOT_COVERED',
+                existingTaskId: covered.taskId,
+              })
+            }
+          }
+        }
       }
       claimedSlotId = slot.id
     }

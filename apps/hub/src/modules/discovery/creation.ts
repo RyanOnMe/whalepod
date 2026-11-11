@@ -12,7 +12,7 @@ import { eq } from 'drizzle-orm'
 import {
   advanceDiscoveryCatalogGeneration,
   appendTeamEvent,
-  countDiscoveryApplicationsForPermit,
+  countDiscoveryApplicationsForSlot,
   getActiveDiscoveryPermit,
   getCurrentSlotVerification,
   getCoordinatorStateForUpdate,
@@ -50,7 +50,13 @@ import { TaskSpecContentSchema, type DiscoverySlotVerificationRequest } from '@w
 import type { RouterDeps } from '../router/service.js'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
-import { available, discoveryAdmission, discoveryConfig, templateFor } from './admission.js'
+import {
+  available,
+  discoveryAdmission,
+  discoveryConfig,
+  requeueDiscoveryAdmission,
+  templateDigestOf,
+} from './admission.js'
 import { loadDiscoveryCatalog, renderDiscoveryTemplate } from './catalog.js'
 import { loadDiscoveryInput } from './input.js'
 
@@ -257,6 +263,7 @@ export async function verifyDiscoverySlot(
         'every current project task must be classified exactly once',
       )
     const coveredCount = input.entries.filter((entry) => entry.coverage === 'covered').length
+    const occupation = await getDiscoverySlotOccupation(tx, slot.id)
     const row = await upsertDiscoverySlotVerification(tx, {
       id: uuidv7(now.getTime()),
       slotId: slot.id,
@@ -277,7 +284,7 @@ export async function verifyDiscoverySlot(
       generation: row.generation,
       catalogDigest: row.catalogDigest,
       verifiedAt: row.verifiedAt.toISOString(),
-      eligibleEmpty: coveredCount === 0,
+      eligibleEmpty: coveredCount === 0 && occupation === undefined,
       coveredCount,
     }
   })
@@ -334,15 +341,24 @@ export async function getDiscoverySlotView(
     if (!slot || slot.projectId !== projectId)
       throw new ApiError(404, 'NOT_FOUND', 'discovery slot not found')
     const cfg = await discoveryConfig(tx, projectId)
-    const permit = cfg
-      ? await getActiveDiscoveryPermit(tx, projectId, cfg.settings.principalUserId, cfg.version)
-      : undefined
+    if (!available(cfg, nowOf(deps)))
+      throw new ApiError(404, 'NOT_FOUND', 'discovery is not active')
+    if (cfg.settings.principalUserId !== actorUserId)
+      throw new ApiError(403, 'FORBIDDEN', 'only the named slot principal can read this catalog')
+    const permit = await getActiveDiscoveryPermit(
+      tx,
+      projectId,
+      cfg.settings.principalUserId,
+      cfg.version,
+    )
     const catalog = await loadDiscoveryCatalog(tx, projectId)
     const verification = await getCurrentSlotVerification(tx, slot.id)
     const occupation = await getDiscoverySlotOccupation(tx, slot.id)
     const current =
+      permit !== undefined &&
       verification !== undefined &&
       verification.generation === slot.generation &&
+      verification.permitId === permit.id &&
       verification.catalogDigest === catalog.digest
     return {
       slotId: slot.id,
@@ -411,12 +427,10 @@ export async function applyDiscoveryCandidate(
   const result = await deps.database.transaction(async (tx) => {
     let candidate = await getDiscoveryCandidateById(tx, candidateId)
     if (!candidate) return outcome('skipped', 'candidate_missing')
-    const project = await lockProject(tx, candidate.projectId)
     const now = nowOf(deps)
-    if (!project || project.archivedAt !== null)
-      return markAndReturn(tx, candidate.id, rejectReason('project_archived', true), now)
-    // Lock order matches comment admission / configure: entry Task → coordinator → discovery rows.
-    // Project is already held (same as createTask), so manual and automatic creation serialize here.
+    // Canonical lock order: entry Task → coordinator → Project → discovery rows.
+    // Router input uses Task → coordinator → Project FOR SHARE; taking Project first here
+    // would invert that order and deadlock with the Router tick.
     const admission = await discoveryAdmission(tx, candidate.sourceId)
     if (!admission)
       return markAndReturn(tx, candidate.id, rejectReason('source_missing', true), now)
@@ -424,6 +438,9 @@ export async function applyDiscoveryCandidate(
     if (!entryTask)
       return markAndReturn(tx, candidate.id, rejectReason('source_missing', true), now)
     await getCoordinatorStateForUpdate(tx, candidate.projectId)
+    const project = await lockProject(tx, candidate.projectId)
+    if (!project || project.archivedAt !== null)
+      return markAndReturn(tx, candidate.id, rejectReason('project_archived', true), now)
     // Re-read under lock: revoke/correction/cleanup may have deleted the row while we queued.
     candidate = await getDiscoveryCandidateForUpdate(tx, candidateId)
     if (!candidate) return outcome('skipped', 'candidate_missing')
@@ -472,7 +489,7 @@ export async function applyDiscoveryCandidate(
       return markAndReturn(tx, candidate.id, rejectReason('slot_changed', true), now)
     if (await getDiscoverySlotOccupation(tx, slot.id))
       return markAndReturn(tx, candidate.id, rejectReason('slot_occupied', true), now)
-    if ((await countDiscoveryApplicationsForPermit(tx, permit.id)) >= permit.maxCreations)
+    if ((await countDiscoveryApplicationsForSlot(tx, slot.id)) >= permit.maxCreations)
       return markAndReturn(tx, candidate.id, rejectReason('creation_quota_exhausted', true), now)
 
     const catalog = await loadDiscoveryCatalog(tx, candidate.projectId)
@@ -499,8 +516,11 @@ export async function applyDiscoveryCandidate(
     if (
       input.evaluationDigest !== evaluation.evaluationDigest ||
       input.admission.sourceVersion !== candidate.sourceVersion
-    )
+    ) {
+      // ADR §4：目录水位变化时不提交，先重评；把来源放回待评估队列。
+      await requeueDiscoveryAdmission(tx, candidate.sourceId, now)
       return markAndReturn(tx, candidate.id, rejectReason('stale_evaluation', true), now)
+    }
     const sourceEntry = input.manifest.find((entry) => entry.kind === 'source')
     const slotEntry = input.manifest.find((entry) => entry.kind === 'slot')
     if (
@@ -517,7 +537,10 @@ export async function applyDiscoveryCandidate(
     if (typeof fact === 'string')
       return markAndReturn(tx, candidate.id, rejectReason(fact, true), now)
 
-    const template = templateFor(cfg.settings)
+    // Materialize the template the principal actually confirmed, not the live config row.
+    const template = TaskSpecContentSchema.safeParse(permit.template)
+    if (!template.success || templateDigestOf(template.data) !== permit.templateDigest)
+      return markAndReturn(tx, candidate.id, rejectReason('template_invalid', true), now)
     const render = (text: string) =>
       renderDiscoveryTemplate(text, {
         activity: slot.activity,
@@ -525,13 +548,17 @@ export async function applyDiscoveryCandidate(
         sourceId: candidate.sourceId,
         sourceVersion: input.admission.sourceVersion,
       })
-    const content = TaskSpecContentSchema.parse({
-      goal: render(template.goal),
-      constraints: render(template.constraints),
-      acceptance: render(template.acceptance),
-      openQuestions: render(template.openQuestions),
+    const rendered = TaskSpecContentSchema.safeParse({
+      goal: render(template.data.goal),
+      constraints: render(template.data.constraints),
+      acceptance: render(template.data.acceptance),
+      openQuestions: render(template.data.openQuestions),
     })
-    if (content.goal.trim() === '' || content.acceptance.trim() === '')
+    if (!rendered.success)
+      return markAndReturn(tx, candidate.id, rejectReason('template_invalid', true), now)
+    const content = rendered.data
+    const workGoal = content.goal.slice(0, 1000)
+    if (content.goal.trim() === '' || content.acceptance.trim() === '' || workGoal.trim() === '')
       return markAndReturn(tx, candidate.id, rejectReason('template_invalid', true), now)
 
     const taskId = uuidv7(now.getTime())
@@ -563,7 +590,7 @@ export async function applyDiscoveryCandidate(
       taskId,
       workKey,
       humanOwnerUserId: permit.principalUserId,
-      goal: content.goal.slice(0, 1000),
+      goal: workGoal,
       state: 'active',
       createdAt: now,
       updatedAt: now,
@@ -668,7 +695,16 @@ export async function applyPendingDiscoveryCandidates(deps: CreationDeps, limit 
   const candidates = await listCandidatesAwaitingCreation(deps.database.db, now, retryBefore, limit)
   const results: ApplyOutcome[] = []
   for (const candidate of candidates) {
-    results.push(await applyDiscoveryCandidate(deps, candidate.id))
+    try {
+      results.push(await applyDiscoveryCandidate(deps, candidate.id))
+    } catch {
+      // One poison candidate must not stop retries for the rest of the project.
+      deps.log?.({
+        component: 'hub.discovery',
+        action: 'discovery.application_failed',
+        candidateId: candidate.id,
+      })
+    }
   }
   return results
 }

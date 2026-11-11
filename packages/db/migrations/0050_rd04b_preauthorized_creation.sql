@@ -35,6 +35,9 @@ set settings = settings || jsonb_build_object(
 )
 where not (settings ? 'tier');
 
+-- 目录水位变化后的重评不改变原始准入时间；队列 TTL 从 requeued_at 重新起算。
+alter table discovery_admission add column requeued_at timestamptz;
+
 create table discovery_slot (
   id uuid primary key,
   project_id uuid not null references project (id),

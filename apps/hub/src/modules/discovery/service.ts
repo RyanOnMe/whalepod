@@ -198,7 +198,8 @@ async function dispatch(deps: RouterDeps, sourceId: string) {
       return
     }
     if (input.admission.processedAt !== null) return
-    const expires = input.admission.createdAt.getTime() + QUEUE_TTL_MS
+    const queuedAt = input.admission.requeuedAt ?? input.admission.createdAt
+    const expires = queuedAt.getTime() + QUEUE_TTL_MS
     if (expires <= now.getTime()) {
       await tx
         .update(a)
@@ -249,7 +250,7 @@ async function dispatch(deps: RouterDeps, sourceId: string) {
       rulesVersion: DISCOVERY_RULES_VERSION,
       processorVersion: DISCOVERY_PROMPT_VERSION,
       status: 'queued',
-      queuedAt: input.admission.createdAt,
+      queuedAt,
       queueExpiresAt: new Date(expires),
     })
     const reserved =
@@ -649,6 +650,14 @@ export async function listDiscoveryCandidates(
         }[]
         let omissions: string[]
         if (application !== undefined) {
+          // ADR §1：来源撤回/更正后同步拒绝候选正文；已成立的 Task 另行留给真人处理。
+          const admission = await discoveryAdmission(tx, candidate.sourceId)
+          if (
+            !admission ||
+            admission.withdrawnAt !== null ||
+            admission.sourceVersion !== candidate.sourceVersion
+          )
+            continue
           // An applied candidate predates the task it created; rebuilding would compare
           // against a catalog that now includes that task. Use the frozen evaluation input.
           const frozen = evaluation.inputManifest['entries']
@@ -701,6 +710,11 @@ export async function listDiscoveryCandidates(
                 appliedAt: application.appliedAt.toISOString(),
               }
             : null,
+          creation: {
+            reason: candidate.creationReason,
+            terminal: candidate.creationTerminal,
+            checkedAt: candidate.creationCheckedAt?.toISOString() ?? null,
+          },
           createdAt: candidate.createdAt.toISOString(),
           expiresAt: candidate.expiresAt.toISOString(),
         })
@@ -813,20 +827,41 @@ async function cleanDiscoveryCandidates(deps: RouterDeps, now: Date) {
   const staleChecks = await deps.database.db
     .select({ id: t.id, evaluationId: t.evaluationId })
     .from(t)
-    .where(lte(t.checkedAt, new Date(now.getTime() - 60_000)))
+    .where(
+      and(
+        lte(t.checkedAt, new Date(now.getTime() - 60_000)),
+        // Applied candidates are audit history and are referenced by discovery_application.
+        // Rebuilding them would also compare against a catalog that now includes their task.
+        notExists(
+          deps.database.db
+            .select({ one: schema.discoveryApplications.id })
+            .from(schema.discoveryApplications)
+            .where(eq(schema.discoveryApplications.candidateId, t.id)),
+        ),
+      ),
+    )
     .orderBy(asc(t.checkedAt), asc(t.id))
     .limit(10)
   for (const candidate of staleChecks) {
-    await deps.database.transaction(async (tx) => {
-      const evaluation = await getEvaluation(tx, candidate.evaluationId)
-      try {
-        if (!evaluation) throw unavailable()
-        await rebuild(tx, evaluation, deps)
-        await tx.update(t).set({ checkedAt: now }).where(eq(t.id, candidate.id))
-      } catch (error) {
-        if (!(error instanceof ApiError)) throw error
-        await tx.delete(t).where(eq(t.id, candidate.id))
-      }
-    })
+    try {
+      await deps.database.transaction(async (tx) => {
+        const evaluation = await getEvaluation(tx, candidate.evaluationId)
+        try {
+          if (!evaluation) throw unavailable()
+          await rebuild(tx, evaluation, deps)
+          await tx.update(t).set({ checkedAt: now }).where(eq(t.id, candidate.id))
+        } catch (error) {
+          if (!(error instanceof ApiError)) throw error
+          await tx.delete(t).where(eq(t.id, candidate.id))
+        }
+      })
+    } catch {
+      // One poison row must not stop the rest of the privacy sweep or the tick.
+      deps.log?.({
+        component: 'hub.discovery',
+        action: 'discovery.candidate_cleanup_failed',
+        candidateId: candidate.id,
+      })
+    }
   }
 }
