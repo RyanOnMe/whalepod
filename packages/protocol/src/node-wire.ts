@@ -375,18 +375,28 @@ export const CoordinationResultAckFrameSchema = envelope(
   CoordinationResultAckPayloadSchema,
 )
 
-/** Private execution check result; never carries model output, filenames, or diagnostics. */
+const managedDraftOutcomeBinding = {
+  commandId: z.uuid(),
+  runId: z.uuid(),
+  manifestDigest: Sha256DigestSchema,
+}
+
+/** Private execution result; never carries model output, filenames, or diagnostics. */
 export const ManagedDraftOutcomeSchema = envelope(
   'managed_draft.outcome',
-  z
-    .strictObject({
-      commandId: z.uuid(),
-      runId: z.uuid(),
-      manifestDigest: Sha256DigestSchema,
-      outcome: z.enum(['completed', 'failed']),
-      attemptId: z.uuid().optional(),
-    })
-    .refine((value) => value.outcome !== 'completed' || value.attemptId !== undefined),
+  z.discriminatedUnion('outcome', [
+    z.strictObject({
+      ...managedDraftOutcomeBinding,
+      outcome: z.literal('completed'),
+      attemptId: z.uuid(),
+      artifactId: z.uuid(),
+      verifiedUploadReceiptId: z.uuid(),
+    }),
+    z.strictObject({
+      ...managedDraftOutcomeBinding,
+      outcome: z.literal('failed'),
+    }),
+  ]),
 )
 
 export const NodeUpstreamSchema = z.discriminatedUnion('type', [

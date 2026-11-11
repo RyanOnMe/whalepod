@@ -411,8 +411,11 @@ export async function submitTaskForReview(
       throw new ApiError(409, 'CONFLICT', 'task has no published artifact to review')
     }
     const next = transitionTask({ status: task.status }, { type: 'review_submitted' })
-    const updated = await setTaskStatus(tx, taskId, next.status)
+    const now = new Date()
+    const updated = await setTaskStatus(tx, taskId, next.status, now)
     if (updated === undefined) throw new Error('task vanished in its own transaction')
+    // An ordinary revision Run can return the Task to in_progress; old draft authority must not revive.
+    await revokeManagedDraftSourcesForTask(tx, taskId, now)
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
     return toTaskView(updated)
   })

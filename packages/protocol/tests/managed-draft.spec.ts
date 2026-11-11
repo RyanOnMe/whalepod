@@ -4,7 +4,9 @@ import {
   ManagedDraftSourceManifestSchema,
   ManagedDraftModelAttemptSchema,
   ManagedDraftCandidateProofSchema,
+  ManagedDraftCandidateUploadSchema,
 } from '../src/managed-draft.js'
+import { ManagedDraftOutcomeSchema } from '../src/node-wire.js'
 
 const sha256 = 'a'.repeat(64)
 const ids = {
@@ -30,7 +32,7 @@ const sourceManifest = {
   expiresAt: '2026-11-09T15:00:00Z',
 }
 
-describe('RD-03c3a source wire contracts (not enabled for dispatch)', () => {
+describe('RD-03c3a source and trusted candidate wire contracts', () => {
   it('pins one source and a versioned fixed instruction; never accepts private bytes on the control plane', () => {
     expect(ManagedDraftSourceManifestSchema.parse(sourceManifest)).toEqual(sourceManifest)
     for (const field of [
@@ -107,5 +109,42 @@ describe('RD-03c3a source wire contracts (not enabled for dispatch)', () => {
         verifiedUploadReceiptId: proof.fileWriteReceiptId,
       }).success,
     ).toBe(false)
+  })
+
+  it('requires the v2 output receipt to complete and does not accept content on the control lane', () => {
+    const binding = { runId: ids.runId, manifestDigest: sha256, commandId: randomUUID() }
+    const upload = {
+      commandId: binding.commandId,
+      manifestDigest: binding.manifestDigest,
+      modelAttemptId: randomUUID(),
+      fileWriteReceiptId: randomUUID(),
+      sha256,
+      byteSize: 16,
+    }
+    expect(ManagedDraftCandidateUploadSchema.parse(upload)).toEqual(upload)
+    for (const field of ['title', 'path', 'bytes'])
+      expect(
+        ManagedDraftCandidateUploadSchema.safeParse({ ...upload, [field]: 'draft' }).success,
+      ).toBe(false)
+
+    const result = ManagedDraftOutcomeSchema.shape.payload
+    const attemptId = upload.modelAttemptId
+    const artifactId = randomUUID()
+    const verifiedUploadReceiptId = randomUUID()
+    expect(result.safeParse({ ...binding, outcome: 'failed' }).success).toBe(true)
+    expect(result.safeParse({ ...binding, outcome: 'failed', artifactId }).success).toBe(false)
+    expect(result.safeParse({ ...binding, outcome: 'completed', attemptId }).success).toBe(false)
+    expect(
+      result.safeParse({ ...binding, outcome: 'completed', attemptId, artifactId }).success,
+    ).toBe(false)
+    expect(
+      result.safeParse({
+        ...binding,
+        outcome: 'completed',
+        attemptId,
+        artifactId,
+        verifiedUploadReceiptId,
+      }).success,
+    ).toBe(true)
   })
 })

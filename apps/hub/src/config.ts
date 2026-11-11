@@ -117,6 +117,7 @@ export interface HubConfig {
   readonly managedDraftHost?: ManagedDraftHost | undefined
   readonly managedDraftModelRoute?: ManagedSourceModelRoute | undefined
   readonly managedDraftLoopbackEndpoint?: string | undefined
+  readonly managedDraftMemberReviewEnabled?: boolean | undefined
 }
 
 export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
@@ -158,6 +159,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubConfig {
     managedDraftHost: parseManagedDraftHost(env.WHALEPOD_MANAGED_DRAFT_HOST, publicOrigin),
     managedDraftModelRoute: parseManagedDraftModelRoute(env.WHALEPOD_MANAGED_DRAFT_MODEL_ROUTE),
     managedDraftLoopbackEndpoint: env.WHALEPOD_MANAGED_DRAFT_LOOPBACK_ENDPOINT,
+    managedDraftMemberReviewEnabled: env.WHALEPOD_MANAGED_DRAFT_MEMBER_REVIEW === '1',
     contextReceiptWatchdogMs: parsePositiveNumber(env.WHALEPOD_CONTEXT_RECEIPT_WATCHDOG_MS),
   }
 }

@@ -24,7 +24,8 @@
 | node.gateway / node.workspace / node.supervisor | Node 结构化日志、本地 spool、SQLite registry；`run.mandate_invalidated` 的转发/重复 ack/终态 ack-only 记 `component=node.run_manager`（runId/reason，无正文）；#501 并发重复 `run.start` 按 runId 串行化并回放首次结果，判据看 `command.ack`（含拒绝回放）、`active_runtime` 行身份/pid、`supervisor.isActive` 与 `run.snapshot`（无 lost），见 [P1-501 验收](./2026-11-08-p1-501-duplicate-run-start-acceptance.md) | Node 本地状态目录（`~/.whalepod-node/`；#133 定名后按本行预留调整改名，旧 `~/.project311-node/` 不再写入）；诊断走本地 Unix socket | 待 P1-09/12；RD-03c2 命令路径生效；#501 串行化生效 |
 | runtime.bridge / dsh.agent | Runtime stderr 尾部（≤8 KiB，脱敏）、NDJSON 协议帧 | Node 暂存；owner-only | 待 P1-11/12 |
 | artifact.store | 内容寻址 blob、candidate 元数据 | Hub `blobs/sha256/ab/<digest>` + DB | 待 P1-15 |
-| hub.managed-draft / node.managed_draft | 专用设备、密封清单、冻结来源读取和本机模型一次性裁决；撤销先提交时零模型 POST。正式执行固定拒绝，旧 Run 标记不可补写 | 生产 HTTP、实际 WebSocket、DB `dispatch_intent` / `run.managed_draft_source_digest` / `dispatch_outbox` / `managed_draft_execution`；[复跑与证据边界](./rd03c3a-source-gates-acceptance.md) | #533；仅回环模型，不授予阅稿权限 |
+| hub.managed-draft / node.managed_draft | 专用设备、冻结来源读取、本机模型一次性裁决和可信候选上传；撤销先提交时零模型 POST，旧 Run 标记不可补写 | 生产 HTTP、实际 WebSocket、DB `dispatch_intent` / `run.managed_draft_source_digest` / `dispatch_outbox` / `managed_draft_execution` / `managed_draft_candidate`；[复跑与证据边界](./rd03c3a-source-gates-acceptance.md) | #533；仅回环模型，正式执行固定拒绝 |
+| hub.draft-share | A 核对固定候选并发出邀请，指定 B 接受后读取；普通读面不可见，撤销后禁止新读取 | 真实候选；生产 HTTP、真实 PostgreSQL `draft_share_grant` / `draft_share_read_admission`；[复跑与证据边界](./rd03c3a-source-gates-acceptance.md) | #533；默认关闭，显式配置的本机阅稿验证 |
 
 ## 一把捞齐
 

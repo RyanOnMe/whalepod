@@ -122,11 +122,11 @@ describe.skipIf(!macSandboxAvailable())('RD-03c3a packaged managed source worker
       const launchEntry = require.resolve('@whalepod/runtime/managed-draft-host')
       await rm(f.sourceFile)
       await writeFile(f.sourceFile, '', { mode: 0o600 })
-      const child = spawn(process.execPath, [launchEntry, f.sourceFile, f.outputDir], {
-        env: {},
-        cwd: f.root,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      })
+      const child = spawn(
+        process.execPath,
+        [launchEntry, f.sourceFile, f.outputDir, f.runId, f.manifestDigest],
+        { env: {}, cwd: f.root, stdio: ['pipe', 'pipe', 'pipe'] },
+      )
       const exited = new Promise<number | null>((resolve) => child.once('close', resolve))
       child.stderr.resume()
       const lines = createInterface({ input: child.stdout })
@@ -159,9 +159,15 @@ describe.skipIf(!macSandboxAvailable())('RD-03c3a packaged managed source worker
             text: output,
           }) + '\n',
         )
-        expect(await receive()).toMatchObject({
-          kind: 'candidate',
+        expect(await receive()).toEqual({
+          kind: 'candidate.verified',
+          runId: f.runId,
+          manifestDigest: f.manifestDigest,
           modelAttemptId: model.request.attemptId,
+          fileWriteReceiptId: expect.stringMatching(/^[a-f0-9-]+$/),
+          sha256: createHash('sha256').update(output).digest('hex'),
+          byteSize: Buffer.byteLength(output),
+          bodyBase64url: Buffer.from(output).toString('base64url'),
         })
         expect((await iterator.next()).done).toBe(true)
         expect(await exited).toBe(0)

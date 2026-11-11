@@ -46,9 +46,11 @@ import { registerWorkspaceRoutes } from './modules/device/workspace-routes.js'
 import { registerNodeWebsocket } from './modules/device/node-websocket.js'
 import { sha256Hex } from './modules/coordination/digest.js'
 import { ManagedDraftExecution } from './modules/draft-share/execution.js'
+import { managedDraftCandidateStore } from './modules/draft-share/candidate-store.js'
 import { registerManagedDraftExecutionRoutes } from './modules/draft-share/execution-routes.js'
 import { parseManagedDraftLoopbackEndpoint } from './modules/draft-share/loopback-broker.js'
 import { ManagedDraftTransport } from './modules/draft-share/dispatch.js'
+import { activateManagedDraftModelPolicy } from './modules/draft-share/source-registry.js'
 import { registerManagedDraftSourceRoutes } from './modules/draft-share/routes.js'
 import { nodeConnections } from './modules/device/connection-registry.js'
 import { RunOrchestrator } from './modules/run/index.js'
@@ -60,6 +62,8 @@ import { registerRealtimeRoutes } from './modules/realtime/routes.js'
 // P1-15：内容寻址 Artifact Store 与 HTTP 面。
 import { ArtifactStore } from './modules/artifact/store.js'
 import { registerArtifactRoutes } from './modules/artifact/routes.js'
+import { DraftShareGrants } from './modules/draft-share/grants.js'
+import { registerDraftShareGrantRoutes } from './modules/draft-share/grant-routes.js'
 import { registerReviewRoutes } from './modules/review/routes.js'
 
 // P1-16：server 组合根把 orchestrator 的内存心跳投影喂给租约 reconcile
@@ -256,7 +260,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       ? undefined
       : parseManagedDraftLoopbackEndpoint(config.managedDraftLoopbackEndpoint)
   const managedDraftRequiresTls = new URL(config.publicOrigin).protocol === 'https:'
-  const managedDraftPlacement =
+  const configuredManagedDraftPlacement =
     config.managedDraftHost !== undefined && config.managedDraftModelRoute !== undefined
       ? {
           host: config.managedDraftHost,
@@ -268,14 +272,22 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
           },
         }
       : undefined
-  if (loopbackEndpoint !== undefined && managedDraftPlacement === undefined)
+  if (loopbackEndpoint !== undefined && configuredManagedDraftPlacement === undefined)
     throw new Error('managed draft loopback requires dedicated host and model route provisioning')
+  const managedDraftPlacement =
+    configuredManagedDraftPlacement !== undefined &&
+    (await activateManagedDraftModelPolicy(database, configuredManagedDraftPlacement.modelRoute))
+      ? configuredManagedDraftPlacement
+      : undefined
+  if (configuredManagedDraftPlacement !== undefined && managedDraftPlacement === undefined)
+    app.log.warn({ component: 'hub.managed-draft' }, 'managed draft model policy is not current')
   const managedDraftTransport = new ManagedDraftTransport(database, outbox, managedDraftPlacement)
   const managedDraftExecution = new ManagedDraftExecution(
     database,
     outbox,
     managedDraftPlacement,
     loopbackEndpoint,
+    managedDraftCandidateStore(config.artifactStoreDir),
   )
   app.decorate('managedDraftTransport', managedDraftTransport)
   app.decorate('managedDraftExecution', managedDraftExecution)
@@ -374,7 +386,8 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       })
       registerDispatchRoutes(api, {
         managedDraftPlacement,
-        managedDraftExecutionCheck: loopbackEndpoint !== undefined,
+        managedDraftExecutionCheck:
+          managedDraftPlacement !== undefined && loopbackEndpoint !== undefined,
         database,
         requireActor,
         orchestrator,
@@ -404,6 +417,20 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       // P1-15：Artifact 面——Node 上传/manifest/受控下载 + owner 发布 + 内容下载。
       // Store 根来自配置（生产 data/artifact-store，测试注入临时目录）。
       const artifactStore = new ArtifactStore({ root: config.artifactStoreDir })
+      if (
+        config.managedDraftMemberReviewEnabled === true &&
+        managedDraftPlacement !== undefined &&
+        loopbackEndpoint !== undefined
+      ) {
+        registerDraftShareGrantRoutes(api, {
+          requireActor,
+          grants: new DraftShareGrants(
+            database,
+            managedDraftCandidateStore(config.artifactStoreDir),
+            managedDraftPlacement.modelRoute,
+          ),
+        })
+      }
       registerArtifactRoutes(api, {
         database,
         store: artifactStore,

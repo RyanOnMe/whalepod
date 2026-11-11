@@ -16,10 +16,16 @@ import { z } from 'zod'
 import {
   callManagedDraftModel,
   fetchManagedDraftSource,
+  uploadManagedDraftCandidate,
   type ManagedDraftHubIdentity,
 } from './hub-client.js'
 
 type Offer = Extract<NodeDownstream, { type: 'managed_draft.execute' }>['payload']
+export type ManagedDraftExecutionResult = Awaited<
+  ReturnType<typeof uploadManagedDraftCandidate>
+> & {
+  attemptId: string
+}
 const require = createRequire(import.meta.url)
 const maxWorkerFrame = 8 * MANAGED_DRAFT_MAX_CONTENT_BYTES
 const executionTimeoutMs = 60_000
@@ -45,15 +51,18 @@ const WorkerModelSchema = z.strictObject({
     tools: z.tuple([]),
   }),
 })
-const WorkerReceiptSchema = z.strictObject({
-  kind: z.literal('candidate'),
+const VerifiedCandidateSchema = z.strictObject({
+  kind: z.literal('candidate.verified'),
   runId: z.uuid(),
   manifestDigest: z.string().regex(/^[a-f0-9]{64}$/),
   modelAttemptId: z.uuid(),
   fileWriteReceiptId: z.uuid(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   byteSize: z.int().min(1).max(MANAGED_DRAFT_MAX_CONTENT_BYTES),
-  fileIdentity: z.string().regex(/^[0-9:]{7,160}$/),
+  bodyBase64url: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]+$/)
+    .max(Math.ceil((MANAGED_DRAFT_MAX_CONTENT_BYTES * 4) / 3)),
 })
 
 async function* workerFrames(stdout: AsyncIterable<Buffer>): AsyncGenerator<unknown> {
@@ -89,7 +98,7 @@ export async function executeManagedDraft(
   hub: ManagedDraftHubIdentity,
   offer: Offer,
   cancellation: AbortSignal,
-): Promise<string> {
+): Promise<ManagedDraftExecutionResult> {
   if (process.platform !== 'darwin' || process.getuid === undefined) throw unavailable()
   const remaining = Date.parse(offer.manifest.expiresAt) - Date.now()
   if (!Number.isFinite(remaining) || remaining <= 0) throw unavailable()
@@ -125,13 +134,18 @@ export async function executeManagedDraft(
     )
     try {
       signal.throwIfAborted()
+      const { commandId, manifest, manifestDigest, model } = offer
       const host = require.resolve('@whalepod/runtime/managed-draft-host')
-      const child = spawn(process.execPath, [host, sourceFile, outputDir], {
-        env: {},
-        cwd: root,
-        detached: true,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      })
+      const child = spawn(
+        process.execPath,
+        [host, sourceFile, outputDir, manifest.runId, manifestDigest],
+        {
+          env: {},
+          cwd: root,
+          detached: true,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        },
+      )
       const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
         (resolve) => child.once('close', (code, signal) => resolve({ code, signal })),
       )
@@ -152,7 +166,6 @@ export async function executeManagedDraft(
         signal.throwIfAborted()
         WorkerReadySchema.parse((await frames.next()).value)
         signal.throwIfAborted()
-        const { commandId, manifest, manifestDigest, model } = offer
         const bytes = await fetchManagedDraftSource(
           hub,
           manifest.runId,
@@ -212,7 +225,7 @@ export async function executeManagedDraft(
         child.stdin.end(
           `${JSON.stringify({ kind: 'model.response', attemptId, text: response })}\n`,
         )
-        const receipt = WorkerReceiptSchema.parse((await frames.next()).value)
+        const receipt = VerifiedCandidateSchema.parse((await frames.next()).value)
         if (
           receipt.runId !== manifest.runId ||
           receipt.manifestDigest !== manifestDigest ||
@@ -223,8 +236,33 @@ export async function executeManagedDraft(
         const exit = await exited
         if (exit.code !== 0 || exit.signal !== null) throw unavailable()
         signal.throwIfAborted()
-        // The worker output stays in this private root and never becomes an Artifact.
-        return attemptId
+        const body = Buffer.from(receipt.bodyBase64url, 'base64url')
+        try {
+          if (
+            body.toString('base64url') !== receipt.bodyBase64url ||
+            body.byteLength !== receipt.byteSize ||
+            sha256(body) !== receipt.sha256
+          )
+            throw unavailable()
+          const uploaded = await uploadManagedDraftCandidate(
+            hub,
+            manifest.runId,
+            {
+              commandId,
+              manifestDigest,
+              modelAttemptId: attemptId,
+              fileWriteReceiptId: receipt.fileWriteReceiptId,
+              sha256: receipt.sha256,
+              byteSize: receipt.byteSize,
+            },
+            body,
+            signal,
+          )
+          signal.throwIfAborted()
+          return { attemptId, ...uploaded }
+        } finally {
+          body.fill(0)
+        }
       } finally {
         signal.removeEventListener('abort', stop)
         stop()

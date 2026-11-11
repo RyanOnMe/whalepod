@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import {
   getEnabledMember,
   getLatestConfirmedSpec,
@@ -47,6 +47,7 @@ type SourcePolicyView = Pick<
 
 const MAX_BYTES = 65_536
 const policy = schema.managedDraftSourcePolicies
+const modelPolicy = schema.managedDraftModelPolicyFloor
 const unavailable = () =>
   new ApiError(409, 'CONFLICT', 'managed draft source authority is unavailable')
 const notFound = () => new ApiError(404, 'NOT_FOUND', 'managed draft source not found')
@@ -55,9 +56,14 @@ export function managedDraftModelBindingDigest(
   route: ManagedSourceModelRoute | undefined,
   now: Date,
 ): string | undefined {
+  return route !== undefined && route.expiresAt.getTime() > now.getTime()
+    ? configuredModelBindingDigest(route)
+    : undefined
+}
+
+function configuredModelBindingDigest(route: ManagedSourceModelRoute): string | undefined {
   if (
-    route === undefined ||
-    !(route.expiresAt.getTime() > now.getTime()) ||
+    !Number.isFinite(route.expiresAt.getTime()) ||
     !Number.isSafeInteger(route.policyGeneration) ||
     route.policyGeneration < 1 ||
     [route.provider, route.model, route.endpointId, route.accountId].some(
@@ -76,6 +82,49 @@ export function managedDraftModelBindingDigest(
       policyExpiresAt: route.expiresAt.toISOString(),
     }),
   )
+}
+
+/** A newer deployment supersedes all older ones; the same binding may restart. */
+export async function activateManagedDraftModelPolicy(
+  database: Database,
+  route: ManagedSourceModelRoute,
+): Promise<boolean> {
+  const bindingDigest = configuredModelBindingDigest(route)
+  if (bindingDigest === undefined) return false
+  const generation = route.policyGeneration
+  const [accepted] = await database.db
+    .insert(modelPolicy)
+    .values({ singleton: true, generation, bindingDigest })
+    .onConflictDoUpdate({
+      target: modelPolicy.singleton,
+      set: { generation, bindingDigest },
+      setWhere: sql`${modelPolicy.generation} < ${generation} or
+        (${modelPolicy.generation} = ${generation} and ${modelPolicy.bindingDigest} = ${bindingDigest})`,
+    })
+    .returning({ singleton: modelPolicy.singleton })
+  return accepted !== undefined
+}
+
+/** Hold this fence through the authorization decision, not through network IO. */
+export async function lockManagedDraftModelBinding(
+  tx: Tx,
+  route: ManagedSourceModelRoute | undefined,
+  now: Date,
+): Promise<string | undefined> {
+  const digest = managedDraftModelBindingDigest(route, now)
+  if (route === undefined || digest === undefined) return undefined
+  const [current] = await tx
+    .select({ digest: modelPolicy.bindingDigest })
+    .from(modelPolicy)
+    .where(
+      and(
+        eq(modelPolicy.singleton, true),
+        eq(modelPolicy.generation, route.policyGeneration),
+        eq(modelPolicy.bindingDigest, digest),
+      ),
+    )
+    .for('share')
+  return current?.digest
 }
 
 function view(row: SourcePolicyRow): SourcePolicyView {
@@ -166,7 +215,7 @@ export async function registerManagedDraftSource(
       actorUserId,
       'only the current assignee can register this source',
     )
-    const modelBindingDigest = managedDraftModelBindingDigest(route, now)
+    const modelBindingDigest = await lockManagedDraftModelBinding(tx, route, now)
     if (
       modelBindingDigest === undefined ||
       route === undefined ||
@@ -252,7 +301,7 @@ export async function lockRegisteredDraftSource(
     return undefined
   const task = alreadyLockedTask ?? (await getTaskForUpdate(tx, probe.taskId))
   if (task === undefined) return undefined
-  const digest = managedDraftModelBindingDigest(route, now)
+  const digest = await lockManagedDraftModelBinding(tx, route, now)
   if (
     probe.projectId !== task.projectId ||
     !(probe.expiresAt.getTime() > now.getTime()) ||

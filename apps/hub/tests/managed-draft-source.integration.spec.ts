@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,15 +19,20 @@ import {
 } from '@whalepod/db'
 import {
   buildManagedDraftModelBody,
+  ManagedDraftCandidateProofSchema,
   ManagedDraftExecuteSchema,
   ManagedDraftStartSchema,
+  parseClientFrame,
+  type ClientFrame,
   MANAGED_DRAFT_EXECUTION_VERSION,
 } from '@whalepod/protocol'
+import { managedDraftCandidateStore } from '../src/modules/draft-share/candidate-store.js'
 import { nodeConnections } from '../src/modules/device/connection-registry.js'
 import { WsDeviceGateway } from '../src/modules/device/gateway.js'
 import { OutboxWorker } from '../src/modules/run/outbox-worker.js'
 import { prepareManagedDraftSourceManifest } from '../src/modules/draft-share/source-manifest.js'
 import {
+  activateManagedDraftModelPolicy,
   loadRegisteredDraftSource,
   managedDraftModelBindingDigest,
   registerManagedDraftSource,
@@ -45,6 +50,10 @@ import {
   type Session,
   type TestApp,
 } from './helpers.js'
+import {
+  verifyManagedDraftRecipient,
+  verifyManagedDraftReviewInvalidation,
+} from './managed-draft-grant-contract.js'
 
 const MODEL_ROUTE = {
   provider: 'managed-model-provider',
@@ -57,6 +66,7 @@ const MODEL_ROUTE = {
 const NOW = new Date('2026-11-09T12:00:00Z')
 const EXPIRY = new Date('2026-11-09T13:00:00Z')
 const SOURCE_MARKER = 'registered-source-policy-probe'
+const MODEL_OUTPUT = 'private local model response'
 
 describe('managed draft source registration over a real Task agreement', () => {
   let database: Database
@@ -208,6 +218,84 @@ describe('managed draft source registration over a real Task agreement', () => {
     expect(await loadRegisteredDraftSource(database, id, modelRoute, new Date())).toBeUndefined()
   })
 
+  it('never reactivates a superseded model policy across concurrent Hubs or a restart', async () => {
+    const revisionId = await confirmAgreement()
+    const url = `/api/v1/tasks/${taskId}/managed-draft-sources`
+    const host = {
+      ownerUserId: alice.userId,
+      deviceId: randomUUID(),
+      workspaceId: randomUUID(),
+      profileRevisionId: randomUUID(),
+      managedHostGeneration: 1,
+      proofSha256: createHash('sha256').update(randomBytes(32)).digest('hex'),
+    }
+    const first = { ...MODEL_ROUTE, expiresAt: new Date(Date.now() + 30 * 60_000) }
+    const next = {
+      ...first,
+      policyGeneration: first.policyGeneration + 1,
+      accountId: 'new-account',
+    }
+    const apps: TestApp[] = []
+    const boot = async (modelRoute: typeof first) => {
+      const app = await createTestApp(database, {
+        managedDraftHost: host,
+        managedDraftModelRoute: modelRoute,
+      })
+      apps.push(app)
+      return app
+    }
+    const get = (app: TestApp) => apiInject(app, alice, { method: 'GET', url })
+    const register = (app: TestApp, modelBindingDigest: string) =>
+      apiInject(app, alice, {
+        method: 'POST',
+        url,
+        payload: {
+          projectId,
+          revisionId,
+          recipientUserId: bob.userId,
+          permitsPublishedAudience: false,
+          confirmsOwnershipAndUses: true,
+          modelBindingDigest,
+          expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+        },
+      })
+
+    try {
+      const oldHub = await boot(first)
+      const oldPolicy = await get(oldHub)
+      expect(oldPolicy.statusCode).toBe(200)
+      const oldDigest = oldPolicy.json().data.bindingDigest as string
+      const initial = await register(oldHub, oldDigest)
+      expect(initial.statusCode).toBe(201)
+      const sourceId = initial.json().data.id as string
+      expect(await loadRegisteredDraftSource(database, sourceId, first, new Date())).toBeDefined()
+
+      const nextHub = await boot(next)
+      const current = await get(nextHub)
+      expect(current.statusCode).toBe(200)
+      expect(current.json().data.bindingDigest).not.toBe(oldDigest)
+      expect((await get(oldHub)).statusCode).toBe(404)
+      expect((await register(oldHub, oldDigest)).statusCode).toBe(409)
+      expect(await loadRegisteredDraftSource(database, sourceId, first, new Date())).toBeUndefined()
+
+      const rollback = await boot(first)
+      const conflict = await boot({ ...next, accountId: 'conflicting-account' })
+      for (const disabled of [rollback, conflict]) {
+        expect((await get(disabled)).statusCode).toBe(404)
+        expect((await disabled.app.inject({ method: 'GET', url: '/healthz' })).statusCode).toBe(200)
+      }
+      const restarted = await boot(next)
+      expect((await get(restarted)).json().data.bindingDigest).toBe(
+        current.json().data.bindingDigest,
+      )
+      expect(
+        (await register(restarted, current.json().data.bindingDigest as string)).statusCode,
+      ).toBe(201)
+    } finally {
+      await Promise.all(apps.map((app) => app.close()))
+    }
+  })
+
   it.each([
     'delivered',
     'revoked',
@@ -216,16 +304,21 @@ describe('managed draft source registration over a real Task agreement', () => {
     'execution-in-flight',
     'execution-in-flight-reconnect',
     'execution-reconnected',
-    ...(process.platform === 'darwin' ? ['execution' as const] : []),
+    'execution-upload-revoked',
+    'execution-upload-incomplete',
+    ...(process.platform === 'darwin' ? (['execution', 'execution-review'] as const) : []),
   ] as const)(
     'production HTTP and WS: a sealed operation is %s',
     async (scenario) => {
+      const packaged = scenario === 'execution' || scenario === 'execution-review'
       const executes =
-        scenario === 'execution' ||
+        packaged ||
         scenario === 'execution-revoked' ||
         scenario === 'execution-in-flight' ||
         scenario === 'execution-in-flight-reconnect' ||
-        scenario === 'execution-reconnected'
+        scenario === 'execution-reconnected' ||
+        scenario === 'execution-upload-revoked' ||
+        scenario === 'execution-upload-incomplete'
       let releaseProvider: (() => void) | undefined
       const providerGate = new Promise<void>((resolve) => {
         releaseProvider = resolve
@@ -376,9 +469,7 @@ describe('managed draft source registration over a real Task agreement', () => {
             response.writeHead(200, { 'content-type': 'application/json' })
             response.end(
               JSON.stringify({
-                choices: [
-                  { finish_reason: 'stop', message: { content: 'private local model response' } },
-                ],
+                choices: [{ finish_reason: 'stop', message: { content: MODEL_OUTPUT } }],
                 usage: { prompt_tokens: 5, completion_tokens: 4 },
               }),
             )
@@ -391,8 +482,11 @@ describe('managed draft source registration over a real Task agreement', () => {
           managedDraftHost: host,
           managedDraftModelRoute: modelRoute,
           managedDraftLoopbackEndpoint,
+          managedDraftMemberReviewEnabled: packaged || scenario === 'execution-upload-incomplete',
         })
         const wsUrl = await listen()
+        if (scenario === 'execution-upload-revoked')
+          expect((await get('/api/v1/managed-draft-candidates')).statusCode).toBe(404)
         const ordinaryRun = await post(`/api/v1/tasks/${taskId}/runs`, {
           agentId: agent.id,
           deviceId: device.deviceId,
@@ -424,7 +518,8 @@ describe('managed draft source registration over a real Task agreement', () => {
         const mandate = await post(`${workUrl}/mandates`, {
           allowedActionClasses: ['draft'],
           allowedAgentIds: [agent.id],
-          allowedSourceTypes: ['task_message'],
+          allowedSourceTypes:
+            scenario === 'execution-review' ? ['task_message', 'context_entry'] : ['task_message'],
           expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
         })
         expect(mandate.statusCode).toBe(201)
@@ -453,7 +548,24 @@ describe('managed draft source registration over a real Task agreement', () => {
         const ordinaryFrames: unknown[] = []
         ordinarySocket.on('message', (raw) => ordinaryFrames.push(String(raw)))
         let dedicated: WebSocket | undefined
-        if (scenario === 'delivered' || scenario === 'execution') {
+        if (scenario === 'execution') {
+          const previousVersion = await connect(wsUrl, device.deviceToken, proof)
+          const closed = once(previousVersion, 'close')
+          previousVersion.send(
+            frame('node.hello', {
+              deviceId: device.deviceId,
+              platform: 'darwin',
+              architecture: 'arm64',
+              nodeVersion: '24.12.0',
+              supportedProtocolVersions: [1],
+              dshDistributionVersion: 'managed-draft-isolated.v1',
+              pluginPackDigests: [],
+            }),
+          )
+          expect((await closed)[0]).toBe(4003)
+          expect(nodeConnections.isManagedDraftOnline(host)).toBe(false)
+        }
+        if (scenario === 'delivered' || packaged) {
           const nodeBin = createRequire(
             new URL('../../node/package.json', import.meta.url),
           ).resolve('@whalepod/node/bin')
@@ -569,6 +681,27 @@ describe('managed draft source registration over a real Task agreement', () => {
               body: JSON.stringify(body),
               redirect: 'error',
             })
+          const candidatePost = (
+            binding: object,
+            contents: string,
+            token = device.deviceToken,
+            proofHeader = true,
+          ) =>
+            fetch(`${url}/candidate`, {
+              method: 'POST',
+              headers: {
+                authorization: `Device ${token}`,
+                'idempotency-key':
+                  'fileWriteReceiptId' in binding ? String(binding.fileWriteReceiptId) : idemKey(),
+                'content-type': 'application/octet-stream',
+                'x-whalepod-managed-candidate': Buffer.from(JSON.stringify(binding)).toString(
+                  'base64url',
+                ),
+                ...(proofHeader ? { 'x-whalepod-managed-host': proof } : {}),
+              },
+              body: contents,
+              redirect: 'error',
+            })
           const sourceRequest = {
             commandId: offer.id,
             manifestDigest: payload.manifestDigest,
@@ -638,7 +771,7 @@ describe('managed draft source registration over a real Task agreement', () => {
             }
             return
           }
-          if (scenario !== 'execution') {
+          if (!packaged) {
             const frozen = await devicePost('source', sourceRequest)
             expect(frozen.status).toBe(200)
             expect(frozen.headers.get('cache-control')).toContain('no-store')
@@ -660,6 +793,15 @@ describe('managed draft source registration over a real Task agreement', () => {
               (await devicePost('model', { ...modelRequest, requestDigest: '0'.repeat(64) }))
                 .status,
             ).toBe(404)
+            const outputDigest = createHash('sha256').update(MODEL_OUTPUT).digest('hex')
+            const writeProof = {
+              commandId: offer.id,
+              manifestDigest: payload.manifestDigest,
+              modelAttemptId: modelRequest.attemptId,
+              fileWriteReceiptId: randomUUID(),
+              sha256: outputDigest,
+              byteSize: Buffer.byteLength(MODEL_OUTPUT),
+            }
             const revoke = async () =>
               expect(
                 (
@@ -673,6 +815,98 @@ describe('managed draft source registration over a real Task agreement', () => {
               await revoke()
               expect((await devicePost('model', modelRequest)).status).toBe(404)
               expect(providerBodies).toEqual([])
+            } else if (
+              scenario === 'execution-upload-revoked' ||
+              scenario === 'execution-upload-incomplete'
+            ) {
+              expect((await candidatePost(writeProof, MODEL_OUTPUT)).status).toBe(404)
+              const modelResult = await devicePost('model', modelRequest)
+              expect(modelResult.status).toBe(200)
+              expect(((await modelResult.json()) as { data: unknown }).data).toEqual({
+                attemptId: modelRequest.attemptId,
+                text: MODEL_OUTPUT,
+              })
+              expect(
+                (await candidatePost(writeProof, MODEL_OUTPUT, other.deviceToken)).status,
+              ).toBe(404)
+              expect(
+                (await candidatePost(writeProof, MODEL_OUTPUT, device.deviceToken, false)).status,
+              ).toBe(404)
+              expect(
+                (await candidatePost({ ...writeProof, modelAttemptId: randomUUID() }, MODEL_OUTPUT))
+                  .status,
+              ).toBe(404)
+              expect(
+                (await candidatePost({ ...writeProof, title: SOURCE_MARKER }, MODEL_OUTPUT)).status,
+              ).toBe(404)
+              expect((await candidatePost(writeProof, 'not the model output')).status).toBe(404)
+              const old = 'old workspace bytes'
+              expect(
+                (
+                  await candidatePost(
+                    {
+                      ...writeProof,
+                      sha256: createHash('sha256').update(old).digest('hex'),
+                      byteSize: Buffer.byteLength(old),
+                    },
+                    old,
+                  )
+                ).status,
+              ).toBe(404)
+              if (scenario === 'execution-upload-revoked') {
+                await revoke()
+                const denied = await candidatePost(writeProof, MODEL_OUTPUT)
+                expect(denied.status).toBe(404)
+                expect(await denied.text()).not.toContain(MODEL_OUTPUT)
+                expect(await database.db.select().from(schema.managedDraftCandidates)).toEqual([])
+                await expect(
+                  stat(join(ctx.config.artifactStoreDir, 'managed-drafts')),
+                ).rejects.toMatchObject({ code: 'ENOENT' })
+              } else {
+                const sendOutcome = (artifactId: string, verifiedUploadReceiptId: string) =>
+                  dedicated?.send(
+                    frame('managed_draft.outcome', {
+                      commandId: offer.id,
+                      runId,
+                      manifestDigest: payload.manifestDigest,
+                      attemptId: modelRequest.attemptId,
+                      outcome: 'completed',
+                      artifactId,
+                      verifiedUploadReceiptId,
+                    }),
+                  )
+                sendOutcome(randomUUID(), randomUUID())
+                const accepted = await candidatePost(writeProof, MODEL_OUTPUT)
+                expect(accepted.status, await accepted.clone().text()).toBe(201)
+                const receipt = ManagedDraftCandidateProofSchema.parse(
+                  ((await accepted.json()) as { data: unknown }).data,
+                )
+                sendOutcome(receipt.artifactId, randomUUID())
+                expect((await candidatePost(writeProof, MODEL_OUTPUT)).status).toBe(404)
+                expect(
+                  (
+                    await candidatePost(
+                      { ...writeProof, fileWriteReceiptId: randomUUID() },
+                      MODEL_OUTPUT,
+                    )
+                  ).status,
+                ).toBe(404)
+                expect((await run())?.status).toBe('running')
+                const candidates = await get('/api/v1/managed-draft-candidates')
+                expect(candidates.statusCode).toBe(200)
+                expect(candidates.json().data).toEqual([])
+                expect(await database.db.select().from(schema.managedDraftCandidates)).toEqual([
+                  expect.objectContaining(receipt),
+                ])
+                await revoke()
+                sendOutcome(receipt.artifactId, receipt.verifiedUploadReceiptId)
+                expect((await candidatePost(writeProof, MODEL_OUTPUT)).status).toBe(404)
+                // A deliberately invalid next frame closes only after queued outcomes are processed.
+                const drained = once(dedicated!, 'close')
+                dedicated!.send(frame('unregistered.test-barrier', {}))
+                expect((await drained)[0]).toBe(4003)
+                expect((await run())?.status).toBe('running')
+              }
             } else {
               // Hold the real provider response. Replays and revocation must finish before it is released.
               const inFlight = devicePost('model', modelRequest)
@@ -708,7 +942,7 @@ describe('managed draft source registration over a real Task agreement', () => {
               releaseProvider?.()
               const denied = await inFlight
               expect(denied.status).toBe(404)
-              expect(await denied.text()).not.toContain('private local model response')
+              expect(await denied.text()).not.toContain(MODEL_OUTPUT)
               expect(providerBodies).toHaveLength(1)
               const [execution] = await database.db.select().from(schema.managedDraftExecutions)
               expect(execution).toMatchObject({
@@ -744,6 +978,8 @@ describe('managed draft source registration over a real Task agreement', () => {
               sourceReadAt: expect.any(Date),
               modelDecidedAt: expect.any(Date),
               modelRespondedAt: expect.any(Date),
+              modelResponseSha256: createHash('sha256').update(MODEL_OUTPUT).digest('hex'),
+              modelResponseByteSize: Buffer.byteLength(MODEL_OUTPUT),
               modelRequestDigest: createHash('sha256').update(providerBodies[0]!).digest('hex'),
             })
             expect(
@@ -759,9 +995,127 @@ describe('managed draft source registration over a real Task agreement', () => {
               ).status,
             ).toBe(404)
             expect(providerBodies).toHaveLength(1)
+            const artifacts = await database.db.select().from(schema.artifacts)
+            expect(artifacts).toEqual([
+              expect.objectContaining({
+                runId,
+                status: 'candidate',
+                sourceRelativePath: null,
+                sha256: createHash('sha256').update(MODEL_OUTPUT).digest('hex'),
+                byteSize: Buffer.byteLength(MODEL_OUTPUT),
+              }),
+            ])
+            const artifact = artifacts[0]!
+            const [candidate] = await database.db.select().from(schema.managedDraftCandidates)
+            expect(candidate).toMatchObject({
+              artifactId: artifact.id,
+              runId,
+              sourcePolicyId: sourceId,
+              manifestDigest: payload.manifestDigest,
+              modelAttemptId: execution?.modelAttemptId,
+              sha256: artifact.sha256,
+              byteSize: artifact.byteSize,
+              fileWriteReceiptId: expect.any(String),
+              verifiedUploadReceiptId: expect.any(String),
+              verifiedAt: expect.any(Date),
+            })
+            expect(candidate?.fileWriteReceiptId).not.toBe(candidate?.verifiedUploadReceiptId)
+            const stored = await managedDraftCandidateStore(
+              ctx.config.artifactStoreDir,
+            ).readVerified(artifact.storageKey, artifact.sha256)
+            expect(stored).toEqual(Buffer.from(MODEL_OUTPUT))
+            await expect(
+              database.sql`update managed_draft_candidate set sha256 = ${'0'.repeat(64)} where run_id = ${runId}`,
+            ).rejects.toMatchObject({
+              code: '23514',
+              constraint_name: 'managed_draft_candidate_receipt_immutable',
+            })
+            await expect(
+              database.sql`update managed_draft_execution set model_response_sha256 = ${'0'.repeat(64)} where run_id = ${runId}`,
+            ).rejects.toMatchObject({
+              code: '23514',
+              constraint_name: 'managed_draft_execution_response_immutable',
+            })
+            for (const reader of [alice, bob]) {
+              for (const path of [
+                `/api/v1/artifacts/${artifact.id}/content`,
+                `/api/v1/runs/${runId}/events`,
+                `/api/v1/runs/${runId}/handoff-draft`,
+              ]) {
+                expect(
+                  (await apiInject(ctx, reader, { method: 'GET', url: path })).statusCode,
+                ).toBe(404)
+              }
+              const room = await apiInject(ctx, reader, {
+                method: 'GET',
+                url: `/api/v1/tasks/${taskId}`,
+              })
+              expect(room.statusCode).toBe(200)
+              for (const marker of [artifact.id, artifact.sha256, artifact.title, MODEL_OUTPUT])
+                expect(room.body).not.toContain(marker)
+            }
+            expect((await post(`/api/v1/artifacts/${artifact.id}/publish`, {})).statusCode).toBe(
+              404,
+            )
+            const workHistory = await get(workUrl)
+            expect(workHistory.statusCode).toBe(200)
+            const routerHistory = await get(`${workUrl}/router/evaluations`)
+            expect(routerHistory.statusCode).toBe(200)
+            const browser = new WebSocket(wsUrl.replace('/ws/v1/node', '/ws/v1/client?cursor=0'), {
+              headers: { cookie: bob.cookie, origin: ctx.origin },
+            })
+            sockets.push(browser)
+            const teamFrames: ClientFrame[] = []
+            browser.on('message', (raw) =>
+              teamFrames.push(parseClientFrame(JSON.parse(String(raw)))),
+            )
+            await once(browser, 'open')
+            await waitForValue(
+              async () =>
+                teamFrames.find((value) => {
+                  if (value.kind !== 'persistent' || value.event.type !== 'run.changed')
+                    return false
+                  const payload = value.event.payload
+                  return (
+                    typeof payload === 'object' &&
+                    payload !== null &&
+                    !Array.isArray(payload) &&
+                    payload['runId'] === runId &&
+                    payload['status'] === 'completed'
+                  )
+                }),
+              'B receives only fixed Run status from normal team WebSocket replay',
+            )
+            for (const marker of [
+              artifact.id,
+              artifact.sha256,
+              artifact.title,
+              MODEL_OUTPUT,
+              candidate!.fileWriteReceiptId,
+              candidate!.verifiedUploadReceiptId,
+            ]) {
+              expect(workHistory.body).not.toContain(marker)
+              expect(routerHistory.body).not.toContain(marker)
+              expect(JSON.stringify(teamFrames)).not.toContain(marker)
+            }
+            const verifyRecipient =
+              scenario === 'execution-review'
+                ? verifyManagedDraftReviewInvalidation
+                : verifyManagedDraftRecipient
+            await verifyRecipient(ctx, database, {
+              alice,
+              bob,
+              taskId,
+              runId,
+              artifactId: artifact.id,
+              body: MODEL_OUTPUT,
+              sourceId,
+              workKey: work.json().data.workKey as string,
+            })
           }
           expect(ordinaryFrames).toEqual([])
-          expect(await database.db.select().from(schema.artifacts)).toEqual([])
+          if (!packaged && scenario !== 'execution-upload-incomplete')
+            expect(await database.db.select().from(schema.artifacts)).toEqual([])
           return
         }
         const received: unknown[] = []
@@ -848,6 +1202,7 @@ describe('managed draft source registration over a real Task agreement', () => {
   )
 
   it('pins content, a named recipient and model route; version drift invalidates without changing old bytes', async () => {
+    expect(await activateManagedDraftModelPolicy(database, MODEL_ROUTE)).toBe(true)
     const revisionId = await confirmAgreement()
     const input = registration(revisionId)
     const registered = await registerManagedDraftSource(
@@ -893,6 +1248,7 @@ describe('managed draft source registration over a real Task agreement', () => {
   })
 
   it('freezes the exact source and active Mandate with an independently approved managed host', async () => {
+    expect(await activateManagedDraftModelPolicy(database, MODEL_ROUTE)).toBe(true)
     const revisionId = await confirmAgreement()
     const source = await registerManagedDraftSource(
       database,
@@ -957,6 +1313,7 @@ describe('managed draft source registration over a real Task agreement', () => {
   })
 
   it('does not infer ownership from readability, task responsibility or a model-looking identifier', async () => {
+    expect(await activateManagedDraftModelPolicy(database, MODEL_ROUTE)).toBe(true)
     const revisionId = await confirmAgreement(bob)
     const input = registration(revisionId)
     await expect(
@@ -982,6 +1339,7 @@ describe('managed draft source registration over a real Task agreement', () => {
   })
 
   it('rejects a draft with unknown editor provenance, even if A wrote the first version', async () => {
+    expect(await activateManagedDraftModelPolicy(database, MODEL_ROUTE)).toBe(true)
     const url = `/api/v1/tasks/${taskId}/agreement`
     const body = { goal: SOURCE_MARKER, constraints: '', acceptance: '', openQuestions: '' }
     const original = await apiInject(ctx, alice, {
@@ -1014,6 +1372,7 @@ describe('managed draft source registration over a real Task agreement', () => {
   })
 
   it('invalidates the old registration when assignment moves away and then back', async () => {
+    expect(await activateManagedDraftModelPolicy(database, MODEL_ROUTE)).toBe(true)
     const revisionId = await confirmAgreement()
     const input = registration(revisionId)
     const first = await registerManagedDraftSource(database, alice.userId, input, MODEL_ROUTE, NOW)
@@ -1047,6 +1406,7 @@ describe('managed draft source registration over a real Task agreement', () => {
   })
 
   it('persists source invalidation in the member-disable transaction', async () => {
+    expect(await activateManagedDraftModelPolicy(database, MODEL_ROUTE)).toBe(true)
     const revisionId = await confirmAgreement()
     const input = registration(revisionId)
     const registered = await registerManagedDraftSource(
@@ -1071,6 +1431,7 @@ describe('managed draft source registration over a real Task agreement', () => {
   })
 
   it('revokes an exact registration and never revives it when explicitly reauthorizing', async () => {
+    expect(await activateManagedDraftModelPolicy(database, MODEL_ROUTE)).toBe(true)
     const revisionId = await confirmAgreement()
     const input = registration(revisionId)
     const first = await registerManagedDraftSource(database, alice.userId, input, MODEL_ROUTE, NOW)

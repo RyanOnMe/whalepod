@@ -1,11 +1,13 @@
-import { createHash } from 'node:crypto'
-import { eq } from 'drizzle-orm'
+import { createHash, randomUUID } from 'node:crypto'
+import { eq, or } from 'drizzle-orm'
 import {
   ackInTransaction,
   appendTeamEvent,
   failInTransaction,
   getOutboxCommand,
+  insertArtifact,
   schema,
+  unwrapPgError,
   type Database,
   type Outbox,
   type RunRow,
@@ -16,6 +18,8 @@ import {
   buildManagedDraftModelBody,
   MANAGED_DRAFT_EXECUTION_CHECK_MAX_AGE_MS,
   ManagedDraftExecuteSchema,
+  type ManagedDraftCandidateProof,
+  type ManagedDraftCandidateUpload,
   type ManagedDraftModelForwardRequestSchema,
   type ManagedDraftOutcomeSchema,
   type ManagedDraftSourceReadRequestSchema,
@@ -29,6 +33,7 @@ import { nodeConnections, NodeOfflineError } from '../device/connection-registry
 import { applyRunStatus } from '../run/run-status.js'
 import { lockWorkContext } from '../work/context.js'
 import { verifyRunMachineDispatch } from '../work/run-dispatch.js'
+import type { ManagedDraftCandidateStore } from './candidate-store.js'
 import { verifyManagedDraftPlacement, type ManagedDraftPlacement } from './dispatch.js'
 import { forwardManagedDraftLoopback } from './loopback-broker.js'
 import { loadManagedDraftSourceManifest } from './source-manifest.js'
@@ -37,7 +42,9 @@ type Offer = Extract<NodeDownstream, { type: 'managed_draft.execute' }>
 type Binding = { readonly commandId: string; readonly manifestDigest: string }
 type ExecutionRow = typeof schema.managedDraftExecutions.$inferSelect
 const executions = schema.managedDraftExecutions
+const candidates = schema.managedDraftCandidates
 const active = new Set<RunRow['status']>(['queued', 'dispatching', 'running'])
+class ManagedDraftCommitDenied extends Error {}
 
 interface LockedExecution {
   readonly tx: Tx
@@ -63,6 +70,7 @@ export class ManagedDraftExecution {
     private readonly outbox: Outbox,
     private readonly placement: ManagedDraftPlacement | undefined,
     private readonly loopbackEndpoint: URL | undefined,
+    private readonly candidateStore: ManagedDraftCandidateStore,
   ) {}
 
   private async withRun<T>(
@@ -294,11 +302,114 @@ export class ManagedDraftExecution {
         return undefined
       await scope.tx
         .update(executions)
-        .set({ modelRespondedAt: scope.now })
+        .set({
+          modelRespondedAt: scope.now,
+          modelResponseSha256: sha256Hex(result.text),
+          modelResponseByteSize: Buffer.byteLength(result.text),
+        })
         .where(eq(executions.runId, runId))
       return this.admission(scope, { attemptId: request.attemptId, text: result.text })
     })
     return response !== undefined && this.current(response) ? response.value : undefined
+  }
+
+  /** Persist a single newly written candidate from the exact managed attachment and model output. */
+  async candidate(
+    runId: string,
+    request: ManagedDraftCandidateUpload,
+    bytes: Buffer,
+    signal: AbortSignal,
+  ): Promise<ManagedDraftCandidateProof | undefined> {
+    if (
+      signal.aborted ||
+      bytes.length !== request.byteSize ||
+      createHash('sha256').update(bytes).digest('hex') !== request.sha256
+    )
+      return undefined
+    try {
+      const receipt = await this.withRun(runId, request, async (scope) => {
+        if (
+          signal.aborted ||
+          scope.authorizedBytes === undefined ||
+          !this.isOffered(scope) ||
+          scope.run.status !== 'running' ||
+          scope.row.modelAttemptId !== request.modelAttemptId ||
+          scope.row.modelRespondedAt === null ||
+          scope.row.modelResponseSha256 !== request.sha256 ||
+          scope.row.modelResponseByteSize !== request.byteSize
+        )
+          return undefined
+        const [existing] = await scope.tx
+          .select({ runId: candidates.runId })
+          .from(candidates)
+          .where(
+            or(
+              eq(candidates.runId, runId),
+              eq(candidates.fileWriteReceiptId, request.fileWriteReceiptId),
+            ),
+          )
+          .limit(1)
+        const admission = this.admission(scope, true)
+        if (
+          existing !== undefined ||
+          admission === undefined ||
+          !this.current(admission) ||
+          signal.aborted
+        )
+          return undefined
+
+        // The complete request is already in memory. Only bounded, private disk IO holds the
+        // Task lock; revocation and artifact admission serialize at this same boundary.
+        const storageKey = await this.candidateStore.saveUpload(request.sha256, bytes)
+        if (!this.current(admission) || signal.aborted) return undefined
+
+        const artifactId = randomUUID()
+        const verifiedUploadReceiptId = randomUUID()
+        const verifiedAt = new Date()
+        const proof: ManagedDraftCandidateProof = {
+          runId,
+          manifestDigest: request.manifestDigest,
+          artifactId,
+          sha256: request.sha256,
+          byteSize: request.byteSize,
+          fileWriteReceiptId: request.fileWriteReceiptId,
+          verifiedUploadReceiptId,
+        }
+        await insertArtifact(scope.tx, {
+          id: artifactId,
+          taskId: scope.run.taskId,
+          runId,
+          ownerUserId: scope.offer.manifest.ownerUserId,
+          title: '受管草稿',
+          mediaType: 'text/plain',
+          storageKey,
+          sha256: request.sha256,
+          byteSize: request.byteSize,
+        })
+        await scope.tx.insert(candidates).values({
+          ...proof,
+          sourcePolicyId: scope.offer.manifest.source.policyId,
+          modelAttemptId: request.modelAttemptId,
+          verifiedAt,
+        })
+        if (!this.current(admission) || signal.aborted) throw new ManagedDraftCommitDenied()
+        return this.admission(scope, proof)
+      })
+      return receipt !== undefined && this.current(receipt) && !signal.aborted
+        ? receipt.value
+        : undefined
+    } catch (error) {
+      // Another Run can race using the same write receipt. PG rejects the loser and rolls
+      // back its Artifact. Content-addressed bytes left without a row are inaccessible.
+      if (error instanceof ManagedDraftCommitDenied) return undefined
+      const pg = unwrapPgError(error)
+      if (
+        pg?.code === '23505' &&
+        pg.constraintName === 'managed_draft_candidate_file_write_receipt_id_key'
+      )
+        return undefined
+      throw error
+    }
   }
 
   private admission<T>(scope: LockedExecution, value: T): Admission<T> | undefined {
@@ -326,21 +437,46 @@ export class ManagedDraftExecution {
     receipt: z.infer<typeof ManagedDraftOutcomeSchema.shape.payload>,
   ): Promise<void> {
     if (this.placement?.host !== host || !nodeConnections.isCurrent(host.deviceId, socket)) return
-    await this.withRun(receipt.runId, receipt, async (scope) => {
-      if (!this.isOffered(scope) || !nodeConnections.isCurrent(host.deviceId, socket)) return
-      if (receipt.outcome === 'failed') {
-        await this.finish(scope, 'failed')
-        return
-      }
-      if (
-        scope.run.status !== 'running' ||
-        scope.authorizedBytes === undefined ||
-        scope.row.modelAttemptId !== receipt.attemptId ||
-        scope.row.modelRespondedAt === null
-      )
-        return
-      await this.finish(scope, 'completed')
-    })
+    try {
+      await this.withRun(receipt.runId, receipt, async (scope) => {
+        if (!this.isOffered(scope) || !nodeConnections.isCurrent(host.deviceId, socket)) return
+        if (receipt.outcome === 'failed') {
+          await this.finish(scope, 'failed')
+          return
+        }
+        if (
+          scope.run.status !== 'running' ||
+          scope.authorizedBytes === undefined ||
+          scope.row.modelAttemptId !== receipt.attemptId ||
+          scope.row.modelRespondedAt === null
+        )
+          return
+        const [candidate] = await scope.tx
+          .select()
+          .from(candidates)
+          .where(eq(candidates.runId, scope.run.id))
+        const admission = this.admission(scope, true)
+        if (
+          candidate === undefined ||
+          candidate.artifactId !== receipt.artifactId ||
+          candidate.verifiedUploadReceiptId !== receipt.verifiedUploadReceiptId ||
+          candidate.modelAttemptId !== receipt.attemptId ||
+          candidate.manifestDigest !== receipt.manifestDigest ||
+          candidate.sourcePolicyId !== scope.offer.manifest.source.policyId ||
+          candidate.sha256 !== scope.row.modelResponseSha256 ||
+          candidate.byteSize !== scope.row.modelResponseByteSize ||
+          admission === undefined ||
+          !this.current(admission) ||
+          !nodeConnections.isCurrent(host.deviceId, socket)
+        )
+          return
+        await this.finish(scope, 'completed')
+        if (!this.current(admission) || !nodeConnections.isCurrent(host.deviceId, socket))
+          throw new ManagedDraftCommitDenied()
+      })
+    } catch (error) {
+      if (!(error instanceof ManagedDraftCommitDenied)) throw error
+    }
   }
 
   private async finish(scope: LockedExecution, kind: 'completed' | 'failed'): Promise<void> {

@@ -6,7 +6,7 @@ export const MANAGED_DRAFT_SOURCE_INSTRUCTION =
 export const MANAGED_DRAFT_MAX_CONTENT_BYTES = 64 * 1024
 export const MANAGED_DRAFT_OUTPUT_NAME = 'draft.txt'
 export const MANAGED_DRAFT_CONTROL_VERSION = 'managed-draft-control.v1'
-export const MANAGED_DRAFT_EXECUTION_VERSION = 'managed-draft-isolated.v1'
+export const MANAGED_DRAFT_EXECUTION_VERSION = 'managed-draft-isolated.v2'
 export const MANAGED_DRAFT_MODEL_MAX_TOKENS = 1024
 export const MANAGED_DRAFT_EXECUTION_CHECK_MAX_AGE_MS = 90_000
 export const MANAGED_DRAFT_PREPARATION_MAX_AGE_MS = 60_000
@@ -84,6 +84,16 @@ export const ManagedDraftModelAttemptSchema = z.strictObject({
     .max(128 * 1024),
 })
 
+/** Private HTTP upload proof; candidate bytes are the raw request body. */
+export const ManagedDraftCandidateUploadSchema = z.strictObject({
+  commandId: z.uuid(),
+  manifestDigest: sha256,
+  modelAttemptId: z.uuid(),
+  fileWriteReceiptId: z.uuid(),
+  sha256,
+  byteSize: size,
+})
+
 /** Metadata only. Hub must independently check both receipts and successful Run completion. */
 export const ManagedDraftCandidateProofSchema = z
   .strictObject({
@@ -102,3 +112,4 @@ export const ManagedDraftCandidateProofSchema = z
 export type ManagedDraftSourceManifest = z.infer<typeof ManagedDraftSourceManifestSchema>
 export type ManagedDraftModelAttempt = z.infer<typeof ManagedDraftModelAttemptSchema>
 export type ManagedDraftCandidateProof = z.infer<typeof ManagedDraftCandidateProofSchema>
+export type ManagedDraftCandidateUpload = z.infer<typeof ManagedDraftCandidateUploadSchema>

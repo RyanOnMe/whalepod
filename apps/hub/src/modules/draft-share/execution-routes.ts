@@ -1,5 +1,7 @@
 import type { Database } from '@whalepod/db'
 import {
+  MANAGED_DRAFT_MAX_CONTENT_BYTES,
+  ManagedDraftCandidateUploadSchema,
   ManagedDraftModelForwardRequestSchema,
   ManagedDraftSourceReadRequestSchema,
 } from '@whalepod/protocol'
@@ -11,6 +13,17 @@ import type { ManagedDraftExecution } from './execution.js'
 import { deviceForNodeRequest, matchesManagedDraftHost } from './host-auth.js'
 
 const missing = () => new ApiError(404, 'NOT_FOUND', 'managed draft execution unavailable')
+
+function decodeCandidateHeader(value: unknown): unknown {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,2048}$/.test(value)) return undefined
+  try {
+    const bytes = Buffer.from(value, 'base64url')
+    if (bytes.toString('base64url') !== value) return undefined
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown
+  } catch {
+    return undefined
+  }
+}
 
 export function registerManagedDraftExecutionRoutes(
   app: FastifyInstance,
@@ -81,4 +94,61 @@ export function registerManagedDraftExecutionRoutes(
       }
     },
   )
+
+  app.register(async (upload) => {
+    upload.addContentTypeParser(
+      'application/octet-stream',
+      { parseAs: 'buffer' },
+      (_request, body, done) => done(null, body),
+    )
+    upload.post<{ Params: { runId: string } }>(
+      `${base}/candidate`,
+      {
+        bodyLimit: MANAGED_DRAFT_MAX_CONTENT_BYTES,
+        onRequest: async (request, reply) => {
+          reply.header('cache-control', 'private, no-store')
+          await requireHost(request)
+        },
+      },
+      async (request, reply) => {
+        const controller = new AbortController()
+        const close = () => controller.abort()
+        reply.raw.once('close', close)
+        if (request.raw.aborted || reply.raw.destroyed || reply.raw.writableEnded) close()
+        try {
+          const run = z.uuid().safeParse(request.params.runId)
+          const proof = ManagedDraftCandidateUploadSchema.safeParse(
+            decodeCandidateHeader(request.headers['x-whalepod-managed-candidate']),
+          )
+          if (
+            !run.success ||
+            !proof.success ||
+            !Buffer.isBuffer(request.body) ||
+            request.headers['idempotency-key'] !== proof.data.fileWriteReceiptId ||
+            controller.signal.aborted
+          )
+            throw missing()
+          const receipt = await deps.execution.candidate(
+            run.data,
+            proof.data,
+            request.body,
+            controller.signal,
+          )
+          if (receipt === undefined) throw missing()
+          request.log.info(
+            {
+              component: 'hub.managed-draft',
+              action: 'candidate.verified',
+              runId: run.data,
+              verifiedUploadReceiptId: receipt.verifiedUploadReceiptId,
+            },
+            'managed draft upload verified',
+          )
+          return reply.code(201).send({ ok: true, data: receipt })
+        } finally {
+          reply.raw.off('close', close)
+        }
+      },
+    )
+  })
 }

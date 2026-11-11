@@ -12,6 +12,7 @@ import { z } from 'zod'
 import { detectPlatformKind } from '../gateway/hello-facts.js'
 import { commandAckFrame } from '../gateway/hub-socket.js'
 import { startDeviceSession } from '../gateway/session.js'
+import type { ManagedDraftExecutionResult } from './execution.js'
 
 const maxProvisioningBytes = 4096
 const ProvisioningSchema = z.strictObject({
@@ -134,7 +135,7 @@ export async function runManagedDraftNode(provisioningPath: string): Promise<voi
       manifest,
       manifestDigest,
     }: Extract<NodeDownstream, { type: 'managed_draft.execute' }>['payload'],
-    attemptId?: string,
+    result?: ManagedDraftExecutionResult,
   ): void => {
     session.send(
       JSON.stringify(
@@ -147,9 +148,7 @@ export async function runManagedDraftNode(provisioningPath: string): Promise<voi
             commandId,
             runId: manifest.runId,
             manifestDigest,
-            ...(attemptId === undefined
-              ? { outcome: 'failed' }
-              : { outcome: 'completed', attemptId }),
+            ...(result === undefined ? { outcome: 'failed' } : { outcome: 'completed', ...result }),
           },
         }),
       ),
@@ -206,8 +205,8 @@ export async function runManagedDraftNode(provisioningPath: string): Promise<voi
             executeManagedDraft(provision, frame.payload, cancellation.signal),
           )
           .then(
-            (attemptId) => {
-              if (!cancellation.signal.aborted) reportOutcome(frame.payload, attemptId)
+            (result) => {
+              if (!cancellation.signal.aborted) reportOutcome(frame.payload, result)
             },
             () => {
               if (!cancellation.signal.aborted) reportOutcome(frame.payload)

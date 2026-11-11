@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RD-03c3a checkpoints. This does not activate private draft sharing.
+# RD-03c3a checks. Only the isolated test Hub explicitly enables private review.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -17,6 +17,8 @@ pnpm test:integration \
   apps/node/tests/integration/managed-draft-node.integration.spec.ts \
   apps/hub/tests/artifact.integration.spec.ts \
   apps/hub/tests/artifact-review.integration.spec.ts \
+  apps/hub/tests/personal-attention.integration.spec.ts \
+  apps/hub/tests/handoff-draft.integration.spec.ts \
   apps/hub/tests/realtime.integration.spec.ts \
   apps/hub/tests/outbox-recovery.integration.spec.ts
 pnpm test:resilience apps/hub/tests/resilience/run-lease-resilience.spec.ts

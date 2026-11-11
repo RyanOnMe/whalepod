@@ -7,7 +7,7 @@ import { audit } from '../shared/audit.js'
 import { ApiError } from '../shared/http-error.js'
 import { requireAssignee } from '../work/context.js'
 import {
-  managedDraftModelBindingDigest,
+  lockManagedDraftModelBinding,
   registerManagedDraftSource,
   revokeManagedDraftSource,
   type ManagedSourceModelRoute,
@@ -44,7 +44,7 @@ export function registerManagedDraftSourceRoutes(
       const task = await getTaskForUpdate(tx, request.params.taskId)
       if (task === undefined || task.assigneeUserId !== actor.userId) throw missing()
       await requireAssignee(tx, task, actor.userId)
-      const bindingDigest = managedDraftModelBindingDigest(deps.modelRoute, now)
+      const bindingDigest = await lockManagedDraftModelBinding(tx, deps.modelRoute, now)
       if (bindingDigest === undefined) throw missing()
       return { ok: true, data: { ...deps.modelRoute, bindingDigest } }
     })

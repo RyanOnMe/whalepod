@@ -1,5 +1,5 @@
 import {
-  getArtifact,
+  getOrdinaryArtifact,
   getContextEntry,
   getDispatchIntent,
   getDispatchIntentByDecision,
@@ -7,7 +7,7 @@ import {
   getLatestWorkMandate,
   getRouterDecisionById,
   getRouterDecisionBySource,
-  getRun,
+  getOrdinaryRun,
   getTaskMessage,
   getTeam,
   insertDispatchIntent,
@@ -79,8 +79,8 @@ export async function taskIdOfBusinessRef(
   if (businessRef.startsWith('taskSpec:')) return parseBusinessId(businessRef)
   const id = parseBusinessId(businessRef)
   if (id === undefined) return undefined
-  if (businessRef.startsWith('run:')) return (await getRun(tx, id))?.taskId
-  if (businessRef.startsWith('artifact:')) return (await getArtifact(tx, id))?.taskId
+  if (businessRef.startsWith('run:')) return (await getOrdinaryRun(tx, id))?.taskId
+  if (businessRef.startsWith('artifact:')) return (await getOrdinaryArtifact(tx, id))?.taskId
   return undefined
 }
 

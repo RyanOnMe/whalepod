@@ -14,6 +14,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import {
+  MANAGED_DRAFT_EXECUTION_VERSION,
+  MANAGED_DRAFT_MAX_CONTENT_BYTES,
+  MANAGED_DRAFT_OUTPUT_NAME,
   MANAGED_DRAFT_SOURCE_INSTRUCTION,
   parseNodeFrame,
   type NodeUpstream,
@@ -170,7 +173,18 @@ function macSandboxAvailable(): boolean {
 }
 
 const sourceText = 'isolated registered source'
-const draftText = 'fixed private model reply'
+const draftText = 'fixed private model reply — 草稿'
+const hubModes = [
+  'success',
+  'max-candidate',
+  'wrong-source',
+  'redirect',
+  'denied-model',
+  'preexisting-output',
+  'denied-candidate',
+  'mismatched-candidate-receipt',
+] as const
+const stalledStages = ['model', 'candidate'] as const
 const executionModel = 'fixture-model'
 const hash = (input: string) => createHash('sha256').update(input).digest('hex')
 
@@ -423,20 +437,34 @@ describe('packaged Node managed draft lane', { timeout: 12_000 }, () => {
     expect(requests).toEqual([])
   })
 
-  it.skipIf(!macSandboxAvailable()).each(['success', 'wrong-source', 'redirect', 'denied-model'])(
+  it.skipIf(!macSandboxAvailable()).each(hubModes)(
     'packaged Node runs the isolated worker with %s Hub behavior',
     async (mode) => {
+      const succeeded = mode === 'success' || mode === 'max-candidate'
+      const draft =
+        mode === 'max-candidate' ? 'x'.repeat(MANAGED_DRAFT_MAX_CONTENT_BYTES) : draftText
       const requests: Array<{
         path: string | undefined
         headers: IncomingHttpHeaders
         body: Record<string, unknown>
+        bytes: Buffer
       }> = []
+      const home = await tempDirectory()
+      const artifactId = randomUUID()
+      const verifiedUploadReceiptId = randomUUID()
       const server = await hubSocket((request, response) => {
         void (async () => {
           const chunks: Buffer[] = []
           for await (const raw of request) chunks.push(Buffer.from(raw))
-          const body = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>
-          requests.push({ path: request.url, headers: request.headers, body })
+          const bytes = Buffer.concat(chunks)
+          const isCandidate = request.url?.endsWith('/candidate')
+          const header = request.headers['x-whalepod-managed-candidate']
+          const json =
+            isCandidate && typeof header === 'string'
+              ? Buffer.from(header, 'base64url').toString()
+              : bytes.toString()
+          const body = JSON.parse(json) as Record<string, unknown>
+          requests.push({ path: request.url, headers: request.headers, body, bytes })
           if (request.url?.endsWith('/source')) {
             if (mode === 'redirect') {
               response.writeHead(302, { location: '/must-not-follow' }).end()
@@ -446,16 +474,43 @@ describe('packaged Node managed draft lane', { timeout: 12_000 }, () => {
               .writeHead(200, { 'content-type': 'application/octet-stream' })
               .end(mode === 'wrong-source' ? 'z'.repeat(sourceText.length) : sourceText)
           } else if (request.url?.endsWith('/model') && mode !== 'denied-model') {
+            if (mode === 'preexisting-output') {
+              const root = (await readdir(home)).find((name) =>
+                name.startsWith('whalepod-managed-draft-'),
+              )
+              if (root === undefined) throw new Error('managed runtime root not found')
+              await writeFile(join(home, root, 'output', MANAGED_DRAFT_OUTPUT_NAME), draft, {
+                mode: 0o600,
+                flag: 'wx',
+              })
+            }
             response.writeHead(200, { 'content-type': 'application/json' }).end(
               JSON.stringify({
                 ok: true,
-                data: { attemptId: body['attemptId'], text: draftText },
+                data: { attemptId: body['attemptId'], text: draft },
               }),
             )
-          } else response.writeHead(404).end()
+          } else if (isCandidate && mode !== 'denied-candidate') {
+            response.writeHead(201, { 'content-type': 'application/json' }).end(
+              JSON.stringify({
+                ok: true,
+                data: {
+                  runId: request.url?.split('/').at(-2),
+                  manifestDigest: body['manifestDigest'],
+                  artifactId,
+                  sha256: body['sha256'],
+                  byteSize: body['byteSize'],
+                  fileWriteReceiptId:
+                    mode === 'mismatched-candidate-receipt'
+                      ? randomUUID()
+                      : body['fileWriteReceiptId'],
+                  verifiedUploadReceiptId,
+                },
+              }),
+            )
+          } else response.writeHead(403).end()
         })().catch(() => response.destroy())
       })
-      const home = await tempDirectory()
       const config = join(home, 'managed-host.json')
       const deployment = provision(server.hubUrl)
       await writeFile(config, JSON.stringify({ ...deployment, managedDraftExecution: true }), {
@@ -465,15 +520,20 @@ describe('packaged Node managed draft lane', { timeout: 12_000 }, () => {
       const connection = await poll(() => server.connections[0], child)
       expect(
         await poll(() => connection.frames.find((frame) => frame.type === 'node.hello'), child),
-      ).toMatchObject({ payload: { dshDistributionVersion: 'managed-draft-isolated.v1' } })
+      ).toMatchObject({ payload: { dshDistributionVersion: MANAGED_DRAFT_EXECUTION_VERSION } })
       const offer = executionOffer(deployment)
       send(connection, 'managed_draft.execute', offer)
       const outcome = await observeOutcome(connection, child, offer.commandId)
-      const modelExpected = mode === 'success' || mode === 'denied-model'
+      const candidateExpected =
+        succeeded || mode === 'denied-candidate' || mode === 'mismatched-candidate-receipt'
+      const modelExpected =
+        candidateExpected || mode === 'denied-model' || mode === 'preexisting-output'
       const runPath = `/api/v1/node/managed-drafts/${offer.manifest.runId}`
-      expect(requests.map(({ path }) => path)).toEqual(
-        modelExpected ? [`${runPath}/source`, `${runPath}/model`] : [`${runPath}/source`],
-      )
+      expect(requests.map(({ path }) => path)).toEqual([
+        `${runPath}/source`,
+        ...(modelExpected ? [`${runPath}/model`] : []),
+        ...(candidateExpected ? [`${runPath}/candidate`] : []),
+      ])
       for (const request of requests) {
         expect(request.headers.authorization).toBe(`Device ${deployment.deviceToken}`)
         expect(request.headers['x-whalepod-managed-host']).toBe(deployment.managedHostToken)
@@ -506,43 +566,67 @@ describe('packaged Node managed draft lane', { timeout: 12_000 }, () => {
         })
         expect(modelRequest?.headers['idempotency-key']).toBe(modelRequest?.body['attemptId'])
       }
+      if (candidateExpected) {
+        const candidate = requests[2]
+        expect(candidate?.headers['content-type']).toBe('application/octet-stream')
+        expect(candidate?.headers['idempotency-key']).toBe(candidate?.body['fileWriteReceiptId'])
+        expect(candidate?.bytes).toEqual(Buffer.from(draft))
+        expect(candidate?.body).toEqual({
+          commandId: offer.commandId,
+          manifestDigest: offer.manifestDigest,
+          modelAttemptId: modelRequest?.body['attemptId'],
+          fileWriteReceiptId: expect.any(String),
+          sha256: hash(draft),
+          byteSize: Buffer.byteLength(draft),
+        })
+      }
       expect(outcome.payload).toEqual({
         commandId: offer.commandId,
         runId: offer.manifest.runId,
         manifestDigest: offer.manifestDigest,
-        outcome: mode === 'success' ? 'completed' : 'failed',
-        ...(mode === 'success' ? { attemptId: modelRequest?.body['attemptId'] } : {}),
+        outcome: succeeded ? 'completed' : 'failed',
+        ...(succeeded
+          ? { attemptId: modelRequest?.body['attemptId'], artifactId, verifiedUploadReceiptId }
+          : {}),
       })
       expect(await readdir(home)).toEqual(['managed-host.json'])
       expect(JSON.stringify(connection.frames)).not.toContain(sourceText)
-      expect(JSON.stringify(connection.frames)).not.toContain(draftText)
+      expect(JSON.stringify(connection.frames)).not.toContain(draft)
 
       // A WS barrier proves a repeated offer isn't handled again by this process.
       send(connection, 'managed_draft.execute', offer)
       expect(await sendManaged(connection, child, offer.manifest)).toMatchObject({
         payload: { accepted: true },
       })
-      expect(requests).toHaveLength(modelExpected ? 2 : 1)
+      expect(requests).toHaveLength(1 + Number(modelExpected) + Number(candidateExpected))
       expect(connection.frames.filter((frame) => frame.type === 'managed_draft.outcome')).toEqual([
         outcome,
       ])
     },
   )
 
-  it.skipIf(!macSandboxAvailable())(
-    'aborts a stalled broker request and clears private files when the offering socket closes',
-    async () => {
+  it.skipIf(!macSandboxAvailable()).each(stalledStages)(
+    'aborts a stalled %s request and clears private files when the offering socket closes',
+    async (stage) => {
       const requests: Array<string | undefined> = []
-      let brokerClosed = false
+      let transferClosed = false
       const server = await hubSocket((request, response) => {
-        request.resume()
+        const chunks: Buffer[] = []
+        request.on('data', (chunk: Buffer) => chunks.push(chunk))
         request.once('end', () => {
           requests.push(request.url)
           if (request.url?.endsWith('/source')) {
             response.writeHead(200, { 'content-type': 'application/octet-stream' }).end(sourceText)
+          } else if (request.url?.endsWith('/model') && stage === 'candidate') {
+            const { attemptId } = JSON.parse(Buffer.concat(chunks).toString()) as {
+              attemptId: string
+            }
+            response
+              .writeHead(200, { 'content-type': 'application/json' })
+              .end(JSON.stringify({ ok: true, data: { attemptId, text: draftText } }))
           } else {
             response.once('close', () => {
-              brokerClosed = true
+              transferClosed = true
             })
           }
         })
@@ -558,18 +642,22 @@ describe('packaged Node managed draft lane', { timeout: 12_000 }, () => {
       await poll(() => initial.frames.find((frame) => frame.type === 'node.hello'), child)
       const offer = executionOffer(deployment)
       send(initial, 'managed_draft.execute', offer)
-      await poll(() => requests[1], child)
+      const path = `/api/v1/node/managed-drafts/${offer.manifest.runId}`
+      await poll(() => requests.find((url) => url === `${path}/${stage}`), child)
       expect(readdirSync(home)).toHaveLength(2)
       initial.socket.terminate()
-      await poll(() => (brokerClosed && readdirSync(home).length === 1 ? true : undefined), child)
+      await poll(() => (transferClosed && readdirSync(home).length === 1 ? true : undefined), child)
       const reconnected = await poll(() => server.connections[1], child)
       await poll(() => reconnected.frames.find((frame) => frame.type === 'node.hello'), child)
       send(reconnected, 'managed_draft.execute', offer)
       expect(await sendManaged(reconnected, child, offer.manifest)).toMatchObject({
         payload: { accepted: true },
       })
-      const path = `/api/v1/node/managed-drafts/${offer.manifest.runId}`
-      expect(requests).toEqual([`${path}/source`, `${path}/model`])
+      expect(requests).toEqual([
+        `${path}/source`,
+        `${path}/model`,
+        ...(stage === 'candidate' ? [`${path}/candidate`] : []),
+      ])
       expect(
         [...initial.frames, ...reconnected.frames].some(
           (frame) => frame.type === 'managed_draft.outcome',
