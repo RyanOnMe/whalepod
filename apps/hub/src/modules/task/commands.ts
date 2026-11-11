@@ -3,15 +3,20 @@ import { authorize, asUserId, transitionAssignment, transitionTask } from '@whal
 import type { Actor } from '@whalepod/domain'
 import type { Database, Outbox, TaskRow, Tx } from '@whalepod/db'
 import {
+  advanceDiscoveryCatalogGeneration,
   appendTeamEvent,
   cancelProposedDispatchIntents,
   expireWorkSubscriptionsAndRetract,
   findCommandReceipt,
+  findDiscoverySlot,
   getCurrentWorkByTask,
+  getDiscoverySlotForUpdate,
+  getDiscoverySlotOccupation,
   getEnabledMember,
   getTeam,
   getWorkByIdForUpdate,
   hasPublishedArtifactByTask,
+  insertDiscoverySlotOccupation,
   insertMessage,
   insertTask,
   listActiveRunsByTask,
@@ -27,8 +32,9 @@ import {
   updateTaskFields,
   updateWork,
 } from '@whalepod/db'
+import type { DiscoveryTaskClassification } from '@whalepod/protocol'
 import { cancelRunInTransaction } from '../run/cancel.js'
-import { classifyComment } from '../discovery/admission.js'
+import { available, discoveryConfig, classifyComment } from '../discovery/admission.js'
 import { admitTaskMessageEntry, workEntryDeps } from '../work/entry.js'
 import { reviewPrerequisiteReason } from './review-conditions.js'
 import { ApiError } from '../shared/http-error.js'
@@ -186,6 +192,8 @@ export interface CreateTaskInput {
    * 指派提交后由路由层自动驱动（run/instruction.ts 的 driveAgentAssignment）。
    */
   assigneeAgentId?: string
+  /** RD-04b：发现自动档启用时，人工创建必须认领槽位或提交「与槽位无关」建议。 */
+  discovery?: DiscoveryTaskClassification
   idempotencyKey: string
 }
 
@@ -213,6 +221,41 @@ export async function createTask(
     if (project.archivedAt !== null) throw new ApiError(409, 'CONFLICT', 'project is archived')
     await requireActiveAssignee(tx, assigneeUserId)
     if (agentAssigned) await requireAssignableAgent(tx, input.assigneeAgentId!)
+    const now = new Date()
+    const cfg = await discoveryConfig(tx, projectId)
+    const autoMode = available(cfg, now) && cfg.settings.tier !== 'discover'
+    if (autoMode && input.discovery === undefined) {
+      throw new ApiError(
+        409,
+        'CONFLICT',
+        'discovery auto creation is on: classify this task against the registered slot or disable auto creation first',
+        { code: 'DISCOVERY_CLASSIFICATION_REQUIRED' },
+      )
+    }
+    let claimedSlotId: string | undefined
+    if (input.discovery !== undefined && 'slotId' in input.discovery) {
+      const slot = await getDiscoverySlotForUpdate(tx, input.discovery.slotId)
+      if (!slot || slot.projectId !== projectId)
+        throw new ApiError(404, 'NOT_FOUND', 'discovery slot not found')
+      if (cfg !== undefined) {
+        const current = await findDiscoverySlot(
+          tx,
+          projectId,
+          cfg.settings.activity,
+          cfg.settings.slot,
+        )
+        if (current?.id !== slot.id)
+          throw new ApiError(409, 'CONFLICT', 'discovery slot is not current')
+      }
+      const occupation = await getDiscoverySlotOccupation(tx, slot.id)
+      if (occupation) {
+        throw new ApiError(409, 'CONFLICT', 'discovery slot is already occupied', {
+          code: 'DISCOVERY_SLOT_OCCUPIED',
+          existingTaskId: occupation.taskId,
+        })
+      }
+      claimedSlotId = slot.id
+    }
     const task = await insertTask(tx, {
       id,
       projectId,
@@ -223,11 +266,25 @@ export async function createTask(
         ? {
             assigneeAgentId: input.assigneeAgentId,
             assignmentStatus: 'accepted' as const,
-            acceptedAt: new Date(),
+            acceptedAt: now,
           }
         : {}),
       createdBy: actor.userId,
     })
+    if (claimedSlotId !== undefined) {
+      await insertDiscoverySlotOccupation(tx, {
+        id: uuidv7(now.getTime()),
+        projectId,
+        slotId: claimedSlotId,
+        taskId: task.id,
+        workId: null,
+        applicationId: null,
+        source: 'manual',
+        createdAt: now,
+      })
+    }
+    // Any unclassified manual creation (including handoff) advances the catalog epoch.
+    if (available(cfg, now)) await advanceDiscoveryCatalogGeneration(tx, projectId, now)
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(task) })
     return toTaskView(task)
   })
@@ -337,6 +394,7 @@ export async function reassignAssignment(
     await revokeManagedDraftSourcesForTask(tx, taskId, now)
     // #428 评审修复：未确认交接随责任转移，别让旧接收人留着一条确认不了的回执。
     await reassignPendingHandoffReceipts(tx, taskId, assigneeUserId, now)
+    await advanceDiscoveryCatalogGeneration(tx, task.projectId, now)
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
     return toTaskView(updated)
   })
@@ -378,6 +436,8 @@ export async function updateTask(
     }
     const updated = await updateTaskFields(tx, taskId, patch)
     if (updated === undefined) throw new Error('task vanished in its own transaction')
+    if (patch.title !== undefined || patch.description !== undefined)
+      await advanceDiscoveryCatalogGeneration(tx, task.projectId, new Date())
     if (patch.approvalPolicy === 'full_access') {
       await cancelWorkProposals(tx, taskId, new Date())
     }
@@ -439,6 +499,7 @@ export async function completeTask(
     const updated = await setTaskStatus(tx, taskId, next.status, now)
     if (updated === undefined) throw new Error('task vanished in its own transaction')
     await retireWorkForTerminalTask(tx, taskId, now)
+    await advanceDiscoveryCatalogGeneration(tx, task.projectId, now)
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
     return toTaskView(updated)
   })
@@ -477,6 +538,7 @@ export async function cancelTask(
     const updated = await setTaskStatus(tx, taskId, 'cancelled', now)
     if (updated === undefined) throw new Error('task vanished in its own transaction')
     await retireWorkForTerminalTask(tx, taskId, now)
+    await advanceDiscoveryCatalogGeneration(tx, task.projectId, now)
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
     return toTaskView(updated)
   })

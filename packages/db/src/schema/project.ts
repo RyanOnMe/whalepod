@@ -30,8 +30,18 @@ export const taskStatus = pgEnum('task_status', [
 export const assignmentStatus = pgEnum('assignment_status', ['pending', 'accepted', 'rejected'])
 // 任务约定（#378；ADR-0017 §1）：draft 可编辑（draft_version 并发令牌）、confirmed
 // 不可变且每 Task 编号单调递增。
-export const taskSpecRevisionStatus = pgEnum('task_spec_revision_status', ['draft', 'confirmed'])
-export const taskSpecRevisionOrigin = pgEnum('task_spec_revision_origin', ['manual', 'agent'])
+// ADR-0030（RD-04b）：`derived` 是 Hub 按预授权模板物化的派生版本，不是正式确认；
+// 普通 resolver、Decision、交接、审阅与发布都只认 `confirmed`。
+export const taskSpecRevisionStatus = pgEnum('task_spec_revision_status', [
+  'draft',
+  'confirmed',
+  'derived',
+])
+export const taskSpecRevisionOrigin = pgEnum('task_spec_revision_origin', [
+  'manual',
+  'agent',
+  'preauthorized_template',
+])
 
 export const projects = pgTable(
   'project',
@@ -135,7 +145,7 @@ export const taskSpecRevisions = pgTable(
     ),
     check(
       'task_spec_revision_confirmed_fields',
-      sql`(${table.status} = 'confirmed' and ${table.revisionNumber} is not null and ${table.confirmedBy} is not null and ${table.confirmedAt} is not null) or (${table.status} = 'draft' and ${table.revisionNumber} is null and ${table.confirmedBy} is null and ${table.confirmedAt} is null)`,
+      sql`(${table.status} = 'confirmed' and ${table.revisionNumber} is not null and ${table.confirmedBy} is not null and ${table.confirmedAt} is not null) or (${table.status} = 'draft' and ${table.revisionNumber} is null and ${table.confirmedBy} is null and ${table.confirmedAt} is null) or (${table.status} = 'derived' and ${table.revisionNumber} is null and ${table.confirmedBy} is null and ${table.confirmedAt} is null and ${table.origin} = 'preauthorized_template')`,
     ),
     uniqueIndex('task_spec_revision_number_unique')
       .on(table.taskId, table.revisionNumber)
@@ -143,6 +153,9 @@ export const taskSpecRevisions = pgTable(
     uniqueIndex('task_spec_revision_one_draft')
       .on(table.taskId)
       .where(sql`${table.status} = 'draft'`),
+    uniqueIndex('task_spec_revision_one_derived')
+      .on(table.taskId)
+      .where(sql`${table.status} = 'derived'`),
   ],
 )
 

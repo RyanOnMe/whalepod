@@ -1,5 +1,6 @@
 /** ADR-0026 §13 / ADR-0028 §17: bounded model evaluations, never business Runs. */
 import { z } from 'zod'
+import { DiscoveryTierSchema } from './discovery.js'
 
 const Id = z.uuid()
 const Digest = z.string().regex(/^[a-f0-9]{64}$/)
@@ -252,6 +253,14 @@ export const AnyCoordinationResultSchema = z.union([
 export type AnyCoordinationRequest = z.infer<typeof AnyCoordinationRequestSchema>
 export type AnyCoordinationResult = z.infer<typeof AnyCoordinationResultSchema>
 
+/** 与 TaskSpecContentSchema 同形；此处内联避免 router ↔ task-views ↔ node-wire 的模块环。 */
+const DiscoveryTemplateSchema = z.strictObject({
+  goal: z.string().max(10000),
+  constraints: z.string().max(10000),
+  acceptance: z.string().max(10000),
+  openQuestions: z.string().max(10000),
+})
+
 export const ConfigureDiscoveryRequestSchema = z.strictObject({
   enabled: z.boolean(),
   entryTaskId: Id,
@@ -265,6 +274,19 @@ export const ConfigureDiscoveryRequestSchema = z.strictObject({
   maxCostMicros: Positive,
   evidenceArtifactIds: z.array(Id).max(16).default([]),
   agreementTaskIds: z.array(Id).max(16).default([]),
+  /** RD-04b：项目允许的最高档位；责任人许可不得超出。默认仅发现，保持旧配置语义。 */
+  tier: DiscoveryTierSchema.default('discover'),
+  /** 责任人确认时冻结的约定模板；仅当 tier 含立项时要求目标与验收非空。 */
+  template: DiscoveryTemplateSchema.default({
+    goal: '',
+    constraints: '',
+    acceptance: '',
+    openQuestions: '',
+  }),
+  /** 预登记的独立核实人；作者本人永远不能核实自己的评论。 */
+  verifierUserIds: z.array(Id).max(16).default([]),
+  /** 同一许可下最多自动立项数（含人工认领不同槽位的路径不计入）。 */
+  maxCreations: Positive.default(1),
 })
 export type ConfigureDiscoveryRequest = z.infer<typeof ConfigureDiscoveryRequestSchema>
 export const DiscoveryConsentRequestSchema = z.strictObject({ configVersion: Positive })

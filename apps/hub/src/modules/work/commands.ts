@@ -1,7 +1,9 @@
 import {
+  advanceDiscoveryCatalogGeneration,
   cancelProposedDispatchIntents,
   expireWorkSubscriptionsAndRetract,
   getCurrentWorkByTask,
+  getDiscoveryApplicationByWork,
   getLatestWorkMandate,
   getTaskForUpdate,
   getWorkByKey,
@@ -151,6 +153,8 @@ export async function createWork(
         createdAt: now,
         updatedAt: now,
       })
+      // Work goal is part of the slot coverage scope; old catalog verification is stale.
+      await advanceDiscoveryCatalogGeneration(tx, task.projectId, now)
       return toWorkView(work)
     },
   )
@@ -216,6 +220,15 @@ export async function insertActiveMandateVersion(
   },
 ): Promise<WorkMandateRow> {
   const { work, actorUserId, scope, now } = input
+  // ADR-0030 §4：RD-04b 只立项。发现物化的 Work 没有执行授权，任何派工入口都拒绝；
+  // RD-04c 引入 execute 档并具备调用级费用守卫后，才允许在这里放行子 Mandate。
+  if (await getDiscoveryApplicationByWork(tx, work.id)) {
+    throw new ApiError(
+      409,
+      'CONFLICT',
+      'discovery-created work has no execution authorization in this slice',
+    )
+  }
   const latest = await getLatestWorkMandate(tx, work.id)
   const version = (latest?.version ?? 0) + 1
   const mandate = await insertWorkMandate(tx, {

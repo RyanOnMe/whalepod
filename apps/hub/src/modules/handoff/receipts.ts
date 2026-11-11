@@ -169,6 +169,7 @@ export async function deliverHandoff(
         ? { description: input.newTask!.description }
         : {}),
       assigneeUserId: input.receiverUserId,
+      ...(input.discovery !== undefined ? { discovery: input.discovery } : {}),
       idempotencyKey: `${idempotencyKey}:task`,
     })
     const row = await getTask(database.db, created.id)

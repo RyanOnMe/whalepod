@@ -4,7 +4,9 @@ import { DomainError } from './errors.js'
 // 草稿（draft）可编辑、不构成要求；确认（confirm）冻结为不可变版本，revision_number
 // 每 Task 单调递增；confirmed 是终态（发布后不原地覆盖——修改产生新草稿、新版本）。
 // 与 Run/Artifact 同哲学：这里只固化纯状态边，编号分配与责任人校验由 Hub 命令层做。
-export type TaskSpecRevisionStatus = 'draft' | 'confirmed'
+// ADR-0030（RD-04b）的 `derived` 是 Hub 按预授权模板物化的派生版本，不是正式确认；
+// 它没有可走的确认边，普通 resolver 也只读 confirmed。
+export type TaskSpecRevisionStatus = 'draft' | 'confirmed' | 'derived'
 
 export type TaskSpecRevisionEvent = { type: 'confirm' }
 
@@ -16,6 +18,7 @@ const SPEC_NEXT: Readonly<
 > = {
   draft: { confirm: 'confirmed' },
   confirmed: {},
+  derived: {},
 }
 
 export function transitionTaskSpecRevision(

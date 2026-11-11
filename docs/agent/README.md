@@ -160,6 +160,7 @@
 | [runtime-capability-contract.md](./runtime-capability-contract.md) | A0-6：DSH 熔断的单一登记处——六项能力 + 四条规则逐条给判据或挂 Issue（#288/#289/#290）、版本锁现状、CI 接线（Q3/Q6/Q7 从「文档说必跑」改成真跑）、未覆盖清单；表本身由 scripts/tests 的漂移哨兵机检 |
 | [compose-standard-loop-acceptance.md](./compose-standard-loop-acceptance.md) | A0-5/#286 空卷安装的标准闭环：A 段机检（邀请/双设备/双 Workspace 隔离/Agent 装配/Task 指派/双 Run/凭证边界/跨成员拒绝）+ B 段边界（Agent 真执行需真密钥，归 Phase 2）+ 变异自证与 15 分钟预算账 |
 | [test-load-sensitivity-acceptance.md](./test-load-sensitivity-acceptance.md) | #296 判据的负载敏感性收口：加压口径（并发两遍全量）8/12 红 → 0 红、四类根因（RTL 发现超时/vitest 上限/秒级钉值/同帧判据）、四个变异自证、复跑命令 |
+| [2026-11-11-rd04b-preauthorized-creation-acceptance.md](./2026-11-11-rd04b-preauthorized-creation-acceptance.md) | RD-04b（#534）：预授权快照 + 目录核对 + 独立佐证/回执 → 单事务立项；并发只建一个、人工/机器两种顺序、两人报告、撤权/更正/目录变化负控、派生约定不被当成正式确认、零 Run/Mandate；8 条生产路径用例与 RD-04a 回归 |
 
 规矩只有一条：**验过就要留下**。验收步骤、探针跑法、上次结果、坑在哪，写进这里的 acceptance 文档；能直接复跑的脚本放 `scripts/`。只留在 `/tmp` 或对话里的验证，等于没验。
 

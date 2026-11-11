@@ -35,6 +35,7 @@ export interface NewTask {
   /** Agent 指派（#239）：非空时 assignment 由命令层直接落 accepted（Agent 不走人的受理）。 */
   assigneeAgentId?: string
   assignmentStatus?: TaskRow['assignmentStatus']
+  agreementEnabled?: boolean
   createdBy: string
   acceptedAt?: Date
 }
