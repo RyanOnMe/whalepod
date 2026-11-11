@@ -189,10 +189,13 @@ export function registerDiscoveryRoutes(
       request.params,
     )
     const candidate = await getDiscoveryCandidateById(deps.database.db, candidateId)
-    if (!candidate || candidate.projectId !== projectId)
+    // Do not confirm existence to non-principals: both cases are the same 404.
+    if (
+      !candidate ||
+      candidate.projectId !== projectId ||
+      candidate.principalUserId !== actor.userId
+    )
       throw new ApiError(404, 'NOT_FOUND', 'discovery candidate not found')
-    if (candidate.principalUserId !== actor.userId)
-      throw new ApiError(403, 'FORBIDDEN', 'only the named principal can apply this candidate')
     return { ok: true, data: await applyDiscoveryCandidate(deps, candidate.id) }
   })
   app.get(`${base}/candidates`, async (request, reply) => {

@@ -528,7 +528,8 @@ describe('RD-04b preauthorized creation', () => {
   async function waitForCreationReason(evaluationId: string, reason: string) {
     return waitForValue(async () => {
       const [row] = await database.sql`
-        select id, creation_reason from discovery_candidate where evaluation_id = ${evaluationId}
+        select id, creation_reason, creation_terminal
+        from discovery_candidate where evaluation_id = ${evaluationId}
       `
       return row?.creation_reason === reason ? row : undefined
     }, `candidate did not settle on ${reason}`)
@@ -867,7 +868,8 @@ describe('RD-04b preauthorized creation', () => {
       url: `${node.route}/candidates/${candidate!.id}/apply`,
       payload: {},
     })
-    expect(nonPrincipal.statusCode, nonPrincipal.body).toBe(403)
+    // Non-principals cannot distinguish an existing candidate from a missing one.
+    expect(nonPrincipal.statusCode, nonPrincipal.body).toBe(404)
     await verifySlot(node)
     const apply = () =>
       apiInject(ctx, owner, {
@@ -1118,12 +1120,32 @@ describe('RD-04b preauthorized creation', () => {
 
   it('invalidates a verified empty slot after a scope change and refuses a covered slot', async () => {
     const stale = await setupPilot()
+    const initialView = await apiInject(ctx, owner, {
+      method: 'GET',
+      url: `${stale.route}/slots/${stale.slotId}`,
+    })
+    expect(initialView.json().data.verification).toMatchObject({
+      current: true,
+      eligibleEmpty: true,
+      coveredCount: 0,
+    })
+    const memberView = await apiInject(ctx, member, {
+      method: 'GET',
+      url: `${stale.route}/slots/${stale.slotId}`,
+    })
+    expect(memberView.statusCode, memberView.body).toBe(403)
     const rename = await apiInject(ctx, owner, {
       method: 'PATCH',
       url: `/api/v1/tasks/${entryTaskId}`,
       payload: { title: '筹备讨论（范围更新）' },
     })
     expect(rename.statusCode, rename.body).toBe(200)
+    const staleView = await apiInject(ctx, owner, {
+      method: 'GET',
+      url: `${stale.route}/slots/${stale.slotId}`,
+    })
+    expect(staleView.json().data.verification.current).toBe(false)
+    expect(staleView.json().data.verification.eligibleEmpty).toBe(false)
     const firstSource = await comment()
     await verifySource(stale, firstSource)
     const firstRequest = await getRequest(stale)
@@ -1135,7 +1157,10 @@ describe('RD-04b preauthorized creation', () => {
     ).toEqual([])
 
     const covered = await setupPilot({ verify: false })
-    await verifySlot(covered, (taskId) => (taskId === venueTaskId ? 'covered' : 'not_covered'))
+    const coveredView = await verifySlot(covered, (taskId) =>
+      taskId === venueTaskId ? 'covered' : 'not_covered',
+    )
+    expect(coveredView).toMatchObject({ eligibleEmpty: false, coveredCount: 1 })
     const manualCovered = await apiInject(ctx, owner, {
       method: 'POST',
       url: `/api/v1/projects/${projectId}/tasks`,
@@ -1159,5 +1184,151 @@ describe('RD-04b preauthorized creation', () => {
     expect(
       await database.sql`select id from discovery_application where evaluation_id = ${secondRequest.evaluationId}`,
     ).toEqual([])
+  })
+
+  it('applies a candidate after the independent receipt arrives following evaluation', async () => {
+    const node = await setupPilot()
+    const sourceId = await comment()
+    const request = await getRequest(node)
+    await downloadAndStart(node, request)
+    expect((await sendIndependentGap(node, request)).status).toBe('accepted')
+    const pending = await waitForCreationReason(request.evaluationId, 'independent_support_missing')
+    expect(pending.creation_terminal).toBe(false)
+    expect(
+      await database.sql`select id from discovery_application where evaluation_id = ${request.evaluationId}`,
+    ).toEqual([])
+
+    // The receipt is allowed to arrive after the candidate; the tick retries non-terminal facts.
+    await verifySource(node, sourceId)
+    await expect(
+      runDiscoveryTick({
+        database,
+        store: new ArtifactStore({ root: ctx.config.artifactStoreDir }),
+        now: () => new Date(Date.now() + 61_000),
+      }),
+    ).resolves.toBeUndefined()
+    const application = await waitForApplication(request.evaluationId)
+    expect(application.task_id).toBeTruthy()
+    expect(
+      await database.sql`select id from discovery_candidate where evaluation_id = ${request.evaluationId}`,
+    ).toHaveLength(1)
+    expect(await database.sql`select id from run where task_id = ${application.task_id}`).toEqual(
+      [],
+    )
+  })
+
+  it('requeues a stale evaluation without clobbering the next dispatch', async () => {
+    const node = await setupPilot({ verify: false })
+    const sourceId = await comment()
+    await verifySource(node, sourceId)
+    const request = await getRequest(node)
+    await downloadAndStart(node, request)
+    expect((await sendIndependentGap(node, request)).status).toBe('accepted')
+    await waitForCreationReason(request.evaluationId, 'slot_unverified')
+    const [candidate] = await database.sql`
+      select id from discovery_candidate where evaluation_id = ${request.evaluationId}
+    `
+    // Add a Work to the covered venue task: the catalog and evaluation manifest move while
+    // coverage stays complete. Re-verify the empty slot so only the digest can reject.
+    const work = await apiInject(ctx, owner, {
+      method: 'POST',
+      url: `/api/v1/tasks/${venueTaskId}/works`,
+      payload: { goal: '整理场地座席备选' },
+    })
+    expect(work.statusCode, work.body).toBe(201)
+    await verifySlot(node)
+
+    const stale = await apiInject(ctx, owner, {
+      method: 'POST',
+      url: `${node.route}/candidates/${candidate!.id}/apply`,
+      payload: {},
+    })
+    expect(stale.statusCode, stale.body).toBe(200)
+    expect(stale.json().data).toMatchObject({ status: 'rejected', reason: 'stale_evaluation' })
+    const [admission] = await database.sql`
+      select processed_at, evaluation_id, processing_reason, requeued_at
+      from discovery_admission where source_id = ${sourceId}
+    `
+    expect(admission).toMatchObject({
+      processed_at: null,
+      evaluation_id: null,
+      processing_reason: 'stale_replan',
+    })
+    expect(admission?.requeued_at).not.toBeNull()
+    expect(
+      await database.sql`select id from discovery_application where evaluation_id = ${request.evaluationId}`,
+    ).toEqual([])
+
+    const next = await getRequest(node, sourceId)
+    expect(next.evaluationId).not.toBe(request.evaluationId)
+    const [moved] = await database.sql`
+      select evaluation_id, requeued_at from discovery_admission where source_id = ${sourceId}
+    `
+    expect(moved?.evaluation_id).toBe(next.evaluationId)
+  })
+
+  it('keeps an applied candidate as audit history but hides its body after correction', async () => {
+    const node = await setupPilot()
+    const sourceId = await comment()
+    await verifySource(node, sourceId)
+    const request = await getRequest(node)
+    await downloadAndStart(node, request)
+    expect((await sendIndependentGap(node, request)).status).toBe('accepted')
+    const application = await waitForApplication(request.evaluationId)
+    const before = await apiInject(ctx, owner, {
+      method: 'GET',
+      url: `${node.route}/candidates`,
+    })
+    expect(before.json().data).toHaveLength(1)
+    expect(before.json().data[0]).toMatchObject({
+      application: { taskId: application.task_id },
+    })
+
+    const correction = await apiInject(ctx, member, {
+      method: 'POST',
+      url: `${node.route}/sources/${sourceId}/correct`,
+      payload: { body: '更正：坡道已临时铺设，缺口改为备用路线。' },
+    })
+    expect(correction.statusCode, correction.body).toBe(200)
+    const after = await apiInject(ctx, owner, {
+      method: 'GET',
+      url: `${node.route}/candidates`,
+    })
+    expect(after.json().data).toEqual([])
+    expect(
+      await database.sql`select id from discovery_candidate where evaluation_id = ${request.evaluationId}`,
+    ).toHaveLength(1)
+    expect(await database.sql`select id from task where id = ${application.task_id}`).toHaveLength(
+      1,
+    )
+  })
+
+  it('requires an explicit create tier and the current template digest', async () => {
+    const node = await setupPilot()
+    const discovered = await apiInject(ctx, owner, {
+      method: 'POST',
+      url: `${node.route}/permit`,
+      payload: { configVersion: node.configVersion },
+    })
+    expect(discovered.statusCode, discovered.body).toBe(200)
+    const [permit] = await database.sql`
+      select tier from discovery_permit
+      where project_id = ${projectId} and principal_user_id = ${owner.userId}
+      order by version desc limit 1
+    `
+    expect(permit?.tier).toBe('discover')
+
+    const missingDigest = await apiInject(ctx, owner, {
+      method: 'POST',
+      url: `${node.route}/permit`,
+      payload: { configVersion: node.configVersion, tier: 'create' },
+    })
+    expect(missingDigest.statusCode, missingDigest.body).toBe(409)
+    const overTier = await apiInject(ctx, owner, {
+      method: 'POST',
+      url: `${node.route}/permit`,
+      payload: { configVersion: node.configVersion, tier: 'execute' },
+    })
+    expect(overTier.statusCode, overTier.body).toBe(409)
   })
 })

@@ -53,9 +53,19 @@ export function templateFor(settings: ConfigureDiscoveryRequest): TaskSpecConten
   return TaskSpecContentSchema.parse(settings.template)
 }
 
-/** Permit/template JSON is stored in one jsonb column with a 64 KiB DB guard. */
+/**
+ * Permit/template JSON is stored in one jsonb column with a 64 KiB DB guard.
+ * PostgreSQL renders jsonb with `": "`/`", "` separators (7 bytes for the four-key
+ * template) and rejects \u0000; keep headroom so no accepted request reaches the
+ * check constraint as a 500.
+ */
+const TEMPLATE_STORAGE_LIMIT = 65_024
+
 export function assertTemplateWithinStorage(template: TaskSpecContent): void {
-  if (Buffer.byteLength(canonicalJson(template), 'utf8') > 65_536)
+  if (
+    Buffer.byteLength(canonicalJson(template), 'utf8') > TEMPLATE_STORAGE_LIMIT ||
+    Object.values(template).some((value) => value.includes('\u0000'))
+  )
     throw new ApiError(400, 'VALIDATION_FAILED', 'discovery template exceeds storage bounds')
 }
 
@@ -220,7 +230,9 @@ export async function configureDiscovery(
     database,
     `discovery.config:${actor.userId}:${projectId}:${key}`,
     async (tx) => {
-      // Same ordering as Router and comment admission: Task, coordinator state, then discovery rows.
+      // Same ordering as Router and comment admission: Task, coordinator state, Project, then
+      // discovery rows. The Project lock serializes config/permit changes with apply and manual
+      // creation, which both hold it before touching slots.
       const [task] = await tx
         .select()
         .from(schema.tasks)
@@ -235,6 +247,13 @@ export async function configureDiscovery(
           'CONFLICT',
           'configure coordination operator and billing before discovery',
         )
+      const [lockedProject] = await tx
+        .select()
+        .from(schema.projects)
+        .where(eq(schema.projects.id, projectId))
+        .for('update')
+      if (!lockedProject || lockedProject.archivedAt !== null)
+        throw new ApiError(404, 'NOT_FOUND', 'discovery entry not found')
       const model = await getRouterConfig(tx, projectId)
       if (!model || (settings.enabled && !model.enabled))
         throw new ApiError(409, 'CONFLICT', 'coordination model has no current approval')
@@ -445,6 +464,15 @@ export async function changeDiscoveryConsent(
     `discovery.consent:${kind}:${active}:${actor.userId}:${projectId}:${key}:${configVersion ?? ''}:${permitInput?.tier ?? ''}:${permitInput?.templateDigest ?? ''}`,
     async (tx) => {
       await getCoordinatorStateForUpdate(tx, projectId)
+      // Project lock orders consent changes against apply/manual creation, which hold it before
+      // reading permits, slots and the catalog.
+      const [project] = await tx
+        .select()
+        .from(schema.projects)
+        .where(eq(schema.projects.id, projectId))
+        .for('update')
+      if (!project || project.archivedAt !== null)
+        throw new ApiError(404, 'NOT_FOUND', 'discovery permission not found')
       const cfg = await discoveryConfig(tx, projectId)
       const now = new Date()
       if (!cfg || (kind === 'permit' && cfg.settings.principalUserId !== actor.userId))
@@ -876,13 +904,17 @@ export async function discoverySourceIdentity(
   })
 }
 
-/** ADR §4：目录水位变化使旧评估失效时，把来源放回待评估队列而不是静默丢失。 */
+/**
+ * ADR §4：目录水位变化使旧评估失效时，把来源放回待评估队列而不是静默丢失。
+ * 只重排当前仍指向该评估的准入行：落后的候选不能把已经派发的新评估清掉。
+ */
 export async function requeueDiscoveryAdmission(
   tx: Tx,
   sourceId: string,
+  evaluationId: string,
   now: Date,
-): Promise<void> {
-  await tx
+): Promise<boolean> {
+  const rows = await tx
     .update(schema.discoveryAdmissions)
     .set({
       processedAt: null,
@@ -894,9 +926,12 @@ export async function requeueDiscoveryAdmission(
       and(
         eq(schema.discoveryAdmissions.sourceId, sourceId),
         eq(schema.discoveryAdmissions.route, 'discovery'),
+        eq(schema.discoveryAdmissions.evaluationId, evaluationId),
         isNull(schema.discoveryAdmissions.withdrawnAt),
       ),
     )
+    .returning({ sourceId: schema.discoveryAdmissions.sourceId })
+  return rows.length > 0
 }
 
 function toVerificationView(row: {

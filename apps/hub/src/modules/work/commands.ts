@@ -198,6 +198,8 @@ export async function retireWork(
         now,
       })
       await supersedePendingWorkMandateProposals(tx, { workId: work.id, now })
+      // Retirement removes the Work from the catalog; old slot verification must not survive it.
+      await advanceDiscoveryCatalogGeneration(tx, task.projectId, now)
       return toWorkView(updated)
     },
   )
@@ -382,6 +384,8 @@ export async function acceptWorkAfterOwnerChange(
         now,
       })
       await supersedePendingWorkMandateProposals(tx, { workId: work.id, now })
+      // waiting → active changes the catalog's work state.
+      await advanceDiscoveryCatalogGeneration(tx, work.projectId, now)
       return { view: toWorkMandateView(mandate, now, true), changed: true }
     },
   )

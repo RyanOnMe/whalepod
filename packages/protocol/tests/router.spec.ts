@@ -3,6 +3,7 @@ import {
   CoordinationRequestPayloadSchema,
   RouterProposalSchema,
   ConfigureProjectRouterRequestSchema,
+  ConfigureDiscoveryRequestSchema,
   coordinationUsageCost,
   coordinationInputTokenEstimate,
 } from '../src/router.js'
@@ -140,5 +141,26 @@ describe('Router application contracts', () => {
     expect(RouterReevaluateRequestSchema.safeParse({ waitId: id, evaluationId: id }).success).toBe(
       false,
     )
+  })
+
+  it('bounds discovery creation quota to the int4 column', () => {
+    const base = {
+      enabled: true,
+      entryTaskId: id,
+      principalUserId: id,
+      activity: '活动',
+      slot: '接驳草稿',
+      templateVersion: 'v1',
+      expiresAt: '2026-11-11T12:00:00Z',
+      maxCalls: 6,
+      maxTokens: 200_000,
+      maxCostMicros: 1000,
+    }
+    expect(
+      ConfigureDiscoveryRequestSchema.safeParse({ ...base, maxCreations: 2_147_483_647 }).success,
+    ).toBe(true)
+    expect(
+      ConfigureDiscoveryRequestSchema.safeParse({ ...base, maxCreations: 2_147_483_648 }).success,
+    ).toBe(false)
   })
 })

@@ -122,12 +122,30 @@ export async function getDiscoverySlotForUpdate(
   return row
 }
 
+/**
+ * 目录写入推进代次前，按 id 顺序锁住项目全部槽位行。
+ * 立项/人工认领会先锁单个槽位再推进代次；若不先按同一顺序锁全量，
+ * 多槽位项目里两个事务会各持一行互相等待（40P01）。
+ */
+export async function lockDiscoveryProjectSlots(
+  handle: DbHandle,
+  projectId: string,
+): Promise<void> {
+  await handle
+    .select({ id: discoverySlots.id })
+    .from(discoverySlots)
+    .where(eq(discoverySlots.projectId, projectId))
+    .orderBy(asc(discoverySlots.id))
+    .for('update')
+}
+
 /** 目录写入推进代次：任何人工新建、改派、范围变更或成果发布都令旧核对失效。 */
 export async function advanceDiscoveryCatalogGeneration(
   handle: DbHandle,
   projectId: string,
   now: Date,
 ): Promise<void> {
+  await lockDiscoveryProjectSlots(handle, projectId)
   await handle
     .update(discoverySlots)
     .set({ generation: sql`${discoverySlots.generation} + 1`, updatedAt: now })

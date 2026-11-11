@@ -286,7 +286,7 @@ export const ConfigureDiscoveryRequestSchema = z.strictObject({
   /** 预登记的独立核实人；作者本人永远不能核实自己的评论。 */
   verifierUserIds: z.array(Id).max(16).default([]),
   /** 同一许可下最多自动立项数（含人工认领不同槽位的路径不计入）。 */
-  maxCreations: Positive.default(1),
+  maxCreations: Positive.max(2_147_483_647).default(1),
 })
 export type ConfigureDiscoveryRequest = z.infer<typeof ConfigureDiscoveryRequestSchema>
 export const DiscoveryConsentRequestSchema = z.strictObject({ configVersion: Positive })

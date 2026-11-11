@@ -37,6 +37,7 @@ import {
   insertWork,
   listCandidatesAwaitingCreation,
   listCurrentDiscoveryReceipts,
+  lockDiscoveryProjectSlots,
   markCandidateCreation,
   schema,
   upsertDiscoverySlotVerification,
@@ -58,7 +59,7 @@ import {
   templateDigestOf,
 } from './admission.js'
 import { loadDiscoveryCatalog, renderDiscoveryTemplate } from './catalog.js'
-import { loadDiscoveryInput } from './input.js'
+import { fenceDiscoveryAuthority, loadDiscoveryInput } from './input.js'
 
 type CreationDeps = RouterDeps
 
@@ -441,9 +442,16 @@ export async function applyDiscoveryCandidate(
     const project = await lockProject(tx, candidate.projectId)
     if (!project || project.archivedAt !== null)
       return markAndReturn(tx, candidate.id, rejectReason('project_archived', true), now)
+    // Slot rows are always locked in id order before any single slot row. Otherwise a
+    // project-wide generation bump taken while holding one slot can deadlock a second
+    // transaction that scans slots from the other end.
+    await lockDiscoveryProjectSlots(tx, candidate.projectId)
     // Re-read under lock: revoke/correction/cleanup may have deleted the row while we queued.
     candidate = await getDiscoveryCandidateForUpdate(tx, candidateId)
     if (!candidate) return outcome('skipped', 'candidate_missing')
+    // A newer evaluation for the same source supersedes this candidate.
+    if (admission.evaluationId !== null && admission.evaluationId !== candidate.evaluationId)
+      return markAndReturn(tx, candidate.id, rejectReason('stale_evaluation', true), now)
     const existing = await getDiscoveryApplicationByEvaluation(tx, candidate.evaluationId)
     if (existing)
       return {
@@ -518,7 +526,8 @@ export async function applyDiscoveryCandidate(
       input.admission.sourceVersion !== candidate.sourceVersion
     ) {
       // ADR §4：目录水位变化时不提交，先重评；把来源放回待评估队列。
-      await requeueDiscoveryAdmission(tx, candidate.sourceId, now)
+      // CAS：只重排仍指向本候选评估的准入行，避免落后的应用清掉已派发的新评估。
+      await requeueDiscoveryAdmission(tx, candidate.sourceId, candidate.evaluationId, now)
       return markAndReturn(tx, candidate.id, rejectReason('stale_evaluation', true), now)
     }
     const sourceEntry = input.manifest.find((entry) => entry.kind === 'source')
@@ -535,7 +544,15 @@ export async function applyDiscoveryCandidate(
     if (!source) return markAndReturn(tx, candidate.id, rejectReason('source_missing', true), now)
     const fact = await factVerification(tx, input, permit, source, candidate.proposal)
     if (typeof fact === 'string')
-      return markAndReturn(tx, candidate.id, rejectReason(fact, true), now)
+      // 核实回执可以在候选之后到来；缺独立佐证时保持可重试，由 tick 在回执落库后补立项。
+      return markAndReturn(
+        tx,
+        candidate.id,
+        rejectReason(fact, fact !== 'independent_support_missing'),
+        now,
+      )
+    if (!(await fenceDiscoveryAuthority(tx, input)))
+      return markAndReturn(tx, candidate.id, rejectReason('source_or_authority_changed', true), now)
 
     // Materialize the template the principal actually confirmed, not the live config row.
     const template = TaskSpecContentSchema.safeParse(permit.template)

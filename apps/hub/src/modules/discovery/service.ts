@@ -811,19 +811,28 @@ export async function runDiscoveryTick(deps: RouterDeps) {
 /** Revalidate bounded batches so a revoked excerpt does not survive in Hub candidate storage. */
 async function cleanDiscoveryCandidates(deps: RouterDeps, now: Date) {
   const t = schema.discoveryCandidates
-  await deps.database.db
-    .delete(t)
-    .where(
-      and(
-        lte(t.expiresAt, now),
-        notExists(
-          deps.database.db
-            .select({ one: schema.discoveryApplications.id })
-            .from(schema.discoveryApplications)
-            .where(eq(schema.discoveryApplications.candidateId, t.id)),
+  try {
+    await deps.database.db
+      .delete(t)
+      .where(
+        and(
+          lte(t.expiresAt, now),
+          notExists(
+            deps.database.db
+              .select({ one: schema.discoveryApplications.id })
+              .from(schema.discoveryApplications)
+              .where(eq(schema.discoveryApplications.candidateId, t.id)),
+          ),
         ),
-      ),
-    )
+      )
+  } catch {
+    // A concurrent application can win the FK race at the expiry boundary; skip this
+    // sweep and let the next tick retry instead of aborting the whole tick.
+    deps.log?.({
+      component: 'hub.discovery',
+      action: 'discovery.candidate_expiry_delete_failed',
+    })
+  }
   const staleChecks = await deps.database.db
     .select({ id: t.id, evaluationId: t.evaluationId })
     .from(t)

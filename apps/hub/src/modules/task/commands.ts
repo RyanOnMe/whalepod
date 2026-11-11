@@ -22,6 +22,7 @@ import {
   insertMessage,
   insertTask,
   listActiveRunsByTask,
+  lockDiscoveryProjectSlots,
   reassignTask,
   reassignPendingHandoffReceipts,
   retractAutoAdmittedInboxItemsForWork,
@@ -237,6 +238,9 @@ export async function createTask(
     }
     let claimedSlotId: string | undefined
     if (input.discovery !== undefined && 'slotId' in input.discovery) {
+      // Same order as apply: Project → all slots by id → the claimed slot row. The later
+      // generation bump then re-locks rows already held instead of scanning under one slot.
+      await lockDiscoveryProjectSlots(tx, projectId)
       const slot = await getDiscoverySlotForUpdate(tx, input.discovery.slotId)
       if (!slot || slot.projectId !== projectId)
         throw new ApiError(404, 'NOT_FOUND', 'discovery slot not found')
@@ -342,6 +346,7 @@ export async function acceptAssignment(
     const now = new Date()
     const updated = await setAssignment(tx, taskId, next.assignmentStatus, now)
     if (updated === undefined) throw new Error('task vanished in its own transaction')
+    await advanceDiscoveryCatalogGeneration(tx, task.projectId, now)
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
     return toTaskView(updated)
   })
@@ -507,6 +512,7 @@ export async function submitTaskForReview(
     if (updated === undefined) throw new Error('task vanished in its own transaction')
     // An ordinary revision Run can return the Task to in_progress; old draft authority must not revive.
     await revokeManagedDraftSourcesForTask(tx, taskId, now)
+    await advanceDiscoveryCatalogGeneration(tx, task.projectId, now)
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
     return toTaskView(updated)
   })

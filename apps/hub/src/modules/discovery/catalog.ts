@@ -90,9 +90,10 @@ export function renderDiscoveryTemplate(
     readonly sourceVersion: string
   },
 ): string {
-  return text
-    .replaceAll('{{activity}}', values.activity)
-    .replaceAll('{{slot}}', values.slot)
-    .replaceAll('{{sourceId}}', values.sourceId)
-    .replaceAll('{{sourceVersion}}', values.sourceVersion)
+  // One pass with a function replacement: `$&`/`$'` and nested `{{slot}}` in an
+  // admin-provided name stay literal instead of being re-interpreted by a later pass.
+  return text.replace(
+    /\{\{(activity|slot|sourceId|sourceVersion)\}\}/g,
+    (_, key: string) => values[key as keyof typeof values],
+  )
 }
