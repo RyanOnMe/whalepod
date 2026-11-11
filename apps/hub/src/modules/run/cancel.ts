@@ -16,6 +16,7 @@ import {
   appendTeamEvent,
   failInTransaction,
   findOutboxCommandsForRun,
+  isManagedDraftSource,
   schema,
   setApprovalStatus,
   setRunStatus,
@@ -43,7 +44,30 @@ export async function cancelRunInTransaction(
   cause: 'user' | 'admin',
 ): Promise<void> {
   // 幂等：重复取消不再入队第二条 run.cancel。
-  if (run.status === 'cancel_requested' || run.status === 'cancelled') return
+  if (run.status === 'cancelled') return
+  if (
+    isManagedDraftSource(run) &&
+    run.status !== 'queued' &&
+    (run.status === 'dispatching' || run.status === 'running' || run.status === 'cancel_requested')
+  ) {
+    if (run.status !== 'cancel_requested')
+      transitionRun({ status: run.status }, { type: 'cancel_requested' })
+    transitionRun({ status: 'cancel_requested' }, { type: 'cancel_confirmed' })
+    await applyRunStatus(
+      tx,
+      deps.outbox,
+      run.id,
+      'cancelled',
+      { finishedAt: deps.now },
+      deps.recorded,
+    )
+    await appendTeamEvent(tx, {
+      type: 'run.changed',
+      payload: { runId: run.id, taskId: run.taskId, status: 'cancelled' },
+    })
+    return
+  }
+  if (run.status === 'cancel_requested') return
 
   if (run.status === 'queued') {
     transitionRun({ status: run.status }, { type: 'cancel_before_dispatch' })

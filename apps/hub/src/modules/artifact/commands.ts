@@ -8,7 +8,14 @@
  */
 import { eq } from 'drizzle-orm'
 import { asUserId, authorize, transitionArtifact } from '@whalepod/domain'
-import { appendTeamEvent, getArtifact, schema, setArtifactStatus } from '@whalepod/db'
+import {
+  appendTeamEvent,
+  getOrdinaryArtifact,
+  getRun,
+  isManagedDraftSource,
+  schema,
+  setArtifactStatus,
+} from '@whalepod/db'
 import type { Database, Tx } from '@whalepod/db'
 import type { ArtifactRow } from '@whalepod/db'
 import { ApiError } from '../shared/http-error.js'
@@ -35,6 +42,12 @@ export async function publishArtifact(
       .where(eq(schema.artifacts.id, input.artifactId))
       .for('update')
     if (row === undefined) throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
+    const sourceRun = await getRun(tx, row.runId)
+    // Keep sealed content off the published path until current source policies and
+    // grant invalidation are checked together in this transaction.
+    if (sourceRun === undefined || isManagedDraftSource(sourceRun)) {
+      throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
+    }
     const allowed = authorize(
       { userId: asUserId(input.actorUserId), role: input.actorRole },
       'publish_artifact',
@@ -86,7 +99,7 @@ export async function requireArtifactRow(
   database: Database,
   artifactId: string,
 ): Promise<ArtifactRow> {
-  const row = await getArtifact(database.db, artifactId)
+  const row = await getOrdinaryArtifact(database.db, artifactId)
   if (row === undefined) throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
   return row
 }

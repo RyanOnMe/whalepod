@@ -17,13 +17,22 @@ import {
   ACTIVE_RUN_STATUSES,
   appendTeamEvent,
   findOutboxCommandsForRun,
+  isManagedDraftSource,
   Outbox,
   schema,
   setRunStatus,
 } from '@whalepod/db'
-import { RunStatusRequestSchema } from '@whalepod/protocol'
+import {
+  MANAGED_DRAFT_PREPARATION_MAX_AGE_MS,
+  MANAGED_DRAFT_EXECUTION_CHECK_MAX_AGE_MS,
+  MANAGED_DRAFT_EXECUTION_VERSION,
+  ManagedDraftExecuteSchema,
+  ManagedDraftStartSchema,
+  RunStatusRequestSchema,
+} from '@whalepod/protocol'
 import { transitionRun } from '@whalepod/domain'
-import { cancelPendingApprovalsInTransaction } from './cancel.js'
+import { cancelPendingApprovalsInTransaction, cancelRunInTransaction } from './cancel.js'
+import { lockWorkContext } from '../work/context.js'
 import { applyRunStatus } from './run-status.js'
 import type { ContextEntryObserver, RecordedContextEntry } from '../context/observer.js'
 
@@ -69,6 +78,9 @@ export async function reconcileLeases(deps: ReconcileDeps, now: Date): Promise<n
 async function reconcileOne(deps: ReconcileDeps, run: RunRow, now: Date): Promise<boolean> {
   const recorded: RecordedContextEntry[] = []
   const acted = await deps.database.transaction(async (tx) => {
+    // Dedicated sender and receipt also lock Task → Work → Run. Managed preparation
+    // never falls through to ordinary recovery or emits run.start/run.status_request.
+    if (isManagedDraftSource(run) && run.workKey !== null) await lockWorkContext(tx, run.workKey)
     const [locked] = await tx
       .select()
       .from(schema.runs)
@@ -76,6 +88,45 @@ async function reconcileOne(deps: ReconcileDeps, run: RunRow, now: Date): Promis
       .for('update')
     if (locked === undefined || !(ACTIVE_RUN_STATUSES as readonly string[]).includes(locked.status))
       return false
+
+    if (isManagedDraftSource(locked)) {
+      if (
+        locked.managedDraftPreparation &&
+        locked.dshDistributionVersion === MANAGED_DRAFT_EXECUTION_VERSION
+      ) {
+        const commands = await findOutboxCommandsForRun(tx, {
+          runId: locked.id,
+          type: 'managed_draft.execute',
+        })
+        const command = ManagedDraftExecuteSchema.shape.payload.safeParse(commands[0]?.payload)
+        if (
+          commands.length === 1 &&
+          command.success &&
+          commands[0]?.failedAt === null &&
+          Date.parse(command.data.manifest.expiresAt) > now.getTime() &&
+          locked.createdAt.getTime() + MANAGED_DRAFT_EXECUTION_CHECK_MAX_AGE_MS > now.getTime()
+        )
+          return false
+        await cancelRunInTransaction(tx, { outbox: deps.outbox, now }, locked, 'admin')
+        return true
+      }
+      if (!locked.managedDraftPreparation || locked.status !== 'queued') return false
+      const pending = await findOutboxCommandsForRun(tx, {
+        runId: locked.id,
+        type: 'managed_draft.start',
+        pendingOnly: true,
+      })
+      const command = ManagedDraftStartSchema.shape.payload.safeParse(pending[0]?.payload)
+      if (
+        pending.length === 1 &&
+        command.success &&
+        Date.parse(command.data.manifest.expiresAt) > now.getTime() &&
+        locked.createdAt.getTime() + MANAGED_DRAFT_PREPARATION_MAX_AGE_MS > now.getTime()
+      )
+        return false
+      await cancelRunInTransaction(tx, { outbox: deps.outbox, now }, locked, 'admin')
+      return true
+    }
 
     if (locked.status === 'queued') {
       const pending = await findOutboxCommandsForRun(tx, {

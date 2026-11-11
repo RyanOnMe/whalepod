@@ -1,0 +1,15 @@
+{
+  "protocolVersion": 1,
+  "messageId": "00000000-0000-4000-8000-000000000012",
+  "sentAt": "2026-11-10T10:00:00Z",
+  "type": "managed_draft.outcome",
+  "payload": {
+    "commandId": "00000000-0000-4000-8000-000000000013",
+    "runId": "00000000-0000-4000-8000-000000000001",
+    "manifestDigest": "6ec58b02d34926add5d62a4c9df02a81b0cd54bcecacccc91cb82f746a9bb22e",
+    "outcome": "completed",
+    "attemptId": "00000000-0000-4000-8000-000000000014",
+    "artifactId": "00000000-0000-4000-8000-000000000015",
+    "verifiedUploadReceiptId": "00000000-0000-4000-8000-000000000016"
+  }
+}

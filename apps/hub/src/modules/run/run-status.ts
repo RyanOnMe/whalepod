@@ -29,6 +29,7 @@ import {
   getProfileRevision,
   getWorkByIdForUpdate,
   insertWorkRunBoundary,
+  isManagedDraftSource,
   schema,
   setRunStatus,
   settleExecutorUsage,
@@ -71,7 +72,7 @@ export async function applyRunStatus(
     )
   }
   const row = await setRunStatus(tx, runId, status, patch)
-  if (row !== undefined && status === 'running') {
+  if (row !== undefined && status === 'running' && !isManagedDraftSource(row)) {
     // 幂等（补发器以 outbox.message_id 判重），所以「多调一次」是安全的，
     // 而「漏调一次」会让指令永久停在 pending —— 这就是收口的价值。
     await dispatchPendingInstructions(tx, outbox, row)
@@ -134,6 +135,8 @@ export async function applyRunStatus(
         updatedAt: row.finishedAt ?? new Date(),
       })
     }
+    // Private status does not become a Router trigger or a general project fact.
+    if (isManagedDraftSource(row)) return row
     // ADR-0028 §17.1/§17.3（RD-03d3）：机器 Run 终态落一条边界复核标记，由 Router
     // tick 在受控后续事务里复核 work/Task/Mandate/活跃 Run 后再决定是否重评。
     // 这里只写标记，不调用模型、不建意图/Run，也不改 Run 的输入快照。同一 Run 的

@@ -80,8 +80,9 @@ export async function personalAttention(
         and not exists (select 1 from run r where r.task_id=t.id and r.status in ('queued','dispatching','running','waiting_approval','cancel_requested'))
       union all
       select 'inspect_candidate',t.id,t.title,t.project_name,a.id,a.run_id,a.created_at,5
-      from eligible t join artifact a on a.task_id=t.id
+      from eligible t join artifact a on a.task_id=t.id join run r on r.id=a.run_id
       where a.status='candidate' and a.owner_user_id=${actor.userId}
+        and r.managed_draft_source_digest is null
       union all
       select 'complete_task',t.id,t.title,t.project_name,t.id,null::uuid,t.updated_at,6
       from eligible t where t.assignee_user_id=${actor.userId} and t.assignment_status='accepted' and t.status='in_review'

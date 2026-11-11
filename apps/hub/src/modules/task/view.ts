@@ -21,6 +21,7 @@ import {
   listDiscussionMessages,
   listInstructionMessages,
   listReceiptsByDownstreamTask,
+  isManagedDraftSource,
   listRunsByTask,
   listRunPlacementNames,
   mapSpecRevisionNumbers,
@@ -234,19 +235,20 @@ export async function getTaskRoom(
     // #211：一次查出本任务所有 Run 的设备名/工作区名（JOIN，不 N+1）。
     listRunPlacementNames(handle, taskId),
   ])
+  const visibleRuns = runs.filter((row) => !isManagedDraftSource(row))
   // #244：预解析依赖上面的 runs（要先知道会继承哪个 Agent），没法进同一个
   // Promise.all；顺序两查（agent → revision）+ 读模型路径，代价可接受。
   // #246/#261/#378：工具/阶段摘要与约定版本号映射同样依赖 runs（按 runId 批查），与预解析并行。
   const [nextRunApprovalPolicy, lastToolCalls, lastPhases, specNumbers] = await Promise.all([
-    resolveNextRunApprovalPolicy(handle, task, runs),
+    resolveNextRunApprovalPolicy(handle, task, visibleRuns),
     latestToolStartsByRun(
       handle,
-      runs.map((row) => row.id),
+      visibleRuns.map((row) => row.id),
     ),
     // #261：阶段摘要同式（按 runId 批查，别的 Run 不串档）。
     latestPhasesByRun(
       handle,
-      runs.map((row) => row.id),
+      visibleRuns.map((row) => row.id),
     ),
     // #378：本 Task 的已确认版本号映射（id → revision_number，供绑定展示）。
     mapSpecRevisionNumbers(handle, taskId),
@@ -322,7 +324,7 @@ export async function getTaskRoom(
     })(),
     comments: comments.map(toCommentView),
     instructions: instructions.map(toCommentView),
-    runs: runs.map((row) =>
+    runs: visibleRuns.map((row) =>
       toTaskRoomRun(
         row,
         placementNames,

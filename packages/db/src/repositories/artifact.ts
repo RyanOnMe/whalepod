@@ -1,6 +1,7 @@
-import { and, asc, count, eq } from 'drizzle-orm'
+import { and, asc, count, eq, isNull, or } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { artifacts } from '../schema/artifact.js'
+import { runs } from '../schema/run.js'
 
 export type ArtifactRow = typeof artifacts.$inferSelect
 
@@ -32,6 +33,26 @@ export async function getArtifact(handle: DbHandle, id: string): Promise<Artifac
   return row
 }
 
+// A managed candidate inherits the Run seal. A deliberately published Artifact can
+// enter the ordinary surfaces; the publish transaction owns that authorization.
+const ordinaryArtifact = or(
+  isNull(runs.managedDraftSourceDigest),
+  eq(artifacts.status, 'published'),
+)
+
+export async function getOrdinaryArtifact(
+  handle: DbHandle,
+  id: string,
+): Promise<ArtifactRow | undefined> {
+  const [row] = await handle
+    .select({ artifact: artifacts })
+    .from(artifacts)
+    .innerJoin(runs, eq(runs.id, artifacts.runId))
+    .where(and(eq(artifacts.id, id), ordinaryArtifact))
+    .limit(1)
+  return row?.artifact
+}
+
 /**
  * 终态迁移（03 §3.4：candidate -> published | rejected）。
  * 合法性由 Hub 经 domain.transitionArtifact 判定后调用；这里只落库。
@@ -55,11 +76,13 @@ export async function listArtifactsByTask(
   handle: DbHandle,
   taskId: string,
 ): Promise<ArtifactRow[]> {
-  return handle
-    .select()
+  const rows = await handle
+    .select({ artifact: artifacts })
     .from(artifacts)
-    .where(eq(artifacts.taskId, taskId))
+    .innerJoin(runs, eq(runs.id, artifacts.runId))
+    .where(and(eq(artifacts.taskId, taskId), ordinaryArtifact))
     .orderBy(asc(artifacts.createdAt))
+  return rows.map(({ artifact }) => artifact)
 }
 
 /** Task 是否已有至少一个 published Artifact（submit-review 守卫，03 §3.1）。 */

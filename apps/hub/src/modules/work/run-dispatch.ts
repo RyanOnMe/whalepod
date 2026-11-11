@@ -3,7 +3,7 @@ import type { Database, RunRow, Tx } from '@whalepod/db'
 import {
   getDispatchIntent,
   getRetractedInboxItemForSource,
-  getRun,
+  getOrdinaryRun,
   getWorkByKey,
   getWorkMandate,
   schema,
@@ -232,7 +232,7 @@ export async function buildRunWorkInputBundle(
   runId: string,
   deviceId: string,
 ): Promise<RunWorkInputBundleResult> {
-  const run = await getRun(database.db, runId)
+  const run = await getOrdinaryRun(database.db, runId)
   if (run === undefined || run.deviceId !== deviceId) return undefined
   if (run.workInputManifest === null || run.workInputManifestDigest === null) {
     return undefined

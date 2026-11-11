@@ -12,6 +12,7 @@ import {
   HandoffNarrativeSchema,
   HandoffRunSpecSchema,
 } from './handoff.js'
+import { ManagedDraftSourceManifestSchema } from './managed-draft.js'
 import { ApprovalPolicySchema } from './approval.js'
 import { MandateInvalidationReasonSchema } from './mandate-invalidation.js'
 import { RunToolPolicySchema } from './tool-policy.js'
@@ -380,6 +381,30 @@ export const CoordinationResultAckFrameSchema = envelope(
   CoordinationResultAckPayloadSchema,
 )
 
+const managedDraftOutcomeBinding = {
+  commandId: z.uuid(),
+  runId: z.uuid(),
+  manifestDigest: Sha256DigestSchema,
+}
+
+/** Private execution result; never carries model output, filenames, or diagnostics. */
+export const ManagedDraftOutcomeSchema = envelope(
+  'managed_draft.outcome',
+  z.discriminatedUnion('outcome', [
+    z.strictObject({
+      ...managedDraftOutcomeBinding,
+      outcome: z.literal('completed'),
+      attemptId: z.uuid(),
+      artifactId: z.uuid(),
+      verifiedUploadReceiptId: z.uuid(),
+    }),
+    z.strictObject({
+      ...managedDraftOutcomeBinding,
+      outcome: z.literal('failed'),
+    }),
+  ]),
+)
+
 const DiscoveryRequestFrameSchema = envelope('discovery.request', DiscoveryRequestPayloadSchema)
 const DiscoveryHeartbeatFrameSchema = envelope(
   'discovery.heartbeat',
@@ -407,6 +432,7 @@ export const NodeUpstreamSchema = z.discriminatedUnion('type', [
   NodePreparationResultSchema,
   SourcePermissionResultSchema,
   CommandAckSchema,
+  ManagedDraftOutcomeSchema,
   RunSnapshotFrameSchema,
   RunEventFrameSchema,
   RunLiveDeltaSchema,
@@ -581,6 +607,24 @@ export const RunContextStateFrameSchema = envelope('run.context_state', RunConte
 /** ADR-0027 §6（PC-05b）：周期性水位/摘要帧；不直接应用 entries。 */
 export const ContextStateSyncFrameSchema = envelope('context.state_sync', ContextStateSyncSchema)
 
+/** Metadata-only offer for a provisioned managed host; receipt does not authorize model I/O. */
+export const ManagedDraftStartSchema = envelope(
+  'managed_draft.start',
+  z.strictObject({
+    commandId: z.uuid(),
+    manifest: ManagedDraftSourceManifestSchema,
+    manifestDigest: Sha256DigestSchema,
+  }),
+)
+
+/** Loopback verification lane, distinct from transport-only preparation. */
+export const ManagedDraftExecuteSchema = envelope(
+  'managed_draft.execute',
+  ManagedDraftStartSchema.shape.payload.extend({
+    model: z.string().regex(/^[A-Za-z0-9_./-]{1,128}$/),
+  }),
+)
+
 export const NodeDownstreamSchema = z.discriminatedUnion('type', [
   CoordinationRequestFrameSchema,
   DiscoveryRequestFrameSchema,
@@ -590,6 +634,8 @@ export const NodeDownstreamSchema = z.discriminatedUnion('type', [
   CoordinationCancelFrameSchema,
   CoordinationResultAckFrameSchema,
   RunStartSchema,
+  ManagedDraftStartSchema,
+  ManagedDraftExecuteSchema,
   RunCancelSchema,
   RunMandateInvalidatedSchema,
   RunStatusRequestSchema,

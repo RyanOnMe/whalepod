@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# RD-03c3a checks. Only the isolated test Hub explicitly enables private review.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+pnpm --filter @whalepod/hub... --filter @whalepod/node... --filter @whalepod/runtime... build
+pnpm exec vitest run --project unit \
+  apps/hub/tests/draft-share-eligibility.spec.ts \
+  apps/hub/tests/artifact-preview-projection.spec.ts \
+  packages/protocol/tests/managed-draft.spec.ts
+pnpm test:integration \
+  apps/hub/tests/work-dispatch.integration.spec.ts \
+  apps/hub/tests/managed-draft-source.integration.spec.ts \
+  apps/hub/tests/managed-draft-loopback-broker.integration.spec.ts \
+  apps/hub/tests/managed-draft-node-bin.integration.spec.ts \
+  apps/hub/tests/node-websocket.integration.spec.ts \
+  apps/node/tests/integration/managed-draft-node.integration.spec.ts \
+  apps/hub/tests/artifact.integration.spec.ts \
+  apps/hub/tests/artifact-review.integration.spec.ts \
+  apps/hub/tests/personal-attention.integration.spec.ts \
+  apps/hub/tests/handoff-draft.integration.spec.ts \
+  apps/hub/tests/realtime.integration.spec.ts \
+  apps/hub/tests/outbox-recovery.integration.spec.ts
+pnpm test:resilience apps/hub/tests/resilience/run-lease-resilience.spec.ts
+pnpm test:dsh-contract \
+  packages/runtime-dsh/tests/dsh-contract/managed-draft-model.contract.spec.ts \
+  packages/runtime-dsh/tests/dsh-contract/managed-draft-broker.contract.spec.ts \
+  apps/runtime/tests/dsh-contract/managed-draft-worker.contract.spec.ts

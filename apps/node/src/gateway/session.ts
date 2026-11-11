@@ -28,6 +28,7 @@ export const HEARTBEAT_INTERVAL_MS = 10_000 as const
 
 export interface DeviceSessionDeps {
   readonly config: NodeConfig
+  readonly managedHostToken?: string
   /**
    * #352：hello 事实**按连接重算**（此前是启动时算好的一份冻结对象）——本地 preflight
    * 装/重建 pack 之后、或本机 DSH 换版之后，设备视图不该等 Node 重启才刷新。
@@ -52,6 +53,8 @@ export interface DeviceSessionDeps {
   readonly onFrame?: (frame: NodeDownstream) => void
   /** P1-13：连接（重）建立、hello 发出后回调——spool 全量补发的触发点（R1）。 */
   readonly onConnected?: () => void
+  /** Managed operations cannot outlive the exact socket which offered them. */
+  readonly onDisconnected?: () => void
   /** P1-13：心跳事实源（activeRunIds + lastEventSeqByRun，03 §6.2）。 */
   readonly heartbeatFacts?: () => {
     activeRunIds: string[]
@@ -233,6 +236,11 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
       deps.config.deviceToken,
       {
         onMessage: (frame) => {
+          if (
+            deps.managedHostToken !== undefined &&
+            (current !== (socket as unknown as SocketLike) || socket.readyState !== 1)
+          )
+            return
           if (frame.type === 'node.token_revoked') {
             // 先标记再清理：随后到来的 close（1000 自发或 4008 对端）直接退出，不重连。
             revoked = true
@@ -274,6 +282,7 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
         onClose: (code, reason) => {
           if (current !== (socket as unknown as SocketLike)) return // 旧连接事件忽略
           current = undefined
+          deps.onDisconnected?.()
           if (revoked) {
             deps.exit(1, 'device token revoked; run `whalepod-node pair` to re-pair')
             return
@@ -291,7 +300,10 @@ export function startDeviceSession(deps: DeviceSessionDeps): {
           // 网络错误后必跟 close/unexpected-response，由 onClose 统一调度。
         },
       },
-      deps.WebSocketImpl === undefined ? {} : { WebSocketImpl: deps.WebSocketImpl },
+      {
+        ...(deps.WebSocketImpl === undefined ? {} : { WebSocketImpl: deps.WebSocketImpl }),
+        ...(deps.managedHostToken === undefined ? {} : { managedHostToken: deps.managedHostToken }),
+      },
     )
     current = socket as unknown as SocketLike
     socket.once('open', () => {

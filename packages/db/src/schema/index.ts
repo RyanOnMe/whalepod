@@ -22,5 +22,6 @@ export * from './work-delivery.js'
 export * from './handoff.js'
 export * from './outbox.js'
 export * from './router.js'
-
+export * from './managed-draft.js'
+export * from './draft-share.js'
 export * from './discovery.js'

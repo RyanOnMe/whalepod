@@ -45,6 +45,14 @@ import { registerPreparationRoutes } from './modules/device/preparation-routes.j
 import { registerDeviceRoutes } from './modules/device/routes.js'
 import { registerWorkspaceRoutes } from './modules/device/workspace-routes.js'
 import { registerNodeWebsocket } from './modules/device/node-websocket.js'
+import { sha256Hex } from './modules/coordination/digest.js'
+import { ManagedDraftExecution } from './modules/draft-share/execution.js'
+import { managedDraftCandidateStore } from './modules/draft-share/candidate-store.js'
+import { registerManagedDraftExecutionRoutes } from './modules/draft-share/execution-routes.js'
+import { parseManagedDraftLoopbackEndpoint } from './modules/draft-share/loopback-broker.js'
+import { ManagedDraftTransport } from './modules/draft-share/dispatch.js'
+import { activateManagedDraftModelPolicy } from './modules/draft-share/source-registry.js'
+import { registerManagedDraftSourceRoutes } from './modules/draft-share/routes.js'
 import { nodeConnections } from './modules/device/connection-registry.js'
 import { RunOrchestrator } from './modules/run/index.js'
 import { registerRunRoutes } from './modules/run/routes.js'
@@ -55,6 +63,8 @@ import { registerRealtimeRoutes } from './modules/realtime/routes.js'
 // P1-15：内容寻址 Artifact Store 与 HTTP 面。
 import { ArtifactStore } from './modules/artifact/store.js'
 import { registerArtifactRoutes } from './modules/artifact/routes.js'
+import { DraftShareGrants } from './modules/draft-share/grants.js'
+import { registerDraftShareGrantRoutes } from './modules/draft-share/grant-routes.js'
 import { registerReviewRoutes } from './modules/review/routes.js'
 
 // P1-16：server 组合根把 orchestrator 的内存心跳投影喂给租约 reconcile
@@ -62,6 +72,8 @@ import { registerReviewRoutes } from './modules/review/routes.js'
 declare module 'fastify' {
   interface FastifyInstance {
     runOrchestrator: RunOrchestrator
+    managedDraftTransport: ManagedDraftTransport
+    managedDraftExecution: ManagedDraftExecution
   }
 }
 
@@ -225,6 +237,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
   const orchestrator = new RunOrchestrator({
     database,
     outbox,
+    managedDraftDeviceId: config.managedDraftHost?.deviceId,
     // #52/ADR-0007：表外越边的 Run 级降级收敛走结构化 warn（component 分层，
     // 违例计数/告警的挂点；真人路径可观测，不做暗手）。
     warn: (message, context) => app.log.warn({ component: 'hub.run', ...context }, message),
@@ -237,15 +250,58 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
     send: (deviceId, frame) => nodeConnections.send(deviceId, frame),
   })
   app.decorate('runOrchestrator', orchestrator)
+  const isOrdinaryDevice = (deviceId: string) => orchestrator.isOrdinaryDevice(deviceId)
+  const dshDistributionVersionFor = async (deviceId: string) =>
+    isOrdinaryDevice(deviceId) ? getDeviceDshDistributionVersion(database.db, deviceId) : undefined
   // RD-03r2：Router 提案应用出 proposed 意图后，用既有端口尝试 existing_task
   // 自动派工。系统触发只代表当前责任人，不伪造成员会话或审批。
   const onRouterAutoDispatch = createRouterAutoDispatch(database, orchestrator, outbox)
+  const loopbackEndpoint =
+    config.managedDraftLoopbackEndpoint === undefined
+      ? undefined
+      : parseManagedDraftLoopbackEndpoint(config.managedDraftLoopbackEndpoint)
+  const managedDraftRequiresTls = new URL(config.publicOrigin).protocol === 'https:'
+  const configuredManagedDraftPlacement =
+    config.managedDraftHost !== undefined && config.managedDraftModelRoute !== undefined
+      ? {
+          host: config.managedDraftHost,
+          modelRoute: {
+            ...config.managedDraftModelRoute,
+            ...(loopbackEndpoint === undefined
+              ? {}
+              : { endpointDigest: sha256Hex(loopbackEndpoint.href) }),
+          },
+        }
+      : undefined
+  if (loopbackEndpoint !== undefined && configuredManagedDraftPlacement === undefined)
+    throw new Error('managed draft loopback requires dedicated host and model route provisioning')
+  const managedDraftPlacement =
+    configuredManagedDraftPlacement !== undefined &&
+    (await activateManagedDraftModelPolicy(database, configuredManagedDraftPlacement.modelRoute))
+      ? configuredManagedDraftPlacement
+      : undefined
+  if (configuredManagedDraftPlacement !== undefined && managedDraftPlacement === undefined)
+    app.log.warn({ component: 'hub.managed-draft' }, 'managed draft model policy is not current')
+  const managedDraftTransport = new ManagedDraftTransport(database, outbox, managedDraftPlacement)
+  const managedDraftExecution = new ManagedDraftExecution(
+    database,
+    outbox,
+    managedDraftPlacement,
+    loopbackEndpoint,
+    managedDraftCandidateStore(config.artifactStoreDir),
+  )
+  app.decorate('managedDraftTransport', managedDraftTransport)
+  app.decorate('managedDraftExecution', managedDraftExecution)
   registerNodeWebsocket(app, {
     database,
     orchestrator,
     realtime,
     routerStore: new ArtifactStore({ root: config.artifactStoreDir }),
     onAutoDispatch: onRouterAutoDispatch,
+    managedDraftHost: config.managedDraftHost,
+    managedDraftRequiresTls,
+    managedDraftTransport,
+    managedDraftExecution,
   })
 
   await app.register(
@@ -261,6 +317,21 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       registerInviteRoutes(api, { database, requireActor, anonymousLimiter, secureCookie })
       registerProjectRoutes(api, { database, requireActor })
       registerSourceRoutes(api, { database, requireActor })
+      if (managedDraftPlacement !== undefined) {
+        registerManagedDraftSourceRoutes(api, {
+          database,
+          requireActor,
+          ownerUserId: managedDraftPlacement.host.ownerUserId,
+          modelRoute: managedDraftPlacement.modelRoute,
+        })
+        if (loopbackEndpoint !== undefined)
+          registerManagedDraftExecutionRoutes(api, {
+            database,
+            host: managedDraftPlacement.host,
+            requiresTls: managedDraftRequiresTls,
+            execution: managedDraftExecution,
+          })
+      }
       registerContextRoutes(api, { database, requireActor })
       registerCoordinationRoutes(api, { database, requireActor })
       registerDiscoveryRoutes(api, {
@@ -321,6 +392,9 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         },
       })
       registerDispatchRoutes(api, {
+        managedDraftPlacement,
+        managedDraftExecutionCheck:
+          managedDraftPlacement !== undefined && loopbackEndpoint !== undefined,
         database,
         requireActor,
         orchestrator,
@@ -332,8 +406,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         requireActor,
         outbox,
         orchestrator,
-        dshDistributionVersionFor: (deviceId) =>
-          getDeviceDshDistributionVersion(database.db, deviceId),
+        dshDistributionVersionFor,
       })
       // #379：交接草稿/版本面（owner 私有草稿 + 团队可见的已发布版本）。
       registerHandoffRoutes(api, { database, requireActor })
@@ -345,12 +418,26 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         catalog: pluginCatalog,
         allowLocalDevelopment: config.pluginDevMode ?? false,
       })
-      registerPreparationRoutes(api, { database, requireActor })
+      registerPreparationRoutes(api, { database, requireActor, isOrdinaryDevice })
       registerDeviceRoutes(api, { database, requireActor, anonymousLimiter })
       registerWorkspaceRoutes(api, { database, requireActor })
       // P1-15：Artifact 面——Node 上传/manifest/受控下载 + owner 发布 + 内容下载。
       // Store 根来自配置（生产 data/artifact-store，测试注入临时目录）。
       const artifactStore = new ArtifactStore({ root: config.artifactStoreDir })
+      if (
+        config.managedDraftMemberReviewEnabled === true &&
+        managedDraftPlacement !== undefined &&
+        loopbackEndpoint !== undefined
+      ) {
+        registerDraftShareGrantRoutes(api, {
+          requireActor,
+          grants: new DraftShareGrants(
+            database,
+            managedDraftCandidateStore(config.artifactStoreDir),
+            managedDraftPlacement.modelRoute,
+          ),
+        })
+      }
       registerArtifactRoutes(api, {
         database,
         store: artifactStore,
@@ -362,8 +449,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         store: artifactStore,
         requireActor,
         orchestrator,
-        dshDistributionVersionFor: (deviceId) =>
-          getDeviceDshDistributionVersion(database.db, deviceId),
+        dshDistributionVersionFor,
       })
       // P1-13：Run HTTP 面（创建/投影/事件时间线）正式接线；dsh 版本取自
       // node.hello 回填的设备事实列（缺 = 设备不在线 → DEVICE_OFFLINE）。
@@ -377,8 +463,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
           const session = await requireActor(request)
           return { userId: asUserId(session.userId), role: session.role }
         },
-        dshDistributionVersionFor: (deviceId) =>
-          getDeviceDshDistributionVersion(database.db, deviceId),
+        dshDistributionVersionFor,
       })
     },
     { prefix: '/api/v1' },

@@ -24,7 +24,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { authorize, asUserId } from '@whalepod/domain'
 import {
   getArtifact,
-  getRun,
+  getOrdinaryRun,
   insertArtifact,
   deviceHandoffInputReferences,
   deviceHasRunOnTask,
@@ -150,7 +150,7 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
       async (request, reply) => {
         const identity = await authenticateDevice(deps.database, request)
         const { runId } = request.params as { runId: string }
-        const run = await getRun(deps.database.db, runId)
+        const run = await getOrdinaryRun(deps.database.db, runId)
         if (run === undefined || run.deviceId !== identity.deviceId) {
           throw new ApiError(404, 'NOT_FOUND', 'run not found')
         }
@@ -273,7 +273,7 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
     artifact.get('/node/runs/:runId/input-manifest', async (request) => {
       const identity = await authenticateDevice(deps.database, request)
       const { runId } = request.params as { runId: string }
-      const run = await getRun(deps.database.db, runId)
+      const run = await getOrdinaryRun(deps.database.db, runId)
       if (run === undefined || run.deviceId !== identity.deviceId) {
         throw new ApiError(404, 'NOT_FOUND', 'run not found')
       }
@@ -291,7 +291,7 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
     artifact.get('/runs/:runId/input-manifest', async (request, reply) => {
       await deps.requireActor(request)
       const { runId } = request.params as { runId: string }
-      const run = await getRun(deps.database.db, runId)
+      const run = await getOrdinaryRun(deps.database.db, runId)
       if (run === undefined) throw new ApiError(404, 'NOT_FOUND', 'run not found')
       return reply.header('cache-control', 'no-store').send({ ok: true, data: savedRunInputs(run) })
     })
@@ -301,7 +301,7 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
     artifact.get('/node/runs/:runId/handoff-input', async (request) => {
       const identity = await authenticateDevice(deps.database, request)
       const { runId } = request.params as { runId: string }
-      const run = await getRun(deps.database.db, runId)
+      const run = await getOrdinaryRun(deps.database.db, runId)
       if (run === undefined || run.deviceId !== identity.deviceId) {
         throw new ApiError(404, 'NOT_FOUND', 'run not found')
       }
@@ -311,7 +311,7 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
     artifact.get('/runs/:runId/handoff-input', async (request, reply) => {
       await deps.requireActor(request)
       const { runId } = request.params as { runId: string }
-      const run = await getRun(deps.database.db, runId)
+      const run = await getOrdinaryRun(deps.database.db, runId)
       if (run === undefined) throw new ApiError(404, 'NOT_FOUND', 'run not found')
       return reply
         .header('cache-control', 'no-store')

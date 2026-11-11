@@ -729,7 +729,13 @@ export async function countMachineRunsForWork(handle: DbHandle, workKey: string)
   const [row] = await handle
     .select({ value: count() })
     .from(runs)
-    .where(and(eq(runs.workKey, workKey), eq(runs.origin, 'mandate')))
+    .where(
+      and(
+        eq(runs.workKey, workKey),
+        eq(runs.origin, 'mandate'),
+        eq(runs.managedDraftPreparation, false),
+      ),
+    )
   return row?.value ?? 0
 }
 
@@ -745,6 +751,7 @@ export async function countFailedMachineRunsForWork(
       and(
         eq(runs.workKey, workKey),
         eq(runs.origin, 'mandate'),
+        eq(runs.managedDraftPreparation, false),
         inArray(runs.status, ['failed', 'cancelled', 'lost']),
       ),
     )
@@ -871,11 +878,16 @@ export async function listDispatchIntents(
   handle: DbHandle,
   workId: string,
   limit: number,
-): Promise<DispatchIntentRow[]> {
-  return handle
-    .select()
+): Promise<(DispatchIntentRow & { readonly managedRun: boolean })[]> {
+  const rows = await handle
+    .select({
+      intent: dispatchIntents,
+      managedRun: sql<boolean>`${runs.managedDraftSourceDigest} is not null`,
+    })
     .from(dispatchIntents)
+    .leftJoin(runs, eq(runs.id, dispatchIntents.runId))
     .where(eq(dispatchIntents.workId, workId))
     .orderBy(desc(dispatchIntents.createdAt), desc(dispatchIntents.id))
     .limit(limit)
+  return rows.map(({ intent, managedRun }) => ({ ...intent, managedRun }))
 }

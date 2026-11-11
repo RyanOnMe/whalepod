@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import type { ApprovalRow, RunRow } from '@whalepod/db'
 import type { MandateInvalidationReason } from '@whalepod/protocol'
 import { MandateInvalidationReasonSchema, WorkInputManifestSchema } from '@whalepod/protocol'
-import { getRun, listRunsByTask, schema } from '@whalepod/db'
+import { getOrdinaryRun, isManagedDraftSource, listRunsByTask, schema } from '@whalepod/db'
 import type { DbHandle } from '@whalepod/db'
 import { deriveDeviceStatus } from '../device/pairing.js'
 import { RunCommandError } from './errors.js'
@@ -107,7 +107,7 @@ export function toRunView(row: RunRow): RunView {
 }
 
 export async function getRunView(handle: DbHandle, runId: string): Promise<RunView | undefined> {
-  const row = await getRun(handle, runId)
+  const row = await getOrdinaryRun(handle, runId)
   return row === undefined ? undefined : toRunView(row)
 }
 
@@ -147,7 +147,7 @@ export function toApprovalView(row: ApprovalRow): ApprovalView {
 
 export async function listRunViewsByTask(handle: DbHandle, taskId: string): Promise<RunView[]> {
   const rows = await listRunsByTask(handle, taskId)
-  return rows.map(toRunView)
+  return rows.filter((row) => !isManagedDraftSource(row)).map(toRunView)
 }
 
 /**

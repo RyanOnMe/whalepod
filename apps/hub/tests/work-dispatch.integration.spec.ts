@@ -324,6 +324,64 @@ describe('RD-03a controlled dispatch (ADR-0028 §6)', () => {
     return { work, mandate, intentId, runId }
   }
 
+  it('refuses a requested managed draft source without verified execution; never falls back', async () => {
+    const work = await createWork(ctx, alice, taskId)
+    await createMandate(ctx, alice, work.workKey, { allowedAgentIds: [agent.agentId] })
+    const { intentId } = await prepareIntent(work.workKey)
+    await approve(ctx, alice, work.workKey, intentId)
+    const url = `/api/v1/works/${work.workKey}/dispatch-intents/${intentId}/dispatch`
+    const placement = {
+      agentId: agent.agentId,
+      deviceId: device.deviceId,
+      workspaceId: device.workspaceId,
+    }
+    const idempotencyKey = idemKey()
+    const request = {
+      method: 'POST' as const,
+      url,
+      payload: { ...placement, executionProfile: 'managed_draft_source' },
+      idempotencyKey,
+    }
+
+    // The same ordinary approved intent and placement can run normally when explicitly chosen.
+    for (const rejected of [
+      await apiInject(ctx, alice, request),
+      await apiInject(ctx, alice, request),
+    ]) {
+      expect(rejected.statusCode).toBe(409)
+      expect(rejected.json().error).toMatchObject({
+        code: 'CONFLICT',
+        message: 'managed draft source execution is unavailable',
+      })
+    }
+    expect(await database.db.select().from(schema.runs)).toEqual([])
+    expect(await database.db.select().from(schema.dispatchOutbox)).toEqual([])
+    const [stillApproved] = await database.db
+      .select()
+      .from(schema.dispatchIntents)
+      .where(eq(schema.dispatchIntents.id, intentId))
+    expect(stillApproved).toMatchObject({ status: 'approved', runId: null })
+
+    const ordinary = await apiInject(ctx, alice, { ...request, payload: placement })
+    expect(ordinary.statusCode).toBe(200)
+    expect(ordinary.json().data).toMatchObject({ status: 'dispatched' })
+    const ordinaryRunId = String(ordinary.json().data.runId)
+    expect(ordinaryRunId).toMatch(/^[0-9a-f-]{36}$/)
+    // Assert the database rejects relabeling. This write must fail: no running state is
+    // created or modified behind the dispatch path.
+    await expect(
+      database.sql`update run set managed_draft_source_digest = ${'a'.repeat(64)} where id = ${ordinaryRunId}`,
+    ).rejects.toMatchObject({
+      code: '23514',
+      constraint_name: 'run_managed_draft_source_immutable',
+    })
+    // A later managed request with the same idempotency key cannot reuse the ordinary Run.
+    const rejected = await apiInject(ctx, alice, request)
+    expect(rejected.statusCode).toBe(409)
+    expect(rejected.json().error.message).not.toBeUndefined()
+    expect(await database.db.select().from(schema.runs)).toHaveLength(1)
+  })
+
   it('approve → dispatch creates a machine Run with provenance and reactivates work on terminal', async () => {
     const work = await createWork(ctx, alice, taskId)
     const mandate = await createMandate(ctx, alice, work.workKey, {

@@ -18,6 +18,7 @@ import {
   reassignTask,
   reassignPendingHandoffReceipts,
   retractAutoAdmittedInboxItemsForWork,
+  revokeManagedDraftSourcesForTask,
   setAssignment,
   setTaskStatus,
   schema,
@@ -333,6 +334,7 @@ export async function reassignAssignment(
     if (task.assigneeUserId !== assigneeUserId) {
       await markWorkWaitingForAssigneeChange(tx, taskId, now)
     }
+    await revokeManagedDraftSourcesForTask(tx, taskId, now)
     // #428 评审修复：未确认交接随责任转移，别让旧接收人留着一条确认不了的回执。
     await reassignPendingHandoffReceipts(tx, taskId, assigneeUserId, now)
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
@@ -410,8 +412,11 @@ export async function submitTaskForReview(
       throw new ApiError(409, 'CONFLICT', 'task has no published artifact to review')
     }
     const next = transitionTask({ status: task.status }, { type: 'review_submitted' })
-    const updated = await setTaskStatus(tx, taskId, next.status)
+    const now = new Date()
+    const updated = await setTaskStatus(tx, taskId, next.status, now)
     if (updated === undefined) throw new Error('task vanished in its own transaction')
+    // An ordinary revision Run can return the Task to in_progress; old draft authority must not revive.
+    await revokeManagedDraftSourcesForTask(tx, taskId, now)
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
     return toTaskView(updated)
   })

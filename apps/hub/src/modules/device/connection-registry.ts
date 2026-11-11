@@ -5,6 +5,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { WebSocket } from 'ws'
+import type { ManagedDraftHost } from '../../config.js'
 import type { AuthenticatedDevice } from '../run/device-gateway.js'
 import { NodePreparationCheckSchema, SourcePermissionCheckSchema } from '@whalepod/protocol'
 import type {
@@ -18,6 +19,7 @@ import type {
 
 export interface NodeConnection extends AuthenticatedDevice {
   readonly socket: WebSocket
+  readonly managedDraftHost?: ManagedDraftHost | undefined
 }
 
 /** 瞬时错误（离线等）：OutboxWorker 按退避重投，不置终态。 */
@@ -68,6 +70,10 @@ type DiscoveryCredentials = Pick<
 
 export class NodeConnectionRegistry {
   private readonly byDevice = new Map<string, NodeConnection>()
+  private readonly readyManagedSockets = new WeakMap<
+    WebSocket,
+    { id: string; execution: boolean; abort: AbortController }
+  >()
   private readonly discoveryHellos = new WeakSet<WebSocket>()
   private readonly discoveryInventories = new WeakMap<
     WebSocket,
@@ -96,6 +102,7 @@ export class NodeConnectionRegistry {
   >()
 
   private rejectPending(socket: WebSocket): void {
+    this.readyManagedSockets.get(socket)?.abort.abort()
     for (const [id, pending] of this.preparation) {
       if (pending.socket !== socket) continue
       clearTimeout(pending.timer)
@@ -266,7 +273,68 @@ export class NodeConnectionRegistry {
 
   isOnline(deviceId: string): boolean {
     const connection = this.byDevice.get(deviceId)
-    return connection !== undefined && connection.socket.readyState === connection.socket.OPEN
+    return (
+      connection !== undefined &&
+      connection.managedDraftHost === undefined &&
+      connection.socket.readyState === connection.socket.OPEN
+    )
+  }
+
+  isManagedDraftOnline(host: ManagedDraftHost): boolean {
+    return this.managedDraftConnectionId(host) !== undefined
+  }
+
+  managedDraftConnectionId(host: ManagedDraftHost, execution = false): string | undefined {
+    const connection = this.byDevice.get(host.deviceId)
+    if (
+      connection?.managedDraftHost !== host ||
+      connection.socket.readyState !== connection.socket.OPEN
+    )
+      return undefined
+    const readiness = this.readyManagedSockets.get(connection.socket)
+    return readiness === undefined ||
+      readiness.abort.signal.aborted ||
+      (execution && !readiness.execution)
+      ? undefined
+      : readiness.id
+  }
+
+  markManagedDraftReady(deviceId: string, socket: WebSocket, execution = false): boolean {
+    if (
+      this.byDevice.get(deviceId)?.managedDraftHost === undefined ||
+      !this.isCurrent(deviceId, socket)
+    )
+      return false
+    const previous = this.readyManagedSockets.get(socket)
+    if (previous !== undefined) return previous.execution === execution
+    this.readyManagedSockets.set(socket, {
+      id: randomUUID(),
+      execution,
+      abort: new AbortController(),
+    })
+    return true
+  }
+
+  managedDraftExecutionSignal(
+    host: ManagedDraftHost,
+    connectionId: string,
+  ): AbortSignal | undefined {
+    if (this.managedDraftConnectionId(host, true) !== connectionId) return undefined
+    const socket = this.byDevice.get(host.deviceId)?.socket
+    return socket === undefined ? undefined : this.readyManagedSockets.get(socket)?.abort.signal
+  }
+
+  sendManagedDraftExecution(
+    host: ManagedDraftHost,
+    connectionId: string,
+    frame: Extract<NodeDownstream, { type: 'managed_draft.execute' }>,
+  ): void {
+    if (this.managedDraftConnectionId(host, true) !== connectionId) throw new NodeOfflineError()
+    this.sendChecked(host.deviceId, frame, connectionId)
+  }
+
+  isCurrent(deviceId: string, socket: WebSocket): boolean {
+    return this.byDevice.get(deviceId)?.socket === socket && socket.readyState === socket.OPEN
   }
 
   /** Successful declarations are scoped to the socket, never inherited from the device row. */
@@ -360,8 +428,36 @@ export class NodeConnectionRegistry {
 
   /** 下发任意合法下行帧；离线抛瞬时错误由调用方分类。 */
   send(deviceId: string, frame: NodeDownstream): void {
+    this.sendChecked(deviceId, frame)
+  }
+
+  private sendChecked(
+    deviceId: string,
+    frame: NodeDownstream,
+    executionConnectionId?: string,
+  ): void {
     const connection = this.byDevice.get(deviceId)
     if (connection === undefined || connection.socket.readyState !== connection.socket.OPEN) {
+      throw new NodeOfflineError()
+    }
+    const host = connection.managedDraftHost
+    if (frame.type === 'managed_draft.start' || frame.type === 'managed_draft.execute') {
+      const { manifest } = frame.payload
+      if (
+        host === undefined ||
+        !this.readyManagedSockets.has(connection.socket) ||
+        (frame.type === 'managed_draft.execute' &&
+          (executionConnectionId === undefined ||
+            this.managedDraftConnectionId(host, true) !== executionConnectionId)) ||
+        manifest.deviceId !== host.deviceId ||
+        manifest.ownerUserId !== host.ownerUserId ||
+        manifest.workspaceId !== host.workspaceId ||
+        manifest.profileRevisionId !== host.profileRevisionId ||
+        manifest.managedHostGeneration !== host.managedHostGeneration ||
+        Date.parse(manifest.expiresAt) <= Date.now()
+      )
+        throw new NodeOfflineError()
+    } else if (host !== undefined && frame.type !== 'node.token_revoked') {
       throw new NodeOfflineError()
     }
     connection.socket.send(JSON.stringify(frame))

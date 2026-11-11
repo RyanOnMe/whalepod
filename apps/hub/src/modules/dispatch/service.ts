@@ -63,7 +63,11 @@ import type {
   WorkSourceType,
 } from '@whalepod/protocol'
 import { RunMandateInvalidatedSchema, WorkDraftToolNameSchema } from '@whalepod/protocol'
-import { WORK_INPUT_CAPABILITY, coordinationUsageCost } from '@whalepod/protocol'
+import {
+  MANAGED_DRAFT_CONTROL_VERSION,
+  WORK_INPUT_CAPABILITY,
+  coordinationUsageCost,
+} from '@whalepod/protocol'
 import { ApiError } from '../shared/http-error.js'
 import { ERROR_HTTP_STATUS, errorCodeOf } from '../run/routes.js'
 import { getDeviceDshDistributionVersion } from '../run/queries.js'
@@ -75,12 +79,18 @@ import { lockWorkContext, requireAssignee } from '../work/context.js'
 import { loadWorkSource, WORK_ADMISSION_RULES_VERSION } from '../work/admission.js'
 import { toDispatchIntentView } from '../work/queries.js'
 import { openNoCandidateQuestion } from '../work/questions.js'
+import {
+  queueManagedDraftPreparation,
+  type ManagedDraftPlacement,
+} from '../draft-share/dispatch.js'
 
 export interface DispatchDeps {
   readonly database: Database
   readonly orchestrator: RunOrchestrator
   readonly outbox: Outbox
   readonly now: () => Date
+  readonly managedDraftPlacement?: ManagedDraftPlacement | undefined
+  readonly managedDraftExecutionCheck?: boolean
 }
 
 function notFound(): ApiError {
@@ -399,6 +409,7 @@ async function resolveCandidate(
   intent: DispatchIntentRow,
   request: DispatchIntentDispatchRequest,
   now: Date,
+  managedPreparation = false,
 ): Promise<Candidate> {
   const mandate = await getWorkMandateForUpdate(tx, intent.mandateId)
   if (
@@ -444,7 +455,9 @@ async function resolveCandidate(
   }
   // #394：事务内读设备版本，必须复用同一事务句柄；另开连接看不到本事务的锁序，
   // 也把「在线」判定与派工提交拆成了两个快照。
-  const dshDistributionVersion = await getDeviceDshDistributionVersion(tx, request.deviceId, now)
+  const dshDistributionVersion = managedPreparation
+    ? MANAGED_DRAFT_CONTROL_VERSION
+    : await getDeviceDshDistributionVersion(tx, request.deviceId, now)
   if (dshDistributionVersion === undefined) {
     throw new ApiError(409, 'DEVICE_OFFLINE', 'device is not connected')
   }
@@ -694,6 +707,7 @@ async function evaluateAutoCandidate(
   },
   intent: DispatchIntentRow,
   now: Date,
+  isOrdinaryDevice: (id: string) => boolean,
 ): Promise<AutoCandidateEvaluation> {
   const exclusionReasons: unknown[] = []
   const actionClass = (
@@ -754,6 +768,10 @@ async function evaluateAutoCandidate(
 
   const devices = (await listDevicesByOwner(tx, task.assigneeUserId))
     .filter((device) => {
+      if (!isOrdinaryDevice(device.id)) {
+        exclusionReasons.push({ kind: 'device', id: device.id, reason: 'offline' })
+        return false
+      }
       if (device.revokedAt !== null) {
         exclusionReasons.push({ kind: 'device', id: device.id, reason: 'revoked' })
         return false
@@ -888,6 +906,36 @@ export async function dispatchIntent(
         await requireAssignee(tx, task, actor.userId)
         assertActiveWork(work, task)
         const intent = assertIntentOwned(await getDispatchIntentForUpdate(tx, intentId), work, task)
+        // ADR-0029: a managed source needs a separate verified execution path. Never
+        // hand this request to the ordinary machine Run, even on a capable-looking device.
+        if (request.executionProfile === 'managed_draft_source') {
+          throw conflict('managed draft source execution is unavailable')
+        }
+        const executionCheck = request.executionProfile === 'managed_draft_source_execution_check'
+        if (executionCheck && !deps.managedDraftExecutionCheck)
+          throw conflict('managed draft execution check is unavailable')
+        const preparing =
+          request.executionProfile === 'managed_draft_source_preparation' || executionCheck
+        const placement = deps.managedDraftPlacement
+        if (
+          preparing &&
+          (placement === undefined ||
+            request.managedDraftSourceId === undefined ||
+            request.workInputItemIds !== undefined ||
+            request.actionClass !== 'draft' ||
+            request.deviceId !== placement.host.deviceId ||
+            request.workspaceId !== placement.host.workspaceId ||
+            request.profileRevisionId !== placement.host.profileRevisionId ||
+            actor.userId !== placement.host.ownerUserId)
+        ) {
+          throw conflict('managed draft source preparation is unavailable')
+        }
+        if (!preparing && !deps.orchestrator.isOrdinaryDevice(request.deviceId)) {
+          throw new ApiError(409, 'DEVICE_OFFLINE', 'device is unavailable for ordinary execution')
+        }
+        if (!preparing && request.managedDraftSourceId !== undefined) {
+          throw conflict('managed draft source preparation is required')
+        }
         if (intent.status !== 'approved') {
           throw conflict(`dispatch intent is ${intent.status}; approve it first`)
         }
@@ -906,7 +954,7 @@ export async function dispatchIntent(
         let candidate: Candidate
         try {
           refs = await verifyIntentBinding(tx, work, intent)
-          candidate = await resolveCandidate(tx, work, task, intent, request, now)
+          candidate = await resolveCandidate(tx, work, task, intent, request, now, preparing)
         } catch (error) {
           if (error instanceof IntentBindingError) {
             const rejected = await rejectIntentRow(tx, intent.id, error.message, now)
@@ -918,6 +966,41 @@ export async function dispatchIntent(
             }
           }
           throw error
+        }
+        if (preparing) {
+          if (placement === undefined || request.managedDraftSourceId === undefined)
+            throw conflict('managed draft source preparation is unavailable')
+          const run = await queueManagedDraftPreparation(tx, deps.outbox, {
+            actorUserId: actor.userId,
+            workKey,
+            now,
+            intent,
+            agentId: candidate.agentId,
+            placement,
+            sourceId: request.managedDraftSourceId,
+            executionCheck,
+          })
+          const row = await markDispatchIntentDispatched(
+            tx,
+            intent.id,
+            run.id,
+            {
+              agentId: run.agentId,
+              profileRevisionId: run.profileRevisionId,
+              deviceId: run.deviceId,
+              workspaceId: run.workspaceId,
+              actionClass: 'draft',
+            },
+            now,
+          )
+          if (row === undefined) throw conflict('dispatch intent changed concurrently')
+          await updateWork(tx, work.id, {
+            state: 'waiting',
+            resumeMode: 'auto',
+            resumeCondition: `run:${run.id}`,
+            updatedAt: now,
+          })
+          return { view: toDispatchIntentView(row, now) }
         }
         await assertSelectedItemsInIntent(tx, work, task, refs, request.workInputItemIds)
 
@@ -1055,7 +1138,9 @@ export async function autoDispatchProposedIntent(
         return toDispatchIntentView(rejected ?? intent, now)
       }
 
-      const evaluation = await evaluateAutoCandidate(tx, work, task, mandate, intent, now)
+      const evaluation = await evaluateAutoCandidate(tx, work, task, mandate, intent, now, (id) =>
+        deps.orchestrator.isOrdinaryDevice(id),
+      )
       if (evaluation.candidate === undefined) {
         const row = await setDispatchIntentCandidates(
           tx,

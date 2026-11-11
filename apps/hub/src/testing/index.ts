@@ -132,6 +132,10 @@ export interface TestAppOptions {
   /** #183：Plugin Catalog / dev 模式（plugin-catalog、plugin-pack 两个 spec 需要 fixture 目录）。 */
   readonly pluginCatalogDir?: string
   readonly pluginDevMode?: boolean
+  readonly managedDraftHost?: HubConfig['managedDraftHost']
+  readonly managedDraftModelRoute?: HubConfig['managedDraftModelRoute']
+  readonly managedDraftLoopbackEndpoint?: HubConfig['managedDraftLoopbackEndpoint']
+  readonly managedDraftMemberReviewEnabled?: HubConfig['managedDraftMemberReviewEnabled']
 }
 
 export async function createTestApp(
@@ -158,6 +162,10 @@ export async function createTestApp(
       ? { pluginCatalogDir: options.pluginCatalogDir }
       : {}),
     ...(options.pluginDevMode ? { pluginDevMode: true as const } : {}),
+    managedDraftHost: options.managedDraftHost,
+    managedDraftModelRoute: options.managedDraftModelRoute,
+    managedDraftLoopbackEndpoint: options.managedDraftLoopbackEndpoint,
+    managedDraftMemberReviewEnabled: options.managedDraftMemberReviewEnabled,
   }
   const app = await buildApp({
     config,

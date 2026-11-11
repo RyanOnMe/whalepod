@@ -11,13 +11,18 @@
  * 语义冲突 = 单 Run 业务问题 → orchestrator Run 级收敛，连接保留。
  */
 import { randomUUID } from 'node:crypto'
+import type { ManagedDraftHost } from '../../config.js'
+import type { ManagedDraftExecution } from '../draft-share/execution.js'
+import { deviceForNodeRequest, matchesManagedDraftHost } from '../draft-share/host-auth.js'
+import type { ManagedDraftTransport } from '../draft-share/dispatch.js'
 import { eq, sql } from 'drizzle-orm'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { Database } from '@whalepod/db'
 import {
   appendTeamEvent,
-  findDeviceByTokenHash,
+  getOrdinaryRun,
   getRun,
+  isManagedDraftSource,
   runEventWatermark,
   setDeviceHelloFacts,
   touchDeviceLastSeenAt,
@@ -26,6 +31,8 @@ import {
 import {
   COORDINATION_CAPABILITY,
   DISCOVERY_CAPABILITY,
+  MANAGED_DRAFT_CONTROL_VERSION,
+  MANAGED_DRAFT_EXECUTION_VERSION,
   parseNodeFrame,
   ProtocolError,
   RunEventAckSchema,
@@ -35,7 +42,6 @@ import type { RunOrchestrator } from '../run/orchestrator.js'
 import type { AuthenticatedDevice } from '../run/device-gateway.js'
 import { isRunSemanticConflict } from '../run/errors.js'
 import { sanitizeError } from '../shared/error-log.js'
-import { hashToken } from '../auth/token.js'
 import { nodeConnections } from './connection-registry.js'
 import { WorkspaceInventoryIngest } from './inventory.js'
 import type { RealtimeHub } from '../realtime/subscriptions.js'
@@ -51,6 +57,10 @@ export interface NodeWebsocketDeps {
   /** P1-13：owner-only live delta 的投递面（03 §8：不持久、非 owner 不可见）。 */
   readonly realtime: RealtimeHub
   readonly routerStore?: ArtifactStore
+  readonly managedDraftHost?: ManagedDraftHost | undefined
+  readonly managedDraftRequiresTls: boolean
+  readonly managedDraftTransport: ManagedDraftTransport
+  readonly managedDraftExecution: ManagedDraftExecution
   /** RD-03r2：结果接受后应用提案并由组合根尝试既有自动派工端口。 */
   readonly onAutoDispatch?: RouterAutoDispatch
 }
@@ -60,13 +70,7 @@ const TERMINAL: ReadonlySet<string> = new Set(['completed', 'failed', 'cancelled
 
 interface DeviceUpgradeRequest extends FastifyRequest {
   device?: AuthenticatedDevice
-}
-
-function extractBearerDeviceToken(request: FastifyRequest): string {
-  const header = request.headers.authorization
-  if (typeof header !== 'string') return ''
-  const prefix = 'Device '
-  return header.startsWith(prefix) ? header.slice(prefix.length).trim() : ''
+  managedDraftHost?: ManagedDraftHost | undefined
 }
 
 export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketDeps): void {
@@ -79,10 +83,21 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
     {
       websocket: true,
       async onRequest(request: FastifyRequest, reply: FastifyReply) {
-        const token = extractBearerDeviceToken(request)
-        const device =
-          token === '' ? undefined : await findDeviceByTokenHash(deps.database.db, hashToken(token))
-        if (device === undefined || device.revokedAt !== null) {
+        const device = await deviceForNodeRequest(deps.database, request)
+        const host = deps.managedDraftHost
+        const dedicated = host !== undefined && device?.id === host.deviceId
+        const proof = request.headers['x-whalepod-managed-host']
+        const verified = matchesManagedDraftHost(
+          request,
+          host,
+          device,
+          deps.managedDraftRequiresTls,
+        )
+        if (
+          device === undefined ||
+          device.revokedAt !== null ||
+          ((dedicated || proof !== undefined) && !verified)
+        ) {
           return reply.code(401).send({
             ok: false,
             error: {
@@ -96,16 +111,75 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
           deviceId: device.id,
           ownerUserId: device.ownerUserId,
         }
+        if (verified) (request as DeviceUpgradeRequest).managedDraftHost = host
       },
     },
     (socket: WebSocket, request: FastifyRequest) => {
       const identity = (request as DeviceUpgradeRequest).device
       if (identity === undefined) return // onRequest 已 401；防御分支。
-      nodeConnections.attach({ ...identity, socket })
+      const managedDraftHost = (request as DeviceUpgradeRequest).managedDraftHost
+      nodeConnections.attach({ ...identity, socket, managedDraftHost })
 
       const handleUpstream = async (raw: string): Promise<void> => {
         try {
+          if (!nodeConnections.isCurrent(identity.deviceId, socket)) return
           const frame = parseNodeFrame(JSON.parse(raw), 'upstream')
+          if (managedDraftHost !== undefined) {
+            if (
+              frame.type === 'node.hello' &&
+              frame.payload.deviceId === identity.deviceId &&
+              (frame.payload.dshDistributionVersion === MANAGED_DRAFT_CONTROL_VERSION ||
+                frame.payload.dshDistributionVersion === MANAGED_DRAFT_EXECUTION_VERSION) &&
+              frame.payload.pluginPackDigests.length === 0 &&
+              !frame.payload.sourceCapabilities?.length &&
+              !frame.payload.contextCapabilities?.length &&
+              !frame.payload.coordinationCapabilities?.length
+            ) {
+              if (
+                nodeConnections.markManagedDraftReady(
+                  identity.deviceId,
+                  socket,
+                  frame.payload.dshDistributionVersion === MANAGED_DRAFT_EXECUTION_VERSION,
+                )
+              )
+                return
+              throw new Error('managed draft mode changed')
+            }
+            if (
+              frame.type === 'node.heartbeat' &&
+              frame.payload.deviceId === identity.deviceId &&
+              frame.payload.activeRunIds.length === 0 &&
+              Object.keys(frame.payload.lastEventSeqByRun).length === 0
+            ) {
+              return
+            }
+            if (frame.type === 'managed_draft.outcome') {
+              await deps.managedDraftExecution.receive(managedDraftHost, socket, frame.payload)
+              return
+            }
+            if (frame.type === 'command.ack') {
+              const recorded = await deps.managedDraftTransport.receive(
+                managedDraftHost,
+                socket,
+                frame.payload,
+              )
+              if (recorded)
+                request.log.info(
+                  {
+                    component: 'hub.managed-draft',
+                    action: 'manifest.receipt',
+                    deviceId: identity.deviceId,
+                    commandId: frame.payload.commandId,
+                  },
+                  'managed manifest received',
+                )
+              return
+            }
+            throw new Error('unsupported managed draft host frame')
+          }
+
+          if (frame.type === 'managed_draft.outcome') throw new Error('unsupported node frame')
+
           if (frame.type === 'discovery.heartbeat' || frame.type === 'discovery.result') {
             // Spool replay follows hello and can precede the fresh inventory on reconnect.
             if (!nodeConnections.hasDiscoveryHello(identity.deviceId, socket)) {
@@ -260,6 +334,7 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
             if (run === undefined || run.deviceId !== identity.deviceId) {
               throw new Error('live_delta for unknown or foreign run')
             }
+            if (isManagedDraftSource(run)) return
             if (TERMINAL.has(run.status)) return // 终态后的迟到 delta：丢，不转发
             deps.realtime.publishLive({
               runId: run.id,
@@ -292,7 +367,7 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
             // R1 协议侧：心跳上报的 Node 水位高于 Hub 连续水位 → 主动拉缺口。
             // （Node 重连也会自发 drain——这里是 Hub 视角的双保险。）
             for (const [runId, nodeSeq] of Object.entries(frame.payload.lastEventSeqByRun)) {
-              const run = await getRun(deps.database.db, runId)
+              const run = await getOrdinaryRun(deps.database.db, runId)
               if (run === undefined || run.deviceId !== identity.deviceId) continue
               if (TERMINAL.has(run.status)) continue
               const hubWatermark = await runEventWatermark(deps.database.db, runId)
@@ -335,7 +410,9 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
             {
               component: 'hub.node-ws',
               deviceId: identity.deviceId,
-              ...diagnostic,
+              ...(managedDraftHost === undefined
+                ? diagnostic
+                : { errorName: 'ManagedDraftProtocolError' }),
               disposition: semanticConflict ? 'connection-retained' : 'connection-closed',
             },
             'node upstream frame rejected',

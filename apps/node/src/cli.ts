@@ -3,6 +3,7 @@ import { checkPreparation } from './workspace/preparation.js'
  * Node CLI（02 Task 9 Step 3/5）。
  *   whalepod-node pair --hub <url> --code <code> [--name <n>] ...
  *   whalepod-node start
+ *   whalepod-node start --managed-draft-config <path>
  *
  * 零三方依赖（node:util parseArgs）。pair 写本地配置（mode 0600）；
  * start 持有出站连接 + 心跳循环 + 退避重连，收到 node.token_revoked 时清理本地 Token。
@@ -15,6 +16,7 @@ import { randomUUID } from 'node:crypto'
 import { claimDevice } from './pairing/client.js'
 import { DEFAULT_CONFIG_DIR, loadConfig, saveConfig } from './config.js'
 import { startDeviceSession } from './gateway/session.js'
+import { commandAckFrame } from './gateway/hub-socket.js'
 import {
   createHelloFacts,
   detectPlatformKind,
@@ -390,6 +392,15 @@ export async function runStart(
       void revokeLocalConfig(configDir)
     },
     onFrame: (frame) => {
+      if (frame.type === 'managed_draft.start' || frame.type === 'managed_draft.execute') {
+        sessionSend(
+          commandAckFrame(frame.payload.commandId, false, {
+            code: 'FORBIDDEN',
+            message: 'managed_draft_lane_required',
+          }),
+        )
+        return
+      }
       if (frame.type.startsWith('coordination.') || frame.type.startsWith('discovery.')) {
         void coordination.handleFrame(frame).catch(() => {
           process.stderr.write(
@@ -499,10 +510,26 @@ export async function main(argv: string[]): Promise<void> {
       'dsh-version': { type: 'string' },
       'state-dir': { type: 'string' },
       'config-dir': { type: 'string' },
+      'managed-draft-config': { type: 'string' },
     },
     allowPositionals: true,
   })
   const command = positionals[0]
+  const managedDraftConfig = values['managed-draft-config']
+  if (managedDraftConfig !== undefined) {
+    if (
+      command !== 'start' ||
+      positionals.length !== 1 ||
+      values['dsh-version'] !== undefined ||
+      values['state-dir'] !== undefined ||
+      values['config-dir'] !== undefined
+    ) {
+      throw new Error('managed_draft_start_options_invalid')
+    }
+    const { runManagedDraftNode } = await import('./managed-draft/control.js')
+    await runManagedDraftNode(managedDraftConfig)
+    return
+  }
   if (command === 'pair') {
     if (values.hub === undefined || values.code === undefined) {
       process.stderr.write('usage: whalepod-node pair --hub <url> --code <code>\n')

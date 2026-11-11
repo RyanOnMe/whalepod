@@ -20,6 +20,7 @@ import type { Actor } from '@whalepod/domain'
 import type { Database, Outbox, RunRow, TaskMessageRow, Tx } from '@whalepod/db'
 import {
   appendTeamEvent,
+  getOrdinaryRun,
   INSTRUCTION_REFUSAL,
   insertMessage,
   resolveInstructionRight,
@@ -120,14 +121,11 @@ export async function sendRunFollowup(
     throw new RunCommandError('VALIDATION_FAILED', 'idempotency key is required')
   }
 
+  // The Run's seal and Task binding cannot change. Guard before a legacy receipt
+  // lookup so a sealed Run never falls into the ordinary followup queue.
+  const probe = await getOrdinaryRun(database.db, runId)
+  if (probe === undefined) throw new RunCommandError('NOT_FOUND', 'run not found')
   return transactCommand(database, `run.followup:${input.idempotencyKey}`, async (tx) => {
-    // 先取 Run（不加锁，只为拿到 taskId），再按 **Task → Run** 的顺序加锁。
-    const [probe] = await tx
-      .select({ id: schema.runs.id, taskId: schema.runs.taskId })
-      .from(schema.runs)
-      .where(eq(schema.runs.id, runId))
-    if (probe === undefined) throw new RunCommandError('NOT_FOUND', 'run not found')
-
     // 锁顺序必须是 Task → Run：`task/commands.ts`（lockTask → 锁 Run 行）就是这一序，
     // 反过来会在「Task 取消 × 追问」并发时造成 40P01 死锁。
     const [task] = await tx
