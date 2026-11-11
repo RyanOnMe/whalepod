@@ -978,7 +978,7 @@ export async function runRouterTick(deps: RouterDeps) {
       }
     }
   }
-  for (const ledger of await listUnsettledCoordinationUsage(deps.database.db)) {
+  for (const ledger of await listUnsettledCoordinationUsage(deps.database.db, 100, 'router')) {
     const row = await getEvaluation(deps.database.db, ledger.evaluationId)
     if (row) await settleRouterEvaluation(deps, row)
   }

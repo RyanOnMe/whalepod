@@ -28,7 +28,7 @@ import { registryFileRevision, WorkspaceRegistry } from './workspace/registry.js
 import { WorkspaceInventory } from './workspace/inventory.js'
 import { SecretStore } from './secret/store.js'
 import { runWorkspaceCommand, runSecretSet, readHiddenLine } from './workspace/cli-commands.js'
-import { COORDINATION_CAPABILITY } from '@whalepod/protocol'
+import { COORDINATION_CAPABILITY, DISCOVERY_CAPABILITY } from '@whalepod/protocol'
 import { CoordinationManager } from './coordination/manager.js'
 import { probeCoordinationRuntime } from './coordination/driver.js'
 import { coordinationCredentialFacts } from './coordination/config.js'
@@ -104,7 +104,10 @@ export async function runStart(
   const createRequire = (await import('node:module')).createRequire
   const runtimeEntry = createRequire(import.meta.url).resolve('@whalepod/runtime/bin')
   // Capability comes from the same isolated worker launch path, never from an operator claim.
-  const coordinationCapable = await probeCoordinationRuntime(runtimeEntry)
+  const [coordinationCapable, discoveryCapable] = await Promise.all([
+    probeCoordinationRuntime(runtimeEntry),
+    probeCoordinationRuntime(runtimeEntry, 'discovery'),
+  ])
   // #288：「敏感不兼容禁启动」的左侧操作数——本机真实 DSH 版本由 Runtime 自报
   //（唯一允许 import @deepseek-ai/* 的一侧），不再由操作者声明。探针失败 → probed
   // 为 null：上报照旧走显式参数/环境变量/'unmanaged' 的诚实兜底，而 pack 兼容闸
@@ -133,7 +136,9 @@ export async function runStart(
     stateDir,
     runtimeEntry,
     startupDshVersion: dshVersionFacts.reported,
-    coordinationCapabilities: coordinationCapable ? [COORDINATION_CAPABILITY] : [],
+    coordinationCapabilities: coordinationCapable
+      ? [COORDINATION_CAPABILITY, ...(discoveryCapable ? [DISCOVERY_CAPABILITY] : [])]
+      : [],
   })
 
   // ---- P1-13 运行会话层装配（02 Task 13）----
@@ -287,6 +292,7 @@ export async function runStart(
     deviceToken: config.deviceToken,
     runtimeEntry,
     capable: coordinationCapable,
+    discoveryCapable,
     send: (frame) => sessionSend(frame),
     log: (event, fields) =>
       process.stderr.write(`${JSON.stringify({ level: 'info', msg: event, ...fields })}\n`),
@@ -395,7 +401,7 @@ export async function runStart(
         )
         return
       }
-      if (frame.type.startsWith('coordination.')) {
+      if (frame.type.startsWith('coordination.') || frame.type.startsWith('discovery.')) {
         void coordination.handleFrame(frame).catch(() => {
           process.stderr.write(
             `${JSON.stringify({ level: 'error', component: 'node.coordination', msg: 'frame_handler_failed' })}\n`,

@@ -15,7 +15,7 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core'
 import { contextEntries } from './context.js'
-import { projects, tasks } from './project.js'
+import { projects, tasks, taskMessages } from './project.js'
 import { devices } from './device.js'
 import { userAccounts } from './identity.js'
 import { works, workMandates } from './work.js'
@@ -23,6 +23,7 @@ import type {
   RouterProposal,
   CoordinationUsage,
   ConfigureProjectRouterRequest,
+  DiscoveryProposal,
 } from '@whalepod/protocol'
 
 // ADR-0026（PC-04a）：确定性内部协调。本切片只使用 queued/completed/skipped/failed；
@@ -46,7 +47,7 @@ export const coordinationEvaluations = pgTable(
       .notNull()
       .references(() => projects.id),
     purpose: varchar('purpose', { length: 16 })
-      .$type<'inference' | 'router'>()
+      .$type<'inference' | 'router' | 'discovery'>()
       .notNull()
       .default('inference'),
     workId: uuid('work_id').references(() => works.id),
@@ -58,6 +59,13 @@ export const coordinationEvaluations = pgTable(
     evaluationDigest: char('evaluation_digest', { length: 64 }),
     deviceId: uuid('device_id').references(() => devices.id),
     configVersion: integer('config_version'),
+    discoveryDownloadedIds: jsonb('discovery_downloaded_ids')
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    discoverySourceId: uuid('discovery_source_id').references(() => taskMessages.id),
+    // Internal acceptance metadata for all accepted classes, with no model prose.
+    discoveryObservation: jsonb('discovery_observation').$type<Omit<DiscoveryProposal, 'reason'>>(),
     routerContext: jsonb('router_context').$type<{
       sourceType: 'task_message' | 'context_entry'
       sourceId: string
@@ -114,12 +122,23 @@ export const coordinationEvaluations = pgTable(
     ),
     check(
       'coordination_evaluation_completed_fields',
-      sql`${table.status} <> 'completed' or (${table.resultDigest} is not null and ((${table.purpose} = 'inference' and ${table.inferenceEntryId} is not null and ${table.routerProposal} is null) or (${table.purpose} = 'router' and ${table.inferenceEntryId} is null and ${table.routerProposal} is not null)))`,
+      sql`${table.status} <> 'completed' or (${table.resultDigest} is not null and ((${table.purpose} = 'inference' and ${table.inferenceEntryId} is not null and ${table.routerProposal} is null) or (${table.purpose} = 'router' and ${table.inferenceEntryId} is null and ${table.routerProposal} is not null) or (${table.purpose} = 'discovery' and ${table.inferenceEntryId} is null and ${table.routerProposal} is null)))`,
     ),
-    check('coordination_evaluation_purpose', sql`${table.purpose} in ('inference', 'router')`),
+    check(
+      'coordination_evaluation_purpose',
+      sql`${table.purpose} in ('inference', 'router', 'discovery')`,
+    ),
+    check(
+      'coordination_evaluation_discovery_observation',
+      sql`(${table.discoveryObservation} is not null) = (${table.purpose} = 'discovery' and ${table.status} = 'completed') and (${table.discoveryObservation} is null or jsonb_typeof(${table.discoveryObservation}) = 'object')`,
+    ),
     check(
       'coordination_evaluation_router_binding',
       sql`${table.purpose} <> 'router' or (${table.workId} is not null and ${table.workKey} is not null and ${table.taskId} is not null and ${table.principalUserId} is not null and ${table.mandateId} is not null and ${table.mandateVersion} is not null and ${table.mandateVersion} > 0 and ${table.evaluationDigest} is not null and ${table.evaluationDigest} ~ '^[a-f0-9]{64}$' and ${table.routerContext} is not null and ${table.configSnapshot} is not null)`,
+    ),
+    check(
+      'coordination_evaluation_discovery_binding',
+      sql`(${table.purpose} <> 'discovery' and ${table.discoverySourceId} is null) or (${table.purpose} = 'discovery' and ${table.discoverySourceId} is not null and ${table.workId} is null and ${table.workKey} is null and ${table.taskId} is null and ${table.mandateId} is null and ${table.mandateVersion} is null and ${table.principalUserId} is not null and ${table.deviceId} is not null and ${table.evaluationDigest} is not null and ${table.configVersion} is not null and ${table.configVersion} > 0 and ${table.configSnapshot} is not null and ${table.routerContext} is null and ${table.routerProposal} is null and ${table.inferenceEntryId} is null)`,
     ),
     uniqueIndex('coordination_evaluation_input_attempt_unique').on(
       table.projectId,

@@ -9,6 +9,8 @@ import type { ManagedDraftHost } from '../../config.js'
 import type { AuthenticatedDevice } from '../run/device-gateway.js'
 import { NodePreparationCheckSchema, SourcePermissionCheckSchema } from '@whalepod/protocol'
 import type {
+  CoordinationCredentialSlot,
+  DiscoveryRequest,
   NodePreparationResult,
   NodeDownstream,
   SourcePermissionCheckPayload,
@@ -55,6 +57,16 @@ export interface SourcePermissionSnapshot {
 }
 
 export type SourcePermissionCheckInput = Omit<SourcePermissionCheckPayload, 'requestId'>
+type DiscoveryFrame = Extract<NodeDownstream, { type: 'discovery.request' | 'discovery.cancel' }>
+type DiscoveryCredentials = Pick<
+  DiscoveryRequest,
+  | 'provider'
+  | 'model'
+  | 'credentialSlot'
+  | 'operatorUserId'
+  | 'billingUserId'
+  | 'credentialConfigRevision'
+>
 
 export class NodeConnectionRegistry {
   private readonly byDevice = new Map<string, NodeConnection>()
@@ -62,6 +74,12 @@ export class NodeConnectionRegistry {
     WebSocket,
     { id: string; execution: boolean; abort: AbortController }
   >()
+  private readonly discoveryHellos = new WeakSet<WebSocket>()
+  private readonly discoveryInventories = new WeakMap<
+    WebSocket,
+    readonly CoordinationCredentialSlot[]
+  >()
+  private readonly deviceFactUpdates = new Map<string, Promise<boolean>>()
   private readonly preparation = new Map<
     string,
     {
@@ -317,6 +335,95 @@ export class NodeConnectionRegistry {
 
   isCurrent(deviceId: string, socket: WebSocket): boolean {
     return this.byDevice.get(deviceId)?.socket === socket && socket.readyState === socket.OPEN
+  }
+
+  /** Successful declarations are scoped to the socket, never inherited from the device row. */
+  setDiscoveryHello(deviceId: string, socket: WebSocket, compatible: boolean): void {
+    if (this.byDevice.get(deviceId)?.socket !== socket) return
+    if (compatible) this.discoveryHellos.add(socket)
+    else this.discoveryHellos.delete(socket)
+  }
+
+  setDiscoveryInventory(
+    deviceId: string,
+    socket: WebSocket,
+    slots: readonly CoordinationCredentialSlot[],
+  ): void {
+    if (this.byDevice.get(deviceId)?.socket === socket) this.discoveryInventories.set(socket, slots)
+  }
+
+  private discoverySocket(deviceId: string): WebSocket | undefined {
+    const socket = this.byDevice.get(deviceId)?.socket
+    if (!socket || socket.readyState !== socket.OPEN || !this.discoveryHellos.has(socket)) return
+    return socket
+  }
+
+  hasDiscoveryHello(deviceId: string, socket: WebSocket): boolean {
+    return this.discoverySocket(deviceId) === socket
+  }
+
+  private matchesDiscoveryCredentials(socket: WebSocket, expected: DiscoveryCredentials): boolean {
+    return (
+      this.discoveryInventories
+        .get(socket)
+        ?.some(
+          (slot) =>
+            slot.provider === expected.provider &&
+            slot.model === expected.model &&
+            slot.slot === expected.credentialSlot &&
+            slot.ownerUserId === expected.operatorUserId &&
+            slot.billingUserId === expected.billingUserId &&
+            slot.configRevision === expected.credentialConfigRevision,
+        ) === true
+    )
+  }
+
+  canDispatchDiscovery(
+    deviceId: string,
+    expected: DiscoveryCredentials,
+    expectedSocket?: WebSocket,
+  ): boolean {
+    const socket = this.discoverySocket(deviceId)
+    return (
+      socket !== undefined &&
+      (expectedSocket === undefined || socket === expectedSocket) &&
+      this.matchesDiscoveryCredentials(socket, expected)
+    )
+  }
+
+  /** An old socket's in-flight inventory must commit before a replacement can publish facts. */
+  async updateDeviceFacts(
+    deviceId: string,
+    socket: WebSocket,
+    update: () => Promise<void>,
+  ): Promise<boolean> {
+    const previous = this.deviceFactUpdates.get(deviceId) ?? Promise.resolve()
+    const next = previous
+      .catch(() => undefined)
+      .then(async () => {
+        if (this.byDevice.get(deviceId)?.socket !== socket || socket.readyState !== socket.OPEN)
+          return false
+        await update()
+        return this.byDevice.get(deviceId)?.socket === socket && socket.readyState === socket.OPEN
+      })
+    this.deviceFactUpdates.set(deviceId, next)
+    try {
+      return await next
+    } finally {
+      if (this.deviceFactUpdates.get(deviceId) === next) this.deviceFactUpdates.delete(deviceId)
+    }
+  }
+
+  /** Recheck the current socket when sending: a reconnect can happen during the reservation. */
+  sendDiscovery(deviceId: string, frame: DiscoveryFrame): void {
+    const socket = this.discoverySocket(deviceId)
+    if (
+      !socket ||
+      (frame.type === 'discovery.request' &&
+        !this.matchesDiscoveryCredentials(socket, frame.payload))
+    )
+      return
+    socket.send(JSON.stringify(frame))
   }
 
   /** 下发任意合法下行帧；离线抛瞬时错误由调用方分类。 */

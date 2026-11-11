@@ -1,0 +1,35 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01940000-0000-7000-8000-000000000025",
+  "sentAt": "2026-11-04T04:00:00Z",
+  "type": "discovery.result",
+  "payload": {
+    "evaluationId": "01940000-0000-7000-8000-000000000002",
+    "attempt": 1,
+    "leaseToken": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "evaluationDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "status": "completed",
+    "resultDigest": "3e5e95b2f6fe63430233403c04a09d8ce9d4433d4cbc2b5ce6587b2737dc7a92",
+    "proposal": {
+      "classification": "independent_gap",
+      "source": "01940000-0000-7000-8000-000000000008",
+      "slot": "01940000-0000-7000-8000-000000000010",
+      "citations": ["01940000-0000-7000-8000-000000000012", "01940000-0000-7000-8000-000000000014"],
+      "reason": "The current venue agreement leaves shuttle access outside its scope."
+    },
+    "readEntryIds": [
+      "01940000-0000-7000-8000-000000000008",
+      "01940000-0000-7000-8000-000000000010",
+      "01940000-0000-7000-8000-000000000012",
+      "01940000-0000-7000-8000-000000000014"
+    ],
+    "usage": {
+      "inputTokens": 100,
+      "outputTokens": 20,
+      "costMicros": 1,
+      "provider": "test-provider",
+      "model": "test-model"
+    },
+    "purpose": "discovery"
+  }
+}

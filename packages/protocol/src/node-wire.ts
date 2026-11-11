@@ -38,6 +38,12 @@ import {
 
 import {
   CoordinationCapabilitySchema,
+  DiscoveryRequestPayloadSchema,
+  DiscoveryHeartbeatPayloadSchema,
+  DiscoveryResultPayloadSchema,
+  DiscoveryModelStartAckPayloadSchema,
+  DiscoveryCancelPayloadSchema,
+  DiscoveryResultAckPayloadSchema,
   CoordinationCredentialSlotSchema,
   CoordinationRequestPayloadSchema,
   CoordinationResultPayloadSchema,
@@ -224,7 +230,7 @@ export const NodeHelloSchema = envelope(
      * 会因 strictObject 的未知字段被拒，部署顺序固定为 Hub 先升级。
      */
     sourceCapabilities: z.array(SourceCapabilitySchema).max(8).optional(),
-    coordinationCapabilities: z.array(CoordinationCapabilitySchema).max(1).optional(),
+    coordinationCapabilities: z.array(CoordinationCapabilitySchema).max(2).optional(),
     /**
      * ADR-0027 §3 / ADR-0028 §3：Run 交付能力。缺省 = 旧 Node；Hub 对非空项目
      * 上下文快照或非空工作输入清单不向未声明的 Node 派发。空清单仍可执行。
@@ -389,10 +395,28 @@ export const ManagedDraftOutcomeSchema = envelope(
     .refine((value) => value.outcome !== 'completed' || value.attemptId !== undefined),
 )
 
+const DiscoveryRequestFrameSchema = envelope('discovery.request', DiscoveryRequestPayloadSchema)
+const DiscoveryHeartbeatFrameSchema = envelope(
+  'discovery.heartbeat',
+  DiscoveryHeartbeatPayloadSchema,
+)
+const DiscoveryResultFrameSchema = envelope('discovery.result', DiscoveryResultPayloadSchema)
+const DiscoveryModelStartAckFrameSchema = envelope(
+  'discovery.model_start_ack',
+  DiscoveryModelStartAckPayloadSchema,
+)
+const DiscoveryCancelFrameSchema = envelope('discovery.cancel', DiscoveryCancelPayloadSchema)
+const DiscoveryResultAckFrameSchema = envelope(
+  'discovery.result_ack',
+  DiscoveryResultAckPayloadSchema,
+)
+
 export const NodeUpstreamSchema = z.discriminatedUnion('type', [
   NodeHelloSchema,
   CoordinationHeartbeatFrameSchema,
   CoordinationResultFrameSchema,
+  DiscoveryHeartbeatFrameSchema,
+  DiscoveryResultFrameSchema,
   NodeHeartbeatSchema,
   NodeInventorySchema,
   NodePreparationResultSchema,
@@ -593,6 +617,10 @@ export const ManagedDraftExecuteSchema = envelope(
 
 export const NodeDownstreamSchema = z.discriminatedUnion('type', [
   CoordinationRequestFrameSchema,
+  DiscoveryRequestFrameSchema,
+  DiscoveryModelStartAckFrameSchema,
+  DiscoveryCancelFrameSchema,
+  DiscoveryResultAckFrameSchema,
   CoordinationCancelFrameSchema,
   CoordinationResultAckFrameSchema,
   RunStartSchema,

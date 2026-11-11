@@ -1,0 +1,19 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01940000-0000-7000-8000-000000000021",
+  "sentAt": "2026-11-04T04:00:00Z",
+  "type": "discovery.heartbeat",
+  "payload": {
+    "evaluationId": "01940000-0000-7000-8000-000000000002",
+    "attempt": 1,
+    "leaseToken": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "readEntryIds": [
+      "01940000-0000-7000-8000-000000000008",
+      "01940000-0000-7000-8000-000000000010",
+      "01940000-0000-7000-8000-000000000012",
+      "01940000-0000-7000-8000-000000000014"
+    ],
+    "modelStartedAt": "2026-11-04T04:00:01Z",
+    "purpose": "discovery"
+  }
+}
