@@ -39,7 +39,7 @@ pnpm check
 7. **撤权/更正**：许可撤回删除未应用候选、apply 404；原作者版本化更正删除旧候选、apply 404；空白更正 400；两种情况下 application 与 Task 均不新增。
 8. **目录失效/covered**：核对后修改入口 Task 标题（范围变更）→ 自动应用 `slot_unverified`；槽位视图 `current=false`、`eligibleEmpty=false`，非责任人读取 403；把场地任务标为 `covered` → 核对结果 `coveredCount=1`、`eligibleEmpty=false`，自动应用 `slot_covered`，人工认领同槽位 409 `DISCOVERY_SLOT_COVERED`；两种情况均不新增 application。
 9. **晚到核实**：先完成评估、尚无回执 → 候选落 `independent_support_missing` 且 `creation_terminal=false`；核实人随后提交回执，下一次 tick 自动立项，仍不产生 Run。
-10. **陈旧评估重排**：评估后目录/清单变化并重新核对槽位 → apply 落 `stale_evaluation`；准入行 `processed_at=null`、`evaluation_id=null`、`requeued_at` 非空；下一次 tick 派发**新的** evaluation，且不会被旧候选清掉。
+10. **陈旧评估重排**：评估后目录/清单变化并重新核对槽位 → apply 落 `stale_evaluation`；准入行 `processed_at=null`、`evaluation_id=null`、`requeued_at` 非空；下一次 tick 派发**新的** evaluation；再次 apply 旧候选仍拒绝，且新 evaluation 的 `evaluation_id/processed_at/requeued_at` 原样保留（CAS 不被旧候选清掉）。
 11. **更正后隐私**：已立项候选在来源更正后从责任人列表消失，但 application 与 Task 保留（审计历史），候选行未被删除。
 12. **许可档位**：`POST /permit` 省略 `tier` 落 `discover`；`tier=create` 缺当前模板摘要 409；`tier=execute` 超过项目上限 409。
 
@@ -73,18 +73,20 @@ bash scripts/secret-scan.sh
 ## 证据
 
 - 新用例：`apps/hub/tests/discovery-creation.integration.spec.ts`（12 tests）。
-- 纯函数用例：`apps/hub/tests/discovery-helpers.spec.ts`（4 tests：模板存储边界、NUL、占位符单次替换）；`packages/protocol/tests/router.spec.ts`（maxCreations int4 边界）。
+- 纯函数用例：`apps/hub/tests/discovery-helpers.spec.ts`（5 tests：模板存储边界、NUL/孤立代理、占位符单次替换）；`packages/protocol/tests/router.spec.ts`（maxCreations int4 边界）。
 - 回归：`apps/hub/tests/discovery.integration.spec.ts`（15 tests）；任务/指派/约定/评论/Work Mandate/Work Dispatch/Run 创建/交接/Artifact 相关 11 个文件共 201 tests。
-- 静态门：`pnpm check` exit 0（format、lint、typecheck、boundaries、protocol-generated、plugin fixture、2616 unit/web tests）。
-- 迁移：`0049_rd04b_spec_enum.sql`（先提交 enum 值）、`0050_rd04b_preauthorized_creation.sql`（许可/槽位/核对/回执/应用/占用/来源绑定 + 旧配置回填）、`0051_rd04b_requeue_admission.sql`（`requeued_at` 独立成迁移，已应用 0050 的库也能升级）。
+- 静态门：`pnpm check` exit 0（format、lint、typecheck、boundaries、protocol-generated、plugin fixture、2617 unit/web tests）。
+- 迁移：`0049_rd04b_spec_enum.sql`（先提交 enum 值）、`0050_rd04b_preauthorized_creation.sql`（许可/槽位/核对/回执/应用/占用/来源绑定 + 旧配置回填）、`0051_rd04b_requeue_admission.sql`（`requeued_at` 独立成迁移且 `if not exists`，c527435 级、8ebb04d 级与新库都能升级）。
 - 回执驱动：`GET /projects/:projectId/discovery/sources/:sourceId` 向责任人与已登记核实人返回确切版本/摘要；测试不再从数据库拼回执请求。
 
 ## 边界
 
 - 自动立项仍默认关闭；开启需要协调模型操作者配置 `tier=create`（含非空目标/验收模板与核实人），再由具名责任人确认模板摘要。任何配置换版都会撤销旧许可。
 - 本切片是 **API-only 试点**：现有 Web 建任务/交接面板不发送 `discovery` 分类；启用 `tier=create` 后这些旧客户端会收到 409 `DISCOVERY_CLASSIFICATION_REQUIRED`。槽位选择 UI 与交接分类入口另开 Issue，不在本 PR 改 `apps/web`。
+- 交接新建路径（`deliverHandoff` → `createTask`）会转发 `discovery` 分类，但没有单独的集成用例；`discovery` 只用于 `newTask`，与 `downstreamTaskId` 同时出现时被忽略。
 - 许可额度按槽位累计，重新确认许可不重置。由于 `discovery_slot_occupation.slot_id` 唯一且占用不删除，**单槽位实际上限恒为 1**；`maxCreations > 1` 目前不产生第二个自动立项，保留字段是为未来多槽位配额。
 - 槽位行锁序固定为「Project → 项目全部槽位按 id 排序 → 单个槽位」；目录 generation 推进也先按 id 锁全量槽位，避免多槽位项目里生成扫描与单槽位预锁互相等待（40P01）。配置/许可变更同样先锁 Project，与人工创建、自动立项串行。
+- generation 只在人工/范围写入（建任务、改派、改范围、完成/取消、建/退休 Work、成果发布、约定确认、受理/提交验收、owner 承接）推进。Router/Run 驱动的 Work 状态变化不推进 generation，但仍会改变目录摘要，自动立项会按 `slot_unverified` fail closed，需要责任人重新核对。
 - Real-model 语义质量沿用 RD-04a 已冻结的 `discovery.v2` 开发集/保留集与人工复核；本切片不新增模型判断，也没有放宽引用校验。
 - RD-04c 未开始：专用跨 Task 来源读取、调用级费用守卫、私有草稿投影、Executor 实际消费与跨重启清理仍待实现；正式阅稿、受控模型/计费验收继续关闭，飞书仍等测试租户授权。
 - 人工/机器并发在单一 Project 行锁上串行；跨项目不共享槽位。多进程 Hub 依赖 PostgreSQL 行锁与唯一约束，不依赖进程内状态。

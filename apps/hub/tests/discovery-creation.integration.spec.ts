@@ -1262,9 +1262,24 @@ describe('RD-04b preauthorized creation', () => {
     const next = await getRequest(node, sourceId)
     expect(next.evaluationId).not.toBe(request.evaluationId)
     const [moved] = await database.sql`
-      select evaluation_id, requeued_at from discovery_admission where source_id = ${sourceId}
+      select evaluation_id, processed_at, requeued_at from discovery_admission
+      where source_id = ${sourceId}
     `
     expect(moved?.evaluation_id).toBe(next.evaluationId)
+
+    // Re-applying the old candidate while E2 is in flight must not clear E2 (CAS no-ops).
+    const late = await apiInject(ctx, owner, {
+      method: 'POST',
+      url: `${node.route}/candidates/${candidate!.id}/apply`,
+      payload: {},
+    })
+    expect(late.statusCode, late.body).toBe(200)
+    expect(late.json().data).toMatchObject({ status: 'rejected', reason: 'stale_evaluation' })
+    const [after] = await database.sql`
+      select evaluation_id, processed_at, requeued_at from discovery_admission
+      where source_id = ${sourceId}
+    `
+    expect(after).toEqual(moved)
   })
 
   it('keeps an applied candidate as audit history but hides its body after correction', async () => {
@@ -1330,5 +1345,36 @@ describe('RD-04b preauthorized creation', () => {
       payload: { configVersion: node.configVersion, tier: 'execute' },
     })
     expect(overTier.statusCode, overTier.body).toBe(409)
+
+    // Discover tier still stores settings as jsonb; NUL must be a 400, not a database 500.
+    const configBase = {
+      enabled: true,
+      entryTaskId,
+      principalUserId: owner.userId,
+      activity: '活动',
+      slot: '接驳草稿',
+      templateVersion: 'v1',
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      maxCalls: 6,
+      maxTokens: 200_000,
+      maxCostMicros: 1000,
+      tier: 'discover',
+      verifierUserIds: [verifier.userId],
+    }
+    const nulActivity = await apiInject(ctx, owner, {
+      method: 'POST',
+      url: `${node.route}/config`,
+      payload: { ...configBase, activity: '活动\u0000' },
+    })
+    expect(nulActivity.statusCode, nulActivity.body).toBe(400)
+    const nulTemplate = await apiInject(ctx, owner, {
+      method: 'POST',
+      url: `${node.route}/config`,
+      payload: {
+        ...configBase,
+        template: { goal: 'a\u0000b', constraints: '', acceptance: '', openQuestions: '' },
+      },
+    })
+    expect(nulTemplate.statusCode, nulTemplate.body).toBe(400)
   })
 })

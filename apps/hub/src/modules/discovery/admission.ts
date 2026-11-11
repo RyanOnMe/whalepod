@@ -56,15 +56,23 @@ export function templateFor(settings: ConfigureDiscoveryRequest): TaskSpecConten
 /**
  * Permit/template JSON is stored in one jsonb column with a 64 KiB DB guard.
  * PostgreSQL renders jsonb with `": "`/`", "` separators (7 bytes for the four-key
- * template) and rejects \u0000; keep headroom so no accepted request reaches the
- * check constraint as a 500.
+ * template) and rejects \u0000 and lone surrogates; keep headroom so no accepted
+ * request reaches the check/parser as a 500.
  */
 const TEMPLATE_STORAGE_LIMIT = 65_024
+const UNSTORABLE_TEXT =
+  /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
+/** Config strings also land in the settings jsonb; reject what PostgreSQL cannot store. */
+export function assertDiscoveryTextStorable(value: string): void {
+  if (UNSTORABLE_TEXT.test(value))
+    throw new ApiError(400, 'VALIDATION_FAILED', 'discovery configuration text is not storable')
+}
 
 export function assertTemplateWithinStorage(template: TaskSpecContent): void {
   if (
     Buffer.byteLength(canonicalJson(template), 'utf8') > TEMPLATE_STORAGE_LIMIT ||
-    Object.values(template).some((value) => value.includes('\u0000'))
+    Object.values(template).some((value) => UNSTORABLE_TEXT.test(value))
   )
     throw new ApiError(400, 'VALIDATION_FAILED', 'discovery template exceeds storage bounds')
 }
@@ -276,9 +284,13 @@ export async function configureDiscovery(
           'VALIDATION_FAILED',
           'discovery permission must have a future expiry',
         )
+      // The whole settings object (template and labels included) is stored as jsonb on every
+      // tier, so validate what PostgreSQL can store before any write, not only for create.
+      const template = templateFor(settings)
+      assertTemplateWithinStorage(template)
+      for (const value of [settings.activity, settings.slot, settings.templateVersion])
+        assertDiscoveryTextStorable(value)
       if (settings.enabled && settings.tier !== 'discover') {
-        const template = templateFor(settings)
-        assertTemplateWithinStorage(template)
         if (template.goal.trim() === '' || template.acceptance.trim() === '')
           throw new ApiError(
             400,

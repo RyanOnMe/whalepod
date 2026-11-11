@@ -449,9 +449,8 @@ export async function applyDiscoveryCandidate(
     // Re-read under lock: revoke/correction/cleanup may have deleted the row while we queued.
     candidate = await getDiscoveryCandidateForUpdate(tx, candidateId)
     if (!candidate) return outcome('skipped', 'candidate_missing')
-    // A newer evaluation for the same source supersedes this candidate.
-    if (admission.evaluationId !== null && admission.evaluationId !== candidate.evaluationId)
-      return markAndReturn(tx, candidate.id, rejectReason('stale_evaluation', true), now)
+    // Existing applications are idempotent even if the source has since moved to a new
+    // evaluation; only a not-yet-applied candidate can be stale.
     const existing = await getDiscoveryApplicationByEvaluation(tx, candidate.evaluationId)
     if (existing)
       return {
@@ -461,6 +460,17 @@ export async function applyDiscoveryCandidate(
         workId: existing.workId,
         specRevisionId: existing.specRevisionId,
       }
+    // Re-read after the Task/coordinator locks: dispatch takes the same locks, so this is the
+    // first read that cannot be overtaken by a newer evaluation commit.
+    const lockedAdmission = await discoveryAdmission(tx, candidate.sourceId)
+    if (!lockedAdmission)
+      return markAndReturn(tx, candidate.id, rejectReason('source_missing', true), now)
+    // A newer evaluation for the same source supersedes this candidate.
+    if (
+      lockedAdmission.evaluationId !== null &&
+      lockedAdmission.evaluationId !== candidate.evaluationId
+    )
+      return markAndReturn(tx, candidate.id, rejectReason('stale_evaluation', true), now)
     if (candidate.expiresAt.getTime() <= now.getTime())
       return markAndReturn(tx, candidate.id, rejectReason('candidate_expired', true), now)
     const evaluation = await getEvaluation(tx, candidate.evaluationId)

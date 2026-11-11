@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { canonicalJson } from '../src/modules/coordination/digest.js'
-import { assertTemplateWithinStorage } from '../src/modules/discovery/admission.js'
+import {
+  assertDiscoveryTextStorable,
+  assertTemplateWithinStorage,
+} from '../src/modules/discovery/admission.js'
 import { renderDiscoveryTemplate } from '../src/modules/discovery/catalog.js'
 
 const template = (goal: string) => ({
@@ -33,6 +36,12 @@ describe('discovery template helpers', () => {
 
   it('rejects NUL, which PostgreSQL jsonb cannot store', () => {
     expect(() => assertTemplateWithinStorage(template('a\u0000b'))).toThrow(/storage bounds/)
+  })
+
+  it('rejects lone surrogates in templates and config labels', () => {
+    expect(() => assertTemplateWithinStorage(template('a\uD800b'))).toThrow(/storage bounds/)
+    expect(() => assertDiscoveryTextStorable('\uDC00')).toThrow(/not storable/)
+    expect(() => assertDiscoveryTextStorable('活动')).not.toThrow()
   })
 })
 
