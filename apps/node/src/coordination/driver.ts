@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
+  DISCOVERY_CAPABILITY,
   RouterRuntimeInputSchema,
   RouterRuntimeOutputSchema,
   type RouterRuntimeInput,
@@ -35,15 +36,30 @@ function minimalEnvironment(homePath?: string): NodeJS.ProcessEnv {
     ...(homePath === undefined ? {} : { HOME: homePath, TMPDIR: homePath, DSH_HOME: homePath }),
   }
 }
-export async function probeCoordinationRuntime(runtimeEntry: string): Promise<boolean> {
+export async function probeCoordinationRuntime(
+  runtimeEntry: string,
+  purpose?: 'discovery',
+): Promise<boolean> {
   try {
-    const result = await execFileAsync(process.execPath, [runtimeEntry, '--coordination-probe'], {
-      env: minimalEnvironment(),
-      timeout: 30_000,
-      maxBuffer: 64_000,
-    })
-    const parsed = JSON.parse(result.stdout.trim()) as { supported?: unknown }
-    return parsed.supported === true
+    const result = await execFileAsync(
+      process.execPath,
+      [runtimeEntry, '--coordination-probe', ...(purpose === 'discovery' ? ['--discovery'] : [])],
+      {
+        env: minimalEnvironment(),
+        timeout: 30_000,
+        maxBuffer: 64_000,
+      },
+    )
+    const parsed = JSON.parse(result.stdout.trim()) as {
+      supported?: unknown
+      discovery?: unknown
+      discoveryPromptVersion?: unknown
+    }
+    return (
+      parsed.supported === true &&
+      (purpose === undefined ||
+        (parsed.discovery === true && parsed.discoveryPromptVersion === DISCOVERY_CAPABILITY))
+    )
   } catch {
     return false
   }

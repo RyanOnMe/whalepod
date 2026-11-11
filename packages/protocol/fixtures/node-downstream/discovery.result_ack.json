@@ -1,0 +1,13 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01940000-0000-7000-8000-000000000023",
+  "sentAt": "2026-11-04T04:00:00Z",
+  "type": "discovery.result_ack",
+  "payload": {
+    "evaluationId": "01940000-0000-7000-8000-000000000002",
+    "attempt": 1,
+    "leaseToken": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "status": "accepted",
+    "purpose": "discovery"
+  }
+}

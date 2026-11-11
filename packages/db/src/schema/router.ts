@@ -79,7 +79,9 @@ export const routerConfigurations = pgTable(
 export const coordinationBudgets = pgTable(
   'coordination_budget',
   {
-    scope: varchar('scope', { length: 16 }).$type<'team' | 'project' | 'work'>().notNull(),
+    scope: varchar('scope', { length: 16 })
+      .$type<'team' | 'project' | 'work' | 'discovery'>()
+      .notNull(),
     scopeId: uuid('scope_id').notNull(),
     utcDate: varchar('utc_date', { length: 10 }).notNull(),
     calls: bigint('calls', { mode: 'number' }).notNull().default(0),
@@ -92,7 +94,10 @@ export const coordinationBudgets = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.scope, table.scopeId, table.utcDate] }),
-    check('coordination_budget_scope', sql`${table.scope} in ('team','project','work')`),
+    check(
+      'coordination_budget_scope',
+      sql`${table.scope} in ('team','project','work','discovery')`,
+    ),
     check(
       'coordination_budget_nonnegative',
       sql`${table.calls} >= 0 and ${table.retryAttempts} >= 0 and ${table.inputTokens} >= 0 and ${table.outputTokens} >= 0 and ${table.costMicros} >= 0 and ${table.reservedTokens} >= 0 and ${table.reservedCostMicros} >= 0`,
@@ -112,7 +117,7 @@ export const coordinationUsageLedger = pgTable(
       .notNull()
       .references(() => projects.id),
     teamId: uuid('team_id').notNull(),
-    workKey: uuid('work_key').notNull(),
+    workKey: uuid('work_key'),
     utcDate: varchar('utc_date', { length: 10 }).notNull(),
     reservedTokens: bigint('reserved_tokens', { mode: 'number' }).notNull(),
     reservedCostMicros: bigint('reserved_cost_micros', { mode: 'number' }).notNull(),

@@ -1,0 +1,13 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01940000-0000-7000-8000-000000000024",
+  "sentAt": "2026-11-04T04:00:00Z",
+  "type": "discovery.cancel",
+  "payload": {
+    "evaluationId": "01940000-0000-7000-8000-000000000002",
+    "attempt": 1,
+    "leaseToken": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "reason": "input_or_authority_changed",
+    "purpose": "discovery"
+  }
+}

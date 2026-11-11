@@ -5,11 +5,11 @@ import { createInterface } from 'node:readline'
 import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
-  CoordinationRequestPayloadSchema,
+  AnyCoordinationRequestSchema,
   RouterRuntimeInputSchema,
   RouterRuntimeOutputSchema,
-  type CoordinationRequest,
-  type CoordinationResult,
+  type AnyCoordinationRequest,
+  type AnyCoordinationResult,
   type CoordinationUsage,
   type RouterRuntimeInitialize,
   type RouterRuntimeOutput,
@@ -29,6 +29,7 @@ import {
 
 export { probeCoordinationIsolation } from './coordination-isolation.js'
 export { COORDINATION_MODEL_TOOLS } from './coordination-worker.js'
+export { DISCOVERY_WORKER_PROMPT_VERSION } from './coordination-worker.js'
 
 const MAX_LINE_BYTES = 1024 * 1024
 const FAILURE_CODES = new Set([
@@ -55,21 +56,24 @@ function failureCode(error: unknown): string {
     ? error.message
     : 'invalid_model_result'
 }
-function binding(request: CoordinationRequest) {
+function binding(request: AnyCoordinationRequest) {
   return {
     evaluationId: request.evaluationId,
     attempt: request.attempt,
     leaseToken: request.leaseToken,
   }
 }
+function purposeBinding(request: AnyCoordinationRequest) {
+  return 'purpose' in request ? { ...binding(request), purpose: request.purpose } : binding(request)
+}
 function failed(
-  request: CoordinationRequest,
+  request: AnyCoordinationRequest,
   code: string,
   readEntryIds: string[],
   usage?: CoordinationUsage,
-): CoordinationResult {
+): AnyCoordinationResult {
   return {
-    ...binding(request),
+    ...purposeBinding(request),
     evaluationDigest: request.evaluationDigest,
     status: 'failed',
     failureCode: code,
@@ -77,7 +81,7 @@ function failed(
     ...(usage === undefined ? {} : { usage }),
   }
 }
-function costMicros(request: CoordinationRequest, response: CoordinationModelResponse): number {
+function costMicros(request: AnyCoordinationRequest, response: CoordinationModelResponse): number {
   const numerator =
     BigInt(response.inputTokens) * BigInt(request.inputPriceMicrosPerMillionTokens) +
     BigInt(response.outputTokens) * BigInt(request.outputPriceMicrosPerMillionTokens)
@@ -102,7 +106,7 @@ export async function runCoordinationWorkerMode(
 ): Promise<void> {
   const lines = createInterface({ input })
   const iterator = lines[Symbol.asyncIterator]()
-  let request: CoordinationRequest | undefined
+  let request: AnyCoordinationRequest | undefined
   try {
     const first = await iterator.next()
     if (first.done) return
@@ -112,7 +116,7 @@ export async function runCoordinationWorkerMode(
       typeof initialize['inputsDir'] !== 'string'
     )
       throw new Error('invalid_model_request')
-    request = CoordinationRequestPayloadSchema.parse(initialize['request'])
+    request = AnyCoordinationRequestSchema.parse(initialize['request'])
     const prompt = readCoordinationPrompt(request, initialize['inputsDir'])
     write({ type: 'worker.read', readEntryIds: prompt.readEntryIds })
     const proposal = await evaluateCoordinationWorker(request, prompt, async (system, user) => {
@@ -297,7 +301,7 @@ async function evaluateBroker(
     })
     void exited.catch(() => {})
     child.stdin.write(`${JSON.stringify({ request, inputsDir: initialize.inputsDir })}\n`)
-    const consume = async (): Promise<CoordinationResult> => {
+    const consume = async (): Promise<AnyCoordinationResult> => {
       for await (const line of workerLines) {
         const message = asObject(parseLine(line))
         if (message['type'] === 'worker.read') {
@@ -311,7 +315,10 @@ async function evaluateBroker(
           )
             throw new Error('invalid_model_result')
           readEntryIds = expected
-          emit({ type: 'coordination.heartbeat', payload: { ...binding(request), readEntryIds } })
+          emit({
+            type: 'coordination.heartbeat',
+            payload: { ...purposeBinding(request), readEntryIds },
+          })
         } else if (message['type'] === 'worker.model_request') {
           if (
             modelCalled ||
@@ -324,7 +331,7 @@ async function evaluateBroker(
           emit({
             type: 'coordination.heartbeat',
             payload: {
-              ...binding(request),
+              ...purposeBinding(request),
               readEntryIds,
               modelStartedAt: new Date().toISOString(),
             },
@@ -358,17 +365,26 @@ async function evaluateBroker(
           )
         } else if (message['type'] === 'worker.result') {
           if (!modelCalled || usage === undefined) throw new Error('invalid_model_result')
-          const { validateCoordinationProposal } = await import('./coordination-worker.js')
-          const proposal = validateCoordinationProposal(message['proposal'], request)
-          return {
+          const { validateCoordinationProposal, validateDiscoveryProposal } =
+            await import('./coordination-worker.js')
+          const base = {
             ...binding(request),
             evaluationDigest: request.evaluationDigest,
-            status: 'completed',
-            proposal,
-            resultDigest: coordinationResultDigest(proposal),
+            status: 'completed' as const,
             readEntryIds,
             usage,
           }
+          if ('purpose' in request) {
+            const proposal = validateDiscoveryProposal(message['proposal'], request)
+            return {
+              ...base,
+              purpose: request.purpose,
+              proposal,
+              resultDigest: coordinationResultDigest(proposal),
+            }
+          }
+          const proposal = validateCoordinationProposal(message['proposal'], request)
+          return { ...base, proposal, resultDigest: coordinationResultDigest(proposal) }
         } else if (message['type'] === 'worker.failed') {
           // Only classified diagnostics: Error.message may contain private input paths.
           const errorCode =
