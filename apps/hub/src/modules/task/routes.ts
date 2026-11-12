@@ -45,7 +45,10 @@ import type { RunOrchestrator } from '../run/orchestrator.js'
 import { listRecentTaskViews, listTaskViewsByProject, searchTaskViews } from './queries.js'
 import { personalAttention } from './attention.js'
 import { getTaskRoom } from './view.js'
-import { verifyDiscoveryReplayRun, type DiscoveryReplayRoute } from '../discovery/replay-binding.js'
+import {
+  verifyDiscoveryReplayRun,
+  type DiscoveryExecutionRoute,
+} from '../discovery/replay-binding.js'
 
 export interface TaskRouteDeps {
   readonly database: Database
@@ -54,7 +57,7 @@ export interface TaskRouteDeps {
   /** 执行区指令要建 Run（#196）：复用既有的建 Run 路径，不另造一套。 */
   readonly orchestrator: RunOrchestrator
   readonly dshDistributionVersionFor: (deviceId: string) => Promise<string | undefined>
-  readonly discoveryExecutionReplay?: DiscoveryReplayRoute | undefined
+  readonly discoveryExecutionReplay?: DiscoveryExecutionRoute | undefined
 }
 
 /**

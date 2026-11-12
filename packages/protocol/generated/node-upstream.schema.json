@@ -2201,6 +2201,10 @@
         {
           "type": "string",
           "const": "discovery-execution-replay.v1"
+        },
+        {
+          "type": "string",
+          "const": "discovery-execution-live.v1"
         }
       ]
     },

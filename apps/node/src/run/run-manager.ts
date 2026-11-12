@@ -26,6 +26,7 @@ import { lstat, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import type {
   ContextStateSyncWire,
+  DiscoveryExecutionExecutor,
   ErrorCode,
   NodeDownstream,
   ProjectedRunEvent,
@@ -171,6 +172,10 @@ export interface RunManagerDeps {
     runId: string,
     endpoint: string,
     model: string,
+  ) => Promise<DiscoveryReplayGate>
+  readonly startDiscoveryLive?: (
+    runId: string,
+    executor: DiscoveryExecutionExecutor,
   ) => Promise<DiscoveryReplayGate>
   /** ADR-0028 §3：工作输入回执的持久累计/待发队列（生产 SQLite）。 */
   readonly workInputReceiptStore?: WorkInputReceiptStore
@@ -553,9 +558,8 @@ export class RunManager {
       let discoveryReplay: DiscoveryReplayGate | undefined
       if (discovery !== undefined) {
         const endpoint = payload.workInput?.discoveryReplayEndpoint
+        const liveExecutor = payload.workInput?.discoveryLiveExecutor
         if (
-          this.deps.startDiscoveryReplay === undefined ||
-          endpoint === undefined ||
           payload.agent.provider !== 'deepseek-official' ||
           payload.approvalPolicy !== 'approval_required' ||
           payload.toolPolicy?.allowedToolNames.length !== 1 ||
@@ -565,13 +569,26 @@ export class RunManager {
           payload.resumeOfRunId !== undefined ||
           payload.resumeSessionId !== undefined ||
           payload.projectContext !== undefined ||
-          payload.handoff !== undefined
+          payload.handoff !== undefined ||
+          (endpoint === undefined) === (liveExecutor === undefined)
         ) {
-          const error = new Error('discovery execution requires the fixed replay assembly')
+          const error = new Error('discovery execution requires the fixed broker assembly')
           ;(error as Error & { code?: string }).code = 'CONTEXT_UNAVAILABLE'
           throw error
         }
-        discoveryReplay = await this.deps.startDiscoveryReplay(runId, endpoint, payload.agent.model)
+        discoveryReplay =
+          liveExecutor !== undefined
+            ? liveExecutor.model === payload.agent.model
+              ? await this.deps.startDiscoveryLive?.(runId, liveExecutor)
+              : undefined
+            : endpoint !== undefined
+              ? await this.deps.startDiscoveryReplay?.(runId, endpoint, payload.agent.model)
+              : undefined
+        if (discoveryReplay === undefined) {
+          const error = new Error('discovery executor was not provisioned on this node')
+          ;(error as Error & { code?: string }).code = 'CONTEXT_UNAVAILABLE'
+          throw error
+        }
         this.discoveryGates.set(runId, discoveryReplay)
       }
       // 启动对账可能在 Hub 按同一 commandId 重投之前已把崩溃残留清成 done；

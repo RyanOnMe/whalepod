@@ -17,6 +17,7 @@ import {
 } from 'drizzle-orm/pg-core'
 import type {
   ConfigureDiscoveryRequest,
+  DiscoveryExecutorLimits,
   DiscoveryProposal,
   TaskSpecContent,
 } from '@whalepod/protocol'
@@ -220,6 +221,7 @@ export const discoveryPermits = pgTable(
     template: jsonb('template').$type<TaskSpecContent>().notNull(),
     templateDigest: char('template_digest', { length: 64 }).notNull(),
     maxCreations: integer('max_creations').notNull(),
+    executorLimits: jsonb('executor_limits').$type<DiscoveryExecutorLimits>(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     verifierUserIds: jsonb('verifier_user_ids').$type<string[]>().notNull(),
     confirmedAt: timestamp('confirmed_at', { withTimezone: true }).notNull(),
@@ -235,6 +237,10 @@ export const discoveryPermits = pgTable(
     ),
     check('discovery_permit_template_digest', sql`${t.templateDigest} ~ '^[a-f0-9]{64}$'`),
     check('discovery_permit_creations', sql`${t.maxCreations} >= 1`),
+    check(
+      'discovery_permit_executor_limits',
+      sql`${t.executorLimits} is null or (${t.tier} = 'execute' and jsonb_typeof(${t.executorLimits}) = 'object')`,
+    ),
     check('discovery_permit_expiry', sql`${t.expiresAt} > ${t.confirmedAt}`),
     check(
       'discovery_permit_verifiers',
@@ -562,6 +568,43 @@ export const discoveryExecutionSources = pgTable(
 export type DiscoveryExecutionSourceKind = 'task_message' | 'artifact' | 'receipt'
 export type DiscoveryExecutionRow = typeof discoveryExecutions.$inferSelect
 export type DiscoveryExecutionSourceRow = typeof discoveryExecutionSources.$inferSelect
+
+export const discoveryExecutorSourceGrants = pgTable(
+  'discovery_executor_source_grant',
+  {
+    id: uuid('id').primaryKey(),
+    applicationId: uuid('application_id')
+      .notNull()
+      .references(() => discoveryApplications.id, { onDelete: 'cascade' }),
+    kind: varchar('kind', { length: 16 }).$type<DiscoveryExecutionSourceKind>().notNull(),
+    sourceId: uuid('source_id').notNull(),
+    sourceVersion: varchar('source_version', { length: 128 }).notNull(),
+    sourceDigest: char('source_digest', { length: 64 }).notNull(),
+    authorizationGeneration: varchar('authorization_generation', { length: 200 }).notNull(),
+    granterUserId: uuid('granter_user_id')
+      .notNull()
+      .references(() => userAccounts.id),
+    executorDigest: char('executor_digest', { length: 64 }).notNull(),
+    grantedAt: timestamp('granted_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (t) => [
+    unique('discovery_executor_source_grant_identity').on(
+      t.applicationId,
+      t.executorDigest,
+      t.kind,
+      t.sourceId,
+    ),
+    check(
+      'discovery_executor_source_grant_kind',
+      sql`${t.kind} in ('task_message', 'artifact', 'receipt')`,
+    ),
+    check(
+      'discovery_executor_source_grant_digests',
+      sql`${t.sourceDigest} ~ '^[a-f0-9]{64}$' and ${t.executorDigest} ~ '^[a-f0-9]{64}$'`,
+    ),
+  ],
+)
 
 export interface DiscoverySlotCatalogEntry {
   readonly taskId: string

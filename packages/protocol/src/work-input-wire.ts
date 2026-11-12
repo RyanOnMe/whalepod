@@ -7,6 +7,7 @@
  * Run 终态后仍接受（窗口内 consumed，窗口后只更新对账记录），不复活 Run。
  */
 import { z } from 'zod'
+import { DiscoveryExecutionExecutorSchema } from './discovery.js'
 import {
   FrozenWorkSourceTypeSchema,
   WORK_INPUT_MANIFEST_MAX_ENTRIES,
@@ -17,6 +18,7 @@ import {
 
 export const WORK_INPUT_CAPABILITY = 'work-input.v1' as const
 export const DISCOVERY_EXECUTION_REPLAY_CAPABILITY = 'discovery-execution-replay.v1' as const
+export const DISCOVERY_EXECUTION_LIVE_CAPABILITY = 'discovery-execution-live.v1' as const
 export const WorkInputCapabilitySchema = z.enum([WORK_INPUT_CAPABILITY])
 
 export const WORK_INPUT_MAX_ENTRY_BYTES = 65_536
@@ -32,16 +34,20 @@ export const RunStartWorkInputSchema = z
     manifest: WorkInputManifestSchema,
     discoveryExecutionId: z.uuid().optional(),
     discoveryReplayEndpoint: z.url().optional(),
+    discoveryLiveExecutor: DiscoveryExecutionExecutorSchema.optional(),
   })
   .refine((value) => {
     const discovery = value.discoveryExecutionId !== undefined
+    const modes =
+      Number(value.discoveryReplayEndpoint !== undefined) +
+      Number(value.discoveryLiveExecutor !== undefined)
     return (
-      discovery === (value.discoveryReplayEndpoint !== undefined) &&
+      modes === Number(discovery) &&
       value.manifest.entries.every(
         (entry) => (entry.sourceType === 'discovery_source') === discovery,
       )
     )
-  }, 'discovery binding and endpoint must accompany a dedicated discovery manifest')
+  }, 'a dedicated discovery manifest requires exactly one discovery model binding')
 export type RunStartWorkInput = z.infer<typeof RunStartWorkInputSchema>
 
 /** Node → Hub：受控下载应答；正文只在本次 HTTP 响应出现。 */

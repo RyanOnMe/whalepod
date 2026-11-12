@@ -7,6 +7,9 @@ export const publicBody = 'RD04C2_CONTROL: The shuttle stop has no permanent boa
 export const sourceBody =
   'RD04C2_SOURCE: Prepare a separate shuttle boarding plan using the site survey.'
 export const privateMarker = 'RD04C2_PRIVATE_DRAFT_ONLY'
+export const toolErrorMarker = 'RD04C2_PRIVATE_TOOL_ERROR_ONLY'
+export const toolErrorCallId = 'private-read-error'
+export const toolErrorText = 'Error: unknown work input item: ' + toolErrorMarker
 export const publicPrompt = 'Create the site survey for the acceptance comparison.'
 
 export interface FrozenInput {
@@ -65,10 +68,22 @@ export class Rd04c2Replay {
   publicRequests = 0
   privateRequests = 0
   privateReads: { inboxItemId: string; bodyDigest: string }[] = []
+  toolErrors: {
+    callId: string
+    toolName: 'read_work_input'
+    role: 'tool'
+    resultDigest: string
+  }[] = []
   privateDraftDigest: string | undefined
   beforePrivateRead?: () => Promise<void>
   failures: string[] = []
   allowedSources: { title: string; sourceVersion: string; body: string }[] = []
+
+  constructor(
+    readonly fixturePublicBody = publicBody,
+    readonly fixtureSourceBody = sourceBody,
+    readonly toolErrorFollowup = false,
+  ) {}
 
   assertHealthy() {
     assert.equal(this.failures.length, 0, this.failures.join('; '))
@@ -89,9 +104,9 @@ export class Rd04c2Replay {
     const evidence = prompt.entries.find((entry) => entry.kind === 'evidence')
     assert(
       prompt.coverageComplete &&
-        source?.body === sourceBody &&
+        source?.body === this.fixtureSourceBody &&
         slot &&
-        evidence?.body === publicBody,
+        evidence?.body === this.fixturePublicBody,
       'discovery did not see the ordinary comment and published control',
     )
     const proposal = {
@@ -127,7 +142,7 @@ export class Rd04c2Replay {
         return replyStream(response, {
           id: 'public-write',
           name: 'write',
-          args: { file_path: path, content: publicBody },
+          args: { file_path: path, content: this.fixturePublicBody },
         })
       if (step === 1)
         return replyStream(response, {
@@ -138,11 +153,16 @@ export class Rd04c2Replay {
       assert.equal(step, 2)
       return replyStream(response, { text: 'Public comparison draft is ready.' })
     }
+    assert.deepEqual(
+      [...tools].sort(),
+      ['publish_artifact', 'read_work_input', 'write'],
+      'private Runtime exposed unexpected model tools',
+    )
     assert.equal(this.phase, 'private', 'execution occurred before authorization')
     assert.equal(++this.privateRequests, step + 1, 'private execution repeated')
     assert(tools.has('read_work_input'), 'private Executor did not receive the work reader')
     assert(
-      !prompt.includes(sourceBody) && !prompt.includes(publicBody),
+      !prompt.includes(this.fixtureSourceBody) && !prompt.includes(this.fixturePublicBody),
       'source body was sent before its work input read',
     )
     const items = new Map<string, FrozenInput>()
@@ -183,7 +203,29 @@ export class Rd04c2Replay {
       })
     const path = prompt.match(/\.whalepod\/drafts\/[a-f0-9-]{36}\.md/)?.[0]
     assert(path, 'private Executor did not receive its fixed draft path')
-    if (step === frozen.length) {
+    if (this.toolErrorFollowup) {
+      if (step === frozen.length)
+        return replyStream(response, {
+          id: toolErrorCallId,
+          name: 'read_work_input',
+          args: { inboxItemId: toolErrorMarker },
+        })
+      // HTTP tool messages carry the rendered error, not an isError flag. Recheck the
+      // cumulative history on later turns, but record the next-request observation only once.
+      const errors = toolResults.filter((result) => result.tool_call_id === toolErrorCallId)
+      assert.equal(errors.length, 1, 'expected exactly one actual work-input error tool result')
+      const error = errors[0]!
+      assert.equal(error.content, toolErrorText, 'actual work-input error text differs')
+      if (step === frozen.length + 1)
+        this.toolErrors.push({
+          callId: toolErrorCallId,
+          toolName: 'read_work_input',
+          role: 'tool',
+          resultDigest: sha256(error.content),
+        })
+    }
+    const draftStep = step - (this.toolErrorFollowup ? 1 : 0)
+    if (draftStep === frozen.length) {
       const body = '# ' + privateMarker + '\n\n' + bodies.join('\n')
       this.privateDraftDigest = sha256(body)
       return replyStream(response, {
@@ -192,13 +234,13 @@ export class Rd04c2Replay {
         args: { file_path: path, content: body },
       })
     }
-    if (step === frozen.length + 1)
+    if (draftStep === frozen.length + 1)
       return replyStream(response, {
         id: 'private-upload',
         name: 'publish_artifact',
         args: { relativePath: path, title: privateMarker, mediaType: 'text/markdown' },
       })
-    assert.equal(step, frozen.length + 2)
+    assert.equal(draftStep, frozen.length + 2)
     return replyStream(response, { text: privateMarker })
   }
 

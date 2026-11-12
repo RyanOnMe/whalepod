@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
 import {
   getDispatchIntent,
+  getDiscoveryExecutorDispatch,
   getRun,
   getTaskMessage,
   getWorkMandate,
@@ -15,6 +16,8 @@ import {
 } from '@whalepod/db'
 import {
   DISCOVERY_EXECUTION_REPLAY_CAPABILITY,
+  DISCOVERY_EXECUTION_LIVE_CAPABILITY,
+  DiscoveryExecutionExecutorSchema,
   WORK_INPUT_MAX_ENTRY_BYTES,
   WORK_INPUT_MANIFEST_VERSION,
   WorkInputManifestSchema,
@@ -26,16 +29,59 @@ import { canonicalJson, sha256Hex } from '../coordination/digest.js'
 import { contextCapabilitiesOf } from '../context/run-snapshot.js'
 import type { ArtifactStore } from '../artifact/store.js'
 import { sourceIdentity } from './admission.js'
-import { revalidateDiscoveryExecution } from './execution.js'
+import { executorDigest, revalidateDiscoveryExecution } from './execution.js'
+import { executorSourceGrantsDigest } from './executor-source-grants.js'
 
 export const DISCOVERY_REPLAY_TOOLS = ['write'] as const
 export type DiscoveryReplayRoute = DiscoveryExecutionExecutor
+export interface DiscoveryLivePolicy {
+  readonly route: DiscoveryExecutionExecutor
+  readonly maxInputTokens: number
+  readonly maxOutputTokens: number
+  readonly inputPriceMicrosPerMillion: number
+  readonly outputPriceMicrosPerMillion: number
+}
+export type DiscoveryExecutionRoute = DiscoveryReplayRoute | DiscoveryLivePolicy
+
+export function discoveryRoute(config: DiscoveryExecutionRoute): DiscoveryExecutionExecutor {
+  return 'route' in config ? config.route : config
+}
+
+export function discoveryCapability(config: DiscoveryExecutionRoute) {
+  return 'route' in config
+    ? DISCOVERY_EXECUTION_LIVE_CAPABILITY
+    : DISCOVERY_EXECUTION_REPLAY_CAPABILITY
+}
+
+export function validDiscoveryLivePolicy(policy: DiscoveryLivePolicy): boolean {
+  const route = DiscoveryExecutionExecutorSchema.safeParse(policy.route)
+  return (
+    route.success &&
+    route.data.provider === 'command-code' &&
+    route.data.model === 'deepseek/deepseek-v4.1-flash' &&
+    route.data.endpoint === 'https://api.commandcode.ai/provider/v1/chat/completions' &&
+    route.data.account === 'rd04c3-acceptance' &&
+    route.data.credentialDigest !== undefined &&
+    policy.maxInputTokens >= 1_048_576 &&
+    policy.maxInputTokens <= 2_097_152 &&
+    policy.maxOutputTokens <= 4096 &&
+    policy.inputPriceMicrosPerMillion >= 300_000 &&
+    policy.outputPriceMicrosPerMillion >= 1_200_000 &&
+    [
+      policy.maxInputTokens,
+      policy.maxOutputTokens,
+      policy.inputPriceMicrosPerMillion,
+      policy.outputPriceMicrosPerMillion,
+    ].every((value) => Number.isSafeInteger(value) && value > 0)
+  )
+}
 
 export function discoveryReplayRouteIsLoopback(route: DiscoveryReplayRoute): boolean {
   try {
     const endpoint = new URL(route.endpoint)
     return (
       route.provider === 'deepseek-official' &&
+      route.credentialDigest === undefined &&
       endpoint.href === route.endpoint &&
       endpoint.protocol === 'http:' &&
       endpoint.hostname === '127.0.0.1' &&
@@ -53,16 +99,19 @@ export function discoveryReplayRouteIsLoopback(route: DiscoveryReplayRoute): boo
 
 export function matchesDiscoveryReplayRoute(
   execution: DiscoveryExecutionRow,
-  route: DiscoveryReplayRoute,
+  config: DiscoveryExecutionRoute,
 ): boolean {
+  const route = discoveryRoute(config)
   return (
-    discoveryReplayRouteIsLoopback(route) &&
+    ('route' in config
+      ? validDiscoveryLivePolicy(config)
+      : discoveryReplayRouteIsLoopback(route)) &&
     execution.executorProvider === route.provider &&
     execution.executorModel === route.model &&
     execution.executorEndpoint === route.endpoint &&
     execution.executorAccount === route.account &&
     execution.executorPolicyGeneration === route.policyGeneration &&
-    execution.executorDigest === sha256Hex(canonicalJson({ ...route, purpose: 'private_draft' }))
+    execution.executorDigest === executorDigest(route)
   )
 }
 
@@ -185,7 +234,7 @@ export async function verifyDiscoveryReplayRun(
   now: Date,
   options: {
     readonly lock?: boolean
-    readonly route?: DiscoveryReplayRoute
+    readonly route?: DiscoveryExecutionRoute
     readonly allowCompleted?: boolean
     readonly lockRunBeforeWork?: boolean
   } = {},
@@ -208,14 +257,40 @@ export async function verifyDiscoveryReplayRun(
     !execution ||
     execution.taskId !== run.taskId ||
     execution.principalUserId !== run.ownerUserId ||
-    (options.route && !matchesDiscoveryReplayRoute(execution, options.route)) ||
-    !(await revalidateDiscoveryExecution(tx, execution, now, {
-      runId: run.id,
-      ...(options.lock ? { lock: true } : {}),
-      ...(options.lockRunBeforeWork ? { lockRunBeforeWork: true } : {}),
-    }))
+    !options.route ||
+    !matchesDiscoveryReplayRoute(execution, options.route)
   )
     return reject
+  const currentSources = await revalidateDiscoveryExecution(tx, execution, now, {
+    runId: run.id,
+    ...(options.lock ? { lock: true } : {}),
+    ...(options.lockRunBeforeWork ? { lockRunBeforeWork: true } : {}),
+    ...(options.lock && 'route' in options.route ? { lockDeviceId: run.deviceId } : {}),
+  })
+  if (!currentSources) return reject
+  if ('route' in options.route) {
+    const dispatch = await getDiscoveryExecutorDispatch(tx, run.id)
+    const grantsDigest = await executorSourceGrantsDigest(
+      tx,
+      execution.applicationId,
+      execution.executorDigest,
+      currentSources,
+    )
+    if (
+      !dispatch ||
+      !grantsDigest ||
+      dispatch.sourceGrantsDigest !== grantsDigest ||
+      dispatch.routeDigest !== execution.executorDigest ||
+      dispatch.policyGeneration !== execution.executorPolicyGeneration ||
+      dispatch.policy.maxInputTokens !== options.route.maxInputTokens ||
+      dispatch.policy.maxOutputTokens !== options.route.maxOutputTokens ||
+      dispatch.policy.inputPriceMicrosPerMillionTokens !==
+        options.route.inputPriceMicrosPerMillion ||
+      dispatch.policy.outputPriceMicrosPerMillionTokens !==
+        options.route.outputPriceMicrosPerMillion
+    )
+      return reject
+  }
   if (options.lock) {
     const current = await getRun(tx, run.id)
     if (
@@ -255,7 +330,7 @@ export async function verifyDiscoveryReplayRun(
     !device ||
     device.revokedAt !== null ||
     device.ownerUserId !== run.ownerUserId ||
-    !contextCapabilitiesOf(device).includes(DISCOVERY_EXECUTION_REPLAY_CAPABILITY)
+    !contextCapabilitiesOf(device).includes(discoveryCapability(options.route))
   )
     return reject
   const manifest = WorkInputManifestSchema.safeParse(run.workInputManifest)

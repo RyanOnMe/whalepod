@@ -17,6 +17,7 @@ import {
   getDiscoverySlot,
   getDiscoverySourceBindingByApplication,
   getEnabledMember,
+  getRouterConfig,
   getTask,
   getTaskForUpdate,
   getTaskMessage,
@@ -107,7 +108,7 @@ function sourceManifestDigest(sources: readonly DiscoveryExecutionSourceView[]):
   )
 }
 
-function executorDigest(input: DiscoveryExecutionAuthorizationRequest['executor']): string {
+export function executorDigest(input: DiscoveryExecutionAuthorizationRequest['executor']): string {
   return sha256Hex(
     canonicalJson({
       purpose: 'private_draft',
@@ -115,6 +116,7 @@ function executorDigest(input: DiscoveryExecutionAuthorizationRequest['executor'
       model: input.model,
       endpoint: input.endpoint,
       account: input.account,
+      ...(input.credentialDigest ? { credentialDigest: input.credentialDigest } : {}),
       policyGeneration: input.policyGeneration,
     }),
   )
@@ -161,7 +163,7 @@ function notFoundExecution(): never {
  * every authority now. A single drifted source makes the whole authorization ineligible.
  * `lock` is true only on the write path so GET never blocks permit/work transitions.
  */
-async function loadBasis(
+export async function loadDiscoveryExecutionBasis(
   tx: Tx,
   actorUserId: string,
   projectId: string,
@@ -217,7 +219,13 @@ async function loadBasis(
     }
 
   const cfg = await discoveryConfig(tx, projectId)
-  if (!available(cfg, now) || permit.revokedAt !== null)
+  const router = await getRouterConfig(tx, projectId)
+  if (
+    !available(cfg, now) ||
+    permit.revokedAt !== null ||
+    !router?.enabled ||
+    router.configVersion !== cfg.modelConfigVersion
+  )
     return {
       application,
       sources: [],
@@ -493,7 +501,7 @@ function toView(
 }
 
 /** Serialize with correction/withdrawal and task/work transitions before reading the basis. */
-async function lockAuthorizationScope(
+export async function lockDiscoveryExecutionScope(
   tx: Tx,
   actorUserId: string,
   applicationId: string,
@@ -527,26 +535,35 @@ export async function revalidateDiscoveryExecution(
     readonly runId?: string
     readonly lock?: boolean
     readonly lockRunBeforeWork?: boolean
+    readonly lockDeviceId?: string
   } = {},
 ): Promise<readonly DiscoveryExecutionSourceView[] | undefined> {
   try {
     if (options.lock)
-      await lockAuthorizationScope(
+      await lockDiscoveryExecutionScope(
         tx,
         execution.principalUserId,
         execution.applicationId,
         execution.projectId,
       )
     if (options.lock && options.lockRunBeforeWork && options.runId) {
-      // Candidate insert has a Run FK; take its key-share before Work so a
-      // terminal event (Run → Work) cannot deadlock with an upload.
+      // Terminal events acquire Run before Work. Exclude terminal changes while
+      // an external call or a candidate upload is being granted.
       await tx
         .select({ id: schema.runs.id })
         .from(schema.runs)
         .where(eq(schema.runs.id, options.runId))
-        .for('key share')
+        .for('no key update')
     }
-    const basis = await loadBasis(
+    if (options.lock && options.lockDeviceId) {
+      const [device] = await tx
+        .select({ revokedAt: schema.devices.revokedAt })
+        .from(schema.devices)
+        .where(eq(schema.devices.id, options.lockDeviceId))
+        .for('share')
+      if (!device || device.revokedAt !== null) return undefined
+    }
+    const basis = await loadDiscoveryExecutionBasis(
       tx,
       execution.principalUserId,
       execution.projectId,
@@ -591,7 +608,14 @@ export async function discoveryExecutionBasis(
 ): Promise<DiscoveryExecutionView> {
   const now = nowOf(deps)
   return deps.database.transaction(async (tx) => {
-    const basis = await loadBasis(tx, actorUserId, projectId, applicationId, now, false)
+    const basis = await loadDiscoveryExecutionBasis(
+      tx,
+      actorUserId,
+      projectId,
+      applicationId,
+      now,
+      false,
+    )
     const execution = await getDiscoveryExecutionByApplication(tx, applicationId)
     const stored = execution
       ? storedSourceView(await listDiscoveryExecutionSources(tx, execution.id))
@@ -630,14 +654,21 @@ export async function authorizeDiscoveryExecution(
   const commandKey = `discovery.execution:${actorUserId}:${projectId}:${applicationId}:${idempotencyKey}`
   let inserted = false
   const result = await transactCommand(deps.database, commandKey, async (tx) => {
-    await lockAuthorizationScope(tx, actorUserId, applicationId, projectId)
+    await lockDiscoveryExecutionScope(tx, actorUserId, applicationId, projectId)
     // The first request may have committed while this duplicate waited for
     // the Task lock and moved Work to waiting. Reuse its receipt before
     // applying the first-authorization guards to the new Work state.
     const prior = await findCommandReceipt(tx, commandKey)
     if (prior) return prior.result as { executionId: string }
     const now = nowOf(deps)
-    const basis = await loadBasis(tx, actorUserId, projectId, applicationId, now, true)
+    const basis = await loadDiscoveryExecutionBasis(
+      tx,
+      actorUserId,
+      projectId,
+      applicationId,
+      now,
+      true,
+    )
     if (!basis.eligible)
       throw new ApiError(409, 'CONFLICT', 'discovery execution authorization is not available', {
         code: 'DISCOVERY_EXECUTION_UNAVAILABLE',
@@ -755,7 +786,7 @@ export async function authorizeDiscoveryExecution(
     await listDiscoveryExecutionSources(deps.database.db, execution.id),
   )
   const basis = await deps.database.transaction((tx) =>
-    loadBasis(tx, actorUserId, projectId, applicationId, now, false),
+    loadDiscoveryExecutionBasis(tx, actorUserId, projectId, applicationId, now, false),
   )
   if (inserted)
     deps.log?.({
@@ -776,7 +807,14 @@ export async function revokeDiscoveryExecutionByPrincipal(
 ): Promise<DiscoveryExecutionView> {
   const now = nowOf(deps)
   return deps.database.transaction(async (tx) => {
-    const basis = await loadBasis(tx, actorUserId, projectId, applicationId, now, true)
+    const basis = await loadDiscoveryExecutionBasis(
+      tx,
+      actorUserId,
+      projectId,
+      applicationId,
+      now,
+      true,
+    )
     const execution = await getDiscoveryExecutionForUpdate(tx, applicationId)
     if (!execution) notFoundExecution()
     await revokeDiscoveryExecution(tx, execution.id, 'principal_revoked', now)

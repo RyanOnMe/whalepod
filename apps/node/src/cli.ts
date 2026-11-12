@@ -33,6 +33,10 @@ import { CoordinationManager } from './coordination/manager.js'
 import { probeCoordinationRuntime } from './coordination/driver.js'
 import { coordinationCredentialFacts } from './coordination/config.js'
 import { runCoordinationCommand } from './coordination/cli.js'
+import {
+  validateDiscoveryLiveOptions,
+  type DiscoveryLiveOptions,
+} from './work/discovery-live-model.js'
 
 interface PairArgs {
   configDir?: string
@@ -77,6 +81,8 @@ export async function runStart(
   configDir = DEFAULT_CONFIG_DIR,
   /** Programmatic acceptance assembly only. The production CLI never passes it. */
   replay?: { readonly deepSeekBaseUrl: string },
+  /** A dedicated acceptance caller passes its scoped key to Node only, not Runtime. */
+  discoveryLive?: DiscoveryLiveOptions,
 ): Promise<void> {
   if (replay !== undefined) {
     const endpoint = new URL(replay.deepSeekBaseUrl)
@@ -93,6 +99,11 @@ export async function runStart(
       throw new Error('acceptance provider must be an explicit HTTP loopback endpoint')
     }
   }
+  if (discoveryLive !== undefined) validateDiscoveryLiveOptions(discoveryLive)
+  const live =
+    discoveryLive === undefined
+      ? undefined
+      : Object.freeze({ ...discoveryLive, executor: Object.freeze({ ...discoveryLive.executor }) })
   const config = await loadConfig({ configDir })
   if (config === undefined) {
     process.stderr.write('no local config: run `whalepod-node pair` first\n')
@@ -137,13 +148,14 @@ export async function runStart(
     runtimeEntry,
     startupDshVersion: dshVersionFacts.reported,
     discoveryExecutionReplay: replay !== undefined,
+    discoveryExecutionLive: live !== undefined && dshVersionFacts.probed !== null,
     coordinationCapabilities: coordinationCapable
       ? [COORDINATION_CAPABILITY, ...(discoveryCapable ? [DISCOVERY_CAPABILITY] : [])]
       : [],
   })
 
   // ---- P1-13 运行会话层装配（02 Task 13）----
-  const { mkdirSync } = await import('node:fs')
+  const { existsSync, mkdirSync } = await import('node:fs')
   const { homedir } = await import('node:os')
   const { CommandStore } = await import('./spool/command-store.js')
   const { EventStore } = await import('./spool/event-store.js')
@@ -164,8 +176,11 @@ export async function runStart(
   const { SqliteRunTerminalCleanupStore } = await import('./run/terminal-cleanup.js')
   const { SqliteContextStateStore } = await import('./context/state-store.js')
   const { WorkInputDownloader } = await import('./work/work-input.js')
-  const { discoveryReplayEndpoint, startDiscoveryReplayGate } =
+  const { discoveryReplayEndpoint, startDiscoveryLiveGate, startDiscoveryReplayGate } =
     await import('./work/discovery-replay.js')
+  const { createDiscoveryModelHubPort } = await import('./work/discovery-model-hub.js')
+  const { SqliteDiscoverySettlementOutbox, discoverySettlementFile } =
+    await import('./work/discovery-settlement-outbox.js')
   const { SqliteWorkInputReceiptStore } = await import('./work/receipt-store.js')
   const { OfficePreviewGenerator } = await import('./artifact/preview.js')
   const { uploadArtifactPreview, reportArtifactPreviewFailure } =
@@ -235,6 +250,21 @@ export async function runStart(
   })
 
   mkdirSync(stateDir, { recursive: true })
+  const settlementPath = join(stateDir, discoverySettlementFile(config))
+  const discoverySettlements =
+    live !== undefined || existsSync(settlementPath)
+      ? new SqliteDiscoverySettlementOutbox(settlementPath, (runId, input, signal) =>
+          createDiscoveryModelHubPort(config, runId).settle(input, signal),
+        )
+      : undefined
+  const flushDiscoverySettlements = () => {
+    void discoverySettlements?.flush().catch(() => {
+      process.stderr.write(
+        `${JSON.stringify({ level: 'warn', component: 'node.discovery_execution', action: 'discovery.executor.settlement_outbox_unavailable' })}\n`,
+      )
+    })
+  }
+  if (discoverySettlements) setInterval(flushDiscoverySettlements, 10_000).unref()
   const registry = new WorkspaceRegistry(join(stateDir, 'workspace-registry.sqlite'))
   const secrets = new SecretStore(join(stateDir, 'secrets.json'))
   // #89：inventory 事实源（本地真值：registry.resolve preflight + secrets slot 名）。
@@ -378,6 +408,40 @@ export async function runStart(
             })
           },
         }),
+    ...(live === undefined || dshVersionFacts.probed === null || discoverySettlements === undefined
+      ? {}
+      : {
+          startDiscoveryLive: (runId, executor) => {
+            const report = (stage: string, fact: Record<string, unknown>) => {
+              process.stderr.write(
+                `${JSON.stringify({
+                  level: 'info',
+                  component: 'node.discovery_execution',
+                  action: `discovery.executor.${stage}`,
+                  runId,
+                  at: new Date().toISOString(),
+                  ...fact,
+                })}\n`,
+              )
+            }
+            return startDiscoveryLiveGate({
+              options: live,
+              executor,
+              hub: {
+                begin: createDiscoveryModelHubPort(config, runId, (status) =>
+                  report('reservation_rejected_http', { status }),
+                ).begin,
+                settle: (input, signal) => discoverySettlements.settle(runId, input, signal),
+              },
+              authorize: (signal) => workInputs.authorizeDiscovery(runId, signal),
+              observe: (boundary, allowed) => {
+                if (!allowed) report('authority_denied', { boundary })
+              },
+              observeLive: ({ stage, ...fact }) =>
+                report(stage, stage === 'refused' ? fact : { ...fact, transport: 'native_https' }),
+            })
+          },
+        }),
     workInputReceiptStore: workInputReceipts,
     deviceId: config.deviceId,
     // Run 固化面用**启动时**的探针值（#288 口径：一次装配、多次消费）；#352 刷新的是
@@ -442,6 +506,7 @@ export async function runStart(
     onConnected: () => {
       coordination.onReconnect()
       runManager.onReconnect()
+      flushDiscoverySettlements()
       if (!deviceConnectedOnce) {
         deviceConnectedOnce = true
         runManager.startTerminalCleanup()

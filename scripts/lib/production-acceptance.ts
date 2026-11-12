@@ -94,7 +94,9 @@ export class ProductionAcceptance {
   constructor(
     listener?: RequestListener,
     private readonly hubReplayRoute?: (origin: string) => object,
+    private readonly hubLiveExecutorPolicy?: object,
   ) {
+    assert(!hubReplayRoute || !hubLiveExecutorPolicy, 'choose one discovery executor route')
     if (listener) this.provider = createServer(listener)
   }
 
@@ -263,7 +265,18 @@ export class ProductionAcceptance {
       PORT: String(port),
       LOG_LEVEL: 'info',
     }
-    if (this.hubReplayRoute === undefined) this.launch(this.entries.hub, [], hubEnvironment)
+    if (this.hubLiveExecutorPolicy !== undefined)
+      this.launch(
+        'whalepod-hub-guarded-executor-assembly',
+        [this.entries.hub, JSON.stringify(this.hubLiveExecutorPolicy)],
+        hubEnvironment,
+        [
+          '--input-type=module',
+          '--eval',
+          'import { pathToFileURL } from "node:url"; const { runHub } = await import(pathToFileURL(process.argv[2]).href); await runHub(undefined, JSON.parse(process.argv[3]))',
+        ],
+      )
+    else if (this.hubReplayRoute === undefined) this.launch(this.entries.hub, [], hubEnvironment)
     else {
       assert(this.providerOrigin, 'the Hub replay route needs a disposable loopback provider')
       this.launch(
@@ -338,6 +351,67 @@ export class ProductionAcceptance {
         'import { pathToFileURL } from "node:url"; const { runStart } = await import(pathToFileURL(process.argv[2]).href); await runStart(undefined, process.argv[3], process.argv[4], { deepSeekBaseUrl: process.argv[5] })',
       ],
     )
+  }
+
+  startNodeWithGuardedExecutor(
+    deepSeekBaseUrl: string,
+    configuration: { readonly executor: object; readonly maxOutputTokens: number },
+    key: string,
+    blockExternalNetwork = false,
+  ): ChildProcess {
+    this.protect(key)
+    // Negative-controls only. Install the barrier before loading the production package
+    // so a broken guard can be observed without connecting to the real provider.
+    const barrier = blockExternalNetwork
+      ? `
+        const observe = (action, status) => process.stderr.write(JSON.stringify({ component: "testkit.rd04c3", action, status }) + "\\n");
+        const blocked = () => {
+          observe("external_network_blocked");
+          throw new Error("external network blocked by negative-control fixture");
+        };
+        const https = (await import("node:https")).default;
+        https.request = blocked;
+        https.get = blocked;
+        const http = (await import("node:http")).default;
+        const requestLocal = http.request;
+        http.request = (endpoint, ...rest) => {
+          if (endpoint instanceof URL && endpoint.hostname !== "127.0.0.1") return blocked();
+          const request = requestLocal(endpoint, ...rest);
+          if (endpoint instanceof URL && endpoint.pathname.endsWith("/discovery-model/begin")) {
+            request.once("response", (response) => observe("hub_begin", response.statusCode));
+          }
+          return request;
+        };
+        (await import("node:module")).syncBuiltinESMExports();
+        const fetchLocal = globalThis.fetch;
+        globalThis.fetch = async (input, ...rest) => {
+          const target = new URL(input instanceof Request ? input.url : input);
+          if (target.protocol !== "http:" || target.hostname !== "127.0.0.1") return blocked();
+          const response = await fetchLocal(input, ...rest);
+          if (target.pathname.endsWith("/work-input/authorize")) observe("hub_online_check", response.status);
+          return response;
+        };
+      `
+      : ''
+    const child = this.launch(
+      'whalepod-guarded-executor-assembly',
+      [
+        this.nodeEntry,
+        this.stateDir,
+        this.configDir,
+        deepSeekBaseUrl,
+        JSON.stringify(configuration),
+      ],
+      {},
+      [
+        '--input-type=module',
+        '--eval',
+        barrier +
+          'import { readFileSync } from "node:fs"; import { pathToFileURL } from "node:url"; const { runStart } = await import(pathToFileURL(process.argv[2]).href); await runStart(undefined, process.argv[3], process.argv[4], { deepSeekBaseUrl: process.argv[5] }, { ...JSON.parse(process.argv[6]), apiKey: readFileSync(0, "utf8") })',
+      ],
+    )
+    child.stdin!.end(key)
+    return child
   }
 
   async waitCoordinationInventory(): Promise<void> {

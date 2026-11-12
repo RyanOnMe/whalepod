@@ -1,8 +1,8 @@
 #!/usr/bin/env tsx
 /** RD-04c2: real Hub, PostgreSQL, Node and DSH; only loopback model replies are replayed. */
 import assert from 'node:assert/strict'
-import { randomBytes, randomUUID } from 'node:crypto'
-import { lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { lstat, mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { schema } from '@whalepod/db'
 import { eq } from 'drizzle-orm'
@@ -14,16 +14,19 @@ import {
   until,
   type AcceptanceActor,
 } from './lib/production-acceptance.js'
+import { Rd04c2Replay, privateMarker, toolErrorMarker } from './lib/rd04c2-replay.js'
+import { bindToolErrorFollowup } from './lib/rd04c2-tool-error.js'
 import {
-  Rd04c2Replay,
-  publicBody,
-  sourceBody,
-  publicPrompt,
-  privateMarker,
-} from './lib/rd04c2-replay.js'
+  prepareDiscoveryDraftFixture,
+  type DiscoveryExecutionBasis as Basis,
+} from './lib/discovery-draft-fixture.js'
 import { verifyRd04c2 } from './verify-rd04c2-acceptance.js'
 
-const replay = new Rd04c2Replay()
+const toolErrorFollowup = process.argv.includes('--tool-error-followup')
+const revokeBeforeRead = process.argv.includes('--revoke-before-read')
+assert(!(toolErrorFollowup && revokeBeforeRead), 'follow-up and revocation are separate scenarios')
+const followupBinding = toolErrorFollowup ? await bindToolErrorFollowup(repoRoot) : undefined
+const replay = new Rd04c2Replay(undefined, undefined, toolErrorFollowup)
 const executor = (origin: string) => ({
   provider: 'deepseek-official',
   model: 'deepseek-v4-flash',
@@ -38,33 +41,17 @@ const env = new ProductionAcceptance(
 const sockets: WebSocket[] = []
 const afterRun = 'RD04C2_PUBLIC_SENTINEL_AFTER'
 const beforeRun = 'RD04C2_PUBLIC_SENTINEL_BEFORE'
-const revokeBeforeRead = process.argv.includes('--revoke-before-read')
 const out = join(
   repoRoot,
   'artifacts/evidence/rd04c2',
-  ...(revokeBeforeRead ? ['revoke-before-read'] : []),
+  ...(followupBinding
+    ? ['tool-error-followup', followupBinding.commit]
+    : revokeBeforeRead
+      ? ['revoke-before-read']
+      : []),
 )
 const resultPath = join(out, 'result.json')
 const eventsPath = join(out, 'events.jsonl')
-
-type ExactSource = {
-  kind: 'task_message' | 'artifact' | 'receipt'
-  sourceId: string
-  sourceVersion: string
-  sourceDigest: string
-  authorizationGeneration: string
-}
-interface Basis {
-  eligible: boolean
-  sourceManifestDigest: string
-  sources: ExactSource[]
-  execution: null | {
-    id: string
-    status: string
-    purpose: string
-    sourceManifestDigest: string
-  }
-}
 
 async function browserSocket(member: AcceptanceActor, cursor = 0) {
   const url = env.origin.replace(/^http:/, 'ws:') + '/ws/v1/client?cursor=' + cursor
@@ -104,260 +91,25 @@ async function checkPrivateWorkspaceCleanup(runId: string) {
 }
 
 async function drive() {
-  await env.start()
+  const {
+    colleague,
+    project,
+    venue,
+    discussion,
+    db,
+    rowsForTask,
+    artifactsFor,
+    publicArtifact,
+    publicDigest,
+    publicResponse,
+    base,
+    post,
+    source,
+    application,
+    executionUrl,
+    basis,
+  } = await prepareDiscoveryDraftFixture(env, replay)
   assert(env.providerOrigin)
-  const colleague = await env.inviteMember('acceptance-colleague')
-  const project = await env.api<{ id: string }>('/projects', { name: 'RD-04c2 Acceptance' })
-  await env.cli([
-    'workspace',
-    'add',
-    env.workspaceDir,
-    '--name',
-    'acceptance',
-    '--state-dir',
-    env.stateDir,
-  ])
-  await env.cli(
-    ['secret', 'set', 'deepseek-official', 'acceptance', '--state-dir', env.stateDir],
-    randomBytes(24).toString('base64url') + '\n',
-  )
-  await env.cli([
-    'coordination',
-    'configure',
-    '--state-dir',
-    env.stateDir,
-    '--owner-user-id',
-    env.owner.userId,
-    '--billing-user-id',
-    env.owner.userId,
-    '--provider',
-    'replay',
-    '--model',
-    'discovery-replay',
-    '--slot',
-    'acceptance',
-    '--endpoint',
-    env.providerOrigin + '/discovery/chat/completions',
-  ])
-  await env.cli(
-    ['coordination', 'secret', 'set', 'replay', 'acceptance', '--state-dir', env.stateDir],
-    randomBytes(24).toString('base64url') + '\n',
-  )
-  const { configRevision } = JSON.parse(
-    await readFile(join(env.stateDir, 'coordination.json'), 'utf8'),
-  ) as { configRevision: string }
-  env.startNode(env.providerOrigin)
-  await env.waitCoordinationInventory()
-  const workspace = await until('packaged Node workspace', async () =>
-    (await env.api<{ workspaceId: string; deviceId: string; name: string }[]>('/workspaces')).find(
-      (item) => item.name === 'acceptance',
-    ),
-  )
-  const pack = (await env.api<{ id: string; name: string }[]>('/plugin-packs')).find(
-    (entry) => entry.name === 'core-empty',
-  )
-  assert(pack, 'core-empty production pack missing')
-  const agent = await env.api<{ id: string }>('/agents', {
-    name: 'Acceptance draft executor',
-    persona: 'Prepare a short draft using only the exact available inputs.',
-    provider: 'deepseek-official',
-    model: executor(env.providerOrigin).model,
-    credentialSlot: 'acceptance',
-    pluginPackId: pack.id,
-    approvalPolicy: 'approval_required',
-    maxTokens: 2048,
-    inputPriceMicrosPerMillionTokens: 1,
-    outputPriceMicrosPerMillionTokens: 1,
-  })
-  const task = (title: string) =>
-    env.api<{ id: string }>(`/projects/${project.id}/tasks`, {
-      title,
-      assigneeUserId: env.owner.userId,
-    })
-  const venue = await task('Existing venue seating')
-  const discussion = await task('Planning discussion')
-  await env.api(`/tasks/${venue.id}/accept`, {})
-  // Only the control artifact uses an explicit human Run; keep the discovery profile's
-  // mandatory approval_required default while avoiding a manual write approval here.
-  await env.api(`/tasks/${venue.id}`, { approvalPolicy: 'full_access' }, { method: 'PATCH' })
-  const spec = await env.api<{ draftVersion: number }>(`/tasks/${venue.id}/agreement/draft`, {
-    content: {
-      goal: 'Plan venue seating',
-      constraints: 'Only manage the existing venue seating',
-      acceptance: 'Seat map recorded',
-      openQuestions: '',
-    },
-  })
-  await env.api(`/tasks/${venue.id}/agreement/confirm`, { draftVersion: spec.draftVersion })
-  const { db } = env.database
-  const rowsForTask = (taskId: string) =>
-    db.select().from(schema.runs).where(eq(schema.runs.taskId, taskId))
-  const artifactsFor = (runId: string) =>
-    db.select().from(schema.artifacts).where(eq(schema.artifacts.runId, runId))
-  const publicRun = await env.api<{ id: string }>(
-    `/tasks/${venue.id}/runs`,
-    {
-      agentId: agent.id,
-      deviceId: env.deviceId,
-      workspaceId: workspace.workspaceId,
-      prompt: publicPrompt,
-    },
-    { expected: 201 },
-  )
-  const publicArtifact = await until(
-    'public artifact through the Runtime tool',
-    async () => {
-      replay.assertHealthy()
-      const [run] = await rowsForTask(venue.id)
-      if (run?.status === 'failed') {
-        const evidence = await db
-          .select()
-          .from(schema.runEvents)
-          .where(eq(schema.runEvents.runId, run.id))
-        const failed = evidence.find((row) => row.type === 'run.failed')
-        const detail = failed?.payload as
-          | { message?: string; error?: { message?: string }; reason?: string }
-          | undefined
-        throw new Error(
-          'public Run failed: ' +
-            JSON.stringify({
-              code: run.failureCode,
-              replayRequests: replay.publicRequests,
-              reason:
-                run.failureSummary ?? detail?.message ?? detail?.error?.message ?? detail?.reason,
-              projectedTypes: evidence.map((row) => row.type),
-            }),
-        )
-      }
-      if (run?.status !== 'completed') return undefined
-      assert.equal(run.id, publicRun.id)
-      const artifacts = await artifactsFor(run.id)
-      assert.equal(artifacts.length, 1, 'public comparison must produce one candidate')
-      return artifacts[0]!
-    },
-    60_000,
-  )
-  await env.api(`/artifacts/${publicArtifact.id}/publish`, {})
-  const publicResponse = await env.request(`/artifacts/${publicArtifact.id}/content`, undefined, {
-    actor: colleague,
-  })
-  assert.equal(publicResponse.status, 200)
-  const publicDigest = sha256(await publicResponse.text())
-  assert.equal(publicDigest, publicArtifact.sha256)
-  assert.equal(publicDigest, sha256(publicBody))
-
-  await env.api(`/projects/${project.id}/router/config`, {
-    enabled: true,
-    deviceId: env.deviceId,
-    operatorUserId: env.owner.userId,
-    billingUserId: env.owner.userId,
-    credentialSlot: 'acceptance',
-    credentialConfigRevision: configRevision,
-    provider: 'replay',
-    model: 'discovery-replay',
-    teamDailyCallLimit: 20,
-    projectDailyCallLimit: 20,
-    teamDailyTokenLimit: 500_000,
-    projectDailyTokenLimit: 500_000,
-    teamDailyCostMicrosLimit: 10_000,
-    projectDailyCostMicrosLimit: 10_000,
-    maxInputTokens: 32_000,
-    maxOutputTokens: 512,
-    maxCostMicros: 100,
-    inputPriceMicrosPerMillionTokens: 1,
-    outputPriceMicrosPerMillionTokens: 1,
-    timeoutSeconds: 30,
-    maxRetries: 0,
-  })
-  const base = `/projects/${project.id}/discovery`
-  const expiresAt = new Date(Date.now() + 3600_000).toISOString()
-  const { configVersion, slotId } = await env.api<{ configVersion: number; slotId: string }>(
-    base + '/config',
-    {
-      enabled: true,
-      entryTaskId: discussion.id,
-      principalUserId: env.owner.userId,
-      activity: 'Accessible event',
-      slot: 'Shuttle boarding draft',
-      templateVersion: 'acceptance-v1',
-      expiresAt,
-      maxCalls: 6,
-      maxTokens: 200_000,
-      maxCostMicros: 1000,
-      agreementTaskIds: [venue.id],
-      evidenceArtifactIds: [publicArtifact.id],
-      tier: 'execute',
-      template: {
-        goal: 'Prepare {{slot}} for {{activity}}',
-        constraints: 'Use the approved source {{sourceId}}',
-        acceptance: 'Produce the private {{slot}}',
-        openQuestions: '',
-      },
-      verifierUserIds: [env.owner.userId],
-      maxCreations: 1,
-    },
-  )
-  const { templateDigest } = await env.api<{ templateDigest: string }>(base + '/config')
-  await env.api(base + '/permit', { configVersion, tier: 'execute', templateDigest })
-  await env.api(base + '/participation', { configVersion }, { actor: colleague })
-  const slotUrl = base + '/slots/' + slotId
-  const { catalog } = await env.api<{ catalog: { digest: string; entries: { taskId: string }[] } }>(
-    slotUrl,
-  )
-  const { eligibleEmpty } = await env.api<{ eligibleEmpty: boolean }>(slotUrl + '/verify', {
-    catalogDigest: catalog.digest,
-    complete: true,
-    entries: catalog.entries.map(({ taskId }) => ({ taskId, coverage: 'not_covered' })),
-  })
-  assert(eligibleEmpty, 'catalog was not verified empty for the distinct slot')
-  replay.phase = 'discovery'
-  const post = (body: string, taskId = discussion.id) =>
-    env.api<{ id: string }>(
-      `/tasks/${taskId}/comments`,
-      { body },
-      { actor: colleague, expected: 201 },
-    )
-  const source = await post(sourceBody)
-  const application = await until(
-    'ordinary comment produced an automatic application',
-    async () => {
-      replay.assertHealthy()
-      const [row] = await db
-        .select()
-        .from(schema.discoveryApplications)
-        .where(eq(schema.discoveryApplications.sourceId, source.id))
-      return row
-    },
-    60_000,
-  )
-  assert.equal(application.status, 'applied')
-  assert.notEqual(application.taskId, discussion.id)
-  assert.notEqual(application.taskId, venue.id)
-  assert.equal(application.verification.kind, 'published_evidence')
-  assert.deepEqual(
-    application.verification.evidence.map((entry) => entry.artifactId),
-    [publicArtifact.id],
-  )
-  const executionUrl = base + '/applications/' + application.id + '/execution'
-  const basis = await env.api<Basis>(executionUrl)
-  assert(basis.eligible && basis.execution === null)
-  assert.deepEqual(basis.sources.map((entry) => entry.kind).sort(), ['artifact', 'task_message'])
-  replay.allowedSources = basis.sources.map((entry) => {
-    if (entry.kind === 'task_message') {
-      assert.equal(entry.sourceId, source.id)
-      assert.equal(entry.sourceVersion, application.sourceVersion)
-      assert.equal(
-        entry.sourceDigest,
-        application.sourceDigest,
-        'comment identity differs from application',
-      )
-      return { ...entry, body: sourceBody, title: 'Authorized discussion' }
-    }
-    assert.equal(entry.sourceId, publicArtifact.id)
-    assert.equal(entry.sourceVersion, publicDigest)
-    assert.equal(entry.sourceDigest, publicDigest)
-    return { ...entry, body: publicBody, title: 'Published evidence' }
-  })
   const authorization = {
     sourceManifestDigest: basis.sourceManifestDigest,
     executor: executor(env.providerOrigin),
@@ -567,11 +319,19 @@ async function drive() {
     sawRun(live.frames) && sawRun(history.frames),
     'missing private Run status control on WebSocket',
   )
-  const visibility = [httpBodies, live.frames, history.frames].map((items) => ({
+  const surfaces = ['http', 'ws_live', 'ws_replay']
+  const visibility = [httpBodies, live.frames, history.frames].map((items, index) => ({
     observed: items.length,
     leaks: items.filter((item) => item.includes(privateMarker)).length,
+    ...(toolErrorFollowup
+      ? {
+          surface: surfaces[index],
+          toolErrorLeaks: items.filter((item) => item.includes(toolErrorMarker)).length,
+        }
+      : {}),
   }))
   assert(visibility.every((surface) => surface.observed > 0 && surface.leaks === 0))
+  if (toolErrorFollowup) assert(visibility.every((surface) => surface.toolErrorLeaks === 0))
   const workspaceClean = await checkPrivateWorkspaceCleanup(run.id)
   const revoke = await env.request(executionUrl, undefined, { method: 'DELETE' })
   assert.equal(revoke.status, 200)
@@ -610,12 +370,20 @@ async function drive() {
       audience: row.audience,
       seq: row.seq,
     })),
+    ...(toolErrorFollowup
+      ? replay.toolErrors.map((error) => ({
+          component: 'acceptance.replay',
+          type: 'tool_error.observed',
+          runId: run.id,
+          ...error,
+        }))
+      : []),
   ]
   return {
     events,
     result: {
-      schemaVersion: 1,
-      mode: 'loopback_model_replay',
+      schemaVersion: toolErrorFollowup ? 2 : 1,
+      mode: toolErrorFollowup ? 'loopback_tool_error_followup' : 'loopback_model_replay',
       projectId: project.id,
       discussionTaskId: discussion.id,
       comparisonTaskId: venue.id,
@@ -659,6 +427,7 @@ async function drive() {
         privateRequests: replay.privateRequests,
         reads: replay.privateReads,
         draftDigest: replay.privateDraftDigest,
+        ...(toolErrorFollowup ? { toolErrors: replay.toolErrors } : {}),
       },
       publicArtifact: {
         id: publicArtifact.id,
@@ -695,11 +464,19 @@ async function stop() {
 }
 process.once('SIGTERM', () => void stop().finally(() => process.exit(143)))
 process.once('SIGINT', () => void stop().finally(() => process.exit(130)))
+let ownsOutput = false
 try {
-  await mkdir(out, { recursive: true })
-  await Promise.all(
-    [resultPath, eventsPath, join(out, 'failure.log')].map((path) => rm(path, { force: true })),
-  )
+  if (followupBinding) {
+    await mkdir(join(out, '..'), { recursive: true })
+    await mkdir(out)
+    ownsOutput = true
+  } else {
+    await mkdir(out, { recursive: true })
+    ownsOutput = true
+    await Promise.all(
+      [resultPath, eventsPath, join(out, 'failure.log')].map((path) => rm(path, { force: true })),
+    )
+  }
   const assemblyDigest = await fingerprintProductionAssembly(repoRoot)
   const { result, events } = await drive()
   assert.equal(
@@ -707,25 +484,33 @@ try {
     assemblyDigest,
     'production packages changed during acceptance',
   )
+  if (followupBinding)
+    assert.deepEqual(
+      await bindToolErrorFollowup(repoRoot),
+      followupBinding,
+      'follow-up harness changed',
+    )
   const eventBytes = events.map((event) => JSON.stringify(event)).join('\n') + '\n'
-  await writeFile(eventsPath, eventBytes)
+  await writeFile(eventsPath, eventBytes, { flag: followupBinding ? 'wx' : 'w' })
   await writeFile(
     resultPath,
     JSON.stringify(
       {
         ...result,
-        provenance: { assemblyDigest, eventsDigest: sha256(eventBytes) },
+        provenance: { assemblyDigest, eventsDigest: sha256(eventBytes), ...followupBinding },
       },
       null,
       2,
     ) + '\n',
   )
-  await verifyRd04c2(resultPath, assemblyDigest)
+  await verifyRd04c2(resultPath, assemblyDigest, followupBinding)
   console.log('RD-04c2 production acceptance PASS')
 } catch (error) {
-  await rm(resultPath, { force: true })
   const message = env.redact(error instanceof Error ? error.message : String(error))
-  await writeFile(join(out, 'failure.log'), message + '\n' + env.diagnostics() + '\n')
+  if (ownsOutput) {
+    await rm(resultPath, { force: true })
+    await writeFile(join(out, 'failure.log'), message + '\n' + env.diagnostics() + '\n')
+  }
   console.error(message)
   process.exitCode = 1
 } finally {

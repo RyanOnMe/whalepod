@@ -148,6 +148,10 @@ export class SessionOwner {
     const discovery = spec.workInputs?.discoveryExecutionId !== undefined
     const discoveryReads = new Set<string>()
     const setup = (agentCtx: Context) => {
+      // The filesystem plugin registers read/edit as well as write. Discovery
+      // may only see write from that plugin; its scoped read and publish tools
+      // are registered below and remain visible under the inherited-tool mask.
+      if (discovery) agentCtx.tools.restrict({ allow: ['write'] })
       agentCtx.tools.register(createPublishArtifactTool(ports.artifact, ports.artifactValidator))
       // P1-15：Reviewer Run 带输入清单时注册只读读取工具（清单为空不注册）。
       if (

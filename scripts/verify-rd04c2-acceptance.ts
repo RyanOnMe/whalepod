@@ -5,7 +5,8 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { fingerprintProductionAssembly, isSha256, sha256 } from './lib/acceptance-provenance.js'
-import { sourceBody } from './lib/rd04c2-replay.js'
+import { sourceBody, toolErrorCallId, toolErrorText } from './lib/rd04c2-replay.js'
+import { bindToolErrorFollowup, type ToolErrorBinding } from './lib/rd04c2-tool-error.js'
 
 type Source = {
   kind: string
@@ -16,7 +17,13 @@ type Source = {
 }
 
 type Entry = Omit<Source, 'kind'> & { inboxItemId: string; sourceType: string; bodyDigest: string }
-type Event = {
+type ToolError = {
+  callId: string
+  toolName: string
+  role: string
+  resultDigest: string
+}
+type Event = Partial<ToolError> & {
   component: string
   runId: string
   type: string
@@ -67,6 +74,7 @@ interface Result {
     privateRequests: number
     reads: { inboxItemId: string; bodyDigest: string }[]
     draftDigest: string
+    toolErrors?: ToolError[]
   }
   publicArtifact: { id: string; memberHttp: number; sha256: string }
   draft: {
@@ -82,19 +90,44 @@ interface Result {
   }
   ownerHttp: number[]
   memberHttp: number[]
-  visibility: { observed: number; leaks: number }[]
+  visibility: { surface?: string; observed: number; leaks: number; toolErrorLeaks?: number }[]
   privateDirectoriesObserved: number
   workspaceClean: boolean
   revocation: { ownerHttp: number; ownerRoomHasRevokedTitle: boolean }
-  provenance: { assemblyDigest: string; eventsDigest: string }
+  provenance: {
+    assemblyDigest: string
+    eventsDigest: string
+    commit?: string
+    harnessDigest?: string
+  }
 }
 
 const uuid = (value: unknown) =>
   typeof value === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(value)
 
-export function checkRd04c2(input: unknown, eventsBytes: string, expectedAssemblyDigest?: string) {
+export function checkRd04c2(
+  input: unknown,
+  eventsBytes: string,
+  expectedAssemblyDigest?: string,
+  expectedToolErrorBinding?: ToolErrorBinding,
+) {
   const r = input as Result
-  assert(r?.schemaVersion === 1, 'wrong evidence version')
+  const toolErrorFollowup = r?.schemaVersion === 2
+  assert(r?.schemaVersion === 1 || toolErrorFollowup, 'wrong evidence version')
+  if (expectedToolErrorBinding !== undefined || toolErrorFollowup) {
+    assert(toolErrorFollowup, 'tool-error follow-up cannot use legacy evidence')
+    assert(expectedToolErrorBinding, 'missing independent tool-error binding')
+    assert(expectedAssemblyDigest, 'missing independent production assembly binding')
+    assert.equal(r.mode, 'loopback_tool_error_followup', 'wrong follow-up mode')
+    assert(/^[a-f0-9]{40}$/.test(r.provenance.commit ?? ''), 'missing follow-up commit')
+    assert(isSha256(r.provenance.harnessDigest), 'missing follow-up harness fingerprint')
+    assert.equal(r.provenance.commit, expectedToolErrorBinding.commit, 'follow-up commit changed')
+    assert.equal(
+      r.provenance.harnessDigest,
+      expectedToolErrorBinding.harnessDigest,
+      'follow-up harness changed',
+    )
+  }
   assert(isSha256(r.provenance.assemblyDigest), 'missing production assembly fingerprint')
   assert.equal(r.provenance.eventsDigest, sha256(eventsBytes), 'event fingerprint mismatch')
   if (expectedAssemblyDigest !== undefined)
@@ -149,7 +182,11 @@ export function checkRd04c2(input: unknown, eventsBytes: string, expectedAssembl
     )
     return
   }
-  assert.equal(r.mode, 'loopback_model_replay', 'wrong evidence mode')
+  assert.equal(
+    r.mode,
+    toolErrorFollowup ? 'loopback_tool_error_followup' : 'loopback_model_replay',
+    'wrong evidence mode',
+  )
   assert(
     [
       r.projectId,
@@ -248,7 +285,29 @@ export function checkRd04c2(input: unknown, eventsBytes: string, expectedAssembl
   assert(reads.every(({ digestVerified }) => digestVerified === true))
   assert.equal(r.replay.discoveryRequests, 1)
   assert.equal(r.replay.publicRequests, 3)
-  assert.equal(r.replay.privateRequests, ids.length + 3)
+  assert.equal(r.replay.privateRequests, ids.length + (toolErrorFollowup ? 4 : 3))
+  if (toolErrorFollowup) {
+    const expected = {
+      callId: toolErrorCallId,
+      toolName: 'read_work_input',
+      role: 'tool',
+      resultDigest: sha256(toolErrorText),
+    }
+    assert.deepEqual(r.replay.toolErrors, [expected], 'actual private tool error is missing')
+    const errors = events.filter((event) => event.type === 'tool_error.observed')
+    assert.deepEqual(
+      errors,
+      [
+        {
+          component: 'acceptance.replay',
+          type: 'tool_error.observed',
+          runId: r.run.id,
+          ...expected,
+        },
+      ],
+      'missing, duplicate or mismatched private tool error event',
+    )
+  }
   assert.equal(r.publicArtifact.memberHttp, 200)
   assert.equal(r.draft.ownerHttp, 200)
   assert.equal(r.draft.cacheControl, 'private, no-store')
@@ -264,6 +323,17 @@ export function checkRd04c2(input: unknown, eventsBytes: string, expectedAssembl
   assert.equal(r.workspaceClean, true)
   assert.deepEqual(r.revocation, { ownerHttp: 404, ownerRoomHasRevokedTitle: false })
   assert.equal(r.visibility.length, 3, 'HTTP, live WebSocket and replay are required')
+  if (toolErrorFollowup) {
+    assert.deepEqual(
+      r.visibility.map((surface) => surface.surface),
+      ['http', 'ws_live', 'ws_replay'],
+      'missing or duplicate private observation surface',
+    )
+    assert(
+      r.visibility.every((surface) => surface.toolErrorLeaks === 0),
+      'private tool error leaked or its observation is missing',
+    )
+  }
   assert(
     r.visibility.every(
       ({ observed, leaks }) => Number.isInteger(observed) && observed > 0 && leaks === 0,
@@ -272,18 +342,30 @@ export function checkRd04c2(input: unknown, eventsBytes: string, expectedAssembl
   )
 }
 
-export async function verifyRd04c2(resultPath: string, expectedAssemblyDigest?: string) {
+export async function verifyRd04c2(
+  resultPath: string,
+  expectedAssemblyDigest?: string,
+  expectedToolErrorBinding?: ToolErrorBinding,
+) {
   const [result, events] = await Promise.all([
     readFile(resultPath, 'utf8'),
     readFile(join(dirname(resultPath), 'events.jsonl'), 'utf8'),
   ])
-  checkRd04c2(JSON.parse(result), events, expectedAssemblyDigest)
+  checkRd04c2(JSON.parse(result), events, expectedAssemblyDigest, expectedToolErrorBinding)
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const followup = process.argv.includes('--tool-error-followup')
+  const root = fileURLToPath(new URL('..', import.meta.url))
+  const binding = followup ? await bindToolErrorFollowup(root) : undefined
+  const path = process.argv.slice(2).find((arg) => !arg.startsWith('--'))
   await verifyRd04c2(
-    process.argv[2] ?? 'artifacts/evidence/rd04c2/result.json',
-    await fingerprintProductionAssembly(fileURLToPath(new URL('..', import.meta.url))),
+    path ??
+      (binding
+        ? `artifacts/evidence/rd04c2/tool-error-followup/${binding.commit}/result.json`
+        : 'artifacts/evidence/rd04c2/result.json'),
+    await fingerprintProductionAssembly(root),
+    binding,
   )
   console.log('RD-04c2 evidence PASS')
 }

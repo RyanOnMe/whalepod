@@ -68,13 +68,13 @@ import type { ArtifactStore } from '../artifact/store.js'
 import {
   discoveryReplayBundle,
   verifyDiscoveryReplayRun,
-  type DiscoveryReplayRoute,
+  type DiscoveryExecutionRoute,
 } from '../discovery/replay-binding.js'
 
 export interface WorkRouteDeps {
   readonly database: Database
   readonly requireActor: RequireActor
-  readonly discoveryExecutionReplay?: DiscoveryReplayRoute | undefined
+  readonly discoveryExecutionReplay?: DiscoveryExecutionRoute | undefined
   readonly discoveryStore?: ArtifactStore | undefined
   readonly discoveryDeviceOnline?: ((deviceId: string) => boolean) | undefined
   /**
@@ -771,6 +771,7 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
     const identity = await authenticateDevice(deps.database, request)
     const { runId: rawRunId } = request.params as { runId: string }
     const runId = parseUuid(rawRunId, 'run id')
+    const deviceOnline = () => deps.discoveryDeviceOnline?.(identity.deviceId) === true
     let bundle: Awaited<ReturnType<typeof buildRunWorkInputBundle>>
     try {
       const run = await getOrdinaryRun(deps.database.db, runId)
@@ -781,13 +782,26 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
         route &&
         store &&
         run.deviceId === identity.deviceId &&
-        deps.discoveryDeviceOnline?.(identity.deviceId)
+        deviceOnline()
       ) {
-        bundle = await deps.database.transaction(async (tx) =>
-          (await verifyDiscoveryReplayRun(tx, run, new Date(), { route, lock: true })).ok
-            ? discoveryReplayBundle(tx, run, store)
-            : undefined,
-        )
+        bundle = await deps.database.transaction(async (tx) => {
+          const verified = await verifyDiscoveryReplayRun(tx, run, new Date(), {
+            route,
+            lock: true,
+            ...('route' in route ? { lockRunBeforeWork: true } : {}),
+          })
+          if (!verified.ok || !deviceOnline()) return undefined
+          const materialized = await discoveryReplayBundle(tx, run, store)
+          // Reading the frozen artifact can wait. Recheck before disclosing it.
+          if (
+            !materialized ||
+            ('route' in route &&
+              !(await verifyDiscoveryReplayRun(tx, run, new Date(), { route })).ok)
+          )
+            return undefined
+          return deviceOnline() ? materialized : undefined
+        })
+        if (!deviceOnline()) bundle = undefined
       } else {
         bundle = await buildRunWorkInputBundle(deps.database, runId, identity.deviceId)
       }
@@ -808,15 +822,22 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
     const { runId: rawRunId } = request.params as { runId: string }
     const runId = parseUuid(rawRunId, 'run id')
     const route = deps.discoveryExecutionReplay
+    const deviceOnline = () => deps.discoveryDeviceOnline?.(identity.deviceId) === true
     const ok =
       route &&
-      deps.discoveryDeviceOnline?.(identity.deviceId) &&
+      deviceOnline() &&
       (await deps.database.transaction(async (tx) => {
         const run = await getOrdinaryRun(tx, runId)
         if (!run || run.deviceId !== identity.deviceId) return false
-        return (await verifyDiscoveryReplayRun(tx, run, new Date(), { route, lock: true })).ok
+        const verified = await verifyDiscoveryReplayRun(tx, run, new Date(), {
+          route,
+          lock: true,
+          ...('route' in route ? { lockRunBeforeWork: true } : {}),
+        })
+        return verified.ok && deviceOnline()
       }))
-    if (!ok) throw new ApiError(404, 'NOT_FOUND', 'run input authorization unavailable')
+    if (!ok || !deviceOnline())
+      throw new ApiError(404, 'NOT_FOUND', 'run input authorization unavailable')
     return noStore(reply).code(204).send()
   })
 }

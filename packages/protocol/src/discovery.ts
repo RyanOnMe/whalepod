@@ -24,11 +24,21 @@ export const DiscoveryTaskClassificationSchema = z.union([
 export type DiscoveryTaskClassification = z.infer<typeof DiscoveryTaskClassificationSchema>
 
 /** 责任人确认本人许可：必须确认看过的模板摘要（创建档）。 */
-export const DiscoveryPermitRequestSchema = z.strictObject({
-  configVersion: Positive,
-  tier: DiscoveryTierSchema.optional(),
-  templateDigest: Digest.optional(),
+export const DiscoveryExecutorLimitsSchema = z.strictObject({
+  dispatches: Positive,
+  calls: Positive,
+  tokens: Positive,
+  costMicros: Positive,
 })
+export type DiscoveryExecutorLimits = z.infer<typeof DiscoveryExecutorLimitsSchema>
+export const DiscoveryPermitRequestSchema = z
+  .strictObject({
+    configVersion: Positive,
+    tier: DiscoveryTierSchema.optional(),
+    templateDigest: Digest.optional(),
+    executorLimits: DiscoveryExecutorLimitsSchema.optional(),
+  })
+  .refine((value) => value.executorLimits === undefined || value.tier === 'execute')
 export type DiscoveryPermitRequest = z.infer<typeof DiscoveryPermitRequestSchema>
 
 /** 责任人核对完整目录：entries 必须与 Hub 当前目录逐项一致。 */
@@ -71,10 +81,50 @@ export const DiscoveryExecutionExecutorSchema = z.strictObject({
   model: z.string().trim().min(1).max(128),
   endpoint: z.string().trim().min(1).max(128),
   account: z.string().trim().min(1).max(128),
+  /** Fingerprint of the approved live credential; never the credential itself. */
+  credentialDigest: Digest.optional(),
   /** Deployment policy generation; a newer route/policy must be reconfirmed. */
   policyGeneration: z.number().int().positive().max(2_147_483_647),
 })
 export type DiscoveryExecutionExecutor = z.infer<typeof DiscoveryExecutionExecutorSchema>
+
+export const DiscoveryExecutorSourceGrantRequestSchema = z.strictObject({
+  source: z.strictObject({
+    kind: z.enum(['task_message', 'artifact', 'receipt']),
+    sourceId: Id,
+    sourceVersion: z.string().min(1).max(128),
+    sourceDigest: Digest,
+    authorizationGeneration: z.string().min(1).max(200),
+  }),
+  executor: DiscoveryExecutionExecutorSchema,
+  confirmsPrivateDraft: z.literal(true),
+})
+export type DiscoveryExecutorSourceGrantRequest = z.infer<
+  typeof DiscoveryExecutorSourceGrantRequestSchema
+>
+
+export const DISCOVERY_EXECUTOR_MAX_REQUEST_BYTES = 32_768
+export const DiscoveryExecutorAttemptBeginSchema = z.strictObject({
+  attemptId: Id,
+  executor: DiscoveryExecutionExecutorSchema,
+  requestDigest: Digest,
+  requestBytes: Positive.max(DISCOVERY_EXECUTOR_MAX_REQUEST_BYTES),
+  maxOutputTokens: Positive.max(4096),
+})
+export const DiscoveryExecutorAttemptSettleSchema = z.strictObject({
+  attemptId: Id,
+  requestDigest: Digest,
+  outcome: z.discriminatedUnion('kind', [
+    z.strictObject({
+      kind: z.literal('actual'),
+      inputTokens: Positive.max(2_147_483_647),
+      outputTokens: z.number().int().nonnegative().max(2_147_483_647),
+      responseIdDigest: Digest.optional(),
+    }),
+    z.strictObject({ kind: z.literal('confirmed_missing_usage') }),
+    z.strictObject({ kind: z.literal('unknown') }),
+  ]),
+})
 
 /**
  * RD-04c1：责任人本人对已立项候选的第二次确认。

@@ -337,7 +337,7 @@ export class RuntimeBridge {
         spec.workspacePath !== realpathSync(process.cwd()) ||
         dirname(spec.workspacePath) !== realpathSync(spec.dshHomePath))
     )
-      throw new Error('discovery execution requires the fixed replay assembly')
+      throw new Error('discovery execution requires the fixed broker assembly')
     let dshSessionId = resumeSessionId ?? dshSessionIdOf(spec)
     const emit = (output: RuntimeOutput): void => options.emit(output)
 

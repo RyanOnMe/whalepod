@@ -107,6 +107,29 @@ jobs:
       - name: Run Router guard mutations
         run: pnpm exec tsx scripts/mutate-router-evaluation.ts
 
+      - name: Run private tool error production acceptance
+        run: |
+          pnpm exec tsx scripts/run-rd04c2-acceptance.ts --tool-error-followup
+          pnpm exec tsx scripts/verify-rd04c2-acceptance.ts --tool-error-followup
+          pnpm exec tsx scripts/check-rd04c2-evidence-negatives.ts --tool-error-followup
+
+      - name: Scan private tool error evidence
+        id: private_error_evidence_scan
+        if: always()
+        run: |
+          if [ -d artifacts/evidence/rd04c2/tool-error-followup ]; then
+            scripts/secret-scan.sh artifacts/evidence/rd04c2/tool-error-followup
+          fi
+
+      - name: Upload private tool error evidence
+        if: always() && steps.private_error_evidence_scan.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-tool-error-evidence
+          path: artifacts/evidence/rd04c2/tool-error-followup/
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Scan Router acceptance evidence
         id: router_evidence_scan
         if: always()
