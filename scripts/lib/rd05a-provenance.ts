@@ -5,7 +5,7 @@ import { promisify } from 'node:util'
 import { fingerprintAssemblyFiles, fingerprintProductionAssembly } from './acceptance-provenance.js'
 
 const exec = promisify(execFile)
-const harnessFiles = [
+export const RD05A_HARNESS_FILES = [
   'scripts/run-rd05a-acceptance.ts',
   'scripts/verify-rd05a-acceptance.ts',
   'scripts/verify-rd05a-acceptance.spec.ts',
@@ -14,7 +14,12 @@ const harnessFiles = [
   'scripts/lib/rd05a-replay.spec.ts',
   'scripts/lib/rd05a-evidence.ts',
   'scripts/lib/rd05a-fixture.ts',
+  'scripts/lib/rd05a-fixture.spec.ts',
   'scripts/lib/rd05a-provenance.ts',
+  'scripts/lib/rd05a-provenance.spec.ts',
+  'scripts/lib/phase1/hub-assembly.ts',
+  'scripts/lib/phase1/events.ts',
+  'scripts/lib/ephemeral-postgres.mts',
   'scripts/lib/rd04c2-replay.ts',
   'scripts/lib/production-acceptance.ts',
   'scripts/lib/acceptance-provenance.ts',
@@ -29,8 +34,8 @@ export interface Rd05aBinding {
 export async function bindRd05a(root: string): Promise<Rd05aBinding> {
   const [{ stdout: head }, { stdout: status }, harnessDigest, assemblyDigest] = await Promise.all([
     exec('git', ['rev-parse', 'HEAD'], { cwd: root }),
-    exec('git', ['status', '--porcelain', '--', ...harnessFiles], { cwd: root }),
-    fingerprintAssemblyFiles(root, harnessFiles, []),
+    exec('git', ['status', '--porcelain', '--', ...RD05A_HARNESS_FILES], { cwd: root }),
+    fingerprintAssemblyFiles(root, RD05A_HARNESS_FILES, []),
     fingerprintProductionAssembly(root),
   ])
   const commit = head.trim()

@@ -196,15 +196,24 @@ function fixture() {
       before: {
         taskIds: [id(10), id(11), id(12), id(13)],
         runIds: [id(30), id(31), id(32), id(33)],
-        evaluationIds: [id(90), id(91), id(93), id(94)],
+        evaluationIds: [id(90), id(91), id(93), id(94), id(95)],
       },
       after: {
         taskIds: [id(10), id(11), id(12), id(13)],
         runIds: [id(30), id(31), id(32), id(33)],
-        evaluationIds: [id(90), id(91), id(93), id(94)],
+        evaluationIds: [id(90), id(91), id(93), id(94), id(95)],
       },
     },
     accounting: {
+      localEvaluations: [
+        {
+          id: id(95),
+          projectId: id(2),
+          purpose: 'inference',
+          status: 'completed',
+          modelStarted: false,
+        },
+      ],
       coordination: [id(90), id(91), id(93), id(94)].flatMap((evaluationId, index) =>
         ['reserved', 'settled'].map((phase, phaseIndex) => ({
           id: id(200 + index * 2 + phaseIndex),
@@ -439,6 +448,27 @@ function fixture() {
         purpose: 'private_draft',
         sourceManifestDigest: sourceManifestDigest([discoverySource, artifactSource]),
         sources: [discoverySource, artifactSource],
+        ...(() => {
+          const executor = {
+            provider: 'deepseek-official',
+            model: 'deepseek-v4-flash',
+            endpoint: 'http://127.0.0.1:49152/chat/completions',
+            account: 'acceptance-replay',
+            policyGeneration: 1,
+          }
+          return {
+            executor,
+            executorDigest: hash(
+              JSON.stringify(
+                Object.fromEntries(
+                  Object.entries({ purpose: 'private_draft', ...executor }).sort(([a], [b]) =>
+                    a.localeCompare(b),
+                  ),
+                ),
+              ),
+            ),
+          }
+        })(),
         liveOnlyGrantCount: 0,
       },
       repeatExecutionId: id(81),
@@ -485,6 +515,17 @@ function fixture() {
       sourceId: id(43),
       executionId: id(84),
       authorizedExecutionId: id(84),
+      sources: [{ ...discoverySource, sourceId: id(43) }, artifactSource],
+      sourceManifestDigest: sourceManifestDigest([
+        { ...discoverySource, sourceId: id(43) },
+        artifactSource,
+      ]),
+      manifestDigest: negativeReceipt.manifestDigest,
+      entries: entries.map((entry, index) => ({
+        ...entry,
+        sourceId: index === 0 ? id(43) : entry.sourceId,
+        inboxItemId: negativeReceipt.entriesDelivered[index]!,
+      })),
       runId: id(33),
       delivery: 2,
       correctionHttp: 200,
@@ -528,20 +569,22 @@ function fixture() {
       campaignId: evidence.campaignId,
       ...structuredClone(stage),
     })),
-    ...evidence.runs.slice(0, 2).flatMap((row) => [
-      {
-        component: 'hub.run' as const,
-        type: 'runtime.ready' as const,
-        runId: row.id,
-        audience: 'owner' as const,
-      },
-      {
-        component: 'hub.run' as const,
-        type: 'run.completed' as const,
-        runId: row.id,
-        audience: 'owner' as const,
-      },
-    ]),
+    ...evidence.runs.slice(0, 2).flatMap((row) =>
+      (['owner', 'project'] as const).flatMap((audience) => [
+        {
+          component: 'hub.run' as const,
+          type: 'runtime.ready' as const,
+          runId: row.id,
+          audience,
+        },
+        {
+          component: 'hub.run' as const,
+          type: 'run.completed' as const,
+          runId: row.id,
+          audience,
+        },
+      ]),
+    ),
     ...evidence.runs.map((row) => ({
       component: 'acceptance.snapshot' as const,
       type: 'run.status' as const,
@@ -577,6 +620,117 @@ function seal(value: Fixture) {
 // Every mutation starts from a clone, including independent event objects. Rehashing is
 // intentional: a recomputed file digest must not conceal missing semantic evidence.
 const negatives: Mutation[] = [
+  ...(['provider', 'model', 'endpoint', 'account', 'policyGeneration'] as const).map(
+    (field): Mutation => [
+      `authorized Executor changed ${field}`,
+      ({ evidence: r }) => {
+        Object.assign(r.slow.authorization.executor, {
+          [field]: field === 'policyGeneration' ? 2 : 'substituted',
+        })
+      },
+    ],
+  ),
+  [
+    'authorized Executor digest changed',
+    ({ evidence: r }) => {
+      r.slow.authorization.executorDigest = hash('another Executor')
+    },
+  ],
+  ...(['coordination', 'executor'] as const).flatMap((ledger) =>
+    (['reservedTokens', 'reservedCostMicros'] as const).map((field): Mutation => [
+      `${ledger} settlement changed ${field}`,
+      ({ evidence: r }) => {
+        r.accounting[ledger].find((row) => row.phase === 'settled')![field] += 1
+      },
+    ]),
+  ),
+  [
+    'missing owner lifecycle mirror',
+    (value) => {
+      const index = value.events.findIndex(
+        (event) => event.component === 'hub.run' && event.audience === 'owner',
+      )
+      value.events.splice(index, 1)
+    },
+  ],
+  [
+    'duplicated project lifecycle mirror',
+    (value) => {
+      const event = value.events.find(
+        (event) => event.component === 'hub.run' && event.audience === 'project',
+      )!
+      value.events.push(structuredClone(event))
+    },
+  ],
+  [
+    'negative deliveries substituted from positive Run after rehash',
+    (value) => {
+      value.evidence.revokeBeforeRead.receipts[0]!.entriesDelivered = [
+        ...value.evidence.runs[2]!.itemIds,
+      ]
+      const event = value.events.find(
+        (event) =>
+          event.type === 'work_input.receipt' &&
+          event.runId === value.evidence.revokeBeforeRead.runId,
+      )!
+      Object.assign(event, { entriesDelivered: [...value.evidence.runs[2]!.itemIds] })
+    },
+  ],
+  [
+    'negative manifest source changed',
+    ({ evidence: r }) => {
+      r.revokeBeforeRead.entries[0]!.sourceId = id(999)
+    },
+  ],
+  [
+    'negative authorized source changed',
+    ({ evidence: r }) => {
+      r.revokeBeforeRead.sources[0]!.sourceVersion = 'wrong-version'
+    },
+  ],
+  [
+    'negative source manifest changed',
+    ({ evidence: r }) => {
+      r.revokeBeforeRead.sourceManifestDigest = hash('wrong-negative')
+    },
+  ],
+  [
+    'negative uses positive inbox identity',
+    ({ evidence: r }) => {
+      r.revokeBeforeRead.entries[0]!.inboxItemId = r.runs[2]!.itemIds[0]!
+    },
+  ],
+
+  [
+    'local evaluation charged another project',
+    ({ evidence: r }) => {
+      r.accounting.localEvaluations[0]!.projectId = id(999)
+    },
+  ],
+  [
+    'local evaluation actually called model',
+    ({ evidence: r }) => {
+      Object.assign(r.accounting.localEvaluations[0]!, { modelStarted: true })
+    },
+  ],
+  [
+    'local evaluation disguises discovery',
+    ({ evidence: r }) => {
+      Object.assign(r.accounting.localEvaluations[0]!, { purpose: 'discovery' })
+    },
+  ],
+  [
+    'missing local evaluation disclosure',
+    ({ evidence: r }) => {
+      r.accounting.localEvaluations = []
+    },
+  ],
+  [
+    'duplicate local evaluation',
+    ({ evidence: r }) => {
+      r.accounting.localEvaluations.push(structuredClone(r.accounting.localEvaluations[0]!))
+    },
+  ],
   [
     'missing accounting',
     ({ evidence: r }) => {
@@ -2090,7 +2244,6 @@ describe('RD-05a independent combined campaign judge', () => {
     const value = fixture()
     multipleSnapshots(value)
     value.evidence.runs[2]!.dshSessionId = null
-    for (const event of value.events) if (event.component === 'hub.run') event.audience = 'project'
     expect(() => checkRd05a(value.evidence, seal(value), binding)).not.toThrow()
   })
 

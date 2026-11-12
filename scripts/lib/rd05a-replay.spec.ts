@@ -190,6 +190,71 @@ async function expectRejected(session: Session, messages: Message[], options = {
   expect(() => session.replay.assertHealthy()).toThrow()
 }
 
+const privateSources = [
+  {
+    sourceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    title: 'Site survey',
+    sourceVersion: 'survey-v1',
+    body: publicBody,
+  },
+  {
+    sourceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    title: 'Shuttle source',
+    sourceVersion: 'source-v1',
+    body: sourceBody,
+  },
+]
+
+function privateMessages(replay: Rd05aReplay): Message[] {
+  replay.stage = 'private'
+  replay.slow.allowedSources = privateSources.map((source) => ({ ...source }))
+  return [
+    {
+      role: 'user',
+      content:
+        privateSources
+          .map((source, index) =>
+            JSON.stringify({
+              inboxItemId: index ? ids.second : ids.first,
+              title: source.title,
+              sourceType: 'discovery_source',
+              sourceVersion: source.sourceVersion,
+              byteSize: Buffer.byteLength(source.body),
+            }),
+          )
+          .join('\n') +
+        '\nWrite to ' +
+        draftPath,
+    },
+  ]
+}
+
+function renderedPrivate(index: number) {
+  const source = privateSources[index]!
+  return [
+    'work input: ' + (index ? ids.second : ids.first),
+    'source: discovery_source/' + source.sourceId,
+    'version: ' + source.sourceVersion,
+    'title: ' + source.title,
+    'digest: ' + sha256(source.body),
+    'byteSize: ' + Buffer.byteLength(source.body),
+    'truncated: false',
+    '',
+    source.body,
+  ].join('\n')
+}
+
+async function privatePrefix(session: Session, messages: Message[], steps: number) {
+  for (let index = 0; index < steps; index++) {
+    const name = index < 3 ? 'read_work_input' : index === 3 ? 'write' : 'publish_artifact'
+    const call = called(await session.send(messages), name)
+    messages.push(
+      assistant(call),
+      result(call, index < 2 ? renderedPrivate(index) : index === 2 ? toolErrorText : 'Completed.'),
+    )
+  }
+}
+
 describe('RD05a combined replay over loopback HTTP', () => {
   it('exports the exact fixture bytes and defaults to fast with a replaceable c2 replay', () => {
     expect(replayModule).toMatchObject({
@@ -422,7 +487,7 @@ describe('RD05a combined replay over loopback HTTP', () => {
     })
   })
 
-  it('delegates discovery and the full private error-followup to c2 without consuming the request body', async () => {
+  it('preserves discovery and the full six-request private error-followup when delegating to c2', async () => {
     await withLoopback(async ({ replay, send }) => {
       replay.stage = 'discovery'
       expect(proposal(await send(discoveryMessages(), bounded))).toMatchObject({
@@ -433,39 +498,15 @@ describe('RD05a combined replay over loopback HTTP', () => {
       })
       expect(replay.slow.phase).toBe('discovery')
       expect(replay.slow.discoveryRequests).toBe(1)
-      replay.stage = 'private'
-      replay.slow.allowedSources = [
-        { title: 'Site survey', sourceVersion: 'survey-v1', body: publicBody },
-        { title: 'Shuttle source', sourceVersion: 'source-v1', body: sourceBody },
-      ]
-      const sources = replay.slow.allowedSources
+      const messages = privateMessages(replay)
       let beforeReads = 0
       replay.slow.beforePrivateRead = async () => {
         beforeReads++
       }
-      const messages: Message[] = [
-        {
-          role: 'user',
-          content:
-            sources
-              .map((source, index) =>
-                JSON.stringify({
-                  inboxItemId: index ? ids.second : ids.first,
-                  title: source.title,
-                  sourceType: 'discovery_source',
-                  sourceVersion: source.sourceVersion,
-                  byteSize: Buffer.byteLength(source.body),
-                }),
-              )
-              .join('\n') +
-            '\nWrite to ' +
-            draftPath,
-        },
-      ]
-      for (const [index, source] of sources.entries()) {
+      for (let index = 0; index < privateSources.length; index++) {
         const read = called(await send(messages), 'read_work_input')
         expect(read.args.inboxItemId).toBe(index ? ids.second : ids.first)
-        messages.push(assistant(read), result(read, 'work input\n\n' + source.body))
+        messages.push(assistant(read), result(read, renderedPrivate(index)))
       }
       const error = called(await send(messages), 'read_work_input')
       expect(error.id).toBe(toolErrorCallId)
@@ -489,6 +530,18 @@ describe('RD05a combined replay over loopback HTTP', () => {
         { inboxItemId: ids.first, bodyDigest: sha256(publicBody) },
         { inboxItemId: ids.second, bodyDigest: sha256(sourceBody) },
       ])
+      expect(replay.actualPrivateReads).toEqual(
+        privateSources.map((source, index) => ({
+          inboxItemId: index ? ids.second : ids.first,
+          callId: 'private-read-' + index,
+          sourceId: source.sourceId,
+          sourceType: 'discovery_source',
+          sourceVersion: source.sourceVersion,
+          title: source.title,
+          byteSize: Buffer.byteLength(source.body),
+          bodyDigest: sha256(source.body),
+        })),
+      )
       expect(replay.slow.privateDraftDigest).toBe(sha256(body))
       expect(replay.slow.toolErrors).toEqual([
         {
@@ -501,6 +554,138 @@ describe('RD05a combined replay over loopback HTTP', () => {
       expect(replay.routerCalls).toEqual([])
       expect(replay.executorCalls).toEqual([])
       replay.assertHealthy()
+    })
+  })
+
+  it.each([
+    'inbox id',
+    'source id',
+    'source type',
+    'version',
+    'title',
+    'digest',
+    'byte size',
+    'truncated',
+    'body',
+  ])(
+    'rejects private rendered header/body mismatch: %s before recording a read',
+    async (mutation) => {
+      await withLoopback(async (session) => {
+        const messages = privateMessages(session.replay)
+        await privatePrefix(session, messages, 1)
+        const actual = messages[2]!
+        const wrong: Record<string, [string, string]> = {
+          'inbox id': [ids.first, ids.second],
+          'source id': [privateSources[0]!.sourceId, 'ffffffff-ffff-4fff-8fff-ffffffffffff'],
+          'source type': ['source: discovery_source/', 'source: task_message/'],
+          version: ['version: survey-v1', 'version: WRONG'],
+          title: ['title: Site survey', 'title: Shuttle source'],
+          digest: [sha256(publicBody), sha256(sourceBody)],
+          'byte size': ['byteSize: ' + Buffer.byteLength(publicBody), 'byteSize: 0'],
+          truncated: ['truncated: false', 'truncated: true'],
+        }
+        if (mutation === 'body') actual.content += '\n'
+        else actual.content = actual.content!.replace(...wrong[mutation]!)
+        await expectRejected(session, messages)
+        expect(session.replay.slow.privateReads).toEqual([])
+        expect(session.replay.actualPrivateReads).toEqual([])
+        expect(session.replay.slow.privateRequests).toBe(1)
+        expect(session.replay.slow.privateDraftDigest).toBeUndefined()
+      })
+    },
+  )
+
+  it.each([
+    'assistant id',
+    'assistant name',
+    'assistant args',
+    'assistant role',
+    'tool role',
+    'tool call id',
+    'duplicate call',
+    'duplicate result',
+    'missing assistant',
+    'missing result',
+    'missing pair',
+    'changed prior header',
+    'changed prior manifest',
+    'unknown authorized source',
+  ])('rejects private cumulative history: %s before delegating', async (mutation) => {
+    await withLoopback(async (session) => {
+      const messages = privateMessages(session.replay)
+      await privatePrefix(session, messages, mutation.startsWith('changed prior') ? 2 : 1)
+      const history = messages[1]!
+      if (mutation === 'assistant id') history.tool_calls![0]!.id = 'wrong-read'
+      if (mutation === 'assistant name') history.tool_calls![0]!.function.name = 'write'
+      if (mutation === 'assistant args')
+        history.tool_calls![0]!.function.arguments = JSON.stringify({ inboxItemId: ids.second })
+      if (mutation === 'assistant role') history.role = 'user'
+      if (mutation === 'tool role') messages[2]!.role = 'user'
+      if (mutation === 'tool call id') messages[2]!.tool_call_id = 'wrong-read'
+      if (mutation === 'duplicate call')
+        history.tool_calls!.push(structuredClone(history.tool_calls![0]!))
+      if (mutation === 'duplicate result') messages.push({ ...messages[2]! })
+      if (mutation === 'missing assistant') messages.splice(1, 1)
+      if (mutation === 'missing result') messages.pop()
+      if (mutation === 'missing pair') messages.splice(1)
+      if (mutation === 'changed prior header')
+        messages[2]!.content = messages[2]!.content!.replace(ids.first, ids.second)
+      if (mutation === 'changed prior manifest')
+        messages[0]!.content = messages[0]!.content!.replace(
+          ids.first,
+          'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        )
+      if (mutation === 'unknown authorized source')
+        session.replay.slow.allowedSources = privateSources.map(
+          ({ sourceId: _, ...source }) => source,
+        )
+      const before = {
+        requests: session.replay.slow.privateRequests,
+        reads: structuredClone(session.replay.slow.privateReads),
+      }
+      await expectRejected(session, messages)
+      expect(session.replay.slow.privateRequests).toBe(before.requests)
+      expect(session.replay.slow.privateReads).toEqual(before.reads)
+      expect(session.replay.slow.privateDraftDigest).toBeUndefined()
+    })
+  })
+
+  it.each(
+    (['error', 'write', 'upload'] as const).flatMap((step) =>
+      (['id', 'name', 'arguments', 'role'] as const).map((field) => ({ step, field })),
+    ),
+  )('revalidates private $step assistant $field independently', async ({ step, field }) => {
+    await withLoopback(async (session) => {
+      const messages = privateMessages(session.replay)
+      await privatePrefix(session, messages, step === 'error' ? 3 : step === 'write' ? 4 : 5)
+      const history = messages[messages.length - 2]!
+      const call = history.tool_calls![0]!
+      if (field === 'id') call.id = 'wrong-call'
+      if (field === 'name') call.function.name = 'shell'
+      if (field === 'arguments')
+        call.function.arguments = JSON.stringify({ inboxItemId: ids.first })
+      if (field === 'role') history.role = 'user'
+      const before = session.replay.slow.privateRequests
+      await expectRejected(session, messages)
+      expect(session.replay.slow.privateRequests).toBe(before)
+    })
+  })
+
+  it('resets private history validation when a new c2 instance is assigned', async () => {
+    await withLoopback(async (session) => {
+      let messages = privateMessages(session.replay)
+      await privatePrefix(session, messages, 2)
+      session.replay.slow = new Rd04c2Replay(publicBody, sourceBody, true)
+      messages = privateMessages(session.replay)
+      await privatePrefix(session, messages, 1)
+      expect(session.replay.actualPrivateReads).toEqual([])
+      called(await session.send(messages), 'read_work_input')
+      expect(session.replay.actualPrivateReads).toHaveLength(1)
+      expect(session.replay.slow.privateRequests).toBe(2)
+      expect(session.replay.slow.privateReads).toEqual([
+        { inboxItemId: ids.first, bodyDigest: sha256(publicBody) },
+      ])
+      session.replay.assertHealthy()
     })
   })
 

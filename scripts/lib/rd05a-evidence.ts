@@ -110,6 +110,13 @@ export interface Rd05aUsage {
 }
 
 export interface Rd05aAccounting {
+  localEvaluations: {
+    id: string
+    projectId: string
+    purpose: 'inference'
+    status: string
+    modelStarted: false
+  }[]
   coordination: {
     id: string
     evaluationId: string
@@ -283,6 +290,14 @@ export interface Rd05aEvidence {
       purpose: string
       sourceManifestDigest: string
       sources: Rd05aSource[]
+      executor: {
+        provider: string
+        model: string
+        endpoint: string
+        account: string
+        policyGeneration: number
+      }
+      executorDigest: string
       liveOnlyGrantCount: number
     }
     repeatExecutionId: string
@@ -322,6 +337,10 @@ export interface Rd05aEvidence {
     sourceId: string
     executionId: string
     authorizedExecutionId: string
+    sourceManifestDigest: string
+    sources: Rd05aSource[]
+    manifestDigest: string
+    entries: Rd05aEntry[]
     runId: string
     delivery: number
     correctionHttp: number

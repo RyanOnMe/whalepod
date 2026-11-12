@@ -165,6 +165,20 @@ export async function setupRd05a(env: ProductionAcceptance) {
 
 export type Rd05aFixture = Awaited<ReturnType<typeof setupRd05a>>
 
+export function observeRd05aAdmission(
+  actual: { inboxItemId: string | null; subscriptionId: string | null },
+  expected: { inboxItemId: string; subscriptionId: string },
+) {
+  assert.equal(actual.inboxItemId, expected.inboxItemId, 'admission delivered another inbox item')
+  assert.equal(
+    actual.subscriptionId,
+    expected.subscriptionId,
+    'admission used another subscription',
+  )
+  assert(actual.inboxItemId && actual.subscriptionId)
+  return { admissionItemId: actual.inboxItemId, admissionSubscriptionId: actual.subscriptionId }
+}
+
 export async function driveFast(
   env: ProductionAcceptance,
   replay: Rd05aReplay,
@@ -201,6 +215,10 @@ export async function driveFast(
     sourceVersion: secondItem.sourceVersion,
     sourceDigest: secondItem.sourceDigest,
     subscriptionId: subscription.id,
+    ...observeRd05aAdmission(admission, {
+      inboxItemId: secondItem.id,
+      subscriptionId: subscription.id,
+    }),
     outcome: admission.outcome,
     reason: admission.reason,
     routerInvoked: admission.routerInvoked,
@@ -352,6 +370,7 @@ export async function prepareSlow(
   fixture: Rd05aFixture,
   publicArtifact: { id: string; sha256: string },
   slot: string,
+  additionalAgreementTaskIds: string[] = [],
 ) {
   const { colleague, project, venue, discussion, db } = fixture
   const base = `/projects/${project.id}/discovery`
@@ -368,7 +387,7 @@ export async function prepareSlow(
       maxCalls: 6,
       maxTokens: 200_000,
       maxCostMicros: 1000,
-      agreementTaskIds: [venue.id],
+      agreementTaskIds: [venue.id, ...additionalAgreementTaskIds],
       evidenceArtifactIds: [publicArtifact.id],
       tier: 'execute',
       template: {

@@ -15,6 +15,49 @@ type Sample = { evidence: Rd05aEvidence; events: Rd05aEvent[] }
 type Mutation = { name: string; apply: (sample: Sample) => void }
 
 const mutations: Mutation[] = [
+  ...(['provider', 'model', 'endpoint', 'account', 'policyGeneration'] as const).map(
+    (field): Mutation => ({
+      name: `authorized Executor changed ${field}`,
+      apply: ({ evidence: r }) => {
+        Object.assign(r.slow.authorization.executor, {
+          [field]: field === 'policyGeneration' ? 2 : 'substituted',
+        })
+      },
+    }),
+  ),
+  {
+    name: 'authorized Executor digest changed',
+    apply: ({ evidence: r }) => {
+      r.slow.authorization.executorDigest = changedDigest
+    },
+  },
+  ...(['coordination', 'executor'] as const).flatMap((ledger) =>
+    (['reservedTokens', 'reservedCostMicros'] as const).map((field): Mutation => ({
+      name: `${ledger} settlement changed ${field}`,
+      apply: ({ evidence: r }) => {
+        r.accounting[ledger].find((row) => row.phase === 'settled')![field] += 1
+      },
+    })),
+  ),
+  {
+    name: 'missing owner lifecycle mirror',
+    apply: ({ events }) => {
+      const index = events.findIndex(
+        (event) => event.component === 'hub.run' && event.audience === 'owner',
+      )
+      events.splice(index, 1)
+    },
+  },
+  {
+    name: 'duplicate project lifecycle mirror',
+    apply: ({ events }) => {
+      events.push(
+        structuredClone(
+          events.find((event) => event.component === 'hub.run' && event.audience === 'project')!,
+        ),
+      )
+    },
+  },
   {
     name: 'different commit',
     apply: ({ evidence: r }) => {
@@ -374,6 +417,64 @@ const mutations: Mutation[] = [
 ]
 
 mutations.push(
+  {
+    name: 'negative delivery substituted from positive Run',
+    apply: ({ evidence: r, events }) => {
+      for (const receipt of r.revokeBeforeRead.receipts)
+        receipt.entriesDelivered = [...r.runs.find((run) => run.role === 'discovery')!.itemIds]
+      for (const event of events)
+        if (event.type === 'work_input.receipt' && event.runId === r.revokeBeforeRead.runId)
+          event.entriesDelivered = [...r.runs.find((run) => run.role === 'discovery')!.itemIds]
+    },
+  },
+  {
+    name: 'negative authorized source changed',
+    apply: ({ evidence: r }) => {
+      r.revokeBeforeRead.sources[0]!.sourceVersion = 'wrong-version'
+    },
+  },
+  {
+    name: 'negative manifest source changed',
+    apply: ({ evidence: r }) => {
+      r.revokeBeforeRead.entries[0]!.sourceId = changedId
+    },
+  },
+  {
+    name: 'negative source digest changed',
+    apply: ({ evidence: r }) => {
+      r.revokeBeforeRead.sourceManifestDigest = changedDigest
+    },
+  },
+  {
+    name: 'negative reused positive inbox item',
+    apply: ({ evidence: r }) => {
+      r.revokeBeforeRead.entries[0]!.inboxItemId = r.runs[0]!.itemIds[0]!
+    },
+  },
+  {
+    name: 'local model call disguised as inference',
+    apply: ({ evidence: r }) => {
+      r.accounting.localEvaluations.push({
+        id: changedId,
+        projectId: r.projectId,
+        purpose: 'inference',
+        status: 'completed',
+        modelStarted: true as false,
+      })
+    },
+  },
+  {
+    name: 'local inference omitted from stability',
+    apply: ({ evidence: r }) => {
+      r.accounting.localEvaluations.push({
+        id: changedId,
+        projectId: r.projectId,
+        purpose: 'inference',
+        status: 'completed',
+        modelStarted: false,
+      })
+    },
+  },
   {
     name: 'missing per-purpose accounting',
     apply: ({ evidence: r }) => {

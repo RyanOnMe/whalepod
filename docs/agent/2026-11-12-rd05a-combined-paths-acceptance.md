@@ -2,7 +2,7 @@
 
 - 对应 Issue：#546；前置为 RD-02b、RD-03d3、RD-04b/c1/c2；#545 工具错误补验已合入 `f31ca0f`。
 - 对应门禁：required `integration` 中的生产装配验收、独立判定与证据负控；不替代 Q2/Q6/Q7。
-- 更新日期：2026-11-12。
+- 更新日期：2026-11-13。
 - 上次验证：`not_run / 待本轮结果`；本轮 commit、attempt、结果与总耗时待主协调提供机器证据后登记。不把前置通过、构建成功或旧报告写成本轮通过。
 
 ## 验的是哪条用户路径
@@ -37,6 +37,7 @@ driver 内部自检不替代独立 checker；CI 必须另起 CLI 重判，之后
 - `result.json`：两成员/Project 身份、三条正向 Run、隔离负向、阶段检查点、来源精确版本/摘要/授权代次、清单、交付/读取回执、消费记录、候选下载状态与人工动作分类。
 - `events.jsonl`：`acceptance.campaign` 阶段、`hub.work_input` 实际回执、`acceptance.replay` 实际模型工具消息、`hub.run` 生命周期和 `acceptance.snapshot` 运行状态。按 `campaignId/runId/receiptSeq/callId/executionId` 关联，不靠控制台 PASS 文本。
 - provenance 同时绑定当前 commit、harness、生产 assembly 与事件原字节摘要。独立判定不能只相信 driver 写出的计数或结论；缺字段、缺事件、错身份或指纹漂移均失败。
+- 两条 fast Run 的 ready/completed 必须分别具备 owner/project 两种生产投影，共八行，按 Run/type/audience 精确配对；实际执行授权独立核对固定回环 Executor 与规范摘要；每组 reserved/settled 的原预留 token/金额必须一致。
 
 ## 判定（成功长什么样）
 
@@ -52,7 +53,8 @@ driver 内部自检不替代独立 checker；CI 必须另起 CLI 重判，之后
 1. 快路径两条 Run 与第二次边界 wait 收口后才冻结 catalog 并核实未覆盖槽位，不能在快链仍写入目录时提前冻结。普通筹备评论触发发现、幂等立项为新 Task/派生约定/Work，不能由 driver 手建目标工作替代。最终负控收口后另观测 2.5 秒稳定窗，同 Project 全部 Task/Run/evaluation 身份集合前后必须相同；这是最终防自激判据，不冒充 catalog 冻结前的额外稳定窗。
 2. 新工作授权前为零 Run。责任人显式确认固定来源包的精确身份、版本、摘要、授权代次及 Executor 路由；非责任人 404、错误账户 409。同键并发及重复确认复用一条执行授权，自动派工且只建一条 discovery Run。
 3. 该显式 exact 执行授权是实际人工动作成本，不得写成全程零人动。setup、bootstrap、发布、catalog 核实、执行授权、撤回/更正与负向动作分别记账；模型请求和自动派工不冒充人工效率测量。
-4. Runtime 实际读到两份冻结来源，模型下一请求含同一来源的真实工具结果；下载成功、摘要碰巧相同或来源换版均不能替代读取证据。回环场景的 `liveOnlyGrantCount=0`，不声称重新验证了真实出站时每个来源作者/拥有者的 live-only grant。
+4. Runtime 实际读到两份冻结来源，模型下一请求含同一来源的真实工具结果；工具头中的 inbox/source/version/type/byteSize 与真实 assistant/tool call 历史一并校验。下载成功、摘要碰巧相同或来源换版均不能替代读取证据。回环场景的 `liveOnlyGrantCount=0`，不声称重新验证了真实出站时每个来源作者/拥有者的 live-only grant。
+5. 第四条负控开始前，责任人经正常约定草稿/确认接口给正向新 Work 补充可读范围，并在新发现配置中纳入此约定；两次维护操作记入负控 setup，不伪称自动派生约定等于真人已确认。WS 公开哨兵放在这个已有 Work、无订阅的 Task，而非发现入口；责任人的 permit 本身已含来源同意，不能假定其评论不会触发发现。
 
 ### 私有候选、工具错误与撤权
 
@@ -107,7 +109,11 @@ driver 内部自检不替代独立 checker；CI 必须另起 CLI 重判，之后
 | discovery helpers/live-fences | 9 项 PASS；不等于本轮启用 live 策略或真实出站 |
 | 稳定窗/来源 digest 定向 spec | 265 项 PASS；accounting 最后补丁仍在进行，最终定向回归待本轮结果 |
 | 旧封存证据 | 十份 hash 保持不变，不改写旧原件 |
-| 全仓 `pnpm check` | 未通过：两份由 checker agent 正在修改的文件触发 format 停止；修复后最终结果待本轮，不记 PASS |
+| 全仓 `pnpm check` | `25dc9a0` 实现提交前的完整门已 PASS；评审修复后仍需重跑，不能转签为最终 head 通过 |
 | RD-05a driver / checker / negatives 与完整 CI | `not_run / 待本轮结果` |
+
+首个组合 attempt（`25dc9a0`，`2aa22c93-6138-48ea-b0b0-ac86aa5963ac`）失败，未保留成功 result：公开哨兵错误放入发现入口触发额外发现，后续新目录又缺正向新 Work 的可读约定。诊断封存在该 attempt 的 `failure.log`；不覆盖失败包，不以旧 c2 报告补位。后续修复同时补 actual admission 外键、实际工具头身份、负控精确来源与 harness 源码依赖封闭性，须另建新 attempt。
+
+本地 `purpose=inference` 协调求值是生产自动生成的无模型推断，单独披露身份、终态与 `modelStarted=false`，不与四次 Router/discovery 模型评估混算；稳定窗覆盖两类全部身份，不忽略额外模型调用。
 
 当前 integration timeout 为 **25 分钟**，既有总耗时 **17 分 22 秒**，可用余量 **7 分 38 秒**。该数字是既有链路基线，不是 RD-05a 新增耗时。先保留 25 分钟；待完整 CI 测得 driver、checker、negatives、扫描和上传及全 job 总耗时后，按实际总耗时与合理波动余量调整。不得只看本机 driver、无证据缩短 timeout，或以超时为由把组合验收挪出 required integration。

@@ -36,6 +36,13 @@ import { bindRd05a } from './lib/rd05a-provenance.js'
 import { Rd05aReplay, publicBody, sourceBody } from './lib/rd05a-replay.js'
 import { verifyRd05a } from './verify-rd05a-acceptance.js'
 
+type Rd05aExecutionBasis = Omit<DiscoveryExecutionBasis, 'execution'> & {
+  execution:
+    | null
+    | (NonNullable<DiscoveryExecutionBasis['execution']> &
+        Pick<Rd05aEvidence['slow']['authorization'], 'executor' | 'executorDigest'>)
+}
+
 const binding = await bindRd05a(repoRoot)
 assert.equal(process.argv.length, 3, 'usage: run-rd05a-acceptance.ts <evidence/result.json>')
 const resultPath = resolve(process.argv[2]!)
@@ -215,7 +222,7 @@ async function drive() {
   const live = await browserSocket(colleague)
   const sentinel = async (body: string) => {
     const result = await env.api<{ id: string }>(
-      `/tasks/${discussion.id}/comments`,
+      `/tasks/${slow.application.taskId}/comments`,
       { body },
       { actor: env.owner },
     )
@@ -226,7 +233,7 @@ async function drive() {
     )
     return result
   }
-  // Owner has not opted in as a discovery source author; these are observation controls only.
+  // This Task already has a Work and no subscription: controls cannot enter discovery or fast dispatch.
   const before = await sentinel('RD05A_PUBLIC_BEFORE_PRIVATE_RUN')
   let privateDirectoriesObserved = 0
   replay.slow.beforePrivateRead = async () => {
@@ -238,11 +245,11 @@ async function drive() {
   replay.stage = 'private'
   const idempotencyKey = randomUUID()
   const [authorized, concurrent] = await Promise.all([
-    env.api<DiscoveryExecutionBasis>(slow.executionUrl, authorization, { idempotencyKey }),
-    env.api<DiscoveryExecutionBasis>(slow.executionUrl, authorization, { idempotencyKey }),
+    env.api<Rd05aExecutionBasis>(slow.executionUrl, authorization, { idempotencyKey }),
+    env.api<Rd05aExecutionBasis>(slow.executionUrl, authorization, { idempotencyKey }),
   ])
   assert(authorized.execution)
-  const repeated = await env.api<DiscoveryExecutionBasis>(slow.executionUrl, authorization, {
+  const repeated = await env.api<Rd05aExecutionBasis>(slow.executionUrl, authorization, {
     idempotencyKey,
   })
   assert.equal(concurrent.execution?.id, authorized.execution.id)
@@ -323,12 +330,29 @@ async function drive() {
   await revoked.body?.cancel()
   const hidden = await readStatus(env, draftPath)
   const ownerRoom = await readStatus(env, `/tasks/${slow.application.taskId}`)
-  const basisAfterRevoke = await env.api<DiscoveryExecutionBasis>(slow.executionUrl)
+  const basisAfterRevoke = await env.api<Rd05aExecutionBasis>(slow.executionUrl)
   assert.equal(hidden.status, 404)
   const positiveReplay = replay.slow
+  const positiveActualReads = structuredClone(replay.actualPrivateReads)
   const positiveRunRows = [...fast.runs, privateRun]
   await checkpoint('slow_complete')
 
+  // The derived agreement is not a confirmed scope for the next catalog.
+  // Account for the owner's explicit maintenance rather than omitting the new Work.
+  const maintained = await env.api<{ draftVersion: number }>(
+    `/tasks/${slow.application.taskId}/agreement/draft`,
+    {
+      content: {
+        goal: 'Maintain the shuttle boarding plan',
+        constraints: 'Shuttle boarding only',
+        acceptance: 'Private traceable boarding draft',
+        openQuestions: '',
+      },
+    },
+  )
+  await env.api(`/tasks/${slow.application.taskId}/agreement/confirm`, {
+    draftVersion: maintained.draftVersion,
+  })
   replay.slow = new Rd04c2Replay(publicBody, sourceBody, true)
   const negative = await prepareSlow(
     env,
@@ -336,6 +360,7 @@ async function drive() {
     fixture,
     fast.firstArtifact,
     'Shuttle weather contingency draft',
+    [slow.application.taskId],
   )
   let revokedRead:
     | {
@@ -358,6 +383,22 @@ async function drive() {
         return rows.find((row) => row.entriesDelivered.length === negative.basis.sources.length)
       },
     )
+    assert(run.workInputManifest && run.workInputManifestDigest)
+    assert.deepEqual(
+      [...receiptRows.entriesDelivered].sort(),
+      run.workInputManifest.entries.map((entry) => entry.inboxItemId).sort(),
+      'negative delivery differs from its frozen Run',
+    )
+    for (const entry of run.workInputManifest.entries) {
+      const source = negative.basis.sources.find((source) => source.sourceId === entry.sourceId)
+      assert(
+        source &&
+          entry.sourceVersion === source.sourceVersion &&
+          entry.sourceDigest === source.sourceDigest &&
+          entry.authorizationGeneration === source.authorizationGeneration,
+        'negative frozen source differs from exact authorization',
+      )
+    }
     const directories = (await privateDirectories(run.id)).length
     const response = await env.request(
       negative.base + '/sources/' + negative.source.id + '/correct',
@@ -376,7 +417,7 @@ async function drive() {
     }
   }
   replay.stage = 'private'
-  const negativeAuthorization = await env.api<DiscoveryExecutionBasis>(negative.executionUrl, {
+  const negativeAuthorization = await env.api<Rd05aExecutionBasis>(negative.executionUrl, {
     ...authorization,
     sourceManifestDigest: negative.basis.sourceManifestDigest,
   })
@@ -397,7 +438,7 @@ async function drive() {
     .select()
     .from(schema.runWorkInputReceipts)
     .where(eq(schema.runWorkInputReceipts.runId, negativeRun.id))
-  const negativeBasis = await env.api<DiscoveryExecutionBasis>(negative.executionUrl)
+  const negativeBasis = await env.api<Rd05aExecutionBasis>(negative.executionUrl)
   const negativeClean = await cleanPrivate(negativeRun.id)
   const negativeDrafts = await artifactsFor(negativeRun.id)
   assert.equal(negativeReceipts.flatMap((row) => row.entriesRead).length, 0)
@@ -405,6 +446,15 @@ async function drive() {
   assert.equal(replay.slow.privateRequests, 1)
   assert.equal(negativeDrafts.length, 0)
   await checkpoint('revoke_before_read_complete')
+  await until('local coordination inference settled', async () => {
+    const rows = await db
+      .select()
+      .from(schema.coordinationEvaluations)
+      .where(eq(schema.coordinationEvaluations.projectId, project.id))
+    return rows.every((row) => !['queued', 'dispatched', 'running'].includes(row.status))
+      ? true
+      : undefined
+  })
   const stableSnapshot = async () => {
     const [tasks, runs, evaluations] = await Promise.all([
       db
@@ -466,13 +516,18 @@ async function drive() {
       bodyDigest: observed.bodyDigest,
     }
   })
-  const slowReads = positiveReplay.privateReads.map((read, index) => ({
+  const slowReads = positiveActualReads.map(({ inboxItemId, callId, bodyDigest }) => ({
     runId: privateRun.id,
-    callId: 'private-read-' + index,
-    ...read,
+    callId,
+    inboxItemId,
+    bodyDigest,
   }))
   const allReceipts = [...fastReceipts, ...capturedSlowReceipts, ...capturedNegativeReceipts]
   const allRunRows = [...positiveRunRows, negativeRun]
+  const localEvaluations = await db
+    .select()
+    .from(schema.coordinationEvaluations)
+    .where(eq(schema.coordinationEvaluations.projectId, project.id))
   const [coordinationRows, executorRows, liveDispatches, liveAttempts] = await Promise.all([
     db
       .select({
@@ -509,6 +564,19 @@ async function drive() {
       ),
   ])
   const accounting = {
+    localEvaluations: localEvaluations
+      .filter((row) => row.purpose === 'inference')
+      .map((row) => {
+        assert.equal(row.modelStartedAt, null, 'local inference unexpectedly called a model')
+        assert(['completed', 'skipped'].includes(row.status), 'local inference did not settle')
+        return {
+          id: row.id,
+          projectId: row.projectId,
+          purpose: 'inference' as const,
+          status: row.status,
+          modelStarted: false as const,
+        }
+      }),
     coordination: coordinationRows.map(
       ({
         id,
@@ -631,8 +699,17 @@ async function drive() {
   assert(privateRun.discoveryExecutionId)
   assert(positiveReplay.privateDraftDigest)
   assert(basisAfterRevoke.execution)
-  assert(negativeRun.workKey && negativeRun.discoveryExecutionId)
+  assert(
+    negativeRun.workKey &&
+      negativeRun.discoveryExecutionId &&
+      negativeRun.workInputManifest &&
+      negativeRun.workInputManifestDigest,
+  )
   assert(negativeBasis.execution)
+  const negativeSources = negative.basis.sources.map((source): Rd05aSource => {
+    assert(source.kind === 'task_message' || source.kind === 'artifact')
+    return { ...source, kind: source.kind }
+  })
   const authorizedSources = slow.basis.sources.map((source): Rd05aSource => {
     assert(source.kind === 'task_message' || source.kind === 'artifact')
     return { ...source, kind: source.kind }
@@ -688,6 +765,8 @@ async function drive() {
       ],
       corrections: [{ action: 'correction', subjectId: authorized.execution.id }],
       negative: [
+        { action: 'setup', subjectId: slow.application.taskId }, // Explicit scope draft maintenance.
+        { action: 'setup', subjectId: slow.application.taskId }, // Explicit confirmation, not automatic creation.
         { action: 'setup', subjectId: negative.slotId },
         { action: 'setup', subjectId: project.id },
         { action: 'setup', subjectId: colleague.userId },
@@ -715,8 +794,8 @@ async function drive() {
         outcome: fast.ingress.outcome,
         reason: fast.ingress.reason,
         subscriptionId: subscription.id,
-        admissionItemId: fast.ingress.itemId,
-        admissionSubscriptionId: subscription.id,
+        admissionItemId: fast.ingress.admissionItemId,
+        admissionSubscriptionId: fast.ingress.admissionSubscriptionId,
         status: fast.ingress.status,
         routerInvoked: fast.ingress.routerInvoked,
         routerCalls: fast.ingress.routerCalls,
@@ -888,6 +967,28 @@ async function drive() {
       sourceId: negative.source.id,
       executionId: negativeRun.discoveryExecutionId,
       authorizedExecutionId: negativeAuthorization.execution.id,
+      sourceManifestDigest: negative.basis.sourceManifestDigest,
+      sources: negativeSources,
+      manifestDigest: negativeRun.workInputManifestDigest,
+      entries: negativeRun.workInputManifest.entries.map(
+        ({
+          inboxItemId,
+          sourceType,
+          sourceId,
+          sourceVersion,
+          sourceDigest,
+          authorizationGeneration,
+          bodyDigest,
+        }) => ({
+          inboxItemId,
+          sourceType,
+          sourceId,
+          sourceVersion,
+          sourceDigest,
+          authorizationGeneration,
+          bodyDigest,
+        }),
+      ),
       runId: negativeRun.id,
       delivery: revokedRead.delivery,
       correctionHttp: revokedRead.correctionHttp,

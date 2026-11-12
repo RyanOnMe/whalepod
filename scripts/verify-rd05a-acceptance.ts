@@ -463,6 +463,37 @@ function slowFlow(r: Rd05aEvidence, run: Rd05aRun) {
   assert.equal(auth.ownerUserId, r.members.ownerId)
   assert.equal(auth.status, 'authorized')
   assert.equal(auth.purpose, 'private_draft')
+  const executor = auth.executor
+  assert(executor && typeof executor === 'object', 'missing authorized Executor')
+  assert.deepEqual(
+    Object.keys(executor).sort(),
+    ['account', 'endpoint', 'model', 'policyGeneration', 'provider'],
+    'unexpected authorized Executor fields',
+  )
+  assert.equal(executor.provider, 'deepseek-official', 'wrong authorized provider')
+  assert.equal(executor.model, 'deepseek-v4-flash', 'wrong authorized model')
+  assert.equal(executor.account, 'acceptance-replay', 'wrong authorized account')
+  assert.equal(executor.policyGeneration, 1, 'wrong authorized policy generation')
+  const endpoint = new URL(executor.endpoint)
+  assert.equal(endpoint.protocol, 'http:', 'Executor is not loopback HTTP')
+  assert.equal(endpoint.hostname, '127.0.0.1', 'Executor endpoint is not loopback')
+  assert(endpoint.port && Number(endpoint.port) > 0, 'Executor is missing its replay port')
+  assert.equal(endpoint.pathname, '/chat/completions', 'wrong Executor replay path')
+  assert.equal(endpoint.username + endpoint.password + endpoint.search + endpoint.hash, '')
+  assert.equal(executor.endpoint, endpoint.href, 'noncanonical Executor endpoint')
+  assert.equal(
+    auth.executorDigest,
+    sha256(
+      JSON.stringify(
+        Object.fromEntries(
+          Object.entries({ purpose: 'private_draft', ...executor }).sort(([a], [b]) =>
+            a.localeCompare(b),
+          ),
+        ),
+      ),
+    ),
+    'authorized Executor digest changed',
+  )
   assert.equal(
     auth.liveOnlyGrantCount,
     0,
@@ -599,10 +630,56 @@ function negativeFlow(r: Rd05aEvidence) {
     assert.equal(count, 0, 'revoke-before-read leaked an effect')
   assert(n.receipts.length > 0, 'negative delivery proof missing')
   const final = [...n.receipts].sort((a, b) => a.receiptSeq - b.receiptSeq).at(-1)!
-  digest(final.manifestDigest, 'missing negative manifest digest')
+  digest(n.manifestDigest, 'missing negative manifest digest')
+  assert.equal(
+    n.sourceManifestDigest,
+    sourceManifestDigest(n.sources),
+    'negative exact sources changed',
+  )
+  assert.equal(n.sources.length, 2)
+  assert.equal(n.entries.length, 2)
+  assert.deepEqual(n.sources.map((row) => row.kind).sort(), ['artifact', 'task_message'])
+  n.sources.forEach(source)
+  assert.equal(
+    one(
+      n.sources.filter((row) => row.kind === 'task_message'),
+      'negative source comment',
+    ).sourceId,
+    n.sourceId,
+  )
+  assert.equal(
+    one(
+      n.sources.filter((row) => row.kind === 'artifact'),
+      'negative public control',
+    ).sourceId,
+    r.fast.publicArtifact.id,
+  )
+  const positiveItems = r.runs.flatMap((run) => run.itemIds)
+  for (const entry of n.entries) {
+    uuid(entry.inboxItemId, 'missing negative inbox identity')
+    assert(!positiveItems.includes(entry.inboxItemId), 'negative reused a positive inbox identity')
+    assert.equal(entry.sourceType, 'discovery_source')
+    const authorized = one(
+      n.sources.filter((row) => row.sourceId === entry.sourceId),
+      'negative unauthorized source',
+    )
+    assert.equal(entry.sourceVersion, authorized.sourceVersion)
+    assert.equal(entry.sourceDigest, authorized.sourceDigest)
+    assert.equal(entry.authorizationGeneration, authorized.authorizationGeneration)
+    digest(entry.bodyDigest, 'missing negative source bytes digest')
+  }
+  unique(
+    n.entries.map((entry) => entry.sourceId),
+    'duplicate negative source',
+  )
   assert.equal(final.entriesDelivered.length, n.delivery)
-  final.entriesDelivered.forEach((value) => uuid(value, 'missing negative inbox identity'))
-  receipts(n.receipts, n.runId, final.manifestDigest, final.entriesDelivered, false)
+  receipts(
+    n.receipts,
+    n.runId,
+    n.manifestDigest,
+    n.entries.map((entry) => entry.inboxItemId),
+    false,
+  )
   assert.equal(n.privateDirectoriesObserved, 2)
   assert.equal(n.workspaceClean, true)
 }
@@ -740,9 +817,19 @@ function accounting(r: Rd05aEvidence) {
   ]
   evaluationIds.forEach((value) => uuid(value, 'missing accounting evaluation identity'))
   unique(evaluationIds, 'duplicate accounting evaluation identity')
+  assert(Array.isArray(a.localEvaluations), 'missing local evaluation disclosure')
+  for (const local of a.localEvaluations) {
+    uuid(local.id, 'invalid local evaluation identity')
+    assert.equal(local.projectId, r.projectId, 'local evaluation belongs to another Project')
+    assert.equal(local.purpose, 'inference', 'model evaluation disguised as local inference')
+    assert.equal(local.modelStarted, false, 'local evaluation called a model')
+    assert(['completed', 'skipped'].includes(local.status), 'local evaluation has not settled')
+  }
+  const allEvaluationIds = [...evaluationIds, ...a.localEvaluations.map((row) => row.id)]
+  unique(allEvaluationIds, 'duplicate local or model evaluation identity')
   sameIds(
     r.stability.before.evaluationIds,
-    evaluationIds,
+    allEvaluationIds,
     'accounting and stability evaluations differ',
   )
   assert.equal(
@@ -774,13 +861,30 @@ function accounting(r: Rd05aEvidence) {
       )
     }
   }
-  for (const evaluationId of evaluationIds) {
-    for (const phase of ['reserved', 'settled'])
-      one(
-        a.coordination.filter((row) => row.evaluationId === evaluationId && row.phase === phase),
-        'coordination reserve/settlement pair',
-      )
+  const reservationPair = (
+    rows: { phase: string; reservedTokens: number; reservedCostMicros: number }[],
+  ) => {
+    const reserved = one(
+      rows.filter((row) => row.phase === 'reserved'),
+      'reservation row',
+    )
+    const settled = one(
+      rows.filter((row) => row.phase === 'settled'),
+      'settlement row',
+    )
+    assert.equal(
+      settled.reservedTokens,
+      reserved.reservedTokens,
+      'settlement reservation tokens changed',
+    )
+    assert.equal(
+      settled.reservedCostMicros,
+      reserved.reservedCostMicros,
+      'settlement reservation cost changed',
+    )
   }
+  for (const evaluationId of evaluationIds)
+    reservationPair(a.coordination.filter((row) => row.evaluationId === evaluationId))
   const ordinary = r.runs.filter((run) => run.role !== 'discovery')
   assert.equal(
     a.executor.length,
@@ -802,13 +906,7 @@ function accounting(r: Rd05aEvidence) {
     assert.equal(row.mandateId, run.mandateId, 'Executor charged another Mandate')
     settlement(row)
   }
-  for (const run of ordinary) {
-    for (const phase of ['reserved', 'settled'])
-      one(
-        a.executor.filter((row) => row.runId === run.id && row.phase === phase),
-        'Executor reserve/settlement pair',
-      )
-  }
+  for (const run of ordinary) reservationPair(a.executor.filter((row) => row.runId === run.id))
   const expected = [
     ...r.runs.map((run) => ({
       runId: run.id,
@@ -890,14 +988,16 @@ function eventChain(r: Rd05aEvidence, events: Rd05aEvent[]) {
     },
   ]
   const lifecycle = events.filter((event) => event.component === 'hub.run')
-  assert.equal(lifecycle.length, 4, 'missing or extra ordinary Run lifecycle evidence')
+  assert.equal(lifecycle.length, 8, 'missing or extra ordinary Run lifecycle evidence')
   for (const run of r.runs.filter((run) => run.role !== 'discovery')) {
     for (const type of ['runtime.ready', 'run.completed']) {
-      const event = one(
-        lifecycle.filter((event) => event.type === type && event.runId === run.id),
-        'ordinary Run lifecycle event',
-      )
-      assert(['owner', 'project'].includes(event.audience), 'wrong lifecycle audience')
+      for (const audience of ['owner', 'project'])
+        one(
+          lifecycle.filter(
+            (event) => event.type === type && event.runId === run.id && event.audience === audience,
+          ),
+          'ordinary Run lifecycle audience mirror',
+        )
     }
   }
   const observed = events.filter((event) => event.component !== 'hub.run')
@@ -1031,8 +1131,8 @@ export function checkRd05a(
   sameIds(stable.before.runIds, expectedRuns, 'stability Run baseline mismatch')
   assert.equal(
     stable.before.evaluationIds.length,
-    4,
-    'stability requires all four coordination evaluations',
+    4 + r.accounting.localEvaluations.length,
+    'stability requires all model and local coordination evaluations',
   )
   unique(stable.before.evaluationIds, 'duplicate stability evaluation')
   stable.before.evaluationIds.forEach((value) => uuid(value, 'invalid stability evaluation'))

@@ -1,8 +1,16 @@
 /** Loopback-only provider replies for the combined RD05a production acceptance. */
 import assert from 'node:assert/strict'
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import { IncomingMessage, type ServerResponse } from 'node:http'
+import { Socket } from 'node:net'
 import { sha256 } from './acceptance-provenance.js'
-import { Rd04c2Replay } from './rd04c2-replay.js'
+import {
+  Rd04c2Replay,
+  privateMarker,
+  toolErrorCallId,
+  toolErrorMarker,
+  toolErrorText,
+  type FrozenInput,
+} from './rd04c2-replay.js'
 
 export const firstSource = 'RD05A_INITIAL: The venue plan needs accessible signage.'
 export const secondSource =
@@ -38,6 +46,22 @@ interface FastTurn {
   calls: ToolCall[]
   results: string[]
   stopped: boolean
+}
+export interface ActualPrivateRead {
+  inboxItemId: string
+  callId: string
+  sourceId: string
+  sourceType: string
+  sourceVersion: string
+  title: string
+  byteSize: number
+  bodyDigest: string
+}
+interface PrivateTurn {
+  manifest: string
+  calls: ToolCall[]
+  results: string[]
+  completed: boolean
 }
 
 function replyStream(response: ServerResponse, reply: ToolCall | { text: string }) {
@@ -77,6 +101,8 @@ export class Rd05aReplay {
   slow = new Rd04c2Replay(publicBody, sourceBody, true)
   failures: string[] = []
   private readonly fastTurns = new Map<number, FastTurn>()
+  actualPrivateReads: ActualPrivateRead[] = []
+  private readonly privateTurns = new WeakMap<Rd04c2Replay, PrivateTurn>()
 
   assertHealthy() {
     assert.equal(this.failures.length, 0, this.failures.join('; '))
@@ -270,18 +296,207 @@ export class Rd05aReplay {
     replyStream(response, { text: 'Updated venue draft is available for owner review.' })
   }
 
+  private validatePrivate(request: CompletionRequest) {
+    assert.equal(request.stream, true, 'private Executor must stream')
+    assert.deepEqual(
+      request.tools?.map((tool) => tool.function.name).sort(),
+      ['publish_artifact', 'read_work_input', 'write'],
+      'private Executor must retain the c2 tool surface',
+    )
+    const prompt = request.messages
+      .filter((message) => message.role === 'user')
+      .map((message) => message.content ?? '')
+      .join('\n')
+    const entries = [...prompt.matchAll(/\{"inboxItemId":"[a-f0-9-]{36}"[^{}]+\}/g)].map(
+      (match) => JSON.parse(match[0]) as FrozenInput,
+    )
+    assert(this.slow.allowedSources.length > 0, 'private authorized sources missing')
+    assert.equal(entries.length, this.slow.allowedSources.length, 'private manifest size differs')
+    assert.equal(
+      new Set(entries.map((entry) => entry.inboxItemId)).size,
+      entries.length,
+      'duplicate private inbox ids',
+    )
+    assert.equal(
+      new Set(entries.map((entry) => entry.title)).size,
+      entries.length,
+      'duplicate private source titles',
+    )
+    const frozen = this.slow.allowedSources.map((source) => {
+      assert(
+        'sourceId' in source && typeof source.sourceId === 'string',
+        'authorized source id missing',
+      )
+      const entry = entries.find((item) => item.title === source.title)
+      assert(
+        entry &&
+          entry.sourceType === 'discovery_source' &&
+          entry.sourceVersion === source.sourceVersion &&
+          entry.byteSize === Buffer.byteLength(source.body),
+        'private manifest differs from authorized source',
+      )
+      return { ...entry, sourceId: source.sourceId, body: source.body }
+    })
+    const path = prompt.match(/\.whalepod\/drafts\/[a-f0-9-]{36}\.md/)?.[0]
+    assert(path, 'private draft path missing')
+    const manifest = JSON.stringify({ frozen, path })
+    const prior = this.privateTurns.get(this.slow)
+    if (prior) {
+      assert(!prior.completed, 'private execution repeated after stop')
+      assert.equal(manifest, prior.manifest, 'private manifest changed during execution')
+    }
+    const calls: ToolCall[] = frozen.map((entry, index) => ({
+      id: 'private-read-' + index,
+      name: 'read_work_input',
+      args: { inboxItemId: entry.inboxItemId },
+    }))
+    if (this.slow.toolErrorFollowup)
+      calls.push({
+        id: toolErrorCallId,
+        name: 'read_work_input',
+        args: { inboxItemId: toolErrorMarker },
+      })
+    calls.push(
+      {
+        id: 'private-write',
+        name: 'write',
+        args: {
+          file_path: path,
+          content: '# ' + privateMarker + '\n\n' + frozen.map((entry) => entry.body).join('\n'),
+        },
+      },
+      {
+        id: 'private-upload',
+        name: 'publish_artifact',
+        args: { relativePath: path, title: privateMarker, mediaType: 'text/markdown' },
+      },
+    )
+    const step = prior?.calls.length ?? 0
+    assert(step <= calls.length, 'private execution has extra history')
+    const history = request.messages.filter(
+      (message) =>
+        message.role === 'assistant' ||
+        message.role === 'tool' ||
+        message.tool_calls !== undefined ||
+        message.tool_call_id !== undefined,
+    )
+    assert.equal(history.length, step * 2, 'private call/result history is missing or duplicated')
+    const reads: ActualPrivateRead[] = []
+    const results = calls.slice(0, step).map((expected, index) => {
+      const assistant = history[index * 2]!
+      const tool = history[index * 2 + 1]!
+      assert.equal(assistant.role, 'assistant', 'private function call has wrong role')
+      assert.equal(assistant.tool_call_id, undefined, 'private assistant contains a result id')
+      assert.equal(assistant.tool_calls?.length, 1, 'private assistant call missing or duplicated')
+      const call = assistant.tool_calls[0]!
+      assert.equal(call.id, expected.id, 'private assistant call id differs')
+      assert.equal(call.type, 'function')
+      assert.equal(call.function.name, expected.name, 'private assistant tool differs')
+      assert.deepEqual(
+        JSON.parse(call.function.arguments),
+        expected.args,
+        'private assistant arguments differ',
+      )
+      assert.equal(tool.role, 'tool', 'private result has wrong role')
+      assert.equal(tool.tool_call_id, call.id, 'private result does not match actual call id')
+      assert.equal(tool.tool_calls, undefined, 'private result contains function calls')
+      assert(
+        typeof tool.content === 'string' && tool.content.length > 0,
+        'private result content missing',
+      )
+      if (index < (prior?.results.length ?? 0))
+        assert.equal(tool.content, prior!.results[index], 'private cumulative result changed')
+      const entry = frozen[index]
+      if (entry) {
+        const separator = tool.content.indexOf('\n\n')
+        assert(separator >= 0, 'private work input header delimiter missing')
+        const header = tool.content.slice(0, separator).split('\n')
+        assert.equal(header.length, 7, 'private work input header shape differs')
+        const inbox = /^work input: ([a-f0-9-]{36})$/.exec(header[0]!)
+        const source = /^source: ([^/]+)\/([a-f0-9-]{36})$/.exec(header[1]!)
+        const version = /^version: (.+)$/.exec(header[2]!)
+        const title = /^title: (.+)$/.exec(header[3]!)
+        const digest = /^digest: ([a-f0-9]{64})$/.exec(header[4]!)
+        const bytes = /^byteSize: (0|[1-9]\d*)$/.exec(header[5]!)
+        assert(
+          inbox && source && version && title && digest && bytes,
+          'private work input header fields missing',
+        )
+        assert.equal(header[6], 'truncated: false', 'private source was truncated')
+        const body = tool.content.slice(separator + 2)
+        const actual: ActualPrivateRead = {
+          inboxItemId: inbox[1]!,
+          callId: call.id,
+          sourceType: source[1]!,
+          sourceId: source[2]!,
+          sourceVersion: version[1]!,
+          title: title[1]!,
+          byteSize: Number(bytes[1]),
+          bodyDigest: sha256(body),
+        }
+        assert.equal(actual.inboxItemId, entry.inboxItemId, 'actual private inbox id differs')
+        assert.equal(actual.sourceId, entry.sourceId, 'actual private source id differs')
+        assert.equal(actual.sourceType, entry.sourceType, 'actual private source type differs')
+        assert.equal(
+          actual.sourceVersion,
+          entry.sourceVersion,
+          'actual private source version differs',
+        )
+        assert.equal(actual.title, entry.title, 'actual private source title differs')
+        assert.equal(actual.byteSize, entry.byteSize, 'actual private byte size differs')
+        assert.equal(Buffer.byteLength(body), actual.byteSize, 'actual private body size differs')
+        assert.equal(digest[1], actual.bodyDigest, 'actual private digest header differs')
+        assert.equal(body, entry.body, 'actual private source body differs')
+        reads.push(actual)
+      } else if (expected.id === toolErrorCallId) {
+        assert.equal(tool.content, toolErrorText, 'private actual work-input error differs')
+      } else assert(!tool.content.startsWith('Error:'), 'private draft tool failed')
+      return tool.content
+    })
+    return { manifest, calls, results, reads, step }
+  }
+
   async respond(incoming: IncomingMessage, response: ServerResponse) {
     try {
-      // Delegate before reading: c2 owns the original IncomingMessage stream and
-      // all discovery/private behavior, including its authorization callback.
-      if (this.stage !== 'fast') {
+      if (this.stage === 'discovery') {
         this.slow.phase = this.stage
         return await this.slow.respond(incoming, response)
       }
       assert.equal(incoming.method, 'POST')
       const chunks: Buffer[] = []
       for await (const chunk of incoming) chunks.push(Buffer.from(chunk))
-      const request = JSON.parse(Buffer.concat(chunks).toString()) as CompletionRequest
+      const bytes = Buffer.concat(chunks)
+      const request = JSON.parse(bytes.toString()) as CompletionRequest
+      if (this.stage === 'private') {
+        assert.equal(incoming.url, '/chat/completions', 'private execution used the wrong route')
+        const checked = this.validatePrivate(request)
+        // c2 still owns every reply and its authorization callback. Give it the
+        // untouched provider bytes on a fresh IncomingMessage readable stream.
+        // An independent socket prevents IncomingMessage auto-destroy from
+        // closing the live response connection when c2 finishes iteration.
+        const delegated = new IncomingMessage(new Socket())
+        delegated.method = incoming.method
+        delegated.url = incoming.url
+        delegated.headers = incoming.headers
+        delegated.push(bytes)
+        delegated.push(null)
+        this.slow.phase = 'private'
+        try {
+          await this.slow.respond(delegated, response)
+        } finally {
+          delegated.destroy()
+        }
+        if (response.statusCode === 200 && this.slow.failures.length === 0) {
+          this.actualPrivateReads = checked.reads
+          this.privateTurns.set(this.slow, {
+            manifest: checked.manifest,
+            calls: checked.calls.slice(0, checked.step + 1),
+            results: checked.results,
+            completed: checked.step === checked.calls.length,
+          })
+        }
+        return
+      }
       if (incoming.url === '/discovery/chat/completions') this.router(request, response)
       else {
         assert.equal(incoming.url, '/chat/completions', 'unrecognized replay route')
