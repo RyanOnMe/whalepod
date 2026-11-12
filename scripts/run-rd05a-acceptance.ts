@@ -433,7 +433,22 @@ async function drive() {
     },
     60_000,
   )
-  assert(revokedRead && revokedRead.runId === negativeRun.id)
+  assert(
+    revokedRead && revokedRead.runId === negativeRun.id,
+    JSON.stringify({
+      component: 'acceptance.revoke_before_read',
+      runId: negativeRun.id,
+      status: negativeRun.status,
+      failureCode: negativeRun.failureCode,
+      privateRequests: replay.slow.privateRequests,
+      checks: env.events
+        .filter(
+          (event) =>
+            event.component === 'node.discovery_execution' && event.runId === negativeRun.id,
+        )
+        .map(({ stage, allowed }) => ({ stage, allowed })),
+    }),
+  )
   const negativeReceipts = await db
     .select()
     .from(schema.runWorkInputReceipts)
