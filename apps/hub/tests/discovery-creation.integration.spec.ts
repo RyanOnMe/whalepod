@@ -1630,7 +1630,11 @@ describe('RD-04b preauthorized creation', () => {
       expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
       confirmsPrivateDraft: true,
     }
-    expect((await apiInject(ctx, owner, { method: 'POST', url, payload })).statusCode).toBe(200)
+    const key = randomUUID()
+    expect(
+      (await apiInject(ctx, owner, { method: 'POST', url, payload, idempotencyKey: key }))
+        .statusCode,
+    ).toBe(200)
     const deleted = await apiInject(ctx, owner, { method: 'DELETE', url })
     expect(deleted.statusCode, deleted.body).toBe(200)
     expect(deleted.json().data.execution).toMatchObject({
@@ -1640,6 +1644,14 @@ describe('RD-04b preauthorized creation', () => {
     expect(deleted.json().data.eligible).toBe(false)
     const after = await apiInject(ctx, owner, { method: 'GET', url })
     expect(after.json().data).toMatchObject({ eligible: false, reason: 'execution_revoked' })
+    const replay = await apiInject(ctx, owner, {
+      method: 'POST',
+      url,
+      payload,
+      idempotencyKey: key,
+    })
+    expect(replay.statusCode, replay.body).toBe(200)
+    expect(replay.json().data.execution).toMatchObject({ status: 'revoked' })
     const retry = await apiInject(ctx, owner, { method: 'POST', url, payload })
     expect(retry.statusCode, retry.body).toBe(409)
     expect(retry.json().error.details).toMatchObject({ code: 'DISCOVERY_EXECUTION_REVOKED' })
@@ -1750,6 +1762,20 @@ describe('RD-04b preauthorized creation', () => {
       confirmsPrivateDraft: true,
     }
     expect((await apiInject(ctx, owner, { method: 'POST', url, payload })).statusCode).toBe(200)
+    const outsider = (
+      await driveInviteAndAccept(ctx, owner, {
+        username: 'outsider',
+        displayName: 'Outsider',
+        password: 'outsider-test-password',
+      })
+    ).session
+    const unrelated = await apiInject(ctx, outsider, {
+      method: 'DELETE',
+      url: `${node.route}/participation`,
+    })
+    expect(unrelated.statusCode, unrelated.body).toBe(200)
+    const stillLive = await apiInject(ctx, owner, { method: 'GET', url })
+    expect(stillLive.json().data.execution).toMatchObject({ status: 'authorized' })
     const leave = await apiInject(ctx, member, {
       method: 'DELETE',
       url: `${node.route}/participation`,
@@ -1787,7 +1813,7 @@ describe('RD-04b preauthorized creation', () => {
     expect((await apiInject(ctx, owner, { method: 'POST', url, payload })).statusCode).toBe(200)
     const disabled = await apiInject(ctx, owner, {
       method: 'POST',
-      url: `/api/v1/team/members/${member.userId}/disable`,
+      url: `/api/v1/team/members/${verifier.userId}/disable`,
       payload: {},
     })
     expect(disabled.statusCode, disabled.body).toBe(200)

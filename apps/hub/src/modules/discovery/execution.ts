@@ -302,12 +302,23 @@ async function loadBasis(
       ...receipts.map((receipt) => receipt.verifierUserId),
     ]),
   ].sort()
-  await tx
-    .select({ id: schema.userAccounts.id })
-    .from(schema.userAccounts)
-    .where(inArray(schema.userAccounts.id, authorityIds))
-    .orderBy(asc(schema.userAccounts.id))
-    .for('share')
+  if (lock) {
+    await tx
+      .select({ id: schema.userAccounts.id })
+      .from(schema.userAccounts)
+      .where(inArray(schema.userAccounts.id, authorityIds))
+      .orderBy(asc(schema.userAccounts.id))
+      .for('share')
+    // Re-read after the freeze: a disable that committed while we waited must reject.
+    if (!(await getEnabledMember(tx, team.id, actorUserId)))
+      return {
+        application,
+        sources: [],
+        manifestDigest: '',
+        eligible: false,
+        reason: 'authority_changed',
+      }
+  }
   const authorConsent = await sourceConsent(tx, cfg, message.authorUserId)
   if (
     identity.sourceVersion !== application.sourceVersion ||
@@ -334,8 +345,10 @@ async function loadBasis(
   const registeredVerifiers = new Set(
     permit.verifierUserIds.filter((id) => id !== message.authorUserId),
   )
-  const eligibleVerifier = async (userId: string) =>
+  const eligibleEvidenceOwner = async (userId: string) =>
     registeredVerifiers.has(userId) && (await sourceConsent(tx, cfg, userId)) !== undefined
+  const eligibleReceiptVerifier = async (userId: string) =>
+    registeredVerifiers.has(userId) && (await getEnabledMember(tx, team.id, userId))
 
   for (const { evidence, artifact } of evidenceRows) {
     const publishedAt = artifact?.publishedAt?.toISOString()
@@ -345,7 +358,7 @@ async function loadBasis(
       artifact.sha256 !== evidence.sha256 ||
       artifact.ownerUserId === message.authorUserId ||
       !publishedAt ||
-      !(await eligibleVerifier(artifact.ownerUserId))
+      !(await eligibleEvidenceOwner(artifact.ownerUserId))
     )
       return {
         application,
@@ -370,7 +383,7 @@ async function loadBasis(
       receipt.sourceVersion !== application.sourceVersion ||
       receipt.sourceDigest !== application.sourceDigest ||
       receipt.permitId !== permit.id ||
-      !(await eligibleVerifier(receipt.verifierUserId))
+      !(await eligibleReceiptVerifier(receipt.verifierUserId))
     )
       return {
         application,

@@ -47,8 +47,8 @@ pnpm check
 ## 归因
 
 - `reason=source_changed`：入口评论版本/摘要与立项绑定不一致，或作者参与权失效；先看 `discovery_source_binding` 与 `discovery_source_correction`。
-- `reason=evidence_changed`：佐证取消发布、摘要不符，或佐证拥有者不再是登记核实人/活跃成员。
-- `reason=receipt_changed`：回执被撤销、版本不符，或核实人不再是登记核实人/活跃成员。
+- `reason=evidence_changed`：佐证取消发布、摘要不符，或佐证拥有者不再是登记核实人、活跃成员或失去参与权。
+- `reason=receipt_changed`：回执被撤销、版本不符，或核实人不再是登记核实人/活跃成员（回执核实不要求参与权，与 RD-04b 核实入口一致）。
 - `reason=permit_inactive` / `tier_required`：父许可撤销、过期、换版或档位不足。
 - `reason=authority_changed`：责任人不再是当前成员、Task 已改派或 Work 不再 active。
 - `reason=execution_revoked` / `execution_expired`：已有授权被撤销或已过 `expiresAt`；改派、提交评审、完成/取消、Work 退休、参与权撤回与成员停用都会在同一事务撤销。
@@ -70,4 +70,5 @@ bash scripts/secret-scan.sh
 - 执行授权只固定「来源 + Executor 路由身份」，不代替部署侧对实际 provider/model/endpoint/account 的启用；RD-04c2 必须在出站前再次核对部署策略与父/子代次。
 - 父许可额度、Run 次数和模型费用仍由既有 Run/Mandate 预算与 RD-04c3 的调用级预留裁决；本切片不产生费用。
 - 已授权来源包只在库内保存身份与摘要，不保存正文；正文仍由原 TaskMessage/Artifact/回执持有，读时重验。
+- 已过期视图（`status=expired` / `reason=execution_expired`）按代码路径审阅，未单独注入时钟跑 HTTP 用例；RD-04c2 必须在出站前同时核对 `expiresAt`。
 - 授权撤销/过期是终态；同一 application 不重新授权，后续执行切片只认这一行且会同时核对 `expiresAt`。槽位占用不可删除，重开实际需要新的发现立项路径；本切片不提供复活入口。

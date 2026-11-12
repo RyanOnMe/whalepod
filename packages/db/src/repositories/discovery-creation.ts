@@ -40,7 +40,7 @@ import {
   type DiscoverySlotVerificationEntry,
 } from '../schema/discovery.js'
 import { artifacts } from '../schema/artifact.js'
-import { projects, taskMessages, taskSpecRevisions } from '../schema/project.js'
+import { taskMessages, taskSpecRevisions } from '../schema/project.js'
 
 export type DiscoverySlotRow = typeof discoverySlots.$inferSelect
 export type DiscoveryPermitRow = typeof discoveryPermits.$inferSelect
@@ -730,20 +730,8 @@ export async function revokeDiscoveryExecutionsForMember(
         or ${discoveryVerifications.verifierUserId} = ${userId}
     )
   )`
-  // Lock affected projects first: authorize holds the Project row before inserting, so a
-  // concurrent disable either sees the committed row or blocks authorize's final checks.
-  const affected = await handle
-    .select({ projectId: discoveryExecutions.projectId })
-    .from(discoveryExecutions)
-    .where(matches)
-    .groupBy(discoveryExecutions.projectId)
-    .orderBy(asc(discoveryExecutions.projectId))
-  for (const row of affected)
-    await handle
-      .select({ id: projects.id })
-      .from(projects)
-      .where(eq(projects.id, row.projectId))
-      .for('update')
+  // Authorization holds the member row FOR SHARE, so disableUser either commits before the
+  // consent checks or waits; taking Project locks here would invert that order.
   await handle
     .update(discoveryExecutions)
     .set({ revokedAt: now, revokedReason: reason })
