@@ -4,6 +4,8 @@
 
 | 文档 | 内容 |
 |---|---|
+| [2026-11-12-rd04c1-execution-authorization-acceptance.md](./2026-11-12-rd04c1-execution-authorization-acceptance.md) | #540：`tier=execute` 父许可下责任人逐件确认入口评论/佐证/回执的精确版本与 Executor 路由，只写执行授权；来源/许可/配置漂移即撤销；不派工、不建 Run，私有候选留 RD-04c2。 |
+| [2026-11-11-rd04b-preauthorized-creation-acceptance.md](./2026-11-11-rd04b-preauthorized-creation-acceptance.md) | #534：发现候选按本人预授权只立一个已承接 Task（派生约定 + active Work），人工创建与自动立项共用槽位锁；并发、撤权/更正、目录失效、仅立项零 Run；API-only 边界。 |
 | [rd04a-shadow-discovery-acceptance.md](./rd04a-shadow-discovery-acceptance.md) | #532：普通筹备评论触发受限发现，仅当前责任人可读候选；现有订阅直达、授权/费用/读取可核验、撤权即拒读且无业务写入。 |
 | [rd04a-discovery-real-model-quality.md](./rd04a-discovery-real-model-quality.md) | #532：独立发现开发集与冻结保留集，分开登记工程、真实模型及人工复核。 |
 | [m1r-a-production-acceptance.md](./m1r-a-production-acceptance.md) | #486：按同一条补充的身份串证有效订阅、Run 边界自动续跑、DSH 工具读取回执与私有草稿，生产装配只回放模型出口 |

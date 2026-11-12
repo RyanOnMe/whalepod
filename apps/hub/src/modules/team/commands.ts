@@ -13,6 +13,7 @@ import {
   insertTeam,
   insertUser,
   insertInvite,
+  revokeDiscoveryExecutionsForMember,
   revokeManagedDraftSourcesForMember,
   revokeSessionsForUser,
   schema,
@@ -397,6 +398,7 @@ export async function disableMember(
     await disableUser(tx, input.targetUserId, now)
     await revokeSessionsForUser(tx, input.targetUserId, now)
     await revokeManagedDraftSourcesForMember(tx, input.targetUserId, now)
+    await revokeDiscoveryExecutionsForMember(tx, input.targetUserId, 'member_disabled', now)
     // #163：停用同样是名册变更（enabled:false 那行还在，但选择器要把它过滤掉——
     // 对方开着的页面必须实时看到"已停用"徽标，而不是下次刷新才发现）。
     await publishMemberChanged(tx, now)

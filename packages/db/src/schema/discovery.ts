@@ -462,6 +462,107 @@ export const discoverySourceBindings = pgTable(
   ],
 )
 
+/** ADR-0030 RD-04c1：责任人本人对已立项候选的第二次执行授权（只授权，不派工）。 */
+export const discoveryExecutions = pgTable(
+  'discovery_execution',
+  {
+    id: uuid('id').primaryKey(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    applicationId: uuid('application_id')
+      .notNull()
+      .unique()
+      .references(() => discoveryApplications.id),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.id),
+    workId: uuid('work_id')
+      .notNull()
+      .references(() => works.id),
+    principalUserId: uuid('principal_user_id')
+      .notNull()
+      .references(() => userAccounts.id),
+    parentPermitId: uuid('parent_permit_id')
+      .notNull()
+      .references(() => discoveryPermits.id),
+    parentPermitVersion: integer('parent_permit_version').notNull(),
+    purpose: varchar('purpose', { length: 32 }).$type<'private_draft'>().notNull(),
+    executorProvider: varchar('executor_provider', { length: 128 }).notNull(),
+    executorModel: varchar('executor_model', { length: 128 }).notNull(),
+    executorEndpoint: varchar('executor_endpoint', { length: 128 }).notNull(),
+    executorAccount: varchar('executor_account', { length: 128 }).notNull(),
+    executorPolicyGeneration: integer('executor_policy_generation').notNull(),
+    executorDigest: char('executor_digest', { length: 64 }).notNull(),
+    sourceManifestDigest: char('source_manifest_digest', { length: 64 }).notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    authorizedAt: timestamp('authorized_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    revokedReason: varchar('revoked_reason', { length: 64 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index('discovery_execution_active_project')
+      .on(t.projectId)
+      .where(sql`${t.revokedAt} is null`),
+    index('discovery_execution_active_principal')
+      .on(t.principalUserId)
+      .where(sql`${t.revokedAt} is null`),
+    check('discovery_execution_purpose', sql`${t.purpose} = 'private_draft'`),
+    check(
+      'discovery_execution_digests',
+      sql`${t.executorDigest} ~ '^[a-f0-9]{64}$' and ${t.sourceManifestDigest} ~ '^[a-f0-9]{64}$'`,
+    ),
+    check(
+      'discovery_execution_executor',
+      sql`length(${t.executorProvider}) between 1 and 128
+        and length(${t.executorModel}) between 1 and 128
+        and length(${t.executorEndpoint}) between 1 and 128
+        and length(${t.executorAccount}) between 1 and 128`,
+    ),
+    check('discovery_execution_permit_version', sql`${t.parentPermitVersion} > 0`),
+    check('discovery_execution_executor_generation', sql`${t.executorPolicyGeneration} > 0`),
+    check('discovery_execution_expiry', sql`${t.expiresAt} > ${t.authorizedAt}`),
+    check(
+      'discovery_execution_revocation',
+      sql`(${t.revokedAt} is null and ${t.revokedReason} is null)
+        or (${t.revokedAt} is not null and ${t.revokedReason} is not null)`,
+    ),
+  ],
+)
+
+export const discoveryExecutionSources = pgTable(
+  'discovery_execution_source',
+  {
+    id: uuid('id').primaryKey(),
+    executionId: uuid('execution_id')
+      .notNull()
+      .references(() => discoveryExecutions.id, { onDelete: 'cascade' }),
+    kind: varchar('kind', { length: 16 }).$type<DiscoveryExecutionSourceKind>().notNull(),
+    sourceId: uuid('source_id').notNull(),
+    sourceVersion: varchar('source_version', { length: 128 }).notNull(),
+    sourceDigest: char('source_digest', { length: 64 }).notNull(),
+    authorizationGeneration: varchar('authorization_generation', { length: 200 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique('discovery_execution_source_identity').on(t.executionId, t.kind, t.sourceId),
+    check(
+      'discovery_execution_source_kind',
+      sql`${t.kind} in ('task_message', 'artifact', 'receipt')`,
+    ),
+    check('discovery_execution_source_digest', sql`${t.sourceDigest} ~ '^[a-f0-9]{64}$'`),
+    check(
+      'discovery_execution_source_generation',
+      sql`length(${t.authorizationGeneration}) between 1 and 200`,
+    ),
+  ],
+)
+
+export type DiscoveryExecutionSourceKind = 'task_message' | 'artifact' | 'receipt'
+export type DiscoveryExecutionRow = typeof discoveryExecutions.$inferSelect
+export type DiscoveryExecutionSourceRow = typeof discoveryExecutionSources.$inferSelect
+
 export interface DiscoverySlotCatalogEntry {
   readonly taskId: string
   readonly status: string

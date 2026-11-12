@@ -3,6 +3,7 @@ import { z } from 'zod'
 import {
   ConfigureDiscoveryRequestSchema,
   DiscoveryConsentRequestSchema,
+  DiscoveryExecutionAuthorizationRequestSchema,
   DiscoveryPermitRequestSchema,
   DiscoverySlotVerificationRequestSchema,
   DiscoverySourceCorrectionRequestSchema,
@@ -23,6 +24,11 @@ import {
   withdrawDiscoverySource,
 } from './admission.js'
 import { applyDiscoveryCandidate, getDiscoverySlotView, verifyDiscoverySlot } from './creation.js'
+import {
+  authorizeDiscoveryExecution,
+  discoveryExecutionBasis,
+  revokeDiscoveryExecutionByPrincipal,
+} from './execution.js'
 import { downloadDiscoveryInput, listDiscoveryCandidates } from './service.js'
 import { ApiError } from '../shared/http-error.js'
 
@@ -181,6 +187,47 @@ export function registerDiscoveryRoutes(
     const input = DiscoverySlotVerificationRequestSchema.parse(request.body)
     const data = await verifyDiscoverySlot(deps, actor.userId, projectId, slotId, input)
     return { ok: true, data }
+  })
+  app.get(`${base}/applications/:applicationId/execution`, async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
+    const actor = await deps.requireActor(request)
+    const { projectId, applicationId } = Project.extend({ applicationId: z.uuid() }).parse(
+      request.params,
+    )
+    return {
+      ok: true,
+      data: await discoveryExecutionBasis(deps, actor.userId, projectId, applicationId),
+    }
+  })
+  app.post(`${base}/applications/:applicationId/execution`, async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
+    const actor = await deps.requireActor(request)
+    const { projectId, applicationId } = Project.extend({ applicationId: z.uuid() }).parse(
+      request.params,
+    )
+    const input = DiscoveryExecutionAuthorizationRequestSchema.parse(request.body)
+    return {
+      ok: true,
+      data: await authorizeDiscoveryExecution(
+        deps,
+        actor.userId,
+        projectId,
+        applicationId,
+        input,
+        readIdempotencyKey(request),
+      ),
+    }
+  })
+  app.delete(`${base}/applications/:applicationId/execution`, async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
+    const actor = await deps.requireActor(request)
+    const { projectId, applicationId } = Project.extend({ applicationId: z.uuid() }).parse(
+      request.params,
+    )
+    return {
+      ok: true,
+      data: await revokeDiscoveryExecutionByPrincipal(deps, actor.userId, projectId, applicationId),
+    }
   })
   app.post(`${base}/candidates/:candidateId/apply`, async (request, reply) => {
     reply.header('cache-control', 'private, no-store')

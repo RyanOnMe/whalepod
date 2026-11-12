@@ -4,12 +4,27 @@
  * 这里只做单表读写与唯一约束兜底；事实门、槽位门和事务锁序由 Hub 命令层裁决。
  * 槽位占用（discovery_slot_occupation.slot_id unique）同时服务人工认领与自动立项。
  */
-import { and, asc, count, desc, eq, gt, isNull, lte, notExists, or, sql } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lte,
+  notExists,
+  or,
+  sql,
+} from 'drizzle-orm'
 import type { TaskSpecContent } from '@whalepod/protocol'
 import type { DbHandle } from '../client.js'
 import {
   discoveryApplications,
   discoveryCandidates,
+  discoveryExecutionSources,
+  discoveryExecutions,
   discoveryPermits,
   discoverySlotOccupations,
   discoverySlotVerifications,
@@ -18,10 +33,14 @@ import {
   discoverySourceCorrections,
   discoveryVerifications,
   type DiscoveryApplicationVerification,
+  type DiscoveryExecutionRow,
+  type DiscoveryExecutionSourceKind,
+  type DiscoveryExecutionSourceRow,
   type DiscoverySlotCatalogEntry,
   type DiscoverySlotVerificationEntry,
 } from '../schema/discovery.js'
-import { taskSpecRevisions } from '../schema/project.js'
+import { artifacts } from '../schema/artifact.js'
+import { taskMessages, taskSpecRevisions } from '../schema/project.js'
 
 export type DiscoverySlotRow = typeof discoverySlots.$inferSelect
 export type DiscoveryPermitRow = typeof discoveryPermits.$inferSelect
@@ -171,6 +190,14 @@ export async function getActiveDiscoveryPermit(
     )
     .orderBy(desc(discoveryPermits.version))
     .limit(1)
+  return row
+}
+
+export async function getDiscoveryPermit(
+  handle: DbHandle,
+  id: string,
+): Promise<DiscoveryPermitRow | undefined> {
+  const [row] = await handle.select().from(discoveryPermits).where(eq(discoveryPermits.id, id))
   return row
 }
 
@@ -403,6 +430,17 @@ export async function insertDiscoverySourceBinding(
   return row
 }
 
+export async function getDiscoverySourceBindingByApplication(
+  handle: DbHandle,
+  applicationId: string,
+): Promise<DiscoverySourceBindingRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(discoverySourceBindings)
+    .where(eq(discoverySourceBindings.applicationId, applicationId))
+  return row
+}
+
 /** 派生首份约定：status='derived'，不是正式确认版本。 */
 export async function insertDerivedSpec(
   handle: DbHandle,
@@ -539,8 +577,196 @@ export async function getDiscoveryApplicationByCandidate(
   return row
 }
 
+export async function listDiscoveryVerificationsByIds(
+  handle: DbHandle,
+  ids: readonly string[],
+): Promise<DiscoveryVerificationRow[]> {
+  if (ids.length === 0) return []
+  return handle
+    .select()
+    .from(discoveryVerifications)
+    .where(inArray(discoveryVerifications.id, [...ids]))
+}
+
+export async function getDiscoveryApplicationById(
+  handle: DbHandle,
+  id: string,
+): Promise<DiscoveryApplicationRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(discoveryApplications)
+    .where(eq(discoveryApplications.id, id))
+  return row
+}
+
+export async function getDiscoveryExecutionByApplication(
+  handle: DbHandle,
+  applicationId: string,
+): Promise<DiscoveryExecutionRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(discoveryExecutions)
+    .where(eq(discoveryExecutions.applicationId, applicationId))
+  return row
+}
+
+export async function getDiscoveryExecutionForUpdate(
+  handle: DbHandle,
+  applicationId: string,
+): Promise<DiscoveryExecutionRow | undefined> {
+  const [row] = await handle
+    .select()
+    .from(discoveryExecutions)
+    .where(eq(discoveryExecutions.applicationId, applicationId))
+    .for('update')
+  return row
+}
+
+export async function listDiscoveryExecutionSources(
+  handle: DbHandle,
+  executionId: string,
+): Promise<DiscoveryExecutionSourceRow[]> {
+  return handle
+    .select()
+    .from(discoveryExecutionSources)
+    .where(eq(discoveryExecutionSources.executionId, executionId))
+    .orderBy(asc(discoveryExecutionSources.kind), asc(discoveryExecutionSources.sourceId))
+}
+
+export async function insertDiscoveryExecution(
+  handle: DbHandle,
+  values: typeof discoveryExecutions.$inferInsert,
+): Promise<DiscoveryExecutionRow> {
+  const [row] = await handle.insert(discoveryExecutions).values(values).returning()
+  if (row === undefined) throw new Error('insert discovery execution returned no row')
+  return row
+}
+
+export async function insertDiscoveryExecutionSources(
+  handle: DbHandle,
+  values: readonly (typeof discoveryExecutionSources.$inferInsert)[],
+): Promise<void> {
+  if (values.length === 0) throw new Error('discovery execution needs at least one source')
+  await handle.insert(discoveryExecutionSources).values([...values])
+}
+
+export async function revokeDiscoveryExecution(
+  handle: DbHandle,
+  id: string,
+  reason: string,
+  now: Date,
+): Promise<boolean> {
+  const rows = await handle
+    .update(discoveryExecutions)
+    .set({ revokedAt: now, revokedReason: reason })
+    .where(and(eq(discoveryExecutions.id, id), isNull(discoveryExecutions.revokedAt)))
+    .returning({ id: discoveryExecutions.id })
+  return rows.length > 0
+}
+
+export async function revokeDiscoveryExecutionsForProject(
+  handle: DbHandle,
+  projectId: string,
+  reason: string,
+  now: Date,
+): Promise<void> {
+  await handle
+    .update(discoveryExecutions)
+    .set({ revokedAt: now, revokedReason: reason })
+    .where(and(eq(discoveryExecutions.projectId, projectId), isNull(discoveryExecutions.revokedAt)))
+}
+
+export async function revokeDiscoveryExecutionsForTask(
+  handle: DbHandle,
+  taskId: string,
+  reason: string,
+  now: Date,
+): Promise<void> {
+  await handle
+    .update(discoveryExecutions)
+    .set({ revokedAt: now, revokedReason: reason })
+    .where(and(eq(discoveryExecutions.taskId, taskId), isNull(discoveryExecutions.revokedAt)))
+}
+
+export async function revokeDiscoveryExecutionsForWork(
+  handle: DbHandle,
+  workId: string,
+  reason: string,
+  now: Date,
+): Promise<void> {
+  await handle
+    .update(discoveryExecutions)
+    .set({ revokedAt: now, revokedReason: reason })
+    .where(and(eq(discoveryExecutions.workId, workId), isNull(discoveryExecutions.revokedAt)))
+}
+
+/** 成员停用：责任人、来源作者、佐证拥有者或核实人失去资格即撤销相关授权。 */
+export async function revokeDiscoveryExecutionsForMember(
+  handle: DbHandle,
+  userId: string,
+  reason: string,
+  now: Date,
+): Promise<void> {
+  const matches = sql`${discoveryExecutions.revokedAt} is null and (
+    ${discoveryExecutions.principalUserId} = ${userId}
+    or ${discoveryExecutions.applicationId} in (
+      select ${discoveryApplications.id}
+      from ${discoveryApplications}
+      join ${discoverySourceBindings}
+        on ${discoverySourceBindings.applicationId} = ${discoveryApplications.id}
+      join ${taskMessages} on ${taskMessages.id} = ${discoverySourceBindings.sourceId}
+      where ${taskMessages.authorUserId} = ${userId}
+    )
+    or ${discoveryExecutions.id} in (
+      select ${discoveryExecutionSources.executionId}
+      from ${discoveryExecutionSources}
+      left join ${artifacts}
+        on ${discoveryExecutionSources.kind} = 'artifact'
+        and ${artifacts.id} = ${discoveryExecutionSources.sourceId}
+      left join ${discoveryVerifications}
+        on ${discoveryExecutionSources.kind} = 'receipt'
+        and ${discoveryVerifications.id} = ${discoveryExecutionSources.sourceId}
+      where ${artifacts.ownerUserId} = ${userId}
+        or ${discoveryVerifications.verifierUserId} = ${userId}
+    )
+  )`
+  // Authorization holds the member row FOR SHARE, so disableUser either commits before the
+  // consent checks or waits; taking Project locks here would invert that order.
+  await handle
+    .update(discoveryExecutions)
+    .set({ revokedAt: now, revokedReason: reason })
+    .where(matches)
+}
+
+/** 来源更正/撤回只撤销引用该来源的授权，不误伤同项目其它来源。 */
+export async function revokeDiscoveryExecutionsForSource(
+  handle: DbHandle,
+  sourceId: string,
+  reason: string,
+  now: Date,
+): Promise<void> {
+  await handle
+    .update(discoveryExecutions)
+    .set({ revokedAt: now, revokedReason: reason })
+    .where(
+      and(
+        isNull(discoveryExecutions.revokedAt),
+        inArray(
+          discoveryExecutions.applicationId,
+          handle
+            .select({ id: discoveryApplications.id })
+            .from(discoveryApplications)
+            .where(eq(discoveryApplications.sourceId, sourceId)),
+        ),
+      ),
+    )
+}
+
 export type {
   DiscoveryApplicationVerification,
+  DiscoveryExecutionRow,
+  DiscoveryExecutionSourceKind,
+  DiscoveryExecutionSourceRow,
   DiscoverySlotCatalogEntry,
   DiscoverySlotVerificationEntry,
 }

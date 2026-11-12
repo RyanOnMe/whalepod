@@ -26,6 +26,7 @@ import {
   reassignTask,
   reassignPendingHandoffReceipts,
   retractAutoAdmittedInboxItemsForWork,
+  revokeDiscoveryExecutionsForTask,
   revokeManagedDraftSourcesForTask,
   setAssignment,
   setTaskStatus,
@@ -427,6 +428,7 @@ export async function reassignAssignment(
       await markWorkWaitingForAssigneeChange(tx, taskId, now)
     }
     await revokeManagedDraftSourcesForTask(tx, taskId, now)
+    await revokeDiscoveryExecutionsForTask(tx, taskId, 'task_reassigned', now)
     // #428 评审修复：未确认交接随责任转移，别让旧接收人留着一条确认不了的回执。
     await reassignPendingHandoffReceipts(tx, taskId, assigneeUserId, now)
     await advanceDiscoveryCatalogGeneration(tx, task.projectId, now)
@@ -512,6 +514,7 @@ export async function submitTaskForReview(
     if (updated === undefined) throw new Error('task vanished in its own transaction')
     // An ordinary revision Run can return the Task to in_progress; old draft authority must not revive.
     await revokeManagedDraftSourcesForTask(tx, taskId, now)
+    await revokeDiscoveryExecutionsForTask(tx, taskId, 'task_review_submitted', now)
     await advanceDiscoveryCatalogGeneration(tx, task.projectId, now)
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
     return toTaskView(updated)
@@ -535,6 +538,7 @@ export async function completeTask(
     const updated = await setTaskStatus(tx, taskId, next.status, now)
     if (updated === undefined) throw new Error('task vanished in its own transaction')
     await retireWorkForTerminalTask(tx, taskId, now)
+    await revokeDiscoveryExecutionsForTask(tx, taskId, 'task_terminal', now)
     await advanceDiscoveryCatalogGeneration(tx, task.projectId, now)
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
     return toTaskView(updated)
@@ -574,6 +578,7 @@ export async function cancelTask(
     const updated = await setTaskStatus(tx, taskId, 'cancelled', now)
     if (updated === undefined) throw new Error('task vanished in its own transaction')
     await retireWorkForTerminalTask(tx, taskId, now)
+    await revokeDiscoveryExecutionsForTask(tx, taskId, 'task_terminal', now)
     await advanceDiscoveryCatalogGeneration(tx, task.projectId, now)
     await appendTeamEvent(tx, { type: 'task.changed', payload: taskChangedPayload(updated) })
     return toTaskView(updated)
