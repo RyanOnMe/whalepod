@@ -19,6 +19,7 @@ import { transitionTaskSpecRevision } from '@whalepod/domain'
 import type { Actor } from '@whalepod/domain'
 import type { Database, DbHandle, TaskSpecRevisionRow, TaskRow, Tx } from '@whalepod/db'
 import {
+  advanceDiscoveryCatalogGeneration,
   appendTeamEvent,
   confirmSpecDraftCas,
   countConfirmedSpecRevisions,
@@ -216,6 +217,8 @@ export async function confirmAgreement(
         },
       })
       if (decision.inserted) recorded = toRecordedEntry(decision.row, occurredAt)
+      // A newly confirmed agreement changes the task's scope; the slot catalog must be re-verified.
+      await advanceDiscoveryCatalogGeneration(tx, task.projectId, occurredAt)
       await appendTeamEvent(tx, {
         type: 'task.changed',
         payload: await taskChangedPayloadFor(tx, taskId),

@@ -1,6 +1,14 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { ConfigureDiscoveryRequestSchema, DiscoveryConsentRequestSchema } from '@whalepod/protocol'
+import {
+  ConfigureDiscoveryRequestSchema,
+  DiscoveryConsentRequestSchema,
+  DiscoveryPermitRequestSchema,
+  DiscoverySlotVerificationRequestSchema,
+  DiscoverySourceCorrectionRequestSchema,
+  DiscoverySourceVerificationRequestSchema,
+} from '@whalepod/protocol'
+import { getDiscoveryCandidateById } from '@whalepod/db'
 import { readIdempotencyKey } from '../auth/idempotency.js'
 import type { RequireActor } from '../auth/session.js'
 import { authenticateDevice } from '../plugin/pack-resolver.js'
@@ -8,10 +16,15 @@ import type { RouterDeps } from '../router/service.js'
 import {
   changeDiscoveryConsent,
   configureDiscovery,
+  correctDiscoverySource,
   discoveryConsentBasis,
+  discoverySourceIdentity,
+  verifyDiscoverySource,
   withdrawDiscoverySource,
 } from './admission.js'
+import { applyDiscoveryCandidate, getDiscoverySlotView, verifyDiscoverySlot } from './creation.js'
 import { downloadDiscoveryInput, listDiscoveryCandidates } from './service.js'
+import { ApiError } from '../shared/http-error.js'
 
 const Project = z.object({ projectId: z.uuid() })
 const base = '/projects/:projectId/discovery'
@@ -40,39 +53,69 @@ export function registerDiscoveryRoutes(
     const { projectId } = Project.parse(request.params)
     return { ok: true, data: await discoveryConsentBasis(deps.database, actor, projectId) }
   })
-  for (const kind of ['permit', 'participation'] as const) {
-    app.post(`${base}/${kind}`, async (request, reply) => {
-      reply.header('cache-control', 'private, no-store')
-      const actor = await deps.requireActor(request)
-      const { projectId } = Project.parse(request.params)
-      const { configVersion } = DiscoveryConsentRequestSchema.parse(request.body)
-      const data = await changeDiscoveryConsent(
-        deps.database,
-        actor,
-        projectId,
-        kind,
-        true,
-        configVersion,
-        readIdempotencyKey(request),
-      )
-      return { ok: true, data }
-    })
-    app.delete(`${base}/${kind}`, async (request, reply) => {
-      reply.header('cache-control', 'private, no-store')
-      const actor = await deps.requireActor(request)
-      const { projectId } = Project.parse(request.params)
-      const data = await changeDiscoveryConsent(
-        deps.database,
-        actor,
-        projectId,
-        kind,
-        false,
-        undefined,
-        readIdempotencyKey(request),
-      )
-      return { ok: true, data }
-    })
-  }
+  app.post(`${base}/permit`, async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
+    const actor = await deps.requireActor(request)
+    const { projectId } = Project.parse(request.params)
+    const input = DiscoveryPermitRequestSchema.parse(request.body)
+    const data = await changeDiscoveryConsent(
+      deps.database,
+      actor,
+      projectId,
+      'permit',
+      true,
+      input.configVersion,
+      readIdempotencyKey(request),
+      input,
+    )
+    return { ok: true, data }
+  })
+  app.delete(`${base}/permit`, async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
+    const actor = await deps.requireActor(request)
+    const { projectId } = Project.parse(request.params)
+    const data = await changeDiscoveryConsent(
+      deps.database,
+      actor,
+      projectId,
+      'permit',
+      false,
+      undefined,
+      readIdempotencyKey(request),
+    )
+    return { ok: true, data }
+  })
+  app.post(`${base}/participation`, async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
+    const actor = await deps.requireActor(request)
+    const { projectId } = Project.parse(request.params)
+    const { configVersion } = DiscoveryConsentRequestSchema.parse(request.body)
+    const data = await changeDiscoveryConsent(
+      deps.database,
+      actor,
+      projectId,
+      'participation',
+      true,
+      configVersion,
+      readIdempotencyKey(request),
+    )
+    return { ok: true, data }
+  })
+  app.delete(`${base}/participation`, async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
+    const actor = await deps.requireActor(request)
+    const { projectId } = Project.parse(request.params)
+    const data = await changeDiscoveryConsent(
+      deps.database,
+      actor,
+      projectId,
+      'participation',
+      false,
+      undefined,
+      readIdempotencyKey(request),
+    )
+    return { ok: true, data }
+  })
   app.post(`${base}/sources/:sourceId/withdraw`, async (request, reply) => {
     reply.header('cache-control', 'private, no-store')
     const actor = await deps.requireActor(request)
@@ -85,6 +128,75 @@ export function registerDiscoveryRoutes(
       readIdempotencyKey(request),
     )
     return { ok: true, data }
+  })
+  app.post(`${base}/sources/:sourceId/correct`, async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
+    const actor = await deps.requireActor(request)
+    const { projectId, sourceId } = Project.extend({ sourceId: z.uuid() }).parse(request.params)
+    const { body } = DiscoverySourceCorrectionRequestSchema.parse(request.body)
+    const data = await correctDiscoverySource(
+      deps.database,
+      actor,
+      projectId,
+      sourceId,
+      body,
+      readIdempotencyKey(request),
+    )
+    return { ok: true, data }
+  })
+  app.get(`${base}/sources/:sourceId`, async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
+    const actor = await deps.requireActor(request)
+    const { projectId, sourceId } = Project.extend({ sourceId: z.uuid() }).parse(request.params)
+    return {
+      ok: true,
+      data: await discoverySourceIdentity(deps.database, actor, projectId, sourceId),
+    }
+  })
+  app.post(`${base}/sources/:sourceId/verify`, async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
+    const actor = await deps.requireActor(request)
+    const { projectId, sourceId } = Project.extend({ sourceId: z.uuid() }).parse(request.params)
+    const input = DiscoverySourceVerificationRequestSchema.parse(request.body)
+    const data = await verifyDiscoverySource(
+      deps.database,
+      actor,
+      projectId,
+      sourceId,
+      input,
+      readIdempotencyKey(request),
+    )
+    return { ok: true, data }
+  })
+  app.get(`${base}/slots/:slotId`, async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
+    const actor = await deps.requireActor(request)
+    const { projectId, slotId } = Project.extend({ slotId: z.uuid() }).parse(request.params)
+    return { ok: true, data: await getDiscoverySlotView(deps, actor.userId, projectId, slotId) }
+  })
+  app.post(`${base}/slots/:slotId/verify`, async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
+    const actor = await deps.requireActor(request)
+    const { projectId, slotId } = Project.extend({ slotId: z.uuid() }).parse(request.params)
+    const input = DiscoverySlotVerificationRequestSchema.parse(request.body)
+    const data = await verifyDiscoverySlot(deps, actor.userId, projectId, slotId, input)
+    return { ok: true, data }
+  })
+  app.post(`${base}/candidates/:candidateId/apply`, async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
+    const actor = await deps.requireActor(request)
+    const { projectId, candidateId } = Project.extend({ candidateId: z.uuid() }).parse(
+      request.params,
+    )
+    const candidate = await getDiscoveryCandidateById(deps.database.db, candidateId)
+    // Do not confirm existence to non-principals: both cases are the same 404.
+    if (
+      !candidate ||
+      candidate.projectId !== projectId ||
+      candidate.principalUserId !== actor.userId
+    )
+      throw new ApiError(404, 'NOT_FOUND', 'discovery candidate not found')
+    return { ok: true, data: await applyDiscoveryCandidate(deps, candidate.id) }
   })
   app.get(`${base}/candidates`, async (request, reply) => {
     reply.header('cache-control', 'private, no-store')

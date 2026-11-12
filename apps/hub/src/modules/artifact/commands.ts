@@ -9,6 +9,7 @@
 import { eq } from 'drizzle-orm'
 import { asUserId, authorize, transitionArtifact } from '@whalepod/domain'
 import {
+  advanceDiscoveryCatalogGeneration,
   appendTeamEvent,
   getOrdinaryArtifact,
   getRun,
@@ -78,6 +79,8 @@ export async function publishArtifact(
       payload: { taskId: updated.taskId, runId: updated.runId, artifactId: updated.id },
     })
     if (decision.inserted) recorded = toRecordedEntry(decision.row, occurredAt)
+    // A new published outcome can cover the registered slot; old catalog verification is stale.
+    await advanceDiscoveryCatalogGeneration(tx, task.projectId, occurredAt)
     await appendTeamEvent(tx, {
       type: 'artifact.changed',
       payload: {

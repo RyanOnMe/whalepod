@@ -101,7 +101,7 @@ export async function loadDiscoveryInput(
     message.origin !== 'human'
   )
     throw unavailable()
-  const identity = sourceIdentity(message)
+  const identity = await sourceIdentity(tx, message)
   const permit = await activeConsent(tx, cfg, cfg.settings.principalUserId, 'permit')
   const author = await sourceConsent(tx, cfg, message.authorUserId)
   const team = await getTeam(tx)
@@ -180,7 +180,7 @@ export async function loadDiscoveryInput(
     canonicalJson([project.id, cfg.settings.activity, cfg.settings.slot]),
   )
   if (
-    !add('source', sourceId, identity.sourceVersion, message.body, `author:${author.version}`) ||
+    !add('source', sourceId, identity.sourceVersion, identity.body, `author:${author.version}`) ||
     !add(
       'slot',
       slotKey,

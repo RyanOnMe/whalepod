@@ -93,8 +93,8 @@ export const TaskSpecContentSchema = z.strictObject({
 })
 export type TaskSpecContent = z.infer<typeof TaskSpecContentSchema>
 
-export const TaskSpecRevisionStatusSchema = z.enum(['draft', 'confirmed'])
-export const TaskSpecRevisionOriginSchema = z.enum(['manual', 'agent'])
+export const TaskSpecRevisionStatusSchema = z.enum(['draft', 'confirmed', 'derived'])
+export const TaskSpecRevisionOriginSchema = z.enum(['manual', 'agent', 'preauthorized_template'])
 
 /** 单条约定版本（draft 或 confirmed）的读模型：Hub 出网前 parse，多一列少一列都是红。 */
 export const TaskSpecRevisionViewSchema = z.strictObject({

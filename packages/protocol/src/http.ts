@@ -9,6 +9,7 @@ import { ApprovalPolicySchema } from './approval.js'
 import { ErrorCodeSchema } from './errors.js'
 import { TaskSpecContentSchema } from './task-views.js'
 import { HandoffContentSchema } from './handoff.js'
+import { DiscoveryTaskClassificationSchema } from './discovery.js'
 
 export const ApiFailureSchema = z.strictObject({
   ok: z.literal(false),
@@ -81,6 +82,11 @@ export const CreateTaskRequestSchema = z
     description: z.string().max(20000).optional(),
     assigneeUserId: z.uuid().optional(),
     assigneeAgentId: z.uuid().optional(),
+    /**
+     * ADR-0030 RD-04b：发现自动档启用时，人工建 Task 必须明确认领槽位或提交
+     * 「与槽位无关」建议；缺省请求会被拒绝，直到显式关闭自动档。
+     */
+    discovery: DiscoveryTaskClassificationSchema.optional(),
   })
   .superRefine((value, ctx) => {
     if ((value.assigneeUserId !== undefined) !== (value.assigneeAgentId !== undefined)) return

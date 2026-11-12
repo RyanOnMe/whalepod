@@ -15,6 +15,7 @@
  * 即按生成失败处理，不给 Hub 制造毒帧。
  */
 import { z } from 'zod'
+import { DiscoveryTaskClassificationSchema } from './discovery.js'
 
 /** 叙述整体（JSON.stringify 后的 UTF-8 字节）上限；留足 envelope 头空间。 */
 export const HANDOFF_NARRATIVE_MAX_BYTES = 24_576
@@ -265,6 +266,8 @@ export const DeliverHandoffRequestSchema = z
         description: z.string().max(20000).optional(),
       })
       .optional(),
+    /** 新建下游 Task 时的发现槽位分类；自动档启用时缺省会被 Hub 拒绝。 */
+    discovery: DiscoveryTaskClassificationSchema.optional(),
   })
   .superRefine((value, ctx) => {
     if ((value.downstreamTaskId === undefined) === (value.newTask === undefined)) {

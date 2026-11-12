@@ -149,6 +149,7 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
       ...(body.description !== undefined ? { description: body.description } : {}),
       ...(body.assigneeUserId !== undefined ? { assigneeUserId: body.assigneeUserId } : {}),
       ...(body.assigneeAgentId !== undefined ? { assigneeAgentId: body.assigneeAgentId } : {}),
+      ...(body.discovery !== undefined ? { discovery: body.discovery } : {}),
       idempotencyKey: readIdempotencyKey(request),
     })
     audit(request, 'task.create', 'success', session.userId)

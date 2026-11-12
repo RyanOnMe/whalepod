@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
-import { and, asc, desc, eq, gt, inArray, isNull, lte } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, lte, notExists } from 'drizzle-orm'
 import {
+  getDiscoveryApplicationByCandidate,
   getEvaluation,
   getEvaluationForUpdate,
   hasRunningCoordinationEvaluation,
@@ -31,6 +32,7 @@ import type { RouterDeps } from '../router/service.js'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
 import { activeConsent, available, discoveryAdmission, discoveryConfig } from './admission.js'
+import { applyDiscoveryCandidate, applyPendingDiscoveryCandidates } from './creation.js'
 import {
   DISCOVERY_PROMPT_VERSION,
   DISCOVERY_RULES_VERSION,
@@ -196,7 +198,8 @@ async function dispatch(deps: RouterDeps, sourceId: string) {
       return
     }
     if (input.admission.processedAt !== null) return
-    const expires = input.admission.createdAt.getTime() + QUEUE_TTL_MS
+    const queuedAt = input.admission.requeuedAt ?? input.admission.createdAt
+    const expires = queuedAt.getTime() + QUEUE_TTL_MS
     if (expires <= now.getTime()) {
       await tx
         .update(a)
@@ -247,7 +250,7 @@ async function dispatch(deps: RouterDeps, sourceId: string) {
       rulesVersion: DISCOVERY_RULES_VERSION,
       processorVersion: DISCOVERY_PROMPT_VERSION,
       status: 'queued',
-      queuedAt: input.admission.createdAt,
+      queuedAt,
       queueExpiresAt: new Date(expires),
     })
     const reserved =
@@ -528,6 +531,28 @@ export async function acceptDiscoveryResult(
   if (updated) {
     await settle(deps, updated)
     emit(deps, 'discovery.result', updated, updated.failureCode ?? undefined)
+    // RD-04b：模型接受与业务应用分两次裁决；候选落库后在同一次调用内尝试立项，
+    // 失败只写候选水位，tick 会按同一幂等事务补偿。
+    if (updated.status === 'completed') {
+      const [candidate] = await deps.database.db
+        .select({ id: schema.discoveryCandidates.id })
+        .from(schema.discoveryCandidates)
+        .where(eq(schema.discoveryCandidates.evaluationId, updated.id))
+        .limit(1)
+      if (candidate) {
+        try {
+          await applyDiscoveryCandidate(deps, candidate.id)
+        } catch {
+          // The tick retries the same idempotent application; the ack itself must not fail.
+          deps.log?.({
+            component: 'hub.discovery',
+            action: 'discovery.application_failed',
+            evaluationId: updated.id,
+            candidateId: candidate.id,
+          })
+        }
+      }
+    }
   }
   return ack
 }
@@ -615,16 +640,45 @@ export async function listDiscoveryCandidates(
     const view = []
     for (const { candidate, evaluation } of candidates) {
       try {
-        const current = await rebuild(tx, evaluation, deps)
-        if (
-          current.cfg.settings.principalUserId !== actorUserId ||
-          !(await fenceDiscoveryAuthority(tx, current)) ||
-          !available(current.cfg, nowOf(deps)) ||
-          candidate.expiresAt <= nowOf(deps)
-        )
-          continue
+        const application = await getDiscoveryApplicationByCandidate(tx, candidate.id)
+        let manifest: {
+          id: string
+          kind: string
+          sourceId: string
+          version: string
+          digest: string
+        }[]
+        let omissions: string[]
+        if (application !== undefined) {
+          // ADR §1：来源撤回/更正后同步拒绝候选正文；已成立的 Task 另行留给真人处理。
+          const admission = await discoveryAdmission(tx, candidate.sourceId)
+          if (
+            !admission ||
+            admission.withdrawnAt !== null ||
+            admission.sourceVersion !== candidate.sourceVersion
+          )
+            continue
+          // An applied candidate predates the task it created; rebuilding would compare
+          // against a catalog that now includes that task. Use the frozen evaluation input.
+          const frozen = evaluation.inputManifest['entries']
+          if (!Array.isArray(frozen)) continue
+          manifest = frozen as typeof manifest
+          const frozenOmissions = evaluation.inputManifest['omissions']
+          omissions = Array.isArray(frozenOmissions) ? (frozenOmissions as string[]) : []
+        } else {
+          const current = await rebuild(tx, evaluation, deps)
+          if (
+            current.cfg.settings.principalUserId !== actorUserId ||
+            !(await fenceDiscoveryAuthority(tx, current)) ||
+            !available(current.cfg, nowOf(deps)) ||
+            candidate.expiresAt <= nowOf(deps)
+          )
+            continue
+          manifest = current.manifest
+          omissions = current.omissions
+        }
         const { proposal } = candidate
-        const citations = current.manifest
+        const citations = manifest
           .filter(
             (entry) =>
               entry.id === proposal.source ||
@@ -646,7 +700,21 @@ export async function listDiscoveryCandidates(
           classification: proposal.classification,
           reason: proposal.reason,
           citations,
-          omissions: current.omissions,
+          omissions,
+          application: application
+            ? {
+                id: application.id,
+                status: application.status,
+                taskId: application.taskId,
+                workId: application.workId,
+                appliedAt: application.appliedAt.toISOString(),
+              }
+            : null,
+          creation: {
+            reason: candidate.creationReason,
+            terminal: candidate.creationTerminal,
+            checkedAt: candidate.creationCheckedAt?.toISOString() ?? null,
+          },
           createdAt: candidate.createdAt.toISOString(),
           expiresAt: candidate.expiresAt.toISOString(),
         })
@@ -737,29 +805,72 @@ export async function runDiscoveryTick(deps: RouterDeps) {
     if (row) await settle(deps, row)
   }
   await cleanDiscoveryCandidates(deps, now)
+  await applyPendingDiscoveryCandidates(deps, 10)
 }
 
 /** Revalidate bounded batches so a revoked excerpt does not survive in Hub candidate storage. */
 async function cleanDiscoveryCandidates(deps: RouterDeps, now: Date) {
   const t = schema.discoveryCandidates
-  await deps.database.db.delete(t).where(lte(t.expiresAt, now))
+  try {
+    await deps.database.db
+      .delete(t)
+      .where(
+        and(
+          lte(t.expiresAt, now),
+          notExists(
+            deps.database.db
+              .select({ one: schema.discoveryApplications.id })
+              .from(schema.discoveryApplications)
+              .where(eq(schema.discoveryApplications.candidateId, t.id)),
+          ),
+        ),
+      )
+  } catch {
+    // A concurrent application can win the FK race at the expiry boundary; skip this
+    // sweep and let the next tick retry instead of aborting the whole tick.
+    deps.log?.({
+      component: 'hub.discovery',
+      action: 'discovery.candidate_expiry_delete_failed',
+    })
+  }
   const staleChecks = await deps.database.db
     .select({ id: t.id, evaluationId: t.evaluationId })
     .from(t)
-    .where(lte(t.checkedAt, new Date(now.getTime() - 60_000)))
+    .where(
+      and(
+        lte(t.checkedAt, new Date(now.getTime() - 60_000)),
+        // Applied candidates are audit history and are referenced by discovery_application.
+        // Rebuilding them would also compare against a catalog that now includes their task.
+        notExists(
+          deps.database.db
+            .select({ one: schema.discoveryApplications.id })
+            .from(schema.discoveryApplications)
+            .where(eq(schema.discoveryApplications.candidateId, t.id)),
+        ),
+      ),
+    )
     .orderBy(asc(t.checkedAt), asc(t.id))
     .limit(10)
   for (const candidate of staleChecks) {
-    await deps.database.transaction(async (tx) => {
-      const evaluation = await getEvaluation(tx, candidate.evaluationId)
-      try {
-        if (!evaluation) throw unavailable()
-        await rebuild(tx, evaluation, deps)
-        await tx.update(t).set({ checkedAt: now }).where(eq(t.id, candidate.id))
-      } catch (error) {
-        if (!(error instanceof ApiError)) throw error
-        await tx.delete(t).where(eq(t.id, candidate.id))
-      }
-    })
+    try {
+      await deps.database.transaction(async (tx) => {
+        const evaluation = await getEvaluation(tx, candidate.evaluationId)
+        try {
+          if (!evaluation) throw unavailable()
+          await rebuild(tx, evaluation, deps)
+          await tx.update(t).set({ checkedAt: now }).where(eq(t.id, candidate.id))
+        } catch (error) {
+          if (!(error instanceof ApiError)) throw error
+          await tx.delete(t).where(eq(t.id, candidate.id))
+        }
+      })
+    } catch {
+      // One poison row must not stop the rest of the privacy sweep or the tick.
+      deps.log?.({
+        component: 'hub.discovery',
+        action: 'discovery.candidate_cleanup_failed',
+        candidateId: candidate.id,
+      })
+    }
   }
 }
