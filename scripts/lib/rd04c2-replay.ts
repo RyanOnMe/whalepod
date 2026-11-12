@@ -70,6 +70,11 @@ export class Rd04c2Replay {
   failures: string[] = []
   allowedSources: { title: string; sourceVersion: string; body: string }[] = []
 
+  constructor(
+    readonly fixturePublicBody = publicBody,
+    readonly fixtureSourceBody = sourceBody,
+  ) {}
+
   assertHealthy() {
     assert.equal(this.failures.length, 0, this.failures.join('; '))
   }
@@ -89,9 +94,9 @@ export class Rd04c2Replay {
     const evidence = prompt.entries.find((entry) => entry.kind === 'evidence')
     assert(
       prompt.coverageComplete &&
-        source?.body === sourceBody &&
+        source?.body === this.fixtureSourceBody &&
         slot &&
-        evidence?.body === publicBody,
+        evidence?.body === this.fixturePublicBody,
       'discovery did not see the ordinary comment and published control',
     )
     const proposal = {
@@ -127,7 +132,7 @@ export class Rd04c2Replay {
         return replyStream(response, {
           id: 'public-write',
           name: 'write',
-          args: { file_path: path, content: publicBody },
+          args: { file_path: path, content: this.fixturePublicBody },
         })
       if (step === 1)
         return replyStream(response, {
@@ -138,11 +143,16 @@ export class Rd04c2Replay {
       assert.equal(step, 2)
       return replyStream(response, { text: 'Public comparison draft is ready.' })
     }
+    assert.deepEqual(
+      [...tools].sort(),
+      ['publish_artifact', 'read_work_input', 'write'],
+      'private Runtime exposed unexpected model tools',
+    )
     assert.equal(this.phase, 'private', 'execution occurred before authorization')
     assert.equal(++this.privateRequests, step + 1, 'private execution repeated')
     assert(tools.has('read_work_input'), 'private Executor did not receive the work reader')
     assert(
-      !prompt.includes(sourceBody) && !prompt.includes(publicBody),
+      !prompt.includes(this.fixtureSourceBody) && !prompt.includes(this.fixturePublicBody),
       'source body was sent before its work input read',
     )
     const items = new Map<string, FrozenInput>()

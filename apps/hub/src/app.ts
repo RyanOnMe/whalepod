@@ -35,9 +35,12 @@ import { logRecordedEntry } from './modules/context/observer.js'
 // ADR-0026（PC-04a）：确定性内部协调的读面与显式触发。
 import { registerCoordinationRoutes } from './modules/coordination/routes.js'
 import { registerDiscoveryRoutes } from './modules/discovery/routes.js'
+import { registerDiscoveryExecutorAttemptRoutes } from './modules/discovery/executor-attempt-routes.js'
 import { dispatchDiscoveryReplay } from './modules/dispatch/discovery-replay.js'
 import {
   discoveryReplayRouteIsLoopback,
+  validDiscoveryLivePolicy,
+  type DiscoveryLivePolicy,
   type DiscoveryReplayRoute,
 } from './modules/discovery/replay-binding.js'
 import { registerRouterRoutes } from './modules/router/routes.js'
@@ -89,6 +92,7 @@ export interface HubDeps {
   readonly setupTokenStore?: SetupTokenStore
   /** Acceptance assembly only. The Hub CLI does not expose this option. */
   readonly discoveryExecutionReplay?: DiscoveryReplayRoute | undefined
+  readonly discoveryExecutorLive?: DiscoveryLivePolicy | undefined
 }
 
 /**
@@ -184,9 +188,18 @@ function notFoundHandler(request: FastifyRequest, reply: FastifyReply): FastifyR
  */
 export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
   const { config, database } = deps
-  const discoveryExecutionReplay = deps.discoveryExecutionReplay
-  if (discoveryExecutionReplay && !discoveryReplayRouteIsLoopback(discoveryExecutionReplay))
+  const discoveryExecutorLive = deps.discoveryExecutorLive
+  if (
+    deps.discoveryExecutionReplay &&
+    !discoveryReplayRouteIsLoopback(deps.discoveryExecutionReplay)
+  )
     throw new Error('discovery execution requires an explicit loopback replay route')
+  if (
+    discoveryExecutorLive &&
+    (deps.discoveryExecutionReplay || !validDiscoveryLivePolicy(discoveryExecutorLive))
+  )
+    throw new Error('discovery live executor policy is invalid or mixed with replay')
+  const discoveryExecutionReplay = discoveryExecutorLive ?? deps.discoveryExecutionReplay
   const app = fastify({
     logger: deps.logger ?? false,
     // #113：反代形态由配置显式开启——request.ip 才信任 XFF 首跳（限流分桶真值）。
@@ -349,6 +362,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       registerDiscoveryRoutes(api, {
         database,
         requireActor,
+        discoveryExecutorLive,
         store: new ArtifactStore({ root: config.artifactStoreDir }),
         log: (event) => app.log.info(event, 'discovery event'),
         ...(discoveryExecutionReplay === undefined
@@ -368,6 +382,11 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
                   now,
                 ),
             }),
+      })
+      registerDiscoveryExecutorAttemptRoutes(api, {
+        database,
+        route: discoveryExecutorLive,
+        deviceOnline: (id) => nodeConnections.isOnline(id),
       })
       registerRouterRoutes(api, {
         database,
@@ -475,6 +494,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         store: artifactStore,
         requireActor,
         discoveryExecutionReplay,
+        discoveryDeviceOnline: (id) => nodeConnections.isOnline(id),
       })
       // #429：交付物审阅面（批注线程 + 审阅邀请 + 提交意见）复用同一 Store。
       registerReviewRoutes(api, {

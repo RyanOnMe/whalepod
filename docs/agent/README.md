@@ -4,6 +4,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [2026-11-12-rd04c3-guarded-executor-acceptance.md](./2026-11-12-rd04c3-guarded-executor-acceptance.md) | #544：真实 Executor 逐件授权、逐调用预算与结算、私有草稿验收及供应商账单边界。 |
 | [2026-11-12-rd04c2-discovery-draft-acceptance.md](./2026-11-12-rd04c2-discovery-draft-acceptance.md) | #542：新任务授权后自动派工，真 DSH 实际读固定来源并产出责任人私有草稿；首读前撤权阻断；仅回环模型回放。 |
 | [2026-11-12-rd04c1-execution-authorization-acceptance.md](./2026-11-12-rd04c1-execution-authorization-acceptance.md) | #540：`tier=execute` 父许可下责任人逐件确认入口评论/佐证/回执的精确版本与 Executor 路由，只写执行授权；来源/许可/配置漂移即撤销；不派工、不建 Run，私有候选留 RD-04c2。 |
 | [2026-11-11-rd04b-preauthorized-creation-acceptance.md](./2026-11-11-rd04b-preauthorized-creation-acceptance.md) | #534：发现候选按本人预授权只立一个已承接 Task（派生约定 + active Work），人工创建与自动立项共用槽位锁；并发、撤权/更正、目录失效、仅立项零 Run；API-only 边界。 |

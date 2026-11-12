@@ -105,9 +105,11 @@ import {
 import { recordRunWorkInputReceipt } from '../work/receipts.js'
 import {
   DISCOVERY_REPLAY_TOOLS,
+  discoveryRoute,
   verifyDiscoveryReplayRun,
-  type DiscoveryReplayRoute,
+  type DiscoveryExecutionRoute,
 } from '../discovery/replay-binding.js'
+import { executorDigest } from '../discovery/execution.js'
 import type { ApprovalView, RunView } from './queries.js'
 import { toApprovalView, toRunView } from './queries.js'
 
@@ -120,7 +122,7 @@ export interface RunOrchestratorDeps {
   database: Database
   outbox: Outbox
   managedDraftDeviceId?: string | undefined
-  discoveryExecutionReplay?: DiscoveryReplayRoute | undefined
+  discoveryExecutionReplay?: DiscoveryExecutionRoute | undefined
   now?: () => Date
   /**
    * #52：越边降级与违例收敛的结构化告警通道（组合根接 app.log.warn，
@@ -149,7 +151,7 @@ export class RunOrchestrator {
   private readonly outbox: Outbox
   private readonly nowFn: () => Date
   private readonly managedDraftDeviceId: string | undefined
-  private readonly discoveryExecutionReplay: DiscoveryReplayRoute | undefined
+  private readonly discoveryExecutionReplay: DiscoveryExecutionRoute | undefined
   private readonly warnFn: (message: string, context: Record<string, unknown>) => void
   private readonly logFn: ContextEntryObserver
   private readonly contextLogFn: (action: string, fields: Record<string, unknown>) => void
@@ -315,11 +317,13 @@ export class RunOrchestrator {
     input: CreateRunInput,
     discovery?: {
       readonly executionId: string
-      readonly endpoint: string
       readonly specRevisionId: string
       readonly manifest: WorkInputManifest
       readonly manifestDigest: string
-    },
+    } & (
+      | { readonly endpoint: string }
+      | { readonly liveExecutor: import('@whalepod/protocol').DiscoveryExecutionExecutor }
+    ),
   ): Promise<RunView> {
     assertCreateRunInput(input)
     return this.createInTransaction(
@@ -412,13 +416,18 @@ export class RunOrchestrator {
     }
     // ADR-0028 §6（RD-03a）：机器 Run 必须有完整 provenance，且不能以 full_access 执行。
     const origin = input.origin ?? 'human'
+    const discoveryConfig = this.discoveryExecutionReplay
     if (
       discovery &&
       (origin !== 'mandate' ||
         approvalPolicy !== 'approval_required' ||
-        this.discoveryExecutionReplay?.endpoint !== discovery.endpoint ||
-        revision.provider !== this.discoveryExecutionReplay.provider ||
-        revision.model !== this.discoveryExecutionReplay.model ||
+        !discoveryConfig ||
+        ('route' in discoveryConfig
+          ? !('liveExecutor' in discovery) ||
+            executorDigest(discovery.liveExecutor) !== executorDigest(discoveryConfig.route)
+          : !('endpoint' in discovery) || discovery.endpoint !== discoveryConfig.endpoint) ||
+        revision.provider !== 'deepseek-official' ||
+        revision.model !== discoveryRoute(discoveryConfig).model ||
         !Array.isArray(pack.installations) ||
         pack.installations.length !== 0 ||
         input.workInputItemIds !== undefined ||
@@ -752,7 +761,9 @@ export class RunOrchestrator {
               manifestDigest: discovery.manifestDigest,
               manifest: discovery.manifest,
               discoveryExecutionId: discovery.executionId,
-              discoveryReplayEndpoint: discovery.endpoint,
+              ...('liveExecutor' in discovery
+                ? { discoveryLiveExecutor: discovery.liveExecutor }
+                : { discoveryReplayEndpoint: discovery.endpoint }),
             },
           }
         : workInputs !== undefined
@@ -850,10 +861,13 @@ export class RunOrchestrator {
         if (
           !replay ||
           input?.workInput?.discoveryExecutionId !== run.discoveryExecutionId ||
-          input.workInput.discoveryReplayEndpoint !== replay.endpoint ||
+          ('route' in replay
+            ? !input.workInput.discoveryLiveExecutor ||
+              executorDigest(input.workInput.discoveryLiveExecutor) !== executorDigest(replay.route)
+            : input.workInput.discoveryReplayEndpoint !== replay.endpoint) ||
           input.workInput.manifestDigest !== run.workInputManifestDigest ||
-          input.agent.provider !== replay.provider ||
-          input.agent.model !== replay.model ||
+          input.agent.provider !== 'deepseek-official' ||
+          input.agent.model !== discoveryRoute(replay).model ||
           toolNames?.length !== DISCOVERY_REPLAY_TOOLS.length ||
           !DISCOVERY_REPLAY_TOOLS.every((name) => toolNames.includes(name)) ||
           !(await verifyDiscoveryReplayRun(tx, run, now, { route: replay })).ok

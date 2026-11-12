@@ -4,6 +4,7 @@ import {
   ConfigureDiscoveryRequestSchema,
   DiscoveryConsentRequestSchema,
   DiscoveryExecutionAuthorizationRequestSchema,
+  DiscoveryExecutorSourceGrantRequestSchema,
   DiscoveryPermitRequestSchema,
   DiscoverySlotVerificationRequestSchema,
   DiscoverySourceCorrectionRequestSchema,
@@ -31,16 +32,18 @@ import {
 } from './execution.js'
 import { downloadDiscoveryInput, listDiscoveryCandidates } from './service.js'
 import { ApiError } from '../shared/http-error.js'
+import { grantExecutorSource, revokeExecutorSource } from './executor-source-grants.js'
+import type { DiscoveryLivePolicy } from './replay-binding.js'
 
 const Project = z.object({ projectId: z.uuid() })
 const base = '/projects/:projectId/discovery'
 
 export function registerDiscoveryRoutes(
   app: FastifyInstance,
-  deps: RouterDeps & { requireActor: RequireActor } & Pick<
-      Parameters<typeof authorizeDiscoveryExecution>[0],
-      'dispatchDiscoveryReplay'
-    >,
+  deps: RouterDeps & {
+    requireActor: RequireActor
+    discoveryExecutorLive?: DiscoveryLivePolicy | undefined
+  } & Pick<Parameters<typeof authorizeDiscoveryExecution>[0], 'dispatchDiscoveryReplay'>,
 ) {
   app.post(`${base}/config`, async (request, reply) => {
     reply.header('cache-control', 'private, no-store')
@@ -201,6 +204,36 @@ export function registerDiscoveryRoutes(
       ok: true,
       data: await discoveryExecutionBasis(deps, actor.userId, projectId, applicationId),
     }
+  })
+  const grantPath = `${base}/applications/:applicationId/executor-source-grants`
+  const applicationParams = Project.extend({ applicationId: z.uuid() })
+  app.post(grantPath, async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
+    const actor = await deps.requireActor(request)
+    if (!deps.discoveryExecutorLive)
+      throw new ApiError(404, 'NOT_FOUND', 'executor source grant unavailable')
+    const { projectId, applicationId } = applicationParams.parse(request.params)
+    const input = DiscoveryExecutorSourceGrantRequestSchema.parse(request.body)
+    return {
+      ok: true,
+      data: await grantExecutorSource(
+        deps.database,
+        actor.userId,
+        projectId,
+        applicationId,
+        input,
+        deps.discoveryExecutorLive.route,
+      ),
+    }
+  })
+  app.delete(`${grantPath}/:grantId`, async (request, reply) => {
+    reply.header('cache-control', 'private, no-store')
+    const actor = await deps.requireActor(request)
+    const { projectId, applicationId, grantId } = applicationParams
+      .extend({ grantId: z.uuid() })
+      .parse(request.params)
+    await revokeExecutorSource(deps.database, actor.userId, projectId, applicationId, grantId)
+    return reply.code(204).send()
   })
   app.post(`${base}/applications/:applicationId/execution`, async (request, reply) => {
     reply.header('cache-control', 'private, no-store')

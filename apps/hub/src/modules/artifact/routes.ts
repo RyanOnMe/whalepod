@@ -29,6 +29,7 @@ import {
   getOrdinaryRun,
   getRun,
   insertArtifact,
+  listDiscoveryExecutorAttempts,
   deviceHandoffInputReferences,
   deviceHasRunOnTask,
   schema,
@@ -47,7 +48,10 @@ import { readIdempotencyKey } from '../auth/idempotency.js'
 import { audit } from '../shared/audit.js'
 import { logRecordedEntry } from '../context/observer.js'
 import { ApiError } from '../shared/http-error.js'
-import { verifyDiscoveryReplayRun, type DiscoveryReplayRoute } from '../discovery/replay-binding.js'
+import {
+  verifyDiscoveryReplayRun,
+  type DiscoveryExecutionRoute,
+} from '../discovery/replay-binding.js'
 import { publishArtifact } from './commands.js'
 import {
   getArtifactPreviewInfo,
@@ -64,7 +68,8 @@ export interface ArtifactRoutesDeps {
   readonly database: Database
   readonly store: ArtifactStore
   readonly requireActor: RequireActor
-  readonly discoveryExecutionReplay?: DiscoveryReplayRoute | undefined
+  readonly discoveryExecutionReplay?: DiscoveryExecutionRoute | undefined
+  readonly discoveryDeviceOnline?: (deviceId: string) => boolean
 }
 
 const DISCOVERY_DRAFT_MAX_BYTES = 1024 * 1024
@@ -76,12 +81,14 @@ function discoveryRunCanUpload(run: RunRow): boolean {
 async function assertDiscoveryCandidateUploadAllowed(
   tx: Tx,
   run: RunRow,
-  route: DiscoveryReplayRoute | undefined,
+  route: DiscoveryExecutionRoute | undefined,
+  deviceOnline: boolean,
   lock = false,
 ): Promise<void> {
   if (
     route === undefined ||
     !discoveryRunCanUpload(run) ||
+    ('route' in route && !deviceOnline) ||
     !(
       await verifyDiscoveryReplayRun(tx, run, new Date(), {
         lock,
@@ -91,6 +98,14 @@ async function assertDiscoveryCandidateUploadAllowed(
     ).ok
   )
     throw new ApiError(404, 'NOT_FOUND', 'run not found')
+  if ('route' in route) {
+    const attempts = await listDiscoveryExecutorAttempts(tx, run.id)
+    if (
+      attempts.length === 0 ||
+      attempts.some((attempt) => attempt.state !== 'actual' || attempt.overage)
+    )
+      throw new ApiError(404, 'NOT_FOUND', 'run not found')
+  }
 }
 
 /** query 串元数据 → 协议 DTO（byteSize 必须可解析为整数，其余原样校验）。 */
@@ -194,7 +209,12 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
         const replay = Boolean(run.discoveryExecutionId)
         if (replay) {
           await deps.database.transaction((tx) =>
-            assertDiscoveryCandidateUploadAllowed(tx, run, deps.discoveryExecutionReplay),
+            assertDiscoveryCandidateUploadAllowed(
+              tx,
+              run,
+              deps.discoveryExecutionReplay,
+              deps.discoveryDeviceOnline?.(identity.deviceId) === true,
+            ),
           )
           if (
             meta.mediaType !== 'text/markdown' ||
@@ -228,6 +248,7 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
                 tx,
                 run,
                 deps.discoveryExecutionReplay,
+                deps.discoveryDeviceOnline?.(identity.deviceId) === true,
                 true,
               )
               const current = await getRun(tx, run.id)

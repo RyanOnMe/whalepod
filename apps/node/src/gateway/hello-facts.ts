@@ -17,6 +17,7 @@
 import { join } from 'node:path'
 import {
   CONTEXT_STATE_CAPABILITY,
+  DISCOVERY_EXECUTION_LIVE_CAPABILITY,
   DISCOVERY_EXECUTION_REPLAY_CAPABILITY,
   PROJECT_CONTEXT_CAPABILITY,
   WORK_INPUT_CAPABILITY,
@@ -39,6 +40,7 @@ export interface HelloFactsInputs {
   readonly coordinationCapabilities?: readonly CoordinationCapability[]
   /** Production CLI does not opt in; advertised only by the explicit replay assembly. */
   readonly discoveryExecutionReplay?: boolean
+  readonly discoveryExecutionLive?: boolean
 }
 
 /** 平台归类：与配对上报（cli 的 pair 路径）同一口径，不丢 win32。 */
@@ -64,6 +66,7 @@ export function createHelloFacts(inputs: HelloFactsInputs): () => Promise<HelloF
       CONTEXT_STATE_CAPABILITY,
       WORK_INPUT_CAPABILITY,
       ...(inputs.discoveryExecutionReplay === true ? [DISCOVERY_EXECUTION_REPLAY_CAPABILITY] : []),
+      ...(inputs.discoveryExecutionLive === true ? [DISCOVERY_EXECUTION_LIVE_CAPABILITY] : []),
     ],
     ...(inputs.coordinationCapabilities === undefined
       ? {}

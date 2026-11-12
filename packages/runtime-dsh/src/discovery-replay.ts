@@ -1,7 +1,7 @@
 /**
- * RD-04c2 still uses the real DSH session, agent loop and filesystem tool.
- * It cannot load the ordinary provider/settings/plugins: those could send a
- * frozen source outside the loopback gate before c3 exists.
+ * Discovery runs use the real DSH session, agent loop and filesystem tool,
+ * with only an authenticated, local Node broker as the model endpoint.
+ * Runtime never loads ordinary provider credentials, settings or plugins.
  */
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'

@@ -32,6 +32,7 @@ import {
 } from './run-context.js'
 import {
   DISCOVERY_EXECUTION_REPLAY_CAPABILITY,
+  DISCOVERY_EXECUTION_LIVE_CAPABILITY,
   WORK_INPUT_CAPABILITY,
   RunStartWorkInputSchema,
   RunWorkInputReceiptSchema,
@@ -242,6 +243,7 @@ export const NodeHelloSchema = envelope(
           ProjectContextCapabilitySchema,
           z.literal(WORK_INPUT_CAPABILITY),
           z.literal(DISCOVERY_EXECUTION_REPLAY_CAPABILITY),
+          z.literal(DISCOVERY_EXECUTION_LIVE_CAPABILITY),
         ]),
       )
       .max(8)

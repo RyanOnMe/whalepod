@@ -68,13 +68,13 @@ import type { ArtifactStore } from '../artifact/store.js'
 import {
   discoveryReplayBundle,
   verifyDiscoveryReplayRun,
-  type DiscoveryReplayRoute,
+  type DiscoveryExecutionRoute,
 } from '../discovery/replay-binding.js'
 
 export interface WorkRouteDeps {
   readonly database: Database
   readonly requireActor: RequireActor
-  readonly discoveryExecutionReplay?: DiscoveryReplayRoute | undefined
+  readonly discoveryExecutionReplay?: DiscoveryExecutionRoute | undefined
   readonly discoveryStore?: ArtifactStore | undefined
   readonly discoveryDeviceOnline?: ((deviceId: string) => boolean) | undefined
   /**

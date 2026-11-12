@@ -12,6 +12,13 @@ import {
   type ServerResponse,
 } from 'node:http'
 import { basename, dirname, join } from 'node:path'
+import type { DiscoveryExecutionExecutor } from '@whalepod/protocol'
+import {
+  createDiscoveryLiveModelPort,
+  sameDiscoveryLiveExecutor,
+  type DiscoveryLiveOptions,
+  type DiscoveryModelHubPort,
+} from './discovery-live-model.js'
 
 const MAX_REQUEST_BYTES = 512 * 1024
 const MAX_RESPONSE_BYTES = 1024 * 1024
@@ -77,13 +84,104 @@ export function discoveryReplayEndpoint(value: string): URL {
   return url
 }
 
-export async function startDiscoveryReplayGate(input: {
-  readonly endpoint: string
-  readonly model: string
+interface DiscoveryGateChecks {
   readonly authorize: (signal: AbortSignal) => Promise<boolean>
   readonly observe?: (stage: 'read' | 'tool' | 'model' | 'candidate', allowed: boolean) => void
-}): Promise<DiscoveryReplayGate> {
+}
+
+export async function startDiscoveryReplayGate(
+  input: DiscoveryGateChecks & {
+    readonly endpoint: string
+    readonly model: string
+  },
+): Promise<DiscoveryReplayGate> {
   const endpoint = discoveryReplayEndpoint(input.endpoint)
+  return startDiscoveryLoopbackGate({
+    ...input,
+    async forward(payload, signal, res) {
+      // Never send the local capability or a device token to the replay fixture.
+      const upstream = await new Promise<IncomingMessage>((resolve, reject) => {
+        const request = httpRequest(
+          endpoint,
+          {
+            method: 'POST',
+            agent: false,
+            headers: {
+              'content-type': 'application/json',
+              'content-length': payload.byteLength,
+            },
+            signal,
+          },
+          resolve,
+        )
+        request.once('error', reject)
+        request.end(payload)
+      })
+      const type = upstream.headers['content-type']
+      if (upstream.statusCode !== 200 || typeof type !== 'string') {
+        upstream.destroy()
+        res.writeHead(503).end()
+        return
+      }
+      res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store' })
+      let resultBytes = 0
+      try {
+        for await (const raw of upstream) {
+          const chunk = Buffer.from(raw)
+          resultBytes += chunk.byteLength
+          if (resultBytes > MAX_RESPONSE_BYTES) throw new Error('replay response too large')
+          res.write(chunk)
+        }
+        res.end()
+      } finally {
+        upstream.destroy()
+      }
+    },
+  })
+}
+
+type LiveObserver = Parameters<typeof createDiscoveryLiveModelPort>[2]
+
+export async function startDiscoveryLiveGate(
+  input: DiscoveryGateChecks & {
+    readonly options: DiscoveryLiveOptions
+    readonly executor: DiscoveryExecutionExecutor
+    readonly hub: DiscoveryModelHubPort
+    readonly observeLive?: LiveObserver
+  },
+): Promise<DiscoveryReplayGate> {
+  if (!sameDiscoveryLiveExecutor(input.options.executor, input.executor))
+    throw new Error('discovery live executor does not match local policy')
+  const port = createDiscoveryLiveModelPort(input.options, input.hub, input.observeLive)
+  return startDiscoveryLoopbackGate({
+    ...input,
+    model: input.executor.model,
+    authorize: async (signal) => !port.isBlocked() && input.authorize(signal),
+    mayUpload: port.mayUpload,
+    async forward(payload, signal, res) {
+      const body = await port.request(payload, signal)
+      res
+        .writeHead(200, {
+          'content-type': 'text/event-stream',
+          'content-length': body.byteLength,
+          'cache-control': 'no-store',
+        })
+        .end(body)
+    },
+  })
+}
+
+async function startDiscoveryLoopbackGate(
+  input: DiscoveryGateChecks & {
+    readonly model: string
+    readonly mayUpload?: () => boolean
+    readonly forward: (
+      bytes: Buffer,
+      signal: AbortSignal,
+      response: ServerResponse,
+    ) => Promise<void>
+  },
+): Promise<DiscoveryReplayGate> {
   const token = randomBytes(32).toString('base64url')
   const expectedAuth = Buffer.from(`Bearer ${token}`)
   const lifetime = new AbortController()
@@ -153,45 +251,7 @@ export async function startDiscoveryReplayGate(input: {
       res.writeHead(403).end()
       return
     }
-    // One request per DSH attempt. Never send the local capability or a device
-    // token to the replay endpoint, and never follow a redirect off loopback.
-    const upstream = await new Promise<IncomingMessage>((resolve, reject) => {
-      const request = httpRequest(
-        endpoint,
-        {
-          method: 'POST',
-          // No ambient agent, proxy, redirection or retries.
-          agent: false,
-          headers: {
-            'content-type': 'application/json',
-            'content-length': payload.byteLength,
-          },
-          signal,
-        },
-        resolve,
-      )
-      request.once('error', reject)
-      request.end(payload)
-    })
-    const type = upstream.headers['content-type']
-    if (upstream.statusCode !== 200 || typeof type !== 'string') {
-      upstream.destroy()
-      res.writeHead(503).end()
-      return
-    }
-    res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store' })
-    let resultBytes = 0
-    try {
-      for await (const raw of upstream) {
-        const chunk = Buffer.from(raw)
-        resultBytes += chunk.byteLength
-        if (resultBytes > MAX_RESPONSE_BYTES) throw new Error('replay response too large')
-        res.write(chunk)
-      }
-      res.end()
-    } finally {
-      upstream.destroy()
-    }
+    await input.forward(payload, signal, res)
   }
 
   await new Promise<void>((resolve, reject) => {
@@ -210,7 +270,8 @@ export async function startDiscoveryReplayGate(input: {
   return {
     origin: `http://127.0.0.1:${address.port}`,
     token,
-    authorizeCandidate: () =>
+    authorizeCandidate: async () =>
+      (input.mayUpload?.() ?? true) &&
       authorize('candidate', AbortSignal.any([lifetime.signal, AbortSignal.timeout(TIMEOUT_MS)])),
     close: () => {
       lifetime.abort()

@@ -434,6 +434,7 @@ export async function discoveryConsentBasis(database: Database, actor: Actor, pr
               id: permit.id,
               version: permit.version,
               tier: permit.tier,
+              ...(permit.executorLimits ? { executorLimits: permit.executorLimits } : {}),
               confirmedAt: permit.confirmedAt.toISOString(),
               expiresAt: permit.expiresAt.toISOString(),
               revokedAt: permit.revokedAt?.toISOString() ?? null,
@@ -482,7 +483,9 @@ export async function changeDiscoveryConsent(
 ) {
   return transactCommand(
     database,
-    `discovery.consent:${kind}:${active}:${actor.userId}:${projectId}:${key}:${configVersion ?? ''}:${permitInput?.tier ?? ''}:${permitInput?.templateDigest ?? ''}`,
+    `discovery.consent:${kind}:${active}:${actor.userId}:${projectId}:${key}:${configVersion ?? ''}:${permitInput?.tier ?? ''}:${permitInput?.templateDigest ?? ''}${
+      permitInput?.executorLimits ? `:${sha256Hex(canonicalJson(permitInput.executorLimits))}` : ''
+    }`,
     async (tx) => {
       await getCoordinatorStateForUpdate(tx, projectId)
       // Project lock orders consent changes against apply/manual creation, which hold it before
@@ -591,7 +594,9 @@ export async function changeDiscoveryConsent(
         previous.configVersion === cfg.version &&
         existing !== undefined &&
         existing.tier === tier &&
-        existing.templateDigest === digest
+        existing.templateDigest === digest &&
+        canonicalJson(existing.executorLimits) ===
+          canonicalJson(permitInput?.executorLimits ?? null)
       )
         return {
           projectId,
@@ -630,6 +635,7 @@ export async function changeDiscoveryConsent(
         template,
         templateDigest: digest,
         maxCreations: cfg.settings.maxCreations,
+        executorLimits: permitInput?.executorLimits ?? null,
         expiresAt: new Date(cfg.settings.expiresAt),
         verifierUserIds: [...new Set(cfg.settings.verifierUserIds)],
         confirmedAt: now,

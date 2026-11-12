@@ -587,13 +587,13 @@
               "$ref": "#/$defs/__schema40"
             },
             "toolPolicy": {
-              "$ref": "#/$defs/__schema46"
+              "$ref": "#/$defs/__schema47"
             },
             "resumeOfRunId": {
-              "$ref": "#/$defs/__schema48"
+              "$ref": "#/$defs/__schema49"
             },
             "resumeSessionId": {
-              "$ref": "#/$defs/__schema49"
+              "$ref": "#/$defs/__schema50"
             }
           },
           "required": [
@@ -639,10 +639,10 @@
           "type": "object",
           "properties": {
             "commandId": {
-              "$ref": "#/$defs/__schema50"
+              "$ref": "#/$defs/__schema51"
             },
             "manifest": {
-              "$ref": "#/$defs/__schema51"
+              "$ref": "#/$defs/__schema52"
             },
             "manifestDigest": {
               "$ref": "#/$defs/__schema25"
@@ -685,10 +685,10 @@
           "type": "object",
           "properties": {
             "commandId": {
-              "$ref": "#/$defs/__schema50"
+              "$ref": "#/$defs/__schema51"
             },
             "manifest": {
-              "$ref": "#/$defs/__schema51"
+              "$ref": "#/$defs/__schema52"
             },
             "manifestDigest": {
               "$ref": "#/$defs/__schema25"
@@ -1296,11 +1296,11 @@
               "maxItems": 32,
               "type": "array",
               "items": {
-                "$ref": "#/$defs/__schema54"
+                "$ref": "#/$defs/__schema55"
               }
             },
             "generatedAt": {
-              "$ref": "#/$defs/__schema59"
+              "$ref": "#/$defs/__schema60"
             },
             "commandId": {
               "type": "string",
@@ -1367,7 +1367,7 @@
               "$ref": "#/$defs/__schema31"
             },
             "at": {
-              "$ref": "#/$defs/__schema59"
+              "$ref": "#/$defs/__schema60"
             },
             "commandId": {
               "type": "string",
@@ -1914,6 +1914,9 @@
         },
         "discoveryReplayEndpoint": {
           "$ref": "#/$defs/__schema45"
+        },
+        "discoveryLiveExecutor": {
+          "$ref": "#/$defs/__schema46"
         }
       },
       "required": [
@@ -2036,6 +2039,44 @@
     "__schema46": {
       "type": "object",
       "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "endpoint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "account": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "policyGeneration": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 2147483647
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "endpoint",
+        "account",
+        "policyGeneration"
+      ],
+      "additionalProperties": false
+    },
+    "__schema47": {
+      "type": "object",
+      "properties": {
         "mode": {
           "type": "string",
           "const": "draft"
@@ -2044,7 +2085,7 @@
           "maxItems": 16,
           "type": "array",
           "items": {
-            "$ref": "#/$defs/__schema47"
+            "$ref": "#/$defs/__schema48"
           }
         },
         "mandateVersion": {
@@ -2066,7 +2107,7 @@
       ],
       "additionalProperties": false
     },
-    "__schema47": {
+    "__schema48": {
       "type": "string",
       "enum": [
         "read",
@@ -2076,22 +2117,22 @@
         "grep"
       ]
     },
-    "__schema48": {
+    "__schema49": {
       "type": "string",
       "format": "uuid",
       "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
     },
-    "__schema49": {
+    "__schema50": {
       "type": "string",
       "minLength": 1,
       "maxLength": 128
     },
-    "__schema50": {
+    "__schema51": {
       "type": "string",
       "format": "uuid",
       "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
     },
-    "__schema51": {
+    "__schema52": {
       "type": "object",
       "properties": {
         "kind": {
@@ -2133,7 +2174,7 @@
           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
         },
         "mandateVersion": {
-          "$ref": "#/$defs/__schema52"
+          "$ref": "#/$defs/__schema53"
         },
         "profileRevisionId": {
           "type": "string",
@@ -2151,7 +2192,7 @@
           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
         },
         "managedHostGeneration": {
-          "$ref": "#/$defs/__schema52"
+          "$ref": "#/$defs/__schema53"
         },
         "source": {
           "type": "object",
@@ -2167,7 +2208,7 @@
               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
             },
             "sha256": {
-              "$ref": "#/$defs/__schema53"
+              "$ref": "#/$defs/__schema54"
             },
             "byteSize": {
               "type": "integer",
@@ -2184,7 +2225,7 @@
           "additionalProperties": false
         },
         "modelBindingDigest": {
-          "$ref": "#/$defs/__schema53"
+          "$ref": "#/$defs/__schema54"
         },
         "expiresAt": {
           "type": "string",
@@ -2212,32 +2253,32 @@
       ],
       "additionalProperties": false
     },
-    "__schema52": {
+    "__schema53": {
       "type": "integer",
       "minimum": 1,
       "maximum": 9007199254740991
     },
-    "__schema53": {
+    "__schema54": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
     },
-    "__schema54": {
+    "__schema55": {
       "type": "object",
       "properties": {
         "entryId": {
-          "$ref": "#/$defs/__schema55"
+          "$ref": "#/$defs/__schema56"
         },
         "kind": {
           "$ref": "#/$defs/__schema34"
         },
         "state": {
-          "$ref": "#/$defs/__schema56"
-        },
-        "currentAuthorizationGeneration": {
           "$ref": "#/$defs/__schema57"
         },
-        "reason": {
+        "currentAuthorizationGeneration": {
           "$ref": "#/$defs/__schema58"
+        },
+        "reason": {
+          "$ref": "#/$defs/__schema59"
         }
       },
       "required": [
@@ -2249,12 +2290,12 @@
       ],
       "additionalProperties": false
     },
-    "__schema55": {
+    "__schema56": {
       "type": "string",
       "format": "uuid",
       "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
     },
-    "__schema56": {
+    "__schema57": {
       "type": "string",
       "enum": [
         "frozen",
@@ -2265,7 +2306,7 @@
         "unavailable"
       ]
     },
-    "__schema57": {
+    "__schema58": {
       "anyOf": [
         {
           "type": "string",
@@ -2277,7 +2318,7 @@
         }
       ]
     },
-    "__schema58": {
+    "__schema59": {
       "anyOf": [
         {
           "type": "string",
@@ -2289,7 +2330,7 @@
         }
       ]
     },
-    "__schema59": {
+    "__schema60": {
       "type": "string",
       "format": "date-time",
       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"

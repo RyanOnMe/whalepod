@@ -31,9 +31,10 @@ import { sanitizeError } from './modules/shared/error-log.js'
 import { logRecordedEntry } from './modules/context/observer.js'
 import { WsDeviceGateway } from './modules/device/index.js'
 
-/** The shipped composition; programmatic callers may enable only the guarded loopback replay. */
+/** The shipped composition. Discovery model modes remain off in the CLI. */
 export async function runHub(
   discoveryExecutionReplay?: HubDeps['discoveryExecutionReplay'],
+  discoveryExecutorLive?: HubDeps['discoveryExecutorLive'],
 ): Promise<void> {
   const config = loadConfig()
   const database = createDatabase({ connectionString: config.databaseUrl })
@@ -56,6 +57,7 @@ export async function runHub(
     setupTokenStore,
     logger: { level: process.env.LOG_LEVEL ?? 'info' },
     ...(discoveryExecutionReplay === undefined ? {} : { discoveryExecutionReplay }),
+    ...(discoveryExecutorLive === undefined ? {} : { discoveryExecutorLive }),
   })
 
   // 组合根后台循环：测试不经本入口，故无需条件化。

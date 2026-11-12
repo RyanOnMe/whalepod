@@ -1,33 +1,40 @@
 import { and, eq, isNull } from 'drizzle-orm'
 import { asUserId } from '@whalepod/domain'
 import {
+  getCoordinationTeamPolicy,
+  getDiscoveryPermit,
+  getRouterConfig,
   getSpecRevision,
+  getTeam,
   getWorkByIdForUpdate,
   insertDispatchIntent,
   insertWorkMandate,
   markDispatchIntentAutoDispatched,
+  recordDiscoveryExecutorDispatch,
   schema,
   updateWork,
   type DiscoveryExecutionRow,
   type Tx,
 } from '@whalepod/db'
-import { DISCOVERY_EXECUTION_REPLAY_CAPABILITY, WORK_INPUT_CAPABILITY } from '@whalepod/protocol'
+import { WORK_INPUT_CAPABILITY } from '@whalepod/protocol'
 import type { ArtifactStore } from '../artifact/store.js'
 import { contextCapabilitiesOf } from '../context/run-snapshot.js'
 import { deriveDeviceStatus } from '../device/pairing.js'
 import type { DiscoveryExecutionBasis } from '../discovery/execution.js'
+import { executorSourceGrantsDigest } from '../discovery/executor-source-grants.js'
 import {
   DISCOVERY_REPLAY_TOOLS,
+  discoveryCapability,
   matchesDiscoveryReplayRoute,
   materializeDiscoveryReplayInput,
-  type DiscoveryReplayRoute,
+  type DiscoveryExecutionRoute,
 } from '../discovery/replay-binding.js'
 import type { RunOrchestrator } from '../run/orchestrator.js'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
 
 function unavailable(reason: string): never {
-  throw new ApiError(409, 'CONFLICT', 'discovery replay dispatch is not available', { reason })
+  throw new ApiError(409, 'CONFLICT', 'discovery execution dispatch is not available', { reason })
 }
 
 /**
@@ -39,7 +46,7 @@ export async function dispatchDiscoveryReplay(
   deps: {
     readonly orchestrator: RunOrchestrator
     readonly store: ArtifactStore
-    readonly route: DiscoveryReplayRoute
+    readonly route: DiscoveryExecutionRoute
     readonly isDeviceConnected: (deviceId: string) => boolean
   },
   tx: Tx,
@@ -48,6 +55,50 @@ export async function dispatchDiscoveryReplay(
   now: Date,
 ): Promise<void> {
   if (!matchesDiscoveryReplayRoute(execution, deps.route)) unavailable('executor_route_mismatch')
+  const livePolicy = 'route' in deps.route ? deps.route : undefined
+  const liveBilling = livePolicy
+    ? await (async () => {
+        const permit = await getDiscoveryPermit(tx, execution.parentPermitId)
+        const team = await getTeam(tx)
+        const project = await getRouterConfig(tx, execution.projectId)
+        const teamPolicy = team ? await getCoordinationTeamPolicy(tx, team.id) : undefined
+        if (!permit?.executorLimits || !team || !teamPolicy || !project?.enabled)
+          unavailable('executor_budget_unavailable')
+        const sourceGrantsDigest = await executorSourceGrantsDigest(
+          tx,
+          execution.applicationId,
+          execution.executorDigest,
+          basis.sources,
+        )
+        if (!sourceGrantsDigest) unavailable('executor_source_grants_unavailable')
+        return {
+          teamId: team.id,
+          sourceGrantsDigest,
+          policy: {
+            parent: permit.executorLimits,
+            team: {
+              calls: teamPolicy.dailyCallLimit,
+              tokens: teamPolicy.dailyTokenLimit,
+              costMicros: teamPolicy.dailyCostMicrosLimit,
+            },
+            project: {
+              calls: project.projectDailyCallLimit,
+              tokens: project.projectDailyTokenLimit,
+              costMicros: project.projectDailyCostMicrosLimit,
+            },
+            work: {
+              calls: permit.executorLimits.calls,
+              tokens: permit.executorLimits.tokens,
+              costMicros: permit.executorLimits.costMicros,
+            },
+            maxInputTokens: livePolicy.maxInputTokens,
+            maxOutputTokens: livePolicy.maxOutputTokens,
+            inputPriceMicrosPerMillionTokens: livePolicy.inputPriceMicrosPerMillion,
+            outputPriceMicrosPerMillionTokens: livePolicy.outputPriceMicrosPerMillion,
+          },
+        }
+      })()
+    : undefined
   const work = await getWorkByIdForUpdate(tx, execution.workId)
   const spec = await getSpecRevision(tx, basis.application.specRevisionId)
   if (
@@ -80,7 +131,7 @@ export async function dispatchDiscoveryReplay(
       and(
         isNull(schema.agents.archivedAt),
         eq(schema.agents.createdBy, execution.principalUserId),
-        eq(schema.agentProfileRevisions.provider, execution.executorProvider),
+        eq(schema.agentProfileRevisions.provider, 'deepseek-official'),
         eq(schema.agentProfileRevisions.model, execution.executorModel),
         eq(schema.agentProfileRevisions.approvalPolicy, 'approval_required'),
       ),
@@ -109,7 +160,7 @@ export async function dispatchDiscoveryReplay(
       deps.orchestrator.isOrdinaryDevice(device.id) &&
       deps.isDeviceConnected(device.id) &&
       deriveDeviceStatus(device, now) === 'online' &&
-      contextCapabilitiesOf(device).includes(DISCOVERY_EXECUTION_REPLAY_CAPABILITY) &&
+      contextCapabilitiesOf(device).includes(discoveryCapability(deps.route)) &&
       contextCapabilitiesOf(device).includes(WORK_INPUT_CAPABILITY) &&
       (workspace.capabilities as { write?: unknown }).write === true,
   )
@@ -141,8 +192,8 @@ export async function dispatchDiscoveryReplay(
     allowedToolNames: [...DISCOVERY_REPLAY_TOOLS],
     maxRunsPerWork: 1,
     maxAttempts: 1,
-    maxTokens: 0,
-    maxCostMicros: 0,
+    maxTokens: liveBilling?.policy.work.tokens ?? 0,
+    maxCostMicros: liveBilling?.policy.work.costMicros ?? 0,
     waitDeadlineSeconds: 1,
     expiresAt: execution.expiresAt,
     createdAt: now,
@@ -162,7 +213,7 @@ export async function dispatchDiscoveryReplay(
     onBehalfOfUserId: execution.principalUserId,
     inputDigest: execution.sourceManifestDigest,
     triggerRefs: [{ discoveryExecutionId: execution.id }],
-    reason: 'discovery_private_draft_replay',
+    reason: livePolicy ? 'discovery_private_draft_executor' : 'discovery_private_draft_replay',
     expiresAt: execution.expiresAt,
     createdAt: now,
     updatedAt: now,
@@ -206,12 +257,25 @@ export async function dispatchDiscoveryReplay(
     },
     {
       executionId: execution.id,
-      endpoint: execution.executorEndpoint,
+      ...(livePolicy
+        ? { liveExecutor: livePolicy.route }
+        : { endpoint: execution.executorEndpoint }),
       specRevisionId: spec.id,
       manifest: frozen.manifest,
       manifestDigest: frozen.bundle.manifestDigest,
     },
   )
+  if (liveBilling) {
+    const ledger = await recordDiscoveryExecutorDispatch(tx, {
+      ...liveBilling,
+      runId: run.id,
+      executionId: execution.id,
+      routeDigest: execution.executorDigest,
+      policyGeneration: execution.executorPolicyGeneration,
+      now,
+    })
+    if (!ledger.ok) unavailable(ledger.reason)
+  }
   if (
     !(await markDispatchIntentAutoDispatched(
       tx,
