@@ -29,7 +29,7 @@ export interface Rd05aRun {
   status: string
   origin: string
   workKey: string
-  dshSessionId: string
+  dshSessionId: string | null
   dispatchIntentId: string
   mandateId: string
   specRevisionId: string
@@ -95,6 +95,55 @@ export interface Rd05aStage {
   runIds: string[]
 }
 
+export interface Rd05aStability {
+  startedAt: string
+  finishedAt: string
+  observedMs: number
+  before: { taskIds: string[]; runIds: string[]; evaluationIds: string[] }
+  after: { taskIds: string[]; runIds: string[]; evaluationIds: string[] }
+}
+
+export interface Rd05aUsage {
+  inputTokens: number
+  outputTokens: number
+  costMicros: number
+}
+
+export interface Rd05aAccounting {
+  coordination: {
+    id: string
+    evaluationId: string
+    purpose: string
+    attempt: number
+    phase: string
+    projectId: string
+    workKey: string | null
+    reservedTokens: number
+    reservedCostMicros: number
+    chargeMode: string | null
+    usage: (Rd05aUsage & { provider: string; model: string }) | null
+  }[]
+  executor: {
+    id: string
+    runId: string
+    phase: string
+    projectId: string
+    workKey: string
+    mandateId: string
+    reservedTokens: number
+    reservedCostMicros: number
+    chargeMode: string | null
+    usage: Rd05aUsage | null
+  }[]
+  replay: {
+    runId: string
+    mode: 'ordinary_ledger' | 'loopback_unmetered'
+    requests: number
+    liveDispatchRows: number
+    liveAttemptRows: number
+  }[]
+}
+
 export interface Rd05aHumanAction {
   action:
     | 'setup'
@@ -131,6 +180,8 @@ export interface Rd05aEvidence {
   provenance: Rd05aBinding & { eventsDigest: string }
   runs: Rd05aRun[]
   stages: Rd05aStage[]
+  stability: Rd05aStability
+  accounting: Rd05aAccounting
   humanActions: {
     setup: Rd05aHumanAction[]
     positive: Rd05aHumanAction[]
@@ -266,6 +317,8 @@ export interface Rd05aEvidence {
   revokeBeforeRead: {
     projectId: string
     taskId: string
+    workKey: string
+    evaluationId: string
     sourceId: string
     executionId: string
     authorizedExecutionId: string
@@ -290,6 +343,11 @@ export interface Rd05aEvidence {
 export type Rd05aEvent =
   | ({ component: 'hub.work_input'; type: 'work_input.receipt' } & Rd05aReceipt)
   | ({ component: 'acceptance.campaign'; type: 'campaign.stage'; campaignId: string } & Rd05aStage)
+  | ({
+      component: 'acceptance.snapshot'
+      type: 'campaign.stability'
+      campaignId: string
+    } & Rd05aStability)
   | ({ component: 'acceptance.replay'; type: 'tool_read.observed' } & Rd05aToolRead)
   | ({
       component: 'acceptance.replay'
@@ -300,5 +358,15 @@ export type Rd05aEvent =
       component: 'hub.run'
       type: 'runtime.ready' | 'run.completed' | 'run.failed' | 'run.cancelled'
       runId: string
-      audience: 'owner'
+      audience: 'owner' | 'project'
+    }
+  | {
+      component: 'acceptance.snapshot'
+      type: 'run.status'
+      runId: string
+      status: string
+      projectId: string
+      taskId: string
+      workKey: string
+      executionId: string | null
     }

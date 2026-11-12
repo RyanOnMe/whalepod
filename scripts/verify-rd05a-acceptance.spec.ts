@@ -13,6 +13,7 @@ import type {
   Rd05aSource,
 } from './lib/rd05a-evidence.js'
 import { checkRd05a, verifyRd05a } from './verify-rd05a-acceptance.js'
+import { checkRd05aEvidenceNegatives } from './check-rd05a-evidence-negatives.js'
 
 const id = (n: number) => `11111111-1111-4111-8111-${n.toString().padStart(12, '0')}`
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
@@ -27,6 +28,23 @@ const toolError = {
   toolName: 'read_work_input',
   role: 'tool',
   resultDigest: hash('Error: unknown work input item: RD04C2_PRIVATE_TOOL_ERROR_ONLY'),
+}
+
+function sourceManifestDigest(sources: Rd05aSource[]) {
+  const canonical = (value: unknown): string => {
+    if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']'
+    if (value && typeof value === 'object')
+      return (
+        '{' +
+        Object.entries(value)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, item]) => JSON.stringify(key) + ':' + canonical(item))
+          .join(',') +
+        '}'
+      )
+    return JSON.stringify(value)
+  }
+  return hash(canonical(sources))
 }
 
 function source(n: number, body: string): Rd05aSource {
@@ -134,7 +152,7 @@ function fixture() {
     schemaVersion: 1,
     mode: 'rd05a_loopback_combined',
     campaignId: id(1),
-    generatedAt: at(49),
+    generatedAt: at(52),
     projectId: id(2),
     members: { ownerId: id(3), memberId: id(4), count: 2 },
     assembly: {
@@ -171,6 +189,79 @@ function fixture() {
         runIds: [bootstrap.id, continuation.id, discovery.id, id(33)],
       },
     ],
+    stability: {
+      startedAt: at(48),
+      finishedAt: at(51),
+      observedMs: 2500,
+      before: {
+        taskIds: [id(10), id(11), id(12), id(13)],
+        runIds: [id(30), id(31), id(32), id(33)],
+        evaluationIds: [id(90), id(91), id(93), id(94)],
+      },
+      after: {
+        taskIds: [id(10), id(11), id(12), id(13)],
+        runIds: [id(30), id(31), id(32), id(33)],
+        evaluationIds: [id(90), id(91), id(93), id(94)],
+      },
+    },
+    accounting: {
+      coordination: [id(90), id(91), id(93), id(94)].flatMap((evaluationId, index) =>
+        ['reserved', 'settled'].map((phase, phaseIndex) => ({
+          id: id(200 + index * 2 + phaseIndex),
+          evaluationId,
+          purpose: index < 2 ? 'router' : 'discovery',
+          attempt: 1,
+          phase,
+          projectId: id(2),
+          workKey: index < 2 ? id(20) : null,
+          reservedTokens: 1000,
+          reservedCostMicros: 100,
+          chargeMode: phase === 'reserved' ? null : 'actual',
+          usage:
+            phase === 'reserved'
+              ? null
+              : {
+                  inputTokens: 300,
+                  outputTokens: 70,
+                  costMicros: 0,
+                  provider: 'loopback',
+                  model: 'replay',
+                },
+        })),
+      ),
+      executor: [bootstrap, continuation].flatMap((target, index) =>
+        ['reserved', 'settled'].map((phase, phaseIndex) => ({
+          id: id(220 + index * 2 + phaseIndex),
+          runId: target.id,
+          phase,
+          projectId: id(2),
+          workKey: id(20),
+          mandateId: id(21),
+          reservedTokens: 1000,
+          reservedCostMicros: 100,
+          chargeMode: phase === 'reserved' ? null : 'actual',
+          usage:
+            phase === 'reserved' ? null : { inputTokens: 200, outputTokens: 50, costMicros: 0 },
+        })),
+      ),
+      replay: [bootstrap, continuation, discovery]
+        .map((target, index) => ({
+          runId: target.id,
+          mode: index < 2 ? ('ordinary_ledger' as const) : ('loopback_unmetered' as const),
+          requests: index < 2 ? 4 : 6,
+          liveDispatchRows: 0,
+          liveAttemptRows: 0,
+        }))
+        .concat([
+          {
+            runId: id(33),
+            mode: 'loopback_unmetered',
+            requests: 1,
+            liveDispatchRows: 0,
+            liveAttemptRows: 0,
+          },
+        ]),
+    },
     humanActions: {
       setup: [{ action: 'setup', subjectId: id(2) }],
       positive: [
@@ -181,7 +272,9 @@ function fixture() {
       ],
       corrections: [{ action: 'correction', subjectId: id(81) }],
       negative: [
-        { action: 'setup', subjectId: id(13) },
+        { action: 'setup', subjectId: id(85) },
+        { action: 'setup', subjectId: id(2) },
+        { action: 'setup', subjectId: id(4) },
         { action: 'catalogVerification', subjectId: id(83) },
         { action: 'executionAuthorization', subjectId: id(84) },
         { action: 'correction', subjectId: id(84) },
@@ -344,7 +437,7 @@ function fixture() {
         ownerUserId: id(3),
         status: 'authorized',
         purpose: 'private_draft',
-        sourceManifestDigest: discovery.manifestDigest,
+        sourceManifestDigest: sourceManifestDigest([discoverySource, artifactSource]),
         sources: [discoverySource, artifactSource],
         liveOnlyGrantCount: 0,
       },
@@ -387,6 +480,8 @@ function fixture() {
     revokeBeforeRead: {
       projectId: id(2),
       taskId: id(13),
+      workKey: id(29),
+      evaluationId: id(94),
       sourceId: id(43),
       executionId: id(84),
       authorizedExecutionId: id(84),
@@ -405,6 +500,12 @@ function fixture() {
     },
   }
   const events: Rd05aEvent[] = [
+    {
+      component: 'acceptance.snapshot',
+      type: 'campaign.stability',
+      campaignId: evidence.campaignId,
+      ...structuredClone(evidence.stability),
+    },
     ...[...fastReceipts, slowReceipt, negativeReceipt].map((row) => ({
       component: 'hub.work_input' as const,
       type: 'work_input.receipt' as const,
@@ -427,7 +528,7 @@ function fixture() {
       campaignId: evidence.campaignId,
       ...structuredClone(stage),
     })),
-    ...evidence.runs.flatMap((row) => [
+    ...evidence.runs.slice(0, 2).flatMap((row) => [
       {
         component: 'hub.run' as const,
         type: 'runtime.ready' as const,
@@ -441,8 +542,26 @@ function fixture() {
         audience: 'owner' as const,
       },
     ]),
-    { component: 'hub.run', type: 'runtime.ready', runId: id(33), audience: 'owner' },
-    { component: 'hub.run', type: 'run.failed', runId: id(33), audience: 'owner' },
+    ...evidence.runs.map((row) => ({
+      component: 'acceptance.snapshot' as const,
+      type: 'run.status' as const,
+      runId: row.id,
+      status: row.status,
+      projectId: row.projectId,
+      taskId: row.taskId,
+      workKey: row.workKey,
+      executionId: row.role === 'discovery' ? evidence.slow.executionId : null,
+    })),
+    {
+      component: 'acceptance.snapshot',
+      type: 'run.status',
+      runId: id(33),
+      status: 'failed',
+      projectId: id(2),
+      taskId: id(13),
+      workKey: id(29),
+      executionId: id(84),
+    },
   ]
   return { evidence, events }
 }
@@ -458,6 +577,252 @@ function seal(value: Fixture) {
 // Every mutation starts from a clone, including independent event objects. Rehashing is
 // intentional: a recomputed file digest must not conceal missing semantic evidence.
 const negatives: Mutation[] = [
+  [
+    'missing accounting',
+    ({ evidence: r }) => {
+      Object.assign(r, { accounting: undefined })
+    },
+  ],
+  [
+    'duplicate coordination charge',
+    ({ evidence: r }) => {
+      r.accounting.coordination.push(structuredClone(r.accounting.coordination[1]!))
+    },
+  ],
+  [
+    'missing coordination settlement',
+    ({ evidence: r }) => {
+      r.accounting.coordination.pop()
+    },
+  ],
+  [
+    'wrong coordination attempt',
+    ({ evidence: r }) => {
+      r.accounting.coordination[0]!.attempt = 2
+    },
+  ],
+  [
+    'wrong coordination purpose',
+    ({ evidence: r }) => {
+      r.accounting.coordination[0]!.purpose = 'discovery'
+    },
+  ],
+  [
+    'wrong coordination project',
+    ({ evidence: r }) => {
+      r.accounting.coordination[0]!.projectId = id(999)
+    },
+  ],
+  [
+    'discovery charged Work',
+    ({ evidence: r }) => {
+      r.accounting.coordination[4]!.workKey = r.fast.workKey
+    },
+  ],
+  [
+    'Router missing Work charge',
+    ({ evidence: r }) => {
+      r.accounting.coordination[0]!.workKey = null
+    },
+  ],
+  [
+    'reserved coordination has actual charge',
+    ({ evidence: r }) => {
+      r.accounting.coordination[0]!.chargeMode = 'actual'
+    },
+  ],
+  [
+    'reserved coordination has usage',
+    ({ evidence: r }) => {
+      r.accounting.coordination[0]!.usage = structuredClone(r.accounting.coordination[1]!.usage)
+    },
+  ],
+  [
+    'invalid settlement charge mode',
+    ({ evidence: r }) => {
+      r.accounting.coordination[1]!.chargeMode = 'free'
+    },
+  ],
+  [
+    'negative coordination reserve',
+    ({ evidence: r }) => {
+      r.accounting.coordination[0]!.reservedTokens = -1
+    },
+  ],
+  [
+    'negative coordination usage',
+    ({ evidence: r }) => {
+      r.accounting.coordination[1]!.usage!.inputTokens = -1
+    },
+  ],
+  [
+    'missing coordination provider',
+    ({ evidence: r }) => {
+      r.accounting.coordination[1]!.usage!.provider = ''
+    },
+  ],
+  [
+    'missing negative evaluation identity',
+    ({ evidence: r }) => {
+      r.revokeBeforeRead.evaluationId = ''
+    },
+  ],
+  [
+    'duplicate ordinary settlement',
+    ({ evidence: r }) => {
+      r.accounting.executor.push(structuredClone(r.accounting.executor[1]!))
+    },
+  ],
+  [
+    'missing ordinary settlement',
+    ({ evidence: r }) => {
+      r.accounting.executor.pop()
+    },
+  ],
+  [
+    'wrong executor mandate',
+    ({ evidence: r }) => {
+      r.accounting.executor[0]!.mandateId = id(999)
+    },
+  ],
+  [
+    'private Run in ordinary ledger',
+    ({ evidence: r }) => {
+      r.accounting.executor[0]!.runId = r.runs[2]!.id
+    },
+  ],
+  [
+    'wrong executor Work',
+    ({ evidence: r }) => {
+      r.accounting.executor[0]!.workKey = id(999)
+    },
+  ],
+  [
+    'executor settlement missing charge mode',
+    ({ evidence: r }) => {
+      r.accounting.executor[1]!.chargeMode = null
+    },
+  ],
+  [
+    'executor negative usage',
+    ({ evidence: r }) => {
+      r.accounting.executor[1]!.usage!.outputTokens = -1
+    },
+  ],
+  [
+    'missing replay usage disclosure',
+    ({ evidence: r }) => {
+      r.accounting.replay.pop()
+    },
+  ],
+  [
+    'duplicate replay usage disclosure',
+    ({ evidence: r }) => {
+      r.accounting.replay.push(structuredClone(r.accounting.replay[0]!))
+    },
+  ],
+  [
+    'private replay claims metered',
+    ({ evidence: r }) => {
+      r.accounting.replay[2]!.mode = 'ordinary_ledger'
+    },
+  ],
+  [
+    'ordinary replay claims unmetered',
+    ({ evidence: r }) => {
+      r.accounting.replay[0]!.mode = 'loopback_unmetered'
+    },
+  ],
+  [
+    'ordinary requests undercounted',
+    ({ evidence: r }) => {
+      r.accounting.replay[0]!.requests = 3
+    },
+  ],
+  [
+    'private requests reported zero',
+    ({ evidence: r }) => {
+      r.accounting.replay[2]!.requests = 0
+    },
+  ],
+  [
+    'negative requests reported zero',
+    ({ evidence: r }) => {
+      r.accounting.replay[3]!.requests = 0
+    },
+  ],
+  [
+    'live-only dispatch present',
+    ({ evidence: r }) => {
+      r.accounting.replay[2]!.liveDispatchRows = 1
+    },
+  ],
+  [
+    'live-only attempt present',
+    ({ evidence: r }) => {
+      r.accounting.replay[3]!.liveAttemptRows = 1
+    },
+  ],
+  [
+    'stability shorter than two seconds',
+    ({ evidence: r }) => {
+      r.stability.observedMs = 1999
+    },
+  ],
+  [
+    'stability interval reversed',
+    ({ evidence: r }) => {
+      r.stability.finishedAt = at(47)
+    },
+  ],
+  [
+    'stability begins before closure',
+    ({ evidence: r }) => {
+      r.stability.startedAt = at(46)
+    },
+  ],
+  [
+    'stability adds Run',
+    ({ evidence: r }) => {
+      r.stability.after.runIds.push(id(999))
+    },
+  ],
+  [
+    'stability adds Task',
+    ({ evidence: r }) => {
+      r.stability.after.taskIds.push(id(999))
+    },
+  ],
+  [
+    'stability adds evaluation',
+    ({ evidence: r }) => {
+      r.stability.after.evaluationIds.push(id(999))
+    },
+  ],
+  [
+    'stability baseline omits final Run',
+    ({ evidence: r }) => {
+      r.stability.before.runIds.pop()
+    },
+  ],
+  [
+    'stability baseline evaluation missing',
+    ({ evidence: r }) => {
+      r.stability.before.evaluationIds.pop()
+    },
+  ],
+  [
+    'missing stability event after rehash',
+    (value) => {
+      value.events = value.events.filter((event) => event.type !== 'campaign.stability')
+    },
+  ],
+  [
+    'source-manifest confused with Run digest',
+    ({ evidence: r }) => {
+      r.slow.authorization.sourceManifestDigest = r.runs[2]!.manifestDigest
+    },
+  ],
   ['wrong schema', ({ evidence: r }) => Object.assign(r, { schemaVersion: 2 })],
   [
     'old report mode',
@@ -1523,7 +1888,7 @@ for (const type of [
   'campaign.stage',
   'runtime.ready',
   'run.completed',
-  'run.failed',
+  'run.status',
 ] as const) {
   negatives.push([`missing ${type} event after rehash`, (value) => removeEvent(value, type)])
   negatives.push([
@@ -1618,7 +1983,117 @@ negatives.push(
   ],
 )
 
+function multipleSnapshots(value: Fixture) {
+  const target = value.evidence.slow.receipts[0]!
+  const delivered = {
+    ...structuredClone(target),
+    id: id(74),
+    receiptSeq: 1,
+    entriesRead: [],
+    readEvents: [],
+  }
+  const firstRead = {
+    ...structuredClone(target),
+    id: id(75),
+    receiptSeq: 2,
+    entriesRead: target.entriesRead.slice(0, 1),
+    readEvents: target.readEvents.slice(0, 1),
+  }
+  const finalRead = {
+    ...structuredClone(target),
+    receiptSeq: 3,
+    readEvents: target.readEvents.slice(1),
+  }
+  value.evidence.slow.receipts = [delivered, firstRead, finalRead]
+  value.events = value.events.filter(
+    (event) => !(event.type === 'work_input.receipt' && event.runId === target.runId),
+  )
+  value.events.push(
+    ...value.evidence.slow.receipts.map((row) => ({
+      component: 'hub.work_input' as const,
+      type: 'work_input.receipt' as const,
+      ...structuredClone(row),
+    })),
+  )
+}
+
+for (const change of [
+  'missing final read',
+  'duplicate sequence',
+  'regressed cumulative reads',
+  'duplicate actual read',
+  'snapshot status',
+  'snapshot execution',
+  'snapshot task',
+] as const) {
+  negatives.push([
+    change,
+    (value) => {
+      if (change.startsWith('snapshot')) {
+        const event = value.events.find(
+          (event) => event.type === 'run.status' && event.runId === value.evidence.runs[2]!.id,
+        )!
+        if (change === 'snapshot status') Object.assign(event, { status: 'running' })
+        else if (change === 'snapshot execution') Object.assign(event, { executionId: id(999) })
+        else Object.assign(event, { taskId: id(999) })
+        return
+      }
+      multipleSnapshots(value)
+      const rows = value.evidence.slow.receipts
+      if (change === 'missing final read') rows.pop()
+      else if (change === 'duplicate sequence') rows[2]!.receiptSeq = 2
+      else if (change === 'regressed cumulative reads')
+        rows[2]!.entriesRead = rows[2]!.entriesRead.slice(1)
+      else rows[2]!.readEvents.push(structuredClone(rows[1]!.readEvents[0]!))
+      // Keep event claims equal to the mutated captured rows; semantic coverage must fail too.
+      value.events = value.events.filter(
+        (event) =>
+          !(event.type === 'work_input.receipt' && event.runId === value.evidence.runs[2]!.id),
+      )
+      value.events.push(
+        ...rows.map((row) => ({
+          component: 'hub.work_input' as const,
+          type: 'work_input.receipt' as const,
+          ...structuredClone(row),
+        })),
+      )
+    },
+  ])
+}
+
 describe('RD-05a independent combined campaign judge', () => {
+  it('discloses reserved fallback and missing usage without inventing zero private billing', () => {
+    const value = fixture()
+    for (const row of [
+      ...value.evidence.accounting.coordination,
+      ...value.evidence.accounting.executor,
+    ])
+      if (row.phase === 'settled') {
+        row.chargeMode = 'reserved'
+        row.usage = null
+      }
+    expect(() => checkRd05a(value.evidence, seal(value), binding)).not.toThrow()
+  })
+  it('executes every standalone mutation check on both single and multiple receipt snapshots', () => {
+    for (const multi of [false, true]) {
+      const value = fixture()
+      if (multi) multipleSnapshots(value)
+      const before = structuredClone(value)
+      const bytes = seal(value)
+      expect(checkRd05aEvidenceNegatives(value.evidence, bytes, binding)).toBeGreaterThan(100)
+      expect(value.events).toEqual(before.events)
+      expect(value.evidence).toEqual({ ...before.evidence, provenance: value.evidence.provenance })
+    }
+  })
+
+  it('accepts cumulative multi-receipt snapshots and delta read events without inventing private lifecycle', () => {
+    const value = fixture()
+    multipleSnapshots(value)
+    value.evidence.runs[2]!.dshSessionId = null
+    for (const event of value.events) if (event.component === 'hub.run') event.audience = 'project'
+    expect(() => checkRd05a(value.evidence, seal(value), binding)).not.toThrow()
+  })
+
   it('accepts exactly three positive roles and a separate fourth revoke-before-read Run', () => {
     const value = fixture()
     expect(() => checkRd05a(value.evidence, seal(value), binding)).not.toThrow()

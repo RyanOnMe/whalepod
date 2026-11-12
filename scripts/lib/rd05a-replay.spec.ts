@@ -300,8 +300,12 @@ describe('RD05a combined replay over loopback HTTP', () => {
           await vi.waitFor(() => expect(replay.firstFinal).toBeDefined())
           expect(settled).toBe(false)
           expect(replay.firstFinal!.writableEnded).toBe(false)
-          replay.firstFinal!.writeHead(200).end('Owner publication barrier released.')
-          expect(await final).toEqual({ status: 200, body: 'Owner publication barrier released.' })
+          replay.releaseFirstFinal()
+          const released = await final
+          expect(streamed(released)).toEqual({ text: 'Site survey prepared.' })
+          expect(released.body).toContain('"prompt_tokens":200')
+          expect(released.body).toContain('"completion_tokens":50')
+          expect(() => replay.releaseFirstFinal()).toThrow()
         } else {
           expect(streamed(await send(messages))).toMatchObject({ text: expect.any(String) })
         }
@@ -323,12 +327,33 @@ describe('RD05a combined replay over loopback HTTP', () => {
     })
   })
 
+  it('accepts ordinary filesystem read/edit tools while replaying only the frozen fast draft calls', async () => {
+    await withLoopback(async ({ replay, send }) => {
+      const messages = manifest('second')
+      const names = [...tools, 'read', 'edit']
+      for (const name of tools) {
+        const call = called(await send(messages, { tools: names }), name)
+        const content =
+          name === 'read_work_input'
+            ? 'work input: ' + ids.second + '\n\n' + secondSource
+            : 'Completed.'
+        messages.push(assistant(call), result(call, content))
+      }
+      expect(streamed(await send(messages, { tools: names }))).toMatchObject({
+        text: expect.any(String),
+      })
+      expect(replay.executorCalls.map((call) => call.name)).toEqual([...tools, 'stop'])
+      expect(replay.executorCalls[1]!.bodyDigest).toBe(sha256(secondSource))
+      replay.assertHealthy()
+    })
+  })
+
   it.each([
     'unknown id',
     'missing manifest',
     'duplicate manifest',
     'inline body',
-    'extra tool',
+    'duplicate tool name',
     'missing tool',
   ])('rejects a fast Executor with %s', async (mutation) => {
     await withLoopback(async (session) => {
@@ -341,7 +366,7 @@ describe('RD05a combined replay over loopback HTTP', () => {
       if (mutation === 'missing manifest') messages[0]!.content = 'Draft the venue plan.'
       if (mutation === 'duplicate manifest') messages[0]!.content += '\n' + messages[0]!.content
       if (mutation === 'inline body') messages[0]!.content += '\n' + firstSource
-      if (mutation === 'extra tool') names = [...tools, 'shell']
+      if (mutation === 'duplicate tool name') names = [...tools, 'write']
       if (mutation === 'missing tool') names = tools.filter((name) => name !== 'read_work_input')
       await expectRejected(session, messages, { tools: names })
       expect(session.replay.executorCalls).toEqual([])
@@ -356,6 +381,7 @@ describe('RD05a combined replay over loopback HTTP', () => {
     'wrong body',
     'missing delimiter',
     'wrong tool name',
+    'shell tool history',
     'wrong tool arguments',
     'extra history',
     'changed cumulative read',
@@ -379,6 +405,7 @@ describe('RD05a combined replay over loopback HTTP', () => {
       if (mutation === 'wrong body') actual.content += '\n'
       if (mutation === 'missing delimiter') actual.content = secondSource
       if (mutation === 'wrong tool name') history.tool_calls![0]!.function.name = 'write'
+      if (mutation === 'shell tool history') history.tool_calls![0]!.function.name = 'shell'
       if (mutation === 'wrong tool arguments')
         history.tool_calls![0]!.function.arguments = JSON.stringify({ inboxItemId: ids.first })
       if (mutation === 'extra history')
