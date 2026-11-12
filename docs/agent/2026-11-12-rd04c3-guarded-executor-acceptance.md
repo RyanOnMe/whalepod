@@ -6,6 +6,20 @@
 - 同日通过一次真实装配验收：Command Code 的 `deepseek/deepseek-v4.1-flash` 完成 4 次调用，供应商报告输入 9,570、输出 1,352 tokens。Team、Project、父许可和 Work 的增量一致，按冻结费率折算为 4,495 微美元（USD 0.004495），无残留预留。供应商扣款对账仍为 `not_run`。
 - 一个授权只生成一个已完成的 Run。DSH 读到两份冻结来源，草稿保留了两份来源各自独有的合成校验值；责任人下载 200，另一成员查看公开对照 200、查看草稿 404。HTTP、实时和重放无私有标记；正式发布入口 404，私有运行目录已清理。独立验真通过。
 
+## 工具错误隔离补验
+
+PR #545 独立评审发现：原 c2/c3 成功路径没有实际制造带私有标记的工具错误，不能仅凭三面零泄漏证明错误内容隔离。补验不修改生产策略：真实 Runtime 在两份授权来源读取后，调用未知 ID 的 `read_work_input`。仅在下一次模型请求收到精确调用身份及完整错误结果后，回环供应商才继续成功写稿、登记候选和最终答复。错误使用独立标记，不复用草稿或最终答复标记。
+
+```bash
+node --import tsx scripts/run-rd04c2-acceptance.ts --tool-error-followup
+node --import tsx scripts/verify-rd04c2-acceptance.ts --tool-error-followup
+node --import tsx scripts/check-rd04c2-evidence-negatives.ts --tool-error-followup
+```
+
+运行前提交 harness；输出独占 `artifacts/evidence/rd04c2/tool-error-followup/<commit>/`，已有目录拒绝覆盖。新证据必须是 v2，独立判定绑定当前提交、harness 和生产 assembly 指纹；错误结果缺失、错配、重复，或 HTTP、实时 WS、历史重放任一面缺观测/泄漏均失败。删除错误事件后重算指纹仍拒绝。状态机及判定器单元自证接入 check，生产补验与负控接入 integration CI。补验只使用回环响应，新增真实供应商请求为零。
+
+原真实批次 `f0e2b73` 的 c2、guard、计划、密钥绑定、attempt 和 live 证据保留原字节；只能用原冻结 harness 及匹配生产构建复核。整改改变 harness 指纹，当前 c3 验真会拒绝旧计划，不能把它写成新 harness 的 live 通过，也不能重签原计划或重发真实调用。原批次扣款对账与新提交工具错误补验分别取证。
+
 ## 验什么
 
 生产 HTTP/WS 创建筹备讨论、成员、公开佐证和已承接工作。成员评论触发新任务，责任人通过生产入口确认执行。评论原作者、佐证所有者、核实回执创建者分别对实际 Executor 接收方授权；没有全套逐件授权、来源改版或账户不符，Hub 拒绝出站，不回落到默认模型。验收只把合成资料送给显式允许的测试账户，发现和公开对照仍使用回环回放。

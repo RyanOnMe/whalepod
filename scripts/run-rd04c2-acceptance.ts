@@ -14,14 +14,19 @@ import {
   until,
   type AcceptanceActor,
 } from './lib/production-acceptance.js'
-import { Rd04c2Replay, privateMarker } from './lib/rd04c2-replay.js'
+import { Rd04c2Replay, privateMarker, toolErrorMarker } from './lib/rd04c2-replay.js'
+import { bindToolErrorFollowup } from './lib/rd04c2-tool-error.js'
 import {
   prepareDiscoveryDraftFixture,
   type DiscoveryExecutionBasis as Basis,
 } from './lib/discovery-draft-fixture.js'
 import { verifyRd04c2 } from './verify-rd04c2-acceptance.js'
 
-const replay = new Rd04c2Replay()
+const toolErrorFollowup = process.argv.includes('--tool-error-followup')
+const revokeBeforeRead = process.argv.includes('--revoke-before-read')
+assert(!(toolErrorFollowup && revokeBeforeRead), 'follow-up and revocation are separate scenarios')
+const followupBinding = toolErrorFollowup ? await bindToolErrorFollowup(repoRoot) : undefined
+const replay = new Rd04c2Replay(undefined, undefined, toolErrorFollowup)
 const executor = (origin: string) => ({
   provider: 'deepseek-official',
   model: 'deepseek-v4-flash',
@@ -36,11 +41,14 @@ const env = new ProductionAcceptance(
 const sockets: WebSocket[] = []
 const afterRun = 'RD04C2_PUBLIC_SENTINEL_AFTER'
 const beforeRun = 'RD04C2_PUBLIC_SENTINEL_BEFORE'
-const revokeBeforeRead = process.argv.includes('--revoke-before-read')
 const out = join(
   repoRoot,
   'artifacts/evidence/rd04c2',
-  ...(revokeBeforeRead ? ['revoke-before-read'] : []),
+  ...(followupBinding
+    ? ['tool-error-followup', followupBinding.commit]
+    : revokeBeforeRead
+      ? ['revoke-before-read']
+      : []),
 )
 const resultPath = join(out, 'result.json')
 const eventsPath = join(out, 'events.jsonl')
@@ -311,11 +319,19 @@ async function drive() {
     sawRun(live.frames) && sawRun(history.frames),
     'missing private Run status control on WebSocket',
   )
-  const visibility = [httpBodies, live.frames, history.frames].map((items) => ({
+  const surfaces = ['http', 'ws_live', 'ws_replay']
+  const visibility = [httpBodies, live.frames, history.frames].map((items, index) => ({
     observed: items.length,
     leaks: items.filter((item) => item.includes(privateMarker)).length,
+    ...(toolErrorFollowup
+      ? {
+          surface: surfaces[index],
+          toolErrorLeaks: items.filter((item) => item.includes(toolErrorMarker)).length,
+        }
+      : {}),
   }))
   assert(visibility.every((surface) => surface.observed > 0 && surface.leaks === 0))
+  if (toolErrorFollowup) assert(visibility.every((surface) => surface.toolErrorLeaks === 0))
   const workspaceClean = await checkPrivateWorkspaceCleanup(run.id)
   const revoke = await env.request(executionUrl, undefined, { method: 'DELETE' })
   assert.equal(revoke.status, 200)
@@ -354,12 +370,20 @@ async function drive() {
       audience: row.audience,
       seq: row.seq,
     })),
+    ...(toolErrorFollowup
+      ? replay.toolErrors.map((error) => ({
+          component: 'acceptance.replay',
+          type: 'tool_error.observed',
+          runId: run.id,
+          ...error,
+        }))
+      : []),
   ]
   return {
     events,
     result: {
-      schemaVersion: 1,
-      mode: 'loopback_model_replay',
+      schemaVersion: toolErrorFollowup ? 2 : 1,
+      mode: toolErrorFollowup ? 'loopback_tool_error_followup' : 'loopback_model_replay',
       projectId: project.id,
       discussionTaskId: discussion.id,
       comparisonTaskId: venue.id,
@@ -403,6 +427,7 @@ async function drive() {
         privateRequests: replay.privateRequests,
         reads: replay.privateReads,
         draftDigest: replay.privateDraftDigest,
+        ...(toolErrorFollowup ? { toolErrors: replay.toolErrors } : {}),
       },
       publicArtifact: {
         id: publicArtifact.id,
@@ -439,11 +464,19 @@ async function stop() {
 }
 process.once('SIGTERM', () => void stop().finally(() => process.exit(143)))
 process.once('SIGINT', () => void stop().finally(() => process.exit(130)))
+let ownsOutput = false
 try {
-  await mkdir(out, { recursive: true })
-  await Promise.all(
-    [resultPath, eventsPath, join(out, 'failure.log')].map((path) => rm(path, { force: true })),
-  )
+  if (followupBinding) {
+    await mkdir(join(out, '..'), { recursive: true })
+    await mkdir(out)
+    ownsOutput = true
+  } else {
+    await mkdir(out, { recursive: true })
+    ownsOutput = true
+    await Promise.all(
+      [resultPath, eventsPath, join(out, 'failure.log')].map((path) => rm(path, { force: true })),
+    )
+  }
   const assemblyDigest = await fingerprintProductionAssembly(repoRoot)
   const { result, events } = await drive()
   assert.equal(
@@ -451,25 +484,33 @@ try {
     assemblyDigest,
     'production packages changed during acceptance',
   )
+  if (followupBinding)
+    assert.deepEqual(
+      await bindToolErrorFollowup(repoRoot),
+      followupBinding,
+      'follow-up harness changed',
+    )
   const eventBytes = events.map((event) => JSON.stringify(event)).join('\n') + '\n'
-  await writeFile(eventsPath, eventBytes)
+  await writeFile(eventsPath, eventBytes, { flag: followupBinding ? 'wx' : 'w' })
   await writeFile(
     resultPath,
     JSON.stringify(
       {
         ...result,
-        provenance: { assemblyDigest, eventsDigest: sha256(eventBytes) },
+        provenance: { assemblyDigest, eventsDigest: sha256(eventBytes), ...followupBinding },
       },
       null,
       2,
     ) + '\n',
   )
-  await verifyRd04c2(resultPath, assemblyDigest)
+  await verifyRd04c2(resultPath, assemblyDigest, followupBinding)
   console.log('RD-04c2 production acceptance PASS')
 } catch (error) {
-  await rm(resultPath, { force: true })
   const message = env.redact(error instanceof Error ? error.message : String(error))
-  await writeFile(join(out, 'failure.log'), message + '\n' + env.diagnostics() + '\n')
+  if (ownsOutput) {
+    await rm(resultPath, { force: true })
+    await writeFile(join(out, 'failure.log'), message + '\n' + env.diagnostics() + '\n')
+  }
   console.error(message)
   process.exitCode = 1
 } finally {
