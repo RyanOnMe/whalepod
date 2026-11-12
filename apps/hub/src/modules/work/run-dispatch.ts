@@ -234,6 +234,7 @@ export async function buildRunWorkInputBundle(
 ): Promise<RunWorkInputBundleResult> {
   const run = await getOrdinaryRun(database.db, runId)
   if (run === undefined || run.deviceId !== deviceId) return undefined
+  if (run.discoveryExecutionId) return undefined
   if (run.workInputManifest === null || run.workInputManifestDigest === null) {
     return undefined
   }

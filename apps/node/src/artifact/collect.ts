@@ -103,6 +103,7 @@ export class ArtifactCollector {
     runId: string,
     candidate: CollectCandidate,
     workspacePath: string,
+    options?: { readonly privateDraft: boolean },
   ): Promise<CollectedArtifact> {
     // 1) 字面拒绝（不触 IO）：空值/NUL/绝对路径（含 Windows 盘符形）/resolve 越界。
     const relativePath = candidate.relativePath
@@ -194,10 +195,16 @@ export class ArtifactCollector {
       )
     }
     const sha256 = createHash('sha256').update(bytes).digest('hex')
-    await mkdir(this.stagingDir, { recursive: true })
-    const tmpPath = resolve(this.stagingDir, randomUUID())
+    // Private discovery already writes inside its durable cleanup scope.
+    // Upload the same verified Buffer without making an unrelated temp file
+    // that could survive a Node crash outside that scope.
+    const tmpPath =
+      options?.privateDraft === true ? undefined : resolve(this.stagingDir, randomUUID())
     try {
-      await writeFile(tmpPath, bytes)
+      if (tmpPath !== undefined) {
+        await mkdir(this.stagingDir, { recursive: true })
+        await writeFile(tmpPath, bytes)
+      }
       // 5) 上传（注入客户端处理重试/错误映射）。
       const { artifactId } = await this.upload(
         runId,
@@ -218,7 +225,11 @@ export class ArtifactCollector {
         byteSize: bytes.byteLength,
       })
       // 预览是派生阅读副本：后台执行，候选事件先投影；失败只影响预览。
-      if (this.preview !== undefined && supportsOfficePreview(candidate.mediaType)) {
+      if (
+        options?.privateDraft !== true &&
+        this.preview !== undefined &&
+        supportsOfficePreview(candidate.mediaType)
+      ) {
         this.schedulePreview({
           runId,
           artifactId,
@@ -240,7 +251,7 @@ export class ArtifactCollector {
         error instanceof Error ? error.message : 'artifact upload failed',
       )
     } finally {
-      await unlink(tmpPath).catch(() => {})
+      if (tmpPath !== undefined) await unlink(tmpPath).catch(() => {})
     }
   }
 

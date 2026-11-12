@@ -83,6 +83,7 @@ export interface RuntimeSpec {
     readonly manifestDigest: string
     readonly entries: readonly WorkInputManifestEntry[]
     readonly entriesDir: string
+    readonly discoveryExecutionId?: string | undefined
   }
 }
 

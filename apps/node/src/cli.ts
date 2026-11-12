@@ -136,6 +136,7 @@ export async function runStart(
     stateDir,
     runtimeEntry,
     startupDshVersion: dshVersionFacts.reported,
+    discoveryExecutionReplay: replay !== undefined,
     coordinationCapabilities: coordinationCapable
       ? [COORDINATION_CAPABILITY, ...(discoveryCapable ? [DISCOVERY_CAPABILITY] : [])]
       : [],
@@ -163,6 +164,8 @@ export async function runStart(
   const { SqliteRunTerminalCleanupStore } = await import('./run/terminal-cleanup.js')
   const { SqliteContextStateStore } = await import('./context/state-store.js')
   const { WorkInputDownloader } = await import('./work/work-input.js')
+  const { discoveryReplayEndpoint, startDiscoveryReplayGate } =
+    await import('./work/discovery-replay.js')
   const { SqliteWorkInputReceiptStore } = await import('./work/receipt-store.js')
   const { OfficePreviewGenerator } = await import('./artifact/preview.js')
   const { uploadArtifactPreview, reportArtifactPreviewFailure } =
@@ -352,8 +355,29 @@ export async function runStart(
     isRuntimeHomeInUse: (homePath, exceptRunId) => supervisor.isHomeInUse(homePath, exceptRunId),
     contextReceiptOutbox,
     contextStateStore: new SqliteContextStateStore(join(stateDir, 'context-state.sqlite')),
-    prepareWorkInputs: (runId, input) => workInputs.prepare(runId, input),
+    prepareWorkInputs: (runId, input, privateDirectory) =>
+      workInputs.prepare(runId, input, privateDirectory),
     cleanupWorkInputs: (runId) => workInputs.cleanup(runId),
+    ...(replay === undefined
+      ? {}
+      : {
+          startDiscoveryReplay: async (runId: string, endpoint: string, model: string) => {
+            const expected = new URL('/chat/completions', replay.deepSeekBaseUrl).href
+            if (discoveryReplayEndpoint(endpoint).href !== expected) {
+              throw new Error('discovery replay endpoint does not match the local deployment')
+            }
+            return startDiscoveryReplayGate({
+              endpoint: expected,
+              model,
+              authorize: (signal) => workInputs.authorizeDiscovery(runId, signal),
+              observe: (stage, allowed) => {
+                process.stderr.write(
+                  `${JSON.stringify({ level: 'info', component: 'node.discovery_execution', action: 'discovery.execution.online_check', runId, stage, allowed })}\n`,
+                )
+              },
+            })
+          },
+        }),
     workInputReceiptStore: workInputReceipts,
     deviceId: config.deviceId,
     // Run 固化面用**启动时**的探针值（#288 口径：一次装配、多次消费）；#352 刷新的是

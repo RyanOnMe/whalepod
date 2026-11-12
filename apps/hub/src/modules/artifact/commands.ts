@@ -46,7 +46,11 @@ export async function publishArtifact(
     const sourceRun = await getRun(tx, row.runId)
     // Keep sealed content off the published path until current source policies and
     // grant invalidation are checked together in this transaction.
-    if (sourceRun === undefined || isManagedDraftSource(sourceRun)) {
+    if (
+      sourceRun === undefined ||
+      isManagedDraftSource(sourceRun) ||
+      Boolean(sourceRun.discoveryExecutionId)
+    ) {
       throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
     }
     const allowed = authorize(

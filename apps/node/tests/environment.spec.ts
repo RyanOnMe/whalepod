@@ -67,6 +67,36 @@ const spec = (provider: string): RuntimeStartSpec => ({
 })
 
 describe('runtime 环境注入：provider→credential-ref 真值表（#117）', () => {
+  it('discovery replay has only the local gate, with no provider credentials or overlay', async () => {
+    const { secrets, workspacePath } = await fixture('deepseek-official', {
+      WHALEPOD_DSH_SECRET_DEEPSEEK_OFFICIAL_DEFAULT: 'fixture-provider-credential',
+    })
+    const origin = 'http://127.0.0.1:3210'
+    const token = 'fixture-local-capability'
+    const env = buildRuntimeEnvironment(
+      { ...spec('deepseek-official'), discoveryReplay: { origin, token, workspacePath } },
+      {
+        workspacePath,
+        secrets,
+        processEnv: {
+          DEEPSEEK_BASE_URL: 'https://provider.invalid',
+          WHALEPOD_RUNTIME_EXTRA_PATCH_FILES: 'arbitrary.yml',
+          DEEPSEEK_API_KEY: 'fixture-ambient-credential',
+        },
+        extraPassthrough: [
+          'DEEPSEEK_BASE_URL',
+          'WHALEPOD_RUNTIME_EXTRA_PATCH_FILES',
+          'DEEPSEEK_API_KEY',
+        ],
+      },
+    )
+    expect(env).toEqual({
+      TMPDIR: join(workspacePath, '.wp-tmp'),
+      WHALEPOD_DISCOVERY_REPLAY_ORIGIN: origin,
+      WHALEPOD_DISCOVERY_REPLAY_TOKEN: token,
+    })
+  })
+
   it('deepseek-official → 注入 DEEPSEEK_API_KEY（adapter 真值），不产派生名', async () => {
     const { secrets, workspacePath } = await fixture('deepseek-official', {
       WHALEPOD_DSH_SECRET_DEEPSEEK_OFFICIAL_DEFAULT: 'sk-real-route',

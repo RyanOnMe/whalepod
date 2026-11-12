@@ -12,6 +12,7 @@ import {
   countFailedMachineRunsForWork,
   countChargedRouterFailuresForWork,
   getCoordinatorState,
+  getDiscoveryApplicationByWork,
   getCoordinationTeamPolicy,
   getRouterConfig,
   getTeam,
@@ -197,6 +198,11 @@ async function verifyIntentBinding(
   work: WorkRow,
   intent: DispatchIntentRow,
 ): Promise<TriggerRef[]> {
+  if (await getDiscoveryApplicationByWork(tx, work.id)) {
+    throw new IntentBindingError(
+      'discovery-created work must use its dedicated execution authorization',
+    )
+  }
   if (work.mandateId === null || work.mandateId !== intent.mandateId) {
     throw new IntentBindingError('work mandate changed; dispatch must be re-evaluated')
   }

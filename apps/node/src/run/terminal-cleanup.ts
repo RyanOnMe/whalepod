@@ -13,7 +13,7 @@ export interface RunRuntimeFacts {
   readonly runId: string
   /** 本 Run 实际使用的 DSH_HOME（resume Run 为来源 Run 的 home）。 */
   readonly homePath: string
-  /** 非空项目上下文 Run = 快照条目数 > 0；0 = 空快照/无上下文。 */
+  /** 敏感输入条目数（项目上下文或发现专用来源）；> 0 的 Run 清除整个受管 home 内容。 */
   readonly entryCount: number
   /**
    * home 是否归本 Run 所有。resume Run 复用来源 Run 的 home，值为 false：

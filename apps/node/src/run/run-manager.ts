@@ -22,6 +22,7 @@
  *   node.supervisor 结构化日志（真人路径可观测，不做接口背后的暗手）。
  */
 import { existsSync, readdirSync, rmSync } from 'node:fs'
+import { lstat, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import type {
   ContextStateSyncWire,
@@ -70,9 +71,17 @@ import type {
 import { MemoryRunTerminalCleanupStore } from './terminal-cleanup.js'
 import type { PreparedProjectContext } from '../context/project-context.js'
 import type { PreparedWorkInputs } from '../work/work-input.js'
+import {
+  prepareDiscoveryReplayDirectories,
+  type DiscoveryReplayGate,
+} from '../work/discovery-replay.js'
 import type { WorkInputReceiptStore } from '../work/receipt-store.js'
 import { MemoryWorkInputReceiptStore } from '../work/receipt-store.js'
-import { PluginPreflightError, type PreflightOutcome } from '../plugin/plugin-preflight.js'
+import {
+  CORE_EMPTY_PACK_DIGEST,
+  PluginPreflightError,
+  type PreflightOutcome,
+} from '../plugin/plugin-preflight.js'
 import { RunProjector, type ProjectionContext } from '../projection/projector.js'
 import type { CommandStore } from '../spool/command-store.js'
 import type { EventStore } from '../spool/event-store.js'
@@ -154,9 +163,15 @@ export interface RunManagerDeps {
   readonly prepareWorkInputs?: (
     runId: string,
     input: RunStartWorkInput,
+    privateDirectory?: string,
   ) => Promise<PreparedWorkInputs>
   /** ADR-0028 §6：Run 终态/启动拒绝后的 runtime-work-inputs 副本清理。 */
   readonly cleanupWorkInputs?: (runId: string) => Promise<void>
+  readonly startDiscoveryReplay?: (
+    runId: string,
+    endpoint: string,
+    model: string,
+  ) => Promise<DiscoveryReplayGate>
   /** ADR-0028 §3：工作输入回执的持久累计/待发队列（生产 SQLite）。 */
   readonly workInputReceiptStore?: WorkInputReceiptStore
   /** ADR-0027 §6（PC-05b）：上下文状态与清理重试队列（生产 SQLite；缺省内存）。 */
@@ -196,6 +211,7 @@ export interface RunArtifactCollector {
     runId: string,
     candidate: { relativePath: string; title: string; mediaType: string },
     workspacePath: string,
+    options?: { readonly privateDraft: boolean },
   ): Promise<{
     artifactId: string
     sha256: string
@@ -294,6 +310,9 @@ export class RunManager {
   private readonly contextStateOps = new Map<string, Promise<unknown>>()
   /** runId → 已下载的工作输入副本与清单（本地回执的事实源）。 */
   private readonly workInputs = new Map<string, PreparedWorkInputs>()
+  private readonly discoveryGates = new Map<string, DiscoveryReplayGate>()
+  private readonly discoveryCandidateUploads = new Map<string, Promise<boolean>>()
+  private readonly discoveryTerminalPending = new Set<string>()
   private readonly workInputReceiptStore: WorkInputReceiptStore
   /** runId → 取消升级状态。 */
   private readonly cancels = new Map<string, CancelEscalation>()
@@ -459,6 +478,9 @@ export class RunManager {
 
   private async processRunStart(payload: RunStartPayload): Promise<void> {
     const { commandId, runId } = payload
+    const discovery = payload.workInput?.discoveryExecutionId
+    const previousStart =
+      discovery === undefined ? undefined : this.deps.commandStore.latestForRun(runId, 'run.start')
     const outcome = this.deps.commandStore.record({
       commandId,
       runId,
@@ -506,12 +528,52 @@ export class RunManager {
         )
         return
       }
+      if (discovery !== undefined) {
+        // A crash between spawn and the durable outcome is ambiguous. Never
+        // repeat a private discovery Run just because its first ack is missing.
+        const error = { code: 'RUNTIME_LOST', message: 'interrupted discovery run will not replay' }
+        this.persistRunStartOutcome(commandId, 'rejected', error)
+        this.ack(commandId, false, error)
+        this.cleanupInputs(runId)
+        this.cleanupAbortedRun(runId)
+        return
+      }
       // 崩溃恢复：command 已落但未 spawn（本进程从未完成处理）——继续正常处理。
       this.log('info', 'duplicate run.start without active runtime; reprocessing', { runId })
+    }
+    if (outcome === 'recorded' && previousStart !== undefined) {
+      const error = { code: 'RUNTIME_LOST', message: 'discovery run already has a start command' }
+      this.persistRunStartOutcome(commandId, 'rejected', error)
+      this.ack(commandId, false, error)
+      return
     }
 
     this.startingRuns.set(runId, (this.startingRuns.get(runId) ?? 0) + 1)
     try {
+      let discoveryReplay: DiscoveryReplayGate | undefined
+      if (discovery !== undefined) {
+        const endpoint = payload.workInput?.discoveryReplayEndpoint
+        if (
+          this.deps.startDiscoveryReplay === undefined ||
+          endpoint === undefined ||
+          payload.agent.provider !== 'deepseek-official' ||
+          payload.approvalPolicy !== 'approval_required' ||
+          payload.toolPolicy?.allowedToolNames.length !== 1 ||
+          payload.toolPolicy.allowedToolNames[0] !== 'write' ||
+          payload.toolPolicy.workKey !== payload.workInput?.manifest.workKey ||
+          payload.expectedPluginPackDigest !== CORE_EMPTY_PACK_DIGEST ||
+          payload.resumeOfRunId !== undefined ||
+          payload.resumeSessionId !== undefined ||
+          payload.projectContext !== undefined ||
+          payload.handoff !== undefined
+        ) {
+          const error = new Error('discovery execution requires the fixed replay assembly')
+          ;(error as Error & { code?: string }).code = 'CONTEXT_UNAVAILABLE'
+          throw error
+        }
+        discoveryReplay = await this.deps.startDiscoveryReplay(runId, endpoint, payload.agent.model)
+        this.discoveryGates.set(runId, discoveryReplay)
+      }
       // 启动对账可能在 Hub 按同一 commandId 重投之前已把崩溃残留清成 done；
       // 重跑生命周期开始前清掉该行，否则新的终态会被 `do nothing` 吞掉。
       this.terminalCleanupStore.reopen(runId)
@@ -522,7 +584,7 @@ export class RunManager {
         {
           runId,
           homePath: dshHomePath,
-          entryCount: payload.projectContext?.manifest.length ?? 0,
+          entryCount: this.sensitiveInputCount(payload),
           ownsHome: payload.resumeOfRunId === undefined,
           sessionReady: false,
           dshSessionId: null,
@@ -531,7 +593,10 @@ export class RunManager {
       )
       // redaction 上下文要 canonical workspace 根（registry.resolve 已 realpath +
       // 身份校验）；supervisor.start 内部会再 resolve 一次（同一事实源）。
-      const workspacePath = await this.deps.registry.resolve(payload.workspaceId)
+      const registeredWorkspacePath = await this.deps.registry.resolve(payload.workspaceId)
+      const discoveryDirectories =
+        discovery === undefined ? undefined : await prepareDiscoveryReplayDirectories(dshHomePath)
+      const workspacePath = discoveryDirectories?.workspacePath ?? registeredWorkspacePath
       // P1-17 preflight：workspace 就绪后、spawn 之前。失败即 run 拒绝，
       // 绝不带着未校验/未安装的 pack 启动 Runtime。
       let pluginPackOverlayPath: string | undefined
@@ -539,11 +604,19 @@ export class RunManager {
         const preflight = await this.deps.pluginPackPreflight(payload.expectedPluginPackDigest)
         pluginPackOverlayPath = preflight.overlayPath
       }
+      if (discovery !== undefined && pluginPackOverlayPath !== undefined) {
+        const error = new Error('discovery execution cannot load an overlay')
+        ;(error as Error & { code?: string }).code = 'CONTEXT_UNAVAILABLE'
+        throw error
+      }
       // P1-15：Reviewer 输入准备（清单拉取 + 受控下载副本）。失败 → run 拒绝，
       // 错误码透传（如 ARTIFACT_HASH_MISMATCH）；Builder Run（空清单）直接通过。
       let artifactInputs: RunArtifactInputs | undefined
       if (this.deps.prepareArtifactInputs !== undefined) {
-        artifactInputs = await this.deps.prepareArtifactInputs(runId, payload.taskId)
+        // Discovery may read only its separately authorized source manifest.
+        if (discovery === undefined) {
+          artifactInputs = await this.deps.prepareArtifactInputs(runId, payload.taskId)
+        }
       }
       // ADR-0027 §3：项目上下文快照下载 + 逐条 digest/byteSize 核对。清单存在但
       // 本 Node 未装配时 fail-closed（绝不「只存快照 ID」继续执行）。
@@ -580,7 +653,14 @@ export class RunManager {
           ;(error as Error & { code?: string }).code = 'CONTEXT_UNAVAILABLE'
           throw error
         }
-        workInputs = await this.deps.prepareWorkInputs(runId, payload.workInput)
+        workInputs =
+          discoveryDirectories === undefined
+            ? await this.deps.prepareWorkInputs(runId, payload.workInput)
+            : await this.deps.prepareWorkInputs(
+                runId,
+                payload.workInput,
+                discoveryDirectories.inputPath,
+              )
         this.workInputs.set(runId, workInputs)
       }
       const projector = new RunProjector(this.projectionContext(runId, workspacePath))
@@ -601,6 +681,9 @@ export class RunManager {
         },
         expectedProfileDigest: payload.expectedProfileDigest,
         expectedPluginPackDigest: payload.expectedPluginPackDigest,
+        ...(discoveryReplay === undefined
+          ? {}
+          : { discoveryReplay: { ...discoveryReplay, workspacePath } }),
       }
       await this.deps.supervisor.start(spec, { workspaceId: payload.workspaceId })
       this.projectors.set(runId, projector)
@@ -654,6 +737,7 @@ export class RunManager {
                   manifestDigest: workInputs.manifestDigest,
                   entries: [...workInputs.entries],
                   entriesDir: workInputs.dir,
+                  ...(discovery === undefined ? {} : { discoveryExecutionId: discovery }),
                 },
               }
             : {}),
@@ -697,7 +781,12 @@ export class RunManager {
                   typeof (error as unknown as { code?: unknown }).code === 'string'
                 ? (error as unknown as { code: string }).code // P1-15：输入准备失败码（如 ARTIFACT_HASH_MISMATCH）透传
                 : ('INTERNAL_ERROR' as const)
-      const message = error instanceof Error ? error.message : String(error)
+      const message =
+        payload.workInput?.discoveryExecutionId === undefined
+          ? error instanceof Error
+            ? error.message
+            : String(error)
+          : 'discovery execution could not start'
       this.persistRunStartOutcome(commandId, 'rejected', { code, message })
       this.ack(commandId, false, { code, message })
       // run.start 拒绝路径不进 finalizeRun（Run 从未在管）：输入准备可能已下载
@@ -806,6 +895,10 @@ export class RunManager {
       persistOutcome('rejected', { code, message })
       this.log('warn', 'run.followup rejected', { component: 'node.run_manager', runId, code })
       this.ack(commandId, false, { code, message })
+    }
+    if (this.isDiscoveryRun(runId)) {
+      reject('FORBIDDEN', 'discovery replay does not accept follow-up instructions')
+      return
     }
     if (this.finalFacts.has(runId)) {
       reject('INVALID_RUN_TRANSITION', 'run is terminal; followup rejected')
@@ -1340,8 +1433,48 @@ export class RunManager {
         this.log('warn', 'artifact candidate dropped: no collector wired', { runId })
         return
       }
-      void this.collectArtifact(runId, frame.payload, workspacePath).catch(() => {})
+      if (this.isDiscoveryRun(runId)) {
+        if (this.discoveryCandidateUploads.has(runId)) return
+        this.discoveryCandidateUploads.set(
+          runId,
+          this.collectDiscoveryCandidate(runId, frame.payload, workspacePath).catch(() => false),
+        )
+      } else {
+        void this.collectArtifact(runId, frame.payload, workspacePath).catch(() => {})
+      }
       return
+    }
+    if (this.isDiscoveryRun(runId)) {
+      if (frame.type === 'run.completed') {
+        if (this.discoveryTerminalPending.has(runId)) return
+        this.discoveryTerminalPending.add(runId)
+        // Node must deliver the authorized candidate before announcing success.
+        // The Hub intentionally refuses registration after a terminal state.
+        void Promise.resolve(this.discoveryCandidateUploads.get(runId)).then((uploaded) => {
+          const current = this.projectors.get(runId)
+          if (current === undefined) return
+          if (uploaded === true) {
+            this.spoolAndDrain(runId, current.projectRuntimeOutput(frame).events)
+            this.finalizeRun(runId, 'completed')
+          } else {
+            const failure = {
+              ...frame,
+              type: 'runtime.fatal',
+              payload: { runId, code: 'CONTEXT_UNAVAILABLE', summary: 'CONTEXT_UNAVAILABLE' },
+            } as const
+            this.spoolAndDrain(runId, current.projectRuntimeOutput(failure).events)
+            this.finalizeRun(runId, 'failed', 'CONTEXT_UNAVAILABLE', 'CONTEXT_UNAVAILABLE')
+          }
+          this.workspacePaths.delete(runId)
+        })
+        return
+      }
+      if (
+        frame.type !== 'runtime.ready' &&
+        frame.type !== 'runtime.fatal' &&
+        frame.type !== 'run.cancelled'
+      )
+        return
     }
     const result = projector.projectRuntimeOutput(frame)
     this.spoolAndDrain(runId, result.events)
@@ -1367,6 +1500,32 @@ export class RunManager {
       }
       this.workspacePaths.delete(runId)
     }
+  }
+
+  private async collectDiscoveryCandidate(
+    runId: string,
+    candidate: { relativePath: string; title: string; mediaType: string },
+    workspacePath: string,
+  ): Promise<boolean> {
+    const gate = this.discoveryGates.get(runId)
+    const prepared = this.workInputs.get(runId)
+    const collector = this.deps.artifactCollector
+    if (
+      gate === undefined ||
+      prepared === undefined ||
+      collector === undefined ||
+      candidate.relativePath !== `.whalepod/drafts/${runId}.md` ||
+      candidate.mediaType !== 'text/markdown'
+    )
+      return false
+    const { read } = this.workInputReceiptStore.snapshot(runId, prepared.manifestDigest)
+    if (!prepared.entries.every((entry) => read.includes(entry.inboxItemId))) return false
+    if (!(await gate.authorizeCandidate())) return false
+    const target = join(workspacePath, candidate.relativePath)
+    const [canonical, stat] = await Promise.all([realpath(target), lstat(target)])
+    if (canonical !== target || !stat.isFile() || stat.nlink !== 1) return false
+    await collector.collect(runId, candidate, workspacePath, { privateDraft: true })
+    return true
   }
 
   /** P1-15：采集链路（collector 抛错=候选被拒/上传失败：只留结构化痕迹，Run 不受影响）。 */
@@ -1464,7 +1623,7 @@ export class RunManager {
     this.finalFacts.set(runId, {
       status,
       failureCode,
-      failureSummary,
+      failureSummary: this.isDiscoveryRun(runId) ? failureCode : failureSummary,
       finishedAt: this.now().toISOString(),
     })
     const escalation = this.cancels.get(runId)
@@ -1955,6 +2114,10 @@ export class RunManager {
 
   /** P1-15：输入副本清理（best-effort，失败只吞掉——不阻塞终态登记）。 */
   private cleanupInputs(runId: string): void {
+    this.discoveryGates.get(runId)?.close()
+    this.discoveryGates.delete(runId)
+    this.discoveryCandidateUploads.delete(runId)
+    this.discoveryTerminalPending.delete(runId)
     void this.deps.cleanupArtifactInputs?.(runId).catch(() => {})
     void this.deps.cleanupWorkInputs?.(runId).catch(() => {})
     this.projectContexts.delete(runId)
@@ -1973,11 +2136,18 @@ export class RunManager {
     return {
       runId,
       homePath: this.deps.runtimeHomeFor(resumeOfRunId ?? runId),
-      entryCount: spooled?.projectContext?.manifest.length ?? 0,
+      entryCount: this.sensitiveInputCount(spooled),
       ownsHome: resumeOfRunId === undefined,
       sessionReady: this.readyFacts.has(runId),
       dshSessionId: null,
     }
+  }
+
+  private sensitiveInputCount(payload: RunStartPayload | undefined): number {
+    if (payload?.workInput?.discoveryExecutionId !== undefined) {
+      return payload.workInput.manifest.entries.length
+    }
+    return payload?.projectContext?.manifest.length ?? 0
   }
 
   /** 持久事实优先；runtime.ready 以本进程内存为准（store 写失败时 fail-safe 补上）。 */
@@ -2014,7 +2184,13 @@ export class RunManager {
     try {
       const spooled = this.deps.commandStore.latestForRun(runId, 'run.start')
       if (spooled === undefined) return undefined
-      return this.deps.commandStore.isAcked(spooled.commandId) ? undefined : 'unacked_run_start'
+      const payload = spooled.payload as RunStartPayload
+      // Discovery never replays an ambiguous start. Once its Runtime is
+      // confirmed gone, recover its private local files even with a missing ack.
+      return this.deps.commandStore.isAcked(spooled.commandId) ||
+        payload.workInput?.discoveryExecutionId !== undefined
+        ? undefined
+        : 'unacked_run_start'
     } catch {
       return 'spool_read_failed'
     }
@@ -2316,7 +2492,7 @@ export class RunManager {
    * - 所有 Run：runtime-context/<runId>；
    * - resume Run 在 spawn 前失败（未写过共享 home）：到此为止；
    * - 其余：删 <home>/spill；
-   * - 非空项目上下文（blocked）：删除 home 下全部内容（session + 非 session），
+   * - 非空项目上下文或发现专用私有 Run（blocked）：删除 home 下全部内容，
    *   但保留 home 目录本身（ADR-0009 resume 用的是来源 home，不整体删）；
    * - 空快照/无上下文（full）：保留 session 与非 session 文件，只额外清掉
    *   quarantine（正文暂存区，终态必须删除）。
@@ -2355,18 +2531,44 @@ export class RunManager {
       event: ProjectedRunEvent['event']
     }[],
   ): void {
+    const discovery = this.isDiscoveryRun(runId)
+    let appended = false
     for (const draft of drafts) {
+      let event = draft.event
+      if (discovery) {
+        switch (event.type) {
+          case 'runtime.ready':
+            break
+          case 'run.completed':
+            event = { type: event.type, finalText: '' }
+            break
+          case 'run.failed':
+            event = { type: event.type, code: event.code, summary: event.code }
+            break
+          case 'run.cancelled':
+            event = { type: event.type, forced: event.forced }
+            break
+          default:
+            continue
+        }
+      }
       this.deps.eventStore.appendAlloc(runId, (seq) =>
         JSON.stringify({
           runId,
           seq,
           occurredAt: draft.occurredAt,
           audience: draft.audience,
-          event: draft.event,
+          event,
         } satisfies ProjectedRunEvent),
       )
+      appended = true
     }
-    if (drafts.length > 0) this.drainRun(runId)
+    if (appended) this.drainRun(runId)
+  }
+
+  private isDiscoveryRun(runId: string): boolean {
+    const facts = this.runFacts.get(runId) ?? this.readRunFactsFromSpool(runId)
+    return facts?.workInput?.discoveryExecutionId !== undefined
   }
 
   /** 把该 run 全部未 ack 事件按 seq 升序发出（at-least-once；Hub 幂等）。 */

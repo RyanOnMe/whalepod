@@ -73,6 +73,25 @@ function makeHarness(
 }
 
 describe('ArtifactCollector.collect', () => {
+  it('uploads an isolated private draft without making a shared staging copy', async () => {
+    const h = makeHarness({
+      upload: async (_runId, candidate, body) => {
+        expect(await readdir(staging)).toEqual([])
+        expect(body.toString()).toBe(CONTENT)
+        expect(candidate.sha256).toBe(DIGEST)
+        return { artifactId: '01905f7c-0000-7000-8000-000000000801' }
+      },
+    })
+    await expect(
+      h.collector.collect(
+        'r1',
+        { relativePath: 'reports/out.md', title: 'Private draft', mediaType: 'text/markdown' },
+        workspace,
+        { privateDraft: true },
+      ),
+    ).resolves.toMatchObject({ sha256: DIGEST })
+  })
+
   it('正常路径：读临时副本 + hash + 上传一致字节，临时副本清理', async () => {
     const h = makeHarness()
     const collected = await h.collector.collect(

@@ -52,7 +52,7 @@ async function requireDeviceArtifact(
   const artifact = await getOrdinaryArtifact(database.db, artifactId.toLowerCase())
   if (artifact === undefined) throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
   const run = await getRun(database.db, artifact.runId)
-  if (run === undefined || run.deviceId !== deviceId)
+  if (run === undefined || run.deviceId !== deviceId || Boolean(run.discoveryExecutionId))
     throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
   return artifact
 }
@@ -113,7 +113,11 @@ export async function recordArtifactPreviewFailure(
         .for('update')
       if (locked === undefined) throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
       const run = await getRun(tx, locked.runId)
-      if (run === undefined || run.deviceId !== binding.deviceId)
+      if (
+        run === undefined ||
+        run.deviceId !== binding.deviceId ||
+        Boolean(run.discoveryExecutionId)
+      )
         throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
       assertSource(locked, request.sourceSha256)
       const current = await getArtifactPreview(tx, locked.id)

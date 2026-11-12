@@ -34,6 +34,7 @@ import {
   getOutboxCommand,
   getOrdinaryRun,
   getRun,
+  getSpecRevision,
   isManagedDraftSource,
   getWorkByKeyForUpdate,
   insertApprovalIfAbsent,
@@ -60,6 +61,7 @@ import type {
   RunContextReceipt,
   RunSnapshot,
   RunWorkInputReceipt,
+  WorkInputManifest,
 } from '@whalepod/protocol'
 import {
   parseNodeFrame,
@@ -101,6 +103,11 @@ import {
   type RunContextStateDeps,
 } from '../context/state.js'
 import { recordRunWorkInputReceipt } from '../work/receipts.js'
+import {
+  DISCOVERY_REPLAY_TOOLS,
+  verifyDiscoveryReplayRun,
+  type DiscoveryReplayRoute,
+} from '../discovery/replay-binding.js'
 import type { ApprovalView, RunView } from './queries.js'
 import { toApprovalView, toRunView } from './queries.js'
 
@@ -113,6 +120,7 @@ export interface RunOrchestratorDeps {
   database: Database
   outbox: Outbox
   managedDraftDeviceId?: string | undefined
+  discoveryExecutionReplay?: DiscoveryReplayRoute | undefined
   now?: () => Date
   /**
    * #52：越边降级与违例收敛的结构化告警通道（组合根接 app.log.warn，
@@ -141,6 +149,7 @@ export class RunOrchestrator {
   private readonly outbox: Outbox
   private readonly nowFn: () => Date
   private readonly managedDraftDeviceId: string | undefined
+  private readonly discoveryExecutionReplay: DiscoveryReplayRoute | undefined
   private readonly warnFn: (message: string, context: Record<string, unknown>) => void
   private readonly logFn: ContextEntryObserver
   private readonly contextLogFn: (action: string, fields: Record<string, unknown>) => void
@@ -156,6 +165,7 @@ export class RunOrchestrator {
     this.database = deps.database
     this.outbox = deps.outbox
     this.managedDraftDeviceId = deps.managedDraftDeviceId?.toLowerCase()
+    this.discoveryExecutionReplay = deps.discoveryExecutionReplay
     this.nowFn = deps.now ?? (() => new Date())
     this.warnFn = deps.warn ?? (() => {})
     this.logFn = deps.log ?? (() => {})
@@ -303,9 +313,24 @@ export class RunOrchestrator {
     ctx: ActorContext,
     taskId: string,
     input: CreateRunInput,
+    discovery?: {
+      readonly executionId: string
+      readonly endpoint: string
+      readonly specRevisionId: string
+      readonly manifest: WorkInputManifest
+      readonly manifestDigest: string
+    },
   ): Promise<RunView> {
     assertCreateRunInput(input)
-    return this.createInTransaction(tx, ctx, taskId.toLowerCase(), input, this.nowFn())
+    return this.createInTransaction(
+      tx,
+      ctx,
+      taskId.toLowerCase(),
+      input,
+      this.nowFn(),
+      undefined,
+      discovery,
+    )
   }
 
   /** Configuration reserves this device even if its last ordinary heartbeat is still fresh. */
@@ -320,6 +345,7 @@ export class RunOrchestrator {
     input: CreateRunInput,
     now: Date,
     onSnapshot?: (snapshot: { readonly snapshotId: string; readonly entryCount: number }) => void,
+    discovery?: Parameters<RunOrchestrator['createWithinTransaction']>[4],
   ): Promise<RunView> {
     if (!this.isOrdinaryDevice(input.deviceId)) {
       throw new RunCommandError('DEVICE_OFFLINE', 'device is unavailable for ordinary execution')
@@ -386,6 +412,24 @@ export class RunOrchestrator {
     }
     // ADR-0028 §6（RD-03a）：机器 Run 必须有完整 provenance，且不能以 full_access 执行。
     const origin = input.origin ?? 'human'
+    if (
+      discovery &&
+      (origin !== 'mandate' ||
+        approvalPolicy !== 'approval_required' ||
+        this.discoveryExecutionReplay?.endpoint !== discovery.endpoint ||
+        revision.provider !== this.discoveryExecutionReplay.provider ||
+        revision.model !== this.discoveryExecutionReplay.model ||
+        !Array.isArray(pack.installations) ||
+        pack.installations.length !== 0 ||
+        input.workInputItemIds !== undefined ||
+        input.artifactInputIds !== undefined ||
+        input.handoffReceiptId !== undefined ||
+        input.reviewInput !== undefined ||
+        input.resumeFromRunId !== undefined ||
+        input.rerunOfRunId !== undefined)
+    ) {
+      throw new RunCommandError('FORBIDDEN', 'discovery replay placement is unavailable')
+    }
     if (origin !== 'mandate' && input.toolPolicy !== undefined) {
       throw new RunCommandError('VALIDATION_FAILED', 'tool policy is only for machine runs')
     }
@@ -444,7 +488,7 @@ export class RunOrchestrator {
     let rerunSource: RunRow | undefined
     if (input.rerunOfRunId !== undefined) {
       const prior = await getOrdinaryRun(tx, input.rerunOfRunId)
-      if (prior === undefined || prior.taskId !== taskId) {
+      if (prior === undefined || prior.taskId !== taskId || prior.discoveryExecutionId) {
         throw new RunCommandError('NOT_FOUND', 'rerun source run not found')
       }
       if (!isTerminal(prior.status)) {
@@ -464,7 +508,7 @@ export class RunOrchestrator {
     let resumeSource: RunRow | undefined
     if (input.resumeFromRunId !== undefined) {
       const prior = await getOrdinaryRun(tx, input.resumeFromRunId)
-      if (prior === undefined || prior.taskId !== taskId) {
+      if (prior === undefined || prior.taskId !== taskId || prior.discoveryExecutionId) {
         throw new RunCommandError('NOT_FOUND', 'resume source run not found')
       }
       if (!isTerminal(prior.status)) {
@@ -515,12 +559,23 @@ export class RunOrchestrator {
       throw new RunCommandError('FORBIDDEN', 'helper run purposes are assignee-only')
     }
     // 任务约定绑定（#378；ADR-0017 §2）：与输入清单同一事务内固化，全入口单点收口。
-    const specRevision = await resolveSpecBinding(tx, task, input)
+    const derivedSpec = discovery ? await getSpecRevision(tx, discovery.specRevisionId) : undefined
+    if (
+      discovery &&
+      (!derivedSpec ||
+        derivedSpec.taskId !== task.id ||
+        derivedSpec.status !== 'derived' ||
+        derivedSpec.origin !== 'preauthorized_template')
+    )
+      throw new RunCommandError('CONFLICT', 'discovery derived agreement unavailable')
+    const specRevision = derivedSpec ?? (await resolveSpecBinding(tx, task, input))
     const specRevisionId = specRevision?.id ?? null
     // #379（ADR-0017 §3）：Task 启用约定流程的业务 Run 携带收尾整理快照——Runtime
     // 据此在正常完成后生成交接草稿；辅助 Run 不生成（purpose 非 business）。
     const handoffRunSpec =
-      task.agreementEnabled && (input.purpose ?? 'business') === 'business'
+      discovery === undefined &&
+      task.agreementEnabled &&
+      (input.purpose ?? 'business') === 'business'
         ? {
             agreement:
               specRevision === null || specRevision.revisionNumber === null
@@ -595,7 +650,7 @@ export class RunOrchestrator {
       profileRevisionId: revision.id,
       deviceId: device.id,
       workspaceId: workspace.id,
-      artifactInputManifest,
+      artifactInputManifest: discovery ? null : artifactInputManifest,
       ...(runWorkKey === undefined ? {} : { workKey: runWorkKey }),
       ...(workInputs === undefined
         ? {}
@@ -611,6 +666,14 @@ export class RunOrchestrator {
             onBehalfOfUserId: input.onBehalfOfUserId!,
           }
         : {}),
+      ...(discovery === undefined
+        ? {}
+        : {
+            discoveryExecutionId: discovery.executionId,
+            resumeContext: 'blocked' as const,
+            workInputManifest: discovery.manifest,
+            workInputManifestDigest: discovery.manifestDigest,
+          }),
       ...(handoffInput !== null ? { handoffInput } : {}),
       ...(input.reviewInput !== undefined ? { reviewInput: input.reviewInput } : {}),
       ...(specRevisionId !== null ? { specRevisionId } : {}),
@@ -629,23 +692,29 @@ export class RunOrchestrator {
     // ADR-0027（PC-05a）：项目上下文快照与 Run/Outbox 同事务冻结。选择只读当前
     // 有效 Decision/Observation；Inference 永不进入执行依据。空快照仍落行，
     // 但 `run.start` 不携带 projectContext（旧 Node 可继续执行）。
-    const projectContext = await createRunProjectContext(tx, {
-      runId,
-      projectId: task.projectId,
-      taskId: task.id,
-      now,
-    })
+    const projectContext =
+      discovery === undefined
+        ? await createRunProjectContext(tx, {
+            runId,
+            projectId: task.projectId,
+            taskId: task.id,
+            now,
+          })
+        : undefined
     assertProjectContextCapability(
       device,
-      projectContext.start === undefined ? 0 : projectContext.start.manifest.length,
+      projectContext?.start === undefined ? 0 : projectContext.start.manifest.length,
     )
-    if (projectContext.start !== undefined) {
+    if (projectContext?.start !== undefined) {
       // ADR-0027 §6（PC-05b）：创建事务内派生首版状态（全 frozen）并把完整状态
       // 入队；Node 早于 run.start 收到也只会持久化，等下载完成后再应用。
       const derivedState = await refreshRunContextState(tx, projectContext.snapshotId, now)
       await enqueueRunContextState(tx, this.contextStateDeps, derivedState.state)
     }
-    assertWorkInputCapability(device, workInputs?.items.length ?? 0)
+    assertWorkInputCapability(
+      device,
+      discovery?.manifest.entries.length ?? workInputs?.items.length ?? 0,
+    )
     const runStartPayload = RunStartSchema.shape.payload.parse({
       commandId,
       runId,
@@ -664,11 +733,10 @@ export class RunOrchestrator {
       expectedProfileDigest: revision.profileDigest,
       expectedPluginPackDigest: pack.packDigest,
       prompt: input.prompt,
-      executionContext: buildExecutionContext(
-        specRevision,
-        handoffInput,
-        input.reviewInput ?? null,
-      ),
+      executionContext:
+        discovery === undefined
+          ? buildExecutionContext(specRevision, handoffInput, input.reviewInput ?? null)
+          : undefined,
       // 切片⑧：解析后的档位成对固化（run.start 与 runs 行同值，Node 只透传）。
       approvalPolicy,
       // ADR-0028 §7（RD-03c1）：机器 Run 的固定草稿面（人类 Run 缺省）。
@@ -676,23 +744,36 @@ export class RunOrchestrator {
       // #379：收尾交接草稿的触发与约定快照（缺省 = 不生成）。
       ...(handoffRunSpec !== undefined ? { handoff: handoffRunSpec } : {}),
       // ADR-0027 §3：本 Run 冻结的项目上下文清单（正文走 Node 受控下载）。
-      ...(projectContext.start !== undefined ? { projectContext: projectContext.start } : {}),
+      ...(projectContext?.start !== undefined ? { projectContext: projectContext.start } : {}),
       // ADR-0028 §3：本 Run 冻结的工作输入清单（正文走 Node 受控下载）。
-      ...(workInputs !== undefined
+      ...(discovery !== undefined
         ? {
-            workInput: { manifestDigest: workInputs.manifestDigest, manifest: workInputs.manifest },
+            workInput: {
+              manifestDigest: discovery.manifestDigest,
+              manifest: discovery.manifest,
+              discoveryExecutionId: discovery.executionId,
+              discoveryReplayEndpoint: discovery.endpoint,
+            },
           }
-        : {}),
+        : workInputs !== undefined
+          ? {
+              workInput: {
+                manifestDigest: workInputs.manifestDigest,
+                manifest: workInputs.manifest,
+              },
+            }
+          : {}),
       // 切片⑤：成对下发——resumeOfRunId 让 Node 把 dshHomePath 指向来源 Run 的
       // home（per-run 隔离下新 home 没有旧日志）；resumeSessionId 直达装载身份。
       ...(resumeSource !== undefined
         ? { resumeOfRunId: resumeSource.id, resumeSessionId: resumeSource.dshSessionId! }
         : {}),
     })
-    onSnapshot?.({
-      snapshotId: projectContext.snapshotId,
-      entryCount: projectContext.start?.manifest.length ?? 0,
-    })
+    if (projectContext)
+      onSnapshot?.({
+        snapshotId: projectContext.snapshotId,
+        entryCount: projectContext.start?.manifest.length ?? 0,
+      })
     // 首个 Run 把 Task 推进到 in_progress（§3.1）；in_progress 上重复 run_started 无边。
     if (task.status === 'open' || task.status === 'in_review') {
       const next = transitionTask({ status: task.status }, { type: 'run_started' })
@@ -730,7 +811,7 @@ export class RunOrchestrator {
     // 期间来源变化只能影响「尚未发出的新快照」，不能把已在执行的 Run 判失败。
     if (command.sentAt !== null) {
       const run = await getRun(this.database.db, payload.runId)
-      return run === undefined || !isManagedDraftSource(run)
+      return run === undefined || (!isManagedDraftSource(run) && !run.discoveryExecutionId)
     }
     const now = this.nowFn()
     const recorded: RecordedContextEntry[] = []
@@ -759,6 +840,30 @@ export class RunOrchestrator {
         blockReason = machineVerification.reason
         await cancelRunInTransaction(tx, { outbox: this.outbox, now }, run, 'admin')
         dispatch.outcome = 'block'
+        return
+      }
+      if (run.discoveryExecutionId) {
+        const replay = this.discoveryExecutionReplay
+        const frame = RunStartSchema.shape.payload.safeParse(command.payload)
+        const input = frame.success ? frame.data : undefined
+        const toolNames = input?.toolPolicy?.allowedToolNames
+        if (
+          !replay ||
+          input?.workInput?.discoveryExecutionId !== run.discoveryExecutionId ||
+          input.workInput.discoveryReplayEndpoint !== replay.endpoint ||
+          input.workInput.manifestDigest !== run.workInputManifestDigest ||
+          input.agent.provider !== replay.provider ||
+          input.agent.model !== replay.model ||
+          toolNames?.length !== DISCOVERY_REPLAY_TOOLS.length ||
+          !DISCOVERY_REPLAY_TOOLS.every((name) => toolNames.includes(name)) ||
+          !(await verifyDiscoveryReplayRun(tx, run, now, { route: replay })).ok
+        ) {
+          blockReason = 'discovery_execution_unavailable'
+          await cancelRunInTransaction(tx, { outbox: this.outbox, now }, run, 'admin')
+          dispatch.outcome = 'block'
+          return
+        }
+        dispatch.outcome = 'send'
         return
       }
       // RD-03c1：升级前排队、未被本版本固化 toolPolicy 的机器 Run 一律不下发。
@@ -1028,14 +1133,19 @@ export class RunOrchestrator {
         })
       } else {
         this.applyRunTransition(run, { type: 'failed' })
+        const privateReplay = Boolean(run.discoveryExecutionId)
         await applyRunStatus(
           tx,
           this.outbox,
           run.id,
           'failed',
           {
-            failureCode: ack.error?.code ?? 'RUNTIME_START_FAILED',
-            failureSummary: ack.error?.message ?? 'node rejected run.start',
+            failureCode: privateReplay
+              ? 'RUNTIME_START_FAILED'
+              : (ack.error?.code ?? 'RUNTIME_START_FAILED'),
+            failureSummary: privateReplay
+              ? 'Private draft execution did not start'
+              : (ack.error?.message ?? 'node rejected run.start'),
             finishedAt: now,
           },
           recorded,
@@ -1267,6 +1377,10 @@ export class RunOrchestrator {
       // The persisted seal wins over the node-supplied audience. Managed lifecycle
       // and receipts need their own fixed, payload-free protocol.
       if (isManagedDraftSource(run)) return
+      if (run.discoveryExecutionId) {
+        await this.handleDiscoveryReplayEvent(tx, run, payload, now, recorded)
+        return
+      }
       // usage 只属于 owner 受众；不依赖 Node projector 自律，伪造的 project
       // 终态帧在持久化/团队扇出之前拒绝。
       if (
@@ -1348,6 +1462,62 @@ export class RunOrchestrator {
       }
     })
     this.flushContextEvents(recorded)
+  }
+
+  /** Keep the contiguous Node acknowledgement without saving or projecting Runtime content. */
+  private async handleDiscoveryReplayEvent(
+    tx: Tx,
+    run: RunRow,
+    payload: ProjectedRunEvent,
+    now: Date,
+    recorded: RecordedContextEntry[],
+  ): Promise<void> {
+    const { appended } = await appendRunEvent(tx, {
+      id: randomUUID(),
+      runId: run.id,
+      seq: payload.seq,
+      type: 'discovery.replay.receipt',
+      audience: 'owner',
+      payload: {},
+      occurredAt: now,
+    })
+    if (!appended || payload.audience !== 'owner' || isTerminal(run.status)) return
+    let lifecycle: ProjectedRunEvent['event']
+    switch (payload.event.type) {
+      case 'runtime.ready':
+        lifecycle = payload.event
+        break
+      case 'run.completed':
+        lifecycle = { type: 'run.completed', finalText: '' }
+        break
+      case 'run.failed':
+        lifecycle = {
+          type: 'run.failed',
+          code: 'INTERNAL_ERROR',
+          summary: 'Private draft execution failed',
+        }
+        break
+      case 'run.cancelled':
+        lifecycle = { type: 'run.cancelled', forced: false }
+        break
+      default:
+        return
+    }
+    if (run.status === 'queued') {
+      const dispatched = this.applyRunTransition(run, { type: 'dispatch_acked' })
+      await setRunStatus(tx, run.id, dispatched.status)
+      run.status = dispatched.status
+      await appendTeamEvent(tx, {
+        type: 'run.changed',
+        payload: { runId: run.id, taskId: run.taskId, status: dispatched.status },
+      })
+    }
+    try {
+      await this.applyProjectedEvent(tx, run, lifecycle, now, recorded)
+    } catch (error) {
+      if (!isRunSemanticConflict(error)) throw error
+      await this.convergeSemanticConflict(tx, run, error, now, recorded)
+    }
   }
 
   /**
@@ -1627,6 +1797,7 @@ export class RunOrchestrator {
     recorded: RecordedContextEntry[],
   ): Promise<void> {
     const terminal = isTerminal(status)
+    const privateReplay = Boolean(run.discoveryExecutionId)
     await applyRunStatus(
       tx,
       this.outbox,
@@ -1636,8 +1807,16 @@ export class RunOrchestrator {
         ...(snapshot.dshSessionId !== null ? { dshSessionId: snapshot.dshSessionId } : {}),
         ...(status === 'running' ? { startedAt: run.startedAt ?? now } : {}),
         ...(terminal ? { finishedAt: now } : {}),
-        ...(snapshot.failureCode !== null ? { failureCode: snapshot.failureCode } : {}),
-        ...(snapshot.failureSummary !== null ? { failureSummary: snapshot.failureSummary } : {}),
+        ...(privateReplay
+          ? status === 'failed'
+            ? { failureCode: 'INTERNAL_ERROR', failureSummary: 'Private draft execution failed' }
+            : {}
+          : {
+              ...(snapshot.failureCode !== null ? { failureCode: snapshot.failureCode } : {}),
+              ...(snapshot.failureSummary !== null
+                ? { failureSummary: snapshot.failureSummary }
+                : {}),
+            }),
       },
       recorded,
     )

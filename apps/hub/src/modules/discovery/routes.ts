@@ -37,7 +37,10 @@ const base = '/projects/:projectId/discovery'
 
 export function registerDiscoveryRoutes(
   app: FastifyInstance,
-  deps: RouterDeps & { requireActor: RequireActor },
+  deps: RouterDeps & { requireActor: RequireActor } & Pick<
+      Parameters<typeof authorizeDiscoveryExecution>[0],
+      'dispatchDiscoveryReplay'
+    >,
 ) {
   app.post(`${base}/config`, async (request, reply) => {
     reply.header('cache-control', 'private, no-store')

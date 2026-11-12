@@ -16,6 +16,7 @@ import type { RuntimeDriver, RuntimeHandle, RuntimeStartSpec } from '../runtime-
 import type { RuntimeCommand } from '@whalepod/protocol'
 import type { SecretStore } from '../secret/store.js'
 import type { WorkspaceRegistry } from '../workspace/registry.js'
+import { verifyDiscoveryReplayWorkspace } from '../work/discovery-replay.js'
 import { buildRuntimeEnvironment, RuntimeEnvError } from './environment.js'
 import { StderrTail } from './stderr-tail.js'
 import { killProcessGroup, probeOrphan, processStartTime } from './process.js'
@@ -196,6 +197,12 @@ export class RuntimeSupervisor {
     let workspacePath: string
     try {
       workspacePath = await this.deps.registry.resolve(ctx.workspaceId)
+      if (spec.discoveryReplay !== undefined) {
+        workspacePath = await verifyDiscoveryReplayWorkspace(
+          spec.dshHomePath,
+          spec.discoveryReplay.workspacePath,
+        )
+      }
     } catch {
       throw new SupervisorError('WORKSPACE_UNAVAILABLE', 'workspace preflight failed')
     }

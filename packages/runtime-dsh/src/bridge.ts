@@ -8,8 +8,9 @@
  * 不 fork loop）。`dispose()` 按 cancel → flush → dispose 次序收敛后拆树。
  */
 import { randomUUID } from 'node:crypto'
+import { realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { boot, loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
@@ -33,6 +34,7 @@ import {
   type ProjectContextReadFact,
 } from './project-context-tool.js'
 import { SessionOwner, type AgentStatusPayload, type SessionOwnerEvents } from './session-owner.js'
+import { bootDiscoveryReplayDsh } from './discovery-replay.js'
 
 /**
  * 探针接缝 `probeAfterReady` 交出的**直送面**（#289）：把合成输入直接送生产订阅
@@ -319,6 +321,23 @@ export class RuntimeBridge {
      */
     // 切片⑤：wire 字段（spec.resumeSessionId）是产品真源；探针注入是兼容口。
     const resumeSessionId = spec.resumeSessionId ?? options.probeResumeSessionId
+    const discovery = spec.workInputs?.discoveryExecutionId !== undefined
+    if (
+      discovery &&
+      (resumeSessionId !== undefined ||
+        spec.pluginPackOverlayPath !== undefined ||
+        (options.extraPatchFiles?.length ?? 0) !== 0 ||
+        spec.provider !== 'deepseek-official' ||
+        spec.approvalPolicy !== 'approval_required' ||
+        spec.toolPolicy?.allowedToolNames.length !== 1 ||
+        spec.toolPolicy.allowedToolNames[0] !== 'write' ||
+        spec.projectContext !== undefined ||
+        spec.artifactInputs !== undefined ||
+        spec.handoff !== undefined ||
+        spec.workspacePath !== realpathSync(process.cwd()) ||
+        dirname(spec.workspacePath) !== realpathSync(spec.dshHomePath))
+    )
+      throw new Error('discovery execution requires the fixed replay assembly')
     let dshSessionId = resumeSessionId ?? dshSessionIdOf(spec)
     const emit = (output: RuntimeOutput): void => options.emit(output)
 
@@ -342,7 +361,9 @@ export class RuntimeBridge {
     // P1-17：spec.pluginPackOverlayPath 是经审核 Plugin Pack 的 Cordis overlay
     // （本地 wire 绝对路径，红线同 workspacePath——只走本地命令帧，不进日志；
     // 这里的结构化日志只带 runId）。
-    const ctx = await bootDshTree(options.extraPatchFiles ?? [], spec.pluginPackOverlayPath)
+    const ctx = discovery
+      ? await bootDiscoveryReplayDsh(spec.workspacePath)
+      : await bootDshTree(options.extraPatchFiles ?? [], spec.pluginPackOverlayPath)
     log({ level: 'info', component: 'runtime.bridge', msg: 'runtime booted', runId })
 
     const approval = new ApprovalPort(
@@ -366,8 +387,12 @@ export class RuntimeBridge {
       },
     }
     const events: SessionOwnerEvents = {
-      sessionEvent: (event) => emit(frameOf('session.event', { runId, dshSessionId, event })),
-      agentStatus: (status) => emit(frameOf('agent.status', { runId, status })),
+      sessionEvent: (event) => {
+        if (!discovery) emit(frameOf('session.event', { runId, dshSessionId, event }))
+      },
+      agentStatus: (status) => {
+        if (!discovery) emit(frameOf('agent.status', { runId, status }))
+      },
       contextRead: (fact: ProjectContextReadFact) => {
         if (spec.projectContext === undefined) return
         emit(
@@ -438,7 +463,13 @@ export class RuntimeBridge {
             return
           case 'error': {
             const failure = mapTurnError(reason.error)
-            emit(frameOf('runtime.fatal', { runId, code: failure.code, summary: failure.summary }))
+            emit(
+              frameOf('runtime.fatal', {
+                runId,
+                code: failure.code,
+                summary: discovery ? failure.code : failure.summary,
+              }),
+            )
             return
           }
           default:

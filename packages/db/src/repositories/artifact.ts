@@ -1,4 +1,4 @@
-import { and, asc, count, eq, isNull, or } from 'drizzle-orm'
+import { and, asc, count, eq, isNotNull, isNull, or } from 'drizzle-orm'
 import type { DbHandle } from '../client.js'
 import { artifacts } from '../schema/artifact.js'
 import { runs } from '../schema/run.js'
@@ -35,9 +35,9 @@ export async function getArtifact(handle: DbHandle, id: string): Promise<Artifac
 
 // A managed candidate inherits the Run seal. A deliberately published Artifact can
 // enter the ordinary surfaces; the publish transaction owns that authorization.
-const ordinaryArtifact = or(
-  isNull(runs.managedDraftSourceDigest),
-  eq(artifacts.status, 'published'),
+const ordinaryArtifact = and(
+  isNull(runs.discoveryExecutionId),
+  or(isNull(runs.managedDraftSourceDigest), eq(artifacts.status, 'published')),
 )
 
 export async function getOrdinaryArtifact(
@@ -75,14 +75,29 @@ export async function setArtifactStatus(
 export async function listArtifactsByTask(
   handle: DbHandle,
   taskId: string,
-): Promise<ArtifactRow[]> {
-  const rows = await handle
-    .select({ artifact: artifacts })
+  privateDiscoveryOwner?: string,
+): Promise<{ artifact: ArtifactRow; discoveryExecutionId: string | null }[]> {
+  return handle
+    .select({ artifact: artifacts, discoveryExecutionId: runs.discoveryExecutionId })
     .from(artifacts)
     .innerJoin(runs, eq(runs.id, artifacts.runId))
-    .where(and(eq(artifacts.taskId, taskId), ordinaryArtifact))
+    .where(
+      and(
+        eq(artifacts.taskId, taskId),
+        privateDiscoveryOwner === undefined
+          ? ordinaryArtifact
+          : or(
+              ordinaryArtifact,
+              and(
+                isNotNull(runs.discoveryExecutionId),
+                eq(artifacts.status, 'candidate'),
+                eq(artifacts.ownerUserId, privateDiscoveryOwner),
+                eq(runs.ownerUserId, privateDiscoveryOwner),
+              ),
+            ),
+      ),
+    )
     .orderBy(asc(artifacts.createdAt))
-  return rows.map(({ artifact }) => artifact)
 }
 
 /** Task 是否已有至少一个 published Artifact（submit-review 守卫，03 §3.1）。 */

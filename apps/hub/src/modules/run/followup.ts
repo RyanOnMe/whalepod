@@ -124,7 +124,8 @@ export async function sendRunFollowup(
   // The Run's seal and Task binding cannot change. Guard before a legacy receipt
   // lookup so a sealed Run never falls into the ordinary followup queue.
   const probe = await getOrdinaryRun(database.db, runId)
-  if (probe === undefined) throw new RunCommandError('NOT_FOUND', 'run not found')
+  if (probe === undefined || Boolean(probe.discoveryExecutionId))
+    throw new RunCommandError('NOT_FOUND', 'run not found')
   return transactCommand(database, `run.followup:${input.idempotencyKey}`, async (tx) => {
     // 锁顺序必须是 Task → Run：`task/commands.ts`（lockTask → 锁 Run 行）就是这一序，
     // 反过来会在「Task 取消 × 追问」并发时造成 40P01 死锁。

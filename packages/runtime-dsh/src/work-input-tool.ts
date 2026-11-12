@@ -28,6 +28,7 @@ export function createReadWorkInputTool(
   entries: readonly WorkInputManifestEntry[],
   entriesDir: string,
   onRead: (fact: WorkInputReadFact) => void,
+  authorizeRead?: () => Promise<void>,
 ): ToolDefinition {
   const byId = new Map(entries.map((entry) => [entry.inboxItemId, entry]))
   return defineTool({
@@ -88,6 +89,9 @@ export function createReadWorkInputTool(
       if (raw.byteLength !== entry.byteSize || sha256Hex(raw) !== entry.bodyDigest) {
         throw new Error('work input copy failed digest verification')
       }
+      // A local copy is not a capability: revalidate after the digest check,
+      // before recording consumption or exposing any bytes to the DSH turn.
+      await authorizeRead?.()
       onRead({
         inboxItemId: entry.inboxItemId,
         digestVerified: true,

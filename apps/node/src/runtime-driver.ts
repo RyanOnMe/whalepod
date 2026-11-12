@@ -8,6 +8,7 @@
  */
 import { spawn } from 'node:child_process'
 import { RuntimeCommandSchema, type RuntimeCommand } from '@whalepod/protocol'
+import type { DiscoveryReplayGate } from './work/discovery-replay.js'
 
 export interface RuntimeStartSpec {
   readonly runId: string
@@ -31,6 +32,9 @@ export interface RuntimeStartSpec {
   }
   readonly expectedProfileDigest: string
   readonly expectedPluginPackDigest: string
+  readonly discoveryReplay?: Pick<DiscoveryReplayGate, 'origin' | 'token'> & {
+    readonly workspacePath: string
+  }
 }
 
 export interface RuntimeSpawnContext {

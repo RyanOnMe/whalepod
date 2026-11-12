@@ -15,7 +15,7 @@
  *
  * 红线：拒绝理由只描述事实，不携带绝对路径（错误文本会进模型上下文与会话日志）。
  */
-import { realpathSync } from 'node:fs'
+import { lstatSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
 import {
@@ -35,6 +35,42 @@ const FILE_PATH_ARG = 'file_path'
 
 /** 机器 Run 唯一的免审批写入区（工作区相对路径）。 */
 export const MACHINE_DRAFT_WRITE_SUBDIR = '.whalepod/drafts'
+
+export function discoveryDraftPath(runId: string): string {
+  return `${MACHINE_DRAFT_WRITE_SUBDIR}/${runId}.md`
+}
+
+/** Source-only policy; never delegates to an approval or permits ambient workspace reads. */
+export function discoveryDraftToolDenial(
+  runId: string,
+  toolName: string,
+  args: unknown,
+  workspacePath: string,
+): string | undefined {
+  if (toolName === 'read_work_input') return undefined
+  if (toolName !== 'write' && toolName !== 'publish_artifact') {
+    return 'tool is outside the discovery draft scope'
+  }
+  const expected = discoveryDraftPath(runId)
+  const input = typeof args === 'object' && args !== null ? (args as Record<string, unknown>) : {}
+  if (
+    (toolName === 'write' && input['file_path'] !== expected) ||
+    (toolName === 'publish_artifact' &&
+      (input['relativePath'] !== expected || input['mediaType'] !== 'text/markdown'))
+  )
+    return 'tool may only use the Markdown draft for this discovery run'
+  const target = resolve(canonicalRoot(workspacePath), expected)
+  if (canonicalTarget(target) !== target) return 'discovery draft path is not a regular file'
+  try {
+    const info = lstatSync(target)
+    if (!info.isFile() || info.nlink !== 1) return 'discovery draft path is not a regular file'
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      return 'discovery draft path is unavailable'
+    }
+  }
+  return undefined
+}
 
 export interface MachineToolScope {
   /** Node 注册的 Workspace 根；相对路径按它解析（DSH 的 cwd 同值）。 */

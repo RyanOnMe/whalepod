@@ -63,10 +63,20 @@ import { loadWorkDetail, toWorkView } from './queries.js'
 import { answerWorkQuestion } from './questions.js'
 import { confirmWorkMandateProposal, type ScopeProposalConfirmOutcome } from './scope-proposals.js'
 import { buildRunWorkInputBundle } from './run-dispatch.js'
+import { getOrdinaryRun } from '@whalepod/db'
+import type { ArtifactStore } from '../artifact/store.js'
+import {
+  discoveryReplayBundle,
+  verifyDiscoveryReplayRun,
+  type DiscoveryReplayRoute,
+} from '../discovery/replay-binding.js'
 
 export interface WorkRouteDeps {
   readonly database: Database
   readonly requireActor: RequireActor
+  readonly discoveryExecutionReplay?: DiscoveryReplayRoute | undefined
+  readonly discoveryStore?: ArtifactStore | undefined
+  readonly discoveryDeviceOnline?: ((deviceId: string) => boolean) | undefined
   /**
    * ADR-0028 §9（RD-03a）：新 Mandate/暂停/恢复/撤销提交后，在**独立事务**取消
    * 已派发但仍 queued 的机器 Run。回调由组合根注入，work 模块不直接 import
@@ -763,7 +773,24 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
     const runId = parseUuid(rawRunId, 'run id')
     let bundle: Awaited<ReturnType<typeof buildRunWorkInputBundle>>
     try {
-      bundle = await buildRunWorkInputBundle(deps.database, runId, identity.deviceId)
+      const run = await getOrdinaryRun(deps.database.db, runId)
+      const route = deps.discoveryExecutionReplay
+      const store = deps.discoveryStore
+      if (
+        run?.discoveryExecutionId &&
+        route &&
+        store &&
+        run.deviceId === identity.deviceId &&
+        deps.discoveryDeviceOnline?.(identity.deviceId)
+      ) {
+        bundle = await deps.database.transaction(async (tx) =>
+          (await verifyDiscoveryReplayRun(tx, run, new Date(), { route, lock: true })).ok
+            ? discoveryReplayBundle(tx, run, store)
+            : undefined,
+        )
+      } else {
+        bundle = await buildRunWorkInputBundle(deps.database, runId, identity.deviceId)
+      }
     } catch (error) {
       const { code, message } = errorCodeOf(error)
       if (code === 'INTERNAL_ERROR') throw error
@@ -775,6 +802,22 @@ export function registerWorkRoutes(app: FastifyInstance, deps: WorkRouteDeps): v
       throw new ApiError(404, 'NOT_FOUND', 'run has no work input manifest')
     }
     return noStore(reply).send({ ok: true, data: bundle })
+  })
+  app.get('/node/runs/:runId/work-input/authorize', async (request, reply) => {
+    const identity = await authenticateDevice(deps.database, request)
+    const { runId: rawRunId } = request.params as { runId: string }
+    const runId = parseUuid(rawRunId, 'run id')
+    const route = deps.discoveryExecutionReplay
+    const ok =
+      route &&
+      deps.discoveryDeviceOnline?.(identity.deviceId) &&
+      (await deps.database.transaction(async (tx) => {
+        const run = await getOrdinaryRun(tx, runId)
+        if (!run || run.deviceId !== identity.deviceId) return false
+        return (await verifyDiscoveryReplayRun(tx, run, new Date(), { route, lock: true })).ok
+      }))
+    if (!ok) throw new ApiError(404, 'NOT_FOUND', 'run input authorization unavailable')
+    return noStore(reply).code(204).send()
   })
 }
 

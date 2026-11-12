@@ -9,10 +9,11 @@ import { WorkSourceTypeSchema } from './work.js'
 
 export const WORK_INPUT_MANIFEST_VERSION = 'rd02a2.v1'
 export const WORK_INPUT_MANIFEST_MAX_ENTRIES = 32
+export const FrozenWorkSourceTypeSchema = WorkSourceTypeSchema.or(z.literal('discovery_source'))
 
 export const WorkInputManifestEntrySchema = z.strictObject({
   inboxItemId: z.uuid(),
-  sourceType: WorkSourceTypeSchema,
+  sourceType: FrozenWorkSourceTypeSchema,
   sourceId: z.uuid(),
   sourceVersion: z.string().min(1).max(200),
   sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),

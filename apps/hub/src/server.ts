@@ -8,8 +8,10 @@
  *   同周期驱动 Approval 过期清扫（P1-14，G5-05 pending → expired 等价拒绝）。
  * 进程退出时清理定时器与连接。
  */
+import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { applyMigrations, createDatabase, getTeam, Outbox } from '@whalepod/db'
-import { buildApp, createRouterAutoDispatch } from './app.js'
+import { buildApp, createRouterAutoDispatch, type HubDeps } from './app.js'
 import { loadConfig } from './config.js'
 import { SetupTokenStore } from './modules/team/setup-token.js'
 import { OutboxWorker } from './modules/run/index.js'
@@ -29,227 +31,243 @@ import { sanitizeError } from './modules/shared/error-log.js'
 import { logRecordedEntry } from './modules/context/observer.js'
 import { WsDeviceGateway } from './modules/device/index.js'
 
-const config = loadConfig()
-const database = createDatabase({ connectionString: config.databaseUrl })
-// 启动即应用迁移（P1-20 空卷冷启动判据）：幂等 + advisory lock 串行化（#55），
-// 多副本同起也安全。此前 applyMigrations 只有测试 helper 与 e2e-serve 调用——
-// 「库已就绪」在测试里永远是真，这个洞就永远隐身（#95/#97 同族：生产入口
-// 从未被执行过）。DB 不可达时进程崩溃退出是**正确语义**：compose 的 healthy
-// 条件等不到它，编排层负责重试与报警，绝不静默半启动。
-await applyMigrations(database)
-const setupTokenStore = new SetupTokenStore(config.setupTokenPath)
+/** The shipped composition; programmatic callers may enable only the guarded loopback replay. */
+export async function runHub(
+  discoveryExecutionReplay?: HubDeps['discoveryExecutionReplay'],
+): Promise<void> {
+  const config = loadConfig()
+  const database = createDatabase({ connectionString: config.databaseUrl })
+  // 启动即应用迁移（P1-20 空卷冷启动判据）：幂等 + advisory lock 串行化（#55），
+  // 多副本同起也安全。此前 applyMigrations 只有测试 helper 与 e2e-serve 调用——
+  // 「库已就绪」在测试里永远是真，这个洞就永远隐身（#95/#97 同族：生产入口
+  // 从未被执行过）。DB 不可达时进程崩溃退出是**正确语义**：compose 的 healthy
+  // 条件等不到它，编排层负责重试与报警，绝不静默半启动。
+  await applyMigrations(database)
+  const setupTokenStore = new SetupTokenStore(config.setupTokenPath)
 
-// 只有尚无 Team 时才生成一次性 Setup Token；Token 不打印进日志（由 CLI 读文件输出）。
-if ((await getTeam(database.db)) === undefined) {
-  await setupTokenStore.ensure()
-}
+  // 只有尚无 Team 时才生成一次性 Setup Token；Token 不打印进日志（由 CLI 读文件输出）。
+  if ((await getTeam(database.db)) === undefined) {
+    await setupTokenStore.ensure()
+  }
 
-const app = await buildApp({
-  config,
-  database,
-  setupTokenStore,
-  logger: { level: process.env.LOG_LEVEL ?? 'info' },
-})
-
-// 组合根后台循环：测试不经本入口，故无需条件化。
-const outbox = new Outbox(database)
-const worker = new OutboxWorker({
-  outbox,
-  gateway: new WsDeviceGateway(),
-  managedDraftTransport: app.managedDraftTransport,
-  managedDraftExecution: app.managedDraftExecution,
-  // ADR-0027 §3：run.start 真正下发前复核快照；失败由 orchestrator 收敛 failed。
-  beforeDispatch: (command) => app.runOrchestrator.beforeDispatch(command),
-})
-const workerTimer = setInterval(() => {
-  void worker.dispatchOnce().catch((error) => {
-    app.log.warn(
-      { component: 'hub.outbox-worker', errorName: String(error) },
-      'dispatch loop error',
-    )
-  })
-}, 250)
-/**
- * PC-05b-2：审批过期清扫与首条回执 watchdog 串行驱动。两者都会写 Run/Approval；
- * 并发时会在 `Run→Approval`（终态折叠）与 `Approval→Run`（决策/过期）之间形成
- * ABBA。串行化自动路径即可，真人审批与终态折叠的既有竞争仍由 PostgreSQL 检测。
- */
-let receiptMaintenanceRunning = false
-let routerTickRunning = false
-const routerStore = new ArtifactStore({ root: config.artifactStoreDir })
-const routerTimer = setInterval(() => {
-  if (routerTickRunning) return
-  routerTickRunning = true
-  void runRouterTick({
+  const app = await buildApp({
+    config,
     database,
-    store: routerStore,
-    log: (event) => app.log.info(event, 'router event'),
-    onAutoDispatch: createRouterAutoDispatch(database, app.runOrchestrator, outbox),
+    setupTokenStore,
+    logger: { level: process.env.LOG_LEVEL ?? 'info' },
+    ...(discoveryExecutionReplay === undefined ? {} : { discoveryExecutionReplay }),
   })
-    .catch((error) =>
-      app.log.warn({ component: 'hub.router', ...sanitizeError(error) }, 'router tick failed'),
-    )
-    .finally(() => {
-      routerTickRunning = false
-    })
-}, 1000)
-// The DB coordinator lock and running index arbitrate the shared slot across processes.
-let discoveryTickRunning = false
-const discoveryTimer = setInterval(() => {
-  if (discoveryTickRunning) return
-  discoveryTickRunning = true
-  void runDiscoveryTick({
-    database,
-    store: routerStore,
-    log: (event) => app.log.info(event, 'discovery event'),
+
+  // 组合根后台循环：测试不经本入口，故无需条件化。
+  const outbox = new Outbox(database)
+  const worker = new OutboxWorker({
+    outbox,
+    gateway: new WsDeviceGateway(),
+    managedDraftTransport: app.managedDraftTransport,
+    managedDraftExecution: app.managedDraftExecution,
+    // ADR-0027 §3：run.start 真正下发前复核快照；失败由 orchestrator 收敛 failed。
+    beforeDispatch: (command) => app.runOrchestrator.beforeDispatch(command),
   })
-    .catch((error) =>
+  const workerTimer = setInterval(() => {
+    void worker.dispatchOnce().catch((error) => {
       app.log.warn(
-        { component: 'hub.discovery', ...sanitizeError(error) },
-        'discovery tick failed',
-      ),
-    )
-    .finally(() => {
-      discoveryTickRunning = false
+        { component: 'hub.outbox-worker', errorName: String(error) },
+        'dispatch loop error',
+      )
     })
-}, 1000)
-app.addHook('onClose', async () => {
-  clearInterval(routerTimer)
-  clearInterval(discoveryTimer)
-})
-const leaseTimer = setInterval(() => {
-  void reconcileLeases(
-    {
+  }, 250)
+  /**
+   * PC-05b-2：审批过期清扫与首条回执 watchdog 串行驱动。两者都会写 Run/Approval；
+   * 并发时会在 `Run→Approval`（终态折叠）与 `Approval→Run`（决策/过期）之间形成
+   * ABBA。串行化自动路径即可，真人审批与终态折叠的既有竞争仍由 PostgreSQL 检测。
+   */
+  let receiptMaintenanceRunning = false
+  let routerTickRunning = false
+  const routerStore = new ArtifactStore({ root: config.artifactStoreDir })
+  const routerTimer = setInterval(() => {
+    if (routerTickRunning) return
+    routerTickRunning = true
+    void runRouterTick({
+      database,
+      store: routerStore,
+      log: (event) => app.log.info(event, 'router event'),
+      onAutoDispatch: createRouterAutoDispatch(database, app.runOrchestrator, outbox),
+    })
+      .catch((error) =>
+        app.log.warn({ component: 'hub.router', ...sanitizeError(error) }, 'router tick failed'),
+      )
+      .finally(() => {
+        routerTickRunning = false
+      })
+  }, 1000)
+  // The DB coordinator lock and running index arbitrate the shared slot across processes.
+  let discoveryTickRunning = false
+  const discoveryTimer = setInterval(() => {
+    if (discoveryTickRunning) return
+    discoveryTickRunning = true
+    void runDiscoveryTick({
+      database,
+      store: routerStore,
+      log: (event) => app.log.info(event, 'discovery event'),
+    })
+      .catch((error) =>
+        app.log.warn(
+          { component: 'hub.discovery', ...sanitizeError(error) },
+          'discovery tick failed',
+        ),
+      )
+      .finally(() => {
+        discoveryTickRunning = false
+      })
+  }, 1000)
+  app.addHook('onClose', async () => {
+    clearInterval(routerTimer)
+    clearInterval(discoveryTimer)
+  })
+  const leaseTimer = setInterval(() => {
+    void reconcileLeases(
+      {
+        database,
+        outbox,
+        // P1-16：喂入 buildApp 装配的 orchestrator 心跳投影——Node 在线但心跳
+        // 已不含该 Run 时立即收敛 lost（03 §3.2）；进程重启后内存投影为空，
+        // 退化为 devices.lastSeenAt（DB 事实），语义不变。
+        activity: app.runOrchestrator.deviceActivity,
+        now: () => new Date(),
+        // ADR-0025 §9：租约过期/丢失同样会投影 Run 终态 Observation；观测必须在
+        // 事务提交后写，且组合根不能漏接（评审 B2 的实测缺口）。
+        log: (event) => logRecordedEntry(app.log, event),
+      },
+      new Date(),
+    ).catch((error) => {
+      app.log.warn(
+        { component: 'hub.reconciler', errorName: String(error) },
+        'lease reconcile error',
+      )
+    })
+    // ADR-0026（PC-04a）：确定性协调 tick。只跑无模型求值；无变化时没有 queued 行，
+    // 不会为「保持记忆」定期唤醒任何计算。
+    void runCoordinationTick({
+      database,
+      now: new Date(),
+      log: (event) => app.log.info(event, 'coordination event'),
+    }).catch((error) => {
+      app.log.warn(
+        { component: 'hub.coordination', ...sanitizeError(error) },
+        'coordination tick error',
+      )
+    })
+    // ADR-0024 §5：来源权限水位（verified 过期 → unknown；7 天 → unavailable）。
+    // 租约续租/采集器扫描每 tick 都跑；慢重验在 reconciler 内部单飞，避免拖垮健康租约。
+    void runSourceReconcileTick({
+      database,
+      collector: nodeSourceCollector,
+      now: new Date(),
+      log: (event) => app.log.info(event, 'source context changed'),
+    }).catch((error) => {
+      app.log.warn(
+        { component: 'hub.context', ...sanitizeError(error) },
+        'source permission reconcile error',
+      )
+    })
+    // ADR-0027 §6（PC-05b）：活跃 Run 的上下文撤权状态重算与 20s 水位帧。
+    void syncActiveRunContextStates({
       database,
       outbox,
-      // P1-16：喂入 buildApp 装配的 orchestrator 心跳投影——Node 在线但心跳
-      // 已不含该 Run 时立即收敛 lost（03 §3.2）；进程重启后内存投影为空，
-      // 退化为 devices.lastSeenAt（DB 事实），语义不变。
-      activity: app.runOrchestrator.deviceActivity,
       now: () => new Date(),
-      // ADR-0025 §9：租约过期/丢失同样会投影 Run 终态 Observation；观测必须在
-      // 事务提交后写，且组合根不能漏接（评审 B2 的实测缺口）。
-      log: (event) => logRecordedEntry(app.log, event),
-    },
-    new Date(),
-  ).catch((error) => {
-    app.log.warn({ component: 'hub.reconciler', errorName: String(error) }, 'lease reconcile error')
-  })
-  // ADR-0026（PC-04a）：确定性协调 tick。只跑无模型求值；无变化时没有 queued 行，
-  // 不会为「保持记忆」定期唤醒任何计算。
-  void runCoordinationTick({
-    database,
-    now: new Date(),
-    log: (event) => app.log.info(event, 'coordination event'),
-  }).catch((error) => {
-    app.log.warn(
-      { component: 'hub.coordination', ...sanitizeError(error) },
-      'coordination tick error',
-    )
-  })
-  // ADR-0024 §5：来源权限水位（verified 过期 → unknown；7 天 → unavailable）。
-  // 租约续租/采集器扫描每 tick 都跑；慢重验在 reconciler 内部单飞，避免拖垮健康租约。
-  void runSourceReconcileTick({
-    database,
-    collector: nodeSourceCollector,
-    now: new Date(),
-    log: (event) => app.log.info(event, 'source context changed'),
-  }).catch((error) => {
-    app.log.warn(
-      { component: 'hub.context', ...sanitizeError(error) },
-      'source permission reconcile error',
-    )
-  })
-  // ADR-0027 §6（PC-05b）：活跃 Run 的上下文撤权状态重算与 20s 水位帧。
-  void syncActiveRunContextStates({
-    database,
-    outbox,
-    now: () => new Date(),
-    log: (message, context) => app.log.warn(context, message),
-  }).catch((error) => {
-    app.log.warn({ component: 'hub.context', ...sanitizeError(error) }, 'context state sync error')
-  })
-  // ADR-0028（RD-02a-2a）：未消费工作输入的 60s 对账窗口。
-  void reconcileWorkInputs(database, new Date())
-    .then((count) => {
-      if (count > 0) {
-        app.log.info(
-          { component: 'hub.work_input', action: 'work.input_returned', count },
-          'unconsumed work inputs returned to pending',
-        )
-      }
-    })
-    .catch((error) => {
+      log: (message, context) => app.log.warn(context, message),
+    }).catch((error) => {
       app.log.warn(
-        { component: 'hub.work_input', ...sanitizeError(error) },
-        'work input reconcile error',
+        { component: 'hub.context', ...sanitizeError(error) },
+        'context state sync error',
       )
     })
-  // ADR-0028 §9（RD-03c2）：Mandate 到期/版本漂移/Work 不可用的在途机器 Run 实时失效。
-  void reconcileMandateInvalidation({ database, outbox, now: () => new Date() }, new Date())
-    .then((result) => {
-      if (result.invalidated > 0 || result.failed > 0) {
-        app.log.info(
-          {
-            component: 'hub.dispatch',
-            action: 'work.dispatch.mandate_invalidated',
-            invalidated: result.invalidated,
-            failed: result.failed,
-          },
-          'running machine runs marked mandate-invalidated by sweep',
-        )
-      }
-    })
-    .catch((error) => {
-      app.log.warn(
-        { component: 'hub.dispatch', ...sanitizeError(error) },
-        'mandate invalidation sweep error',
-      )
-    })
-  // P1-14 + ADR-0027 §4（PC-05b-2）：过期清扫与首条回执 watchdog 同周期、
-  // 串行执行（幂等；慢一轮则本 tick 跳过，下一 10 秒重试）。
-  if (!receiptMaintenanceRunning) {
-    receiptMaintenanceRunning = true
-    void (async () => {
-      try {
-        await expireApprovals({ database, outbox, now: () => new Date() }, new Date()).catch(
-          (error) => {
-            app.log.warn(
-              { component: 'hub.approval.expiry', errorName: String(error) },
-              'approval expiry sweep error',
-            )
-          },
-        )
-        await failMissingContextReceipts({
-          database,
-          outbox,
-          now: () => new Date(),
-          ...(config.contextReceiptWatchdogMs === undefined
-            ? {}
-            : { watchdogMs: config.contextReceiptWatchdogMs }),
-          log: (event) => logRecordedEntry(app.log, event),
-          contextLog: (action, fields) => app.log.info({ ...fields, action }, action),
-        }).catch((error) => {
-          app.log.warn(
-            { component: 'hub.context', ...sanitizeError(error) },
-            'context receipt watchdog error',
+    // ADR-0028（RD-02a-2a）：未消费工作输入的 60s 对账窗口。
+    void reconcileWorkInputs(database, new Date())
+      .then((count) => {
+        if (count > 0) {
+          app.log.info(
+            { component: 'hub.work_input', action: 'work.input_returned', count },
+            'unconsumed work inputs returned to pending',
           )
-        })
-      } finally {
-        receiptMaintenanceRunning = false
-      }
-    })()
+        }
+      })
+      .catch((error) => {
+        app.log.warn(
+          { component: 'hub.work_input', ...sanitizeError(error) },
+          'work input reconcile error',
+        )
+      })
+    // ADR-0028 §9（RD-03c2）：Mandate 到期/版本漂移/Work 不可用的在途机器 Run 实时失效。
+    void reconcileMandateInvalidation({ database, outbox, now: () => new Date() }, new Date())
+      .then((result) => {
+        if (result.invalidated > 0 || result.failed > 0) {
+          app.log.info(
+            {
+              component: 'hub.dispatch',
+              action: 'work.dispatch.mandate_invalidated',
+              invalidated: result.invalidated,
+              failed: result.failed,
+            },
+            'running machine runs marked mandate-invalidated by sweep',
+          )
+        }
+      })
+      .catch((error) => {
+        app.log.warn(
+          { component: 'hub.dispatch', ...sanitizeError(error) },
+          'mandate invalidation sweep error',
+        )
+      })
+    // P1-14 + ADR-0027 §4（PC-05b-2）：过期清扫与首条回执 watchdog 同周期、
+    // 串行执行（幂等；慢一轮则本 tick 跳过，下一 10 秒重试）。
+    if (!receiptMaintenanceRunning) {
+      receiptMaintenanceRunning = true
+      void (async () => {
+        try {
+          await expireApprovals({ database, outbox, now: () => new Date() }, new Date()).catch(
+            (error) => {
+              app.log.warn(
+                { component: 'hub.approval.expiry', errorName: String(error) },
+                'approval expiry sweep error',
+              )
+            },
+          )
+          await failMissingContextReceipts({
+            database,
+            outbox,
+            now: () => new Date(),
+            ...(config.contextReceiptWatchdogMs === undefined
+              ? {}
+              : { watchdogMs: config.contextReceiptWatchdogMs }),
+            log: (event) => logRecordedEntry(app.log, event),
+            contextLog: (action, fields) => app.log.info({ ...fields, action }, action),
+          }).catch((error) => {
+            app.log.warn(
+              { component: 'hub.context', ...sanitizeError(error) },
+              'context receipt watchdog error',
+            )
+          })
+        } finally {
+          receiptMaintenanceRunning = false
+        }
+      })()
+    }
+  }, 10_000)
+
+  await app.listen({ host: config.host, port: config.port })
+
+  const shutdown = async (): Promise<void> => {
+    clearInterval(workerTimer)
+    clearInterval(leaseTimer)
+    await app.close()
+    await database.close()
+    process.exit(0)
   }
-}, 10_000)
-
-await app.listen({ host: config.host, port: config.port })
-
-const shutdown = async (): Promise<void> => {
-  clearInterval(workerTimer)
-  clearInterval(leaseTimer)
-  await app.close()
-  await database.close()
-  process.exit(0)
+  process.on('SIGINT', () => void shutdown())
+  process.on('SIGTERM', () => void shutdown())
 }
-process.on('SIGINT', () => void shutdown())
-process.on('SIGTERM', () => void shutdown())
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await runHub()
+}

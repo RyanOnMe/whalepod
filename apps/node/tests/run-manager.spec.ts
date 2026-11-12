@@ -13,9 +13,9 @@
  */
 import { randomUUID, createHash } from 'node:crypto'
 import { existsSync, readdirSync } from 'node:fs'
-import { mkdtemp, mkdir, chmod, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, chmod, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type {
   NodeDownstream,
@@ -50,6 +50,7 @@ import {
 } from '../src/run/terminal-cleanup.js'
 import { openStateDatabase } from '../src/state/db.js'
 import type { RuntimeDriver, RuntimeHandle, RuntimeStartSpec } from '../src/runtime-driver.js'
+import { CORE_EMPTY_PACK_DIGEST } from '../src/plugin/plugin-preflight.js'
 
 let root: string
 let workspaceDir: string
@@ -117,6 +118,7 @@ function runStartFrame(
 
 interface FakeRuntime {
   readonly runId: string
+  readonly cwd: string
   readonly pid: number
   readonly stdin: RuntimeCommand[]
   readonly emitStdout: (line: string) => void
@@ -133,6 +135,7 @@ function makeFakeDriver(): { driver: RuntimeDriver; runtimes: FakeRuntime[] } {
       const pid = 2_000_000 + runtimes.length + 1 // 超出系统 pid 范围：ps 探针必查无此进程
       const runtime: FakeRuntime = {
         runId: spec.runId,
+        cwd: ctx.cwd,
         pid,
         stdin: [],
         terminateCount: 0,
@@ -2509,6 +2512,136 @@ describe('ADR-0028：工作输入交付与回执', () => {
       },
     }
   }
+
+  function discoveryStart(workspaceId: string, commandId = COMMAND_ID) {
+    const frame = runStartFrame(workspaceId, {
+      commandId,
+      workInput: {
+        manifestDigest,
+        manifest: {
+          version: 'rd02a2.v1',
+          workKey,
+          entries: [manifestEntry('frozen discovery source', { sourceType: 'discovery_source' })],
+        },
+        discoveryExecutionId: '01905f7c-0000-7000-8000-000000000973',
+        discoveryReplayEndpoint: 'http://127.0.0.1:3210/chat/completions',
+      },
+      agent: {
+        id: '55555555-5555-4555-8555-555555555555',
+        profileRevisionId: '66666666-6666-4666-8666-666666666666',
+        persona: 'discovery executor',
+        provider: 'deepseek-official',
+        model: 'deepseek-v4-flash',
+        credentialSlot: 'unused',
+      },
+      expectedPluginPackDigest: CORE_EMPTY_PACK_DIGEST,
+      approvalPolicy: 'approval_required',
+      toolPolicy: { mode: 'draft', allowedToolNames: ['write'], mandateVersion: 1, workKey },
+    })
+    if (frame.type !== 'run.start') throw new Error('expected a run.start')
+    return frame
+  }
+
+  it('keeps discovery cwd, frozen bytes and draft out of the registered workspace and purges them after exit', async () => {
+    const home = join(root, 'runtime-home', RUN_ID)
+    await mkdir(home, { recursive: true })
+    await writeFile(join(workspaceDir, 'team-visible.txt'), 'ordinary workspace content')
+    const store = new MemoryRunTerminalCleanupStore()
+    const h = await makeHarness({
+      managerDeps: {
+        terminalCleanupStore: store,
+        startDiscoveryReplay: async () => ({
+          origin: 'http://127.0.0.1:4321',
+          token: 'synthetic-local-capability',
+          authorizeCandidate: async () => true,
+          close: () => {},
+        }),
+        prepareWorkInputs: async (_runId: string, _input: unknown, dir?: string) => {
+          if (dir === undefined) throw new Error('discovery input must be private')
+          const entry = manifestEntry('frozen discovery source', { sourceType: 'discovery_source' })
+          await writeFile(join(dir, itemId), 'frozen discovery source')
+          return { dir, workKey, manifestDigest, entries: [entry] }
+        },
+      },
+    })
+    await h.manager.handleFrame(discoveryStart(h.workspaceId))
+    expect(h.runtimes).toHaveLength(1)
+    const runtime = h.runtimes[0]!
+    const initialize = runtime.stdin[0]
+    if (initialize?.type !== 'runtime.initialize') throw new Error('missing Runtime initialize')
+    const privateInputs = initialize.payload.workInputs?.entriesDir
+    if (privateInputs === undefined) throw new Error('missing frozen discovery inputs')
+    const canonicalHome = await realpath(home)
+    expect(runtime.cwd).toBe(initialize.payload.workspacePath)
+    expect(dirname(runtime.cwd)).toBe(canonicalHome)
+    expect(dirname(privateInputs)).toBe(canonicalHome)
+    expect(runtime.cwd).not.toBe(privateInputs)
+    if (process.platform !== 'win32') {
+      for (const path of [home, runtime.cwd, privateInputs]) {
+        expect((await stat(path)).mode & 0o777).toBe(0o700)
+      }
+    }
+    await mkdir(join(runtime.cwd, '.whalepod', 'drafts'), { recursive: true })
+    await writeFile(join(runtime.cwd, '.whalepod', 'drafts', `${RUN_ID}.md`), 'private draft')
+    runtime.emitStdout(
+      JSON.stringify({
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        sentAt: new Date().toISOString(),
+        type: 'runtime.fatal',
+        payload: { runId: RUN_ID, code: 'CONTEXT_UNAVAILABLE', summary: 'authority unavailable' },
+      }),
+    )
+    expect(store.get(RUN_ID)).toMatchObject({ state: 'pending', entryCount: 1 })
+    expect(readdirSync(home)).toHaveLength(2)
+    runtime.emitExit(1, null)
+    expect(store.get(RUN_ID)?.state).toBe('done')
+    expect(readdirSync(home)).toEqual([])
+    expect(readdirSync(workspaceDir)).toEqual(['team-visible.txt'])
+  })
+
+  it('purges private files on restart and refuses ambiguous discovery start redelivery', async () => {
+    const home = join(root, 'runtime-home', RUN_ID)
+    await mkdir(home, { recursive: true })
+    await writeFile(join(home, 'leftover-draft.md'), 'private draft')
+    const store = new SqliteRunTerminalCleanupStore(join(root, 'terminal-cleanup.db'))
+    const h = await makeHarness({ managerDeps: { terminalCleanupStore: store } })
+    const command = discoveryStart(h.workspaceId)
+    h.commandStore.record({
+      commandId: COMMAND_ID,
+      runId: RUN_ID,
+      type: 'run.start',
+      payload: command.payload,
+    })
+    store.putFacts(
+      {
+        runId: RUN_ID,
+        homePath: home,
+        entryCount: 1,
+        ownsHome: true,
+        sessionReady: false,
+        dshSessionId: null,
+      },
+      new Date().toISOString(),
+    )
+    expect(h.manager.startTerminalCleanup()).toBe(1)
+    expect(readdirSync(home)).toEqual([])
+    await h.manager.handleFrame(command)
+    await h.manager.handleFrame(discoveryStart(h.workspaceId, randomUUID()))
+    expect(h.runtimes).toHaveLength(0)
+    const acks = h.sentFrames().filter((frame) => frame.type === 'command.ack')
+    expect(acks).toHaveLength(2)
+    expect(acks.map(({ payload }) => payload)).toEqual([
+      expect.objectContaining({
+        accepted: false,
+        error: expect.objectContaining({ code: 'RUNTIME_LOST' }),
+      }),
+      expect.objectContaining({
+        accepted: false,
+        error: expect.objectContaining({ code: 'RUNTIME_LOST' }),
+      }),
+    ])
+  })
 
   function runtimeReceipt(payload: Record<string, unknown>): string {
     return JSON.stringify({

@@ -66,6 +66,49 @@ function withinWindow(unconfirmedAt: Date, now: Date): boolean {
   return now.getTime() <= unconfirmedAt.getTime() + WORK_INPUT_RECONCILE_WINDOW_MS
 }
 
+async function recordDiscoveryReceipt(
+  tx: Tx,
+  run: RunRow,
+  receipt: RunWorkInputReceipt,
+  now: Date,
+  manifest: WorkInputManifest,
+): Promise<WorkInputReceiptOutcome> {
+  // Discovery receipts identify dedicated authorization-source rows; no generic inbox
+  // consumption or terminal Router trigger is created. Accept late evidence without
+  // reopening the Run, matching the ordinary receipt transport.
+  const work = await getWorkByKey(tx, receipt.workKey)
+  const entrySizes = new Map(manifest.entries.map((entry) => [entry.inboxItemId, entry.byteSize]))
+  if (
+    !work ||
+    work.taskId !== run.taskId ||
+    manifest.entries.some((entry) => entry.sourceType !== 'discovery_source') ||
+    receipt.readEvents.some(
+      (event) =>
+        !receipt.digestVerified ||
+        !event.digestVerified ||
+        !receipt.entriesRead.includes(event.inboxItemId) ||
+        !receipt.entriesDelivered.includes(event.inboxItemId) ||
+        entrySizes.get(event.inboxItemId) !== event.byteSize,
+    )
+  )
+    throw new RunCommandError('CONFLICT', 'invalid discovery work input receipt')
+  const row = await insertRunWorkInputReceiptIfAbsent(tx, {
+    id: uuidv7(now.getTime()),
+    runId: run.id,
+    workId: work.id,
+    workKey: receipt.workKey,
+    manifestDigest: receipt.manifestDigest,
+    receiptSeq: receipt.receiptSeq,
+    entriesDelivered: [...receipt.entriesDelivered],
+    entriesRead: [...receipt.entriesRead],
+    readEvents: receipt.readEvents.map((event) => ({ ...event })),
+    missing: [...receipt.missing],
+    digestVerified: receipt.digestVerified,
+    receivedAt: now,
+  })
+  return emptyOutcome(row === undefined)
+}
+
 export async function recordRunWorkInputReceipt(
   tx: Tx,
   run: RunRow,
@@ -77,6 +120,7 @@ export async function recordRunWorkInputReceipt(
     throw new RunCommandError('CONFLICT', 'receipt does not match the run work input manifest')
   }
   assertKnownIds(receipt, manifest)
+  if (run.discoveryExecutionId) return recordDiscoveryReceipt(tx, run, receipt, now, manifest)
 
   // 同一 (run, manifest, seq) 只落一行。**低于最大 seq 的未见序号也接受**：
   // Node 重连时可能先发出新回执、再补发旧 outbox；条目/消费唯一键已经保证

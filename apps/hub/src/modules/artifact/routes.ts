@@ -19,18 +19,22 @@
  *   不可枚举）；发布是他者可见的唯一入口（G6-04）。
  * - 上传幂等：Idempotency-Key → command_receipt，重试返回同一 artifact。
  */
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { eq } from 'drizzle-orm'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { authorize, asUserId } from '@whalepod/domain'
 import {
   getArtifact,
+  getOrdinaryArtifact,
   getOrdinaryRun,
+  getRun,
   insertArtifact,
   deviceHandoffInputReferences,
   deviceHasRunOnTask,
+  schema,
   transactCommand,
 } from '@whalepod/db'
-import type { Database } from '@whalepod/db'
+import type { Database, RunRow, Tx } from '@whalepod/db'
 import { ArtifactUploadMetadataSchema } from '@whalepod/protocol'
 import type { ArtifactUploadMetadata } from '@whalepod/protocol'
 import {
@@ -43,7 +47,8 @@ import { readIdempotencyKey } from '../auth/idempotency.js'
 import { audit } from '../shared/audit.js'
 import { logRecordedEntry } from '../context/observer.js'
 import { ApiError } from '../shared/http-error.js'
-import { publishArtifact, requireArtifactRow } from './commands.js'
+import { verifyDiscoveryReplayRun, type DiscoveryReplayRoute } from '../discovery/replay-binding.js'
+import { publishArtifact } from './commands.js'
 import {
   getArtifactPreviewInfo,
   readArtifactPreview,
@@ -59,6 +64,33 @@ export interface ArtifactRoutesDeps {
   readonly database: Database
   readonly store: ArtifactStore
   readonly requireActor: RequireActor
+  readonly discoveryExecutionReplay?: DiscoveryReplayRoute | undefined
+}
+
+const DISCOVERY_DRAFT_MAX_BYTES = 1024 * 1024
+
+function discoveryRunCanUpload(run: RunRow): boolean {
+  return run.status === 'dispatching' || run.status === 'running'
+}
+
+async function assertDiscoveryCandidateUploadAllowed(
+  tx: Tx,
+  run: RunRow,
+  route: DiscoveryReplayRoute | undefined,
+  lock = false,
+): Promise<void> {
+  if (
+    route === undefined ||
+    !discoveryRunCanUpload(run) ||
+    !(
+      await verifyDiscoveryReplayRun(tx, run, new Date(), {
+        lock,
+        route,
+        ...(lock ? { lockRunBeforeWork: true } : {}),
+      })
+    ).ok
+  )
+    throw new ApiError(404, 'NOT_FOUND', 'run not found')
 }
 
 /** query 串元数据 → 协议 DTO（byteSize 必须可解析为整数，其余原样校验）。 */
@@ -117,7 +149,7 @@ function previewMetadataFromQuery(
 }
 
 export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoutesDeps): void {
-  app.register(async (artifact: FastifyInstance) => {
+  async function registerArtifactScope(artifact: FastifyInstance): Promise<void> {
     // 本组路由的 octet-stream body（封装在子作用域：/api/v1 其余路由不受影响）。
     artifact.addContentTypeParser(
       'application/octet-stream',
@@ -159,13 +191,63 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
         if (!Buffer.isBuffer(body)) {
           throw new ApiError(400, 'VALIDATION_FAILED', 'artifact body must be raw bytes')
         }
+        const replay = Boolean(run.discoveryExecutionId)
+        if (replay) {
+          await deps.database.transaction((tx) =>
+            assertDiscoveryCandidateUploadAllowed(tx, run, deps.discoveryExecutionReplay),
+          )
+          if (
+            meta.mediaType !== 'text/markdown' ||
+            meta.sourceRelativePath !== `.whalepod/drafts/${run.id}.md`
+          )
+            throw new ApiError(400, 'VALIDATION_FAILED', 'invalid private draft output')
+          if (body.byteLength > DISCOVERY_DRAFT_MAX_BYTES)
+            throw new ApiError(413, 'ARTIFACT_TOO_LARGE', 'private draft exceeds the size limit')
+          if (
+            meta.byteSize !== body.byteLength ||
+            createHash('sha256').update(body).digest('hex') !== meta.sha256
+          )
+            throw new ApiError(
+              400,
+              'ARTIFACT_HASH_MISMATCH',
+              'private draft digest or size mismatch',
+            )
+        }
+        const key = readIdempotencyKey(request)
         // hash/size 权威复核 + 内容寻址落位（失败即无副作用：临时文件清理）。
-        const blob = await deps.store.saveUpload(meta.sha256, body)
+        const ordinaryBlob = replay ? undefined : await deps.store.saveUpload(meta.sha256, body)
         // 幂等落行：同 key 重试返回首次结果（不产生第二行）。
         const view = await transactCommand(
           deps.database,
-          `artifact.upload:${readIdempotencyKey(request)}`,
+          replay ? `discovery.artifact.upload:${run.id}:${key}` : `artifact.upload:${key}`,
           async (tx) => {
+            if (replay) {
+              // Authority Task scope → Run key share → Work. Acquire the Run FK lock
+              // before the Work lock: terminal ingest takes Run then Work as well.
+              await assertDiscoveryCandidateUploadAllowed(
+                tx,
+                run,
+                deps.discoveryExecutionReplay,
+                true,
+              )
+              const current = await getRun(tx, run.id)
+              if (
+                current === undefined ||
+                !discoveryRunCanUpload(current) ||
+                current.discoveryExecutionId !== run.discoveryExecutionId ||
+                current.mandateInvalidatedAt !== null ||
+                current.deviceId !== identity.deviceId
+              )
+                throw new ApiError(404, 'NOT_FOUND', 'run not found')
+              const [previous] = await tx
+                .select()
+                .from(schema.artifacts)
+                .where(eq(schema.artifacts.runId, run.id))
+                .limit(1)
+              if (previous !== undefined)
+                throw new ApiError(409, 'CONFLICT', 'private draft has already been registered')
+            }
+            const blob = ordinaryBlob ?? (await deps.store.saveUpload(meta.sha256, body))
             const row = await insertArtifact(tx, {
               id: randomUUID(),
               taskId: run.taskId,
@@ -181,6 +263,12 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
             return toArtifactView(row)
           },
         )
+        if (replay && (view.sha256 !== meta.sha256 || view.title !== meta.title))
+          throw new ApiError(
+            409,
+            'CONFLICT',
+            'private draft upload does not match its original request',
+          )
         request.log.info(
           {
             component: 'artifact.store',
@@ -190,6 +278,7 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
           },
           'artifact candidate uploaded',
         )
+        if (replay) reply.header('cache-control', 'private, no-store')
         return reply.code(201).send({ ok: true, data: view })
       },
     )
@@ -292,7 +381,8 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
       await deps.requireActor(request)
       const { runId } = request.params as { runId: string }
       const run = await getOrdinaryRun(deps.database.db, runId)
-      if (run === undefined) throw new ApiError(404, 'NOT_FOUND', 'run not found')
+      if (run === undefined || Boolean(run.discoveryExecutionId))
+        throw new ApiError(404, 'NOT_FOUND', 'run not found')
       return reply.header('cache-control', 'no-store').send({ ok: true, data: savedRunInputs(run) })
     })
 
@@ -312,7 +402,8 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
       await deps.requireActor(request)
       const { runId } = request.params as { runId: string }
       const run = await getOrdinaryRun(deps.database.db, runId)
-      if (run === undefined) throw new ApiError(404, 'NOT_FOUND', 'run not found')
+      if (run === undefined || Boolean(run.discoveryExecutionId))
+        throw new ApiError(404, 'NOT_FOUND', 'run not found')
       return reply
         .header('cache-control', 'no-store')
         .send({ ok: true, data: savedHandoffInput(run) })
@@ -329,6 +420,9 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
       if (row === undefined || row.status !== 'published') {
         throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
       }
+      const source = await getRun(deps.database.db, row.runId)
+      if (source === undefined || Boolean(source.discoveryExecutionId))
+        throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
       const authorized =
         (await deviceHasRunOnTask(deps.database.db, identity.deviceId, row.taskId)) ||
         (await deviceHandoffInputReferences(deps.database.db, identity.deviceId, row.id))
@@ -361,15 +455,51 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
     artifact.get('/artifacts/:artifactId/content', async (request, reply) => {
       const session = await deps.requireActor(request)
       const { artifactId } = request.params as { artifactId: string }
-      const row = await requireArtifactRow(deps.database, artifactId)
-      const allowed = authorize(
-        { userId: asUserId(session.userId), role: session.role },
-        'read_artifact_content',
-        { ownerUserId: asUserId(row.ownerUserId), artifactStatus: row.status },
+      const ordinary = await getOrdinaryArtifact(deps.database.db, artifactId)
+      if (ordinary) {
+        const allowed = authorize(
+          { userId: asUserId(session.userId), role: session.role },
+          'read_artifact_content',
+          { ownerUserId: asUserId(ordinary.ownerUserId), artifactStatus: ordinary.status },
+        )
+        if (!allowed) throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
+        const bytes = await deps.store.readVerified(ordinary.storageKey, ordinary.sha256)
+        return sendArtifactBytes(reply, bytes, ordinary.mediaType, ordinary.id)
+      }
+      const route = deps.discoveryExecutionReplay
+      if (!route) throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
+      const { row, bytes } = await deps.database.transaction(async (tx) => {
+        const row = await getArtifact(tx, artifactId)
+        if (!row || row.ownerUserId !== session.userId || row.status !== 'candidate')
+          throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
+        const source = await getRun(tx, row.runId)
+        if (
+          !source?.discoveryExecutionId ||
+          source.ownerUserId !== session.userId ||
+          !(
+            await verifyDiscoveryReplayRun(tx, source, new Date(), {
+              lock: true,
+              route,
+              allowCompleted: true,
+            })
+          ).ok
+        )
+          throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
+        const bytes = await deps.store.readVerified(row.storageKey, row.sha256)
+        return { row, bytes }
+      })
+      return sendArtifactBytes(
+        reply.header('cache-control', 'private, no-store'),
+        bytes,
+        row.mediaType,
+        row.id,
       )
-      if (!allowed) throw new ApiError(404, 'NOT_FOUND', 'artifact not found')
-      const bytes = await deps.store.readVerified(row.storageKey, row.sha256)
-      return sendArtifactBytes(reply, bytes, row.mediaType, row.id)
     })
+  }
+  app.register(registerArtifactScope, {
+    // Candidate metadata travels in the query; it is not an HTTP log field.
+    logSerializers: {
+      req: (request: FastifyRequest) => `${request.method} ${request.url.split('?', 1)[0]}`,
+    },
   })
 }

@@ -13,7 +13,13 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId, type Session, type TurnEndReason } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
-import { machineDraftToolDecision, MACHINE_DRAFT_WRITE_SUBDIR } from './tool-policy.js'
+import {
+  discoveryDraftPath,
+  discoveryDraftToolDenial,
+  machineDraftToolDecision,
+  MACHINE_DRAFT_WRITE_SUBDIR,
+} from './tool-policy.js'
+import { authorizeDiscoveryRuntime } from './discovery-replay.js'
 import { createPublishArtifactTool, type ArtifactPort } from './artifact-tool.js'
 import { createReadArtifactInputTool } from './artifact-input-tool.js'
 import {
@@ -139,6 +145,8 @@ export class SessionOwner {
     // 组合面必须完全一致，否则「续跑的 Run 少注册了一个工具」这类漂移没人拦）。
     // 失效状态由 bridge 的 run.mandate_invalidated 命令写入；create/resume 同享。
     const mandateState: { invalidatedReason?: string } = {}
+    const discovery = spec.workInputs?.discoveryExecutionId !== undefined
+    const discoveryReads = new Set<string>()
     const setup = (agentCtx: Context) => {
       agentCtx.tools.register(createPublishArtifactTool(ports.artifact, ports.artifactValidator))
       // P1-15：Reviewer Run 带输入清单时注册只读读取工具（清单为空不注册）。
@@ -165,8 +173,14 @@ export class SessionOwner {
       // ADR-0028：工作输入的专用只读通道（正文不经 executionContext）。
       if (spec.workInputs !== undefined && spec.workInputs.entries.length > 0) {
         agentCtx.tools.register(
-          createReadWorkInputTool(spec.workInputs.entries, spec.workInputs.entriesDir, (fact) =>
-            events.workInputRead?.(fact),
+          createReadWorkInputTool(
+            spec.workInputs.entries,
+            spec.workInputs.entriesDir,
+            (fact) => {
+              if (discovery) discoveryReads.add(fact.inboxItemId)
+              events.workInputRead?.(fact)
+            },
+            discovery ? () => authorizeDiscoveryRuntime('read') : undefined,
           ),
         )
       }
@@ -187,7 +201,29 @@ export class SessionOwner {
           ...(spec.workInputs === undefined ? [] : [spec.workInputs.entriesDir]),
         ],
       }
-      agentCtx.on('tools/pre-execute', (exec): Promise<PreToolDecision> => {
+      const discoveryDenial = (name: string, args: unknown): string | undefined =>
+        mandateState.invalidatedReason !== undefined
+          ? 'discovery execution authorization unavailable'
+          : (discoveryDraftToolDenial(spec.runId, name, args, spec.workspacePath) ??
+            (name !== 'read_work_input' &&
+            !spec.workInputs?.entries.every((entry) => discoveryReads.has(entry.inboxItemId))
+              ? 'read every frozen discovery source before producing a draft'
+              : undefined))
+      agentCtx.on('tools/pre-execute', async (exec): Promise<PreToolDecision> => {
+        if (discovery) {
+          const denial = discoveryDenial(exec.name, exec.arguments)
+          if (denial !== undefined) return { kind: 'deny', reason: denial }
+          // The read tool performs its own online gate after verifying the
+          // local digest, immediately before handing source bytes to DSH.
+          if (exec.name !== 'read_work_input') {
+            try {
+              await authorizeDiscoveryRuntime('tool')
+            } catch {
+              return { kind: 'deny', reason: 'discovery execution authorization unavailable' }
+            }
+          }
+          return { kind: 'allow' }
+        }
         // ADR-0028 §7（RD-03c1）：机器 Run 先过固定草稿面 + allowlist + 路径/资源
         // 范围；四项同时通过才免逐次审批，面内未命中走现有 ask，面外/越界 deny
         //（不产生 approval.requested）。
@@ -212,6 +248,7 @@ export class SessionOwner {
       // 前置返回 allow，面外/越界调用仍被拒（guard 只能 deny，不能 force-allow）。
       if (spec.toolPolicy !== undefined) {
         agentCtx.tools.guard((exec) => {
+          if (discovery) return discoveryDenial(exec.name, exec.arguments)
           const decision = machineDraftToolDecision(
             spec.toolPolicy,
             exec.name,
@@ -273,6 +310,11 @@ export class SessionOwner {
       this.initialPromptSent = true
       const context = [
         this.spec.executionContext ?? '',
+        ...(this.spec.workInputs?.discoveryExecutionId === undefined
+          ? []
+          : [
+              `Read every frozen input with read_work_input. Write the private Markdown draft to ${discoveryDraftPath(this.spec.runId)} and register it with publish_artifact using media type text/markdown.`,
+            ]),
         ...(this.spec.artifactInputs?.length
           ? [
               '# 本次只读材料清单',
