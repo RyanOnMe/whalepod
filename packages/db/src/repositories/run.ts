@@ -31,6 +31,7 @@ export interface NewRun {
   artifactInputManifest?: ArtifactInputManifest | null
   managedDraftSourceDigest?: string
   managedDraftPreparation?: boolean
+  discoveryExecutionId?: string
   resumeContext?: RunRow['resumeContext']
   /** 跨 Task 交接输入快照（#380）：显式选择或重跑/续跑继承来源；缺省 null（不带）。 */
   handoffInput?: HandoffInputManifest | null

@@ -132,6 +132,7 @@ export const runs = pgTable(
     /** ADR-0029: immutable digest of the managed source manifest; null is an ordinary Run. */
     managedDraftSourceDigest: char('managed_draft_source_digest', { length: 64 }),
     managedDraftPreparation: boolean('managed_draft_preparation').notNull().default(false),
+    discoveryExecutionId: uuid('discovery_execution_id'),
     mandateId: uuid('mandate_id'),
     dispatchIntentId: uuid('dispatch_intent_id'),
     onBehalfOfUserId: uuid('on_behalf_of_user_id').references(() => userAccounts.id),
@@ -165,6 +166,11 @@ export const runs = pgTable(
     finishedAt: timestamp('finished_at', { withTimezone: true }),
   },
   (table) => [
+    unique('run_discovery_execution_unique').on(table.discoveryExecutionId),
+    check(
+      'run_discovery_execution_seal',
+      sql`${table.discoveryExecutionId} is null or (${table.origin} = 'mandate' and ${table.approvalPolicy} = 'approval_required' and ${table.managedDraftSourceDigest} is null and ${table.workInputManifest} is not null and ${table.specRevisionId} is not null and ${table.resumeContext} = 'blocked')`,
+    ),
     // RD-03b：按 workKey 统计机器 Run 的次数闸查询（migration 0035）。
     index('run_work_key_origin_status_idx')
       .on(table.workKey, table.status)

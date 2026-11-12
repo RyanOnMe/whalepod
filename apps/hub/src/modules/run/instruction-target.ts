@@ -152,7 +152,13 @@ async function resolveFromLastRun(
       createdAt: schema.runs.createdAt,
     })
     .from(schema.runs)
-    .where(and(eq(schema.runs.taskId, taskId), isNull(schema.runs.managedDraftSourceDigest)))
+    .where(
+      and(
+        eq(schema.runs.taskId, taskId),
+        isNull(schema.runs.managedDraftSourceDigest),
+        isNull(schema.runs.discoveryExecutionId),
+      ),
+    )
     .orderBy(desc(schema.runs.createdAt))
     .limit(5)
 

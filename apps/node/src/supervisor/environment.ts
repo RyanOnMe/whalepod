@@ -61,6 +61,14 @@ export function buildRuntimeEnvironment(
   if (ctx.processEnv.LC_ALL !== undefined) env.LC_ALL = ctx.processEnv.LC_ALL
   env.TMPDIR = ctx.processEnv.TMPDIR ?? join(ctx.workspacePath, '.wp-tmp')
 
+  if (spec.discoveryReplay !== undefined) {
+    // Never load a real credential or pass through the ordinary replay/overlay
+    // environment for discovery. This token only authenticates to the local gate.
+    env.WHALEPOD_DISCOVERY_REPLAY_ORIGIN = spec.discoveryReplay.origin
+    env.WHALEPOD_DISCOVERY_REPLAY_TOKEN = spec.discoveryReplay.token
+    return env
+  }
+
   for (const name of ctx.extraPassthrough ?? []) {
     const value = ctx.processEnv[name]
     if (value !== undefined) env[name] = value

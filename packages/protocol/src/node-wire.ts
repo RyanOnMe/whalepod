@@ -31,6 +31,7 @@ import {
   RunStartProjectContextSchema,
 } from './run-context.js'
 import {
+  DISCOVERY_EXECUTION_REPLAY_CAPABILITY,
   WORK_INPUT_CAPABILITY,
   RunStartWorkInputSchema,
   RunWorkInputReceiptSchema,
@@ -236,7 +237,13 @@ export const NodeHelloSchema = envelope(
      * 上下文快照或非空工作输入清单不向未声明的 Node 派发。空清单仍可执行。
      */
     contextCapabilities: z
-      .array(z.union([ProjectContextCapabilitySchema, z.literal(WORK_INPUT_CAPABILITY)]))
+      .array(
+        z.union([
+          ProjectContextCapabilitySchema,
+          z.literal(WORK_INPUT_CAPABILITY),
+          z.literal(DISCOVERY_EXECUTION_REPLAY_CAPABILITY),
+        ]),
+      )
       .max(8)
       .optional(),
   }),

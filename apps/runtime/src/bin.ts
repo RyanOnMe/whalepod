@@ -138,6 +138,10 @@ function main(): void {
     async onCommand(command: RuntimeCommand) {
       if (command.type === 'runtime.initialize') {
         try {
+          if (command.payload.workInputs?.discoveryExecutionId !== undefined) {
+            // This per-Run child only writes owner-private draft files.
+            process.umask(0o077)
+          }
           await dispatchRuntimeCommand(slot, command, options)
         } catch (error) {
           emitStartFatal(command.payload.runId, error)

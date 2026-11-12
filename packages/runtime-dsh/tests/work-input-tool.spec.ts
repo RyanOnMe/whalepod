@@ -121,4 +121,28 @@ describe('read_work_input tool', () => {
     expect(text).toContain(`digest: ${ENTRY.bodyDigest}`)
     expect(text).toContain(BODY)
   })
+
+  it('does not return a downloaded copy or issue a receipt after online authority is lost', async () => {
+    writeFileSync(join(entriesDir, ITEM_ID), BODY)
+    const reads: unknown[] = []
+    let allowed = false
+    const tool = createReadWorkInputTool(
+      [{ ...ENTRY, sourceType: 'discovery_source' }],
+      entriesDir,
+      (fact) => reads.push(fact),
+      async () => {
+        if (!allowed) throw new Error('discovery execution authorization unavailable')
+      },
+    )
+    await expect(tool.execute({ inboxItemId: ITEM_ID }, {} as never)).rejects.toThrow(
+      'discovery execution authorization unavailable',
+    )
+    expect(reads).toHaveLength(0)
+    allowed = true
+    await expect(tool.execute({ inboxItemId: ITEM_ID }, {} as never)).resolves.toMatchObject({
+      content: BODY,
+      sourceType: 'discovery_source',
+    })
+    expect(reads).toHaveLength(1)
+  })
 })

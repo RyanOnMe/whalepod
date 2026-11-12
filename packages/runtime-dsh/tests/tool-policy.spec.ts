@@ -4,12 +4,24 @@
  * 写限工作区内 `.whalepod/drafts/`；越界一律 deny。
  * 真正的 pre-execute 接线由 contract 用例覆盖；这里逐名、逐路径钉住 allow/ask/deny。
  */
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import {
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { RunToolPolicy } from '@whalepod/protocol'
-import { machineDraftToolDecision } from '../src/tool-policy.js'
+import {
+  discoveryDraftPath,
+  discoveryDraftToolDenial,
+  machineDraftToolDecision,
+} from '../src/tool-policy.js'
 
 const policy: RunToolPolicy = {
   mode: 'draft',
@@ -38,6 +50,28 @@ afterEach(() => {
 function decide(name: string, args: unknown = {}) {
   return machineDraftToolDecision(policy, name, args, scope)
 }
+
+describe('discovery draft tool surface', () => {
+  it('cannot read ambient files or write or register another draft', () => {
+    const runId = '01905f7c-0000-7000-8000-000000000901'
+    const path = discoveryDraftPath(runId)
+    const deny = (tool: string, args: unknown) =>
+      discoveryDraftToolDenial(runId, tool, args, workspace)
+    expect(deny('read_work_input', {})).toBeUndefined()
+    expect(deny('read', { file_path: 'src/main.ts' })).toBeDefined()
+    expect(deny('write', { file_path: '.whalepod/drafts/other.md' })).toBeDefined()
+    expect(deny('write', { file_path: path })).toBeUndefined()
+    expect(deny('publish_artifact', { relativePath: path, mediaType: 'text/plain' })).toBeDefined()
+    expect(
+      deny('publish_artifact', { relativePath: path, mediaType: 'text/markdown' }),
+    ).toBeUndefined()
+    linkSync(join(workspace, 'src', 'main.ts'), join(workspace, path))
+    expect(deny('write', { file_path: path })).toBeDefined()
+    expect(
+      deny('publish_artifact', { relativePath: path, mediaType: 'text/markdown' }),
+    ).toBeDefined()
+  })
+})
 
 describe('machineDraftToolDecision', () => {
   it('leaves human Runs to the existing approval policy', () => {

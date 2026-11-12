@@ -108,7 +108,7 @@ export function toRunView(row: RunRow): RunView {
 
 export async function getRunView(handle: DbHandle, runId: string): Promise<RunView | undefined> {
   const row = await getOrdinaryRun(handle, runId)
-  return row === undefined ? undefined : toRunView(row)
+  return row === undefined || Boolean(row.discoveryExecutionId) ? undefined : toRunView(row)
 }
 
 /**
@@ -147,7 +147,9 @@ export function toApprovalView(row: ApprovalRow): ApprovalView {
 
 export async function listRunViewsByTask(handle: DbHandle, taskId: string): Promise<RunView[]> {
   const rows = await listRunsByTask(handle, taskId)
-  return rows.filter((row) => !isManagedDraftSource(row)).map(toRunView)
+  return rows
+    .filter((row) => !isManagedDraftSource(row) && !row.discoveryExecutionId)
+    .map(toRunView)
 }
 
 /**

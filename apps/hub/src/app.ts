@@ -35,6 +35,11 @@ import { logRecordedEntry } from './modules/context/observer.js'
 // ADR-0026（PC-04a）：确定性内部协调的读面与显式触发。
 import { registerCoordinationRoutes } from './modules/coordination/routes.js'
 import { registerDiscoveryRoutes } from './modules/discovery/routes.js'
+import { dispatchDiscoveryReplay } from './modules/dispatch/discovery-replay.js'
+import {
+  discoveryReplayRouteIsLoopback,
+  type DiscoveryReplayRoute,
+} from './modules/discovery/replay-binding.js'
 import { registerRouterRoutes } from './modules/router/routes.js'
 import type { RouterAutoDispatch } from './modules/router/application.js'
 import { registerTaskRoutes } from './modules/task/routes.js'
@@ -82,6 +87,8 @@ export interface HubDeps {
   readonly database: Database
   readonly logger?: FastifyServerOptions['logger']
   readonly setupTokenStore?: SetupTokenStore
+  /** Acceptance assembly only. The Hub CLI does not expose this option. */
+  readonly discoveryExecutionReplay?: DiscoveryReplayRoute | undefined
 }
 
 /**
@@ -177,6 +184,9 @@ function notFoundHandler(request: FastifyRequest, reply: FastifyReply): FastifyR
  */
 export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
   const { config, database } = deps
+  const discoveryExecutionReplay = deps.discoveryExecutionReplay
+  if (discoveryExecutionReplay && !discoveryReplayRouteIsLoopback(discoveryExecutionReplay))
+    throw new Error('discovery execution requires an explicit loopback replay route')
   const app = fastify({
     logger: deps.logger ?? false,
     // #113：反代形态由配置显式开启——request.ip 才信任 XFF 首跳（限流分桶真值）。
@@ -238,6 +248,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
     database,
     outbox,
     managedDraftDeviceId: config.managedDraftHost?.deviceId,
+    discoveryExecutionReplay,
     // #52/ADR-0007：表外越边的 Run 级降级收敛走结构化 warn（component 分层，
     // 违例计数/告警的挂点；真人路径可观测，不做暗手）。
     warn: (message, context) => app.log.warn({ component: 'hub.run', ...context }, message),
@@ -306,6 +317,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
 
   await app.register(
     async (api) => {
+      const artifactStore = new ArtifactStore({ root: config.artifactStoreDir })
       registerAuthRoutes(api, { database, requireActor, loginLimiter, secureCookie })
       registerTeamRoutes(api, {
         database,
@@ -339,6 +351,23 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         requireActor,
         store: new ArtifactStore({ root: config.artifactStoreDir }),
         log: (event) => app.log.info(event, 'discovery event'),
+        ...(discoveryExecutionReplay === undefined
+          ? {}
+          : {
+              dispatchDiscoveryReplay: (tx, execution, basis, now) =>
+                dispatchDiscoveryReplay(
+                  {
+                    orchestrator,
+                    store: artifactStore,
+                    route: discoveryExecutionReplay,
+                    isDeviceConnected: (id) => nodeConnections.isOnline(id),
+                  },
+                  tx,
+                  execution,
+                  basis,
+                  now,
+                ),
+            }),
       })
       registerRouterRoutes(api, {
         database,
@@ -351,6 +380,9 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       registerWorkRoutes(api, {
         database,
         requireActor,
+        discoveryExecutionReplay,
+        discoveryStore: artifactStore,
+        discoveryDeviceOnline: (deviceId) => nodeConnections.isOnline(deviceId),
         onIntentProposed: async (actor, workKey, intentId) =>
           autoDispatchProposedIntent(
             { database, orchestrator, outbox, now: () => new Date() },
@@ -407,6 +439,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         outbox,
         orchestrator,
         dshDistributionVersionFor,
+        discoveryExecutionReplay,
       })
       // #379：交接草稿/版本面（owner 私有草稿 + 团队可见的已发布版本）。
       registerHandoffRoutes(api, { database, requireActor })
@@ -423,7 +456,6 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
       registerWorkspaceRoutes(api, { database, requireActor })
       // P1-15：Artifact 面——Node 上传/manifest/受控下载 + owner 发布 + 内容下载。
       // Store 根来自配置（生产 data/artifact-store，测试注入临时目录）。
-      const artifactStore = new ArtifactStore({ root: config.artifactStoreDir })
       if (
         config.managedDraftMemberReviewEnabled === true &&
         managedDraftPlacement !== undefined &&
@@ -442,6 +474,7 @@ export async function buildApp(deps: HubDeps): Promise<FastifyInstance> {
         database,
         store: artifactStore,
         requireActor,
+        discoveryExecutionReplay,
       })
       // #429：交付物审阅面（批注线程 + 审阅邀请 + 提交意见）复用同一 Store。
       registerReviewRoutes(api, {

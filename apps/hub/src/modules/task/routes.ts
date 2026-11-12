@@ -45,6 +45,7 @@ import type { RunOrchestrator } from '../run/orchestrator.js'
 import { listRecentTaskViews, listTaskViewsByProject, searchTaskViews } from './queries.js'
 import { personalAttention } from './attention.js'
 import { getTaskRoom } from './view.js'
+import { verifyDiscoveryReplayRun, type DiscoveryReplayRoute } from '../discovery/replay-binding.js'
 
 export interface TaskRouteDeps {
   readonly database: Database
@@ -53,6 +54,7 @@ export interface TaskRouteDeps {
   /** 执行区指令要建 Run（#196）：复用既有的建 Run 路径，不另造一套。 */
   readonly orchestrator: RunOrchestrator
   readonly dshDistributionVersionFor: (deviceId: string) => Promise<string | undefined>
+  readonly discoveryExecutionReplay?: DiscoveryReplayRoute | undefined
 }
 
 /**
@@ -212,11 +214,30 @@ export function registerTaskRoutes(app: FastifyInstance, deps: TaskRouteDeps): v
 
   // GET /tasks/:taskId：Task Room 聚合（不暴露 runtime internals，03 §9/02 Step 1）。
   // viewer 传入会话用户：candidate Artifact 仅 owner 本人可见（P1-15，G6-01）。
-  app.get('/tasks/:taskId', async (request) => {
+  app.get('/tasks/:taskId', async (request, reply) => {
     const session = await deps.requireActor(request)
     const { taskId } = request.params as { taskId: string }
-    const room = await getTaskRoom(deps.database.db, taskId, session.userId)
+    const route = deps.discoveryExecutionReplay
+    const room = await getTaskRoom(
+      deps.database.db,
+      taskId,
+      session.userId,
+      route === undefined
+        ? undefined
+        : (run) =>
+            deps.database.transaction(
+              async (tx) =>
+                (
+                  await verifyDiscoveryReplayRun(tx, run, new Date(), {
+                    route,
+                    lock: true,
+                    allowCompleted: true,
+                  })
+                ).ok,
+            ),
+    )
     if (room === undefined) throw new ApiError(404, 'NOT_FOUND', 'task not found')
+    reply.header('cache-control', 'private, no-store')
     return { ok: true, data: room }
   })
 

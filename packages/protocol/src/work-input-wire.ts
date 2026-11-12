@@ -8,6 +8,7 @@
  */
 import { z } from 'zod'
 import {
+  FrozenWorkSourceTypeSchema,
   WORK_INPUT_MANIFEST_MAX_ENTRIES,
   WorkInputManifestEntrySchema,
   WorkInputManifestSchema,
@@ -15,6 +16,7 @@ import {
 } from './work-input.js'
 
 export const WORK_INPUT_CAPABILITY = 'work-input.v1' as const
+export const DISCOVERY_EXECUTION_REPLAY_CAPABILITY = 'discovery-execution-replay.v1' as const
 export const WorkInputCapabilitySchema = z.enum([WORK_INPUT_CAPABILITY])
 
 export const WORK_INPUT_MAX_ENTRY_BYTES = 65_536
@@ -24,16 +26,28 @@ const Sha256DigestSchema = z.string().regex(/^[a-f0-9]{64}$/)
 const IsoDateTimeSchema = z.iso.datetime({ offset: true })
 
 /** Hub → Node：Run 创建事务里冻结的工作输入清单头 + 清单（正文走受控下载）。 */
-export const RunStartWorkInputSchema = z.strictObject({
-  manifestDigest: Sha256DigestSchema,
-  manifest: WorkInputManifestSchema,
-})
+export const RunStartWorkInputSchema = z
+  .strictObject({
+    manifestDigest: Sha256DigestSchema,
+    manifest: WorkInputManifestSchema,
+    discoveryExecutionId: z.uuid().optional(),
+    discoveryReplayEndpoint: z.url().optional(),
+  })
+  .refine((value) => {
+    const discovery = value.discoveryExecutionId !== undefined
+    return (
+      discovery === (value.discoveryReplayEndpoint !== undefined) &&
+      value.manifest.entries.every(
+        (entry) => (entry.sourceType === 'discovery_source') === discovery,
+      )
+    )
+  }, 'discovery binding and endpoint must accompany a dedicated discovery manifest')
 export type RunStartWorkInput = z.infer<typeof RunStartWorkInputSchema>
 
 /** Node → Hub：受控下载应答；正文只在本次 HTTP 响应出现。 */
 export const WorkInputBundleEntrySchema = z.strictObject({
   inboxItemId: z.uuid(),
-  sourceType: z.enum(['task_message', 'context_entry']),
+  sourceType: FrozenWorkSourceTypeSchema,
   sourceId: z.uuid(),
   sourceVersion: z.string().min(1).max(200),
   sourceDigest: Sha256DigestSchema,
@@ -104,6 +118,7 @@ export type RunWorkInputReceipt = z.infer<typeof RunWorkInputReceiptSchema>
 
 /** Runtime initialize 的清单 + 本地副本目录（成对字段）。 */
 export const RuntimeWorkInputsSchema = z.strictObject({
+  discoveryExecutionId: z.uuid().optional(),
   workKey: z.uuid(),
   manifestDigest: Sha256DigestSchema,
   entries: z.array(WorkInputManifestEntrySchema).min(1).max(WORK_INPUT_MANIFEST_MAX_ENTRIES),

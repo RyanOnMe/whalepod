@@ -78,11 +78,18 @@ async function wireErrorCodeFrom(response: Response): Promise<string | undefined
 export class WorkInputDownloader {
   constructor(private readonly deps: WorkInputDownloaderDeps) {}
 
-  async prepare(runId: string, input: RunStartWorkInput): Promise<PreparedWorkInputs> {
+  async prepare(
+    runId: string,
+    input: RunStartWorkInput,
+    privateDirectory?: string,
+  ): Promise<PreparedWorkInputs> {
     const manifest = input.manifest
-    const dir = join(this.deps.inputsRoot, runId)
+    if ((input.discoveryExecutionId !== undefined) !== (privateDirectory !== undefined)) {
+      throw new WorkInputError('CONTEXT_UNAVAILABLE', 'discovery input directory unavailable')
+    }
+    const dir = privateDirectory ?? join(this.deps.inputsRoot, runId)
     try {
-      await mkdir(dir, { recursive: true })
+      await mkdir(dir, { recursive: true, mode: 0o700 })
       const response = await this.request(
         `${this.deps.hubUrl.replace(/\/$/, '')}/api/v1/node/runs/${runId}/work-input/bundle`,
       )
@@ -144,7 +151,7 @@ export class WorkInputDownloader {
             'work input copy failed digest verification',
           )
         }
-        await writeFile(join(dir, entry.inboxItemId), bytes)
+        await writeFile(join(dir, entry.inboxItemId), bytes, { mode: 0o600 })
       }
       if (seen.size !== expected.size) {
         throw new WorkInputError('CONTEXT_DIGEST_MISMATCH', 'work input bundle is missing an entry')
@@ -172,12 +179,25 @@ export class WorkInputDownloader {
     await rm(join(this.deps.inputsRoot, runId), { recursive: true, force: true }).catch(() => {})
   }
 
-  private async request(url: string): Promise<Response> {
+  /** Fail closed when the Hub cannot revalidate a discovery Run's exact input binding. */
+  async authorizeDiscovery(runId: string, signal: AbortSignal): Promise<boolean> {
+    const response = await this.request(
+      `${this.deps.hubUrl.replace(/\/$/, '')}/api/v1/node/runs/${runId}/work-input/authorize`,
+      signal,
+    )
+    if (response.status === 204) return true
+    await response.body?.cancel()
+    return false
+  }
+
+  private async request(url: string, signal?: AbortSignal): Promise<Response> {
     const fetchFn = this.deps.fetchImpl ?? fetch
     try {
+      const deadline = AbortSignal.timeout(this.deps.timeoutMs ?? DEFAULT_WORK_INPUT_TIMEOUT_MS)
       return await fetchFn(url, {
         headers: { authorization: `Device ${this.deps.deviceToken}` },
-        signal: AbortSignal.timeout(this.deps.timeoutMs ?? DEFAULT_WORK_INPUT_TIMEOUT_MS),
+        redirect: 'error',
+        signal: signal === undefined ? deadline : AbortSignal.any([deadline, signal]),
       })
     } catch (error) {
       const reason = error instanceof Error ? error.name : 'network error'

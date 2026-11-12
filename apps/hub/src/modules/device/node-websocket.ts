@@ -334,7 +334,7 @@ export function registerNodeWebsocket(app: FastifyInstance, deps: NodeWebsocketD
             if (run === undefined || run.deviceId !== identity.deviceId) {
               throw new Error('live_delta for unknown or foreign run')
             }
-            if (isManagedDraftSource(run)) return
+            if (isManagedDraftSource(run) || Boolean(run.discoveryExecutionId)) return
             if (TERMINAL.has(run.status)) return // 终态后的迟到 delta：丢，不转发
             deps.realtime.publishLive({
               runId: run.id,

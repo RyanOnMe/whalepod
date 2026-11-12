@@ -222,6 +222,7 @@ export async function getTaskRoom(
   handle: DbHandle,
   taskId: string,
   viewerUserId?: string,
+  canReadPrivateDiscoveryRun?: (run: RunRow) => Promise<boolean>,
 ): Promise<TaskRoomView | undefined> {
   const task = await getTask(handle, taskId)
   if (task === undefined) return undefined
@@ -231,11 +232,28 @@ export async function getTaskRoom(
     listDiscussionMessages(handle, taskId),
     listInstructionMessages(handle, taskId),
     listRunsByTask(handle, taskId),
-    listArtifactsByTask(handle, taskId),
+    listArtifactsByTask(
+      handle,
+      taskId,
+      canReadPrivateDiscoveryRun === undefined ? undefined : viewerUserId,
+    ),
     // #211：一次查出本任务所有 Run 的设备名/工作区名（JOIN，不 N+1）。
     listRunPlacementNames(handle, taskId),
   ])
-  const visibleRuns = runs.filter((row) => !isManagedDraftSource(row))
+  const privateRuns = new Map(
+    runs.filter((row) => Boolean(row.discoveryExecutionId)).map((row) => [row.id, row]),
+  )
+  const visiblePrivateRuns = new Set<string>()
+  if (canReadPrivateDiscoveryRun) {
+    for (const run of privateRuns.values()) {
+      if (run.ownerUserId === viewerUserId && (await canReadPrivateDiscoveryRun(run)))
+        visiblePrivateRuns.add(run.id)
+    }
+  }
+  const visibleRuns = runs.filter(
+    (row) =>
+      !isManagedDraftSource(row) && (!privateRuns.has(row.id) || visiblePrivateRuns.has(row.id)),
+  )
   // #244：预解析依赖上面的 runs（要先知道会继承哪个 Agent），没法进同一个
   // Promise.all；顺序两查（agent → revision）+ 读模型路径，代价可接受。
   // #246/#261/#378：工具/阶段摘要与约定版本号映射同样依赖 runs（按 runId 批查），与预解析并行。
@@ -318,7 +336,10 @@ export async function getTaskRoom(
               ? 'task_not_in_progress'
               : reviewPrerequisiteReason(
                   runs.some((row) => !TERMINAL_RUN_STATUSES.has(row.status)),
-                  artifacts.some((row) => row.status === 'published'),
+                  artifacts.some(
+                    ({ artifact, discoveryExecutionId }) =>
+                      !discoveryExecutionId && artifact.status === 'published',
+                  ),
                 )
       return { allowed: reason === null, reason }
     })(),
@@ -336,12 +357,13 @@ export async function getTaskRoom(
     nextRunApprovalPolicy,
     artifacts: artifacts
       .filter(
-        (a) =>
-          a.status === 'published' ||
+        ({ artifact: a, discoveryExecutionId }) =>
+          (!discoveryExecutionId && a.status === 'published') ||
           (a.status === 'candidate' &&
             viewerUserId !== undefined &&
-            a.ownerUserId === viewerUserId),
+            a.ownerUserId === viewerUserId &&
+            (!discoveryExecutionId || visiblePrivateRuns.has(a.runId))),
       )
-      .map(toTaskRoomArtifact),
+      .map(({ artifact }) => toTaskRoomArtifact(artifact)),
   }
 }

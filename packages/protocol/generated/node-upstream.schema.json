@@ -2197,6 +2197,10 @@
         {
           "type": "string",
           "const": "work-input.v1"
+        },
+        {
+          "type": "string",
+          "const": "discovery-execution-replay.v1"
         }
       ]
     },

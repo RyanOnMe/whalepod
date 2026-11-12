@@ -134,6 +134,27 @@ async function reconcileOne(deps: ReconcileDeps, run: RunRow, now: Date): Promis
         type: 'run.start',
         pendingOnly: true,
       })
+      if (locked.discoveryExecutionId) {
+        // The only command was committed with the single-run authorization. A
+        // missing/failed delivery might already have executed on the Node;
+        // never synthesize a fresh command ID for a discovery Run.
+        const [execution] = await tx
+          .select({
+            expiresAt: schema.discoveryExecutions.expiresAt,
+            revokedAt: schema.discoveryExecutions.revokedAt,
+          })
+          .from(schema.discoveryExecutions)
+          .where(eq(schema.discoveryExecutions.id, locked.discoveryExecutionId))
+        if (
+          pending.length === 1 &&
+          execution &&
+          execution.revokedAt === null &&
+          execution.expiresAt.getTime() > now.getTime()
+        )
+          return false
+        await cancelRunInTransaction(tx, { outbox: deps.outbox, now }, locked, 'admin')
+        return true
+      }
       if (pending.length > 0) return false
       const existing = await findOutboxCommandsForRun(tx, { runId: locked.id, type: 'run.start' })
       const template = existing[0]

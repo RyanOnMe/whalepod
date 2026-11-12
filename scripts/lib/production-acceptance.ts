@@ -91,7 +91,10 @@ export class ProductionAcceptance {
   private readonly tails = new Map<ChildProcess, string>()
   private readonly secrets = new Set<string>()
 
-  constructor(listener?: RequestListener) {
+  constructor(
+    listener?: RequestListener,
+    private readonly hubReplayRoute?: (origin: string) => object,
+  ) {
     if (listener) this.provider = createServer(listener)
   }
 
@@ -251,7 +254,7 @@ export class ProductionAcceptance {
     this.postgres = await startEphemeralPostgres()
     this.protect(this.postgres.databaseUrl)
     this.database = createDatabase({ connectionString: this.postgres.databaseUrl })
-    this.launch(this.entries.hub, [], {
+    const hubEnvironment = {
       DATABASE_URL: this.postgres.databaseUrl,
       WHALEPOD_PUBLIC_ORIGIN: this.origin,
       WHALEPOD_SETUP_TOKEN_PATH: setupPath,
@@ -259,7 +262,21 @@ export class ProductionAcceptance {
       HOST: '127.0.0.1',
       PORT: String(port),
       LOG_LEVEL: 'info',
-    })
+    }
+    if (this.hubReplayRoute === undefined) this.launch(this.entries.hub, [], hubEnvironment)
+    else {
+      assert(this.providerOrigin, 'the Hub replay route needs a disposable loopback provider')
+      this.launch(
+        'whalepod-hub-replay-assembly',
+        [this.entries.hub, JSON.stringify(this.hubReplayRoute(this.providerOrigin))],
+        hubEnvironment,
+        [
+          '--input-type=module',
+          '--eval',
+          'import { pathToFileURL } from "node:url"; const { runHub } = await import(pathToFileURL(process.argv[2]).href); await runHub(JSON.parse(process.argv[3]))',
+        ],
+      )
+    }
     await until('Hub ready', async () => {
       try {
         return (await this.request('/setup/status', undefined, { actor: null })).ok

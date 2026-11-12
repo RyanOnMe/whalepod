@@ -207,7 +207,8 @@ export async function sendInstruction(
   if (active !== undefined) {
     if (input.expectedApprovalPolicy !== undefined) {
       const pinned = await getOrdinaryRun(deps.database.db, active.id)
-      if (pinned === undefined) throw new RunCommandError('NOT_FOUND', 'run not found')
+      if (pinned === undefined || Boolean(pinned.discoveryExecutionId))
+        throw new RunCommandError('NOT_FOUND', 'run not found')
       if (pinned.approvalPolicy !== input.expectedApprovalPolicy)
         throw new RunCommandError('CONFLICT', '审批档位与所选执行不一致，请重新确认')
     }
@@ -254,7 +255,9 @@ export async function sendInstruction(
       : undefined
   if (
     input.intent?.kind === 'resume' &&
-    (resumeSource === undefined || resumeSource.taskId !== taskId)
+    (resumeSource === undefined ||
+      Boolean(resumeSource.discoveryExecutionId) ||
+      resumeSource.taskId !== taskId)
   ) {
     throw new RunCommandError('NOT_FOUND', '续跑来源不在本任务中')
   }
@@ -390,7 +393,13 @@ async function agentFromLastRun(
   const rows = await deps.database.db
     .select({ agentId: schema.runs.agentId })
     .from(schema.runs)
-    .where(and(eq(schema.runs.taskId, taskId), isNull(schema.runs.managedDraftSourceDigest)))
+    .where(
+      and(
+        eq(schema.runs.taskId, taskId),
+        isNull(schema.runs.managedDraftSourceDigest),
+        isNull(schema.runs.discoveryExecutionId),
+      ),
+    )
     .orderBy(desc(schema.runs.createdAt))
     .limit(1)
   return rows[0]?.agentId
