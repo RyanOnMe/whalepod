@@ -1061,7 +1061,15 @@ try {
   await verifyRd05a(resultPath, binding)
   console.log('RD-05a combined production acceptance PASS: ' + output.slice(repoRoot.length + 1))
 } catch (error) {
-  const message = env.redact(error instanceof Error ? error.message : String(error))
+  const sites =
+    error instanceof Error
+      ? [...new Set(error.stack?.match(/scripts\/[a-zA-Z0-9_./-]+\.ts:\d+:\d+/g) ?? [])]
+      : []
+  const message = env.redact(
+    (error instanceof Error ? error.message : String(error)) +
+      '\n' +
+      JSON.stringify({ component: 'acceptance.failure', sites }),
+  )
   if (ownsOutput) {
     await rm(resultPath, { force: true })
     await writeFile(join(output, 'failure.log'), message + '\n' + env.diagnostics() + '\n', {
