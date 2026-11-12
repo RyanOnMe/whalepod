@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { DiscoveryPermitRequestSchema, RunStartWorkInputSchema } from '../src/index.js'
+import {
+  DiscoveryExecutorAttemptSettleSchema,
+  DiscoveryPermitRequestSchema,
+  RunStartWorkInputSchema,
+} from '../src/index.js'
 
 describe('discovery executor protocol', () => {
   const digest = 'b'.repeat(64)
@@ -11,6 +15,7 @@ describe('discovery executor protocol', () => {
       model: 'deepseek/deepseek-v4.1-flash',
       endpoint: 'https://api.commandcode.ai/provider/v1/chat/completions',
       account: 'rd04c3-acceptance',
+      credentialDigest: digest,
       policyGeneration: 1,
     },
   }
@@ -59,6 +64,22 @@ describe('discovery executor protocol', () => {
     ).toBe(false)
     expect(
       DiscoveryPermitRequestSchema.safeParse({ configVersion: 1, executorLimits }).success,
+    ).toBe(false)
+  })
+
+  it('accepts actual prompt-only usage while refusing a zero-input receipt', () => {
+    const receipt = { attemptId: randomUUID(), requestDigest: digest }
+    expect(
+      DiscoveryExecutorAttemptSettleSchema.safeParse({
+        ...receipt,
+        outcome: { kind: 'actual', inputTokens: 19, outputTokens: 0 },
+      }).success,
+    ).toBe(true)
+    expect(
+      DiscoveryExecutorAttemptSettleSchema.safeParse({
+        ...receipt,
+        outcome: { kind: 'actual', inputTokens: 0, outputTokens: 0 },
+      }).success,
     ).toBe(false)
   })
 })

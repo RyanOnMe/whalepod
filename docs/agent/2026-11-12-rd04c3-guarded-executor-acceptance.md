@@ -2,7 +2,9 @@
 
 - Issue：#544（父任务 #535），前置 #542，契约 ADR-0030 §5。
 - 真实模型只在独立的验收装配显式启用。默认 Hub/Node 不启用；正式阅稿和飞书接入沿原边界。
-- 2026-11-12：最终构建的 c2 正向、首读前撤权和 c3 无外网拒绝场景均通过。缺授权、账户不符、授权撤回或预算不足时，未产生模型请求；真实模型和供应商扣费仍为 `not_run`。
+- 2026-11-12：最终构建的 c2 正向、首读前撤权和 c3 无外网拒绝场景均通过。缺授权、账户或密钥不符、授权撤回、预算不足时，未产生模型请求。
+- 同日通过一次真实装配验收：Command Code 的 `deepseek/deepseek-v4.1-flash` 完成 4 次调用，供应商报告输入 9,570、输出 1,352 tokens。Team、Project、父许可和 Work 的增量一致，按冻结费率折算为 4,495 微美元（USD 0.004495），无残留预留。供应商扣款对账仍为 `not_run`。
+- 一个授权只生成一个已完成的 Run。DSH 读到两份冻结来源，草稿保留了两份来源各自独有的合成校验值；责任人下载 200，另一成员查看公开对照 200、查看草稿 404。HTTP、实时和重放无私有标记；正式发布入口 404，私有运行目录已清理。独立验真通过。
 
 ## 验什么
 
@@ -20,10 +22,11 @@ node --import tsx scripts/run-rd04c2-acceptance.ts
 node --import tsx scripts/run-rd04c2-acceptance.ts --revoke-before-read
 node --import tsx scripts/run-rd04c3-acceptance.ts --guard-negatives
 node --import tsx scripts/run-rd04c3-acceptance.ts --prepare-only
+node --import tsx scripts/run-rd04c3-acceptance.ts --bind-credential --key-file "$WHALEPOD_C3_KEY_FILE"
 node --import tsx scripts/run-rd04c3-acceptance.ts --accept-charges --key-file "$WHALEPOD_C3_KEY_FILE"
 node --import tsx scripts/verify-rd04c3-acceptance.ts
 ```
 
-先验证同一构建的 c2 正向和撤权证据。真实请求只用已授权的测试账户，密钥文件须在仓库外、权限为 0600；同一验收计划只允许发起一次。出现断线、供应商拒绝或用量不明时先检查已有尝试，不重发。
+先验证同一构建的 c2 正向和撤权证据。真实请求只用已授权的测试账户，密钥文件须在仓库外、权限为 0600。先在不出网的步骤绑定该文件的密钥指纹，来源授权和 Node 出站复用同一指纹；换密钥即拒绝。同一验收计划只允许发起一次。出现断线、供应商拒绝或用量不明时先检查已有尝试，不重发。
 
 脱敏证据在 `artifacts/evidence/rd04c3/`，按 application、execution、Run 和 attempt ID 关联。授权和派工看执行来源、逐件授权及 dispatch；发送和供应商用量看 `node.discovery_execution`；预留、结算和未知结果看调用账本及四级计数；DSH 读取看冻结清单与回执。私有候选用两名成员、HTTP、实时和重放对照复核。

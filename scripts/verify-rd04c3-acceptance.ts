@@ -14,8 +14,9 @@ import {
 try {
   const root = join(repoRoot, 'artifacts/evidence/rd04c3')
   const live = join(root, 'live')
-  const [planRaw, attemptRaw, eventsRaw, resultRaw] = await Promise.all([
+  const [planRaw, bindingRaw, attemptRaw, eventsRaw, resultRaw] = await Promise.all([
     readFile(join(root, 'plan.json'), 'utf8'),
+    readFile(join(root, 'credential-binding.json'), 'utf8'),
     readFile(join(live, 'attempt.json'), 'utf8'),
     readFile(join(live, 'events.jsonl'), 'utf8'),
     readFile(join(live, 'result.json'), 'utf8'),
@@ -24,7 +25,7 @@ try {
   const plan = JSON.parse(planRaw) as GuardedAcceptancePlan
   assert.deepEqual(await bindGuardedAcceptancePlan(plan.preparedAt), plan)
   const evidence = JSON.parse(resultRaw) as GuardedAcceptanceEvidence
-  const totals = checkRd04c3(evidence, eventsRaw, planRaw, attemptRaw)
+  const totals = checkRd04c3(evidence, eventsRaw, planRaw, attemptRaw, bindingRaw)
   console.log('RD-04c3 private draft and guarded provider usage PASS', JSON.stringify(totals))
   console.log('Provider invoice reconciliation: not_run')
 } catch {

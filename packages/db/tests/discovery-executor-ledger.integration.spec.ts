@@ -527,6 +527,40 @@ describe('Discovery Executor durable accounting', () => {
     await expect(counters('team', ids.teamId, '2026-11-13')).resolves.toBeUndefined()
   })
 
+  it('settles positive prompt-only usage once while refusing zero prompt usage', async () => {
+    const f = await activeFixture()
+    const attemptId = randomUUID()
+    await expect(claim(f.runId, attemptId)).resolves.toMatchObject({ ok: true })
+    const usage = { kind: 'actual', inputTokens: 11, outputTokens: 0, responseIdDigest } as const
+    await expect(settle(f.runId, attemptId, { ...usage, inputTokens: 0 })).resolves.toMatchObject({
+      status: 'conflict',
+      attempt: { state: 'held' },
+    })
+    await expect(settle(f.runId, attemptId, usage)).resolves.toMatchObject({
+      status: 'applied',
+      attempt: { state: 'actual', inputTokens: 11, outputTokens: 0, costMicros: 6, overage: false },
+    })
+    await expect(settle(f.runId, attemptId, usage)).resolves.toMatchObject({ status: 'duplicate' })
+    await expect(claim(f.runId, randomUUID(), { requestDigest: 'f'.repeat(64) })).resolves.toEqual({
+      ok: false,
+      reason: 'attempt_cannot_continue',
+    })
+    const charged = {
+      calls: 1,
+      inputTokens: 11,
+      outputTokens: 0,
+      costMicros: 6,
+      reservedTokens: 0,
+      reservedCostMicros: 0,
+    }
+    await expect(counters('work', f.workKey, 'lifetime')).resolves.toMatchObject(charged)
+    await expect(counters('project', ids.projectId, utcDate)).resolves.toMatchObject(charged)
+    await expect(counters('team', ids.teamId, utcDate)).resolves.toMatchObject(charged)
+    await expect(getDiscoveryExecutorParentBudget(database.db, slotId)).resolves.toMatchObject(
+      charged,
+    )
+  })
+
   it('keeps uncertainty reserved, charges exact overage, and permanently blocks its parent slot', async () => {
     const f = await activeFixture()
     const attemptId = randomUUID()
@@ -593,6 +627,10 @@ describe('Discovery Executor durable accounting', () => {
     ).resolves.toMatchObject({
       status: 'applied',
       attempt: { state: 'estimated', inputTokens: 20, outputTokens: 10, costMicros: 30 },
+    })
+    await expect(claim(f.runId, randomUUID(), { requestDigest: '1'.repeat(64) })).resolves.toEqual({
+      ok: false,
+      reason: 'attempt_cannot_continue',
     })
     await expect(listDiscoveryExecutorAttempts(database.db, f.runId)).resolves.toHaveLength(2)
     await expect(getDiscoveryExecutorParentBudget(database.db, slotId)).resolves.toMatchObject({

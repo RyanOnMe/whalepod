@@ -17,6 +17,7 @@ const options: DiscoveryLiveOptions = {
     model: DISCOVERY_LIVE_MODEL,
     endpoint: DISCOVERY_LIVE_ENDPOINT,
     account: DISCOVERY_LIVE_ACCOUNT,
+    credentialDigest: createHash('sha256').update('synthetic-local-test-only').digest('hex'),
     policyGeneration: 1,
   },
   apiKey: 'synthetic-local-test-only',
@@ -41,20 +42,34 @@ const finish = event({
   choices: [{ index: 0, finish_reason: 'tool_calls' }],
 })
 const done = 'data: [DONE]\n\n'
+const usage = (inputTokens: number, outputTokens: number) =>
+  event({
+    id: 'synthetic-request',
+    choices: [],
+    usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens },
+  })
 const withUsage = (inputTokens = 327, outputTokens = 123) =>
-  Buffer.from(
-    finish +
-      event({
-        id: 'synthetic-request',
-        choices: [],
-        usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens },
-      }) +
-      done,
-  )
+  Buffer.from(finish + usage(inputTokens, outputTokens) + done)
 const signal = () => new AbortController().signal
 const sha = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex')
 
 describe('RD-04c3 provider egress port', () => {
+  it('rejects a replaced credential even when the recipient account label is unchanged', () => {
+    const begin = vi.fn<DiscoveryModelHubPort['begin']>()
+    const settle = vi.fn<DiscoveryModelHubPort['settle']>()
+    const transport = vi.fn<DiscoveryModelProviderTransport>()
+    expect(() =>
+      createDiscoveryLiveModelPort(
+        { ...options, apiKey: 'different-synthetic-local-key' },
+        { begin, settle },
+        undefined,
+        transport,
+      ),
+    ).toThrow('discovery model call unavailable')
+    expect(begin).not.toHaveBeenCalled()
+    expect(transport).not.toHaveBeenCalled()
+  })
+
   it('binds each distinct attempt to the exact capped bytes sent and waits for settlement', async () => {
     const begin = vi.fn<DiscoveryModelHubPort['begin']>().mockResolvedValue(true)
     const settle = vi.fn<DiscoveryModelHubPort['settle']>()
@@ -237,6 +252,56 @@ describe('RD-04c3 provider egress port', () => {
     await expect(port.request(request, client.signal)).rejects.toThrow('unavailable')
     expect(settle.mock.calls[0]![0].outcome.kind).toBe('actual')
     expect(settle.mock.calls[0]![1].aborted).toBe(false)
+    expect(port.mayUpload()).toBe(false)
+  })
+
+  it('settles a validated empty completion at its positive prompt usage but never releases it', async () => {
+    const begin = vi.fn<DiscoveryModelHubPort['begin']>().mockResolvedValue(true)
+    const settle = vi.fn<DiscoveryModelHubPort['settle']>().mockResolvedValue(true)
+    const transport = vi.fn<DiscoveryModelProviderTransport>()
+    const emptyStop = event({
+      id: 'synthetic-request',
+      choices: [
+        {
+          index: 0,
+          delta: { role: 'assistant', content: '', reasoning_content: null, tool_calls: [] },
+          finish_reason: 'stop',
+        },
+      ],
+    })
+    transport.mockResolvedValue({ body: Buffer.from(emptyStop + usage(327, 0) + done) })
+    const port = createDiscoveryLiveModelPort(options, { begin, settle }, undefined, transport)
+    await expect(port.request(request, signal())).rejects.toThrow('unavailable')
+    expect(settle.mock.calls[0]![0].outcome).toEqual({
+      kind: 'actual',
+      inputTokens: 327,
+      outputTokens: 0,
+      responseIdDigest: sha('synthetic-request'),
+    })
+    expect(port.mayUpload()).toBe(false)
+    await expect(port.request(request, signal())).rejects.toThrow('unavailable')
+    expect(transport).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { name: 'generated text', delta: { content: 'private draft' }, tail: done },
+    { name: 'generated reasoning', delta: { reasoning_content: 'plan' }, tail: done },
+    { name: 'generated tool call', delta: { tool_calls: [{ index: 0, id: 'call' }] }, tail: done },
+    { name: 'incomplete stream', delta: {}, tail: '' },
+  ])('holds the reservation for zero counters with $name', async ({ delta, tail }) => {
+    const begin = vi.fn<DiscoveryModelHubPort['begin']>().mockResolvedValue(true)
+    const settle = vi.fn<DiscoveryModelHubPort['settle']>().mockResolvedValue(true)
+    const chunk = event({
+      id: 'synthetic-request',
+      choices: [{ index: 0, delta, finish_reason: null }],
+    })
+    const stop = event({ id: 'synthetic-request', choices: [{ index: 0, finish_reason: 'stop' }] })
+    const body = Buffer.from(chunk + stop + usage(327, 0) + tail)
+    const port = createDiscoveryLiveModelPort(options, { begin, settle }, undefined, async () => ({
+      body,
+    }))
+    await expect(port.request(request, signal())).rejects.toThrow('unavailable')
+    expect(settle.mock.calls[0]![0].outcome).toEqual({ kind: 'unknown' })
     expect(port.mayUpload()).toBe(false)
   })
 })

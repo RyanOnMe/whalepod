@@ -81,6 +81,8 @@ export const DiscoveryExecutionExecutorSchema = z.strictObject({
   model: z.string().trim().min(1).max(128),
   endpoint: z.string().trim().min(1).max(128),
   account: z.string().trim().min(1).max(128),
+  /** Fingerprint of the approved live credential; never the credential itself. */
+  credentialDigest: Digest.optional(),
   /** Deployment policy generation; a newer route/policy must be reconfirmed. */
   policyGeneration: z.number().int().positive().max(2_147_483_647),
 })
@@ -116,7 +118,7 @@ export const DiscoveryExecutorAttemptSettleSchema = z.strictObject({
     z.strictObject({
       kind: z.literal('actual'),
       inputTokens: Positive.max(2_147_483_647),
-      outputTokens: Positive.max(2_147_483_647),
+      outputTokens: z.number().int().nonnegative().max(2_147_483_647),
       responseIdDigest: Digest.optional(),
     }),
     z.strictObject({ kind: z.literal('confirmed_missing_usage') }),

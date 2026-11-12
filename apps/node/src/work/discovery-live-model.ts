@@ -107,6 +107,7 @@ export function isDiscoveryLiveExecutor(executor: DiscoveryExecutionExecutor): b
     executor.model === DISCOVERY_LIVE_MODEL &&
     executor.endpoint === DISCOVERY_LIVE_ENDPOINT &&
     executor.account === DISCOVERY_LIVE_ACCOUNT &&
+    /^[a-f0-9]{64}$/.test(executor.credentialDigest ?? '') &&
     Number.isSafeInteger(executor.policyGeneration) &&
     executor.policyGeneration > 0
   )
@@ -119,6 +120,7 @@ export function sameDiscoveryLiveExecutor(
   return (
     isDiscoveryLiveExecutor(expected) &&
     isDiscoveryLiveExecutor(offered) &&
+    expected.credentialDigest === offered.credentialDigest &&
     expected.policyGeneration === offered.policyGeneration
   )
 }
@@ -127,6 +129,7 @@ export function validateDiscoveryLiveOptions(options: DiscoveryLiveOptions): voi
   if (
     !isDiscoveryLiveExecutor(options.executor) ||
     !/^[\x21-\x7e]{8,4096}$/.test(options.apiKey) ||
+    hash(options.apiKey) !== options.executor.credentialDigest ||
     !Number.isSafeInteger(options.maxOutputTokens) ||
     options.maxOutputTokens < 1 ||
     options.maxOutputTokens > MAX_OUTPUT_TOKENS
@@ -217,7 +220,37 @@ function record(value: unknown): Record<string, unknown> | undefined {
 }
 
 function tokenCount(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 2_147_483_647
+  return (
+    typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 2_147_483_647
+  )
+}
+
+/** Only recognized empty delta fields can corroborate zero generated tokens. */
+function choiceMayContainGeneration(choice: Record<string, unknown>): boolean {
+  if (
+    (choice.message !== null && choice.message !== undefined) ||
+    (choice.text !== null && choice.text !== undefined && choice.text !== '')
+  )
+    return true
+  if (choice.delta === null || choice.delta === undefined) return false
+  const delta = record(choice.delta)
+  if (!delta) return true
+  return Object.entries(delta).some(([field, value]) => {
+    if (value === null) return false
+    switch (field) {
+      case 'role':
+        return value !== 'assistant'
+      case 'content':
+      case 'reasoning_content':
+      case 'reasoning':
+      case 'refusal':
+        return value !== ''
+      case 'tool_calls':
+        return !Array.isArray(value) || value.length > 0
+      default:
+        return true
+    }
+  })
 }
 
 /** Inspect all data events before allowing any model content to leave the broker. */
@@ -235,6 +268,7 @@ function inspectProviderStream(body: Buffer): {
   let done = false
   let finished = false
   let acceptableFinish = false
+  let generated = false
   let responseId: string | undefined
   let usage: Extract<DiscoveryModelOutcome, { kind: 'actual' }> | undefined
   for (const [index, bytes] of blocks.entries()) {
@@ -300,6 +334,8 @@ function inspectProviderStream(body: Buffer): {
         continue
       }
       const reason = choice.finish_reason
+      generated ||=
+        choiceMayContainGeneration(choice) || reason === 'tool_calls' || reason === 'function_call'
       if (typeof reason === 'string') {
         finished = true
         acceptableFinish = reason === 'stop' || reason === 'tool_calls'
@@ -309,7 +345,14 @@ function inspectProviderStream(body: Buffer): {
       const stats = record(event.usage)
       const inputTokens = stats?.prompt_tokens
       const outputTokens = stats?.completion_tokens
-      if (malformed || !finished || !tokenCount(inputTokens) || !tokenCount(outputTokens))
+      if (
+        malformed ||
+        !finished ||
+        !tokenCount(inputTokens) ||
+        inputTokens === 0 ||
+        !tokenCount(outputTokens) ||
+        (outputTokens === 0 && (generated || responseId === undefined))
+      )
         return unknown
       usage = {
         kind: 'actual',
@@ -319,10 +362,14 @@ function inspectProviderStream(body: Buffer): {
       }
     }
   }
+  if (usage?.outputTokens === 0 && (malformed || !done)) return unknown
   const outcome = usage ?? {
     kind: !malformed && done && finished ? 'confirmed_missing_usage' : 'unknown',
   }
-  return { outcome, complete: !malformed && done && acceptableFinish && usage !== undefined }
+  return {
+    outcome,
+    complete: !malformed && done && acceptableFinish && (usage?.outputTokens ?? 0) > 0,
+  }
 }
 
 /** Use a substituted transport only from a unit test, never from packaged CLI options. */
@@ -430,7 +477,8 @@ export function createDiscoveryLiveModelPort(
           ;({ outcome, complete } = inspectProviderStream(response))
           if (provider.complete === false) {
             complete = false
-            if (outcome.kind !== 'actual') outcome = { kind: 'unknown' }
+            if (outcome.kind !== 'actual' || outcome.outputTokens === 0)
+              outcome = { kind: 'unknown' }
           }
           if (outcome.kind === 'actual') {
             observe?.({ ...outcome, stage: 'provider_usage', attemptId: facts.attemptId })

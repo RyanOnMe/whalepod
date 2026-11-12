@@ -22,6 +22,31 @@ export const EXECUTOR_ROUTE = {
   policyGeneration: 1,
 } as const
 
+export type BoundExecutorRoute = typeof EXECUTOR_ROUTE & { readonly credentialDigest: string }
+
+export function boundExecutorRoute(credentialDigest: string): BoundExecutorRoute {
+  assert(isSha256(credentialDigest), 'invalid credential binding')
+  return { ...EXECUTOR_ROUTE, credentialDigest }
+}
+
+export function bindApprovedCredential(planRaw: string, key: string) {
+  return {
+    schemaVersion: 1,
+    planDigest: sha256(planRaw),
+    account: EXECUTOR_ROUTE.account,
+    credentialDigest: sha256(key),
+  } as const
+}
+
+export function parseCredentialBinding(bindingRaw: string, planRaw: string) {
+  const binding = JSON.parse(bindingRaw) as ReturnType<typeof bindApprovedCredential>
+  assert.equal(binding.schemaVersion, 1)
+  assert.equal(binding.planDigest, sha256(planRaw))
+  assert.equal(binding.account, EXECUTOR_ROUTE.account)
+  assert(isSha256(binding.credentialDigest))
+  return binding
+}
+
 /** Peak list prices, used as a conservative local tariff, not provider invoice evidence. */
 export const EXECUTOR_POLICY = {
   route: EXECUTOR_ROUTE,
@@ -336,6 +361,7 @@ export interface GuardedAcceptanceEvidence {
   }
   readonly provenance: {
     readonly planDigest: string
+    readonly credentialBindingDigest: string
     readonly attemptDigest: string
     readonly eventsDigest: string
   }
@@ -366,8 +392,10 @@ export function checkRd04c3(
   eventsRaw: string,
   planRaw: string,
   attemptRaw: string,
+  bindingRaw: string,
 ): ExecutorUsage {
   const plan = JSON.parse(planRaw) as GuardedAcceptancePlan
+  const binding = parseCredentialBinding(bindingRaw, planRaw)
   const attempt = JSON.parse(attemptRaw) as HoldoutAttempt
   assert.equal(plan.schemaVersion, 1)
   assert.deepEqual(plan.policy, EXECUTOR_POLICY)
@@ -383,7 +411,7 @@ export function checkRd04c3(
   assert.equal(attempt.schemaVersion, 1)
   assert(uuid(attempt.id))
   assert(validTime(attempt.startedAt) > validTime(plan.preparedAt))
-  assert.equal(attempt.freezeDigest, sha256(planRaw))
+  assert.equal(attempt.freezeDigest, sha256(planRaw + bindingRaw))
   assert.equal(report.schemaVersion, 1)
   assert.equal(report.mode, 'guarded_live_model')
   assert.equal(report.invoiceReconciliation, 'not_run')
@@ -391,13 +419,17 @@ export function checkRd04c3(
   assert.deepEqual(report.provider, EXECUTOR_ROUTE)
   assert.deepEqual(report.provenance, {
     planDigest: sha256(planRaw),
+    credentialBindingDigest: sha256(bindingRaw),
     attemptDigest: sha256(attemptRaw),
     eventsDigest: sha256(eventsRaw),
   })
   assert([report.projectId, report.taskId, report.executionId, report.runId].every(uuid))
   assert.equal(report.runCount, 1)
   assert.equal(report.runStatus, 'completed')
-  const route = { ...EXECUTOR_ROUTE, purpose: 'private_draft' } as const
+  const route = {
+    ...boundExecutorRoute(binding.credentialDigest),
+    purpose: 'private_draft',
+  } as const
   const sortedRoute = Object.fromEntries(
     (Object.keys(route) as (keyof typeof route)[]).sort().map((key) => [key, route[key]]),
   )

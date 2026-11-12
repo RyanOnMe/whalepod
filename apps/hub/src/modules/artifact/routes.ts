@@ -82,13 +82,13 @@ async function assertDiscoveryCandidateUploadAllowed(
   tx: Tx,
   run: RunRow,
   route: DiscoveryExecutionRoute | undefined,
-  deviceOnline: boolean,
+  deviceOnline: () => boolean,
   lock = false,
 ): Promise<void> {
   if (
     route === undefined ||
     !discoveryRunCanUpload(run) ||
-    ('route' in route && !deviceOnline) ||
+    ('route' in route && !deviceOnline()) ||
     !(
       await verifyDiscoveryReplayRun(tx, run, new Date(), {
         lock,
@@ -101,8 +101,15 @@ async function assertDiscoveryCandidateUploadAllowed(
   if ('route' in route) {
     const attempts = await listDiscoveryExecutorAttempts(tx, run.id)
     if (
+      !deviceOnline() ||
       attempts.length === 0 ||
-      attempts.some((attempt) => attempt.state !== 'actual' || attempt.overage)
+      attempts.some(
+        (attempt) =>
+          attempt.state !== 'actual' ||
+          attempt.overage ||
+          attempt.outputTokens === null ||
+          attempt.outputTokens <= 0,
+      )
     )
       throw new ApiError(404, 'NOT_FOUND', 'run not found')
   }
@@ -207,14 +214,12 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
           throw new ApiError(400, 'VALIDATION_FAILED', 'artifact body must be raw bytes')
         }
         const replay = Boolean(run.discoveryExecutionId)
+        const route = deps.discoveryExecutionReplay
+        const live = replay && route !== undefined && 'route' in route
+        const deviceOnline = () => deps.discoveryDeviceOnline?.(identity.deviceId) === true
         if (replay) {
           await deps.database.transaction((tx) =>
-            assertDiscoveryCandidateUploadAllowed(
-              tx,
-              run,
-              deps.discoveryExecutionReplay,
-              deps.discoveryDeviceOnline?.(identity.deviceId) === true,
-            ),
+            assertDiscoveryCandidateUploadAllowed(tx, run, route, deviceOnline),
           )
           if (
             meta.mediaType !== 'text/markdown' ||
@@ -242,15 +247,9 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
           replay ? `discovery.artifact.upload:${run.id}:${key}` : `artifact.upload:${key}`,
           async (tx) => {
             if (replay) {
-              // Authority Task scope → Run key share → Work. Acquire the Run FK lock
+              // Authority Task scope → Run → Work. Acquire the Run lock
               // before the Work lock: terminal ingest takes Run then Work as well.
-              await assertDiscoveryCandidateUploadAllowed(
-                tx,
-                run,
-                deps.discoveryExecutionReplay,
-                deps.discoveryDeviceOnline?.(identity.deviceId) === true,
-                true,
-              )
+              await assertDiscoveryCandidateUploadAllowed(tx, run, route, deviceOnline, true)
               const current = await getRun(tx, run.id)
               if (
                 current === undefined ||
@@ -269,6 +268,8 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
                 throw new ApiError(409, 'CONFLICT', 'private draft has already been registered')
             }
             const blob = ordinaryBlob ?? (await deps.store.saveUpload(meta.sha256, body))
+            // Storage I/O may wait even after taking the authority locks.
+            if (live) await assertDiscoveryCandidateUploadAllowed(tx, run, route, deviceOnline)
             const row = await insertArtifact(tx, {
               id: randomUUID(),
               taskId: run.taskId,
@@ -281,9 +282,11 @@ export function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRoute
               storageKey: blob.storageKey,
               sourceRelativePath: meta.sourceRelativePath,
             })
+            if (live && !deviceOnline()) throw new ApiError(404, 'NOT_FOUND', 'run not found')
             return toArtifactView(row)
           },
         )
+        if (live && !deviceOnline()) throw new ApiError(404, 'NOT_FOUND', 'run not found')
         if (replay && (view.sha256 !== meta.sha256 || view.title !== meta.title))
           throw new ApiError(
             409,

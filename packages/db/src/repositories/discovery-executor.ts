@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm'
 import type { DbHandle, Tx } from '../client.js'
 import {
   discoveryApplications,
@@ -295,6 +295,7 @@ type ClaimDenial =
   | 'attempt_already_claimed'
   | 'attempt_binding_changed'
   | 'attempt_unsettled'
+  | 'attempt_cannot_continue'
   | 'request_already_claimed'
   | 'request_exceeds_ceiling'
   | 'budget_policy_missing'
@@ -410,12 +411,29 @@ export async function claimDiscoveryExecutorAttempt(
           ? 'attempt_already_claimed'
           : 'attempt_binding_changed',
     }
-  const [open] = await tx
-    .select({ id: attempts.attemptId })
+  // Settlement uses the same dispatch lock. A prompt-only actual receipt or a
+  // missing-usage estimate pays for that call but cannot authorize another.
+  const [blocking] = await tx
+    .select({ state: attempts.state })
     .from(attempts)
-    .where(and(eq(attempts.runId, input.runId), inArray(attempts.state, ['held', 'unknown'])))
+    .where(
+      and(
+        eq(attempts.runId, input.runId),
+        or(
+          inArray(attempts.state, ['held', 'unknown', 'estimated']),
+          and(eq(attempts.state, 'actual'), eq(attempts.outputTokens, 0)),
+        ),
+      ),
+    )
     .limit(1)
-  if (open) return { ok: false, reason: 'attempt_unsettled' }
+  if (blocking)
+    return {
+      ok: false,
+      reason:
+        blocking.state === 'held' || blocking.state === 'unknown'
+          ? 'attempt_unsettled'
+          : 'attempt_cannot_continue',
+    }
   const [duplicate] = await tx
     .select({ id: attempts.attemptId })
     .from(attempts)
@@ -571,7 +589,7 @@ export async function settleDiscoveryExecutorAttempt(
   const outcome = input.outcome
   if (
     outcome.kind === 'actual' &&
-    (!positive(outcome.inputTokens) || !positive(outcome.outputTokens))
+    (!positive(outcome.inputTokens) || !nonnegative(outcome.outputTokens))
   )
     return { status: 'conflict', attempt }
   if (outcome.kind === 'unknown') {

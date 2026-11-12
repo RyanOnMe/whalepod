@@ -28,13 +28,17 @@ import {
   FIXTURE_FACT,
   FIXTURE_RECOMMENDATION,
   bindGuardedAssembly,
+  bindApprovedCredential,
   bindGuardedAcceptancePlan,
+  boundExecutorRoute,
   checkGuardNegatives,
   checkRd04c3,
   guardedFixtureWitnesses,
+  parseCredentialBinding,
   privateMarkerForRun,
   readPrivateAcceptanceCredential,
   type ExecutorEvent,
+  type BoundExecutorRoute,
   type ExecutorUsage,
   type GuardNegativeCase,
   type GuardedAcceptanceEvidence,
@@ -43,6 +47,7 @@ import {
 
 const root = join(repoRoot, 'artifacts/evidence/rd04c3')
 const planPath = join(root, 'plan.json')
+const credentialBindingPath = join(root, 'credential-binding.json')
 const guardsPath = join(root, 'guard-negatives.json')
 const attemptDirectory = join(root, 'live')
 const sockets: WebSocket[] = []
@@ -122,6 +127,7 @@ async function prepareGuardedFixture(
   h: ProductionAcceptance,
   replay: Rd04c2Replay,
   key: string,
+  executor: BoundExecutorRoute,
   negative = false,
 ) {
   const fixture = await prepareDiscoveryDraftFixture(h, replay, {
@@ -129,7 +135,7 @@ async function prepareGuardedFixture(
     startNode: (origin) =>
       h.startNodeWithGuardedExecutor(
         origin,
-        { executor: EXECUTOR_ROUTE, maxOutputTokens: EXECUTOR_POLICY.maxOutputTokens },
+        { executor, maxOutputTokens: EXECUTOR_POLICY.maxOutputTokens },
         key,
         negative,
       ),
@@ -165,7 +171,7 @@ async function prepareGuardedFixture(
   const grantPath = base + '/applications/' + application.id + '/executor-source-grants'
   const grantBody = (exactSource: DiscoveryExecutionBasis['sources'][number]) => ({
     source: exactSource,
-    executor: EXECUTOR_ROUTE,
+    executor,
     confirmsPrivateDraft: true,
   })
   const artifact = basis.sources.find((row) => row.kind === 'artifact')
@@ -178,7 +184,7 @@ async function prepareGuardedFixture(
   await ownerGrant.body?.cancel()
   const authorization = {
     sourceManifestDigest: basis.sourceManifestDigest,
-    executor: EXECUTOR_ROUTE,
+    executor,
     expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
     confirmsPrivateDraft: true,
   }
@@ -193,10 +199,16 @@ async function prepareGuardedFixture(
   assert(typeof commentGrantData.data.id === 'string')
   const wrong = await h.request(executionUrl, {
     ...authorization,
-    executor: { ...EXECUTOR_ROUTE, account: 'unapproved-acceptance-account' },
+    executor: { ...executor, account: 'unapproved-acceptance-account' },
   })
   assert.equal(wrong.status, 409)
   await wrong.body?.cancel()
+  const replacedCredential = await h.request(executionUrl, {
+    ...authorization,
+    executor: { ...executor, credentialDigest: sha256(executor.credentialDigest) },
+  })
+  assert.equal(replacedCredential.status, 409)
+  await replacedCredential.body?.cancel()
   const before = await rowsForTask(application.taskId)
   assert.equal(before.length, 0)
   return {
@@ -216,6 +228,7 @@ async function drive(
   h: ProductionAcceptance,
   replay: Rd04c2Replay,
   key: string,
+  executor: BoundExecutorRoute,
   witnesses: ReturnType<typeof guardedFixtureWitnesses>,
 ) {
   const {
@@ -236,7 +249,7 @@ async function drive(
     wrongRouteHttp,
     partialGrantHttp,
     beforeAuthorizationRuns,
-  } = await prepareGuardedFixture(h, replay, key)
+  } = await prepareGuardedFixture(h, replay, key, executor)
   liveStage = 'dispatch'
   const beforeBudget = await db.select().from(schema.coordinationBudgets)
   const [parentBefore] = await db
@@ -523,10 +536,12 @@ async function drive(
 async function driveGuardNegative(kind: 'budget' | 'revoked_grant'): Promise<GuardNegativeCase> {
   const witnesses = guardedFixtureWitnesses(randomUUID())
   const replay = new Rd04c2Replay(witnesses.publicBody, witnesses.sourceBody)
+  const key = randomBytes(32).toString('base64url')
+  const executor = boundExecutorRoute(sha256(key))
   const h = new ProductionAcceptance(
     (request, response) => void replay.respond(request, response),
     undefined,
-    EXECUTOR_POLICY,
+    { ...EXECUTOR_POLICY, route: executor },
   )
   env = h
   const statuses = (action: 'hub_begin' | 'hub_online_check') =>
@@ -538,12 +553,7 @@ async function driveGuardNegative(kind: 'budget' | 'revoked_grant'): Promise<Gua
         : [],
     )
   try {
-    const fixture = await prepareGuardedFixture(
-      h,
-      replay,
-      randomBytes(32).toString('base64url'),
-      true,
-    )
+    const fixture = await prepareGuardedFixture(h, replay, key, executor, true)
     const {
       application,
       artifactsFor,
@@ -678,13 +688,17 @@ async function main() {
     options: {
       'prepare-only': { type: 'boolean' },
       'guard-negatives': { type: 'boolean' },
+      'bind-credential': { type: 'boolean' },
       'accept-charges': { type: 'boolean' },
       'key-file': { type: 'string' },
     },
   })
   if (values['guard-negatives']) {
     assert(
-      !values['prepare-only'] && !values['accept-charges'] && !values['key-file'],
+      !values['prepare-only'] &&
+        !values['bind-credential'] &&
+        !values['accept-charges'] &&
+        !values['key-file'],
       'guard negatives take no credential or charge consent',
     )
     const binding = await bindGuardedAssembly()
@@ -703,7 +717,7 @@ async function main() {
   }
   if (values['prepare-only']) {
     assert(
-      !values['accept-charges'] && !values['key-file'],
+      !values['bind-credential'] && !values['accept-charges'] && !values['key-file'],
       'preparation must not receive a key or charge consent',
     )
     const plan = await bindGuardedAcceptancePlan(new Date().toISOString())
@@ -713,8 +727,8 @@ async function main() {
     return
   }
   assert(
-    values['accept-charges'] && values['key-file'],
-    'live probe requires --accept-charges and --key-file',
+    values['key-file'] && Boolean(values['bind-credential']) !== Boolean(values['accept-charges']),
+    'choose --bind-credential or --accept-charges with --key-file',
   )
   const planRaw = await readFile(planPath, 'utf8')
   const plan = JSON.parse(planRaw) as GuardedAcceptancePlan
@@ -724,17 +738,38 @@ async function main() {
     'prepared evidence or assembly changed',
   )
   const key = await readPrivateAcceptanceCredential(values['key-file'])
-  const attempt = await reserveHoldoutAttempt(attemptDirectory, sha256(planRaw), plan.preparedAt)
+  if (values['bind-credential']) {
+    await writeFile(
+      credentialBindingPath,
+      JSON.stringify(bindApprovedCredential(planRaw, key), null, 2) + '\n',
+      options,
+    )
+    console.log('RD-04c3 authorized test credential bound; no provider request')
+    return
+  }
+  const bindingRaw = await readFile(credentialBindingPath, 'utf8')
+  const binding = parseCredentialBinding(bindingRaw, planRaw)
+  assert.equal(
+    sha256(key),
+    binding.credentialDigest,
+    'credential differs from the prepared binding',
+  )
+  const executor = boundExecutorRoute(binding.credentialDigest)
+  const attempt = await reserveHoldoutAttempt(
+    attemptDirectory,
+    sha256(planRaw + bindingRaw),
+    plan.preparedAt,
+  )
   const witnesses = guardedFixtureWitnesses(attempt.attempt.id)
   const replay = new Rd04c2Replay(witnesses.publicBody, witnesses.sourceBody)
   env = new ProductionAcceptance(
     (request, response) => void replay.respond(request, response),
     undefined,
-    EXECUTOR_POLICY,
+    { ...EXECUTOR_POLICY, route: executor },
   )
   env.protect(key)
   try {
-    const { events, evidence } = await drive(env, replay, key, witnesses)
+    const { events, evidence } = await drive(env, replay, key, executor, witnesses)
     liveStage = 'verification'
     assert.deepEqual(
       await bindGuardedAcceptancePlan(plan.preparedAt),
@@ -747,11 +782,12 @@ async function main() {
       attemptId: attempt.attempt.id,
       provenance: {
         planDigest: sha256(planRaw),
+        credentialBindingDigest: sha256(bindingRaw),
         attemptDigest: attempt.digest,
         eventsDigest: sha256(eventsRaw),
       },
     }
-    const totals = checkRd04c3(result, eventsRaw, planRaw, attempt.raw)
+    const totals = checkRd04c3(result, eventsRaw, planRaw, attempt.raw, bindingRaw)
     await writeFile(join(attemptDirectory, 'events.jsonl'), eventsRaw, options)
     await writeFile(
       join(attemptDirectory, 'result.json'),

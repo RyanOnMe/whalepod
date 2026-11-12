@@ -144,6 +144,7 @@ export function registerDiscoveryExecutorAttemptRoutes(
             authorized &&
             deps.route !== undefined &&
             result.attempt?.state === 'actual' &&
+            (result.attempt.outputTokens ?? 0) > 0 &&
             !result.attempt.overage &&
             deps.deviceOnline(deviceId) &&
             (await verifyDiscoveryReplayRun(tx, run, new Date(), { route: deps.route })).ok,

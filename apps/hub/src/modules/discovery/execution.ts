@@ -116,6 +116,7 @@ export function executorDigest(input: DiscoveryExecutionAuthorizationRequest['ex
       model: input.model,
       endpoint: input.endpoint,
       account: input.account,
+      ...(input.credentialDigest ? { credentialDigest: input.credentialDigest } : {}),
       policyGeneration: input.policyGeneration,
     }),
   )

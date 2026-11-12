@@ -2059,6 +2059,10 @@
           "minLength": 1,
           "maxLength": 128
         },
+        "credentialDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
         "policyGeneration": {
           "type": "integer",
           "exclusiveMinimum": 0,

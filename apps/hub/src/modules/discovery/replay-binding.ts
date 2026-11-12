@@ -61,6 +61,7 @@ export function validDiscoveryLivePolicy(policy: DiscoveryLivePolicy): boolean {
     route.data.model === 'deepseek/deepseek-v4.1-flash' &&
     route.data.endpoint === 'https://api.commandcode.ai/provider/v1/chat/completions' &&
     route.data.account === 'rd04c3-acceptance' &&
+    route.data.credentialDigest !== undefined &&
     policy.maxInputTokens >= 1_048_576 &&
     policy.maxInputTokens <= 2_097_152 &&
     policy.maxOutputTokens <= 4096 &&
@@ -80,6 +81,7 @@ export function discoveryReplayRouteIsLoopback(route: DiscoveryReplayRoute): boo
     const endpoint = new URL(route.endpoint)
     return (
       route.provider === 'deepseek-official' &&
+      route.credentialDigest === undefined &&
       endpoint.href === route.endpoint &&
       endpoint.protocol === 'http:' &&
       endpoint.hostname === '127.0.0.1' &&
