@@ -17,6 +17,7 @@ import {
   insertDiscoveryPermit,
   insertDiscoveryVerification,
   insertSourceCorrection,
+  revokeDiscoveryExecutionsForMember,
   revokeDiscoveryExecutionsForProject,
   revokeDiscoveryExecutionsForSource,
   revokeDiscoveryPermits,
@@ -527,7 +528,7 @@ export async function changeDiscoveryConsent(
         // An author/verifier leaving discovery invalidates every execution authorization
         // that might depend on their material; re-confirmation is required.
         if (!active)
-          await revokeDiscoveryExecutionsForProject(tx, projectId, 'participation_changed', now)
+          await revokeDiscoveryExecutionsForMember(tx, actor.userId, 'participation_changed', now)
         return { projectId, configVersion: cfg.version, version: values.version, active }
       }
 

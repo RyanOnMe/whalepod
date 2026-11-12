@@ -5,7 +5,7 @@
  * 授权代次，Executor 路由身份固定到该件执行。不创建 Mandate、派工意图或 Run；
  * RD-04c2 只能在同一条授权仍有效时继续。
  */
-import { eq } from 'drizzle-orm'
+import { asc, eq, inArray } from 'drizzle-orm'
 import {
   getCoordinatorStateForUpdate,
   getDiscoveryApplicationById,
@@ -257,6 +257,7 @@ async function loadBasis(
     !task ||
     task.projectId !== projectId ||
     task.assigneeUserId !== actorUserId ||
+    task.assignmentStatus !== 'accepted' ||
     !work ||
     work.taskId !== task.id ||
     work.state !== 'active' ||
@@ -281,6 +282,32 @@ async function loadBasis(
       reason: 'source_changed',
     }
   const identity = await sourceIdentity(tx, message)
+  // Freeze the exact user rows before checking consent/membership: a concurrent
+  // disable/participation write must either commit before this read or wait for us.
+  const evidenceRows = await Promise.all(
+    application.verification.evidence.map(async (evidence) => {
+      const [artifact] = await tx
+        .select()
+        .from(schema.artifacts)
+        .where(eq(schema.artifacts.id, evidence.artifactId))
+      return { evidence, artifact }
+    }),
+  )
+  const receipts = await listDiscoveryVerificationsByIds(tx, application.verification.receiptIds)
+  const authorityIds = [
+    ...new Set([
+      actorUserId,
+      message.authorUserId,
+      ...evidenceRows.flatMap(({ artifact }) => (artifact ? [artifact.ownerUserId] : [])),
+      ...receipts.map((receipt) => receipt.verifierUserId),
+    ]),
+  ].sort()
+  await tx
+    .select({ id: schema.userAccounts.id })
+    .from(schema.userAccounts)
+    .where(inArray(schema.userAccounts.id, authorityIds))
+    .orderBy(asc(schema.userAccounts.id))
+    .for('share')
   const authorConsent = await sourceConsent(tx, cfg, message.authorUserId)
   if (
     identity.sourceVersion !== application.sourceVersion ||
@@ -304,18 +331,13 @@ async function loadBasis(
       authorizationGeneration: `author:${authorConsent.version}:permit:${permit.version}:config:${cfg.version}`,
     },
   ]
-  // RD-04b accepts registered verifiers by active membership, not participation consent.
   const registeredVerifiers = new Set(
     permit.verifierUserIds.filter((id) => id !== message.authorUserId),
   )
   const eligibleVerifier = async (userId: string) =>
-    registeredVerifiers.has(userId) && (await getEnabledMember(tx, team.id, userId))
+    registeredVerifiers.has(userId) && (await sourceConsent(tx, cfg, userId)) !== undefined
 
-  for (const evidence of application.verification.evidence) {
-    const [artifact] = await tx
-      .select()
-      .from(schema.artifacts)
-      .where(eq(schema.artifacts.id, evidence.artifactId))
+  for (const { evidence, artifact } of evidenceRows) {
     const publishedAt = artifact?.publishedAt?.toISOString()
     if (
       !artifact ||
@@ -341,7 +363,6 @@ async function loadBasis(
     })
   }
 
-  const receipts = await listDiscoveryVerificationsByIds(tx, application.verification.receiptIds)
   for (const receipt of receipts) {
     if (
       receipt.revokedAt !== null ||
@@ -442,11 +463,15 @@ function toView(
 /** Serialize with correction/withdrawal and task/work transitions before reading the basis. */
 async function lockAuthorizationScope(
   tx: Tx,
+  actorUserId: string,
   applicationId: string,
   projectId: string,
 ): Promise<void> {
   const application = await getDiscoveryApplicationById(tx, applicationId)
   if (!application || application.projectId !== projectId) notFoundApplication()
+  const permit = await getDiscoveryPermit(tx, application.permitId)
+  // Reject non-principals before taking any Task/coordinator/Project lock.
+  if (!permit || permit.principalUserId !== actorUserId) notFoundApplication()
   const admission = await discoveryAdmission(tx, application.sourceId)
   if (!admission || admission.projectId !== projectId) notFoundApplication()
   // Task -> Task -> coordinator -> Project; correction locks the entry Task, task commands
@@ -502,7 +527,7 @@ export async function authorizeDiscoveryExecution(
     `discovery.execution:${actorUserId}:${projectId}:${applicationId}:${idempotencyKey}`,
     async (tx) => {
       const now = nowOf(deps)
-      await lockAuthorizationScope(tx, applicationId, projectId)
+      await lockAuthorizationScope(tx, actorUserId, applicationId, projectId)
       const basis = await loadBasis(tx, actorUserId, projectId, applicationId, now, true)
       if (!basis.eligible)
         throw new ApiError(409, 'CONFLICT', 'discovery execution authorization is not available', {

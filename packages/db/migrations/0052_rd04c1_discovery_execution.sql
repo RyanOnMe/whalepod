@@ -20,7 +20,6 @@ create table discovery_execution (
   executor_model varchar(128) not null,
   executor_endpoint varchar(128) not null,
   executor_account varchar(128) not null,
-  executor_policy_generation integer not null,
   executor_digest char(64) not null,
   source_manifest_digest char(64) not null,
   expires_at timestamptz not null,
@@ -39,7 +38,6 @@ create table discovery_execution (
     and length(executor_account) between 1 and 128
   ),
   constraint discovery_execution_permit_version check (parent_permit_version > 0),
-  constraint discovery_execution_executor_generation check (executor_policy_generation > 0),
   constraint discovery_execution_expiry check (expires_at > authorized_at),
   constraint discovery_execution_revocation check (
     (revoked_at is null and revoked_reason is null)

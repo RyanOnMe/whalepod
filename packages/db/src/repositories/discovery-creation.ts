@@ -40,7 +40,7 @@ import {
   type DiscoverySlotVerificationEntry,
 } from '../schema/discovery.js'
 import { artifacts } from '../schema/artifact.js'
-import { taskMessages, taskSpecRevisions } from '../schema/project.js'
+import { projects, taskMessages, taskSpecRevisions } from '../schema/project.js'
 
 export type DiscoverySlotRow = typeof discoverySlots.$inferSelect
 export type DiscoveryPermitRow = typeof discoveryPermits.$inferSelect
@@ -707,34 +707,47 @@ export async function revokeDiscoveryExecutionsForMember(
   reason: string,
   now: Date,
 ): Promise<void> {
+  const matches = sql`${discoveryExecutions.revokedAt} is null and (
+    ${discoveryExecutions.principalUserId} = ${userId}
+    or ${discoveryExecutions.applicationId} in (
+      select ${discoveryApplications.id}
+      from ${discoveryApplications}
+      join ${discoverySourceBindings}
+        on ${discoverySourceBindings.applicationId} = ${discoveryApplications.id}
+      join ${taskMessages} on ${taskMessages.id} = ${discoverySourceBindings.sourceId}
+      where ${taskMessages.authorUserId} = ${userId}
+    )
+    or ${discoveryExecutions.id} in (
+      select ${discoveryExecutionSources.executionId}
+      from ${discoveryExecutionSources}
+      left join ${artifacts}
+        on ${discoveryExecutionSources.kind} = 'artifact'
+        and ${artifacts.id} = ${discoveryExecutionSources.sourceId}
+      left join ${discoveryVerifications}
+        on ${discoveryExecutionSources.kind} = 'receipt'
+        and ${discoveryVerifications.id} = ${discoveryExecutionSources.sourceId}
+      where ${artifacts.ownerUserId} = ${userId}
+        or ${discoveryVerifications.verifierUserId} = ${userId}
+    )
+  )`
+  // Lock affected projects first: authorize holds the Project row before inserting, so a
+  // concurrent disable either sees the committed row or blocks authorize's final checks.
+  const affected = await handle
+    .select({ projectId: discoveryExecutions.projectId })
+    .from(discoveryExecutions)
+    .where(matches)
+    .groupBy(discoveryExecutions.projectId)
+    .orderBy(asc(discoveryExecutions.projectId))
+  for (const row of affected)
+    await handle
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.id, row.projectId))
+      .for('update')
   await handle
     .update(discoveryExecutions)
     .set({ revokedAt: now, revokedReason: reason })
-    .where(
-      sql`${discoveryExecutions.revokedAt} is null and (
-        ${discoveryExecutions.principalUserId} = ${userId}
-        or ${discoveryExecutions.applicationId} in (
-          select ${discoveryApplications.id}
-          from ${discoveryApplications}
-          join ${discoverySourceBindings}
-            on ${discoverySourceBindings.applicationId} = ${discoveryApplications.id}
-          join ${taskMessages} on ${taskMessages.id} = ${discoverySourceBindings.sourceId}
-          where ${taskMessages.authorUserId} = ${userId}
-        )
-        or ${discoveryExecutions.id} in (
-          select ${discoveryExecutionSources.executionId}
-          from ${discoveryExecutionSources}
-          left join ${artifacts}
-            on ${discoveryExecutionSources.kind} = 'artifact'
-            and ${artifacts.id} = ${discoveryExecutionSources.sourceId}
-          left join ${discoveryVerifications}
-            on ${discoveryExecutionSources.kind} = 'receipt'
-            and ${discoveryVerifications.id} = ${discoveryExecutionSources.sourceId}
-          where ${artifacts.ownerUserId} = ${userId}
-            or ${discoveryVerifications.verifierUserId} = ${userId}
-        )
-      )`,
-    )
+    .where(matches)
 }
 
 /** 来源更正/撤回只撤销引用该来源的授权，不误伤同项目其它来源。 */

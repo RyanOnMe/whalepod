@@ -1726,4 +1726,75 @@ describe('RD-04b preauthorized creation', () => {
     })
     expect(after.json().data.eligible).toBe(false)
   })
+
+  it('revokes only the affected member execution on participation withdrawal', async () => {
+    const node = await setupPilot({ tier: 'execute' })
+    const sourceId = await comment()
+    await verifySource(node, sourceId)
+    const request = await getRequest(node)
+    await downloadAndStart(node, request)
+    expect((await sendIndependentGap(node, request)).status).toBe('accepted')
+    const application = await waitForApplication(request.evaluationId)
+    const url = `${node.route}/applications/${application.id}/execution`
+    const basis = await apiInject(ctx, owner, { method: 'GET', url })
+    const payload = {
+      sourceManifestDigest: basis.json().data.sourceManifestDigest as string,
+      executor: {
+        provider: 'managed-model-provider',
+        model: 'test-model',
+        endpoint: 'approved-endpoint',
+        account: 'approved-account',
+        policyGeneration: 1,
+      },
+      expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+      confirmsPrivateDraft: true,
+    }
+    expect((await apiInject(ctx, owner, { method: 'POST', url, payload })).statusCode).toBe(200)
+    const leave = await apiInject(ctx, member, {
+      method: 'DELETE',
+      url: `${node.route}/participation`,
+    })
+    expect(leave.statusCode, leave.body).toBe(200)
+    const after = await apiInject(ctx, owner, { method: 'GET', url })
+    expect(after.json().data.execution).toMatchObject({
+      status: 'revoked',
+      revokedReason: 'participation_changed',
+    })
+  })
+
+  it('revokes the execution when a source member is disabled', async () => {
+    const node = await setupPilot({ tier: 'execute' })
+    const sourceId = await comment()
+    await verifySource(node, sourceId)
+    const request = await getRequest(node)
+    await downloadAndStart(node, request)
+    expect((await sendIndependentGap(node, request)).status).toBe('accepted')
+    const application = await waitForApplication(request.evaluationId)
+    const url = `${node.route}/applications/${application.id}/execution`
+    const basis = await apiInject(ctx, owner, { method: 'GET', url })
+    const payload = {
+      sourceManifestDigest: basis.json().data.sourceManifestDigest as string,
+      executor: {
+        provider: 'managed-model-provider',
+        model: 'test-model',
+        endpoint: 'approved-endpoint',
+        account: 'approved-account',
+        policyGeneration: 1,
+      },
+      expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+      confirmsPrivateDraft: true,
+    }
+    expect((await apiInject(ctx, owner, { method: 'POST', url, payload })).statusCode).toBe(200)
+    const disabled = await apiInject(ctx, owner, {
+      method: 'POST',
+      url: `/api/v1/team/members/${member.userId}/disable`,
+      payload: {},
+    })
+    expect(disabled.statusCode, disabled.body).toBe(200)
+    const after = await apiInject(ctx, owner, { method: 'GET', url })
+    expect(after.json().data.execution).toMatchObject({
+      status: 'revoked',
+      revokedReason: 'member_disabled',
+    })
+  })
 })
