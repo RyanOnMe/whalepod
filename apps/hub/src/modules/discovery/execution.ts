@@ -5,19 +5,21 @@
  * 授权代次，Executor 路由身份固定到该件执行。不创建 Mandate、派工意图或 Run；
  * RD-04c2 只能在同一条授权仍有效时继续。
  */
-import { and, eq, inArray, isNull } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import {
+  getCoordinatorStateForUpdate,
   getDiscoveryApplicationById,
   getDiscoveryExecutionByApplication,
   getDiscoveryExecutionForUpdate,
+  getDiscoveryPermit,
   getDiscoveryPermitForUpdate,
   getDiscoverySlot,
   getDiscoverySourceBindingByApplication,
   getEnabledMember,
   getTask,
+  getTaskForUpdate,
   getTaskMessage,
   getTeam,
-  getWorkByIdForUpdate,
   insertDiscoveryExecution,
   insertDiscoveryExecutionSources,
   listDiscoveryExecutionSources,
@@ -35,7 +37,14 @@ import type { DiscoveryExecutionAuthorizationRequest } from '@whalepod/protocol'
 import { canonicalJson, sha256Hex } from '../coordination/digest.js'
 import { ApiError } from '../shared/http-error.js'
 import { uuidv7 } from '../shared/uuid.js'
-import { available, discoveryConfig, sourceIdentity, sourceConsent } from './admission.js'
+import {
+  assertDiscoveryTextStorable,
+  available,
+  discoveryAdmission,
+  discoveryConfig,
+  sourceIdentity,
+  sourceConsent,
+} from './admission.js'
 
 export interface DiscoveryExecutionSourceView {
   readonly kind: DiscoveryExecutionSourceKind
@@ -53,13 +62,14 @@ export interface DiscoveryExecutionView {
   readonly sources: readonly DiscoveryExecutionSourceView[]
   readonly execution: {
     readonly id: string
-    readonly status: 'authorized' | 'revoked'
+    readonly status: 'authorized' | 'expired' | 'revoked'
     readonly purpose: 'private_draft'
     readonly executor: {
       readonly provider: string
       readonly model: string
       readonly endpoint: string
       readonly account: string
+      readonly policyGeneration: number
     }
     readonly executorDigest: string
     readonly sourceManifestDigest: string
@@ -82,7 +92,7 @@ const EXECUTION_TTL_MS = 24 * 60 * 60_000
 
 const nowOf = (deps: { now?: () => Date }): Date => deps.now?.() ?? new Date()
 
-function sourceDigest(sources: readonly DiscoveryExecutionSourceView[]): string {
+function sourceManifestDigest(sources: readonly DiscoveryExecutionSourceView[]): string {
   return sha256Hex(
     canonicalJson(
       sources.map(({ kind, sourceId, sourceVersion, sourceDigest, authorizationGeneration }) => ({
@@ -104,17 +114,51 @@ function executorDigest(input: DiscoveryExecutionAuthorizationRequest['executor'
       model: input.model,
       endpoint: input.endpoint,
       account: input.account,
+      policyGeneration: input.policyGeneration,
     }),
   )
 }
 
-function notFound(): never {
+function executionStatus(
+  execution: DiscoveryExecutionRow,
+  now: Date,
+): 'authorized' | 'expired' | 'revoked' {
+  if (execution.revokedAt !== null) return 'revoked'
+  return execution.expiresAt.getTime() <= now.getTime() ? 'expired' : 'authorized'
+}
+
+function storedSourceView(
+  sources: readonly {
+    readonly kind: DiscoveryExecutionSourceKind
+    readonly sourceId: string
+    readonly sourceVersion: string
+    readonly sourceDigest: string
+    readonly authorizationGeneration: string
+  }[],
+): DiscoveryExecutionSourceView[] {
+  return sources.map(
+    ({ kind, sourceId, sourceVersion, sourceDigest, authorizationGeneration }) => ({
+      kind,
+      sourceId,
+      sourceVersion,
+      sourceDigest,
+      authorizationGeneration,
+    }),
+  )
+}
+
+function notFoundApplication(): never {
   throw new ApiError(404, 'NOT_FOUND', 'discovery application not found')
+}
+
+function notFoundExecution(): never {
+  throw new ApiError(404, 'NOT_FOUND', 'discovery execution not found')
 }
 
 /**
  * Rebuild the exact source package the application was materialized from, re-checking
  * every authority now. A single drifted source makes the whole authorization ineligible.
+ * `lock` is true only on the write path so GET never blocks permit/work transitions.
  */
 async function loadBasis(
   tx: Tx,
@@ -122,11 +166,32 @@ async function loadBasis(
   projectId: string,
   applicationId: string,
   now: Date,
+  lock: boolean,
 ): Promise<Basis> {
   const application = await getDiscoveryApplicationById(tx, applicationId)
-  if (!application || application.projectId !== projectId) notFound()
-  const permit = await getDiscoveryPermitForUpdate(tx, application.permitId)
-  if (!permit || permit.principalUserId !== actorUserId) notFound()
+  if (!application || application.projectId !== projectId) notFoundApplication()
+  const permit = lock
+    ? await getDiscoveryPermitForUpdate(tx, application.permitId)
+    : await getDiscoveryPermit(tx, application.permitId)
+  if (!permit || permit.principalUserId !== actorUserId) notFoundApplication()
+
+  const admission = await discoveryAdmission(tx, application.sourceId)
+  if (
+    !admission ||
+    admission.projectId !== projectId ||
+    admission.route !== 'discovery' ||
+    admission.withdrawnAt !== null ||
+    admission.sourceVersion !== application.sourceVersion ||
+    admission.sourceDigest !== application.sourceDigest
+  )
+    return {
+      application,
+      sources: [],
+      manifestDigest: '',
+      eligible: false,
+      reason: 'source_changed',
+    }
+
   const binding = await getDiscoverySourceBindingByApplication(tx, application.id)
   if (
     !binding ||
@@ -153,7 +218,6 @@ async function loadBasis(
     }
   const slot = await getDiscoverySlot(tx, permit.slotId)
   if (
-    permit.principalUserId !== actorUserId ||
     permit.configVersion !== cfg.version ||
     permit.expiresAt.getTime() <= now.getTime() ||
     !slot ||
@@ -187,7 +251,8 @@ async function loadBasis(
       reason: 'authority_changed',
     }
   const task = await getTask(tx, application.taskId)
-  const work = await getWorkByIdForUpdate(tx, application.workId)
+  const workQuery = tx.select().from(schema.works).where(eq(schema.works.id, application.workId))
+  const [work] = lock ? await workQuery.for('update') : await workQuery
   if (
     !task ||
     task.projectId !== projectId ||
@@ -239,21 +304,26 @@ async function loadBasis(
       authorizationGeneration: `author:${authorConsent.version}:permit:${permit.version}:config:${cfg.version}`,
     },
   ]
+  // RD-04b accepts registered verifiers by active membership, not participation consent.
+  const registeredVerifiers = new Set(
+    permit.verifierUserIds.filter((id) => id !== message.authorUserId),
+  )
+  const eligibleVerifier = async (userId: string) =>
+    registeredVerifiers.has(userId) && (await getEnabledMember(tx, team.id, userId))
 
   for (const evidence of application.verification.evidence) {
     const [artifact] = await tx
       .select()
       .from(schema.artifacts)
       .where(eq(schema.artifacts.id, evidence.artifactId))
-    const consent = artifact ? await sourceConsent(tx, cfg, artifact.ownerUserId) : undefined
     const publishedAt = artifact?.publishedAt?.toISOString()
     if (
       !artifact ||
       artifact.status !== 'published' ||
       artifact.sha256 !== evidence.sha256 ||
       artifact.ownerUserId === message.authorUserId ||
-      !consent ||
-      !publishedAt
+      !publishedAt ||
+      !(await eligibleVerifier(artifact.ownerUserId))
     )
       return {
         application,
@@ -267,22 +337,19 @@ async function loadBasis(
       sourceId: artifact.id,
       sourceVersion: artifact.sha256,
       sourceDigest: artifact.sha256,
-      authorizationGeneration: `published:${publishedAt}:consent:${consent.version}:permit:${permit.version}`,
+      authorizationGeneration: `published:${publishedAt}:permit:${permit.version}`,
     })
   }
 
-  for (const receipt of await listDiscoveryVerificationsByIds(
-    tx,
-    application.verification.receiptIds,
-  )) {
-    const consent = await sourceConsent(tx, cfg, receipt.verifierUserId)
+  const receipts = await listDiscoveryVerificationsByIds(tx, application.verification.receiptIds)
+  for (const receipt of receipts) {
     if (
       receipt.revokedAt !== null ||
       receipt.verifierUserId === message.authorUserId ||
       receipt.sourceVersion !== application.sourceVersion ||
       receipt.sourceDigest !== application.sourceDigest ||
       receipt.permitId !== permit.id ||
-      !consent
+      !(await eligibleVerifier(receipt.verifierUserId))
     )
       return {
         application,
@@ -296,31 +363,21 @@ async function loadBasis(
       sourceId: receipt.id,
       sourceVersion: receipt.sourceVersion,
       sourceDigest: receipt.sourceDigest,
-      authorizationGeneration: `receipt:${receipt.createdAt.toISOString()}:consent:${consent.version}:permit:${permit.version}`,
+      authorizationGeneration: `receipt:${receipt.createdAt.toISOString()}:permit:${permit.version}`,
     })
   }
 
-  const missingReceipts =
-    sources.filter((source) => source.kind === 'receipt').length !==
-    new Set(application.verification.receiptIds).size
-  if (missingReceipts)
-    return {
-      application,
-      sources: [],
-      manifestDigest: '',
-      eligible: false,
-      reason: 'receipt_changed',
-    }
   if (
-    application.verification.evidence.length === 0 &&
-    application.verification.receiptIds.length === 0
+    receipts.length !== new Set(application.verification.receiptIds).size ||
+    (application.verification.evidence.length === 0 &&
+      application.verification.receiptIds.length === 0)
   )
     return {
       application,
       sources: [],
       manifestDigest: '',
       eligible: false,
-      reason: 'authority_changed',
+      reason: 'receipt_changed',
     }
 
   sources.sort((left, right) =>
@@ -331,7 +388,7 @@ async function loadBasis(
   return {
     application,
     sources,
-    manifestDigest: sourceDigest(sources),
+    manifestDigest: sourceManifestDigest(sources),
     eligible: true,
   }
 }
@@ -341,33 +398,68 @@ function toView(
   basis: Basis,
   execution: DiscoveryExecutionRow | undefined,
   sources: readonly DiscoveryExecutionSourceView[],
+  now: Date,
 ): DiscoveryExecutionView {
+  const status = execution === undefined ? undefined : executionStatus(execution, now)
+  const live = status === 'authorized'
+  const reason =
+    execution !== undefined && !live
+      ? status === 'revoked'
+        ? 'execution_revoked'
+        : 'execution_expired'
+      : basis.reason
+  const eligible = execution !== undefined && !live ? false : basis.eligible
   return {
     applicationId,
-    eligible: basis.eligible,
-    ...(basis.reason === undefined ? {} : { reason: basis.reason }),
-    sourceManifestDigest: basis.manifestDigest === '' ? null : basis.manifestDigest,
+    eligible,
+    ...(reason === undefined ? {} : { reason }),
+    sourceManifestDigest: eligible && basis.manifestDigest !== '' ? basis.manifestDigest : null,
     sources,
-    execution: execution
-      ? {
-          id: execution.id,
-          status: execution.revokedAt === null ? 'authorized' : 'revoked',
-          purpose: 'private_draft',
-          executor: {
-            provider: execution.executorProvider,
-            model: execution.executorModel,
-            endpoint: execution.executorEndpoint,
-            account: execution.executorAccount,
+    execution:
+      execution === undefined || status === undefined
+        ? null
+        : {
+            id: execution.id,
+            status,
+            purpose: 'private_draft',
+            executor: {
+              provider: execution.executorProvider,
+              model: execution.executorModel,
+              endpoint: execution.executorEndpoint,
+              account: execution.executorAccount,
+              policyGeneration: execution.executorPolicyGeneration,
+            },
+            executorDigest: execution.executorDigest,
+            sourceManifestDigest: execution.sourceManifestDigest,
+            expiresAt: execution.expiresAt.toISOString(),
+            authorizedAt: execution.authorizedAt.toISOString(),
+            revokedAt: execution.revokedAt?.toISOString() ?? null,
+            revokedReason: execution.revokedReason,
           },
-          executorDigest: execution.executorDigest,
-          sourceManifestDigest: execution.sourceManifestDigest,
-          expiresAt: execution.expiresAt.toISOString(),
-          authorizedAt: execution.authorizedAt.toISOString(),
-          revokedAt: execution.revokedAt?.toISOString() ?? null,
-          revokedReason: execution.revokedReason,
-        }
-      : null,
   }
+}
+
+/** Serialize with correction/withdrawal and task/work transitions before reading the basis. */
+async function lockAuthorizationScope(
+  tx: Tx,
+  applicationId: string,
+  projectId: string,
+): Promise<void> {
+  const application = await getDiscoveryApplicationById(tx, applicationId)
+  if (!application || application.projectId !== projectId) notFoundApplication()
+  const admission = await discoveryAdmission(tx, application.sourceId)
+  if (!admission || admission.projectId !== projectId) notFoundApplication()
+  // Task -> Task -> coordinator -> Project; correction locks the entry Task, task commands
+  // lock the target Task before the Work, so this cannot invert with either.
+  if (!(await getTaskForUpdate(tx, admission.entryTaskId))) notFoundApplication()
+  if (!(await getTaskForUpdate(tx, application.taskId))) notFoundApplication()
+  await getCoordinatorStateForUpdate(tx, projectId)
+  const [project] = await tx
+    .select()
+    .from(schema.projects)
+    .where(eq(schema.projects.id, projectId))
+    .for('update')
+  if (!project || project.archivedAt !== null) notFoundApplication()
 }
 
 export async function discoveryExecutionBasis(
@@ -376,11 +468,14 @@ export async function discoveryExecutionBasis(
   projectId: string,
   applicationId: string,
 ): Promise<DiscoveryExecutionView> {
+  const now = nowOf(deps)
   return deps.database.transaction(async (tx) => {
-    const basis = await loadBasis(tx, actorUserId, projectId, applicationId, nowOf(deps))
+    const basis = await loadBasis(tx, actorUserId, projectId, applicationId, now, false)
     const execution = await getDiscoveryExecutionByApplication(tx, applicationId)
-    const stored = execution ? await listDiscoveryExecutionSources(tx, execution.id) : basis.sources
-    return toView(applicationId, basis, execution, stored)
+    const stored = execution
+      ? storedSourceView(await listDiscoveryExecutionSources(tx, execution.id))
+      : basis.sources
+    return toView(applicationId, basis, execution, stored, now)
   })
 }
 
@@ -392,15 +487,23 @@ export async function authorizeDiscoveryExecution(
   input: DiscoveryExecutionAuthorizationRequest,
   idempotencyKey: string,
 ): Promise<DiscoveryExecutionView> {
-  let created:
-    | { execution: DiscoveryExecutionRow; sources: readonly DiscoveryExecutionSourceView[] }
-    | undefined
+  for (const value of [
+    input.executor.provider,
+    input.executor.model,
+    input.executor.endpoint,
+    input.executor.account,
+  ])
+    assertDiscoveryTextStorable(value)
+  const requestedExecutorDigest = executorDigest(input.executor)
+  const requestedExpiry = new Date(input.expiresAt).toISOString()
+  let inserted = false
   const result = await transactCommand(
     deps.database,
     `discovery.execution:${actorUserId}:${projectId}:${applicationId}:${idempotencyKey}`,
     async (tx) => {
       const now = nowOf(deps)
-      const basis = await loadBasis(tx, actorUserId, projectId, applicationId, now)
+      await lockAuthorizationScope(tx, applicationId, projectId)
+      const basis = await loadBasis(tx, actorUserId, projectId, applicationId, now, true)
       if (!basis.eligible)
         throw new ApiError(409, 'CONFLICT', 'discovery execution authorization is not available', {
           code: 'DISCOVERY_EXECUTION_UNAVAILABLE',
@@ -416,7 +519,6 @@ export async function authorizeDiscoveryExecution(
           },
         )
       const expiresAt = new Date(input.expiresAt)
-      const permitBound = basis.application.permitVersion
       if (
         !Number.isFinite(expiresAt.getTime()) ||
         expiresAt.getTime() <= now.getTime() ||
@@ -428,13 +530,20 @@ export async function authorizeDiscoveryExecution(
           'discovery execution expiry must be within the next 24 hours',
         )
       const permit = await getDiscoveryPermitForUpdate(tx, basis.application.permitId)
-      if (!permit || permit.version !== permitBound || permit.revokedAt !== null)
-        throw new ApiError(409, 'CONFLICT', 'discovery permit changed; refresh and confirm again')
+      if (
+        !permit ||
+        permit.version !== basis.application.permitVersion ||
+        permit.revokedAt !== null
+      )
+        throw new ApiError(409, 'CONFLICT', 'discovery permit changed; refresh and confirm again', {
+          code: 'DISCOVERY_PERMIT_CHANGED',
+        })
       if (expiresAt.getTime() > permit.expiresAt.getTime())
         throw new ApiError(
           400,
           'VALIDATION_FAILED',
           'discovery execution expiry exceeds the parent permit',
+          { code: 'DISCOVERY_EXECUTION_EXPIRY' },
         )
 
       const existing = await getDiscoveryExecutionForUpdate(tx, applicationId)
@@ -445,8 +554,8 @@ export async function authorizeDiscoveryExecution(
           })
         const same =
           existing.sourceManifestDigest === basis.manifestDigest &&
-          existing.executorDigest === executorDigest(input.executor) &&
-          existing.expiresAt.toISOString() === expiresAt.toISOString()
+          existing.executorDigest === requestedExecutorDigest &&
+          existing.expiresAt.toISOString() === requestedExpiry
         if (!same)
           throw new ApiError(
             409,
@@ -456,12 +565,11 @@ export async function authorizeDiscoveryExecution(
               code: 'DISCOVERY_EXECUTION_EXISTS',
             },
           )
-        const stored = await listDiscoveryExecutionSources(tx, existing.id)
-        return { execution: existing, sources: stored }
+        return { executionId: existing.id }
       }
 
       const executionId = uuidv7(now.getTime())
-      const execution = await insertDiscoveryExecution(tx, {
+      await insertDiscoveryExecution(tx, {
         id: executionId,
         projectId,
         applicationId,
@@ -475,7 +583,8 @@ export async function authorizeDiscoveryExecution(
         executorModel: input.executor.model,
         executorEndpoint: input.executor.endpoint,
         executorAccount: input.executor.account,
-        executorDigest: executorDigest(input.executor),
+        executorPolicyGeneration: input.executor.policyGeneration,
+        executorDigest: requestedExecutorDigest,
         sourceManifestDigest: basis.manifestDigest,
         expiresAt,
         authorizedAt: now,
@@ -496,23 +605,42 @@ export async function authorizeDiscoveryExecution(
           createdAt: now,
         })),
       )
-      created = { execution, sources: basis.sources }
-      return { execution, sources: basis.sources }
+      inserted = true
+      return { executionId }
     },
   )
-  if (created)
+
+  const now = nowOf(deps)
+  const [execution] = await deps.database.db
+    .select()
+    .from(schema.discoveryExecutions)
+    .where(eq(schema.discoveryExecutions.id, result.executionId))
+  if (!execution) throw new ApiError(500, 'INTERNAL_ERROR', 'discovery execution vanished')
+  // Idempotency receipts carry only the id; compare the request to the current row here so
+  // a same-key retry with a different manifest/executor/expiry is a 409, not a silent replay.
+  if (
+    execution.sourceManifestDigest !== input.sourceManifestDigest ||
+    execution.executorDigest !== requestedExecutorDigest ||
+    execution.expiresAt.toISOString() !== requestedExpiry
+  )
+    throw new ApiError(409, 'CONFLICT', 'a different discovery execution is already authorized', {
+      code: 'DISCOVERY_EXECUTION_EXISTS',
+    })
+  const stored = storedSourceView(
+    await listDiscoveryExecutionSources(deps.database.db, execution.id),
+  )
+  const basis = await deps.database.transaction((tx) =>
+    loadBasis(tx, actorUserId, projectId, applicationId, now, false),
+  )
+  if (inserted)
     deps.log?.({
       component: 'hub.discovery',
       action: 'discovery.execution.authorized',
-      executionId: created.execution.id,
+      executionId: execution.id,
       applicationId,
-      sourceCount: created.sources.length,
+      sourceCount: stored.length,
     })
-  const basis = await deps.database.transaction((tx) =>
-    loadBasis(tx, actorUserId, projectId, applicationId, nowOf(deps)),
-  )
-  const stored = await listDiscoveryExecutionSources(deps.database.db, result.execution.id)
-  return toView(applicationId, basis, result.execution, stored)
+  return toView(applicationId, basis, execution, stored, now)
 }
 
 export async function revokeDiscoveryExecutionByPrincipal(
@@ -521,47 +649,17 @@ export async function revokeDiscoveryExecutionByPrincipal(
   projectId: string,
   applicationId: string,
 ): Promise<DiscoveryExecutionView> {
+  const now = nowOf(deps)
   return deps.database.transaction(async (tx) => {
-    const basis = await loadBasis(tx, actorUserId, projectId, applicationId, nowOf(deps))
+    const basis = await loadBasis(tx, actorUserId, projectId, applicationId, now, true)
     const execution = await getDiscoveryExecutionForUpdate(tx, applicationId)
-    if (!execution) notFound()
-    await revokeDiscoveryExecution(tx, execution.id, 'principal_revoked', nowOf(deps))
+    if (!execution) notFoundExecution()
+    await revokeDiscoveryExecution(tx, execution.id, 'principal_revoked', now)
     const [updated] = await tx
       .select()
       .from(schema.discoveryExecutions)
       .where(eq(schema.discoveryExecutions.id, execution.id))
-    const sources = await listDiscoveryExecutionSources(tx, execution.id)
-    return toView(applicationId, basis, updated, sources)
+    const sources = storedSourceView(await listDiscoveryExecutionSources(tx, execution.id))
+    return toView(applicationId, basis, updated, sources, now)
   })
-}
-
-/** Revoke authorization when the parent permit/config changes or the source drifts. */
-export async function revokeDiscoveryExecutionsForApplication(
-  tx: Tx,
-  applicationId: string,
-  reason: string,
-  now: Date,
-): Promise<void> {
-  const execution = await getDiscoveryExecutionForUpdate(tx, applicationId)
-  if (!execution) return
-  await revokeDiscoveryExecution(tx, execution.id, reason, now)
-}
-
-export async function revokeDiscoveryExecutionsForApplications(
-  tx: Tx,
-  applicationIds: readonly string[],
-  reason: string,
-  now: Date,
-): Promise<void> {
-  if (applicationIds.length === 0) return
-  const rows = await tx
-    .select({ id: schema.discoveryExecutions.id })
-    .from(schema.discoveryExecutions)
-    .where(
-      and(
-        isNull(schema.discoveryExecutions.revokedAt),
-        inArray(schema.discoveryExecutions.applicationId, [...applicationIds]),
-      ),
-    )
-  for (const row of rows) await revokeDiscoveryExecution(tx, row.id, reason, now)
 }

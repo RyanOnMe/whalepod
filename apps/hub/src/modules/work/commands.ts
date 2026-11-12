@@ -1,5 +1,6 @@
 import {
   advanceDiscoveryCatalogGeneration,
+  revokeDiscoveryExecutionsForWork,
   cancelProposedDispatchIntents,
   expireWorkSubscriptionsAndRetract,
   getCurrentWorkByTask,
@@ -199,6 +200,7 @@ export async function retireWork(
       })
       await supersedePendingWorkMandateProposals(tx, { workId: work.id, now })
       // Retirement removes the Work from the catalog; old slot verification must not survive it.
+      await revokeDiscoveryExecutionsForWork(tx, work.id, 'work_retired', now)
       await advanceDiscoveryCatalogGeneration(tx, task.projectId, now)
       return toWorkView(updated)
     },

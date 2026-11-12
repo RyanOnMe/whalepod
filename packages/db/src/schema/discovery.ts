@@ -492,6 +492,7 @@ export const discoveryExecutions = pgTable(
     executorModel: varchar('executor_model', { length: 128 }).notNull(),
     executorEndpoint: varchar('executor_endpoint', { length: 128 }).notNull(),
     executorAccount: varchar('executor_account', { length: 128 }).notNull(),
+    executorPolicyGeneration: integer('executor_policy_generation').notNull(),
     executorDigest: char('executor_digest', { length: 64 }).notNull(),
     sourceManifestDigest: char('source_manifest_digest', { length: 64 }).notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
@@ -520,6 +521,7 @@ export const discoveryExecutions = pgTable(
         and length(${t.executorAccount}) between 1 and 128`,
     ),
     check('discovery_execution_permit_version', sql`${t.parentPermitVersion} > 0`),
+    check('discovery_execution_executor_generation', sql`${t.executorPolicyGeneration} > 0`),
     check('discovery_execution_expiry', sql`${t.expiresAt} > ${t.authorizedAt}`),
     check(
       'discovery_execution_revocation',

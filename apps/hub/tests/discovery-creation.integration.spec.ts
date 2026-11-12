@@ -1420,6 +1420,7 @@ describe('RD-04b preauthorized creation', () => {
       model: 'test-model',
       endpoint: 'approved-endpoint',
       account: 'approved-account',
+      policyGeneration: 1,
     }
     const payload = {
       sourceManifestDigest: basisData.sourceManifestDigest,
@@ -1427,6 +1428,18 @@ describe('RD-04b preauthorized creation', () => {
       expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
       confirmsPrivateDraft: true,
     }
+    const tooLong = await apiInject(ctx, owner, {
+      method: 'POST',
+      url,
+      payload: { ...payload, expiresAt: new Date(Date.now() + 25 * 60 * 60_000).toISOString() },
+    })
+    expect(tooLong.statusCode, tooLong.body).toBe(400)
+    const nulExecutor = await apiInject(ctx, owner, {
+      method: 'POST',
+      url,
+      payload: { ...payload, executor: { ...executor, provider: 'a\u0000b' } },
+    })
+    expect(nulExecutor.statusCode, nulExecutor.body).toBe(400)
     const changed = await apiInject(ctx, owner, {
       method: 'POST',
       url,
@@ -1437,7 +1450,13 @@ describe('RD-04b preauthorized creation', () => {
       code: 'DISCOVERY_SOURCE_MANIFEST_CHANGED',
     })
 
-    const first = await apiInject(ctx, owner, { method: 'POST', url, payload })
+    const retryKey = randomUUID()
+    const first = await apiInject(ctx, owner, {
+      method: 'POST',
+      url,
+      payload,
+      idempotencyKey: retryKey,
+    })
     expect(first.statusCode, first.body).toBe(200)
     const authorized = first.json().data as {
       sourceManifestDigest: string
@@ -1455,9 +1474,34 @@ describe('RD-04b preauthorized creation', () => {
       executor,
       sourceManifestDigest: basisData.sourceManifestDigest,
     })
-    const again = await apiInject(ctx, owner, { method: 'POST', url, payload })
+    // Same-idempotency-key retry replays the receipt; it must re-read the row, not crash.
+    const again = await apiInject(ctx, owner, {
+      method: 'POST',
+      url,
+      payload,
+      idempotencyKey: retryKey,
+    })
     expect(again.statusCode, again.body).toBe(200)
     expect(again.json().data.execution.id).toBe(authorized.execution.id)
+    const different = await apiInject(ctx, owner, {
+      method: 'POST',
+      url,
+      payload: { ...payload, executor: { ...executor, model: 'other-model' } },
+      idempotencyKey: retryKey,
+    })
+    expect(different.statusCode, different.body).toBe(409)
+    expect(different.json().error.details).toMatchObject({ code: 'DISCOVERY_EXECUTION_EXISTS' })
+    const live = await apiInject(ctx, owner, { method: 'GET', url })
+    expect(live.json().data.execution).toMatchObject({
+      status: 'authorized',
+      executor: { policyGeneration: 1 },
+    })
+    expect(live.json().data.sources).toHaveLength(2)
+    expect(
+      (live.json().data.sources as Record<string, unknown>[]).every(
+        (source) => !('executionId' in source) && !('createdAt' in source),
+      ),
+    ).toBe(true)
     const [row] = await database.sql`
       select executor_digest, source_manifest_digest, revoked_at
       from discovery_execution where application_id = ${application.id}
@@ -1514,6 +1558,7 @@ describe('RD-04b preauthorized creation', () => {
           model: 'test-model',
           endpoint: 'approved-endpoint',
           account: 'approved-account',
+          policyGeneration: 1,
         },
         expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
         confirmsPrivateDraft: true,
@@ -1543,6 +1588,7 @@ describe('RD-04b preauthorized creation', () => {
         model: 'test-model',
         endpoint: 'approved-endpoint',
         account: 'approved-account',
+        policyGeneration: 1,
       },
       expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
       confirmsPrivateDraft: true,
@@ -1558,6 +1604,125 @@ describe('RD-04b preauthorized creation', () => {
     expect(after.json().data.execution).toMatchObject({
       status: 'revoked',
       revokedReason: 'permit_revoked',
+    })
+    expect(after.json().data.eligible).toBe(false)
+  })
+
+  it('revokes an execution explicitly and refuses a new authorization', async () => {
+    const node = await setupPilot({ tier: 'execute' })
+    const sourceId = await comment()
+    await verifySource(node, sourceId)
+    const request = await getRequest(node)
+    await downloadAndStart(node, request)
+    expect((await sendIndependentGap(node, request)).status).toBe('accepted')
+    const application = await waitForApplication(request.evaluationId)
+    const url = `${node.route}/applications/${application.id}/execution`
+    const basis = await apiInject(ctx, owner, { method: 'GET', url })
+    const payload = {
+      sourceManifestDigest: basis.json().data.sourceManifestDigest as string,
+      executor: {
+        provider: 'managed-model-provider',
+        model: 'test-model',
+        endpoint: 'approved-endpoint',
+        account: 'approved-account',
+        policyGeneration: 1,
+      },
+      expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+      confirmsPrivateDraft: true,
+    }
+    expect((await apiInject(ctx, owner, { method: 'POST', url, payload })).statusCode).toBe(200)
+    const deleted = await apiInject(ctx, owner, { method: 'DELETE', url })
+    expect(deleted.statusCode, deleted.body).toBe(200)
+    expect(deleted.json().data.execution).toMatchObject({
+      status: 'revoked',
+      revokedReason: 'principal_revoked',
+    })
+    expect(deleted.json().data.eligible).toBe(false)
+    const after = await apiInject(ctx, owner, { method: 'GET', url })
+    expect(after.json().data).toMatchObject({ eligible: false, reason: 'execution_revoked' })
+    const retry = await apiInject(ctx, owner, { method: 'POST', url, payload })
+    expect(retry.statusCode, retry.body).toBe(409)
+    expect(retry.json().error.details).toMatchObject({ code: 'DISCOVERY_EXECUTION_REVOKED' })
+  })
+
+  it('refuses a new authorization after the author withdraws the source', async () => {
+    const node = await setupPilot({ tier: 'execute' })
+    const sourceId = await comment()
+    await verifySource(node, sourceId)
+    const request = await getRequest(node)
+    await downloadAndStart(node, request)
+    expect((await sendIndependentGap(node, request)).status).toBe('accepted')
+    const application = await waitForApplication(request.evaluationId)
+    const url = `${node.route}/applications/${application.id}/execution`
+    const basis = await apiInject(ctx, owner, { method: 'GET', url })
+    const digest = basis.json().data.sourceManifestDigest as string
+    const withdraw = await apiInject(ctx, member, {
+      method: 'POST',
+      url: `${node.route}/sources/${sourceId}/withdraw`,
+      payload: {},
+    })
+    expect(withdraw.statusCode, withdraw.body).toBe(200)
+    const after = await apiInject(ctx, owner, { method: 'GET', url })
+    expect(after.json().data).toMatchObject({ eligible: false, reason: 'source_changed' })
+    const denied = await apiInject(ctx, owner, {
+      method: 'POST',
+      url,
+      payload: {
+        sourceManifestDigest: digest,
+        executor: {
+          provider: 'managed-model-provider',
+          model: 'test-model',
+          endpoint: 'approved-endpoint',
+          account: 'approved-account',
+          policyGeneration: 1,
+        },
+        expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+        confirmsPrivateDraft: true,
+      },
+    })
+    expect(denied.statusCode, denied.body).toBe(409)
+    expect(denied.json().error.details).toMatchObject({
+      code: 'DISCOVERY_EXECUTION_UNAVAILABLE',
+      reason: 'source_changed',
+    })
+    expect(
+      await database.sql`select id from discovery_execution where application_id = ${application.id}`,
+    ).toEqual([])
+  })
+
+  it('revokes execution authorization when the discovery task is reassigned', async () => {
+    const node = await setupPilot({ tier: 'execute' })
+    const sourceId = await comment()
+    await verifySource(node, sourceId)
+    const request = await getRequest(node)
+    await downloadAndStart(node, request)
+    expect((await sendIndependentGap(node, request)).status).toBe('accepted')
+    const application = await waitForApplication(request.evaluationId)
+    const url = `${node.route}/applications/${application.id}/execution`
+    const basis = await apiInject(ctx, owner, { method: 'GET', url })
+    const payload = {
+      sourceManifestDigest: basis.json().data.sourceManifestDigest as string,
+      executor: {
+        provider: 'managed-model-provider',
+        model: 'test-model',
+        endpoint: 'approved-endpoint',
+        account: 'approved-account',
+        policyGeneration: 1,
+      },
+      expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+      confirmsPrivateDraft: true,
+    }
+    expect((await apiInject(ctx, owner, { method: 'POST', url, payload })).statusCode).toBe(200)
+    const reassigned = await apiInject(ctx, owner, {
+      method: 'POST',
+      url: `/api/v1/tasks/${application.task_id}/reassign`,
+      payload: { assigneeUserId: member.userId },
+    })
+    expect(reassigned.statusCode, reassigned.body).toBe(200)
+    const after = await apiInject(ctx, owner, { method: 'GET', url })
+    expect(after.json().data.execution).toMatchObject({
+      status: 'revoked',
+      revokedReason: 'task_reassigned',
     })
     expect(after.json().data.eligible).toBe(false)
   })

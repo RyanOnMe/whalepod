@@ -71,6 +71,8 @@ export const DiscoveryExecutionExecutorSchema = z.strictObject({
   model: z.string().trim().min(1).max(128),
   endpoint: z.string().trim().min(1).max(128),
   account: z.string().trim().min(1).max(128),
+  /** Deployment policy generation; a newer route/policy must be reconfirmed. */
+  policyGeneration: z.number().int().positive().max(2_147_483_647),
 })
 export type DiscoveryExecutionExecutor = z.infer<typeof DiscoveryExecutionExecutorSchema>
 
