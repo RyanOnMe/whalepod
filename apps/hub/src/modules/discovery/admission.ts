@@ -17,6 +17,8 @@ import {
   insertDiscoveryPermit,
   insertDiscoveryVerification,
   insertSourceCorrection,
+  revokeDiscoveryExecutionsForProject,
+  revokeDiscoveryExecutionsForSource,
   revokeDiscoveryPermits,
   revokeDiscoveryVerificationsForSource,
   schema,
@@ -331,6 +333,12 @@ export async function configureDiscovery(
         reason: settings.enabled ? 'config_changed' : 'discovery_disabled',
         now,
       })
+      await revokeDiscoveryExecutionsForProject(
+        tx,
+        projectId,
+        settings.enabled ? 'config_changed' : 'discovery_disabled',
+        now,
+      )
       const slot = await getOrCreateDiscoverySlot(tx, {
         id: uuidv7(now.getTime()),
         projectId,
@@ -540,6 +548,7 @@ export async function changeDiscoveryConsent(
           reason: 'permit_revoked',
           now,
         })
+        await revokeDiscoveryExecutionsForProject(tx, projectId, 'permit_revoked', now)
         await deleteCandidatesSafely(tx, { projectId, principalUserId: actor.userId })
         return { projectId, configVersion: cfg.version, version: nextVersion, active }
       }
@@ -601,6 +610,8 @@ export async function changeDiscoveryConsent(
         reason: 'permit_reconfirmed',
         now,
       })
+      // A new permit identity supersedes every earlier child execution authorization.
+      await revokeDiscoveryExecutionsForProject(tx, projectId, 'permit_reconfirmed', now)
       const permit = await insertDiscoveryPermit(tx, {
         id: uuidv7(now.getTime()),
         projectId,
@@ -707,6 +718,7 @@ export async function withdrawDiscoverySource(
           .where(eq(schema.discoveryAdmissions.sourceId, sourceId))
       await revokeDiscoveryVerificationsForSource(tx, sourceId, 'source_withdrawn', now)
       await deleteCandidatesSafely(tx, { projectId, sourceId })
+      await revokeDiscoveryExecutionsForSource(tx, sourceId, 'source_withdrawn', now)
       return { sourceId, withdrawn: true }
     },
   )
@@ -771,6 +783,7 @@ export async function correctDiscoverySource(
         .where(eq(schema.discoveryAdmissions.sourceId, sourceId))
       await revokeDiscoveryVerificationsForSource(tx, sourceId, 'source_corrected', now)
       await deleteCandidatesSafely(tx, { projectId, sourceId })
+      await revokeDiscoveryExecutionsForSource(tx, sourceId, 'source_corrected', now)
       return {
         sourceId,
         corrected: true,

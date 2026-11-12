@@ -145,6 +145,7 @@ describe('RD-04b preauthorized creation', () => {
     options: {
       verify?: boolean
       verifierUserId?: string
+      tier?: 'create' | 'execute'
       beforeConfig?: (pilot: {
         deviceId: string
         deviceToken: string
@@ -269,7 +270,7 @@ describe('RD-04b preauthorized creation', () => {
         maxCostMicros: 1000,
         evidenceArtifactIds: prepared.evidenceArtifactIds ?? [],
         agreementTaskIds: [venueTaskId],
-        tier: 'create',
+        tier: options.tier ?? 'create',
         template: {
           goal: '为{{activity}}准备{{slot}}',
           constraints: '只使用项目内已确认材料；来源 {{sourceId}}',
@@ -294,7 +295,7 @@ describe('RD-04b preauthorized creation', () => {
     const permit = await apiInject(ctx, owner, {
       method: 'POST',
       url: `${route}/permit`,
-      payload: { configVersion, tier: 'create', templateDigest },
+      payload: { configVersion, tier: options.tier ?? 'create', templateDigest },
     })
     expect(permit.statusCode, permit.body).toBe(200)
     for (const session of [member, verifier]) {
@@ -770,6 +771,7 @@ describe('RD-04b preauthorized creation', () => {
     const evidence = '勘察记录：接驳点缺少无障碍坡道，备用路线需要现场确认。'
     let artifactId = ''
     const node = await setupPilot({
+      tier: 'execute',
       verifierUserId: owner.userId,
       beforeConfig: async ({ deviceId, deviceToken, workspaceId }) => {
         const packs = await apiInject(ctx, owner, {
@@ -850,6 +852,15 @@ describe('RD-04b preauthorized creation', () => {
     expect(
       await database.sql`select id from discovery_verification where source_id = ${sourceId}`,
     ).toEqual([])
+    const basis = await apiInject(ctx, owner, {
+      method: 'GET',
+      url: `${node.route}/applications/${application.id}/execution`,
+    })
+    expect(basis.statusCode, basis.body).toBe(200)
+    expect(basis.json().data).toMatchObject({ eligible: true })
+    expect(
+      (basis.json().data.sources as { kind: string }[]).map((source) => source.kind).sort(),
+    ).toEqual(['artifact', 'task_message'])
   })
 
   it('serializes concurrent applications into one task and one occupation', async () => {
@@ -1376,5 +1387,178 @@ describe('RD-04b preauthorized creation', () => {
       },
     })
     expect(nulTemplate.statusCode, nulTemplate.body).toBe(400)
+  })
+
+  it('authorizes one exact-source private-draft execution for the principal', async () => {
+    const node = await setupPilot({ tier: 'execute' })
+    const sourceId = await comment()
+    await verifySource(node, sourceId)
+    const request = await getRequest(node)
+    await downloadAndStart(node, request)
+    expect((await sendIndependentGap(node, request)).status).toBe('accepted')
+    const application = await waitForApplication(request.evaluationId)
+    const url = `${node.route}/applications/${application.id}/execution`
+
+    const hidden = await apiInject(ctx, member, { method: 'GET', url })
+    expect(hidden.statusCode, hidden.body).toBe(404)
+    const basis = await apiInject(ctx, owner, { method: 'GET', url })
+    expect(basis.statusCode, basis.body).toBe(200)
+    const basisData = basis.json().data as {
+      eligible: boolean
+      sourceManifestDigest: string
+      execution: null
+      sources: { kind: string; sourceId: string }[]
+    }
+    expect(basisData, JSON.stringify(basisData)).toMatchObject({ eligible: true, execution: null })
+    expect(basisData.sources.map((source) => source.kind).sort()).toEqual([
+      'receipt',
+      'task_message',
+    ])
+
+    const executor = {
+      provider: 'managed-model-provider',
+      model: 'test-model',
+      endpoint: 'approved-endpoint',
+      account: 'approved-account',
+    }
+    const payload = {
+      sourceManifestDigest: basisData.sourceManifestDigest,
+      executor,
+      expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+      confirmsPrivateDraft: true,
+    }
+    const changed = await apiInject(ctx, owner, {
+      method: 'POST',
+      url,
+      payload: { ...payload, sourceManifestDigest: '0'.repeat(64) },
+    })
+    expect(changed.statusCode, changed.body).toBe(409)
+    expect(changed.json().error.details).toMatchObject({
+      code: 'DISCOVERY_SOURCE_MANIFEST_CHANGED',
+    })
+
+    const first = await apiInject(ctx, owner, { method: 'POST', url, payload })
+    expect(first.statusCode, first.body).toBe(200)
+    const authorized = first.json().data as {
+      sourceManifestDigest: string
+      execution: {
+        id: string
+        status: string
+        purpose: string
+        executor: typeof executor
+        sourceManifestDigest: string
+      }
+    }
+    expect(authorized.execution).toMatchObject({
+      status: 'authorized',
+      purpose: 'private_draft',
+      executor,
+      sourceManifestDigest: basisData.sourceManifestDigest,
+    })
+    const again = await apiInject(ctx, owner, { method: 'POST', url, payload })
+    expect(again.statusCode, again.body).toBe(200)
+    expect(again.json().data.execution.id).toBe(authorized.execution.id)
+    const [row] = await database.sql`
+      select executor_digest, source_manifest_digest, revoked_at
+      from discovery_execution where application_id = ${application.id}
+    `
+    expect(row).toMatchObject({
+      source_manifest_digest: basisData.sourceManifestDigest,
+      revoked_at: null,
+    })
+    expect(row?.executor_digest).toMatch(/^[a-f0-9]{64}$/)
+    expect(
+      await database.sql`
+        select kind from discovery_execution_source
+        where execution_id = ${authorized.execution.id}
+      `,
+    ).toHaveLength(2)
+
+    // A source correction revokes the execution authorization; no Task/Run is created.
+    const correction = await apiInject(ctx, member, {
+      method: 'POST',
+      url: `${node.route}/sources/${sourceId}/correct`,
+      payload: { body: '更正：坡道已临时铺设，缺口改为备用路线。' },
+    })
+    expect(correction.statusCode, correction.body).toBe(200)
+    const after = await apiInject(ctx, owner, { method: 'GET', url })
+    expect(after.json().data.execution).toMatchObject({
+      status: 'revoked',
+      revokedReason: 'source_corrected',
+    })
+    expect(after.json().data.eligible).toBe(false)
+    expect(await database.sql`select id from run where task_id = ${application.task_id}`).toEqual(
+      [],
+    )
+  })
+
+  it('refuses execution authorization below the execute tier', async () => {
+    const node = await setupPilot()
+    const sourceId = await comment()
+    await verifySource(node, sourceId)
+    const request = await getRequest(node)
+    await downloadAndStart(node, request)
+    expect((await sendIndependentGap(node, request)).status).toBe('accepted')
+    const application = await waitForApplication(request.evaluationId)
+    const url = `${node.route}/applications/${application.id}/execution`
+    const basis = await apiInject(ctx, owner, { method: 'GET', url })
+    expect(basis.statusCode, basis.body).toBe(200)
+    expect(basis.json().data).toMatchObject({ eligible: false, reason: 'tier_required' })
+    const denied = await apiInject(ctx, owner, {
+      method: 'POST',
+      url,
+      payload: {
+        sourceManifestDigest: '0'.repeat(64),
+        executor: {
+          provider: 'managed-model-provider',
+          model: 'test-model',
+          endpoint: 'approved-endpoint',
+          account: 'approved-account',
+        },
+        expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+        confirmsPrivateDraft: true,
+      },
+    })
+    expect(denied.statusCode, denied.body).toBe(409)
+    expect(denied.json().error.details).toMatchObject({
+      code: 'DISCOVERY_EXECUTION_UNAVAILABLE',
+      reason: 'tier_required',
+    })
+  })
+
+  it('revokes the execution authorization when the parent permit is withdrawn', async () => {
+    const node = await setupPilot({ tier: 'execute' })
+    const sourceId = await comment()
+    await verifySource(node, sourceId)
+    const request = await getRequest(node)
+    await downloadAndStart(node, request)
+    expect((await sendIndependentGap(node, request)).status).toBe('accepted')
+    const application = await waitForApplication(request.evaluationId)
+    const url = `${node.route}/applications/${application.id}/execution`
+    const basis = await apiInject(ctx, owner, { method: 'GET', url })
+    const payload = {
+      sourceManifestDigest: basis.json().data.sourceManifestDigest as string,
+      executor: {
+        provider: 'managed-model-provider',
+        model: 'test-model',
+        endpoint: 'approved-endpoint',
+        account: 'approved-account',
+      },
+      expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+      confirmsPrivateDraft: true,
+    }
+    const authorized = await apiInject(ctx, owner, { method: 'POST', url, payload })
+    expect(authorized.statusCode, authorized.body).toBe(200)
+    const revoke = await apiInject(ctx, owner, {
+      method: 'DELETE',
+      url: `${node.route}/permit`,
+    })
+    expect(revoke.statusCode, revoke.body).toBe(200)
+    const after = await apiInject(ctx, owner, { method: 'GET', url })
+    expect(after.json().data.execution).toMatchObject({
+      status: 'revoked',
+      revokedReason: 'permit_revoked',
+    })
+    expect(after.json().data.eligible).toBe(false)
   })
 })

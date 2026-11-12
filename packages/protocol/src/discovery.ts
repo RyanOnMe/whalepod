@@ -64,3 +64,26 @@ export const DiscoverySourceVerificationRequestSchema = z.strictObject({
 export type DiscoverySourceVerificationRequest = z.infer<
   typeof DiscoverySourceVerificationRequestSchema
 >
+
+/** Executor 的实际路由身份；授权时固定，执行前再与部署策略逐项核对。 */
+export const DiscoveryExecutionExecutorSchema = z.strictObject({
+  provider: z.string().trim().min(1).max(128),
+  model: z.string().trim().min(1).max(128),
+  endpoint: z.string().trim().min(1).max(128),
+  account: z.string().trim().min(1).max(128),
+})
+export type DiscoveryExecutionExecutor = z.infer<typeof DiscoveryExecutionExecutorSchema>
+
+/**
+ * RD-04c1：责任人本人对已立项候选的第二次确认。
+ * 只接受精确来源包摘要与 Executor 路由；不包含正文、路径或凭据。
+ */
+export const DiscoveryExecutionAuthorizationRequestSchema = z.strictObject({
+  sourceManifestDigest: Digest,
+  executor: DiscoveryExecutionExecutorSchema,
+  expiresAt: z.iso.datetime({ offset: true }),
+  confirmsPrivateDraft: z.literal(true),
+})
+export type DiscoveryExecutionAuthorizationRequest = z.infer<
+  typeof DiscoveryExecutionAuthorizationRequestSchema
+>
