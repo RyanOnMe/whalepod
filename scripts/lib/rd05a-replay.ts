@@ -46,6 +46,7 @@ interface FastTurn {
   calls: ToolCall[]
   results: string[]
   stopped: boolean
+  finalDelivered: boolean
 }
 export interface ActualPrivateRead {
   inboxItemId: string
@@ -114,6 +115,11 @@ export class Rd05aReplay {
 
   releaseFirstFinal() {
     assert(this.firstFinal && !this.firstFinal.writableEnded, 'publication barrier is not pending')
+    const turn = this.fastTurns.get(1)
+    assert(turn?.stopped, 'first Executor has not reached its final response')
+    this.firstFinal.once('finish', () => {
+      turn.finalDelivered = true
+    })
     replyStream(this.firstFinal, { text: 'Site survey prepared.' })
   }
 
@@ -200,27 +206,53 @@ export class Rd05aReplay {
     assert(system?.content?.startsWith('你是交接整理助手。'), 'wrong handoff system prompt')
     const prompt = user?.content
     assert(typeof prompt === 'string', 'missing handoff material')
-    for (const part of [
-      '# 任务约定（本次执行的依据）',
-      '版本 v1',
-      '目标：Maintain venue seating and signage',
-      '约束：Venue plan only; draft outputs',
-      '验收条件：Traceable accessible seating',
-      '# 本次执行登记过的 Artifact',
-      '# 执行对话（user=指令，assistant=产出）',
-    ])
-      assert(prompt.includes(part), 'handoff material differs from confirmed agreement')
-    const runId = prompt.match(/# 来源 Run\nrunId=([a-f0-9-]{36})$/)?.[1]
+    const headings = [...prompt.matchAll(/^# .+$/gm)].map((match) => match[0])
+    assert.deepEqual(
+      headings,
+      [
+        '# 任务约定（本次执行的依据）',
+        '# 本次执行登记过的 Artifact',
+        '# 执行对话（user=指令，assistant=产出）',
+        '# 来源 Run',
+      ],
+      'handoff sections differ',
+    )
+    const sections = prompt.split(/\n\n(?=# )/)
+    assert.equal(sections.length, 4, 'handoff section boundaries differ')
+    assert.equal(
+      sections[0],
+      [
+        '# 任务约定（本次执行的依据）',
+        '版本 v1',
+        '目标：Maintain venue seating and signage',
+        '约束：Venue plan only; draft outputs',
+        '验收条件：Traceable accessible seating',
+        '待确认问题：（未填写）',
+      ].join('\n'),
+      'handoff material differs from confirmed agreement',
+    )
+    const runId = sections[3]!.match(/^# 来源 Run\nrunId=([a-f0-9-]{36})$/)?.[1]
     assert(runId, 'handoff source Run missing')
     if (this.resolveFastRuns) this.fastRunIds = await this.resolveFastRuns()
     const phase = runId === this.fastRunIds.first ? 1 : runId === this.fastRunIds.second ? 2 : 0
     assert(phase > 0, 'handoff belongs to another Run')
-    assert(this.fastTurns.get(phase)?.stopped, 'handoff preceded Executor completion')
+    assert(this.fastTurns.get(phase)?.finalDelivered, 'handoff preceded Executor completion')
     assert(!this.handoffCalls.some((call) => call.runId === runId), 'duplicate handoff request')
     const final =
       phase === 1 ? 'Site survey prepared.' : 'Updated venue draft is available for owner review.'
-    assert(prompt.includes('[assistant] ' + final), 'handoff lost actual final response')
-    assert(prompt.includes('Acceptance draft ' + phase), 'handoff lost actual candidate')
+    assert.equal(
+      sections[1],
+      '# 本次执行登记过的 Artifact\n- Acceptance draft ' + phase,
+      'handoff lost actual candidate',
+    )
+    const transcript = sections[2]!.slice('# 执行对话（user=指令，assistant=产出）\n'.length)
+    const assistantReplies = transcript.split('\n').filter((line) => line.startsWith('[assistant]'))
+    assert.deepEqual(
+      assistantReplies,
+      ['[assistant] ' + final],
+      'handoff lost actual final response',
+    )
+    assert.equal(transcript.split('\n').at(-1), '[assistant] ' + final, 'handoff final is not last')
     this.handoffCalls.push({ runId, phase, inputTokens: 200, outputTokens: 50 })
     replyStream(response, {
       text: JSON.stringify({
@@ -259,7 +291,12 @@ export class Rd05aReplay {
     const phase =
       inboxItemId === this.itemIds.first ? 1 : inboxItemId === this.itemIds.second ? 2 : 0
     assert(phase > 0, 'Executor manifest must identify an observed inbox item')
-    const turn = this.fastTurns.get(phase) ?? { calls: [], results: [], stopped: false }
+    const turn = this.fastTurns.get(phase) ?? {
+      calls: [],
+      results: [],
+      stopped: false,
+      finalDelivered: false,
+    }
     assert(!turn.stopped, 'Executor repeated after stop')
     const history = request.messages.filter(
       (message) =>
@@ -347,6 +384,9 @@ export class Rd05aReplay {
       this.firstFinal = response
       return
     }
+    response.once('finish', () => {
+      turn.finalDelivered = true
+    })
     replyStream(response, { text: 'Updated venue draft is available for owner review.' })
   }
 

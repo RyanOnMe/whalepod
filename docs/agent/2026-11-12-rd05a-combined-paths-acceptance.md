@@ -3,7 +3,7 @@
 - 对应 Issue：#546；前置为 RD-02b、RD-03d3、RD-04b/c1/c2；#545 工具错误补验已合入 `f31ca0f`。
 - 对应门禁：required `integration` 中的生产装配验收、独立判定与证据负控；不替代 Q2/Q6/Q7。
 - 更新日期：2026-11-13。
-- 上次验证：组合 campaign `failed / 修复复跑中`，见下方独占 attempt 记录；尚无成功 result。当前 head 的完整 CI 尚未运行，不把前置通过、构建成功或旧报告写成本轮通过。
+- 上次验证：`6fdd2d2` 的组合 campaign、独立 checker、180 项证据负控与敏感扫描全部 PASS；该 head 的完整本地 check 与七文件定向 integration PASS。独立评审随后发现两项 handoff 回放契约缺口，已补十项红测并修复，须在新 head 重新生成证据和复核；Ubuntu required CI 仍未运行，不把首轮成功包转签后续 head。
 
 ## 验的是哪条用户路径
 
@@ -87,7 +87,7 @@ driver 内部自检不替代独立 checker；CI 必须另起 CLI 重判，之后
 
 | 项目 | 本轮状态/口径 |
 |---|---|
-| 组合生产回放、独立 checker、negatives、敏感扫描 | driver 已运行但失败，checker/negatives 因无成功 result 未执行；各失败 attempt 敏感扫描 PASS |
+| 组合生产回放、独立 checker、negatives、敏感扫描 | `6fdd2d2` 首轮全部 PASS，180 项变异，链路 16 秒；后续 handoff 评审修复必须另跑新 attempt，各失败 attempt 也均扫描 PASS |
 | Ubuntu required integration（含取证上传） | `not_run / 待本轮结果` |
 | 费用 | 仅回环模拟账本；两条 fast Run 各有四次 Executor 请求及一次自动交接整理，共五次 provider 请求。两次 handoff 单列为 `loopback_unmetered`，记录回放用量、实际自动草稿/Run/约定身份与未发布状态，不把它伪装成普通 Executor ledger 已覆盖。两条 fast Run 各有普通 Executor reserved/settled，Router 两次、正向 discovery 一次、负向 discovery 一次各有 coordination reserved/settled。正向私有执行六次/负向私有执行一次请求为 `loopback_unmetered`，不进普通 ledger 或 live 专用 dispatch/attempt；这些是源码判据，实际本轮数值待验。无 paid 供应商请求（目标 `paidRequests=0`）不等于零模型请求或零费用，不能当成真实 token/扣费对账 |
 | 供应商账单/扣款对账 | `not_run`；公开价格、旧 c3 token 或 #545 合入均不能代替账单证据 |
@@ -132,5 +132,13 @@ driver 内部自检不替代独立 checker；CI 必须另起 CLI 重判，之后
 本地 `purpose=inference` 协调求值是生产自动生成的无模型推断，单独披露身份、终态与 `modelStarted=false`。约定维护产生的额外 Router 则独立记入 `accounting.suppressedRouter`：必须绑定正向新 Task/Work、状态/原因必须精确配对为 `cancelled/input_or_authority_changed`、`cancelled/input_superseded` 或实测的 `skipped/budget_exhausted`，且实际无模型开始时间、无 token/金额预留。不把它伪装成 inference，也不与四次 Router/discovery 模型评估混算；稳定窗覆盖三类全部身份，不删除多出的求值来凑数。
 
 该披露修复首轮定向测试共 422 项 PASS（replay 75、checker 342、fixture 4、provenance 1），类型检查、定向 lint 与 diff 检查 PASS。临时移除逐字段判据时，九项单点篡改分别红；恢复后全部拒绝，缺整条记录由稳定窗身份精确集合拒绝。独立 negatives 同步覆盖十项分支，并在累计多回执及无额外 Router 的合法样本运行；不把单元通过写成生产 campaign 通过。
+
+### 首轮成功与独立评审修复
+
+`6fdd2d246ecd0ce2b7939e9242ca70ca08adb715` / `52f8e813-325c-4cec-b2f6-bd9c834e11a4` 的 driver、独立 checker、180 项 negatives、attempt 扫描全部 PASS，三 CLI 链路 16 秒。四阶段 Task/Run 分别为 2/2、3/2、3/3、4/4；最终稳定窗 2504 ms，六条求值包括四条有模型评估、一条本地 inference 和一条 `skipped/budget_exhausted` Router。两条 fast 各五次请求（含单列 handoff），私有正向六次、负向一次。三面观测为 HTTP 3、WS live 63、replay 63，泄漏均零；首读前更正负控送达两件、成功读/工具结果/草稿均零，Run failed、授权 revoked、目录清理。paid requests 为零，不代表真实费用对账。
+
+该 head 的完整 `pnpm check` 为 251 文件/3139 项 PASS，127 条既有 lint warning、零 error，63 秒；五文件 integration 115 项 PASS、41 秒，另 discovery/普通 Executor ledger 两文件 18 项 PASS、10 秒。旧 c2/provenance 61 项回归 PASS，十份封存文件摘要一致。脱敏日志与汇总位于 `artifacts/evidence/rd05a/validation-6fdd2d2-3226e956-aa0f-4010-bcc8-3d28681a8320/`，扫描 PASS。
+
+第一位独立评审对该 head 给出 NOT_READY：handoff 材料子串匹配会把 v10 当 v1、候选 20 当 2，且遗漏待确认问题；首条最终回复被发布屏障扣住时，也能误认 Executor 已完成。`0b40441` 保留十项实际会红的拒绝用例，修复按四个唯一有序章节精确匹配约定五字段/候选条目/assistant 最终回复，并仅在响应 `finish` 后允许 handoff。修复后定向 438 项 PASS（replay 86、checker 347、fixture 4、provenance 1），类型/lint/diff PASS；新 head campaign、完整门及独立复核仍待跑，首轮报告不改签。
 
 当前 integration timeout 为 **25 分钟**，既有总耗时 **17 分 22 秒**，可用余量 **7 分 38 秒**。该数字是既有链路基线，不是 RD-05a 新增耗时。先保留 25 分钟；待完整 CI 测得 driver、checker、negatives、扫描和上传及全 job 总耗时后，按实际总耗时与合理波动余量调整。不得只看本机 driver、无证据缩短 timeout，或以超时为由把组合验收挪出 required integration。
