@@ -825,7 +825,31 @@ function accounting(r: Rd05aEvidence) {
     assert.equal(local.modelStarted, false, 'local evaluation called a model')
     assert(['completed', 'skipped'].includes(local.status), 'local evaluation has not settled')
   }
-  const allEvaluationIds = [...evaluationIds, ...a.localEvaluations.map((row) => row.id)]
+  assert(Array.isArray(a.suppressedRouter), 'missing no-model Router disclosure')
+  for (const row of a.suppressedRouter) {
+    uuid(row.id, 'invalid suppressed Router identity')
+    assert.equal(row.projectId, r.projectId, 'suppressed Router belongs to another Project')
+    assert.equal(
+      row.workKey,
+      r.runs.find((run) => run.role === 'discovery')!.workKey,
+      'suppressed Router belongs to another Work',
+    )
+    assert.equal(row.taskId, r.slow.taskId, 'suppressed Router belongs to another Task')
+    assert.equal(row.purpose, 'router', 'non-Router hidden in suppressed evaluations')
+    assert.equal(row.modelStarted, false, 'suppressed Router called a model')
+    assert.equal(row.status, 'cancelled', 'suppressed Router is not cancelled')
+    assert(
+      ['input_or_authority_changed', 'input_superseded'].includes(row.failureCode),
+      'unexpected suppressed Router reason',
+    )
+    assert.equal(row.reservedTokens, null, 'suppressed Router reserved tokens')
+    assert.equal(row.reservedCostMicros, null, 'suppressed Router reserved cost')
+  }
+  const allEvaluationIds = [
+    ...evaluationIds,
+    ...a.localEvaluations.map((row) => row.id),
+    ...a.suppressedRouter.map((row) => row.id),
+  ]
   unique(allEvaluationIds, 'duplicate local or model evaluation identity')
   sameIds(
     r.stability.before.evaluationIds,
@@ -1153,7 +1177,7 @@ export function checkRd05a(
   sameIds(stable.before.runIds, expectedRuns, 'stability Run baseline mismatch')
   assert.equal(
     stable.before.evaluationIds.length,
-    4 + r.accounting.localEvaluations.length,
+    4 + r.accounting.localEvaluations.length + r.accounting.suppressedRouter.length,
     'stability requires all model and local coordination evaluations',
   )
   unique(stable.before.evaluationIds, 'duplicate stability evaluation')

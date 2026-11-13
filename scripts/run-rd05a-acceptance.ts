@@ -604,6 +604,29 @@ async function drive() {
     )
   assert.equal(handoffRows.length, 2, 'unexpected automatic handoff drafts')
   const accounting = {
+    suppressedRouter: localEvaluations
+      .filter(
+        (row) =>
+          row.purpose === 'router' && !fast.evaluations.some((fastRow) => fastRow.id === row.id),
+      )
+      .map((row) => {
+        assert.equal(row.modelStartedAt, null, 'extra Router called a model')
+        assert.equal(row.reservedTokens, null, 'extra Router reserved tokens')
+        assert.equal(row.reservedCostMicros, null, 'extra Router reserved cost')
+        assert(row.workKey && row.taskId && row.failureCode, 'suppressed Router identity missing')
+        return {
+          id: row.id,
+          projectId: row.projectId,
+          workKey: row.workKey,
+          taskId: row.taskId,
+          purpose: 'router' as const,
+          status: row.status,
+          failureCode: row.failureCode,
+          modelStarted: false as const,
+          reservedTokens: null,
+          reservedCostMicros: null,
+        }
+      }),
     handoff: handoffRows.map((row) => {
       const calls = replay.handoffCalls.filter((call) => call.runId === row.sourceRunId)
       assert.equal(calls.length, 1, 'handoff is missing its actual model request')

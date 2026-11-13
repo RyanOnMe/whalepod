@@ -122,10 +122,13 @@ driver 内部自检不替代独立 checker；CI 必须另起 CLI 重判，之后
 | `4298df0` / `d431b7aa-188b-4e42-ba95-5f63d3436e47` | 15 秒，driver 失败，扫描 PASS |
 | `cde9e1b` / `cedd5553-6c83-40db-9cbe-df5e84d41429` | 15 秒，driver 失败，扫描 PASS；新增脱敏仓库相对位置将失败定位到 Run 证据整理，不是负控回调 |
 | `cac4b2b` / `cdfda1d3-fca1-4b70-a6de-cb9194099ff8` | 40 秒，bootstrap 缺 `specRevisionId`，扫描 PASS；生产规则是约定确认不等于显式启用约定绑定 |
-| `5d9df89` / `ba4440b3-03db-45b5-a6de-b57cdef90f20` | 5 秒，补生产 PATCH 启用后出现原回放未覆盖的工具面请求，driver 拒绝，扫描 PASS；正在定位，不忽略该请求 |
+| `5d9df89` / `ba4440b3-03db-45b5-a6de-b57cdef90f20` | 5 秒，补生产 PATCH 启用后触发正常的无工具自动 handoff，原回放未覆盖而拒绝，扫描 PASS；后续补严格身份回放并单列用量，不关闭生产交接绕验 |
+| `423f402` / `48e3caaf-3bed-483d-aa95-a87dd44932a4` | 36 秒，全部业务场景完成后，driver 内部 checker 拒绝 accounting/stability 身份不齐：负控前约定维护触发另一条未出站 Router，随后取消。扫描 PASS；独立 checker/negatives CLI 未执行，无成功 result |
 
 `7035ef1` 的全仓 `pnpm check` 为 251 文件、3104 项 PASS；随后 392 项定向回归和类型检查 PASS。两名独立评审分别复核该 head 已知七项问题，给出仅限代码修复的 READY；不代表生产 campaign 通过，也不转签后续 head。原十份封存证据 SHA-256 再次一致。父项 #535 的分层证据映射已登记，父项保持打开。
 
-本地 `purpose=inference` 协调求值是生产自动生成的无模型推断，单独披露身份、终态与 `modelStarted=false`，不与四次 Router/discovery 模型评估混算；稳定窗覆盖两类全部身份，不忽略额外模型调用。
+本地 `purpose=inference` 协调求值是生产自动生成的无模型推断，单独披露身份、终态与 `modelStarted=false`。约定维护产生的额外 Router 则独立记入 `accounting.suppressedRouter`：必须绑定正向新 Task/Work、状态为 `cancelled`、原因为 `input_or_authority_changed` 或 `input_superseded`，且实际无模型开始时间、无 token/金额预留。不把它伪装成 inference，也不与四次 Router/discovery 模型评估混算；稳定窗覆盖三类全部身份，不删除多出的求值来凑数。
+
+该披露修复的定向测试共 422 项 PASS（replay 75、checker 342、fixture 4、provenance 1），类型检查、定向 lint 与 diff 检查 PASS。临时移除逐字段判据时，九项单点篡改分别红；恢复后全部拒绝，缺整条记录由稳定窗身份精确集合拒绝。独立 negatives 同步覆盖十项分支，并在累计多回执及无额外 Router 的合法样本运行；不把单元通过写成生产 campaign 通过。
 
 当前 integration timeout 为 **25 分钟**，既有总耗时 **17 分 22 秒**，可用余量 **7 分 38 秒**。该数字是既有链路基线，不是 RD-05a 新增耗时。先保留 25 分钟；待完整 CI 测得 driver、checker、negatives、扫描和上传及全 job 总耗时后，按实际总耗时与合理波动余量调整。不得只看本机 driver、无证据缩短 timeout，或以超时为由把组合验收挪出 required integration。
