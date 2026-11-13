@@ -60,8 +60,9 @@ jobs:
   # 先 build 再测：integration 经包名 import 走 dist/，不 build 会测到陈旧构建（#35）。
   integration:
     runs-on: ubuntu-latest
-    # Q2/Q7/Q6 + Router 生产验收 + 单点变异同装一条真 PG 链路；#518 起变异增至
-    # 65 条（基线前后 + 逐条重跑），15 分钟会在 mutation 步骤被 job timeout 截断。
+    # Q2/Q7/Q6 + Router/c2/RD-05a 生产验收及负控同处 required integration。
+    # 既有总耗时 17m22，25 分钟余量 7m38；RD-05a 新增后的总耗时待本轮实测，
+    # 再按完整 job（含扫描/上传）调整，不能只用 driver 耗时或移出 required 门。
     timeout-minutes: 25
     steps:
       - name: Checkout
@@ -128,6 +129,90 @@ jobs:
           name: private-tool-error-evidence
           path: artifacts/evidence/rd04c2/tool-error-followup/
           if-no-files-found: warn
+          retention-days: 30
+
+      # #546：本次 checkout HEAD + 新 UUID 独占一个 attempt；三个 CLI 显式传同一路径，
+      # 不搜索 latest/旧 PASS。失败也只扫描/上传本 attempt 的中性诊断包，不改写门禁结论。
+      - name: Prepare RD-05a evidence path
+        id: rd05a_attempt
+        shell: bash
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          attempt=$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')
+          evidence_dir="artifacts/evidence/rd05a/$head/$attempt"
+          test ! -e "$evidence_dir"
+          printf 'head=%s\nattempt=%s\ndir=%s\nresult=%s/result.json\n' \
+            "$head" "$attempt" "$evidence_dir" "$evidence_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Run RD-05a combined production acceptance
+        id: rd05a_driver
+        env:
+          RD05A_RESULT: ${{ steps.rd05a_attempt.outputs.result }}
+        run: pnpm exec tsx scripts/run-rd05a-acceptance.ts "$RD05A_RESULT"
+
+      - name: Bind this RD-05a result to this attempt
+        id: rd05a_result
+        env:
+          RD05A_HEAD: ${{ steps.rd05a_attempt.outputs.head }}
+          RD05A_ATTEMPT: ${{ steps.rd05a_attempt.outputs.attempt }}
+          RD05A_RESULT: ${{ steps.rd05a_attempt.outputs.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RD05A_HEAD"
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict'
+          import { lstat, readFile } from 'node:fs/promises'
+          import { dirname, join } from 'node:path'
+          const { RD05A_HEAD: head, RD05A_ATTEMPT: attempt, RD05A_RESULT: path } = process.env
+          assert.equal(path, `artifacts/evidence/rd05a/${head}/${attempt}/result.json`)
+          assert((await lstat(dirname(path))).isDirectory(), 'missing fresh attempt directory')
+          for (const file of [path, join(dirname(path), 'attempt.json'), join(dirname(path), 'events.jsonl')]) {
+            assert((await lstat(file)).isFile(), 'missing regular evidence file')
+          }
+          const result = JSON.parse(await readFile(path, 'utf8'))
+          const marker = JSON.parse(await readFile(join(dirname(path), 'attempt.json'), 'utf8'))
+          assert.equal(marker.campaignId, attempt)
+          assert.equal(marker.commit, head)
+          assert.equal(result.campaignId, attempt)
+          for (const key of ['commit', 'harnessDigest', 'assemblyDigest']) {
+            assert.equal(result.provenance[key], marker[key], `attempt binding changed: ${key}`)
+          }
+          NODE
+
+      - name: Independently verify RD-05a evidence
+        id: rd05a_checker
+        env:
+          RD05A_RESULT: ${{ steps.rd05a_attempt.outputs.result }}
+        run: pnpm exec tsx scripts/verify-rd05a-acceptance.ts "$RD05A_RESULT"
+
+      - name: Reject RD-05a evidence negatives
+        id: rd05a_negatives
+        env:
+          RD05A_RESULT: ${{ steps.rd05a_attempt.outputs.result }}
+        run: pnpm exec tsx scripts/check-rd05a-evidence-negatives.ts "$RD05A_RESULT"
+
+      - name: Scan this RD-05a attempt evidence
+        id: rd05a_evidence_scan
+        if: always() && steps.rd05a_attempt.outcome == 'success'
+        env:
+          RD05A_DIR: ${{ steps.rd05a_attempt.outputs.dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d "$RD05A_DIR" ]; then
+            scripts/secret-scan.sh "$RD05A_DIR"
+            printf 'present=true\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload RD-05a attempt evidence (not a verdict)
+        if: always() && steps.rd05a_evidence_scan.outcome == 'success' && steps.rd05a_evidence_scan.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rd05a-evidence-${{ steps.rd05a_attempt.outputs.head }}-${{ steps.rd05a_attempt.outputs.attempt }}
+          path: ${{ steps.rd05a_attempt.outputs.dir }}/
+          if-no-files-found: error
           retention-days: 30
 
       - name: Scan Router acceptance evidence

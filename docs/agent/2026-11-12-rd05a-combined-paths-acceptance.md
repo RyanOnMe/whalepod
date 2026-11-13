@@ -1,0 +1,152 @@
+# WhalePod RD-05a：快慢路径组合生产验收
+
+- 对应 Issue：#546；前置为 RD-02b、RD-03d3、RD-04b/c1/c2；#545 工具错误补验已合入 `f31ca0f`。
+- 对应门禁：required `integration` 中的生产装配验收、独立判定与证据负控；不替代 Q2/Q6/Q7。
+- 更新日期：2026-11-13。
+- 上次验证：实现 head `6f66db7` 的新组合 campaign、独立 checker、180 项证据负控与敏感扫描全部 PASS；完整本地 check 为 3150 项 PASS，七文件定向 integration 为 133 项 PASS。两位独立评审分别复核 handoff 修复及证据/CI 判据后 READY；Ubuntu required CI 仍未运行，不把本机结果或旧成功包转签后续 head。
+
+## 验的是哪条用户路径
+
+两名成员围绕同一 Project 正常讨论。既有场地工作通过有效订阅收到补充，初始执行结束后在终态边界自动续接；快路径稳定后，再冻结发现目录，由另一成员的普通筹备评论发现未覆盖的新工作。系统按预授权立项，责任人显式确认精确来源和 Executor 后才执行，得到责任人私有草稿。
+
+整轮只启动一套真实 PostgreSQL、Hub、Node 和独立 DSH Runtime 生产包装配；业务动作走生产 HTTP/WS，查询数据库仅采集事实，禁止直写运行时状态。只替换模型 HTTP 响应为本机回环回放，不套跑旧验收或拼接旧报告。
+
+正向严格三条 Run，角色分别为 `bootstrap`、`continuation`、`discovery`。正向收口后，在同装配、同 Project 下另建来源、Task、Work 和执行授权，运行隔离的第四条负向 Run；它不混入三条正向计数。
+
+## 驱动（怎么触发）
+
+三个 CLI 都必须显式传入同一个 result 路径，不允许省略参数、回落默认报告或查找 latest。driver 要求路径严格为 `artifacts/evidence/rd05a/<当前完整 HEAD>/<UUID>/result.json`，目录 UUID 即 `campaignId`；attempt 必须不存在，由 driver 独占创建，已有目录拒绝覆盖。先提交本轮 harness 并构建生产包，提交只由主协调按本轮授权执行。
+
+```bash
+pnpm -r --if-present build
+head=$(git rev-parse HEAD)
+attempt=$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')
+result="artifacts/evidence/rd05a/$head/$attempt/result.json"
+pnpm exec tsx scripts/run-rd05a-acceptance.ts "$result" &&
+  pnpm exec tsx scripts/verify-rd05a-acceptance.ts "$result" &&
+  pnpm exec tsx scripts/check-rd05a-evidence-negatives.ts "$result"
+# 上传或分享前，只扫描这个 attempt；命中即拒绝出包。
+scripts/secret-scan.sh "$(dirname "$result")"
+```
+
+driver 内部自检不替代独立 checker；CI 必须另起 CLI 重判，之后运行 negatives。driver 失败时不得拿旧 result 补位。
+
+## 观测（看什么）
+
+- `attempt.json`：本轮 `campaignId`、commit、harness/assembly 指纹与启动时间。
+- `result.json`：两成员/Project 身份、三条正向 Run、隔离负向、阶段检查点、来源精确版本/摘要/授权代次、清单、交付/读取回执、消费记录、候选下载状态与人工动作分类。
+- `events.jsonl`：`acceptance.campaign` 阶段、`hub.work_input` 实际回执、`acceptance.replay` 实际模型工具消息、`hub.run` 生命周期和 `acceptance.snapshot` 运行状态。按 `campaignId/runId/receiptSeq/callId/executionId` 关联，不靠控制台 PASS 文本。
+- provenance 同时绑定当前 commit、harness、生产 assembly 与事件原字节摘要。独立判定不能只相信 driver 写出的计数或结论；缺字段、缺事件、错身份或指纹漂移均失败。
+- 两条 fast Run 的 ready/completed 必须分别具备 owner/project 两种生产投影，共八行，按 Run/type/audience 精确配对；实际执行授权独立核对固定回环 Executor 与规范摘要；每组 reserved/settled 的原预留 token/金额必须一致。
+
+## 判定（成功长什么样）
+
+### 既有工作的快入口与终态边界
+
+1. 初始设置经生产 PATCH 显式启用已确认约定绑定，并计入 setup；只确认但不启用的 Task 不会自动绑定 `specRevisionId`，不得从期望值补造。有效订阅将补充评论直达唯一收件箱条目；同幂等键评论重放不增加来源或条目。入口准入为 `deliver/subscription_match`，`routerInvoked=false`，入口 Router 调用/评估与新增 Run 均为零。
+2. bootstrap 固定清单不被补充改写；补充保持 pending，只有下一条 continuation 固定新清单并真实读取。交付不等于消费，Hub 回执、持久消费和实际模型工具结果摘要必须逐件对上。
+3. **快入口零 Router 不等于终态边界零 Router**。两次终态边界分别有 Router 评估：第一次 `dispatch` 自动产生唯一 continuation，第二次 `wait` 收口，不再多建 Run。不能把两次边界评估误记为入口慢路径。
+4. 首次候选由人发布，作为第二成员可读的公开对照及后续发现佐证；continuation 候选保持未发布，责任人下载 200、第二成员 404。
+
+### 新工作的发现与精确执行授权
+
+1. 快路径两条 Run 与第二次边界 wait 收口后才冻结 catalog 并核实未覆盖槽位，不能在快链仍写入目录时提前冻结。普通筹备评论触发发现、幂等立项为新 Task/派生约定/Work，不能由 driver 手建目标工作替代。最终负控收口后另观测 2.5 秒稳定窗，同 Project 全部 Task/Run/evaluation 身份集合前后必须相同；这是最终防自激判据，不冒充 catalog 冻结前的额外稳定窗。
+2. 新工作授权前为零 Run。责任人显式确认固定来源包的精确身份、版本、摘要、授权代次及 Executor 路由；非责任人 404、错误账户 409。同键并发及重复确认复用一条执行授权，自动派工且只建一条 discovery Run。
+3. 该显式 exact 执行授权是实际人工动作成本，不得写成全程零人动。setup、bootstrap、发布、catalog 核实、执行授权、撤回/更正与负向动作分别记账；模型请求和自动派工不冒充人工效率测量。
+4. Runtime 实际读到两份冻结来源，模型下一请求含同一来源的真实工具结果；工具头中的 inbox/source/version/type/byteSize 与真实 assistant/tool call 历史一并校验。下载成功、摘要碰巧相同或来源换版均不能替代读取证据。回环场景的 `liveOnlyGrantCount=0`，不声称重新验证了真实出站时每个来源作者/拥有者的 live-only grant。
+5. 第四条负控开始前，责任人经正常约定草稿/确认接口给正向新 Work 补充可读范围，并在新发现配置中纳入此约定；两次维护操作记入负控 setup，不伪称自动派生约定等于真人已确认。WS 公开哨兵放在这个已有 Work、无订阅的 Task，而非发现入口；责任人的 permit 本身已含来源同意，不能假定其评论不会触发发现。
+
+### 私有候选、工具错误与撤权
+
+1. 普通候选正文沿既有 owner-only 内容策略判定，**不等于**发现执行的标题、终态回复及工具错误已满足更强隔离。后者单独使用成员 HTTP、实时 WS、历史重放三面非空观测和公开对照；成员仍可见允许的状态，但私有标题/最终答复/错误标记不得泄漏。
+2. 工具错误复用 c2 真实 Runtime 的未知 ID `read_work_input` 路径；不是回放伪造错误文本。下一模型请求必须收到精确 `callId`、tool role 和完整错误结果摘要，之后才继续产出候选。缺失、错配、重复或仅删事件再重算摘要均必须被 checker/negatives 拒绝。
+3. discovery 草稿责任人下载 200、另一成员 404，缓存为 `private, no-store`，正式发布拒绝。撤回执行授权后责任人下载也变为 404，任务读面不留被撤回私有标题。子进程退出后两个私有目录清理，登记 Workspace 不留草稿。
+4. 隔离第四 Run 在两份来源送达、首次工具读之前，由来源作者调用**生产 HTTP correct** 更正评论；允许初始模型请求已发出，但要求零成功读取、零后续模型请求、零草稿，Run 失败或取消、授权收口，私有目录清理。不能用未送达、无 Run 或只改模拟状态充当负控。
+
+## 归因（失败先看哪层）
+
+| 现象 | 先看 |
+|---|---|
+| 补充未直达、重复投递或入口误调 Router | `hub.work_entry` 准入与 `hub.work_subscription` → inbox 身份；对照 `fast.supplement` 的入口零调用事实 |
+| 终态不续接或多建 Run | `hub.dispatch` 的 boundary/intent → `hub.router` 两次评估及应用 → `hub.run` 三角色与阶段检查点 |
+| 发现目录漂移、立项后不能执行 | `hub.discovery` 的 catalog、application、execution 与来源精确版本；对照快稳定/发现创建阶段 |
+| 已送达却无正文读取 | `node.work_input` → `hub.work_input` 回执与消费 → `acceptance.replay` 的实际工具消息摘要 |
+| 标题、终态、错误泄漏或撤回仍可下载 | `artifact.store` 与成员 HTTP/WS 三面事实；先确认公开对照/非空观测，再对私有标记与撤回状态 |
+| 首读前更正仍读/发请求/写稿 | `hub.discovery` 的 correct/授权收口 → Node/Runtime 撤权 → `revokeBeforeRead` 和对应回执/事件 |
+| 取到旧报告或当前 checker 拒绝旧证据 | 本次 HEAD/UUID 路径、`attempt.json` 与 provenance；不得改写旧包来适配新 harness |
+
+## 取证与 required CI
+
+本次独占目录为 `artifacts/evidence/rd05a/<commit>/<attempt>/`，同目录保存 `attempt.json`、`events.jsonl`、`result.json`；失败时保留脱敏 `failure.log`，不得把失败包改称 PASS。证据只留不透明身份、摘要、状态和计数，不留私有正文、凭据、绝对路径或完整 DSH Session。
+
+`.github/workflows/check.yml` 的 required `integration` 保留既有 Router/c2 链路，追加顺序为：预生成当前 checkout HEAD/新 UUID 路径 → driver → 只定位该路径并核对 marker/result 绑定 → 独立 checker → negatives → 该 attempt 的 secret-scan → upload。没有结果、身份不符、checker 或 negatives 失败均使 job 失败，不使用 `continue-on-error`。扫描及上传用 `always()` 保留失败诊断，但只在本 attempt 存在且扫描成功后上传，中性 artifact 名不代表通过；不得扫描/上传整个 rd05a 根目录替代本轮。
+
+历史 c2/c3 封存证据（包括原真实批次及 #545 补验）保持原字节；不重签、不重算旧指纹、不搬入本次路径。#545 已合入不代表供应商对账已完成，更不代表 RD-05a 已通过。
+
+## 边界与未覆盖
+
+| 项目 | 本轮状态/口径 |
+|---|---|
+| 组合生产回放、独立 checker、negatives、敏感扫描 | `6f66db7` 修复后新 attempt 全部 PASS，180 项变异，链路 33 秒；没有改签首轮包，各失败 attempt 也均扫描 PASS |
+| Ubuntu required integration（含取证上传） | `not_run / 待本轮结果` |
+| 费用 | 仅回环模拟账本；两条 fast Run 各有四次 Executor 请求及一次自动交接整理，共五次 provider 请求。两次 handoff 单列为 `loopback_unmetered`，记录回放用量、实际自动草稿/Run/约定身份与未发布状态，不把它伪装成普通 Executor ledger 已覆盖。两条 fast Run 各有普通 Executor reserved/settled，Router 两次、正向 discovery 一次、负向 discovery 一次各有 coordination reserved/settled。正向私有执行六次/负向私有执行一次请求为 `loopback_unmetered`，不进普通 ledger 或 live 专用 dispatch/attempt；这些计数已在 `6f66db7` 的新 attempt 实测通过。无 paid 供应商请求（实测 `paidRequests=0`）不等于零模型请求或零费用，不能当成真实 token/扣费对账 |
+| 供应商账单/扣款对账 | `not_run`；公开价格、旧 c3 token 或 #545 合入均不能代替账单证据 |
+| 真实出站逐来源 live-only grant 重验 | `not_run`；本轮不出网，不扩张为 RD-04c3 live 覆盖 |
+| 正式阅稿、飞书接入 | `not_run` |
+| 真实模型判断/产稿质量、真人效率 | `not_run`；确定性回放和人工动作计数不构成质量或效率结论 |
+
+## 复跑结果与耗时预算
+
+从上方命令重新生成独占 attempt；只用这一份 result 复跑独立判定和负控，不能覆盖既有 attempt。主协调提供机器结果前，commit/attempt、四阶段计数、各 CLI、扫描、CI 及耗时均保持 `not_run / 待本轮结果`。
+
+2026-11-12 主协调已通知的前置验证单列如下，不外推为组合 campaign 通过。
+
+| 验证 | 已通知结果 |
+|---|---|
+| 生产包 `pnpm build` | PASS |
+| 定向 integration 五文件 | 124/124 PASS，34.90 秒 |
+| c2 57 项 + replay 32 项 | 合计 89 项 PASS |
+| discovery helpers/live-fences | 9 项 PASS；不等于本轮启用 live 策略或真实出站 |
+| 稳定窗/来源 digest 定向 spec | 265 项 PASS；accounting 最后补丁仍在进行，最终定向回归待本轮结果 |
+| 旧封存证据 | 十份 hash 保持不变，不改写旧原件 |
+| 全仓 `pnpm check` | `25dc9a0` 实现提交前的完整门已 PASS；评审修复后仍需重跑，不能转签为最终 head 通过 |
+| RD-05a driver / checker / negatives 与完整 CI | `not_run / 待本轮结果` |
+
+首个组合 attempt（`25dc9a0`，`2aa22c93-6138-48ea-b0b0-ac86aa5963ac`）失败，未保留成功 result：公开哨兵错误放入发现入口触发额外发现，后续新目录又缺正向新 Work 的可读约定。诊断封存在该 attempt 的 `failure.log`；不覆盖失败包，不以旧 c2 报告补位。后续修复同时补 actual admission 外键、实际工具头身份、负控精确来源与 harness 源码依赖封闭性，须另建新 attempt。
+
+2026-11-13 追加机器记录（均非成功包）：
+
+| commit / attempt | 实测结果 |
+|---|---|
+| `7035ef1` / `29af1398-3063-4ba2-bf66-eba89e168f4b` | driver 失败，失败包扫描 PASS；外层收尾命令误用了 zsh 只读变量，之后独立补扫，不外推 checker/negatives 已执行 |
+| `4298df0` / `d431b7aa-188b-4e42-ba95-5f63d3436e47` | 15 秒，driver 失败，扫描 PASS |
+| `cde9e1b` / `cedd5553-6c83-40db-9cbe-df5e84d41429` | 15 秒，driver 失败，扫描 PASS；新增脱敏仓库相对位置将失败定位到 Run 证据整理，不是负控回调 |
+| `cac4b2b` / `cdfda1d3-fca1-4b70-a6de-cb9194099ff8` | 40 秒，bootstrap 缺 `specRevisionId`，扫描 PASS；生产规则是约定确认不等于显式启用约定绑定 |
+| `5d9df89` / `ba4440b3-03db-45b5-a6de-b57cdef90f20` | 5 秒，补生产 PATCH 启用后触发正常的无工具自动 handoff，原回放未覆盖而拒绝，扫描 PASS；后续补严格身份回放并单列用量，不关闭生产交接绕验 |
+| `423f402` / `48e3caaf-3bed-483d-aa95-a87dd44932a4` | 36 秒，全部业务场景完成后，driver 内部 checker 拒绝 accounting/stability 身份不齐：负控前约定维护触发另一条未出站 Router，随后取消。扫描 PASS；独立 checker/negatives CLI 未执行，无成功 result |
+| `98e2dd1` / `c22428f0-f380-4304-84a2-9843dc515af4` | 24 秒，实际额外 Router 为 `skipped`，只接受取消态的 checker 拒绝；扫描 PASS，独立 checker/negatives CLI 未执行 |
+| `e743c93` / `ba373b62-d864-4971-bcb3-937f72eef567` | 16 秒，新增脱敏诊断取得精确事实 `skipped/budget_exhausted`，与生产预算拒绝、未预留未出站分支一致；扫描 PASS，无成功 result。随后补状态/原因配对判据，未知/错配仍拒绝 |
+
+`7035ef1` 的全仓 `pnpm check` 为 251 文件、3104 项 PASS；随后 392 项定向回归和类型检查 PASS。两名独立评审分别复核该 head 已知七项问题，给出仅限代码修复的 READY；不代表生产 campaign 通过，也不转签后续 head。原十份封存证据 SHA-256 再次一致。父项 #535 的分层证据映射已登记，父项保持打开。
+
+本地 `purpose=inference` 协调求值是生产自动生成的无模型推断，单独披露身份、终态与 `modelStarted=false`。约定维护产生的额外 Router 则独立记入 `accounting.suppressedRouter`：必须绑定正向新 Task/Work、状态/原因必须精确配对为 `cancelled/input_or_authority_changed`、`cancelled/input_superseded` 或实测的 `skipped/budget_exhausted`，且实际无模型开始时间、无 token/金额预留。不把它伪装成 inference，也不与四次 Router/discovery 模型评估混算；稳定窗覆盖三类全部身份，不删除多出的求值来凑数。
+
+该披露修复首轮定向测试共 422 项 PASS（replay 75、checker 342、fixture 4、provenance 1），类型检查、定向 lint 与 diff 检查 PASS。临时移除逐字段判据时，九项单点篡改分别红；恢复后全部拒绝，缺整条记录由稳定窗身份精确集合拒绝。独立 negatives 同步覆盖十项分支，并在累计多回执及无额外 Router 的合法样本运行；不把单元通过写成生产 campaign 通过。
+
+### 首轮成功与独立评审修复
+
+`6fdd2d246ecd0ce2b7939e9242ca70ca08adb715` / `52f8e813-325c-4cec-b2f6-bd9c834e11a4` 的 driver、独立 checker、180 项 negatives、attempt 扫描全部 PASS，三 CLI 链路 16 秒。四阶段 Task/Run 分别为 2/2、3/2、3/3、4/4；最终稳定窗 2504 ms，六条求值包括四条有模型评估、一条本地 inference 和一条 `skipped/budget_exhausted` Router。两条 fast 各五次请求（含单列 handoff），私有正向六次、负向一次。三面观测为 HTTP 3、WS live 63、replay 63，泄漏均零；首读前更正负控送达两件、成功读/工具结果/草稿均零，Run failed、授权 revoked、目录清理。paid requests 为零，不代表真实费用对账。
+
+该 head 的完整 `pnpm check` 为 251 文件/3139 项 PASS，127 条既有 lint warning、零 error，63 秒；五文件 integration 115 项 PASS、41 秒，另 discovery/普通 Executor ledger 两文件 18 项 PASS、10 秒。旧 c2/provenance 61 项回归 PASS，十份封存文件摘要一致。脱敏日志与汇总位于 `artifacts/evidence/rd05a/validation-6fdd2d2-3226e956-aa0f-4010-bcc8-3d28681a8320/`，扫描 PASS。
+
+第一位独立评审对该 head 给出 NOT_READY：handoff 材料子串匹配会把 v10 当 v1、候选 20 当 2，且遗漏待确认问题；首条最终回复被发布屏障扣住时，也能误认 Executor 已完成。`0b40441` 保留十项实际会红的拒绝用例，修复按四个唯一有序章节精确匹配约定五字段/候选条目/assistant 最终回复，并仅在响应 `finish` 后允许 handoff。修复后定向 438 项 PASS（replay 86、checker 347、fixture 4、provenance 1），类型/lint/diff PASS；新 head 已按下方另跑并复核，首轮报告不改签。
+
+### 修复后实现基线
+
+实现 head `6f66db711f97b132d1ec3d8761b77ec96e0ace37` / attempt `58a7d11c-589e-44c8-9bc3-d0980867d9eb` 的 driver → 独立 checker → 180 项 negatives → 敏感扫描全部 PASS，三 CLI 链路 33 秒，容器清理。稳定窗 2505 ms，七条求值为四条有模型评估、两条本地 inference 和一条 `skipped/budget_exhausted` Router，自动 handoff 两次、paid requests 零；没有为凑计数过滤本地求值。重建生产包后，独立 checker 与 180 项负控再次通过，证明报告仍匹配实际装配指纹。
+
+该实现 head 的完整 `pnpm check` 为 251 文件/3150 项 PASS，127 条既有 warning、零 error，总耗时 78 秒；七文件真实 PostgreSQL integration 为 133 项 PASS，76 秒；生产包 build PASS，3 秒。脱敏日志位于 `artifacts/evidence/rd05a/validation-6f66db7-9888a5b4-2077-4a71-8cb9-8695f8e65fed/`；全部十五个变更文件及验证目录扫描 PASS，十份历史封存证据摘要再次一致。
+
+两位独立评审串行完成：第一位仅复核其两项 handoff P2 在实现 head 的修复，86 项 replay PASS 后 READY；第二位对独立判定、费用/身份披露、provenance 与 CI 门禁复核，348 项 checker/provenance PASS，另独立 checker/180 mutations/扫描 PASS 后 READY。它们不是 GitHub 平台审批或 Ubuntu CI 结果。后续文档提交不改实现；仍须为最终 checkout HEAD 独占生成 campaign，GitHub required check/integration 通过后才可合入。
+
+当前 integration timeout 为 **25 分钟**，既有总耗时 **17 分 22 秒**，可用余量 **7 分 38 秒**。该数字是既有链路基线，不是 RD-05a 新增耗时。先保留 25 分钟；待完整 CI 测得 driver、checker、negatives、扫描和上传及全 job 总耗时后，按实际总耗时与合理波动余量调整。不得只看本机 driver、无证据缩短 timeout，或以超时为由把组合验收挪出 required integration。
