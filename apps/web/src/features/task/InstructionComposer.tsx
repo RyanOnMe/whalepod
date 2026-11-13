@@ -102,6 +102,8 @@ export interface InstructionComposerProps {
    * 「已排队」都已是过期事实，不再显示；驳回理由与「已发给当前助手对话」仍保留。
    */
   startedOutcomeStale?: boolean
+  /** 「已排队」按 Hub 的排队窗口判断：waiting_approval 仍可排队。 */
+  queuedOutcomeStale?: boolean
   draft?: string
   intentKeyRef?: InstructionIntentKeyRef
   onDraftChange?: (text: string) => void
@@ -124,6 +126,7 @@ export function InstructionComposer({
   blocked = false,
   initialOutcome,
   startedOutcomeStale = false,
+  queuedOutcomeStale = false,
   draft,
   intentKeyRef,
   onDraftChange,
@@ -326,7 +329,8 @@ export function InstructionComposer({
         />
       </PromptBar>
       {last !== null &&
-      !(startedOutcomeStale && (last.outcome === 'started_run' || last.outcome === 'queued')) ? (
+      !(last.outcome === 'started_run' && startedOutcomeStale) &&
+      !(last.outcome === 'queued' && queuedOutcomeStale) ? (
         <p className="instruction-outcome" role="status" data-testid="instruction-outcome">
           {OUTCOME_TEXT[last.outcome]}
           {last.runId === null ? null : <span className="mono"> · {last.runId.slice(0, 8)}</span>}

@@ -238,7 +238,7 @@ export function CommentComposer({
           已发给团队
         </p>
       ) : null}
-      {error !== null ? <ErrorBanner error={error} /> : null}
+      {error !== null && draft.pending !== null ? <ErrorBanner error={error} /> : null}
     </form>
   )
 }

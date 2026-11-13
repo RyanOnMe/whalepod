@@ -557,6 +557,77 @@ describe('#548 发送受阻时就地继续编辑与恢复', () => {
     expect(screen.queryByText('已采用')).toBeNull()
   })
 
+  it('追问在 waiting_approval 的排队窗口内仍显示「已排队」', async () => {
+    const task = makeTask({ assignmentStatus: 'accepted' })
+    const run = makeRun({ status: 'waiting_approval' })
+    const user = userEvent.setup()
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task, { runs: [run] }),
+        sourceHandler(task, run),
+        ...agentHandlers(),
+        teamMembersHandler(),
+        devicesHandler([makeDevice({ id: DEVICE, status: 'online' })]),
+        workspaceHandler(),
+        {
+          method: 'POST',
+          url: /\/instructions$/,
+          respond: () =>
+            ok({
+              id: 'instruction-2',
+              outcome: 'queued',
+              runId: run.id,
+              instructionState: 'pending',
+            }),
+        },
+      ]),
+    )
+    await showRecipient('请助手处理')
+    const box = await screen.findByLabelText('指令')
+    await waitFor(() => expect(box).toBeEnabled())
+    await user.type(box, '排队等审批后放行')
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
+    expect(await screen.findByTestId('instruction-outcome')).toHaveTextContent(
+      '已排队，助手开始后放行',
+    )
+  })
+
+  it('新执行已进入 running 后不再说「已提交，等助手开始」', async () => {
+    const task = makeTask({ assignmentStatus: 'accepted', assigneeAgentId: AGENT })
+    const startedRun = makeRun({ id: 'new-run', status: 'running' })
+    const user = userEvent.setup()
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task),
+        sourceHandler(task, startedRun),
+        ...agentHandlers(),
+        teamMembersHandler(),
+        devicesHandler([makeDevice({ id: DEVICE, status: 'online' })]),
+        workspaceHandler(),
+        {
+          method: 'POST',
+          url: /\/instructions$/,
+          respond: () =>
+            ok({
+              id: 'instruction-3',
+              outcome: 'started_run',
+              runId: 'new-run',
+              instructionState: 'accepted',
+            }),
+        },
+      ]),
+    )
+    await showRecipient('请助手处理')
+    const box = await screen.findByLabelText('指令')
+    await waitFor(() => expect(box).toBeEnabled())
+    await user.type(box, '已经开始后不说过期回执')
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
+    await waitFor(() => expect(screen.queryByTestId('instruction-outcome')).toBeNull())
+    expect(screen.queryByText('已提交，等助手开始')).toBeNull()
+  })
+
   it('新执行被设备离线拒绝：保留文字并说「没发出」，不是静默失败', async () => {
     const task = makeTask({ assignmentStatus: 'accepted', assigneeAgentId: AGENT })
     const user = userEvent.setup()

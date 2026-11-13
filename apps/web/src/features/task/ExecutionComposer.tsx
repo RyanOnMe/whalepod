@@ -34,7 +34,7 @@ import {
 } from './InstructionComposer.js'
 import { RunLauncher } from './RunLauncher.js'
 import { useMemberDirectory, UNKNOWN_MEMBER_LABEL } from '../team/memberDirectory.js'
-import { ACTIVE_RUN, TERMINAL_RUN } from './run-states.js'
+import { ACTIVE_RUN, QUEUEING_RUN, TERMINAL_RUN } from './run-states.js'
 import { runOrdinalLabels } from './runLabels.js'
 
 import {
@@ -484,7 +484,7 @@ export function ExecutionComposer({
   const environmentActions = (refresh = true): ReactNode =>
     environmentState === 'ready' ? (
       <>
-        <span>你写的消息会保留，旧对话不会带过去。</span>
+        <span>重新开始会保留你写的消息，旧对话不会带过去。</span>
         {alternateEnvironment === undefined ? null : (
           <span data-testid="restart-hint">这次会用另一台已授权的电脑</span>
         )}
@@ -662,13 +662,16 @@ export function ExecutionComposer({
           }
       : approvalPreview
   // #548：「已提交，等助手开始」只在排队窗口内成立；来源 Run 已开始（running/审批/终态）
-  // 后不再显示这句，避免在「已完成」旁边继续声称「等开始」。
+  // 后不再显示这句，避免在「已完成」旁边继续声称「等开始」。「已排队」则按 Hub 的
+  // FOLLOWUP_QUEUEING_STATUSES 窗口判断——waiting_approval 仍可排队，不能提前收起。
+  const outcomeSourceStatus =
+    lastOutcome?.runId !== null && lastOutcome?.runId === sourceId ? source.data?.status : undefined
   const startedOutcomeStale =
-    lastOutcome?.runId !== null &&
-    lastOutcome?.runId === sourceId &&
-    source.data !== undefined &&
-    source.data.status !== 'queued' &&
-    source.data.status !== 'dispatching'
+    outcomeSourceStatus !== undefined &&
+    outcomeSourceStatus !== 'queued' &&
+    outcomeSourceStatus !== 'dispatching'
+  const queuedOutcomeStale =
+    outcomeSourceStatus !== undefined && !QUEUEING_RUN.has(outcomeSourceStatus)
   // #378：活跃 Run 绑定的约定版本落后于任务最新已确认版本 → 提示三选一（追问/取消/保持本次）。
   // 「保持本次」按 Run 记一次：同一次运行不再打扰，换了一次运行（新 id）重新提示。
   const [keptStaleRunId, setKeptStaleRunId] = useState<string | null>(null)
@@ -1081,6 +1084,7 @@ export function ExecutionComposer({
                 mode === 'followup' && lastOutcome?.runId === sourceId ? lastOutcome : null
               }
               startedOutcomeStale={startedOutcomeStale}
+              queuedOutcomeStale={queuedOutcomeStale}
               taskId={task.id}
               hasActiveRun={mode === 'followup'}
               target={null}
