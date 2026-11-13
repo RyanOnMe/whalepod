@@ -17,7 +17,7 @@ import {
 type ToolCall = { id: string; name: string; args: Record<string, string> }
 type Reply = ToolCall | { text: string }
 interface Message {
-  role: 'user' | 'assistant' | 'tool'
+  role: 'system' | 'user' | 'assistant' | 'tool'
   content?: string
   tool_call_id?: string
   tool_calls?: {
@@ -389,6 +389,68 @@ describe('RD05a combined replay over loopback HTTP', () => {
       )
       expect(replay.slow.publicRequests + replay.slow.privateRequests).toBe(0)
       replay.assertHealthy()
+    })
+  })
+
+  it.each([
+    'valid',
+    'duplicate',
+    'unknown run',
+    'wrong agreement',
+    'wrong role',
+    'tools',
+    'before stop',
+  ])('validates automatic handoff independently: %s', async (mutation) => {
+    await withLoopback(async (session) => {
+      const runId = '44444444-4444-4444-8444-444444444444'
+      const input = manifest('second')
+      for (const name of tools) {
+        const call = called(await session.send(input), name)
+        input.push(
+          assistant(call),
+          result(
+            call,
+            name === 'read_work_input'
+              ? 'work input: ' + ids.second + '\n\n' + secondSource
+              : 'Completed.',
+          ),
+        )
+      }
+      if (mutation !== 'before stop') streamed(await session.send(input))
+      Object.assign(session.replay, { fastRunIds: { first: '', second: runId } })
+      const messages: Message[] = [
+        { role: 'system', content: '你是交接整理助手。一次已完成的 Agent 执行即将结束' },
+        {
+          role: 'user',
+          content:
+            '# 任务约定（本次执行的依据）\n版本 v1\n目标：Maintain venue seating and signage\n约束：Venue plan only; draft outputs\n验收条件：Traceable accessible seating\n待确认问题：（未填写）\n\n# 本次执行登记过的 Artifact\n- Acceptance draft 2\n\n# 执行对话（user=指令，assistant=产出）\n[assistant] Updated venue draft is available for owner review.\n\n# 来源 Run\nrunId=' +
+            runId,
+        },
+      ]
+      if (mutation === 'unknown run') messages[1]!.content += '0'
+      if (mutation === 'wrong agreement')
+        messages[1]!.content = messages[1]!.content!.replace(
+          'Traceable accessible seating',
+          'Other scope',
+        )
+      if (mutation === 'wrong role') messages[0]!.role = 'user'
+      const options = { tools: mutation === 'tools' ? ['write'] : [] }
+      if (mutation === 'valid' || mutation === 'duplicate') {
+        const response = streamed(await session.send(messages, options))
+        expect(response).toHaveProperty('text')
+        if (!('text' in response)) throw new Error('handoff must be text')
+        expect(JSON.parse(response.text)).toMatchObject({
+          completed: [{ verified: false }],
+          evidence: [],
+          commits: [],
+          prs: [],
+        })
+        expect(session.replay).toHaveProperty('handoffCalls', [
+          expect.objectContaining({ runId, phase: 2, inputTokens: 200, outputTokens: 50 }),
+        ])
+        if (mutation === 'duplicate') await expectRejected(session, messages, options)
+        else session.replay.assertHealthy()
+      } else await expectRejected(session, messages, options)
     })
   })
 

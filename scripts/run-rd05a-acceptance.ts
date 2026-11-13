@@ -593,7 +593,35 @@ async function drive() {
         ),
       ),
   ])
+  const handoffRows = await db
+    .select()
+    .from(schema.handoffDrafts)
+    .where(
+      inArray(
+        schema.handoffDrafts.sourceRunId,
+        allRunRows.map((run) => run.id),
+      ),
+    )
+  assert.equal(handoffRows.length, 2, 'unexpected automatic handoff drafts')
   const accounting = {
+    handoff: handoffRows.map((row) => {
+      const calls = replay.handoffCalls.filter((call) => call.runId === row.sourceRunId)
+      assert.equal(calls.length, 1, 'handoff is missing its actual model request')
+      assert(row.specRevisionId, 'handoff is missing its confirmed agreement')
+      return {
+        runId: row.sourceRunId,
+        draftId: row.id,
+        taskId: row.taskId,
+        specRevisionId: row.specRevisionId,
+        status: row.status,
+        origin: row.origin,
+        requests: calls.length,
+        inputTokens: calls[0]!.inputTokens,
+        outputTokens: calls[0]!.outputTokens,
+        metering: 'loopback_unmetered' as const,
+        published: row.publishedRevisionId !== null,
+      }
+    }),
     localEvaluations: localEvaluations
       .filter((row) => row.purpose === 'inference')
       .map((row) => {
@@ -664,7 +692,8 @@ async function drive() {
       mode: index < 2 ? ('ordinary_ledger' as const) : ('loopback_unmetered' as const),
       requests:
         index < 2
-          ? replay.executorCalls.filter((call) => call.phase === index + 1).length
+          ? replay.executorCalls.filter((call) => call.phase === index + 1).length +
+            replay.handoffCalls.filter((call) => call.runId === run.id).length
           : index === 2
             ? positiveReplay.privateRequests
             : replay.slow.privateRequests,

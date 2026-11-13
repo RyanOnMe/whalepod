@@ -907,11 +907,33 @@ function accounting(r: Rd05aEvidence) {
     settlement(row)
   }
   for (const run of ordinary) reservationPair(a.executor.filter((row) => row.runId === run.id))
+  assert(Array.isArray(a.handoff), 'missing automatic handoff disclosure')
+  assert.equal(a.handoff.length, ordinary.length, 'missing or duplicate automatic handoff')
+  unique(
+    a.handoff.map((row) => row.draftId),
+    'duplicate handoff draft identity',
+  )
+  for (const run of ordinary) {
+    const row = one(
+      a.handoff.filter((row) => row.runId === run.id),
+      'automatic handoff Run',
+    )
+    uuid(row.draftId, 'missing automatic handoff draft identity')
+    assert.equal(row.taskId, run.taskId, 'handoff belongs to another Task')
+    assert.equal(row.specRevisionId, run.specRevisionId, 'handoff lost confirmed agreement binding')
+    assert.equal(row.status, 'ready', 'automatic handoff was not generated')
+    assert.equal(row.origin, 'auto', 'handoff was manually substituted')
+    assert.equal(row.requests, 1, 'handoff request missing or repeated')
+    assert.equal(row.inputTokens, 200, 'handoff replay input usage missing')
+    assert.equal(row.outputTokens, 50, 'handoff replay output usage missing')
+    assert.equal(row.metering, 'loopback_unmetered', 'handoff falsely charged as ordinary Executor')
+    assert.equal(row.published, false, 'handoff was automatically published')
+  }
   const expected = [
     ...r.runs.map((run) => ({
       runId: run.id,
       mode: run.role === 'discovery' ? 'loopback_unmetered' : 'ordinary_ledger',
-      requests: run.role === 'discovery' ? r.slow.replay.privateRequests : 4,
+      requests: run.role === 'discovery' ? r.slow.replay.privateRequests : 5,
     })),
     {
       runId: r.revokeBeforeRead.runId,

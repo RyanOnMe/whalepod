@@ -95,6 +95,9 @@ function replyStream(response: ServerResponse, reply: ToolCall | { text: string 
 export class Rd05aReplay {
   stage: 'fast' | 'discovery' | 'private' = 'fast'
   itemIds = { first: '', second: '' }
+  fastRunIds = { first: '', second: '' }
+  resolveFastRuns?: () => Promise<{ first: string; second: string }>
+  handoffCalls: { runId: string; phase: number; inputTokens: number; outputTokens: number }[] = []
   firstFinal?: ServerResponse
   routerCalls: { decision: string; sources: number; evidence: number }[] = []
   executorCalls: { phase: number; name: string; inboxItemId?: string; bodyDigest?: string }[] = []
@@ -180,6 +183,57 @@ export class Rd05aReplay {
         usage: { prompt_tokens: 200, completion_tokens: 100 },
       }),
     )
+  }
+
+  private async handoff(request: CompletionRequest, response: ServerResponse) {
+    assert.equal(request.stream, true, 'handoff must stream')
+    assert.equal(request.tools?.length ?? 0, 0, 'handoff cannot use tools')
+    assert.deepEqual(
+      request.messages.map((message) => message.role),
+      ['system', 'user'],
+    )
+    assert(
+      request.messages.every((message) => !message.tool_calls && !message.tool_call_id),
+      'handoff received tool history',
+    )
+    const [system, user] = request.messages
+    assert(system?.content?.startsWith('你是交接整理助手。'), 'wrong handoff system prompt')
+    const prompt = user?.content
+    assert(typeof prompt === 'string', 'missing handoff material')
+    for (const part of [
+      '# 任务约定（本次执行的依据）',
+      '版本 v1',
+      '目标：Maintain venue seating and signage',
+      '约束：Venue plan only; draft outputs',
+      '验收条件：Traceable accessible seating',
+      '# 本次执行登记过的 Artifact',
+      '# 执行对话（user=指令，assistant=产出）',
+    ])
+      assert(prompt.includes(part), 'handoff material differs from confirmed agreement')
+    const runId = prompt.match(/# 来源 Run\nrunId=([a-f0-9-]{36})$/)?.[1]
+    assert(runId, 'handoff source Run missing')
+    if (this.resolveFastRuns) this.fastRunIds = await this.resolveFastRuns()
+    const phase = runId === this.fastRunIds.first ? 1 : runId === this.fastRunIds.second ? 2 : 0
+    assert(phase > 0, 'handoff belongs to another Run')
+    assert(this.fastTurns.get(phase)?.stopped, 'handoff preceded Executor completion')
+    assert(!this.handoffCalls.some((call) => call.runId === runId), 'duplicate handoff request')
+    const final =
+      phase === 1 ? 'Site survey prepared.' : 'Updated venue draft is available for owner review.'
+    assert(prompt.includes('[assistant] ' + final), 'handoff lost actual final response')
+    assert(prompt.includes('Acceptance draft ' + phase), 'handoff lost actual candidate')
+    this.handoffCalls.push({ runId, phase, inputTokens: 200, outputTokens: 50 })
+    replyStream(response, {
+      text: JSON.stringify({
+        completed: [{ text: final, verified: false, refs: [{ kind: 'run', runId }] }],
+        interfaces: [],
+        unfinished: [],
+        decisions: [],
+        evidence: [],
+        downstream: [],
+        commits: [],
+        prs: [],
+      }),
+    })
   }
 
   private executor(request: CompletionRequest, response: ServerResponse) {
@@ -500,7 +554,9 @@ export class Rd05aReplay {
       if (incoming.url === '/discovery/chat/completions') this.router(request, response)
       else {
         assert.equal(incoming.url, '/chat/completions', 'unrecognized replay route')
-        this.executor(request, response)
+        if (request.messages.some((message) => message.content?.startsWith('你是交接整理助手。')))
+          await this.handoff(request, response)
+        else this.executor(request, response)
       }
     } catch (error) {
       this.failures.push(error instanceof Error ? error.message : String(error))

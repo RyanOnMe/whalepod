@@ -110,6 +110,19 @@ export interface Rd05aUsage {
 }
 
 export interface Rd05aAccounting {
+  handoff: {
+    runId: string
+    draftId: string
+    taskId: string
+    specRevisionId: string
+    status: string
+    origin: string
+    requests: number
+    inputTokens: number
+    outputTokens: number
+    metering: 'loopback_unmetered'
+    published: boolean
+  }[]
   localEvaluations: {
     id: string
     projectId: string

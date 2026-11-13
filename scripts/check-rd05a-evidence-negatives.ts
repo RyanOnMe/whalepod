@@ -15,6 +15,39 @@ type Sample = { evidence: Rd05aEvidence; events: Rd05aEvent[] }
 type Mutation = { name: string; apply: (sample: Sample) => void }
 
 const mutations: Mutation[] = [
+  ...(
+    [
+      'missing',
+      'duplicate',
+      'wrong run',
+      'wrong task',
+      'wrong spec',
+      'wrong status',
+      'manual',
+      'requests',
+      'input tokens',
+      'output tokens',
+      'metering',
+      'published',
+    ] as const
+  ).map((change): Mutation => ({
+    name: `automatic handoff ${change}`,
+    apply: ({ evidence: r }) => {
+      const row = r.accounting.handoff[0]!
+      if (change === 'missing') r.accounting.handoff.pop()
+      else if (change === 'duplicate') r.accounting.handoff.push(structuredClone(row))
+      else if (change === 'wrong run') row.runId = r.runs[2]!.id
+      else if (change === 'wrong task') row.taskId = changedId
+      else if (change === 'wrong spec') row.specRevisionId = changedId
+      else if (change === 'wrong status') row.status = 'failed'
+      else if (change === 'manual') row.origin = 'manual'
+      else if (change === 'requests') row.requests = 0
+      else if (change === 'input tokens') row.inputTokens = 0
+      else if (change === 'output tokens') row.outputTokens = 0
+      else if (change === 'metering') Object.assign(row, { metering: 'ordinary_ledger' })
+      else row.published = true
+    },
+  })),
   ...(['provider', 'model', 'endpoint', 'account', 'policyGeneration'] as const).map(
     (field): Mutation => ({
       name: `authorized Executor changed ${field}`,

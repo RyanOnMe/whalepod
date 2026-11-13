@@ -210,6 +210,10 @@ export async function driveFast(
   const admission = (await admissions()).find((row) => row.sourceId === second.id)
   assert(firstItem && secondItem && admission)
   replay.itemIds = { first: firstItem.id, second: secondItem.id }
+  replay.resolveFastRuns = async () => {
+    const rows = await runRows(venue.id)
+    return { first: rows[0]?.id ?? '', second: rows[1]?.id ?? '' }
+  }
   const ingress = {
     sourceId: second.id,
     itemId: secondItem.id,

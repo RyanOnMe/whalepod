@@ -3,7 +3,7 @@
 - 对应 Issue：#546；前置为 RD-02b、RD-03d3、RD-04b/c1/c2；#545 工具错误补验已合入 `f31ca0f`。
 - 对应门禁：required `integration` 中的生产装配验收、独立判定与证据负控；不替代 Q2/Q6/Q7。
 - 更新日期：2026-11-13。
-- 上次验证：`not_run / 待本轮结果`；本轮 commit、attempt、结果与总耗时待主协调提供机器证据后登记。不把前置通过、构建成功或旧报告写成本轮通过。
+- 上次验证：组合 campaign `failed / 修复复跑中`，见下方独占 attempt 记录；尚无成功 result。当前 head 的完整 CI 尚未运行，不把前置通过、构建成功或旧报告写成本轮通过。
 
 ## 验的是哪条用户路径
 
@@ -87,9 +87,9 @@ driver 内部自检不替代独立 checker；CI 必须另起 CLI 重判，之后
 
 | 项目 | 本轮状态/口径 |
 |---|---|
-| 组合生产回放、独立 checker、negatives、敏感扫描 | `not_run / 待本轮结果` |
+| 组合生产回放、独立 checker、negatives、敏感扫描 | driver 已运行但失败，checker/negatives 因无成功 result 未执行；各失败 attempt 敏感扫描 PASS |
 | Ubuntu required integration（含取证上传） | `not_run / 待本轮结果` |
-| 费用 | 仅回环模拟账本；两条 fast Run 各有普通 Executor reserved/settled，Router 两次、正向 discovery 一次、负向 discovery 一次各有 coordination reserved/settled。正向私有执行六次/负向私有执行一次请求为 `loopback_unmetered`，不进普通 ledger 或 live 专用 dispatch/attempt；这些是源码判据，实际本轮数值待验。无 paid 供应商请求（目标 `paidRequests=0`）不等于零模型请求或零费用，不能当成真实 token/扣费对账 |
+| 费用 | 仅回环模拟账本；两条 fast Run 各有四次 Executor 请求及一次自动交接整理，共五次 provider 请求。两次 handoff 单列为 `loopback_unmetered`，记录回放用量、实际自动草稿/Run/约定身份与未发布状态，不把它伪装成普通 Executor ledger 已覆盖。两条 fast Run 各有普通 Executor reserved/settled，Router 两次、正向 discovery 一次、负向 discovery 一次各有 coordination reserved/settled。正向私有执行六次/负向私有执行一次请求为 `loopback_unmetered`，不进普通 ledger 或 live 专用 dispatch/attempt；这些是源码判据，实际本轮数值待验。无 paid 供应商请求（目标 `paidRequests=0`）不等于零模型请求或零费用，不能当成真实 token/扣费对账 |
 | 供应商账单/扣款对账 | `not_run`；公开价格、旧 c3 token 或 #545 合入均不能代替账单证据 |
 | 真实出站逐来源 live-only grant 重验 | `not_run`；本轮不出网，不扩张为 RD-04c3 live 覆盖 |
 | 正式阅稿、飞书接入 | `not_run` |
@@ -113,6 +113,18 @@ driver 内部自检不替代独立 checker；CI 必须另起 CLI 重判，之后
 | RD-05a driver / checker / negatives 与完整 CI | `not_run / 待本轮结果` |
 
 首个组合 attempt（`25dc9a0`，`2aa22c93-6138-48ea-b0b0-ac86aa5963ac`）失败，未保留成功 result：公开哨兵错误放入发现入口触发额外发现，后续新目录又缺正向新 Work 的可读约定。诊断封存在该 attempt 的 `failure.log`；不覆盖失败包，不以旧 c2 报告补位。后续修复同时补 actual admission 外键、实际工具头身份、负控精确来源与 harness 源码依赖封闭性，须另建新 attempt。
+
+2026-11-13 追加机器记录（均非成功包）：
+
+| commit / attempt | 实测结果 |
+|---|---|
+| `7035ef1` / `29af1398-3063-4ba2-bf66-eba89e168f4b` | driver 失败，失败包扫描 PASS；外层收尾命令误用了 zsh 只读变量，之后独立补扫，不外推 checker/negatives 已执行 |
+| `4298df0` / `d431b7aa-188b-4e42-ba95-5f63d3436e47` | 15 秒，driver 失败，扫描 PASS |
+| `cde9e1b` / `cedd5553-6c83-40db-9cbe-df5e84d41429` | 15 秒，driver 失败，扫描 PASS；新增脱敏仓库相对位置将失败定位到 Run 证据整理，不是负控回调 |
+| `cac4b2b` / `cdfda1d3-fca1-4b70-a6de-cb9194099ff8` | 40 秒，bootstrap 缺 `specRevisionId`，扫描 PASS；生产规则是约定确认不等于显式启用约定绑定 |
+| `5d9df89` / `ba4440b3-03db-45b5-a6de-b57cdef90f20` | 5 秒，补生产 PATCH 启用后出现原回放未覆盖的工具面请求，driver 拒绝，扫描 PASS；正在定位，不忽略该请求 |
+
+`7035ef1` 的全仓 `pnpm check` 为 251 文件、3104 项 PASS；随后 392 项定向回归和类型检查 PASS。两名独立评审分别复核该 head 已知七项问题，给出仅限代码修复的 READY；不代表生产 campaign 通过，也不转签后续 head。原十份封存证据 SHA-256 再次一致。父项 #535 的分层证据映射已登记，父项保持打开。
 
 本地 `purpose=inference` 协调求值是生产自动生成的无模型推断，单独披露身份、终态与 `modelStarted=false`，不与四次 Router/discovery 模型评估混算；稳定窗覆盖两类全部身份，不忽略额外模型调用。
 

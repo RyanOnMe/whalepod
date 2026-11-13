@@ -205,6 +205,19 @@ function fixture() {
       },
     },
     accounting: {
+      handoff: [bootstrap, continuation].map((target, index) => ({
+        runId: target.id,
+        draftId: id(240 + index),
+        taskId: target.taskId,
+        specRevisionId: target.specRevisionId,
+        status: 'ready',
+        origin: 'auto',
+        requests: 1,
+        inputTokens: 200,
+        outputTokens: 50,
+        metering: 'loopback_unmetered',
+        published: false,
+      })),
       localEvaluations: [
         {
           id: id(95),
@@ -257,7 +270,7 @@ function fixture() {
         .map((target, index) => ({
           runId: target.id,
           mode: index < 2 ? ('ordinary_ledger' as const) : ('loopback_unmetered' as const),
-          requests: index < 2 ? 4 : 6,
+          requests: index < 2 ? 5 : 6,
           liveDispatchRows: 0,
           liveAttemptRows: 0,
         }))
@@ -620,6 +633,39 @@ function seal(value: Fixture) {
 // Every mutation starts from a clone, including independent event objects. Rehashing is
 // intentional: a recomputed file digest must not conceal missing semantic evidence.
 const negatives: Mutation[] = [
+  ...(
+    [
+      'missing',
+      'duplicate',
+      'wrong run',
+      'wrong task',
+      'wrong spec',
+      'wrong status',
+      'manual',
+      'requests',
+      'input tokens',
+      'output tokens',
+      'metering',
+      'published',
+    ] as const
+  ).map((change): Mutation => [
+    `automatic handoff ${change}`,
+    ({ evidence: r }) => {
+      const row = r.accounting.handoff[0]!
+      if (change === 'missing') r.accounting.handoff.pop()
+      else if (change === 'duplicate') r.accounting.handoff.push(structuredClone(row))
+      else if (change === 'wrong run') row.runId = r.runs[2]!.id
+      else if (change === 'wrong task') row.taskId = id(999)
+      else if (change === 'wrong spec') row.specRevisionId = id(999)
+      else if (change === 'wrong status') row.status = 'failed'
+      else if (change === 'manual') row.origin = 'manual'
+      else if (change === 'requests') row.requests = 0
+      else if (change === 'input tokens') row.inputTokens = 0
+      else if (change === 'output tokens') row.outputTokens = 0
+      else if (change === 'metering') Object.assign(row, { metering: 'ordinary_ledger' })
+      else row.published = true
+    },
+  ]),
   ...(['provider', 'model', 'endpoint', 'account', 'policyGeneration'] as const).map(
     (field): Mutation => [
       `authorized Executor changed ${field}`,
