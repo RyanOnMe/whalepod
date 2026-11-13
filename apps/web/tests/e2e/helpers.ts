@@ -451,15 +451,6 @@ export async function selectFromMenu(trigger: Locator, optionText: string | RegE
   await expect(trigger).toHaveAttribute('aria-expanded', 'false')
 }
 
-/**
- * ADR-0019：底部统一输入框默认接着上一条业务运行（模式「继续会话」），此时页面上没有
- * 「选择 Agent / 选择设备 / 选择 Workspace」这三个启动控件。凡是要**新起一段执行**的用例，
- * 都得走真人同一条路——先把「执行方式」明确改选为「开始新执行（不接旧会话）」。
- *
- * 不对历史读没读完做假设：显式改选会把 modeOrigin 置为 'user'（ExecutionComposer 的
- * 「默认规则只改写未经用户调整的自动草稿」），此后读取面慢一拍也不会把模式翻回去——
- * 这比"等一会儿再看"稳，也比"读模型到了再点"少一个时序坑。
- */
 /** #548：普通任务链接默认「发给团队」；执行侧用例显式走「请助手处理」这个真实入口。 */
 export async function showAssistant(page: Page): Promise<void> {
   const group = page.getByRole('group', { name: '消息接收方' })
@@ -469,6 +460,15 @@ export async function showAssistant(page: Page): Promise<void> {
   if ((await button.getAttribute('aria-pressed')) !== 'true') await button.click()
 }
 
+/**
+ * ADR-0019：底部统一输入框默认接着上一条业务运行（模式「继续会话」），此时页面上没有
+ * 「选择 Agent / 选择设备 / 选择 Workspace」这三个启动控件。凡是要**新起一段执行**的用例，
+ * 都得走真人同一条路——先把「执行方式」明确改选为「开始新执行（不接旧会话）」。
+ *
+ * 不对历史读没读完做假设：显式改选会把 modeOrigin 置为 'user'（ExecutionComposer 的
+ * 「默认规则只改写未经用户调整的自动草稿」），此后读取面慢一拍也不会把模式翻回去——
+ * 这比"等一会儿再看"稳，也比"读模型到了再点"少一个时序坑。
+ */
 export async function chooseNewExecution(page: Page): Promise<void> {
   // #548：普通任务链接默认发给团队；要新起执行先走「请助手处理」的真人切换。
   await showAssistant(page)

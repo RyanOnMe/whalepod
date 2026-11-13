@@ -97,6 +97,11 @@ export interface InstructionComposerProps {
   artifactInputIds?: string[] | undefined
   blocked?: boolean
   initialOutcome?: InstructionOutcome | null
+  /**
+   * #548：来源 Run 已经越过排队窗口（开始运行/终态）。此时「已提交，等助手开始」和
+   * 「已排队」都已是过期事实，不再显示；驳回理由与「已发给当前助手对话」仍保留。
+   */
+  startedOutcomeStale?: boolean
   draft?: string
   intentKeyRef?: InstructionIntentKeyRef
   onDraftChange?: (text: string) => void
@@ -118,6 +123,7 @@ export function InstructionComposer({
   artifactInputIds,
   blocked = false,
   initialOutcome,
+  startedOutcomeStale = false,
   draft,
   intentKeyRef,
   onDraftChange,
@@ -136,6 +142,10 @@ export function InstructionComposer({
   const [submittedText, setSubmittedText] = useState('')
   const [last, setLast] = useState<InstructionOutcome | null>(initialOutcome ?? null)
   const [instant, setInstant] = useState(true)
+  // #548：「重试发送」只属于同一份未确认请求。改了正文/来源/审批档后，旧失败签名
+  // 不再匹配——按钮回到「发给助手」，避免把新意图当作旧请求重试。
+  const attemptedSignature = useRef<string | null>(null)
+  const [failedSignature, setFailedSignature] = useState<string | null>(null)
   // #244：full_access 确认闸。pendingBody 存「点了发送那一刻」的正文——对话框是模态的，
   // 打开期间正文不可编辑，但确认动作必须发送用户看到的那句话，别在关闭时重读 state。
   const [confirmingFullAccess, setConfirmingFullAccess] = useState(false)
@@ -147,29 +157,31 @@ export function InstructionComposer({
     }
   }, [blocked])
 
+  const payloadFor = (body: string) => ({
+    text: body,
+    ...(artifactInputIds === undefined ? {} : { artifactInputIds }),
+    ...(target !== null && target.deviceId !== ''
+      ? {
+          deviceId: target.deviceId,
+          ...(target.workspaceId !== '' ? { workspaceId: target.workspaceId } : {}),
+        }
+      : {}),
+    ...(intent !== undefined
+      ? {
+          intent,
+          ...(approvalPreview !== null ? { expectedApprovalPolicy: approvalPreview.policy } : {}),
+        }
+      : {}),
+  })
+  const currentSignature = JSON.stringify(payloadFor(text.trim()))
+
   const mutation = useMutation({
     onMutate: () => onSendingChange?.(true),
     onSettled: () => onSendingChange?.(false),
     mutationFn: (body: string) => {
-      const payload = {
-        text: body,
-        ...(artifactInputIds === undefined ? {} : { artifactInputIds }),
-        ...(target !== null && target.deviceId !== ''
-          ? {
-              deviceId: target.deviceId,
-              ...(target.workspaceId !== '' ? { workspaceId: target.workspaceId } : {}),
-            }
-          : {}),
-        ...(intent !== undefined
-          ? {
-              intent,
-              ...(approvalPreview !== null
-                ? { expectedApprovalPolicy: approvalPreview.policy }
-                : {}),
-            }
-          : {}),
-      }
+      const payload = payloadFor(body)
       const signature = JSON.stringify(payload)
+      attemptedSignature.current = signature
       if (intentKey.current?.signature !== signature)
         intentKey.current = { signature, key: crypto.randomUUID() }
       return api.mutate<InstructionOutcome>(`/tasks/${taskId}/instructions`, {
@@ -184,6 +196,7 @@ export function InstructionComposer({
         intentKey.current = null
       }
       setError(null)
+      setFailedSignature(null)
       setLast(outcome)
       onOutcome?.(outcome)
       void queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(taskId) })
@@ -191,6 +204,7 @@ export function InstructionComposer({
     onError: (mutationError: unknown) => {
       // 失败时保留输入内容（与留言输入同一口径：失败不乐观更新、不吞掉用户打的字）。
       setError(mutationError)
+      setFailedSignature(attemptedSignature.current)
       setLast(null)
     },
   })
@@ -210,15 +224,21 @@ export function InstructionComposer({
     mutation.mutate(body)
   }
 
+  // 失败回执只对应「发出那一刻」的正文与安排。用户改了其中任何一项，旧回执就不再是
+  // 这份请求的事实（重试必须换新键），引导与「重试发送」都随之收起。
+  const failedCurrentRequest = failedSignature !== null && failedSignature === currentSignature
   // `ApiError` 自带 wire 上的 code（errors.ts），不需要另造助手。
   const offlineGuidance =
-    isApiError(error) && (error.code === 'DEVICE_OFFLINE' || error.code === 'DEVICE_REVOKED')
+    failedCurrentRequest &&
+    isApiError(error) &&
+    (error.code === 'DEVICE_OFFLINE' || error.code === 'DEVICE_REVOKED')
   // 网络失败/5xx 只说明「没确认」，不能说成「没发出」或「未受理」——两种拒绝已有明确回执。
-  const uncertain = isApiError(error) && (error.status === 0 || error.status >= 500)
+  const uncertain =
+    failedCurrentRequest && isApiError(error) && (error.status === 0 || error.status >= 500)
   const submitLabel = mutation.isPending ? '发送中…' : uncertain ? '重试发送' : '发给助手'
   const feedback: SendFeedback = mutation.isPending
     ? 'pending'
-    : error !== null
+    : failedCurrentRequest
       ? 'failed'
       : text !== '' && !(last?.outcome === 'rejected' && text === submittedText)
         ? 'idle'
@@ -305,7 +325,8 @@ export function InstructionComposer({
           }}
         />
       </PromptBar>
-      {last !== null ? (
+      {last !== null &&
+      !(startedOutcomeStale && (last.outcome === 'started_run' || last.outcome === 'queued')) ? (
         <p className="instruction-outcome" role="status" data-testid="instruction-outcome">
           {OUTCOME_TEXT[last.outcome]}
           {last.runId === null ? null : <span className="mono"> · {last.runId.slice(0, 8)}</span>}
@@ -319,7 +340,7 @@ export function InstructionComposer({
         </p>
       ) : null}
       {uncertain ? (
-        <div className="composer-actions" data-testid="assistant-uncertain">
+        <div className="composer-actions" role="status" data-testid="assistant-uncertain">
           <span>暂时没确认助手是否收到。你写的内容还在。</span>
           <button
             type="button"

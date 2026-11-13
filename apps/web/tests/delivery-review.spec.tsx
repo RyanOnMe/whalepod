@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { queryKeys } from '../src/app/query-client.js'
@@ -281,6 +281,10 @@ describe('从交付物发起复核 (#326)', () => {
     expect(await screen.findByRole('heading', { name: f.other.title })).toBeVisible()
     await user.click(screen.getByRole('link', { name: new RegExp(f.task.title) }))
     expect(await screen.findByRole('heading', { name: f.task.title })).toBeVisible()
+    // #548：任务侧栏是普通链接，默认落在「发给团队」；本用例判执行侧，切过去继续。
+    const group = await screen.findByRole('group', { name: '消息接收方' })
+    const assistant = within(group).getByRole('button', { name: '请助手处理' })
+    if (assistant.getAttribute('aria-pressed') !== 'true') await user.click(assistant)
     await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
     await showWorkspace('run')
     await user.click(await screen.findByRole('button', { name: '查看本次固定输入' }))

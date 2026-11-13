@@ -66,11 +66,14 @@ function TaskRoom(): ReactNode {
         ? 'execution'
         : 'discussion'
   const [channel, setChannel] = useState<'execution' | 'discussion'>(() =>
-    location.hash === '' || location.hash === '#comments-heading'
-      ? (rememberedChannel ?? 'discussion')
-      : 'execution',
+    location.hash === '#comments-heading'
+      ? 'discussion'
+      : location.hash === ''
+        ? (rememberedChannel ?? 'discussion')
+        : 'execution',
   )
-  const selectChannel = (next: 'execution' | 'discussion'): void => {
+  // 只有用户明确切换接收方才记；锚点跳转/查看执行不算选择，不能改写下次裸链接的默认。
+  const chooseChannel = (next: 'execution' | 'discussion'): void => {
     setChannel(next)
     recipientMemory.remember(next === 'execution' ? 'assistant' : 'team')
   }
@@ -108,14 +111,14 @@ function TaskRoom(): ReactNode {
   }, [inspector])
   useEffect(() => {
     if (location.hash === '#comments-heading') {
-      selectChannel('discussion')
+      setChannel('discussion')
       setInspector(null)
     } else if (
       location.hash.startsWith('#approval-') ||
       location.hash === '#task-execution' ||
       location.hash === '#task-assignment'
     ) {
-      selectChannel('execution')
+      setChannel('execution')
       setInspector(null)
     } else if (location.hash.startsWith('#artifact-')) {
       setInspector('artifacts')
@@ -123,7 +126,7 @@ function TaskRoom(): ReactNode {
     } else if (location.hash.startsWith('#handoff-receipt')) {
       // 交接待办直达（#428）：固定版本接收卡在执行区正文，直接回到执行区。
       // `#handoff-receipt-<receiptId>` 指到具体一张卡（同任务可有多份交接）。
-      selectChannel('execution')
+      setChannel('execution')
       setInspector(null)
     }
   }, [location.hash, location.key])
@@ -310,7 +313,7 @@ function TaskRoom(): ReactNode {
     runs.find((run) => run.id === detailRunId) ?? activeRun ?? runs.at(-1) ?? undefined
   const showExecution = () => {
     focusExecution.current = true
-    selectChannel('execution')
+    setChannel('execution')
     setSeenActivity(activityCount)
     setInspector(null)
   }
@@ -342,7 +345,7 @@ function TaskRoom(): ReactNode {
             testIdPrefix="workspace-view-"
             value={channel}
             onChange={(next) => {
-              selectChannel(next)
+              chooseChannel(next)
               setInspector(null)
             }}
             items={[
@@ -538,7 +541,7 @@ function TaskRoom(): ReactNode {
                 testIdPrefix="message-recipient-"
                 value={channel}
                 onChange={(next) => {
-                  selectChannel(next)
+                  chooseChannel(next)
                   setInspector(null)
                 }}
                 items={[
@@ -553,6 +556,7 @@ function TaskRoom(): ReactNode {
               >
                 <CommentComposer
                   taskId={task.id}
+                  userId={session?.userId ?? null}
                   runs={runs}
                   runLabels={runOrdinalLabels(runs)}
                   insertToken={insertToken}
@@ -576,7 +580,7 @@ function TaskRoom(): ReactNode {
                     revisionRequest={revisionRequest}
                     continueRequest={continueRequest}
                     onDiscuss={() => {
-                      selectChannel('discussion')
+                      chooseChannel('discussion')
                       requestAnimationFrame(() =>
                         document.getElementById('comments-heading')?.focus(),
                       )
@@ -705,7 +709,7 @@ function TaskRoom(): ReactNode {
                     showExecution()
                   }}
                   onReferenceRun={(runId) => {
-                    selectChannel('discussion')
+                    chooseChannel('discussion')
                     setInspector(null)
                     setInsertToken({ text: formatRunReference(runId), nonce: Date.now() })
                   }}

@@ -12,6 +12,7 @@ import {
   BOB,
   apiFailure,
   devicesHandler,
+  initOf,
   loggedInHandlers,
   makeComment,
   makeDevice,
@@ -374,7 +375,7 @@ describe('#548 发送受阻时就地继续编辑与恢复', () => {
     expect(payload).not.toHaveProperty('runId')
   })
 
-  it('没有可用环境时不承诺立即重新开始，只提供重新检查与设置入口', async () => {
+  it('原电脑离线且没有可用环境：不承诺立即重新开始，只给检查与设置入口', async () => {
     const task = makeTask({ assignmentStatus: 'accepted' })
     const run = makeRun({ status: 'completed', finishedAt: '2026-08-25T03:00:00.000Z' })
     const user = userEvent.setup()
@@ -394,7 +395,7 @@ describe('#548 发送受阻时就地继续编辑与恢复', () => {
       '还没有可用的电脑来处理这条消息。',
     )
     expect(screen.queryByTestId('restart-assistant')).toBeNull()
-    expect(screen.getByRole('button', { name: '重新检查' })).toBeVisible()
+    expect(screen.getByTestId('check-connection')).toBeVisible()
     expect(screen.getByRole('link', { name: '设置执行电脑' })).toBeVisible()
   })
 
@@ -550,7 +551,7 @@ describe('#548 发送受阻时就地继续编辑与恢复', () => {
     const send = screen.getByRole('button', { name: '发给助手' })
     await waitFor(() => expect(send).toBeEnabled())
     await user.click(send)
-    expect(await screen.findByTestId('run-outcome')).toHaveTextContent('已提交，等助手开始')
+    expect(await screen.findByTestId('instruction-outcome')).toHaveTextContent('已提交，等助手开始')
     expect(screen.queryByText('助手已读')).toBeNull()
     expect(screen.queryByText('已采用')).toBeNull()
   })
@@ -586,5 +587,99 @@ describe('#548 发送受阻时就地继续编辑与恢复', () => {
     expect(box).toHaveValue('这句要保留')
     expect(instructionPosts(view.fetchMock)).toHaveLength(1)
     expect(screen.queryByTestId('run-outcome')).toBeNull()
+  })
+
+  it('受限私有执行不当作可接续会话：只说不能续接并给重新开始', async () => {
+    const task = makeTask({ assignmentStatus: 'accepted' })
+    const run = makeRun({ status: 'completed', finishedAt: '2026-08-25T03:00:00.000Z' })
+    const user = userEvent.setup()
+    const view = renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task, { runs: [run] }),
+        sourceHandler(task, run, { resumeContext: 'blocked' }),
+        ...agentHandlers(),
+        teamMembersHandler(),
+        devicesHandler([makeDevice({ id: DEVICE, status: 'online' })]),
+        workspaceHandler(),
+        { method: 'POST', url: /\/instructions$/, respond: () => ok({}) },
+      ]),
+    )
+    await showRecipient('请助手处理')
+    const blocker = await screen.findByTestId('execution-blocker')
+    expect(blocker).toHaveTextContent('这次对话不能在这里重开或续接')
+    expect(blocker).toHaveTextContent('请明确重新开始')
+    expect(screen.getByTestId('restart-assistant')).toBeVisible()
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
+    expect(instructionPosts(view.fetchMock)).toHaveLength(0)
+  })
+
+  it('团队留言网络失败后重试沿用同一幂等键，成功后只清团队草稿', async () => {
+    const task = makeTask({ assignmentStatus: 'accepted' })
+    const comment = makeComment({ taskId: task.id, authorUserId: BOB.userId, body: '现场补充' })
+    let attempts = 0
+    const user = userEvent.setup()
+    const view = renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task),
+        ...agentHandlers(),
+        teamMembersHandler(),
+        devicesHandler([makeDevice({ id: DEVICE })]),
+        workspaceHandler(),
+        {
+          method: 'POST',
+          url: /\/comments$/,
+          respond: () => {
+            attempts += 1
+            if (attempts === 1) throw new TypeError('offline')
+            return { status: 201, body: { ok: true, data: comment } }
+          },
+        },
+      ]),
+    )
+    await user.type(await screen.findByLabelText('留言'), '这条不能重复')
+    const team = screen.getByTestId('team-composer')
+    await user.click(within(team).getByRole('button', { name: '发给团队' }))
+    expect(await screen.findByText(/无法连接服务器/)).toBeVisible()
+    expect(screen.getByLabelText('留言')).toHaveValue('这条不能重复')
+
+    await user.click(within(team).getByRole('button', { name: '发给团队' }))
+    expect(await screen.findByTestId('comment-sent-status')).toHaveTextContent('已发给团队')
+    const keys = commentPosts(view.fetchMock).map((call) =>
+      new Headers(initOf(call as [RequestInfo | URL, RequestInit?]).headers).get('idempotency-key'),
+    )
+    expect(keys).toHaveLength(2)
+    expect(keys[0]).toBe(keys[1])
+    expect(keys[0]).toBeTruthy()
+    expect(screen.getByLabelText('留言')).toHaveValue('')
+  })
+
+  it('去设备页再返回：团队草稿与上次选的接收方都还在', async () => {
+    const task = makeTask({ assignmentStatus: 'accepted' })
+    const user = userEvent.setup()
+    const view = renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task),
+        ...agentHandlers(),
+        teamMembersHandler(),
+        devicesHandler([makeDevice({ id: DEVICE })]),
+        workspaceHandler(),
+      ]),
+    )
+    await user.type(await screen.findByLabelText('留言'), '离开页面也要留着')
+    await showRecipient('请助手处理')
+    await view.router.navigate('/devices')
+    await view.router.navigate(`/tasks/${task.id}`)
+    const group = await screen.findByRole('group', { name: '消息接收方' })
+    await waitFor(() =>
+      expect(within(group).getByRole('button', { name: '请助手处理' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      ),
+    )
+    await user.click(within(group).getByRole('button', { name: '发给团队' }))
+    expect(screen.getByLabelText('留言')).toHaveValue('离开页面也要留着')
   })
 })

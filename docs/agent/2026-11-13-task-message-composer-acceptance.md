@@ -40,27 +40,29 @@ pnpm exec playwright test --config=playwright.micro.config.ts
   `restart-assistant`、`assistant-uncertain`、`run-outcome`；所有请求按 URL 与
   `Idempotency-Key` 断言，不读组件内部 state。
 - hub.run：`p1-393` 的 `result.json` 记录 `instructionPosts`、离线期间新增 Run 数、
-  团队评论、来源/意图与设备在线事实；独立判定器重判 123 项。
-- 生产浏览器：p1-07 双上下文主链；p1-19 的 15 条、p1-315/345/381 的 evidence 判定器
-  分别 PASS（p1-19 R8 证据独立重判 PASS）。
+  团队评论、来源/意图与设备在线事实；独立判定器重判 128 项。
+- 生产浏览器：p1-07 双上下文主链；p1-19 的 15 条、p1-345/381 的 evidence 判定器
+  分别 PASS（p1-19 R8 证据独立重判 PASS）；p1-315 以用例内断言为准，没有独立判定器。
 
 ## 判定（成功长什么样）
 
 - 普通链接默认团队：`aria-pressed=true` 落在「发给团队」，讨论区文案只说「团队成员可见」，
   不再出现「团队成员之间 · 不触发 Agent」；发一条团队留言只产生 1 条 `POST /comments`、
   0 条 `POST /instructions`。
-- 双草稿：切换接收方、离线、刷新式整页导航都不串字；成功只清对应草稿；未确认请求重试
-  沿用同一 `Idempotency-Key`（网络失败时按钮变为「重试发送」）。
+- 双草稿：切换接收方、离线、去设备页再返回都不串字；成功只清对应草稿；未确认请求重试
+  沿用同一 `Idempotency-Key`（团队留言与助手指令各自一份，网络失败时按钮变为「重试发送」，
+  改正文或发送安排后回到普通发送）。
 - 助手接收者：有活跃/最近业务来源时显示真实 Agent 名（`发给：Builder`）；没有可沿用对象时
   显示「还没为这项任务选助手」，选择入口零提交、零改派。
 - 受阻与恢复：离线时指令 textarea 仍可编辑、提交禁用、团队留言照常；「检查连接」只刷新
   读面不发送；重新上线后按钮恢复但 `POST /instructions` 计数不变，必须由人再点。
   无可用环境时不承诺「重新开始」，给出「重新检查」与「设置执行电脑」。
-- 权限与竞态：无交办权限显示「这项任务由 X 负责交办。你仍然可以给团队留言。」且无指令输入；
-  权限撤回后已有草稿保留并可继续编辑，提交禁用；编辑中旧来源结束显示
-  「刚才的对话已经结束…」，文字不改投，明确「重新开始」后才按新执行发送。
-- 事实反馈：新请求提交但尚未开始显示「已提交，等助手开始」；排队显示「已排队」；
-  拒绝连理由显示；无证据时不显示「助手已读」「已采用」。
+- 权限与竞态：无交办权限显示「这项任务由 X 负责交办。你仍然可以给团队留言。」且不展示
+  别人的接收助手/选择入口；权限撤回后已有草稿保留并可继续编辑，提交禁用；编辑中旧来源结束显示
+  「刚才的对话已经结束…」，文字不改投，明确「重新开始」后才按新执行发送；来源 Run 的
+  `resumeContext=blocked`（受限私有执行）只给重新开始，不当作可接续会话。
+- 事实反馈：新请求提交但尚未开始显示「已提交，等助手开始」，Run 一旦开始（running/审批/
+  终态）就不再保留这句；排队显示「已排队」；拒绝连理由显示；无证据时不显示「助手已读」「已采用」。
 
 ## 归因（失败先看哪层）
 
@@ -74,10 +76,10 @@ pnpm exec playwright test --config=playwright.micro.config.ts
 
 ## 取证
 
-- 组件：`apps/web/tests/task-message-composer.spec.tsx`（13 条）。
-- 生产浏览器：`artifacts/evidence/conversation-flow/result.json`（p1-393 + 独立判定器 123 项）、
-  `artifacts/evidence/e2e/<attempt>/`（p1-19 失败包/日志，含 R8）、
-  `artifacts/evidence/handoff-loop/`、`artifacts/evidence/create-recovery/`、
+- 组件：`apps/web/tests/task-message-composer.spec.tsx`（16 条）。
+- 生产浏览器：`artifacts/evidence/conversation-flow/result.json`（p1-393 + 独立判定器 128 项）、
+  `artifacts/evidence/r8-window/result.json`（p1-19 R8：held → 重启 → 5 次派发后 ack/completed）、
+  p1-19 全 15 条运行日志、`artifacts/evidence/handoff-loop/`、`artifacts/evidence/create-recovery/`、
   `artifacts/evidence/focused-workspace/<tag>/`、`artifacts/evidence/run-micro/<tag>/`。
 - 出包/入 git 前跑 `scripts/secret-scan.sh <路径>`；证据目录不提交。
 

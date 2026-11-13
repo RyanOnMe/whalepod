@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useMemo,
+  useState,
   useSyncExternalStore,
   type ReactNode,
   type SetStateAction,
@@ -36,6 +37,17 @@ export interface ExecutionMaterialRequest {
 }
 export type InstructionIntentKey = { signature: string; key: string }
 export type InstructionIntentKeyRef = { current: InstructionIntentKey | null }
+/**
+ * #548：团队留言草稿与它尚未确认的幂等键。
+ * 与执行草稿同一份页面会话内存——切换接收方、进出详情或去设备页返回都还原；
+ * 刷新/退出/换身份不承诺还在，也不进 URL 或浏览器持久存储。
+ */
+export interface TeamMessageDraft {
+  body: string
+  /** 同一份未确认请求重试时沿用；内容变了或成功后才换/清。 */
+  pending: InstructionIntentKey | null
+}
+export const EMPTY_TEAM_MESSAGE_DRAFT: TeamMessageDraft = { body: '', pending: null }
 export interface ExecutionDraft {
   ownerId: string
   text: string
@@ -52,16 +64,35 @@ interface Entry {
   intentKey: InstructionIntentKeyRef
   listeners: Set<() => void>
 }
+interface TeamEntry {
+  snapshot: TeamMessageDraft
+  listeners: Set<() => void>
+}
 /** One AppShell instance owns this memory. No persistence, transport or global singleton. */
 class ExecutionDraftStore {
   private readonly entries = new Map<string, Entry>()
   private readonly recipients = new Map<string, MessageRecipient>()
+  private readonly teamDrafts = new Map<string, TeamEntry>()
   constructor(readonly userId: string) {}
   recipientOf(taskId: string): MessageRecipient | undefined {
     return this.recipients.get(taskId)
   }
   setRecipient(taskId: string, recipient: MessageRecipient): void {
     this.recipients.set(taskId, recipient)
+  }
+  teamEntry(taskId: string): TeamEntry {
+    let entry = this.teamDrafts.get(taskId)
+    if (!entry) {
+      entry = { snapshot: EMPTY_TEAM_MESSAGE_DRAFT, listeners: new Set() }
+      this.teamDrafts.set(taskId, entry)
+    }
+    return entry
+  }
+  updateTeam(entry: TeamEntry, change: SetStateAction<TeamMessageDraft>): void {
+    const next = typeof change === 'function' ? change(entry.snapshot) : change
+    if (Object.is(next, entry.snapshot)) return
+    entry.snapshot = next
+    for (const listener of entry.listeners) listener()
   }
   ensure(taskId: string, initial: () => ExecutionDraft): Entry {
     let entry = this.entries.get(taskId)
@@ -147,5 +178,44 @@ export function useTaskMessageRecipient(
     remember: (recipient) => {
       if (usable) store.setRecipient(taskId, recipient)
     },
+  }
+}
+
+/**
+ * #548：团队留言的未发送文字与待确认幂等键。
+ * 与接收方记忆同一份页面会话边界；没有 AppShell（组件级夹具）时退回组件内 state。
+ */
+export function useTeamMessageDraft(
+  taskId: string,
+  userId: string | null,
+): {
+  draft: TeamMessageDraft
+  update: (change: SetStateAction<TeamMessageDraft>) => void
+} {
+  const store = useContext(DraftContext)
+  const usableStore = store !== null && userId !== null && store.userId === userId ? store : null
+  const entry = usableStore?.teamEntry(taskId) ?? null
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      if (entry === null) return () => {}
+      entry.listeners.add(listener)
+      return () => {
+        entry.listeners.delete(listener)
+      }
+    },
+    [entry],
+  )
+  const getSnapshot = useCallback(() => entry?.snapshot ?? EMPTY_TEAM_MESSAGE_DRAFT, [entry])
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+  const [local, setLocal] = useState<TeamMessageDraft>(EMPTY_TEAM_MESSAGE_DRAFT)
+  if (usableStore !== null && entry !== null) {
+    return {
+      draft: snapshot,
+      update: (change) => usableStore.updateTeam(entry, change),
+    }
+  }
+  return {
+    draft: local,
+    update: (change) => setLocal((old) => (typeof change === 'function' ? change(old) : change)),
   }
 }

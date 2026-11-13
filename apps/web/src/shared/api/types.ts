@@ -317,6 +317,11 @@ export interface RunView {
   workspaceId: string
   status: RunStatus
   dshSessionId: string | null
+  /**
+   * 会话能否续接（Hub run/queries.ts 暴露）。`blocked` = 受限私有执行的会话已被
+   * 清理/隔离，界面不得把它当作可接续对象（#548）。
+   */
+  resumeContext?: 'full' | 'redacted' | 'blocked'
   failureCode: string | null
   failureSummary: string | null
   // P1-16 G7-04：显式重跑血缘（03 §2.6 rerun_of_run_id）。

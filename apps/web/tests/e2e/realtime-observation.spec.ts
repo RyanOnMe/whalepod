@@ -127,8 +127,8 @@ test.describe('#140 同组成员零操作实时可见', () => {
     await expect(bob.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
     await bob.goto(`/tasks/${taskId}`)
     await showAssistant(bob)
-    // ADR-0019：任务房间默认停在「Agent 执行」；留言在独立的「团队讨论」频道里，
-    // 观察前先切过去（切频道是观察窗口之前的一次真人动作，此后 Bob 零操作）。
+    // #548：普通任务链接默认「发给团队」；先按真人入口切到「请助手处理」，
+    // 再切回「团队讨论」——两次都是观察窗口之前的一次真人动作，此后 Bob 零操作。
     await bob.getByRole('button', { name: '团队讨论', exact: true }).click()
     // 用 heading 而不是 getByText（2026-10-09，Q5 20 连跑第 15 轮实测）：UX-10 起侧栏
     // 「最近任务」也会渲染**任务标题**（`span.sidebar-recent-title`），而它是异步拉取——

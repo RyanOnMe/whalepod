@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { queryKeys } from '../src/app/query-client.js'
@@ -623,6 +623,11 @@ async function leaveForDevices(user: ReturnType<typeof userEvent.setup>) {
 async function returnToDraft(user: ReturnType<typeof userEvent.setup>, title: string) {
   await user.click(screen.getByRole('link', { name: new RegExp(`^${title}`) }))
   await screen.findByRole('heading', { name: title, level: 1 })
+  // #548：任务侧栏是普通链接，生产默认落在「发给团队」；这些用例判的是执行侧草稿，
+  // 返回后按真人会做的那样再切到「请助手处理」。
+  const group = await screen.findByRole('group', { name: '消息接收方' })
+  const assistant = within(group).getByRole('button', { name: '请助手处理' })
+  if (assistant.getAttribute('aria-pressed') !== 'true') await user.click(assistant)
 }
 describe('#337 当前会话中的执行草稿', () => {
   it('去设备页再回任务保留草稿和固定Agent版本，不发指令', async () => {

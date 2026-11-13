@@ -79,6 +79,7 @@ interface RoomFact {
     createdAt: string
   }>
   artifacts: Array<{ id: string; runId: string; title: string; status: string }>
+  comments: Array<{ id: string }>
 }
 
 const shared: {
@@ -607,11 +608,18 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
   })
   await expect(alice.getByRole('button', { name: '发给助手', exact: true })).toBeDisabled()
   // #548：助手暂不可用时仍可继续编辑；团队留言在原有范围内照常可用。
-  await expect(alice.getByLabel('指令')).toBeEditable()
+  const editableWhileBlocked = await alice.getByLabel('指令').isEditable()
+  expect(editableWhileBlocked).toBe(true)
+  const commentsBeforeTeamMessage = (await room()).comments.length
   await alice.getByTestId('message-recipient-discussion').click()
   await alice.getByLabel('留言').fill('离线期间团队留言仍可用')
   await alice.getByTestId('team-composer').getByRole('button', { name: '发给团队' }).click()
   await expect(alice.getByText('离线期间团队留言仍可用')).toBeVisible({ timeout: 30_000 })
+  await expect
+    .poll(async () => (await room()).comments.length, { timeout: 30_000 })
+    .toBe(commentsBeforeTeamMessage + 1)
+  const commentsAfterTeamMessage = (await room()).comments.length
+  expect(commentsAfterTeamMessage).toBe(commentsBeforeTeamMessage + 1)
   await alice.getByTestId('message-recipient-execution').click()
   await expect(alice.getByLabel('指令')).toHaveValue(draft)
   await expect(alice.getByLabel('执行方式')).toContainText('继续会话')
@@ -650,10 +658,12 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
     timeout: 30_000,
   })
   expect(instructionPosts).toBe(instructionPostsBeforeOffline)
+  const reconnectedWithoutAutoSend = instructionPosts === instructionPostsBeforeOffline
   await alice.getByRole('button', { name: '发给助手', exact: true }).click()
   await expect
     .poll(() => instructionPosts, { timeout: 30_000 })
     .toBe(instructionPostsBeforeOffline + 1)
+  const sentOnlyAfterExplicitClick = instructionPosts === instructionPostsBeforeOffline + 1
   await expect
     .poll(async () => (await room()).runs.length, { timeout: 30_000 })
     .toBe(runsAfterReconnect + 1)
@@ -661,14 +671,15 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
     blockedBy: 'client-guard',
     blockerShown: true,
     draftPreserved: true,
-    editableWhileBlocked: true,
-    teamMessageWorked: true,
+    editableWhileBlocked,
+    teamMessageWorked: commentsAfterTeamMessage === commentsBeforeTeamMessage + 1,
+    teamCommentDelta: commentsAfterTeamMessage - commentsBeforeTeamMessage,
     explicitSwitchKeepsDraft: true,
     newRunsAfterAttempt: 0,
     instructionPosts: instructionPostsBeforeOffline,
     instructionPostsAfterBlock: instructionPostsWhileBlocked,
-    reconnectedWithoutAutoSend: true,
-    sentOnlyAfterExplicitClick: true,
+    reconnectedWithoutAutoSend,
+    sentOnlyAfterExplicitClick,
     liveFrames,
   }
 })

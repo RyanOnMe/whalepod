@@ -70,10 +70,15 @@ function goodEvidence(): Record<string, unknown> {
       blockedBy: 'client-guard',
       blockerShown: true,
       draftPreserved: true,
+      editableWhileBlocked: true,
+      teamMessageWorked: true,
+      teamCommentDelta: 1,
       explicitSwitchKeepsDraft: true,
       newRunsAfterAttempt: 0,
       instructionPosts: 3,
       instructionPostsAfterBlock: 3,
+      reconnectedWithoutAutoSend: true,
+      sentOnlyAfterExplicitClick: true,
       liveFrames: 229,
     },
     window: {
@@ -329,9 +334,14 @@ describe('#393 连续对话证据判定器', () => {
         offline['blockedBy'] = 'server-409'
         offline['blockerShown'] = false
         offline['draftPreserved'] = false
+        offline['editableWhileBlocked'] = false
+        offline['teamMessageWorked'] = false
+        offline['teamCommentDelta'] = 0
         offline['explicitSwitchKeepsDraft'] = false
         offline['newRunsAfterAttempt'] = 1
         offline['instructionPostsAfterBlock'] = 4
+        offline['reconnectedWithoutAutoSend'] = false
+        offline['sentOnlyAfterExplicitClick'] = false
       }),
     )
     expect(verdict.failures).toContain(
@@ -339,6 +349,16 @@ describe('#393 连续对话证据判定器', () => {
     )
     expect(verdict.failures).toContain('the offline block must explain itself to the user')
     expect(verdict.failures).toContain('the blocked draft must stay in the composer')
+    expect(verdict.failures).toContain(
+      'the blocked assistant draft must stay editable (editing is not sending)',
+    )
+    expect(verdict.failures).toContain(
+      'a team message must still be delivered while the assistant is blocked (exactly one comment)',
+    )
+    expect(verdict.failures).toContain('reconnecting must not auto-send the preserved draft')
+    expect(verdict.failures).toContain(
+      'the instruction may be posted only after the user explicitly clicks send',
+    )
     expect(verdict.failures).toContain('switching to a new execution by hand must keep the text')
     expect(verdict.failures).toContain('a blocked continuation must not create a run')
     expect(verdict.failures).toContain(

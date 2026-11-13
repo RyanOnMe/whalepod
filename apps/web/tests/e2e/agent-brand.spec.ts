@@ -16,6 +16,7 @@ import {
   sessionCookie,
   setRuntimeFixture,
   showAgentCreation,
+  showAssistant,
   startNode,
   stopNode,
   waitForRunStatus,
@@ -789,6 +790,7 @@ async function recordBrand(page: Page, taskId: string, width: number, value: The
   await page.getByRole('button', { name: '收起', exact: true }).first().click()
   await page.screenshot({ path: join(evidence, `brand-${value}-${width}.png`) })
   await page.goto(`/tasks/${taskId}`)
+  await showAssistant(page)
   await theme(page, value)
   await page.getByLabel('指令', { exact: true }).fill('未发送的品牌验收草稿')
   const send = page.locator('.workspace-dock .instruction-send')
@@ -1037,6 +1039,7 @@ test('潮汐品牌与真实 Agent 状态：GPU、审批、键盘、减少动态�
       await form.getByRole('button', { name: /创建任务/ }).click()
       await owner.waitForURL(/\/tasks\//)
       const taskId = new URL(owner.url()).pathname.split('/').pop()!
+      await showAssistant(owner)
       await owner.getByRole('button', { name: '接受任务', exact: true }).click()
       await expect(owner.getByTestId('task-assignment-state')).toHaveText('已接受')
       await member.goto(`/tasks/${taskId}`)
@@ -1206,6 +1209,7 @@ test('潮汐品牌与真实 Agent 状态：GPU、审批、键盘、减少动态�
     await selectFromMenu(degradedForm.locator('button[id^="task-assignee-"]'), /Alice/)
     await degradedForm.getByRole('button', { name: /创建任务/ }).click()
     await degraded.waitForURL(/\/tasks\//)
+    await showAssistant(degraded)
     await degraded.getByRole('button', { name: '接受任务', exact: true }).click()
     await selectFromMenu(degraded.getByLabel('选择 Agent', { exact: true }), 'Tide Builder')
     await degraded.getByLabel('执行设置', { exact: true }).click()
@@ -1295,6 +1299,7 @@ test('潮汐品牌与真实 Agent 状态：GPU、审批、键盘、减少动态�
     await selectFromMenu(lossForm.locator('button[id^="task-assignee-"]'), /Alice/)
     await lossForm.getByRole('button', { name: /创建任务/ }).click()
     await lostPage.waitForURL(/\/tasks\//)
+    await showAssistant(lostPage)
     await lostPage.getByRole('button', { name: '接受任务', exact: true }).click()
     await selectFromMenu(lostPage.getByLabel('选择 Agent', { exact: true }), 'Tide Builder')
     await lostPage.getByLabel('执行设置', { exact: true }).click()

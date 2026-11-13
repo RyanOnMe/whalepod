@@ -33,7 +33,7 @@ import {
   type InstructionOutcome,
 } from './InstructionComposer.js'
 import { RunLauncher } from './RunLauncher.js'
-import { useMemberDirectory } from '../team/memberDirectory.js'
+import { useMemberDirectory, UNKNOWN_MEMBER_LABEL } from '../team/memberDirectory.js'
 import { ACTIVE_RUN, TERMINAL_RUN } from './run-states.js'
 import { runOrdinalLabels } from './runLabels.js'
 
@@ -130,7 +130,9 @@ export function ExecutionComposer({
 }): ReactNode {
   const directory = useMemberDirectory()
   const queryClient = useQueryClient()
-  const responsible = directory.personOf(task.assigneeUserId)
+  const responsibleName = directory.personOf(task.assigneeUserId)
+  // #548：姓名读不到时写「任务责任人」，不把「未知成员」当成人名塞进业务提示。
+  const responsible = responsibleName === UNKNOWN_MEMBER_LABEL ? '任务责任人' : responsibleName
   // #393 实测：`runs` 是**读取面**，刚起的运行要等一次失效重拉才出现。那一拍若不把它当
   // 已知，标签会退回「所选执行」、理由链会误报「所选执行已结束或发生变化」——刚发出去的
   // 指令明明就在跑（真实链路实测）。记住刚起的运行，读取面到位前按已知运行参与派生
@@ -309,6 +311,27 @@ export function ExecutionComposer({
     return () => cancelAnimationFrame(frame)
   }, [continueRequest, task.id])
   const isAssignee = task.assigneeUserId === session.userId
+  // #548：开始写普通交办时，把当时任务已指派的 Agent 固定进这份草稿；后台改派不再
+  // 改写显示与提交目标。复核/修订不沿用这个默认——那两处必须由人明确选。
+  useEffect(() => {
+    if (
+      mode !== 'new' ||
+      revisionContext !== null ||
+      draft.trim() === '' ||
+      launchSettings.agentId !== ''
+    )
+      return
+    const agentId = task.assigneeAgentId
+    if (agentId === null || agentId === undefined) return
+    setLaunchSettings((old) => (old.agentId === '' ? { ...old, agentId } : old))
+  }, [
+    draft,
+    launchSettings.agentId,
+    mode,
+    revisionContext,
+    task.assigneeAgentId,
+    setLaunchSettings,
+  ])
   const grants = useQuery({
     queryKey: queryKeys.instructionGrants(task.id),
     queryFn: () => api.get<InstructionDriverView[]>(`/tasks/${task.id}/instruction-grants`),
@@ -364,33 +387,28 @@ export function ExecutionComposer({
   const sourcePlacement = runsWithStarted.find((run) => run.id === sourceId)
   const sourceLabel = runOrdinalLabels(runsWithStarted).get(sourceId) ?? '所选执行'
   // #548：接收者与「能不能提交」都按事实说。环境判据只看责任人的设备/工作区读面：
-  // ready = 至少一台在线设备带可用工作区；none = 已读到且确实没有；unknown = 还没读到或读失败。
+  // ready = 至少一台在线、已准备 DSH 分发的设备带可用工作区；none = 已读到且确实没有；
+  // unknown = 还没读到、正在重读或读失败。缓存里的旧值不算「已确认」。
+  const environmentSettled =
+    devices.isSuccess &&
+    environmentWorkspaces.isSuccess &&
+    !(devices.isFetching && !devices.isFetchedAfterMount) &&
+    !(environmentWorkspaces.isFetching && !environmentWorkspaces.isFetchedAfterMount)
+  const usableEnvironments = (environmentWorkspaces.data ?? []).flatMap((workspace) => {
+    const device = (devices.data ?? []).find((row) => row.id === workspace.deviceId)
+    return workspace.available && device?.status === 'online' ? [{ workspace, device }] : []
+  })
   const environmentState: 'ready' | 'none' | 'unknown' = !isAssignee
     ? 'unknown'
-    : devices.isPending ||
-        environmentWorkspaces.isPending ||
-        devices.isError ||
-        environmentWorkspaces.isError
+    : !environmentSettled || devices.isError || environmentWorkspaces.isError
       ? 'unknown'
-      : (environmentWorkspaces.data ?? []).some(
-            (workspace) =>
-              workspace.available &&
-              (devices.data ?? []).some(
-                (device) => device.id === workspace.deviceId && device.status === 'online',
-              ),
-          )
+      : usableEnvironments.length > 0
         ? 'ready'
         : 'none'
   const alternateEnvironment =
     environmentState === 'ready'
-      ? (environmentWorkspaces.data ?? []).find(
-          (workspace) =>
-            workspace.available &&
-            workspace.deviceId !== source.data?.deviceId &&
-            (devices.data ?? []).some(
-              (device) => device.id === workspace.deviceId && device.status === 'online',
-            ),
-        )
+      ? usableEnvironments.find(({ workspace }) => workspace.deviceId !== source.data?.deviceId)
+          ?.workspace
       : undefined
   const refetchConnection = (): void => {
     void grants.refetch()
@@ -455,9 +473,10 @@ export function ExecutionComposer({
   const setupComputerAction = isAssignee ? (
     <Link to={preparationDeviceHref(task.id)}>设置执行电脑</Link>
   ) : null
-  const environmentActions = (): ReactNode =>
+  const environmentActions = (refresh = true): ReactNode =>
     environmentState === 'ready' ? (
       <>
+        <span>你写的消息会保留，旧对话不会带过去。</span>
         {alternateEnvironment === undefined ? null : (
           <span data-testid="restart-hint">这次会用另一台已授权的电脑</span>
         )}
@@ -466,13 +485,13 @@ export function ExecutionComposer({
     ) : environmentState === 'none' ? (
       <>
         <span>还没有可用的电脑来处理这条消息。</span>
-        {recheckAction}
+        {refresh ? recheckAction : null}
         {setupComputerAction}
       </>
     ) : (
       <>
         <span>暂时无法确认电脑能否使用。</span>
-        {recheckAction}
+        {refresh ? recheckAction : null}
       </>
     )
   let blocker: { message: string; actions?: ReactNode } | null = null
@@ -554,19 +573,23 @@ export function ExecutionComposer({
     }
   else if (mode === 'resume' && sourceDevice?.status === 'offline')
     // 不自动改投、不跳过来源：保留文字并说清「没发出」，恢复动作由用户点。
+    // 环境那一句由 environmentActions 统一给一次，结论别在消息里重复两遍。
     blocker = {
-      message:
-        environmentState === 'none'
-          ? '上次用的电脑没连上，消息还没发出。你可以继续编辑。还没有可用的电脑来处理这条消息。'
-          : environmentState === 'unknown'
-            ? '上次用的电脑没连上，消息还没发出。你可以继续编辑。暂时无法确认电脑能否使用。'
-            : '上次用的电脑没连上，消息还没发出。你可以继续编辑。',
+      message: '上次用的电脑没连上，消息还没发出。你可以继续编辑。',
+      // 一个刷新动作：离线现场用「检查连接」；没有环境时的「设置执行电脑」照常可达。
       actions: (
         <>
           {checkConnectionAction}
-          {environmentActions()}
+          {environmentActions(false)}
         </>
       ),
+    }
+  else if (mode === 'resume' && source.data?.resumeContext === 'blocked')
+    // #548：会话已不可续接（含发现生成的受限私有执行）。可见的运行记录不等于可接续对象；
+    // 离线现场优先说设备事实，这一条只在设备可用时兜底。
+    blocker = {
+      message: '这次对话不能在这里重开或续接，请明确重新开始。草稿仍保留。',
+      actions: environmentActions(),
     }
   else if (mode === 'resume' && sourceAgent.isError)
     blocker = { message: '无法读取来源配置版本，请重试。', actions: checkConnectionAction }
@@ -590,19 +613,37 @@ export function ExecutionComposer({
     ? (source.data?.agentId ?? '')
     : launchSettings.agentId !== ''
       ? launchSettings.agentId
-      : (task.assigneeAgentId ?? '')
+      : mode === 'new' && revisionContext === null
+        ? (task.assigneeAgentId ?? '')
+        : // 复核/修订必须由人明确选过 Agent，任务指派不冒充接收者（#548）。
+          ''
   const receiverName =
     receiverAgentId === ''
       ? null
       : isSourceMode && sourceAgent.data?.id === receiverAgentId
         ? sourceAgent.data.name
         : (agents.data?.find((agent) => agent.id === receiverAgentId)?.name ?? null)
+  const receiverReadFailed = receiverName === null && receiverAgentId !== '' && agents.isError
   const receiverPending =
     receiverName === null &&
+    !receiverReadFailed &&
     (isSourceMode
       ? source.isPending || sourceAgent.isPending || agents.isPending
       : receiverAgentId !== '' && agents.isPending)
-  const canChooseAssistant = allowed && isAssignee && !isSourceMode && receiverName === null
+  // 只有 composer 真的挂载（有启动器可选）时才给「选择本任务的助手」，否则按钮没有落点。
+  const composerMounted =
+    (allowed &&
+      task.assignmentStatus === 'accepted' &&
+      task.status !== 'done' &&
+      task.status !== 'cancelled') ||
+    draft !== ''
+  const canChooseAssistant =
+    composerMounted &&
+    allowed &&
+    isAssignee &&
+    !isSourceMode &&
+    receiverName === null &&
+    !agents.isError
   const policy: ApprovalPreview =
     mode === 'resume'
       ? revision === undefined
@@ -612,6 +653,14 @@ export function ExecutionComposer({
             source: task.approvalPolicy === null ? 'revision_default' : 'task_override',
           }
       : approvalPreview
+  // #548：「已提交，等助手开始」只在排队窗口内成立；来源 Run 已开始（running/审批/终态）
+  // 后不再显示这句，避免在「已完成」旁边继续声称「等开始」。
+  const startedOutcomeStale =
+    lastOutcome?.runId !== null &&
+    lastOutcome?.runId === sourceId &&
+    source.data !== undefined &&
+    source.data.status !== 'queued' &&
+    source.data.status !== 'dispatching'
   // #378：活跃 Run 绑定的约定版本落后于任务最新已确认版本 → 提示三选一（追问/取消/保持本次）。
   // 「保持本次」按 Run 记一次：同一次运行不再打扰，换了一次运行（新 id）重新提示。
   const [keptStaleRunId, setKeptStaleRunId] = useState<string | null>(null)
@@ -757,28 +806,33 @@ export function ExecutionComposer({
       className="execution-composer"
       data-testid="execution-composer"
     >
-      <div className="message-receiver-row">
-        <p className="message-receiver" data-testid="assistant-receiver">
-          {receiverName !== null
-            ? `发给：${receiverName}`
-            : receiverPending
-              ? '正在确认接收助手…'
-              : '还没为这项任务选助手'}
-          {mode === 'resume' ? ' · 沿用上次对话' : mode === 'followup' ? ' · 接着当前对话' : ''}
-        </p>
-        {canChooseAssistant ? (
-          <button
-            type="button"
-            className="button button-quiet"
-            data-testid="choose-assistant"
-            onClick={() => {
-              document.querySelector<HTMLElement>('[aria-label="选择 Agent"]')?.focus()
-            }}
-          >
-            选择本任务的助手
-          </button>
-        ) : null}
-      </div>
+      {/* #548：没有交办权限的人只看到业务级说明，不展示别人的接收助手或选择入口。 */}
+      {allowed ? (
+        <div className="message-receiver-row">
+          <p className="message-receiver" data-testid="assistant-receiver">
+            {receiverName !== null
+              ? `发给：${receiverName}`
+              : receiverPending
+                ? '正在确认接收助手…'
+                : receiverReadFailed
+                  ? '暂时无法确认接收助手'
+                  : '还没为这项任务选助手'}
+            {mode === 'resume' ? ' · 沿用上次对话' : mode === 'followup' ? ' · 接着当前对话' : ''}
+          </p>
+          {canChooseAssistant ? (
+            <button
+              type="button"
+              className="button button-quiet"
+              data-testid="choose-assistant"
+              onClick={() => {
+                document.querySelector<HTMLElement>('[aria-label="选择 Agent"]')?.focus()
+              }}
+            >
+              选择本任务的助手
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {/* #378：任务约定的绑定提示——新执行（new/resume）缺省绑定最新已确认版本。 */}
       {agreement.enabled ? (
         <p className="mutation-hint" data-testid="agreement-binding-hint">
@@ -884,14 +938,6 @@ export function ExecutionComposer({
           ) : null}
         </section>
       ) : null}
-      {/* #548：新请求已提交但运行尚未开始时，说事实；不在发起后立刻切成续聊而吞掉反馈。 */}
-      {lastOutcome?.outcome === 'started_run' &&
-      lastOutcome.runId !== null &&
-      lastOutcome.runId === sourceId ? (
-        <p className="instruction-outcome" role="status" data-testid="run-outcome">
-          已提交，等助手开始
-        </p>
-      ) : null}
       {blocker !== null ? (
         <div className="execution-blocker" role="status" data-testid="execution-blocker">
           <p className="mutation-hint">{blocker.message}</p>
@@ -934,11 +980,7 @@ export function ExecutionComposer({
           重新确认
         </button>
       ) : null}
-      {(allowed &&
-        task.assignmentStatus === 'accepted' &&
-        task.status !== 'done' &&
-        task.status !== 'cancelled') ||
-      draft !== '' ? (
+      {composerMounted ? (
         <fieldset disabled={sending} style={{ border: 0, padding: 0, margin: 0 }}>
           {handoff !== null && isNewExecution ? (
             <SpringCheck
@@ -977,7 +1019,12 @@ export function ExecutionComposer({
               }
               handoffReceiptId={includeHandoff && handoff !== null ? handoff.receiptId : undefined}
               buttonLabel="发给助手"
-              defaultAgentId={task.assigneeAgentId ?? undefined}
+              {...(mode === 'new' ? { placeholder: '想请助手做什么？' } : {})}
+              defaultAgentId={
+                mode === 'new' && revisionContext === null
+                  ? (task.assigneeAgentId ?? undefined)
+                  : undefined
+              }
               settings={launchSettings}
               onSettingsChange={setLaunchSettings}
               session={session}
@@ -1025,6 +1072,7 @@ export function ExecutionComposer({
               initialOutcome={
                 mode === 'followup' && lastOutcome?.runId === sourceId ? lastOutcome : null
               }
+              startedOutcomeStale={startedOutcomeStale}
               taskId={task.id}
               hasActiveRun={mode === 'followup'}
               target={null}

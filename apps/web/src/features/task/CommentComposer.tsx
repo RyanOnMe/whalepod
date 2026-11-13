@@ -12,6 +12,7 @@ import { useMemberDirectory } from '../team/memberDirectory.js'
 import type { CommentView, Session, TaskRoomRun } from '../../shared/api/types.js'
 import { SelectMenu } from '../../shared/SelectMenu.js'
 import { formatRunReference, parseRunReferences } from './runReference.js'
+import { EMPTY_TEAM_MESSAGE_DRAFT, useTeamMessageDraft } from './execution-drafts.js'
 import { queryKeys } from '../../app/query-client.js'
 
 export interface CommentListProps {
@@ -77,6 +78,11 @@ export function CommentList({
 
 export interface CommentComposerProps {
   taskId: string
+  /**
+   * #548：当前登录身份。草稿与幂等键按身份 + 任务存在 AppShell 的页面会话内存里，
+   * 切换接收方或去设备页返回时不丢；为空时退回组件内 state（组件级夹具）。
+   */
+  userId?: string | null
   /** 本任务的运行列表（团队可见投影）：引用只能指向本任务的运行，所以按钮里列的就是它。 */
   runs?: readonly TaskRoomRun[]
   /** 运行短号 → 展示名（「第 N 次运行」）；由页面注入，避免这里重新发明编号规则。 */
@@ -92,17 +98,28 @@ export interface CommentComposerProps {
 
 export function CommentComposer({
   taskId,
+  userId = null,
   runs = [],
   runLabels = new Map<string, string>(),
   insertToken = null,
   onInsertTokenConsumed,
 }: CommentComposerProps): ReactNode {
   const queryClient = useQueryClient()
-  const [body, setBody] = useState('')
+  const { draft, update: updateDraft } = useTeamMessageDraft(taskId, userId)
+  const body = draft.body
   const [error, setError] = useState<unknown>(null)
   // #548：成功只表示「已发给团队」，不宣称助手已读或采用。
   const [sent, setSent] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  /** 任何编辑都意味着这是一份新的留言：旧幂等键不能再拿去重试。 */
+  const setBody = (change: string | ((current: string) => string)): void => {
+    setSent(false)
+    updateDraft((old) => ({
+      body: typeof change === 'function' ? change(old.body) : change,
+      pending: null,
+    }))
+  }
 
   useEffect(() => {
     if (insertToken === null) return
@@ -114,16 +131,19 @@ export function CommentComposer({
   }, [insertToken, onInsertTokenConsumed])
 
   const mutation = useMutation({
-    mutationFn: (text: string) =>
-      api.mutate<CommentView>(`/tasks/${taskId}/comments`, { body: { body: text } }),
+    mutationFn: ({ text, key }: { text: string; key: string }) =>
+      api.mutate<CommentView>(`/tasks/${taskId}/comments`, {
+        body: { body: text },
+        idempotencyKey: key,
+      }),
     onSuccess: () => {
-      setBody('')
+      updateDraft(() => EMPTY_TEAM_MESSAGE_DRAFT)
       setError(null)
       setSent(true)
       void queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(taskId) })
     },
     onError: (mutationError: unknown) => {
-      // 失败时保留输入内容，只展示错误（02 Task 7 Step 6）。
+      // 失败时保留输入内容与幂等键：同一份未确认请求重试不得重复留言（#548）。
       setError(mutationError)
     },
   })
@@ -132,8 +152,10 @@ export function CommentComposer({
     event.preventDefault()
     const text = body.trim()
     if (text === '' || mutation.isPending) return
+    const key = draft.pending?.signature === text ? draft.pending.key : crypto.randomUUID()
+    updateDraft((old) => ({ ...old, pending: { signature: text, key } }))
     setError(null)
-    mutation.mutate(text)
+    mutation.mutate({ text, key })
   }
 
   return (
