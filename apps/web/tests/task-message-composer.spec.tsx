@@ -710,12 +710,12 @@ describe('#548 发送受阻时就地继续编辑与恢复', () => {
     expect(instructionPosts(view.fetchMock)).toHaveLength(0)
   })
 
-  it('迟到的团队留言回执不清掉之后写的新草稿', async () => {
+  it('迟到的团队留言回执在离开任务页后也不清掉新草稿', async () => {
     const task = makeTask({ assignmentStatus: 'accepted' })
     const comment = makeComment({ taskId: task.id, authorUserId: BOB.userId, body: '旧留言' })
     const gate = deferredResponse()
     const user = userEvent.setup()
-    renderApp(
+    const view = renderApp(
       `/tasks/${task.id}`,
       loggedInHandlers(BOB, [
         taskRoomHandler(task),
@@ -731,12 +731,15 @@ describe('#548 发送受阻时就地继续编辑与恢复', () => {
     const team = screen.getByTestId('team-composer')
     await user.click(within(team).getByRole('button', { name: '发给团队' }))
     await waitFor(() => expect(within(team).getByRole('button', { name: '发送中…' })).toBeVisible())
-    // 请求在途时继续写了一条新的：迟到的成功回执只能清旧请求，不能吞掉这条。
-    await user.clear(box)
-    await user.type(box, '新留言不能丢')
+    // 请求在途时离开任务页再回来：旧 composer 已卸载，store 里会换成新草稿。
+    await view.router.navigate('/devices')
+    await view.router.navigate(`/tasks/${task.id}`)
+    const nextBox = await screen.findByLabelText('留言')
+    await user.clear(nextBox)
+    await user.type(nextBox, '新留言不能丢')
     gate.resolve({ status: 201, body: { ok: true, data: comment } })
     await waitFor(() => expect(screen.queryByTestId('comment-sent-status')).toBeNull())
-    expect(box).toHaveValue('新留言不能丢')
+    expect(nextBox).toHaveValue('新留言不能丢')
   })
 
   it('团队留言网络失败后重试沿用同一幂等键，成功后只清团队草稿', async () => {

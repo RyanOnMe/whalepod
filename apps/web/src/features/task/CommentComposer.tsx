@@ -12,7 +12,7 @@ import { useMemberDirectory } from '../team/memberDirectory.js'
 import type { CommentView, Session, TaskRoomRun } from '../../shared/api/types.js'
 import { SelectMenu } from '../../shared/SelectMenu.js'
 import { formatRunReference, parseRunReferences } from './runReference.js'
-import { EMPTY_TEAM_MESSAGE_DRAFT, useTeamMessageDraft } from './execution-drafts.js'
+import { useTeamMessageDraft } from './execution-drafts.js'
 import { queryKeys } from '../../app/query-client.js'
 
 export interface CommentListProps {
@@ -105,14 +105,17 @@ export function CommentComposer({
   onInsertTokenConsumed,
 }: CommentComposerProps): ReactNode {
   const queryClient = useQueryClient()
-  const { draft, update: updateDraft } = useTeamMessageDraft(taskId, userId)
+  const {
+    draft,
+    update: updateDraft,
+    clearIfPending,
+    isPending,
+  } = useTeamMessageDraft(taskId, userId)
   const body = draft.body
   const [error, setError] = useState<unknown>(null)
   // #548：成功只表示「已发给团队」，不宣称助手已读或采用。
   const [sent, setSent] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const draftRef = useRef(draft)
-  draftRef.current = draft
 
   /** 任何编辑都意味着这是一份新的留言：旧幂等键不能再拿去重试。 */
   const setBody = (change: string | ((current: string) => string)): void => {
@@ -146,18 +149,14 @@ export function CommentComposer({
         idempotencyKey: key,
       }),
     onSuccess: (_comment, { key }) => {
-      // 迟到的回执只清它自己那份请求。用户已经在同一任务里开始写新留言时，
-      // 不能把新草稿一起清掉（#548：不让迟到的回执改写当前输入）。
-      if (draftRef.current.pending?.key === key) {
-        updateDraft(() => EMPTY_TEAM_MESSAGE_DRAFT)
-        setSent(true)
-      }
+      // 迟到的回执只清它自己那份请求——判据取 store 当前快照，组件已卸载/换任务也成立。
+      if (clearIfPending(key)) setSent(true)
       setError(null)
       void queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(taskId) })
     },
     onError: (mutationError: unknown, { key }) => {
       // 失败时保留输入内容与幂等键：同一份未确认请求重试不得重复留言（#548）。
-      if (draftRef.current.pending?.key === key) setError(mutationError)
+      if (isPending(key)) setError(mutationError)
     },
   })
 

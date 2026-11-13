@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -93,6 +94,20 @@ class ExecutionDraftStore {
     if (Object.is(next, entry.snapshot)) return
     entry.snapshot = next
     for (const listener of entry.listeners) listener()
+  }
+  /**
+   * #548：迟到回执只能清「它自己那份」请求。判据必须在 store 的当前快照上取，
+   * 不能用发起组件的 ref——组件可能已经因离开任务页而卸载、store 里已换成新草稿。
+   */
+  clearTeamIfPending(taskId: string, key: string): boolean {
+    const entry = this.teamDrafts.get(taskId)
+    if (!entry || entry.snapshot.pending?.key !== key) return false
+    entry.snapshot = EMPTY_TEAM_MESSAGE_DRAFT
+    for (const listener of entry.listeners) listener()
+    return true
+  }
+  teamPendingKey(taskId: string): string | null {
+    return this.teamDrafts.get(taskId)?.snapshot.pending?.key ?? null
   }
   ensure(taskId: string, initial: () => ExecutionDraft): Entry {
     let entry = this.entries.get(taskId)
@@ -191,6 +206,10 @@ export function useTeamMessageDraft(
 ): {
   draft: TeamMessageDraft
   update: (change: SetStateAction<TeamMessageDraft>) => void
+  /** 仅当 store 里仍是这把键时清空；返回是否真的清了（迟到回执的安全闸）。 */
+  clearIfPending: (key: string) => boolean
+  /** 当前待确认键是否仍是这一把（失败回执是否还属于当前草稿）。 */
+  isPending: (key: string) => boolean
 } {
   const store = useContext(DraftContext)
   const usableStore = store !== null && userId !== null && store.userId === userId ? store : null
@@ -208,14 +227,24 @@ export function useTeamMessageDraft(
   const getSnapshot = useCallback(() => entry?.snapshot ?? EMPTY_TEAM_MESSAGE_DRAFT, [entry])
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
   const [local, setLocal] = useState<TeamMessageDraft>(EMPTY_TEAM_MESSAGE_DRAFT)
+  const localRef = useRef(local)
+  localRef.current = local
   if (usableStore !== null && entry !== null) {
     return {
       draft: snapshot,
       update: (change) => usableStore.updateTeam(entry, change),
+      clearIfPending: (key) => usableStore.clearTeamIfPending(taskId, key),
+      isPending: (key) => usableStore.teamPendingKey(taskId) === key,
     }
   }
   return {
     draft: local,
     update: (change) => setLocal((old) => (typeof change === 'function' ? change(old) : change)),
+    clearIfPending: (key) => {
+      if (localRef.current.pending?.key !== key) return false
+      setLocal(EMPTY_TEAM_MESSAGE_DRAFT)
+      return true
+    },
+    isPending: (key) => localRef.current.pending?.key === key,
   }
 }

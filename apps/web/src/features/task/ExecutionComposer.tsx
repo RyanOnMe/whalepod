@@ -313,20 +313,20 @@ export function ExecutionComposer({
   const isAssignee = task.assigneeUserId === session.userId
   // #548：开始写普通交办时，把当时任务已指派的 Agent 固定进这份草稿；后台改派不再
   // 改写显示与提交目标。复核/修订不沿用这个默认——那两处必须由人明确选。
-  // 如果落笔时任务还没有 Agent，后来才指派，也不能把新 Agent 填进已写的草稿。
-  const startedWithoutAgent = useRef(false)
+  // 只在「本次挂载内由空变非空」这一拍固定：离开页面再回来时草稿已存在，
+  // 即使这期间任务被指派了 Agent，也不能把新 Agent 填进已经写好的文字。
+  const draftWasEmpty = useRef(draft.trim() === '')
   useEffect(() => {
     if (mode !== 'new' || revisionContext !== null || launchSettings.agentId !== '') return
     if (draft.trim() === '') {
-      startedWithoutAgent.current = false
+      draftWasEmpty.current = true
       return
     }
+    const becameNonEmpty = draftWasEmpty.current
+    draftWasEmpty.current = false
+    if (!becameNonEmpty) return
     const agentId = task.assigneeAgentId
-    if (agentId === null || agentId === undefined) {
-      startedWithoutAgent.current = true
-      return
-    }
-    if (startedWithoutAgent.current) return
+    if (agentId === null || agentId === undefined) return
     setLaunchSettings((old) => (old.agentId === '' ? { ...old, agentId } : old))
   }, [
     draft,

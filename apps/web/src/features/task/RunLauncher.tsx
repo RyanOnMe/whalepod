@@ -88,6 +88,8 @@ export interface RunLauncherProps {
   blocked?: boolean
   onStarted?: (runId: string) => void
   onOutcome?: (outcome: InstructionOutcome) => void
+  /** 辅助入口没有外部运行读面时，是否显示一句「已提交给助手」的受理回执。 */
+  showReceipt?: boolean
   draft?: string
   settings?: ExecutionSettings
   onSettingsChange?: (change: SetStateAction<ExecutionSettings>) => void
@@ -122,6 +124,7 @@ export function RunLauncher({
   lockSettings = false,
   onStarted,
   onOutcome,
+  showReceipt = false,
   draft,
   settings: controlledSettings,
   onSettingsChange,
@@ -671,7 +674,7 @@ export function RunLauncher({
             </button>
           </div>
         ) : null}
-        {onOutcome === undefined && start.data?.outcome === 'started_run' ? (
+        {showReceipt && start.data?.outcome === 'started_run' ? (
           // 辅助入口（约定起草/修订）没有外部运行读面，只说一句可长期成立的受理事实；
           // 主输入路径由 InstructionComposer 按 Run 状态决定是否显示「等助手开始」。
           <p className="instruction-outcome" role="status" data-testid="run-outcome">
