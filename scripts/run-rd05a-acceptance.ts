@@ -780,6 +780,7 @@ async function drive() {
         venue.id, // Task acceptance.
         venue.id, // Agreement draft.
         venue.id, // Agreement confirmation.
+        venue.id, // Explicitly enable confirmed agreement binding.
         work.workKey,
         mandate.id,
         subscription.id,

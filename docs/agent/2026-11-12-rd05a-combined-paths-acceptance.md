@@ -43,7 +43,7 @@ driver 内部自检不替代独立 checker；CI 必须另起 CLI 重判，之后
 
 ### 既有工作的快入口与终态边界
 
-1. 有效订阅将补充评论直达唯一收件箱条目；同幂等键评论重放不增加来源或条目。入口准入为 `deliver/subscription_match`，`routerInvoked=false`，入口 Router 调用/评估与新增 Run 均为零。
+1. 初始设置经生产 PATCH 显式启用已确认约定绑定，并计入 setup；只确认但不启用的 Task 不会自动绑定 `specRevisionId`，不得从期望值补造。有效订阅将补充评论直达唯一收件箱条目；同幂等键评论重放不增加来源或条目。入口准入为 `deliver/subscription_match`，`routerInvoked=false`，入口 Router 调用/评估与新增 Run 均为零。
 2. bootstrap 固定清单不被补充改写；补充保持 pending，只有下一条 continuation 固定新清单并真实读取。交付不等于消费，Hub 回执、持久消费和实际模型工具结果摘要必须逐件对上。
 3. **快入口零 Router 不等于终态边界零 Router**。两次终态边界分别有 Router 评估：第一次 `dispatch` 自动产生唯一 continuation，第二次 `wait` 收口，不再多建 Run。不能把两次边界评估误记为入口慢路径。
 4. 首次候选由人发布，作为第二成员可读的公开对照及后续发现佐证；continuation 候选保持未发布，责任人下载 200、第二成员 404。

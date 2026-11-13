@@ -121,6 +121,7 @@ export async function setupRd05a(env: ProductionAcceptance) {
     },
   })
   await env.api(`/tasks/${venue.id}/agreement/confirm`, { draftVersion: agreement.draftVersion })
+  await env.api(`/tasks/${venue.id}`, { agreementEnabled: true }, { method: 'PATCH' })
   const work = await env.api<{ workKey: string }>(`/tasks/${venue.id}/works`, {
     goal: 'Maintain the accessible venue plan',
   })
