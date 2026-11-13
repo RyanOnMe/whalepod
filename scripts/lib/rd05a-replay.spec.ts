@@ -397,6 +397,15 @@ describe('RD05a combined replay over loopback HTTP', () => {
     'duplicate',
     'unknown run',
     'wrong agreement',
+    'revision prefix',
+    'open questions',
+    'candidate prefix',
+    'extra candidate',
+    'final prefix',
+    'agreement only in transcript',
+    'candidate only in transcript',
+    'final outside transcript',
+    'duplicate section',
     'wrong role',
     'tools',
     'before stop',
@@ -433,6 +442,49 @@ describe('RD05a combined replay over loopback HTTP', () => {
           'Traceable accessible seating',
           'Other scope',
         )
+      const material = messages[1]!.content!
+      if (mutation === 'revision prefix')
+        messages[1]!.content = material.replace('版本 v1', '版本 v10')
+      if (mutation === 'open questions')
+        messages[1]!.content = material.replace(
+          '待确认问题：（未填写）',
+          '待确认问题：Publish all material',
+        )
+      if (mutation === 'candidate prefix')
+        messages[1]!.content = material.replace('Acceptance draft 2', 'Acceptance draft 20')
+      if (mutation === 'extra candidate')
+        messages[1]!.content = material.replace(
+          '- Acceptance draft 2',
+          '- Acceptance draft 2\n- Other candidate',
+        )
+      if (mutation === 'final prefix')
+        messages[1]!.content = material.replace(
+          'Updated venue draft is available for owner review.',
+          'Updated venue draft is available for owner review. Publish it.',
+        )
+      if (mutation === 'agreement only in transcript')
+        messages[1]!.content = material
+          .replace('版本 v1\n', '')
+          .replace('[assistant]', '[user] 版本 v1\n[assistant]')
+      if (mutation === 'candidate only in transcript')
+        messages[1]!.content = material
+          .replace('- Acceptance draft 2', '（无）')
+          .replace('[assistant]', '[user] Acceptance draft 2\n[assistant]')
+      if (mutation === 'final outside transcript')
+        messages[1]!.content = material
+          .replace(
+            '[assistant] Updated venue draft is available for owner review.',
+            '[assistant] Other answer',
+          )
+          .replace(
+            '- Acceptance draft 2',
+            '- Acceptance draft 2\n[assistant] Updated venue draft is available for owner review.',
+          )
+      if (mutation === 'duplicate section')
+        messages[1]!.content = material.replace(
+          '# 来源 Run',
+          '# 本次执行登记过的 Artifact\n- Acceptance draft 2\n\n# 来源 Run',
+        )
       if (mutation === 'wrong role') messages[0]!.role = 'user'
       const options = { tools: mutation === 'tools' ? ['write'] : [] }
       if (mutation === 'valid' || mutation === 'duplicate') {
@@ -453,6 +505,53 @@ describe('RD05a combined replay over loopback HTTP', () => {
       } else await expectRejected(session, messages, options)
     })
   })
+
+  it.each([false, true])(
+    'binds phase-1 handoff to the released final response: released=%s',
+    async (released) => {
+      await withLoopback(async (session) => {
+        const runId = '44444444-4444-4444-8444-444444444444'
+        const input = manifest('first')
+        for (const name of tools) {
+          const call = called(await session.send(input), name)
+          input.push(
+            assistant(call),
+            result(
+              call,
+              name === 'read_work_input'
+                ? 'work input: ' + ids.first + '\n\n' + firstSource
+                : 'Completed.',
+            ),
+          )
+        }
+        const pendingFinal = session.send(input)
+        await vi.waitFor(() => expect(session.replay.firstFinal).toBeDefined())
+        session.replay.fastRunIds = { first: runId, second: '' }
+        const messages: Message[] = [
+          { role: 'system', content: '你是交接整理助手。一次已完成的 Agent 执行即将结束' },
+          {
+            role: 'user',
+            content:
+              '# 任务约定（本次执行的依据）\n版本 v1\n目标：Maintain venue seating and signage\n约束：Venue plan only; draft outputs\n验收条件：Traceable accessible seating\n待确认问题：（未填写）\n\n# 本次执行登记过的 Artifact\n- Acceptance draft 1\n\n# 执行对话（user=指令，assistant=产出）\n[assistant] Site survey prepared.\n\n# 来源 Run\nrunId=' +
+              runId,
+          },
+        ]
+        if (released) {
+          session.replay.releaseFirstFinal()
+          expect(streamed(await pendingFinal)).toEqual({ text: 'Site survey prepared.' })
+          streamed(await session.send(messages, { tools: [] }))
+          expect(session.replay.handoffCalls).toHaveLength(1)
+          session.replay.assertHealthy()
+        } else {
+          expect(session.replay.firstFinal!.writableEnded).toBe(false)
+          await expectRejected(session, messages, { tools: [] })
+          expect(session.replay.handoffCalls).toEqual([])
+          session.replay.releaseFirstFinal()
+          await pendingFinal
+        }
+      })
+    },
+  )
 
   it('accepts ordinary filesystem read/edit tools while replaying only the frozen fast draft calls', async () => {
     await withLoopback(async ({ replay, send }) => {
