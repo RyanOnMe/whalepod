@@ -837,7 +837,15 @@ function accounting(r: Rd05aEvidence) {
     assert.equal(row.taskId, r.slow.taskId, 'suppressed Router belongs to another Task')
     assert.equal(row.purpose, 'router', 'non-Router hidden in suppressed evaluations')
     assert.equal(row.modelStarted, false, 'suppressed Router called a model')
-    assert.equal(row.status, 'cancelled', 'suppressed Router is not cancelled')
+    assert.equal(
+      row.status,
+      'cancelled',
+      `suppressed Router is not cancelled: ${JSON.stringify({
+        evaluationId: row.id,
+        status: row.status,
+        failureCode: row.failureCode,
+      })}`,
+    )
     assert(
       ['input_or_authority_changed', 'input_superseded'].includes(row.failureCode),
       'unexpected suppressed Router reason',
