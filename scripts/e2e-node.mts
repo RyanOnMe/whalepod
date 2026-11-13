@@ -267,6 +267,10 @@ const inputManifests = new Map<
   }
 >()
 let ackDropRemaining = 0
+/** 只吞指定下行命令类型的 ack（R7：run.start）；undefined = 吞任意 command.ack。 */
+let ackDropType: string | undefined
+/** commandId → 下行命令类型；ack 帧只有 commandId，靠它把故障缝对准 run.start。 */
+const commandTypes = new Map<string, string>()
 const ackDropped: string[] = [] // 被吞掉的 ack 事实（取证）
 
 // ---- Runtime driver（真 DshRuntimeDriver + pid / 固定上下文只读观测缝）----
@@ -379,11 +383,22 @@ let sessionSend: (frame: string) => void = () => {}
 
 function sendUplink(frame: string): void {
   try {
-    const parsed = JSON.parse(frame) as { type?: unknown; payload?: { success?: unknown } }
+    const parsed = JSON.parse(frame) as {
+      type?: unknown
+      payload?: { success?: unknown; commandId?: unknown }
+    }
     // R7 故障注入：吞掉接下来 N 条 command.ack（上行出口级——模拟 ack 丢失；
     // Hub 退避重发同一 commandId，Node 按 CommandStore 回旧 ack，绝不启第二 Runtime）。
-    if (parsed.type === 'command.ack' && ackDropRemaining > 0) {
+    // `ackDropType` 可把故障对准某一类命令的 ack（R7 只要 run.start，不被旧命令 ack 吃掉）。
+    if (
+      parsed.type === 'command.ack' &&
+      ackDropRemaining > 0 &&
+      (ackDropType === undefined ||
+        (typeof parsed.payload?.commandId === 'string' &&
+          commandTypes.get(parsed.payload.commandId) === ackDropType))
+    ) {
       ackDropRemaining -= 1
+      if (ackDropRemaining === 0) ackDropType = undefined
       ackDropped.push(frame.slice(0, 200))
       log('command.ack dropped (fault seam)', { remaining: ackDropped.length })
       return
@@ -561,6 +576,8 @@ const session = startDeviceSession({
     process.exit(code)
   },
   onFrame: (frame: NodeDownstream) => {
+    const commandId = (frame as { payload?: { commandId?: unknown } }).payload?.commandId
+    if (typeof commandId === 'string') commandTypes.set(commandId, frame.type)
     void runManager.handleFrame(frame).catch((error: unknown) => {
       log('frame handling failed', {
         error: error instanceof Error ? error.message : String(error),
@@ -648,6 +665,7 @@ const server = createServer((req, res) => {
       }
       case '/ack-drop': {
         ackDropRemaining += Number(body['count'] ?? 1)
+        ackDropType = typeof body['type'] === 'string' ? body['type'] : undefined
         return reply(200, { ok: true, droppedSoFar: ackDropped.length })
       }
       case '/runtimes': {

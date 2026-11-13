@@ -15,7 +15,7 @@
  * 的用例覆盖，此处不重复）；**观察**必须走浏览器，且不得用 reload 兜底。
  */
 import { randomUUID } from 'node:crypto'
-import { env as readEnv } from './helpers.js'
+import { env as readEnv, showAssistant } from './helpers.js'
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 
 // 与其他 Q5 共用环境入口，隔离运行不读取其他工作树的凭据清单。
@@ -126,6 +126,7 @@ test.describe('#140 同组成员零操作实时可见', () => {
     await bob.press('#login-password', 'Enter')
     await expect(bob.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
     await bob.goto(`/tasks/${taskId}`)
+    await showAssistant(bob)
     // ADR-0019：任务房间默认停在「Agent 执行」；留言在独立的「团队讨论」频道里，
     // 观察前先切过去（切频道是观察窗口之前的一次真人动作，此后 Bob 零操作）。
     await bob.getByRole('button', { name: '团队讨论', exact: true }).click()
@@ -138,6 +139,7 @@ test.describe('#140 同组成员零操作实时可见', () => {
 
     // ---- Alice：同任务页面里经 UI 在团队讨论频道留言 ----
     await alice.goto(`/tasks/${taskId}`)
+    await showAssistant(alice)
     await alice.getByRole('button', { name: '团队讨论', exact: true }).click()
     await alice.fill('textarea[name="body"]', '这是 Alice 的实时留言。')
     await alice.keyboard.press('Tab')

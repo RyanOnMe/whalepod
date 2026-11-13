@@ -1,4 +1,4 @@
-import { showAgentCreation } from './helpers.js'
+import { showAgentCreation, showAssistant } from './helpers.js'
 /**
  * P1-19 全链 E2E（Issue #23）：两浏览器 × 真 Hub × 真 Node × 真 Runtime（DSH replay）。
  *
@@ -147,6 +147,7 @@ async function setupTeamAndTask(): Promise<void> {
   await expect(assignee).toContainText('Bob')
   await createTaskForm.getByRole('button', { name: /创建任务/ }).click()
   await alice.waitForURL(/\/tasks\//)
+  await showAssistant(alice)
   const taskId = new URL(alice.url()).pathname.split('/').pop()
   if (taskId === undefined || taskId === '') throw new Error('Task URL 无法解析')
   shared.taskId = taskId
@@ -158,6 +159,7 @@ async function setupTeamAndTask(): Promise<void> {
   await fillAndEnter(bob, '#login-password', BOB_PASSWORD)
   await expect(bob.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
   await bob.goto(`/tasks/${shared.taskId}`)
+  await showAssistant(bob)
   await bob.getByRole('button', { name: '接受任务' }).click()
   await expect(bob.getByTestId('task-assignment-state')).toHaveText('已接受')
   shared.bobCookie = await sessionCookie(shared.bobContext!)
@@ -206,15 +208,21 @@ async function pairNodeViaUiAndControl(): Promise<void> {
   shared.deviceId = node.deviceId
   // 设备/Workspace 经 inventory 投影到 Hub 后，RunLauncher 才选得到（真人可见性）。
   await shared.bob!.reload()
+  await showAssistant(shared.bob!)
 }
 
-async function startRunViaUi(agentName: string, promptText: string): Promise<string> {
+async function startRunViaUi(
+  agentName: string,
+  promptText: string,
+  beforeSend?: () => Promise<unknown>,
+): Promise<string> {
   const bob = shared.bob!
   // 真人节奏：断链场景里 Node 以产品退避自动重连（封顶 30s 一档），页面快照可能
   // 截在「离线」瞬间——先经 HTTP 观察设备回到在线，再刷新取新快照（两步都是
   // 真实用户动作；不加速重连本身）。
   await waitDeviceOnline()
   await bob.reload()
+  await showAssistant(bob)
   // ADR-0019：这一条任务上多半已经有运行，底部输入框默认落到「继续会话」——要新起一段
   // 执行，用户必须明确改选「开始新执行」（真人同一条路）。
   await chooseNewExecution(bob)
@@ -235,7 +243,9 @@ async function startRunViaUi(agentName: string, promptText: string): Promise<str
   await selectFromMenu(bob.getByLabel('选择设备'), /e2e-node（在线）/)
   await selectFromMenu(bob.getByLabel('选择 Workspace'), 'e2e-ws')
   await bob.getByLabel('指令').fill(promptText)
-  await bob.getByRole('button', { name: '开始执行' }).click()
+  // 故障注入紧贴发送：页面导航/视图切换期间可能有别的 ack 在飞，提前注入会被它吃掉。
+  if (beforeSend !== undefined) await beforeSend()
+  await bob.getByRole('button', { name: '发给助手' }).click()
   // 运行段出现在连续对话里（责任人真人路径；ADR-0019）。
   await expect(bob.locator('[data-testid="run-segment"]').first()).toBeVisible()
   const runId = await waitForFreshRunId()
@@ -331,12 +341,14 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     await pairNodeViaUiAndControl()
 
     await shared.bob!.goto(`/tasks/${shared.taskId}`)
+    await showAssistant(shared.bob!)
     const runId = await startRunViaUi('builder', '起草验收报告初稿')
     shared.builderRunId = runId
 
     // Runtime 真跑到 waiting_approval（DB 事实先行判定），再经 reload 驱动 UI 呈现。
     await waitForRunStatus(runId, 'waiting_approval', 120_000)
     await shared.bob!.reload()
+    await showAssistant(shared.bob!)
 
     // 审批卡：Bob（owner）见完整卡；工具名与 preview 来自 replay 工具链。
     const card = shared.bob!.getByTestId('approval-card')
@@ -347,6 +359,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
 
     // G5-01 两端 diff（走 UI）：Alice 只见等待态，不见 owner 卡正文。
     await shared.alice!.goto(`/tasks/${shared.taskId}`)
+    await showAssistant(shared.alice!)
     await expect(shared.alice!.getByTestId('approval-waiting')).toBeVisible({ timeout: 30_000 })
     await expect(shared.alice!.getByTestId('approval-card')).toHaveCount(0)
 
@@ -369,12 +382,14 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     // 拿 bug 当判据。改为核验 Run 事件行里的审批决定（owner 受众投影，03 §8）：
     // reload + 选中该 Run（与 G5-04 同法），这是「决定真的落到事件流」的持久证据。
     await shared.bob!.reload()
+    await showAssistant(shared.bob!)
     await selectRun(shared.bob!, runId)
     await expect(eventsOf(shared.bob!, runId)).toContainText('审批决定：已批准一次')
 
     // Runtime 继续 → 完成（DB 事实判定；UI 徽标经 reload 核验）。
     const done = await waitForRunStatus(runId, 'completed', 120_000)
     await shared.bob!.reload()
+    await showAssistant(shared.bob!)
     await expect(shared.bob!.getByText('已完成').first()).toBeVisible({ timeout: 30_000 })
     expect(done.artifacts.length).toBe(1)
     shared.artifactId = done.artifacts[0]!.id
@@ -392,9 +407,11 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     await setRuntimeFixture('rejection')
     try {
       await shared.bob!.reload()
+      await showAssistant(shared.bob!)
       const runId = await startRunViaUi('builder', 'G5-04：拒绝这次发布')
       await waitForRunStatus(runId, 'waiting_approval', 120_000)
       await shared.bob!.reload()
+      await showAssistant(shared.bob!)
 
       // 键盘可达：焦点到「拒绝」按钮 Enter 激活（G5-04 驱动走 UI）。
       const card = shared.bob!.getByTestId('approval-card')
@@ -419,9 +436,11 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
       // owner/project 双受众同形投影（03 §8），Bob/Alice 各自 reload+点选后
       // 都应看到「审批决定：已拒绝」。
       await shared.bob!.reload()
+      await showAssistant(shared.bob!)
       await selectRun(shared.bob!, runId)
       await expect(eventsOf(shared.bob!, runId)).toContainText('审批决定：已拒绝')
       await shared.alice!.reload()
+      await showAssistant(shared.alice!)
       await selectRun(shared.alice!, runId)
       await expect(eventsOf(shared.alice!, runId)).toContainText('审批决定：已拒绝')
 
@@ -444,6 +463,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
   test('G6-04 Artifact：Bob 发布 candidate；Alice 下载且与 digest 一致', async () => {
     test.setTimeout(180_000)
     await shared.bob!.reload()
+    await showAssistant(shared.bob!)
     await shared.bob!.getByRole('button', { name: '交付与复核', exact: true }).click()
     const publish = shared.bob!.getByTestId('artifact-publish-button')
     await expect(publish).toBeVisible({ timeout: 30_000 })
@@ -456,6 +476,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     )
     expect(beforePublish?.status).toBe('candidate')
     await shared.alice!.reload()
+    await showAssistant(shared.alice!)
     await expect(shared.alice!.getByTestId('artifact-download-button')).toHaveCount(0)
     const deniedCandidate = await fetch(
       `${env().hubOrigin}/api/v1/artifacts/${shared.artifactId}/content`,
@@ -469,6 +490,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
 
     // Alice（另一浏览器上下文）立即能下载（UI 下载 + HTTP 双核验）。
     await shared.alice!.reload()
+    await showAssistant(shared.alice!)
     await shared.alice!.getByRole('button', { name: '交付与复核', exact: true }).click()
     await expect(
       shared.alice!.locator('.artifact-title', { hasText: 'Report' }).first(),
@@ -533,13 +555,14 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
   test('G6-07 Reviewer Run 经输入清单受控消费 Artifact', async () => {
     test.setTimeout(240_000)
     await shared.bob!.reload()
+    await showAssistant(shared.bob!)
     await shared.bob!.getByRole('button', { name: '交付与复核', exact: true }).click()
     // #326：从具体已发布产出进入统一入口，不靠用户自己拼通用运行路径。
     await shared.bob!.getByRole('button', { name: '更多文件操作', exact: true }).click()
     await shared.bob!.getByRole('menuitem', { name: '发起复核', exact: true }).click()
     await expect(shared.bob!.getByTestId('review-scope')).toContainText('材料副本只读')
     await expect(shared.bob!.getByRole('checkbox', { name: '复核材料：Report' })).toBeChecked()
-    await expect(shared.bob!.getByRole('button', { name: '开始复核', exact: true })).toBeDisabled()
+    await expect(shared.bob!.getByRole('button', { name: '发给助手', exact: true })).toBeDisabled()
     await selectFromMenu(shared.bob!.getByLabel('选择 Agent'), 'reviewer')
     await shared.bob!.getByLabel('指令').fill('复核已发布报告')
     const responsePromise = shared.bob!.waitForResponse(
@@ -553,7 +576,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
       path: join(reviewEvidence, 'review-settings.png'),
       fullPage: true,
     })
-    await shared.bob!.getByRole('button', { name: '开始复核', exact: true }).click()
+    await shared.bob!.getByRole('button', { name: '发给助手', exact: true }).click()
     const response = await responsePromise
     expect(response.status()).toBe(201)
     expect(response.request().postDataJSON()).toMatchObject({
@@ -567,6 +590,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     // Reviewer 同样触发 ask（replay 快照）→ 再走一次真人批准。
     await waitForRunStatus(runId, 'waiting_approval', 120_000)
     await shared.bob!.reload()
+    await showAssistant(shared.bob!)
     await expect(shared.bob!.getByTestId('approval-card')).toBeVisible({ timeout: 30_000 })
     await shared.bob!.getByTestId('approve-button').click()
     await waitForRunStatus(runId, 'completed', 120_000)
@@ -587,9 +611,11 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     expect(builderWsPath.length).toBeGreaterThan(0)
     expect(manifest.manifestText).not.toContain(builderWsPath)
     await shared.bob!.reload()
+    await showAssistant(shared.bob!)
     await selectRun(shared.bob!, runId)
     await expect(eventsOf(shared.bob!, runId)).not.toContainText(builderWsPath)
     await shared.alice!.reload()
+    await showAssistant(shared.alice!)
     await selectRun(shared.alice!, runId)
     await expect(eventsOf(shared.alice!, runId)).not.toContainText(builderWsPath)
     await shared.bob!.getByRole('button', { name: '运行详情', exact: true }).click()
@@ -629,6 +655,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
     await setRuntimeFixture('basic')
     try {
       await shared.bob!.reload()
+      await showAssistant(shared.bob!)
       const runId = await startRunViaUi('builder', 'hello replay')
       await waitForRunStatus(runId, 'completed', 120_000)
 
@@ -658,6 +685,7 @@ test.describe('P1-19 全链：Builder Run → 审批 → Artifact → Reviewer�
 
       // Alice（成员）：同一动作——服务端受众过滤后，owner 行零出现，只见缩水产品。
       await shared.alice!.reload()
+      await showAssistant(shared.alice!)
       await selectRun(shared.alice!, runId)
       const aliceEvents = eventsOf(shared.alice!, runId)
       await expect(aliceEvents).toBeVisible({ timeout: 30_000 })
@@ -698,6 +726,7 @@ test.describe('P1-19 恢复场景（R1/R4/R5/R7/R8/R9）', () => {
 
   async function startTrackedRun(promptText: string): Promise<string> {
     await shared.bob!.reload()
+    await showAssistant(shared.bob!)
     const runId = await startRunViaUi('builder', promptText)
     await waitForRunStatus(runId, 'waiting_approval', 120_000)
     return runId
@@ -705,6 +734,7 @@ test.describe('P1-19 恢复场景（R1/R4/R5/R7/R8/R9）', () => {
 
   async function approveAndComplete(runId: string): Promise<void> {
     await shared.bob!.reload()
+    await showAssistant(shared.bob!)
     await expect(shared.bob!.getByTestId('approval-card')).toBeVisible({ timeout: 30_000 })
     await shared.bob!.getByTestId('approve-button').click()
     await waitForRunStatus(runId, 'completed', 120_000)
@@ -774,17 +804,31 @@ test.describe('P1-19 恢复场景（R1/R4/R5/R7/R8/R9）', () => {
 
     // UI 呈现（责任人 reload 后见「丢失」徽标 + 未知副作用警示）。
     await shared.bob!.reload()
+    await showAssistant(shared.bob!)
     await expect(shared.bob!.getByText('丢失').first()).toBeVisible({ timeout: 30_000 })
     await waitForRuntimeReleased(runId) // #88：Hub 判 lost 后心跳仍报 active → admin run.cancel 收敛，进程由产品路径回收。
   })
 
   test('R7：Outbox 重发按 commandId 幂等——只启动一个 Runtime', async () => {
     test.setTimeout(300_000)
-    await dropAckCount(1) // 丢掉 run.start 的 command.ack → Hub 必重发
+    // 上一支场景的终态清理/取消 ack 可能还在路上：先让它们落地，否则故障缝会吞错帧。
+    await sleep(5_000)
     await shared.bob!.reload()
-    const runId = await startRunViaUi('builder', 'R7：ack 丢失重发')
+    await showAssistant(shared.bob!)
+    // 吞掉接下来几条 command.ack（含 run.start）→ Hub 必重发
+    const runId = await startRunViaUi('builder', 'R7：ack 丢失重发', () =>
+      dropAckCount(1, 'run.start'),
+    )
     await waitForRunStatus(runId, 'waiting_approval', 120_000)
 
+    // 重发由 outbox 的重试节拍驱动，不在 Run 进审批的那一刻必然发生——等它真的发生。
+    await expect
+      .poll(
+        async () =>
+          (await getRunFact(runId)).outbox.find((row) => row.type === 'run.start')?.attempts ?? 0,
+        { timeout: 60_000 },
+      )
+      .toBeGreaterThanOrEqual(2)
     const fact = await getRunFact(runId)
     const startRows = fact.outbox.filter((r) => r.type === 'run.start')
     expect(startRows.length).toBe(1)
@@ -802,6 +846,7 @@ test.describe('P1-19 恢复场景（R1/R4/R5/R7/R8/R9）', () => {
     await setupTeamAndTask()
     await pairNodeViaUiAndControl()
     await shared.bob!.goto(`/tasks/${shared.taskId}`)
+    await showAssistant(shared.bob!)
     const faultId = randomUUID()
     await holdNodeConnection(faultId)
     let released = false
@@ -910,6 +955,7 @@ test.describe('P1-19 恢复场景（R1/R4/R5/R7/R8/R9）', () => {
     expect((await getRunFact(runId)).run.status).toBe('lost') // 不复活
 
     await shared.bob!.reload()
+    await showAssistant(shared.bob!)
     await expect(shared.bob!.getByText('丢失').first()).toBeVisible({ timeout: 30_000 })
     shared.lostRunId = runId
   })
@@ -926,10 +972,12 @@ test.describe('P1-19 Run 行动（G7-01 取消 / G7-04 重跑血缘）', () => {
   test('G7-01：等待审批的 Run 经 UI 取消——终态 cancelled 且 Runtime 进程收尾', async () => {
     test.setTimeout(300_000)
     await shared.bob!.reload()
+    await showAssistant(shared.bob!)
     const runId = await startRunViaUi('builder', 'G7-01：取消我')
     await waitForRunStatus(runId, 'waiting_approval', 120_000)
 
     await shared.bob!.reload()
+    await showAssistant(shared.bob!)
     await selectRun(shared.bob!, runId)
     const cancel = shared.bob!.getByRole('button', { name: '取消 Run' })
     await expect(cancel).toBeVisible()
@@ -962,7 +1010,9 @@ test.describe('P1-19 Run 行动（G7-01 取消 / G7-04 重跑血缘）', () => {
     )
     expect(denied.status).toBe(409)
     await shared.bob!.reload()
-    await expect(shared.bob!.getByText('已取消').first()).toBeVisible({ timeout: 30_000 })
+    await showAssistant(shared.bob!)
+    // 段头活动行是可见的终态事实；事件记录默认折叠，不能拿它当可见性判据。
+    await expect(shared.bob!.getByText('本次运行已取消')).toBeVisible({ timeout: 30_000 })
     shared.cancelledRunId = runId
   })
 
@@ -972,6 +1022,7 @@ test.describe('P1-19 Run 行动（G7-01 取消 / G7-04 重跑血缘）', () => {
     expect(sourceRunId).toBeDefined()
 
     await shared.bob!.reload()
+    await showAssistant(shared.bob!)
     await selectRun(shared.bob!, sourceRunId!)
     await shared.bob!.getByRole('button', { name: '重跑此 Run' }).click()
     // 表单里的输入框 id 带 runId 后缀（每个 Run 一套），按标签定位。
@@ -999,6 +1050,7 @@ test.describe('P1-19 Run 行动（G7-01 取消 / G7-04 重跑血缘）', () => {
     // UI 呈现（#162）：血缘句说「重跑自第 N 次运行」，来源 id 只在 title 上悬停可见
     // ——不再有「由 Run <前8位> 重跑」这种拿短 id 当标签的写法。reload 取新快照后再点选。
     await shared.bob!.reload()
+    await showAssistant(shared.bob!)
     await selectRun(shared.bob!, newRunId)
     // ADR-0019：血缘、设备、时间与版本都在运行详情里（段头只留一个简短状态）。
     const detail = shared.bob!.getByRole('region', { name: '工作区详情' })
@@ -1029,6 +1081,7 @@ test.describe('P1-19 Run 行动（G7-01 取消 / G7-04 重跑血缘）', () => {
 
 async function approveAndCompleteLoose(runId: string): Promise<void> {
   await shared.bob!.reload()
+  await showAssistant(shared.bob!)
   await expect(shared.bob!.getByTestId('approval-card')).toBeVisible({ timeout: 30_000 })
   await shared.bob!.getByTestId('approve-button').click()
   await waitForRunStatus(runId, 'completed', 120_000)
@@ -1051,6 +1104,7 @@ test('交付闭环：意见发布 → 明确返回产出会话修订 → 重新�
     dshSessionId: string
   }
   await bob.reload()
+  await showAssistant(bob)
   await bob.getByRole('button', { name: '交付与复核', exact: true }).click()
   const feedbackRow = bob
     .locator('.artifact-item')
@@ -1069,6 +1123,7 @@ test('交付闭环：意见发布 → 明确返回产出会话修订 → 重新�
   await bob.getByRole('button', { name: '确认提交验收' }).click()
   await expect(bob.locator('.badge-task-in_review')).toBeVisible()
   await alice.reload()
+  await showAssistant(alice)
   await expect(alice.getByRole('button', { name: '完成任务', exact: true })).toHaveCount(0)
   const draft = '根据已发布复核意见调整初稿，并说明修订内容。'
   await bob.getByLabel('指令', { exact: true }).fill(draft)
@@ -1076,7 +1131,7 @@ test('交付闭环：意见发布 → 明确返回产出会话修订 → 重新�
   await bob.getByRole('menuitem', { name: '根据意见修订' }).click()
   await expect(bob.getByLabel('指令', { exact: true })).toHaveValue(draft)
   await expect(bob.getByLabel('来源执行')).toContainText('选择要继续的会话')
-  await expect(bob.getByRole('button', { name: '继续会话', exact: true })).toBeDisabled()
+  await expect(bob.getByRole('button', { name: '发给助手', exact: true })).toBeDisabled()
   await selectFromMenu(bob.getByLabel('来源执行'), /^第 1 次运行$/)
   await expect(bob.getByTestId('execution-context')).toContainText('builder')
   const responsePromise = bob.waitForResponse(
@@ -1087,7 +1142,7 @@ test('交付闭环：意见发布 → 明确返回产出会话修订 → 重新�
   const evidence = join(process.cwd(), 'artifacts', 'evidence', 'delivery-revision')
   await mkdir(evidence, { recursive: true })
   await bob.screenshot({ path: join(evidence, 'explicit-producer.png'), fullPage: true })
-  await bob.getByRole('button', { name: '继续会话', exact: true }).click()
+  await bob.getByRole('button', { name: '发给助手', exact: true }).click()
   const response = await responsePromise
   expect(response.status()).toBe(201)
   expect(response.request().postDataJSON()).toMatchObject({
@@ -1124,11 +1179,13 @@ test('交付闭环：意见发布 → 明确返回产出会话修订 → 重新�
   )
   expect(revisedArtifact).toBeDefined()
   await bob.reload()
+  await showAssistant(bob)
   await bob.getByRole('button', { name: '交付与复核', exact: true }).click()
   const revisedRow = bob
     .locator('.artifact-item')
     .filter({ has: bob.locator(`dd[title="${revisedId}"]`) })
   await alice.reload()
+  await showAssistant(alice)
   await alice.getByRole('button', { name: '交付与复核', exact: true }).click()
   await expect(
     alice.locator('.artifact-item').filter({ has: alice.locator(`dd[title="${revisedId}"]`) }),
@@ -1138,6 +1195,7 @@ test('交付闭环：意见发布 → 明确返回产出会话修订 → 重新�
   await revisedRow.getByTestId('artifact-publish-button').click()
   await bob.getByRole('button', { name: '确认发布给团队' }).click()
   await alice.reload()
+  await showAssistant(alice)
   await expect(
     alice.locator('.artifact-item').filter({ has: alice.locator(`dd[title="${revisedId}"]`) }),
   ).toHaveCount(1)
@@ -1159,6 +1217,7 @@ test('交付闭环：意见发布 → 明确返回产出会话修订 → 重新�
   await bob.getByRole('button', { name: '确认完成任务' }).click()
   await expect(bob.locator('.badge-task-done')).toBeVisible()
   await alice.reload()
+  await showAssistant(alice)
   await expect(alice.locator('.badge-task-done')).toBeVisible()
   await writeFile(
     join(evidence, 'result.json'),
@@ -1306,6 +1365,7 @@ test('个人行动入口：双用户五类事项只读定位、真人确认与�
     await waitDeviceOnline()
     const bob = shared.bob!
     await bob.goto(`/tasks/${taskId}`)
+    await showAssistant(bob)
     await chooseNewExecution(bob)
     await selectFromMenu(bob.getByLabel('选择 Agent'), 'builder')
     await selectFromMenu(bob.getByLabel('选择设备'), /e2e-node（在线）/)
@@ -1316,7 +1376,7 @@ test('个人行动入口：双用户五类事项只读定位、真人确认与�
         response.url().endsWith(`/tasks/${taskId}/instructions`) &&
         response.request().method() === 'POST',
     )
-    await bob.getByRole('button', { name: '开始执行', exact: true }).click()
+    await bob.getByRole('button', { name: '发给助手', exact: true }).click()
     const started = await start
     expect(started.status()).toBe(201)
     const runId = (await started.json()).data.runId as string

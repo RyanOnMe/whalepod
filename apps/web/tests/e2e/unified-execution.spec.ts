@@ -1,4 +1,4 @@
-import { showAgentCreation } from './helpers.js'
+import { showAgentCreation, showAssistant } from './helpers.js'
 import { expect, test } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
@@ -82,17 +82,19 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     await owner.locator('input[id^="task-title-"]').fill('开始并继续同一会话')
     await owner.getByRole('button', { name: '创建任务', exact: true }).click()
     await owner.waitForURL(/\/tasks\//)
+    await showAssistant(owner)
     const taskId = new URL(owner.url()).pathname.split('/').pop()!
     await owner.getByRole('button', { name: '接受任务' }).click()
     await expect(owner.getByTestId('task-assignment-state')).toHaveText('已接受')
     await member.goto(`/tasks/${taskId}`)
+    await showAssistant(member)
     await expect(member.getByTestId('execution-responsibility')).toContainText('Alice')
     await member.getByRole('link', { name: '前往讨论' }).click()
     await expect(member.locator('#comments-heading')).toBeFocused()
-    await expect(member.getByTestId('execution-blocker')).toContainText('只有责任人和已授权成员')
+    await expect(member.getByTestId('execution-blocker')).toContainText('负责交办')
     await expect(member.getByLabel('指令', { exact: true })).toHaveCount(0)
-    const execute = owner.locator('[aria-labelledby="instructions-heading"]')
-    await expect(execute.locator('textarea')).toHaveCount(1)
+    // #548：底部输入在共享 dock 里，不再挂在执行区 section 内。
+    await expect(owner.getByTestId('assistant-composer').locator('textarea')).toHaveCount(1)
     await selectFromMenu(owner.getByLabel('选择 Agent'), 'Builder')
     let instructionPosts = 0
     let preparationPosts = 0
@@ -156,7 +158,7 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     await expect(owner.getByLabel('指令', { exact: true })).toHaveValue(returnDraft)
     await expect(owner.getByLabel('执行方式')).toContainText('开始新执行')
     await expect(owner.getByTestId('preparation-status')).toContainText('本次准备条件尚未确认')
-    await expect(owner.getByRole('button', { name: '开始执行' })).toBeEnabled()
+    await expect(owner.getByRole('button', { name: '发给助手' })).toBeEnabled()
     expect(
       await owner
         .locator(
@@ -178,13 +180,13 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     const selectionAfter = (await returnCheck).request().postDataJSON() as typeof selectionBefore
     expect(selectionAfter).toEqual(selectionBefore)
     await expect(owner.getByTestId('preparation-status')).toContainText('已确认可用')
-    await expect(owner.getByRole('button', { name: '开始执行' })).toBeEnabled()
+    await expect(owner.getByRole('button', { name: '发给助手' })).toBeEnabled()
     const startResponse = owner.waitForResponse(
       (response) =>
         response.url().endsWith(`/tasks/${taskId}/instructions`) &&
         response.request().method() === 'POST',
     )
-    await owner.getByRole('button', { name: '开始执行' }).click()
+    await owner.getByRole('button', { name: '发给助手' }).click()
     const firstReply = await startResponse
     expect(firstReply.status()).toBe(201)
     const submitted = firstReply.request().postDataJSON() as typeof selectionBefore & {
@@ -217,25 +219,28 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
         response.url().endsWith(`/tasks/${taskId}/instructions`) &&
         response.request().method() === 'POST',
     )
-    await member.getByRole('button', { name: '发送追问', exact: true }).click()
+    await member.getByRole('button', { name: '发给助手', exact: true }).click()
     expect((await (await queuedResponse).json()).data.outcome).toBe('queued')
     await memberDraft.fill('保留撤销时正在编辑的草稿')
     await owner.getByTestId('driver-revoke').click()
-    await expect(memberDraft).toBeDisabled()
+    // #548：权限撤回后仍可继续编辑，只禁用提交。
+    await expect(memberDraft).toBeEditable()
+    await expect(member.getByRole('button', { name: '发给助手', exact: true })).toBeDisabled()
     await expect(memberDraft).toHaveValue('保留撤销时正在编辑的草稿')
     await expect(member.getByTestId('instruction-error')).toContainText('发送者已失去指令权限')
     await owner.goto(`/tasks/${taskId}`)
+    await showAssistant(owner)
 
     const draft = '请保留上文继续检查'
     const box = owner.getByLabel('指令', { exact: true })
-    await expect(owner.getByRole('button', { name: '发送追问' })).toBeEnabled()
+    await expect(owner.getByRole('button', { name: '发给助手' })).toBeEnabled()
     await box.fill(draft)
     await owner.getByTestId('approve-button').click()
     const completedFirst = await waitForRunStatus(firstRunId, 'completed')
     await waitForRuntimeReleased(firstRunId)
-    await expect(owner.getByTestId('execution-blocker')).toContainText('草稿仍保留')
+    await expect(owner.getByTestId('execution-blocker')).toContainText('刚才的对话已经结束')
     await expect(box).toHaveValue(draft)
-    await expect(owner.getByRole('button', { name: '发送追问' })).toBeDisabled()
+    await expect(owner.getByRole('button', { name: '发给助手' })).toBeDisabled()
     const before = (await hubApi(cookie, 'GET', `/runs/${firstRunId}`)).data as {
       agentId: string
       dshSessionId: string
@@ -252,13 +257,13 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     expect(actualSelection).toEqual(selectionBefore)
     await selectFromMenu(owner.getByLabel('执行方式'), /继续会话/)
     await expect(owner.getByLabel('指令', { exact: true })).toHaveValue(draft)
-    await expect(owner.getByRole('button', { name: '继续会话', exact: true })).toBeEnabled()
+    await expect(owner.getByRole('button', { name: '发给助手', exact: true })).toBeEnabled()
     const resumeResponse = owner.waitForResponse(
       (response) =>
         response.url().endsWith(`/tasks/${taskId}/instructions`) &&
         response.request().method() === 'POST',
     )
-    await owner.getByRole('button', { name: '继续会话', exact: true }).click()
+    await owner.getByRole('button', { name: '发给助手', exact: true }).click()
     const continuedReply = await resumeResponse
     expect(continuedReply.status()).toBe(201)
     const resumedRunId = (await continuedReply.json()).data.runId as string

@@ -18,13 +18,31 @@ export interface TestAppResult extends RenderResult {
   fetchMock: ReturnType<typeof installFetch>
 }
 
+export interface RenderAppOptions {
+  /**
+   * 任务页初始视图（#548）。
+   *
+   * 生产默认是普通链接进入「发给团队」；既有执行侧用例判的是执行区，
+   * 默认从显式 `#task-execution` 锚点进入（审批/交接/旧执行卡片在真实页面
+   * 也走这个锚点）。断言普通链接默认视图的用例显式传 `'team'`。
+   */
+  taskView?: 'team' | 'assistant'
+}
+
+function resolveTaskRoomPath(initialPath: string, options: RenderAppOptions): string {
+  if (options.taskView !== 'assistant') return initialPath
+  // 只处理裸任务链接：带 hash 的深链保持原样。
+  return /^\/tasks\/[^/?#]+$/.test(initialPath) ? `${initialPath}#task-execution` : initialPath
+}
+
 export function renderApp(
   initialPath: string,
   handlers: readonly MockHandler[],
+  options: RenderAppOptions = { taskView: 'assistant' },
 ): TestAppResult & { router: ReturnType<typeof createTestRouter> } {
   const fetchMock = installFetch(handlers)
   const queryClient = makeQueryClient({ retry: false })
-  const router = createTestRouter(queryClient, [initialPath])
+  const router = createTestRouter(queryClient, [resolveTaskRoomPath(initialPath, options)])
   const view = render(
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />

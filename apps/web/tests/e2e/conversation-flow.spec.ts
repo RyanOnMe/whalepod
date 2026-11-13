@@ -1,4 +1,4 @@
-import { showAgentCreation } from './helpers.js'
+import { showAgentCreation, showAssistant } from './helpers.js'
 /**
  * P1-393 连续对话工作区验收（Q5，project `p1-393`）。
  *
@@ -35,14 +35,15 @@ import {
   env,
   fillAndEnter,
   getRunFact,
+  holdNodeConnection,
   hubApi,
   seedPluginPack,
   selectFromMenu,
   sessionCookie,
+  releaseNodeConnection,
   setRuntimeFixture,
   sleep,
   startNode,
-  stopNode,
   waitForRunStatus,
   waitForRuntimeReleased,
 } from './helpers.js'
@@ -254,6 +255,7 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
   await selectFromMenu(createForm.locator('button[id^="task-assignee-"]'), /Alice/)
   await createForm.getByRole('button', { name: /创建任务/ }).click()
   await alice.waitForURL(/\/tasks\/[0-9a-f-]{36}/)
+  await showAssistant(alice)
   shared.taskId = new URL(alice.url()).pathname.split('/').pop()!
   await alice.getByRole('button', { name: '接受任务' }).click()
   await expect(alice.getByTestId('task-assignment-state')).toHaveText('已接受')
@@ -264,6 +266,7 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
   await expect(bob.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
   shared.bobCookie = await sessionCookie(shared.bobContext!)
   await bob.goto(`/tasks/${shared.taskId}`)
+  await showAssistant(bob)
   await expect(bob.getByTestId('execution-composer')).toBeVisible({ timeout: 30_000 })
 
   // 责任人把驱动权授予 Bob（真实权限页；后面要用撤销把它收回）。
@@ -272,7 +275,10 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
   await alice.getByRole('button', { name: '授权', exact: true }).click()
   await expect(alice.getByTestId('driver-revoke')).toBeVisible()
   await alice.goto(`/tasks/${shared.taskId}`)
+  await showAssistant(alice)
   await bob.reload()
+  // reload 丢掉页面内视图状态；显式回到执行侧（与用户点「请助手处理」同一入口）。
+  await showAssistant(bob)
   await expect(bob.getByLabel('指令', { exact: true })).toBeEnabled({ timeout: 30_000 })
 
   // ---------- 1. 第一次执行：无历史时默认就是"开始新执行" ----------
@@ -287,7 +293,7 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
   await selectFromMenu(alice.getByLabel('选择设备'), /e2e-node（在线）/)
   await selectFromMenu(alice.getByLabel('选择 Workspace'), 'e2e-ws')
   await alice.getByLabel('指令').fill('第一次执行：整理验收报告。')
-  await alice.getByRole('button', { name: '开始执行' }).click()
+  await alice.getByRole('button', { name: '发给助手' }).click()
   const firstRunId = await waitForFreshRunId(known)
   known.add(firstRunId)
   runIds.push(firstRunId)
@@ -346,7 +352,7 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
       response.url().endsWith(`/tasks/${shared.taskId}/instructions`) &&
       response.request().method() === 'POST',
   )
-  await alice.getByRole('button', { name: '继续会话', exact: true }).click()
+  await alice.getByRole('button', { name: '发给助手', exact: true }).click()
   const resumeResponse = await resumePost
   expect(resumeResponse.status()).toBe(201)
   expect(resumeResponse.request().postDataJSON()).toMatchObject({
@@ -373,7 +379,7 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
       response.url().endsWith(`/tasks/${shared.taskId}/instructions`) &&
       response.request().method() === 'POST',
   )
-  await bob.getByRole('button', { name: '发送追问', exact: true }).click()
+  await bob.getByRole('button', { name: '发给助手', exact: true }).click()
   const queuedJson = (await (await queuedPost).json()) as { data: { outcome: string } }
   expect(queuedJson.data.outcome).toBe('queued')
   const queuedInstruction = (await room()).instructions.find(
@@ -387,6 +393,7 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
   await alice.getByTestId('driver-revoke').click()
   await expect(alice.getByTestId('driver-revoke')).toHaveCount(0)
   await alice.goto(`/tasks/${shared.taskId}`)
+  await showAssistant(alice)
   // 被拒指令：状态与理由同列，落在**它所属的那一段**里（成员页与责任人页都要有）。
   const rejected = (await room()).instructions.find((row) => row.id === queuedInstruction.id)!
   expect(rejected.instructionState).toBe('rejected')
@@ -398,9 +405,11 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
   await expect(segmentOf(alice, secondRunId).getByTestId('instruction-error')).toContainText(
     '发送者已失去指令权限',
   )
-  // 撤销即时生效：成员的执行入口被挡，但草稿保留。
-  await expect(bob.getByTestId('execution-blocker')).toContainText('只有责任人和已授权成员')
+  // 撤销即时生效：成员的发入口被挡，但草稿仍可继续编辑（#548：能编辑与能提交分开）。
+  await expect(bob.getByTestId('execution-blocker')).toContainText('负责交办')
   await expect(bob.getByLabel('指令')).toHaveValue('撤销时我正在编辑的草稿')
+  await expect(bob.getByLabel('指令')).toBeEditable()
+  await expect(bob.getByRole('button', { name: '发给助手', exact: true })).toBeDisabled()
   await bob.screenshot({ path: join(EVIDENCE_DIR, 'rejected-instruction-segment.png') })
   facts['permission'] = {
     grantedMemberInstructionRight: true,
@@ -563,7 +572,8 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
   // 判的是**客户端**阻断：本用例首轮实测（#394 修复前）停掉 Node 后续跑仍 201，长出一次
   // 注定失败的运行。服务端现在也按 30s 在线窗口 fail-closed，但界面仍要更早挡住并说清原因
   // （保留草稿），所以这条客户端判据继续保留。
-  await stopNode()
+  const offlineFault = `offline-${randomUUID()}`
+  await holdNodeConnection(offlineFault)
   await waitDeviceOffline()
   const runsBeforeOffline = (await room()).runs.length
   const instructionPostsBeforeOffline = instructionPosts
@@ -592,10 +602,18 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
     }),
   })
   expect(claim.status).toBe(201)
-  await expect(alice.getByTestId('execution-blocker')).toContainText('来源设备当前离线', {
+  await expect(alice.getByTestId('execution-blocker')).toContainText('上次用的电脑没连上', {
     timeout: 60_000,
   })
-  await expect(alice.getByRole('button', { name: '继续会话', exact: true })).toBeDisabled()
+  await expect(alice.getByRole('button', { name: '发给助手', exact: true })).toBeDisabled()
+  // #548：助手暂不可用时仍可继续编辑；团队留言在原有范围内照常可用。
+  await expect(alice.getByLabel('指令')).toBeEditable()
+  await alice.getByTestId('message-recipient-discussion').click()
+  await alice.getByLabel('留言').fill('离线期间团队留言仍可用')
+  await alice.getByTestId('team-composer').getByRole('button', { name: '发给团队' }).click()
+  await expect(alice.getByText('离线期间团队留言仍可用')).toBeVisible({ timeout: 30_000 })
+  await alice.getByTestId('message-recipient-execution').click()
+  await expect(alice.getByLabel('指令')).toHaveValue(draft)
   await expect(alice.getByLabel('执行方式')).toContainText('继续会话')
   await alice.screenshot({ path: join(EVIDENCE_DIR, 'offline-block.png') })
   // 显式切换到新执行（用户自己的决定）：草稿仍在；现场没有在线设备所以起不来，且**不自动发送**。
@@ -603,20 +621,54 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
   await selectFromMenu(alice.getByLabel('执行方式'), /开始新执行/)
   await expect(alice.getByLabel('选择 Agent')).toBeVisible({ timeout: 30_000 })
   await expect(alice.getByLabel('指令')).toHaveValue(draft)
-  await expect(alice.getByRole('button', { name: '开始执行' })).toBeDisabled()
+  await expect(alice.getByRole('button', { name: '发给助手' })).toBeDisabled()
   await sleep(3_000)
   expect((await room()).runs.length).toBe(runsBeforeOffline)
   expect(instructionPosts).toBe(instructionPostsBeforeOffline)
   await expect(alice.getByLabel('指令')).toHaveValue(draft)
   expect(liveFrames).toBeGreaterThan(0)
+  // 原电脑重新连上：只恢复发送按钮，不替用户发送；用户明确点下去才长出新运行。
+  const runsAfterReconnect = (await room()).runs.length
+  const instructionPostsWhileBlocked = instructionPosts
+  await releaseNodeConnection(offlineFault)
+  await expect
+    .poll(
+      async () =>
+        ((await hubApi(shared.cookie!, 'GET', '/devices')).data as Array<{ status: string }>).some(
+          (device) => device.status === 'online',
+        ),
+      { timeout: 90_000 },
+    )
+    .toBe(true)
+  expect(await alice.getByTestId('execution-blocker').count()).toBe(0)
+  // 整页刷新后页面会话内的执行设置不承诺保留（ADR-0019 的页面内存边界）：
+  // 用户要重新确认助手与现场；这一步本身不发送。
+  await selectFromMenu(alice.getByLabel('选择 Agent'), AGENT_NAME)
+  await selectFromMenu(alice.getByLabel('选择设备'), /e2e-node（在线）/)
+  await selectFromMenu(alice.getByLabel('选择 Workspace'), 'e2e-ws')
+  await expect(alice.getByRole('button', { name: '发给助手', exact: true })).toBeEnabled({
+    timeout: 30_000,
+  })
+  expect(instructionPosts).toBe(instructionPostsBeforeOffline)
+  await alice.getByRole('button', { name: '发给助手', exact: true }).click()
+  await expect
+    .poll(() => instructionPosts, { timeout: 30_000 })
+    .toBe(instructionPostsBeforeOffline + 1)
+  await expect
+    .poll(async () => (await room()).runs.length, { timeout: 30_000 })
+    .toBe(runsAfterReconnect + 1)
   facts['offline'] = {
     blockedBy: 'client-guard',
     blockerShown: true,
     draftPreserved: true,
+    editableWhileBlocked: true,
+    teamMessageWorked: true,
     explicitSwitchKeepsDraft: true,
     newRunsAfterAttempt: 0,
     instructionPosts: instructionPostsBeforeOffline,
-    instructionPostsAfterBlock: instructionPosts,
+    instructionPostsAfterBlock: instructionPostsWhileBlocked,
+    reconnectedWithoutAutoSend: true,
+    sentOnlyAfterExplicitClick: true,
     liveFrames,
   }
 })
@@ -792,6 +844,7 @@ test('真实布局：20 段窗口、载入更早的阅读锚点、上翻后新�
   })
 
   await alice.goto(`/tasks/${taskId}`)
+  await showAssistant(alice)
   const transcript = alice.getByTestId('conversation-scroll')
   await expect(transcript).toBeVisible({ timeout: 30_000 })
   const segments = alice.locator('[data-testid="run-segment"]')

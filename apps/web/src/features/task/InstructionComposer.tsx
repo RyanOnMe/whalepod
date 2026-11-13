@@ -62,9 +62,9 @@ const APPROVAL_SOURCE_TEXT: Record<Exclude<ApprovalPreview, null>['source'], str
 }
 
 const OUTCOME_TEXT: Record<InstructionOutcome['outcome'], string> = {
-  started_run: '已起新运行',
-  followup: '已作为追问发给当前运行',
-  queued: '已排队——当前运行开始后放行',
+  started_run: '已提交，等助手开始',
+  followup: '已发给当前助手对话',
+  queued: '已排队，助手开始后放行',
   rejected: '未受理',
 }
 
@@ -213,6 +213,9 @@ export function InstructionComposer({
   // `ApiError` 自带 wire 上的 code（errors.ts），不需要另造助手。
   const offlineGuidance =
     isApiError(error) && (error.code === 'DEVICE_OFFLINE' || error.code === 'DEVICE_REVOKED')
+  // 网络失败/5xx 只说明「没确认」，不能说成「没发出」或「未受理」——两种拒绝已有明确回执。
+  const uncertain = isApiError(error) && (error.status === 0 || error.status >= 500)
+  const submitLabel = mutation.isPending ? '发送中…' : uncertain ? '重试发送' : '发给助手'
   const feedback: SendFeedback = mutation.isPending
     ? 'pending'
     : error !== null
@@ -266,16 +269,9 @@ export function InstructionComposer({
             className="button button-primary instruction-send"
             disabled={blocked || mutation.isPending}
             aria-busy={mutation.isPending}
-            aria-label={
-              mutation.isPending
-                ? '发送中…'
-                : intent?.kind === 'resume'
-                  ? '继续会话'
-                  : intent?.kind === 'followup'
-                    ? '发送追问'
-                    : '发送指令'
-            }
+            aria-label={submitLabel}
             data-feedback={feedback}
+            data-intent={intent?.kind}
             data-instant={instant ? '' : undefined}
             onPointerDown={() => setInstant(false)}
             onKeyDown={(event) => {
@@ -283,15 +279,7 @@ export function InstructionComposer({
             }}
           >
             <InstructionSendIcon feedback={feedback} />
-            {compact
-              ? null
-              : mutation.isPending
-                ? '发送中…'
-                : intent?.kind === 'resume'
-                  ? '继续会话'
-                  : intent?.kind === 'followup'
-                    ? '发送追问'
-                    : '发送指令'}
+            {compact ? null : submitLabel}
           </button>
         }
       >
@@ -303,9 +291,9 @@ export function InstructionComposer({
           name="text"
           rows={2}
           maxLength={10_000}
-          disabled={blocked || mutation.isPending}
+          disabled={mutation.isPending}
           value={text}
-          placeholder={intent?.kind === 'resume' ? '继续上次会话…' : '补充要求或提问…'}
+          placeholder={intent?.kind === 'resume' ? '继续上次对话…' : '想请助手做什么？'}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
             // #229：Cmd/Ctrl+Enter 直发（与提交按钮同一条 form 路径）；纯 Enter 仍是换行。
@@ -330,13 +318,27 @@ export function InstructionComposer({
           ) : null}
         </p>
       ) : null}
+      {uncertain ? (
+        <div className="composer-actions" data-testid="assistant-uncertain">
+          <span>暂时没确认助手是否收到。你写的内容还在。</span>
+          <button
+            type="button"
+            className="button button-quiet"
+            onClick={() => {
+              void queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(taskId) })
+            }}
+          >
+            重新确认
+          </button>
+        </div>
+      ) : null}
       {error !== null ? <ErrorBanner error={error} /> : null}
       {offlineGuidance ? (
         // 409 的含义不是"你写错了"，而是"没有可用的执行目标"——必须告诉用户下一步做什么。
         <p className="mutation-hint" data-testid="instruction-offline-guidance">
           {isApiError(error) && error.code === 'DEVICE_REVOKED'
             ? '来源设备已撤销，无法在该现场续跑；请明确选择开始新执行并重新确认环境。'
-            : '这个任务当前没有可用的执行目标：可以让责任人的设备上线（在「设备」页确认已上报），或在目标选择里显式指定设备与工作区。'}
+            : '上次用的电脑没连上，消息还没发出。你写的内容还在。可以让责任人的设备上线（在「设备」页确认已上报），或明确重新选择执行环境。'}
         </p>
       ) : null}
       {confirmingFullAccess ? (

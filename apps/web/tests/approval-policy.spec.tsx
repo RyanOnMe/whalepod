@@ -264,7 +264,7 @@ describe('#241 RunLauncher：解析为 full_access 时先确认再发', () => {
     await selectOption(user, '选择设备', 'm4-mini（在线）')
     await selectOption(user, '选择 Workspace', 'whalepod')
     await user.type(screen.getByLabelText('指令'), '发布周报')
-    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     const dialog = await screen.findByRole('dialog')
     expect(dialog).toHaveTextContent('完全权限')
     expect(captures.bodies).toHaveLength(0) // 对话框没确认前一个请求都不该有
@@ -334,7 +334,7 @@ describe('#241 RunLauncher：解析为 full_access 时先确认再发', () => {
     await user.type(screen.getByLabelText('指令'), '发布周报')
     await showExecutionOptions()
     await user.click(screen.getByRole('button', { name: '检查本次准备条件' }))
-    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     const dialog = await screen.findByRole('dialog')
     expect(dialog).toHaveTextContent('完全权限')
     expect(captures.bodies).toHaveLength(0) // 对话框没确认前一个请求都不该有
@@ -353,7 +353,7 @@ describe('#241 RunLauncher：解析为 full_access 时先确认再发', () => {
       }),
     )
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
     expect(screen.getByLabelText('指令')).toHaveValue('发布周报')
     expect(captures.bodies).toHaveLength(0)
   })

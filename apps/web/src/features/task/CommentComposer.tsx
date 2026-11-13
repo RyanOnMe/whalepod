@@ -100,6 +100,8 @@ export function CommentComposer({
   const queryClient = useQueryClient()
   const [body, setBody] = useState('')
   const [error, setError] = useState<unknown>(null)
+  // #548：成功只表示「已发给团队」，不宣称助手已读或采用。
+  const [sent, setSent] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -117,6 +119,7 @@ export function CommentComposer({
     onSuccess: () => {
       setBody('')
       setError(null)
+      setSent(true)
       void queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(taskId) })
     },
     onError: (mutationError: unknown) => {
@@ -142,7 +145,7 @@ export function CommentComposer({
             className="button button-primary"
             disabled={mutation.isPending || body.trim() === ''}
           >
-            {mutation.isPending ? '发送中…' : '发送留言'}
+            {mutation.isPending ? '发送中…' : '发给团队'}
           </button>
         }
         controls={
@@ -177,12 +180,15 @@ export function CommentComposer({
         <textarea
           id={`comment-body-${taskId}`}
           name="body"
-          placeholder="留言…"
+          placeholder="补充一条情况…"
           rows={3}
           maxLength={10_000}
           value={body}
           ref={textareaRef}
-          onChange={(event) => setBody(event.target.value)}
+          onChange={(event) => {
+            setSent(false)
+            setBody(event.target.value)
+          }}
           onKeyDown={(event) => {
             // #229：Cmd/Ctrl+Enter 直发（与提交按钮同一条 form 路径）；纯 Enter 仍是换行。
             if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
@@ -192,6 +198,11 @@ export function CommentComposer({
           }}
         />
       </DiscussionComposer>
+      {sent ? (
+        <p className="composer-feedback" role="status" data-testid="comment-sent-status">
+          已发给团队
+        </p>
+      ) : null}
       {error !== null ? <ErrorBanner error={error} /> : null}
     </form>
   )

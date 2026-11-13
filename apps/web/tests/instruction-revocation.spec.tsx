@@ -57,9 +57,11 @@ describe('撤销后的旧页面（#321）', () => {
         ),
       ),
     )
-    await waitFor(() => expect(draft).toBeDisabled())
+    // #548：权限撤回后草稿仍可继续编辑，只禁用提交；文字不被改投。
+    await waitFor(() => expect(draft).not.toBeDisabled())
     expect(draft).toHaveValue('保留授权撤销前的工作草稿')
-    expect(screen.getByTestId('execution-blocker')).toHaveTextContent('只有责任人和已授权成员')
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
+    expect(await screen.findByTestId('execution-blocker')).toHaveTextContent('负责交办')
     expect(
       view.fetchMock.mock.calls.filter(([url]) =>
         /\/(devices|workspaces|instructions)$/.test(String(url)),

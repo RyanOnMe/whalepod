@@ -1,4 +1,4 @@
-import { showAgentCreation } from './helpers.js'
+import { showAgentCreation, showAssistant } from './helpers.js'
 /**
  * #312 指派 Agent 建任务的两支浏览器判据（Q5 新面）：信封顶层兄弟位的 `drive`
  * 在**真 Chrome + 真 Hub** 上真的走到 toast。
@@ -205,6 +205,7 @@ test('设备未配对：任务仍创建成功，toast 如实说自动执行未�
 
   // 201 不吞：落到刚建的任务里，且项目里就这一个任务。
   await alice.waitForURL(/\/tasks\/[0-9a-f-]{36}/, { timeout: 15_000 })
+  await showAssistant(alice)
   shared.offlineTaskId = taskIdFromUrl(alice)
   const tasks = await projectTasks()
   expect(tasks.map((t) => t.id)).toEqual([shared.offlineTaskId])
@@ -226,6 +227,7 @@ test('失败后从原任务继续：配对真 Node 后在这个任务手动发�
 
   // 回到**原任务**（不是新建一个）：URL 里还是失败那一次创建的任务。
   await alice.goto(`/tasks/${offlineTaskId}`)
+  await showAssistant(alice)
   const agentTrigger = alice.getByLabel('选择 Agent')
   await expect(agentTrigger).toBeVisible({ timeout: 30_000 })
   await assertNotNativeSelect(agentTrigger, alice.locator('.run-launcher'), '选择 Agent')
@@ -233,7 +235,7 @@ test('失败后从原任务继续：配对真 Node 后在这个任务手动发�
   await selectFromMenu(alice.getByLabel('选择设备'), /e2e-node（在线）/)
   await selectFromMenu(alice.getByLabel('选择 Workspace'), 'e2e-ws')
   await alice.getByLabel('指令').fill('接着把发布说明写完')
-  await alice.getByRole('button', { name: '开始执行' }).click()
+  await alice.getByRole('button', { name: '发给助手' }).click()
 
   await expect(alice.locator('[data-testid="run-segment"]').first()).toBeVisible({
     timeout: 30_000,
@@ -253,6 +255,7 @@ test('设备在线：toast 说已自动开始执行，且 Run 真的起来了', 
     { timeout: 15_000 },
   )
   await alice.waitForURL(/\/tasks\/[0-9a-f-]{36}/, { timeout: 15_000 })
+  await showAssistant(alice)
   const taskId = taskIdFromUrl(alice)
   expect(taskId).not.toBe(shared.offlineTaskId)
 

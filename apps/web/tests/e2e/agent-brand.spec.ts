@@ -1046,7 +1046,7 @@ test('潮汐品牌与真实 Agent 状态：GPU、审批、键盘、减少动态�
       await selectFromMenu(owner.getByLabel('选择 Workspace', { exact: true }), 'e2e-ws')
       await owner.getByLabel('执行设置', { exact: true }).click()
       await owner.getByLabel('指令', { exact: true }).fill('生成潮汐状态验收报告')
-      const send = owner.getByRole('button', { name: '开始执行', exact: true })
+      const send = owner.getByRole('button', { name: '发给助手', exact: true })
       await expect(send).toBeEnabled()
       await observeStates(owner)
       await send.click()
@@ -1221,7 +1221,7 @@ test('潮汐品牌与真实 Agent 状态：GPU、审批、键盘、减少动态�
             '\n',
           ),
       )
-    await degraded.getByRole('button', { name: '开始执行', exact: true }).click()
+    await degraded.getByRole('button', { name: '发给助手', exact: true }).click()
     const fallbackCore = degraded.getByTestId('agent-state-core')
     await expect(fallbackCore).toHaveAttribute('data-state', 'thinking', { timeout: 120_000 })
     await expect(fallbackCore).toHaveAttribute('data-renderer', 'fallback')
@@ -1302,7 +1302,7 @@ test('潮汐品牌与真实 Agent 状态：GPU、审批、键盘、减少动态�
     await selectFromMenu(lostPage.getByLabel('选择 Workspace', { exact: true }), 'e2e-ws')
     await lostPage.getByLabel('执行设置', { exact: true }).click()
     await lostPage.getByLabel('指令', { exact: true }).fill('生成终态资源验收报告')
-    await lostPage.getByRole('button', { name: '开始执行', exact: true }).click()
+    await lostPage.getByRole('button', { name: '发给助手', exact: true }).click()
     const permanentlyLost = lostPage.getByTestId('agent-state-core')
     await expect(permanentlyLost).toHaveAttribute('data-state', 'thinking', { timeout: 120_000 })
     await permanentlyLost.scrollIntoViewIfNeeded()

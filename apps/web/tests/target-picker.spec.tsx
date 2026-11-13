@@ -125,7 +125,7 @@ function renderAsAssignee(bodies: unknown[]): void {
 
 async function sendInstruction(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await user.type(await screen.findByLabelText('指令'), '跑一遍')
-  await user.click(screen.getByRole('button', { name: '发送指令' }))
+  await user.click(screen.getByRole('button', { name: '发给助手' }))
 }
 
 describe('执行目标条（⑥c）', () => {

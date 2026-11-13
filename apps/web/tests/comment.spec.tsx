@@ -5,7 +5,7 @@ import { showWorkspace } from './workspace.js'
  * - pending 期间发送按钮禁用；
  * - 失败时保留输入内容并显示 message + requestId（失败不乐观更新）。
  */
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import {
@@ -48,7 +48,9 @@ describe('comment', () => {
     await showWorkspace('discussion')
     await screen.findByLabelText('留言')
     await user.type(screen.getByLabelText('留言'), '我来负责这次运行')
-    await user.click(screen.getByRole('button', { name: '发送留言' }))
+    await user.click(
+      within(screen.getByTestId('team-composer')).getByRole('button', { name: '发给团队' }),
+    )
     expect(await screen.findByText('我来负责这次运行')).toBeVisible()
     // 成功的可见反馈：输入框清空
     await waitFor(() => {
@@ -92,7 +94,9 @@ describe('comment', () => {
     await showWorkspace('discussion')
     await screen.findByLabelText('留言')
     await user.type(screen.getByLabelText('留言'), '慢请求留言')
-    await user.click(screen.getByRole('button', { name: '发送留言' }))
+    await user.click(
+      within(screen.getByTestId('team-composer')).getByRole('button', { name: '发给团队' }),
+    )
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '发送中…' })).toBeDisabled()
     })
@@ -134,7 +138,9 @@ describe('comment', () => {
     await showWorkspace('discussion')
     await screen.findByLabelText('留言')
     await user.type(screen.getByLabelText('留言'), '这条不能丢')
-    await user.click(screen.getByRole('button', { name: '发送留言' }))
+    await user.click(
+      within(screen.getByTestId('team-composer')).getByRole('button', { name: '发给团队' }),
+    )
     expect(await screen.findByRole('alert')).toHaveTextContent('comment slot locked')
     expect(screen.getByRole('alert')).toHaveTextContent('req-comment-409')
     // 失败恢复输入：内容保留，便于重试
@@ -188,8 +194,12 @@ describe('comment', () => {
     const { fetchMock } = renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [roomHandler(task)]))
     await showWorkspace('discussion')
     await screen.findByLabelText('留言')
-    await user.click(screen.getByRole('button', { name: '发送留言' }))
-    expect(screen.getByRole('button', { name: '发送留言' })).toBeDisabled()
+    await user.click(
+      within(screen.getByTestId('team-composer')).getByRole('button', { name: '发给团队' }),
+    )
+    expect(
+      within(screen.getByTestId('team-composer')).getByRole('button', { name: '发给团队' }),
+    ).toBeDisabled()
     const commentCalls = fetchMock.mock.calls.filter(([input]) =>
       String(input).endsWith('/comments'),
     )

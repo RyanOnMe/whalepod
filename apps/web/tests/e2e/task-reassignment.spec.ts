@@ -1,4 +1,4 @@
-import { showAgentCreation } from './helpers.js'
+import { showAgentCreation, showAssistant } from './helpers.js'
 import { expect, test } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -60,8 +60,10 @@ test('拒绝 → 网页重新指派 → 新责任人接受 → 在自己的环�
     await selectFromMenu(owner.locator('button[id^="task-assignee-"]'), /Bob/)
     await owner.getByRole('button', { name: '创建任务', exact: true }).click()
     await owner.waitForURL(/\/tasks\//)
+    await showAssistant(owner)
     const taskId = new URL(owner.url()).pathname.split('/').pop()!
     await member.goto(`/tasks/${taskId}`)
+    await showAssistant(member)
     await member.getByRole('button', { name: '拒绝任务' }).click()
     await expect(member.getByText(/此任务已被拒绝/)).toBeVisible()
     await expect(member.getByRole('button', { name: '重新指派', exact: true })).toHaveCount(0)
@@ -100,11 +102,12 @@ test('拒绝 → 网页重新指派 → 新责任人接受 → 在自己的环�
     const pairing = await hubApi(cookie, 'POST', '/devices/pairing-codes', {})
     const node = await startNode({ pairingCode: (pairing.data as { code: string }).code })
     await owner.goto(`/tasks/${taskId}`)
+    await showAssistant(owner)
     await selectFromMenu(owner.getByLabel('选择 Agent'), 'Builder')
     await selectFromMenu(owner.getByLabel('选择设备'), /e2e-node（在线）/)
     await selectFromMenu(owner.getByLabel('选择 Workspace'), 'e2e-ws')
     await owner.getByLabel('指令', { exact: true }).fill('接手后生成交付物')
-    await owner.getByRole('button', { name: '开始执行' }).click()
+    await owner.getByRole('button', { name: '发给助手' }).click()
     const row = owner.locator('button[data-run-id]').first()
     await expect(row).toBeVisible()
     const runId = (await row.getAttribute('data-run-id'))!

@@ -237,12 +237,9 @@ describe('RunLauncher', () => {
     await selectOption(user, '选择 Workspace', 'whalepod')
     await user.type(screen.getByLabelText('指令'), '把登录页修好')
 
-    expect(
-      document
-        .querySelector('[aria-labelledby="instructions-heading"]')
-        ?.querySelectorAll('textarea'),
-    ).toHaveLength(1)
-    const submit = screen.getByRole('button', { name: '开始执行' })
+    // #548：输入位置统一在底部 dock（不再挂在执行区 section 内），仍只有一个指令输入。
+    expect(document.querySelectorAll('[data-testid="assistant-composer"] textarea')).toHaveLength(1)
+    const submit = screen.getByRole('button', { name: '发给助手' })
     expect(submit).toBeEnabled()
     await user.click(submit)
 
@@ -298,11 +295,11 @@ describe('RunLauncher', () => {
     )
     await selectOption(user, '选择 Agent', 'Fixer')
     await user.type(screen.getByLabelText('指令'), '保留被拒收的原文')
-    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     expect(await screen.findByTestId('execution-start-refusal')).toHaveTextContent('工作目录不可用')
     expect(screen.getByLabelText('指令')).toHaveValue('保留被拒收的原文')
     expect(screen.getByLabelText('执行方式')).toHaveTextContent('开始新执行')
-    expect(screen.getByRole('button', { name: '开始执行' })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: '发给助手' })).toHaveAttribute(
       'data-feedback',
       'rejected',
     )
@@ -341,7 +338,7 @@ describe('RunLauncher', () => {
       await selectOption(user, '选择设备', 'm4-mini（在线）')
       await selectOption(user, '选择 Workspace', 'whalepod')
       await user.type(screen.getByLabelText('指令'), '保留这段草稿')
-      expect(screen.getByRole('button', { name: '开始执行' })).toBeEnabled()
+      expect(screen.getByRole('button', { name: '发给助手' })).toBeEnabled()
       act(() => {
         if (kind === 'device') {
           const devices = view.queryClient.getQueryData<
@@ -366,7 +363,7 @@ describe('RunLauncher', () => {
           ])
         }
       })
-      await waitFor(() => expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled())
+      await waitFor(() => expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled())
       expect(screen.getByTestId('execution-target-blocker')).toBeVisible()
       expect(screen.getByLabelText('指令')).toHaveValue('保留这段草稿')
       expect(
@@ -401,7 +398,7 @@ describe('RunLauncher', () => {
     )
     expect(screen.getByTestId('execution-revision')).toHaveTextContent('r3')
     await user.type(screen.getByLabelText('指令'), '使用已确认的版本')
-    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     await waitFor(() =>
       expect(capture.body).toMatchObject({
         profileRevisionId: REVISION_ID,
@@ -520,7 +517,7 @@ describe('#225 批次①：启动失败走统一错误口径', () => {
     await selectOption(user, '选择设备', 'm4-mini（在线）')
     await selectOption(user, '选择 Workspace', 'whalepod')
     await user.type(screen.getByLabelText('指令'), '把登录页修好')
-    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('agent not ready')

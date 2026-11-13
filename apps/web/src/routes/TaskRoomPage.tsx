@@ -21,6 +21,7 @@ import { DeliveryFlow } from '../features/task/DeliveryFlow.js'
 import { HandoffReceiptPanel } from '../features/task/HandoffReceiptPanel.js'
 import { HandoffDeliveryPanel } from '../features/task/HandoffDeliveryPanel.js'
 import { ExecutionComposer } from '../features/task/ExecutionComposer.js'
+import { useTaskMessageRecipient } from '../features/task/execution-drafts.js'
 import { RunDetailPanel } from '../features/task/RunDetailPanel.js'
 import { RunSegment } from '../features/task/RunSegment.js'
 import { InstructionBubble } from '../features/task/InstructionBubble.js'
@@ -54,9 +55,25 @@ function TaskRoom(): ReactNode {
   const { taskId } = useParams()
   const location = useLocation()
   const navigate = useNavigate()
+  const session = useSession()
+  // #548：接收方在同一页面会话内按任务恢复（进出详情/设备页返回不丢）；
+  // 普通任务链接默认「发给团队」，审批/交接/成果等显式锚点仍落到原位置。
+  const recipientMemory = useTaskMessageRecipient(taskId ?? '', session?.userId ?? null)
+  const rememberedChannel =
+    recipientMemory.remembered === undefined
+      ? undefined
+      : recipientMemory.remembered === 'assistant'
+        ? 'execution'
+        : 'discussion'
   const [channel, setChannel] = useState<'execution' | 'discussion'>(() =>
-    location.hash === '#comments-heading' ? 'discussion' : 'execution',
+    location.hash === '' || location.hash === '#comments-heading'
+      ? (rememberedChannel ?? 'discussion')
+      : 'execution',
   )
+  const selectChannel = (next: 'execution' | 'discussion'): void => {
+    setChannel(next)
+    recipientMemory.remember(next === 'execution' ? 'assistant' : 'team')
+  }
   const [inspector, setInspector] = useState<'agreement' | 'artifacts' | 'run' | null>(null)
   const inspectorPresence = usePresence(inspector, SURFACE_EXIT_MS)
   const presentedInspector = inspector ?? inspectorPresence.value
@@ -91,14 +108,14 @@ function TaskRoom(): ReactNode {
   }, [inspector])
   useEffect(() => {
     if (location.hash === '#comments-heading') {
-      setChannel('discussion')
+      selectChannel('discussion')
       setInspector(null)
     } else if (
       location.hash.startsWith('#approval-') ||
       location.hash === '#task-execution' ||
       location.hash === '#task-assignment'
     ) {
-      setChannel('execution')
+      selectChannel('execution')
       setInspector(null)
     } else if (location.hash.startsWith('#artifact-')) {
       setInspector('artifacts')
@@ -106,11 +123,10 @@ function TaskRoom(): ReactNode {
     } else if (location.hash.startsWith('#handoff-receipt')) {
       // 交接待办直达（#428）：固定版本接收卡在执行区正文，直接回到执行区。
       // `#handoff-receipt-<receiptId>` 指到具体一张卡（同任务可有多份交接）。
-      setChannel('execution')
+      selectChannel('execution')
       setInspector(null)
     }
   }, [location.hash, location.key])
-  const session = useSession()
   const directory = useMemberDirectory()
   const [revisionRequest, setRevisionRequest] = useState<ArtifactReviewRequest | null>(null)
   const [reviewRequest, setReviewRequest] = useState<ArtifactReviewRequest | null>(null)
@@ -294,7 +310,7 @@ function TaskRoom(): ReactNode {
     runs.find((run) => run.id === detailRunId) ?? activeRun ?? runs.at(-1) ?? undefined
   const showExecution = () => {
     focusExecution.current = true
-    setChannel('execution')
+    selectChannel('execution')
     setSeenActivity(activityCount)
     setInspector(null)
   }
@@ -326,7 +342,7 @@ function TaskRoom(): ReactNode {
             testIdPrefix="workspace-view-"
             value={channel}
             onChange={(next) => {
-              setChannel(next)
+              selectChannel(next)
               setInspector(null)
             }}
             items={[
@@ -376,7 +392,7 @@ function TaskRoom(): ReactNode {
                 <h2 id="comments-heading" tabIndex={-1}>
                   讨论
                 </h2>
-                <p className="room-column-note">团队成员之间 · 不触发 Agent</p>
+                <p className="room-column-note">团队成员可见</p>
                 {hasNewActivity || activeRun?.status === 'waiting_approval' ? (
                   <button
                     type="button"
@@ -394,16 +410,6 @@ function TaskRoom(): ReactNode {
                   session={session}
                   runs={runs}
                   onOpenRun={setConsoleRunId}
-                />
-              </div>
-              <div className="workspace-dock discussion-dock">
-                <p className="room-column-note">发送给团队成员</p>
-                <CommentComposer
-                  taskId={task.id}
-                  runs={runs}
-                  runLabels={runOrdinalLabels(runs)}
-                  insertToken={insertToken}
-                  onInsertTokenConsumed={() => setInsertToken(null)}
                 />
               </div>
             </section>
@@ -521,8 +527,40 @@ function TaskRoom(): ReactNode {
                   </button>
                 )}
               </div>
+            </section>
+            {/*
+              #548：底部固定输入位置——两种接收方共用一个 dock，切换只改去向，
+              不发送消息。两份 composer 都保持挂载，各自草稿在切换与返回时保留。
+            */}
+            <div className="workspace-dock task-message-dock">
+              <RubberSegment
+                label="消息接收方"
+                testIdPrefix="message-recipient-"
+                value={channel}
+                onChange={(next) => {
+                  selectChannel(next)
+                  setInspector(null)
+                }}
+                items={[
+                  { value: 'discussion', label: '发给团队' },
+                  { value: 'execution', label: '请助手处理' },
+                ]}
+              />
+              <div
+                className="discussion-dock"
+                data-testid="team-composer"
+                hidden={channel !== 'discussion'}
+              >
+                <CommentComposer
+                  taskId={task.id}
+                  runs={runs}
+                  runLabels={runOrdinalLabels(runs)}
+                  insertToken={insertToken}
+                  onInsertTokenConsumed={() => setInsertToken(null)}
+                />
+              </div>
               {session !== null ? (
-                <div className="workspace-dock">
+                <div data-testid="assistant-composer" hidden={channel !== 'execution'}>
                   <ExecutionComposer
                     compact
                     key={task.id}
@@ -538,15 +576,17 @@ function TaskRoom(): ReactNode {
                     revisionRequest={revisionRequest}
                     continueRequest={continueRequest}
                     onDiscuss={() => {
-                      setChannel('discussion')
+                      selectChannel('discussion')
                       requestAnimationFrame(() =>
                         document.getElementById('comments-heading')?.focus(),
                       )
                     }}
                   />
                 </div>
+              ) : channel === 'execution' ? (
+                <p className="room-column-note">登录后才能请助手处理。</p>
               ) : null}
-            </section>
+            </div>
           </div>
           <aside
             className="workspace-inspector"
@@ -665,7 +705,7 @@ function TaskRoom(): ReactNode {
                     showExecution()
                   }}
                   onReferenceRun={(runId) => {
-                    setChannel('discussion')
+                    selectChannel('discussion')
                     setInspector(null)
                     setInsertToken({ text: formatRunReference(runId), nonce: Date.now() })
                   }}

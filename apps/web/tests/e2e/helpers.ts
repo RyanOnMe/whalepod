@@ -460,7 +460,18 @@ export async function selectFromMenu(trigger: Locator, optionText: string | RegE
  * 「默认规则只改写未经用户调整的自动草稿」），此后读取面慢一拍也不会把模式翻回去——
  * 这比"等一会儿再看"稳，也比"读模型到了再点"少一个时序坑。
  */
+/** #548：普通任务链接默认「发给团队」；执行侧用例显式走「请助手处理」这个真实入口。 */
+export async function showAssistant(page: Page): Promise<void> {
+  const group = page.getByRole('group', { name: '消息接收方' })
+  const button = group.getByRole('button', { name: '请助手处理' })
+  // waitForURL 之后任务房聚合还在路上；等切换器真的出现再按。
+  await button.waitFor({ state: 'visible', timeout: 30_000 })
+  if ((await button.getAttribute('aria-pressed')) !== 'true') await button.click()
+}
+
 export async function chooseNewExecution(page: Page): Promise<void> {
+  // #548：普通任务链接默认发给团队；要新起执行先走「请助手处理」的真人切换。
+  await showAssistant(page)
   // 「执行方式」在「执行设置」折叠里，可能是收起状态——判据看它在不在、当前选的是哪个，
   // 不看可不可见（展开由 selectFromMenu 按真人路径完成）。
   const modeTrigger = page.getByLabel('执行方式', { exact: true })
@@ -658,8 +669,8 @@ export function nodeConnectionState(): Promise<ConnectionFaultState> {
   return nodeControl('/connection-state', {})
 }
 
-export function dropAckCount(count: number): Promise<unknown> {
-  return nodeControl('/ack-drop', { count })
+export function dropAckCount(count: number, type?: string): Promise<unknown> {
+  return nodeControl('/ack-drop', { count, ...(type === undefined ? {} : { type }) })
 }
 
 /**
