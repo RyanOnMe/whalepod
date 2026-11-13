@@ -196,15 +196,29 @@ function fixture() {
       before: {
         taskIds: [id(10), id(11), id(12), id(13)],
         runIds: [id(30), id(31), id(32), id(33)],
-        evaluationIds: [id(90), id(91), id(93), id(94), id(95)],
+        evaluationIds: [id(90), id(91), id(93), id(94), id(95), id(96)],
       },
       after: {
         taskIds: [id(10), id(11), id(12), id(13)],
         runIds: [id(30), id(31), id(32), id(33)],
-        evaluationIds: [id(90), id(91), id(93), id(94), id(95)],
+        evaluationIds: [id(90), id(91), id(93), id(94), id(95), id(96)],
       },
     },
     accounting: {
+      suppressedRouter: [
+        {
+          id: id(96),
+          projectId: id(2),
+          workKey: discovery.workKey,
+          taskId: discovery.taskId,
+          purpose: 'router',
+          status: 'cancelled',
+          failureCode: 'input_or_authority_changed',
+          modelStarted: false,
+          reservedTokens: null,
+          reservedCostMicros: null,
+        },
+      ],
       handoff: [bootstrap, continuation].map((target, index) => ({
         runId: target.id,
         draftId: id(240 + index),
@@ -633,6 +647,35 @@ function seal(value: Fixture) {
 // Every mutation starts from a clone, including independent event objects. Rehashing is
 // intentional: a recomputed file digest must not conceal missing semantic evidence.
 const negatives: Mutation[] = [
+  ...(
+    [
+      'missing',
+      'model started',
+      'wrong project',
+      'wrong Work',
+      'wrong Task',
+      'wrong purpose',
+      'nonterminal',
+      'reason',
+      'reserved tokens',
+      'reserved cost',
+    ] as const
+  ).map((change): Mutation => [
+    `suppressed Router ${change}`,
+    ({ evidence: r }) => {
+      const row = r.accounting.suppressedRouter[0]!
+      if (change === 'missing') r.accounting.suppressedRouter = []
+      else if (change === 'model started') Object.assign(row, { modelStarted: true })
+      else if (change === 'wrong project') row.projectId = id(999)
+      else if (change === 'wrong Work') row.workKey = r.fast.workKey
+      else if (change === 'wrong Task') row.taskId = r.fast.taskId
+      else if (change === 'wrong purpose') Object.assign(row, { purpose: 'discovery' })
+      else if (change === 'nonterminal') row.status = 'running'
+      else if (change === 'reason') row.failureCode = 'unknown'
+      else if (change === 'reserved tokens') Object.assign(row, { reservedTokens: 1 })
+      else Object.assign(row, { reservedCostMicros: 1 })
+    },
+  ]),
   ...(
     [
       'missing',
@@ -2286,6 +2329,21 @@ describe('RD-05a independent combined campaign judge', () => {
     }
   })
 
+  it('allows no suppressed Router when the complete stability snapshot also contains none', () => {
+    const value = fixture()
+    const ids = value.evidence.accounting.suppressedRouter.map((row) => row.id)
+    value.evidence.accounting.suppressedRouter = []
+    for (const snapshot of [value.evidence.stability.before, value.evidence.stability.after])
+      snapshot.evaluationIds = snapshot.evaluationIds.filter((id) => !ids.includes(id))
+    value.events = value.events.map((event) =>
+      event.type === 'campaign.stability'
+        ? { ...event, ...structuredClone(value.evidence.stability) }
+        : event,
+    )
+    expect(() => checkRd05a(value.evidence, seal(value), binding)).not.toThrow()
+    expect(checkRd05aEvidenceNegatives(value.evidence, seal(value), binding)).toBeGreaterThan(100)
+  })
+
   it('accepts cumulative multi-receipt snapshots and delta read events without inventing private lifecycle', () => {
     const value = fixture()
     multipleSnapshots(value)
@@ -2298,10 +2356,22 @@ describe('RD-05a independent combined campaign judge', () => {
     expect(() => checkRd05a(value.evidence, seal(value), binding)).not.toThrow()
   })
 
-  it.each(negatives)('rejects %s', (_, mutate) => {
+  it.each(negatives)('rejects %s', (name, mutate) => {
     const value = structuredClone(fixture())
     mutate(value)
-    expect(() => checkRd05a(value.evidence, seal(value), binding)).toThrow()
+    const suppressedErrors: Record<string, string> = {
+      'suppressed Router missing': 'accounting and stability evaluations differ',
+      'suppressed Router model started': 'suppressed Router called a model',
+      'suppressed Router wrong project': 'suppressed Router belongs to another Project',
+      'suppressed Router wrong Work': 'suppressed Router belongs to another Work',
+      'suppressed Router wrong Task': 'suppressed Router belongs to another Task',
+      'suppressed Router wrong purpose': 'non-Router hidden in suppressed evaluations',
+      'suppressed Router nonterminal': 'suppressed Router is not cancelled',
+      'suppressed Router reason': 'unexpected suppressed Router reason',
+      'suppressed Router reserved tokens': 'suppressed Router reserved tokens',
+      'suppressed Router reserved cost': 'suppressed Router reserved cost',
+    }
+    expect(() => checkRd05a(value.evidence, seal(value), binding)).toThrow(suppressedErrors[name])
   })
 
   it('requires the independently supplied binding, never the evidence self-claim', () => {

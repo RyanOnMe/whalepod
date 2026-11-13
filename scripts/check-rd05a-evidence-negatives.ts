@@ -14,6 +14,36 @@ const changedId = 'ffffffff-ffff-4fff-8fff-ffffffffffff'
 type Sample = { evidence: Rd05aEvidence; events: Rd05aEvent[] }
 type Mutation = { name: string; apply: (sample: Sample) => void }
 
+const suppressedRouterMutations: Mutation[] = (
+  [
+    'missing',
+    'model started',
+    'wrong project',
+    'wrong Work',
+    'wrong Task',
+    'wrong purpose',
+    'nonterminal',
+    'reason',
+    'reserved tokens',
+    'reserved cost',
+  ] as const
+).map((change): Mutation => ({
+  name: `suppressed Router ${change}`,
+  apply: ({ evidence: r }) => {
+    const row = r.accounting.suppressedRouter[0]!
+    if (change === 'missing') r.accounting.suppressedRouter = []
+    else if (change === 'model started') Object.assign(row, { modelStarted: true })
+    else if (change === 'wrong project') row.projectId = changedId
+    else if (change === 'wrong Work') row.workKey = r.fast.workKey
+    else if (change === 'wrong Task') row.taskId = r.fast.taskId
+    else if (change === 'wrong purpose') Object.assign(row, { purpose: 'discovery' })
+    else if (change === 'nonterminal') row.status = 'running'
+    else if (change === 'reason') row.failureCode = 'unknown'
+    else if (change === 'reserved tokens') Object.assign(row, { reservedTokens: 1 })
+    else Object.assign(row, { reservedCostMicros: 1 })
+  },
+}))
+
 const mutations: Mutation[] = [
   ...(
     [
@@ -794,7 +824,11 @@ export function checkRd05aEvidenceNegatives(
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as Rd05aEvent)
-  for (const mutation of mutations) {
+  const campaignMutations = [
+    ...mutations,
+    ...(evidence.accounting.suppressedRouter.length > 0 ? suppressedRouterMutations : []),
+  ]
+  for (const mutation of campaignMutations) {
     const sample = structuredClone({ evidence, events })
     mutation.apply(sample)
     const bytes = sample.events.map((event) => JSON.stringify(event)).join('\n') + '\n'
@@ -809,7 +843,7 @@ export function checkRd05aEvidenceNegatives(
     () => checkRd05a(evidence, eventsBytes + '\n', binding),
     'accepted substituted events bytes',
   )
-  return mutations.length + 1
+  return campaignMutations.length + 1
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -110,6 +110,18 @@ export interface Rd05aUsage {
 }
 
 export interface Rd05aAccounting {
+  suppressedRouter: {
+    id: string
+    projectId: string
+    workKey: string
+    taskId: string
+    purpose: 'router'
+    status: string
+    failureCode: string
+    modelStarted: false
+    reservedTokens: null
+    reservedCostMicros: null
+  }[]
   handoff: {
     runId: string
     draftId: string
