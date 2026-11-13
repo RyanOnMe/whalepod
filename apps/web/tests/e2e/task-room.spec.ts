@@ -16,7 +16,12 @@ import {
   CONTROL_PRIMARY_FILL_TOKEN,
   CONTROL_PRIMARY_LABEL_TOKEN,
 } from '../../src/shared/control-style-tokens.js'
-import { assertControlTokens, assertNotNativeSelect, env as readEnv } from './helpers.js'
+import {
+  assertControlTokens,
+  assertNotNativeSelect,
+  env as readEnv,
+  showAssistant,
+} from './helpers.js'
 import { expectNoContrastOffenders } from './contrast-sweep.js'
 import {
   PERSON_SLOTS,
@@ -390,8 +395,9 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     await expect(listedTask).toBeVisible()
     // 责任人显示名来自成员接口（#136），不是短 UUID
     await expect(alice.getByRole('list', { name: '项目任务列表' })).toContainText('Bob（@bob')
-    // #152：项目卡写的是创建者姓名（成员名录），不是截断 UUID；列表就绪后再取文本
-    await expect(alice.locator('.project-meta').first()).toContainText('创建者')
+    // #152：项目卡写的是创建者姓名（成员名录），不是截断 UUID；列表就绪后再取文本。
+    // （#548 复核发现旧断言指向已不存在的 `.project-meta`——按当前卡片结构查创建者。）
+    await expect(alice.locator('.project-item').first()).toContainText('Alice')
     await expectNoJargonVisible(alice)
     await listedTask.click()
     await alice.waitForURL(new RegExp(`/tasks/${taskId}$`))
@@ -407,6 +413,8 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
 
     // ---- Bob：打开 Task Room，接受指派（键盘可达：Tab 到按钮 Enter） ----
     await bob.goto(`/tasks/${taskId}`)
+    // #548：普通链接默认发给团队；接受指派在执行区，先走真实切换。
+    await showAssistant(bob)
     await expect(bob.getByText('你被指派负责此任务，请接受或拒绝。')).toBeVisible()
     const acceptButton = bob.getByRole('button', { name: '接受任务' })
     await acceptButton.focus()
@@ -456,9 +464,13 @@ test.describe('P1-07 验收：双浏览器上下文主链', () => {
     )
 
     // 键盘可达性证据：从留言输入框 Tab 一步即达提交按钮（与 DOM 顺序一致）。
+    // 先留一段未发送文字——空草稿时提交按钮按设计是禁用的，不能聚焦。
     await bob.focus('textarea[name="body"]')
+    await bob.keyboard.type('键盘可达性检查')
     await bob.keyboard.press('Tab')
-    await expect(bob.getByRole('button', { name: '发送留言' })).toBeFocused()
+    await expect(
+      bob.getByTestId('team-composer').getByRole('button', { name: '发给团队' }),
+    ).toBeFocused()
 
     // #159：Task Room 是**内容最杂的一页**（责任人栏 + 留言时间线 + Run/Artifact 区），
     // 也是本项目里唯一有文本框、徽标、时间戳混排的页面。放到最后扫：此时是「已被接受

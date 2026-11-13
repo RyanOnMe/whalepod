@@ -28,7 +28,11 @@ import {
 } from './fixtures.js'
 import type { MockHandler } from './fixtures.js'
 import { showWorkspace, workspaceDetails } from './workspace.js'
-import { renderApp } from './render.jsx'
+import { renderApp as renderAppRoom } from './render.jsx'
+/** #548：本文件要判普通任务链接的真实默认视图（发给团队），显式不走执行锚点。 */
+function renderApp(path: string, handlers: Parameters<typeof renderAppRoom>[1]) {
+  return renderAppRoom(path, handlers, { taskView: 'team' })
+}
 import { FORMER_MEMBER_LABEL, UNKNOWN_MEMBER_LABEL } from '../src/features/team/memberDirectory.js'
 import { RUN_NOT_IN_TIMELINE_LABEL } from '../src/features/task/runLabels.js'
 import {
@@ -100,8 +104,10 @@ describe('task-room', () => {
   })
 
   it('渲染左侧 Assignment 与 Agent 快照插槽的空态', async () => {
+    const user = userEvent.setup()
     const task = makeTask({ assigneeUserId: BOB.userId })
     renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [taskRoomHandler(task)]))
+    await user.click(await screen.findByRole('button', { name: 'Agent 执行' }))
     expect(await screen.findByRole('button', { name: '接受任务' })).toBeVisible()
     expect(screen.getByRole('button', { name: '拒绝任务' })).toBeVisible()
   })
@@ -116,6 +122,7 @@ describe('task-room', () => {
   })
 
   it('渲染执行栏的运行区与审批插槽；有 Run 时展示状态文本', async () => {
+    const user = userEvent.setup()
     const task = makeTask({ assigneeUserId: BOB.userId })
     renderApp(
       `/tasks/${task.id}`,
@@ -128,11 +135,12 @@ describe('task-room', () => {
         }),
       ]),
     )
-    // ADR-0018：执行默认可见，讨论可单独切换。
+    // #548：普通任务链接默认「发给团队」；执行区由顶部视图或底部接收方切换进入。
     expect(await screen.findByRole('button', { name: '团队讨论' })).toHaveAttribute(
       'aria-pressed',
-      'false',
+      'true',
     )
+    await user.click(screen.getByRole('button', { name: 'Agent 执行' }))
     expect(screen.getByRole('heading', { name: '执行' })).toBeVisible()
     // ADR-0019：运行以「段」出现在连续对话里，每段一个简短状态；不再有常驻运行列表。
     await waitFor(() => expect(screen.getAllByTestId('run-segment')).toHaveLength(2))
@@ -299,8 +307,10 @@ describe('task-room', () => {
   })
 
   it('空态说明下一步，而不是静默空白', async () => {
+    const user = userEvent.setup()
     const task = makeTask({ assigneeUserId: BOB.userId })
     renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [taskRoomHandler(task)]))
+    await user.click(await screen.findByRole('button', { name: 'Agent 执行' }))
     expect(await screen.findByRole('heading', { name: '我们要完成什么？' })).toBeVisible()
     await showWorkspace('run')
     expect(screen.getByText(/还没有 Run。/)).toBeVisible()
@@ -481,6 +491,7 @@ describe('#162 Run 与来源运行的可读措辞', () => {
     expect(sourceValue).toHaveAttribute('title', RUN_ID)
 
     // 段头就是「第 N 次运行」；打开运行详情看血缘（设备/时间/血缘都在详情里）。
+    await user.click(screen.getByRole('button', { name: 'Agent 执行' }))
     await user.click(screen.getByRole('button', { name: /第 2 次运行/ }))
     expect(await workspaceDetails().findByTestId('run-detail-meta')).toBeVisible()
     const lineage = workspaceDetails().getByTestId('run-lineage')
@@ -576,6 +587,7 @@ describe('task-room 执行栏接线（⑥a 页面级）', () => {
     // 复核实测：把 `instructionsMissing` 恒 false 或恒 true，判据**全绿**——整块 R1 修复没人守。
     // 这里直接喂一个"契约违约"的响应体（不带 instructions 字段），断言：
     //   ① 告警出现；② **不是**空态文案（这是这条修复的全部意义）。
+    const user = userEvent.setup()
     const task = makeTask({ assigneeUserId: BOB.userId })
     renderApp(`/tasks/${task.id}`, [
       ...loggedInHandlers(BOB, [
@@ -590,6 +602,7 @@ describe('task-room 执行栏接线（⑥a 页面级）', () => {
         },
       ]),
     ])
+    await user.click(await screen.findByRole('button', { name: 'Agent 执行' }))
     expect(await screen.findByTestId('instructions-missing')).toBeVisible()
     expect(screen.queryByText(/还没有人驱动过这个任务/)).not.toBeInTheDocument()
     // 文案不得夹协议字段名，也不得留 Markdown 星号（复核 R1 实测页面会原样显示 `**`）。
@@ -599,8 +612,10 @@ describe('task-room 执行栏接线（⑥a 页面级）', () => {
   })
 
   it('正常响应（带 instructions: []）**不**触发告警——空指令流与"读取不完整"是两回事', async () => {
+    const user = userEvent.setup()
     const task = makeTask({ assigneeUserId: BOB.userId })
     renderApp(`/tasks/${task.id}`, loggedInHandlers(BOB, [taskRoomHandler(task)]))
+    await user.click(await screen.findByRole('button', { name: 'Agent 执行' }))
     expect(await screen.findByRole('heading', { name: '我们要完成什么？' })).toBeVisible()
     expect(screen.queryByTestId('instructions-missing')).not.toBeInTheDocument()
   })
@@ -647,6 +662,7 @@ describe('task-room 执行栏接线（⑥a 页面级）', () => {
         ...runDetailHandlers(run),
       ]),
     )
+    await user.click(await screen.findByRole('button', { name: 'Agent 执行' }))
     expect(
       await screen.findByRole('button', { name: '查看交付物 security-review.md' }),
     ).toBeVisible()

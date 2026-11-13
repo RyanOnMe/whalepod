@@ -5,7 +5,7 @@ import {
   recordMotionDemo,
 } from './motion-experience-audit.js'
 import { auditPages } from './pages-bits-audit.js'
-import { showAgentCreation } from './helpers.js'
+import { showAgentCreation, showAssistant } from './helpers.js'
 /** #306：真实 HTTP/WS、已编译 Hub、真实 Node/Runtime replay；不直写运行状态。 */
 import { auditSecondarySurfaces } from './secondary-surface-audit.js'
 import { auditApproval, auditFileActions, auditPrompt, auditSendFocus } from './app-ui-audit.js'
@@ -111,10 +111,12 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
     await selectFromMenu(taskForm.locator('button[id^="task-assignee-"]'), /Alice/)
     await taskForm.getByRole('button', { name: /创建任务/ }).click()
     await owner.waitForURL(/\/tasks\//)
+    await showAssistant(owner)
     const taskId = new URL(owner.url()).pathname.split('/').pop()!
     await owner.getByRole('button', { name: '接受任务' }).click()
     await expect(owner.getByTestId('task-assignment-state')).toHaveText('已接受')
     await member.goto(`/tasks/${taskId}`)
+    await showAssistant(member)
     const workbenchRoom = await auditWorkbenchRoom(owner, evidence)
 
     await expect(owner.getByRole('heading', { name: '我们要完成什么？' })).toBeVisible()
@@ -126,9 +128,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
     await expect(owner.getByTestId('execution-target-summary')).not.toBeVisible()
     const header = await owner.locator('.task-header').boundingBox()
     expect(header!.height).toBeLessThanOrEqual(80)
-    const visibleComposerText = (
-      await owner.locator('#execution-channel > .workspace-dock').innerText()
-    ).trim()
+    const visibleComposerText = (await owner.getByTestId('assistant-composer').innerText()).trim()
     expect(visibleComposerText.length).toBeLessThanOrEqual(60)
     await owner.screenshot({ path: join(evidence, 'desktop-ready.png') })
     const microLayouts = []
@@ -212,7 +212,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
     await expect(owner.getByLabel('留言')).not.toBeVisible()
     await owner.getByRole('button', { name: '团队讨论', exact: true }).click()
     await expect(owner.getByLabel('留言')).toHaveValue('先确认验收口径，再开始执行。')
-    await owner.getByRole('button', { name: '发送留言' }).click()
+    await owner.getByTestId('team-composer').getByRole('button', { name: '发给团队' }).click()
     await expect(member.getByText('先确认验收口径，再开始执行。')).not.toBeVisible()
     await member.getByRole('button', { name: '团队讨论', exact: true }).click()
     await expect(member.getByText('先确认验收口径，再开始执行。')).toBeVisible()
@@ -241,7 +241,7 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
     await selectFromMenu(owner.getByLabel('选择 Workspace'), 'e2e-ws')
     await owner.getByLabel('指令').fill('生成团队验收报告')
     const sendFocus = await auditSendFocus(owner, evidence)
-    await owner.getByRole('button', { name: '开始执行' }).click()
+    await owner.getByRole('button', { name: '发给助手' }).click()
     const runButton = owner.locator('button[data-run-id]').first()
     await expect(runButton).toBeVisible()
     const runId = (await runButton.getAttribute('data-run-id'))!

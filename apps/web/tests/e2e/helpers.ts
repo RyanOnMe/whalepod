@@ -451,6 +451,15 @@ export async function selectFromMenu(trigger: Locator, optionText: string | RegE
   await expect(trigger).toHaveAttribute('aria-expanded', 'false')
 }
 
+/** #548：普通任务链接默认「发给团队」；执行侧用例显式走「请助手处理」这个真实入口。 */
+export async function showAssistant(page: Page): Promise<void> {
+  const group = page.getByRole('group', { name: '消息接收方' })
+  const button = group.getByRole('button', { name: '请助手处理' })
+  // waitForURL 之后任务房聚合还在路上；等切换器真的出现再按。
+  await button.waitFor({ state: 'visible', timeout: 30_000 })
+  if ((await button.getAttribute('aria-pressed')) !== 'true') await button.click()
+}
+
 /**
  * ADR-0019：底部统一输入框默认接着上一条业务运行（模式「继续会话」），此时页面上没有
  * 「选择 Agent / 选择设备 / 选择 Workspace」这三个启动控件。凡是要**新起一段执行**的用例，
@@ -461,6 +470,8 @@ export async function selectFromMenu(trigger: Locator, optionText: string | RegE
  * 这比"等一会儿再看"稳，也比"读模型到了再点"少一个时序坑。
  */
 export async function chooseNewExecution(page: Page): Promise<void> {
+  // #548：普通任务链接默认发给团队；要新起执行先走「请助手处理」的真人切换。
+  await showAssistant(page)
   // 「执行方式」在「执行设置」折叠里，可能是收起状态——判据看它在不在、当前选的是哪个，
   // 不看可不可见（展开由 selectFromMenu 按真人路径完成）。
   const modeTrigger = page.getByLabel('执行方式', { exact: true })
@@ -658,8 +669,8 @@ export function nodeConnectionState(): Promise<ConnectionFaultState> {
   return nodeControl('/connection-state', {})
 }
 
-export function dropAckCount(count: number): Promise<unknown> {
-  return nodeControl('/ack-drop', { count })
+export function dropAckCount(count: number, type?: string): Promise<unknown> {
+  return nodeControl('/ack-drop', { count, ...(type === undefined ? {} : { type }) })
 }
 
 /**

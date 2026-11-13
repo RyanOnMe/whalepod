@@ -11,7 +11,11 @@ import {
   taskRoomHandler,
 } from './fixtures.js'
 import { formatRunReference } from '../src/features/task/runReference.js'
-import { renderApp } from './render.js'
+import { renderApp as renderAppRoom } from './render.js'
+/** #548：本文件判普通任务链接的默认视图与切换，显式走团队默认。 */
+function renderApp(path: string, handlers: Parameters<typeof renderAppRoom>[1]) {
+  return renderAppRoom(path, handlers, { taskView: 'team' })
+}
 import { chooseFileAction } from './workspace.js'
 
 const ROOM_RUN = 'abababab-0000-4000-8000-0000000000aa'
@@ -68,17 +72,16 @@ describe('聚焦工作区', () => {
     await waitFor(() => expect(document.getElementById(target)).toHaveFocus())
   })
 
-  it('默认进入 Agent 执行，讨论单独切换，来回切换保留留言草稿', async () => {
+  it('#548 默认发给团队，切到请助手处理后留言草稿仍保留', async () => {
     const user = userEvent.setup()
     openRoom()
-    expect(await screen.findByRole('button', { name: 'Agent 执行' })).toHaveAttribute(
+    expect(await screen.findByRole('button', { name: '团队讨论' })).toHaveAttribute(
       'aria-pressed',
       'true',
     )
-    expect(screen.queryByRole('textbox', { name: '留言' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '团队讨论' }))
     await user.type(screen.getByLabelText('留言'), '请确认验收口径')
     await user.click(screen.getByRole('button', { name: 'Agent 执行' }))
+    expect(screen.queryByRole('textbox', { name: '留言' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '团队讨论' }))
     expect(screen.getByLabelText('留言')).toHaveValue('请确认验收口径')
   })
@@ -86,6 +89,7 @@ describe('聚焦工作区', () => {
   it('交付物入口按需打开检查面板，Escape 关闭并还焦，不改变任务状态', async () => {
     const user = userEvent.setup()
     openRoom([makeArtifact({ title: 'report.md' })])
+    await user.click(await screen.findByRole('button', { name: 'Agent 执行' }))
     const trigger = await screen.findByRole('button', { name: '查看交付物 report.md' })
     expect(screen.queryByRole('region', { name: '工作区详情' })).not.toBeInTheDocument()
     await user.click(trigger)
@@ -113,6 +117,7 @@ describe('聚焦工作区', () => {
     const user = userEvent.setup()
     const artifact = makeArtifact({ title: 'team.md', runId: ROOM_RUN })
     const app = openRoom([artifact])
+    await user.click(await screen.findByRole('button', { name: 'Agent 执行' }))
     await user.click(await screen.findByRole('button', { name: '查看交付物 team.md' }))
     await chooseFileAction('在讨论中引用', user)
     expect(screen.getByRole('button', { name: '团队讨论' })).toHaveAttribute('aria-pressed', 'true')

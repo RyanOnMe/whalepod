@@ -20,6 +20,7 @@ import { Link } from 'react-router'
 import { preparationDeviceHref } from '../../shared/preparation-navigation.js'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
+import { isApiError } from '../../shared/api/errors.js'
 import { useMemberDirectory } from '../team/memberDirectory.js'
 import { ExecutionPreparation } from './ExecutionPreparation.js'
 import { TargetPicker } from './TargetPicker.js'
@@ -59,6 +60,11 @@ export interface RunLauncherProps {
     idempotencyKey: string,
   ) => Promise<{ runId: string; outcome: 'started_run' }>
   idPrefix?: string
+  /**
+   * #548：任务已明确指派 Agent 时，名字与配置可以直接沿用——不再要求用户重选一次。
+   * 显式选择（settings.agentId）仍优先；这里只是「没选时」的默认接收者。
+   */
+  defaultAgentId?: string | undefined
   launchIntent?: string
   launchTitle?: string
   launchDescription?: string
@@ -76,10 +82,14 @@ export interface RunLauncherProps {
   /** 交接输入（#380）：勾选「附带上游交接材料」时显式带上已确认 receipt。 */
   handoffReceiptId?: string | undefined
   buttonLabel?: string | undefined
+  /** #548：普通交办用「想请助手做什么？」，复核/修订等专用入口沿用原提示。 */
+  placeholder?: string
   purpose?: 'business' | 'agreement_draft' | 'handoff_draft'
   blocked?: boolean
   onStarted?: (runId: string) => void
   onOutcome?: (outcome: InstructionOutcome) => void
+  /** 辅助入口没有外部运行读面时，是否显示一句「已提交给助手」的受理回执。 */
+  showReceipt?: boolean
   draft?: string
   settings?: ExecutionSettings
   onSettingsChange?: (change: SetStateAction<ExecutionSettings>) => void
@@ -101,10 +111,12 @@ export function RunLauncher({
   artifactInputIds,
   handoffReceiptId,
   buttonLabel = '开始执行',
+  placeholder = '输入任务要求…',
   purpose,
   blocked = false,
   launch,
   idPrefix,
+  defaultAgentId,
   launchIntent,
   launchTitle = '开始新执行',
   launchDescription = '新执行不接续旧会话；配置版本与审批档将在开始时固定。',
@@ -112,6 +124,7 @@ export function RunLauncher({
   lockSettings = false,
   onStarted,
   onOutcome,
+  showReceipt = false,
   draft,
   settings: controlledSettings,
   onSettingsChange,
@@ -128,6 +141,8 @@ export function RunLauncher({
   const settings = controlledSettings ?? localSettings
   const setSettings = onSettingsChange ?? setLocalSettings
   const { agentId, profileRevisionId, deviceId, workspaceId } = settings
+  // #548：没显式选过时沿用任务已指派的 Agent；显式选择仍然优先。
+  const effectiveAgentId = agentId !== '' ? agentId : (defaultAgentId ?? '')
   const setAgentId = (agentId: string): void => setSettings((old) => ({ ...old, agentId }))
   const setProfileRevisionId = (profileRevisionId: string): void =>
     setSettings((old) => ({ ...old, profileRevisionId }))
@@ -156,9 +171,9 @@ export function RunLauncher({
     refetchOnMount: 'always',
   })
   const agentDetailQuery = useQuery({
-    queryKey: queryKeys.agentDetail(agentId),
-    queryFn: () => api.get<AgentDetailView>(`/agents/${agentId}`),
-    enabled: agentId !== '',
+    queryKey: queryKeys.agentDetail(effectiveAgentId),
+    queryFn: () => api.get<AgentDetailView>(`/agents/${effectiveAgentId}`),
+    enabled: effectiveAgentId !== '',
     refetchOnMount: 'always',
   })
   const devicesQuery = useQuery({
@@ -178,12 +193,12 @@ export function RunLauncher({
   useEffect(() => {
     if (
       profileRevisionId === '' &&
-      agentDetailQuery.data?.id === agentId &&
+      agentDetailQuery.data?.id === effectiveAgentId &&
       agentDetailQuery.data.currentRevisionId !== null
     ) {
       setProfileRevisionId(agentDetailQuery.data.currentRevisionId)
     }
-  }, [agentId, agentDetailQuery.data, profileRevisionId])
+  }, [effectiveAgentId, agentDetailQuery.data, profileRevisionId])
   const revisions = agentDetailQuery.data?.revisions ?? []
   const effectiveRevisionId =
     profileRevisionId !== '' ? profileRevisionId : (agentDetailQuery.data?.currentRevisionId ?? '')
@@ -220,6 +235,24 @@ export function RunLauncher({
   const resolvedApprovalPolicy =
     task.approvalPolicy ?? selectedRevision?.approvalPolicy ?? 'approval_required'
   const [confirmingFullAccess, setConfirmingFullAccess] = useState(false)
+  const bodyFor = (text: string) => ({
+    agentId: effectiveAgentId,
+    ...(artifactInputIds === undefined ? {} : { artifactInputIds }),
+    ...(handoffReceiptId === undefined ? {} : { handoffReceiptId }),
+    ...(purpose === undefined ? {} : { purpose }),
+    profileRevisionId: effectiveRevisionId,
+    ...(isAssignee && deviceId !== ''
+      ? { deviceId, ...(workspaceId !== '' ? { workspaceId } : {}) }
+      : {}),
+    text,
+    intent: { kind: 'new' as const },
+    expectedApprovalPolicy: resolvedApprovalPolicy,
+  })
+  // #548：「重试发送」只属于同一份未确认请求；改文字/换 Agent/设备后不再是它。
+  const attemptedSignature = useRef<string | null>(null)
+  const [failedSignature, setFailedSignature] = useState<string | null>(null)
+  const [outcomeSignature, setOutcomeSignature] = useState<string | null>(null)
+  const currentSignature = JSON.stringify({ body: bodyFor(prompt), launchIntent })
 
   const start = useMutation<
     InstructionOutcome | { runId: string; outcome: 'started_run' },
@@ -229,20 +262,9 @@ export function RunLauncher({
     onMutate: () => onSendingChange?.(true),
     onSettled: () => onSendingChange?.(false),
     mutationFn: () => {
-      const body = {
-        agentId,
-        ...(artifactInputIds === undefined ? {} : { artifactInputIds }),
-        ...(handoffReceiptId === undefined ? {} : { handoffReceiptId }),
-        ...(purpose === undefined ? {} : { purpose }),
-        profileRevisionId: effectiveRevisionId,
-        ...(isAssignee && deviceId !== ''
-          ? { deviceId, ...(workspaceId !== '' ? { workspaceId } : {}) }
-          : {}),
-        text: prompt,
-        intent: { kind: 'new' as const },
-        expectedApprovalPolicy: resolvedApprovalPolicy,
-      }
+      const body = bodyFor(prompt)
       const signature = JSON.stringify({ body, launchIntent })
+      attemptedSignature.current = signature
       if (intentKey.current?.signature !== signature)
         intentKey.current = { signature, key: crypto.randomUUID() }
       if (launch !== undefined) return launch(body, intentKey.current.key)
@@ -251,10 +273,15 @@ export function RunLauncher({
         idempotencyKey: intentKey.current.key,
       })
     },
+    onError: () => {
+      setFailedSignature(attemptedSignature.current)
+    },
     onSuccess: (outcome) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(task.id) })
       if (outcome.outcome !== 'rejected') setPrompt('')
+      setOutcomeSignature(attemptedSignature.current)
       intentKey.current = null
+      setFailedSignature(null)
       setConfirmingFullAccess(false)
       if ('id' in outcome) onOutcome?.(outcome)
       if (
@@ -299,10 +326,11 @@ export function RunLauncher({
     (agentDetailQuery.isFetching && !agentDetailQuery.isFetchedAfterMount)
   const configurationError = agentsQuery.isError || agentDetailQuery.isError
   const selectedAgentAvailable =
-    (agentsQuery.data ?? []).some((agent) => agent.id === agentId && agent.archivedAt === null) &&
-    typeof agentDetailQuery.data?.archivedAt !== 'string'
+    (agentsQuery.data ?? []).some(
+      (agent) => agent.id === effectiveAgentId && agent.archivedAt === null,
+    ) && typeof agentDetailQuery.data?.archivedAt !== 'string'
   const configurationBlocker =
-    agentId === ''
+    effectiveAgentId === ''
       ? null
       : configurationError
         ? '暂时无法确认所选Agent与配置，请重新读取。草稿仍保留。'
@@ -339,7 +367,7 @@ export function RunLauncher({
         : null
 
   const ready =
-    agentId !== '' &&
+    effectiveAgentId !== '' &&
     (!requireExplicitTarget || (deviceId !== '' && workspaceId !== '')) &&
     selectedAgentAvailable &&
     !configurationError &&
@@ -365,13 +393,30 @@ export function RunLauncher({
             )))) &&
     prompt.trim().length > 0
 
+  const failedCurrentRequest = failedSignature !== null && failedSignature === currentSignature
+  const outcomeCurrent = outcomeSignature !== null && outcomeSignature === currentSignature
+  // 网络失败/5xx 只代表「没确认是否收到」，不能当成「没发出」。
+  const uncertainError =
+    failedCurrentRequest &&
+    start.isError &&
+    isApiError(start.error) &&
+    (start.error.status === 0 || start.error.status >= 500)
+  const startGuidance =
+    failedCurrentRequest && start.isError && isApiError(start.error)
+      ? start.error.code === 'DEVICE_REVOKED'
+        ? '这台电脑已被撤销，不能再用它处理这条消息。你写的内容还在；请重新选择执行电脑。'
+        : start.error.code === 'DEVICE_OFFLINE'
+          ? '上次用的电脑没连上，消息还没发出。你写的内容还在。可以让责任人的设备上线（在「设备」页确认已上报），或明确重新选择执行电脑。'
+          : null
+      : null
   const feedback = start.isPending
     ? 'pending'
-    : start.isError
+    : failedCurrentRequest && start.isError
       ? 'failed'
-      : start.data?.outcome === 'rejected'
+      : outcomeCurrent && start.data?.outcome === 'rejected'
         ? 'rejected'
         : 'idle'
+  const sendLabel = start.isPending ? '发送中…' : uncertainError ? '重试发送' : buttonLabel
 
   return (
     <section
@@ -396,7 +441,7 @@ export function RunLauncher({
                   id={`${controlId}-agent`}
                   label="Agent"
                   ariaLabel="选择 Agent"
-                  value={agentId}
+                  value={effectiveAgentId}
                   disabled={lockSettings || start.isPending}
                   placeholder="选择 Agent"
                   options={agentOptions}
@@ -421,7 +466,7 @@ export function RunLauncher({
                     placeholder="先选 Agent…"
                     options={revisionOptions}
                     onChange={setProfileRevisionId}
-                    disabled={lockSettings || agentId === '' || start.isPending}
+                    disabled={lockSettings || effectiveAgentId === '' || start.isPending}
                   />
                 </div>
                 <TargetPicker
@@ -456,7 +501,7 @@ export function RunLauncher({
                   <ExecutionPreparation
                     taskId={task.id}
                     selection={{
-                      agentId,
+                      agentId: effectiveAgentId,
                       profileRevisionId: selectedRevision.id,
                       ...(deviceId === '' ? {} : { deviceId }),
                       ...(workspaceId === '' ? {} : { workspaceId }),
@@ -483,7 +528,7 @@ export function RunLauncher({
                   {workspaceId === '' ? '工作区自动选' : (selectedWorkspace?.name ?? '所选工作区')}
                 </span>
               ) : null}
-              {agentId !== '' || task.approvalPolicy !== null ? (
+              {effectiveAgentId !== '' || task.approvalPolicy !== null ? (
                 <span
                   className="composer-approval-pill"
                   data-testid="instruction-approval-pill"
@@ -500,8 +545,8 @@ export function RunLauncher({
               className="button button-primary instruction-send"
               disabled={!ready || start.isPending}
               aria-busy={start.isPending}
-              aria-label={start.isPending ? '发送中…' : buttonLabel}
-              title={buttonLabel}
+              aria-label={sendLabel}
+              title={sendLabel}
               data-feedback={feedback}
               data-instant={instant ? '' : undefined}
               onPointerDown={() => setInstant(false)}
@@ -510,7 +555,7 @@ export function RunLauncher({
               }}
             >
               <InstructionSendIcon feedback={feedback} />
-              {compact ? null : start.isPending ? '发送中…' : buttonLabel}
+              {compact ? null : sendLabel}
             </button>
           }
         >
@@ -520,7 +565,8 @@ export function RunLauncher({
               aria-label="指令"
               value={prompt}
               maxLength={10_000}
-              disabled={blocked || start.isPending}
+              // #548：能编辑与能提交分开——阻塞时保留文字、只禁用提交。
+              disabled={start.isPending}
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
@@ -529,12 +575,12 @@ export function RunLauncher({
                   event.currentTarget.form?.requestSubmit()
                 }
               }}
-              placeholder="输入任务要求…"
+              placeholder={placeholder}
               rows={compact ? 2 : 4}
             />
           </label>
         </PromptBar>
-        {agentId !== '' && agentDetailQuery.isSuccess && selectedRevision === undefined ? (
+        {effectiveAgentId !== '' && agentDetailQuery.isSuccess && selectedRevision === undefined ? (
           <p className="mutation-hint" role="status">
             所选配置版本不可用，请重新选择版本或 Agent。
           </p>
@@ -555,7 +601,7 @@ export function RunLauncher({
             className="button"
             onClick={() => {
               void agentsQuery.refetch()
-              if (agentId !== '') void agentDetailQuery.refetch()
+              if (effectiveAgentId !== '') void agentDetailQuery.refetch()
               if (isAssignee) {
                 void devicesQuery.refetch()
                 void workspacesQuery.refetch()
@@ -608,8 +654,34 @@ export function RunLauncher({
             本次 Run 将以「完全权限」运行：工具调用不再逐次请求批准。
           </p>
         ) : null}
-        {start.isError ? <ErrorBanner error={start.error} /> : null}
-        {start.data?.outcome === 'rejected' ? (
+        {startGuidance !== null ? (
+          <p className="mutation-hint" data-testid="instruction-offline-guidance">
+            {startGuidance}
+          </p>
+        ) : null}
+        {start.isError && failedCurrentRequest ? <ErrorBanner error={start.error} /> : null}
+        {uncertainError ? (
+          <div className="composer-actions" role="status" data-testid="assistant-uncertain">
+            <span>暂时没确认助手是否收到。你写的内容还在。</span>
+            <button
+              type="button"
+              className="button button-quiet"
+              onClick={() => {
+                void queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(task.id) })
+              }}
+            >
+              重新确认
+            </button>
+          </div>
+        ) : null}
+        {showReceipt && start.data?.outcome === 'started_run' ? (
+          // 约定起草等辅助入口没有外部运行读面，只说一句可长期成立的受理事实；
+          // 主输入路径由 InstructionComposer 按 Run 状态决定是否显示「等助手开始」。
+          <p className="instruction-outcome" role="status" data-testid="run-outcome">
+            已提交给助手
+          </p>
+        ) : null}
+        {outcomeCurrent && start.data?.outcome === 'rejected' ? (
           <p className="mutation-hint" role="alert" data-testid="execution-start-refusal">
             指令未被受理：
             {start.data.instructionErrorMessage ??

@@ -92,9 +92,9 @@ describe('instruction composer', () => {
       renderComposer([instructionOk({ ...message(), outcome, runId: null })])
       const box = await screen.findByLabelText('指令')
       await user.type(box, '检查报告')
-      await user.click(screen.getByRole('button', { name: '发送指令' }))
+      await user.click(screen.getByRole('button', { name: '发给助手' }))
       await screen.findByTestId('instruction-outcome')
-      const button = screen.getByRole('button', { name: '发送指令' })
+      const button = screen.getByRole('button', { name: '发给助手' })
       expect(button).toHaveAttribute('data-feedback', outcome)
       expect(button.querySelector('.instruction-send-icon')).toHaveAttribute('aria-hidden', 'true')
       await user.type(box, '新的草稿')
@@ -102,20 +102,20 @@ describe('instruction composer', () => {
       expect(screen.getByTestId('instruction-outcome')).toBeVisible()
     },
   )
-  it('起新运行：如实说「已起新运行」并给出运行号；输入被清空', async () => {
+  it('起新运行：如实说「已提交，等助手开始」并给出运行号；输入被清空', async () => {
     const user = userEvent.setup()
     renderComposer([instructionOk({ ...message(), outcome: 'started_run', runId: 'run-abcdef12' })])
     const box = await screen.findByLabelText('指令')
     await user.type(box, '跑一遍回归')
-    await user.click(screen.getByRole('button', { name: '发送指令' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     await waitFor(() => {
-      expect(screen.getByTestId('instruction-outcome').textContent).toContain('已起新运行')
+      expect(screen.getByTestId('instruction-outcome').textContent).toContain('已提交，等助手开始')
     })
     expect(screen.getByTestId('instruction-outcome').textContent).toContain('run-abcd')
     expect(box).toHaveValue('')
   })
 
-  it('追问：如实说「已作为追问发给当前运行」，并提前告知这句话会去哪', async () => {
+  it('追问：如实说「已发给当前助手对话」，并提前告知这句话会去哪', async () => {
     const user = userEvent.setup()
     renderComposer(
       [instructionOk({ ...message(), outcome: 'followup', runId: 'run-abcdef12' })],
@@ -123,11 +123,9 @@ describe('instruction composer', () => {
     )
     expect((await screen.findByTestId('instruction-routing-hint')).textContent).toContain('追问')
     await user.type(await screen.findByLabelText('指令'), '再带上堆栈')
-    await user.click(screen.getByRole('button', { name: '发送指令' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     await waitFor(() => {
-      expect(screen.getByTestId('instruction-outcome').textContent).toContain(
-        '已作为追问发给当前运行',
-      )
+      expect(screen.getByTestId('instruction-outcome').textContent).toContain('已发给当前助手对话')
     })
   })
 
@@ -138,7 +136,7 @@ describe('instruction composer', () => {
       true,
     )
     await user.type(await screen.findByLabelText('指令'), '顺便清理缓存')
-    await user.click(screen.getByRole('button', { name: '发送指令' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     await waitFor(() => {
       expect(screen.getByTestId('instruction-outcome').textContent).toContain('已排队')
     })
@@ -167,7 +165,7 @@ describe('instruction composer', () => {
       }),
     ])
     await user.type(await screen.findByLabelText('指令'), '继续跑')
-    await user.click(screen.getByRole('button', { name: '发送指令' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     await waitFor(() => {
       expect(screen.getByTestId('instruction-outcome').textContent).toContain('未受理')
     })
@@ -181,13 +179,13 @@ describe('instruction composer', () => {
     renderComposer([instructionFail(403, 'FORBIDDEN', '你不是这个任务的责任人')])
     const box = await screen.findByLabelText('指令')
     await user.type(box, '这句要留住')
-    await user.click(screen.getByRole('button', { name: '发送指令' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     await waitFor(() => {
       expect(screen.getByText(/你不是这个任务的责任人/)).toBeTruthy()
     })
     expect(box).toHaveValue('这句要留住') // 输入内容保留
     expect(screen.getByText(/req-1/)).toBeTruthy() // requestId 原样展示
-    expect(screen.getByRole('button', { name: '发送指令' })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: '发给助手' })).toHaveAttribute(
       'data-feedback',
       'failed',
     )
@@ -197,10 +195,10 @@ describe('instruction composer', () => {
     const user = userEvent.setup()
     renderComposer([instructionFail(409, 'DEVICE_OFFLINE', '没有可用的执行目标')])
     await user.type(await screen.findByLabelText('指令'), '跑吧')
-    await user.click(screen.getByRole('button', { name: '发送指令' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     const guidance = await screen.findByTestId('instruction-offline-guidance')
     expect(guidance.textContent).toContain('设备')
-    expect(guidance.textContent).toContain('显式指定')
+    expect(guidance.textContent).toContain('重新选择执行环境')
   })
 
   it('提交中禁用按钮（不重复下发同一条指令）', async () => {
@@ -350,7 +348,7 @@ describe('#244 审批档位胶囊（知情 + full_access 确认）', () => {
       { taskId: task.id, approvalPreview: { policy: 'full_access', source: 'task_override' } },
     )
     await user.type(await screen.findByLabelText('指令'), '直接改文件')
-    await user.click(screen.getByRole('button', { name: '发送指令' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     // 确认框弹出，请求没发。
     expect(await screen.findByRole('heading', { name: '以完全权限发送指令？' })).toBeVisible()
     expect(posts).toBe(0)
@@ -360,7 +358,7 @@ describe('#244 审批档位胶囊（知情 + full_access 确认）', () => {
     expect(posts).toBe(0)
     expect(screen.getByLabelText('指令')).toHaveValue('直接改文件')
     // 再发并确认：恰好一次。
-    await user.click(screen.getByRole('button', { name: '发送指令' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     await user.click(await screen.findByRole('button', { name: '确认以完全权限发送' }))
     await waitFor(() => expect(posts).toBe(1))
   })
@@ -388,7 +386,7 @@ describe('#244 审批档位胶囊（知情 + full_access 确认）', () => {
       true,
     )
     await user.type(await screen.findByLabelText('指令'), '跑吧')
-    await user.click(screen.getByRole('button', { name: '发送指令' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     await waitFor(() => expect(posts).toBe(1))
     expect(screen.queryByRole('heading', { name: '以完全权限发送指令？' })).not.toBeInTheDocument()
   })

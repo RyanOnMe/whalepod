@@ -4,6 +4,8 @@
 
 | 文档 | 内容 |
 |---|---|
+| [2026-11-13-task-message-composer-acceptance.md](./2026-11-13-task-message-composer-acceptance.md) | #548：任务页默认发给团队、接收方切换、双草稿、离线/重新开始与受限成员负向面；Q0 全量 + p1-07/p1-19/p1-393 等生产浏览器结果，真人试用 not_run。 |
+| [2026-11-13-task-message-composer-plan.md](./2026-11-13-task-message-composer-plan.md) | 任务页第一步产品计划：默认发给团队、明确请助手处理、独立草稿与发送受阻恢复；保持原消息和授权边界，工程验收与真人试用分开。 |
 | [2026-11-12-rd05a-combined-paths-acceptance.md](./2026-11-12-rd05a-combined-paths-acceptance.md) | #546：同一生产装配/Project/两成员串联快入口与终态续接、新工作发现及精确授权私有草稿；三条正向 Run + 首读前生产 HTTP 更正的隔离第四 Run，独立 checker/negatives 接 required integration，本轮组合结果 not_run。 |
 | [2026-11-12-rd04c3-guarded-executor-acceptance.md](./2026-11-12-rd04c3-guarded-executor-acceptance.md) | #544：真实 Executor 逐件授权、逐调用预算与结算、私有草稿验收及供应商账单边界。 |
 | [2026-11-12-rd04c2-discovery-draft-acceptance.md](./2026-11-12-rd04c2-discovery-draft-acceptance.md) | #542：新任务授权后自动派工，真 DSH 实际读固定来源并产出责任人私有草稿；首读前撤权阻断；仅回环模型回放。 |

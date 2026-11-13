@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { queryKeys } from '../src/app/query-client.js'
@@ -125,7 +125,7 @@ describe('#315 统一执行入口的真人页面', () => {
       await user.click(await screen.findByRole('menuitem', { name: 'Builder' }))
       const box = await screen.findByLabelText('指令')
       await user.type(box, '这次先提交的草稿')
-      const send = screen.getByRole('button', { name: '开始执行' })
+      const send = screen.getByRole('button', { name: '发给助手' })
       await waitFor(() => expect(send).toBeEnabled())
       await user.click(send)
       await waitFor(() => expect(send).toHaveAttribute('data-feedback', 'pending'))
@@ -190,7 +190,7 @@ describe('#315 统一执行入口的真人页面', () => {
     const box = await screen.findByLabelText('指令')
     await waitFor(() => expect(box).toBeEnabled())
     await user.type(box, '继续原会话的草稿')
-    await user.click(screen.getByRole('button', { name: '继续会话' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     await waitFor(() => expect(source).toBeDisabled())
     expect(screen.getByLabelText('执行方式')).toBeDisabled()
     expect(box).toBeDisabled()
@@ -234,7 +234,7 @@ describe('#315 统一执行入口的真人页面', () => {
     await showExecutionOptions()
     expect(screen.getByTestId('instruction-approval-source')).toHaveTextContent('当前运行')
     await user.type(box, '检查上文')
-    await user.click(screen.getByRole('button', { name: '发送追问' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     await waitFor(() =>
       expect(view.fetchMock.mock.calls.some(([url]) => String(url).endsWith('/instructions'))).toBe(
         true,
@@ -274,9 +274,9 @@ describe('#315 统一执行入口的真人页面', () => {
       runs: [{ ...run, status: 'completed' }],
       nextRunApprovalPolicy: null,
     })
-    expect(await screen.findByTestId('execution-blocker')).toHaveTextContent('草稿仍保留')
+    expect(await screen.findByTestId('execution-blocker')).toHaveTextContent('刚才的对话已经结束')
     expect(box).toHaveValue('不要丢这段话')
-    expect(screen.getByRole('button', { name: '发送追问' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
     await mode(user, /开始新执行/)
     expect(await screen.findByLabelText('指令')).toHaveValue('不要丢这段话')
     expect(
@@ -311,7 +311,7 @@ describe('#315 统一执行入口的真人页面', () => {
     expect(screen.getByTestId('instruction-approval-pill')).toHaveTextContent('逐次批准')
     expect(screen.getByTestId('execution-context')).toHaveTextContent('沿用来源配置版本')
     await user.type(box, '接着上文')
-    await user.click(screen.getByRole('button', { name: '继续会话' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     await waitFor(() =>
       expect(view.fetchMock.mock.calls.some(([url]) => String(url).endsWith('/instructions'))).toBe(
         true,
@@ -344,7 +344,7 @@ describe('#315 统一执行入口的真人页面', () => {
     await screen.findByLabelText('执行方式')
     await mode(user, /继续会话/)
     expect(await screen.findByText('这次执行没有可续接的会话，请开始新执行。')).toBeVisible()
-    expect(screen.getByRole('button', { name: '继续会话' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
   })
 
   it('无指令权显示可协作说明，无发送输入', async () => {
@@ -361,7 +361,7 @@ describe('#315 统一执行入口的真人页面', () => {
         },
       ]),
     )
-    expect(await screen.findByText(/只有责任人和已授权成员可以发送指令/)).toBeVisible()
+    expect(await screen.findByText(/负责交办/)).toBeVisible()
     expect(screen.queryByLabelText('指令')).toBeNull()
     expect(screen.getByLabelText('留言')).toBeEnabled()
   })
@@ -623,6 +623,11 @@ async function leaveForDevices(user: ReturnType<typeof userEvent.setup>) {
 async function returnToDraft(user: ReturnType<typeof userEvent.setup>, title: string) {
   await user.click(screen.getByRole('link', { name: new RegExp(`^${title}`) }))
   await screen.findByRole('heading', { name: title, level: 1 })
+  // #548：任务侧栏是普通链接，生产默认落在「发给团队」；这些用例判的是执行侧草稿，
+  // 返回后按真人会做的那样再切到「请助手处理」。
+  const group = await screen.findByRole('group', { name: '消息接收方' })
+  const assistant = within(group).getByRole('button', { name: '请助手处理' })
+  if (assistant.getAttribute('aria-pressed') !== 'true') await user.click(assistant)
 }
 describe('#337 当前会话中的执行草稿', () => {
   it('去设备页再回任务保留草稿和固定Agent版本，不发指令', async () => {
@@ -671,7 +676,7 @@ describe('#337 当前会话中的执行草稿', () => {
     f.state.request = deferredResponse()
     await selectDraftAgent(user)
     await user.type(screen.getByLabelText('指令'), '等待确认受理的正文')
-    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     await waitFor(() => expect(screen.getByLabelText('执行方式')).toBeDisabled())
     await leaveForDevices(user)
     await returnToDraft(user, f.task.title)
@@ -700,7 +705,7 @@ describe('#337 当前会话中的执行草稿', () => {
     f.state.fail = true
     await selectDraftAgent(user)
     await user.type(screen.getByLabelText('指令'), '失败后不应变成另一次指令')
-    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     await screen.findByText(/暂时无法确认受理/)
     const calls = () =>
       f.fetchMock.mock.calls.filter(
@@ -710,7 +715,7 @@ describe('#337 当前会话中的执行草稿', () => {
     await leaveForDevices(user)
     await returnToDraft(user, f.task.title)
     expect(screen.getByLabelText('指令')).toHaveValue('失败后不应变成另一次指令')
-    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     await waitFor(() => expect(calls()).toHaveLength(2))
     expect(new Headers(calls()[1]?.[1]?.headers).get('idempotency-key')).toBe(first)
   })
@@ -725,7 +730,7 @@ describe('#337 当前会话中的执行草稿', () => {
     await returnToDraft(user, f.task.title)
     expect(screen.getByLabelText('指令')).toHaveValue('只针对原责任人环境的安排')
     expect(screen.getByTestId('execution-blocker')).toHaveTextContent('责任人已变化')
-    expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
   })
 })
 
@@ -743,7 +748,7 @@ describe('#337 草稿身份与来源边界', () => {
     await returnToDraft(user, f.task.title)
     expect(screen.getByLabelText('指令')).toHaveValue('仅发往原活跃执行')
     expect(screen.getByLabelText('执行方式')).toHaveTextContent('发送追问')
-    expect(screen.getByTestId('execution-blocker')).toHaveTextContent('所选执行已结束')
+    expect(screen.getByTestId('execution-blocker')).toHaveTextContent('刚才的对话已经结束')
     expect(
       f.fetchMock.mock.calls.some(
         ([url, init]) => String(url).endsWith('/instructions') && init?.method === 'POST',
@@ -842,10 +847,10 @@ describe('#338 首次准备往返与当前条件', () => {
     })
     await returnToDraft(user, f.task.title)
     expect(screen.getByTestId('execution-blocker')).toHaveTextContent('重新确认任务')
-    expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
     expect(screen.getByLabelText('指令')).toHaveValue('等当前任务确认后再发送')
     await act(async () => release())
-    await waitFor(() => expect(screen.getByRole('button', { name: '开始执行' })).toBeEnabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: '发给助手' })).toBeEnabled())
   })
   it('离开期间设备离线后，返回重读而不改选其他目标', async () => {
     const user = userEvent.setup()
@@ -863,7 +868,7 @@ describe('#338 首次准备往返与当前条件', () => {
     await waitFor(() =>
       expect(screen.getByTestId('execution-target-blocker')).toHaveTextContent('离线'),
     )
-    expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
     expect(screen.getByTestId('execution-target-summary')).toHaveTextContent(f.device.name)
     expect(screen.getByLabelText('指令')).toHaveValue('固定本人执行现场')
   })
@@ -878,11 +883,11 @@ describe('#338 首次准备往返与当前条件', () => {
     await returnToDraft(user, f.task.title)
     await waitFor(() =>
       expect(screen.getByTestId('execution-blocker')).toHaveTextContent(
-        result === 'error' ? '暂时无法确认权限' : '只有责任人和已授权成员',
+        result === 'error' ? '暂时无法确认权限' : '负责交办',
       ),
     )
     expect(screen.getByLabelText('指令')).toHaveValue('协作者的原草稿')
-    expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
     expect(screen.queryByRole('button', { name: '检查本次准备条件' })).toBeNull()
   })
   it('返回重新读取Agent归档状态，不用旧成功配置继续发送', async () => {
@@ -896,7 +901,7 @@ describe('#338 首次准备往返与当前条件', () => {
     await waitFor(() =>
       expect(screen.getByTestId('execution-configuration-blocker')).toHaveTextContent('不可用'),
     )
-    expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
     expect(screen.getByLabelText('指令')).toHaveValue('原先选择的执行者')
   })
   it('离开再返回不复用准备检查成功，也不自动重查Node', async () => {
@@ -955,11 +960,11 @@ describe('#338 返回边界与读取恢复', () => {
     await waitFor(() =>
       expect(screen.getByTestId('execution-blocker')).toHaveTextContent('正在确认操作权限'),
     )
-    expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
     f.state.granted = false
     await act(async () => release())
     await waitFor(() =>
-      expect(screen.getByTestId('execution-blocker')).toHaveTextContent('只有责任人和已授权成员'),
+      expect(screen.getByTestId('execution-blocker')).toHaveTextContent('负责交办'),
     )
     expect(screen.getByLabelText('指令')).toHaveValue('等待当前授权确认')
   })
@@ -976,7 +981,7 @@ describe('#338 返回边界与读取恢复', () => {
     )
     f.state.grantError = false
     await user.click(screen.getByRole('button', { name: '重新确认' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '开始执行' })).toBeEnabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: '发给助手' })).toBeEnabled())
     expect(screen.getByLabelText('指令')).toHaveValue('读取失败也保留正文')
     expect(
       f.fetchMock.mock.calls.some(

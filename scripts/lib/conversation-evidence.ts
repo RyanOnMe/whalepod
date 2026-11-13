@@ -274,6 +274,23 @@ export function verifyConversationEvidence(input: unknown): ConversationVerifica
     check(offline['blockerShown'] === true, 'the offline block must explain itself to the user')
     check(offline['draftPreserved'] === true, 'the blocked draft must stay in the composer')
     check(
+      offline['editableWhileBlocked'] === true,
+      'the blocked assistant draft must stay editable (editing is not sending)',
+    )
+    check(
+      offline['teamMessageWorked'] === true &&
+        num(offline['teamCommentDelta'], 'offline.teamCommentDelta') === 1,
+      'a team message must still be delivered while the assistant is blocked (exactly one comment)',
+    )
+    check(
+      offline['reconnectedWithoutAutoSend'] === true,
+      'reconnecting must not auto-send the preserved draft',
+    )
+    check(
+      offline['sentOnlyAfterExplicitClick'] === true,
+      'the instruction may be posted only after the user explicitly clicks send',
+    )
+    check(
       offline['explicitSwitchKeepsDraft'] === true,
       'switching to a new execution by hand must keep the text',
     )

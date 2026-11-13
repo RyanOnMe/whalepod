@@ -16,6 +16,7 @@ import {
   sessionCookie,
   setRuntimeFixture,
   showAgentCreation,
+  showAssistant,
   startNode,
   stopNode,
   waitForRunStatus,
@@ -789,6 +790,7 @@ async function recordBrand(page: Page, taskId: string, width: number, value: The
   await page.getByRole('button', { name: '收起', exact: true }).first().click()
   await page.screenshot({ path: join(evidence, `brand-${value}-${width}.png`) })
   await page.goto(`/tasks/${taskId}`)
+  await showAssistant(page)
   await theme(page, value)
   await page.getByLabel('指令', { exact: true }).fill('未发送的品牌验收草稿')
   const send = page.locator('.workspace-dock .instruction-send')
@@ -1037,6 +1039,7 @@ test('潮汐品牌与真实 Agent 状态：GPU、审批、键盘、减少动态�
       await form.getByRole('button', { name: /创建任务/ }).click()
       await owner.waitForURL(/\/tasks\//)
       const taskId = new URL(owner.url()).pathname.split('/').pop()!
+      await showAssistant(owner)
       await owner.getByRole('button', { name: '接受任务', exact: true }).click()
       await expect(owner.getByTestId('task-assignment-state')).toHaveText('已接受')
       await member.goto(`/tasks/${taskId}`)
@@ -1046,7 +1049,7 @@ test('潮汐品牌与真实 Agent 状态：GPU、审批、键盘、减少动态�
       await selectFromMenu(owner.getByLabel('选择 Workspace', { exact: true }), 'e2e-ws')
       await owner.getByLabel('执行设置', { exact: true }).click()
       await owner.getByLabel('指令', { exact: true }).fill('生成潮汐状态验收报告')
-      const send = owner.getByRole('button', { name: '开始执行', exact: true })
+      const send = owner.getByRole('button', { name: '发给助手', exact: true })
       await expect(send).toBeEnabled()
       await observeStates(owner)
       await send.click()
@@ -1206,6 +1209,7 @@ test('潮汐品牌与真实 Agent 状态：GPU、审批、键盘、减少动态�
     await selectFromMenu(degradedForm.locator('button[id^="task-assignee-"]'), /Alice/)
     await degradedForm.getByRole('button', { name: /创建任务/ }).click()
     await degraded.waitForURL(/\/tasks\//)
+    await showAssistant(degraded)
     await degraded.getByRole('button', { name: '接受任务', exact: true }).click()
     await selectFromMenu(degraded.getByLabel('选择 Agent', { exact: true }), 'Tide Builder')
     await degraded.getByLabel('执行设置', { exact: true }).click()
@@ -1221,7 +1225,7 @@ test('潮汐品牌与真实 Agent 状态：GPU、审批、键盘、减少动态�
             '\n',
           ),
       )
-    await degraded.getByRole('button', { name: '开始执行', exact: true }).click()
+    await degraded.getByRole('button', { name: '发给助手', exact: true }).click()
     const fallbackCore = degraded.getByTestId('agent-state-core')
     await expect(fallbackCore).toHaveAttribute('data-state', 'thinking', { timeout: 120_000 })
     await expect(fallbackCore).toHaveAttribute('data-renderer', 'fallback')
@@ -1295,6 +1299,7 @@ test('潮汐品牌与真实 Agent 状态：GPU、审批、键盘、减少动态�
     await selectFromMenu(lossForm.locator('button[id^="task-assignee-"]'), /Alice/)
     await lossForm.getByRole('button', { name: /创建任务/ }).click()
     await lostPage.waitForURL(/\/tasks\//)
+    await showAssistant(lostPage)
     await lostPage.getByRole('button', { name: '接受任务', exact: true }).click()
     await selectFromMenu(lostPage.getByLabel('选择 Agent', { exact: true }), 'Tide Builder')
     await lostPage.getByLabel('执行设置', { exact: true }).click()
@@ -1302,7 +1307,7 @@ test('潮汐品牌与真实 Agent 状态：GPU、审批、键盘、减少动态�
     await selectFromMenu(lostPage.getByLabel('选择 Workspace', { exact: true }), 'e2e-ws')
     await lostPage.getByLabel('执行设置', { exact: true }).click()
     await lostPage.getByLabel('指令', { exact: true }).fill('生成终态资源验收报告')
-    await lostPage.getByRole('button', { name: '开始执行', exact: true }).click()
+    await lostPage.getByRole('button', { name: '发给助手', exact: true }).click()
     const permanentlyLost = lostPage.getByTestId('agent-state-core')
     await expect(permanentlyLost).toHaveAttribute('data-state', 'thinking', { timeout: 120_000 })
     await permanentlyLost.scrollIntoViewIfNeeded()

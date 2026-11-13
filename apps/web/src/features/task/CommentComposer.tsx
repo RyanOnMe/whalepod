@@ -12,6 +12,7 @@ import { useMemberDirectory } from '../team/memberDirectory.js'
 import type { CommentView, Session, TaskRoomRun } from '../../shared/api/types.js'
 import { SelectMenu } from '../../shared/SelectMenu.js'
 import { formatRunReference, parseRunReferences } from './runReference.js'
+import { useTeamMessageDraft } from './execution-drafts.js'
 import { queryKeys } from '../../app/query-client.js'
 
 export interface CommentListProps {
@@ -77,6 +78,11 @@ export function CommentList({
 
 export interface CommentComposerProps {
   taskId: string
+  /**
+   * #548：当前登录身份。草稿与幂等键按身份 + 任务存在 AppShell 的页面会话内存里，
+   * 切换接收方或去设备页返回时不丢；为空时退回组件内 state（组件级夹具）。
+   */
+  userId?: string | null
   /** 本任务的运行列表（团队可见投影）：引用只能指向本任务的运行，所以按钮里列的就是它。 */
   runs?: readonly TaskRoomRun[]
   /** 运行短号 → 展示名（「第 N 次运行」）；由页面注入，避免这里重新发明编号规则。 */
@@ -92,15 +98,40 @@ export interface CommentComposerProps {
 
 export function CommentComposer({
   taskId,
+  userId = null,
   runs = [],
   runLabels = new Map<string, string>(),
   insertToken = null,
   onInsertTokenConsumed,
 }: CommentComposerProps): ReactNode {
   const queryClient = useQueryClient()
-  const [body, setBody] = useState('')
+  const {
+    draft,
+    update: updateDraft,
+    clearIfPending,
+    isPending,
+  } = useTeamMessageDraft(taskId, userId)
+  const body = draft.body
   const [error, setError] = useState<unknown>(null)
+  // #548：成功只表示「已发给团队」，不宣称助手已读或采用。
+  const [sent, setSent] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  /** 任何编辑都意味着这是一份新的留言：旧幂等键不能再拿去重试。 */
+  const setBody = (change: string | ((current: string) => string)): void => {
+    setSent(false)
+    updateDraft((old) => ({
+      body: typeof change === 'function' ? change(old.body) : change,
+      pending: null,
+    }))
+  }
+
+  // 任务参数变化时路由可能复用同一组件实例：上一条任务的「已发给团队」与错误不能
+  // 挂到新任务的输入框上。草稿本身按 taskId 存在 store 里，不需要搬。
+  useEffect(() => {
+    setSent(false)
+    setError(null)
+  }, [taskId])
 
   useEffect(() => {
     if (insertToken === null) return
@@ -112,16 +143,20 @@ export function CommentComposer({
   }, [insertToken, onInsertTokenConsumed])
 
   const mutation = useMutation({
-    mutationFn: (text: string) =>
-      api.mutate<CommentView>(`/tasks/${taskId}/comments`, { body: { body: text } }),
-    onSuccess: () => {
-      setBody('')
+    mutationFn: ({ text, key }: { text: string; key: string }) =>
+      api.mutate<CommentView>(`/tasks/${taskId}/comments`, {
+        body: { body: text },
+        idempotencyKey: key,
+      }),
+    onSuccess: (_comment, { key }) => {
+      // 迟到的回执只清它自己那份请求——判据取 store 当前快照，组件已卸载/换任务也成立。
+      if (clearIfPending(key)) setSent(true)
       setError(null)
       void queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(taskId) })
     },
-    onError: (mutationError: unknown) => {
-      // 失败时保留输入内容，只展示错误（02 Task 7 Step 6）。
-      setError(mutationError)
+    onError: (mutationError: unknown, { key }) => {
+      // 失败时保留输入内容与幂等键：同一份未确认请求重试不得重复留言（#548）。
+      if (isPending(key)) setError(mutationError)
     },
   })
 
@@ -129,8 +164,10 @@ export function CommentComposer({
     event.preventDefault()
     const text = body.trim()
     if (text === '' || mutation.isPending) return
+    const key = draft.pending?.signature === text ? draft.pending.key : crypto.randomUUID()
+    updateDraft((old) => ({ ...old, pending: { signature: text, key } }))
     setError(null)
-    mutation.mutate(text)
+    mutation.mutate({ text, key })
   }
 
   return (
@@ -142,7 +179,7 @@ export function CommentComposer({
             className="button button-primary"
             disabled={mutation.isPending || body.trim() === ''}
           >
-            {mutation.isPending ? '发送中…' : '发送留言'}
+            {mutation.isPending ? '发送中…' : '发给团队'}
           </button>
         }
         controls={
@@ -177,12 +214,15 @@ export function CommentComposer({
         <textarea
           id={`comment-body-${taskId}`}
           name="body"
-          placeholder="留言…"
+          placeholder="补充一条情况…"
           rows={3}
           maxLength={10_000}
           value={body}
           ref={textareaRef}
-          onChange={(event) => setBody(event.target.value)}
+          onChange={(event) => {
+            setSent(false)
+            setBody(event.target.value)
+          }}
           onKeyDown={(event) => {
             // #229：Cmd/Ctrl+Enter 直发（与提交按钮同一条 form 路径）；纯 Enter 仍是换行。
             if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
@@ -192,7 +232,12 @@ export function CommentComposer({
           }}
         />
       </DiscussionComposer>
-      {error !== null ? <ErrorBanner error={error} /> : null}
+      {sent ? (
+        <p className="composer-feedback" role="status" data-testid="comment-sent-status">
+          已发给团队
+        </p>
+      ) : null}
+      {error !== null && draft.pending !== null ? <ErrorBanner error={error} /> : null}
     </form>
   )
 }

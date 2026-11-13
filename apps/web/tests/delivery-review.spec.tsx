@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { queryKeys } from '../src/app/query-client.js'
@@ -214,7 +214,7 @@ describe('从交付物发起复核 (#326)', () => {
     await typeInstruction('我已写好的复核要求', user)
     await review(user)
     expect(screen.getByLabelText('指令')).toHaveValue('我已写好的复核要求')
-    expect(screen.getByRole('button', { name: '开始复核' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
     expect(f.posts).toHaveLength(0)
     expect(screen.getByLabelText(`复核材料：${f.artifact.title}`)).toBeChecked()
     await act(async () =>
@@ -225,7 +225,7 @@ describe('从交付物发起复核 (#326)', () => {
     )
     expect(await screen.findByLabelText(`复核材料：${f.late.title}`)).not.toBeChecked()
     await selectOption(user, '选择 Agent', 'Reviewer')
-    await user.click(screen.getByRole('button', { name: '开始复核' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     await waitFor(() => expect(f.posts).toHaveLength(1))
     expect(f.posts[0]).toMatchObject({
       agentId: REVIEWER,
@@ -243,14 +243,14 @@ describe('从交付物发起复核 (#326)', () => {
     await review(user)
     expect(screen.getByTestId('execution-blocker')).toHaveTextContent('已有执行进行中')
     expect(screen.getByLabelText('指令')).toHaveValue('保留的下一次复核要求')
-    expect(screen.getByRole('button', { name: '开始复核' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
     expect(f.posts).toHaveLength(0)
   })
   it('无指令权成员可定位讨论，不能借产出复核探查私有现场或发送', async () => {
     const user = userEvent.setup()
     const f = fixture({ unauthorized: true })
     await review(user)
-    expect(screen.getByTestId('execution-blocker')).toHaveTextContent('只有责任人和已授权成员')
+    expect(screen.getByTestId('execution-blocker')).toHaveTextContent('负责交办')
     expect(screen.getByRole('link', { name: '前往讨论' })).toBeVisible()
     expect(f.posts).toHaveLength(0)
     expect(
@@ -264,7 +264,7 @@ describe('从交付物发起复核 (#326)', () => {
     expect(screen.getByTestId('review-scope')).toHaveTextContent('材料副本只读')
     expect(screen.getByTestId('review-scope')).toHaveTextContent('工具')
     await selectOption(user, '选择 Agent', 'Reviewer')
-    await user.click(screen.getByRole('button', { name: '开始复核' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     expect(await screen.findByRole('dialog')).toBeVisible()
     expect(f.posts).toHaveLength(0)
     await user.click(screen.getByRole('button', { name: '确认以完全权限启动' }))
@@ -281,6 +281,10 @@ describe('从交付物发起复核 (#326)', () => {
     expect(await screen.findByRole('heading', { name: f.other.title })).toBeVisible()
     await user.click(screen.getByRole('link', { name: new RegExp(f.task.title) }))
     expect(await screen.findByRole('heading', { name: f.task.title })).toBeVisible()
+    // #548：任务侧栏是普通链接，默认落在「发给团队」；本用例判执行侧，切过去继续。
+    const group = await screen.findByRole('group', { name: '消息接收方' })
+    const assistant = within(group).getByRole('button', { name: '请助手处理' })
+    if (assistant.getAttribute('aria-pressed') !== 'true') await user.click(assistant)
     await user.click(await screen.findByRole('button', { name: /第 1 次运行/ }))
     await showWorkspace('run')
     await user.click(await screen.findByRole('button', { name: '查看本次固定输入' }))
@@ -341,7 +345,7 @@ describe('根据意见修订与真人验收 (#327)', () => {
       // 这条判据驱动「发送期间连续选择」：显式切到新执行路径（默认是续聊）。
       await selectOption(user, '执行方式', '开始新执行（不接旧会话）')
       await selectOption(user, '选择 Agent', 'Builder')
-      await user.click(screen.getByRole('button', { name: '开始执行' }))
+      await user.click(screen.getByRole('button', { name: '发给助手' }))
       await waitFor(() => expect(f.posts).toHaveLength(1))
       expect(screen.getByLabelText('执行方式')).toBeDisabled()
       for (const name of order === 'review-then-revision'
@@ -374,12 +378,12 @@ describe('根据意见修订与真人验收 (#327)', () => {
     await chooseFileAction('根据意见修订', user)
     expect(screen.getByLabelText('来源执行')).toHaveTextContent('选择要继续的会话')
     expect(screen.getByLabelText('指令')).toHaveValue('请保留这段修订要求')
-    expect(screen.getByRole('button', { name: '继续会话' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
     expect(f.posts).toHaveLength(0)
     await selectOption(user, '来源执行', '第 1 次运行')
     expect(await screen.findByTestId('execution-context')).toHaveTextContent('Builder')
     expect(screen.getByTestId('revision-context')).toHaveTextContent(f.artifact.title)
-    await user.click(screen.getByRole('button', { name: '继续会话' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     await waitFor(() => expect(f.posts).toHaveLength(1))
     expect(f.posts[0]).toMatchObject({
       intent: { kind: 'resume', runId: f.producer.id },
@@ -393,9 +397,9 @@ describe('根据意见修订与真人验收 (#327)', () => {
     await showWorkspace('artifacts')
     await chooseFileAction('根据意见修订', user)
     await selectOption(user, '执行方式', '开始新执行（不接旧会话）')
-    expect(screen.getByRole('button', { name: '开始执行' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
     await selectOption(user, '选择 Agent', 'Builder')
-    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     await waitFor(() => expect(f.posts).toHaveLength(1))
     expect(f.posts[0]).toMatchObject({
       intent: { kind: 'new' },
@@ -442,7 +446,7 @@ describe('根据意见修订与真人验收 (#327)', () => {
     await showWorkspace('artifacts')
     await chooseFileAction('根据意见修订', user)
     await selectOption(user, '来源执行', '第 1 次运行')
-    await user.click(screen.getByRole('button', { name: '继续会话' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     expect(await screen.findByRole('dialog')).toBeVisible()
     const draft = (screen.getByLabelText('指令') as HTMLTextAreaElement).value
     await act(async () =>
@@ -453,7 +457,7 @@ describe('根据意见修订与真人验收 (#327)', () => {
     )
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(screen.getByLabelText('指令')).toHaveValue(draft)
-    expect(screen.getByRole('button', { name: '继续会话' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
     expect(f.posts).toHaveLength(0)
   })
   it('没有Reviewer执行也可按服务端条件提交验收', async () => {

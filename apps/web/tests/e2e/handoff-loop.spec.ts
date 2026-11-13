@@ -1,4 +1,4 @@
-import { showAgentCreation } from './helpers.js'
+import { showAgentCreation, showAssistant } from './helpers.js'
 import { driveDeliveryReviewLoop } from './delivery-review-loop.js'
 import { driveOfficePreviewLoop } from './office-preview-loop.js'
 /**
@@ -188,6 +188,7 @@ async function startRunViaUi(
   promptText: string,
 ): Promise<string> {
   await page.reload()
+  await showAssistant(page)
   const agentTrigger = page.getByLabel('选择 Agent')
   await expect(agentTrigger).toBeVisible({ timeout: 30_000 })
   await assertNotNativeSelect(agentTrigger, page.locator('.run-launcher'), '选择 Agent')
@@ -198,7 +199,7 @@ async function startRunViaUi(
   await selectFromMenu(page.getByLabel('选择设备'), /e2e-node（在线）/)
   await selectFromMenu(page.getByLabel('选择 Workspace'), 'e2e-ws')
   await page.getByLabel('指令').fill(promptText)
-  await page.getByRole('button', { name: '开始执行' }).click()
+  await page.getByRole('button', { name: '发给助手' }).click()
   // 完全权限是显式放权：发送前有一次确认（真人路径）；普通档位下没有这一步。
   const confirmDialog = page.getByRole('dialog')
   if (await confirmDialog.isVisible().catch(() => false)) {
@@ -277,6 +278,7 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   await selectFromMenu(createForm.locator('button[id^="task-assignee-"]'), /Alice/)
   await createForm.getByRole('button', { name: /创建任务/ }).click()
   await alice.waitForURL(/\/tasks\/[0-9a-f-]{36}/)
+  await showAssistant(alice)
   shared.upstreamTaskId = new URL(alice.url()).pathname.split('/').pop()!
   await alice.getByRole('button', { name: '接受任务' }).click()
   await expect(alice.getByTestId('task-assignment-state')).toHaveText('已接受')
@@ -305,6 +307,7 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   await waitForRunStatus(helperRunId, 'completed')
   // 刷新读面；执行完成不代表已采用或确认，候选仍走 owner 的私有下载通道。
   await alice.reload()
+  await showAssistant(alice)
   await alice.getByRole('button', { name: /^任务约定/ }).click()
   await alice.getByRole('button', { name: '用 Agent 起草约定' }).click()
   const before = await hubApi(
@@ -367,6 +370,7 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
 
   // 材料发布（交接包的系统块只收已发布材料）。
   await alice.reload()
+  await showAssistant(alice)
   await alice.locator(`.run-item-button[data-run-id="${shared.upstreamRunId}"]`).click()
   await alice.getByRole('button', { name: '交付与复核', exact: true }).click()
   const reportPublish = alice
@@ -478,9 +482,11 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
     })
   }
   await alice.goto(`/tasks/${shared.upstreamTaskId}`)
+  await showAssistant(alice)
 
   // ---------- 5. 交付给 Bob（建下游任务）----------
   await alice.reload()
+  await showAssistant(alice)
   await alice.getByRole('button', { name: '交付与复核', exact: true }).click()
   const deliveryPanel = alice.getByTestId('handoff-delivery-panel')
   await expect(deliveryPanel).toBeVisible({ timeout: 30_000 })
@@ -515,6 +521,7 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
 
   // ---------- 6. Bob 确认接收（不自动接受任务/不启动 Run）+ 重复确认幂等 ----------
   await bob.goto(`/tasks/${receipt.downstreamTaskId}`)
+  await showAssistant(bob)
   const receiptPanel = bob.getByTestId('handoff-receipt-panel')
   await expect(receiptPanel).toBeVisible({ timeout: 30_000 })
   await expect(receiptPanel).toContainText('待确认版本 v1')
@@ -555,6 +562,7 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
 
   // ---------- 7. Bob 接受任务、换配对自己的设备、默认勾选交接材料后执行 ----------
   await bob.reload()
+  await showAssistant(bob)
   await bob.getByRole('button', { name: '接受任务' }).click()
   await expect(bob.getByTestId('task-assignment-state')).toHaveText('已接受')
   await stopNode('SIGKILL')
@@ -562,6 +570,7 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   expect(bobDeviceId).toBeTruthy()
   await setRuntimeFixture('handoff-downstream')
   await bob.reload()
+  await showAssistant(bob)
   const attach = bob.getByTestId('handoff-attach')
   await expect(attach).toBeVisible({ timeout: 30_000 })
   await expect(bob.getByLabel('附带上游交接材料')).toBeChecked()
@@ -685,12 +694,14 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
 
   // 真正走到真人验收终点，而非仅以 Run completed 冒充任务完成。
   await bob.reload()
+  await showAssistant(bob)
   await bob.locator(`.run-item-button[data-run-id="${downstreamRunId}"]`).click()
   await bob.getByRole('button', { name: '交付与复核', exact: true }).click()
   await bob.getByTestId('artifact-publish-button').click()
   await bob.getByRole('button', { name: '确认发布给团队' }).click()
   await waitForPublishedArtifact(shared.bobCookie, receipt.downstreamTaskId)
   await bob.reload()
+  await showAssistant(bob)
   const beforeReview = await roomOf(shared.bobCookie, receipt.downstreamTaskId)
   await bob.getByRole('button', { name: '提交验收', exact: true }).click()
   await bob.getByRole('button', { name: '确认提交验收', exact: true }).click()

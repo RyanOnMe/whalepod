@@ -1,4 +1,4 @@
-import { showAgentCreation } from './helpers.js'
+import { showAgentCreation, showAssistant } from './helpers.js'
 /**
  * #158 下拉落页的**两档截图与定位审计**（Q5，playwright project `p1-158`）。
  *
@@ -183,6 +183,7 @@ test.describe('#158 七处下拉的两档审计', () => {
     await selectFromMenu(assignee, /Bob/)
     await taskForm.getByRole('button', { name: /创建任务/ }).click()
     await owner.waitForURL(/\/tasks\//)
+    await showAssistant(owner)
     const taskId = new URL(owner.url()).pathname.split('/').pop() ?? ''
     expect(taskId).not.toBe('')
 
@@ -201,6 +202,7 @@ test.describe('#158 七处下拉的两档审计', () => {
     await fillAndEnter(bob, '#login-password', PASSWORD)
     await expect(bob.getByRole('heading', { name: '项目', exact: true })).toBeVisible()
     await bob.goto(`/tasks/${taskId}`)
+    await showAssistant(bob)
     await bob.getByRole('button', { name: '接受任务' }).click()
     await expect(bob.getByTestId('task-assignment-state')).toHaveText('已接受')
 
@@ -218,6 +220,7 @@ test.describe('#158 七处下拉的两档审计', () => {
     await setRuntimeFixture('approval')
     await bob.reload()
     await bob.goto(`/tasks/${taskId}`)
+    await showAssistant(bob)
     await expect(bob.getByLabel('指令', { exact: true })).toBeVisible()
 
     await bob.locator('.execution-settings > summary').click()

@@ -11,6 +11,7 @@ import {
 import { Link } from 'react-router'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { api } from '../../shared/api/client.js'
+import { preparationDeviceHref } from '../../shared/preparation-navigation.js'
 import SpringCheck from '../../vendor/react-bits-micro/SpringCheck.js'
 import { SelectMenu } from '../../shared/SelectMenu.js'
 import { queryKeys } from '../../app/query-client.js'
@@ -24,6 +25,7 @@ import type {
   TaskRoomRun,
   TaskRoomArtifact,
   TaskView,
+  WorkspaceView,
 } from '../../shared/api/types.js'
 import {
   InstructionComposer,
@@ -31,8 +33,8 @@ import {
   type InstructionOutcome,
 } from './InstructionComposer.js'
 import { RunLauncher } from './RunLauncher.js'
-import { useMemberDirectory } from '../team/memberDirectory.js'
-import { ACTIVE_RUN, TERMINAL_RUN } from './run-states.js'
+import { useMemberDirectory, UNKNOWN_MEMBER_LABEL } from '../team/memberDirectory.js'
+import { ACTIVE_RUN, QUEUEING_RUN, TERMINAL_RUN } from './run-states.js'
 import { runOrdinalLabels } from './runLabels.js'
 
 import {
@@ -127,7 +129,10 @@ export function ExecutionComposer({
   continueRequest?: ContinueSessionRequest | null
 }): ReactNode {
   const directory = useMemberDirectory()
-  const responsible = directory.personOf(task.assigneeUserId)
+  const queryClient = useQueryClient()
+  const responsibleName = directory.personOf(task.assigneeUserId)
+  // #548：姓名读不到时写「任务责任人」，不把「未知成员」当成人名塞进业务提示。
+  const responsible = responsibleName === UNKNOWN_MEMBER_LABEL ? '任务责任人' : responsibleName
   // #393 实测：`runs` 是**读取面**，刚起的运行要等一次失效重拉才出现。那一拍若不把它当
   // 已知，标签会退回「所选执行」、理由链会误报「所选执行已结束或发生变化」——刚发出去的
   // 指令明明就在跑（真实链路实测）。记住刚起的运行，读取面到位前按已知运行参与派生
@@ -306,6 +311,41 @@ export function ExecutionComposer({
     return () => cancelAnimationFrame(frame)
   }, [continueRequest, task.id])
   const isAssignee = task.assigneeUserId === session.userId
+  // #548：开始写普通交办时，把当时任务已指派的 Agent 固定进这份草稿；后台改派不再
+  // 改写显示与提交目标。复核/修订不沿用这个默认——那两处必须由人明确选。
+  // 只在「本次挂载内由空变非空」这一拍固定：离开页面再回来时草稿已存在，
+  // 即使这期间任务被指派了 Agent，也不能把新 Agent 填进已经写好的文字。
+  const draftWasEmpty = useRef(draft.trim() === '')
+  useEffect(() => {
+    if (mode !== 'new' || revisionContext !== null) return
+    if (draft.trim() === '') {
+      draftWasEmpty.current = true
+      if (memory.snapshot.agentSnapshot !== undefined)
+        memory.update((old) => {
+          const next = { ...old }
+          delete next.agentSnapshot
+          return next
+        })
+      return
+    }
+    const becameNonEmpty = draftWasEmpty.current
+    draftWasEmpty.current = false
+    if (!becameNonEmpty) return
+    // 快照“落笔时的 Agent 或明确无 Agent”，接收者与默认提交目标都只读这份快照。
+    // 不写 launchSettings：那是「用户明确调整过的设置」，自动快照不该让
+    // followsDefaultMode 误以为用户改过执行参数。
+    const agentId = task.assigneeAgentId ?? null
+    memory.update((old) =>
+      old.agentSnapshot === agentId ? old : { ...old, agentSnapshot: agentId },
+    )
+  }, [
+    draft,
+    mode,
+    revisionContext,
+    task.assigneeAgentId,
+    memory.update,
+    memory.snapshot.agentSnapshot,
+  ])
   const grants = useQuery({
     queryKey: queryKeys.instructionGrants(task.id),
     queryFn: () => api.get<InstructionDriverView[]>(`/tasks/${task.id}/instruction-grants`),
@@ -337,7 +377,15 @@ export function ExecutionComposer({
   const devices = useQuery({
     queryKey: queryKeys.devices,
     queryFn: () => api.get<DeviceView[]>('/devices'),
-    enabled: allowed && mode === 'resume',
+    // #548：追问的来源也可能在编辑期间结束——恢复「重新开始」同样要知道有没有可用环境。
+    enabled: allowed && (mode === 'resume' || mode === 'followup'),
+    refetchOnMount: 'always',
+  })
+  // #548：判断「已确认有可用的授权环境」只看责任人的设备与工作区（与启动器同一份缓存）。
+  const environmentWorkspaces = useQuery({
+    queryKey: queryKeys.workspaces,
+    queryFn: () => api.get<WorkspaceView[]>('/workspaces'),
+    enabled: allowed && isAssignee && (mode === 'resume' || mode === 'followup'),
     refetchOnMount: 'always',
   })
   const sourceDevice = devices.data?.find((device) => device.id === source.data?.deviceId)
@@ -352,60 +400,270 @@ export function ExecutionComposer({
   )
   const sourcePlacement = runsWithStarted.find((run) => run.id === sourceId)
   const sourceLabel = runOrdinalLabels(runsWithStarted).get(sourceId) ?? '所选执行'
-  let reason: string | null = null
-  if (confirmingTask) reason = '正在重新确认任务状态，草稿仍保留…'
+  // #548：接收者与「能不能提交」都按事实说。环境判据只看责任人的设备/工作区读面：
+  // ready = 至少一台在线、已准备 DSH 分发的设备带可用工作区；none = 已读到且确实没有；
+  // unknown = 还没读到、正在重读或读失败。缓存里的旧值不算「已确认」。
+  const environmentSettled =
+    devices.isSuccess &&
+    environmentWorkspaces.isSuccess &&
+    !(devices.isFetching && !devices.isFetchedAfterMount) &&
+    !(environmentWorkspaces.isFetching && !environmentWorkspaces.isFetchedAfterMount)
+  const usableEnvironments = (environmentWorkspaces.data ?? []).flatMap((workspace) => {
+    const device = (devices.data ?? []).find((row) => row.id === workspace.deviceId)
+    return workspace.available &&
+      device?.status === 'online' &&
+      device.dshDistributionVersion !== null
+      ? [{ workspace, device }]
+      : []
+  })
+  const environmentState: 'ready' | 'none' | 'unknown' = !isAssignee
+    ? 'unknown'
+    : !environmentSettled || devices.isError || environmentWorkspaces.isError
+      ? 'unknown'
+      : usableEnvironments.length > 0
+        ? 'ready'
+        : 'none'
+  const alternateEnvironment =
+    environmentState === 'ready'
+      ? usableEnvironments.find(({ workspace }) => workspace.deviceId !== source.data?.deviceId)
+          ?.workspace
+      : undefined
+  const refetchConnection = (): void => {
+    void grants.refetch()
+    if (sourceId !== '') void source.refetch()
+    void devices.refetch()
+    void environmentWorkspaces.refetch()
+    if (source.data !== undefined) void sourceAgent.refetch()
+    void queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(task.id) })
+  }
+  // 明确「重新开始」才改发送安排；文字与已选材料都不动，仍由用户自己按发送。
+  const restartAssistant = (): void =>
+    memory.update((old) => ({
+      ...old,
+      mode: 'new',
+      modeOrigin: 'user',
+      sourceId: '',
+      revisionContext: null,
+    }))
+  const checkConnectionAction = (
+    <button
+      type="button"
+      className="button"
+      data-testid="check-connection"
+      onClick={refetchConnection}
+    >
+      检查连接
+    </button>
+  )
+  const recheckAction = (
+    <button
+      type="button"
+      className="button"
+      data-testid="recheck-environment"
+      onClick={refetchConnection}
+    >
+      重新检查
+    </button>
+  )
+  const restartAction = (
+    <button
+      type="button"
+      className="button"
+      data-testid="restart-assistant"
+      onClick={restartAssistant}
+    >
+      重新开始
+    </button>
+  )
+  const switchToTeamAction = (
+    <button
+      type="button"
+      className="button"
+      data-testid="switch-to-team"
+      onClick={() => {
+        onDiscuss?.()
+        document.getElementById('comments-heading')?.focus()
+      }}
+    >
+      发给团队
+    </button>
+  )
+  const setupComputerAction = isAssignee ? (
+    <Link to={preparationDeviceHref(task.id)}>设置执行电脑</Link>
+  ) : null
+  const environmentActions = (refresh = true): ReactNode =>
+    environmentState === 'ready' ? (
+      <>
+        <span>重新开始会保留你写的消息，旧对话不会带过去。</span>
+        {alternateEnvironment === undefined ? null : (
+          <span data-testid="restart-hint">这次会用另一台已授权的电脑</span>
+        )}
+        {restartAction}
+      </>
+    ) : environmentState === 'none' ? (
+      <>
+        <span>还没有可用的电脑来处理这条消息。</span>
+        {refresh ? recheckAction : null}
+        {setupComputerAction}
+      </>
+    ) : (
+      <>
+        <span>暂时无法确认电脑能否使用。</span>
+        {refresh ? recheckAction : null}
+      </>
+    )
+  let blocker: { message: string; actions?: ReactNode } | null = null
+  if (confirmingTask) blocker = { message: '正在重新确认任务状态，草稿仍保留…' }
   else if (memory.snapshot.ownerId !== task.assigneeUserId)
-    reason = '任务责任人已变化。草稿仍保留，请重新确认责任人与执行安排。'
+    blocker = { message: '任务责任人已变化。草稿仍保留，请重新确认责任人与执行安排。' }
   else if (!isAssignee && (grants.isPending || (grants.isFetching && !grants.isFetchedAfterMount)))
-    reason = '正在确认操作权限…'
-  else if (!isAssignee && grants.isError) reason = '暂时无法确认权限，请重试。'
-  else if (!allowed) reason = '只有责任人和已授权成员可以发送指令；你仍可在讨论区协作。'
-  else if (task.assignmentStatus !== 'accepted') reason = '责任人接受任务后才能开始执行。'
+    blocker = { message: '正在确认操作权限…' }
+  else if (!isAssignee && grants.isError) blocker = { message: '暂时无法确认权限，请重试。' }
+  else if (!allowed)
+    blocker = {
+      message: `这项任务由${responsible}负责交办。你仍然可以给团队留言。`,
+      actions: switchToTeamAction,
+    }
+  else if (task.assignmentStatus !== 'accepted')
+    blocker = isAssignee
+      ? {
+          message: '请先接受这项任务，再请助手处理。',
+          actions: <a href="#task-assignment">去接受任务</a>,
+        }
+      : { message: `等${responsible}接受这项任务。` }
   else if (task.status === 'done' || task.status === 'cancelled')
-    reason = '任务已结束，不能继续执行。'
+    blocker = { message: '任务已结束，不能继续执行。' }
   else if (revisionContext !== null && revisionMaterial === undefined)
-    reason = '修订依据已不可用，请重新选择已发布意见。草稿仍保留。'
+    blocker = { message: '修订依据已不可用，请重新选择已发布意见。草稿仍保留。' }
   else if (isNewExecution && active !== undefined)
-    reason = '已有执行进行中，请明确选择发送追问，或等它结束后开始新执行。'
-  else if (mode === 'review' && reviewArtifactIds.length === 0) reason = '请明确选择本次复核材料。'
+    blocker = { message: '已有执行进行中，请明确选择发送追问，或等它结束后开始新执行。' }
+  else if (mode === 'review' && reviewArtifactIds.length === 0)
+    blocker = { message: '请明确选择本次复核材料。' }
   else if (mode === 'review' && reviewArtifactIds.some((id) => !published.some((a) => a.id === id)))
-    reason = '所选材料已不可用，请重新选择已发布交付物。草稿仍保留。'
+    blocker = { message: '所选材料已不可用，请重新选择已发布交付物。草稿仍保留。' }
   else if (mode === 'followup' && (active === undefined || active.id !== sourceId))
-    reason = '所选执行已结束或发生变化。草稿仍保留，请选择继续会话或开始新执行。'
+    blocker = {
+      message: '刚才的对话已经结束，这条消息没有发到新的对话。请确认要接着说还是重新开始。',
+      actions: (
+        <>
+          {source.data !== undefined &&
+          TERMINAL_RUN.has(source.data.status) &&
+          source.data.dshSessionId !== null ? (
+            <button
+              type="button"
+              className="button"
+              data-testid="continue-session"
+              onClick={() => {
+                setMode('resume')
+                setSourceId(sourceId)
+              }}
+            >
+              接着这次对话
+            </button>
+          ) : null}
+          {environmentActions()}
+        </>
+      ),
+    }
   else if (mode === 'resume' && active !== undefined)
-    reason = '已有执行进行中，结束后才能继续会话。'
-  else if (isSourceMode && sourceId === '') reason = '请先选择来源执行。'
-  else if (isSourceMode && source.isError) reason = '无法读取来源执行，请重试。'
+    blocker = { message: '已有执行进行中，结束后才能继续会话。' }
+  else if (isSourceMode && sourceId === '') blocker = { message: '请先选择来源执行。' }
+  else if (isSourceMode && source.isError)
+    blocker = { message: '无法读取来源执行，请重试。', actions: checkConnectionAction }
   else if (
     isSourceMode &&
     (!source.isSuccess || (source.isFetching && !source.isFetchedAfterMount))
   )
-    reason = '正在读取来源执行…'
+    blocker = { message: '正在读取来源执行…' }
   else if (isSourceMode && source.isSuccess && source.data.taskId !== task.id)
-    reason = '来源执行不属于当前任务，请重新选择。'
+    blocker = { message: '来源执行不属于当前任务，请重新选择。' }
   else if (mode === 'resume' && source.isSuccess && !TERMINAL_RUN.has(source.data.status))
-    reason = '来源执行尚未结束，请等待结束后再继续会话。'
+    blocker = { message: '来源执行尚未结束，请等待结束后再继续会话。' }
   else if (mode === 'resume' && source.data?.ownerUserId !== task.assigneeUserId)
-    reason = '来源执行属于此前的责任人，请基于已发布交接材料开始新执行。'
+    blocker = {
+      message: '来源执行属于此前的责任人，请基于已发布交接材料开始新执行。',
+      actions: environmentActions(),
+    }
   else if (mode === 'resume' && source.data?.dshSessionId === null)
-    reason = '这次执行没有可续接的会话，请开始新执行。'
+    blocker = {
+      message: '这次执行没有可续接的会话，请开始新执行。',
+      actions: environmentActions(),
+    }
   else if (mode === 'resume' && sourceDevice?.status === 'offline')
-    // 不自动改投、不跳过来源：说清原因并保留草稿，是否开始新执行由用户明确决定。
-    // 只拦"暂时不在线"这一种：设备**已撤销**是永久失效，服务端会带 DEVICE_REVOKED 与
-    // requestId 明确回绝（页面另有就该现场续跑的说明），客户端抢答会把那条更准的话术吞掉。
-    reason =
-      '来源设备当前离线。草稿仍保留：让该设备上线继续这条会话，或明确选择开始新执行并重新确认环境。'
-  else if (mode === 'resume' && sourceAgent.isError) reason = '无法读取来源配置版本，请重试。'
+    // 不自动改投、不跳过来源：保留文字并说清「没发出」，恢复动作由用户点。
+    // 环境那一句由 environmentActions 统一给一次，结论别在消息里重复两遍。
+    blocker = {
+      message: '上次用的电脑没连上，消息还没发出。你可以继续编辑。',
+      // 一个刷新动作：离线现场用「检查连接」；没有环境时的「设置执行电脑」照常可达。
+      actions: (
+        <>
+          {checkConnectionAction}
+          {environmentActions(false)}
+        </>
+      ),
+    }
+  else if (isSourceMode && source.data?.resumeContext === 'blocked')
+    // #548：会话已不可续接（含活跃中的发现私有执行）。可见的运行记录不等于可接续对象；
+    // 离线现场优先说设备事实，这一条只在设备可用时兜底。
+    blocker = {
+      message: '这次对话不能在这里重开或续接，请明确重新开始。草稿仍保留。',
+      actions: environmentActions(),
+    }
+  else if (mode === 'resume' && sourceAgent.isError)
+    blocker = { message: '无法读取来源配置版本，请重试。', actions: checkConnectionAction }
   else if (
     mode === 'resume' &&
     (sourceAgent.isPending || (sourceAgent.isFetching && !sourceAgent.isFetchedAfterMount))
   )
-    reason = '正在确认来源配置版本…'
+    blocker = { message: '正在确认来源配置版本…' }
   else if (mode === 'resume' && typeof sourceAgent.data?.archivedAt === 'string')
-    reason = '来源 Agent 已归档，请明确选择可用 Agent 开始新执行。'
+    blocker = {
+      message: '来源 Agent 已归档，请明确选择可用 Agent 开始新执行。',
+      actions: environmentActions(),
+    }
   else if (mode === 'resume' && sourceAgent.isSuccess && revision === undefined)
-    reason = '来源配置版本已不可用，请开始新执行。'
-  else if (mode === 'resume' && revision === undefined) reason = '正在确认来源配置版本…'
+    blocker = { message: '来源配置版本已不可用，请开始新执行。', actions: environmentActions() }
+  else if (mode === 'resume' && revision === undefined)
+    blocker = { message: '正在确认来源配置版本…' }
+  // #548：接收者按事实显示——来源会话的 Agent、用户在设置里明确选中的 Agent，
+  // 或**落笔那一刻**快照的 Agent。空草稿才跟随任务当前指派；草稿一开写，
+  // 后来才指派的 Agent 不再冒充接收者。复核/修订必须由人明确选过 Agent。
+  const receiverAgentId = isSourceMode
+    ? (source.data?.agentId ?? '')
+    : launchSettings.agentId !== ''
+      ? launchSettings.agentId
+      : mode === 'new' && revisionContext === null
+        ? draft.trim() === ''
+          ? (task.assigneeAgentId ?? '')
+          : (memory.snapshot.agentSnapshot ?? '')
+        : ''
+  const receiverName =
+    receiverAgentId === ''
+      ? null
+      : isSourceMode && sourceAgent.data?.id === receiverAgentId
+        ? sourceAgent.data.name
+        : (agents.data?.find((agent) => agent.id === receiverAgentId)?.name ?? null)
+  const receiverReadFailed = receiverName === null && agents.isError
+  const receiverPending =
+    receiverName === null &&
+    !receiverReadFailed &&
+    (isSourceMode
+      ? source.isPending || sourceAgent.isPending || agents.isPending
+      : receiverAgentId !== '' && agents.isPending)
+  // 只有 composer 真的挂载（有启动器可选）时才给「选择本任务的助手」，否则按钮没有落点。
+  const composerMounted =
+    (allowed &&
+      task.assignmentStatus === 'accepted' &&
+      task.status !== 'done' &&
+      task.status !== 'cancelled') ||
+    draft !== ''
+  const canChooseAssistant =
+    composerMounted &&
+    allowed &&
+    isAssignee &&
+    !isSourceMode &&
+    receiverName === null &&
+    !agents.isError
   const policy: ApprovalPreview =
     mode === 'resume'
       ? revision === undefined
@@ -415,9 +673,19 @@ export function ExecutionComposer({
             source: task.approvalPolicy === null ? 'revision_default' : 'task_override',
           }
       : approvalPreview
+  // #548：「已提交，等助手开始」只在排队窗口内成立；来源 Run 已开始（running/审批/终态）
+  // 后不再显示这句，避免在「已完成」旁边继续声称「等开始」。「已排队」则按 Hub 的
+  // FOLLOWUP_QUEUEING_STATUSES 窗口判断——waiting_approval 仍可排队，不能提前收起。
+  const outcomeSourceStatus =
+    lastOutcome?.runId !== null && lastOutcome?.runId === sourceId ? source.data?.status : undefined
+  const startedOutcomeStale =
+    outcomeSourceStatus !== undefined &&
+    outcomeSourceStatus !== 'queued' &&
+    outcomeSourceStatus !== 'dispatching'
+  const queuedOutcomeStale =
+    outcomeSourceStatus !== undefined && !QUEUEING_RUN.has(outcomeSourceStatus)
   // #378：活跃 Run 绑定的约定版本落后于任务最新已确认版本 → 提示三选一（追问/取消/保持本次）。
   // 「保持本次」按 Run 记一次：同一次运行不再打扰，换了一次运行（新 id）重新提示。
-  const queryClient = useQueryClient()
   const [keptStaleRunId, setKeptStaleRunId] = useState<string | null>(null)
   const cancelRunMutation = useMutation({
     mutationFn: (runId: string) => api.mutate<RunView>(`/runs/${runId}/cancel`),
@@ -561,6 +829,33 @@ export function ExecutionComposer({
       className="execution-composer"
       data-testid="execution-composer"
     >
+      {/* #548：没有交办权限的人只看到业务级说明，不展示别人的接收助手或选择入口。 */}
+      {allowed ? (
+        <div className="message-receiver-row">
+          <p className="message-receiver" data-testid="assistant-receiver">
+            {receiverName !== null
+              ? `发给：${receiverName}`
+              : receiverPending
+                ? '正在确认接收助手…'
+                : receiverReadFailed
+                  ? '暂时无法确认接收助手'
+                  : '还没为这项任务选助手'}
+            {mode === 'resume' ? ' · 沿用上次对话' : mode === 'followup' ? ' · 接着当前对话' : ''}
+          </p>
+          {canChooseAssistant ? (
+            <button
+              type="button"
+              className="button button-quiet"
+              data-testid="choose-assistant"
+              onClick={() => {
+                document.querySelector<HTMLElement>('[aria-label="选择 Agent"]')?.focus()
+              }}
+            >
+              选择本任务的助手
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {/* #378：任务约定的绑定提示——新执行（new/resume）缺省绑定最新已确认版本。 */}
       {agreement.enabled ? (
         <p className="mutation-hint" data-testid="agreement-binding-hint">
@@ -666,10 +961,13 @@ export function ExecutionComposer({
           ) : null}
         </section>
       ) : null}
-      {reason !== null ? (
-        <p className="mutation-hint" role="status" data-testid="execution-blocker">
-          {reason}
-        </p>
+      {blocker !== null ? (
+        <div className="execution-blocker" role="status" data-testid="execution-blocker">
+          <p className="mutation-hint">{blocker.message}</p>
+          {blocker.actions === undefined ? null : (
+            <div className="composer-actions">{blocker.actions}</div>
+          )}
+        </div>
       ) : null}
       {!allowed ? (
         <p className="mutation-hint" data-testid="execution-responsibility">
@@ -705,11 +1003,7 @@ export function ExecutionComposer({
           重新确认
         </button>
       ) : null}
-      {(allowed &&
-        task.assignmentStatus === 'accepted' &&
-        task.status !== 'done' &&
-        task.status !== 'cancelled') ||
-      draft !== '' ? (
+      {composerMounted ? (
         <fieldset disabled={sending} style={{ border: 0, padding: 0, margin: 0 }}>
           {handoff !== null && isNewExecution ? (
             <SpringCheck
@@ -717,7 +1011,7 @@ export function ExecutionComposer({
               testId="handoff-attach"
               ariaLabel="附带上游交接材料"
               checked={includeHandoff}
-              disabled={sending || reason !== null}
+              disabled={sending || blocker !== null}
               onChange={setIncludeHandoff}
               label={
                 <>
@@ -738,7 +1032,7 @@ export function ExecutionComposer({
             <RunLauncher
               key={launcherKey}
               task={task}
-              blocked={reason !== null}
+              blocked={blocker !== null}
               artifactInputIds={
                 revisionContext !== null
                   ? [revisionContext.artifactId]
@@ -747,7 +1041,17 @@ export function ExecutionComposer({
                     : undefined
               }
               handoffReceiptId={includeHandoff && handoff !== null ? handoff.receiptId : undefined}
-              buttonLabel={mode === 'review' ? '开始复核' : '开始执行'}
+              buttonLabel="发给助手"
+              {...(mode === 'new' ? { placeholder: '想请助手做什么？' } : {})}
+              defaultAgentId={
+                mode === 'new' && revisionContext === null
+                  ? launchSettings.agentId !== ''
+                    ? launchSettings.agentId
+                    : draft.trim() === ''
+                      ? (task.assigneeAgentId ?? undefined)
+                      : (memory.snapshot.agentSnapshot ?? undefined)
+                  : undefined
+              }
               settings={launchSettings}
               onSettingsChange={setLaunchSettings}
               session={session}
@@ -786,7 +1090,7 @@ export function ExecutionComposer({
                 }${mode === 'resume' ? ` · 续聊${sourceLabel}` : mode === 'followup' ? ` · 追问${sourceLabel}` : ''}`
               }
               key={`${task.id}-${mode}-${sourceId}-${revisionContext?.nonce ?? ''}`}
-              blocked={reason !== null}
+              blocked={blocker !== null}
               artifactInputIds={
                 mode === 'resume' && revisionContext !== null
                   ? [revisionContext.artifactId]
@@ -795,6 +1099,8 @@ export function ExecutionComposer({
               initialOutcome={
                 mode === 'followup' && lastOutcome?.runId === sourceId ? lastOutcome : null
               }
+              startedOutcomeStale={startedOutcomeStale}
+              queuedOutcomeStale={queuedOutcomeStale}
               taskId={task.id}
               hasActiveRun={mode === 'followup'}
               target={null}

@@ -43,7 +43,7 @@ describe('工作区 Micro 精修', () => {
     const bar = within(composer).getByTestId('prompt-bar')
     expect(within(bar).getAllByRole('textbox', { name: '指令' })).toHaveLength(1)
     expect(within(bar).getByRole('button', { name: '选择 Agent' })).toBeVisible()
-    expect(within(bar).getByRole('button', { name: '开始执行' })).toBeDisabled()
+    expect(within(bar).getByRole('button', { name: '发给助手' })).toBeDisabled()
   })
 
   it('底部选择菜单通过 portal 展开，Escape 收起并返回原控件', async () => {

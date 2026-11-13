@@ -1,4 +1,4 @@
-import { showAgentCreation } from './helpers.js'
+import { showAgentCreation, showAssistant } from './helpers.js'
 /**
  * #345 创建到恢复的生产验收：五条路径一次走完（Q5，project `p1-345`）。
  *
@@ -331,6 +331,7 @@ test('路径 1：只创建任务不产生执行；连点不重复创建', async 
   await selectFromMenu(alice.locator('button[id^="task-assignee-"]'), /Bob/)
   await submitForm(alice, '创建任务')
   await alice.waitForURL(/\/tasks\/[0-9a-f-]{36}/)
+  await showAssistant(alice)
   shared.taskIds.createOnly = taskIdFromUrl(alice)
 
   const tasks = await projectTasks()
@@ -349,6 +350,7 @@ test('路径 1：只创建任务不产生执行；连点不重复创建', async 
   const postsBefore = watch.count()
   await alice.locator('form[aria-label="创建任务"] button[type="submit"]').dblclick()
   await alice.waitForURL(/\/tasks\/[0-9a-f-]{36}/, { timeout: 20_000 })
+  await showAssistant(alice)
   await sleep(700)
   expect(watch.count() - postsBefore).toBe(1)
   const afterDoubleClick = await projectTasks()
@@ -379,6 +381,7 @@ test('路径 5a：超时重试沿用同一把幂等键——不重复创建', as
   await expect(alice.locator('.error-banner')).toBeVisible({ timeout: 20_000 })
   await submitForm(alice, '创建任务')
   await alice.waitForURL(/\/tasks\/[0-9a-f-]{36}/, { timeout: 20_000 })
+  await showAssistant(alice)
   shared.taskIds.retry = taskIdFromUrl(alice)
 
   const after = await projectTasks()
@@ -450,6 +453,7 @@ test('路径 5b：成员状态变化不静默改投——提交前显式阻塞�
   await expect(hint).toBeHidden()
   await submitForm(alice, '创建任务')
   await alice.waitForURL(/\/tasks\/[0-9a-f-]{36}/, { timeout: 20_000 })
+  await showAssistant(alice)
   const createdTaskId = taskIdFromUrl(alice)
   const after = await projectTasks()
 
@@ -472,6 +476,7 @@ test('路径 4 前半：创建成功但启动失败（设备离线）——任�
   await enableExecution(alice)
   await submitForm(alice, '创建并开始执行')
   await alice.waitForURL(/\/tasks\/[0-9a-f-]{36}/)
+  await showAssistant(alice)
   shared.taskIds.failedDrive = taskIdFromUrl(alice)
 
   const toast = alice.locator('.toast-item').first()
@@ -504,13 +509,14 @@ test('路径 4 后半：进入原任务准备环境后继续——同一任务�
   const before = (await projectTasks()).length
 
   await alice.goto(`/tasks/${taskId}`)
+  await showAssistant(alice)
   const agentTrigger = alice.getByLabel('选择 Agent')
   await expect(agentTrigger).toBeVisible({ timeout: 30_000 })
   await selectFromMenu(agentTrigger, AGENT_NAME)
   await selectFromMenu(alice.getByLabel('选择设备'), /e2e-node（在线）/)
   await selectFromMenu(alice.getByLabel('选择 Workspace'), 'e2e-ws')
   await alice.getByLabel('指令').fill('环境准备好了，接着做')
-  await alice.getByRole('button', { name: '开始执行' }).click()
+  await alice.getByRole('button', { name: '发给助手' }).click()
 
   const runId = await waitForNewRun(taskId)
   const owner = await runOwnerAndTarget(shared.aliceCookie!, runId)
@@ -543,6 +549,7 @@ test('路径 3：自己明确选择 Agent → 创建并执行（归自己、用�
   await enableExecution(alice)
   await submitForm(alice, '创建并开始执行')
   await alice.waitForURL(/\/tasks\/[0-9a-f-]{36}/)
+  await showAssistant(alice)
   shared.taskIds.selfAgent = taskIdFromUrl(alice)
 
   await expect(alice.locator('.toast-item').first()).toContainText(
@@ -585,6 +592,7 @@ test('路径 2：分给别人，对方接受后再执行——用对方的现场
   const bob = shared.bob!
   await bob.reload()
   await bob.goto(`/tasks/${taskId}`)
+  await showAssistant(bob)
   await bob.getByRole('button', { name: '接受任务' }).click()
   await expect(bob.getByTestId('task-assignment-state')).toHaveText('已接受')
 
@@ -594,7 +602,7 @@ test('路径 2：分给别人，对方接受后再执行——用对方的现场
   await selectFromMenu(bob.getByLabel('选择设备'), /e2e-node（在线）/)
   await selectFromMenu(bob.getByLabel('选择 Workspace'), 'e2e-ws')
   await bob.getByLabel('指令').fill('我来接着做这一段')
-  await bob.getByRole('button', { name: '开始执行' }).click()
+  await bob.getByRole('button', { name: '发给助手' }).click()
 
   const runId = await waitForNewRun(taskId)
   const owner = await runOwnerAndTarget(shared.bobCookie!, runId)

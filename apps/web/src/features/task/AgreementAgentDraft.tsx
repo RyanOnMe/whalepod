@@ -91,6 +91,7 @@ export function AgreementAgentDraft({
         session={session}
         hasActiveRun={runs.some((run) => ACTIVE.has(run.status))}
         purpose="agreement_draft"
+        showReceipt
         draft={prompt}
         onDraftChange={setPrompt}
         buttonLabel="启动约定起草"

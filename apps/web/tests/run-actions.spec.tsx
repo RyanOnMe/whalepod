@@ -433,7 +433,7 @@ describe('切片⑤ resume：终态 Run 的「接着聊」与血缘句（#237）
     await user.click(await screen.findByTestId('continue-session-button'))
     const box = await screen.findByLabelText('指令')
     await user.type(box, '继续刚才的思路')
-    await user.click(screen.getByRole('button', { name: '继续会话' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     await waitFor(() => expect(captures.instructionBodies).toHaveLength(1))
     expect(captures.instructionBodies[0]).toMatchObject({
       text: '继续刚才的思路',

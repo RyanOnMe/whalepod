@@ -2,6 +2,7 @@ import { expect, type Locator, type Page } from '@playwright/test'
 import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import { waitForRunStatus, waitForRuntimeReleased } from './helpers.js'
+import { showAssistant } from './helpers.js'
 
 async function sampleTransition(target: Locator) {
   return target.evaluate((node) => {
@@ -319,6 +320,8 @@ export async function recordMotionDemo(owner: Page, taskId: string, evidence: st
     await card.getByRole('button', { name: '收起任务列表', exact: true }).click()
     await settled(card)
     await page.goto(new URL(`/tasks/${taskId}`, owner.url()).href)
+    // #548：整页导航回到任务默认发给团队；交付物入口在执行侧。
+    await showAssistant(page)
     const file = page.getByRole('button', { name: /查看交付物/ }).first()
     await file.click()
     const drawer = page.getByRole('region', { name: '工作区详情' })

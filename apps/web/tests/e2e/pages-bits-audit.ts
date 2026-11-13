@@ -176,7 +176,7 @@ export async function auditPages({
   // Only this deliberate send mutates, after the read-only audit counter is stopped.
   owner.off('request', observe)
   expect(posts).toBe(0)
-  await owner.getByRole('button', { name: '发送留言', exact: true }).click()
+  await owner.getByTestId('team-composer').getByRole('button', { name: '发给团队' }).click()
   await expect(owner.getByRole('textbox', { name: '留言', exact: true })).toHaveValue('')
   await expect(owner.locator('.comment-body').filter({ hasText: '页面精修草稿' })).toBeVisible()
   await member.goto(`/tasks/${taskId}`)

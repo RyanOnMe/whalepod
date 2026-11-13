@@ -670,7 +670,7 @@ describe('连续对话：默认续聊与草稿（判据 3）', () => {
     await selectOption(user, '选择设备', 'm4-mini（在线）')
     await selectOption(user, '选择 Workspace', 'whalepod')
     await user.type(screen.getByLabelText('指令'), '第一次执行：整理报告')
-    await user.click(screen.getByRole('button', { name: '开始执行' }))
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
     // 读取面这一拍仍不含新运行：目标已经指向"追问这次运行"，不回退。
     expect(await screen.findByText('Builder · 追问第 1 次运行')).toBeVisible()
     // 读取面把运行带回来（真实 WS 失效路径）之后仍是追问它。
@@ -694,7 +694,7 @@ describe('连续对话：默认续聊与草稿（判据 3）', () => {
       ),
     )
     expect(await screen.findByText('Builder · 续聊第 1 次运行')).toBeVisible()
-    expect(screen.getByRole('button', { name: '继续会话' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeEnabled()
   })
 
   it('#393：来源设备离线时默认继续被阻断、草稿保留（不显示可发送、不落指令）', async () => {
@@ -736,7 +736,7 @@ describe('连续对话：默认续聊与草稿（判据 3）', () => {
     const box = screen.getByLabelText('指令')
     await waitFor(() => expect(box).toBeEnabled())
     await user.type(box, '接着写第三节')
-    expect(screen.getByRole('button', { name: '继续会话' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeEnabled()
     // 设备掉线：阻断发送、说清原因，但**不动**草稿（也不自动改投新执行）。
     state.online = false
     await act(async () =>
@@ -745,8 +745,8 @@ describe('连续对话：默认续聊与草稿（判据 3）', () => {
         resync: () => {},
       }),
     )
-    expect(await screen.findByTestId('execution-blocker')).toHaveTextContent('来源设备当前离线')
-    expect(screen.getByRole('button', { name: '继续会话' })).toBeDisabled()
+    expect(await screen.findByTestId('execution-blocker')).toHaveTextContent('上次用的电脑没连上')
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
     expect(box).toHaveValue('接着写第三节')
     expect(screen.getByLabelText('执行方式')).toHaveTextContent('继续会话')
   })
@@ -799,7 +799,7 @@ describe('连续对话：默认续聊与草稿（判据 3）', () => {
       '这次执行没有可续接的会话，请开始新执行。',
     )
     expect(screen.getByLabelText('指令')).toHaveValue('')
-    expect(screen.getByRole('button', { name: '继续会话' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
   })
 
   it('用户明确改选后默认规则不再改写；「继续此会话」保留已有文字且不自动发送', async () => {

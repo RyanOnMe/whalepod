@@ -278,6 +278,8 @@ describe('auth-navigation', () => {
     await user.keyboard('{Enter}')
     expect(await screen.findByRole('heading', { name: task.title })).toBeVisible()
 
+    // #548：普通任务链接默认落在「发给团队」；接受任务的入口在执行区，显式切过去。
+    await user.click(await screen.findByRole('button', { name: 'Agent 执行' }))
     // 接受任务（键盘：聚焦按钮 + Enter）
     const acceptButton = await screen.findByRole('button', { name: '接受任务' })
     acceptButton.focus()

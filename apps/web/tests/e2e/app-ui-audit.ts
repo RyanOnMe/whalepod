@@ -57,7 +57,7 @@ export async function auditSendFocus(page: Page, evidence: string) {
     await page.keyboard.press('Escape')
     await expect(page.getByRole('region', { name: '执行参数' })).not.toBeVisible()
     const frame = page.getByTestId('prompt-bar')
-    const send = frame.getByRole('button', { name: '开始执行', exact: true })
+    const send = frame.getByRole('button', { name: '发给助手', exact: true })
     await expect(send).toBeEnabled()
     // Start one actual tab stop before send; don't depend on the number of
     // other controls (native details/portals have their own tab sequences).

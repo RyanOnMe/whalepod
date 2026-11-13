@@ -3499,6 +3499,45 @@ textarea::placeholder {
   padding: 8px 24px 20px;
   background: var(--color-surface);
 }
+
+/* #548：一个固定输入位置，上方切换发给团队 / 请助手处理；两份 composer 各自保活。 */
+.task-message-dock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.task-message-dock > .rubber-segment {
+  align-self: center;
+  width: fit-content;
+}
+.task-message-dock .discussion-dock[hidden],
+.task-message-dock [data-testid='assistant-composer'][hidden] {
+  display: none;
+}
+.message-receiver-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.message-receiver {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+.composer-feedback {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+.execution-blocker .composer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
 .workspace-status {
   font-size: 12px;
   color: var(--color-muted);
