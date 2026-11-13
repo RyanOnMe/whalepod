@@ -121,6 +121,13 @@ export function CommentComposer({
     }))
   }
 
+  // 任务参数变化时路由可能复用同一组件实例：上一条任务的「已发给团队」与错误不能
+  // 挂到新任务的输入框上。草稿本身按 taskId 存在 store 里，不需要搬。
+  useEffect(() => {
+    setSent(false)
+    setError(null)
+  }, [taskId])
+
   useEffect(() => {
     if (insertToken === null) return
     // 追加而非覆盖：用户可能已经打了半句话（#250 从交付物区点进来时正文通常为空，
