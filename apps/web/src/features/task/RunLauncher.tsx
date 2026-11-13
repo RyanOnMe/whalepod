@@ -675,7 +675,7 @@ export function RunLauncher({
           </div>
         ) : null}
         {showReceipt && start.data?.outcome === 'started_run' ? (
-          // 辅助入口（约定起草/修订）没有外部运行读面，只说一句可长期成立的受理事实；
+          // 约定起草等辅助入口没有外部运行读面，只说一句可长期成立的受理事实；
           // 主输入路径由 InstructionComposer 按 Run 状态决定是否显示「等助手开始」。
           <p className="instruction-outcome" role="status" data-testid="run-outcome">
             已提交给助手

@@ -2,7 +2,7 @@
 
 - 对应场景/门禁：P1-07 任务房主链 · Q0/Q5；ADR-0018 决定 1 的修订（#548）
 - 对应 Issue：[#548](https://github.com/RyanOnMe/whalepod/issues/548)（产品切片代号 P1-07，与里程碑 P1-07 不同编号体系）
-- 上次验证：2026-11-14 · 分支 `feat/p1-548-task-message-composer`（起点 20bf1df；复核修复 5d6ddb1、fff9869、ae2db33、5b471e3、be5d13d）· 结果 PASS（工程门）；真人可用性 not_run
+- 上次验证：2026-11-14 · 分支 `feat/p1-548-task-message-composer`（起点 20bf1df；复核修复 5d6ddb1、fff9869、ae2db33、5b471e3、be5d13d、89350bc）· 结果 PASS（工程门）；真人可用性 not_run
 
 ## 验的是哪条用户路径
 
