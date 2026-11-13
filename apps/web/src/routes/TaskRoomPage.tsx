@@ -311,8 +311,11 @@ function TaskRoom(): ReactNode {
           : null
   const detailRun =
     runs.find((run) => run.id === detailRunId) ?? activeRun ?? runs.at(-1) ?? undefined
-  const showExecution = () => {
+  // 查看活动/运行详情只是阅读位置，不改接收方；复核/修订是明确的交办动作，
+  // 传 remember 让去设备页返回后仍落在准备好的助手草稿上（#548）。
+  const showExecution = (remember = false) => {
     focusExecution.current = true
+    if (remember) recipientMemory.remember('assistant')
     setChannel('execution')
     setSeenActivity(activityCount)
     setInspector(null)
@@ -401,7 +404,7 @@ function TaskRoom(): ReactNode {
                     type="button"
                     className="execution-activity-hint"
                     data-testid="execution-activity-hint"
-                    onClick={showExecution}
+                    onClick={() => showExecution()}
                   >
                     {activeRun?.status === 'waiting_approval'
                       ? '执行等待审批——前往处理'
@@ -701,12 +704,12 @@ function TaskRoom(): ReactNode {
                   onRequestRevision={(artifactId) => {
                     setReviewRequest(null)
                     setRevisionRequest({ taskId: task.id, artifactId, nonce: crypto.randomUUID() })
-                    showExecution()
+                    showExecution(true)
                   }}
                   onRequestReview={(artifactId) => {
                     setRevisionRequest(null)
                     setReviewRequest({ taskId: task.id, artifactId, nonce: crypto.randomUUID() })
-                    showExecution()
+                    showExecution(true)
                   }}
                   onReferenceRun={(runId) => {
                     chooseChannel('discussion')

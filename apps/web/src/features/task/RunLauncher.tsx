@@ -656,7 +656,7 @@ export function RunLauncher({
             {startGuidance}
           </p>
         ) : null}
-        {start.isError ? <ErrorBanner error={start.error} /> : null}
+        {start.isError && failedCurrentRequest ? <ErrorBanner error={start.error} /> : null}
         {uncertainError ? (
           <div className="composer-actions" role="status" data-testid="assistant-uncertain">
             <span>暂时没确认助手是否收到。你写的内容还在。</span>
@@ -670,6 +670,13 @@ export function RunLauncher({
               重新确认
             </button>
           </div>
+        ) : null}
+        {onOutcome === undefined && start.data?.outcome === 'started_run' ? (
+          // 辅助入口（约定起草/修订）没有外部运行读面，只说一句可长期成立的受理事实；
+          // 主输入路径由 InstructionComposer 按 Run 状态决定是否显示「等助手开始」。
+          <p className="instruction-outcome" role="status" data-testid="run-outcome">
+            已提交给助手
+          </p>
         ) : null}
         {outcomeCurrent && start.data?.outcome === 'rejected' ? (
           <p className="mutation-hint" role="alert" data-testid="execution-start-refusal">

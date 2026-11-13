@@ -250,7 +250,8 @@ export function makeDevice(overrides: Partial<DeviceView> = {}): DeviceView {
     name: 'm4-mini',
     platform: 'darwin',
     status: 'online',
-    dshDistributionVersion: null,
+    // 在线且已上报 DSH 分发的设备才是「已准备」；需要未准备面的用例显式传 null。
+    dshDistributionVersion: '0.1.0-rc.8',
     lastSeenAt: '2026-08-25T00:00:00.000Z',
     ...overrides,
   }

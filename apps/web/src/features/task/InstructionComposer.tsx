@@ -353,7 +353,7 @@ export function InstructionComposer({
           </button>
         </div>
       ) : null}
-      {error !== null ? <ErrorBanner error={error} /> : null}
+      {error !== null && failedCurrentRequest ? <ErrorBanner error={error} /> : null}
       {offlineGuidance ? (
         // 409 的含义不是"你写错了"，而是"没有可用的执行目标"——必须告诉用户下一步做什么。
         <p className="mutation-hint" data-testid="instruction-offline-guidance">

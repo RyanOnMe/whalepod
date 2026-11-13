@@ -111,6 +111,8 @@ export function CommentComposer({
   // #548：成功只表示「已发给团队」，不宣称助手已读或采用。
   const [sent, setSent] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const draftRef = useRef(draft)
+  draftRef.current = draft
 
   /** 任何编辑都意味着这是一份新的留言：旧幂等键不能再拿去重试。 */
   const setBody = (change: string | ((current: string) => string)): void => {
@@ -143,15 +145,19 @@ export function CommentComposer({
         body: { body: text },
         idempotencyKey: key,
       }),
-    onSuccess: () => {
-      updateDraft(() => EMPTY_TEAM_MESSAGE_DRAFT)
+    onSuccess: (_comment, { key }) => {
+      // 迟到的回执只清它自己那份请求。用户已经在同一任务里开始写新留言时，
+      // 不能把新草稿一起清掉（#548：不让迟到的回执改写当前输入）。
+      if (draftRef.current.pending?.key === key) {
+        updateDraft(() => EMPTY_TEAM_MESSAGE_DRAFT)
+        setSent(true)
+      }
       setError(null)
-      setSent(true)
       void queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(taskId) })
     },
-    onError: (mutationError: unknown) => {
+    onError: (mutationError: unknown, { key }) => {
       // 失败时保留输入内容与幂等键：同一份未确认请求重试不得重复留言（#548）。
-      setError(mutationError)
+      if (draftRef.current.pending?.key === key) setError(mutationError)
     },
   })
 

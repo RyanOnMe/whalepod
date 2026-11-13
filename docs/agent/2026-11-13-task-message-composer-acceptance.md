@@ -2,7 +2,7 @@
 
 - 对应场景/门禁：P1-07 任务房主链 · Q0/Q5；ADR-0018 决定 1 的修订（#548）
 - 对应 Issue：[#548](https://github.com/RyanOnMe/whalepod/issues/548)（产品切片代号 P1-07，与里程碑 P1-07 不同编号体系）
-- 上次验证：2026-11-13 · 分支 `feat/p1-548-task-message-composer`（起点 20bf1df）· 结果 PASS（工程门）；真人可用性 not_run
+- 上次验证：2026-11-14 · 分支 `feat/p1-548-task-message-composer`（起点 20bf1df；复核修复 5d6ddb1、fff9869）· 结果 PASS（工程门）；真人可用性 not_run
 
 ## 验的是哪条用户路径
 
@@ -37,7 +37,7 @@ pnpm exec playwright test --config=playwright.micro.config.ts
 
 - web：`task-message-composer.spec.tsx` 的 `message-recipient-*`、`assistant-receiver`、
   `team-composer`、`comment-sent-status`、`execution-blocker`、`check-connection`、
-  `restart-assistant`、`assistant-uncertain`、`run-outcome`；所有请求按 URL 与
+  `restart-assistant`、`assistant-uncertain`、`instruction-outcome`；所有请求按 URL 与
   `Idempotency-Key` 断言，不读组件内部 state。
 - hub.run：`p1-393` 的 `result.json` 记录 `instructionPosts`、离线期间新增 Run 数、
   团队评论、来源/意图与设备在线事实；独立判定器重判 128 项。
@@ -76,11 +76,12 @@ pnpm exec playwright test --config=playwright.micro.config.ts
 
 ## 取证
 
-- 组件：`apps/web/tests/task-message-composer.spec.tsx`（16 条）。
+- 组件：`apps/web/tests/task-message-composer.spec.tsx`（18 条）。
 - 生产浏览器：`artifacts/evidence/conversation-flow/result.json`（p1-393 + 独立判定器 128 项）、
   `artifacts/evidence/r8-window/result.json`（p1-19 R8：held → 重启 → 5 次派发后 ack/completed）、
-  p1-19 全 15 条运行日志、`artifacts/evidence/handoff-loop/`、`artifacts/evidence/create-recovery/`、
-  `artifacts/evidence/focused-workspace/<tag>/`、`artifacts/evidence/run-micro/<tag>/`。
+  p1-19 本轮 15/15 运行结果（无失败包）、`artifacts/evidence/handoff-loop/`、
+  `artifacts/evidence/create-recovery/`、`artifacts/evidence/focused-workspace/<tag>/`、
+  `artifacts/evidence/run-micro/<tag>/`。
 - 出包/入 git 前跑 `scripts/secret-scan.sh <路径>`；证据目录不提交。
 
 ## 边界与未覆盖

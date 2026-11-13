@@ -313,16 +313,20 @@ export function ExecutionComposer({
   const isAssignee = task.assigneeUserId === session.userId
   // #548：开始写普通交办时，把当时任务已指派的 Agent 固定进这份草稿；后台改派不再
   // 改写显示与提交目标。复核/修订不沿用这个默认——那两处必须由人明确选。
+  // 如果落笔时任务还没有 Agent，后来才指派，也不能把新 Agent 填进已写的草稿。
+  const startedWithoutAgent = useRef(false)
   useEffect(() => {
-    if (
-      mode !== 'new' ||
-      revisionContext !== null ||
-      draft.trim() === '' ||
-      launchSettings.agentId !== ''
-    )
+    if (mode !== 'new' || revisionContext !== null || launchSettings.agentId !== '') return
+    if (draft.trim() === '') {
+      startedWithoutAgent.current = false
       return
+    }
     const agentId = task.assigneeAgentId
-    if (agentId === null || agentId === undefined) return
+    if (agentId === null || agentId === undefined) {
+      startedWithoutAgent.current = true
+      return
+    }
+    if (startedWithoutAgent.current) return
     setLaunchSettings((old) => (old.agentId === '' ? { ...old, agentId } : old))
   }, [
     draft,
@@ -396,7 +400,11 @@ export function ExecutionComposer({
     !(environmentWorkspaces.isFetching && !environmentWorkspaces.isFetchedAfterMount)
   const usableEnvironments = (environmentWorkspaces.data ?? []).flatMap((workspace) => {
     const device = (devices.data ?? []).find((row) => row.id === workspace.deviceId)
-    return workspace.available && device?.status === 'online' ? [{ workspace, device }] : []
+    return workspace.available &&
+      device?.status === 'online' &&
+      device.dshDistributionVersion !== null
+      ? [{ workspace, device }]
+      : []
   })
   const environmentState: 'ready' | 'none' | 'unknown' = !isAssignee
     ? 'unknown'
@@ -584,8 +592,8 @@ export function ExecutionComposer({
         </>
       ),
     }
-  else if (mode === 'resume' && source.data?.resumeContext === 'blocked')
-    // #548：会话已不可续接（含发现生成的受限私有执行）。可见的运行记录不等于可接续对象；
+  else if (isSourceMode && source.data?.resumeContext === 'blocked')
+    // #548：会话已不可续接（含活跃中的发现私有执行）。可见的运行记录不等于可接续对象；
     // 离线现场优先说设备事实，这一条只在设备可用时兜底。
     blocker = {
       message: '这次对话不能在这里重开或续接，请明确重新开始。草稿仍保留。',
@@ -623,7 +631,7 @@ export function ExecutionComposer({
       : isSourceMode && sourceAgent.data?.id === receiverAgentId
         ? sourceAgent.data.name
         : (agents.data?.find((agent) => agent.id === receiverAgentId)?.name ?? null)
-  const receiverReadFailed = receiverName === null && receiverAgentId !== '' && agents.isError
+  const receiverReadFailed = receiverName === null && agents.isError
   const receiverPending =
     receiverName === null &&
     !receiverReadFailed &&

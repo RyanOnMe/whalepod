@@ -11,6 +11,7 @@ import {
   ALICE,
   BOB,
   apiFailure,
+  deferredResponse,
   devicesHandler,
   initOf,
   loggedInHandlers,
@@ -612,6 +613,59 @@ describe('#548 发送受阻时就地继续编辑与恢复', () => {
     expect(screen.getByTestId('restart-assistant')).toBeVisible()
     expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
     expect(instructionPosts(view.fetchMock)).toHaveLength(0)
+  })
+
+  it('活跃的受限私有执行在追问模式也不可发送', async () => {
+    const task = makeTask({ assignmentStatus: 'accepted' })
+    const run = makeRun({ status: 'running' })
+    const user = userEvent.setup()
+    const view = renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task, { runs: [run] }),
+        sourceHandler(task, run, { resumeContext: 'blocked' }),
+        ...agentHandlers(),
+        teamMembersHandler(),
+        devicesHandler([makeDevice({ id: DEVICE, status: 'online' })]),
+        workspaceHandler(),
+        { method: 'POST', url: /\/instructions$/, respond: () => ok({}) },
+      ]),
+    )
+    await showRecipient('请助手处理')
+    const blocker = await screen.findByTestId('execution-blocker')
+    expect(blocker).toHaveTextContent('这次对话不能在这里重开或续接')
+    await user.type(screen.getByLabelText('指令'), '这句不能追到私有执行')
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
+    expect(instructionPosts(view.fetchMock)).toHaveLength(0)
+  })
+
+  it('迟到的团队留言回执不清掉之后写的新草稿', async () => {
+    const task = makeTask({ assignmentStatus: 'accepted' })
+    const comment = makeComment({ taskId: task.id, authorUserId: BOB.userId, body: '旧留言' })
+    const gate = deferredResponse()
+    const user = userEvent.setup()
+    renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task),
+        ...agentHandlers(),
+        teamMembersHandler(),
+        devicesHandler([makeDevice({ id: DEVICE })]),
+        workspaceHandler(),
+        { method: 'POST', url: /\/comments$/, respond: () => gate.promise },
+      ]),
+    )
+    const box = await screen.findByLabelText('留言')
+    await user.type(box, '旧留言')
+    const team = screen.getByTestId('team-composer')
+    await user.click(within(team).getByRole('button', { name: '发给团队' }))
+    await waitFor(() => expect(within(team).getByRole('button', { name: '发送中…' })).toBeVisible())
+    // 请求在途时继续写了一条新的：迟到的成功回执只能清旧请求，不能吞掉这条。
+    await user.clear(box)
+    await user.type(box, '新留言不能丢')
+    gate.resolve({ status: 201, body: { ok: true, data: comment } })
+    await waitFor(() => expect(screen.queryByTestId('comment-sent-status')).toBeNull())
+    expect(box).toHaveValue('新留言不能丢')
   })
 
   it('团队留言网络失败后重试沿用同一幂等键，成功后只清团队草稿', async () => {

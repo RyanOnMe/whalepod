@@ -61,6 +61,8 @@ it('#396 责任人从约定面显式选择 Agent 和自己的现场发起辅助 
       intent: { kind: 'new' },
     }),
   )
+  // #548：辅助启动没有外部运行读面，也要给一句可长期成立的受理反馈。
+  expect(within(panel).getByTestId('run-outcome')).toHaveTextContent('已提交给助手')
 })
 
 function launcherHandlers(
