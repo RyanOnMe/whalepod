@@ -24,6 +24,8 @@ const suppressedRouterMutations: Mutation[] = (
     'wrong purpose',
     'nonterminal',
     'reason',
+    'skipped cancellation',
+    'cancelled budget',
     'reserved tokens',
     'reserved cost',
   ] as const
@@ -39,6 +41,10 @@ const suppressedRouterMutations: Mutation[] = (
     else if (change === 'wrong purpose') Object.assign(row, { purpose: 'discovery' })
     else if (change === 'nonterminal') row.status = 'running'
     else if (change === 'reason') row.failureCode = 'unknown'
+    else if (change === 'skipped cancellation')
+      Object.assign(row, { status: 'skipped', failureCode: 'input_or_authority_changed' })
+    else if (change === 'cancelled budget')
+      Object.assign(row, { status: 'cancelled', failureCode: 'budget_exhausted' })
     else if (change === 'reserved tokens') Object.assign(row, { reservedTokens: 1 })
     else Object.assign(row, { reservedCostMicros: 1 })
   },

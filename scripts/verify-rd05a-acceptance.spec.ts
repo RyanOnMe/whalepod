@@ -657,6 +657,8 @@ const negatives: Mutation[] = [
       'wrong purpose',
       'nonterminal',
       'reason',
+      'skipped cancellation',
+      'cancelled budget',
       'reserved tokens',
       'reserved cost',
     ] as const
@@ -672,6 +674,10 @@ const negatives: Mutation[] = [
       else if (change === 'wrong purpose') Object.assign(row, { purpose: 'discovery' })
       else if (change === 'nonterminal') row.status = 'running'
       else if (change === 'reason') row.failureCode = 'unknown'
+      else if (change === 'skipped cancellation')
+        Object.assign(row, { status: 'skipped', failureCode: 'input_or_authority_changed' })
+      else if (change === 'cancelled budget')
+        Object.assign(row, { status: 'cancelled', failureCode: 'budget_exhausted' })
       else if (change === 'reserved tokens') Object.assign(row, { reservedTokens: 1 })
       else Object.assign(row, { reservedCostMicros: 1 })
     },
@@ -2329,6 +2335,17 @@ describe('RD-05a independent combined campaign judge', () => {
     }
   })
 
+  it.each([
+    ['cancelled', 'input_or_authority_changed'],
+    ['cancelled', 'input_superseded'],
+    ['skipped', 'budget_exhausted'],
+  ])('accepts only the observed no-model Router outcome %s/%s', (status, failureCode) => {
+    const value = fixture()
+    Object.assign(value.evidence.accounting.suppressedRouter[0]!, { status, failureCode })
+    expect(() => checkRd05a(value.evidence, seal(value), binding)).not.toThrow()
+    expect(checkRd05aEvidenceNegatives(value.evidence, seal(value), binding)).toBeGreaterThan(100)
+  })
+
   it('allows no suppressed Router when the complete stability snapshot also contains none', () => {
     const value = fixture()
     const ids = value.evidence.accounting.suppressedRouter.map((row) => row.id)
@@ -2366,8 +2383,10 @@ describe('RD-05a independent combined campaign judge', () => {
       'suppressed Router wrong Work': 'suppressed Router belongs to another Work',
       'suppressed Router wrong Task': 'suppressed Router belongs to another Task',
       'suppressed Router wrong purpose': 'non-Router hidden in suppressed evaluations',
-      'suppressed Router nonterminal': 'suppressed Router is not cancelled',
-      'suppressed Router reason': 'unexpected suppressed Router reason',
+      'suppressed Router nonterminal': 'suppressed Router is not terminal',
+      'suppressed Router reason': 'unexpected suppressed Router outcome',
+      'suppressed Router skipped cancellation': 'unexpected suppressed Router outcome',
+      'suppressed Router cancelled budget': 'unexpected suppressed Router outcome',
       'suppressed Router reserved tokens': 'suppressed Router reserved tokens',
       'suppressed Router reserved cost': 'suppressed Router reserved cost',
     }
