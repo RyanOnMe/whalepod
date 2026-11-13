@@ -57,6 +57,8 @@ export interface ExecutionDraft {
   sourceId: string
   reviewArtifactIds: string[]
   revisionContext: ExecutionMaterialRequest | null
+  /** #548：落笔那一刻的接收 Agent（null = 当时没有 Agent，必须由人再选）。 */
+  agentSnapshot?: string | null
   launch: { key: string; settings: ExecutionSettings }
   sending: boolean
 }

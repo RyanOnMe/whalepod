@@ -317,24 +317,34 @@ export function ExecutionComposer({
   // 即使这期间任务被指派了 Agent，也不能把新 Agent 填进已经写好的文字。
   const draftWasEmpty = useRef(draft.trim() === '')
   useEffect(() => {
-    if (mode !== 'new' || revisionContext !== null || launchSettings.agentId !== '') return
+    if (mode !== 'new' || revisionContext !== null) return
     if (draft.trim() === '') {
       draftWasEmpty.current = true
+      if (memory.snapshot.agentSnapshot !== undefined)
+        memory.update((old) => {
+          const next = { ...old }
+          delete next.agentSnapshot
+          return next
+        })
       return
     }
     const becameNonEmpty = draftWasEmpty.current
     draftWasEmpty.current = false
     if (!becameNonEmpty) return
-    const agentId = task.assigneeAgentId
-    if (agentId === null || agentId === undefined) return
-    setLaunchSettings((old) => (old.agentId === '' ? { ...old, agentId } : old))
+    // 快照“落笔时的 Agent 或明确无 Agent”，接收者与默认提交目标都只读这份快照。
+    // 不写 launchSettings：那是「用户明确调整过的设置」，自动快照不该让
+    // followsDefaultMode 误以为用户改过执行参数。
+    const agentId = task.assigneeAgentId ?? null
+    memory.update((old) =>
+      old.agentSnapshot === agentId ? old : { ...old, agentSnapshot: agentId },
+    )
   }, [
     draft,
-    launchSettings.agentId,
     mode,
     revisionContext,
     task.assigneeAgentId,
-    setLaunchSettings,
+    memory.update,
+    memory.snapshot.agentSnapshot,
   ])
   const grants = useQuery({
     queryKey: queryKeys.instructionGrants(task.id),
@@ -615,16 +625,18 @@ export function ExecutionComposer({
     blocker = { message: '来源配置版本已不可用，请开始新执行。', actions: environmentActions() }
   else if (mode === 'resume' && revision === undefined)
     blocker = { message: '正在确认来源配置版本…' }
-  // #548：接收者按事实显示——来源会话的 Agent、任务已指派的 Agent，或用户在设置里
-  // 明确选中的 Agent；三者都没有时如实说「还没选」，不按列表顺序猜。
+  // #548：接收者按事实显示——来源会话的 Agent、用户在设置里明确选中的 Agent，
+  // 或**落笔那一刻**快照的 Agent。空草稿才跟随任务当前指派；草稿一开写，
+  // 后来才指派的 Agent 不再冒充接收者。复核/修订必须由人明确选过 Agent。
   const receiverAgentId = isSourceMode
     ? (source.data?.agentId ?? '')
     : launchSettings.agentId !== ''
       ? launchSettings.agentId
       : mode === 'new' && revisionContext === null
-        ? (task.assigneeAgentId ?? '')
-        : // 复核/修订必须由人明确选过 Agent，任务指派不冒充接收者（#548）。
-          ''
+        ? draft.trim() === ''
+          ? (task.assigneeAgentId ?? '')
+          : (memory.snapshot.agentSnapshot ?? '')
+        : ''
   const receiverName =
     receiverAgentId === ''
       ? null
@@ -1033,7 +1045,11 @@ export function ExecutionComposer({
               {...(mode === 'new' ? { placeholder: '想请助手做什么？' } : {})}
               defaultAgentId={
                 mode === 'new' && revisionContext === null
-                  ? (task.assigneeAgentId ?? undefined)
+                  ? launchSettings.agentId !== ''
+                    ? launchSettings.agentId
+                    : draft.trim() === ''
+                      ? (task.assigneeAgentId ?? undefined)
+                      : (memory.snapshot.agentSnapshot ?? undefined)
                   : undefined
               }
               settings={launchSettings}

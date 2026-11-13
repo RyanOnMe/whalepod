@@ -20,11 +20,13 @@ import {
   makeRun,
   makeTask,
   ok,
+  statefulTaskRoom,
   taskRoomHandler,
   teamMembersHandler,
   workspacesHandler,
 } from './fixtures.js'
 import type { MockHandler } from './fixtures.js'
+import { queryKeys } from '../src/app/query-client.js'
 import { renderApp as renderAppRoom } from './render.jsx'
 /** #548：本文件判普通任务链接的默认视图与恢复，显式走团队默认。 */
 function renderApp(path: string, handlers: Parameters<typeof renderAppRoom>[1]) {
@@ -706,6 +708,40 @@ describe('#548 发送受阻时就地继续编辑与恢复', () => {
     const blocker = await screen.findByTestId('execution-blocker')
     expect(blocker).toHaveTextContent('这次对话不能在这里重开或续接')
     await user.type(screen.getByLabelText('指令'), '这句不能追到私有执行')
+    expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
+    expect(instructionPosts(view.fetchMock)).toHaveLength(0)
+  })
+
+  it('无 Agent 时起稿、后台才指派：返回后不把草稿改投给新 Agent', async () => {
+    const task = makeTask({ assignmentStatus: 'accepted', assigneeAgentId: null })
+    const roomState = statefulTaskRoom(task)
+    const user = userEvent.setup()
+    const view = renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        ...roomState.handlers,
+        ...agentHandlers(),
+        teamMembersHandler(),
+        devicesHandler([makeDevice({ id: DEVICE })]),
+        workspaceHandler(),
+        { method: 'POST', url: /\/instructions$/, respond: () => ok({}) },
+      ]),
+    )
+    await showRecipient('请助手处理')
+    const box = await screen.findByLabelText('指令')
+    await waitFor(() => expect(box).toBeEnabled())
+    await user.type(box, '这句话是写给当时的空白安排的')
+    // 离开期间任务才被指派 Agent：返回后接收者仍是「还没选」，发送不得自动带新 Agent。
+    await view.router.navigate('/devices')
+    roomState.setTask({ ...task, assigneeAgentId: AGENT })
+    await view.queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(task.id) })
+    await view.router.navigate(`/tasks/${task.id}`)
+    const nextBox = await screen.findByLabelText('指令')
+    await waitFor(() =>
+      expect(screen.getByTestId('assistant-receiver')).toHaveTextContent('还没为这项任务选助手'),
+    )
+    expect(nextBox).toHaveValue('这句话是写给当时的空白安排的')
+    expect(screen.getByTestId('choose-assistant')).toBeVisible()
     expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
     expect(instructionPosts(view.fetchMock)).toHaveLength(0)
   })

@@ -76,7 +76,7 @@ pnpm exec playwright test --config=playwright.micro.config.ts
 
 ## 取证
 
-- 组件：`apps/web/tests/task-message-composer.spec.tsx`（20 条）。
+- 组件：`apps/web/tests/task-message-composer.spec.tsx`（21 条）。
 - 生产浏览器：`artifacts/evidence/conversation-flow/result.json`（p1-393 + 独立判定器 128 项）、
   `artifacts/evidence/r8-window/result.json`（p1-19 R8：held → 重启 → 5 次派发后 ack/completed）、
   p1-19 本轮 15/15 运行结果（无失败包）、`artifacts/evidence/handoff-loop/`、
