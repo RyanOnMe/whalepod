@@ -147,6 +147,21 @@ function observedRun(
       row.workInputManifest &&
       row.startedAt &&
       row.finishedAt,
+    JSON.stringify({
+      component: 'acceptance.run_snapshot',
+      role,
+      runId: row.id,
+      missing: [
+        'workKey',
+        'mandateId',
+        'specRevisionId',
+        'dispatchIntentId',
+        'workInputManifestDigest',
+        'workInputManifest',
+        'startedAt',
+        'finishedAt',
+      ].filter((key) => !row[key as keyof typeof row]),
+    }),
   )
   return {
     role,
