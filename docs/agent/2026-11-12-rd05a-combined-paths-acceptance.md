@@ -3,7 +3,7 @@
 - 对应 Issue：#546；前置为 RD-02b、RD-03d3、RD-04b/c1/c2；#545 工具错误补验已合入 `f31ca0f`。
 - 对应门禁：required `integration` 中的生产装配验收、独立判定与证据负控；不替代 Q2/Q6/Q7。
 - 更新日期：2026-11-13。
-- 上次验证：`6fdd2d2` 的组合 campaign、独立 checker、180 项证据负控与敏感扫描全部 PASS；该 head 的完整本地 check 与七文件定向 integration PASS。独立评审随后发现两项 handoff 回放契约缺口，已补十项红测并修复，须在新 head 重新生成证据和复核；Ubuntu required CI 仍未运行，不把首轮成功包转签后续 head。
+- 上次验证：实现 head `6f66db7` 的新组合 campaign、独立 checker、180 项证据负控与敏感扫描全部 PASS；完整本地 check 为 3150 项 PASS，七文件定向 integration 为 133 项 PASS。两位独立评审分别复核 handoff 修复及证据/CI 判据后 READY；Ubuntu required CI 仍未运行，不把本机结果或旧成功包转签后续 head。
 
 ## 验的是哪条用户路径
 
@@ -87,9 +87,9 @@ driver 内部自检不替代独立 checker；CI 必须另起 CLI 重判，之后
 
 | 项目 | 本轮状态/口径 |
 |---|---|
-| 组合生产回放、独立 checker、negatives、敏感扫描 | `6fdd2d2` 首轮全部 PASS，180 项变异，链路 16 秒；后续 handoff 评审修复必须另跑新 attempt，各失败 attempt 也均扫描 PASS |
+| 组合生产回放、独立 checker、negatives、敏感扫描 | `6f66db7` 修复后新 attempt 全部 PASS，180 项变异，链路 33 秒；没有改签首轮包，各失败 attempt 也均扫描 PASS |
 | Ubuntu required integration（含取证上传） | `not_run / 待本轮结果` |
-| 费用 | 仅回环模拟账本；两条 fast Run 各有四次 Executor 请求及一次自动交接整理，共五次 provider 请求。两次 handoff 单列为 `loopback_unmetered`，记录回放用量、实际自动草稿/Run/约定身份与未发布状态，不把它伪装成普通 Executor ledger 已覆盖。两条 fast Run 各有普通 Executor reserved/settled，Router 两次、正向 discovery 一次、负向 discovery 一次各有 coordination reserved/settled。正向私有执行六次/负向私有执行一次请求为 `loopback_unmetered`，不进普通 ledger 或 live 专用 dispatch/attempt；这些是源码判据，实际本轮数值待验。无 paid 供应商请求（目标 `paidRequests=0`）不等于零模型请求或零费用，不能当成真实 token/扣费对账 |
+| 费用 | 仅回环模拟账本；两条 fast Run 各有四次 Executor 请求及一次自动交接整理，共五次 provider 请求。两次 handoff 单列为 `loopback_unmetered`，记录回放用量、实际自动草稿/Run/约定身份与未发布状态，不把它伪装成普通 Executor ledger 已覆盖。两条 fast Run 各有普通 Executor reserved/settled，Router 两次、正向 discovery 一次、负向 discovery 一次各有 coordination reserved/settled。正向私有执行六次/负向私有执行一次请求为 `loopback_unmetered`，不进普通 ledger 或 live 专用 dispatch/attempt；这些计数已在 `6f66db7` 的新 attempt 实测通过。无 paid 供应商请求（实测 `paidRequests=0`）不等于零模型请求或零费用，不能当成真实 token/扣费对账 |
 | 供应商账单/扣款对账 | `not_run`；公开价格、旧 c3 token 或 #545 合入均不能代替账单证据 |
 | 真实出站逐来源 live-only grant 重验 | `not_run`；本轮不出网，不扩张为 RD-04c3 live 覆盖 |
 | 正式阅稿、飞书接入 | `not_run` |
@@ -139,6 +139,14 @@ driver 内部自检不替代独立 checker；CI 必须另起 CLI 重判，之后
 
 该 head 的完整 `pnpm check` 为 251 文件/3139 项 PASS，127 条既有 lint warning、零 error，63 秒；五文件 integration 115 项 PASS、41 秒，另 discovery/普通 Executor ledger 两文件 18 项 PASS、10 秒。旧 c2/provenance 61 项回归 PASS，十份封存文件摘要一致。脱敏日志与汇总位于 `artifacts/evidence/rd05a/validation-6fdd2d2-3226e956-aa0f-4010-bcc8-3d28681a8320/`，扫描 PASS。
 
-第一位独立评审对该 head 给出 NOT_READY：handoff 材料子串匹配会把 v10 当 v1、候选 20 当 2，且遗漏待确认问题；首条最终回复被发布屏障扣住时，也能误认 Executor 已完成。`0b40441` 保留十项实际会红的拒绝用例，修复按四个唯一有序章节精确匹配约定五字段/候选条目/assistant 最终回复，并仅在响应 `finish` 后允许 handoff。修复后定向 438 项 PASS（replay 86、checker 347、fixture 4、provenance 1），类型/lint/diff PASS；新 head campaign、完整门及独立复核仍待跑，首轮报告不改签。
+第一位独立评审对该 head 给出 NOT_READY：handoff 材料子串匹配会把 v10 当 v1、候选 20 当 2，且遗漏待确认问题；首条最终回复被发布屏障扣住时，也能误认 Executor 已完成。`0b40441` 保留十项实际会红的拒绝用例，修复按四个唯一有序章节精确匹配约定五字段/候选条目/assistant 最终回复，并仅在响应 `finish` 后允许 handoff。修复后定向 438 项 PASS（replay 86、checker 347、fixture 4、provenance 1），类型/lint/diff PASS；新 head 已按下方另跑并复核，首轮报告不改签。
+
+### 修复后实现基线
+
+实现 head `6f66db711f97b132d1ec3d8761b77ec96e0ace37` / attempt `58a7d11c-589e-44c8-9bc3-d0980867d9eb` 的 driver → 独立 checker → 180 项 negatives → 敏感扫描全部 PASS，三 CLI 链路 33 秒，容器清理。稳定窗 2505 ms，七条求值为四条有模型评估、两条本地 inference 和一条 `skipped/budget_exhausted` Router，自动 handoff 两次、paid requests 零；没有为凑计数过滤本地求值。重建生产包后，独立 checker 与 180 项负控再次通过，证明报告仍匹配实际装配指纹。
+
+该实现 head 的完整 `pnpm check` 为 251 文件/3150 项 PASS，127 条既有 warning、零 error，总耗时 78 秒；七文件真实 PostgreSQL integration 为 133 项 PASS，76 秒；生产包 build PASS，3 秒。脱敏日志位于 `artifacts/evidence/rd05a/validation-6f66db7-9888a5b4-2077-4a71-8cb9-8695f8e65fed/`；全部十五个变更文件及验证目录扫描 PASS，十份历史封存证据摘要再次一致。
+
+两位独立评审串行完成：第一位仅复核其两项 handoff P2 在实现 head 的修复，86 项 replay PASS 后 READY；第二位对独立判定、费用/身份披露、provenance 与 CI 门禁复核，348 项 checker/provenance PASS，另独立 checker/180 mutations/扫描 PASS 后 READY。它们不是 GitHub 平台审批或 Ubuntu CI 结果。后续文档提交不改实现；仍须为最终 checkout HEAD 独占生成 campaign，GitHub required check/integration 通过后才可合入。
 
 当前 integration timeout 为 **25 分钟**，既有总耗时 **17 分 22 秒**，可用余量 **7 分 38 秒**。该数字是既有链路基线，不是 RD-05a 新增耗时。先保留 25 分钟；待完整 CI 测得 driver、checker、negatives、扫描和上传及全 job 总耗时后，按实际总耗时与合理波动余量调整。不得只看本机 driver、无证据缩短 timeout，或以超时为由把组合验收挪出 required integration。
