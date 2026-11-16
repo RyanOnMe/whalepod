@@ -238,7 +238,7 @@ test('唯一执行入口：首次启动 → 结束保留追问草稿 → 显式�
     await owner.getByTestId('approve-button').click()
     const completedFirst = await waitForRunStatus(firstRunId, 'completed')
     await waitForRuntimeReleased(firstRunId)
-    await expect(owner.getByTestId('execution-blocker')).toContainText('刚才的对话已经结束')
+    await expect(owner.getByTestId('execution-blocker')).toContainText('助手已经结束处理')
     await expect(box).toHaveValue(draft)
     await expect(owner.getByRole('button', { name: '发给助手' })).toBeDisabled()
     const before = (await hubApi(cookie, 'GET', `/runs/${firstRunId}`)).data as {

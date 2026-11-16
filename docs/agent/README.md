@@ -4,6 +4,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [2026-11-16-readable-task-review-acceptance.md](./2026-11-16-readable-task-review-acceptance.md) | #550：说清具体对话和恢复动作；引用准确版本，审阅先看文件和意见，需追查时展开来源。 |
 | [2026-11-13-task-message-composer-acceptance.md](./2026-11-13-task-message-composer-acceptance.md) | #548：任务页默认发给团队、接收方切换、双草稿、离线/重新开始与受限成员负向面；Q0 全量 + p1-07/p1-19/p1-393 等生产浏览器结果，真人试用 not_run。 |
 | [2026-11-13-task-message-composer-plan.md](./2026-11-13-task-message-composer-plan.md) | 任务页第一步产品计划：默认发给团队、明确请助手处理、独立草稿与发送受阻恢复；保持原消息和授权边界，工程验收与真人试用分开。 |
 | [2026-11-12-rd05a-combined-paths-acceptance.md](./2026-11-12-rd05a-combined-paths-acceptance.md) | #546：同一生产装配/Project/两成员串联快入口与终态续接、新工作发现及精确授权私有草稿；三条正向 Run + 首读前生产 HTTP 更正的隔离第四 Run，独立 checker/negatives 接 required integration，本轮组合结果 not_run。 |

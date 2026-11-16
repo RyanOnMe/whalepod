@@ -169,16 +169,16 @@ export function TaskAgreementPanel({
 
   if (query.isPending) {
     return (
-      <section className="card agreement-panel" aria-label="任务约定">
-        {embedded ? null : <h2>任务约定</h2>}
+      <section className="card agreement-panel" aria-label="任务要求">
+        {embedded ? null : <h2>任务要求</h2>}
         <p className="agreement-note">正在读取…</p>
       </section>
     )
   }
   if (query.isError) {
     return (
-      <section className="card agreement-panel" aria-label="任务约定">
-        {embedded ? null : <h2>任务约定</h2>}
+      <section className="card agreement-panel" aria-label="任务要求">
+        {embedded ? null : <h2>任务要求</h2>}
         <ErrorBanner error={query.error} />
       </section>
     )
@@ -190,8 +190,13 @@ export function TaskAgreementPanel({
   const draft = agreement.draft
 
   return (
-    <section className="card agreement-panel" aria-label="任务约定" data-testid="agreement-panel">
-      <div className="room-column-head">{embedded ? null : <h2>任务约定</h2>}</div>
+    <section className="card agreement-panel" aria-label="任务要求" data-testid="agreement-panel">
+      {embedded ? null : (
+        <div className="room-column-head">
+          <h2>任务要求</h2>
+        </div>
+      )}
+      <p className="agreement-note">这里写清要做什么、有哪些限制，以及怎样算完成。</p>
 
       <div className="agreement-status" data-testid="agreement-status">
         {agreement.enabled ? (

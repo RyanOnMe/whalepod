@@ -104,10 +104,10 @@ export async function auditWorkbenchRoom(page: Page, evidence: string) {
     await page.keyboard.press('Enter')
     await expect(dialog).not.toBeVisible()
     expect(page.url()).toBe(url)
-    const open = page.getByRole('button', { name: '任务约定', exact: true })
+    const open = page.getByRole('button', { name: '任务要求', exact: true })
     await open.click()
     const heading = page.locator('.workspace-inspector-head[data-collectui="app-dialog-6"]')
-    await expect(heading.getByRole('heading', { name: '任务约定', exact: true })).toHaveCount(1)
+    await expect(heading.getByRole('heading', { name: '任务要求', exact: true })).toHaveCount(1)
     // Measure the settled surface; the entry path deliberately starts outside the viewport.
     await expect
       .poll(() =>

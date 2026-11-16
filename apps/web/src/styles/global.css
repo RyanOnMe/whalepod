@@ -3516,10 +3516,32 @@ textarea::placeholder {
 }
 .message-receiver-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
   margin-bottom: 2px;
+}
+.message-receiver-row p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.comment-file-references {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 0;
+  list-style: none;
+}
+.comment-file-references > li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-inline: var(--space-2);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 .message-receiver {
   margin: 0;
@@ -4075,10 +4097,6 @@ textarea::placeholder {
   padding: 0;
   width: 40px;
   height: 40px;
-}
-.composer-receiver {
-  font-size: 13px;
-  font-weight: 500;
 }
 .workspace-dock .composer-approval-pill {
   font-size: 12px;
@@ -4780,6 +4798,23 @@ textarea::placeholder {
 .review-header > div {
   flex: 1;
   min-width: 0;
+}
+.review-jumps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+.review-history {
+  margin-top: var(--space-4);
+}
+.review-history > summary,
+.review-invite > summary {
+  cursor: pointer;
+}
+.review-history .delivery-basis {
+  padding-inline: 0;
+  border: 0;
 }
 .review-layout {
   display: grid;

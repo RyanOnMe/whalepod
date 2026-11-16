@@ -62,7 +62,7 @@ export async function auditSecondarySurfaces({
   }
   await owner.setViewportSize({ width: 1440, height: 960 })
   await owner.goto(`/tasks/${taskId}`)
-  await owner.getByRole('button', { name: '任务约定', exact: true }).click()
+  await owner.getByRole('button', { name: '任务要求', exact: true }).click()
   await owner.getByRole('button', { name: '起草任务约定', exact: true }).click()
   await owner.getByLabel('任务约定：目标', { exact: true }).fill('交付可复核的团队验收报告')
   await owner
@@ -77,7 +77,7 @@ export async function auditSecondarySurfaces({
     await owner.setViewportSize({ width, height: 960 })
     await owner.goto(`/tasks/${taskId}`)
     for (const [name, label] of [
-      ['agreement', '任务约定'],
+      ['agreement', '任务要求'],
       ['artifacts', '交付与复核'],
       ['run', '运行详情'],
     ] as const) {
@@ -86,7 +86,7 @@ export async function auditSecondarySurfaces({
       const panel = owner.getByRole('region', { name: '工作区详情' })
       await expect(panel).toBeVisible()
       if (name === 'agreement') {
-        await expect(panel.getByRole('heading', { name: '任务约定', exact: true })).toHaveCount(1)
+        await expect(panel.getByRole('heading', { name: '任务要求', exact: true })).toHaveCount(1)
         await expect(panel.getByTestId('agreement-current')).toContainText('v1')
       }
       if (name === 'artifacts') {

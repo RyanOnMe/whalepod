@@ -82,9 +82,9 @@ describe('抽屉与二级页面的统一层级', () => {
         },
       ]),
     )
-    await userEvent.setup().click(await screen.findByRole('button', { name: '任务约定' }))
+    await userEvent.setup().click(await screen.findByRole('button', { name: '任务要求' }))
     const panel = within(screen.getByRole('region', { name: '工作区详情' }))
-    expect(panel.getAllByRole('heading', { name: '任务约定' })).toHaveLength(1)
+    expect(panel.getAllByRole('heading', { name: '任务要求' })).toHaveLength(1)
     expect(await panel.findByTestId('agreement-enabled-unconfirmed')).toBeVisible()
     expect(
       panel.getByRole('button', { name: '关闭工作区详情' }).querySelector('svg'),

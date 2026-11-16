@@ -45,10 +45,15 @@ export type InstructionIntentKeyRef = { current: InstructionIntentKey | null }
  */
 export interface TeamMessageDraft {
   body: string
+  artifactIds: string[]
   /** 同一份未确认请求重试时沿用；内容变了或成功后才换/清。 */
   pending: InstructionIntentKey | null
 }
-export const EMPTY_TEAM_MESSAGE_DRAFT: TeamMessageDraft = { body: '', pending: null }
+export const EMPTY_TEAM_MESSAGE_DRAFT: TeamMessageDraft = {
+  body: '',
+  artifactIds: [],
+  pending: null,
+}
 export interface ExecutionDraft {
   ownerId: string
   text: string

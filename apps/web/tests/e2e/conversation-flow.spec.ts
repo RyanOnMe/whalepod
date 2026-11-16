@@ -343,9 +343,15 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
   }
 
   // ---------- 2. 默认继续：结束态 = 续聊最近一次业务运行 ----------
-  const receiver = alice.locator('.composer-receiver')
-  await expect(receiver).toContainText('续聊')
-  await expect(receiver).toContainText('第 1 次运行')
+  const previousConversation = alice.getByTestId('assistant-conversation')
+  await expect(previousConversation).toContainText('接着聊：')
+  // The only output is private here; identify this conversation by its start time instead.
+  await expect(previousConversation).toContainText('开始')
+  await expect(previousConversation).not.toContainText(CANDIDATE_TITLE)
+  const firstConversationTime = (await previousConversation.locator('p').innerText()).replace(
+    /^接着聊：/,
+    '',
+  )
   const beforeSecond = new Set(known)
   await alice.getByLabel('指令').fill('第二次：在同一个会话里继续补充验收小节。')
   const resumePost = alice.waitForResponse(
@@ -365,15 +371,15 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
   const secondRun = (await room()).runs.find((run) => run.id === secondRunId)!
   expect(secondRun.resumeFromRunId).toBe(firstRunId)
   // 活跃执行期间：没人动过的草稿，默认目标是**追问它**（默认规则随运行状态走）。
-  await expect(receiver).toContainText('追问')
-  await expect(receiver).toContainText('第 2 次运行')
+  await expect(previousConversation).toContainText('接着聊：')
+  await expect(previousConversation).toContainText('开始')
 
   // ---------- 3. 被授权成员在审批窗口排队 → 撤销 → 当场被拒（理由留在对话里） ----------
   await waitForRunStatus(secondRunId, 'waiting_approval', 150_000)
   const memberBox = bob.getByLabel('指令', { exact: true })
   await expect(memberBox).toBeEnabled({ timeout: 30_000 })
   // 成员没动过设置：默认就该是追问这条活跃执行（不需要自己去选执行方式）。
-  await expect(bob.locator('.composer-receiver')).toContainText('追问')
+  await expect(bob.getByTestId('assistant-conversation')).toContainText('接着聊：')
   await memberBox.fill('协作者补充：验收小节请按新的口径写。')
   const queuedPost = bob.waitForResponse(
     (response) =>
@@ -500,19 +506,18 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
   await alice.getByTestId('continue-session-button').click()
   // 交回输入框时详情自动收起：窄屏下详情占满这一栏，不收起用户就看不见自己被送到哪里。
   await expect(alice.getByRole('region', { name: '工作区详情' })).not.toBeVisible()
-  await expect(receiver).toContainText('续聊')
-  await expect(receiver).toContainText('第 1 次运行')
+  await expect(previousConversation.locator('p')).toContainText(firstConversationTime)
   await expect(alice.getByLabel('指令')).toHaveValue(draft)
   await expect(alice.getByLabel('指令')).toBeFocused()
   // 查看别的运行 / 切讨论都不改发送目标，也不吞草稿。
   await openRunDetail(alice, secondRunId)
   await closeInspector(alice)
-  await expect(receiver).toContainText('第 1 次运行')
+  await expect(previousConversation.locator('p')).toContainText(firstConversationTime)
   await expect(alice.getByLabel('指令')).toHaveValue(draft)
   await alice.getByRole('button', { name: '团队讨论', exact: true }).click()
   await expect(alice.getByLabel('留言')).toBeVisible()
   await alice.getByRole('button', { name: 'Agent 执行', exact: true }).click()
-  await expect(receiver).toContainText('第 1 次运行')
+  await expect(previousConversation.locator('p')).toContainText(firstConversationTime)
   await expect(alice.getByLabel('指令')).toHaveValue(draft)
   // 用户明确选过模式之后，运行状态不再改写它（auto/user 标记的语义）。
   await expect(alice.getByLabel('执行方式')).toContainText('继续会话')
@@ -603,9 +608,15 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
     }),
   })
   expect(claim.status).toBe(201)
-  await expect(alice.getByTestId('execution-blocker')).toContainText('上次用的电脑没连上', {
-    timeout: 60_000,
-  })
+  const sourceRead = await hubApi(shared.cookie, 'GET', `/runs/${firstRunId}`)
+  expect(sourceRead.status).toBe(200)
+  const sourceBlocked = (sourceRead.data as { resumeContext?: string }).resumeContext === 'blocked'
+  const blocker = alice.getByTestId('execution-blocker')
+  // If the shared old chat was already closed, an offline device is not the reason it
+  // cannot be continued. Reconnection will make a new chat possible, not restore this one.
+  await expect(blocker).toContainText(sourceBlocked ? '这段对话已无法继续' : '原来用的电脑没连上')
+  await expect(blocker).toContainText('还没有可用的电脑', { timeout: 60_000 })
+  if (sourceBlocked) await expect(blocker).not.toContainText('原来用的电脑没连上')
   await expect(alice.getByRole('button', { name: '发给助手', exact: true })).toBeDisabled()
   // #548：助手暂不可用时仍可继续编辑；团队留言在原有范围内照常可用。
   const editableWhileBlocked = await alice.getByLabel('指令').isEditable()

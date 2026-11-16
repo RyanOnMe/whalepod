@@ -10,7 +10,6 @@ import {
   ok,
   taskRoomHandler,
 } from './fixtures.js'
-import { formatRunReference } from '../src/features/task/runReference.js'
 import { renderApp as renderAppRoom } from './render.js'
 /** #548：本文件判普通任务链接的默认视图与切换，显式走团队默认。 */
 function renderApp(path: string, handlers: Parameters<typeof renderAppRoom>[1]) {
@@ -48,7 +47,7 @@ describe('聚焦工作区', () => {
   it('打开详情后点击团队讨论，会收起详情并显示留言', async () => {
     const user = userEvent.setup()
     openRoom()
-    await user.click(await screen.findByRole('button', { name: '任务约定' }))
+    await user.click(await screen.findByRole('button', { name: '任务要求' }))
     await user.click(screen.getByRole('button', { name: '团队讨论' }))
     expect(screen.queryByRole('region', { name: '工作区详情' })).toBeNull()
     expect(screen.getByRole('textbox', { name: '留言' })).toBeVisible()
@@ -62,7 +61,7 @@ describe('聚焦工作区', () => {
     const user = userEvent.setup()
     const app = openRoom()
     await user.click(await screen.findByRole('button', { name: '团队讨论' }))
-    await user.click(screen.getByRole('button', { name: '任务约定' }))
+    await user.click(screen.getByRole('button', { name: '任务要求' }))
     expect(screen.getByRole('region', { name: '工作区详情' })).toBeVisible()
     await act(async () => {
       await app.router.navigate(hash)
@@ -113,7 +112,7 @@ describe('聚焦工作区', () => {
     expect(screen.getByText(/还没有已发布的 Artifact/)).toBeVisible()
   })
 
-  it('从交付物引用运行时切换到团队讨论，引用不会发送给 Agent', async () => {
+  it('从交付物引用准确的文件版本，只加入团队留言草稿', async () => {
     const user = userEvent.setup()
     const artifact = makeArtifact({ title: 'team.md', runId: ROOM_RUN })
     const app = openRoom([artifact])
@@ -121,9 +120,9 @@ describe('聚焦工作区', () => {
     await user.click(await screen.findByRole('button', { name: '查看交付物 team.md' }))
     await chooseFileAction('在讨论中引用', user)
     expect(screen.getByRole('button', { name: '团队讨论' })).toHaveAttribute('aria-pressed', 'true')
-    await waitFor(() =>
-      expect(screen.getByLabelText('留言')).toHaveValue(formatRunReference(artifact.runId)),
-    )
+    const references = await screen.findByRole('list', { name: '引用的文件' })
+    expect(within(references).getByText('team.md')).toBeVisible()
+    expect(screen.getByLabelText('留言')).toHaveValue('')
     expect(app.fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0)
   })
 })

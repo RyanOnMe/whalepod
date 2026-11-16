@@ -24,7 +24,7 @@ export async function showWorkspace(view: 'discussion' | 'artifacts' | 'agreemen
   const label = {
     discussion: '团队讨论',
     artifacts: '交付与复核',
-    agreement: /^任务约定/,
+    agreement: /^任务要求/,
     run: '运行详情',
   }[view]
   const button = await screen.findByRole('button', { name: label })

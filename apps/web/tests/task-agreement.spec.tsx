@@ -316,7 +316,8 @@ describe('#378 任务约定面板', () => {
     expect(saves).toBe(1)
   })
 
-  it('启用后显示绑定提示；已启用但无已确认版本时明确说明执行会被拒绝', async () => {
+  it('发送区可直接查看已确认的任务要求', async () => {
+    const user = userEvent.setup()
     const confirmed = makeRevision()
     const view = {
       enabled: true,
@@ -333,7 +334,11 @@ describe('#378 任务约定面板', () => {
       }),
     )
     const hint = await screen.findByTestId('agreement-binding-hint')
-    expect(hint).toHaveTextContent('v1')
+    expect(hint).toHaveTextContent('查看任务要求')
+    await user.click(hint)
+    const panel = await screen.findByTestId('agreement-panel')
+    expect(panel).toHaveTextContent('这里写清要做什么、有哪些限制，以及怎样算完成。')
+    expect(panel).toHaveTextContent(confirmed.content.goal)
   })
 
   it('已启用但无已确认版本：面板显式提示执行会被拒绝', async () => {

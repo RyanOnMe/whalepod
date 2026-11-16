@@ -274,7 +274,7 @@ describe('#315 统一执行入口的真人页面', () => {
       runs: [{ ...run, status: 'completed' }],
       nextRunApprovalPolicy: null,
     })
-    expect(await screen.findByTestId('execution-blocker')).toHaveTextContent('刚才的对话已经结束')
+    expect(await screen.findByTestId('execution-blocker')).toHaveTextContent('助手已经结束处理')
     expect(box).toHaveValue('不要丢这段话')
     expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
     await mode(user, /开始新执行/)
@@ -343,7 +343,9 @@ describe('#315 统一执行入口的真人页面', () => {
     )
     await screen.findByLabelText('执行方式')
     await mode(user, /继续会话/)
-    expect(await screen.findByText('这次执行没有可续接的会话，请开始新执行。')).toBeVisible()
+    expect(await screen.findByTestId('execution-blocker')).toHaveTextContent(
+      '这次处理没有留下可继续的对话。',
+    )
     expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
   })
 
@@ -729,7 +731,7 @@ describe('#337 当前会话中的执行草稿', () => {
     await f.queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(f.task.id) })
     await returnToDraft(user, f.task.title)
     expect(screen.getByLabelText('指令')).toHaveValue('只针对原责任人环境的安排')
-    expect(screen.getByTestId('execution-blocker')).toHaveTextContent('责任人已变化')
+    expect(screen.getByTestId('execution-blocker')).toHaveTextContent('任务换了责任人')
     expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
   })
 })
@@ -748,7 +750,7 @@ describe('#337 草稿身份与来源边界', () => {
     await returnToDraft(user, f.task.title)
     expect(screen.getByLabelText('指令')).toHaveValue('仅发往原活跃执行')
     expect(screen.getByLabelText('执行方式')).toHaveTextContent('发送追问')
-    expect(screen.getByTestId('execution-blocker')).toHaveTextContent('刚才的对话已经结束')
+    expect(screen.getByTestId('execution-blocker')).toHaveTextContent('助手已经结束处理')
     expect(
       f.fetchMock.mock.calls.some(
         ([url, init]) => String(url).endsWith('/instructions') && init?.method === 'POST',
@@ -846,7 +848,7 @@ describe('#338 首次准备往返与当前条件', () => {
       release = resolve
     })
     await returnToDraft(user, f.task.title)
-    expect(screen.getByTestId('execution-blocker')).toHaveTextContent('重新确认任务')
+    expect(screen.getByTestId('execution-blocker')).toHaveTextContent('正在确认任务状态')
     expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
     expect(screen.getByLabelText('指令')).toHaveValue('等当前任务确认后再发送')
     await act(async () => release())

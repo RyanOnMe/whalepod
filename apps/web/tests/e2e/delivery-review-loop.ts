@@ -47,12 +47,15 @@ export async function driveDeliveryReviewLoop(input: Input): Promise<Record<stri
   }
   await alice.goto(path)
   await expect(alice.getByTestId('review-text')).toContainText('E2E 验收交付物')
+  await expect(alice.getByRole('heading', { name: '成果依据' })).toHaveCount(0)
+  await alice.getByText('查看来源和历史要求', { exact: true }).click()
   await expect(alice.getByRole('heading', { name: '成果依据' })).toBeVisible()
   const basisRead = await hubApi(bobCookie, 'GET', `/artifacts/${sourceArtifactId}/delivery-basis`)
   expect(basisRead.status).toBe(200)
   const basis = basisRead.data as ArtifactDeliveryBasis
   expect(basis.sourceRun?.id).toBe(sourceRunId)
   expect(basis.agreement.revision?.revisionNumber).toBe(1)
+  await alice.getByText('请同事审阅', { exact: true }).click()
   await alice.getByRole('checkbox', { name: /Bob/ }).check()
   await alice.getByLabel('请重点看什么（可选）').fill('请核对错误处理约定')
   await alice.getByRole('button', { name: '发送审阅邀请' }).click()
@@ -152,9 +155,38 @@ export async function driveDeliveryReviewLoop(input: Input): Promise<Record<stri
   expect(content.status).toBe(200)
   const room = await hubApi(aliceCookie, 'GET', `/tasks/${taskId}`)
   const candidate = (
-    room.data as { artifacts: Array<{ id: string; sha256: string }> }
+    room.data as { artifacts: Array<{ id: string; sha256: string; title: string }> }
   ).artifacts.find((row) => row.id === candidateId)!
   expect(candidate.sha256).not.toBe(sourceSha256)
+
+  // The discussion points to the published file version, not the assistant's work history.
+  const taskPath = `/tasks/${taskId}`
+  const exactReviewPath = `${taskPath}/review/${candidateId}`
+  await alice.goto(taskPath)
+  await alice
+    .getByRole('group', { name: '消息接收方' })
+    .getByRole('button', { name: '发给团队' })
+    .click()
+  const teamBox = alice.getByTestId('team-composer')
+  await teamBox.getByLabel('引用文件').click()
+  await alice.getByRole('menuitem', { name: candidate.title, exact: true }).click()
+  await expect(teamBox.getByRole('list', { name: '引用的文件' })).toContainText(candidate.title)
+  await expect(teamBox.getByLabel('留言', { exact: true })).toHaveValue('')
+  await teamBox.getByRole('button', { name: '发给团队' }).click()
+  await expect(teamBox.getByTestId('comment-sent-status')).toContainText('已发给团队')
+  await bob.goto(taskPath)
+  await bob
+    .getByRole('group', { name: '消息接收方' })
+    .getByRole('button', { name: '发给团队' })
+    .click()
+  const reference = bob
+    .locator('#discussion-channel')
+    .getByRole('link', { name: candidate.title, exact: true })
+  await expect(reference).toHaveAttribute('href', exactReviewPath)
+  await reference.click()
+  await expect(bob.getByTestId('review-text')).toBeVisible()
+  expect(new URL(bob.url()).pathname).toBe(exactReviewPath)
+
   return {
     sourceArtifactId,
     sourceSha256,
