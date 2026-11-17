@@ -101,9 +101,13 @@ export function ExecutionComposer({
   revisionRequest = null,
   continueRequest = null,
   onDiscuss,
+  onOpenAgreement,
+  onOpenConversation,
   compact = false,
 }: {
   onDiscuss?: () => void
+  onOpenAgreement?: () => void
+  onOpenConversation?: (runId: string) => void
   compact?: boolean
   task: TaskView
   session: Session
@@ -299,6 +303,7 @@ export function ExecutionComposer({
     )
       return
     handledContinue.current = continueRequest.nonce
+    if (sending) return
     memory.update((old) => ({
       ...old,
       mode: 'resume',
@@ -309,7 +314,7 @@ export function ExecutionComposer({
       document.getElementById(`instruction-text-${task.id}`)?.focus(),
     )
     return () => cancelAnimationFrame(frame)
-  }, [continueRequest, task.id])
+  }, [continueRequest, task.id, sending])
   const isAssignee = task.assigneeUserId === session.userId
   // #548：开始写普通交办时，把当时任务已指派的 Agent 固定进这份草稿；后台改派不再
   // 改写显示与提交目标。复核/修订不沿用这个默认——那两处必须由人明确选。
@@ -400,6 +405,24 @@ export function ExecutionComposer({
   )
   const sourcePlacement = runsWithStarted.find((run) => run.id === sourceId)
   const sourceLabel = runOrdinalLabels(runsWithStarted).get(sourceId) ?? '所选执行'
+  // Use the current task's published projection to name a conversation. A private candidate
+  // must not become the name of a conversation, even for its owner.
+  const readableSource =
+    allowed && isSourceMode && source.isSuccess && source.data.taskId === task.id
+      ? source.data
+      : undefined
+  const sourceFile =
+    readableSource === undefined
+      ? undefined
+      : published.find((artifact) => artifact.runId === readableSource.id)
+  const conversationName =
+    readableSource === undefined
+      ? null
+      : sourceFile !== undefined
+        ? `处理「${sourceFile.title}」时`
+        : `${new Date(readableSource.startedAt ?? readableSource.createdAt).toLocaleString()} 开始`
+  const showConversation = !isSourceMode || conversationName !== null
+  const showRequirements = mode !== 'followup' && agreement.enabled && onOpenAgreement !== undefined
   // #548：接收者与「能不能提交」都按事实说。环境判据只看责任人的设备/工作区读面：
   // ready = 至少一台在线、已准备 DSH 分发的设备带可用工作区；none = 已读到且确实没有；
   // unknown = 还没读到、正在重读或读失败。缓存里的旧值不算「已确认」。
@@ -470,9 +493,10 @@ export function ExecutionComposer({
       type="button"
       className="button"
       data-testid="restart-assistant"
+      disabled={sending}
       onClick={restartAssistant}
     >
-      重新开始
+      开始新对话
     </button>
   )
   const switchToTeamAction = (
@@ -492,11 +516,13 @@ export function ExecutionComposer({
     <Link to={preparationDeviceHref(task.id)}>设置执行电脑</Link>
   ) : null
   const environmentActions = (refresh = true): ReactNode =>
-    environmentState === 'ready' ? (
+    active !== undefined ? (
+      <span>等助手忙完再开始新对话。你也可以先给团队留言。</span>
+    ) : environmentState === 'ready' ? (
       <>
-        <span>重新开始会保留你写的消息，旧对话不会带过去。</span>
-        {alternateEnvironment === undefined ? null : (
-          <span data-testid="restart-hint">这次会用另一台已授权的电脑</span>
+        <span>会保留你写的消息，旧聊天不会带过去。点「发给助手」才会发送。</span>
+        {refresh || alternateEnvironment === undefined ? null : (
+          <span data-testid="restart-hint">有另一台已授权的电脑可用。</span>
         )}
         {restartAction}
       </>
@@ -513,9 +539,9 @@ export function ExecutionComposer({
       </>
     )
   let blocker: { message: string; actions?: ReactNode } | null = null
-  if (confirmingTask) blocker = { message: '正在重新确认任务状态，草稿仍保留…' }
+  if (confirmingTask) blocker = { message: '正在确认任务状态，你写的消息还在。' }
   else if (memory.snapshot.ownerId !== task.assigneeUserId)
-    blocker = { message: '任务责任人已变化。草稿仍保留，请重新确认责任人与执行安排。' }
+    blocker = { message: '任务换了责任人。你写的内容还在，请重新确认发给谁。' }
   else if (!isAssignee && (grants.isPending || (grants.isFetching && !grants.isFetchedAfterMount)))
     blocker = { message: '正在确认操作权限…' }
   else if (!isAssignee && grants.isError) blocker = { message: '暂时无法确认权限，请重试。' }
@@ -543,16 +569,19 @@ export function ExecutionComposer({
     blocker = { message: '所选材料已不可用，请重新选择已发布交付物。草稿仍保留。' }
   else if (mode === 'followup' && (active === undefined || active.id !== sourceId))
     blocker = {
-      message: '刚才的对话已经结束，这条消息没有发到新的对话。请确认要接着说还是重新开始。',
+      message: '助手已经结束处理。你写的内容还在。',
       actions: (
         <>
           {source.data !== undefined &&
+          source.data.taskId === task.id &&
           TERMINAL_RUN.has(source.data.status) &&
+          source.data.resumeContext !== 'blocked' &&
           source.data.dshSessionId !== null ? (
             <button
               type="button"
               className="button"
               data-testid="continue-session"
+              disabled={sending}
               onClick={() => {
                 setMode('resume')
                 setSourceId(sourceId)
@@ -567,14 +596,14 @@ export function ExecutionComposer({
     }
   else if (mode === 'resume' && active !== undefined)
     blocker = { message: '已有执行进行中，结束后才能继续会话。' }
-  else if (isSourceMode && sourceId === '') blocker = { message: '请先选择来源执行。' }
+  else if (isSourceMode && sourceId === '') blocker = { message: '请先选要继续的对话。' }
   else if (isSourceMode && source.isError)
-    blocker = { message: '无法读取来源执行，请重试。', actions: checkConnectionAction }
+    blocker = { message: '暂时读不到这段对话。你写的内容还在。', actions: recheckAction }
   else if (
     isSourceMode &&
     (!source.isSuccess || (source.isFetching && !source.isFetchedAfterMount))
   )
-    blocker = { message: '正在读取来源执行…' }
+    blocker = { message: '正在查找这段对话…' }
   else if (isSourceMode && source.isSuccess && source.data.taskId !== task.id)
     blocker = { message: '来源执行不属于当前任务，请重新选择。' }
   else if (mode === 'resume' && source.isSuccess && !TERMINAL_RUN.has(source.data.status))
@@ -586,14 +615,17 @@ export function ExecutionComposer({
     }
   else if (mode === 'resume' && source.data?.dshSessionId === null)
     blocker = {
-      message: '这次执行没有可续接的会话，请开始新执行。',
+      message: '这次处理没有留下可继续的对话。你写的消息还在。',
+      actions: environmentActions(),
+    }
+  else if (isSourceMode && source.data?.resumeContext === 'blocked')
+    blocker = {
+      message: '这段对话已无法继续。你写的消息还在。',
       actions: environmentActions(),
     }
   else if (mode === 'resume' && sourceDevice?.status === 'offline')
-    // 不自动改投、不跳过来源：保留文字并说清「没发出」，恢复动作由用户点。
-    // 环境那一句由 environmentActions 统一给一次，结论别在消息里重复两遍。
     blocker = {
-      message: '上次用的电脑没连上，消息还没发出。你可以继续编辑。',
+      message: '这段对话原来用的电脑没连上。你写的内容还在。',
       // 一个刷新动作：离线现场用「检查连接」；没有环境时的「设置执行电脑」照常可达。
       actions: (
         <>
@@ -601,13 +633,6 @@ export function ExecutionComposer({
           {environmentActions(false)}
         </>
       ),
-    }
-  else if (isSourceMode && source.data?.resumeContext === 'blocked')
-    // #548：会话已不可续接（含活跃中的发现私有执行）。可见的运行记录不等于可接续对象；
-    // 离线现场优先说设备事实，这一条只在设备可用时兜底。
-    blocker = {
-      message: '这次对话不能在这里重开或续接，请明确重新开始。草稿仍保留。',
-      actions: environmentActions(),
     }
   else if (mode === 'resume' && sourceAgent.isError)
     blocker = { message: '无法读取来源配置版本，请重试。', actions: checkConnectionAction }
@@ -625,6 +650,8 @@ export function ExecutionComposer({
     blocker = { message: '来源配置版本已不可用，请开始新执行。', actions: environmentActions() }
   else if (mode === 'resume' && revision === undefined)
     blocker = { message: '正在确认来源配置版本…' }
+  else if (mode !== 'followup' && agreement.enabled && agreement.latestConfirmedNumber === null)
+    blocker = { message: '请先确认任务要求，再发给助手。' }
   // #548：接收者按事实显示——来源会话的 Agent、用户在设置里明确选中的 Agent，
   // 或**落笔那一刻**快照的 Agent。空草稿才跟随任务当前指派；草稿一开写，
   // 后来才指派的 Agent 不再冒充接收者。复核/修订必须由人明确选过 Agent。
@@ -834,13 +861,12 @@ export function ExecutionComposer({
         <div className="message-receiver-row">
           <p className="message-receiver" data-testid="assistant-receiver">
             {receiverName !== null
-              ? `发给：${receiverName}`
+              ? `${isSourceMode && blocker !== null ? '原对话的助手' : '发给'}：${receiverName}`
               : receiverPending
                 ? '正在确认接收助手…'
                 : receiverReadFailed
                   ? '暂时无法确认接收助手'
                   : '还没为这项任务选助手'}
-            {mode === 'resume' ? ' · 沿用上次对话' : mode === 'followup' ? ' · 接着当前对话' : ''}
           </p>
           {canChooseAssistant ? (
             <button
@@ -856,15 +882,37 @@ export function ExecutionComposer({
           ) : null}
         </div>
       ) : null}
-      {/* #378：任务约定的绑定提示——新执行（new/resume）缺省绑定最新已确认版本。 */}
-      {agreement.enabled ? (
-        <p className="mutation-hint" data-testid="agreement-binding-hint">
-          本任务已启用任务约定：开始新执行/继续会话将绑定当前正式版本
-          {agreement.latestConfirmedNumber !== null
-            ? ` v${agreement.latestConfirmedNumber}`
-            : '（尚无已确认版本，服务端会拒绝执行）'}
-          {agreement.hasDraft ? '；存在未确认草稿，不作为执行依据' : ''}。
-        </p>
+      {allowed && (showConversation || showRequirements) ? (
+        <div className="message-receiver-row" data-testid="assistant-conversation">
+          {showConversation ? (
+            <p className="mutation-hint">
+              {conversationName === null
+                ? '新对话'
+                : `${blocker === null ? '接着聊' : '原对话'}：${conversationName}`}
+            </p>
+          ) : null}
+          {readableSource !== undefined &&
+          runs.some((run) => run.id === readableSource.id) &&
+          onOpenConversation ? (
+            <button
+              type="button"
+              className="button button-quiet"
+              onClick={() => onOpenConversation(readableSource.id)}
+            >
+              查看当时的处理记录
+            </button>
+          ) : null}
+          {showRequirements ? (
+            <button
+              type="button"
+              className="button button-quiet"
+              data-testid="agreement-binding-hint"
+              onClick={onOpenAgreement}
+            >
+              查看任务要求
+            </button>
+          ) : null}
+        </div>
       ) : null}
       {/* #378：执行中约定更新——三选一（追问 / 取消 / 保持本次）都只由用户点，不自动动。 */}
       {agreementNowStale ? (
@@ -1081,14 +1129,6 @@ export function ExecutionComposer({
               compact={compact}
               settingsContent={executionSettings}
               settingsDisclosure={settingsDisclosure}
-              receiverLabel={
-                // ADR-0019 决定 3：默认续聊/追问要在输入框上有一个**简短目标标签**，
-                // 用户不必展开设置就知道这句话会去哪。
-                `${
-                  agents.data?.find((agent) => agent.id === source.data?.agentId)?.name ??
-                  '来源未确认'
-                }${mode === 'resume' ? ` · 续聊${sourceLabel}` : mode === 'followup' ? ` · 追问${sourceLabel}` : ''}`
-              }
               key={`${task.id}-${mode}-${sourceId}-${revisionContext?.nonce ?? ''}`}
               blocked={blocker !== null}
               artifactInputIds={

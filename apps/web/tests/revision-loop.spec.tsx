@@ -279,7 +279,9 @@ describe('review revision loop (#430)', () => {
         { sourceArtifactId: ART, commentIds: [COMMENT], direction: '只补充依据，不改结论' },
       ]),
     )
-    expect(await screen.findByTestId(`revision-round-${ROUND}`)).toHaveTextContent('尚未开始执行')
+    expect(await screen.findByTestId(`revision-round-${ROUND}`)).toHaveTextContent(
+      '已选好要改的意见，还没请助手处理',
+    )
   })
 
   it('固定批次启动失败后保留原稿会话与配置，重试同一轮及幂等键', async () => {

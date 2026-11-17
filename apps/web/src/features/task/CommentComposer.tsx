@@ -4,20 +4,50 @@ import { DiscussionMessage, DiscussionComposer } from '../../vendor/collectui/co
  * 提交后精确失效 task-room 查询；失败时保留输入内容并显示 requestId。
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { Link } from 'react-router'
 import { api } from '../../shared/api/client.js'
 import { ErrorBanner } from '../../app/ErrorBanner.js'
 import { RelativeTime } from '../../shared/RelativeTime.js'
 import { useMemberDirectory } from '../team/memberDirectory.js'
-import type { CommentView, Session, TaskRoomRun } from '../../shared/api/types.js'
+import type { CommentView, Session, TaskRoomArtifact, TaskRoomRun } from '../../shared/api/types.js'
 import { SelectMenu } from '../../shared/SelectMenu.js'
-import { formatRunReference, parseRunReferences } from './runReference.js'
+import { parseRunReferences } from './runReference.js'
 import { useTeamMessageDraft } from './execution-drafts.js'
 import { queryKeys } from '../../app/query-client.js'
+
+const reviewPath = (taskId: string, id: string) => `/tasks/${taskId}/review/${id}`
+// Comments are plain text. Recognise only a whole line that points to an exact published
+// version in this task; old clients can still copy the path, and unknown links stay plain text.
+const fileReferenceLine = (path: string) => `文件：${path}`
+
+function publishedFileLabels(files: readonly TaskRoomArtifact[]): Map<string, string> {
+  const groups = new Map<string, TaskRoomArtifact[]>()
+  const labels = new Map<string, string>()
+  for (const file of files) {
+    if (file.status !== 'published') continue
+    const group = groups.get(file.title) ?? []
+    group.push(file)
+    groups.set(file.title, group)
+  }
+  for (const [title, group] of groups) {
+    group.sort(
+      (a, b) =>
+        (a.publishedAt ?? a.createdAt).localeCompare(b.publishedAt ?? b.createdAt) ||
+        a.id.localeCompare(b.id),
+    )
+    group.forEach((file, index) => {
+      labels.set(file.id, group.length === 1 ? title : `${title} · 同名文件 ${index + 1}`)
+    })
+  }
+  return labels
+}
 
 export interface CommentListProps {
   comments: CommentView[]
   session: Session | null
+  taskId: string
+  artifacts?: readonly TaskRoomArtifact[]
   /**
    * 本任务的运行（团队可见投影）：讨论里的 `运行 R-xxxxxxxx` 只有能在**本任务**解析到时
    * 才渲染成可点的引用 chip——对不上就保持纯文本，绝不做死链（⑥f）。
@@ -30,12 +60,20 @@ export interface CommentListProps {
 export function CommentList({
   comments,
   session,
+  taskId,
+  artifacts = [],
   runs = [],
   onOpenRun,
 }: CommentListProps): ReactNode {
   // #162：留言作者写人名（显示名（@用户名）），不写 `shortId(authorUserId)`——
   // 团队讨论里「谁说了这句」是主信息，半截 UUID 提供不了这个信息。
   const directory = useMemberDirectory()
+  const fileLinks = new Map(
+    Array.from(publishedFileLabels(artifacts), ([id, title]) => {
+      const path = reviewPath(taskId, id)
+      return [fileReferenceLine(path), { path, title }] as const
+    }),
+  )
   if (comments.length === 0) {
     return <p className="empty-state">还没有留言——向责任人说明下一步吧。</p>
   }
@@ -50,23 +88,37 @@ export function CommentList({
               time={<RelativeTime iso={comment.createdAt} />}
             >
               <p className="comment-body">
-                {parseRunReferences(comment.body, runs).map((segment, index) =>
-                  segment.runId === null ? (
-                    <span key={index}>{segment.text}</span>
-                  ) : (
-                    <button
-                      key={index}
-                      type="button"
-                      className="ref-chip"
-                      data-testid="comment-run-ref"
-                      data-run-id={segment.runId}
-                      title="打开这次运行的 Console"
-                      onClick={() => onOpenRun?.(segment.runId as string)}
-                    >
-                      {segment.text}
-                    </button>
-                  ),
-                )}
+                {comment.body.split('\n').map((line, index) => {
+                  const file = fileLinks.get(line)
+                  return (
+                    <Fragment key={index}>
+                      {index === 0 ? null : '\n'}
+                      {file !== undefined ? (
+                        <Link className="ref-chip" to={file.path}>
+                          {file.title}
+                        </Link>
+                      ) : (
+                        parseRunReferences(line, runs).map((segment, part) =>
+                          segment.runId === null ? (
+                            <span key={part}>{segment.text}</span>
+                          ) : (
+                            <button
+                              key={part}
+                              type="button"
+                              className="ref-chip"
+                              data-testid="comment-run-ref"
+                              data-run-id={segment.runId}
+                              title="查看这次处理的详细记录"
+                              onClick={() => onOpenRun?.(segment.runId as string)}
+                            >
+                              {segment.text}
+                            </button>
+                          ),
+                        )
+                      )}
+                    </Fragment>
+                  )
+                })}
               </p>
             </DiscussionMessage>
           </li>
@@ -83,26 +135,17 @@ export interface CommentComposerProps {
    * 切换接收方或去设备页返回时不丢；为空时退回组件内 state（组件级夹具）。
    */
   userId?: string | null
-  /** 本任务的运行列表（团队可见投影）：引用只能指向本任务的运行，所以按钮里列的就是它。 */
-  runs?: readonly TaskRoomRun[]
-  /** 运行短号 → 展示名（「第 N 次运行」）；由页面注入，避免这里重新发明编号规则。 */
-  runLabels?: ReadonlyMap<string, string>
-  /**
-   * #250 外部注入的引用 token（「对这个工件继续说」）：页面把来源运行的引用文本从
-   * 交付物区递进来，这里追加到正文尾部并聚焦。`nonce` 每次注入都变——同一 token
-   * 连点两次也要落两次账。消费后回调页面清状态，避免重渲染时重复追加。
-   */
-  insertToken?: { text: string; nonce: number } | null
-  onInsertTokenConsumed?: () => void
+  artifacts?: readonly TaskRoomArtifact[]
+  quoteRequest?: { artifactId: string; nonce: string } | null
+  onQuoteConsumed?: () => void
 }
 
 export function CommentComposer({
   taskId,
   userId = null,
-  runs = [],
-  runLabels = new Map<string, string>(),
-  insertToken = null,
-  onInsertTokenConsumed,
+  artifacts = [],
+  quoteRequest = null,
+  onQuoteConsumed,
 }: CommentComposerProps): ReactNode {
   const queryClient = useQueryClient()
   const {
@@ -111,7 +154,16 @@ export function CommentComposer({
     clearIfPending,
     isPending,
   } = useTeamMessageDraft(taskId, userId)
-  const body = draft.body
+  const { body, artifactIds } = draft
+  const published = publishedFileLabels(artifacts)
+  const selectedFiles = artifactIds.map((id) => published.get(id))
+  const missingFile = selectedFiles.some((row) => row === undefined)
+  const outgoing = [
+    body.trim(),
+    ...artifactIds.map((id) => fileReferenceLine(reviewPath(taskId, id))),
+  ]
+    .filter(Boolean)
+    .join('\n')
   const [error, setError] = useState<unknown>(null)
   // #548：成功只表示「已发给团队」，不宣称助手已读或采用。
   const [sent, setSent] = useState(false)
@@ -121,10 +173,25 @@ export function CommentComposer({
   const setBody = (change: string | ((current: string) => string)): void => {
     setSent(false)
     updateDraft((old) => ({
+      ...old,
       body: typeof change === 'function' ? change(old.body) : change,
       pending: null,
     }))
   }
+  const addFile = (id: string): void => {
+    setSent(false)
+    updateDraft((old) =>
+      old.artifactIds.includes(id)
+        ? old
+        : { ...old, artifactIds: [...old.artifactIds, id], pending: null },
+    )
+  }
+  const removeFile = (id: string): void =>
+    updateDraft((old) => ({
+      ...old,
+      artifactIds: old.artifactIds.filter((row) => row !== id),
+      pending: null,
+    }))
 
   // 任务参数变化时路由可能复用同一组件实例：上一条任务的「已发给团队」与错误不能
   // 挂到新任务的输入框上。草稿本身按 taskId 存在 store 里，不需要搬。
@@ -134,13 +201,11 @@ export function CommentComposer({
   }, [taskId])
 
   useEffect(() => {
-    if (insertToken === null) return
-    // 追加而非覆盖：用户可能已经打了半句话（#250 从交付物区点进来时正文通常为空，
-    // 但不假设）。分隔恒用空格——窄解析对紧邻 token 的边界有断言（runReference.ts）。
-    setBody((current) => (current === '' ? insertToken.text : `${current} ${insertToken.text}`))
+    if (quoteRequest === null) return
+    if (published.has(quoteRequest.artifactId)) addFile(quoteRequest.artifactId)
     textareaRef.current?.focus()
-    onInsertTokenConsumed?.()
-  }, [insertToken, onInsertTokenConsumed])
+    onQuoteConsumed?.()
+  }, [quoteRequest, onQuoteConsumed, artifacts])
 
   const mutation = useMutation({
     mutationFn: ({ text, key }: { text: string; key: string }) =>
@@ -162,8 +227,8 @@ export function CommentComposer({
 
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
-    const text = body.trim()
-    if (text === '' || mutation.isPending) return
+    const text = outgoing
+    if (text === '' || missingFile || text.length > 10_000 || mutation.isPending) return
     const key = draft.pending?.signature === text ? draft.pending.key : crypto.randomUUID()
     updateDraft((old) => ({ ...old, pending: { signature: text, key } }))
     setError(null)
@@ -177,37 +242,28 @@ export function CommentComposer({
           <button
             type="submit"
             className="button button-primary"
-            disabled={mutation.isPending || body.trim() === ''}
+            disabled={
+              mutation.isPending || outgoing === '' || missingFile || outgoing.length > 10_000
+            }
           >
             {mutation.isPending ? '发送中…' : '发给团队'}
           </button>
         }
         controls={
-          <>
-            {/* ⑥f：引用某次运行。插入的是**可读 token**（「运行 R-ab12cd34」），与手打同一套语法——
-            不做"只有点按钮才会被识别"的隐藏规则。没有运行时如实禁用，而不是给一个空菜单。 */}
-            {runs.length === 0 ? null : (
-              <SelectMenu
-                id={`comment-run-ref-${taskId}`}
-                label="引用运行"
-                value=""
-                placeholder="引用运行…"
-                options={runs.map((run) => ({
-                  value: run.id,
-                  label: runLabels.get(run.id) ?? '运行',
-                  disabled: false,
-                }))}
-                onChange={(runId: string) => {
-                  if (runId === '') return
-                  setBody((current) =>
-                    current === ''
-                      ? formatRunReference(runId)
-                      : `${current} ${formatRunReference(runId)}`,
-                  )
-                }}
-              />
-            )}
-          </>
+          published.size === 0 ? null : (
+            <SelectMenu
+              id={`comment-file-ref-${taskId}`}
+              label="引用文件"
+              value=""
+              placeholder="选择已发布文件"
+              options={Array.from(published, ([id, title]) => ({
+                value: id,
+                label: title,
+                disabled: mutation.isPending || artifactIds.includes(id),
+              }))}
+              onChange={addFile}
+            />
+          )
         }
       >
         <label htmlFor={`comment-body-${taskId}`}>留言</label>
@@ -231,6 +287,30 @@ export function CommentComposer({
             }
           }}
         />
+        {artifactIds.length > 0 ? (
+          <ul className="comment-file-references" aria-label="引用的文件">
+            {artifactIds.map((id, index) => {
+              const title = selectedFiles[index] ?? '不可用的文件'
+              return (
+                <li key={id}>
+                  <span>{title}</span>
+                  <button
+                    type="button"
+                    className="button button-quiet"
+                    aria-label={`移除引用：${title}`}
+                    onClick={() => removeFile(id)}
+                  >
+                    移除
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        ) : null}
+        {missingFile ? <p role="status">有文件已不可用，请移除这条引用后再发送。</p> : null}
+        {outgoing.length > 10_000 ? (
+          <p role="status">留言太长，请删减文字或引用后再发送。</p>
+        ) : null}
       </DiscussionComposer>
       {sent ? (
         <p className="composer-feedback" role="status" data-testid="comment-sent-status">

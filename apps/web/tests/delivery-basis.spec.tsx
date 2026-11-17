@@ -33,8 +33,8 @@ describe('delivery basis panel (#440)', () => {
   it('shows explicit missing history and an actually empty input set differently', async () => {
     installFetch([{ method: 'GET', url: /\/delivery-basis$/, respond: () => ok(view) }])
     mount()
-    expect(await screen.findByText('该次执行未绑定任务约定。')).toBeVisible()
-    await userEvent.click(screen.getByText('执行时固定的材料'))
+    expect(await screen.findByText('生成这份文件时没有记录任务要求。')).toBeVisible()
+    await userEvent.click(screen.getByText('当时选用的材料'))
     expect(screen.getByText('该次执行记录的本任务文件输入为空。')).toBeVisible()
     expect(screen.getByText('尚未找到与这份成果明确对应的已发布交接说明。')).toBeVisible()
   })
@@ -64,7 +64,7 @@ describe('delivery basis panel (#440)', () => {
       screen.queryByText('尚未找到与这份成果明确对应的已发布交接说明。'),
     ).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '重试读取依据' }))
-    await waitFor(() => expect(screen.getByText('该次执行未绑定任务约定。')).toBeVisible())
+    await waitFor(() => expect(screen.getByText('生成这份文件时没有记录任务要求。')).toBeVisible())
     expect(fetchMock.mock.calls.every(([, init]) => (init?.method ?? 'GET') === 'GET')).toBe(true)
   })
   it('keeps model claims unverified and incomplete records explicit', async () => {
@@ -94,8 +94,8 @@ describe('delivery basis panel (#440)', () => {
       },
     ])
     mount()
-    await screen.findByText('执行时固定的材料')
-    await userEvent.click(screen.getByText('执行时固定的材料'))
+    await screen.findByText('当时选用的材料')
+    await userEvent.click(screen.getByText('当时选用的材料'))
     expect(screen.getByText('历史输入记录未知，不能据此认定没有使用材料。')).toBeVisible()
     expect(screen.getByText('部分固定材料当前不可读取，以下清单不完整。')).toBeVisible()
     await userEvent.click(screen.getByText('对应的最近发布交接说明 · 第 1 版'))
@@ -122,7 +122,7 @@ describe('delivery basis panel (#440)', () => {
       defaultOptions: { queries: { retry: false, staleTime: Infinity } },
     })
     mount(client)
-    await screen.findByText('该次执行未绑定任务约定。')
+    await screen.findByText('生成这份文件时没有记录任务要求。')
     const deps = { cursorStore: new CursorStore(), resync: vi.fn() }
     for (const type of ['task.changed', 'run.changed', 'artifact.changed']) {
       const before = reads
@@ -147,6 +147,6 @@ describe('delivery basis panel (#440)', () => {
     ])
     mount()
     expect(await screen.findByRole('button', { name: '重试读取依据' })).toBeVisible()
-    expect(screen.queryByText('该次执行未绑定任务约定。')).not.toBeInTheDocument()
+    expect(screen.queryByText('生成这份文件时没有记录任务要求。')).not.toBeInTheDocument()
   })
 })

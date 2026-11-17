@@ -139,7 +139,7 @@ describe('task room approval card', () => {
     expect(screen.getByTestId('approval-expires')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '批准一次' })).toBeEnabled()
     expect(screen.getByRole('button', { name: '拒绝' })).toBeEnabled()
-    await user.click(screen.getByRole('button', { name: '任务约定' }))
+    await user.click(screen.getByRole('button', { name: '任务要求' }))
     await act(async () => {
       await app.router.navigate(`#approval-${APPROVAL_ID}`)
     })

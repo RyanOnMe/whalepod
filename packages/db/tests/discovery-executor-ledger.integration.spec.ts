@@ -281,6 +281,9 @@ describe('Discovery Executor durable accounting', () => {
       maxAttempts: 1,
       waitDeadlineSeconds: 1,
       expiresAt,
+      // The expiry check compares against createdAt, so use the fixture clock on both sides.
+      createdAt: reservedAt,
+      updatedAt: reservedAt,
     })
     await db.insert(schema.dispatchIntents).values({
       id: dispatchIntentId,

@@ -307,12 +307,15 @@ export function ArtifactReviewPage(): ReactNode {
         <div>
           <h1>{view.artifact.title}</h1>
           <p className="mutation-hint" data-testid="review-version">
-            {`交付物版本 · 内容摘要 ${view.artifact.sha256.slice(0, 12)} · `}
+            {`${directory.personOf(view.artifact.ownerUserId)} · `}
             {view.artifact.publishedAt === null
               ? '尚未发布'
               : `发布于 ${new Date(view.artifact.publishedAt).toLocaleString()}`}
-            {` · 发布人 ${directory.personOf(view.artifact.ownerUserId)}`}
           </p>
+          <nav className="review-jumps" aria-label="文件审阅">
+            <a href="#review-feedback">看同事意见</a>
+            <a href="#review-changes">看后续修改</a>
+          </nav>
         </div>
         <a
           className="button"
@@ -330,16 +333,6 @@ export function ArtifactReviewPage(): ReactNode {
         </p>
       ) : null}
 
-      <DeliveryBasisPanel artifactId={artifactId} taskId={taskId} />
-
-      <ReviewRevisionPanel
-        key={artifactId}
-        taskId={taskId}
-        artifactId={artifactId}
-        comments={comments}
-        session={session!}
-        onResolutionState={setResolutionState}
-      />
       <div className="review-layout">
         <main className="review-content" aria-label="文件内容">
           <OfficePreview artifact={view.artifact} />
@@ -446,7 +439,8 @@ export function ArtifactReviewPage(): ReactNode {
           </section>
         </main>
 
-        <aside className="review-side" aria-label="批注与审阅">
+        <aside id="review-feedback" className="review-side" aria-label="批注与审阅" tabIndex={-1}>
+          <h2>同事意见</h2>
           <div className="review-filters" role="group" aria-label="批注筛选">
             {(
               [
@@ -532,10 +526,10 @@ export function ArtifactReviewPage(): ReactNode {
           ) : null}
 
           {view.capabilities.canInvite ? (
-            <section className="review-invite" aria-label="邀请审阅">
-              <h2>请同事审阅</h2>
+            <details className="review-invite">
+              <summary>请同事审阅</summary>
               <p className="mutation-hint">
-                邀请只决定待办归属；文件仍按当前团队可见范围读取，不授予执行权限。
+                审阅会出现在对方的待办里。邀请不会改变谁能看这份文件。
               </p>
               <fieldset>
                 <legend>审阅人</legend>
@@ -572,7 +566,7 @@ export function ArtifactReviewPage(): ReactNode {
               >
                 发送审阅邀请
               </button>
-            </section>
+            </details>
           ) : null}
 
           {view.capabilities.canSubmitReview && ownInvitation !== undefined ? (
@@ -636,6 +630,23 @@ export function ArtifactReviewPage(): ReactNode {
           ) : null}
         </aside>
       </div>
+      <div id="review-changes" tabIndex={-1}>
+        <ReviewRevisionPanel
+          key={artifactId}
+          taskId={taskId}
+          artifactId={artifactId}
+          comments={comments}
+          session={session!}
+          onResolutionState={setResolutionState}
+        />
+      </div>
+      <details className="card review-history" key={artifactId}>
+        <summary>查看来源和历史要求</summary>
+        <p className="mutation-hint">
+          文件校验码：<code title={view.artifact.sha256}>{view.artifact.sha256.slice(0, 12)}</code>
+        </p>
+        <DeliveryBasisPanel artifactId={artifactId} taskId={taskId} />
+      </details>
     </div>
   )
 }

@@ -332,15 +332,15 @@ test('聚焦工作区：独立草稿、实时审批、候选检查发布、桌�
     await expect(owner.getByRole('button', { name: /查看交付物/ }).first()).toBeFocused()
     await expect(owner.getByRole('button', { name: 'Agent 执行', exact: true })).toBeVisible()
     await owner.screenshot({ path: join(evidence, 'mobile-conversation.png') })
-    await owner.getByRole('button', { name: '任务约定', exact: true }).click()
+    await owner.getByRole('button', { name: '任务要求', exact: true }).click()
     await expect(owner.getByTestId('agreement-panel')).toBeVisible()
     await owner.getByRole('button', { name: '团队讨论', exact: true }).click()
     await expect(owner.getByRole('region', { name: '工作区详情' })).toHaveCount(0)
     await expect(owner.getByRole('textbox', { name: '留言' })).toBeVisible()
     await owner.getByRole('button', { name: 'Agent 执行', exact: true }).click()
-    await owner.getByRole('button', { name: '任务约定', exact: true }).click()
+    await owner.getByRole('button', { name: '任务要求', exact: true }).click()
     await owner.keyboard.press('Escape')
-    await expect(owner.getByRole('button', { name: '任务约定', exact: true })).toBeFocused()
+    await expect(owner.getByRole('button', { name: '任务要求', exact: true })).toBeFocused()
     await expect(owner.getByRole('region', { name: '工作区详情' })).not.toBeVisible()
     facts.push({
       component: 'web.layout',

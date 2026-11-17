@@ -284,7 +284,7 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   await expect(alice.getByTestId('task-assignment-state')).toHaveText('已接受')
 
   // ---------- 2. 启用约定 + 起草并确认 v1 ----------
-  await alice.getByRole('button', { name: /^任务约定/ }).click()
+  await alice.getByRole('button', { name: /^任务要求/ }).click()
   await alice.getByRole('switch', { name: '启用约定流程' }).click()
   await pairNodeFor(shared.aliceCookie)
   await setRuntimeFixture('agreement-draft')
@@ -308,7 +308,7 @@ test('后端交付 → 前端接收 → 固定输入执行 → 真人验收（�
   // 刷新读面；执行完成不代表已采用或确认，候选仍走 owner 的私有下载通道。
   await alice.reload()
   await showAssistant(alice)
-  await alice.getByRole('button', { name: /^任务约定/ }).click()
+  await alice.getByRole('button', { name: /^任务要求/ }).click()
   await alice.getByRole('button', { name: '用 Agent 起草约定' }).click()
   const before = await hubApi(
     shared.aliceCookie,

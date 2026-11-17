@@ -144,7 +144,9 @@ export function RunActions({
           </div>
         ) : (
           <div className="run-again-entry">
-            {onContinueSession === undefined ? null : (
+            {onContinueSession !== undefined &&
+            run.dshSessionId != null &&
+            run.resumeContext !== 'blocked' ? (
               <button
                 type="button"
                 className="button"
@@ -154,7 +156,7 @@ export function RunActions({
               >
                 继续此会话
               </button>
-            )}
+            ) : null}
             <button
               type="button"
               className="button"

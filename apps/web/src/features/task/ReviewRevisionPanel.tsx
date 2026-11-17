@@ -16,6 +16,7 @@ import { useMemberDirectory } from '../team/memberDirectory.js'
 import { RunLauncher, type RevisionLaunchInput } from './RunLauncher.js'
 import { EMPTY_EXECUTION_SETTINGS, type ExecutionSettings } from './execution-drafts.js'
 import { ACTIVE_RUN } from './run-states.js'
+import { RUN_STATUS_LABEL } from '../../shared/format.js'
 import { isTextPreviewable } from './artifactPreview.js'
 import type { RunView, Session, TaskRoomView, TaskRoomArtifact } from '../../shared/api/types.js'
 
@@ -258,13 +259,15 @@ function RevisionRound({
       data-testid={`revision-round-${round.id}`}
       tabIndex={-1}
     >
-      <h3>修订批次 · {new Date(round.createdAt).toLocaleString()}</h3>
+      <h3>{new Date(round.createdAt).toLocaleString()} 发起的修改</h3>
       <p>
         {round.runId === null
           ? round.status === 'starting'
-            ? '正在确认启动结果，请刷新后继续；不会另建执行。'
-            : '意见已固定，尚未开始执行。'
-          : `本轮执行：${run?.status ?? '正在读取状态'}`}
+            ? '正在确认助手是否收到修改请求。'
+            : '已选好要改的意见，还没请助手处理。'
+          : run?.status === 'completed'
+            ? '助手已处理完。'
+            : `助手：${run ? RUN_STATUS_LABEL[run.status] : '正在查看进度'}`}
       </p>
       <p>
         <a href={`/api/v1/artifacts/${round.sourceArtifact.artifactId}/content`}>
@@ -319,7 +322,7 @@ function RevisionRound({
         <p>尚无已发布新版；不能确认意见已解决。</p>
       ) : (
         <>
-          <p>本轮新版已发布，Agent 的说明仍需人工核对。</p>
+          <p>新版已发布。请对照两版，确认这些意见是否已解决。</p>
           <button type="button" className="button" onClick={() => setCompare((value) => !value)}>
             查看原稿与新版
           </button>

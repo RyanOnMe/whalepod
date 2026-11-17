@@ -6,7 +6,7 @@ import { showWorkspace, workspaceDetails } from './workspace.js'
  * - 候选 Artifact（Hub 只给 owner 下发）：owner 见「发布」按钮；发布成功刷新 Task Room。
  * - Reviewer 输入说明：已发布交付物作为 Reviewer Run 的只读输入（sha256 固定内容）。
  */
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -124,7 +124,7 @@ describe('artifact-list（Task Room 右侧）', () => {
 
 /**
  * #250（#243 第 3 条「交付物有脸」）：文本类工件页面内可读 + 「对这个工件继续说」
- * 接 #216 引用-运行机制。判据全走真实页面（讨论输入框在左栏，交付物在右栏详情区）。
+ * 判据全走真实页面（讨论输入框在左栏，交付物在右栏详情区）。
  */
 describe('#250 交付物文本预览与引用入口', () => {
   function contentHandler(
@@ -206,7 +206,7 @@ describe('#250 交付物文本预览与引用入口', () => {
     expect(screen.queryByRole('button', { name: '预览' })).not.toBeInTheDocument()
   })
 
-  it('对这个工件继续说：点击把来源运行引用注入讨论输入框并聚焦', async () => {
+  it('从文件卡引用：加入该版本并聚焦留言输入框', async () => {
     const user = userEvent.setup()
     const run = makeRun({ status: 'completed' })
     const artifact = makeArtifact({ status: 'published', runId: run.id })
@@ -217,8 +217,9 @@ describe('#250 交付物文本预览与引用入口', () => {
     await showWorkspace('artifacts')
     await chooseFileAction('在讨论中引用', user)
     const box = screen.getByLabelText('留言')
-    // 注入的是 #216 同一套引用 token（运行 R-<短号>），窄解析把它渲染成可点 chip。
-    expect(box).toHaveValue(`运行 R-${run.id.slice(0, 8)}`)
+    const references = screen.getByRole('list', { name: '引用的文件' })
+    expect(within(references).getByText(artifact.title)).toBeVisible()
+    expect(box).toHaveValue('')
     expect(box).toHaveFocus()
   })
 })

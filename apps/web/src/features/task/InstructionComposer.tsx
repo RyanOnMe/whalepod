@@ -73,7 +73,6 @@ export interface InstructionComposerProps {
   compact?: boolean
   settingsContent?: ReactNode
   settingsDisclosure?: SettingsDisclosure
-  receiverLabel?: string
   /** 有活跃 Run 时提示"这句话会成为追问"，让用户提前知道自己的话会去哪。 */
   hasActiveRun: boolean
   /**
@@ -116,7 +115,6 @@ export function InstructionComposer({
   compact = false,
   settingsContent,
   settingsDisclosure,
-  receiverLabel,
   hasActiveRun,
   target,
   approvalPreview,
@@ -252,7 +250,6 @@ export function InstructionComposer({
       <PromptBar
         controls={
           <>
-            {receiverLabel ? <span className="composer-receiver">{receiverLabel}</span> : null}
             <ComposerSettings
               disabled={mutation.isPending}
               {...(settingsDisclosure === undefined ? {} : { disclosure: settingsDisclosure })}

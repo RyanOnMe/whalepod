@@ -21,6 +21,7 @@ import { userEvent } from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { renderApp, renderUi } from './render.js'
 import { openSelect, selectOption } from './select-menu.js'
+import { showWorkspace } from './workspace.js'
 import {
   ALICE,
   BOB,
@@ -252,10 +253,10 @@ describe('#158 反面钉：全树不许有原生 <select>（逐落页点）', ()
     expect(screen.queryByLabelText('工作区')).toBeNull()
   })
 
-  it('落页点 #comment-run-ref-<taskId>（⑥f 引用运行）：是 <button aria-haspopup="menu">', async () => {
+  it('团队留言的引用文件选择器支持键盘打开菜单', async () => {
     // 评审 #216 S1：本片唯一的新用户入口此前**零判据**（源码侧 M4/M5 双变异全绿、浏览器侧
     // e2e 的 Task Room 是 runs 空态所以从未渲染过它）。按 #158 的逐落页点约定补上。
-    const { BOB, loggedInHandlers, makeRun, makeTask, teamMembersHandler } =
+    const { BOB, loggedInHandlers, makeArtifact, makeTask, teamMembersHandler } =
       await import('./fixtures.js')
     const task = makeTask({ assigneeUserId: BOB.userId })
     renderApp(
@@ -272,8 +273,8 @@ describe('#158 反面钉：全树不许有原生 <select>（逐落页点）', ()
                   task,
                   comments: [],
                   instructions: [],
-                  runs: [makeRun({ status: 'running' })],
-                  artifacts: [],
+                  runs: [],
+                  artifacts: [makeArtifact()],
                 },
               }),
               { status: 200 },
@@ -282,11 +283,14 @@ describe('#158 反面钉：全树不许有原生 <select>（逐落页点）', ()
         teamMembersHandler([]),
       ]),
     )
-    const control = await screen.findByLabelText('引用运行')
+    await showWorkspace('discussion')
+    const control = await screen.findByLabelText('引用文件')
     expect(control.tagName).toBe('BUTTON')
     expect(control).toHaveAttribute('aria-haspopup', 'menu')
-    expect(control).toHaveAttribute('id', `comment-run-ref-${task.id}`)
-    expect(document.querySelector(`select#comment-run-ref-${task.id}`)).toBeNull()
+    expect(control).toHaveAttribute('id', `comment-file-ref-${task.id}`)
+    control.focus()
+    await userEvent.keyboard('{Enter}')
+    expect(await screen.findByRole('menuitem', { name: 'security-review.md' })).toHaveFocus()
   })
 
   it('落页点 #task-assignee-<projectId>：是按钮，且每个项目一个（不再按前缀命中原生 select）', async () => {

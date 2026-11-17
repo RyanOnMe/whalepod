@@ -42,7 +42,7 @@ export interface ArtifactListProps {
    * #250「在讨论中引用」：把来源运行的引用 token 注入讨论输入框（#216 同一套
    * 窄解析语法，渲染端零改动）。由页面注入——组件不管输入框在哪。
    */
-  onReferenceRun?: (runId: string) => void
+  onReferenceFile?: (artifactId: string) => void
   onRequestReview?: (artifactId: string) => void
   onRequestRevision?: (artifactId: string) => void
   /** #429：进入交付物审阅页（由页面注入导航；组件本身不依赖 Router 上下文）。 */
@@ -63,7 +63,7 @@ export function ArtifactList({
   session,
   taskId,
   runs,
-  onReferenceRun,
+  onReferenceFile,
   onRequestReview,
   onRequestRevision,
   onOpenReview,
@@ -82,7 +82,7 @@ export function ArtifactList({
         session={session}
         taskId={taskId}
         runLabels={runLabels}
-        onReferenceRun={onReferenceRun}
+        onReferenceFile={onReferenceFile}
         onRequestReview={onRequestReview}
         onRequestRevision={onRequestRevision}
         onOpenReview={onOpenReview}
@@ -121,7 +121,7 @@ function ArtifactRows({
   artifacts,
   taskId,
   runLabels,
-  onReferenceRun,
+  onReferenceFile,
   onRequestReview,
   onRequestRevision,
   onOpenReview,
@@ -130,7 +130,7 @@ function ArtifactRows({
   session: Session | null
   taskId: string
   runLabels: ReadonlyMap<string, string>
-  onReferenceRun?: ((runId: string) => void) | undefined
+  onReferenceFile?: ((artifactId: string) => void) | undefined
   onRequestReview?: ((artifactId: string) => void) | undefined
   onRequestRevision?: ((artifactId: string) => void) | undefined
   onOpenReview?: ((artifactId: string) => void) | undefined
@@ -212,14 +212,14 @@ function ArtifactRows({
                         onSelect: () => onRequestRevision(artifact.id),
                       },
                     ]),
-                ...(onReferenceRun === undefined
+                ...(onReferenceFile === undefined
                   ? []
                   : [
                       {
                         id: 'reference',
                         label: '在讨论中引用',
                         icon: <WorkspaceIcon name="引用" />,
-                        onSelect: () => onReferenceRun(artifact.runId),
+                        onSelect: () => onReferenceFile(artifact.id),
                       },
                     ]),
               ]}

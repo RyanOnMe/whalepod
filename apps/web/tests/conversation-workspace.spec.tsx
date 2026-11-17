@@ -672,7 +672,9 @@ describe('连续对话：默认续聊与草稿（判据 3）', () => {
     await user.type(screen.getByLabelText('指令'), '第一次执行：整理报告')
     await user.click(screen.getByRole('button', { name: '发给助手' }))
     // 读取面这一拍仍不含新运行：目标已经指向"追问这次运行"，不回退。
-    expect(await screen.findByText('Builder · 追问第 1 次运行')).toBeVisible()
+    await waitFor(() =>
+      expect(screen.getByTestId('assistant-conversation')).toHaveTextContent(/^接着聊：/),
+    )
     // 读取面把运行带回来（真实 WS 失效路径）之后仍是追问它。
     state.includeRun = true
     await act(async () =>
@@ -681,7 +683,9 @@ describe('连续对话：默认续聊与草稿（判据 3）', () => {
         resync: () => {},
       }),
     )
-    expect(await screen.findByText('Builder · 追问第 1 次运行')).toBeVisible()
+    await waitFor(() =>
+      expect(screen.getByTestId('assistant-conversation')).toHaveTextContent(/^接着聊：/),
+    )
     // 运行结束后默认接住同一条会话（续聊最近一次业务运行）。状态变化走真实的
     // `run.changed` 帧（它同时失效 ['run', id] 与任务房间——只发 task.changed 时
     // 运行详情仍是旧快照，理由链会停在「来源执行尚未结束」）。
@@ -693,7 +697,9 @@ describe('连续对话：默认续聊与草稿（判据 3）', () => {
         { cursorStore: { commit: () => {} }, resync: () => {} },
       ),
     )
-    expect(await screen.findByText('Builder · 续聊第 1 次运行')).toBeVisible()
+    await waitFor(() =>
+      expect(screen.getByTestId('assistant-conversation')).toHaveTextContent(/^接着聊：/),
+    )
     expect(screen.getByRole('button', { name: '发给助手' })).toBeEnabled()
   })
 
@@ -745,7 +751,7 @@ describe('连续对话：默认续聊与草稿（判据 3）', () => {
         resync: () => {},
       }),
     )
-    expect(await screen.findByTestId('execution-blocker')).toHaveTextContent('上次用的电脑没连上')
+    expect(await screen.findByTestId('execution-blocker')).toHaveTextContent('原来用的电脑没连上')
     expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
     expect(box).toHaveValue('接着写第三节')
     expect(screen.getByLabelText('执行方式')).toHaveTextContent('继续会话')
@@ -765,7 +771,9 @@ describe('连续对话：默认续聊与草稿（判据 3）', () => {
       ]),
     )
     await screen.findByTestId('run-segment')
-    expect(await screen.findByText('Builder · 续聊第 1 次运行')).toBeVisible()
+    await waitFor(() =>
+      expect(screen.getByTestId('assistant-conversation')).toHaveTextContent(/^接着聊：/),
+    )
     const user = userEvent.setup()
     await showExecutionOptions(user)
     expect(await screen.findByTestId('instruction-routing-hint')).toHaveTextContent('续接指定会话')
@@ -789,14 +797,16 @@ describe('连续对话：默认续聊与草稿（判据 3）', () => {
       ]),
     )
     // 默认来源仍是最近一次**业务**运行（辅助运行不冒充）。
-    expect(await screen.findByText('Builder · 续聊第 1 次运行')).toBeVisible()
+    await waitFor(() =>
+      expect(screen.getByTestId('assistant-conversation')).toHaveTextContent(/^接着聊：/),
+    )
     // 来源没有可续接的会话：明确说明并保留草稿。
     const user = userEvent.setup()
     await showExecutionOptions(user)
     await user.click(screen.getByLabelText('来源执行'))
     await user.click(await screen.findByRole('menuitem', { name: '第 2 次运行' }))
     expect(await screen.findByTestId('execution-blocker')).toHaveTextContent(
-      '这次执行没有可续接的会话，请开始新执行。',
+      '这次处理没有留下可继续的对话。',
     )
     expect(screen.getByLabelText('指令')).toHaveValue('')
     expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()
@@ -832,7 +842,9 @@ describe('连续对话：默认续聊与草稿（判据 3）', () => {
     // 入口在运行详情里（ADR-0019 决定 2）：段上只有「运行详情」，行动面在详情内。
     await user.click(within(segmentOf(R1)).getByRole('button', { name: /第 1 次运行/ }))
     await user.click(await screen.findByTestId('continue-session-button'))
-    await waitFor(() => expect(screen.getByText(/续聊第 1 次运行/)).toBeVisible())
+    await waitFor(() =>
+      expect(screen.getByTestId('assistant-conversation')).toHaveTextContent(/^接着聊：/),
+    )
     expect(screen.getByLabelText('指令')).toHaveValue('我要全新跑一遍')
     expect(
       view.fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/instructions')),
@@ -842,7 +854,7 @@ describe('连续对话：默认续聊与草稿（判据 3）', () => {
       await view.queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(room.id) })
     })
     expect(screen.getByLabelText('指令')).toHaveValue('我要全新跑一遍')
-    expect(screen.getByText(/续聊第 1 次运行/)).toBeVisible()
+    expect(screen.getByTestId('assistant-conversation')).toHaveTextContent(/^接着聊：/)
   })
 })
 

@@ -74,7 +74,9 @@ export function DeliveryBasisPanel({ artifactId, taskId }: { artifactId: string;
   return (
     <section className="card delivery-basis" aria-label="成果依据" data-testid="delivery-basis">
       <h2>成果依据</h2>
-      <p className="mutation-hint">这些是来源记录与已发布说明，不代表成果已通过充分验证。</p>
+      <p className="mutation-hint">
+        这里记录文件从哪里来、当时参考了什么。文件是否达到要求，仍需审阅人确认。
+      </p>
       {basis.sourceRun === null ? (
         <p>来源执行记录不可取得。</p>
       ) : (
@@ -91,16 +93,16 @@ export function DeliveryBasisPanel({ artifactId, taskId }: { artifactId: string;
         </p>
       )}
       <details open>
-        <summary>执行时采用的任务约定</summary>
+        <summary>生成这份文件时的任务要求</summary>
         {revision === null ? (
           <p>
             {basis.agreement.status === 'unbound'
-              ? '该次执行未绑定任务约定。'
-              : '历史任务约定不可取得，未使用当前版本替代。'}
+              ? '生成这份文件时没有记录任务要求。'
+              : '当时的任务要求读不到，当前的要求不能代替。'}
           </p>
         ) : (
           <>
-            <p>本次执行采用第 {revision.revisionNumber} 版</p>
+            <p>当时采用第 {revision.revisionNumber} 版</p>
             <dl>
               <dt>目标</dt>
               <dd>{revision.content.goal}</dd>
@@ -115,7 +117,7 @@ export function DeliveryBasisPanel({ artifactId, taskId }: { artifactId: string;
         )}
       </details>
       <details>
-        <summary>执行时固定的材料</summary>
+        <summary>当时选用的材料</summary>
         <h3>本任务交付物输入</h3>
         <Materials value={basis.taskInputs} />
         <h3>上游交接文件输入</h3>

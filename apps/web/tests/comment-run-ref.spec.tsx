@@ -9,7 +9,7 @@ import { showWorkspace } from './workspace.js'
  *   ③ 窄匹配——正文里的"运行"二字、裸的 8 位十六进制都不是引用；
  *   ④ 点 chip 真的打开那次运行的 Console（页面级，证明接线通）。
  */
-import { screen } from '@testing-library/react'
+import { screen, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { formatRunReference, parseRunReferences } from '../src/features/task/runReference.js'
@@ -127,46 +127,67 @@ describe('运行引用的解析（纯函数）', () => {
   })
 })
 
-describe('「引用运行」入口（S1：此前源码与浏览器两侧都零判据）', () => {
-  it('**有**运行时入口在，选中一次会把可识别 token 插进草稿', async () => {
+describe('团队留言引用具体文件', () => {
+  it('只能引用已发布版本；选中后不打乱正文，发送的链接指向准确版本', async () => {
     const user = userEvent.setup()
-    const { BOB, loggedInHandlers, makeRun, makeTask, teamMembersHandler } =
-      await import('./fixtures.js')
+    const {
+      BOB,
+      loggedInHandlers,
+      makeArtifact,
+      makeComment,
+      makeTask,
+      ok,
+      taskRoomHandler,
+      teamMembersHandler,
+    } = await import('./fixtures.js')
     const { renderApp } = await import('./render.jsx')
-    const { selectOption } = await import('./select-menu.js')
     const task = makeTask({ assigneeUserId: BOB.userId })
-    renderApp(
+    // Same title and exact publish time; input array order must not decide the label.
+    const v1 = makeArtifact({ id: RUN_A, title: '交接单', runId: RUN_A })
+    const v2 = makeArtifact({ id: RUN_B, title: '交接单', runId: RUN_A })
+    const firstLabel = '交接单 · 同名文件 1'
+    const secondLabel = '交接单 · 同名文件 2'
+    const candidate = makeArtifact({ title: '未发布的第 3 版', runId: RUN_A, status: 'candidate' })
+    const comments = [makeComment({ body: `文件：/tasks/${task.id}/review/${candidate.id}` })]
+    const { fetchMock } = renderApp(
       `/tasks/${task.id}`,
       loggedInHandlers(BOB, [
+        taskRoomHandler(task, { artifacts: [v2, candidate, v1], comments }),
         {
-          method: 'GET',
-          url: new RegExp(`/api/v1/tasks/${task.id}$`),
-          respond: () =>
-            new Response(
-              JSON.stringify({
-                ok: true,
-                data: {
-                  task,
-                  comments: [],
-                  instructions: [],
-                  runs: [makeRun({ id: RUN_A, status: 'running' })],
-                  artifacts: [],
-                },
-              }),
-              { status: 200 },
-            ),
+          method: 'POST',
+          url: /\/comments$/,
+          respond: (request) => {
+            const row = makeComment({ body: JSON.parse(String(request.body)).body })
+            comments.push(row)
+            return ok(row)
+          },
         },
         teamMembersHandler([]),
       ]),
     )
     await showWorkspace('discussion')
-    // 变异 M4（删掉"没有运行就不渲染"判断）不会红这条，但下面的空态用例会——两条合起来才钉住。
-    await selectOption(user, '引用运行', '第 1 次运行')
-    // 变异 M5（选中后什么都不插入）**必须**让这条红：草稿里要真的出现可识别 token。
-    expect(await screen.findByLabelText('留言')).toHaveValue('运行 R-aaaaaaaa')
+    const box = await screen.findByLabelText('留言')
+    await user.type(box, '请两位同事确认新版。')
+    await user.click(screen.getByLabelText('引用文件'))
+    expect(screen.getByRole('menuitem', { name: firstLabel })).toBeVisible()
+    expect(screen.queryByRole('menuitem', { name: candidate.title })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('menuitem', { name: secondLabel }))
+    expect(box).toHaveValue('请两位同事确认新版。')
+    expect(
+      within(screen.getByRole('list', { name: '引用的文件' })).getByText(secondLabel),
+    ).toBeVisible()
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0)
+    await user.click(
+      within(screen.getByTestId('team-composer')).getByRole('button', { name: '发给团队' }),
+    )
+    const link = await screen.findByRole('link', { name: secondLabel })
+    expect(link).toHaveAttribute('href', `/tasks/${task.id}/review/${v2.id}`)
+    expect(screen.queryByRole('link', { name: candidate.title })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: firstLabel })).not.toBeInTheDocument()
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1)
   })
 
-  it('**没有**运行时不渲染这个入口（不是给一个空菜单）', async () => {
+  it('没有已发布文件时不显示引用入口', async () => {
     const { BOB, loggedInHandlers, makeTask, teamMembersHandler } = await import('./fixtures.js')
     const { renderApp } = await import('./render.jsx')
     const task = makeTask({ assigneeUserId: BOB.userId })
@@ -191,7 +212,7 @@ describe('「引用运行」入口（S1：此前源码与浏览器两侧都零�
     await showWorkspace('discussion')
     // 留言输入框在（证明页面确实渲染了），但引用入口不在。
     expect(await screen.findByLabelText('留言')).toBeVisible()
-    expect(screen.queryByLabelText('引用运行')).toBeNull()
+    expect(screen.queryByLabelText('引用文件')).toBeNull()
   })
 })
 

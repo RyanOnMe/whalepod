@@ -27,7 +27,7 @@ function files() {
         runs={[makeRun({ id: first.runId }), makeRun({ id: second.runId })]}
         onRequestReview={review}
         onRequestRevision={revise}
-        onReferenceRun={reference}
+        onReferenceFile={reference}
       />
     </QueryClientProvider>,
   )
@@ -51,7 +51,7 @@ describe('P1-421 文件操作层级', () => {
     expect(f.revise).toHaveBeenCalledExactlyOnceWith(f.second.id)
     await user.click(within(row).getByRole('button', { name: '更多文件操作' }))
     await user.click(screen.getByRole('menuitem', { name: '在讨论中引用' }))
-    expect(f.reference).toHaveBeenCalledExactlyOnceWith(f.second.runId)
+    expect(f.reference).toHaveBeenCalledExactlyOnceWith(f.second.id)
     expect(f.review).toHaveBeenCalledTimes(1)
   })
 

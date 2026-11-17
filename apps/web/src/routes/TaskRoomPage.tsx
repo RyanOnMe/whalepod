@@ -36,7 +36,6 @@ import {
 import { useRunEventWindow, useRunReads } from '../features/task/useRunWindows.js'
 import { runOrdinalLabels } from '../features/task/runLabels.js'
 import { ACTIVE_RUN, QUEUEING_RUN } from '../features/task/run-states.js'
-import { formatRunReference } from '../features/task/runReference.js'
 import RubberSegment from '../vendor/react-bits-micro/RubberSegment.js'
 import { TaskHeader } from '../features/task/TaskHeader.js'
 import { TaskAgreementPanel } from '../features/task/TaskAgreementPanel.js'
@@ -146,8 +145,10 @@ function TaskRoom(): ReactNode {
   const [consoleRunId, setConsoleRunId] = useState<string | undefined>(undefined)
   // #273：关掉 Console 时先把退场演完再卸载（`usePresence` 保留上一次的 runId + 挂 leaving）。
   const consolePresence = usePresence(consoleRunId ?? null, EXIT_PRESENCE_MS)
-  // #250「对这个工件继续说」：交付物区注入的引用 token，落点是独立的团队讨论输入框。
-  const [insertToken, setInsertToken] = useState<{ text: string; nonce: number } | null>(null)
+  // 从文件卡发起的引用只进入团队留言草稿，不会提交或切换助手对话。
+  const [quoteRequest, setQuoteRequest] = useState<{ artifactId: string; nonce: string } | null>(
+    null,
+  )
   // ADR-0019 决定 1：首屏最近 20 段，顶部每次加载更早 20 次。
   const [runWindow, setRunWindow] = useState(CONVERSATION_WINDOW)
 
@@ -363,10 +364,7 @@ function TaskRoom(): ReactNode {
               aria-expanded={inspector === 'agreement'}
               onClick={() => openInspector('agreement')}
             >
-              任务约定
-              {agreementSummary.enabled
-                ? ` · ${agreementSummary.latestConfirmedNumber === null ? '待确认' : `v${agreementSummary.latestConfirmedNumber}`}`
-                : ''}
+              任务要求
             </button>
             <button
               type="button"
@@ -414,6 +412,8 @@ function TaskRoom(): ReactNode {
                 <CommentList
                   comments={query.data.comments}
                   session={session}
+                  taskId={task.id}
+                  artifacts={visibleArtifacts}
                   runs={runs}
                   onOpenRun={setConsoleRunId}
                 />
@@ -560,10 +560,9 @@ function TaskRoom(): ReactNode {
                 <CommentComposer
                   taskId={task.id}
                   userId={session?.userId ?? null}
-                  runs={runs}
-                  runLabels={runOrdinalLabels(runs)}
-                  insertToken={insertToken}
-                  onInsertTokenConsumed={() => setInsertToken(null)}
+                  artifacts={visibleArtifacts}
+                  quoteRequest={quoteRequest}
+                  onQuoteConsumed={() => setQuoteRequest(null)}
                 />
               </div>
               {session !== null ? (
@@ -582,6 +581,8 @@ function TaskRoom(): ReactNode {
                     reviewRequest={reviewRequest}
                     revisionRequest={revisionRequest}
                     continueRequest={continueRequest}
+                    onOpenAgreement={() => openInspector('agreement')}
+                    onOpenConversation={openRunDetail}
                     onDiscuss={() => {
                       chooseChannel('discussion')
                       requestAnimationFrame(() =>
@@ -638,7 +639,7 @@ function TaskRoom(): ReactNode {
               }
               title={
                 presentedInspector === 'agreement'
-                  ? '任务约定'
+                  ? '任务要求'
                   : presentedInspector === 'run'
                     ? '运行详情'
                     : inspectedArtifactId !== null
@@ -711,10 +712,10 @@ function TaskRoom(): ReactNode {
                     setReviewRequest({ taskId: task.id, artifactId, nonce: crypto.randomUUID() })
                     showExecution(true)
                   }}
-                  onReferenceRun={(runId) => {
+                  onReferenceFile={(artifactId) => {
                     chooseChannel('discussion')
                     setInspector(null)
-                    setInsertToken({ text: formatRunReference(runId), nonce: Date.now() })
+                    setQuoteRequest({ artifactId, nonce: crypto.randomUUID() })
                   }}
                   onOpenReview={(artifactId) => navigate(`/tasks/${task.id}/review/${artifactId}`)}
                 />
