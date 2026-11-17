@@ -29,6 +29,7 @@ import {
 import type { MockHandler } from './fixtures.js'
 import { queryKeys } from '../src/app/query-client.js'
 import { renderApp as renderAppRoom } from './render.jsx'
+import { workspaceDetails } from './workspace.js'
 /** #548：本文件判普通任务链接的默认视图与恢复，显式走团队默认。 */
 function renderApp(path: string, handlers: Parameters<typeof renderAppRoom>[1]) {
   return renderAppRoom(path, handlers, { taskView: 'team' })
@@ -297,7 +298,7 @@ describe('#548 发送受阻时就地继续编辑与恢复', () => {
     )
     await showRecipient('请助手处理')
     expect(await screen.findByTestId('execution-blocker')).toHaveTextContent(
-      '这段对话原来用的电脑没连上，消息还没发出。你可以继续编辑。',
+      '这段对话原来用的电脑没连上。你写的内容还在。',
     )
     const box = screen.getByLabelText('指令')
     expect(box).toBeEnabled()
@@ -364,7 +365,7 @@ describe('#548 发送受阻时就地继续编辑与恢复', () => {
     const box = await screen.findByLabelText('指令')
     await user.type(box, '换台电脑继续这件事')
     expect(await screen.findByTestId('execution-blocker')).toHaveTextContent(
-      '这段对话原来用的电脑没连上，消息还没发出。你可以继续编辑。',
+      '这段对话原来用的电脑没连上。你写的内容还在。',
     )
     expect(screen.getByTestId('restart-assistant')).toBeVisible()
     expect(screen.getByTestId('restart-hint')).toHaveTextContent('有另一台已授权的电脑可用')
@@ -476,13 +477,56 @@ describe('#548 发送受阻时就地继续编辑与恢复', () => {
       reviewFeedback: { unresolvedCount: 0, artifactId: null },
     })
     expect(await screen.findByTestId('execution-blocker')).toHaveTextContent(
-      '助手已经结束处理，这条消息没发出。你写的内容还在。',
+      '助手已经结束处理。你写的内容还在。',
     )
     expect(screen.getByLabelText('指令')).toHaveValue('这条不能改投')
     expect(instructionPosts(view.fetchMock)).toHaveLength(0)
     await user.click(screen.getByTestId('restart-assistant'))
     expect(screen.getByLabelText('指令')).toHaveValue('这条不能改投')
     await waitFor(() => expect(screen.getByRole('button', { name: '发给助手' })).toBeEnabled())
+  })
+
+  it('对话在请求返回前结束，保留发送中的消息并等真实回执', async () => {
+    const task = makeTask({ assignmentStatus: 'accepted', approvalPolicy: 'approval_required' })
+    const run = makeRun({ status: 'running' })
+    const gate = deferredResponse()
+    const room = { runs: [run] }
+    const user = userEvent.setup()
+    const view = renderApp(
+      `/tasks/${task.id}`,
+      loggedInHandlers(BOB, [
+        taskRoomHandler(task, room),
+        sourceHandler(task, run),
+        ...agentHandlers(),
+        teamMembersHandler(),
+        devicesHandler([makeDevice({ id: DEVICE, status: 'online' })]),
+        workspaceHandler(),
+        { method: 'POST', url: /\/instructions$/, respond: () => gate.promise },
+      ]),
+    )
+    await showRecipient('请助手处理')
+    const box = await screen.findByLabelText('指令')
+    await user.type(box, '把这条说明加进去')
+    await user.click(screen.getByRole('button', { name: '发给助手' }))
+    await waitFor(() => expect(instructionPosts(view.fetchMock)).toHaveLength(1))
+    room.runs = [{ ...run, status: 'completed' }]
+    await view.queryClient.invalidateQueries({ queryKey: queryKeys.taskRoom(task.id) })
+    const blocker = await screen.findByTestId('execution-blocker')
+    expect(blocker).not.toHaveTextContent(/没发出|未发送/)
+    expect(within(blocker).getByRole('button', { name: '开始新对话' })).toBeDisabled()
+    expect(box).toHaveValue('把这条说明加进去')
+    gate.resolve({
+      status: 503,
+      body: {
+        ok: false,
+        error: { code: 'INTERNAL_ERROR', message: 'Unavailable', requestId: 'test' },
+      },
+    })
+    expect(await screen.findByTestId('assistant-uncertain')).toHaveTextContent(
+      '暂时没确认助手是否收到',
+    )
+    expect(blocker).not.toHaveTextContent(/没发出|未发送/)
+    expect(instructionPosts(view.fetchMock)).toHaveLength(1)
   })
 
   it('请求超时未确认是否收到：保留文字，重试沿用同一请求身份', async () => {
@@ -699,6 +743,10 @@ describe('#548 发送受阻时就地继续编辑与恢复', () => {
     expect(conversation).not.toHaveTextContent('第 1 版')
     expect(screen.getByTestId('assistant-receiver')).not.toHaveTextContent('沿用上次')
     expect(blocker).toHaveTextContent('旧聊天不会带过去')
+    await user.click(within(conversation).getByRole('button', { name: '查看当时的处理记录' }))
+    expect(await workspaceDetails().findByTestId('rerun-button')).toBeVisible()
+    expect(workspaceDetails().queryByTestId('continue-session-button')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '关闭工作区详情' }))
     const box = screen.getByLabelText('指令')
     await user.type(box, '把新版里的两条验收动作再讲清楚')
     expect(screen.getByRole('button', { name: '发给助手' })).toBeDisabled()

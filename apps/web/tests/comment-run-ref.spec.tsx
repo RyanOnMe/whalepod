@@ -142,14 +142,17 @@ describe('团队留言引用具体文件', () => {
     } = await import('./fixtures.js')
     const { renderApp } = await import('./render.jsx')
     const task = makeTask({ assigneeUserId: BOB.userId })
-    const v1 = makeArtifact({ title: '交接单｜第 1 版', runId: RUN_A })
-    const v2 = makeArtifact({ title: '交接单｜第 2 版', runId: RUN_A })
+    // Same title and exact publish time; input array order must not decide the label.
+    const v1 = makeArtifact({ id: RUN_A, title: '交接单', runId: RUN_A })
+    const v2 = makeArtifact({ id: RUN_B, title: '交接单', runId: RUN_A })
+    const firstLabel = '交接单 · 同名文件 1'
+    const secondLabel = '交接单 · 同名文件 2'
     const candidate = makeArtifact({ title: '未发布的第 3 版', runId: RUN_A, status: 'candidate' })
     const comments = [makeComment({ body: `文件：/tasks/${task.id}/review/${candidate.id}` })]
     const { fetchMock } = renderApp(
       `/tasks/${task.id}`,
       loggedInHandlers(BOB, [
-        taskRoomHandler(task, { artifacts: [v1, v2, candidate], comments }),
+        taskRoomHandler(task, { artifacts: [v2, candidate, v1], comments }),
         {
           method: 'POST',
           url: /\/comments$/,
@@ -166,21 +169,21 @@ describe('团队留言引用具体文件', () => {
     const box = await screen.findByLabelText('留言')
     await user.type(box, '请两位同事确认新版。')
     await user.click(screen.getByLabelText('引用文件'))
-    expect(screen.getByRole('menuitem', { name: v1.title })).toBeVisible()
+    expect(screen.getByRole('menuitem', { name: firstLabel })).toBeVisible()
     expect(screen.queryByRole('menuitem', { name: candidate.title })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('menuitem', { name: v2.title }))
+    await user.click(screen.getByRole('menuitem', { name: secondLabel }))
     expect(box).toHaveValue('请两位同事确认新版。')
     expect(
-      within(screen.getByRole('list', { name: '引用的文件' })).getByText(v2.title),
+      within(screen.getByRole('list', { name: '引用的文件' })).getByText(secondLabel),
     ).toBeVisible()
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0)
     await user.click(
       within(screen.getByTestId('team-composer')).getByRole('button', { name: '发给团队' }),
     )
-    const link = await screen.findByRole('link', { name: v2.title })
+    const link = await screen.findByRole('link', { name: secondLabel })
     expect(link).toHaveAttribute('href', `/tasks/${task.id}/review/${v2.id}`)
     expect(screen.queryByRole('link', { name: candidate.title })).not.toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: v1.title })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: firstLabel })).not.toBeInTheDocument()
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1)
   })
 

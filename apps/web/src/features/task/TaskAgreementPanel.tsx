@@ -279,6 +279,12 @@ export function TaskAgreementPanel({
         <p>责任人确认后形成正式版本。启用约定流程后，新执行必须绑定已确认版本；草稿不构成要求。</p>
       </HelpDisclosure>
 
+      {confirmed !== null ? (
+        <div className="agreement-confirmed" data-testid="agreement-confirmed">
+          <RevisionContent content={confirmed.content} />
+        </div>
+      ) : null}
+
       {/* 编辑中的草稿 */}
       {editor !== null && session !== null ? (
         <AgreementDraftEditor
@@ -345,33 +351,26 @@ export function TaskAgreementPanel({
         </div>
       ) : null}
 
-      {/* 无草稿：查看当前版本 + 起草入口 */}
-      {editor === null && draft === null ? (
-        <div className="agreement-confirmed" data-testid="agreement-confirmed">
-          {confirmed !== null ? <RevisionContent content={confirmed.content} /> : null}
-          {session !== null ? (
-            <div className="agreement-actions">
-              <button
-                type="button"
-                className="button"
-                disabled={pending}
-                onClick={() =>
-                  setEditor(
-                    confirmed === null
-                      ? { kind: 'empty' }
-                      : { kind: 'confirmed', revision: confirmed },
-                  )
-                }
-                title={
-                  confirmed === null
-                    ? '起草任务约定的第一个版本'
-                    : '基于当前版本修改：保存产生新草稿，确认后成为新版本'
-                }
-              >
-                {confirmed === null ? '起草任务约定' : '修改约定（产生新版本）'}
-              </button>
-            </div>
-          ) : null}
+      {/* 无草稿：起草入口 */}
+      {editor === null && draft === null && session !== null ? (
+        <div className="agreement-actions">
+          <button
+            type="button"
+            className="button"
+            disabled={pending}
+            onClick={() =>
+              setEditor(
+                confirmed === null ? { kind: 'empty' } : { kind: 'confirmed', revision: confirmed },
+              )
+            }
+            title={
+              confirmed === null
+                ? '起草任务约定的第一个版本'
+                : '基于当前版本修改：保存产生新草稿，确认后成为新版本'
+            }
+          >
+            {confirmed === null ? '起草任务约定' : '修改约定（产生新版本）'}
+          </button>
         </div>
       ) : null}
 

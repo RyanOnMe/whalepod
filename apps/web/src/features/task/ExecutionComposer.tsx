@@ -303,6 +303,7 @@ export function ExecutionComposer({
     )
       return
     handledContinue.current = continueRequest.nonce
+    if (sending) return
     memory.update((old) => ({
       ...old,
       mode: 'resume',
@@ -313,7 +314,7 @@ export function ExecutionComposer({
       document.getElementById(`instruction-text-${task.id}`)?.focus(),
     )
     return () => cancelAnimationFrame(frame)
-  }, [continueRequest, task.id])
+  }, [continueRequest, task.id, sending])
   const isAssignee = task.assigneeUserId === session.userId
   // #548：开始写普通交办时，把当时任务已指派的 Agent 固定进这份草稿；后台改派不再
   // 改写显示与提交目标。复核/修订不沿用这个默认——那两处必须由人明确选。
@@ -492,6 +493,7 @@ export function ExecutionComposer({
       type="button"
       className="button"
       data-testid="restart-assistant"
+      disabled={sending}
       onClick={restartAssistant}
     >
       开始新对话
@@ -539,7 +541,7 @@ export function ExecutionComposer({
   let blocker: { message: string; actions?: ReactNode } | null = null
   if (confirmingTask) blocker = { message: '正在确认任务状态，你写的消息还在。' }
   else if (memory.snapshot.ownerId !== task.assigneeUserId)
-    blocker = { message: '任务换了责任人。这条消息还没发出，你写的内容还在。' }
+    blocker = { message: '任务换了责任人。你写的内容还在，请重新确认发给谁。' }
   else if (!isAssignee && (grants.isPending || (grants.isFetching && !grants.isFetchedAfterMount)))
     blocker = { message: '正在确认操作权限…' }
   else if (!isAssignee && grants.isError) blocker = { message: '暂时无法确认权限，请重试。' }
@@ -567,7 +569,7 @@ export function ExecutionComposer({
     blocker = { message: '所选材料已不可用，请重新选择已发布交付物。草稿仍保留。' }
   else if (mode === 'followup' && (active === undefined || active.id !== sourceId))
     blocker = {
-      message: '助手已经结束处理，这条消息没发出。你写的内容还在。',
+      message: '助手已经结束处理。你写的内容还在。',
       actions: (
         <>
           {source.data !== undefined &&
@@ -579,6 +581,7 @@ export function ExecutionComposer({
               type="button"
               className="button"
               data-testid="continue-session"
+              disabled={sending}
               onClick={() => {
                 setMode('resume')
                 setSourceId(sourceId)
@@ -595,7 +598,7 @@ export function ExecutionComposer({
     blocker = { message: '已有执行进行中，结束后才能继续会话。' }
   else if (isSourceMode && sourceId === '') blocker = { message: '请先选要继续的对话。' }
   else if (isSourceMode && source.isError)
-    blocker = { message: '读不到这段对话，消息还没发出。', actions: recheckAction }
+    blocker = { message: '暂时读不到这段对话。你写的内容还在。', actions: recheckAction }
   else if (
     isSourceMode &&
     (!source.isSuccess || (source.isFetching && !source.isFetchedAfterMount))
@@ -621,10 +624,8 @@ export function ExecutionComposer({
       actions: environmentActions(),
     }
   else if (mode === 'resume' && sourceDevice?.status === 'offline')
-    // 不自动改投、不跳过来源：保留文字并说清「没发出」，恢复动作由用户点。
-    // 环境那一句由 environmentActions 统一给一次，结论别在消息里重复两遍。
     blocker = {
-      message: '这段对话原来用的电脑没连上，消息还没发出。你可以继续编辑。',
+      message: '这段对话原来用的电脑没连上。你写的内容还在。',
       // 一个刷新动作：离线现场用「检查连接」；没有环境时的「设置执行电脑」照常可达。
       actions: (
         <>

@@ -319,9 +319,14 @@ describe('#378 任务约定面板', () => {
   it('发送区可直接查看已确认的任务要求', async () => {
     const user = userEvent.setup()
     const confirmed = makeRevision()
+    const draft = makeRevision({
+      status: 'draft',
+      revisionNumber: null,
+      content: { ...confirmed.content, goal: '未确认的新目标' },
+    })
     const view = {
       enabled: true,
-      draft: null,
+      draft,
       confirmed,
       history: [confirmed],
       confirmedCount: 1,
@@ -330,7 +335,7 @@ describe('#378 任务约定面板', () => {
       `/tasks/${TASK_ID}`,
       roomHandlers([agreementHandler(view)], {
         agreementEnabled: true,
-        agreement: { enabled: true, latestConfirmedNumber: 1, hasDraft: false },
+        agreement: { enabled: true, latestConfirmedNumber: 1, hasDraft: true },
       }),
     )
     const hint = await screen.findByTestId('agreement-binding-hint')
@@ -338,7 +343,10 @@ describe('#378 任务约定面板', () => {
     await user.click(hint)
     const panel = await screen.findByTestId('agreement-panel')
     expect(panel).toHaveTextContent('这里写清要做什么、有哪些限制，以及怎样算完成。')
-    expect(panel).toHaveTextContent(confirmed.content.goal)
+    expect(within(panel).getByTestId('agreement-confirmed')).toHaveTextContent(
+      confirmed.content.goal,
+    )
+    expect(within(panel).getByTestId('agreement-draft')).toHaveTextContent('未确认，不构成要求')
   })
 
   it('已启用但无已确认版本：面板显式提示执行会被拒绝', async () => {

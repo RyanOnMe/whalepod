@@ -354,6 +354,11 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
   )
   const beforeSecond = new Set(known)
   await alice.getByLabel('指令').fill('第二次：在同一个会话里继续补充验收小节。')
+  await openRunDetail(alice, firstRunId)
+  await alice.getByTestId('continue-session-button').click()
+  await expect(alice.getByRole('region', { name: '工作区详情' })).not.toBeVisible()
+  await expect(alice.getByLabel('指令')).toHaveValue('第二次：在同一个会话里继续补充验收小节。')
+  await expect(alice.getByLabel('指令')).toBeFocused()
   const resumePost = alice.waitForResponse(
     (response) =>
       response.url().endsWith(`/tasks/${shared.taskId}/instructions`) &&
@@ -503,12 +508,26 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
   await alice.getByLabel('指令').fill(draft)
   // 入口在运行详情里（ADR-0019 决定 2）：段上只有「运行详情」，点它就是段头的按钮。
   await openRunDetail(alice, firstRunId)
-  await alice.getByTestId('continue-session-button').click()
+  const firstSourceRead = await hubApi(shared.cookie, 'GET', `/runs/${firstRunId}`)
+  expect(firstSourceRead.status).toBe(200)
+  const sourceBlocked =
+    (firstSourceRead.data as { resumeContext?: string }).resumeContext === 'blocked'
+  if (sourceBlocked) {
+    await expect(alice.getByTestId('rerun-button')).toBeVisible()
+    await expect(alice.getByTestId('continue-session-button')).toHaveCount(0)
+    await closeInspector(alice)
+    await alice.locator('.execution-settings > summary').click()
+    await selectFromMenu(alice.getByLabel('执行方式'), /继续会话/)
+    await selectFromMenu(alice.getByLabel('来源执行'), '第 1 次运行')
+    await alice.locator('.execution-settings > summary').click()
+  } else {
+    await alice.getByTestId('continue-session-button').click()
+    await expect(alice.getByLabel('指令')).toBeFocused()
+  }
   // 交回输入框时详情自动收起：窄屏下详情占满这一栏，不收起用户就看不见自己被送到哪里。
   await expect(alice.getByRole('region', { name: '工作区详情' })).not.toBeVisible()
   await expect(previousConversation.locator('p')).toContainText(firstConversationTime)
   await expect(alice.getByLabel('指令')).toHaveValue(draft)
-  await expect(alice.getByLabel('指令')).toBeFocused()
   // 查看别的运行 / 切讨论都不改发送目标，也不吞草稿。
   await openRunDetail(alice, secondRunId)
   await closeInspector(alice)
@@ -608,9 +627,6 @@ test('连续对话：默认继续、段内审批、被拒指令与历史不消�
     }),
   })
   expect(claim.status).toBe(201)
-  const sourceRead = await hubApi(shared.cookie, 'GET', `/runs/${firstRunId}`)
-  expect(sourceRead.status).toBe(200)
-  const sourceBlocked = (sourceRead.data as { resumeContext?: string }).resumeContext === 'blocked'
   const blocker = alice.getByTestId('execution-blocker')
   // If the shared old chat was already closed, an offline device is not the reason it
   // cannot be continued. Reconnection will make a new chat possible, not restore this one.

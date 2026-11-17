@@ -21,6 +21,28 @@ const reviewPath = (taskId: string, id: string) => `/tasks/${taskId}/review/${id
 // version in this task; old clients can still copy the path, and unknown links stay plain text.
 const fileReferenceLine = (path: string) => `文件：${path}`
 
+function publishedFileLabels(files: readonly TaskRoomArtifact[]): Map<string, string> {
+  const groups = new Map<string, TaskRoomArtifact[]>()
+  const labels = new Map<string, string>()
+  for (const file of files) {
+    if (file.status !== 'published') continue
+    const group = groups.get(file.title) ?? []
+    group.push(file)
+    groups.set(file.title, group)
+  }
+  for (const [title, group] of groups) {
+    group.sort(
+      (a, b) =>
+        (a.publishedAt ?? a.createdAt).localeCompare(b.publishedAt ?? b.createdAt) ||
+        a.id.localeCompare(b.id),
+    )
+    group.forEach((file, index) => {
+      labels.set(file.id, group.length === 1 ? title : `${title} · 同名文件 ${index + 1}`)
+    })
+  }
+  return labels
+}
+
 export interface CommentListProps {
   comments: CommentView[]
   session: Session | null
@@ -47,12 +69,10 @@ export function CommentList({
   // 团队讨论里「谁说了这句」是主信息，半截 UUID 提供不了这个信息。
   const directory = useMemberDirectory()
   const fileLinks = new Map(
-    artifacts
-      .filter((row) => row.status === 'published')
-      .map((row) => {
-        const path = reviewPath(taskId, row.id)
-        return [fileReferenceLine(path), { path, title: row.title }] as const
-      }),
+    Array.from(publishedFileLabels(artifacts), ([id, title]) => {
+      const path = reviewPath(taskId, id)
+      return [fileReferenceLine(path), { path, title }] as const
+    }),
   )
   if (comments.length === 0) {
     return <p className="empty-state">还没有留言——向责任人说明下一步吧。</p>
@@ -135,8 +155,8 @@ export function CommentComposer({
     isPending,
   } = useTeamMessageDraft(taskId, userId)
   const { body, artifactIds } = draft
-  const published = artifacts.filter((row) => row.status === 'published')
-  const selectedFiles = artifactIds.map((id) => published.find((row) => row.id === id))
+  const published = publishedFileLabels(artifacts)
+  const selectedFiles = artifactIds.map((id) => published.get(id))
   const missingFile = selectedFiles.some((row) => row === undefined)
   const outgoing = [
     body.trim(),
@@ -182,8 +202,7 @@ export function CommentComposer({
 
   useEffect(() => {
     if (quoteRequest === null) return
-    if (published.some((row) => row.id === quoteRequest.artifactId))
-      addFile(quoteRequest.artifactId)
+    if (published.has(quoteRequest.artifactId)) addFile(quoteRequest.artifactId)
     textareaRef.current?.focus()
     onQuoteConsumed?.()
   }, [quoteRequest, onQuoteConsumed, artifacts])
@@ -231,18 +250,16 @@ export function CommentComposer({
           </button>
         }
         controls={
-          published.length === 0 ? null : (
+          published.size === 0 ? null : (
             <SelectMenu
               id={`comment-file-ref-${taskId}`}
               label="引用文件"
               value=""
               placeholder="选择已发布文件"
-              options={published.map((row) => ({
-                value: row.id,
-                label: published.some((other) => other.id !== row.id && other.title === row.title)
-                  ? `${row.title} · ${new Date(row.publishedAt ?? row.createdAt).toLocaleString()}`
-                  : row.title,
-                disabled: mutation.isPending || artifactIds.includes(row.id),
+              options={Array.from(published, ([id, title]) => ({
+                value: id,
+                label: title,
+                disabled: mutation.isPending || artifactIds.includes(id),
               }))}
               onChange={addFile}
             />
@@ -273,7 +290,7 @@ export function CommentComposer({
         {artifactIds.length > 0 ? (
           <ul className="comment-file-references" aria-label="引用的文件">
             {artifactIds.map((id, index) => {
-              const title = selectedFiles[index]?.title ?? '不可用的文件'
+              const title = selectedFiles[index] ?? '不可用的文件'
               return (
                 <li key={id}>
                   <span>{title}</span>

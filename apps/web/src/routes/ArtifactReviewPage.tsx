@@ -314,7 +314,7 @@ export function ArtifactReviewPage(): ReactNode {
           </p>
           <nav className="review-jumps" aria-label="文件审阅">
             <a href="#review-feedback">看同事意见</a>
-            <a href="#review-changes">看修改</a>
+            <a href="#review-changes">看后续修改</a>
           </nav>
         </div>
         <a
